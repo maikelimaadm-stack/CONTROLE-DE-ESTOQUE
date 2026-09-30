@@ -3,21 +3,29 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA, ERRO_EXIGENCIA_NAO_ATENDIDA } from "@agro/domain";
+import {
+  AVISO_PADRAO_INVALIDO_CENTRAL, ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA, ERRO_EXIGENCIA_NAO_ATENDIDA, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando,
+  catalogoDaFamilia, chavePadraoDeCadastro, mensagemCampoObrigatorio, type CampoDoLayout
+} from "@agro/domain";
 import { api, ApiError, newIdem } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
 import { useTradutor } from "@/lib/i18n";
 import { brl, todayISO } from "@/lib/utils";
 import { enumLabel } from "@/lib/copy";
-import { Button, Card, CardBody, CardHeader, Field, Input, LoadingState, NativeSelect, Textarea } from "@/components/ui";
+import { Button, Card, CardBody, CardHeader, Confirm, Field, Input, LoadingState, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect, type BuscaDeOpcoes, type Option } from "@/components/ui/ref-select";
-import { ItemsEditor, PlanEditor, defaultPlan, totalDaLinhaExibido, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
-import { CampoTipoOperacao, podeLancar } from "@/features/sales/tipo-operacao-select";
+import { ItemsEditor, PlanEditor, defaultPlan, totalDaLinhaExibido, useEmpresaPadrao, type ColunaDoEditorDeItens, type ItemRow, type Plan } from "@/features/docs/shared";
+import { MensagemTop, entendeLayoutDocumento, podeLancar, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
+import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
 import { useTopsDaEspecie, varianteDeCompra, type VarianteDeCompra } from "./variantes";
 import { useRecebimentoDoPedido } from "./receber-pedido";
 import { acompanharDescontoDaOrigem, cabecalhoDoPedido, linhasDoRecebimento } from "./recebimento-linhas";
 import { rotaDoDocumento } from "./documentos-compra-list";
+import {
+  SEM_PADROES, camposExigidosPelaRegra, colunasDoEditor, estruturaComExigidos, estruturaDaResposta, hrefDoConfigurador, layoutQueVale, lerRegras,
+  padroesDaResposta, textoDoLayoutQueVale, valorDoPadrao, zonasDaCentral, type RegrasDaCompra
+} from "./layout-da-central";
 
 /**
  * A CENTRAL DE COMPRAS — o lançamento de um Pedido de compra ou de uma Compra (COMPRAS-01, decisão 267).
@@ -27,7 +35,7 @@ import { rotaDoDocumento } from "./documentos-compra-list";
  * │ `/api/sales`, layout do documento, cliente em atraso, reserva). Parametrizá-la mudaria vendas;   │
  * │ por isso esta Central é PRÓPRIA, no formato simples dos documentos de estoque, e reusa só as     │
  * │ peças genéricas que não mudam: o editor de itens e o de parcelas (`features/docs/shared`), o    │
- * │ campo e a descoberta de TOP (`features/sales/tipo-operacao-select`, que não conhece a porta).    │
+ * │ lançador e a descoberta de TOP (`features/sales/…`, que não conhecem a porta).                   │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * A TOP da URL é PEDIDO: vale só se estiver na lista que o servidor devolve para AQUELA espécie. Totais,
@@ -45,6 +53,23 @@ import { rotaDoDocumento } from "./documentos-compra-list";
  * │ Pedido que não pode ser recebido agora (fechado, TOP fora do leque, API anterior) não vira formulário:   │
  * │ a Central diz por quê, e o Salvar não aparece habilitado.                                               │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ LAYOUT DO DOCUMENTO (COMPRAS-03, decisão 269) — o mecanismo de Vendas, sem desenho novo ──────────────┐
+ * │ SÓ com `capacidades.layoutDocumento` EXATA em operation-types. Sem ela nenhuma pergunta a              │
+ * │ `/layout-efetivo` sai e a Central é a de hoje (o desenho segue `LAYOUT_DO_SISTEMA`, que É a Central de  │
+ * │ hoje, sem `data-campo`, sem cobrança nova). Com ela, o Salvar trava enquanto o layout não chega        │
+ * │ conferido, e o layout governa: visibilidade e ordem DENTRO do grid de hoje (larguras de hoje), rótulo,  │
+ * │ "*", campo não editável (travado) e padrões (literal, variável e de cadastro) só em campo intocado.     │
+ * │ "Dados adicionais" e as abas aparecem EM SEQUÊNCIA depois dos campos principais, com o mesmo grid.     │
+ * │ O que a REGRA exige aparece mesmo que o layout o esconda (esconder o que o servidor vai cobrar faria o │
+ * │ Salvar recusar algo invisível): as exigências da TOP, natureza e centro quando gera título, forma de    │
+ * │ pagamento, vencimento e armazém quando a política exige, e lote/validade de produto com controle de    │
+ * │ lote. A conferência do obrigatório é a MESMA função do domínio que a API usa, sobre o documento inteiro │
+ * │ que o servidor vai ver (no receber, com empresa, fornecedor e produto do pedido); o 422 cai no campo.   │
+ * │ No RECEBER, o pedido vence o padrão: o padrão só preenche o que o pedido deixou vazio, e o "não         │
+ * │ editável" trava mostrando o valor do pedido.                                                            │
+ * │ A TOP fica TRAVADA na Central, como em Vendas: trocar de operação é voltar ao lançador.                 │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 type Cabecalho = {
   empresa_id: string; fornecedor_id: string; transportadora_id: string; data_documento: string; data_entrada: string;
@@ -58,8 +83,9 @@ const opcional = (v: string) => (vazio(v) ? undefined : v.trim());
 const ehObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /**
- * Os erros de campo que o servidor devolveu, por caminho: `details: [{ path, message }]` (validação),
- * `details.exigencias: [{ caminho, mensagem }]` (regras da operação) e `details.campo` (condição não permitida).
+ * Os erros de campo que o servidor devolveu, por caminho: `details: [{ path, message }]` (validação e, na COMPRAS-03,
+ * obrigatório do layout — `itens[i].campo` inclusive), `details.exigencias: [{ caminho, mensagem }]` (regras da
+ * operação) e `details.campo` (condição não permitida).
  */
 function errosDoServidor(e: unknown): Record<string, string> {
   if (!(e instanceof ApiError)) return {};
@@ -79,21 +105,15 @@ function errosDoServidor(e: unknown): Record<string, string> {
   return out;
 }
 
-/** Resposta de `/api/compras/{seg}/regras-da-operacao` conferida; forma estranha = `null` (nenhum asterisco a mais). */
-interface RegrasDaCompra { exigencias: string[]; condicoesPermitidas: string[] | null; geraTitulos: boolean | null }
-function lerRegras(v: unknown): RegrasDaCompra | null {
-  if (!ehObj(v) || !Array.isArray(v.exigencias) || !v.exigencias.every((x) => typeof x === "string")) return null;
-  const cp = v.condicoesPermitidas;
-  if (cp !== null && cp !== undefined && !(Array.isArray(cp) && cp.every((x) => typeof x === "string"))) return null;
-  return { exigencias: v.exigencias as string[], condicoesPermitidas: (cp as string[] | null | undefined) ?? null, geraTitulos: typeof v.geraTitulos === "boolean" ? v.geraTitulos : null };
-}
-function useRegrasDaCompra(segmento: string, top: string, ativo: boolean): RegrasDaCompra | null {
+/** Regras da operação da TOP escolhida (`lerRegras`). `pendente`: a pergunta saiu e a resposta ainda não chegou. */
+function useRegrasDaCompra(segmento: string, top: string, ativo: boolean): { regras: RegrasDaCompra | null; pendente: boolean } {
   const q = useQuery<unknown, ApiError>({
     queryKey: ["compras-regras-da-operacao", segmento, top],
     queryFn: () => api<unknown>(`/api/compras/${segmento}/regras-da-operacao?tipo_operacao_id=${encodeURIComponent(top)}`),
     enabled: ativo && Boolean(top), retry: false
   });
-  return React.useMemo(() => (ativo && q.data !== undefined ? lerRegras(q.data) : null), [ativo, q.data]);
+  const regras = React.useMemo(() => (ativo && q.data !== undefined ? lerRegras(q.data) : null), [ativo, q.data]);
+  return { regras, pendente: ativo && Boolean(top) && q.isPending };
 }
 
 /** Natureza de DESPESA para compra: analítica, do tipo despesa OU receita e despesa (a mesma régua da API). */
@@ -106,47 +126,130 @@ const opcoesDeNaturezaDeDespesa: BuscaDeOpcoes = {
   }
 };
 
-/** Controle de lote de cada produto (cadastro); desconhecido = campos abertos (o servidor é quem recusa). */
-function useControleDeLote(produtos: string[]): (produtoId: string) => { lote: boolean; validade: boolean } {
+/**
+ * Controle de lote de cada produto (cadastro). `daLinha`: desconhecido = campos abertos (o servidor é quem recusa).
+ * `pede` (COMPRAS-03): a coluna Lote/Validade tem de aparecer mesmo que o layout a esconda? Só com produto escolhido —
+ * controle lido que pede, ou controle que não se conseguiu ler (a pessoa precisa de onde digitar o que o servidor
+ * pode cobrar). Enquanto a leitura não chega, não força: a coluna não pisca a cada produto escolhido.
+ */
+function useControleDeLote(produtos: string[]): { daLinha: (produtoId: string) => { lote: boolean; validade: boolean }; pede: (produtoId: string, campo: "lote" | "validade") => boolean } {
   const unicos = Array.from(new Set(produtos.filter(Boolean)));
   const qs = useQueries({ queries: unicos.map((id) => ({ queryKey: ["compras-produto-lote", id], queryFn: () => api<Record<string, unknown>>(`/api/resources/products/${id}`), staleTime: 60_000, retry: false })) });
-  const mapa = new Map<string, string>();
-  unicos.forEach((id, i) => { const c = qs[i]?.data?.["controle_lote"]; if (typeof c === "string") mapa.set(id, c); });
-  return (produtoId) => {
-    const c = mapa.get(produtoId);
-    if (c === undefined) return { lote: true, validade: true };
-    return { lote: c !== "nenhum", validade: c === "lote_validade" };
+  const mapa = new Map<string, string>(); const ilegivel = new Set<string>();
+  unicos.forEach((id, i) => {
+    const q = qs[i]; const c = q?.data?.["controle_lote"];
+    if (typeof c === "string") mapa.set(id, c); else if (q && !q.isPending) ilegivel.add(id);
+  });
+  return {
+    daLinha: (produtoId) => {
+      const c = mapa.get(produtoId);
+      if (c === undefined) return { lote: true, validade: true };
+      return { lote: c !== "nenhum", validade: c === "lote_validade" };
+    },
+    pede: (produtoId, campo) => {
+      if (!produtoId) return false;
+      const c = mapa.get(produtoId);
+      if (c === undefined) return ilegivel.has(produtoId);
+      return campo === "lote" ? c !== "nenhum" : c === "lote_validade";
+    }
   };
 }
 
+/** As colunas do editor de itens da Central de hoje (sem layout) — o layout do sistema tem exatamente estas, nesta ordem. */
+const COLUNAS_DE_HOJE_DA_COMPRA: ColunaDoEditorDeItens[] = ["warehouse", "product", "quantity", "unit_value", "discount", "discount_percent", "lot", "expiration"];
+const COLUNAS_DE_HOJE_DO_PEDIDO: ColunaDoEditorDeItens[] = ["warehouse", "product", "quantity", "unit_value", "discount", "discount_percent"];
+
+/**
+ * A CENTRAL — TOP PRIMEIRO, FORMULÁRIO DEPOIS (COMPRAS-03, como a Central de Vendas).
+ *
+ *   sem `?tipo_operacao_id`, ou com uma que a lista da espécie não confirma → LANÇADOR (o de Vendas, que não conhece
+ *                                                                              porta): o formulário não existe na árvore;
+ *   com a TOP que a lista confirma                                          → FORMULÁRIO, com a TOP travada;
+ *   com `?pedido` (receber, só na compra)                                   → FORMULÁRIO do recebimento: a TOP é a do
+ *                                                                              passo, conferida contra o leque do pedido.
+ *
+ * O formulário mora num componente SEPARADO, com `key` pela TOP (ou pelo pedido e passo): sem TOP válida não existe
+ * estado de formulário nem Salvar, e trocar a TOP pela URL nunca herda o que foi digitado para outra operação.
+ *
+ * A TRAVA DA SESSÃO (a mesma de Vendas): uma nova leitura da lista que deixe de confirmar a TOP não desmonta o que a
+ * pessoa digitou — o formulário continua montado, mas a ESCRITA só é autorizada pela lista de AGORA
+ * (`escritaTopConfirmada`). A chave é espécie + TOP pedida: outra espécie nunca herda a trava.
+ */
 export function CentralDeCompras({ variante }: { variante: VarianteDeCompra }) {
-  const router = useRouter(); const sp = useSearchParams(); const tr = useTradutor(); const qc = useQueryClient();
+  const router = useRouter(); const sp = useSearchParams(); const tr = useTradutor();
   const { can } = useAuth();
-  const ehCompra = variante.variante === "compra";
-  const empresaPadrao = useEmpresaPadrao();
   const pedidaNaUrl = sp.get("tipo_operacao_id") ?? "";
   // RECEBER PEDIDO só existe na COMPRA: `pedido` na URL de outra espécie não muda nada (é o lançamento de sempre).
-  const pedidoId = ehCompra ? sp.get("pedido") ?? "" : "";
-  const recebimento = useRecebimentoDoPedido(pedidoId, pedidaNaUrl, variante.variante);
+  const pedidoId = variante.variante === "compra" ? sp.get("pedido") ?? "" : "";
+  const podeCriar = can(`${variante.perm}.create`);
+  // No recebimento a lista de TOPs da espécie é perguntada SÓ pela capacidade (layout): a TOP é a do passo.
+  const estado = useTopsDaEspecie(variante.segmento, podeCriar);
+  const topAtual = pedidoId ? null : topSelecionada(estado, pedidaNaUrl);
+  const chave = !pedidoId && pedidaNaUrl ? `${variante.segmento}:${pedidaNaUrl}` : null;
+  const trava = React.useRef<{ chave: string; top: TopOperacional } | null>(null);
+  React.useLayoutEffect(() => {
+    if (!chave) { trava.current = null; return; }
+    if (topAtual) trava.current = { chave, top: topAtual };
+  });
+
+  if (pedidoId) {
+    return <FormularioDeCompra key={`receber:${pedidoId}:${pedidaNaUrl}`} variante={variante} estado={estado} podeCriar={podeCriar}
+      pedidoId={pedidoId} topDaUrl={pedidaNaUrl} top={null} escritaTopConfirmada={false} />;
+  }
+  const topDaSessao = chave && trava.current?.chave === chave ? trava.current.top : null;
+  const topEfetiva = topAtual ?? topDaSessao;
+  if (topEfetiva) {
+    return <FormularioDeCompra key={`lancar:${topEfetiva.id}`} variante={variante} estado={estado} podeCriar={podeCriar}
+      pedidoId="" topDaUrl={pedidaNaUrl} top={topEfetiva} escritaTopConfirmada={podeLancar(estado) && topAtual !== null} />;
+  }
+  return <LancadorDeTipoOperacao
+    estado={estado}
+    titulo={`Novo documento · ${tr(variante.chaveI18n)}`}
+    indisponivel={pedidoImpossivel(estado, pedidaNaUrl)}
+    onCancelar={() => router.push("/compras?tab=documentos")}
+    // `replace`: o lançador e o formulário são duas caras da MESMA etapa de criação (o Voltar do navegador sai dela)
+    onContinuar={(t) => router.replace(`/compras/${variante.segmento}/new?tipo_operacao_id=${encodeURIComponent(t.id)}`)}
+  />;
+}
+
+function FormularioDeCompra({ variante, estado, podeCriar, pedidoId, topDaUrl, top: topDoLancamento, escritaTopConfirmada }: {
+  variante: VarianteDeCompra;
+  /** O estado ATUAL da descoberta de TOPs da espécie (e da capacidade do layout). */
+  estado: EstadoTop;
+  podeCriar: boolean;
+  /** Vazio = lançamento comum. */
+  pedidoId: string;
+  topDaUrl: string;
+  /** A TOP do lançamento comum (validada contra a lista da espécie); `null` no recebimento. */
+  top: TopOperacional | null;
+  /** A lista de AGORA confirma a TOP do lançamento? Só isso autoriza o POST do lançamento comum. */
+  escritaTopConfirmada: boolean;
+}) {
+  const router = useRouter(); const tr = useTradutor(); const qc = useQueryClient();
+  const { can } = useAuth();
+  const ehCompra = variante.variante === "compra";
+  const familia = variante.familia;
+  const empresaPadrao = useEmpresaPadrao();
+  const recebimento = useRecebimentoDoPedido(pedidoId, topDaUrl, variante.variante);
   const modoReceber = recebimento.situacao !== "inativo";
   const recebendo = recebimento.situacao === "pronto" ? recebimento : null;
-  // No modo receber a lista de TOPs da espécie não é perguntada: a TOP é a do passo, e o leque do pedido a conferiu.
-  const estado = useTopsDaEspecie(variante.segmento, can(`${variante.perm}.create`) && !modoReceber);
-  const [top, setTop] = React.useState("");
-  // A TOP da URL só é aceita se o servidor a listou para esta espécie; sem ela, o padrão do cadastro (se houver).
-  React.useEffect(() => {
-    if (modoReceber || !podeLancar(estado) || top) return;
-    const naLista = estado.dados.items.some((i) => i.id === pedidaNaUrl);
-    const escolha = naLista ? pedidaNaUrl : estado.dados.defaultId;
-    if (escolha) setTop(escolha);
-  }, [modoReceber, estado, top, pedidaNaUrl]);
-  const topRecusada = !modoReceber && podeLancar(estado) && !!pedidaNaUrl && !estado.dados.items.some((i) => i.id === pedidaNaUrl);
+  // No recebimento a TOP é a do passo (fixada quando o pedido preenche a Central); no lançamento, a travada.
+  const [topDoPasso, setTopDoPasso] = React.useState("");
+  const top = modoReceber ? topDoPasso : topDoLancamento?.id ?? "";
+  // O movimento da TOP travada, guardado ao montar: uma nova leitura da lista não apaga o contexto da tela.
+  const [movimento] = React.useState(() => (estado.situacao === "pronto" ? estado.dados.family.label : ""));
 
   const [h, setH] = React.useState<Cabecalho>({
     empresa_id: "", fornecedor_id: "", transportadora_id: "", data_documento: todayISO(), data_entrada: "", data_vencimento: "",
     numero_nota: "", serie_nota: "", categoria_financeira_id: "", centro_custo_id: "", condicao_pagamento_id: "", forma_pagamento_id: "",
     frete: "0", outras_despesas: "0", desconto: "0", observacao: ""
   });
+  /**
+   * O ESTADO INICIAL do cabeçalho — o que conta como "intocado". Acompanha o que não é digitação: o pedido (no receber)
+   * e os padrões do layout aplicados. O padrão só entra em campo intocado; e "tem coisa digitada" (a confirmação de
+   * "Alterar operação") compara com ele — sem a empresa, que o efeito abaixo preenche sozinho.
+   */
+  const inicial = React.useRef<Cabecalho>(h);
   React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresaPadrao })); }, [empresaPadrao]);
   const mudar = (p: Partial<Cabecalho>) => setH((o) => ({ ...o, ...p }));
   const [itens, setItensCru] = React.useState<ItemRow[]>([]);
@@ -155,21 +258,29 @@ export function CentralDeCompras({ variante }: { variante: VarianteDeCompra }) {
   const [ajustarParcelas, setAjustarParcelas] = React.useState(false);
   const [plano, setPlano] = React.useState<Plan>(defaultPlan());
   const [erros, setErros] = React.useState<Record<string, string>>({});
+  const [confirmarTroca, setConfirmarTroca] = React.useState(false);
 
   /**
    * O PEDIDO PREENCHE A CENTRAL UMA VEZ, quando fica pronto. Depois disso o formulário é da pessoa: uma nova leitura
-   * do pedido (foco na janela, invalidação) não pode apagar o que ela já digitou.
+   * do pedido (foco na janela, invalidação) não pode apagar o que ela já digitou. COMPRAS-03: o que o pedido trouxe
+   * com valor fica marcado (`doPedido`) — o padrão do layout nunca o substitui.
    */
   const preenchidoDe = React.useRef("");
+  const doPedido = React.useRef<ReadonlySet<string>>(new Set());
+  const [preenchimento, setPreenchimento] = React.useState("");
   React.useEffect(() => {
     // A chave é o PEDIDO e o PASSO: outro passo do mesmo pedido (outra TOP, outra regra de partes) preenche de novo.
     const chaveDoPreenchimento = recebendo ? `${pedidoId}|${recebendo.passo.tipoOperacaoId}` : "";
     if (!recebendo || preenchidoDe.current === chaveDoPreenchimento) return;
     preenchidoDe.current = chaveDoPreenchimento;
     const p = recebendo.pedido;
-    setTop(recebendo.passo.tipoOperacaoId);
-    setH((o) => ({ ...o, empresa_id: String(p["empresa_id"] ?? ""), fornecedor_id: String(p["fornecedor_id"] ?? ""), ...cabecalhoDoPedido(p) }));
+    const vindos: Partial<Cabecalho> = { empresa_id: String(p["empresa_id"] ?? ""), fornecedor_id: String(p["fornecedor_id"] ?? ""), ...cabecalhoDoPedido(p) };
+    doPedido.current = new Set(Object.entries(vindos).filter(([, v]) => typeof v === "string" && !vazio(v)).map(([k]) => k));
+    inicial.current = { ...inicial.current, ...vindos };
+    setTopDoPasso(recebendo.passo.tipoOperacaoId);
+    setH((o) => ({ ...o, ...vindos }));
     setItensCru(linhasDoRecebimento(p.itens));
+    setPreenchimento(chaveDoPreenchimento);
   }, [recebendo, pedidoId]);
 
   const totalItens = itens.reduce((a, it) => a + totalDaLinhaExibido(it), 0);
@@ -208,6 +319,14 @@ export function CentralDeCompras({ variante }: { variante: VarianteDeCompra }) {
   const corpo = () => (modoReceber
     ? { ...cabecalhoDoCorpo(), itens: itens.map((i) => ({ item_origem_id: String(i["item_origem_id"] ?? ""), ...camposDoItem(i) })) }
     : { empresa_id: h.empresa_id, fornecedor_id: h.fornecedor_id, ...cabecalhoDoCorpo(), itens: itens.map((i) => ({ produto_id: i.product_id, ...camposDoItem(i) })) });
+  /**
+   * O DOCUMENTO QUE O SERVIDOR VAI CONFERIR (COMPRAS-03): no lançamento, o próprio corpo; no recebimento, o corpo com
+   * empresa e fornecedor do PEDIDO e o produto de cada item do pedido — é o que `lancar` confere na compra de destino.
+   */
+  const documentoConferido = (): Record<string, unknown> => (recebendo
+    ? { ...cabecalhoDoCorpo(), empresa_id: String(recebendo.pedido["empresa_id"] ?? ""), fornecedor_id: String(recebendo.pedido["fornecedor_id"] ?? ""),
+      itens: itens.map((i) => ({ produto_id: i.product_id, ...camposDoItem(i) })) }
+    : corpo());
 
   /** A porta do POST: a da espécie, ou a do recebimento do pedido. O retorno das duas é o documento criado (`id`). */
   const segmentoDoPedido = varianteDeCompra("pedido")?.segmento ?? "";
@@ -221,27 +340,144 @@ export function CentralDeCompras({ variante }: { variante: VarianteDeCompra }) {
     onError: (e) => { chave.current = newIdem(); setErros(errosDoServidor(e)); toast.error((e as Error).message); }
   });
 
-  const regras = useRegrasDaCompra(variante.segmento, top, modoReceber ? Boolean(recebendo) && !!top : pronto0(estado, top));
-  const exigidos = new Set(regras?.exigencias ?? []);
-  // Compra que gera contas a pagar exige natureza e centro (a API recusa no campo); pedido não gera título.
-  const classificacaoObrigatoria = ehCompra && regras?.geraTitulos === true;
-  const obrig = (c: string) => exigidos.has(c) || ((c === "categoria_financeira_id" || c === "centro_custo_id") && classificacaoObrigatoria);
-  const loteDoProduto = useControleDeLote(ehCompra ? itens.map((i) => i.product_id) : []);
+  const { regras, pendente: regrasPendente } = useRegrasDaCompra(variante.segmento, top, modoReceber ? Boolean(recebendo) && !!top : podeLancar(estado) && !!top);
+  /**
+   * O QUE A REGRA EXIGE (dono: `camposExigidosPelaRegra`) — "*" e, com layout, o campo aparece mesmo escondido. Sem
+   * as flags da COMPRAS-03 (API anterior) é exatamente o de antes: as exigências da TOP, e natureza e centro quando a
+   * compra gera contas a pagar (a API recusa no campo); pedido não gera título.
+   */
+  const exigidosPelaRegra = React.useMemo(() => new Set(camposExigidosPelaRegra(regras, ehCompra)), [regras, ehCompra]);
+  const lote = useControleDeLote(ehCompra ? itens.map((i) => i.product_id) : []);
   // Produto que deixou de controlar lote/validade não leva o valor digitado antes (evita a recusa do item).
   React.useEffect(() => {
     if (!ehCompra) return;
     let mudou = false;
     const novos = itens.map((it) => {
-      const c = loteDoProduto(it.product_id);
-      const lote = c.lote ? it.provider_lot : ""; const validade = c.validade ? it.expiration_date : "";
-      if ((it.provider_lot ?? "") !== (lote ?? "") || (it.expiration_date ?? "") !== (validade ?? "")) { mudou = true; return { ...it, provider_lot: lote, expiration_date: validade }; }
+      const c = lote.daLinha(it.product_id);
+      const l = c.lote ? it.provider_lot : ""; const validade = c.validade ? it.expiration_date : "";
+      if ((it.provider_lot ?? "") !== (l ?? "") || (it.expiration_date ?? "") !== (validade ?? "")) { mudou = true; return { ...it, provider_lot: l, expiration_date: validade }; }
       return it;
     });
     if (mudou) setItens(novos);
   });
-  const erro = (c: string) => erros[c];
-  const errosDeItens = Object.entries(erros).filter(([c]) => c.startsWith("itens"));
-  const pronto = modoReceber ? Boolean(recebendo) && !!top : pronto0(estado, top) && !topRecusada;
+
+  /* ── LAYOUT DO DOCUMENTO (COMPRAS-03) ─────────────────────────────────────────────────────────────────────────── */
+  const layoutAtivo = entendeLayoutDocumento(estado);
+  const layoutQ = useQuery<unknown, ApiError>({
+    queryKey: ["layout-efetivo", "compras", variante.segmento, top],
+    queryFn: () => api<unknown>(`/api/compras/${variante.segmento}/layout-efetivo?tipo_operacao_id=${encodeURIComponent(top)}`),
+    enabled: layoutAtivo && Boolean(top),
+    retry: false
+  });
+  const layoutRecebido = layoutQ.data;
+  const layout = React.useMemo(() => (layoutAtivo ? estruturaDaResposta(layoutRecebido) : null), [layoutAtivo, layoutRecebido]);
+  // Gravar sem saber o que é obrigatório seria descobrir no 422: com a capacidade, sem layout conferido, o Salvar trava.
+  const layoutPendente = layoutAtivo && !layout;
+  // No recebimento a capacidade chega pela lista da espécie; enquanto ela não responde, não se sabe se há layout.
+  const capacidadePendente = modoReceber && podeCriar && estado.situacao === "carregando";
+  const layoutVale = React.useMemo(() => (layout ? layoutQueVale(layoutRecebido) : null), [layout, layoutRecebido]);
+  const padroes = React.useMemo(() => (layout ? padroesDaResposta(layoutRecebido) : SEM_PADROES), [layout, layoutRecebido]);
+  /** Configuração do layout por chave (cabeçalho e abas) — só com layout de verdade. Campo forçado pela regra não está aqui. */
+  const cfg = React.useMemo(() => new Map<string, CampoDoLayout>(layout ? [...layout.cabecalho, ...layout.rodape.flatMap((a) => a.campos)].map((x) => [x.campo, x]) : []), [layout]);
+  const catalogo = React.useMemo(() => catalogoDaFamilia(familia), [familia]);
+  /** Obrigatórios de hoje (sem layout): os "do sistema" do catálogo — Empresa, Fornecedor e Data do documento. */
+  const doSistema = React.useMemo(() => new Set(catalogo.filter((c) => c.parte !== "itens" && c.sistema).map((c) => c.chave)), [catalogo]);
+  /** Padrão de cadastro só em campo de referência que o CATÁLOGO declara (dono: `referencia`) e que o layout desenha. */
+  const camposDeCadastro = React.useMemo(() => new Set(catalogo.filter((c) => c.parte !== "itens" && c.referencia).map((c) => c.chave)), [catalogo]);
+  const doLayoutComCadastro = (c: string) => Boolean(layout) && camposDeCadastro.has(c) && cfg.has(c);
+  // Condição de pagamento padrão fora das permitidas da TOP não vale (vira aviso de padrão inválido), como em Vendas.
+  const condicoesPermitidas = regras?.condicoesPermitidas ?? null;
+  const condicaoNaoPermitida = (id: string) => condicoesPermitidas !== null && id !== "" && !condicoesPermitidas.some((x) => x.toLowerCase() === id.toLowerCase());
+  const padraoNaoPermitido = (c: string) => c === "condicao_pagamento_id" && condicaoNaoPermitida(padroes.validos.get(c)?.id ?? "");
+  /** O padrão de cadastro que vale agora para o campo (null: nenhum). */
+  const padraoDoCampo = (c: string) => (doLayoutComCadastro(c) && !padraoNaoPermitido(c) ? padroes.validos.get(c) ?? null : null);
+  /** O padrão do campo morreu no cadastro: nada é aplicado, o aviso aparece e o campo fica editável nesta abertura. */
+  const padraoInvalido = (c: string) => doLayoutComCadastro(c) && (padroes.invalidos.has(c) || padraoNaoPermitido(c));
+  /** O desenho: o layout + o que a regra exige e ele esconde. Sem layout, o LAYOUT DO SISTEMA — a Central de hoje. */
+  const desenho = React.useMemo(() => (layout ? estruturaComExigidos(familia, layout, [...exigidosPelaRegra]) : null), [layout, familia, exigidosPelaRegra]);
+  const zonas = React.useMemo(() => zonasDaCentral(familia, desenho?.estrutura ?? LAYOUT_DO_SISTEMA(familia)), [familia, desenho]);
+
+  /**
+   * ARMAZÉM PADRÃO: o padrão da coluna Armazém vale SÓ para a empresa do documento de agora (`empresaId` da resposta
+   * === a empresa do cabeçalho); de outra empresa, ou sem empresa na resposta, nenhum. No lançamento, só a linha NOVA
+   * o recebe; no recebimento, só a linha do pedido que veio SEM armazém (o pedido vence o padrão).
+   */
+  const padraoArmazem = layout && layout.itens.some((c) => c.campo === "armazem_id") ? padroes.validos.get(chavePadraoDeCadastro("itens", "armazem_id")) : undefined;
+  const armazemPadrao = padraoArmazem && padraoArmazem.empresaId && padraoArmazem.empresaId === h.empresa_id ? padraoArmazem.id : null;
+
+  /**
+   * VALOR PADRÃO DO LAYOUT, aplicado UMA vez por resposta (e, no recebimento, depois de o pedido preencher), só a campo
+   * ainda intocado — o valor digitado nunca é sobrescrito — e nunca a campo que o pedido trouxe com valor. Espera as
+   * regras chegarem: a condição padrão que a TOP não permite não é aplicada (vira aviso). O estado inicial acompanha,
+   * para o padrão não contar como "tem coisa digitada".
+   */
+  const padroesAplicados = React.useRef<{ resposta: unknown; preenchimento: string } | null>(null);
+  React.useEffect(() => {
+    if (!layout || regrasPendente || (modoReceber && !preenchimento)) return;
+    const marca = padroesAplicados.current;
+    if (marca && marca.resposta === layoutRecebido && marca.preenchimento === preenchimento) return;
+    padroesAplicados.current = { resposta: layoutRecebido, preenchimento };
+    const antes = inicial.current;
+    const aceita = (c: string): c is keyof Cabecalho => c in antes && !doPedido.current.has(c);
+    const novos: Partial<Cabecalho> = {};
+    for (const x of [...layout.cabecalho, ...layout.rodape.flatMap((a) => a.campos)]) {
+      if (!x.valorPadrao || !aceita(x.campo)) continue;
+      const v = valorDoPadrao(x.valorPadrao, empresaPadrao);
+      if (v !== null) novos[x.campo] = v;
+    }
+    for (const [c, p] of padroes.validos) if (aceita(c) && padraoDoCampo(c)) novos[c] = p.id;
+    const chaves = Object.keys(novos) as (keyof Cabecalho)[];
+    if (chaves.length) {
+      inicial.current = { ...antes, ...novos };
+      // intocado = igual ao inicial; a empresa também quando é a que o efeito de abertura pôs (não é digitação)
+      setH((o) => {
+        const r = { ...o };
+        for (const k of chaves) if (o[k] === antes[k] || (k === "empresa_id" && o[k] === empresaPadrao)) r[k] = novos[k]!;
+        return r;
+      });
+    }
+    if (modoReceber && armazemPadrao) setItensCru((ls) => ls.map((l) => (l.warehouse_id ? l : { ...l, warehouse_id: armazemPadrao })));
+  }, [layout, layoutRecebido, regrasPendente, modoReceber, preenchimento, empresaPadrao, padroes, padraoDoCampo, armazemPadrao]);
+
+  /** As colunas dos itens: as do layout (com a regra: armazém exigido, lote/validade de produto com controle) ou as de hoje. */
+  const colunasForcadas = [
+    ...(regras?.exigeArmazem ? ["armazem_id"] : []),
+    ...(ehCompra ? (["lote", "validade"] as const).filter((c) => itens.some((it) => lote.pede(it.product_id, c))) : [])
+  ];
+  const colunasDoLayout = layout ? colunasDoEditor(familia, layout.itens, { forcadas: colunasForcadas, obrigatoriasPelaRegra: new Set(regras?.exigeArmazem ? ["armazem_id"] : []) }) : undefined;
+  const fieldsDosItens: ColunaDoEditorDeItens[] = colunasDoLayout ? colunasDoLayout.map((c) => c.coluna) : ehCompra ? COLUNAS_DE_HOJE_DA_COMPRA : COLUNAS_DE_HOJE_DO_PEDIDO;
+
+  /**
+   * OBRIGATÓRIOS DO LAYOUT: a MESMA função do domínio que a API usa (`camposObrigatoriosFaltando`), sobre o documento
+   * que o servidor vai ver. Depois da primeira tentativa de salvar, os erros acompanham a digitação; os do servidor
+   * ficam até a próxima tentativa.
+   */
+  const [tentouSalvar, setTentouSalvar] = React.useState(false);
+  const faltando = () => (layout ? camposObrigatoriosFaltando(familia, layout, documentoConferido(), { classificacao: true, condicao: true }) : []);
+  const errosLocais: Record<string, string> = layout && tentouSalvar ? Object.fromEntries(faltando().map((f) => [f.caminho, mensagemCampoObrigatorio(f.rotulo)])) : {};
+  const errosDaTela: Record<string, string> = { ...erros, ...errosLocais };
+  const erro = (c: string) => errosDaTela[c];
+  const errosDeItens = Object.entries(errosDaTela).filter(([c]) => c.startsWith("itens"));
+
+  const pronto = modoReceber ? Boolean(recebendo) && !!top : escritaTopConfirmada;
+  const salvarBloqueado = !pronto || !itens.length || salvar.isPending || layoutPendente || capacidadePendente;
+  const submit = () => {
+    // A defesa no handler, e não só no `disabled` do botão: `disabled` é apresentação.
+    if (salvarBloqueado) return;
+    setErros({});
+    if (layout) {
+      setTentouSalvar(true);
+      if (faltando().length) return;
+    }
+    salvar.mutate();
+  };
+
+  /* "Tem coisa digitada?" — contra o estado inicial, sem a empresa (preenchida por efeito, não por digitação). */
+  const semEmpresa = ({ empresa_id: _empresa, ...resto }: Cabecalho) => resto;
+  const sujo = itens.length > 0 || ajustarParcelas || JSON.stringify(semEmpresa(h)) !== JSON.stringify(semEmpresa(inicial.current));
+  const voltarAoLancador = () => router.replace(`/compras/${variante.segmento}/new`);
+  const alterarOperacao = () => { if (sujo) setConfirmarTroca(true); else voltarAoLancador(); };
+
   const rotuloDoPedido = enumLabel("especie_documento_compra", "pedido");
   const codigoDoPedido = recebendo ? String(recebendo.pedido["codigo"] ?? "") : "";
   const titulo = modoReceber ? `Receber ${rotuloDoPedido.toLowerCase()} ${codigoDoPedido}`.trim() : `Novo documento · ${tr(variante.chaveI18n)}`;
@@ -249,79 +485,147 @@ export function CentralDeCompras({ variante }: { variante: VarianteDeCompra }) {
   const mostrarFormulario = !modoReceber || Boolean(recebendo);
   const emPartes = recebendo?.passo.emPartes === true;
 
-  return <Card data-testid="compras-central" data-especie={variante.variante} data-modo={modoReceber ? "receber" : "lancar"}>
-    <CardHeader title={titulo} actions={<>
-      {/* No recebimento, voltar é voltar ao PEDIDO: foi de lá que a pessoa veio, pelos Próximos passos. */}
-      <Button variant="outline" size="sm" onClick={() => router.push(modoReceber ? rotaDoDocumento({ id: pedidoId, especie: "pedido" }) : "/compras?tab=documentos")}>Voltar</Button>
-      <Button size="sm" data-testid="compras-salvar" loading={salvar.isPending} disabled={!pronto || !itens.length || salvar.isPending} onClick={() => { setErros({}); salvar.mutate(); }}>Salvar</Button>
-    </>} />
-    <CardBody className="space-y-4">
-      {topRecusada && <p data-testid="compras-top-recusada" className="text-sm text-amber-700">O Tipo de Operação pedido não está disponível para {tr(variante.chaveI18n)}. Escolha outro.</p>}
-      {modoReceber && <div data-testid="compras-central-receber" data-pedido-id={pedidoId} data-situacao={recebimento.situacao} data-em-partes={recebendo ? String(emPartes) : undefined} className="space-y-1 text-[12.5px] text-slate-700">
-        {recebimento.situacao === "carregando" && <LoadingState variant="compact" label="Carregando o pedido de compra…" />}
-        {recebimento.situacao === "recusado" && <p data-testid="compras-receber-recusado" className="text-sm text-amber-700">{recebimento.mensagem}</p>}
-        {recebendo && <>
-          <p>
-            Recebendo o <Link className="text-brand-700 underline" data-testid="compras-receber-pedido" href={rotaDoDocumento({ id: pedidoId, especie: "pedido" })}>{rotuloDoPedido.toLowerCase()} {codigoDoPedido}</Link>
-            {" "}pela operação <span className="font-mono font-semibold">{recebendo.passo.codigo}</span> — {recebendo.passo.nome}.
-          </p>
-          <p className="text-slate-500" data-testid="compras-receber-regra">
-            {emPartes
-              ? "Em partes: escolha os itens e as quantidades desta compra, cada uma até o saldo do item."
-              : "Esta operação recebe o pedido inteiro: cada item com o saldo, sem mudar a quantidade."}
-            {" "}Fornecedor, empresa e produto vêm do pedido. Valor unitário e descontos também, e podem mudar: valem os da nota.
-          </p>
-        </>}
-      </div>}
-      {mostrarFormulario && <>
-      <div className="grid grid-cols-12 gap-3">
-        {recebendo
-          ? <Field label="Tipo de Operação" required span={4}>
-            <Input data-testid="compras-receber-top" readOnly disabled value={`${recebendo.passo.codigo} — ${recebendo.passo.nome}`} />
-            <span className="mt-1 block text-xs text-slate-500">Movimento: {recebendo.passo.familiaRotulo}</span>
-          </Field>
-          : <CampoTipoOperacao estado={estado} valor={top} onChange={setTop} span={4} />}
-        <Field label="Empresa" required span={4} error={erro("empresa_id")}><RefSelect resource="empresas" value={h.empresa_id} disabled={modoReceber || undefined} allowEmpty={!modoReceber}
-          labelHint={recebendo ? String(recebendo.pedido["empresa_nome"] ?? "") || null : undefined} onChange={(v) => mudar({ empresa_id: v ?? "" })} /></Field>
-        <Field label="Fornecedor" required span={4} error={erro("fornecedor_id")}><RefSelect resource="people" value={h.fornecedor_id} disabled={modoReceber || undefined} allowEmpty={!modoReceber}
-          labelHint={recebendo ? String(recebendo.pedido["fornecedor_nome"] ?? "") || null : undefined} onChange={(v) => mudar({ fornecedor_id: v ?? "" })} filter={{ is_provider: "true" }} /></Field>
-        <Field label="Data do documento" required span={2} error={erro("data_documento")}><Input data-testid="compras-data-documento" type="date" value={h.data_documento} onChange={(e) => mudar({ data_documento: e.target.value })} /></Field>
-        {ehCompra && <Field label="Data de entrada" span={2} error={erro("data_entrada")}><Input data-testid="compras-data-entrada" type="date" value={h.data_entrada} onChange={(e) => mudar({ data_entrada: e.target.value })} /></Field>}
-        <Field label="Vencimento" span={2} error={erro("data_vencimento")}><Input data-testid="compras-data-vencimento" type="date" value={h.data_vencimento} onChange={(e) => mudar({ data_vencimento: e.target.value })} /></Field>
-        {ehCompra && <Field label="Número da nota" span={2} error={erro("numero_nota")}><Input data-testid="compras-numero-nota" value={h.numero_nota} onChange={(e) => mudar({ numero_nota: e.target.value })} /></Field>}
-        {ehCompra && <Field label="Série" span={1} error={erro("serie_nota")}><Input data-testid="compras-serie-nota" value={h.serie_nota} onChange={(e) => mudar({ serie_nota: e.target.value })} /></Field>}
-        <Field label="Transportadora" required={obrig("transportadora_id")} span={3} error={erro("transportadora_id")}><RefSelect resource="people" value={h.transportadora_id} onChange={(v) => mudar({ transportadora_id: v ?? "" })} filter={{ is_transporter: "true" }} /></Field>
-        <Field label="Natureza de despesa" required={obrig("categoria_financeira_id")} span={3} error={erro("categoria_financeira_id")}><RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={(v) => mudar({ categoria_financeira_id: v ?? "" })} buscarOpcoes={opcoesDeNaturezaDeDespesa} /></Field>
-        <Field label="Centro de resultado" required={obrig("centro_custo_id")} span={3} error={erro("centro_custo_id")}><RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => mudar({ centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>
-        <Field label="Condição de pagamento" span={3} error={erro("condicao_pagamento_id")}><RefSelect resource="condicoes_pagamento" somenteIds={regras?.condicoesPermitidas ?? null} value={h.condicao_pagamento_id} onChange={(v) => mudar({ condicao_pagamento_id: v ?? "" })} /></Field>
-        <Field label="Forma de pagamento" span={3} error={erro("forma_pagamento_id")}><RefSelect resource="payment_methods" value={h.forma_pagamento_id} onChange={(v) => mudar({ forma_pagamento_id: v ?? "" })} /></Field>
-        <Field label="Frete" span={2} error={erro("frete")}><Input data-testid="compras-frete" type="number" step="0.01" min="0" value={h.frete} onChange={(e) => mudar({ frete: e.target.value })} /></Field>
-        <Field label="Outras despesas" span={2} error={erro("outras_despesas")}><Input data-testid="compras-outras-despesas" type="number" step="0.01" min="0" value={h.outras_despesas} onChange={(e) => mudar({ outras_despesas: e.target.value })} /></Field>
-        <Field label="Desconto" span={2} error={erro("desconto")}><Input data-testid="compras-desconto" type="number" step="0.01" min="0" value={h.desconto} onChange={(e) => mudar({ desconto: e.target.value })} /></Field>
-        <Field label="Parcelas" span={3} error={erro("plano_parcelas")}>
-          <NativeSelect data-testid="compras-parcelas" value={ajustarParcelas ? "ajustar" : "padrao"} onChange={(e) => setAjustarParcelas(e.target.value === "ajustar")}>
-            <option value="padrao">Pela condição (ou à vista)</option>
-            <option value="ajustar">Ajustar parcelas</option>
-          </NativeSelect>
-        </Field>
-        <Field label="Observação" required={obrig("observacao")} span={12} error={erro("observacao")}><Textarea data-testid="compras-observacao" value={h.observacao} onChange={(e) => mudar({ observacao: e.target.value })} /></Field>
-      </div>
-      {ajustarParcelas && <div data-testid="compras-plano"><PlanEditor plan={plano} onChange={setPlano} /></div>}
-      <div data-testid="compras-itens">
-        <ItemsEditor items={itens} onChange={setItens} loteDaLinha={ehCompra ? (it) => loteDoProduto(it.product_id) : undefined}
-          daOrigem={modoReceber ? { saldo: (it) => String(it["saldo"] ?? "0"), quantidadeTravada: !emPartes, testIdDaLinha: (it) => `compras-receber-item-${String(it["item_origem_id"] ?? "")}` } : undefined}
-          fields={ehCompra ? ["warehouse", "product", "quantity", "unit_value", "discount", "discount_percent", "lot", "expiration"] : ["warehouse", "product", "quantity", "unit_value", "discount", "discount_percent"]} />
-        {errosDeItens.length > 0 && <ul data-testid="compras-erros-itens" className="mt-2 space-y-0.5 text-[12px] text-red-700">
-          {errosDeItens.map(([c, m]) => <li key={c}>{descreverCaminhoDeItem(c)}: {m}</li>)}
-        </ul>}
-      </div>
-      <div className="text-right text-sm font-semibold" data-testid="compras-total">Total do documento: {brl(totalExibido)}</div>
-      </>}
-    </CardBody>
-  </Card>;
-}
+  /* ── CADA CAMPO ────────────────────────────────────────────────────────────────────────────────────────────────
+   * Sem layout (sem a capacidade) nada muda no DOM: o campo é o de hoje, sem invólucro. Com layout: rótulo e "*" do
+   * layout (somados à exigência da regra), `data-campo`/`data-obrigatorio` num invólucro que não ocupa lugar no grid
+   * (`display: contents` — as larguras são as de hoje), erro no próprio campo, e o não editável travado mostrando o
+   * valor. Campo forçado pela regra: rótulo de hoje, sem padrão, sem trava. */
+  const rot = (c: string, hoje: string) => cfg.get(c)?.rotulo || hoje;
+  const req = (c: string) => (layout ? Boolean(cfg.get(c)?.obrigatorio) : doSistema.has(c)) || exigidosPelaRegra.has(c);
+  /** O rótulo do padrão de cadastro vai ao RefSelect enquanto o valor for o do padrão (sem consulta). */
+  const dica = (c: keyof Cabecalho) => { const p = padraoDoCampo(c); return p && h[c] === p.id ? p.rotulo : undefined; };
+  /** O aviso do padrão morto, dentro do campo (depois do controle). Sem padrão inválido, o controle sozinho — o de hoje. */
+  const comAviso = (c: string, controle: React.ReactElement): React.ReactNode => (padraoInvalido(c)
+    ? [<React.Fragment key="controle">{controle}</React.Fragment>, <p key="aviso" data-testid="padrao-invalido-aviso" className="mt-0.5 text-[11px] text-amber-700">{AVISO_PADRAO_INVALIDO_CENTRAL}</p>]
+    : controle);
+  const desenhar = (c: string): React.ReactNode => {
+    switch (c) {
+      case "empresa_id": return <Field label={rot(c, "Empresa")} required={req(c)} span={4} error={erro(c)}><RefSelect resource="empresas" value={h.empresa_id} disabled={modoReceber || undefined} allowEmpty={!modoReceber}
+        labelHint={recebendo ? String(recebendo.pedido["empresa_nome"] ?? "") || null : undefined} onChange={(v) => mudar({ empresa_id: v ?? "" })} /></Field>;
+      case "fornecedor_id": return <Field label={rot(c, "Fornecedor")} required={req(c)} span={4} error={erro(c)}>{comAviso(c, <RefSelect resource="people" value={h.fornecedor_id} disabled={modoReceber || undefined} allowEmpty={!modoReceber}
+        labelHint={recebendo ? String(recebendo.pedido["fornecedor_nome"] ?? "") || null : dica("fornecedor_id")} onChange={(v) => mudar({ fornecedor_id: v ?? "" })} filter={{ is_provider: "true" }} />)}</Field>;
+      case "data_documento": return <Field label={rot(c, "Data do documento")} required={req(c)} span={2} error={erro(c)}><Input data-testid="compras-data-documento" type="date" value={h.data_documento} onChange={(e) => mudar({ data_documento: e.target.value })} /></Field>;
+      case "data_entrada": return <Field label={rot(c, "Data de entrada")} required={req(c)} span={2} error={erro(c)}><Input data-testid="compras-data-entrada" type="date" value={h.data_entrada} onChange={(e) => mudar({ data_entrada: e.target.value })} /></Field>;
+      case "data_vencimento": return <Field label={rot(c, "Vencimento")} required={req(c)} span={2} error={erro(c)}><Input data-testid="compras-data-vencimento" type="date" value={h.data_vencimento} onChange={(e) => mudar({ data_vencimento: e.target.value })} /></Field>;
+      case "numero_nota": return <Field label={rot(c, "Número da nota")} required={req(c)} span={2} error={erro(c)}><Input data-testid="compras-numero-nota" value={h.numero_nota} onChange={(e) => mudar({ numero_nota: e.target.value })} /></Field>;
+      case "serie_nota": return <Field label={rot(c, "Série")} required={req(c)} span={1} error={erro(c)}><Input data-testid="compras-serie-nota" value={h.serie_nota} onChange={(e) => mudar({ serie_nota: e.target.value })} /></Field>;
+      case "transportadora_id": return <Field label={rot(c, "Transportadora")} required={req(c)} span={3} error={erro(c)}>{comAviso(c, <RefSelect resource="people" value={h.transportadora_id} onChange={(v) => mudar({ transportadora_id: v ?? "" })} filter={{ is_transporter: "true" }} labelHint={dica("transportadora_id")} />)}</Field>;
+      case "categoria_financeira_id": return <Field label={rot(c, "Natureza de despesa")} required={req(c)} span={3} error={erro(c)}><RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={(v) => mudar({ categoria_financeira_id: v ?? "" })} buscarOpcoes={opcoesDeNaturezaDeDespesa} /></Field>;
+      case "centro_custo_id": return <Field label={rot(c, "Centro de resultado")} required={req(c)} span={3} error={erro(c)}>{comAviso(c, <RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => mudar({ centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} labelHint={dica("centro_custo_id")} />)}</Field>;
+      case "condicao_pagamento_id": return <Field label={rot(c, "Condição de pagamento")} required={req(c)} span={3} error={erro(c)}>{comAviso(c, <RefSelect resource="condicoes_pagamento" somenteIds={condicoesPermitidas} value={h.condicao_pagamento_id} onChange={(v) => mudar({ condicao_pagamento_id: v ?? "" })} labelHint={dica("condicao_pagamento_id")} />)}</Field>;
+      case "forma_pagamento_id": return <Field label={rot(c, "Forma de pagamento")} required={req(c)} span={3} error={erro(c)}>{comAviso(c, <RefSelect resource="payment_methods" value={h.forma_pagamento_id} onChange={(v) => mudar({ forma_pagamento_id: v ?? "" })} labelHint={dica("forma_pagamento_id")} />)}</Field>;
+      case "frete": return <Field label={rot(c, "Frete")} required={req(c)} span={2} error={erro(c)}><Input data-testid="compras-frete" type="number" step="0.01" min="0" value={h.frete} onChange={(e) => mudar({ frete: e.target.value })} /></Field>;
+      case "outras_despesas": return <Field label={rot(c, "Outras despesas")} required={req(c)} span={2} error={erro(c)}><Input data-testid="compras-outras-despesas" type="number" step="0.01" min="0" value={h.outras_despesas} onChange={(e) => mudar({ outras_despesas: e.target.value })} /></Field>;
+      case "desconto": return <Field label={rot(c, "Desconto")} required={req(c)} span={2} error={erro(c)}><Input data-testid="compras-desconto" type="number" step="0.01" min="0" value={h.desconto} onChange={(e) => mudar({ desconto: e.target.value })} /></Field>;
+      case "plano_parcelas": return <Field label={rot(c, "Parcelas")} required={req(c)} span={3} error={erro(c)}>
+        <NativeSelect data-testid="compras-parcelas" value={ajustarParcelas ? "ajustar" : "padrao"} onChange={(e) => setAjustarParcelas(e.target.value === "ajustar")}>
+          <option value="padrao">Pela condição (ou à vista)</option>
+          <option value="ajustar">Ajustar parcelas</option>
+        </NativeSelect>
+      </Field>;
+      case "observacao": return <Field label={rot(c, "Observação")} required={req(c)} span={12} error={erro(c)}><Textarea data-testid="compras-observacao" value={h.observacao} onChange={(e) => mudar({ observacao: e.target.value })} /></Field>;
+      default: return null;
+    }
+  };
+  /**
+   * Não editável do layout TRAVA — salvo com o padrão de cadastro morto (fica editável nesta abertura) e salvo quando a
+   * REGRA exige o campo e o layout não lhe dá valor padrão (travado e vazio, o documento nunca seria salvo).
+   */
+  const temPadrao = (c: string) => Boolean(cfg.get(c)?.valorPadrao) || Boolean(padraoDoCampo(c));
+  const render = (c: string) => {
+    const n = desenhar(c);
+    if (!layout) return <React.Fragment key={c}>{n}</React.Fragment>;
+    const travado = cfg.get(c)?.editavel === false && !padraoInvalido(c) && !(exigidosPelaRegra.has(c) && !temPadrao(c));
+    return <div key={c} style={{ display: "contents" }} data-campo={c} data-obrigatorio={String(req(c))} {...(desenho?.forcados.has(c) ? { "data-forcado": "true" } : {})}>
+      {travado ? <fieldset disabled data-editavel="false" style={{ display: "contents" }}>{n}</fieldset> : n}
+    </div>;
+  };
 
-function pronto0(estado: ReturnType<typeof useTopsDaEspecie>, top: string): boolean { return podeLancar(estado) && !!top; }
+  /* A TOP TRAVADA: contexto do lançamento, não campo. Trocar é "Alterar operação" (volta ao lançador); no recebimento, é
+     escolher outro passo no pedido (o Voltar leva a ele). */
+  const campoDaTop = (codigo: string, nome: string, movimentoDaTop: string) => <Field label="Tipo de Operação" required span={4}>
+    <Input data-testid="compras-top-travada" data-tipo-operacao-id={top} readOnly disabled value={`${codigo} — ${nome}`} />
+    {movimentoDaTop && <span className="mt-1 block text-xs text-slate-500">Movimento: {movimentoDaTop}</span>}
+  </Field>;
+
+  /* Só com a capacidade do layout E a resposta conferida — sem a capacidade, nada: a Central de hoje. `can` só decide
+     se o atalho "Configurar" aparece (apresentação); quem nega o configurador é a rota. */
+  const linhaDoLayout = layoutVale && <div className="flex flex-wrap items-baseline gap-x-2">
+    <p data-testid="compras-layout-efetivo" data-origem={layoutVale.origem} data-layout-id={layoutVale.id ?? ""} className="text-[11.5px] text-slate-500">{textoDoLayoutQueVale(layoutVale)}</p>
+    {can("tipos_operacao.edit") && <Link data-testid="compras-layout-configurar" href={hrefDoConfigurador(layoutVale)} className="text-[11.5px] font-medium text-emerald-700 hover:underline">Configurar</Link>}
+  </div>;
+
+  return <>
+    <Card data-testid="compras-central" data-especie={variante.variante} data-modo={modoReceber ? "receber" : "lancar"}>
+      <CardHeader title={titulo} actions={<>
+        {/* No recebimento, voltar é voltar ao PEDIDO: foi de lá que a pessoa veio, pelos Próximos passos. */}
+        <Button variant="outline" size="sm" onClick={() => router.push(modoReceber ? rotaDoDocumento({ id: pedidoId, especie: "pedido" }) : "/compras?tab=documentos")}>Voltar</Button>
+        {!modoReceber && <Button variant="outline" size="sm" data-testid="compras-alterar-operacao" onClick={alterarOperacao}>Alterar operação</Button>}
+        <Button size="sm" data-testid="compras-salvar" loading={salvar.isPending} disabled={salvarBloqueado} onClick={submit}>Salvar</Button>
+      </>} />
+      <CardBody className="space-y-4">
+        {/* A lista de AGORA não confirma mais a TOP desta sessão: o formulário continua, a escrita não. */}
+        {!modoReceber && !escritaTopConfirmada && <div className="space-y-1 rounded-md bg-amber-50 p-3">
+          <MensagemTop estado={estado} />
+          {estado.situacao === "pronto" && <p data-testid="top-indisponivel" className="text-sm text-amber-800">O Tipo de Operação selecionado não está disponível para este lançamento.</p>}
+          <p className="text-xs text-amber-700">O que já foi preenchido continua aqui. Use “Alterar operação” para escolher outra.</p>
+        </div>}
+        {layoutPendente && (layoutQ.isError || (layoutQ.isSuccess && !layout)) && <div className="rounded-md bg-amber-50 p-3">
+          <p data-testid="compras-layout-nao-carregado" className="text-sm text-amber-700">Não foi possível carregar o layout deste Tipo de Operação. O lançamento está bloqueado até ele ser carregado.</p>
+        </div>}
+        {modoReceber && <div data-testid="compras-central-receber" data-pedido-id={pedidoId} data-situacao={recebimento.situacao} data-em-partes={recebendo ? String(emPartes) : undefined} className="space-y-1 text-[12.5px] text-slate-700">
+          {recebimento.situacao === "carregando" && <LoadingState variant="compact" label="Carregando o pedido de compra…" />}
+          {recebimento.situacao === "recusado" && <p data-testid="compras-receber-recusado" className="text-sm text-amber-700">{recebimento.mensagem}</p>}
+          {recebendo && <>
+            <p>
+              Recebendo o <Link className="text-brand-700 underline" data-testid="compras-receber-pedido" href={rotaDoDocumento({ id: pedidoId, especie: "pedido" })}>{rotuloDoPedido.toLowerCase()} {codigoDoPedido}</Link>
+              {" "}pela operação <span className="font-mono font-semibold">{recebendo.passo.codigo}</span> — {recebendo.passo.nome}.
+            </p>
+            <p className="text-slate-500" data-testid="compras-receber-regra">
+              {emPartes
+                ? "Em partes: escolha os itens e as quantidades desta compra, cada uma até o saldo do item."
+                : "Esta operação recebe o pedido inteiro: cada item com o saldo, sem mudar a quantidade."}
+              {" "}Fornecedor, empresa e produto vêm do pedido. Valor unitário e descontos também, e podem mudar: valem os da nota.
+            </p>
+          </>}
+        </div>}
+        {mostrarFormulario && <>
+        {linhaDoLayout}
+        <div className="grid grid-cols-12 gap-3">
+          {recebendo
+            ? campoDaTop(recebendo.passo.codigo, recebendo.passo.nome, recebendo.passo.familiaRotulo)
+            : topDoLancamento && campoDaTop(topDoLancamento.code, topDoLancamento.name, movimento)}
+          {zonas.principais.map(render)}
+        </div>
+        {/* As zonas do layout, EM SEQUÊNCIA e com o grid de hoje (sem recolher, sem abas de verdade: isso é da faixa F2). */}
+        {zonas.adicionais.length > 0 && <div data-testid="compras-zona-adicionais" className="space-y-2">
+          <p className="text-[11px] font-semibold uppercase text-slate-500">Dados adicionais</p>
+          <div className="grid grid-cols-12 gap-3">{zonas.adicionais.map(render)}</div>
+        </div>}
+        {zonas.abas.map((a) => <div key={a.indice} data-testid={`compras-zona-aba-${a.indice}`} className="space-y-2">
+          <p className="text-[11px] font-semibold uppercase text-slate-500">{a.aba}</p>
+          <div className="grid grid-cols-12 gap-3">{a.campos.map(render)}</div>
+        </div>)}
+        {ajustarParcelas && <div data-testid="compras-plano"><PlanEditor plan={plano} onChange={setPlano} /></div>}
+        <div data-testid="compras-itens">
+          <ItemsEditor items={itens} onChange={setItens} loteDaLinha={ehCompra ? (it) => lote.daLinha(it.product_id) : undefined}
+            daOrigem={modoReceber ? { saldo: (it) => String(it["saldo"] ?? "0"), quantidadeTravada: !emPartes, testIdDaLinha: (it) => `compras-receber-item-${String(it["item_origem_id"] ?? "")}` } : undefined}
+            fields={fieldsDosItens} colunasDoLayout={colunasDoLayout} defaults={armazemPadrao && !modoReceber ? { warehouse_id: armazemPadrao } : undefined} />
+          {errosDeItens.length > 0 && <ul data-testid="compras-erros-itens" className="mt-2 space-y-0.5 text-[12px] text-red-700">
+            {errosDeItens.map(([c, m]) => <li key={c}>{descreverCaminhoDeItem(c)}: {m}</li>)}
+          </ul>}
+        </div>
+        <div className="text-right text-sm font-semibold" data-testid="compras-total">Total do documento: {brl(totalExibido)}</div>
+        </>}
+      </CardBody>
+    </Card>
+
+    {/* Trocar a operação descarta o que foi digitado — então pergunta antes, em vez de descobrir depois. */}
+    <Confirm open={confirmarTroca} onOpenChange={setConfirmarTroca} title="Alterar o Tipo de Operação?"
+      text="Os dados já preenchidos neste lançamento serão descartados." danger
+      onConfirm={() => { setConfirmarTroca(false); voltarAoLancador(); }} />
+  </>;
+}
 
 const ROTULO_DO_CAMPO_DO_ITEM: Record<string, string> = {
   produto_id: "produto", item_origem_id: "item do pedido", armazem_id: "armazém", quantidade: "quantidade", valor_unitario: "valor unitário",
