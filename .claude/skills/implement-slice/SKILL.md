@@ -16,6 +16,13 @@ Ordem fixa. Pular etapa aqui é como o trabalho vira retrabalho de revisão.
   **verifique-a de fato** — estado no GitHub e presença do merge em `origin/main`.
   Precondição não atendida: pare e diga que está bloqueada. Não implemente "adiantado".
 - Branch `claude/<fatia>` criada do `origin/main` atual.
+- A faixa vem do prompt; prompt sem faixa: pare e pergunte. Número de migration, trava ou
+  decisão: só o reservado no prompt; sem reserva e a fatia precisa de número: pare e pergunte.
+- **MAPA DE COLISÃO** (PRE-PR-02, `.claude/rules/workflow.md`) antes de criar a PR e antes
+  de CADA relatório, o inicial e os de correção: liste as PRs abertas e, para cada uma,
+  `gh pr diff <n> --name-only` (ou `pull_request_read` com `get_files`); compare arquivo,
+  número, banco e contrato com os da fatia. Com colisão: **não abra a PR** — pare e diga
+  com qual PR e em quê.
 
 ## 2. Ler o contrato antes de escrever
 
@@ -55,5 +62,8 @@ Arquivo fora de escopo? Comentário obsoleto? Teste que passa vazio? Corrija ant
 
 - Commit com mensagem que explica o PORQUÊ.
 - `git push -u origin <branch>`.
-- PR **DRAFT**. Corpo: problema, decisão, provas (tabela), fora de escopo.
+- PR **DRAFT**, título aberto pela faixa (`[F1]`, `[F2]`, `[F3]`). Corpo: problema,
+  decisão, provas (tabela), fora de escopo e o mapa de colisão (tabela PR · faixa ·
+  arquivos em comum · números · banco · contrato · ordem de merge). Se houver ordem:
+  "Merge depois de #N" e o motivo.
 - **Não mesclar. Não marcar ready.** Relatório final em um único bloco `text`.

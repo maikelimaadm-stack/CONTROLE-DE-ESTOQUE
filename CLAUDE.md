@@ -10,23 +10,29 @@ a rule não a recopia — ela aprofunda.
 
 ## Fluxo
 
-- Uma fatia ativa por faixa. Branch `claude/<fatia>`, criada de `origin/main` atual.
-- **PRE-PR-01 — uma PR aberta por faixa, no máximo 3 no repositório, e a lei vence o pedido.**
-  Faixas (a faixa vem do PROMPT da fatia; a sessão nunca a escolhe — prompt sem faixa: pare e pergunte):
-  **F1 Regra e banco** (domínio, API, banco, regra; a ÚNICA faixa que cria migration e decisão
-  numerada, na ordem do roteiro) · **F2 Tela** (só `apps/web` e documentação; sem migration, rota
-  nova, regra, API ou domínio) · **F3 Desempenho e operação** (desempenho, importação,
-  infraestrutura, observabilidade; sem regra nova; migration e decisão só com número reservado no
-  prompt). As duas fórmulas valem juntas:
-  `PRs abertas na faixa > 0 ⇒ PR nova nessa faixa = PROIBIDA` e
-  `PRs abertas no repositório ≥ 3 ⇒ PR nova = PROIBIDA`.
-  O título da PR abre com a faixa (`[F1] …`, `[F2] …`, `[F3] …`); PR aberta sem faixa no título
-  ocupa as três faixas. Corrigir é atualizar **a mesma branch e a mesma PR**.
+- Uma fatia = uma branch = uma PR. Branch `claude/<fatia>`, criada de `origin/main` atual; a PR
+  nasce e permanece DRAFT. Corrigir é atualizar **a mesma branch e a mesma PR**.
+- **PRE-PR-02 — várias PRs abertas, inclusive na mesma faixa, desde que nenhuma colida com outra.**
+  A fórmula: `colisão com PR aberta ⇒ PR nova = PROIBIDA`. Não há teto por faixa nem no repositório.
+  Faixas (a faixa vem do PROMPT da fatia; a sessão nunca a escolhe — prompt sem faixa: pare e
+  pergunte): **F1 Regra e banco** (domínio, API, banco, regra) · **F2 Tela** (só `apps/web` e
+  documentação; sem migration, rota nova, regra, API ou domínio) · **F3 Desempenho e operação**
+  (desempenho, importação, infraestrutura, observabilidade; sem regra nova). O título da PR abre
+  com a faixa (`[F1] …`, `[F2] …`, `[F3] …`).
+- Colisão, contra CADA PR aberta: arquivo em comum; número em comum (migration, trava ou decisão —
+  em qualquer faixa, só vale o número reservado no prompt; sem reserva e a fatia precisa de
+  número: pare e pergunte); banco em comum (a mesma tabela, coluna, função, gatilho, restrição,
+  política ou permissão, mesmo em arquivos diferentes); contrato em comum (rota, corpo, resposta,
+  configuração da TOP, layout ou permissão). PR aberta sem faixa no título colide com todas.
+  Ordem não é colisão, mas se declara no corpo da PR: "Merge depois de #N" e o motivo.
+- O MAPA DE COLISÃO, uma linha por PR aberta, vai no corpo da PR e no relatório: antes de abrir a
+  PR e antes de cada relatório. Sem mapa, sem PR.
 - Você não desobstrui o caminho: fechar, mesclar, marcar *ready*, criar branch concorrente ou
-  abrir PR "temporária" para liberar uma faixa é a mesma proibição por outra porta.
-- Se um pedido mandar abrir PR numa faixa ocupada, ou com 3 abertas, **PRE-PR-01 vence o pedido**:
-  diga qual PR ocupa e entregue nela. Fechar ou mesclar é decisão do Maike, nunca sua.
-  Fronteira, merge de outra faixa e a checagem estão em `.claude/rules/workflow.md`.
+  abrir PR "temporária" para livrar o caminho é a mesma proibição por outra porta.
+- Se um pedido mandar abrir PR que colide com uma aberta, **PRE-PR-02 vence o pedido**: diga com
+  qual PR e em quê, e pare. Fechar ou mesclar é decisão do Maike, nunca sua.
+  Colisão por tipo, exceções, MAPA DE COLISÃO, merge em fila e a checagem estão em
+  `.claude/rules/workflow.md`.
 - **Você nunca faz merge.** Nunca marca PR como *ready*. O merge é manual, do Maike,
   depois de revisão e CI verde. Isso vale mesmo com tudo verde e a fatia perfeita.
 - Sem commit direto em `main`, sem force push, sem reescrita de histórico.
