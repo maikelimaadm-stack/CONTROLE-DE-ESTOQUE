@@ -16,8 +16,8 @@ import { layoutEfetivo, respostaDoLayoutEfetivo } from "../lib/layout-documento.
 import { resolverTopParaLancamento, validarClassificacaoDoDocumento, recusaDeCampoDaClassificacao, validarCondicaoDoDocumento, condicaoGravada, type TopDoLancamento, type ClassificacaoFinanceira, type RegraDaClassificacao, type CondicaoDoDocumento } from "../lib/documento-comercial.js";
 // TOP-CONFIG-05 (decisão 263): regras da operação no lançamento, na conversão (TOP DESTINO), `/regras-da-operacao`,
 // `/situacao-cliente` e a capacidade nova.
-import { CAPACIDADE_REGRAS_DA_OPERACAO, camposExigidosTop, type RegrasDaOperacaoResposta } from "@agro/domain";
-import { regrasDaVersaoTop, regrasDaTopAtual, cobrarRegrasDaOperacao } from "./vendas-regras-operacao.js";
+import { CAPACIDADE_REGRAS_DA_OPERACAO } from "@agro/domain";
+import { regrasDaVersaoTop, regrasDaTopAtual, cobrarRegrasDaOperacao, respostaDasRegrasDaOperacao, type RegrasDaOperacaoDaVenda } from "./vendas-regras-operacao.js";
 import { registrarSituacaoCliente } from "./vendas-atraso-cliente.js";
 import { registrarEdicaoDeVenda } from "./vendas-edicao.js";
 // TOP-CONFIG-06 (decisão 265): faturar em partes — as contas no domínio, as leituras em `vendas-faturar-em-partes`.
@@ -958,7 +958,7 @@ export default async function salesRoutes(app: FastifyInstance) {
      * inativa, excluída, id malformado e parâmetro AUSENTE caem na MESMA 404. Sem TOP não há regra a perguntar.
      * Só o formato 3 executa restrições; formato 1/2 responde o NEUTRO (nada exigido, toda condição, não valida).
      */
-    app.get(`${base}/regras-da-operacao`, async (req) => runService(app, req, `${perm}.create`, async (ctx): Promise<RegrasDaOperacaoResposta & { reservaEstoque: boolean }> => {
+    app.get(`${base}/regras-da-operacao`, async (req) => runService(app, req, `${perm}.create`, async (ctx): Promise<RegrasDaOperacaoDaVenda> => {
       const familia = familiaDaVariante(kind);
       const q = (req.query ?? {}) as Record<string, unknown>;
       const bruto = q["tipo_operacao_id"];
@@ -972,15 +972,8 @@ export default async function salesRoutes(app: FastifyInstance) {
           where t.id=$1 and t.organization_id=$2 and t.codigo_base=$3 and t.ativo and t.excluido_em is null`, [bruto, ctx.orgId, familia]);
       if (!v.rows[0]) throw notFound("Tipo de operação");
       const reservaEstoque = kind === "order" && v.rows[0].reserva_estoque === true;
-      const { formato, regras } = await regrasDaTopAtual(ctx, bruto);
-      if (!regras) return { formato, exigencias: [], condicoesPermitidas: null, clienteEmAtraso: { politica: "nao_valida", toleranciaDias: 0 }, reservaEstoque };
-      return {
-        formato,
-        exigencias: camposExigidosTop(regras.config),
-        condicoesPermitidas: regras.condicoesPermitidas,
-        clienteEmAtraso: { politica: regras.config.financeiro.clienteEmAtraso, toleranciaDias: regras.config.financeiro.toleranciaAtrasoDias },
-        reservaEstoque,
-      };
+      // EDITAR-01: a MONTAGEM é a mesma do `GET <base>/:id/edicao` (lá, pela versão CONGELADA do documento) — um dono só.
+      return respostaDasRegrasDaOperacao(await regrasDaTopAtual(ctx, bruto), reservaEstoque);
     }));
     /**
      * LAYOUT EFETIVO da TOP escolhida (VENDAS-A3-1) — mesma permissão e porta de `operation-types`. TOP que a
