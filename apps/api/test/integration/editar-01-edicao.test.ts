@@ -122,6 +122,12 @@ const acao = async (url: string, payload: Record<string, unknown> = {}) => {
   expect(r.statusCode, `${url}: ${r.body}`).toBeLessThan(300);
   return j(r);
 };
+/** O layout que a Central lê no lançamento (`/layout-efetivo`), com o administrador (que tem `.create`). */
+async function layoutEfetivo(kind: Variante, topId: string | null): Promise<unknown> {
+  const r = await h.app.inject({ method: "GET", url: `/api/sales/${ROTA[kind]}/layout-efetivo${topId ? `?tipo_operacao_id=${topId}` : ""}`, headers: h.headers() });
+  expect(r.statusCode, r.body).toBe(200);
+  return j(r);
+}
 /** A PATCH com a versão ATUAL: a recusa dela tem de ser a mesma que o `/edicao` anunciou. */
 const patchAtual = async (kind: Variante, id: string, payload: Record<string, unknown>) =>
   h.app.inject({ method: "PATCH", url: `/api/sales/${ROTA[kind]}/${id}`, headers: h.headers(), payload: { version: (await ler(kind, id)).version, ...payload } });
@@ -142,7 +148,9 @@ describe("ED-9 — podeEditar e motivo", () => {
       const g = await ler(kind, id);
       expect(e, kind).toMatchObject({ podeEditar: true, motivo: null, limites: SEM_LIMITES, version: g.version });
       expect(e.regras, kind).toEqual({ ...REGRAS_NEUTRAS, reservaEstoque: false });
-      for (const campo of ["condicoesPermitidas", "layout", "situacaoCliente"]) expect(e, `${kind}: ${campo}`).toHaveProperty(campo);
+      expect([e.condicoesPermitidas, e.situacaoCliente], kind).toEqual([null, { politica: "nao_valida" }]);
+      // O layout é o MESMO contrato de /layout-efetivo, pela TOP do documento.
+      expect(e.layout, kind).toEqual(await layoutEfetivo(kind, tops[kind]));
       const p = await patchAtual(kind, id, { note: "o /edicao disse que pode" });
       expect(p.statusCode, `${kind}: ${p.body}`).toBe(200);
       expect((await edicao(kind, id)).version, "a versão do /edicao acompanha").toBe(String(Number(g.version) + 1));
@@ -177,7 +185,10 @@ describe("ED-9 — podeEditar e motivo", () => {
       const id = await criar(kind, { tipo_operacao_id: undefined });
       expect((await admin.query<{ t: string | null }>("select tipo_operacao_id t from erp.sales_documents where id=$1", [id])).rows[0]!.t, "premissa: legado").toBeNull();
       const e = await edicao(kind, id);
-      expect(e, kind).toMatchObject({ podeEditar: false, motivo: MSG_SEM_TOP });
+      expect(e, kind).toMatchObject({ podeEditar: false, motivo: MSG_SEM_TOP, limites: SEM_LIMITES, version: (await ler(kind, id)).version });
+      expect(e.regras, kind).toEqual({ ...REGRAS_NEUTRAS, formato: 0, reservaEstoque: false });
+      expect([e.condicoesPermitidas, e.situacaoCliente], kind).toEqual([null, { politica: "nao_valida" }]);
+      expect(e.layout, `${kind}: o layout do sistema`).toEqual(await layoutEfetivo(kind, null));
       const p = await patchAtual(kind, id, { note: "x" });
       expect([p.statusCode, j(p).error?.message], `${kind}: ${p.body}`).toEqual([409, MSG_SEM_TOP]);
     }
@@ -243,6 +254,34 @@ describe("ED-9 — as regras da versão CONGELADA", () => {
   });
 });
 
+describe("ED-9 — o cliente gravado em atraso", () => {
+  it("ED-9 cliente DEVEDOR sob TOP que valida atraso → situacaoCliente.emAtraso true, pela política CONGELADA — também para quem só tem <perm>.edit (sem create)", async () => {
+    const devedor = (await admin.query<{ id: string }>(
+      "insert into erp.people(organization_id,code,document,person_type,name,legal_name,city_id,is_client) values ($1,'ED92','99272000000092','legal','[TEST] Devedor ED9','[TEST] Devedor ED9',5208707,true) returning id",
+      [h.demo.orgId])).rows[0]!.id;
+    const top = await criarTop("order", "ED9 atraso");
+    await novaVersao(top, cfg((c) => { c.financeiro.clienteEmAtraso = "bloqueia"; }));
+    // Nasce ANTES do título vencido; depois a TOP ganha versão nova que NÃO valida (a congelada continua bloqueando).
+    const id = await criar("order", { tipo_operacao_id: top, client_id: devedor });
+    await novaVersao(top, configuracaoNeutraTopV3());
+    const venc = new Date(Date.now() - 10 * 86_400_000).toISOString().slice(0, 10);
+    await admin.query(
+      "insert into erp.financial_titles(organization_id,empresa_id,code,direction,number,person_id,amount,emission_date,due_date) values ($1,$2,$3,'receivable',$4,$5,'1234.50',$6,$6)",
+      [h.demo.orgId, I.empresa2, `ED9-ATR-${Date.now()}`, "ED9-ATRASO", devedor, venc]);
+    const esperado = { politica: "bloqueia", emAtraso: true, titulos: 1, total: "1234.50", vencimentoMaisAntigo: venc };
+    const pelo = await edicao("order", id);
+    expect(pelo.situacaoCliente, "o dono").toEqual(esperado);
+    expect(pelo.regras.clienteEmAtraso).toEqual({ politica: "bloqueia", toleranciaDias: 0 });
+    // Quem só EDITA: a mesma resposta (a porta do atraso não pode exigir create de quem abre a edição).
+    const soEdit = await membro("ED9 só edit pedidos", ["orders.edit"]);
+    const s = await h.app.inject({ method: "GET", url: `/api/sales/orders/situacao-cliente?client_id=${devedor}&tipo_operacao_id=${top}`, headers: soEdit });
+    expect(s.statusCode, `premissa: sem create: ${s.body}`).toBe(403);
+    const e = await edicao("order", id, soEdit);
+    expect(e.situacaoCliente, "só com orders.edit").toEqual(esperado);
+    expect(e.podeEditar).toBe(true);
+  });
+});
+
 describe("ED-9 — a porta", () => {
   it("ED-9 só com <perm>.edit (sem create, sem view) → 200 nas três variantes; sem edit → 403", async () => {
     const docs: Record<Variante, string> = { budget: await criar("budget"), order: await criar("order"), sale: await criar("sale") };
@@ -265,7 +304,7 @@ describe("ED-9 — a porta", () => {
     }
   });
 
-  it("ED-9 a MESMA 404 do GET: inexistente, excluído, outra variante, empresa fora do escopo e outra organização", async () => {
+  it("ED-9 a MESMA 404 do GET: inexistente, id malformado, excluído, outra variante, empresa fora do escopo e outra organização", async () => {
     const pedido = await criar("order");
     const excluido = await criar("order");
     expect((await admin.query("update erp.sales_documents set deleted_at=now() where id=$1", [excluido])).rowCount).toBe(1);
@@ -279,6 +318,10 @@ describe("ED-9 — a porta", () => {
       ["outra organização", "order", pedido, outraOrg],
     ];
     const corpos = new Set<string>();
+    // Id MALFORMADO: a mesma 404 (o corpo do inexistente), nunca 500 nem 422.
+    const malformado = await edicaoResposta("order", "nao-e-um-uuid");
+    expect(malformado.statusCode, malformado.body).toBe(404);
+    corpos.add(malformado.body);
     for (const [nome, kind, id, headers] of casos) {
       const e = await edicaoResposta(kind, id, headers);
       const g = await getResposta(kind, id, headers);

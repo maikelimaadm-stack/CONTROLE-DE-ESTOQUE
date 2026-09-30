@@ -4,7 +4,7 @@ import {
   configuracaoNeutraTopV3, ERRO_EXIGENCIA_NAO_ATENDIDA, MENSAGEM_EXIGENCIA_NAO_ATENDIDA, ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA,
   MENSAGEM_CONDICAO_NAO_PERMITIDA, ERRO_CLIENTE_EM_ATRASO, type ConfiguracaoTipoOperacaoV3,
 } from "@agro/domain";
-import { harness, ids, TEST_URL, type Harness } from "./setup.js";
+import { escoposDeTodosOsModulos, harness, ids, TEST_URL, type Harness } from "./setup.js";
 
 /**
  * EDITAR-01 (decisão 272) — A PATCH SOB AS REGRAS DE HOJE: ED-3, ED-4, ED-5.
@@ -103,8 +103,21 @@ async function criar(kind: Variante, extra: Record<string, unknown> = {}): Promi
   expect(r.statusCode, r.body).toBe(201);
   return j(r).id as string;
 }
-const patch = (kind: Variante, id: string, payload: Record<string, unknown>) =>
-  h.app.inject({ method: "PATCH", url: `/api/sales/${ROTA[kind]}/${id}`, headers: h.headers(), payload });
+type Hdr = Record<string, string>;
+const patch = (kind: Variante, id: string, payload: Record<string, unknown>, headers: Hdr = h.headers()) =>
+  h.app.inject({ method: "PATCH", url: `/api/sales/${ROTA[kind]}/${id}`, headers, payload });
+async function membro(rotulo: string, permissoes: string[]): Promise<Hdr> {
+  const sufixo = `${++seq}-${Math.random().toString(36).slice(2, 7)}`;
+  const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `${rotulo} ${sufixo}`, permissions: permissoes } });
+  expect(papel.statusCode, papel.body).toBe(201);
+  const email = `ed3-${sufixo}@teste.local`;
+  const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(),
+    payload: { name: rotulo, email, password: "Editar@12345", role_id: j(papel).id, escopos_empresas: escoposDeTodosOsModulos([]) } });
+  expect(vinculo.statusCode, vinculo.body).toBe(201);
+  const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Editar@12345" } });
+  expect(login.statusCode, login.body).toBe(200);
+  return { authorization: `Bearer ${(login.json() as { token: string }).token}`, "x-org-id": h.demo.orgId };
+}
 async function ler(kind: Variante, id: string): Promise<Linha & { version: string; code: string; items: (Linha & { id: string })[] }> {
   const r = await h.app.inject({ method: "GET", url: `/api/sales/${ROTA[kind]}/${id}`, headers: h.headers() });
   expect(r.statusCode, r.body).toBe(200);
@@ -137,9 +150,9 @@ const MSG_PARTES_CANCELADAS = "Este documento já teve partes geradas; os itens 
 const MSG_PARTE_RESERVA_ARMAZEM = "O armazém deste item vem do pedido de origem, que reserva estoque no armazém de cada item: não pode ser trocado. Para mudar, cancele esta venda e gere de novo.";
 
 /** Recusa esperada: status e erro exatos, e a foto do banco intacta. */
-async function recusada(kind: Variante, id: string, payload: Record<string, unknown>, status: number, erro: Partial<Erro>, rotulo: string) {
+async function recusada(kind: Variante, id: string, payload: Record<string, unknown>, status: number, erro: Partial<Erro>, rotulo: string, headers: Hdr = h.headers()) {
   const antes = await foto(id);
-  const r = await patch(kind, id, payload);
+  const r = await patch(kind, id, payload, headers);
   expect(r.statusCode, `${rotulo}: ${r.body}`).toBe(status);
   expect(j(r).error, rotulo).toMatchObject(erro);
   expect(await foto(id), `${rotulo}: nada gravado`).toEqual(antes);
@@ -395,5 +408,27 @@ describe("ED-5 — condição de pagamento e cliente em atraso", () => {
     await recusada("order", docDoLimpo, { version: await versaoGravada(docDoLimpo), client_id: devedor }, 422,
       { code: ERRO_CLIENTE_EM_ATRASO, message: mensagem, details: { campo: "client_id", titulos: 1, total: "1234.50", vencimentoMaisAntigo: venc } }, "troca para o devedor");
     expect((await linha(docDoLimpo)).client_id).toBe(limpo);
+  });
+
+  it("ED-5 cliente em atraso com quem só tem orders.edit (sem create): outro campo passa; trocar PARA o devedor → a mesma recusa, sem gravar", async () => {
+    const limpo = await cliente(); const devedor = await cliente();
+    const top = await criarTop("order", "ED-5 atraso só edit");
+    await novaVersao(top, cfg((c) => { c.financeiro.clienteEmAtraso = "bloqueia"; }));
+    const doc = await criar("order", { tipo_operacao_id: top, client_id: limpo });
+    const venc = new Date(Date.now() - 12 * 86_400_000).toISOString().slice(0, 10);
+    await admin.query(
+      "insert into erp.financial_titles(organization_id,empresa_id,code,direction,number,person_id,amount,emission_date,due_date) values ($1,$2,$3,'receivable',$4,$5,'99.90',$6,$6)",
+      [h.demo.orgId, I.empresa, `ED5E-ATR-${Date.now()}`, "ED5E-ATRASO", devedor, venc]);
+    const [a, m, d] = venc.split("-");
+    const mensagem = `O cliente tem 1 título(s) vencido(s), total R$ 99,90, o mais antigo de ${d}/${m}/${a}. Esta operação não aceita cliente em atraso.`;
+    const soEdit = await membro("ED-5 só edita pedidos", ["orders.edit"]);
+    // PREMISSA: ele não tem create (a porta de lançamento o recusa).
+    const semCreate = await h.app.inject({ method: "GET", url: `/api/sales/orders/regras-da-operacao?tipo_operacao_id=${top}`, headers: soEdit });
+    expect(semCreate.statusCode, semCreate.body).toBe(403);
+    const obs = await patch("order", doc, { version: await versaoGravada(doc), note: "só edit" }, soEdit);
+    expect(obs.statusCode, obs.body).toBe(200);
+    await recusada("order", doc, { version: await versaoGravada(doc), client_id: devedor }, 422,
+      { code: ERRO_CLIENTE_EM_ATRASO, message: mensagem, details: { campo: "client_id", titulos: 1, total: "99.90", vencimentoMaisAntigo: venc } }, "só edit: troca para o devedor", soEdit);
+    expect((await linha(doc)).client_id).toBe(limpo);
   });
 });

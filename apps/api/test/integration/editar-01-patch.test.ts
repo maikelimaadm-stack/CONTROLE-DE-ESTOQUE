@@ -251,6 +251,15 @@ describe("ED-6 — corpo estrito", () => {
     const g = await lerResposta("budget", id);
     expect([r.statusCode, g.statusCode], r.body).toEqual([404, 404]);
     expect(r.body, "a MESMA 404 do GET").toBe(g.body);
+    // Inexistente e id MALFORMADO: a mesma 404 (o corpo do GET de um inexistente) — nunca 500 nem 422.
+    const inexistente = "00000000-0000-4000-8000-000000000272";
+    const gi = await lerResposta("order", inexistente);
+    expect(gi.statusCode, gi.body).toBe(404);
+    for (const alvo of [inexistente, "nao-e-um-uuid"]) {
+      const x = await patch("order", alvo, { version: v, note: "x" });
+      expect([x.statusCode, x.body], alvo).toEqual([404, gi.body]);
+    }
+    expect(g.body, "a 404 de outra variante é a do inexistente").toBe(gi.body);
     const soVe = await membro("ED-6 só vê pedidos", ["orders.view"]);
     expect((await lerResposta("order", id, soVe)).statusCode, "premissa: ele lê o pedido").toBe(200);
     const r2 = await patch("order", id, { version: v, note: "x" }, soVe);
