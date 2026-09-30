@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { DomainError } from "@agro/shared";
 import { FORMA_UUID_PADRAO, familiaOperacionalDeDocumentoVenda, type SalesKind, type SituacaoClienteResposta } from "@agro/domain";
 import type { ServiceCtx } from "../lib/context.js";
-import { runService } from "../lib/service.js";
+import { runService, requirePermission } from "../lib/service.js";
 import { notFound } from "../lib/errors.js";
 import { respostaDoLayoutEfetivo, type LayoutEfetivoDaCentral } from "../lib/layout-documento.js";
 import { recusaDaEdicao, limitesDaEdicao, type LimitesDaEdicao } from "./vendas-edicao-regras.js";
@@ -14,7 +14,10 @@ export interface DependenciasDaEdicao {
   getDoc: (ctx: ServiceCtx, id: string, expectedKind: SalesKind, opts?: { lock?: boolean }) => Promise<Record<string, unknown>>;
 }
 
-/** O que esta rota lê do documento carregado pelo GET (`d.*` + `reserva_estoque` da versão congelada + itens). */
+/**
+ * O que esta rota lê do documento carregado pelo GET (`d.*` + `reserva_estoque` da versão congelada + itens). Os itens
+ * trazem o que `limitesDaEdicao` pede (`DocumentoParaLimites`): `id`, `origem_item_id` e `product_control_stock`.
+ */
 type DocumentoDaEdicao = {
   id: string; status: string; client_id: string;
   tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null; origin_document_id: string | null;
@@ -27,7 +30,11 @@ type DocumentoDaEdicao = {
 /**
  * A resposta de `GET <base>/:id/edicao`.
  *  - `podeEditar`/`motivo`  → `recusaDaEdicao(..., { exigirTop: true })`: a MESMA pergunta, na MESMA ordem, da PATCH.
- *  - `limites`              → `limitesDaEdicao`: o que uma edição permitida pode tocar (parte gerada, armazém travado).
+ *  - `limites`              → `limitesDaEdicao`, a MESMA função do PUT e da PATCH: o que uma edição permitida pode
+ *                              tocar. `somenteArmazemEObservacao` = parte gerada (nos ITENS, só armazém e observação; o
+ *                              cabeçalho continua editável); `itens[]` = um por item gravado, com `armazemTravado` POR
+ *                              ITEM — travado só o item de produto que controla estoque, na venda gerada de pedido que
+ *                              reserva estoque. Item sem controle de estoque fica livre, como a gravação o deixa.
  *  - `version`              → a do documento, para a PATCH mandar de volta (concorrência otimista).
  *  - `regras`               → o MESMO contrato de `/regras-da-operacao`, pela versão CONGELADA.
  *  - `condicoesPermitidas`  → o MESMO valor de `regras.condicoesPermitidas` (mesma referência; null = todas).
@@ -54,8 +61,9 @@ const SEM_VERSAO: { formato: number; regras: RegrasDaVersaoTop | null } = { form
  *
  * POR QUE UMA ROTA PRÓPRIA, e não `/regras-da-operacao` + `/layout-efetivo` + `/situacao-cliente`:
  *  1. PERMISSÃO. As três portas do lançamento pedem `<perm>.create` — quem só EDITA (tem `.edit` sem `.create`) levaria
- *     403 nelas e a tela de edição ficaria sem regra nenhuma. Esta porta pede SÓ `<perm>.edit`, a MESMA da PATCH: quem
- *     pode salvar a edição pode perguntar o que a edição vai cobrar, e nada além disso.
+ *     403 nelas e a tela de edição ficaria sem regra nenhuma. Esta porta pede `<perm>.edit` E `<perm>.view`, as MESMAS
+ *     da PATCH: a resposta devolve o documento lido (versão, cliente, limites por item), e editar sem poder ver não
+ *     abre leitura. Quem pode salvar a edição pode perguntar o que a edição vai cobrar, e nada além disso.
  *  2. VERSÃO. As portas do lançamento respondem pela versão ATUAL da TOP escolhida; a PATCH cobra pela versão
  *     CONGELADA do documento (`tipo_operacao_versao_id`), a versão em que ele nasceu. Se a tela conferisse pela atual,
  *     uma TOP reconfigurada depois do documento faria a tela exigir o que a PATCH não cobra (ou esconder o que cobra).
@@ -72,30 +80,35 @@ const SEM_VERSAO: { formato: number; regras: RegrasDaVersaoTop | null } = { form
  * EXISTÊNCIA: quem carrega é o `getDoc` do GET — inexistente, de outro tenant, fora do escopo de empresa, excluído e
  * de outra variante caem na MESMA 404 do `GET <base>/:id` (mesmo código, mesma mensagem). Id MALFORMADO também: a
  * forma é conferida aqui ANTES do SQL, porque o `getDoc` o passa direto a uma coluna `uuid` e o Postgres responde
- * 22P02, que vira 500 — malformado ficaria distinguível de inexistente. Sem `<perm>.edit` → 403 do `runService`, antes
- * de qualquer leitura (não revela existência).
+ * 22P02, que vira 500 — malformado ficaria distinguível de inexistente. Sem `<perm>.view` → 403 de `requirePermission`,
+ * conferido ANTES do `runService` (nem transação abre); sem `<perm>.edit` → 403 do `runService`. As duas antes de
+ * qualquer leitura (não revelam existência).
  *
  * LEITURA PURA, SEM LOCK: nada aqui grava, e travar a linha só para responder seria disputar com a PATCH. O número de
  * consultas é fixo (o GET + partes + reserva da origem + versão + layout + atraso) — nenhuma por item.
  */
 export function registrarEdicaoDeVenda(app: FastifyInstance, kind: SalesKind, base: string, perm: string, deps: DependenciasDaEdicao): void {
-  app.get(`${base}/:id/edicao`, async (req) => runService(app, req, `${perm}.edit`, async (ctx): Promise<EdicaoDoDocumentoDeVenda> => {
-    // Fail-closed como a criação (`familiaDaVariante` em sales.ts): variante sem família declarada não responde layout.
-    const familia = familiaOperacionalDeDocumentoVenda(kind);
-    if (!familia) throw new DomainError("TIPO_OPERACAO_INDISPONIVEL", "Tipo de operação indisponível para este lançamento", { kind });
-    const id = (req.params as { id: string }).id;
-    if (!FORMA_UUID_PADRAO.test(id)) throw notFound("Documento"); // a MESMA 404 que o `getDoc` lança
-    const doc = (await deps.getDoc(ctx, id, kind)) as Record<string, unknown> & DocumentoDaEdicao;
-    const motivo = await recusaDaEdicao(ctx, doc, { exigirTop: true });
-    const limites = await limitesDaEdicao(ctx, kind, doc);
-    // A versão CONGELADA (0021: `tipo_operacao_id` e `tipo_operacao_versao_id` são nulos juntos ou preenchidos juntos).
-    const congelada = doc.tipo_operacao_versao_id ? await regrasDaVersaoCongelada(ctx, doc.tipo_operacao_versao_id) : SEM_VERSAO;
-    // `reserva_estoque` do GET já é o da versão CONGELADA (e só pedido pode ser true) — a mesma regra de `/regras-da-operacao`.
-    const regras = respostaDasRegrasDaOperacao(congelada, kind === "order" && doc.reserva_estoque === true);
-    // Sem TOP → `null` → layout do SISTEMA (o mesmo que a PATCH usaria; ela recusa antes, mas a tela mostra o documento).
-    const layout = await respostaDoLayoutEfetivo(ctx, familia, doc.tipo_operacao_id);
-    // O cliente GRAVADO, pela política da versão congelada. Sem regras do formato 3 → `nao_valida`, sem consultar o atraso.
-    const situacaoCliente = await respostaDaSituacaoCliente(ctx, congelada.regras, doc.client_id);
-    return { podeEditar: motivo === null, motivo, limites, version: doc.version, regras, condicoesPermitidas: regras.condicoesPermitidas, layout, situacaoCliente };
-  }));
+  app.get(`${base}/:id/edicao`, async (req) => {
+    // `.view` junto de `.edit` (AND): a capacidade que falta nega antes de qualquer leitura — nem a transação abre.
+    requirePermission(app.requireCtx(req), `${perm}.view`);
+    return runService(app, req, `${perm}.edit`, async (ctx): Promise<EdicaoDoDocumentoDeVenda> => {
+      // Fail-closed como a criação (`familiaDaVariante` em sales.ts): variante sem família declarada não responde layout.
+      const familia = familiaOperacionalDeDocumentoVenda(kind);
+      if (!familia) throw new DomainError("TIPO_OPERACAO_INDISPONIVEL", "Tipo de operação indisponível para este lançamento", { kind });
+      const id = (req.params as { id: string }).id;
+      if (!FORMA_UUID_PADRAO.test(id)) throw notFound("Documento"); // a MESMA 404 que o `getDoc` lança
+      const doc = (await deps.getDoc(ctx, id, kind)) as Record<string, unknown> & DocumentoDaEdicao;
+      const motivo = await recusaDaEdicao(ctx, doc, { exigirTop: true });
+      const limites = await limitesDaEdicao(ctx, kind, doc);
+      // A versão CONGELADA (0021: `tipo_operacao_id` e `tipo_operacao_versao_id` são nulos juntos ou preenchidos juntos).
+      const congelada = doc.tipo_operacao_versao_id ? await regrasDaVersaoCongelada(ctx, doc.tipo_operacao_versao_id) : SEM_VERSAO;
+      // `reserva_estoque` do GET já é o da versão CONGELADA (e só pedido pode ser true) — a mesma regra de `/regras-da-operacao`.
+      const regras = respostaDasRegrasDaOperacao(congelada, kind === "order" && doc.reserva_estoque === true);
+      // Sem TOP → `null` → layout do SISTEMA (o mesmo que a PATCH usaria; ela recusa antes, mas a tela mostra o documento).
+      const layout = await respostaDoLayoutEfetivo(ctx, familia, doc.tipo_operacao_id);
+      // O cliente GRAVADO, pela política da versão congelada. Sem regras do formato 3 → `nao_valida`, sem consultar o atraso.
+      const situacaoCliente = await respostaDaSituacaoCliente(ctx, congelada.regras, doc.client_id);
+      return { podeEditar: motivo === null, motivo, limites, version: doc.version, regras, condicoesPermitidas: regras.condicoesPermitidas, layout, situacaoCliente };
+    });
+  });
 }
