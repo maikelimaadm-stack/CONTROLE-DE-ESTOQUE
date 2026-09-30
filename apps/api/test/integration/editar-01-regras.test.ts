@@ -4,6 +4,10 @@ import {
   configuracaoNeutraTopV3, ERRO_EXIGENCIA_NAO_ATENDIDA, MENSAGEM_EXIGENCIA_NAO_ATENDIDA, ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA,
   MENSAGEM_CONDICAO_NAO_PERMITIDA, ERRO_CLIENTE_EM_ATRASO, type ConfiguracaoTipoOperacaoV3,
 } from "@agro/domain";
+import { MSG_DOCUMENTO_MUDOU } from "../../src/routes/vendas-edicao-patch.js";
+import { MSG_DOCUMENTO_NAO_EDITAVEL, MSG_DOCUMENTO_SEM_TOP } from "../../src/routes/vendas-edicao-regras.js";
+import { MSG_ORIGEM_COM_PARTES_ATIVAS_PUT, MSG_ORIGEM_COM_PARTES_CANCELADAS_PUT } from "../../src/routes/vendas-faturar-em-partes.js";
+import { MSG_PARTE_RESERVA_ARMAZEM } from "../../src/routes/vendas-reserva-estoque.js";
 import { escoposDeTodosOsModulos, harness, ids, TEST_URL, type Harness } from "./setup.js";
 
 /**
@@ -144,12 +148,12 @@ const versaoGravada = async (id: string) => (await linha(id)).version as string;
 const updates = async (id: string) => (await eventos(id)).filter((e) => e.action === "update" && !(e.after !== null && "organization_id" in e.after)).length;
 const detalhes = (r: Resposta) => (j(r).error?.details ?? []) as Detalhe[];
 
-const MSG_VERSAO = "Este documento mudou desde que você o abriu. Recarregue antes de salvar.";
-const MSG_NAO_EDITAVEL = "Documento não editável neste status";
-const MSG_SEM_TOP = "Este documento não tem tipo de operação (registro anterior às operações) e não pode ser editado.";
-const MSG_PARTES_ATIVAS = "Este documento já tem partes geradas, e os itens não podem mais ser trocados. Para faturar o resto, converta outra parte; para parar, encerre o saldo.";
-const MSG_PARTES_CANCELADAS = "Este documento já teve partes geradas; os itens não podem mais ser trocados.";
-const MSG_PARTE_RESERVA_ARMAZEM = "O armazém deste item vem do pedido de origem, que reserva estoque no armazém de cada item: não pode ser trocado. Para mudar, cancele esta venda e gere de novo.";
+// O TEXTO é contrato: as constantes das rotas, importadas (nunca uma cópia que envelhece em silêncio).
+const MSG_VERSAO = MSG_DOCUMENTO_MUDOU;
+const MSG_NAO_EDITAVEL = MSG_DOCUMENTO_NAO_EDITAVEL;
+const MSG_SEM_TOP = MSG_DOCUMENTO_SEM_TOP;
+const MSG_PARTES_ATIVAS = MSG_ORIGEM_COM_PARTES_ATIVAS_PUT;
+const MSG_PARTES_CANCELADAS = MSG_ORIGEM_COM_PARTES_CANCELADAS_PUT;
 
 /** Recusa esperada: status e erro exatos, e a foto do banco intacta. */
 async function recusada(kind: Variante, id: string, payload: Record<string, unknown>, status: number, erro: Partial<Erro>, rotulo: string, headers: Hdr = h.headers()) {
@@ -189,6 +193,72 @@ describe("ED-3 — a versão", () => {
       expect([d.version, d.note], `rodada ${rodada}`).toEqual([String(Number(v) + 1), nota]);
       expect(await updates(id) - eventosAntes, `rodada ${rodada}: um evento só`).toBe(1);
     }
+  });
+
+  /**
+   * A CORRIDA QUE TROCA O CLIENTE. A trava tem de ser só da linha de `erp.sales_documents`: se a leitura travada junta
+   * outra tabela pelo cliente (`join erp.people c on c.id = d.client_id`), a PATCH que espera a trava relê a linha
+   * NOVA (o cliente trocado) contra a pessoa VELHA, a junção não casa, e a linha some — 404 para um documento que
+   * existe. O certo é a perdedora ver a versão nova: 409.
+   *
+   * Duas formas de disputar: (1) em ORDEM FORÇADA — o superusuário trava a linha, as duas PATCH ficam esperando (a
+   * que troca o cliente primeiro na fila, depois a outra), e a trava é solta; (2) AO MESMO TEMPO, sem ordem.
+   */
+  it("ED-3 corrida: PATCH A troca o cliente × PATCH B com a MESMA versão → exatamente uma 200 e uma 409, nunca 404 (ordem forçada nos dois sentidos e várias rodadas ao mesmo tempo)", async () => {
+    /** Espera até `n` sessões estarem bloqueadas numa trava (as PATCH na fila da linha). */
+    async function esperarNaFila(n: number) {
+      for (let t = 0; t < 400; t++) {
+        // A trava de `transactionid` não tem `database` em pg_locks: o recorte pelo banco é o da sessão.
+        const r = await admin.query<{ n: number }>("select count(*)::int n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'");
+        if (r.rows[0]!.n >= n) return;
+        await new Promise((ok) => setTimeout(ok, 10));
+      }
+      throw new Error(`as ${n} PATCH não chegaram à fila da trava`);
+    }
+    type Disparo = () => Promise<Resposta>;
+    /** Trava a linha como superusuário, dispara na ordem dada (cada uma só depois de a anterior estar na fila) e solta. */
+    async function emOrdem(id: string, disparos: Disparo[]): Promise<Resposta[]> {
+      const c = await admin.connect();
+      try {
+        await c.query("begin");
+        expect((await c.query("select id from erp.sales_documents where id=$1 for update", [id])).rowCount).toBe(1);
+        const emVoo: Promise<Resposta>[] = [];
+        for (const [k, disparo] of disparos.entries()) { emVoo.push(disparo()); await esperarNaFila(k + 1); }
+        await c.query("commit");
+        return await Promise.all(emVoo);
+      } catch (e) { await c.query("rollback").catch(() => undefined); throw e; } finally { c.release(); }
+    }
+    const rodadas: { modo: string; aPrimeiro: boolean | null }[] = [
+      { modo: "ordem forçada, A (cliente) primeiro", aPrimeiro: true }, { modo: "ordem forçada, A (cliente) primeiro", aPrimeiro: true },
+      { modo: "ordem forçada, B (observação) primeiro", aPrimeiro: false },
+      ...Array.from({ length: 6 }, () => ({ modo: "ao mesmo tempo", aPrimeiro: null })),
+    ];
+    let provadas = 0; let aVenceu = 0;
+    for (const [k, { modo, aPrimeiro }] of rodadas.entries()) {
+      const rotulo = `rodada ${k + 1} (${modo})`;
+      const novoCliente = await cliente();
+      const id = await criar("order", { note: "original" });
+      const v = await versaoGravada(id);
+      const eventosAntes = await updates(id);
+      const a: Disparo = () => patch("order", id, { version: v, client_id: novoCliente });
+      const b: Disparo = () => patch("order", id, { version: v, note: `B${k}` });
+      const [ra, rb] = aPrimeiro === null ? await Promise.all([a(), b()])
+        : aPrimeiro ? await emOrdem(id, [a, b]) : (await emOrdem(id, [b, a])).reverse() as [Resposta, Resposta];
+      expect([ra!.statusCode, rb!.statusCode], `${rotulo}: nunca 404 — ${ra!.body} · ${rb!.body}`).not.toContain(404);
+      expect([ra!.statusCode, rb!.statusCode].sort(), `${rotulo}: ${ra!.body} · ${rb!.body}`).toEqual([200, 409]);
+      const perdedora = ra!.statusCode === 409 ? ra! : rb!;
+      expect(j(perdedora).error, rotulo).toMatchObject({ code: "CONCURRENCY_CONFLICT", message: MSG_VERSAO });
+      if (aPrimeiro !== null) expect(ra!.statusCode, `${rotulo}: a primeira da fila vence`).toBe(aPrimeiro ? 200 : 409);
+      const d = await linha(id);
+      // O banco: SÓ a vencedora gravou — versão +1, um evento de edição.
+      expect([d.version, d.client_id, d.note], rotulo).toEqual(ra!.statusCode === 200
+        ? [String(Number(v) + 1), novoCliente, "original"] : [String(Number(v) + 1), clientePadrao, `B${k}`]);
+      expect(await updates(id) - eventosAntes, `${rotulo}: um evento só`).toBe(1);
+      if (ra!.statusCode === 200) aVenceu++;
+      provadas++;
+    }
+    expect(provadas).toBe(rodadas.length);
+    expect(aVenceu, "premissa: nas rodadas forçadas com A primeiro, a troca do cliente venceu e a outra esperou por ela").toBeGreaterThanOrEqual(2);
   });
 
   it("ED-3 confirmar a venda aumenta a versão; a PATCH com a versão de antes → 409 CONCURRENCY_CONFLICT (a versão vem ANTES da situação)", async () => {
@@ -442,7 +512,7 @@ describe("ED-5 — condição de pagamento e cliente em atraso", () => {
     expect((await linha(docDoLimpo)).client_id).toBe(limpo);
   });
 
-  it("ED-5 cliente em atraso com quem só tem orders.edit (sem create): outro campo passa; trocar PARA o devedor → a mesma recusa, sem gravar", async () => {
+  it("ED-5 cliente em atraso com quem tem orders.edit e orders.view (sem create): outro campo passa; trocar PARA o devedor → a mesma recusa, sem gravar", async () => {
     const limpo = await cliente(); const devedor = await cliente();
     const top = await criarTop("order", "ED-5 atraso só edit");
     await novaVersao(top, cfg((c) => { c.financeiro.clienteEmAtraso = "bloqueia"; }));
@@ -453,7 +523,7 @@ describe("ED-5 — condição de pagamento e cliente em atraso", () => {
       [h.demo.orgId, I.empresa, `ED5E-ATR-${Date.now()}`, "ED5E-ATRASO", devedor, venc]);
     const [a, m, d] = venc.split("-");
     const mensagem = `O cliente tem 1 título(s) vencido(s), total R$ 99,90, o mais antigo de ${d}/${m}/${a}. Esta operação não aceita cliente em atraso.`;
-    const soEdit = await membro("ED-5 só edita pedidos", ["orders.edit"]);
+    const soEdit = await membro("ED-5 edita e vê pedidos", ["orders.edit", "orders.view"]);
     // PREMISSA: ele não tem create (a porta de lançamento o recusa).
     const semCreate = await h.app.inject({ method: "GET", url: `/api/sales/orders/regras-da-operacao?tipo_operacao_id=${top}`, headers: soEdit });
     expect(semCreate.statusCode, semCreate.body).toBe(403);
