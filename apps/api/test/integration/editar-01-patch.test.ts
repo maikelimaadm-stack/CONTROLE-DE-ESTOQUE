@@ -139,6 +139,26 @@ describe("ED-1 — PATCH só do cabeçalho", () => {
     }
     expect(provados).toBe(3);
   });
+
+  it("ED-1 PATCH que não muda nada (campo igual ao gravado, itens iguais ao gravado) → 200 com o GET, sem escrita: versão, linha, itens e eventos idênticos", async () => {
+    const id = await criar("order", { note: "igual", items: [ITEM({ quantity: "2", note: "obs 1" }), ITEM({ product_id: I.product!, quantity: "3", unit_price: "8.00" })] });
+    const antes = await foto(id);
+    const [a, b] = antes.itens;
+    const casos: [string, Record<string, unknown>][] = [
+      ["só a versão", { version: antes.doc.version }],
+      ["observação igual à gravada", { version: antes.doc.version, note: "igual" }],
+      ["itens iguais aos gravados (só os ids)", { version: antes.doc.version, items: [{ id: a!.id }, { id: b!.id }] }],
+      ["itens iguais aos gravados (com os valores)", { version: antes.doc.version, items: [{ id: a!.id, quantity: "2", note: "obs 1" }, { id: b!.id, quantity: "3.0000", unit_price: "8" }] }],
+      ["cliente igual, versão em inteiro", { version: Number(antes.doc.version), client_id: antes.doc.client_id }],
+    ];
+    for (const [nome, payload] of casos) {
+      const r = await patch("order", id, payload);
+      expect(r.statusCode, `${nome}: ${r.body}`).toBe(200);
+      expect(j(r), nome).toEqual(await ler("order", id));
+      expect(j(r).version, `${nome}: a versão não sobe`).toBe(antes.doc.version);
+      expect(await foto(id), `${nome}: nada gravado`).toEqual(antes);
+    }
+  });
 });
 
 describe("ED-2 — itens com id", () => {
