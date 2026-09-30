@@ -1466,6 +1466,7 @@ Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido
 | `saldo_encerrado_por` |  | uuid | não | FK | `erp.users` |  |  |
 | `saldo_encerrado_motivo` |  | text | não |  |  |  |  |
 | `add` |  | constraint | sim |  |  |  |  |
+| `version` |  | bigint | sim |  |  |  |  |
 
 ## Pecuária
 
