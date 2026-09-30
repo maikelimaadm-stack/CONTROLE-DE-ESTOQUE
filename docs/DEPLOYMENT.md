@@ -1401,6 +1401,8 @@ refeito (seguro: nada foi aplicado). Nenhuma variável nova, nenhuma permissão 
 nenhuma tela chama as rotas novas (o lápis vem na F2, depois da VISUAL-UX-02).
 
 **Pré-condição:** a 0039 recusa, com a mensagem nomeada e sem aplicar nada:
+- **`erp.sales_documents` ausente** (a cadeia de migrations fora de ordem) — a primeira pergunta, antes de qualquer
+  outra sobre a tabela;
 - **já aplicada ou schema divergente** — `version`, `erp.sales_documents_versao()` ou `trg_sales_documents_versao` já
   existem (`EDITAR-01: erp.sales_documents.version ja existe; ...` vem primeiro, para a reaplicação dizer o motivo
   verdadeiro);
@@ -1415,8 +1417,11 @@ nenhuma tela chama as rotas novas (o lápis vem na F2, depois da VISUAL-UX-02).
   dele é recusa própria, antes das conferências que o citam); depois, a pergunta é sempre `MEMBER` (o próprio
   `erp_app` conta; e `MEMBER`, não `USAGE`, porque ele é NOINHERIT e ainda faria SET ROLE): `erp_app` membro de
   qualquer papel superusuário, de qualquer papel com SET em `session_replication_role`, de qualquer papel com TRIGGER
-  em `erp.sales_documents`, ou do papel dono da tabela; ou com `session_replication_role` configurado para ele em
-  `pg_db_role_setting`;
+  em `erp.sales_documents`, ou do papel dono da tabela — direto ou em cadeia, com ou sem herança; ou com
+  `session_replication_role` guardado em `pg_db_role_setting` para ele (`ALTER ROLE erp_app SET`, também `IN
+  DATABASE`) ou para todos os papéis (`setrole = 0`: `ALTER ROLE ALL SET`, `ALTER DATABASE SET`), em qualquer banco —
+  a sessão dele nasceria com o gatilho desligado. O caso `setrole = 0` vai além do pedido na revisão, de propósito: é
+  o mesmo efeito por outra porta;
 - **a porta do atraso não é a da 0033**: ausente ou sem SECURITY DEFINER; corpo que não é, byte a byte, o da 0033
   (`md5(prosrc)` diferente de `d55df1291552c3fdd19b7c0eecf4d22c`); dono que não atravessa RLS.
 

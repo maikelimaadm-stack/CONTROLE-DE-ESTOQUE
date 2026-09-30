@@ -1429,8 +1429,8 @@ atraso (§15.4). A permissão do PUT continua só `<variante>.edit`, e a respost
   confere essa ordem.
 - O papel da aplicação não desliga, não derruba, não troca nem contorna o gatilho: não é dono nem membro do dono;
   nem ele nem papel de que seja membro é superusuário, tem SET em `session_replication_role` ou tem TRIGGER na tabela;
-  e não tem `session_replication_role` configurado para ele (`pg_db_role_setting`). A pré-condição da 0039 confere
-  cada um.
+  e não há `session_replication_role` configurado para ele em `pg_db_role_setting` — nem do papel, nem de todos os
+  papéis (`ALTER ROLE ALL SET`, `ALTER DATABASE SET`), em qualquer banco. A pré-condição da 0039 confere cada um.
 - Na API, `version` sai como string de dígitos (é `bigint`) no `GET <base>/:id`, na resposta da PATCH e no
   `/edicao`. Na entrada da PATCH, a forma é CANÔNICA:
   - texto `/^(0|[1-9]\d{0,18})$/` e no máximo `9223372036854775807` (o maior `bigint`);
@@ -1441,7 +1441,8 @@ atraso (§15.4). A permissão do PUT continua só `<variante>.edit`, e a respost
 ### 15.2 PATCH `/api/sales/{budgets,orders,sales}/:id`
 
 Permissão `<variante>.edit` **E** `<variante>.view` (`budgets.edit` + `budgets.view`, `orders.edit` + `orders.view`,
-`sales.edit` + `sales.view`): sem `.edit` → 403; com `.edit` e sem `.view` → 403 — as duas antes de qualquer leitura.
+`sales.edit` + `sales.view`), por chave exata: sem `.edit` → 403 (`runService`); com `.edit` e sem `.view` → 403
+(`requirePermission`, a primeira linha do handler) — as duas antes de ler o corpo ou o documento.
 A PATCH devolve o documento como o `GET <base>/:id`; sem `.view`, seria leitura para quem só edita (o PUT, que não
 devolve o documento, continua só com `.edit`). `Idempotency-Key` OPCIONAL, pelo helper oficial, como nas outras
 escritas: com ela, mesma chave e mesmo corpo devolvem a mesma resposta sem gravar de novo, e a mesma chave com outro
@@ -1455,7 +1456,7 @@ do POST/PUT, sem os valores padrão (na PATCH, ausente quer dizer "fica o gravad
 | --- | --- |
 | `version` | obrigatória: a versão que a tela leu (do `GET` ou do `/edicao`), na forma canônica do §15.1; ausente → "Informe a versão do documento que você abriu."; fora da forma → "Versão inválida: envie a versão que o documento devolveu." |
 | `document_date`, `shipping_date`, `due_date`, `client_id`, `transporter_id`, `proprietary_id`, `driver_name`, `payment_method_id`, `freight`, `freight_icms`, `other_values`, `discount`, `note`, `categoria_financeira_id`, `centro_custo_id`, `condicao_pagamento_id` | **ausente** = fica como está gravado · **`null`** = limpa (só onde o POST aceita vazio; senão 422 no campo) · **valor** = troca; valor igual ao gravado não é mudança |
-| `installment_plan` | ESTRITO nas chaves e nos valores: chave desconhecida → 422 em `installment_plan.<chave>` (no POST/PUT ela seria descartada); a marca de dedutível vai em `is_deductible`, não dentro do plano; `down_payment_value` é dinheiro e segue a regra dos números (`"1,50"` → 422). Enviado (objeto ou `null`) e DIFERENTE do gravado, é decisão explícita: o plano é refeito pela conta do PUT. IGUAL ao gravado não é mudança: não grava, não sobe a versão e não liga `parcelas_ajustadas` |
+| `installment_plan` | ESTRITO nas chaves e nos valores (`installmentPlanSchema.extend({ down_payment_value: <dinheiro> }).strict()`): chave desconhecida → 422 em `installment_plan.<chave>` (no POST/PUT ela seria descartada); a marca de dedutível vai em `is_deductible`, não dentro do plano; `down_payment_value` é dinheiro e segue a regra dos números (`"1,50"` → 422). Enviado (objeto ou `null`) e DIFERENTE do gravado, é decisão explícita: o plano é refeito pela conta do PUT. IGUAL ao gravado (`planoIgualAoGravado`: objeto com os padrões do schema aplicados, sem a marca `is_deductible`, a entrada comparada como decimal; `null` só é igual quando não há plano gravado nem condição) não é mudança: não grava, não sobe a versão e não liga `parcelas_ajustadas` |
 | números | forma CANÔNICA e o LIMITE DA COLUNA, conferidos antes de ler o registro (tabela abaixo) |
 | `is_deductible` | muda a marca só se vier diferente da gravada |
 | `items` | **ausente** = nenhuma linha de item é tocada · **presente** = a LISTA NOVA COMPLETA, com pelo menos um item (tabela abaixo) |
@@ -1466,9 +1467,10 @@ do POST/PUT, sem os valores padrão (na PATCH, ausente quer dizer "fica o gravad
 As recusas de chave (`empresa_id`, `tipo_operacao_id`, `version`, desconhecidas) saem JUNTAS, uma por campo; depois
 vem a validação dos valores, com os caminhos `items[i].<campo>`.
 
-**Números** — cada um é número JSON finito ou texto só com dígitos e ponto (`"1.50"`), na forma canônica
-[[COORDENADOR: a expressão exata da forma canônica dos números (sinal, zero à esquerda) — o nome da função em vendas-edicao-patch.ts]],
-e cabe na coluna em que vai ser gravado, SEM arredondar:
+**Números** — `recusaDoNumero` (`apps/api/src/routes/vendas-edicao-patch.ts`, limites em `LIMITES_DA_EDICAO`): cada
+um é número JSON ou texto na forma canônica `/^-?(0|[1-9]\d*)(\.\d+)?$/` — sinal `-` opcional, sem zero à esquerda,
+ponto como separador; nada de vírgula, expoente, `+` ou espaço — e cabe na coluna em que vai ser gravado, SEM
+arredondar:
 
 | Campo | Coluna | Dígitos inteiros + casas, no máximo |
 | --- | --- | --- |
@@ -1477,23 +1479,39 @@ e cabe na coluna em que vai ser gravado, SEM arredondar:
 | `items[i].unit_price` | `numeric(18,6)` | 12 + 6 |
 | `items[i].discount_percent` | `numeric(7,4)` | 3 + 4 |
 
-Outra forma (`"1,50"`, `"abc"`, `"1e3"`), casa decimal a mais (`"1.005"` num campo de dinheiro) ou parte inteira
-maior que a coluna → 422 `VALIDATION_ERROR` no campo, antes de ler o registro — nunca 500 e nunca o valor arredondado
-em silêncio. "Igual ao gravado" compara VALORES CANÔNICOS: `"1.5"`, `1.5` e `"1.50"` são o mesmo `1.50` gravado, e
-não são mudança.
+Recusas, todas 422 `VALIDATION_ERROR` no campo, antes de ler o registro — nunca 500 e nunca o valor arredondado em
+silêncio:
 
-**Referências trocadas** — `client_id`, `transporter_id`, `proprietary_id` e `payment_method_id` que a PATCH troca
-(valor novo, diferente do gravado) têm de existir e ser visíveis na organização; senão → 422 `VALIDATION_ERROR` no
-campo. A chave estrangeira dessas colunas é de coluna única e o banco a confere sem RLS: sem esta conferência, o id de
-um registro de outra organização passaria. `null` (onde o POST aceita vazio) e o valor gravado reenviado não são
-conferidos. Categoria, centro de custo e condição já passam pelas portas do núcleo.
+- outra forma (`"1,50"`, `"abc"`, `"1e3"`, `"+1"`, `"01"`) → `MSG_NUMERO_INVALIDO` "Número inválido: use dígitos e ponto
+  como separador decimal";
+- parte inteira maior que a coluna, ou casa decimal a mais — as casas contam como vieram: `"1.005"` e também `"1.500"`
+  num campo de dinheiro → `msgNumeroForaDoLimite(inteiros, casas)` "Número fora do limite: até N dígitos inteiros e M
+  casas decimais." (`MSG_LIMITE_DINHEIRO`, `MSG_LIMITE_QUANTIDADE`, `MSG_LIMITE_PRECO`, `MSG_LIMITE_PERCENTUAL`);
+- os `check` das colunas do item: `quantity` ≤ 0 → `MSG_QUANTIDADE_POSITIVA` "A quantidade deve ser maior que zero.";
+  `unit_price` < 0 → `MSG_PRECO_NEGATIVO` "O preço unitário não pode ser negativo.".
+
+"Igual ao gravado" compara VALORES CANÔNICOS: `"1.5"`, `1.5` e `"1.50"` são o mesmo `1.50` gravado, e não são
+mudança.
+
+**Referências trocadas** — `conferirReferenciasDaEdicao` (`sales.ts`): `client_id`, `transporter_id` e
+`proprietary_id` que a PATCH troca têm de ser uma pessoa (`erp.people`) DESTA organização e não excluída (lida
+`for share`: a exclusão concorrente espera o commit da edição); `payment_method_id`, uma forma de pagamento desta
+organização ou a padrão do sistema (`organization_id` nulo, o recorte do cadastro). Inexistente, de outra organização e
+excluída caem na MESMA recusa — 422 `VALIDATION_ERROR` no campo, com `MSG_EDICAO_CLIENTE_INEXISTENTE` "Cliente não
+encontrado: escolha uma pessoa cadastrada nesta organização.", `MSG_EDICAO_TRANSPORTADORA_INEXISTENTE`,
+`MSG_EDICAO_PROPRIETARIO_INEXISTENTE` ou `MSG_EDICAO_FORMA_PAGAMENTO_INEXISTENTE` "Forma de pagamento não encontrada:
+escolha uma forma de pagamento desta organização."; no máximo duas consultas, nunca uma por campo. A chave estrangeira
+dessas colunas é de coluna única e o banco a confere sem RLS: sem esta conferência, o id de um registro de outra
+organização passaria. Só o que a PATCH TROCA é conferido: `null` (onde o POST aceita vazio) e o valor gravado
+reenviado não. Categoria, centro de custo e condição já passam pelas portas do núcleo. O POST e o PUT não fazem esta
+conferência (ficam como estão).
 
 **Itens por id** — sem operações "alterar/incluir/remover": a lista enviada é o documento.
 
 | Linha da lista | Efeito |
 | --- | --- |
 | com `id` de item DESTE documento | é o mesmo item (mesmo id, mesma ligação com a origem); campo ausente = o que está gravado |
-| sem `id` | item novo; exige `product_id`, `quantity` e `unit_price` — faltando algum, 422 em `items[i].<campo>` ("Campo obrigatório") NA FORMA, antes de ler o registro |
+| sem `id` | item novo; exige `product_id`, `quantity` e `unit_price` — faltando algum, 422 em `items[i].<campo>` ("Campo obrigatório"; a mensagem-resumo é "Campos obrigatórios pendentes: items[i].<campo>") NA FORMA, antes de ler o registro — também num documento que a situação recusaria |
 | item gravado que não vem na lista | sai do documento |
 | `id` que não é deste documento (de outro ou inexistente, indistinguíveis) | 422 `VALIDATION_ERROR` em `items[i].id`: "Este item não é deste documento." |
 | `id` repetido na lista | 422 `VALIDATION_ERROR` em `items[i].id`: "Este item aparece mais de uma vez na lista." |
@@ -1510,35 +1528,43 @@ PATCH não troca TOP; como no §13.3, a condição só é conferida se a PATCH a
 layout ao salvar e reserva de estoque — esta só quando os itens mudam (ela depende só dos itens e da empresa). Nenhum
 código, caminho ou mensagem dessas recusas difere do PUT.
 
-**O plano de parcelas e os totais são calculados DENTRO do núcleo**, no mesmo ponto e na mesma ordem do PUT: uma
-recusa sai no mesmo passo pelas duas portas. O plano é refeito pela conta do PUT só quando a PATCH envia
+**O plano de parcelas e os totais são calculados DENTRO do núcleo**, no ponto exato em que o PUT calcula os totais (a
+primeira linha do `writeDoc`), depois dos limites, da classificação, da condição, das regras da operação, do layout e da
+reserva: a mesma conta do domínio (`documentTotals`: "Desconto maior…" e "Total negativo" saem dali, na mesma ordem das
+duas portas), depois o total que não cabe na coluna, e só então o plano (`planoDaEdicao`), que depende do total. O
+plano é refeito pela conta do PUT só quando a PATCH envia
 `installment_plan` diferente do gravado, troca ou remove a condição, ou o plano gravado é derivado da condição (há
 condição e `parcelas_ajustadas = false`) e mudou `document_date` ou o total. Em qualquer outro caso `installment_plan`
-e `parcelas_ajustadas` ficam byte a byte (só a marca `is_deductible` muda, se vier diferente). Total calculado (do item
-ou do documento) que não cabe em `numeric(18,2)` → 422, sem gravar
-[[COORDENADOR: código e caminho exatos da recusa do total que estoura]].
+e `parcelas_ajustadas` ficam byte a byte (só a marca `is_deductible` muda, se vier diferente). Total calculado que não
+cabe em `numeric(18,2)` (`recusaDosTotaisDaEdicao`) → 422 `VALIDATION_ERROR`, sem gravar, com
+`MSG_EDICAO_TOTAL_FORA_DO_LIMITE` "O total calculado passa do limite: até 16 dígitos inteiros e 2 casas decimais." em
+cada caminho que estoura: `items[i].total`, `subtotal` e `total` (o item estourado leva os três; o que estoura só no
+cabeçalho, `total`). É só da PATCH: o PUT não confere e continua como está.
 
 **Ordem:**
 
 | # | Passo | Recusa |
 | --- | --- | --- |
-| 1 | capacidade de editar | sem `<variante>.edit` → 403 |
-| 2 | capacidade de ver | com `.edit` e sem `<variante>.view` → 403, antes de qualquer leitura |
-| 3 | forma do corpo — antes de qualquer leitura e de reservar a chave: chaves, `version` canônica, números canônicos no limite da coluna, plano estrito (chaves e valores), item novo sem `product_id`, `quantity` ou `unit_price` | 422 `VALIDATION_ERROR` no campo |
-| 4 | id malformado; documento invisível (inexistente, de outra organização, fora do escopo de empresa, excluído) | a MESMA 404 do `GET <base>/:id` |
-| 5 | idempotência (depois da 404: a resposta gravada não passa pelo recorte de empresa) | mesma chave, outro corpo → 409 `CONFLICT` |
-| 6 | trava da linha SEM junção (só `erp.sales_documents`, `for update`) e, logo depois, a versão | 409 `CONCURRENCY_CONFLICT` "Este documento mudou desde que você o abriu. Recarregue antes de salvar." — também quando uma gravação concorrente trocou o cliente: 409, nunca 404 |
-| 7 | `recusaDaEdicao` (exigindo TOP): situação fora de aberto/aprovado; origem com partes (ativas; depois só canceladas); sem TOP | 409 `INVALID_STATUS_TRANSITION`: "Documento não editável neste status", as mensagens de partes do PUT, "Este documento não tem tipo de operação (registro anterior às operações) e não pode ser editado." |
-| 8 | o documento como ficará (itens por id) | 422 em `items[i].id` |
-| 9 | referência trocada inexistente ou de outra organização (cliente, transportadora, proprietário, forma de pagamento) | 422 `VALIDATION_ERROR` no campo |
-| 10 | nada muda (valores canônicos iguais ao gravado, plano igual inclusive) | 200 com o documento, SEM escrita e SEM subir a versão |
-| 11 | o núcleo do PUT, com o plano e os totais calculados nele, na ordem do PUT | os códigos de sempre (`VALIDATION_ERROR` — parte gerada, reserva, classificação —, `CONDICAO_PAGAMENTO_INVALIDA`, `CONDICAO_PAGAMENTO_NAO_PERMITIDA`, `TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA`, `CLIENTE_EM_ATRASO`, `LAYOUT_CAMPO_OBRIGATORIO`) e 422 no total calculado que não cabe na coluna |
+| 1 | capacidade de editar (`runService`) | sem `<variante>.edit` → 403 |
+| 2 | capacidade de ver (`requirePermission`, a primeira linha do handler) | com `.edit` e sem `<variante>.view` → 403, antes de ler o corpo |
+| 3 | forma do corpo — antes de qualquer leitura e de reservar a chave: corpo objeto, `empresa_id`, `tipo_operacao_id`, `version` canônica, chave desconhecida, validadores, números na forma e no limite da coluna, plano estrito (chaves e valores), item novo sem `product_id`, `quantity` ou `unit_price` | 422 `VALIDATION_ERROR` no campo |
+| 4 | id malformado | a MESMA 404 do `GET <base>/:id` |
+| 5 | documento invisível (inexistente, de outra organização, fora do escopo de empresa, excluído, de outra variante) | a MESMA 404 |
+| 6 | idempotência (depois da 404: a resposta gravada não passa pelo recorte de empresa) | mesma chave, outro corpo → 409 `CONFLICT` |
+| 7 | trava SEM junção — `travarDocumentoDaEdicao`: `select` de `id` e `version` só de `erp.sales_documents`, `for update`, com o MESMO recorte do `getDoc` (`scopedById`) | zero linhas → a MESMA 404 |
+| 8 | a versão, logo depois da trava | 409 `CONCURRENCY_CONFLICT` "Este documento mudou desde que você o abriu. Recarregue antes de salvar." — também quando uma gravação concorrente trocou o cliente: 409, nunca 404 |
+| 9 | leitura do documento (`getDoc` sem trava: a linha já é desta transação) | — |
+| 10 | `recusaDaEdicao` (exigindo TOP): situação fora de aberto/aprovado; origem com partes (ativas; depois só canceladas); sem TOP | 409 `INVALID_STATUS_TRANSITION`: "Documento não editável neste status", as mensagens de partes do PUT, "Este documento não tem tipo de operação (registro anterior às operações) e não pode ser editado." |
+| 11 | o documento como ficará (itens por id) | 422 em `items[i].id` |
+| 12 | nada muda (valores canônicos iguais ao gravado, plano igual inclusive) | 200 com o documento lido sob a trava, SEM escrita e SEM subir a versão |
+| 13 | referência trocada inexistente, de outra organização ou excluída (`conferirReferenciasDaEdicao`: cliente, transportadora, proprietário, forma de pagamento) | 422 `VALIDATION_ERROR` no campo |
+| 14 | o núcleo do PUT (`salvarEdicao`), na ordem do PUT: limites (`limitesDaEdicao`), classificação, condição, regras da operação da versão congelada, layout, reserva; só na PATCH, no ponto em que o PUT calcula os totais: `documentTotals`, o total além da coluna e `planoDaEdicao`; `writeDoc` | os códigos de sempre (`VALIDATION_ERROR` — parte gerada, reserva, classificação, "Desconto maior…", "Total negativo" —, `CONDICAO_PAGAMENTO_INVALIDA`, `CONDICAO_PAGAMENTO_NAO_PERMITIDA`, `TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA`, `CLIENTE_EM_ATRASO`, `LAYOUT_CAMPO_OBRIGATORIO`) e 422 `VALIDATION_ERROR` em `items[i].total`, `subtotal` ou `total` quando o total calculado não cabe na coluna |
 
 A 404 vem antes da 409: a diferença entre os dois códigos não pode virar oráculo de existência (a mesma regra do §0.1).
 A versão vem antes da situação: quem editava um documento que outra aba confirmou recebe "recarregue" e, recarregando,
 vê o estado real. A trava é sem junção porque, com junção, o PostgreSQL reavalia a linha depois de esperar a trava:
 se a gravação concorrente trocou o cliente, a linha sairia da junção e a PATCH responderia 404 a um documento que
-existe. O documento completo é lido depois, já travado.
+existe. O documento completo é lido depois, sem trava, pela linha que esta transação já travou.
 
 **Resposta 200**: o documento como o `GET <base>/:id` o devolve, com a `version` nova. Toda PATCH que grava faz UM
 update do cabeçalho — também a que só muda item, porque os totais são regravados —, e a versão sobe exatamente 1.
