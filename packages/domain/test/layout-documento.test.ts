@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  FAMILIAS_COM_LAYOUT,
+  FAMILIAS_COM_LAYOUT_DE_VENDAS,
   LAYOUT_DO_SISTEMA,
   validarEstruturaLayout,
   resolverLayout,
@@ -15,7 +15,9 @@ const sis = (f: string = F): EstruturaLayout => structuredClone(LAYOUT_DO_SISTEM
 const caminhos = (f: string, e: EstruturaLayout) => validarEstruturaLayout(f, e).map((x) => x.caminho);
 
 describe("LD-D1 layout do sistema reproduz a Central de hoje", () => {
-  it.each(FAMILIAS_COM_LAYOUT)("%s valida sem erros e tem a ordem de hoje", (f) => {
+  // COMPRAS-03 (decisão 269): as chaves abaixo são as da Central de VENDAS; as famílias de compras têm o próprio
+  // catálogo e o próprio layout do sistema (compras-03.test.ts). O "vale para toda família" fica no contrato.
+  it.each(FAMILIAS_COM_LAYOUT_DE_VENDAS)("%s valida sem erros e tem a ordem de hoje", (f) => {
     const l = LAYOUT_DO_SISTEMA(f);
     expect(validarEstruturaLayout(f, l)).toEqual([]);
     expect(l.versaoSchema).toBe(1);
@@ -93,7 +95,8 @@ describe("LD-D2 regras de validarEstruturaLayout", () => {
     expect(caminhos(F, l)).toEqual(["itens"]);
   });
   it("família desconhecida", () => {
-    expect(validarEstruturaLayout("compras.pedido", sis())).toEqual([{ caminho: "familia", mensagem: expect.any(String) }]);
+    // COMPRAS-03: "compras.pedido" passou a ter layout; a família sem layout aqui é a solicitação de compras
+    expect(validarEstruturaLayout("compras.solicitacao", sis())).toEqual([{ caminho: "familia", mensagem: expect.any(String) }]);
   });
   it("versaoSchema errada", () => {
     const l = { ...sis(), versaoSchema: 2 } as unknown as EstruturaLayout;

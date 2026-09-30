@@ -1404,6 +1404,76 @@ usa (`pickRef`, `acaoDaCentral`, `abrirDadosAdicionais`) funcionam nas duas Cent
 **Reversão:** reverter a PR (redeploy do web anterior). Nada a desfazer em banco ou configuração: a posição do
 rótulo, o ampliar, o Duplicar e o "Salvo" vivem só na memória da tela.
 
+## COMPRAS-03 — layout do documento de compra (0038)
+
+Decisão 269. **Uma migration: `0038_layout_do_documento_de_compra.sql`** (pre-deploy; trava (2026,72), `lock_timeout` 2 s,
+pré/pós-condições nomeadas `COMPRAS-03: ...`, não destrutiva, sem backfill): o CHECK `chk_layouts_documento_familia`
+de `erp.layouts_documento` passa a aceitar as duas famílias de compra (`compras.pedido` e `compras.compra`) ao lado
+das três de venda — drop e add na MESMA instrução, sem instante sem o CHECK; o gatilho que confere "família da TOP =
+família do layout" (`trg_layout_documento_tops_familia`, 0032) já era genérico e NÃO muda. E as funções SECURITY
+DEFINER do documento de compra vivas depois da 0037 (enumeradas pelo catálogo na pré-condição) passam a
+`search_path = erp, pg_temp` (padrão da 0033 e da 0035: `pg_catalog` implícito primeiro, `pg_temp` por último), por `ALTER FUNCTION` — corpo, dono, privilégios
+e gatilhos ficam como estão (item 0 e). As pós-condições conferem objetos (o CHECK aceita exatamente as cinco
+famílias; toda função definer de compras tem o `search_path` novo; o gatilho da família continua o da 0032); não
+comparam contagens de tabelas vivas. Nenhuma variável nova, nenhuma permissão nova: o layout de compra se administra
+com as capacidades da TOP (`tipos_operacao.*`) e a Central o lê com `pedidos_compra.create` / `compras.create`.
+
+**Pré-condição:** quem aplica a 0038 é dono (ou membro do papel dono: `pg_has_role(..., 'USAGE')`) das funções de
+compras e de `erp.layouts_documento` (ALTER TABLE e COMMENT), e o dono das funções atravessa RLS (superusuário ou
+`BYPASSRLS`) — a própria migration recusa, com `COMPRAS-03: o dono de alguma funcao SECURITY DEFINER de compras nao
+atravessa RLS; ...`, `COMPRAS-03: o papel que aplica a migration nao e dono das funcoes SECURITY DEFINER de
+compras; ...` ou `COMPRAS-03: o papel que aplica a migration nao e dono de erp.layouts_documento; ...`, e nada é
+aplicado. Também recusa se o gatilho da família não for o da 0032 (ausente, desligado, de outro tipo ou em outra
+função), se o CHECK de família não for o da 0032, ou se a 0037 não terminou. Em erro, publique o nome do papel, nunca a conexão. A 0038 também
+exige que as funções SECURITY DEFINER do schema `erp` que se chamam `documentos_compra%` ou leem `documentos_compra`
+sejam EXATAMENTE as quatro da COMPRAS-01/02 (`documentos_compra_itens_documento_aberto`, `documentos_compra_conferir_v2`,
+`documentos_compra_transicao_v2` e `documentos_compra_item_origem_guarda`). Qualquer outra — criada à mão, schema
+divergente — para a migration com `COMPRAS-03: funcoes SECURITY DEFINER de compras diferentes das quatro esperadas
+(...)`, que nomeia a função a mais, e nada é aplicado. O que fazer com essa função é decisão do Maike; a sessão não a
+remove nem a altera.
+
+**Ordem: banco (0038) → API → web.** Janelas:
+1. **API anterior × banco novo:** a API anterior só cria layout das famílias de venda (a lista de famílias dela é a
+   de vendas) e não lê layout de compra; o CHECK mais largo não muda nada do que ela grava ou lê. Os gatilhos de
+   compras só mudaram o `search_path` — toda referência deles já era qualificada —, então lançar, receber, confirmar
+   e cancelar seguem como na COMPRAS-02.
+2. **web ANTERIOR × API nova:** o "Novo" do configurador anterior só oferece as famílias de venda, então nenhum layout
+   de compra nasce por ele; sem layout de compra, a API nova cobra o layout do sistema — isto é, nada — e a Central de
+   Compras anterior salva como hoje (ela não conhece `capacidades.layoutDocumento` e não pede `/layout-efetivo`). Se um
+   layout de compra já existir (criado pela web nova), a lista de layouts da web anterior o mostra com o código cru da
+   família e ela não tem catálogo para editá-lo: não o edite por ela (o servidor novo confere toda gravação com o
+   catálogo de compra, então nada inválido é gravado). Com esse layout ligado, a Central anterior recebe do salvar o
+   422 `LAYOUT_CAMPO_OBRIGATORIO`, que ela mostra pela mensagem e pelo caminho de `details`, como qualquer 422 de campo.
+3. **web NOVA × API anterior:** sem `capacidades.layoutDocumento` em `operation-types`, a Central de Compras não pede
+   `/layout-efetivo` e é a Central de hoje (sem campo governado, sem erro novo, Salvar como hoje); sem os três flags
+   novos em `regras-da-operacao`, nenhum campo é forçado por eles — e sem layout nenhum campo está escondido. O
+   lançador que escolhe a TOP primeiro e a TOP travada na Central valem com qualquer API (dependem só de
+   `operation-types`, que a API anterior já responde). O configurador novo oferece as famílias de compra, mas a API
+   anterior recusa criar layout de compra (422 na família): nada é gravado; e o filtro do Movimento **Compra** na lista
+   de layouts chama a API anterior com `familia=compras.*`, que ela recusa — a grade mostra o 422 (os filtros de venda
+   seguem normais). Na lista de TOPs, as TOPs de compra mostram "Layout do documento: indisponível" (a API anterior não
+   responde o layout efetivo de compra); as de venda, como hoje.
+
+**Impacto em dados reais:** o CHECK de família dos layouts passa a aceitar as duas famílias de compra; nenhum dado muda.
+
+**Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0038 fica: o CHECK mais largo e o
+`search_path` novo não mudam o que a API anterior faz. Com layout de compra já gravado, a API anterior não o lê nem o
+cobra (a Central de Compras volta a salvar sem layout) e não o edita (a família não está no catálogo dela). Voltar o
+CHECK às três famílias de venda só é possível sem layout de compra gravado e é decisão do Maike — com migration NOVA,
+nunca editando a 0038. Nada de apagar dado de produção (decisão 247): para tirar um layout de compra de uso, desligue
+as TOPs dele (a Central volta ao layout do sistema) ou desative-o; o layout fica guardado.
+
+**Roteiro do Maike (produção é operacional — decisões 240 e 247; a prova não precisa gravar documento):**
+1. Configurações › Operações › Layouts de documento › Novo → Movimento **Compra** → nome → criar a partir do layout
+   do sistema.
+2. No configurador: tirar um campo (por exemplo, Transportadora), marcar **Observação** como obrigatória, pôr um
+   **Fornecedor** como valor padrão (padrão de cadastro) e salvar. Em "TOPs ligadas", ligar a TOP **Compra** e salvar.
+3. Compras › Documentos › Novo → TOP **Compra**: a Central de Compras mostra o layout — a Transportadora não aparece, a
+   Observação tem "*", o Fornecedor vem preenchido e a TOP aparece travada ("Tipo de Operação").
+4. Salvar sem Observação recusa no campo, e nada é gravado. (Para desfazer a prova: desligue a TOP do layout.)
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
 ## COMPRAS-02 — receber o pedido de compra (0037)
 
 Decisão 268. **Uma migration: `0037_receber_pedido_de_compra.sql`** (pre-deploy; trava (2026,71), `lock_timeout` 2 s,

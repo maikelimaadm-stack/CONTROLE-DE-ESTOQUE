@@ -1,10 +1,11 @@
-import { FORMA_UUID_PADRAO, padroesRegistroDaEstrutura, resolverLayout, type EstruturaLayout, type OrigemDoLayout } from "@agro/domain";
+import { FORMA_UUID_PADRAO, padroesRegistroDaEstrutura, removerPadroesRegistro, resolverLayout, type EstruturaLayout, type OrigemDoLayout } from "@agro/domain";
 import type { ServiceCtx } from "./context.js";
 
 /**
  * LAYOUT DO DOCUMENTO (VENDAS-A3-1). A escolha é a do domínio (`resolverLayout`): ligado à TOP (ativo, vivo) →
- * padrão ativo da família → LAYOUT DO SISTEMA. UM dono (R1): a Central (rota de vendas) e a linha da TOP (rota de
- * Configurações) leem daqui. Documento SEM TOP usa o do sistema (não o padrão da família: sem
+ * padrão ativo da família → LAYOUT DO SISTEMA. UM dono (R1): a Central (rota de vendas), a linha da TOP (rota de
+ * Configurações) e, desde a COMPRAS-03, as rotas de compras (layout efetivo e cobrança no lançamento) leem daqui.
+ * Documento SEM TOP usa o do sistema (não o padrão da família: sem
  * TOP não há família escolhida, como na criação sem `tipo_operacao_id`). Recorte de organização em toda consulta.
  */
 export async function layoutEfetivo(ctx: ServiceCtx, familia: string, tipoOperacaoId: string | null): Promise<{ estrutura: EstruturaLayout; origem: OrigemDoLayout; nome: string | null; id: string | null }> {
@@ -42,12 +43,16 @@ interface ConsultaDoPadrao { sql: string; filtros: ReadonlyMap<string, string>; 
 type LinhaDoPadrao = { id: string; rotulo: string; empresa_id: string | null } & Record<string, unknown>;
 
 const CONSULTA_DO_PADRAO: ReadonlyMap<string, ConsultaDoPadrao> = new Map<string, ConsultaDoPadrao>([
+  // COMPRAS-03 (decisão 269): `is_provider=true` é o filtro do Fornecedor no catálogo de compras. Coluna a MAIS na
+  // mesma consulta: as de vendas (cliente, proprietário, transportadora) respondem exatamente como antes.
   ["people", {
     sql: `select t.id::text as id, t.name::text as rotulo, null::text as empresa_id,
-                 t.is_client as f_cliente, t.is_proprietary as f_proprietario, t.is_transporter as f_transportadora
+                 t.is_client as f_cliente, t.is_proprietary as f_proprietario, t.is_transporter as f_transportadora,
+                 t.is_provider as f_fornecedor
             from erp.people t
            where t.id = any($1::uuid[]) and t.organization_id = $2 and t.is_active and t.deleted_at is null`,
-    filtros: new Map([["is_client=true", "f_cliente"], ["is_proprietary=true", "f_proprietario"], ["is_transporter=true", "f_transportadora"]]),
+    filtros: new Map([["is_client=true", "f_cliente"], ["is_proprietary=true", "f_proprietario"], ["is_transporter=true", "f_transportadora"],
+      ["is_provider=true", "f_fornecedor"]]),
     comEmpresa: false
   }],
   ["payment_methods", {
@@ -139,4 +144,28 @@ export async function conferirPadroesRegistro(ctx: ServiceCtx, familia: string, 
     else invalidos.push({ chave: p.chave, caminho: p.caminho, rotulo: p.rotulo });
   });
   return { validos, invalidos };
+}
+
+/* ─────────────── COMPRAS-03: a resposta do `/layout-efetivo` da Central ─────────────── */
+/** O contrato do `/layout-efetivo` da Central (VENDAS-A3-1 + A3-1b): os dois mapas só existem com padrão de cadastro. */
+export interface LayoutEfetivoDaCentral {
+  estrutura: EstruturaLayout; origem: OrigemDoLayout; nome: string | null; id: string | null;
+  padroesDeCadastro?: Record<string, RegistroPadraoConferido>; padroesInvalidos?: string[];
+}
+/**
+ * A RESPOSTA do `/layout-efetivo` para a TOP JÁ CONFERIDA pela rota (a 404 uniforme é da rota: cada porta sabe a sua
+ * família e a sua permissão). É o contrato do `/layout-efetivo` de vendas (`sales.ts`), escrito aqui para as rotas de
+ * compras (COMPRAS-03, decisão 269) — `sales.ts` fica como está nesta fatia, e a web lê as duas respostas com o MESMO
+ * leitor. Layout SEM padrão `registro` (inclusive o do sistema) responde só `{ estrutura, origem, nome, id }`, sem
+ * consulta a mais; com padrão registro, a `estrutura` sai SEM eles e eles vêm à parte, CONFERIDOS AGORA nesta
+ * organização: `padroesDeCadastro` = os que valem, `padroesInvalidos` = as chaves dos que morreram.
+ */
+export async function respostaDoLayoutEfetivo(ctx: ServiceCtx, familia: string, tipoOperacaoId: string): Promise<LayoutEfetivoDaCentral> {
+  const l = await layoutEfetivo(ctx, familia, tipoOperacaoId);
+  if (!padroesRegistroDaEstrutura(familia, l.estrutura).length) return { estrutura: l.estrutura, origem: l.origem, nome: l.nome, id: l.id };
+  const c = await conferirPadroesRegistro(ctx, familia, l.estrutura);
+  const padroesDeCadastro: Record<string, RegistroPadraoConferido> = Object.fromEntries([...c.validos].map(([chave, v]) =>
+    [chave, { id: v.id, rotulo: v.rotulo, ...(v.empresaId !== undefined ? { empresaId: v.empresaId } : {}) }]));
+  const padroesInvalidos = [...new Set(c.invalidos.map((x) => x.chave))];
+  return { estrutura: removerPadroesRegistro(l.estrutura), origem: l.origem, nome: l.nome, id: l.id, padroesDeCadastro, padroesInvalidos };
 }

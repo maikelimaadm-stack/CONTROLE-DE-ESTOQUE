@@ -71,8 +71,10 @@ const FAMILIA_DO_PEDIDO = familiaOperacionalDeDocumentoVenda("order");
  * uma lista daqui. Decide duas coisas de APRESENTAÇÃO: o bloco "Cliente em atraso" (regra que só existe na venda; a
  * API recusa outro valor nas famílias de compra) e as frases da aba Execução, que falam de "vendas" só quando o
  * movimento é de vendas. Família vazia ou desconhecida não é venda: o texto fica neutro, e o bloco some.
+ * COMPRAS-03: exportada porque a listagem (`tipos-operacao.tsx`) entrega ao histórico de versões, com a MESMA chave, se
+ * uma versão sem política declarada seguia a ponte de vendas (`comPonte`). O histórico não tem regra própria para isso.
  */
-const ehMovimentoDeVendas = (codigoBase: string): boolean => !!codigoBase && tipoOperacao(codigoBase)?.modulo === "vendas";
+export const ehMovimentoDeVendas = (codigoBase: string): boolean => !!codigoBase && tipoOperacao(codigoBase)?.modulo === "vendas";
 
 /** As oito seções, na ordem em que a tela as mostra. */
 const ABAS = [
@@ -94,7 +96,7 @@ const AJUDA: Record<ChaveAba, string> = {
   geral:
     "As regras de preenchimento e de ciclo de vida do documento: quem confirma, o que é obrigatório informar e o que ainda pode ser alterado depois da confirmação. Confirmação e alteração após confirmar ficam registradas nesta versão, mas ainda não são executadas: a confirmação automática, por exemplo, não confirma documento nenhum. As exigências de preenchimento só são cobradas no lançamento em versões gravadas com as restrições da operação.",
   destinos:
-    "Para quais operações um documento deste tipo pode ser encaminhado. A lista de opções vem do servidor, já limitada ao que o produto sabe executar; habilitar um caminho aqui não concede permissão a ninguém. Em vendas, enquanto esta operação não declarar a política, a conversão continua seguindo o caminho anterior do produto; nas demais operações, sem política declarada não há próxima operação.",
+    "Para quais operações um documento deste tipo pode ser encaminhado. A lista de opções vem do servidor, já limitada ao que o produto sabe executar; habilitar um caminho aqui não concede permissão a ninguém. Enquanto esta operação não declarar a política, a conversão continua seguindo o caminho anterior do produto.",
   estoque:
     "Se esta operação declara movimentação de estoque e em que sentido, além do que ela exige do operador e do que fazer quando o saldo ficaria negativo. Esta seção só é executada quando a aba Execução entrega o estoque à configuração da TOP.",
   financeiro:
@@ -106,6 +108,16 @@ const AJUDA: Record<ChaveAba, string> = {
   execucao:
     "Quem decide o estoque e o financeiro de um documento desta operação: o comportamento legado do produto ou a configuração desta TOP. Cada efeito é decidido separadamente, e só o que o servidor declara executável pode ser ativado."
 };
+
+/**
+ * COMPRAS-03 (item 0 f) — a ajuda da aba "Próximas operações" FORA de vendas. O texto de `AJUDA.destinos` é o de vendas,
+ * o de antes da COMPRAS-02, sem mudar uma letra: só em vendas existe a ponte para o caminho anterior (havia acervo
+ * convertendo por ela — decisão 268). Nos demais movimentos (compras, ou movimento ainda não escolhido) a política não
+ * declarada quer dizer "sem próxima operação", e é isso que a ajuda diz. A chave é `ehMovimentoDeVendas`, a mesma do
+ * aviso da aba (`EstadoDaPolitica`) e do histórico de versões.
+ */
+const AJUDA_DESTINOS_SEM_PONTE =
+  "Para quais operações um documento deste tipo pode ser encaminhado. A lista de opções vem do servidor, já limitada ao que o produto sabe executar; habilitar um caminho aqui não concede permissão a ninguém. Enquanto esta operação não declarar a política, um documento deste tipo não oferece próxima operação.";
 
 // ---------------------------------------------------------------------------------------------------
 // Campos
@@ -141,9 +153,12 @@ function CampoSimNao({ rotulo, ajuda, valor, onChange, desabilitado, testId, spa
   </Field>;
 }
 
-/** Cabeçalho de seção com a ajuda própria daquela aba — nunca um texto genérico reaproveitado. */
-const Secao = ({ chave, children }: { chave: ChaveAba; children: React.ReactNode }) => <div>
-  <p className="mb-3 text-[12px] leading-relaxed text-slate-500">{AJUDA[chave]}</p>
+/**
+ * Cabeçalho de seção com a ajuda própria daquela aba — nunca um texto genérico reaproveitado. `ajuda` troca o texto
+ * quando a mesma aba diz coisas diferentes por movimento (hoje, só "Próximas operações": com ou sem a ponte de vendas).
+ */
+const Secao = ({ chave, ajuda, children }: { chave: ChaveAba; ajuda?: string; children: React.ReactNode }) => <div>
+  <p className="mb-3 text-[12px] leading-relaxed text-slate-500">{ajuda ?? AJUDA[chave]}</p>
   <div className="grid grid-cols-12 gap-3">{children}</div>
 </div>;
 
@@ -550,7 +565,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         <ErrosDeCampo erros={errosCampo} prefixos={["geral"]} />
       </Secao>}
 
-      {aba === "destinos" && liberado && <Secao chave="destinos">
+      {aba === "destinos" && liberado && <Secao chave="destinos" ajuda={ehMovimentoDeVendas(rascunho.codigoBase) ? undefined : AJUDA_DESTINOS_SEM_PONTE}>
         <div className="col-span-12">
           <AbaDestinos
             codigoBase={rascunho.codigoBase}

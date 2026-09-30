@@ -168,9 +168,12 @@ describe("premissas e catálogo", () => {
     expect(t.map((x) => x.codigo_base)).toEqual(["compras.compra", "compras.pedido"]);
   });
 
-  it("a 0037 é a 37ª migration do ledger e a última aplicada", async () => {
-    const r = (await db.query<{ n: number; ultima: string }>("select count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
-    expect(r).toEqual({ n: 37, ultima: "0037_receber_pedido_de_compra.sql" });
+  it("a 0037 é a 37ª migration do ledger; depois dela, só a 0038 (COMPRAS-03)", async () => {
+    // A posição da 0037 continua sendo a 37ª; a contagem total acompanha a ordem do repositório (a 0038 alarga
+    // o CHECK de família dos layouts e fixa o search_path destas funções — layouts-documento-compras.test.ts).
+    const r = (await db.query<{ ate: number; n: number; ultima: string }>(
+      "select count(*) filter (where name <= '0037_receber_pedido_de_compra.sql')::int ate, count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
+    expect(r).toEqual({ ate: 37, n: 38, ultima: "0038_layout_do_documento_de_compra.sql" });
   });
 
   it("colunas novas: tipo e nulidade", async () => {

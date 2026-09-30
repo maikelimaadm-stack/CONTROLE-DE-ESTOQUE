@@ -3,7 +3,7 @@ import * as React from "react";
 import { COPY } from "@/lib/copy";
 import { Button, Dialog, Field, Input, NativeSelect } from "@/components/ui";
 import { RefSelect, type Option } from "@/components/ui/ref-select";
-import { AVISO_PADRAO_REGISTRO_MORTO, COLUNAS_COM_PADRAO_REGISTRO, type CampoDoCatalogo, type ValorPadraoLayout } from "@agro/domain";
+import { AVISO_PADRAO_REGISTRO_MORTO, colunasComPadraoRegistro, type CampoDoCatalogo, type ValorPadraoLayout } from "@agro/domain";
 import {
   TEXTOS, campoDaChave, ehChaveDeColuna, useConfigurador,
   type CampoDoLayout, type ColunaDoLayout, type EstruturaLayout, type RegistroConhecido
@@ -48,7 +48,10 @@ export function ConfigurarCampoDialogo({ chave, onFechar, idMorto: idMortoProp, 
   const vpAtual = (valor as Partial<CampoDoLayout>).valorPadrao;
   const idMorto = idMortoProp ?? (ctx.padroesInvalidos.has(chave) && vpAtual?.tipo === "registro" ? vpAtual.id : undefined);
   const rotuloDe = (id: string) => { const r = ctx.padroesDeCadastro.get(chave); return r && r.id === id && r.rotulo ? r.rotulo : undefined; };
+  // COMPRAS-03 (decisão 269): a coluna que aceita padrão de cadastro é a do corpo da FAMÍLIA (warehouse_id em vendas,
+  // armazem_id em compras) — o mesmo dono que a validação do domínio usa na gravação.
   return <Corpo key={chave} ehItem={ehItem} valor={valor} catalogo={catalogo} idMorto={idMorto} rotuloDe={rotuloDe}
+    colunasComPadrao={colunasComPadraoRegistro(ctx.familia)}
     onFechar={onFechar}
     onAplicar={(novo, registro) => {
       const r = substituirCampo(ctx.estrutura, chave, { ...novo });
@@ -59,9 +62,11 @@ export function ConfigurarCampoDialogo({ chave, onFechar, idMorto: idMortoProp, 
     }} />;
 }
 
-function Corpo({ ehItem, valor, catalogo, idMorto, rotuloDe, onFechar, onAplicar }: {
+function Corpo({ ehItem, valor, catalogo, idMorto, rotuloDe, colunasComPadrao, onFechar, onAplicar }: {
   ehItem: boolean; valor: CampoDoLayout | ColunaDoLayout; catalogo?: CampoDoCatalogo;
   idMorto?: string; rotuloDe: (id: string) => string | undefined;
+  /** as colunas de item que aceitam padrão registro NA FAMÍLIA (`colunasComPadraoRegistro`) */
+  colunasComPadrao: readonly string[];
   onFechar: () => void; onAplicar: (v: CampoDoLayout | ColunaDoLayout, registro?: RegistroConhecido) => void;
 }) {
   const base = valor as Partial<CampoDoLayout>;
@@ -77,9 +82,9 @@ function Corpo({ ehItem, valor, catalogo, idMorto, rotuloDe, onFechar, onAplicar
   const somenteLeitura = Boolean(catalogo?.somenteLeitura);
   /** R1: o corpo sempre leva valor — o domínio recusa "obrigatório" nele. */
   const sempreTemValor = Boolean(catalogo?.sempreTemValor);
-  /** A3-1b: "Registro do cadastro" — campo com `referencia`; nos itens, só as colunas de COLUNAS_COM_PADRAO_REGISTRO. */
+  /** A3-1b: "Registro do cadastro" — campo com `referencia`; nos itens, só as colunas que a família aceita (COMPRAS-03). */
   const referencia = catalogo?.referencia;
-  const aceitaRegistro = Boolean(referencia) && (!ehItem || COLUNAS_COM_PADRAO_REGISTRO.includes(valor.campo));
+  const aceitaRegistro = Boolean(referencia) && (!ehItem || colunasComPadrao.includes(valor.campo));
   const [registroId, setRegistroId] = React.useState<string | null>(base.valorPadrao?.tipo === "registro" ? base.valorPadrao.id : null);
   const [registroRotulo, setRegistroRotulo] = React.useState("");
   const morto = modo === "registro" && Boolean(idMorto) && registroId === idMorto;

@@ -6,16 +6,31 @@
  * UMA conta só: a API e a tela usam `validarEstruturaLayout`, `resolverLayout` e `camposObrigatoriosFaltando` daqui.
  * O layout governa só a DIGITAÇÃO; os efeitos continuam presos à versão da TOP do documento. O valor padrão é literal,
  * variável ou (VENDAS-A3-1b) registro de cadastro: aqui só a forma (UUID) e o lugar; a existência é conferida pela API.
+ *
+ * COMPRAS-03 (decisão 269): o MESMO mecanismo vale para o Pedido de compra e a Compra. O que era "de venda" e passa a
+ * ser POR FAMÍLIA: o catálogo (`catalogoDaFamilia`), a chave das linhas no corpo (`chaveDosItensDaFamilia`) e a coluna
+ * que aceita padrão de cadastro (`colunasComPadraoRegistro`). Vendas não muda um byte.
  */
 
-import { TIPOS_OPERACAO } from "./tipo-operacao.js";
+import { TIPOS_OPERACAO, tipoOperacao } from "./tipo-operacao.js";
 
-/** As famílias da Central de Vendas, LIDAS do registry (dono único da lista): as variantes de `erp.sales_documents`. */
-export const FAMILIAS_COM_LAYOUT: readonly string[] = Object.freeze(
-  TIPOS_OPERACAO.filter((t) => t.origem.tabela === "erp.sales_documents").map((t) => t.codigo)
-);
+/** As variantes de uma tabela, LIDAS do registry (dono único da lista), na ordem do registry. */
+const variantesDaTabela = (tabela: string): string[] => TIPOS_OPERACAO.filter((t) => t.origem.tabela === tabela).map((t) => t.codigo);
+/** As famílias da Central de Vendas: as variantes de `erp.sales_documents` (orçamento, pedido, venda). */
+export const FAMILIAS_COM_LAYOUT_DE_VENDAS: readonly string[] = Object.freeze(variantesDaTabela("erp.sales_documents"));
+/** COMPRAS-03: as famílias da Central de Compras: as variantes de `erp.documentos_compra` (pedido, compra). */
+export const FAMILIAS_COM_LAYOUT_DE_COMPRAS: readonly string[] = Object.freeze(variantesDaTabela("erp.documentos_compra"));
+/**
+ * Todas as famílias com layout. VENDAS PRIMEIRO, de propósito: no registry as de compras vêm antes das de vendas, e o
+ * "Novo" do configurador (e toda lista que pega a primeira família) tem de continuar começando por vendas. Esta é a
+ * ordem das listas de Movimento na tela.
+ */
+export const FAMILIAS_COM_LAYOUT: readonly string[] = Object.freeze([...FAMILIAS_COM_LAYOUT_DE_VENDAS, ...FAMILIAS_COM_LAYOUT_DE_COMPRAS]);
 export type FamiliaComLayout = string;
 export function familiaTemLayout(f: string): f is FamiliaComLayout { return FAMILIAS_COM_LAYOUT.includes(f); }
+/** COMPRAS-03: a família é do documento de compra (pedido ou compra)? */
+export function familiaDeCompras(f: string): boolean { return FAMILIAS_COM_LAYOUT_DE_COMPRAS.includes(f); }
+const familiaDeVendas = (f: string): boolean => FAMILIAS_COM_LAYOUT_DE_VENDAS.includes(f);
 
 export type ParteDoLayout = "cabecalho" | "rodape" | "itens";
 export type TipoDoCampoLayout = "referencia" | "empresa" | "data" | "texto" | "texto_longo" | "numero" | "booleano" | "plano";
@@ -60,7 +75,7 @@ const R = (aba: string, chave: string, rotulo: string, tipo: TipoDoCampoLayout, 
 const I = (chave: string, rotulo: string, tipo: TipoDoCampoLayout, extra: Partial<CampoDoCatalogo> = {}): CampoDoCatalogo => ({ chave, rotulo, parte: "itens", tipo, ...extra });
 
 /** O catálogo das vendas (orçamento, pedido, venda): exatamente os campos da Central de hoje, na ordem de hoje. */
-const CATALOGO_VENDAS: readonly CampoDoCatalogo[] = [
+export const CATALOGO_VENDAS: readonly CampoDoCatalogo[] = [
   C("client_id", "Cliente", "referencia", { sistema: "sempre", referencia: { recurso: "people", filtro: { is_client: "true" } } }),
   C("empresa_id", "Empresa", "empresa", { sistema: "sempre" }),
   C("document_date", "Data", "data", { sistema: "sempre" }),
@@ -91,7 +106,70 @@ const CATALOGO_VENDAS: readonly CampoDoCatalogo[] = [
   I("total", "Total", "numero", { somenteLeitura: true })
 ];
 
-export function catalogoDaFamilia(familia: string): readonly CampoDoCatalogo[] { return familiaTemLayout(familia) ? CATALOGO_VENDAS : []; }
+/**
+ * COMPRAS-03 (decisão 269): o catálogo do Pedido de compra e da Compra — as chaves do CORPO da compra (o que a Central
+ * de Compras envia à API), na ordem e com os rótulos da Central de Compras de hoje. Tudo é "cabecalho": a Central de
+ * Compras não tem rodapé com abas, e o layout do sistema põe tudo no grupo principal. `daCompra` acrescenta o que só a
+ * Compra tem (entrada, nota, lote e validade): o Pedido não conhece esses campos, e o layout dele não pode citá-los.
+ *
+ * NÃO são "do sistema", de propósito: Natureza de despesa e Centro de resultado. Quem os exige é a REGRA da TOP quando a
+ * compra gera título; cobrá-los sempre recusaria o pedido que não gera título. Nenhum campo tem `exige`: a API de compras
+ * sempre declara classificação e condição. Natureza de despesa SEM `referencia`: o filtro dela (despesa OU ambas) não
+ * cabe no filtro de igualdade do padrão de cadastro — sem `referencia`, o domínio recusa padrão registro nela.
+ */
+function catalogoDeCompras(daCompra: boolean): readonly CampoDoCatalogo[] {
+  const soNaCompra = (c: CampoDoCatalogo): CampoDoCatalogo[] => (daCompra ? [c] : []);
+  return Object.freeze([
+    C("empresa_id", "Empresa", "empresa", { sistema: "sempre" }),
+    C("fornecedor_id", "Fornecedor", "referencia", { sistema: "sempre", referencia: { recurso: "people", filtro: { is_provider: "true" } } }),
+    C("data_documento", "Data do documento", "data", { sistema: "sempre" }),
+    ...soNaCompra(C("data_entrada", "Data de entrada", "data")),
+    C("data_vencimento", "Vencimento", "data"),
+    ...soNaCompra(C("numero_nota", "Número da nota", "texto")),
+    ...soNaCompra(C("serie_nota", "Série", "texto")),
+    C("transportadora_id", "Transportadora", "referencia", { referencia: { recurso: "people", filtro: { is_transporter: "true" } } }),
+    C("categoria_financeira_id", "Natureza de despesa", "referencia"),
+    C("centro_custo_id", "Centro de resultado", "referencia", { referencia: { recurso: "cost_centers", filtro: { kind: "analytic" } } }),
+    C("condicao_pagamento_id", "Condição de pagamento", "referencia", { referencia: { recurso: "condicoes_pagamento" } }),
+    C("forma_pagamento_id", "Forma de pagamento", "referencia", { referencia: { recurso: "payment_methods" } }),
+    C("frete", "Frete", "numero", { sempreTemValor: true }),
+    C("outras_despesas", "Outras despesas", "numero", { sempreTemValor: true }),
+    C("desconto", "Desconto", "numero", { sempreTemValor: true }),
+    C("plano_parcelas", "Parcelas", "plano", { sempreTemValor: true }),
+    C("observacao", "Observação", "texto_longo"),
+    // a ordem das colunas é a do ItemsEditor de hoje (os E2E de compras localizam armazém e produto pela posição)
+    I("armazem_id", "Armazém", "referencia", { referencia: { recurso: "warehouses" } }),
+    I("produto_id", "Produto", "referencia", { sistema: "sempre" }),
+    I("quantidade", "Quantidade", "numero", { sistema: "sempre" }),
+    I("valor_unitario", "Valor unitário", "numero", { sistema: "sempre" }),
+    I("desconto", "Desconto", "numero", { sempreTemValor: true }),
+    I("desconto_percentual", "Desconto %", "numero", { sempreTemValor: true }),
+    ...soNaCompra(I("lote", "Lote", "texto")),
+    ...soNaCompra(I("validade", "Validade", "data"))
+  ]);
+}
+/**
+ * Pela ESPÉCIE do documento (`erp.documentos_compra.especie`, o valor que o banco persiste), lida do registry pela
+ * variante da família — nunca pelo código da família, para o registry continuar sendo o único dono da lista de famílias.
+ * Espécie nova no registry sem catálogo aqui: nenhum campo (fail-closed), nunca o catálogo da vizinha.
+ */
+const CATALOGO_DE_COMPRAS_POR_ESPECIE: ReadonlyMap<string, readonly CampoDoCatalogo[]> = new Map([
+  ["pedido", catalogoDeCompras(false)],
+  ["compra", catalogoDeCompras(true)]
+]);
+
+/** O catálogo da família: vendas → CATALOGO_VENDAS; compras → o da espécie; outra → nenhum (fail-closed). */
+export function catalogoDaFamilia(familia: string): readonly CampoDoCatalogo[] {
+  if (familiaDeVendas(familia)) return CATALOGO_VENDAS;
+  if (familiaDeCompras(familia)) return CATALOGO_DE_COMPRAS_POR_ESPECIE.get(tipoOperacao(familia)?.origem.valor ?? "") ?? [];
+  return [];
+}
+
+/**
+ * COMPRAS-03: a chave das LINHAS no corpo do documento — "items" em vendas (o corpo de sales), "itens" em compras. É
+ * também a dona do caminho do erro do item (`items[i].x` × `itens[i].x`), que a tela usa para apontar o 422 no campo.
+ */
+export function chaveDosItensDaFamilia(familia: string): "items" | "itens" { return familiaDeCompras(familia) ? "itens" : "items"; }
 
 /* ─────────────── ESTRUTURA (versaoSchema 1) ─────────────── */
 /**
@@ -171,6 +249,7 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
     a.campos.forEach((x, i) => conferirCampo(x, `rodape[${ai}].campos[${i}]`, { tipo: "aba", indice: ai }));
   });
   const vistosItem = new Set<string>();
+  const colunasComPadrao = colunasComPadraoRegistro(familia);
   estrutura.itens.forEach((x, i) => {
     const c = it.get(x.campo); const caminho = `itens[${i}]`;
     if (!c) { e.push({ caminho: `${caminho}.campo`, mensagem: `Coluna "${x.campo}" não existe nos itens.` }); return; }
@@ -178,8 +257,10 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
     vistosItem.add(x.campo);
     if (c.somenteLeitura && x.obrigatorio) e.push({ caminho, mensagem: `"${c.rotulo}" é só leitura: não pode ser obrigatória.` });
     if (c.sempreTemValor && x.obrigatorio) e.push({ caminho: `${caminho}.obrigatorio`, mensagem: mensagemSempreTemValor(c.rotulo) });
-    // VENDAS-A3-1b: valor padrão de coluna só na coluna Armazém e só do tipo registro (UUID)
-    if (x.valorPadrao && !(COLUNAS_COM_PADRAO_REGISTRO.includes(x.campo) && x.valorPadrao.tipo === "registro" && padraoCompativel(c, x.valorPadrao)))
+    // VENDAS-A3-1b: valor padrão de coluna só na coluna Armazém e só do tipo registro (UUID); COMPRAS-03: a da família
+    // COMPRAS-03_R1: em compras, lote e validade têm a recusa própria (mais clara) — uma mensagem só por campo
+    const temRecusaPropria = familiaDeCompras(familia) && (x.campo === "lote" || x.campo === "validade");
+    if (x.valorPadrao && !temRecusaPropria && !(colunasComPadrao.includes(x.campo) && x.valorPadrao.tipo === "registro" && padraoCompativel(c, x.valorPadrao)))
       e.push({ caminho: `${caminho}.valorPadrao`, mensagem: `Valor padrão incompatível com "${c.rotulo}".` });
   });
   // campo "do sistema" fora do layout SEM valor padrão (coluna do sistema não tem padrão: tem de estar lá)
@@ -201,7 +282,39 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
     if (!x) e.push({ caminho: c.parte, mensagem: `"${c.rotulo}" é obrigatório do sistema: ponha no layout.` });
     else if (!x.obrigatorio) e.push({ caminho: caminhoDe(x.campo) + ".obrigatorio", mensagem: `"${c.rotulo}" é obrigatório do sistema: não pode ficar opcional.` });
   }
+  if (familiaDeCompras(familia)) conferirRegrasDeCompras(estrutura, noLayout, caminhoDe, e);
   return e;
+}
+
+/**
+ * COMPRAS-03_R1 (decisão 269): o que o lançar de compras SEMPRE recusaria é recusado já na gravação do layout. Só nas
+ * famílias de compras — vendas não passa por aqui (a saída de vendas não muda). Cada recusa aponta o campo.
+ *  - Lote e Validade: o layout só decide se aparecem, rótulo e ordem; quem os exige é a regra do produto, item a item.
+ *  - Série só com Número da nota no layout; Série fixa (padrão e não editável) só com Número editável.
+ *  - Natureza de despesa e Centro de resultado: os dois no layout ou os dois fora, com o mesmo "obrigatório"; Centro fixo
+ *    (padrão e não editável) só com Natureza no layout e editável.
+ */
+function conferirRegrasDeCompras(estrutura: EstruturaLayout, noLayout: ReadonlyMap<string, CampoDoLayout>, caminhoDe: (campo: string) => string, e: ErroDoLayout[]): void {
+  estrutura.itens.forEach((x, i) => {
+    if (x.campo !== "lote" && x.campo !== "validade") return;
+    const rotulo = x.campo === "lote" ? "Lote" : "Validade";
+    if (x.obrigatorio) e.push({ caminho: `itens[${i}].obrigatorio`, mensagem: `"${rotulo}" é exigido pela regra do produto: o layout não o torna obrigatório.` });
+    if (x.valorPadrao) e.push({ caminho: `itens[${i}].valorPadrao`, mensagem: `"${rotulo}" é informado item a item: não aceita valor padrão.` });
+  });
+  const fixo = (x: CampoDoLayout) => Boolean(x.valorPadrao) && !x.editavel;
+  const serie = noLayout.get("serie_nota"); const numero = noLayout.get("numero_nota");
+  if (serie && !numero) e.push({ caminho: `${caminhoDe("serie_nota")}.campo`, mensagem: `"Série" só entra no layout com "Número da nota".` });
+  else if (serie && numero && fixo(serie) && !numero.editavel)
+    e.push({ caminho: `${caminhoDe("serie_nota")}.editavel`, mensagem: `"Série" com valor padrão fixo exige "Número da nota" editável.` });
+  const natureza = noLayout.get("categoria_financeira_id"); const centro = noLayout.get("centro_custo_id");
+  if (natureza && !centro) e.push({ caminho: `${caminhoDe("categoria_financeira_id")}.campo`, mensagem: `"Natureza de despesa" e "Centro de resultado" entram juntos no layout: ponha também "Centro de resultado".` });
+  if (centro && !natureza) e.push({ caminho: `${caminhoDe("centro_custo_id")}.campo`, mensagem: `"Natureza de despesa" e "Centro de resultado" entram juntos no layout: ponha também "Natureza de despesa".` });
+  if (natureza && centro) {
+    if (natureza.obrigatorio !== centro.obrigatorio)
+      e.push({ caminho: `${caminhoDe("centro_custo_id")}.obrigatorio`, mensagem: `"Centro de resultado" e "Natureza de despesa" têm de ser ambos obrigatórios ou ambos opcionais.` });
+    if (fixo(centro) && !natureza.editavel)
+      e.push({ caminho: `${caminhoDe("centro_custo_id")}.editavel`, mensagem: `"Centro de resultado" com valor padrão fixo exige "Natureza de despesa" editável.` });
+  }
 }
 
 export type OrigemDoLayout = "ligado" | "padrao_da_familia" | "sistema";
@@ -214,12 +327,16 @@ export function resolverLayout(familia: string, a: { ligado?: EstruturaLayout | 
 
 const vazio = (v: unknown) => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
 
+const ehLinha = (v: unknown): v is Readonly<Record<string, unknown>> => typeof v === "object" && v !== null;
+
 /**
  * Obrigatórios do layout que o documento deixa vazios → [{ caminho, rotulo }]. `documento` tem as chaves do corpo
- * da API (o valor que o documento TERÁ depois de gravar) e `items`. Caminho do item: `items[i].<campo>`.
- * Campo com `exige` que a API não declara (`capacidades`) não é cobrado.
+ * da API (o valor que o documento TERÁ depois de gravar) e as linhas em `documento[chaveDosItensDaFamilia(familia)]`
+ * ("items" em vendas, "itens" em compras). Caminho do item: `<chave>[i].<campo>` — em vendas `items[i].<campo>`, como
+ * sempre foi. Campo com `exige` que a API não declara (`capacidades`) não é cobrado. Linha que não é objeto conta como
+ * linha vazia (cobra tudo): falhar fechado, nunca pular a linha.
  */
-export function camposObrigatoriosFaltando(familia: string, estrutura: EstruturaLayout, documento: Record<string, unknown> & { items?: Record<string, unknown>[] }, capacidades: { classificacao?: boolean; condicao?: boolean } = {}): { caminho: string; rotulo: string }[] {
+export function camposObrigatoriosFaltando(familia: string, estrutura: EstruturaLayout, documento: Record<string, unknown>, capacidades: { classificacao?: boolean; condicao?: boolean } = {}): { caminho: string; rotulo: string }[] {
   // VENDAS-A3-1c: campo do documento achado pela CHAVE em qualquer zona (cabeçalho ou aba); coluna só nos itens
   const cat = new Map(catalogoDaFamilia(familia).map((c) => [c.parte === "itens" ? `itens:${c.chave}` : `documento:${c.chave}`, c]));
   const ativo = (c: CampoDoCatalogo | undefined) => Boolean(c) && (!c!.exige || (c!.exige === "classificacao" ? capacidades.classificacao : capacidades.condicao));
@@ -232,11 +349,15 @@ export function camposObrigatoriosFaltando(familia: string, estrutura: Estrutura
   };
   estrutura.cabecalho.forEach((x) => topo(x));
   estrutura.rodape.forEach((a) => a.campos.forEach((x) => topo(x)));
-  (documento.items ?? []).forEach((linha, i) => {
+  const chave = chaveDosItensDaFamilia(familia);
+  const linhas: unknown = documento[chave];
+  const lista: readonly unknown[] = Array.isArray(linhas) ? linhas : [];
+  lista.forEach((linha, i) => {
+    const l: Readonly<Record<string, unknown>> = ehLinha(linha) ? linha : {};
     for (const x of estrutura.itens) {
       const c = cat.get(`itens:${x.campo}`);
       if (!x.obrigatorio || !c || c.somenteLeitura || c.sempreTemValor) continue;
-      if (vazio(linha[x.campo])) out.push({ caminho: `items[${i}].${x.campo}`, rotulo: x.rotulo ?? c.rotulo });
+      if (vazio(l[x.campo])) out.push({ caminho: `${chave}[${i}].${x.campo}`, rotulo: x.rotulo ?? c.rotulo });
     }
   });
   return out;
@@ -249,8 +370,19 @@ export const ERRO_LAYOUT_CAMPO_OBRIGATORIO = "LAYOUT_CAMPO_OBRIGATORIO";
 export const mensagemCampoObrigatorio = (rotulo: string) => `O campo '${rotulo}' é obrigatório nesta operação.`;
 
 /* ─────────────── VENDAS-A3-1b: padrão de CADASTRO (registro) e arquivo do layout ─────────────── */
-/** Colunas de item que aceitam padrão registro (só o Armazém). */
+/**
+ * Colunas de item que aceitam padrão registro (só o Armazém) — as de VENDAS. Continua exportada para quem já a importa;
+ * a regra (validação e configurador) passa pela família: `colunasComPadraoRegistro`.
+ */
 export const COLUNAS_COM_PADRAO_REGISTRO: readonly string[] = Object.freeze(["warehouse_id"]);
+const COLUNAS_COM_PADRAO_REGISTRO_DE_COMPRAS: readonly string[] = Object.freeze(["armazem_id"]);
+const NENHUMA_COLUNA: readonly string[] = Object.freeze([]);
+/** COMPRAS-03: as colunas de item que aceitam padrão registro NA FAMÍLIA — o Armazém de cada corpo; outra família, nenhuma. */
+export function colunasComPadraoRegistro(familia: string): readonly string[] {
+  if (familiaDeVendas(familia)) return COLUNAS_COM_PADRAO_REGISTRO;
+  if (familiaDeCompras(familia)) return COLUNAS_COM_PADRAO_REGISTRO_DE_COMPRAS;
+  return NENHUMA_COLUNA;
+}
 /** Chave do padrão de cadastro nos mapas da API: o campo (cabeçalho/rodapé) ou "itens.<coluna>". */
 export const chavePadraoDeCadastro = (parte: ParteDoLayout, campo: string) => (parte === "itens" ? `itens.${campo}` : campo);
 export const FORMA_UUID_PADRAO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
