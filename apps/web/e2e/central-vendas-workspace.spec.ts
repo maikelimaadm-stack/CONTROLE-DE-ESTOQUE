@@ -37,11 +37,11 @@ const DIVISOR_H = "central-vendas-divisor-horizontal";
 const LARGURA = { min: 17, max: 52, padrao: 30 };
 const ALTURA = { min: 92, max: 430, padrao: 206 };
 /**
- * VISUAL-UX-02 (decisão 270): o cabeçalho de Dados principais do desenho. TODO-COORDENADOR: o pedido diz 36 px; o CSS
- * do desenho diz `--dz-reg: 32px` + 1 px de borda. Fechar com a medida real do DOM — a MESMA de `MEDIDAS` em
+ * VISUAL-UX-02 (decisão 270): o cabeçalho de Dados principais do desenho — `height: 36px` inline + 1 px de borda: a
+ * caixa medida no desenho é 37 (o `--dz-reg: 32px` do CSS não vale para ele). A MESMA medida de `MEDIDAS` em
  * central-vendas-desenho.spec.ts (VD-1).
  */
-const ALTURA_DO_CABECALHO_DE_DADOS = 36;
+const ALTURA_DO_CABECALHO_DE_DADOS = 37;
 /**
  * OS CONJUNTOS DA BARRA E DO LEQUE, POR MODO (decisão 270) — nomes acessíveis na ORDEM do DOM. O leque vai de baixo
  * para cima, como no desenho; "N documentos abertos" leva o número, por isso é casado por padrão.

@@ -35,8 +35,9 @@ const MEDIDAS = {
   pilula: { altura: 25, fonte: "12.5px", peso: "600" },
   posicaoDoRotulo: { altura: 25 },
   documento: { raio: "14px" },
-  /** TODO-COORDENADOR: o pedido diz 36; o CSS do desenho diz `--dz-reg: 32px` + 1 px de borda. Fechar com a medida real. */
-  cabecalhoDeDados: 36,
+  /** O desenho põe `height: 36px` INLINE no cabeçalho (o `--dz-reg: 32px` do CSS não vale para ele) + 1 px de borda:
+   *  a caixa medida no desenho é 37. O pedido diz 36 — é o conteúdo; a caixa é 37. */
+  cabecalhoDeDados: 37,
   campo: {
     rotuloLargura: 126, rotuloFonte: "12px", rotuloPeso: "500", rotuloCor: "rgb(100, 116, 139)",
     caixaInicio: 136, caixaAltura: 30, caixaRaio: "8px",
