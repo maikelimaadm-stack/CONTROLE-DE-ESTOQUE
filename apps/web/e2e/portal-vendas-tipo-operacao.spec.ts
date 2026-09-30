@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, logout, api, uniq, empresaAtiva, primeiroId, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, acaoDaCentral } from "./helpers";
+import { login, logout, api, uniq, empresaAtiva, primeiroId, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, acaoDaCentral, abrirDadosAdicionais } from "./helpers";
 
 /**
  * PORTAL DE VENDAS COM TOP CADASTRADA — o caminho que o usuário faz de verdade (TOP-CONFIG-02).
@@ -75,6 +75,8 @@ test("cadastra TOPs, lança pelo Portal de Vendas e o detalhe mostra o snapshot"
   // TOP configurada E família canônica aparecem como coisas DIFERENTES.
   await expect(page.getByText(nomeTop)).toBeVisible();
   // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
+  // Decisão 270: na consulta, Movimento mora em "Dados adicionais" — abre-se o grupo antes de ler.
+  await abrirDadosAdicionais(page);
   await expect(page.getByText("Movimento", { exact: true })).toBeVisible();
 });
 
@@ -351,6 +353,8 @@ test("LEGADO — documento sem TOP abre, diz que não está configurado e manté
   await expect(page.getByText("Não configurada (registro legado)")).toBeVisible();
   // A família canônica CONTINUA correta — ela vem do registro, não da configuração.
   // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
+  // Decisão 270: na consulta, Movimento mora em "Dados adicionais" — abre-se o grupo antes de ler.
+  await abrirDadosAdicionais(page);
   await expect(page.getByText("Movimento", { exact: true })).toBeVisible();
 
   // E continua na listagem: um INNER JOIN o teria feito sumir.
