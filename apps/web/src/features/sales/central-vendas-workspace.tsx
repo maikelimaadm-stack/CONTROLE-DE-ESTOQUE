@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { ChevronDown, FilePlus, Loader2 } from "lucide-react";
+import { ChevronDown, FilePlus } from "lucide-react";
 import { Tabs } from "@/components/ui";
 import { useWorkspaceImersivo } from "@/components/layout/workspace-imersivo";
 import type { Densidade } from "./central-vendas-campo";
@@ -336,27 +336,3 @@ export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade
     </AmpliarContexto.Provider>
   </div>;
 }
-
-/** Botão só de ícone da barra: redondo, com nome acessível e dica — nunca ícone mudo. */
-export const AcaoDaBarra = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { rotulo: string; destaque?: "salvar" | "novo"; ocupado?: boolean; aberta?: boolean; dica?: "inicio" | "fim" }>(
-  ({ rotulo, destaque, ocupado, aberta, dica, className, children, disabled, ...p }, ref) => <button ref={ref} type="button" aria-label={rotulo} data-dica={rotulo}
-    aria-busy={ocupado || undefined} disabled={disabled || ocupado}
-    className={cn(estilos.acao, destaque === "salvar" && estilos.acaoSalvar, destaque === "novo" && estilos.acaoNovo, aberta && estilos.acaoAberta, dica === "inicio" && estilos.dicaInicio, dica === "fim" && estilos.dicaFim, className)} {...p}>
-    {ocupado ? <Loader2 className={estilos.girar} aria-hidden /> : children}
-  </button>
-);
-AcaoDaBarra.displayName = "AcaoDaBarra";
-
-/**
- * A ação de MAIOR hierarquia da etapa (Confirmar venda, Converter): pílula verde sólida com ícone E
- * texto, como no design. É a única ação da barra que não é só ícone — o texto nomeia o efeito.
- */
-export const AcaoPrincipal = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { icone: React.ReactNode; ocupado?: boolean }>(
-  ({ icone, ocupado, className, children, disabled, ...p }, ref) => <button ref={ref} type="button" aria-busy={ocupado || undefined} disabled={disabled || ocupado}
-    className={cn(estilos.acaoPrincipal, className)} {...p}>
-    {ocupado ? <Loader2 className={estilos.girar} aria-hidden /> : icone}{children}
-  </button>
-);
-AcaoPrincipal.displayName = "AcaoPrincipal";
-
-export const DivisorDaBarra = () => <span className={estilos.barraDivisor} aria-hidden />;

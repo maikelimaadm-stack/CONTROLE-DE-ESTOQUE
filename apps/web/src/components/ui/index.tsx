@@ -5,8 +5,11 @@ import * as TabsP from "@radix-ui/react-tabs";
 import * as DropdownP from "@radix-ui/react-dropdown-menu";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MgDatePicker } from "./mg-controls";
+import { MgDatePicker, type PainelDoCalendario } from "./mg-controls";
 import { Card } from "./card";
+
+/** O calendário do campo de data, para quem precisa do painel próprio (Central de Vendas, VISUAL-UX-02). */
+export { MgDatePicker, type PainelDoCalendario };
 
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(({ className, ...p }, ref) => {
   if (p.type === "date") return <DateInput ref={ref} className={className} {...p} />;

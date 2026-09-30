@@ -73,42 +73,10 @@
 .acao:disabled { opacity: .42; cursor: not-allowed; }
 .acao:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
 .acao svg { width: 16px; height: 16px; }
-/* Salvar: contorno verde, a ação de maior hierarquia que a criação TEM */
-.acaoSalvar { background: #fff; border-color: #e0e4e9; color: #22a85c; }
-.acaoSalvar:hover:not(:disabled) { background: #ecfdf3; border-color: rgba(64, 222, 99, .5); color: #15803d; }
-.acaoSalvar:active:not(:disabled) { background: #dcfce7; }
-.acaoSalvar[aria-busy="true"],
-.acaoSalvar[aria-busy="true"]:disabled { opacity: 1; background: #ecfdf3; color: #15803d; box-shadow: inset 0 0 0 1px rgba(64, 222, 99, .45); cursor: default; }
+
 .acaoAberta { background: #e2e8f0; color: #0f172a; box-shadow: inset 0 0 0 1px #cbd5e1; }
-/* Novo: círculo verde preenchido, ícone branco */
-.acaoNovo { background: #40de63; color: #fff; }
-.acaoNovo:hover:not(:disabled) { background: #36c956; color: #fff; }
-.acaoNovo:active:not(:disabled) { background: #22a85c; }
-.acaoNovo svg { width: 17px; height: 17px; stroke-width: 2.4; }
-/* Confirmar / Converter: pílula verde sólida com ícone e texto — a ação de maior hierarquia */
-.acaoPrincipal {
-  height: 32px;
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0 15px 0 13px;
-  border: 0;
-  border-radius: 999px;
-  background: #40de63;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background-color var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
-}
-.acaoPrincipal:hover:not(:disabled) { background: #36c956; }
-.acaoPrincipal:active:not(:disabled) { background: #22a85c; transform: scale(.975); }
-.acaoPrincipal:disabled { opacity: .5; cursor: not-allowed; }
-.acaoPrincipal:focus-visible { outline: 2px solid #15803d; outline-offset: 2px; }
-.acaoPrincipal svg { width: 15px; height: 15px; stroke-width: 2.3; flex-shrink: 0; }
+
+
 .selo {
   position: absolute;
   top: -3px;
@@ -181,72 +149,56 @@
 .link:hover { background: #ecfdf3; }
 .link:focus-visible { outline: 2px solid #22a85c; outline-offset: 1px; }
 
-/* popover PORTALADO (menu Mais ações): fora de `.workspace`, então sem as variáveis de movimento dele */
-.popoverFlutuante {
-  z-index: 80;
-  box-sizing: border-box;
-  overflow: hidden;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, .72);
-  -webkit-backdrop-filter: blur(22px) saturate(180%);
-  backdrop-filter: blur(22px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, .65);
-  box-shadow: 0 18px 40px rgba(15, 23, 42, .18), 0 2px 8px rgba(15, 23, 42, .08), inset 0 1px 0 rgba(255, 255, 255, .85);
-  animation: sobe 230ms cubic-bezier(.16, 1, .3, 1) backwards;
-}
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .popoverFlutuante { background: rgba(255, 255, 255, .97); }
-}
-.menu { width: 244px; padding: 4px 0; }
-.menuItem { display: block; height: 32px; line-height: 32px; padding: 0 12px; font-size: 12.5px; color: #1e293b; cursor: pointer; outline: none; user-select: none; }
-.menuItem[data-highlighted] { background: rgba(64, 222, 99, .14); box-shadow: inset 3px 0 0 #22a85c; }
-.menuItemPerigo { color: #b91c1c; }
-.menuSeparador { height: 1px; background: rgba(15, 23, 42, .08); margin: 4px 0; }
-@media (prefers-reduced-motion: reduce) { .popoverFlutuante { animation: none; } }
 
-/* documentos abertos — a barra de abas que já existe, vista como lista de documentos */
-.docsAncora { position: relative; display: inline-flex; }
-.docs { right: 0; top: 38px; width: 430px; }
+/* documentos abertos — a barra de abas vista como lista (`.pop` 430px + `.olist`/`.orow` do desenho, VISUAL-UX-02);
+   ancora no leque de Ações rápidas, sob o ⚡ */
+.docs { right: 0; top: 38px; width: 432px; }
 .docsBusca { padding: 10px 12px 8px; border-bottom: 1px solid #eef1f4; }
 .pesquisaPilula { display: flex; align-items: center; gap: 7px; height: 30px; box-sizing: border-box; padding: 0 4px 0 10px; border: 1px solid #e1e6eb; border-radius: 999px; background: #fff; color: #94a3b8; transition: border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io); }
 .pesquisaPilula:focus-within { border-color: #40de63; box-shadow: 0 0 0 3px rgba(64, 222, 99, .15); }
 .pesquisaPilula svg { width: 14px; height: 14px; flex-shrink: 0; }
 .pesquisaPilula input { flex: 1 1 auto; min-width: 0; border: 0; outline: none; background: transparent; font-size: 12.5px; color: #111827; }
 .pesquisaPilula input::placeholder { color: #a9b2bd; }
-.docsLista { max-height: 300px; overflow: auto; padding: 4px 0; margin: 0; list-style: none; }
+.docsLista { max-height: 300px; overflow: auto; padding: 0; margin: 0; list-style: none; }
 .docsLinha {
   position: relative;
   display: grid;
-  grid-template-columns: 18px 86px minmax(0, 1fr) 92px 10px 22px;
+  grid-template-columns: 104px minmax(0, 1fr) 92px 10px 22px;
   align-items: center;
-  gap: 8px;
-  height: 34px;
-  padding: 0 10px 0 12px;
-  transition: background-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io);
+  width: 100%;
+  box-sizing: border-box;
+  height: 30px;
+  font-size: 12.5px;
+  color: #111827;
+  transition: background-color 130ms ease;
+  animation: desceDeLeve var(--mi) var(--ez) backwards;
 }
+.docsLinha > span { box-sizing: border-box; height: 30px; padding: 0 8px; display: flex; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+.docsLinha > span:first-of-type { padding-left: 14px; }
+.docsLinha > span:last-of-type { padding-right: 14px; justify-content: flex-end; overflow: visible; }
+.docsLista .docsLinha + .docsLinha { box-shadow: inset 0 1px 0 rgba(15, 23, 42, .055); }
 .docsLinha[hidden] { display: none; }
-.docsLinha:hover { background: rgba(15, 23, 42, .05); }
-.docsLinha[data-atual="true"] { background: rgba(64, 222, 99, .16); box-shadow: inset 3px 0 0 #22a85c; }
+.docsLinha:hover { background: rgba(15, 23, 42, .04); }
+.docsLinha[data-atual="true"],
+.docsLinha[data-atual="true"]:hover { background: rgba(64, 222, 99, .15); box-shadow: none; }
 /* a linha inteira escolhe o documento: o botão principal estica por cima dela, o × fica acima dele */
 .docsEscolher { position: absolute; inset: 0; z-index: 0; border: 0; background: transparent; cursor: pointer; padding: 0; }
 .docsEscolher:focus-visible { outline: 2px solid #22a85c; outline-offset: -2px; }
-.docsIcone { display: inline-flex; color: #94a3b8; pointer-events: none; }
-.docsIcone svg { width: 14px; height: 14px; }
-.docsIcone[data-tom="warning"] { color: #92400e; }
-.docsIcone[data-tom="positive"] { color: #166534; }
-.docsIcone[data-tom="negative"] { color: #991b1b; }
-.docsTitulo { font-size: 12.5px; font-weight: 600; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
-.docsTitulo.codigo { font-size: 11.5px; }
-.docsCliente { font-size: 12px; color: #64748b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
-.docsSituacao { display: inline-flex; min-width: 0; pointer-events: none; }
-.docsFechar { position: relative; z-index: 1; width: 22px; height: 22px; border: 0; border-radius: 999px; background: transparent; color: #a7b0bb; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; opacity: 0; transition: opacity var(--mf) var(--ez-io), background-color var(--mf) var(--ez-io), color var(--mf) var(--ez-io); }
+.docsTitulo { font-size: 12.5px; font-weight: 500; color: #111827; text-overflow: ellipsis; pointer-events: none; }
+.docsCodigo { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; font-weight: 500; letter-spacing: -.01em; font-variant-numeric: tabular-nums; color: #7b8694; }
+.docsCliente { font-size: 12.5px; color: #111827; text-overflow: ellipsis; pointer-events: none; }
+.docsSituacao { pointer-events: none; }
+.docsPonto { pointer-events: none; }
+.docsFecharCelula { position: relative; z-index: 1; }
+.docsFechar { width: 22px; height: 22px; border: 0; border-radius: 999px; background: transparent; color: #475569; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; opacity: 0; transition: opacity 120ms, background-color 120ms, color 120ms; }
 .docsFechar svg { width: 13px; height: 13px; }
 .docsLinha:hover .docsFechar,
 .docsLinha:focus-within .docsFechar,
 .docsFechar:focus-visible { opacity: 1; }
-.docsFechar:hover { background: #eef1f4; color: #334155; }
+.docsFechar:hover { background: #eef1f4; color: #0f172a; }
 .docsFechar:focus-visible { outline: 2px solid #22a85c; outline-offset: 1px; }
 .docsVazio { padding: 24px 12px; text-align: center; font-size: 12.5px; color: #64748b; }
+@keyframes desceDeLeve { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 
 /* configuração de colunas da grade / campos do formulário do item */
 .configAncora { position: relative; display: inline-flex; }
@@ -395,46 +347,9 @@
 .travadoValor { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 13px; font-weight: 500; color: #8b939e; white-space: nowrap; overflow: hidden; }
 .travadoValor > :last-child { overflow: hidden; text-overflow: ellipsis; }
 .travado .adorno { color: #b6bdc6; top: auto; bottom: 11px; }
-/* campo preenchido, só leitura (consulta): o mesmo desenho do campo da criação, sem entrada */
-.leitura {
-  position: relative;
-  height: 38px;
-  box-sizing: border-box;
-  border-radius: 8px;
-  background: #fff;
-  border: 1px solid #e7eaee;
-  padding: 17px 32px 5px 10px;
-  display: flex;
-  align-items: flex-end;
-  min-width: 0;
-}
-.leituraVazia { background: #f1f3f4; border-color: transparent; }
-.leituraRotulo { position: absolute; top: 4px; left: 10px; font-size: 9px; font-weight: 500; line-height: 1; color: #9ca3af; }
-.leituraValor { min-width: 0; font-size: 13px; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.leituraVazia .leituraValor { color: #9ca3af; }
+
 .codigo { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; font-weight: 600; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
 .separador { color: #cbd5e1; }
-
-.maisDados {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  align-self: flex-start;
-  height: 26px;
-  padding: 0 4px;
-  border: 0;
-  background: transparent;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: #334155;
-  cursor: pointer;
-  border-radius: 6px;
-}
-.maisDados:hover { color: #15803d; }
-.maisDados:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
-.maisDados svg { width: 14px; height: 14px; transition: transform var(--mi) var(--ez); }
-.maisDados[aria-expanded="true"] svg { transform: rotate(90deg); }
-.mudo { color: #94a3b8; font-weight: 500; }
 
 /* ═════════════ divisores ═════════════ */
 /* o divisor é uma faixa cinza de 7px, arredondada; o traço verde só aparece ao passar, focar ou arrastar */

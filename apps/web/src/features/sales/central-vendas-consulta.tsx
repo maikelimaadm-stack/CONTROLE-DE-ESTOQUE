@@ -1,8 +1,7 @@
 "use client";
 import * as React from "react";
-import * as DropdownP from "@radix-ui/react-dropdown-menu";
 import * as PopoverP from "@radix-ui/react-popover";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Columns3, EllipsisVertical, FileText, Grid3x3, Plus } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Columns3, FileText, Grid3x3, Plus } from "lucide-react";
 import { cn, brl, num, pct } from "@/lib/utils";
 import { StockCell, type Row } from "@/features/docs/shared";
 import { ehDecimalDaApi } from "@/features/stock/reserva-estoque";
@@ -272,26 +271,3 @@ export function ConfigurarColunas<K extends string>({ titulo, subtitulo, rotulos
   </PopoverP.Root>;
 }
 
-export interface ItemDoMenu { rotulo: string; onSelect: () => void; perigo?: boolean; separar?: boolean; testId?: string }
-
-/**
- * "Mais ações" (⋮): o menu do conjunto de consulta do design, no vidro dos popovers da Central.
- * Radix DropdownMenu entrega papéis, teclado e foco; aqui só se veste. Recebe SÓ ações reais — a
- * tela decide quais existem para o documento e para o usuário, e nenhuma aparece "em breve".
- */
-export function MaisAcoes({ itens }: { itens: ItemDoMenu[] }) {
-  if (!itens.length) return null;
-  return <DropdownP.Root modal={false}>
-    <DropdownP.Trigger asChild>
-      <button type="button" className={cn(estilos.acao, estilos.dicaFim)} aria-label="Mais ações" data-dica="Mais ações" data-testid="central-vendas-mais-acoes"><EllipsisVertical aria-hidden /></button>
-    </DropdownP.Trigger>
-    <DropdownP.Portal>
-      <DropdownP.Content align="end" sideOffset={6} className={cn(estilos.popoverFlutuante, estilos.menu)} data-testid="central-vendas-mais-acoes-menu">
-        {itens.map((m, i) => <React.Fragment key={m.rotulo}>
-          {m.separar && i > 0 && <DropdownP.Separator className={estilos.menuSeparador} />}
-          <DropdownP.Item className={cn(estilos.menuItem, m.perigo && estilos.menuItemPerigo)} onSelect={m.onSelect} data-testid={m.testId}>{m.rotulo}</DropdownP.Item>
-        </React.Fragment>)}
-      </DropdownP.Content>
-    </DropdownP.Portal>
-  </DropdownP.Root>;
-}

@@ -2,7 +2,7 @@
 import * as React from "react";
 import { Calendar, ChevronDown, ChevronRight, ChevronUp, CircleAlert, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MgDatePicker, type PainelDoCalendario } from "@/components/ui/mg-controls";
+import { MgDatePicker, type PainelDoCalendario } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import estilos from "./central-vendas-campo.module.css";
 

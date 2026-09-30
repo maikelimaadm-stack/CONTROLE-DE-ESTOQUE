@@ -1,0 +1,78 @@
+/*
+ * CENTRAL DE VENDAS — CASCA DOS DIÁLOGOS (VISUAL-UX-02, decisão 270, item 4.6).
+ *
+ * O diálogo continua sendo o `Dialog` oficial (@/components/ui): overlay, foco preso e devolvido, Esc, título e
+ * descrição acessíveis e largura pela prop `size` são dele. Esta folha só VESTE o conteúdo com a casca do desenho
+ * (`.dlg`: raio 12, 18px 18px 14px, título 15px/600, texto 12,5px, botões `.tb-btn`). O cabeçalho, o corpo e o rodapé
+ * do primitive são alcançados pela ESTRUTURA (primeiro/último filho, h2, p) e não pelo nome das classes globais dele
+ * — a catraca de nomenclatura conta cada referência ao prefixo herdado.
+ */
+
+.dialogo[data-size] {
+  border-radius: 12px;
+  padding: 18px 18px 14px;
+  gap: 8px;
+  animation: dialogoEntra 230ms cubic-bezier(.16, 1, .3, 1) backwards;
+}
+.espacado[data-size] { gap: 10px; }
+
+/* cabeçalho: título e texto, sem faixa nem borda */
+.dialogo > :first-child { display: block; padding: 0; border: 0; }
+.dialogo > :first-child h2 { margin: 0; font-size: 15px; font-weight: 600; line-height: normal; color: #111827; }
+.dialogo > :first-child p { margin: 8px 0 0; font-size: 12.5px; line-height: 1.5; color: #475569; }
+.espacado > :first-child p { margin-top: 10px; }
+
+/* corpo: sem recuo próprio; vazio, ele só ocupa o espaço entre o texto e os botões (como o desenho) */
+.dialogo .corpo { padding: 0; overflow: visible; font-size: 12.5px; color: #475569; }
+.dialogo .corpo:empty { flex: 0 0 auto; }
+
+/* rodapé: os botões à direita, 8px entre eles, sem faixa */
+.dialogo > :last-child:not(:first-child) { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 0; border: 0; margin-top: 8px; }
+.semCorpo > :last-child:not(:first-child) { margin-top: 0; }
+.espacado > :last-child:not(:first-child) { margin-top: 4px; }
+
+/* botões do desenho (`.tb-btn` + gray / green / red / out) */
+.botao {
+  height: 30px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 13px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: #f1f3f4;
+  color: #475569;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 170ms cubic-bezier(.4, 0, .2, 1), color 170ms cubic-bezier(.4, 0, .2, 1), border-color 170ms cubic-bezier(.4, 0, .2, 1), box-shadow 170ms cubic-bezier(.4, 0, .2, 1), opacity 170ms cubic-bezier(.4, 0, .2, 1), transform 120ms cubic-bezier(.4, 0, .2, 1);
+}
+.botao:hover:not(:disabled) { background: #e8ecef; color: #0f172a; }
+.botao:active:not(:disabled) { transform: scale(.97); }
+.botao:disabled { opacity: .5; cursor: not-allowed; }
+.botao:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+.verde:hover:not(:disabled) { box-shadow: 0 3px 9px rgba(34, 197, 94, .36); }
+.verde:active:not(:disabled) { background: #dde3e8; }
+.vermelho { background: #dc2626; color: #fff; box-shadow: none; }
+.vermelho:hover:not(:disabled) { background: #b91c1c; color: #fff; }
+.girar { display: inline-flex; animation: girar 800ms linear infinite; }
+@keyframes girar { to { transform: rotate(360deg); } }
+
+/* o centro do diálogo oficial é um translate(-50%, -50%): a entrada do desenho (zoomIn) parte dele */
+@keyframes dialogoEntra {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(.965) translateY(6px); }
+  to { opacity: 1; transform: translate(-50%, -50%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dialogo[data-size] { animation: none; }
+  .botao { transition: none; }
+  .botao:active:not(:disabled) { transform: none; }
+  .girar { animation-duration: 1.6s; }
+}
