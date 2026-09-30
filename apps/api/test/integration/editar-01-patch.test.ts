@@ -86,9 +86,15 @@ async function ler(kind: Variante, id: string): Promise<Linha> {
 // ---------- testemunhas no banco (superusuário, sem RLS) ----------
 const linha = async (id: string) => (await admin.query<Linha>("select * from erp.sales_documents where id=$1", [id])).rows[0]!;
 const itens = async (id: string) => (await admin.query<Linha & { id: string }>("select * from erp.sales_document_items where document_id=$1 order by position, id", [id])).rows;
-type Evento = { id: string; action: string; before: Record<string, unknown> | null; after: Record<string, unknown> | null };
+type Evento = { id: string; action: string; before: Record<string, unknown> | null; after: Record<string, unknown> | null; metadata: Record<string, unknown> | null };
 const eventos = async (id: string) => (await admin.query<Evento>(
-  "select id::text, action, before, after from erp.audit_logs where entity='sales_documents' and entity_id=$1 order by id", [id])).rows;
+  "select id::text, action, before, after, metadata from erp.audit_logs where entity='sales_documents' and entity_id=$1 order by id", [id])).rows;
+/**
+ * O gatilho `erp.audit_row` (0005) grava, a CADA update da linha, um evento `update` com a linha INTEIRA antes/depois.
+ * O evento da EDIÇÃO é o outro `update`: o que traz SÓ os campos alterados — nunca a foto inteira do gatilho.
+ */
+const fotoDoGatilho = (e: Pick<Evento, "after">) => e.after !== null && "organization_id" in e.after;
+const daEdicao = (evs: readonly Evento[]) => evs.filter((e) => e.action === "update" && !fotoDoGatilho(e));
 /** A foto inteira do documento: linha, itens e eventos. "Nada gravado" = a mesma foto antes e depois. */
 const foto = async (id: string) => ({ doc: await linha(id), itens: await itens(id), eventos: await eventos(id) });
 const versaoGravada = async (id: string) => (await linha(id)).version as string;
@@ -192,7 +198,7 @@ describe("ED-2 — itens com id", () => {
     const semPreco = await patch("order", id, { version: v, items: [{ id: a!.id }, { product_id: I.product2!, quantity: "1" }] });
     expect(semPreco.statusCode, semPreco.body).toBe(422);
     expect(j(semPreco).error!.code).toBe("VALIDATION_ERROR");
-    expect(JSON.stringify(detalhes(semPreco))).toContain("unit_price");
+    expect(detalhes(semPreco)).toEqual(expect.arrayContaining([expect.objectContaining({ path: "items[1].unit_price" })]));
     expect(await foto(id), "nada gravado no documento").toEqual(antes);
     expect(await foto(outro), "nada gravado no dono do item alheio").toEqual(antesOutro);
     // PREMISSA: a mesma PATCH com os itens do próprio documento passa.
@@ -236,7 +242,7 @@ describe("ED-6 — corpo estrito", () => {
     const noItem = await patch("order", id, { version: v, items: [{ id: item!.id, quantidade: "3" }] });
     expect(noItem.statusCode, noItem.body).toBe(422);
     expect(j(noItem).error!.code).toBe("VALIDATION_ERROR");
-    expect(JSON.stringify(detalhes(noItem))).toContain("quantidade");
+    expect(detalhes(noItem)).toEqual(expect.arrayContaining([expect.objectContaining({ path: "items[0].quantidade" })]));
     expect(await foto(id), "nenhuma recusa gravou").toEqual(antes);
     // PREMISSA: o mesmo documento, com o corpo canônico, aceita a PATCH.
     const ok = await patch("order", id, { version: v, note: "mudou" });
@@ -287,7 +293,8 @@ describe("ED-7 — Idempotency-Key", () => {
     const depois = await foto(id);
     expect(depois.doc.version, "gravou uma vez só").toBe(mais(v0, 1));
     expect(depois.doc.note).toBe("idempotente");
-    expect(depois.eventos.filter((e) => e.action === "update").length - antes.eventos.filter((e) => e.action === "update").length, "um evento de auditoria só").toBe(1);
+    expect(daEdicao(depois.eventos).length - daEdicao(antes.eventos).length, "um evento da edição só").toBe(1);
+    expect(depois.eventos.filter(fotoDoGatilho).length - antes.eventos.filter(fotoDoGatilho).length, "um update da linha só").toBe(1);
     // A mesma chave com OUTRO corpo: conflito, sem efeito.
     const r3 = await patch("sale", id, { version: v0, note: "outro corpo" }, h.headers({ "idempotency-key": chave }));
     expect(r3.statusCode, r3.body).toBe(409);
@@ -302,36 +309,39 @@ describe("ED-7 — Idempotency-Key", () => {
 });
 
 describe("ED-8 — histórico", () => {
-  it("ED-8 o histórico mostra antes → depois SÓ dos campos alterados (cabeçalho e item)", async () => {
-    const id = await criar("order", { note: "velha", items: [ITEM({ quantity: "2", unit_price: "10.00", note: "nota A" }), ITEM({ product_id: I.product!, quantity: "3", unit_price: "8.00" })] });
-    const [a, b] = await itens(id);
-    const eventosAntes = (await eventos(id)).length;
-    const r = await patch("order", id, { version: await versaoGravada(id), note: "nova", items: [{ id: a!.id, quantity: "5" }, { id: b!.id }] });
+  it("ED-8 o histórico mostra antes → depois SÓ dos campos alterados (cabeçalho e item: alterado, incluído, removido)", async () => {
+    const id = await criar("order", { note: "velha", items: [
+      ITEM({ quantity: "2", unit_price: "10.00", note: "nota A" }),
+      ITEM({ product_id: I.product!, quantity: "3", unit_price: "8.00" }),
+      ITEM({ quantity: "1", unit_price: "5.00", note: "sai" })] });
+    const [a, b, c] = await itens(id);
+    const antesDaPatch = await eventos(id);
+    const r = await patch("order", id, { version: await versaoGravada(id), note: "nova", items: [
+      { id: a!.id, quantity: "5" }, { id: b!.id }, { product_id: I.product2!, warehouse_id: I.warehouse!, quantity: "4", unit_price: "7.00", note: "entra" }] });
     expect(r.statusCode, r.body).toBe(200);
-    // A leitura da tela (GET /api/admin/audit, com audit_logs.view) — a mesma coisa que o banco guarda.
+    const [, , d] = await itens(id);
+    // O banco: um evento da edição (e a foto do gatilho da única atualização da linha).
+    const novos = (await eventos(id)).slice(antesDaPatch.length);
+    expect(novos.map((e) => [e.action, fotoDoGatilho(e)])).toEqual([["update", true], ["update", false]]);
+    const noBanco = daEdicao(novos)[0]!;
+    // A leitura da tela (GET /api/admin/audit, com audit_logs.view) devolve o MESMO evento.
     const hist = await h.app.inject({ method: "GET", url: `/api/admin/audit?entity=sales_documents&entity_id=${id}`, headers: h.headers() });
     expect(hist.statusCode, hist.body).toBe(200);
-    const doHistorico = (j(hist).items as Evento[]).filter((e) => e.action === "update");
-    const noBanco = (await eventos(id)).slice(eventosAntes);
-    expect(noBanco.map((e) => e.action), "a PATCH grava um evento update").toEqual(["update"]);
+    const doHistorico = daEdicao(j(hist).items as Evento[]);
     expect(doHistorico).toHaveLength(1);
     const ev = doHistorico[0]!;
-    expect([ev.before, ev.after]).toEqual([noBanco[0]!.before, noBanco[0]!.after]);
+    expect([ev.before, ev.after, ev.metadata]).toEqual([noBanco.before, noBanco.after, noBanco.metadata]);
     const antes = ev.before!; const depois = ev.after!;
-    // Cabeçalho: a observação, antes → depois.
-    expect([antes.note, depois.note]).toEqual(["velha", "nova"]);
-    // SÓ os campos alterados: nada do cabeçalho que não mudou aparece.
-    for (const campo of ["client_id", "empresa_id", "document_date", "tipo_operacao_id", "condicao_pagamento_id", "installment_plan", "freight", "transporter_id", "status", "version"]) {
-      expect(antes, campo).not.toHaveProperty(campo);
-      expect(depois, campo).not.toHaveProperty(campo);
-    }
-    // O item: a quantidade do item A, antes → depois; o item B (intocado) não aparece.
-    const textoAntes = JSON.stringify(antes); const textoDepois = JSON.stringify(depois);
-    expect(textoAntes, "o item alterado está no antes").toContain(a!.id as string);
-    expect(textoDepois, "o item alterado está no depois").toContain(a!.id as string);
-    expect(textoAntes).toMatch(/"2(\.0+)?"|:2[,}]/);
-    expect(textoDepois).toMatch(/"5(\.0+)?"|:5[,}]/);
-    expect(textoAntes + textoDepois, "o item intocado não entra no histórico").not.toContain(b!.id as string);
+    // Cabeçalho: a observação (pedida) e os totais (derivados), antes → depois; nada mais.
+    expect(antes).toEqual({ note: "velha", subtotal: "49.00", total: "49.00", items: expect.anything() });
+    expect(depois).toEqual({ note: "nova", subtotal: "102.00", total: "102.00", items: expect.anything() });
+    // Itens: o alterado só com o que mudou; o incluído e o removido inteiros; o intocado (B) não aparece.
+    expect(antes.items).toEqual({ alterados: [{ id: a!.id, quantity: "2.0000", total: "20.00" }],
+      removidos: [expect.objectContaining({ id: c!.id, product_id: I.product2, quantity: "1.0000", note: "sai" })] });
+    expect(depois.items).toEqual({ alterados: [{ id: a!.id, quantity: "5.0000", total: "50.00" }],
+      incluidos: [expect.objectContaining({ id: d!.id, product_id: I.product2, quantity: "4.0000", note: "entra" })] });
+    expect(JSON.stringify(ev), "o item intocado não entra no histórico").not.toContain(b!.id as string);
+    expect(ev.metadata).toMatchObject({ via: "patch" });
   });
 });
 

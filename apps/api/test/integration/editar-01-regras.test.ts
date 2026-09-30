@@ -135,11 +135,13 @@ const converter = (kind: "budget" | "order", id: string, payload: Record<string,
 // ---------- testemunhas no banco (superusuário, sem RLS) ----------
 const linha = async (id: string) => (await admin.query<Linha>("select * from erp.sales_documents where id=$1", [id])).rows[0]!;
 const itens = async (id: string) => (await admin.query<Linha & { id: string }>("select * from erp.sales_document_items where document_id=$1 order by position, id", [id])).rows;
-const eventos = async (id: string) => (await admin.query<{ id: string; action: string }>(
-  "select id::text, action from erp.audit_logs where entity='sales_documents' and entity_id=$1 order by id", [id])).rows;
+type Evento = { id: string; action: string; before: Record<string, unknown> | null; after: Record<string, unknown> | null; metadata: Record<string, unknown> | null };
+const eventos = async (id: string) => (await admin.query<Evento>(
+  "select id::text, action, before, after, metadata from erp.audit_logs where entity='sales_documents' and entity_id=$1 order by id", [id])).rows;
 const foto = async (id: string) => ({ doc: await linha(id), itens: await itens(id), eventos: await eventos(id) });
 const versaoGravada = async (id: string) => (await linha(id)).version as string;
-const updates = async (id: string) => (await eventos(id)).filter((e) => e.action === "update").length;
+/** Eventos `update` da EDIÇÃO — não a foto inteira que o gatilho `erp.audit_row` (0005) grava a cada update da linha. */
+const updates = async (id: string) => (await eventos(id)).filter((e) => e.action === "update" && !(e.after !== null && "organization_id" in e.after)).length;
 const detalhes = (r: Resposta) => (j(r).error?.details ?? []) as Detalhe[];
 
 const MSG_VERSAO = "Este documento mudou desde que você o abriu. Recarregue antes de salvar.";
