@@ -342,6 +342,36 @@ describe("ED-4 — as regras do PUT valem na PATCH, com a mensagem de hoje", () 
     expect(await reservado(), "a conta continua fechando: pedido (4) + parte (4)").toBe("8.0000");
   });
 
+  it("ED-4 reserva: a venda INTEIRA gerada de pedido com reserva (sem ligação por item) não cresce além do disponível (a recusa de hoje); dentro dele, passa", async () => {
+    const topInteiro = await criarTop("order", "ED pedido com reserva inteiro", { reservaEstoque: true, destinos: [{ tipoOperacaoId: tops.sale, ordem: 0 }] });
+    const nome = `ED-4 venda inteira ${Math.random().toString(36).slice(2, 7)}`;
+    const p = await h.app.inject({ method: "POST", url: "/api/resources/products", headers: h.headers(), payload: { ...baseProduto, description: nome } });
+    expect(p.statusCode, p.body).toBe(201);
+    const produto = j(p).id as string;
+    const nomeGravado = (await admin.query<{ description: string }>("select description from erp.products where id=$1", [produto])).rows[0]!.description;
+    const s = await h.app.inject({ method: "POST", url: "/api/stock/opening-balances", headers: h.headers(),
+      payload: { empresa_id: I.empresa, warehouse_id: I.warehouse, product_id: produto, quantity: "10", unit_value: "5" } });
+    expect(s.statusCode, s.body).toBe(201);
+    const reservado = async () => (await admin.query<{ r: string }>(
+      "select coalesce(sum(n.reservado),0)::numeric(18,4)::text r from erp.reserva_estoque_nucleo($1, array[$2]::uuid[], array[$3]::uuid[], null) n",
+      [h.demo.orgId, I.warehouse, produto])).rows[0]!.r;
+    const pedido = await criar("order", { tipo_operacao_id: topInteiro, items: [ITEM({ product_id: produto, quantity: "8", unit_price: "5.00" })] });
+    const venda = (await converter("order", pedido, { tipo_operacao_id: tops.sale })).id as string;
+    const [vi] = await itens(venda);
+    // PREMISSAS: a venda é inteira (sem ligação por item) e segura a reserva; outro pedido reserva 1 → para ela sobram 9.
+    expect([vi!.origem_item_id, vi!.quantity, (await linha(pedido)).status]).toEqual([null, "8.0000", "converted"]);
+    await criar("order", { tipo_operacao_id: topInteiro, items: [ITEM({ product_id: produto, quantity: "1", unit_price: "5.00" })] });
+    expect(await reservado()).toBe("9.0000");
+    const linhaDaRecusa = `${nomeGravado} no armazém ${nomeArmazem}: disponível 9, pedido 10.`;
+    const r = await recusada("sale", venda, { version: await versaoGravada(venda), items: [{ id: vi!.id, quantity: "10" }] }, 422,
+      { code: "VALIDATION_ERROR", message: linhaDaRecusa }, "venda inteira acima do disponível");
+    expect(detalhes(r)).toEqual([{ path: "items", message: linhaDaRecusa }]);
+    const ok = await patch("sale", venda, { version: await versaoGravada(venda), items: [{ id: vi!.id, quantity: "9" }] });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect((await itens(venda)).map((x) => [x.id, x.quantity])).toEqual([[vi!.id, "9.0000"]]);
+    expect(await reservado(), "a venda (9) + o outro pedido (1)").toBe("10.0000");
+  });
+
   it("ED-4 exigências da TOP pela versão CONGELADA: a versão do documento exige observação → limpar recusa; a versão nova exige e a do documento não → passa", async () => {
     const t1 = await criarTop("order", "ED-4 exige observação");
     await novaVersao(t1, cfg((c) => { c.geral.exigeObservacao = true; }));
