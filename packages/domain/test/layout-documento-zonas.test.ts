@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  FAMILIAS_COM_LAYOUT,
+  FAMILIAS_COM_LAYOUT_DE_VENDAS,
   LAYOUT_DO_SISTEMA,
   validarEstruturaLayout,
   camposObrigatoriosFaltando,
@@ -107,7 +107,8 @@ describe("LC-D1 validarEstruturaLayout aceita campo do documento em qualquer zon
 });
 
 describe("LC-D2 layout do sistema com grupo; motivoZonaProibida; camposAdicionaisDoCabecalho", () => {
-  it.each(FAMILIAS_COM_LAYOUT)("%s: o de antes + proprietary_id em adicionais", (f) => {
+  // COMPRAS-03: o Proprietário em "Dados adicionais" é da Central de VENDAS; compras não tem grupo adicional no sistema
+  it.each(FAMILIAS_COM_LAYOUT_DE_VENDAS)("%s: o de antes + proprietary_id em adicionais", (f) => {
     const l = LAYOUT_DO_SISTEMA(f);
     expect(validarEstruturaLayout(f, l)).toEqual([]);
     // tirando o grupo, é o layout de antes (ordem, rótulos, obrigatórios — conferidos em LD-D1)
