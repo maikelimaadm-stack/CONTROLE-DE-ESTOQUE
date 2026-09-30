@@ -14,11 +14,16 @@ import { AVISO_PADRAO_INVALIDO_CENTRAL, CAMPOS_SO_NO_RODAPE, camposAdicionaisDoC
 import { api, ApiError } from "@/lib/api";
 import { MensagemTop, entendeClassificacaoFinanceira, entendeCondicaoPagamento, entendeLayoutDocumento, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
-import { ChevronRight, Repeat2, Save, Search } from "lucide-react";
+import { ChevronRight, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { AcaoDaBarra, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
+import { CentralVendasWorkspace } from "@/features/sales/central-vendas-workspace";
 import { ItensDaCentral, Travado } from "@/features/sales/central-vendas-itens";
-import { DocumentosAbertos } from "@/features/sales/central-vendas-documentos";
+/* VISUAL-UX-02 W1: barra da criação (Descartar, Salvar com pendências, Confirmar venda), leque, cópia do Duplicar */
+import { AcoesRapidas, BotaoDaBarra, ConjuntoDaBarra, ConjuntoDireito, IconeAlterarOperacao, IconeConfirmar, IconeDescartar, IconeHistorico, IconeImprimir, IconeSalvar, PendenciasDoDocumento, PilulaDaBarra, PosicaoDoRotulo, chaveDepoisDeSalvar, type DepoisDeSalvar, type ItemRapido, type Pendencia, type PosicaoDoRotuloValor } from "@/features/sales/central-vendas-barra";
+import { DialogoDescartar } from "@/features/sales/central-vendas-dialogos";
+import { chaveDaCopia, copiaValePara, type CopiaDoDocumento } from "@/features/sales/central-vendas-duplicar";
+import { descartarEntrega, entregarEmMemoria, espiarEntrega } from "@/lib/entrega-em-memoria";
+import { toast } from "@/lib/toast";
 /* TOP-CONFIG-05 exigências: as regras da operação (só com `capacidades.regrasDaOperacao` exata). */
 import { entendeRegrasDaOperacao, useRegrasDaOperacao, useSituacaoCliente } from "@/features/sales/regras-da-operacao";
 import estilosCv from "@/features/sales/central-vendas-workspace.module.css";
@@ -212,12 +217,23 @@ function Inner({ kind }: { kind: string }) {
    */
   const escritaTopConfirmada = podeLancar(estadoTop) && topAtual !== null;
 
+  /* VISUAL-UX-02 W1 — POSIÇÃO DO RÓTULO: estado desta tela (nem storage, nem perfil); fica aqui para sobreviver ao
+     Descartar. DESCARTAR volta à ABERTURA: remonta o formulário (mesma TOP, padrões do layout reaplicados, zero
+     escrita). DUPLICAR: TOP do original que não abre o formulário (indisponível, inativa, servidor sem a lista) → o
+     lançador de hoje, com a mensagem de hoje, e a cópia em memória é descartada. */
+  const [densidade, setDensidade] = React.useState<PosicaoDoRotuloValor>("rotulo-a-frente");
+  const [abertura, setAbertura] = React.useState(0);
+  const copiaSemFormulario = Boolean(pedido) && !topEfetiva && estadoTop.situacao !== "carregando";
+  React.useEffect(() => { if (copiaSemFormulario) descartarEntrega(chaveDaCopia(kind)); }, [copiaSemFormulario, kind]);
+
   if (topEfetiva) return <Formulario
+    key={abertura}
     kind={kind}
     top={topEfetiva}
     familia={estadoTop.situacao === "pronto" ? estadoTop.dados.family.label : ""}
     estadoTop={estadoTop}
     escritaTopConfirmada={escritaTopConfirmada}
+    densidade={densidade} onDensidade={setDensidade} onDescartar={() => setAbertura((n) => n + 1)}
   />;
 
   return <LancadorDeTipoOperacao
@@ -235,7 +251,7 @@ function Inner({ kind }: { kind: string }) {
   />;
 }
 
-function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
+function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densidade, onDensidade, onDescartar }: {
   kind: string;
   top: TopOperacional;
   familia: string;
@@ -243,10 +259,23 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   estadoTop: EstadoTop;
   /** A descoberta de AGORA confirma esta TOP? Só isso autoriza o POST. */
   escritaTopConfirmada: boolean;
+  /** VISUAL-UX-02 W1: a posição do rótulo (estado da página) e o Descartar (a página remonta o formulário). */
+  densidade: PosicaoDoRotuloValor; onDensidade: (v: PosicaoDoRotuloValor) => void; onDescartar: () => void;
 }) {
   const router = useRouter(); const empresa = useEmpresaPadrao();
-  const [h, setH] = React.useState({ empresa_id: "", document_date: todayISO(), shipping_date: "", due_date: "", client_id: "", transporter_id: "", proprietary_id: "", driver_name: "", payment_method_id: "", freight: "0", freight_icms: "0", other_values: "0", discount: "0", note: "", is_deductible: false, installments: false, categoria_financeira_id: "", centro_custo_id: "", condicao_pagamento_id: "" });
-  const [items, setItems] = React.useState<ItemRow[]>([]); const [plan, setPlan] = React.useState<Plan>(defaultPlan());
+  /* VISUAL-UX-02 W1 — DUPLICAR: a cópia entregue em memória pela consulta, consumida UMA vez ao montar (espia aqui,
+     descarta no efeito) e só para ESTA espécie e ESTA TOP. Ela entra como VALOR, não como abertura: `branco` (a
+     abertura) continua sendo o estado inicial de `inicial` — a cópia conta como alteração, o ponto acende — e nenhum
+     padrão de layout ou de cadastro a sobrescreve. Salvar a cópia é o POST de sempre, com as mesmas chaves. */
+  const [copia] = React.useState(() => { const c = espiarEntrega<CopiaDoDocumento>(chaveDaCopia(kind)); return copiaValePara(c, kind, top.id) ? c : null; });
+  const copiaAvisada = React.useRef(false);
+  React.useEffect(() => {
+    descartarEntrega(chaveDaCopia(kind));
+    if (copia && !copiaAvisada.current) { copiaAvisada.current = true; toast.info("Cópia aberta como rascunho"); }
+  }, [kind, copia]);
+  const [branco] = React.useState(() => ({ empresa_id: "", document_date: todayISO(), shipping_date: "", due_date: "", client_id: "", transporter_id: "", proprietary_id: "", driver_name: "", payment_method_id: "", freight: "0", freight_icms: "0", other_values: "0", discount: "0", note: "", is_deductible: false, installments: false, categoria_financeira_id: "", centro_custo_id: "", condicao_pagamento_id: "" }));
+  const [h, setH] = React.useState<typeof branco>(() => (copia ? { ...branco, ...copia.cabecalho } : branco));
+  const [items, setItems] = React.useState<ItemRow[]>(() => copia?.itens ?? []); const [plan, setPlan] = React.useState<Plan>(() => copia?.plano ?? defaultPlan());
   const [confirmarTroca, setConfirmarTroca] = React.useState(false);
   React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
 
@@ -356,7 +385,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
    * nascer "sujo" e transformaria o aviso de perda de dados em ruído que se aprende a ignorar — que é
    * como um aviso deixa de proteger.
    */
-  const inicial = React.useRef(h);
+  const inicial = React.useRef(branco); // VISUAL-UX-02 W1: a abertura, nunca a cópia do Duplicar
   const semEmpresa = ({ empresa_id: _, ...resto }: typeof h) => resto;
   const sujo = items.length > 0 || JSON.stringify(semEmpresa(h)) !== JSON.stringify(semEmpresa(inicial.current));
   useDirtyTab(sujo);
@@ -369,6 +398,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   React.useEffect(() => {
     if (!layout || padroesAplicados.current === layout) return;
     padroesAplicados.current = layout;
+    if (copia) return; /* VISUAL-UX-02 W1: padrão de layout nenhum sobrescreve a cópia do Duplicar */
     const novos: Partial<typeof h> = {};
     for (const x of [...layout.cabecalho, ...layout.rodape.flatMap((a) => a.campos)]) {
       if (!x.valorPadrao || !(x.campo in inicial.current)) continue;
@@ -384,9 +414,12 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       for (const [k, v] of Object.entries(novos)) if (JSON.stringify(o[k as keyof typeof o]) === JSON.stringify(antes[k as keyof typeof antes]) || k === "empresa_id") Object.assign(r, { [k]: v });
       return r;
     });
-  }, [layout, empresa]);
+  }, [layout, empresa, copia]);
 
-  const create = useCreate<{ id: string }>(`/api/sales/${kind}`, (r) => router.push(`/vendas/${kind}/${r.id}`));
+  /* VISUAL-UX-02 W1: depois do POST abre o documento salvo, como sempre, deixando em memória o "Salvo" e — quando o
+     clique foi "Confirmar venda" — o pedido de abrir o diálogo de Confirmar venda (com a prévia do servidor). */
+  const confirmarDepois = React.useRef(false);
+  const create = useCreate<{ id: string }>(`/api/sales/${kind}`, (r) => { const depois: DepoisDeSalvar = { confirmar: confirmarDepois.current }; entregarEmMemoria(chaveDepoisDeSalvar(r.id), depois); router.push(`/vendas/${kind}/${r.id}`); });
   /**
    * CLASSIFICAÇÃO FINANCEIRA (VENDAS-A1): só existe na tela quando a API DECLARA que a entende. Obrigatória
    * nas TRÊS variantes: documento salvo não tem edição aqui e a conversão só copia — pedido sem
@@ -464,7 +497,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const aoRecusarAtraso = (e: unknown) => { if (regrasAtivo && e instanceof ApiError && e.code === ERRO_CLIENTE_EM_ATRASO) setErroAtraso({ cliente: h.client_id, mensagem: e.message }); };
   /* fim TOP-CONFIG-05 atraso */
   /** O corpo do POST — o MESMO objeto que a cobrança do layout confere antes de sair. */
-  const corpo = () => ({ empresa_id: h.empresa_id, document_date: h.document_date, shipping_date: h.shipping_date || null, due_date: h.due_date || null, client_id: h.client_id, transporter_id: h.transporter_id || null, proprietary_id: h.proprietary_id || null, driver_name: h.driver_name || null, payment_method_id: h.payment_method_id || null, freight: h.freight || "0", freight_icms: h.freight_icms || "0", other_values: h.other_values || "0", discount: h.discount || "0", note: h.note || null, is_deductible: h.is_deductible, installment_plan: condicaoId ? (ajustado ? plan : null) : (h.installments ? plan : null), items: items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id || null, quantity: i.quantity, unit_price: i.unit_value ?? "0", discount: i.discount || "0", discount_percent: i.discount_percent || "0", note: null })), tipo_operacao_id: top.id, ...(classificacaoAtiva ? { categoria_financeira_id: h.categoria_financeira_id, centro_custo_id: h.centro_custo_id } : {}), ...(condicaoId ? { condicao_pagamento_id: condicaoId } : {}) });
+  const corpo = () => ({ empresa_id: h.empresa_id, document_date: h.document_date, shipping_date: h.shipping_date || null, due_date: h.due_date || null, client_id: h.client_id, transporter_id: h.transporter_id || null, proprietary_id: h.proprietary_id || null, driver_name: h.driver_name || null, payment_method_id: h.payment_method_id || null, freight: h.freight || "0", freight_icms: h.freight_icms || "0", other_values: h.other_values || "0", discount: h.discount || "0", note: h.note || null, is_deductible: h.is_deductible, installment_plan: condicaoId ? (ajustado ? plan : null) : (h.installments ? plan : null), items: items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id || null, quantity: i.quantity, unit_price: i.unit_value ?? "0", discount: i.discount || "0", discount_percent: i.discount_percent || "0", note: typeof i["note"] === "string" && i["note"] ? i["note"] : null })), tipo_operacao_id: top.id, ...(classificacaoAtiva ? { categoria_financeira_id: h.categoria_financeira_id, centro_custo_id: h.centro_custo_id } : {}), ...(condicaoId ? { condicao_pagamento_id: condicaoId } : {}) });
 
   /**
    * OBRIGATÓRIOS DO LAYOUT: a MESMA função do domínio que a API usa (`camposObrigatoriosFaltando`), sobre o MESMO
@@ -482,7 +515,9 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
    */
   const exigenciasFaltando = () => (regras ? exigenciasFaltandoPorCampos(regras.exigencias, corpo()) : []);
   const errosExigencia: Record<string, string> = regras && tentouSalvar ? Object.fromEntries(exigenciasFaltando().map((f) => [f.caminho, `${f.rotulo} é obrigatório nesta operação.`])) : {};
-  const erros: Record<string, string> = layout || regras ? { ...errosServidor, ...errosLocais, ...errosExigencia } : {};
+  /* VISUAL-UX-02 W1: a pendência de Cliente marca o campo mesmo sem layout (o clique com pendência não envia nada). */
+  const errosDePendencia: Record<string, string> = tentouSalvar && !h.client_id ? { client_id: "Selecione um cliente." } : {};
+  const erros: Record<string, string> = layout || regras ? { ...errosDePendencia, ...errosServidor, ...errosLocais, ...errosExigencia } : errosDePendencia;
   const [maisDados, setMaisDados] = React.useState(false);
   /** TOP-CONFIG-05 exigências: 422 TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA (`details.exigencias` [{caminho, mensagem}]) → erro no campo. */
   const errouExigencia = (e: unknown): boolean => {
@@ -505,6 +540,49 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     setErrosServidor(m);
     return true;
   };
+  /* ── VISUAL-UX-02 W1 — SALVAR COM PENDÊNCIAS ───────────────────────────────────────────────────────────────────
+   * Clique com pendência de CAMPO não envia NADA: marca os campos (o mesmo `tentouSalvar` de antes) e mostra a pílula
+   * "N pendências" com a lista, que leva a cada campo. As checagens são as de antes — cliente, itens, produto do item,
+   * exigências da TOP, obrigatórios do layout — e a guarda mora no HANDLER (`submit`), não no `disabled`. O que NÃO é
+   * pendência de campo continua DESABILITANDO o botão: TOP não confirmada, layout ou regras carregando/com falha,
+   * cliente em atraso que bloqueia e, nesta fase, natureza e centro (`semClassificacao`). */
+  const [pendenciasAbertas, setPendenciasAbertas] = React.useState(false);
+  const pendenciasDoSalvar = (): Pendencia[] => {
+    const lista = new Map<string, Pendencia>();
+    const anotar = (caminho: string, rotulo: string, mensagem: string) => { if (!lista.has(caminho)) lista.set(caminho, { caminho, rotulo, mensagem }); };
+    if (!h.client_id) anotar("client_id", cfg.get("client_id")?.rotulo || "Cliente", "Selecione um cliente.");
+    if (!items.length) anotar("items", "Itens", "Adicione ao menos um item.");
+    items.forEach((it, i) => { if (!it.product_id) anotar(`items[${i}].product_id`, `Item ${i + 1}`, "Selecione o produto."); });
+    for (const f of exigenciasFaltando()) anotar(f.caminho, f.rotulo, `${f.rotulo} é obrigatório nesta operação.`);
+    for (const f of faltando()) anotar(f.caminho, f.rotulo, mensagemCampoObrigatorio(f.rotulo));
+    return [...lista.values()];
+  };
+  /** A lista leva ao campo: item → a região Itens (a marcação da linha é da Fase B); campo de aba → abre a aba; campo
+   *  de "Dados adicionais" → abre o grupo; e o foco vai ao controle do campo. Só DOM da própria Central, pelo rótulo. */
+  const irParaPendencia = (p: Pendencia) => {
+    const central = document.querySelector<HTMLElement>('[data-testid="central-vendas"]');
+    if (!central) return;
+    const controle = (raiz: Element | null | undefined) => raiz?.querySelector<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)") ?? null;
+    const focar = (el: HTMLElement | null) => { if (!el) return; el.scrollIntoView({ block: "nearest" }); el.focus(); };
+    if (p.caminho.startsWith("items")) {
+      const regiao = central.querySelector<HTMLElement>('[data-testid="central-vendas-itens"]');
+      const i = /^items\[(\d+)\]/.exec(p.caminho)?.[1];
+      const linha = i === undefined ? null : central.querySelectorAll('[data-testid="central-vendas-linha"]')[Number(i)];
+      focar(controle(linha) ?? controle(regiao));
+      return;
+    }
+    const chave = p.caminho.split(/[.[]/)[0]!;
+    const semMarca = (t: string) => t.replace(/[*:]/g, "").replace(/\s+/g, " ").trim();
+    const achar = () => controle(central.querySelector(`[data-campo="${chave}"]`))
+      ?? controle([...central.querySelectorAll("label")].find((l) => semMarca(l.textContent ?? "") === semMarca(p.rotulo))?.parentElement);
+    const aba = estruturaDesenhada.rodape.find((a) => a.campos.some((c) => c.campo === chave));
+    if (aba) {
+      const guia = [...central.querySelectorAll<HTMLElement>('[data-testid="central-vendas-painel"] [role="tab"]')].find((t) => (t.textContent ?? "").trim().startsWith(aba.aba));
+      if (guia && guia.getAttribute("aria-selected") !== "true") guia.click();
+    } else if (adicionaisDoLayout.has(chave)) setMaisDados(true);
+    requestAnimationFrame(() => focar(achar()));
+  };
+
   /** O UUID que vai no corpo é o da TOP VALIDADA contra a lista — nunca o texto cru da URL. */
   const submit = () => {
     /**
@@ -520,6 +598,14 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     /* TOP-CONFIG-05 exigências: regras pendentes travam; exigência faltando → erro no campo e NADA sai. Sem a
        capacidade `regrasPendente` é falso e `regras` é null: o caminho abaixo é o de antes, linha a linha. */
     if (regrasPendente) return;
+    if (layoutPendente) return;
+    /* VISUAL-UX-02 W1: pendência de CAMPO = ZERO POST — marca os campos e abre a lista "N pendências". */
+    const pendentes = pendenciasDoSalvar();
+    if (pendentes.length) {
+      setTentouSalvar(true); setErrosServidor({}); setPendenciasAbertas(true);
+      if (pendentes.some((x) => adicionaisDoLayout.has(x.caminho))) setMaisDados(true);
+      return;
+    }
     if (regras) {
       setTentouSalvar(true); setErrosServidor({});
       const fe = exigenciasFaltando();
@@ -555,9 +641,10 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
    *   Fiscal           → Dedutível
    *   Observações      → Observação
    *
-   * A BARRA SÓ TEM AÇÕES QUE EXISTEM: Voltar, Salvar e Alterar operação (e Documentos abertos, que é
-   * visão da barra de abas). "Confirmar venda", "Descartar", "Editar" e "Anexos" do design não têm
-   * contrato nesta etapa (`docs/DECISIONS.md` 224) — não aparecem, nem desabilitadas.
+   * A BARRA (VISUAL-UX-02, decisão 270): Descartar alterações, Salvar (com pendências) e — só na venda —
+   * Confirmar venda (= Salvar + o diálogo de Confirmar venda com a prévia, na consulta que abre); à
+   * direita N pendências, Posição do rótulo e o leque de Ações rápidas (Alterar operação, Imprimir e
+   * Histórico desabilitados, Documentos abertos). "Editar" e "Anexos" continuam fora (sem contrato).
    */
 
   /*
@@ -673,6 +760,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   React.useEffect(() => {
     if (!layout || padroesDeCadastroAplicados.current === padroes) return;
     padroesDeCadastroAplicados.current = padroes;
+    if (copia) return; /* VISUAL-UX-02 W1: padrão de cadastro nenhum sobrescreve a cópia do Duplicar */
     const antes = inicial.current;
     const novos: Partial<typeof h> = {};
     let condicaoPadrao: string | null = null;
@@ -695,7 +783,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       inicial.current = { ...inicial.current, condicao_pagamento_id: condicaoPadrao };
       escolherCondicao(condicaoPadrao);
     }
-  }, [layout, padroes, h, padraoDoCampo, existe, escolherCondicao]);
+  }, [layout, padroes, h, padraoDoCampo, existe, escolherCondicao, copia]);
 
   /** O campo, com a chave do React e — só com layout e `editavel: false` — travado. Padrão de cadastro morto destrava. */
   const render = (chave: string) => {
@@ -749,18 +837,41 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     [padraoArmazem, h.empresa_id]
   );
 
+  /* ── VISUAL-UX-02 W1 — a barra da criação ── */
+  const [perguntaDescartar, setPerguntaDescartar] = React.useState(false);
+  const pendencias = tentouSalvar ? pendenciasDoSalvar() : [];
+  const salvarDesabilitado = !escritaTopConfirmada || semClassificacao || layoutPendente || regrasPendente || atrasoTravaSalvar || !sujo;
+  /* "Confirmar venda" só na venda — perguntado ao SSOT da família (o mesmo caminho da reserva, acima). */
+  const ehVenda = familiaLayout !== "" && familiaLayout === familiaOperacionalDeDocumentoVenda("sale");
+  /* O leque da criação, de baixo para cima: Alterar operação, Imprimir e Histórico (desabilitados: o documento ainda
+     não existe) e "N documentos abertos" (o próprio leque o põe). Histórico só com a capacidade — `can` só esconde. */
+  const rapidas: ItemRapido[] = [
+    { chave: "alterar", rotulo: "Alterar operação", testId: "top-alterar", icone: <IconeAlterarOperacao />, onSelect: alterarOperacao },
+    { chave: "imprimir", rotulo: "Imprimir", testId: "central-vendas-imprimir", icone: <IconeImprimir />, desabilitado: true, onSelect: () => undefined },
+    ...(can("audit_logs.view") ? [{ chave: "historico", rotulo: "Histórico de alterações", testId: "central-vendas-historico", icone: <IconeHistorico />, desabilitado: true, onSelect: () => undefined }] : [])
+  ];
+
   return <>
     <CentralVendasWorkspace
       titulo={T[kind] ?? "Novo"}
       identidade={{ nome: T[kind] ?? "Novo documento", alterado: sujo, dica: kind === "sales" ? "O que a confirmação faz no estoque e no financeiro depende do Tipo de Operação e é mostrado antes de confirmar." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada." }}
-      acoes={<>
-        {/* sem "Voltar": como no design, a barra só tem ações do documento; navegar é a barra de abas */}
-        {/* TOP-CONFIG-05 exigências/atraso: `regrasPendente` trava como `layoutPendente`; `atrasoTravaSalvar` trava o cliente em atraso com "bloqueia" (os dois falsos sem a capacidade). */}
-        <AcaoDaBarra rotulo="Salvar" destaque="salvar" dica="inicio" ocupado={create.isPending} disabled={!escritaTopConfirmada || semClassificacao || layoutPendente || regrasPendente || atrasoTravaSalvar || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}><Save aria-hidden /></AcaoDaBarra>
-        <DivisorDaBarra />
-        <AcaoDaBarra rotulo="Alterar operação" data-testid="top-alterar" onClick={alterarOperacao}><Repeat2 aria-hidden /></AcaoDaBarra>
-      </>}
-      acoesDireita={<DocumentosAbertos />}
+      densidade={densidade}
+      acoes={<ConjuntoDaBarra>
+        {/* VISUAL-UX-02 W1 — criação: [Descartar alterações ✕] [Salvar] [Confirmar venda (só venda)]. Sem "Voltar":
+            navegar é a barra de abas. Salvar e Confirmar venda desabilitam só por ESTADO (TOP, layout/regras, atraso,
+            natureza e centro nesta fase) ou sem alteração; pendência de campo é o clique que não envia nada. */}
+        <BotaoDaBarra rotulo="Descartar alterações" disabled={!sujo || create.isPending} data-testid="central-vendas-descartar" onClick={() => setPerguntaDescartar(true)}><IconeDescartar /></BotaoDaBarra>
+        <BotaoDaBarra rotulo="Salvar" dica={create.isPending ? "Salvando…" : "Salvar"} ocupado={create.isPending} disabled={salvarDesabilitado} data-testid="central-vendas-salvar"
+          onClick={() => { confirmarDepois.current = false; submit(); }}><IconeSalvar /></BotaoDaBarra>
+        {ehVenda && can("sales.edit") && <PilulaDaBarra icone={<IconeConfirmar />} dica="Confirmar venda" disabled={salvarDesabilitado || create.isPending} data-testid="central-vendas-confirmar"
+          onClick={() => { confirmarDepois.current = true; submit(); }}>Confirmar venda</PilulaDaBarra>}
+      </ConjuntoDaBarra>}
+      acoesDireita={<ConjuntoDireito>
+        {/* [N pendências] [Posição do rótulo] [Ações rápidas] */}
+        {tentouSalvar && <PendenciasDoDocumento pendencias={pendencias} aberta={pendenciasAbertas} onAbertaChange={setPendenciasAbertas} onIr={irParaPendencia} />}
+        <PosicaoDoRotulo valor={densidade} onChange={onDensidade} />
+        <AcoesRapidas antes={rapidas} desabilitado={create.isPending} />
+      </ConjuntoDireito>}
       aviso={avisoDeLayout ? <>{avisoDeEscrita}{avisoDeLayout}</> : avisoDeEscrita}
       dados={<>
         {linhaDoLayout}
@@ -780,6 +891,8 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       abas={abas}
     />
 
+    {/* VISUAL-UX-02 W1: Descartar pergunta antes; confirmar remonta o formulário na abertura (nada é escrito). */}
+    <DialogoDescartar aberto={perguntaDescartar} onFechar={() => setPerguntaDescartar(false)} onDescartar={() => { setPerguntaDescartar(false); onDescartar(); }} />
     {/* Trocar a operação descarta o que foi digitado — então pergunta antes, em vez de descobrir depois. */}
     <Confirm open={confirmarTroca} onOpenChange={setConfirmarTroca} title="Alterar o Tipo de Operação?"
       text="Os dados já preenchidos neste lançamento serão descartados." danger
