@@ -30,18 +30,27 @@ describe("guardrail: anexos × registro-pai", () => {
       const vp = rule.viewPerm;
       if (typeof vp === "string") expect(perms.has(vp), `${entity}: ${vp}`).toBe(true);
       else {
-        const validos = ["nutrition", "sanitary", "purchase", "sale", "payable", "receivable"].map((k) => vp({ handling_type: k, movement_type: k, direction: k })).filter((p): p is string => p !== null);
+        const validos = ["nutrition", "sanitary", "purchase", "sale", "payable", "receivable", "budget", "order", "pedido", "compra"].map((k) => vp({ handling_type: k, movement_type: k, direction: k, kind: k, especie: k })).filter((p): p is string => p !== null);
         expect(validos.length, `${entity}: nenhuma variante resolvida`).toBeGreaterThan(0);
         for (const p of validos) expect(perms.has(p), `${entity}: ${p}`).toBe(true);
         // fail-closed: tipo desconhecido ou interno não cai numa permissão vizinha
         if (entity === "financial_titles") expect(vp({ direction: "outra" }), entity).toBeNull();
+        // documentos por espécie: cada espécie tem a própria porta; espécie desconhecida não cai numa vizinha
+        if (entity === "sales_documents") {
+          expect([vp({ kind: "budget" }), vp({ kind: "order" }), vp({ kind: "sale" })], entity).toEqual(["budgets.view", "orders.view", "sales.view"]);
+          for (const k of ["", "invoice", "outra"]) expect(vp({ kind: k }), `${entity}[${k}]`).toBeNull();
+        }
+        if (entity === "documentos_compra") {
+          expect([vp({ especie: "pedido" }), vp({ especie: "compra" })], entity).toEqual(["pedidos_compra.view", "compras.view"]);
+          for (const k of ["", "devolucao", "outra"]) expect(vp({ especie: k }), `${entity}[${k}]`).toBeNull();
+        }
         if (entity === "animal_handlings" || entity === "animal_movements") {
           for (const k of ["", "inventory", "farm_transfer", "processing", "inexistente"]) expect(vp({ handling_type: k, movement_type: k }), `${entity}[${k}]`).toBeNull();
         }
       }
     }
     // entidades usadas pela UI (DocList/ResourceList) estão cobertas; tabelas internas não
-    for (const e of ["service_orders", "purchase_requests", "animal_movements", "animal_handlings", "weighings", "financial_titles", "warehouses", "equipments", "people", "empresas", "batches", "feedlot_corrals", "users"]) expect(attachableEntity(e), e).toBeTruthy();
+    for (const e of ["service_orders", "purchase_requests", "animal_movements", "animal_handlings", "weighings", "financial_titles", "warehouses", "equipments", "people", "empresas", "batches", "feedlot_corrals", "users", "sales_documents", "documentos_compra"]) expect(attachableEntity(e), e).toBeTruthy();
     for (const e of ["attachment_blobs", "organization_members", "role_permissions", "audit_logs", "__proto__", "constructor"]) expect(attachableEntity(e), e).toBeUndefined();
     // Nome ANTERIOR de tabela não resolve mais (PRE-BASE2-05B): `entity` é canônico, e o apelido morreu com
     // o adaptador. Traduzir aqui faria a mesma entidade ter duas portas — e só uma delas apareceria numa

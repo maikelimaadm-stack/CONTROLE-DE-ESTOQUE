@@ -160,7 +160,7 @@ export interface LayoutEfetivoDaCentral {
  * consulta a mais; com padrão registro, a `estrutura` sai SEM eles e eles vêm à parte, CONFERIDOS AGORA nesta
  * organização: `padroesDeCadastro` = os que valem, `padroesInvalidos` = as chaves dos que morreram.
  */
-export async function respostaDoLayoutEfetivo(ctx: ServiceCtx, familia: string, tipoOperacaoId: string): Promise<LayoutEfetivoDaCentral> {
+export async function respostaDoLayoutEfetivo(ctx: ServiceCtx, familia: string, tipoOperacaoId: string | null): Promise<LayoutEfetivoDaCentral> {
   const l = await layoutEfetivo(ctx, familia, tipoOperacaoId);
   if (!padroesRegistroDaEstrutura(familia, l.estrutura).length) return { estrutura: l.estrutura, origem: l.origem, nome: l.nome, id: l.id };
   const c = await conferirPadroesRegistro(ctx, familia, l.estrutura);

@@ -66,6 +66,27 @@ No servidor (`advancedClause` em `apps/api/src/routes/resources.ts`) o nome da c
 
 `module` = chave do recurso (`products`) ou id derivado do endpoint (`stock.entries`); `screen` = `list` | `form` | outros (documento livre, validado só por tamanho).
 
+### Pesquisa de produtos — `GET /api/produtos/pesquisa` (ANEXOS-PESQUISA-01, decisão 271)
+
+Consulta de LEITURA para o seletor de produto dos lançamentos. Implementação: `apps/api/src/routes/produtos-pesquisa.ts`.
+
+- **Query estrita**: `busca` (texto aparado, 0–100), `armazem_id` (uuid, opcional), `limite` (1–50, padrão 20).
+  Chave desconhecida, `limite` fora da faixa ou `armazem_id` malformado → 422.
+- **Permissão e campos**: os MESMOS de `GET /api/resources/products/options` (módulo de `products.view`); campo que
+  o usuário não vê sai `null`.
+- **Resposta**: `{ itens: [{ id, codigo, descricao, referencia, unidade, estoque }], estoqueDoArmazem: boolean }`.
+  `referencia` = `reference` ou `null`; `unidade` = o mesmo rótulo de `measurement_id_label` de
+  `GET /api/resources/products/:id`; `estoque` = string com 4 casas ou `null`.
+- **Busca**: cada palavra bate em código (começa com) OU descrição (contém) OU referência (contém); palavras com E;
+  sem diferenciar maiúsculas; `%` e `_` são texto. Busca vazia → os primeiros por descrição. Só produto ativo, não
+  excluído, da organização. Ordem: código igual ao texto primeiro, depois descrição.
+- **Estoque**: só com `stocks.view` E `armazem_id` E armazém da organização no escopo de empresa do módulo de
+  estoque. É o saldo FÍSICO (soma de todos os lotes do produto no armazém), **sem descontar reserva**. Qualquer
+  "não" (sem `stocks.view`, sem `armazem_id`, armazém de empresa fora do escopo, de outra organização ou
+  inexistente) responde IDÊNTICO: `estoque` nulo em todos e `estoqueDoArmazem=false`.
+- **Custo**: UMA consulta de produtos e, com estoque, UMA de saldos (`any($ids)`) — nunca N+1.
+- **API anterior**: a rota não existe → 404 de rota; a tela que vier a usá-la cai no `/api/resources/products/options`.
+
 ## Layout de formulário (`screen = form`)
 Documento **painéis → cards → linhas → campos** (`FormLayout` em `@agro/shared`): `panels[]`, `cards[{panelId, colSpan 6|12, rows[{fieldIds[]}]}]`, `hiddenFieldIds`, `lockedFieldIds`, `requiredFieldIds`, `fieldSizes`, `fieldLabels`, `fieldDefaultValues`. Regras: máx. 7 campos por linha em card de largura 12 e 4 em largura 6; campo obrigatório na definição nunca pode ser ocultado; campos sem posição são anexados ao card "Outros campos". Implementado em todos os cadastros declarativos (`ResourceForm`): a página **Configuração de layout** (`apps/web/src/features/resources/form-layout.tsx`, rota `/cadastros/:recurso/configuracao-layout`) replica a tela do MG: campos disponíveis, painéis e cards em abas, linhas com arrastar-e-soltar (ou clique no campo e na linha) e propriedades por campo: rótulo exibido, valor padrão para novos registros, somente leitura, obrigatório, mover para outro card, retirar do formulário. Campos obrigatórios na definição não podem ser ocultados nem deixar de ser obrigatórios. "Salvar como padrão da organização" e "Restaurar padrão" como nas listagens.
 

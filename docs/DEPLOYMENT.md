@@ -1385,6 +1385,27 @@ frete, Dedutível) NÃO aceita obrigatório — sempre tem valor (R1). 2. Centra
 "*", Data de saída preenchida e só leitura; salvar sem transportadora → erro no campo; com → salva. 3. TOP sem layout →
 vale o padrão da família; sem padrão → a Central de hoje. 4. Editor da TOP mostra o layout e a origem.
 
+## ANEXOS-PESQUISA-01 — anexos nos documentos de venda e de compra e pesquisa de produtos
+
+Decisão 271. **Sem migration**, sem variável nova, sem permissão nova. Ordem: **API → web**.
+
+**Impacto em dados reais: nenhum dado muda; o botão Anexos dos portais de Vendas e de Compras passa a aceitar arquivos.**
+
+Janelas de version skew:
+
+1. **API nova × web anterior**: a web anterior já tinha o botão Anexos nos portais; ele deixa de receber 422 e passa
+   a funcionar sob a política da decisão 271. A pesquisa de produtos não é chamada pela web anterior. O
+   `/layout-efetivo` de vendas responde byte a byte igual (L-0).
+2. **API anterior × web nova**: a API anterior responde 422 ao anexo de documento de venda/compra (como hoje) e 404
+   de rota a `GET /api/produtos/pesquisa`; nenhuma tela desta fatia chama a pesquisa, e a tela futura cai no
+   `/api/resources/products/options`.
+
+**Reversão:** reverter a PR. Os anexos já enviados ficam no banco (`erp.attachments`, `erp.attachment_blobs`) e voltam
+a aparecer quando a mudança voltar; dado de produção não se apaga (decisão 247).
+
+**Roteiro do Maike (produção):** Vendas › marcar uma venda › Anexos › enviar um PDF — aparece na lista, baixa e
+o histórico da venda mostra o anexo adicionado.
+
 ## COMPRAS-03 — layout do documento de compra (0038)
 
 Decisão 269. **Uma migration: `0038_layout_do_documento_de_compra.sql`** (pre-deploy; trava (2026,72), `lock_timeout` 2 s,
