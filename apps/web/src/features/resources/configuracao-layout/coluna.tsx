@@ -65,7 +65,7 @@ export function Coluna(props: PropsColuna) {
     return (
       <div
         key={c.id}
-        className={estilos.item}
+        className={vendoDisponiveis ? `${estilos.item} ${estilos.itemArrasta}` : estilos.item}
         role="listitem"
         data-parte="item-campo"
         data-fid={c.id}

@@ -9,7 +9,8 @@
  *  - .bd é redondo (raio 999, padding 2 9 — regra posterior da camada);
  *  - a transição do × / + e das abas é a do grupo "o que muda, muda em rampa" (regra posterior à .dchip-x de .12s);
  *  - o texto herda `line-height: normal` do body do desenho (a casa usa 1.5): fixado na raiz da coluna.
- * Diferença do produto (item i do PEDIDO): × desabilitado em Em uso fica .25 e sem o hover vermelho (no desenho .65).
+ * Diferenças do produto: × desabilitado em Em uso fica .25 e sem o hover vermelho (item i; no desenho .65); o item de
+ * Em uso tem o cursor normal, porque não arrasta (R1 g; no desenho, grab).
  * Movimento: variáveis herdadas da raiz da página (--mi, --mf, --mo, --ez, --ez-io, --ez-mola); nenhuma duração fixa aqui.
  */
 
@@ -202,7 +203,7 @@
   font-size: 12px;
   font-weight: 500;
   color: #1e293b;
-  cursor: grab;
+  cursor: default;
   overflow: hidden;
   transition: border-color var(--mf), box-shadow var(--mf), opacity var(--mi), max-height var(--mo) var(--ez), margin var(--mo) var(--ez), transform var(--mo) var(--ez);
 }
@@ -211,7 +212,10 @@
   background: #fff;
   box-shadow: 0 2px 8px rgba(15, 23, 42, .08);
 }
-.item:active { cursor: grabbing; }
+/* cursor de agarrar só onde algo arrasta (regra do produto, R1 g): Disponíveis arrasta; Em uso fica com o cursor normal
+   (o desenho calcula grab nos dois, mas nada arrasta em Em uso) */
+.itemArrasta { cursor: grab; }
+.itemArrasta:active { cursor: grabbing; }
 
 /* obrigatório: a barra vermelha da linha e o "*" */
 .item[data-obrigatorio] { padding-left: 13px; }
