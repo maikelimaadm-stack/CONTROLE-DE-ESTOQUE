@@ -93,12 +93,22 @@ export function AcoesRapidasDoBem({ itens, desabilitado }: { itens: ItemRapidoBe
   </span>;
 }
 
-/** Cartão do desenho (Dados / Veículo / Depreciação / Outros): título + coluna única de campos. */
+/** Cartão do desenho (Dados / Veículo / Depreciação / Outros): título + grade 12 colunas. */
 export function CartaoDoBem({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className={cn(estilos.cartao, "col-span-12")} data-testid="lancamento-bem-cartao">
     <h3 className={estilos.cartaoTitulo}>{label}</h3>
-    <div className={estilos.coluna}>{children}</div>
+    <div className={estilos.grade} data-testid="lancamento-bem-grade">{children}</div>
   </div>;
+}
+
+/** Span do registry/layout → classe da grade (2 / 3 / 4 / 6 / 12). */
+export function classeDoSpan(span?: number): string {
+  const n = span && span > 0 ? span : 3;
+  if (n >= 12) return estilos.sp12!;
+  if (n >= 6) return estilos.sp6!;
+  if (n >= 4) return estilos.sp4!;
+  if (n >= 3) return estilos.sp3!;
+  return estilos.sp2!;
 }
 
 export { estilos as estilosLancamentoBem };

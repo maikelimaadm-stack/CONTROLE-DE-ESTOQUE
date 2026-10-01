@@ -1,8 +1,8 @@
 /**
  * VISUAL-UX-04 — Lançamento de bem/equipamento igual ao desenho (só apresentação).
  *
- * Cobre create e edit: chrome do desenho (barra redonda, posição do rótulo, abas Principal/Depreciação/Outros),
- * densidade rótulo-à-frente (196px), e que Salvar continua POST/PUT na mesma API de resources — sem renomear campo.
+ * Create e edit: chrome do desenho, densidade padrão = rótulo DENTRO (grade lado a lado),
+ * troca para rótulo à frente (coluna), abas e mesmos rótulos do registry.
  */
 import { expect, test, type Page } from "@playwright/test";
 import { login } from "./helpers";
@@ -29,12 +29,13 @@ async function abrirNovo(page: Page) {
 test.describe("VISUAL-UX-04 — lançamento de bem/equipamento", () => {
   test.beforeEach(async ({ page }) => { await login(page); });
 
-  test("VB-1 chrome do desenho no novo: barra, densidade, abas e cartões", async ({ page }) => {
+  test("VB-1 chrome + densidade compacta (rótulo dentro) com grade lado a lado", async ({ page }) => {
     await abrirNovo(page);
     const form = page.locator(FORM);
-    await expect(form).toHaveAttribute("data-densidade", "rotulo-a-frente");
+    await expect(form).toHaveAttribute("data-densidade", "compacto");
     await expect(page.getByTestId("lancamento-bem-salvar")).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-descartar")).toBeVisible();
+    await expect(page.getByTestId("lancamento-bem-novo")).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-posicao-rotulo")).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-acoes-rapidas")).toBeVisible();
     await expect(form.getByRole("tab", { name: "Principal" })).toBeVisible();
@@ -42,20 +43,36 @@ test.describe("VISUAL-UX-04 — lançamento de bem/equipamento", () => {
     await expect(form.getByRole("tab", { name: "Outros" })).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-cartao").filter({ hasText: "Dados" }).first()).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-cartao").filter({ hasText: "Veículo" }).first()).toBeVisible();
-    // rótulo à frente: 196px de content-box + 2px de padding = 198 no getBoundingClientRect (como o VD-1 da Central)
-    const rotulo = form.locator('[data-parte="rotulo"]').first();
-    await expect(rotulo).toBeVisible();
-    const w = await rotulo.evaluate((el) => Math.round(el.getBoundingClientRect().width));
-    expect(w, "rótulo à frente do bem = 196 + 2 de padding").toBe(198);
+    // grade 12 colunas: pelo menos 2 campos na mesma linha horizontal (Descrição e Empresa, span 6+6)
+    const grade = page.getByTestId("lancamento-bem-grade").first();
+    const campos = grade.locator('[data-testid^="campo-"]');
+    await expect(campos.nth(0)).toBeVisible();
+    await expect(campos.nth(1)).toBeVisible();
+    const ladoALado = await Promise.all([campos.nth(0), campos.nth(1)].map(async (c) => {
+      const b = await c.boundingBox();
+      return b!;
+    }));
+    expect(Math.abs(ladoALado[0]!.y - ladoALado[1]!.y), "primeiro e segundo campo na mesma linha").toBeLessThan(8);
+    expect(ladoALado[1]!.x, "segundo campo à direita do primeiro").toBeGreaterThan(ladoALado[0]!.x + 40);
   });
 
   test("VB-2 troca de densidade é só de tela (compacto ↔ frente)", async ({ page }) => {
     await abrirNovo(page);
     const form = page.locator(FORM);
-    await page.getByRole("button", { name: "Rótulo dentro do campo" }).click();
     await expect(form).toHaveAttribute("data-densidade", "compacto");
     await page.getByRole("button", { name: "Rótulo antes do campo" }).click();
     await expect(form).toHaveAttribute("data-densidade", "rotulo-a-frente");
+    // content-box 196px (variável --dz-rotulo-raiz da moldura)
+    const rotulo = form.locator('[data-parte="rotulo"]').first();
+    const w = await rotulo.evaluate((el) => Math.round(parseFloat(getComputedStyle(el).width)));
+    expect(w, "rótulo à frente = 196px (content-box)").toBe(196);
+    // em frente a grade vira coluna: segundo campo abaixo do primeiro
+    const grade = page.getByTestId("lancamento-bem-grade").first();
+    const a = await grade.locator('[data-testid^="campo-"]').nth(0).boundingBox();
+    const b = await grade.locator('[data-testid^="campo-"]').nth(1).boundingBox();
+    expect(b!.y, "rótulo à frente empilha os campos").toBeGreaterThan(a!.y + 10);
+    await page.getByRole("button", { name: "Rótulo dentro do campo" }).click();
+    await expect(form).toHaveAttribute("data-densidade", "compacto");
   });
 
   test("VB-3 abas Depreciação/Outros mostram os mesmos rótulos do registry", async ({ page }) => {
@@ -75,9 +92,9 @@ test.describe("VISUAL-UX-04 — lançamento de bem/equipamento", () => {
     await page.goto(`/cadastros/equipments/${id}`);
     const form = page.locator(FORM);
     await expect(form).toBeVisible();
+    await expect(form).toHaveAttribute("data-densidade", "compacto");
     await expect(page.getByTestId("lancamento-bem-posicao-rotulo")).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-cartao").first()).toBeVisible();
-    // com permissão de editar a rota abre em edição (Salvar); sem ela, Em leitura (Editar)
     await expect(page.getByTestId("lancamento-bem-salvar").or(page.getByTestId("lancamento-bem-editar"))).toBeVisible();
     await expect(form.getByText("Descrição", { exact: false }).first()).toBeVisible();
   });

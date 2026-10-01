@@ -26,8 +26,8 @@ import { HistoryDialog } from "@/features/base1/history-dialog";
 import { CampoDoLancamento, ChaveSimNao, DataDoLancamento, type Densidade, type IconeDoCampo } from "@/features/bens/campo";
 import {
   AcoesRapidasDoBem, BotaoDaBarra, CartaoDoBem, Conjunto, ConjuntoDireito, IconeAnexos, IconeDescartar, IconeDuplicar,
-  IconeEditar, IconeExcluir, IconeHistorico, IconeImprimir, IconeNovo, IconeSalvar, PosicaoDoRotuloBem, ehPeleBem,
-  estilosLancamentoBem,
+  IconeEditar, IconeExcluir, IconeHistorico, IconeImprimir, IconeNovo, IconeSalvar, PosicaoDoRotuloBem, classeDoSpan,
+  ehPeleBem, estilosLancamentoBem,
 } from "@/features/bens/lancamento";
 import { B1Field } from "./campo-b1";
 export { B1Field };
@@ -35,7 +35,7 @@ export { B1Field };
 type Values = Record<string, unknown>;
 export interface EmbeddedForm { mode: "view" | "edit" | "new"; /** linha já carregada na listagem: evita tela de carregamento ao navegar entre registros */ row?: Values | null; setMode: (m: "view" | "edit" | "new") => void; onExit: () => void; refresh: () => void; copyFrom?: Values | null; rightSlot?: React.ReactNode; nav?: { index: number; total: number; go: (i: number) => void } }
 
-function defaults(fields: FieldDef[], preset: Record<string, string>, layoutDefaults: Record<string, unknown>): Values { const v: Values = {}; for (const f of fields) { const ld = layoutDefaults[f.name]; v[f.name] = preset[f.name] ?? (ld !== undefined ? (f.type === "boolean" ? ld === true || ld === "true" : ld) : f.default !== undefined ? f.default : f.type === "boolean" ? false : f.type === "tags" ? [] : f.type === "json" ? {} : ""); } return v; }
+function defaults(fields: FieldDef[], preset: Record<string, string>, layoutDefaults: Record<string, unknown>): Values { const v: Values = {}; for (const f of fields) { const ld = layoutDefaults[f.name]; v[f.name] = preset[f.name] ?? (ld !== undefined ? (f.type === "boolean" ? ld === true || ld === "true" : ld) : f.default !== undefined ? f.default : f.type === "boolean" ? false : f.type === "tags" ? [] : f.type === "json" ? "{}" : ""); } return v; }
 function fromRecord(fields: FieldDef[], data: Values): Values { const v: Values = {}; for (const f of fields) { const x = data[f.name]; v[f.name] = f.type === "json" ? JSON.stringify(x ?? {}, null, 2) : x === null || x === undefined ? (f.type === "tags" ? [] : "") : f.type === "date" ? String(x).slice(0, 10) : x; } return v; }
 /** comparação das condições declarativas do registry (`visibleWhen`/`requiredWhen`): valor igual OU String igual */
 const iguala = (x: unknown, esperado: unknown) => x === esperado || String(x) === String(esperado);
@@ -158,8 +158,8 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const [historico, setHistorico] = React.useState(false);
   const [janelaCnpj, setJanelaCnpj] = React.useState(false);
   const [openField, setOpenField] = React.useState<string | null>(null);
-  // VISUAL-UX-04: densidade do lançamento de bem — estado SÓ da tela; nada persiste
-  const [densidadeBem, setDensidadeBem] = React.useState<Densidade>("rotulo-a-frente");
+  // VISUAL-UX-04: densidade do lançamento de bem — padrão = rótulo DENTRO (campos lado a lado); só de tela
+  const [densidadeBem, setDensidadeBem] = React.useState<Densidade>("compacto");
   const peleBem = ehPeleBem(resourceKey, rapido);
   // painéis em abas horizontais ("tabs") ou lista lateral ("sidebar"), como o modelo base do MG; lembrado por cadastro
   const panelStyleKey = `agro.launchPanelStyle.${resourceKey}`;
@@ -199,12 +199,13 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
     // rótulo que segue outro campo (AJUSTES 01: "Razão social" em Jurídica, "Nome completo" em Física)
     const rotulo = l.fieldLabels[f.name] ?? (f.rotuloQuando ? f.rotuloQuando.rotulos[String(values[f.rotuloQuando.field] ?? "")] : undefined) ?? f.label;
     const aoAbrir = (o: boolean) => setOpenField(o ? f.name : (cur) => (cur === f.name ? null : cur));
-    // VISUAL-UX-04: pele do bem — mesmos controles/API; só a caixa do desenho (rótulo à frente / compacto)
+    // VISUAL-UX-04: pele do bem — mesmos controles/API; caixa do desenho + span da grade
     if (peleBem) {
+      const spanCls = classeDoSpan(l.fieldSizes[f.name] ?? f.span);
       if (f.type === "boolean") {
         const ligado = v === true || v === "true";
-        return <ChaveSimNao key={f.name} rotulo={rotulo} valor={ligado} desabilitado={dis} testId={`campo-${f.name}`}
-          data-campo={rotulo} {...(dis ? {} : { onChange: (nv: boolean) => form.setValue(f.name, nv, { shouldDirty: true }) })} />;
+        return <div key={f.name} className={spanCls}><ChaveSimNao rotulo={rotulo} valor={ligado} desabilitado={dis} testId={`campo-${f.name}`}
+          data-campo={rotulo} {...(dis ? {} : { onChange: (nv: boolean) => form.setValue(f.name, nv, { shouldDirty: true }) })} /></div>;
       }
       const icone: IconeDoCampo | null = f.type === "date" ? "data" : f.type === "ref" || f.busca ? "pesquisa" : f.type === "select" ? "selecao" : null;
       const estado = dis ? "desabilitado" as const : "editavel" as const;
@@ -217,9 +218,9 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
         return <FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} record={q.data ?? null} onOpenChange={aoAbrir} extra={extra} />;
       };
       const el = controle ? controle({ dis, required, onOpenChange: aoAbrir, padrao }) : padrao();
-      return <CampoDoLancamento key={f.name} rotulo={rotulo} obrigatorio={required} erro={controle && f.name === "document" ? undefined : err}
+      return <div key={f.name} className={spanCls}><CampoDoLancamento rotulo={rotulo} obrigatorio={required} erro={controle && f.name === "document" ? undefined : err}
         icone={icone} estado={estado} preenchido={hasValue || (Boolean(controle) && !soAjuste)} multilinha={multilinha}
-        testId={`campo-${f.name}`} data-campo={rotulo} dica={f.help}>{el}</CampoDoLancamento>;
+        testId={`campo-${f.name}`} data-campo={rotulo} dica={f.help}>{el}</CampoDoLancamento></div>;
     }
     // controle da ficha que só AJUSTA o de sempre (`padrao`) mantém a aparência de sempre (rótulo flutuante pelo valor)
     let soAjuste = false;
@@ -287,7 +288,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
     <form onSubmit={submit} className={cn("b1 flex min-h-0 flex-1 flex-col gap-2", peleBem && estilosLancamentoBem.raiz)}
       data-testid="b1-form" data-lancamento-bem={peleBem ? "" : undefined} data-densidade={peleBem ? densidadeBem : undefined}>
       {/* barra de ações — VISUAL-UX-04: chrome do desenho só em bem/equipamento */}
-      {peleBem ? <div className={cn("mg-card no-print", estilosLancamentoBem.barra)}>
+      {peleBem ? <div className={cn("mg-toolbar mg-card no-print", estilosLancamentoBem.barra)}>
         <Conjunto>
           {readOnly ? <>
             {canCreate && <BotaoDaBarra rotulo="Novo registro" solido onClick={irNovo} data-testid="lancamento-bem-novo"><IconeNovo /></BotaoDaBarra>}
@@ -302,10 +303,9 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
           </>}
         </Conjunto>
         <ConjuntoDireito>
-          <AcoesRapidasDoBem itens={acoesRapidasBem} />
+          <AcoesRapidasDoBem itens={acoesRapidasBem} desabilitado={isNew} />
           <PosicaoDoRotuloBem valor={densidadeBem} onChange={setDensidadeBem} />
           {embedded?.rightSlot}
-          {!embedded && !onCancel && <Link href={back}><BotaoDaBarra rotulo="Voltar para a listagem" dicaNoFim><ArrowLeft className="h-3.5 w-3.5" /></BotaoDaBarra></Link>}
         </ConjuntoDireito>
       </div> : <div className="mg-toolbar mg-card flex-wrap no-print">
         {readOnly ? <>
