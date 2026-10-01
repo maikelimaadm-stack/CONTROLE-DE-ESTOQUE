@@ -4,9 +4,9 @@ import Link from "next/link";
 import { brl, cn, dateBR } from "@/lib/utils";
 import { enumLabel, statusLabel } from "@/lib/copy";
 import { statusTone } from "@/components/ui";
-import type { Row } from "@/features/docs/shared";
-// O campo de leitura é o da Central: um só componente de campo, o de `central-vendas-campo.tsx`.
-import { CampoLeitura } from "./central-vendas-campo";
+import { PlanEditor, type CampoDoPlano, type ChaveDoPlano, type DesenhoDoPlano, type Plan, type Row } from "@/features/docs/shared";
+// O campo é o da Central: um só componente de campo, o de `central-vendas-campo.tsx` (leitura e edição).
+import { CampoDaCentral, CampoLeitura, DataDaCentral, type IconeDoCampo } from "./central-vendas-campo";
 import estilos from "./central-vendas-painel.module.css";
 
 /**
@@ -37,11 +37,23 @@ export function PainelLargo({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * O plano de parcelas EDITÁVEL da criação é o `PlanEditor` de sempre (docs/shared.tsx). Ele não é copiado nem
- * alterado: este invólucro só o põe na coluna do painel, um campo abaixo do outro, como os demais.
+ * O PLANO DE PARCELAS EDITÁVEL DA CRIAÇÃO (VISUAL-UX-02 Fase B, decisão 270). É o `PlanEditor` de sempre
+ * (docs/shared.tsx) — nunca copiado: o plano, os controles e o que vai no corpo (`installment_plan`) são os dele. A
+ * Central só passa o DESENHO opcional: a ordem da consulta (`PlanoEmLeitura`: Nº de parcelas, 1º vencimento,
+ * Intervalo (dias), e depois Modo, Dia de vencimento, Possui entrada, Valor entrada, Data entrada), o rótulo
+ * "Intervalo (dias)" do desenho e cada campo no `CampoDaCentral` (as duas densidades), com a data no `DataDaCentral`.
+ * Cada campo leva `data-plano="<chave do plano>"` e `data-testid="central-plano-<chave>"`.
  */
-export function PlanoNaColuna({ children }: { children: React.ReactNode }) {
-  return <div className={estilos.plano}>{children}</div>;
+const ORDEM_DO_PLANO: readonly ChaveDoPlano[] = ["installments", "first_due_date", "interval_days", "mode", "due_day", "has_down_payment", "down_payment_value", "down_payment_date"];
+const ICONE_DO_PLANO: Partial<Record<ChaveDoPlano, IconeDoCampo>> = { first_due_date: "data", mode: "selecao", has_down_payment: "selecao", down_payment_date: "data" };
+const campoDoPlano = (c: CampoDoPlano) =>
+  <CampoDaCentral rotulo={c.rotulo} icone={ICONE_DO_PLANO[c.chave] ?? null} preenchido={c.preenchido} testId={`central-plano-${c.chave}`} data-plano={c.chave}>
+    {c.data ? <DataDaCentral rotulo={c.rotulo} value={c.data.valor} onChange={c.data.definir} /> : c.controle}
+  </CampoDaCentral>;
+const DESENHO_DO_PLANO: DesenhoDoPlano = { ordem: ORDEM_DO_PLANO, rotulos: { interval_days: "Intervalo (dias)" }, campo: campoDoPlano };
+
+export function PlanoDaCentral({ plano, onChange }: { plano: Plan; onChange: (p: Plan) => void }) {
+  return <PlanEditor plan={plano} onChange={onChange} desenho={DESENHO_DO_PLANO} />;
 }
 
 type Tom = ReturnType<typeof statusTone>;

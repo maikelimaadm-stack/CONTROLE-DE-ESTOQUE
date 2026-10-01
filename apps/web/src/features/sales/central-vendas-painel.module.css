@@ -12,10 +12,6 @@
 .lado { min-width: 0; }
 .largo { max-width: 960px; }
 
-/* o PlanEditor (docs/shared.tsx) é uma grade de 12 colunas: na coluna do painel, um campo abaixo do outro */
-.plano > div { display: flex; flex-direction: column; gap: 6px; }
-.plano > div > * { min-width: 0; }
-
 /* relação: a pauta dos títulos do desenho — o cabeçalho em negrito, a borda da linha em cinza claro */
 .relacao { min-width: 0; line-height: normal; }
 .linha {

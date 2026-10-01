@@ -8,7 +8,7 @@ import { todayISO } from "@/lib/utils";
 import { useDirtyTab, useTabTitle } from "@/lib/workspace-tabs";
 import { Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
-import { PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
+import { defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
 import { useQuery } from "@tanstack/react-query";
 import { AVISO_PADRAO_INVALIDO_CENTRAL, CAMPOS_SO_NO_RODAPE, camposAdicionaisDoCabecalho, ERRO_EXIGENCIA_NAO_ATENDIDA, ERRO_LAYOUT_CAMPO_OBRIGATORIO, exigenciasFaltandoPorCampos, FORMA_UUID_PADRAO, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando, chavePadraoDeCadastro, catalogoDaFamilia, documentTotals, mensagemCampoObrigatorio, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CampoDoLayout, type CondicaoPagamento, type EstruturaLayout, type OrigemDoLayout, type ValorPadraoLayout } from "@agro/domain";
 import { api, ApiError } from "@/lib/api";
@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 import { CentralVendasWorkspace } from "@/features/sales/central-vendas-workspace";
 import { ItensDaCentral } from "@/features/sales/central-vendas-itens";
 import { CampoDaCentral, ChaveSimNao, ColunaDeCampos, DadosAdicionais, DataDaCentral, type IconeDoCampo } from "@/features/sales/central-vendas-campo";
-import { PainelColuna, PainelLargo, PainelRepartido, PlanoNaColuna, TitulosDoDocumento } from "@/features/sales/central-vendas-painel";
+import { PainelColuna, PainelLargo, PainelRepartido, PlanoDaCentral, TitulosDoDocumento } from "@/features/sales/central-vendas-painel";
 /* VISUAL-UX-02 W1: barra da criação (Descartar, Salvar com pendências, Confirmar venda), leque, cópia do Duplicar */
 import { AcoesRapidas, BotaoDaBarra, ConjuntoDaBarra, ConjuntoDireito, IconeAlterarOperacao, IconeConfirmar, IconeDescartar, IconeHistorico, IconeImprimir, IconeSalvar, PendenciasDoDocumento, PilulaDaBarra, PosicaoDoRotulo, chaveDepoisDeSalvar, type DepoisDeSalvar, type ItemRapido, type Pendencia, type PosicaoDoRotuloValor } from "@/features/sales/central-vendas-barra";
 import { DialogoDescartar } from "@/features/sales/central-vendas-dialogos";
@@ -37,6 +37,9 @@ import { familiaOperacionalDeDocumentoVenda, type ColunaDoLayout } from "@agro/d
 import { CAMPOS_DO_ITEM_EXIGIDOS_PELA_RESERVA, ehCaminhoDeItemDaReserva } from "@/features/sales/regras-da-operacao";
 
 const T: Record<string, string> = { budgets: "Novo Orçamento", orders: "Novo Pedido de Venda", sales: "Nova Venda" };
+/** VISUAL-UX-02 Fase B: as mensagens das pendências de natureza e centro (no campo e na lista "N pendências"). */
+const PENDENCIA_NATUREZA = "Selecione a natureza.";
+const PENDENCIA_CENTRO = "Selecione o centro de resultado.";
 
 /**
  * LAYOUT DO DOCUMENTO (VENDAS-A3-1) — o que `/layout-efetivo` devolve, CONFERIDO antes de governar a tela (mesma
@@ -484,7 +487,10 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
     escolherCondicao(null);
   }, [h.condicao_pagamento_id, condicaoNaoPermitida, escolherCondicao]);
   /* ── fim TOP-CONFIG-05 condição ── */
-  const semClassificacao = classificacaoAtiva && (!h.categoria_financeira_id || !h.centro_custo_id);
+  /* VISUAL-UX-02 Fase B (decisão 270 (5)): natureza e centro deixam de DESABILITAR o Salvar e viram PENDÊNCIA DE CLIQUE —
+     a mesma checagem de antes (só com a classificação ativa), agora campo a campo, conferida no `submit`. */
+  const semNatureza = classificacaoAtiva && !h.categoria_financeira_id;
+  const semCentro = classificacaoAtiva && !h.centro_custo_id;
   /*
    * TOP-CONFIG-05 atraso — SÓ com `capacidades.regrasDaOperacao` EXATA (`entendeRegrasDaOperacao`). Sem ela o hook
    * fica desligado (nenhum `/situacao-cliente` sai), a faixa não existe e o Salvar é o de hoje. "bloqueia" com atraso
@@ -517,8 +523,13 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
    */
   const exigenciasFaltando = () => (regras ? exigenciasFaltandoPorCampos(regras.exigencias, corpo()) : []);
   const errosExigencia: Record<string, string> = regras && tentouSalvar ? Object.fromEntries(exigenciasFaltando().map((f) => [f.caminho, `${f.rotulo} é obrigatório nesta operação.`])) : {};
-  /* VISUAL-UX-02 W1: a pendência de Cliente marca o campo mesmo sem layout (o clique com pendência não envia nada). */
-  const errosDePendencia: Record<string, string> = tentouSalvar && !h.client_id ? { client_id: "Selecione um cliente." } : {};
+  /* VISUAL-UX-02 W1: a pendência de Cliente marca o campo mesmo sem layout (o clique com pendência não envia nada).
+     Fase B: natureza e centro (com a classificação ativa) também. */
+  const errosDePendencia: Record<string, string> = tentouSalvar ? {
+    ...(!h.client_id ? { client_id: "Selecione um cliente." } : {}),
+    ...(semNatureza ? { categoria_financeira_id: PENDENCIA_NATUREZA } : {}),
+    ...(semCentro ? { centro_custo_id: PENDENCIA_CENTRO } : {})
+  } : {};
   const erros: Record<string, string> = layout || regras ? { ...errosDePendencia, ...errosServidor, ...errosLocais, ...errosExigencia } : errosDePendencia;
   const [maisDados, setMaisDados] = React.useState(false);
   /** TOP-CONFIG-05 exigências: 422 TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA (`details.exigencias` [{caminho, mensagem}]) → erro no campo. */
@@ -547,12 +558,16 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
    * "N pendências" com a lista, que leva a cada campo. As checagens são as de antes — cliente, itens, produto do item,
    * exigências da TOP, obrigatórios do layout — e a guarda mora no HANDLER (`submit`), não no `disabled`. O que NÃO é
    * pendência de campo continua DESABILITANDO o botão: TOP não confirmada, layout ou regras carregando/com falha,
-   * cliente em atraso que bloqueia e, nesta fase, natureza e centro (`semClassificacao`). */
+   * cliente em atraso que bloqueia. Fase B: natureza e centro (com a classificação ativa) saíram do `disabled` e são
+   * pendência de campo, como o Cliente — a guarda é a deste handler; o layout que também os cobra não repete a linha
+   * (a lista é por caminho). */
   const [pendenciasAbertas, setPendenciasAbertas] = React.useState(false);
   const pendenciasDoSalvar = (): Pendencia[] => {
     const lista = new Map<string, Pendencia>();
     const anotar = (caminho: string, rotulo: string, mensagem: string) => { if (!lista.has(caminho)) lista.set(caminho, { caminho, rotulo, mensagem }); };
     if (!h.client_id) anotar("client_id", cfg.get("client_id")?.rotulo || "Cliente", "Selecione um cliente.");
+    if (semNatureza) anotar("categoria_financeira_id", cfg.get("categoria_financeira_id")?.rotulo || "Natureza", PENDENCIA_NATUREZA);
+    if (semCentro) anotar("centro_custo_id", cfg.get("centro_custo_id")?.rotulo || "Centro de resultado", PENDENCIA_CENTRO);
     if (!items.length) anotar("items", "Itens", "Adicione ao menos um item.");
     items.forEach((it, i) => { if (!it.product_id) anotar(`items[${i}].product_id`, `Item ${i + 1}`, "Selecione o produto."); });
     for (const f of exigenciasFaltando()) anotar(f.caminho, f.rotulo, `${f.rotulo} é obrigatório nesta operação.`);
@@ -595,7 +610,6 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
      * de um documento cuja operação não está confirmada tem de estar onde a gravação acontece.
      */
     if (!escritaTopConfirmada) return;
-    if (semClassificacao) return;
     if (atrasoTravaSalvar) return; /* TOP-CONFIG-05 atraso: a trava também no handler */
     /* TOP-CONFIG-05 exigências: regras pendentes travam; exigência faltando → erro no campo e NADA sai. Sem a
        capacidade `regrasPendente` é falso e `regras` é null: o caminho abaixo é o de antes, linha a linha. */
@@ -714,12 +728,11 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
   /** VENDAS-A3-1b: aviso do padrão morto, dentro do invólucro `data-campo` do campo. Sem padrão inválido, nada. */
   const avisoDoPadrao = (chave?: string) => (chave && padraoInvalido(chave) ? <p data-testid="padrao-invalido-aviso" className="mt-0.5 text-[11px] text-amber-700">{AVISO_PADRAO_INVALIDO_CENTRAL}</p> : null);
   const pesquisa = (conteudo: React.ReactNode, chave?: string) => <div className={cn(estilosCv.campo, estilosCv.campoPesquisa)} {...(chave ? dc(chave) : {})}>{conteudo}{avisoDoPadrao(chave)}<span className={estilosCv.adorno} aria-hidden><Search /></span></div>;
-  const campo = (conteudo: React.ReactNode, chave?: string) => <div className={estilosCv.campo} {...(chave ? dc(chave) : {})}>{conteudo}</div>;
   const larguraFixa = { maxWidth: 330 };
   /**
    * VISUAL-UX-02: o campo do DESENHO (`CampoDaCentral`, nas duas densidades). Rótulo, "*", erro e `data-campo` saem dos
-   * MESMOS helpers de antes (`rot`/`req`/`err`/`dc`); o controle e o valor são os de antes. (`pesquisa`/`campo` acima
-   * ficam para os casos que ainda os usam.)
+   * MESMOS helpers de antes (`rot`/`req`/`err`/`dc`); o controle e o valor são os de antes. (`pesquisa` acima
+   * fica para o caso que ainda o usa.)
    */
   const cc = (chave: string, hoje: string, o: { obrigatorio?: boolean; icone?: IconeDoCampo; preenchido: boolean; erro?: string; multilinha?: boolean }, controle: React.ReactElement) =>
     <CampoDaCentral rotulo={rot(chave, hoje)} obrigatorio={req(chave, o.obrigatorio ?? false)} erro={o.erro ?? err(chave)} icone={o.icone ?? null} preenchido={o.preenchido} multilinha={o.multilinha} abaixo={avisoDoPadrao(chave)} {...dc(chave)}>{controle}</CampoDaCentral>;
@@ -742,11 +755,13 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
       case "discount": return cc(chave, "Desconto", { preenchido: h.discount !== "" }, <Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} />);
       case "other_values": return cc(chave, "Outros valores", { preenchido: h.other_values !== "" }, <Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} />);
       case "condicao_pagamento_id": return condicaoAtiva && <div style={larguraFixa} data-testid="condicao-pagamento">{pesquisa(<Field label={rot(chave, "Condição de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="condicoes_pagamento" value={h.condicao_pagamento_id} onChange={escolherCondicao} labelHint={dica("condicao_pagamento_id")} somenteIds={condicoesPermitidas} /></Field>, chave)}</div>;
-      /* VISUAL-UX-02: o plano entra na coluna do Financeiro, um campo abaixo do outro (o PlanEditor não muda). */
+      /* VISUAL-UX-02 Fase B: o Financeiro da criação no desenho — um campo abaixo do outro, na densidade da Central, na
+         ordem da consulta. Parcelamento é o `cc` de sempre; o plano é o `PlanEditor` com o desenho da Central
+         (`PlanoDaCentral`). Valores, `plan` e o corpo (`installment_plan`) são os de antes. */
       case "installment_plan": return <>
-        {!condicaoId && campo(<Field label={rot(chave, "Parcelamento")} required={req(chave, false)} error={err(chave)} span={12}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field>, chave)}
-        {!condicaoId && h.installments && <PlanoNaColuna><PlanEditor plan={plan} onChange={setPlan} /></PlanoNaColuna>}
-        {condicaoId && planoCalculado && <PlanoNaColuna><PlanEditor plan={plan} onChange={ajustarPlano} /></PlanoNaColuna>}
+        {!condicaoId && cc(chave, "Parcelamento", { icone: "selecao", preenchido: true }, <NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect>)}
+        {!condicaoId && h.installments && <PlanoDaCentral plano={plan} onChange={setPlan} />}
+        {condicaoId && planoCalculado && <PlanoDaCentral plano={plan} onChange={ajustarPlano} />}
       </>;
       case "transporter_id": return cc(chave, "Transportadora", { icone: "pesquisa", preenchido: Boolean(h.transporter_id) }, <RefSelect resource="people" value={h.transporter_id} onChange={(v) => setH({ ...h, transporter_id: v ?? "" })} filter={{ is_transporter: "true" }} labelHint={dica("transporter_id")} />);
       case "driver_name": return cc(chave, "Motorista", { preenchido: Boolean(h.driver_name) }, <Input value={h.driver_name} onChange={(e) => setH({ ...h, driver_name: e.target.value })} />);
@@ -855,7 +870,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
   const [perguntaDescartar, setPerguntaDescartar] = React.useState(false);
   const pendencias = tentouSalvar ? pendenciasDoSalvar() : [];
   React.useEffect(() => { if (!pendencias.length) setPendenciasAbertas(false); }, [pendencias.length]);
-  const salvarDesabilitado = !escritaTopConfirmada || semClassificacao || layoutPendente || regrasPendente || atrasoTravaSalvar || !sujo;
+  const salvarDesabilitado = !escritaTopConfirmada || layoutPendente || regrasPendente || atrasoTravaSalvar || !sujo;
   /* "Confirmar venda" só na venda — perguntado ao SSOT da família (o mesmo caminho da reserva, acima). */
   const ehVenda = familiaLayout !== "" && familiaLayout === familiaOperacionalDeDocumentoVenda("sale");
   /* O leque da criação, de baixo para cima: Alterar operação, Imprimir e Histórico (desabilitados: o documento ainda
@@ -873,8 +888,8 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
       densidade={densidade}
       acoes={<ConjuntoDaBarra>
         {/* VISUAL-UX-02 W1 — criação: [Descartar alterações ✕] [Salvar] [Confirmar venda (só venda)]. Sem "Voltar":
-            navegar é a barra de abas. Salvar e Confirmar venda desabilitam só por ESTADO (TOP, layout/regras, atraso,
-            natureza e centro nesta fase) ou sem alteração; pendência de campo é o clique que não envia nada. */}
+            navegar é a barra de abas. Salvar e Confirmar venda desabilitam só por ESTADO (TOP, layout/regras, atraso)
+            ou sem alteração; pendência de campo (natureza e centro inclusive, Fase B) é o clique que não envia nada. */}
         <BotaoDaBarra rotulo="Descartar alterações" disabled={!sujo || create.isPending} data-testid="central-vendas-descartar" onClick={() => setPerguntaDescartar(true)}><IconeDescartar /></BotaoDaBarra>
         <BotaoDaBarra rotulo="Salvar" dica={create.isPending ? "Salvando…" : "Salvar"} ocupado={create.isPending} disabled={salvarDesabilitado} data-testid="central-vendas-salvar"
           onClick={() => { confirmarDepois.current = false; submit(); }}><IconeSalvar /></BotaoDaBarra>
