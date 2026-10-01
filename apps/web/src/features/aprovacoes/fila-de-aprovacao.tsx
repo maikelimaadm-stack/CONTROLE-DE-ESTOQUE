@@ -7,7 +7,7 @@ import { api, ApiError, newIdem, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { COPY, enumLabel } from "@/lib/copy";
 import { brl, cn, dateBR } from "@/lib/utils";
-import { Button, Dialog, EmptyState, ErrorState, Field, LoadingState, StatusBadge, Textarea, safeErrorMessage } from "@/components/ui";
+import { Button, Card, Dialog, EmptyState, ErrorState, Field, LoadingState, StatusBadge, Textarea, safeErrorMessage } from "@/components/ui";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { colunaIdGlobalTabela } from "@/features/listing/id-global-coluna";
 import {
@@ -149,7 +149,7 @@ export function FilaDeAprovacao({ area }: { area: AreaDeAprovacao }) {
   return <div data-testid="aprovacoes-lista" data-area={area} data-total={total} className="flex min-h-0 flex-1 flex-col gap-2">
     {mensagem && <p data-testid="aprovacao-mensagem" data-tom={mensagem.tom} role="status" className={cn("rounded border px-3 py-2 text-[12.5px]", CLASSES_DO_AVISO[mensagem.tom])}>{mensagem.texto}</p>}
     {total === 0 && linhas.length === 0
-      ? <div data-testid="aprovacoes-vazia" className="mg-card"><EmptyState title={MSG_FILA_VAZIA} /></div>
+      ? <Card data-testid="aprovacoes-vazia"><EmptyState title={MSG_FILA_VAZIA} /></Card>
       : <DataTable<LinhaDaFila> columns={colunas} rows={linhas} total={total} page={page} pageSize={pageSize} loading={q.isFetching}
         onPage={setPage} onPageSize={(n) => { setPageSize(n); setPage(1); }} rowKey={(l) => l.id} emptyText={MSG_FILA_VAZIA} />}
 
