@@ -8,14 +8,14 @@ PRE-BASE2-03, um total único mentiria: `farm_id` numa migration aplicada é his
 cliente HTTP é ponte com prazo, e "fazenda" no comentário de uma rota é o produto ainda falando o
 nicho. Por isso cada ocorrência é classificada em um dos três baldes abaixo — e a catraca trava só o terceiro.
 
-Total medido: **1767** ocorrências · 3 tabelas com coluna de empresa.
+Total medido: **1769** ocorrências · 3 tabelas com coluna de empresa.
 
 ## Classificação (o número que importa é o balde 3)
 
 | # | Balde | Ocorrências | Catraca | O que é |
 | --- | --- | ---: | --- | --- |
-| 1 | **LEGADO HISTÓRICO** | 1308 | não | Migrations aplicadas e documentação. O nome legado aqui é registro do que aconteceu; reescrever é falsificar história. |
-| 2 | **COMPATIBILIDADE TRANSITÓRIA PERMITIDA** | 349 | não | Arquivos declarados em scripts/lib/empresa-compat-surface.mjs, cada um com motivo. Removidos em PRE-BASE2-05C-1 (purga física: colunas legadas, as cinco views de nome antigo e os gatilhos de espelho) — apenas a categoria PONTE_FISICA; ver CATEGORIAS_COMPAT. |
+| 1 | **LEGADO HISTÓRICO** | 1309 | não | Migrations aplicadas e documentação. O nome legado aqui é registro do que aconteceu; reescrever é falsificar história. |
+| 2 | **COMPATIBILIDADE TRANSITÓRIA PERMITIDA** | 350 | não | Arquivos declarados em scripts/lib/empresa-compat-surface.mjs, cada um com motivo. Removidos em PRE-BASE2-05C-1 (purga física: colunas legadas, as cinco views de nome antigo e os gatilhos de espelho) — apenas a categoria PONTE_FISICA; ver CATEGORIAS_COMPAT. |
 | 3 | **DÍVIDA DE PRODUTO PROIBIDA** | 110 | **sim — só diminui** | O produto ainda fala o nicho onde não precisa. Alvo: zero. A catraca só deixa diminuir. |
 
 A regra que impede maquiagem: **arquivo não declarado cai no balde 3 por definição.** Esconder dívida
@@ -25,18 +25,18 @@ exige declarar o arquivo com motivo em `scripts/lib/empresa-compat-surface.mjs` 
 
 | Superfície | 1. Histórico | 2. Compatibilidade | 3. Dívida (travada) | Total |
 | --- | ---: | ---: | ---: | ---: |
-| Schema (migrations) | 471 | 0 | 0 | 471 |
+| Schema (migrations) | 476 | 0 | 0 | 476 |
 | API — código | 0 | 9 | **44** | 53 |
 | API — testes | 0 | 50 | **51** | 101 |
 | Núcleo neutro de nicho (plataforma) | 0 | 4 | 0 | 4 |
-| Pacotes compartilhados | 0 | 170 | **11** | 181 |
+| Pacotes compartilhados | 0 | 171 | **11** | 182 |
 | Web — código | 0 | 0 | 0 | 0 |
 | Web — navegação/rotas | 0 | 7 | 0 | 7 |
 | Web — testes ponta a ponta | 0 | 26 | 0 | 26 |
 | Scripts e gates | 0 | 83 | **4** | 87 |
-| Documentação ativa | 324 | 0 | 0 | 324 |
+| Documentação ativa | 320 | 0 | 0 | 320 |
 | Documentação histórica (referência externa) | 513 | 0 | 0 | 513 |
-| **Total** | **1308** | **349** | **110** | **1767** |
+| **Total** | **1309** | **350** | **110** | **1769** |
 
 ## Balde 2 — a ponte declarada
 
@@ -69,7 +69,7 @@ Cada arquivo abaixo pode falar o idioma antigo por um motivo escrito. Todos saem
 | `apps/web/e2e/empresa-canonica.spec.ts` | 8 | Cutover canônico medido no navegador: cita o nome antigo para provar que ele NÃO sai no fio e que a sessão anterior não é mais promovida. |
 | `apps/web/e2e/skew-api-producao.spec.ts` | 14 | Version skew SENTIDO 1 (web deste HEAD × API da base): cita o nome antigo para provar que ele NÃO sai do cliente canônico. |
 | `apps/web/e2e/skew-web-anterior.spec.ts` | 4 | Version skew SENTIDO 2 (web da base × API deste HEAD): cita o nome antigo para provar que a API nova o RECUSA — e que o cliente em produção não depende dele. |
-| `packages/db/test/purga-0017-fresh.test.ts` | 20 | VOCABULÁRIO (05C-1): mede a ponte física INTEIRA com a 0016 aplicada — 52 colunas, 5 views, 52 gatilhos, 3 funções, 52 FKs, 8 índices — e então exige que todos esses contadores caiam a zero depois da 0017. Cita o nome antigo porque ele É o objeto medido; sem citá-lo, a ausência não teria como ser contada. |
+| `packages/db/test/purga-0017-fresh.test.ts` | 21 | VOCABULÁRIO (05C-1): mede a ponte física INTEIRA com a 0016 aplicada — 52 colunas, 5 views, 52 gatilhos, 3 funções, 52 FKs, 8 índices — e então exige que todos esses contadores caiam a zero depois da 0017. Cita o nome antigo porque ele É o objeto medido; sem citá-lo, a ausência não teria como ser contada. |
 | `packages/db/test/purga-0017-upgrade.test.ts` | 46 | VOCABULÁRIO + PROVA HISTÓRICA (05C-1): semeia acervo da fase DUAL, escrevendo pelos dois lados para provar que o espelho da 0014 estava vivo, e só então atravessa a purga conferindo que o dado canônico sobreviveu linha a linha. O idioma antigo aparece porque era assim que o acervo era escrito. |
 | `packages/db/test/purga-0017-concorrencia.test.ts` | 22 | VOCABULÁRIO (05C-1): prova a trava de concorrência e o comportamento sob contenção de relação e de objeto de catálogo. Cita o nome das funções de sincronia porque é sobre uma delas que a disputa de catálogo é montada, e conta os objetos legados para provar que uma falha NÃO deixou estado parcial. |
 | `packages/db/test/purga-0017-invariantes.test.ts` | 5 | VOCABULÁRIO (05C-1): confere FKs compostas, CHECK canônico, papéis da política e isolamento de tenant depois da purga, comparando o estado ANTES e DEPOIS. Precisa nomear a coluna legada para provar que nenhuma política ainda decide por ela. |
@@ -104,10 +104,10 @@ Onde o produto ainda fala o nicho sem precisar. Ordem de ataque: quem concentra 
 | `apps/api/src/routes/resources.ts` | API — código | 8 |
 | `apps/api/src/routes/stock.ts` | API — código | 7 |
 | `apps/api/src/routes/livestock.ts` | API — código | 5 |
-| `packages/db/src/seed.ts` | Pacotes compartilhados | 5 |
 | `apps/api/src/routes/admin.ts` | API — código | 4 |
 | `apps/api/src/routes/reports.ts` | API — código | 4 |
 | `apps/api/test/integration/attachments-scope.test.ts` | API — testes | 4 |
+| `packages/db/src/seed.ts` | Pacotes compartilhados | 4 |
 | `apps/api/src/lib/attachment-parent.ts` | API — código | 3 |
 | `apps/api/src/routes/fleet-hr.ts` | API — código | 3 |
 | `apps/api/test/integration/rls-matriz.test.ts` | API — testes | 3 |
@@ -123,7 +123,7 @@ Onde o produto ainda fala o nicho sem precisar. Ordem de ataque: quem concentra 
 | `apps/api/src/server.ts` | API — código | 1 |
 | `apps/api/src/services/stock-core.ts` | API — código | 1 |
 | `apps/api/test/unit/escopo-classificacao.test.ts` | API — testes | 1 |
-| _… mais 5 arquivo(s)_ | | 5 |
+| _… mais 6 arquivo(s)_ | | 6 |
 
 ## Por símbolo (o que precisa migrar)
 
@@ -138,7 +138,7 @@ Onde o produto ainda fala o nicho sem precisar. Ordem de ataque: quem concentra 
 | `farmScope` | contrato | 3 | 2 | `escopoEmpresa` |
 | `allowedFarms` | contrato | 6 | 3 | `escopoEmpresa (@erp/plataforma)` |
 | `farms` | contrato | 89 | 6 | `/empresas` |
-| `fazenda` | texto | 654 | 77 | `Empresa (i18n: termos.empresa)` |
+| `fazenda` | texto | 656 | 77 | `Empresa (i18n: termos.empresa)` |
 
 `dado` = exige migration e backfill · `contrato` = quebra clientes se mudar sem compatibilidade · `texto` = rótulo, resolvido por i18n.
 
