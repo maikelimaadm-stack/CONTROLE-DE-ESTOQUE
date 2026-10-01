@@ -10,7 +10,8 @@ import { login } from "./helpers";
 const FORM = '[data-testid="b1-form"][data-lancamento-bem]';
 
 async function apiCall<T>(page: Page, method: string, path: string): Promise<T> {
-  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
+  const api = process.env.NEXT_PUBLIC_API_URL
+    ?? (process.env.E2E_API_PORT ? `http://127.0.0.1:${process.env.E2E_API_PORT}` : "http://127.0.0.1:3333");
   return page.evaluate(async ({ method, path, api }) => {
     const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string | null; empresaId: string | null };
     const res = await fetch(`${api}${path}`, { method, headers: { "content-type": "application/json", authorization: `Bearer ${s.token}`, ...(s.orgId ? { "x-org-id": s.orgId } : {}), ...(s.empresaId ? { "x-empresa-id": s.empresaId } : {}) } });
@@ -41,11 +42,11 @@ test.describe("VISUAL-UX-04 — lançamento de bem/equipamento", () => {
     await expect(form.getByRole("tab", { name: "Outros" })).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-cartao").filter({ hasText: "Dados" }).first()).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-cartao").filter({ hasText: "Veículo" }).first()).toBeVisible();
-    // rótulo à frente: 196px no desenho do bem
+    // rótulo à frente: 196px de content-box + 2px de padding = 198 no getBoundingClientRect (como o VD-1 da Central)
     const rotulo = form.locator('[data-parte="rotulo"]').first();
     await expect(rotulo).toBeVisible();
     const w = await rotulo.evaluate((el) => Math.round(el.getBoundingClientRect().width));
-    expect(w, "rótulo à frente do bem = 196px").toBe(196);
+    expect(w, "rótulo à frente do bem = 196 + 2 de padding").toBe(198);
   });
 
   test("VB-2 troca de densidade é só de tela (compacto ↔ frente)", async ({ page }) => {
