@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
+import { login, api, uniq, empresaAtiva, primeiroId, acaoDaCentral } from "./helpers";
 
 /**
  * PORTAL DE VENDAS UNIFICADO E PRÓXIMOS PASSOS PELO GRAFO (TOP-CONFIG-03) — E11 a E19 e E21.
@@ -346,7 +346,9 @@ test("E16 — documento cuja operação não declara transição NÃO oferece co
   await expect(page.getByTestId("dialog-conversao"), "e nenhum diálogo pendurado na árvore").toHaveCount(0);
   // As OUTRAS ações do documento continuam lá: é o que prova que a tela montou inteira e que só a
   // conversão está ausente.
-  await expect(page.getByRole("button", { name: "Imprimir" }), "a tela montou: as demais ações seguem").toBeVisible();
+  // VISUAL-UX-02 (decisão 270): Imprimir mora no leque de Ações rápidas, renderizado incondicionalmente como antes
+  await expect(await acaoDaCentral(page, "central-vendas-imprimir"), "a tela montou: as demais ações seguem").toBeVisible();
+  await page.keyboard.press("Escape");
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════════

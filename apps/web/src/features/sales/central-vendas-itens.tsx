@@ -1,38 +1,56 @@
 "use client";
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Columns2, Columns3, FileText, LayoutGrid, Lock, Plus, Search, Trash2 } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Copy, FileText, Grid3x3, Plus, Search, Trash2 } from "lucide-react";
 import { getResource, CATALOGO_VENDAS, type ColunaDoLayout } from "@agro/domain";
 import { cn, brl, num } from "@/lib/utils";
 import { api } from "@/lib/api";
-import { Field, Input } from "@/components/ui";
+import { Input } from "@/components/ui";
 import { StockCell, totalDaLinhaExibido, type ItemRow } from "@/features/docs/shared";
 import { EstoqueDisponivelDoItem } from "@/features/stock/reserva-estoque";
 import { PainelDePesquisa, type OpcaoReal } from "./central-vendas-pesquisa";
+import { CampoDaCentral } from "./central-vendas-campo";
+import { ConfigurarColunas } from "./central-vendas-consulta";
+import { BotaoAmpliar } from "./central-vendas-workspace";
 import estilos from "./central-vendas-workspace.module.css";
+import grade from "./central-vendas-grade.module.css";
 
 /**
- * ITENS DA CENTRAL DE VENDAS — três VISÕES do MESMO `items` (VISUAL-UX-01 R1).
+ * ITENS DA CENTRAL DE VENDAS — duas VISÕES (e as duas juntas) do MESMO `items` (VISUAL-UX-01 R1; desenho na VISUAL-UX-02).
  *
  * ┌─ A FONTE ÚNICA ────────────────────────────────────────────────────────────────────────────────┐
  * │ `items` e `onChange` são os da página, os mesmos que o `ItemsEditor` recebia. Grade, Formulário  │
- * │ e Grade + Formulário são três maneiras de OLHAR para esse array — nenhuma guarda cópia. O que    │
- * │ esta camada tem de próprio é só apresentação: qual linha está selecionada, qual visão está       │
- * │ ativa, qual pesquisa está aberta e o rótulo já conhecido de cada produto escolhido.              │
+ * │ e Grade + Formulário são maneiras de OLHAR para esse array — nenhuma guarda cópia. O que esta    │
+ * │ camada tem de próprio é só apresentação: qual linha está marcada, qual visão está ativa, qual    │
+ * │ pesquisa está aberta e o rótulo já conhecido de cada produto escolhido.                          │
  * │                                                                                                  │
  * │ Por isso o payload não muda: adicionar cria a MESMA linha que o editor criava (quantidade 1,     │
- * │ unitário 0, gera estoque), remover faz o MESMO filtro, e cada campo grava a MESMA chave.         │
- * │ O valor da linha e o subtotal são os que o editor sempre EXIBIU (`totalDaLinhaExibido`) — e      │
- * │ continuam sendo exibição: quem calcula o documento é o servidor.                                 │
+ * │ unitário 0, gera estoque), remover faz o MESMO filtro, duplicar copia as MESMAS chaves do item   │
+ * │ (nenhuma a mais), e cada campo grava a MESMA chave. O valor da linha e o subtotal são os que o   │
+ * │ editor sempre EXIBIU (`totalDaLinhaExibido`) — e continuam sendo exibição: quem calcula o        │
+ * │ documento é o servidor.                                                                          │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
- * Seleção: clicar em qualquer ponto da linha seleciona; a linha selecionada é a única tabulável, ↑ ↓
- * andam entre linhas, Enter e Espaço selecionam. Os campos editáveis só aparecem na linha selecionada.
- * Excluir nunca deixa seleção órfã.
+ * ┌─ NO DESENHO (VISUAL-UX-02, Fase B) ────────────────────────────────────────────────────────────┐
+ * │ A mesma geometria dos itens da CONSULTA (`ItensSalvos`, `central-vendas-grade.module.css`):      │
+ * │ barra de 36px [Ampliar] [Adicionar produto] [Duplicar item] [Remover item] … [Grade | Formulário] │
+ * │ [Configurar colunas]; cabeçalho de 28px, linha de 23px; rodapé de 32px com "Itens (N)", o ponto  │
+ * │ de pendência e o subtotal EXIBIDO. "Mostrar grade e formulário" mora no Configurar colunas.      │
+ * │                                                                                                  │
+ * │ MARCAÇÃO: só o círculo da 1ª coluna marca e desmarca (um item por vez). Clicar na linha não      │
+ * │ marca; clicar na área da grade fora de qualquer linha desmarca. No círculo: Enter e Espaço       │
+ * │ alternam, ↓ ↑ passam a marca à linha vizinha e levam o foco ao círculo dela; só o círculo da     │
+ * │ linha marcada (ou o da 1ª, sem marca) é tabulável. Abrir a pesquisa de produto ou de armazém     │
+ * │ também marca a linha. Os campos editáveis só aparecem na linha marcada.                          │
+ * │                                                                                                  │
+ * │ ITEM CORRENTE (o que Duplicar e Remover usam): na Grade sozinha, a linha MARCADA; com o           │
+ * │ formulário à vista, o item do formulário (o marcado, ou o 1º quando nada está marcado). Sem item │
+ * │ corrente, os dois botões somem. Remover nunca deixa marca órfã: ela vai ao item anterior.        │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ CONFIGURAR COLUNAS / CAMPOS (R2): SÓ O QUE SE VÊ ─────────────────────────────────────────────┐
- * │ O botão "Configurar colunas" liga, desliga e reordena as colunas da grade ou os campos do        │
- * │ formulário do item — a lista da visão que está na tela, como no protótipo. É ESTADO DESTA TELA:  │
+ * │ O "Configurar colunas" (o mesmo da consulta) liga, desliga e reordena as colunas da grade ou os  │
+ * │ campos do formulário do item — a lista da visão que está na tela. É ESTADO DESTA TELA:           │
  * │ `useState`, sem `localStorage`, `sessionStorage`, perfil ou API (COLUMN_CONFIG_PERSISTENCE =     │
  * │ NONE); remontar a Central devolve o padrão. Esconder uma coluna não toca o item: `ItemRow` e o   │
  * │ payload continuam com todas as chaves. E o que a célula de estoque FAZ (preencher o unitário    │
@@ -48,12 +66,7 @@ import estilos from "./central-vendas-workspace.module.css";
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 
-type Visao = "grade" | "formulario" | "ambos";
-const VISOES: { v: Visao; rotulo: string; Icone: typeof LayoutGrid }[] = [
-  { v: "grade", rotulo: "Grade", Icone: LayoutGrid },
-  { v: "formulario", rotulo: "Formulário", Icone: FileText },
-  { v: "ambos", rotulo: "Grade e formulário", Icone: Columns2 }
-];
+type Visao = "grade" | "formulario";
 
 /**
  * A linha nova é a MESMA que o `ItemsEditor` cria — para o payload não perceber a troca de apresentação. Com armazém
@@ -74,7 +87,8 @@ const COLUNAS: Record<ChaveColuna, { rotulo: string; largura: number; numero?: b
   descontoPercentual: { rotulo: "Desconto %", largura: 90, numero: true },
   total: { rotulo: "Total", largura: 102, numero: true }
 };
-const LARGURA_EXCLUIR = 36;
+/** A coluna do círculo de seleção, do desenho. */
+const LARGURA_SELECAO = 34;
 
 /** Campos do formulário do item, na ordem padrão do design. */
 type ChaveCampo = "produto" | "armazem" | "estoque" | "unidade" | "quantidade" | "unitario" | "desconto" | "descontoPercentual" | "total";
@@ -157,7 +171,7 @@ function useUnidadeDoProduto(id: string | undefined) {
 
 function Unidade({ produto }: { produto?: string }) {
   const u = useUnidadeDoProduto(produto || undefined);
-  return u ? <span className={estilos.unidade} data-testid="central-vendas-unidade">{u}</span> : null;
+  return u ? <span className={grade.unidade} data-testid="central-vendas-unidade">{u}</span> : null;
 }
 
 function UnidadeTravada({ produto }: { produto?: string }) {
@@ -165,21 +179,25 @@ function UnidadeTravada({ produto }: { produto?: string }) {
   return <>{u ?? "—"}</>;
 }
 
-function CelulaDeReferencia({ recurso, id, conhecido, vazio, aberto, onAbrir, rotuloAcao, testId, children }: {
-  recurso: string; id?: string; conhecido?: OpcaoReal; vazio: string; aberto: boolean; onAbrir: (el: HTMLElement) => void;
-  rotuloAcao: string; testId: string; children?: (o: OpcaoReal | null) => React.ReactNode;
+/**
+ * A célula de pesquisa da grade (produto, armazém): o botão do desenho, com a lupa à esquerda. `rotuloAcao` é o nome
+ * acessível — a função recebe o registro escolhido (ou null) e devolve o texto.
+ */
+function CelulaDeReferencia({ recurso, id, conhecido, vazio, erro, aberto, onAbrir, rotuloAcao, testId }: {
+  recurso: string; id?: string; conhecido?: OpcaoReal; vazio: string; erro?: boolean; aberto: boolean; onAbrir: (el: HTMLElement) => void;
+  rotuloAcao: (o: OpcaoReal | null) => string; testId: string;
 }) {
   const o = useRotulo(recurso, id || undefined, conhecido);
-  return <button type="button" className={estilos.celulaBotao} aria-haspopup="listbox" aria-expanded={aberto} aria-label={o ? `${rotuloAcao}: ${o.label}` : rotuloAcao}
+  return <button type="button" className={grade.celulaBotao} aria-haspopup="listbox" aria-expanded={aberto} aria-label={rotuloAcao(o)}
     data-testid={testId} onClick={(e) => { e.stopPropagation(); onAbrir(e.currentTarget.closest("td") ?? e.currentTarget); }}>
-    <span className={o ? undefined : estilos.celulaVazia}>{children ? children(o) : (o?.label ?? vazio)}</span>
-    <span className={estilos.celulaIcone} aria-hidden><Search /></span>
+    <span className={o ? undefined : erro ? grade.celulaErro : grade.celulaVazia}>{o?.label ?? vazio}</span>
+    <span className={grade.celulaIcone} aria-hidden><Search /></span>
   </button>;
 }
 
 function CodigoDoProduto({ id, conhecido }: { id?: string; conhecido?: OpcaoReal }) {
   const o = useRotulo("products", id || undefined, conhecido);
-  return <span className={estilos.codigo}>{o?.code ?? (id ? "" : "—")}</span>;
+  return <span>{o?.code ?? (id ? "" : "—")}</span>;
 }
 
 export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao, reservaEstoque = null }: {
@@ -201,15 +219,17 @@ export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao, 
   armazemPadrao?: { id: string; rotulo: string } | null;
 }) {
   const [visao, setVisao] = React.useState<Visao>("grade");
+  const [ambos, setAmbos] = React.useState(false);
+  /** A linha marcada (uma por vez) — -1: nenhuma. */
   const [selecionado, setSelecionado] = React.useState<number>(-1);
   const [pesquisa, setPesquisa] = React.useState<{ linha: number; campo: "product_id" | "warehouse_id"; ancora: HTMLElement | null; modo: "flutuante" | "fluxo" } | null>(null);
   /** Rótulos das escolhas feitas nesta sessão — só apresentação, nunca entra no payload. */
   const [conhecidos, setConhecidos] = React.useState<Record<string, OpcaoReal>>({});
-  const linhas = React.useRef<(HTMLTableRowElement | null)[]>([]);
+  /** Os círculos de seleção, para o ↓ ↑ levarem o foco ao da linha vizinha. */
+  const circulos = React.useRef<(HTMLButtonElement | null)[]>([]);
   /** Colunas e campos visíveis e sua ordem — apresentação desta tela, sem persistência. */
   const [colunas, setColunas] = React.useState<Preferencia<ChaveColuna>[]>(COLUNAS_PADRAO);
   const [campos, setCampos] = React.useState<Preferencia<ChaveCampo>[]>(CAMPOS_PADRAO);
-  const [configurando, setConfigurando] = React.useState(false);
   /** Com layout: o padrão é o do layout; trocar de layout devolve a preferência ao padrão dele. */
   const colunasPadrao = React.useCallback(() => (layout ? padrao(colunasDoLayout(layout).map((c) => c.chave)) : COLUNAS_PADRAO()), [layout]);
   const camposPadrao = React.useCallback(() => (layout ? padrao(camposDoLayout(layout)) : CAMPOS_PADRAO()), [layout]);
@@ -229,10 +249,19 @@ export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao, 
   const dataCampo = (k: ChaveColuna) => (layout ? { "data-campo": CHAVE_DO_CATALOGO[k] } : {});
   const erroDe = (i: number, k: ChaveColuna) => erros?.[`items[${i}].${CHAVE_DO_CATALOGO[k]}`];
   const errosDosItens = erros ? Object.entries(erros).filter(([c]) => c.startsWith("items[")) : [];
+  /** O item tem pendência (algum erro com o caminho dele): fundo de erro na linha e "Selecione o produto" em vermelho. */
+  const pendente = (i: number) => errosDosItens.some(([c]) => c.startsWith(`items[${i}]`));
 
-  // seleção nunca órfã: se o array encolheu, a seleção vem junto
+  // marca nunca órfã: se o array encolheu, a marca vem junto
   const sel = selecionado >= items.length ? items.length - 1 : selecionado;
   React.useEffect(() => { if (sel !== selecionado) setSelecionado(sel); }, [sel, selecionado]);
+
+  const mostraGrade = visao === "grade" || ambos;
+  const mostraFormulario = visao === "formulario";
+  /** O item do formulário: o marcado; sem marca, o 1º (como o desenho). */
+  const atual = sel >= 0 ? sel : items.length ? 0 : -1;
+  /** O item corrente de Duplicar/Remover: na Grade sozinha, a linha marcada; com o formulário à vista, o item dele. */
+  const corrente = mostraFormulario ? atual : sel;
 
   const atualizar = (i: number, chave: string, v: unknown) => onChange(items.map((it, j) => (j === i ? { ...it, [chave]: v } : it)));
   const adicionar = () => {
@@ -242,10 +271,22 @@ export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao, 
     }
     onChange([...items, linhaNova(armazemPadrao?.id)]); setSelecionado(items.length);
   };
-  const remover = (i: number) => {
-    onChange(items.filter((_, j) => j !== i));
+  /** A cópia do item corrente — as MESMAS chaves, nenhuma a mais — entra logo abaixo e fica marcada. */
+  const duplicar = () => {
+    const c = corrente;
+    const original = items[c];
+    if (!original) return;
+    onChange([...items.slice(0, c + 1), { ...original }, ...items.slice(c + 1)]);
     setPesquisa(null);
-    setSelecionado((s) => (items.length - 1 === 0 ? -1 : s > i ? s - 1 : s === i ? Math.min(i, items.length - 2) : s));
+    setSelecionado(c + 1);
+  };
+  /** Tira o item corrente; a marca vai ao anterior (o 1º, se era ele), ou a nenhum quando não sobra item. */
+  const remover = () => {
+    const c = corrente;
+    if (!items[c]) return;
+    onChange(items.filter((_, j) => j !== c));
+    setPesquisa(null);
+    setSelecionado(items.length - 1 > 0 ? Math.max(0, c - 1) : -1);
   };
   const escolher = (o: OpcaoReal) => {
     if (!pesquisa) return;
@@ -254,21 +295,28 @@ export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao, 
     setPesquisa(null);
   };
   const fechar = React.useCallback(() => setPesquisa(null), []);
-  const focarLinha = (i: number) => { setSelecionado(i); requestAnimationFrame(() => linhas.current[i]?.focus()); };
+  const marcarEFocar = (i: number) => { setSelecionado(i); requestAnimationFrame(() => circulos.current[i]?.focus()); };
 
-  const tecladoDaLinha = (e: React.KeyboardEvent<HTMLTableRowElement>, i: number) => {
-    if (e.target !== e.currentTarget) return;
-    if (e.key === "ArrowDown") { e.preventDefault(); focarLinha(Math.min(items.length - 1, i + 1)); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); focarLinha(Math.max(0, i - 1)); }
-    else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelecionado(i); }
+  /**
+   * Enter e Espaço alternam pelo próprio botão (o clique nativo do `<button>` chama o mesmo `onClick`) — tratá-los aqui
+   * também alternaria duas vezes onde o navegador dispara o clique do Espaço mesmo com o keydown cancelado.
+   */
+  const tecladoDoCirculo = (e: React.KeyboardEvent<HTMLButtonElement>, i: number) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); if (i + 1 < items.length) marcarEFocar(i + 1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); if (i > 0) marcarEFocar(i - 1); }
+  };
+  /** Clicar na área da grade fora de qualquer linha de item desmarca (o cabeçalho e o espaço vazio contam como fora). */
+  const cliqueNaGrade = (e: React.MouseEvent<HTMLDivElement>) => {
+    const alvo = e.target as Element;
+    if (!alvo.closest("tr[aria-selected]") && sel >= 0) setSelecionado(-1);
   };
 
   const subtotal = items.reduce((a, it) => a + totalDaLinhaExibido(it), 0);
-  const item = sel >= 0 ? items[sel] : undefined;
+  const item = atual >= 0 ? items[atual] : undefined;
 
   const colunasVisiveis = colunas.filter((c) => c.visivel && (!doLayout || doLayout.has(c.chave))).map((c) => c.chave);
-  // largura mínima DERIVADA das colunas visíveis (a lixeira + cada coluna), nunca contada à mão
-  const larguraMinima = LARGURA_EXCLUIR + colunasVisiveis.reduce((a, k) => a + COLUNAS[k].largura, 0);
+  // largura mínima DERIVADA das colunas visíveis (o círculo + cada coluna), nunca contada à mão
+  const larguraMinima = LARGURA_SELECAO + colunasVisiveis.reduce((a, k) => a + COLUNAS[k].largura, 0);
 
   /**
    * O saldo mostrado na coluna/campo Estoque. Só EXIBE — quem preenche o custo médio é `efeitosDoEstoque`, montado
@@ -281,40 +329,55 @@ export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao, 
   const celula = (k: ChaveColuna, it: ItemRow, i: number, ativa: boolean) => {
     switch (k) {
       case "codigo": return <td key={k}><CodigoDoProduto id={it.product_id} conhecido={conhecidos[it.product_id]} /></td>;
-      case "produto": return <td key={k}><CelulaDeReferencia recurso="products" id={it.product_id} conhecido={conhecidos[it.product_id]} vazio="Pesquisar produto" rotuloAcao="Produto"
+      case "produto": return <td key={k}><CelulaDeReferencia recurso="products" id={it.product_id} conhecido={conhecidos[it.product_id]} vazio="Selecione o produto" erro={pendente(i)}
+        rotuloAcao={(o) => (o ? `Trocar o produto do item ${i + 1}` : `Selecionar o produto do item ${i + 1}`)}
         aberto={pesquisa?.linha === i && pesquisa.campo === "product_id"} testId="central-vendas-produto"
         onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "product_id", ancora: el, modo: "flutuante" }); }} /></td>;
-      case "armazem": return <td key={k}><CelulaDeReferencia recurso="warehouses" id={it.warehouse_id} conhecido={it.warehouse_id ? conhecidos[it.warehouse_id] : undefined} vazio="—" rotuloAcao="Armazém"
+      case "armazem": return <td key={k}><CelulaDeReferencia recurso="warehouses" id={it.warehouse_id} conhecido={it.warehouse_id ? conhecidos[it.warehouse_id] : undefined} vazio="—"
+        rotuloAcao={(o) => (o ? `Armazém: ${o.label}` : "Armazém")}
         aberto={pesquisa?.linha === i && pesquisa.campo === "warehouse_id"} testId="central-vendas-armazem"
         onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "warehouse_id", ancora: el, modo: "flutuante" }); }} /></td>;
-      case "estoque": return <td key={k} className={cn(estilos.numero, estilos.estoque)}>{saldoDoItem(it)}</td>;
-      case "quantidade": return <td key={k} className={estilos.numero}><span className={estilos.quantidade}>
-        {ativa ? <input className={estilos.entrada} aria-label="Quantidade" type="number" step="0.0001" min="0" value={it.quantity} onChange={(e) => atualizar(i, "quantity", e.target.value)} onClick={(e) => e.stopPropagation()} />
+      case "estoque": return <td key={k} className={cn(grade.numero, grade.estoque)}>{saldoDoItem(it)}</td>;
+      case "quantidade": return <td key={k} className={grade.numero}><span className={grade.quantidade}>
+        {ativa ? <input className={grade.entrada} aria-label={`Quantidade do item ${i + 1}`} type="number" step="0.0001" min="0" value={it.quantity} onChange={(e) => atualizar(i, "quantity", e.target.value)} />
           : <span data-testid="central-vendas-quantidade">{num(it.quantity || "0", 2)}</span>}
         <Unidade produto={it.product_id} />
       </span></td>;
-      case "unitario": return <td key={k} className={estilos.numero}>{ativa ? <input className={estilos.entrada} aria-label="Valor unitário" type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(i, "unit_value", e.target.value)} onClick={(e) => e.stopPropagation()} /> : brl(it.unit_value ?? "0")}</td>;
-      case "desconto": return <td key={k} className={estilos.numero}>{Number(it.discount || 0) ? brl(it.discount!) : "—"}</td>;
-      case "descontoPercentual": return <td key={k} className={estilos.numero}>{Number(it.discount_percent || 0) ? `${num(it.discount_percent!, 2)}%` : "—"}</td>;
-      case "total": return <td key={k} className={cn(estilos.numero, estilos.forte)}>{brl(totalDaLinhaExibido(it))}</td>;
+      case "unitario": return <td key={k} className={grade.numero}>{ativa ? <input className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(i, "unit_value", e.target.value)} /> : brl(it.unit_value ?? "0")}</td>;
+      case "desconto": return <td key={k} className={grade.numero}>{Number(it.discount || 0) ? brl(it.discount!) : "—"}</td>;
+      case "descontoPercentual": return <td key={k} className={grade.numero}>{Number(it.discount_percent || 0) ? `${num(it.discount_percent!, 2)}%` : "—"}</td>;
+      case "total": return <td key={k} className={cn(grade.numero, grade.forte)}>{brl(totalDaLinhaExibido(it))}</td>;
     }
   };
 
-  const grade = <div className={estilos.gradeRolagem}>
-    <table className={estilos.grade} style={{ minWidth: larguraMinima }} aria-label="Itens do documento" data-testid="central-vendas-grade">
-      <colgroup><col style={{ width: LARGURA_EXCLUIR }} />{colunasVisiveis.map((k) => <col key={k} style={COLUNAS[k].elastica ? { minWidth: COLUNAS[k].largura } : { width: COLUNAS[k].largura }} />)}</colgroup>
+  // o círculo tabulável: o da linha marcada, ou o da 1ª quando nada está marcado (tabindex itinerante)
+  const tabulavel = sel >= 0 ? sel : 0;
+
+  const tabela = <div className={grade.rolagem} onClick={cliqueNaGrade}>
+    <table className={grade.grade} style={{ minWidth: larguraMinima }} aria-label="Itens do documento" data-testid="central-vendas-grade">
+      <colgroup><col style={{ width: LARGURA_SELECAO }} />{colunasVisiveis.map((k) => <col key={k} style={COLUNAS[k].elastica ? { minWidth: COLUNAS[k].largura } : { width: COLUNAS[k].largura }} />)}</colgroup>
       <thead><tr>
-        <th aria-label="Excluir" />
-        {colunasVisiveis.map((k) => <th key={k} className={COLUNAS[k].numero ? estilos.numero : undefined} {...dataCampo(k)}>{rotuloColuna(k)}{obrigatoria(k) && !COLUNAS_DO_SISTEMA.has(CHAVE_DO_CATALOGO[k]) && <span className="req text-red-500"> *</span>}</th>)}
+        <th scope="col" className={grade.celulaSelecao} aria-label="Seleção" />
+        {colunasVisiveis.map((k) => <th key={k} scope="col" {...dataCampo(k)}>{rotuloColuna(k)}{obrigatoria(k) && !COLUNAS_DO_SISTEMA.has(CHAVE_DO_CATALOGO[k]) && <span className="req text-red-500"> *</span>}</th>)}
       </tr></thead>
       <tbody>
-        {items.length === 0 && <tr><td colSpan={1 + colunasVisiveis.length} className={estilos.vazio}>Nenhum item. Use o botão verde para adicionar.</td></tr>}
+        {items.length === 0 && <tr><td colSpan={1 + colunasVisiveis.length} className={grade.vazio}>
+          <div className={grade.vazioConteudo}>
+            <span>Nenhum item adicionado.</span>
+            <button type="button" className={grade.botaoTexto} data-testid="central-vendas-adicionar-vazio" onClick={(e) => { e.stopPropagation(); adicionar(); }}><Plus aria-hidden />Adicionar produto</button>
+          </div>
+        </td></tr>}
         {items.map((it, i) => {
           const ativa = i === sel;
-          return <tr key={i} ref={(el) => { linhas.current[i] = el; }} className={cn(estilos.linha, !it.product_id && estilos.linhaSemProduto)}
-            aria-selected={ativa} tabIndex={ativa || (sel < 0 && i === 0) ? 0 : -1} data-testid="central-vendas-linha"
-            onClick={() => setSelecionado(i)} onKeyDown={(e) => tecladoDaLinha(e, i)}>
-            <td className={estilos.excluir}><button type="button" className={estilos.remover} aria-label={`Excluir item ${i + 1}`} data-dica="Excluir item" onClick={(e) => { e.stopPropagation(); remover(i); }}><Trash2 aria-hidden /></button></td>
+          return <tr key={i} className={cn(grade.linha, ativa && grade.linhaMarcada, pendente(i) && grade.linhaComErro)}
+            aria-selected={ativa} data-testid="central-vendas-linha">
+            <td className={grade.celulaSelecao}>
+              <button type="button" role="checkbox" aria-checked={ativa} aria-label={`Selecionar item ${i + 1}`} className={grade.circulo} data-testid="central-vendas-selecionar-item"
+                ref={(el) => { circulos.current[i] = el; }} tabIndex={i === tabulavel ? 0 : -1}
+                onClick={(e) => { e.stopPropagation(); setSelecionado(ativa ? -1 : i); }} onKeyDown={(e) => tecladoDoCirculo(e, i)}>
+                {ativa && <Check aria-hidden strokeWidth={2} />}
+              </button>
+            </td>
             {colunasVisiveis.map((k) => {
               const td = celula(k, it, i, ativa);
               // Sem layout E sem erros, a célula de hoje. Os erros sem layout só chegam com a reserva (TOP-CONFIG-07).
@@ -328,48 +391,55 @@ export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao, 
     </table>
   </div>;
 
-  const pesquisaEmFluxo = (campo: "product_id" | "warehouse_id") => pesquisa && pesquisa.modo === "fluxo" && pesquisa.campo === campo && pesquisa.linha === sel
+  const pesquisaEmFluxo = (campo: "product_id" | "warehouse_id") => pesquisa && pesquisa.modo === "fluxo" && pesquisa.campo === campo && pesquisa.linha === atual
     ? <PainelDePesquisa key={`fluxo-${campo}`} recurso={campo === "product_id" ? "products" : "warehouses"} rotulo={campo === "product_id" ? "Pesquisar produto" : "Pesquisar armazém"}
         valor={item?.[campo] as string | undefined} modo="fluxo" ancora={pesquisa.ancora} onEscolher={escolher} onFechar={fechar} testId="central-vendas-pesquisa" />
     : null;
 
-  /** Atributos do campo do formulário do item com layout: `data-campo`, obrigatório e erro da linha selecionada. */
-  const doCampo = (k: ChaveColuna) => ({ attrs: dataCampo(k), required: obrigatoria(k), error: erroDe(sel, k), label: rotuloColuna(k) });
-  const campoDeReferencia = (campo: "product_id" | "warehouse_id", rotulo: string, recurso: string) => {
+  /** Atributos do campo do formulário do item com layout: `data-campo`, obrigatório e erro do item do formulário. */
+  const doCampo = (k: ChaveColuna) => ({ attrs: dataCampo(k), required: obrigatoria(k), error: erroDe(atual, k), label: rotuloColuna(k) });
+  const campoDeReferencia = (campo: "product_id" | "warehouse_id", recurso: string) => {
     const id = (item?.[campo] as string | undefined) || undefined;
     const d = doCampo(campo === "product_id" ? "produto" : "armazem");
-    return <div key={campo} className={cn(estilos.campo, estilos.campoPesquisa)} {...d.attrs}>
-      <Field label={layout ? d.label : rotulo} required={d.required} error={d.error} span={12}>
-        <CampoReferenciaBotao recurso={recurso} valor={id} conhecido={id ? conhecidos[id] : undefined} aberto={Boolean(pesquisa?.modo === "fluxo" && pesquisa.campo === campo)}
-          onAbrir={(el) => setPesquisa(pesquisa?.modo === "fluxo" && pesquisa.campo === campo ? null : { linha: sel, campo, ancora: el, modo: "fluxo" })} />
-      </Field>
-      <span className={estilos.adorno} aria-hidden><Search /></span>
-    </div>;
+    return <CampoDaCentral rotulo={d.label} obrigatorio={d.required} erro={d.error} icone="pesquisa" preenchido={Boolean(id)} {...d.attrs}>
+      <CampoReferenciaBotao recurso={recurso} valor={id} conhecido={id ? conhecidos[id] : undefined} aberto={Boolean(pesquisa?.modo === "fluxo" && pesquisa.campo === campo)}
+        onAbrir={(el) => setPesquisa(pesquisa?.modo === "fluxo" && pesquisa.campo === campo ? null : { linha: atual, campo, ancora: el, modo: "fluxo" })} />
+    </CampoDaCentral>;
+  };
+  const campoNumerico = (k: "quantidade" | "unitario" | "desconto" | "descontoPercentual", chave: "quantity" | "unit_value" | "discount" | "discount_percent", valor: string, extra: { step: string; max?: string }) => {
+    const d = doCampo(k);
+    return <CampoDaCentral rotulo={d.label} obrigatorio={d.required} erro={d.error} preenchido={valor !== ""} {...d.attrs}>
+      <Input type="number" step={extra.step} min="0" max={extra.max} value={valor} onChange={(e) => atualizar(atual, chave, e.target.value)} />
+    </CampoDaCentral>;
   };
 
   const campoDoItem = (k: ChaveCampo, it: ItemRow): React.ReactNode => {
     switch (k) {
-      case "produto": return [campoDeReferencia("product_id", "Produto", "products"), pesquisaEmFluxo("product_id")];
-      case "armazem": return [campoDeReferencia("warehouse_id", "Armazém", "warehouses"), pesquisaEmFluxo("warehouse_id")];
-      case "estoque": return <Travado key={k} rotulo={rotuloCampo(k)} campo={layout ? "estoque" : undefined}>{saldoDoItem(it)}</Travado>;
-      case "unidade": return <Travado key={k} rotulo="Unidade" testId="central-vendas-item-unidade"><UnidadeTravada produto={it.product_id} /></Travado>;
-      case "quantidade": { const d = doCampo(k); return <div key={k} className={estilos.campo} {...d.attrs}><Field label={d.label} required={d.required} error={d.error} span={12}><Input type="number" step="0.0001" min="0" value={it.quantity} onChange={(e) => atualizar(sel, "quantity", e.target.value)} /></Field></div>; }
-      case "unitario": { const d = doCampo(k); return <div key={k} className={estilos.campo} {...d.attrs}><Field label={d.label} required={d.required} error={d.error} span={12}><Input type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(sel, "unit_value", e.target.value)} /></Field></div>; }
-      case "desconto": { const d = doCampo(k); return <div key={k} className={estilos.campo} {...d.attrs}><Field label={d.label} required={d.required} error={d.error} span={12}><Input type="number" step="0.01" min="0" value={it.discount ?? ""} onChange={(e) => atualizar(sel, "discount", e.target.value)} /></Field></div>; }
-      case "descontoPercentual": { const d = doCampo(k); return <div key={k} className={estilos.campo} {...d.attrs}><Field label={d.label} required={d.required} error={d.error} span={12}><Input type="number" step="0.01" min="0" max="100" value={it.discount_percent ?? ""} onChange={(e) => atualizar(sel, "discount_percent", e.target.value)} /></Field></div>; }
-      case "total": return <Travado key={k} rotulo={rotuloCampo(k)} campo={layout ? "total" : undefined}><span data-testid="central-vendas-item-total">{brl(totalDaLinhaExibido(it))}</span></Travado>;
+      case "produto": return <>{campoDeReferencia("product_id", "products")}{pesquisaEmFluxo("product_id")}</>;
+      case "armazem": return <>{campoDeReferencia("warehouse_id", "warehouses")}{pesquisaEmFluxo("warehouse_id")}</>;
+      case "estoque": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" data-campo={layout ? "estoque" : undefined}>{saldoDoItem(it)}</CampoDaCentral>;
+      case "unidade": return <CampoDaCentral rotulo="Unidade" estado="travado" testId="central-vendas-item-unidade"><UnidadeTravada produto={it.product_id} /></CampoDaCentral>;
+      case "quantidade": return campoNumerico(k, "quantity", it.quantity, { step: "0.0001" });
+      case "unitario": return campoNumerico(k, "unit_value", it.unit_value ?? "", { step: "0.000001" });
+      case "desconto": return campoNumerico(k, "discount", it.discount ?? "", { step: "0.01" });
+      case "descontoPercentual": return campoNumerico(k, "discount_percent", it.discount_percent ?? "", { step: "0.01", max: "100" });
+      case "total": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" data-campo={layout ? "total" : undefined}><span data-testid="central-vendas-item-total">{brl(totalDaLinhaExibido(it))}</span></CampoDaCentral>;
     }
   };
 
-  const formulario = <div className={estilos.formRolagem} data-testid="central-vendas-item-form">
-    {!item ? <div className={estilos.itemVazio}>{items.length ? "Selecione um item na grade." : "Nenhum item. Use o botão verde para adicionar."}</div> : <div className={estilos.itemForm}>
-      <div className={estilos.itemNav}>
-        <span data-testid="central-vendas-item-posicao">Item {sel + 1} de {items.length}</span>
-        <button type="button" className={estilos.itemNavBotao} aria-label="Item anterior" data-dica="Item anterior" disabled={sel <= 0} onClick={() => setSelecionado(sel - 1)}><ChevronLeft aria-hidden /></button>
-        <button type="button" className={estilos.itemNavBotao} aria-label="Próximo item" data-dica="Próximo item" disabled={sel >= items.length - 1} onClick={() => setSelecionado(sel + 1)}><ChevronRight aria-hidden /></button>
+  const formulario = <div className={grade.form} data-testid="central-vendas-item-form">
+    {!item ? <div className={grade.formVazio}>Nenhum item adicionado.</div> : <>
+      <div className={grade.formNav}>
+        <span className={grade.formNavTitulo} data-testid="central-vendas-item-posicao">Item {atual + 1} de {items.length}</span>
+        <button type="button" className={cn(grade.botao, grade.botaoItem)} aria-label="Item anterior" data-dica="Item anterior" disabled={atual <= 0} onClick={() => { setPesquisa(null); setSelecionado(atual - 1); }}><ChevronLeft aria-hidden /></button>
+        <button type="button" className={cn(grade.botao, grade.botaoItem)} aria-label="Próximo item" data-dica="Próximo item" disabled={atual >= items.length - 1} onClick={() => { setPesquisa(null); setSelecionado(atual + 1); }}><ChevronRight aria-hidden /></button>
+        {/* "novo": o item ainda sem produto (a regra do desenho) */}
+        {!item.product_id && <span className={grade.selo} data-testid="central-vendas-item-novo">novo</span>}
       </div>
-      {campos.filter((c) => c.visivel && (!doLayout || !ehChaveColuna(c.chave) || doLayout.has(c.chave))).map((c) => <React.Fragment key={c.chave}>{campoDoItem(c.chave, item)}</React.Fragment>)}
-    </div>}
+      <div className={grade.formCampos}>
+        {campos.filter((c) => c.visivel && (!doLayout || !ehChaveColuna(c.chave) || doLayout.has(c.chave))).map((c) => <React.Fragment key={c.chave}>{campoDoItem(c.chave, item)}</React.Fragment>)}
+      </div>
+    </>}
   </div>;
 
   /*
@@ -384,31 +454,53 @@ export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao, 
   const efeitosDoEstoque = <div hidden>{items.map((it, i) => <StockCell key={i} warehouseId={it.warehouse_id} productId={it.product_id} onCost={(c) => { if (!it.unit_value || it.unit_value === "0") atualizar(i, "unit_value", c); }} />)}</div>;
 
   // a configuração é a da visão na tela: o formulário quando ele aparece (sozinho ou ao lado da grade), senão a grade
-  const configDoFormulario = visao !== "grade";
+  const configDoFormulario = visao === "formulario";
+  /** Com o formulário à vista e nada marcado, o 1º item passa a ser o marcado — grade e formulário falam do MESMO item. */
+  const mostrarFormulario = () => { if (sel < 0 && items.length) setSelecionado(0); };
+  const escolherVisao = (v: Visao) => {
+    setVisao(v); setPesquisa(null);
+    if (v === "grade") setAmbos(false); else mostrarFormulario();
+  };
+  const alternarAmbos = () => {
+    const novo = !ambos; setAmbos(novo); setPesquisa(null);
+    if (novo) { setVisao("formulario"); mostrarFormulario(); }
+  };
 
   return <>
-    <div className={estilos.itensBarra} role="toolbar" aria-label="Itens">
-      <button type="button" className={cn(estilos.acao, estilos.acaoAdicionar, estilos.dicaInicio)} aria-label="Adicionar item" data-dica="Adicionar item" onClick={adicionar}><Plus aria-hidden /></button>
-      <span className={estilos.barraDivisor} aria-hidden />
-      <span className={estilos.itensTitulo}>Itens <span className={estilos.itensContagem} data-testid="central-vendas-itens-contagem">({items.length})</span></span>
-      <span className={estilos.barraEspaco} />
-      <div className={estilos.visoes} role="group" aria-label="Visualização dos itens">
-        {VISOES.map(({ v, rotulo, Icone }) => <button key={v} type="button" aria-pressed={visao === v} aria-label={rotulo} data-dica={rotulo}
-          onClick={() => { setVisao(v); setPesquisa(null); setConfigurando(false); if (v !== "grade" && sel < 0 && items.length) setSelecionado(0); }}><Icone aria-hidden /></button>)}
+    <div className={grade.barra} role="toolbar" aria-label="Itens">
+      <BotaoAmpliar regiao="itens" />
+      <button type="button" className={cn(grade.botao, grade.botaoAdicionar, estilos.dicaInicio)} aria-label="Adicionar produto" data-dica="Adicionar produto" data-testid="central-vendas-adicionar-item" onClick={adicionar}><Plus aria-hidden /></button>
+      {corrente >= 0 && <>
+        <button type="button" className={cn(grade.botao, grade.botaoAcaoItem, estilos.dicaInicio)} aria-label="Duplicar item" data-dica="Duplicar item" data-testid="central-vendas-duplicar-item" onClick={duplicar}><Copy aria-hidden /></button>
+        <button type="button" className={cn(grade.botao, grade.botaoAcaoItem, grade.botaoRemover, estilos.dicaInicio)} aria-label="Remover item" data-dica="Remover item" data-testid="central-vendas-remover-item" onClick={remover}><Trash2 aria-hidden /></button>
+      </>}
+      <span className={grade.espaco} />
+      <div className={grade.segmento} role="group" aria-label="Visualização dos itens">
+        <button type="button" aria-pressed={visao === "grade"} aria-label="Grade" data-dica="Grade" onClick={() => escolherVisao("grade")}><Grid3x3 aria-hidden /></button>
+        <button type="button" aria-pressed={visao === "formulario"} aria-label="Formulário" data-dica="Formulário" data-visao="formulario" onClick={() => escolherVisao("formulario")}><FileText aria-hidden /></button>
       </div>
       {configDoFormulario
-        ? <ConfiguracaoDeVisao<ChaveCampo> titulo="Visualização do formulário" subtitulo="Campos visíveis e ordem" rotulos={layout ? (Object.fromEntries((Object.keys(CAMPOS) as ChaveCampo[]).map((k) => [k, rotuloCampo(k)])) as Record<ChaveCampo, string>) : CAMPOS} lista={campos} onLista={setCampos} onRestaurar={() => setCampos(camposPadrao())} aberta={configurando} onAberta={setConfigurando} />
-        : <ConfiguracaoDeVisao<ChaveColuna> titulo="Colunas da grade" subtitulo="Colunas visíveis e ordem" rotulos={Object.fromEntries((Object.keys(COLUNAS) as ChaveColuna[]).map((k) => [k, rotuloColuna(k)])) as Record<ChaveColuna, string>} lista={colunas} onLista={setColunas} onRestaurar={() => setColunas(colunasPadrao())} aberta={configurando} onAberta={setConfigurando} />}
+        ? <ConfigurarColunas<ChaveCampo> titulo="Visualização do formulário" subtitulo="Campos visíveis e ordem"
+            rotulos={Object.fromEntries((Object.keys(CAMPOS) as ChaveCampo[]).map((k) => [k, rotuloCampo(k)])) as Record<ChaveCampo, string>}
+            lista={campos} onLista={setCampos} onRestaurar={() => setCampos(camposPadrao())} ambos={ambos} onAmbos={alternarAmbos} />
+        : <ConfigurarColunas<ChaveColuna> titulo="Colunas da grade" subtitulo="Colunas visíveis e ordem"
+            rotulos={Object.fromEntries((Object.keys(COLUNAS) as ChaveColuna[]).map((k) => [k, rotuloColuna(k)])) as Record<ChaveColuna, string>}
+            lista={colunas} onLista={setColunas} onRestaurar={() => setColunas(colunasPadrao())} ambos={ambos} onAmbos={alternarAmbos} />}
     </div>
-    <div className={estilos.itensCorpo} data-visao={visao} data-testid="central-vendas-itens-corpo">
-      {visao !== "formulario" && grade}
-      {visao !== "grade" && formulario}
+    <div className={grade.corpo} data-visao={ambos ? "ambos" : visao} data-testid="central-vendas-itens-corpo">
+      {mostraGrade && tabela}
+      {mostraFormulario && formulario}
       {efeitosDoEstoque}
     </div>
     {errosDosItens.length > 0 && <div role="alert" data-testid="central-vendas-itens-erros" className="px-3 py-1 text-[11px] text-red-600">
       {errosDosItens.map(([caminho, msg]) => { const n = /^items\[(\d+)\]/.exec(caminho); return <p key={caminho} data-erro-campo={caminho}>{n ? `Item ${Number(n[1]) + 1}: ` : ""}{msg}</p>; })}
     </div>}
-    <div className={estilos.itensRodape}>Subtotal dos itens <b data-testid="central-vendas-subtotal">{brl(subtotal)}</b></div>
+    <div className={grade.rodape} data-testid="central-vendas-itens-rodape">
+      <span className={grade.rodapeTitulo}>Itens <span className={grade.rodapeContagem} data-testid="central-vendas-itens-contagem">({items.length})</span>
+        {errosDosItens.length > 0 && <span className={grade.pontoErro} data-testid="central-vendas-itens-erro" title="Há itens com pendência" />}</span>
+      {/* o subtotal EXIBIDO de sempre: exibição — quem calcula o documento é o servidor */}
+      <span>Subtotal dos itens <b className={grade.rodapeValor} data-testid="central-vendas-subtotal">{brl(subtotal)}</b></span>
+    </div>
     {pesquisa?.modo === "flutuante" && <PainelDePesquisa recurso={pesquisa.campo === "product_id" ? "products" : "warehouses"}
       rotulo={pesquisa.campo === "product_id" ? "Pesquisar produto" : "Pesquisar armazém"} valor={items[pesquisa.linha]?.[pesquisa.campo] as string | undefined}
       modo="flutuante" ancora={pesquisa.ancora} onEscolher={escolher} onFechar={fechar} testId="central-vendas-pesquisa" />}
@@ -416,59 +508,12 @@ export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao, 
 }
 
 /**
- * "Configurar colunas": o popover de vidro do protótipo (340px, ancorado ao botão, abrindo para baixo),
- * com uma caixa por coluna/campo, subir/descer e "Restaurar padrão". Só muda a lista que recebe — que é
- * estado da tela. É um DISCLOSURE (`aria-expanded` + `aria-controls`), não um diálogo modal: a tela
- * continua viva por trás, e Esc ou clicar fora fecham.
+ * O controle da pesquisa no formulário do item (produto, armazém): o `CampoDaCentral` injeta `id` (que liga o rótulo ao
+ * botão — sem ele o leitor de tela não o nomeia) e `className` (que o põe dentro da caixa do desenho).
  */
-function ConfiguracaoDeVisao<K extends string>({ titulo, subtitulo, rotulos, lista, onLista, onRestaurar, aberta, onAberta }: {
-  titulo: string; subtitulo: string; rotulos: Record<K, string>; lista: Preferencia<K>[]; onLista: (l: Preferencia<K>[]) => void; onRestaurar: () => void;
-  aberta: boolean; onAberta: (a: boolean) => void;
-}) {
-  const ancora = React.useRef<HTMLSpanElement>(null);
-  const botao = React.useRef<HTMLButtonElement>(null);
-  const id = React.useId();
-  React.useEffect(() => {
-    if (!aberta) return;
-    const fora = (e: MouseEvent) => { if (!ancora.current?.contains(e.target as Node)) onAberta(false); };
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { onAberta(false); botao.current?.focus(); } };
-    document.addEventListener("mousedown", fora); document.addEventListener("keydown", esc);
-    return () => { document.removeEventListener("mousedown", fora); document.removeEventListener("keydown", esc); };
-  }, [aberta, onAberta]);
-  const alternar = (i: number) => onLista(lista.map((c, j) => (j === i ? { ...c, visivel: !c.visivel } : c)));
-  const mover = (i: number, d: -1 | 1) => { const j = i + d; if (j < 0 || j >= lista.length) return; const n = lista.slice(); [n[i], n[j]] = [n[j]!, n[i]!]; onLista(n); };
-
-  return <span className={estilos.configAncora} ref={ancora}>
-    <button ref={botao} type="button" className={cn(estilos.acao, estilos.acaoPequena, estilos.dicaFim, aberta && estilos.acaoAberta)} aria-label="Configurar colunas" data-dica="Configurar colunas"
-      aria-expanded={aberta} aria-controls={aberta ? id : undefined} data-testid="central-vendas-configurar" onClick={() => onAberta(!aberta)}><Columns3 aria-hidden /></button>
-    {aberta && <div id={id} className={cn(estilos.popover, estilos.config)} role="group" aria-label={titulo} data-testid="central-vendas-configuracao">
-      <div className={estilos.configCabecalho}><span className={estilos.configTitulo}>{titulo}</span><span className={estilos.configSub}>{subtitulo}</span></div>
-      <ul className={estilos.configLista}>
-        {lista.map((c, i) => <li key={c.chave} className={estilos.configLinha}>
-          <button type="button" role="checkbox" aria-checked={c.visivel} aria-label={`Mostrar ${rotulos[c.chave]}`} className={estilos.caixa} onClick={() => alternar(i)}>{c.visivel && <Check aria-hidden />}</button>
-          <span className={estilos.configRotulo}>{rotulos[c.chave]}</span>
-          <button type="button" className={estilos.mover} aria-label={`Subir ${rotulos[c.chave]}`} title="Subir" disabled={i === 0} onClick={() => mover(i, -1)}><ChevronUp aria-hidden /></button>
-          <button type="button" className={estilos.mover} aria-label={`Descer ${rotulos[c.chave]}`} title="Descer" disabled={i === lista.length - 1} onClick={() => mover(i, 1)}><ChevronDown aria-hidden /></button>
-        </li>)}
-      </ul>
-      <div className={estilos.popoverRodape}><span>Vale só nesta tela</span><button type="button" className={estilos.link} onClick={onRestaurar}>Restaurar padrão</button></div>
-    </div>}
-  </span>;
-}
-
-/** `idDoCampo` chega pelo `Field` (que injeta `id` no filho) e liga o rótulo ao botão — sem ele o leitor de tela não o nomeia. */
-function CampoReferenciaBotao({ recurso, valor, conhecido, aberto, onAbrir, id: idDoCampo }: { recurso: string; valor?: string; conhecido?: OpcaoReal; aberto: boolean; onAbrir: (el: HTMLElement) => void; id?: string }) {
+function CampoReferenciaBotao({ recurso, valor, conhecido, aberto, onAbrir, id: idDoCampo, className }: { recurso: string; valor?: string; conhecido?: OpcaoReal; aberto: boolean; onAbrir: (el: HTMLElement) => void; id?: string; className?: string }) {
   const o = useRotulo(recurso, valor, conhecido);
-  return <button type="button" id={idDoCampo} className={cn("cmd-display", !o && "is-empty")} aria-haspopup="listbox" aria-expanded={aberto} onClick={(e) => onAbrir(e.currentTarget)}>
+  return <button type="button" id={idDoCampo} className={cn("cmd-display", !o && "is-empty", className)} aria-haspopup="listbox" aria-expanded={aberto} onClick={(e) => onAbrir(e.currentTarget)}>
     {o ? <span>{o.code ? `${o.code} · ` : ""}{o.label}</span> : <span className="cmd-display-placeholder">Pesquisar</span>}
   </button>;
-}
-
-/** Valor travado pelo sistema (fundo cinza-azulado, cadeado): leitura, nunca entrada. */
-export function Travado({ rotulo, children, testId, campo }: { rotulo: string; children: React.ReactNode; testId?: string; campo?: string }) {
-  return <div className={estilos.travado} role="group" aria-label={rotulo} data-testid={testId} data-campo={campo}>
-    <span className={estilos.travadoRotulo}>{rotulo}</span>
-    <span className={estilos.travadoValor}>{children}</span>
-    <span className={estilos.adorno} aria-hidden><Lock /></span>
-  </div>;
 }

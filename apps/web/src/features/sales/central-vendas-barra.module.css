@@ -1,0 +1,259 @@
+/*
+ * CENTRAL DE VENDAS — BARRA DE AÇÕES (VISUAL-UX-02, decisão 270).
+ *
+ * As medidas saem do CSS do desenho aprovado (`.tbar2`, `.tbi`, `.tbp`, `.vseg`, `.radial`/`.rs-item`, `.pendb`,
+ * `.pend-i`, `.savednow`, `.emode`, `.pop`, `.mi`, `.tbadge`) e do bloco MOVIMENTO dele (uma curva, três durações,
+ * tudo zerado com prefers-reduced-motion). As cores repetem o hexadecimal, como o resto da folha da Central: a
+ * catraca de nomenclatura conta cada referência ao prefixo herdado, e nenhum token novo foi criado.
+ *
+ * O popover que é PORTALADO (menu Novo, lista de pendências) sai de `.workspace` e perde as variáveis de movimento
+ * dela — por isso os tempos aparecem aqui em milissegundos, e não por variável.
+ */
+
+/* ═════════════ conjuntos da barra (`.aset` gap 6px · `.tbar2` gap 8px) ═════════════ */
+.conjunto { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.conjuntoDireito { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+/* ═════════════ botão redondo (`.tbi`) ═════════════ */
+.botao {
+  position: relative;
+  width: 25px;
+  height: 25px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: #f1f3f4;
+  color: #475569;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background-color 170ms cubic-bezier(.4, 0, .2, 1), color 170ms cubic-bezier(.4, 0, .2, 1), border-color 170ms cubic-bezier(.4, 0, .2, 1), box-shadow 170ms cubic-bezier(.4, 0, .2, 1), transform 120ms cubic-bezier(.4, 0, .2, 1);
+}
+.botao:hover:not(:disabled) { background: #e8ecef; color: #0f172a; box-shadow: 0 3px 9px rgba(34, 197, 94, .36); }
+.botao:active:not(:disabled) { background: #dde3e8; transform: scale(.90); }
+.botao:disabled { opacity: .42; cursor: not-allowed; }
+.botao:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+/* pressionado: o ⚡ aberto usa o mesmo estado do "Configurar colunas" (`.radial.open .rs-fab`) */
+.botao:not(.solido)[data-state="open"],
+.botao[aria-pressed="true"] { background: #e2e8f0; color: #0f172a; box-shadow: inset 0 0 0 1px #cbd5e1, 0 2px 6px rgba(34, 197, 94, .30); }
+/* salvando (`.tbi.busy`) */
+.botao[aria-busy="true"],
+.botao[aria-busy="true"]:disabled { opacity: 1; background: #e8ecef; color: #475569; box-shadow: 0 2px 6px rgba(34, 197, 94, .30); cursor: default; }
+/* Novo (`.tbi.solid`): verde cheio; no hover vale a ÚLTIMA regra do desenho (cinza, ícone escuro) */
+.solido { background: #40de63; color: #fff; border-color: transparent; }
+.solido:hover:not(:disabled) { background: #e8ecef; color: #0f172a; }
+.solido:active:not(:disabled) { background: #dde3e8; }
+
+/* ═════════════ pílula (`.tbp`) — Confirmar venda, Converter, Encerrar saldo ═════════════ */
+.pilula {
+  height: 25px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 13px 0 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: #f1f3f4;
+  color: #475569;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 170ms cubic-bezier(.4, 0, .2, 1), color 170ms cubic-bezier(.4, 0, .2, 1), border-color 170ms cubic-bezier(.4, 0, .2, 1), box-shadow 170ms cubic-bezier(.4, 0, .2, 1), transform 120ms cubic-bezier(.4, 0, .2, 1);
+}
+.pilula:hover:not(:disabled) { background: #e8ecef; color: #0f172a; box-shadow: 0 3px 9px rgba(34, 197, 94, .36); }
+.pilula:active:not(:disabled) { background: #dde3e8; transform: scale(.975); }
+.pilula:disabled { opacity: .42; cursor: not-allowed; }
+.pilula:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+
+.girar { display: inline-flex; animation: girar 800ms linear infinite; }
+@keyframes girar { to { transform: rotate(360deg); } }
+
+/* ═════════════ posição do rótulo (`.vseg`) ═════════════ */
+.segmentado {
+  height: 25px;
+  box-sizing: border-box;
+  padding: 2px;
+  border-radius: 999px;
+  background: #f1f3f4;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+.segmentado > button {
+  width: 26px;
+  height: 21px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #475569;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 170ms cubic-bezier(.4, 0, .2, 1), color 170ms cubic-bezier(.4, 0, .2, 1), box-shadow 170ms cubic-bezier(.4, 0, .2, 1), transform 120ms cubic-bezier(.4, 0, .2, 1);
+}
+.segmentado > button:hover { background: rgba(15, 23, 42, .07); color: #0f172a; }
+.segmentado > button[aria-pressed="true"] { background: #fff; color: #0f172a; box-shadow: 0 1px 2px rgba(15, 23, 42, .08); }
+.segmentado > button[aria-pressed="true"]:hover { background: #fff; color: #0f172a; box-shadow: 0 1px 4px rgba(15, 23, 42, .16); }
+.segmentado > button:active { transform: scale(.97); }
+.segmentado > button:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+
+/* ═════════════ indicadores ═════════════ */
+.salvo { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; color: #15803d; white-space: nowrap; animation: sobeDeLeve 170ms cubic-bezier(.16, 1, .3, 1) backwards; }
+.confirmando { display: inline-flex; align-items: center; margin-left: 4px; font-size: 12px; color: #64748b; white-space: nowrap; }
+.confirmando > .girar { margin-right: 6px; }
+.pendenciasAncora { position: relative; display: inline-flex; margin-right: 2px; }
+.pendencias {
+  height: 26px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  animation: sobeDeLeve 170ms cubic-bezier(.16, 1, .3, 1) backwards;
+}
+.pendencias:hover { background: #fee2e2; }
+.pendencias:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+/* caixas do desenho: conteúdo + borda de 1px (border-box aqui) */
+.pendenciasLista { width: 302px; padding: 4px 0; }
+.pendencia { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; width: 100%; box-sizing: border-box; padding: 7px 12px; border: 0; background: transparent; text-align: left; cursor: pointer; font-family: inherit; }
+.pendencia:hover,
+.pendencia:focus-visible { background: #fef2f2; outline: none; }
+.pendencia > b { font-size: 12px; font-weight: 600; line-height: normal; color: #0f172a; }
+.pendencia > span { font-size: 11.5px; line-height: normal; color: #b91c1c; }
+
+/* ═════════════ vidro (`.pop`) — portalado ═════════════ */
+.pop {
+  z-index: 80;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .72);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(22px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, .65);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, .18), 0 2px 8px rgba(15, 23, 42, .08), inset 0 1px 0 rgba(255, 255, 255, .85);
+  animation: surge 230ms cubic-bezier(.16, 1, .3, 1) backwards;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .pop { background: rgba(255, 255, 255, .97); }
+}
+
+/* menu Novo documento (`.pop` 336px + `.mi`) */
+.menuNovo { width: 338px; padding: 4px 0; }
+.menuTitulo { padding: 8px 12px 6px; font-size: 10px; line-height: normal; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #a3adb9; }
+.menuAviso { padding: 6px 12px 8px; font-size: 12px; color: #64748b; }
+.mi {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-size: 12.5px;
+  color: #1e293b;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+  transition: background-color 170ms cubic-bezier(.4, 0, .2, 1), box-shadow 170ms cubic-bezier(.4, 0, .2, 1), transform 120ms cubic-bezier(.4, 0, .2, 1);
+}
+.mi[data-highlighted] { background: rgba(64, 222, 99, .14); box-shadow: inset 3px 0 0 #22a85c; }
+.mi:active { transform: scale(.995); }
+.miSimples { grid-template-columns: minmax(0, 1fr); font-weight: 600; color: #15803d; }
+.miNome { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.codigo { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; font-weight: 600; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.selo { font-size: 10.5px; font-weight: 600; color: #475569; background: #eef1f4; border-radius: 999px; padding: 0 6px; line-height: 16px; }
+.separador { height: 1px; background: rgba(15, 23, 42, .08); margin: 4px 0; }
+
+/* ═════════════ ações rápidas em meia-lua (`.radial`, `.rs-item`) ═════════════ */
+.leque { position: relative; display: inline-flex; flex-shrink: 0; }
+/* o conteúdo do menu é um ponto no CENTRO do ⚡: os itens orbitam a partir dele */
+.lequeConteudo { position: relative; width: 0; height: 0; z-index: 36; outline: none; }
+.lequeConteudo[data-state="closed"] { animation: lequeFecha 410ms linear forwards; }
+/* especificidade acima de `.workspace [data-dica]` (position: relative da dica) */
+.lequeConteudo .lequeItem[data-dica] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  translate: -50% -50%;
+  z-index: 36;
+  width: 28px;
+  height: 28px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .95);
+  border: 1px solid #e6ece8;
+  color: #475569;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, .13);
+  outline: none;
+  transform: translate(var(--x), var(--y)) scale(1);
+  transition: border-color 120ms cubic-bezier(.4, 0, .2, 1), background-color 120ms cubic-bezier(.4, 0, .2, 1), color 120ms cubic-bezier(.4, 0, .2, 1);
+  animation: lequeSai 340ms cubic-bezier(.2, .8, .3, 1.2) var(--atraso-entrada) backwards, lequeAcende 170ms cubic-bezier(.4, 0, .2, 1) var(--atraso-entrada) backwards;
+}
+.lequeConteudo .lequeItem[data-highlighted]:not([data-disabled]),
+.lequeConteudo .lequeItem:hover:not([data-disabled]) { border-color: #cbd5e1; background: #fff; color: #0f172a; }
+.lequeConteudo .lequeItem:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+/* no desenho `.radial.open .rs-item` vence o `:disabled`: o item desabilitado (Imprimir e Histórico na criação) fica
+   com opacidade 1 — só o cursor e a falta de resposta ao passar dizem que ele não age */
+.lequeConteudo .lequeItem[data-disabled] { opacity: 1; cursor: not-allowed; }
+/* a mesma especificidade da regra base do item (`.lequeConteudo .lequeItem[data-dica]`) + 1 classe: sem isso a cor da
+   base vencia — o número saía #475569 e o Cancelar saía cinza, não vermelho (VD-3) */
+.lequeConteudo .lequeItem.lequeNumero[data-dica] { font-size: 13px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; color: #0f172a; }
+.lequeConteudo .lequeItem.lequePerigo[data-dica] { color: #b91c1c; }
+.lequeConteudo .lequePerigo[data-highlighted]:not([data-disabled]),
+.lequeConteudo .lequePerigo:hover:not([data-disabled]) { border-color: #fecaca; background: #fef2f2; color: #b91c1c; }
+.lequeConteudo[data-state="closed"] .lequeItem[data-dica] {
+  animation: lequeVolta 340ms cubic-bezier(.2, .8, .3, 1.2) var(--atraso-saida) forwards, lequeApaga 170ms cubic-bezier(.4, 0, .2, 1) var(--atraso-saida) forwards;
+  pointer-events: none;
+}
+
+@keyframes lequeSai { from { transform: translate(0, 0) scale(.55); } }
+@keyframes lequeAcende { from { opacity: 0; } }
+@keyframes lequeVolta { to { transform: translate(0, 0) scale(.55); } }
+@keyframes lequeApaga { to { opacity: 0; } }
+@keyframes lequeFecha { to { opacity: 1; } }
+@keyframes sobeDeLeve { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+@keyframes surge { from { opacity: 0; transform: translateY(-7px) scale(.985); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .botao, .pilula, .segmentado > button, .mi { transition: none; }
+  .botao:active:not(:disabled), .pilula:active:not(:disabled), .segmentado > button:active, .mi:active { transform: none; }
+  .salvo, .pendencias, .pop { animation: none; }
+  .girar { animation-duration: 1.6s; }
+  .lequeConteudo[data-state="closed"] { animation: none; }
+  .lequeConteudo .lequeItem[data-dica],
+  .lequeConteudo[data-state="closed"] .lequeItem[data-dica] { animation: none; transition: none; }
+}

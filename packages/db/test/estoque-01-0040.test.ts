@@ -298,13 +298,13 @@ describe("0040 — sobre o banco até a 0038, como o runner aplica", () => {
     expect((await db.query("select 1 from pg_constraint where conname in ('uq_warehouses_tenant','uq_products_tenant','uq_tipos_operacao_tenant','uq_tipos_operacao_versoes_tenant')")).rowCount).toBe(4);
   });
 
-  it("EB5 aplica: ledger com 39 (a 0040 por último — a 0039 é de outra fatia), tabelas, funções e trava liberada", async () => {
+  it("EB5 aplica: ledger com 39 (o banco sobe até a 0038 e aplica só a 0040), tabelas, funções e trava liberada", async () => {
     await aplicar();
     const ledger = (await db.query<{ n: number; ultima: string }>("select count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
     expect(ledger).toEqual({ n: 39, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
-    expect(noDisco.length, "39 migrations no repositório (0001..0038 + 0040)").toBe(39);
-    expect(noDisco[38]).toBe(ALVO);
+    expect(noDisco.length, "40 migrations no repositório (0001..0040)").toBe(40);
+    expect(noDisco[39]).toBe(ALVO);
     expect(await tabelasExistem()).toEqual({ a: "erp.documentos_estoque", b: "erp.documentos_estoque_itens" });
     // A trava é de transação: depois do commit, outra sessão a obtém.
     const outra = await db.connect();

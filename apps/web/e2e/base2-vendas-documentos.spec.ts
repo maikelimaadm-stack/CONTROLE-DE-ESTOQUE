@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, api, empresaAtiva } from "./helpers";
+import { login, api, empresaAtiva, acaoDaCentral, abrirDadosAdicionais } from "./helpers";
 import { ptBR } from "@erp/plataforma";
 
 /**
@@ -83,10 +83,9 @@ async function aba(page: Page, nome: string) {
   await expect(t).toHaveAttribute("aria-selected", "true");
   return page.getByTestId("central-vendas-painel").getByRole("tabpanel");
 }
-/** Abre "Mais ações" (⋮) e escolhe o item. */
-async function maisAcoes(page: Page, item: string | RegExp) {
-  await page.getByTestId("central-vendas-mais-acoes").click();
-  await page.getByTestId("central-vendas-mais-acoes-menu").getByRole("menuitem", { name: item }).click();
+/** Abre o leque de Ações rápidas (VISUAL-UX-02, decisão 270; antes "Mais ações") e escolhe o item pelo testid. */
+async function acaoRapida(page: Page, testId: string) {
+  await (await acaoDaCentral(page, testId)).click();
 }
 
 /** Status CRU de uma porta da API — o helper `api` lança em erro, e aqui o erro é o que se mede. */
@@ -127,6 +126,8 @@ for (const variante of ["budget", "order", "sale"] as Variante[]) {
     // não-cruzamento entre variantes segue valendo — mas no campo que continua sendo derivado do
     // registro, que é onde ela sempre quis morar.
     // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
+    // VISUAL-UX-02 (decisão 270): na consulta, Movimento, Versão e Origem moram em "Dados adicionais".
+    await abrirDadosAdicionais(page);
     const familia = campo(page, "Movimento");
     await expect(familia).toContainText(V[variante].top);
     for (const outra of (["budget", "order", "sale"] as Variante[]).filter((x) => x !== variante)) {
@@ -152,10 +153,11 @@ for (const variante of ["budget", "order", "sale"] as Variante[]) {
     }
     await expect(grade.locator("input"), "consulta: nada editável na grade").toHaveCount(0);
 
-    // TOTAL — o número do SERVIDOR, que com frete difere da soma dos itens (subtotal)
+    // TOTAL — o número do SERVIDOR, que com frete difere da soma dos itens (subtotal). Decisão 270: ele saiu da faixa
+    // das abas e mora em Totais, como campo travado — a aba abre antes da leitura.
     const formatado = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2 }).format(Number(d.total));
-    await expect(page.getByTestId("central-vendas-total"), "o total exibido é o do servidor").toContainText(formatado);
     const totais = await aba(page, "Totais");
+    await expect(page.getByTestId("central-vendas-total"), "o total exibido é o do servidor").toContainText(formatado);
     for (const rotulo of ["Subtotal dos itens", "Frete", "Total do documento"]) await expect(totais.locator(`[data-campo="${rotulo}"]`)).toBeVisible();
     await expect(totais.locator('[data-campo="Total do documento"]')).toContainText(formatado);
 
@@ -212,8 +214,11 @@ test("BASE2-03C: a conversão liga origem e derivado, e cada lado abre na SUA ro
   await expect(page.getByTestId("central-vendas")).toBeVisible();
   await expect(page.getByRole("region", { name: `Pedido de venda ${pedido.code}` })).toBeVisible();
   // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
+  await abrirDadosAdicionais(page);                                         // decisão 270: moram em "Dados adicionais"
   await expect(campo(page, "Movimento"), "a família sai do registro DERIVADO").toContainText(V.order.top);
-  await expect(campo(page, "Origem"), "o pedido nasceu de uma conversão").toContainText("Convertido");
+  // decisão 270: a Origem diz "<Espécie> <código>" quando a leitura da origem consegue; senão, "Convertido"
+  await expect(campo(page, "Origem"), "o pedido nasceu de uma conversão").toContainText(new RegExp(`Orçamento ${orcamento.code}|Convertido`, "i"));
+  await expect(campo(page, "Origem")).not.toContainText("Lançamento direto");
 });
 
 test("BASE2-03C: venda confirmada mostra as contas a receber geradas, com link para o título", async ({ page }) => {
@@ -228,8 +233,8 @@ test("BASE2-03C: venda confirmada mostra as contas a receber geradas, com link p
   await expect(contas.getByTestId("base2-items-linha")).toHaveCount(confirmada.title_ids.length);
   await expect(contas.locator(`a[href="/financeiro/contas-a-receber/${confirmada.title_ids[0]}"]`), "o link precisa levar ao título real").toBeVisible();
 
-  // e a ação de confirmar não é mais oferecida para um documento já confirmado
-  await expect(page.getByRole("button", { name: "Confirmar venda" })).toHaveCount(0);
+  // e a ação de confirmar não confirma um documento já confirmado: decisão 270 — a pílula fica, DESABILITADA, como no desenho
+  await expect(page.getByTestId("central-vendas-acoes").getByRole("button", { name: "Confirmar venda" })).toBeDisabled();
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -241,7 +246,7 @@ test("BASE2-03C: o histórico oficial abre com conteúdo real; anexos NÃO são 
   const d = await criar(page, "order");
   await abrir(page, d);
 
-  await maisAcoes(page, "Histórico de alterações");
+  await acaoRapida(page, "central-vendas-historico");
   const dialogo = page.getByRole("dialog");
   await expect(dialogo).toBeVisible();
   await expect(dialogo).toContainText("Histórico");
@@ -251,8 +256,8 @@ test("BASE2-03C: o histórico oficial abre com conteúdo real; anexos NÃO são 
   await expect(dialogo.locator("ol > li").first(), "histórico vazio não prova nada").toBeVisible();
   await page.keyboard.press("Escape");
 
-  // ANEXOS: `sales_documents` não está em ATTACHMENT_PARENTS. O botão responderia 422 — então ele não
-  // existe. Abrir a superfície é outra fatia, com backend.
+  // ANEXOS: desde a decisão 271 `sales_documents` está em ATTACHMENT_PARENTS (o servidor aceitaria), mas a
+  // Central não oferece Anexos (decisão 270) — então o botão não existe aqui. Oferecer é outra fatia.
   await expect(page.getByRole("button", { name: /anexo/i }), "não abrir anexos sem suporte do servidor").toHaveCount(0);
   await expect(page.getByText(/anexos/i), "nem como texto").toHaveCount(0);
 });
@@ -276,7 +281,7 @@ test("HOTFIX: o cancelamento sai da tela COM Idempotency-Key, como a confirmaç�
   // conferência logo abaixo correria na frente da mutação — um teste que falharia (ou passaria) pelo
   // relógio, não pelo comportamento.
   const resposta = page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes(`/api/sales/${d.rota}/${d.id}/cancel`));
-  await maisAcoes(page, /^Cancelar /);
+  await acaoRapida(page, "central-vendas-cancelar");
   await page.getByTestId("confirm-dialog-confirm").click();
   const res = await resposta;
   const req = res.request();

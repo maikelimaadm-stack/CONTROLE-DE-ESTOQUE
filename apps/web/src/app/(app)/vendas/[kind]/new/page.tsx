@@ -8,17 +8,24 @@ import { todayISO } from "@/lib/utils";
 import { useDirtyTab, useTabTitle } from "@/lib/workspace-tabs";
 import { Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
-import { PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
+import { defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
 import { useQuery } from "@tanstack/react-query";
 import { AVISO_PADRAO_INVALIDO_CENTRAL, CAMPOS_SO_NO_RODAPE, camposAdicionaisDoCabecalho, ERRO_EXIGENCIA_NAO_ATENDIDA, ERRO_LAYOUT_CAMPO_OBRIGATORIO, exigenciasFaltandoPorCampos, FORMA_UUID_PADRAO, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando, chavePadraoDeCadastro, catalogoDaFamilia, documentTotals, mensagemCampoObrigatorio, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CampoDoLayout, type CondicaoPagamento, type EstruturaLayout, type OrigemDoLayout, type ValorPadraoLayout } from "@agro/domain";
 import { api, ApiError } from "@/lib/api";
 import { MensagemTop, entendeClassificacaoFinanceira, entendeCondicaoPagamento, entendeLayoutDocumento, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
-import { ChevronRight, Repeat2, Save, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { AcaoDaBarra, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
-import { ItensDaCentral, Travado } from "@/features/sales/central-vendas-itens";
-import { DocumentosAbertos } from "@/features/sales/central-vendas-documentos";
+import { CentralVendasWorkspace } from "@/features/sales/central-vendas-workspace";
+import { ItensDaCentral } from "@/features/sales/central-vendas-itens";
+import { CampoDaCentral, ChaveSimNao, ColunaDeCampos, DadosAdicionais, DataDaCentral, type IconeDoCampo } from "@/features/sales/central-vendas-campo";
+import { PainelColuna, PainelLargo, PainelRepartido, PlanoDaCentral, TitulosDoDocumento } from "@/features/sales/central-vendas-painel";
+/* VISUAL-UX-02 W1: barra da criação (Descartar, Salvar com pendências, Confirmar venda), leque, cópia do Duplicar */
+import { AcoesRapidas, BotaoDaBarra, ConjuntoDaBarra, ConjuntoDireito, IconeAlterarOperacao, IconeConfirmar, IconeDescartar, IconeHistorico, IconeImprimir, IconeSalvar, PendenciasDoDocumento, PilulaDaBarra, PosicaoDoRotulo, chaveDepoisDeSalvar, type DepoisDeSalvar, type ItemRapido, type Pendencia, type PosicaoDoRotuloValor } from "@/features/sales/central-vendas-barra";
+import { DialogoDescartar } from "@/features/sales/central-vendas-dialogos";
+import { chaveDaCopia, copiaValePara, type CopiaDoDocumento } from "@/features/sales/central-vendas-duplicar";
+import { descartarEntrega, entregarEmMemoria, espiarEntrega } from "@/lib/entrega-em-memoria";
+import { toast } from "@/lib/toast";
 /* TOP-CONFIG-05 exigências: as regras da operação (só com `capacidades.regrasDaOperacao` exata). */
 import { entendeRegrasDaOperacao, useRegrasDaOperacao, useSituacaoCliente } from "@/features/sales/regras-da-operacao";
 import estilosCv from "@/features/sales/central-vendas-workspace.module.css";
@@ -30,6 +37,9 @@ import { familiaOperacionalDeDocumentoVenda, type ColunaDoLayout } from "@agro/d
 import { CAMPOS_DO_ITEM_EXIGIDOS_PELA_RESERVA, ehCaminhoDeItemDaReserva } from "@/features/sales/regras-da-operacao";
 
 const T: Record<string, string> = { budgets: "Novo Orçamento", orders: "Novo Pedido de Venda", sales: "Nova Venda" };
+/** VISUAL-UX-02 Fase B: as mensagens das pendências de natureza e centro (no campo e na lista "N pendências"). */
+const PENDENCIA_NATUREZA = "Selecione a natureza.";
+const PENDENCIA_CENTRO = "Selecione o centro de resultado.";
 
 /**
  * LAYOUT DO DOCUMENTO (VENDAS-A3-1) — o que `/layout-efetivo` devolve, CONFERIDO antes de governar a tela (mesma
@@ -212,12 +222,23 @@ function Inner({ kind }: { kind: string }) {
    */
   const escritaTopConfirmada = podeLancar(estadoTop) && topAtual !== null;
 
+  /* VISUAL-UX-02 W1 — POSIÇÃO DO RÓTULO: estado desta tela (nem storage, nem perfil); fica aqui para sobreviver ao
+     Descartar. DESCARTAR volta à ABERTURA: remonta o formulário (mesma TOP, padrões do layout reaplicados, zero
+     escrita). DUPLICAR: TOP do original que não abre o formulário (indisponível, inativa, servidor sem a lista) → o
+     lançador de hoje, com a mensagem de hoje, e a cópia em memória é descartada. */
+  const [densidade, setDensidade] = React.useState<PosicaoDoRotuloValor>("rotulo-a-frente");
+  const [abertura, setAbertura] = React.useState(0);
+  const copiaSemFormulario = Boolean(pedido) && !topEfetiva && estadoTop.situacao !== "carregando";
+  React.useEffect(() => { if (copiaSemFormulario) descartarEntrega(chaveDaCopia(kind)); }, [copiaSemFormulario, kind]);
+
   if (topEfetiva) return <Formulario
+    key={abertura}
     kind={kind}
     top={topEfetiva}
     familia={estadoTop.situacao === "pronto" ? estadoTop.dados.family.label : ""}
     estadoTop={estadoTop}
     escritaTopConfirmada={escritaTopConfirmada}
+    densidade={densidade} onDensidade={setDensidade} onDescartar={() => setAbertura((n) => n + 1)}
   />;
 
   return <LancadorDeTipoOperacao
@@ -235,7 +256,7 @@ function Inner({ kind }: { kind: string }) {
   />;
 }
 
-function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
+function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densidade, onDensidade, onDescartar }: {
   kind: string;
   top: TopOperacional;
   familia: string;
@@ -243,10 +264,23 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   estadoTop: EstadoTop;
   /** A descoberta de AGORA confirma esta TOP? Só isso autoriza o POST. */
   escritaTopConfirmada: boolean;
+  /** VISUAL-UX-02 W1: a posição do rótulo (estado da página) e o Descartar (a página remonta o formulário). */
+  densidade: PosicaoDoRotuloValor; onDensidade: (v: PosicaoDoRotuloValor) => void; onDescartar: () => void;
 }) {
   const router = useRouter(); const empresa = useEmpresaPadrao();
-  const [h, setH] = React.useState({ empresa_id: "", document_date: todayISO(), shipping_date: "", due_date: "", client_id: "", transporter_id: "", proprietary_id: "", driver_name: "", payment_method_id: "", freight: "0", freight_icms: "0", other_values: "0", discount: "0", note: "", is_deductible: false, installments: false, categoria_financeira_id: "", centro_custo_id: "", condicao_pagamento_id: "" });
-  const [items, setItems] = React.useState<ItemRow[]>([]); const [plan, setPlan] = React.useState<Plan>(defaultPlan());
+  /* VISUAL-UX-02 W1 — DUPLICAR: a cópia entregue em memória pela consulta, consumida UMA vez ao montar (espia aqui,
+     descarta no efeito) e só para ESTA espécie e ESTA TOP. Ela entra como VALOR, não como abertura: `branco` (a
+     abertura) continua sendo o estado inicial de `inicial` — a cópia conta como alteração, o ponto acende — e nenhum
+     padrão de layout ou de cadastro a sobrescreve. Salvar a cópia é o POST de sempre, com as mesmas chaves. */
+  const [copia] = React.useState(() => { const c = espiarEntrega<CopiaDoDocumento>(chaveDaCopia(kind)); return copiaValePara(c, kind, top.id) ? c : null; });
+  const copiaAvisada = React.useRef(false);
+  React.useEffect(() => {
+    descartarEntrega(chaveDaCopia(kind));
+    if (copia && !copiaAvisada.current) { copiaAvisada.current = true; toast.info("Cópia aberta como rascunho"); }
+  }, [kind, copia]);
+  const [branco] = React.useState(() => ({ empresa_id: "", document_date: todayISO(), shipping_date: "", due_date: "", client_id: "", transporter_id: "", proprietary_id: "", driver_name: "", payment_method_id: "", freight: "0", freight_icms: "0", other_values: "0", discount: "0", note: "", is_deductible: false, installments: false, categoria_financeira_id: "", centro_custo_id: "", condicao_pagamento_id: "" }));
+  const [h, setH] = React.useState<typeof branco>(() => (copia ? { ...branco, ...copia.cabecalho } : branco));
+  const [items, setItems] = React.useState<ItemRow[]>(() => copia?.itens ?? []); const [plan, setPlan] = React.useState<Plan>(() => copia?.plano ?? defaultPlan());
   const [confirmarTroca, setConfirmarTroca] = React.useState(false);
   React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
 
@@ -356,7 +390,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
    * nascer "sujo" e transformaria o aviso de perda de dados em ruído que se aprende a ignorar — que é
    * como um aviso deixa de proteger.
    */
-  const inicial = React.useRef(h);
+  const inicial = React.useRef(branco); // VISUAL-UX-02 W1: a abertura, nunca a cópia do Duplicar
   const semEmpresa = ({ empresa_id: _, ...resto }: typeof h) => resto;
   const sujo = items.length > 0 || JSON.stringify(semEmpresa(h)) !== JSON.stringify(semEmpresa(inicial.current));
   useDirtyTab(sujo);
@@ -369,6 +403,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   React.useEffect(() => {
     if (!layout || padroesAplicados.current === layout) return;
     padroesAplicados.current = layout;
+    if (copia) return; /* VISUAL-UX-02 W1: padrão de layout nenhum sobrescreve a cópia do Duplicar */
     const novos: Partial<typeof h> = {};
     for (const x of [...layout.cabecalho, ...layout.rodape.flatMap((a) => a.campos)]) {
       if (!x.valorPadrao || !(x.campo in inicial.current)) continue;
@@ -384,9 +419,12 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       for (const [k, v] of Object.entries(novos)) if (JSON.stringify(o[k as keyof typeof o]) === JSON.stringify(antes[k as keyof typeof antes]) || k === "empresa_id") Object.assign(r, { [k]: v });
       return r;
     });
-  }, [layout, empresa]);
+  }, [layout, empresa, copia]);
 
-  const create = useCreate<{ id: string }>(`/api/sales/${kind}`, (r) => router.push(`/vendas/${kind}/${r.id}`));
+  /* VISUAL-UX-02 W1: depois do POST abre o documento salvo, como sempre, deixando em memória o "Salvo" e — quando o
+     clique foi "Confirmar venda" — o pedido de abrir o diálogo de Confirmar venda (com a prévia do servidor). */
+  const confirmarDepois = React.useRef(false);
+  const create = useCreate<{ id: string }>(`/api/sales/${kind}`, (r) => { const depois: DepoisDeSalvar = { confirmar: confirmarDepois.current }; entregarEmMemoria(chaveDepoisDeSalvar(r.id), depois); router.push(`/vendas/${kind}/${r.id}`); });
   /**
    * CLASSIFICAÇÃO FINANCEIRA (VENDAS-A1): só existe na tela quando a API DECLARA que a entende. Obrigatória
    * nas TRÊS variantes: documento salvo não tem edição aqui e a conversão só copia — pedido sem
@@ -449,7 +487,10 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     escolherCondicao(null);
   }, [h.condicao_pagamento_id, condicaoNaoPermitida, escolherCondicao]);
   /* ── fim TOP-CONFIG-05 condição ── */
-  const semClassificacao = classificacaoAtiva && (!h.categoria_financeira_id || !h.centro_custo_id);
+  /* VISUAL-UX-02 Fase B (decisão 270 (5)): natureza e centro deixam de DESABILITAR o Salvar e viram PENDÊNCIA DE CLIQUE —
+     a mesma checagem de antes (só com a classificação ativa), agora campo a campo, conferida no `submit`. */
+  const semNatureza = classificacaoAtiva && !h.categoria_financeira_id;
+  const semCentro = classificacaoAtiva && !h.centro_custo_id;
   /*
    * TOP-CONFIG-05 atraso — SÓ com `capacidades.regrasDaOperacao` EXATA (`entendeRegrasDaOperacao`). Sem ela o hook
    * fica desligado (nenhum `/situacao-cliente` sai), a faixa não existe e o Salvar é o de hoje. "bloqueia" com atraso
@@ -464,7 +505,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const aoRecusarAtraso = (e: unknown) => { if (regrasAtivo && e instanceof ApiError && e.code === ERRO_CLIENTE_EM_ATRASO) setErroAtraso({ cliente: h.client_id, mensagem: e.message }); };
   /* fim TOP-CONFIG-05 atraso */
   /** O corpo do POST — o MESMO objeto que a cobrança do layout confere antes de sair. */
-  const corpo = () => ({ empresa_id: h.empresa_id, document_date: h.document_date, shipping_date: h.shipping_date || null, due_date: h.due_date || null, client_id: h.client_id, transporter_id: h.transporter_id || null, proprietary_id: h.proprietary_id || null, driver_name: h.driver_name || null, payment_method_id: h.payment_method_id || null, freight: h.freight || "0", freight_icms: h.freight_icms || "0", other_values: h.other_values || "0", discount: h.discount || "0", note: h.note || null, is_deductible: h.is_deductible, installment_plan: condicaoId ? (ajustado ? plan : null) : (h.installments ? plan : null), items: items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id || null, quantity: i.quantity, unit_price: i.unit_value ?? "0", discount: i.discount || "0", discount_percent: i.discount_percent || "0", note: null })), tipo_operacao_id: top.id, ...(classificacaoAtiva ? { categoria_financeira_id: h.categoria_financeira_id, centro_custo_id: h.centro_custo_id } : {}), ...(condicaoId ? { condicao_pagamento_id: condicaoId } : {}) });
+  const corpo = () => ({ empresa_id: h.empresa_id, document_date: h.document_date, shipping_date: h.shipping_date || null, due_date: h.due_date || null, client_id: h.client_id, transporter_id: h.transporter_id || null, proprietary_id: h.proprietary_id || null, driver_name: h.driver_name || null, payment_method_id: h.payment_method_id || null, freight: h.freight || "0", freight_icms: h.freight_icms || "0", other_values: h.other_values || "0", discount: h.discount || "0", note: h.note || null, is_deductible: h.is_deductible, installment_plan: condicaoId ? (ajustado ? plan : null) : (h.installments ? plan : null), items: items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id || null, quantity: i.quantity, unit_price: i.unit_value ?? "0", discount: i.discount || "0", discount_percent: i.discount_percent || "0", note: typeof i["note"] === "string" && i["note"] ? i["note"] : null })), tipo_operacao_id: top.id, ...(classificacaoAtiva ? { categoria_financeira_id: h.categoria_financeira_id, centro_custo_id: h.centro_custo_id } : {}), ...(condicaoId ? { condicao_pagamento_id: condicaoId } : {}) });
 
   /**
    * OBRIGATÓRIOS DO LAYOUT: a MESMA função do domínio que a API usa (`camposObrigatoriosFaltando`), sobre o MESMO
@@ -482,7 +523,14 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
    */
   const exigenciasFaltando = () => (regras ? exigenciasFaltandoPorCampos(regras.exigencias, corpo()) : []);
   const errosExigencia: Record<string, string> = regras && tentouSalvar ? Object.fromEntries(exigenciasFaltando().map((f) => [f.caminho, `${f.rotulo} é obrigatório nesta operação.`])) : {};
-  const erros: Record<string, string> = layout || regras ? { ...errosServidor, ...errosLocais, ...errosExigencia } : {};
+  /* VISUAL-UX-02 W1: a pendência de Cliente marca o campo mesmo sem layout (o clique com pendência não envia nada).
+     Fase B: natureza e centro (com a classificação ativa) também. */
+  const errosDePendencia: Record<string, string> = tentouSalvar ? {
+    ...(!h.client_id ? { client_id: "Selecione um cliente." } : {}),
+    ...(semNatureza ? { categoria_financeira_id: PENDENCIA_NATUREZA } : {}),
+    ...(semCentro ? { centro_custo_id: PENDENCIA_CENTRO } : {})
+  } : {};
+  const erros: Record<string, string> = layout || regras ? { ...errosDePendencia, ...errosServidor, ...errosLocais, ...errosExigencia } : errosDePendencia;
   const [maisDados, setMaisDados] = React.useState(false);
   /** TOP-CONFIG-05 exigências: 422 TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA (`details.exigencias` [{caminho, mensagem}]) → erro no campo. */
   const errouExigencia = (e: unknown): boolean => {
@@ -505,6 +553,53 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     setErrosServidor(m);
     return true;
   };
+  /* ── VISUAL-UX-02 W1 — SALVAR COM PENDÊNCIAS ───────────────────────────────────────────────────────────────────
+   * Clique com pendência de CAMPO não envia NADA: marca os campos (o mesmo `tentouSalvar` de antes) e mostra a pílula
+   * "N pendências" com a lista, que leva a cada campo. As checagens são as de antes — cliente, itens, produto do item,
+   * exigências da TOP, obrigatórios do layout — e a guarda mora no HANDLER (`submit`), não no `disabled`. O que NÃO é
+   * pendência de campo continua DESABILITANDO o botão: TOP não confirmada, layout ou regras carregando/com falha,
+   * cliente em atraso que bloqueia. Fase B: natureza e centro (com a classificação ativa) saíram do `disabled` e são
+   * pendência de campo, como o Cliente — a guarda é a deste handler; o layout que também os cobra não repete a linha
+   * (a lista é por caminho). */
+  const [pendenciasAbertas, setPendenciasAbertas] = React.useState(false);
+  const pendenciasDoSalvar = (): Pendencia[] => {
+    const lista = new Map<string, Pendencia>();
+    const anotar = (caminho: string, rotulo: string, mensagem: string) => { if (!lista.has(caminho)) lista.set(caminho, { caminho, rotulo, mensagem }); };
+    if (!h.client_id) anotar("client_id", cfg.get("client_id")?.rotulo || "Cliente", "Selecione um cliente.");
+    if (semNatureza) anotar("categoria_financeira_id", cfg.get("categoria_financeira_id")?.rotulo || "Natureza", PENDENCIA_NATUREZA);
+    if (semCentro) anotar("centro_custo_id", cfg.get("centro_custo_id")?.rotulo || "Centro de resultado", PENDENCIA_CENTRO);
+    if (!items.length) anotar("items", "Itens", "Adicione ao menos um item.");
+    items.forEach((it, i) => { if (!it.product_id) anotar(`items[${i}].product_id`, `Item ${i + 1}`, "Selecione o produto."); });
+    for (const f of exigenciasFaltando()) anotar(f.caminho, f.rotulo, `${f.rotulo} é obrigatório nesta operação.`);
+    for (const f of faltando()) anotar(f.caminho, f.rotulo, mensagemCampoObrigatorio(f.rotulo));
+    return [...lista.values()];
+  };
+  /** A lista leva ao campo: item → a região Itens (a marcação da linha é da Fase B); campo de aba → abre a aba; campo
+   *  de "Dados adicionais" → abre o grupo; e o foco vai ao controle do campo. Só DOM da própria Central, pelo rótulo. */
+  const irParaPendencia = (p: Pendencia) => {
+    const central = document.querySelector<HTMLElement>('[data-testid="central-vendas"]');
+    if (!central) return;
+    const controle = (raiz: Element | null | undefined) => raiz?.querySelector<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)") ?? null;
+    const focar = (el: HTMLElement | null) => { if (!el) return; el.scrollIntoView({ block: "nearest" }); el.focus(); };
+    if (p.caminho.startsWith("items")) {
+      const regiao = central.querySelector<HTMLElement>('[data-testid="central-vendas-itens"]');
+      const i = /^items\[(\d+)\]/.exec(p.caminho)?.[1];
+      const linha = i === undefined ? null : central.querySelectorAll('[data-testid="central-vendas-linha"]')[Number(i)];
+      focar(controle(linha) ?? controle(regiao));
+      return;
+    }
+    const chave = p.caminho.split(/[.[]/)[0]!;
+    const semMarca = (t: string) => t.replace(/[*:]/g, "").replace(/\s+/g, " ").trim();
+    const achar = () => controle(central.querySelector(`[data-campo="${chave}"]`))
+      ?? controle([...central.querySelectorAll("label")].find((l) => semMarca(l.textContent ?? "") === semMarca(p.rotulo))?.parentElement);
+    const aba = estruturaDesenhada.rodape.find((a) => a.campos.some((c) => c.campo === chave));
+    if (aba) {
+      const guia = [...central.querySelectorAll<HTMLElement>('[data-testid="central-vendas-painel"] [role="tab"]')].find((t) => (t.textContent ?? "").trim().startsWith(aba.aba));
+      if (guia && guia.getAttribute("aria-selected") !== "true") guia.click();
+    } else if (adicionaisDoLayout.has(chave)) setMaisDados(true);
+    requestAnimationFrame(() => focar(achar()));
+  };
+
   /** O UUID que vai no corpo é o da TOP VALIDADA contra a lista — nunca o texto cru da URL. */
   const submit = () => {
     /**
@@ -515,11 +610,18 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
      * de um documento cuja operação não está confirmada tem de estar onde a gravação acontece.
      */
     if (!escritaTopConfirmada) return;
-    if (semClassificacao) return;
     if (atrasoTravaSalvar) return; /* TOP-CONFIG-05 atraso: a trava também no handler */
     /* TOP-CONFIG-05 exigências: regras pendentes travam; exigência faltando → erro no campo e NADA sai. Sem a
        capacidade `regrasPendente` é falso e `regras` é null: o caminho abaixo é o de antes, linha a linha. */
     if (regrasPendente) return;
+    if (layoutPendente) return;
+    /* VISUAL-UX-02 W1: pendência de CAMPO = ZERO POST — marca os campos e abre a lista "N pendências". */
+    const pendentes = pendenciasDoSalvar();
+    if (pendentes.length) {
+      setTentouSalvar(true); setErrosServidor({}); setPendenciasAbertas(true);
+      if (pendentes.some((x) => adicionaisDoLayout.has(x.caminho))) setMaisDados(true);
+      return;
+    }
     if (regras) {
       setTentouSalvar(true); setErrosServidor({});
       const fe = exigenciasFaltando();
@@ -555,9 +657,10 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
    *   Fiscal           → Dedutível
    *   Observações      → Observação
    *
-   * A BARRA SÓ TEM AÇÕES QUE EXISTEM: Voltar, Salvar e Alterar operação (e Documentos abertos, que é
-   * visão da barra de abas). "Confirmar venda", "Descartar", "Editar" e "Anexos" do design não têm
-   * contrato nesta etapa (`docs/DECISIONS.md` 224) — não aparecem, nem desabilitadas.
+   * A BARRA (VISUAL-UX-02, decisão 270): Descartar alterações, Salvar (com pendências) e — só na venda —
+   * Confirmar venda (= Salvar + o diálogo de Confirmar venda com a prévia, na consulta que abre); à
+   * direita N pendências, Posição do rótulo e o leque de Ações rápidas (Alterar operação, Imprimir e
+   * Histórico desabilitados, Documentos abertos). "Editar" e "Anexos" continuam fora (sem contrato).
    */
 
   /*
@@ -568,9 +671,10 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     escolha, e quem congela a versão do documento é o servidor, no POST. Exibi-la antes de salvar
     prometeria um snapshot que ainda não existe — a versão congelada é mostrada no DETALHE.
   */
-  const contextoOperacional = <Travado rotulo={familia ? `Tipo de Operação · ${familia}` : "Tipo de Operação"} testId="top-contexto">
+  /* VISUAL-UX-02: travado, "<código> · <nome>", como no desenho; o movimento (família) fica na dica do campo. */
+  const contextoOperacional = <CampoDaCentral rotulo="Tipo de Operação" estado="travado" testId="top-contexto" dica={familia ? `Movimento: ${familia}` : undefined}>
     <span className={estilosCv.codigo}>{top.code}</span><span className={estilosCv.separador}>·</span><span>{top.name}</span>
-  </Travado>;
+  </CampoDaCentral>;
 
   /*
     POR QUE A ESCRITA ESTÁ BLOQUEADA — dentro do formulário, que continua inteiro.
@@ -624,35 +728,48 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   /** VENDAS-A3-1b: aviso do padrão morto, dentro do invólucro `data-campo` do campo. Sem padrão inválido, nada. */
   const avisoDoPadrao = (chave?: string) => (chave && padraoInvalido(chave) ? <p data-testid="padrao-invalido-aviso" className="mt-0.5 text-[11px] text-amber-700">{AVISO_PADRAO_INVALIDO_CENTRAL}</p> : null);
   const pesquisa = (conteudo: React.ReactNode, chave?: string) => <div className={cn(estilosCv.campo, estilosCv.campoPesquisa)} {...(chave ? dc(chave) : {})}>{conteudo}{avisoDoPadrao(chave)}<span className={estilosCv.adorno} aria-hidden><Search /></span></div>;
-  const campo = (conteudo: React.ReactNode, chave?: string) => <div className={estilosCv.campo} {...(chave ? dc(chave) : {})}>{conteudo}</div>;
   const larguraFixa = { maxWidth: 330 };
+  /**
+   * VISUAL-UX-02: o campo do DESENHO (`CampoDaCentral`, nas duas densidades). Rótulo, "*", erro e `data-campo` saem dos
+   * MESMOS helpers de antes (`rot`/`req`/`err`/`dc`); o controle e o valor são os de antes. (`pesquisa` acima
+   * fica para o caso que ainda o usa.)
+   */
+  const cc = (chave: string, hoje: string, o: { obrigatorio?: boolean; icone?: IconeDoCampo; preenchido: boolean; erro?: string; multilinha?: boolean }, controle: React.ReactElement) =>
+    <CampoDaCentral rotulo={rot(chave, hoje)} obrigatorio={req(chave, o.obrigatorio ?? false)} erro={o.erro ?? err(chave)} icone={o.icone ?? null} preenchido={o.preenchido} multilinha={o.multilinha} abaixo={avisoDoPadrao(chave)} {...dc(chave)}>{controle}</CampoDaCentral>;
+  /** Responsável: só leitura, o nome de quem lança (o servidor grava quem faz o POST). Não é campo do layout: sem `data-campo`. */
+  const nomeDeQuemLanca = useAuth().ctx?.user.name ?? "";
+  const responsavel = <CampoDaCentral rotulo="Responsável" estado="travado">{nomeDeQuemLanca}</CampoDaCentral>;
 
   const desenhar = (chave: string): React.ReactNode => {
     switch (chave) {
       /* TOP-CONFIG-05 atraso: erro do 422 no campo Cliente e a faixa LOGO ABAIXO dele (fora do invólucro, sem espaço reservado quando não há faixa). */
-      case "client_id": return <>{pesquisa(<Field label={rot(chave, "Cliente")} required={req(chave, true)} error={err(chave) ?? erroAtrasoDoCliente} span={12}><RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} labelHint={dica("client_id")} /></Field>, chave)}{regrasAtivo && <FaixaAtrasoCliente situacao={situacaoAtraso} />}</>;
-      case "empresa_id": return pesquisa(<Field label={rot(chave, "Empresa")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>, chave);
-      case "document_date": return campo(<Field label={rot(chave, "Data")} required={req(chave, true)} error={err(chave)} span={12}><Input type="date" value={h.document_date} onChange={(e) => setH({ ...h, document_date: e.target.value })} /></Field>, chave);
-      case "due_date": return campo(<Field label={rot(chave, "Vencimento")} required={req(chave, false)} error={err(chave)} span={12}><Input type="date" value={h.due_date} onChange={(e) => setH({ ...h, due_date: e.target.value })} /></Field>, chave);
-      case "payment_method_id": return pesquisa(<Field label={rot(chave, "Forma de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="payment_methods" value={h.payment_method_id} onChange={(v) => setH({ ...h, payment_method_id: v ?? "" })} labelHint={dica("payment_method_id")} /></Field>, chave);
-      case "categoria_financeira_id": return classificacaoAtiva && pesquisa(<Field label={rot(chave, "Natureza")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={(v) => setH({ ...h, categoria_financeira_id: v ?? "" })} filter={{ kind: "analytic", nature: "income" }} labelHint={dica("categoria_financeira_id")} /></Field>, chave);
-      case "centro_custo_id": return classificacaoAtiva && pesquisa(<Field label={rot(chave, "Centro de resultado")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => setH({ ...h, centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} labelHint={dica("centro_custo_id")} /></Field>, chave);
-      case "shipping_date": return campo(<Field label={rot(chave, "Data de saída")} required={req(chave, false)} error={err(chave)} span={12}><Input type="date" value={h.shipping_date} onChange={(e) => setH({ ...h, shipping_date: e.target.value })} /></Field>, chave);
-      case "proprietary_id": return pesquisa(<Field label={rot(chave, "Proprietário")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="people" value={h.proprietary_id} onChange={(v) => setH({ ...h, proprietary_id: v ?? "" })} filter={{ is_proprietary: "true" }} labelHint={dica("proprietary_id")} /></Field>, chave);
-      case "discount": return campo(<Field label={rot(chave, "Desconto")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} /></Field>, chave);
-      case "other_values": return campo(<Field label={rot(chave, "Outros valores")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} /></Field>, chave);
+      case "client_id": return <>{cc(chave, "Cliente", { obrigatorio: true, icone: "pesquisa", preenchido: Boolean(h.client_id), erro: err(chave) ?? erroAtrasoDoCliente }, <RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} labelHint={dica("client_id")} />)}{regrasAtivo && <FaixaAtrasoCliente situacao={situacaoAtraso} />}</>;
+      case "empresa_id": return cc(chave, "Empresa", { obrigatorio: true, icone: "pesquisa", preenchido: Boolean(h.empresa_id) }, <RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} />);
+      case "document_date": return cc(chave, "Data", { obrigatorio: true, icone: "data", preenchido: Boolean(h.document_date) }, <DataDaCentral rotulo={rot(chave, "Data")} value={h.document_date} onChange={(v) => setH({ ...h, document_date: v })} />);
+      case "due_date": return cc(chave, "Vencimento", { icone: "data", preenchido: Boolean(h.due_date) }, <DataDaCentral rotulo={rot(chave, "Vencimento")} value={h.due_date} onChange={(v) => setH({ ...h, due_date: v })} />);
+      case "payment_method_id": return cc(chave, "Forma de pagamento", { icone: "pesquisa", preenchido: Boolean(h.payment_method_id) }, <RefSelect resource="payment_methods" value={h.payment_method_id} onChange={(v) => setH({ ...h, payment_method_id: v ?? "" })} labelHint={dica("payment_method_id")} />);
+      case "categoria_financeira_id": return classificacaoAtiva && cc(chave, "Natureza", { obrigatorio: true, icone: "pesquisa", preenchido: Boolean(h.categoria_financeira_id) }, <RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={(v) => setH({ ...h, categoria_financeira_id: v ?? "" })} filter={{ kind: "analytic", nature: "income" }} labelHint={dica("categoria_financeira_id")} />);
+      case "centro_custo_id": return classificacaoAtiva && cc(chave, "Centro de resultado", { obrigatorio: true, icone: "pesquisa", preenchido: Boolean(h.centro_custo_id) }, <RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => setH({ ...h, centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} labelHint={dica("centro_custo_id")} />);
+      case "shipping_date": return cc(chave, "Data de saída", { icone: "data", preenchido: Boolean(h.shipping_date) }, <DataDaCentral rotulo={rot(chave, "Data de saída")} value={h.shipping_date} onChange={(v) => setH({ ...h, shipping_date: v })} />);
+      case "proprietary_id": return cc(chave, "Proprietário", { icone: "pesquisa", preenchido: Boolean(h.proprietary_id) }, <RefSelect resource="people" value={h.proprietary_id} onChange={(v) => setH({ ...h, proprietary_id: v ?? "" })} filter={{ is_proprietary: "true" }} labelHint={dica("proprietary_id")} />);
+      case "discount": return cc(chave, "Desconto", { preenchido: h.discount !== "" }, <Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} />);
+      case "other_values": return cc(chave, "Outros valores", { preenchido: h.other_values !== "" }, <Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} />);
       case "condicao_pagamento_id": return condicaoAtiva && <div style={larguraFixa} data-testid="condicao-pagamento">{pesquisa(<Field label={rot(chave, "Condição de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="condicoes_pagamento" value={h.condicao_pagamento_id} onChange={escolherCondicao} labelHint={dica("condicao_pagamento_id")} somenteIds={condicoesPermitidas} /></Field>, chave)}</div>;
+      /* VISUAL-UX-02 Fase B: o Financeiro da criação no desenho — um campo abaixo do outro, na densidade da Central, na
+         ordem da consulta. Parcelamento é o `cc` de sempre; o plano é o `PlanEditor` com o desenho da Central
+         (`PlanoDaCentral`). Valores, `plan` e o corpo (`installment_plan`) são os de antes. */
       case "installment_plan": return <>
-        {!condicaoId && <div style={larguraFixa}>{campo(<Field label={rot(chave, "Parcelamento")} required={req(chave, false)} error={err(chave)} span={12}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field>, chave)}</div>}
-        {!condicaoId && h.installments && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={setPlan} /></div>}
-        {condicaoId && planoCalculado && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={ajustarPlano} /></div>}
+        {!condicaoId && cc(chave, "Parcelamento", { icone: "selecao", preenchido: true }, <NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect>)}
+        {!condicaoId && h.installments && <PlanoDaCentral plano={plan} onChange={setPlan} />}
+        {condicaoId && planoCalculado && <PlanoDaCentral plano={plan} onChange={ajustarPlano} />}
       </>;
-      case "transporter_id": return pesquisa(<Field label={rot(chave, "Transportadora")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="people" value={h.transporter_id} onChange={(v) => setH({ ...h, transporter_id: v ?? "" })} filter={{ is_transporter: "true" }} labelHint={dica("transporter_id")} /></Field>, chave);
-      case "driver_name": return campo(<Field label={rot(chave, "Motorista")} required={req(chave, false)} error={err(chave)} span={12}><Input value={h.driver_name} onChange={(e) => setH({ ...h, driver_name: e.target.value })} /></Field>, chave);
-      case "freight": return campo(<Field label={rot(chave, "Frete")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.freight} onChange={(e) => setH({ ...h, freight: e.target.value })} /></Field>, chave);
-      case "freight_icms": return campo(<Field label={rot(chave, "ICMS frete")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.freight_icms} onChange={(e) => setH({ ...h, freight_icms: e.target.value })} /></Field>, chave);
-      case "is_deductible": return campo(<Field label={rot(chave, "Dedutível")} required={req(chave, false)} error={err(chave)} span={12}><NativeSelect value={h.is_deductible ? "1" : "0"} onChange={(e) => setH({ ...h, is_deductible: e.target.value === "1" })}><option value="0">Não</option><option value="1">Sim</option></NativeSelect></Field>, chave);
-      case "note": return campo(<Field label={rot(chave, "Observação")} required={req(chave, false)} error={err(chave)} span={12}><Textarea value={h.note} onChange={(e) => setH({ ...h, note: e.target.value })} /></Field>, chave);
+      case "transporter_id": return cc(chave, "Transportadora", { icone: "pesquisa", preenchido: Boolean(h.transporter_id) }, <RefSelect resource="people" value={h.transporter_id} onChange={(v) => setH({ ...h, transporter_id: v ?? "" })} filter={{ is_transporter: "true" }} labelHint={dica("transporter_id")} />);
+      case "driver_name": return cc(chave, "Motorista", { preenchido: Boolean(h.driver_name) }, <Input value={h.driver_name} onChange={(e) => setH({ ...h, driver_name: e.target.value })} />);
+      case "freight": return cc(chave, "Frete", { preenchido: h.freight !== "" }, <Input type="number" step="0.01" value={h.freight} onChange={(e) => setH({ ...h, freight: e.target.value })} />);
+      case "freight_icms": return cc(chave, "ICMS frete", { preenchido: h.freight_icms !== "" }, <Input type="number" step="0.01" value={h.freight_icms} onChange={(e) => setH({ ...h, freight_icms: e.target.value })} />);
+      /* chave sim/não do desenho; o valor e o payload (`is_deductible`) são os de antes */
+      case "is_deductible": return <ChaveSimNao rotulo={rot(chave, "Dedutível")} valor={h.is_deductible} onChange={(v) => setH({ ...h, is_deductible: v })} {...dc(chave)} />;
+      case "note": return cc(chave, "Observação", { preenchido: Boolean(h.note), multilinha: true }, <Textarea value={h.note} onChange={(e) => setH({ ...h, note: e.target.value })} />);
       default: return null;
     }
   };
@@ -673,6 +790,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   React.useEffect(() => {
     if (!layout || padroesDeCadastroAplicados.current === padroes) return;
     padroesDeCadastroAplicados.current = padroes;
+    if (copia) return; /* VISUAL-UX-02 W1: padrão de cadastro nenhum sobrescreve a cópia do Duplicar */
     const antes = inicial.current;
     const novos: Partial<typeof h> = {};
     let condicaoPadrao: string | null = null;
@@ -695,7 +813,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       inicial.current = { ...inicial.current, condicao_pagamento_id: condicaoPadrao };
       escolherCondicao(condicaoPadrao);
     }
-  }, [layout, padroes, h, padraoDoCampo, existe, escolherCondicao]);
+  }, [layout, padroes, h, padraoDoCampo, existe, escolherCondicao, copia]);
 
   /** O campo, com a chave do React e — só com layout e `editavel: false` — travado. Padrão de cadastro morto destrava. */
   const render = (chave: string) => {
@@ -713,8 +831,12 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const adicionais = cabecalho.filter((c) => adicionaisDoLayout.has(c));
   const posEmpresa = principais.indexOf("empresa_id");
   const posTop = posEmpresa >= 0 ? posEmpresa + 1 : Math.min(2, principais.length);
+  const posSaida = principais.indexOf("shipping_date");
+  const posResponsavel = posSaida >= posTop ? posSaida : principais.length;
 
-  /* Rodapé: as abas do layout, na ordem, com os campos dele. A arrumação de cada aba segue a de hoje. */
+  /* Rodapé: as abas do layout, na ordem, com os campos dele — na geometria do desenho (VISUAL-UX-02): uma coluna de
+     330px; a aba do plano (Financeiro) ganha, à direita, os títulos (na criação ainda não há nenhum); Observação
+     sozinha usa a área larga. */
   const VALOR_DA_ABA: Record<string, string> = { "Totais": "totais", "Financeiro": "financeiro", "Frete e transporte": "frete", "Fiscal": "fiscal", "Observações": "observacoes" };
   const usados = new Set<string>();
   const abas = estruturaDesenhada.rodape.flatMap((a, i) => {
@@ -725,15 +847,10 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     usados.add(value);
     const especial = (c: string) => c === "installment_plan" || c === "condicao_pagamento_id";
     let content: React.ReactNode;
-    if (campos.length === 1 && campos[0] === "note") content = <div className={estilosCv.painelLargo}>{render("note")}</div>;
-    else if (campos.some(especial)) content = <div className={estilosCv.painelColuna}>{campos.map((c) => (especial(c) ? render(c) : <div key={c} style={larguraFixa}>{render(c)}</div>))}</div>;
-    else if (campos.length >= 4) {
-      const metade = Math.ceil(campos.length / 2);
-      content = <div className={estilosCv.painelGrade}>
-        <div className={estilosCv.painelColuna}>{campos.slice(0, metade).map(render)}</div>
-        <div className={estilosCv.painelColuna}>{campos.slice(metade).map(render)}</div>
-      </div>;
-    } else content = <div className={estilosCv.painelColuna} style={larguraFixa}>{campos.map(render)}</div>;
+    if (campos.length === 1 && campos[0] === "note") content = <PainelLargo>{render("note")}</PainelLargo>;
+    else if (campos.some(especial)) content = <PainelRepartido lado={<TitulosDoDocumento legenda="Contas a receber do documento" titulos={[]} />}>{campos.map(render)}</PainelRepartido>;
+    else if (value === "totais") content = <PainelRepartido>{campos.map(render)}</PainelRepartido>; /* Totais: a grade do desenho, sem lado */
+    else content = <PainelColuna>{campos.map(render)}</PainelColuna>;
     return [{ value, label: a.aba, content }];
   });
   /* TOP-CONFIG-07: com a reserva, a coluna do armazém entra mesmo que o layout não a desenhe (`comColunasDaReserva`). */
@@ -749,37 +866,63 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     [padraoArmazem, h.empresa_id]
   );
 
+  /* ── VISUAL-UX-02 W1 — a barra da criação ── */
+  const [perguntaDescartar, setPerguntaDescartar] = React.useState(false);
+  const pendencias = tentouSalvar ? pendenciasDoSalvar() : [];
+  React.useEffect(() => { if (!pendencias.length) setPendenciasAbertas(false); }, [pendencias.length]);
+  const salvarDesabilitado = !escritaTopConfirmada || layoutPendente || regrasPendente || atrasoTravaSalvar || !sujo;
+  /* "Confirmar venda" só na venda — perguntado ao SSOT da família (o mesmo caminho da reserva, acima). */
+  const ehVenda = familiaLayout !== "" && familiaLayout === familiaOperacionalDeDocumentoVenda("sale");
+  /* O leque da criação, de baixo para cima: Alterar operação, Imprimir e Histórico (desabilitados: o documento ainda
+     não existe) e "N documentos abertos" (o próprio leque o põe). Histórico só com a capacidade — `can` só esconde. */
+  const rapidas: ItemRapido[] = [
+    { chave: "alterar", rotulo: "Alterar operação", testId: "top-alterar", icone: <IconeAlterarOperacao />, onSelect: alterarOperacao },
+    { chave: "imprimir", rotulo: "Imprimir", testId: "central-vendas-imprimir", icone: <IconeImprimir />, desabilitado: true, onSelect: () => undefined },
+    ...(can("audit_logs.view") ? [{ chave: "historico", rotulo: "Histórico de alterações", testId: "central-vendas-historico", icone: <IconeHistorico />, desabilitado: true, onSelect: () => undefined }] : [])
+  ];
+
   return <>
     <CentralVendasWorkspace
       titulo={T[kind] ?? "Novo"}
       identidade={{ nome: T[kind] ?? "Novo documento", alterado: sujo, dica: kind === "sales" ? "O que a confirmação faz no estoque e no financeiro depende do Tipo de Operação e é mostrado antes de confirmar." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada." }}
-      acoes={<>
-        {/* sem "Voltar": como no design, a barra só tem ações do documento; navegar é a barra de abas */}
-        {/* TOP-CONFIG-05 exigências/atraso: `regrasPendente` trava como `layoutPendente`; `atrasoTravaSalvar` trava o cliente em atraso com "bloqueia" (os dois falsos sem a capacidade). */}
-        <AcaoDaBarra rotulo="Salvar" destaque="salvar" dica="inicio" ocupado={create.isPending} disabled={!escritaTopConfirmada || semClassificacao || layoutPendente || regrasPendente || atrasoTravaSalvar || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}><Save aria-hidden /></AcaoDaBarra>
-        <DivisorDaBarra />
-        <AcaoDaBarra rotulo="Alterar operação" data-testid="top-alterar" onClick={alterarOperacao}><Repeat2 aria-hidden /></AcaoDaBarra>
-      </>}
-      acoesDireita={<DocumentosAbertos />}
+      densidade={densidade}
+      acoes={<ConjuntoDaBarra>
+        {/* VISUAL-UX-02 W1 — criação: [Descartar alterações ✕] [Salvar] [Confirmar venda (só venda)]. Sem "Voltar":
+            navegar é a barra de abas. Salvar e Confirmar venda desabilitam só por ESTADO (TOP, layout/regras, atraso)
+            ou sem alteração; pendência de campo (natureza e centro inclusive, Fase B) é o clique que não envia nada. */}
+        <BotaoDaBarra rotulo="Descartar alterações" disabled={!sujo || create.isPending} data-testid="central-vendas-descartar" onClick={() => setPerguntaDescartar(true)}><IconeDescartar /></BotaoDaBarra>
+        <BotaoDaBarra rotulo="Salvar" dica={create.isPending ? "Salvando…" : "Salvar"} ocupado={create.isPending} disabled={salvarDesabilitado} data-testid="central-vendas-salvar"
+          onClick={() => { confirmarDepois.current = false; submit(); }}><IconeSalvar /></BotaoDaBarra>
+        {ehVenda && can("sales.edit") && <PilulaDaBarra icone={<IconeConfirmar />} dica="Confirmar venda" disabled={salvarDesabilitado || create.isPending} data-testid="central-vendas-confirmar"
+          onClick={() => { confirmarDepois.current = true; submit(); }}>Confirmar venda</PilulaDaBarra>}
+      </ConjuntoDaBarra>}
+      acoesDireita={<ConjuntoDireito>
+        {/* [N pendências] [Posição do rótulo] [Ações rápidas] */}
+        {tentouSalvar && <PendenciasDoDocumento pendencias={pendencias} aberta={pendenciasAbertas} onAbertaChange={setPendenciasAbertas} onIr={irParaPendencia} />}
+        <PosicaoDoRotulo valor={densidade} onChange={onDensidade} />
+        <AcoesRapidas antes={rapidas} desabilitado={create.isPending} />
+      </ConjuntoDireito>}
       aviso={avisoDeLayout ? <>{avisoDeEscrita}{avisoDeLayout}</> : avisoDeEscrita}
       dados={<>
         {linhaDoLayout}
-        {principais.slice(0, posTop).map(render)}
-        {contextoOperacional}
-        {principais.slice(posTop).map(render)}
-        {adicionais.length > 0 && <>
-          <button type="button" className={estilosCv.maisDados} aria-expanded={maisDados} aria-controls="dados-adicionais" onClick={() => setMaisDados((m) => !m)}>
-            <ChevronRight aria-hidden /> Dados adicionais <span className={estilosCv.mudo}>· {adicionais.length} {adicionais.length === 1 ? "campo" : "campos"}</span>
-          </button>
-          {maisDados && <div id="dados-adicionais">
-            {adicionais.map(render)}
-          </div>}
-        </>}
+        {/* VISUAL-UX-02: a coluna do desenho; o Responsável (só leitura) entra antes da Data de saída, como no desenho */}
+        <ColunaDeCampos>
+          {principais.slice(0, posTop).map(render)}
+          {contextoOperacional}
+          {principais.slice(posTop, posResponsavel).map(render)}
+          {responsavel}
+          {principais.slice(posResponsavel).map(render)}
+        </ColunaDeCampos>
+        <DadosAdicionais quantidade={adicionais.length} aberto={maisDados} onAlternar={() => setMaisDados((m) => !m)}>
+          {adicionais.map(render)}
+        </DadosAdicionais>
       </>}
       itens={<ItensDaCentral items={items} onChange={setItems} layout={layoutDosItens} erros={layout || regras ? erros : undefined} armazemPadrao={armazemPadrao} reservaEstoque={reservaDosItens} />}
       abas={abas}
     />
 
+    {/* VISUAL-UX-02 W1: Descartar pergunta antes; confirmar remonta o formulário na abertura (nada é escrito). */}
+    <DialogoDescartar aberto={perguntaDescartar} onFechar={() => setPerguntaDescartar(false)} onDescartar={() => { setPerguntaDescartar(false); onDescartar(); }} />
     {/* Trocar a operação descarta o que foi digitado — então pergunta antes, em vez de descobrir depois. */}
     <Confirm open={confirmarTroca} onOpenChange={setConfirmarTroca} title="Alterar o Tipo de Operação?"
       text="Os dados já preenchidos neste lançamento serão descartados." danger

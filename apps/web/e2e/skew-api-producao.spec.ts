@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, uniq, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
+import { login, adicionarItemNaCentral, salvarSemClassificacaoNaoEnvia, uniq, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
 import { criarEmpresaEConferirContador, provarContadorIncompativel } from "./skew-contador-empresa";
 import { baseTemFatiaDeCadastro, capacidadeServidaConfere, cpfValido } from "./skew-fichas-cadastro";
 import { execFileSync } from "node:child_process";
@@ -638,7 +638,7 @@ test("VENDAS-A1 · A1-K1 — sem a capacidade declarada pela base, os campos nã
   const dados = page.getByTestId("central-vendas").getByRole("region", { name: "Dados principais" });
   await expect(dados.locator("label", { hasText: "Forma de pagamento" }), "premissa: o formulário montou").toBeVisible();
   await pickRef(page, "Cliente", "DEMO");
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   await escolherPrimeiroProdutoDaLinha(page);
   const salvar = page.getByRole("button", { name: "Salvar" });
 
@@ -666,7 +666,7 @@ test("VENDAS-A1 · A1-K1 — sem a capacidade declarada pela base, os campos nã
   expect(corpoDesc.capacidades?.classificacaoFinanceira, "a árvore da base declara, então o binário tem de servir").toBe(1);
   await expect(dados.locator("label", { hasText: "Natureza" })).toBeVisible();
   await expect(dados.locator("label", { hasText: "Centro de resultado" })).toBeVisible();
-  await expect(salvar, "declarada, a classificação é exigida").toBeDisabled();
+  await salvarSemClassificacaoNaoEnvia(page, ["Natureza", "Centro de resultado"], "declarada, a classificação é exigida");
   await preencherClassificacaoFinanceira(page);
   await expect(salvar).toBeEnabled();
   v.semBloqueio();
@@ -1867,7 +1867,7 @@ test("VENDAS-A4 · CP-K1 — sem a capacidade declarada pela base, a Condição 
   await escolherTopEContinuar(page, topId);
   const central = page.getByTestId("central-vendas");
   await pickRef(page, "Cliente", "DEMO");
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   await escolherPrimeiroProdutoDaLinha(page);
   if (classificacao) await preencherClassificacaoFinanceira(page);
   await central.getByRole("tab", { name: "Financeiro" }).click();
@@ -1972,7 +1972,7 @@ test("VENDAS-A3-1 · LD-K1 — sem a capacidade declarada pela base, o web não 
   await escolherTopEContinuar(page, topId);
   await expect(page.getByTestId("central-vendas"), "premissa: a Central montou").toBeVisible();
   await pickRef(page, "Cliente", "DEMO");
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   await escolherPrimeiroProdutoDaLinha(page);
   if (classificacao) await preencherClassificacaoFinanceira(page);
 
@@ -2069,7 +2069,7 @@ test("TOP-CONFIG-05 · RO-K1 — sem a capacidade declarada pela base, o web nã
   await escolherTopEContinuar(page, topId);
   await expect(page.getByTestId("central-vendas"), "premissa: a Central montou").toBeVisible();
   await pickRef(page, "Cliente", "DEMO");
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   await escolherPrimeiroProdutoDaLinha(page);
   if (classificacao) await preencherClassificacaoFinanceira(page);
 
@@ -2164,7 +2164,7 @@ test("VENDAS-A3-1b · LB-K1 — a API da base não manda padroesDeCadastro: a Ce
   /** Cliente, um item e Salvar: o POST vai de verdade para a base, e o documento nasce como hoje. */
   const salvarComoHoje = async (): Promise<Record<string, unknown>> => {
     await pickRef(page, "Cliente", "DEMO");
-    await page.getByRole("button", { name: /Adicionar item/ }).click();
+    await adicionarItemNaCentral(page);
     await escolherPrimeiroProdutoDaLinha(page);
     if (classificacao) await preencherClassificacaoFinanceira(page);
     const resposta = page.waitForResponse((r) => r.request().method() === "POST" && /\/api\/sales\/sales$/.test(new URL(r.url()).pathname));

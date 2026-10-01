@@ -401,9 +401,9 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-431 | Fornecimento de Trato | `/confinamento/trato/new` | 2 | 0 | 0 | — | IMPLEMENTADO |
 | SCR-432 | Nova Leitura de Cocho | `/confinamento/leitura-cocho/new` | 2 | 0 | 0 | — | IMPLEMENTADO |
 | SCR-433 | Pluviometria | `/cadastros/rainfalls/new` | 4 | 0 | 0 | 4 | IMPLEMENTADO |
-| SCR-434 | Orçamentos | `/vendas/budgets/new` | 67 | 0 | 3 | 19 | TESTADO |
-| SCR-435 | Pedidos | `/vendas/orders/new` | 63 | 0 | 3 | 19 | TESTADO |
-| SCR-436 | Vendas | `/vendas/sales/new` | 26 | 0 | 0 | 19 | TESTADO |
+| SCR-434 | Orçamentos | `/vendas/budgets/new` | 67 | 0 | 3 | 1 | TESTADO |
+| SCR-435 | Pedidos | `/vendas/orders/new` | 63 | 0 | 3 | 1 | TESTADO |
+| SCR-436 | Vendas | `/vendas/sales/new` | 26 | 0 | 0 | 1 | TESTADO |
 | SCR-437 | Identificação da OS | `/os/new` | 41 | 0 | 0 | 11 | IMPLEMENTADO |
 | SCR-438 | Gestão de Contrato | `/cadastros/contracts/new` | 13 | 0 | 0 | 12 | IMPLEMENTADO |
 | SCR-439 | Categorias | `/financeiro/previsao-orcamentaria/new` | 2956 | 0 | 15 | — | IMPLEMENTADO |

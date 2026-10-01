@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Response } from "@playwright/test";
-import { login, api, uniq, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar, CLASSIFICACAO_DO_SEED } from "./helpers";
+import { login, api, uniq, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar, CLASSIFICACAO_DO_SEED, acaoDaCentral } from "./helpers";
 
 /**
  * VENDAS-A5-1 — A CONFIRMAÇÃO HONESTA, PELA TELA.
@@ -90,8 +90,9 @@ async function abrirDetalhe(page: Page, id: string) {
 const botaoConfirmarVenda = (page: Page) => page.getByTestId(WORKSPACE).getByTestId("central-vendas-acoes").getByRole("button", { name: "Confirmar venda" });
 const dialogo = (page: Page) => page.getByTestId("confirm-dialog");
 const botaoDoDialogo = (page: Page) => dialogo(page).getByTestId("confirm-dialog-confirm");
+/** VISUAL-UX-02 (decisão 270): os diálogos do desenho cancelam por "Voltar" (o × do cabeçalho se chama Fechar). */
 async function fecharDialogo(page: Page) {
-  await dialogo(page).getByRole("button", { name: "Fechar", exact: true }).filter({ hasText: /^Fechar$/ }).click();
+  await dialogo(page).getByRole("button", { name: "Voltar", exact: true }).click();
   await expect(dialogo(page)).toHaveCount(0);
 }
 /** "2026-09-01" → "01/09/2026": a data que o servidor devolveu, na forma em que a tela a escreve. */
@@ -311,9 +312,11 @@ test("A5-W4 — dica da criação da venda e diálogo de cancelamento com o text
   const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
   const aberta = await criarVenda(page, { empresa_id: empresa, client_id: cliente, items: [{ product_id: produto, warehouse_id: null, quantity: "1", unit_price: "10.00" }] });
   const ws = await abrirDetalhe(page, aberta);
-  await ws.getByTestId("central-vendas-mais-acoes").click();
-  await page.getByTestId("central-vendas-mais-acoes-menu").getByRole("menuitem", { name: "Cancelar venda…" }).click();
-  await expect(dialogo(page).getByRole("heading", { name: "Cancelar documento" })).toBeVisible();
+  await expect(ws).toBeVisible();
+  // decisão 270: Cancelar mora no leque de Ações rápidas; o título do desenho diz a espécie e o código
+  await expect(await acaoDaCentral(page, "central-vendas-cancelar")).toHaveAccessibleName("Cancelar venda…");
+  await page.getByTestId("central-vendas-cancelar").click();
+  await expect(dialogo(page).getByRole("heading", { name: /^Cancelar venda .+\?$/ })).toBeVisible();
   await expect(dialogo(page)).toContainText("O documento será cancelado. Ele não movimentou estoque nem gerou conta a receber.");
   await expect(dialogo(page), "a frase sobre venda confirmada saiu: a tela nunca a alcança").not.toContainText("Vendas confirmadas têm estoque e títulos estornados.");
   await fecharDialogo(page);
@@ -322,10 +325,9 @@ test("A5-W4 — dica da criação da venda e diálogo de cancelamento com o text
   await api(page, "POST", `/api/sales/sales/${aberta}/confirm`, {});
   await page.reload();
   await expect(page.getByTestId("central-vendas-situacao").locator("[data-status]"), "premissa: confirmada").toHaveAttribute("data-status", "confirmed");
-  await page.getByTestId(WORKSPACE).getByTestId("central-vendas-mais-acoes").click();
-  const menu = page.getByTestId("central-vendas-mais-acoes-menu");
-  await expect(menu.getByRole("menuitem", { name: "Histórico de alterações" }), "premissa: o menu abriu").toBeVisible();
-  await expect(menu.getByRole("menuitem", { name: /^Cancelar/ }), "confirmada, a tela não oferece cancelar").toHaveCount(0);
+  // decisão 270: o menu é o leque de Ações rápidas
+  await expect(await acaoDaCentral(page, "central-vendas-historico"), "premissa: o leque abriu").toBeVisible();
+  await expect(page.getByTestId("central-vendas-cancelar"), "confirmada, a tela não oferece cancelar").toHaveCount(0);
   await page.keyboard.press("Escape");
 });
 

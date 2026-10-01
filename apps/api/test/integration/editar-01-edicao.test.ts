@@ -1,0 +1,522 @@
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import pg from "pg";
+import { createPool, seedDemo, type Db } from "@agro/db";
+import { configuracaoNeutraTopV3, ERRO_EXIGENCIA_NAO_ATENDIDA, LAYOUT_DO_SISTEMA, type ConfiguracaoTipoOperacaoV3 } from "@agro/domain";
+import { MSG_DOCUMENTO_NAO_EDITAVEL, MSG_DOCUMENTO_SEM_TOP } from "../../src/routes/vendas-edicao-regras.js";
+import { MSG_ORIGEM_COM_PARTES_ATIVAS_PUT, MSG_ORIGEM_COM_PARTES_CANCELADAS_PUT } from "../../src/routes/vendas-faturar-em-partes.js";
+import { MSG_PARTE_RESERVA_ARMAZEM } from "../../src/routes/vendas-reserva-estoque.js";
+import { escoposDeTodosOsModulos, harness, ids, TEST_URL, type Harness } from "./setup.js";
+
+/**
+ * EDITAR-01 (decisão 272) — `GET /api/sales/<seg>/:id/edicao`: ED-9.
+ *
+ * A pergunta "este documento pode ser editado, e sob quais regras?" — respondida pela VERSÃO CONGELADA no documento,
+ * com a MESMA recusa que a PATCH daria (o lápis da tela não pode oferecer o que a PATCH recusa, nem esconder o que
+ * ela aceita). Permissão `<perm>.edit` E `<perm>.view`, SEM `<perm>.create`; invisível → a MESMA 404 do GET; sem edit
+ * ou sem view → 403, antes de ler. `limites` POR ITEM: `{ somenteArmazemEObservacao, itens: { id, armazemTravado }[] }`.
+ * O número de consultas não depende do número de itens.
+ *
+ * Fixtures: TOPs pela API (partes e reserva com `destinos`/`reservaEstoque`), versão NOVA do formato 3 por SQL de
+ * superusuário (como em top-config-05-vendas), papéis e membros pela API administrativa (como em
+ * sales-variante-autorizacao), outra organização pelo `seedDemo` (como em anexos-pesquisa-01-anexos), layout ligado
+ * à TOP por SQL (como em anexos-pesquisa-01-layout), consultas contadas como no PQ-6 (anexos-pesquisa-01-pesquisa).
+ */
+let h: Harness; let I: Awaited<ReturnType<typeof ids>>; let admin: Db;
+const ROTA = { budget: "budgets", order: "orders", sale: "sales" } as const;
+const PERM = { budget: "budgets", order: "orders", sale: "sales" } as const;
+const FAMILIA = { budget: "vendas.orcamento", order: "vendas.pedido", sale: "vendas.venda" } as const;
+type Variante = keyof typeof ROTA;
+const VARIANTES: readonly Variante[] = ["budget", "order", "sale"];
+let tops: Record<Variante, string>;
+let topPedidoEmPartes: string; let topPedidoComReserva: string;
+let outraOrg: Record<string, string>;
+/** Produto SEM controle de estoque (`control_stock=false`): não reserva, e o armazém dele fica livre na parte. */
+let produtoSemEstoque: string;
+
+beforeAll(async () => {
+  h = await harness();
+  I = await ids(h);
+  admin = createPool(TEST_URL, { max: 3 });
+  const r = await h.app.inject({ method: "POST", url: "/api/stock/opening-balances", headers: h.headers(),
+    payload: { empresa_id: I.empresa, warehouse_id: I.warehouse, product_id: I.product2, quantity: "500", unit_value: "10" } });
+  expect(r.statusCode, r.body).toBe(201);
+  tops = { budget: await criarTop("budget", "ED9 orçamento"), order: await criarTop("order", "ED9 pedido"), sale: await criarTop("sale", "ED9 venda") };
+  topPedidoEmPartes = await criarTop("order", "ED9 pedido em partes", { destinos: [{ tipoOperacaoId: tops.sale, ordem: 0, emPartes: true }] });
+  topPedidoComReserva = await criarTop("order", "ED9 pedido com reserva", { reservaEstoque: true, destinos: [{ tipoOperacaoId: tops.sale, ordem: 0, emPartes: true }] });
+  const o2 = await seedDemo(admin, { orgName: "Org ED-9", slug: `org-ed9-${Date.now().toString(36)}`, adminEmail: "ed9-outra-org@demo.local" }, () => {});
+  const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "ed9-outra-org@demo.local", password: "Demo@12345" } });
+  expect(login.statusCode, login.body).toBe(200);
+  outraOrg = { authorization: `Bearer ${(login.json() as { token: string }).token}`, "x-org-id": o2.orgId };
+  const grupo = (await admin.query<{ id: string }>("select id from erp.product_groups where organization_id=$1 and kind='analytic' and deleted_at is null order by code limit 1", [h.demo.orgId])).rows[0]!.id;
+  const un = (await admin.query<{ id: string }>("select id from erp.measurement_units where (organization_id is null or organization_id=$1) and upper(symbol)='UN' order by organization_id nulls last limit 1", [h.demo.orgId])).rows[0]!.id;
+  const p = await h.app.inject({ method: "POST", url: "/api/resources/products", headers: h.headers(),
+    payload: { group_id: grupo, measurement_id: un, financial_category_id: I.category, description: `ED-9 sem estoque ${Math.random().toString(36).slice(2, 7)}`, control_stock: false } });
+  expect(p.statusCode, p.body).toBe(201);
+  produtoSemEstoque = j(p).id as string;
+  expect((await admin.query<{ c: boolean }>("select control_stock c from erp.products where id=$1", [produtoSemEstoque])).rows[0]!.c, "premissa: sem controle de estoque").toBe(false);
+}, 240_000);
+afterAll(async () => { await admin?.end(); await h?.app.close(); await h?.db.end(); });
+
+type Resposta = { statusCode: number; body: string; json: () => unknown };
+type Erro = { code: string; message: string; details?: unknown };
+const j = (r: Resposta) => r.json() as Record<string, unknown> & { error?: Erro };
+type Hdr = Record<string, string>;
+type Linha = Record<string, unknown>;
+type Regras = { formato: number; exigencias: string[]; condicoesPermitidas: string[] | null; clienteEmAtraso: { politica: string; toleranciaDias: number }; reservaEstoque: boolean };
+type Limites = { somenteArmazemEObservacao: boolean; itens: { id: string; armazemTravado: boolean }[] };
+type Edicao = {
+  podeEditar: boolean; motivo: string | null; version: string;
+  limites: Limites;
+  regras: Regras; condicoesPermitidas: unknown; layout: unknown; situacaoCliente: unknown;
+};
+
+let seq = 0;
+async function criarTop(kind: Variante, nome: string, extra: Record<string, unknown> = {}): Promise<string> {
+  const r = await h.app.inject({ method: "POST", url: "/api/admin/tipos-operacao", headers: h.headers(),
+    payload: { codigo: `ED9${String(++seq).padStart(3, "0")}`, codigoBase: FAMILIA[kind], nome: `${nome} ${seq}`, ...extra } });
+  expect(r.statusCode, r.body).toBe(201);
+  return j(r).id as string;
+}
+async function novaVersao(topId: string, config: ConfiguracaoTipoOperacaoV3, condicoes: string[] = []): Promise<void> {
+  const v = (await admin.query<{ id: string }>(
+    `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por, configuracao, configuracao_schema_version, destinos_configurados)
+     select v.organization_id, v.tipo_operacao_id, v.versao + 1, v.nome, v.descricao, v.criado_por, $2::jsonb, 3, v.destinos_configurados
+       from erp.tipos_operacao_versoes v join erp.tipos_operacao t on t.id = v.tipo_operacao_id and t.versao_atual = v.versao
+      where t.id = $1 returning id`, [topId, JSON.stringify(config)])).rows[0]!.id;
+  expect((await admin.query("update erp.tipos_operacao set versao_atual = versao_atual + 1 where id = $1", [topId])).rowCount).toBe(1);
+  for (const c of condicoes) {
+    await admin.query("insert into erp.tipos_operacao_versao_condicoes(organization_id,origem_versao_id,origem_tipo_operacao_id,condicao_pagamento_id) values ($1,$2,$3,$4)", [h.demo.orgId, v, topId, c]);
+  }
+}
+function cfg(ajuste: (c: ConfiguracaoTipoOperacaoV3) => void): ConfiguracaoTipoOperacaoV3 {
+  const c = configuracaoNeutraTopV3();
+  ajuste(c);
+  return c;
+}
+async function condicao(): Promise<string> {
+  const n = ++seq;
+  return (await admin.query<{ id: string }>(
+    "insert into erp.condicoes_pagamento(organization_id,code,nome,parcelas,dias_primeira_parcela,modo,intervalo_dias,dia_vencimento,entrada,entrada_percentual,is_active) values ($1,$2,$3,1,30,'intervalo',30,null,false,null,true) returning id",
+    [h.demo.orgId, `ED9-${n}`, `Condição ED9 ${n}`])).rows[0]!.id;
+}
+async function membro(rotulo: string, permissoes: string[], empresas: string[] = []): Promise<Hdr> {
+  const sufixo = `${++seq}-${Math.random().toString(36).slice(2, 7)}`;
+  const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `${rotulo} ${sufixo}`, permissions: permissoes } });
+  expect(papel.statusCode, papel.body).toBe(201);
+  const email = `ed9-${sufixo}@teste.local`;
+  const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(),
+    payload: { name: rotulo, email, password: "Variante@12345", role_id: j(papel).id, escopos_empresas: escoposDeTodosOsModulos(empresas) } });
+  expect(vinculo.statusCode, vinculo.body).toBe(201);
+  const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Variante@12345" } });
+  expect(login.statusCode, login.body).toBe(200);
+  return { authorization: `Bearer ${(login.json() as { token: string }).token}`, "x-org-id": h.demo.orgId };
+}
+
+type Item = { product_id: string; warehouse_id?: string | null; quantity: string; unit_price: string };
+const ITEM = (o: Partial<Item> = {}): Item => ({ product_id: I.product2!, warehouse_id: I.warehouse!, quantity: "1", unit_price: "10.00", ...o });
+async function criar(kind: Variante, extra: Record<string, unknown> = {}): Promise<string> {
+  const r = await h.app.inject({ method: "POST", url: `/api/sales/${ROTA[kind]}`, headers: h.headers(),
+    payload: { empresa_id: I.empresa, document_date: "2026-09-10", client_id: I.client, tipo_operacao_id: tops[kind], items: [ITEM()], ...extra } });
+  expect(r.statusCode, r.body).toBe(201);
+  return j(r).id as string;
+}
+const edicaoResposta = (kind: Variante, id: string, headers: Hdr = h.headers()) =>
+  h.app.inject({ method: "GET", url: `/api/sales/${ROTA[kind]}/${id}/edicao`, headers });
+const getResposta = (kind: Variante, id: string, headers: Hdr = h.headers()) =>
+  h.app.inject({ method: "GET", url: `/api/sales/${ROTA[kind]}/${id}`, headers });
+async function edicao(kind: Variante, id: string, headers: Hdr = h.headers()): Promise<Edicao> {
+  const r = await edicaoResposta(kind, id, headers);
+  expect(r.statusCode, r.body).toBe(200);
+  return j(r) as unknown as Edicao;
+}
+async function ler(kind: Variante, id: string): Promise<Linha & { version: string; code: string; items: (Linha & { id: string })[] }> {
+  const r = await getResposta(kind, id);
+  expect(r.statusCode, r.body).toBe(200);
+  return j(r) as Linha & { version: string; code: string; items: (Linha & { id: string })[] };
+}
+const acao = async (url: string, payload: Record<string, unknown> = {}) => {
+  const r = await h.app.inject({ method: "POST", url, headers: h.headers(), payload });
+  expect(r.statusCode, `${url}: ${r.body}`).toBeLessThan(300);
+  return j(r);
+};
+/** O layout que a Central lê no lançamento (`/layout-efetivo`), com o administrador (que tem `.create`). */
+async function layoutEfetivo(kind: Variante, topId: string | null): Promise<unknown> {
+  const r = await h.app.inject({ method: "GET", url: `/api/sales/${ROTA[kind]}/layout-efetivo${topId ? `?tipo_operacao_id=${topId}` : ""}`, headers: h.headers() });
+  expect(r.statusCode, r.body).toBe(200);
+  return j(r);
+}
+/** A PATCH com a versão ATUAL: a recusa dela tem de ser a mesma que o `/edicao` anunciou. */
+const patchAtual = async (kind: Variante, id: string, payload: Record<string, unknown>) =>
+  h.app.inject({ method: "PATCH", url: `/api/sales/${ROTA[kind]}/${id}`, headers: h.headers(), payload: { version: (await ler(kind, id)).version, ...payload } });
+
+const MSG_NAO_EDITAVEL = MSG_DOCUMENTO_NAO_EDITAVEL;
+const MSG_SEM_TOP = MSG_DOCUMENTO_SEM_TOP;
+const MSG_PARTES_ATIVAS = MSG_ORIGEM_COM_PARTES_ATIVAS_PUT;
+const MSG_PARTES_CANCELADAS = MSG_ORIGEM_COM_PARTES_CANCELADAS_PUT;
+/**
+ * Os limites de um documento que NÃO é parte gerada: nada restrito nos itens, e um item por item gravado, na ordem do
+ * documento, todos com o armazém livre. `toEqual` (exato): o `armazemTravado` do DOCUMENTO saiu do contrato.
+ */
+const semLimites = (itens: readonly { id: string }[]): Limites => ({ somenteArmazemEObservacao: false, itens: itens.map((i) => ({ id: i.id, armazemTravado: false })) });
+const REGRAS_NEUTRAS = { formato: 2, exigencias: [], condicoesPermitidas: null, clienteEmAtraso: { politica: "nao_valida", toleranciaDias: 0 } };
+/** As consultas SQL que a requisição dispara (como o PQ-6 da ANEXOS-PESQUISA-01 conta): o texto de cada uma. */
+async function comConsultas<T>(f: () => Promise<T>): Promise<{ r: T; sqls: string[] }> {
+  const espiao = vi.spyOn(pg.Client.prototype, "query");
+  try {
+    const r = await f();
+    const sqls = espiao.mock.calls.map((c) => c[0] as unknown).map((x) => (typeof x === "string" ? x : (x as { text?: unknown } | null)?.text))
+      .filter((x): x is string => typeof x === "string");
+    return { r, sqls };
+  } finally { espiao.mockRestore(); }
+}
+const idsDosItens = async (id: string) => (await admin.query<{ id: string }>("select id from erp.sales_document_items where document_id=$1 order by position, id", [id])).rows;
+
+describe("ED-9 — podeEditar e motivo", () => {
+  it("ED-9 aberto → podeEditar true, sem motivo, sem limites (um item por item gravado, na ordem, armazém livre), a versão do GET — nas três variantes; a PATCH aceita", async () => {
+    let provados = 0;
+    for (const kind of VARIANTES) {
+      const id = await criar(kind, { items: [ITEM(), ITEM({ product_id: I.product!, quantity: "2" })] });
+      const e = await edicao(kind, id);
+      const g = await ler(kind, id);
+      expect(g.items, "premissa: dois itens").toHaveLength(2);
+      expect(e, kind).toMatchObject({ podeEditar: true, motivo: null, version: g.version });
+      expect(e.limites, kind).toEqual(semLimites(g.items));
+      expect(e.regras, kind).toEqual({ ...REGRAS_NEUTRAS, reservaEstoque: false });
+      expect([e.condicoesPermitidas, e.situacaoCliente], kind).toEqual([null, { politica: "nao_valida" }]);
+      // O layout é o MESMO contrato de /layout-efetivo, pela TOP do documento.
+      expect(e.layout, kind).toEqual(await layoutEfetivo(kind, tops[kind]));
+      const p = await patchAtual(kind, id, { note: "o /edicao disse que pode" });
+      expect(p.statusCode, `${kind}: ${p.body}`).toBe(200);
+      expect((await edicao(kind, id)).version, "a versão do /edicao acompanha").toBe(String(Number(g.version) + 1));
+      provados++;
+    }
+    expect(provados).toBe(3);
+  });
+
+  it("ED-9 confirmado, cancelado e convertido → podeEditar false com o motivo da situação; a PATCH recusa com o MESMO texto", async () => {
+    const confirmada = await criar("sale");
+    await acao(`/api/sales/sales/${confirmada}/confirm`);
+    const casos: [Variante, string][] = [["sale", confirmada]];
+    for (const kind of VARIANTES) {
+      const id = await criar(kind);
+      await acao(`/api/sales/${ROTA[kind]}/${id}/cancel`);
+      casos.push([kind, id]);
+    }
+    const convertido = await criar("order");
+    await acao(`/api/sales/orders/${convertido}/convert`, { tipo_operacao_id: tops.sale });
+    casos.push(["order", convertido]);
+    for (const [kind, id] of casos) {
+      const e = await edicao(kind, id);
+      expect(e, `${kind} ${id}`).toMatchObject({ podeEditar: false, motivo: MSG_NAO_EDITAVEL, version: (await ler(kind, id)).version });
+      const p = await patchAtual(kind, id, { note: "x" });
+      expect([p.statusCode, j(p).error?.code, j(p).error?.message], `${kind}: ${p.body}`).toEqual([409, "INVALID_STATUS_TRANSITION", e.motivo]);
+    }
+    expect(casos).toHaveLength(5);
+  });
+
+  it("ED-9 sem TOP (documento legado) → podeEditar false com o motivo próprio; a PATCH recusa com o mesmo texto", async () => {
+    for (const kind of VARIANTES) {
+      const id = await criar(kind, { tipo_operacao_id: undefined });
+      expect((await admin.query<{ t: string | null }>("select tipo_operacao_id t from erp.sales_documents where id=$1", [id])).rows[0]!.t, "premissa: legado").toBeNull();
+      const e = await edicao(kind, id);
+      const g = await ler(kind, id);
+      expect(e, kind).toMatchObject({ podeEditar: false, motivo: MSG_SEM_TOP, version: g.version });
+      expect(e.limites, kind).toEqual(semLimites(g.items));
+      expect(e.regras, kind).toEqual({ ...REGRAS_NEUTRAS, formato: 0, reservaEstoque: false });
+      expect([e.condicoesPermitidas, e.situacaoCliente], kind).toEqual([null, { politica: "nao_valida" }]);
+      expect(e.layout, `${kind}: o layout do sistema`).toEqual(await layoutEfetivo(kind, null));
+      const p = await patchAtual(kind, id, { note: "x" });
+      expect([p.statusCode, j(p).error?.message], `${kind}: ${p.body}`).toEqual([409, MSG_SEM_TOP]);
+    }
+  });
+
+  it("ED-9 origem com partes (ativa, depois só cancelada) → podeEditar false com as mensagens de hoje; a parte gerada → podeEditar true, só armazém e observação", async () => {
+    const id = await criar("order", { tipo_operacao_id: topPedidoEmPartes, items: [ITEM({ quantity: "10" })] });
+    const [item] = (await ler("order", id)).items;
+    const parte = (await acao(`/api/sales/orders/${id}/convert`, { tipo_operacao_id: tops.sale, itens: [{ item_id: item!.id, quantidade: "4" }] })).id as string;
+    const ativa = await edicao("order", id);
+    expect(ativa).toMatchObject({ podeEditar: false, motivo: MSG_PARTES_ATIVAS });
+    const p1 = await patchAtual("order", id, { note: "x" });
+    expect([p1.statusCode, j(p1).error?.message]).toEqual([409, MSG_PARTES_ATIVAS]);
+    // A parte: editável, com o limite da 06 (só armazém e observação do item); a origem não reserva → armazém livre.
+    const ep = await edicao("sale", parte);
+    expect(ep).toMatchObject({ podeEditar: true, motivo: null });
+    const [pi] = await idsDosItens(parte);
+    expect(ep.limites).toEqual({ somenteArmazemEObservacao: true, itens: [{ id: pi!.id, armazemTravado: false }] });
+    await acao(`/api/sales/sales/${parte}/cancel`);
+    expect(await edicao("order", id)).toMatchObject({ podeEditar: false, motivo: MSG_PARTES_CANCELADAS });
+    const p2 = await patchAtual("order", id, { note: "x" });
+    expect([p2.statusCode, j(p2).error?.message]).toEqual([409, MSG_PARTES_CANCELADAS]);
+    // A parte cancelada: situação.
+    expect(await edicao("sale", parte)).toMatchObject({ podeEditar: false, motivo: MSG_NAO_EDITAVEL });
+  });
+
+  it("ED-9 parte de pedido com reserva → armazém travado no item; o pedido com reserva declara reservaEstoque na regra congelada; a PATCH recusa com o texto exato", async () => {
+    const pedido = await criar("order", { tipo_operacao_id: topPedidoComReserva, items: [ITEM({ quantity: "6" })] });
+    const e = await edicao("order", pedido);
+    const g = await ler("order", pedido);
+    expect(e).toMatchObject({ podeEditar: true, motivo: null });
+    expect(e.limites, "o PEDIDO com reserva troca armazém (a reserva acompanha)").toEqual(semLimites(g.items));
+    expect(e.regras.reservaEstoque).toBe(true);
+    const [item] = g.items;
+    const parte = (await acao(`/api/sales/orders/${pedido}/convert`, { tipo_operacao_id: tops.sale, itens: [{ item_id: item!.id, quantidade: "2" }] })).id as string;
+    const ep = await edicao("sale", parte);
+    const [pi] = (await ler("sale", parte)).items;
+    expect(ep).toMatchObject({ podeEditar: true, motivo: null });
+    expect(ep.limites).toEqual({ somenteArmazemEObservacao: true, itens: [{ id: pi!.id, armazemTravado: true }] });
+    expect(ep.regras.reservaEstoque, "venda nunca reserva").toBe(false);
+    // O limite anunciado é o que a PATCH cobra: trocar o armazém da parte é recusado, com o texto exato.
+    const p = await patchAtual("sale", parte, { items: [{ id: pi!.id, warehouse_id: I.warehouse2! }] });
+    expect(p.statusCode, p.body).toBe(422);
+    expect(j(p).error).toMatchObject({ code: "VALIDATION_ERROR", message: MSG_PARTE_RESERVA_ARMAZEM });
+    expect(j(p).error!.details).toEqual([{ path: "items[0].warehouse_id", message: MSG_PARTE_RESERVA_ARMAZEM }]);
+  });
+
+  it("ED-9 parte de pedido com reserva com um item SEM controle de estoque: o /edicao diz armazém livre nesse item e travado no outro; a PATCH aceita e recusa exatamente os mesmos", async () => {
+    const pedido = await criar("order", { tipo_operacao_id: topPedidoComReserva, items: [ITEM({ quantity: "6" }), ITEM({ product_id: produtoSemEstoque, quantity: "3" })] });
+    const [comEstoque, semEstoque] = (await ler("order", pedido)).items;
+    const parte = (await acao(`/api/sales/orders/${pedido}/convert`, { tipo_operacao_id: tops.sale,
+      itens: [{ item_id: comEstoque!.id, quantidade: "2" }, { item_id: semEstoque!.id, quantidade: "1" }] })).id as string;
+    const [p1, p2] = (await ler("sale", parte)).items;
+    expect([p1!.product_id, p2!.product_id], "premissa: o item 0 controla estoque, o item 1 não").toEqual([I.product2, produtoSemEstoque]);
+    const e = await edicao("sale", parte);
+    expect(e).toMatchObject({ podeEditar: true, motivo: null });
+    expect(e.limites).toEqual({ somenteArmazemEObservacao: true, itens: [{ id: p1!.id, armazemTravado: true }, { id: p2!.id, armazemTravado: false }] });
+    const linhas = async () => (await admin.query<{ id: string; warehouse_id: string | null }>("select id, warehouse_id from erp.sales_document_items where document_id=$1 order by position, id", [parte])).rows;
+    const antes = await linhas();
+    // Recusa: o item travado (sozinho, ou junto com o livre) — o detalhe aponta SÓ o travado.
+    for (const [rotulo, items] of [
+      ["só o travado", [{ id: p1!.id, warehouse_id: I.warehouse2! }, { id: p2!.id }]],
+      ["os dois", [{ id: p1!.id, warehouse_id: I.warehouse2! }, { id: p2!.id, warehouse_id: I.warehouse2! }]],
+    ] as const) {
+      const r = await patchAtual("sale", parte, { items });
+      expect(r.statusCode, `${rotulo}: ${r.body}`).toBe(422);
+      expect(j(r).error!.details, rotulo).toEqual([{ path: "items[0].warehouse_id", message: MSG_PARTE_RESERVA_ARMAZEM }]);
+      expect(await linhas(), `${rotulo}: nada gravado`).toEqual(antes);
+    }
+    // Aceita: o item livre troca de armazém.
+    const ok = await patchAtual("sale", parte, { items: [{ id: p1!.id }, { id: p2!.id, warehouse_id: I.warehouse2! }] });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(await linhas()).toEqual([{ id: p1!.id, warehouse_id: I.warehouse }, { id: p2!.id, warehouse_id: I.warehouse2 }]);
+    // E o /edicao continua dizendo o mesmo depois da troca.
+    expect((await edicao("sale", parte)).limites).toEqual(e.limites);
+  });
+
+  it("ED-9 a TOP desativada (e depois excluída) após o lançamento, com um layout ligado (e religado) depois → responde pela versão CONGELADA e pelo layout de HOJE; a PATCH cobra o mesmo", async () => {
+    const top = await criarTop("order", "ED9 desativada");
+    await novaVersao(top, cfg((c) => { c.geral.exigeObservacao = true; }));
+    const id = await criar("order", { tipo_operacao_id: top, note: "exigida" });
+    await novaVersao(top, configuracaoNeutraTopV3()); // a atual deixa de exigir
+    expect((await admin.query("update erp.tipos_operacao set ativo=false where id=$1", [top])).rowCount).toBe(1);
+    const congeladas = { ...REGRAS_NEUTRAS, formato: 3, exigencias: ["note"], reservaEstoque: false };
+    // Desativada, sem layout ligado: as regras da versão congelada e o layout do SISTEMA.
+    const e0 = await edicao("order", id);
+    expect(e0).toMatchObject({ podeEditar: true, motivo: null });
+    expect(e0.regras).toEqual(congeladas);
+    expect(e0.layout, "sem layout ligado: o do sistema").toEqual(await layoutEfetivo("order", null));
+    const semLayout = await patchAtual("order", id, { note: "com o layout do sistema" });
+    expect(semLayout.statusCode, `premissa: a PATCH passa com o layout do sistema: ${semLayout.body}`).toBe(200);
+    // Um layout é ligado à TOP DEPOIS do lançamento: o /edicao responde pelo de hoje.
+    const familia = FAMILIA.order;
+    const novoLayout = async (nome: string) => (await admin.query<{ id: string }>(
+      "insert into erp.layouts_documento(organization_id,code,nome,familia,padrao,estrutura) values ($1,$2,$3,$4,false,$5) returning id",
+      [h.demo.orgId, `ED9-${++seq}`, nome, familia, JSON.stringify(LAYOUT_DO_SISTEMA(familia))])).rows[0]!.id;
+    const l1 = await novoLayout(`ED9 layout 1 ${seq}`);
+    await admin.query("insert into erp.layout_documento_tops(organization_id,layout_id,tipo_operacao_id) values ($1,$2,$3)", [h.demo.orgId, l1, top]);
+    const e1 = await edicao("order", id);
+    expect(e1.layout, "o layout ligado hoje").toMatchObject({ origem: "ligado", id: l1 });
+    expect(e1.regras, "as regras continuam as da versão congelada").toEqual(congeladas);
+    // Religado a OUTRO layout: o /edicao acompanha.
+    const l2 = await novoLayout(`ED9 layout 2 ${seq}`);
+    expect((await admin.query("delete from erp.layout_documento_tops where tipo_operacao_id=$1 and layout_id=$2", [top, l1])).rowCount).toBe(1);
+    await admin.query("insert into erp.layout_documento_tops(organization_id,layout_id,tipo_operacao_id) values ($1,$2,$3)", [h.demo.orgId, l2, top]);
+    const e2 = await edicao("order", id);
+    expect(e2.layout, "o layout religado").toMatchObject({ origem: "ligado", id: l2 });
+    // A PATCH cobra o mesmo: o layout ligado HOJE (natureza e centro obrigatórios no layout ligado) e a exigência
+    // CONGELADA (observação).
+    const peloLayout = await patchAtual("order", id, { note: "sem natureza" });
+    expect([peloLayout.statusCode, j(peloLayout).error?.code], `o layout de hoje: ${peloLayout.body}`).toEqual([422, "LAYOUT_CAMPO_OBRIGATORIO"]);
+    const classificacao = { categoria_financeira_id: I.incomeCategory, centro_custo_id: I.costCenter };
+    const limpar = await patchAtual("order", id, { ...classificacao, note: null });
+    expect([limpar.statusCode, j(limpar).error?.code], `a exigência congelada: ${limpar.body}`).toEqual([422, ERRO_EXIGENCIA_NAO_ATENDIDA]);
+    const ok = await patchAtual("order", id, { ...classificacao, note: "ainda exigida" });
+    expect(ok.statusCode, ok.body).toBe(200);
+    // Excluída (pela API): a mesma resposta — versão congelada e layout de hoje.
+    const revisao = (await admin.query<{ r: number }>("select revisao r from erp.tipos_operacao where id=$1", [top])).rows[0]!.r;
+    const del = await h.app.inject({ method: "DELETE", url: `/api/admin/tipos-operacao/${top}?revisao=${revisao}`, headers: h.headers() });
+    expect(del.statusCode, del.body).toBeLessThan(300);
+    expect((await admin.query<{ x: boolean }>("select excluido_em is not null x from erp.tipos_operacao where id=$1", [top])).rows[0]!.x, "premissa: excluída").toBe(true);
+    const e3 = await edicao("order", id);
+    expect(e3).toMatchObject({ podeEditar: true, motivo: null });
+    expect(e3.regras).toEqual(congeladas);
+    expect(e3.layout).toEqual(e2.layout);
+  });
+});
+
+describe("ED-9 — as regras da versão CONGELADA", () => {
+  it("ED-9 a TOP ganhou versão NOVA depois do documento: o /edicao mostra a antiga (exigências, condições, atraso); /regras-da-operacao mostra a nova", async () => {
+    const [c1, c2] = [await condicao(), await condicao()];
+    // Cliente PRÓPRIO: nenhum título herdado do seed decide a situação.
+    const cliente = (await admin.query<{ id: string }>(
+      "insert into erp.people(organization_id,code,document,person_type,name,legal_name,city_id,is_client) values ($1,'ED91','99272000000091','legal','[TEST] Cliente ED9','[TEST] Cliente ED9',5208707,true) returning id",
+      [h.demo.orgId])).rows[0]!.id;
+    const top = await criarTop("order", "ED9 congelada");
+    await novaVersao(top, cfg((c) => { c.geral.exigeObservacao = true; c.financeiro.clienteEmAtraso = "avisa"; c.financeiro.toleranciaAtrasoDias = 5; }), [c1]);
+    const id = await criar("order", { tipo_operacao_id: top, client_id: cliente, note: "exigida", condicao_pagamento_id: c1 });
+    await novaVersao(top, cfg((c) => { c.geral.exigeTransportadora = true; }), [c2]);
+
+    const e = await edicao("order", id);
+    expect(e.podeEditar).toBe(true);
+    expect(e.regras).toEqual({ formato: 3, exigencias: ["note"], condicoesPermitidas: [c1], clienteEmAtraso: { politica: "avisa", toleranciaDias: 5 }, reservaEstoque: false });
+    expect(JSON.stringify(e.condicoesPermitidas), "as condições da versão congelada").toContain(c1);
+    expect(JSON.stringify(e.condicoesPermitidas)).not.toContain(c2);
+    expect(e.situacaoCliente, "o cliente gravado pela política congelada").toMatchObject({ politica: "avisa", emAtraso: false, titulos: 0 });
+
+    const atual = await h.app.inject({ method: "GET", url: `/api/sales/orders/regras-da-operacao?tipo_operacao_id=${top}`, headers: h.headers() });
+    expect(atual.statusCode, atual.body).toBe(200);
+    expect(j(atual)).toEqual({ formato: 3, exigencias: ["transporter_id"], condicoesPermitidas: [c2], clienteEmAtraso: { politica: "nao_valida", toleranciaDias: 0 }, reservaEstoque: false });
+  });
+});
+
+describe("ED-9 — o cliente gravado em atraso", () => {
+  it("ED-9 cliente DEVEDOR sob TOP que valida atraso → situacaoCliente.emAtraso true, pela política CONGELADA — também para quem tem <perm>.edit e <perm>.view (sem create)", async () => {
+    const devedor = (await admin.query<{ id: string }>(
+      "insert into erp.people(organization_id,code,document,person_type,name,legal_name,city_id,is_client) values ($1,'ED92','99272000000092','legal','[TEST] Devedor ED9','[TEST] Devedor ED9',5208707,true) returning id",
+      [h.demo.orgId])).rows[0]!.id;
+    const top = await criarTop("order", "ED9 atraso");
+    await novaVersao(top, cfg((c) => { c.financeiro.clienteEmAtraso = "bloqueia"; }));
+    // Nasce ANTES do título vencido; depois a TOP ganha versão nova que NÃO valida (a congelada continua bloqueando).
+    const id = await criar("order", { tipo_operacao_id: top, client_id: devedor });
+    await novaVersao(top, configuracaoNeutraTopV3());
+    const venc = new Date(Date.now() - 10 * 86_400_000).toISOString().slice(0, 10);
+    await admin.query(
+      "insert into erp.financial_titles(organization_id,empresa_id,code,direction,number,person_id,amount,emission_date,due_date) values ($1,$2,$3,'receivable',$4,$5,'1234.50',$6,$6)",
+      [h.demo.orgId, I.empresa2, `ED9-ATR-${Date.now()}`, "ED9-ATRASO", devedor, venc]);
+    const esperado = { politica: "bloqueia", emAtraso: true, titulos: 1, total: "1234.50", vencimentoMaisAntigo: venc };
+    const pelo = await edicao("order", id);
+    expect(pelo.situacaoCliente, "o dono").toEqual(esperado);
+    expect(pelo.regras.clienteEmAtraso).toEqual({ politica: "bloqueia", toleranciaDias: 0 });
+    // Quem EDITA (e vê) sem lançar: a mesma resposta (a porta do atraso não pode exigir create de quem abre a edição).
+    const soEdit = await membro("ED9 edit e view pedidos", ["orders.edit", "orders.view"]);
+    const s = await h.app.inject({ method: "GET", url: `/api/sales/orders/situacao-cliente?client_id=${devedor}&tipo_operacao_id=${top}`, headers: soEdit });
+    expect(s.statusCode, `premissa: sem create: ${s.body}`).toBe(403);
+    const e = await edicao("order", id, soEdit);
+    expect(e.situacaoCliente, "com orders.edit e orders.view, sem create").toEqual(esperado);
+    expect(e.podeEditar).toBe(true);
+  });
+});
+
+describe("ED-9 — a porta", () => {
+  it("ED-9 com <perm>.edit e <perm>.view (sem create) → 200 nas três variantes; sem edit → 403", async () => {
+    const docs: Record<Variante, string> = { budget: await criar("budget"), order: await criar("order"), sale: await criar("sale") };
+    const soEdit = await membro("ED9 edit e view", VARIANTES.flatMap((k) => [`${PERM[k]}.edit`, `${PERM[k]}.view`]));
+    let provados = 0;
+    for (const kind of VARIANTES) {
+      const e = await edicao(kind, docs[kind], soEdit);
+      expect(e, kind).toMatchObject({ podeEditar: true, motivo: null, version: (await ler(kind, docs[kind])).version });
+      // PREMISSA: ele NÃO tem create (as rotas de lançamento o recusam).
+      const regras = await h.app.inject({ method: "GET", url: `/api/sales/${ROTA[kind]}/regras-da-operacao?tipo_operacao_id=${tops[kind]}`, headers: soEdit });
+      expect(regras.statusCode, `${kind}: ${regras.body}`).toBe(403);
+      provados++;
+    }
+    expect(provados).toBe(3);
+    const soVe = await membro("ED9 só view", VARIANTES.map((k) => `${PERM[k]}.view`));
+    for (const kind of VARIANTES) {
+      expect((await getResposta(kind, docs[kind], soVe)).statusCode, `premissa: ${kind} visível`).toBe(200);
+      const r = await edicaoResposta(kind, docs[kind], soVe);
+      expect(r.statusCode, `${kind}: ${r.body}`).toBe(403);
+    }
+  });
+
+  it("ED-9 a MESMA 404 do GET: inexistente, id malformado, excluído, outra variante, empresa fora do escopo e outra organização", async () => {
+    const pedido = await criar("order");
+    const excluido = await criar("order");
+    expect((await admin.query("update erp.sales_documents set deleted_at=now() where id=$1", [excluido])).rowCount).toBe(1);
+    const daEmpresa2 = await criar("order", { empresa_id: I.empresa2, items: [ITEM({ warehouse_id: I.warehouseEmpresa2! })] });
+    const soEmpresa1 = await membro("ED9 empresa 1", ["orders.view", "orders.edit"], [I.empresa]);
+    const casos: [string, Variante, string, Hdr][] = [
+      ["inexistente", "order", "00000000-0000-4000-8000-000000000272", h.headers()],
+      ["excluído", "order", excluido, h.headers()],
+      ["outra variante", "budget", pedido, h.headers()],
+      ["empresa fora do escopo", "order", daEmpresa2, soEmpresa1],
+      ["outra organização", "order", pedido, outraOrg],
+    ];
+    const corpos = new Set<string>();
+    // Id MALFORMADO: a mesma 404 (o corpo do inexistente), nunca 500 nem 422.
+    const malformado = await edicaoResposta("order", "nao-e-um-uuid");
+    expect(malformado.statusCode, malformado.body).toBe(404);
+    corpos.add(malformado.body);
+    for (const [nome, kind, id, headers] of casos) {
+      const e = await edicaoResposta(kind, id, headers);
+      const g = await getResposta(kind, id, headers);
+      expect([e.statusCode, g.statusCode], `${nome}: ${e.body}`).toEqual([404, 404]);
+      expect(e.body, `${nome}: a MESMA 404 do GET`).toBe(g.body);
+      corpos.add(e.body);
+    }
+    expect(corpos.size, `um corpo só: ${[...corpos].join(" | ")}`).toBe(1);
+    // PREMISSAS: os 404 são recorte, não rota quebrada.
+    expect((await edicao("order", pedido)).podeEditar).toBe(true);
+    expect((await edicao("order", pedido, soEmpresa1)).podeEditar, "o usuário da empresa 1 enxerga o pedido dela").toBe(true);
+    expect((await edicao("order", daEmpresa2)).podeEditar, "o dono enxerga o da empresa 2").toBe(true);
+  });
+
+  it("ED-9 <perm>.edit SEM <perm>.view → 403 ANTES de ler (nenhuma consulta ao documento; a mesma 403 para o existente e o inexistente); o documento intacto — nas três variantes", async () => {
+    let provados = 0;
+    for (const kind of VARIANTES) {
+      const id = await criar(kind);
+      const foto = async () => ({
+        doc: (await admin.query("select *, xmin::text as x from erp.sales_documents where id=$1", [id])).rows,
+        itens: (await admin.query("select *, xmin::text as x from erp.sales_document_items where document_id=$1 order by position, id", [id])).rows,
+        eventos: (await admin.query("select id::text from erp.audit_logs where entity='sales_documents' and entity_id=$1 order by id", [id])).rows,
+      });
+      const antes = await foto();
+      const soEdit = await membro(`ED9 só edit ${kind}`, [`${PERM[kind]}.edit`]);
+      const { r, sqls } = await comConsultas(() => edicaoResposta(kind, id, soEdit));
+      expect(r.statusCode, `${kind}: ${r.body}`).toBe(403);
+      expect(sqls.filter((q) => /erp\.sales_document/.test(q)), `${kind}: nenhuma leitura do documento`).toEqual([]);
+      const inexistente = await edicaoResposta(kind, "00000000-0000-4000-8000-000000000272", soEdit);
+      expect([inexistente.statusCode, inexistente.body], `${kind}: a MESMA 403 (não revela existência)`).toEqual([403, r.body]);
+      expect(await foto(), `${kind}: o documento intacto`).toEqual(antes);
+      // PREMISSA: com .edit E .view, o mesmo documento responde.
+      const comView = await membro(`ED9 edit e view ${kind}`, [`${PERM[kind]}.edit`, `${PERM[kind]}.view`]);
+      expect((await edicao(kind, id, comView)).podeEditar, kind).toBe(true);
+      provados++;
+    }
+    expect(provados).toBe(3);
+  });
+});
+
+describe("ED-9 — o número de consultas", () => {
+  it("ED-9 o /edicao faz o MESMO número de consultas com 1 e com 5 itens (pedido aberto e parte de pedido com reserva, com item sem controle de estoque) — nenhuma por item", async () => {
+    type Contagem = { total: number; itens: number; porTabela: Record<string, number> };
+    const tabelas = ["erp.sales_documents", "erp.sales_document_items", "erp.products", "erp.tipos_operacao_versoes", "erp.layout"];
+    async function contar(kind: Variante, id: string): Promise<Contagem> {
+      await edicao(kind, id); // aquece: a primeira chamada do usuário não pode entrar na conta
+      const { r, sqls } = await comConsultas(() => edicaoResposta(kind, id));
+      expect(r.statusCode, r.body).toBe(200);
+      const e = j(r) as unknown as Edicao;
+      return { total: sqls.length, itens: e.limites.itens.length, porTabela: Object.fromEntries(tabelas.map((t) => [t, sqls.filter((q) => q.includes(t)).length])) };
+    }
+    const itens = (n: number, extra: Partial<Item> = {}) => Array.from({ length: n }, (_, k) => ITEM({ quantity: "1", ...(k % 2 === 1 ? { product_id: produtoSemEstoque } : {}), ...extra }));
+    // Pedido aberto.
+    const p1 = await criar("order", { items: itens(1) });
+    const p5 = await criar("order", { items: itens(5) });
+    const [c1, c5] = [await contar("order", p1), await contar("order", p5)];
+    expect([c1.itens, c5.itens], "premissa: 1 e 5 itens").toEqual([1, 5]);
+    expect(c1.total, "premissa: o espião viu as consultas").toBeGreaterThan(2);
+    expect(c1.porTabela["erp.sales_documents"], "premissa: o documento foi lido").toBeGreaterThan(0);
+    expect(c5, "pedido: as mesmas consultas").toEqual({ ...c1, itens: 5 });
+    // Parte de pedido com reserva (armazém travado por item, com o produto de cada item).
+    const parte = async (n: number) => {
+      const pedido = await criar("order", { tipo_operacao_id: topPedidoComReserva, items: itens(n) });
+      const origem = (await ler("order", pedido)).items;
+      return (await acao(`/api/sales/orders/${pedido}/convert`, { tipo_operacao_id: tops.sale, itens: origem.map((i) => ({ item_id: i.id, quantidade: "1" })) })).id as string;
+    };
+    const s1 = await parte(1); const s5 = await parte(5);
+    const [d1, d5] = [await contar("sale", s1), await contar("sale", s5)];
+    expect([d1.itens, d5.itens], "premissa: 1 e 5 itens na parte").toEqual([1, 5]);
+    const e5 = await edicao("sale", s5);
+    expect(e5.limites.itens.map((i) => i.armazemTravado), "premissa: travado no item com estoque, livre no sem estoque").toEqual([true, false, true, false, true]);
+    expect(d5, "parte: as mesmas consultas").toEqual({ ...d1, itens: 5 });
+  });
+});

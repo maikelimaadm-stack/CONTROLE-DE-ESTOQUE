@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, qs } from "@/lib/api";
-import estilos from "./central-vendas-workspace.module.css";
+import grade from "./central-vendas-grade.module.css";
 
 /**
  * PESQUISA DA CENTRAL DE VENDAS — o painel de vidro do design aprovado, sobre a FONTE REAL de opções.
@@ -21,6 +21,13 @@ import estilos from "./central-vendas-workspace.module.css";
  * Dois modos, como o design fixa: FLUTUANTE, ancorado à célula da grade e abrindo para baixo (as linhas
  * não se movem, o cabeçalho da grade não é coberto); e EM FLUXO, dentro do formulário do item,
  * empurrando os campos seguintes. Teclado: ↑ ↓ movem, Enter escolhe, Esc fecha. Sem rodapé, sem X.
+ *
+ * APRESENTAÇÃO DO DESENHO (VISUAL-UX-02): painel de 640px, busca de 40px, cabeçalho de 31px e linhas de 30px, nas
+ * classes de `central-vendas-grade.module.css`. O flutuante abre 2px abaixo do CONTEÚDO da linha (a borda de baixo da
+ * célula não conta), preso à coluna da célula e sem passar da borda direita da linha — o `calc(100% + 2px)` e o
+ * `max(0, min(coluna, 100% - 640px))` do desenho, medidos na tela porque o painel é `fixed`. Props, testids, papéis e
+ * teclado são os de antes: a grade da criação consome este painel e não muda. A opção ATIVA (a do teclado e do ponteiro,
+ * a que o `aria-activedescendant` aponta e o Enter escolhe) é a `aria-selected="true"`; as outras, "false".
  */
 
 export interface OpcaoReal { id: string; label: string; code?: string | null }
@@ -55,7 +62,7 @@ export function PainelDePesquisa({ recurso, rotulo, filtro, valor, modo, ancora,
   const opcoes = data ?? [];
   const painel = React.useRef<HTMLDivElement>(null);
   const lista = React.useRef<HTMLDivElement>(null);
-  const [pos, setPos] = React.useState<{ top: number; left: number } | null>(null);
+  const [pos, setPos] = React.useState<{ top: number; left: number; largura: number } | null>(null);
   const idLista = React.useId();
 
   React.useEffect(() => { setAtiva(Math.max(0, (data ?? []).findIndex((o) => o.id === valor))); }, [data, valor]);
@@ -65,8 +72,11 @@ export function PainelDePesquisa({ recurso, rotulo, filtro, valor, modo, ancora,
     if (modo !== "flutuante" || !ancora) return;
     const medir = () => {
       const r = ancora.getBoundingClientRect();
-      const largura = Math.min(640, window.innerWidth - 24);
-      setPos({ top: r.bottom + 2, left: Math.max(12, Math.min(r.left, window.innerWidth - largura - 12)) });
+      const linha = (ancora.closest("tr") ?? ancora).getBoundingClientRect();
+      const bordaDeBaixo = parseFloat(getComputedStyle(ancora).borderBottomWidth) || 0;
+      const largura = Math.min(640, linha.width, window.innerWidth - 24);
+      const left = Math.max(linha.left, Math.min(r.left, linha.right - largura));
+      setPos({ top: r.bottom - bordaDeBaixo + 2, left: Math.max(12, Math.min(left, window.innerWidth - largura - 12)), largura });
     };
     medir();
     window.addEventListener("resize", medir);
@@ -99,11 +109,11 @@ export function PainelDePesquisa({ recurso, rotulo, filtro, valor, modo, ancora,
     aria-label={rotulo}
     data-testid={testId}
     data-modo={modo}
-    className={cn(estilos.pesquisa, modo === "flutuante" ? estilos.pesquisaFlutuante : estilos.pesquisaFluxo)}
-    style={modo === "flutuante" && pos ? { top: pos.top, left: pos.left } : undefined}
+    className={cn(grade.pesquisa, modo === "flutuante" ? grade.pesquisaFlutuante : grade.pesquisaFluxo)}
+    style={modo === "flutuante" && pos ? { top: pos.top, left: pos.left, width: pos.largura } : undefined}
     onKeyDown={teclado}
   >
-    <label className={estilos.pesquisaBusca}>
+    <label className={grade.pesquisaBusca}>
       <Search aria-hidden />
       <input
         autoFocus
@@ -117,24 +127,24 @@ export function PainelDePesquisa({ recurso, rotulo, filtro, valor, modo, ancora,
         aria-expanded="true"
       />
     </label>
-    <div className={estilos.pesquisaCabecalho} aria-hidden><span>Código</span><span>Descrição</span></div>
-    <div ref={lista} id={idLista} role="listbox" aria-label={rotulo} className={estilos.pesquisaLista}>
-      {isLoading && <div className={estilos.pesquisaEstado}>Carregando…</div>}
-      {!isLoading && opcoes.length === 0 && <div className={estilos.pesquisaEstado}>Nenhuma opção encontrada</div>}
+    <div className={cn(grade.pesquisaLinha, grade.pesquisaCabecalho)} aria-hidden><span>Código</span><span>Descrição</span></div>
+    <div ref={lista} id={idLista} role="listbox" aria-label={rotulo} className={grade.pesquisaLista}>
+      {isLoading && <div className={grade.pesquisaEstado}>Carregando…</div>}
+      {!isLoading && opcoes.length === 0 && <div className={grade.pesquisaEstado}>Nenhuma opção encontrada</div>}
       {opcoes.map((o, i) => <button
         type="button"
         key={o.id}
         id={`${idLista}-${i}`}
         role="option"
-        aria-selected={o.id === valor}
+        aria-selected={i === ativa}
         data-ativa={i === ativa ? "true" : "false"}
-        className={estilos.pesquisaOpcao}
+        className={grade.pesquisaLinha}
         tabIndex={-1}
         onMouseEnter={() => setAtiva(i)}
         onClick={() => onEscolher(o)}
       >
-        <span className={estilos.codigo}>{o.code ?? "—"}</span>
-        <span>{o.label}</span>
+        <span className={grade.pesquisaCodigo}>{o.code ?? "—"}</span>
+        <span className={grade.pesquisaNome}>{o.label}</span>
       </button>)}
     </div>
   </div>;

@@ -278,6 +278,28 @@ capacidade exigida depende do que o usuário pode ver), então o recorte de empr
 o módulo EXPLÍCITO da permissão de vendas: com módulo indefinido a RLS vale pela união das empresas
 visíveis, que é mais larga. RLS ∧ SQL = o escopo exato, e nenhum dos dois sozinho decide.
 
+### Apresentação vigente da Central de Vendas (VISUAL-UX-02, decisão 270)
+
+A Central de Vendas — a criação (`/vendas/<variante>/new`) e a consulta do documento salvo
+(`/vendas/<variante>/<id>`) — segue o desenho aprovado "Central de vendas — lançamento (interativo)":
+
+- **barra por modo** — na consulta, Novo documento, Duplicar documento e as pílulas da espécie; na criação,
+  Descartar alterações, Salvar e, na venda, Confirmar venda — e o **leque de Ações rápidas**, onde moram as ações
+  que o desenho não põe na barra (Imprimir, Histórico, Documentos abertos, Alterar operação, Cancelar);
+- **posição do rótulo** (antes ou dentro do campo), estado só da tela;
+- **Salvar com pendências**: o clique com pendência não grava e lista o que falta, levando ao campo;
+- **itens com seleção pelo círculo**, e duplicar e remover item pela barra dos itens;
+- **painel inferior** com Totais, Financeiro, Frete e transporte, Fiscal e Observações, e Documentos derivados
+  na consulta de pedido e de orçamento.
+
+Nada de layout persiste: posição do rótulo, ampliar, colunas e divisores voltam ao padrão quando a tela remonta.
+
+Esta seção descreve APRESENTAÇÃO e não é dona de regra. A regra de negócio, as rotas e as permissões são as dos
+contratos donos: a TOP escolhida antes do formulário e as rotas da Central estão no `docs/TIPO-OPERACAO-CONTRACT.md`
+(§0.3 e §13.4), os próximos passos no §11 dele, os campos que aparecem no layout do documento ligado à TOP
+(decisões 259 a 262), e o que cada ação da tela faz — com o que ficou fora e por quê — na decisão 270 de
+`docs/DECISIONS.md`. A tela esconder um botão não autoriza nem nega nada: quem decide é a rota que a ação chama.
+
 ## Portal de Compras — documento comercial de compra (COMPRAS-01), recebimento do pedido (COMPRAS-02), layout (COMPRAS-03) e o que falta
 
 Decisão 267. O Portal de Compras segue o desenho do Portal de Vendas: lista única de documentos com o tipo como

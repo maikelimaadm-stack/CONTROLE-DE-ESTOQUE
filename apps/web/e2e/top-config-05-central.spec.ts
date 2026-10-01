@@ -3,7 +3,7 @@ import {
   configuracaoNeutraTopV3, LAYOUT_DO_SISTEMA, textoSituacaoAtraso,
   type ConfiguracaoTipoOperacaoV3, type EstruturaLayout, type SituacaoClienteResposta
 } from "@agro/domain";
-import { login, api, uniq, pickRef, empresaAtiva, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, abrirAbaDoLancamento } from "./helpers";
+import { login, adicionarItemNaCentral, api, uniq, pickRef, empresaAtiva, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, abrirAbaDoLancamento } from "./helpers";
 import { criarParceiro } from "./aj02-comum";
 
 /**
@@ -83,7 +83,7 @@ async function abrirCentral(page: Page, top: string, layoutId: string) {
 /** Cliente, 1 item de 1 × 100,00 e a classificação do seed — tudo o que o Salvar pede além das regras da TOP. */
 async function preencherDocumento(page: Page, cliente: string) {
   await pickRef(page, "Cliente", cliente);
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   await escolherPrimeiroProdutoDaLinha(page);
   const linha = page.getByTestId("central-vendas-linha").first();
   await linha.getByLabel("Quantidade").fill("1");
