@@ -449,16 +449,17 @@
 .campo[data-oculto] { opacity: .55; border-style: dashed; }
 .campo[data-somente-leitura] .campoRotulo { color: #5b6875; }
 
-/* troca na linha cheia (`.ch.troca`): vence o hover do campo, como o pedido manda (no desenho o hover vence a borda) */
-.areaLinhas .campo[data-troca] {
+/* troca na linha cheia (`.ch.troca`, 0-2-0): como no desenho, o hover do campo (`.emEdicao .campo:hover`, 0-3-0) vence a
+   borda e o fundo com o ponteiro em cima (borda calculada #c6d0da); a recusa (`.ch.troca.nao`, 0-3-0, depois) vence o hover */
+.campo[data-troca] {
   border-color: #40de63;
   background: #fff;
   transform: translateY(-3px) scale(1.025);
   z-index: 3;
   animation: trocaPulso 1.5s cubic-bezier(.4, 0, .2, 1) infinite;
 }
-.areaLinhas .campo[data-troca] .campoRotulo { font-weight: 600; color: #0f172a; }
-.areaLinhas .campo[data-troca]::after {
+.campo[data-troca] .campoRotulo { font-weight: 600; color: #0f172a; }
+.campo[data-troca]::after {
   content: "\2194";
   position: absolute;
   right: -7px;
