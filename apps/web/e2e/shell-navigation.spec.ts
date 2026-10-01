@@ -15,7 +15,12 @@ test.describe("shell: menu superior e mega-menu", () => {
     await nav.getByTestId("nav-module").filter({ hasText: "Estoque" }).hover();
     const mega = page.getByTestId("mega-menu"); await expect(mega).toBeVisible();
     await expect(mega.getByText("Recebimentos", { exact: true })).toBeVisible(); await expect(mega.getByText("Ações", { exact: true })).toBeVisible();
-    await mega.getByTestId("mega-item").filter({ hasText: "Movimentações" }).first().click();
+    // ESTOQUE-01 (decisão 274): o Estoque tem duas "Movimentações" — a aba nova (o documento de estoque) e a
+    // sub-área antiga do ledger. Cada uma é pedida pelo destino, não pela posição no painel.
+    const itens = mega.getByTestId("mega-item").filter({ hasText: "Movimentações" });
+    await expect(itens.and(page.locator('[href="/estoque?tab=movimentacoes"]'))).toHaveCount(1);
+    const ledger = itens.and(page.locator('[href="/estoque?tab=estoque&sub=ledger"]'));
+    await expect(ledger).toHaveCount(1); await ledger.click();
     await expect(page).toHaveURL(/\/estoque\?tab=estoque&sub=ledger/);
     await expect(page.getByTestId("workspace-tab").filter({ hasText: "Estoque" })).toHaveCount(1);
     await expect(page.getByTestId("workspace-tabs").getByRole("tab", { name: "Estoque" })).toHaveAttribute("aria-selected", "true");

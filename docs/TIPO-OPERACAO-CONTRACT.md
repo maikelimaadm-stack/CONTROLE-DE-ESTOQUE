@@ -1635,3 +1635,29 @@ só o dono e o `erp_app` a executam.
   `clienteEmAtraso = bloqueia`, passa a receber 422 `CLIENTE_EM_ATRASO` — a regra configurada, que antes falhava
   aberta para ele. Vale também para a API anterior assim que a 0039 estiver aplicada: a porta mora no banco.
 - **A porta aberta a `.edit` fica, por decisão do Maike** (decisão 272): medido em produção, não muda nada hoje.
+
+## 16. Famílias de TOP de estoque (ESTOQUE-01)
+
+O documento de estoque (`erp.documentos_estoque`, 0040) e o Portal de Estoque estão em
+`docs/PORTAIS-OPERACIONAIS-CONTRACT.md`, § Portal de Estoque; aqui ficam as famílias de TOP dele (decisão 274).
+
+- **Quatro famílias novas**, todas do módulo `estoque` e variantes de `erp.documentos_estoque` pela coluna `especie`:
+  `estoque.entrada` ("Entrada de estoque"), `estoque.saida` ("Saída de estoque"), `estoque.transferencia`
+  ("Transferência de estoque") e `estoque.ajuste` ("Ajuste de estoque (inventário)"). O registry é a fonte única; o
+  domínio deriva delas o segmento, o recurso e a família de cada espécie, e espécie que o registry não declara não tem
+  família (fail-closed).
+- **As oito famílias antigas de estoque** (`estoque.entrada_manual`, `estoque.documento_fiscal`, `estoque.requisicao`,
+  `estoque.baixa`, `estoque.devolucao`, `estoque.transferencia_entre_armazens`, `estoque.transferencia_entre_empresas`
+  e `estoque.producao_de_racao`) ficam como estão: presas às tabelas antigas, sem consumidor.
+- **O movimento é o da espécie.** As famílias novas NÃO entram na `MATRIZ_EXECUCAO_TOP`: a execução configurada
+  continua recusada para elas, com a mensagem de hoje. A TOP dá ao documento o nome da operação, a TOP padrão por
+  espécie, a versão congelada e as exigências gerais.
+- **Exigências gerais** (`EXIGENCIAS_GERAIS_ESTOQUE_TOP`): só "observação obrigatória" se aplica (campo `observacao`
+  do documento). Parceiro, centro de resultado, transportadora e cliente em atraso não se aplicam — é um mapa próprio,
+  para as famílias de estoque nunca caírem no mapa da venda; "Cliente em atraso" diferente de "não valida" é recusado
+  pela API da TOP (422 no campo).
+- **Editor da TOP** para as famílias de estoque: aparece só o que se aplica — Geral com a observação; na seção Estoque, o
+  texto "O movimento é definido pela espécie"; Financeiro, Fiscal, Aprovação e Próximas operações escondidos.
+- **A TOP no documento**: obrigatória, só da família da espécie (conferido pela API e pelo gatilho do banco), versão
+  congelada no lançamento, imutáveis depois. O ledger (`erp.stock_movements`) nunca recebe TOP: recebe o movimento, com
+  a origem no `source_type`.

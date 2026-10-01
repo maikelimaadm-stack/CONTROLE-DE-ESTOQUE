@@ -157,7 +157,7 @@ describe("caminho legítimo — conexão operacional", () => {
     const v = await verificar(admin, h.demo.orgId);
     expect(v.problemas).toEqual([]);
     expect(v.organizacoes, "o resumo precisa dizer quantas organizações foram percorridas").toBe(1);
-    expect(v.entidades).toBe(24);
+    expect(v.entidades).toBe(25);
     expect(v.registrosGlobais).toBeGreaterThan(0);
     expect(v.faltando).toBe(0);
   }, 120_000);

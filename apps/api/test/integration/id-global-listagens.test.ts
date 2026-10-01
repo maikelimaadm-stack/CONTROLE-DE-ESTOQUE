@@ -45,6 +45,7 @@ const LISTAGENS: Readonly<Record<string, readonly string[]>> = {
   ofx_imports: ["/api/financial/ofx-imports"],
   sales_documents: ["/api/sales/budgets", "/api/sales/orders", "/api/sales/sales"],
   documentos_compra: ["/api/compras/pedidos", "/api/compras/compras", "/api/compras/documentos"],
+  documentos_estoque: ["/api/estoque/documentos"],
   animals: ["/api/livestock/animals"],
   animal_movements: ["/api/livestock/movements"],
   animal_handlings: ["/api/livestock/handlings"],

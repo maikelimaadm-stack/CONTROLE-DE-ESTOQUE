@@ -88,6 +88,11 @@ export const ptBR: Catalogo = {
     "top.estoque.transferencia_entre_armazens": "Transferência entre armazéns",
     "top.estoque.transferencia_entre_empresas": "Transferência entre empresas",
     "top.estoque.producao_de_racao": "Produção de ração",
+    // ESTOQUE-01 (decisão 274): as famílias do documento de estoque (`erp.documentos_estoque`, por espécie).
+    "top.estoque.entrada": "Entrada de estoque",
+    "top.estoque.saida": "Saída de estoque",
+    "top.estoque.transferencia": "Transferência de estoque",
+    "top.estoque.ajuste": "Ajuste de estoque (inventário)",
     "top.compras.solicitacao": "Solicitação de compra",
     "top.compras.pedido": "Pedido de compra",
     "top.compras.compra": "Compra",

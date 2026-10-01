@@ -107,7 +107,8 @@ das duas — autorização continua sendo CAPACIDADE ∧ ESCOPO, verificada no s
 | **COMPRAS-01** | documento de compra (0036): Pedido de compra e Compra com TOP obrigatória, lista única, Central de Compras, confirmação da Compra com entrada no estoque (custo rateado) e contas a pagar pela matriz (`compras.compra`), cancelamento com estorno, nota duplicada recusada nos dois caminhos (decisão 267) | mesclada e implantada |
 | **COMPRAS-02** | próximos passos do Pedido de compra (0037): grafo de compras (só pedido → compra, nunca cruzando com vendas), receber inteiro ou em partes na Central de Compras pela MESMA função que lança a compra, saldo por item, reabertura ao cancelar a compra e encerramento do saldo (decisão 268) | mesclada e implantada |
 | **COMPRAS-03** | layout do documento de compra (0038): o mecanismo de layout de Vendas para o Pedido de compra e a Compra, com catálogo por família, cobrado ao lançar e ao receber, sem redesenho da Central de Compras (decisão 269) | EM PR |
-| **TOP-CONFIG-04B+** | Movimentações de Estoque (04C), Financeiro (04D) — reutilizando o formato 2 e a matriz | não iniciada |
+| **ESTOQUE-01** | documento de estoque (0040): Portal de Estoque por TOP com Entrada, Saída, Transferência e Ajuste (inventário), quatro famílias de TOP de estoque, movimento pela espécie e SEM execução configurada (decisão 274) | EM PR |
+| **TOP-CONFIG-04B+** | Movimentações de Estoque (04C: a execução configurada sobre o documento de estoque da ESTOQUE-01), Financeiro (04D) — reutilizando o formato 2 e a matriz | não iniciada |
 
 A TOP-CONFIG-04A é a fatia que autoriza efeito configurável — e SÓ estoque e financeiro, SÓ na confirmação
 de `vendas.venda`, SÓ pelas combinações da matriz. Efeito fiscal e contábil, workflow genérico, aprovação
@@ -372,3 +373,78 @@ aba "Processos"). Não mudaram, e não viram documento de compra.
 - fora do roteiro atual: editar documento salvo, Devolução de Compra, solicitação → pedido, item na compra que não
   está no pedido (lança-se outra compra), reabrir saldo encerrado, rateio por item ou produto, impostos, NF-e, alçada,
   reserva e confirmação automática.
+
+## Portal de Estoque — o documento de estoque (ESTOQUE-01)
+
+Decisão 274. O Portal de Estoque segue o desenho dos Portais de Vendas e de Compras: uma lista única de documentos,
+o `+ Novo` que pergunta a OPERAÇÃO (a TOP), a Central de Estoque para lançar e consultar, e a consulta com Confirmar e
+Cancelar. As quatro espécies entram juntas. O documento nasce ABERTO e só mexe no saldo quando é CONFIRMADO.
+
+**Documento único, em tabela própria.** `erp.documentos_estoque` (cabeçalho) e `erp.documentos_estoque_itens` (itens),
+0040, com quatro variantes pela coluna `especie`. Não é TOP pendurada nas tabelas antigas de estoque: aquelas
+continuam com os fluxos, as regras e as telas delas, e uma fatia própria decide quando trocá-las. Tela unificada não é
+regra unificada — o documento de estoque não funde serviço, permissão nem efeito com as telas antigas.
+
+| Espécie | Segmento (URL e API) | Família da TOP | Recurso de permissão | Movimento na confirmação |
+| --- | --- | --- | --- | --- |
+| Entrada | `entradas` | `estoque.entrada` | `entradas_estoque` | `entry`, pelo custo INFORMADO no item, com lote e validade |
+| Saída | `saidas` | `estoque.saida` | `saidas_estoque` | `writeoff`, pelo custo médio; lote informado ou escolhido pela validade (vencido só sai informado, decisão 254) |
+| Transferência | `transferencias` | `estoque.transferencia` | `transferencias_estoque` | `transfer_out` na origem e `transfer_in` no destino, parte por parte, com o MESMO custo, lote e validade |
+| Ajuste (inventário) | `ajustes` | `estoque.ajuste` | `ajustes_estoque` | pela diferença contado − saldo: `correction_in` (> 0, pelo custo médio atual), `correction_out` (< 0), nenhum (zero) |
+
+**Rotas.** API: `GET /api/estoque/documentos` (a lista única: espécie, situação, período, armazém de origem ou destino,
+TOP, empresa e busca por código, com paginação, ordem e busca no servidor e número fixo de consultas);
+`GET /api/estoque/<segmento>/operation-types`; `POST /api/estoque/<segmento>` (lança aberto, com Idempotency-Key; o
+cliente manda só `tipo_operacao_id` e o servidor congela a versão e confere a família); `GET /api/estoque/<segmento>/:id`;
+`GET .../previa-confirmacao`; `POST .../confirmar`; `POST .../cancelar`. Tela: a aba **Movimentações** do `/estoque`,
+logo depois de "Visão geral" (as abas e o "+ Novo" antigos continuam), e a Central de Estoque em
+`/estoque/movimentacoes/<segmento>/new?tipo_operacao_id=…` (criação) e `/estoque/movimentacoes/<segmento>/<id>`
+(consulta), declaradas no `apps/web/nav.registry.mjs`.
+
+**Permissões.** Grupo "Operacional > Estoque", ações view, create e edit por espécie; confirmar e cancelar exigem
+`.edit`, como na compra. Escopo de empresa do módulo `estoque` (RLS da 0015 no cabeçalho; o item herda pela junção). A
+lista recorta por capacidade de LEITURA de cada espécie no SQL, e nenhuma capacidade → 403 (lista vazia nunca é
+"todas"). Documento de outra organização, fora do escopo, de outra espécie, inexistente ou com id malformado → a MESMA
+404. Armazém e produto vindos do cliente são pedido: o servidor confere que existem, estão ativos e — os armazéns — são
+da empresa do documento.
+
+**Situação.** `aberto` → `confirmado`, `aberto` → `cancelado`, `confirmado` → `cancelado`; nada volta, e cancelado é
+final (gatilho no banco). Fora do aberto o cabeçalho fica congelado; organização, empresa, espécie, código, TOP e
+versão nunca mudam. Item só nasce ou muda com o documento aberto.
+
+**Confirmação por espécie.** A prévia (`previa-confirmacao`) mostra, por item, o saldo de agora, o de depois, a falta
+de saldo e, no ajuste, a diferença — números como texto; com falta, o Confirmar fica bloqueado. A confirmação relê
+tudo sob trava e é a autoridade: saldo insuficiente na saída ou na transferência → 422 no item e nada gravado; período
+fechado pela data do documento → 422 em `data_documento`; produto ou armazém inativo, ou produto que deixou de
+controlar estoque desde o lançamento → 422 no campo. Saída e transferência passam pela guarda da reserva (0035): ferir
+a reserva de um pedido → 409 `INSUFFICIENT_STOCK`. Os movimentos levam `source_type` `documentos_estoque` e a data do
+documento.
+
+**Ajuste com trava.** O ajuste informa a CONTAGEM. Para cada item, em ordem fixa de armazém, produto e lote, o
+servidor trava o balde (armazém × produto × lote) antes de ler o saldo — inclusive o balde que ainda não existe —,
+calcula a diferença sob a trava e grava no item `saldo_na_confirmacao` e `diferenca`. Dois ajustes simultâneos no mesmo
+balde terminam na contagem do último, nunca na soma das diferenças. O ajuste para baixo (`correction_out`) NÃO passa
+pela guarda da reserva, por desenho da 0035: o inventário registra o que está fisicamente no armazém.
+
+**Cancelamento.** Aberto → cancelado, sem efeito no saldo. Confirmado → estorno (`reversal`) de TODOS os movimentos do
+documento, depois de conferir que o que ele deu de entrada (`entry`, `transfer_in`, `correction_in`) ainda está no
+balde; já consumido → 422 no item, dizendo produto, armazém e lote, e nada gravado. Cancelar de novo → 409
+`ALREADY_CANCELLED`. Sem motivo, grava-se "Cancelado sem motivo informado".
+
+**O que fica nas telas antigas** (`/estoque/entradas`, baixas, requisições, transferências, devoluções, batidas, o
+ajuste a partir do Saldo e as rotas `/stock/*`): tudo continua como está, inclusive a transferência entre empresas,
+o Documento fiscal de Estoque e a produção de ração. O documento de estoque não as substitui nesta fatia.
+
+**O que FALTA (e não deve ser simulado):** editar documento aberto (cancela-se e lança-se outro), layout do documento
+por TOP, transferência entre empresas no documento, centro de resultado no documento, anexos no documento de estoque,
+a execução configurada das famílias novas (TOP-CONFIG-04C) e a troca das telas antigas.
+
+### Famílias de TOP de estoque
+
+As famílias de TOP do documento de estoque (as quatro novas, as oito antigas, o movimento pela espécie, as exigências
+gerais, o editor e a TOP no documento) estão em `docs/TIPO-OPERACAO-CONTRACT.md` §16 (decisão 274).
+
+### Situação no programa
+
+ESTOQUE-01 está EM PR e tem a própria linha na tabela do programa (§5, "Ordem do programa"): o documento de estoque
+sem execução configurada é esta fatia; a execução configurada do estoque (04C) continua não iniciada.

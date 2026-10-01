@@ -168,13 +168,14 @@ describe("premissas e catálogo", () => {
     expect(t.map((x) => x.codigo_base)).toEqual(["compras.compra", "compras.pedido"]);
   });
 
-  it("a 0037 é a 37ª migration do ledger; depois dela, só a 0038 (COMPRAS-03) e a 0039 (EDITAR-01)", async () => {
+  it("a 0037 é a 37ª migration do ledger; depois dela, a 0038 (COMPRAS-03), a 0039 (EDITAR-01) e a 0040 (ESTOQUE-01)", async () => {
     // A posição da 0037 continua sendo a 37ª; a contagem total acompanha a ordem do repositório (a 0038 alarga
     // o CHECK de família dos layouts e fixa o search_path destas funções — layouts-documento-compras.test.ts; a 0039
-    // dá versão ao documento de venda — editar-01-versao.test.ts).
+    // dá versão ao documento de venda — editar-01-versao.test.ts; a 0040 cria o documento de estoque —
+    // estoque-01-0040.test.ts).
     const r = (await db.query<{ ate: number; n: number; ultima: string }>(
       "select count(*) filter (where name <= '0037_receber_pedido_de_compra.sql')::int ate, count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
-    expect(r).toEqual({ ate: 37, n: 39, ultima: "0039_versao_do_documento_de_venda.sql" });
+    expect(r).toEqual({ ate: 37, n: 40, ultima: "0040_documento_de_estoque.sql" });
   });
 
   it("colunas novas: tipo e nulidade", async () => {

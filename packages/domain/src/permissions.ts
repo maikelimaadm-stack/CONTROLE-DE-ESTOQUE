@@ -159,6 +159,12 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   // COMPRAS-01 (decisão 267): o documento comercial de compra, um recurso por espécie.
   R("pedidos_compra", "Pedidos de Compra", "Operacional > Compras"),
   R("compras", "Compras", "Operacional > Compras"),
+  // ESTOQUE-01 (decisão 274): o documento de estoque, um recurso por espécie. Sem `delete`: o documento não se
+  // apaga (a 0040 revoga DELETE) — confirmar e cancelar exigem `.edit`, como na compra.
+  R("entradas_estoque", "Entradas de Estoque", "Operacional > Estoque", ["view", "create", "edit"]),
+  R("saidas_estoque", "Saídas de Estoque", "Operacional > Estoque", ["view", "create", "edit"]),
+  R("transferencias_estoque", "Transferências de Estoque", "Operacional > Estoque", ["view", "create", "edit"]),
+  R("ajustes_estoque", "Ajustes de Estoque", "Operacional > Estoque", ["view", "create", "edit"]),
   R("service_orders", "Ordens de Serviço", "Operacional > Ordens de Serviço", [...CRUD, "monitor", "rate"]),
   // Financeiro
   R("payables", "Contas a Pagar", "Financeiro", [...CRUD, "settle", "cancel_settlement", "import", "export", "receipt", "boleto", "duplicate"]),

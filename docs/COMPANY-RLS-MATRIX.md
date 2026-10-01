@@ -61,14 +61,14 @@ títulos, 10 empresas no seletor) — muda o PLANO, não a autorização. Só a 
 
 ## Categorias
 
-- **A** — EMPRESA ÚNICA OBRIGATÓRIA (37 tabelas)
+- **A** — EMPRESA ÚNICA OBRIGATÓRIA (38 tabelas)
 - **B** — EMPRESA ÚNICA ANULÁVEL (6 tabelas)
 - **C** — ORIGEM + DESTINO (três contratos por domínio) (3 tabelas)
 - **D** — TABELA EMPRESAS (1 tabela)
 - **E** — PORTA DINÂMICA / ESPECIAL (8 tabelas)
 - **F** — ORGANIZAÇÃO — SEM RLS EMPRESARIAL (1 tabela)
 
-## Tabelas (56)
+## Tabelas (57)
 
 | Tabela | Coluna(s) canônica(s) | Módulo | Cat. | Nulo? | Leitura | Escrita | Semântica POR COMANDO |
 | --- | --- | --- | :---: | :---: | --- | --- | --- |
@@ -88,6 +88,7 @@ títulos, 10 empresas no seletor) — muda o PLANO, não a autorização. Só a 
 | `erp.dfe_documents` | `empresa_id` | fiscal | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita (origem)**<br>UPDATE: using=**escrita (origem)** · check=**escrita (origem)**<br>DELETE: using=**escrita (origem)** |
 | `erp.diet_batches` | `empresa_id` | confinamento | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.documentos_compra` | `empresa_id` | compras | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.documentos_estoque` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.documents` | `empresa_id` | documentos | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita (origem)**<br>UPDATE: using=**escrita (origem)** · check=**escrita (origem)**<br>DELETE: using=**escrita (origem)** |
 | `erp.earnings` | `empresa_id` | pessoas_rh | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.employee_profiles` | `empresa_id` | — | E | sim | regra própria (ver justificativa) | regra própria (ver justificativa) | — (a proteção é outra; ver justificativa) |
