@@ -1,0 +1,171 @@
+/*
+ * CONFIGURAÇÃO DE LAYOUT — o fantasma do arrastar (decisão 275). Cópia do item que segue o ponteiro.
+ * Mora num portal em document.body, FORA da raiz da página: não herda as variáveis de movimento de lá e define as
+ * próprias durações (e o próprio prefers-reduced-motion).
+ * Valores calculados do desenho, medidos no meio de um arraste (as classes de lá: .fantasma, .trocando, .f-campo, .ob e
+ * a barra ::before, .f-linha, .f-aba, .f-card, .fan-l, .fan-t, .ch-r, .cap e .bd.t-positive). O tamanho do texto (16 px,
+ * o do "*") é o calculado do desenho: o fantasma de lá herda o 16 px do body; o body da casa é 13 px, por isso ele vem
+ * escrito aqui.
+ */
+.fantasma {
+  position: fixed;
+  z-index: 1000;
+  margin: 0;
+  pointer-events: none;
+  box-sizing: border-box;
+  transform-origin: 50% 50%;
+  opacity: .97;
+  white-space: nowrap;
+  font-size: 16px;
+  line-height: normal;
+  color: #111827;
+  box-shadow: 0 16px 34px rgba(15, 23, 42, .24), 0 2px 6px rgba(15, 23, 42, .10), 0 0 0 3px rgba(64, 222, 99, .16);
+  will-change: left, top, transform;
+  transition: left 70ms linear, top 70ms linear, transform 190ms cubic-bezier(.34, 1.36, .5, 1);
+  animation: pega 200ms cubic-bezier(.34, 1.36, .5, 1);
+}
+
+@keyframes pega {
+  from { opacity: 0; box-shadow: 0 1px 3px rgba(15, 23, 42, .10), 0 0 0 0 rgba(64, 222, 99, 0); }
+  to { opacity: .97; }
+}
+
+/* durante uma troca (linha cheia) o fantasma fica mais transparente, para o alvo aparecer por baixo */
+.fantasma.trocando { opacity: .85; }
+
+/* campo (e item de Disponíveis): 30 px, raio 8 */
+.campo {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  border: 1px solid #40de63;
+  background: #fff;
+  padding: 0 9px;
+}
+.campo.obrigatorio { padding-left: 13px; }
+.campo.obrigatorio::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 999px;
+  background: #dc2626;
+}
+
+/* cabeçalho de linha: 32 px, raio 10 */
+.linha {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid #40de63;
+  background: #fff;
+}
+
+/* aba de painel: pílula de 26 px */
+.aba {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid #40de63;
+  background: #fff;
+  color: #15803d;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+/* pílula de card: 23 px */
+.card {
+  height: 23px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid #40de63;
+  background: rgba(64, 222, 99, .12);
+  color: #15803d;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+/* .fan-l: o rótulo do campo */
+.rotulo {
+  font-size: 12px;
+  font-weight: 500;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex-grow: 1;
+}
+
+/* .ch-r: o "*" do obrigatório (16 px: herda o tamanho do fantasma) */
+.asterisco {
+  color: #dc2626;
+  font-weight: 700;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+/* .fan-t: "LINHA N" */
+.titulo {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: #8492a3;
+  flex-shrink: 0;
+}
+
+/* .cap: o x/y da linha */
+.contador {
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 15px;
+  font-variant-numeric: tabular-nums;
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+/* .bd.t-positive: o contador da aba e da pílula */
+.selo {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  background: #dcfce7;
+  color: #166534;
+}
+
+/* Na raiz do documento (<html>) enquanto há algo na mão: a mão fechada em toda a tela e nada de seleção de texto. */
+.arrastando,
+.arrastando * {
+  cursor: grabbing !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fantasma {
+    transition-duration: 1ms;
+    animation-duration: 1ms;
+  }
+}

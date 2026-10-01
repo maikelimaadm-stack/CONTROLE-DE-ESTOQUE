@@ -1542,6 +1542,40 @@ grant execute on function erp.situacao_atraso_cliente(uuid, int) to erp_app;
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 
+## VISUAL-UX-03 — Configuração de layout igual ao desenho
+
+Decisão 275. **Só web**: sem migration, sem rota, sem API, sem variável, sem permissão, sem domínio. A página
+`/cadastros/:recurso/configuracao-layout` (todos os cadastros declarativos) passa a ser a do desenho: consulta e edição
+com a barra de cada modo, a coluna Disponíveis / Em uso com o trilho (Usar todos / Tirar todos), as faixas de painéis e
+de cards, as linhas com o x/y e o "+ Campo", arrastar por ponteiro (vão, troca na linha cheia, soltar na coluna), o
+inspetor de propriedades no lugar do popover, Desfazer / Refazer e Pré-visualizar. O formulário do cadastro
+(`ResourceForm`) não muda. As escritas continuam as portas de hoje, com o mesmo documento:
+`PUT /api/preferences/<recurso>/form?scope=user` (Salvar), `DELETE …?scope=user` (Restaurar padrão) e `PUT` /
+`DELETE …?scope=org` (Padrão da organização). Sai o editor do "Tipo de largura" (`fieldSizes`), que o formulário não
+usa; o valor salvo atravessa intacto.
+
+**Impacto em dados reais:** nenhum. O documento salvo é o mesmo FormLayout, e os layouts já salvos abrem iguais.
+
+**Version skew:** web nova contra a API da base — mesmas rotas e o mesmo corpo, normalizado pelo servidor como antes;
+web anterior contra a API nova — nada muda na API. Um layout gravado pela tela nova abre na anterior, e o inverso: o
+documento não ganhou chave (as linhas só passam a ir renumeradas r1..rN e o `order` 1..n, o que o normalizador já
+aceitava).
+
+**Reversão:** reverter a PR (redeploy do web anterior). Nada a desfazer em banco ou configuração: o rascunho, a pilha,
+a aba e a busca da coluna, a marca do "+ Campo" e o Pré-visualizar vivem só na memória da tela.
+
+**Roteiro do Maike (produção):** 1. Abrir um cadastro (por exemplo Armazéns) › Novo › ícone "Layout do formulário": a
+tela abre na consulta, sem coluna nem ferramentas, com Restaurar padrão desabilitado. 2. Editar layout: aparecem a
+coluna (Disponíveis / Em uso), o trilho, o "+ Campo" e o "Adicionar linha"; passando o mouse num campo, o ⚙ e o ×;
+Salvar desabilitado ("Nada mudou ainda"). 3. Arrastar um campo para outra linha (o vão abre com o nome), tirar outro
+pelo × (vai para Disponíveis) e renomear um terceiro pelo ⚙ ("Rótulo do campo"): o ponto aparece na aba e o Salvar
+fica verde; Desfazer volta um passo. 4. Salvar: a tela volta à consulta com "Layout salvo"; no Novo do cadastro, o
+rótulo novo aparece, o campo tirado não, e a ordem é a da tela. 5. Editar layout › Restaurar padrão › "Restaurar
+padrão" no diálogo: a tela volta ao padrão da organização (ou do sistema), e o formulário também. 6. Um layout que já
+estava salvo antes do deploy abre com os mesmos painéis, cards, linhas e propriedades.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
 ## VISUAL-UX-02 — Central de Vendas igual ao desenho (sem migration)
 
 Decisão 270. **Só web**: sem migration, sem rota, sem API, sem variável, sem permissão, sem domínio. A Central de

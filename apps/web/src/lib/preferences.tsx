@@ -12,7 +12,8 @@ import { api, ApiError, getSession } from "./api";
 interface PrefRecord { scope: "user" | "org"; preferences: Record<string, unknown>; revision: number; updatedAt: string }
 interface PrefResponse { user: PrefRecord | null; org: PrefRecord | null; canEditOrg: boolean }
 export type PrefSource = "user" | "org" | "default";
-export interface ScreenPrefs<T> { prefs: T; source: PrefSource; loaded: boolean; canEditOrg: boolean; saving: boolean; hasOrgDefault: boolean; update: (fn: (p: T) => T) => void; reset: () => Promise<void>; saveAsOrgDefault: () => Promise<void>; clearOrgDefault: () => Promise<void> }
+// `fresh`: a leitura do servidor deu certo (cache local e leitura que falhou não contam) — quem reescreve o documento inteiro espera por ela
+export interface ScreenPrefs<T> { prefs: T; source: PrefSource; loaded: boolean; fresh: boolean; leituraFalhou: boolean; canEditOrg: boolean; saving: boolean; hasOrgDefault: boolean; update: (fn: (p: T) => T) => void; reset: () => Promise<void>; saveAsOrgDefault: () => Promise<void>; clearOrgDefault: () => Promise<void> }
 
 const storageKey = (module: string, screen: string) => { const s = getSession(); return `agro:prefs:${s?.orgId ?? "-"}:${s?.user?.id ?? "-"}:${module}:${screen}`; };
 const readLocal = (k: string): unknown => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch { return null; } };
@@ -79,5 +80,5 @@ export function useScreenPrefs<T extends { meta?: { revision?: number } }>(modul
   const reset = React.useCallback(async () => { if (timer.current) clearTimeout(timer.current); pending.current = null; await api(`/api/preferences/${module}/${screen}?scope=user`, { method: "DELETE" }); setLocal(null); writeLocal(key, null); await qc.invalidateQueries({ queryKey: qk }); toast.success("Preferências restauradas"); }, [module, screen, key, qc, qk]);
   const saveAsOrgDefault = React.useCallback(async () => { const { meta: _m, ...doc } = prefs as T & { meta?: unknown }; void _m; await api(`/api/preferences/${module}/${screen}?scope=org`, { method: "PUT", body: { preferences: doc } }); await qc.invalidateQueries({ queryKey: qk }); toast.success("Definido como padrão da organização"); }, [prefs, module, screen, qc, qk]);
   const clearOrgDefault = React.useCallback(async () => { await api(`/api/preferences/${module}/${screen}?scope=org`, { method: "DELETE" }); await qc.invalidateQueries({ queryKey: qk }); toast.success("Padrão da organização removido"); }, [module, screen, qc, qk]);
-  return { prefs, source, loaded: q.isFetched || Boolean(local), canEditOrg: q.data?.canEditOrg ?? false, saving, hasOrgDefault: Boolean(q.data?.org), update, reset, saveAsOrgDefault, clearOrgDefault };
+  return { prefs, source, loaded: q.isFetched || Boolean(local), fresh: q.isSuccess, leituraFalhou: q.isError, canEditOrg: q.data?.canEditOrg ?? false, saving, hasOrgDefault: Boolean(q.data?.org), update, reset, saveAsOrgDefault, clearOrgDefault };
 }
