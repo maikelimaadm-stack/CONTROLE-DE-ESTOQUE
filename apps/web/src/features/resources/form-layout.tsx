@@ -189,7 +189,7 @@ export function FormLayoutPage({ p, backHref }: PropsDaPagina) {
             aoTirarTodos={() => { if (card) { alterar((x) => R.tirarTodos(x, ctx, card.id)); setSelecionado(null); } }} />}
           <div data-parte="principal" className={estilos.principal}>
             <Faixas modo={edicao ? "edicao" : "consulta"} layout={vista} painelId={painel?.id ?? ""} cardId={card?.id ?? ""}
-              aoSelecionarPainel={trocarPainel} aoSelecionarCard={trocarCard} contagemDoPainel={(id) => R.contagemDoPainel(vista, id)}
+              aoSelecionarPainel={trocarPainel} aoSelecionarCard={trocarCard} contagemDoPainel={(id) => R.contagemDoPainel(l, id)}
               renomeando={edicao ? renomeando : null} aoIniciarRenomear={(tipo, id) => { if (edicao) setRenomeando({ tipo, id }); }}
               aoRenomear={(tipo, id, nome) => {
                 setRenomeando(null);
