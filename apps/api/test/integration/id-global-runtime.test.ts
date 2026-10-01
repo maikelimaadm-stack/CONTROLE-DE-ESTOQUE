@@ -192,6 +192,22 @@ describe("COMPRAS — pedido de compra e compra, duas permissões", () => {
   }
 });
 
+describe("ESTOQUE — o documento de estoque, quatro espécies, quatro permissões (ESTOQUE-01)", () => {
+  for (const [especie, rota] of [["entrada", "entradas"], ["saida", "saidas"], ["transferencia", "transferencias"], ["ajuste", "ajustes"]] as const) {
+    it(`documento de estoque: ${especie}`, async () => {
+      const top = await post("/api/admin/tipos-operacao", { codigo: `IDGE${especie.slice(0, 2).toUpperCase()}`, codigoBase: `estoque.${especie}`, nome: `ID Global ${especie}` });
+      expect(top.statusCode, top.body).toBe(201);
+      // O documento nasce ABERTO e numerado — o número vem do lançamento, não da confirmação.
+      const item = especie === "entrada" ? { produto_id: I.product, quantidade: "1", custo_unitario: "10" }
+        : especie === "ajuste" ? { produto_id: I.product, quantidade_contada: "1" }
+          : { produto_id: I.product, quantidade: "1" };
+      const id = await criar(`/api/estoque/${rota}`, { empresa_id: I.empresa, tipo_operacao_id: String(j(top).id), armazem_id: I.warehouse,
+        ...(especie === "transferencia" ? { armazem_destino_id: I.warehouse2 } : {}), data_documento: "2031-01-16", itens: [item] });
+      await conferir("documentos_estoque", id, { empresa: I.empresa, modulo: "estoque", rota: `/estoque/movimentacoes/${rota}/${id}` });
+    });
+  }
+});
+
 describe("PECUÁRIA — cada variante user-facing recebe; as INTERNAS não", () => {
   it("animal", async () => {
     const id = await criar("/api/livestock/animals", { empresa_id: I.empresa, species_id: await opcao("animal_species"), category_id: I.speciesCategory, entry_date: "2031-01-17", sex: "M", identifications: [{ identification_type_id: I.idType, value: "IDG-ANIMAL-1", is_primary: true }] });

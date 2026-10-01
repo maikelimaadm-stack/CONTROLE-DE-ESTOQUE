@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 198 |
-| Tabelas com `organization_id` (escopo de organização) | 141 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 55 |
-| Entidades curadas neste dicionário | 52 |
-| Entidades com ID Global | 24 |
-| Entidades com Tipo de Operação | 14 |
-| Tipos de Operação referenciados | 19 |
-| Cobertura curada | 26.3% |
+| Tabelas no schema `erp` | 200 |
+| Tabelas com `organization_id` (escopo de organização) | 143 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 56 |
+| Entidades curadas neste dicionário | 54 |
+| Entidades com ID Global | 25 |
+| Entidades com Tipo de Operação | 15 |
+| Tipos de Operação referenciados | 23 |
+| Cobertura curada | 27.0% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -1057,6 +1057,77 @@ Produção de ração a partir de uma fórmula: consome insumos e gera produto a
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
 | `validade` |  | date | não |  |  |  |  |
+
+### ERP-ESTOQUE-DOCUMENTO — Documento de Estoque
+
+Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. A coluna `especie` decide a operação e a tela (entrada, saída, transferência, ajuste de inventário). Nasce aberto e só mexe no saldo quando é confirmado; o movimento é o da espécie, gravado no razão de estoque com origem `documentos_estoque`.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.documentos_estoque` |
+| Natureza | entidade |
+| Escopo de organização | sim |
+| Escopo de empresa | `empresa_id` |
+| Exclusão lógica | não |
+| ID Global | sim |
+| Discriminador | `especie` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
+| Rotas por variante | `entrada` → `/estoque/movimentacoes/entradas/:id` · `saida` → `/estoque/movimentacoes/saidas/:id` · `transferencia` → `/estoque/movimentacoes/transferencias/:id` · `ajuste` → `/estoque/movimentacoes/ajustes/:id` |
+| Tipo de Operação | `estoque.entrada` (Entrada de estoque) · `estoque.saida` (Saída de estoque) · `estoque.transferencia` (Transferência de estoque) · `estoque.ajuste` (Ajuste de estoque (inventário)) |
+| Discriminador do Tipo de Operação | `especie` (decide qual das operações acima o registro é) |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `empresa_id` |  | uuid | sim |  |  |  |  |
+| `especie` | Espécie | text | sim |  |  | `entrada` · `saida` · `transferencia` · `ajuste` | entrada \| saida \| transferencia \| ajuste. Valor canônico persistido; o rótulo é traduzido na apresentação. |
+| `codigo` |  | text | sim |  |  |  |  |
+| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `cancelado` | aberto \| confirmado \| cancelado. Aberto → confirmado, aberto → cancelado, confirmado → cancelado (com estorno). Nada volta; cancelado é final. |
+| `tipo_operacao_id` |  | uuid | sim |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | sim |  |  |  |  |
+| `armazem_id` | Armazém | uuid | sim |  |  |  | Armazém do movimento (a origem, na transferência). Da mesma empresa do documento. |
+| `armazem_destino_id` | Armazém de destino | uuid | não |  |  |  | Só na transferência, e diferente da origem. Da mesma empresa do documento: transferência entre empresas continua nas telas antigas. |
+| `data_documento` |  | date | sim |  |  |  |  |
+| `observacao` |  | text | não |  |  |  |  |
+| `criado_por` |  | uuid | não | FK | `erp.users` |  |  |
+| `confirmado_em` |  | timestamptz | não |  |  |  |  |
+| `confirmado_por` |  | uuid | não | FK | `erp.users` |  |  |
+| `cancelado_em` |  | timestamptz | não |  |  |  |  |
+| `cancelado_por` |  | uuid | não | FK | `erp.users` |  |  |
+| `motivo_cancelamento` |  | text | não |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `atualizado_em` |  | timestamptz | sim |  |  |  |  |
+
+### ERP-ESTOQUE-DOCUMENTO-ITEM — Item do Documento de Estoque
+
+Linha de produto do documento de estoque. Identidade pertence ao documento; só muda com o documento aberto.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.documentos_estoque_itens` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `documento_id` |  | uuid | sim |  |  |  |  |
+| `especie` |  | text | sim |  |  | `entrada` · `saida` · `transferencia` · `ajuste` |  |
+| `posicao` |  | integer | sim |  |  |  |  |
+| `produto_id` |  | uuid | sim |  |  |  |  |
+| `lote` |  | text | não |  |  |  |  |
+| `validade` |  | date | não |  |  |  |  |
+| `quantidade` | Quantidade | numeric(18,4) | não |  |  |  | Entrada, saída e transferência: maior que zero. Vazia no ajuste. |
+| `quantidade_contada` | Quantidade contada | numeric(18,4) | não |  |  |  | Só no ajuste: a contagem do inventário (zero ou mais). A diferença para o saldo é calculada na confirmação. |
+| `custo_unitario` | Custo unitário | numeric(18,6) | não |  |  |  | Informado na entrada. Nas outras espécies é preenchido na confirmação com o custo do movimento. |
+| `saldo_na_confirmacao` | Saldo na confirmação | numeric(18,4) | não |  |  |  | Só no ajuste: o saldo do armazém × produto × lote lido sob trava na confirmação. |
+| `diferenca` | Diferença | numeric(18,4) | não |  |  |  | Só no ajuste: contada menos o saldo na confirmação. Positiva gera correção de entrada; negativa, correção de saída; zero não move estoque. |
+| `observacao` |  | text | não |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
 
 ### ERP-ESTOQUE-MOVIMENTO — Movimento de Estoque
 

@@ -249,6 +249,33 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     top: "estoque.producao_de_racao", descricao: "Produção de ração a partir de uma fórmula: consome insumos e gera produto acabado. Específico do nicho agro."
   },
   {
+    codigo: "ERP-ESTOQUE-DOCUMENTO", tabela: "erp.documentos_estoque", nome: "Documento de Estoque", modulo: "ESTOQUE", natureza: "entidade", idGlobal: true,
+    discriminador: "especie", rotas: {
+      entrada: "/estoque/movimentacoes/entradas/:id", saida: "/estoque/movimentacoes/saidas/:id",
+      transferencia: "/estoque/movimentacoes/transferencias/:id", ajuste: "/estoque/movimentacoes/ajustes/:id"
+    },
+    discriminadorTop: "especie",
+    tops: ["estoque.entrada", "estoque.saida", "estoque.transferencia", "estoque.ajuste"],
+    descricao: "Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. A coluna `especie` decide a operação e a tela (entrada, saída, transferência, ajuste de inventário). Nasce aberto e só mexe no saldo quando é confirmado; o movimento é o da espécie, gravado no razão de estoque com origem `documentos_estoque`.",
+    campos: {
+      especie: { nome: "Espécie", descricao: "entrada | saida | transferencia | ajuste. Valor canônico persistido; o rótulo é traduzido na apresentação." },
+      situacao: { nome: "Situação", descricao: "aberto | confirmado | cancelado. Aberto → confirmado, aberto → cancelado, confirmado → cancelado (com estorno). Nada volta; cancelado é final." },
+      armazem_id: { nome: "Armazém", descricao: "Armazém do movimento (a origem, na transferência). Da mesma empresa do documento." },
+      armazem_destino_id: { nome: "Armazém de destino", descricao: "Só na transferência, e diferente da origem. Da mesma empresa do documento: transferência entre empresas continua nas telas antigas." }
+    }
+  },
+  {
+    codigo: "ERP-ESTOQUE-DOCUMENTO-ITEM", tabela: "erp.documentos_estoque_itens", nome: "Item do Documento de Estoque", modulo: "ESTOQUE", natureza: "linha", idGlobal: false,
+    descricao: "Linha de produto do documento de estoque. Identidade pertence ao documento; só muda com o documento aberto.",
+    campos: {
+      quantidade: { nome: "Quantidade", descricao: "Entrada, saída e transferência: maior que zero. Vazia no ajuste." },
+      quantidade_contada: { nome: "Quantidade contada", descricao: "Só no ajuste: a contagem do inventário (zero ou mais). A diferença para o saldo é calculada na confirmação." },
+      custo_unitario: { nome: "Custo unitário", descricao: "Informado na entrada. Nas outras espécies é preenchido na confirmação com o custo do movimento." },
+      saldo_na_confirmacao: { nome: "Saldo na confirmação", descricao: "Só no ajuste: o saldo do armazém × produto × lote lido sob trava na confirmação." },
+      diferenca: { nome: "Diferença", descricao: "Só no ajuste: contada menos o saldo na confirmação. Positiva gera correção de entrada; negativa, correção de saída; zero não move estoque." }
+    }
+  },
+  {
     codigo: "ERP-ESTOQUE-MOVIMENTO", tabela: "erp.stock_movements", nome: "Movimento de Estoque", modulo: "ESTOQUE", natureza: "infraestrutura", idGlobal: false,
     descricao: "Razão imutável de estoque (custo médio e saldo). Não é lançamento: é consequência contábil de um."
   },

@@ -68,8 +68,9 @@ describe("inventário go-live", () => {
         expect(membros).toHaveLength(2);
         expect(Number(volume![0]!.empresas)).toBe(2);
         expect(Number(volume![0]!.animais)).toBe(20);
-        // EDITAR-01: a 0039 entrou no ledger — a contagem e a última migration acompanham a ordem do repositório.
-        expect(ledger![0]).toMatchObject({ migrations: "39", ultima: "0039_versao_do_documento_de_venda.sql" });
+        // EDITAR-01 e ESTOQUE-01: a 0039 e a 0040 entraram no ledger — a contagem e a última migration acompanham a
+        // ordem do repositório.
+        expect(ledger![0]).toMatchObject({ migrations: "40", ultima: "0040_documento_de_estoque.sql" });
         expect(gatilho).toEqual([{ tgname: "trg_sales_documents_execucao_configurada", clausula_r1: true }]);
         expect(versoes).toEqual([{ versoes_com_execucao_configurada: "0" }]);
       } finally { await cli.query("rollback").catch(() => {}); cli.release(); }

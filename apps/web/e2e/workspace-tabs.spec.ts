@@ -18,7 +18,9 @@ async function apiCall<T = Record<string, unknown>>(page: Page, method: string, 
 }
 const tabs = (page: Page) => page.getByTestId("workspace-tab");
 const activeTab = (page: Page) => page.getByTestId("workspace-tabs").locator('[role="tab"][aria-selected="true"]');
-const openVia = async (page: Page, module: string, item: RegExp | string) => {
+// ESTOQUE-01 (decisão 274): o Estoque tem duas "Movimentações" — a aba nova (o documento de estoque) e a sub-área
+// antiga do ledger. Com `href`, o item é pedido pelo destino, não pela posição no painel.
+const openVia = async (page: Page, module: string, item: RegExp | string, href?: string) => {
   let btn = page.getByTestId("nav-module").filter({ hasText: module }).first();
   let dentroDoMais = false;
   if (!(await btn.isVisible())) { await page.getByTestId("nav-more").click(); btn = page.getByTestId("nav-module").filter({ hasText: module }).first(); dentroDoMais = true; }
@@ -27,7 +29,9 @@ const openVia = async (page: Page, module: string, item: RegExp | string) => {
   // do overflow em `top-navigation.tsx`). Antes daquela correção, este hover morria em
   // "element was detached from the DOM" em cerca de metade das execuções.
   if (dentroDoMais) await btn.click(); else await btn.hover();
-  await page.getByTestId("mega-menu").getByTestId("mega-item").filter({ hasText: item }).first().click();
+  const itens = page.getByTestId("mega-menu").getByTestId("mega-item").filter({ hasText: item });
+  if (href) { const alvo = itens.and(page.locator(`[href="${href}"]`)); await expect(alvo).toHaveCount(1); await alvo.click(); }
+  else await itens.first().click();
 };
 async function fuelSupply(page: Page, note: string) {
   const eq = await apiCall<{ items: { id: string; empresa_id: string }[] }>(page, "GET", "/api/resources/equipments?pageSize=1"); const e = eq.items[0]!;
@@ -39,7 +43,7 @@ test.describe("abas globais", () => {
   test("mesma tela aberta duas vezes (mega-menu e busca) = uma aba; abas internas ficam dentro da aba do módulo", async ({ page }) => {
     await login(page);
     await openVia(page, "Estoque", "Saldo"); await expect(page).toHaveURL(/sub=saldo/);
-    await openVia(page, "Estoque", "Movimentações"); await expect(page).toHaveURL(/sub=ledger/);
+    await openVia(page, "Estoque", "Movimentações", "/estoque?tab=estoque&sub=ledger"); await expect(page).toHaveURL(/sub=ledger/);
     await page.getByTestId("global-search").fill("saldo"); await page.keyboard.press("Enter"); await expect(page).toHaveURL(/sub=saldo/);
     await expect(tabs(page).filter({ hasText: "Estoque" })).toHaveCount(1); await expect(tabs(page)).toHaveCount(2);
     await expect(page.locator("main").getByRole("tab", { name: "Estoque", exact: true })).toHaveAttribute("aria-selected", "true");

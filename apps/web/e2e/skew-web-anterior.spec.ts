@@ -283,13 +283,23 @@ test("TOP-CONFIG-04A · o web da base renomeia uma TOP do formato 2 e a configur
  * API da mesma base (`.skew-classificacao-financeira.json`, gravado por `scripts/skew-classificacao-financeira.mjs`):
  * os dois lados nasceram juntos na VENDAS-A1, e divergência entre eles é o detector errado, não um terceiro mundo.
  */
+/** O web da base mostra pendência no CLIQUE do Salvar (VISUAL-UX-02, decisão 270) em vez de desabilitá-lo? Lido do fonte da base. */
+function pendenciaNoClique(): boolean {
+  const raiz = path.resolve(__dirname, "../../..");
+  const sha = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
+  try {
+    execFileSync("git", ["grep", "-q", "data-testid=\"central-vendas-pendencias\"", sha, "--", "apps/web/src"], { cwd: raiz });
+    return true;
+  } catch { return false; }
+}
 function rotulosDaClassificacaoNoWebDaBase(): { natureza: string; centro: string } | null {
   const raiz = path.resolve(__dirname, "../../..");
   const sha = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
   expect(sha, "`.api-anterior.base` é gravado por scripts/api-anterior.mjs ao montar a árvore").toMatch(/^[0-9a-f]{40}$/);
   const fonte = execFileSync("git", ["show", `${sha}:apps/web/src/app/(app)/vendas/[kind]/new/page.tsx`], { cwd: raiz, encoding: "utf8" });
-  // o rótulo é literal (`label="…"`) até a A3-1; a partir dela vem do layout com o de hoje como reserva (`label={rot(chave, "…")}`)
-  const rotulos = (recurso: string) => [...fonte.matchAll(new RegExp(`<Field label=(?:"([^"]+)"|\\{rot\\(chave, "([^"]+)"\\)\\}) required[^>]*><RefSelect resource="${recurso}"`, "g"))].map((m) => (m[1] ?? m[2])!);
+  // o rótulo é literal (`label="…"`) até a A3-1; a partir dela vem do layout com o de hoje como reserva (`label={rot(chave, "…")}`);
+  // desde a VISUAL-UX-02 (decisão 270) o campo é o da Central: `cc(chave, "…", { obrigatorio: true, … }, <RefSelect …`
+  const rotulos = (recurso: string) => [...fonte.matchAll(new RegExp(`(?:<Field label=(?:"([^"]+)"|\\{rot\\(chave, "([^"]+)"\\)\\}) required[^>]*>|cc\\(chave, "([^"]+)", \\{ obrigatorio: true[^}]*\\}, )<RefSelect resource="${recurso}"`, "g"))].map((m) => (m[1] ?? m[2] ?? m[3])!);
   const natureza = rotulos("financial_categories");
   const centro = rotulos("cost_centers");
   expect([natureza.length, centro.length], `detector dos rótulos da classificação no web da base: ${JSON.stringify({ natureza, centro })}`).toEqual(natureza.length ? [1, 1] : [0, 0]);
@@ -358,7 +368,15 @@ test("VENDAS-A1 · A1-K2 — o web da base cria venda: sem os campos (base anter
     // Mundo em que a base já é posterior à A1: o web dela preenche como o deste HEAD (W1). O caso do cliente
     // ANTERIOR à fatia deixou de existir em produção, e fingi-lo aqui certificaria o que não roda.
     await expect(page.getByTestId("central-vendas").locator("label", { hasText: rotulos.natureza }).first(), "o web da base desenha o campo que o fonte dele declara").toBeVisible();
-    await expect(salvar, "declarada, a classificação é exigida pelo web da base").toBeDisabled();
+    if (pendenciaNoClique()) {
+      // VISUAL-UX-02 (decisão 270): o Salvar da Central não se desabilita por pendência — o clique não grava (zero POST)
+      // e abre a pílula de pendências. A exigência continua; só a forma de mostrá-la mudou.
+      await salvar.click();
+      await expect(page.getByTestId("central-vendas-pendencias"), "declarada, a classificação é exigida pelo web da base").toBeVisible();
+      await page.keyboard.press("Escape");                         // fecha a lista de pendências antes de preencher
+    } else {
+      await expect(salvar, "declarada, a classificação é exigida pelo web da base").toBeDisabled();
+    }
     await preencherClassificacaoFinanceira(page, rotulos);
     await expect(salvar, "com o par escolhido, o Salvar do web da base habilita").toBeEnabled();
   }

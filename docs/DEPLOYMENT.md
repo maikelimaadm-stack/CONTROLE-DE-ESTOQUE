@@ -1622,6 +1622,72 @@ a aparecer quando a mudança voltar; dado de produção não se apaga (decisão 
 **Roteiro do Maike (produção):** Vendas › marcar uma venda › Anexos › enviar um PDF — aparece na lista, baixa e
 o histórico da venda mostra o anexo adicionado.
 
+## ESTOQUE-01 — documento de estoque (0040)
+
+Decisão 274. **Uma migration: `0040_documento_de_estoque.sql`** (pre-deploy, como a 0036; trava (2026,74),
+`lock_timeout` 2 s, pré/pós-condições nomeadas `ESTOQUE-01: ...` — a primeira é "já aplicada" —, não destrutiva, sem
+backfill): tabelas `erp.documentos_estoque` e `erp.documentos_estoque_itens` (vazias), com as quatro espécies
+(`entrada`, `saida`, `transferencia`, `ajuste`), TOP obrigatória com FKs compostas, CHECKs por espécie no item,
+gatilhos de conferência (família `estoque.<espécie>` da TOP, armazéns da empresa do documento, TOP e versão imutáveis),
+de transição (aberto → confirmado, aberto → cancelado, confirmado → cancelado) e do item (só com o documento aberto),
+RLS (cabeçalho com a política de empresa da 0015, módulo `estoque`; itens `api_child`), `erp.audit_row` no cabeçalho e
+`revoke delete` do papel da API nas duas tabelas. As pós-condições conferem os objetos criados; não comparam contagens
+de tabelas vivas. O ledger (`erp.stock_movements`, `erp.stock_balances`) NÃO muda: os movimentos usam tipos que já
+existem, com `source_type` `documentos_estoque`. As permissões novas (`entradas_estoque.*`, `saidas_estoque.*`,
+`transferencias_estoque.*`, `ajustes_estoque.*`, ações view/create/edit) não têm migration: o pre-deploy sincroniza o
+catálogo e o Administrador as recebe; papel personalizado recebe pelo admin. Nenhuma variável nova.
+
+**Pré-condição:** quem aplica a 0040 é o dono das funções SECURITY DEFINER e precisa atravessar RLS (superusuário ou
+`BYPASSRLS`) — a própria migration recusa, com `ESTOQUE-01: o papel que aplica a migration (dono das funcoes SECURITY
+DEFINER) nao atravessa RLS; ...`, e nada é aplicado. Também recusa se faltar dependência (a chave
+`uq_warehouses_tenant` da 0036, a `uq_products_tenant`, as chaves da TOP e da versão, a chave composta de empresas, as
+funções de RLS e auditoria, o módulo de escopo `estoque` ou o papel `erp_app`), sempre com a mensagem `ESTOQUE-01: ...`
+que nomeia o que falta. Em erro, publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0040) → API → web.** Janelas:
+1. **API anterior × banco novo:** a API anterior não conhece as tabelas novas nem as permissões novas, e não as lê. As
+   telas e rotas de estoque de hoje (`/stock/*`) seguem iguais; o ledger e o saldo não mudaram.
+2. **web ANTERIOR × API nova:** a web anterior não tem a aba Movimentações nem a Central de Estoque; as abas antigas do
+   `/estoque` (Visão geral, Estoque, Recebimentos, Operações…) e o "+ Novo" antigo seguem iguais. Um documento confirmado
+   pela web nova aparece no ledger e no Saldo da web anterior como um movimento comum (origem `documentos_estoque`). O
+   editor anterior da TOP OFERECE as quatro famílias novas (lê a lista da API) e manda o que conhece: efeito
+   configurado nelas é recusado pela API nova (fora da matriz) e "Cliente em atraso" diferente de "não valida" também
+   (422 no campo) — fail-closed, nada é gravado; salvar TOP de estoque com os valores neutros funciona. Na web anterior,
+   `?tab=movimentacoes` continua levando ao ledger (o atalho antigo é dela); na web nova, essa aba é a lista do documento.
+3. **web NOVA × API anterior:** sem `GET /api/estoque/documentos` (404), a aba Movimentações diz "Movimentações
+   indisponíveis nesta versão do servidor" — sem lista vazia e sem "+ Novo" —, e o resto do `/estoque` (Visão geral,
+   Saldo, ledger e as telas antigas) continua funcionando. A Central não tem como ser aberta pelo portal; aberta por
+   URL, ela não encontra as TOPs de estoque (a API anterior responde 404 a `operation-types`) e não lança nada.
+
+As três janelas são provadas no CI pelo job `skew` (ES-K1, `docs/TESTING.md`), contra os binários reais da base.
+
+**Impacto em dados reais: nenhum dado muda; o Portal de Estoque ganha a aba Movimentações.** Tabelas novas, vazias;
+nenhuma linha existente muda (produção, lida em 01/10/2026: nenhuma TOP de estoque, zero documento nas telas antigas,
+1 armazém, 1 movimento). Para lançar o primeiro documento é preciso cadastrar uma TOP de estoque — até lá a aba mostra a
+lista vazia e o "+ Novo" sem operação.
+
+**Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0040 fica: tabelas vazias (ou com
+documentos já lançados) não afetam a API anterior. Documento confirmado antes da reversão continua com os movimentos no
+ledger e o saldo que eles deram; a API anterior não o lê nem o cancela — reverter nesse estado é decisão do Maike. O
+caminho inverso do banco, se um dia for preciso, é migration NOVA — nunca editar a 0040. Nada de apagar dado de
+produção (decisão 247): documento se cancela, com estorno.
+
+**Merge depois de #81: a 0039 entra antes da 0040.** Nesta branch a contagem de migrations é 39 (a 0039 é da #81);
+depois do merge da #81 e da main trazida, os testes de contagem passam a 40 (quem entra depois refaz a contagem).
+
+**Roteiro do Maike (cria documentos reais; produção é operacional — decisões 240 e 247, nada é apagado):**
+1. Configurações › Tipos de operação: criar as TOPs "Entrada de estoque" (Movimento: Entrada de estoque) e "Ajuste de
+   estoque (inventário)" (Movimento: Ajuste de estoque (inventário)) e salvar. O editor mostra "O movimento é definido
+   pela espécie".
+2. Estoque › Movimentações › Novo: escolher a TOP de entrada e lançar 1 unidade de um produto que controla estoque, com
+   armazém e custo; salvar — o documento fica Aberto e o Saldo NÃO muda.
+3. Na consulta, Confirmar: a prévia mostra o saldo de agora e o de depois; confirmar → Estoque › Saldo mostra a unidade.
+4. Novo › TOP de ajuste: o mesmo produto e armazém com a contagem real; Confirmar — a prévia mostra a diferença; o saldo
+   vira a contagem.
+5. (Para desfazer a prova) cancelar o ajuste e a entrada, nessa ordem: os movimentos são estornados.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
 ## COMPRAS-03 — layout do documento de compra (0038)
 
 Decisão 269. **Uma migration: `0038_layout_do_documento_de_compra.sql`** (pre-deploy; trava (2026,72), `lock_timeout` 2 s,

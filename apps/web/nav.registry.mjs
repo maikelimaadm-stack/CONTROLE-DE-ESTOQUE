@@ -76,6 +76,10 @@ export const AREAS = [
   act("compras", "solicitacao", "Nova solicitação de compra", "/suprimentos/new", "purchase_requests.create", { keywords: ["comprar", "pedir", "requisitar compra"] }),
   // ---------------- Estoque ----------------
   a("estoque", "visao-geral", "Visão Geral", "stocks.view", { keywords: ["indicadores de estoque"] }),
+  // ESTOQUE-01 (decisão 274): a lista única do DOCUMENTO de estoque (entrada, saída, transferência e ajuste), com o
+  // `Novo` que pergunta a TOP. Qualquer leitura de uma das quatro espécies libera a aba; quem recorta linha é o
+  // servidor. As áreas abaixo (as telas antigas) não mudam.
+  a("estoque", "movimentacoes", "Movimentações", ["entradas_estoque.view", "saidas_estoque.view", "transferencias_estoque.view", "ajustes_estoque.view"], { keywords: ["documento de estoque", "entrada de estoque", "saída de estoque", "transferência de estoque", "ajuste de estoque", "inventário", "tipo de operação"], description: "Uma lista dos documentos de estoque, com filtro por espécie e situação" }),
   a("estoque", "estoque", "Estoque", ["stocks.view", "stock_corrections.view"], { keywords: ["saldo", "lote", "validade", "estoque mínimo", "custo"], description: "Saldo, movimentações (ledger) e ajustes" }),
   s("estoque", "estoque", "saldo", "Saldo", "stocks.view", { aliases: ["/estoque/saldo"], keywords: ["consultar estoque", "quantidade", "produto"] }),
   s("estoque", "estoque", "ledger", "Movimentações", "stocks.view", { aliases: ["/estoque/movimentos"], keywords: ["histórico", "ledger", "extrato de estoque"] }),
@@ -287,7 +291,10 @@ export const AREAS = [
 export const LEGACY_TABS = {
   compras: { "processos/all": { tab: "processos" }, "processos/mine": { tab: "processos", query: { scope: "mine" } }, "processos/request": { tab: "processos", query: { stage: "request" } }, "processos/quotation": { tab: "processos", query: { stage: "quotation" } }, "processos/authorization": { tab: "processos", query: { stage: "authorization" } }, "processos/buy": { tab: "processos", query: { stage: "buy" } }, "processos/receipts": { tab: "processos", query: { stage: "receipts" } }, "processos/finished": { tab: "processos", query: { stage: "finished" } }, "processos/rejected": { tab: "processos", query: { stage: "rejected" } } },
   estoque: {
-    saldo: { tab: "estoque", sub: "saldo" }, movimentacoes: { tab: "estoque", sub: "ledger" }, "movimentacoes/ledger": { tab: "estoque", sub: "ledger" }, "movimentacoes/correcoes": { tab: "estoque", sub: "ajustes" },
+    // ESTOQUE-01: `?tab=movimentacoes` SOZINHO deixou de ser aba antiga — é a aba nova (a lista do documento de
+    // estoque). Mantê-lo aqui reescreveria a aba nova para o ledger antes de ela abrir. As formas com `sub` da V1
+    // (`movimentacoes/ledger`, `movimentacoes/correcoes`) continuam canonicalizadas como antes.
+    saldo: { tab: "estoque", sub: "saldo" }, "movimentacoes/ledger": { tab: "estoque", sub: "ledger" }, "movimentacoes/correcoes": { tab: "estoque", sub: "ajustes" },
     entradas: { tab: "recebimentos" }, "entradas/lancadas": { tab: "recebimentos", sub: "fiscais" }, "entradas/manuais": { tab: "recebimentos", sub: "manuais" }, "entradas/dfe": { tab: "recebimentos", sub: "dfe" }, "entradas/conferencia": { tab: "recebimentos", sub: "conferencia" },
     saidas: { tab: "operacoes" }, "saidas/requisicoes": { tab: "operacoes", sub: "requisicoes" }, "saidas/diretas": { tab: "operacoes", sub: "diretas" }, "saidas/devolucoes": { tab: "operacoes", sub: "devolucoes" },
     transferencias: { tab: "operacoes", sub: "transferencias" }, "transferencias/warehouse": { tab: "operacoes", sub: "transferencias", query: { kind: "warehouse" } }, "transferencias/farm": { tab: "operacoes", sub: "transferencias", query: { kind: "farm" } }
@@ -369,6 +376,11 @@ export const EXTRA_REDIRECTS = [
 export const DETAIL_ROUTES = [
   { id: "compras.documentos.detalhe", module: "compras", area: "documentos", label: "Documento de compra", pattern: "/compras/:especie/:id", perm: ["pedidos_compra.view", "compras.view"] },
   { id: "compras.processos.detalhe", module: "compras", area: "processos", label: "Processo de compra", pattern: "/suprimentos/view/:id", perm: "purchase_requests.view" },
+  // ESTOQUE-01 (decisão 274): a Central de Estoque. `[especie]` é o SEGMENTO (entradas | saidas | transferencias |
+  // ajustes). A criação vem antes porque o padrão de consulta (`:id`) também casaria com `new`, e ela exige `.create`.
+  // O rótulo é o mesmo nas duas: a aba de trabalho da criação já se chama "Novo · <rótulo>" (`lib/workspace-tabs`).
+  { id: "estoque.movimentacoes.novo", module: "estoque", area: "movimentacoes", label: "Documento de estoque", pattern: "/estoque/movimentacoes/:especie/new", perm: ["entradas_estoque.create", "saidas_estoque.create", "transferencias_estoque.create", "ajustes_estoque.create"] },
+  { id: "estoque.movimentacoes.detalhe", module: "estoque", area: "movimentacoes", label: "Documento de estoque", pattern: "/estoque/movimentacoes/:especie/:id", perm: ["entradas_estoque.view", "saidas_estoque.view", "transferencias_estoque.view", "ajustes_estoque.view"] },
   { id: "estoque.recebimentos.manuais.detalhe", module: "estoque", area: "recebimentos", label: "Entrada manual", pattern: "/estoque/entradas/:id", perm: "input_entries.view" },
   { id: "estoque.recebimentos.fiscais.detalhe", module: "estoque", area: "recebimentos", label: "Documento fiscal", pattern: "/estoque/documentos-fiscais/:id", perm: "invoices.view" },
   { id: "estoque.operacoes.requisicoes.detalhe", module: "estoque", area: "operacoes", label: "Requisição", pattern: "/estoque/requisicoes/:id", perm: "requisitions.view" },

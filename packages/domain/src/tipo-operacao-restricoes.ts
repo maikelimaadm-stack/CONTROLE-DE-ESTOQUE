@@ -19,6 +19,7 @@ import {
 } from "./tipo-operacao-configuracao.js";
 import { tipoOperacao } from "./tipo-operacao.js";
 import { TABELA_DOCUMENTO_COMPRA } from "./tipo-operacao-configurado.js";
+import { TABELA_DOCUMENTO_ESTOQUE } from "./estoque-documento.js";
 
 // ─────────────── capacidade e códigos ───────────────
 
@@ -139,19 +140,35 @@ export const EXIGENCIAS_GERAIS_COMPRA_TOP = [
   { chave: "exigeTransportadora", caminho: "transportadora_id", rotulo: "Transportadora" },
 ] as const;
 
+/**
+ * ESTOQUE-01 (decisão 274): o mapa do documento de estoque (`erp.documentos_estoque`). Só a observação se
+ * aplica: o documento de estoque não tem parceiro, centro de resultado nem transportadora. É um mapa PRÓPRIO
+ * de propósito — se as famílias de estoque caíssem no mapa padrão (o da venda), uma TOP de estoque que
+ * marcasse "exige parceiro" recusaria todo lançamento por um `client_id` que o documento nem tem.
+ */
+export const EXIGENCIAS_GERAIS_ESTOQUE_TOP = [
+  { chave: "exigeObservacao", caminho: "observacao", rotulo: "Observação" },
+] as const;
+
 export type CampoExigidoTop = (typeof EXIGENCIAS_GERAIS_TOP)[number]["caminho"];
 export type CampoExigidoCompraTop = (typeof EXIGENCIAS_GERAIS_COMPRA_TOP)[number]["caminho"];
+export type CampoExigidoEstoqueTop = (typeof EXIGENCIAS_GERAIS_ESTOQUE_TOP)[number]["caminho"];
 
 /** O documento como será gravado (só os campos que as exigências olham). */
 export type DocumentoParaExigencias = Partial<Record<CampoExigidoTop, unknown>>;
 export type DocumentoCompraParaExigencias = Partial<Record<CampoExigidoCompraTop, unknown>>;
+export type DocumentoEstoqueParaExigencias = Partial<Record<CampoExigidoEstoqueTop, unknown>>;
 
 /**
  * O mapa de exigências do DOCUMENTO que a família lança: famílias do documento de compra → mapa da compra;
- * qualquer outra → o mapa da venda (o comportamento de sempre, que não muda).
+ * famílias do documento de estoque → mapa do estoque (só a observação); qualquer outra → o mapa da venda (o
+ * comportamento de sempre, que não muda).
  */
 export function exigenciasGeraisDaFamiliaTop(familia: string): readonly ExigenciaGeralTop[] {
-  return tipoOperacao(familia)?.origem.tabela === TABELA_DOCUMENTO_COMPRA ? EXIGENCIAS_GERAIS_COMPRA_TOP : EXIGENCIAS_GERAIS_TOP;
+  const tabela = tipoOperacao(familia)?.origem.tabela;
+  if (tabela === TABELA_DOCUMENTO_COMPRA) return EXIGENCIAS_GERAIS_COMPRA_TOP;
+  if (tabela === TABELA_DOCUMENTO_ESTOQUE) return EXIGENCIAS_GERAIS_ESTOQUE_TOP;
+  return EXIGENCIAS_GERAIS_TOP;
 }
 
 const vazio = (v: unknown): boolean => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
@@ -223,13 +240,18 @@ export const mensagemClienteEmAtraso = (s: SituacaoAtrasoCliente): string =>
  * COMPRAS-01 (decisão 267): "Cliente em atraso" vale para esta família? Só fora do documento de compra —
  * comprar de um fornecedor não tem cliente, e a política não tem o que conferir. A API da TOP recusa, nas
  * famílias de compra, qualquer valor diferente de "não valida"; o editor esconde o bloco.
+ * ESTOQUE-01 (decisão 274): o documento de estoque também não tem cliente — mesma recusa. As oito famílias
+ * antigas de estoque não mudam (continuam como estavam, sem consumidor).
  */
 export function clienteEmAtrasoValeParaFamiliaTop(familia: string): boolean {
-  return tipoOperacao(familia)?.origem.tabela !== TABELA_DOCUMENTO_COMPRA;
+  const tabela = tipoOperacao(familia)?.origem.tabela;
+  return tabela !== TABELA_DOCUMENTO_COMPRA && tabela !== TABELA_DOCUMENTO_ESTOQUE;
 }
 
 /** Mensagem da recusa do "Cliente em atraso" numa família de compra (422 no campo). */
 export const MENSAGEM_CLIENTE_EM_ATRASO_FORA_DE_VENDAS = "\"Cliente em atraso\" não vale para compras: use \"Não valida\".";
+/** ESTOQUE-01: a mesma recusa numa família do documento de estoque — dita com o nome do portal certo. */
+export const MENSAGEM_CLIENTE_EM_ATRASO_FORA_DE_VENDAS_ESTOQUE = "\"Cliente em atraso\" não vale para estoque: use \"Não valida\".";
 
 /**
  * A recusa do "Cliente em atraso" para a família (formato 3; vazio nos formatos 1/2 e nas famílias em que vale).
@@ -238,7 +260,9 @@ export const MENSAGEM_CLIENTE_EM_ATRASO_FORA_DE_VENDAS = "\"Cliente em atraso\" 
 export function recusasClienteEmAtrasoDaFamiliaTop(c: ConfiguracaoTipoOperacao, familia: string): RecusaFiscalTop[] {
   if (!restricoesExecutamTop(c) || clienteEmAtrasoValeParaFamiliaTop(familia)) return [];
   if (c.financeiro.clienteEmAtraso === "nao_valida") return [];
-  return [{ motivo: "valor_invalido", caminho: "financeiro.clienteEmAtraso", mensagem: MENSAGEM_CLIENTE_EM_ATRASO_FORA_DE_VENDAS }];
+  const mensagem = tipoOperacao(familia)?.origem.tabela === TABELA_DOCUMENTO_ESTOQUE
+    ? MENSAGEM_CLIENTE_EM_ATRASO_FORA_DE_VENDAS_ESTOQUE : MENSAGEM_CLIENTE_EM_ATRASO_FORA_DE_VENDAS;
+  return [{ motivo: "valor_invalido", caminho: "financeiro.clienteEmAtraso", mensagem }];
 }
 
 // ─────────────── respostas das rotas novas de vendas ───────────────
