@@ -31,10 +31,12 @@ const ler = (p) => readFileSync(caminho(p), "utf8");
 // -------------------------------------------------------------------------------------------------
 const RAIZ_ESPERADA = ["CLAUDE.md", "REVIEW.md", ".claude/settings.json", ".mcp.json.example"];
 const REGRAS = ["workflow", "architecture", "security", "backend-api", "frontend-web", "database-migrations", "testing-gates"];
-const SKILLS = ["implement-slice", "certify-pr", "migration-safety", "production-smoke", "multi-company-contract", "id-global-contract", "pre-base2-checkpoint"];
+const SKILLS = ["implement-slice", "certify-pr", "migration-safety", "production-smoke", "multi-company-contract", "id-global-contract", "pre-base2-checkpoint", "fatia-visual", "rodar-local"];
 const AGENTES = ["security-rls-auditor", "migration-auditor", "test-gate-verifier", "frontend-regression-reviewer", "performance-reviewer", "pr-certifier"];
 const HOOKS = ["guard-dangerous-command.mjs", "guard-auditor-command.mjs"];
 const DOCS = ["docs/CLAUDE-CODE-ENGINEERING-HARNESS.md", "docs/CLAUDE-CODE-CONNECTORS.md"];
+/** Ferramentas do harness com autoteste offline (as fixtures rodam aqui; a rede, nunca). */
+const FERRAMENTAS_COM_AUTOTESTE = ["scripts/mapa-colisao.mjs"];
 /** Skills que só o usuário pode disparar (tocar produção não pode ser decisão do modelo). */
 const SKILLS_SEM_INVOCACAO_AUTOMATICA = ["production-smoke"];
 /** Ferramentas que tiram de um auditor a condição de auditor. */
@@ -380,6 +382,18 @@ for (const h of HOOKS) {
   } catch (e) {
     const saida = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim().split("\n").slice(-6).join(" | ");
     erro(`${p}: autoteste reprovou — ${saida || e.message}`);
+  }
+}
+
+// O mapa de colisão da máquina fala com o GitHub e por isso não roda aqui; o CLASSIFICADOR dele, sim.
+// Uma exceção do workflow apagada do script (ou uma colisão que ele deixasse passar) reprova o lint.
+for (const f of FERRAMENTAS_COM_AUTOTESTE) {
+  if (!existe(f)) { erro(`falta ${f}`); continue; }
+  try {
+    execFileSync(process.execPath, [caminho(f), "--autoteste"], { stdio: "pipe", timeout: 60_000 });
+  } catch (e) {
+    const saida = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim().split("\n").slice(-6).join(" | ");
+    erro(`${f}: autoteste reprovou — ${saida || e.message}`);
   }
 }
 
