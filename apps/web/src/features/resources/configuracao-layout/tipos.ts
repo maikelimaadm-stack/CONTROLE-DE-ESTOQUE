@@ -253,7 +253,7 @@ export interface Operacoes {
 /** barra.tsx (W1) */
 export interface PropsBarra {
   modo: Modo;
-  /** leitura das preferências (p.loaded / erro): só com "ok" o Editar abre — sem isso o rascunho nasceria do padrão */
+  /** leitura do servidor (p.fresh / p.leituraFalhou): só com "ok" o Editar abre — sem ela o rascunho nasceria do padrão ou de um cache velho */
   leitura: "carregando" | "ok" | "falhou";
   alterado: boolean;
   podeDesfazer: boolean;
