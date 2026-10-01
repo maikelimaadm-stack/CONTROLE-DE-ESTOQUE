@@ -93,6 +93,9 @@ interface LinhaDaFilaLida {
   decidido_em: Date | null;
 }
 
+/** A fila aceita só a paginação (`page`, `pageSize`). */
+const PARAMETROS_DA_FILA = new Set(["page", "pageSize"]);
+
 /**
  * A FILA DO ESTOQUE — os documentos ABERTOS das espécies que a pessoa aprova, cuja versão CONGELADA exige aprovação
  * e cuja última decisão não é "aprovado" (pendentes e reprovados), no escopo de empresa do módulo estoque.
@@ -105,8 +108,11 @@ interface LinhaDaFilaLida {
 async function listarFila(ctx: ServiceCtx, especies: readonly EspecieEstoque[], query: unknown) {
   const bruta = (query ?? {}) as Record<string, unknown>;
   // Parâmetro repetido chega como lista: 422 no parâmetro, nunca 500 (e nunca "o primeiro vale").
+  // A fila aceita só a paginação, como as de venda e de compra: o que vier além é 422 no parâmetro, nunca "ignorado"
+  // (descarte silencioso de contrato não canônico é ampliação de escopo — CLAUDE.md).
   for (const [chave, valor] of Object.entries(bruta)) {
     if (Array.isArray(valor)) throw validation("Parâmetro repetido: informe um valor só", [{ path: chave, message: "Parâmetro repetido: informe um valor só" }]);
+    if (!PARAMETROS_DA_FILA.has(chave)) throw validation("Parâmetro não reconhecido na fila de aprovações", [{ path: chave, message: "Parâmetro não reconhecido na fila de aprovações" }]);
   }
   const q = pageQuerySchema.parse(bruta);
   const params: unknown[] = [ctx.orgId, [...especies]];
@@ -117,7 +123,6 @@ async function listarFila(ctx: ServiceCtx, especies: readonly EspecieEstoque[], 
     "erp.top_exige_aprovacao(topv.configuracao, null)",
     "ult.decisao is distinct from 'aprovado'",
   ];
-  if (q.search) { params.push(`%${q.search}%`); where.push(`d.codigo ilike $${params.length}`); }
   // Como a lista única do portal: a empresa SELECIONADA não recorta; a autorização entra sempre.
   where.push(...empresaScope(ctx, "d", params, { ignoreSelected: true, modulo: MODULO_ESTOQUE }));
 

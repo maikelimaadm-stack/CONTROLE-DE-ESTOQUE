@@ -141,6 +141,9 @@ interface LinhaLida {
 
 const instante = (v: Date | string): string => (v instanceof Date ? v.toISOString() : new Date(v).toISOString());
 
+/** A fila aceita só a paginação (`page`, `pageSize`). */
+const PARAMETROS_DA_FILA = new Set(["page", "pageSize"]);
+
 /**
  * A FILA DE APROVAÇÃO DA VENDA: venda (`kind` sale) viva e aberta (open | approved) cuja versão congelada EXIGE
  * aprovação pelo total ATUAL e cuja decisão vigente — a última DA VERSÃO ATUAL — não é "aprovado". Sem decisão da
@@ -158,7 +161,15 @@ const instante = (v: Date | string): string => (v instanceof Date ? v.toISOStrin
  * Paginação no servidor (`pageQuerySchema`), ordem fixa: data do documento desc, criação desc, id.
  */
 async function listarFila(ctx: ServiceCtx, query: unknown) {
-  const q = pageQuerySchema.parse(query ?? {});
+  const bruta = (query ?? {}) as Record<string, unknown>;
+  // A fila aceita só a paginação, como as de compra e de estoque: o que vier além é 422 no parâmetro, nunca
+  // "ignorado" (descarte silencioso de contrato não canônico é ampliação de escopo — CLAUDE.md). Parâmetro repetido
+  // chega como lista: 422 no parâmetro, nunca 500 (e nunca "o primeiro vale").
+  for (const [chave, valor] of Object.entries(bruta)) {
+    if (Array.isArray(valor)) throw err("VALIDATION_ERROR", "Parâmetro repetido: informe um valor só", [{ path: chave, message: "Parâmetro repetido: informe um valor só" }]);
+    if (!PARAMETROS_DA_FILA.has(chave)) throw err("VALIDATION_ERROR", "Parâmetro não reconhecido na fila de aprovações", [{ path: chave, message: "Parâmetro não reconhecido na fila de aprovações" }]);
+  }
+  const q = pageQuerySchema.parse(bruta);
   const params: unknown[] = [ctx.orgId];
   const where = [
     "d.organization_id = $1", "d.kind = 'sale'", "d.status in ('open', 'approved')", "d.deleted_at is null",
