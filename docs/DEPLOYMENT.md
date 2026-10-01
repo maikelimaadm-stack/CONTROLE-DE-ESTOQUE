@@ -1385,24 +1385,30 @@ frete, Dedutível) NÃO aceita obrigatório — sempre tem valor (R1). 2. Centra
 "*", Data de saída preenchida e só leitura; salvar sem transportadora → erro no campo; com → salva. 3. TOP sem layout →
 vale o padrão da família; sem padrão → a Central de hoje. 4. Editor da TOP mostra o layout e a origem.
 
-## VISUAL-UX-02 — Central de Vendas igual ao desenho, Fase A (sem migration)
+## VISUAL-UX-02 — Central de Vendas igual ao desenho (sem migration)
 
 Decisão 270. **Só web**: sem migration, sem rota, sem API, sem variável, sem permissão, sem domínio. A Central de
 Vendas (criação e consulta) passa a ter a barra e o leque de Ações rápidas do desenho, a posição do rótulo, Duplicar,
-Descartar, Salvar com pendências, Confirmar venda na criação (Salvar + diálogo com a prévia de sempre), Cancelar com
-motivo, Fiscal e plano na consulta, esqueleto e Ampliar; o diálogo de fechar aba ganha o texto do desenho. As
+Descartar, Salvar com pendências (Cliente, Natureza e Centro de resultado, itens e Financeiro: o clique com pendência
+não grava e lista o que falta), Confirmar venda na criação (Salvar + diálogo com a prévia de sempre), Cancelar com
+motivo, Fiscal e plano na consulta, esqueleto e Ampliar; os itens da criação passam à grade do desenho (seleção pelo
+círculo, Duplicar item e Remover item na barra, "Grade e formulário" em Configurar colunas, rodapé "Itens (N)" e
+"Subtotal dos itens", formulário "Item X de N") e o Financeiro da criação aos campos do plano em coluna, na densidade
+da Central; o diálogo de fechar aba ganha o texto do desenho. O `PlanEditor` compartilhado ganhou só uma prop
+opcional de apresentação: sem ela, documentos fiscais, transferências, títulos e compras ficam como estavam. As
 escritas continuam as mesmas portas de hoje (`POST /api/sales/<seg>`, `/confirm`, `/cancel` com `reason`,
-`/convert`, `/encerrar-saldo`), com as mesmas chaves de corpo e a mesma `Idempotency-Key`.
+`/convert`, `/encerrar-saldo`), com as mesmas chaves de corpo (cabeçalho, item e plano) e a mesma `Idempotency-Key`.
 
 **Impacto em dados reais:** nenhum dado muda; a Central passa a oferecer Duplicar (abre rascunho) e Cancelar com
 motivo.
 
 **Version skew:** web nova contra a API da base — mesmas rotas e mesmos corpos (o `skew-api-producao.spec.ts` roda a
-Central nova contra a API anterior); web anterior contra a API nova — nada muda na API. Os helpers de E2E que o skew
-usa (`pickRef`, `acaoDaCentral`, `abrirDadosAdicionais`) funcionam nas duas Centrais.
+Central nova contra a API anterior, já com Natureza e Centro de resultado como pendência de clique); web anterior
+contra a API nova — nada muda na API. Os helpers de E2E que o skew usa (`pickRef`, `acaoDaCentral`,
+`abrirDadosAdicionais`) funcionam nas duas Centrais.
 
 **Reversão:** reverter a PR (redeploy do web anterior). Nada a desfazer em banco ou configuração: a posição do
-rótulo, o ampliar, o Duplicar e o "Salvo" vivem só na memória da tela.
+rótulo, o ampliar, as colunas, a seleção de item, o Duplicar e o "Salvo" vivem só na memória da tela.
 
 ## ANEXOS-PESQUISA-01 — anexos nos documentos de venda e de compra e pesquisa de produtos
 
