@@ -26,7 +26,9 @@ export function useFormLayout(resourceKey: string, fields: FieldDef[]): PrefsDoL
   const fieldsInfo = React.useMemo(() => toLayoutFields(fields), [fields]);
   // o tipo só alimenta a pílula do inspetor: o normalizador continua recebendo o LayoutFieldInfo de sempre
   const campos = React.useMemo(() => fields.map((f): CampoInfo => ({ ...paraInfo(f), tipo: f.type })), [fields]);
-  const normalize = React.useCallback((raw: unknown) => (raw ? normalizeFormLayout(raw, fieldsInfo).layout : buildDefaultFormLayout(fieldsInfo)), [fieldsInfo]);
+  // o padrão derivado pode repetir id de card (duas seções com o mesmo slug): sem isso, publicá-lo como padrão da
+  // organização perde o segundo card no servidor. O layout salvo já passou pelo normalizador e fica como veio.
+  const normalize = React.useCallback((raw: unknown) => (raw ? normalizeFormLayout(raw, fieldsInfo).layout : R.cardsComIdUnico(buildDefaultFormLayout(fieldsInfo))), [fieldsInfo]);
   const p = useScreenPrefs<FormLayout>(resourceKey, "form", normalize);
   return { ...p, fieldsInfo, campos };
 }
@@ -59,9 +61,11 @@ export function FormLayoutPage({ p, backHref }: PropsDaPagina) {
   const salvoAberto = React.useMemo(() => R.abrirRascunho(salvo), [salvo]);
   const [modo, setModo] = React.useState<Modo>("consulta");
   const [pilha, setPilha] = React.useState<Pilha | null>(null);
+  // o salvo como estava no clique em Editar: mudança de outra aba ou do padrão da organização no meio da edição não acende o ponto
+  const [copiaDoSalvo, setCopiaDoSalvo] = React.useState<FormLayout | null>(null);
   const edicao = modo === "edicao" && pilha !== null;
   const l = edicao ? pilha.presente : salvoAberto;
-  const alterado = edicao && R.alterado(pilha.presente, salvo);
+  const alterado = edicao && copiaDoSalvo !== null && R.alterado(pilha.presente, copiaDoSalvo);
   useDirtyTab(alterado);
 
   const [painelId, setPainelId] = React.useState("");
@@ -118,9 +122,12 @@ export function FormLayoutPage({ p, backHref }: PropsDaPagina) {
   const fecharDigitacao = React.useCallback(() => setPilha((atual) => (atual ? R.fecharDigitacao(atual) : atual)), []);
 
   const limparTela = () => { setSelecionado(null); setInspetor(null); setMarca(null); setRenomeando(null); };
-  const voltarAConsulta = () => { setModo("consulta"); setPilha(null); setBusca(""); limparTela(); };
+  const voltarAConsulta = () => { setModo("consulta"); setPilha(null); setCopiaDoSalvo(null); setBusca(""); limparTela(); };
   const editar = () => {
-    if (!p.loaded) return;
+    // só sobre uma leitura boa do servidor: cache local velho ou leitura que falhou viraria o rascunho, e o Salvar
+    // trocaria a personalização real por ele
+    if (!p.fresh) return;
+    setCopiaDoSalvo(salvo);
     setPilha(R.criarPilha(R.abrirRascunho(salvo)));
     setModo("edicao");
     limparTela();
@@ -184,7 +191,7 @@ export function FormLayoutPage({ p, backHref }: PropsDaPagina) {
       const linhaNaMao = arraste.item?.tipo === "linha" ? arraste.item : null;
       const paraOReal = (end: EnderecoLinha): EnderecoLinha => (linhaNaMao && linhaNaMao.cardId === end.cardId && end.linha >= linhaNaMao.linha ? { ...end, linha: end.linha + 1 } : end);
       return <div data-testid="layout-config" data-modo={edicao ? "edicao" : "consulta"} className={estilos.raiz}>
-        <Barra modo={edicao ? "edicao" : "consulta"} carregado={p.loaded} alterado={alterado}
+        <Barra modo={edicao ? "edicao" : "consulta"} leitura={p.fresh ? "ok" : p.leituraFalhou ? "falhou" : "carregando"} alterado={alterado}
           podeDesfazer={pilha ? R.podeDesfazer(pilha) : false} podeRefazer={pilha ? R.podeRefazer(pilha) : false}
           preVisualizar={preVisualizar} temPersonalizacao={p.source === "user"} podeEditarOrg={p.canEditOrg} temPadraoOrg={p.hasOrgDefault}
           voltarHref={backHref} aoEditar={editar} aoSalvar={salvar} aoDescartar={voltarAConsulta}
@@ -230,7 +237,7 @@ export function FormLayoutPage({ p, backHref }: PropsDaPagina) {
               aoAbrirInspetor={(fid) => { if (!edicao) return; fecharDigitacao(); setInspetor(fid); setSelecionado(fid); }}
               aoTirar={tirar}
               aoMarcarLinha={(end) => { if (!edicao) return; setMarca(end); setAba("disponiveis"); setBusca(""); setPedidoDeFoco((n) => n + 1); }}
-              aoRemoverLinha={(end) => { alterar((x) => R.removerLinha(x, ctx, end)); setMarca(null); }}
+              aoRemoverLinha={(end) => { const real = paraOReal(end); alterar((x) => R.removerLinha(x, ctx, real)); setMarca(null); }}
               motivoNaoRemoverLinha={(end) => R.motivoNaoRemoverLinha(l, ctx, paraOReal(end))}
               aoAdicionarLinha={() => { if (card) alterar((x) => R.adicionarLinha(x, card.id)); }} />
           </div>

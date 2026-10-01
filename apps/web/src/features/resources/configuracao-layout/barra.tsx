@@ -8,13 +8,14 @@ import estilos from "./pagina.module.css";
 
 const inicio = cn(estilos.acao, estilos.dicaInicio);
 const fim = cn(estilos.acao, estilos.dicaFim);
+const DICA_EDITAR: Record<PropsBarra["leitura"], string> = { ok: "Editar layout", carregando: "Carregando o layout…", falhou: "Não foi possível ler o layout salvo" };
 
 /**
  * Barra da configuração de layout. Consulta: [Voltar] | [Editar layout] … [Padrão da organização] | [Pré-visualizar]
  * [Restaurar padrão]. Edição: [Salvar] [Descartar] | [Desfazer] [Refazer] … o mesmo grupo da direita.
  */
 export function Barra(props: PropsBarra) {
-  const { modo, carregado, alterado, podeDesfazer, podeRefazer, preVisualizar, temPersonalizacao, podeEditarOrg, temPadraoOrg, voltarHref } = props;
+  const { modo, leitura, alterado, podeDesfazer, podeRefazer, preVisualizar, temPersonalizacao, podeEditarOrg, temPadraoOrg, voltarHref } = props;
   const edicao = modo === "edicao";
   // na consulta não há rascunho a perder; na edição, só a personalização do usuário tem o que restaurar
   const restaurarAtivo = edicao && temPersonalizacao;
@@ -33,8 +34,8 @@ export function Barra(props: PropsBarra) {
         : <div className={estilos.grupo}>
           <Link href={voltarHref} aria-label="Voltar" data-dica="Voltar para o cadastro" className={inicio}><ArrowLeft size={16} aria-hidden /></Link>
           <span className={estilos.divisor} aria-hidden />
-          {/* sem as preferências carregadas o rascunho nasceria do padrão, e o Salvar trocaria a personalização real */}
-          <button type="button" aria-label="Editar layout" data-dica="Editar layout" disabled={!carregado} className={inicio} onClick={props.aoEditar}><Pencil size={16} aria-hidden /></button>
+          {/* sem uma leitura boa do servidor o rascunho nasceria do padrão ou de um cache velho, e o Salvar trocaria a personalização real */}
+          <button type="button" aria-label="Editar layout" data-dica={DICA_EDITAR[leitura]} disabled={leitura !== "ok"} className={inicio} onClick={props.aoEditar}><Pencil size={16} aria-hidden /></button>
         </div>}
       <span className={estilos.espaco} />
       <div className={estilos.grupo}>

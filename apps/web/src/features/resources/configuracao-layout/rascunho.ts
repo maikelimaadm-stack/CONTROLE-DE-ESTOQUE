@@ -132,20 +132,31 @@ export const criarContexto: Operacoes["criarContexto"] = (campos) => {
 
 /* ═══════════════════════════════ abrir, salvar e comparar ═══════════════════════════════ */
 
+/**
+ * Id de card repetido (o padrão derivado da definição dá "geral" à seção sem nome E à seção "Geral"): o primeiro na
+ * ordem do array fica com o id, os outros ganham o menor sufixo livre (geral_2, geral_3…). Sem isso, achar o card pelo
+ * id pega sempre o primeiro, e o normalizador do servidor descartaria o segundo ao salvar. Determinística: o `alterado`
+ * compara com o salvo aberto pela mesma regra, então abrir não acende o ponto. Sem repetição devolve o MESMO objeto.
+ */
+export const cardsComIdUnico: Operacoes["cardsComIdUnico"] = (l) => {
+  if (new Set(l.cards.map((c) => c.id)).size === l.cards.length) return l;
+  const usados = new Set<string>();
+  const todos = new Set(l.cards.map((c) => c.id));
+  const cards = l.cards.map((c) => {
+    let id = c.id;
+    if (usados.has(id)) { let n = 2; while (todos.has(`${c.id}_${n}`)) n++; id = `${c.id}_${n}`; todos.add(id); }
+    usados.add(id);
+    return id === c.id ? c : { ...c, id };
+  });
+  return { ...l, cards };
+};
+
 export const abrirRascunho: Operacoes["abrirRascunho"] = (salvo) => {
   const l = clonar(salvo);
   l.panels = porOrdem(l.panels);
   l.cards = porOrdem(l.cards);
-  // Id de card repetido (o padrão derivado da definição dá "geral" à seção sem nome E à seção "Geral"): o primeiro na
-  // ordem fica com o id, os outros ganham sufixo único. Sem isso, achar o card pelo id pega sempre o primeiro, e o
-  // normalizador do servidor descartaria o segundo ao salvar. Determinístico: o `alterado` compara com o salvo aberto
-  // por esta mesma função, então abrir não acende o ponto.
-  const usados = new Set<string>();
-  const todos = new Set(l.cards.map((c) => c.id));
-  for (const c of l.cards) {
-    if (usados.has(c.id)) { let n = 2; while (todos.has(`${c.id}_${n}`)) n++; c.id = `${c.id}_${n}`; todos.add(c.id); }
-    usados.add(c.id);
-  }
+  // id de card repetido ganha sufixo (cardsComIdUnico); a cópia é nossa, então pode ser trocada pela que ela devolve
+  l.cards = cardsComIdUnico(l).cards;
   // card sem linha (layout antigo) ganha a "Linha 1" vazia que a tela mostra; vazia, ela não muda o "alterado" nem o salvo
   for (const c of l.cards) if (!c.rows.length) c.rows.push(linhaVazia());
   // valor padrão vazio ou nulo não existe no rascunho (seria gravado por cima do valor padrão da definição)
@@ -536,9 +547,12 @@ export const definirVisivel: Operacoes["definirVisivel"] = (l, ctx, fid, ligado)
   return n;
 };
 
-/** Ligar não mexe no Obrigatório. Campo só leitura na definição: travado (sem efeito). */
+/**
+ * Ligar não mexe no Obrigatório. Campo só leitura na definição: travado (sem efeito). Campo do sistema: não liga (o
+ * toApi não manda campo travado e o "Novo" do cadastro nunca mais gravaria); se veio ligado de um layout salvo, só desliga.
+ */
 export const definirSomenteLeitura: Operacoes["definirSomenteLeitura"] = (l, ctx, fid, ligado) => {
-  if (ctx.ehSoLeituraNaDefinicao(fid) || l.lockedFieldIds.includes(fid) === ligado) return l;
+  if (ctx.ehSoLeituraNaDefinicao(fid) || (ligado && ctx.ehDoSistema(fid)) || l.lockedFieldIds.includes(fid) === ligado) return l;
   const n = clonar(l);
   n.lockedFieldIds = ligado ? com(n.lockedFieldIds, fid) : sem(n.lockedFieldIds, fid);
   return n;

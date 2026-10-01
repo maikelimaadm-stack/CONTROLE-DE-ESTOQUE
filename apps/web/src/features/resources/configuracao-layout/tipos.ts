@@ -166,6 +166,8 @@ export interface Operacoes {
 
   /** cópia profunda do salvo; painéis e cards por `order`; linhas de cada card r1..rN; `order` 1..n */
   abrirRascunho(salvo: FormLayout): FormLayout;
+  /** id de card repetido ganha sufixo único (geral, geral_2…; o primeiro na ordem do array fica com o id). Sem repetição: o MESMO objeto */
+  cardsComIdUnico(l: FormLayout): FormLayout;
   /** o documento do Salvar: sem linhas vazias, linhas r1..rN, `order` 1..n, SÓ as chaves do FormLayout */
   paraSalvar(rascunho: FormLayout): FormLayout;
   /** forma canônica (string): painéis e cards na ordem, cards por painel, linhas só como listas de campos e sem as vazias, listas e mapas ordenados, sem ids de linha, sem `order` e sem `meta` */
@@ -251,8 +253,8 @@ export interface Operacoes {
 /** barra.tsx (W1) */
 export interface PropsBarra {
   modo: Modo;
-  /** preferências carregadas (p.loaded): sem isso o rascunho nasceria do padrão */
-  carregado: boolean;
+  /** leitura das preferências (p.loaded / erro): só com "ok" o Editar abre — sem isso o rascunho nasceria do padrão */
+  leitura: "carregando" | "ok" | "falhou";
   alterado: boolean;
   podeDesfazer: boolean;
   podeRefazer: boolean;
