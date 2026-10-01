@@ -1,0 +1,372 @@
+/*
+ * CONFIGURAÇÃO DE LAYOUT — coluna da esquerda e trilho (VISUAL-UX-03, decisão 275, 4.2).
+ *
+ * Valores do desenho, pelo estilo CALCULADO: camada "CONFIGURAÇÃO DE LAYOUT" (.aside, .aside-b, .aside-drop, .pool,
+ * .bskw/.bsk, .trilho) sobre a base que veio da Central (.tabs/.tab, .bd, .dchip-x, .ib, .empty, button:focus-visible).
+ * Onde o calculado difere do CSS:
+ *  - a coluna é transparente (estilo inline `background-color: transparent` na marcação vence o #fbfcfd da .aside);
+ *  - a faixa das abas e as abas não têm traço (estilo inline `border-style: none` nas duas);
+ *  - .bd é redondo (raio 999, padding 2 9 — regra posterior da camada);
+ *  - a transição do × / + e das abas é a do grupo "o que muda, muda em rampa" (regra posterior à .dchip-x de .12s);
+ *  - o texto herda `line-height: normal` do body do desenho (a casa usa 1.5): fixado na raiz da coluna.
+ * Diferença do produto (item i do PEDIDO): × desabilitado em Em uso fica .25 e sem o hover vermelho (no desenho .65).
+ * Movimento: variáveis herdadas da raiz da página (--mi, --mf, --mo, --ez, --ez-io, --ez-mola); nenhuma duração fixa aqui.
+ */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes zoomIn {
+  from { opacity: 0; transform: scale(.965) translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ═════════════ coluna (.aside) ═════════════ */
+.coluna {
+  position: relative;
+  width: 250px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid #eef1f4;
+  border-radius: 0;
+  background: transparent;
+  line-height: normal;
+  transition: background var(--mi), box-shadow var(--mi);
+}
+/* soltar aqui tira o campo do formulário */
+.coluna[data-soltar="ok"] {
+  background: #f3fdf6;
+  box-shadow: inset 0 0 0 2px #40de63;
+}
+/* recusa: campo do sistema, ou item que veio da própria coluna */
+.coluna[data-soltar="sistema"],
+.coluna[data-soltar="ja-esta"] {
+  background: #fdf5f5;
+  box-shadow: inset 0 0 0 2px #eaa9a9;
+}
+
+/* caixa no meio da coluna durante o arraste (.aside-drop) */
+.caixaSoltar {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  box-sizing: content-box;
+  padding: 15px 12px;
+  border-radius: 12px;
+  border: 2px dashed #22a85c;
+  background: #fff;
+  color: #15803d;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  line-height: 1.5;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, .14);
+  animation: zoomIn var(--mo) var(--ez-mola);
+}
+.caixaSoltar[data-recusa] {
+  border-color: #dc2626;
+  color: #991b1b;
+}
+
+/* ═════════════ abas Disponíveis / Em uso (.tabs + .tab, sem traço) ═════════════ */
+.abas {
+  height: 38px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 10px 0 8px;
+  border: 0;
+  background: transparent;
+  overflow: hidden;
+}
+.aba {
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #64748b;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io), border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io), opacity var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
+}
+.aba:hover { color: #1e293b; }
+.aba[aria-selected="true"] {
+  color: #15803d;
+  font-weight: 600;
+}
+.aba:focus-visible {
+  outline: 2px solid #22a85c;
+  outline-offset: 2px;
+}
+
+/* contador em pílula (.bd .t-plain / .t-positive) */
+.contador {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  background: #f1f5f9;
+  color: #334155;
+}
+.aba[aria-selected="true"] .contador {
+  background: #dcfce7;
+  color: #166534;
+}
+
+/* ═════════════ busca (.bskw + .bsk) ═════════════ */
+.buscaFaixa {
+  padding: 8px 10px 6px;
+  flex-shrink: 0;
+}
+.busca {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: #f6f8fa;
+  color: #94a3b8;
+  cursor: text;
+  transition: background var(--mf), border-color var(--mf), box-shadow var(--mf);
+}
+.busca:hover { background: #eff3f7; }
+.busca:focus-within {
+  background: #fff;
+  border-color: #cfd6de;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .10);
+}
+.buscaIcone { flex-shrink: 0; }
+/* o padding 1 2 é o do campo de texto do navegador, que o desenho mantém */
+.buscaCampo {
+  flex-grow: 1;
+  min-width: 0;
+  padding: 1px 2px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: #111827;
+}
+.buscaCampo::placeholder {
+  color: #8b939e;
+  font-weight: 400;
+  opacity: 1;
+}
+
+/* ═════════════ lista (.aside-b) e item (.pool) ═════════════ */
+.lista {
+  flex-grow: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 0 10px;
+}
+
+.item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  height: 30px;
+  max-height: 30px;
+  margin: 0 10px 6px;
+  padding: 0 4px 0 9px;
+  border-radius: 8px;
+  border: 1px solid #e7ebef;
+  background: #f4f6f7;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+  color: #1e293b;
+  cursor: grab;
+  overflow: hidden;
+  transition: border-color var(--mf), box-shadow var(--mf), opacity var(--mi), max-height var(--mo) var(--ez), margin var(--mo) var(--ez), transform var(--mo) var(--ez);
+}
+.item:hover {
+  border-color: #c6d0da;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, .08);
+}
+.item:active { cursor: grabbing; }
+
+/* obrigatório: a barra vermelha da linha e o "*" */
+.item[data-obrigatorio] { padding-left: 13px; }
+.item[data-obrigatorio]::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 999px;
+  background: #dc2626;
+}
+
+/* o item na mão sai da lista na hora (.pool.drag) */
+.item[data-na-mao] {
+  opacity: 0;
+  max-height: 0;
+  min-height: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  border-width: 0;
+  transform: scale(.96);
+  pointer-events: none;
+}
+
+.itemTexto {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex-grow: 1;
+}
+.itemNome {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asterisco {
+  color: #dc2626;
+  font-weight: 700;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+/* "+" (Disponíveis, aparece no hover) e "×" (Em uso, sempre à vista) — .dchip-x */
+.itemAcao {
+  width: 20px;
+  height: 20px;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #a7b0bb;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0;
+  transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io), border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io), opacity var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
+}
+.item:hover .itemAcao { opacity: 1; }
+.itemAcao:focus-visible {
+  opacity: 1;
+  outline: 2px solid #22a85c;
+  outline-offset: 2px;
+}
+.itemAcao:hover:not(:disabled) {
+  background: #eef1f4;
+  color: #0f172a;
+}
+.item .itemAcaoFixo { opacity: .65; }
+.item .itemAcaoFixo:hover:not(:disabled) {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+/* campo do sistema: o × não sai e parece desabilitado (item i) — vence o hover do item */
+.item .itemAcao:disabled {
+  opacity: .25;
+  cursor: not-allowed;
+}
+
+/* vazio (.empty com o estilo inline do desenho) */
+.vazio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex-grow: 1;
+  padding: 34px 18px;
+  text-align: center;
+  animation: fadeIn var(--mi) var(--ez-io) backwards;
+}
+.vazioTitulo {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #475569;
+}
+.vazioTexto {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #94a3b8;
+  max-width: 190px;
+}
+
+/* ═════════════ trilho (.trilho + .ib de 28) ═════════════ */
+.trilho {
+  width: 38px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-right: 1px solid #eef1f4;
+  background: #fbfcfd;
+}
+.trilhoBotao {
+  width: 28px;
+  height: 28px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: #f1f3f4;
+  color: #475569;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io), border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io), opacity var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
+}
+.trilhoBotao:hover:not(:disabled) {
+  background: #e5e7eb;
+  color: #0f172a;
+  box-shadow: 0 3px 9px rgba(34, 197, 94, .36);
+}
+.trilhoBotao:active:not(:disabled) { transform: scale(.90); }
+.trilhoBotao:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+.trilhoBotao:focus-visible {
+  outline: 2px solid #22a85c;
+  outline-offset: 2px;
+}
+
+/* movimento reduzido: as durações já vêm em 1ms das variáveis da raiz; aqui param o "surgir" do vazio e o recuo do clique */
+@media (prefers-reduced-motion: reduce) {
+  .vazio { animation: none; }
+  .trilhoBotao:active:not(:disabled) { transform: none; }
+}
