@@ -18,6 +18,7 @@ import { DevolutionsList } from "@/features/stock/devolutions-list";
 import { TransfersList } from "@/features/stock/transfers-list";
 import { FeedFormulasPanel } from "@/features/stock/feed-formulas";
 import { FeedBatchesList } from "@/features/stock/feed-batches-list";
+import { MovimentacoesEstoque } from "@/features/estoque/movimentacoes-lista";
 
 /**
  * Estoque (Compactação V2): Visão Geral · Estoque (saldo / movimentações / ajustes) · Recebimentos · Operações ·
@@ -25,6 +26,10 @@ import { FeedBatchesList } from "@/features/stock/feed-batches-list";
  * (Entrada / Saída / Transferência / Produção). Ajuste de estoque nasce do saldo (ação por linha, permissão própria)
  * e devolução nasce da requisição/saída original — nenhum dos dois é opção cotidiana do "+ Novo".
  * Cada operação continua usando seu próprio endpoint/regra.
+ *
+ * ESTOQUE-01 (decisão 274): "Movimentações", logo depois de Visão Geral, é a lista única do DOCUMENTO de estoque
+ * (entrada, saída, transferência e ajuste), com o `Novo` que pergunta a TOP e abre a Central de Estoque. As abas
+ * e o "+ Novo" acima continuam como estão — as telas antigas não mudam até uma fatia própria trocá-las.
  */
 const scroll = (c: React.ReactNode) => <div className="ws-scroll">{c}</div>;
 function Transfers() {
@@ -46,6 +51,7 @@ function Inner() {
       { label: "Produção", children: [{ label: "Produção de ração", href: "/estoque/batidas/new", perm: "feed_batches.create" }] }
     ]} />} tabs={[
       tab("estoque.visao-geral", <StockOverview />),
+      tab("estoque.movimentacoes", <MovimentacoesEstoque />),
       tab("estoque.estoque", <ViewSegment tabs={[
         tab("estoque.estoque.saldo", <BalancesPanel onAdjust={can("stock_corrections.create") ? (r) => openAdjust({ empresa_id: String(r["empresa_id"] ?? ""), warehouse_id: String(r["warehouse_id"] ?? ""), product_id: String(r["product_id"] ?? ""), provider_lot: String(r["provider_lot"] ?? "") }) : undefined} />),
         tab("estoque.estoque.ledger", <MovementsPanel />),

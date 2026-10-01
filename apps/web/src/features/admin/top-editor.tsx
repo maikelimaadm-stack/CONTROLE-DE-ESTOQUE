@@ -15,7 +15,7 @@ import {
   LIMITE_CONDICOES_PERMITIDAS, MODOS_CONFIRMACAO, MODOS_EXECUCAO_TOP, MODOS_FINANCEIRO, MOMENTOS_APROVACAO, MOMENTOS_EFEITO,
   POLITICAS_ALTERACAO, POLITICAS_APROVACAO, POLITICAS_CLIENTE_EM_ATRASO, POLITICAS_DOCUMENTO_SEM_ITENS, POLITICAS_SALDO_NEGATIVO,
   TOLERANCIA_ATRASO_MAXIMA_DIAS, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
-  configuracaoTopParaEdicao, efeitosAtivadosTop, exigenciasGeraisDaFamiliaTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, familiaOperacionalDeDocumentoVenda,
+  configuracaoTopParaEdicao, efeitosAtivadosTop, ehFamiliaDeDocumentoEstoque, exigenciasGeraisDaFamiliaTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, familiaOperacionalDeDocumentoVenda,
   normalizarConfiguracaoTop, tipoOperacao,
   recusasFiscaisDaFamiliaTop, validarExecucaoTop,
   type ConfiguracaoTipoOperacaoV2, type ConfiguracaoTipoOperacaoV3, type EfeitoExecucaoTop, type ModoExecucaoTop,
@@ -76,6 +76,17 @@ const FAMILIA_DO_PEDIDO = familiaOperacionalDeDocumentoVenda("order");
  */
 export const ehMovimentoDeVendas = (codigoBase: string): boolean => !!codigoBase && tipoOperacao(codigoBase)?.modulo === "vendas";
 
+/**
+ * ESTOQUE-01 (decisão 274) — as seções que NÃO se aplicam ao documento de estoque (as quatro famílias de
+ * `erp.documentos_estoque`, perguntadas ao registry por `ehFamiliaDeDocumentoEstoque`). O documento de estoque não
+ * tem financeiro, fiscal, aprovação nem próxima operação: o movimento é o da ESPÉCIE, e a TOP dá ao documento o nome
+ * da operação, a TOP padrão da espécie, a versão congelada e a exigência de observação. Seção que aparece e não
+ * decide nada é pior que seção ausente — o administrador marcaria uma regra que nenhum lançamento cobra.
+ * Identificação, Geral (só a observação), Estoque (o aviso da espécie) e Execução (onde o servidor diz que a
+ * execução configurada não vale para estas famílias) continuam.
+ */
+const ABAS_FORA_DO_DOCUMENTO_ESTOQUE: ReadonlySet<string> = new Set(["destinos", "financeiro", "fiscal", "aprovacao"]);
+
 /** As oito seções, na ordem em que a tela as mostra. */
 const ABAS = [
   { chave: "identificacao", rotulo: "Identificação" },
@@ -118,6 +129,14 @@ const AJUDA: Record<ChaveAba, string> = {
  */
 const AJUDA_DESTINOS_SEM_PONTE =
   "Para quais operações um documento deste tipo pode ser encaminhado. A lista de opções vem do servidor, já limitada ao que o produto sabe executar; habilitar um caminho aqui não concede permissão a ninguém. Enquanto esta operação não declarar a política, um documento deste tipo não oferece próxima operação.";
+
+/** ESTOQUE-01 — a ajuda da Geral no documento de estoque: só a observação se aplica (`EXIGENCIAS_GERAIS_ESTOQUE_TOP`). */
+const AJUDA_GERAL_DOCUMENTO_ESTOQUE =
+  "O que é obrigatório informar no documento de estoque. Só a observação se aplica: o documento de estoque não tem parceiro, centro de resultado nem transportadora. A exigência só é cobrada no lançamento em versões gravadas com as restrições da operação.";
+
+/** ESTOQUE-01 — a ajuda da seção Estoque no documento de estoque: a TOP não decide a movimentação, a espécie decide. */
+const AJUDA_ESTOQUE_DOCUMENTO_ESTOQUE =
+  "O movimento é definido pela espécie do documento, e não por esta seção.";
 
 // ---------------------------------------------------------------------------------------------------
 // Campos
@@ -301,7 +320,12 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
   }), [detalhe, restricoes]);
 
   const [rascunho, setRascunho] = React.useState<RascunhoTop>(inicial);
-  const [aba, setAba] = React.useState<ChaveAba>("identificacao");
+  const [abaEscolhida, setAba] = React.useState<ChaveAba>("identificacao");
+  /** ESTOQUE-01 — o movimento é uma das famílias do documento de estoque? Perguntado ao registry, nunca a uma lista daqui. */
+  const documentoEstoque = ehFamiliaDeDocumentoEstoque(rascunho.codigoBase);
+  const abasVisiveis = ABAS.filter((a) => !documentoEstoque || !ABAS_FORA_DO_DOCUMENTO_ESTOQUE.has(a.chave));
+  // Uma aba escondida nunca fica ativa (um erro do servidor pode apontar para ela): cai na identificação.
+  const aba: ChaveAba = abasVisiveis.some((a) => a.chave === abaEscolhida) ? abaEscolhida : "identificacao";
   const [confirmandoDescarte, setConfirmandoDescarte] = React.useState(false);
   const [erro, setErro] = React.useState<unknown>(null);
   const [conflito, setConflito] = React.useState(false);
@@ -482,7 +506,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
     >
       {edicao && id && detalhe ? <div className="mb-2"><LinhaLayoutDocumentoTop tipoOperacaoId={id} familia={detalhe.familia.codigo} /></div> : null}
       <div role="tablist" aria-label="Seções do tipo de operação" className="mb-3 flex flex-wrap gap-1 border-b">
-        {ABAS.map((a) => <button
+        {abasVisiveis.map((a) => <button
           key={a.chave}
           type="button"
           role="tab"
@@ -516,6 +540,9 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
                 mudar({ codigoBase, destinos: [], reservaEstoque: false });
                 // "Cliente em atraso" só existe na venda: fora dela volta para "não valida" (a API recusa outro valor).
                 if (!ehMovimentoDeVendas(codigoBase)) mudarConfigV3((c) => ({ ...c, financeiro: { ...c.financeiro, clienteEmAtraso: "nao_valida" } }));
+                // ESTOQUE-01: no documento de estoque as seções que não se aplicam somem — e o que tinha sido marcado
+                // nelas antes da escolha do movimento volta ao neutro, para nenhuma regra escondida ir na gravação.
+                if (ehFamiliaDeDocumentoEstoque(codigoBase)) mudar({ configuracao: configuracaoInicial(null), ...camposDeRestricoes(restricoes, null) });
               }}>
                 <option value="">Selecione…</option>
                 {familias.map((f) => <option key={f.codigo} value={f.codigo}>{f.rotulo} — {f.codigo}</option>)}
@@ -532,7 +559,13 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         </Field>
       </Secao>}
 
-      {aba === "geral" && liberado && <Secao chave="geral">
+      {aba === "geral" && liberado && documentoEstoque && <Secao chave="geral" ajuda={AJUDA_GERAL_DOCUMENTO_ESTOQUE}>
+        <CampoSimNao rotulo="Exigir observação" testId="top-campo-geral-observacao" valor={rascunho.configuracao.geral.exigeObservacao}
+          onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeObservacao: v } }))} />
+        <ErrosDeCampo erros={errosCampo} prefixos={["geral"]} />
+      </Secao>}
+
+      {aba === "geral" && liberado && !documentoEstoque && <Secao chave="geral">
         <CampoEnum rotulo="Confirmação" testId="top-campo-geral-confirmacao" valor={rascunho.configuracao.geral.confirmacao}
           opcoes={MODOS_CONFIRMACAO} rotulos={ROTULOS_TOP.confirmacao}
           ajuda="Quem dispara a confirmação do documento."
@@ -584,7 +617,16 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         </div>
       </Secao>}
 
-      {aba === "estoque" && liberado && <Secao chave="estoque">
+      {aba === "estoque" && liberado && documentoEstoque && <Secao chave="estoque" ajuda={AJUDA_ESTOQUE_DOCUMENTO_ESTOQUE}>
+        <p data-testid="top-estoque-definido-pela-especie" className="col-span-12 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] leading-relaxed text-slate-700">
+          O movimento é definido pela espécie: a entrada põe a quantidade no armazém pelo custo informado, a saída a tira
+          pelo custo médio, a transferência a tira da origem e a põe no destino com o mesmo custo, e o ajuste leva o saldo
+          à quantidade contada. O saldo só muda quando o documento é confirmado. Esta operação dá ao documento o nome, a
+          operação padrão da espécie e a versão congelada; ela não decide a movimentação.
+        </p>
+      </Secao>}
+
+      {aba === "estoque" && liberado && !documentoEstoque && <Secao chave="estoque">
         <CampoEnum rotulo="Movimentação" testId="top-campo-estoque-atualizacao" valor={rascunho.configuracao.estoque.atualizacao}
           opcoes={ATUALIZACOES_ESTOQUE} rotulos={ROTULOS_TOP.estoqueAtualizacao}
           ajuda="O sentido do efeito declarado. Sem movimentação, os demais campos desta seção não decidem nada."
