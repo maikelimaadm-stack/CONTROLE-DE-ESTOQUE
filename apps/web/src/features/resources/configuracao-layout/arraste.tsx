@@ -9,8 +9,9 @@
  *  - o alvo é o `[data-alvo]` sob o ponteiro (`elementFromPoint`; o fantasma tem pointer-events: none), lido com
  *    `lerAlvo`, e a tela recebe a previsão de `props.prever`;
  *  - soltar com previsão válida chama `props.soltar` (UMA entrada na pilha) e marca o `pouso`; soltar fora de alvo, numa
- *    recusa, Esc, pointercancel e perder o foco da janela: nada muda. O clique que o navegador dispara depois de um
- *    arraste é engolido (não seleciona nada sem querer).
+ *    recusa, Esc, pointercancel DESTE ponteiro, menu de contexto, botão solto sem o pointerup chegar (fora da janela) e
+ *    perder o foco da janela: nada muda. O clique de ponteiro que o navegador dispara junto do pointerup que encerra um
+ *    arraste é engolido (não seleciona nada sem querer); clique de teclado (Enter, Espaço) nunca é.
  * O fantasma é uma cópia do item num portal em document.body; inclinação, pegada e largura seguem o `moverFn` do desenho.
  */
 import * as React from "react";
@@ -23,8 +24,6 @@ import { lerAlvo, type ApiArraste, type ItemArrastado, type Pouso, type Previsao
 const LIMIAR = 4;
 /** quanto o `pouso` fica marcado: a animação "pousa" do desenho dura --mo-set (340 ms) + folga */
 const DURACAO_DO_POUSO = 380;
-/** por quanto tempo o clique que vem depois do soltar é engolido */
-const JANELA_DO_CLIQUE = 400;
 /** inclinação de repouso do fantasma (graus), a do desenho */
 const ANGULO_DE_REPOUSO = -1.2;
 /** dentro do item, estes não começam arraste */
@@ -109,11 +108,14 @@ function criarMotor(s: Saidas) {
     relogioDoPouso = setTimeout(() => { relogioDoPouso = null; s.setPouso(null); }, DURACAO_DO_POUSO);
   };
 
-  /** o navegador dispara um click depois do pointerup: depois de um arraste ele não pode selecionar nada */
+  /**
+   * O navegador dispara o click no mesmo ciclo do pointerup: depois de um arraste ele não pode selecionar nada. Só o
+   * clique de PONTEIRO (detail > 0) é engolido, e a armadilha expira no fim do ciclo: Enter ou Espaço depois nunca somem.
+   */
   const engolirClique = () => {
     largarClique?.();
-    const engole = (e: MouseEvent) => { e.preventDefault(); e.stopPropagation(); largar(); };
-    const relogio = setTimeout(() => largar(), JANELA_DO_CLIQUE);
+    const engole = (e: MouseEvent) => { if (e.detail === 0) return; e.preventDefault(); e.stopPropagation(); largar(); };
+    const relogio = setTimeout(() => largar(), 0);
     const largar = () => {
       clearTimeout(relogio);
       window.removeEventListener("click", engole, true);
@@ -136,7 +138,8 @@ function criarMotor(s: Saidas) {
   const desligar = () => {
     document.removeEventListener("pointermove", aoMover, true);
     document.removeEventListener("pointerup", aoSoltar, true);
-    document.removeEventListener("pointercancel", aoInterromper, true);
+    document.removeEventListener("pointercancel", aoCancelarPonteiro, true);
+    document.removeEventListener("contextmenu", aoInterromper, true);
     document.removeEventListener("dragstart", aoArrastoNativo, true);
     document.removeEventListener("scroll", aoRolar, true);
     window.removeEventListener("keydown", aoTeclar, true);
@@ -145,7 +148,8 @@ function criarMotor(s: Saidas) {
   const ligar = () => {
     document.addEventListener("pointermove", aoMover, true);
     document.addEventListener("pointerup", aoSoltar, true);
-    document.addEventListener("pointercancel", aoInterromper, true);
+    document.addEventListener("pointercancel", aoCancelarPonteiro, true);
+    document.addEventListener("contextmenu", aoInterromper, true);
     document.addEventListener("dragstart", aoArrastoNativo, true);
     document.addEventListener("scroll", aoRolar, true);
     window.addEventListener("keydown", aoTeclar, true);
@@ -187,7 +191,10 @@ function criarMotor(s: Saidas) {
 
   function aoMover(e: PointerEvent) {
     const atual = sessao;
-    if (!atual || e.pointerId !== atual.ponteiro || atual.fase === "cancelada") return;
+    if (!atual || e.pointerId !== atual.ponteiro) return;
+    // o botão principal já não está apertado: o pointerup se perdeu (solto fora da janela, menu de contexto) — cancela
+    if ((e.buttons & 1) === 0) { encerrar(); return; }
+    if (atual.fase === "cancelada") return;
     atual.px = e.clientX;
     atual.py = e.clientY;
     if (atual.fase === "espera") {
@@ -229,8 +236,11 @@ function criarMotor(s: Saidas) {
   /** a área das linhas (ou a lista da coluna) rolou com o item na mão: o que está sob o ponteiro mudou */
   function aoRolar() { if (sessao?.fase === "arrastando") mirar(sessao, sessao.px, sessao.py); }
 
-  /** pointercancel e a janela perdendo o foco: nada muda e nenhum clique vem depois */
+  /** menu de contexto e a janela perdendo o foco: nada muda e nenhum clique vem depois */
   function aoInterromper() { if (sessao) encerrar(); }
+
+  /** pointercancel só vale para o ponteiro do arraste em curso (outro dedo, outra caneta não cancelam nada) */
+  function aoCancelarPonteiro(e: PointerEvent) { if (sessao && e.pointerId === sessao.ponteiro) encerrar(); }
 
   /** texto já selecionado ou imagem dentro do item não abrem o arrastar nativo por cima do nosso */
   function aoArrastoNativo(e: DragEvent) { e.preventDefault(); }
