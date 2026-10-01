@@ -122,7 +122,8 @@ export async function adicionarItemNaCentral(page: Page) {
  *
  * O CONTRATO não muda: sem o par, nada é gravado. Muda a APRESENTAÇÃO: o Salvar fica HABILITADO (há alteração), e o
  * clique não envia NADA — ZERO POST para `/api/sales/` — e a pílula "N pendências" lista o que falta. `faltando`
- * diz quais dos dois rótulos TÊM de estar na lista; o outro, já escolhido, NÃO pode estar. As requisições são
+ * diz quais dos dois TÊM de estar na lista (achados pelo `data-caminho`: categoria_financeira_id, centro_custo_id);
+ * o outro, já escolhido, NÃO pode estar. As requisições são
  * contadas no fio (`request`), não deduzidas da tela. Fecha a lista ao sair, para o passo seguinte achar a página
  * como antes do clique.
  */
@@ -147,9 +148,12 @@ export async function salvarSemClassificacaoNaoEnvia(
     if ((await pilula.getAttribute("aria-expanded")) !== "true") await pilula.click();
     const lista = page.getByTestId("central-vendas-pendencias-lista");
     await expect(lista).toBeVisible();
-    for (const rotulo of ["Natureza", "Centro de resultado"] as const) {
-      await expect(lista.getByTestId("central-vendas-pendencia").filter({ hasText: rotulo }),
-        `${motivo}: ${rotulo} ${faltando.includes(rotulo) ? "é" : "não é"} pendência`).toHaveCount(faltando.includes(rotulo) ? 1 : 0);
+    // a pendência é achada pelo CAMINHO do campo (o mesmo dos erros), e o rótulo visível é conferido junto
+    for (const [rotulo, caminho] of [["Natureza", "categoria_financeira_id"], ["Centro de resultado", "centro_custo_id"]] as const) {
+      const pendencia = lista.locator(`[data-testid="central-vendas-pendencia"][data-caminho="${caminho}"]`);
+      const falta = faltando.includes(rotulo);
+      await expect(pendencia, `${motivo}: ${rotulo} ${falta ? "é" : "não é"} pendência`).toHaveCount(falta ? 1 : 0);
+      if (falta) await expect(pendencia, `${motivo}: a pendência diz o nome do campo`).toContainText(rotulo);
     }
     await page.waitForTimeout(300);
     expect(posts, `${motivo}: ZERO POST — sem o par nada é gravado`).toEqual([]);
