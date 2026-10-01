@@ -6,7 +6,7 @@ import {
 } from "@agro/domain";
 import { fromPgError } from "../../src/lib/errors.js";
 import {
-  c, iniciar, encerrar, cfg3, cfg4, top, produto, produtoComSaldo, saldoInicial, saldo, usuario, escopos, seg, lancarEstoque, estoqueLancado,
+  c, iniciar, encerrar, cfg3, cfg4, top, versaoDireta, produto, produtoComSaldo, saldoInicial, saldo, usuario, escopos, seg, lancarEstoque, estoqueLancado,
   confirmarEstoque, previaEstoque, aprovar, reprovar, fila, movimentosDe, erro, j, unico, DATA,
   itemVenda, corpoVenda, vendaLancada, confirmarVenda, titulosDe, situacaoNoBanco, auditoriaDe,
   type Hdr, type Resposta, type ItemEstoque, type Erro,
@@ -62,23 +62,6 @@ const top4 = (e: EspecieEstoque, ajuste?: Ajuste) => top(`estoque.${e}`, { confi
 const AUTOMATICA: Ajuste = (x) => { x.geral.confirmacao = "automatica"; };
 const SEMPRE: Ajuste = (x) => { x.aprovacao.politica = "sempre"; };
 const AUTOMATICA_E_SEMPRE: Ajuste = (x) => { AUTOMATICA(x); SEMPRE(x); };
-
-/**
- * Uma versão NOVA da TOP escrita DIRETO NO BANCO (superusuário), e já tornada a corrente: o único jeito de ter uma
- * versão que a porta administrativa recusaria (a matriz da família, ou o leitor estrito). A coluna e o payload
- * concordam no número do formato (o CHECK da 0022). Devolve o id da versão nova.
- */
-async function versaoDireta(topId: string, configuracao: object): Promise<string> {
-  const v = (await c.admin.query<{ id: string; versao: number }>(
-    `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, configuracao, configuracao_schema_version)
-     select v.organization_id, v.tipo_operacao_id, v.versao + 1, v.nome, $2::jsonb, ($2::jsonb ->> 'versaoSchema')::int
-       from erp.tipos_operacao_versoes v join erp.tipos_operacao t on t.id = v.tipo_operacao_id and t.versao_atual = v.versao
-      where t.id = $1
-     returning id, versao`, [topId, JSON.stringify(configuracao)])).rows[0]!;
-  const u = await c.admin.query("update erp.tipos_operacao set versao_atual = $2 where id = $1", [topId, v.versao]);
-  expect(u.rowCount, "premissa: a versão direta virou a corrente").toBe(1);
-  return v.id;
-}
 
 // ─────────────── o documento ───────────────
 

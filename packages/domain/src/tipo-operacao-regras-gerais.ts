@@ -348,9 +348,14 @@ const REGRAS_NEUTRAS = (): RegrasGeraisDaVersao => ({ confirmacaoAutomatica: fal
  * corrente da TOP. A ordem das perguntas é a regra:
  *   1. sem versão congelada              → neutro (documento sem TOP);
  *   2. formato desconhecido              → `configuracao_ilegivel` (ninguém sabe o que ela decidiu);
- *   3. formato 1, 2 ou 3                 → neutro, SEM LER AS SEÇÕES (o corte da decisão 277);
- *   4. formato 4 malformado              → `configuracao_ilegivel`;
+ *   3. formato 4 malformado              → `configuracao_ilegivel`;
+ *   4. formato 1, 2 ou 3                 → neutro (o corte da decisão 277); malformada também é neutro, porque a
+ *                                          leitura das seções de uma versão que nunca executou não pode virar
+ *                                          recusa nova;
  *   5. formato 4                         → o que ela diz, COMO ELA DIZ.
+ * O PORTÃO É UM SÓ: executa a versão que `regrasGeraisExecutamTop` aceita, o mesmo predicado da gravação, para que
+ * "só o formato 4 executa" tenha um dono só. O número do formato decide apenas o destino de quem NÃO executa: a que
+ * se declarou 4 e não saiu da leitura como 4 é ilegível (nunca neutro); a de 1 a 3 é o corte, neutro.
  * A matriz NÃO é aplicada aqui: ela é o portão da gravação, e a versão já gravada vale como foi gravada.
  * `codigoBase` viaja junto por ser a mesma entrada das políticas da venda e da compra; a execução não o lê.
  */
@@ -358,11 +363,11 @@ export function regrasGeraisDaVersaoTop(versao: { codigoBase: string; configurac
   if (!versao) return { ok: true, regras: REGRAS_NEUTRAS() };
   const formato = versaoSchemaDaConfiguracaoTop(versao.configuracao);
   if (formato === null) return { ok: false, motivo: "configuracao_ilegivel" };
-  if (formato !== VERSAO_SCHEMA_CONFIGURACAO_TOP_V4) return { ok: true, regras: REGRAS_NEUTRAS() };
 
   const lida = lerConfiguracaoTop(versao.configuracao);
-  // Ler o formato 4 e receber outro formato seria a leitura perdendo o 4 no caminho: ilegível, nunca neutro.
-  if (!lida.ok || !regrasGeraisExecutamTop(lida.valor)) return { ok: false, motivo: "configuracao_ilegivel" };
+  if (!lida.ok || !regrasGeraisExecutamTop(lida.valor)) {
+    return formato === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4 ? { ok: false, motivo: "configuracao_ilegivel" } : { ok: true, regras: REGRAS_NEUTRAS() };
+  }
   const c = lida.valor;
 
   let aprovacao: RegrasGeraisDaVersao["aprovacao"] = null;

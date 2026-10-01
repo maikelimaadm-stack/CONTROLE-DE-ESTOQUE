@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { configuracaoNeutraTop, configuracaoNeutraTopV2, type ConfiguracaoTipoOperacaoV4 } from "@agro/domain";
 import { MSG_DOCUMENTO_MUDOU } from "../../src/routes/vendas-edicao-patch.js";
 import {
-  c, iniciar, encerrar, j, erro, unico, cfg3, cfg4, top, versaoAtualNoBanco, usuario, produto, produtoComSaldo, saldoInicial, saldo,
+  c, iniciar, encerrar, j, erro, unico, cfg3, cfg4, top, versaoAtualNoBanco, versaoDireta, usuario, produto, produtoComSaldo, saldoInicial, saldo,
   itemVenda, corpoVenda, lancarVenda, vendaLancada, editarVenda, patchVenda, confirmarVenda, lerVenda, converterVenda, versaoDaVenda,
   movimentosDe, titulosDe, situacaoNoBanco, auditoriaDe, decisoesDe,
   type Resposta, type Erro, type Hdr, type ItemVenda,
@@ -537,6 +537,32 @@ describe("CA-9 o corte: versão no formato 3 com 'automatica' gravado (como prod
       expect((await confirmarVenda(venda)).statusCode).toBe(200);
       await esperarConfirmada(venda, { saidas: [[p.id, "1"]], total: "10.00" });
     }
+  });
+
+  it("CA-9b a versão formato 3 'Automática' gravada DIRETO NO BANCO (sem passar pela porta administrativa) → POST e PATCH não confirmam; o /confirm manual confirma", async () => {
+    // O corte medido SÓ na execução: a versão não nasce pelo cadastro da TOP, então a recusa (ou o aceite) dela
+    // ali não entra na conta. Se a execução decidir pelo número do formato por conta própria, em vez do predicado
+    // único do domínio, ou se o predicado abrir para o formato 3, a venda confirma e este caso fica vermelho.
+    const topId = await topVenda(cfg4());
+    await versaoDireta(topId, comoProducao());
+    const v3 = await versaoAtualNoBanco(topId);
+    expect([v3.configuracao_schema_version, (v3.configuracao.geral as Record<string, unknown>).confirmacao], "premissa: a corrente é a formato 3 'Automática'")
+      .toEqual([3, "automatica"]);
+    const p = await produtoComSaldo("20");
+    const base = corpoVenda([itemVenda(p.id, "1", "10.00")], { tipo_operacao_id: topId });
+
+    const r = await lancarVenda(base);
+    expect(r.statusCode, r.body).toBe(201);
+    const id = corpo(r).id;
+    expect(Object.keys(corpo(r)), "POST: o corpo de hoje").toEqual(CHAVES_DO_POST);
+    const patch = await patchVenda(id, { version: await versaoDaVenda(id), note: "patch" });
+    expect(patch.statusCode, patch.body).toBe(200);
+    expect(corpo(patch), "PATCH").not.toHaveProperty("confirmacaoAutomatica");
+    expect(await semEfeito(id), "nenhum caminho confirmou").toEqual(["open", 0, 0, 0]);
+    expect(await saldo(p.id), "nada saiu").toBe("20.0000");
+    // PREMISSA: a venda é confirmável — a manual a confirma.
+    expect((await confirmarVenda(id)).statusCode).toBe(200);
+    await esperarConfirmada(id, { saidas: [[p.id, "1"]], total: "10.00" });
   });
 });
 
