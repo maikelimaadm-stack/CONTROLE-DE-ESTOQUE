@@ -1,0 +1,656 @@
+/*
+ * CONFIGURAÇÃO DE LAYOUT — faixa de painéis, faixa de cards, linhas e campos (VISUAL-UX-03, decisão 275).
+ *
+ * As medidas saem do CSS do desenho, camada "CONFIGURAÇÃO DE LAYOUT" (`.tabs`, `.tab`, `.bd`, `.tabw`, `.tabgap`, `.tg-in`,
+ * `.nav`, `.fix`, `.ib`, `.ib.novo`, `.rm`, `.subtabs`, `.subrol`, `.sbt`, `.ren`, `.panel`, `.lrow`, `.lrh`, `.lrh-t`, `.cap`,
+ * `.lrb`, `.chw`, `.gap`, `.ch`, `.ch-t`, `.ch-l`, `.ch-r`, `.mk`, `.chg`, `.dchip-x`, `.slot`, `.preench`, `.fim`, `.addrow`),
+ * com o estilo CALCULADO valendo sobre a regra: a lixeira mede 22 px (a regra de densidade vence os 26 px da base), a
+ * pílula do contador é redonda (a regra posterior vence os 5 px), e o "+ Campo" tem o padding de botão do navegador (1 6).
+ *
+ * A RÉGUA da linha é a do desenho: o corpo é uma linha flex; cada campo mora num envoltório de base 0 que cresce 1 e
+ * leva, antes do campo, um vão de 8 px; depois do último vem um vão de 8 px; o "+ Campo" é um botão de base 0 que cresce
+ * 1 (e soma os 14 px do próprio padding e borda); a sobra cresce o que falta para o limite. Coluna = (largura do corpo −
+ * 8 − 14) ÷ limite: o campo mede uma coluna − 8, o "+ Campo" uma coluna + 14, e a sobra guarda as colunas vazias.
+ *
+ * Movimento com as variáveis herdadas da raiz (pagina.module.css); os @keyframes valem só neste arquivo.
+ */
+
+/* ═════════════ faixa de painéis (`.tabs` com `border-style: none` em linha) ═════════════ */
+.faixaPaineis {
+  position: relative;
+  height: 38px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 10px 0 8px;
+  background: #fbfcfd;
+  min-width: 0;
+  line-height: normal;
+}
+/* a faixa não empurra o + nem a lixeira: ela corta na horizontal. O desenho corta com `overflow: hidden` na faixa
+   inteira e assim esconde as dicas dos botões; aqui só a rolagem corta, e só na horizontal (as dicas aparecem). */
+.rolagemPaineis {
+  position: relative;
+  flex-grow: 1;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  overflow-x: clip;
+  overflow-y: visible;
+}
+.envoltorioAba { display: inline-flex; align-items: stretch; height: 100%; flex-shrink: 0; }
+/* fora da janela das setas: sai do fluxo, mas continua medível (a janela é calculada pela largura real) */
+.foraDaJanela { position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none; }
+
+.aba {
+  height: 100%;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #64748b;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--mi) cubic-bezier(.4, 0, .2, 1), color var(--mi) cubic-bezier(.4, 0, .2, 1), border-color var(--mi) cubic-bezier(.4, 0, .2, 1), box-shadow var(--mi) cubic-bezier(.4, 0, .2, 1), opacity var(--mi) cubic-bezier(.4, 0, .2, 1), transform var(--mf) cubic-bezier(.4, 0, .2, 1);
+}
+.aba:hover { color: #1e293b; }
+.aba[aria-selected="true"],
+.aba.abaRenomeando { color: #15803d; font-weight: 600; border-bottom-color: #22a85c; }
+/* a aba em renomear (`<span class="tab on" style="padding: 0 6px">`): o span é content-box, mede 38 + 2 e a caixa fica
+   centrada nos 38; o traço cai nos 2 px de baixo, que a faixa do desenho corta (invisível). Aqui a faixa não corta na
+   vertical (por causa das dicas), então o traço do span fica transparente — o que se vê é o mesmo. */
+.aba.abaRenomeando { box-sizing: content-box; padding: 0 6px; border-bottom-color: transparent; }
+
+/* contador de campos do painel (`.bd` + `.t-plain` / `.t-positive`) */
+.contador {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  background: #f1f5f9;
+  color: #334155;
+}
+.aba[aria-selected="true"] .contador { background: #dcfce7; color: #166534; }
+
+/* vão verde de aba e pílula (`.tabgap` / `.tg-in`): fechado não ocupa nada; aberto mostra o nome */
+.vaoFaixa {
+  flex-shrink: 0;
+  flex-basis: auto;
+  align-self: center;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+}
+.vaoFaixaInterno {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  width: 0;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0 dashed transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #15803d;
+  font-size: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: width var(--mo-set) cubic-bezier(.34, 1.36, .5, 1), padding var(--mo-set) cubic-bezier(.34, 1.36, .5, 1), margin var(--mo-set) cubic-bezier(.34, 1.36, .5, 1), background var(--mi), border-color var(--mi), font-size var(--mi);
+}
+.vaoFaixaQuente > .vaoFaixaInterno {
+  width: auto;
+  margin: 0 4px;
+  padding: 0 10px;
+  border: 2px dashed #22a85c;
+  background: #eafcf0;
+  font-size: 12px;
+  animation: respira 1.9s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+
+/* setas (`.nav` + `.ib.sm`) e o grupo da direita (`.fix`) */
+.nav { display: flex; align-items: center; flex-shrink: 0; }
+.navEsq { padding-right: 8px; }
+.navDir { padding-left: 8px; }
+.fixo {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 8px;
+  border-left: 1px solid #eef1f4;
+  margin-left: 8px;
+}
+
+/* botão redondo de 25 px (`.ib`): setas e largura do card */
+.botaoRedondo {
+  width: 25px;
+  height: 25px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: #f1f3f4;
+  color: #475569;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background-color var(--mi) cubic-bezier(.4, 0, .2, 1), color var(--mi) cubic-bezier(.4, 0, .2, 1), border-color var(--mi) cubic-bezier(.4, 0, .2, 1), box-shadow var(--mi) cubic-bezier(.4, 0, .2, 1), opacity var(--mi) cubic-bezier(.4, 0, .2, 1), transform var(--mf) cubic-bezier(.4, 0, .2, 1);
+}
+.botaoRedondo:hover:not(:disabled) { background: #e5e7eb; color: #0f172a; box-shadow: 0 3px 9px rgba(34, 197, 94, .36); }
+.botaoRedondo:disabled { opacity: .45; cursor: not-allowed; }
+.botaoRedondo:active:not(:disabled) { transform: scale(.90); }
+/* o + verde (`.ib.novo`) */
+.botaoNovo { background: #40de63; color: #fff; border: 1px solid transparent; box-shadow: none; }
+.botaoNovo:hover:not(:disabled) { background: #35cf56; color: #fff; box-shadow: 0 0 0 3px rgba(64, 222, 99, .22); }
+.botaoNovo:active:not(:disabled) { background: #2fbd4d; box-shadow: 0 0 0 2px rgba(64, 222, 99, .3); }
+.botaoNovo:disabled { background: #cfe9d6; color: #fff; box-shadow: none; }
+
+/* lixeira (`.rm`, 22 px na densidade da tela). Desabilitada parece desabilitada (item i): sem o hover vermelho. */
+.lixeira {
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background-color var(--mi) cubic-bezier(.4, 0, .2, 1), color var(--mi) cubic-bezier(.4, 0, .2, 1), border-color var(--mi) cubic-bezier(.4, 0, .2, 1), box-shadow var(--mi) cubic-bezier(.4, 0, .2, 1), opacity var(--mi) cubic-bezier(.4, 0, .2, 1), transform var(--mf) cubic-bezier(.4, 0, .2, 1);
+}
+.lixeira:hover:not(:disabled) { background: #fef2f2; color: #b91c1c; }
+.lixeira:active:not(:disabled) { transform: scale(.90); }
+.lixeira:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ═════════════ faixa de cards (`.subtabs`: 34 px + a borda) ═════════════ */
+.faixaCards {
+  position: relative;
+  box-sizing: content-box;
+  height: 34px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 16px;
+  border-bottom: 1px solid #f1f4f6;
+  background: #fff;
+  min-width: 0;
+  line-height: normal;
+}
+.rolagemCards {
+  position: relative;
+  flex-grow: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: clip;
+  overflow-y: visible;
+}
+.pilula {
+  height: 23px;
+  box-sizing: border-box;
+  padding: 0 11px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: #f4f6f7;
+  color: #6b7280;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.pilula:hover { background: #eceff1; color: #1e293b; }
+.pilula[aria-selected="true"] { border-color: rgba(64, 222, 99, .38); background: rgba(64, 222, 99, .12); color: #15803d; font-weight: 600; }
+.pilulaMeta { color: #94a3b8; font-weight: 500; }
+
+/* ═════════════ renomear na própria aba (`.ren` / `.ren.rensm`) ═════════════ */
+.renomear {
+  height: 22px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid #cfd6de;
+  border-radius: 6px;
+  background: #fff;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #111827;
+  outline: none;
+  min-width: 70px;
+  max-width: 280px;
+}
+.renomear:focus { border-color: #40de63; box-shadow: 0 0 0 2px rgba(64, 222, 99, .22); }
+.renomearCard { height: 20px; font-size: 11.5px; font-weight: 500; }
+/* a caixa fica fora do tablist (acessibilidade), por cima do marcador que guarda o lugar dela na faixa: o marcador mede
+   o mesmo que a caixa e está onde o desenho põe o input (na aba, padding 0 6 e centrado; no card, no lugar da pílula) */
+.renomearFlutuante { position: absolute; z-index: 2; }
+.marcadorRenomear { display: block; flex-shrink: 0; height: 22px; }
+.marcadorRenomearCard { display: block; flex-shrink: 0; height: 20px; }
+
+/* ═════════════ área das linhas (`.panel` com padding 12 16 14 em linha) ═════════════ */
+/* rola na vertical; na horizontal corta (no desenho `overflow: auto` nos dois eixos: a dica do botão da direita abre
+   uma barra de rolagem horizontal enquanto o mouse está em cima) */
+.areaLinhas {
+  flex-grow: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 12px 16px 14px;
+  line-height: normal;
+}
+.areaLinhas > * { animation: fadeIn var(--mi) cubic-bezier(.4, 0, .2, 1) backwards; }
+
+/* linha (`.lrow`) */
+.linha {
+  position: relative;
+  border: 1px solid #e7eaee;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .03);
+  margin-bottom: 10px;
+  transition: border-color var(--mf), box-shadow var(--mf), background var(--mf);
+}
+.linha:hover { border-color: #dbe2e9; box-shadow: 0 2px 8px rgba(15, 23, 42, .05); }
+/* alvo de soltar (`.lrow.over`) — e a linha marcada pelo "+ Campo" */
+.linha[data-alvo-ativo],
+.linha[data-marcada] {
+  border-color: #40de63;
+  background: #f9fefb;
+  box-shadow: 0 0 0 3px rgba(64, 222, 99, .16), 0 4px 14px rgba(34, 197, 94, .14);
+  transition: border-color var(--mi), background var(--mi), box-shadow var(--mo) cubic-bezier(.16, 1, .3, 1);
+}
+.linha[data-pousa] { animation: pousa var(--mo-set) cubic-bezier(.16, 1, .3, 1); }
+/* linha arrastada: o traço verde acima da linha de destino (`.lrow.destino::before`) */
+.tracoLinha {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -7px;
+  height: 3px;
+  border-radius: 999px;
+  background: #22a85c;
+  box-shadow: 0 0 0 3px rgba(64, 222, 99, .25);
+  pointer-events: none;
+  animation: fadeIn var(--mi) cubic-bezier(.16, 1, .3, 1);
+}
+
+/* cabeçalho (`.lrh`) */
+.cabecaLinha {
+  height: 32px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 0 11px;
+  border-bottom: 1px solid #f4f6f8;
+}
+/* agarrar só onde algo arrasta: na consulta o cabeçalho fica com o cursor normal (o desenho calcula grab nos dois modos) */
+.emEdicao .cabecaLinha { cursor: grab; }
+.emEdicao .cabecaLinha:hover { background: #fbfcfd; }
+.emEdicao .cabecaLinha:active { cursor: grabbing; }
+.tituloLinha { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #8492a3; flex-shrink: 0; }
+.espaco { flex-grow: 1; }
+/* x/y (`.cap`, redondo pela regra posterior) */
+.contadorLinha {
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 15px;
+  font-variant-numeric: tabular-nums;
+  background: #f1f5f9;
+  color: #64748b;
+}
+.contadorUmaVaga { background: #fef3c7; color: #92400e; }
+.contadorCheio { background: #dcfce7; color: #166534; }
+
+/* corpo (`.lrb`): a régua */
+.corpoLinha { display: flex; align-items: stretch; padding: 9px 10px; flex-wrap: nowrap; }
+.envoltorioCampo {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  flex-basis: 0;
+  transition: flex-grow var(--mo-set) cubic-bezier(.34, 1.36, .5, 1);
+}
+/* vão de 8 px antes de cada campo e no fim (`.gap`); aberto (`.gap.hot`) é o lugar onde o item entra */
+.vao {
+  flex-shrink: 0;
+  flex-basis: 8px;
+  align-self: stretch;
+  box-sizing: border-box;
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12px;
+  transition: flex-basis var(--mo-set) cubic-bezier(.34, 1.36, .5, 1), flex-grow var(--mo-set) cubic-bezier(.34, 1.36, .5, 1), background var(--mi), border-color var(--mi);
+}
+.vao > span {
+  opacity: 0;
+  transform: scale(.88);
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: opacity var(--mi) cubic-bezier(.16, 1, .3, 1), transform var(--mo) cubic-bezier(.34, 1.36, .5, 1);
+}
+.vaoQuente > span { opacity: 1; transform: none; }
+.vaoQuente {
+  flex-basis: 0;
+  min-width: 58px;
+  align-self: center;
+  height: 30px;
+  border: 2px dashed #22a85c;
+  background: #eafcf0;
+  color: #15803d;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 9px;
+  animation: respira 1.9s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+/* a sobra guarda as colunas que ainda não têm campo (`.preench`) */
+.sobra { flex-basis: 0; flex-shrink: 0; align-self: stretch; transition: flex-grow var(--mo-set) cubic-bezier(.34, 1.36, .5, 1); }
+
+/* caixa do campo: o campo e, por cima da ponta direita dele, o ⚙ e o × (irmãos, fora do botão do campo) */
+.caixaCampo { position: relative; display: flex; align-items: stretch; flex: 1 1 0; min-width: 0; }
+
+/* campo (`.ch`) */
+.campo {
+  position: relative;
+  min-width: 0;
+  flex-basis: 0;
+  box-sizing: border-box;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  border: 1px solid #e7ebef;
+  background: #f4f6f7;
+  padding: 0 4px 0 9px;
+  transition: border-color var(--mi), background var(--mi), box-shadow var(--mi), flex-grow var(--mo-set) cubic-bezier(.34, 1.36, .5, 1);
+}
+.campo[data-obrigatorio] { padding-left: 13px; }
+.campo[data-obrigatorio]::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 999px;
+  background: #dc2626;
+}
+.campo[data-selecionado] { border-color: #40de63; background: #fff; box-shadow: 0 0 0 2px rgba(64, 222, 99, .22), 0 3px 10px rgba(15, 23, 42, .08); }
+.emEdicao .campo { cursor: grab; }
+/* hover (`.ed .ch:hover`, 0-3-0): vale também com o ponteiro no ⚙ e no × e com o foco de teclado na caixa */
+:where(.emEdicao) .caixaCampo:hover > .campo,
+:where(.emEdicao) .caixaCampo:has(:focus-visible) > .campo { border-color: #c6d0da; background: #fff; box-shadow: 0 2px 8px rgba(15, 23, 42, .08); }
+.emEdicao .campo:active { cursor: grabbing; }
+.campoTexto { display: flex; align-items: center; gap: 4px; min-width: 0; flex-grow: 1; }
+.campoRotulo { min-width: 0; font-size: 12px; font-weight: 500; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asterisco { color: #dc2626; font-size: 16px; font-weight: 700; flex-shrink: 0; line-height: 1; }
+.campo[data-pousa] { animation: pousa var(--mo-set) cubic-bezier(.16, 1, .3, 1); }
+.marca { flex-shrink: 0; display: inline-flex; align-items: center; color: #94a3b8; }
+
+/* ⚙ (`.chg`) e × (`.dchip-x`) — decisão do Maike: não ocupam espaço no campo. Ficam POR CIMA da ponta direita, na
+   mesma posição do desenho (× a 9 px da borda de fora: 1 da borda + 4 do padding + 4 da margem; ⚙ 6 px antes dele),
+   sobre o fundo branco do hover, e aparecem no hover e no foco; o rótulo usa a largura inteira quando não estão. */
+.acoesCampo {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 6px;
+  border-radius: 0 7px 7px 0;
+  background: linear-gradient(to right, rgba(255, 255, 255, 0), #fff 6px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms;
+}
+.caixaCampo:hover > .acoesCampo,
+.caixaCampo:has(:focus-visible) > .acoesCampo,
+.acoesCampo.acoesComInspetor { opacity: 1; }
+/* só os dois botões recebem o ponteiro: o fundo branco, as folgas e o vão entre eles continuam sendo o campo (selecionar
+   e arrastar); com o inspetor aberto e sem hover, só o ⚙ verde, que é o único à vista */
+.caixaCampo:hover > .acoesCampo > button,
+.caixaCampo:has(:focus-visible) > .acoesCampo > button,
+.acoesCampo.acoesComInspetor > .botaoPropriedades { pointer-events: auto; }
+.botaoPropriedades,
+.botaoTirar {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #a7b0bb;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0;
+}
+.botaoPropriedades { transition: opacity 120ms, background var(--mi), color var(--mi); }
+.botaoTirar {
+  margin-right: 4px;
+  transition: background-color var(--mi) cubic-bezier(.4, 0, .2, 1), color var(--mi) cubic-bezier(.4, 0, .2, 1), border-color var(--mi) cubic-bezier(.4, 0, .2, 1), box-shadow var(--mi) cubic-bezier(.4, 0, .2, 1), opacity var(--mi) cubic-bezier(.4, 0, .2, 1), transform var(--mf) cubic-bezier(.4, 0, .2, 1);
+}
+.botaoTirar:hover { background: #eef1f4; color: #0f172a; }
+.botaoTirar:disabled { cursor: not-allowed; }
+.caixaCampo:hover .botaoTirar,
+.caixaCampo:has(:focus-visible) .botaoTirar { opacity: 1; }
+/* o × do campo do sistema (desabilitado) só aparece junto, a .25 */
+.caixaCampo:hover .botaoTirar:disabled,
+.caixaCampo:has(:focus-visible) .botaoTirar:disabled { opacity: .25; }
+.botaoPropriedades:hover { background: #eef1f4; color: #0f172a; }
+.caixaCampo:hover .botaoPropriedades,
+.caixaCampo:has(:focus-visible) .botaoPropriedades { opacity: 1; }
+/* ⚙ do campo com o inspetor aberto (`.chg.ativo`, que vem depois do hover e vence) */
+.botaoPropriedades.botaoPropriedadesAtivo { opacity: 1; background: #eafcf0; color: #15803d; }
+/* inspetor aberto (`.ch.cfgon`), oculto e somente leitura */
+.campo[data-inspetor] { border-color: #40de63; box-shadow: 0 0 0 2px rgba(64, 222, 99, .18); }
+.campo[data-oculto] { opacity: .55; border-style: dashed; }
+.campo[data-somente-leitura] .campoRotulo { color: #5b6875; }
+
+/* troca na linha cheia (`.ch.troca`, 0-2-0): como no desenho, o hover do campo (`.emEdicao .campo:hover`, 0-3-0) vence a
+   borda e o fundo com o ponteiro em cima (borda calculada #c6d0da); a recusa (`.ch.troca.nao`, 0-3-0, depois) vence o hover */
+.campo[data-troca] {
+  border-color: #40de63;
+  background: #fff;
+  transform: translateY(-3px) scale(1.025);
+  z-index: 3;
+  animation: trocaPulso 1.5s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+.campo[data-troca] .campoRotulo { font-weight: 600; color: #0f172a; }
+.campo[data-troca]::after {
+  content: "\2194";
+  position: absolute;
+  right: -7px;
+  top: -9px;
+  z-index: 70;
+  width: 19px;
+  height: 19px;
+  border-radius: 999px;
+  background: #22a85c;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 19px;
+  text-align: center;
+  box-shadow: 0 2px 7px rgba(15, 23, 42, .24);
+  animation: zoomIn var(--mo) cubic-bezier(.34, 1.36, .5, 1);
+}
+.areaLinhas .campo[data-troca="recusa"] {
+  border-color: #dc2626;
+  background: #fdf5f5;
+  animation: none;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, .18);
+  transform: none;
+}
+.areaLinhas .campo[data-troca="recusa"]::after { content: "\2715"; background: #dc2626; box-shadow: 0 2px 7px rgba(220, 38, 38, .3); }
+/* eco (`.ch.eco`): o lugar de origem mostra quem vem para cá */
+.areaLinhas .eco {
+  border-style: dashed;
+  border-color: #8fd9a5;
+  background: #f3fdf6;
+  cursor: default;
+  animation: zoomIn var(--mo) cubic-bezier(.34, 1.36, .5, 1);
+}
+.areaLinhas .eco .campoRotulo { color: #15803d; font-weight: 600; }
+
+/* "+ Campo" (`.slot`): uma coluna + o padding de botão do navegador */
+.maisCampo {
+  flex-shrink: 0;
+  flex-basis: 0;
+  min-width: 74px;
+  align-self: center;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 1px 6px;
+  border: 1px dashed #d7dee6;
+  border-radius: 8px;
+  background: #fbfcfd;
+  color: #9aa7b4;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: border-color var(--mf), color var(--mf), background var(--mf), flex-basis var(--mo) cubic-bezier(.16, 1, .3, 1);
+}
+.maisCampo:hover { border-color: #40de63; color: #15803d; background: #f7fef9; }
+
+/* depois da última linha (`.fim`): o traço do fim e o "Adicionar linha" */
+.fimLinhas {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 3px;
+  border-radius: 999px;
+  margin: -2px 0 10px;
+  background: transparent;
+  transition: background var(--mi);
+}
+.arrastando .fimLinhas { height: 16px; margin: -8px 0 6px; }
+.tracoFim {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: 999px;
+  background: #22a85c;
+  box-shadow: 0 0 0 3px rgba(64, 222, 99, .25);
+  pointer-events: none;
+}
+.adicionarLinha {
+  width: auto;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 14px;
+  margin-top: 2px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: #40de63;
+  color: #fff;
+  box-shadow: none;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: background var(--mf), box-shadow var(--mf);
+}
+.adicionarLinha:hover:not(:disabled) { background: #35cf56; color: #fff; box-shadow: 0 0 0 3px rgba(64, 222, 99, .22); }
+.adicionarLinha:active:not(:disabled) { background: #2fbd4d; box-shadow: 0 0 0 2px rgba(64, 222, 99, .3); }
+.adicionarLinha:disabled { background: #cfe9d6; color: #fff; box-shadow: none; }
+
+/* aba e pílula que acabaram de pousar (`.tabw.entrou`) */
+.aba[data-pousa],
+.pilula[data-pousa] { animation: pousa var(--mo-set) cubic-bezier(.16, 1, .3, 1); }
+
+.faixaPaineis svg,
+.faixaCards svg,
+.areaLinhas svg { flex-shrink: 0; }
+
+/* foco de teclado (o `button:focus-visible` / `input:focus-visible` da base do desenho; o campo segue o mesmo anel) */
+.faixaPaineis :is(button, input):focus-visible,
+.faixaCards :is(button, input):focus-visible,
+.areaLinhas :is(button, [role="button"]):focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+
+@keyframes respira {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(64, 222, 99, .15); }
+  50% { box-shadow: 0 0 0 6px rgba(64, 222, 99, .26); }
+}
+@keyframes trocaPulso {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(64, 222, 99, .45), 0 4px 14px rgba(15, 23, 42, .12); }
+  50% { box-shadow: 0 0 0 6px rgba(64, 222, 99, .2), 0 7px 20px rgba(15, 23, 42, .16); }
+}
+@keyframes pousa {
+  0% { transform: scale(.94); box-shadow: 0 0 0 0 rgba(64, 222, 99, .5); }
+  55% { transform: scale(1.018); box-shadow: 0 0 0 7px rgba(64, 222, 99, .16); }
+  100% { transform: none; box-shadow: 0 0 0 15px rgba(64, 222, 99, 0); }
+}
+@keyframes zoomIn {
+  from { opacity: 0; transform: scale(.965) translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* movimento reduzido: as variáveis já viram 1 ms na raiz; aqui param "respira" e "trocaPulso", a entrada das linhas
+   (como o desenho), o recuo do clique, e a única duração fixa deste arquivo (o ⚙) vai a 1 ms */
+@media (prefers-reduced-motion: reduce) {
+  .vaoQuente,
+  .vaoFaixaQuente > .vaoFaixaInterno,
+  .areaLinhas .campo[data-troca],
+  .areaLinhas > * { animation: none; }
+  .botaoPropriedades,
+  .acoesCampo { transition-duration: 1ms; }
+  .botaoRedondo:active:not(:disabled),
+  .lixeira:active:not(:disabled) { transform: none; }
+}
