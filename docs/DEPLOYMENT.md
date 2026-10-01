@@ -1728,12 +1728,12 @@ antes da reversão, pela automática ou depois de aprovado, continua confirmado,
 tabelas de aprovação NUNCA se apagam — são dado real (decisão 247); desligar as guardas ou a conta só com uma migration
 NOVA, por decisão do Maike — nunca editando a 0041. Nada de apagar dado de produção: documento se cancela, com estorno.
 
-**Merge depois de #84 e de #<Central de Compras>:** as decisões 275 (#84) e 276 (Central de Compras) ficam antes da 277
-na tabela, e esta fatia não edita nenhum arquivo da Central de Compras: os E2E dela (W-3, W-4) só leem os `data-testid`
-`central-vendas-*`, que o motor da Central mantém pelo prefixo — e rodam de novo depois de trazer a main com ela. As duas
-são F2, sem migration: nesta
-branch a contagem de migrations é 41 (a 0041 por último), e continua 41 depois de trazer a main com elas — quem entra
-depois roda os geradores e refaz a contagem.
+**Merge depois de #86 e de #87:** PR de número maior não entra antes da menor. A #84 (decisão 275) já está na main e foi
+trazida para esta branch. A #87 (Central de Compras, F2) só mexe em `apps/web`, e esta fatia não edita nenhum arquivo
+dela: os E2E daqui (W-3, W-4) só leem os `data-testid` `central-vendas-*`, que o motor da Central mantém pelo prefixo, e
+rodam de novo depois de trazer a main com ela. A #86 (F3) só mexe num teste de outra fatia e na linha dela no TESTING.
+Nenhuma das duas tem migration: nesta branch a contagem de migrations é 41 (a 0041 por último), e continua 41 depois de
+trazer a main com elas — quem entra depois roda os geradores e refaz a contagem.
 
 **Roteiro do Maike (cria TOPs e documentos reais; produção é operacional — decisões 240 e 247, nada é apagado):**
 1. Configurações › Usuários e Permissões › Perfis e Permissões: dar "Aprovar" (Vendas, Compras e as quatro espécies de
