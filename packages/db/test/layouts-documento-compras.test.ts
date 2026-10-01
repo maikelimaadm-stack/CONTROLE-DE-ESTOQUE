@@ -247,13 +247,16 @@ describe("0038 — sobre o acervo de layouts de venda, como o runner aplica", ()
     expect((await db.query("select 1 from pg_roles where rolname like 'c03r\\_%'")).rowCount).toBe(0);
   });
 
-  it("LB5 aplica: ledger com 38 (a 0038 por último), layouts e ligações idênticos, CHECK com as cinco famílias do domínio, gatilho intacto", async () => {
+  it("LB5 aplica: ledger com 38 (a 0038 por último NESTE banco), 39 no repositório (a 0039 depois dela), layouts e ligações idênticos, CHECK com as cinco famílias do domínio, gatilho intacto", async () => {
     await aplicar();
+    // Este arquivo sobe o banco só até a 0038: o ledger dele termina nela. O repositório já tem a 0039 (EDITAR-01),
+    // provada em editar-01-versao.test.ts.
     const ledger = (await db.query<{ n: number; ultima: string }>("select count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
     expect(ledger).toEqual({ n: 38, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
-    expect(noDisco.length, "38 migrations no repositório").toBe(38);
+    expect(noDisco.length, "39 migrations no repositório").toBe(39);
     expect(noDisco[37]).toBe(ALVO);
+    expect(noDisco[38], "a 0039 por último no repositório").toBe("0039_versao_do_documento_de_venda.sql");
     expect(await retrato(), "nenhuma linha de layout ou de ligação muda").toEqual(antes);
     expect(await familiasDoCheck()).toEqual(CINCO);
     // Uma lista só: o CHECK do banco é o conjunto do domínio — três de venda, duas de compra.

@@ -147,7 +147,7 @@ describe("estoque: ledger, documentos e concorrência", () => {
 describe("financeiro: títulos, baixas, movimentos, congelamento", () => {
   let titleId: string; let settlementId: string;
   it("cria título com rateio e parcelamento, baixa parcial e total, e rejeita excesso", async () => {
-    const r = await h.app.inject({ method: "POST", url: "/api/financial/payables", headers: h.headers(), payload: { empresa_id: I.empresa, number: "NF-777", person_id: I.provider, amount: "1000.00", emission_date: "2026-09-01", due_date: "2026-09-30", note: "Teste", apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "60" }, { financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "40" }] } });
+    const r = await h.app.inject({ method: "POST", url: "/api/financial/payables", headers: h.headers(), payload: { empresa_id: I.empresa, number: "NF-777", person_id: I.provider, amount: "1000.00", emission_date: "2026-09-01", due_date: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), note: "Teste", apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "60" }, { financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "40" }] } });
     expect(r.statusCode).toBe(201); titleId = j(r).id as string;
     const t = j(await h.app.inject({ method: "GET", url: `/api/financial/payables/${titleId}`, headers: h.headers() })) as { apportionments: { amount: string }[]; status_label: string };
     expect(t.apportionments.map((a) => a.amount)).toEqual(["600.00", "400.00"]); expect(t.status_label).toBe("A vencer");
