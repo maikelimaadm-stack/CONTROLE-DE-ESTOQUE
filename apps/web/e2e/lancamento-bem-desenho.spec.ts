@@ -34,7 +34,7 @@ test.describe("VISUAL-UX-04 — lançamento de bem/equipamento", () => {
     const form = page.locator(FORM);
     await expect(form).toHaveAttribute("data-densidade", "compacto");
     await expect(page.getByTestId("lancamento-bem-salvar")).toBeVisible();
-    await expect(page.getByTestId("lancamento-bem-descartar")).toBeVisible();
+    await expect(page.getByTestId("lancamento-bem-descartar")).toHaveCount(0);
     await expect(page.getByTestId("lancamento-bem-novo")).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-posicao-rotulo")).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-acoes-rapidas")).toBeVisible();
@@ -54,6 +54,15 @@ test.describe("VISUAL-UX-04 — lançamento de bem/equipamento", () => {
     }));
     expect(Math.abs(ladoALado[0]!.y - ladoALado[1]!.y), "primeiro e segundo campo na mesma linha").toBeLessThan(8);
     expect(ladoALado[1]!.x, "segundo campo à direita do primeiro").toBeGreaterThan(ladoALado[0]!.x + 40);
+    await expect(page.getByTestId("campo-code")).toHaveCount(0);
+    const mesmaLinha = async (a: string, b: string) => {
+      const ba = await page.getByTestId(a).boundingBox();
+      const bb = await page.getByTestId(b).boundingBox();
+      expect(Math.abs(ba!.y - bb!.y), `${a} e ${b} na mesma linha`).toBeLessThan(8);
+    };
+    await mesmaLinha("campo-description", "campo-empresa_id");
+    await mesmaLinha("campo-chassis", "campo-color");
+    await expect(page.getByTestId("campo-vehicle").locator("textarea")).toHaveValue("");
   });
 
   test("VB-2 troca de densidade é só de tela (compacto ↔ frente)", async ({ page }) => {

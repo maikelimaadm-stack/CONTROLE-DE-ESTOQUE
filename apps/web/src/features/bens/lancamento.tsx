@@ -105,6 +105,23 @@ export function CartaoDoBem({ label, children }: { label: string; children: Reac
   </div>;
 }
 
+/**
+ * Larguras do HTML (coluna de 12). Só a pele: o registry continua dono do campo.
+ * Código não entra na grade — no desenho ele aparece no título do registro.
+ */
+const SPANS_DO_DESENHO: Record<string, number> = {
+  description: 6, empresa_id: 6,
+  family_id: 3, equipment_type: 3, proprietary_id: 3, status: 3,
+  hour_value: 2, hour_meter: 2, year_model: 2, brand: 2, model: 2, patrimony: 2,
+  chassis: 2, renavam: 2, serial_number: 2, plate: 2, plate_state: 2, color: 2, vehicle: 12,
+  has_depreciation: 3, acquisition_value: 3, acquisition_date: 3, depreciation_type: 3,
+  residual_percent: 2, life_years: 2, depreciation_percent: 2, residual_value: 2, depreciable_value: 2, depreciated_value: 2,
+  provider_id: 4, product_id: 4, use_fiscal: 4, features: 6, specification: 12,
+};
+export function spanDoDesenhoBem(nome: string): number | undefined {
+  return SPANS_DO_DESENHO[nome];
+}
+
 /** Span do registry/layout → classe da grade (2 / 3 / 4 / 6 / 12). */
 export function classeDoSpan(span?: number): string {
   const n = span && span > 0 ? span : 3;

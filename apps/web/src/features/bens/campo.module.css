@@ -300,10 +300,10 @@ fieldset:disabled .caixa :is(.controle, input, textarea, :global(.cmd-display)) 
 
 /* ═════════════ chave sim/não ═════════════ */
 .linha.linha[data-chave] .caixa { background: transparent; border-color: transparent; box-shadow: none; padding-left: 0; padding-right: 0; gap: 9px; }
-[data-densidade="compacto"] .linha[data-chave] { height: auto; min-height: 42px; }
-/* a chave não tem caixa: no compacto ela fica no padding-box da linha (sem cobrir a borda), como o `.fc` do desenho */
-[data-densidade="compacto"] .linha.linha[data-chave] .caixa:not([data-controle]) { inset: 0; border-width: 0; padding-top: 16px !important; padding-bottom: 2px !important; align-items: center; }
-[data-densidade="compacto"] .linha[data-chave] .rotulo { top: 3px; transform: none; font-size: 8.5px; line-height: 1; }
+/* compacto: o par rótulo + chave fica junto, centralizado na divisão, com os 32px do `.fld` */
+[data-densidade="compacto"] .linha[data-chave] { height: 32px; min-height: 32px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+[data-densidade="compacto"] .linha[data-chave] .rotulo { position: static; width: auto; max-width: none; height: auto; padding: 0; top: auto; transform: none; font-size: 13px; line-height: 1; }
+[data-densidade="compacto"] .linha.linha[data-chave] .caixa { position: static; inset: auto; width: auto; height: auto; flex: 0 0 auto; padding: 0 !important; border-width: 0; background: transparent; }
 .chave {
   --sw-w: 42px;
   --sw-h: 20px;

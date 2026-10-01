@@ -25,9 +25,9 @@ import { AttachmentsDialog } from "@/features/base1/attachments-dialog";
 import { HistoryDialog } from "@/features/base1/history-dialog";
 import { CampoDoLancamento, ChaveSimNao, DataDoLancamento, estilosCampoBem, type Densidade, type IconeDoCampo } from "@/features/bens/campo";
 import {
-  AcoesRapidasDoBem, BotaoDaBarra, CartaoDoBem, Conjunto, ConjuntoDireito, IconeAnexos, IconeDescartar, IconeDuplicar,
+  AcoesRapidasDoBem, BotaoDaBarra, CartaoDoBem, Conjunto, ConjuntoDireito, IconeAnexos, IconeDuplicar,
   IconeEditar, IconeExcluir, IconeHistorico, IconeImprimir, IconeNovo, IconeSalvar, PosicaoDoRotuloBem, classeDoSpan,
-  ehPeleBem, estilosLancamentoBem,
+  ehPeleBem, estilosLancamentoBem, spanDoDesenhoBem,
 } from "@/features/bens/lancamento";
 import { B1Field } from "./campo-b1";
 export { B1Field };
@@ -202,14 +202,15 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
     const aoAbrir = (o: boolean) => setOpenField(o ? f.name : (cur) => (cur === f.name ? null : cur));
     // VISUAL-UX-04: pele do bem — mesmos controles/API; caixa do desenho + span da grade
     if (peleBem) {
-      const spanCls = classeDoSpan(l.fieldSizes[f.name] ?? f.span);
+      if (f.name === "code") return null;
+      const spanCls = classeDoSpan(l.fieldSizes[f.name] ?? spanDoDesenhoBem(f.name) ?? f.span);
       if (f.type === "boolean") {
         const ligado = v === true || v === "true";
         return <div key={f.name} className={spanCls}><ChaveSimNao rotulo={rotulo} valor={ligado} desabilitado={dis} testId={`campo-${f.name}`}
           data-campo={rotulo} {...(dis ? {} : { onChange: (nv: boolean) => form.setValue(f.name, nv, { shouldDirty: true }) })} /></div>;
       }
       const icone: IconeDoCampo | null = f.type === "date" ? "data" : f.type === "ref" || f.busca ? "pesquisa" : f.type === "select" ? "selecao" : null;
-      const estado = dis ? "desabilitado" as const : "editavel" as const;
+      const estado = f.readOnly ? "leitura" as const : dis ? "desabilitado" as const : "editavel" as const;
       const multilinha = f.type === "textarea" || f.type === "json" || f.type === "tags";
       const numero = ["money", "quantity", "number", "percent", "integer"].includes(f.type);
       let soAjuste = false;
@@ -217,12 +218,17 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
         if (extra) soAjuste = true;
         if (f.type === "date") return <Controller name={f.name} control={form.control} rules={{ required: required ? "Obrigatório" : false }}
           render={({ field }) => <DataDoLancamento value={String(field.value ?? "")} onChange={field.onChange} disabled={dis} rotulo={rotulo} className={estilosCampoBem.controle} />} />;
+        if (f.type === "json") return <Controller name={f.name} control={form.control} render={({ field }) => {
+          const bruto = String(field.value ?? "");
+          const vazio = bruto.trim() === "" || bruto.trim() === "{}";
+          return <Textarea readOnly={dis} tabIndex={dis ? -1 : undefined} className={estilosCampoBem.controle} value={vazio ? "" : bruto} onChange={(e) => field.onChange(e.target.value === "" ? "{}" : e.target.value)} />;
+        }} />;
         return <FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} record={q.data ?? null} onOpenChange={aoAbrir} extra={extra}
           classeEntrada={cn(ctl, estilosCampoBem.controle)} classeDoPainel={estilosCampoBem.painelPesquisa} />;
       };
       const el = controle ? controle({ dis, required, onOpenChange: aoAbrir, padrao }) : padrao();
       return <div key={f.name} className={spanCls}><CampoDoLancamento rotulo={rotulo} obrigatorio={required} erro={controle && f.name === "document" ? undefined : err}
-        icone={icone} estado={estado} preenchido={hasValue || (Boolean(controle) && !soAjuste)} multilinha={multilinha} numero={numero}
+        icone={icone} estado={estado} preenchido={(hasValue && !(f.type === "json" && String(v ?? "").trim() === "{}")) || (Boolean(controle) && !soAjuste)} multilinha={multilinha} numero={numero}
         testId={`campo-${f.name}`} data-campo={rotulo} dica={f.help}>{el}</CampoDoLancamento></div>;
     }
     // controle da ficha que só AJUSTA o de sempre (`padrao`) mantém a aparência de sempre (rótulo flutuante pelo valor)
@@ -300,14 +306,12 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
             {!isNew && canDelete && <BotaoDaBarra rotulo="Excluir" dica="Excluir registro" onClick={() => setConfirmDel(true)} data-testid="lancamento-bem-excluir"><IconeExcluir /></BotaoDaBarra>}
           </> : <>
             {canCreate && <BotaoDaBarra rotulo="Novo registro" solido onClick={irNovo} data-testid="lancamento-bem-novo"><IconeNovo /></BotaoDaBarra>}
-            <BotaoDaBarra rotulo="Descartar alterações" onClick={cancel} data-testid="lancamento-bem-descartar"><IconeDescartar /></BotaoDaBarra>
             <BotaoDaBarra rotulo="Salvar" dica={!sujo ? "Nada para salvar" : save.isPending ? "Salvando…" : "Salvar"}
               disabled={!sujo && !save.isPending} ocupado={save.isPending} onClick={() => void submit()} data-testid="lancamento-bem-salvar"><IconeSalvar /></BotaoDaBarra>
           </>}
         </Conjunto>
         <ConjuntoDireito>
           <AcoesRapidasDoBem itens={acoesRapidasBem} desabilitado={isNew} />
-          <PosicaoDoRotuloBem valor={densidadeBem} onChange={setDensidadeBem} />
           {embedded?.rightSlot}
         </ConjuntoDireito>
       </div> : <div className="mg-toolbar mg-card flex-wrap no-print">
@@ -335,9 +339,10 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
       {/* cabeçalho do registro + navegação */}
       <div className="mg-toolbar mg-card flex-wrap">
         <Bookmark className="h-4 w-4 text-[var(--mg-icon)]" /><span className="text-[13px] font-semibold text-slate-800">{code && <>{code} <span className="text-slate-400">•</span> </>}{title || def.label}</span>
-        {!readOnly && (() => { const req = fields.filter((f) => visible(f) && obrigatorio(f) && !(isNew && f.readOnly)); const pend = req.filter((f) => { const v = values[f.name]; return f.type === "boolean" ? false : Array.isArray(v) ? v.length === 0 : v === "" || v === null || v === undefined; }); return <RequiredPill total={req.length} filled={req.length - pend.length} pending={pend.map((f) => l.fieldLabels[f.name] ?? f.label)} />; })()}
+        {!peleBem && !readOnly && (() => { const req = fields.filter((f) => visible(f) && obrigatorio(f) && !(isNew && f.readOnly)); const pend = req.filter((f) => { const v = values[f.name]; return f.type === "boolean" ? false : Array.isArray(v) ? v.length === 0 : v === "" || v === null || v === undefined; }); return <RequiredPill total={req.length} filled={req.length - pend.length} pending={pend.map((f) => l.fieldLabels[f.name] ?? f.label)} />; })()}
         <span className="ml-auto flex items-center gap-1">
-          <Link href={`${back}/configuracao-layout`} title="Layout do formulário" aria-label="Layout do formulário"><IconBtn size="sm" className={cn(layout.source !== "default" && "text-brand-700")}><LayoutPanelTop className="h-4 w-4" /></IconBtn></Link>
+          {peleBem && <PosicaoDoRotuloBem valor={densidadeBem} onChange={setDensidadeBem} />}
+          {!peleBem && <Link href={`${back}/configuracao-layout`} title="Layout do formulário" aria-label="Layout do formulário"><IconBtn size="sm" className={cn(layout.source !== "default" && "text-brand-700")}><LayoutPanelTop className="h-4 w-4" /></IconBtn></Link>}
           {/* navegação entre registros (MG): não existe em "novo"; fica bloqueada durante a edição */}
           {nav && !isNew && <><IconBtn size="sm" aria-label="Primeiro" disabled={!readOnly || nav.index <= 0} onClick={() => nav.go(0)}><ChevronsLeft className="h-4 w-4" /></IconBtn><IconBtn size="sm" aria-label="Anterior" disabled={!readOnly || nav.index <= 0} onClick={() => nav.go(nav.index - 1)}><ChevronLeft className="h-4 w-4" /></IconBtn><span className="px-1 text-[12px] text-slate-600">{`${nav.index + 1}/${nav.total}`}</span><IconBtn size="sm" aria-label="Próximo" disabled={!readOnly || nav.index >= nav.total - 1} onClick={() => nav.go(nav.index + 1)}><ChevronRight className="h-4 w-4" /></IconBtn><IconBtn size="sm" aria-label="Último" disabled={!readOnly || nav.index >= nav.total - 1} onClick={() => nav.go(nav.total - 1)}><ChevronsRight className="h-4 w-4" /></IconBtn></>}
         </span>
