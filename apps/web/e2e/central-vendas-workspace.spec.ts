@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
-import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
+import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, acaoDaCentral, CLASSIFICACAO_DO_SEED, ROTULOS_CLASSIFICACAO } from "./helpers";
 
 /**
  * CENTRAL DE VENDAS — WORKSPACE FOUNDATION (VISUAL-UX-01).
@@ -15,7 +15,16 @@ import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirLancamentoDeV
  * │ Aqui se mede o que a moldura nova promete e o que ela NÃO pode ter inventado: os campos          │
  * │ continuam ligados ao mesmo estado, o Salvar continua sujeito às mesmas condições, os divisores  │
  * │ funcionam por ponteiro e por teclado, NADA é persistido, e nenhuma ação do protótipo sem         │
- * │ contrato (Confirmar venda, Descartar, Editar, Anexos) apareceu — nem desabilitada.               │
+ * │ contrato (Editar, Anexos) apareceu — nem desabilitada.                                           │
+ * │                                                                                                  │
+ * │ VISUAL-UX-02 (docs/DECISIONS.md 270): a barra passou a ser a do desenho por modo — Descartar,    │
+ * │ Salvar e Confirmar venda na criação; Novo documento, Duplicar e a pílula na consulta; Posição do │
+ * │ rótulo e o leque de Ações rápidas (Imprimir, Histórico, Documentos abertos, Cancelar, Alterar    │
+ * │ operação) nos dois. Só as asserções de APRESENTAÇÃO mudaram (W2, W4, W6, W11, W18–W27, W30); as │
+ * │ de contrato continuam as mesmas. O registro linha a linha está no relatório da fatia.            │
+ * │ Fase B: mudou a APRESENTAÇÃO dos itens da criação (Adicionar produto, marca pelo círculo,        │
+ * │ Remover item na barra, "Mostrar grade e formulário" em Configurar colunas) e, no W4, Natureza e  │
+ * │ Centro de resultado viraram pendência de clique. W4/W5/W10/W17/W29 provam o MESMO contrato.      │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ A REGRA ANTI-VACUIDADE ───────────────────────────────────────────────────────────────────────┐
@@ -30,6 +39,21 @@ const DIVISOR_H = "central-vendas-divisor-horizontal";
 /** Os limites do design aprovado — os mesmos exportados pelo componente; escritos aqui para o teste falhar se mudarem por acidente. */
 const LARGURA = { min: 17, max: 52, padrao: 30 };
 const ALTURA = { min: 92, max: 430, padrao: 206 };
+/**
+ * VISUAL-UX-02 (decisão 270): o cabeçalho de Dados principais do desenho — `height: 36px` inline + 1 px de borda: a
+ * caixa medida no desenho é 37 (o `--dz-reg: 32px` do CSS não vale para ele). A MESMA medida de `MEDIDAS` em
+ * central-vendas-desenho.spec.ts (VD-1).
+ */
+const ALTURA_DO_CABECALHO_DE_DADOS = 37;
+/**
+ * OS CONJUNTOS DA BARRA E DO LEQUE, POR MODO (decisão 270) — nomes acessíveis na ORDEM do DOM. O leque vai de baixo
+ * para cima, como no desenho; "N documentos abertos" leva o número, por isso é casado por padrão.
+ */
+const DOCUMENTOS_ABERTOS = expect.stringMatching(/^\d+ documentos? abertos?$/);
+const BARRA_DA_CRIACAO_DE_VENDA = ["Descartar alterações", "Salvar", "Confirmar venda", "Rótulo antes do campo", "Rótulo dentro do campo", "Ações rápidas"];
+const BARRA_DA_CONSULTA_DE_VENDA = ["Novo documento", "Duplicar documento", "Confirmar venda", "Rótulo antes do campo", "Rótulo dentro do campo", "Ações rápidas"];
+const LEQUE_DA_CRIACAO = ["Alterar operação", "Imprimir", "Histórico de alterações", DOCUMENTOS_ABERTOS];
+const LEQUE_DA_CONSULTA_DE_VENDA_ABERTA = ["Imprimir", "Histórico de alterações", DOCUMENTOS_ABERTOS, "Cancelar venda…"];
 
 /**
  * Cadastra uma TOP de venda pela API administrativa; prefixo 5 para não colidir com os specs vizinhos.
@@ -66,6 +90,72 @@ const chavesDoNavegador = (page: Page) => page.evaluate(() => ({
   sessao: Object.keys(sessionStorage).sort()
 }));
 
+/** Nomes acessíveis dos botões da barra, na ordem do DOM (botão só de ícone: o nome é o aria-label). */
+const nomesDaBarra = (page: Page) => page.getByTestId(WORKSPACE).getByTestId("central-vendas-acoes").getByRole("button")
+  .evaluateAll((els) => els.map((b) => b.getAttribute("aria-label") ?? (b.textContent ?? "").trim()));
+
+/** Abre o leque de Ações rápidas (decisão 270) e devolve os nomes dos itens, na ordem do DOM. */
+async function nomesDoLeque(page: Page) {
+  const botao = page.getByTestId("central-vendas-acoes-rapidas");
+  if ((await botao.getAttribute("aria-expanded")) !== "true") await botao.click();
+  const leque = page.getByTestId("central-vendas-acoes-rapidas-leque");
+  // o conteúdo do leque é um PONTO no centro do ⚡ (os círculos saem dele por transformação): o sinal de "abriu" é o ⚡
+  // expandido e os itens visíveis, não a caixa do contêiner
+  await expect(botao, "o leque abriu").toHaveAttribute("aria-expanded", "true");
+  await expect(leque.getByRole("menuitem").first(), "os itens do leque estão na tela").toBeVisible();
+  return leque.evaluate((raiz) => {
+    const todos = [...raiz.querySelectorAll<HTMLElement>('button, [role="menuitem"]')];
+    // um item de menu que embrulha um botão conta UMA vez
+    return todos.filter((el) => !todos.some((outro) => outro !== el && outro.contains(el)))
+      .map((el) => el.getAttribute("aria-label") ?? (el.textContent ?? "").trim());
+  });
+}
+
+/** Fecha o leque por Esc e prova que fechou: o ⚡ recolhido e o leque fora da árvore (depois da animação de saída). */
+async function fecharLeque(page: Page) {
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("central-vendas-acoes-rapidas"), "Esc fecha o leque").toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByTestId("central-vendas-acoes-rapidas-leque"), "e ele sai da árvore").toHaveCount(0);
+}
+
+/**
+ * O CONTADOR DE DOCUMENTOS ABERTOS (decisão 270): mora no item "N documentos abertos" do leque. Lê com o leque aberto
+ * e o fecha de novo — só se foi esta função que o abriu.
+ */
+async function contadorDeDocumentos(page: Page) {
+  const contador = page.getByTestId("central-vendas-documentos-contador");
+  const abriu = (await page.getByTestId("central-vendas-acoes-rapidas").getAttribute("aria-expanded")) !== "true";
+  if (abriu) await acaoDaCentral(page, "central-vendas-documentos");
+  const texto = (await contador.innerText()).trim();
+  if (abriu) await fecharLeque(page);
+  return texto;
+}
+
+/**
+ * SALVAR COM PENDÊNCIA (decisão 270): o clique NÃO envia nada — marca os campos e mostra a pílula vermelha
+ * "N pendências", cuja lista tem as N. Devolve os textos da lista. `posts` é o registro de POST da página.
+ */
+async function clicarSalvarComPendencia(page: Page, posts: string[], motivo: string) {
+  const antes = posts.length;
+  await page.getByRole("button", { name: "Salvar" }).click();
+  const pilula = page.getByTestId("central-vendas-pendencias");
+  await expect(pilula, `${motivo}: a pílula de pendências aparece`).toBeVisible();
+  await expect(pilula).toHaveText(/\d+ pendências?/);
+  const n = Number(/(\d+)\s+pend/.exec(await pilula.innerText())?.[1] ?? "0");
+  expect(n, `${motivo}: ao menos uma pendência`).toBeGreaterThan(0);
+  await page.waitForTimeout(300);
+  expect(posts.length, `${motivo}: ZERO POST`).toBe(antes);
+  // o clique com pendência já abre a lista; se ela estiver fechada, a pílula a abre
+  if ((await pilula.getAttribute("aria-expanded")) !== "true") await pilula.click();
+  const lista = page.getByTestId("central-vendas-pendencias-lista");
+  await expect(lista).toBeVisible();
+  await expect(lista.getByTestId("central-vendas-pendencia"), `${motivo}: a lista tem as ${n} pendências`).toHaveCount(n);
+  const textos = await lista.getByTestId("central-vendas-pendencia").allInnerTexts();
+  await page.keyboard.press("Escape");
+  await expect(lista).toBeHidden();
+  return textos;
+}
+
 test("W1 — sem TOP: o lançador aparece e o workspace NÃO existe na árvore", async ({ page }) => {
   await login(page);
   await abrirLancamentoDeVendas(page, "sales");
@@ -100,7 +190,7 @@ test("W2 — com TOP válida: barra, Dados principais, Itens, painel e as cinco 
   const barra = await ws.getByTestId("central-vendas-acoes").boundingBox();
   expect(barra?.height, "altura da barra de ações").toBe(44);
   const cabecalho = await ws.getByTestId("central-vendas-dados").locator("div").first().boundingBox();
-  expect(cabecalho?.height, "altura do cabeçalho de Dados principais").toBe(42);
+  expect(cabecalho?.height, "altura do cabeçalho de Dados principais (desenho, decisão 270)").toBe(ALTURA_DO_CABECALHO_DE_DADOS);
 });
 
 test("W3 — os campos das abas continuam ligados ao MESMO estado: o que se digita sobrevive à troca de aba", async ({ page }) => {
@@ -114,7 +204,8 @@ test("W3 — os campos das abas continuam ligados ao MESMO estado: o que se digi
   await abrirAbaDoLancamento(page, "Totais");
   await page.getByLabel("Desconto").fill("12.5");
   await abrirAbaDoLancamento(page, "Fiscal");
-  await page.getByLabel("Dedutível").selectOption("1");
+  // decisão 270: Dedutível é a chave do desenho (role=switch), não mais um <select>
+  await page.getByRole("switch", { name: "Dedutível" }).click();
   await abrirAbaDoLancamento(page, "Financeiro");
   await page.getByLabel("Parcelamento").selectOption("1");
   await expect(page.getByLabel("Nº de parcelas"), "o plano de parcelas existente aparece ao escolher Parcelado").toBeVisible();
@@ -127,24 +218,38 @@ test("W3 — os campos das abas continuam ligados ao MESMO estado: o que se digi
   await abrirAbaDoLancamento(page, "Totais");
   await expect(page.getByLabel("Desconto")).toHaveValue("12.5");
   await abrirAbaDoLancamento(page, "Fiscal");
-  await expect(page.getByLabel("Dedutível")).toHaveValue("1");
+  await expect(page.getByRole("switch", { name: "Dedutível" })).toHaveAttribute("aria-checked", "true");
 });
 
 test("W4 — Salvar continua sujeito às condições funcionais: cliente, item com produto, e o payload é o de antes", async ({ page }) => {
   await login(page);
   const top = await abrirWorkspace(page);
   const salvar = page.getByRole("button", { name: "Salvar" });
+  const posts: string[] = [];
+  page.on("request", (r) => { if (r.method() === "POST" && new URL(r.url()).pathname.startsWith("/api/sales/")) posts.push(r.url()); });
 
-  await expect(salvar, "sem cliente e sem item, não salva").toBeDisabled();
+  // VENDAS-A1: com a capacidade declarada pela API, a classificação financeira é condição. Fase B da VISUAL-UX-02
+  // (decisão 270): Natureza e Centro de resultado viraram PENDÊNCIA de clique, como o Cliente — com alteração e sem o
+  // par, o Salvar habilita, o clique não envia NADA e a lista diz o que falta.
+  await expect(salvar, "sem alteração, nada a salvar").toBeDisabled();
+  await pickRef(page, ROTULOS_CLASSIFICACAO.natureza, CLASSIFICACAO_DO_SEED.categoria.nome);
+  await expect(salvar, "com alteração e sem trava de estado, o Salvar habilita: as pendências se conferem no clique").toBeEnabled();
+  const semCentro = await clicarSalvarComPendencia(page, posts, "sem centro de resultado, não salva");
+  expect(semCentro.some((t) => /Centro de resultado/.test(t)), "a lista diz que falta o centro de resultado").toBe(true);
+  expect(semCentro.some((t) => /Natureza/.test(t)), "a natureza escolhida não está na lista").toBe(false);
+  await pickRef(page, ROTULOS_CLASSIFICACAO.centro, CLASSIFICACAO_DO_SEED.centro.nome);
+  // decisão 270: "desabilitado por pendência" virou "clique = ZERO POST + N pendências" — as MESMAS condições de antes
+  const semCliente = await clicarSalvarComPendencia(page, posts, "sem cliente e sem item, não salva");
+  expect(semCliente.some((t) => /Cliente/.test(t)), "a lista diz que falta o cliente").toBe(true);
+  expect(semCliente.some((t) => /Natureza|Centro de resultado/.test(t)), "com o par escolhido, a classificação saiu da lista").toBe(false);
   await pickRef(page, "Cliente", "DEMO");
-  await expect(salvar, "cliente sem item, não salva").toBeDisabled();
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
-  await expect(salvar, "item sem produto, não salva").toBeDisabled();
+  const semItem = await clicarSalvarComPendencia(page, posts, "cliente sem item, não salva");
+  expect(semItem.some((t) => /Cliente/.test(t)), "o cliente escolhido saiu da lista").toBe(false);
+  await page.getByTestId("central-vendas-adicionar-item").click();      // Fase B: "Adicionar produto" (barra); "Adicionar item" saiu
+  await clicarSalvarComPendencia(page, posts, "item sem produto, não salva");
   await escolherPrimeiroProdutoDaLinha(page);
-  // VENDAS-A1: com a capacidade declarada pela API, a classificação financeira é a terceira condição.
-  await expect(salvar, "cliente e item sem classificação financeira, não salva").toBeDisabled();
-  await preencherClassificacaoFinanceira(page);
   await expect(salvar).toBeEnabled();
+  expect(posts, "nenhum dos cliques com pendência chegou ao servidor").toEqual([]);
 
   // o que vai no corpo: os campos das abas, com o nome de antes, e o UUID da TOP validada
   await abrirAbaDoLancamento(page, "Observações");
@@ -193,7 +298,7 @@ test("W5 — nenhuma escrita sem TOP confirmada AGORA: a lista muda, o rascunho 
   await abrirWorkspace(page);
   await pickRef(page, "Cliente", "DEMO");
   await preencherClassificacaoFinanceira(page);                     // VENDAS-A1: condição do Salvar desde a A1
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await page.getByTestId("central-vendas-adicionar-item").click();      // Fase B: "Adicionar produto" (barra); "Adicionar item" saiu
   await escolherPrimeiroProdutoDaLinha(page);
   await expect(page.getByRole("button", { name: "Salvar" }), "a PREMISSA: sem o bloqueio, salvaria").toBeEnabled();
 
@@ -229,7 +334,7 @@ test("W6 — Alterar operação com rascunho pergunta antes; Fechar mantém o wo
   await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill("rascunho protegido");
 
-  await page.getByTestId("top-alterar").click();
+  await (await acaoDaCentral(page, "top-alterar")).click();          // decisão 270: Alterar operação mora no leque
   const confirmacao = page.getByTestId("confirm-dialog");
   await expect(confirmacao).toBeVisible();
   await confirmacao.locator("button", { hasText: "Fechar" }).click();       // o botão de TEXTO; o × do cabeçalho também se chama Fechar
@@ -238,7 +343,7 @@ test("W6 — Alterar operação com rascunho pergunta antes; Fechar mantém o wo
   await expect(page.getByLabel("Observação")).toHaveValue("rascunho protegido");
 
   // confirmando, volta ao lançador — e o workspace deixa de existir
-  await page.getByTestId("top-alterar").click();
+  await (await acaoDaCentral(page, "top-alterar")).click();
   await page.getByTestId("confirm-dialog-confirm").click();
   await expect(page.getByTestId("top-lancador")).toBeVisible();
   await expect(page.getByTestId(WORKSPACE)).toHaveCount(0);
@@ -355,16 +460,16 @@ test("W10 — os divisores NÃO persistem: nada no armazenamento do navegador, e
   expect(await valorDo(page, DIVISOR_H)).toBe(ALTURA.padrao);
 });
 
-test("W11 — a barra só tem ações que existem (e Documentos abertos, visão da barra de abas): nada de Anexos, Confirmar venda, Descartar ou Editar", async ({ page }) => {
+test("W11 — a barra da criação é a do desenho (Descartar, Salvar, Confirmar venda · Posição do rótulo · Ações rápidas) e o leque só tem ações que existem: nada de Anexos ou Editar", async ({ page }) => {
   await login(page);
   await abrirWorkspace(page);
   const ws = page.getByTestId(WORKSPACE);
 
   const botoes = ws.getByTestId("central-vendas-acoes").getByRole("button");
   // os botões são só de ícone (linguagem da barra do design): o que se confere é o NOME acessível
-  const nomes = await botoes.evaluateAll((els) => els.map((b) => b.getAttribute("aria-label") ?? (b.textContent ?? "").trim()));
+  // decisão 270: o conjunto da CRIAÇÃO (venda) — Descartar e Confirmar venda passaram a existir, com contrato
+  expect(await nomesDaBarra(page)).toEqual(BARRA_DA_CRIACAO_DE_VENDA);
   // sem "Voltar" (R3): como no design, a barra só tem ações do documento — navegar é a barra de abas
-  expect(nomes).toEqual(["Salvar", "Alterar operação", "Documentos abertos"]);
   await expect(ws.getByRole("button", { name: "Voltar", exact: true })).toHaveCount(0);
   // e todo botão só de ícone da barra tem dica textual
   const semDica = await botoes.evaluateAll((els) => els.filter((b) => !(b.textContent ?? "").trim() && !b.getAttribute("data-dica")).length);
@@ -373,10 +478,22 @@ test("W11 — a barra só tem ações que existem (e Documentos abertos, visão 
   const semNome = await ws.getByRole("button").evaluateAll((els) => els.filter((b) => !(b.textContent ?? "").trim() && !b.getAttribute("aria-label") && !b.getAttribute("title")).length);
   expect(semNome, "botões sem nome acessível no workspace").toBe(0);
 
-  for (const proibida of [/anexo/i, /confirmar venda/i, /descartar/i, /^editar$/i]) {
+  // o LEQUE da criação: Alterar operação, Imprimir e Histórico (desabilitados, como no desenho) e Documentos abertos
+  expect(await nomesDoLeque(page)).toEqual(LEQUE_DA_CRIACAO);
+  await expect(page.getByTestId("central-vendas-imprimir"), "criação: nada a imprimir ainda").toBeDisabled();
+  await expect(page.getByTestId("central-vendas-historico"), "criação: sem histórico ainda").toBeDisabled();
+  await expect(page.getByTestId("top-alterar")).toBeEnabled();
+  await expect(page.getByTestId("central-vendas-documentos")).toBeEnabled();
+  const leque = page.getByTestId("central-vendas-acoes-rapidas-leque");
+  for (const proibida of [/anexo/i, /^editar/i]) {
     await expect(ws.getByRole("button", { name: proibida }), `ação sem contrato não aparece: ${proibida}`).toHaveCount(0);
     await expect(ws.getByRole("tab", { name: proibida })).toHaveCount(0);
+    await expect(leque.getByRole("button", { name: proibida }), `nem no leque: ${proibida}`).toHaveCount(0);
+    await expect(leque.getByRole("menuitem", { name: proibida })).toHaveCount(0);
   }
+  await expect(leque.getByText(/anexos/i), "nem como texto no leque").toHaveCount(0);
+  await fecharLeque(page);
+  await expect(page.getByTestId("central-vendas-acoes-rapidas"), "e o foco volta ao ⚡").toBeFocused();
   await expect(ws.getByText(/anexos/i), "nem como texto, nem como 'em breve'").toHaveCount(0);
 });
 
@@ -401,11 +518,33 @@ test("W12 — prefers-reduced-motion zera as transições do workspace", async (
 
 const linhaDaGrade = (page: Page, i: number) => page.getByTestId("central-vendas-linha").nth(i);
 const painelDePesquisa = (page: Page) => page.getByTestId("central-vendas-pesquisa");
+/** Fase B (decisão 270): o botão da barra de itens é "Adicionar produto"; com zero itens o vazio tem outro de mesmo nome. */
+const adicionarProduto = (page: Page) => page.getByTestId("central-vendas-adicionar-item");
+
+/**
+ * Fase B: a linha se MARCA pelo círculo (clicar na linha não marca, e o círculo alterna). Marca a linha i só se ela
+ * ainda não estiver marcada — um segundo clique a desmarcaria — e confere a marca.
+ */
+async function marcarLinha(page: Page, i: number) {
+  const linha = linhaDaGrade(page, i);
+  if ((await linha.getAttribute("aria-selected")) !== "true") await linha.getByTestId("central-vendas-selecionar-item").click();
+  await expect(linha, `a linha ${i + 1} está marcada`).toHaveAttribute("aria-selected", "true");
+}
+
+/** Fase B: "Grade e formulário" deixou de ser botão da barra e virou a opção "Mostrar grade e formulário" de Configurar colunas. */
+async function mostrarGradeEFormulario(page: Page) {
+  await page.getByTestId("central-vendas-configurar").click();
+  const opcao = page.getByTestId("central-vendas-configuracao").getByRole("checkbox", { name: "Mostrar grade e formulário" });
+  if ((await opcao.getAttribute("aria-checked")) !== "true") await opcao.click();
+  await expect(opcao).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("central-vendas-configuracao")).toHaveCount(0);
+}
 
 /** Adiciona um item e escolhe o N-ésimo produto REAL pela pesquisa ancorada na célula. */
 async function adicionarItemComProduto(page: Page, n = 0) {
   const antes = await page.getByTestId("central-vendas-linha").count();
-  await page.getByRole("button", { name: "Adicionar item" }).click();
+  await adicionarProduto(page).click();
   await expect(page.getByTestId("central-vendas-linha")).toHaveCount(antes + 1);
   await linhaDaGrade(page, antes).getByTestId("central-vendas-produto").click();
   const opcoes = painelDePesquisa(page).getByRole("option");
@@ -417,7 +556,7 @@ async function adicionarItemComProduto(page: Page, n = 0) {
   return rotulo;
 }
 
-test("W13 — três visões do MESMO items: Grade, Formulário e Grade e formulário; trocar não perde nada", async ({ page }) => {
+test("W13 — três visões do MESMO items: Grade, Formulário e Mostrar grade e formulário; trocar não perde nada", async ({ page }) => {
   await login(page);
   await abrirWorkspace(page);
   const p1 = await adicionarItemComProduto(page, 0);
@@ -444,38 +583,42 @@ test("W13 — três visões do MESMO items: Grade, Formulário e Grade e formul�
   // a coluna 6 (índice 5) é Quantidade: o NÚMERO é o que foi digitado; a unidade do produto vem ao lado, à parte
   await expect(linhaDaGrade(page, 1).locator("td").nth(5).getByTestId("central-vendas-quantidade")).toHaveText("7,00");
 
-  // Grade e formulário: as duas ao mesmo tempo, sobre o mesmo item selecionado
-  await linhaDaGrade(page, 1).click();
-  await page.getByRole("button", { name: "Grade e formulário" }).click();
+  // Grade e formulário (Fase B: a opção de Configurar colunas): as duas ao mesmo tempo, sobre o mesmo item marcado
+  await marcarLinha(page, 1);
+  await mostrarGradeEFormulario(page);
+  await marcarLinha(page, 1);
   await expect(page.getByTestId("central-vendas-grade")).toBeVisible();
   await expect(page.getByTestId("central-vendas-item-form")).toBeVisible();
   await linhaDaGrade(page, 1).getByLabel("Quantidade").fill("9");
   await expect(page.getByTestId("central-vendas-item-form").getByLabel("Quantidade"), "a grade e o formulário são o MESMO estado").toHaveValue("9");
 });
 
-test("W14 — seleção de linha: clique, teclado (↑ ↓ Enter) e nenhuma seleção órfã ao excluir", async ({ page }) => {
+test("W14 — seleção de linha: círculo, teclado (↑ ↓) e nenhuma seleção órfã ao remover", async ({ page }) => {
   await login(page);
   await abrirWorkspace(page);
   await adicionarItemComProduto(page, 0);
   await adicionarItemComProduto(page, 1);
   await adicionarItemComProduto(page, 2);
 
-  await linhaDaGrade(page, 0).click();
+  // Fase B: marca-se pelo círculo da linha (clicar na linha não marca)
+  await linhaDaGrade(page, 0).getByTestId("central-vendas-selecionar-item").click();
   await expect(linhaDaGrade(page, 0)).toHaveAttribute("aria-selected", "true");
   await expect(linhaDaGrade(page, 0).getByLabel("Quantidade"), "os campos editáveis aparecem na linha selecionada").toBeVisible();
   await expect(linhaDaGrade(page, 1).getByLabel("Quantidade"), "e só nela").toHaveCount(0);
 
-  await linhaDaGrade(page, 0).focus();
+  await linhaDaGrade(page, 0).getByTestId("central-vendas-selecionar-item").focus();
   await page.keyboard.press("ArrowDown");
   await expect(linhaDaGrade(page, 1)).toHaveAttribute("aria-selected", "true");
-  await expect(linhaDaGrade(page, 1)).toBeFocused();
+  await expect.poll(() => linhaDaGrade(page, 1).evaluate((el) => el === document.activeElement || el.contains(document.activeElement)), { message: "o foco foi junto com a marca" }).toBe(true);
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowUp");
   await expect(linhaDaGrade(page, 1)).toHaveAttribute("aria-selected", "true");
 
-  // excluir a última linha selecionada: a seleção passa para uma linha que EXISTE
-  await linhaDaGrade(page, 2).click();
-  await linhaDaGrade(page, 2).getByRole("button", { name: "Excluir item 3" }).click();
+  // remover a última linha marcada (Fase B: "Remover item" da barra; a lixeira por linha saiu): a seleção passa para
+  // uma linha que EXISTE
+  await expect(page.getByRole("button", { name: /^Excluir item/ }), "a lixeira por linha saiu").toHaveCount(0);
+  await marcarLinha(page, 2);
+  await page.getByTestId("central-vendas-remover-item").click();
   await expect(page.getByTestId("central-vendas-linha")).toHaveCount(2);
   await expect(page.locator('[data-testid="central-vendas-linha"][aria-selected="true"]'), "exatamente uma linha selecionada, e ela existe").toHaveCount(1);
   await expect(linhaDaGrade(page, 1)).toHaveAttribute("aria-selected", "true");
@@ -487,7 +630,7 @@ test("W15 — pesquisa de produto: ancorada à célula, fonte real, teclado ↑ 
   const buscas: string[] = [];
   page.on("request", (r) => { const u = new URL(r.url()); if (u.pathname === "/api/resources/products/options") buscas.push(u.searchParams.get("search") ?? ""); });
 
-  await page.getByRole("button", { name: "Adicionar item" }).click();
+  await adicionarProduto(page).click();
   const celula = linhaDaGrade(page, 0).getByTestId("central-vendas-produto");
   await celula.click();
   const painel = painelDePesquisa(page);
@@ -521,7 +664,7 @@ test("W15 — pesquisa de produto: ancorada à célula, fonte real, teclado ↑ 
   // Esc fecha sem escolher
   await page.keyboard.press("Escape");
   await expect(painel).toHaveCount(0);
-  await expect(celula).toContainText("Pesquisar produto");
+  await expect(celula).toContainText("Selecione o produto");          // Fase B: o vazio do desenho (antes "Pesquisar produto")
 
   // reabrir: a busca começa limpa; ↓ Enter escolhe a SEGUNDA opção
   await celula.click();
@@ -582,7 +725,7 @@ test("W18 — Documentos abertos é VISÃO da barra de abas: lista a aba desta c
   await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill("rascunho visível");
   await expect(page.getByTestId("central-vendas-alterado"), "o cabeçalho marca alteração não salva").toBeVisible();
-  await page.getByTestId("central-vendas-documentos").click();
+  await (await acaoDaCentral(page, "central-vendas-documentos")).click();   // decisão 270: item do leque
   const lista = page.getByTestId("central-vendas-documentos-lista");
   await expect(lista).toBeVisible();
   const atual = lista.locator('[data-testid="central-vendas-documento"][data-atual="true"]');
@@ -613,7 +756,7 @@ test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visõe
     await pickRef(page, "Cliente", "DEMO");
     await adicionarItemComProduto(page, 0);
     await adicionarItemComProduto(page, 1);
-    await linhaDaGrade(page, 0).click();
+    await marcarLinha(page, 0);
     await expect(linhaDaGrade(page, 0).getByTestId("central-vendas-unidade"), "a unidade chegou antes da foto").toBeVisible();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow, `rolagem horizontal em ${w}×${h}`).toBeLessThanOrEqual(0);
@@ -631,16 +774,18 @@ test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visõe
     await expect(page.getByTestId("central-vendas-configuracao")).toBeVisible();
     await foto("column-config");
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "Adicionar item" }).click();
+    await adicionarProduto(page).click();
     await linhaDaGrade(page, 2).getByTestId("central-vendas-produto").click();
     await expect(painelDePesquisa(page).getByRole("option").first()).toBeVisible();
     await foto("product-lookup");
     await page.keyboard.press("Escape");
-    await linhaDaGrade(page, 2).getByRole("button", { name: "Excluir item 3" }).click();
-    await linhaDaGrade(page, 0).click();
+    await marcarLinha(page, 2);
+    await page.getByTestId("central-vendas-remover-item").click();
+    await expect(page.getByTestId("central-vendas-linha")).toHaveCount(2);
+    await marcarLinha(page, 0);
     await page.getByRole("button", { name: "Formulário", exact: true }).click();
     await foto("items-form");
-    await page.getByRole("button", { name: "Grade e formulário" }).click();
+    await mostrarGradeEFormulario(page);
     await foto("items-split");
     await page.getByRole("button", { name: "Grade", exact: true }).click();
     await page.getByTestId("central-vendas-recolher").click();
@@ -652,7 +797,7 @@ test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visõe
     await page.getByTestId(DIVISOR_V).focus(); for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowRight");
     await page.mouse.move(5, h - 5);
     await foto("bottom-panel");
-    await page.getByTestId("central-vendas-documentos").click();
+    await (await acaoDaCentral(page, "central-vendas-documentos")).click();
     await expect(page.getByTestId("central-vendas-documento-titulo").first()).toHaveText(salvo.code);
     await foto("open-documents");
     await page.getByRole("textbox", { name: "Pesquisar documento aberto" }).fill(salvo.code);
@@ -663,7 +808,7 @@ test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visõe
 /* ════════════════════════════════ R2 — fechamento de fidelidade ════════════════════════════════ */
 
 const ROTULOS_DA_GRADE = ["Código", "Produto", "Armazém", "Estoque", "Quantidade", "Valor unitário", "Desconto", "Desconto %", "Total"];
-/** Os títulos das colunas da grade, sem a coluna da lixeira (que não tem texto). */
+/** Os títulos das colunas da grade, sem a coluna do círculo de seleção (Fase B; antes a da lixeira), que não tem texto. */
 const cabecalhos = async (page: Page) => (await page.getByTestId("central-vendas-grade").locator("thead th").allInnerTexts()).map((t) => t.trim()).filter(Boolean);
 const aba = (page: Page, chave: string) => page.locator(`[data-testid="workspace-tab"][data-tab-key="${chave}"]`);
 const alturaDoPainel = async (page: Page) => Math.round((await page.getByTestId("central-vendas-painel").boundingBox())!.height);
@@ -742,14 +887,16 @@ test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos 
   const cfg = page.getByTestId("central-vendas-configuracao");
   await expect(cfg).toBeVisible();
   await expect(cfg).toContainText("Colunas da grade");
-  await expect(cfg.getByRole("checkbox")).toHaveCount(ROTULOS_DA_GRADE.length);
+  // uma caixa por coluna + a opção "Mostrar grade e formulário" (Fase B: o antigo 3º botão da barra mora aqui)
+  await expect(cfg.getByRole("checkbox")).toHaveCount(ROTULOS_DA_GRADE.length + 1);
+  await expect(cfg.getByRole("checkbox", { name: "Mostrar grade e formulário" })).toHaveCount(1);
 
   // esconder Quantidade: a coluna some da grade (cabeçalho e células), a quantidade continua no item
   const quantidade = cfg.getByRole("checkbox", { name: "Mostrar Quantidade" });
   await quantidade.click();
   await expect(quantidade).toHaveAttribute("aria-checked", "false");
   await expect.poll(() => cabecalhos(page)).toEqual(ROTULOS_DA_GRADE.filter((r) => r !== "Quantidade"));
-  await expect(linhaDaGrade(page, 0).locator("td"), "lixeira + 8 colunas").toHaveCount(ROTULOS_DA_GRADE.length);
+  await expect(linhaDaGrade(page, 0).locator("td"), "círculo de seleção + 8 colunas").toHaveCount(ROTULOS_DA_GRADE.length);
   await expect(linhaDaGrade(page, 0).getByLabel("Quantidade")).toHaveCount(0);
   // reordenar: Total sobe uma posição
   await cfg.getByRole("button", { name: "Subir Total" }).click();
@@ -793,7 +940,7 @@ test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos 
   await page.unroute("**/api/sales/sales");
   await page.goto(`/vendas/sales/new?tipo_operacao_id=${top.id}`);
   await expect(page.getByTestId(WORKSPACE)).toBeVisible();
-  await page.getByRole("button", { name: "Adicionar item" }).click();
+  await adicionarProduto(page).click();
   expect(await cabecalhos(page)).toEqual(ROTULOS_DA_GRADE);
 });
 
@@ -854,8 +1001,8 @@ test("W21 — painel inferior recolhível: só a faixa fica, nada focável atrá
 test("W22 — Documentos abertos: só documentos de vendas, contador coerente, pesquisa que filtra e estado vazio", async ({ page }) => {
   await login(page);
   const { salvo, chaveOutroRegistro } = await abrirComVizinhos(page);
-  await expect(page.getByTestId("central-vendas-documentos-contador"), "venda salva + esta criação; o produto, Estoque e Início não contam").toHaveText("2");
-  await page.getByTestId("central-vendas-documentos").click();
+  await expect.poll(() => contadorDeDocumentos(page), { message: "venda salva + esta criação; o produto, Estoque e Início não contam" }).toBe("2");
+  await (await acaoDaCentral(page, "central-vendas-documentos")).click();
   const lista = page.getByTestId("central-vendas-documentos-lista");
   await expect(lista).toBeVisible();
   const chaves = await lista.getByTestId("central-vendas-documento").evaluateAll((els) => els.map((e) => e.getAttribute("data-chave")));
@@ -877,15 +1024,17 @@ test("W22 — Documentos abertos: só documentos de vendas, contador coerente, p
   await busca.fill("zzzz documento que nao existe");
   await expect(linhasVisiveis(page)).toHaveCount(0);
   await expect(page.getByTestId("central-vendas-documentos-vazio")).toHaveText("Nenhum documento encontrado.");
-  await expect(page.getByTestId("central-vendas-documentos-contador"), "pesquisar não fecha nada").toHaveText("2");
   await busca.fill("");
   await expect(linhasVisiveis(page)).toHaveCount(2);
+  // decisão 270: o contador mora no leque; lê-se depois de fechar a lista
+  await page.keyboard.press("Escape");
+  await expect.poll(() => contadorDeDocumentos(page), { message: "pesquisar não fecha nada" }).toBe("2");
 });
 
 test("W23 — fechar um documento salvo pela lista é o closeTab REAL: a aba global some, as outras ficam", async ({ page }) => {
   await login(page);
   const { salvo } = await abrirComVizinhos(page);
-  await page.getByTestId("central-vendas-documentos").click();
+  await (await acaoDaCentral(page, "central-vendas-documentos")).click();
   const linha = page.locator(`[data-testid="central-vendas-documento"][data-chave="/vendas/sales/${salvo.id}"]`);
   await expect(linha.getByTestId("central-vendas-documento-titulo")).toHaveText(salvo.code);
   await linha.hover();
@@ -898,7 +1047,8 @@ test("W23 — fechar um documento salvo pela lista é o closeTab REAL: a aba glo
   await expect(aba(page, "/")).toHaveCount(1);
   await expect(aba(page, "/vendas/sales/new")).toHaveCount(1);
   await expect(page.getByTestId(WORKSPACE), "a Central continua na tela").toBeVisible();
-  await expect(page.getByTestId("central-vendas-documentos-contador")).toHaveText("1");
+  await page.keyboard.press("Escape");                                     // decisão 270: o contador mora no leque
+  await expect.poll(() => contadorDeDocumentos(page)).toBe("1");
 });
 
 test("W24 — fechar pela lista uma aba COM alteração pergunta como a barra de abas: cancelar mantém lista, aba e foco; confirmar fecha só ela", async ({ page }) => {
@@ -908,7 +1058,7 @@ test("W24 — fechar pela lista uma aba COM alteração pergunta como a barra de
   await page.getByLabel("Observação").fill("rascunho que não pode sumir");
   await expect(aba(page, "/vendas/sales/new")).toHaveAttribute("data-dirty", "true");
 
-  await page.getByTestId("central-vendas-documentos").click();
+  await (await acaoDaCentral(page, "central-vendas-documentos")).click();
   const lista = page.getByTestId("central-vendas-documentos-lista");
   const linha = lista.locator('[data-testid="central-vendas-documento"][data-chave="/vendas/sales/new"]');
   const xis = linha.getByRole("button", { name: "Fechar Nova Venda" });
@@ -916,10 +1066,11 @@ test("W24 — fechar pela lista uma aba COM alteração pergunta como a barra de
 
   await linha.hover(); await xis.click();
   await expect(dlg, "closeTab recusou a aba suja: a lista pergunta, não descarta").toBeVisible();
-  await expect(dlg.getByRole("heading", { name: "Fechar aba com alterações não salvas?" })).toBeVisible();
-  await expect(dlg).toContainText('"Nova Venda"');
-  // cancelar pelo botão de TEXTO "Fechar" do rodapé; o × do cabeçalho também se chama Fechar, mas não tem texto
-  await dlg.getByRole("button", { name: "Fechar", exact: true }).filter({ hasText: /^Fechar$/ }).click();
+  // decisão 270: o texto do desenho no diálogo compartilhado (ConfirmarFechamentoDeAba)
+  await expect(dlg.getByRole("heading", { name: "Fechar Nova Venda?" })).toBeVisible();
+  await expect(dlg).toContainText("Existem alterações não salvas. Ao fechar, elas serão descartadas.");
+  // cancelar pelo botão de TEXTO do rodapé ("Continuar editando"); o × do cabeçalho se chama Fechar
+  await dlg.getByRole("button", { name: "Continuar editando", exact: true }).click();
   await expect(dlg).toBeHidden();
   await expect(lista, "o diálogo é dono do clique: a lista continua aberta por baixo").toBeVisible();
   await expect(xis, "e o foco volta ao × da linha").toBeFocused();
@@ -951,9 +1102,9 @@ test("W25 — Fechar os já salvos: fecha os documentos de vendas limpos e mant�
   await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill("rascunho da central");
   await expect(aba(page, "/vendas/sales/new")).toHaveAttribute("data-dirty", "true");
-  await expect(page.getByTestId("central-vendas-documentos-contador")).toHaveText("3");
+  await expect.poll(() => contadorDeDocumentos(page)).toBe("3");
 
-  await page.getByTestId("central-vendas-documentos").click();
+  await (await acaoDaCentral(page, "central-vendas-documentos")).click();
   await page.getByTestId("central-vendas-documentos-fechar-salvos").click();
   await expect(page.getByTestId("central-vendas-documentos-lista"), "a lista fecha depois da ação").toHaveCount(0);
   await expect(aba(page, `/vendas/sales/${salvo.id}`), "venda salva e limpa: fecha").toHaveCount(0);
@@ -963,10 +1114,12 @@ test("W25 — Fechar os já salvos: fecha os documentos de vendas limpos e mant�
   await expect(aba(page, "/estoque"), "outro módulo fica").toHaveCount(1);
   await expect(aba(page, chaveOutroRegistro), "registro de outro módulo, mesmo limpo, fica").toHaveCount(1);
   await expect(aba(page, "/"), "Início fica").toHaveCount(1);
-  await expect(page.getByTestId("central-vendas-documentos"), "a lista fechou: o foco volta ao botão dela").toBeFocused();
+  // decisão 270: a lista abre pelo leque; fechada, o foco volta a quem a abriu (o item do leque, ou Ações rápidas quando o
+  // leque já se recolheu) — nunca ao <body>
+  await expect(page.locator('[data-testid="central-vendas-documentos"]:focus, [data-testid="central-vendas-acoes-rapidas"]:focus'), "a lista fechou: o foco volta a quem a abriu").toHaveCount(1);
   await expect(page.getByLabel("Observação")).toHaveValue("rascunho da central");
   await expect(page.getByTestId("confirm-dialog"), "nada sujo foi tocado, então nada foi perguntado").toHaveCount(0);
-  await expect(page.getByTestId("central-vendas-documentos-contador")).toHaveText("1");
+  await expect.poll(() => contadorDeDocumentos(page)).toBe("1");
 });
 
 test("W26 — metadados do documento salvo vêm da leitura REAL e só com a lista aberta: código, cliente, situação, nenhum UUID", async ({ page }) => {
@@ -978,7 +1131,7 @@ test("W26 — metadados do documento salvo vêm da leitura REAL e só com a list
   await page.waitForTimeout(300);
   expect(leituras.filter((p) => p === `/api/sales/sales/${salvo.id}`), "da montagem da Central até aqui, com a lista fechada, nada é perguntado").toEqual([]);
 
-  await page.getByTestId("central-vendas-documentos").click();
+  await (await acaoDaCentral(page, "central-vendas-documentos")).click();
   const lista = page.getByTestId("central-vendas-documentos-lista");
   const linha = lista.locator(`[data-chave="/vendas/sales/${salvo.id}"]`);
   await expect(linha.getByTestId("central-vendas-documento-titulo")).toHaveText(salvo.code);
@@ -1016,7 +1169,7 @@ test("W27 — workspace imersivo: a trilha some SÓ com a Central montada (cria�
   expect(barra.y - area.y, "a barra da Central abre a área de trabalho (só o respiro de 12px)").toBeLessThanOrEqual(13);
 
   // desmontar a Central (Alterar operação, sem rascunho) devolve a trilha na MESMA rota
-  await page.getByTestId("top-alterar").click();
+  await (await acaoDaCentral(page, "top-alterar")).click();
   await expect(page.getByTestId("top-lancador")).toBeVisible();
   await expect(trilha, "a declaração sai com a Central").toBeVisible();
 
@@ -1052,7 +1205,7 @@ test("W28 — unidade do produto: sufixo da quantidade e campo travado, pela lei
   await adicionarItemComProduto(page, 1);
   await expect(linhaDaGrade(page, 0).getByTestId("central-vendas-quantidade"), "linha não selecionada: número").toHaveText("1,00");
   await expect(linhaDaGrade(page, 0).getByTestId("central-vendas-unidade"), "e unidade").toHaveText(unidade);
-  await linhaDaGrade(page, 0).click();
+  await marcarLinha(page, 0);
   await page.getByRole("button", { name: "Formulário", exact: true }).click();
   await expect(page.getByTestId("central-vendas-item-unidade"), "campo travado Unidade no formulário do item").toContainText(unidade);
 
@@ -1077,7 +1230,7 @@ test("W29 — esconder a coluna Estoque ou trocar de visão NÃO reaplica o cust
   await abrirWorkspace(page);
   await pickRef(page, "Cliente", "DEMO");
   await preencherClassificacaoFinanceira(page);                     // VENDAS-A1: condição do Salvar desde a A1
-  await page.getByRole("button", { name: "Adicionar item" }).click();
+  await adicionarProduto(page).click();
   const linha = linhaDaGrade(page, 0);
   const escolher = async (celula: string, nome: string) => {
     await linha.getByTestId(celula).click();
@@ -1097,9 +1250,10 @@ test("W29 — esconder a coluna Estoque ou trocar de visão NÃO reaplica o cust
   const estoque = page.getByTestId("central-vendas-configuracao").getByRole("checkbox", { name: "Mostrar Estoque" });
   await configurar.click(); await estoque.click(); await estoque.click(); await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Formulário", exact: true }).click();
-  await page.getByRole("button", { name: "Grade e formulário" }).click();
+  await mostrarGradeEFormulario(page);                              // Fase B: a opção de Configurar colunas
   await page.getByRole("button", { name: "Grade", exact: true }).click();
   await page.waitForTimeout(500);
+  await marcarLinha(page, 0);                                       // os campos moram na linha MARCADA (Fase B)
   await expect(linhaDaGrade(page, 0).getByLabel("Valor unitário"), "apresentação não reescreve o unitário").toHaveValue("0");
 
   const post = await capturarPost(page);
@@ -1110,7 +1264,7 @@ test("W29 — esconder a coluna Estoque ou trocar de visão NÃO reaplica o cust
   expect(item["warehouse_id"]).toBe(armazemId);
 });
 
-test("W30 — documento SALVO abre na Central em consulta: ações como ícones, sem Voltar, dados e itens do servidor", async ({ page }) => {
+test("W30 — documento SALVO abre na Central em consulta: barra do desenho, leque com Histórico e Cancelar, sem Voltar, dados e itens do servidor", async ({ page }) => {
   await login(page);
   const salvo = await documentoSalvo(page);
   const lido = await api<{ total: string; subtotal: string; items: unknown[] }>(page, "GET", `/api/sales/sales/${salvo.id}`);
@@ -1124,32 +1278,32 @@ test("W30 — documento SALVO abre na Central em consulta: ações como ícones,
   await expect(page.getByTestId("central-vendas-situacao").locator("[data-status]")).toHaveAttribute("data-status", salvo.status);
   await expect(page.getByTestId("central-vendas-alterado"), "consulta não tem alteração").toHaveCount(0);
 
-  // a barra: ícones com nome e dica; a ação principal é pílula com texto; nada de Voltar, Anexos ou Editar
+  // a barra do desenho na CONSULTA (decisão 270): Novo documento, Duplicar e a pílula; Posição do rótulo e Ações rápidas.
+  // Nada de Voltar, Anexos, Editar ou Descartar.
   const barra = ws.getByTestId("central-vendas-acoes");
-  const nomes = await barra.getByRole("button").evaluateAll((els) => els.map((b) => b.getAttribute("aria-label") ?? (b.textContent ?? "").trim()));
-  expect(nomes).toEqual(["Nova venda", "Confirmar venda", "Imprimir", "Documentos abertos", "Mais ações"]);
+  expect(await nomesDaBarra(page)).toEqual(BARRA_DA_CONSULTA_DE_VENDA);
   const semDica = await barra.getByRole("button").evaluateAll((els) => els.filter((b) => !(b.textContent ?? "").trim() && !b.getAttribute("data-dica")).length);
   expect(semDica, "ação só de ícone sem dica").toBe(0);
-  for (const proibida of [/^voltar$/i, /anexo/i, /^editar$/i, /descartar/i]) await expect(ws.getByRole("button", { name: proibida }), `${proibida}`).toHaveCount(0);
+  for (const proibida of [/^voltar$/i, /anexo/i, /^editar/i, /descartar/i]) await expect(ws.getByRole("button", { name: proibida }), `${proibida}`).toHaveCount(0);
 
-  // Mais ações: histórico e cancelar, as ações reais que a tela resumida tinha
-  await barra.getByRole("button", { name: "Mais ações" }).click();
-  const menu = page.getByTestId("central-vendas-mais-acoes-menu");
-  await expect(menu.getByRole("menuitem")).toHaveText(["Histórico de alterações", "Cancelar venda…"]);
-  await menu.getByRole("menuitem", { name: "Cancelar venda…" }).click();
+  // o leque: Imprimir, Histórico, Documentos abertos e Cancelar — as ações reais que "Mais ações" tinha, e as da barra
+  expect(await nomesDoLeque(page)).toEqual(LEQUE_DA_CONSULTA_DE_VENDA_ABERTA);
+  await expect(page.getByTestId("central-vendas-acoes-rapidas-leque").getByRole("button", { name: /anexo/i }), "sem Anexos no leque").toHaveCount(0);
+  await page.getByTestId("central-vendas-cancelar").click();
   const dlg = page.getByTestId("confirm-dialog");
-  await expect(dlg.getByRole("heading", { name: "Cancelar documento" }), "o MESMO diálogo de antes").toBeVisible();
-  await dlg.getByRole("button", { name: "Fechar", exact: true }).filter({ hasText: /^Fechar$/ }).click();
+  // o diálogo do desenho: título com espécie e código; "Voltar" cancela (o × do cabeçalho se chama Fechar)
+  await expect(dlg.getByRole("heading", { name: `Cancelar venda ${salvo.code}?` })).toBeVisible();
+  await dlg.getByRole("button", { name: "Voltar", exact: true }).click();
   await expect(dlg).toBeHidden();
-  await barra.getByRole("button", { name: "Mais ações" }).click();
-  await page.getByTestId("central-vendas-mais-acoes-menu").getByRole("menuitem", { name: "Histórico de alterações" }).click();
+  await (await acaoDaCentral(page, "central-vendas-historico")).click();
   await expect(page.getByRole("dialog").filter({ hasText: "Histórico" })).toBeVisible();
   await page.keyboard.press("Escape");
 
-  // Confirmar venda abre a MESMA confirmação de antes (a execução é coberta pelos specs de venda)
+  // Confirmar venda abre a MESMA confirmação de antes, na casca do desenho (a execução é coberta pelos specs de venda)
   await barra.getByRole("button", { name: "Confirmar venda" }).click();
-  await expect(dlg.getByRole("heading", { name: "Confirmar venda" })).toBeVisible();
-  await dlg.getByRole("button", { name: "Fechar", exact: true }).filter({ hasText: /^Fechar$/ }).click();
+  await expect(dlg.getByRole("heading", { name: `Confirmar venda ${salvo.code}?` })).toBeVisible();
+  await dlg.getByRole("button", { name: "Voltar", exact: true }).click();
+  await expect(dlg).toBeHidden();
 
   // dados e itens do SERVIDOR; em consulta não há lixeira nem campo editável na grade
   await expect(ws.locator('[data-campo="Cliente"]')).toContainText(salvo.cliente);
@@ -1159,15 +1313,17 @@ test("W30 — documento SALVO abre na Central em consulta: ações como ícones,
   await expect(page.getByTestId("central-vendas-grade").locator("input")).toHaveCount(0);
   const reais = (v: string) => Number(v).toFixed(2).replace(".", ",");
   await expect(page.getByTestId("central-vendas-subtotal")).toContainText(reais(lido.subtotal));
+  // decisão 270: o Total do servidor saiu da faixa das abas e mora em Totais, como campo travado
+  await abrirAbaDoLancamento(page, "Totais");
   await expect(page.getByTestId("central-vendas-total"), "o total do documento é o do servidor").toContainText(reais(lido.total));
 
-  // Nova venda abre o lançador da MESMA variante (TOP-first)
   const pasta = process.env.EVIDENCIA_DIR ?? path.resolve("test-results", "evidencia-visual-ux-01");
   fs.mkdirSync(pasta, { recursive: true });
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.mouse.move(5, 895); await page.waitForTimeout(450);
   await page.screenshot({ path: path.join(pasta, "consulta-1440x900.png") });
-  await barra.getByRole("button", { name: "Nova venda" }).click();
-  await expect(page.getByTestId("top-lancador")).toBeVisible();
-  await expect(page).toHaveURL(/\/vendas\/sales\/new$/);
+  // Novo documento abre o menu de operações da MESMA espécie (TOP-first); escolher e lançar é o VD-4
+  await barra.getByRole("button", { name: "Novo documento" }).click();
+  await expect(page.getByRole("menu").filter({ hasText: "Nova operação · Venda" }), "o menu de operações da espécie").toBeVisible();
+  await page.keyboard.press("Escape");
 });

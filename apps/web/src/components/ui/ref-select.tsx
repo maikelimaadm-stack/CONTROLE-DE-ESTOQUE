@@ -34,8 +34,10 @@ const textoDaOpcao = (o: Option) => o.caminho || o.label;
  */
 export interface BuscaDeOpcoes { chave: string; buscar: (search: string) => Promise<Option[]> }
 
+const PAINEL_DA_LISTA = "cmd-panel z-[10000] w-[var(--radix-popover-trigger-width)] min-w-[240px] outline-none";
+
 /** Select com busca server-side (equivalente ao select2 do sistema de referência), para campos de referência. */
-export function RefSelect({ resource, value, onChange, placeholder = "Selecione", filter, disabled, className, allowEmpty = true, includeInactive, labelHint, onOpenChange, idDaCaixa, excluirIds, buscarOpcoes, somenteIds }: { resource: string; value: string | null | undefined; onChange: (v: string | null, opt?: Option) => void; placeholder?: string; filter?: Record<string, string | undefined>; disabled?: boolean; className?: string; allowEmpty?: boolean; includeInactive?: boolean; /** rótulo já conhecido do valor atual (evita consulta ao abrir o registro) */ labelHint?: string | null; onOpenChange?: (o: boolean) => void;
+export function RefSelect({ resource, value, onChange, placeholder = "Selecione", filter, disabled, className, allowEmpty = true, includeInactive, labelHint, onOpenChange, idDaCaixa, excluirIds, buscarOpcoes, somenteIds, classeDoPainel, semDestaqueAoAbrir }: { resource: string; value: string | null | undefined; onChange: (v: string | null, opt?: Option) => void; placeholder?: string; filter?: Record<string, string | undefined>; disabled?: boolean; className?: string; allowEmpty?: boolean; includeInactive?: boolean; /** rótulo já conhecido do valor atual (evita consulta ao abrir o registro) */ labelHint?: string | null; onOpenChange?: (o: boolean) => void;
   /** id da caixa (para `<label htmlFor>`); nome próprio para o `Field` genérico não o injetar em toda tela */ idDaCaixa?: string;
   /** ids que nunca aparecem na lista (ex.: o próprio registro na Matriz); comparados em minúsculas */ excluirIds?: string[];
   /** fonte própria das opções (ver `BuscaDeOpcoes`); sem ela, `/api/resources/:resource/options` */ buscarOpcoes?: BuscaDeOpcoes;
@@ -43,7 +45,11 @@ export function RefSelect({ resource, value, onChange, placeholder = "Selecione"
    * TOP-CONFIG-05: SÓ estes ids aparecem na lista (comparados em minúsculas); o valor atual fora dela também não é
    * oferecido. `null`/ausente = sem recorte (a lista de hoje, idêntica). Apresentação — quem recusa é o servidor.
    */
-  somenteIds?: readonly string[] | null }) {
+  somenteIds?: readonly string[] | null;
+  /** VISUAL-UX-02: classe a mais na lista (ex.: o vidro da Central de Vendas). Ausente = a lista de hoje, idêntica. */
+  classeDoPainel?: string;
+  /** VISUAL-UX-02: ao abrir, nenhuma opção vem destacada (digitar destaca a 1ª). Ausente = a 1ª destacada, como hoje. */
+  semDestaqueAoAbrir?: boolean }) {
   const [open, setOpen] = React.useState(false); const [search, setSearch] = React.useState(""); const [creating, setCreating] = React.useState(false); const { can } = useAuth();
   const f = Object.fromEntries(Object.entries(filter ?? {}).filter(([, v]) => v));
   const excluidos = new Set((excluirIds ?? []).map((x) => x.toLowerCase()));
@@ -64,8 +70,8 @@ export function RefSelect({ resource, value, onChange, placeholder = "Selecione"
       <Popover.Trigger asChild>
         <CmdDisplay id={idDaCaixa} disabled={disabled} empty={!value} placeholder={placeholder} aria-expanded={open} className={cn("mg-input", className)} onClear={allowEmpty ? () => onChange(null) : undefined}>{value ? label || "…" : null}</CmdDisplay>
       </Popover.Trigger>
-      <Popover.Portal><Popover.Content align="start" sideOffset={4} className="cmd-panel z-[10000] w-[var(--radix-popover-trigger-width)] min-w-[240px] outline-none">
-        <CmdPanel options={opts} value={value ?? null} search={search} onSearch={setSearch} loading={isLoading} emptyText="Nenhum resultado" onPick={(o) => { const src = data?.find((x) => x.id === o.value); setPicked(src ?? { id: o.value, label: o.label, code: o.code ?? null }); onChange(o.value, src); setOpen(false); setSearch(""); }}
+      <Popover.Portal><Popover.Content align="start" sideOffset={4} className={classeDoPainel ? cn(PAINEL_DA_LISTA, classeDoPainel) : PAINEL_DA_LISTA}>
+        <CmdPanel options={opts} value={value ?? null} search={search} onSearch={setSearch} loading={isLoading} emptyText="Nenhum resultado" destaqueAoAbrir={semDestaqueAoAbrir ? -1 : undefined} onPick={(o) => { const src = data?.find((x) => x.id === o.value); setPicked(src ?? { id: o.value, label: o.label, code: o.code ?? null }); onChange(o.value, src); setOpen(false); setSearch(""); }}
           footer={def && can(`${def.permission}.create`) ? <button type="button" className="cmd-panel__create" onClick={() => { setOpen(false); setCreating(true); }}><Plus className="h-3.5 w-3.5" /> Cadastrar {def.label.toLowerCase()}</button> : undefined} />
       </Popover.Content></Popover.Portal>
     </Popover.Root>

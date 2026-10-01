@@ -223,15 +223,48 @@ export const toAppLines = (l: AppLine[]) => l.map((x) => ({ financial_category_i
 
 /** Plano de parcelamento (modal "Parcelamento" do sistema de referência). */
 export interface Plan { installments: number; first_due_date: string; mode: "interval" | "fixed_day"; interval_days: number; due_day?: number; has_down_payment: boolean; down_payment_value?: string; down_payment_date?: string }
-export function PlanEditor({ plan, onChange }: { plan: Plan; onChange: (p: Plan) => void }) {
-  return <div className="grid grid-cols-12 gap-2">
-    <Field label="Nº de parcelas" span={2}><Input type="number" min={1} max={120} value={plan.installments} onChange={(e) => onChange({ ...plan, installments: Number(e.target.value) })} /></Field>
-    <Field label="1º vencimento" span={2}><Input type="date" value={plan.first_due_date} onChange={(e) => onChange({ ...plan, first_due_date: e.target.value })} /></Field>
-    <Field label="Modo" span={2}><NativeSelect value={plan.mode} onChange={(e) => onChange({ ...plan, mode: e.target.value as Plan["mode"] })}><option value="interval">Por intervalo (dias)</option><option value="fixed_day">Dia fixo do mês</option></NativeSelect></Field>
-    {plan.mode === "interval" ? <Field label="Intervalo entre parcelas (dias)" span={2}><Input type="number" min={1} value={plan.interval_days} onChange={(e) => onChange({ ...plan, interval_days: Number(e.target.value) })} /></Field> : <Field label="Dia de vencimento" span={2}><Input type="number" min={1} max={31} value={plan.due_day ?? ""} onChange={(e) => onChange({ ...plan, due_day: Number(e.target.value) })} /></Field>}
-    <Field label="Possui entrada" span={2}><NativeSelect value={plan.has_down_payment ? "true" : "false"} onChange={(e) => onChange({ ...plan, has_down_payment: e.target.value === "true" })}><option value="false">Não</option><option value="true">Sim</option></NativeSelect></Field>
-    {plan.has_down_payment && <><Field label="Valor entrada" span={2}><Input type="number" step="0.01" value={plan.down_payment_value ?? ""} onChange={(e) => onChange({ ...plan, down_payment_value: e.target.value })} /></Field><Field label="Data entrada" span={2}><Input type="date" value={plan.down_payment_date ?? ""} onChange={(e) => onChange({ ...plan, down_payment_date: e.target.value })} /></Field></>}
+/** As chaves do plano que o editor desenha (as mesmas do `Plan`, que é o que vai no corpo). */
+export type ChaveDoPlano = "installments" | "first_due_date" | "mode" | "interval_days" | "due_day" | "has_down_payment" | "down_payment_value" | "down_payment_date";
+/** Um campo do plano, pronto: rótulo, o controle de sempre já ligado ao plano e, na data, o valor ISO e o mesmo setter. */
+export interface CampoDoPlano {
+  chave: ChaveDoPlano;
+  rotulo: string;
+  /** o controle de sempre (`Input`/`NativeSelect`), com o `onChange` que monta o plano */
+  controle: React.ReactElement;
+  /** tem valor? (apresentação: caixa preenchida ou vazia) */
+  preenchido: boolean;
+  /** só nas datas: quem troca o controle de data pelo seu usa este valor e este setter (o MESMO do controle) */
+  data?: { valor: string; definir: (iso: string) => void };
+}
+/**
+ * Desenho OPCIONAL do editor (a Central de Vendas): a ordem dos campos, rótulos trocados e quem desenha cada campo. O
+ * plano, os controles e os valores continuam daqui — quem desenha só apresenta. Campo que não se aplica ao plano (o
+ * intervalo no dia fixo, o dia no intervalo, a entrada sem entrada) fica de fora em qualquer ordem.
+ */
+export interface DesenhoDoPlano {
+  ordem: readonly ChaveDoPlano[];
+  rotulos?: Partial<Record<ChaveDoPlano, string>>;
+  campo: (c: CampoDoPlano) => React.ReactNode;
+}
+const ORDEM_DO_PLANO: readonly ChaveDoPlano[] = ["installments", "first_due_date", "mode", "interval_days", "due_day", "has_down_payment", "down_payment_value", "down_payment_date"];
+export function PlanEditor({ plan, onChange, desenho }: { plan: Plan; onChange: (p: Plan) => void; desenho?: DesenhoDoPlano }) {
+  const definirPrimeiro = (v: string) => onChange({ ...plan, first_due_date: v });
+  const definirDataEntrada = (v: string) => onChange({ ...plan, down_payment_date: v });
+  const campos: Record<ChaveDoPlano, CampoDoPlano | null> = {
+    installments: { chave: "installments", rotulo: "Nº de parcelas", preenchido: true, controle: <Input type="number" min={1} max={120} value={plan.installments} onChange={(e) => onChange({ ...plan, installments: Number(e.target.value) })} /> },
+    first_due_date: { chave: "first_due_date", rotulo: "1º vencimento", preenchido: Boolean(plan.first_due_date), controle: <Input type="date" value={plan.first_due_date} onChange={(e) => definirPrimeiro(e.target.value)} />, data: { valor: plan.first_due_date, definir: definirPrimeiro } },
+    mode: { chave: "mode", rotulo: "Modo", preenchido: true, controle: <NativeSelect value={plan.mode} onChange={(e) => onChange({ ...plan, mode: e.target.value as Plan["mode"] })}><option value="interval">Por intervalo (dias)</option><option value="fixed_day">Dia fixo do mês</option></NativeSelect> },
+    interval_days: plan.mode === "interval" ? { chave: "interval_days", rotulo: "Intervalo entre parcelas (dias)", preenchido: true, controle: <Input type="number" min={1} value={plan.interval_days} onChange={(e) => onChange({ ...plan, interval_days: Number(e.target.value) })} /> } : null,
+    due_day: plan.mode === "interval" ? null : { chave: "due_day", rotulo: "Dia de vencimento", preenchido: plan.due_day !== undefined, controle: <Input type="number" min={1} max={31} value={plan.due_day ?? ""} onChange={(e) => onChange({ ...plan, due_day: Number(e.target.value) })} /> },
+    has_down_payment: { chave: "has_down_payment", rotulo: "Possui entrada", preenchido: true, controle: <NativeSelect value={plan.has_down_payment ? "true" : "false"} onChange={(e) => onChange({ ...plan, has_down_payment: e.target.value === "true" })}><option value="false">Não</option><option value="true">Sim</option></NativeSelect> },
+    down_payment_value: plan.has_down_payment ? { chave: "down_payment_value", rotulo: "Valor entrada", preenchido: Boolean(plan.down_payment_value), controle: <Input type="number" step="0.01" value={plan.down_payment_value ?? ""} onChange={(e) => onChange({ ...plan, down_payment_value: e.target.value })} /> } : null,
+    down_payment_date: plan.has_down_payment ? { chave: "down_payment_date", rotulo: "Data entrada", preenchido: Boolean(plan.down_payment_date), controle: <Input type="date" value={plan.down_payment_date ?? ""} onChange={(e) => definirDataEntrada(e.target.value)} />, data: { valor: plan.down_payment_date ?? "", definir: definirDataEntrada } } : null
+  };
+  /* sem desenho: a grade de 12 colunas de sempre, na ordem de sempre (as telas que já usam o editor não mudam) */
+  if (!desenho) return <div className="grid grid-cols-12 gap-2">
+    {ORDEM_DO_PLANO.map((k) => { const c = campos[k]; return c && <Field key={k} label={c.rotulo} span={2}>{c.controle}</Field>; })}
   </div>;
+  return <>{desenho.ordem.map((k) => { const c = campos[k]; return c && <React.Fragment key={k}>{desenho.campo({ ...c, rotulo: desenho.rotulos?.[k] ?? c.rotulo })}</React.Fragment>; })}</>;
 }
 export const defaultPlan = (): Plan => ({ installments: 1, first_due_date: todayISO(), mode: "interval", interval_days: 30, has_down_payment: false });
 

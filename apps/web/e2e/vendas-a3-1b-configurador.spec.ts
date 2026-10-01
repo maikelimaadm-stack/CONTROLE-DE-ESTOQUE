@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
-import { login, api, uniq, empresaAtiva, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento } from "./helpers";
+import { login, adicionarItemNaCentral, api, uniq, empresaAtiva, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento } from "./helpers";
 
 /**
  * VENDAS-A3-1b — PADRÃO DE CADASTRO NO LAYOUT E EXPORTAR/IMPORTAR, PELA TELA (API e banco REAIS; nada mockado).
@@ -210,13 +210,14 @@ test("LB-W1 — pelo editor: Natureza padrão não editável, Condição e Armaz
   await expect(nat.getByTestId("padrao-invalido-aviso")).toHaveCount(0);
 
   // Linha NOVA de item nasce com o armazém padrão (empresa do documento)
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   await expect(page.getByTestId("central-vendas-linha").last().getByTestId("central-vendas-armazem")).toContainText(armazem.rotulo);
 
   // Condição padrão pelo caminho da escolha manual: o plano é calculado (duas parcelas)
   await abrirAbaDoLancamento(page, "Financeiro");
   await expect(page.getByTestId("condicao-pagamento").locator('[data-campo="condicao_pagamento_id"]')).toContainText(condicao.nome);
-  await expect(page.getByText("Plano de parcelas")).toBeVisible();
+  // VISUAL-UX-02 (decisão 270): o desenho não tem o subtítulo "Plano de parcelas"; a prova é o plano calculado na coluna.
+  await expect(page.getByLabel("Nº de parcelas", { exact: true }), "o plano calculado pela condição padrão: duas parcelas").toHaveValue("2");
 });
 
 test("LB-W2 — natureza inativada: a Central abre o campo EDITÁVEL, vazio, com o aviso", async ({ page }) => {

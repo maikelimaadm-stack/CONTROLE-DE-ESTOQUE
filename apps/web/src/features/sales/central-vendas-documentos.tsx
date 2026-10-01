@@ -1,18 +1,18 @@
 "use client";
 import * as React from "react";
-import { FileCheck2, FilePlus2, FileText, FileX2, Folder, Search, X } from "lucide-react";
-import { StatusBadge, statusTone, type StatusTone } from "@/components/ui";
+import { Search, X } from "lucide-react";
+import { StatusBadge } from "@/components/ui";
 import { statusLabel } from "@/lib/copy";
 import { cn } from "@/lib/utils";
 import { useWorkspaceTabs, type WsTab } from "@/lib/workspace-tabs";
 import { ConfirmarFechamentoDeAba } from "@/components/layout/workspace-tabs";
 import { useDoc, type Row } from "@/features/docs/shared";
-import { AcaoDaBarra } from "./central-vendas-workspace";
 import { variantesDeVenda } from "./variantes";
 import estilos from "./central-vendas-workspace.module.css";
 
 /**
- * DOCUMENTOS ABERTOS — a barra de abas que já existe, vista como lista de documentos (VISUAL-UX-01 R2).
+ * DOCUMENTOS ABERTOS — a barra de abas que já existe, vista como lista de documentos (VISUAL-UX-01 R2; aberta pelo
+ * leque de Ações rápidas desde a VISUAL-UX-02).
  *
  * ┌─ UMA FONTE, NENHUM SEGUNDO SISTEMA ────────────────────────────────────────────────────────────┐
  * │ Quais documentos estão abertos, qual é o ativo e qual tem alteração não salva: `useWorkspaceTabs`│
@@ -38,7 +38,7 @@ import estilos from "./central-vendas-workspace.module.css";
 /** Segmentos de documento de venda (`/vendas/<segmento>/<id>`) — derivados das variantes do registry, não listados aqui. */
 const segmentosDeVenda = () => new Set(variantesDeVenda().map((v) => v.segmento));
 
-interface Documento { aba: WsTab; porta: string | null; novo: boolean }
+export interface Documento { aba: WsTab; porta: string | null; novo: boolean }
 
 /** A aba é um documento de vendas? Criação (`/vendas/<seg>/new`) ou registro (`/vendas/<seg>/<id>`) de uma variante conhecida. */
 function documentoDaAba(aba: WsTab, segmentos: Set<string>): Documento | null {
@@ -52,33 +52,52 @@ function documentoDaAba(aba: WsTab, segmentos: Set<string>): Documento | null {
 /** Pesquisa local: sem acento, sem caixa, todas as palavras precisam aparecer. */
 const normalizar = (v: string) => v.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
-const ICONE_DO_TOM: Partial<Record<StatusTone, typeof FileText>> = { positive: FileCheck2, negative: FileX2 };
-
-export function DocumentosAbertos() {
+/** Os documentos de vendas abertos nas abas — a MESMA fonte da barra de abas (`useWorkspaceTabs`). Fora do shell, nada. */
+export interface DocumentosDeVendas { ws: NonNullable<ReturnType<typeof useWorkspaceTabs>>; docs: Documento[] }
+export function useDocumentosDeVendas(): DocumentosDeVendas | null {
   const ws = useWorkspaceTabs();
-  const [aberto, setAberto] = React.useState(false);
+  if (!ws) return null;
+  const segmentos = segmentosDeVenda();
+  return { ws, docs: ws.tabs.map((t) => documentoDaAba(t, segmentos)).filter((d): d is Documento => d !== null) };
+}
+
+/**
+ * A LISTA (VISUAL-UX-02): quem a abre é o item "N documentos abertos" do leque de Ações rápidas; ela ancora na ponta
+ * direita da barra, sob o ⚡ (`botao`), 430px, linhas de 30px, como no desenho. O comportamento é o de antes, linha a
+ * linha: pesquisa, `focusTab`, `closeTab` com o MESMO diálogo da barra de abas, "Fechar os já salvos".
+ */
+export function ListaDeDocumentosAbertos({ aberta, onFechar, ancora, botao, documentos }: {
+  aberta: boolean; onFechar: () => void;
+  /** o invólucro do ⚡ e da lista: clique fora dele fecha a lista */
+  ancora: React.RefObject<HTMLSpanElement | null>;
+  /** o ⚡: é para ele que o foco volta quando a lista fecha */
+  botao: React.RefObject<HTMLButtonElement | null>;
+  documentos: DocumentosDeVendas;
+}) {
+  const { ws, docs } = documentos;
   const [busca, setBusca] = React.useState("");
   const [confirmar, setConfirmar] = React.useState<WsTab | null>(null);
-  const ancora = React.useRef<HTMLSpanElement>(null);
-  const botao = React.useRef<HTMLButtonElement>(null);
   const pesquisa = React.useRef<HTMLInputElement>(null);
   /** O texto de cada linha, para a pesquisa — preenchido pelas linhas conforme os dados chegam. */
   const [textos, setTextos] = React.useState<Record<string, string>>({});
   const registrarTexto = React.useCallback((chave: string, texto: string) => setTextos((t) => (t[chave] === texto ? t : { ...t, [chave]: texto })), []);
+  const fecharLista = React.useCallback(() => { setBusca(""); onFechar(); }, [onFechar]);
 
   // Com a confirmação de fechamento aberta, clique e Esc são do DIÁLOGO: a lista não fecha por baixo dele,
   // e cancelar devolve o foco ao × da linha, que continua na tela.
+  //
+  // O Esc é ouvido na CAPTURA da janela, antes das camadas do Radix (que escutam na captura do documento): a lista abre
+  // pelo leque, e o leque continua montado durante a animação de recolher — nesse intervalo a camada dele era a mais alta,
+  // consumia o Esc (`preventDefault`) e a lista não fechava (W18). A lista não tem camada por cima dela além do diálogo de
+  // fechar, e com ele aberto este ouvinte nem existe. Tratado aqui, o Esc não recolhe mais nada por baixo.
   React.useEffect(() => {
-    if (!aberto || confirmar) return;
-    const fora = (e: MouseEvent) => { if (!ancora.current?.contains(e.target as Node)) setAberto(false); };
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape" && !e.defaultPrevented) { setAberto(false); botao.current?.focus(); } };
-    document.addEventListener("mousedown", fora); document.addEventListener("keydown", esc);
-    return () => { document.removeEventListener("mousedown", fora); document.removeEventListener("keydown", esc); };
-  }, [aberto, confirmar]);
+    if (!aberta || confirmar) return;
+    const fora = (e: MouseEvent) => { if (!ancora.current?.contains(e.target as Node)) fecharLista(); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape" && !e.defaultPrevented) { e.preventDefault(); fecharLista(); botao.current?.focus(); } };
+    document.addEventListener("mousedown", fora); window.addEventListener("keydown", esc, true);
+    return () => { document.removeEventListener("mousedown", fora); window.removeEventListener("keydown", esc, true); };
+  }, [aberta, confirmar, ancora, botao, fecharLista]);
 
-  if (!ws) return null;
-  const segmentos = segmentosDeVenda();
-  const docs = ws.tabs.map((t) => documentoDaAba(t, segmentos)).filter((d): d is Documento => d !== null);
   const termos = normalizar(busca).split(/\s+/).filter(Boolean);
   const visiveis = docs.filter((d) => { const alvo = normalizar(textos[d.aba.key] ?? d.aba.label); return termos.every((t) => alvo.includes(t)); });
 
@@ -86,14 +105,11 @@ export function DocumentosAbertos() {
   const fechar = (aba: WsTab) => { if (ws.closeTab(aba.key)) pesquisa.current?.focus(); else setConfirmar(aba); };
   const fecharOsJaSalvos = () => {
     for (const d of docs) if (d.aba.key !== ws.active && !ws.dirty.has(d.aba.key)) ws.closeTab(d.aba.key);
-    setBusca(""); setAberto(false); botao.current?.focus();
+    fecharLista(); botao.current?.focus();
   };
 
-  return <span className={estilos.docsAncora} ref={ancora}>
-    <AcaoDaBarra ref={botao} rotulo="Documentos abertos" dica="fim" aria-expanded={aberto} aria-controls={aberto ? "central-vendas-documentos-lista" : undefined}
-      aberta={aberto} data-testid="central-vendas-documentos" onClick={() => setAberto((a) => !a)}><Folder aria-hidden /></AcaoDaBarra>
-    {docs.length > 0 && <span className={estilos.selo} aria-hidden data-testid="central-vendas-documentos-contador">{docs.length}</span>}
-    {aberto && <div id="central-vendas-documentos-lista" className={cn(estilos.popover, estilos.docs)} role="group" aria-label="Documentos abertos" data-testid="central-vendas-documentos-lista">
+  return <>
+    {aberta && <div id="central-vendas-documentos-lista" className={cn(estilos.popover, estilos.docs)} role="group" aria-label="Documentos abertos" data-testid="central-vendas-documentos-lista">
       <div className={estilos.docsBusca}>
         <label className={estilos.pesquisaPilula}>
           <Search aria-hidden />
@@ -101,8 +117,8 @@ export function DocumentosAbertos() {
         </label>
       </div>
       <ul className={estilos.docsLista} aria-label="Documentos">
-        {docs.map((d) => <LinhaDoDocumento key={d.aba.key} doc={d} oculto={!visiveis.includes(d)} atual={d.aba.key === ws.active} sujo={ws.dirty.has(d.aba.key)}
-          onEscolher={() => { setAberto(false); ws.focusTab(d.aba.key); }} onFechar={() => fechar(d.aba)} onTexto={registrarTexto} />)}
+        {docs.map((d, i) => <LinhaDoDocumento key={d.aba.key} doc={d} ordem={i} oculto={!visiveis.includes(d)} atual={d.aba.key === ws.active} sujo={ws.dirty.has(d.aba.key)}
+          onEscolher={() => { fecharLista(); ws.focusTab(d.aba.key); }} onFechar={() => fechar(d.aba)} onTexto={registrarTexto} />)}
       </ul>
       {visiveis.length === 0 && <div className={estilos.docsVazio} data-testid="central-vendas-documentos-vazio">Nenhum documento encontrado.</div>}
       <div className={estilos.popoverRodape}>
@@ -116,16 +132,16 @@ export function DocumentosAbertos() {
         // depois da restauração de foco do diálogo, que mira o × que acabou de sumir
         requestAnimationFrame(() => (pesquisa.current ?? botao.current)?.focus());
       }} />
-  </span>;
+  </>;
 }
 
 /**
- * Uma linha: ícone da situação, título (código do servidor, ou o nome da aba), cliente, situação, ponto
- * de alteração e ×. A linha inteira escolhe o documento; o × é um botão irmão, nunca um botão dentro de
- * botão. Oculta pela pesquisa, a linha continua montada — a consulta dela não recomeça a cada letra.
+ * Uma linha (`.orow` do desenho): título (código do servidor, ou o nome da aba), cliente, situação, ponto de
+ * alteração e ×. A linha inteira escolhe o documento; o × é um botão irmão, nunca um botão dentro de botão. Oculta pela
+ * pesquisa, a linha continua montada — a consulta dela não recomeça a cada letra. Entra com atraso escalonado, como o leque.
  */
-function LinhaDoDocumento({ doc, oculto, atual, sujo, onEscolher, onFechar, onTexto }: {
-  doc: Documento; oculto: boolean; atual: boolean; sujo: boolean; onEscolher: () => void; onFechar: () => void; onTexto: (chave: string, texto: string) => void;
+function LinhaDoDocumento({ doc, ordem, oculto, atual, sujo, onEscolher, onFechar, onTexto }: {
+  doc: Documento; ordem: number; oculto: boolean; atual: boolean; sujo: boolean; onEscolher: () => void; onFechar: () => void; onTexto: (chave: string, texto: string) => void;
 }) {
   const q = useDoc<Row>(doc.porta ?? "", Boolean(doc.porta));
   const d = q.data;
@@ -134,18 +150,15 @@ function LinhaDoDocumento({ doc, oculto, atual, sujo, onEscolher, onFechar, onTe
   const situacao = d ? d["status"] : null;
   const temSituacao = situacao !== null && situacao !== undefined && situacao !== "";
   const titulo = codigo ?? doc.aba.label;
-  const tom: StatusTone | "novo" = doc.novo ? "novo" : temSituacao ? statusTone(situacao) : "neutral";
-  const Icone = doc.novo ? FilePlus2 : ICONE_DO_TOM[tom as StatusTone] ?? FileText;
   const texto = [titulo, cliente ?? "", temSituacao ? statusLabel(situacao) : ""].join(" ");
   React.useEffect(() => { onTexto(doc.aba.key, texto); }, [doc.aba.key, texto, onTexto]);
 
-  return <li className={estilos.docsLinha} data-atual={atual ? "true" : "false"} hidden={oculto} data-testid="central-vendas-documento" data-chave={doc.aba.key}>
+  return <li className={estilos.docsLinha} style={{ animationDelay: `${40 + ordem * 32}ms` }} data-atual={atual ? "true" : "false"} hidden={oculto} data-testid="central-vendas-documento" data-chave={doc.aba.key}>
     <button type="button" className={estilos.docsEscolher} aria-current={atual ? "page" : undefined} aria-label={`Trabalhar em ${titulo}${cliente ? ` · ${cliente}` : ""}`} onClick={onEscolher} />
-    <span className={estilos.docsIcone} data-tom={tom} aria-hidden><Icone /></span>
-    <span className={cn(estilos.docsTitulo, codigo && estilos.codigo)} data-testid="central-vendas-documento-titulo">{titulo}</span>
+    <span className={cn(estilos.docsTitulo, codigo && estilos.docsCodigo)} data-testid="central-vendas-documento-titulo">{titulo}</span>
     <span className={estilos.docsCliente} data-testid="central-vendas-documento-cliente">{cliente ?? "—"}</span>
     <span className={estilos.docsSituacao} data-testid="central-vendas-documento-situacao">{temSituacao && <StatusBadge value={situacao} />}</span>
-    <span>{sujo && <span className={estilos.pontoAlterado} role="img" aria-label="Alterações não salvas" />}</span>
-    <button type="button" className={estilos.docsFechar} aria-label={`Fechar ${titulo}`} title="Fechar documento" onClick={onFechar} data-testid="central-vendas-documento-fechar"><X aria-hidden /></button>
+    <span className={estilos.docsPonto}>{sujo && <span className={estilos.pontoAlterado} role="img" aria-label="Alterações não salvas" />}</span>
+    <span className={estilos.docsFecharCelula}><button type="button" className={estilos.docsFechar} aria-label={`Fechar ${titulo}`} title="Fechar documento" onClick={onFechar} data-testid="central-vendas-documento-fechar"><X aria-hidden /></button></span>
   </li>;
 }

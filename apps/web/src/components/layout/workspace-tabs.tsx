@@ -2,7 +2,6 @@
 import * as React from "react";
 import { X, Plus, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { COPY } from "@/lib/copy";
 import { Menu, ConfirmDialog } from "@/components/ui";
 import { useWorkspaceTabs, HOME_KEY, type WsTab } from "@/lib/workspace-tabs";
 
@@ -48,7 +47,8 @@ export function WorkspaceTabsBar({ onNewTab }: { onNewTab: () => void }) {
  * para que a barra de abas e a lista de Documentos abertos da Central de Vendas digam a MESMA coisa.
  */
 export function ConfirmarFechamentoDeAba({ aba, onCancelar, onConfirmar }: { aba: WsTab | null; onCancelar: () => void; onConfirmar: (aba: WsTab) => void }) {
-  return <ConfirmDialog open={Boolean(aba)} onOpenChange={(o) => { if (!o) onCancelar(); }} title="Fechar aba com alterações não salvas?"
-    description={aba ? `"${aba.label}" tem ${COPY.alteracoesNaoSalvas.toLowerCase()}. Ao fechar, elas serão descartadas.` : undefined}
-    confirmLabel="Fechar mesmo assim" danger onConfirm={() => { if (aba) onConfirmar(aba); }} />;
+  /* VISUAL-UX-02 (4.6): o texto do desenho — e some a frase quebrada de antes. O diálogo e a regra são os mesmos. */
+  return <ConfirmDialog open={Boolean(aba)} onOpenChange={(o) => { if (!o) onCancelar(); }} title={aba ? `Fechar ${aba.label}?` : "Fechar?"}
+    description={aba ? "Existem alterações não salvas. Ao fechar, elas serão descartadas." : undefined}
+    dismissLabel="Continuar editando" confirmLabel="Descartar e fechar" danger onConfirm={() => { if (aba) onConfirmar(aba); }} />;
 }

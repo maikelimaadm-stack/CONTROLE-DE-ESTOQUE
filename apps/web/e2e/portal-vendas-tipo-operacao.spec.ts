@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, logout, api, uniq, empresaAtiva, primeiroId, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
+import { login, adicionarItemNaCentral, logout, api, uniq, empresaAtiva, primeiroId, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, acaoDaCentral, abrirDadosAdicionais } from "./helpers";
 
 /**
  * PORTAL DE VENDAS COM TOP CADASTRADA — o caminho que o usuário faz de verdade (TOP-CONFIG-02).
@@ -75,6 +75,8 @@ test("cadastra TOPs, lança pelo Portal de Vendas e o detalhe mostra o snapshot"
   // TOP configurada E família canônica aparecem como coisas DIFERENTES.
   await expect(page.getByText(nomeTop)).toBeVisible();
   // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
+  // Decisão 270: na consulta, Movimento mora em "Dados adicionais" — abre-se o grupo antes de ler.
+  await abrirDadosAdicionais(page);
   await expect(page.getByText("Movimento", { exact: true })).toBeVisible();
 });
 
@@ -351,6 +353,8 @@ test("LEGADO — documento sem TOP abre, diz que não está configurado e manté
   await expect(page.getByText("Não configurada (registro legado)")).toBeVisible();
   // A família canônica CONTINUA correta — ela vem do registro, não da configuração.
   // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
+  // Decisão 270: na consulta, Movimento mora em "Dados adicionais" — abre-se o grupo antes de ler.
+  await abrirDadosAdicionais(page);
   await expect(page.getByText("Movimento", { exact: true })).toBeVisible();
 
   // E continua na listagem: um INNER JOIN o teria feito sumir.
@@ -372,7 +376,9 @@ test("REGRESSÃO: a TOP não mudou a confirmação nem as ações do detalhe", a
   await page.goto(`/vendas/sales/${venda.id}`);
   // As ações da variante continuam as mesmas: a TOP é identidade, não comportamento.
   await expect(page.getByRole("button", { name: "Confirmar venda" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Imprimir" })).toBeVisible();
+  // VISUAL-UX-02 (decisão 270): Imprimir mora no leque de Ações rápidas
+  await expect(await acaoDaCentral(page, "central-vendas-imprimir")).toBeVisible();
+  await page.keyboard.press("Escape");
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -434,7 +440,7 @@ test("E1 VENDA — do Portal ao snapshot: lançador, formulário contextualizado
 
   await pickRef(page, "Cliente", "DEMO");
   await preencherClassificacaoFinanceira(page);                     // VENDAS-A1: condição do Salvar desde a A1
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   /*
     A lista de opções é procurada DENTRO do painel de pesquisa, e não na página: `page.getByRole("option")`
     casaria também o `<select>` de empresa da barra superior, cuja opção nunca fica visível.
@@ -550,14 +556,15 @@ test("ALTERAR OPERAÇÃO — volta ao lançador, e avisa antes de descartar o qu
   await escolherTopEContinuar(page, top.id);
 
   // (a) SEM nada digitado, a troca é imediata: perguntar aqui seria ruído que ensina a ignorar avisos.
-  await page.getByTestId("top-alterar").click();
+  // VISUAL-UX-02 (decisão 270): Alterar operação mora no leque de Ações rápidas.
+  await (await acaoDaCentral(page, "top-alterar")).click();
   await esperarLancadorSemFormulario(page);
 
   // (b) COM dado digitado, pergunta antes — e só descarta depois do "sim".
   await escolherTopEContinuar(page, top.id);
   await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill("rascunho que não pode sumir calado");
-  await page.getByTestId("top-alterar").click();
+  await (await acaoDaCentral(page, "top-alterar")).click();
   await expect(page.getByRole("dialog")).toContainText("Alterar o Tipo de Operação?");
   await expect(page.getByTestId("top-contexto"), "enquanto não confirma, o formulário continua lá").toBeVisible();
   await page.getByTestId("confirm-dialog-confirm").click();
@@ -683,7 +690,7 @@ test("C2 — O SERVIDOR AINDA MANDA: salvar com a TOP já desativada recusa, e n
   await page.getByLabel("Observação").fill(rascunho);
   await pickRef(page, "Cliente", "DEMO");
   await preencherClassificacaoFinanceira(page);                     // VENDAS-A1: condição do Salvar desde a A1
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   await escolherPrimeiroProdutoDaLinha(page);
 
   // A TOP é desativada DEPOIS de o formulário estar pronto para salvar.
@@ -747,7 +754,8 @@ async function esperarRascunhoSemEscrita(page: Page, rascunho: string, posts: st
   await expect(page.getByTestId("top-contexto"), "o formulário continua montado").toBeVisible();
   await expect(page.getByLabel("Observação"), "o que foi digitado continua lá").toHaveValue(rascunho);
   await expect(page.getByRole("button", { name: "Salvar" }), "a escrita está fechada").toBeDisabled();
-  await expect(page.getByTestId("top-alterar"), "trocar de operação continua possível").toBeVisible();
+  await expect(await acaoDaCentral(page, "top-alterar"), "trocar de operação continua possível (leque, decisão 270)").toBeEnabled();
+  await page.keyboard.press("Escape");
   await expect(page.getByTestId("top-lancador"), "não voltou ao lançador sozinho").toHaveCount(0);
   expect(posts, "ZERO POST — o cliente JÁ SABE que não pode gravar").toEqual([]);
 }
@@ -770,7 +778,7 @@ async function formularioComRascunho(page: Page, rascunho: string) {
   await page.getByLabel("Observação").fill(rascunho);
   await pickRef(page, "Cliente", "DEMO");
   await preencherClassificacaoFinanceira(page);                     // VENDAS-A1: condição do Salvar desde a A1
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   await escolherPrimeiroProdutoDaLinha(page);
   await expect(page.getByRole("button", { name: "Salvar" }), "a PREMISSA: sem o bloqueio, este formulário salvaria").toBeEnabled();
   return top;

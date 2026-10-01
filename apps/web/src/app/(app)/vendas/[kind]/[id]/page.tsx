@@ -1,24 +1,30 @@
 "use client";
 import * as React from "react";
 import { use } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRightLeft, Check, FileCheck2, FileText, FileX2, Plus, Printer } from "lucide-react";
+import { FileCheck, FileText, FileX } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { brl, dateBR } from "@/lib/utils";
-import { Button, Confirm, Dialog, StatusBadge, statusTone } from "@/components/ui";
-import { useTabTitle } from "@/lib/workspace-tabs";
+import { brl, dateBR, num, todayISO } from "@/lib/utils";
+import { Button, Dialog, StatusBadge, statusTone } from "@/components/ui";
+import { useTabTitle, useWorkspaceTabs, type WsTab } from "@/lib/workspace-tabs";
 import { useDoc, LoadingOr, type Row } from "@/features/docs/shared";
 import { useAction } from "@/features/docs/actions";
-import { Base2Items, type Base2ItemColumn } from "@/features/base2";
 import { HistoryDialog } from "@/features/base1/history-dialog";
-import { AcaoDaBarra, AcaoPrincipal, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
-import { CampoLeitura, ItensSalvos, MaisAcoes, type ItemDoMenu } from "@/features/sales/central-vendas-consulta";
-import { DocumentosAbertos } from "@/features/sales/central-vendas-documentos";
+import { CentralVendasWorkspace, type AbaDoPainel } from "@/features/sales/central-vendas-workspace";
+import { ItensSalvos } from "@/features/sales/central-vendas-consulta";
+import { CampoLeitura, ChaveSimNao, ColunaDeCampos, DadosAdicionais } from "@/features/sales/central-vendas-campo";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import { DerivadosDoDocumento, PainelColuna, PainelLargo, PainelRepartido, PlanoEmLeitura, TitulosDoDocumento, dedutivelDoPlano } from "@/features/sales/central-vendas-painel";
+/* VISUAL-UX-02 W1: barra, leque, diálogos, Duplicar e "Salvo" (entrega em memória) */
+import { AcoesRapidas, BotaoDaBarra, ConjuntoDaBarra, ConjuntoDireito, IconeCancelarDocumento, IconeConfirmar, IconeConverter, IconeDuplicar, IconeEncerrarSaldo, IconeHistorico, IconeImprimir, IndicadorConfirmando, IndicadorSalvo, NovoDocumento, PilulaDaBarra, PosicaoDoRotulo, TEMPO_DO_SALVO_MS, chaveDepoisDeSalvar, type DepoisDeSalvar, type ItemRapido, type PosicaoDoRotuloValor } from "@/features/sales/central-vendas-barra";
+import { DialogoCancelarDocumento, DialogoConfirmarVenda } from "@/features/sales/central-vendas-dialogos";
+import { chaveDaCopia, copiaDoDocumento, motivoParaNaoDuplicar } from "@/features/sales/central-vendas-duplicar";
+import { descartarEntrega, entregarEmMemoria, espiarEntrega } from "@/lib/entrega-em-memoria";
+import { ConfirmarFechamentoDeAba } from "@/components/layout/workspace-tabs";
 import estilosCentral from "@/features/sales/central-vendas-workspace.module.css";
 import { tipoOperacaoDoRegistro } from "@agro/domain";
 import { useTradutor } from "@/lib/i18n";
-import { COPY, enumLabel, statusLabel } from "@/lib/copy";
 import { CampoTipoOperacao, useTopsDaVariante, usePadraoTop } from "@/features/sales/tipo-operacao-select";
 import { destinoDeCompatibilidade, usaCadeiaDeCompatibilidade, useProximosPassos, type ProximoPasso } from "@/features/sales/proximos-passos";
 import { varianteDeVenda } from "@/features/sales/variantes";
@@ -59,33 +65,33 @@ const DO_REGISTRO: Record<string, { titulo: string; novo: string; perm: string; 
  * código faria a tela dizer "Não informada" — e prometer o padrão automático — numa venda que a guarda do
  * banco vai RECUSAR confirmar. Com o id e sem o nome, a tela diz que está informada e não inventa o nome.
  */
+/**
+ * LEITURA PENDENTE: as abas que TODA variante tem, sem conteúdo — estrutura da tela, não dado do documento. Os valores
+ * são os das abas da consulta (abaixo), para a aba escolhida continuar a mesma quando a leitura chega; "Documentos
+ * derivados" só entra com o registro, porque depende da variante que só ele diz.
+ */
+const ABAS_DA_LEITURA_PENDENTE: AbaDoPainel[] = [
+  { value: "totais", label: "Totais", content: null },
+  { value: "financeiro", label: "Financeiro", content: null },
+  { value: "frete", label: "Frete e transporte", content: null },
+  { value: "fiscal", label: "Fiscal", content: null },
+  { value: "observacoes", label: "Observações", content: null }
+];
+
 function rotuloDaClassificacao(id: unknown, codigo: unknown, nome: unknown, ausente: string, semNome: string): string {
   if (!id) return ausente;
   if (!codigo) return semNome;
   return `${String(codigo)} · ${String(nome ?? "")}`;
 }
 
-const COLUNAS_TITULOS: Base2ItemColumn<Row>[] = [
-  { key: "number", label: "Título", render: (r) => <Link className="text-brand-700 underline" href={`/financeiro/contas-a-receber/${r["id"]}`}>{String(r["number"])}</Link> },
-  { key: "due_date", label: "Vencimento", render: (r) => dateBR(r["due_date"] as string) },
-  { key: "amount", label: "Valor", align: "right", render: (r) => brl(r["amount"] as string) },
-  { key: "balance", label: "Saldo", align: "right", render: (r) => brl(r["balance"] as string) },
-  { key: "status", label: COPY.situacao, render: (r) => enumLabel("title_status", r["status"]) }
-];
-
-const COLUNAS_DERIVADOS: Base2ItemColumn<Row>[] = [
-  { key: "kind", label: "Tipo", render: (r) => enumLabel("sales_kind", r["kind"]) },
-  { key: "code", label: "Código", render: (r) => <Link className="text-brand-700 underline" href={`/vendas/${r["kind"]}s/${r["id"]}`}>{String(r["code"])}</Link> },
-  { key: "status", label: COPY.situacao, render: (r) => statusLabel(r["status"]) }
-];
-
 /**
  * DOCUMENTO DE VENDA SALVO — NA CENTRAL DE VENDAS, EM CONSULTA (VISUAL-UX-01 R3; antes Modelo Base 2,
  * BASE2-03C — docs/DECISIONS.md 227).
  *
- * Abrir um registro abre a MESMA Central da criação, no conjunto de CONSULTA do design: as ações como
- * ícones (Novo, Confirmar venda / Converter, Imprimir, Documentos abertos, Mais ações → Histórico e
- * Cancelar), os dados principais como campos preenchidos, os itens na grade, e totais, financeiro,
+ * Abrir um registro abre a MESMA Central da criação, no conjunto de CONSULTA do design: as ações do
+ * desenho (VISUAL-UX-02: Novo documento, Duplicar, a pílula Confirmar venda / Converter / Encerrar saldo;
+ * à direita Salvo, Posição do rótulo e o leque de Ações rápidas → Imprimir, Histórico, Documentos
+ * abertos e Cancelar), os dados principais como campos preenchidos, os itens na grade, e totais, financeiro,
  * frete, derivados e observações no painel inferior. Não há "Voltar": a navegação entre documentos é
  * a barra de abas e Documentos abertos. O que a apresentação NÃO passou a decidir: conversão,
  * confirmação, cancelamento, estoque, geração de títulos, idempotência, permissão, escopo de empresa,
@@ -108,18 +114,18 @@ const COLUNAS_DERIVADOS: Base2ItemColumn<Row>[] = [
  * prometer de novo.
  */
 function PreviaNoDialogo({ estado }: { estado: EstadoDaPrevia }) {
-  if (estado.situacao === "carregando") return <p data-testid="previa-confirmacao-carregando" className="text-sm text-slate-600">Carregando o que a confirmação vai fazer nesta venda…</p>;
-  if (estado.situacao === "nao-confirmado") return <p data-testid="previa-confirmacao-neutra" className="text-sm text-slate-600">{TEXTO_SEM_PREVIA}</p>;
+  if (estado.situacao === "carregando") return <p data-testid="previa-confirmacao-carregando" className="text-[12.5px] leading-[1.5] text-slate-600">Carregando o que a confirmação vai fazer nesta venda…</p>;
+  if (estado.situacao === "nao-confirmado") return <p data-testid="previa-confirmacao-neutra" className="text-[12.5px] leading-[1.5] text-slate-600">{TEXTO_SEM_PREVIA}</p>;
   const p = estado.previa;
   if (!p.podeConfirmar) {
-    return <div data-testid="previa-confirmacao-recusa" role="alert" className="space-y-1 text-sm text-slate-700">
+    return <div data-testid="previa-confirmacao-recusa" role="alert" className="space-y-1 text-[12.5px] leading-[1.5] text-slate-700">
       <p className="font-medium">Esta venda não pode ser confirmada agora:</p>
       {p.recusas.map((r, i) => <p key={i} data-testid="previa-confirmacao-recusa-mensagem">{r.message}</p>)}
     </div>;
   }
   const estoque = linhaDeEstoque(p);
   const financeiro = linhaFinanceira(p, { dinheiro: brl, data: dateBR });
-  return <ul data-testid="previa-confirmacao" className="space-y-1 text-sm text-slate-700">
+  return <ul data-testid="previa-confirmacao" className="space-y-1 text-[12.5px] leading-[1.5] text-slate-700">
     {estoque && <li data-testid="previa-confirmacao-estoque">{estoque}</li>}
     {financeiro && <li data-testid="previa-confirmacao-financeiro">{financeiro}</li>}
   </ul>;
@@ -154,6 +160,36 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   const vendaAberta = variante === "sale" && ["open", "approved"].includes(String(d?.["status"] ?? ""));
   const avisoPossivel = vendaAberta && !d?.["categoria_financeira_id"];
   const previaDaConfirmacao = usePreviaDaConfirmacao(id, variante === "sale" && (confirmar === "confirm" || avisoPossivel), aberturasDoConfirmar);
+
+  /* ── VISUAL-UX-02 W1 — BARRA DA CONSULTA ─────────────────────────────────────────────────────────────────────────
+   * POSIÇÃO DO RÓTULO: estado só desta tela (nem storage, nem perfil); remontar devolve o padrão.
+   * "SALVO" e CONFIRMAR DEPOIS DE SALVAR: a criação deixa, em memória e com dono, o que esta consulta mostra ao abrir
+   * (`chaveDepoisDeSalvar`). Lida UMA vez (espia ao montar, descarta no efeito); o "Salvo" fica 2,4 s. O Confirmar
+   * venda pedido na criação abre o MESMO diálogo, pelo MESMO caminho do clique (conta a abertura, refaz a prévia) —
+   * e fechá-lo deixa a venda como está: Aberto.
+   * DUPLICAR: a cópia sai do GET deste detalhe (`copiaDoDocumento`) e vai por entrega em memória para a criação da
+   * mesma espécie, com a mesma TOP na URL. Rascunho alterado dessa espécie aberto em outra aba: pergunta antes. */
+  const [densidade, setDensidade] = React.useState<PosicaoDoRotuloValor>("rotulo-a-frente");
+  const [depoisDeSalvar] = React.useState(() => espiarEntrega<DepoisDeSalvar>(chaveDepoisDeSalvar(id)));
+  React.useEffect(() => { descartarEntrega(chaveDepoisDeSalvar(id)); }, [id]);
+  const [salvoVisivel, setSalvoVisivel] = React.useState(false);
+  const chegadaTratada = React.useRef(false);
+  React.useEffect(() => {
+    if (!d || !depoisDeSalvar || chegadaTratada.current) return;
+    chegadaTratada.current = true;
+    setSalvoVisivel(true);
+    if (depoisDeSalvar.confirmar && String(d["kind"]) === "sale" && ["open", "approved"].includes(String(d["status"])) && can("sales.edit")) {
+      setAberturasDoConfirmar((n) => n + 1); setConfirmar("confirm");
+    }
+  }, [d, depoisDeSalvar, can]);
+  React.useEffect(() => {
+    if (!salvoVisivel) return;
+    const t = window.setTimeout(() => setSalvoVisivel(false), TEMPO_DO_SALVO_MS);
+    return () => window.clearTimeout(t);
+  }, [salvoVisivel]);
+  const ws = useWorkspaceTabs();
+  const [perguntaDuplicar, setPerguntaDuplicar] = React.useState<WsTab | null>(null);
+  /* ── fim VISUAL-UX-02 W1 ── */
 
   /**
    * OS PRÓXIMOS PASSOS — a política do documento, não a cadeia fixa da tela.
@@ -206,8 +242,19 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   const [linhasDaParte, setLinhasDaParte] = React.useState<LinhaDaParte[]>([]);
   const parteGerada = d ? ehParteGerada(d.items) : false;
   const origemDaParte = useOrigemDaParte(d, parteGerada, can);
+  /**
+   * VISUAL-UX-02 — "Dados adicionais" da consulta (recolhível, estado de tela) e o Proprietário QUANDO LEGÍVEL: o detalhe
+   * traz só o id; o nome vem da MESMA leitura (e da mesma chave de cache) que o RefSelect usa para mostrar um valor. Sem
+   * permissão de ler o cadastro, o campo não aparece — nunca vira um id cru na tela.
+   */
+  const [maisDados, setMaisDados] = React.useState(false);
+  const proprietarioId = typeof d?.["proprietary_id"] === "string" ? d["proprietary_id"] : "";
+  const proprietario = useQuery({ queryKey: ["option-one", "people", proprietarioId], queryFn: () => api<Record<string, unknown>>(`/api/resources/people/${proprietarioId}`), enabled: Boolean(proprietarioId), staleTime: 60_000, retry: false });
   // o rótulo da aba de trabalho é o de antes da Central: título da variante + código do servidor
   useTabTitle(d ? `${k?.titulo ?? "Documento de venda"} ${String(d["code"] ?? "")}`.trim() : null);
+  /* LEITURA PENDENTE (VISUAL-UX-02): a Central já aparece, com o esqueleto em Dados principais e nada do documento —
+     nem a variante, que só o registro diz. Erro continua no estado oficial (404 igual para tudo o que não se vê). */
+  if (!d && q.isLoading) return <CentralVendasWorkspace carregando titulo="Documento de venda" identidade={{ nome: "Carregando documento", alterado: false }} acoes={null} dados={null} itens={null} abas={ABAS_DA_LEITURA_PENDENTE} />;
   if (!d) return <LoadingOr q={q}>{null}</LoadingOr>;
 
   const passoSelecionado = itens.length === 1 ? itens[0]! : itens.find((x) => x.tipoOperacaoId === passoEscolhido) ?? null;
@@ -256,118 +303,153 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
 
   const codigo = String(d["code"] ?? "");
   const tom = statusTone(situacao);
-  const IconeDaSituacao = tom === "positive" ? FileCheck2 : tom === "negative" ? FileX2 : FileText;
+  const IconeDaSituacao = tom === "positive" ? FileCheck : tom === "negative" ? FileX : FileText;
   const podeCancelar = Boolean(k) && !["cancelled", "confirmed", "invoiced"].includes(situacao) && can(`${k!.perm}.delete`);
-  const menu: ItemDoMenu[] = [
-    ...(can("audit_logs.view") ? [{ rotulo: "Histórico de alterações", onSelect: () => setHistoricoAberto(true), testId: "central-vendas-historico" }] : []),
-    ...(podeCancelar ? [{ rotulo: `Cancelar ${k!.titulo.toLowerCase()}…`, onSelect: () => setConfirmar("cancel"), perigo: true, separar: true, testId: "central-vendas-cancelar" }] : [])
+  /* VISUAL-UX-02 W1 — o leque de Ações rápidas, de baixo para cima: Imprimir, Histórico, "N documentos abertos" (o
+     próprio leque o põe) e, quando pode, Cancelar. Histórico e Cancelar só com a capacidade — `can` só esconde. */
+  const rapidasAntes: ItemRapido[] = [
+    { chave: "imprimir", rotulo: "Imprimir", testId: "central-vendas-imprimir", icone: <IconeImprimir />, onSelect: () => window.print() },
+    ...(can("audit_logs.view") ? [{ chave: "historico", rotulo: "Histórico de alterações", testId: "central-vendas-historico", icone: <IconeHistorico />, onSelect: () => setHistoricoAberto(true) }] : [])
   ];
-  const tabela = <T extends Row>(legenda: string, colunas: Base2ItemColumn<T>[], linhas: T[], vazio: string) =>
-    <Base2Items legenda={legenda} colunas={colunas} linhas={linhas} vazioTexto={vazio} />;
+  const rapidasDepois: ItemRapido[] = podeCancelar ? [{ chave: "cancelar", rotulo: `Cancelar ${k!.titulo.toLowerCase()}…`, testId: "central-vendas-cancelar", icone: <IconeCancelarDocumento />, perigo: true, onSelect: () => setConfirmar("cancel") }] : [];
+  /* Duplicar: desabilitado com o motivo na dica (documento gerado de outro; sem TOP). */
+  const motivoSemCopia = motivoParaNaoDuplicar(d);
+  const abrirCopia = () => {
+    if (!k) return;
+    const copia = copiaDoDocumento(d, k.segmento, todayISO());
+    if (!copia) return;
+    entregarEmMemoria(chaveDaCopia(k.segmento), copia);
+    router.push(`/vendas/${k.segmento}/new?tipo_operacao_id=${encodeURIComponent(copia.tipoOperacaoId)}`);
+  };
+  const duplicar = () => {
+    if (!k) return;
+    const chaveDaCriacao = `/vendas/${k.segmento}/new`;
+    const rascunho = ws?.tabs.find((t) => t.key === chaveDaCriacao);
+    if (rascunho && ws?.dirty.has(chaveDaCriacao)) { setPerguntaDuplicar(rascunho); return; }
+    abrirCopia();
+  };
+  const confirmando = confirmar === "confirm" && act.isPending;
+  const varianteDoRegistro = varianteDeVenda(variante);
 
   return <>
     <CentralVendasWorkspace
       titulo={`${titulo} ${codigo}`.trim()}
-      identidade={{ nome: codigo || titulo, alterado: false, icone: <IconeDaSituacao />, tom, dica: titulo, situacao: <StatusBadge value={situacao} /> }}
-      acoes={<>
-        {/* NOVO abre o lançador da MESMA variante (TOP-first): a criação continua sendo a de sempre */}
-        {k && can(`${k.perm}.create`) && <><AcaoDaBarra rotulo={k.novo} destaque="novo" dica="inicio" data-testid="central-vendas-novo" onClick={() => router.push(`/vendas/${k.segmento}/new`)}><Plus aria-hidden /></AcaoDaBarra><DivisorDaBarra /></>}
-        {variante === "sale" && editavel && can("sales.edit") && <AcaoPrincipal icone={<Check aria-hidden />} onClick={() => { setAberturasDoConfirmar((n) => n + 1); setConfirmar("confirm"); }}>Confirmar venda</AcaoPrincipal>}
+      identidade={{ nome: codigo || titulo, codigo: Boolean(codigo), alterado: false, icone: <IconeDaSituacao />, tom, dica: titulo, situacao: <StatusBadge value={situacao} /> }}
+      densidade={densidade}
+      acoes={<ConjuntoDaBarra>
+        {/* VISUAL-UX-02 W1 — consulta: [Novo documento +] [Duplicar documento] [pílula] */}
+        {k && can(`${k.perm}.create`) && varianteDoRegistro && <NovoDocumento variante={varianteDoRegistro} />}
+        {k && can(`${k.perm}.create`) && <BotaoDaBarra rotulo="Duplicar documento" dica={motivoSemCopia ?? "Duplicar documento"} disabled={motivoSemCopia !== null} data-testid="central-vendas-duplicar" onClick={duplicar}><IconeDuplicar /></BotaoDaBarra>}
+        {/* Venda: Confirmar venda, visível e DESABILITADA quando o documento não está aberto (confirmada, cancelada…) */}
+        {variante === "sale" && can("sales.edit") && <PilulaDaBarra icone={<IconeConfirmar />} dica="Confirmar venda" disabled={!editavel || act.isPending} data-testid="central-vendas-confirmar"
+          onClick={() => { setAberturasDoConfirmar((n) => n + 1); setConfirmar("confirm"); }}>Confirmar venda</PilulaDaBarra>}
         {/* CONVERTER exige AS DUAS capacidades, como a API passou a exigir: editar a FONTE e criar o
             DESTINO. Mostrar o botão só com a do destino ofereceria uma ação que a API recusa com 403. */}
-        {k && ofereceConversao && editavel && can(`${k.perm}.edit`) && <AcaoPrincipal icone={<ArrowRightLeft aria-hidden />} data-testid="acao-conversao" onClick={abrirConversao}>{rotuloDaConversao}</AcaoPrincipal>}
-        {k && origemComParte && haSaldo && !saldoEncerradoEm && situacao !== "converted" && can(`${k.perm}.edit`) && <AcaoPrincipal icone={<FileX2 aria-hidden />} data-testid="acao-encerrar-saldo" onClick={() => setConfirmar("encerrar")}>Encerrar saldo</AcaoPrincipal>}
-      </>}
-      acoesDireita={<>
-        <AcaoDaBarra rotulo="Imprimir" onClick={() => window.print()}><Printer aria-hidden /></AcaoDaBarra>
-        <DocumentosAbertos />
-        {menu.length > 0 && <><DivisorDaBarra /><MaisAcoes itens={menu} /></>}
-      </>}
+        {k && ofereceConversao && editavel && can(`${k.perm}.edit`) && <PilulaDaBarra icone={<IconeConverter />} data-testid="acao-conversao" onClick={abrirConversao}>{rotuloDaConversao}</PilulaDaBarra>}
+        {k && origemComParte && haSaldo && !saldoEncerradoEm && situacao !== "converted" && can(`${k.perm}.edit`) && <PilulaDaBarra icone={<IconeEncerrarSaldo />} data-testid="acao-encerrar-saldo" onClick={() => setConfirmar("encerrar")}>Encerrar saldo</PilulaDaBarra>}
+      </ConjuntoDaBarra>}
+      acoesDireita={<ConjuntoDireito>
+        {/* [Salvo | Confirmando…] [Posição do rótulo] [Ações rápidas] */}
+        {confirmando ? <IndicadorConfirmando /> : salvoVisivel ? <IndicadorSalvo /> : null}
+        <PosicaoDoRotulo valor={densidade} onChange={setDensidade} />
+        <AcoesRapidas antes={rapidasAntes} depois={rapidasDepois} />
+      </ConjuntoDireito>}
       dados={<>
-        <CampoLeitura rotulo="Cliente" adorno="pesquisa" testId="central-vendas-campo" valor={`${d["client_name"] ?? ""} ${d["client_document"] ?? ""}`.trim()} />
-        <CampoLeitura rotulo="Empresa" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["empresa_name"] ?? "")} />
-        <CampoLeitura rotulo={tr("termos.tipo_operacao")} adorno="travado" testId="top-contexto"
-          valor={topConfigurada ? <><span className={estilosCentral.codigo}>{topConfigurada.codigo}</span><span className={estilosCentral.separador}>·</span><span>{topConfigurada.nome}</span></> : "Não configurada (registro legado)"} />
-        {/* A FAMÍLIA CANÔNICA sai do REGISTRO (`kind`), em memória — campo próprio, ao lado da TOP configurada */}
-        <CampoLeitura rotulo="Movimento" adorno="travado" testId="central-vendas-campo" valor={top ? tr(top.chaveI18n) : ""} />
-        {/* TOP-CONFIG-07: a versão CONGELADA no pedido reserva estoque. Só `=== true` do servidor; ausente (API anterior) = nada. */}
-        {/* "ativa" só enquanto o pedido de fato segura estoque (aberto e sem saldo encerrado); a coluna Reservado mostra o que resta. */}
-        {reservaAtiva && (situacao === "open" || situacao === "approved") && !saldoEncerradoEm
-          && <p data-testid="doc-reserva-ativa" className={estilosCentral.descricao}>Reserva de estoque: ativa</p>}
-        <CampoLeitura rotulo="Data" adorno="data" testId="central-vendas-campo" valor={dateBR(d["document_date"] as string)} />
-        <CampoLeitura rotulo="Vencimento" adorno="data" testId="central-vendas-campo" valor={d["due_date"] ? dateBR(d["due_date"] as string) : ""} />
-        <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["payment_method_name"] ?? "")} />
-        {/* CONDIÇÃO DE PAGAMENTO (VENDAS-A4): só quando a API devolve o campo preenchido — API anterior não o conhece. */}
-        {d["condicao_pagamento_id"] !== undefined && d["condicao_pagamento_id"] !== null && <CampoLeitura rotulo="Condição de pagamento" adorno="pesquisa" testId="consulta-condicao-pagamento"
-          valor={`${[d["condicao_pagamento_codigo"], d["condicao_pagamento_nome"]].filter((x) => x !== null && x !== undefined && x !== "").map(String).join(" · ")}${d["parcelas_ajustadas"] === true ? " (parcelas ajustadas)" : ""}`} />}
-        {/* VENDAS-A1: a classificação financeira escolhida no documento. Venda ainda não confirmada sem classificação
-            confirma pelo padrão automático, e a tela diz isso em vez de deixar o campo vazio. */}
-        <CampoLeitura rotulo="Natureza" adorno="travado" testId="central-vendas-campo"
-          valor={rotuloDaClassificacao(d["categoria_financeira_id"], d["categoria_financeira_codigo"], d["categoria_financeira_nome"], "Não informada", "Informada")} />
-        <CampoLeitura rotulo="Centro de resultado" adorno="travado" testId="central-vendas-campo"
-          valor={rotuloDaClassificacao(d["centro_custo_id"], d["centro_custo_codigo"], d["centro_custo_nome"], "Não informado", "Informado")} />
-        {/* O AVISO DO PADRÃO AUTOMÁTICO (A1, refeito na A5-1). Com a prévia, ele só aparece quando ela diz que a
-            confirmação PODE acontecer e VAI gerar contas a receber pelo recuo — e nomeia o par. Sem a prévia (API
-            anterior), vale a regra da A1: venda aberta sem classificação. Enquanto a prévia carrega, nada. */}
-        {variante === "sale" && !d["categoria_financeira_id"] && editavel && (
-          previaDaConfirmacao.situacao === "pronto"
-            ? padraoAutomaticoPrevisto(previaDaConfirmacao.previa) && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático — {padraoAutomaticoPrevisto(previaDaConfirmacao.previa)}.</p>
-            : previaDaConfirmacao.situacao === "nao-confirmado" && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático (primeira natureza de receita e primeiro centro de resultado analíticos, pela ordem do código).</p>
-        )}
-        <CampoLeitura rotulo="Responsável" adorno="travado" testId="central-vendas-campo" valor={String(d["responsible_name"] ?? "")} />
-        <CampoLeitura rotulo="Data de saída" adorno="data" testId="central-vendas-campo" valor={d["shipping_date"] ? dateBR(d["shipping_date"] as string) : ""} />
-        <CampoLeitura rotulo="Número" adorno="travado" testId="central-vendas-campo" valor={codigo} />
-        {/* A versão só faz sentido quando há TOP: num legado ela seria um número sem referente. */}
-        {topConfigurada && <CampoLeitura rotulo="Versão da operação" adorno="travado" testId="central-vendas-campo" valor={String(topConfigurada.versao)} />}
-        <CampoLeitura rotulo="Origem" adorno="travado" testId="central-vendas-campo" valor={d["origin_document_id"] ? "Convertido" : "Manual"} />
+        {/* VISUAL-UX-02: a coluna do desenho. Número, Natureza e Centro ficam em Dados principais (o skew os lê lá). */}
+        <ColunaDeCampos>
+          <CampoLeitura rotulo="Cliente" adorno="pesquisa" testId="central-vendas-campo" valor={`${d["client_name"] ?? ""} ${d["client_document"] ?? ""}`.trim()} />
+          <CampoLeitura rotulo="Empresa" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["empresa_name"] ?? "")} />
+          <CampoLeitura rotulo={tr("termos.tipo_operacao")} adorno="travado" testId="top-contexto"
+            valor={topConfigurada ? <><span className={estilosCentral.codigo}>{topConfigurada.codigo}</span><span className={estilosCentral.separador}>·</span><span>{topConfigurada.nome}</span></> : "Não configurada (registro legado)"} />
+          {/* TOP-CONFIG-07: a versão CONGELADA no pedido reserva estoque. Só `=== true` do servidor; ausente (API anterior) = nada. */}
+          {/* "ativa" só enquanto o pedido de fato segura estoque (aberto e sem saldo encerrado); a coluna Reservado mostra o que resta. */}
+          {reservaAtiva && (situacao === "open" || situacao === "approved") && !saldoEncerradoEm
+            && <p data-testid="doc-reserva-ativa" className={estilosCentral.descricao}>Reserva de estoque: ativa</p>}
+          <CampoLeitura rotulo="Data" adorno="data" testId="central-vendas-campo" valor={dateBR(d["document_date"] as string)} />
+          <CampoLeitura rotulo="Vencimento" adorno="data" testId="central-vendas-campo" valor={d["due_date"] ? dateBR(d["due_date"] as string) : ""} />
+          <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["payment_method_name"] ?? "")} />
+          {/* CONDIÇÃO DE PAGAMENTO (VENDAS-A4): só quando a API devolve o campo preenchido — API anterior não o conhece. */}
+          {d["condicao_pagamento_id"] !== undefined && d["condicao_pagamento_id"] !== null && <CampoLeitura rotulo="Condição de pagamento" adorno="pesquisa" testId="consulta-condicao-pagamento"
+            valor={`${[d["condicao_pagamento_codigo"], d["condicao_pagamento_nome"]].filter((x) => x !== null && x !== undefined && x !== "").map(String).join(" · ")}${d["parcelas_ajustadas"] === true ? " (parcelas ajustadas)" : ""}`} />}
+          {/* VENDAS-A1: a classificação financeira escolhida no documento. Venda ainda não confirmada sem classificação
+              confirma pelo padrão automático, e a tela diz isso em vez de deixar o campo vazio. */}
+          <CampoLeitura rotulo="Natureza" adorno="pesquisa" testId="central-vendas-campo"
+            valor={rotuloDaClassificacao(d["categoria_financeira_id"], d["categoria_financeira_codigo"], d["categoria_financeira_nome"], "Não informada", "Informada")} />
+          <CampoLeitura rotulo="Centro de resultado" adorno="pesquisa" testId="central-vendas-campo"
+            valor={rotuloDaClassificacao(d["centro_custo_id"], d["centro_custo_codigo"], d["centro_custo_nome"], "Não informado", "Informado")} />
+          {/* O AVISO DO PADRÃO AUTOMÁTICO (A1, refeito na A5-1). Com a prévia, ele só aparece quando ela diz que a
+              confirmação PODE acontecer e VAI gerar contas a receber pelo recuo — e nomeia o par. Sem a prévia (API
+              anterior), vale a regra da A1: venda aberta sem classificação. Enquanto a prévia carrega, nada. */}
+          {variante === "sale" && !d["categoria_financeira_id"] && editavel && (
+            previaDaConfirmacao.situacao === "pronto"
+              ? padraoAutomaticoPrevisto(previaDaConfirmacao.previa) && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático — {padraoAutomaticoPrevisto(previaDaConfirmacao.previa)}.</p>
+              : previaDaConfirmacao.situacao === "nao-confirmado" && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático (primeira natureza de receita e primeiro centro de resultado analíticos, pela ordem do código).</p>
+          )}
+          <CampoLeitura rotulo="Responsável" adorno="travado" testId="central-vendas-campo" valor={String(d["responsible_name"] ?? "")} />
+          <CampoLeitura rotulo="Data de saída" adorno="data" testId="central-vendas-campo" valor={d["shipping_date"] ? dateBR(d["shipping_date"] as string) : ""} />
+          <CampoLeitura rotulo="Número" adorno="travado" testId="central-vendas-campo" valor={codigo} />
+        </ColunaDeCampos>
+        {/* DADOS ADICIONAIS (VISUAL-UX-02): Proprietário (quando legível), Movimento, Versão da TOP e Origem, recolhidos como na criação. */}
+        <DadosAdicionais quantidade={(proprietario.isError ? 0 : 1) + 1 + (topConfigurada ? 1 : 0) + 1} aberto={maisDados} onAlternar={() => setMaisDados((m) => !m)} manterMontado>
+          {!proprietario.isError && <CampoLeitura rotulo="Proprietário" adorno="pesquisa" testId="central-vendas-campo" valor={proprietarioId && proprietario.data ? String(proprietario.data["name"] ?? "") : ""} />}
+          {/* A FAMÍLIA CANÔNICA sai do REGISTRO (`kind`), em memória — campo próprio, ao lado da TOP configurada */}
+          <CampoLeitura rotulo="Movimento" adorno="travado" testId="central-vendas-campo" valor={top ? tr(top.chaveI18n) : ""} />
+          {/* A versão só faz sentido quando há TOP: num legado ela seria um número sem referente. */}
+          {topConfigurada && <CampoLeitura rotulo="Versão da TOP" adorno="travado" testId="central-vendas-campo" valor={String(topConfigurada.versao)} />}
+          {/* Origem: "Lançamento direto" sem origem; a espécie e o código quando a leitura da parte (TOP-CONFIG-06) os traz; senão, "Convertido". */}
+          <CampoLeitura rotulo="Origem" adorno="travado" testId="central-vendas-campo"
+            valor={!d["origin_document_id"] ? "Lançamento direto" : origemDaParte.codigo && origemDaParte.kind ? `${DO_REGISTRO[origemDaParte.kind]?.titulo ?? "Documento"} ${origemDaParte.codigo}` : "Convertido"} />
+        </DadosAdicionais>
       </>}
-      itens={<>
-        {saldoEncerradoEm && <p data-testid="saldo-encerrado" className="mb-2 text-sm text-slate-700">
-          Saldo encerrado em {dateBR(saldoEncerradoEm).slice(0, 5)} por {String(d["saldo_encerrado_por_nome"] ?? "—")}: {String(d["saldo_encerrado_motivo"] ?? "")}
-        </p>}
-        {/* A parte gerada não muda produto, quantidade, preço nem descontos: eles vêm do documento de origem. */}
-        {parteGerada && <p data-testid="parte-itens-da-origem" className="mb-2 text-sm text-slate-700">{fraseItensDaOrigem(origemDaParte)}</p>}
-        <ItensSalvos mostrarSaldo={origemComParte} mostrarReservado={reservaAtiva} itens={d.items} subtotal={String(d["subtotal"] ?? "0")} legenda={`Itens d${variante === "sale" ? "a venda" : variante === "order" ? "o pedido de venda" : variante === "budget" ? "o orçamento" : "o documento"} ${codigo}`} />
-      </>}
-      totalDoDocumento={brl(d["total"] as string)}
+      itens={<ItensSalvos mostrarSaldo={origemComParte} mostrarReservado={reservaAtiva} itens={d.items} subtotal={String(d["subtotal"] ?? "0")} legenda={`Itens d${variante === "sale" ? "a venda" : variante === "order" ? "o pedido de venda" : variante === "budget" ? "o orçamento" : "o documento"} ${codigo}`}
+        avisos={[
+          ...(saldoEncerradoEm ? [{ testId: "saldo-encerrado", conteudo: <>Saldo encerrado em {dateBR(saldoEncerradoEm).slice(0, 5)} por {String(d["saldo_encerrado_por_nome"] ?? "—")}: {String(d["saldo_encerrado_motivo"] ?? "")}</> }] : []),
+          // A parte gerada não muda produto, quantidade, preço nem descontos: eles vêm do documento de origem.
+          ...(parteGerada ? [{ testId: "parte-itens-da-origem", conteudo: fraseItensDaOrigem(origemDaParte) }] : [])
+        ]} />}
       abas={[
-        { value: "totais", label: "Totais", content: <div className={estilosCentral.painelGrade}>
-          <div className={estilosCentral.painelColuna}>
-            <CampoLeitura rotulo="Subtotal dos itens" valor={brl(d["subtotal"] as string)} />
-            <CampoLeitura rotulo="Desconto" valor={brl(d["discount"] as string)} />
-            <CampoLeitura rotulo="Outros valores" valor={brl(d["other_values"] as string)} />
-          </div>
-          <div className={estilosCentral.painelColuna}>
-            <CampoLeitura rotulo="Frete" valor={brl(d["freight"] as string)} />
-            <CampoLeitura rotulo="ICMS frete" valor={brl(d["freight_icms"] as string)} />
-            <CampoLeitura rotulo="Total do documento" adorno="travado" testId="central-vendas-total-campo" valor={<b>{brl(d["total"] as string)}</b>} />
-          </div>
-        </div> },
-        { value: "financeiro", label: "Financeiro", content: tabela(`Contas a receber geradas pelo documento ${codigo}`, COLUNAS_TITULOS, d.titles, "Nenhuma conta a receber gerada.") },
-        { value: "frete", label: "Frete e transporte", content: <div className={estilosCentral.painelGrade}>
-          <div className={estilosCentral.painelColuna}>
-            <CampoLeitura rotulo="Transportadora" adorno="pesquisa" valor={String(d["transporter_name"] ?? "")} />
-            <CampoLeitura rotulo="Motorista" valor={String(d["driver_name"] ?? "")} />
-          </div>
-          <div className={estilosCentral.painelColuna}>
-            <CampoLeitura rotulo="Frete" valor={brl(d["freight"] as string)} />
-            <CampoLeitura rotulo="ICMS frete" valor={brl(d["freight_icms"] as string)} />
-          </div>
-        </div> },
-        { value: "derivados", label: "Documentos derivados", content: tabela(`Documentos derivados do documento ${codigo}`, COLUNAS_DERIVADOS, d.derived, "Nenhum documento derivado.") },
-        { value: "observacoes", label: "Observações", content: <div className={estilosCentral.painelLargo}><CampoLeitura rotulo="Observação" valor={String(d["note"] ?? "")} /></div> }
+        /* TOTAIS: Desconto e Outros valores (o desenho) e, ao lado, os números do SERVIDOR — o total do documento
+           inclui frete, ICMS do frete e outros valores, que não estão em linha de item nenhuma. */
+        { value: "totais", label: "Totais", content: <PainelRepartido lado={<PainelColuna>
+          <CampoLeitura rotulo="Subtotal dos itens" valor={brl(d["subtotal"] as string)} />
+          <CampoLeitura rotulo="Frete" valor={brl(d["freight"] as string)} />
+          <CampoLeitura rotulo="ICMS frete" valor={brl(d["freight_icms"] as string)} />
+          <div data-testid="central-vendas-total-campo"><CampoLeitura rotulo="Total do documento" adorno="travado" testId="central-vendas-total" valor={brl(d["total"] as string)} /></div>
+        </PainelColuna>}>
+          <CampoLeitura rotulo="Desconto" valor={num(String(d["discount"] ?? "0"), 2)} />
+          <CampoLeitura rotulo="Outros valores" valor={num(String(d["other_values"] ?? "0"), 2)} />
+        </PainelRepartido> },
+        /* FINANCEIRO: o plano GRAVADO (`installment_plan` do detalhe), em só leitura, e os títulos gerados. */
+        { value: "financeiro", label: "Financeiro", contador: d.titles.length, content: <PainelRepartido lado={<TitulosDoDocumento legenda={`Contas a receber geradas pelo documento ${codigo}`} titulos={d.titles} />}>
+          <PlanoEmLeitura plano={d["installment_plan"]} />
+        </PainelRepartido> },
+        { value: "frete", label: "Frete e transporte", content: <PainelColuna>
+          <CampoLeitura rotulo="Transportadora" adorno="pesquisa" valor={String(d["transporter_name"] ?? "")} />
+          <CampoLeitura rotulo="Motorista" valor={String(d["driver_name"] ?? "")} />
+          <CampoLeitura rotulo="Frete" valor={num(String(d["freight"] ?? "0"), 2)} />
+          <CampoLeitura rotulo="ICMS frete" valor={num(String(d["freight_icms"] ?? "0"), 2)} />
+        </PainelColuna> },
+        /* FISCAL: nenhuma NF-e é vinculada hoje (`nfe_id` nunca é gravado); Dedutível é o do plano gravado. */
+        { value: "fiscal", label: "Fiscal", content: <PainelColuna>
+          <CampoLeitura rotulo="NF-e" adorno="travado" valor={d["nfe_id"] ? "Vinculada" : "Nenhuma vinculada"} />
+          <ChaveSimNao rotulo="Dedutível" valor={dedutivelDoPlano(d["installment_plan"])} />
+        </PainelColuna> },
+        /* DERIVADOS só em pedido e orçamento: venda não gera derivado (a conversão não existe para `sale`). */
+        ...(variante === "order" || variante === "budget" ? [{ value: "derivados", label: "Documentos derivados", content: <DerivadosDoDocumento legenda={`Documentos derivados do documento ${codigo}`} derivados={d.derived} /> }] : []),
+        { value: "observacoes", label: "Observações", content: <PainelLargo><CampoLeitura rotulo="Observação" multilinha valor={String(d["note"] ?? "")} /></PainelLargo> }
       ]}
     />
     <HistoryDialog open={historicoAberto} onOpenChange={setHistoricoAberto} entity={ENTIDADE} entityId={id} title={`${titulo} ${codigo}`.trim()} />
 
     {/* CONFIRMAR VENDA (A5-1): o texto diz o que a confirmação VAI fazer NESTA venda, segundo a prévia do
         servidor. Enquanto ela carrega, e quando ela prevê uma recusa, o botão fica desabilitado; sem prévia
-        (API anterior, erro, corpo desconhecido), texto neutro e botão habilitado — quem recusa é o servidor. */}
-    <Confirm open={confirmar === "confirm"} onOpenChange={() => setConfirmar(null)} title="Confirmar venda" loading={act.isPending}
-      confirmDisabled={previaDaConfirmacao.situacao === "carregando" || (previaDaConfirmacao.situacao === "pronto" && !previaDaConfirmacao.previa.podeConfirmar)}
-      onConfirm={() => act.mutate({ path: `/api/sales/sales/${id}/confirm`, idem: true })}>
+        (API anterior, erro, corpo desconhecido), texto neutro e botão habilitado — quem recusa é o servidor.
+        VISUAL-UX-02: na casca do desenho ("Confirmar venda <código>?", Voltar / Confirmar venda). */}
+    <DialogoConfirmarVenda aberto={confirmar === "confirm"} onFechar={() => setConfirmar(null)} codigo={codigo} carregando={act.isPending}
+      confirmarDesabilitado={previaDaConfirmacao.situacao === "carregando" || (previaDaConfirmacao.situacao === "pronto" && !previaDaConfirmacao.previa.podeConfirmar)}
+      onConfirmar={() => act.mutate({ path: `/api/sales/sales/${id}/confirm`, idem: true })}>
       <PreviaNoDialogo estado={previaDaConfirmacao} />
-    </Confirm>
+    </DialogoConfirmarVenda>
     {/* CONVERSÃO NÃO É MAIS UM "TEM CERTEZA?". O documento de destino é de OUTRA família, então precisa
         da TOP dele — a da fonte não serve e não é herdada. Sem TOP alvo escolhível, o botão não converte. */}
     <Dialog open={confirmar === "convert"} onOpenChange={() => setConfirmar(null)} title={rotuloDaConversao} size={emPartes ? "md" : "sm"} testId="dialog-conversao"
@@ -414,6 +496,12 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
     {/* `idem: true` como na confirmação e na conversão: cancelar venda confirmada ESTORNA estoque e
         cancela títulos, e um reenvio do MESMO pedido não pode virar um segundo estorno. Era a única das
         três ações desta tela que mandava o pedido sem chave. */}
-    <Confirm open={confirmar === "cancel"} onOpenChange={() => setConfirmar(null)} title="Cancelar documento" text="O documento será cancelado. Ele não movimentou estoque nem gerou conta a receber." danger loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/${rota}/${id}/cancel`, idem: true, body: { reason: "Cancelado pelo usuário" } })} />
+    {/* VISUAL-UX-02: "Cancelar <espécie> <código>?" com Motivo (opcional) — `reason` = motivo aparado, ou o texto padrão de hoje. */}
+    <DialogoCancelarDocumento aberto={confirmar === "cancel"} onFechar={() => setConfirmar(null)} especie={titulo.toLowerCase()} codigo={codigo}
+      texto="O documento será cancelado. Ele não movimentou estoque nem gerou conta a receber." carregando={act.isPending}
+      onCancelar={(reason) => act.mutate({ path: `/api/sales/${rota}/${id}/cancel`, idem: true, body: { reason } })} />
+    {/* Duplicar com rascunho alterado da mesma espécie aberto: a MESMA pergunta de fechar aba, antes de trocar. */}
+    <ConfirmarFechamentoDeAba aba={perguntaDuplicar} onCancelar={() => setPerguntaDuplicar(null)}
+      onConfirmar={(aba) => { ws?.closeTab(aba.key, true); setPerguntaDuplicar(null); abrirCopia(); }} />
   </>;
 }

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, uniq, pickRef, preencherClassificacaoFinanceira } from "./helpers";
+import { login, adicionarItemNaCentral, uniq, pickRef, preencherClassificacaoFinanceira } from "./helpers";
 import { baseTemFatiaDeCadastro, cpfValido } from "./skew-fichas-cadastro";
 import { criarEmpresaEConferirContador } from "./skew-contador-empresa";
 import { execFileSync } from "node:child_process";
@@ -344,7 +344,7 @@ test("VENDAS-A1 · A1-K2 — o web da base cria venda: sem os campos (base anter
   await page.getByTestId("top-continuar").click();
   await expect(page.getByTestId("top-contexto")).toBeVisible();
   await pickRef(page, "Cliente", "DEMO");
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   await page.getByTestId("central-vendas-linha").first().getByTestId("central-vendas-produto").click();
   await page.getByTestId("central-vendas-pesquisa").getByRole("option").first().click();
   // Valor POSITIVO de propósito: o recuo só existe quando há título, e título de valor zero é recusado.
@@ -809,7 +809,7 @@ test("VENDAS-A4 · CP-K2 — o web da base cria orçamento, pedido e venda sem a
     await page.getByTestId("top-continuar").click();
     await expect(page.getByTestId("top-contexto")).toBeVisible();
     await pickRef(page, "Cliente", "DEMO");
-    await page.getByRole("button", { name: /Adicionar item/ }).click();
+    await adicionarItemNaCentral(page);
     await page.getByTestId("central-vendas-linha").first().getByTestId("central-vendas-produto").click();
     await page.getByTestId("central-vendas-pesquisa").getByRole("option").first().click();
     await page.getByTestId("central-vendas-linha").first().getByLabel("Valor unitário").fill("10");
@@ -874,7 +874,7 @@ test("VENDAS-A3-1 · LD-K2 — o web da base cria orçamento, pedido e venda com
     await page.getByTestId("top-continuar").click();
     await expect(page.getByTestId("top-contexto")).toBeVisible();
     await pickRef(page, "Cliente", "DEMO");
-    await page.getByRole("button", { name: /Adicionar item/ }).click();
+    await adicionarItemNaCentral(page);
     await page.getByTestId("central-vendas-linha").first().getByTestId("central-vendas-produto").click();
     await page.getByTestId("central-vendas-pesquisa").getByRole("option").first().click();
     await page.getByTestId("central-vendas-linha").first().getByLabel("Valor unitário").fill("10");
@@ -947,7 +947,7 @@ test("TOP-CONFIG-05 · RO-K2 — o web da base cria orçamento, pedido e venda c
     await page.getByTestId("top-continuar").click();
     await expect(page.getByTestId("top-contexto")).toBeVisible();
     await pickRef(page, "Cliente", "DEMO");
-    await page.getByRole("button", { name: /Adicionar item/ }).click();
+    await adicionarItemNaCentral(page);
     await page.getByTestId("central-vendas-linha").first().getByTestId("central-vendas-produto").click();
     await page.getByTestId("central-vendas-pesquisa").getByRole("option").first().click();
     await page.getByTestId("central-vendas-linha").first().getByLabel("Valor unitário").fill("10");
@@ -1115,7 +1115,7 @@ test("VENDAS-A3-1b · LB-K2 — layout com padrão de cadastro pela API deste HE
     }
 
     await pickRef(page, "Cliente", "DEMO");
-    await page.getByRole("button", { name: /Adicionar item/ }).click();
+    await adicionarItemNaCentral(page);
     await page.getByTestId("central-vendas-linha").first().getByTestId("central-vendas-produto").click();
     await page.getByTestId("central-vendas-pesquisa").getByRole("option").first().click();
     await page.getByTestId("central-vendas-linha").first().getByLabel("Valor unitário").fill("10");
