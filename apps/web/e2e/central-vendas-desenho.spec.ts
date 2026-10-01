@@ -13,6 +13,8 @@ import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirAbaDoLancamen
  * │ servidor (VD-4), Duplicar em memória (VD-5), Descartar (VD-6), Salvar com pendências (VD-7),   │
  * │ Salvo e Confirmar venda na criação (VD-8), Cancelar com motivo (VD-9), a consulta completa     │
  * │ (VD-10), Ampliar (VD-11), o esqueleto (VD-12) e a evidência desenho × produto (VD-13).         │
+ * │ Fase B: os itens da criação no desenho (VD-14), o Financeiro da criação na coluna (VD-15) e     │
+ * │ Natureza/Centro de resultado como pendência de clique (VD-7).                                  │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ VERDE QUE NÃO PROVA NADA É REPROVAÇÃO ───────────────────────────────────────────────────────┐
@@ -52,7 +54,10 @@ const MEDIDAS = {
   itens: { barra: 37, cabecalho: 29, linha: 24, rodape: 33 },
   /** D8: faixa 38 + borda = 39 de caixa. */
   painel: { faixa: 39 },
-  esqueleto: { barra: 34, quantas: 5 }
+  esqueleto: { barra: 34, quantas: 5 },
+  /** Fase B — itens da CRIAÇÃO: a 1ª coluna (o círculo) tem 34 px; a linha marcada leva o fundo verde translúcido e o
+   *  filete de 2 px à esquerda (box-shadow inset), na cor exata do desenho. */
+  itensDaCriacao: { circulo: 34, fundoMarcada: "rgba(64, 222, 99, 0.07)", fileteMarcada: "rgb(34, 168, 92) 2px 0px 0px 0px inset" }
 } as const;
 
 /** O texto padrão do motivo de cancelamento de hoje (vazio → ele). */
@@ -265,7 +270,7 @@ test("VD-1 — medidas-chave do desenho na criação e na consulta: barra, botõ
   const bdup = await caixa(dup);
   expect.soft([Math.round(bdup.width), Math.round(bdup.height)]).toEqual([MEDIDAS.botaoRedondo.lado, MEDIDAS.botaoRedondo.lado]);
   expect.soft((await estilo(page.getByTestId("central-vendas-novo"), ["background-color"]))["background-color"], "Novo verde").toBe(MEDIDAS.novo.fundo);
-  // ITENS (consulta; a grade da criação é a Fase B): barra 36, cabeçalho 28, linha 23, rodapé 32
+  // ITENS (consulta; a grade da criação é medida no VD-14): barra 36, cabeçalho 28, linha 23, rodapé 32
   const itens = consulta.getByTestId("central-vendas-itens");
   expect.soft(Math.round((await caixa(itens.getByRole("toolbar").first())).height), "barra de itens").toBe(MEDIDAS.itens.barra);
   expect.soft(Math.round((await caixa(page.getByTestId("central-vendas-grade").locator("thead tr").first())).height), "cabeçalho da grade").toBe(MEDIDAS.itens.cabecalho);
@@ -621,14 +626,15 @@ test("VD-6 — Descartar: pergunta, Continuar editando mantém, confirmar volta 
 
 /* ═════════════════════════════════════════════ VD-7 pendências ═════════════════════════════════════════════ */
 
-test("VD-7 — Salvar com pendências: ZERO POST, pílula com a lista, clique leva ao campo; estado (layout) continua DESABILITANDO", async ({ page }) => {
+test("VD-7 — Salvar com pendências: ZERO POST, pílula com a lista, clique leva ao campo; Natureza e Centro de resultado são pendência; estado (layout) continua DESABILITANDO", async ({ page }) => {
   await login(page);
   const top = await cadastrarTop(page);
   const outra = await cadastrarTop(page);                          // fixture: antes do registro de escritas da TELA
+  const daClassificacao = await cadastrarTop(page);                // fixture: antes do registro de escritas da TELA
   await abrirCriacao(page, top.id);
   const escritas = registrarEscritas(page);
   const salvar = page.getByRole("button", { name: "Salvar" });
-  await preencherClassificacaoFinanceira(page);                     // Fase A: Natureza/Centro ainda desabilitam (ajuste B)
+  await preencherClassificacaoFinanceira(page);                     // o par fica escolhido: este trecho é o de Cliente e Itens
   await expect(salvar, "com alteração, o Salvar habilita").toBeEnabled();
 
   await salvar.click();
@@ -667,6 +673,47 @@ test("VD-7 — Salvar com pendências: ZERO POST, pílula com a lista, clique le
   // ESTADO que não é pendência de campo continua DESABILITANDO: layout que não carrega. Sair de um rascunho sujo por
   // `goto` dispara o beforeunload REAL da barra de abas: aceitá-lo é o que o usuário faria ao trocar de endereço.
   page.on("dialog", (d) => { void d.accept(); });
+
+  // FASE B — NATUREZA E CENTRO DE RESULTADO SÃO PENDÊNCIA DE CLIQUE, não mais estado que desabilita. Tudo o mais
+  // válido (cliente, item com produto): só o par falta. O Salvar HABILITA com a alteração, o clique não envia NADA, a
+  // pílula lista exatamente os dois, e clicar em cada pendência leva ao campo. Sem o resto válido, o ZERO POST poderia
+  // ser obra de outra pendência — aqui só a classificação o segura (a guarda está no handler).
+  await abrirCriacao(page, daClassificacao.id);
+  await pickRef(page, "Cliente", "DEMO");
+  await page.getByTestId("central-vendas-adicionar-item").click();
+  await escolherPrimeiroProdutoDaLinha(page);
+  const salvarSemPar = page.getByRole("button", { name: "Salvar" });
+  await expect(salvarSemPar, "com alteração e sem Natureza/Centro, o Salvar HABILITA (Fase B)").toBeEnabled();
+  await salvarSemPar.click();
+  await expect(pilula, "o clique sem o par mostra a pílula").toBeVisible();
+  await expect(pilula).toHaveText(/2 pendências/);
+  if ((await pilula.getAttribute("aria-expanded")) !== "true") await pilula.click();
+  const doPar = lista.getByTestId("central-vendas-pendencia");
+  await expect(doPar, "só o par falta: duas pendências").toHaveCount(2);
+  await expect(doPar.filter({ hasText: "Natureza" }), "a lista diz Natureza").toHaveCount(1);
+  await expect(doPar.filter({ hasText: "Centro de resultado" }), "a lista diz Centro de resultado").toHaveCount(1);
+  await page.waitForTimeout(400);
+  expect(escritas, "ZERO POST sem Natureza e Centro — a guarda está no handler").toEqual([]);
+  const dadosDoPar = page.getByTestId(WORKSPACE).getByRole("region", { name: "Dados principais" });
+  const focoNoCampo = (rotulo: string) => async () => (await campoPeloRotulo(dadosDoPar, rotulo).evaluate((el) => el.contains(document.activeElement))) || (await page.locator("[data-radix-popper-content-wrapper]").count()) > 0;
+  await doPar.filter({ hasText: "Natureza" }).first().click();
+  await expect(lista, "a lista fecha").toBeHidden();
+  await expect.poll(focoNoCampo("Natureza"), { message: "Natureza → o foco vai ao campo (ou a pesquisa dele abre)" }).toBe(true);
+  await page.keyboard.press("Escape");
+  // só a Natureza escolhida: o Centro continua pendência, e a Natureza sai da lista
+  await pickRef(page, "Natureza", CLASSIFICACAO_DO_SEED.categoria.nome);
+  await salvarSemPar.click();
+  await expect(pilula).toHaveText(/1 pendência/);
+  if ((await pilula.getAttribute("aria-expanded")) !== "true") await pilula.click();
+  await expect(doPar, "resta uma pendência").toHaveCount(1);
+  await expect(doPar.first(), "e ela é o Centro de resultado").toContainText("Centro de resultado");
+  await page.waitForTimeout(400);
+  expect(escritas, "ZERO POST sem o Centro").toEqual([]);
+  await doPar.first().click();
+  await expect(lista).toBeHidden();
+  await expect.poll(focoNoCampo("Centro de resultado"), { message: "Centro de resultado → o foco vai ao campo (ou a pesquisa dele abre)" }).toBe(true);
+  await page.keyboard.press("Escape");
+
   await page.route("**/api/sales/sales/layout-efetivo**", (rota) => rota.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: { code: "INTERNAL", message: "falha simulada" } }) }));
   await abrirCriacao(page, outra.id);
   await expect(page.getByTestId("layout-nao-carregado"), "premissa: o layout falhou").toBeVisible({ timeout: 20_000 });
@@ -680,7 +727,7 @@ test("VD-7 — Salvar com pendências: ZERO POST, pílula com a lista, clique le
 async function preencherLancamentoValido(page: Page) {
   await pickRef(page, "Cliente", "DEMO");
   await preencherClassificacaoFinanceira(page);
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await page.getByTestId("central-vendas-adicionar-item").click();      // Fase B: "Adicionar produto" (barra); "Adicionar item" saiu
   await escolherPrimeiroProdutoDaLinha(page);
   await page.getByTestId("central-vendas-linha").first().getByLabel("Valor unitário").fill("10");
 }
@@ -972,4 +1019,352 @@ test("VD-13 — evidência desenho × produto em 1440×900 e 1280×800, sem rola
     await expect(page.getByTestId("central-vendas-identidade-nome")).toHaveText(venda.code);
   }
   test.info().annotations.push({ type: "evidencia", description: `pares gravados em ${pasta}${desenhos ? "" : " (sem DESENHO_SHOTS_DIR: só o produto)"}` });
+});
+
+/* ═════════════════════════════════════════════ VD-14 itens da criação ═════════════════════════════════════════════ */
+
+const linhaDaCriacao = (page: Page, i: number) => page.getByTestId("central-vendas-linha").nth(i);
+const circuloDa = (page: Page, i: number) => linhaDaCriacao(page, i).getByTestId("central-vendas-selecionar-item");
+const linhasMarcadas = (page: Page) => page.locator('[data-testid="central-vendas-linha"][aria-selected="true"]');
+/** O foco está na linha (no círculo dela, ou nela mesma). */
+const focoNaLinha = (l: Locator) => l.evaluate((el) => el === document.activeElement || el.contains(document.activeElement));
+/** Fundo e filete da linha marcada — procurados na linha e nas células: o desenho pode pintar o `tr` ou as `td`. */
+const pinturaDaLinha = (l: Locator) => l.evaluate((el, m) => {
+  const todos = [el as HTMLElement, ...el.querySelectorAll<HTMLElement>("*")];
+  return {
+    fundo: todos.some((e) => getComputedStyle(e).backgroundColor === m.fundo),
+    filete: todos.some((e) => getComputedStyle(e).boxShadow.includes(m.filete))
+  };
+}, { fundo: MEDIDAS.itensDaCriacao.fundoMarcada, filete: MEDIDAS.itensDaCriacao.fileteMarcada });
+/** Nomes acessíveis dos botões da barra de itens, na ordem do DOM. */
+const nomesDaBarraDeItens = (barra: Locator) => barra.getByRole("button").evaluateAll((els) => els.map((b) => b.getAttribute("aria-label") ?? (b.textContent ?? "").trim()));
+const CHAVES_DO_POST = [
+  "categoria_financeira_id", "centro_custo_id",
+  "client_id", "discount", "document_date", "driver_name", "due_date", "empresa_id", "freight", "freight_icms",
+  "installment_plan", "is_deductible", "items", "note", "other_values", "payment_method_id", "proprietary_id",
+  "shipping_date", "tipo_operacao_id", "transporter_id"
+];
+const CHAVES_DO_ITEM = ["discount", "discount_percent", "note", "product_id", "quantity", "unit_price", "warehouse_id"];
+
+/** Intercepta o POST de criação (sem gravar no banco) e devolve o corpo enviado. */
+async function capturarPostDaCriacao(page: Page) {
+  const capturado: { corpo: Record<string, unknown> | null } = { corpo: null };
+  await page.route("**/api/sales/sales", async (rota) => {
+    if (rota.request().method() !== "POST") return rota.fallback();
+    capturado.corpo = rota.request().postDataJSON() as Record<string, unknown>;
+    await rota.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ id: "00000000-0000-4000-8000-000000000000" }) });
+  });
+  return capturado;
+}
+
+test("VD-14 — itens da criação no desenho: marca pelo círculo (não pela linha), teclado, cor e filete, Duplicar/Remover do item corrente, vazio, rodapé, formulário e medidas 37/29/24/33", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const top = await cadastrarTop(page);
+  await abrirCriacao(page, top.id);
+  await pickRef(page, "Cliente", "DEMO");
+  await preencherClassificacaoFinanceira(page);
+  const escritas = registrarEscritas(page);
+  const itens = page.getByTestId(WORKSPACE).getByTestId("central-vendas-itens");
+  const barra = itens.getByRole("toolbar", { name: "Itens" });
+  const adicionarNaBarra = page.getByTestId("central-vendas-adicionar-item");
+  const adicionarNoVazio = page.getByTestId("central-vendas-adicionar-vazio");
+  const duplicar = page.getByTestId("central-vendas-duplicar-item");
+  const remover = page.getByTestId("central-vendas-remover-item");
+  const contagem = page.getByTestId("central-vendas-itens-contagem");
+  const rodape = page.getByTestId("central-vendas-itens-rodape");
+  const pontoDeErro = page.getByTestId("central-vendas-itens-erro");
+
+  // VAZIO: a frase do desenho e DOIS "Adicionar produto" (barra e vazio); "Adicionar item" não existe mais
+  await expect(itens.getByText("Nenhum item adicionado."), "o vazio do desenho").toBeVisible();
+  await expect(adicionarNaBarra).toHaveAccessibleName("Adicionar produto");
+  await expect(adicionarNoVazio).toHaveAccessibleName("Adicionar produto");
+  await expect(itens.getByRole("button", { name: "Adicionar produto", exact: true }), "com zero itens, dois botões com esse nome").toHaveCount(2);
+  await expect(itens.getByRole("button", { name: /Adicionar item/ }), "o nome antigo saiu").toHaveCount(0);
+  // o botão do vazio: pílula clara com a sombra verde do desenho (.tb-btn-green), 30 px
+  const ev = await estilo(adicionarNoVazio, ["background-color", "box-shadow"]);
+  expect.soft(ev["background-color"], "botão do vazio: fundo claro").toBe(MEDIDAS.botaoRedondo.fundo);
+  expect.soft(ev["box-shadow"], "botão do vazio: sombra verde").toBe(MEDIDAS.botaoRedondo.sombra);
+  expect.soft(Math.round((await caixa(adicionarNoVazio)).height), "botão do vazio: 30 px").toBe(30);
+  // sem item corrente, sem Duplicar e sem Remover; Grade e Formulário são DOIS botões ("Grade e formulário" saiu)
+  expect(await nomesDaBarraDeItens(barra), "barra sem item corrente").toEqual([expect.stringMatching(/^Ampliar/), "Adicionar produto", "Grade", "Formulário", "Configurar colunas"]);
+  await expect(duplicar).toHaveCount(0);
+  await expect(remover).toHaveCount(0);
+  await expect(barra.getByRole("button", { name: "Grade e formulário" })).toHaveCount(0);
+  // o título "Itens (N)" saiu da barra e mora no rodapé, com o subtotal
+  await expect(barra.getByTestId("central-vendas-itens-contagem"), "a contagem não está na barra").toHaveCount(0);
+  await expect(rodape.getByTestId("central-vendas-itens-contagem")).toHaveText("(0)");
+  await expect(rodape).toContainText("Itens (0)");
+  await expect(rodape.getByTestId("central-vendas-subtotal")).toContainText("0,00");
+  await expect(pontoDeErro, "sem pendência, sem ponto vermelho").toHaveCount(0);
+
+  // ITEM 1 pelo botão do vazio: a linha nova nasce MARCADA
+  await adicionarNoVazio.click();
+  await expect(page.getByTestId("central-vendas-linha")).toHaveCount(1);
+  await expect(itens.getByText("Nenhum item adicionado."), "o vazio saiu").toHaveCount(0);
+  await expect(linhaDaCriacao(page, 0)).toHaveAttribute("aria-selected", "true");
+  await expect(circuloDa(page, 0)).toHaveAttribute("role", "checkbox");
+  await expect(circuloDa(page, 0)).toHaveAccessibleName("Selecionar item 1");
+  await expect(circuloDa(page, 0)).toHaveAttribute("aria-checked", "true");
+  await expect(linhaDaCriacao(page, 0).getByTestId("central-vendas-produto"), "produto vazio").toHaveAccessibleName("Selecionar o produto do item 1");
+  await expect(linhaDaCriacao(page, 0).getByTestId("central-vendas-produto")).toContainText("Selecione o produto");
+  await escolherPrimeiroProdutoDaLinha(page);
+  await expect(linhaDaCriacao(page, 0).getByTestId("central-vendas-produto"), "produto escolhido").toHaveAccessibleName(/^Trocar o produto do item 1/);
+  const p1 = (await linhaDaCriacao(page, 0).getByTestId("central-vendas-produto").innerText()).trim();
+  await linhaDaCriacao(page, 0).getByLabel("Quantidade do item 1").fill("2");
+  await linhaDaCriacao(page, 0).getByLabel("Valor unitário do item 1").fill("10");
+  // com item corrente, a barra ganha Duplicar e Remover
+  expect(await nomesDaBarraDeItens(barra), "barra com item corrente").toEqual([expect.stringMatching(/^Ampliar/), "Adicionar produto", "Duplicar item", "Remover item", "Grade", "Formulário", "Configurar colunas"]);
+
+  // ITEM 2 pela barra: acrescenta e marca a NOVA; a 1ª perde a marca e os campos
+  await adicionarNaBarra.click();
+  await expect(page.getByTestId("central-vendas-linha")).toHaveCount(2);
+  await expect(linhaDaCriacao(page, 1)).toHaveAttribute("aria-selected", "true");
+  await expect(linhaDaCriacao(page, 0)).not.toHaveAttribute("aria-selected", "true");
+  await expect(linhasMarcadas(page), "seleção única").toHaveCount(1);
+  await expect(linhaDaCriacao(page, 0).locator("input"), "campos só na linha marcada").toHaveCount(0);
+  await expect(linhaDaCriacao(page, 1).getByLabel("Quantidade do item 2")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Excluir item/ }), "a lixeira por linha saiu").toHaveCount(0);
+  // ABRIR A PESQUISA DE PRODUTO MARCA A LINHA: marca a 1ª pelo círculo e abre o produto da 2ª
+  await circuloDa(page, 0).click();
+  await expect(linhaDaCriacao(page, 0)).toHaveAttribute("aria-selected", "true");
+  await linhaDaCriacao(page, 1).getByTestId("central-vendas-produto").click();
+  await expect(linhaDaCriacao(page, 1), "abrir a pesquisa marcou a linha dela").toHaveAttribute("aria-selected", "true");
+  await expect(linhasMarcadas(page)).toHaveCount(1);
+  const opcoes = page.getByTestId("central-vendas-pesquisa").getByRole("option");
+  await expect(opcoes.nth(1), "premissa: a pesquisa traz ao menos dois produtos reais").toBeVisible();
+  await opcoes.nth(1).click();
+  await expect(page.getByTestId("central-vendas-pesquisa")).toHaveCount(0);
+  const p2 = (await linhaDaCriacao(page, 1).getByTestId("central-vendas-produto").innerText()).trim();
+  expect(p2, "premissa: dois produtos diferentes").not.toBe(p1);
+  await linhaDaCriacao(page, 1).getByLabel("Quantidade do item 2").fill("3");
+  await linhaDaCriacao(page, 1).getByLabel("Valor unitário do item 2").fill("5");
+
+  // CLICAR NA LINHA NÃO MARCA: a célula Total da 1ª linha não tira a marca da 2ª
+  await linhaDaCriacao(page, 0).locator("td").last().click();
+  await expect(linhaDaCriacao(page, 1), "clicar na linha não muda a marca").toHaveAttribute("aria-selected", "true");
+  await expect(linhaDaCriacao(page, 0)).not.toHaveAttribute("aria-selected", "true");
+  await expect(circuloDa(page, 0)).toHaveAttribute("aria-checked", "false");
+
+  // COR E FILETE da linha marcada; a outra não os tem (o ponteiro sai de cima da grade: sem hover)
+  await page.mouse.move(0, 0);
+  expect.soft(await pinturaDaLinha(linhaDaCriacao(page, 1)), "marcada: fundo verde translúcido e filete inset de 2 px #22a85c").toEqual({ fundo: true, filete: true });
+  expect.soft(await pinturaDaLinha(linhaDaCriacao(page, 0)), "não marcada: nem fundo nem filete").toEqual({ fundo: false, filete: false });
+
+  // MEDIDAS — as mesmas dos itens da consulta: barra 37, cabeçalho 29, linha 24, rodapé 33; o círculo em 34 px
+  expect.soft(Math.round((await caixa(barra)).height), "barra de itens").toBe(MEDIDAS.itens.barra);
+  expect.soft(Math.round((await caixa(page.getByTestId("central-vendas-grade").locator("thead tr").first())).height), "cabeçalho da grade").toBe(MEDIDAS.itens.cabecalho);
+  for (const i of [0, 1]) expect.soft(Math.round((await caixa(linhaDaCriacao(page, i))).height), `linha ${i + 1} (${i === 1 ? "marcada" : "não marcada"})`).toBe(MEDIDAS.itens.linha);
+  expect.soft(Math.round((await caixa(rodape)).height), "rodapé dos itens").toBe(MEDIDAS.itens.rodape);
+  expect.soft(Math.round((await caixa(linhaDaCriacao(page, 0).locator("td").first())).width), "1ª coluna: o círculo, 34 px").toBe(MEDIDAS.itensDaCriacao.circulo);
+
+  // O CÍRCULO ALTERNA: desmarcar deixa a grade sem item corrente — sem campos, sem Duplicar, sem Remover
+  await circuloDa(page, 1).click();
+  await expect(linhasMarcadas(page), "o segundo clique no círculo desmarca").toHaveCount(0);
+  await expect(page.getByTestId("central-vendas-grade").locator("input"), "sem marca, nenhum campo editável").toHaveCount(0);
+  await expect(duplicar, "sem item corrente, sem Duplicar").toHaveCount(0);
+  await expect(remover, "sem item corrente, sem Remover").toHaveCount(0);
+  await circuloDa(page, 1).click();
+  await expect(linhaDaCriacao(page, 1)).toHaveAttribute("aria-selected", "true");
+
+  // CLICAR NA ÁREA DA GRADE FORA DAS LINHAS DESMARCA: o ponto logo abaixo da última linha, acima do rodapé
+  const ultima = await caixa(linhaDaCriacao(page, 1));
+  const topoDoRodape = (await caixa(rodape)).y;
+  const ponto = { x: Math.round(ultima.x + 60), y: Math.round(ultima.y + ultima.height + 14) };
+  expect(ponto.y, "premissa: há área de grade abaixo das linhas").toBeLessThan(topoDoRodape - 2);
+  const onde = await page.evaluate(({ x, y }) => {
+    const el = document.elementFromPoint(x, y);
+    return { nosItens: Boolean(el?.closest('[data-testid="central-vendas-itens"]')), naLinha: Boolean(el?.closest('[data-testid="central-vendas-linha"]')), naBarra: Boolean(el?.closest('[role="toolbar"]')), noRodape: Boolean(el?.closest('[data-testid="central-vendas-itens-rodape"]')) };
+  }, ponto);
+  expect(onde, "premissa: o ponto é da grade, fora das linhas").toEqual({ nosItens: true, naLinha: false, naBarra: false, noRodape: false });
+  await page.mouse.click(ponto.x, ponto.y);
+  await expect(linhasMarcadas(page), "clicar fora das linhas desmarca").toHaveCount(0);
+
+  // TECLADO no círculo: Espaço e Enter alternam; ↓ e ↑ passam a marca E o foco
+  await circuloDa(page, 0).focus();
+  await page.keyboard.press("Space");
+  await expect(linhaDaCriacao(page, 0), "Espaço marca").toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Enter");
+  await expect(linhasMarcadas(page), "Enter desmarca").toHaveCount(0);
+  await page.keyboard.press("Enter");
+  await expect(linhaDaCriacao(page, 0), "Enter marca de novo").toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("ArrowDown");
+  await expect(linhaDaCriacao(page, 1), "↓ passa a marca").toHaveAttribute("aria-selected", "true");
+  await expect(linhasMarcadas(page)).toHaveCount(1);
+  await expect.poll(() => focoNaLinha(linhaDaCriacao(page, 1)), { message: "↓ leva o foco junto" }).toBe(true);
+  await page.keyboard.press("ArrowUp");
+  await expect(linhaDaCriacao(page, 0), "↑ volta a marca").toHaveAttribute("aria-selected", "true");
+  await expect(linhasMarcadas(page)).toHaveCount(1);
+  await expect.poll(() => focoNaLinha(linhaDaCriacao(page, 0)), { message: "↑ leva o foco junto" }).toBe(true);
+
+  // DUPLICAR: a cópia entra LOGO ABAIXO, marcada, com os mesmos valores; o item 2 desce para a 3ª linha
+  await duplicar.click();
+  await expect(page.getByTestId("central-vendas-linha")).toHaveCount(3);
+  await expect(linhaDaCriacao(page, 1), "a cópia, logo abaixo, marcada").toHaveAttribute("aria-selected", "true");
+  await expect(linhasMarcadas(page)).toHaveCount(1);
+  await expect(linhaDaCriacao(page, 1).getByTestId("central-vendas-produto")).toContainText(p1);
+  await expect(linhaDaCriacao(page, 1).getByLabel("Quantidade do item 2")).toHaveValue("2");
+  await expect(linhaDaCriacao(page, 1).getByLabel("Valor unitário do item 2")).toHaveValue("10");
+  await expect(linhaDaCriacao(page, 2).getByTestId("central-vendas-produto")).toContainText(p2);
+  await expect(contagem).toHaveText("(3)");
+  // a cópia ganha uma quantidade própria — é ELA que o Remover tira, e o POST não pode levá-la
+  await linhaDaCriacao(page, 1).getByLabel("Quantidade do item 2").fill("7");
+  // REMOVER: tira o item corrente; a marca vai ao anterior
+  await remover.click();
+  await expect(page.getByTestId("central-vendas-linha")).toHaveCount(2);
+  await expect(linhaDaCriacao(page, 0), "a marca foi ao anterior").toHaveAttribute("aria-selected", "true");
+  await expect(linhasMarcadas(page)).toHaveCount(1);
+  await expect(linhaDaCriacao(page, 1).getByTestId("central-vendas-produto")).toContainText(p2);
+
+  // RODAPÉ: contagem e subtotal (2 × 10 + 3 × 5 = 35), sem ponto vermelho
+  await expect(contagem).toHaveText("(2)");
+  await expect(rodape.getByTestId("central-vendas-subtotal")).toContainText("35,00");
+  await expect(pontoDeErro).toHaveCount(0);
+
+  // PENDÊNCIA NOS ITENS: um item sem produto e o clique em Salvar — ZERO POST, ponto vermelho no rodapé, a linha
+  // pendente com o fundo de erro e "Selecione o produto" em vermelho (antes da tentativa, cinza)
+  await adicionarNaBarra.click();
+  await expect(page.getByTestId("central-vendas-linha")).toHaveCount(3);
+  const selecione = linhaDaCriacao(page, 2).getByText("Selecione o produto");
+  await expect(selecione).toBeVisible();
+  expect.soft(await selecione.evaluate((el) => getComputedStyle(el).color), "antes de tentar salvar, o vazio não é vermelho").not.toBe("rgb(185, 28, 28)");
+  await page.getByRole("button", { name: "Salvar" }).click();
+  const pilula = page.getByTestId("central-vendas-pendencias");
+  await expect(pilula).toBeVisible();
+  if ((await pilula.getAttribute("aria-expanded")) !== "true") await pilula.click();
+  await expect(page.getByTestId("central-vendas-pendencias-lista").getByTestId("central-vendas-pendencia").filter({ hasText: "Item 3" }), "a pendência é o item 3").toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(400);
+  expect(escritas, "ZERO POST com item sem produto").toEqual([]);
+  await expect(pontoDeErro, "o ponto vermelho do rodapé").toBeVisible();
+  await expect(pontoDeErro).toHaveAttribute("title", "Há itens com pendência");
+  await circuloDa(page, 0).click();                                  // a linha pendente sem a marca: o fundo é o de erro
+  await expect(linhaDaCriacao(page, 2)).not.toHaveAttribute("aria-selected", "true");
+  await page.mouse.move(0, 0);
+  expect.soft(await linhaDaCriacao(page, 2).evaluate((el) => [el as HTMLElement, ...el.querySelectorAll<HTMLElement>("*")].some((e) => getComputedStyle(e).backgroundColor === "rgb(255, 247, 247)")), "linha pendente: fundo #fff7f7").toBe(true);
+  expect.soft(await selecione.evaluate((el) => getComputedStyle(el).color), "linha pendente: 'Selecione o produto' em #b91c1c").toBe("rgb(185, 28, 28)");
+
+  // FORMULÁRIO: o item corrente é o do formulário — "Item X de N", ‹ ›, selo "novo" no item sem produto
+  await circuloDa(page, 2).click();
+  await expect(linhaDaCriacao(page, 2)).toHaveAttribute("aria-selected", "true");
+  await barra.getByRole("button", { name: "Formulário", exact: true }).click();
+  const posicao = page.getByTestId("central-vendas-item-posicao");
+  await expect(posicao).toHaveText("Item 3 de 3");
+  await expect(page.getByTestId("central-vendas-item-novo"), "item sem produto: selo novo").toBeVisible();
+  await page.getByTestId("central-vendas-item-form").getByRole("button", { name: "Item anterior" }).click();
+  await expect(posicao).toHaveText("Item 2 de 3");
+  await expect(page.getByTestId("central-vendas-item-novo"), "item com produto: sem selo").toHaveCount(0);
+  await page.getByTestId("central-vendas-item-form").getByRole("button", { name: "Próximo item" }).click();
+  await expect(posicao).toHaveText("Item 3 de 3");
+  // Remover no formulário tira o item DO FORMULÁRIO; a pendência dos itens some com ele
+  await remover.click();
+  await expect(posicao).toHaveText("Item 2 de 2");
+  await expect(page.getByTestId("central-vendas-item-novo")).toHaveCount(0);
+  await expect(contagem).toHaveText("(2)");
+  await expect(pontoDeErro, "sem item pendente, sem ponto").toHaveCount(0);
+
+  // "MOSTRAR GRADE E FORMULÁRIO" mora em Configurar colunas (o 3º botão saiu da barra)
+  await page.getByTestId("central-vendas-configurar").click();
+  const ambos = page.getByTestId("central-vendas-configuracao").getByRole("checkbox", { name: "Mostrar grade e formulário" });
+  await expect(ambos).toHaveAttribute("aria-checked", "false");
+  await ambos.click();
+  await expect(ambos).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("central-vendas-grade"), "grade e formulário juntos").toBeVisible();
+  await expect(page.getByTestId("central-vendas-item-form")).toBeVisible();
+  await barra.getByRole("button", { name: "Grade", exact: true }).click();
+  await expect(page.getByTestId("central-vendas-item-form"), "Grade sozinha").toHaveCount(0);
+
+  // O POST: as MESMAS 20 chaves do W4, dois itens com as chaves de sempre — e NADA do item removido (a quantidade 7)
+  const post = await capturarPostDaCriacao(page);
+  await page.getByRole("button", { name: "Salvar" }).click();
+  await expect.poll(() => post.corpo, { message: "o POST saiu" }).not.toBeNull();
+  expect(Object.keys(post.corpo!).sort(), "as MESMAS 20 chaves do W4").toEqual(CHAVES_DO_POST);
+  const enviados = post.corpo!["items"] as Record<string, unknown>[];
+  expect(enviados, "dois itens: o removido não foi").toHaveLength(2);
+  for (const it of enviados) expect(Object.keys(it).sort(), "as chaves do item de sempre").toEqual(CHAVES_DO_ITEM);
+  expect(enviados.map((it) => [Number(it["quantity"]), Number(it["unit_price"])]), "item 1 (2 × 10) e item 2 (3 × 5), na ordem").toEqual([[2, 10], [3, 5]]);
+  expect(enviados.some((it) => Number(it["quantity"]) === 7), "a cópia removida (quantidade 7) não viajou").toBe(false);
+  expect(enviados[0]!["product_id"], "dois produtos diferentes").not.toBe(enviados[1]!["product_id"]);
+  expect(escritas.map((e) => `${e.metodo} ${e.caminho}`), "só o POST de criação").toEqual(["POST /api/sales/sales"]);
+});
+
+/* ═════════════════════════════════════════════ VD-15 Financeiro da criação ═════════════════════════════════════════════ */
+
+/** O rótulo como o usuário o lê: sem o "*" do obrigatório e sem o ":" do rótulo à frente. */
+const semMarca = (t: string) => t.replace(/[*:]/g, "").replace(/\s+/g, " ").trim();
+
+test("VD-15 — Financeiro da criação: o plano na coluna do painel, um campo abaixo do outro, na densidade da Central, e o POST com as MESMAS chaves do installment_plan", async ({ page }) => {
+  await login(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const top = await cadastrarTop(page);
+  await abrirCriacao(page, top.id);
+  await expect(page.getByTestId(WORKSPACE), "a densidade padrão é rótulo à frente").toHaveAttribute("data-densidade", "rotulo-a-frente");
+  await pickRef(page, "Cliente", "DEMO");
+  await preencherClassificacaoFinanceira(page);
+  await page.getByTestId("central-vendas-adicionar-item").click();
+  await escolherPrimeiroProdutoDaLinha(page);
+  await page.getByTestId("central-vendas-linha").first().getByLabel("Valor unitário").fill("100");
+
+  await abrirAbaDoLancamento(page, "Financeiro");
+  const fin = page.getByTestId("central-vendas-painel").getByRole("tabpanel");
+  /** Os rótulos da coluna, a partir do Parcelamento (a Condição de pagamento, quando a API a declara, vem antes). */
+  const rotulos = async () => { const todos = (await fin.locator("label").allInnerTexts()).map(semMarca); const i = todos.indexOf("Parcelamento"); return i < 0 ? todos : todos.slice(i); };
+  const chavesDoPlano = () => fin.locator("[data-plano]").evaluateAll((els) => els.map((e) => e.getAttribute("data-plano")));
+
+  // À VISTA: só o Parcelamento
+  await expect.poll(rotulos, { message: "à vista: só o Parcelamento" }).toEqual(["Parcelamento"]);
+  await expect.poll(chavesDoPlano).toEqual([]);
+
+  // PARCELADO, modo intervalo: a ordem do desenho, com o rótulo novo "Intervalo (dias)"
+  await fin.getByLabel("Parcelamento").selectOption("1");
+  const NO_INTERVALO = ["Parcelamento", "Nº de parcelas", "1º vencimento", "Intervalo (dias)", "Modo", "Possui entrada"];
+  await expect.poll(rotulos, { message: "parcelado, por intervalo" }).toEqual(NO_INTERVALO);
+  await expect.poll(chavesDoPlano).toEqual(["installments", "first_due_date", "interval_days", "mode", "has_down_payment"]);
+  await expect(fin.getByLabel("Intervalo (dias)")).toHaveValue("30");
+  await expect(fin.getByText("Intervalo entre parcelas (dias)"), "o rótulo antigo saiu").toHaveCount(0);
+
+  // DENSIDADE DA CENTRAL, um abaixo do outro: rótulo à frente de 128, caixa em 137 com 28 de altura, todas na MESMA
+  // coluna e cada uma abaixo da anterior (sem sobrepor)
+  const geometria: { x: number; topo: number; base: number }[] = [];
+  for (const rotulo of NO_INTERVALO) {
+    const campo = campoPeloRotulo(fin, rotulo);
+    const larguraDoRotulo = await campo.locator("label").first().evaluate((el) => Math.round(el.getBoundingClientRect().width));
+    expect.soft(larguraDoRotulo, `${rotulo}: rótulo à frente, 128 de caixa (D4)`).toBe(MEDIDAS.campo.rotuloLargura);
+    const m = await medirCaixa(campo);
+    expect.soft(m, `${rotulo}: a caixa foi encontrada`).not.toBeNull();
+    expect.soft([m?.x, m?.altura], `${rotulo}: caixa em 137, 28 de altura (D3)`).toEqual([MEDIDAS.campo.caixaInicio, MEDIDAS.campo.caixaAltura]);
+    const b = await caixa(campo);
+    geometria.push({ x: Math.round(b.x), topo: Math.round(b.y), base: Math.round(b.y + b.height) });
+  }
+  expect(new Set(geometria.map((g) => g.x)).size, "todos na MESMA coluna").toBe(1);
+  for (let i = 1; i < geometria.length; i++) expect(geometria[i]!.topo, `${NO_INTERVALO[i]} abaixo de ${NO_INTERVALO[i - 1]}`).toBeGreaterThanOrEqual(geometria[i - 1]!.base);
+
+  // DIA FIXO: o Intervalo sai, o Dia de vencimento entra DEPOIS do Modo
+  await fin.getByLabel("Nº de parcelas").fill("3");
+  await fin.getByLabel("Modo").selectOption("fixed_day");
+  await expect.poll(rotulos, { message: "parcelado, dia fixo" }).toEqual(["Parcelamento", "Nº de parcelas", "1º vencimento", "Modo", "Dia de vencimento", "Possui entrada"]);
+  await expect.poll(chavesDoPlano).toEqual(["installments", "first_due_date", "mode", "due_day", "has_down_payment"]);
+  await fin.getByLabel("Dia de vencimento").fill("10");
+  // COM ENTRADA: Valor entrada e Data entrada no fim
+  await fin.getByLabel("Possui entrada").selectOption("true");
+  await expect.poll(rotulos, { message: "com entrada" }).toEqual(["Parcelamento", "Nº de parcelas", "1º vencimento", "Modo", "Dia de vencimento", "Possui entrada", "Valor entrada", "Data entrada"]);
+  await expect.poll(chavesDoPlano).toEqual(["installments", "first_due_date", "mode", "due_day", "has_down_payment", "down_payment_value", "down_payment_date"]);
+  await fin.getByLabel("Valor entrada").fill("20");
+  await fin.getByLabel("Data entrada").fill("20/10/2026");
+  await fin.getByLabel("Data entrada").press("Enter");
+
+  // O POST: as 20 chaves do W4 e o installment_plan com as MESMAS chaves que o PlanEditor sempre enviou
+  const escritas = registrarEscritas(page);
+  const post = await capturarPostDaCriacao(page);
+  await page.getByRole("button", { name: "Salvar" }).click();
+  await expect.poll(() => post.corpo, { message: "o POST saiu" }).not.toBeNull();
+  expect(Object.keys(post.corpo!).sort(), "as MESMAS 20 chaves do W4").toEqual(CHAVES_DO_POST);
+  const plano = post.corpo!["installment_plan"] as Record<string, unknown>;
+  expect(Object.keys(plano).sort(), "as chaves do plano de sempre (o intervalo do padrão continua, como antes)").toEqual([
+    "down_payment_date", "down_payment_value", "due_day", "first_due_date", "has_down_payment", "installments", "interval_days", "mode"
+  ]);
+  expect([plano["installments"], plano["mode"], plano["due_day"], plano["has_down_payment"], plano["down_payment_value"], plano["down_payment_date"]], "os valores digitados").toEqual([3, "fixed_day", 10, true, "20", "2026-10-20"]);
+  expect(escritas.map((e) => `${e.metodo} ${e.caminho}`), "só o POST de criação").toEqual(["POST /api/sales/sales"]);
 });
