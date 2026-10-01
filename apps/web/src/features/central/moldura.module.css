@@ -181,7 +181,7 @@
 .docsEscolher:focus-visible { outline: 2px solid #22a85c; outline-offset: -2px; }
 .docsTitulo { font-size: 12.5px; font-weight: 500; color: #111827; text-overflow: ellipsis; pointer-events: none; }
 .docsCodigo { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; font-weight: 500; letter-spacing: -.01em; font-variant-numeric: tabular-nums; color: #7b8694; }
-.docsCliente { font-size: 12.5px; color: #111827; text-overflow: ellipsis; pointer-events: none; }
+.docsContraparte { font-size: 12.5px; color: #111827; text-overflow: ellipsis; pointer-events: none; }
 .docsSituacao { pointer-events: none; }
 .docsPonto { pointer-events: none; }
 .docsFecharCelula { position: relative; z-index: 1; }

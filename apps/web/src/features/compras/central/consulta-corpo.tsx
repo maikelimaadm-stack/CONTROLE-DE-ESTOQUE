@@ -60,8 +60,9 @@ export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: Zon
   const z = zonas ?? zonasPadraoDaConsulta(e.variante.familia);
   const nosDados = new Set([...z.principais, ...z.adicionais]);
   const top = e.top;
+  const recebidoPorItem = e.itens.some((it) => typeof it["item_origem_id"] === "string" && it["item_origem_id"] !== "");
   const origem = !e.origemId
-    ? "Lançamento direto"
+    ? (recebidoPorItem ? "Recebido de pedido" : "Lançamento direto")
     : <Link data-testid="compras-origem" className="text-brand-700 underline" href={e.rotaDaOrigem}>{e.rotuloDoPedido}{d["origem_codigo"] ? ` ${String(d["origem_codigo"])}` : ""}</Link>;
   return <>
     <ColunaDeCampos>
@@ -100,7 +101,7 @@ export function ItensDaConsulta({ e }: { e: EstadoDaConsulta }) {
   return <div data-testid="compras-consulta-itens" className="contents">
     <ItensSalvos prefixoTestid={PREFIXO_CENTRAL_COMPRAS} colunas={colunas} itens={itens} subtotal={String(d["valor_itens"] ?? "0")}
       legenda={`Itens ${e.ehPedido ? "do pedido de compra" : "da compra"} ${t(d["codigo"])}`}
-      mostrarLote={e.ehCompra} mostrarSaldo={e.recebimentoDeclarado} avisos={avisos} />
+      mostrarLote={e.ehCompra} mostrarSaldo={e.recebimentoDeclarado} rotuloDoGerado="Recebido" avisos={avisos} />
   </div>;
 }
 

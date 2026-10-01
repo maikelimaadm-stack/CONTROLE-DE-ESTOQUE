@@ -300,6 +300,8 @@ export interface PropsDosItensSalvos {
   mostrarSaldo?: boolean; mostrarReservado?: boolean;
   /** Lote e validade gravados no item (só a espécie que os grava liga). */
   mostrarLote?: boolean;
+  /** Rótulo da parte já gerada no item, com `mostrarSaldo` (padrão "Faturado"; a compra diz "Recebido"). */
+  rotuloDoGerado?: string;
   avisos?: readonly AvisoDosItens[];
 }
 export interface PropsDeConfigurarColunas<K extends string> {

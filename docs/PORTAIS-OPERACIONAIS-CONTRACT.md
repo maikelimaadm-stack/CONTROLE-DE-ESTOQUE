@@ -448,3 +448,65 @@ gerais, o editor e a TOP no documento) estão em `docs/TIPO-OPERACAO-CONTRACT.md
 
 ESTOQUE-01 está EM PR e tem a própria linha na tabela do programa (§5, "Ordem do programa"): o documento de estoque
 sem execução configurada é esta fatia; a execução configurada do estoque (04C) continua não iniciada.
+
+## Motor da Central (VISUAL-UX-04)
+
+> Decisão 276. Só apresentação (faixa F2): nenhuma rota, API, permissão ou regra nova.
+
+**A regra.** Toda Central de documento (Vendas, Compras e as que vierem, a começar pela de Estoque) usa o MOTOR DA
+CENTRAL. Comportamento novo de tela — um botão da barra, uma pílula, um diálogo, uma guarda do Salvar — entra no motor,
+nunca numa Central só. Duas Centrais copiadas divergem em silêncio: a que não recebeu a cópia simplesmente fica sem.
+
+**O que mora no motor** (`apps/web/src/features/central/`, um componente por arquivo, nome neutro):
+
+| Arquivo | O que é |
+|---|---|
+| `moldura.tsx` | a moldura: barra, Dados principais (cabeçalho com Ampliar, identidade, aviso e esqueleto), divisores, Itens, painel com abas recolhíveis, Ampliar/Restaurar layout |
+| `campo.tsx` | o campo nas duas densidades (rótulo à frente ou compacto), campo em leitura, chave Sim/Não, coluna de campos, Dados adicionais, data |
+| `barra.tsx` | ícones, conjuntos, botão e pílula da barra, Posição do rótulo, "Salvo" / "Confirmando…", a pílula "N pendências" |
+| `acoes-rapidas.tsx` | o leque de Ações rápidas (a espécie entrega os itens) |
+| `documentos-abertos.tsx` | a lista dos documentos abertos, sobre as abas do workspace e o `closeTab` |
+| `novo-documento.tsx` | o menu "Nova operação · <espécie>" com as TOPs que o servidor listou |
+| `itens.tsx`, `itens-salvos.tsx`, `configurar-colunas.tsx` | a grade da criação (seleção pelo círculo, Grade \| Formulário, rodapé; lote/validade, armazém por item e o modo "da origem" opcionais), os itens salvos e Configurar colunas |
+| `painel.tsx` | painel repartido, coluna, largo, o plano de parcelas (editável e em leitura), títulos e derivados |
+| `dialogos.tsx` | Confirmar (com a prévia que a espécie põe dentro), Cancelar (motivo opcional, 1–500) e Descartar |
+| `pesquisa.tsx` | a pesquisa (lookup) da Central |
+| `duplicar-memoria.ts`, `salvo.ts` | a entrega EM MEMÓRIA da cópia do Duplicar e do "Salvo" (nada na URL, nada no navegador) |
+| `contrato.ts` | só tipos e constantes triviais: o contrato do adaptador e das peças |
+
+O motor não conhece espécie: dentro de `features/central/` não há rota de API, cliente nem fornecedor.
+
+**O contrato do adaptador** (`AdaptadorDaCentral`, em `features/central/contrato.ts`). Cada Central entrega:
+
+- `prefixoTestid` — o prefixo de todos os testids do motor (a venda mantém `central-vendas`; a compra usa
+  `central-compras`, e os `compras-*` de hoje continuam no elemento equivalente);
+- `segmento` e `rotas` — lista, nova, registro e a porta de leitura do registro na API;
+- `textos` — título da criação e da leitura pendente, rótulo do Confirmar, espécie em minúsculas, legenda dos títulos;
+- `documentosAbertos` — qual aba do workspace é documento da espécie (e a porta de leitura dela) e o campo da
+  contraparte;
+- `novoDocumento` — as TOPs da espécie (hook), o rótulo do menu, a rota com `tipo_operacao_id` (a página RECONFERE: URL
+  não autoriza) e a rota do lançador;
+- `colunasDosItens` — colunas do sistema, mapa catálogo → coluna do motor e as colunas da leitura;
+- `acoes` — o que a espécie põe na barra e no leque (o motor só dispõe);
+- `entidadeDoHistorico` (ou null), `linkDoTitulo`, `linkDoDerivado`;
+- `chaveDoSalvo` e `chaveDaCopia` — chaves do Map em memória, nunca do armazenamento do navegador;
+- `cancelamento` — a chave do motivo no corpo (`reason` na venda, `motivo` na compra) e o vazio.
+
+O que é regra continua na espécie: a venda (`features/sales/`) mantém o lançamento, os derivados, o cliente em atraso,
+a reserva e o faturar em partes; a compra (`features/compras/central/`) mantém o estado do documento, o receber pedido,
+os Próximos passos, o Encerrar saldo e o que a cópia leva. O servidor continua sendo quem recusa.
+
+### A apresentação vigente da Central de Compras (VISUAL-UX-04, decisão 276)
+
+A Central de Compras (`/compras/<espécie>/new` e `/compras/<espécie>/<id>`, Pedido de compra e Compra) é montada sobre
+o motor pelo adaptador `apps/web/src/features/compras/central/adaptador.ts` e tem a apresentação da Central de Vendas:
+barra por modo (consulta: Novo documento, Duplicar, a pílula "Confirmar compra" ou, no pedido, "Receber…" e "Encerrar
+saldo", e "Salvo"; criação: Descartar, Salvar, Confirmar compra e "N pendências"), o leque (Imprimir, Histórico,
+documentos abertos, Cancelar; sem Anexos), Dados principais com a TOP travada e Dados adicionais (Movimento, Versão da
+TOP, Origem), a grade do motor com Lote e Validade na compra e "Saldo do pedido" no receber, e o painel com Totais,
+Financeiro, Frete e transporte, Fiscal, Estoque (compra), Compras geradas (pedido) e Observações. O layout do documento
+ligado à TOP (COMPRAS-03, decisão 269) continua decidindo os campos e as zonas. Ficam como eram: as portas
+(`POST /api/compras/<seg>`, `/convert`, `/confirm`, `/cancel`, `/encerrar-saldo`), as chaves dos corpos, o modo
+receber, os Próximos passos e a lista do portal `/compras`. Ganham do modelo: Duplicar (em memória, sem nota, série,
+datas, lote, validade nem origem), Descartar, a guarda de pendência no clique (zero POST), Confirmar na criação, o
+"Salvo", o aviso de aba alterada e o Cancelar com `{motivo}` opcional e `Idempotency-Key`.

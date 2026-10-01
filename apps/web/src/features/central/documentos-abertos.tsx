@@ -119,7 +119,7 @@ function LinhaDoDocumento({ doc, ordem, oculto, atual, sujo, onEscolher, onFecha
   return <li className={estilos.docsLinha} style={{ animationDelay: `${40 + ordem * 32}ms` }} data-atual={atual ? "true" : "false"} hidden={oculto} data-testid={`${prefixoTestid}-documento`} data-chave={doc.aba.key}>
     <button type="button" className={estilos.docsEscolher} aria-current={atual ? "page" : undefined} aria-label={`Trabalhar em ${titulo}${contraparte ? ` · ${contraparte}` : ""}`} onClick={onEscolher} />
     <span className={cn(estilos.docsTitulo, codigo && estilos.docsCodigo)} data-testid={`${prefixoTestid}-documento-titulo`}>{titulo}</span>
-    <span className={estilos.docsCliente} data-testid={`${prefixoTestid}-documento-${fonte.sufixoTestidDaContraparte}`}>{contraparte ?? "—"}</span>
+    <span className={estilos.docsContraparte} data-testid={`${prefixoTestid}-documento-${fonte.sufixoTestidDaContraparte}`}>{contraparte ?? "—"}</span>
     <span className={estilos.docsSituacao} data-testid={`${prefixoTestid}-documento-situacao`}>{temSituacao && <StatusBadge value={situacao} />}</span>
     <span className={estilos.docsPonto}>{sujo && <span className={estilos.pontoAlterado} role="img" aria-label="Alterações não salvas" />}</span>
     <span className={estilos.docsFecharCelula}><button type="button" className={estilos.docsFechar} aria-label={`Fechar ${titulo}`} title="Fechar documento" onClick={onFechar} data-testid={`${prefixoTestid}-documento-fechar`}><X aria-hidden /></button></span>

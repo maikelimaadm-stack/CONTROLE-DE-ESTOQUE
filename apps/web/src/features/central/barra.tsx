@@ -55,7 +55,7 @@ export const BotaoDaBarra = React.forwardRef<HTMLButtonElement, PropsDoBotaoDaBa
   </button>);
 BotaoDaBarra.displayName = "BotaoDaBarra";
 
-/** A pílula (`.tbp`): ícone e texto — Confirmar, Converter, Encerrar saldo. */
+/** A pílula (`.tbp`): ícone e texto — Confirmar e as ações de avanço da espécie. */
 export const PilulaDaBarra = React.forwardRef<HTMLButtonElement, PropsDaPilulaDaBarra>(
   ({ icone, dica, ocupado, className, children, disabled, ...p }, ref) =>
     <button ref={ref} type="button" data-dica={dica} aria-busy={ocupado || undefined} disabled={disabled || ocupado}

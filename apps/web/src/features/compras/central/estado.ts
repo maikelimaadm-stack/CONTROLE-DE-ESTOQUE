@@ -319,7 +319,12 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   /* A CÓPIA (Duplicar) — lida UMA vez, da memória; só vale para esta espécie e esta TOP. */
   const [copia] = React.useState<CopiaDeCompra | null>(() =>
     (!modoReceber && topDoLancamento ? espiarCopia<Partial<Cabecalho>>(chaveDaCopiaDeCompra, variante.segmento, topDoLancamento.id) : null));
-  React.useEffect(() => { if (copia) descartarCopia(chaveDaCopiaDeCompra, variante.segmento); }, [copia, variante.segmento]);
+  const avisouCopia = React.useRef(false);
+  React.useEffect(() => {
+    if (!copia) return;
+    descartarCopia(chaveDaCopiaDeCompra, variante.segmento);
+    if (!avisouCopia.current) { avisouCopia.current = true; toast.info("Cópia aberta como rascunho"); }
+  }, [copia, variante.segmento]);
 
   const [h, setH] = React.useState<Cabecalho>(() => ({ ...cabecalhoVazio(), ...(copia?.cabecalho ?? {}), data_documento: todayISO() }));
   /** O estado INICIAL ("intocado"): a abertura (sem a cópia: a cópia é alteração), o pedido e os padrões aplicados. */

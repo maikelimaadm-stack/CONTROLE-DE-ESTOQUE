@@ -1542,6 +1542,34 @@ grant execute on function erp.situacao_atraso_cliente(uuid, int) to erp_app;
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 
+## VISUAL-UX-04 — Central de Compras no motor da Central (sem migration)
+
+Decisão 276. **Só web**: sem migration, sem rota, sem API, sem variável, sem permissão, sem domínio. O motor da Central
+sai da Central de Vendas para `apps/web/src/features/central/`, e a Central de Compras (`/compras/<espécie>/new` e
+`/compras/<espécie>/<id>`) passa a ser montada sobre ele, com a apresentação da venda. As escritas continuam as portas
+de hoje, com os mesmos corpos: `POST /api/compras/<seg>`, `/convert`, `/confirm`, `/cancel` e `/encerrar-saldo`. O shell
+passa a tratar `/compras/<espécie>/new` e `/compras/<espécie>/<id>` como rotas imersivas, como as de venda.
+
+**Impacto em dados reais:** nenhum. A Central de Compras passa a oferecer Duplicar (abre um rascunho) e Cancelar com
+motivo; a Central de Vendas não muda.
+
+**Version skew:** web nova contra a API da base — as mesmas portas e os mesmos corpos (o cancelamento com motivo usa a
+chave `motivo` que a API já aceita; vazio, o corpo sai sem ela, como hoje); web anterior contra a API nova — nada muda
+na API.
+
+**Reversão:** reverter a PR (redeploy do web anterior). Nada a desfazer em banco ou configuração: a cópia do Duplicar,
+o "Salvo", a posição do rótulo e o Ampliar vivem só na memória da tela.
+
+**Roteiro do Maike (produção):** 1. Compras › + Novo › Compra › uma TOP: a Central abre com a barra da venda (Descartar,
+Salvar, Confirmar compra) e os Dados principais com a TOP travada. 2. Escolher só o fornecedor e Salvar sem item: nada é gravado e
+a pílula vermelha "N pendências" lista o que falta; o clique leva ao campo. 3. Preencher e Salvar: a compra salva abre
+com "Salvo". 4. Na consulta: Duplicar abre um rascunho da mesma TOP sem número de nota, série, lote nem validade;
+Descartar volta ao começo sem gravar. 5. Ações rápidas › Cancelar compra… com um motivo: a compra fica Cancelada (o motivo
+vai no corpo do cancelamento). 6. Um Pedido de compra: "Receber…" abre a Central em modo receber com o saldo; a Central de
+Vendas continua igual.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
 ## VISUAL-UX-03 — Configuração de layout igual ao desenho
 
 Decisão 275. **Só web**: sem migration, sem rota, sem API, sem variável, sem permissão, sem domínio. A página

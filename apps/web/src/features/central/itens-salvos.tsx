@@ -71,9 +71,9 @@ const COLUNAS_DO_LOTE: readonly ColunaDoItemSalvo[] = [
   { chave: "validade", rotulo: "Validade", largura: 96, testId: "doc-item-validade", celula: (it) => textoDoItem(it["validade"]) }
 ];
 
-/** Documento com parte gerada — Faturado e Saldo, do servidor. */
-const COLUNAS_DO_SALDO: readonly ColunaDoItemSalvo[] = [
-  { chave: "faturado", rotulo: "Faturado", largura: 100, numero: true, testId: "doc-item-faturado", celula: (it) => num(String(it["faturado"] ?? "0"), 2) },
+/** Documento com parte gerada — a parte gerada (o rótulo é da espécie) e o Saldo, do servidor. */
+const colunasDoSaldo = (rotuloDoGerado: string): readonly ColunaDoItemSalvo[] => [
+  { chave: "faturado", rotulo: rotuloDoGerado, largura: 100, numero: true, testId: "doc-item-faturado", celula: (it) => num(String(it["faturado"] ?? "0"), 2) },
   { chave: "saldo", rotulo: "Saldo", largura: 100, numero: true, testId: "doc-item-saldo", celula: (it) => num(String(it["saldo"] ?? it["quantity"] ?? "0"), 2) }
 ];
 
@@ -97,8 +97,8 @@ const CAMPOS_DO_LOTE: readonly CampoDoItemSalvo[] = [
   { chave: "lote", rotulo: "Lote", adorno: "travado", valor: (it) => texto(it["lote"]) },
   { chave: "validade", rotulo: "Validade", adorno: "travado", valor: (it) => texto(it["validade"]) }
 ];
-const CAMPOS_DO_SALDO: readonly CampoDoItemSalvo[] = [
-  { chave: "faturado", rotulo: "Faturado", adorno: "travado", valor: (it) => num(String(it["faturado"] ?? "0"), 2) },
+const camposDoSaldo = (rotuloDoGerado: string): readonly CampoDoItemSalvo[] => [
+  { chave: "faturado", rotulo: rotuloDoGerado, adorno: "travado", valor: (it) => num(String(it["faturado"] ?? "0"), 2) },
   { chave: "saldo", rotulo: "Saldo", adorno: "travado", valor: (it) => num(String(it["saldo"] ?? it["quantity"] ?? "0"), 2) }
 ];
 const CAMPOS_DA_RESERVA: readonly CampoDoItemSalvo[] = [
@@ -118,17 +118,17 @@ function aplicarPreferencia<K extends string>(prefs: readonly Preferencia<K>[] |
 
 /**
  * `colunas.leitura`: a ordem padrão da espécie. `mostrarLote`: Lote e Validade gravados (desligado por padrão).
- * `mostrarSaldo`: Faturado e Saldo, do servidor. `mostrarReservado`: Reservado, do servidor.
+ * `mostrarSaldo`: a parte gerada (`rotuloDoGerado`, padrão "Faturado") e o Saldo, do servidor. `mostrarReservado`: Reservado, do servidor.
  * `avisos`: avisos funcionais dos itens, entre a barra e a grade, com o testid de cada um.
  */
-export function ItensSalvos({ prefixoTestid, colunas: colunasDaEspecie, itens, subtotal, legenda, mostrarSaldo = false, mostrarReservado = false, mostrarLote = false, avisos = [] }: PropsDosItensSalvos) {
+export function ItensSalvos({ prefixoTestid, colunas: colunasDaEspecie, itens, subtotal, legenda, mostrarSaldo = false, mostrarReservado = false, mostrarLote = false, rotuloDoGerado = "Faturado", avisos = [] }: PropsDosItensSalvos) {
   const leitura = colunasDaEspecie.leitura;
   const colunas = React.useMemo(() => {
     const catalogo = catalogoDeColunas(prefixoTestid);
     const base = leitura.filter((k) => !OPCIONAIS.has(k)).map((k) => catalogo[k]).filter((c): c is ColunaDoItemSalvo => c !== undefined);
-    return [...base, ...(mostrarLote ? COLUNAS_DO_LOTE : []), ...(mostrarSaldo ? COLUNAS_DO_SALDO : []), ...(mostrarReservado ? COLUNAS_DA_RESERVA : [])];
-  }, [prefixoTestid, leitura, mostrarLote, mostrarSaldo, mostrarReservado]);
-  const campos = React.useMemo(() => [...CAMPOS_DO_ITEM_SALVO, ...(mostrarLote ? CAMPOS_DO_LOTE : []), ...(mostrarSaldo ? CAMPOS_DO_SALDO : []), ...(mostrarReservado ? CAMPOS_DA_RESERVA : [])], [mostrarLote, mostrarSaldo, mostrarReservado]);
+    return [...base, ...(mostrarLote ? COLUNAS_DO_LOTE : []), ...(mostrarSaldo ? colunasDoSaldo(rotuloDoGerado) : []), ...(mostrarReservado ? COLUNAS_DA_RESERVA : [])];
+  }, [prefixoTestid, leitura, mostrarLote, mostrarSaldo, mostrarReservado, rotuloDoGerado]);
+  const campos = React.useMemo(() => [...CAMPOS_DO_ITEM_SALVO, ...(mostrarLote ? CAMPOS_DO_LOTE : []), ...(mostrarSaldo ? camposDoSaldo(rotuloDoGerado) : []), ...(mostrarReservado ? CAMPOS_DA_RESERVA : [])], [mostrarLote, mostrarSaldo, mostrarReservado, rotuloDoGerado]);
 
   const [visao, setVisao] = React.useState<Visao>("grade");
   const [ambos, setAmbos] = React.useState(false);

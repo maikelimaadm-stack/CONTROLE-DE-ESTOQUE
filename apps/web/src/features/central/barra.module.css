@@ -48,7 +48,7 @@
 .solido:hover:not(:disabled) { background: #e8ecef; color: #0f172a; }
 .solido:active:not(:disabled) { background: #dde3e8; }
 
-/* ═════════════ pílula (`.tbp`) — Confirmar, Converter, Encerrar saldo ═════════════ */
+/* ═════════════ pílula (`.tbp`) — Confirmar e as ações de avanço da espécie ═════════════ */
 .pilula {
   height: 25px;
   box-sizing: border-box;
