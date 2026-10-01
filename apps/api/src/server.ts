@@ -24,6 +24,9 @@ import financialRoutes from "./routes/financial.js";
 import salesRoutes from "./routes/sales.js";
 import comprasRoutes from "./routes/compras.js";
 import estoqueRoutes from "./routes/estoque-documentos.js";
+import aprovacoesVendasRoutes from "./routes/aprovacoes-vendas.js";
+import aprovacoesComprasRoutes from "./routes/aprovacoes-compras.js";
+import aprovacoesEstoqueRoutes from "./routes/aprovacoes-estoque.js";
 import fleetHrRoutes from "./routes/fleet-hr.js";
 import rhFuncionariosRoutes from "./routes/rh-funcionarios.js";
 import livestockRoutes from "./routes/livestock.js";
@@ -80,6 +83,12 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   await app.register(salesRoutes, { prefix: "/api" });
   await app.register(comprasRoutes, { prefix: "/api" });
   await app.register(estoqueRoutes, { prefix: "/api" });
+  // TOP-CONFIG-08 (decisão 277): as aprovações moram num prefixo PRÓPRIO, /api/aprovacoes, e não dentro de
+  // /api/sales, /api/compras ou /api/estoque. Assim o binário anterior, que não conhece estas rotas,
+  // responde 404 limpo — e a web nova lê esse 404 como "aprovações ainda não disponíveis neste servidor".
+  await app.register(aprovacoesVendasRoutes, { prefix: "/api" });
+  await app.register(aprovacoesComprasRoutes, { prefix: "/api" });
+  await app.register(aprovacoesEstoqueRoutes, { prefix: "/api" });
   await app.register(fleetHrRoutes, { prefix: "/api" });
   await app.register(rhFuncionariosRoutes, { prefix: "/api" });
   await app.register(livestockRoutes, { prefix: "/api" });

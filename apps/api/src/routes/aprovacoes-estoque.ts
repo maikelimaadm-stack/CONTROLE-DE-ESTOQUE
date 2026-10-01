@@ -44,6 +44,7 @@ import {
 } from "../lib/confirmacao-automatica.js";
 import { ESPECIES_ESTOQUE, FORMA_UUID, lerDocumentoEstoque } from "./estoque-comum.js";
 import { confirmarDocumentoEstoqueNaTransacao } from "./estoque-confirmacao.js";
+import { paginaComIdGlobal } from "../lib/id-global.js";
 
 // ─────────────── contrato de entrada (estrito) ───────────────
 
@@ -155,7 +156,9 @@ async function listarFila(ctx: ServiceCtx, especies: readonly EspecieEstoque[], 
       ? { decisao: x.decisao, observacao: x.observacao, decididoPor: { id: x.decidido_por, nome: x.decidido_por_nome ?? "" }, decididoEm: x.decidido_em.toISOString() }
       : null,
   }));
-  return { items, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
+  // O ID Global de cada documento (o localizador humano da organização), como nas listas de hoje: uma consulta a
+  // mais, fixa, e a marca `idGlobal` que a tela lê para mostrar a coluna (id-global-audit).
+  return paginaComIdGlobal(ctx, "documentos_estoque", { items, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize });
 }
 
 // ─────────────── as decisões ───────────────

@@ -36,7 +36,10 @@ const P = {
   FIN_CFG: ["financial_categories.view", "cost_centers.view", "title_types.view", "payables.view", "sales.view", "financial_freezes.view", "chart_accounts.view"],
   LIVESTOCK_CFG: ["animals.view", "weight_parameters.view", "fodders.view", "grazing_modules.view", "batch_area.view", "troughs.view", "livestock_plannings.view", "operations.view", "activities.view", "breeding_sires.view", "breeding_protocols.view"],
   FISCAL_CFG: ["tax_rules.view", "nature_operations.view", "additional_infos.view", "document_types.view", "documents.view", "nfe.view"],
-  HR_CFG: ["hr_events.view", "job_functions.view", "teams.view"]
+  HR_CFG: ["hr_events.view", "job_functions.view", "teams.view"],
+  // TOP-CONFIG-08 (decisão 277): a permissão Aprovar das quatro espécies do documento de estoque — qualquer uma
+  // abre a fila de Estoque; quem recorta LINHA por espécie é o servidor.
+  APROVACAO_ESTOQUE: ["entradas_estoque.approve", "saidas_estoque.approve", "transferencias_estoque.approve", "ajustes_estoque.approve"]
 };
 
 const m = (id, label, path, extra = {}) => ({ id, type: "module", module: id, label, path, menu: true, ...extra });
@@ -62,7 +65,12 @@ export const MODULES = [
   m("os", "Ordens de Serviço", "/os", { perm: "service_orders.view", keywords: ["os", "serviço", "atividade", "operação"], description: "Ordens de serviço (todas / minhas, por status, atrasadas)" }),
   m("fiscal", "Fiscal", "/fiscal", { keywords: ["nota fiscal", "nf-e", "contábil", "lcdpr"], description: "Documentos de entrada, partida dobrada e livro caixa" }),
   m("relatorios", "Relatórios", "/relatorios", { perm: ["report.stock_movement.view", "saved_reports.view"], keywords: ["relatório", "exportar", "impressão"], description: "Catálogo de relatórios, favoritos e personalizados" }),
-  m("configuracoes", "Configurações", "/configuracoes", { keywords: ["cadastros", "parâmetros", "administração", "usuários", "perfis"], description: "Cadastros técnicos, parâmetros, usuários, integrações e auditoria" })
+  m("configuracoes", "Configurações", "/configuracoes", { keywords: ["cadastros", "parâmetros", "administração", "usuários", "perfis"], description: "Cadastros técnicos, parâmetros, usuários, integrações e auditoria" }),
+  // TOP-CONFIG-08 (decisão 277): a fila do documento que a TOP manda aprovar antes de confirmar. Entra por ÚLTIMO
+  // de propósito: é o 14º módulo — o máximo que o nav-audit aceita; o Início não conta na barra, então o
+  // administrador vê 13 —, e quando a barra não cabe, quem vai para o "Mais" é ele, não um módulo de todo dia.
+  // A permissão é a das SEIS capacidades Aprovar (qualquer uma mostra o módulo); cada aba exige a sua.
+  m("aprovacoes", "Aprovações", "/aprovacoes", { perm: ["sales.approve", "compras.approve", ...P.APROVACAO_ESTOQUE], keywords: ["aprovar", "reprovar", "aprovação", "aguardando aprovação", "fila de aprovação"], description: "Documentos que aguardam aprovação antes de serem confirmados" })
 ];
 
 export const AREAS = [
@@ -281,7 +289,14 @@ export const AREAS = [
   cfg("integracoes", null, "Integrações", ["integration.dominio.view", "integration.csv_export.view"]),
   cfg("integracoes", "integrations", "Configurações (NF-e / DFe / NFS-e / Domínio)", "integration.dominio.view", { keywords: ["domínio", "certificado digital", "api"] }),
   cfg("integracoes", "exportacoes", "Exportações CSV / XLSX", "integration.csv_export.view", { aliases: ["/integracoes/exportacoes"] }),
-  cfg("auditoria", null, "Auditoria", "audit_logs.view", { aliases: ["/admin/auditoria"], keywords: ["log", "histórico de alterações", "quem alterou"] })
+  cfg("auditoria", null, "Auditoria", "audit_logs.view", { aliases: ["/admin/auditoria"], keywords: ["log", "histórico de alterações", "quem alterou"] }),
+  // ---------------- Aprovações (TOP-CONFIG-08, decisão 277) ----------------
+  // Uma aba por área, cada uma com a SUA capacidade Aprovar: as abas são a fonte única do que o mega-menu mostra
+  // (com elas o mega-menu do módulo nunca abre vazio) e do que a tela monta. "Abrir" leva à consulta pelas rotas
+  // de detalhe que já existem (DETAIL_ROUTES de vendas, compras e estoque): a fila não ganha rota de registro.
+  a("aprovacoes", "vendas", "Vendas", "sales.approve", { keywords: ["venda aguardando aprovação", "aprovar venda", "reprovar venda"], description: "Vendas abertas que aguardam aprovação" }),
+  a("aprovacoes", "compras", "Compras", "compras.approve", { keywords: ["compra aguardando aprovação", "aprovar compra", "reprovar compra"], description: "Compras abertas que aguardam aprovação" }),
+  a("aprovacoes", "estoque", "Estoque", P.APROVACAO_ESTOQUE, { keywords: ["documento de estoque aguardando aprovação", "aprovar entrada", "aprovar saída", "aprovar transferência", "aprovar ajuste"], description: "Documentos de estoque abertos que aguardam aprovação" })
 ];
 
 /**

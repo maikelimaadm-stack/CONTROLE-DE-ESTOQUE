@@ -14,18 +14,18 @@ import {
   ATUALIZACOES_ESTOQUE, ATUALIZACOES_FINANCEIRO, CALCULOS_TRIBUTARIOS, ENUM_LABELS, MENSAGEM_FAMILIA_SEM_EXECUCAO_TOP,
   LIMITE_CONDICOES_PERMITIDAS, MODOS_CONFIRMACAO, MODOS_EXECUCAO_TOP, MODOS_FINANCEIRO, MOMENTOS_APROVACAO, MOMENTOS_EFEITO,
   POLITICAS_ALTERACAO, POLITICAS_APROVACAO, POLITICAS_CLIENTE_EM_ATRASO, POLITICAS_DOCUMENTO_SEM_ITENS, POLITICAS_SALDO_NEGATIVO,
-  TOLERANCIA_ATRASO_MAXIMA_DIAS, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
-  configuracaoTopParaEdicao, efeitosAtivadosTop, ehFamiliaDeDocumentoEstoque, exigenciasGeraisDaFamiliaTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, familiaOperacionalDeDocumentoVenda,
-  normalizarConfiguracaoTop, tipoOperacao,
+  TOLERANCIA_ATRASO_MAXIMA_DIAS,
+  configuracaoNeutraTopV4, configuracaoTopParaEdicao, efeitosAtivadosTop, ehFamiliaDeDocumentoEstoque, exigenciasGeraisDaFamiliaTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, familiaOperacionalDeDocumentoVenda,
+  normalizarConfiguracaoTop, normalizarRegrasGeraisDaFamiliaTop, regrasGeraisDaFamiliaTop, regrasGeraisQuePassamAValer, restricoesExecutamTop, tipoOperacao,
   recusasFiscaisDaFamiliaTop, validarExecucaoTop,
-  type ConfiguracaoTipoOperacaoV2, type ConfiguracaoTipoOperacaoV3, type EfeitoExecucaoTop, type ModoExecucaoTop,
-  type RecusaExecucaoTop
+  type ConfiguracaoComRestricoesTop, type ConfiguracaoTipoOperacaoV2, type EfeitoExecucaoTop, type ItemMatrizRegrasGeraisTop, type ModoExecucaoTop,
+  type RecusaExecucaoTop, type RegraDaFamiliaTop, type RegraGeralQueVoltaTop
 } from "@agro/domain";
 import {
   CAMINHO_ERRO_RESERVA_ESTOQUE, MensagemCapacidadesTop, ROTULOS_TOP, aplicarNoFormato3, assinaturaRascunho, capacidadesDeExecucao, configuracaoDoRascunhoParaEnvio,
-  configuracaoInicial, configuracaoInicialV3, ehConflitoDeConcorrencia, errosDeCampoDoServidor, lerDetalheTop, limiteDeDestinos,
-  podeConfigurar, podeConfigurarDestinos, podeConfigurarEmPartes, podeConfigurarReservaEstoque, podeConfigurarRestricoes, useCapacidadesTop,
-  useDestinosPossiveis, valorMinimoAceitavel,
+  configuracaoIlegivelNoEditor, configuracaoInicial, configuracaoInicialV3, configuracaoInicialV4, ehConflitoDeConcorrencia, errosDeCampoDoServidor, lerDetalheTop, limiteDeDestinos,
+  matrizRegrasGerais, podeConfigurar, podeConfigurarDestinos, podeConfigurarEmPartes, podeConfigurarRegrasGerais, podeConfigurarReservaEstoque,
+  podeConfigurarRestricoes, useCapacidadesTop, useDestinosPossiveis, valorMinimoAceitavel,
   type CapacidadesExecucaoTop, type DestinoEmEdicao, type EstadoCapacidadesTop, type RascunhoTop
 } from "./top-contrato";
 
@@ -87,6 +87,31 @@ export const ehMovimentoDeVendas = (codigoBase: string): boolean => !!codigoBase
  */
 const ABAS_FORA_DO_DOCUMENTO_ESTOQUE: ReadonlySet<string> = new Set(["destinos", "financeiro", "fiscal", "aprovacao"]);
 
+/**
+ * TOP-CONFIG-08 (decisão 277) — as mesmas seções, COM o bloco `regrasGerais` declarado pelo servidor: a Aprovação
+ * volta para o documento de estoque, porque no formato 4 ela EXECUTA ali ("Sempre"; a matriz da família diz o resto).
+ * Sem o bloco vale a lista de cima, letra por letra: o servidor anterior grava o 3, e lá a aprovação não decide nada.
+ */
+const ABAS_FORA_DO_DOCUMENTO_ESTOQUE_COM_REGRAS_GERAIS: ReadonlySet<string> = new Set(["destinos", "financeiro", "fiscal"]);
+
+/**
+ * TOP-CONFIG-08 — o neutro das quatro regras gerais (Manual, Proibido, Bloqueada, Sem aprovação), perguntado ao
+ * domínio (um dono só). Regra que a família só aceita no neutro não tem o que decidir, e o campo dela some.
+ */
+const NEUTRO_V4 = configuracaoNeutraTopV4();
+
+/**
+ * TOP-CONFIG-08 — o nome de cada regra geral no `data-testid` do motivo (`top-regra-motivo-<campo>`) e no editor.
+ * São os nomes da linha da matriz (`ItemMatrizRegrasGeraisTop`), para o teste e a matriz falarem a mesma língua.
+ */
+type CampoRegraGeral = "confirmacao" | "documentoSemItens" | "alteracaoAposConfirmacao" | "aprovacao";
+
+/**
+ * Uma mudança nas chaves do formato 3 que PRESERVA o formato de quem entra (TOP-CONFIG-08): o 3 sai 3 e o 4 sai 4.
+ * Genérica de propósito — uma mudança escrita para o 3 que devolvesse o 3 rebaixaria o 4 sem o compilador ver.
+ */
+type MudancaComRestricoes = <C extends ConfiguracaoComRestricoesTop>(c: C) => C;
+
 /** As oito seções, na ordem em que a tela as mostra. */
 const ABAS = [
   { chave: "identificacao", rotulo: "Identificação" },
@@ -138,11 +163,28 @@ const AJUDA_GERAL_DOCUMENTO_ESTOQUE =
 const AJUDA_ESTOQUE_DOCUMENTO_ESTOQUE =
   "O movimento é definido pela espécie do documento, e não por esta seção.";
 
+/**
+ * TOP-CONFIG-08 (decisão 277) — OS TEXTOS DO EDITOR QUE GRAVA O FORMATO 4, que só valem com o bloco `regrasGerais`
+ * declarado pelo servidor. No formato 4 a confirmação automática, o documento sem itens e a aprovação EXECUTAM; dizer
+ * "registrado, ainda não executado" aqui seria mentir sobre a versão que o administrador está gravando. Sem o bloco
+ * ficam os textos de cima, letra por letra: o servidor anterior grava o formato 3, e lá nada disso executa.
+ */
+const AJUDA_COM_REGRAS_GERAIS: Readonly<Record<"geral" | "aprovacao", string>> = {
+  geral:
+    "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, com o motivo. Documento sem itens: o documento pode ser salvo e confirmado sem item. As exigências de preenchimento são cobradas no lançamento.",
+  aprovacao:
+    "Com aprovação, o documento só é confirmado depois de aprovado em Aprovações, por quem tem a permissão Aprovar. Alterar a venda depois de aprovada pede uma aprovação nova."
+};
+
+/** TOP-CONFIG-08 — a ajuda da Geral no documento de estoque com o bloco: a confirmação automática também vale ali. */
+const AJUDA_GERAL_DOCUMENTO_ESTOQUE_COM_REGRAS_GERAIS =
+  "No documento de estoque valem a confirmação automática e a observação obrigatória.";
+
 // ---------------------------------------------------------------------------------------------------
 // Campos
 // ---------------------------------------------------------------------------------------------------
 
-function CampoEnum<T extends string>({ rotulo, ajuda, valor, opcoes, rotulos, onChange, desabilitado, opcoesDesabilitadas, testId, span = 4 }: {
+function CampoEnum<T extends string>({ rotulo, ajuda, valor, opcoes, rotulos, onChange, desabilitado, opcoesDesabilitadas, motivo, testId, span = 4 }: {
   rotulo: string; ajuda?: string; valor: T; opcoes: readonly T[]; rotulos: Record<T, string>;
   onChange: (v: T) => void; desabilitado?: boolean;
   /**
@@ -150,13 +192,45 @@ function CampoEnum<T extends string>({ rotulo, ajuda, valor, opcoes, rotulos, on
    * já é o valor atual nunca é desabilitada: ela precisa continuar sendo exibida como selecionada.
    */
   opcoesDesabilitadas?: readonly T[];
+  /**
+   * TOP-CONFIG-08 — POR QUE as opções desabilitadas não podem ser escolhidas, dito AO LADO do campo (o motivo da
+   * matriz que o servidor declarou). Desabilitar sem dizer por quê deixaria o administrador procurando o defeito na
+   * tela. Fica FORA do `Field` de propósito: o `Field` só liga o rótulo ao controle quando o filho é único. `campo`
+   * compõe o `data-testid` (`top-regra-motivo-<campo>`). Ausente = o campo de hoje, sem texto nenhum.
+   */
+  motivo?: { campo: CampoRegraGeral; texto: string } | null;
   testId: string; span?: number;
 }) {
-  return <Field label={rotulo} help={ajuda} span={span}>
+  const campo = <Field label={rotulo} help={ajuda} span={span}>
     <NativeSelect data-testid={testId} value={valor} disabled={desabilitado} onChange={(e) => onChange(e.target.value as T)}>
       {opcoes.map((o) => <option key={o} value={o} disabled={o !== valor && !!opcoesDesabilitadas?.includes(o)}>{rotulos[o]}</option>)}
     </NativeSelect>
   </Field>;
+  if (!motivo) return campo;
+  return <>
+    {campo}
+    <p data-testid={`top-regra-motivo-${motivo.campo}`} className="col-span-12 self-center text-[11.5px] leading-relaxed text-slate-500 md:col-span-8">{motivo.texto}</p>
+  </>;
+}
+
+/**
+ * TOP-CONFIG-08 — a regra aparece no editor? Só quando a família aceita alguma opção ALÉM do neutro. A que só aceita
+ * o neutro não tem o que decidir: o campo some, como as seções que não se aplicam ao documento de estoque — campo que
+ * aparece e não decide nada é pior que campo ausente.
+ */
+const regraAparece = <T extends string>(r: RegraDaFamiliaTop<T>, neutro: T): boolean => r.aceitos.some((v) => v !== neutro);
+
+/**
+ * TOP-CONFIG-08 — as props de uma regra geral pela matriz da família: a opção que a família não aceita aparece
+ * DESABILITADA, com o motivo da matriz ao lado ("aplicável, porém indisponível"). Sem a regra (sem o bloco
+ * `regrasGerais`), nada: o campo de hoje, com todas as opções e sem texto.
+ */
+function pelaFamilia<T extends string>(opcoes: readonly T[], r: RegraDaFamiliaTop<T> | undefined, campo: CampoRegraGeral): {
+  opcoesDesabilitadas?: readonly T[]; motivo?: { campo: CampoRegraGeral; texto: string } | null;
+} {
+  if (!r) return {};
+  const fora = opcoes.filter((o) => !r.aceitos.includes(o));
+  return { opcoesDesabilitadas: fora, motivo: fora.length > 0 && r.motivo ? { campo, texto: r.motivo } : null };
 }
 
 /** Booleano como escolha explícita de duas opções: "Sim/Não" é menos ambíguo que uma caixa marcada. */
@@ -181,12 +255,19 @@ const Secao = ({ chave, ajuda, children }: { chave: ChaveAba; ajuda?: string; ch
   <div className="grid grid-cols-12 gap-3">{children}</div>
 </div>;
 
-/** Dito uma vez, em toda abertura do editor: configurar não é, por si, ligar o efeito. */
-const AvisoDeVersionamento = () => <p data-testid="top-aviso-versionamento" className="mt-3 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[11.5px] leading-relaxed text-slate-600">
+/**
+ * Dito uma vez, em toda abertura do editor: configurar não é, por si, ligar o efeito.
+ *
+ * TOP-CONFIG-08: com o bloco `regrasGerais` (o editor grava o formato 4) muda SÓ a última frase — a aprovação e as
+ * regras da Geral executam no formato 4, e só o fiscal continua declarado. Sem o bloco, o texto de hoje, letra por letra.
+ */
+const AvisoDeVersionamento = ({ regrasGerais }: { regrasGerais: boolean }) => <p data-testid="top-aviso-versionamento" className="mt-3 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[11.5px] leading-relaxed text-slate-600">
   O que você definir aqui é guardado e versionado: cada gravação cria uma versão nova e as anteriores
   continuam legíveis no histórico. Estoque e financeiro só seguem esta configuração quando a aba Execução
   diz &quot;Usar configuração da TOP&quot;, e isso vale para os documentos criados a partir da versão salva.
-  Fiscal, aprovação e as regras da aba Geral continuam registrando a intenção da operação, sem executá-la.
+  {regrasGerais
+    ? " O fiscal continua registrando a intenção da operação, sem executá-la."
+    : " Fiscal, aprovação e as regras da aba Geral continuam registrando a intenção da operação, sem executá-la."}
 </p>;
 
 // ---------------------------------------------------------------------------------------------------
@@ -263,9 +344,21 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
   /** TOP-CONFIG-07 — o servidor grava a reserva de estoque na versão (`capabilities.reservaEstoque === 1`). */
   const reservaConfiguravel = podeConfigurarReservaEstoque(capacidades);
   const idDicaReserva = React.useId();
-  /** A versão vigente já está no formato 3 — sem restrições no servidor, a configuração não tem envio honesto. */
+  /**
+   * TOP-CONFIG-08 (decisão 277) — o servidor declarou o bloco `regrasGerais` (legível, formato 4)? Só então o rascunho
+   * carrega `configuracaoV4` (a verdade da configuração), a gravação sai no formato 4 e os campos das quatro regras
+   * gerais seguem a MATRIZ DA FAMÍLIA que ele publicou. Sem o bloco, `matriz` é `null` e o editor é o de hoje: o
+   * formato 3, os textos de hoje e as abas de hoje.
+   */
+  const matriz = matrizRegrasGerais(capacidades);
+  const regrasGerais = podeConfigurarRegrasGerais(capacidades) && matriz !== null;
+  /**
+   * A versão vigente já está no formato 3 ou 4 (as restrições executam) — sem restrições no servidor, a configuração
+   * não tem envio honesto. TOP-CONFIG-08: perguntado ao domínio (`restricoesExecutamTop`), nunca ao número 3: uma
+   * vigente no formato 4 lida como "não é 3" deixaria um servidor sem restrições receber o formato 2 por cima dela.
+   */
   const vigenteNoFormato3 = edicao && !!detalhe?.configuracao && detalhe.configuracao.suportada
-    && detalhe.configuracao.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3;
+    && restricoesExecutamTop(detalhe.configuracao.valor);
   /** A lista de condições não foi lida (API anterior): não é reescrita, e a tela a bloqueia. */
   const condicoesIlegiveis = edicao && !!detalhe && restricoes && detalhe.condicoesPermitidas === null;
 
@@ -275,8 +368,12 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
    * Numa API que confirmou o contrato mas devolveu `suportada: false`, o editor avançado fica BLOQUEADO em
    * vez de abrir no neutro: abrir no neutro convidaria a salvar por cima de uma regra que ninguém leu, e o
    * salvar gravaria "nada declarado" onde havia alguma coisa.
+   *
+   * TOP-CONFIG-08: a mesma régua para uma vigente no formato 4 diante do editor SEM o bloco `regrasGerais` (servidor
+   * mais novo que a tela, ou bloco que ela não lê) — `configuracaoIlegivelNoEditor`, de `top-contrato`. Os textos desse
+   * editor dizem que as regras gerais não executam, e no 4 elas executam: editar ali seria gravar sobre o que não se leu.
    */
-  const configuracaoIlegivel = edicao && !!detalhe && detalhe.configuracao !== null && !detalhe.configuracao.suportada;
+  const configuracaoIlegivel = edicao && !!detalhe && configuracaoIlegivelNoEditor(detalhe.configuracao, capacidades);
   const liberado = configuravel && !configuracaoIlegivel;
 
   /**
@@ -316,14 +413,35 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
      * se a chave É ENVIADA é a gravação.
      */
     ...(detalhe ? (detalhe.reservaEstoque !== null ? { reservaEstoque: detalhe.reservaEstoque } : {}) : { reservaEstoque: false }),
-    ...camposDeRestricoes(restricoes, detalhe)
-  }), [detalhe, restricoes]);
+    ...camposDeRestricoes(restricoes, regrasGerais, detalhe)
+  }), [detalhe, restricoes, regrasGerais]);
 
   const [rascunho, setRascunho] = React.useState<RascunhoTop>(inicial);
   const [abaEscolhida, setAba] = React.useState<ChaveAba>("identificacao");
   /** ESTOQUE-01 — o movimento é uma das famílias do documento de estoque? Perguntado ao registry, nunca a uma lista daqui. */
   const documentoEstoque = ehFamiliaDeDocumentoEstoque(rascunho.codigoBase);
-  const abasVisiveis = ABAS.filter((a) => !documentoEstoque || !ABAS_FORA_DO_DOCUMENTO_ESTOQUE.has(a.chave));
+  /**
+   * TOP-CONFIG-08 — o que a FAMÍLIA aceita em cada regra geral, pela matriz que o SERVIDOR declarou (nunca uma cópia
+   * daqui). Família ainda não escolhida, ou fora da matriz, cai no padrão do domínio "sem documento", que só aceita o
+   * neutro: os campos somem. `null` = sem o bloco, e nenhum campo depende da família (o editor de hoje).
+   *
+   * Exige também o rascunho NO FORMATO 4: a tela só diz "executa" sobre o que ela vai de fato gravar no 4. No instante
+   * entre as capacidades chegarem e o rascunho ganhar `configuracaoV4` (o efeito abaixo), ela continua a de hoje.
+   */
+  const regrasDaFamilia: ItemMatrizRegrasGeraisTop | null = regrasGerais && matriz && rascunho.configuracaoV4
+    ? regrasGeraisDaFamiliaTop(rascunho.codigoBase, matriz) : null;
+  /** Cada regra geral aparece? Sem o bloco, sempre (como hoje); com ele, só quando a família aceita algo além do neutro. */
+  const regraVisivel: Readonly<Record<CampoRegraGeral, boolean>> = {
+    confirmacao: !regrasDaFamilia || regraAparece(regrasDaFamilia.confirmacao, NEUTRO_V4.geral.confirmacao),
+    documentoSemItens: !regrasDaFamilia || regraAparece(regrasDaFamilia.documentoSemItens, NEUTRO_V4.geral.documentoSemItens),
+    alteracaoAposConfirmacao: !regrasDaFamilia || regraAparece(regrasDaFamilia.alteracaoAposConfirmacao, NEUTRO_V4.geral.alteracaoAposConfirmacao),
+    aprovacao: !regrasDaFamilia || regraAparece(regrasDaFamilia.aprovacao, NEUTRO_V4.aprovacao.politica)
+  };
+  const abasForaDoEstoque = regrasDaFamilia ? ABAS_FORA_DO_DOCUMENTO_ESTOQUE_COM_REGRAS_GERAIS : ABAS_FORA_DO_DOCUMENTO_ESTOQUE;
+  const abasVisiveis = ABAS.filter((a) => (!documentoEstoque || !abasForaDoEstoque.has(a.chave))
+    // TOP-CONFIG-08: com o bloco, a aba Aprovação inteira some onde a família só aceita "Sem aprovação" (orçamento,
+    // pedidos e as famílias sem documento) — é a regra do campo que some, aplicada à aba que só tem esse campo.
+    && (a.chave !== "aprovacao" || regraVisivel.aprovacao));
   // Uma aba escondida nunca fica ativa (um erro do servidor pode apontar para ela): cai na identificação.
   const aba: ChaveAba = abasVisiveis.some((a) => a.chave === abaEscolhida) ? abaEscolhida : "identificacao";
   const [confirmandoDescarte, setConfirmandoDescarte] = React.useState(false);
@@ -339,30 +457,46 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
    */
   React.useEffect(() => {
     if (!restricoes) return;
-    setRascunho((r) => (r.configuracaoV3 ? r : { ...r, ...camposDeRestricoes(true, detalhe) }));
-  }, [restricoes, detalhe]);
+    setRascunho((r) => (r.configuracaoV3 || r.configuracaoV4 ? r : { ...r, ...camposDeRestricoes(true, regrasGerais, detalhe) }));
+  }, [restricoes, regrasGerais, detalhe]);
 
   const assinaturaInicial = React.useMemo(() => assinaturaRascunho(inicial), [inicial]);
   const alterado = assinaturaRascunho(rascunho) !== assinaturaInicial;
 
   const mudar = React.useCallback((p: Partial<RascunhoTop>) => setRascunho((r) => ({ ...r, ...p })), []);
-  /** Toda mudança de configuração passa pela normalização do domínio: o rascunho nunca guarda campo pendurado. */
+  /**
+   * Toda mudança de configuração passa pela normalização do domínio: o rascunho nunca guarda campo pendurado.
+   *
+   * O FORMATO QUE ENTRA É O FORMATO QUE SAI (TOP-CONFIG-08). Com o bloco `regrasGerais`, o formato 4 é a verdade; com
+   * só as restrições, o 3. Normalizar a cada edição rebaixando o 4 para 3 faria a gravação seguinte desligar, em
+   * silêncio, as regras gerais e a aprovação — por isso `aplicarNoFormato3` e a normalização do domínio preservam o número.
+   */
   const mudarConfig = React.useCallback((f: (c: ConfiguracaoTipoOperacaoV2) => ConfiguracaoTipoOperacaoV2) => {
     setRascunho((r) => {
+      if (r.configuracaoV4) {
+        const v4 = normalizarConfiguracaoTop(aplicarNoFormato3(r.configuracaoV4, f));
+        return { ...r, configuracaoV4: v4, configuracao: configuracaoTopParaEdicao(v4) };
+      }
       if (!r.configuracaoV3) return { ...r, configuracao: normalizarConfiguracaoTop(f(r.configuracao)) };
       // Com restrições, o formato 3 é a verdade; a vista formato 2 é sempre DERIVADA dele (uma verdade só).
       const v3 = normalizarConfiguracaoTop(aplicarNoFormato3(r.configuracaoV3, f));
       return { ...r, configuracaoV3: v3, configuracao: configuracaoTopParaEdicao(v3) };
     });
   }, []);
-  /** As chaves novas do formato 3. Sem restrições não há `configuracaoV3`, e nada muda. */
-  const mudarConfigV3 = React.useCallback((f: (c: ConfiguracaoTipoOperacaoV3) => ConfiguracaoTipoOperacaoV3) => {
+  /** As chaves novas do formato 3 (iguais no 4). Sem restrições não há `configuracaoV3` nem `configuracaoV4`, e nada muda. */
+  const mudarConfigV3 = React.useCallback((f: MudancaComRestricoes) => {
     setRascunho((r) => {
+      if (r.configuracaoV4) {
+        const v4 = normalizarConfiguracaoTop(f(r.configuracaoV4));
+        return { ...r, configuracaoV4: v4, configuracao: configuracaoTopParaEdicao(v4) };
+      }
       if (!r.configuracaoV3) return r;
       const v3 = normalizarConfiguracaoTop(f(r.configuracaoV3));
       return { ...r, configuracaoV3: v3, configuracao: configuracaoTopParaEdicao(v3) };
     });
   }, []);
+  /** O rascunho com as chaves do formato 3 — o 4 (com o bloco) ou o 3 (só restrições). Ausente = o editor de hoje. */
+  const comRestricoes: ConfiguracaoComRestricoesTop | undefined = rascunho.configuracaoV4 ?? rascunho.configuracaoV3;
 
   /**
    * A EXECUÇÃO PEDIDA PODE SER GRAVADA? A mesma pergunta que o servidor faz, contra a matriz QUE ELE
@@ -373,7 +507,21 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
     ? validarExecucaoTop(rascunho.codigoBase, rascunho.configuracao, execucao.matriz) : [];
   const ativacaoSemRuntime = liberado && execucao.suportado && !execucao.runtimeHabilitado
     ? efeitosAtivadosTop(edicao ? inicial.configuracao : null, rascunho.configuracao) : [];
-  const envio = configuracaoDoRascunhoParaEnvio(rascunho, execucao.suportado, vigenteNoFormato3);
+  /**
+   * TOP-CONFIG-08 — O FORMATO 4 VAI COM AS REGRAS GERAIS QUE A FAMÍLIA NÃO EXECUTA DE VOLTA AO PADRÃO, pela régua do
+   * domínio (`normalizarRegrasGeraisDaFamiliaTop`, contra a matriz que o servidor declarou). É o caso do pedido de
+   * compra de produção (formato 3 com Automática, Permitido e Permitida): no formato 4 o pedido só aceita o neutro, e
+   * mandar o que ele tinha seria um 422 garantido. A volta NUNCA é silenciosa: na edição, o diálogo "Estas regras
+   * passam a valer" a lista antes de gravar (`voltaram`), e só "Salvar assim mesmo" segue; na criação os campos da
+   * família já não oferecem o que ela não aceita, e trocar a família volta tudo ao neutro do formato 4.
+   */
+  const regrasNormalizadas = liberado && rascunho.configuracaoV4 && matriz
+    ? normalizarRegrasGeraisDaFamiliaTop(rascunho.codigoBase, rascunho.configuracaoV4, matriz) : null;
+  const envio = configuracaoDoRascunhoParaEnvio(
+    regrasNormalizadas ? { ...rascunho, configuracaoV4: regrasNormalizadas.configuracao } : rascunho,
+    execucao.suportado,
+    vigenteNoFormato3
+  );
   /**
    * TOP-CONFIG-07 — a caixa da reserva existe? Capacidade declarada E família do pedido. Ela NÃO depende da
    * movimentação declarada nem da aba Execução: a reserva vale para o pedido salvo mesmo com "Não movimenta estoque".
@@ -414,10 +562,10 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
       }
       /**
        * TOP-CONFIG-05 — a PRESENÇA DA CHAVE `condicoesPermitidas` também é a declaração (ausente = preservar).
-       * Só vai com a configuração no formato 3 no mesmo corpo (o servidor recusa a lista sem ele) e só quando
-       * o usuário mexeu na lista (`condicoesDeclaradas`, régua em `RascunhoTop`).
+       * Só vai com a configuração no formato 3 (ou 4, TOP-CONFIG-08) no mesmo corpo (o servidor recusa a lista sem
+       * ele) e só quando o usuário mexeu na lista (`condicoesDeclaradas`, régua em `RascunhoTop`).
        */
-      if (liberado && restricoes && base.configuracao !== undefined && rascunho.configuracaoV3
+      if (liberado && restricoes && base.configuracao !== undefined && comRestricoes
         && rascunho.condicoesPermitidas && rascunho.condicoesDeclaradas && !condicoesIlegiveis) {
         base.condicoesPermitidas = rascunho.condicoesPermitidas.map((c) => c.id);
       }
@@ -462,10 +610,11 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
    * tolerância no intervalo. Havendo recusa, o erro vai para o campo, a aba dele abre e NADA é enviado.
    * O servidor continua sendo a autoridade — ele recusa de novo com 422, para qualquer cliente.
    */
-  const [aConfirmar, setAConfirmar] = React.useState<string[] | null>(null);
+  const [perguntas, setPerguntas] = React.useState<PerguntasAntesDeGravar | null>(null);
   const tentarSalvar = () => {
     const locais: Record<string, string> = {};
-    const v3 = liberado ? rascunho.configuracaoV3 : undefined;
+    // TOP-CONFIG-08: as chaves do formato 3 vivem no 4 também — as mesmas conferências, o mesmo envio.
+    const v3 = liberado ? comRestricoes : undefined;
     if (v3) {
       if (rascunho.codigoBase) {
         for (const r of recusasFiscaisDaFamiliaTop(v3, rascunho.codigoBase)) {
@@ -487,9 +636,52 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
      */
     const aValer = edicao && v3 && detalhe?.configuracao?.suportada
       ? exigenciasQuePassamAValer(detalhe.configuracao.valor, v3, exigenciasGeraisDaFamiliaTop(detalhe.familia.codigo)) : [];
-    if (aValer.length > 0) { setAConfirmar(aValer); return; }
+    /**
+     * TOP-CONFIG-08 — gravar no formato 4 LIGA as regras gerais e a aprovação que a versão vigente só declarava, e
+     * VOLTA AO PADRÃO o que a família não executa. As duas listas vêm do DOMÍNIO (`regrasGeraisQuePassamAValer` e o
+     * `voltaram` de `normalizarRegrasGeraisDaFamiliaTop`), nunca de uma régua desta tela. Só na EDIÇÃO de uma TOP que
+     * já existe: na criação não há o que passaria a valer, e os campos já mostram o que a família aceita.
+     */
+    const regras: RegrasQuePassamAValer | null = edicao && regrasNormalizadas && detalhe?.configuracao?.suportada
+      ? { passam: regrasGeraisQuePassamAValer(detalhe.configuracao.valor, regrasNormalizadas.configuracao), voltaram: regrasNormalizadas.voltaram }
+      : null;
+    const perguntarRegras = regras && (regras.passam.length > 0 || regras.voltaram.length > 0) ? regras : null;
+    // Quando as duas valem, a das exigências vem primeiro e a das regras depois (`depoisDasExigencias`).
+    if (aValer.length > 0 || perguntarRegras) {
+      setPerguntas({ exigencias: aValer.length > 0 ? aValer : null, regras: perguntarRegras });
+      return;
+    }
     salvar.mutate();
   };
+  /** "Salvar assim mesmo" no diálogo das exigências: a pergunta das regras, se houver, ainda vem antes de gravar. */
+  const depoisDasExigencias = () => {
+    if (perguntas?.regras) { setPerguntas({ exigencias: null, regras: perguntas.regras }); return; }
+    setPerguntas(null);
+    salvar.mutate();
+  };
+
+  /**
+   * TOP-CONFIG-08 — as três regras de `geral`, na ordem de hoje (Confirmação, Alteração após confirmar, Documento sem
+   * itens). Sem o bloco: as três, com todas as opções e sem texto (o editor de hoje). Com ele, cada uma pela matriz da
+   * família: a que só aceita o neutro some; a opção que a família não aceita fica desabilitada, com o motivo ao lado.
+   */
+  const regrasDoGeral = <>
+    {regraVisivel.confirmacao && <CampoEnum rotulo="Confirmação" testId="top-campo-geral-confirmacao" valor={rascunho.configuracao.geral.confirmacao}
+      opcoes={MODOS_CONFIRMACAO} rotulos={ROTULOS_TOP.confirmacao}
+      ajuda="Quem dispara a confirmação do documento."
+      {...pelaFamilia(MODOS_CONFIRMACAO, regrasDaFamilia?.confirmacao, "confirmacao")}
+      onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, confirmacao: v } }))} />}
+    {regraVisivel.alteracaoAposConfirmacao && <CampoEnum rotulo="Alteração após confirmar" testId="top-campo-geral-alteracao" valor={rascunho.configuracao.geral.alteracaoAposConfirmacao}
+      opcoes={POLITICAS_ALTERACAO} rotulos={ROTULOS_TOP.alteracao}
+      ajuda="Se o documento ainda pode ser alterado depois de confirmado."
+      {...pelaFamilia(POLITICAS_ALTERACAO, regrasDaFamilia?.alteracaoAposConfirmacao, "alteracaoAposConfirmacao")}
+      onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, alteracaoAposConfirmacao: v } }))} />}
+    {regraVisivel.documentoSemItens && <CampoEnum rotulo="Documento sem itens" testId="top-campo-geral-sem-itens" valor={rascunho.configuracao.geral.documentoSemItens}
+      opcoes={POLITICAS_DOCUMENTO_SEM_ITENS} rotulos={ROTULOS_TOP.documentoSemItens}
+      ajuda="Se um documento desta operação pode existir sem nenhum item."
+      {...pelaFamilia(POLITICAS_DOCUMENTO_SEM_ITENS, regrasDaFamilia?.documentoSemItens, "documentoSemItens")}
+      onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, documentoSemItens: v } }))} />}
+  </>;
 
   return <>
     <Dialog
@@ -538,11 +730,19 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
             : <NativeSelect data-testid="top-campo-familia" value={rascunho.codigoBase} onChange={(e) => {
                 const codigoBase = e.target.value;
                 mudar({ codigoBase, destinos: [], reservaEstoque: false });
+                /**
+                 * TOP-CONFIG-08: com o bloco `regrasGerais`, TROCAR A FAMÍLIA VOLTA TUDO AO NEUTRO DO FORMATO 4. Cada
+                 * família aceita regras gerais diferentes (a matriz), e uma regra marcada para a família anterior que
+                 * a nova não executa ficaria escondida no rascunho, indo na gravação sem ninguém ver. O neutro do 4 já
+                 * tem "Cliente em atraso" em "não valida" e as seções do estoque no neutro: as duas regras abaixo, de
+                 * hoje, ficam cobertas.
+                 */
+                if (regrasDaFamilia) { mudar({ configuracao: configuracaoInicial(null), ...camposDeRestricoes(restricoes, true, null) }); return; }
                 // "Cliente em atraso" só existe na venda: fora dela volta para "não valida" (a API recusa outro valor).
                 if (!ehMovimentoDeVendas(codigoBase)) mudarConfigV3((c) => ({ ...c, financeiro: { ...c.financeiro, clienteEmAtraso: "nao_valida" } }));
                 // ESTOQUE-01: no documento de estoque as seções que não se aplicam somem — e o que tinha sido marcado
                 // nelas antes da escolha do movimento volta ao neutro, para nenhuma regra escondida ir na gravação.
-                if (ehFamiliaDeDocumentoEstoque(codigoBase)) mudar({ configuracao: configuracaoInicial(null), ...camposDeRestricoes(restricoes, null) });
+                if (ehFamiliaDeDocumentoEstoque(codigoBase)) mudar({ configuracao: configuracaoInicial(null), ...camposDeRestricoes(restricoes, regrasGerais, null) });
               }}>
                 <option value="">Selecione…</option>
                 {familias.map((f) => <option key={f.codigo} value={f.codigo}>{f.rotulo} — {f.codigo}</option>)}
@@ -559,35 +759,26 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         </Field>
       </Secao>}
 
-      {aba === "geral" && liberado && documentoEstoque && <Secao chave="geral" ajuda={AJUDA_GERAL_DOCUMENTO_ESTOQUE}>
+      {aba === "geral" && liberado && documentoEstoque && <Secao chave="geral" ajuda={regrasDaFamilia ? AJUDA_GERAL_DOCUMENTO_ESTOQUE_COM_REGRAS_GERAIS : AJUDA_GERAL_DOCUMENTO_ESTOQUE}>
+        {/* TOP-CONFIG-08: só com o bloco — sem ele o documento de estoque continua só com a observação, como hoje. */}
+        {regrasDaFamilia && regrasDoGeral}
         <CampoSimNao rotulo="Exigir observação" testId="top-campo-geral-observacao" valor={rascunho.configuracao.geral.exigeObservacao}
           onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeObservacao: v } }))} />
         <ErrosDeCampo erros={errosCampo} prefixos={["geral"]} />
       </Secao>}
 
-      {aba === "geral" && liberado && !documentoEstoque && <Secao chave="geral">
-        <CampoEnum rotulo="Confirmação" testId="top-campo-geral-confirmacao" valor={rascunho.configuracao.geral.confirmacao}
-          opcoes={MODOS_CONFIRMACAO} rotulos={ROTULOS_TOP.confirmacao}
-          ajuda="Quem dispara a confirmação do documento."
-          onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, confirmacao: v } }))} />
-        <CampoEnum rotulo="Alteração após confirmar" testId="top-campo-geral-alteracao" valor={rascunho.configuracao.geral.alteracaoAposConfirmacao}
-          opcoes={POLITICAS_ALTERACAO} rotulos={ROTULOS_TOP.alteracao}
-          ajuda="Se o documento ainda pode ser alterado depois de confirmado."
-          onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, alteracaoAposConfirmacao: v } }))} />
-        <CampoEnum rotulo="Documento sem itens" testId="top-campo-geral-sem-itens" valor={rascunho.configuracao.geral.documentoSemItens}
-          opcoes={POLITICAS_DOCUMENTO_SEM_ITENS} rotulos={ROTULOS_TOP.documentoSemItens}
-          ajuda="Se um documento desta operação pode existir sem nenhum item."
-          onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, documentoSemItens: v } }))} />
+      {aba === "geral" && liberado && !documentoEstoque && <Secao chave="geral" ajuda={regrasDaFamilia ? AJUDA_COM_REGRAS_GERAIS.geral : undefined}>
+        {regrasDoGeral}
         <CampoSimNao rotulo="Exigir parceiro" testId="top-campo-geral-parceiro" valor={rascunho.configuracao.geral.exigeParceiro}
           onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeParceiro: v } }))} />
         <CampoSimNao rotulo="Exigir centro de resultado" testId="top-campo-geral-centro" valor={rascunho.configuracao.geral.exigeCentroResultado}
           onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeCentroResultado: v } }))} />
         <CampoSimNao rotulo="Exigir observação" testId="top-campo-geral-observacao" valor={rascunho.configuracao.geral.exigeObservacao}
           onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeObservacao: v } }))} />
-        {rascunho.configuracaoV3 && <Field label="Exigir transportadora" span={4}>
+        {comRestricoes && <Field label="Exigir transportadora" span={4}>
           <label className="flex items-center gap-1 text-xs">
             <input type="checkbox" data-testid="top-geral-exige-transportadora"
-              checked={rascunho.configuracaoV3.geral.exigeTransportadora}
+              checked={comRestricoes.geral.exigeTransportadora}
               onChange={(e) => {
                 const marcado = e.target.checked;
                 mudarConfigV3((c) => ({ ...c, geral: { ...c.geral, exigeTransportadora: marcado } }));
@@ -694,10 +885,10 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         <CampoSimNao rotulo="Exigir centro de resultado" testId="top-campo-financeiro-centro" valor={rascunho.configuracao.financeiro.exigeCentroResultado}
           desabilitado={rascunho.configuracao.financeiro.atualizacao === "nenhuma"}
           onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, exigeCentroResultado: v } }))} />
-        {rascunho.configuracaoV3 && <>
+        {comRestricoes && <>
           {/* INDEPENDE do efeito financeiro (decisão 263): por isso não é desabilitado com "nenhuma".
               COMPRAS-01: só nos movimentos de vendas — fora deles o valor fica o que está ("não valida"). */}
-          {ehMovimentoDeVendas(rascunho.codigoBase) && <><CampoEnum rotulo="Cliente em atraso" testId="top-financeiro-cliente-em-atraso" valor={rascunho.configuracaoV3.financeiro.clienteEmAtraso}
+          {ehMovimentoDeVendas(rascunho.codigoBase) && <><CampoEnum rotulo="Cliente em atraso" testId="top-financeiro-cliente-em-atraso" valor={comRestricoes.financeiro.clienteEmAtraso}
             opcoes={POLITICAS_CLIENTE_EM_ATRASO} rotulos={ROTULOS_TOP.clienteEmAtraso}
             ajuda="O que fazer quando o cliente tem título vencido ao lançar um documento desta operação."
             onChange={(v) => mudarConfigV3((c) => ({ ...c, financeiro: { ...c.financeiro, clienteEmAtraso: v } }))} />
@@ -705,8 +896,8 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
             help="Dias de atraso tolerados antes de o título contar como vencido para esta regra.">
             <Input data-testid="top-financeiro-tolerancia-atraso" type="number" inputMode="numeric"
               min={0} max={TOLERANCIA_ATRASO_MAXIMA_DIAS} step={1}
-              value={String(rascunho.configuracaoV3.financeiro.toleranciaAtrasoDias)}
-              disabled={rascunho.configuracaoV3.financeiro.clienteEmAtraso === "nao_valida"}
+              value={String(comRestricoes.financeiro.toleranciaAtrasoDias)}
+              disabled={comRestricoes.financeiro.clienteEmAtraso === "nao_valida"}
               onChange={(e) => {
                 // Vazio vira 0; fora do intervalo NÃO é corrigido em silêncio — a conferência antes de salvar recusa.
                 const n = e.target.value.trim() === "" ? 0 : Number(e.target.value);
@@ -747,9 +938,9 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
           ajuda="Declara a intenção. Nenhum tributo é calculado por esta configuração."
           onChange={(v) => mudarConfig((c) => ({ ...c, fiscal: { ...c.fiscal, calculoTributario: v } }))} />
         {/* Só com o fiscal ligado: desligado, a normalização do domínio zera também as chaves novas. */}
-        {rascunho.configuracaoV3 && rascunho.configuracaoV3.fiscal.habilitado && <div className="col-span-12">
+        {comRestricoes && comRestricoes.fiscal.habilitado && <div className="col-span-12">
           <FiscalFormato3
-            fiscal={rascunho.configuracaoV3.fiscal}
+            fiscal={comRestricoes.fiscal}
             familia={rascunho.codigoBase}
             erros={errosCampo}
             onChange={(f) => mudarConfigV3((c) => ({ ...c, fiscal: f }))}
@@ -758,10 +949,11 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         {!rascunho.configuracao.fiscal.habilitado && <AvisoDeSecaoDesligada texto="Com o fiscal desligado, os demais campos desta seção ficam no estado neutro e não são gravados como exigência." />}
       </Secao>}
 
-      {aba === "aprovacao" && liberado && <Secao chave="aprovacao">
+      {aba === "aprovacao" && liberado && <Secao chave="aprovacao" ajuda={regrasDaFamilia ? AJUDA_COM_REGRAS_GERAIS.aprovacao : undefined}>
         <CampoEnum rotulo="Critério de aprovação" testId="top-campo-aprovacao-politica" valor={rascunho.configuracao.aprovacao.politica}
           opcoes={POLITICAS_APROVACAO} rotulos={ROTULOS_TOP.aprovacaoPolitica}
           ajuda="Quando o documento precisa passar por aprovação."
+          {...pelaFamilia(POLITICAS_APROVACAO, regrasDaFamilia?.aprovacao, "aprovacao")}
           onChange={(v) => mudarConfig((c) => ({
             ...c,
             // Ao passar para "a partir de um valor", o campo nasce vazio e obrigatório: herdar um valor
@@ -780,6 +972,8 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
           desabilitado={rascunho.configuracao.aprovacao.politica === "nenhuma"}
           onChange={(v) => mudarConfig((c) => ({ ...c, aprovacao: { ...c.aprovacao, momento: v } }))} />
         {rascunho.configuracao.aprovacao.politica === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem critério de aprovação, o valor mínimo fica zerado e não é gravado." />}
+        {/* TOP-CONFIG-08: o 422 em `aprovacao.*` (a matriz da família, no servidor) abre esta aba e aparece aqui. */}
+        <ErrosDeCampo erros={errosCampo} prefixos={["aprovacao"]} />
       </Secao>}
 
       {aba === "execucao" && liberado && <Secao chave="execucao">
@@ -791,6 +985,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
             salva={edicao ? inicial.configuracao : null}
             recusas={recusasExecucao}
             ativacaoSemRuntime={ativacaoSemRuntime}
+            regrasGerais={!!regrasDaFamilia}
             onChange={(efeito, modo) => mudarConfig((c) => ({ ...c, execucao: { ...c.execucao, [efeito]: modo } }))}
           />
         </div>
@@ -803,23 +998,38 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
       </p>}
       {erro ? <div className="mt-3"><ErrorState error={erro} /></div> : null}
 
-      <AvisoDeVersionamento />
+      <AvisoDeVersionamento regrasGerais={!!regrasDaFamilia} />
     </Dialog>
 
     <Dialog
-      open={aConfirmar !== null}
-      onOpenChange={(o) => { if (!o) setAConfirmar(null); }}
+      open={!!perguntas?.exigencias}
+      onOpenChange={(o) => { if (!o) setPerguntas(null); }}
       testId="top-exigencias-passam-a-valer"
       title="Estas exigências passam a valer"
       footer={<>
-        <Button variant="outline" data-testid="top-exigencias-voltar" onClick={() => setAConfirmar(null)}>Voltar e revisar</Button>
-        <Button data-testid="top-exigencias-salvar" onClick={() => { setAConfirmar(null); salvar.mutate(); }}>Salvar assim mesmo</Button>
+        <Button variant="outline" data-testid="top-exigencias-voltar" onClick={() => setPerguntas(null)}>Voltar e revisar</Button>
+        <Button data-testid="top-exigencias-salvar" onClick={depoisDasExigencias}>Salvar assim mesmo</Button>
       </>}
     >
       <p className="text-sm text-slate-600">
-        A partir desta versão, o lançamento vai exigir: {(aConfirmar ?? []).join(", ")}. Até hoje essas marcas
+        A partir desta versão, o lançamento vai exigir: {(perguntas?.exigencias ?? []).join(", ")}. Até hoje essas marcas
         estavam só registradas e não eram cobradas.
       </p>
+    </Dialog>
+
+    {/* TOP-CONFIG-08 — o gêmeo do diálogo das exigências, com o mesmo componente e os mesmos botões. Abre DEPOIS
+        dele quando os dois valem; "Salvar assim mesmo" grava o formato 4 com as regras da família já no padrão. */}
+    <Dialog
+      open={!!perguntas && !perguntas.exigencias && !!perguntas.regras}
+      onOpenChange={(o) => { if (!o) setPerguntas(null); }}
+      testId="top-regras-passam-a-valer"
+      title="Estas regras passam a valer"
+      footer={<>
+        <Button variant="outline" data-testid="top-regras-voltar" onClick={() => setPerguntas(null)}>Voltar e revisar</Button>
+        <Button data-testid="top-regras-salvar" onClick={() => { setPerguntas(null); salvar.mutate(); }}>Salvar assim mesmo</Button>
+      </>}
+    >
+      {perguntas?.regras ? <ListaDasRegrasQuePassamAValer regras={perguntas.regras} /> : null}
     </Dialog>
 
     <ConfirmDialog
@@ -841,31 +1051,94 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
 /**
  * Os campos de restrições do rascunho (TOP-CONFIG-05), ou nenhum. Sem restrições devolve `{}` — o rascunho
  * fica EXATAMENTE o de hoje (sem `configuracaoV3`, sem condições), e a assinatura também.
+ *
+ * TOP-CONFIG-08: com o bloco `regrasGerais`, o rascunho carrega `configuracaoV4` NO LUGAR de `configuracaoV3` (uma
+ * verdade só: a vigente no 1, 2 ou 3 é LIDA como 4, e a no 4 continua 4). Ler não regrava nada — a versão gravada
+ * fica no formato dela até alguém salvar.
  */
 function camposDeRestricoes(
   restricoes: boolean,
+  regrasGerais: boolean,
   detalhe: ReturnType<typeof lerDetalheTop>
 ): Partial<RascunhoTop> {
   if (!restricoes) return {};
-  const v3 = configuracaoInicialV3(detalhe?.configuracao ?? null);
   const lidas = detalhe?.condicoesPermitidas ?? null;
-  return {
-    configuracaoV3: v3,
-    configuracao: configuracaoTopParaEdicao(v3),
+  const condicoes = {
     condicoesPermitidas: lidas ?? [],
     // Nasce NÃO declarada: lista intocada não vai no corpo (régua em `RascunhoTop.condicoesDeclaradas`).
     condicoesDeclaradas: false
   };
+  if (regrasGerais) {
+    const v4 = configuracaoInicialV4(detalhe?.configuracao ?? null);
+    return { configuracaoV4: v4, configuracao: configuracaoTopParaEdicao(v4), ...condicoes };
+  }
+  const v3 = configuracaoInicialV3(detalhe?.configuracao ?? null);
+  return { configuracaoV3: v3, configuracao: configuracaoTopParaEdicao(v3), ...condicoes };
 }
 
-/** A aba onde mora o campo de um caminho de erro. */
+/**
+ * A aba onde mora o campo de um caminho de erro. TOP-CONFIG-08: `aprovacao.*` abre a Aprovação (antes, uma 422 em
+ * `aprovacao.politica` — a matriz da família — abria a Identificação, onde o campo não está).
+ */
 function abaDoCaminho(caminho: string): ChaveAba {
   if (caminho === CAMINHO_ERRO_RESERVA_ESTOQUE) return "estoque";
   if (caminho.startsWith("fiscal.")) return "fiscal";
   if (caminho.startsWith("financeiro.") || caminho === "condicoesPermitidas" || caminho.startsWith("condicoesPermitidas.")) return "financeiro";
   if (caminho.startsWith("geral.")) return "geral";
+  if (caminho.startsWith("aprovacao.")) return "aprovacao";
   return "identificacao";
 }
+
+// ---------------------------------------------------------------------------------------------------
+// As perguntas antes de gravar (TOP-CONFIG-05_R1 e TOP-CONFIG-08)
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * O que a gravação no formato 4 muda na EXECUÇÃO, montado pelo domínio: as regras que passam a executar
+ * (`regrasGeraisQuePassamAValer`) e as que voltam ao padrão porque a família não as executa (`voltaram`).
+ */
+interface RegrasQuePassamAValer { passam: string[]; voltaram: RegraGeralQueVoltaTop[] }
+
+/**
+ * AS PERGUNTAS, EM FILA: primeiro "Estas exigências passam a valer" (TOP-CONFIG-05_R1), depois "Estas regras passam
+ * a valer" (TOP-CONFIG-08). `null` em uma delas = essa não tem o que perguntar. "Voltar e revisar" em qualquer uma
+ * desfaz a fila inteira: nada é gravado sem o administrador ter visto TUDO o que muda.
+ */
+interface PerguntasAntesDeGravar { exigencias: string[] | null; regras: RegrasQuePassamAValer | null }
+
+/**
+ * "Confirmação: Automática → Manual" — cada regra que volta ao padrão, com o nome do campo do editor e os rótulos
+ * de `ROTULOS_TOP` (a tradução de hoje; valor técnico nunca aparece). A união discriminada do domínio liga cada
+ * caminho ao SEU enum, então um rótulo trocado de lugar não compila.
+ */
+function rotuloDaRegraQueVolta(v: RegraGeralQueVoltaTop): string {
+  switch (v.caminho) {
+    case "geral.confirmacao":
+      return `Confirmação: ${ROTULOS_TOP.confirmacao[v.de]} → ${ROTULOS_TOP.confirmacao[v.para]}`;
+    case "geral.documentoSemItens":
+      return `Documento sem itens: ${ROTULOS_TOP.documentoSemItens[v.de]} → ${ROTULOS_TOP.documentoSemItens[v.para]}`;
+    case "geral.alteracaoAposConfirmacao":
+      return `Alteração após confirmar: ${ROTULOS_TOP.alteracao[v.de]} → ${ROTULOS_TOP.alteracao[v.para]}`;
+    case "aprovacao.politica":
+      return `Aprovação: ${ROTULOS_TOP.aprovacaoPolitica[v.de]} → ${ROTULOS_TOP.aprovacaoPolitica[v.para]}`;
+  }
+}
+
+/**
+ * O CORPO DO DIÁLOGO "Estas regras passam a valer": o que passa a executar (os textos do domínio, como vieram) e,
+ * quando houver, o que volta ao padrão. Cada item com o seu `data-testid`, para o teste ler item por item.
+ */
+const ListaDasRegrasQuePassamAValer = ({ regras }: { regras: RegrasQuePassamAValer }) => <div className="space-y-2 text-sm text-slate-600">
+  {regras.passam.length > 0 && <ul className="list-disc pl-5">
+    {regras.passam.map((t) => <li key={t} data-testid="top-regra-passa-a-valer">{t}</li>)}
+  </ul>}
+  {regras.voltaram.length > 0 && <>
+    <p>Estas opções voltam ao padrão, porque esta operação não as executa:</p>
+    <ul className="list-disc pl-5">
+      {regras.voltaram.map((v) => <li key={v.caminho} data-testid="top-regra-volta-ao-padrao" data-caminho={v.caminho}>{rotuloDaRegraQueVolta(v)}</li>)}
+    </ul>
+  </>}
+</div>;
 
 /** Erros de campo das seções Geral/Financeiro (o Fiscal os recebe em `FiscalFormato3`). */
 const ErrosDeCampo = ({ erros, prefixos }: { erros: Readonly<Record<string, string>>; prefixos: readonly string[] }) => <>
@@ -911,7 +1184,7 @@ const ROTULO_EFEITO: Record<EfeitoExecucaoTop, string> = { estoque: "Estoque", f
  * e versão já configurada num ambiente que não a executa (as vendas dela serão recusadas até ligar, ou
  * voltar ao legado). Uma mensagem genérica esconderia qual delas é.
  */
-function AbaExecucao({ execucao, codigoBase, configuracao, salva, recusas, ativacaoSemRuntime, onChange }: {
+function AbaExecucao({ execucao, codigoBase, configuracao, salva, recusas, ativacaoSemRuntime, regrasGerais, onChange }: {
   execucao: CapacidadesExecucaoTop;
   codigoBase: string;
   configuracao: ConfiguracaoTipoOperacaoV2;
@@ -919,6 +1192,8 @@ function AbaExecucao({ execucao, codigoBase, configuracao, salva, recusas, ativa
   salva: ConfiguracaoTipoOperacaoV2 | null;
   recusas: RecusaExecucaoTop[];
   ativacaoSemRuntime: EfeitoExecucaoTop[];
+  /** TOP-CONFIG-08: o editor grava o formato 4 (bloco `regrasGerais`)? Muda só a frase do que continua declarado. */
+  regrasGerais: boolean;
   onChange: (efeito: EfeitoExecucaoTop, modo: ModoExecucaoTop) => void;
 }) {
   if (!execucao.suportado) {
@@ -995,10 +1270,16 @@ function AbaExecucao({ execucao, codigoBase, configuracao, salva, recusas, ativa
       lançados continuam seguindo a versão que registraram, e o cancelamento estorna apenas o que de fato
       aconteceu na confirmação.
     </p>
+    {/* TOP-CONFIG-08: no formato 4 a aprovação, a confirmação automática e as exigências executam, e a alteração após
+        confirmar só aceita "Bloqueada" — sobra o fiscal. Sem o bloco, o texto de hoje, letra por letra. */}
     <p data-testid="top-execucao-declarativo" className="text-[11.5px] leading-relaxed text-slate-500">
-      Preparadas, ainda não executadas: fiscal, aprovação, confirmação automática e alteração após confirmar.
-      Elas ficam registradas nesta versão, mas nada as executa nesta etapa do produto. As exigências da aba Geral
-      só são cobradas no lançamento em versões gravadas com as restrições da operação.
+      {regrasGerais
+        ? "Preparado, ainda não executado: o fiscal. Ele fica registrado nesta versão, mas nada o executa nesta etapa do produto."
+        : <>
+          Preparadas, ainda não executadas: fiscal, aprovação, confirmação automática e alteração após confirmar.
+          Elas ficam registradas nesta versão, mas nada as executa nesta etapa do produto. As exigências da aba Geral
+          só são cobradas no lançamento em versões gravadas com as restrições da operação.
+        </>}
     </p>
   </div>;
 }

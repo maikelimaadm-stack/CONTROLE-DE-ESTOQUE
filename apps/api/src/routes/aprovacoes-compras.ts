@@ -60,6 +60,7 @@ import { situacaoDaAprovacao, registrarDecisao } from "../lib/aprovacao-document
 import { confirmaAutomaticamente, tentarConfirmacaoAutomatica, lerVersaoCongeladaTop, type ResultadoConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
 import { lerDocumentoCompra } from "./compras.js";
 import { confirmarCompraNaTransacao } from "./compras-confirmacao.js";
+import { paginaComIdGlobal } from "../lib/id-global.js";
 
 /** A capacidade da porta: decidir a aprovação da compra. A confirmação automática pede a DELA (`compras.edit`). */
 const PERMISSAO_APROVAR = "compras.approve";
@@ -84,7 +85,7 @@ const PARAMETROS_DA_FILA = new Set(["page", "pageSize"]);
 // ─────────────── a fila ───────────────
 
 /** Uma linha da fila (o corpo que a tela de Aprovações consome). `version` só existe na venda. */
-interface LinhaDaFilaCompra {
+type LinhaDaFilaCompra = {
   id: string; codigo: string; especie: "compra"; data: string;
   empresa: { id: string; nome: string };
   parceiro: { id: string; nome: string } | null;
@@ -93,7 +94,7 @@ interface LinhaDaFilaCompra {
   lancadoPor: { id: string; nome: string } | null;
   situacao: "pendente" | "reprovado";
   ultimaDecisao: { decisao: "aprovado" | "reprovado"; observacao: string | null; decididoPor: { id: string; nome: string }; decididoEm: string } | null;
-}
+};
 
 interface LinhaLida {
   id: string; codigo: string; data: string; empresa_id: string; empresa_nome: string;
@@ -161,7 +162,9 @@ async function listarFila(ctx: ServiceCtx, query: unknown) {
           decididoEm: l.ud_decidido_em.toISOString() }
       : null,
   }));
-  return { items, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
+  // O ID Global de cada documento (o localizador humano da organização), como nas listas de hoje: uma consulta a
+  // mais, fixa, e a marca `idGlobal` que a tela lê para mostrar a coluna (id-global-audit).
+  return paginaComIdGlobal(ctx, "documentos_compra", { items, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize });
 }
 
 // ─────────────── a decisão ───────────────

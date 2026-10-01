@@ -66,6 +66,7 @@ import { situacaoDaAprovacao, registrarDecisao } from "../lib/aprovacao-document
 import { lerVersaoCongeladaTop, confirmaAutomaticamente, tentarConfirmacaoAutomatica, type ResultadoConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
 import { exigirDocumentoVisivel, travarDocumentoDaEdicao, confirmarVendaNaTransacao } from "./sales.js";
 import { MSG_DOCUMENTO_MUDOU, MSG_EDICAO_VERSAO_AUSENTE, MSG_EDICAO_VERSAO_INVALIDA } from "./vendas-edicao-patch.js";
+import { paginaComIdGlobal } from "../lib/id-global.js";
 
 // ─────────────── contrato de entrada (estrito) ───────────────
 
@@ -122,13 +123,13 @@ interface RespostaDaDecisao {
 // ─────────────── a fila ───────────────
 
 /** Uma linha da fila como o W4 a consome (COORD, "Rotas de aprovação"). */
-interface LinhaDaFila {
+type LinhaDaFila = {
   id: string; codigo: string; especie: "venda"; data: string;
   empresa: { id: string; nome: string }; parceiro: { id: string; nome: string } | null; operacao: { id: string; nome: string };
   valor: string | null; lancadoPor: { id: string; nome: string } | null; situacao: "pendente" | "reprovado";
   ultimaDecisao: { decisao: Decisao; observacao: string | null; decididoPor: { id: string; nome: string }; decididoEm: string } | null;
   version: string;
-}
+};
 
 interface LinhaLida {
   id: string; code: string; document_date: string; empresa_id: string; empresa_nome: string | null;
@@ -214,7 +215,9 @@ async function listarFila(ctx: ServiceCtx, query: unknown) {
       : null,
     version: x.version,
   }));
-  return { items, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
+  // O ID Global de cada documento (o localizador humano da organização), como nas listas de hoje: uma consulta a
+  // mais, fixa, e a marca `idGlobal` que a tela lê para mostrar a coluna (id-global-audit).
+  return paginaComIdGlobal(ctx, "sales_documents", { items, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize });
 }
 
 // ─────────────── a decisão ───────────────
