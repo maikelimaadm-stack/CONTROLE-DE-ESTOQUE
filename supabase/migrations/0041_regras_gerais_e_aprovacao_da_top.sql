@@ -4,7 +4,8 @@
 -- 1) TRÊS tabelas de DECISÃO de aprovação, uma ao lado de cada documento: erp.aprovacoes_venda
 --    (erp.sales_documents), erp.aprovacoes_compra (erp.documentos_compra) e erp.aprovacoes_estoque
 --    (erp.documentos_estoque). Uma linha por DECISÃO ('aprovado' | 'reprovado'), SÓ INSERÇÃO: nenhuma decisão é
---    editada nem apagada (gatilho de imutabilidade, no molde da 0020, e sem UPDATE/DELETE/TRUNCATE para o erp_app).
+--    editada nem apagada (gatilho de imutabilidade, no molde da 0020, por linha contra UPDATE/DELETE e por comando
+--    contra TRUNCATE — vale também para o dono —, e sem UPDATE/DELETE/TRUNCATE para o erp_app).
 --    Reprovar e depois aprovar é uma decisão NOVA; a história fica. A vigente é a ÚLTIMA (id desc):
 --      · venda: a última decisão DA VERSÃO ATUAL do documento (sales_documents.version, 0039). A tabela é separada
 --        justamente para que aprovar não mexa na versão; e qualquer UPDATE da venda soma 1 na versão (0039), então
@@ -33,14 +34,17 @@
 --    com o usuário, a organização e o módulo da GUC de quem chama (a função lê as GUCs, não o dono). Sem isso, o
 --    membro com escopo [A] que, como erp_app, pede um documento da empresa B da MESMA organização leria a situação
 --    dele pela recusa (42501 do with check × APROVACAO_NAO_EXIGIDA × CONFLICT × NOT_FOUND): fora do escopo é a
---    MESMA 'NOT_FOUND', também antes de ler qualquer documento. Depois, lê o documento da organização da GUC com
---    FOR SHARE (a rota já o travou FOR UPDATE na mesma transação; um caminho que não travou espera a confirmação
---    concorrente terminar e lê a situação NOVA) e confere: existe, é da empresa da decisão, e está aberto.
---    Documento inexistente, de outra empresa, excluído ou de outra espécie responde a MESMA recusa 'NOT_FOUND'
---    (negar não revela existência). Na venda, versao_documento tem de ser a version atual. ATRIBUI do documento a
---    TOP, a versão congelada e o valor (venda: total; compra: valor_total) — não compara o que veio —, e
---    decidido_por := erp.current_user_id() (sem usuário, recusa), decidido_em := now(). Por fim, o documento tem de
---    EXIGIR aprovação pelo total ATUAL; senão, 'APROVACAO_NAO_EXIGIDA: …'.
+--    MESMA 'NOT_FOUND', também antes de ler qualquer documento. Depois, lê o documento com FOR SHARE (a rota já o
+--    travou FOR UPDATE na mesma transação; um caminho que não travou espera a confirmação concorrente terminar e lê
+--    a situação NOVA), e TUDO o que responde NOT_FOUND está no WHERE dessa leitura: organização da GUC, empresa da
+--    decisão, espécie (venda kind 'sale'; compra espécie 'compra') e, na venda, não excluída. O FOR SHARE só trava a
+--    linha que passa pelo filtro: documento inexistente, de outra empresa, excluído ou de outra espécie não é lido
+--    nem travado, e responde a MESMA recusa 'NOT_FOUND' na hora — mesmo que outra sessão o segure FOR UPDATE (a
+--    espera pela trava, e o lock_timeout dela, revelariam que ele existe). Negar não revela existência. Depois do
+--    filtro, a ordem continua: na venda, versao_documento tem de ser a version atual; o documento tem de estar
+--    aberto. ATRIBUI do documento a TOP, a versão congelada e o valor (venda: total; compra: valor_total) — não
+--    compara o que veio —, e decidido_por := erp.current_user_id() (sem usuário, recusa), decidido_em := now(). Por
+--    fim, o documento tem de EXIGIR aprovação pelo total ATUAL; senão, 'APROVACAO_NAO_EXIGIDA: …'.
 --    A ordem das recusas é: usuário → organização → empresa no escopo → documento (404) → versão (409) → situação
 --    (409) → exigência (409). As três primeiras vêm antes de ler qualquer documento: sem usuário na transação,
 --    'PERMISSION_DENIED'; organização da linha fora da GUC, 'NOT_FOUND'; empresa da linha fora do escopo de escrita
@@ -54,14 +58,25 @@
 --        version junto com o status. O NEW pode mentir; o OLD não;
 --      · trg_documentos_compra_aprovacao: aberto → confirmado;
 --      · trg_documentos_estoque_aprovacao: aberto → confirmado.
---    Quando o documento exige aprovação e a vigente não é 'aprovado', levanta 'CONFLICT: …' (P0001), com mensagem
---    FIXA de uma linha — nada de motivo livre nela. CONFLICT é conhecido por todo binário: o anterior (reversão,
---    instância antiga no pool) responde 409, nunca 500. Na API nova quem explica é o passo da aprovação no
---    planejamento da confirmação (APROVACAO_PENDENTE / APROVACAO_REPROVADA, com details); a guarda é o fundo.
---    FAIL-CLOSED na conta: a guarda considera a versão congelada de ANTES e a de DEPOIS do UPDATE (na compra e no
---    estoque elas são imutáveis; na venda o PUT pode trocar a TOP de um documento aberto) e o MAIOR valor entre o de
---    antes e o de depois. Um UPDATE que confirmasse e, no mesmo comando, baixasse o total ou trocasse a TOP não
---    escaparia da exigência. Formato 1 a 3 nunca é barrado (a conta dá falso).
+--    Quando o documento exige aprovação e a vigente não é 'aprovado' — ou é 'aprovado' mas não cobre o que o UPDATE
+--    confirma (abaixo) —, levanta 'CONFLICT: …' (P0001), com mensagem FIXA de uma linha — nada de motivo livre nela.
+--    CONFLICT é conhecido por todo binário: o anterior (reversão, instância antiga no pool) responde 409, nunca 500.
+--    Na API nova quem explica é o passo da aprovação no planejamento da confirmação (APROVACAO_PENDENTE /
+--    APROVACAO_REPROVADA, com details); a guarda é o fundo. O que vale, exatamente:
+--      · a EXIGÊNCIA (fail-closed na conta) usa a versão congelada de ANTES e a de DEPOIS do UPDATE (na compra e no
+--        estoque elas são imutáveis; na venda o PUT pode trocar a TOP de um documento aberto) e o MAIOR valor entre
+--        o de antes e o de depois: um UPDATE que confirmasse e, no mesmo comando, baixasse o total ou trocasse a TOP
+--        não escaparia dela. Formato 1 a 3 nunca é barrado (a conta dá falso);
+--      · a APROVAÇÃO só cobre o valor e a versão que aprovou: a vigente 'aprovado' só vale se o valor_documento dela
+--        for ≥ o MAIOR valor entre o de antes e o de depois (venda: total; compra: valor_total; numeric(18,2) dos
+--        dois lados, sem arredondamento) e se a tipo_operacao_versao_id dela for a de DEPOIS do UPDATE (no estoque,
+--        que não tem valor, só a versão). Confirmar e, no mesmo comando, subir o valor ou trocar a TOP recebe a
+--        MESMA 'CONFLICT' de "precisa de aprovação" que a falta de decisão recebe. Na compra e no estoque, que não
+--        têm edição, isso também pega valor ou TOP mudados por fora depois da decisão;
+--      · o UPDATE que confirma a venda e, no MESMO comando, deixa a TOP nula NÃO dispara a guarda: o WHEN é o MESMO
+--        da 0023 (NEW.tipo_operacao_versao_id is not null). A API recusa tirar a TOP de uma venda
+--        (apps/api/src/routes/sales.ts: "tipo_operacao_id não pode ser removido de um documento"), e os UPDATEs de
+--        confirmação da API gravam só a situação. Uma guarda de banco para a TOP tirada é de outra fatia.
 --    As guardas NÃO conferem a organização da GUC, de propósito: elas leem pela OLD.organization_id da própria linha
 --    que o UPDATE já alcançou (para o erp_app, só alcança o que a RLS deixa), então não abrem nada de outro tenant; e
 --    um UPDATE sem GUC (superusuário, migração) continua GUARDADO pela decisão da linha, em vez de recusado por falta
@@ -208,7 +223,9 @@ create table erp.aprovacoes_venda (
   observacao text constraint chk_aprovacoes_venda_observacao check (observacao is null or length(observacao) <= 500),
   decidido_por uuid not null references erp.users(id),
   decidido_em timestamptz not null default now(),
-  constraint chk_aprovacoes_venda_reprovacao check (decisao = 'aprovado' or (observacao is not null and btrim(observacao) <> '')),
+  -- Reprovação exige motivo com ao menos um caractere que não seja espaço em branco ([:space:]: espaço, tab,
+  -- quebra de linha…): btrim só tira o espaço, e um motivo feito só de tab ou de quebra de linha passaria.
+  constraint chk_aprovacoes_venda_reprovacao check (decisao = 'aprovado' or (observacao is not null and observacao ~ '[^[:space:]]')),
   -- A venda não tem chave (id, organization_id), e esta fatia não cria uma: o gatilho de inserção confere a organização.
   constraint fk_aprovacoes_venda_documento foreign key (documento_id) references erp.sales_documents (id),
   constraint fk_aprovacoes_venda_empresa foreign key (organization_id, empresa_id) references erp.empresas (organization_id, id),
@@ -229,7 +246,7 @@ create table erp.aprovacoes_compra (
   observacao text constraint chk_aprovacoes_compra_observacao check (observacao is null or length(observacao) <= 500),
   decidido_por uuid not null references erp.users(id),
   decidido_em timestamptz not null default now(),
-  constraint chk_aprovacoes_compra_reprovacao check (decisao = 'aprovado' or (observacao is not null and btrim(observacao) <> '')),
+  constraint chk_aprovacoes_compra_reprovacao check (decisao = 'aprovado' or (observacao is not null and observacao ~ '[^[:space:]]')),
   constraint fk_aprovacoes_compra_documento foreign key (documento_id, organization_id) references erp.documentos_compra (id, organization_id),
   constraint fk_aprovacoes_compra_empresa foreign key (organization_id, empresa_id) references erp.empresas (organization_id, id),
   constraint fk_aprovacoes_compra_tipo_operacao foreign key (tipo_operacao_id, organization_id) references erp.tipos_operacao (id, organization_id),
@@ -248,7 +265,7 @@ create table erp.aprovacoes_estoque (
   observacao text constraint chk_aprovacoes_estoque_observacao check (observacao is null or length(observacao) <= 500),
   decidido_por uuid not null references erp.users(id),
   decidido_em timestamptz not null default now(),
-  constraint chk_aprovacoes_estoque_reprovacao check (decisao = 'aprovado' or (observacao is not null and btrim(observacao) <> '')),
+  constraint chk_aprovacoes_estoque_reprovacao check (decisao = 'aprovado' or (observacao is not null and observacao ~ '[^[:space:]]')),
   constraint fk_aprovacoes_estoque_documento foreign key (documento_id, organization_id) references erp.documentos_estoque (id, organization_id),
   constraint fk_aprovacoes_estoque_empresa foreign key (organization_id, empresa_id) references erp.empresas (organization_id, id),
   constraint fk_aprovacoes_estoque_tipo_operacao foreign key (tipo_operacao_id, organization_id) references erp.tipos_operacao (id, organization_id),
@@ -266,7 +283,7 @@ comment on column erp.aprovacoes_venda.tipo_operacao_versao_id is 'Versão conge
 comment on column erp.aprovacoes_venda.versao_documento is 'Versão do documento (sales_documents.version) que a decisão aprova ou reprova; tem de ser a atual na inserção.';
 comment on column erp.aprovacoes_venda.valor_documento is 'Total do documento no momento da decisão (atribuído pelo gatilho, do documento).';
 comment on column erp.aprovacoes_venda.decisao is 'aprovado ou reprovado.';
-comment on column erp.aprovacoes_venda.observacao is 'Observação da aprovação (opcional) ou motivo da reprovação (obrigatório, não vazio); até 500 caracteres.';
+comment on column erp.aprovacoes_venda.observacao is 'Observação da aprovação (opcional) ou motivo da reprovação (obrigatório, com ao menos um caractere que não seja espaço em branco); até 500 caracteres.';
 comment on column erp.aprovacoes_venda.decidido_por is 'Usuário que decidiu (atribuído pelo gatilho: o usuário da transação).';
 comment on column erp.aprovacoes_venda.decidido_em is 'Momento da decisão (atribuído pelo gatilho).';
 
@@ -279,7 +296,7 @@ comment on column erp.aprovacoes_compra.tipo_operacao_id is 'TOP do documento na
 comment on column erp.aprovacoes_compra.tipo_operacao_versao_id is 'Versão congelada da TOP do documento na decisão (FK de três colunas; atribuída pelo gatilho).';
 comment on column erp.aprovacoes_compra.valor_documento is 'Valor total do documento no momento da decisão (atribuído pelo gatilho, do documento).';
 comment on column erp.aprovacoes_compra.decisao is 'aprovado ou reprovado.';
-comment on column erp.aprovacoes_compra.observacao is 'Observação da aprovação (opcional) ou motivo da reprovação (obrigatório, não vazio); até 500 caracteres.';
+comment on column erp.aprovacoes_compra.observacao is 'Observação da aprovação (opcional) ou motivo da reprovação (obrigatório, com ao menos um caractere que não seja espaço em branco); até 500 caracteres.';
 comment on column erp.aprovacoes_compra.decidido_por is 'Usuário que decidiu (atribuído pelo gatilho: o usuário da transação).';
 comment on column erp.aprovacoes_compra.decidido_em is 'Momento da decisão (atribuído pelo gatilho).';
 
@@ -291,7 +308,7 @@ comment on column erp.aprovacoes_estoque.documento_id is 'Documento de estoque d
 comment on column erp.aprovacoes_estoque.tipo_operacao_id is 'TOP do documento na decisão (atribuída pelo gatilho, do documento).';
 comment on column erp.aprovacoes_estoque.tipo_operacao_versao_id is 'Versão congelada da TOP do documento na decisão (FK de três colunas; atribuída pelo gatilho).';
 comment on column erp.aprovacoes_estoque.decisao is 'aprovado ou reprovado.';
-comment on column erp.aprovacoes_estoque.observacao is 'Observação da aprovação (opcional) ou motivo da reprovação (obrigatório, não vazio); até 500 caracteres.';
+comment on column erp.aprovacoes_estoque.observacao is 'Observação da aprovação (opcional) ou motivo da reprovação (obrigatório, com ao menos um caractere que não seja espaço em branco); até 500 caracteres.';
 comment on column erp.aprovacoes_estoque.decidido_por is 'Usuário que decidiu (atribuído pelo gatilho: o usuário da transação).';
 comment on column erp.aprovacoes_estoque.decidido_em is 'Momento da decisão (atribuído pelo gatilho).';
 
@@ -377,13 +394,18 @@ begin
   if not erp.empresa_escrita_permitida(new.empresa_id) then
     raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
   end if;
-  select d.empresa_id, d.kind, d.status, d.deleted_at, d.total, d.version, d.tipo_operacao_id, d.tipo_operacao_versao_id
+  -- Tudo o que responde NOT_FOUND está no WHERE, e não depois dele: o FOR SHARE só trava a linha que passa pelo
+  -- filtro. Venda de outra empresa, excluída ou de outra espécie não é lida nem travada — se outra sessão a segura
+  -- FOR UPDATE, a recusa sai na hora, sem esperar a trava (a espera, e o lock_timeout que ela daria, revelaria
+  -- que o documento existe).
+  select d.status, d.total, d.version, d.tipo_operacao_id, d.tipo_operacao_versao_id
     into v_doc
     from erp.sales_documents d
    where d.id = new.documento_id and d.organization_id = v_org
+     and d.empresa_id = new.empresa_id and d.kind = 'sale' and d.deleted_at is null
      for share;
   -- Inexistente na organização, outra empresa, excluído ou outra espécie: a MESMA recusa.
-  if not found or v_doc.empresa_id is distinct from new.empresa_id or v_doc.deleted_at is not null or v_doc.kind <> 'sale' then
+  if not found then
     raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
   end if;
   if new.versao_documento is distinct from v_doc.version then
@@ -432,13 +454,16 @@ begin
   if not erp.empresa_escrita_permitida(new.empresa_id) then
     raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
   end if;
-  select d.empresa_id, d.especie, d.situacao, d.valor_total, d.tipo_operacao_id, d.tipo_operacao_versao_id
+  -- O filtro inteiro da NOT_FOUND no WHERE (o mesmo da venda): compra de outra empresa ou pedido de compra não é
+  -- lido nem travado, e a recusa não espera a trava de ninguém.
+  select d.situacao, d.valor_total, d.tipo_operacao_id, d.tipo_operacao_versao_id
     into v_doc
     from erp.documentos_compra d
    where d.id = new.documento_id and d.organization_id = v_org
+     and d.empresa_id = new.empresa_id and d.especie = 'compra'
      for share;
   -- Inexistente na organização, outra empresa ou pedido de compra: a MESMA recusa.
-  if not found or v_doc.empresa_id is distinct from new.empresa_id or v_doc.especie <> 'compra' then
+  if not found then
     raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
   end if;
   if v_doc.situacao <> 'aberto' then
@@ -483,12 +508,15 @@ begin
   if not erp.empresa_escrita_permitida(new.empresa_id) then
     raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
   end if;
-  select d.empresa_id, d.situacao, d.tipo_operacao_id, d.tipo_operacao_versao_id
+  -- O filtro inteiro da NOT_FOUND no WHERE (o mesmo da venda): documento de outra empresa não é lido nem travado.
+  select d.situacao, d.tipo_operacao_id, d.tipo_operacao_versao_id
     into v_doc
     from erp.documentos_estoque d
    where d.id = new.documento_id and d.organization_id = v_org
+     and d.empresa_id = new.empresa_id
      for share;
-  if not found or v_doc.empresa_id is distinct from new.empresa_id then
+  -- Inexistente na organização ou outra empresa: a MESMA recusa.
+  if not found then
     raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
   end if;
   if v_doc.situacao <> 'aberto' then
@@ -513,8 +541,11 @@ create trigger trg_aprovacoes_estoque_conferir
   before insert on erp.aprovacoes_estoque
   for each row execute function erp.aprovacoes_estoque_conferir();
 
--- 5.2 Decisão é histórico imutável (o molde da 0020): nem UPDATE nem DELETE, de ninguém. O erp_app já não tem os
--- privilégios (seção 7); o gatilho fecha o caminho do dono também. Uma função, um gatilho por tabela.
+-- 5.2 Decisão é histórico imutável (o molde da 0020): nem UPDATE, nem DELETE, nem TRUNCATE, de ninguém. O erp_app
+-- já não tem os privilégios (seção 7); os gatilhos fecham o caminho do dono também. Uma função e, por tabela, dois
+-- gatilhos: um POR LINHA (BEFORE UPDATE OR DELETE) e um POR COMANDO (BEFORE TRUNCATE — o TRUNCATE não passa pelos
+-- gatilhos de linha, e sem ele o dono esvaziaria a tabela). A função não lê OLD nem NEW (que são nulos no gatilho
+-- por comando): só recusa, com a MESMA CONFLICT nos dois níveis, nomeando a operação (TG_OP).
 create function erp.aprovacoes_imutavel() returns trigger
 language plpgsql set search_path = erp, pg_temp as $$
 begin
@@ -522,7 +553,7 @@ begin
     using errcode = 'P0001';
 end $$;
 comment on function erp.aprovacoes_imutavel() is
-  'TOP-CONFIG-08: decisão de aprovação é só inserção; recusa UPDATE e DELETE nas três tabelas de aprovação.';
+  'TOP-CONFIG-08: decisão de aprovação é só inserção; recusa UPDATE e DELETE (gatilho por linha) e TRUNCATE (gatilho por comando) nas três tabelas de aprovação, com a mesma CONFLICT; não lê OLD nem NEW.';
 create trigger trg_aprovacoes_venda_imutavel
   before update or delete on erp.aprovacoes_venda
   for each row execute function erp.aprovacoes_imutavel();
@@ -532,6 +563,15 @@ create trigger trg_aprovacoes_compra_imutavel
 create trigger trg_aprovacoes_estoque_imutavel
   before update or delete on erp.aprovacoes_estoque
   for each row execute function erp.aprovacoes_imutavel();
+create trigger trg_aprovacoes_venda_imutavel_truncate
+  before truncate on erp.aprovacoes_venda
+  for each statement execute function erp.aprovacoes_imutavel();
+create trigger trg_aprovacoes_compra_imutavel_truncate
+  before truncate on erp.aprovacoes_compra
+  for each statement execute function erp.aprovacoes_imutavel();
+create trigger trg_aprovacoes_estoque_imutavel_truncate
+  before truncate on erp.aprovacoes_estoque
+  for each statement execute function erp.aprovacoes_imutavel();
 
 create trigger trg_aprovacoes_venda_audit
   after insert or update or delete on erp.aprovacoes_venda
@@ -546,12 +586,15 @@ create trigger trg_aprovacoes_estoque_audit
 -- ---------- 6) guardas de transição ----------
 -- Só na ENTRADA no confirmado, e só com versão congelada. Não mudam o NEW: leem e deixam passar, ou recusam.
 -- Fail-closed na conta (ver o cabeçalho, item 4): a versão de antes E a de depois, e o MAIOR valor entre os dois.
+-- E a aprovação só cobre o que aprovou: o valor (≥ o MAIOR dos dois) e a versão da TOP (= a de depois).
 -- A organização é a OLD.organization_id da linha que o UPDATE já alcançou — não a da GUC, ao contrário da inserção
 -- (5.1): aqui não há linha "pedida", e o UPDATE sem GUC (superusuário, migração) tem de continuar guardado.
 create function erp.venda_aprovacao_guarda() returns trigger
 language plpgsql security definer set search_path = erp, pg_temp as $$
 declare
   v_decisao text;
+  v_valor numeric(18,2);
+  v_versao uuid;
 begin
   if not exists (select 1 from erp.tipos_operacao_versoes v
                   where v.organization_id = old.organization_id
@@ -560,7 +603,7 @@ begin
     return new;
   end if;
   -- A decisão da versão de ANTES do UPDATE: o NEW.version pode ter sido gravado por quem faz o UPDATE.
-  select a.decisao into v_decisao
+  select a.decisao, a.valor_documento, a.tipo_operacao_versao_id into v_decisao, v_valor, v_versao
     from erp.aprovacoes_venda a
    where a.organization_id = old.organization_id and a.documento_id = old.id and a.versao_documento = old.version
    order by a.id desc
@@ -571,10 +614,17 @@ begin
   if v_decisao <> 'aprovado' then
     raise exception 'CONFLICT: Este documento foi reprovado e não pode ser confirmado.' using errcode = 'P0001';
   end if;
+  -- A aprovação só cobre o que aprovou: o valor (≥ o MAIOR entre o de antes e o de depois; numeric(18,2) dos dois
+  -- lados, sem arredondamento) e a versão da TOP de DEPOIS. Confirmar e, no mesmo UPDATE, subir o total ou trocar a
+  -- TOP é a MESMA recusa da falta de decisão. "is not true": comparação nula não vale como aprovação.
+  if (v_valor >= greatest(old.total, new.total)) is not true
+     or v_versao is distinct from new.tipo_operacao_versao_id then
+    raise exception 'CONFLICT: Este documento precisa de aprovação antes de ser confirmado.' using errcode = 'P0001';
+  end if;
   return new;
 end $$;
 comment on function erp.venda_aprovacao_guarda() is
-  'TOP-CONFIG-08: a venda que exige aprovação (versão congelada no formato 4) só entra em confirmed/invoiced com a última decisão da versão OLD.version aprovada; senão, CONFLICT com mensagem fixa.';
+  'TOP-CONFIG-08: a venda que exige aprovação (versão congelada no formato 4) só entra em confirmed/invoiced com a última decisão da versão OLD.version aprovada, e só se essa aprovação cobre o que o UPDATE confirma (valor aprovado >= o maior total entre antes e depois; versão da TOP aprovada = a de depois); senão, CONFLICT com mensagem fixa.';
 -- O MESMO WHEN da 0023 (trg_sales_documents_execucao_configurada): qualquer estado → confirmed ou invoiced, com
 -- versão congelada. confirmed → invoiced não dispara (nenhum efeito de confirmação acontece ali).
 create trigger trg_sales_documents_aprovacao
@@ -590,6 +640,8 @@ create function erp.documentos_compra_aprovacao_guarda() returns trigger
 language plpgsql security definer set search_path = erp, pg_temp as $$
 declare
   v_decisao text;
+  v_valor numeric(18,2);
+  v_versao uuid;
 begin
   if not exists (select 1 from erp.tipos_operacao_versoes v
                   where v.organization_id = old.organization_id
@@ -597,7 +649,7 @@ begin
                     and erp.top_exige_aprovacao(v.configuracao, greatest(old.valor_total, new.valor_total))) then
     return new;
   end if;
-  select a.decisao into v_decisao
+  select a.decisao, a.valor_documento, a.tipo_operacao_versao_id into v_decisao, v_valor, v_versao
     from erp.aprovacoes_compra a
    where a.organization_id = old.organization_id and a.documento_id = old.id
    order by a.id desc
@@ -608,10 +660,16 @@ begin
   if v_decisao <> 'aprovado' then
     raise exception 'CONFLICT: Este documento foi reprovado e não pode ser confirmado.' using errcode = 'P0001';
   end if;
+  -- A aprovação só cobre o que aprovou (o mesmo da venda, com valor_total): valor aprovado ≥ o MAIOR entre o de
+  -- antes e o de depois, e a versão da TOP aprovada = a de DEPOIS. Senão, a MESMA recusa da falta de decisão.
+  if (v_valor >= greatest(old.valor_total, new.valor_total)) is not true
+     or v_versao is distinct from new.tipo_operacao_versao_id then
+    raise exception 'CONFLICT: Este documento precisa de aprovação antes de ser confirmado.' using errcode = 'P0001';
+  end if;
   return new;
 end $$;
 comment on function erp.documentos_compra_aprovacao_guarda() is
-  'TOP-CONFIG-08: a compra que exige aprovação (versão congelada no formato 4) só passa de aberto a confirmado com a última decisão aprovada; senão, CONFLICT com mensagem fixa.';
+  'TOP-CONFIG-08: a compra que exige aprovação (versão congelada no formato 4) só passa de aberto a confirmado com a última decisão aprovada, e só se essa aprovação cobre o que o UPDATE confirma (valor aprovado >= o maior valor_total entre antes e depois; versão da TOP aprovada = a de depois); senão, CONFLICT com mensagem fixa.';
 create trigger trg_documentos_compra_aprovacao
   before update of situacao on erp.documentos_compra
   for each row
@@ -622,6 +680,7 @@ create function erp.documentos_estoque_aprovacao_guarda() returns trigger
 language plpgsql security definer set search_path = erp, pg_temp as $$
 declare
   v_decisao text;
+  v_versao uuid;
 begin
   -- Sem valor: o do documento de estoque só é conhecido na confirmação.
   if not exists (select 1 from erp.tipos_operacao_versoes v
@@ -630,7 +689,7 @@ begin
                     and erp.top_exige_aprovacao(v.configuracao, null)) then
     return new;
   end if;
-  select a.decisao into v_decisao
+  select a.decisao, a.tipo_operacao_versao_id into v_decisao, v_versao
     from erp.aprovacoes_estoque a
    where a.organization_id = old.organization_id and a.documento_id = old.id
    order by a.id desc
@@ -641,10 +700,15 @@ begin
   if v_decisao <> 'aprovado' then
     raise exception 'CONFLICT: Este documento foi reprovado e não pode ser confirmado.' using errcode = 'P0001';
   end if;
+  -- A aprovação só cobre a versão da TOP que aprovou (sem valor, só ela): a de DEPOIS do UPDATE tem de ser a
+  -- aprovada. Senão, a MESMA recusa da falta de decisão.
+  if v_versao is distinct from new.tipo_operacao_versao_id then
+    raise exception 'CONFLICT: Este documento precisa de aprovação antes de ser confirmado.' using errcode = 'P0001';
+  end if;
   return new;
 end $$;
 comment on function erp.documentos_estoque_aprovacao_guarda() is
-  'TOP-CONFIG-08: o documento de estoque que exige aprovação (versão congelada no formato 4) só passa de aberto a confirmado com a última decisão aprovada; senão, CONFLICT com mensagem fixa.';
+  'TOP-CONFIG-08: o documento de estoque que exige aprovação (versão congelada no formato 4) só passa de aberto a confirmado com a última decisão aprovada, e só se essa aprovação cobre o que o UPDATE confirma (versão da TOP aprovada = a de depois; sem valor); senão, CONFLICT com mensagem fixa.';
 create trigger trg_documentos_estoque_aprovacao
   before update of situacao on erp.documentos_estoque
   for each row
@@ -790,8 +854,10 @@ begin
                 and a.privilege_type = 'EXECUTE' and a.grantee <> p.proowner) then
     raise exception 'TOP-CONFIG-08: EXECUTE das funcoes de gatilho da aprovacao ainda concedido alem do dono.';
   end if;
-  -- Gatilhos das tabelas de aprovação, por tabela: conferência (BEFORE INSERT), imutabilidade (BEFORE UPDATE OR
-  -- DELETE) e auditoria (AFTER INSERT OR UPDATE OR DELETE). tgtype: 1 ROW, 2 BEFORE, 4 INSERT, 8 DELETE, 16 UPDATE.
+  -- Gatilhos das tabelas de aprovação: o conjunto EXATO, por tabela — conferência (BEFORE INSERT por linha),
+  -- imutabilidade (BEFORE UPDATE OR DELETE por linha, _imutavel; BEFORE TRUNCATE por comando, _imutavel_truncate) e
+  -- auditoria (AFTER INSERT OR UPDATE OR DELETE por linha) —, e nenhum outro. tgtype: 1 ROW (0 = por comando),
+  -- 2 BEFORE, 4 INSERT, 8 DELETE, 16 UPDATE, 32 TRUNCATE.
   if (select count(*)
         from (values ('erp.aprovacoes_venda'::regclass, 'trg_aprovacoes_venda_conferir', 1 | 2 | 4, 'erp.aprovacoes_venda_conferir()'::regprocedure),
                      ('erp.aprovacoes_compra'::regclass, 'trg_aprovacoes_compra_conferir', 1 | 2 | 4, 'erp.aprovacoes_compra_conferir()'::regprocedure),
@@ -799,13 +865,19 @@ begin
                      ('erp.aprovacoes_venda'::regclass, 'trg_aprovacoes_venda_imutavel', 1 | 2 | 8 | 16, 'erp.aprovacoes_imutavel()'::regprocedure),
                      ('erp.aprovacoes_compra'::regclass, 'trg_aprovacoes_compra_imutavel', 1 | 2 | 8 | 16, 'erp.aprovacoes_imutavel()'::regprocedure),
                      ('erp.aprovacoes_estoque'::regclass, 'trg_aprovacoes_estoque_imutavel', 1 | 2 | 8 | 16, 'erp.aprovacoes_imutavel()'::regprocedure),
+                     ('erp.aprovacoes_venda'::regclass, 'trg_aprovacoes_venda_imutavel_truncate', 2 | 32, 'erp.aprovacoes_imutavel()'::regprocedure),
+                     ('erp.aprovacoes_compra'::regclass, 'trg_aprovacoes_compra_imutavel_truncate', 2 | 32, 'erp.aprovacoes_imutavel()'::regprocedure),
+                     ('erp.aprovacoes_estoque'::regclass, 'trg_aprovacoes_estoque_imutavel_truncate', 2 | 32, 'erp.aprovacoes_imutavel()'::regprocedure),
                      ('erp.aprovacoes_venda'::regclass, 'trg_aprovacoes_venda_audit', 1 | 4 | 8 | 16, 'erp.audit_row()'::regprocedure),
                      ('erp.aprovacoes_compra'::regclass, 'trg_aprovacoes_compra_audit', 1 | 4 | 8 | 16, 'erp.audit_row()'::regprocedure),
                      ('erp.aprovacoes_estoque'::regclass, 'trg_aprovacoes_estoque_audit', 1 | 4 | 8 | 16, 'erp.audit_row()'::regprocedure))
              e(tabela, nome, tipo, funcao)
         join pg_trigger t on t.tgrelid = e.tabela and t.tgname = e.nome and t.tgtype = e.tipo and t.tgfoid = e.funcao
-       where not t.tgisinternal and t.tgenabled = 'O' and cardinality(t.tgattr::int2[]) = 0 and t.tgqual is null) <> 9 then
-    raise exception 'TOP-CONFIG-08: gatilhos das tabelas de aprovacao (conferencia, imutabilidade, auditoria) ausentes, desligados, de outro tipo ou na funcao errada (esperados 9).';
+       where not t.tgisinternal and t.tgenabled = 'O' and cardinality(t.tgattr::int2[]) = 0 and t.tgqual is null) <> 12
+     or (select count(*) from pg_trigger t
+          where not t.tgisinternal
+            and t.tgrelid in ('erp.aprovacoes_venda'::regclass, 'erp.aprovacoes_compra'::regclass, 'erp.aprovacoes_estoque'::regclass)) <> 12 then
+    raise exception 'TOP-CONFIG-08: gatilhos das tabelas de aprovacao (conferencia, imutabilidade por linha e por comando, auditoria) ausentes, a mais, desligados, de outro tipo ou na funcao errada (esperados exatamente 12).';
   end if;
   -- As três guardas: BEFORE UPDATE OF <situação> FOR EACH ROW, com WHEN, ligadas, na função certa.
   if (select count(*) from pg_trigger t
