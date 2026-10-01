@@ -1,193 +1,261 @@
 "use client";
 import * as React from "react";
-import Link from "next/link";
-import { Search, Plus, Trash2, RectangleHorizontal, BetweenHorizontalStart, ChevronFirst, ChevronLast, Settings, X, Redo2, Building2, RotateCcw, LockKeyhole, EyeOff } from "lucide-react";
-import { toast } from "@/lib/toast";
 import type { FieldDef } from "@agro/domain";
-import { buildDefaultFormLayout, normalizeFormLayout, cardFieldIds, MAX_FIELDS_PER_ROW, type FormLayout, type LayoutCard, type LayoutFieldInfo } from "@agro/shared";
+import { buildDefaultFormLayout, normalizeFormLayout, type FormLayout, type LayoutFieldInfo } from "@agro/shared";
 import { useScreenPrefs, type ScreenPrefs } from "@/lib/preferences";
-import { cn } from "@/lib/utils";
-import { Input, Confirm } from "@/components/ui";
-import { MgCheck } from "@/features/base1/ui";
+import { useDirtyTab } from "@/lib/workspace-tabs";
+import { toast } from "@/lib/toast";
+import { ConfirmDialog } from "@/components/ui";
+import { ProvedorArraste, useArraste } from "./configuracao-layout/arraste";
+import * as R from "./configuracao-layout/rascunho";
+import { Barra } from "./configuracao-layout/barra";
+import { Coluna, Trilho } from "./configuracao-layout/coluna";
+import { Faixas } from "./configuracao-layout/faixas";
+import { Linhas } from "./configuracao-layout/linhas";
+import { Inspetor } from "./configuracao-layout/inspetor";
+import type { AbaColuna, AlvoBruto, ApiArraste, CampoInfo, EnderecoLinha, ItemArrastado, Modo, Pilha, Previsao } from "./configuracao-layout/tipos";
+import estilos from "./configuracao-layout/pagina.module.css";
 
-export const toLayoutFields = (fields: FieldDef[]): LayoutFieldInfo[] => fields.map((f) => ({ id: f.name, label: f.label, section: f.section, span: f.span, required: f.required, readOnly: f.readOnly }));
+const paraInfo = (f: FieldDef): LayoutFieldInfo => ({ id: f.name, label: f.label, section: f.section, span: f.span, required: f.required, readOnly: f.readOnly });
+export const toLayoutFields = (fields: FieldDef[]): LayoutFieldInfo[] => fields.map(paraInfo);
+
+export type PrefsDoLayout = ScreenPrefs<FormLayout> & { fieldsInfo: LayoutFieldInfo[]; campos: CampoInfo[] };
 
 /** Layout do formulário de um cadastro declarativo (preferência por usuário > organização > padrão derivado da definição). */
-export function useFormLayout(resourceKey: string, fields: FieldDef[]): ScreenPrefs<FormLayout> & { fieldsInfo: LayoutFieldInfo[] } {
+export function useFormLayout(resourceKey: string, fields: FieldDef[]): PrefsDoLayout {
   const fieldsInfo = React.useMemo(() => toLayoutFields(fields), [fields]);
-  const normalize = React.useCallback((raw: unknown) => (raw ? normalizeFormLayout(raw, fieldsInfo).layout : buildDefaultFormLayout(fieldsInfo)), [fieldsInfo]);
+  // o tipo só alimenta a pílula do inspetor: o normalizador continua recebendo o LayoutFieldInfo de sempre
+  const campos = React.useMemo(() => fields.map((f): CampoInfo => ({ ...paraInfo(f), tipo: f.type })), [fields]);
+  // o padrão derivado pode repetir id de card (duas seções com o mesmo slug): sem isso, publicá-lo como padrão da
+  // organização perde o segundo card no servidor. O layout salvo já passou pelo normalizador e fica como veio.
+  const normalize = React.useCallback((raw: unknown) => (raw ? normalizeFormLayout(raw, fieldsInfo).layout : R.cardsComIdUnico(buildDefaultFormLayout(fieldsInfo))), [fieldsInfo]);
   const p = useScreenPrefs<FormLayout>(resourceKey, "form", normalize);
-  return { ...p, fieldsInfo };
+  return { ...p, fieldsInfo, campos };
 }
 
-const uid = (prefix: string) => `${prefix}_${Math.random().toString(36).slice(2, 7)}`;
-const WIDTHS: { label: string; span: number }[] = [{ label: "Pequena", span: 2 }, { label: "Média", span: 3 }, { label: "Grande", span: 6 }, { label: "Inteira", span: 12 }];
-type Target = { cardId: string; rowIdx?: number; before?: string };
+const uid = (prefixo: string) => `${prefixo}_${Math.random().toString(36).slice(2, 7)}`;
+
+/** Lê o arraste em curso: a vista (o layout sem o item na mão) só existe dentro do provedor. */
+function ComArraste({ refItem, children }: { refItem: React.RefObject<ItemArrastado | null>; children: (a: ApiArraste) => React.ReactNode }) {
+  const a = useArraste();
+  React.useEffect(() => { refItem.current = a.item; }, [refItem, a.item]);
+  return <>{children(a)}</>;
+}
+
+interface PropsDaPagina {
+  p: PrefsDoLayout;
+  /** a rota ainda passa o nome do cadastro; a barra do desenho não tem lugar para ele (a origem fica no ícone do formulário) */
+  resourceLabel: string;
+  backHref: string;
+}
 
 /**
- * "Configuração de layout" — réplica do configurador do MG (EmpLayoutConfiguratorDialog): grade 268 / 40 / 1fr com os campos
- * disponíveis à esquerda (chips verdes; vermelho = obrigatório), coluna de transferência, e à direita as abas de painéis, as abas
- * de cards (inteiro / meio) e as linhas com os campos. Painel → Card → Linha → Campo. Editar → rascunho; Salvar grava a preferência.
+ * Configuração de layout (decisão 275). Abre na CONSULTA; "Editar layout" abre um rascunho igual ao salvo, toda mudança
+ * passa por uma operação pura (rascunho.ts) e entra na pilha de desfazer, e o Salvar grava o MESMO FormLayout de
+ * sempre como preferência do usuário. Este componente é o dono do estado da tela; as partes só desenham e avisam.
  */
-export function FormLayoutPage({ p, resourceLabel, backHref }: { p: ScreenPrefs<FormLayout> & { fieldsInfo: LayoutFieldInfo[] }; resourceLabel: string; backHref: string }) {
-  const { prefs: saved, update, fieldsInfo } = p;
-  const [editing, setEditing] = React.useState(false);
-  const [draft, setDraft] = React.useState<FormLayout>(saved);
-  const l = editing ? draft : saved;
-  const [panelId, setPanelId] = React.useState<string>(saved.panels[0]?.id ?? "principal");
-  const cards = l.cards.filter((c) => c.panelId === panelId).sort((a, b) => a.order - b.order);
-  const [cardId, setCardId] = React.useState<string>(cards[0]?.id ?? "");
-  const [sel, setSel] = React.useState<string | null>(null);
-  const [settings, setSettings] = React.useState<{ fid: string; rect: DOMRect } | null>(null);
-  const [drag, setDrag] = React.useState<string | null>(null); const [overRow, setOverRow] = React.useState<string | null>(null);
-  const [search, setSearch] = React.useState("");
-  const [confirmReset, setConfirmReset] = React.useState(false);
-  const [renaming, setRenaming] = React.useState<{ kind: "panel" | "card"; id: string } | null>(null);
-  React.useEffect(() => { if (!l.panels.some((x) => x.id === panelId)) setPanelId(l.panels[0]?.id ?? "principal"); }, [l.panels, panelId]);
-  React.useEffect(() => { if (!cards.some((c) => c.id === cardId)) setCardId(cards[0]?.id ?? ""); }, [cards.map((c) => c.id).join(","), cardId]);
-  const card = cards.find((c) => c.id === cardId);
-  const info = (id: string) => fieldsInfo.find((f) => f.id === id);
-  const label = (id: string) => l.fieldLabels[id] ?? info(id)?.label ?? id;
-  const isRequired = (id: string) => Boolean(info(id)?.required) || l.requiredFieldIds.includes(id);
-  const placed = new Set(l.cards.flatMap(cardFieldIds));
-  const available = fieldsInfo.filter((f) => !placed.has(f.id) && (!search || f.label.toLowerCase().includes(search.toLowerCase())));
-  const mut = (fn: (x: FormLayout) => FormLayout) => { if (editing) setDraft((d) => fn(d)); };
-  const setCards = (fn: (cards: LayoutCard[]) => LayoutCard[]) => mut((x) => ({ ...x, cards: fn(x.cards).map((c, i) => ({ ...c, order: i + 1 })) }));
-  const updCard = (id: string, fn: (c: LayoutCard) => LayoutCard) => setCards((cs) => cs.map((c) => (c.id === id ? fn(c) : c)));
-  const strip = (cs: LayoutCard[], fid: string) => cs.map((c) => ({ ...c, rows: c.rows.map((r) => ({ ...r, fieldIds: r.fieldIds.filter((x) => x !== fid) })).filter((r) => r.fieldIds.length) }));
-  const startEdit = () => { setDraft(saved); setEditing(true); };
-  const save = () => { const clean = { ...draft, cards: draft.cards.map((c) => ({ ...c, rows: c.rows.filter((r) => r.fieldIds.length) })) }; update(() => clean); setEditing(false); setSel(null); setSettings(null); toast.success("Layout salvo"); };
-  const cancel = () => { setDraft(saved); setEditing(false); setSel(null); setSettings(null); };
-  /** coloca o campo na linha (ou em nova linha) do card; respeita o máximo por linha */
-  const place = (fid: string, target: Target) => {
-    if (!editing) return;
-    const dest = l.cards.find((c) => c.id === target.cardId); const destRow = dest && target.rowIdx !== undefined ? dest.rows[target.rowIdx] : undefined;
-    if (dest && destRow && !destRow.fieldIds.includes(fid) && destRow.fieldIds.length >= MAX_FIELDS_PER_ROW[dest.colSpan]) { toast.warning(`Esta linha já tem ${MAX_FIELDS_PER_ROW[dest.colSpan]} campos (máximo para este card).`); setDrag(null); return; }
-    setCards((cs) => { const s = strip(cs, fid); return s.map((c) => { if (c.id !== target.cardId) return c; const rows = c.rows.map((r) => ({ ...r, fieldIds: [...r.fieldIds] })); const row = target.rowIdx !== undefined ? rows[target.rowIdx] : undefined; if (row) { const at = target.before ? row.fieldIds.indexOf(target.before) : -1; if (at >= 0) row.fieldIds.splice(at, 0, fid); else row.fieldIds.push(fid); } else rows.push({ id: uid("r"), fieldIds: [fid] }); return { ...c, rows }; }); });
-    mut((x) => ({ ...x, hiddenFieldIds: x.hiddenFieldIds.filter((h) => h !== fid) }));
-    setSel(null); setDrag(null); setOverRow(null);
+export function FormLayoutPage({ p, backHref }: PropsDaPagina) {
+  const salvo = p.prefs;
+  const ctx = React.useMemo(() => R.criarContexto(p.campos), [p.campos]);
+  // a consulta mostra o salvo na mesma forma do rascunho, para nada pular ao entrar na edição
+  const salvoAberto = React.useMemo(() => R.abrirRascunho(salvo), [salvo]);
+  const [modo, setModo] = React.useState<Modo>("consulta");
+  const [pilha, setPilha] = React.useState<Pilha | null>(null);
+  // o salvo como estava no clique em Editar: mudança de outra aba ou do padrão da organização no meio da edição não acende o ponto
+  const [copiaDoSalvo, setCopiaDoSalvo] = React.useState<FormLayout | null>(null);
+  const edicao = modo === "edicao" && pilha !== null;
+  const l = edicao ? pilha.presente : salvoAberto;
+  const alterado = edicao && copiaDoSalvo !== null && R.alterado(pilha.presente, copiaDoSalvo);
+  useDirtyTab(alterado);
+
+  const [painelId, setPainelId] = React.useState("");
+  const [cardId, setCardId] = React.useState("");
+  const [selecionado, setSelecionado] = React.useState<string | null>(null);
+  const [inspetor, setInspetor] = React.useState<string | null>(null);
+  const [aba, setAba] = React.useState<AbaColuna>("disponiveis");
+  const [busca, setBusca] = React.useState("");
+  const [marca, setMarca] = React.useState<EnderecoLinha | null>(null);
+  const [preVisualizar, setPreVisualizar] = React.useState(false);
+  const [renomeando, setRenomeando] = React.useState<{ tipo: "painel" | "card"; id: string } | null>(null);
+  const [confirmarRestaurar, setConfirmarRestaurar] = React.useState(false);
+  const [pedidoDeFoco, setPedidoDeFoco] = React.useState(0);
+  const refBusca = React.useRef<HTMLInputElement>(null);
+  const refItem = React.useRef<ItemArrastado | null>(null);
+
+  // painel e card abertos: o que sumiu (excluído, desfeito) cede o lugar ao vizinho — mesma posição ou o último
+  const memoria = React.useRef({ painel: 0, card: { painel: "", indice: 0 } });
+  const painel = l.panels.find((x) => x.id === painelId) ?? l.panels[Math.max(0, Math.min(memoria.current.painel, l.panels.length - 1))];
+  const cards = painel ? R.cardsDoPainel(l, painel.id) : [];
+  const card = cards.find((c) => c.id === cardId)
+    ?? (memoria.current.card.painel === painel?.id ? cards[Math.max(0, Math.min(memoria.current.card.indice, cards.length - 1))] : cards[0]);
+  React.useEffect(() => {
+    if (!painel) return;
+    memoria.current.painel = l.panels.indexOf(painel);
+    if (painel.id !== painelId) setPainelId(painel.id);
+    if (!card) return;
+    memoria.current.card = { painel: painel.id, indice: cards.indexOf(card) };
+    if (card.id !== cardId) setCardId(card.id);
+  });
+
+  // a marca do "+ Campo" é por posição: vale só no card aberto e enquanto a linha tiver vaga
+  const posicionados = React.useMemo(() => R.posicionados(l), [l]);
+  const marcaValida = edicao && marca && card && marca.cardId === card.id && marca.linha < Math.max(1, card.rows.length)
+    && (card.rows[marca.linha]?.fieldIds.length ?? 0) < R.limiteDaLinha(card) ? marca : null;
+  const inspetorValido = edicao && inspetor && posicionados.has(inspetor) ? inspetor : null;
+  const selecionadoValido = edicao && selecionado && posicionados.has(selecionado) ? selecionado : null;
+  React.useEffect(() => { if (marca && !marcaValida) setMarca(null); }, [marca, marcaValida]);
+  React.useEffect(() => { if (inspetor && !inspetorValido) setInspetor(null); }, [inspetor, inspetorValido]);
+  React.useEffect(() => { if (selecionado && !selecionadoValido) setSelecionado(null); }, [selecionado, selecionadoValido]);
+  // Esc solta a marca — mas não no meio de um arraste, em que o Esc é do arraste (captura: lê o item antes de ele sair)
+  React.useEffect(() => {
+    if (!marca) return;
+    const tecla = (e: KeyboardEvent) => { if (e.key === "Escape" && !refItem.current) setMarca(null); };
+    window.addEventListener("keydown", tecla, true);
+    return () => window.removeEventListener("keydown", tecla, true);
+  }, [marca]);
+  React.useEffect(() => { if (pedidoDeFoco) refBusca.current?.focus(); }, [pedidoDeFoco]);
+
+  /** toda mudança é UMA entrada na pilha; operação que recusa (null) não mexe em nada */
+  const alterar = React.useCallback((op: (x: FormLayout) => FormLayout | null, digitacao?: string) => {
+    setPilha((atual) => { if (!atual) return atual; const novo = op(atual.presente); return novo ? R.aplicar(atual, novo, digitacao) : atual; });
+  }, []);
+  const fecharDigitacao = React.useCallback(() => setPilha((atual) => (atual ? R.fecharDigitacao(atual) : atual)), []);
+
+  const limparTela = () => { setSelecionado(null); setInspetor(null); setMarca(null); setRenomeando(null); };
+  const voltarAConsulta = () => { setModo("consulta"); setPilha(null); setCopiaDoSalvo(null); setBusca(""); limparTela(); };
+  const editar = () => {
+    // só sobre uma leitura boa do servidor: cache local velho ou leitura que falhou viraria o rascunho, e o Salvar
+    // trocaria a personalização real por ele
+    if (!p.fresh) return;
+    setCopiaDoSalvo(salvo);
+    setPilha(R.criarPilha(R.abrirRascunho(salvo)));
+    setModo("edicao");
+    limparTela();
   };
-  const remove = (fid: string) => { if (!editing) return; if (info(fid)?.required) { toast.warning("Campo obrigatório não pode sair do formulário"); return; } setCards((cs) => strip(cs, fid)); mut((x) => ({ ...x, hiddenFieldIds: [...new Set([...x.hiddenFieldIds, fid])] })); setSel(null); setSettings(null); setDrag(null); };
-  const onDrop = (e: React.DragEvent, target: Target) => { e.preventDefault(); e.stopPropagation(); const fid = e.dataTransfer.getData("text/field") || drag; if (fid) place(fid, target); };
-  const dragProps = (fid: string) => editing ? { draggable: true, onDragStart: (e: React.DragEvent) => { e.dataTransfer.setData("text/field", fid); e.dataTransfer.effectAllowed = "move"; setDrag(fid); }, onDragEnd: () => { setDrag(null); setOverRow(null); } } : {};
-  const openSettings = (fid: string, el: HTMLElement) => { setSel(fid); setSettings({ fid, rect: el.getBoundingClientRect() }); };
-  React.useEffect(() => { if (!settings) return; const k = (e: KeyboardEvent) => { if (e.key === "Escape") { setSettings(null); setSel(null); } }; document.addEventListener("keydown", k); return () => document.removeEventListener("keydown", k); }, [settings]);
-  const statusIcons = (fid: string) => <span className="emp-layout-config-field-status-icons flex items-center">{l.hiddenFieldIds.includes(fid) && <EyeOff className="h-3 w-3" aria-label="Oculto" />}{(l.lockedFieldIds.includes(fid) || info(fid)?.readOnly) && <LockKeyhole className="h-3 w-3" aria-label="Travado" />}</span>;
-  /** chip de campo (verde; vermelho = obrigatório; texto branco); no painel: ações remover e configurar */
-  const chip = (fid: string, where: "panel" | "available", row?: { cardId: string; rowIdx: number }) => {
-    const required = isRequired(fid); const selected = sel === fid; const f = info(fid);
-    return <div key={fid} role="button" tabIndex={0} aria-label={label(fid)} aria-disabled={!editing} {...dragProps(fid)}
-      onClick={(e) => { if (!editing) return; if (selected) { setSel(null); setSettings(null); } else openSettings(fid, e.currentTarget); }}
-      onKeyDown={(e) => { if (e.key === "Enter") openSettings(fid, e.currentTarget); }}
-      onDragOver={(e) => { if (editing && row) { e.preventDefault(); e.stopPropagation(); } }} onDrop={(e) => row && onDrop(e, { cardId: row.cardId, rowIdx: row.rowIdx, before: fid })}
-      className={cn("emp-layout-config-field", required ? "emp-layout-config-field-required" : "emp-layout-config-field-optional", where === "panel" ? "emp-layout-config-field-panel" : "emp-layout-config-field-available", selected && "emp-layout-config-field-selected", !editing && "emp-layout-config-field-readonly", drag === fid && "emp-layout-config-field--dragging")}>
-      {where === "available" ? <div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold">{label(fid)}</div><div className="truncate text-[10px] opacity-75">{f?.section ?? "Dados"}</div></div> : <span className="min-w-0 flex-1 truncate text-xs font-semibold">{label(fid)}</span>}
-      {statusIcons(fid)}
-      <span className="emp-layout-config-field-actions flex shrink-0 items-center">
-        {where === "available"
-          ? <button type="button" className="emp-layout-config-field-action" title="Adicionar ao painel" aria-label={`Adicionar ${label(fid)} ao painel`} disabled={!editing || !card} onClick={(e) => { e.stopPropagation(); if (card) place(fid, { cardId: card.id }); }}><Redo2 /></button>
-          : <><button type="button" className="emp-layout-config-field-action" title="Remover do painel" aria-label={`Remover ${label(fid)} do painel`} disabled={!editing || Boolean(f?.required)} onClick={(e) => { e.stopPropagation(); remove(fid); }}><X /></button>
-            <button type="button" className="emp-layout-config-field-action" title="Configurações do campo" aria-label={`Configurações de ${label(fid)}`} disabled={!editing} onClick={(e) => { e.stopPropagation(); openSettings(fid, e.currentTarget.closest("[role=button]") as HTMLElement); }}><Settings /></button></>}
-      </span>
-    </div>;
+  const salvar = () => {
+    if (!pilha) return;
+    const doc = R.paraSalvar(pilha.presente);
+    p.update(() => doc);
+    voltarAConsulta();
+    toast.success("Layout salvo");
   };
-  const rowMax = card ? MAX_FIELDS_PER_ROW[card.colSpan] : 7;
-  const addAll = () => { if (!card) return; available.forEach((f) => place(f.id, { cardId: card.id })); };
-  const removeAll = () => { if (!card) return; cardFieldIds(card).filter((fid) => !info(fid)?.required).forEach(remove); };
-  const source = p.source === "user" ? "minha personalização" : p.source === "org" ? "padrão da organização" : "padrão do sistema";
-  const settingsField = settings ? info(settings.fid) : undefined;
-  return <div className="b1 emp-layout-configurator flex flex-col gap-2" data-testid="layout-config">
-    {/* barra de ações (bridge do MgActionBar em modo configuração de layout) */}
-    <div className="mg-toolbar mg-card flex-wrap no-print">
-      <Link href={backHref}><button type="button" className="tb-btn tb-btn-ghost is-primary">Voltar</button></Link>
-      {!editing && <button type="button" className="tb-btn tb-btn-ghost is-primary" onClick={startEdit}>Editar</button>}
-      {editing && <><button type="button" className="tb-btn tb-btn-green" onClick={save}>Salvar</button><button type="button" className="tb-btn tb-btn-ghost is-primary" onClick={cancel}>Cancelar</button></>}
-      <span className="text-[12px] text-[var(--mg-text-2)]">{resourceLabel} · {source}{p.saving && " · salvando…"}</span>
-      <span className="ml-auto flex items-center gap-1.5">
-        {p.canEditOrg && <button type="button" className="tb-btn tb-btn-ghost is-primary" onClick={() => void p.saveAsOrgDefault()} title="Usa este layout como padrão para todos os usuários da organização"><Building2 /> Padrão da organização</button>}
-        {p.canEditOrg && p.hasOrgDefault && <button type="button" className="tb-btn tb-btn-ghost is-primary" onClick={() => void p.clearOrgDefault()}>Remover padrão da organização</button>}
-        <button type="button" className="tb-btn tb-btn-ghost is-primary" onClick={() => setConfirmReset(true)}><RotateCcw /> Restaurar padrão</button>
-      </span>
-    </div>
-    <div className={cn("emp-layout-config-grid", editing && "emp-layout-config-editing", drag && "emp-layout-config-is-dragging")}>
-      {/* campos disponíveis */}
-      <aside className="emp-layout-config-sidebar" onDragOver={(e) => { if (editing) e.preventDefault(); }} onDrop={(e) => { e.preventDefault(); const fid = e.dataTransfer.getData("text/field") || drag; if (fid) remove(fid); }}>
-        <div className="emp-layout-config-sidebar-title">Campos disponíveis</div>
-        <div className="mg-search-pill emp-layout-config-sidebar-search" role="search"><Search className="mg-search-pill-icon" aria-hidden /><input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Procurar campo disponível" aria-label="Procurar campo disponível" /></div>
-        <div className={cn("emp-layout-config-available-list", drag && placed.has(drag) && "emp-layout-config-drop-target")}>
-          {available.map((f) => chip(f.id, "available"))}
-          {available.length === 0 && <div className="py-6 text-center text-[11px] text-[var(--mg-text-3)]">{editing ? "Solte aqui para remover do painel." : "Todos os campos estão no formulário."}</div>}
-        </div>
-      </aside>
-      {/* transferência */}
-      <section className="emp-layout-config-transfer">
-        <button type="button" className="mg-nav-btn emp-layout-config-transfer-btn" title="Remover todos" aria-label="Remover todos os campos do card" disabled={!editing || !card} onClick={removeAll}><ChevronFirst /></button>
-        <button type="button" className="mg-nav-btn emp-layout-config-transfer-btn" title="Adicionar todos" aria-label="Adicionar todos os campos ao card" disabled={!editing || !card || available.length === 0} onClick={addAll}><ChevronLast /></button>
-      </section>
-      {/* painéis, cards e linhas */}
-      <main className="emp-layout-config-main">
-        <div className="mg-panel-tabs-strip emp-layout-config-panel-tabs">
-          {editing && <div className="emp-layout-config-panel-actions">
-            <button type="button" className="mg-nav-btn is-green" title="Novo painel" aria-label="Novo painel" onClick={() => { const id = uid("p"); mut((x) => ({ ...x, panels: [...x.panels, { id, label: `Painel Personalizado ${x.panels.length}`, order: x.panels.length + 1 }] })); setPanelId(id); setRenaming({ kind: "panel", id }); }}><Plus /></button>
-            <button type="button" className="mg-nav-btn is-danger" title="Excluir painel" aria-label="Excluir painel" disabled={l.panels.length <= 1 || cards.length > 0} onClick={() => mut((x) => ({ ...x, panels: x.panels.filter((q) => q.id !== panelId) }))}><Trash2 /></button>
-          </div>}
-          <div className="seg-control" role="tablist">
-            {l.panels.map((pn) => <button key={pn.id} type="button" role="tab" aria-selected={pn.id === panelId} onClick={() => { setPanelId(pn.id); setSel(null); }} onDoubleClick={() => editing && setRenaming({ kind: "panel", id: pn.id })} className={cn("seg-tab", pn.id === panelId && "active")}>
-              {renaming?.kind === "panel" && renaming.id === pn.id ? <input autoFocus className="h-6 w-40 border-0 bg-transparent p-0 text-xs font-semibold outline-none" value={pn.label} onBlur={() => setRenaming(null)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setRenaming(null); }} onChange={(e) => mut((x) => ({ ...x, panels: x.panels.map((q) => (q.id === pn.id ? { ...q, label: e.target.value.slice(0, 60) } : q)) }))} aria-label="Nome do painel" /> : pn.label}
-            </button>)}
+  const andar = (passo: (x: Pilha) => Pilha) => { setPilha((atual) => (atual ? passo(atual) : atual)); setMarca(null); setSelecionado(null); setRenomeando(null); };
+  const restaurar = async () => { setConfirmarRestaurar(false); voltarAConsulta(); await p.reset(); };
+
+  const trocarPainel = (id: string) => {
+    if (id === painel?.id) return;
+    setPainelId(id); setCardId(R.cardsDoPainel(l, id)[0]?.id ?? "");
+    setMarca(null); setSelecionado(null); setRenomeando(null);
+  };
+  const trocarCard = (id: string) => {
+    if (id === card?.id) return;
+    setCardId(id); setMarca(null); setSelecionado(null); setRenomeando(null);
+  };
+  /** destino de quem entra pelo "+" ou pelo Usar todos; painel sem card (layout antigo) ganha o primeiro, na mesma entrada da pilha */
+  const noCardAberto = (op: (x: FormLayout, cardId: string) => FormLayout | null) => {
+    if (card) { alterar((x) => op(x, card.id)); return; }
+    if (!painel) return;
+    const id = uid("c");
+    alterar((x) => op(R.adicionarCard(x, painel.id, id), id));
+    setCardId(id);
+  };
+  const usar = (fid: string) => {
+    if (marcaValida) alterar((x) => R.usarCampo(x, ctx, fid, { cardId: marcaValida.cardId, linha: marcaValida.linha }));
+    else noCardAberto((x, cardId) => R.usarCampo(x, ctx, fid, { cardId }));
+    setSelecionado(fid);
+  };
+  const tirar = (fid: string) => { alterar((x) => R.tirarCampo(x, ctx, fid)); setSelecionado(null); };
+
+  const disponiveis = React.useMemo(() => p.campos.filter((c) => !posicionados.has(c.id)), [p.campos, posicionados]);
+  const emUso = React.useMemo(() => p.campos.filter((c) => posicionados.has(c.id)), [p.campos, posicionados]);
+  const tiraveis = card ? card.rows.flatMap((r) => r.fieldIds).filter((fid) => !ctx.ehDoSistema(fid)).length : 0;
+  const rotulo = (fid: string) => l.fieldLabels[fid] || ctx.info(fid)?.label || fid;
+  const valorPadrao = (fid: string) => { const v = l.fieldDefaultValues[fid]; return v === undefined || v === null || v === "" ? undefined : String(v); };
+
+  const prever = (item: ItemArrastado, a: AlvoBruto) => R.preverSoltura(l, ctx, item, a);
+  const soltar = (item: ItemArrastado, previsao: Previsao) => {
+    alterar((x) => R.aplicarSoltura(x, ctx, item, previsao));
+    // o campo que pousa fica selecionado, como no desenho; mover linha desfaz a marca (ela é por posição)
+    if (item.tipo === "campo" || item.tipo === "disponivel") setSelecionado(previsao.tipo === "coluna" ? null : item.fid);
+    if (item.tipo === "linha") setMarca(null);
+  };
+
+  const campoDoInspetor = inspetorValido ? ctx.info(inspetorValido) : undefined;
+
+  return <ProvedorArraste ativo={edicao} prever={prever} soltar={soltar}>
+    <ComArraste refItem={refItem}>{(arraste) => {
+      const vista = arraste.item ? R.vistaDuranteArraste(l, arraste.item) : l;
+      // o card aberto é procurado só no painel aberto: id de card não é único entre painéis
+      const cardDaVista = card && painel ? R.cardsDoPainel(vista, painel.id).find((c) => c.id === card.id) ?? card : undefined;
+      // as lixeiras respondem pelo documento real; com uma linha na mão, o índice da vista pula a que saiu
+      const linhaNaMao = arraste.item?.tipo === "linha" ? arraste.item : null;
+      const paraOReal = (end: EnderecoLinha): EnderecoLinha => (linhaNaMao && linhaNaMao.cardId === end.cardId && end.linha >= linhaNaMao.linha ? { ...end, linha: end.linha + 1 } : end);
+      return <div data-testid="layout-config" data-modo={edicao ? "edicao" : "consulta"} className={estilos.raiz}>
+        <Barra modo={edicao ? "edicao" : "consulta"} leitura={p.fresh ? "ok" : p.leituraFalhou ? "falhou" : "carregando"} alterado={alterado}
+          podeDesfazer={pilha ? R.podeDesfazer(pilha) : false} podeRefazer={pilha ? R.podeRefazer(pilha) : false}
+          preVisualizar={preVisualizar} temPersonalizacao={p.source === "user"} podeEditarOrg={p.canEditOrg} temPadraoOrg={p.hasOrgDefault}
+          voltarHref={backHref} aoEditar={editar} aoSalvar={salvar} aoDescartar={voltarAConsulta}
+          aoDesfazer={() => andar(R.desfazer)} aoRefazer={() => andar(R.refazer)}
+          aoAlternarPreVisualizar={() => setPreVisualizar((v) => !v)} aoRestaurar={() => setConfirmarRestaurar(true)}
+          aoUsarComoPadraoOrg={() => void p.saveAsOrgDefault()} aoRemoverPadraoOrg={() => void p.clearOrgDefault()} />
+        <section data-parte="documento" aria-label="Layout do formulário" className={estilos.documento}>
+          {edicao && <Coluna aba={aba} aoTrocarAba={(a) => { setAba(a); setBusca(""); }} busca={busca} aoBuscar={setBusca} refBusca={refBusca}
+            disponiveis={disponiveis} emUso={emUso} obrigatorio={(fid) => R.obrigatorio(l, ctx, fid)} doSistema={ctx.ehDoSistema}
+            aoAdicionar={usar} aoTirar={tirar} />}
+          {edicao && <Trilho usarTodos={painel ? disponiveis.length : 0} tirarTodos={tiraveis}
+            aoUsarTodos={() => { noCardAberto((x, cardId) => R.usarTodos(x, ctx, cardId)); setSelecionado(null); }}
+            aoTirarTodos={() => { if (card) { alterar((x) => R.tirarTodos(x, ctx, card.id)); setSelecionado(null); } }} />}
+          <div data-parte="principal" className={estilos.principal}>
+            <Faixas modo={edicao ? "edicao" : "consulta"} layout={vista} painelId={painel?.id ?? ""} cardId={card?.id ?? ""}
+              aoSelecionarPainel={trocarPainel} aoSelecionarCard={trocarCard} contagemDoPainel={(id) => R.contagemDoPainel(l, id)}
+              renomeando={edicao ? renomeando : null} aoIniciarRenomear={(tipo, id) => { if (edicao) setRenomeando({ tipo, id }); }}
+              aoRenomear={(tipo, id, nome) => {
+                setRenomeando(null);
+                if (nome !== null) alterar((x) => (tipo === "painel" ? R.renomearPainel(x, id, nome) : R.renomearCard(x, id, nome)));
+              }}
+              aoAdicionarPainel={() => {
+                const ids = { painel: uid("p"), card: uid("c") };
+                alterar((x) => R.adicionarPainel(x, ids));
+                setPainelId(ids.painel); setCardId(ids.card); setRenomeando({ tipo: "painel", id: ids.painel }); setMarca(null); setSelecionado(null);
+              }}
+              aoExcluirPainel={() => { if (painel) { alterar((x) => R.removerPainel(x, ctx, painel.id)); setSelecionado(null); setRenomeando(null); } }}
+              motivoNaoExcluirPainel={painel ? R.motivoNaoExcluirPainel(l, ctx, painel.id) : null}
+              aoAdicionarCard={() => {
+                if (!painel) return;
+                const id = uid("c");
+                alterar((x) => R.adicionarCard(x, painel.id, id));
+                setCardId(id); setRenomeando({ tipo: "card", id }); setMarca(null); setSelecionado(null);
+              }}
+              aoExcluirCard={() => { if (card) { alterar((x) => R.removerCard(x, ctx, card.id)); setSelecionado(null); setRenomeando(null); } }}
+              motivoNaoExcluirCard={card ? R.motivoNaoExcluirCard(l, ctx, card.id) : "O painel precisa de ao menos um card"}
+              aoAlternarLargura={() => { if (card) { alterar((x) => R.alternarLargura(x, card.id)); setMarca(null); } }} />
+            <Linhas modo={edicao ? "edicao" : "consulta"} layout={vista} card={cardDaVista} rotulo={rotulo} nomeDoSistema={(fid) => ctx.info(fid)?.label ?? fid}
+              obrigatorio={(fid) => R.obrigatorio(l, ctx, fid)} doSistema={ctx.ehDoSistema} oculto={(fid) => !R.visivel(l, ctx, fid)}
+              somenteLeitura={(fid) => R.somenteLeitura(l, ctx, fid)} temValorPadrao={(fid) => valorPadrao(fid) !== undefined}
+              preVisualizar={preVisualizar} selecionado={selecionadoValido} inspetor={inspetorValido} marca={marcaValida}
+              aoSelecionar={(fid) => { if (edicao) setSelecionado(fid); }}
+              aoAbrirInspetor={(fid) => { if (!edicao) return; fecharDigitacao(); setInspetor(fid); setSelecionado(fid); }}
+              aoTirar={tirar}
+              aoMarcarLinha={(end) => { if (!edicao) return; setMarca(end); setAba("disponiveis"); setBusca(""); setPedidoDeFoco((n) => n + 1); }}
+              aoRemoverLinha={(end) => { const real = paraOReal(end); alterar((x) => R.removerLinha(x, ctx, real)); setMarca(null); }}
+              motivoNaoRemoverLinha={(end) => R.motivoNaoRemoverLinha(l, ctx, paraOReal(end))}
+              aoAdicionarLinha={() => { if (card) alterar((x) => R.adicionarLinha(x, card.id)); }} />
           </div>
-        </div>
-        <div className="mg-panel-tabs-strip emp-layout-config-card-tabs">
-          {editing && <div className="emp-layout-config-card-actions">
-            <button type="button" className="mg-nav-btn is-green" title="Novo card" aria-label="Novo card" onClick={() => { const id = uid("c"); setCards((cs) => [...cs, { id, panelId, label: `Card ${cs.filter((c) => c.panelId === panelId).length + 1}`, order: cs.length + 1, colSpan: 6, rows: [] }]); setCardId(id); setRenaming({ kind: "card", id }); }}><Plus /></button>
-            {cards.length > 1 && <button type="button" className="mg-nav-btn is-danger" title="Excluir card" aria-label="Excluir card" disabled={!card || cardFieldIds(card).length > 0} onClick={() => card && setCards((cs) => cs.filter((c) => c.id !== card.id))}><Trash2 /></button>}
-            {card && <button type="button" className="mg-nav-btn" title={card.colSpan === 12 ? "Card inteiro (clique para meio)" : "Card meio (clique para inteiro)"} aria-label="Alternar largura do card" onClick={() => updCard(card.id, (c) => ({ ...c, colSpan: c.colSpan === 12 ? 6 : 12 }))}>{card.colSpan === 12 ? <RectangleHorizontal strokeWidth={2.1} /> : <BetweenHorizontalStart strokeWidth={2.1} />}</button>}
-          </div>}
-          <div className="seg-control" role="tablist">
-            {cards.map((c) => <button key={c.id} type="button" role="tab" aria-selected={c.id === cardId} onClick={() => { setCardId(c.id); setSel(null); }} onDoubleClick={() => editing && setRenaming({ kind: "card", id: c.id })} className={cn("seg-tab emp-layout-config-card-tab-btn", c.id === cardId && "active")}>
-              {renaming?.kind === "card" && renaming.id === c.id ? <input autoFocus className="h-6 w-28 border-0 bg-transparent p-0 text-xs font-semibold outline-none" value={c.label} onBlur={() => setRenaming(null)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") setRenaming(null); }} onChange={(e) => updCard(c.id, (cc) => ({ ...cc, label: e.target.value.slice(0, 60) }))} aria-label="Nome do card" /> : <>{c.label}<span className="ml-1 inline-flex opacity-70">{c.colSpan === 12 ? <RectangleHorizontal className="h-2.5 w-2.5" /> : <BetweenHorizontalStart className="h-2.5 w-2.5" />}</span></>}
-            </button>)}
-            {cards.length === 0 && <span className="px-2 py-2 text-[11.5px] text-[var(--mg-text-3)]">Nenhum card neste painel</span>}
-          </div>
-        </div>
-        <div className="emp-layout-config-panel-body">
-          <p className="emp-layout-config-help">Painel → Card → Linha → Campo. Card inteiro: até <b>{MAX_FIELDS_PER_ROW[12]}</b> por linha; card meio (½): até <b>{MAX_FIELDS_PER_ROW[6]}</b>. Os campos da mesma linha ficam lado a lado e o espaço é redistribuído automaticamente (como no formulário).</p>
-          {card && <div className="emp-layout-config-rows">
-            {card.rows.map((r, ri) => { const full = r.fieldIds.length >= rowMax; return <div key={r.id} className={cn("emp-layout-config-row emp-layout-config-card-shell", full && "emp-layout-config-row--full")} onDragOver={(e) => { if (editing) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setOverRow(r.id); } }} onDragLeave={() => setOverRow((o) => (o === r.id ? null : o))} onDrop={(e) => onDrop(e, { cardId: card.id, rowIdx: ri })}>
-              <div className="emp-layout-config-row-header"><span className="emp-layout-config-row-label">Linha {ri + 1} <span className={cn("ml-1 font-semibold", full && "emp-layout-config-row-label--full")}>({r.fieldIds.length}/{rowMax})</span></span>{editing && <button type="button" className="mg-nav-btn is-danger" title="Excluir linha" aria-label={`Excluir linha ${ri + 1}`} onClick={() => { if (r.fieldIds.some((fid) => info(fid)?.required)) { toast.warning("A linha tem campo obrigatório: mova-o antes de excluir a linha."); return; } updCard(card.id, (c) => ({ ...c, rows: c.rows.filter((x) => x.id !== r.id) })); mut((x) => ({ ...x, hiddenFieldIds: [...new Set([...x.hiddenFieldIds, ...r.fieldIds])] })); }}><Trash2 /></button>}</div>
-              <div className={cn("emp-layout-config-panel-fields", overRow === r.id && drag && "emp-layout-config-row-drop--active")}>
-                {r.fieldIds.length === 0 && editing && <span className="emp-layout-config-row-dropzone">Arraste campos para esta linha</span>}
-                {r.fieldIds.map((fid) => <div key={fid} className="emp-layout-config-field-slot" style={{ flex: `${l.fieldSizes[fid] ?? info(fid)?.span ?? 3} 1 0` }}>{chip(fid, "panel", { cardId: card.id, rowIdx: ri })}</div>)}
-              </div>
-            </div>; })}
-            {editing && <div className="emp-layout-config-row emp-layout-config-row--draft emp-layout-config-card-shell" onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={(e) => onDrop(e, { cardId: card.id })}>
-              <div className="emp-layout-config-row-draft"><button type="button" className="emp-layout-config-row-draft-add" title="Adicionar linha" aria-label="Adicionar linha" onClick={() => { if (sel && !placed.has(sel)) place(sel, { cardId: card.id }); else updCard(card.id, (c) => ({ ...c, rows: [...c.rows, { id: uid("r"), fieldIds: [] }] })); }}><Plus /></button><span className="text-[10px] text-[var(--mg-text-3)]">Arraste um campo para adicionar nova linha</span></div>
-            </div>}
-            {!editing && card.rows.length === 0 && <div className="emp-layout-config-card-shell text-center text-[11.5px] text-[var(--mg-text-3)]">Card vazio</div>}
-          </div>}
-          {editing && sel && placed.has(sel) && <div className="emp-layout-config-footer">
-            <span className="emp-layout-config-footer-label">Tipo de largura:</span>
-            {WIDTHS.map((w) => <button key={w.span} type="button" className={cn("emp-layout-config-footer-btn", (l.fieldSizes[sel] ?? info(sel)?.span ?? 3) === w.span && "emp-layout-config-footer-btn--active")} onClick={() => mut((x) => ({ ...x, fieldSizes: { ...x.fieldSizes, [sel]: w.span } }))}>{w.label}</button>)}
-            <button type="button" className="emp-layout-config-footer-btn" onClick={() => mut((x) => { const fs = { ...x.fieldSizes }; delete fs[sel]; return { ...x, fieldSizes: fs }; })}>Padrão do tipo</button>
-          </div>}
-        </div>
-      </main>
-    </div>
-    {/* configurações do campo (EmpLayoutFieldSettingsPopover): ancorado ao chip */}
-    {editing && settings && settingsField && <>
-      <button type="button" className="mg-config-backdrop" tabIndex={-1} aria-label="Fechar configurações" onClick={() => { setSettings(null); setSel(null); }} onKeyDown={(e) => { if (e.key === "Escape") { setSettings(null); setSel(null); } }} />
-      <div role="dialog" aria-label={`Configurações de ${settingsField.label}`} className="mg-card fixed z-[60] w-72 p-3 text-[12px]" style={{ top: Math.min(settings.rect.bottom + 6, (typeof window !== "undefined" ? window.innerHeight : 800) - 330), left: Math.min(settings.rect.left, (typeof window !== "undefined" ? window.innerWidth : 1200) - 300) }} onKeyDown={(e) => { if (e.key === "Escape") { setSettings(null); setSel(null); } }}>
-        <div className="mb-2 flex items-center justify-between"><span className="font-semibold text-[var(--mg-text-1)]">{settingsField.label}</span><button type="button" className="mg-nav-btn !h-6 !w-6" aria-label="Fechar" onClick={() => { setSettings(null); setSel(null); }}><X /></button></div>
-        <div className="space-y-2">
-          <label className="block"><span className="mg-label">Rótulo exibido</span><Input value={l.fieldLabels[settings.fid] ?? ""} placeholder={settingsField.label} onChange={(e) => mut((x) => { const fl = { ...x.fieldLabels }; if (e.target.value.trim()) fl[settings.fid] = e.target.value; else delete fl[settings.fid]; return { ...x, fieldLabels: fl }; })} /></label>
-          <label className="block"><span className="mg-label">Valor padrão (novos registros)</span><Input value={String(l.fieldDefaultValues[settings.fid] ?? "")} onChange={(e) => mut((x) => { const d = { ...x.fieldDefaultValues }; if (e.target.value) d[settings.fid] = e.target.value; else delete d[settings.fid]; return { ...x, fieldDefaultValues: d }; })} /></label>
-          <label className="flex items-center gap-2"><MgCheck checked={l.lockedFieldIds.includes(settings.fid)} onChange={(on) => mut((x) => ({ ...x, lockedFieldIds: on ? [...new Set([...x.lockedFieldIds, settings.fid])] : x.lockedFieldIds.filter((q) => q !== settings.fid) }))} /><span>Travado (somente leitura)</span></label>
-          <label className="flex items-center gap-2"><MgCheck disabled={Boolean(settingsField.required)} checked={isRequired(settings.fid)} onChange={(on) => mut((x) => ({ ...x, requiredFieldIds: on ? [...new Set([...x.requiredFieldIds, settings.fid])] : x.requiredFieldIds.filter((q) => q !== settings.fid), hiddenFieldIds: on ? x.hiddenFieldIds.filter((q) => q !== settings.fid) : x.hiddenFieldIds, lockedFieldIds: on ? x.lockedFieldIds.filter((q) => q !== settings.fid) : x.lockedFieldIds }))} /><span>Obrigatório</span></label>
-          {placed.has(settings.fid) && !settingsField.required && <button type="button" className="tb-btn tb-btn-red" onClick={() => remove(settings.fid)}><Trash2 /> Retirar do formulário</button>}
-          {!placed.has(settings.fid) && card && <button type="button" className="tb-btn tb-btn-green" onClick={() => { place(settings.fid, { cardId: card.id }); setSettings(null); }}><Redo2 /> Adicionar ao card atual</button>}
-        </div>
-      </div>
-    </>}
-    <Confirm open={confirmReset} onOpenChange={setConfirmReset} title="Restaurar padrão" text="Remove a sua personalização deste formulário (volta ao padrão da organização ou do sistema)." onConfirm={() => { setConfirmReset(false); setEditing(false); void p.reset(); }} />
-  </div>;
+          {inspetorValido && campoDoInspetor && <Inspetor key={inspetorValido} campo={campoDoInspetor} rotulo={l.fieldLabels[inspetorValido]}
+            obrigatorio={R.obrigatorio(l, ctx, inspetorValido)} visivel={R.visivel(l, ctx, inspetorValido)} somenteLeitura={R.somenteLeitura(l, ctx, inspetorValido)}
+            valorPadrao={valorPadrao(inspetorValido)} doSistema={ctx.ehDoSistema(inspetorValido)} soLeituraNaDefinicao={ctx.ehSoLeituraNaDefinicao(inspetorValido)}
+            aoRotulo={(t) => alterar((x) => R.definirRotulo(x, inspetorValido, t), `rotulo:${inspetorValido}`)}
+            aoValorPadrao={(v) => alterar((x) => R.definirValorPadrao(x, inspetorValido, v), `valor:${inspetorValido}`)}
+            aoFecharDigitacao={fecharDigitacao}
+            aoObrigatorio={(on) => alterar((x) => R.definirObrigatorio(x, ctx, inspetorValido, on))}
+            aoVisivel={(on) => alterar((x) => R.definirVisivel(x, ctx, inspetorValido, on))}
+            aoSomenteLeitura={(on) => alterar((x) => R.definirSomenteLeitura(x, ctx, inspetorValido, on))}
+            aoFechar={() => { fecharDigitacao(); setInspetor(null); }} />}
+        </section>
+        <ConfirmDialog open={confirmarRestaurar} onOpenChange={setConfirmarRestaurar} title="Restaurar padrão?"
+          text="Apaga a sua personalização deste formulário e descarta o que não foi salvo. Você volta ao padrão da organização ou, sem ele, ao do sistema."
+          confirmLabel="Restaurar padrão" dismissLabel="Voltar" onConfirm={() => void restaurar()} />
+      </div>;
+    }}</ComArraste>
+  </ProvedorArraste>;
 }

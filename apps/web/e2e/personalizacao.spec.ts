@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { login } from "./helpers";
+import { login, api } from "./helpers";
 
 /** MODELO BASE1: listagem (chips de filtro, colunas, cards), modo Registro, configuração de layout e relatórios. */
 async function restoreScreen(page: import("@playwright/test").Page) {
@@ -75,26 +75,31 @@ test("modo Registro: abre o formulário embutido, navega entre registros e edita
 
 test("configuração de layout: retira campo, renomeia rótulo e restaura padrão", async ({ page }) => {
   await login(page);
+  // VISUAL-UX-03 (decisão 275): começo limpo pela API — na consulta o Restaurar é desabilitado, como no desenho
+  // (corpo `{}`: o helper manda content-type JSON sempre, e a API recusa corpo vazio com esse cabeçalho)
+  await api(page, "DELETE", "/api/preferences/warehouses/form?scope=user", {});
   await page.goto("/cadastros/warehouses/configuracao-layout");
   await expect(page.getByTestId("layout-config")).toBeVisible();
-  await page.getByRole("button", { name: "Restaurar padrão" }).click();
-  await page.getByRole("button", { name: "Confirmar" }).click();
-  await page.getByRole("button", { name: "Editar" }).click();
-  // seleciona o campo "Ativo" e o retira do formulário; renomeia "Sigla"
-  await page.getByRole("button", { name: "Ativo", exact: true }).click();
-  await page.getByRole("button", { name: "Retirar do formulário" }).click();
-  await expect(page.getByText("Campos disponíveis").locator("..").getByRole("button", { name: "Ativo", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Sigla", exact: true }).click();
-  await page.getByLabel("Rótulo exibido").fill("Sigla do armazém");
-  await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Salvar", exact: true }).click();
-  await page.waitForTimeout(800);
+  await page.getByRole("button", { name: "Editar layout" }).click();
+  // tira o campo "Ativo" do formulário pelo × (aparece no hover) e renomeia "Sigla" pelo ⚙ (inspetor)
+  await page.getByRole("button", { name: "Ativo", exact: true }).hover();
+  await page.getByRole("button", { name: "Tirar Ativo do formulário" }).click();
+  await expect(page.locator('[data-parte="coluna"]').getByText("Ativo", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Sigla", exact: true }).hover();
+  await page.getByRole("button", { name: "Propriedades de Sigla" }).click();
+  await page.getByLabel("Rótulo do campo").fill("Sigla do armazém");
+  const salvo = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().includes("/api/preferences/warehouses/form") && r.ok());
+  await page.getByRole("button", { name: "Salvar layout" }).click();
+  await salvo;
   await page.goto("/cadastros/warehouses/new");
   await expect(page.getByLabel(/^Sigla do armazém/)).toBeVisible();
   await expect(page.getByLabel(/^Ativo/)).toHaveCount(0);
   await page.goto("/cadastros/warehouses/configuracao-layout");
-  await page.getByRole("button", { name: "Restaurar padrão" }).click();
-  await page.getByRole("button", { name: "Confirmar" }).click();
+  await page.getByRole("button", { name: "Editar layout" }).click();
+  const restaurado = page.waitForResponse((r) => r.request().method() === "DELETE" && r.url().includes("/api/preferences/warehouses/form") && r.ok());
+  await page.getByRole("button", { name: "Restaurar padrão", exact: true }).click();
+  await page.getByTestId("confirm-dialog-confirm").click();
+  await restaurado;
   await page.goto("/cadastros/warehouses/new");
   await expect(page.getByLabel(/^Sigla/).first()).toBeVisible();
   await expect(page.getByLabel(/^Ativo/)).toBeVisible();
