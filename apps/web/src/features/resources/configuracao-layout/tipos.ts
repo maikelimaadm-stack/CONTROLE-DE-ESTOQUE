@@ -369,3 +369,20 @@ export interface PropsInspetor {
   aoSomenteLeitura: (ligado: boolean) => void;
   aoFechar: () => void;
 }
+
+/* ═══════════════════════════════ notas do motor (W2) ═══════════════════════════════
+ * Acréscimo do dono do contrato (W2); nada acima mudou.
+ *  - Operação "sem efeito" devolve o MESMO objeto que recebeu (ex.: definirObrigatorio no campo do sistema, renomear com o
+ *    mesmo nome, mover para a mesma posição, adicionarLinha num card inexistente). `aplicar` com a mesma referência não
+ *    empilha. Recusa continua sendo `null`.
+ *  - Rascunho: todo card tem ao menos uma linha (abrirRascunho dá a "Linha 1" vazia ao card sem linha de um layout antigo);
+ *    as linhas se chamam r1..rN e `order` = posição, depois de qualquer operação.
+ *  - definirObrigatorio(ligado) e definirVisivel(ligado) só tiram de `hiddenFieldIds` o campo que está numa linha (fora
+ *    delas ele iria para "Outros campos" ao salvar). O inspetor só abre para campo numa linha: na tela não muda nada.
+ *  - vistaDuranteArraste de PAINEL tira só a aba (os cards dele continuam no documento); de CARD tira o card do array —
+ *    a área das linhas usa o card do layout real enquanto a pílula está na mão.
+ *  - Arrastar: elemento com `data-sem-arraste` (e todo button, input, textarea, select, a[href] ou contenteditable) DENTRO
+ *    do elemento que chama `iniciar` não começa arraste. Recusa (troca vermelha, coluna "sistema" ou "ja-esta") não chama
+ *    `soltar` nem marca `pouso`. `pouso` dura 380 ms (a animação "pousa" = --mo-set, 340 ms, + folga). Durante o arraste o
+ *    <html> leva a classe da mão fechada (cursor grabbing e sem seleção de texto em toda a tela).
+ */
