@@ -107,7 +107,8 @@ das duas — autorização continua sendo CAPACIDADE ∧ ESCOPO, verificada no s
 | **COMPRAS-01** | documento de compra (0036): Pedido de compra e Compra com TOP obrigatória, lista única, Central de Compras, confirmação da Compra com entrada no estoque (custo rateado) e contas a pagar pela matriz (`compras.compra`), cancelamento com estorno, nota duplicada recusada nos dois caminhos (decisão 267) | mesclada e implantada |
 | **COMPRAS-02** | próximos passos do Pedido de compra (0037): grafo de compras (só pedido → compra, nunca cruzando com vendas), receber inteiro ou em partes na Central de Compras pela MESMA função que lança a compra, saldo por item, reabertura ao cancelar a compra e encerramento do saldo (decisão 268) | mesclada e implantada |
 | **COMPRAS-03** | layout do documento de compra (0038): o mecanismo de layout de Vendas para o Pedido de compra e a Compra, com catálogo por família, cobrado ao lançar e ao receber, sem redesenho da Central de Compras (decisão 269) | EM PR |
-| **TOP-CONFIG-04B+** | Movimentações de Estoque (04C), Financeiro (04D) — reutilizando o formato 2 e a matriz | não iniciada |
+| **ESTOQUE-01** | documento de estoque (0040): Portal de Estoque por TOP com Entrada, Saída, Transferência e Ajuste (inventário), quatro famílias de TOP de estoque, movimento pela espécie e SEM execução configurada (decisão 274) | EM PR |
+| **TOP-CONFIG-04B+** | Movimentações de Estoque (04C: a execução configurada sobre o documento de estoque da ESTOQUE-01), Financeiro (04D) — reutilizando o formato 2 e a matriz | não iniciada |
 
 A TOP-CONFIG-04A é a fatia que autoriza efeito configurável — e SÓ estoque e financeiro, SÓ na confirmação
 de `vendas.venda`, SÓ pelas combinações da matriz. Efeito fiscal e contábil, workflow genérico, aprovação
@@ -440,34 +441,10 @@ a execução configurada das famílias novas (TOP-CONFIG-04C) e a troca das tela
 
 ### Famílias de TOP de estoque
 
-Esta subseção é o que iria para o `docs/TIPO-OPERACAO-CONTRACT.md` como seção própria; ela entra lá quando a #81 for
-mesclada (decisão 274, item 9). Até lá, este é o lugar.
-
-- **Quatro famílias novas**, todas do módulo `estoque` e variantes de `erp.documentos_estoque` pela coluna `especie`:
-  `estoque.entrada` ("Entrada de estoque"), `estoque.saida` ("Saída de estoque"), `estoque.transferencia`
-  ("Transferência de estoque") e `estoque.ajuste` ("Ajuste de estoque (inventário)"). O registry é a fonte única; o
-  domínio deriva delas o segmento, o recurso e a família de cada espécie, e espécie que o registry não declara não tem
-  família (fail-closed).
-- **As oito famílias antigas de estoque** (`estoque.entrada_manual`, `estoque.documento_fiscal`, `estoque.requisicao`,
-  `estoque.baixa`, `estoque.devolucao`, `estoque.transferencia_entre_armazens`, `estoque.transferencia_entre_empresas`
-  e `estoque.producao_de_racao`) ficam como estão: presas às tabelas antigas, sem consumidor.
-- **O movimento é o da espécie.** As famílias novas NÃO entram na `MATRIZ_EXECUCAO_TOP`: a execução configurada
-  continua recusada para elas, com a mensagem de hoje. A TOP dá ao documento o nome da operação, a TOP padrão por
-  espécie, a versão congelada e as exigências gerais.
-- **Exigências gerais** (`EXIGENCIAS_GERAIS_ESTOQUE_TOP`): só "observação obrigatória" se aplica (campo `observacao`
-  do documento). Parceiro, centro de resultado, transportadora e cliente em atraso não se aplicam — é um mapa próprio,
-  para as famílias de estoque nunca caírem no mapa da venda; "Cliente em atraso" diferente de "não valida" é recusado
-  pela API da TOP (422 no campo).
-- **Editor da TOP** para as famílias de estoque: aparece só o que se aplica — Geral com a observação; na seção Estoque, o
-  texto "O movimento é definido pela espécie"; Financeiro, Fiscal, Aprovação e Próximas operações escondidos.
-- **A TOP no documento**: obrigatória, só da família da espécie (conferido pela API e pelo gatilho do banco), versão
-  congelada no lançamento, imutáveis depois. O ledger (`erp.stock_movements`) nunca recebe TOP: recebe o movimento, com
-  a origem no `source_type`.
+As famílias de TOP do documento de estoque (as quatro novas, as oito antigas, o movimento pela espécie, as exigências
+gerais, o editor e a TOP no documento) estão em `docs/TIPO-OPERACAO-CONTRACT.md` §16 (decisão 274).
 
 ### Situação no programa
 
-ESTOQUE-01 está EM PR. A linha do 04C na tabela do programa (§5, "Ordem do programa") é texto que já existe neste
-arquivo, e a #79 também muda este arquivo (acrescentando a seção dela): editar aquela linha agora tiraria esta fatia da
-exceção da seção própria nova e seria colisão de arquivo (PRE-PR-02). Ela é atualizada depois que a #79 for mesclada —
-o documento de estoque sem execução configurada é esta fatia; a execução configurada do estoque (04C) continua não
-iniciada.
+ESTOQUE-01 está EM PR e tem a própria linha na tabela do programa (§5, "Ordem do programa"): o documento de estoque
+sem execução configurada é esta fatia; a execução configurada do estoque (04C) continua não iniciada.

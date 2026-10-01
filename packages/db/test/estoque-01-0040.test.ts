@@ -193,11 +193,11 @@ beforeAll(async () => {
 }, 300_000);
 afterAll(async () => { await app?.end(); await db?.end(); });
 
-describe("0040 — sobre o banco até a 0038, como o runner aplica", () => {
-  it("EB1 PREMISSA: sob a 0038 as tabelas não existem; o ledger tem 38 e a 0040 não está nele; o cenário tem duas empresas e as TOPs", async () => {
+describe("0040 — sobre o banco até a 0039, como o runner aplica", () => {
+  it("EB1 PREMISSA: sob a 0039 as tabelas não existem; o ledger tem 39 e a 0040 não está nele; o cenário tem duas empresas e as TOPs", async () => {
     expect(await noLedger()).toBe(false);
     expect((await db.query<{ n: number; ultima: string }>("select count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0])
-      .toEqual({ n: 38, ultima: "0038_layout_do_documento_de_compra.sql" });
+      .toEqual({ n: 39, ultima: "0039_versao_do_documento_de_venda.sql" });
     expect(await tabelasExistem()).toEqual({ a: null, b: null });
     expect(A).not.toBe(B);
     const w = (await db.query<{ id: string; empresa_id: string; excl: boolean }>(
@@ -298,10 +298,10 @@ describe("0040 — sobre o banco até a 0038, como o runner aplica", () => {
     expect((await db.query("select 1 from pg_constraint where conname in ('uq_warehouses_tenant','uq_products_tenant','uq_tipos_operacao_tenant','uq_tipos_operacao_versoes_tenant')")).rowCount).toBe(4);
   });
 
-  it("EB5 aplica: ledger com 39 (o banco sobe até a 0038 e aplica só a 0040), tabelas, funções e trava liberada", async () => {
+  it("EB5 aplica: ledger com 40 (a 0040 por último), tabelas, funções e trava liberada", async () => {
     await aplicar();
     const ledger = (await db.query<{ n: number; ultima: string }>("select count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
-    expect(ledger).toEqual({ n: 39, ultima: ALVO });
+    expect(ledger).toEqual({ n: 40, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
     expect(noDisco.length, "40 migrations no repositório (0001..0040)").toBe(40);
     expect(noDisco[39]).toBe(ALVO);
