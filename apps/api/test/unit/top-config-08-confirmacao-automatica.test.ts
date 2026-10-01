@@ -51,6 +51,8 @@ class TxFalsa {
   abortada = false;
   /** Comando → erro que ele lança (o savepoint que não abre, o rollback de uma conexão perdida). */
   readonly falhas = new Map<string, Error>();
+  /** Comando → erro lançado DEPOIS de o comando valer: o servidor executou, e a resposta se perdeu no caminho. */
+  readonly falhasDepoisDeValer = new Map<string, Error>();
 
   async query(sql: string): Promise<{ rows: unknown[]; rowCount: number | null }> {
     this.comandos.push(sql);
@@ -64,6 +66,8 @@ class TxFalsa {
     else if (!this.savepoints.includes(nome)) throw erroPg("3B001", `savepoint "${nome}" does not exist`);
     else if (rollback) this.abortada = false;
     else this.savepoints.splice(this.savepoints.lastIndexOf(nome), 1);
+    const depois = this.falhasDepoisDeValer.get(sql);
+    if (depois) throw depois;
     return { rows: [], rowCount: null };
   }
 }
@@ -175,6 +179,28 @@ describe("sucesso: savepoint → confirmar → release, nesta ordem", () => {
     expect(tx.comandos).toEqual([SAVEPOINT, CONFIRMAR, RELEASE]);
     expect(tx.savepoints).toEqual([]);
   });
+});
+
+describe("release do caminho feliz falhando → a falha sobe como está, sem rollback to savepoint", () => {
+  // O confirmar já foi aceito; só o `release` falha. O rollback to savepoint é para a recusa do confirmar, nunca para
+  // isto: (a) com o savepoint ainda aberto, ele desfaria uma confirmação aceita; (b) com o savepoint JÁ SOLTO pelo
+  // release (o servidor executou, a resposta se perdeu), ele daria 3B001 — e esse erro tomaria o lugar da falha
+  // original.
+  const CASOS: { nome: string; depoisDeValer: boolean }[] = [
+    { nome: "o release recusado (o savepoint continua aberto)", depoisDeValer: false },
+    { nome: "o release executado e a resposta perdida (o savepoint já foi solto)", depoisDeValer: true },
+  ];
+
+  for (const caso of CASOS) {
+    it(`${caso.nome} → rejects.toBe(a falha do release), o confirmar uma vez e NENHUM rollback to savepoint`, async () => {
+      const { ctx, tx } = ctxFalso({ permissoes: ["sales.edit"] });
+      const falha = new Error("Connection terminated unexpectedly");
+      (caso.depoisDeValer ? tx.falhasDepoisDeValer : tx.falhas).set(RELEASE, falha);
+      await expect(tentarConfirmacaoAutomatica(ctx, { permissao: "sales.edit", confirmar: confirmarFalso(tx) })).rejects.toBe(falha);
+      expect(tx.comandos.filter((c) => c.startsWith("rollback to savepoint"))).toEqual([]);
+      expect(tx.comandos).toEqual([SAVEPOINT, CONFIRMAR, RELEASE]);
+    });
+  }
 });
 
 describe("aprovação pendente: o planejamento parou no passo da aprovação → aguardando_aprovacao", () => {

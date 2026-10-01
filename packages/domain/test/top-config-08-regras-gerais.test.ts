@@ -542,4 +542,29 @@ describe("TOP-CONFIG-08 — as mensagens da aprovação", () => {
     expect(MENSAGEM_APROVACAO_SO_DOCUMENTO_ABERTO).toBe("Só documento aberto passa por aprovação.");
     expect(mensagemAprovacaoReprovada("valor acima do combinado")).toBe("Este documento foi reprovado: valor acima do combinado.");
   });
+
+  it("reprovação: motivo que já termina em '.', '!' ou '?' não ganha outro ponto", () => {
+    expect(mensagemAprovacaoReprovada("Preço alto.")).toBe("Este documento foi reprovado: Preço alto.");
+    expect(mensagemAprovacaoReprovada("Preço alto!")).toBe("Este documento foi reprovado: Preço alto!");
+    expect(mensagemAprovacaoReprovada("Preço alto?")).toBe("Este documento foi reprovado: Preço alto?");
+    expect(mensagemAprovacaoReprovada("Rever o preço...")).toBe("Este documento foi reprovado: Rever o preço...");
+    expect(mensagemAprovacaoReprovada("Preço alto?!")).toBe("Este documento foi reprovado: Preço alto?!");
+  });
+
+  it("reprovação: motivo sem pontuação no fim ganha o ponto, como sempre", () => {
+    expect(mensagemAprovacaoReprovada("Preço alto")).toBe("Este documento foi reprovado: Preço alto.");
+    // Só o FIM conta: pontuação no meio não dispensa o ponto final.
+    expect(mensagemAprovacaoReprovada("Preço alto. Rever com o comprador")).toBe("Este documento foi reprovado: Preço alto. Rever com o comprador.");
+    // Só os três sinais fecham a frase; reticências de um caractere, ":", ";", "," e ")" ganham o ponto (nada é adivinhado).
+    for (const fim of ["…", ":", ";", ",", ")"]) {
+      expect(mensagemAprovacaoReprovada(`Preço alto${fim}`), fim).toBe(`Este documento foi reprovado: Preço alto${fim}.`);
+    }
+  });
+
+  it("reprovação: branco no fim do motivo só é ignorado para decidir; o texto entra como foi gravado", () => {
+    expect(mensagemAprovacaoReprovada("Preço alto.  ")).toBe("Este documento foi reprovado: Preço alto.  ");
+    expect(mensagemAprovacaoReprovada("Preço alto!\t\n")).toBe("Este documento foi reprovado: Preço alto!\t\n");
+    expect(mensagemAprovacaoReprovada("Preço alto ")).toBe("Este documento foi reprovado: Preço alto .");
+    expect(mensagemAprovacaoReprovada("Preço alto\n")).toBe("Este documento foi reprovado: Preço alto\n.");
+  });
 });

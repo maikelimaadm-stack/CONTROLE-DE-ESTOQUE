@@ -69,10 +69,22 @@ import { formatarDinheiroBr } from "./tipo-operacao-restricoes.js";
 export const MENSAGEM_APROVACAO_PENDENTE = "Este documento precisa de aprovação antes de ser confirmado.";
 
 /**
- * 409 `APROVACAO_REPROVADA`: a decisão vigente é uma reprovação. O molde é fixo ("…: <motivo>."), com o
- * motivo como foi gravado — a mensagem não reescreve o que quem reprovou escreveu.
+ * 409 `APROVACAO_REPROVADA`: a decisão vigente é uma reprovação. O molde é fixo ("Este documento foi reprovado: <motivo>"),
+ * com o motivo como foi gravado — a mensagem não reescreve o que quem reprovou escreveu — e o ponto final só quando o
+ * motivo ainda não fecha a frase:
+ *   · o motivo termina em ".", "!" ou "?" → nenhum ponto a mais ("Preço alto." → "…reprovado: Preço alto.");
+ *   · qualquer outro fim, inclusive reticências ("…"), ":", ";" e "," → o "." no fim, como sempre foi
+ *     ("Preço alto" → "…reprovado: Preço alto."). Só os três sinais contam; nenhum outro é adivinhado.
+ * Espaço em branco no FIM do motivo (espaço, tab, quebra de linha — o mesmo conjunto de `String.prototype.trim`) é
+ * ignorado SÓ para decidir: o último caractere que conta é o último que não é branco. O texto do motivo entra na
+ * mensagem sem nenhuma mudança, brancos inclusive ("Preço alto.␠" → "…reprovado: Preço alto.␠", sem ponto a mais;
+ * "Preço alto␠" → "…reprovado: Preço alto␠.", como hoje). Pela API isso não chega a acontecer — as rotas de reprovação
+ * gravam o motivo já aparado (`z.string().trim()`) —, mas a linha gravada por outro caminho continua legível, e a
+ * mensagem não normaliza o que ninguém pediu para normalizar.
  */
-export const mensagemAprovacaoReprovada = (motivo: string): string => `Este documento foi reprovado: ${motivo}.`;
+const MOTIVO_JA_FECHA_A_FRASE = /[.!?]$/u;
+export const mensagemAprovacaoReprovada = (motivo: string): string =>
+  `Este documento foi reprovado: ${motivo}${MOTIVO_JA_FECHA_A_FRASE.test(motivo.trimEnd()) ? "" : "."}`;
 
 /** 409 `APROVACAO_NAO_EXIGIDA`: aprovar ou reprovar um documento cuja versão não pede aprovação. */
 export const MENSAGEM_APROVACAO_NAO_EXIGIDA = "Este documento não precisa de aprovação.";

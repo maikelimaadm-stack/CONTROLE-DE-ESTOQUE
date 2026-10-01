@@ -116,10 +116,9 @@ export async function tentarConfirmacaoAutomatica(
 
   // Fora do `try`: se o próprio savepoint falhar, não há para onde voltar, e a falha sobe como está.
   await ctx.tx.query(`savepoint ${SAVEPOINT}`);
+  // O `try` cobre SÓ o `confirmar`: é a recusa DELE que o savepoint existe para desfazer.
   try {
     await o.confirmar();
-    await ctx.tx.query(`release savepoint ${SAVEPOINT}`);
-    return { confirmado: true };
   } catch (e) {
     // PRIMEIRO desfazer, depois classificar: a transação pode estar abortada, e só este rollback a devolve
     // viva (com as marcas de `set_config` desfeitas junto). O `release` em seguida fecha a subtransação, como
@@ -132,6 +131,11 @@ export async function tentarConfirmacaoAutomatica(
     if (recusa.code === "APROVACAO_PENDENTE") return { confirmado: false, motivo: "aguardando_aprovacao" };
     return { confirmado: false, motivo: "recusada", erro: corpoDoErro(recusa) };
   }
+  // Fora do `try`, DEPOIS da confirmação aceita: se o `release` falhar, a falha sobe como está. Dentro do `try`, o
+  // catch faria `rollback to savepoint` sobre um savepoint que o release pode já ter soltado, e o erro desse
+  // rollback (ou uma "recusada" inventada) tomaria o lugar da falha original.
+  await ctx.tx.query(`release savepoint ${SAVEPOINT}`);
+  return { confirmado: true };
 }
 
 /**
