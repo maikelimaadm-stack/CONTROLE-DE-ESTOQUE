@@ -520,7 +520,9 @@ test("CL-1 — medidas-chave do desenho na consulta e na edição (1440×900): b
   medir("+ Campo: 30 px", r((await geo(maisCampo)).h), M.maisCampo.altura);
   medir("+ Campo: mínimo, borda, raio, fundo e texto", await css(maisCampo, ["min-width", "border-top-style", "border-top-color", "border-top-left-radius", "background-color", "font-size", "font-weight", "color"]),
     [M.maisCampo.minimo, M.maisCampo.estilo, M.maisCampo.borda, M.maisCampo.raio, M.maisCampo.fundo, M.maisCampo.fonte, M.maisCampo.peso, M.maisCampo.cor]);
-  medir("+ Campo mede uma coluna + 14 px (o padding de botão do navegador), como no desenho", Math.abs(r((await geo(maisCampo)).w) - (r((await geo(campo(page, "code"))).w) + M.maisCampo.alemDaColuna)) <= 1, true);
+  // a COLUNA da régua é o envoltório do campo (o vão de 8 px + o campo, `.chw` no desenho), não só o campo
+  const coluna1 = await geo(campo(page, "code").locator(".."));
+  medir("+ Campo mede uma coluna + 14 px (o padding de botão do navegador), como no desenho", Math.abs(r((await geo(maisCampo)).w) - (r(coluna1.w) + M.maisCampo.alemDaColuna)) <= 1, true);
 
   // ── ADICIONAR LINHA: 28, padding 0 14, pílula verde, 12/600 branco
   const adicionarLinha = page.getByRole("button", { name: "Adicionar linha", exact: true });
@@ -726,7 +728,8 @@ test("CL-4 — linha cheia: da coluna troca (o de lá vai para Disponíveis); so
   await expect(campo(page, "renavam"), "linha cheia: o campo vira alvo de troca").toHaveAttribute("data-troca", "ok");
   await expect(campo(page, "renavam")).toHaveAttribute("title", `Trocar de lugar com ${rotulo("patrimony")}`);
   await expect(linhaDoCard(page, 0).locator('[data-parte="vao"]', { hasText: rotulo("patrimony") }), "linha cheia não abre vão").toHaveCount(0);
-  medir("troca: borda #40de63, fundo branco", await css(campo(page, "renavam"), ["border-top-color", "background-color"]), [VERDE, BRANCO]);
+  // com o ponteiro EM CIMA do alvo, o hover do campo vence a borda da troca — calculado do desenho (#c6d0da, fundo branco)
+  await suave.poll(() => css(campo(page, "renavam"), ["border-top-color", "background-color"]), { message: "troca sob o ponteiro: borda #c6d0da, fundo branco" }).toEqual(["rgb(198, 208, 218)", BRANCO]);
   await soltar(page);
   await expect.poll(() => fidsDaLinha(page, 0)).toEqual(["chassis", "patrimony", "year_model", "plate"]);
   await expect(itemDaColuna(page, "renavam"), "o campo de lá vai para Disponíveis").toBeVisible();
@@ -737,7 +740,7 @@ test("CL-4 — linha cheia: da coluna troca (o de lá vai para Disponíveis); so
   await levar(page, campo(page, "year_model"));
   await expect(campo(page, "year_model")).toHaveAttribute("data-troca", "recusa");
   await expect(campo(page, "year_model")).toHaveAttribute("title", "Campo do sistema — não sai do formulário");
-  medir("recusa: borda #dc2626, fundo #fdf5f5", await css(campo(page, "year_model"), ["border-top-color", "background-color"]), ["rgb(220, 38, 38)", "rgb(253, 245, 245)"]);
+  await suave.poll(() => css(campo(page, "year_model"), ["border-top-color", "background-color"]), { message: "recusa: borda #dc2626, fundo #fdf5f5 (vence o hover)" }).toEqual(["rgb(220, 38, 38)", "rgb(253, 245, 245)"]);
   await soltar(page);
   await expect.poll(() => fidsDaLinha(page, 0), "recusa: nada muda").toEqual(["chassis", "patrimony", "year_model", "plate"]);
   await expect(itemDaColuna(page, "color")).toBeVisible();
@@ -1533,7 +1536,10 @@ async function evidencia(page: Page, w: number, h: number) {
   await expect(page.locator('[data-parte="aba-painel"]')).toHaveCount(9);
   await foto("muitos-paineis");
 
+  // Descartar volta ao salvo, e o painel aberto (o 9º, que não existe no salvo) cede o lugar ao último que existe
   await recomecar(page);
+  await abaPainel(page, "principal").click();
+  await pilula(page, "geral").click();
   await tirarPeloX(page, "brand");
   await salvar(page);
   await foto("salvo");
