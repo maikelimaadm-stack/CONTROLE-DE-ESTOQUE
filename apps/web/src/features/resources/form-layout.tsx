@@ -144,10 +144,17 @@ export function FormLayoutPage({ p, backHref }: PropsDaPagina) {
     if (id === card?.id) return;
     setCardId(id); setMarca(null); setSelecionado(null); setRenomeando(null);
   };
+  /** destino de quem entra pelo "+" ou pelo Usar todos; painel sem card (layout antigo) ganha o primeiro, na mesma entrada da pilha */
+  const noCardAberto = (op: (x: FormLayout, cardId: string) => FormLayout | null) => {
+    if (card) { alterar((x) => op(x, card.id)); return; }
+    if (!painel) return;
+    const id = uid("c");
+    alterar((x) => op(R.adicionarCard(x, painel.id, id), id));
+    setCardId(id);
+  };
   const usar = (fid: string) => {
-    if (!card) return;
-    const destino = marcaValida ? { cardId: marcaValida.cardId, linha: marcaValida.linha } : { cardId: card.id };
-    alterar((x) => R.usarCampo(x, ctx, fid, destino));
+    if (marcaValida) alterar((x) => R.usarCampo(x, ctx, fid, { cardId: marcaValida.cardId, linha: marcaValida.linha }));
+    else noCardAberto((x, cardId) => R.usarCampo(x, ctx, fid, { cardId }));
     setSelecionado(fid);
   };
   const tirar = (fid: string) => { alterar((x) => R.tirarCampo(x, ctx, fid)); setSelecionado(null); };
@@ -171,7 +178,11 @@ export function FormLayoutPage({ p, backHref }: PropsDaPagina) {
   return <ProvedorArraste ativo={edicao} prever={prever} soltar={soltar}>
     <ComArraste refItem={refItem}>{(arraste) => {
       const vista = arraste.item ? R.vistaDuranteArraste(l, arraste.item) : l;
-      const cardDaVista = card ? vista.cards.find((c) => c.id === card.id) ?? card : undefined;
+      // o card aberto é procurado só no painel aberto: id de card não é único entre painéis
+      const cardDaVista = card && painel ? R.cardsDoPainel(vista, painel.id).find((c) => c.id === card.id) ?? card : undefined;
+      // as lixeiras respondem pelo documento real; com uma linha na mão, o índice da vista pula a que saiu
+      const linhaNaMao = arraste.item?.tipo === "linha" ? arraste.item : null;
+      const paraOReal = (end: EnderecoLinha): EnderecoLinha => (linhaNaMao && linhaNaMao.cardId === end.cardId && end.linha >= linhaNaMao.linha ? { ...end, linha: end.linha + 1 } : end);
       return <div data-testid="layout-config" data-modo={edicao ? "edicao" : "consulta"} className={estilos.raiz}>
         <Barra modo={edicao ? "edicao" : "consulta"} carregado={p.loaded} alterado={alterado}
           podeDesfazer={pilha ? R.podeDesfazer(pilha) : false} podeRefazer={pilha ? R.podeRefazer(pilha) : false}
@@ -184,8 +195,8 @@ export function FormLayoutPage({ p, backHref }: PropsDaPagina) {
           {edicao && <Coluna aba={aba} aoTrocarAba={(a) => { setAba(a); setBusca(""); }} busca={busca} aoBuscar={setBusca} refBusca={refBusca}
             disponiveis={disponiveis} emUso={emUso} obrigatorio={(fid) => R.obrigatorio(l, ctx, fid)} doSistema={ctx.ehDoSistema}
             aoAdicionar={usar} aoTirar={tirar} />}
-          {edicao && <Trilho usarTodos={card ? disponiveis.length : 0} tirarTodos={tiraveis}
-            aoUsarTodos={() => { if (card) { alterar((x) => R.usarTodos(x, ctx, card.id)); setSelecionado(null); } }}
+          {edicao && <Trilho usarTodos={painel ? disponiveis.length : 0} tirarTodos={tiraveis}
+            aoUsarTodos={() => { noCardAberto((x, cardId) => R.usarTodos(x, ctx, cardId)); setSelecionado(null); }}
             aoTirarTodos={() => { if (card) { alterar((x) => R.tirarTodos(x, ctx, card.id)); setSelecionado(null); } }} />}
           <div data-parte="principal" className={estilos.principal}>
             <Faixas modo={edicao ? "edicao" : "consulta"} layout={vista} painelId={painel?.id ?? ""} cardId={card?.id ?? ""}
@@ -210,17 +221,17 @@ export function FormLayoutPage({ p, backHref }: PropsDaPagina) {
               }}
               aoExcluirCard={() => { if (card) { alterar((x) => R.removerCard(x, ctx, card.id)); setSelecionado(null); setRenomeando(null); } }}
               motivoNaoExcluirCard={card ? R.motivoNaoExcluirCard(l, ctx, card.id) : "O painel precisa de ao menos um card"}
-              aoAlternarLargura={() => { if (card) alterar((x) => R.alternarLargura(x, card.id)); }} />
-            <Linhas modo={edicao ? "edicao" : "consulta"} layout={vista} card={cardDaVista} rotulo={rotulo}
+              aoAlternarLargura={() => { if (card) { alterar((x) => R.alternarLargura(x, card.id)); setMarca(null); } }} />
+            <Linhas modo={edicao ? "edicao" : "consulta"} layout={vista} card={cardDaVista} rotulo={rotulo} nomeDoSistema={(fid) => ctx.info(fid)?.label ?? fid}
               obrigatorio={(fid) => R.obrigatorio(l, ctx, fid)} doSistema={ctx.ehDoSistema} oculto={(fid) => !R.visivel(l, ctx, fid)}
               somenteLeitura={(fid) => R.somenteLeitura(l, ctx, fid)} temValorPadrao={(fid) => valorPadrao(fid) !== undefined}
               preVisualizar={preVisualizar} selecionado={selecionadoValido} inspetor={inspetorValido} marca={marcaValida}
-              aoSelecionar={(fid) => { if (edicao) setSelecionado((s) => (s === fid ? null : fid)); }}
+              aoSelecionar={(fid) => { if (edicao) setSelecionado(fid); }}
               aoAbrirInspetor={(fid) => { if (!edicao) return; fecharDigitacao(); setInspetor(fid); setSelecionado(fid); }}
               aoTirar={tirar}
               aoMarcarLinha={(end) => { if (!edicao) return; setMarca(end); setAba("disponiveis"); setBusca(""); setPedidoDeFoco((n) => n + 1); }}
               aoRemoverLinha={(end) => { alterar((x) => R.removerLinha(x, ctx, end)); setMarca(null); }}
-              motivoNaoRemoverLinha={(end) => R.motivoNaoRemoverLinha(vista, ctx, end)}
+              motivoNaoRemoverLinha={(end) => R.motivoNaoRemoverLinha(l, ctx, paraOReal(end))}
               aoAdicionarLinha={() => { if (card) alterar((x) => R.adicionarLinha(x, card.id)); }} />
           </div>
           {inspetorValido && campoDoInspetor && <Inspetor key={inspetorValido} campo={campoDoInspetor} rotulo={l.fieldLabels[inspetorValido]}

@@ -330,6 +330,8 @@ export interface PropsLinhas {
   layout: FormLayout;
   card: LayoutCard | undefined;
   rotulo: (fid: string) => string;
+  /** o nome do campo na definição (o fantasma e o vão do desenho mostram este, não o rótulo do layout) */
+  nomeDoSistema: (fid: string) => string;
   obrigatorio: (fid: string) => boolean;
   doSistema: (fid: string) => boolean;
   oculto: (fid: string) => boolean;

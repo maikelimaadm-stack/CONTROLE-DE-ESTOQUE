@@ -8,6 +8,7 @@
  *  - as linhas de cada card se chamam r1..rN pela posição. O normalizador do contrato renomeia as linhas pela posição e
  *    pode REPETIR id; por isso nada aqui usa `row.id` como endereço (card + posição, sempre);
  *  - todo card tem ao menos uma linha, que pode estar vazia (só `paraSalvar` descarta as vazias);
+ *  - ids de card são únicos (o repetido ganha sufixo ao abrir) e não há valor padrão vazio nem nulo;
  *  - nenhuma entrada é mutada: cada operação trabalha numa cópia. "Sem efeito" devolve o MESMO objeto (a pilha não
  *    empilha), e recusa devolve `null`.
  *
@@ -104,10 +105,13 @@ function rotulosLimpos(m: Record<string, string>): Record<string, string> {
   return out;
 }
 
-/** Valor padrão vazio nunca é gravado: passaria por cima do valor padrão da definição (a Situação "active" nasceria vazia). */
+/**
+ * Valor padrão vazio (ou nulo, que o normalizador aceita vindo da API) nunca é gravado: passaria por cima do valor padrão
+ * da definição (a Situação "active" nasceria vazia). Para a tela, nulo é "Nenhum".
+ */
 function valoresLimpos(m: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(m)) if (v !== "" && v !== undefined) out[k] = v;
+  for (const [k, v] of Object.entries(m)) if (v !== "" && v !== undefined && v !== null) out[k] = v;
   return out;
 }
 
@@ -132,8 +136,20 @@ export const abrirRascunho: Operacoes["abrirRascunho"] = (salvo) => {
   const l = clonar(salvo);
   l.panels = porOrdem(l.panels);
   l.cards = porOrdem(l.cards);
+  // Id de card repetido (o padrão derivado da definição dá "geral" à seção sem nome E à seção "Geral"): o primeiro na
+  // ordem fica com o id, os outros ganham sufixo único. Sem isso, achar o card pelo id pega sempre o primeiro, e o
+  // normalizador do servidor descartaria o segundo ao salvar. Determinístico: o `alterado` compara com o salvo aberto
+  // por esta mesma função, então abrir não acende o ponto.
+  const usados = new Set<string>();
+  const todos = new Set(l.cards.map((c) => c.id));
+  for (const c of l.cards) {
+    if (usados.has(c.id)) { let n = 2; while (todos.has(`${c.id}_${n}`)) n++; c.id = `${c.id}_${n}`; todos.add(c.id); }
+    usados.add(c.id);
+  }
   // card sem linha (layout antigo) ganha a "Linha 1" vazia que a tela mostra; vazia, ela não muda o "alterado" nem o salvo
   for (const c of l.cards) if (!c.rows.length) c.rows.push(linhaVazia());
+  // valor padrão vazio ou nulo não existe no rascunho (seria gravado por cima do valor padrão da definição)
+  l.fieldDefaultValues = valoresLimpos(l.fieldDefaultValues);
   return arrumar(l);
 };
 
