@@ -53,7 +53,7 @@
   left: 0;
   top: 0;
   z-index: 2;
-  box-sizing: content-box;
+  box-sizing: border-box;
   width: var(--dz-rotulo);
   height: 30px;
   max-width: none;
@@ -119,8 +119,8 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
  * o texto termina em reticências antes do recuo direito, e antes do "limpar" quando há valor.
  */
 .caixa[data-controle] { padding: 0; }
-/* wrap do RefSelect/MgSelect: flex; Input/Textarea nativos NÃO recebem display:flex (quebra o texto) */
-.caixa[data-controle] > :not([type="hidden"]):not(input):not(textarea) {
+/* o controle cobre o padding-box da caixa, igual ao `.fc` do desenho */
+.caixa[data-controle] > :not([type="hidden"]) {
   position: absolute;
   inset: -1px;
   display: flex;
@@ -128,14 +128,6 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
   min-width: 0;
   width: auto;
   height: auto;
-}
-.caixa[data-controle] > :is(input, textarea):not([type="hidden"]) {
-  position: absolute;
-  inset: -1px;
-  display: block;
-  min-width: 0;
-  width: auto;
-  height: auto !important;
 }
 /*
  * O filho da caixa pode ser o Input direto OU o wrap do RefSelect/Controller — por isso o chrome
@@ -148,7 +140,7 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
   min-height: 0;
   margin: 0;
   padding: 0 10px 0 var(--recuo) !important;
-  border: 1px solid transparent !important;
+  border: 0 !important;
   border-radius: 8px;
   background: transparent !important;
   box-shadow: none !important;
@@ -166,18 +158,17 @@ fieldset:disabled .caixa :is(.controle, input, textarea, :global(.cmd-display)) 
 .caixa textarea { resize: none; line-height: 1.5; }
 /* seletor de referência: a lupa mora à esquerda; o chevron sai, o "limpar" fica no canto direito da caixa */
 .caixa :global(.cmd-display) {
-  display: block;
+  display: flex;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
   cursor: pointer;
-  /* global reserva 28px pro chevron — aqui o chevron some; só sobra o recuo direito da caixa */
+  /* o desenho não mostra chevron nem limpar; os dois lados usam exatamente o padding do `.fc` */
   padding-right: 10px !important;
 }
 .caixa :global(.cmd-display-placeholder) { color: #94a3b8; font-weight: 500; }
 .caixa :global(.cmd-chevron) { display: none !important; }
-.caixa :global(.cmd-clear) { right: 10px; top: 50%; margin-top: -7px; }
-.linha:has(:global(.cmd-clear)) .caixa :is(.controle, input, :global(.cmd-display)) { padding-right: 30px !important; }
+.caixa :global(.cmd-clear) { display: none !important; }
 
 /* número (money / quantity / percent / integer): tabular + sem spinner do browser */
 .linha[data-numero] .caixa :is(.controle, input) {
