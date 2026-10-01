@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import pg from "pg";
 import {
-  ESPECIES_DOCUMENTO_ESTOQUE, RECURSO_DA_ESPECIE_ESTOQUE, MENSAGEM_APROVACAO_PENDENTE, MENSAGEM_APROVACAO_NAO_EXIGIDA,
+  ESPECIES_DOCUMENTO_ESTOQUE, RECURSO_DA_ESPECIE_ESTOQUE, MENSAGEM_APROVACAO_PENDENTE, MENSAGEM_APROVACAO_NAO_EXIGIDA, configuracaoNeutraTop,
   MENSAGEM_APROVACAO_SO_DOCUMENTO_ABERTO, mensagemAprovacaoReprovada, type ConfiguracaoComRestricoesTop, type EspecieEstoque,
 } from "@agro/domain";
 import { fromPgError } from "../../src/lib/errors.js";
@@ -39,10 +39,10 @@ import {
  * A trilha conta só o que a ROTA grava (`metadata is not null`): o gatilho `erp.audit_row()` grava, na mesma tabela,
  * as linhas da própria tabela com metadata nulo — contá-las junto mediria o gatilho, não a rota.
  *
- * Cada caso cria a PRÓPRIA TOP e o PRÓPRIO produto. A empresa 2 é reservada à fila (AP-9d): é o que dá à contagem de
- * consultas uma página com exatamente 1 e 5 documentos, sem depender da ordem dos outros casos. Os casos da empresa
- * SELECIONADA (AP-9e, AP-9f) também lançam na empresa 2, e por isso vêm DEPOIS do AP-9d no arquivo (o vitest roda os
- * casos de um arquivo na ordem em que são declarados) e só conferem presença e ausência, nunca a contagem.
+ * Cada caso cria a PRÓPRIA TOP e o PRÓPRIO produto. A fila é compartilhada pelos casos do arquivo (AP-9d, AP-9e e
+ * AP-9f lançam na empresa 2): por isso a contagem do AP-9d parte da BASE lida antes de lançar — a página tem
+ * exatamente a base mais 1 e a base mais 5 documentos, qualquer que seja a ordem dos casos —, e o AP-9e e o AP-9f só
+ * conferem presença e ausência, nunca a contagem.
  */
 beforeAll(iniciar, 240_000);
 afterAll(encerrar);
@@ -499,22 +499,32 @@ describe("AP-7 — estoque, aprovação Sempre: o ciclo na confirmação e na pr
 // ---------------------------------------------------------------------------------------------------------
 // A prévia com TOP de formato 1 a 3: como hoje
 // ---------------------------------------------------------------------------------------------------------
-describe("Prévia do estoque com TOP de formato 1 a 3 — podeConfirmar e os itens como hoje", () => {
-  it("formato 1 e formato 3 com 'sempre' e 'automatica' gravados: podeConfirmar true, os mesmos itens; e a confirmação passa", async () => {
-    const legado = await top("estoque.saida");
+describe("Prévia do estoque com TOP de formato 1 a 3 — o corpo de hoje, chave por chave", () => {
+  it("formatos 1 e 2 (o legado) e formato 3 com 'sempre' e 'automatica' gravados: o corpo de HOJE, chave por chave (sem `recusas`); e a confirmação passa", async () => {
+    const formato1 = await top("estoque.saida", { configuracao: configuracaoNeutraTop() });
+    const semConfiguracao = await top("estoque.saida");
     const top3 = await top("estoque.saida", { configuracao: cfg3(AUTOMATICA_E_SEMPRE) });
-    for (const tipo of [legado, top3]) {
+    for (const [tipo, formato] of [[formato1, 1], [semConfiguracao, 2], [top3, 3]] as const) {
       const p = await produtoComSaldo("10");
       const { id } = await estoqueLancado("saida", [item("saida", p.id, "4"), item("saida", p.id, "4")], { tipo_operacao_id: tipo });
-      expect((await docNoBanco(id)).formato, "premissa: formato 1 a 3").toBeLessThan(4);
+      expect((await docNoBanco(id)).formato, `premissa: a versão congelada é a do formato ${formato}`).toBe(formato);
       const pv = await lerPrevia("saida", id);
-      // A chave `recusas` não é fixada aqui: o que vale é que nada do formato 1–3 recusa (o corte).
-      expect(pv).toMatchObject({ contractVersion: 1, documento: { id, especie: "saida", situacao: "aberto" }, podeConfirmar: true });
-      expect(resumo(pv)).toEqual([["10.0000", "6.0000", false, "writeoff"], ["6.0000", "2.0000", false, "writeoff"]]);
+      // O corpo de HOJE, chave por chave: no legado (formatos 1 e 2) e no formato 3 a prévia NÃO ganha a chave
+      // `recusas` — nem lista vazia (o corte da 277 vale também para o corpo) — e nada do formato 1–3 recusa.
+      const linha = (posicao: number, saldoAtual: string, saldoDepois: string) => ({ item_id: expect.any(String), posicao, produto_id: p.id,
+        produto_nome: p.nome, lote: null, saldo_atual: saldoAtual, saldo_depois: saldoDepois, insuficiente: false, diferenca: null, movimento: "writeoff" });
+      expect(pv).toEqual({
+        contractVersion: 1, documento: { id, especie: "saida", situacao: "aberto", codigo: expect.any(String) }, podeConfirmar: true,
+        itens: [linha(0, "10.0000", "6.0000"), linha(1, "6.0000", "2.0000")],
+      });
+      expect(pv).not.toHaveProperty("recusas");
       const ok = await confirmarEstoque("saida", id);
       expect(ok.statusCode, ok.body).toBe(200);
       expect(await saldo(p.id)).toBe("2.0000");
     }
+    // PREMISSA: a ausência mede o corte — a mesma saída numa TOP do formato 4 (a neutra) tem a chave, vazia.
+    const { id } = await estoqueLancado("saida", [item("saida", (await produtoComSaldo("10")).id)], { tipo_operacao_id: c.tops.saida });
+    expect(await lerPrevia("saida", id)).toHaveProperty("recusas", []);
   });
 });
 
@@ -668,8 +678,9 @@ describe("AP-9 — a fila do estoque: espécies de quem aprova, escopo, 403, sa�
     expect(await idsDaFila()).not.toContain(reprovado);
   });
 
-  it("AP-9d escopo de empresa de quem aprova e número FIXO de consultas: a página com 1 e com 5 documentos faz as mesmas consultas", async () => {
-    // A empresa 2 é só deste caso: a página do aprovador restrito a ela tem exatamente os documentos lançados aqui.
+  it("AP-9d escopo de empresa de quem aprova e número FIXO de consultas: a página com a base mais 1 e mais 5 documentos faz as mesmas consultas", async () => {
+    // O aprovador restrito à empresa 2: a página dele é a BASE (o que outro caso já deixou pendente na 2, lido antes de
+    // lançar) mais exatamente os documentos lançados aqui.
     const aprovador = await usuario("Aprovador da empresa 2", ["entradas_estoque.approve"], escopos({ estoque: [c.I.empresa2] }));
     const sempre = await top4("entrada", SEMPRE);
     const p = await produto();
@@ -686,16 +697,19 @@ describe("AP-9 — a fila do estoque: espécies de quem aprova, escopo, 403, sa�
         return { consultas: espiao.mock.calls.length, pagina: j(r) as unknown as PaginaDaFila };
       } finally { espiao.mockRestore(); }
     }
-    // Aquecimento: a primeira requisição da pessoa carrega o que a autenticação guarda em cache (papel, escopos); a
-    // contagem mede a FILA, e por isso começa com o cache quente — como a do ES-11c, que conta com o admin já usado.
-    expect((await fila("estoque", aprovador)).statusCode).toBe(200);
+    // A BASE, lida ANTES de lançar, no recorte que o caso mede (o do aprovador): a contagem não depende da ordem dos
+    // casos. É também o aquecimento: a primeira requisição da pessoa carrega o que a autenticação guarda em cache
+    // (papel, escopos); a contagem mede a FILA, e por isso começa com o cache quente — como a do ES-11c.
+    const base = await filaToda(aprovador);
+    const idsDaBase = base.items.map((x) => x.id);
+    expect(base.total, "premissa: a base inteira veio na página").toBe(idsDaBase.length);
     const umId = await lancar();
     const um = await contar();
     const outros = [await lancar(), await lancar(), await lancar(), await lancar()];
     const cinco = await contar();
-    expect(um.pagina.items.map((x) => x.id), "premissa: 1 documento").toEqual([umId]);
-    expect(new Set(cinco.pagina.items.map((x) => x.id)), "premissa: 5 documentos").toEqual(new Set([umId, ...outros]));
-    expect([um.pagina.total, cinco.pagina.total]).toEqual([1, 5]);
+    expect(new Set(um.pagina.items.map((x) => x.id)), "premissa: a base e mais 1 documento, o lançado aqui").toEqual(new Set([...idsDaBase, umId]));
+    expect(new Set(cinco.pagina.items.map((x) => x.id)), "premissa: a base e mais 5 documentos, os lançados aqui").toEqual(new Set([...idsDaBase, umId, ...outros]));
+    expect([um.pagina.total, cinco.pagina.total]).toEqual([base.total + 1, base.total + 5]);
     expect(cinco.pagina.items.every((x) => x.empresa.id === c.I.empresa2), "só a empresa do escopo").toBe(true);
     expect(cinco.consultas, "as mesmas consultas, qualquer que seja o número de linhas").toBe(um.consultas);
     expect(await idsDaFila(), "premissa: o documento da empresa 1 está na fila de quem vê as duas").toContain(daEmpresa1);

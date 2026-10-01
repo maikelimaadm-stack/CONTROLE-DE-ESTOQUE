@@ -381,7 +381,9 @@ describe("F4-4 — os formatos 1 a 3 como hoje; no 4, as restrições do 3 valem
       "insert into erp.people(organization_id,code,document,person_type,name,legal_name,city_id,is_client) values ($1,$2,$3,'legal',$4,$4,5208707,true) returning id",
       [c.h.demo.orgId, `T8C${n}`, `990800000${n.padStart(5, "0")}`, `[TEST] Cliente TC08 ${n}`])).rows[0]!.id;
     const [emDia, devedor] = [await cliente("1"), await cliente("2")];
-    const venc = new Date(Date.now() - 10 * 86_400_000).toISOString().slice(0, 10);
+    // O vencimento sai do relógio do BANCO (o mesmo `current_date` com que o atraso é conferido), nunca do relógio do
+    // processo: perto da meia-noite, ou com fusos diferentes, os dois discordam do "hoje".
+    const venc = (await c.admin.query<{ d: string }>("select (current_date - 10)::text d")).rows[0]!.d;
     await c.admin.query(
       "insert into erp.financial_titles(organization_id,empresa_id,code,direction,number,person_id,amount,emission_date,due_date) values ($1,$2,$3,'receivable',$4,$5,'1234.50',$6,$6)",
       [c.h.demo.orgId, c.I.empresa, `T8-ATR-${unico()}`, "T8-ATRASO", devedor, venc]);
