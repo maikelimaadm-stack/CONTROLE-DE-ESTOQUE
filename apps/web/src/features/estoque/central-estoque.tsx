@@ -401,8 +401,9 @@ function ConsultaEstoque({ variante, id }: { variante: VarianteDeEstoque; id: st
 
 /**
  * O DIÁLOGO DA PRÉVIA: antes de confirmar, o que a confirmação faria no saldo de AGORA, item por item. Falta de saldo
- * na saída ou na transferência BLOQUEIA o Confirmar (`podeConfirmar: false`); prévia indisponível (API anterior)
- * deixa confirmar — o servidor confere de novo, sob a trava.
+ * na saída ou na transferência, ou uma recusa do documento (a aprovação pendente ou reprovada, a versão da TOP
+ * ilegível — TOP-CONFIG-08, decisão 277), BLOQUEIA o Confirmar (`podeConfirmar: false`); prévia indisponível (API
+ * anterior) deixa confirmar — o servidor confere de novo, sob a trava.
  */
 function DialogoDaPrevia({ segmento, id, especie, aberto, onAberto, ocupado, onConfirmar }: {
   segmento: string; id: string; especie: EspecieEstoque; aberto: boolean; onAberto: (v: boolean) => void; ocupado: boolean; onConfirmar: () => void;
@@ -424,10 +425,19 @@ function DialogoDaPrevia({ segmento, id, especie, aberto, onAberto, ocupado, onC
   </Dialog>;
 }
 
+/**
+ * As recusas do DOCUMENTO vêm primeiro, acima da tabela, com a mensagem do servidor (a mesma que a confirmação daria);
+ * o aviso de saldo só aparece quando algum item está insuficiente — com o documento recusado e o saldo coberto, ele
+ * diria uma falta que não existe.
+ */
 function CorpoDaPrevia({ previa, especie }: { previa: PreviaDaConfirmacaoEstoque; especie: EspecieEstoque }) {
   const ehAjuste = especie === "ajuste";
+  const faltaSaldo = previa.itens.some((it) => it.insuficiente);
   return <div className="space-y-2 text-[12.5px]">
-    {!previa.podeConfirmar && <p data-testid="estoque-previa-bloqueio" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-red-800">
+    {previa.recusas.length > 0 && <ul data-testid="estoque-previa-recusas" className="space-y-0.5 rounded border border-red-200 bg-red-50 px-3 py-2 text-red-800">
+      {previa.recusas.map((r, i) => <li key={`${r.code}:${i}`} data-testid="estoque-previa-recusa" data-code={r.code}>{r.message}</li>)}
+    </ul>}
+    {faltaSaldo && <p data-testid="estoque-previa-bloqueio" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-red-800">
       Há item sem saldo suficiente no armazém de origem. Ajuste o documento ou o saldo antes de confirmar.
     </p>}
     <div className="overflow-x-auto rounded border"><table className="table-dense w-full text-[12.5px]"><thead><tr>
