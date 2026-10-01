@@ -17,6 +17,7 @@ import { BetweenHorizontalStart, ChevronLeft, ChevronRight, Plus, RectangleHoriz
 import { cn } from "@/lib/utils";
 import { useArraste } from "./arraste";
 import { cardsDoPainel, contagemDoCard } from "./rascunho";
+import type { LayoutCard } from "@agro/shared";
 import { alvo, type PropsFaixas } from "./tipos";
 import estilos from "./estrutura.module.css";
 /* a dica é uma só (W1): aqui só se escolhe a ancoragem nas pontas, para ela não sair do documento */
@@ -206,7 +207,12 @@ export function Faixas(props: PropsFaixas) {
   const edicao = props.modo === "edicao";
   const paineis = props.layout.panels;
   const cards = cardsDoPainel(props.layout, props.painelId);
-  const cardAtivo = cards.find((c) => c.id === props.cardId);
+  /* a pílula do card ativo na mão sai da vista: até soltar, vale o card ativo que estava na faixa (largura e lixeira) */
+  const refCardAtivo = React.useRef<LayoutCard | undefined>(undefined);
+  const cardNaVista = cards.find((c) => c.id === props.cardId);
+  const cardAtivo = cardNaVista
+    ?? (item?.tipo === "card" && item.cardId === props.cardId && refCardAtivo.current?.id === props.cardId ? refCardAtivo.current : undefined);
+  React.useEffect(() => { if (cardNaVista) refCardAtivo.current = cardNaVista; });
   const meio = cardAtivo?.colSpan === 6;
 
   const janelaPaineis = useJanela(paineis.findIndex((p) => p.id === props.painelId), CUSTO_SETAS_PAINEIS, "paineis");
@@ -348,7 +354,7 @@ export function Faixas(props: PropsFaixas) {
               className={cn(estilos.lixeira, estilosPagina.dicaFim)}
               aria-label="Excluir card"
               data-dica={props.motivoNaoExcluirCard ?? "Excluir este card"}
-              disabled={props.motivoNaoExcluirCard !== null || !cardAtivo}
+              disabled={props.motivoNaoExcluirCard !== null}
               onClick={props.aoExcluirCard}
             >
               <Trash2 size={15} />

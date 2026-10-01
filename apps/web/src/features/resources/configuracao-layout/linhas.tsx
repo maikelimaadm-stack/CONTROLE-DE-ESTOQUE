@@ -39,6 +39,12 @@ function resumoDoCampo(rotulo: string, c: { obrigatorio: boolean; oculto: boolea
   return partes.join(" · ");
 }
 
+/** title da troca: o rótulo do LAYOUT do campo na mão (o item leva o nome do sistema, que é o do fantasma e do vão) */
+function rotuloDoItem(base: PropsLinhas, item: ApiArraste["item"]): string {
+  if (!item) return "";
+  return item.tipo === "campo" || item.tipo === "disponivel" ? base.rotulo(item.fid) : item.rotulo;
+}
+
 interface PropsLinha {
   base: PropsLinhas;
   arraste: ApiArraste;
@@ -225,7 +231,7 @@ function CampoDaLinha({ base, arraste, fid, endereco, troca, naPonta }: PropsCam
   const comInspetor = base.inspetor === fid;
   const pousou = arraste.pouso?.tipo === "campo" && arraste.pouso.fids.includes(fid);
   const titulo = troca
-    ? (troca.recusa ? "Campo do sistema — não sai do formulário" : `Trocar de lugar com ${arraste.item?.rotulo ?? ""}`)
+    ? (troca.recusa ? "Campo do sistema — não sai do formulário" : `Trocar de lugar com ${rotuloDoItem(base, arraste.item)}`)
     : resumoDoCampo(rotulo, estado);
 
   return (
@@ -252,7 +258,8 @@ function CampoDaLinha({ base, arraste, fid, endereco, troca, naPonta }: PropsCam
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); base.aoAbrirInspetor(fid); }
       }}
       onPointerDown={edicao
-        ? (e) => arraste.iniciar(e, { tipo: "campo", fid, rotulo, obrigatorio: estado.obrigatorio, origem: endereco })
+        /* o item leva o nome do sistema (o texto do fantasma e do vão, como `dragCampo.label` do desenho) */
+        ? (e) => arraste.iniciar(e, { tipo: "campo", fid, rotulo: base.nomeDoSistema(fid), obrigatorio: estado.obrigatorio, origem: endereco })
         : undefined}
     >
       <span className={estilos.campoTexto}>
