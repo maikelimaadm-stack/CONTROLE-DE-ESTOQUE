@@ -119,7 +119,8 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
  * o texto termina em reticências antes do recuo direito, e antes do "limpar" quando há valor.
  */
 .caixa[data-controle] { padding: 0; }
-.caixa[data-controle] > :not([type="hidden"]) {
+/* wrap do RefSelect/MgSelect: flex; Input/Textarea nativos NÃO recebem display:flex (quebra o texto) */
+.caixa[data-controle] > :not([type="hidden"]):not(input):not(textarea) {
   position: absolute;
   inset: -1px;
   display: flex;
@@ -128,11 +129,18 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
   width: auto;
   height: auto;
 }
+.caixa[data-controle] > :is(input, textarea):not([type="hidden"]) {
+  position: absolute;
+  inset: -1px;
+  display: block;
+  min-width: 0;
+  width: auto;
+  height: auto !important;
+}
 /*
  * O filho da caixa pode ser o Input direto OU o wrap do RefSelect/Controller — por isso o chrome
  * mira `.controle` E os host nativos / `.cmd-display` (cloneElement não atravessa o Controller).
  */
-.caixa[data-controle] > :is(input, textarea, .controle):not([type="hidden"]) { height: auto !important; }
 .caixa :is(.controle, input, textarea, :global(.cmd-display), :global(.mg-dp-field)) {
   box-sizing: border-box;
   width: 100%;
@@ -248,6 +256,8 @@ fieldset:disabled .caixa :is(.controle, input, textarea, :global(.cmd-display)) 
   inset: -1px;
   transition: background-color var(--mi, 170ms) cubic-bezier(.4, 0, .2, 1), border-color var(--mi, 170ms) cubic-bezier(.4, 0, .2, 1), box-shadow var(--mi, 170ms) cubic-bezier(.4, 0, .2, 1), padding .22s cubic-bezier(.2, .8, .2, 1);
 }
+/* a caixa já cresceu com inset -1px: o controle mora DENTRO dela (inset 0), senão o valor sobe 1px e come o rótulo */
+[data-densidade="compacto"] .caixa[data-controle] > :not([type="hidden"]) { inset: 0; }
 [data-densidade="compacto"] .rotulo {
   top: 50%;
   transform: translateY(-50%);
@@ -268,17 +278,17 @@ fieldset:disabled .caixa :is(.controle, input, textarea, :global(.cmd-display)) 
 [data-densidade="compacto"] .botaoData { left: 11px; }
 [data-densidade="compacto"] .erro,
 [data-densidade="compacto"] .abaixo { padding-left: 2px; }
-/* flutuante: preenchido, só leitura, travado, com foco ou aberto */
+/* flutuante: preenchido, só leitura, travado, com foco ou aberto — rótulo 8.5px no topo; valor sobe com padding 13 (desenho) */
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .rotulo,
 [data-densidade="compacto"] fieldset:disabled .linha .rotulo,
 [data-densidade="compacto"] .linha[data-multilinha] .rotulo { top: 3px; transform: none; font-size: 8.5px; line-height: 1; }
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa:not([data-controle]) { padding-top: 13px !important; padding-bottom: 4px !important; align-items: flex-end; }
-[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa :is(.controle, input, textarea, :global(.mg-dp-field)),
-[data-densidade="compacto"] fieldset:disabled .linha .caixa :is(.controle, input, textarea, :global(.mg-dp-field)) { padding-top: 13px !important; padding-bottom: 3px !important; align-items: flex-end; }
-/* o botão da pesquisa é bloco (as reticências pedem) e não desce a linha de 15px até o fim de uma área de 14: com 12px
-   em cima a área tem os 15 da linha, e o texto fica onde o flex-end do desenho o põe */
-[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa :global(.cmd-display),
-[data-densidade="compacto"] fieldset:disabled .linha .caixa :global(.cmd-display) { padding-top: 12px !important; }
+[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa :is(.controle, input, textarea, :global(.mg-dp-field), :global(.cmd-display)),
+[data-densidade="compacto"] fieldset:disabled .linha .caixa :is(.controle, input, textarea, :global(.mg-dp-field), :global(.cmd-display)) {
+  padding-top: 13px !important;
+  padding-bottom: 3px !important;
+  align-items: flex-end;
+}
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .icone,
 [data-densidade="compacto"] fieldset:disabled .linha .icone { top: calc(50% + 5px); }
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .botaoData,
