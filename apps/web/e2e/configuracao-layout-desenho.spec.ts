@@ -155,6 +155,12 @@ const campo = (page: Page, fid: string) => page.locator(`[data-parte="area-linha
 const envoltorio = (page: Page, fid: string) => campo(page, fid).locator("xpath=..");
 const engrenagem = (page: Page, fid: string) => envoltorio(page, fid).getByRole("button", { name: /^Propriedades de / });
 const xDoCampo = (page: Page, fid: string) => envoltorio(page, fid).getByRole("button", { name: /^Tirar .+ do formulário$/ });
+/**
+ * O mouse entra no campo pela ponta ESQUERDA: o ⚙ e o × ficam por cima da ponta direita (item e da R1) e, num campo
+ * estreito (1280 px, ou com o inspetor aberto), cobrem o meio — o hover no centro cairia no ⚙.
+ */
+const NA_PONTA_ESQUERDA = { position: { x: 10, y: 15 } };
+const pairarNoCampo = (page: Page, fid: string) => campo(page, fid).hover(NA_PONTA_ESQUERDA);
 const linhaDoCard = (page: Page, i: number) => page.locator(`[data-parte="linha"][data-linha="${i}"]`);
 const cabecaDaLinha = (page: Page, i: number) => linhaDoCard(page, i).locator('[data-parte="cabeca-linha"]');
 const contador = (page: Page, i: number) => linhaDoCard(page, i).locator('[data-parte="contador-linha"]');
@@ -235,7 +241,7 @@ async function adicionarPeloMais(page: Page, fid: string) {
 /** × do campo na linha (aparece no hover). */
 async function tirarPeloX(page: Page, fid: string) {
   const c = campo(page, fid);
-  await c.hover();
+  await c.hover(NA_PONTA_ESQUERDA);
   await xDoCampo(page, fid).click();
   await expect(c, `${fid} saiu das linhas`).toHaveCount(0);
 }
@@ -243,7 +249,7 @@ async function tirarPeloX(page: Page, fid: string) {
 /** ⚙ do campo (aparece no hover) → o inspetor abre nele. */
 async function abrirInspetor(page: Page, fid: string) {
   const c = campo(page, fid);
-  await c.hover();
+  await c.hover(NA_PONTA_ESQUERDA);
   await engrenagem(page, fid).click();
   await expect(inspetor(page)).toBeVisible();
   await expect(c).toHaveAttribute("data-inspetor", "true");
@@ -287,7 +293,9 @@ async function caixa(l: Locator) {
 
 /** Pega `origem` (botão principal), confere que ABAIXO de 4 px nada começa e que, passado o limiar, o fantasma aparece. */
 async function pegar(page: Page, origem: Locator) {
-  await origem.hover();
+  /* pega pela esquerda: num campo, a ponta direita é do ⚙ e do × (item e da R1) */
+  const tamanho = await caixa(origem);
+  await origem.hover({ position: { x: Math.min(20, tamanho.width / 3), y: tamanho.height / 2 } });
   const b = await caixa(origem);
   const x = b.x + Math.min(20, b.width / 3);
   const y = b.y + b.height / 2;
@@ -568,7 +576,7 @@ test("CL-1 — medidas-chave do desenho na consulta e na edição (1440×900): b
   await ponteiroFora(page);
   const semHover = await areaDoRotulo(page, "equipment_type");
   medir("edição sem hover: o rótulo usa a largura inteira do campo (o ⚙ e o × não reservam espaço)", semHover.area, semHover.interno);
-  await campo(page, "equipment_type").hover();
+  await pairarNoCampo(page, "equipment_type");
   await expect(engrenagem(page, "equipment_type"), "hover: o ⚙ aparece").toBeVisible();
   await expect(xDoCampo(page, "equipment_type"), "hover: o × aparece").toBeVisible();
   const comHover = await areaDoRotulo(page, "equipment_type");
@@ -576,11 +584,13 @@ test("CL-1 — medidas-chave do desenho na consulta e na edição (1440×900): b
   const gCampoE = await geo(campo(page, "equipment_type"));
   const gEng = await geo(engrenagem(page, "equipment_type"));
   const gX = await geo(xDoCampo(page, "equipment_type"));
-  medir("⚙ e × por cima da PONTA DIREITA do campo: dentro da caixa dele, o ⚙ à esquerda do ×, os dois nos últimos 60 px", {
+  medir("⚙ e × por cima da PONTA DIREITA do campo: dentro da caixa dele, o ⚙ à esquerda do ×", {
     dentro: gEng.x >= gCampoE.x && gX.direita <= gCampoE.direita + 0.5 && gEng.y >= gCampoE.y - 0.5 && gEng.baixo <= gCampoE.baixo + 0.5 && gX.y >= gCampoE.y - 0.5 && gX.baixo <= gCampoE.baixo + 0.5,
-    ordem: gEng.direita <= gX.x + 0.5,
-    ponta: gEng.x >= gCampoE.direita - 60
-  }, { dentro: true, ordem: true, ponta: true });
+    ordem: gEng.direita <= gX.x + 0.5
+  }, { dentro: true, ordem: true });
+  /* a posição do desenho: × a 9 px da borda de fora (1 da borda + 4 do padding + 4 da margem), ⚙ 6 px antes dele, os dois
+     centrados na altura de 30 (5 px de cima) */
+  medir("posição exata: × a 9 da direita, 6 entre ⚙ e ×, 5 do topo", [r(gCampoE.direita - gX.direita), r(gX.x - gEng.direita), r(gEng.y - gCampoE.y), r(gX.y - gCampoE.y)], [9, 6, 5, 5]);
   medir("⚙ e ×: botões de 20 px", [r(gEng.w), r(gEng.h), r(gX.w), r(gX.h)], [20, 20, 20, 20]);
 
   // ── INSPETOR: 292, borda esquerda; cabeçalho 38 (padding 0 10 0 14, borda #f1f4f6); corpo 12 14 16, gap 11
@@ -614,7 +624,7 @@ test("CL-1 — medidas-chave do desenho na consulta e na edição (1440×900): b
   medir("campo com o inspetor: ⚙ visível e verde", await css(engrenagem(page, "equipment_type"), ["background-color", "color"]), [...M.campoComInspetor.engrenagem]);
   await expect(engrenagem(page, "equipment_type"), "com o inspetor aberto, o ⚙ fica à vista sem hover").toBeVisible();
   const gEngAberto = await geo(engrenagem(page, "equipment_type")); const gCampoAberto = await geo(tipoComInspetor);
-  medir("com o inspetor aberto, o ⚙ verde continua sobre a ponta direita", gEngAberto.x >= gCampoAberto.direita - 60 && gEngAberto.direita <= gCampoAberto.direita + 0.5, true);
+  medir("com o inspetor aberto, o ⚙ verde continua no mesmo lugar sobre a ponta direita (35 da borda de fora, 5 do topo)", [r(gCampoAberto.direita - gEngAberto.direita), r(gEngAberto.y - gCampoAberto.y)], [35, 5]);
   medir("com o inspetor aberto, o rótulo continua com a largura inteira", (await areaDoRotulo(page, "equipment_type")).area, (await areaDoRotulo(page, "equipment_type")).interno);
 });
 
@@ -639,7 +649,7 @@ test("CL-2 — modos: consulta sem ferramentas de edição; edição com tudo; S
   await expect(page.getByRole("button", { name: "Adicionar linha" }), "consulta: sem Adicionar linha").toHaveCount(0);
   for (const nome of ["Adicionar painel", "Excluir painel", "Adicionar card", "Excluir card"]) await expect(page.getByRole("button", { name: nome, exact: true }), `consulta: sem ${nome}`).toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Remover Linha / }), "consulta: sem lixeira de linha").toHaveCount(0);
-  await campo(page, "description").hover();
+  await pairarNoCampo(page, "description");
   await expect(campo(page, "description"), "o campo aparece na consulta").toBeVisible();
   await expect(page.getByRole("button", { name: /^Propriedades de / }), "consulta: sem ⚙").toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Tirar .+ do formulário$/ }), "consulta: sem ×").toHaveCount(0);
@@ -669,7 +679,7 @@ test("CL-2 — modos: consulta sem ferramentas de edição; edição com tudo; S
   await expect(page.getByRole("button", { name: "Adicionar linha", exact: true })).toBeVisible();
   for (const nome of ["Adicionar painel", "Excluir painel", "Adicionar card", "Excluir card"]) await expect(page.getByRole("button", { name: nome, exact: true }), `edição: ${nome}`).toBeVisible();
   await expect(page.getByRole("button", { name: "Remover Linha 1", exact: true })).toBeVisible();
-  await campo(page, "description").hover();
+  await pairarNoCampo(page, "description");
   await expect(envoltorio(page, "description").getByRole("button", { name: `Propriedades de ${rotulo("description")}`, exact: true }), "edição: ⚙ no hover").toBeVisible();
   await expect(envoltorio(page, "description").getByRole("button", { name: `Tirar ${rotulo("description")} do formulário`, exact: true }), "edição: × no hover").toBeVisible();
   // R1 d: o ⚙ e o × não moram DENTRO do campo (role="button" não contém botão); o campo é botão só na edição
@@ -944,7 +954,7 @@ test("CL-5 — soltar na coluna tira o campo; o do sistema recusa; × do sistema
   await expect(itemDaColuna(page, "patrimony")).toBeVisible();
 
   // ── × DO CAMPO DO SISTEMA: desabilitado no campo e em Em uso
-  await campo(page, "description").hover();
+  await pairarNoCampo(page, "description");
   const xNoCampo = envoltorio(page, "description").getByRole("button", { name: `Tirar ${rotulo("description")} do formulário`, exact: true });
   await expect(xNoCampo, "× do campo do sistema desabilitado").toBeDisabled();
   await expect(xNoCampo).toHaveAttribute("data-dica", "Campo do sistema — não sai do formulário");
@@ -1703,7 +1713,7 @@ async function evidencia(page: Page, w: number, h: number) {
   await mostrarDisponiveis(page);
   await foto("editando");
   // item e (decisão do Maike): o ⚙ e o × por cima da ponta direita do campo, sem empurrar o rótulo
-  await campo(page, "equipment_type").hover();
+  await pairarNoCampo(page, "equipment_type");
   await expect(engrenagem(page, "equipment_type")).toBeVisible();
   await foto("campo-com-acoes", true);
 
@@ -1820,7 +1830,7 @@ test("CL-13 — prefers-reduced-motion: nenhuma transição ou animação finita
   expect(await movimentoAcimaDe1ms(page), "consulta").toEqual([]);
   await editar(page);
   await mostrarDisponiveis(page);
-  await campo(page, "brand").hover();
+  await pairarNoCampo(page, "brand");
   expect(await movimentoAcimaDe1ms(page), "edição, com o ⚙ e o × à vista").toEqual([]);
   await botao(page, "Pré-visualizar formulário").hover();
   expect(await movimentoAcimaDe1ms(page), "dica").toEqual([]);

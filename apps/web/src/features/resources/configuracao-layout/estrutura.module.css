@@ -444,7 +444,12 @@
 }
 .caixaCampo:hover > .acoesCampo,
 .caixaCampo:has(:focus-visible) > .acoesCampo,
-.acoesCampo.acoesComInspetor { opacity: 1; pointer-events: auto; }
+.acoesCampo.acoesComInspetor { opacity: 1; }
+/* só os dois botões recebem o ponteiro: o fundo branco, as folgas e o vão entre eles continuam sendo o campo (selecionar
+   e arrastar); com o inspetor aberto e sem hover, só o ⚙ verde, que é o único à vista */
+.caixaCampo:hover > .acoesCampo > button,
+.caixaCampo:has(:focus-visible) > .acoesCampo > button,
+.acoesCampo.acoesComInspetor > .botaoPropriedades { pointer-events: auto; }
 .botaoPropriedades,
 .botaoTirar {
   width: 20px;
