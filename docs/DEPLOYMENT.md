@@ -1729,7 +1729,9 @@ tabelas de aprovação NUNCA se apagam — são dado real (decisão 247); deslig
 NOVA, por decisão do Maike — nunca editando a 0041. Nada de apagar dado de produção: documento se cancela, com estorno.
 
 **Merge depois de #84 e de #<Central de Compras>:** as decisões 275 (#84) e 276 (Central de Compras) ficam antes da 277
-na tabela, e esta fatia só importa arquivos da Central de Compras, nunca os edita. As duas são F2, sem migration: nesta
+na tabela, e esta fatia não edita nenhum arquivo da Central de Compras: os E2E dela (W-3, W-4) só leem os `data-testid`
+`central-vendas-*`, que o motor da Central mantém pelo prefixo — e rodam de novo depois de trazer a main com ela. As duas
+são F2, sem migration: nesta
 branch a contagem de migrations é 41 (a 0041 por último), e continua 41 depois de trazer a main com elas — quem entra
 depois roda os geradores e refaz a contagem.
 
