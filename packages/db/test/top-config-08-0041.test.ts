@@ -10,22 +10,31 @@ import { TEST_URL } from "./setup.js";
  * O que ela promete:
  *   · erp.aprovacoes_venda, erp.aprovacoes_compra e erp.aprovacoes_estoque: uma linha por DECISÃO, só inserção
  *     (o papel da aplicação não tem UPDATE, DELETE nem TRUNCATE, e o gatilho de imutabilidade fecha o caminho do
- *     dono também); FKs de documento, versão da TOP, TOP e empresa — a de empresa composta (organization_id,
+ *     dono também: UPDATE e DELETE por linha, DB-1.6; TRUNCATE por comando, DB-1.9 — a MESMA CONFLICT, e as linhas
+ *     ficam); FKs de documento, versão da TOP, TOP e empresa — a de empresa composta (organization_id,
  *     empresa_id), nessa ordem; RLS forçada com a política tenant_e_empresa da 0040; índice (organização,
- *     documento, id desc); erp.audit_row nas três (DB-1);
+ *     documento, id desc); erp.audit_row nas três; a reprovação sem motivo, ou com um motivo só de espaço, tab ou
+ *     quebra de linha (a classe [[:space:]], não o btrim, que só tira o espaço comum), é o CHECK (23514, DB-1.10)
+ *     (DB-1);
  *   · o gatilho de INSERÇÃO (SECURITY DEFINER; roda ANTES do with check da RLS): sem usuário recusa; organização da
  *     linha diferente da GUC do servidor (ou transação sem organização) recebe a NOT_FOUND ANTES de ler qualquer
  *     documento — a mesma resposta qualquer que seja o documento do outro tenant, então ele não vira oráculo; e a
  *     empresa da linha fora do escopo de escrita de quem decide, no módulo da transação (o predicado do with check),
  *     também — o membro com escopo [A] pedindo um documento da empresa B da MESMA organização (DB-2.12);
- *     documento de outra organização, de outra empresa, de outra espécie ou excluído recebe a MESMA NOT_FOUND; versão diferente
+ *     documento de outra organização, de outra empresa, de outra espécie ou excluído recebe a MESMA NOT_FOUND — e o
+ *     filtro está NA leitura FOR SHARE (organização, empresa da linha, espécie, não excluído), então o documento que
+ *     não é o pedido não é lido nem travado: com ele travado FOR UPDATE por outra sessão, a NOT_FOUND vem na hora,
+ *     nunca o 55P03 do lock_timeout (DB-2.12b); versão diferente
  *     da atual (venda) é concorrência; documento fora do aberto e documento que não exige aprovação são recusados;
  *     a reprovação sem motivo é o CHECK (23514); e ele ATRIBUI do documento a TOP, a versão congelada e o valor, e
  *     da transação decidido_por/decidido_em, ignorando o que veio (DB-2);
  *   · as três GUARDAS de transição, só na ENTRADA no confirmado: sem decisão → CONFLICT "precisa de aprovação";
  *     reprovada → CONFLICT "foi reprovado"; aprovada → passa; formato 1 a 3 e "nenhuma" nunca barrados; o limite
  *     "a partir de" inclui o igual; e, na venda, a decisão que vale é a da versão OLD.version — um UPDATE que grava
- *     version junto com o status não se aprova sozinho (DB-3);
+ *     version junto com o status não se aprova sozinho; e a aprovação só vale para o que ela viu: o valor dela
+ *     cobre o MAIOR total (o de antes e o de depois do UPDATE) e a versão da TOP dela é a de DEPOIS — confirmar e,
+ *     no MESMO UPDATE, subir o total (venda, DB-3.11b; compra, DB-3.11d) ou trocar a TOP (venda, DB-3.11c) é a
+ *     MESMA "precisa de aprovação", e o documento continua aberto (DB-3);
  *   · os quatro BEFORE UPDATE da venda, por nome: a guarda da aprovação dispara PRIMEIRO e a 0039 por ÚLTIMO (DB-4);
  *   · erp.top_exige_aprovacao, numa TABELA DE CASOS (o lado do banco do AP-11; o T6 compara a mesma conta com o
  *     domínio).
@@ -95,6 +104,8 @@ const SO_ABERTO = "CONFLICT: Só documento aberto passa por aprovação.";
 const NAO_EXIGIDA = "APROVACAO_NAO_EXIGIDA: Este documento não precisa de aprovação.";
 const MUDOU = "CONCURRENCY_CONFLICT: Este documento mudou desde que você o abriu. Recarregue antes de salvar.";
 const SEM_USUARIO = "PERMISSION_DENIED: A decisão de aprovação precisa de um usuário identificado.";
+/** O CHECK do motivo da reprovação, como o catálogo o devolve (o mesmo nas três tabelas). */
+const CHECK_REPROVACAO = "CHECK (((decisao = 'aprovado'::text) OR ((observacao IS NOT NULL) AND (observacao ~ '[^[:space:]]'::text))))";
 
 let seq = 0;
 const id1 = async (sql: string, p: unknown[] = []) => (await db.query<{ id: string }>(sql, p)).rows[0]!.id;
@@ -464,6 +475,7 @@ describe("DB-5/DB-6 — a 0041 sobre o banco até a 0040, como o runner aplica",
     try { await c.query("begin"); await expect(c.query(pos)).resolves.toBeTruthy(); } finally { await c.query("rollback"); c.release(); }
 
     const M = "TOP-CONFIG-08: ";
+    const GATILHOS_APROVACAO = `${M}gatilhos das tabelas de aprovacao (conferencia, imutabilidade por linha e por comando, auditoria) ausentes, a mais, desligados, de outro tipo ou na funcao errada (esperados exatamente 12).`;
     const casos: [string, string, string][] = [
       ["tabela ausente", "drop table erp.aprovacoes_estoque", `${M}as tabelas de aprovacao nao foram criadas.`],
       ["RLS sem force", "alter table erp.aprovacoes_compra no force row level security", `${M}tabela de aprovacao sem RLS habilitada e forcada.`],
@@ -480,7 +492,14 @@ describe("DB-5/DB-6 — a 0041 sobre o banco até a 0040, como o runner aplica",
       ["conta volátil", "alter function erp.top_exige_aprovacao(jsonb, numeric) volatile", `${M}erp.top_exige_aprovacao fora da forma (imutavel, sem SECURITY DEFINER, search_path "erp, pg_temp", EXECUTE do erp_app e nao de PUBLIC).`],
       ["conferência sem definer", "alter function erp.aprovacoes_compra_conferir() security invoker", `${M}funcoes de gatilho da aprovacao sem SECURITY DEFINER (conferencias e guardas), ou sem search_path "erp, pg_temp".`],
       ["guarda com EXECUTE do erp_app", "grant execute on function erp.venda_aprovacao_guarda() to erp_app", `${M}EXECUTE das funcoes de gatilho da aprovacao ainda concedido alem do dono.`],
-      ["imutabilidade desligada", "alter table erp.aprovacoes_compra disable trigger trg_aprovacoes_compra_imutavel", `${M}gatilhos das tabelas de aprovacao (conferencia, imutabilidade, auditoria) ausentes, desligados, de outro tipo ou na funcao errada (esperados 9).`],
+      ["imutabilidade desligada", "alter table erp.aprovacoes_compra disable trigger trg_aprovacoes_compra_imutavel", GATILHOS_APROVACAO],
+      // O de TRUNCATE (por comando): desligado, ausente, ou AFTER em vez de BEFORE.
+      ["imutabilidade do TRUNCATE desligada", "alter table erp.aprovacoes_venda disable trigger trg_aprovacoes_venda_imutavel_truncate", GATILHOS_APROVACAO],
+      ["imutabilidade do TRUNCATE ausente", "drop trigger trg_aprovacoes_estoque_imutavel_truncate on erp.aprovacoes_estoque", GATILHOS_APROVACAO],
+      ["imutabilidade do TRUNCATE depois (AFTER)", "drop trigger trg_aprovacoes_compra_imutavel_truncate on erp.aprovacoes_compra; create trigger trg_aprovacoes_compra_imutavel_truncate after truncate on erp.aprovacoes_compra for each statement execute function erp.aprovacoes_imutavel()",
+        GATILHOS_APROVACAO],
+      // Os doze esperados no lugar, e um a MAIS: o conjunto é EXATO.
+      ["um décimo terceiro gatilho", "create trigger trg_aprovacoes_compra_zz before insert on erp.aprovacoes_compra for each row execute function erp.aprovacoes_imutavel()", GATILHOS_APROVACAO],
       ["guarda do estoque desligada", "alter table erp.documentos_estoque disable trigger trg_documentos_estoque_aprovacao", `${M}guardas de transicao da aprovacao ausentes, desligadas, de outro tipo (BEFORE UPDATE OF situacao/status com WHEN) ou na funcao errada (esperadas 3).`],
       ["WHEN da venda diferente do da 0023", "drop trigger trg_sales_documents_aprovacao on erp.sales_documents; create trigger trg_sales_documents_aprovacao before update of status on erp.sales_documents for each row when (NEW.status = 'confirmed' and NEW.tipo_operacao_versao_id is not null) execute function erp.venda_aprovacao_guarda()",
         `${M}o WHEN de trg_sales_documents_aprovacao nao e o mesmo de trg_sales_documents_execucao_configurada (0023).`],
@@ -614,7 +633,9 @@ describe("DB-1 — as três tabelas: objetos, FKs, RLS, índice, privilégios e 
     expect(trg).toEqual(["compra", "estoque", "venda"].flatMap((t) => [
       `CREATE TRIGGER trg_aprovacoes_${t}_audit AFTER INSERT OR DELETE OR UPDATE ON erp.aprovacoes_${t} FOR EACH ROW EXECUTE FUNCTION erp.audit_row()`,
       `CREATE TRIGGER trg_aprovacoes_${t}_conferir BEFORE INSERT ON erp.aprovacoes_${t} FOR EACH ROW EXECUTE FUNCTION erp.aprovacoes_${t}_conferir()`,
-      `CREATE TRIGGER trg_aprovacoes_${t}_imutavel BEFORE DELETE OR UPDATE ON erp.aprovacoes_${t} FOR EACH ROW EXECUTE FUNCTION erp.aprovacoes_imutavel()`
+      `CREATE TRIGGER trg_aprovacoes_${t}_imutavel BEFORE DELETE OR UPDATE ON erp.aprovacoes_${t} FOR EACH ROW EXECUTE FUNCTION erp.aprovacoes_imutavel()`,
+      // O TRUNCATE não passa pelos gatilhos por linha: um por comando, na MESMA função (DB-1.9).
+      `CREATE TRIGGER trg_aprovacoes_${t}_imutavel_truncate BEFORE TRUNCATE ON erp.aprovacoes_${t} FOR EACH STATEMENT EXECUTE FUNCTION erp.aprovacoes_imutavel()`
     ]));
     const fns = (await db.query<{ fn: string; definer: boolean; vol: string; cfg: string[]; app: boolean; publico: boolean }>(
       `select p.proname fn, p.prosecdef definer, p.provolatile vol, p.proconfig cfg, has_function_privilege('erp_app', p.oid, 'execute') app,
@@ -733,6 +754,49 @@ describe("DB-1 — as três tabelas: objetos, FKs, RLS, índice, privilégios e 
         "select action, user_id, organization_id org, after->>'decisao' decisao from erp.audit_logs where entity=$1 and entity_id=$2 order by id", [`aprovacoes_${t}`, id])).rows;
       expect([t, r]).toEqual([t, [{ action: "create", user_id: demo.adminUserId, org: demo.orgId, decisao: "reprovado" }]]);
     }
+  });
+
+  /**
+   * O TRUNCATE não passa pelos gatilhos POR LINHA (DB-1.6): sem o gatilho POR COMANDO, o dono apagaria a história
+   * inteira de uma vez. O DB-1.5 prova que o papel da aplicação nem tem o privilégio (42501); aqui é o DONO da
+   * tabela (a conexão de superusuário que aplicou a migration), que tem — e recebe a MESMA CONFLICT da imutabilidade.
+   */
+  it("DB-1.9 TRUNCATE pelo DONO, em cada uma das três tabelas com linhas: a CONFLICT da imutabilidade, e as linhas continuam lá", async () => {
+    const dono = (await db.query<{ ok: boolean }>(
+      `select bool_and(pg_get_userbyid(c.relowner) = current_user) ok from pg_class c where c.oid in ${OIDS}`)).rows[0]!.ok;
+    expect(dono, "PREMISSA: quem trunca é o dono das três tabelas (o privilégio não é o que recusa)").toBe(true);
+    const contar = async (t: Tabela) => (await db.query<{ n: number }>(`select count(*)::int n from ${TABELA_SQL[t]}`)).rows[0]!.n;
+    for (const t of TABELAS) {
+      const d = await novoDoc(t, topDe(t, "4Sempre"));
+      await decidir(t, d);
+      const antes = await contar(t);
+      expect([t, antes > 0], "PREMISSA: há linha para o TRUNCATE apagar").toEqual([t, true]);
+      // Fora de transação: se o TRUNCATE passasse, as linhas sumiriam de fato (nenhum rollback as devolveria).
+      const e = await erroDe(db.query(`truncate ${TABELA_SQL[t]}`));
+      expect([t, e.message, e.code]).toEqual([t, "CONFLICT: A decisão de aprovação não aceita TRUNCATE (uma decisão nova registra a mudança).", "P0001"]);
+      expect([t, await contar(t), await decisoesDe(t, d)]).toEqual([t, antes, 1]);
+    }
+  });
+
+  it("DB-1.10 reprovação com motivo só de tab e quebra de linha → 23514 (o CHECK do motivo), nas três; com texto entre eles, grava", async () => {
+    // O btrim sem segundo argumento só tira o espaço comum: com ele, estes motivos "em branco" passavam.
+    const EM_BRANCO = ["\t\n", "\n", "\t", "\r\n", " \t \n "];
+    for (const t of TABELAS) {
+      const d = await novoDoc(t, topDe(t, "4Sempre"));
+      const p = `aprovacoes_${t}`;
+      for (const observacao of EM_BRANCO) {
+        const e = await erroDe(decidir(t, d, { decisao: "reprovado", observacao }));
+        expect([t, JSON.stringify(observacao), e.code, e.constraint]).toEqual([t, JSON.stringify(observacao), "23514", `chk_${p}_reprovacao`]);
+      }
+      expect(await decisoesDe(t, d)).toBe(0);
+      // Contraprova: o mesmo documento, reprovado com texto entre o tab e a quebra de linha, grava (o motivo é guardado como veio).
+      const id = await decidir(t, d, { decisao: "reprovado", observacao: "\tFaltou cotação\n" });
+      expect((await db.query<{ o: string }>(`select observacao o from ${TABELA_SQL[t]} where id=$1`, [id])).rows).toEqual([{ o: "\tFaltou cotação\n" }]);
+    }
+    // E o catálogo: o MESMO CHECK nas três, pela classe de espaço — o btrim não está mais nele.
+    const defs = (await db.query<{ conname: string; def: string }>(
+      `select conname, pg_get_constraintdef(oid) def from pg_constraint where conrelid in ${OIDS} and conname like 'chk\\_%\\_reprovacao' order by conname`)).rows;
+    expect(defs).toEqual(["compra", "estoque", "venda"].map((t) => ({ conname: `chk_aprovacoes_${t}_reprovacao`, def: CHECK_REPROVACAO })));
   });
 });
 
@@ -1150,6 +1214,64 @@ describe("DB-2 — o gatilho de inserção: recusas, ordem e o que ele ATRIBUI",
         .toEqual([{ por: usuarioEscopoAB }]);
     }
   });
+
+  /**
+   * O FILTRO NA LEITURA, NÃO DEPOIS DELA. O DB-2.12 fecha a empresa da LINHA fora do escopo; aqui a linha diz a
+   * empresa A (no escopo do membro [A], então a conferência da empresa passa) e o documento é um que NÃO é o pedido:
+   * da empresa B, venda excluída, venda de outra espécie, pedido de compra. Se o gatilho lesse o documento só por id e
+   * organização com FOR SHARE e descartasse DEPOIS, ele travaria (ou esperaria a trava de) uma linha que não é dele —
+   * da empresa B, fora do escopo de quem decide. Com o filtro dentro do SELECT (organização, empresa = a da linha,
+   * espécie, não excluído), a linha nem chega ao FOR SHARE. A prova: cada documento travado FOR UPDATE por outra
+   * sessão, lock_timeout de 1s na sessão do membro, e a resposta é a NOT_FOUND, nunca o 55P03 da espera.
+   * Contraprova: o documento que o filtro deixa passar (da empresa A, vivo, da espécie), travado do MESMO jeito, faz o
+   * gatilho esperar — e o lock_timeout vira 55P03. A trava é real, e a NOT_FOUND de cima é o filtro.
+   */
+  it("DB-2.12b documento que não é o pedido (empresa B com a linha em A, venda excluída, venda de outra espécie, pedido de compra), travado FOR UPDATE por outra sessão: NOT_FOUND na hora, nunca 55P03", async () => {
+    const casos: [Tabela, string, string][] = [];
+    for (const t of TABELAS) casos.push([t, "documento da empresa B", await novoDoc(t, topDe(t, "4Sempre"), { empresa: B })]);
+    casos.push(["venda", "venda excluída", await venda(tops.venda4Sempre, { excluida: true })]);
+    for (const kind of ["budget", "order"]) casos.push(["venda", `venda de outra espécie (${kind})`, await venda(tops.venda4Sempre, { kind })]);
+    casos.push(["compra", "pedido de compra", await compra(tops.pedido4Sempre, { especie: "pedido" })]);
+    // PREMISSA: cada documento é da organização, na situação dita; a empresa só é B no primeiro de cada tabela.
+    for (const [t, caso, doc] of casos) {
+      const r = (await db.query<{ org: string; empresa: string; s: string }>(
+        `select organization_id::text org, empresa_id::text empresa, ${DOCUMENTO_SQL[t].situacao} s from ${DOCUMENTO_SQL[t].tabela} where id=$1`, [doc])).rows;
+      expect([t, caso, r]).toEqual([t, caso, [{ org: demo.orgId, empresa: caso === "documento da empresa B" ? B : A, s: DOCUMENTO_SQL[t].aberto }]]);
+    }
+    expect((await db.query<{ kind: string; excluida: boolean }>(
+      "select kind, deleted_at is not null excluida from erp.sales_documents where id = any($1::uuid[]) order by kind, deleted_at is not null", [casos.filter((c) => c[0] === "venda").map((c) => c[2])])).rows)
+      .toEqual([{ kind: "budget", excluida: false }, { kind: "order", excluida: false }, { kind: "sale", excluida: false }, { kind: "sale", excluida: true }]);
+
+    /** A decisão do membro [A], com a empresa A na linha e lock_timeout de 1s, com `doc` travado FOR UPDATE por outra sessão. */
+    async function comTrava(t: Tabela, doc: string) {
+      const versao = t === "venda" ? await versaoDe(doc) : undefined;
+      const trava = await db.connect();
+      try {
+        await trava.query("begin");
+        expect([t, doc, (await trava.query(`select 1 from ${DOCUMENTO_SQL[t].tabela} where id=$1 for update`, [doc])).rowCount]).toEqual([t, doc, 1]);
+        return await erroDe(withTx(app, ctxDe(t, usuarioEscopoA), async (tx) => {
+          await tx.query("set local lock_timeout = '1s'");
+          return inserirDecisao(tx, t, doc, { empresa: A, versao });
+        }));
+      } finally { await trava.query("rollback").catch(() => {}); trava.release(); }
+    }
+
+    for (const [t, caso, doc] of casos) {
+      const e = await comTrava(t, doc);
+      expect([t, caso, e.message, e.code]).toEqual([t, caso, NAO_ENCONTRADO, "P0001"]);
+      expect([t, caso, await decisoesDe(t, doc)]).toEqual([t, caso, 0]);
+    }
+
+    // CONTRAPROVA: o documento certo (empresa A, aberto, exigindo), travado do mesmo jeito, faz o gatilho esperar.
+    for (const t of TABELAS) {
+      const meu = await novoDoc(t, topDe(t, "4Sempre"));
+      const e = await comTrava(t, meu);
+      expect([t, e.code], "a espera virou o 55P03 do lock_timeout").toEqual([t, "55P03"]);
+      expect(e.message).toMatch(/lock timeout/);
+      // Solta a trava: a MESMA decisão grava.
+      await expect(decidir(t, meu, { empresa: A }, ctxDe(t, usuarioEscopoA)), t).resolves.toMatch(/^\d+$/);
+    }
+  });
 });
 
 describe("DB-3 — as três guardas de transição (entrada no confirmado)", () => {
@@ -1282,6 +1404,69 @@ describe("DB-3 — as três guardas de transição (entrada no confirmado)", () 
     const e = await erroDe(withTx(app, ctxDe("compra"), (tx) => tx.query("update erp.documentos_compra set situacao='confirmado', valor_itens='1.00', valor_total='1.00' where id=$1", [compra1500])));
     expect(e.message).toBe(PRECISA);
     expect(await estado("compra", compra1500)).toBe("aberto");
+  });
+
+  /**
+   * A APROVAÇÃO SÓ VALE PARA O QUE ELA VIU. O DB-3.11 prova a conta sem decisão; aqui a decisão 'aprovado' JÁ está
+   * gravada — e o UPDATE que confirma muda, no MESMO comando, o que ela aprovou. Ela vale só se o valor dela cobre o
+   * MAIOR total (o de antes e o de depois) e se a versão da TOP dela é a de DEPOIS; senão, a MESMA recusa de quem não
+   * tem decisão. Cada recusa tem a PREMISSA ao lado: o MESMO UPDATE, sem subir o total (ou com a MESMA TOP), confirma
+   * — a recusa é pelo que mudou, não por outro motivo.
+   */
+  it("DB-3.11b venda com decisão 'aprovado': confirmar e subir o total no MESMO UPDATE → 'precisa de aprovação', e continua aberta", async () => {
+    // Na 'sempre' (aprovada a 100.00) e na 'a partir de 1500.00' (aprovada a 1500.00): um centavo a mais já não é o aprovado.
+    for (const [top, aprovado, acima] of [[tops.venda4Sempre, "100.00", "100.01"], [tops.venda4Valor, LIMITE, "1500.01"]] as [Top, string, string][]) {
+      const d = await venda(top, { total: aprovado });
+      const id = await decidir("venda", d);
+      expect((await db.query<{ v: string; decisao: string }>("select valor_documento::text v, decisao from erp.aprovacoes_venda where id=$1", [id])).rows)
+        .toEqual([{ v: aprovado, decisao: "aprovado" }]);
+      const e = await erroDe(moverVenda(d, "status='confirmed', total=$2", [acima]));
+      expect([top.versao, e.message, e.code]).toEqual([top.versao, PRECISA, "P0001"]);
+      expect((await db.query<{ s: string; total: string }>("select status s, total::text total from erp.sales_documents where id=$1", [d])).rows)
+        .toEqual([{ s: "open", total: aprovado }]);
+      // PREMISSA: o MESMO UPDATE com o total aprovado confirma.
+      await moverVenda(d, "status='confirmed', total=$2", [aprovado]);
+      expect([top.versao, await estado("venda", d)]).toEqual([top.versao, "confirmed"]);
+    }
+  });
+
+  it("DB-3.11c venda com decisão 'aprovado': confirmar e trocar para outra TOP do formato 4 no MESMO UPDATE → 'precisa de aprovação', e continua aberta", async () => {
+    // Outra TOP do formato 4, que também exige ('sempre'): a troca não dispensa nada — a decisão é que é de outra versão.
+    const outra = await criarTop(demo.orgId, "vendas.venda", configuracao(4, SEMPRE));
+    expect(outra.versao).not.toBe(tops.venda4Sempre.versao);
+    const d = await venda(tops.venda4Sempre);
+    const id = await decidir("venda", d);
+    expect((await db.query<{ versao: string }>("select tipo_operacao_versao_id::text versao from erp.aprovacoes_venda where id=$1", [id])).rows)
+      .toEqual([{ versao: tops.venda4Sempre.versao }]);
+    const trocar = "status='confirmed', tipo_operacao_id=$2, tipo_operacao_versao_id=$3";
+    const e = await erroDe(moverVenda(d, trocar, [outra.top, outra.versao]));
+    expect([e.message, e.code]).toEqual([PRECISA, "P0001"]);
+    expect((await db.query<{ s: string; versao: string }>("select status s, tipo_operacao_versao_id::text versao from erp.sales_documents where id=$1", [d])).rows)
+      .toEqual([{ s: "open", versao: tops.venda4Sempre.versao }]);
+    // PREMISSA: o MESMO UPDATE com a MESMA TOP (as duas colunas no SET, com o valor de hoje) confirma.
+    await moverVenda(d, trocar, [tops.venda4Sempre.top, tops.venda4Sempre.versao]);
+    expect(await estado("venda", d)).toBe("confirmed");
+  });
+
+  it("DB-3.11d compra com decisão 'aprovado': confirmar e subir valor_itens e valor_total no MESMO UPDATE → 'precisa de aprovação', e continua aberta", async () => {
+    const confirmarCom = (d: string, valor: string) => withTx(app, ctxDe("compra"), async (tx) => {
+      const u = await tx.query("update erp.documentos_compra set situacao='confirmado', valor_itens=$2, valor_total=$2 where id=$1", [d, valor]);
+      expect(u.rowCount, "a compra precisa ser visível para o papel da aplicação").toBe(1);
+    });
+    for (const [top, aprovado, acima] of [[tops.compra4Sempre, "100.00", "100.01"], [tops.compra4Valor, LIMITE, "1500.01"]] as [Top, string, string][]) {
+      const d = await compra(top, { valor: aprovado });
+      const id = await decidir("compra", d);
+      expect((await db.query<{ v: string; decisao: string }>("select valor_documento::text v, decisao from erp.aprovacoes_compra where id=$1", [id])).rows)
+        .toEqual([{ v: aprovado, decisao: "aprovado" }]);
+      const e = await erroDe(confirmarCom(d, acima));
+      expect([top.versao, e.message, e.code]).toEqual([top.versao, PRECISA, "P0001"]);
+      expect((await db.query<{ s: string; itens: string; total: string }>(
+        "select situacao s, valor_itens::text itens, valor_total::text total from erp.documentos_compra where id=$1", [d])).rows)
+        .toEqual([{ s: "aberto", itens: aprovado, total: aprovado }]);
+      // PREMISSA: o MESMO UPDATE com o valor aprovado confirma.
+      await confirmarCom(d, aprovado);
+      expect([top.versao, await estado("compra", d)]).toEqual([top.versao, "confirmado"]);
+    }
   });
 });
 

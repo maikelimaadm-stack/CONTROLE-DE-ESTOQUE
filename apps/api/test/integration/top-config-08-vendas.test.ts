@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { configuracaoNeutraTop, configuracaoNeutraTopV2, type ConfiguracaoTipoOperacaoV4 } from "@agro/domain";
 import { MSG_DOCUMENTO_MUDOU } from "../../src/routes/vendas-edicao-patch.js";
+import { MSG_DOCUMENTO_SEM_TOP } from "../../src/routes/vendas-edicao-regras.js";
 import {
   c, iniciar, encerrar, j, erro, unico, cfg3, cfg4, top, versaoAtualNoBanco, versaoDireta, usuario, produto, produtoComSaldo, saldoInicial, saldo,
   itemVenda, corpoVenda, lancarVenda, vendaLancada, editarVenda, patchVenda, confirmarVenda, lerVenda, converterVenda, versaoDaVenda,
@@ -10,12 +11,12 @@ import {
 } from "./top-config-08-ajuda.js";
 
 /**
- * TOP-CONFIG-08 (decisão 277) — AS REGRAS GERAIS NA VENDA (SPEC §3 e §4; casos CA-1..CA-6, CA-9..CA-12, SI-1, SI-2, SI-4).
+ * TOP-CONFIG-08 (decisão 277) — AS REGRAS GERAIS NA VENDA (SPEC §3 e §4; casos CA-1..CA-6, CA-9..CA-12, SI-1, SI-2, SI-4, SI-5).
  *
  * A VENDA com a versão congelada da TOP no FORMATO 4: a confirmação automática no fim de cada caminho que grava (POST,
  * PUT, PATCH e a venda GERADA pela conversão, inteira e em partes), as recusas que deixam a venda salva e aberta com o
  * porquê (saldo, período, capacidade, aprovação), o corte do formato 3 (CA-9), a idempotência (CA-10), o corpo de hoje
- * sem a automática (CA-11), a barreira das travas (CA-12) e o documento sem itens (SI-1, SI-2, SI-4). A aprovação em si
+ * sem a automática (CA-11), a barreira das travas (CA-12) e o documento sem itens (SI-1, SI-2, SI-4, SI-5). A aprovação em si
  * (rotas, fila, decisões) é do `top-config-08-aprovacao.test.ts`; a compra e o estoque, dos arquivos deles.
  *
  * O QUE CONTA COMO PROVA (o molde da COMPRAS-01 e do ESTOQUE-01): nenhuma asserção decisiva é só status HTTP. A situação
@@ -29,6 +30,13 @@ import {
  * A ORDEM NOVA DAS RECUSAS (SPEC §4, declarada): com TOP, os itens vazios são decididos DEPOIS de saber a TOP — a recusa
  * da empresa e a da TOP vêm antes no POST; a 404, o 409 da versão e o 409 da situação vêm antes na PATCH. Sem TOP, e no
  * orçamento e no pedido, a ordem é a de hoje (os itens vazios recusados na leitura do corpo). SI-2 prova as duas.
+ * A EDIÇÃO muda em três pontos, e SI-5 prova os três (antes, os três respondiam o 422 dos itens):
+ *   SI-5a — a PATCH com items [] numa venda SEM TOP recebe a MESMA 409 que a PATCH com itens recebe (a falta de TOP vem
+ *           antes do corpo);
+ *   SI-5b/c — o PUT que PÕE a TOP numa venda sem TOP, com items [], é decidido pela versão da TOP NOVA (formato 4
+ *           "Permitido" aceita; formato 1 a 3, ou 4 "Proibido", o 422 de hoje, byte a byte);
+ *   SI-5d — o PUT que PÕE ou TROCA a TOP para uma TOP INDISPONÍVEL, com items [], recebe a recusa da TOP — a MESMA que o
+ *           PUT com itens recebe: a TOP nova é resolvida antes da regra dos itens.
  */
 
 beforeAll(iniciar, 240_000);
@@ -1005,5 +1013,155 @@ describe("SI-4 PATCH da venda para items []", () => {
     expect(recusa.statusCode, recusa.body).toBe(422);
     expect(erro(recusa)).toEqual(RECUSA_DOS_ITENS_VAZIOS);
     expect([await versaoDaVenda(proibida.id), (await itensNoBanco(proibida.id)).length, await totalNoBanco(proibida.id)]).toEqual([w0, 1, "27.00"]);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+// SI-5
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+/** A TOP gravada na venda — a identidade e a versão congelada —, lida no banco. `[null, null]` = venda sem TOP. */
+async function topDaVendaNoBanco(id: string): Promise<[string | null, string | null]> {
+  const r = (await c.admin.query<{ t: string | null; v: string | null }>(
+    "select tipo_operacao_id t, tipo_operacao_versao_id v from erp.sales_documents where id=$1", [id])).rows[0]!;
+  return [r.t, r.v];
+}
+/** O que uma recusa não pode ter mudado na venda: a `version` (0039), quantos itens, o total e a TOP gravada. */
+async function gravadoDaVenda(id: string): Promise<unknown[]> {
+  return [await versaoDaVenda(id), (await itensNoBanco(id)).length, await totalNoBanco(id), ...(await topDaVendaNoBanco(id))];
+}
+/**
+ * Uma venda SEM TOP (o corpo sem `tipo_operacao_id`, como a venda legada), com UM item e frete 5.00. PREMISSA: no banco
+ * ela está aberta e sem TOP — o que a recusa mede é a falta de TOP, e não a situação.
+ */
+async function vendaSemTop(produtoId: string): Promise<{ id: string; base: Record<string, unknown> }> {
+  const base = corpoVenda([itemVenda(produtoId, "1", "10.00")], { freight: "5.00" });
+  expect(base, "premissa: o corpo não traz TOP").not.toHaveProperty("tipo_operacao_id");
+  const v = await vendaLancada(base);
+  expect([await situacaoNoBanco("sales_documents", v.id), ...(await topDaVendaNoBanco(v.id))], "premissa: a venda está aberta e SEM TOP no banco")
+    .toEqual(["open", null, null]);
+  return { id: v.id, base };
+}
+
+describe("SI-5 items [] na edição: a PATCH sem TOP recusa pela falta de TOP; o PUT que PÕE a TOP decide pela versão da TOP NOVA; a TOP indisponível vem antes dos itens", () => {
+  it("SI-5a PATCH numa venda sem TOP: com items [] e com itens válidos → o MESMO 409 INVALID_STATUS_TRANSITION, byte a byte; nada gravado; numa venda com TOP Permitido a MESMA PATCH grava (premissa)", async () => {
+    const p = await produtoComSaldo("5");
+    const v = await vendaSemTop(p.id);
+    const v0 = await versaoDaVenda(v.id);
+    const antes = await gravadoDaVenda(v.id);
+    const [item] = await itensNoBanco(v.id);
+    const comItens = await patchVenda(v.id, { version: v0, items: [{ id: item!.id, product_id: p.id, warehouse_id: c.I.warehouse, quantity: "2", unit_price: "10.00" }] });
+    expect(comItens.statusCode, comItens.body).toBe(409);
+    expect(erro(comItens), "a recusa da PATCH sem TOP: code e message, sem details").toStrictEqual({ code: "INVALID_STATUS_TRANSITION", message: MSG_DOCUMENTO_SEM_TOP });
+    // A ORDEM declarada da PATCH: 404/409 antes do corpo. Com items [] a resposta é a MESMA — antes, era o 422 dos itens.
+    const vazio = await patchVenda(v.id, { version: v0, items: [] });
+    expect(vazio.statusCode, vazio.body).toBe(comItens.statusCode);
+    expect(vazio.body, "o MESMO corpo de erro (code, message, details), byte a byte").toBe(comItens.body);
+    expect(await gravadoDaVenda(v.id), "nada gravado: version, itens, total e TOP").toEqual(antes);
+    expect(await semEfeito(v.id)).toEqual(["open", 0, 0, 0]);
+    // PREMISSA: a MESMA PATCH (items []) numa venda COM TOP formato 4 Permitido grava — a recusa era a falta de TOP, não o corpo.
+    const comTop = await vendaLancada(corpoVenda([itemVenda(p.id, "1", "10.00")], { tipo_operacao_id: await topVenda(semItens()), freight: "5.00" }));
+    const w0 = await versaoDaVenda(comTop.id);
+    const ok = await patchVenda(comTop.id, { version: w0, items: [] });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect([await itensNoBanco(comTop.id), await totalNoBanco(comTop.id), await versaoDaVenda(comTop.id)]).toEqual([[], "5.00", mais(w0, 1)]);
+  });
+
+  it("SI-5b PUT que PÕE uma TOP formato 4 'Permitido' numa venda sem TOP, com items [] → 200 (o corpo de hoje); no banco: zero itens, a TOP nova com a versão corrente dela congelada, o total do frete, a troca auditada; o MESMO PUT sem a TOP → o 422 (premissa)", async () => {
+    const topSem = await topVenda(semItens());
+    const versaoNova = await versaoAtualNoBanco(topSem);
+    expect((versaoNova.configuracao.geral as Record<string, unknown>).documentoSemItens, "premissa: a versão da TOP nova aceita documento sem itens").toBe("permitido");
+    const p = await produtoComSaldo("5");
+    const v = await vendaSemTop(p.id);
+    // PREMISSA: o MESMO PUT, SEM a TOP, é recusado — quem aceita é a versão da TOP nova, não o corpo.
+    const semTop = await editarVenda(v.id, { ...v.base, items: [] });
+    expect(semTop.statusCode, semTop.body).toBe(422);
+    expect(erro(semTop)).toEqual(RECUSA_DOS_ITENS_VAZIOS);
+    expect((await itensNoBanco(v.id)).length, "premissa: a recusa não gravou").toBe(1);
+
+    const r = await editarVenda(v.id, { ...v.base, tipo_operacao_id: topSem, items: [] });
+    expect(r.statusCode, r.body).toBe(200);
+    const b = corpo(r);
+    expect(Object.keys(b), "Manual: o corpo de hoje").toEqual(CHAVES_DO_POST);
+    expect([b.id, b.subtotal, b.total]).toEqual([v.id, "0.00", "5.00"]);
+    expect(await itensNoBanco(v.id), "zero itens no banco").toEqual([]);
+    expect(await topDaVendaNoBanco(v.id), "a TOP NOVA, e a versão CORRENTE dela congelada").toEqual([topSem, versaoNova.id]);
+    expect(await totalNoBanco(v.id), "o total sai do frete").toBe("5.00");
+    const troca = await auditoriaDe("sales_documents", v.id, "operation_type_change");
+    expect(troca, "pôr a TOP é auditado (uma troca)").toHaveLength(1);
+    expect(troca[0]!.metadata).toMatchObject({ tipoOperacaoVersao: versaoNova.versao });
+    expect(await semEfeito(v.id), "Manual: aberta, nada confirmado").toEqual(["open", 0, 0, 0]);
+  });
+
+  it("SI-5c o MESMO PUT com a TOP nova no formato 1, 2, 3 (de produção, 'permitido' gravado) ou 4 'Proibido' → o 422 de hoje, byte a byte o do PUT sem TOP; nada gravado (continua sem TOP); com os itens, o MESMO PUT põe a TOP (premissa)", async () => {
+    const p = await produtoComSaldo("5");
+    const casos: [string, string][] = [
+      ["formato 1", await topVenda(configuracaoNeutraTop())],
+      ["formato 2", await topVenda(configuracaoNeutraTopV2())],
+      ["formato 3 de produção", await topVenda(comoProducao())],
+      ["formato 4 Proibido", await topVenda(cfg4())],
+    ];
+    // PREMISSA: o formato 3 GRAVA "permitido" (só declara — o corte) e o 4 grava "proibido" (a regra).
+    const semItensDa = async (topId: string) => ((await versaoAtualNoBanco(topId)).configuracao.geral as Record<string, unknown>).documentoSemItens;
+    expect([await semItensDa(casos[2]![1]), await semItensDa(casos[3]![1])], "premissa: o 3 declara 'permitido', o 4 grava 'proibido'").toEqual(["permitido", "proibido"]);
+    for (const [nome, topId] of casos) {
+      const v = await vendaSemTop(p.id);
+      // O 422 DE HOJE: o PUT sem TOP, com items [] (a recusa logo depois da leitura do corpo).
+      const hoje = await editarVenda(v.id, { ...v.base, items: [] });
+      expect(hoje.statusCode, `${nome}: o PUT sem TOP — ${hoje.body}`).toBe(422);
+      expect(erro(hoje), nome).toEqual(RECUSA_DOS_ITENS_VAZIOS);
+      const antes = await gravadoDaVenda(v.id);
+      const r = await editarVenda(v.id, { ...v.base, tipo_operacao_id: topId, items: [] });
+      expect(r.statusCode, `${nome}: ${r.body}`).toBe(422);
+      expect(r.body, `${nome}: o MESMO corpo do PUT sem TOP (code, message, details), byte a byte`).toBe(hoje.body);
+      expect(await gravadoDaVenda(v.id), `${nome}: nada gravado, e a venda continua sem TOP`).toEqual(antes);
+      expect(await auditoriaDe("sales_documents", v.id, "operation_type_change"), `${nome}: nenhuma troca auditada`).toEqual([]);
+      // PREMISSA: a TOP é aceita pela venda — o MESMO PUT, com os itens, a põe. A recusa era a dos itens vazios.
+      const comItens = await editarVenda(v.id, { ...v.base, tipo_operacao_id: topId });
+      expect(comItens.statusCode, `${nome}: premissa — ${comItens.body}`).toBe(200);
+      expect(await topDaVendaNoBanco(v.id), `${nome}: premissa — a TOP foi posta`).toEqual([topId, (await versaoAtualNoBanco(topId)).id]);
+      expect((await itensNoBanco(v.id)).length, nome).toBe(1);
+    }
+  });
+
+  it("SI-5d PUT que PÕE (venda sem TOP) ou TROCA (venda com TOP formato 4 Proibido) a TOP para uma INDISPONÍVEL (inexistente; de outra família), com items [] → o 422 TIPO_OPERACAO_INDISPONIVEL, byte a byte o do MESMO PUT com itens; nada gravado; com uma TOP disponível, o MESMO PUT grava (premissa)", async () => {
+    const p = await produtoComSaldo("5");
+    const RECUSA_DA_TOP: Erro = { code: "TIPO_OPERACAO_INDISPONIVEL", message: "Tipo de operação indisponível para este lançamento" };
+    // A TOP de outra família EXISTE (a de pedido, formato 4, premissa do `topVenda`) — a recusa é a família, não a falta do registro.
+    const indisponiveis: [string, string][] = [["inexistente", randomUUID()], ["de outra família (vendas.pedido)", await topVenda(cfg4(), "vendas.pedido")]];
+    const topGravada = await topVenda(cfg4());
+    expect(((await versaoAtualNoBanco(topGravada)).configuracao.geral as Record<string, unknown>).documentoSemItens,
+      "premissa: a versão gravada da venda com TOP é 'proibido' — se os itens fossem decididos antes da TOP, a resposta seria o 422 dos itens").toBe("proibido");
+    const vendas: { nome: string; criar: () => Promise<{ id: string; base: Record<string, unknown> }> }[] = [
+      { nome: "PÕE (venda sem TOP)", criar: () => vendaSemTop(p.id) },
+      { nome: "TROCA (venda com TOP formato 4 Proibido)", criar: async () => {
+        const base = corpoVenda([itemVenda(p.id, "1", "10.00")], { tipo_operacao_id: topGravada, freight: "5.00" });
+        const v = await vendaLancada(base);
+        expect(await topDaVendaNoBanco(v.id), "premissa: a venda está com a TOP gravada").toEqual([topGravada, (await versaoAtualNoBanco(topGravada)).id]);
+        return { id: v.id, base };
+      } },
+    ];
+    for (const venda of vendas) {
+      const v = await venda.criar();
+      const antes = await gravadoDaVenda(v.id);
+      expect(await auditoriaDe("sales_documents", v.id, "operation_type_change"), `${venda.nome}: premissa — nenhuma troca antes`).toEqual([]);
+      for (const [nomeTop, topId] of indisponiveis) {
+        const caso = `${venda.nome}, TOP ${nomeTop}`;
+        const comItens = await editarVenda(v.id, { ...v.base, tipo_operacao_id: topId });
+        expect(comItens.statusCode, `${caso}: com itens — ${comItens.body}`).toBe(422);
+        expect(erro(comItens), `${caso}: a recusa da TOP, sem details`).toStrictEqual(RECUSA_DA_TOP);
+        const vazio = await editarVenda(v.id, { ...v.base, tipo_operacao_id: topId, items: [] });
+        expect(vazio.statusCode, `${caso}: items [] — ${vazio.body}`).toBe(422);
+        expect(vazio.body, `${caso}: o MESMO corpo do PUT com itens, byte a byte (a TOP antes dos itens)`).toBe(comItens.body);
+        expect(await gravadoDaVenda(v.id), `${caso}: nada gravado (version, itens, total, TOP)`).toEqual(antes);
+        expect(await auditoriaDe("sales_documents", v.id, "operation_type_change"), `${caso}: nenhuma troca auditada`).toEqual([]);
+      }
+      // PREMISSA: a venda é editável e aceita TOP — o MESMO PUT, com uma TOP disponível, grava e troca. A recusa era a TOP.
+      const disponivel = await topVenda(cfg4());
+      const ok = await editarVenda(v.id, { ...v.base, tipo_operacao_id: disponivel });
+      expect(ok.statusCode, `${venda.nome}: premissa — ${ok.body}`).toBe(200);
+      expect(await topDaVendaNoBanco(v.id), `${venda.nome}: premissa — a TOP disponível foi posta`).toEqual([disponivel, (await versaoAtualNoBanco(disponivel)).id]);
+      expect(await auditoriaDe("sales_documents", v.id, "operation_type_change"), `${venda.nome}: premissa — a troca é auditada`).toHaveLength(1);
+    }
   });
 });

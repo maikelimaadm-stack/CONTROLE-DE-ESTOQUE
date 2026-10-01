@@ -1628,27 +1628,38 @@ Decisão 277. **Uma migration: `0041_regras_gerais_e_aprovacao_da_top.sql`** (pr
 `lock_timeout` 2 s, pré/pós-condições nomeadas `TOP-CONFIG-08: ...` — a primeira é "já aplicada" —, não destrutiva, sem
 backfill): três tabelas de DECISÃO de aprovação, vazias, uma ao lado de cada documento — `erp.aprovacoes_venda`
 (`erp.sales_documents`), `erp.aprovacoes_compra` (`erp.documentos_compra`) e `erp.aprovacoes_estoque`
-(`erp.documentos_estoque`) —, só de inserção (gatilho de imutabilidade e, para o papel da API, só `select` e `insert`),
-com FKs para o documento, a versão da TOP, a TOP e a empresa (composta, `(organization_id, empresa_id)`), RLS forçada
-com a política `tenant_e_empresa` da 0040 (módulos `vendas`, `compras` e `estoque`), `erp.audit_row` e o índice
+(`erp.documentos_estoque`) —, só de inserção (gatilho de imutabilidade por linha contra UPDATE e DELETE e por comando
+contra TRUNCATE — nem o dono edita, apaga ou esvazia uma tabela de decisões — e, para o papel da API, só `select` e
+`insert`), com FKs para o documento, a versão da TOP, a TOP e a empresa (composta, `(organization_id, empresa_id)`), RLS
+forçada com a política `tenant_e_empresa` da 0040 (módulos `vendas`, `compras` e `estoque`), `erp.audit_row` e o índice
 `(organization_id, documento_id, id desc)`; a conta `erp.top_exige_aprovacao(jsonb, numeric)` (imutável, não lê tabela,
 a mesma de `exigeAprovacao` do domínio; o papel da API a executa, porque a fila de aprovações a usa em SQL); um gatilho
 de inserção por tabela (`trg_aprovacoes_venda_conferir`, `trg_aprovacoes_compra_conferir`,
 `trg_aprovacoes_estoque_conferir`; SECURITY DEFINER, `search_path` fixo, organização e usuário da GUC do servidor —
 linha de outra organização, ou sem organização na GUC, recebe a `NOT_FOUND` antes de ler qualquer documento, e linha de
 empresa fora do escopo de escrita de quem decide no módulo da transação (`erp.empresa_escrita_permitida`, o predicado do
-`with check` da política) também), que confere o documento aberto da organização da GUC e da empresa da linha, que exige
+`with check` da política) também), que lê `for share` só o documento que passa pelo filtro inteiro da `NOT_FOUND`, no
+próprio `where` — id, organização da GUC e empresa da linha; na venda, também `kind` `sale` e não excluída; na compra,
+espécie `compra` —, de modo que documento de outra empresa, de outra espécie ou excluído recebe a `NOT_FOUND` na hora,
+sem ser lido nem travado (mesmo quando outra sessão o segura `for update`), e que confere o documento aberto, que exige
 aprovação pelo total ATUAL — na venda, também a versão atual —, e ATRIBUI do documento a TOP, a versão congelada e o
 valor, e da transação `decidido_por` e `decidido_em`; e três guardas de transição BEFORE UPDATE da situação —
 `trg_sales_documents_aprovacao` (o mesmo WHEN da 0023; procura a decisão da versão `OLD.version` e dispara antes das
 três de hoje), `trg_documentos_compra_aprovacao` e `trg_documentos_estoque_aprovacao` (aberto → confirmado) —, que
 recusam com `CONFLICT` (mensagem fixa de uma linha: 409 em todo binário) a entrada no confirmado de documento cuja
-versão congelada está no formato 4, exige aprovação e não tem a vigente aprovada. Formato 1 a 3 nunca é barrado. As
-pós-condições conferem objetos (as tabelas, a RLS forçada e a política única, as 12 FKs sem cascata, os 9 CHECKs, os
-índices, a forma da conta e das funções de gatilho, EXECUTE das funções de gatilho só do dono, os 9 gatilhos das tabelas
-de aprovação, as 3 guardas, o WHEN igual ao da 0023, os quatro BEFORE UPDATE por linha da venda por nome — a guarda da
-aprovação primeiro, a 0039 por último — e os privilégios); não comparam contagens de tabelas vivas. As permissões novas
-(`sales.approve`, `compras.approve`, `entradas_estoque.approve`, `saidas_estoque.approve`,
+versão congelada está no formato 4, exige aprovação e não tem a vigente aprovada. A aprovação só cobre o valor e a
+versão que aprovou: na venda e na compra, a vigente aprovada só vale com o valor aprovado ≥ o maior total (o de antes e
+o de depois do UPDATE) e a versão da TOP aprovada igual à de depois do UPDATE; no estoque, só a versão; senão, a MESMA
+recusa "precisa de aprovação" — confirmar e, no mesmo UPDATE, subir o total ou trocar a TOP não aproveita a aprovação
+antiga. Na venda, o UPDATE que confirma e, no mesmo comando, deixa a TOP nula não dispara a guarda (o MESMO WHEN da
+0023, que também não dispara): a API recusa tirar a TOP, e a guarda de banco para isso é de outra fatia. A reprovação
+exige motivo com ao menos um caractere que não seja espaço em branco (CHECK `observacao ~ '[^[:space:]]'`: motivo só de
+tab ou de quebra de linha é recusado). Formato 1 a 3 nunca é barrado. As pós-condições conferem objetos (as tabelas, a
+RLS forçada e a política única, as 12 FKs sem cascata, os 9 CHECKs, os índices, a forma da conta e das funções de
+gatilho, EXECUTE das funções de gatilho só do dono, os 12 gatilhos das tabelas de aprovação — o conjunto exato, nenhum a
+mais, os 3 de TRUNCATE inclusive —, as 3 guardas, o WHEN igual ao da 0023, os quatro BEFORE UPDATE por linha da venda
+por nome — a guarda da aprovação primeiro, a 0039 por último — e os privilégios); não comparam contagens de tabelas
+vivas. As permissões novas (`sales.approve`, `compras.approve`, `entradas_estoque.approve`, `saidas_estoque.approve`,
 `transferencias_estoque.approve`, `ajustes_estoque.approve` — "Aprovar") não têm migration: o pre-deploy sincroniza o
 catálogo e o perfil Administrador do sistema as recebe; os outros perfis, o Maike dá na tela de perfis. Rotas novas num
 prefixo próprio, `/api/aprovacoes/{vendas,compras,estoque}`, e o módulo Aprovações (`/aprovacoes`) no menu — o 14º, o
@@ -1674,6 +1685,12 @@ curta em `erp.sales_documents`, `erp.documentos_compra`, `erp.documentos_estoque
 transação longa segurando uma delas, a migration desiste em 2 s sem aplicar nada, e o deploy é refeito (seguro: nada foi
 aplicado). Em erro, publique o nome do papel, nunca a conexão.
 
+**Pré-condições da 0041 conferidas em produção pela revisão (01/10, só leitura):** os três BEFORE UPDATE por linha da
+venda (`trg_sales_documents_classificacao_financeira`, `trg_sales_documents_execucao_configurada` e
+`trg_sales_documents_versao`); os módulos de escopo, as colunas, as chaves, as funções e o papel `erp_app` presentes; as
+tabelas de aprovação ausentes; o ledger em 40. A conferência não substitui a da própria migration, que refaz cada
+pergunta na hora de aplicar.
+
 **Ordem: banco (0041) → API → web.** Janelas:
 1. **API anterior × banco novo:** a API anterior não conhece as tabelas novas, a conta nem as permissões novas, e não as
    lê. A guarda nova da venda dispara antes das três de hoje, não muda o NEW e, sem versão no formato 4, só lê e deixa
@@ -1693,9 +1710,11 @@ aplicado). Em erro, publique o nome do papel, nunca a conexão.
    Declarado: a Central de Estoque anterior mostra "prévia indisponível" diante de uma recusa de aprovação e deixa
    clicar Confirmar — o servidor responde 409 `APROVACAO_PENDENTE` (ou `APROVACAO_REPROVADA`), e nada é confirmado.
 3. **web NOVA × API anterior:** sem o bloco `regrasGerais` nas capabilities, o editor grava o formato 3, com os textos e
-   as abas de hoje. O módulo Aprovações recebe 404 nas rotas novas — o prefixo próprio responde um 404 limpo no binário
-   anterior — e mostra "As aprovações ainda não estão disponíveis neste servidor.", sem quebrar o resto do sistema. As
-   Centrais ficam iguais; a de Estoque, sem `recusas` na prévia, se comporta como hoje.
+   as abas de hoje, e o histórico da TOP não mostra nenhuma das duas linhas "Regras gerais e aprovação: …", em versão
+   nenhuma (nem na do formato 3 que traz as chaves das regras gerais): elas só aparecem com o bloco. O módulo
+   Aprovações recebe 404 nas rotas novas — o prefixo próprio responde um 404 limpo no binário anterior — e mostra "As
+   aprovações ainda não estão disponíveis neste servidor.", sem quebrar o resto do sistema. As Centrais ficam iguais; a
+   de Estoque, sem `recusas` na prévia, se comporta como hoje.
 
 As três janelas são provadas no CI pelo job `skew` (K-1 e K-2, `docs/TESTING.md`), contra os binários reais da base: o
 sentido 1 sobe a API da base sobre o banco migrado e semeado por este HEAD, com a web deste HEAD (janelas 1 e 3); o
@@ -1725,7 +1744,11 @@ lançado no binário anterior com TOP formato 4 fica sem exigências e sem condi
 devolve nulo para formato desconhecido, e não confirma sozinho; o binário anterior também não edita TOP cuja versão
 vigente está no formato 4 (422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`: a escrita fecha). Documento confirmado
 antes da reversão, pela automática ou depois de aprovado, continua confirmado, com os efeitos que deu. Banco: as
-tabelas de aprovação NUNCA se apagam — são dado real (decisão 247); desligar as guardas ou a conta só com uma migration
+tabelas de aprovação NUNCA se apagam nem se esvaziam — são dado real (decisão 247), e o gatilho de TRUNCATE recusa até o
+dono, com `CONFLICT: A decisão de aprovação não aceita TRUNCATE (uma decisão nova registra a mudança).`; declarado:
+`TRUNCATE … CASCADE` de `erp.sales_documents`, `erp.documentos_compra` ou `erp.documentos_estoque` passa a ser recusado
+com a mesma `CONFLICT`, porque o gatilho dispara também nas tabelas alcançadas pela cascata (nenhum script nem teste do
+repositório faz TRUNCATE; o reset dos testes derruba o schema); desligar as guardas ou a conta só com uma migration
 NOVA, por decisão do Maike — nunca editando a 0041. Nada de apagar dado de produção: documento se cancela, com estorno.
 
 **Merge depois de #86 e de #87:** PR de número maior não entra antes da menor. A #84 (decisão 275) já está na main e foi
@@ -1762,20 +1785,26 @@ begin transaction read only;
 select count(*) as migrations, max(name) as ultima from public.erp_migrations;
 --    esperado: 41 · 0041_regras_gerais_e_aprovacao_da_top.sql
 
--- 2. as três tabelas: RLS habilitada e FORÇADA, a política única e os privilégios do papel da API
+-- 2. as três tabelas: RLS habilitada e FORÇADA, a política única, os privilégios do papel da API e o CHECK do motivo
 select c.relname as tabela, c.relrowsecurity as rls, c.relforcerowsecurity as forcada,
        (select string_agg(p.policyname, ',') from pg_policies p
          where p.schemaname = 'erp' and p.tablename = c.relname) as politicas,
        has_table_privilege('erp_app', c.oid, 'select') as sel, has_table_privilege('erp_app', c.oid, 'insert') as ins,
        has_table_privilege('erp_app', c.oid, 'update') as upd, has_table_privilege('erp_app', c.oid, 'delete') as del,
-       has_table_privilege('erp_app', c.oid, 'truncate') as trunc
+       has_table_privilege('erp_app', c.oid, 'truncate') as trunc,
+       (select pg_get_constraintdef(k.oid) from pg_constraint k
+         where k.conrelid = c.oid and k.conname = 'chk_' || c.relname || '_reprovacao') as reprovacao
   from pg_class c join pg_namespace n on n.oid = c.relnamespace
  where n.nspname = 'erp' and c.relname in ('aprovacoes_venda', 'aprovacoes_compra', 'aprovacoes_estoque')
  order by c.relname;
---    esperado: 3 linhas · rls e forcada true · politicas tenant_e_empresa · sel e ins true · upd, del e trunc false
+--    esperado: 3 linhas · rls e forcada true · politicas tenant_e_empresa · sel e ins true · upd, del e trunc false ·
+--    reprovacao com observacao ~ '[^[:space:]]' (um caractere que não seja espaço em branco; nunca btrim)
 
--- 3. os gatilhos: 3 guardas, 3 de inserção, 3 de imutabilidade (e os 3 de auditoria), todos ligados ('O')
-select c.relname as tabela, t.tgname as gatilho, t.tgenabled as ligado, p.proname as funcao
+-- 3. os gatilhos: 3 guardas, 3 de inserção, 3 de imutabilidade por linha, 3 de TRUNCATE (e os 3 de auditoria), todos
+--    ligados ('O')
+select c.relname as tabela, t.tgname as gatilho, t.tgenabled as ligado, p.proname as funcao,
+       case when (t.tgtype & 1) = 1 then 'linha' else 'comando' end as nivel,
+       (t.tgtype & 32) = 32 as no_truncate
   from pg_trigger t
   join pg_class c on c.oid = t.tgrelid
   join pg_proc p on p.oid = t.tgfoid
@@ -1784,9 +1813,11 @@ select c.relname as tabela, t.tgname as gatilho, t.tgenabled as ligado, p.pronam
                      'trg_documentos_estoque_aprovacao')
         or t.tgname like 'trg\_aprovacoes\_%')
  order by c.relname, t.tgname;
---    esperado: 12 linhas, todas 'O' — as guardas sales_documents → venda_aprovacao_guarda, documentos_compra →
+--    esperado: 15 linhas, todas 'O' — as guardas sales_documents → venda_aprovacao_guarda, documentos_compra →
 --    documentos_compra_aprovacao_guarda e documentos_estoque → documentos_estoque_aprovacao_guarda; em cada tabela de
---    aprovação, _conferir → aprovacoes_<documento>_conferir, _imutavel → aprovacoes_imutavel e _audit → audit_row
+--    aprovação, _conferir → aprovacoes_<documento>_conferir, _imutavel e _imutavel_truncate → aprovacoes_imutavel e
+--    _audit → audit_row; nivel 'comando' e no_truncate true SÓ nos três _imutavel_truncate (os outros 12: 'linha' e
+--    false)
 
 -- 4. a ordem dos BEFORE UPDATE por linha da venda: a guarda da aprovação primeiro, a versão (0039) por último
 select array_agg(t.tgname::text order by t.tgname collate "C") as before_update

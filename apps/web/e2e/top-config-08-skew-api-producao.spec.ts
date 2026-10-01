@@ -1,6 +1,7 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { login, api, uniq, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar } from "./helpers";
 import { cadastroDeEstoque, criarTopDeEstoque, hojeISO } from "./estoque-01-comum";
+import { abrirHistoricoDaTop, abrirTelaDeTops, cfg3, criarTopViaApi, detalheTopNoServidor, excluirTopE2E } from "./top-config-08-comum";
 
 /**
  * TOP-CONFIG-08 · K-1, SENTIDO 1 — O WEB DESTE HEAD CONTRA A API DA BASE (decisão 277; a janela "web antes da API" da
@@ -22,9 +23,11 @@ import { cadastroDeEstoque, criarTopDeEstoque, hojeISO } from "./estoque-01-comu
  *   · MUNDO LEGADO (a base de hoje, sem a fatia): o editor grava o formato 3, com os textos de hoje, sem o diálogo
  *     "Estas regras passam a valer"; a tela de Aprovações diz que as aprovações ainda não estão disponíveis neste
  *     servidor — nunca uma fila vazia, que afirmaria "nada a aprovar" —, sem nenhuma requisição morrer no navegador;
- *     e as Centrais de Estoque e de Vendas abrem como hoje.
+ *     as Centrais de Estoque e de Vendas abrem como hoje; e o histórico de versões é o de hoje (K-1d): nenhuma linha
+ *     "Regras gerais e aprovação", nem na versão do formato 3 que traz as chaves.
  *   · MUNDO NOVO (a base já com a fatia, depois do merge): o editor mostra o bloco (os textos da seção 8 e o diálogo) e
- *     grava o formato 4; Aprovações carrega a fila que o servidor declara; as Centrais, iguais.
+ *     grava o formato 4; Aprovações carrega a fila que o servidor declara; as Centrais, iguais; e o histórico diz da
+ *     versão do formato 3 o que ela era: "registradas, sem execução".
  * Não há mock: o servidor é o binário da base, servindo o banco migrado e semeado por este HEAD.
  */
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333";
@@ -299,4 +302,67 @@ test("TOP-CONFIG-08 · K-1 (sentido 1) — as Centrais deste web sobre a API da 
   await expect(centralVendas, "a consulta da venda da base abre na Central").toBeVisible();
   await expect(centralVendas, "a do documento certo").toHaveAttribute("aria-label", new RegExp(lida.code));
   v.semBloqueio();
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * K-1d · O HISTÓRICO DE VERSÕES
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** A frase do histórico com o bloco, letra por letra; sem o bloco, nada que comece por "Regras gerais e aprovação". */
+const LINHA_REGISTRADAS = "Regras gerais e aprovação: registradas, sem execução";
+
+/** O valor de um campo no detalhe somente leitura da versão (`<dt>rótulo</dt><dd>valor</dd>`), pelo rótulo EXATO. */
+const valorNoDetalhe = (secao: Locator, rotulo: string) =>
+  secao.locator("div").filter({ has: secao.page().locator("dt").getByText(rotulo, { exact: true }) }).locator("dd");
+
+test("TOP-CONFIG-08 · K-1d (sentido 1) — o histórico deste web sobre a API da base: a versão do formato 3 com as regras gerais declaradas (a forma do pedido de compra de produção) aparece sem nenhuma das duas linhas \"Regras gerais e aprovação\" quando a base não declara o bloco; com o bloco, \"registradas, sem execução\"", async ({ page }) => {
+  const v = vigiar(page);
+  await login(page);
+  const { mundo } = await perguntarABase(page, await cabecalhosDaSessao(page));
+
+  // A TOP nasce PELA API DA BASE, no formato 3, na forma EXATA do pedido de compra de produção: Automática, Permitido,
+  // Permitida — as chaves das regras gerais fora do neutro, que no formato 3 só DECLARAM (nos dois mundos).
+  const top = await criarTopViaApi(page, "compras.pedido",
+    cfg3({ confirmacao: "automatica", documentoSemItens: "permitido", alteracaoAposConfirmacao: "permitida" }), { rotulo: "K-1d histórico" });
+  try {
+    const gravada = await detalheTopNoServidor(page, top.id);
+    const g = gravada.configuracao.valor?.geral;
+    expect([gravada.versao, gravada.configuracaoSchema, g?.confirmacao, g?.documentoSemItens, g?.alteracaoAposConfirmacao],
+      "premissa: a base gravou a versão 1 no formato 3, com as três regras de produção").toEqual([1, 3, "automatica", "permitido", "permitida"]);
+
+    // O histórico pergunta à base o que ela declara (a MESMA pergunta do editor). A tela é carregada do zero aqui, então a
+    // pergunta nasce com o histórico, e a resposta é a deste mundo.
+    await abrirTelaDeTops(page);
+    const capacidades = page.waitForResponse((r) => r.request().method() === "GET" && r.url().endsWith("/api/admin/tipos-operacao/capabilities"));
+    const versoes = await abrirHistoricoDaTop(page, top.codigo);
+    expect((await capacidades).status(), "o histórico perguntou à base as capacidades, e ela respondeu").toBe(200);
+
+    // PROVA POSITIVA, nos dois mundos: a versão está lá, no formato 3, e o web LEU as chaves das regras gerais dela.
+    const linhas = versoes.getByTestId("top-versao-linha");
+    await expect(linhas, "a TOP tem uma versão só").toHaveCount(1);
+    const v1 = linhas.first();
+    await expect(v1).toContainText("Versão 1");
+    await expect(v1, "o web leu a versão no formato 3").toContainText("Formato da configuração: 3");
+    await v1.getByTestId("top-versao-detalhe").click();
+    const geral = v1.getByTestId("top-versao-secao-geral");
+    await expect(valorNoDetalhe(geral, "Confirmação"), "o detalhe mostra a regra declarada").toHaveText("Automática");
+    await expect(valorNoDetalhe(geral, "Documento sem itens")).toHaveText("Permitido");
+    await expect(valorNoDetalhe(geral, "Alteração após confirmar")).toHaveText("Permitida");
+
+    const registradas = v1.getByTestId("top-historico-regras-registradas");
+    const executadas = v1.getByTestId("top-historico-regras-executadas");
+    if (mundo === "legado") {
+      // Sem o bloco, o histórico de HOJE: nenhuma das duas linhas, embora a versão traga as chaves fora do neutro.
+      await expect(registradas, "sem o bloco `regrasGerais`, nada de \"registradas, sem execução\"").toHaveCount(0);
+      await expect(executadas, "nem \"executadas\"").toHaveCount(0);
+      await expect(versoes, "nenhuma frase das regras gerais em lugar nenhum do histórico").not.toContainText("Regras gerais e aprovação");
+    } else {
+      // Com o bloco, a versão do formato 3 é o que sempre foi: declarava, sem executar.
+      await expect(registradas, "com o bloco, a versão do formato 3 registrava, sem executar").toHaveText(LINHA_REGISTRADAS);
+      await expect(executadas, "e nunca \"executadas\": o formato 3 não executa regra geral").toHaveCount(0);
+    }
+    v.semBloqueio();
+  } finally {
+    await excluirTopE2E(page, top.id);
+  }
 });

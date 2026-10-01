@@ -1853,16 +1853,24 @@ lançamentos da organização esperam por ele até o commit.
   responde é o ESTRITO: o corpo do erro fica idêntico ao de hoje. A conversão de venda continua no `docSchema` estrito, e o
   receber do pedido de compra continua com o mínimo de um item.
 - **Sem TOP** (`POST` sem `tipo_operacao_id`; `PUT` de documento que continua sem TOP), os itens vazios são recusados logo
-  depois da leitura do corpo, como hoje.
-- **Com TOP**, a regra roda depois de saber a TOP (no `PUT`, a versão congelada ou a atual da TOP nova, se ele a troca; na
-  `PATCH`, a congelada):
+  depois da leitura do corpo, como hoje. A `PATCH` de venda sem TOP é recusada antes, pela falta de TOP (a ordem, abaixo).
+- **Com TOP**, a regra roda depois de saber a TOP (no `PUT`, a versão congelada ou a atual da TOP nova, se ele a troca ou a
+  PÕE numa venda sem TOP; na `PATCH`, a congelada):
   - versão no formato 4 com "Permitido" → aceita `items: []` (venda) e `itens: []` (compra);
   - formato 1 a 3, "Proibido", configuração ilegível ou pedido → 422 com a resposta de hoje: `VALIDATION_ERROR`, mensagem
     "items: Valor mínimo: 1" (venda) ou "itens: Valor mínimo: 1" (compra), `details`
     `[{path: "items" | "itens", message: "Valor mínimo: 1"}]`.
 - **A ORDEM NOVA das recusas, com TOP** (declarada e testada): no `POST`, a recusa da TOP (`TIPO_OPERACAO_INDISPONIVEL`) ou
   a da empresa pode vir antes da dos itens; na `PATCH`, a 404, o 409 de versão e o 409 de situação vêm antes. Quando os
-  itens vazios são o único defeito do corpo, a resposta é a de hoje.
+  itens vazios são o único defeito do corpo, a resposta é a de hoje. Mais três ordens, na venda (declaradas e testadas,
+  SI-5a…SI-5d):
+  - `PATCH` numa venda SEM TOP com `items: []` → a MESMA 409 `INVALID_STATUS_TRANSITION` da `PATCH` sem TOP com itens
+    (antes, o 422 "items: Valor mínimo: 1"): a `PATCH` só edita venda com TOP, e essa recusa vem antes da dos itens;
+  - `PUT` que PÕE uma TOP numa venda sem TOP, com `items: []` → decide a versão da TOP NOVA: formato 4 "Permitido" →
+    aceita; formato 1 a 3, ou 4 "Proibido" → o MESMO 422 de hoje;
+  - `PUT` que põe ou troca a TOP por uma TOP indisponível (inexistente, ou de outra família), com `items: []` → 422
+    `TIPO_OPERACAO_INDISPONIVEL` (antes, o 422 "items: Valor mínimo: 1"): a TOP é resolvida antes da regra dos itens,
+    como no `POST`.
 - **Confirmar documento sem itens:** nenhum movimento de estoque. O título segue a regra de hoje de cada módulo: venda com
   financeiro a receber e total 0 é recusada pela confirmação ("Valor do título deve ser positivo"; na automática,
   `recusada`); compra só gera título com total > 0 (com frete, o título do total).
@@ -1891,21 +1899,28 @@ SQL, e o `erp_app` a executa.
 | `versao_documento` (bigint) | a `version` do documento (0039) | — | — |
 | `valor_documento` (`numeric(18,2)`) | o `total` | o `valor_total` | — |
 | `decisao` (`aprovado` \| `reprovado`) | sim | sim | sim |
-| `observacao` (até 500; obrigatória e não vazia na reprovação, por CHECK) | sim | sim | sim |
+| `observacao` (até 500; obrigatória na reprovação, com ao menos um caractere que não seja espaço em branco, por CHECK: `observacao ~ '[^[:space:]]'` — motivo só de espaço, tab ou quebra de linha é recusado) | sim | sim | sim |
 | `decidido_por` (FK `erp.users`), `decidido_em` | sim | sim | sim |
 
-- **Uma linha por DECISÃO, só inserção.** Gatilho de imutabilidade (UPDATE e DELETE recusados, de qualquer papel) e o
-  `erp_app` só com SELECT e INSERT. RLS habilitada e forçada, com a política `tenant_e_empresa` (categoria A) e os módulos
-  `vendas`, `compras` e `estoque`; `erp.audit_row` nas três; índice `(organization_id, documento_id, id desc)`.
+- **Uma linha por DECISÃO, só inserção.** Gatilhos de imutabilidade — por linha (UPDATE e DELETE) e por comando (BEFORE
+  TRUNCATE: o TRUNCATE não passa pelos gatilhos de linha) —, que recusam de qualquer papel, o dono inclusive, com
+  `CONFLICT: A decisão de aprovação não aceita <operação> (uma decisão nova registra a mudança).`; um `TRUNCATE … CASCADE`
+  de `erp.sales_documents`, `erp.documentos_compra` ou `erp.documentos_estoque` também é recusado, porque o gatilho dispara
+  nas tabelas alcançadas pela cascata. O `erp_app` só com SELECT e INSERT. RLS habilitada e forçada, com a política
+  `tenant_e_empresa` (categoria A) e os módulos `vendas`, `compras` e `estoque`; `erp.audit_row` nas três; índice
+  `(organization_id, documento_id, id desc)`.
 - **O gatilho de inserção** (BEFORE INSERT, SECURITY DEFINER, `search_path` fixo, organização e usuário da GUC do servidor
   — `erp.current_org_id()` e `erp.current_user_id()`, nunca os da linha) confere, na ordem: sem usuário na transação →
   `PERMISSION_DENIED`; `organization_id` da linha diferente de `erp.current_org_id()`, ou transação sem organização →
   `NOT_FOUND`, antes de ler qualquer documento (o gatilho roda antes do `with check` da RLS, e ler pela organização que
   veio no INSERT faria da recusa um oráculo da situação do documento de outro tenant); empresa da linha fora do escopo de
   escrita de quem decide, no módulo da transação (`erp.empresa_escrita_permitida`, o predicado do `with check` da
-  política) → `NOT_FOUND`, antes de ler o documento (pelo mesmo motivo, dentro da organização); depois lê, `for share`, o
-  documento da organização da GUC: inexistente, de outra empresa, excluído ou de outra espécie → `NOT_FOUND` (a mesma
-  recusa); venda com `versao_documento` diferente da `version` atual → `CONCURRENCY_CONFLICT`; documento que não está
+  política) → `NOT_FOUND`, antes de ler o documento (pelo mesmo motivo, dentro da organização); depois lê, `for share`, SÓ
+  o documento que passa pelo filtro inteiro da `NOT_FOUND`, no próprio `where` — id, organização da GUC e empresa da
+  linha; na venda, também `kind` `sale` e não excluída; na compra, espécie `compra`: inexistente, de outra empresa,
+  excluído ou de outra espécie → `NOT_FOUND` (a mesma recusa), na hora, sem ser lido nem travado — mesmo segurado
+  `for update` por outra sessão, a recusa não espera a trava (a espera, e o `lock_timeout` dela, revelariam que ele
+  existe); venda com `versao_documento` diferente da `version` atual → `CONCURRENCY_CONFLICT`; documento que não está
   aberto (venda `open`/`approved`, compra e estoque `aberto`) → `CONFLICT` "Só documento aberto passa por aprovação.";
   ATRIBUI do documento a TOP, a versão congelada e o valor (não compara o que veio), `decidido_por :=
   erp.current_user_id()` e `decidido_em := now()`; por fim, documento que não exige aprovação pelo total ATUAL →
@@ -1929,7 +1944,9 @@ situação, antes do período e dos cadastros, com uma consulta própria da conf
 - pendente → 409 `APROVACAO_PENDENTE` "Este documento precisa de aprovação antes de ser confirmado.", `details`
   `{politica, valorMinimo, valorDocumento}` (`valorMinimo` nulo na "Sempre"; `valorDocumento` nulo no estoque);
 - reprovado → 409 `APROVACAO_REPROVADA` "Este documento foi reprovado: <motivo>.", `details`
-  `{motivo, decididoPor: {id, nome}, decididoEm}`;
+  `{motivo, decididoPor: {id, nome}, decididoEm}` — o motivo entra como foi gravado, e o "." final só quando ele não
+  termina em ".", "!" ou "?" ("Preço alto." → "…reprovado: Preço alto."; "Preço alto" → "…reprovado: Preço alto.");
+  branco no fim do motivo só é ignorado para essa decisão, nunca tirado do texto (`mensagemAprovacaoReprovada`);
 - versão no formato 4 ilegível → 409 `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL` (fail-closed), como na compra;
 - **prévia da venda e da compra** (§12.5, §14): a recusa entra em `recusas`, no MESMO formato das outras, e `podeConfirmar`
   fica falso; a lista segue para as exigências, o período e a classificação. A Central de Vendas de hoje já mostra as
@@ -1955,6 +1972,17 @@ migração) continua guardado pela decisão da linha:
   `CONFLICT: Este documento precisa de aprovação antes de ser confirmado.` ou
   `CONFLICT: Este documento foi reprovado e não pode ser confirmado.`. Mensagem FIXA, de uma linha, sem motivo livre (o
   `fromPgError` só reconhece uma linha) e sem `details`.
+- **A aprovação só cobre o valor e a versão que aprovou.** A vigente `aprovado` só vale se o `valor_documento` dela for ≥ o
+  MAIOR valor entre o de antes e o de depois do UPDATE (venda: `total`; compra: `valor_total`; `numeric(18,2)` dos dois
+  lados) E se a `tipo_operacao_versao_id` dela for a de DEPOIS do UPDATE; no estoque, que não tem valor, só a versão.
+  Senão, a MESMA `CONFLICT: Este documento precisa de aprovação antes de ser confirmado.` da falta de decisão: confirmar
+  e, no mesmo UPDATE, subir o total ou trocar a TOP não aproveita a aprovação antiga. Na compra e no estoque, que não têm
+  edição, isso também pega valor ou TOP mudados por fora depois da decisão.
+- **A TOP tirada no mesmo UPDATE (venda).** O UPDATE que confirma a venda e, no MESMO comando, deixa
+  `tipo_operacao_versao_id` nula NÃO dispara a guarda: o WHEN é o MESMO da 0023 (com versão congelada), que também não
+  dispara. A API recusa tirar a TOP de uma venda (`PUT` com `tipo_operacao_id: null` → 422 `VALIDATION_ERROR`; a `PATCH`
+  nem aceita o campo), e os UPDATEs de confirmação da API gravam só a situação. Uma guarda de banco para a TOP tirada é de
+  outra fatia.
 - `CONFLICT` é conhecido por TODO binário: o anterior responde 409, nunca 500. Na API nova quem explica é o passo do
   planejamento (acima); a guarda é o fundo.
 - Na venda, a guarda roda ANTES da 0039 (o nome ordena antes de `trg_sales_documents_versao`), e um UPDATE pode gravar
@@ -2058,7 +2086,7 @@ documento pelas rotas de hoje. O menu chegou ao limite do nav-audit.
 | Código | Onde | Mensagem | `details` |
 | --- | --- | --- | --- |
 | `APROVACAO_PENDENTE` | confirmação manual e prévia (na automática vira `aguardando_aprovacao`) | "Este documento precisa de aprovação antes de ser confirmado." | `{politica, valorMinimo, valorDocumento}` |
-| `APROVACAO_REPROVADA` | confirmação (manual e automática) e prévia | "Este documento foi reprovado: <motivo>." | `{motivo, decididoPor: {id, nome}, decididoEm}` |
+| `APROVACAO_REPROVADA` | confirmação (manual e automática) e prévia | "Este documento foi reprovado: <motivo>." — o "." final só quando o motivo não termina em ".", "!" ou "?" (o branco no fim é ignorado só para essa decisão) | `{motivo, decididoPor: {id, nome}, decididoEm}` |
 | `APROVACAO_NAO_EXIGIDA` | aprovar e reprovar; também o gatilho de inserção | "Este documento não precisa de aprovação." | — |
 
 O `fromPgError` já traduz qualquer prefixo `CODIGO:` do banco e não mudou: o nome do código no SQL é idêntico ao do mapa.
@@ -2107,13 +2135,15 @@ formato 3, textos e abas de hoje. Com ele:
   `normalizarRegrasGeraisDaFamiliaTop`); a tela não é uma segunda fonte. É o caso do pedido de compra de produção (formato
   3 com Automática, Permitido e Permitida): salvo assim mesmo, vira formato 4 no neutro;
 - **histórico:** em cada versão que declara alguma regra geral ou aprovação fora do neutro, "Regras gerais e aprovação:
-  executadas" (formato 4) ou "Regras gerais e aprovação: registradas, sem execução" (formato 1 a 3).
+  executadas" (formato 4) ou "Regras gerais e aprovação: registradas, sem execução" (formato 1 a 3) — SÓ com o bloco
+  `regrasGerais` nas capabilities, a MESMA pergunta do editor (`podeConfigurarRegrasGerais`). Sem ele (API anterior,
+  capacidades carregando, ilegíveis ou negadas), nenhuma das duas linhas, em versão nenhuma: o histórico de hoje.
 
 ### 17.8 Version skew e o que fica para depois
 
 | Combinação | Comportamento |
 | --- | --- |
-| web nova × API anterior | sem o bloco `regrasGerais`, o editor grava o formato 3 com os textos de hoje; Aprovações recebe 404 nas rotas novas e mostra "As aprovações ainda não estão disponíveis neste servidor.", sem quebrar o resto |
+| web nova × API anterior | sem o bloco `regrasGerais`, o editor grava o formato 3 com os textos de hoje, e o histórico da TOP não mostra nenhuma das duas linhas "Regras gerais e aprovação: …"; Aprovações recebe 404 nas rotas novas e mostra "As aprovações ainda não estão disponíveis neste servidor.", sem quebrar o resto |
 | API nova × web anterior | o editor anterior grava o formato 3 como hoje; corpo no formato 1 a 3 sobre versão vigente no 4 → a 422 do formato que não retrocede; `POST` e confirmação com TOP de formato 1 a 3 dão o corpo de hoje; a Central de Estoque anterior mostra "prévia indisponível" diante de uma recusa de aprovação e deixa clicar — o servidor responde 409 |
 | API anterior × versão no formato 4 (reversão) | não confirma venda nem compra: 409 `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL` (configuração ilegível), como hoje com formato desconhecido; no estoque ela não lê a configuração, e quem barra o documento que exige aprovação é a guarda do banco (409 `CONFLICT`); documento lançado nela com TOP formato 4 fica sem exigências e sem condições permitidas (`regrasDaVersaoTop` devolve nulo para formato desconhecido); não edita TOP com versão vigente no formato 4 (422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`: a escrita fecha, §11.2) |
 
