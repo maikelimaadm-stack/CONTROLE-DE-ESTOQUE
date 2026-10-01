@@ -27,17 +27,24 @@
 --    organização e o documento de OUTRO tenant e descobrir, pela recusa que volta (NOT_FOUND × CONCURRENCY_CONFLICT
 --    × CONFLICT × APROVACAO_NAO_EXIGIDA), a situação de um documento que a RLS esconde dele. Linha de organização
 --    diferente da GUC — ou transação sem organização na GUC (superusuário, migração) — recebe a MESMA 'NOT_FOUND' de
---    inexistente, ANTES de ler qualquer documento. Depois, lê o documento da organização da GUC com FOR SHARE (a
---    rota já o travou FOR UPDATE na mesma transação; um caminho que não travou espera a confirmação concorrente
---    terminar e lê a situação NOVA) e confere: existe, é da empresa da decisão, e está aberto. Documento
---    inexistente, de outra empresa, excluído ou de outra espécie responde a MESMA recusa 'NOT_FOUND' (negar não
---    revela existência). Na venda, versao_documento tem de ser a version atual. ATRIBUI do documento a TOP, a versão
---    congelada e o valor (venda: total; compra: valor_total) — não compara o que veio —, e decidido_por :=
---    erp.current_user_id() (sem usuário, recusa), decidido_em := now(). Por fim, o documento tem de EXIGIR aprovação
---    pelo total ATUAL; senão, 'APROVACAO_NAO_EXIGIDA: …'.
---    A ordem das recusas é a da rota (TOP-CONFIG-08 §5): 404 → versão (409) → situação (409) → exigência (409);
---    antes de tudo, sem usuário na transação, 'PERMISSION_DENIED', e, em seguida, organização da linha fora da GUC,
---    'NOT_FOUND' (em nenhum dos dois nada do documento é lido).
+--    inexistente, ANTES de ler qualquer documento. O mesmo vale para a EMPRESA: a da linha tem de estar no escopo
+--    de escrita de quem decide, no módulo da transação — erp.empresa_escrita_permitida (0015), o MESMO predicado do
+--    with check da política tenant_e_empresa (para empresa não nula, as duas formas dizem a mesma coisa), avaliado
+--    com o usuário, a organização e o módulo da GUC de quem chama (a função lê as GUCs, não o dono). Sem isso, o
+--    membro com escopo [A] que, como erp_app, pede um documento da empresa B da MESMA organização leria a situação
+--    dele pela recusa (42501 do with check × APROVACAO_NAO_EXIGIDA × CONFLICT × NOT_FOUND): fora do escopo é a
+--    MESMA 'NOT_FOUND', também antes de ler qualquer documento. Depois, lê o documento da organização da GUC com
+--    FOR SHARE (a rota já o travou FOR UPDATE na mesma transação; um caminho que não travou espera a confirmação
+--    concorrente terminar e lê a situação NOVA) e confere: existe, é da empresa da decisão, e está aberto.
+--    Documento inexistente, de outra empresa, excluído ou de outra espécie responde a MESMA recusa 'NOT_FOUND'
+--    (negar não revela existência). Na venda, versao_documento tem de ser a version atual. ATRIBUI do documento a
+--    TOP, a versão congelada e o valor (venda: total; compra: valor_total) — não compara o que veio —, e
+--    decidido_por := erp.current_user_id() (sem usuário, recusa), decidido_em := now(). Por fim, o documento tem de
+--    EXIGIR aprovação pelo total ATUAL; senão, 'APROVACAO_NAO_EXIGIDA: …'.
+--    A ordem das recusas é: usuário → organização → empresa no escopo → documento (404) → versão (409) → situação
+--    (409) → exigência (409). As três primeiras vêm antes de ler qualquer documento: sem usuário na transação,
+--    'PERMISSION_DENIED'; organização da linha fora da GUC, 'NOT_FOUND'; empresa da linha fora do escopo de escrita
+--    do módulo, 'NOT_FOUND'. Dali em diante é a ordem da rota (TOP-CONFIG-08 §5).
 --    Toda mensagem é de UMA linha com prefixo de código: é o que o fromPgError (apps/api/src/lib/errors.ts) traduz.
 -- 4) Guardas de TRANSIÇÃO (BEFORE UPDATE da situação; SECURITY DEFINER; filtro explícito de organização), só na
 --    ENTRADA no estado confirmado:
@@ -158,9 +165,12 @@ begin
                           where a.attrelid = c.conrelid and a.attnum = any (c.conkey)) = array['id', 'organization_id']) then
     raise exception 'TOP-CONFIG-08: chave (organization_id, id) de erp.empresas ausente; a FK composta da empresa nao teria alvo.';
   end if;
+  -- As que os gatilhos de inserção chamam (organização e usuário da GUC; a empresa pelo predicado de escrita) entram
+  -- aqui também: o plpgsql só resolve a chamada na execução, e a ausência viraria erro genérico na primeira decisão.
   if to_regprocedure('erp.audit_row()') is null or to_regprocedure('erp.tenant_visible(uuid)') is null
      or to_regprocedure('erp.escopo_empresa_total(text)') is null or to_regprocedure('erp.empresas_do_membro(text)') is null
-     or to_regprocedure('erp.modulo_empresa_atual()') is null or to_regprocedure('erp.current_user_id()') is null then
+     or to_regprocedure('erp.modulo_empresa_atual()') is null or to_regprocedure('erp.current_user_id()') is null
+     or to_regprocedure('erp.current_org_id()') is null or to_regprocedure('erp.empresa_escrita_permitida(uuid)') is null then
     raise exception 'TOP-CONFIG-08: funcoes de auditoria/RLS/usuario (0001/0007/0015) ausentes.';
   end if;
   if (select count(*) from erp.modulos_escopo_empresa where chave in ('vendas', 'compras', 'estoque')) <> 3 then
@@ -334,9 +344,15 @@ comment on function erp.top_exige_aprovacao(jsonb, numeric) is
 -- ---------- 5) gatilhos das tabelas de aprovação ----------
 -- 5.1 Inserção conferida, uma por tabela. SECURITY DEFINER estreita: organização e usuário da GUC do servidor
 -- (erp.current_org_id() e erp.current_user_id()), nunca da linha; lê o documento e a versão SÓ dessa organização,
--- devolve só a recusa ou os valores atribuídos, sem SQL dinâmico. O organization_id que veio no INSERT é um PEDIDO:
--- diferente da GUC (ou sem GUC), a recusa é a NOT_FOUND de inexistente, antes de qualquer leitura — este gatilho
--- roda ANTES do with check da RLS, e é por isso que ele não pode confiar na linha (ver o cabeçalho, item 3).
+-- devolve só a recusa ou os valores atribuídos, sem SQL dinâmico. O organization_id e o empresa_id que vieram no
+-- INSERT são PEDIDOS: organização diferente da GUC (ou sem GUC), ou empresa fora do escopo de escrita de quem
+-- decide no módulo da transação (erp.empresa_escrita_permitida: o predicado do with check da política), recebem a
+-- NOT_FOUND de inexistente, antes de qualquer leitura — este gatilho roda ANTES do with check da RLS, e é por isso
+-- que ele não pode confiar na linha (ver o cabeçalho, item 3). A conferência da empresa roda DENTRO da definer, mas
+-- continua sendo a de quem chama: erp.empresa_escrita_permitida (sql, invoker) lê o usuário, a organização e o
+-- módulo das GUCs da transação (app.user_id, app.org_id, app.modulo_empresa), que o SECURITY DEFINER não troca; e
+-- as tabelas de escopo que ela lê são filtradas EXPLICITAMENTE por essa organização e esse usuário, então a RLS
+-- delas (que o dono atravessa) não tiraria nada do que ela vê pelo papel da aplicação.
 create function erp.aprovacoes_venda_conferir() returns trigger
 language plpgsql security definer set search_path = erp, pg_temp as $$
 declare
@@ -352,6 +368,13 @@ begin
   -- A organização da linha tem de ser a da GUC do servidor: senão (outro tenant, ou transação sem organização), a
   -- MESMA recusa de inexistente, sem ler nada — a resposta não pode variar com a situação de um documento alheio.
   if v_org is null or new.organization_id is distinct from v_org then
+    raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
+  end if;
+  -- A empresa da linha tem de estar no escopo de ESCRITA de quem decide, no módulo da transação — o MESMO predicado
+  -- do with check da política, só que ANTES de ler o documento: fora do escopo (mesmo na própria organização), a
+  -- MESMA recusa de inexistente, sem ler nada. Sem isto, o membro com escopo [A] pedindo um documento da empresa B
+  -- leria a situação dele pela recusa.
+  if not erp.empresa_escrita_permitida(new.empresa_id) then
     raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
   end if;
   select d.empresa_id, d.kind, d.status, d.deleted_at, d.total, d.version, d.tipo_operacao_id, d.tipo_operacao_versao_id
@@ -384,7 +407,7 @@ begin
   return new;
 end $$;
 comment on function erp.aprovacoes_venda_conferir() is
-  'TOP-CONFIG-08: decisão de venda só com usuário e organização da GUC do servidor (linha de outra organização, ou sem GUC: NOT_FOUND antes de qualquer leitura), para venda (kind sale) dessa organização e da empresa da linha, viva, na versão atual e aberta (open/approved), que exige aprovação pelo total atual; atribui TOP, versão congelada, valor, decidido_por e decidido_em do documento e da transação.';
+  'TOP-CONFIG-08: decisão de venda só com usuário e organização da GUC do servidor (linha de outra organização, ou sem GUC: NOT_FOUND antes de qualquer leitura) e com a empresa da linha no escopo de escrita de quem decide no módulo da transação (erp.empresa_escrita_permitida, o predicado do with check; fora dele: NOT_FOUND antes de qualquer leitura), para venda (kind sale) dessa organização e da empresa da linha, viva, na versão atual e aberta (open/approved), que exige aprovação pelo total atual; atribui TOP, versão congelada, valor, decidido_por e decidido_em do documento e da transação.';
 create trigger trg_aprovacoes_venda_conferir
   before insert on erp.aprovacoes_venda
   for each row execute function erp.aprovacoes_venda_conferir();
@@ -402,6 +425,11 @@ begin
   end if;
   -- A organização da GUC, nunca a da linha (o mesmo da venda): outra, ou nenhuma, é a NOT_FOUND sem ler nada.
   if v_org is null or new.organization_id is distinct from v_org then
+    raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
+  end if;
+  -- A empresa da linha no escopo de escrita de quem decide, no módulo da transação (o mesmo da venda): fora dele, a
+  -- NOT_FOUND sem ler nada.
+  if not erp.empresa_escrita_permitida(new.empresa_id) then
     raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
   end if;
   select d.empresa_id, d.especie, d.situacao, d.valor_total, d.tipo_operacao_id, d.tipo_operacao_versao_id
@@ -430,7 +458,7 @@ begin
   return new;
 end $$;
 comment on function erp.aprovacoes_compra_conferir() is
-  'TOP-CONFIG-08: decisão de compra só com usuário e organização da GUC do servidor (linha de outra organização, ou sem GUC: NOT_FOUND antes de qualquer leitura), para documento de compra (espécie compra) dessa organização e da empresa da linha, aberto, que exige aprovação pelo valor total atual; atribui TOP, versão congelada, valor, decidido_por e decidido_em do documento e da transação.';
+  'TOP-CONFIG-08: decisão de compra só com usuário e organização da GUC do servidor (linha de outra organização, ou sem GUC: NOT_FOUND antes de qualquer leitura) e com a empresa da linha no escopo de escrita de quem decide no módulo da transação (erp.empresa_escrita_permitida, o predicado do with check; fora dele: NOT_FOUND antes de qualquer leitura), para documento de compra (espécie compra) dessa organização e da empresa da linha, aberto, que exige aprovação pelo valor total atual; atribui TOP, versão congelada, valor, decidido_por e decidido_em do documento e da transação.';
 create trigger trg_aprovacoes_compra_conferir
   before insert on erp.aprovacoes_compra
   for each row execute function erp.aprovacoes_compra_conferir();
@@ -448,6 +476,11 @@ begin
   end if;
   -- A organização da GUC, nunca a da linha (o mesmo da venda): outra, ou nenhuma, é a NOT_FOUND sem ler nada.
   if v_org is null or new.organization_id is distinct from v_org then
+    raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
+  end if;
+  -- A empresa da linha no escopo de escrita de quem decide, no módulo da transação (o mesmo da venda): fora dele, a
+  -- NOT_FOUND sem ler nada.
+  if not erp.empresa_escrita_permitida(new.empresa_id) then
     raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
   end if;
   select d.empresa_id, d.situacao, d.tipo_operacao_id, d.tipo_operacao_versao_id
@@ -475,7 +508,7 @@ begin
   return new;
 end $$;
 comment on function erp.aprovacoes_estoque_conferir() is
-  'TOP-CONFIG-08: decisão de estoque só com usuário e organização da GUC do servidor (linha de outra organização, ou sem GUC: NOT_FOUND antes de qualquer leitura), para documento de estoque dessa organização e da empresa da linha, aberto, que exige aprovação (sem valor); atribui TOP, versão congelada, decidido_por e decidido_em do documento e da transação.';
+  'TOP-CONFIG-08: decisão de estoque só com usuário e organização da GUC do servidor (linha de outra organização, ou sem GUC: NOT_FOUND antes de qualquer leitura) e com a empresa da linha no escopo de escrita de quem decide no módulo da transação (erp.empresa_escrita_permitida, o predicado do with check; fora dele: NOT_FOUND antes de qualquer leitura), para documento de estoque dessa organização e da empresa da linha, aberto, que exige aprovação (sem valor); atribui TOP, versão congelada, decidido_por e decidido_em do documento e da transação.';
 create trigger trg_aprovacoes_estoque_conferir
   before insert on erp.aprovacoes_estoque
   for each row execute function erp.aprovacoes_estoque_conferir();

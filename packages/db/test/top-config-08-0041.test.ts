@@ -15,7 +15,9 @@ import { TEST_URL } from "./setup.js";
  *     documento, id desc); erp.audit_row nas três (DB-1);
  *   · o gatilho de INSERÇÃO (SECURITY DEFINER; roda ANTES do with check da RLS): sem usuário recusa; organização da
  *     linha diferente da GUC do servidor (ou transação sem organização) recebe a NOT_FOUND ANTES de ler qualquer
- *     documento — a mesma resposta qualquer que seja o documento do outro tenant, então ele não vira oráculo;
+ *     documento — a mesma resposta qualquer que seja o documento do outro tenant, então ele não vira oráculo; e a
+ *     empresa da linha fora do escopo de escrita de quem decide, no módulo da transação (o predicado do with check),
+ *     também — o membro com escopo [A] pedindo um documento da empresa B da MESMA organização (DB-2.12);
  *     documento de outra organização, de outra empresa, de outra espécie ou excluído recebe a MESMA NOT_FOUND; versão diferente
  *     da atual (venda) é concorrência; documento fora do aberto e documento que não exige aprovação são recusados;
  *     a reprovação sem motivo é o CHECK (23514); e ele ATRIBUI do documento a TOP, a versão congelada e o valor, e
@@ -41,7 +43,7 @@ let db: Db; let app: Db; let demo: DemoOrg;
 let A: string; let B: string;
 let cliente: string; let fornecedor: string; let armazemA: string; let armazemB: string;
 let outraOrg: string; let empresaOutraOrg: string;
-let usuarioEscopoA: string; let outroUsuario: string;
+let usuarioEscopoA: string; let usuarioEscopoAB: string; let usuarioOutraOrg: string; let outroUsuario: string;
 
 const ALVO = "0041_regras_gerais_e_aprovacao_da_top.sql";
 
@@ -271,13 +273,25 @@ beforeAll(async () => {
 
   outroUsuario = await id1("insert into erp.users (email, name, password_hash) values ('t08-outro@demo.local','T08 Outro','x') returning id");
   // Membro com escopo SELECIONADAS = [A] nos três módulos (vendas, compras, estoque), e nada nos outros (fail-closed).
-  usuarioEscopoA = await id1("insert into erp.users (email, name, password_hash) values ('t08-a@demo.local','T08 A','x') returning id");
-  const membro = await id1("insert into erp.organization_members (organization_id, user_id, is_owner, is_active) values ($1,$2,false,true) returning id", [demo.orgId, usuarioEscopoA]);
-  for (const modulo of ["vendas", "compras", "estoque"]) {
-    await db.query("insert into erp.membro_escopos_empresa (organization_id, membro_id, modulo, modo) values ($1,$2,$3,'selecionadas')", [demo.orgId, membro, modulo]);
-    await db.query("insert into erp.membro_empresas (organization_id, membro_id, modulo, modo, empresa_id) values ($1,$2,$3,'selecionadas',$4)", [demo.orgId, membro, modulo, A]);
-  }
+  usuarioEscopoA = await membroSelecionadas(demo.orgId, "t08-a", [A]);
+  // A contraprova do DB-2.12: o MESMO molde, com [A, B].
+  usuarioEscopoAB = await membroSelecionadas(demo.orgId, "t08-ab", [A, B]);
+  // Quem decide NA OUTRA organização (DB-2.2 e a contraprova do DB-2.11): membro dela com escopo [a empresa dela]. O
+  // gatilho confere a empresa pelo escopo de quem decide; o administrador da demo não é membro da outra organização.
+  usuarioOutraOrg = await membroSelecionadas(outraOrg, "t08-oo", [empresaOutraOrg]);
 }, 300_000);
+/** Usuário novo, membro ativo (não proprietário) de `org`, com escopo SELECIONADAS = `empresas` nos três módulos e nada nos outros. */
+async function membroSelecionadas(org: string, rotulo: string, empresas: string[]): Promise<string> {
+  const usuario = await id1("insert into erp.users (email, name, password_hash) values ($1,$2,'x') returning id", [`${rotulo}@demo.local`, `T08 ${rotulo}`]);
+  const membro = await id1("insert into erp.organization_members (organization_id, user_id, is_owner, is_active) values ($1,$2,false,true) returning id", [org, usuario]);
+  for (const modulo of ["vendas", "compras", "estoque"]) {
+    await db.query("insert into erp.membro_escopos_empresa (organization_id, membro_id, modulo, modo) values ($1,$2,$3,'selecionadas')", [org, membro, modulo]);
+    for (const empresa of empresas) {
+      await db.query("insert into erp.membro_empresas (organization_id, membro_id, modulo, modo, empresa_id) values ($1,$2,$3,'selecionadas',$4)", [org, membro, modulo, empresa]);
+    }
+  }
+  return usuario;
+}
 afterAll(async () => { await app?.end(); await db?.end(); });
 
 describe("DB-5/DB-6 — a 0041 sobre o banco até a 0040, como o runner aplica", () => {
@@ -381,7 +395,8 @@ describe("DB-5/DB-6 — a 0041 sobre o banco até a 0040, como o runner aplica",
       for (const n of nomes) await c.query(`alter table erp.empresas drop constraint "${n.conname}" cascade`);
     })).toBe("TOP-CONFIG-08: chave (organization_id, id) de erp.empresas ausente; a FK composta da empresa nao teria alvo.");
     // Cada função de auditoria/RLS/usuário.
-    for (const fn of ["audit_row()", "tenant_visible(uuid)", "escopo_empresa_total(text)", "empresas_do_membro(text)", "modulo_empresa_atual()", "current_user_id()"]) {
+    for (const fn of ["audit_row()", "tenant_visible(uuid)", "escopo_empresa_total(text)", "empresas_do_membro(text)", "modulo_empresa_atual()", "current_user_id()",
+      "current_org_id()", "empresa_escrita_permitida(uuid)"]) {
       expect([fn, await recusaDa0041((c) => c.query(`alter function erp.${fn} rename to t08_renomeada`))])
         .toEqual([fn, "TOP-CONFIG-08: funcoes de auditoria/RLS/usuario (0001/0007/0015) ausentes."]);
     }
@@ -660,6 +675,27 @@ describe("DB-1 — as três tabelas: objetos, FKs, RLS, índice, privilégios e 
     }
   });
 
+  /**
+   * O with check SOZINHO: o gatilho de conferência desligado numa transação DESFEITA (superusuário), e o papel da
+   * aplicação com as GUCs de `ctx`. A linha vai inteira e coerente (o que o gatilho atribuiria vem do documento).
+   */
+  async function soWithCheck(t: Tabela, ctx: TenantContext, documento: string, empresa: string, top: Top) {
+    const c = await db.connect();
+    try {
+      await c.query("begin");
+      await c.query(`alter table ${TABELA_SQL[t]} disable trigger trg_aprovacoes_${t}_conferir`);
+      const linha: Record<string, unknown> = {
+        organization_id: demo.orgId, empresa_id: empresa, documento_id: documento, tipo_operacao_id: top.top, tipo_operacao_versao_id: top.versao,
+        decisao: "aprovado", decidido_por: ctx.userId, decidido_em: new Date(),
+        ...(t === "venda" ? { versao_documento: await versaoDe(documento) } : {}), ...(t === "estoque" ? {} : { valor_documento: "100.00" })
+      };
+      await c.query("select set_config('app.org_id', $1, true), set_config('app.user_id', $2, true), set_config('app.modulo_empresa', $3, true)",
+        [ctx.orgId ?? "", ctx.userId ?? "", ctx.modulo ?? ""]);
+      await c.query("set local role erp_app");
+      const cols = Object.keys(linha);
+      return await c.query(`insert into ${TABELA_SQL[t]} (${cols.join(", ")}) values (${cols.map((_, i) => `$${i + 1}`).join(", ")})`, Object.values(linha));
+    } finally { await c.query("rollback").catch(() => {}); c.release(); }
+  }
   it("DB-1.7 RLS sob o papel da aplicação: o membro [A] vê e grava só a empresa A; módulo sem configuração e sem organização não veem nada", async () => {
     for (const t of TABELAS) {
       const top = topDe(t, "4Sempre");
@@ -672,8 +708,17 @@ describe("DB-1 — as três tabelas: objetos, FKs, RLS, índice, privilégios e 
       // Módulo sem configuração para o membro (financeiro): NENHUMA empresa — fail-closed, nunca "todas".
       expect([t, await ler({ ...ctxDe(t, usuarioEscopoA), modulo: "financeiro" })]).toEqual([t, []]);
       expect([t, await ler({ orgId: null, userId: demo.adminUserId, modulo: MODULO[t] })]).toEqual([t, []]);
-      // O gatilho (definer) deixa passar — o documento de B existe e exige aprovação —, e o with check da RLS recusa depois.
-      expect([t, (await erroDe(decidir(t, dB, { empresa: B }, ctxDe(t, usuarioEscopoA)))).code]).toEqual([t, "42501"]);
+      // Gravar em B: o gatilho (definer) confere a empresa da linha pelo MESMO predicado do with check, ANTES de ler o
+      // documento, e recusa com a NOT_FOUND de inexistente. Antes desta conferência, o gatilho LIA o documento de B e
+      // deixava passar, e a recusa era a 42501 do with check — que vinha depois da leitura, e só quando o documento de
+      // B estava aberto e exigindo (nas outras situações a recusa do gatilho dizia a situação: DB-2.12). A NOT_FOUND
+      // é a mais forte: a mesma de inexistente, e sem ler nada.
+      const e = await erroDe(decidir(t, dB, { empresa: B }, ctxDe(t, usuarioEscopoA)));
+      expect([t, e.message, e.code]).toEqual([t, NAO_ENCONTRADO, "P0001"]);
+      // O with check continua de pé ATRÁS do gatilho (segunda linha): sem a conferência, a MESMA linha do membro [A]
+      // em B, pelo papel da aplicação, é a 42501 da RLS; contraprova: a linha dele em A passa no with check.
+      expect([t, (await erroDe(soWithCheck(t, ctxDe(t, usuarioEscopoA), dB, B, top))).code]).toEqual([t, "42501"]);
+      expect([t, (await soWithCheck(t, ctxDe(t, usuarioEscopoA), dA, A, top)).rowCount]).toEqual([t, 1]);
       const idMembro = await decidir(t, dA, { empresa: A }, ctxDe(t, usuarioEscopoA));
       expect((await db.query<{ por: string }>(`select decidido_por por from ${TABELA_SQL[t]} where id=$1`, [idMembro])).rows[0]!.por).toBe(usuarioEscopoA);
       expect(await decisoesDe(t, dB)).toBe(1);
@@ -696,7 +741,8 @@ describe("DB-2 — o gatilho de inserção: recusas, ordem e o que ele ATRIBUI",
     for (const t of TABELAS) {
       const d = await novoDoc(t, topDe(t, "4Sempre"));
       expect([t, (await erroDe(decidir(t, d, {}, ctxDe(t, null)))).message]).toEqual([t, SEM_USUARIO]);
-      expect([t, (await erroDe(withTx(db, { orgId: demo.orgId, userId: null }, (tx) => inserirDecisao(tx, t, d)))).message]).toEqual([t, SEM_USUARIO]);
+      // Superusuário com a organização e o módulo da transação, sem usuário: a mesma recusa (a definer não depende da RLS).
+      expect([t, (await erroDe(withTx(db, { orgId: demo.orgId, userId: null, modulo: MODULO[t] }, (tx) => inserirDecisao(tx, t, d)))).message]).toEqual([t, SEM_USUARIO]);
       expect([t, (await erroDe(decidir(t, "00000000-0000-4000-8000-000000000003", { versao: "0" }, ctxDe(t, null)))).message]).toEqual([t, SEM_USUARIO]);
       expect(await decisoesDe(t, d)).toBe(0);
     }
@@ -707,7 +753,14 @@ describe("DB-2 — o gatilho de inserção: recusas, ordem e o que ele ATRIBUI",
       const d = await novoDoc(t, topDe(t, "4Sempre"));
       expect([t, "inexistente", (await erroDe(decidir(t, "00000000-0000-4000-8000-000000000004", { versao: "0" }))).message]).toEqual([t, "inexistente", NAO_ENCONTRADO]);
       const outraOrgDecisao = { org: outraOrg, empresa: empresaOutraOrg };
-      expect([t, "outra org (dono)", (await erroDe(withTx(db, { orgId: outraOrg, userId: demo.adminUserId }, (tx) => inserirDecisao(tx, t, d, outraOrgDecisao)))).message])
+      // Superusuário com o contexto de quem decide NA OUTRA organização (membro dela, com a empresa dela no escopo do
+      // módulo): a organização e a empresa da linha passam nas conferências, e a NOT_FOUND é a da LEITURA — o
+      // documento é da demo, e o gatilho só lê pela organização da GUC.
+      const ctxOutraOrg: TenantContext = { orgId: outraOrg, userId: usuarioOutraOrg, modulo: MODULO[t] };
+      expect([t, "premissa: a empresa da linha está no escopo", await withTx(db, ctxOutraOrg, async (tx) =>
+        (await tx.query<{ ok: boolean }>("select erp.empresa_escrita_permitida($1) ok", [empresaOutraOrg])).rows[0]!.ok)])
+        .toEqual([t, "premissa: a empresa da linha está no escopo", true]);
+      expect([t, "outra org (dono)", (await erroDe(withTx(db, ctxOutraOrg, (tx) => inserirDecisao(tx, t, d, outraOrgDecisao)))).message])
         .toEqual([t, "outra org (dono)", NAO_ENCONTRADO]);
       // O BEFORE INSERT (definer) roda ANTES do with check da RLS: o papel da aplicação recebe a NOT_FOUND, não a 42501.
       expect([t, "outra org (app)", (await erroDe(decidir(t, d, outraOrgDecisao))).message]).toEqual([t, "outra org (app)", NAO_ENCONTRADO]);
@@ -773,10 +826,15 @@ describe("DB-2 — o gatilho de inserção: recusas, ordem e o que ele ATRIBUI",
     await expect(decidir("venda", d, { versao: atual })).resolves.toMatch(/^\d+$/);
   });
 
-  it("DB-2.7 a ordem das recusas é a da rota: usuário → 404 → versão (409) → situação (409) → exigência (409)", async () => {
+  it("DB-2.7 a ordem das recusas: usuário → organização → empresa no escopo → 404 → versão (409) → situação (409) → exigência (409)", async () => {
     // Confirmada, de outra empresa e com a versão errada: a 404 vence.
     const confirmada = await venda(tops.venda4Nenhuma, { status: "confirmed" });
     expect((await erroDe(decidir("venda", confirmada, { empresa: B, versao: "9" }))).message).toBe(NAO_ENCONTRADO);
+    // O membro [A] pedindo com a empresa B (fora do escopo dele): a NOT_FOUND da empresa vence a versão e a situação;
+    // a mesma linha sem usuário: o usuário vem antes de tudo. Com a empresa A (no escopo), a versão volta a falar.
+    expect((await erroDe(decidir("venda", confirmada, { empresa: B, versao: "9" }, ctxDe("venda", usuarioEscopoA)))).message).toBe(NAO_ENCONTRADO);
+    expect((await erroDe(decidir("venda", confirmada, { empresa: B, versao: "9" }, ctxDe("venda", null)))).message).toBe(SEM_USUARIO);
+    expect((await erroDe(decidir("venda", confirmada, { versao: "9" }, ctxDe("venda", usuarioEscopoA)))).message).toBe(MUDOU);
     // Confirmada e com a versão errada: a concorrência vence a situação.
     expect((await erroDe(decidir("venda", confirmada, { versao: "9" }))).message).toBe(MUDOU);
     // Confirmada e sem exigência: a situação vence a exigência.
@@ -976,7 +1034,7 @@ describe("DB-2 — o gatilho de inserção: recusas, ordem e o que ele ATRIBUI",
 
       // O superusuário com usuário e SEM organização na GUC: NOT_FOUND — para o documento de B e para um da própria
       // organização (aberto e exigindo) —, e nada gravado. Sem usuário, a PERMISSION_DENIED vem antes (DB-2.1).
-      const semOrg = { orgId: null, userId: demo.adminUserId };
+      const semOrg: TenantContext = { orgId: null, userId: demo.adminUserId, modulo: MODULO[t] };
       expect([t, "B sem GUC", (await erroDe(withTx(db, semOrg, (tx) => inserirDecisao(tx, t, exigindo, pedidoDeB)))).message])
         .toEqual([t, "B sem GUC", NAO_ENCONTRADO]);
       expect([t, "própria sem GUC", (await erroDe(withTx(db, semOrg, (tx) => inserirDecisao(tx, t, meu)))).message])
@@ -985,10 +1043,11 @@ describe("DB-2 — o gatilho de inserção: recusas, ordem e o que ele ATRIBUI",
       expect([t, await decisoesDe(t, meu), await decisoesDe(t, exigindo), await decisoesDe(t, confirmado), await decisoesDe(t, naoExige)])
         .toEqual([t, 0, 0, 0, 0]);
 
-      // CONTRAPROVA: com a GUC de B (superusuário, que não tem RLS a recortar), o gatilho LÊ os documentos de B e as
-      // respostas variam com a situação — era exatamente esse o oráculo. O "aberto e exigindo" grava.
+      // CONTRAPROVA: com a GUC de B — um membro de B com a empresa dele no escopo do módulo, pelo superusuário, que não
+      // tem RLS a recortar —, o gatilho LÊ os documentos de B e as respostas variam com a situação — era exatamente
+      // esse o oráculo. O "aberto e exigindo" grava.
       for (const [situacao, doc, versao, esperado] of casos) {
-        const tentativa = withTx(db, { orgId: outraOrg, userId: demo.adminUserId }, (tx) =>
+        const tentativa = withTx(db, { orgId: outraOrg, userId: usuarioOutraOrg, modulo: MODULO[t] }, (tx) =>
           inserirDecisao(tx, t, doc, { ...pedidoDeB, versao: t === "venda" ? versao : undefined }));
         if (esperado === null) await expect(tentativa, `${t} ${situacao}`).resolves.toMatch(/^\d+$/);
         else expect([t, situacao, (await erroDe(tentativa)).message]).toEqual([t, situacao, esperado]);
@@ -996,6 +1055,99 @@ describe("DB-2 — o gatilho de inserção: recusas, ordem e o que ele ATRIBUI",
       expect([t, await decisoesDe(t, exigindo), await decisoesDe(t, confirmado), await decisoesDe(t, naoExige)]).toEqual([t, 1, 0, 0]);
       // E a do próprio documento, pela GUC da organização dele: grava.
       await expect(decidir(t, meu)).resolves.toMatch(/^\d+$/);
+    }
+  });
+
+  /**
+   * O ORÁCULO ENTRE EMPRESAS, FECHADO. O gatilho de inserção conferia a ORGANIZAÇÃO pela GUC, mas lia o documento sem
+   * o recorte de EMPRESA da RLS: o membro com escopo [A] que, como erp_app, insere uma decisão para um documento da
+   * empresa B (fora do escopo dele, MESMA organização) recebia respostas que variavam com a situação desse documento —
+   * aberto e exigindo → 42501 do with check; sem exigência → APROVACAO_NAO_EXIGIDA; confirmado → CONFLICT; outra
+   * versão (venda) → CONCURRENCY_CONFLICT; inexistente → NOT_FOUND. A API não expõe o caso (as rotas conferem a
+   * visibilidade antes), mas a porta definer tem de ser estreita: a empresa da linha passa pelo MESMO predicado do with
+   * check (erp.empresa_escrita_permitida), com o usuário e o módulo da GUC, ANTES de ler o documento. A prova de que
+   * nada de B foi lido: cada documento travado FOR UPDATE por outra sessão, e a recusa vem na hora (o FOR SHARE do
+   * gatilho, se lesse, esperaria a trava, e o lock_timeout curto viraria 55P03).
+   * O usuário e o módulo são os da GUC de quem chama, também DENTRO da definer: o mesmo membro [A], no módulo sem
+   * configuração (financeiro), recebe a NOT_FOUND até para um documento da própria A; no módulo do documento, grava.
+   * Contraprova: um membro com escopo [A, B], pelo MESMO papel e nos MESMOS documentos, recebe as respostas DIFERENTES
+   * de cada situação — o cenário é real, e a NOT_FOUND única é a conferência da empresa, não um cenário quebrado.
+   */
+  it("DB-2.12 membro com escopo [A] pedindo documento da empresa B da MESMA organização: a MESMA NOT_FOUND em toda situação, sem ler nada de B; com escopo [A, B], as respostas de cada situação", async () => {
+    const INEXISTENTE = "00000000-0000-4000-8000-000000000006";
+    for (const t of TABELAS) {
+      const exigindo = await novoDoc(t, topDe(t, "4Sempre"), { empresa: B });
+      // Confirmado com a TOP "nenhuma": a guarda deixa passar sem decisão (a situação é o que interessa aqui).
+      const confirmado = await novoDoc(t, topDe(t, "4Nenhuma"), { empresa: B });
+      await confirmar(t, confirmado);
+      const naoExige = await novoDoc(t, topDe(t, "4Nenhuma"), { empresa: B });
+      const atual = async (doc: string) => (t === "venda" ? versaoDe(doc) : undefined);
+      // Cada caso: [situação, documento, versão pedida (venda: a ATUAL, salvo na outra versão e no inexistente), a
+      // resposta que o gatilho dá ao membro [A, B] (null = grava)].
+      const casos: [string, string, string | undefined, string | null][] = [
+        ["aberto e exigindo", exigindo, await atual(exigindo), null],
+        ["confirmado", confirmado, await atual(confirmado), SO_ABERTO],
+        ["sem exigência", naoExige, await atual(naoExige), NAO_EXIGIDA],
+        ["inexistente", INEXISTENTE, t === "venda" ? "0" : undefined, NAO_ENCONTRADO],
+        ...(t === "venda" ? [["outra versão", exigindo, "9", MUDOU] as [string, string, string, string]] : [])
+      ];
+      // PREMISSA: os documentos são da MESMA organização e da empresa B, nas situações ditas; pela RLS, o membro [A]
+      // não enxerga nenhum, e o [A, B] enxerga os três.
+      expect([t, await estado(t, exigindo), await estado(t, confirmado), await estado(t, naoExige)])
+        .toEqual([t, DOCUMENTO_SQL[t].aberto, DOCUMENTO_SQL[t].confirmado, DOCUMENTO_SQL[t].aberto]);
+      expect((await db.query<{ org: string; empresa: string }>(
+        `select distinct organization_id::text org, empresa_id::text empresa from ${DOCUMENTO_SQL[t].tabela} where id = any($1::uuid[])`,
+        [[exigindo, confirmado, naoExige]])).rows).toEqual([{ org: demo.orgId, empresa: B }]);
+      const visiveis = (ctx: TenantContext) => withTx(app, ctx, async (tx) =>
+        (await tx.query(`select 1 from ${DOCUMENTO_SQL[t].tabela} where id = any($1::uuid[])`, [[exigindo, confirmado, naoExige]])).rowCount);
+      expect([t, await visiveis(ctxDe(t, usuarioEscopoA)), await visiveis(ctxDe(t, usuarioEscopoAB))]).toEqual([t, 0, 3]);
+
+      // O membro [A], pelo papel da aplicação, no módulo do documento: a MESMA NOT_FOUND em todo caso — e na hora, com
+      // o documento travado FOR UPDATE por outra sessão (o gatilho não chegou a lê-lo).
+      const respostas: string[] = [];
+      for (const [situacao, doc, versao] of casos) {
+        const trava = await db.connect();
+        try {
+          await trava.query("begin");
+          const travados = (await trava.query(`select 1 from ${DOCUMENTO_SQL[t].tabela} where id=$1 for update`, [doc])).rowCount;
+          expect([t, situacao, travados]).toEqual([t, situacao, doc === INEXISTENTE ? 0 : 1]);
+          const e = await erroDe(withTx(app, ctxDe(t, usuarioEscopoA), async (tx) => {
+            await tx.query("set local lock_timeout = '1s'");
+            return inserirDecisao(tx, t, doc, { empresa: B, versao });
+          }));
+          expect([t, situacao, e.message, e.code]).toEqual([t, situacao, NAO_ENCONTRADO, "P0001"]);
+          respostas.push(e.message);
+        } finally { await trava.query("rollback").catch(() => {}); trava.release(); }
+      }
+      expect([t, new Set(respostas).size, respostas.length]).toEqual([t, 1, casos.length]);
+      expect([t, await decisoesDe(t, exigindo), await decisoesDe(t, confirmado), await decisoesDe(t, naoExige)]).toEqual([t, 0, 0, 0]);
+
+      // O módulo é o da GUC de quem chama, também dentro da definer: o MESMO membro [A], no módulo sem configuração
+      // (financeiro), recebe a NOT_FOUND até para um documento da própria A, aberto e exigindo; no módulo dele, grava.
+      const meu = await novoDoc(t, topDe(t, "4Sempre"));
+      expect([t, "módulo sem configuração", (await erroDe(decidir(t, meu, {}, { ...ctxDe(t, usuarioEscopoA), modulo: "financeiro" }))).message])
+        .toEqual([t, "módulo sem configuração", NAO_ENCONTRADO]);
+      expect(await decisoesDe(t, meu)).toBe(0);
+      await expect(decidir(t, meu, {}, ctxDe(t, usuarioEscopoA))).resolves.toMatch(/^\d+$/);
+
+      // CONTRAPROVA: o membro [A, B], pelo MESMO papel e nos MESMOS documentos, passa na conferência da empresa, e o
+      // gatilho LÊ os documentos de B: as respostas variam com a situação (era o oráculo). O "aberto e exigindo" grava.
+      const respostasAB: string[] = [];
+      for (const [situacao, doc, versao, esperado] of casos) {
+        const tentativa = decidir(t, doc, { empresa: B, versao }, ctxDe(t, usuarioEscopoAB));
+        if (esperado === null) {
+          await expect(tentativa, `${t} ${situacao}`).resolves.toMatch(/^\d+$/);
+          respostasAB.push("grava");
+        } else {
+          const m = (await erroDe(tentativa)).message;
+          expect([t, situacao, m]).toEqual([t, situacao, esperado]);
+          respostasAB.push(m);
+        }
+      }
+      expect([t, new Set(respostasAB).size]).toEqual([t, casos.length]);
+      expect([t, await decisoesDe(t, exigindo), await decisoesDe(t, confirmado), await decisoesDe(t, naoExige)]).toEqual([t, 1, 0, 0]);
+      expect((await db.query<{ por: string }>(`select decidido_por por from ${TABELA_SQL[t]} where documento_id=$1`, [exigindo])).rows)
+        .toEqual([{ por: usuarioEscopoAB }]);
     }
   });
 });

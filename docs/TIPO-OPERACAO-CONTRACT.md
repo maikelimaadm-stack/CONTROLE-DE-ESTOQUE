@@ -1897,13 +1897,19 @@ SQL, e o `erp_app` a executa.
 - **Uma linha por DECISÃO, só inserção.** Gatilho de imutabilidade (UPDATE e DELETE recusados, de qualquer papel) e o
   `erp_app` só com SELECT e INSERT. RLS habilitada e forçada, com a política `tenant_e_empresa` (categoria A) e os módulos
   `vendas`, `compras` e `estoque`; `erp.audit_row` nas três; índice `(organization_id, documento_id, id desc)`.
-- **O gatilho de inserção** (BEFORE INSERT, SECURITY DEFINER, `search_path` fixo, filtro explícito de organização) lê o
-  documento `for share`, na ordem: sem usuário na transação → `PERMISSION_DENIED`; documento inexistente, de outra
-  organização, de outra empresa, excluído ou de outra espécie → `NOT_FOUND` (a mesma recusa); venda com `versao_documento`
-  diferente da `version` atual → `CONCURRENCY_CONFLICT`; documento que não está aberto (venda `open`/`approved`, compra e
-  estoque `aberto`) → `CONFLICT` "Só documento aberto passa por aprovação."; ATRIBUI do documento a TOP, a versão congelada
-  e o valor (não compara o que veio), `decidido_por := erp.current_user_id()` e `decidido_em := now()`; por fim, documento
-  que não exige aprovação pelo total ATUAL → `APROVACAO_NAO_EXIGIDA`.
+- **O gatilho de inserção** (BEFORE INSERT, SECURITY DEFINER, `search_path` fixo, organização e usuário da GUC do servidor
+  — `erp.current_org_id()` e `erp.current_user_id()`, nunca os da linha) confere, na ordem: sem usuário na transação →
+  `PERMISSION_DENIED`; `organization_id` da linha diferente de `erp.current_org_id()`, ou transação sem organização →
+  `NOT_FOUND`, antes de ler qualquer documento (o gatilho roda antes do `with check` da RLS, e ler pela organização que
+  veio no INSERT faria da recusa um oráculo da situação do documento de outro tenant); empresa da linha fora do escopo de
+  escrita de quem decide, no módulo da transação (`erp.empresa_escrita_permitida`, o predicado do `with check` da
+  política) → `NOT_FOUND`, antes de ler o documento (pelo mesmo motivo, dentro da organização); depois lê, `for share`, o
+  documento da organização da GUC: inexistente, de outra empresa, excluído ou de outra espécie → `NOT_FOUND` (a mesma
+  recusa); venda com `versao_documento` diferente da `version` atual → `CONCURRENCY_CONFLICT`; documento que não está
+  aberto (venda `open`/`approved`, compra e estoque `aberto`) → `CONFLICT` "Só documento aberto passa por aprovação.";
+  ATRIBUI do documento a TOP, a versão congelada e o valor (não compara o que veio), `decidido_por :=
+  erp.current_user_id()` e `decidido_em := now()`; por fim, documento que não exige aprovação pelo total ATUAL →
+  `APROVACAO_NAO_EXIGIDA`.
 - **A vigente.** Venda: a última decisão (id desc) DA VERSÃO ATUAL do documento; sem decisão da versão atual = pendente.
   Alterar a venda depois de aprovada sobe a versão (0039) e a devolve a pendente; reprovada na versão V e alterada para V+1
   → pendente. A tabela é separada justamente para que aprovar não mexa na versão. Compra e estoque não têm edição: a vigente
@@ -1934,7 +1940,9 @@ situação, antes do período e dos cadastros, com uma consulta própria da conf
   recusas acima da tabela de itens.
 
 **A guarda no banco (0041).** BEFORE UPDATE da situação, só na ENTRADA no confirmado e só com versão congelada; SECURITY
-DEFINER, `search_path` fixo, filtro explícito de organização:
+DEFINER, `search_path` fixo, filtro explícito de organização — a da própria linha (`OLD.organization_id`), não a da GUC,
+ao contrário da inserção: não há linha "pedida" (o UPDATE só alcança o que a RLS deixa), e o UPDATE sem GUC (superusuário,
+migração) continua guardado pela decisão da linha:
 
 | Gatilho | Dispara | Decisão procurada |
 | --- | --- | --- |
@@ -1986,7 +1994,7 @@ observação); `motivo` obrigatório, de 1 a 500 caracteres depois de aparado.
 | --- | --- | --- |
 | 0 | capacidade (`runService`) | sem `<recurso>.approve` → 403 |
 | 1 | corpo, antes de ler registro e de reservar a chave | 422 `VALIDATION_ERROR` |
-| 2 | id fora da forma de UUID | a MESMA 404 (sem isso, o banco daria 500) |
+| 2 | id fora da forma de UUID; a forma aceita maiúsculas, e dali em diante vale o id CANÔNICO, em minúsculas (o hash da idempotência e a trilha do documento falam do mesmo documento, qualquer que seja a grafia) | a MESMA 404 (sem isso, o banco daria 500) |
 | 3 | documento invisível — outra organização, fora do escopo de empresa, inexistente, excluído, espécie ou variante errada (venda: `exigirDocumentoVisivel`; compra: `lerDocumentoCompra`; estoque: `lerDocumentoEstoque`) | a MESMA 404 do GET por id |
 | 4 | `Idempotency-Key` (ação, documento, pedido e autor no hash), depois da 404: o replay não passa pelo recorte de empresa | mesma chave, outro corpo → 409 `CONFLICT` |
 | 5 | trava do documento `for update`, SEM junção (venda: `travarDocumentoDaEdicao`) | zero linhas → a MESMA 404 |
@@ -2009,11 +2017,22 @@ gravado e nunca decide nem confirma duas vezes.
 
 **A fila (GET).** Documentos ABERTOS que exigem aprovação (a conta do banco sobre a versão congelada e o total atual) e não
 têm aprovação vigente — pendentes e reprovados —, no escopo de empresa de quem aprova; no estoque, só das espécies que a
-pessoa aprova. Paginação no servidor (`pageQuerySchema`), ordem fixa: data do documento desc, criação desc, id. Número fixo
-de consultas (a contagem e a página), nunca uma por linha. Resposta `{ items, total, page, pageSize }`, com a linha:
+pessoa aprova.
+
+- **A empresa selecionada** (`X-Empresa-Id`) recorta as três filas como recorta a decisão (o recorte do GET por id que
+  Aprovar e Reprovar usam): o que a fila mostra é o que a decisão aceita. A seleção só diminui o escopo do módulo, nunca o
+  amplia; empresa selecionada proibida no módulo → 403, também na fila do estoque (a porta dinâmica valida a seleção
+  depois de resolver o módulo) — nunca uma fila vazia que a decisão, com a mesma seleção, recusaria com 403.
+- **Só a paginação.** As três aceitam SÓ `page` e `pageSize`: parâmetro desconhecido, filtro ou busca → 422
+  `VALIDATION_ERROR` no parâmetro (`details[].path`), nunca ignorado; parâmetro repetido → 422 no parâmetro.
+- Paginação no servidor (`pageQuerySchema`), ordem fixa: data do documento desc, criação desc, id. Número fixo de
+  consultas (a contagem, a página e o ID Global da página), nunca uma por linha.
+- **Resposta** `{ items, total, page, pageSize, idGlobal }`, o padrão das listas de hoje: cada item traz `id_global` (o ID
+  Global do documento na organização, ou nulo) e a página a marca `idGlobal: { tipoEntidade, rotulo }` (`sales_documents`,
+  `documentos_compra` ou `documentos_estoque`), que a tela lê para mostrar a coluna. A linha:
 
 ```
-{ id, codigo,
+{ id, id_global, codigo,
   especie,                                    // "venda" | "compra" | "entrada" | "saida" | "transferencia" | "ajuste"
   data,
   empresa: { id, nome },
@@ -2098,8 +2117,10 @@ formato 3, textos e abas de hoje. Com ele:
 | API nova × web anterior | o editor anterior grava o formato 3 como hoje; corpo no formato 1 a 3 sobre versão vigente no 4 → a 422 do formato que não retrocede; `POST` e confirmação com TOP de formato 1 a 3 dão o corpo de hoje; a Central de Estoque anterior mostra "prévia indisponível" diante de uma recusa de aprovação e deixa clicar — o servidor responde 409 |
 | API anterior × versão no formato 4 (reversão) | não confirma venda nem compra: 409 `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL` (configuração ilegível), como hoje com formato desconhecido; no estoque ela não lê a configuração, e quem barra o documento que exige aprovação é a guarda do banco (409 `CONFLICT`); documento lançado nela com TOP formato 4 fica sem exigências e sem condições permitidas (`regrasDaVersaoTop` devolve nulo para formato desconhecido); não edita TOP com versão vigente no formato 4 (422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`: a escrita fecha, §11.2) |
 
-**Fica para a fatia F2 da Central no motor** (Central de Vendas e Central de Compras, nenhum arquivo delas mudou aqui): o
-"Salvar e confirmar" quando a TOP é automática — até lá, "Confirmar venda" na criação de uma venda automática abre o
-diálogo de um documento já confirmado —; os itens vazios quando a TOP permite; a situação da aprovação e o
-Aprovar/Reprovar na consulta. **Fatias próprias:** alteração após confirmar, notificação para quem aprova, aprovação de
-pedido, financeiro "Previsão", devolução de venda e de compra, campos por TOP no estoque.
+**Fica para a fatia F2 da Central no motor** (Central de Vendas e Central de Compras, nenhum arquivo delas mudou aqui):
+o "Salvar e confirmar" quando a TOP é automática — até lá, "Confirmar venda" na criação de uma venda automática salva, o
+`POST` já confirma, e a consulta abre a venda confirmada, sem o diálogo de confirmação, sem prévia e sem segundo
+`/confirm` (o diálogo só abre para venda que chega aberta, como quando a automática não confirma) —; os itens vazios
+quando a TOP permite; a situação da aprovação e o Aprovar/Reprovar na consulta. **Fatias próprias:** alteração após
+confirmar, notificação para quem aprova, aprovação de pedido, financeiro "Previsão", devolução de venda e de compra,
+campos por TOP no estoque.

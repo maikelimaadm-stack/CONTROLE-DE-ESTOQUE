@@ -1600,23 +1600,25 @@ com a política `tenant_e_empresa` da 0040 (módulos `vendas`, `compras` e `esto
 `(organization_id, documento_id, id desc)`; a conta `erp.top_exige_aprovacao(jsonb, numeric)` (imutável, não lê tabela,
 a mesma de `exigeAprovacao` do domínio; o papel da API a executa, porque a fila de aprovações a usa em SQL); um gatilho
 de inserção por tabela (`trg_aprovacoes_venda_conferir`, `trg_aprovacoes_compra_conferir`,
-`trg_aprovacoes_estoque_conferir`; SECURITY DEFINER, `search_path` fixo, filtro explícito de organização), que confere o
-documento aberto da mesma organização e empresa, que exige aprovação pelo total ATUAL — na venda, também a versão atual
-—, e ATRIBUI do documento a TOP, a versão congelada e o valor, e da transação `decidido_por` e `decidido_em`; e três
-guardas de transição BEFORE UPDATE da situação — `trg_sales_documents_aprovacao` (o mesmo WHEN da 0023; procura a
-decisão da versão `OLD.version` e dispara antes das três de hoje), `trg_documentos_compra_aprovacao` e
-`trg_documentos_estoque_aprovacao` (aberto → confirmado) —, que recusam com `CONFLICT` (mensagem fixa de uma linha: 409
-em todo binário) a entrada no confirmado de documento cuja versão congelada está no formato 4, exige aprovação e não
-tem a vigente aprovada. Formato 1 a 3 nunca é barrado. As pós-condições conferem objetos (as tabelas, a RLS forçada e
-a política única, as 12 FKs sem cascata, os 9 CHECKs, os índices, a forma da conta e das funções de gatilho, EXECUTE
-das funções de gatilho só do dono, os 9 gatilhos das tabelas de aprovação, as 3 guardas, o WHEN igual ao da 0023, os
-quatro BEFORE UPDATE por linha da venda por nome — a guarda da aprovação primeiro, a 0039 por último — e os
-privilégios); não comparam contagens de tabelas vivas. As permissões novas (`sales.approve`, `compras.approve`,
-`entradas_estoque.approve`, `saidas_estoque.approve`, `transferencias_estoque.approve`, `ajustes_estoque.approve` —
-"Aprovar") não têm migration: o pre-deploy sincroniza o catálogo e o perfil Administrador do sistema as recebe; os
-outros perfis, o Maike dá na tela de perfis. Rotas novas num prefixo próprio,
-`/api/aprovacoes/{vendas,compras,estoque}`, e o módulo Aprovações (`/aprovacoes`) no menu — o 14º, o limite do menu.
-Nenhuma variável nova.
+`trg_aprovacoes_estoque_conferir`; SECURITY DEFINER, `search_path` fixo, organização e usuário da GUC do servidor —
+linha de outra organização, ou sem organização na GUC, recebe a `NOT_FOUND` antes de ler qualquer documento, e linha de
+empresa fora do escopo de escrita de quem decide no módulo da transação (`erp.empresa_escrita_permitida`, o predicado do
+`with check` da política) também), que confere o documento aberto da organização da GUC e da empresa da linha, que exige
+aprovação pelo total ATUAL — na venda, também a versão atual —, e ATRIBUI do documento a TOP, a versão congelada e o
+valor, e da transação `decidido_por` e `decidido_em`; e três guardas de transição BEFORE UPDATE da situação —
+`trg_sales_documents_aprovacao` (o mesmo WHEN da 0023; procura a decisão da versão `OLD.version` e dispara antes das
+três de hoje), `trg_documentos_compra_aprovacao` e `trg_documentos_estoque_aprovacao` (aberto → confirmado) —, que
+recusam com `CONFLICT` (mensagem fixa de uma linha: 409 em todo binário) a entrada no confirmado de documento cuja
+versão congelada está no formato 4, exige aprovação e não tem a vigente aprovada. Formato 1 a 3 nunca é barrado. As
+pós-condições conferem objetos (as tabelas, a RLS forçada e a política única, as 12 FKs sem cascata, os 9 CHECKs, os
+índices, a forma da conta e das funções de gatilho, EXECUTE das funções de gatilho só do dono, os 9 gatilhos das tabelas
+de aprovação, as 3 guardas, o WHEN igual ao da 0023, os quatro BEFORE UPDATE por linha da venda por nome — a guarda da
+aprovação primeiro, a 0039 por último — e os privilégios); não comparam contagens de tabelas vivas. As permissões novas
+(`sales.approve`, `compras.approve`, `entradas_estoque.approve`, `saidas_estoque.approve`,
+`transferencias_estoque.approve`, `ajustes_estoque.approve` — "Aprovar") não têm migration: o pre-deploy sincroniza o
+catálogo e o perfil Administrador do sistema as recebe; os outros perfis, o Maike dá na tela de perfis. Rotas novas num
+prefixo próprio, `/api/aprovacoes/{vendas,compras,estoque}`, e o módulo Aprovações (`/aprovacoes`) no menu — o 14º, o
+limite do menu. Nenhuma variável nova.
 
 **Pré-condição:** quem aplica a 0041 é o dono das funções SECURITY DEFINER e precisa atravessar RLS (superusuário ou
 `BYPASSRLS`) — a própria migration recusa, com `TOP-CONFIG-08: o papel que aplica a migration (dono das funcoes
@@ -1628,9 +1630,10 @@ pergunta); o papel `erp_app` ausente; uma coluna que os gatilhos leem ausente (`
 `documentos_estoque`: `situacao`, `empresa_id`, `tipo_operacao_id`, `tipo_operacao_versao_id`;
 `tipos_operacao_versoes.configuracao`); a chave alvo de uma FK composta (`uq_tipos_operacao_versoes_tenant` da 0021,
 `uq_tipos_operacao_tenant` da 0020, `uq_documentos_compra_tenant` da 0036, `uq_documentos_estoque_tenant` da 0040, a
-chave `(organization_id, id)` de `erp.empresas`); as funções de auditoria, RLS e usuário; os módulos de escopo
-`vendas`, `compras` e `estoque`; e os BEFORE UPDATE por linha de `erp.sales_documents` diferentes, por nome e por
-função, dos três de hoje (`trg_sales_documents_classificacao_financeira` da 0024,
+chave `(organization_id, id)` de `erp.empresas`); as funções de auditoria, RLS, organização, usuário e escopo de escrita
+que a política e os gatilhos chamam (`erp.current_org_id()` e `erp.empresa_escrita_permitida(uuid)` inclusive); os
+módulos de escopo `vendas`, `compras` e `estoque`; e os BEFORE UPDATE por linha de `erp.sales_documents` diferentes,
+por nome e por função, dos três de hoje (`trg_sales_documents_classificacao_financeira` da 0024,
 `trg_sales_documents_execucao_configurada` da 0023 e `trg_sales_documents_versao` da 0039) — é sobre esse conjunto que
 vale "a guarda da aprovação dispara primeiro e a versão continua a última". Os gatilhos e as FKs novas pedem uma trava
 curta em `erp.sales_documents`, `erp.documentos_compra`, `erp.documentos_estoque` e nas tabelas referenciadas: com uma
@@ -1675,9 +1678,10 @@ de toda permissão nova; nenhum outro perfil muda. Com elas, o Administrador pas
 vazia: "Nenhum documento aguardando aprovação.").
 
 **Declarado (fica para a fatia F2 da Central no motor, depois da PR da Central de Compras):** a Central de Vendas e a de
-Compras não mudam nesta fatia. Com uma TOP de venda Automática, "Confirmar venda" na criação salva (e o servidor já
-confirma) e abre o diálogo de um documento já confirmado; os itens vazios que a TOP permite e a situação da aprovação e
-o Aprovar/Reprovar na consulta também ficam para essa fatia. O servidor é a regra: a aprovação se dá em Aprovações.
+Compras não mudam nesta fatia. Com uma TOP de venda Automática, "Confirmar venda" na criação salva, o `POST` já
+confirma, e a consulta abre a venda confirmada, sem o diálogo de confirmação e sem segundo `/confirm` (W-4c); o rótulo
+"Salvar e confirmar", os itens vazios que a TOP permite e a situação da aprovação e o Aprovar/Reprovar na consulta
+ficam para essa fatia. O servidor é a regra: a aprovação se dá em Aprovações.
 
 **Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0041 fica e convive com a API
 anterior (janela 1). Código: o binário anterior não confirma venda nem compra com TOP formato 4 — 409 "configuração
