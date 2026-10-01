@@ -3,8 +3,9 @@
  *
  * Cópia do painel de propriedades do desenho (o `.insp` e as peças que ele usa: `.cpo`, `.cpo-in`, `.lsw`, `.sw`,
  * `.spans`, `.bd.t-plain`, `.ib.sm` e `.rm`), com os valores CALCULADOS no desenho a 1440×900 — onde uma regra
- * posterior vence a anterior, vale a que vence. As alturas de linha que no desenho são "normal" ficam em px
- * (12,5 px → 16; 10,5 px → 13), para a caixa não depender da métrica da fonte.
+ * posterior vence a anterior, vale a que vence. Nos textos soltos a altura de linha "normal" do desenho fica em px
+ * (12,5 px → 16; 10,5 px → 13); nos controles (o texto da caixa e os botões do segmentado) fica "normal", como
+ * no desenho — a caixa (30 px) e os botões (18 px) têm altura própria.
  *
  * Movimento: as variáveis (--mi, --mo, --mf, --ez-io, --ez-mola) vêm da raiz da página, que as zera em
  * prefers-reduced-motion. Aqui só ficam as durações fixas (o "entraLado" e o recuo do clique), zeradas no fim.
@@ -125,7 +126,7 @@
   background: transparent;
   font-size: 12.5px;
   font-weight: 500;
-  line-height: 16px;
+  line-height: normal;
   color: #111827;
 }
 .caixa input::placeholder { color: #9aa4b1; font-weight: 400; opacity: 1; }
@@ -208,7 +209,7 @@
   color: #64748b;
   font-size: 10.5px;
   font-weight: 600;
-  line-height: 13px;
+  line-height: normal;
   cursor: pointer;
 }
 .segmentado button:hover { background: rgba(15, 23, 42, .07); color: #0f172a; }
