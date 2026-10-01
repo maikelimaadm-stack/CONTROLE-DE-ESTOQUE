@@ -155,16 +155,24 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   R("rainfalls", "Pluviometria", "Operacional"),
   R("budgets", "Orçamentos", "Operacional > Vendas"),
   R("orders", "Pedidos", "Operacional > Vendas"),
-  R("sales", "Vendas", "Operacional > Vendas"),
+  // TOP-CONFIG-08 (decisão 277): `approve` é a aprovação da TOP no formato 4 — decidir se o documento aberto pode
+  // ser confirmado. Fica só nos documentos cuja família aceita aprovação (venda, compra e as quatro espécies de
+  // estoque); orçamento, pedido de venda e pedido de compra não confirmam (são convertidos ou recebidos em outro)
+  // e por isso não têm o que aprovar. Capacidade SEPARADA de `edit` de propósito: poder lançar e editar não dá
+  // poder de aprovar — o papel Administrador de sistema a recebe pelo seed; os outros, só quem a der na tela.
+  // O módulo de escopo é o do recurso (escopo-permissao.ts classifica por recurso, não por ação), então
+  // `sales.approve` cai em vendas, `compras.approve` em compras e as quatro de estoque em estoque — o mesmo
+  // módulo do `.edit` que a confirmação automática do aprovador confere.
+  R("sales", "Vendas", "Operacional > Vendas", [...CRUD, "approve"]),
   // COMPRAS-01 (decisão 267): o documento comercial de compra, um recurso por espécie.
   R("pedidos_compra", "Pedidos de Compra", "Operacional > Compras"),
-  R("compras", "Compras", "Operacional > Compras"),
+  R("compras", "Compras", "Operacional > Compras", [...CRUD, "approve"]),
   // ESTOQUE-01 (decisão 274): o documento de estoque, um recurso por espécie. Sem `delete`: o documento não se
   // apaga (a 0040 revoga DELETE) — confirmar e cancelar exigem `.edit`, como na compra.
-  R("entradas_estoque", "Entradas de Estoque", "Operacional > Estoque", ["view", "create", "edit"]),
-  R("saidas_estoque", "Saídas de Estoque", "Operacional > Estoque", ["view", "create", "edit"]),
-  R("transferencias_estoque", "Transferências de Estoque", "Operacional > Estoque", ["view", "create", "edit"]),
-  R("ajustes_estoque", "Ajustes de Estoque", "Operacional > Estoque", ["view", "create", "edit"]),
+  R("entradas_estoque", "Entradas de Estoque", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
+  R("saidas_estoque", "Saídas de Estoque", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
+  R("transferencias_estoque", "Transferências de Estoque", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
+  R("ajustes_estoque", "Ajustes de Estoque", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
   R("service_orders", "Ordens de Serviço", "Operacional > Ordens de Serviço", [...CRUD, "monitor", "rate"]),
   // Financeiro
   R("payables", "Contas a Pagar", "Financeiro", [...CRUD, "settle", "cancel_settlement", "import", "export", "receipt", "boleto", "duplicate"]),

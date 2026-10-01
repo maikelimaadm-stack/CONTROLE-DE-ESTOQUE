@@ -207,12 +207,17 @@ describe("CO-D5 cliente em atraso não vale para compras", () => {
 });
 
 describe("CO-D6 permissões, módulo, rótulos e ID Global", () => {
-  it("pedidos_compra e compras: CRUD em Operacional > Compras, módulo compras", () => {
-    for (const [key, label] of [["pedidos_compra", "Pedidos de Compra"], ["compras", "Compras"]] as const) {
+  it("pedidos_compra e compras: CRUD em Operacional > Compras, módulo compras; só compras aprova (TOP-CONFIG-08)", () => {
+    // O pedido não é confirmado (é recebido em outro documento), então não tem o que aprovar: só a compra ganha `approve`.
+    for (const [key, label, actions] of [
+      ["pedidos_compra", "Pedidos de Compra", ["view", "create", "edit", "delete"]],
+      ["compras", "Compras", ["view", "create", "edit", "delete", "approve"]]
+    ] as const) {
       const r = PERMISSION_RESOURCES.find((x) => x.key === key);
-      expect(r).toEqual({ key, label, module: "Operacional > Compras", actions: ["view", "create", "edit", "delete"] });
+      expect(r).toEqual({ key, label, module: "Operacional > Compras", actions });
       for (const a of r!.actions) expect(moduloDaPermissao(`${key}.${a}`)).toBe("compras");
     }
+    expect(moduloDaPermissao("compras.approve")).toBe(moduloDaPermissao("compras.edit"));
   });
   it("rótulos de espécie e situação", () => {
     expect(enumLabel("especie_documento_compra", "pedido")).toBe("Pedido de compra");

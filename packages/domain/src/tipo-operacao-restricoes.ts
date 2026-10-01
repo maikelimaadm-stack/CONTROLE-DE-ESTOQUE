@@ -1,14 +1,16 @@
 /**
  * TOP-CONFIG-05 — AS RESTRIÇÕES COMERCIAIS E O FISCAL DO FORMATO 3 (decisão 263).
  *
- * Um dono só para o que a API e a tela perguntam sobre as restrições de uma versão do formato 3:
+ * Um dono só para o que a API e a tela perguntam sobre as restrições de uma versão do formato 3 (e do 4, que
+ * executa tudo o que o 3 executa — TOP-CONFIG-08, decisão 277):
  *   · as regras de SENTIDO do CFOP (dependem da família da TOP, por isso fora do leitor estrito);
  *   · as EXIGÊNCIAS GERAIS que o documento não atende — a MESMA função na API (recusa) e na tela (asterisco
  *     e bloqueio antes do POST). Duas implementações divergiriam no primeiro campo novo;
  *   · a mensagem do cliente em atraso, montada a partir dos agregados que o banco devolve;
  *   · os códigos de erro e a capacidade `regrasDaOperacao` da descoberta de vendas.
  *
- * FORMATO 1 E 2 SÃO LEGADO PARA SEMPRE: toda função daqui devolve "nada a cobrar" fora do formato 3.
+ * FORMATO 1 E 2 SÃO LEGADO PARA SEMPRE: toda função daqui devolve "nada a cobrar" fora dos formatos 3 e 4
+ * (`restricoesExecutamTop`).
  * FISCAL É SÓ CONFIGURAÇÃO: nenhuma função daqui emite documento ou calcula imposto.
  */
 import {
