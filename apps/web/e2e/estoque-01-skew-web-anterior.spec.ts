@@ -44,8 +44,9 @@ test("ESTOQUE-01 · ES-K1 (sentido 2) — o web da base contra a API deste HEAD:
   await entradaConfirmadaPelaApi(page, { top: top.id, empresa: c.empresa, armazem: c.armazem, produto: c.produto }, "5", "10");
 
   const v = vigiar(page);
-  // A VISÃO GERAL antiga abre (é a aba padrão do /estoque nos dois bundles).
-  await page.goto("/estoque");
+  // A VISÃO GERAL antiga abre. Ela NÃO é a aba padrão do /estoque (o padrão é "Estoque", o saldo): a aba é pedida
+  // pelo nome, que é o mesmo nos dois bundles.
+  await page.goto("/estoque?tab=visao-geral");
   await expect(page.getByText("Valor em estoque").first(), "a Visão geral da web anterior abre").toBeVisible();
 
   // O LEDGER antigo: a entrada do documento é a linha mais nova do mês (ordem: data desc, criação desc).
