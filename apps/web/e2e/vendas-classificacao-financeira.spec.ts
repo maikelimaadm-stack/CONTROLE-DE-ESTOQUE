@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, CLASSIFICACAO_DO_SEED, abrirDadosAdicionais } from "./helpers";
+import { login, adicionarItemNaCentral, salvarSemClassificacaoNaoEnvia, api, uniq, pickRef, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, CLASSIFICACAO_DO_SEED, abrirDadosAdicionais } from "./helpers";
 
 /**
  * VENDAS-A1 — A CLASSIFICAÇÃO FINANCEIRA NO DOCUMENTO DE VENDA, PELA TELA.
@@ -81,12 +81,12 @@ test("A1-W1 — venda nova: os dois campos, Salvar só com os dois, lookups filt
   expect([pos("Natureza"), pos("Centro de resultado")], "a ordem do contrato: forma de pagamento → categoria → centro")
     .toEqual([pos("Forma de pagamento") + 1, pos("Forma de pagamento") + 2]);
 
-  // Salvar: com cliente e item, falta SÓ a classificação — e é ela que segura o botão.
+  // Salvar: com cliente e item, falta SÓ a classificação — e é ela que segura a gravação (Fase B: o clique vira pendência).
   const salvar = page.getByRole("button", { name: "Salvar" });
   await pickRef(page, "Cliente", "DEMO");
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   await escolherPrimeiroProdutoDaLinha(page);
-  await expect(salvar, "cliente e item sem classificação: não salva").toBeDisabled();
+  await salvarSemClassificacaoNaoEnvia(page, ["Natureza", "Centro de resultado"], "cliente e item sem classificação: não salva");
 
   /**
    * O LOOKUP DE CATEGORIA SÓ OFERECE ANALÍTICA DE RECEITA. A premissa é lida primeiro, na MESMA porta de
@@ -129,7 +129,7 @@ test("A1-W1 — venda nova: os dois campos, Salvar só com os dois, lookups filt
 
   // UM SÓ não basta: o par é a regra, na tela como no servidor.
   await pickRef(page, "Natureza", CLASSIFICACAO_DO_SEED.categoria.nome);
-  await expect(salvar, "só a categoria: não salva").toBeDisabled();
+  await salvarSemClassificacaoNaoEnvia(page, ["Centro de resultado"], "só a categoria: não salva");
   await pickRef(page, "Centro de resultado", CLASSIFICACAO_DO_SEED.centro.nome);
   await expect(salvar, "com o par, salva").toBeEnabled();
 
@@ -157,18 +157,18 @@ test("A1-W2 — orçamento e pedido exigem os campos, e a conversão leva a clas
   // O PEDIDO também exige — a conversão só copia, então pedido sem classificação viraria venda sem conserto.
   await abrirCriacao(page, "orders");
   await pickRef(page, "Cliente", "DEMO");
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   await escolherPrimeiroProdutoDaLinha(page);
-  await expect(salvar, "pedido sem classificação: não salva").toBeDisabled();
+  await salvarSemClassificacaoNaoEnvia(page, ["Natureza", "Centro de resultado"], "pedido sem classificação: não salva");
   await preencherClassificacaoFinanceira(page);
   await expect(salvar, "pedido com o par: salva").toBeEnabled();
 
   // O ORÇAMENTO, que é o começo da cadeia, exige igual — e é dele que a conversão parte.
   await abrirCriacao(page, "budgets");
   await pickRef(page, "Cliente", "DEMO");
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   await escolherPrimeiroProdutoDaLinha(page);
-  await expect(salvar, "orçamento sem classificação: não salva").toBeDisabled();
+  await salvarSemClassificacaoNaoEnvia(page, ["Natureza", "Centro de resultado"], "orçamento sem classificação: não salva");
   await preencherClassificacaoFinanceira(page);
   await expect(salvar).toBeEnabled();
   const resposta = page.waitForResponse((r) => r.request().method() === "POST" && /\/api\/sales\/budgets$/.test(new URL(r.url()).pathname));

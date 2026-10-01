@@ -256,8 +256,8 @@ test("BASE2-03C: o histórico oficial abre com conteúdo real; anexos NÃO são 
   await expect(dialogo.locator("ol > li").first(), "histórico vazio não prova nada").toBeVisible();
   await page.keyboard.press("Escape");
 
-  // ANEXOS: `sales_documents` não está em ATTACHMENT_PARENTS. O botão responderia 422 — então ele não
-  // existe. Abrir a superfície é outra fatia, com backend.
+  // ANEXOS: desde a decisão 271 `sales_documents` está em ATTACHMENT_PARENTS (o servidor aceitaria), mas a
+  // Central não oferece Anexos (decisão 270) — então o botão não existe aqui. Oferecer é outra fatia.
   await expect(page.getByRole("button", { name: /anexo/i }), "não abrir anexos sem suporte do servidor").toHaveCount(0);
   await expect(page.getByText(/anexos/i), "nem como texto").toHaveCount(0);
 });
