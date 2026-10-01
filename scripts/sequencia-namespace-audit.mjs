@@ -46,6 +46,9 @@ const POR_VARIANTE = {
   "title_${...}": { tabela: "erp.financial_titles", discriminador: "direction" },
   "sales_${...}": { tabela: "erp.sales_documents", discriminador: "kind" },
   "compras_${...}": { tabela: "erp.documentos_compra", discriminador: "especie" },
+  // ESTOQUE-01 (decisão 274): `nextCode(ctx.tx, ctx.orgId, \`estoque_${especie}\`)` no lançamento do documento de
+  // estoque. A 0040 põe `especie` na UNIQUE (organization_id, especie, codigo): cada espécie numera à parte.
+  "estoque_${...}": { tabela: "erp.documentos_estoque", discriminador: "especie" },
   // `animalCode(ctx, \`animal_${d.movement_type}\`)` em `apps/api/src/routes/livestock.ts`. Só ficou
   // visível quando o auditor passou a enxergar os invólucros — e é LEGÍTIMO: `movement_type` está dentro
   // da UNIQUE de `erp.animal_movements`, então cada tipo de movimentação tem namespace próprio. A metade
@@ -189,7 +192,10 @@ const semDiscriminador = [];
 for (const [forma, { tabela, discriminador }] of Object.entries(POR_VARIANTE)) {
   const t = schema.get(tabela);
   if (!t) { semDiscriminador.push(`${forma}: tabela ${tabela} nao existe no schema`); continue; }
-  const uniques = t.constraints.filter((c) => /^unique\b/i.test(c));
+  // A UNIQUE pode vir sem nome (`unique (…)`, como na 0036) ou nomeada (`constraint uq_… unique (…)`, como na
+  // 0040): as duas são a mesma garantia no banco. Ler só a forma sem nome faria a migration que DÁ NOME à
+  // chave parecer não tê-la — o gate reprovaria a convenção boa, e a saída seria tirar o nome.
+  const uniques = t.constraints.filter((c) => /^(constraint\s+\w+\s+)?unique\b/i.test(c));
   const cobre = uniques.some((u) => {
     const cols = (u.match(/\(([^)]*)\)/)?.[1] ?? "").split(",").map((s) => s.trim());
     return (cols.includes("code") || cols.includes("codigo")) && cols.includes(discriminador);

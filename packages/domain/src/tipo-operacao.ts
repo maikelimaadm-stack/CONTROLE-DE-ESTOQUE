@@ -134,6 +134,14 @@ export const TIPOS_OPERACAO: readonly TipoOperacao[] = Object.freeze([
   T("estoque.transferencia_entre_armazens", "estoque", variante("erp.warehouse_transfers", "kind", "warehouse")),
   T("estoque.transferencia_entre_empresas", "estoque", variante("erp.warehouse_transfers", "kind", "farm")),
   T("estoque.producao_de_racao", "estoque", entidade("erp.feed_batches")),
+  // ESTOQUE-01 (decisão 274): o documento de estoque do Portal de Estoque. Uma tabela, quatro espécies, a
+  // mesma forma de `erp.documentos_compra`. As oito famílias acima continuam presas às telas antigas e não
+  // ganham consumidor: a TOP entra no documento NOVO, e não nas tabelas antigas, porque cada tabela antiga
+  // tem a sua regra e a sua tela, e pôr TOP nelas seria fundir regras pela classificação.
+  T("estoque.entrada", "estoque", variante("erp.documentos_estoque", "especie", "entrada")),
+  T("estoque.saida", "estoque", variante("erp.documentos_estoque", "especie", "saida")),
+  T("estoque.transferencia", "estoque", variante("erp.documentos_estoque", "especie", "transferencia")),
+  T("estoque.ajuste", "estoque", variante("erp.documentos_estoque", "especie", "ajuste")),
 
   // ---------- Compras ----------
   T("compras.solicitacao", "compras", entidade("erp.purchase_requests")),

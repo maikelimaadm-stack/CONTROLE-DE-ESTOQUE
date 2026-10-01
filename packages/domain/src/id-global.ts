@@ -70,6 +70,14 @@ export const ENTIDADES_ID_GLOBAL: readonly EntidadeIdGlobal[] = [
     pedido: { rota: "/compras/pedidos/:id", permissao: "pedidos_compra.view" },
     compra: { rota: "/compras/compras/:id", permissao: "compras.view" }
   }), { exclusaoLogica: false }),
+  // Estoque — ESTOQUE-01 (decisão 274): o documento de estoque, uma permissão por espécie. Sem exclusão lógica:
+  // o documento não se apaga, cancela.
+  E("documentos_estoque", "Documento de Estoque", "estoque", "erp.documentos_estoque", porVariante("especie", {
+    entrada: { rota: "/estoque/movimentacoes/entradas/:id", permissao: "entradas_estoque.view" },
+    saida: { rota: "/estoque/movimentacoes/saidas/:id", permissao: "saidas_estoque.view" },
+    transferencia: { rota: "/estoque/movimentacoes/transferencias/:id", permissao: "transferencias_estoque.view" },
+    ajuste: { rota: "/estoque/movimentacoes/ajustes/:id", permissao: "ajustes_estoque.view" }
+  }), { exclusaoLogica: false }),
   // Pecuária — variantes derivadas da fonte única de operações de rebanho
   E("animals", "Animal", "pecuaria", "erp.animals", fixa("/pecuaria/animais/:id", "animals.view")),
   E("animal_movements", "Movimentação de Rebanho", "pecuaria", "erp.animal_movements", porVariante("movement_type", variantesDeOperacoes(MOVIMENTACOES_REBANHO))),

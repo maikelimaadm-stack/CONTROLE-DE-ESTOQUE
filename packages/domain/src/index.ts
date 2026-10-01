@@ -19,6 +19,7 @@ export * from "./faturamento-parcial.js";
 export * from "./tipo-operacao-execucao.js";
 export * from "./compras-custo-entrada.js";
 export * from "./compras-recebimento.js";
+export * from "./estoque-documento.js";
 export * from "./sales.js";
 export * from "./codigo-hierarquico.js";
 export * from "./condicao-pagamento.js";
