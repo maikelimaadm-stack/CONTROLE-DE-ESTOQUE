@@ -1,5 +1,5 @@
 /*
- * CENTRAL DE VENDAS — BARRA DE AÇÕES (VISUAL-UX-02, decisão 270).
+ * CENTRAL — BARRA DE AÇÕES (motor neutro; VISUAL-UX-02, decisão 270).
  *
  * As medidas saem do CSS do desenho aprovado (`.tbar2`, `.tbi`, `.tbp`, `.vseg`, `.radial`/`.rs-item`, `.pendb`,
  * `.pend-i`, `.savednow`, `.emode`, `.pop`, `.mi`, `.tbadge`) e do bloco MOVIMENTO dele (uma curva, três durações,
@@ -48,7 +48,7 @@
 .solido:hover:not(:disabled) { background: #e8ecef; color: #0f172a; }
 .solido:active:not(:disabled) { background: #dde3e8; }
 
-/* ═════════════ pílula (`.tbp`) — Confirmar venda, Converter, Encerrar saldo ═════════════ */
+/* ═════════════ pílula (`.tbp`) — Confirmar, Converter, Encerrar saldo ═════════════ */
 .pilula {
   height: 25px;
   box-sizing: border-box;

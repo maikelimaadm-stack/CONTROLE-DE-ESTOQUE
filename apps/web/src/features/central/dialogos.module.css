@@ -1,5 +1,5 @@
 /*
- * CENTRAL DE VENDAS — CASCA DOS DIÁLOGOS (VISUAL-UX-02, decisão 270, item 4.6).
+ * CENTRAL — CASCA DOS DIÁLOGOS (VISUAL-UX-02, decisão 270, item 4.6).
  *
  * O diálogo continua sendo o `Dialog` oficial (@/components/ui): overlay, foco preso e devolvido, Esc, título e
  * descrição acessíveis e largura pela prop `size` são dele. Esta folha só VESTE o conteúdo com a casca do desenho

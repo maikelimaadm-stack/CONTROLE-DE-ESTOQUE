@@ -22,7 +22,7 @@ import { DialogoCancelarDocumento, DialogoConfirmarVenda } from "@/features/sale
 import { chaveDaCopia, copiaDoDocumento, motivoParaNaoDuplicar } from "@/features/sales/central-vendas-duplicar";
 import { descartarEntrega, entregarEmMemoria, espiarEntrega } from "@/lib/entrega-em-memoria";
 import { ConfirmarFechamentoDeAba } from "@/components/layout/workspace-tabs";
-import estilosCentral from "@/features/sales/central-vendas-workspace.module.css";
+import estilosCentral from "@/features/central/moldura.module.css";
 import { tipoOperacaoDoRegistro } from "@agro/domain";
 import { useTradutor } from "@/lib/i18n";
 import { CampoTipoOperacao, useTopsDaVariante, usePadraoTop } from "@/features/sales/tipo-operacao-select";
