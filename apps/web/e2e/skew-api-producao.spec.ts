@@ -2481,7 +2481,7 @@ test("COMPRAS-03 · LC-K1 — sem a capacidade declarada pela base, a Central de
     await salvarComoHoje(async () => {
       const grade = page.getByTestId("compras-itens");
       await expect(grade.locator("th").first(), "presença: a grade de itens de hoje, com o cabeçalho").toBeVisible();
-      await expect(grade.locator("th[data-coluna]"), "sem layout, nenhum data-coluna nos itens").toHaveCount(0);
+      await expect(grade.locator("th[data-coluna], th[data-campo]"), "sem layout, nenhum data-coluna nos itens").toHaveCount(0);
     });
     expect(pedidosLayout, "o web NÃO pede /layout-efetivo a uma API que não declara a capacidade").toEqual([]);
     v.semBloqueio();
@@ -2494,7 +2494,7 @@ test("COMPRAS-03 · LC-K1 — sem a capacidade declarada pela base, a Central de
   expect(pedidosLayout.some((u) => new URL(u).pathname === "/api/compras/compras/layout-efetivo" && new URL(u).searchParams.get("tipo_operacao_id") === topId),
     "o web perguntou o layout desta TOP à base que o declara").toBe(true);
   await salvarComoHoje(async () => {
-    await expect(page.getByTestId("compras-itens").locator('th[data-coluna="produto_id"]'), "as colunas também seguem o layout do sistema").toHaveCount(1);
+    await expect(page.getByTestId("compras-itens").locator('th[data-coluna="produto_id"], th[data-campo="produto_id"]'), "as colunas também seguem o layout do sistema").toHaveCount(1);
   });
   v.semBloqueio();
 });
