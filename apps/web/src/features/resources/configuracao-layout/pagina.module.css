@@ -1,0 +1,147 @@
+/*
+ * CONFIGURAÇÃO DE LAYOUT — página, barra e documento (VISUAL-UX-03, decisão 275).
+ *
+ * As medidas saem do CSS do desenho (`.wsh`, `.tbar2`, `.tbi`, `.vdiv`, `.doc`, `.right2`, `[data-tip]`) com o estilo
+ * CALCULADO valendo sobre a regra: o gap de 8 px da barra e o de 6 px dos grupos vêm do estilo inline da marcação, e o
+ * hover do Salvar verde é o da última regra do desenho (cinza, ícone escuro).
+ *
+ * As variáveis de movimento moram AQUI, na raiz, e todo o conteúdo da página as herda (coluna, faixas, linhas,
+ * inspetor). O fantasma do arraste vive num portal fora da raiz e tem os próprios tempos.
+ */
+
+/* ═════════════ raiz: ocupa o que sobra do <main> do shell; a página não rola, só o miolo de cada parte ═════════════ */
+.raiz {
+  --mo: 230ms;
+  --mo-set: 340ms;
+  --mi: 170ms;
+  --mf: 120ms;
+  --ez: cubic-bezier(.16, 1, .3, 1);
+  --ez-io: cubic-bezier(.4, 0, .2, 1);
+  --ez-mola: cubic-bezier(.34, 1.36, .5, 1);
+
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* ═════════════ barra: cartão (`.wsh`) com a barra de 44 px dentro (`.tbar2`) ═════════════ */
+.barraCartao {
+  flex-shrink: 0;
+  background: #fff;
+  border: 1px solid #e7eaee;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .03), 0 2px 6px rgba(15, 23, 42, .02);
+}
+.barra {
+  position: relative;
+  height: 44px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+}
+.grupo { display: flex; align-items: center; gap: 6px; }
+.espaco { flex-grow: 1; }
+.divisor { width: 1px; height: 18px; background: #e4e8ec; flex-shrink: 0; margin: 0 3px; }
+
+/* ═════════════ botão redondo (`.tbi`) ═════════════ */
+.acao {
+  position: relative;
+  width: 25px;
+  height: 25px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: #f1f3f4;
+  color: #475569;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  text-decoration: none;
+  transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io), border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
+}
+.acao svg { width: 16px; height: 16px; flex-shrink: 0; }
+.acao:hover:not(:disabled) { background: #e8ecef; color: #0f172a; box-shadow: 0 3px 9px rgba(34, 197, 94, .36); }
+.acao:active:not(:disabled) { background: #dde3e8; transform: scale(.90); }
+.acao:disabled { opacity: .42; cursor: not-allowed; }
+.acao:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+/* pressionado (Pré-visualizar ligado) */
+.acao[aria-pressed="true"] { background: #e2e8f0; color: #0f172a; box-shadow: inset 0 0 0 1px #cbd5e1, 0 2px 6px rgba(34, 197, 94, .30); }
+.acao[aria-pressed="true"]:hover:not(:disabled) { background: #d8e0e9; color: #0f172a; box-shadow: inset 0 0 0 1px #c3cddb, 0 3px 9px rgba(34, 197, 94, .36); }
+.acao[aria-pressed="true"]:disabled { opacity: 1; background: #e2e8f0; color: #64748b; cursor: default; }
+/* Salvar com alteração (`.tbi.solid`). A ordem das três regras reproduz a cascata do desenho: no hover vale a última
+   regra dele (cinza, ícone escuro), e o clique escurece o fundo sem trocar a cor do ícone. */
+.acao.salvar { background: #40de63; color: #fff; border-color: transparent; }
+.acao.salvar:active:not(:disabled) { color: #fff; }
+.acao.salvar:hover:not(:disabled) { background: #e8ecef; color: #0f172a; }
+.acao.salvar:active:not(:disabled) { background: #dde3e8; }
+
+/* ═════════════ documento (`.doc` em linha): coluna · trilho · principal · inspetor ═════════════ */
+.documento {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid rgba(15, 23, 42, .06);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .03), 0 2px 6px rgba(15, 23, 42, .02);
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+/* faixas em cima, linhas embaixo (`.right2`) */
+.principal { flex-grow: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+
+/* ═════════════ dica (`[data-tip]`): a única da página; cada parte só põe `data-dica` no elemento ═════════════ */
+/* especificidade zero: quem já posiciona o próprio elemento (absolute) continua mandando nele */
+:where(.raiz [data-dica]) { position: relative; }
+.raiz [data-dica]:hover,
+.raiz [data-dica]:focus-visible,
+.raiz [data-dica]:focus-within { z-index: 90; }
+.raiz [data-dica]:hover::after,
+.raiz [data-dica]:focus-visible::after {
+  content: attr(data-dica);
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 90;
+  pointer-events: none;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #1e293b;
+  color: #f8fafc;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, .22);
+  animation: dicaEntra 120ms ease 300ms both;
+}
+/* na barra a dica ancora pela borda de fora, para não sair do cartão */
+.raiz .dicaInicio[data-dica]:hover::after,
+.raiz .dicaInicio[data-dica]:focus-visible::after { left: 0; transform: none; }
+.raiz .dicaFim[data-dica]:hover::after,
+.raiz .dicaFim[data-dica]:focus-visible::after { left: auto; right: 0; transform: none; }
+/* dica vazia não mostra nada; com o menu aberto, a dica sai do caminho */
+.raiz [data-dica=""]:hover::after,
+.raiz [data-dica=""]:focus-visible::after,
+.raiz [aria-expanded="true"][data-dica]:hover::after { display: none; }
+/* a mesma entrada do desenho para as três ancoragens (a ancorada parte do mesmo deslocamento) */
+@keyframes dicaEntra { from { opacity: 0; transform: translateX(-50%) translateY(-2px); } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .raiz { --mo: 1ms; --mo-set: 1ms; --mi: 1ms; --mf: 1ms; }
+  .raiz [data-dica]:hover::after,
+  .raiz [data-dica]:focus-visible::after { animation-duration: 1ms; }
+  .acao:active:not(:disabled) { transform: none; }
+}
