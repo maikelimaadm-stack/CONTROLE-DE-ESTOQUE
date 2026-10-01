@@ -122,7 +122,9 @@ menor — o que vale entre PRs vale entre agentes.
 sido resumida, e a PR aberta pode ser de outra sessão. Uma listagem de leitura basta
 (`list_pull_requests` com `state=open`, ou `gh pr list --state open`) — ela não muta nada.
 Para CADA aberta, leia os arquivos (`gh pr diff <n> --name-only`, ou `pull_request_read` com
-`get_files`) e monte o MAPA DE COLISÃO contra a sua fatia.
+`get_files`) e monte o MAPA DE COLISÃO contra a sua fatia. `scripts/mapa-colisao.mjs` faz essa
+leitura e devolve a tabela; ele prova arquivo e número, e manda ler o diff onde houver banco ou
+contrato — o que ele mandou ler continua sendo seu.
 
 - **Nenhuma colisão** → pode abrir, DRAFT, com a faixa no título e o mapa no corpo.
 - **Colisão** → não abre. Pare e diga com qual PR e em quê: a decisão de qual espera, ou de como

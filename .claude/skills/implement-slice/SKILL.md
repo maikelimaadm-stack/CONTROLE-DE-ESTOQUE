@@ -22,7 +22,9 @@ Ordem fixa. Pular etapa aqui é como o trabalho vira retrabalho de revisão.
   de CADA relatório, o inicial e os de correção: liste as PRs abertas e, para cada uma,
   `gh pr diff <n> --name-only` (ou `pull_request_read` com `get_files`); compare arquivo,
   número, banco e contrato com os da fatia. Com colisão: **não abra a PR** — pare e diga
-  com qual PR e em quê.
+  com qual PR e em quê. `node scripts/mapa-colisao.mjs --faixa <F> [--planejado a,b]` monta
+  a tabela e prova arquivo e número; banco e contrato marcados "LER O DIFF" continuam seus.
+- Fatia de tela (F2): siga também a skill `fatia-visual`.
 
 ## 2. Ler o contrato antes de escrever
 

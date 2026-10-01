@@ -31,6 +31,8 @@ REVIEW.md                     critérios de code review
     multi-company-contract/   Organização × Empresa, capacidade × escopo, 404 vs 403
     id-global-contract/       papéis de UUID, código de entidade e ID Global
     pre-base2-checkpoint/     ordem do roteiro e gates externos
+    fatia-visual/             fatia F2 convivendo com outras PRs de tela sem colidir
+    rodar-local/              subir o ERP local e entrar com o usuário demo
   agents/                     especialistas com contexto isolado (limitados a leitura pelo hook)
     security-rls-auditor.md   opus · xhigh
     migration-auditor.md      opus · xhigh
@@ -45,6 +47,7 @@ docs/
   CLAUDE-CODE-ENGINEERING-HARNESS.md  este documento
   CLAUDE-CODE-CONNECTORS.md           MCP e conectores
 scripts/claude-harness-audit.mjs      gate do harness (roda dentro de `pnpm lint`)
+scripts/mapa-colisao.mjs              MAPA DE COLISÃO pela máquina (lê o GitHub; fora do lint, autoteste dentro)
 ```
 
 ## Cada mecanismo tem um papel
