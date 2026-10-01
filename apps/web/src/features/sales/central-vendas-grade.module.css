@@ -368,6 +368,130 @@
 .pesquisaLista .pesquisaNome { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .pesquisaEstado { padding: 26px 16px; text-align: center; font-size: 12.5px; color: #64748b; }
 
+/*
+ * ═════════════ ITENS DA CRIAÇÃO (VISUAL-UX-02, Fase B) ═════════════
+ * Classes SÓ da grade editável da criação (`central-vendas-itens.tsx`); as da consulta acima ficam como estão.
+ * Medidas e cores do desenho: círculo de seleção de 15px numa coluna de 34px, linha marcada com o verde a 7% e o
+ * filete de 2px, linha com pendência em #fff7f7, célula de pesquisa com a lupa à esquerda, entrada de 74px.
+ */
+/* Duplicar item / Remover item: o botão redondo da barra, com o hover e o ícone de 15px do desenho */
+.botaoAcaoItem:hover:not(:disabled) { background: #e5e7eb; }
+.botaoAcaoItem svg { width: 15px; height: 15px; }
+.botaoRemover { color: #1e293b; }
+
+/* a coluna do círculo: 34px, sem recuo, o círculo no centro */
+.grade th.celulaSelecao,
+.grade td.celulaSelecao { padding: 0; text-align: center; text-overflow: clip; }
+.circulo {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  border-radius: 999px;
+  border: 1.5px solid #c3ccd6;
+  background: #fff;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  vertical-align: middle;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  transition: background-color var(--mi) var(--ez-io), border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io);
+}
+.circulo:hover { border-color: #40de63; }
+.circulo[aria-checked="true"] { background: #40de63; border-color: #40de63; }
+.circulo[aria-checked="true"]:hover { background: #40de63; border-color: #40de63; box-shadow: 0 0 0 2px rgba(64, 222, 99, .28); }
+.circulo:focus-visible { outline: none; box-shadow: 0 0 0 2px rgba(64, 222, 99, .35); }
+.circulo svg { width: 10px; height: 10px; }
+
+/* linha marcada (também no hover) e linha com pendência — depois da zebra e do hover, para vencê-los */
+.linha.linhaMarcada td,
+.linha.linhaMarcada:hover td { background: rgba(64, 222, 99, .07); }
+.linha.linhaMarcada td:first-child { box-shadow: inset 2px 0 0 #22a85c; }
+.linha.linhaComErro td { background: #fff7f7; }
+
+/* célula de pesquisa (produto, armazém): o texto da célula, a lupa à esquerda; vazio cinza, com pendência vermelho */
+.celulaBotao {
+  width: 100%;
+  height: 23px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: #111827;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  border-radius: 4px;
+  transition: color var(--mi) var(--ez-io);
+}
+.celulaBotao > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.celulaBotao:hover { color: #15803d; }
+.celulaBotao:focus-visible { outline: 2px solid #22a85c; outline-offset: -2px; }
+.celulaVazia { color: #a9b2bd; }
+.celulaErro { color: #b91c1c; font-weight: 600; }
+.celulaIcone { order: -1; margin-right: 2px; display: flex; color: #475569; flex-shrink: 0; transition: color var(--mi) var(--ez-io); }
+.celulaIcone svg { width: 13px; height: 13px; }
+.celulaBotao:hover .celulaIcone { color: #22a85c; }
+
+/* entrada da linha marcada (Quantidade, Valor unitário): 74px, à direita */
+.entrada {
+  width: 74px;
+  height: 19px;
+  box-sizing: border-box;
+  border: 1px solid #cfd6de;
+  border-radius: 6px;
+  background: #fff;
+  text-align: right;
+  font: inherit;
+  font-size: 12px;
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+  transition: border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io);
+}
+.entrada:focus { outline: none; border-color: #cfd6de; box-shadow: 0 1px 3px rgba(15, 23, 42, .10); }
+.quantidade .entrada { flex: 0 1 74px; min-width: 0; }
+
+/* grade vazia: a frase e o botão "Adicionar produto" do desenho (30px, pílula clara com a sombra verde) */
+.vazioConteudo { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.botaoTexto {
+  height: 30px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 13px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: #f1f3f4;
+  color: #475569;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
+}
+.botaoTexto:hover:not(:disabled) { background: #e8ecef; color: #0f172a; box-shadow: 0 3px 9px rgba(34, 197, 94, .36); }
+.botaoTexto:active:not(:disabled) { background: #dde3e8; }
+.botaoTexto:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+.botaoTexto svg { width: 15px; height: 15px; flex-shrink: 0; }
+
+/* selo "novo" do formulário do item e o ponto de pendência do rodapé */
+.selo { font-size: 10.5px; font-weight: 600; color: #475569; background: #eef1f4; border-radius: 999px; padding: 0 6px; line-height: 16px; }
+.pontoErro { width: 7px; height: 7px; border-radius: 50%; background: #dc2626; display: inline-block; }
+
 @keyframes aparece { from { opacity: 0; } to { opacity: 1; } }
 @keyframes desce { from { opacity: 0; transform: translateY(-7px) scale(.985); } to { opacity: 1; transform: none; } }
 
