@@ -6,20 +6,28 @@ import {
   VERSAO_SCHEMA_CONFIGURACAO_TOP,
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
+  VERSAO_SCHEMA_CONFIGURACAO_TOP_V4,
   configuracaoNeutraTopV2,
   configuracaoNeutraTopV3,
+  configuracaoNeutraTopV4,
   configuracaoTopParaEdicao,
   configuracaoTopParaEdicaoV3,
+  configuracaoTopParaEdicaoV4,
   execucaoDeclaradaTop,
   lerConfiguracaoTop,
   lerMatrizExecucaoTop,
+  lerMatrizRegrasGeraisTop,
+  regrasGeraisExecutamTop,
   type AtualizacaoEstoque,
   type AtualizacaoFinanceiro,
   type CalculoTributario,
+  type ConfiguracaoComRestricoesTop,
   type ConfiguracaoTipoOperacao,
   type ConfiguracaoTipoOperacaoV1,
   type ConfiguracaoTipoOperacaoV2,
   type ConfiguracaoTipoOperacaoV3,
+  type ConfiguracaoTipoOperacaoV4,
+  type ItemMatrizRegrasGeraisTop,
   type ModoConfirmacao,
   type ModoFinanceiro,
   type MomentoAprovacao,
@@ -106,6 +114,18 @@ export interface CapacidadesRestricoesTop {
   versaoSchema: number;
 }
 
+/**
+ * O que o servidor declara sobre as REGRAS GERAIS E A APROVAÇÃO EXECUTADAS (TOP-CONFIG-08): o formato em que ele as
+ * grava (`versaoSchema`, hoje 4) e a matriz por família — o que cada família aceita em Confirmação, Documento sem
+ * itens, Alteração após confirmar e Aprovação, com o motivo do que ela não aceita. A tela avalia a matriz QUE O
+ * SERVIDOR DECLAROU, lida pelo leitor estrito do domínio — nunca `MATRIZ_REGRAS_GERAIS_TOP` importada direto: a
+ * matriz só cresce, e uma cópia da tela recusaria o que um servidor mais novo já aceita (ou o contrário).
+ */
+export interface CapacidadesRegrasGeraisTop {
+  versaoSchema: number;
+  matriz: readonly ItemMatrizRegrasGeraisTop[];
+}
+
 export interface CapacidadesTop {
   contractVersion: typeof CONTRATO_CAPACIDADES_TOP;
   configuracao: { versaoSchema: number; secoes: string[] };
@@ -117,10 +137,38 @@ export interface CapacidadesTop {
    * ausente ou qualquer outro valor = servidor anterior — a caixa não aparece e a chave nunca vai no corpo.
    */
   reservaEstoque: boolean;
+  /**
+   * TOP-CONFIG-08: o bloco `regrasGerais` da raiz, lido. `null` = AUSENTE (servidor anterior) OU ILEGÍVEL — os dois
+   * dão o mesmo editor, o de hoje, no formato 3, sem nenhuma chave nova no fio (ver `lerRegrasGeraisDasCapacidades`).
+   */
+  regrasGerais: CapacidadesRegrasGeraisTop | null;
 }
 
 /** Servidor sem restrições: nada do formato 3 aparece e nada dele é enviado. */
 const SEM_RESTRICOES: CapacidadesRestricoesTop = { suportado: false, versaoSchema: 0 };
+
+/**
+ * Lê o bloco `regrasGerais` das capacidades (TOP-CONFIG-08), ou `null`.
+ *
+ * ┌─ ESTE BLOCO NÃO SEGUE A RÉGUA DOS OUTROS, E ISSO É DELIBERADO ─────────────────────────────────────┐
+ * │ `destinos`, `execucao` e `restricoes` presentes e malformados NEGAM o corpo inteiro: contrato       │
+ * │ desconhecido, e nada dele merece confiança. Aqui, presente e malformado vira `null` — "como se não  │
+ * │ existisse" —, e as outras capacidades continuam lidas. A diferença é o que a degradação custa:      │
+ * │ sem o bloco, o editor é o de hoje e grava o formato 3, que o servidor continua aceitando e que      │
+ * │ NUNCA executa as regras gerais (é o corte da decisão 277). O pior desfecho é não oferecer a regra   │
+ * │ nova; negar o corpo inteiro bloquearia também a configuração que a tela sabe escrever.              │
+ * │                                                                                                      │
+ * │ Legível exige: objeto, `suportado === true`, `versaoSchema` inteiro positivo e a matriz aceita por  │
+ * │ `lerMatrizRegrasGeraisTop` (estrito: chave a mais ou a menos, valor fora do enum, família repetida   │
+ * │ — qualquer desvio é `null`, nunca um pedaço da matriz adivinhado). Um `versaoSchema` que esta tela   │
+ * │ não escreve não é malformação: o bloco é lido e `podeConfigurarRegrasGerais` o recusa.              │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ */
+function lerRegrasGeraisDasCapacidades(bruto: unknown): CapacidadesRegrasGeraisTop | null {
+  if (!ehObjeto(bruto) || bruto.suportado !== true || !ehInteiroPositivo(bruto.versaoSchema)) return null;
+  const matriz = lerMatrizRegrasGeraisTop(bruto.matriz);
+  return matriz === null ? null : { versaoSchema: bruto.versaoSchema, matriz };
+}
 
 /** Servidor sem execução configurada: nada é executável e nada do bloco é enviado. */
 const SEM_EXECUCAO: CapacidadesExecucaoTop = { suportado: false, runtimeHabilitado: false, matriz: [] };
@@ -189,7 +237,9 @@ export function lerCapacidadesTop(bruto: unknown): CapacidadesTop | null {
     restricoes,
     // Só o valor EXATO 1 liga (a régua de `destinos.emPartes`): ausente é o servidor anterior, e outro valor é
     // um contrato que esta tela não leu — nos dois casos a reserva fica fora do editor, sem negar o resto.
-    reservaEstoque: bruto.reservaEstoque === 1
+    reservaEstoque: bruto.reservaEstoque === 1,
+    // TOP-CONFIG-08: ausente ou ilegível = `null`, sem negar o resto (régua própria, em `lerRegrasGeraisDasCapacidades`).
+    regrasGerais: lerRegrasGeraisDasCapacidades(bruto.regrasGerais)
   };
 }
 
@@ -256,6 +306,32 @@ export const podeConfigurarDestinos = (e: EstadoCapacidadesTop): boolean =>
 export const podeConfigurarRestricoes = (e: EstadoCapacidadesTop): boolean =>
   podeConfigurar(e) && e.capacidades.restricoes.suportado
   && e.capacidades.restricoes.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3;
+
+/**
+ * TOP-CONFIG-08 — o bloco `regrasGerais` que o editor do formato 4 usa, ou `null`. Uma pergunta só, para as duas
+ * funções abaixo nunca discordarem: exige tudo o que as restrições exigem (o formato 4 tem as chaves do 3, e o
+ * servidor que não grava o 3 não grava o 4) E o bloco legível no formato que esta tela escreve (4).
+ */
+const regrasGeraisDoEditor = (e: EstadoCapacidadesTop): CapacidadesRegrasGeraisTop | null => {
+  if (!podeConfigurar(e) || !podeConfigurarRestricoes(e)) return null;
+  const r = e.capacidades.regrasGerais;
+  return r !== null && r.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4 ? r : null;
+};
+
+/**
+ * As regras gerais e a aprovação podem ser EDITADAS, e o rascunho vai no FORMATO 4 (`RascunhoTop.configuracaoV4`)?
+ * Qualquer resposta que não seja o bloco legível no formato 4 = o editor da TOP-CONFIG-05, formato 3, textos de
+ * hoje — que é exatamente o que uma API anterior a esta fatia recebe.
+ */
+export const podeConfigurarRegrasGerais = (e: EstadoCapacidadesTop): boolean => regrasGeraisDoEditor(e) !== null;
+
+/**
+ * A matriz por família que o servidor declarou — `null` fora de `podeConfigurarRegrasGerais` (fail-closed: sem o
+ * formato 4 no editor não há regra geral a conferir, e uma matriz sem uso seria convite a uma segunda decisão).
+ * É a que se passa a `regrasGeraisDaFamiliaTop`, `validarRegrasGeraisTop` e `normalizarRegrasGeraisDaFamiliaTop`.
+ */
+export const matrizRegrasGerais = (e: EstadoCapacidadesTop): readonly ItemMatrizRegrasGeraisTop[] | null =>
+  regrasGeraisDoEditor(e)?.matriz ?? null;
 
 /** Quantos destinos esta API aceita. Zero quando ela não os suporta — e zero bloqueia a inclusão. */
 /** A caixa "Em partes" aparece e `emPartes` vai no corpo? Só quando a API declara `destinos.emPartes === 1`. */
@@ -563,11 +639,19 @@ export interface RascunhoTop {
   configuracao: ConfiguracaoTipoOperacaoV2;
   /**
    * TOP-CONFIG-05 — o rascunho no FORMATO 3, presente SÓ quando o servidor declara restrições
-   * (`podeConfigurarRestricoes`). Ausente = editor de hoje: `configuracao` (formato 2) é a única verdade e
-   * nenhuma chave nova existe na tela nem no fio. Presente, ele é a verdade da configuração e `configuracao`
-   * não é usada para o envio.
+   * (`podeConfigurarRestricoes`) e NÃO declara as regras gerais (com elas, quem existe é `configuracaoV4`).
+   * Ausente = editor de hoje: `configuracao` (formato 2) é a única verdade e nenhuma chave nova existe na tela
+   * nem no fio. Presente, ele é a verdade da configuração e `configuracao` não é usada para o envio.
    */
   configuracaoV3?: ConfiguracaoTipoOperacaoV3;
+  /**
+   * TOP-CONFIG-08 — o rascunho no FORMATO 4, presente SÓ quando o servidor declara as regras gerais
+   * (`podeConfigurarRegrasGerais`). Presente, ele é a verdade da configuração: `configuracaoV3` fica AUSENTE (uma
+   * verdade só — dois rascunhos com as mesmas chaves divergiriam na primeira edição) e `configuracao` (formato 2) é
+   * só a vista derivada dele, para os campos de hoje (`aplicarNoFormato3` preserva o 4). Ausente = o editor de hoje,
+   * com ou sem o formato 3: nenhuma regra geral executada na tela nem no fio.
+   */
+  configuracaoV4?: ConfiguracaoTipoOperacaoV4;
   /** As condições permitidas em edição (só com restrições). Vazia = todas as condições. */
   condicoesPermitidas?: CondicaoPermitidaEmEdicao[];
   /**
@@ -617,10 +701,50 @@ export function configuracaoInicial(c: ConfiguracaoDoServidor | null): Configura
   return c && c.suportada ? configuracaoTopParaEdicao(c.valor) : configuracaoNeutraTopV2();
 }
 
-/** A configuração inicial do editor COM restrições: formato 3 (v1/v2 promovidos com as chaves novas no neutro). */
+/**
+ * A configuração inicial do editor COM restrições e SEM as regras gerais: formato 3 (v1/v2 promovidos com as chaves
+ * novas no neutro; o 3 como está).
+ *
+ * ┌─ UM FORMATO 4 AQUI É FORMATO DESCONHECIDO PARA ESTE EDITOR (TOP-CONFIG-08) ─────────────────────────┐
+ * │ Este editor só existe quando o servidor NÃO declarou o bloco `regrasGerais` legível no formato 4.   │
+ * │ Uma versão vigente no formato 4 diante dele quer dizer que o servidor é mais novo que a tela (ou    │
+ * │ declarou um bloco que ela não lê), e vale a MESMA régua de hoje para formato desconhecido: o neutro │
+ * │ aqui, e as seções de operação BLOQUEADAS por quem chama (`configuracaoIlegivelNoEditor`). Devolver  │
+ * │ o 4 como 3 faria a gravação seguinte rebaixar a versão (o servidor recusa o retrocesso, mas a tela  │
+ * │ teria oferecido a edição); devolver o 4 como 4 poria um formato 4 nas mãos de um editor cujos       │
+ * │ textos dizem que as regras gerais NÃO executam — e no 4 elas executam. Ler não regrava nada: a      │
+ * │ versão continua 4 no banco, e o 4 é editado por inteiro onde ele existe (`configuracaoInicialV4`).  │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ */
 export function configuracaoInicialV3(c: ConfiguracaoDoServidor | null): ConfiguracaoTipoOperacaoV3 {
-  return c && c.suportada ? configuracaoTopParaEdicaoV3(c.valor) : configuracaoNeutraTopV3();
+  if (!c || !c.suportada) return configuracaoNeutraTopV3();
+  const v = configuracaoTopParaEdicaoV3(c.valor);
+  return v.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3 ? v : configuracaoNeutraTopV3();
 }
+
+/**
+ * TOP-CONFIG-08 — a configuração inicial do editor COM as regras gerais: formato 4. O 1/2 passa pela vista do 3 de
+ * hoje (chaves novas no neutro), o 3 vira 4 com as MESMAS chaves e os mesmos valores, o 4 sai como está — tudo pelo
+ * domínio (`configuracaoTopParaEdicaoV4`). NÃO aplica a matriz da família: uma regra que a família não aceita (o
+ * pedido de compra de produção, formato 3 com Automática) chega ao editor como foi gravada, e quem a volta ao padrão,
+ * avisando antes, é a gravação (`normalizarRegrasGeraisDaFamiliaTop` + o diálogo "Estas regras passam a valer").
+ * Neutro do formato 4 sem configuração legível — a mesma régua de `configuracaoInicial`.
+ */
+export function configuracaoInicialV4(c: ConfiguracaoDoServidor | null): ConfiguracaoTipoOperacaoV4 {
+  return c && c.suportada ? configuracaoTopParaEdicaoV4(c.valor) : configuracaoNeutraTopV4();
+}
+
+/**
+ * A VERSÃO VIGENTE PODE SER EDITADA POR ESTE EDITOR, COM ESTAS CAPACIDADES? `true` = não pode, e as seções de
+ * operação ficam bloqueadas com a frase de formato desconhecido (`top-config-ilegivel`). Duas causas, a mesma régua:
+ *   · o servidor declarou que não sabe ler a versão (`suportada: false`) — o caso de hoje, intocado;
+ *   · TOP-CONFIG-08: a versão está no formato 4 e o editor não é o do formato 4 (`podeConfigurarRegrasGerais`
+ *     falso). Ver o quadro de `configuracaoInicialV3`.
+ * Sem configuração (`null`, API anterior à configuração) não há o que bloquear. Com uma API anterior a esta fatia
+ * nenhuma versão chega legível no formato 4, então a resposta é exatamente a de hoje.
+ */
+export const configuracaoIlegivelNoEditor = (c: ConfiguracaoDoServidor | null, e: EstadoCapacidadesTop): boolean =>
+  c !== null && (!c.suportada || (regrasGeraisExecutamTop(c.valor) && !podeConfigurarRegrasGerais(e)));
 
 /**
  * A configuração no formato que ESTE servidor grava — ou `null` quando não há como enviá-la sem mudar o
@@ -642,22 +766,27 @@ export function configuracaoParaEnvio(c: ConfiguracaoTipoOperacaoV2, execucaoSup
 }
 
 /**
- * Aplica uma mudança escrita para o FORMATO 2 (as seções de hoje) sobre o rascunho no FORMATO 3, sem perder
- * as chaves novas. É o que deixa os campos de hoje funcionarem iguais nos dois editores: eles continuam
+ * Aplica uma mudança escrita para o FORMATO 2 (as seções de hoje) sobre o rascunho no FORMATO 3 ou 4, sem perder
+ * as chaves novas. É o que deixa os campos de hoje funcionarem iguais nos três editores: eles continuam
  * mexendo na vista formato 2, e as chaves novas do formato 3 são reaplicadas por cima. A normalização do
  * domínio vem depois, em quem chama.
+ *
+ * O FORMATO QUE ENTRA É O FORMATO QUE SAI (TOP-CONFIG-08): 3 → 3, 4 → 4. O nome ficou ("no formato 3" = com as
+ * chaves do 3, que o 4 também tem), mas o número não é mais fixado aqui: fixar o 3 rebaixaria o rascunho do formato
+ * 4 a cada edição de campo, e a gravação sairia no 3 — que nunca executa as regras gerais. Por isso `versaoSchema` é
+ * a ÚNICA chave que vem de `c` por inteiro; todas as seções vêm da vista editada, com as chaves do 3 reaplicadas.
  */
-export function aplicarNoFormato3(
-  v3: ConfiguracaoTipoOperacaoV3,
+export function aplicarNoFormato3<C extends ConfiguracaoComRestricoesTop>(
+  c: C,
   f: (c: ConfiguracaoTipoOperacaoV2) => ConfiguracaoTipoOperacaoV2
-): ConfiguracaoTipoOperacaoV3 {
-  const novo = f(configuracaoTopParaEdicao(v3));
-  const { exigeTransportadora } = v3.geral;
-  const { clienteEmAtraso, toleranciaAtrasoDias } = v3.financeiro;
-  const { modeloDocumento, finalidade, naturezaOperacao, cfopDentroEstado, cfopForaEstado, cfopExterior } = v3.fiscal;
+): C {
+  const { versaoSchema: _formato2, ...novo } = f(configuracaoTopParaEdicao(c));
+  const { exigeTransportadora } = c.geral;
+  const { clienteEmAtraso, toleranciaAtrasoDias } = c.financeiro;
+  const { modeloDocumento, finalidade, naturezaOperacao, cfopDentroEstado, cfopForaEstado, cfopExterior } = c.fiscal;
   return {
+    ...c,
     ...novo,
-    versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
     geral: { ...novo.geral, exigeTransportadora },
     financeiro: { ...novo.financeiro, clienteEmAtraso, toleranciaAtrasoDias },
     fiscal: { ...novo.fiscal, modeloDocumento, finalidade, naturezaOperacao, cfopDentroEstado, cfopForaEstado, cfopExterior }
@@ -665,23 +794,31 @@ export function aplicarNoFormato3(
 }
 
 /**
- * A configuração que a gravação ENVIA, decidida pelo rascunho (TOP-CONFIG-05).
+ * A configuração que a gravação ENVIA, decidida pelo rascunho (TOP-CONFIG-05; formato 4 na TOP-CONFIG-08).
  *
+ *   · Com as regras gerais (`configuracaoV4` presente): o formato 4, como está — ele é a verdade, e um
+ *     `configuracaoV3` que sobrasse ao lado dele é ignorado.
  *   · Com restrições (`configuracaoV3` presente): o formato 3, como está.
- *   · Sem restrições e a versão VIGENTE já no formato 3: `null` — a mesma régua da execução. Mandar o
+ *   · Sem nenhum dos dois e a versão VIGENTE no formato 3 OU MAIOR: `null` — a mesma régua da execução. Mandar o
  *     formato 2 por cima apagaria as chaves novas (o servidor recusa o retrocesso de formato de todo jeito).
- *   · Sem restrições, vigente no formato 1/2: o caminho de hoje, intocado (`configuracaoParaEnvio`).
+ *   · Sem nenhum dos dois, vigente no formato 1/2: o caminho de hoje, intocado (`configuracaoParaEnvio`).
+ *
+ * O formato 4 vai COMO ESTÁ também em relação à família: as regras que ela não aceita são voltadas ao padrão ANTES,
+ * na gravação do editor (`normalizarRegrasGeraisDaFamiliaTop` com `matrizRegrasGerais`, depois do diálogo "Estas
+ * regras passam a valer"). Esta função não as volta em silêncio — e o servidor recusa com 422 o que sobrar.
  */
 export function configuracaoDoRascunhoParaEnvio(
   r: RascunhoTop,
   execucaoSuportada: boolean,
+  /** A versão VIGENTE está no formato 3 ou maior (o 4 inclusive). O nome é o da TOP-CONFIG-05; o sentido cresceu. */
   vigenteNoFormato3: boolean
 ): ConfiguracaoTipoOperacao | null {
-  if (r.configuracaoV3) {
+  const comRestricoes: ConfiguracaoComRestricoesTop | undefined = r.configuracaoV4 ?? r.configuracaoV3;
+  if (comRestricoes) {
     // Mesma régua de `configuracaoParaEnvio`: sem execução no servidor, efeito configurado não tem envio honesto.
-    const e = execucaoDeclaradaTop(r.configuracaoV3);
+    const e = execucaoDeclaradaTop(comRestricoes);
     if (!execucaoSuportada && (e.estoque !== "legado" || e.financeiro !== "legado")) return null;
-    return r.configuracaoV3;
+    return comRestricoes;
   }
   if (vigenteNoFormato3) return null;
   return configuracaoParaEnvio(r.configuracao, execucaoSuportada);
@@ -721,6 +858,8 @@ export function assinaturaRascunho(r: RascunhoTop): string {
     // TOP-CONFIG-05: só com restrições (sem elas as chaves ficam AUSENTES e a assinatura é a de hoje).
     // Da lista de condições só a identidade e a ORDEM viajam; código e nome são apresentação.
     ...(r.configuracaoV3 ? { configuracaoV3: r.configuracaoV3 } : {}),
+    // TOP-CONFIG-08: a mesma régua — só com as regras gerais; sem elas a chave fica AUSENTE e a assinatura é a de hoje.
+    ...(r.configuracaoV4 ? { configuracaoV4: r.configuracaoV4 } : {}),
     ...(r.condicoesPermitidas ? { condicoesPermitidas: r.condicoesPermitidas.map((c) => c.id) } : {}),
     ...(r.condicoesDeclaradas !== undefined ? { condicoesDeclaradas: r.condicoesDeclaradas } : {}),
     // TOP-CONFIG-07: marcar ou desmarcar a reserva é conteúdo (cria versão). Ausente = não lida, fora da assinatura.
