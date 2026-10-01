@@ -23,7 +23,8 @@ import { FichaEmAbas, ConsultaCnpj, CriacaoPorOutraPorta, camposApagadosNaTroca,
 import { JanelaConsultaCnpj, esquecerImportacaoPendente, lerImportacaoPendente, useConsultaCnpjJanela, type RespostaCnpj } from "./consulta-cnpj-janela";
 import { AttachmentsDialog } from "@/features/base1/attachments-dialog";
 import { HistoryDialog } from "@/features/base1/history-dialog";
-import { CampoDoLancamento, ChaveSimNao, DataDoLancamento, estilosCampoBem, type Densidade, type IconeDoCampo } from "@/features/bens/campo";
+import { CampoDoLancamento, ChaveSimNao, DataDoLancamento, SelecaoVariasDoLancamento, estilosCampoBem, type Densidade, type IconeDoCampo } from "@/features/bens/campo";
+import { useWorkspaceImersivo } from "@/components/layout/workspace-imersivo";
 import {
   AcoesRapidasDoBem, BotaoDaBarra, CartaoDoBem, Conjunto, ConjuntoDireito, IconeAnexos, IconeDuplicar,
   IconeEditar, IconeExcluir, IconeHistorico, IconeImprimir, IconeNovo, IconeSalvar, PosicaoDoRotuloBem, classeDoSpan,
@@ -159,9 +160,10 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const [historico, setHistorico] = React.useState(false);
   const [janelaCnpj, setJanelaCnpj] = React.useState(false);
   const [openField, setOpenField] = React.useState<string | null>(null);
-  // VISUAL-UX-04: densidade do lançamento de bem — padrão = rótulo DENTRO (campos lado a lado); só de tela
-  const [densidadeBem, setDensidadeBem] = React.useState<Densidade>("compacto");
+  // VISUAL-UX-04: densidade do lançamento de bem — o HTML abre em rótulo À FRENTE; o compacto é o outro botão. Só de tela.
+  const [densidadeBem, setDensidadeBem] = React.useState<Densidade>("rotulo-a-frente");
   const peleBem = ehPeleBem(resourceKey, rapido);
+  useWorkspaceImersivo(peleBem);
   // painéis em abas horizontais ("tabs") ou lista lateral ("sidebar"), como o modelo base do MG; lembrado por cadastro
   const panelStyleKey = `agro.launchPanelStyle.${resourceKey}`;
   const [panelStyle, setPanelStyle] = React.useState<"tabs" | "sidebar">("tabs");
@@ -203,15 +205,28 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
     // VISUAL-UX-04: pele do bem — mesmos controles/API; caixa do desenho + span da grade
     if (peleBem) {
       if (f.name === "code") return null;
-      const spanCls = classeDoSpan(l.fieldSizes[f.name] ?? spanDoDesenhoBem(f.name) ?? f.span);
+      // O layout padrão copia o span do registry para `fieldSizes`. No desenho a largura é outra
+      // (Empresa 6, Chassi 2, Usa fiscal 4…). Largura salva pelo usuário só vence quando difere do registry.
+      const tamanhoSalvo = l.fieldSizes[f.name];
+      const personalizado = layout.source !== "default" && tamanhoSalvo !== undefined && tamanhoSalvo !== f.span;
+      const spanCls = classeDoSpan(personalizado ? tamanhoSalvo : (spanDoDesenhoBem(f.name) ?? tamanhoSalvo ?? f.span));
       if (f.type === "boolean") {
         const ligado = v === true || v === "true";
         return <div key={f.name} className={spanCls}><ChaveSimNao rotulo={rotulo} valor={ligado} desabilitado={dis} testId={`campo-${f.name}`}
           data-campo={rotulo} {...(dis ? {} : { onChange: (nv: boolean) => form.setValue(f.name, nv, { shouldDirty: true }) })} /></div>;
       }
+      if (f.type === "tags") {
+        const escolhidos = Array.isArray(v) ? (v as string[]) : [];
+        return <div key={f.name} className={spanCls}><CampoDoLancamento rotulo={rotulo} obrigatorio={required} erro={err}
+          icone="selecao" estado={f.readOnly ? "leitura" : dis ? "desabilitado" : "editavel"} preenchido={escolhidos.length > 0}
+          testId={`campo-${f.name}`} data-campo={rotulo} dica={f.help}>
+          <SelecaoVariasDoLancamento rotulo={rotulo} opcoes={f.options ?? []} valor={escolhidos} desabilitado={dis}
+            onChange={(nv) => form.setValue(f.name, nv, { shouldDirty: true })} />
+        </CampoDoLancamento></div>;
+      }
       const icone: IconeDoCampo | null = f.type === "date" ? "data" : f.type === "ref" || f.busca ? "pesquisa" : f.type === "select" ? "selecao" : null;
       const estado = f.readOnly ? "leitura" as const : dis ? "desabilitado" as const : "editavel" as const;
-      const multilinha = f.type === "textarea" || f.type === "json" || f.type === "tags";
+      const multilinha = f.type === "textarea" || f.type === "json";
       const numero = ["money", "quantity", "number", "percent", "integer"].includes(f.type);
       let soAjuste = false;
       const padrao = (extra?: ExtraDoCampo) => {

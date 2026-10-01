@@ -295,14 +295,29 @@ fieldset:disabled .caixa :is(.controle, input, textarea, :global(.cmd-display)) 
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .botaoData,
 [data-densidade="compacto"] fieldset:disabled .linha .botaoData { top: calc(50% + 5px); }
 [data-densidade="compacto"] .linha[data-multilinha] .caixa :is(.controle, textarea) { padding-top: 13px !important; padding-bottom: 3px !important; }
-/* vazio no compacto: o rótulo ocupa a caixa — o traço de "sem valor" não aparece por baixo dele */
-[data-densidade="compacto"] .caixa :global(.cmd-display-placeholder) { visibility: hidden; }
+/* vazio: o desenho não escreve "Selecione" nem "—" dentro da caixa */
+.caixa :global(.cmd-display-placeholder) { visibility: hidden; }
+/* rótulo à frente, caixa alta (MDFe, especificação): o texto longo quebra junto com o ":" */
+[data-densidade="rotulo-a-frente"] .linha[data-multilinha] .rotulo {
+  display: block;
+  text-align: right;
+  white-space: normal;
+  height: auto;
+  max-height: 100%;
+  overflow: visible;
+  padding-top: 6px;
+  line-height: 1.15;
+  text-overflow: clip;
+}
 
 /* ═════════════ chave sim/não ═════════════ */
-.linha.linha[data-chave] .caixa { background: transparent; border-color: transparent; box-shadow: none; padding-left: 0; padding-right: 0; gap: 9px; }
+.linha.linha[data-chave] .caixa { background: transparent; border-color: transparent; box-shadow: none; padding-left: 0; padding-right: 0; gap: 0; justify-content: center; }
+.linha[data-chave] .rotulo { font-size: 13px; }
+/* a chave mostra ":" nas duas densidades; o compacto tira o ":" dos outros rótulos */
+[data-densidade="compacto"] .linha[data-chave] .rotulo::after { content: ":"; }
 /* compacto: o par rótulo + chave fica junto, centralizado na divisão, com os 32px do `.fld` */
 [data-densidade="compacto"] .linha[data-chave] { height: 32px; min-height: 32px; display: flex; align-items: center; justify-content: center; gap: 8px; }
-[data-densidade="compacto"] .linha[data-chave] .rotulo { position: static; width: auto; max-width: none; height: auto; padding: 0; top: auto; transform: none; font-size: 13px; line-height: 1; }
+[data-densidade="compacto"] .linha[data-chave] .rotulo { position: static; display: flex; align-items: center; width: auto; max-width: none; height: auto; padding: 0; top: auto; transform: none; font-size: 13px; line-height: 1; }
 [data-densidade="compacto"] .linha.linha[data-chave] .caixa { position: static; inset: auto; width: auto; height: auto; flex: 0 0 auto; padding: 0 !important; border-width: 0; background: transparent; }
 .chave {
   --sw-w: 42px;
@@ -346,7 +361,23 @@ fieldset:disabled .caixa :is(.controle, input, textarea, :global(.cmd-display)) 
 .chave:disabled { opacity: .45; cursor: not-allowed; }
 .chave[aria-readonly="true"] { cursor: default; }
 .chave:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
-.chaveTexto { font-size: 12.5px; font-weight: 500; color: #475569; }
+.painelVarias { width: var(--radix-popover-trigger-width); min-width: 220px; padding: 4px; }
+.opcaoVaria {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 13px;
+  color: #111827;
+  cursor: pointer;
+}
+.opcaoVaria:hover,
+.opcaoVaria[aria-pressed="true"] { background: #f1f5f9; }
+.opcaoVaria[aria-pressed="true"] { font-weight: 600; }
 
 /* ═════════════ Dados adicionais (recolhível) ═════════════ */
 .maisDados {

@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import * as Popover from "@radix-ui/react-popover";
 import { Calendar, ChevronDown, ChevronRight, ChevronUp, CircleAlert, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MgDatePicker, type PainelDoCalendario } from "@/components/ui";
@@ -128,9 +129,9 @@ export function CampoLeituraDoLancamento({ rotulo, valor, adorno, testId, multil
 }
 
 /**
- * Chave sim/não do desenho (`role="switch"`): trilho de 42×20 com a bolinha, e o texto "Sim"/"Não" ao lado. Sem
- * `onChange` ela só mostra (consulta): opacidade cheia, `aria-readonly`, não reage — como no desenho. `desabilitado`
- * (ou o fieldset travado do layout) é o estado apagado. O valor e o que ele significa no payload são de quem chama.
+ * Chave sim/não do desenho (`role="switch"`): só o trilho de 42×20. O rótulo leva ":" nas duas densidades.
+ * Sem `onChange` ela só mostra (consulta): `aria-readonly`, não reage. `desabilitado` é o estado apagado.
+ * O valor e o que ele significa no payload são de quem chama.
  */
 export function ChaveSimNao({ rotulo, valor, onChange, desabilitado, testId, ...dados }: { rotulo: string; valor: boolean; onChange?: (v: boolean) => void; desabilitado?: boolean; testId?: string } & AtributosDeDados) {
   const id = React.useId();
@@ -141,10 +142,35 @@ export function ChaveSimNao({ rotulo, valor, onChange, desabilitado, testId, ...
       <div className={estilos.caixa} data-parte="caixa">
         <button id={id} type="button" role="switch" aria-checked={valor} aria-label={rotulo} aria-readonly={soLeitura || undefined} className={estilos.chave}
           disabled={desabilitado} onClick={() => { if (!soLeitura) onChange(!valor); }}><span className={estilos.chaveBotao} /></button>
-        <span className={estilos.chaveTexto} data-parte="valor">{valor ? "Sim" : "Não"}</span>
       </div>
     </div>
   </div>;
+}
+
+/** Várias opções no mesmo formato do seletor do desenho (uma linha, chevron). O valor continua sendo a lista de sempre. */
+export function SelecaoVariasDoLancamento({ rotulo, opcoes, valor, onChange, desabilitado }: {
+  rotulo: string; opcoes: { value: string; label: string }[]; valor: string[]; onChange: (v: string[]) => void; desabilitado?: boolean;
+}) {
+  const [aberto, setAberto] = React.useState(false);
+  const texto = opcoes.filter((o) => valor.includes(o.value)).map((o) => o.label).join(", ");
+  const alterna = (v: string) => { const set = new Set(valor); if (set.has(v)) set.delete(v); else set.add(v); onChange([...set]); };
+  return <Popover.Root open={aberto} onOpenChange={(o) => { if (!desabilitado) setAberto(o); }}>
+    <Popover.Trigger asChild>
+      <button type="button" role="combobox" className={estilos.controle} disabled={desabilitado} aria-label={rotulo} aria-expanded={aberto} aria-haspopup="listbox">{texto}</button>
+    </Popover.Trigger>
+    <Popover.Portal>
+      <Popover.Content align="start" sideOffset={4} className={cn("cmd-panel z-[10000] outline-none", estilos.painelVarias)} onOpenAutoFocus={(e) => e.preventDefault()}>
+        <ul role="listbox" aria-label={rotulo} aria-multiselectable="true">
+          {opcoes.map((o) => {
+            const ligado = valor.includes(o.value);
+            return <li key={o.value} role="option" aria-selected={ligado}>
+              <button type="button" className={estilos.opcaoVaria} aria-pressed={ligado} onClick={() => alterna(o.value)}>{o.label}</button>
+            </li>;
+          })}
+        </ul>
+      </Popover.Content>
+    </Popover.Portal>
+  </Popover.Root>;
 }
 
 /**

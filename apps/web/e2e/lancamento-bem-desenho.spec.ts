@@ -1,8 +1,8 @@
 /**
  * VISUAL-UX-04 — Lançamento de bem/equipamento igual ao desenho (só apresentação).
  *
- * Create e edit: chrome do desenho, densidade padrão = rótulo DENTRO (grade lado a lado),
- * troca para rótulo à frente (coluna), abas e mesmos rótulos do registry.
+ * Create e edit: chrome do desenho. O HTML abre em rótulo À FRENTE (coluna, 640px).
+ * O outro botão põe o rótulo DENTRO e a grade do desenho (Empresa 6, Chassi 2, Usa fiscal 4).
  */
 import { expect, test, type Page } from "@playwright/test";
 import { login } from "./helpers";
@@ -29,10 +29,10 @@ async function abrirNovo(page: Page) {
 test.describe("VISUAL-UX-04 — lançamento de bem/equipamento", () => {
   test.beforeEach(async ({ page }) => { await login(page); });
 
-  test("VB-1 chrome + densidade compacta (rótulo dentro) com grade lado a lado", async ({ page }) => {
+  test("VB-1 chrome do HTML: abre em rótulo à frente e o compacto usa a grade do desenho", async ({ page }) => {
     await abrirNovo(page);
     const form = page.locator(FORM);
-    await expect(form).toHaveAttribute("data-densidade", "compacto");
+    await expect(form).toHaveAttribute("data-densidade", "rotulo-a-frente");
     await expect(page.getByTestId("lancamento-bem-salvar")).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-descartar")).toHaveCount(0);
     await expect(page.getByTestId("lancamento-bem-novo")).toBeVisible();
@@ -43,31 +43,40 @@ test.describe("VISUAL-UX-04 — lançamento de bem/equipamento", () => {
     await expect(form.getByRole("tab", { name: "Outros" })).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-cartao").filter({ hasText: "Dados" }).first()).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-cartao").filter({ hasText: "Veículo" }).first()).toBeVisible();
-    // grade 12 colunas: pelo menos 2 campos na mesma linha horizontal (Descrição e Empresa, span 6+6)
-    const grade = page.getByTestId("lancamento-bem-grade").first();
-    const campos = grade.locator('[data-testid^="campo-"]');
-    await expect(campos.nth(0)).toBeVisible();
-    await expect(campos.nth(1)).toBeVisible();
-    const ladoALado = await Promise.all([campos.nth(0), campos.nth(1)].map(async (c) => {
-      const b = await c.boundingBox();
-      return b!;
-    }));
-    expect(Math.abs(ladoALado[0]!.y - ladoALado[1]!.y), "primeiro e segundo campo na mesma linha").toBeLessThan(8);
-    expect(ladoALado[1]!.x, "segundo campo à direita do primeiro").toBeGreaterThan(ladoALado[0]!.x + 40);
     await expect(page.getByTestId("campo-code")).toHaveCount(0);
+    await expect(page.locator(".mg-crumbs")).toHaveCount(0);
+    const empilhado = async (a: string, b: string) => {
+      const ba = await page.getByTestId(a).boundingBox();
+      const bb = await page.getByTestId(b).boundingBox();
+      expect(bb!.y, `${b} abaixo de ${a} no rótulo à frente`).toBeGreaterThan(ba!.y + 10);
+    };
+    await empilhado("campo-description", "campo-empresa_id");
+    await expect(page.getByTestId("campo-vehicle").locator("textarea")).toHaveValue("");
+    await page.getByRole("button", { name: "Rótulo dentro do campo" }).click();
+    await expect(form).toHaveAttribute("data-densidade", "compacto");
     const mesmaLinha = async (a: string, b: string) => {
       const ba = await page.getByTestId(a).boundingBox();
       const bb = await page.getByTestId(b).boundingBox();
       expect(Math.abs(ba!.y - bb!.y), `${a} e ${b} na mesma linha`).toBeLessThan(8);
+      expect(bb!.x, `${b} à direita de ${a}`).toBeGreaterThan(ba!.x + 40);
     };
     await mesmaLinha("campo-description", "campo-empresa_id");
+    await mesmaLinha("campo-family_id", "campo-status");
     await mesmaLinha("campo-chassis", "campo-color");
-    await expect(page.getByTestId("campo-vehicle").locator("textarea")).toHaveValue("");
+    await form.getByRole("tab", { name: "Depreciação" }).click();
+    await mesmaLinha("campo-has_depreciation", "campo-depreciation_type");
+    await mesmaLinha("campo-residual_percent", "campo-depreciated_value");
+    await form.getByRole("tab", { name: "Outros" }).click();
+    await mesmaLinha("campo-provider_id", "campo-use_fiscal");
+    await expect(page.getByTestId("campo-features").getByRole("combobox")).toBeVisible();
+    await expect(page.getByTestId("campo-features").getByRole("checkbox")).toHaveCount(0);
   });
 
   test("VB-2 troca de densidade é só de tela (compacto ↔ frente)", async ({ page }) => {
     await abrirNovo(page);
     const form = page.locator(FORM);
+    await expect(form).toHaveAttribute("data-densidade", "rotulo-a-frente");
+    await page.getByRole("button", { name: "Rótulo dentro do campo" }).click();
     await expect(form).toHaveAttribute("data-densidade", "compacto");
     await page.getByRole("button", { name: "Rótulo antes do campo" }).click();
     await expect(form).toHaveAttribute("data-densidade", "rotulo-a-frente");
@@ -101,7 +110,11 @@ test.describe("VISUAL-UX-04 — lançamento de bem/equipamento", () => {
     await page.goto(`/cadastros/equipments/${id}`);
     const form = page.locator(FORM);
     await expect(form).toBeVisible();
+    await expect(form).toHaveAttribute("data-densidade", "rotulo-a-frente");
+    await page.getByRole("button", { name: "Rótulo dentro do campo" }).click();
     await expect(form).toHaveAttribute("data-densidade", "compacto");
+    // a troca de densidade anima o padding; medir no meio do trajeto não é a geometria do desenho
+    await expect(page.getByTestId("campo-empresa_id").locator(".cmd-display")).toHaveCSS("padding-top", "13px");
     await expect(page.getByTestId("lancamento-bem-posicao-rotulo")).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-cartao").first()).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-salvar").or(page.getByTestId("lancamento-bem-editar"))).toBeVisible();
