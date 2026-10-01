@@ -168,7 +168,17 @@ fieldset:disabled .caixa :is(.controle, input, textarea, :global(.cmd-display)) 
 }
 .caixa :global(.cmd-display-placeholder) { color: #94a3b8; font-weight: 500; }
 .caixa :global(.cmd-chevron) { display: none !important; }
-.caixa :global(.cmd-clear) { display: none !important; }
+.caixa :global(.cmd-clear) {
+  right: 10px;
+  top: 50%;
+  margin-top: -7px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+/* em repouso permanece idêntico ao HTML; no hover/foco a limpeza existente continua alcançável */
+.linha:is(:hover, :focus-within) .caixa :global(.cmd-clear) { opacity: 1; pointer-events: auto; }
+.linha:is(:hover, :focus-within):has(:global(.cmd-clear)) .caixa :is(.controle, input, :global(.cmd-display)) { padding-right: 30px !important; }
 
 /* número (money / quantity / percent / integer): tabular + sem spinner do browser */
 .linha[data-numero] .caixa :is(.controle, input) {

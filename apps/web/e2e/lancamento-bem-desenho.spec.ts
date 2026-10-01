@@ -119,7 +119,7 @@ test.describe("VISUAL-UX-04 — lançamento de bem/equipamento", () => {
         linha: relativo(linha), caixa: relativo(caixa), rotulo: relativo(rotulo),
         controle: relativo(controle), icone: relativo(icone),
         padding: css.padding, borda: css.borderTopWidth, display: css.display,
-        limpar: limpar ? getComputedStyle(limpar).display : "ausente",
+        limpar: limpar ? { display: getComputedStyle(limpar).display, opacity: getComputedStyle(limpar).opacity } : null,
       };
     });
     expect(geometria).toEqual({
@@ -131,7 +131,14 @@ test.describe("VISUAL-UX-04 — lançamento de bem/equipamento", () => {
       padding: "13px 10px 3px 32px",
       borda: "0px",
       display: "flex",
-      limpar: "none",
+      limpar: { display: "block", opacity: "0" },
     });
+
+    const empresa = page.getByTestId("campo-empresa_id");
+    await empresa.hover();
+    const limpar = empresa.locator(".cmd-clear");
+    await expect(limpar).toHaveCSS("opacity", "1");
+    await limpar.click();
+    await expect(empresa.locator(".cmd-display")).toHaveClass(/is-empty/);
   });
 });
