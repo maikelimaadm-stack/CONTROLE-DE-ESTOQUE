@@ -1,0 +1,529 @@
+/*
+ * CAMPO DO LANÇAMENTO DE BEM/EQUIPAMENTO (só apresentação).
+ *
+ * As medidas saem do CSS do desenho aprovado: rótulo à frente é o padrão — `--dz-rotulo` (126px por omissão; a
+ * moldura do bem sobe para 196px) alinhado à direita, caixa a `--dz-caixa` com 30px de altura —; compacto põe o
+ * rótulo DENTRO da caixa (flutuante) com 32px. A densidade vem do ANCESTRAL `[data-densidade]`; sem ele, vale o padrão.
+ *
+ * Esta folha só VESTE: os controles continuam sendo os primitives (`Input`, `RefSelect`, `MgDatePicker`, `Textarea`)
+ * — aqui eles perdem a caixa própria e passam a morar na caixa do desenho. Nenhum valor, payload ou regra.
+ */
+
+/* ═════════════ coluna de campos (Dados principais / Dados adicionais) ═════════════ */
+.coluna { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.coluna .campo { max-width: 560px; }
+.coluna[hidden] { display: none; }
+/* ampliar Dados: os campos em duas colunas, de cima para baixo (a moldura marca `data-ampliado` na raiz) */
+[data-ampliado="dados"] .coluna[data-muitos="true"] {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(var(--linhas, 1), auto);
+  grid-auto-columns: minmax(0, 560px);
+  column-gap: 34px;
+  align-content: start;
+  justify-content: start;
+}
+
+/* ═════════════ campo ═════════════ */
+.campo { position: relative; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+
+/*
+ * GEOMETRIA DO DESENHO: a linha tem borda TRANSPARENTE de 1px (o `.fld`), e rótulo, caixa e ícone moram no padding-box
+ * dela — então, com rótulo à frente, o rótulo fica em +1,+1 e a caixa mede (largura − 138) × 28 a partir de +137.
+ * O controle ocupa EXATAMENTE a caixa (nada dele passa dela); a lista de pesquisa e o calendário saem da caixa de
+ * referência do desenho (o `.fx` a partir de 136px, topo +4 da linha) — o deslocamento mora no próprio painel, no fim.
+ */
+.linha {
+  --dz-rotulo: var(--dz-rotulo-raiz, 126px);
+  --dz-caixa: calc(var(--dz-rotulo) + 10px);
+  --dz-icone: calc(var(--dz-caixa) + 10px);
+  --dz-pad-erro: calc(var(--dz-caixa) + 2px);
+  --recuo: 10px;
+  position: relative;
+  height: 30px;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+}
+.linha[data-icone] { --recuo: 32px; }
+.linha[data-multilinha] { height: 80px; }
+
+/* rótulo à frente (padrão): `--dz-rotulo`, à direita, ":" antes do "*" */
+.rotulo {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  box-sizing: content-box;
+  width: var(--dz-rotulo);
+  height: 30px;
+  max-width: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 2px 0 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  transition: font-size .22s cubic-bezier(.2, .8, .2, 1), padding .22s cubic-bezier(.2, .8, .2, 1), top .22s cubic-bezier(.2, .8, .2, 1);
+}
+.rotulo::after { content: ":"; order: 0; }
+.obrigatorio { order: 1; margin-left: 3px; color: #dc2626; font-weight: 600; }
+
+/* a caixa: começa depois do rótulo (+10px) */
+.caixa {
+  position: absolute;
+  left: var(--dz-caixa);
+  right: 0;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 10px 0 var(--recuo);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #f1f3f4;
+  box-shadow: inset 0 1px 2px rgba(100, 116, 139, .05), inset 1px 0 1px rgba(148, 163, 184, .07), inset -1px 0 1px rgba(148, 163, 184, .07);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: #111827;
+  text-align: left;
+  transition: padding .22s cubic-bezier(.2, .8, .2, 1);
+}
+.linha[data-preenchido="true"]:not([data-estado]) .caixa { background: #fff; border-color: #e7eaee; box-shadow: none; }
+.linha[data-estado="leitura"] .caixa { background: #f6f8fa; border-color: transparent; box-shadow: none; cursor: default; }
+.linha[data-estado="travado"] .caixa,
+.linha[data-estado="desabilitado"] .caixa,
+fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border-color: transparent; box-shadow: none; color: #8b939e; cursor: default; }
+.linha[data-estado="desabilitado"] .caixa { cursor: not-allowed; }
+.linha[data-erro="true"]:not([data-estado]) .caixa { background: #fff; border-color: rgba(220, 38, 38, .28); box-shadow: 0 0 0 3px rgba(239, 68, 68, .09); }
+.linha:not([data-estado]):focus-within .caixa,
+.linha:not([data-estado]):has([aria-expanded="true"]) .caixa { border-color: #cfd6de; box-shadow: 0 1px 3px rgba(15, 23, 42, .10); }
+
+/* o valor (leitura e travado): texto que encurta, "—" apagado quando vazio */
+.valor { display: flex; align-items: baseline; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.valor > :last-child { overflow: hidden; text-overflow: ellipsis; }
+.vazio { color: #94a3b8; }
+
+/*
+ * o controle (Input, RefSelect, MgDatePicker, Textarea) perde a caixa própria e É a caixa do desenho (o `.fc`): cobre a
+ * border-box dela (−1px sobre o padding-box), com borda transparente de 1px e o padding de 10px (32px com ícone) —
+ * o texto termina em reticências antes do recuo direito, e antes do "limpar" quando há valor.
+ */
+.caixa[data-controle] { padding: 0; }
+.caixa[data-controle] > :not([type="hidden"]) {
+  position: absolute;
+  inset: -1px;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  width: auto;
+  height: auto;
+}
+/* Input e Textarea são o próprio filho da caixa: a altura sai do inset, não dos 100% do padding-box */
+.caixa[data-controle] > .controle:not([type="hidden"]) { height: auto !important; }
+.caixa .controle {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100% !important;
+  min-height: 0;
+  margin: 0;
+  padding: 0 10px 0 var(--recuo) !important;
+  border: 1px solid transparent !important;
+  border-radius: 8px;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  opacity: 1;
+  transition: padding .22s cubic-bezier(.2, .8, .2, 1);
+}
+.caixa .controle:disabled { color: #8b939e; -webkit-text-fill-color: #8b939e; cursor: not-allowed; }
+fieldset:disabled .caixa .controle { cursor: default; }
+.caixa input.controle::placeholder { color: transparent; }
+.caixa select.controle { appearance: none; background-image: none !important; }
+.caixa textarea.controle { resize: none; line-height: 1.5; }
+/* seletor de referência: a lupa mora à esquerda; o chevron sai, o "limpar" continua à direita */
+.caixa :global(.cmd-display) { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
+.caixa :global(.cmd-display-placeholder) { color: #94a3b8; font-weight: 500; }
+.caixa :global(.cmd-chevron) { display: none; }
+.caixa :global(.cmd-clear) { right: 11px; margin-top: -7px; }
+.linha:has(:global(.cmd-clear)) .controle { padding-right: 30px !important; }
+
+/* ícone À ESQUERDA, dentro da caixa (lupa, calendário, chevron) */
+.icone {
+  position: absolute;
+  left: var(--dz-icone);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+  display: flex;
+  color: #475569;
+  pointer-events: none;
+  transition: top .22s cubic-bezier(.2, .8, .2, 1);
+}
+.icone svg { width: 14px; height: 14px; flex-shrink: 0; }
+/* data: o botão redondo de 22px do desenho ("Escolher data"), no mesmo lugar do glifo; na consulta, a mesma forma, parada */
+.icone[data-botao] { width: 22px; height: 22px; margin-left: -4px; align-items: center; justify-content: center; border-radius: 999px; }
+.botaoData {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  margin: 0 0 0 -4px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  transition: background-color var(--mi, 170ms) cubic-bezier(.4, 0, .2, 1), color var(--mi, 170ms) cubic-bezier(.4, 0, .2, 1), top .22s cubic-bezier(.2, .8, .2, 1);
+}
+.botaoData svg { width: 14px; height: 14px; flex-shrink: 0; }
+.botaoData:hover:not(:disabled) { background: rgba(15, 23, 42, .06); color: #0f172a; }
+.botaoData:disabled { cursor: default; }
+.botaoData:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+
+/* erro sob a caixa, com ícone */
+.erro {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: var(--dz-pad-erro);
+  font-size: 11px;
+  line-height: 14px;
+  color: #b91c1c;
+  animation: aparecerErro var(--mi, 170ms) cubic-bezier(.16, 1, .3, 1) backwards;
+}
+.erro svg { width: 12px; height: 12px; flex-shrink: 0; }
+.abaixo { padding-left: var(--dz-pad-erro); }
+
+/* ═════════════ compacto: rótulo DENTRO da caixa (flutuante), 32px ═════════════ */
+[data-densidade="compacto"] .linha { height: 32px; }
+[data-densidade="compacto"] .linha[data-multilinha] { height: 80px; }
+/* no compacto a caixa É o `.fld` do desenho: cobre a linha inteira, borda incluída */
+[data-densidade="compacto"] .caixa {
+  inset: -1px;
+  transition: background-color var(--mi, 170ms) cubic-bezier(.4, 0, .2, 1), border-color var(--mi, 170ms) cubic-bezier(.4, 0, .2, 1), box-shadow var(--mi, 170ms) cubic-bezier(.4, 0, .2, 1), padding .22s cubic-bezier(.2, .8, .2, 1);
+}
+[data-densidade="compacto"] .rotulo {
+  top: 50%;
+  transform: translateY(-50%);
+  box-sizing: content-box;
+  width: auto;
+  height: auto;
+  max-width: calc(100% - 16px);
+  display: block;
+  padding: 0 10px;
+  font-size: 11.5px;
+  line-height: 1.1;
+  color: #9ca3af;
+}
+[data-densidade="compacto"] .rotulo::after { content: none; }
+[data-densidade="compacto"] .obrigatorio { margin-left: 0; }
+[data-densidade="compacto"] .linha[data-icone] .rotulo { padding-left: 32px; max-width: calc(100% - 38px); }
+[data-densidade="compacto"] .icone { left: 10px; }
+[data-densidade="compacto"] .botaoData { left: 11px; }
+[data-densidade="compacto"] .erro,
+[data-densidade="compacto"] .abaixo { padding-left: 2px; }
+/* flutuante: preenchido, só leitura, travado, com foco ou aberto */
+[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .rotulo,
+[data-densidade="compacto"] fieldset:disabled .linha .rotulo,
+[data-densidade="compacto"] .linha[data-multilinha] .rotulo { top: 3px; transform: none; font-size: 8.5px; line-height: 1; }
+[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa:not([data-controle]) { padding-top: 13px !important; padding-bottom: 4px !important; align-items: flex-end; }
+[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .controle,
+[data-densidade="compacto"] fieldset:disabled .linha .controle { padding-top: 13px !important; padding-bottom: 3px !important; align-items: flex-end; }
+/* o botão da pesquisa é bloco (as reticências pedem) e não desce a linha de 15px até o fim de uma área de 14: com 12px
+   em cima a área tem os 15 da linha, e o texto fica onde o flex-end do desenho o põe */
+[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa :global(.cmd-display),
+[data-densidade="compacto"] fieldset:disabled .linha .caixa :global(.cmd-display) { padding-top: 12px !important; }
+[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .icone,
+[data-densidade="compacto"] fieldset:disabled .linha .icone { top: calc(50% + 5px); }
+[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .botaoData,
+[data-densidade="compacto"] fieldset:disabled .linha .botaoData { top: calc(50% + 5px); }
+[data-densidade="compacto"] .linha[data-multilinha] .controle { padding-top: 13px !important; padding-bottom: 3px !important; }
+/* vazio no compacto: o rótulo ocupa a caixa — o traço de "sem valor" não aparece por baixo dele */
+[data-densidade="compacto"] .caixa :global(.cmd-display-placeholder) { visibility: hidden; }
+
+/* ═════════════ chave sim/não ═════════════ */
+.linha.linha[data-chave] .caixa { background: transparent; border-color: transparent; box-shadow: none; padding-left: 0; padding-right: 0; gap: 9px; }
+[data-densidade="compacto"] .linha[data-chave] { height: auto; min-height: 42px; }
+/* a chave não tem caixa: no compacto ela fica no padding-box da linha (sem cobrir a borda), como o `.fc` do desenho */
+[data-densidade="compacto"] .linha.linha[data-chave] .caixa:not([data-controle]) { inset: 0; border-width: 0; padding-top: 16px !important; padding-bottom: 2px !important; align-items: center; }
+[data-densidade="compacto"] .linha[data-chave] .rotulo { top: 3px; transform: none; font-size: 8.5px; line-height: 1; }
+.chave {
+  --sw-w: 42px;
+  --sw-h: 20px;
+  --sw-g: 2px;
+  --sw-b: 1.375;
+  position: relative;
+  width: var(--sw-w);
+  height: var(--sw-h);
+  flex-shrink: 0;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 999px;
+  background: #e4e4e7;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  transition: background .22s cubic-bezier(.4, 0, .2, 1);
+}
+.chaveBotao {
+  position: absolute;
+  top: var(--sw-g);
+  bottom: var(--sw-g);
+  left: var(--sw-g);
+  width: auto;
+  aspect-ratio: var(--sw-b);
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 2px 5px rgba(15, 23, 42, .20), 0 1px 2px rgba(15, 23, 42, .14);
+  transform-origin: left center;
+  transition: transform .26s cubic-bezier(.32, 1.4, .5, 1);
+}
+.chave:hover:not(:disabled):not([aria-readonly="true"]) { background: #d7d7dc; }
+.chave[aria-checked="true"] { background: #40de63; }
+.chave[aria-checked="true"]:hover:not(:disabled):not([aria-readonly="true"]) { background: #35cf56; }
+.chave[aria-checked="true"] .chaveBotao { transform: translateX(calc(var(--sw-w) - var(--sw-g) * 2 - 100%)); transform-origin: right center; }
+.chave:active:not(:disabled):not([aria-readonly="true"]) .chaveBotao { transform: scaleX(1.18); }
+.chave[aria-checked="true"]:active:not(:disabled):not([aria-readonly="true"]) .chaveBotao { transform: translateX(calc(var(--sw-w) - var(--sw-g) * 2 - 100%)) scaleX(1.18); }
+.chave:disabled { opacity: .45; cursor: not-allowed; }
+.chave[aria-readonly="true"] { cursor: default; }
+.chave:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+.chaveTexto { font-size: 12.5px; font-weight: 500; color: #475569; }
+
+/* ═════════════ Dados adicionais (recolhível) ═════════════ */
+.maisDados {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  padding: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: normal;
+  color: #475569;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.maisDados:hover { color: #0f172a; }
+.maisDados:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+.maisDadosSeta { display: inline-flex; }
+.maisDadosSeta svg { width: 14px; height: 14px; flex-shrink: 0; }
+.maisDados[aria-expanded="true"] .maisDadosSeta { transform: rotate(90deg); }
+.mudo { color: #94a3b8; font-weight: 500; }
+
+/* ═════════════ lista de pesquisa (RefSelect) no vidro do desenho ═════════════ */
+:global(.cmd-panel).painelPesquisa {
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, .88);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(22px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, .65);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, .12), inset 0 1px 0 rgba(255, 255, 255, .85);
+  animation: subir 230ms cubic-bezier(.16, 1, .3, 1) backwards;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :global(.cmd-panel).painelPesquisa { background: rgba(255, 255, 255, .97); }
+}
+/*
+ * A caixa de referência do desenho (`.lkp`): com rótulo à frente, a lista e o calendário saem de 136px — 1px à
+ * esquerda da caixa —, com a largura dela + 2 e o topo 4px abaixo da LINHA (5px abaixo da caixa, que é a âncora do
+ * Radix); no compacto a caixa é a linha, e eles saem dela sem deslocamento. O painel mora num portal, fora da raiz
+ * da Central: a densidade é lida na página. `translate` não mexe na medida do Radix nem no `transform` da entrada.
+ */
+:global(.cmd-panel).painelPesquisa { width: calc(var(--radix-popover-trigger-width) + 2px); translate: -1px 1px; }
+.calendario { translate: -1px 1px; }
+:global(.cmd-panel).painelPesquisa[data-side="top"],
+.calendario[data-side="top"] { translate: -1px -1px; }
+:global(body:has([data-densidade="compacto"])) :global(.cmd-panel).painelPesquisa { width: var(--radix-popover-trigger-width); translate: none; }
+:global(body:has([data-densidade="compacto"])) .calendario { translate: none; }
+.painelPesquisa :global(.cmd-panel__search) {
+  display: block;
+  width: 100%;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 0 12px 0 32px;
+  border: 0;
+  border-bottom: 1px solid rgba(15, 23, 42, .07);
+  background: rgba(255, 255, 255, .55) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21 21-4.34-4.34'/%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3C/svg%3E") no-repeat 12px center / 13px 13px;
+  font-size: 12.5px;
+  color: #111827;
+  outline: none;
+}
+.painelPesquisa :global(.cmd-panel__search)::placeholder { color: #a9b2bd; }
+.painelPesquisa :global(.cmd-panel-options) { max-height: 186px; overflow: auto; padding: 4px 0; }
+.painelPesquisa :global(.cmd-panel-options)::-webkit-scrollbar { width: 9px; }
+.painelPesquisa :global(.cmd-panel-options)::-webkit-scrollbar-track { background: transparent; }
+.painelPesquisa :global(.cmd-panel-options)::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, .16); border-radius: 9px; border: 3px solid transparent; background-clip: padding-box; }
+.painelPesquisa :global(.cmd-option) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: #1e293b;
+  text-align: left;
+  cursor: pointer;
+  transition: background .13s ease, color .13s ease;
+}
+.painelPesquisa :global(.cmd-option):hover,
+.painelPesquisa :global(.cmd-option.highlighted) { background: rgba(64, 222, 99, .13); }
+.painelPesquisa :global(.cmd-option.selected) { color: #15803d; font-weight: 600; background: transparent; }
+.painelPesquisa :global(.cmd-option.selected.highlighted) { background: rgba(64, 222, 99, .13); }
+.painelPesquisa :global(.cmd-option.selected)::after {
+  content: "";
+  width: 13px;
+  height: 13px;
+  margin-left: auto;
+  flex-shrink: 0;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.painelPesquisa :global(.cmd-option__code) { color: #7b8694; font-weight: 500; }
+.painelPesquisa :global(.cmd-panel__empty) { padding: 18px 12px; text-align: center; font-size: 12px; color: #64748b; }
+.painelPesquisa :global(.cmd-panel__footer) { border-top: 1px solid rgba(15, 23, 42, .07); background: transparent; }
+
+/* ═════════════ calendário do desenho (painel do MgDatePicker) ═════════════ */
+/* 240px de ÁREA ÚTIL (a caixa do desenho não declara box-sizing: 240 + 2×10 + 2×1 = 262) */
+.calendario {
+  width: 240px;
+  box-sizing: content-box;
+  padding: 8px 10px;
+  line-height: normal;
+  border-radius: 12px;
+  overflow: hidden;
+  z-index: 10001;
+  outline: none;
+  background: rgba(255, 255, 255, .88);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(22px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, .65);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, .12), inset 0 1px 0 rgba(255, 255, 255, .85);
+  animation: subir 230ms cubic-bezier(.16, 1, .3, 1) backwards;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .calendario { background: rgba(255, 255, 255, .97); }
+}
+.calCabecalho { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 0 4px; }
+.calTitulo {
+  border: 0;
+  background: transparent;
+  padding: 2px 6px;
+  margin-left: -6px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #1e293b;
+  cursor: pointer;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+.calTitulo::first-letter { text-transform: uppercase; }
+.calTitulo:hover:not(:disabled) { background: rgba(15, 23, 42, .06); }
+.calTitulo:disabled { cursor: default; }
+.calSetas { display: inline-flex; flex-direction: column; flex-shrink: 0; }
+.calSeta { width: 22px; height: 14px; border: 0; border-radius: 5px; background: transparent; color: #475569; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.calSeta:hover { background: rgba(15, 23, 42, .07); color: #0f172a; }
+.calSeta svg { width: 13px; height: 13px; flex-shrink: 0; }
+.calDias { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.calSemana { height: 18px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: #a3adb9; }
+.calDia {
+  width: 24px;
+  height: 24px;
+  margin: 0 auto;
+  border: 1.5px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12px;
+  color: #1e293b;
+  cursor: pointer;
+  padding: 0;
+  font-variant-numeric: tabular-nums;
+  box-sizing: border-box;
+}
+.calGrade { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px; height: 174px; grid-auto-rows: 1fr; }
+.calCelula {
+  width: 42px;
+  height: 42px;
+  margin: 0 auto;
+  border: 1.5px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12px;
+  color: #1e293b;
+  cursor: pointer;
+  padding: 0;
+  box-sizing: border-box;
+  font-variant-numeric: tabular-nums;
+  text-transform: capitalize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.calDia:hover,
+.calCelula:hover { background: rgba(15, 23, 42, .06); }
+.calDia[data-fora],
+.calCelula[data-fora] { color: #c3cbd5; }
+.calDia[data-fora]:hover,
+.calCelula[data-fora]:hover { color: #64748b; }
+.calDia[data-hoje],
+.calCelula[data-hoje] { font-weight: 700; color: #40de63; background: transparent; border-color: #40de63; }
+.calDia[data-hoje]:hover,
+.calCelula[data-hoje]:hover { background: rgba(64, 222, 99, .12); }
+.calDia[aria-pressed="true"],
+.calDia[aria-pressed="true"]:hover,
+.calCelula[aria-pressed="true"],
+.calCelula[aria-pressed="true"]:hover { background: #40de63; border-color: #40de63; color: #fff; font-weight: 700; }
+.calRodape { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(15, 23, 42, .07); }
+.calLink { border: 0; background: transparent; color: #15803d; font-size: 12px; font-weight: 600; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+.calLink:hover { background: #ecfdf3; }
+.calDia:focus-visible,
+.calCelula:focus-visible,
+.calSeta:focus-visible,
+.calTitulo:focus-visible,
+.calLink:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+
+@keyframes subir { from { opacity: 0; transform: translateY(-7px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes aparecerErro { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  :global(.cmd-panel).painelPesquisa,
+  .calendario,
+  .erro { animation: none; }
+  .rotulo, .caixa, .caixa .controle, .icone, .chave, .chaveBotao, .painelPesquisa :global(.cmd-option) { transition: none; }
+  .chave:active:not(:disabled) .chaveBotao { transform: none; }
+  .chave[aria-checked="true"]:active:not(:disabled) .chaveBotao { transform: translateX(calc(var(--sw-w) - var(--sw-g) * 2 - 100%)); }
+}

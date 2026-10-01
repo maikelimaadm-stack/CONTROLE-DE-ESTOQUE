@@ -22,6 +22,13 @@ import { useFormLayout } from "./form-layout";
 import { FichaEmAbas, ConsultaCnpj, CriacaoPorOutraPorta, camposApagadosNaTroca, capacidadeDoCampo, fichaDoRegistro, fichaParaApi, linhaNovaDaGrade, tipoDoDocumento, type ControleDoCampo, type ErroDaFicha, type ExtraDoCampo } from "./ficha-em-abas";
 import { JanelaConsultaCnpj, esquecerImportacaoPendente, lerImportacaoPendente, useConsultaCnpjJanela, type RespostaCnpj } from "./consulta-cnpj-janela";
 import { AttachmentsDialog } from "@/features/base1/attachments-dialog";
+import { HistoryDialog } from "@/features/base1/history-dialog";
+import { CampoDoLancamento, ChaveSimNao, DataDoLancamento, type Densidade, type IconeDoCampo } from "@/features/bens/campo";
+import {
+  AcoesRapidasDoBem, BotaoDaBarra, CartaoDoBem, Conjunto, ConjuntoDireito, IconeAnexos, IconeDescartar, IconeDuplicar,
+  IconeEditar, IconeExcluir, IconeHistorico, IconeImprimir, IconeNovo, IconeSalvar, PosicaoDoRotuloBem, ehPeleBem,
+  estilosLancamentoBem,
+} from "@/features/bens/lancamento";
 import { B1Field } from "./campo-b1";
 export { B1Field };
 
@@ -148,8 +155,12 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   React.useEffect(() => { if (!importacao) return; for (const [k, x] of Object.entries(importacao)) form.setValue(k, x, { shouldDirty: true }); esquecerImportacaoPendente(); }, [importacao, form]);
   const [confirmDel, setConfirmDel] = React.useState(false);
   const [anexos, setAnexos] = React.useState(false);
+  const [historico, setHistorico] = React.useState(false);
   const [janelaCnpj, setJanelaCnpj] = React.useState(false);
   const [openField, setOpenField] = React.useState<string | null>(null);
+  // VISUAL-UX-04: densidade do lançamento de bem — estado SÓ da tela; nada persiste
+  const [densidadeBem, setDensidadeBem] = React.useState<Densidade>("rotulo-a-frente");
+  const peleBem = ehPeleBem(resourceKey, rapido);
   // painéis em abas horizontais ("tabs") ou lista lateral ("sidebar"), como o modelo base do MG; lembrado por cadastro
   const panelStyleKey = `agro.launchPanelStyle.${resourceKey}`;
   const [panelStyle, setPanelStyle] = React.useState<"tabs" | "sidebar">("tabs");
@@ -188,6 +199,28 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
     // rótulo que segue outro campo (AJUSTES 01: "Razão social" em Jurídica, "Nome completo" em Física)
     const rotulo = l.fieldLabels[f.name] ?? (f.rotuloQuando ? f.rotuloQuando.rotulos[String(values[f.rotuloQuando.field] ?? "")] : undefined) ?? f.label;
     const aoAbrir = (o: boolean) => setOpenField(o ? f.name : (cur) => (cur === f.name ? null : cur));
+    // VISUAL-UX-04: pele do bem — mesmos controles/API; só a caixa do desenho (rótulo à frente / compacto)
+    if (peleBem) {
+      if (f.type === "boolean") {
+        const ligado = v === true || v === "true";
+        return <ChaveSimNao key={f.name} rotulo={rotulo} valor={ligado} desabilitado={dis} testId={`campo-${f.name}`}
+          data-campo={rotulo} {...(dis ? {} : { onChange: (nv: boolean) => form.setValue(f.name, nv, { shouldDirty: true }) })} />;
+      }
+      const icone: IconeDoCampo | null = f.type === "date" ? "data" : f.type === "ref" || f.busca ? "pesquisa" : f.type === "select" ? "selecao" : null;
+      const estado = dis ? "desabilitado" as const : "editavel" as const;
+      const multilinha = f.type === "textarea" || f.type === "json" || f.type === "tags";
+      let soAjuste = false;
+      const padrao = (extra?: ExtraDoCampo) => {
+        if (extra) soAjuste = true;
+        if (f.type === "date") return <Controller name={f.name} control={form.control} rules={{ required: required ? "Obrigatório" : false }}
+          render={({ field }) => <DataDoLancamento value={String(field.value ?? "")} onChange={field.onChange} disabled={dis} rotulo={rotulo} />} />;
+        return <FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} record={q.data ?? null} onOpenChange={aoAbrir} extra={extra} />;
+      };
+      const el = controle ? controle({ dis, required, onOpenChange: aoAbrir, padrao }) : padrao();
+      return <CampoDoLancamento key={f.name} rotulo={rotulo} obrigatorio={required} erro={controle && f.name === "document" ? undefined : err}
+        icone={icone} estado={estado} preenchido={hasValue || (Boolean(controle) && !soAjuste)} multilinha={multilinha}
+        testId={`campo-${f.name}`} data-campo={rotulo} dica={f.help}>{el}</CampoDoLancamento>;
+    }
     // controle da ficha que só AJUSTA o de sempre (`padrao`) mantém a aparência de sempre (rótulo flutuante pelo valor)
     let soAjuste = false;
     // busca oficial (AJUSTES 02, 2.1): UM B1Field POR PARTE, lado a lado na linha; a busca leva rótulo, obrigatório e erro;
@@ -199,7 +232,15 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
     return <B1Field key={f.name} flex label={rotulo} required={required} error={controle && f.name === "document" ? undefined : err} help={f.help} disabled={readOnly} locked={locked} hasValue={hasValue || (Boolean(controle) && !soAjuste)} multiline={f.type === "textarea" || f.type === "json" || f.type === "tags"} open={openField === f.name}>{el}</B1Field>;
   };
   const panels = l.panels.filter((p) => !p.hidden);
-  const renderPanel = (panelId: string) => <div className="grid grid-cols-12 gap-3">{l.cards.filter((c) => c.panelId === panelId).map((c) => { const ids = cardFieldIds(c).filter((fid) => { const f = byId.get(fid); return f && visible(f); }); if (!ids.length) return null; return <LayoutCardView key={c.id} label={c.label} collapsible={c.collapsible} colSpan={c.colSpan}>{c.rows.map((r) => { const els = r.fieldIds.map((x) => renderField(x)).filter(Boolean); return els.length ? <div key={r.id} className="flex flex-wrap gap-2">{els}</div> : null; })}</LayoutCardView>; })}</div>;
+  const renderPanel = (panelId: string) => <div className="grid grid-cols-12 gap-3">{l.cards.filter((c) => c.panelId === panelId).map((c) => {
+    const ids = cardFieldIds(c).filter((fid) => { const f = byId.get(fid); return f && visible(f); });
+    if (!ids.length) return null;
+    if (peleBem) {
+      const els = c.rows.flatMap((r) => r.fieldIds.map((x) => renderField(x)).filter(Boolean));
+      return els.length ? <CartaoDoBem key={c.id} label={c.label}>{els}</CartaoDoBem> : null;
+    }
+    return <LayoutCardView key={c.id} label={c.label} collapsible={c.collapsible} colSpan={c.colSpan}>{c.rows.map((r) => { const els = r.fieldIds.map((x) => renderField(x)).filter(Boolean); return els.length ? <div key={r.id} className="flex flex-wrap gap-2">{els}</div> : null; })}</LayoutCardView>;
+  })}</div>;
   const title = isNew ? `Novo ${def.label.toLowerCase()}` : String(q.data?.[def.labelField] ?? q.data?.["name"] ?? q.data?.["description"] ?? "");
   const code = !isNew && q.data?.["code"] ? String(q.data["code"]) : null;
   const nav = embedded?.nav;
@@ -233,10 +274,40 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
     catch (e) { toast.warning((e as Error).message); }
   };
   const cancel = () => { if (onCancel) { onCancel(); return; } if (embedded) { if (embedded.mode === "new") embedded.onExit(); else { if (q.data) form.reset({ ...fromRecord(def.fields, q.data), ...(ficha ? fichaDoRegistro(def, q.data) : {}) }); embedded.setMode("view"); } } else router.push(back); };
+  const sujo = form.formState.isDirty;
+  const irNovo = () => { if (embedded) embedded.setMode("new"); else router.push(`${back}/new`); };
+  const irEditar = () => { if (embedded) embedded.setMode("edit"); else { setEditarAqui(true); router.push(`${back}/${id}`); } };
+  const irDuplicar = () => router.push(`${back}/new?copy=${id}`);
+  const acoesRapidasBem = peleBem ? [
+    { chave: "anexo", rotulo: "Anexos", testId: "lancamento-bem-anexos", icone: <IconeAnexos />, desabilitado: isNew || !q.data?.["id"], onSelect: () => (isNew || !q.data?.["id"] ? toast.info(`Salve o ${def.label.toLowerCase()} para anexar arquivos.`) : setAnexos(true)) },
+    { chave: "print", rotulo: "Imprimir", testId: "lancamento-bem-imprimir", icone: <IconeImprimir />, desabilitado: isNew, onSelect: () => window.print() },
+    { chave: "hist", rotulo: "Histórico de alterações", testId: "lancamento-bem-historico", icone: <IconeHistorico />, desabilitado: isNew || !q.data?.["id"], onSelect: () => setHistorico(true) },
+  ] : [];
   return (
-    <form onSubmit={submit} className="b1 flex min-h-0 flex-1 flex-col gap-2" data-testid="b1-form">
-      {/* barra de ações */}
-      <div className="mg-toolbar mg-card flex-wrap no-print">
+    <form onSubmit={submit} className={cn("b1 flex min-h-0 flex-1 flex-col gap-2", peleBem && estilosLancamentoBem.raiz)}
+      data-testid="b1-form" data-lancamento-bem={peleBem ? "" : undefined} data-densidade={peleBem ? densidadeBem : undefined}>
+      {/* barra de ações — VISUAL-UX-04: chrome do desenho só em bem/equipamento */}
+      {peleBem ? <div className={cn("mg-card no-print", estilosLancamentoBem.barra)}>
+        <Conjunto>
+          {readOnly ? <>
+            {canCreate && <BotaoDaBarra rotulo="Novo registro" solido onClick={irNovo} data-testid="lancamento-bem-novo"><IconeNovo /></BotaoDaBarra>}
+            {!isNew && canEdit && <BotaoDaBarra rotulo="Editar" dica="Editar registro" onClick={irEditar} data-testid="lancamento-bem-editar"><IconeEditar /></BotaoDaBarra>}
+            {!isNew && canCreate && <BotaoDaBarra rotulo="Duplicar" dica="Duplicar registro" onClick={irDuplicar} data-testid="lancamento-bem-duplicar"><IconeDuplicar /></BotaoDaBarra>}
+            {!isNew && canDelete && <BotaoDaBarra rotulo="Excluir" dica="Excluir registro" onClick={() => setConfirmDel(true)} data-testid="lancamento-bem-excluir"><IconeExcluir /></BotaoDaBarra>}
+          </> : <>
+            {canCreate && <BotaoDaBarra rotulo="Novo registro" solido onClick={irNovo} data-testid="lancamento-bem-novo"><IconeNovo /></BotaoDaBarra>}
+            <BotaoDaBarra rotulo="Descartar alterações" onClick={cancel} data-testid="lancamento-bem-descartar"><IconeDescartar /></BotaoDaBarra>
+            <BotaoDaBarra rotulo="Salvar" dica={!sujo ? "Nada para salvar" : save.isPending ? "Salvando…" : "Salvar"}
+              disabled={!sujo && !save.isPending} ocupado={save.isPending} onClick={() => void submit()} data-testid="lancamento-bem-salvar"><IconeSalvar /></BotaoDaBarra>
+          </>}
+        </Conjunto>
+        <ConjuntoDireito>
+          <AcoesRapidasDoBem itens={acoesRapidasBem} />
+          <PosicaoDoRotuloBem valor={densidadeBem} onChange={setDensidadeBem} />
+          {embedded?.rightSlot}
+          {!embedded && !onCancel && <Link href={back}><BotaoDaBarra rotulo="Voltar para a listagem" dicaNoFim><ArrowLeft className="h-3.5 w-3.5" /></BotaoDaBarra></Link>}
+        </ConjuntoDireito>
+      </div> : <div className="mg-toolbar mg-card flex-wrap no-print">
         {readOnly ? <>
           {embedded && canCreate && <PillBtn onClick={() => embedded.setMode("new")}><Plus className="h-4 w-4" /> Novo</PillBtn>}
           {!isNew && canEdit && <PillBtn tone="gray" onClick={() => (embedded ? embedded.setMode("edit") : router.push(`${back}/${id}`))}><Pencil className="h-3.5 w-3.5" /> Editar</PillBtn>}
@@ -257,7 +328,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
           { label: "Atualizar situação na Receita", onClick: () => void atualizarSituacao() }
         ]} />}
         {embedded?.rightSlot ?? <div className="ml-auto flex items-center gap-1.5">{!embedded && !onCancel && <Link href={back}><IconBtn aria-label="Voltar para a listagem" title="Voltar para a listagem"><ArrowLeft className="h-4 w-4" /></IconBtn></Link>}</div>}
-      </div>
+      </div>}
       {/* cabeçalho do registro + navegação */}
       <div className="mg-toolbar mg-card flex-wrap">
         <Bookmark className="h-4 w-4 text-[var(--mg-icon)]" /><span className="text-[13px] font-semibold text-slate-800">{code && <>{code} <span className="text-slate-400">•</span> </>}{title || def.label}</span>
@@ -275,7 +346,8 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
         : panels.length > 1 ? <PanelTabs panels={panels.map((p) => ({ id: p.id, label: p.label }))} render={renderPanel} style={panelStyle} onToggleStyle={togglePanelStyle} animate={!readOnly} /> : renderPanel(panels[0]?.id ?? l.panels[0]!.id)}
       {!isNew && q.data && <div className="px-2 pt-2 text-[11px] text-slate-400">Criado em {dateTimeBR(q.data["created_at"] as string)} · atualizado em {dateTimeBR(q.data["updated_at"] as string)}</div>}
       </div>
-      {ficha && !rapido && anexavel && !isNew && q.data?.["id"] ? <AttachmentsDialog open={anexos} onOpenChange={setAnexos} entity={def.table} entityId={String(q.data["id"])} title={`Anexos · ${String(q.data[def.labelField] ?? "")}`} /> : null}
+      {(ficha || peleBem) && !rapido && anexavel && !isNew && q.data?.["id"] ? <AttachmentsDialog open={anexos} onOpenChange={setAnexos} entity={def.table} entityId={String(q.data["id"])} title={`Anexos · ${String(q.data[def.labelField] ?? "")}`} /> : null}
+      {peleBem && !isNew && q.data?.["id"] ? <HistoryDialog open={historico} onOpenChange={setHistorico} entity={def.table} entityId={String(q.data["id"])} title={String(q.data[def.labelField] ?? def.label)} /> : null}
       {parceiroComJanela && <JanelaConsultaCnpj open={janelaCnpj} onOpenChange={setJanelaCnpj} cnpjInicial={tipoDoDocumento(values["document"]) === "legal" ? normalizarDocumento(String(values["document"])) : ""} cadastro={values} onImportar={importarDaReceita} camposApagados={apagadosAoImportar.map((f) => f.label)} />}
       <Confirm open={confirmDel} onOpenChange={setConfirmDel} title="Confirme a exclusão" text={`Excluir este registro de ${def.label.toLowerCase()}? A ação fica registrada na auditoria.`} danger loading={remove.isPending} onConfirm={() => remove.mutate()} />
     </form>

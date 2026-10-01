@@ -1,0 +1,194 @@
+/*
+ * LANÇAMENTO DE BEM/EQUIPAMENTO — moldura (só apresentação).
+ *
+ * Barra de ações redonda (`.tbi`), posição do rótulo (`.vseg`), leque de ações rápidas e cartões em coluna única
+ * com rótulo de 196px — as medidas do HTML aprovado. Nada aqui decide payload, permissão ou API.
+ */
+
+.raiz {
+  --dz-rotulo-raiz: 196px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 8px;
+}
+
+/* ═════════════ barra ═════════════ */
+.barra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  box-sizing: border-box;
+}
+.conjunto { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.conjuntoDireito { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: auto; }
+
+.botao {
+  position: relative;
+  width: 25px;
+  height: 25px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: #f1f3f4;
+  color: #475569;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background-color 170ms cubic-bezier(.4, 0, .2, 1), color 170ms cubic-bezier(.4, 0, .2, 1), border-color 170ms cubic-bezier(.4, 0, .2, 1), box-shadow 170ms cubic-bezier(.4, 0, .2, 1), transform 120ms cubic-bezier(.4, 0, .2, 1);
+}
+.botao:hover:not(:disabled) { background: #e8ecef; color: #0f172a; box-shadow: 0 3px 9px rgba(34, 197, 94, .36); }
+.botao:active:not(:disabled) { background: #dde3e8; transform: scale(.90); }
+.botao:disabled { opacity: .42; cursor: not-allowed; }
+.botao:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+.botao:not(.solido)[data-state="open"],
+.botao[aria-pressed="true"] { background: #e2e8f0; color: #0f172a; box-shadow: inset 0 0 0 1px #cbd5e1, 0 2px 6px rgba(34, 197, 94, .30); }
+.botao[aria-busy="true"],
+.botao[aria-busy="true"]:disabled { opacity: 1; background: #e8ecef; color: #475569; box-shadow: 0 2px 6px rgba(34, 197, 94, .30); cursor: default; }
+.solido { background: #40de63; color: #fff; border-color: transparent; }
+.solido:hover:not(:disabled) { background: #e8ecef; color: #0f172a; }
+.solido:active:not(:disabled) { background: #dde3e8; }
+
+.girar { display: inline-flex; animation: girar 800ms linear infinite; }
+@keyframes girar { to { transform: rotate(360deg); } }
+
+/* dica no hover (atributo data-dica) — mesma geometria do shell da Central */
+.botao[data-dica]::after,
+.segmentado > button[data-dica]::after,
+.lequeItem[data-dica]::after {
+  content: attr(data-dica);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  translate: -50% 0;
+  z-index: 40;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #1e293b;
+  color: #f8fafc;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.botao[data-dica-fim]::after,
+.segmentado > button[data-dica-fim]::after,
+.lequeItem[data-dica-fim]::after { left: auto; right: 0; translate: 0 0; }
+.botao:hover:not(:disabled)[data-dica]::after,
+.botao:focus-visible[data-dica]::after,
+.segmentado > button:hover[data-dica]::after,
+.segmentado > button:focus-visible[data-dica]::after,
+.lequeItem:hover[data-dica]::after,
+.lequeItem[data-highlighted][data-dica]::after { opacity: 1; }
+
+/* ═════════════ posição do rótulo ═════════════ */
+.segmentado {
+  height: 25px;
+  box-sizing: border-box;
+  padding: 2px;
+  border-radius: 999px;
+  background: #f1f3f4;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+.segmentado > button {
+  position: relative;
+  width: 26px;
+  height: 21px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: #475569;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: background-color 170ms cubic-bezier(.4, 0, .2, 1), color 170ms cubic-bezier(.4, 0, .2, 1), box-shadow 170ms cubic-bezier(.4, 0, .2, 1), transform 120ms cubic-bezier(.4, 0, .2, 1);
+}
+.segmentado > button:hover { background: rgba(15, 23, 42, .07); color: #0f172a; }
+.segmentado > button[aria-pressed="true"] { background: #fff; color: #0f172a; box-shadow: 0 1px 2px rgba(15, 23, 42, .08); }
+.segmentado > button:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+
+/* ═════════════ leque de ações rápidas ═════════════ */
+.leque { position: relative; display: inline-flex; flex-shrink: 0; }
+.lequeConteudo { position: relative; width: 0; height: 0; z-index: 36; outline: none; }
+.lequeConteudo .lequeItem[data-dica] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  translate: -50% -50%;
+  z-index: 36;
+  width: 28px;
+  height: 28px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .95);
+  border: 1px solid #e6ece8;
+  color: #475569;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+  backdrop-filter: blur(14px) saturate(160%);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, .13);
+  outline: none;
+  transform: translate(var(--x), var(--y)) scale(1);
+  transition: border-color 120ms cubic-bezier(.4, 0, .2, 1), background-color 120ms cubic-bezier(.4, 0, .2, 1), color 120ms cubic-bezier(.4, 0, .2, 1);
+  animation: lequeSai 340ms cubic-bezier(.2, .8, .3, 1.2) var(--atraso-entrada) backwards, lequeAcende 170ms cubic-bezier(.4, 0, .2, 1) var(--atraso-entrada) backwards;
+}
+.lequeConteudo .lequeItem[data-highlighted]:not([data-disabled]),
+.lequeConteudo .lequeItem:hover:not([data-disabled]) { border-color: #cbd5e1; background: #fff; color: #0f172a; }
+.lequeConteudo .lequeItem:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+.lequeConteudo .lequeItem[data-disabled] { opacity: 1; cursor: not-allowed; }
+
+@keyframes lequeSai { from { transform: translate(0, 0) scale(.55); } }
+@keyframes lequeAcende { from { opacity: 0; } }
+
+/* ═════════════ cartão / coluna de campos ═════════════ */
+.cartao {
+  box-sizing: border-box;
+  background: #fff;
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .03), 0 0 0 1px #e7eaee;
+}
+.cartaoTitulo {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1e293b;
+  letter-spacing: -.01em;
+}
+.coluna {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 640px;
+  min-width: 0;
+}
+.coluna .campo,
+.coluna :global([data-campo]) { max-width: 640px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .botao, .segmentado > button { transition: none; }
+  .botao:active:not(:disabled) { transform: none; }
+  .girar { animation-duration: 1.6s; }
+  .lequeConteudo .lequeItem[data-dica] { animation: none; }
+}
