@@ -12,8 +12,9 @@
   flex: 1;
   min-height: 0;
   gap: 8px;
+  --dz-gap: 6px; /* dens-compacto do desenho */
 }
-.raiz[data-densidade="rotulo-a-frente"] { --dz-rotulo-raiz: 196px; }
+.raiz[data-densidade="rotulo-a-frente"] { --dz-rotulo-raiz: 196px; --dz-gap: 9px; }
 
 /* ═════════════ barra (mede como `.mg-toolbar` + `.tbi` do desenho) ═════════════ */
 .barra {
@@ -21,8 +22,12 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  height: auto;
   min-height: 44px;
   box-sizing: border-box;
+  overflow: visible; /* dicas abaixo do botão (data-tip do desenho) não podem ser cortadas */
+  position: relative;
+  z-index: 2;
 }
 .conjunto { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .conjuntoDireito { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: auto; }
@@ -31,6 +36,8 @@
   position: relative;
   width: 25px;
   height: 25px;
+  min-width: 25px;
+  min-height: 25px;
   box-sizing: border-box;
   border-radius: 999px;
   border: 1px solid transparent;
@@ -43,9 +50,11 @@
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
-  font-size: 0; /* ícone só — o texto da dica não vaza para o nome acessível via ::after */
-  transition: background .12s, color .12s, box-shadow .12s, transform .12s;
+  font-size: 0; /* ícone só — o texto da dica vive no ::after */
+  line-height: 0;
+  transition: background-color 170ms cubic-bezier(.4, 0, .2, 1), color 170ms cubic-bezier(.4, 0, .2, 1), border-color 170ms cubic-bezier(.4, 0, .2, 1), box-shadow 170ms cubic-bezier(.4, 0, .2, 1), transform 120ms cubic-bezier(.4, 0, .2, 1);
 }
+.botao svg { width: 16px; height: 16px; flex-shrink: 0; }
 .botao:hover:not(:disabled) { background: #e8ecef; color: #0f172a; box-shadow: 0 3px 9px rgba(34, 197, 94, .36); }
 .botao:active:not(:disabled) { background: #dde3e8; transform: scale(.90); }
 .botao:disabled { opacity: .42; cursor: not-allowed; }
@@ -62,38 +71,65 @@
 .girar { display: inline-flex; animation: girar 800ms linear infinite; }
 @keyframes girar { to { transform: rotate(360deg); } }
 
-/* dica no hover (atributo data-dica) — mesma geometria do shell da Central */
-.botao[data-dica]::after,
-.segmentado > button[data-dica]::after,
-.lequeItem[data-dica]::after {
+/*
+ * Dica (`.data-tip` do desenho): ABAIXO do botão, 7px de folga, tip-start / tip-end.
+ * Aparece no hover/foco com atraso de 300ms — igual ao shell da Central de vendas.
+ */
+.botao[data-dica],
+.segmentado > button[data-dica],
+.lequeItem[data-dica] { position: relative; }
+.botao[data-dica]:hover,
+.botao[data-dica]:focus-visible,
+.segmentado > button[data-dica]:hover,
+.segmentado > button[data-dica]:focus-visible,
+.lequeItem[data-dica]:hover,
+.lequeItem[data-highlighted][data-dica] { z-index: 90; }
+.botao[data-dica]:hover::after,
+.botao[data-dica]:focus-visible::after,
+.segmentado > button[data-dica]:hover::after,
+.segmentado > button[data-dica]:focus-visible::after,
+.lequeItem[data-dica]:hover::after,
+.lequeItem[data-highlighted][data-dica]::after {
   content: attr(data-dica);
   position: absolute;
+  top: calc(100% + 7px);
   left: 50%;
-  bottom: calc(100% + 6px);
-  translate: -50% 0;
-  z-index: 40;
+  transform: translateX(-50%);
+  z-index: 90;
   padding: 4px 8px;
   border-radius: 6px;
   background: #1e293b;
   color: #f8fafc;
-  font-size: 11px; /* sobrescreve font-size:0 do botão */
+  font-size: 11.5px;
   font-weight: 500;
-  line-height: 1.2;
+  line-height: 16px;
   letter-spacing: 0;
   white-space: nowrap;
   pointer-events: none;
-  opacity: 0;
-  transition: opacity 120ms ease;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, .22);
+  animation: dicaEntra 120ms ease 300ms both;
 }
-.botao[data-dica-fim]::after,
-.segmentado > button[data-dica-fim]::after,
-.lequeItem[data-dica-fim]::after { left: auto; right: 0; translate: 0 0; }
-.botao:hover:not(:disabled)[data-dica]::after,
-.botao:focus-visible[data-dica]::after,
-.segmentado > button:hover[data-dica]::after,
-.segmentado > button:focus-visible[data-dica]::after,
-.lequeItem:hover[data-dica]::after,
-.lequeItem[data-highlighted][data-dica]::after { opacity: 1; }
+/* tip-start (esquerda da barra) / tip-end (direita: ⚡, posição do rótulo, itens do leque) */
+.botao[data-dica-inicio]:hover::after,
+.botao[data-dica-inicio]:focus-visible::after,
+.segmentado > button[data-dica-inicio]:hover::after,
+.segmentado > button[data-dica-inicio]:focus-visible::after {
+  left: 0; transform: none; animation-name: dicaEntraFixa;
+}
+.botao[data-dica-fim]:hover::after,
+.botao[data-dica-fim]:focus-visible::after,
+.segmentado > button[data-dica-fim]:hover::after,
+.segmentado > button[data-dica-fim]:focus-visible::after,
+.lequeItem[data-dica-fim]:hover::after,
+.lequeItem[data-highlighted][data-dica-fim]::after {
+  left: auto; right: 0; transform: none; animation-name: dicaEntraFixa;
+}
+/* leque aberto: esconde a dica do gatilho (como o desenho com aria-expanded) */
+.botao[aria-expanded="true"][data-dica]:hover::after,
+.botao[aria-expanded="true"][data-dica]:focus-visible::after { display: none; }
+
+@keyframes dicaEntra { from { opacity: 0; transform: translateX(-50%) translateY(-2px); } to { opacity: 1; transform: translateX(-50%); } }
+@keyframes dicaEntraFixa { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; transform: none; } }
 
 /* ═════════════ posição do rótulo ═════════════ */
 .segmentado {
@@ -121,6 +157,8 @@
   justify-content: center;
   cursor: pointer;
   padding: 0;
+  font-size: 0;
+  line-height: 0;
   transition: background-color 170ms cubic-bezier(.4, 0, .2, 1), color 170ms cubic-bezier(.4, 0, .2, 1), box-shadow 170ms cubic-bezier(.4, 0, .2, 1), transform 120ms cubic-bezier(.4, 0, .2, 1);
 }
 .segmentado > button:hover { background: rgba(15, 23, 42, .07); color: #0f172a; }
@@ -182,7 +220,7 @@
 .grade {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: var(--dz-gap, 9px);
+  gap: var(--dz-gap, 6px);
   align-items: start;
   min-width: 0;
 }
@@ -205,4 +243,10 @@
   .botao:active:not(:disabled) { transform: none; }
   .girar { animation-duration: 1.6s; }
   .lequeConteudo .lequeItem[data-dica] { animation: none; }
+  .botao[data-dica]:hover::after,
+  .botao[data-dica]:focus-visible::after,
+  .segmentado > button[data-dica]:hover::after,
+  .segmentado > button[data-dica]:focus-visible::after,
+  .lequeItem[data-dica]:hover::after,
+  .lequeItem[data-highlighted][data-dica]::after { animation: none; opacity: 1; }
 }

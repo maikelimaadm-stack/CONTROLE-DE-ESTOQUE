@@ -36,9 +36,13 @@ export const Conjunto = ({ children }: { children: React.ReactNode }) => <span c
 export const ConjuntoDireito = ({ children }: { children: React.ReactNode }) => <span className={estilos.conjuntoDireito}>{children}</span>;
 
 export const BotaoDaBarra = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  rotulo: string; dica?: string; solido?: boolean; ocupado?: boolean; dicaNoFim?: boolean;
-}>(({ rotulo, dica, solido, ocupado, dicaNoFim, className, children, disabled, ...p }, ref) =>
-  <button ref={ref} type="button" aria-label={rotulo} data-dica={dica ?? rotulo} data-dica-fim={dicaNoFim ? "" : undefined}
+  rotulo: string; dica?: string; solido?: boolean; ocupado?: boolean;
+  /** alinhamento da dica: início (esquerda da barra, padrão) · fim (direita: ⚡) · centro */
+  dicaAlinhada?: "inicio" | "fim" | "centro";
+}>(({ rotulo, dica, solido, ocupado, dicaAlinhada = "inicio", className, children, disabled, ...p }, ref) =>
+  <button ref={ref} type="button" aria-label={rotulo} data-dica={dica ?? rotulo}
+    data-dica-inicio={dicaAlinhada === "inicio" ? "" : undefined}
+    data-dica-fim={dicaAlinhada === "fim" ? "" : undefined}
     aria-busy={ocupado || undefined} disabled={disabled || ocupado}
     className={cn(estilos.botao, solido && estilos.solido, className)} {...p}>
     {ocupado ? <IconeGirando /> : children}
@@ -73,7 +77,7 @@ export function AcoesRapidasDoBem({ itens, desabilitado }: { itens: ItemRapidoBe
   return <span className={estilos.leque}>
     <DropdownP.Root modal={false} open={aberto} onOpenChange={setAberto}>
       <DropdownP.Trigger asChild disabled={desabilitado}>
-        <BotaoDaBarra rotulo="Ações rápidas" dicaNoFim data-testid="lancamento-bem-acoes-rapidas"><IconeRaio /></BotaoDaBarra>
+        <BotaoDaBarra rotulo="Ações rápidas" dicaAlinhada="fim" data-testid="lancamento-bem-acoes-rapidas"><IconeRaio /></BotaoDaBarra>
       </DropdownP.Trigger>
       <DropdownP.Content side="bottom" align="center" sideOffset={-12.5} avoidCollisions={false} loop className={estilos.lequeConteudo}
         aria-label="Ações rápidas" data-testid="lancamento-bem-acoes-rapidas-leque"

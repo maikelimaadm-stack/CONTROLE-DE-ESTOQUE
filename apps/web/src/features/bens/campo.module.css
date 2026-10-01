@@ -153,14 +153,35 @@ fieldset:disabled .caixa .controle { cursor: default; }
 .caixa input.controle::placeholder { color: transparent; }
 .caixa select.controle { appearance: none; background-image: none !important; }
 .caixa textarea.controle { resize: none; line-height: 1.5; }
-/* seletor de referência: a lupa mora à esquerda; o chevron sai, o "limpar" continua à direita */
-.caixa :global(.cmd-display) { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
+/* seletor de referência: a lupa mora à esquerda; o chevron sai, o "limpar" fica no canto direito da caixa */
+.caixa :global(.cmd-display) {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  /* global reserva 28px pro chevron — aqui o chevron some; só sobra o recuo direito da caixa */
+  padding-right: 10px !important;
+}
 .caixa :global(.cmd-display-placeholder) { color: #94a3b8; font-weight: 500; }
-.caixa :global(.cmd-chevron) { display: none; }
-.caixa :global(.cmd-clear) { right: 11px; margin-top: -7px; }
-.linha:has(:global(.cmd-clear)) .controle { padding-right: 30px !important; }
+.caixa :global(.cmd-chevron) { display: none !important; }
+.caixa :global(.cmd-clear) { right: 10px; top: 50%; margin-top: -7px; }
+.linha:has(:global(.cmd-clear)) .controle,
+.linha:has(:global(.cmd-clear)) .caixa :global(.cmd-display) { padding-right: 30px !important; }
 
-/* ícone À ESQUERDA, dentro da caixa (lupa, calendário, chevron) */
+/* número (money / quantity / percent / integer): tabular + sem spinner do browser */
+.linha[data-numero] .controle {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  -moz-appearance: textfield;
+}
+.linha[data-numero] .controle::-webkit-outer-spin-button,
+.linha[data-numero] .controle::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* ícone À ESQUERDA, dentro da caixa (lupa, calendário, chevron) — `.fic` do desenho */
 .icone {
   position: absolute;
   left: var(--dz-icone);
@@ -173,6 +194,9 @@ fieldset:disabled .caixa .controle { cursor: default; }
   transition: top .22s cubic-bezier(.2, .8, .2, 1);
 }
 .icone svg { width: 14px; height: 14px; flex-shrink: 0; }
+/* com ícone: o controle recua 32px à esquerda (`.fld.ic .fc`) */
+.linha[data-icone] .caixa .controle { padding-left: 32px !important; }
+.linha[data-icone] .caixa :global(.cmd-display) { padding-left: 32px !important; }
 /* data: o botão redondo de 22px do desenho ("Escolher data"), no mesmo lugar do glifo; na consulta, a mesma forma, parada */
 .icone[data-botao] { width: 22px; height: 22px; margin-left: -4px; align-items: center; justify-content: center; border-radius: 999px; }
 .botaoData {

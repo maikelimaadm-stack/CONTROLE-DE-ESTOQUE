@@ -210,6 +210,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
       const icone: IconeDoCampo | null = f.type === "date" ? "data" : f.type === "ref" || f.busca ? "pesquisa" : f.type === "select" ? "selecao" : null;
       const estado = dis ? "desabilitado" as const : "editavel" as const;
       const multilinha = f.type === "textarea" || f.type === "json" || f.type === "tags";
+      const numero = ["money", "quantity", "number", "percent", "integer"].includes(f.type);
       let soAjuste = false;
       const padrao = (extra?: ExtraDoCampo) => {
         if (extra) soAjuste = true;
@@ -219,7 +220,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
       };
       const el = controle ? controle({ dis, required, onOpenChange: aoAbrir, padrao }) : padrao();
       return <div key={f.name} className={spanCls}><CampoDoLancamento rotulo={rotulo} obrigatorio={required} erro={controle && f.name === "document" ? undefined : err}
-        icone={icone} estado={estado} preenchido={hasValue || (Boolean(controle) && !soAjuste)} multilinha={multilinha}
+        icone={icone} estado={estado} preenchido={hasValue || (Boolean(controle) && !soAjuste)} multilinha={multilinha} numero={numero}
         testId={`campo-${f.name}`} data-campo={rotulo} dica={f.help}>{el}</CampoDoLancamento></div>;
     }
     // controle da ficha que só AJUSTA o de sempre (`padrao`) mantém a aparência de sempre (rótulo flutuante pelo valor)

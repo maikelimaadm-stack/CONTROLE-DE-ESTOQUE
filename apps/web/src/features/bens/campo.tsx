@@ -51,6 +51,8 @@ export type PropsDoCampo = {
   preenchido?: boolean;
   /** caixa de texto longo (Observação): 80px nas duas densidades */
   multilinha?: boolean;
+  /** money / quantity / number / percent / integer — tabular-nums, sem spinner */
+  numero?: boolean;
   testId?: string;
   /** o que fica sob a caixa além do erro (ex.: aviso de padrão inválido) */
   abaixo?: React.ReactNode;
@@ -63,7 +65,7 @@ export type PropsDoCampo = {
  * Um campo da Central. Com `estado` "editavel"/"desabilitado", `children` é UM controle: ele recebe o id do rótulo
  * (o RefSelect por `idDaCaixa`) e a classe que o põe dentro da caixa. Com "leitura"/"travado", `children` é o valor.
  */
-export function CampoDoLancamento({ rotulo, obrigatorio, erro, icone, estado = "editavel", preenchido, multilinha, testId, abaixo, dica, children, ...dados }: PropsDoCampo) {
+export function CampoDoLancamento({ rotulo, obrigatorio, erro, icone, estado = "editavel", preenchido, multilinha, numero, testId, abaixo, dica, children, ...dados }: PropsDoCampo) {
   const gerado = React.useId();
   const comControle = estado === "editavel" || estado === "desabilitado";
   let conteudo: React.ReactNode = children;
@@ -86,11 +88,12 @@ export function CampoDoLancamento({ rotulo, obrigatorio, erro, icone, estado = "
   /* a data traz o próprio botão "Escolher data" (dentro do controle); os outros ícones moram na linha */
   const iconeNaLinha = comControle && icone === "data" ? null : icone;
   return <div className={estilos.campo} data-testid={testId} {...dados}>
-    <div className={estilos.linha} title={dica}
+    <div className={estilos.linha} title={dica || undefined}
       data-estado={estado === "editavel" ? undefined : estado}
       data-preenchido={comControle && preenchido ? "true" : undefined}
       data-erro={erro ? "true" : undefined}
       data-icone={icone ?? undefined}
+      data-numero={numero ? "" : undefined}
       data-multilinha={multilinha ? "" : undefined}>
       {rotuloNo}
       <div className={estilos.caixa} data-parte="caixa" data-controle={comControle ? "" : undefined}>
