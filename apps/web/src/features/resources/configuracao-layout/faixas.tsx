@@ -133,9 +133,25 @@ function useJanela(ativo: number, custoSetas: number, chave: string): ApiJanela 
   };
 }
 
-/** a caixa de renomear: o texto em edição é daqui; Enter e sair gravam, Esc cancela, vazio cancela */
-function CaixaRenomear({ tipo, id, inicial, aoRenomear }: { tipo: "painel" | "card"; id: string; inicial: string; aoRenomear: PropsFaixas["aoRenomear"] }) {
-  const [texto, setTexto] = React.useState(inicial);
+/** largura da caixa de renomear: acompanha o texto (7,6 px por caractere + 26, entre 70 e 280) */
+const larguraDoNome = (texto: string): number =>
+  Math.round(Math.max(LARGURA_CAIXA_MINIMA, Math.min(LARGURA_CAIXA_MAXIMA, texto.length * 7.6 + 26)));
+
+interface PropsCaixaRenomear {
+  tipo: "painel" | "card";
+  id: string;
+  texto: string;
+  aoMudar: (texto: string) => void;
+  aoRenomear: PropsFaixas["aoRenomear"];
+  /** onde a caixa fica, por cima do marcador que guarda o lugar da aba/pílula na faixa */
+  posicao: { left: number; top: number } | null;
+}
+
+/**
+ * A caixa de renomear. Fica FORA do tablist (acessibilidade), posicionada por cima do lugar da aba/pílula, que segue na
+ * faixa como um marcador do mesmo tamanho. Enter e sair gravam, Esc cancela, vazio cancela.
+ */
+function CaixaRenomear({ tipo, id, texto, aoMudar, aoRenomear, posicao }: PropsCaixaRenomear) {
   const ref = React.useRef<HTMLInputElement | null>(null);
   const encerrada = React.useRef(false);
   React.useEffect(() => {
@@ -150,17 +166,15 @@ function CaixaRenomear({ tipo, id, inicial, aoRenomear }: { tipo: "painel" | "ca
     const limpo = nome === null ? "" : nome.trim();
     aoRenomear(tipo, id, limpo ? limpo : null);
   };
-  const largura = Math.round(Math.max(LARGURA_CAIXA_MINIMA, Math.min(LARGURA_CAIXA_MAXIMA, texto.length * 7.6 + 26)));
   return (
     <input
       ref={ref}
-      className={cn(estilos.renomear, tipo === "card" && estilos.renomearCard)}
-      style={{ width: largura }}
+      className={cn(estilos.renomear, estilos.renomearFlutuante, tipo === "card" && estilos.renomearCard)}
+      style={{ width: larguraDoNome(texto), left: posicao?.left ?? 0, top: posicao?.top ?? 0 }}
       value={texto}
       maxLength={MAXIMO_DO_NOME}
       aria-label={tipo === "painel" ? "Renomear painel" : "Renomear card"}
-      data-medir={tipo === "card" ? "" : undefined}
-      onChange={(e) => setTexto(e.target.value)}
+      onChange={(e) => aoMudar(e.target.value)}
       onKeyDown={(e) => {
         if (e.key === "Enter") { e.preventDefault(); encerrar(texto); }
         else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); encerrar(null); }
@@ -221,15 +235,51 @@ export function Faixas(props: PropsFaixas) {
   const vaoPainel = item?.tipo === "painel" && previsao?.tipo === "painel" ? previsao.antes : null;
   const vaoCard = item?.tipo === "card" && previsao?.tipo === "card" ? previsao.antes : null;
   const rotuloNaMao = item?.rotulo ?? "";
-  const dicaLargura = meio ? "Card meio — clique para inteiro" : "Card inteiro — clique para meio";
+  const dicaLargura = !cardAtivo ? "Sem card neste painel" : meio ? "Card meio — clique para inteiro" : "Card inteiro — clique para meio";
   const renomeandoPainel = edicao && props.renomeando?.tipo === "painel" ? props.renomeando.id : null;
   const renomeandoCard = edicao && props.renomeando?.tipo === "card" ? props.renomeando.id : null;
 
+  /* renomear: o texto em edição é daqui (a caixa e o marcador da faixa medem o mesmo); começa no nome atual */
+  const chaveRenomear = renomeandoPainel ? `painel:${renomeandoPainel}` : renomeandoCard ? `card:${renomeandoCard}` : null;
+  const nomeAtual = renomeandoPainel
+    ? paineis.find((p) => p.id === renomeandoPainel)?.label
+    : renomeandoCard ? cards.find((c) => c.id === renomeandoCard)?.label : undefined;
+  const [nomeEmEdicao, setNomeEmEdicao] = React.useState<{ chave: string; texto: string } | null>(null);
+  const textoRenomear = chaveRenomear && nomeEmEdicao?.chave === chaveRenomear ? nomeEmEdicao.texto : (nomeAtual ?? "");
+  const larguraRenomear = larguraDoNome(textoRenomear);
+  /* a caixa fica fora do tablist, por cima do marcador que guarda o lugar dela na faixa */
+  const refMarcador = React.useRef<HTMLSpanElement | null>(null);
+  const [posicaoRenomear, setPosicaoRenomear] = React.useState<{ chave: string; left: number; top: number } | null>(null);
+  React.useLayoutEffect(() => {
+    const marcador = refMarcador.current;
+    const faixa = (renomeandoPainel ? janelaPaineis.refFaixa : janelaCards.refFaixa).current;
+    if (!chaveRenomear || !marcador || !faixa) { if (posicaoRenomear) setPosicaoRenomear(null); return; }
+    const m = marcador.getBoundingClientRect();
+    const f = faixa.getBoundingClientRect();
+    const left = m.left - f.left - faixa.clientLeft;
+    const top = m.top - f.top - faixa.clientTop;
+    if (!posicaoRenomear || posicaoRenomear.chave !== chaveRenomear || Math.abs(posicaoRenomear.left - left) > 0.1 || Math.abs(posicaoRenomear.top - top) > 0.1) {
+      setPosicaoRenomear({ chave: chaveRenomear, left, top });
+    }
+  });
+  const caixaRenomear = (tipo: "painel" | "card", id: string) => (
+    <CaixaRenomear
+      key={`${tipo}:${id}`}
+      tipo={tipo}
+      id={id}
+      texto={textoRenomear}
+      aoMudar={(texto) => setNomeEmEdicao({ chave: `${tipo}:${id}`, texto })}
+      aoRenomear={props.aoRenomear}
+      posicao={posicaoRenomear?.chave === `${tipo}:${id}` ? posicaoRenomear : null}
+    />
+  );
+
   return (
     <>
-      <div ref={janelaPaineis.refFaixa} role="tablist" aria-label="Painéis do formulário" data-parte="faixa-paineis" className={estilos.faixaPaineis}>
+      <div ref={janelaPaineis.refFaixa} data-parte="faixa-paineis" className={estilos.faixaPaineis}>
         <Setas api={janelaPaineis} anterior="Painéis anteriores" proximo="Próximos painéis" lado="esq" />
-        <div ref={janelaPaineis.refRolagem} className={estilos.rolagemPaineis}>
+        {/* só a rolagem é o tablist: setas, +, lixeira e a caixa de renomear ficam fora dele */}
+        <div ref={janelaPaineis.refRolagem} role="tablist" aria-label="Painéis do formulário" className={estilos.rolagemPaineis}>
           {paineis.map((p, i) => {
             const ativo = p.id === props.painelId;
             const contagem = props.contagemDoPainel(p.id);
@@ -241,8 +291,8 @@ export function Faixas(props: PropsFaixas) {
               >
                 <VaoFaixa quente={vaoPainel === i} rotulo={rotuloNaMao} />
                 {renomeandoPainel === p.id ? (
-                  <span className={cn(estilos.aba, estilos.abaRenomeando)} data-parte="aba-painel" data-id={p.id} data-medir="">
-                    <CaixaRenomear tipo="painel" id={p.id} inicial={p.label} aoRenomear={props.aoRenomear} />
+                  <span className={cn(estilos.aba, estilos.abaRenomeando)} data-parte="aba-painel" data-id={p.id} data-medir="" aria-hidden="true">
+                    <span ref={refMarcador} className={estilos.marcadorRenomear} style={{ width: larguraRenomear }} />
                   </span>
                 ) : (
                   <button
@@ -271,6 +321,7 @@ export function Faixas(props: PropsFaixas) {
           </span>
         </div>
         <Setas api={janelaPaineis} anterior="Painéis anteriores" proximo="Próximos painéis" lado="dir" />
+        {renomeandoPainel && caixaRenomear("painel", renomeandoPainel)}
         {edicao && (
           <span className={estilos.fixo}>
             <button type="button" className={cn(estilos.botaoRedondo, estilos.botaoNovo, estilosPagina.dicaFim)} aria-label="Adicionar painel" data-dica="Adicionar painel" onClick={props.aoAdicionarPainel}>
@@ -290,9 +341,9 @@ export function Faixas(props: PropsFaixas) {
         )}
       </div>
 
-      <div ref={janelaCards.refFaixa} role="tablist" aria-label="Cards do painel" data-parte="faixa-cards" className={estilos.faixaCards}>
+      <div ref={janelaCards.refFaixa} data-parte="faixa-cards" className={estilos.faixaCards}>
         <Setas api={janelaCards} anterior="Cards anteriores" proximo="Próximos cards" lado="esq" />
-        <div ref={janelaCards.refRolagem} className={estilos.rolagemCards}>
+        <div ref={janelaCards.refRolagem} role="tablist" aria-label="Cards do painel" className={estilos.rolagemCards}>
           {cards.map((c, i) => {
             const ativo = c.id === props.cardId;
             /* a contagem é a do documento: o campo na mão ainda é do card de origem (no desenho o "· N" não muda no arraste) */
@@ -305,7 +356,7 @@ export function Faixas(props: PropsFaixas) {
               >
                 <VaoFaixa quente={vaoCard === i} rotulo={rotuloNaMao} />
                 {renomeandoCard === c.id ? (
-                  <CaixaRenomear tipo="card" id={c.id} inicial={c.label} aoRenomear={props.aoRenomear} />
+                  <span ref={refMarcador} className={estilos.marcadorRenomearCard} style={{ width: larguraRenomear }} data-medir="" aria-hidden="true" />
                 ) : (
                   <button
                     type="button"
@@ -333,6 +384,7 @@ export function Faixas(props: PropsFaixas) {
           </span>
         </div>
         <Setas api={janelaCards} anterior="Cards anteriores" proximo="Próximos cards" lado="dir" />
+        {renomeandoCard && caixaRenomear("card", renomeandoCard)}
         {edicao && (
           <span className={estilos.fixo}>
             <button

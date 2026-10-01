@@ -148,6 +148,13 @@ const abaDaColuna = (page: Page, nome: "Disponíveis" | "Em uso") => coluna(page
 const caixaDeSoltar = (page: Page) => coluna(page).locator('[data-parte="caixa-soltar"]');
 const trilho = (page: Page) => page.locator('[data-parte="trilho"]');
 const campo = (page: Page, fid: string) => page.locator(`[data-parte="area-linhas"] [data-parte="campo"][data-fid="${fid}"]`);
+/**
+ * O ENVOLTÓRIO do campo (o vão + o campo + o ⚙ e o ×). Desde a VISUAL-UX-03_R1 (item d) o ⚙ e o × são IRMÃOS do campo
+ * (não ficam dentro do elemento role="button"), na mesma posição visual: são achados no envoltório.
+ */
+const envoltorio = (page: Page, fid: string) => campo(page, fid).locator("xpath=..");
+const engrenagem = (page: Page, fid: string) => envoltorio(page, fid).getByRole("button", { name: /^Propriedades de / });
+const xDoCampo = (page: Page, fid: string) => envoltorio(page, fid).getByRole("button", { name: /^Tirar .+ do formulário$/ });
 const linhaDoCard = (page: Page, i: number) => page.locator(`[data-parte="linha"][data-linha="${i}"]`);
 const cabecaDaLinha = (page: Page, i: number) => linhaDoCard(page, i).locator('[data-parte="cabeca-linha"]');
 const contador = (page: Page, i: number) => linhaDoCard(page, i).locator('[data-parte="contador-linha"]');
@@ -173,15 +180,15 @@ async function limparCacheLocal(page: Page) {
   await page.evaluate(() => { for (const k of Object.keys(localStorage)) if (k.startsWith("agro:prefs:")) localStorage.removeItem(k); });
 }
 
-/** Apaga as preferências user e org de equipments/form (a org só com a permissão; 404 é tolerado). */
-async function limparPreferencias(page: Page) {
-  const apagar = async (caminho: string) => {
+/** Apaga as preferências user e org de equipments/form (ou de `caminho`; a org só com a permissão; 404 é tolerado). */
+async function limparPreferencias(page: Page, caminho = PREFS) {
+  const apagar = async (url: string) => {
     // corpo `{}`: o helper manda content-type JSON sempre, e a API recusa corpo vazio com esse cabeçalho (400)
-    try { await api(page, "DELETE", caminho, {}); } catch (e) { if (!/^Error: 404 /.test(String(e))) throw e; }
+    try { await api(page, "DELETE", url, {}); } catch (e) { if (!/^Error: 404 /.test(String(e))) throw e; }
   };
-  const estado = await api<{ canEditOrg: boolean }>(page, "GET", PREFS);
-  await apagar(`${PREFS}?scope=user`);
-  if (estado.canEditOrg) await apagar(`${PREFS}?scope=org`);
+  const estado = await api<{ canEditOrg: boolean }>(page, "GET", caminho);
+  await apagar(`${caminho}?scope=user`);
+  if (estado.canEditOrg) await apagar(`${caminho}?scope=org`);
   await limparCacheLocal(page);
 }
 
@@ -229,7 +236,7 @@ async function adicionarPeloMais(page: Page, fid: string) {
 async function tirarPeloX(page: Page, fid: string) {
   const c = campo(page, fid);
   await c.hover();
-  await c.getByRole("button", { name: /^Tirar .+ do formulário$/ }).click();
+  await xDoCampo(page, fid).click();
   await expect(c, `${fid} saiu das linhas`).toHaveCount(0);
 }
 
@@ -237,7 +244,7 @@ async function tirarPeloX(page: Page, fid: string) {
 async function abrirInspetor(page: Page, fid: string) {
   const c = campo(page, fid);
   await c.hover();
-  await c.getByRole("button", { name: /^Propriedades de / }).click();
+  await engrenagem(page, fid).click();
   await expect(inspetor(page)).toBeVisible();
   await expect(c).toHaveAttribute("data-inspetor", "true");
 }
@@ -252,8 +259,8 @@ async function salvar(page: Page) {
   return corpo;
 }
 
-const respostaDe = (page: Page, metodo: "PUT" | "DELETE", escopo: "user" | "org") =>
-  page.waitForResponse((r) => r.request().method() === metodo && r.url().includes(PREFS) && r.url().includes(`scope=${escopo}`));
+const respostaDe = (page: Page, metodo: "PUT" | "DELETE", escopo: "user" | "org", caminho = PREFS) =>
+  page.waitForResponse((r) => r.request().method() === metodo && new URL(r.url()).pathname === caminho && r.url().includes(`scope=${escopo}`));
 
 /** Registra toda escrita (não-GET) em /api/preferences/ a partir de agora. */
 function registrarEscritas(page: Page) {
@@ -334,6 +341,19 @@ const ponteiroFora = (page: Page) => page.mouse.move(4, (page.viewportSize()?.he
 /** Rótulos VISÍVEIS do formulário, na ordem do DOM (sem o " *" do obrigatório). */
 const rotulosDoFormulario = (page: Page) => page.getByTestId("b1-form").locator("label").evaluateAll((els) =>
   els.filter((e) => { const q = e.getBoundingClientRect(); return q.width > 0 && q.height > 0; }).map((e) => (e.textContent ?? "").replace(/\s*\*\s*$/, "").trim()));
+
+/**
+ * A área do rótulo do campo (o pai do texto, que cresce na linha) contra a largura INTERNA do campo (sem borda e sem
+ * padding), e a posição do texto. Item e da VISUAL-UX-03_R1 (decisão do Maike): o ⚙ e o × não ocupam espaço — sem
+ * hover o rótulo usa a largura inteira, e o hover não o empurra.
+ */
+const areaDoRotulo = (page: Page, fid: string) => campo(page, fid).evaluate((el, texto) => {
+  const folha = [...el.querySelectorAll("*")].find((e) => e.children.length === 0 && (e.textContent ?? "").trim() === texto);
+  const area = folha?.parentElement;
+  const q = el.getBoundingClientRect(); const cs = getComputedStyle(el);
+  const interno = q.width - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  return { area: area && area !== el ? Math.round(area.getBoundingClientRect().width) : null, interno: Math.round(interno), x: folha ? Math.round(folha.getBoundingClientRect().left) : null };
+}, rotulo(fid));
 
 /* ═════════════════════════════════════════════ ciclo de cada caso ═════════════════════════════════════════════ */
 
@@ -454,6 +474,8 @@ test("CL-1 — medidas-chave do desenho na consulta e na edição (1440×900): b
   medir("somente leitura (Código, só leitura na definição): rótulo #5b6875", await folha(campo(page, "code"), exato(rotulo("code")), ["color"]), [M.campo.soLeituraCor]);
   const larguras = await page.locator('[data-parte="area-linhas"] [data-parte="campo"]').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().width)));
   medir("régua 1/limite: com 3, 6 ou 2 campos na linha, todo campo do card inteiro tem a mesma largura", Math.max(...larguras) - Math.min(...larguras) <= 1, true);
+  const naConsulta = await areaDoRotulo(page, "equipment_type");
+  medir("consulta: o rótulo usa a largura inteira do campo (item e)", naConsulta.area, naConsulta.interno);
 
   // ── LINHA CHEIA (card meio Veículo, 4/4): #dcfce7 / #166534
   await pilula(page, "veiculo").click();
@@ -520,8 +542,9 @@ test("CL-1 — medidas-chave do desenho na consulta e na edição (1440×900): b
   medir("+ Campo: 30 px", r((await geo(maisCampo)).h), M.maisCampo.altura);
   medir("+ Campo: mínimo, borda, raio, fundo e texto", await css(maisCampo, ["min-width", "border-top-style", "border-top-color", "border-top-left-radius", "background-color", "font-size", "font-weight", "color"]),
     [M.maisCampo.minimo, M.maisCampo.estilo, M.maisCampo.borda, M.maisCampo.raio, M.maisCampo.fundo, M.maisCampo.fonte, M.maisCampo.peso, M.maisCampo.cor]);
-  // a COLUNA da régua é o envoltório do campo (o vão de 8 px + o campo, `.chw` no desenho), não só o campo
-  const coluna1 = await geo(campo(page, "code").locator(".."));
+  // a COLUNA da régua é o envoltório do campo (o vão de 8 px + o campo, `.chw` no desenho), não só o campo: o ancestral
+  // mais próximo que é alvo de soltar
+  const coluna1 = await geo(campo(page, "code").locator("xpath=ancestor::*[@data-alvo][1]"));
   medir("+ Campo mede uma coluna + 14 px (o padding de botão do navegador), como no desenho", Math.abs(r((await geo(maisCampo)).w) - (r(coluna1.w) + M.maisCampo.alemDaColuna)) <= 1, true);
 
   // ── ADICIONAR LINHA: 28, padding 0 14, pílula verde, 12/600 branco
@@ -540,6 +563,25 @@ test("CL-1 — medidas-chave do desenho na consulta e na edição (1440×900): b
   medir("lixeira: 22×22, raio 6, #94a3b8", [r(gLixeira.w), r(gLixeira.h), ...(await css(excluirPainel, ["border-top-left-radius", "color"]))], [M.lixeira.lado, M.lixeira.lado, M.lixeira.raio, M.lixeira.cor]);
   medir("grupo da direita: borda esquerda #eef1f4, padding 8, margem 8", await css(adicionarPainel.locator(".."), ["border-left-width", "border-left-color", "padding-left", "margin-left"]),
     ["1px", M.grupoDireita.borda, M.grupoDireita.padding, M.grupoDireita.margem]);
+
+  // ── ITEM e (decisão do Maike): ⚙ e × POR CIMA da ponta direita do campo, sem ocupar espaço
+  await ponteiroFora(page);
+  const semHover = await areaDoRotulo(page, "equipment_type");
+  medir("edição sem hover: o rótulo usa a largura inteira do campo (o ⚙ e o × não reservam espaço)", semHover.area, semHover.interno);
+  await campo(page, "equipment_type").hover();
+  await expect(engrenagem(page, "equipment_type"), "hover: o ⚙ aparece").toBeVisible();
+  await expect(xDoCampo(page, "equipment_type"), "hover: o × aparece").toBeVisible();
+  const comHover = await areaDoRotulo(page, "equipment_type");
+  medir("hover: o ⚙ e o × não empurram o rótulo (mesma área, mesma posição)", [comHover.area, comHover.x], [semHover.area, semHover.x]);
+  const gCampoE = await geo(campo(page, "equipment_type"));
+  const gEng = await geo(engrenagem(page, "equipment_type"));
+  const gX = await geo(xDoCampo(page, "equipment_type"));
+  medir("⚙ e × por cima da PONTA DIREITA do campo: dentro da caixa dele, o ⚙ à esquerda do ×, os dois nos últimos 60 px", {
+    dentro: gEng.x >= gCampoE.x && gX.direita <= gCampoE.direita + 0.5 && gEng.y >= gCampoE.y - 0.5 && gEng.baixo <= gCampoE.baixo + 0.5 && gX.y >= gCampoE.y - 0.5 && gX.baixo <= gCampoE.baixo + 0.5,
+    ordem: gEng.direita <= gX.x + 0.5,
+    ponta: gEng.x >= gCampoE.direita - 60
+  }, { dentro: true, ordem: true, ponta: true });
+  medir("⚙ e ×: botões de 20 px", [r(gEng.w), r(gEng.h), r(gX.w), r(gX.h)], [20, 20, 20, 20]);
 
   // ── INSPETOR: 292, borda esquerda; cabeçalho 38 (padding 0 10 0 14, borda #f1f4f6); corpo 12 14 16, gap 11
   await abrirInspetor(page, "equipment_type");
@@ -569,7 +611,11 @@ test("CL-1 — medidas-chave do desenho na consulta e na edição (1440×900): b
   medir("segmentado 22 com botões de 18 (10,5 · 600)", [r((await geo(nenhum.locator(".."))).h), r((await geo(nenhum)).h), ...(await css(nenhum, ["font-size", "font-weight"]))], [I.segmentado, I.segmentadoBotao, ...I.segmentadoFonte]);
   const tipoComInspetor = campo(page, "equipment_type");
   medir("campo com o inspetor: borda #40de63", (await css(tipoComInspetor, ["border-top-color"]))[0], M.campoComInspetor.borda);
-  medir("campo com o inspetor: ⚙ visível e verde", await css(tipoComInspetor.getByRole("button", { name: /^Propriedades de / }), ["background-color", "color"]), [...M.campoComInspetor.engrenagem]);
+  medir("campo com o inspetor: ⚙ visível e verde", await css(engrenagem(page, "equipment_type"), ["background-color", "color"]), [...M.campoComInspetor.engrenagem]);
+  await expect(engrenagem(page, "equipment_type"), "com o inspetor aberto, o ⚙ fica à vista sem hover").toBeVisible();
+  const gEngAberto = await geo(engrenagem(page, "equipment_type")); const gCampoAberto = await geo(tipoComInspetor);
+  medir("com o inspetor aberto, o ⚙ verde continua sobre a ponta direita", gEngAberto.x >= gCampoAberto.direita - 60 && gEngAberto.direita <= gCampoAberto.direita + 0.5, true);
+  medir("com o inspetor aberto, o rótulo continua com a largura inteira", (await areaDoRotulo(page, "equipment_type")).area, (await areaDoRotulo(page, "equipment_type")).interno);
 });
 
 /* ═════════════════════════════════════════════ CL-2 modos ═════════════════════════════════════════════ */
@@ -597,6 +643,14 @@ test("CL-2 — modos: consulta sem ferramentas de edição; edição com tudo; S
   await expect(campo(page, "description"), "o campo aparece na consulta").toBeVisible();
   await expect(page.getByRole("button", { name: /^Propriedades de / }), "consulta: sem ⚙").toHaveCount(0);
   await expect(page.getByRole("button", { name: /^Tirar .+ do formulário$/ }), "consulta: sem ×").toHaveCount(0);
+  // R1 d: na consulta o campo não é botão (sem role, tabindex, aria-pressed nem teclado); o title (o resumo) fica
+  const descricaoNaConsulta = campo(page, "description");
+  await expect(descricaoNaConsulta, "consulta: o campo não é botão").not.toHaveAttribute("role", "button");
+  await expect(descricaoNaConsulta, "consulta: o campo não entra no Tab").not.toHaveAttribute("tabindex");
+  await expect(descricaoNaConsulta).not.toHaveAttribute("aria-pressed");
+  await expect(descricaoNaConsulta, "consulta: o resumo continua no title").toHaveAttribute("title", new RegExp(`^${rotulo("description")} · obrigatório`));
+  // R1 g: o cursor de agarrar só onde algo arrasta — na consulta, nada arrasta
+  expect(["auto", "default"], "consulta: o cabeçalho da linha fica com o cursor normal").toContain((await css(cabecaDaLinha(page, 0), ["cursor"]))[0]);
   await expect(botao(page, "Restaurar padrão"), "Restaurar desabilitado na consulta").toBeDisabled();
   // Padrão da organização: sem padrão gravado, só "Usar"
   const org = botao(page, "Padrão da organização");
@@ -616,9 +670,23 @@ test("CL-2 — modos: consulta sem ferramentas de edição; edição com tudo; S
   for (const nome of ["Adicionar painel", "Excluir painel", "Adicionar card", "Excluir card"]) await expect(page.getByRole("button", { name: nome, exact: true }), `edição: ${nome}`).toBeVisible();
   await expect(page.getByRole("button", { name: "Remover Linha 1", exact: true })).toBeVisible();
   await campo(page, "description").hover();
-  await expect(campo(page, "description").getByRole("button", { name: `Propriedades de ${rotulo("description")}`, exact: true }), "edição: ⚙ no hover").toBeVisible();
-  await expect(campo(page, "description").getByRole("button", { name: `Tirar ${rotulo("description")} do formulário`, exact: true }), "edição: × no hover").toBeVisible();
+  await expect(envoltorio(page, "description").getByRole("button", { name: `Propriedades de ${rotulo("description")}`, exact: true }), "edição: ⚙ no hover").toBeVisible();
+  await expect(envoltorio(page, "description").getByRole("button", { name: `Tirar ${rotulo("description")} do formulário`, exact: true }), "edição: × no hover").toBeVisible();
+  // R1 d: o ⚙ e o × não moram DENTRO do campo (role="button" não contém botão); o campo é botão só na edição
+  await expect(campo(page, "description"), "edição: o campo é botão").toHaveAttribute("role", "button");
+  await expect(campo(page, "description").getByRole("button"), "nenhum botão dentro do role=\"button\"").toHaveCount(0);
   await expect(botao(page, "Editar layout"), "a edição não tem Editar").toHaveCount(0);
+  // R1 d: role="tablist" só no contêiner das abas e das pílulas — setas, +, lixeira, largura e a busca ficam fora
+  for (const nome of ["Painéis do formulário", "Cards do painel", "Lista de campos"]) {
+    const lista = page.getByRole("tablist", { name: nome });
+    await expect(lista.getByRole("tab").first(), `${nome}: o tablist tem as abas`).toBeVisible();
+    await expect(lista.locator('button:not([role="tab"]), input, select, textarea, a[href]'), `${nome}: só abas dentro do tablist`).toHaveCount(0);
+  }
+  // R1 g: na edição, agarra o que arrasta (cabeçalho da linha, item de Disponíveis); Em uso não arrasta: cursor normal
+  expect((await css(cabecaDaLinha(page, 0), ["cursor"]))[0], "edição: o cabeçalho da linha arrasta").toBe("grab");
+  await abaDaColuna(page, "Em uso").click();
+  expect(["auto", "default"], "Em uso: o item não arrasta, cursor normal").toContain((await css(itemDaColuna(page, "description"), ["cursor"]))[0]);
+  await mostrarDisponiveis(page);
   const salvarB = botao(page, "Salvar layout");
   await expect(salvarB, "sem alteração, Salvar desabilitado").toBeDisabled();
   await expect(salvarB).toHaveAttribute("data-dica", "Nada mudou ainda");
@@ -651,6 +719,63 @@ test("CL-2 — modos: consulta sem ferramentas de edição; edição com tudo; S
   await editar(page);
   await expect(botao(page, "Restaurar padrão"), "com personalização do usuário, Restaurar habilitado na edição").toBeEnabled();
   await expect(botao(page, "Restaurar padrão")).toHaveAttribute("data-dica", "Restaurar padrão");
+});
+
+/* ═════════════════════════════════════════════ CL-2b Editar só com leitura boa ═════════════════════════════════════════════ */
+
+/** O GET das preferências de equipments/form (PUT e DELETE vão no mesmo caminho e passam direto). */
+const ehOGetDasPreferencias = (u: URL) => u.pathname === PREFS;
+
+test("CL-2b — Editar só depois de uma leitura BOA do servidor: GET com erro → desabilitado com a dica do erro; cache local velho com GET lento → desabilitado até o GET responder", async ({ page }) => {
+  await gravarLayout(page, layoutBase());
+  const editarB = botao(page, "Editar layout");
+
+  // ── A LEITURA FALHA (500 nas duas tentativas): o Editar não abre um rascunho do padrão por cima do salvo
+  let falhas = 0;
+  await page.route(ehOGetDasPreferencias, async (rota) => {
+    if (rota.request().method() !== "GET") return rota.continue();
+    falhas++;
+    const real = await rota.fetch(); // mantém os cabeçalhos (CORS) da API; só o status e o corpo mudam
+    await rota.fulfill({ response: real, status: 500, contentType: "application/json", body: JSON.stringify({ error: { code: "INTERNAL", message: "falha simulada pelo teste" } }) });
+  });
+  await page.goto(TELA);
+  await expect(raiz(page)).toHaveAttribute("data-modo", "consulta");
+  await expect(editarB, "leitura que falhou: a dica diz por quê").toHaveAttribute("data-dica", "Não foi possível ler o layout salvo");
+  await expect(editarB, "leitura que falhou: Editar desabilitado").toBeDisabled();
+  expect(falhas, "premissa: o GET das preferências passou pela rota de falha").toBeGreaterThan(0);
+  await page.unroute(ehOGetDasPreferencias);
+
+  // ── CACHE LOCAL VELHO + GET LENTO: enquanto o servidor não responde, a tela mostra a cópia velha e o Editar espera
+  await page.goto(TELA);
+  await expect(editarB, "premissa: com a leitura boa, o Editar habilita").toBeEnabled();
+  const chaveDoCache = await page.evaluate(() => Object.keys(localStorage).find((k) => k.startsWith("agro:prefs:") && k.endsWith(":equipments:form")) ?? null);
+  expect(chaveDoCache, "premissa: a leitura boa gravou o cache local").not.toBeNull();
+  const velho = layoutBase();
+  velho.cards[0]!.rows[2] = linha("r3", "brand");
+  velho.hiddenFieldIds.push("model");
+  await page.evaluate(({ k, doc }) => localStorage.setItem(k, JSON.stringify({ ...doc, meta: { revision: 0 } })), { k: chaveDoCache!, doc: velho });
+  let soltarOGet!: () => void;
+  const segura = new Promise<void>((ok) => { soltarOGet = ok; });
+  let segurou = 0;
+  await page.route(ehOGetDasPreferencias, async (rota) => {
+    if (rota.request().method() === "GET") { segurou++; await segura; }
+    await rota.continue();
+  });
+  await page.reload();
+  await expect(raiz(page)).toHaveAttribute("data-modo", "consulta");
+  await expect.poll(() => fidsDaLinha(page, 2), "premissa: a tela desenha a cópia VELHA do cache enquanto o GET não volta").toEqual(["brand"]);
+  await expect.poll(() => segurou, { message: "premissa: o GET está segurado" }).toBeGreaterThan(0);
+  await expect(editarB, "cache velho não é leitura boa: Editar desabilitado").toBeDisabled();
+  await expect(editarB).toHaveAttribute("data-dica", "Carregando o layout…");
+  soltarOGet();
+  await expect(editarB, "o GET respondeu: o Editar habilita").toBeEnabled();
+  await expect(editarB).toHaveAttribute("data-dica", "Editar layout");
+  await expect.poll(() => fidsDaLinha(page, 2), "vale o servidor, mais novo que o cache").toEqual(["brand", "model"]);
+  await editar(page);
+  await expect.poll(() => fidsDaLinha(page, 2), "o rascunho nasce da leitura do servidor, não do cache velho").toEqual(["brand", "model"]);
+  await expect(botao(page, "Salvar layout"), "abrir não é alteração").toBeDisabled();
+  await botao(page, "Descartar alterações").click();
+  await page.unroute(ehOGetDasPreferencias);
 });
 
 /* ═════════════════════════════════════════════ CL-3 arrastar para uma linha ═════════════════════════════════════════════ */
@@ -820,7 +945,7 @@ test("CL-5 — soltar na coluna tira o campo; o do sistema recusa; × do sistema
 
   // ── × DO CAMPO DO SISTEMA: desabilitado no campo e em Em uso
   await campo(page, "description").hover();
-  const xNoCampo = campo(page, "description").getByRole("button", { name: `Tirar ${rotulo("description")} do formulário`, exact: true });
+  const xNoCampo = envoltorio(page, "description").getByRole("button", { name: `Tirar ${rotulo("description")} do formulário`, exact: true });
   await expect(xNoCampo, "× do campo do sistema desabilitado").toBeDisabled();
   await expect(xNoCampo).toHaveAttribute("data-dica", "Campo do sistema — não sai do formulário");
   await abaDaColuna(page, "Em uso").click();
@@ -1086,7 +1211,8 @@ test("CL-7 — painéis, cards e linhas: adicionar (Enter grava, Esc cancela), e
   await editar(page);
   await expect(page.locator('[data-parte="aba-painel"]')).toHaveCount(1);
   await expect(excluirPainel, "um painel só não se exclui").toBeDisabled();
-  await expect(excluirPainel, "o motivo na dica (o painel único tem também os campos do sistema)").toHaveAttribute("data-dica", /^(O formulário precisa de ao menos um painel|Este painel tem campo do sistema, que não sai do formulário)$/);
+  // o painel único também tem campos do sistema: a regra do rascunho dá "um só" ANTES de "campo do sistema"
+  await expect(excluirPainel, "o motivo na dica é o do painel único").toHaveAttribute("data-dica", "O formulário precisa de ao menos um painel");
 });
 
 /* ═════════════════════════════════════════════ CL-8 inspetor ═════════════════════════════════════════════ */
@@ -1186,6 +1312,9 @@ test("CL-8 — inspetor: rótulo e Voltar ao nome do sistema; Obrigatório liga 
   await expect(chave(page, "Obrigatório"), "campo do sistema: Obrigatório travado").toBeDisabled();
   await expect(chave(page, "Visível")).toHaveAttribute("aria-checked", "true");
   await expect(chave(page, "Visível"), "campo do sistema: Visível travado").toBeDisabled();
+  // R1 c: travar o obrigatório da definição tiraria o campo do envio (toApi) e o Novo do cadastro nunca mais gravaria
+  await expect(chave(page, "Somente leitura"), "campo do sistema: Somente leitura desligada").toHaveAttribute("aria-checked", "false");
+  await expect(chave(page, "Somente leitura"), "campo do sistema: Somente leitura travada").toBeDisabled();
   await abrirInspetor(page, "code");
   await expect(chave(page, "Somente leitura")).toHaveAttribute("aria-checked", "true");
   await expect(chave(page, "Somente leitura"), "só leitura na definição: travada").toBeDisabled();
@@ -1217,6 +1346,23 @@ test("CL-8 — inspetor: rótulo e Voltar ao nome do sistema; Obrigatório liga 
     await abrirInspetor(page, fid);
     await expect(insp.getByText(tipo, { exact: true }), `${fid} → ${tipo}`).toBeVisible();
   }
+
+  // ── CAMPO DO SISTEMA TRAVADO POR UM LAYOUT SALVO ANTES DA R1: a chave vem ligada e SÓ desliga
+  await botao(page, "Descartar alterações").click();
+  const travadoAntes = layoutBase();
+  travadoAntes.lockedFieldIds = ["description"];
+  await gravarLayout(page, travadoAntes);
+  await abrirTela(page);
+  await expect(marca(campo(page, "description"), "Somente leitura"), "premissa: o layout salvo trava Descrição").toHaveCount(1);
+  await editar(page);
+  await abrirInspetor(page, "description");
+  const soLeitura = chave(page, "Somente leitura");
+  await expect(soLeitura, "vem ligada do layout salvo").toHaveAttribute("aria-checked", "true");
+  await expect(soLeitura, "ligada, ela pode desligar").toBeEnabled();
+  await soLeitura.click();
+  await expect(soLeitura).toHaveAttribute("aria-checked", "false");
+  await expect(soLeitura, "desligada, não liga de novo").toBeDisabled();
+  await expect(marca(campo(page, "description"), "Somente leitura"), "o cadeado sai do campo").toHaveCount(0);
 });
 
 /* ═════════════════════════════════════════════ CL-9 desfazer / refazer ═════════════════════════════════════════════ */
@@ -1359,6 +1505,89 @@ test("CL-10 — contrato: o PUT leva só as chaves do FormLayout; recarregar sem
   expect(sequencia, "o formulário segue a ordem salva (linhas e cards)").toEqual([...sequencia].sort((a, b) => a - b));
 });
 
+/* ═════════════════════════════════════════════ CL-10b contrato rico ═════════════════════════════════════════════ */
+
+test("CL-10b — contrato rico: card recolhível, painel oculto, rótulo, travado, obrigatório, fieldSizes e valores padrão (5, false, null) atravessam Editar → mudança sem relação → Salvar; só o null sai; o campo que entra pela coluna sai do hiddenFieldIds", async ({ page }) => {
+  const rico = layoutBase();
+  rico.panels[2] = { ...rico.panels[2]!, hidden: true };
+  rico.cards[1] = { ...rico.cards[1]!, collapsible: true };
+  rico.fieldLabels = { brand: "Marca do bem" };
+  rico.lockedFieldIds = ["chassis"];
+  rico.requiredFieldIds = ["hour_meter"];
+  rico.fieldSizes = { ...TAMANHOS, brand: 5, model: 7 };
+  rico.fieldDefaultValues = { hour_meter: 5, has_depreciation: false, model: null };
+  await gravarLayout(page, rico);
+  const guardado = await api<{ user: { preferences: FormLayout } | null }>(page, "GET", PREFS);
+  const g = guardado.user?.preferences;
+  expect(g?.fieldDefaultValues, "premissa: o servidor guardou os três valores padrão como vieram (número, booleano e null)").toEqual({ hour_meter: 5, has_depreciation: false, model: null });
+  expect(g?.panels.filter((x) => x.hidden).map((x) => x.id), "premissa: painel oculto guardado").toEqual(["p_outros"]);
+  expect(g?.cards.filter((x) => x.collapsible).map((x) => x.id), "premissa: card recolhível guardado").toEqual(["veiculo"]);
+
+  await abrirTela(page);
+  await editar(page);
+  await mostrarDisponiveis(page);
+  await expect(botao(page, "Salvar layout"), "abrir o layout rico não é alteração").toBeDisabled();
+  // UMA mudança sem relação com o que o layout já guarda: Patrimônio entra pela coluna (o "+")
+  await adicionarPeloMais(page, "patrimony");
+  const { preferences: doc } = await salvar(page);
+
+  expect(doc.panels.map((x) => [x.id, x.label, x.hidden === true]), "painéis: o oculto atravessa").toEqual(rico.panels.map((x) => [x.id, x.label, x.hidden === true]));
+  expect(doc.cards.map((x) => [x.id, x.panelId, x.label, x.colSpan, x.collapsible === true]), "cards: o recolhível atravessa").toEqual(rico.cards.map((x) => [x.id, x.panelId, x.label, x.colSpan, x.collapsible === true]));
+  const esperadas = rico.cards.map((x) => x.rows.map((y) => y.fieldIds));
+  esperadas[0]![2] = ["brand", "model", "patrimony"];
+  expect(doc.cards.map((x) => x.rows.map((y) => y.fieldIds)), "linhas: só Patrimônio entrou, no fim da última linha do card aberto").toEqual(esperadas);
+  expect(doc.fieldLabels, "rótulo salvo atravessa").toEqual({ brand: "Marca do bem" });
+  expect(doc.lockedFieldIds, "travado salvo atravessa").toEqual(["chassis"]);
+  expect(doc.requiredFieldIds, "obrigatório salvo atravessa").toEqual(["hour_meter"]);
+  expect(doc.fieldSizes, "fieldSizes atravessa intacto (sem editor)").toEqual(rico.fieldSizes);
+  expect(doc.fieldDefaultValues, "número e booleano atravessam com o tipo; o null sai (declarado na 275)").toEqual({ hour_meter: 5, has_depreciation: false });
+  expect([...doc.hiddenFieldIds].sort(), "o campo que entra pela coluna sai do hiddenFieldIds; o resto fica").toEqual(FORA_DO_FORMULARIO.filter((f) => f !== "patrimony").sort());
+});
+
+/* ═════════════════════════════════════════════ CL-10c products: ids de card repetidos no padrão ═════════════════════════════════════════════ */
+
+const PREFS_PRODUTOS = "/api/preferences/products/form";
+
+test("CL-10c — products: o padrão sem personalização tem os cards geral e geral_2; publicado como padrão da organização e relido, os dois continuam, sem \"Outros campos\"", async ({ page }) => {
+  const permissao = await api<{ canEditOrg: boolean }>(page, "GET", PREFS_PRODUTOS);
+  expect(permissao.canEditOrg, "PARAR: o admin do E2E precisa de canEditOrg para publicar o padrão da organização").toBe(true);
+  await limparPreferencias(page, PREFS_PRODUTOS);
+  try {
+    await page.goto("/cadastros/products/configuracao-layout");
+    await expect(raiz(page)).toHaveAttribute("data-modo", "consulta");
+    await expect(botao(page, "Editar layout")).toBeEnabled();
+    await expect.poll(() => idsDasPilulas(page), "Principal: o card da seção Geral fica com o id geral").toEqual(["geral", "estoque"]);
+    await abaPainel(page, "p_geral").click();
+    await expect.poll(() => idsDasPilulas(page), "Outros: o card da seção sem nome, que o padrão também chamava geral, vira geral_2").toEqual(["geral_2"]);
+
+    const pedido = page.waitForRequest((r) => r.method() === "PUT" && new URL(r.url()).pathname === PREFS_PRODUTOS && r.url().includes("scope=org"));
+    const gravou = respostaDe(page, "PUT", "org", PREFS_PRODUTOS);
+    await botao(page, "Padrão da organização").click();
+    await page.getByRole("menuitem", { name: "Usar este layout como padrão da organização" }).click();
+    const enviado = (await pedido).postDataJSON() as { preferences: FormLayout };
+    expect((await gravou).ok(), "publicar = PUT ?scope=org").toBe(true);
+    const ids = ["geral", "estoque", "fiscal", "custos_e_venda", "agro", "geral_2"];
+    expect(enviado.preferences.cards.map((x) => x.id), "o documento publicado já sai sem id repetido").toEqual(ids);
+
+    const lido = await api<{ org: { preferences: FormLayout } | null }>(page, "GET", PREFS_PRODUTOS);
+    expect(lido.org?.preferences.cards.map((x) => x.id), "o servidor guardou os dois cards").toEqual(ids);
+    expect(lido.org?.preferences.cards.map((x) => x.label), "sem card \"Outros campos\"").not.toContain("Outros campos");
+    expect(lido.org?.preferences.cards.find((x) => x.id === "geral_2")?.rows.map((x) => x.fieldIds), "os campos do segundo card ficaram nele").toEqual(enviado.preferences.cards.find((x) => x.id === "geral_2")?.rows.map((x) => x.fieldIds));
+
+    // relido na tela (sem o cache local): os dois cards, e o Principal sem "Outros campos"
+    await limparCacheLocal(page);
+    await page.reload();
+    await expect(botao(page, "Editar layout")).toBeEnabled();
+    await expect.poll(() => idsDasPilulas(page), "Principal relido: sem card a mais").toEqual(["geral", "estoque"]);
+    await expect(page.locator('[data-parte="pilula-card"]', { hasText: "Outros campos" })).toHaveCount(0);
+    await abaPainel(page, "p_geral").click();
+    await expect.poll(() => idsDasPilulas(page), "Outros relido: geral_2 continua").toEqual(["geral_2"]);
+  } finally {
+    // o banco do E2E é compartilhado: sai sem padrão da organização nem personalização do products
+    await limparPreferencias(page, PREFS_PRODUTOS);
+  }
+});
+
 /* ═════════════════════════════════════════════ CL-11 descartar, restaurar, padrão da organização ═════════════════════════════════════════════ */
 
 test("CL-11 — Descartar sem escrita; Restaurar com confirmação e DELETE ?scope=user (volta a seguir o padrão da organização); Padrão da organização por PUT e DELETE ?scope=org", async ({ page }) => {
@@ -1460,10 +1689,10 @@ async function evidencia(page: Page, w: number, h: number) {
   const pasta = process.env.EVIDENCIA_DIR ?? path.join("test-results", "visual-ux-03");
   fs.mkdirSync(pasta, { recursive: true });
   await page.setViewportSize({ width: w, height: h });
-  const foto = async (cena: string, arrastando = false) => {
+  const foto = async (cena: string, manterPonteiro = false) => {
     const sobra = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(sobra, `${cena}: sem rolagem horizontal em ${w}×${h}`).toBeLessThanOrEqual(0);
-    if (!arrastando) await ponteiroFora(page);
+    if (!manterPonteiro) await ponteiroFora(page);
     await page.waitForTimeout(350); // assenta a transição mais longa da tela (--mo-set 340 ms)
     await page.screenshot({ path: path.join(pasta, `${cena}__produto__${w}x${h}.png`) });
   };
@@ -1473,6 +1702,10 @@ async function evidencia(page: Page, w: number, h: number) {
   await editar(page);
   await mostrarDisponiveis(page);
   await foto("editando");
+  // item e (decisão do Maike): o ⚙ e o × por cima da ponta direita do campo, sem empurrar o rótulo
+  await campo(page, "equipment_type").hover();
+  await expect(engrenagem(page, "equipment_type")).toBeVisible();
+  await foto("campo-com-acoes", true);
 
   await pegar(page, itemDaColuna(page, "patrimony"));
   await levar(page, campo(page, "description"));

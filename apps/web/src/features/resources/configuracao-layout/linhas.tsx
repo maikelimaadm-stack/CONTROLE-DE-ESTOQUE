@@ -233,51 +233,57 @@ function CampoDaLinha({ base, arraste, fid, endereco, troca, naPonta }: PropsCam
   const titulo = troca
     ? (troca.recusa ? "Campo do sistema — não sai do formulário" : `Trocar de lugar com ${rotuloDoItem(base, arraste.item)}`)
     : resumoDoCampo(rotulo, estado);
+  /* na edição o campo é um botão (selecionar; Enter ou Espaço abre o inspetor); na consulta é só a caixa com o title */
+  const comoBotao: React.HTMLAttributes<HTMLSpanElement> = edicao
+    ? {
+        role: "button",
+        tabIndex: 0,
+        "aria-label": rotulo,
+        "aria-pressed": selecionado,
+        onClick: () => base.aoSelecionar(fid),
+        onKeyDown: (e) => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); base.aoAbrirInspetor(fid); }
+        },
+        /* o item leva o nome do sistema (o texto do fantasma e do vão, como `dragCampo.label` do desenho) */
+        onPointerDown: (e) => arraste.iniciar(e, { tipo: "campo", fid, rotulo: base.nomeDoSistema(fid), obrigatorio: estado.obrigatorio, origem: endereco })
+      }
+    : {};
 
   return (
-    <span
-      role="button"
-      tabIndex={0}
-      aria-label={rotulo}
-      aria-pressed={selecionado}
-      title={titulo}
-      data-parte="campo"
-      data-fid={fid}
-      data-selecionado={sim(selecionado)}
-      data-inspetor={sim(comInspetor)}
-      data-oculto={sim(estado.oculto)}
-      data-obrigatorio={sim(estado.obrigatorio)}
-      data-somente-leitura={sim(estado.somenteLeitura)}
-      data-pousa={sim(pousou)}
-      data-troca={troca ? (troca.recusa ? "recusa" : "ok") : undefined}
-      className={estilos.campo}
-      style={{ flexGrow: 1 }}
-      onClick={() => base.aoSelecionar(fid)}
-      onKeyDown={(e) => {
-        if (e.target !== e.currentTarget) return;
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); base.aoAbrirInspetor(fid); }
-      }}
-      onPointerDown={edicao
-        /* o item leva o nome do sistema (o texto do fantasma e do vão, como `dragCampo.label` do desenho) */
-        ? (e) => arraste.iniciar(e, { tipo: "campo", fid, rotulo: base.nomeDoSistema(fid), obrigatorio: estado.obrigatorio, origem: endereco })
-        : undefined}
-    >
-      <span className={estilos.campoTexto}>
-        <span className={estilos.campoRotulo}>{rotulo}</span>
-        {estado.obrigatorio && <span className={estilos.asterisco} title="Obrigatório">*</span>}
+    <span className={estilos.caixaCampo}>
+      <span
+        {...comoBotao}
+        title={titulo}
+        data-parte="campo"
+        data-fid={fid}
+        data-selecionado={sim(selecionado)}
+        data-inspetor={sim(comInspetor)}
+        data-oculto={sim(estado.oculto)}
+        data-obrigatorio={sim(estado.obrigatorio)}
+        data-somente-leitura={sim(estado.somenteLeitura)}
+        data-pousa={sim(pousou)}
+        data-troca={troca ? (troca.recusa ? "recusa" : "ok") : undefined}
+        className={estilos.campo}
+        style={{ flexGrow: 1 }}
+      >
+        <span className={estilos.campoTexto}>
+          <span className={estilos.campoRotulo}>{rotulo}</span>
+          {estado.obrigatorio && <span className={estilos.asterisco} title="Obrigatório">*</span>}
+        </span>
+        {estado.oculto && <span className={estilos.marca} title="Oculto no formulário"><EyeOff size={12} /></span>}
+        {estado.somenteLeitura && <span className={estilos.marca} title="Somente leitura"><Lock size={12} /></span>}
+        {estado.temValorPadrao && <span className={estilos.marca} title="Tem valor padrão"><Zap size={12} /></span>}
       </span>
-      {estado.oculto && <span className={estilos.marca} title="Oculto no formulário"><EyeOff size={12} /></span>}
-      {estado.somenteLeitura && <span className={estilos.marca} title="Somente leitura"><Lock size={12} /></span>}
-      {estado.temValorPadrao && <span className={estilos.marca} title="Tem valor padrão"><Zap size={12} /></span>}
+      {/* ⚙ e × (decisão do Maike): irmãos do campo, POR CIMA da ponta direita, sem ocupar espaço; aparecem no hover e no
+          foco, e o ⚙ verde fica à vista com o inspetor aberto */}
       {edicao && !troca && (
-        <>
+        <span className={cn(estilos.acoesCampo, comInspetor && estilos.acoesComInspetor)} onPointerDown={naoArrasta}>
           <button
             type="button"
             className={cn(estilos.botaoPropriedades, comInspetor && estilos.botaoPropriedadesAtivo, naPonta && estilosPagina.dicaFim)}
             aria-label={`Propriedades de ${rotulo}`}
             data-dica="Propriedades do campo"
-            onPointerDown={naoArrasta}
-            onClick={(e) => { e.stopPropagation(); base.aoAbrirInspetor(fid); }}
+            onClick={() => base.aoAbrirInspetor(fid)}
           >
             <Engrenagem size={13} />
           </button>
@@ -287,12 +293,11 @@ function CampoDaLinha({ base, arraste, fid, endereco, troca, naPonta }: PropsCam
             aria-label={`Tirar ${rotulo} do formulário`}
             data-dica={estado.doSistema ? "Campo do sistema — não sai do formulário" : "Tirar do formulário"}
             disabled={estado.doSistema}
-            onPointerDown={naoArrasta}
-            onClick={(e) => { e.stopPropagation(); base.aoTirar(fid); }}
+            onClick={() => base.aoTirar(fid)}
           >
             <X size={12} />
           </button>
-        </>
+        </span>
       )}
     </span>
   );

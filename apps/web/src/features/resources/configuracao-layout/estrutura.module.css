@@ -17,6 +17,7 @@
 
 /* ═════════════ faixa de painéis (`.tabs` com `border-style: none` em linha) ═════════════ */
 .faixaPaineis {
+  position: relative;
   height: 38px;
   flex-shrink: 0;
   display: flex;
@@ -186,6 +187,7 @@
 
 /* ═════════════ faixa de cards (`.subtabs`: 34 px + a borda) ═════════════ */
 .faixaCards {
+  position: relative;
   box-sizing: content-box;
   height: 34px;
   flex-shrink: 0;
@@ -247,6 +249,11 @@
 }
 .renomear:focus { border-color: #40de63; box-shadow: 0 0 0 2px rgba(64, 222, 99, .22); }
 .renomearCard { height: 20px; font-size: 11.5px; font-weight: 500; }
+/* a caixa fica fora do tablist (acessibilidade), por cima do marcador que guarda o lugar dela na faixa: o marcador mede
+   o mesmo que a caixa e está onde o desenho põe o input (na aba, padding 0 6 e centrado; no card, no lugar da pílula) */
+.renomearFlutuante { position: absolute; z-index: 2; }
+.marcadorRenomear { display: block; flex-shrink: 0; height: 22px; }
+.marcadorRenomearCard { display: block; flex-shrink: 0; height: 20px; }
 
 /* ═════════════ área das linhas (`.panel` com padding 12 16 14 em linha) ═════════════ */
 /* rola na vertical; na horizontal corta (no desenho `overflow: auto` nos dois eixos: a dica do botão da direita abre
@@ -305,10 +312,11 @@
   gap: 8px;
   padding: 0 6px 0 11px;
   border-bottom: 1px solid #f4f6f8;
-  cursor: grab;
 }
+/* agarrar só onde algo arrasta: na consulta o cabeçalho fica com o cursor normal (o desenho calcula grab nos dois modos) */
+.emEdicao .cabecaLinha { cursor: grab; }
 .emEdicao .cabecaLinha:hover { background: #fbfcfd; }
-.cabecaLinha:active { cursor: grabbing; }
+.emEdicao .cabecaLinha:active { cursor: grabbing; }
 .tituloLinha { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: #8492a3; flex-shrink: 0; }
 .espaco { flex-grow: 1; }
 /* x/y (`.cap`, redondo pela regra posterior) */
@@ -374,6 +382,9 @@
 /* a sobra guarda as colunas que ainda não têm campo (`.preench`) */
 .sobra { flex-basis: 0; flex-shrink: 0; align-self: stretch; transition: flex-grow var(--mo-set) cubic-bezier(.34, 1.36, .5, 1); }
 
+/* caixa do campo: o campo e, por cima da ponta direita dele, o ⚙ e o × (irmãos, fora do botão do campo) */
+.caixaCampo { position: relative; display: flex; align-items: stretch; flex: 1 1 0; min-width: 0; }
+
 /* campo (`.ch`) */
 .campo {
   position: relative;
@@ -403,16 +414,37 @@
 }
 .campo[data-selecionado] { border-color: #40de63; background: #fff; box-shadow: 0 0 0 2px rgba(64, 222, 99, .22), 0 3px 10px rgba(15, 23, 42, .08); }
 .emEdicao .campo { cursor: grab; }
-.emEdicao .campo:hover { border-color: #c6d0da; background: #fff; box-shadow: 0 2px 8px rgba(15, 23, 42, .08); }
+/* hover (`.ed .ch:hover`, 0-3-0): vale também com o ponteiro no ⚙ e no × e com o foco de teclado na caixa */
+:where(.emEdicao) .caixaCampo:hover > .campo,
+:where(.emEdicao) .caixaCampo:has(:focus-visible) > .campo { border-color: #c6d0da; background: #fff; box-shadow: 0 2px 8px rgba(15, 23, 42, .08); }
 .emEdicao .campo:active { cursor: grabbing; }
-.emEdicao .campo:hover .botaoTirar { opacity: 1; }
 .campoTexto { display: flex; align-items: center; gap: 4px; min-width: 0; flex-grow: 1; }
 .campoRotulo { min-width: 0; font-size: 12px; font-weight: 500; color: #1e293b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .asterisco { color: #dc2626; font-size: 16px; font-weight: 700; flex-shrink: 0; line-height: 1; }
 .campo[data-pousa] { animation: pousa var(--mo-set) cubic-bezier(.16, 1, .3, 1); }
 .marca { flex-shrink: 0; display: inline-flex; align-items: center; color: #94a3b8; }
 
-/* ⚙ (`.chg`) e × (`.dchip-x`): aparecem no hover do campo; o × do campo do sistema fica a .25 */
+/* ⚙ (`.chg`) e × (`.dchip-x`) — decisão do Maike: não ocupam espaço no campo. Ficam POR CIMA da ponta direita, na
+   mesma posição do desenho (× a 9 px da borda de fora: 1 da borda + 4 do padding + 4 da margem; ⚙ 6 px antes dele),
+   sobre o fundo branco do hover, e aparecem no hover e no foco; o rótulo usa a largura inteira quando não estão. */
+.acoesCampo {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 6px;
+  border-radius: 0 7px 7px 0;
+  background: linear-gradient(to right, rgba(255, 255, 255, 0), #fff 6px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms;
+}
+.caixaCampo:hover > .acoesCampo,
+.caixaCampo:has(:focus-visible) > .acoesCampo,
+.acoesCampo.acoesComInspetor { opacity: 1; pointer-events: auto; }
 .botaoPropriedades,
 .botaoTirar {
   width: 20px;
@@ -436,12 +468,15 @@
   transition: background-color var(--mi) cubic-bezier(.4, 0, .2, 1), color var(--mi) cubic-bezier(.4, 0, .2, 1), border-color var(--mi) cubic-bezier(.4, 0, .2, 1), box-shadow var(--mi) cubic-bezier(.4, 0, .2, 1), opacity var(--mi) cubic-bezier(.4, 0, .2, 1), transform var(--mf) cubic-bezier(.4, 0, .2, 1);
 }
 .botaoTirar:hover { background: #eef1f4; color: #0f172a; }
-.botaoTirar:focus-visible { opacity: 1; }
-.botaoTirar:disabled { opacity: .25; cursor: not-allowed; }
-.emEdicao .campo:hover .botaoTirar:disabled { opacity: .25; }
+.botaoTirar:disabled { cursor: not-allowed; }
+.caixaCampo:hover .botaoTirar,
+.caixaCampo:has(:focus-visible) .botaoTirar { opacity: 1; }
+/* o × do campo do sistema (desabilitado) só aparece junto, a .25 */
+.caixaCampo:hover .botaoTirar:disabled,
+.caixaCampo:has(:focus-visible) .botaoTirar:disabled { opacity: .25; }
 .botaoPropriedades:hover { background: #eef1f4; color: #0f172a; }
-.botaoPropriedades:focus-visible { opacity: 1; }
-.emEdicao .campo:hover .botaoPropriedades { opacity: 1; }
+.caixaCampo:hover .botaoPropriedades,
+.caixaCampo:has(:focus-visible) .botaoPropriedades { opacity: 1; }
 /* ⚙ do campo com o inspetor aberto (`.chg.ativo`, que vem depois do hover e vence) */
 .botaoPropriedades.botaoPropriedadesAtivo { opacity: 1; background: #eafcf0; color: #15803d; }
 /* inspetor aberto (`.ch.cfgon`), oculto e somente leitura */
@@ -609,7 +644,8 @@
   .vaoFaixaQuente > .vaoFaixaInterno,
   .areaLinhas .campo[data-troca],
   .areaLinhas > * { animation: none; }
-  .botaoPropriedades { transition-duration: 1ms; }
+  .botaoPropriedades,
+  .acoesCampo { transition-duration: 1ms; }
   .botaoRedondo:active:not(:disabled),
   .lixeira:active:not(:disabled) { transform: none; }
 }
