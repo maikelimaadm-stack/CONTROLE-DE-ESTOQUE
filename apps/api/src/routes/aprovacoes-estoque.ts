@@ -8,7 +8,9 @@
  * Este arquivo tem a FILA (o que espera decisão) e as DECISÕES (aprovar, reprovar). O prefixo é PRÓPRIO
  * (`/api/aprovacoes/...`), e não um sufixo das rotas do portal: o binário anterior responde a ele um 404 limpo.
  *   · GET  /aprovacoes/estoque                       → porta DINÂMICA: as espécies cuja `<recurso>.approve` a pessoa
- *     tem; nenhuma → 403 ("lista vazia" nunca é "todas"). O molde é a lista única do portal (`estoque-documentos.ts`).
+ *     tem; nenhuma → 403 ("lista vazia" nunca é "todas"). O molde é a lista única do portal (`estoque-documentos.ts`),
+ *     com UMA diferença: a empresa SELECIONADA recorta a fila, como recorta a decisão — a fila só mostra o que o
+ *     Aprovar e o Reprovar, com a mesma seleção, aceitam.
  *   · POST /aprovacoes/estoque/<segmento>/:id/aprovar  {observacao?} e /reprovar {motivo} → uma rota por espécie,
  *     com `<recurso da espécie>.approve`; o segmento na URL é a porta, e o documento de OUTRA espécie é a mesma 404.
  *
@@ -34,7 +36,7 @@ import { z } from "zod";
 import {
   moduloDaPermissao, MENSAGEM_APROVACAO_NAO_EXIGIDA, MENSAGEM_APROVACAO_SO_DOCUMENTO_ABERTO, type EspecieEstoque,
 } from "@agro/domain";
-import { runService, idempotent, audit } from "../lib/service.js";
+import { runService, idempotent, audit, comPermissaoResolvida } from "../lib/service.js";
 import { err, denied, notFound, validation } from "../lib/errors.js";
 import { empresaScope, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
@@ -101,7 +103,8 @@ const PARAMETROS_DA_FILA = new Set(["page", "pageSize"]);
  * e cuja última decisão não é "aprovado" (pendentes e reprovados), no escopo de empresa do módulo estoque.
  *
  * A espécie entra no WHERE ANTES do LIMIT (recorte de autorização, nunca filtro sobre o resultado), e o escopo de
- * empresa é aplicado no SQL com o módulo EXPLÍCITO (a porta é dinâmica, e o módulo não vem dela). A última decisão
+ * empresa é aplicado no SQL com o módulo EXPLÍCITO (a porta é dinâmica, e o módulo não vem dela) e com a empresa
+ * SELECIONADA — a mesma regra da decisão, que vem pelo `scopedById` sem `ignoreSelected`. A última decisão
  * sai de um `lateral` pelo índice (organização, documento, id desc), amarrada à empresa do documento pela PRÓPRIA
  * coluna. Número FIXO de consultas — contagem e página —, qualquer que seja o tamanho da página.
  */
@@ -123,8 +126,11 @@ async function listarFila(ctx: ServiceCtx, especies: readonly EspecieEstoque[], 
     "erp.top_exige_aprovacao(topv.configuracao, null)",
     "ult.decisao is distinct from 'aprovado'",
   ];
-  // Como a lista única do portal: a empresa SELECIONADA não recorta; a autorização entra sempre.
-  where.push(...empresaScope(ctx, "d", params, { ignoreSelected: true, modulo: MODULO_ESTOQUE }));
+  // A empresa SELECIONADA (X-Empresa-Id) recorta, e a autorização do módulo estoque entra sempre por cima, como nas
+  // filas de venda e de compra. É o MESMO recorte da decisão (`lerDocumentoEstoque` e a trava, pelo `scopedById`): o
+  // que a fila mostra é o que Aprovar e Reprovar aceitam. Ignorar a seleção aqui listaria o documento da empresa Y
+  // com a X selecionada, e a decisão sobre ele responderia 404. A seleção só DIMINUI o escopo, nunca o amplia.
+  where.push(...empresaScope(ctx, "d", params, { modulo: MODULO_ESTOQUE }));
 
   const de = `from erp.documentos_estoque d
               join erp.tipos_operacao_versoes topv on topv.id = d.tipo_operacao_versao_id and topv.organization_id = d.organization_id
@@ -217,11 +223,19 @@ export default async function aprovacoesEstoqueRoutes(app: FastifyInstance) {
    * ═══ A FILA ═══ — porta dinâmica (`permission: null`), no desenho da lista única do portal: recorte por
    * capacidade (`<recurso>.approve`) no WHERE antes do LIMIT; nenhuma capacidade → 403; escopo de empresa
    * reaplicado no SQL com o módulo EXPLÍCITO de estoque.
+   *
+   * Resolvida a porta, o módulo é PUBLICADO na transação e a empresa SELECIONADA é validada
+   * (`comPermissaoResolvida`), como o `runService` faz nas filas de venda e de compra e nas decisões do estoque: as
+   * quatro espécies caem no MESMO módulo (estoque), então qualquer `.approve` que a pessoa tenha resolve igual. A
+   * RLS e o SQL falam do mesmo módulo, e a empresa explicitamente proibida no estoque é 403 aqui também — nunca uma
+   * fila vazia que a decisão, com a mesma seleção, recusaria com 403.
    */
   app.get("/aprovacoes/estoque", async (req) => runService(app, req, null, async (ctx) => {
-    const permitidas = ESPECIES_ESTOQUE.filter((e) => hasPermission(ctx, `${e.recurso}.approve`)).map((e) => e.especie);
-    if (permitidas.length === 0) throw denied("entradas_estoque.approve");
-    return listarFila(ctx, permitidas, req.query);
+    const aprovaveis = ESPECIES_ESTOQUE.filter((e) => hasPermission(ctx, `${e.recurso}.approve`));
+    const [primeira] = aprovaveis;
+    if (!primeira) throw denied("entradas_estoque.approve");
+    const resolvido = await comPermissaoResolvida(ctx, `${primeira.recurso}.approve`);
+    return listarFila(resolvido, aprovaveis.map((e) => e.especie), req.query);
   }));
 
   for (const { especie, segmento, recurso } of ESPECIES_ESTOQUE) {

@@ -21,16 +21,23 @@
 --    erro. valorMinimo ilegível numa 'por_valor' → VERDADEIRO (fail-closed: o limite que não se lê não dispensa
 --    ninguém; o domínio nem chega aqui, porque recusa a configuração ilegível). É a porta que a fila de
 --    aprovações (API) usa em SQL: o erp_app executa.
--- 3) Gatilho de INSERÇÃO por tabela (BEFORE INSERT, SECURITY DEFINER, filtro explícito de organização). Lê o
---    documento com FOR SHARE (a rota já o travou FOR UPDATE na mesma transação; um caminho que não travou espera a
---    confirmação concorrente terminar e lê a situação NOVA) e confere: existe, é da organização e da empresa da
---    decisão, e está aberto. Documento de outra organização, de outra empresa, excluído ou de outra espécie
---    responde a MESMA recusa 'NOT_FOUND' (negar não revela existência). Na venda, versao_documento tem de ser a
---    version atual. ATRIBUI do documento a TOP, a versão congelada e o valor (venda: total; compra: valor_total) —
---    não compara o que veio —, e decidido_por := erp.current_user_id() (sem usuário, recusa), decidido_em := now().
---    Por fim, o documento tem de EXIGIR aprovação pelo total ATUAL; senão, 'APROVACAO_NAO_EXIGIDA: …'.
+-- 3) Gatilho de INSERÇÃO por tabela (BEFORE INSERT, SECURITY DEFINER, organização e usuário da GUC do servidor).
+--    A organização é a de erp.current_org_id(), NUNCA o organization_id que veio no INSERT: o BEFORE INSERT definer
+--    roda ANTES do with check da RLS, e ler pela organização da linha deixaria quem roda SQL como erp_app mandar a
+--    organização e o documento de OUTRO tenant e descobrir, pela recusa que volta (NOT_FOUND × CONCURRENCY_CONFLICT
+--    × CONFLICT × APROVACAO_NAO_EXIGIDA), a situação de um documento que a RLS esconde dele. Linha de organização
+--    diferente da GUC — ou transação sem organização na GUC (superusuário, migração) — recebe a MESMA 'NOT_FOUND' de
+--    inexistente, ANTES de ler qualquer documento. Depois, lê o documento da organização da GUC com FOR SHARE (a
+--    rota já o travou FOR UPDATE na mesma transação; um caminho que não travou espera a confirmação concorrente
+--    terminar e lê a situação NOVA) e confere: existe, é da empresa da decisão, e está aberto. Documento
+--    inexistente, de outra empresa, excluído ou de outra espécie responde a MESMA recusa 'NOT_FOUND' (negar não
+--    revela existência). Na venda, versao_documento tem de ser a version atual. ATRIBUI do documento a TOP, a versão
+--    congelada e o valor (venda: total; compra: valor_total) — não compara o que veio —, e decidido_por :=
+--    erp.current_user_id() (sem usuário, recusa), decidido_em := now(). Por fim, o documento tem de EXIGIR aprovação
+--    pelo total ATUAL; senão, 'APROVACAO_NAO_EXIGIDA: …'.
 --    A ordem das recusas é a da rota (TOP-CONFIG-08 §5): 404 → versão (409) → situação (409) → exigência (409);
---    antes de tudo, sem usuário na transação, 'PERMISSION_DENIED' (nada do documento é lido).
+--    antes de tudo, sem usuário na transação, 'PERMISSION_DENIED', e, em seguida, organização da linha fora da GUC,
+--    'NOT_FOUND' (em nenhum dos dois nada do documento é lido).
 --    Toda mensagem é de UMA linha com prefixo de código: é o que o fromPgError (apps/api/src/lib/errors.ts) traduz.
 -- 4) Guardas de TRANSIÇÃO (BEFORE UPDATE da situação; SECURITY DEFINER; filtro explícito de organização), só na
 --    ENTRADA no estado confirmado:
@@ -48,6 +55,10 @@
 --    estoque elas são imutáveis; na venda o PUT pode trocar a TOP de um documento aberto) e o MAIOR valor entre o de
 --    antes e o de depois. Um UPDATE que confirmasse e, no mesmo comando, baixasse o total ou trocasse a TOP não
 --    escaparia da exigência. Formato 1 a 3 nunca é barrado (a conta dá falso).
+--    As guardas NÃO conferem a organização da GUC, de propósito: elas leem pela OLD.organization_id da própria linha
+--    que o UPDATE já alcançou (para o erp_app, só alcança o que a RLS deixa), então não abrem nada de outro tenant; e
+--    um UPDATE sem GUC (superusuário, migração) continua GUARDADO pela decisão da linha, em vez de recusado por falta
+--    de contexto.
 -- 5) Ordem dos BEFORE UPDATE da venda (por NOME, collation "C"; cada um vê o NEW dos anteriores): passam a ser
 --    exatamente QUATRO — trg_sales_documents_aprovacao, trg_sales_documents_classificacao_financeira,
 --    trg_sales_documents_execucao_configurada, trg_sales_documents_versao. A guarda da aprovação dispara PRIMEIRO
@@ -321,12 +332,16 @@ comment on function erp.top_exige_aprovacao(jsonb, numeric) is
   'TOP-CONFIG-08 (decisão 277): a configuração da versão congelada exige aprovação para este valor? Verdadeira quando versaoSchema >= 4 e a política é sempre, ou por_valor com valor nulo ou >= valorMinimo (limite ilegível exige). Nula, formato 1 a 3, nenhuma ou desconhecida: falsa. Imutável, não lê tabela; a mesma conta de exigeAprovacao do domínio.';
 
 -- ---------- 5) gatilhos das tabelas de aprovação ----------
--- 5.1 Inserção conferida, uma por tabela. SECURITY DEFINER estreita: lê o documento e a versão da MESMA organização
--- da linha, devolve só a recusa ou os valores atribuídos, sem SQL dinâmico.
+-- 5.1 Inserção conferida, uma por tabela. SECURITY DEFINER estreita: organização e usuário da GUC do servidor
+-- (erp.current_org_id() e erp.current_user_id()), nunca da linha; lê o documento e a versão SÓ dessa organização,
+-- devolve só a recusa ou os valores atribuídos, sem SQL dinâmico. O organization_id que veio no INSERT é um PEDIDO:
+-- diferente da GUC (ou sem GUC), a recusa é a NOT_FOUND de inexistente, antes de qualquer leitura — este gatilho
+-- roda ANTES do with check da RLS, e é por isso que ele não pode confiar na linha (ver o cabeçalho, item 3).
 create function erp.aprovacoes_venda_conferir() returns trigger
 language plpgsql security definer set search_path = erp, pg_temp as $$
 declare
   v_usuario uuid := erp.current_user_id();
+  v_org uuid := erp.current_org_id();
   v_doc record;
   v_configuracao jsonb;
 begin
@@ -334,12 +349,17 @@ begin
   if v_usuario is null then
     raise exception 'PERMISSION_DENIED: A decisão de aprovação precisa de um usuário identificado.' using errcode = 'P0001';
   end if;
+  -- A organização da linha tem de ser a da GUC do servidor: senão (outro tenant, ou transação sem organização), a
+  -- MESMA recusa de inexistente, sem ler nada — a resposta não pode variar com a situação de um documento alheio.
+  if v_org is null or new.organization_id is distinct from v_org then
+    raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
+  end if;
   select d.empresa_id, d.kind, d.status, d.deleted_at, d.total, d.version, d.tipo_operacao_id, d.tipo_operacao_versao_id
     into v_doc
     from erp.sales_documents d
-   where d.id = new.documento_id and d.organization_id = new.organization_id
+   where d.id = new.documento_id and d.organization_id = v_org
      for share;
-  -- Outra organização, outra empresa, excluído ou outra espécie: a MESMA recusa de inexistente.
+  -- Inexistente na organização, outra empresa, excluído ou outra espécie: a MESMA recusa.
   if not found or v_doc.empresa_id is distinct from new.empresa_id or v_doc.deleted_at is not null or v_doc.kind <> 'sale' then
     raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
   end if;
@@ -357,14 +377,14 @@ begin
   new.decidido_em := now();
   select v.configuracao into v_configuracao
     from erp.tipos_operacao_versoes v
-   where v.id = v_doc.tipo_operacao_versao_id and v.organization_id = new.organization_id;
+   where v.id = v_doc.tipo_operacao_versao_id and v.organization_id = v_org;
   if not erp.top_exige_aprovacao(v_configuracao, v_doc.total) then
     raise exception 'APROVACAO_NAO_EXIGIDA: Este documento não precisa de aprovação.' using errcode = 'P0001';
   end if;
   return new;
 end $$;
 comment on function erp.aprovacoes_venda_conferir() is
-  'TOP-CONFIG-08: decisão de venda só com usuário, para venda (kind sale) da organização e da empresa da linha, viva, na versão atual e aberta (open/approved), que exige aprovação pelo total atual; atribui TOP, versão congelada, valor, decidido_por e decidido_em do documento e da transação.';
+  'TOP-CONFIG-08: decisão de venda só com usuário e organização da GUC do servidor (linha de outra organização, ou sem GUC: NOT_FOUND antes de qualquer leitura), para venda (kind sale) dessa organização e da empresa da linha, viva, na versão atual e aberta (open/approved), que exige aprovação pelo total atual; atribui TOP, versão congelada, valor, decidido_por e decidido_em do documento e da transação.';
 create trigger trg_aprovacoes_venda_conferir
   before insert on erp.aprovacoes_venda
   for each row execute function erp.aprovacoes_venda_conferir();
@@ -373,18 +393,23 @@ create function erp.aprovacoes_compra_conferir() returns trigger
 language plpgsql security definer set search_path = erp, pg_temp as $$
 declare
   v_usuario uuid := erp.current_user_id();
+  v_org uuid := erp.current_org_id();
   v_doc record;
   v_configuracao jsonb;
 begin
   if v_usuario is null then
     raise exception 'PERMISSION_DENIED: A decisão de aprovação precisa de um usuário identificado.' using errcode = 'P0001';
   end if;
+  -- A organização da GUC, nunca a da linha (o mesmo da venda): outra, ou nenhuma, é a NOT_FOUND sem ler nada.
+  if v_org is null or new.organization_id is distinct from v_org then
+    raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
+  end if;
   select d.empresa_id, d.especie, d.situacao, d.valor_total, d.tipo_operacao_id, d.tipo_operacao_versao_id
     into v_doc
     from erp.documentos_compra d
-   where d.id = new.documento_id and d.organization_id = new.organization_id
+   where d.id = new.documento_id and d.organization_id = v_org
      for share;
-  -- Outra organização, outra empresa ou pedido de compra: a MESMA recusa de inexistente.
+  -- Inexistente na organização, outra empresa ou pedido de compra: a MESMA recusa.
   if not found or v_doc.empresa_id is distinct from new.empresa_id or v_doc.especie <> 'compra' then
     raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
   end if;
@@ -398,14 +423,14 @@ begin
   new.decidido_em := now();
   select v.configuracao into v_configuracao
     from erp.tipos_operacao_versoes v
-   where v.id = v_doc.tipo_operacao_versao_id and v.organization_id = new.organization_id;
+   where v.id = v_doc.tipo_operacao_versao_id and v.organization_id = v_org;
   if not erp.top_exige_aprovacao(v_configuracao, v_doc.valor_total) then
     raise exception 'APROVACAO_NAO_EXIGIDA: Este documento não precisa de aprovação.' using errcode = 'P0001';
   end if;
   return new;
 end $$;
 comment on function erp.aprovacoes_compra_conferir() is
-  'TOP-CONFIG-08: decisão de compra só com usuário, para documento de compra (espécie compra) da organização e da empresa da linha, aberto, que exige aprovação pelo valor total atual; atribui TOP, versão congelada, valor, decidido_por e decidido_em do documento e da transação.';
+  'TOP-CONFIG-08: decisão de compra só com usuário e organização da GUC do servidor (linha de outra organização, ou sem GUC: NOT_FOUND antes de qualquer leitura), para documento de compra (espécie compra) dessa organização e da empresa da linha, aberto, que exige aprovação pelo valor total atual; atribui TOP, versão congelada, valor, decidido_por e decidido_em do documento e da transação.';
 create trigger trg_aprovacoes_compra_conferir
   before insert on erp.aprovacoes_compra
   for each row execute function erp.aprovacoes_compra_conferir();
@@ -414,16 +439,21 @@ create function erp.aprovacoes_estoque_conferir() returns trigger
 language plpgsql security definer set search_path = erp, pg_temp as $$
 declare
   v_usuario uuid := erp.current_user_id();
+  v_org uuid := erp.current_org_id();
   v_doc record;
   v_configuracao jsonb;
 begin
   if v_usuario is null then
     raise exception 'PERMISSION_DENIED: A decisão de aprovação precisa de um usuário identificado.' using errcode = 'P0001';
   end if;
+  -- A organização da GUC, nunca a da linha (o mesmo da venda): outra, ou nenhuma, é a NOT_FOUND sem ler nada.
+  if v_org is null or new.organization_id is distinct from v_org then
+    raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
+  end if;
   select d.empresa_id, d.situacao, d.tipo_operacao_id, d.tipo_operacao_versao_id
     into v_doc
     from erp.documentos_estoque d
-   where d.id = new.documento_id and d.organization_id = new.organization_id
+   where d.id = new.documento_id and d.organization_id = v_org
      for share;
   if not found or v_doc.empresa_id is distinct from new.empresa_id then
     raise exception 'NOT_FOUND: Documento não encontrado' using errcode = 'P0001';
@@ -437,7 +467,7 @@ begin
   new.decidido_em := now();
   select v.configuracao into v_configuracao
     from erp.tipos_operacao_versoes v
-   where v.id = v_doc.tipo_operacao_versao_id and v.organization_id = new.organization_id;
+   where v.id = v_doc.tipo_operacao_versao_id and v.organization_id = v_org;
   -- O valor do documento de estoque só é conhecido na confirmação: a conta recebe nulo.
   if not erp.top_exige_aprovacao(v_configuracao, null) then
     raise exception 'APROVACAO_NAO_EXIGIDA: Este documento não precisa de aprovação.' using errcode = 'P0001';
@@ -445,7 +475,7 @@ begin
   return new;
 end $$;
 comment on function erp.aprovacoes_estoque_conferir() is
-  'TOP-CONFIG-08: decisão de estoque só com usuário, para documento de estoque da organização e da empresa da linha, aberto, que exige aprovação (sem valor); atribui TOP, versão congelada, decidido_por e decidido_em do documento e da transação.';
+  'TOP-CONFIG-08: decisão de estoque só com usuário e organização da GUC do servidor (linha de outra organização, ou sem GUC: NOT_FOUND antes de qualquer leitura), para documento de estoque dessa organização e da empresa da linha, aberto, que exige aprovação (sem valor); atribui TOP, versão congelada, decidido_por e decidido_em do documento e da transação.';
 create trigger trg_aprovacoes_estoque_conferir
   before insert on erp.aprovacoes_estoque
   for each row execute function erp.aprovacoes_estoque_conferir();
@@ -483,6 +513,8 @@ create trigger trg_aprovacoes_estoque_audit
 -- ---------- 6) guardas de transição ----------
 -- Só na ENTRADA no confirmado, e só com versão congelada. Não mudam o NEW: leem e deixam passar, ou recusam.
 -- Fail-closed na conta (ver o cabeçalho, item 4): a versão de antes E a de depois, e o MAIOR valor entre os dois.
+-- A organização é a OLD.organization_id da linha que o UPDATE já alcançou — não a da GUC, ao contrário da inserção
+-- (5.1): aqui não há linha "pedida", e o UPDATE sem GUC (superusuário, migração) tem de continuar guardado.
 create function erp.venda_aprovacao_guarda() returns trigger
 language plpgsql security definer set search_path = erp, pg_temp as $$
 declare

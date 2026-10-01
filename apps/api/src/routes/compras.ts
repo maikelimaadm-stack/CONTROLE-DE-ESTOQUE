@@ -743,8 +743,12 @@ export default async function comprasRoutes(app: FastifyInstance) {
      *    confirma duas vezes.
      *  · TRAVAS: contador do código → INSERT → contador do ID Global → itens (`lancar`); a confirmação pega o documento
      *    (desta transação), o contador do ID Global (já preso) e só então o estoque — a ordem da manual (documento →
-     *    contador do ID Global → estoque): não há ciclo. Risco declarado: o contador do ID Global fica preso durante a
-     *    confirmação, e os lançamentos da organização esperam por ele.
+     *    contador do ID Global → estoque). Compra e estoque: sem ciclo entre si; possível com a confirmação MANUAL de
+     *    VENDA do mesmo produto (40P01), que trava saldo e produto (`postStock`) e só depois o contador (`createTitles`)
+     *    — o mesmo ciclo que a confirmação manual da compra já tinha. Desfecho do CA-12: a automática que perde vira
+     *    "recusada" (compra salva e aberta, CONCURRENCY_CONFLICT), ou a manual da venda recebe o 409 de hoje. Risco
+     *    declarado: o contador do ID Global fica preso durante a confirmação, e os lançamentos da organização esperam
+     *    por ele.
      */
     app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${recurso}.create`, async (ctx) => {
       const d = lerCorpoDoLancamento(especie, req.body);

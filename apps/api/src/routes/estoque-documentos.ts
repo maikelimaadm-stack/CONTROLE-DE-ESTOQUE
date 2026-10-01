@@ -346,9 +346,15 @@ async function lancar(ctx: ServiceCtx, especie: EspecieEstoque, d: DocumentoEsto
  * O resultado entra no corpo que o `idempotent` grava: o reenvio com a mesma chave devolve o mesmo corpo e nunca
  * confirma duas vezes.
  *
- * TRAVAS: lançar pega o contador do código e o do ID Global; a confirmação manual do estoque trava o cabeçalho e
- * depois o saldo e o produto, sem pegar contador nenhum — não há ciclo. O contador do ID Global fica preso até o
- * fim da confirmação automática (os lançamentos da organização esperam por ele): risco declarado no contrato.
+ * TRAVAS: lançar pega o contador do código e o do ID Global; a confirmação (manual ou automática) trava o cabeçalho e
+ * depois o saldo e o produto, sem pegar contador nenhum. Compra e estoque: sem ciclo entre si. Mas a automática, que
+ * já segura o contador do ID Global desde o lançamento, pede o saldo e o produto, e a confirmação MANUAL de uma VENDA
+ * do mesmo produto faz o contrário (saldo e produto em `postStock`, depois o contador em `createTitles`): é possível
+ * o 40P01, NOVO nesta fatia (a confirmação manual do estoque não fecha esse ciclo), com o mesmo desfecho do CA-12 — o
+ * `fromPgError` o traduz em CONCURRENCY_CONFLICT, e a automática que perde vira "recusada" (documento salvo e aberto)
+ * ou a manual da venda recebe o 409 de hoje. Barreira nas duas ordens: CA-12c/d de `top-config-08-estoque.test.ts`.
+ * O contador do ID Global fica preso até o fim da confirmação automática (os lançamentos da organização esperam por
+ * ele): risco declarado no contrato.
  */
 async function lancarEConfirmar(ctx: ServiceCtx, especie: EspecieEstoque, recurso: RecursoEstoque, d: DocumentoEstoqueEntrada) {
   const { corpo, versaoTopId } = await lancar(ctx, especie, d);

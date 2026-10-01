@@ -8,6 +8,7 @@ import { fromPgError } from "../../src/lib/errors.js";
 import {
   c, iniciar, encerrar, cfg3, cfg4, top, produto, produtoComSaldo, saldoInicial, saldo, usuario, escopos, seg, lancarEstoque, estoqueLancado,
   confirmarEstoque, previaEstoque, aprovar, reprovar, fila, movimentosDe, erro, j, unico, DATA,
+  itemVenda, corpoVenda, vendaLancada, confirmarVenda, titulosDe, situacaoNoBanco, auditoriaDe,
   type Hdr, type Resposta, type ItemEstoque, type Erro,
 } from "./top-config-08-ajuda.js";
 
@@ -26,7 +27,8 @@ import {
  *   · APROVAÇÃO (AP-7, AP-8): o ciclo pendente → reprovado → aprovado na confirmação e na prévia; a automática que
  *     espera a aprovação e é confirmada POR QUEM APROVA; a versão de formato 4 ilegível recusa (fail-closed);
  *   · A FILA (AP-9): só as espécies que a pessoa aprova, só o escopo de empresa dela, 403 sem nenhuma `.approve`,
- *     o documento sai ao ser decidido e não volta; número FIXO de consultas (contado);
+ *     o documento sai ao ser decidido e não volta; número FIXO de consultas (contado); a empresa SELECIONADA recorta
+ *     a fila como recorta a decisão (o que a fila mostra é o que Aprovar aceita), e a proibida é o 403 da decisão;
  *   · A GUARDA DO BANCO (AP-12): o UPDATE direto de aberto para confirmado sem aprovação vigente é recusado pelo
  *     gatilho da 0041 com CONFLICT (o 409 que todo binário conhece), e o formato 1 a 3 passa livre.
  *
@@ -38,7 +40,9 @@ import {
  * as linhas da própria tabela com metadata nulo — contá-las junto mediria o gatilho, não a rota.
  *
  * Cada caso cria a PRÓPRIA TOP e o PRÓPRIO produto. A empresa 2 é reservada à fila (AP-9d): é o que dá à contagem de
- * consultas uma página com exatamente 1 e 5 documentos, sem depender da ordem dos outros casos.
+ * consultas uma página com exatamente 1 e 5 documentos, sem depender da ordem dos outros casos. Os casos da empresa
+ * SELECIONADA (AP-9e, AP-9f) também lançam na empresa 2, e por isso vêm DEPOIS do AP-9d no arquivo (o vitest roda os
+ * casos de um arquivo na ordem em que são declarados) e só conferem presença e ausência, nunca a contagem.
  */
 beforeAll(iniciar, 240_000);
 afterAll(encerrar);
@@ -713,6 +717,62 @@ describe("AP-9 — a fila do estoque: espécies de quem aprova, escopo, 403, sa�
     expect(cinco.consultas, "as mesmas consultas, qualquer que seja o número de linhas").toBe(um.consultas);
     expect(await idsDaFila(), "premissa: o documento da empresa 1 está na fila de quem vê as duas").toContain(daEmpresa1);
   });
+
+  /**
+   * A EMPRESA SELECIONADA (X-Empresa-Id) recorta a fila como recorta a decisão (`lerDocumentoEstoque` e a trava, pelo
+   * `scopedById`): o que a fila mostra é o que Aprovar e Reprovar aceitam. Se a fila ignorasse a seleção, com a
+   * empresa 1 selecionada ela listaria o documento da empresa 2, e Aprovar sobre ele responderia 404.
+   */
+  it("AP-9e a empresa SELECIONADA recorta a fila como recorta a decisão: com a 1, o documento da 2 não aparece e a decisão é a 404 do GET; com a 2, aparece e Aprovar passa", async () => {
+    const sempre = await top4("entrada", SEMPRE);
+    const p = await produto();
+    const daEmpresa2 = (await estoqueLancado("entrada", [item("entrada", p.id)],
+      { tipo_operacao_id: sempre, empresa_id: c.I.empresa2, armazem_id: c.I.warehouseEmpresa2 })).id;
+    const daEmpresa1 = (await estoqueLancado("entrada", [item("entrada", p.id)], { tipo_operacao_id: sempre })).id;
+    const naEmpresa1 = c.h.headers({ "x-empresa-id": c.I.empresa });
+    const naEmpresa2 = c.h.headers({ "x-empresa-id": c.I.empresa2 });
+    // PREMISSA: sem empresa selecionada, quem enxerga as duas tem as duas na fila.
+    expect(await idsDaFila(), "premissa: sem seleção, as duas estão na fila").toEqual(expect.arrayContaining([daEmpresa1, daEmpresa2]));
+
+    // Empresa 1 selecionada: o da empresa 2 NÃO aparece — e o da 1 aparece (a seleção recortou, não esvaziou).
+    const f1 = await filaToda(naEmpresa1);
+    expect(f1.items.map((x) => x.id)).toContain(daEmpresa1);
+    expect(f1.items.map((x) => x.id)).not.toContain(daEmpresa2);
+    expect(f1.items.every((x) => x.empresa.id === c.I.empresa), "só a empresa selecionada").toBe(true);
+    expect(f1.total, "a contagem é a do recorte").toBe(f1.items.length);
+    // ... e a decisão, com a MESMA seleção, é a MESMA 404 do GET: o que a fila esconde a decisão não aceita.
+    const get404 = await c.ligada.inject({ method: "GET", url: `/api/estoque/entradas/${daEmpresa2}`, headers: naEmpresa1 });
+    expect(get404.statusCode, "premissa: com a empresa 1 selecionada, o GET do documento da 2 é 404").toBe(404);
+    for (const r of [await aprovar("entrada", daEmpresa2, {}, naEmpresa1), await reprovar("entrada", daEmpresa2, { motivo: "Outra empresa" }, naEmpresa1)]) {
+      expect(r.statusCode, r.body).toBe(404);
+      expect(j(r)).toEqual(j(get404));
+    }
+    expect(await decisoes(daEmpresa2)).toEqual([]);
+
+    // Empresa 2 selecionada: aparece (e o da 1 não), e Aprovar passa; aprovado, sai da fila.
+    const f2 = await filaToda(naEmpresa2);
+    expect(f2.items.map((x) => x.id)).toContain(daEmpresa2);
+    expect(f2.items.map((x) => x.id)).not.toContain(daEmpresa1);
+    const ok = await aprovar("entrada", daEmpresa2, {}, naEmpresa2);
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect((await decisoes(daEmpresa2)).map((d) => [d.decisao, d.empresa_id])).toEqual([["aprovado", c.I.empresa2]]);
+    expect((await filaToda(naEmpresa2)).items.map((x) => x.id)).not.toContain(daEmpresa2);
+  });
+
+  it("AP-9f empresa selecionada FORA do escopo de estoque de quem aprova → 403 na fila, o MESMO da decisão (nunca uma fila vazia); com a dele, a fila responde", async () => {
+    const aprovador = await usuario("Aprovador do estoque da empresa 2", ["entradas_estoque.approve"], escopos({ estoque: [c.I.empresa2] }));
+    const daEmpresa2 = (await estoqueLancado("entrada", [item("entrada", (await produto()).id)],
+      { tipo_operacao_id: await top4("entrada", SEMPRE), empresa_id: c.I.empresa2, armazem_id: c.I.warehouseEmpresa2 })).id;
+    const proibida = { ...aprovador, "x-empresa-id": c.I.empresa };
+    const r = await fila("estoque", proibida);
+    expect(r.statusCode, r.body).toBe(403);
+    expect(erro(r).code).toBe("PERMISSION_DENIED");
+    const decisao = await aprovar("entrada", daEmpresa2, {}, proibida);
+    expect([decisao.statusCode, erro(decisao)], "a decisão, com a mesma seleção, recusa igual").toEqual([403, erro(r)]);
+    expect(await decisoes(daEmpresa2)).toEqual([]);
+    // PREMISSA: com a empresa DELE selecionada, a mesma porta responde, e o documento está lá.
+    expect((await filaToda({ ...aprovador, "x-empresa-id": c.I.empresa2 })).items.map((x) => x.id)).toContain(daEmpresa2);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------------
@@ -758,5 +818,170 @@ describe("AP-12 — estoque: UPDATE direto de aberto para confirmado sem aprova�
     }
     expect(formatos[0], "premissa: a TOP sem configuração é de formato 1 a 3").toBeLessThan(4);
     expect(formatos.slice(1), "premissa: o formato 3 com 'sempre' e o 4 neutro").toEqual([3, 4]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// CA-12 (estoque) — a barreira das travas: a automática do estoque × a confirmação MANUAL de uma VENDA
+// ---------------------------------------------------------------------------------------------------------
+
+/** Quantas transações DESTE banco (o do agente; nenhum outro processo o usa) estão esperando trava agora. */
+async function esperandoTrava(): Promise<number> {
+  return Number((await c.admin.query<{ n: string }>(
+    "select count(*)::text n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and state = 'active'")).rows[0]!.n);
+}
+/** Espera (sondando) até `n` transações esperarem trava, por no máximo 15 s. Devolve a última contagem. */
+async function ateEsperarem(n: number): Promise<number> {
+  const limite = Date.now() + 15_000;
+  let esperando = await esperandoTrava();
+  while (esperando < n && Date.now() < limite) {
+    await new Promise((r) => setTimeout(r, 25));
+    esperando = await esperandoTrava();
+  }
+  return esperando;
+}
+/** A promessa, ou a falha se ela não terminar em `ms` — "ninguém trava para sempre" com prazo CURTO, sem inflar o do teste. */
+async function semPendurar<T>(p: Promise<T>, ms: number): Promise<T> {
+  let relogio: ReturnType<typeof setTimeout> | undefined;
+  const prazo = new Promise<never>((_, rejeitar) => { relogio = setTimeout(() => rejeitar(new Error(`uma das requisições ficou pendurada por mais de ${ms} ms`)), ms); });
+  try { return await Promise.race([p, prazo]); } finally { clearTimeout(relogio); }
+}
+
+/**
+ * DUAS REQUISIÇÕES EM PARALELO DE VERDADE, EM ORDEM DE CHEGADA CONTROLADA — cópia LOCAL do helper do CA-12 da venda
+ * (`top-config-08-vendas.test.ts`), que não é exportado.
+ *
+ * Uma conexão própria (superusuário) segura a linha `sqlTrava`. A `primeira` é disparada e SÓ DEPOIS de ela estar
+ * esperando trava no banco a `segunda` é disparada; a barreira cai quando as duas esperam. A fila de uma linha no
+ * Postgres é por ordem de chegada (a trava pesada da tupla), então quem pega a linha quando a barreira cai é a
+ * `primeira` — é isso que torna o CICLO determinístico, e não a sorte do escalonador. Quem o Postgres escolhe como
+ * vítima do 40P01 é decidido pelo detector (o primeiro `deadlock_timeout` que vence): por isso o caso aceita as duas
+ * vítimas e exige que haja EXATAMENTE uma.
+ */
+async function emOrdemComBarreira(sqlTrava: string, params: unknown[], primeira: () => Promise<Resposta>, segunda: () => Promise<Resposta>):
+  Promise<{ respostas: [Resposta, Resposta]; esperando: [number, number] }> {
+  const barreira = await c.admin.connect();
+  try {
+    await barreira.query("begin");
+    const travou = await barreira.query(sqlTrava, params);
+    expect(travou.rowCount, "premissa: a barreira travou a linha").toBe(1);
+    const pa = primeira();
+    const e1 = await ateEsperarem(1);
+    const pb = segunda();
+    const e2 = await ateEsperarem(2);
+    await barreira.query("rollback");
+    const respostas = await semPendurar(Promise.all([pa, pb]), 20_000);
+    return { respostas, esperando: [e1, e2] };
+  } finally {
+    // Se algo falhou antes de soltar, a barreira não pode ficar segurando as requisições (nem voltar ao pool aberta).
+    await barreira.query("rollback").catch(() => undefined);
+    barreira.release();
+  }
+}
+
+/** O 40P01/40001 pelo `fromPgError`: o 409 de hoje — o corpo da manual que perde e o `erro` da automática que perde. */
+const RECUSA_DA_CONCORRENCIA: Erro = { code: "CONCURRENCY_CONFLICT", message: "Conflito de concorrência, tente novamente" };
+
+/** A venda no banco: situação, quantos movimentos, quantos títulos e quantas auditorias "confirm" (o "nada aconteceu"). */
+async function efeitosDaVenda(id: string): Promise<[string | null, number, number, number]> {
+  return [await situacaoNoBanco("sales_documents", id), (await movimentosDe("sales_documents", id)).length,
+    (await titulosDe("sales_documents", id)).length, (await auditoriaDe("sales_documents", id, "confirm")).length];
+}
+/** A venda CONFIRMADA no banco: UMA saída de 1 do produto no ALM, UM título a receber de 10.00, UMA auditoria "confirm". */
+async function vendaConfirmada(id: string, produtoId: string): Promise<void> {
+  expect(await situacaoNoBanco("sales_documents", id), "a venda confirmada no banco").toBe("confirmed");
+  expect((await movimentosDe("sales_documents", id)).map((m) => [m.movement_type, m.direction, m.quantity, m.product_id, armazemDe(m.warehouse_id)]))
+    .toEqual([["sale", -1, "1.0000", produtoId, "ALM"]]);
+  expect((await titulosDe("sales_documents", id)).map((t) => [t.direction, t.amount])).toEqual([["receivable", "10.00"]]);
+  expect(await auditoriaDe("sales_documents", id, "confirm"), "uma confirmação = uma auditoria").toHaveLength(1);
+}
+/**
+ * A saída de estoque CONFIRMADA no banco: UM `writeoff` de 2 no ALM, por quem lançou, e a trilha "create" → "confirm"
+ * (com `automatica: true` só quando foi a automática que confirmou).
+ */
+async function saidaConfirmada(id: string, automatica: boolean): Promise<void> {
+  const d = await docNoBanco(id);
+  expect([d.situacao, d.confirmado_por], "a saída confirmada no banco").toEqual(["confirmado", c.h.demo.adminUserId]);
+  expect((await movimentosDe("documentos_estoque", id)).map((m) => [m.movement_type, m.direction, m.quantity, armazemDe(m.warehouse_id)]))
+    .toEqual([["writeoff", -1, "2.0000", "ALM"]]);
+  expect((await trilha(id)).map((t) => [t.action, t.metadata.automatica === true])).toEqual([["create", false], ["confirm", automatica]]);
+}
+
+describe("CA-12 (estoque) barreira: POST de SAÍDA com TOP formato 4 Automática × confirmação manual de uma VENDA do MESMO produto", () => {
+  /**
+   * O CICLO (decisão 277; contrato §17.3, "Travas"): o POST do estoque pega o contador do ID Global no `lancar`
+   * (`atribuirIdGlobal`) e só depois, na confirmação automática, a linha de saldo e o produto (`postStock`, pelo
+   * gatilho do movimento); a confirmação manual da venda trava documento → linha de saldo e produto (`postStock`) →
+   * contador do ID Global (`createTitles`). Cada um segura o que o outro pede. É NOVO nesta fatia: a confirmação
+   * MANUAL do estoque não pega contador nenhum e não fecha o ciclo; a automática fecha, porque o lançamento já
+   * segura o contador. O desfecho tem de ser o do CA-12 da venda. A venda é SEM TOP (a de sempre: baixa e título a
+   * receber), do MESMO produto e armazém (ALM, sem lote: a mesma linha de saldo).
+   */
+  async function cenario() {
+    const topAuto = await top4("saida", AUTOMATICA);
+    const p = await produtoComSaldo("20");
+    const venda = await vendaLancada(corpoVenda([itemVenda(p.id, "1", "10.00")]));
+    expect(await efeitosDaVenda(venda.id), "premissa: a venda está aberta, sem efeito").toEqual(["open", 0, 0, 0]);
+    return { p, vendaId: venda.id, lancarSaida: () => lancarEstoque("saida", [item("saida", p.id, "2")], { tipo_operacao_id: topAuto }) };
+  }
+
+  /**
+   * O DESFECHO: as duas terminaram, e EXATAMENTE UMA perdeu o 40P01 com um dos resultados aceitos — a manual da venda
+   * com o 409 CONCURRENCY_CONFLICT de hoje, ou o documento de estoque SALVO e ABERTO com "recusada" (o MESMO erro). A
+   * vencedora confirmou com efeito; a perdedora, nada. Depois, a perdedora confirma pela porta manual (premissa: ela
+   * era confirmável — o "nada" dela não é um cenário que nunca confirmaria). Devolve quem perdeu.
+   */
+  async function desfecho(s: Awaited<ReturnType<typeof cenario>>, post: Resposta, manual: Resposta): Promise<"manual" | "automatica"> {
+    expect(post.statusCode, `o POST do estoque sempre salva: ${post.body}`).toBe(201);
+    const doc = corpoDoPost(post);
+    const ca = doc.confirmacaoAutomatica as { confirmado: boolean; motivo?: string; erro?: Erro };
+    const perdeuManual = manual.statusCode === 409 && erro(manual).code === "CONCURRENCY_CONFLICT";
+    const perdeuAutomatica = ca.confirmado === false && ca.erro?.code === "CONCURRENCY_CONFLICT";
+    expect([perdeuManual, perdeuAutomatica].filter(Boolean),
+      `exatamente uma vítima do ciclo — manual: ${manual.statusCode} ${manual.body} / automática: ${JSON.stringify(ca)}`).toHaveLength(1);
+    if (perdeuManual) {
+      expect(erro(manual)).toEqual(RECUSA_DA_CONCORRENCIA);
+      expect(doc).toEqual({ ...CORPO_DE_HOJE("saida", "confirmado"), confirmacaoAutomatica: { confirmado: true } });
+      await saidaConfirmada(doc.id, true);
+      expect(await efeitosDaVenda(s.vendaId), "a manual perdedora não deixou efeito").toEqual(["open", 0, 0, 0]);
+      expect(await saldo(s.p.id)).toBe("18.0000");
+      const r = await confirmarVenda(s.vendaId);
+      expect(r.statusCode, `premissa: a venda era confirmável — ${r.body}`).toBe(200);
+      await vendaConfirmada(s.vendaId, s.p.id);
+    } else {
+      expect(manual.statusCode, manual.body).toBe(200);
+      expect(doc).toEqual({ ...CORPO_DE_HOJE("saida"), confirmacaoAutomatica: { confirmado: false, motivo: "recusada", erro: RECUSA_DA_CONCORRENCIA } });
+      expect((await trilha(doc.id)).map((t) => t.action), "a automática perdedora ficou SALVA").toEqual(["create"]);
+      expect([(await docNoBanco(doc.id)).situacao, await movimentosDe("documentos_estoque", doc.id)], "e ABERTA, sem efeito").toEqual(["aberto", []]);
+      await vendaConfirmada(s.vendaId, s.p.id);
+      expect(await saldo(s.p.id)).toBe("19.0000");
+      const r = await confirmarEstoque("saida", doc.id);
+      expect(r.statusCode, `premissa: o documento de estoque era confirmável — ${r.body}`).toBe(200);
+      await saidaConfirmada(doc.id, false);
+    }
+    expect(await saldo(s.p.id), "no fim, as duas saíram uma vez cada").toBe("17.0000");
+    return perdeuManual ? "manual" : "automatica";
+  }
+
+  it("CA-12c a manual da venda chega PRIMEIRO à linha de saldo (o POST do estoque já segura o contador): o ciclo fecha, ninguém pendura, uma vítima só, com um resultado aceito", async () => {
+    const s = await cenario();
+    const { respostas: [manual, post], esperando } = await emOrdemComBarreira(
+      "select 1 from erp.stock_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and provider_lot='' for update",
+      [c.h.demo.orgId, c.I.warehouse, s.p.id],
+      () => confirmarVenda(s.vendaId),
+      s.lancarSaida);
+    expect(esperando, "premissa: a manual esperou primeiro, e as duas esperavam quando a barreira caiu").toEqual([1, 2]);
+    expect(["manual", "automatica"]).toContain(await desfecho(s, post, manual));
+  });
+
+  it("CA-12d o POST do estoque chega PRIMEIRO ao contador do ID Global (a manual da venda já segura o saldo): o ciclo fecha, ninguém pendura, uma vítima só, com um resultado aceito", async () => {
+    const s = await cenario();
+    const { respostas: [post, manual], esperando } = await emOrdemComBarreira(
+      "select 1 from erp.sequencias_id_global where organization_id=$1 for update",
+      [c.h.demo.orgId],
+      s.lancarSaida,
+      () => confirmarVenda(s.vendaId));
+    expect(esperando, "premissa: o POST esperou primeiro, e as duas esperavam quando a barreira caiu").toEqual([1, 2]);
+    expect(["manual", "automatica"]).toContain(await desfecho(s, post, manual));
   });
 });

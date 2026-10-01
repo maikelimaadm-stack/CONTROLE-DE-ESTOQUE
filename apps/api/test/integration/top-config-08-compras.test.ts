@@ -653,6 +653,37 @@ describe("AP-7 compra: o ciclo da aprovação (Sempre e A partir de um valor)", 
     expect(await decisoesDe("aprovacoes_compra", b.id)).toHaveLength(1);
     await esperarConfirmada(b.id, { produtoId: p.id, quantidade: "1", total: "10.00" });
   });
+
+  /**
+   * O id da URL em MAIÚSCULAS é o MESMO documento (a forma de UUID aceita as duas caixas), e a decisão fala dele pelo
+   * id CANÔNICO, em minúsculas — o da venda (`bruto.toLowerCase()`) e o do estoque (`doc.id`). `audit_logs.entity_id`
+   * é texto: gravado como veio, a trilha "approve" ficaria num id que nenhuma leitura do documento procura; e o hash da
+   * idempotência com o texto cru tornaria o reenvio do MESMO pedido, escrito em minúsculas, um 409 "corpo diferente".
+   */
+  it("AP-7g id em MAIÚSCULAS: a trilha 'approve' grava o id em minúsculas; o replay com a mesma chave e o id em minúsculas devolve o MESMO corpo", async () => {
+    const topId = await topCompra(sempre());
+    const p = await produto();
+    const b = await compraLancada("compra", corpoCompra([itemCompra(p.id, "1", "10.00")], { tipo_operacao_id: topId }));
+    const maiusculo = b.id.toUpperCase();
+    expect(maiusculo, "premissa: o id tem letra (a caixa muda o texto)").not.toBe(b.id);
+    const chave = `tc08-ap7g-${unico()}`;
+    const r1 = await aprovar("compras", maiusculo, { observacao: "Caixa alta" }, c.h.headers(), chave);
+    expect(r1.statusCode, r1.body).toBe(200);
+    expect(j(r1)).toEqual({ aprovacao: { decisao: "aprovado", decididoEm: expect.any(String) } });
+    // A trilha está no id CANÔNICO, e nenhuma linha dela ficou no id em maiúsculas.
+    expect((await trilhaDoServico(b.id, "approve")).map((a) => a.metadata)).toEqual([{ observacao: "Caixa alta" }]);
+    expect(await auditoriaDe("documentos_compra", maiusculo)).toEqual([]);
+
+    // O REPLAY: a mesma chave, o mesmo corpo, o id em minúsculas → o MESMO corpo gravado; nenhuma decisão nem trilha nova.
+    const r2 = await aprovar("compras", b.id, { observacao: "Caixa alta" }, c.h.headers(), chave);
+    expect(r2.statusCode, r2.body).toBe(200);
+    expect(j(r2)).toEqual(j(r1));
+    expect((await decisoesDe("aprovacoes_compra", b.id)).map((d) => [d.decisao, d.observacao])).toEqual([["aprovado", "Caixa alta"]]);
+    expect(await trilhaDoServico(b.id, "approve")).toHaveLength(1);
+    // PREMISSA: a decisão valeu para o documento — a confirmação passa.
+    expect((await confirmarCompra(b.id)).statusCode).toBe(200);
+    await esperarConfirmada(b.id, { produtoId: p.id, quantidade: "1", total: "10.00" });
+  });
 });
 
 describe("AP-8 compra: o que não passa por aprovação", () => {

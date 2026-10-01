@@ -1797,6 +1797,15 @@ TOP nova, se ele troca a TOP).
   em `CONCURRENCY_CONFLICT`): `rollback to savepoint` — a marca da 0023 (`set_config` local) volta junto —, o documento
   fica SALVO e ABERTO, e a resposta diz o porquê: `recusada`, com o MESMO corpo de erro que o `/confirm` daria.
 - **Erro que não é de domínio:** `rollback to savepoint` e o erro sobe (500), como hoje; a transação inteira volta.
+- **A empresa SELECIONADA.** A confirmação automática relê o documento como o `/confirm` o leria na MESMA requisição
+  (`getDoc`, `lerDocumentoCompra`, `lerDocumentoEstoque`, pelo `scopedById`): com o escopo de empresa do módulo E com o
+  recorte da empresa selecionada (`X-Empresa-Id`). O `POST` de um documento da empresa Y com a empresa X selecionada é
+  permitido (`exigirEmpresaDeLancamento` confere o escopo do módulo, não a seleção), e o documento fica SALVO e ABERTO;
+  a releitura não o enxerga, e a resposta traz `confirmacaoAutomatica: { confirmado: false, motivo: "recusada", erro:
+  { code: "NOT_FOUND", message: "Documento não encontrado" } }` — coerente com o `/confirm` manual no mesmo contexto,
+  que responde a mesma 404. Vale para o `POST` da venda, da compra e do estoque; no `PUT`, na `PATCH`, na conversão, no
+  receber e no aprovar, o documento (ou a origem, de onde o gerado herda a empresa) já foi lido com o mesmo recorte
+  antes de gravar. Quem confirma depois, com a empresa do documento selecionada (ou sem seleção), confirma.
 
 **Resposta** — aditiva, só com versão no formato 4 Automática; para todo o resto o corpo é o de hoje, chave por chave:
 
@@ -1821,13 +1830,18 @@ confirmacaoAutomatica:
 | Documento | Ordem | Ciclo |
 | --- | --- | --- |
 | venda | a confirmação manual trava documento → saldo/produto (`postStock`) → contador do ID Global (`createTitles`); o `POST` e a conversão já têm o contador (`writeDoc`) antes de chegar ao produto | **possível**: a automática × a confirmação manual de outra venda do mesmo produto pode dar deadlock (40P01) |
-| compra | `POST`: contador do código → INSERT → contador do ID Global → itens → estoque → contador do título; manual: documento → contador do ID Global → estoque | não |
-| estoque | a confirmação manual nem pega o contador | não |
+| compra | `POST`: contador do código → INSERT → contador do ID Global → itens → estoque → contador do título; o receber: pedido → contador do código → contador do ID Global → itens; a confirmação (a manual, e a automática no `POST`, no receber e no aprovar): documento → contador do ID Global → estoque | compra e estoque: **sem ciclo entre si**; **possível** com a confirmação MANUAL de VENDA do mesmo produto (40P01): a compra segura o contador e pede o produto, e a manual da venda segura o produto e pede o contador. Já existia com a confirmação manual da compra; a automática o herda |
+| estoque | `POST`: contador do código → INSERT → contador do ID Global → itens; a confirmação (manual ou automática): cabeçalho → saldo/produto, sem pegar contador | compra e estoque: **sem ciclo entre si**; **possível** entre a automática do `POST` (que segura o contador desde o lançamento e pede o produto) e a confirmação MANUAL de VENDA do mesmo produto (40P01). É NOVO nesta fatia: antes só havia a confirmação manual do estoque, que não pega contador e não fecha o ciclo |
 
-A ordem da confirmação manual NÃO muda. O `fromPgError` já traduz o 40P01 em 409 `CONCURRENCY_CONFLICT`: se a automática
-perde, o resultado é `recusada` e a venda fica salva e aberta; se a manual perde, ela recebe o 409 de hoje. Nenhuma das
-duas trava para sempre. **Custo declarado:** o contador do ID Global da organização fica preso durante a confirmação
-automática inteira, e os lançamentos da organização esperam por ele até o commit.
+A ordem da confirmação manual NÃO muda. O `fromPgError` já traduz o 40P01 em 409 `CONCURRENCY_CONFLICT`, e o desfecho é
+o MESMO nos três documentos (o do CA-12): se a automática perde, o resultado é `recusada` com o erro
+`CONCURRENCY_CONFLICT`, e o documento (venda, compra ou estoque) fica salvo e aberto; se a manual da venda perde, ela
+recebe o 409 de hoje. Nenhuma das duas trava para sempre. A barreira prova o ciclo nas duas ordens para a venda
+(`top-config-08-vendas.test.ts`, CA-12a/b) e para o estoque (`top-config-08-estoque.test.ts`, CA-12c/d). A
+confirmação automática que o APROVAR da venda dispara não segura o contador antes (a rota de aprovação não lança nada):
+ela tem a ordem da manual da venda — documento → saldo/produto → contador — e fica do lado dela no ciclo. **Custo
+declarado:** o contador do ID Global da organização fica preso durante a confirmação automática inteira, e os
+lançamentos da organização esperam por ele até o commit.
 
 ### 17.4 Documento sem itens
 

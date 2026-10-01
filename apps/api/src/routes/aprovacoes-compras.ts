@@ -40,7 +40,10 @@
  *
  * ORDEM DAS TRAVAS: chave de idempotência → documento (`for update`) → [confirmação automática: o documento de
  * novo (já é desta transação) → contador do ID Global → saldo/produto]. É a ordem da confirmação manual
- * (`compras-confirmacao.ts`): não há ciclo novo.
+ * (`compras-confirmacao.ts`). Compra e estoque: sem ciclo entre si; possível com a confirmação MANUAL de VENDA do
+ * mesmo produto (40P01), que trava saldo e produto (`postStock`) e só depois o contador (`createTitles`) — o ciclo
+ * que a confirmação manual da compra já tinha, sem ciclo novo. Desfecho do CA-12: a automática que perde vira
+ * "recusada" (a compra aprovada, salva e aberta, CONCURRENCY_CONFLICT), ou a manual da venda recebe o 409 de hoje.
  *
  * A FILA (`GET /aprovacoes/compras`): compras ABERTAS que exigem aprovação pela versão congelada e o total ATUAL
  * (`erp.top_exige_aprovacao`, a MESMA conta do domínio, provada por paridade) e cuja última decisão NÃO é
@@ -198,9 +201,12 @@ async function decidir(app: FastifyInstance, req: FastifyRequest, decisao: Decis
     // 1. o corpo, antes de qualquer leitura de registro e antes da chave.
     // O texto da decisão vai para a MESMA coluna (`observacao`): a observação da aprovação ou o motivo da reprovação.
     const observacao = decisao === "aprovado" ? aprovarSchema.parse(req.body ?? {}).observacao : reprovarSchema.parse(req.body ?? {}).motivo;
-    const { id } = req.params as { id: string };
+    const bruto = (req.params as { id: string }).id;
     // 2. id malformado é inexistente: a MESMA 404.
-    if (!FORMA_UUID_PADRAO.test(id)) throw notFound("Documento");
+    if (!FORMA_UUID_PADRAO.test(bruto)) throw notFound("Documento");
+    // O id CANÔNICO, em minúsculas (o molde da venda): a forma aceita maiúsculas, e o MESMO documento escrito de dois
+    // jeitos seria dois `sourceId` no hash da idempotência e dois `entity_id` (texto) na trilha do documento.
+    const id = bruto.toLowerCase();
     // 3. invisível (outra organização, fora do escopo, inexistente, pedido de compra): a MESMA 404 do GET por id.
     await lerDocumentoCompra(ctx, id, "compra");
     // 4. a idempotência — com o AUTOR no hash: chave alheia nunca devolve a resposta de outro.
@@ -208,24 +214,25 @@ async function decidir(app: FastifyInstance, req: FastifyRequest, decisao: Decis
     return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
       { action: decisao === "aprovado" ? "aprovar_documento_compra" : "reprovar_documento_compra", sourceId: id, ...texto, actorId: ctx.user.id },
       async (): Promise<RespostaDaDecisao> => {
-        // 5. a trava do documento: serializa as decisões entre si e com a confirmação.
+        // 5. a trava do documento: serializa as decisões entre si e com a confirmação. Daqui em diante, o id é o
+        // que o BANCO devolveu (`doc.id`): a decisão, a trilha e a confirmação falam do documento lido.
         const doc = await travarCompraDaDecisao(ctx, id);
         // 6. só documento aberto passa por aprovação.
         if (doc.situacao !== "aberto") throw err("CONFLICT", MENSAGEM_APROVACAO_SO_DOCUMENTO_ABERTO);
         // 7. exige aprovação? A versão congelada e o total ATUAL, pela mesma regra da confirmação.
         const versaoTop = await lerVersaoCongeladaTop(ctx, doc.tipo_operacao_versao_id);
         const situacao = await situacaoDaAprovacao(ctx,
-          { modulo: "compras", documentoId: id, versaoDocumento: null, valorDocumento: doc.valor_total, versaoTop });
+          { modulo: "compras", documentoId: doc.id, versaoDocumento: null, valorDocumento: doc.valor_total, versaoTop });
         if (situacao === "nao_exigida") throw err("APROVACAO_NAO_EXIGIDA", MENSAGEM_APROVACAO_NAO_EXIGIDA);
         // 8. a decisão e a auditoria no documento.
         const registro = await registrarDecisao(ctx,
-          { modulo: "compras", documentoId: id, empresaId: doc.empresa_id, versaoDocumento: null, decisao, observacao });
-        await audit(ctx.tx, ctx, "documentos_compra", id, decisao === "aprovado" ? "approve" : "reject", texto);
+          { modulo: "compras", documentoId: doc.id, empresaId: doc.empresa_id, versaoDocumento: null, decisao, observacao });
+        await audit(ctx.tx, ctx, "documentos_compra", doc.id, decisao === "aprovado" ? "approve" : "reject", texto);
         const corpo: RespostaDaDecisao = { aprovacao: { decisao, decididoEm: registro.decididoEm } };
         if (decisao !== "aprovado") return corpo;
         // 9. aprovada com Confirmação Automática: confirma no fim, pelo aprovador, com a capacidade DELE.
         const confirmacaoAutomatica = (await confirmaAutomaticamente(ctx, doc.tipo_operacao_versao_id))
-          ? await tentarConfirmacaoAutomatica(ctx, { permissao: PERMISSAO_CONFIRMAR, confirmar: () => confirmarCompraNaTransacao(app, ctx, id, { automatica: true }) })
+          ? await tentarConfirmacaoAutomatica(ctx, { permissao: PERMISSAO_CONFIRMAR, confirmar: () => confirmarCompraNaTransacao(app, ctx, doc.id, { automatica: true }) })
           : undefined;
         return confirmacaoAutomatica ? { ...corpo, confirmacaoAutomatica } : corpo;
       })).result;

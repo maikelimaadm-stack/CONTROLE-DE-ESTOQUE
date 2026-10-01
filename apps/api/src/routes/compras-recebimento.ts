@@ -237,8 +237,12 @@ async function receberPedido(app: FastifyInstance, ctx: ServiceCtx, pedidoId: st
   // domínio sobe (500) e desfaz o recebimento inteiro, como hoje.
   // TRAVAS: as do recebimento (pedido → contador do código → contador do ID Global → itens de origem) já estão
   // tomadas; a confirmação pega a compra (desta transação), o contador do ID Global (já preso) e então o estoque —
-  // a ordem da confirmação manual, sem ciclo novo. O contador do ID Global fica preso durante a confirmação: os
-  // lançamentos da organização esperam por ele (risco declarado na decisão 277).
+  // a ordem da confirmação manual da compra. Compra e estoque: sem ciclo entre si; possível com a confirmação MANUAL
+  // de VENDA do mesmo produto (40P01), que trava saldo e produto (`postStock`) e só depois o contador (`createTitles`)
+  // — o ciclo que a confirmação manual da compra já tinha. Desfecho do CA-12: a automática que perde vira "recusada"
+  // (a compra salva e aberta, o pedido como acima, CONCURRENCY_CONFLICT), ou a manual da venda recebe o 409 de hoje.
+  // O contador do ID Global fica preso durante a confirmação: os lançamentos da organização esperam por ele (risco
+  // declarado na decisão 277).
   // IDEMPOTÊNCIA: isto roda DENTRO do `idempotent` da rota, então o resultado entra no corpo gravado; o replay
   // devolve o mesmo corpo e não confirma de novo.
   const versaoDaCompra = await versaoCongeladaDaCompraGerada(ctx, compra.id);

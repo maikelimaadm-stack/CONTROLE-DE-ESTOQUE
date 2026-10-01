@@ -57,7 +57,12 @@
  * │ ordem da manual NÃO muda: o Postgres escolhe uma vítima; se for a automática, o savepoint a desfaz │
  * │ e a venda fica salva e aberta com "recusada" (CONCURRENCY_CONFLICT); se for a manual, ela recebe o │
  * │ 409 de hoje. Compra (código → INSERT → ID Global → itens → estoque → título; a manual: documento → │
- * │ ID Global → estoque) e estoque (a manual nem pega o contador) não têm ciclo.                       │
+ * │ ID Global → estoque) e estoque (código → INSERT → ID Global → itens → estoque; a manual nem pega o │
+ * │ contador): sem ciclo entre si; possível com a confirmação MANUAL de VENDA do mesmo produto         │
+ * │ (40P01), com o mesmo desfecho do CA-12 — a automática deles segura o contador desde o lançamento   │
+ * │ e pede o produto, e a manual da venda segura o produto e pede o contador (no estoque é novo; na    │
+ * │ compra já existia com a manual dela). A automática que perde vira "recusada", salva e aberta. A    │
+ * │ automática do APROVAR da venda não segura o contador antes: tem a ordem da manual da venda.        │
  * │ O CUSTO: o contador do ID Global da organização fica preso durante a confirmação automática        │
  * │ inteira (estoque, títulos, auditoria), e os lançamentos da organização esperam por ele até o       │
  * │ commit.                                                                                             │
