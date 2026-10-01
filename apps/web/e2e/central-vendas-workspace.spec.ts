@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
-import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, acaoDaCentral } from "./helpers";
+import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, acaoDaCentral, CLASSIFICACAO_DO_SEED, ROTULOS_CLASSIFICACAO } from "./helpers";
 
 /**
  * CENTRAL DE VENDAS — WORKSPACE FOUNDATION (VISUAL-UX-01).
@@ -22,6 +22,9 @@ import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirLancamentoDeV
  * │ rótulo e o leque de Ações rápidas (Imprimir, Histórico, Documentos abertos, Cancelar, Alterar    │
  * │ operação) nos dois. Só as asserções de APRESENTAÇÃO mudaram (W2, W4, W6, W11, W18–W27, W30); as │
  * │ de contrato continuam as mesmas. O registro linha a linha está no relatório da fatia.            │
+ * │ Fase B: mudou a APRESENTAÇÃO dos itens da criação (Adicionar produto, marca pelo círculo,        │
+ * │ Remover item na barra, "Mostrar grade e formulário" em Configurar colunas) e, no W4, Natureza e  │
+ * │ Centro de resultado viraram pendência de clique. W4/W5/W10/W17/W29 provam o MESMO contrato.      │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ A REGRA ANTI-VACUIDADE ───────────────────────────────────────────────────────────────────────┐
@@ -225,18 +228,24 @@ test("W4 — Salvar continua sujeito às condições funcionais: cliente, item c
   const posts: string[] = [];
   page.on("request", (r) => { if (r.method() === "POST" && new URL(r.url()).pathname.startsWith("/api/sales/")) posts.push(r.url()); });
 
-  // VENDAS-A1: com a capacidade declarada pela API, a classificação financeira é condição. Na Fase A da VISUAL-UX-02
-  // ela continua DESABILITANDO o Salvar (estado, não pendência de clique — decisão 270; vira pendência na Fase B).
-  await expect(salvar, "sem classificação financeira, não salva").toBeDisabled();
-  await preencherClassificacaoFinanceira(page);
+  // VENDAS-A1: com a capacidade declarada pela API, a classificação financeira é condição. Fase B da VISUAL-UX-02
+  // (decisão 270): Natureza e Centro de resultado viraram PENDÊNCIA de clique, como o Cliente — com alteração e sem o
+  // par, o Salvar habilita, o clique não envia NADA e a lista diz o que falta.
+  await expect(salvar, "sem alteração, nada a salvar").toBeDisabled();
+  await pickRef(page, ROTULOS_CLASSIFICACAO.natureza, CLASSIFICACAO_DO_SEED.categoria.nome);
   await expect(salvar, "com alteração e sem trava de estado, o Salvar habilita: as pendências se conferem no clique").toBeEnabled();
+  const semCentro = await clicarSalvarComPendencia(page, posts, "sem centro de resultado, não salva");
+  expect(semCentro.some((t) => /Centro de resultado/.test(t)), "a lista diz que falta o centro de resultado").toBe(true);
+  expect(semCentro.some((t) => /Natureza/.test(t)), "a natureza escolhida não está na lista").toBe(false);
+  await pickRef(page, ROTULOS_CLASSIFICACAO.centro, CLASSIFICACAO_DO_SEED.centro.nome);
   // decisão 270: "desabilitado por pendência" virou "clique = ZERO POST + N pendências" — as MESMAS condições de antes
   const semCliente = await clicarSalvarComPendencia(page, posts, "sem cliente e sem item, não salva");
   expect(semCliente.some((t) => /Cliente/.test(t)), "a lista diz que falta o cliente").toBe(true);
+  expect(semCliente.some((t) => /Natureza|Centro de resultado/.test(t)), "com o par escolhido, a classificação saiu da lista").toBe(false);
   await pickRef(page, "Cliente", "DEMO");
   const semItem = await clicarSalvarComPendencia(page, posts, "cliente sem item, não salva");
   expect(semItem.some((t) => /Cliente/.test(t)), "o cliente escolhido saiu da lista").toBe(false);
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await page.getByTestId("central-vendas-adicionar-item").click();      // Fase B: "Adicionar produto" (barra); "Adicionar item" saiu
   await clicarSalvarComPendencia(page, posts, "item sem produto, não salva");
   await escolherPrimeiroProdutoDaLinha(page);
   await expect(salvar).toBeEnabled();
@@ -289,7 +298,7 @@ test("W5 — nenhuma escrita sem TOP confirmada AGORA: a lista muda, o rascunho 
   await abrirWorkspace(page);
   await pickRef(page, "Cliente", "DEMO");
   await preencherClassificacaoFinanceira(page);                     // VENDAS-A1: condição do Salvar desde a A1
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await page.getByTestId("central-vendas-adicionar-item").click();      // Fase B: "Adicionar produto" (barra); "Adicionar item" saiu
   await escolherPrimeiroProdutoDaLinha(page);
   await expect(page.getByRole("button", { name: "Salvar" }), "a PREMISSA: sem o bloqueio, salvaria").toBeEnabled();
 
@@ -509,11 +518,33 @@ test("W12 — prefers-reduced-motion zera as transições do workspace", async (
 
 const linhaDaGrade = (page: Page, i: number) => page.getByTestId("central-vendas-linha").nth(i);
 const painelDePesquisa = (page: Page) => page.getByTestId("central-vendas-pesquisa");
+/** Fase B (decisão 270): o botão da barra de itens é "Adicionar produto"; com zero itens o vazio tem outro de mesmo nome. */
+const adicionarProduto = (page: Page) => page.getByTestId("central-vendas-adicionar-item");
+
+/**
+ * Fase B: a linha se MARCA pelo círculo (clicar na linha não marca, e o círculo alterna). Marca a linha i só se ela
+ * ainda não estiver marcada — um segundo clique a desmarcaria — e confere a marca.
+ */
+async function marcarLinha(page: Page, i: number) {
+  const linha = linhaDaGrade(page, i);
+  if ((await linha.getAttribute("aria-selected")) !== "true") await linha.getByTestId("central-vendas-selecionar-item").click();
+  await expect(linha, `a linha ${i + 1} está marcada`).toHaveAttribute("aria-selected", "true");
+}
+
+/** Fase B: "Grade e formulário" deixou de ser botão da barra e virou a opção "Mostrar grade e formulário" de Configurar colunas. */
+async function mostrarGradeEFormulario(page: Page) {
+  await page.getByTestId("central-vendas-configurar").click();
+  const opcao = page.getByTestId("central-vendas-configuracao").getByRole("checkbox", { name: "Mostrar grade e formulário" });
+  if ((await opcao.getAttribute("aria-checked")) !== "true") await opcao.click();
+  await expect(opcao).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("central-vendas-configuracao")).toHaveCount(0);
+}
 
 /** Adiciona um item e escolhe o N-ésimo produto REAL pela pesquisa ancorada na célula. */
 async function adicionarItemComProduto(page: Page, n = 0) {
   const antes = await page.getByTestId("central-vendas-linha").count();
-  await page.getByRole("button", { name: "Adicionar item" }).click();
+  await adicionarProduto(page).click();
   await expect(page.getByTestId("central-vendas-linha")).toHaveCount(antes + 1);
   await linhaDaGrade(page, antes).getByTestId("central-vendas-produto").click();
   const opcoes = painelDePesquisa(page).getByRole("option");
@@ -525,7 +556,7 @@ async function adicionarItemComProduto(page: Page, n = 0) {
   return rotulo;
 }
 
-test("W13 — três visões do MESMO items: Grade, Formulário e Grade e formulário; trocar não perde nada", async ({ page }) => {
+test("W13 — três visões do MESMO items: Grade, Formulário e Mostrar grade e formulário; trocar não perde nada", async ({ page }) => {
   await login(page);
   await abrirWorkspace(page);
   const p1 = await adicionarItemComProduto(page, 0);
@@ -552,38 +583,42 @@ test("W13 — três visões do MESMO items: Grade, Formulário e Grade e formul�
   // a coluna 6 (índice 5) é Quantidade: o NÚMERO é o que foi digitado; a unidade do produto vem ao lado, à parte
   await expect(linhaDaGrade(page, 1).locator("td").nth(5).getByTestId("central-vendas-quantidade")).toHaveText("7,00");
 
-  // Grade e formulário: as duas ao mesmo tempo, sobre o mesmo item selecionado
-  await linhaDaGrade(page, 1).click();
-  await page.getByRole("button", { name: "Grade e formulário" }).click();
+  // Grade e formulário (Fase B: a opção de Configurar colunas): as duas ao mesmo tempo, sobre o mesmo item marcado
+  await marcarLinha(page, 1);
+  await mostrarGradeEFormulario(page);
+  await marcarLinha(page, 1);
   await expect(page.getByTestId("central-vendas-grade")).toBeVisible();
   await expect(page.getByTestId("central-vendas-item-form")).toBeVisible();
   await linhaDaGrade(page, 1).getByLabel("Quantidade").fill("9");
   await expect(page.getByTestId("central-vendas-item-form").getByLabel("Quantidade"), "a grade e o formulário são o MESMO estado").toHaveValue("9");
 });
 
-test("W14 — seleção de linha: clique, teclado (↑ ↓ Enter) e nenhuma seleção órfã ao excluir", async ({ page }) => {
+test("W14 — seleção de linha: círculo, teclado (↑ ↓) e nenhuma seleção órfã ao remover", async ({ page }) => {
   await login(page);
   await abrirWorkspace(page);
   await adicionarItemComProduto(page, 0);
   await adicionarItemComProduto(page, 1);
   await adicionarItemComProduto(page, 2);
 
-  await linhaDaGrade(page, 0).click();
+  // Fase B: marca-se pelo círculo da linha (clicar na linha não marca)
+  await linhaDaGrade(page, 0).getByTestId("central-vendas-selecionar-item").click();
   await expect(linhaDaGrade(page, 0)).toHaveAttribute("aria-selected", "true");
   await expect(linhaDaGrade(page, 0).getByLabel("Quantidade"), "os campos editáveis aparecem na linha selecionada").toBeVisible();
   await expect(linhaDaGrade(page, 1).getByLabel("Quantidade"), "e só nela").toHaveCount(0);
 
-  await linhaDaGrade(page, 0).focus();
+  await linhaDaGrade(page, 0).getByTestId("central-vendas-selecionar-item").focus();
   await page.keyboard.press("ArrowDown");
   await expect(linhaDaGrade(page, 1)).toHaveAttribute("aria-selected", "true");
-  await expect(linhaDaGrade(page, 1)).toBeFocused();
+  await expect.poll(() => linhaDaGrade(page, 1).evaluate((el) => el === document.activeElement || el.contains(document.activeElement)), { message: "o foco foi junto com a marca" }).toBe(true);
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowUp");
   await expect(linhaDaGrade(page, 1)).toHaveAttribute("aria-selected", "true");
 
-  // excluir a última linha selecionada: a seleção passa para uma linha que EXISTE
-  await linhaDaGrade(page, 2).click();
-  await linhaDaGrade(page, 2).getByRole("button", { name: "Excluir item 3" }).click();
+  // remover a última linha marcada (Fase B: "Remover item" da barra; a lixeira por linha saiu): a seleção passa para
+  // uma linha que EXISTE
+  await expect(page.getByRole("button", { name: /^Excluir item/ }), "a lixeira por linha saiu").toHaveCount(0);
+  await marcarLinha(page, 2);
+  await page.getByTestId("central-vendas-remover-item").click();
   await expect(page.getByTestId("central-vendas-linha")).toHaveCount(2);
   await expect(page.locator('[data-testid="central-vendas-linha"][aria-selected="true"]'), "exatamente uma linha selecionada, e ela existe").toHaveCount(1);
   await expect(linhaDaGrade(page, 1)).toHaveAttribute("aria-selected", "true");
@@ -595,7 +630,7 @@ test("W15 — pesquisa de produto: ancorada à célula, fonte real, teclado ↑ 
   const buscas: string[] = [];
   page.on("request", (r) => { const u = new URL(r.url()); if (u.pathname === "/api/resources/products/options") buscas.push(u.searchParams.get("search") ?? ""); });
 
-  await page.getByRole("button", { name: "Adicionar item" }).click();
+  await adicionarProduto(page).click();
   const celula = linhaDaGrade(page, 0).getByTestId("central-vendas-produto");
   await celula.click();
   const painel = painelDePesquisa(page);
@@ -629,7 +664,7 @@ test("W15 — pesquisa de produto: ancorada à célula, fonte real, teclado ↑ 
   // Esc fecha sem escolher
   await page.keyboard.press("Escape");
   await expect(painel).toHaveCount(0);
-  await expect(celula).toContainText("Pesquisar produto");
+  await expect(celula).toContainText("Selecione o produto");          // Fase B: o vazio do desenho (antes "Pesquisar produto")
 
   // reabrir: a busca começa limpa; ↓ Enter escolhe a SEGUNDA opção
   await celula.click();
@@ -721,7 +756,7 @@ test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visõe
     await pickRef(page, "Cliente", "DEMO");
     await adicionarItemComProduto(page, 0);
     await adicionarItemComProduto(page, 1);
-    await linhaDaGrade(page, 0).click();
+    await marcarLinha(page, 0);
     await expect(linhaDaGrade(page, 0).getByTestId("central-vendas-unidade"), "a unidade chegou antes da foto").toBeVisible();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow, `rolagem horizontal em ${w}×${h}`).toBeLessThanOrEqual(0);
@@ -739,16 +774,18 @@ test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visõe
     await expect(page.getByTestId("central-vendas-configuracao")).toBeVisible();
     await foto("column-config");
     await page.keyboard.press("Escape");
-    await page.getByRole("button", { name: "Adicionar item" }).click();
+    await adicionarProduto(page).click();
     await linhaDaGrade(page, 2).getByTestId("central-vendas-produto").click();
     await expect(painelDePesquisa(page).getByRole("option").first()).toBeVisible();
     await foto("product-lookup");
     await page.keyboard.press("Escape");
-    await linhaDaGrade(page, 2).getByRole("button", { name: "Excluir item 3" }).click();
-    await linhaDaGrade(page, 0).click();
+    await marcarLinha(page, 2);
+    await page.getByTestId("central-vendas-remover-item").click();
+    await expect(page.getByTestId("central-vendas-linha")).toHaveCount(2);
+    await marcarLinha(page, 0);
     await page.getByRole("button", { name: "Formulário", exact: true }).click();
     await foto("items-form");
-    await page.getByRole("button", { name: "Grade e formulário" }).click();
+    await mostrarGradeEFormulario(page);
     await foto("items-split");
     await page.getByRole("button", { name: "Grade", exact: true }).click();
     await page.getByTestId("central-vendas-recolher").click();
@@ -771,7 +808,7 @@ test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visõe
 /* ════════════════════════════════ R2 — fechamento de fidelidade ════════════════════════════════ */
 
 const ROTULOS_DA_GRADE = ["Código", "Produto", "Armazém", "Estoque", "Quantidade", "Valor unitário", "Desconto", "Desconto %", "Total"];
-/** Os títulos das colunas da grade, sem a coluna da lixeira (que não tem texto). */
+/** Os títulos das colunas da grade, sem a coluna do círculo de seleção (Fase B; antes a da lixeira), que não tem texto. */
 const cabecalhos = async (page: Page) => (await page.getByTestId("central-vendas-grade").locator("thead th").allInnerTexts()).map((t) => t.trim()).filter(Boolean);
 const aba = (page: Page, chave: string) => page.locator(`[data-testid="workspace-tab"][data-tab-key="${chave}"]`);
 const alturaDoPainel = async (page: Page) => Math.round((await page.getByTestId("central-vendas-painel").boundingBox())!.height);
@@ -850,14 +887,16 @@ test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos 
   const cfg = page.getByTestId("central-vendas-configuracao");
   await expect(cfg).toBeVisible();
   await expect(cfg).toContainText("Colunas da grade");
-  await expect(cfg.getByRole("checkbox")).toHaveCount(ROTULOS_DA_GRADE.length);
+  // uma caixa por coluna + a opção "Mostrar grade e formulário" (Fase B: o antigo 3º botão da barra mora aqui)
+  await expect(cfg.getByRole("checkbox")).toHaveCount(ROTULOS_DA_GRADE.length + 1);
+  await expect(cfg.getByRole("checkbox", { name: "Mostrar grade e formulário" })).toHaveCount(1);
 
   // esconder Quantidade: a coluna some da grade (cabeçalho e células), a quantidade continua no item
   const quantidade = cfg.getByRole("checkbox", { name: "Mostrar Quantidade" });
   await quantidade.click();
   await expect(quantidade).toHaveAttribute("aria-checked", "false");
   await expect.poll(() => cabecalhos(page)).toEqual(ROTULOS_DA_GRADE.filter((r) => r !== "Quantidade"));
-  await expect(linhaDaGrade(page, 0).locator("td"), "lixeira + 8 colunas").toHaveCount(ROTULOS_DA_GRADE.length);
+  await expect(linhaDaGrade(page, 0).locator("td"), "círculo de seleção + 8 colunas").toHaveCount(ROTULOS_DA_GRADE.length);
   await expect(linhaDaGrade(page, 0).getByLabel("Quantidade")).toHaveCount(0);
   // reordenar: Total sobe uma posição
   await cfg.getByRole("button", { name: "Subir Total" }).click();
@@ -901,7 +940,7 @@ test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos 
   await page.unroute("**/api/sales/sales");
   await page.goto(`/vendas/sales/new?tipo_operacao_id=${top.id}`);
   await expect(page.getByTestId(WORKSPACE)).toBeVisible();
-  await page.getByRole("button", { name: "Adicionar item" }).click();
+  await adicionarProduto(page).click();
   expect(await cabecalhos(page)).toEqual(ROTULOS_DA_GRADE);
 });
 
@@ -1166,7 +1205,7 @@ test("W28 — unidade do produto: sufixo da quantidade e campo travado, pela lei
   await adicionarItemComProduto(page, 1);
   await expect(linhaDaGrade(page, 0).getByTestId("central-vendas-quantidade"), "linha não selecionada: número").toHaveText("1,00");
   await expect(linhaDaGrade(page, 0).getByTestId("central-vendas-unidade"), "e unidade").toHaveText(unidade);
-  await linhaDaGrade(page, 0).click();
+  await marcarLinha(page, 0);
   await page.getByRole("button", { name: "Formulário", exact: true }).click();
   await expect(page.getByTestId("central-vendas-item-unidade"), "campo travado Unidade no formulário do item").toContainText(unidade);
 
@@ -1191,7 +1230,7 @@ test("W29 — esconder a coluna Estoque ou trocar de visão NÃO reaplica o cust
   await abrirWorkspace(page);
   await pickRef(page, "Cliente", "DEMO");
   await preencherClassificacaoFinanceira(page);                     // VENDAS-A1: condição do Salvar desde a A1
-  await page.getByRole("button", { name: "Adicionar item" }).click();
+  await adicionarProduto(page).click();
   const linha = linhaDaGrade(page, 0);
   const escolher = async (celula: string, nome: string) => {
     await linha.getByTestId(celula).click();
@@ -1211,9 +1250,10 @@ test("W29 — esconder a coluna Estoque ou trocar de visão NÃO reaplica o cust
   const estoque = page.getByTestId("central-vendas-configuracao").getByRole("checkbox", { name: "Mostrar Estoque" });
   await configurar.click(); await estoque.click(); await estoque.click(); await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Formulário", exact: true }).click();
-  await page.getByRole("button", { name: "Grade e formulário" }).click();
+  await mostrarGradeEFormulario(page);                              // Fase B: a opção de Configurar colunas
   await page.getByRole("button", { name: "Grade", exact: true }).click();
   await page.waitForTimeout(500);
+  await marcarLinha(page, 0);                                       // os campos moram na linha MARCADA (Fase B)
   await expect(linhaDaGrade(page, 0).getByLabel("Valor unitário"), "apresentação não reescreve o unitário").toHaveValue("0");
 
   const post = await capturarPost(page);
