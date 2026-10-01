@@ -178,11 +178,12 @@ export function Inspetor(props: PropsInspetor) {
           travada={doSistema}
           aoMudar={props.aoVisivel}
         />
+        {/* só leitura na definição: ligada e travada. Campo do sistema: não liga; ligada por um layout salvo, só desliga. */}
         <Chave
           titulo="Somente leitura"
           descricao="Mostra o valor mas não deixa editar"
           ligada={soLeituraNaDefinicao || props.somenteLeitura}
-          travada={soLeituraNaDefinicao}
+          travada={soLeituraNaDefinicao || (doSistema && !props.somenteLeitura)}
           aoMudar={props.aoSomenteLeitura}
         />
 
