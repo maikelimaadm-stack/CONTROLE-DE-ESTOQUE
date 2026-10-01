@@ -97,5 +97,41 @@ test.describe("VISUAL-UX-04 — lançamento de bem/equipamento", () => {
     await expect(page.getByTestId("lancamento-bem-cartao").first()).toBeVisible();
     await expect(page.getByTestId("lancamento-bem-salvar").or(page.getByTestId("lancamento-bem-editar"))).toBeVisible();
     await expect(form.getByText("Descrição", { exact: false }).first()).toBeVisible();
+
+    // Geometria exata de `.dens-compacto .fld.has` / `.fc` / `.fic` no HTML de referência.
+    // Não basta o campo ter 32px: uma borda interna ou um botão de limpar desloca o valor e volta a
+    // sobrepor rótulo/ícone, mesmo com o padding nominal correto.
+    const geometria = await page.getByTestId("campo-empresa_id").evaluate((campo) => {
+      const linha = campo.querySelector<HTMLElement>('[data-parte="caixa"]')?.parentElement;
+      const caixa = campo.querySelector<HTMLElement>('[data-parte="caixa"]');
+      const rotulo = campo.querySelector<HTMLElement>('[data-parte="rotulo"]');
+      const controle = campo.querySelector<HTMLElement>(".cmd-display");
+      const icone = campo.querySelector<HTMLElement>('[data-parte="icone"]');
+      const limpar = campo.querySelector<HTMLElement>(".cmd-clear");
+      if (!linha || !caixa || !rotulo || !controle || !icone) throw new Error("campo Empresa incompleto");
+      const raiz = linha.getBoundingClientRect();
+      const relativo = (el: HTMLElement) => {
+        const r = el.getBoundingClientRect();
+        return { x: r.x - raiz.x, y: r.y - raiz.y, w: r.width, h: r.height };
+      };
+      const css = getComputedStyle(controle);
+      return {
+        linha: relativo(linha), caixa: relativo(caixa), rotulo: relativo(rotulo),
+        controle: relativo(controle), icone: relativo(icone),
+        padding: css.padding, borda: css.borderTopWidth, display: css.display,
+        limpar: limpar ? getComputedStyle(limpar).display : "ausente",
+      };
+    });
+    expect(geometria).toEqual({
+      linha: { x: 0, y: 0, w: geometria.linha.w, h: 32 },
+      caixa: { x: 0, y: 0, w: geometria.linha.w, h: 32 },
+      rotulo: { x: 1, y: 4, w: 83, h: 8.5 },
+      controle: { x: 1, y: 1, w: geometria.linha.w - 2, h: 30 },
+      icone: { x: 11, y: 14, w: 14, h: 14 },
+      padding: "13px 10px 3px 32px",
+      borda: "0px",
+      display: "flex",
+      limpar: "none",
+    });
   });
 });
