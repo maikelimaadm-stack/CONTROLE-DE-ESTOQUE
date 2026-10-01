@@ -16,6 +16,11 @@
  *
  * O que NÃO existe aqui (fora da fatia): editar documento aberto, layout por TOP, transferência entre empresas
  * (os dois armazéns são da empresa do documento — entre empresas fica nas telas antigas) e centro de resultado.
+ *
+ * CONFIRMAÇÃO AUTOMÁTICA (TOP-CONFIG-08, decisão 277): com a versão congelada no FORMATO 4 e "Confirmação:
+ * Automática", o POST confirma o documento que acabou de lançar, na mesma transação, pela MESMA função do
+ * `/confirmar` (`lancarEConfirmar`). Versão 1–3, ou Manual: o POST responde o que respondia, chave por chave.
+ * Documento sem itens continua recusado em toda versão: no estoque ele não movimenta nada (o zod fica com `min(1)`).
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -33,8 +38,9 @@ import { exigirEmpresaDeLancamento, empresaScope, hasPermission, type ServiceCtx
 import { pageQuerySchema } from "../lib/pagination.js";
 import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
 import { resolverTopParaLancamento, type TopDoLancamento } from "../lib/documento-comercial.js";
-import { ESPECIES_ESTOQUE, FORMA_UUID, lerDocumentoEstoque, topParaTela, type ColunasDaTop } from "./estoque-comum.js";
-import { registrarConfirmacaoEstoque } from "./estoque-confirmacao.js";
+import { confirmaAutomaticamente, tentarConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
+import { ESPECIES_ESTOQUE, FORMA_UUID, lerDocumentoEstoque, topParaTela, type ColunasDaTop, type RecursoEstoque } from "./estoque-comum.js";
+import { registrarConfirmacaoEstoque, confirmarDocumentoEstoqueNaTransacao } from "./estoque-confirmacao.js";
 
 const t = criarTradutor(ptBR);
 
@@ -273,7 +279,8 @@ async function conferirItens(ctx: ServiceCtx, especie: EspecieEstoque, d: Docume
  * EXIGÊNCIAS GERAIS DA VERSÃO CONGELADA — só "observação obrigatória" se aplica ao estoque, pelo mapa PRÓPRIO
  * do estoque (`EXIGENCIAS_GERAIS_ESTOQUE_TOP`): cair no mapa da venda cobraria um parceiro que o documento nem tem.
  * Lida aqui, com uma consulta própria, e não pelas regras de vendas: o documento de estoque não tem condição de
- * pagamento nem cliente, e a porta de vendas muda em outra frente. Versão de formato 1/2 não executa restrições.
+ * pagamento nem cliente, e a porta de vendas muda em outra frente. Versão de formato 1/2 não executa restrições;
+ * a de formato 4 executa as mesmas do 3 (`restricoesExecutamTop` aceita os dois — TOP-CONFIG-08, decisão 277).
  */
 async function cobrarExigenciasDaTop(ctx: ServiceCtx, top: TopDoLancamento, d: DocumentoEstoqueEntrada): Promise<void> {
   const v = await ctx.tx.query<{ configuracao: unknown }>(
@@ -289,7 +296,8 @@ async function cobrarExigenciasDaTop(ctx: ServiceCtx, top: TopDoLancamento, d: D
 /**
  * LANÇAR — o documento nasce ABERTO, com a TOP e a versão CONGELADAS pelo servidor (o cliente manda só
  * `tipo_operacao_id`). Recusas, nesta ordem: forma da espécie → TOP → armazéns → itens → exigências da TOP; só
- * então o número (recusa não queima código). NADA de estoque se move aqui.
+ * então o número (recusa não queima código). NADA de estoque se move aqui — nem com a TOP automática: quem
+ * confirma é `lancarEConfirmar`, depois daqui. Devolve o corpo da resposta e, à parte, a versão congelada.
  */
 async function lancar(ctx: ServiceCtx, especie: EspecieEstoque, d: DocumentoEstoqueEntrada) {
   const { quantidades, contadas, custos } = conferirFormaDaEspecie(especie, d);
@@ -317,7 +325,42 @@ async function lancar(ctx: ServiceCtx, especie: EspecieEstoque, d: DocumentoEsto
       quantidades, contadas, custos, d.itens.map((x) => x.observacao)]);
   await audit(ctx.tx, ctx, "documentos_estoque", id, "create",
     { especie, codigo, tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao });
-  return { id, codigo, especie, situacao: "aberto" as const };
+  return { corpo: { id, codigo, especie, situacao: "aberto" as const }, versaoTopId: top.tipoOperacaoVersaoId };
+}
+
+/**
+ * ═══ CONFIRMAÇÃO AUTOMÁTICA (TOP-CONFIG-08, decisão 277) ═══ — o FIM do POST, dentro do `idempotent` e depois
+ * da auditoria "create" do `lancar`. Nunca dentro do `lancar`: lançar é só lançar, e o gancho fica num lugar só.
+ *
+ *   · quem decide é a versão CONGELADA no documento (`confirmaAutomaticamente`): formato 4 legível com
+ *     "Confirmação: Automática". Formato 1–3, Manual ou sem TOP → nenhuma tentativa, e o corpo é o de hoje,
+ *     chave por chave (sem `confirmacaoAutomatica`);
+ *   · confirma pela MESMA função do `/confirmar` (`confirmarDocumentoEstoqueNaTransacao`): mesmas recusas, mesmos
+ *     movimentos, mesma auditoria "confirm" (com `automatica: true`). Não existe segundo caminho de confirmação;
+ *   · quem confirma é quem lançou, com a capacidade da confirmação manual (`<recurso>.edit`): o mesmo recurso cai
+ *     no mesmo módulo de escopo, e a TOP nunca dá a ninguém um poder que ele não tem (sem ela: "sem_permissao");
+ *   · recusa (saldo, período, cadastro, reprovação, a guarda do banco) volta ao savepoint: o documento fica SALVO
+ *     e ABERTO, e a resposta diz o porquê com o MESMO corpo de erro que o `/confirmar` daria; aprovação exigida e
+ *     ainda não dada para antes de qualquer efeito, e a resposta diz "aguardando_aprovacao";
+ *   · com `{ confirmado: true }`, a `situacao` da resposta passa a "confirmado".
+ * O resultado entra no corpo que o `idempotent` grava: o reenvio com a mesma chave devolve o mesmo corpo e nunca
+ * confirma duas vezes.
+ *
+ * TRAVAS: lançar pega o contador do código e o do ID Global; a confirmação manual do estoque trava o cabeçalho e
+ * depois o saldo e o produto, sem pegar contador nenhum — não há ciclo. O contador do ID Global fica preso até o
+ * fim da confirmação automática (os lançamentos da organização esperam por ele): risco declarado no contrato.
+ */
+async function lancarEConfirmar(ctx: ServiceCtx, especie: EspecieEstoque, recurso: RecursoEstoque, d: DocumentoEstoqueEntrada) {
+  const { corpo, versaoTopId } = await lancar(ctx, especie, d);
+  const confirmacaoAutomatica = (await confirmaAutomaticamente(ctx, versaoTopId))
+    ? await tentarConfirmacaoAutomatica(ctx, {
+      permissao: `${recurso}.edit`,
+      confirmar: () => confirmarDocumentoEstoqueNaTransacao(ctx, especie, corpo.id, { automatica: true }),
+    })
+    : undefined;
+  if (!confirmacaoAutomatica) return corpo;
+  const situacao = confirmacaoAutomatica.confirmado ? "confirmado" as const : corpo.situacao;
+  return { ...corpo, situacao, confirmacaoAutomatica };
 }
 
 // ─────────────── rotas ───────────────
@@ -347,14 +390,17 @@ export default async function estoqueRoutes(app: FastifyInstance) {
 
     app.get(`${base}/:id`, async (req) => runService(app, req, `${recurso}.view`, (ctx) => lerDocumentoEstoque(ctx, (req.params as { id: string }).id, especie)));
 
-    /** LANÇAR. TOP obrigatória (versão congelada pelo servidor). Idempotency-Key com o USUÁRIO no hash. */
+    /**
+     * LANÇAR. TOP obrigatória (versão congelada pelo servidor). Idempotency-Key com o USUÁRIO no hash. Com a TOP
+     * no formato 4 e Confirmação Automática, confirma no fim, dentro da chave (`lancarEConfirmar`).
+     */
     app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${recurso}.create`, async (ctx) => {
       const d = documentoSchema.parse(req.body);
       // Empresa do corpo é PEDIDO: fora do escopo do módulo estoque → 422 (o id veio do cliente; nada a revelar).
       await exigirEmpresaDeLancamento(ctx, d.empresa_id);
       return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
         { action: "lancar_documento_estoque", especie, corpo: d, actorId: ctx.user.id },
-        () => lancar(ctx, especie, d))).result;
+        () => lancarEConfirmar(ctx, especie, recurso, d))).result;
     })));
   }
 
