@@ -56,11 +56,26 @@ const HOTSPOTS = [
   [/^apps\/web\/src\/app\/layout\.tsx$/, "layout raiz"],
   [/^apps\/web\/nav\.registry\.mjs$/, "fonte única da navegação: contrato de rota e permissão"],
   [/^apps\/web\/redirects\.mjs$/, "redirects de rota: contrato"],
-  [/^apps\/web\/src\/lib\/(utils|copy|api|workspace-tabs|mega-menu|preferences)\.tsx?$/, "biblioteca compartilhada da web"],
+  [/^apps\/web\/src\/lib\/(utils|copy|api|nav|i18n|workspace-tabs|mega-menu|preferences)\.tsx?$/, "biblioteca compartilhada da web"],
+  [/^apps\/web\/src\/components\/workspace\.tsx$/, "abas internas, chips e NewChooser de todos os módulos (UX-ARCHITECTURE.md)"],
   [/^apps\/web\/src\/features\/(base1|base2)\//, "motor de listagem/lançamento: comportamento é do motor, não da tela"],
+  [/^apps\/web\/src\/features\/docs\/shared\.tsx$/, "DocList e editores compartilhados dos documentos"],
+  [/^apps\/web\/src\/features\/admin\/layout-configurador\//, "layout de documento por TOP: contrato de layout"],
   [/^apps\/web\/src\/features\/resources\/(form-layout|resource-form|resource-list)\.tsx$/, "motor dos cadastros declarativos"],
+  [/^apps\/web\/e2e\/helpers\.ts$/, "helpers de todos os specs (e do skew contra o web da base)"],
+  [/^apps\/web\/playwright[^/]*\.config\.ts$/, "configuração da suíte: viewport do gate desktop"],
+  [/^docs\/UI-(SHELL|RECORD-OPEN)-MATRIX\.md$/, "derivada do nav.registry, mas FORA da lista de gerados isentos: em comum é colisão"],
   [/^apps\/web\/scripts\//, "auditorias do lint da web"]
 ];
+
+/** Área da web: duas PRs na mesma rota ou feature podem colidir por CONTRATO (rota, layout, permissão) sem arquivo em comum. */
+const areaDaWeb = (p) => {
+  const rota = /^apps\/web\/src\/app\/\(app\)\/([^/]+)\//.exec(p)?.[1];
+  if (rota) return `rota /${rota}`;
+  const feature = /^apps\/web\/src\/features\/([^/]+)\//.exec(p)?.[1];
+  return feature ? `features/${feature}` : null;
+};
+const areasDe = (lado) => new Set([...lado.arquivos.keys()].map(areaDaWeb).filter(Boolean));
 
 // -------------------------------------------------------------------------------------------------
 // ANÁLISE DE DIFF — funções puras, cobertas pelo autoteste
@@ -144,9 +159,14 @@ export function compararPar(a, b) {
   const bancoA = toca(a, BANCO), bancoB = toca(b, BANCO);
   const contA = toca(a, CONTRATO), contB = toca(b, CONTRATO);
   const banco = bancoA && bancoB ? "LER O DIFF (as duas tocam banco)" : bancoA || bancoB ? `nenhum por caminho (só ${bancoA ? a.id : b.id} toca banco; confira pré-condição de migration)` : "nenhum (nenhuma toca banco)";
-  // Contrato também se toca pela web: uma tela que CONSOME a rota que a outra muda.
-  const contrato = contA || contB ? "LER O DIFF (há API/domínio de um lado)" : "nenhum (nenhuma toca API/domínio; rota/layout/permissão da web já contam como arquivo)";
-  if (bancoA || bancoB || contA || contB) verificar = true;
+  // Contrato também se toca pela web: uma tela que CONSOME a rota que a outra muda, ou duas fatias de tela na
+  // mesma rota/feature mudando o mesmo layout ou a mesma permissão de área sem nenhum arquivo em comum.
+  const areasB = areasDe(b);
+  const areasComuns = [...areasDe(a)].filter((x) => areasB.has(x)).sort();
+  const contrato = contA || contB ? "LER O DIFF (há API/domínio de um lado)"
+    : areasComuns.length ? `LER O DIFF (as duas mexem em ${areasComuns.join(", ")}: mesma rota, layout ou permissão?)`
+    : "nenhum por caminho (nenhuma toca API/domínio nem a mesma rota/feature da web)";
+  if (bancoA || bancoB || contA || contB || areasComuns.length) verificar = true;
 
   let ordem = "indiferente";
   if (ma.size && mb.size && !migComuns.length) {
@@ -199,6 +219,10 @@ function autoteste() {
   // A coluna banco/contrato nunca pode dizer "nenhum" quando um lado toca API: tem de mandar ler o diff.
   const api = compararPar(lado("esta", "[F2] a", [tela("apps/web/src/a.tsx")]), lado("#2", "[F1] b", [tela("apps/api/src/routes/x.ts")]));
   if (!api.verificar || !/LER O DIFF/.test(api.linha.contrato)) falhas.push("PR com API do outro lado não mandou ler o diff do contrato");
+  const area = compararPar(lado("esta", "[F2] a", [tela("apps/web/src/features/sales/a.tsx")]), lado("#2", "[F2] b", [tela("apps/web/src/features/sales/b.tsx")]));
+  if (area.colide || !area.verificar || !/features\/sales/.test(area.linha.contrato)) falhas.push("duas F2 na mesma feature sem arquivo em comum não mandaram ler o contrato");
+  const longe = compararPar(lado("esta", "[F2] a", [tela("apps/web/src/features/sales/a.tsx")]), lado("#2", "[F2] b", [tela("apps/web/src/features/compras/b.tsx")]));
+  if (longe.verificar) falhas.push("duas F2 em features diferentes foram mandadas ler o diff sem motivo");
   const ord = compararPar(lado("esta", "[F1] a", [["supabase/migrations/0042_a.sql", ["+a"]]]), lado("#2", "[F1] b", [["supabase/migrations/0041_b.sql", ["+b"]]]));
   if (!/esta entra depois de #2/.test(ord.linha.ordem)) falhas.push(`ordem de migration errada: ${ord.linha.ordem}`);
   const f2 = analisarDiff(diff([tela("apps/web/src/a.tsx"), tela("apps/api/src/x.ts"), tela("docs/A.md"), tela("scripts/x.mjs")]));

@@ -87,7 +87,11 @@ Spec novo nasce com verificação reversa: quebre o comportamento, veja reprovar
   porquê) · **MAPA DE COLISÃO** colado da saída do script, refeito na hora · testes e reversa ·
   diferenças do desenho declaradas · fora de escopo.
 - Saída `3` do script (LER O DIFF): leia o diff da outra PR na coluna indicada e escreva no mapa o que
-  achou — o script não prova banco nem contrato.
+  achou — o script não prova banco nem contrato. Duas fatias de tela na MESMA rota ou feature sem
+  arquivo em comum caem aqui: se as duas mudam a mesma rota canônica, o mesmo layout (de listagem,
+  de formulário ou de documento por TOP) ou a mesma permissão de área, é colisão por contrato.
+- `docs/UI-SHELL-MATRIX.md` e `docs/UI-RECORD-OPEN-MATRIX.md` são derivadas do registro de navegação,
+  mas não estão na lista de gerados isentos: as duas PRs mexendo nelas é colisão de arquivo.
 - Depois de CADA merge na `main`: `git merge origin/main` (nunca rebase nem force push), no conflito
   mexa só no que é seu (linhas de outras PRs nos docs ficam, em ordem numérica), refaça gerados e
   contagens, rode os gates e o mapa de novo.
