@@ -204,7 +204,10 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     // encerrado do pedido) e gatilhos às tabelas de compra da 0036 — nada no recorte que a purga lê.
     // A COMPRAS-03 é a vigésima segunda: a 0038 alarga o CHECK de família de `erp.layouts_documento` (cadastro de
     // organização da 0032) e fixa o search_path das funções de gatilho de compra — nada no recorte que a purga lê.
-    expect(noDisco.length, "38 migrations no repositório").toBe(38);
+    // A ESTOQUE-01 é a vigésima terceira: a 0040 cria `erp.documentos_estoque` e `erp.documentos_estoque_itens`
+    // (tabelas novas, vazias) — nada no recorte que a purga lê. A 0039 é de outra fatia ainda aberta: quando ela
+    // entrar na main, quem vier depois refaz esta contagem e a posição da 0040.
+    expect(noDisco.length, "39 migrations no repositório").toBe(39);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
     expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");
@@ -227,6 +230,7 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     expect(noDisco[35], "e a 36ª é o documento de compra (COMPRAS-01)").toBe("0036_documento_de_compra.sql");
     expect(noDisco[36], "e a 37ª é receber o pedido de compra (COMPRAS-02)").toBe("0037_receber_pedido_de_compra.sql");
     expect(noDisco[37], "e a 38ª é o layout do documento de compra (COMPRAS-03)").toBe("0038_layout_do_documento_de_compra.sql");
+    expect(noDisco[38], "e a 39ª é o documento de estoque (ESTOQUE-01)").toBe("0040_documento_de_estoque.sql");
   });
 
   it("as 16 anteriores aplicam, e a 0017 aplica sozinha em seguida", () => {
