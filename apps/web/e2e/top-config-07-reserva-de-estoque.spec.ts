@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, api, uniq, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar } from "./helpers";
+import { login, adicionarItemNaCentral, api, uniq, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar } from "./helpers";
 
 /**
  * RESERVA DE ESTOQUE PELO PEDIDO — o caminho do operador (TOP-CONFIG-07, decisão 266).
@@ -58,7 +58,7 @@ test("RE-W1 — pedido com reserva: a Central mostra o disponível, o documento 
   // (1) A CENTRAL de um pedido NOVO com a mesma TOP: o item com o produto e o armazém mostra o DISPONÍVEL.
   await abrirLancamentoDeVendas(page, "orders");
   await escolherTopEContinuar(page, topPedido.id);
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   const linha = page.getByTestId("central-vendas-linha").first();
   const painel = page.getByTestId("central-vendas-pesquisa");
   const escolher = async (celula: string, nome: string) => {

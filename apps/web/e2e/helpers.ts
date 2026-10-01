@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Page, type Request } from "@playwright/test";
 export const ADMIN = { email: process.env.E2E_ADMIN_EMAIL ?? "admin@demo.local", password: process.env.E2E_ADMIN_PASSWORD ?? "Demo@12345" };
 export async function login(page: Page, u = ADMIN) {
   await page.goto("/login"); await page.fill("#email", u.email); await page.fill("#password", u.password); await page.getByRole("button", { name: "Entrar" }).click();
@@ -102,6 +102,62 @@ export async function escolherPrimeiroProdutoDaLinha(page: Page) {
   await page.getByTestId("central-vendas-linha").first().getByTestId("central-vendas-produto").click();
   await page.getByTestId("central-vendas-pesquisa").getByRole("option").first().click();
   await expect(page.getByTestId("central-vendas-pesquisa")).toHaveCount(0);
+}
+
+/**
+ * ADICIONA UM ITEM NA CRIAÇÃO DA CENTRAL DE VENDAS — TOLERANTE À CENTRAL ANTERIOR E À NOVA (VISUAL-UX-02 Fase B).
+ *
+ * Na Central anterior o botão da barra se chama "Adicionar item"; na do desenho ele é "Adicionar produto" e, com ZERO
+ * itens, a grade vazia mostra também um botão de texto "Adicionar produto" — dois com o mesmo nome. A barra vem antes
+ * da grade no DOM, por isso `.first()`. Nas duas, a linha nova nasce marcada (os campos editáveis aparecem nela).
+ * Roda também no skew contra o web da base. NÃO serve a compras/estoque: o `ItemsEditor` tem o próprio
+ * "Adicionar item", que não muda.
+ */
+export async function adicionarItemNaCentral(page: Page) {
+  await page.getByRole("button", { name: /^Adicionar (item|produto)$/ }).first().click();
+}
+
+/**
+ * SALVAR SEM O PAR NATUREZA/CENTRO DE RESULTADO (VISUAL-UX-02 Fase B, decisão 270).
+ *
+ * O CONTRATO não muda: sem o par, nada é gravado. Muda a APRESENTAÇÃO: o Salvar fica HABILITADO (há alteração), e o
+ * clique não envia NADA — ZERO POST para `/api/sales/` — e a pílula "N pendências" lista o que falta. `faltando`
+ * diz quais dos dois rótulos TÊM de estar na lista; o outro, já escolhido, NÃO pode estar. As requisições são
+ * contadas no fio (`request`), não deduzidas da tela. Fecha a lista ao sair, para o passo seguinte achar a página
+ * como antes do clique.
+ */
+export async function salvarSemClassificacaoNaoEnvia(
+  page: Page,
+  faltando: readonly ("Natureza" | "Centro de resultado")[],
+  motivo: string,
+) {
+  const posts: string[] = [];
+  const registrar = (r: Request) => {
+    if (r.method() === "POST" && new URL(r.url()).pathname.startsWith("/api/sales/")) posts.push(new URL(r.url()).pathname);
+  };
+  page.on("request", registrar);
+  try {
+    const salvar = page.getByRole("button", { name: "Salvar" });
+    await expect(salvar, `${motivo}: com alteração, o Salvar fica habilitado`).toBeEnabled();
+    await salvar.click();
+    const pilula = page.getByTestId("central-vendas-pendencias");
+    await expect(pilula, `${motivo}: a pílula de pendências aparece`).toBeVisible();
+    await expect(pilula).toHaveText(/\d+ pendências?/);
+    // o clique com pendência já abre a lista; se ela estiver fechada, a pílula a abre
+    if ((await pilula.getAttribute("aria-expanded")) !== "true") await pilula.click();
+    const lista = page.getByTestId("central-vendas-pendencias-lista");
+    await expect(lista).toBeVisible();
+    for (const rotulo of ["Natureza", "Centro de resultado"] as const) {
+      await expect(lista.getByTestId("central-vendas-pendencia").filter({ hasText: rotulo }),
+        `${motivo}: ${rotulo} ${faltando.includes(rotulo) ? "é" : "não é"} pendência`).toHaveCount(faltando.includes(rotulo) ? 1 : 0);
+    }
+    await page.waitForTimeout(300);
+    expect(posts, `${motivo}: ZERO POST — sem o par nada é gravado`).toEqual([]);
+    await page.keyboard.press("Escape");
+    await expect(lista).toBeHidden();
+  } finally {
+    page.off("request", registrar);
+  }
 }
 
 /**

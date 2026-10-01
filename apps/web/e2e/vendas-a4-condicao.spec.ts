@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Request } from "@playwright/test";
-import { login, api, uniq, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, abrirAbaDoLancamento } from "./helpers";
+import { login, adicionarItemNaCentral, api, uniq, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, abrirAbaDoLancamento } from "./helpers";
 import { sql } from "./aj02-comum";
 
 /**
@@ -50,7 +50,7 @@ async function abrirCriacaoDeVenda(page: Page) {
   await expect(page.getByTestId(WORKSPACE)).toBeVisible();
   await page.getByLabel("Data *", { exact: true }).fill(brData(DATA_DOC));
   await pickRef(page, "Cliente", "DEMO");
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   await escolherPrimeiroProdutoDaLinha(page);
   // total POSITIVO: o plano (entrada, parcelas) e os títulos dependem dele — 1 × 100,00
   const linha = page.getByTestId("central-vendas-linha").first();
@@ -72,7 +72,7 @@ async function escolherCondicao(page: Page, c: Condicao) {
 const plano = (page: Page) => ({
   parcelas: page.getByLabel("Nº de parcelas", { exact: true }),
   primeiro: page.getByLabel("1º vencimento", { exact: true }),
-  intervalo: page.getByLabel("Intervalo entre parcelas (dias)", { exact: true }),
+  intervalo: page.getByLabel("Intervalo (dias)", { exact: true }),
   entrada: page.getByLabel("Valor entrada", { exact: true })
 });
 

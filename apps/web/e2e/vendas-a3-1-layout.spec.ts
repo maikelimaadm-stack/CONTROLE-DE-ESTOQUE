@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, api, uniq, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
+import { login, adicionarItemNaCentral, api, uniq, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
 
 /**
  * VENDAS-A3-1 — LAYOUT DO DOCUMENTO POR TOP, PELA TELA (API e banco REAIS; nada mockado).
@@ -230,7 +230,7 @@ test("LD-W2 — a Central obedece ao layout: sem transportadora, erro no campo; 
   await expect(saida.locator("input").first()).toBeDisabled();
 
   await pickRef(page, "Cliente", "DEMO");
-  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await adicionarItemNaCentral(page);
   await escolherPrimeiroProdutoDaLinha(page);
   const linha = page.getByTestId("central-vendas-linha").first();
   await linha.getByLabel("Quantidade").fill("1");
