@@ -162,6 +162,8 @@
 .linha:nth-child(even) td { background: #fafbfc; }
 .linha:hover td { background: rgba(15, 23, 42, .028); }
 .vazio { padding: 30px 16px !important; height: auto !important; text-align: center; white-space: normal !important; font-size: 12.5px; color: #64748b; }
+/* a grade vazia do desenho é um bloco sem a borda de linha embaixo (116 px, não 117) */
+.grade td.vazio { border-bottom: 0; }
 
 /* quantidade com o sufixo de unidade (só exibição) */
 .quantidade { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; }
