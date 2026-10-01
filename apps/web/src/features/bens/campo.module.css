@@ -128,9 +128,12 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
   width: auto;
   height: auto;
 }
-/* Input e Textarea são o próprio filho da caixa: a altura sai do inset, não dos 100% do padding-box */
-.caixa[data-controle] > .controle:not([type="hidden"]) { height: auto !important; }
-.caixa .controle {
+/*
+ * O filho da caixa pode ser o Input direto OU o wrap do RefSelect/Controller — por isso o chrome
+ * mira `.controle` E os host nativos / `.cmd-display` (cloneElement não atravessa o Controller).
+ */
+.caixa[data-controle] > :is(input, textarea, .controle):not([type="hidden"]) { height: auto !important; }
+.caixa :is(.controle, input, textarea, :global(.cmd-display), :global(.mg-dp-field)) {
   box-sizing: border-box;
   width: 100%;
   height: 100% !important;
@@ -148,11 +151,11 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
   opacity: 1;
   transition: padding .22s cubic-bezier(.2, .8, .2, 1);
 }
-.caixa .controle:disabled { color: #8b939e; -webkit-text-fill-color: #8b939e; cursor: not-allowed; }
-fieldset:disabled .caixa .controle { cursor: default; }
-.caixa input.controle::placeholder { color: transparent; }
-.caixa select.controle { appearance: none; background-image: none !important; }
-.caixa textarea.controle { resize: none; line-height: 1.5; }
+.caixa :is(.controle, input, textarea):disabled { color: #8b939e; -webkit-text-fill-color: #8b939e; cursor: not-allowed; }
+fieldset:disabled .caixa :is(.controle, input, textarea, :global(.cmd-display)) { cursor: default; }
+.caixa input::placeholder { color: transparent; }
+.caixa select { appearance: none; background-image: none !important; }
+.caixa textarea { resize: none; line-height: 1.5; }
 /* seletor de referência: a lupa mora à esquerda; o chevron sai, o "limpar" fica no canto direito da caixa */
 .caixa :global(.cmd-display) {
   display: block;
@@ -166,17 +169,17 @@ fieldset:disabled .caixa .controle { cursor: default; }
 .caixa :global(.cmd-display-placeholder) { color: #94a3b8; font-weight: 500; }
 .caixa :global(.cmd-chevron) { display: none !important; }
 .caixa :global(.cmd-clear) { right: 10px; top: 50%; margin-top: -7px; }
-.linha:has(:global(.cmd-clear)) .controle,
-.linha:has(:global(.cmd-clear)) .caixa :global(.cmd-display) { padding-right: 30px !important; }
+.linha:has(:global(.cmd-clear)) .caixa :is(.controle, input, :global(.cmd-display)) { padding-right: 30px !important; }
 
 /* número (money / quantity / percent / integer): tabular + sem spinner do browser */
-.linha[data-numero] .controle {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
+.linha[data-numero] .caixa :is(.controle, input) {
+  font-variant-numeric: tabular-nums !important;
+  font-feature-settings: "tnum" 1;
   -moz-appearance: textfield;
+  appearance: textfield;
 }
-.linha[data-numero] .controle::-webkit-outer-spin-button,
-.linha[data-numero] .controle::-webkit-inner-spin-button {
+.linha[data-numero] .caixa input::-webkit-outer-spin-button,
+.linha[data-numero] .caixa input::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
@@ -195,8 +198,7 @@ fieldset:disabled .caixa .controle { cursor: default; }
 }
 .icone svg { width: 14px; height: 14px; flex-shrink: 0; }
 /* com ícone: o controle recua 32px à esquerda (`.fld.ic .fc`) */
-.linha[data-icone] .caixa .controle { padding-left: 32px !important; }
-.linha[data-icone] .caixa :global(.cmd-display) { padding-left: 32px !important; }
+.linha[data-icone] .caixa :is(.controle, input, textarea, :global(.cmd-display), :global(.mg-dp-field)) { padding-left: 32px !important; }
 /* data: o botão redondo de 22px do desenho ("Escolher data"), no mesmo lugar do glifo; na consulta, a mesma forma, parada */
 .icone[data-botao] { width: 22px; height: 22px; margin-left: -4px; align-items: center; justify-content: center; border-radius: 999px; }
 .botaoData {
@@ -271,8 +273,8 @@ fieldset:disabled .caixa .controle { cursor: default; }
 [data-densidade="compacto"] fieldset:disabled .linha .rotulo,
 [data-densidade="compacto"] .linha[data-multilinha] .rotulo { top: 3px; transform: none; font-size: 8.5px; line-height: 1; }
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa:not([data-controle]) { padding-top: 13px !important; padding-bottom: 4px !important; align-items: flex-end; }
-[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .controle,
-[data-densidade="compacto"] fieldset:disabled .linha .controle { padding-top: 13px !important; padding-bottom: 3px !important; align-items: flex-end; }
+[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa :is(.controle, input, textarea, :global(.mg-dp-field)),
+[data-densidade="compacto"] fieldset:disabled .linha .caixa :is(.controle, input, textarea, :global(.mg-dp-field)) { padding-top: 13px !important; padding-bottom: 3px !important; align-items: flex-end; }
 /* o botão da pesquisa é bloco (as reticências pedem) e não desce a linha de 15px até o fim de uma área de 14: com 12px
    em cima a área tem os 15 da linha, e o texto fica onde o flex-end do desenho o põe */
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa :global(.cmd-display),
@@ -281,7 +283,7 @@ fieldset:disabled .caixa .controle { cursor: default; }
 [data-densidade="compacto"] fieldset:disabled .linha .icone { top: calc(50% + 5px); }
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .botaoData,
 [data-densidade="compacto"] fieldset:disabled .linha .botaoData { top: calc(50% + 5px); }
-[data-densidade="compacto"] .linha[data-multilinha] .controle { padding-top: 13px !important; padding-bottom: 3px !important; }
+[data-densidade="compacto"] .linha[data-multilinha] .caixa :is(.controle, textarea) { padding-top: 13px !important; padding-bottom: 3px !important; }
 /* vazio no compacto: o rótulo ocupa a caixa — o traço de "sem valor" não aparece por baixo dele */
 [data-densidade="compacto"] .caixa :global(.cmd-display-placeholder) { visibility: hidden; }
 

@@ -271,3 +271,5 @@ export function DataDoLancamento({ id, className, value, onChange, disabled, rot
     <MgDatePicker id={id} className={className} value={value} onChange={onChange} disabled={disabled} painel={painel} />
   </>;
 }
+
+export { estilos as estilosCampoBem };
