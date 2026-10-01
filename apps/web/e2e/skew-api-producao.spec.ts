@@ -2450,7 +2450,7 @@ test("COMPRAS-03 · LC-K1 — sem a capacidade declarada pela base, a Central de
     const linha = itens.locator("tbody tr").first();
     const doMotor = (await linha.getByTestId("central-compras-produto").count()) > 0;
     await (doMotor ? linha.getByTestId("central-compras-produto") : linha.locator("button").nth(1)).click();
-    await page.getByPlaceholder("Pesquisar...").fill(nomeProduto!.slice(0, 20));
+    await page.getByPlaceholder(doMotor ? "Pesquisar pela descrição" : "Pesquisar...").fill(nomeProduto!.slice(0, 20));
     await page.getByRole("option", { name: literalDe(nomeProduto!) }).first().click();
     await (doMotor ? linha.getByLabel("Quantidade do item 1") : linha.locator("input[type=number]").nth(0)).fill("2");
     await (doMotor ? linha.getByLabel("Valor unitário do item 1") : linha.locator("input[type=number]").nth(1)).fill("9");
