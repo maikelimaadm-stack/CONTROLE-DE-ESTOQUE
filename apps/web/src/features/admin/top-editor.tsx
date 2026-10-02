@@ -1220,7 +1220,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
             <ErroDaSecao erros={errosCampo} caminho="fiscal" />
           </Secao>}
 
-          {aba === "aprovacao" && liberado && <Secao chave="aprovacao" ajuda={regrasDaFamilia ? AJUDA_COM_REGRAS_GERAIS.aprovacao : undefined}>
+          {aba === "aprovacao" && liberado && <Secao chave="aprovacao" ajuda={regrasDaFamilia ? (tipoOperacao(rascunho.codigoBase)?.modulo === "compras" && tipoOperacao(rascunho.codigoBase)?.origem.valor === "pedido" ? "No pedido de compra, a aprovação vale ao finalizar: com aprovação, o pedido só é finalizado depois de aprovado em Aprovações, por quem tem as permissões Aprovar de Pedidos de Compra e Aprovar de Compras. Se o valor do pedido subir depois da aprovação (o orçamento vencedor muda os preços), ela precisa ser feita de novo. O pedido aberto é recebido sem passar pela aprovação, a não ser que a aba Fluxo de compra exija o pedido finalizado para receber." : AJUDA_COM_REGRAS_GERAIS.aprovacao) : undefined}>
             <CampoEnum rotulo="Critério de aprovação" testId="top-campo-aprovacao-politica" valor={rascunho.configuracao.aprovacao.politica}
               opcoes={POLITICAS_APROVACAO} rotulos={ROTULOS_TOP.aprovacaoPolitica}
               ajuda="Quando o documento precisa passar por aprovação."

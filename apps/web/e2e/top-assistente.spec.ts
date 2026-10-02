@@ -95,7 +95,7 @@ test("AS-1 — Novo começa pelo tipo de movimento (só os tipos com tela do cat
   await login(page);
   const catalogo = await catalogoPublicado(page);
   const comTela = catalogo.tipos.filter((t) => t.temTela);
-  expect(comTela, "premissa: o catálogo publicado tem 12 tipos com tela (os 9 com documento e os 3 do Financeiro)").toHaveLength(12);
+  expect(comTela, "premissa: o catálogo publicado tem 13 tipos com tela (os 9 com documento, o orçamento de compra e os 3 do Financeiro)").toHaveLength(13);
   const familias = await api<{ items: { codigo: string }[] }>(page, "GET", "/api/admin/tipos-operacao/familias");
   expect(familias.items.length, "premissa: o registry (/familias, inteiro) tem mais famílias do que tipos com tela").toBeGreaterThan(comTela.length);
   const semTela = catalogo.tipos.filter((t) => !t.temTela && t.familia !== null).map((t) => t.familia);
@@ -123,7 +123,7 @@ test("AS-1 — Novo começa pelo tipo de movimento (só os tipos com tela do cat
     await expect(forma.getByTestId("top-assistente-grupo-movimentacao_interna").getByRole("heading")).toHaveText("Movimentação interna");
     const botoes = (g: string) => forma.getByTestId(`top-assistente-grupo-${g}`).locator("[data-testid^='top-assistente-tipo-']");
     await expect(botoes("vendas")).toHaveText(["Orçamento", "Pedido", "Venda"]);
-    await expect(botoes("compras")).toHaveText(["Pedido", "Compra"]);
+    await expect(botoes("compras")).toHaveText(["Pedido", "Orçamento", "Compra"]);
     await expect(botoes("movimentacao_interna")).toHaveText(["Entrada", "Saída/baixa", "Transferência", "Ajuste"]);
     // OPERACOES-01 F9 (decisão 286): o Financeiro ganhou tela (o lançamento avulso e o movimento escolhem a TOP primeiro).
     await expect(forma.getByTestId("top-assistente-grupo-financeiro").getByRole("heading")).toHaveText("Financeiro");

@@ -75,10 +75,10 @@ export const MODULES = [
 
 export const AREAS = [
   // ---------------- Compras ----------------
-  // COMPRAS-01 (decisão 267): a lista única de documentos de compra (pedido de compra e compra), no desenho do
-  // Portal de Vendas — primeira e padrão. O lançamento começa pelo `+ Novo` da própria lista (a TOP escolhe a
+  // COMPRAS-01 (decisão 267): a lista única de documentos de compra (pedido de compra, orçamento de compra — F6b — e
+  // compra), no desenho do Portal de Vendas — primeira e padrão. O lançamento começa pelo `+ Novo` da própria lista (a TOP escolhe a
   // espécie), então, como em Vendas, não há ação de variante aqui.
-  a("compras", "documentos", "Documentos", ["pedidos_compra.view", "compras.view"], { keywords: ["pedido de compra", "compra", "nota de compra", "fornecedor", "entrada de mercadoria", "documento de compra"], description: "Uma lista com filtro por tipo de documento de compra" }),
+  a("compras", "documentos", "Documentos", ["pedidos_compra.view", "compras.view", "orcamentos_compra.view"], { keywords: ["pedido de compra", "compra", "nota de compra", "fornecedor", "entrada de mercadoria", "documento de compra", "orçamento de compra", "cotação"], description: "Uma lista com filtro por tipo de documento de compra" }),
   a("compras", "visao-geral", "Visão Geral", "dashboard.supply.view", { aliases: ["/dashboards/suprimentos"], keywords: ["indicadores de compras", "dashboard"] }),
   a("compras", "processos", "Processos", P.PURCHASE, { keywords: ["solicitação", "cotação", "aprovação", "autorização", "compra", "recebimento", "meus processos", "rejeitados"], description: "Uma lista: escopo (todos / meus) + etapa como filtro" }),
   act("compras", "solicitacao", "Nova solicitação de compra", "/suprimentos/new", "purchase_requests.create", { keywords: ["comprar", "pedir", "requisitar compra"] }),
@@ -313,7 +313,7 @@ export const AREAS = [
   // (com elas o mega-menu do módulo nunca abre vazio) e do que a tela monta. "Abrir" leva à consulta pelas rotas
   // de detalhe que já existem (DETAIL_ROUTES de vendas, compras e estoque): a fila não ganha rota de registro.
   a("aprovacoes", "vendas", "Vendas", "sales.approve", { keywords: ["venda aguardando aprovação", "aprovar venda", "reprovar venda"], description: "Vendas abertas que aguardam aprovação" }),
-  a("aprovacoes", "compras", "Compras", "compras.approve", { keywords: ["compra aguardando aprovação", "aprovar compra", "reprovar compra"], description: "Compras abertas que aguardam aprovação" }),
+  a("aprovacoes", "compras", "Compras", "compras.approve", { keywords: ["compra aguardando aprovação", "aprovar compra", "reprovar compra"], description: "Compras e pedidos de compra que aguardam aprovação" }),
   a("aprovacoes", "estoque", "Estoque", P.APROVACAO_ESTOQUE, { keywords: ["documento de estoque aguardando aprovação", "aprovar entrada", "aprovar saída", "aprovar transferência", "aprovar ajuste"], description: "Documentos de estoque abertos que aguardam aprovação" })
 ];
 
@@ -407,7 +407,7 @@ export const EXTRA_REDIRECTS = [
  * precisa casar com uma página existente ou com um destes padrões).
  */
 export const DETAIL_ROUTES = [
-  { id: "compras.documentos.detalhe", module: "compras", area: "documentos", label: "Documento de compra", pattern: "/compras/:especie/:id", perm: ["pedidos_compra.view", "compras.view"] },
+  { id: "compras.documentos.detalhe", module: "compras", area: "documentos", label: "Documento de compra", pattern: "/compras/:especie/:id", perm: ["pedidos_compra.view", "compras.view", "orcamentos_compra.view"] },
   { id: "compras.processos.detalhe", module: "compras", area: "processos", label: "Processo de compra", pattern: "/suprimentos/view/:id", perm: "purchase_requests.view" },
   // ESTOQUE-01 (decisão 274): a Central de Estoque. `[especie]` é o SEGMENTO (entradas | saidas | transferencias |
   // ajustes). A criação vem antes porque o padrão de consulta (`:id`) também casaria com `new`, e ela exige `.create`.

@@ -228,6 +228,30 @@ const topParaTela = (l: { tipo_operacao_id: string | null; top_codigo: string | 
         familiaRotulo: l.top_codigo_base ? t(chaveI18nDaFamiliaOperacional(l.top_codigo_base) ?? l.top_codigo_base) : null }
     : null;
 
+/** O preço de um item do pedido num orçamento (OPERACOES-01 F6b): decimais em texto, como o banco os guarda. */
+interface PrecoDoItemNoOrcamento { item_pedido_orcado_id: string; valor_unitario: string; valor_total: string }
+
+/**
+ * OPERACOES-01 F6b — OS PREÇOS POR ITEM DOS ORÇAMENTOS DO PEDIDO, em UMA consulta (nunca uma por orçamento),
+ * agrupados por orçamento e na ordem da posição; cada orçamento ganha `itens` no FIM (`[]` sem item). Sem orçamento
+ * nenhum, a consulta não roda. Quem chama já conferiu a espécie pedido e `orcamentos_compra.view`.
+ */
+async function itensDosOrcamentos(ctx: ServiceCtx, pedidoId: string, orcamentos: (Record<string, unknown> & { id: string })[]) {
+  if (orcamentos.length === 0) return orcamentos;
+  const r = await ctx.tx.query<PrecoDoItemNoOrcamento & { documento_id: string }>(
+    `select i.documento_id, i.item_pedido_orcado_id, i.valor_unitario::text as valor_unitario, i.valor_total::text as valor_total
+       from erp.documentos_compra_itens i
+       join erp.documentos_compra o on o.id = i.documento_id and o.organization_id = i.organization_id
+      where i.organization_id = $1 and o.pedido_orcado_id = $2 and o.especie = 'orcamento'
+      order by i.posicao, i.id`, [ctx.orgId, pedidoId]);
+  const porOrcamento = new Map<string, PrecoDoItemNoOrcamento[]>();
+  for (const { documento_id, ...preco } of r.rows) {
+    const lista = porOrcamento.get(documento_id);
+    if (lista) lista.push(preco); else porOrcamento.set(documento_id, [preco]);
+  }
+  return orcamentos.map((o) => ({ ...o, itens: porOrcamento.get(o.id) ?? [] }));
+}
+
 /**
  * CARREGA O DOCUMENTO JÁ AMARRADO À ESPÉCIE DA PORTA. Espécie errada, inexistente, de outro tenant e fora do
  * escopo de empresa (módulo compras) caem na MESMA 404. `lock` trava SÓ o cabeçalho (`for update of d`) — é o
@@ -246,8 +270,16 @@ const topParaTela = (l: { tipo_operacao_id: string | null; top_codigo: string | 
  * não existe: a leitura do pedido não é uma segunda porta para o orçamento (CAPACIDADE ∧ ESCOPO, nunca OR; a lista
  * única, a leitura, o ID Global e os anexos do orçamento já exigem a mesma capacidade). O orçamento, como a compra,
  * não tem recebido/saldo nem `compras_geradas`.
+ *
+ * OPERACOES-01 F6b (decisão 283), ADITIVO e no mesmo ramo (pedido ∧ `orcamentos_compra.view`): cada orçamento ganha,
+ * no FIM, a condição de pagamento (`condicao_pagamento_codigo`, `condicao_pagamento_nome`; `null` sem condição) e
+ * `itens` — o preço de cada item do pedido no orçamento (`item_pedido_orcado_id`, `valor_unitario`, `valor_total`), na
+ * ordem da posição — para a comparação da tela. UMA consulta a mais para os itens de TODOS os orçamentos do pedido
+ * (agrupada aqui), só quando há orçamento: nunca uma por orçamento. `semOrcamentos` (ADITIVO, padrão `false`): quem
+ * só confere a visibilidade e a conta da aprovação (a situação de `aprovacoes-compras.ts`) não lê os orçamentos nem
+ * os preços — a chave `orcamentos` não vem, como sem a capacidade.
  */
-export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: EspecieDocumentoCompra, opts: { lock?: boolean } = {}): Promise<Record<string, unknown>> {
+export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: EspecieDocumentoCompra, opts: { lock?: boolean; semOrcamentos?: boolean } = {}): Promise<Record<string, unknown>> {
   // id malformado é a MESMA 404 (sem 22P02 → 500).
   if (!FORMA_UUID.test(id)) throw notFound("Documento");
   const sc = scopedById(ctx, "d", id); sc.params.push(especie);
@@ -309,14 +341,17 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
   // OPERACOES-01 F6a: os orçamentos deste pedido (inclusive cancelados, a história da cotação), na ordem em que
   // nasceram — UMA consulta. Pelo vínculo próprio (`pedido_orcado_id`), nunca pela origem (que é da compra). Só com
   // a capacidade de ver orçamento: sem ela, nem a consulta roda (a chave some da resposta).
-  const orcamentos = ehPedido && hasPermission(ctx, PERMISSAO_VER_ORCAMENTO)
-    ? (await ctx.tx.query<Record<string, unknown>>(
+  // OPERACOES-01 F6b: + a condição de pagamento (código e nome, no fim) e os preços por item (`itensDosOrcamentos`).
+  const orcamentos = ehPedido && !opts.semOrcamentos && hasPermission(ctx, PERMISSAO_VER_ORCAMENTO)
+    ? await itensDosOrcamentos(ctx, id, (await ctx.tx.query<Record<string, unknown> & { id: string }>(
       `select o.id, o.codigo, o.situacao, o.fornecedor_id, fo.name as fornecedor_nome, o.condicao_pagamento_id,
-              o.prazo_entrega_dias, o.validade_orcamento, o.valor_total
+              o.prazo_entrega_dias, o.validade_orcamento, o.valor_total,
+              cp.code as condicao_pagamento_codigo, cp.nome as condicao_pagamento_nome
          from erp.documentos_compra o
          join erp.people fo on fo.id = o.fornecedor_id and fo.organization_id = o.organization_id
+         left join erp.condicoes_pagamento cp on cp.id = o.condicao_pagamento_id and cp.organization_id = o.organization_id
         where o.organization_id = $1 and o.pedido_orcado_id = $2 and o.especie = 'orcamento'
-        order by o.created_at, o.id`, [ctx.orgId, id])).rows
+        order by o.created_at, o.id`, [ctx.orgId, id])).rows)
     : null;
   const titulos = await ctx.tx.query(
     `select id, code, number, installment_number, due_date, amount, balance, status

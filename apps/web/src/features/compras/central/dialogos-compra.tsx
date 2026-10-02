@@ -1,9 +1,10 @@
 "use client";
+import { D } from "@agro/shared";
 import { brl, dateBR, num } from "@/lib/utils";
 import { LoadingState } from "@/components/ui";
 import { SimpleTable, type Row } from "@/features/docs/shared";
 import { DialogoConfirmar } from "@/features/central/dialogos";
-import { usePreviaDaConfirmacaoCompra, type PreviaDaConfirmacaoCompra } from "../previa-confirmacao-compra";
+import { usePreviaDaConfirmacaoCompra, type DivergenciaComOPedido, type ItemDaDivergencia, type PreviaDaConfirmacaoCompra } from "../previa-confirmacao-compra";
 
 /**
  * O DIÁLOGO DE CONFIRMAR COMPRA (VISUAL-UX-04, decisão 276).
@@ -12,6 +13,10 @@ import { usePreviaDaConfirmacaoCompra, type PreviaDaConfirmacaoCompra } from "..
  * texto da compra e a prévia da confirmação de hoje (recusas, entrada no estoque, parcelas a pagar). A escrita
  * (POST /api/compras/compras/<id>/confirm, corpo vazio, Idempotency-Key) e quando o diálogo abre moram no estado
  * (`useEstadoDaConsulta`); Cancelar e Encerrar saldo são os diálogos do motor e o de hoje, montados na barra da consulta.
+ *
+ * OPERACOES-01 F6b (decisão 283): quando o servidor declara a DIVERGÊNCIA da compra com o pedido de origem (a seção da
+ * TOP em "Avisar" ou "Bloquear"), a prévia a mostra entre as recusas e o Estoque. Quem decide é o servidor: o bloqueio
+ * chega como a recusa `DIVERGENCIA_COM_O_PEDIDO` em `recusas`, e o botão segue `podeConfirmar`.
  */
 
 /** CONFIRMAR COMPRA <código>? — a prévia do servidor; carregando ou com recusa prevista, o botão trava. */
@@ -40,6 +45,7 @@ function CorpoDaPrevia({ previa }: { previa: PreviaDaConfirmacaoCompra }) {
     {previa.recusas.length > 0 && <ul data-testid="compras-previa-recusas" className="space-y-0.5 rounded border border-red-200 bg-red-50 px-3 py-2 text-red-800">
       {previa.recusas.map((r, i) => <li key={i}>{r.message}</li>)}
     </ul>}
+    {previa.divergencia && <DivergenciaDaPrevia divergencia={previa.divergencia} />}
     <section data-testid="compras-previa-estoque" data-efeito={estoque.efeito ?? ""}>
       <h3 className="mb-1 font-semibold">Estoque</h3>
       {estoque.efeito === "entrada"
@@ -77,4 +83,48 @@ function CorpoDaPrevia({ previa }: { previa: PreviaDaConfirmacaoCompra }) {
         : <p className="text-slate-600">{financeiro.efeito === "nenhum" ? "Não gera contas a pagar." : "O efeito financeiro não pôde ser previsto."}</p>}
     </section>
   </div>;
+}
+
+/** O percentual que o servidor manda ("5", "2.50") com a vírgula decimal da tela; o número não é refeito. */
+const percentualDoServidor = (v: string) => v.replace(".", ",");
+
+/** A diferença com sinal: "+20,00%", "-12,50%"; sem base (o pedido sem preço), "—". */
+const diferencaComSinal = (v: string | null) => (v === null ? "—" : `${D(v).gt(0) ? "+" : ""}${num(v, 2)}%`);
+
+/** O valor de cada lado: o preço com o MESMO formatador do Valor unitário dos itens salvos; a quantidade em 4 casas. */
+const valorDoLado = (campo: ItemDaDivergencia["campo"], v: string) => (campo === "preco" ? brl(v) : num(v, 4));
+
+/** A frase da seção, pelo que o servidor declarou (o modo e se bloqueia). */
+function fraseDaDivergencia(d: DivergenciaComOPedido): string {
+  if (d.itens.length === 0) return "A compra não difere do pedido de origem.";
+  if (d.modo === "avisa") return "A compra difere do pedido de origem. Esta operação só avisa: a confirmação continua possível.";
+  return d.bloqueia ? "A compra difere do pedido além da tolerância desta operação: a confirmação é recusada."
+    : "A compra difere do pedido dentro da tolerância desta operação.";
+}
+
+const COLUNAS_DA_DIVERGENCIA = ["Produto", "O que difere", "No pedido", "Na compra", "Diferença", "Acima da tolerância"] as const;
+
+/**
+ * DIVERGÊNCIA COM O PEDIDO — a frase, as tolerâncias da operação e uma linha por item que difere. A tabela tem a MESMA
+ * marcação do `SimpleTable` (que não aceita atributo por linha): cada linha leva o campo e se está acima da tolerância.
+ */
+function DivergenciaDaPrevia({ divergencia: d }: { divergencia: DivergenciaComOPedido }) {
+  return <section data-testid="compras-previa-divergencia" data-modo={d.modo} data-bloqueia={String(d.bloqueia)}>
+    <h3 className="mb-1 font-semibold">Divergência com o pedido</h3>
+    <p className="mb-1 text-slate-600">{fraseDaDivergencia(d)}</p>
+    <p className="mb-1 text-slate-600" data-testid="compras-previa-divergencia-tolerancia">
+      Tolerância: preço {percentualDoServidor(d.toleranciaPrecoPercentual)}% · quantidade {percentualDoServidor(d.toleranciaQuantidadePercentual)}%.
+    </p>
+    {d.itens.length > 0 && <div className="overflow-x-auto rounded border"><table className="table-dense w-full text-[12.5px]">
+      <thead><tr>{COLUNAS_DA_DIVERGENCIA.map((c, i) => <th key={c} className={i >= 2 && i <= 4 ? "text-right" : ""}>{c}</th>)}</tr></thead>
+      <tbody>{d.itens.map((it, i) => <tr key={`${it.campo}:${it.itemIds.join(",")}:${i}`} data-testid="compras-previa-divergencia-item" data-campo={it.campo} data-acima={String(it.acimaDaTolerancia)}>
+        <td>{it.produto}</td>
+        <td>{it.campo === "preco" ? "Preço" : "Quantidade"}</td>
+        <td className="num">{valorDoLado(it.campo, it.valorPedido)}</td>
+        <td className="num">{valorDoLado(it.campo, it.valorCompra)}</td>
+        <td className="num" title={it.diferencaPercentual === null ? "o pedido não tem preço" : undefined}>{diferencaComSinal(it.diferencaPercentual)}</td>
+        <td>{it.acimaDaTolerancia ? "Sim" : "Não"}</td>
+      </tr>)}</tbody>
+    </table></div>}
+  </section>;
 }

@@ -55,7 +55,7 @@ import {
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, idempotent, audit, requirePermission } from "../lib/service.js";
 import { notFound, err } from "../lib/errors.js";
-import { exigirEmpresaDeLancamento, type ServiceCtx } from "../lib/context.js";
+import { exigirEmpresaDeLancamento, hasPermission, type ServiceCtx } from "../lib/context.js";
 import { confirmaAutomaticamente, tentarConfirmacaoAutomatica, lerVersaoCongeladaTop } from "../lib/confirmacao-automatica.js";
 import { lerDocumentoCompra, lancar, recebimentoSchema, type DocumentoCompraEntrada, type RecebimentoEntrada } from "./compras.js";
 import { confirmarCompraNaTransacao } from "./compras-confirmacao.js";
@@ -77,6 +77,9 @@ export const MSG_PEDIDO_CONVERTIDO_COM_COMPRAS = "Este pedido tem compras: cance
 export const MSG_PEDIDO_CONVERTIDO_NAO_CANCELA = "Este pedido já foi convertido em compra e não é cancelado.";
 /** OPERACOES-01 F6a: a configuração da TOP do pedido que este servidor não lê — o receber e o finalizar recusam (fail-closed). */
 export const MSG_CONFIGURACAO_DO_PEDIDO_ILEGIVEL = "A configuração da operação deste pedido está num formato que este servidor não executa.";
+
+/** OPERACOES-01 F6b: quem LANÇA orçamento de compra vê o leque de orçamento em `/proximos-passos`. */
+const PERMISSAO_CRIAR_ORCAMENTO = "orcamentos_compra.create";
 
 /** OPERACOES-01 F6a: as situações do pedido que recebem, encerram o saldo e viram convertido. */
 const SITUACOES_DO_PEDIDO_EM_ANDAMENTO: readonly string[] = ["aberto", "finalizado"];
@@ -108,10 +111,27 @@ interface PoliticaDeDestinosDaCompra { configurada: boolean; itens: ProximoPasso
  * `"orcamento"` (a TOP do orçamento de compra, em `compras-orcamento.ts`). Só os destinos daquela espécie entram.
  */
 export async function politicaDeDestinosDaCompra(ctx: ServiceCtx, versaoOrigemId: string, especie: EspecieDoDestinoDaCompra = "compra"): Promise<PoliticaDeDestinosDaCompra> {
-  const r = await ctx.tx.query<{
-    destinos_configurados: boolean; origem_codigo_base: string; destino_id: string | null; codigo: string | null;
-    nome: string | null; codigo_base: string | null; ordem: number | null; em_partes: boolean | null;
-  }>(
+  return politicaDaEspecie(await linhasDaPoliticaDeDestinos(ctx, versaoOrigemId), especie);
+}
+
+/**
+ * OPERACOES-01 F6b (decisão 283): a política das DUAS espécies (a compra e o orçamento) na MESMA ida ao banco — a de
+ * `/proximos-passos` com o leque do orçamento. Cada uma é exatamente a de `politicaDeDestinosDaCompra` daquela espécie.
+ */
+export async function politicasDeDestinosDaCompra(ctx: ServiceCtx, versaoOrigemId: string): Promise<Record<EspecieDoDestinoDaCompra, PoliticaDeDestinosDaCompra>> {
+  const linhas = await linhasDaPoliticaDeDestinos(ctx, versaoOrigemId);
+  return { compra: politicaDaEspecie(linhas, "compra"), orcamento: politicaDaEspecie(linhas, "orcamento") };
+}
+
+/** Uma linha da política: a versão de origem (sempre) e, quando há aresta, o destino dela. */
+interface LinhaDaPolitica {
+  destinos_configurados: boolean; origem_codigo_base: string; destino_id: string | null; codigo: string | null;
+  nome: string | null; codigo_base: string | null; ordem: number | null; em_partes: boolean | null;
+}
+
+/** A ida ao banco da política (todas as espécies), na ordem do leque. A versão não lida é recusada (ver acima). */
+async function linhasDaPoliticaDeDestinos(ctx: ServiceCtx, versaoOrigemId: string): Promise<LinhaDaPolitica[]> {
+  const r = await ctx.tx.query<LinhaDaPolitica>(
     `select vo.destinos_configurados, torig.codigo_base as origem_codigo_base,
             t.id as destino_id, t.codigo, tv.nome, t.codigo_base, d.ordem, d.em_partes
        from erp.tipos_operacao_versoes vo
@@ -127,12 +147,16 @@ export async function politicaDeDestinosDaCompra(ctx: ServiceCtx, versaoOrigemId
       where vo.organization_id = $1 and vo.id = $2
       order by d.ordem, t.codigo`,
     [ctx.orgId, versaoOrigemId]);
-  const primeira = r.rows[0];
   // A versão que o pedido cita não foi lida: a TOP é NOT NULL com FK composta, então isto é corrupção — recusar,
   // nunca "sem política" (que aqui daria no mesmo, mas por acaso).
-  if (!primeira) throw new DomainError("TIPO_OPERACAO_INDISPONIVEL", "Tipo de operação indisponível para este documento");
+  if (!r.rows[0]) throw new DomainError("TIPO_OPERACAO_INDISPONIVEL", "Tipo de operação indisponível para este documento");
+  return r.rows;
+}
+
+/** O leque de UMA espécie, das linhas já lidas (a primeira linha existe: `linhasDaPoliticaDeDestinos` o garante). */
+function politicaDaEspecie(linhas: readonly LinhaDaPolitica[], especie: EspecieDoDestinoDaCompra): PoliticaDeDestinosDaCompra {
   const itens: ProximoPassoCompra[] = [];
-  for (const linha of r.rows) {
+  for (const linha of linhas) {
     if (!linha.destino_id || linha.codigo === null || linha.nome === null || linha.codigo_base === null || linha.ordem === null) continue;
     if (validarDestinoOperacao(linha.origem_codigo_base, linha.codigo_base).length > 0) continue;
     if (varianteDeDocumentoCompraDaFamilia(linha.codigo_base) !== especie) continue;
@@ -142,7 +166,7 @@ export async function politicaDeDestinosDaCompra(ctx: ServiceCtx, versaoOrigemId
       especie, ordem: linha.ordem, emPartes: linha.em_partes === true,
     });
   }
-  return { configurada: primeira.destinos_configurados, itens };
+  return { configurada: linhas[0]!.destinos_configurados, itens };
 }
 
 // ─────────────── o pedido como o recebimento o lê ───────────────
@@ -404,12 +428,23 @@ export function registrarRecebimentoCompras(app: FastifyInstance) {
    * OPERACOES-01 F6a: + `exigeFinalizar` no FIM do corpo — a versão congelada DO PEDIDO exige o pedido finalizado
    * para receber? Ilegível → `true` (fail-closed na apresentação: o receber recusaria). Os itens continuam só os de
    * compra (o "Receber em …" da tela); o orçamento tem a sua própria porta.
+   *
+   * OPERACOES-01 F6b (decisão 283): + `orcamentos` no FIM do corpo — o leque de TOPs de ORÇAMENTO de compra da
+   * versão congelada do pedido (a MESMA política que o criar orçamento confere: configurada → os destinos de espécie
+   * orçamento; não configurada → `[]`), para o "Novo orçamento" da consulta. SÓ para quem tem
+   * `orcamentos_compra.create` — sem ela a chave NÃO existe (oferecer o que ele não lança seria um botão sem porta).
+   * As duas espécies saem da MESMA leitura da política (`politicasDeDestinosDaCompra`): nenhuma consulta a mais.
+   * `items` continua SÓ a compra.
    */
   app.get("/compras/pedidos/:id/proximos-passos", async (req) => runService(app, req, "pedidos_compra.view", async (ctx) => {
     const pedido = comoPedido(await lerDocumentoCompra(ctx, (req.params as { id: string }).id, "pedido"));
-    const politica = await politicaDeDestinosDaCompra(ctx, pedido.tipo_operacao_versao_id);
+    const politicas = await politicasDeDestinosDaCompra(ctx, pedido.tipo_operacao_versao_id);
+    const politica = politicas.compra;
     const fluxo = fluxoCompraDaVersaoTop(await lerVersaoCongeladaTop(ctx, pedido.tipo_operacao_versao_id));
-    return { contractVersion: 1, politicaConfigurada: politica.configurada, items: politica.itens, exigeFinalizar: fluxo.ok ? fluxo.valor.exigeFinalizar : true };
+    const corpo = { contractVersion: 1, politicaConfigurada: politica.configurada, items: politica.itens, exigeFinalizar: fluxo.ok ? fluxo.valor.exigeFinalizar : true };
+    if (!hasPermission(ctx, PERMISSAO_CRIAR_ORCAMENTO)) return corpo;
+    const leque = politicas.orcamento;
+    return { ...corpo, orcamentos: leque.configurada ? leque.itens : [] };
   }));
 
   /**

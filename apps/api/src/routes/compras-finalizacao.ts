@@ -118,6 +118,23 @@ async function aprovacaoDoPedido(ctx: ServiceCtx, pedido: PedidoParaFinalizar, v
   return { situacao: "pendente", recusa: recusaPendenteDoPedido(detalhesDaPendente(politica, pedido.valor_total)) };
 }
 
+/**
+ * OPERACOES-01 F6b (decisão 283) — A SITUAÇÃO DA APROVAÇÃO DO PEDIDO ABERTO, pela conta do finalizar (com a
+ * cobertura do valor): é o que `GET /api/aprovacoes/compras/:id` responde para o pedido (`aprovacoes-compras.ts`),
+ * para a consulta não dizer "Aprovado" de um pedido que o Finalizar recusaria. Quem chama já leu o pedido VISÍVEL
+ * (`lerDocumentoCompra`, espécie pedido) e só chama no ABERTO. Configuração ilegível: lança a recusa (fail-closed),
+ * como o finalizar. Só leitura: a versão congelada, a decisão vigente e, quando aprovada, a cobertura.
+ */
+export async function situacaoDaAprovacaoDoPedido(ctx: ServiceCtx, d: Record<string, unknown>): Promise<SituacaoAprovacao> {
+  const pedido = comoPedido(d);
+  const versaoTop = await lerVersaoCongeladaTop(ctx, pedido.tipo_operacao_versao_id);
+  const aprovacao = await aprovacaoDoPedido(ctx, pedido, versaoTop);
+  if (aprovacao.situacao === null) {
+    throw aprovacao.recusa ?? new DomainError("TIPO_OPERACAO_EXECUCAO_INDISPONIVEL", MSG_CONFIGURACAO_DO_PEDIDO_ILEGIVEL);
+  }
+  return aprovacao.situacao;
+}
+
 /** Como o planejamento trata cada recusa — a única diferença entre finalizar e prever. */
 interface ModoDoPlanejamento { recusar(e: DomainError): void }
 const MODO_FINALIZACAO: ModoDoPlanejamento = { recusar: (e) => { throw e; } };

@@ -140,9 +140,9 @@ describe("CT-1 o catálogo: grupos e tipos", () => {
       }
     }
     expect(new Set(familias).size).toBe(familias.length);
-    // 9 com documento que cita a TOP + 3 da movimentação interna (F5a, sem tela até a F5b) + o orçamento de compra
-    // (F6a, sem tela até a F6b) + 3 do financeiro (F9, com tela) + 4 dos módulos que já existem no registry (sem tela);
-    // 2 tipos ainda sem família (manejo e batelada, F10).
+    // 9 com documento que cita a TOP + o orçamento de compra (F6a, com tela desde a F6b) + 3 da movimentação interna (F5a,
+    // sem tela até a F5b) + 3 do financeiro (F9, com tela) + 4 dos módulos que já existem no registry (sem tela); 2 tipos
+    // ainda sem família (manejo e batelada, F10).
     expect(familias).toHaveLength(20);
   });
 
@@ -159,9 +159,9 @@ describe("CT-1 o catálogo: grupos e tipos", () => {
 // ---------------------------------------------------------------------------------------------------
 
 describe("CT-2 só os tipos cujo documento cita a TOP aparecem para escolha", () => {
-  it("CT-2 as famílias com tela: as da matriz das regras gerais (o documento que cita a TOP), menos as três da movimentação interna (F5a) e o orçamento de compra (F6a), ainda sem tela, e as 3 do Financeiro (F9)", () => {
+  it("CT-2 as famílias com tela: as da matriz das regras gerais (o documento que cita a TOP), menos as três da movimentação interna (F5a), ainda sem tela, e as 3 do Financeiro (F9)", () => {
     expect(MATRIZ_REGRAS_GERAIS_TOP, "a premissa: a matriz tem as 13 famílias com documento").toHaveLength(13);
-    const semTelaAinda = ["estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo", "compras.orcamento"];
+    const semTelaAinda = ["estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo"];
     for (const f of semTelaAinda) expect(MATRIZ_REGRAS_GERAIS_TOP.some((m) => m.familia === f), `a premissa: ${f} tem documento`).toBe(true);
     const financeiras = ["financeiro.conta_a_pagar", "financeiro.conta_a_receber", "financeiro.movimento_bancario"];
     // A premissa: as do Financeiro não têm linha na matriz (não são documento com produto) — a tela delas é o
@@ -169,21 +169,22 @@ describe("CT-2 só os tipos cujo documento cita a TOP aparecem para escolha", ()
     for (const f of financeiras) expect(MATRIZ_REGRAS_GERAIS_TOP.some((m) => m.familia === f), f).toBe(false);
     const comTela = CATALOGO_TIPOS_MOVIMENTO_TOP.filter((t) => t.temTela).map((t) => t.familia);
     expect(new Set(comTela)).toEqual(new Set([...MATRIZ_REGRAS_GERAIS_TOP.map((m) => m.familia).filter((f) => !semTelaAinda.includes(f)), ...financeiras]));
-    expect(comTela).toHaveLength(12);
+    expect(comTela).toHaveLength(13);
+    expect(comTela, "o orçamento de compra tem tela desde a F6b").toContain("compras.orcamento");
   });
 
-  it("CT-2 os 10 sem tela: orçamento de compra, requisição, consumo, devolução de consumo e os 6 módulos", () => {
+  it("CT-2 os 9 sem tela: requisição, consumo, devolução de consumo e os 6 módulos", () => {
     expect(CATALOGO_TIPOS_MOVIMENTO_TOP.filter((t) => !t.temTela).map((t) => t.chave)).toEqual([
-      "orcamento_compra", "requisicao", "consumo", "devolucao_consumo",
+      "requisicao", "consumo", "devolucao_consumo",
       "abastecimento", "manutencao", "ordem_servico", "manejo", "batelada", "producao_racao",
     ]);
   });
 
-  it("CT-2 o passo 1: Vendas (3), Compras (2), Movimentação interna (4), Financeiro (3); Módulos não aparece", () => {
+  it("CT-2 o passo 1: Vendas (3), Compras (3), Movimentação interna (4), Financeiro (3); Módulos não aparece", () => {
     const passo1 = tiposParaEscolhaTop(CATALOGO_TOP);
     expect(passo1.map((g) => [g.grupo.chave, g.tipos.map((t) => t.chave)])).toEqual([
       ["vendas", ["orcamento_venda", "pedido_venda", "venda"]],
-      ["compras", ["pedido_compra", "compra"]],
+      ["compras", ["pedido_compra", "orcamento_compra", "compra"]],
       ["movimentacao_interna", ["entrada", "saida", "transferencia", "ajuste"]],
       ["financeiro", ["conta_pagar", "conta_receber", "movimento_bancario"]],
     ]);

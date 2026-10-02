@@ -129,21 +129,21 @@ const tipo = (chave: string, grupo: GrupoTipoMovimentoTop, rotulo: string, famil
 const familiaDaTabela = (tabela: string, valor?: string): string | undefined => resolverTipoOperacao(tabela, valor)?.codigo;
 
 /**
- * OS 22 TIPOS, NA ORDEM DO PEDIDO. Os 9 cujo documento cita a TOP (venda, compra e o documento de estoque) têm tela,
- * e os 3 do Financeiro também (F9, decisão 286: o lançamento avulso da Central e o "Novo movimento bancário" escolhem a
+ * OS 22 TIPOS, NA ORDEM DO PEDIDO. Os 9 cujo documento cita a TOP (venda, compra e o documento de estoque) têm tela, o
+ * orçamento de compra também (F6b, decisão 283: nasce do pedido) e os 3 do Financeiro (F9, decisão 286: o lançamento avulso da Central e o "Novo movimento bancário" escolhem a
  * TOP primeiro). "Requisição", "Consumo" e "Devolução de consumo" são as espécies NOVAS do documento de estoque (F5a:
  * `estoque.requisicao_material`, não a `estoque.requisicao` da requisição antiga), sem tela até a F5b; os tipos de
- * Módulos que já têm família ficam com ela, sem tela: a F10 os liga. O orçamento de compra já tem família (F6a, decisão
- * 283) e fica sem tela até a F6b criar a tela que o lança. Manejo e batelada (F10) nascem sem família — a fase dona
- * cria a família no registry e troca a linha.
+ * Módulos que já têm família ficam com ela, sem tela: a F10 os liga. O orçamento de compra ganhou a família na F6a e
+ * a tela na F6b (decisão 283). Manejo e batelada (F10) nascem sem família — a fase dona cria a família no registry e
+ * troca a linha.
  */
 export const CATALOGO_TIPOS_MOVIMENTO_TOP: readonly TipoDeMovimentoTop[] = Object.freeze([
   tipo("orcamento_venda", "vendas", "Orçamento", familiaOperacionalDeDocumentoVenda("budget"), true),
   tipo("pedido_venda", "vendas", "Pedido", familiaOperacionalDeDocumentoVenda("order"), true),
   tipo("venda", "vendas", "Venda", familiaOperacionalDeDocumentoVenda("sale"), true),
   tipo("pedido_compra", "compras", "Pedido", familiaOperacionalDeDocumentoCompra("pedido"), true),
-  // OPERACOES-01 F6a (decisão 283): a família do orçamento de compra nasce no registry; a tela que o lança é da F6b.
-  tipo("orcamento_compra", "compras", "Orçamento", familiaOperacionalDeDocumentoCompra("orcamento"), false),
+  // OPERACOES-01 F6a (decisão 283): a família do orçamento de compra nasce no registry; F6b: a tela (a Central de Compras).
+  tipo("orcamento_compra", "compras", "Orçamento", familiaOperacionalDeDocumentoCompra("orcamento"), true),
   tipo("compra", "compras", "Compra", familiaOperacionalDeDocumentoCompra("compra"), true),
   // OPERACOES-01 F5a (decisão 282): as famílias da movimentação interna nascem no registry; a tela que as lança é da F5b.
   tipo("requisicao", "movimentacao_interna", "Requisição", familiaOperacionalDeDocumentoEstoque("requisicao"), false),
