@@ -2444,13 +2444,16 @@ test("COMPRAS-03 · LC-K1 — sem a capacidade declarada pela base, a Central de
     await escolherNoCampo("Natureza de despesa", natureza.label);
     await escolherNoCampo("Centro de resultado", centro.label);
     const itens = page.getByTestId("compras-itens");
-    await itens.getByRole("button", { name: "Adicionar item" }).click();
+    // TOLERANTE à Central anterior ("Adicionar item", produto no 2º botão, quantidade/valor nos inputs numéricos) e à do
+    // motor (VISUAL-UX-04: "Adicionar produto", produto em `central-compras-produto`, campos com rótulo acessível).
+    await itens.getByRole("button", { name: /^Adicionar (item|produto)$/ }).first().click();
     const linha = itens.locator("tbody tr").first();
-    await linha.locator("button").nth(1).click();
-    await page.getByPlaceholder("Pesquisar...").fill(nomeProduto!.slice(0, 20));
+    const doMotor = (await linha.getByTestId("central-compras-produto").count()) > 0;
+    await (doMotor ? linha.getByTestId("central-compras-produto") : linha.locator("button").nth(1)).click();
+    await page.getByPlaceholder(doMotor ? "Pesquisar pela descrição" : "Pesquisar...").fill(nomeProduto!.slice(0, 20));
     await page.getByRole("option", { name: literalDe(nomeProduto!) }).first().click();
-    await linha.locator("input[type=number]").nth(0).fill("2");
-    await linha.locator("input[type=number]").nth(1).fill("9");
+    await (doMotor ? linha.getByLabel("Quantidade do item 1") : linha.locator("input[type=number]").nth(0)).fill("2");
+    await (doMotor ? linha.getByLabel("Valor unitário do item 1") : linha.locator("input[type=number]").nth(1)).fill("9");
     await comOItem();
     const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/compras/compras");
     await page.getByTestId("compras-salvar").click();
@@ -2478,7 +2481,7 @@ test("COMPRAS-03 · LC-K1 — sem a capacidade declarada pela base, a Central de
     await salvarComoHoje(async () => {
       const grade = page.getByTestId("compras-itens");
       await expect(grade.locator("th").first(), "presença: a grade de itens de hoje, com o cabeçalho").toBeVisible();
-      await expect(grade.locator("th[data-coluna]"), "sem layout, nenhum data-coluna nos itens").toHaveCount(0);
+      await expect(grade.locator("th[data-coluna], th[data-campo]"), "sem layout, nenhum data-coluna nos itens").toHaveCount(0);
     });
     expect(pedidosLayout, "o web NÃO pede /layout-efetivo a uma API que não declara a capacidade").toEqual([]);
     v.semBloqueio();
@@ -2491,7 +2494,7 @@ test("COMPRAS-03 · LC-K1 — sem a capacidade declarada pela base, a Central de
   expect(pedidosLayout.some((u) => new URL(u).pathname === "/api/compras/compras/layout-efetivo" && new URL(u).searchParams.get("tipo_operacao_id") === topId),
     "o web perguntou o layout desta TOP à base que o declara").toBe(true);
   await salvarComoHoje(async () => {
-    await expect(page.getByTestId("compras-itens").locator('th[data-coluna="produto_id"]'), "as colunas também seguem o layout do sistema").toHaveCount(1);
+    await expect(page.getByTestId("compras-itens").locator('th[data-coluna="produto_id"], th[data-campo="produto_id"]'), "as colunas também seguem o layout do sistema").toHaveCount(1);
   });
   v.semBloqueio();
 });

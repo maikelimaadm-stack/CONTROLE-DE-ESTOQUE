@@ -18,7 +18,7 @@ type Opcao = { id: string; label: string };
 const literal = (t: string) => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 async function escolherNaLinha(page: Page, botao: Locator, nome: string) {
   await botao.click();
-  await page.getByPlaceholder("Pesquisar...").fill(nome.slice(0, 20));
+  await page.getByPlaceholder("Pesquisar pela descrição").fill(nome.slice(0, 20));
   await page.getByRole("option", { name: literal(nome.slice(0, 20)) }).first().click();
 }
 const codigoTop = () => `${Math.floor(Math.random() * 90000 + 10000)}`;
@@ -98,18 +98,20 @@ test("CP-W1 — pedido → Próximos passos → Central em modo receber (em part
   const linhaB = page.getByTestId(`compras-receber-item-${c.itemB.id}`);
   await expect(linhaA).toBeVisible();
   await expect(linhaB).toBeVisible();
-  await expect(linhaA.locator("button").nth(1), "produto do pedido, travado").toBeDisabled();
-  await expect(linhaA.getByTestId("item-saldo-da-origem")).toHaveText("10,0000");
-  await expect(page.getByTestId("compras-itens").getByRole("button", { name: "Adicionar item" }), "item fora do pedido é outra compra").toHaveCount(0);
+  await expect(linhaA.getByTestId("central-compras-produto"), "produto do pedido, travado").toHaveAttribute("data-travado", "");
+  await expect(linhaA.getByTestId("central-compras-produto").locator("button"), "produto do pedido, sem pesquisa").toHaveCount(0);
+  await expect(linhaA.getByTestId("central-compras-saldo-da-origem")).toHaveText("10,0000");
+  await expect(page.getByTestId("compras-itens").getByRole("button", { name: "Adicionar produto" }), "item fora do pedido é outra compra").toHaveCount(0);
 
   // (3) EM PARTES: a linha B sai; a A recebe 4 de 10, a 21,00 (vale o preço da NOTA), no armazém informado.
-  await linhaB.locator("td").last().locator("button").click();
+  await linhaB.getByTestId("central-compras-selecionar-item").click();
+  await page.getByTestId("compras-itens").getByTestId("central-compras-remover-item").click();
   await expect(linhaB).toHaveCount(0);
-  await escolherNaLinha(page, linhaA.locator("button").nth(0), c.nomeArmazem);
-  const quantidade = linhaA.locator("input[type=number]").nth(0);
+  await escolherNaLinha(page, linhaA.getByTestId("central-compras-armazem"), c.nomeArmazem);
+  const quantidade = linhaA.getByLabel("Quantidade do item 1");
   await expect(quantidade, "com 'Em partes' a quantidade começa no saldo e é editável").toHaveValue(/^10/);
   await quantidade.fill("4");
-  await linhaA.locator("input[type=number]").nth(1).fill("21");
+  await linhaA.getByLabel("Valor unitário do item 1").fill("21");
   const nota = `W1${Date.now().toString(36).toUpperCase()}`;
   await page.getByTestId("compras-numero-nota").fill(nota);
   await page.getByTestId("compras-serie-nota").fill("1");
@@ -117,7 +119,7 @@ test("CP-W1 — pedido → Próximos passos → Central em modo receber (em part
   const entrada = central.getByLabel("Data de entrada", { exact: true });
   await entrada.fill("05/09/2026");
   await entrada.press("Enter");
-  await expect(page.getByTestId("compras-data-entrada"), "a data de entrada vira ISO no formulário").toHaveValue("2026-09-05");
+  await expect(page.getByTestId("compras-data-entrada").locator("input[type=hidden]"), "a data de entrada vira ISO no formulário").toHaveValue("2026-09-05");
   await expect(page.getByTestId("compras-total")).toContainText("84,00");
   await page.getByTestId("compras-salvar").click();
 
@@ -135,18 +137,22 @@ test("CP-W1 — pedido → Próximos passos → Central em modo receber (em part
   // (5) CONFIRMAR COM A PRÉVIA: a compra gerada é uma compra comum.
   await page.getByTestId("compras-confirmar").click();
   await expect(page.getByTestId("compras-previa")).toHaveAttribute("data-situacao", "pronta");
-  await page.getByTestId("compras-confirmar-executar").click();
+  await page.getByTestId("confirm-dialog-confirm").click();
   await expect(corpo).toHaveAttribute("data-situacao", "confirmado");
+  await page.getByRole("tab", { name: /^Estoque/ }).click();
   await expect(page.getByTestId("compras-consulta-movimentos")).toContainText(c.a.nome);
 
   // (6) O PEDIDO MOSTRA RECEBIDO E SALDO — continua aberto (falta 6 de A e todo o B), com a compra gerada na lista.
-  await page.getByTestId("compras-origem").getByRole("link").click();
+  // A Origem mora em "Dados adicionais", recolhido por padrão.
+  await page.getByRole("button", { name: /^Dados adicionais/ }).click();
+  await page.getByTestId("compras-origem").click();
   await expect(page).toHaveURL(new RegExp(`/compras/pedidos/${c.pedido.id}$`));
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "aberto");
   const ordem = (await api<PedidoLido>(page, "GET", `/api/compras/pedidos/${c.pedido.id}`)).itens.map((i) => i.id);
   const esperado = (a: string, b: string) => ordem.map((id) => (id === c.itemA.id ? a : b));
-  await expect(page.getByTestId("compras-item-recebido")).toHaveText(esperado("4,0000", "0,0000"));
-  await expect(page.getByTestId("compras-item-saldo")).toHaveText(esperado("6,0000", "2,0000"));
+  await expect(page.getByTestId("doc-item-faturado")).toHaveText(esperado("4,00", "0,00"));
+  await expect(page.getByTestId("doc-item-saldo")).toHaveText(esperado("6,00", "2,00"));
+  await page.getByRole("tab", { name: /^Compras geradas/ }).click();
   await expect(page.getByTestId("compras-geradas").getByTestId("compras-gerada")).toHaveText([/\S/]);
   await expect(page.getByTestId("compras-encerrar-saldo"), "com compra e saldo, encerrar o saldo passa a valer").toBeVisible();
   await expect(page.getByTestId("compras-proximos-passos"), "com saldo, receber continua oferecido").toBeVisible();

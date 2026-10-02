@@ -1,7 +1,10 @@
 import type { ItemRow, Plan, Row } from "@/features/docs/shared";
+import { copiaValePara as copiaValeParaDoMotor, montarCopia, type CopiaEmMemoria } from "@/features/central/duplicar-memoria";
+import { chaveDaCopiaDeVenda } from "./central-vendas-adaptador";
 
 /**
- * DUPLICAR DOCUMENTO (VISUAL-UX-02, decisão 270, item 4.1) — funções PURAS: nada de React, de rede ou de navegador.
+ * DUPLICAR DOCUMENTO DE VENDA (VISUAL-UX-02, decisão 270, item 4.1; entrega genérica no motor desde VISUAL-UX-04) —
+ * funções PURAS: nada de React, de rede ou de navegador.
  *
  * ┌─ O QUE A CÓPIA LEVA E O QUE ELA NÃO LEVA ──────────────────────────────────────────────────────┐
  * │ Leva, a partir do GET do detalhe (o que o servidor devolveu, nunca o que a tela mostrou): a MESMA │
@@ -13,15 +16,12 @@ import type { ItemRow, Plan, Row } from "@/features/docs/shared";
  * │ volta ao de um lançamento novo, e com condição de pagamento o plano é recalculado por ela.        │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
- * ┌─ COMO ELA VIAJA ───────────────────────────────────────────────────────────────────────────────┐
- * │ Por `lib/entrega-em-memoria.ts`, com dono (organização + usuário): nada na URL (que só leva a    │
- * │ TOP, como qualquer lançamento), nenhuma chave no armazenamento do navegador. A criação a consome │
- * │ UMA vez, ao montar; salvar a cópia é o POST de sempre, com as MESMAS chaves.                     │
- * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ * A viagem (entrega em memória, com dono; nada na URL nem no armazenamento do navegador) e a conferência de que a
+ * cópia vale para a criação aberta são do motor (`@/features/central/duplicar-memoria`). Aqui ficam os campos da venda.
  */
 
-/** A chave (do Map em memória, nunca de storage) da cópia que espera a criação da espécie. */
-export const chaveDaCopia = (segmento: string) => `central-vendas:copia:${segmento}`;
+/** A chave (do Map em memória, nunca de storage) da cópia que espera a criação da espécie: `central-vendas:copia:<seg>`. */
+export const chaveDaCopia = chaveDaCopiaDeVenda;
 
 /** Os campos do cabeçalho do lançamento que a cópia preenche — os mesmos nomes do estado da criação. */
 export interface CabecalhoDaCopia {
@@ -30,15 +30,11 @@ export interface CabecalhoDaCopia {
   categoria_financeira_id: string; centro_custo_id: string; condicao_pagamento_id: string;
 }
 
-export interface CopiaDoDocumento {
-  segmento: string;
-  /** A TOP do original: a criação só consome a cópia quando abre com ELA. */
-  tipoOperacaoId: string;
-  cabecalho: CabecalhoDaCopia;
-  itens: ItemRow[];
-  /** O plano de parcelas sem datas — só quando o original era parcelado SEM condição (com condição, ela recalcula). */
-  plano: Plan | null;
-}
+/**
+ * A cópia de um documento de venda: segmento, a TOP do original (a criação só a consome quando abre com ELA), o
+ * cabeçalho, os itens e o plano de parcelas sem datas (só quando o original era parcelado SEM condição).
+ */
+export type CopiaDoDocumento = CopiaEmMemoria<CabecalhoDaCopia>;
 
 const texto = (v: unknown): string => (v === null || v === undefined ? "" : String(v));
 const ehObjeto = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -94,34 +90,29 @@ export function copiaDoDocumento(d: Row, segmento: string, hoje: string): CopiaD
     if (texto(it["note"])) item["note"] = texto(it["note"]);
     return item;
   });
-  return {
-    segmento,
-    tipoOperacaoId: texto(d["tipo_operacao_id"]),
-    cabecalho: {
-      empresa_id: texto(d["empresa_id"]),
-      client_id: texto(d["client_id"]),
-      transporter_id: texto(d["transporter_id"]),
-      proprietary_id: texto(d["proprietary_id"]),
-      driver_name: texto(d["driver_name"]),
-      payment_method_id: texto(d["payment_method_id"]),
-      freight: texto(d["freight"]) || "0",
-      freight_icms: texto(d["freight_icms"]) || "0",
-      other_values: texto(d["other_values"]) || "0",
-      discount: texto(d["discount"]) || "0",
-      note: texto(d["note"]),
-      // o dedutível mora no plano gravado (a mesma leitura da conversão no servidor)
-      is_deductible: plano["is_deductible"] === true,
-      installments: parcelado !== null,
-      categoria_financeira_id: texto(d["categoria_financeira_id"]),
-      centro_custo_id: texto(d["centro_custo_id"]),
-      condicao_pagamento_id: texto(d["condicao_pagamento_id"])
-    },
-    itens,
-    plano: parcelado
+  const cabecalho: CabecalhoDaCopia = {
+    empresa_id: texto(d["empresa_id"]),
+    client_id: texto(d["client_id"]),
+    transporter_id: texto(d["transporter_id"]),
+    proprietary_id: texto(d["proprietary_id"]),
+    driver_name: texto(d["driver_name"]),
+    payment_method_id: texto(d["payment_method_id"]),
+    freight: texto(d["freight"]) || "0",
+    freight_icms: texto(d["freight_icms"]) || "0",
+    other_values: texto(d["other_values"]) || "0",
+    discount: texto(d["discount"]) || "0",
+    note: texto(d["note"]),
+    // o dedutível mora no plano gravado (a mesma leitura da conversão no servidor)
+    is_deductible: plano["is_deductible"] === true,
+    installments: parcelado !== null,
+    categoria_financeira_id: texto(d["categoria_financeira_id"]),
+    centro_custo_id: texto(d["centro_custo_id"]),
+    condicao_pagamento_id: texto(d["condicao_pagamento_id"])
   };
+  return montarCopia(segmento, texto(d["tipo_operacao_id"]), cabecalho, itens, parcelado);
 }
 
 /** A cópia recebida só vale para a criação da MESMA espécie aberta com a MESMA TOP do original. */
 export function copiaValePara(copia: CopiaDoDocumento | null, segmento: string, tipoOperacaoId: string): copia is CopiaDoDocumento {
-  return Boolean(copia) && copia!.segmento === segmento && copia!.tipoOperacaoId.toLowerCase() === tipoOperacaoId.toLowerCase();
+  return copiaValeParaDoMotor(copia, segmento, tipoOperacaoId);
 }

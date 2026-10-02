@@ -28,7 +28,7 @@ import { descartarEntrega, entregarEmMemoria, espiarEntrega } from "@/lib/entreg
 import { toast } from "@/lib/toast";
 /* TOP-CONFIG-05 exigências: as regras da operação (só com `capacidades.regrasDaOperacao` exata). */
 import { entendeRegrasDaOperacao, useRegrasDaOperacao, useSituacaoCliente } from "@/features/sales/regras-da-operacao";
-import estilosCv from "@/features/sales/central-vendas-workspace.module.css";
+import estilosCv from "@/features/central/moldura.module.css";
 /* TOP-CONFIG-05 atraso — faixa do cliente em atraso (só com `capacidades.regrasDaOperacao` exata). */
 import { ERRO_CLIENTE_EM_ATRASO } from "@agro/domain";
 import { FaixaAtrasoCliente, bloqueiaSalvar } from "@/features/sales/faixa-atraso-cliente";

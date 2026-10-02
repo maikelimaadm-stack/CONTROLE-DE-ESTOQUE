@@ -87,8 +87,17 @@ const linhaDoDocumento = (page: Page, tabela: import("@playwright/test").Locator
  * data no futuro garante que o documento semeado esteja na PRIMEIRA página mesmo num banco que já
  * acumulou centenas de lançamentos de execuções anteriores. Sem isso, a asserção de E14 passaria a
  * depender de paginação — que é exatamente o tipo de premissa que envelhece calada.
+ *
+ * RELATIVA A HOJE (PROCESSO-03): a premissa é "no futuro", e uma data fixa deixa de estar no futuro um dia.
+ * hoje + 456 dias é a MESMA distância de quando ela era fixa (2026-10-01 + 456 = 2027-12-31). Conta na data
+ * LOCAL, a mesma que a Central usa para "hoje"; com 456 dias de folga o fuso não muda o resultado.
  */
-const DATA_DISTANTE = "2027-12-31";
+const hojeMaisDias = (dias: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + dias);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const DATA_DISTANTE = hojeMaisDias(456);
 async function criarDocumento(page: Page, variante: string, top: Top): Promise<{ id: string; code: string }> {
   const empresa = await empresaAtiva(page);
   const cliente = await primeiroId(page, "/api/resources/people?is_client=true&pageSize=1");

@@ -1542,6 +1542,34 @@ grant execute on function erp.situacao_atraso_cliente(uuid, int) to erp_app;
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 
+## VISUAL-UX-04 — Central de Compras no motor da Central (sem migration)
+
+Decisão 276. **Só web**: sem migration, sem rota, sem API, sem variável, sem permissão, sem domínio. O motor da Central
+sai da Central de Vendas para `apps/web/src/features/central/`, e a Central de Compras (`/compras/<espécie>/new` e
+`/compras/<espécie>/<id>`) passa a ser montada sobre ele, com a apresentação da venda. As escritas continuam as portas
+de hoje, com os mesmos corpos: `POST /api/compras/<seg>`, `/convert`, `/confirm`, `/cancel` e `/encerrar-saldo`. O shell
+passa a tratar `/compras/<espécie>/new` e `/compras/<espécie>/<id>` como rotas imersivas, como as de venda.
+
+**Impacto em dados reais:** nenhum. A Central de Compras passa a oferecer Duplicar (abre um rascunho) e Cancelar com
+motivo; a Central de Vendas não muda.
+
+**Version skew:** web nova contra a API da base — as mesmas portas e os mesmos corpos (o cancelamento com motivo usa a
+chave `motivo` que a API já aceita; vazio, o corpo sai sem ela, como hoje); web anterior contra a API nova — nada muda
+na API.
+
+**Reversão:** reverter a PR (redeploy do web anterior). Nada a desfazer em banco ou configuração: a cópia do Duplicar,
+o "Salvo", a posição do rótulo e o Ampliar vivem só na memória da tela.
+
+**Roteiro do Maike (produção):** 1. Compras › + Novo › Compra › uma TOP: a Central abre com a barra da venda (Descartar,
+Salvar, Confirmar compra) e os Dados principais com a TOP travada. 2. Escolher só o fornecedor e Salvar sem item: nada é gravado e
+a pílula vermelha "N pendências" lista o que falta; o clique leva ao campo. 3. Preencher e Salvar: a compra salva abre
+com "Salvo". 4. Na consulta: Duplicar abre um rascunho da mesma TOP sem número de nota, série, lote nem validade;
+Descartar volta ao começo sem gravar. 5. Ações rápidas › Cancelar compra… com um motivo: a compra fica Cancelada (o motivo
+vai no corpo do cancelamento). 6. Um Pedido de compra: "Receber…" abre a Central em modo receber com o saldo; a Central de
+Vendas continua igual.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
 ## VISUAL-UX-03 — Configuração de layout igual ao desenho
 
 Decisão 275. **Só web**: sem migration, sem rota, sem API, sem variável, sem permissão, sem domínio. A página
@@ -1751,12 +1779,12 @@ com a mesma `CONFLICT`, porque o gatilho dispara também nas tabelas alcançadas
 repositório faz TRUNCATE; o reset dos testes derruba o schema); desligar as guardas ou a conta só com uma migration
 NOVA, por decisão do Maike — nunca editando a 0041. Nada de apagar dado de produção: documento se cancela, com estorno.
 
-**Merge depois de #86 e de #87:** PR de número maior não entra antes da menor. A #84 (decisão 275) já está na main e foi
-trazida para esta branch. A #87 (Central de Compras, F2) só mexe em `apps/web`, e esta fatia não edita nenhum arquivo
-dela: os E2E daqui (W-3, W-4) só leem os `data-testid` `central-vendas-*`, que o motor da Central mantém pelo prefixo, e
-rodam de novo depois de trazer a main com ela. A #86 (F3) só mexe num teste de outra fatia e na linha dela no TESTING.
-Nenhuma das duas tem migration: nesta branch a contagem de migrations é 41 (a 0041 por último), e continua 41 depois de
-trazer a main com elas — quem entra depois roda os geradores e refaz a contagem.
+**Merge depois de #86 e de #87 — as duas já estão na main e foram trazidas para esta branch (merge, sem rebase):** a
+#84 (decisão 275), a #86 (F3, só um teste de outra fatia e a linha dela no TESTING) e a #87 (decisão 276, Central de
+Compras no motor da Central, F2, só `apps/web` e documentos) entraram antes. Esta fatia não edita nenhum arquivo delas;
+os E2E daqui (W-3, W-4) só leem os `data-testid` `central-vendas-*`, que o motor da Central mantém pelo prefixo, e foram
+rodados de novo depois de trazer a main. Nenhuma das três tem migration: a contagem de migrations continua 41 (a 0041
+por último), e os gerados foram refeitos depois do merge.
 
 **Roteiro do Maike (cria TOPs e documentos reais; produção é operacional — decisões 240 e 247, nada é apagado):**
 1. Configurações › Usuários e Permissões › Perfis e Permissões: dar "Aprovar" (Vendas, Compras e as quatro espécies de

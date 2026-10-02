@@ -4,7 +4,7 @@ import { EmptyState } from "@/components/ui";
 import { ConsultaDeCompra } from "@/features/compras/consulta-compra";
 import { varianteDeCompraPorSegmento } from "@/features/compras/variantes";
 
-/** Consulta do documento de compra (COMPRAS-01): `/compras/<segmento>/<id>`, só leitura. */
+/** Consulta do documento de compra (COMPRAS-01; na Central sobre o motor, VISUAL-UX-04): `/compras/<segmento>/<id>`. */
 export default function Page({ params }: { params: Promise<{ especie: string; id: string }> }) {
   const { especie, id } = use(params);
   const variante = varianteDeCompraPorSegmento(especie);
