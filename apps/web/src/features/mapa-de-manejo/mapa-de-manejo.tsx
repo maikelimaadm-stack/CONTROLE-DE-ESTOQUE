@@ -141,6 +141,9 @@ export function MapaDeManejo() {
   });
   const areas = React.useMemo(() => listaQuery.data?.items ?? [], [listaQuery.data]);
   React.useEffect(() => { areasRef.current = areas; }, [areas]);
+  React.useEffect(() => {
+    (window as unknown as { __mapaAreasE2E?: AreaApi[] }).__mapaAreasE2E = areas;
+  }, [areas]);
   React.useEffect(() => { formAbertoRef.current = rascunho !== null; }, [rascunho]);
 
   // ---------- projeção ----------
@@ -465,12 +468,15 @@ export function MapaDeManejo() {
           // Cursor livre (sem ímã): fica onde o mouse deixou — não some só porque a vista redesenhou.
           flushSync(() => redesenhar());
         });
+        // Gancho só para e2e: projetar vértices reais da área vizinha no ímã.
+        (window as unknown as { __mapaManejoE2E?: MapLibreMap }).__mapaManejoE2E = m;
         setMapaPronto(true);
       });
     })();
     return () => {
       cancelado = true;
       soltarArrastoRef.current?.();
+      delete (window as unknown as { __mapaManejoE2E?: MapLibreMap }).__mapaManejoE2E;
       mapaCleanup?.remove(); mapRef.current = null;
     };
   }, []);

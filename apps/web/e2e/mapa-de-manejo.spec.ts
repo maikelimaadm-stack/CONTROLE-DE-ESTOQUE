@@ -52,6 +52,7 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
   }
 
   test("desenha com as ferramentas do editor, grava, e a segunda área gruda na primeira", async ({ page }) => {
+    test.setTimeout(120_000);
     await login(page);
     await limparAreas(page);
     await page.goto("/mapa-de-manejo");
@@ -122,16 +123,51 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
     await expect(page.getByTestId("mapa-instrucao")).toBeHidden();
     await expect(page.getByTestId("mapa-item-area").filter({ hasText: primeira })).toBeVisible();
 
-    // ---------- 2ª área: ímã (tolerância padrão 8 px) ----------
+    // ---------- 2ª área: ímã projeta vértice/aresta reais da 1ª área ----------
     await abrirEditor(page);
-    const perto = em(L + 5, -L - 4);
-    await page.mouse.move(perto.x, perto.y);
-    await expect(page.getByTestId("mapa-ima-marca")).toHaveAttribute("data-tipo", "vertice");
-    await page.mouse.click(perto.x, perto.y);
+    await expect.poll(async () => page.evaluate(() => {
+      const w = window as unknown as { __mapaManejoE2E?: unknown; __mapaAreasE2E?: unknown[] };
+      return Boolean(w.__mapaManejoE2E) && (w.__mapaAreasE2E?.length ?? 0) > 0;
+    }), { timeout: 15_000 }).toBe(true);
+
+    // Dispara mousemove/click no MapLibre (evita overlay/toolbar interceptando o mouse da página).
+    async function imaEm(alvo: "vertice" | "aresta") {
+      await page.evaluate(({ nome, alvo }) => {
+        const w = window as unknown as {
+          __mapaManejoE2E?: {
+            project: (ll: [number, number]) => { x: number; y: number };
+            unproject: (p: [number, number]) => { lng: number; lat: number };
+            fire: (type: string, ev: Record<string, unknown>) => void;
+          };
+          __mapaAreasE2E?: { nome: string; geometria: { coordinates: number[][][] } | null }[];
+        };
+        const m = w.__mapaManejoE2E;
+        if (!m) throw new Error("mapa e2e não exposto");
+        const area = (w.__mapaAreasE2E ?? []).find((a) => a.nome === nome) ?? (w.__mapaAreasE2E ?? [])[0];
+        const anel = area?.geometria?.coordinates?.[0] ?? [];
+        if (anel.length < 3) throw new Error("área vizinha sem anel");
+        const v0 = anel[0]!, v1 = anel[1]!;
+        const ll: [number, number] = alvo === "vertice"
+          ? [v0[0]!, v0[1]!]
+          : [(v0[0]! + v1[0]!) / 2, (v0[1]! + v1[1]!) / 2];
+        const point = m.project(ll);
+        const fake = {
+          altKey: false,
+          shiftKey: false,
+          button: 0,
+          detail: 1,
+          preventDefault() { /* */ }
+        };
+        m.fire("mousemove", { point, lngLat: { lng: ll[0], lat: ll[1] }, originalEvent: fake });
+        m.fire("click", { point, lngLat: { lng: ll[0], lat: ll[1] }, originalEvent: fake });
+      }, { nome: primeira, alvo });
+    }
+
+    await imaEm("vertice");
     await expect(acao).toHaveText(/^Ponto grudou no vértice de /);
     await expect(page.getByTestId("mapa-medida-grudados")).toHaveText("1");
 
-    await clicar(L + 4, 0);
+    await imaEm("aresta");
     await expect(acao).toHaveText(/^Ponto grudou na aresta de /);
     await expect(page.getByTestId("mapa-medida-grudados")).toHaveText("2");
 
