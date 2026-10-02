@@ -1557,6 +1557,86 @@ ordem de deploy, compatibilidade nos dois sentidos do skew, impacto em dados rea
 produção (PENDING). As migrations da fatia são numeradas na ordem em que entram na branch (0042 a 0048, travas
 (2026,76) a (2026,82)).
 
+### F2 — as Centrais de Vendas e de Compras usam as regras gerais da TOP (OPERACOES-01, sem migration)
+
+Decisão 279. **Sem migration, sem variável, sem permissão nova, sem capacidade nova.** Duas rotas novas, só de
+LEITURA, em prefixo próprio: `GET /api/aprovacoes/vendas/:id` (`sales.view`) e `GET /api/aprovacoes/compras/:id`
+(`compras.view`) — a situação da aprovação de UM documento. Uma chave nova, aditiva e por último, em
+`GET /api/sales/<seg>/regras-da-operacao`, `GET /api/compras/<seg>/regras-da-operacao` e no `regras` de
+`GET /api/sales/<seg>/:id/edicao`: `regrasGerais: { confirmacaoAutomatica, aceitaSemItens }`. Os corpos de entrada e
+as respostas do POST, do PUT/PATCH e do `/convert` não mudam. Na tela: "Salvar e confirmar" com a TOP de Confirmação
+Automática, o aviso do Salvar pelo resultado da confirmação, a venda e a compra sem itens quando a TOP permite, e o
+bloco "Aprovação" na consulta da venda e da compra abertas.
+
+**Migration:** nenhuma. Nada a aplicar no banco. As tabelas lidas (`erp.aprovacoes_venda`, `erp.aprovacoes_compra`,
+0041) já estão em produção.
+
+**Ordem do deploy:** esta fase não impõe ordem entre API e web — os dois sentidos do skew estão provados (abaixo). Duas
+condições da PR #90:
+- a F4 (decisão 281) vai no MESMO deploy: a ajuda nova da Geral do editor fala do documento sem itens nas Centrais de
+  Vendas e de Compras, e isso só é verdade com esta fase;
+- a ordem do deploy da PR é a das fases com migration (F5 a F10), nas seções delas.
+
+**Impacto em dados reais:** NENHUM. Nada é gravado, reescrito nem apagado; sem backfill. As rotas novas só leem.
+- As 3 TOPs de produção (leitura de 02/10) são de pedido de compra (formato 3, com Automática e Permitido declarados),
+  orçamento e pedido de venda (formato 2). São variantes que nunca executam regra geral: `regrasGerais` sai
+  `{ "confirmacaoAutomatica": false, "aceitaSemItens": false }`, e as Centrais continuam com "Salvar" e pedindo item.
+- O bloco "Aprovação" só é montado na consulta da VENDA e da COMPRA. Produção não tem nenhuma das duas (só 1 orçamento
+  convertido e 1 pedido de venda aberto); nenhuma consulta de lá faz o GET novo.
+- O efeito novo só aparece quando o Maike gravar uma TOP de VENDA ou de COMPRA com Confirmação Automática, Documento sem
+  itens Permitido ou aprovação — efeito que o servidor já executa desde a decisão 277. Ligar é decisão dele, TOP por TOP
+  (decisão 281; item 4 da 240).
+
+**Version skew** (base `622f194`; os specs entram nos configs de skew pelo nome e ficam fora da suíte comum):
+- **Sentido 1 — web novo × API da base** (janela "web antes da API" e reversão só da API): sem `regrasGerais`, o web
+  novo é a Central de hoje — "Salvar" exato com a TOP Automática; "Adicione ao menos um item." / "Inclua ao menos um
+  item." com ZERO POST mesmo com a TOP que permitiria. O aviso do Salvar lê o `confirmacaoAutomatica` que a base JÁ
+  devolve: com a TOP Automática a base confirma, e o aviso é "Salvo e confirmado." — a afirmação verdadeira. Na
+  consulta, a pergunta da situação recebe o 404 "Rota não encontrada" (resposta, não falha de rede), o bloco não
+  aparece, e a prévia do Confirmar explica a aprovação pendente como hoje. Nenhuma requisição morre no navegador.
+  `operacoes-01-f2-skew-api-producao.spec.ts` (K-1a vendas, K-1b compras, K-1c consulta). O mundo é perguntado à base
+  na hora, pelas duas portas da F2, que têm de concordar: o bloco em `/regras-da-operacao` e a resposta ao id
+  inexistente em `/api/aprovacoes/<área>/<id>` (404 de rota = legado; 404 do documento = novo). Uma sem a outra
+  reprova. O `skew-api-producao.spec.ts` compartilhado passa inteiro (34 casos) com o web desta fase.
+- **Sentido 2 — web da base × API nova** (janela "API antes do web" e reversão só do web): a API manda a chave a mais,
+  que o web da base ignora. O POST sai com as chaves de hoje e recebe 201 com a confirmação. A rota nova não é chamada.
+  DECLARADO, como já é hoje com a base: o web da base diz "Salvo com sucesso" depois do POST que confirmou (ele não lê
+  `confirmacaoAutomatica`), a consulta mostra o documento confirmado, e com a TOP Permitido ele ainda pede item (a API
+  aceitaria). Nenhum 404, 422 ou 5xx no navegador. `operacoes-01-f2-skew-web-anterior.spec.ts` (K-2a vendas, K-2b
+  compras). O mundo sai do fonte do web da base: `git grep -c -F "Salvar e confirmar" HEAD -- apps/web/src` → 0 em
+  `622f194`.
+- Os ramos "mundo novo" dos dois specs ("Salvar e confirmar", sem itens salva, bloco pendente) só rodam quando a base
+  tiver esta fase.
+
+**Reversão:** API e web voltam por redeploy da versão anterior; nada a desfazer em banco ou configuração.
+- Reverter só a API = sentido 1: o rótulo e a pendência de hoje, o bloco da aprovação some, e o aviso continua lendo a
+  resposta.
+- Reverter só o web = sentido 2: a Central de hoje ("Salvar", item exigido, "Salvo com sucesso").
+- TOP gravada no formato 5 segue a reversão da F4 (§ F4).
+
+**Roteiro do Maike em produção (depois do deploy; produção é operacional — decisões 240 e 247; só leitura, nada é
+gravado):**
+1. Vendas › Novo › a TOP de pedido de venda que já existe:
+   - o botão Salvar tem a dica "Salvar" (não "Salvar e confirmar");
+   - clicar Salvar sem item → a pendência "Adicione ao menos um item." e nada é enviado;
+   - no DevTools › Rede, a resposta de `…/api/sales/orders/regras-da-operacao?tipo_operacao_id=…` termina em
+     `"regrasGerais":{"confirmacaoAutomatica":false,"aceitaSemItens":false}` (prova de que a API nova está no ar).
+   Descartar.
+2. Compras › Novo › a TOP de pedido de compra que já existe:
+   - "Salvar"; sem item → "Inclua ao menos um item." e nada é enviado;
+   - a resposta de `…/api/compras/pedidos/regras-da-operacao?tipo_operacao_id=…` termina no mesmo `regrasGerais` neutro
+     (a TOP é formato 3 com Automática e Permitido declarados: o corte da 277, e o pedido nunca executa).
+   Descartar.
+3. Abrir o pedido de venda aberto: nenhum bloco "Aprovação", e a Rede não mostra pedido a `/api/aprovacoes/vendas/…`
+   (só a consulta da venda pergunta). A pílula da conversão e o resto da consulta, como antes.
+4. Aprovações: a fila abre como antes ("Nenhum documento aguardando aprovação.").
+
+A prova com gravação ("Salvar e confirmar" → "Salvo e confirmado.") NÃO faz parte deste roteiro: ela grava um documento
+confirmado, com estoque e financeiro, em produção. Ela acontece quando o Maike decidir ligar a Confirmação Automática
+numa TOP de venda ou de compra real, e o primeiro Salvar dela é a prova.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
 ### F3a — Local de estoque, pesquisa de pessoas e importação com o nome antigo (OPERACOES-01, sem migration)
 
 Decisão 280 (parte F3a). **Sem migration, sem variável, sem permissão nova, sem capacidade nova, sem rota nova.**
@@ -1717,9 +1797,9 @@ leitura (nada é gravado). O passo 5 grava, e só com a decisão dele.
    - na Geral, só "Exigir observação".
    "Trocar" → Venda:
    - as abas Identificação, Geral, Próximas operações, Estoque, Financeiro, Fiscal, Aprovação e Execução;
-   - na Geral, "Exigir cliente", e a ajuda termina em "Documento sem itens: quando esta operação permite, as Centrais
-     de Vendas, de Compras e de Estoque aceitam o documento sem item. As exigências de preenchimento são cobradas no
-     lançamento.".
+   - na Geral, "Exigir cliente", e a ajuda termina em "Documento sem itens: quando esta operação permite, a venda e a
+     compra podem ser salvas sem item nas Centrais de Vendas e de Compras (o recebimento de um pedido sempre pede
+     item). As exigências de preenchimento são cobradas no lançamento.".
    Fechar sem salvar.
 3. Abrir a TOP de pedido de compra:
    - as abas Identificação, Geral, Próximas operações, Estoque, Financeiro e Fiscal, sem Aprovação e sem Execução;
@@ -2266,7 +2346,8 @@ confirmação automática, os itens vazios que a TOP permite — e, junto, a aju
 diz "nas Centrais de Vendas e de Compras o lançamento ainda pede ao menos um item", com os dois E2E que a conferem letra
 por letra (W-1 e K-1) (desde a OPERACOES-01 F4, decisão 281, o editor do formato 5 diz o texto novo, e o do formato 4,
 que só roda contra a API anterior, mantém este) — e a situação da aprovação e o Aprovar/Reprovar na consulta ficam para essa fatia. O servidor é
-a regra: a aprovação se dá em Aprovações.
+a regra: a aprovação se dá em Aprovações. Feito na OPERACOES-01 F2 (decisão 279), § OPERACOES-01 › F2; a ajuda da
+Geral é da F4 (decisão 281).
 
 **Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0041 fica e convive com a API
 anterior (janela 1). Código: o binário anterior não confirma venda nem compra com TOP formato 4 — 409 "configuração
@@ -2318,7 +2399,8 @@ rodarem sem o conserto do vigia); depois de trazer a main, o CI roda de novo no 
    diálogo de confirmação sobre a compra já confirmada (a prévia recusa com "Compra já confirmada"; nada é duplicado).
 4. Salvar um documento com a TOP Automática, sem aprovação → ele volta confirmado (estoque e financeiro como na
    confirmação manual; a Central de Estoque avisa "Salvo e confirmado.", e as de Vendas e de Compras, o "Salvo com
-   sucesso" de hoje, com a consulta em Confirmado). Com aprovação → fica aberto e aparece em Aprovações (aba Vendas,
+   sucesso" de hoje, com a consulta em Confirmado) (desde a OPERACOES-01 F2, decisão 279, as três avisam "Salvo e
+   confirmado."). Com aprovação → fica aberto e aparece em Aprovações (aba Vendas,
    Compras ou Estoque; com a TOP Automática, a Central de Estoque avisa "Salvo. Este documento precisa de aprovação
    antes de ser confirmado."); Aprovar → com a TOP Automática, confirma no mesmo clique ("Aprovado e confirmado."); com
    a Manual, "Aprovado." e o Confirmar da consulta passa.

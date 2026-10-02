@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { seedDemo } from "@agro/db";
-import type { ConfiguracaoTipoOperacaoV3, ConfiguracaoTipoOperacaoV4 } from "@agro/domain";
+import { configuracaoNeutraTopV5, type ConfiguracaoTipoOperacaoV3, type ConfiguracaoTipoOperacaoV4, type ConfiguracaoTipoOperacaoV5 } from "@agro/domain";
 import {
   c, iniciar, encerrar, j, erro, unico, cfg3, cfg4, top, usuario, escopos, produto, produtoComSaldo, DATA,
   itemVenda, corpoVenda, vendaLancada, patchVenda, confirmarVenda, lerVenda, versaoDaVenda, versaoAtualNoBanco,
@@ -31,6 +31,8 @@ import {
  *   · SA-7 compras: o espelho de SA-1, SA-3, SA-4 e SA-5 (pedido de compra, escopo, 403);
  *   · SA-8 só leitura (nada gravado: decisões, trilha e versão do documento iguais) e número FIXO de consultas (venda
  *          de 1 e de 5 itens; a TOP não é lida no documento que não está aberto).
+ *   · SA-9 FORMATO 5 (OPERACOES-01 F4, decisão 281 — o que o editor grava desde a F4): a mesma conta — "Sempre" →
+ *          pendente na venda e na compra, a venda aprovada → aprovado; o 5 sem aprovação → nao_exigida.
  *
  * O QUE CONTA COMO PROVA (o molde do ajudante): a situação é conferida contra o que o BANCO guarda (as decisões em
  * `erp.aprovacoes_*`, a situação e a versão do documento, lidas por conexão de superusuário) e contra o que a
@@ -63,7 +65,13 @@ const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 // ─────────────── configurações das TOPs ───────────────
 
-type Cfg = ConfiguracaoTipoOperacaoV3 | ConfiguracaoTipoOperacaoV4;
+type Cfg = ConfiguracaoTipoOperacaoV3 | ConfiguracaoTipoOperacaoV4 | ConfiguracaoTipoOperacaoV5;
+/** O neutro do FORMATO 5 do domínio (um dono só), com o ajuste do caso. Cada chamada devolve um objeto novo. */
+function cfg5(ajuste: (x: ConfiguracaoTipoOperacaoV5) => void = () => {}): ConfiguracaoTipoOperacaoV5 {
+  const x = configuracaoNeutraTopV5();
+  ajuste(x);
+  return x;
+}
 const sempre = (x: Cfg) => { x.aprovacao.politica = "sempre"; x.aprovacao.valorMinimo = null; };
 const porValor = (valorMinimo: string) => (x: Cfg) => { x.aprovacao.politica = "por_valor"; x.aprovacao.valorMinimo = valorMinimo; };
 const topVendaSempre = () => top("vendas.venda", { configuracao: cfg4(sempre) });
@@ -539,5 +547,29 @@ describe("SA-8 — só leitura, com número FIXO de consultas", () => {
     const cx = await consultasDaSituacao(um);
     expect(cx).toMatchObject({ situacao: "nao_aberto", documento: 1, versaoTop: 0, vigente: 0, ultima: 1 });
     expect(cx.todas, "duas consultas a menos que a aberta").toBe(c1.todas - 2);
+  });
+});
+
+// ─────────────── SA-9 ───────────────
+
+describe("SA-9 — formato 5 (F4, decisão 281): a mesma conta da confirmação", () => {
+  it("SA-9 venda e compra com a TOP no formato 5 'Sempre' → 'pendente' (a confirmação diz o mesmo); a venda aprovada → 'aprovado'; o 5 sem aprovação → 'nao_exigida'", async () => {
+    const t5 = await top("vendas.venda", { configuracao: cfg5(sempre) });
+    expect((await versaoAtualNoBanco(t5)).configuracao_schema_version, "premissa: a versão da venda está no formato 5").toBe(5);
+    const id = await venda(t5);
+    expect(await situacao("vendas", id)).toEqual({ situacao: "pendente", ultimaDecisao: null });
+    expect(erro(await confirmarVenda(id)).code, "premissa: a confirmação diz o mesmo — pendente").toBe("APROVACAO_PENDENTE");
+    const em = decididoEm(await aprovar("vendas", id, { version: await versaoVista(id) }));
+    expect(await situacao("vendas", id)).toEqual({ situacao: "aprovado", ultimaDecisao: { decisao: "aprovado", observacao: null, decididoPor: await admin(), decididoEm: em } });
+
+    const tc5 = await top("compras.compra", { configuracao: cfg5(sempre) });
+    expect((await versaoAtualNoBanco(tc5)).configuracao_schema_version, "premissa: a versão da compra está no formato 5").toBe(5);
+    const cid = await compra(tc5);
+    expect(await situacao("compras", cid)).toEqual({ situacao: "pendente", ultimaDecisao: null });
+    expect(erro(await confirmarCompra(cid)).code, "premissa: a confirmação da compra diz o mesmo").toBe("APROVACAO_PENDENTE");
+
+    const n5 = await top("vendas.venda", { configuracao: cfg5() });
+    expect((await versaoAtualNoBanco(n5)).configuracao_schema_version, "premissa: formato 5, sem aprovação").toBe(5);
+    expect(await situacao("vendas", await venda(n5))).toEqual({ situacao: "nao_exigida", ultimaDecisao: null });
   });
 });

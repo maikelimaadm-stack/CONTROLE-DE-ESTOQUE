@@ -42,11 +42,12 @@ import {
  */
 const TEXTOS = {
   /**
-   * A ajuda da Geral do EDITOR DO 5 (decisão 281; item 4 do coordenador da F4): quando a TOP permite, as Centrais de
-   * Vendas, de Compras e de Estoque aceitam o documento sem item. Só a frase do documento sem itens mudou.
+   * A ajuda da Geral do EDITOR DO 5 (decisão 281; item 4 do coordenador da F4): quando a TOP permite, a venda e a
+   * compra podem ser salvas sem item nas Centrais de Vendas e de Compras (o recebimento de um pedido sempre pede item;
+   * a F2, decisão 279), e o motivo da recusa aparece também ao salvar. Só essas duas frases mudaram.
    */
   ajudaGeral:
-    "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: quando esta operação permite, as Centrais de Vendas, de Compras e de Estoque aceitam o documento sem item. As exigências de preenchimento são cobradas no lançamento.",
+    "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao salvar e ao confirmar. Documento sem itens: quando esta operação permite, a venda e a compra podem ser salvas sem item nas Centrais de Vendas e de Compras (o recebimento de um pedido sempre pede item). As exigências de preenchimento são cobradas no lançamento.",
   /** O trecho que só a ajuda ANTIGA (a do editor do 4) tem: PROIBIDO na tela do editor do 5. */
   ajudaGeralAntiga: "o lançamento ainda pede ao menos um item",
   ajudaAprovacao:

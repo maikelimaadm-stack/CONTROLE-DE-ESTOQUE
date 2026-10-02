@@ -127,7 +127,92 @@ nomes são fixados pelo coordenador. A sugestão do plano da F4, não normativa:
 
 ## 3. Centrais e modos de produto
 
-A preencher pelas F2, F3, F5 e F10 (decisões 279, 280, 282 e 287).
+A preencher pelas F3 (F3b), F5 e F10 (decisões 280, 282 e 287).
+
+### F2 — as Centrais de Vendas e de Compras usam as regras gerais da TOP (decisão 279) · IMPLEMENTADO
+
+> Sem migration, sem permissão nova, sem capacidade nova. Duas rotas novas de leitura em prefixo próprio e uma chave
+> nova, aditiva, em `/regras-da-operacao`. Os corpos de entrada e as respostas do POST, do PUT/PATCH e do `/convert`
+> não mudam. A Central de Estoque só troca o dono do aviso do Salvar (a F5 a leva ao resto).
+
+**`regrasGerais` nas regras da operação.** `GET /api/sales/<seg>/regras-da-operacao` (`<seg>` ∈ budgets, orders,
+sales) e `GET /api/compras/<seg>/regras-da-operacao` (pedidos, compras): a resposta de antes, chave por chave, mais
+`regrasGerais: { confirmacaoAutomatica: boolean, aceitaSemItens: boolean }` como ÚLTIMA chave.
+- Valor: da versão ATUAL da TOP (a que o POST vai congelar), pela MESMA função da gravação (`regrasGeraisDaVersaoTop`):
+  `confirmacaoAutomatica` ⇔ o 201 do POST traz `confirmacaoAutomatica`; `aceitaSemItens` ⇔ `items: []`/`itens: []`
+  dá 201 (senão, a 422 de hoje). Formato 1 a 3, ilegível ou sem versão → `{ false, false }`; o formato 5 vale como o 4.
+- Variante: só a venda e só a compra executam regra geral. Orçamento, pedido de venda e pedido de compra respondem
+  sempre `{ false, false }`, qualquer que seja a versão (a mesma condição do POST).
+- `GET /api/sales/<seg>/:id/edicao` leva o mesmo bloco dentro de `regras`, pela versão CONGELADA do documento (a que a
+  PATCH executa); documento sem TOP → neutro.
+- Permissão, porta, query e a 404 "Tipo de operação" de antes. Nenhuma consulta a mais.
+- A presença do campo é a declaração (o molde de `reservaEstoque` e `exigeArmazem`, na mesma rota): ausente, ou fora da
+  forma, a Central é a de antes.
+
+**A situação da aprovação de UM documento.**
+
+| Rota | Capacidade | Documento | 404 (a MESMA do GET por id, corpo idêntico) |
+|---|---|---|---|
+| `GET /api/aprovacoes/vendas/:id` | `sales.view` | a venda (`kind = 'sale'`) | id fora da forma, inexistente, de outra organização, fora do escopo de empresa do módulo vendas, excluída, orçamento ou pedido |
+| `GET /api/aprovacoes/compras/:id` | `compras.view` | a compra (`especie = 'compra'`) | id fora da forma, inexistente, de outra organização, fora do escopo do módulo compras, pedido de compra |
+
+- Ordem das recusas: 403 sem a capacidade (antes de qualquer leitura) → 422 `VALIDATION_ERROR` em QUALQUER parâmetro
+  de consulta ("Parâmetro não reconhecido na situação da aprovação"; repetido: "Parâmetro repetido: informe um valor
+  só"; `details` com o parâmetro) → 404.
+- Resposta 200, exatamente duas chaves:
+  `{ situacao: "nao_aberto" | "nao_exigida" | "pendente" | "aprovado" | "reprovado", ultimaDecisao: { decisao: "aprovado" | "reprovado", observacao: string | null, decididoPor: { id, nome }, decididoEm: <ISO> } | null }`.
+  - `nao_aberto`: o documento não está aberto (venda fora de `open`/`approved` — o `approved` da 0005 é aberto; compra
+    fora de "aberto"). A TOP não é lida.
+  - Aberto: a MESMA conta da confirmação e das decisões (versão CONGELADA da TOP, valor ATUAL, decisão vigente da versão
+    da venda; na compra, a última) → `nao_exigida`, `pendente`, `aprovado` ou `reprovado`.
+  - `ultimaDecisao`: a última decisão do documento, de QUALQUER versão, também no `nao_aberto`; `observacao` é o
+    motivo na reprovação. `null` sem decisão.
+- Só leitura (nada gravado, sem idempotência, sem auditoria), número fixo de consultas, nenhuma por item.
+- A fila (`GET /api/aprovacoes/<área>`) e as decisões (`POST …/:id/aprovar|reprovar`) não mudam e continuam em
+  `.approve`.
+
+**Na tela** (o motor da Central, regra da 276):
+- **O Salvar.** "Salvar e confirmar" (rótulo e dica; testids `central-vendas-salvar` e `compras-salvar`, os de antes)
+  quando o servidor declarou `confirmacaoAutomatica` E quem salva pode confirmar o documento (`sales.edit` /
+  `compras.edit`, pelo `can()`, que só muda a apresentação). No resto, "Salvar". Vale na criação da venda e da compra
+  e no receber do pedido (a TOP da compra gerada). A pílula "Confirmar venda"/"Confirmar compra" da criação continua.
+- **O aviso do Salvar** sai da RESPOSTA (`confirmacaoAutomatica`), um por Salvar, nas Centrais de Vendas, de Compras
+  (lançar e receber) e de Estoque.
+- **Sem itens.** Com `aceitaSemItens`, a pendência "Adicione ao menos um item." (venda) / "Inclua ao menos um item."
+  (compra) deixa de valer e o POST sai com a lista vazia. Nunca no receber do pedido. Produto vazio numa linha que
+  existe continua pendência.
+- **A aprovação na consulta.** Na venda e na compra ABERTAS, o bloco "Aprovação" pergunta a situação e só aparece em
+  `pendente`, `aprovado` ou `reprovado`; em `nao_exigida`, `nao_aberto`, carregando, com erro (o 404 de rota da API
+  anterior inclusive) ou com resposta fora da forma, nada. Aprovar e Reprovar só para quem tem `<recurso>.approve`, só
+  em `pendente` e `reprovado`, pelas rotas e pelo diálogo da fila. A venda manda a `version` do documento que a tela
+  mostra. Depois de decidir, a consulta inteira é lida de novo (a aprovação pode ter confirmado o documento).
+- **O Confirmar** só abre em documento aberto e para quem pode confirmar — na pílula da consulta e na chegada da
+  criação, nas duas Centrais. "Aguardando aprovação" é aberto: o diálogo abre e a prévia explica a recusa.
+
+**Textos (exatos).**
+
+| Onde | Testid | Texto |
+|---|---|---|
+| Salvar | `central-vendas-salvar` / `compras-salvar` | "Salvar" · "Salvar e confirmar" |
+| Aviso do Salvar | — | "Salvo com sucesso" (sem a chave) · "Salvo e confirmado." · "Salvo. Este documento precisa de aprovação antes de ser confirmado." · "Salvo, mas não confirmado: você não tem permissão para confirmar este documento." · "Salvo, mas não confirmado: <mensagem do servidor>." (um ponto final só) |
+| Bloco | `central-vendas-aprovacao` / `central-compras-aprovacao` (`data-situacao`) | "Aprovação" |
+| Selo | `<prefixo>-aprovacao-situacao` | "Aguardando aprovação" · "Aprovado" · "Reprovado" (o vocabulário de situação) |
+| Última decisão | `<prefixo>-aprovacao-decisao` | "Última decisão: Aprovado por <nome> em <data e hora>." [+ " Observação: <texto>"] · "Última decisão: Reprovado por <nome> em <data e hora>. Motivo: <motivo>" |
+| Botões | `<prefixo>-aprovar` / `<prefixo>-reprovar` | "Aprovar" · "Reprovar" |
+| Diálogo (o da fila) | `aprovacao-dialogo`, `aprovacao-observacao`, `aprovacao-motivo`, `aprovacao-confirmar` | "Aprovar o documento <código>?" · "Reprovar o documento <código>?" |
+| Aviso da decisão | — | "Aprovado." · "Aprovado e confirmado." · "Aprovado. A confirmação automática não aconteceu: <mensagem>." · "O documento mudou depois que foi aberto. Ele foi carregado de novo; confira antes de aprovar." · "As aprovações ainda não estão disponíveis neste servidor." |
+
+**Compatibilidade** (base `622f194`):
+
+| Combinação | Comportamento |
+|---|---|
+| web novo × API anterior | sem `regrasGerais`: "Salvar" e a pendência de item, como antes; o aviso lê o `confirmacaoAutomatica` que a base já devolve; a situação responde o 404 de rota e o bloco não aparece |
+| web anterior × API nova | a chave a mais é ignorada; corpos e respostas de antes; a rota nova não é chamada; o web anterior diz "Salvo com sucesso" e pede item, como já diz hoje |
+
+**Fora (F2):** a ajuda da Geral do editor (F4, decisão 281); "Salvar e confirmar", sem itens e a aprovação na Central de
+Estoque (F5; a matriz do estoque só aceita "Proibido"); a aprovação do pedido de compra (F6); a tela de edição da venda
+salva; o aviso da conversão pedido → venda ("Operação concluída") e do faturar em partes; alterar documento depois de
+confirmado e notificação para quem aprova (fora da PR).
 
 ### F3a — o nome "Local de estoque", a pesquisa do seletor e a importação com o nome antigo (decisão 280) · IMPLEMENTADO
 

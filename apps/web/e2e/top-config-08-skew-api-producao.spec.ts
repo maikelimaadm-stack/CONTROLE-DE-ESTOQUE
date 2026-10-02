@@ -56,12 +56,12 @@ const TEXTOS_NOVOS = {
   declarativo: "Preparado, ainda não executado: o fiscal. Ele fica registrado nesta versão, mas nada o executa nesta etapa do produto."
 } as const;
 /**
- * OPERACOES-01 F4 — os textos do EDITOR DO 5: os do mundo novo, com a ajuda da Geral nova (a frase do documento sem
- * itens). É o único texto deste caso que muda com o 5.
+ * OPERACOES-01 F4 — os textos do EDITOR DO 5: os do mundo novo, com a ajuda da Geral nova (a frase do motivo e a do
+ * documento sem itens; decisões 281 e 279). É o único texto deste caso que muda com o 5.
  */
 const TEXTOS_FORMATO5 = {
   ...TEXTOS_NOVOS,
-  ajudaGeral: "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: quando esta operação permite, as Centrais de Vendas, de Compras e de Estoque aceitam o documento sem item. As exigências de preenchimento são cobradas no lançamento."
+  ajudaGeral: "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao salvar e ao confirmar. Documento sem itens: quando esta operação permite, a venda e a compra podem ser salvas sem item nas Centrais de Vendas e de Compras (o recebimento de um pedido sempre pede item). As exigências de preenchimento são cobradas no lançamento."
 } as const;
 const MSG_APROVACOES_INDISPONIVEIS = "As aprovações ainda não estão disponíveis neste servidor.";
 

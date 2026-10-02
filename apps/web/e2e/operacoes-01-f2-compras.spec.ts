@@ -1,6 +1,6 @@
 import type { Locator, Page, Request, Response } from "@playwright/test";
 import { login, api, uniq, empresaAtiva } from "./helpers";
-import { cfg4, type RegrasGeraisE2E } from "./top-config-08-comum";
+import { cfg4, cfg5, detalheTopNoServidor, type RegrasGeraisE2E } from "./top-config-08-comum";
 import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 
 /**
@@ -85,10 +85,14 @@ async function cenario(page: Page) {
 }
 type Cenario = Awaited<ReturnType<typeof cenario>>;
 
-/** Uma TOP de COMPRA nova pela porta administrativa, com as regras gerais dadas (formato 4; o resto, o neutro do domínio). */
-async function topDeCompra(page: Page, rotulo: string, regras: RegrasGeraisE2E) {
+/**
+ * Uma TOP de COMPRA nova pela porta administrativa, com as regras gerais dadas, no formato pedido (4, ou o 5 que o
+ * editor grava desde a F4 — decisão 281; o resto, o neutro do domínio). O formato gravado é premissa, lida no servidor.
+ */
+async function topDeCompra(page: Page, rotulo: string, regras: RegrasGeraisE2E, formato: 4 | 5 = 4) {
   const codigo = codigoTop("f2c");
-  const { id } = await criarTop(page, { codigo, codigoBase: "compras.compra", nome: uniq(`F2C ${rotulo}`), configuracao: cfg4(regras) });
+  const { id } = await criarTop(page, { codigo, codigoBase: "compras.compra", nome: uniq(`F2C ${rotulo}`), configuracao: formato === 5 ? cfg5(regras) : cfg4(regras) });
+  expect((await detalheTopNoServidor(page, id)).configuracaoSchema, `premissa: a TOP foi gravada no formato ${formato}`).toBe(formato);
   return { id, codigo };
 }
 
@@ -148,7 +152,8 @@ test("F2C-1 — TOP de Confirmação Automática: o Salvar se chama 'Salvar e co
   await login(page);
   const c = await cenario(page);
   const manual = await topDeCompra(page, "manual", {});
-  const automatica = await topDeCompra(page, "automática", { confirmacao: "automatica" });
+  // A TOP Automática no FORMATO 5 (o que o editor grava desde a F4); a Manual, no 4: os dois formatos pela mesma Central.
+  const automatica = await topDeCompra(page, "automática", { confirmacao: "automatica" }, 5);
   const salvar = page.getByTestId("compras-salvar");
 
   // (1) CONTRASTE — TOP MANUAL: o servidor declara o neutro; o Salvar é "Salvar", o corpo é o de antes e o aviso também.

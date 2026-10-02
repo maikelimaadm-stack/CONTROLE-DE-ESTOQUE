@@ -32,7 +32,7 @@ const TEXTOS = {
   passo1: "Passo 1 de 2: escolha o tipo de movimento. Depois, as abas mostram só o que vale para ele.",
   /** A ajuda da Geral no editor do 5 fora do documento de estoque (decisão 281, item 4 do coordenador), por extenso. */
   ajudaGeralFormato5:
-    "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: quando esta operação permite, as Centrais de Vendas, de Compras e de Estoque aceitam o documento sem item. As exigências de preenchimento são cobradas no lançamento.",
+    "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao salvar e ao confirmar. Documento sem itens: quando esta operação permite, a venda e a compra podem ser salvas sem item nas Centrais de Vendas e de Compras (o recebimento de um pedido sempre pede item). As exigências de preenchimento são cobradas no lançamento.",
   /** A frase da ajuda do editor do 4, que NÃO pode aparecer no editor do 5. */
   ajudaGeralAntigaTrecho: "o lançamento ainda pede ao menos um item",
   ajudaGeralEstoque: "No documento de estoque valem a confirmação automática e a observação obrigatória."

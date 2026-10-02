@@ -1874,7 +1874,10 @@ lançamentos da organização esperam por ele até o commit.
 - **Confirmar documento sem itens:** nenhum movimento de estoque. O título segue a regra de hoje de cada módulo: venda com
   financeiro a receber e total 0 é recusada pela confirmação ("Valor do título deve ser positivo"; na automática,
   `recusada`); compra só gera título com total > 0 (com frete, o título do total).
-- A Central de hoje continua exigindo um item: só o servidor muda (§17.8).
+- As Centrais de Vendas e de Compras deixam de exigir item quando a versão ATUAL da TOP aceita documento sem itens
+  (OPERACOES-01 F2, decisão 279: `regrasGerais.aceitaSemItens` de `/regras-da-operacao`, pela mesma função da
+  gravação; §17.8). O recebimento de um pedido de compra continua exigindo item. Contra a API anterior, que não manda
+  o bloco, elas exigem item como antes.
 
 ### 17.5 Aprovação
 
@@ -1999,16 +2002,20 @@ estoque). O seed a sincroniza no pre-deploy e o papel Administrador do sistema a
 recebem na tela de usuários.
 
 **Rotas.** Prefixo PRÓPRIO, `/api/aprovacoes`: o binário anterior não o conhece e responde 404 limpo — o sinal que a web
-nova lê como "aprovações ainda não disponíveis neste servidor".
+nova lê como "aprovações ainda não disponíveis neste servidor". A fila e as decisões exigem `.approve`; a SITUAÇÃO de UM
+documento (OPERACOES-01 F2, decisão 279) é leitura sob `.view` — a capacidade, o escopo e a 404 do GET do documento por
+id (`docs/OPERACOES-CONTRACT.md` §3).
 
 | Rota | Capacidade | Corpo |
 | --- | --- | --- |
 | `GET /api/aprovacoes/vendas` | `sales.approve` | — (`?page=&pageSize=`) |
 | `POST /api/aprovacoes/vendas/:id/aprovar` | `sales.approve` | `{ version, observacao? }` |
 | `POST /api/aprovacoes/vendas/:id/reprovar` | `sales.approve` | `{ version, motivo }` |
+| `GET /api/aprovacoes/vendas/:id` | `sales.view` (a do GET da venda por id) | — (nenhum parâmetro: qualquer um → 422) |
 | `GET /api/aprovacoes/compras` | `compras.approve` | — (`?page=&pageSize=`) |
 | `POST /api/aprovacoes/compras/:id/aprovar` | `compras.approve` | `{ observacao? }` |
 | `POST /api/aprovacoes/compras/:id/reprovar` | `compras.approve` | `{ motivo }` |
+| `GET /api/aprovacoes/compras/:id` | `compras.view` (a do GET da compra por id) | — (nenhum parâmetro: qualquer um → 422) |
 | `GET /api/aprovacoes/estoque` | porta dinâmica: qualquer `.approve` das quatro espécies; nenhuma → 403 | — (`?page=&pageSize=`) |
 | `POST /api/aprovacoes/estoque/:segmento/:id/aprovar` | `<recurso da espécie>.approve` | `{ observacao? }` |
 | `POST /api/aprovacoes/estoque/:segmento/:id/reprovar` | `<recurso da espécie>.approve` | `{ motivo }` |
@@ -2135,10 +2142,11 @@ formato 3, textos e abas de hoje. Com ele:
   confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o
   documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: o servidor aceita o documento sem
   item, mas nas Centrais de Vendas e de Compras o lançamento ainda pede ao menos um item. As exigências de preenchimento
-  são cobradas no lançamento." — as Centrais de Vendas e de Compras não leem `confirmacaoAutomatica` ao salvar e ainda
-  pedem um item (§17.8); a fatia que mudar isso troca este texto junto. Desde a OPERACOES-01 F4 (decisão 281), este é o
-  texto do editor do FORMATO 4, que só roda contra um servidor sem a capacidade `formato5`; o editor do 5 diz que, quando
-  a TOP permite, as Centrais de Vendas, de Compras e de Estoque aceitam o documento sem item (§18.7). O W-1 confere o
+  são cobradas no lançamento." — contra esse servidor (sem `regrasGerais` em `/regras-da-operacao`) as Centrais de
+  Vendas e de Compras ainda pedem um item, e é isso que ele faz. Desde a OPERACOES-01 F4 (decisão 281), este é o texto
+  do editor do FORMATO 4, que só roda contra um servidor sem a capacidade `formato5`; o editor do 5 diz que, quando a
+  operação permite, a venda e a compra podem ser salvas sem item nas Centrais de Vendas e de Compras, e que o
+  recebimento de um pedido sempre pede item (§18.7; o comportamento é o da F2, decisão 279, §17.8). O W-1 confere o
   novo e o K-1 confere o de cada mundo;
 - **diálogo "Estas regras passam a valer"** (`top-regras-passam-a-valer`), só na EDIÇÃO de uma TOP que já existe e, quando
   os dois valem, depois do diálogo das exigências (§13): a lista do que passa a executar ("Confirmação automática",
@@ -2160,33 +2168,31 @@ formato 3, textos e abas de hoje. Com ele:
 | API nova × web anterior | o editor anterior grava o formato 3 como hoje; corpo no formato 1 a 3 sobre versão vigente no 4 → a 422 do formato que não retrocede; `POST` e confirmação com TOP de formato 1 a 3 dão o corpo de hoje; a Central de Estoque anterior mostra "prévia indisponível" diante de uma recusa de aprovação e deixa clicar — o servidor responde 409; com TOP no formato 4 Automática (o editor anterior não a grava), ela diz "Salvo com sucesso" também quando o servidor confirmou ou a automática não aconteceu, e a consulta mostra a situação que o servidor leu |
 | API anterior × versão no formato 4 (reversão) | não confirma venda nem compra: 409 `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL` (configuração ilegível), como hoje com formato desconhecido; no estoque ela não lê a configuração, e quem barra o documento que exige aprovação é a guarda do banco (409 `CONFLICT`); documento lançado nela com TOP formato 4 fica sem exigências e sem condições permitidas (`regrasDaVersaoTop` devolve nulo para formato desconhecido); não edita TOP com versão vigente no formato 4 (422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`: a escrita fecha, §11.2) |
 
-**A Central de Estoque lê o resultado ao salvar** (`apps/web/src/features/estoque/central-estoque.tsx`, `avisarSalvo`;
-W-5b, e o `sem_permissao` no W-5c). O aviso sai da resposta do `POST`, nunca da TOP da tela: `{confirmado: true}` →
+**As Centrais leem o resultado ao salvar** (`apps/web/src/features/central/salvar.ts`, `avisoDoSalvar`/`avisarSalvo`,
+do motor: a de Estoque desde a TOP-CONFIG-08 — W-5b, e o `sem_permissao` no W-5c —; as de Vendas e de Compras desde a
+OPERACOES-01 F2, decisão 279 — F2V-1, F2C-1, F2C-3 no receber do pedido, F2A-1). O aviso sai da resposta do `POST`, nunca da TOP da tela: `{confirmado: true}` →
 "Salvo e confirmado."; `aguardando_aprovacao` → "Salvo. Este documento precisa de aprovação antes de ser confirmado.";
 `sem_permissao` → "Salvo, mas não confirmado: você não tem permissão para confirmar este documento."; `recusada` →
 "Salvo, mas não confirmado: <`erro.message`>." — a mensagem do servidor com um ponto final só, pela mesma regra da fila
-de Aprovações (`mensagemDoServidorNoMolde`); sem a chave, ou com resultado fora do contrato (motivo desconhecido,
+de Aprovações (`mensagemDoServidorNoMolde`, em
+`features/central/salvar.ts`, reexportado por `features/aprovacoes/areas-de-aprovacao.ts`); sem a chave, ou com resultado fora do contrato (motivo desconhecido,
 `recusada` sem mensagem) → o "Salvo com sucesso" de hoje. Um Salvar dá um aviso só. Depois do aviso, a consulta abre
 como hoje.
 
-**Fica para a fatia F2 da Central no motor** (Central de Vendas e Central de Compras, nenhum arquivo delas mudou aqui):
-o "Salvar e confirmar" quando a TOP é automática — até lá, "Confirmar venda" na criação de uma venda automática salva, o
-`POST` já confirma, e a consulta abre a venda confirmada, sem o diálogo de confirmação, sem prévia e sem segundo
-`/confirm` (o diálogo só abre para venda que chega aberta, como quando a automática não confirma); e "Confirmar compra"
-na criação de uma compra automática salva e o `POST` já confirma; enquanto a VISUAL-UX-04b (decisão 278) não estiver na
-main, a consulta abre o diálogo de confirmação só pelo pedido do clique, sem olhar a situação
-(`apps/web/src/features/compras/central/estado.ts`, o estado inicial de `confirmando`; a venda olha `open`/`approved`):
-o diálogo aparece sobre a compra já confirmada, a prévia dele recusa ("Compra já confirmada", `ALREADY_CONFIRMED`) e o
-Confirmar fica desabilitado; a compra fica confirmada, sem efeito duplicado. A VISUAL-UX-04b entra antes desta e faz
-a consulta da compra conferir a situação e a permissão depois de carregar, antes de abrir o diálogo, como a da venda:
-com ela na main, a compra confirmada sozinha abre a consulta em Confirmado, sem diálogo. Se esta entrar sem a
-VISUAL-UX-04b na main, com TOP de compra Automática, use "Salvar" na criação —; o aviso do Salvar pelo resultado da
-confirmação automática — hoje as duas dizem o "Salvo com sucesso" de sempre também quando ela não aconteceu:
-`recusada` → o documento aparece Aberto, e o motivo surge na prévia ou no `/confirm`; `sem_permissao` → aparece Aberto,
-sem o Confirmar para quem salvou —; os itens vazios quando a TOP permite (e, junto, a ajuda da Geral do §17.7 e os dois
-E2E que a conferem letra por letra, W-1 e K-1); a situação da aprovação e o Aprovar/Reprovar na consulta. **Fatias
-próprias:** alteração após confirmar, notificação para quem aprova, aprovação de pedido, financeiro "Previsão",
-devolução de venda e de compra, campos por TOP no estoque.
+**Feito na OPERACOES-01 F2 (decisão 279)** — contrato em `docs/OPERACOES-CONTRACT.md` §3: o "Salvar e confirmar"
+quando a versão ATUAL da TOP de venda ou de compra confirma sozinha e quem salva pode confirmar (`sales.edit` /
+`compras.edit`), também no receber do pedido; o aviso do Salvar pelo resultado da confirmação automática, nas três
+Centrais, com os textos acima; os itens vazios quando a TOP permite, na venda e na compra — nunca no recebimento do
+pedido, nem em orçamento, pedido de venda ou pedido de compra; a situação da aprovação e o Aprovar/Reprovar na
+consulta da venda e da compra abertas (`GET /api/aprovacoes/{vendas,compras}/:id`, o bloco `AprovacaoDoDocumento` e o
+diálogo da fila); o diálogo de Confirmar só em documento aberto, como uma regra do motor (`confirmarPodeAbrir` e
+`abreConfirmarNaChegada`, `features/central/salvo.ts`), na pílula e na chegada. Ficam como antes, declarado: a
+pílula "Confirmar venda"/"Confirmar compra" na criação também com a TOP Automática — ela salva, o `POST` já
+confirma e a consulta abre o documento confirmado, sem diálogo, sem prévia e sem segundo `/confirm` (W-4c, CC-7); o
+aviso da conversão pedido → venda ("Operação concluída"). A ajuda da Geral (§17.7 e §18.7) e os E2E que a conferem
+(W-1 e K-1) são da F4 (decisão 281). A Central de Estoque segue com a regra própria do Confirmar até a F5 (decisão
+282). **Fatias próprias:** alteração após confirmar, notificação para quem aprova, aprovação de pedido, financeiro
+"Previsão", devolução de venda e de compra, campos por TOP no estoque.
 
 ## 18. Formato 5: o tipo de movimento primeiro e as seções de extensão (OPERACOES-01 F4)
 
@@ -2395,11 +2401,11 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
   - as regras da matriz (como no 4) e SÓ as exigências do perfil, na ordem fixa, com o rótulo do tipo: "Exigir
     cliente", "Exigir fornecedor" ou "Exigir parceiro"; "Exigir centro de resultado"; "Exigir observação"; a caixa
     "Exigir transportadora". Os testids são os de hoje.
-  - A ajuda, fora do documento de estoque (`AJUDA_FORMATO5_GERAL`, `top-editor.tsx:223-224`): "Confirmação automática:
+  - A ajuda, fora do documento de estoque (`AJUDA_FORMATO5_GERAL`, `top-editor.tsx:224-225`): "Confirmação automática:
     o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a
-    confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: quando
-    esta operação permite, as Centrais de Vendas, de Compras e de Estoque aceitam o documento sem item. As exigências
-    de preenchimento são cobradas no lançamento."
+    confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao salvar e ao confirmar. Documento sem
+    itens: quando esta operação permite, a venda e a compra podem ser salvas sem item nas Centrais de Vendas e de
+    Compras (o recebimento de um pedido sempre pede item). As exigências de preenchimento são cobradas no lançamento."
   - No documento de estoque, a de hoje ("No documento de estoque valem a confirmação automática e a observação
     obrigatória.").
 - **Antes de gravar** (só no 5), a ordem é:

@@ -215,13 +215,14 @@ const AJUDA_GERAL_DOCUMENTO_ESTOQUE_COM_REGRAS_GERAIS =
 
 /**
  * OPERACOES-01 F4 (decisão 281; item 4 do coordenador) — a ajuda da Geral no EDITOR DO FORMATO 5, fora do documento de
- * estoque. Muda SÓ a frase do documento sem itens: quando a TOP permite, as Centrais de Vendas, de Compras e de
- * Estoque aceitam o documento sem item (a F2 leva o comportamento às Centrais de Vendas e de Compras). Só com o editor
- * do 5: contra um servidor que não declara o 5, a ajuda é a de `AJUDA_COM_REGRAS_GERAIS.geral`, letra por letra — lá
- * as Centrais ainda pedem um item, e é isso que aquele servidor faz.
+ * estoque. Mudam a frase do motivo (desde a F2, decisão 279, ele aparece também ao salvar) e a do documento sem itens:
+ * quando a TOP permite, a venda e a compra podem ser salvas sem item nas Centrais de Vendas e de Compras (a F2), e o
+ * recebimento de um pedido sempre pede item; a Central de Estoque não entra (a matriz dela só aceita "Proibido"). Só
+ * com o editor do 5: contra um servidor que não declara o 5, a ajuda é a de `AJUDA_COM_REGRAS_GERAIS.geral`, letra por
+ * letra — lá as Centrais ainda pedem um item, e é isso que aquele servidor faz.
  */
 const AJUDA_FORMATO5_GERAL =
-  "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: quando esta operação permite, as Centrais de Vendas, de Compras e de Estoque aceitam o documento sem item. As exigências de preenchimento são cobradas no lançamento.";
+  "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao salvar e ao confirmar. Documento sem itens: quando esta operação permite, a venda e a compra podem ser salvas sem item nas Centrais de Vendas e de Compras (o recebimento de um pedido sempre pede item). As exigências de preenchimento são cobradas no lançamento.";
 
 /**
  * OPERACOES-01 F4 — o `data-testid` de cada exigência da Geral (os de hoje, iguais nos dois editores). A transportadora

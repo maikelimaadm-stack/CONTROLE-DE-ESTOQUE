@@ -471,14 +471,16 @@ nunca numa Central só. Duas Centrais copiadas divergem em silêncio: a que não
 | `painel.tsx` | painel repartido, coluna, largo, o plano de parcelas (editável e em leitura), títulos e derivados |
 | `dialogos.tsx` | Confirmar (com a prévia que a espécie põe dentro), Cancelar (motivo opcional, 1–500) e Descartar |
 | `pesquisa.tsx` | a pesquisa (lookup) da Central |
-| `duplicar-memoria.ts`, `salvo.ts` | a entrega EM MEMÓRIA da cópia do Duplicar e do "Salvo" (nada na URL, nada no navegador) |
+| `duplicar-memoria.ts`, `salvo.ts` | a entrega EM MEMÓRIA da cópia do Duplicar e do "Salvo" (nada na URL, nada no navegador); em `salvo.ts`, a regra ÚNICA do diálogo de Confirmar (OPERACOES-01 F2): `confirmarPodeAbrir` (só em documento aberto e para quem pode confirmar) e `abreConfirmarNaChegada` (a chegada da criação) |
+| `salvar.ts` | o Salvar da Central (OPERACOES-01 F2, decisão 279): `avisoDoSalvar`/`avisarSalvo` (o aviso lido de `confirmacaoAutomatica` na resposta, UM por Salvar), `mensagemDoServidorNoMolde` (a pontuação da mensagem do servidor; as Aprovações a reexportam) e `useCriarDocumento` (o POST de criar pela porta que a Central passa, com a `Idempotency-Key` por tentativa) |
+| `regras-gerais.ts` | as regras gerais da TOP na tela (OPERACOES-01 F2): `lerRegrasGerais` (o bloco `regrasGerais` de `/regras-da-operacao`; ausente ou fora da forma → o neutro inteiro), `rotuloDoSalvar(regras, podeConfirmar)` e `exigeAoMenosUmItem` |
 | `contrato.ts` | só tipos e constantes triviais: o contrato do adaptador e das peças |
 
 O motor não conhece espécie: dentro de `features/central/` não há rota de ESPÉCIE (`/api/sales/*`, `/api/compras/*`),
 cliente nem fornecedor. Ele chama só portas genéricas: `/api/resources/<recurso>/options` na pesquisa (`pesquisa.tsx`),
 `/api/resources/<recurso>/<id>` no rótulo e na unidade (`itens.tsx`), e o saldo pela `StockCell` de `features/docs/shared`
-(`/api/stock/balances/<armazém>/<produto>`). A pesquisa mostra Código e Descrição, sem coluna de estoque. (Corrigido
-pela decisão 278: a 276 dizia "não há rota de API".)
+(`/api/stock/balances/<armazém>/<produto>`). A pesquisa mostra Código e Descrição, sem coluna de estoque. O POST de criar
+(`useCriarDocumento`, `salvar.ts`) vai à porta que a Central passa; o motor não a conhece. (Corrigido pela decisão 278: a 276 dizia "não há rota de API".)
 
 **O contrato do adaptador** (`AdaptadorDaCentral`, em `features/central/contrato.ts`). Cada Central entrega:
 
@@ -546,7 +548,8 @@ Na Central de Compras:
 
 Declarado na decisão 278, sem conserto aqui: a `Idempotency-Key` trocada a cada erro, inclusive na queda de rede (fatia
 própria), e a tela das regras gerais da #88 (decisão 277, já na main) — o aviso do resultado da confirmação automática ao
-salvar e a compra sem itens (fatia F2 própria).
+salvar e a compra sem itens (fatia F2 própria). O aviso e a compra sem itens foram feitos na OPERACOES-01 F2 (decisão
+279, abaixo); a chave de idempotência continua com a F6.
 
 ### O nome do local de estoque no motor (OPERACOES-01 F3a, decisão 280)
 
@@ -556,6 +559,26 @@ estoque"). A coluna da grade tem 122 px (antes 108): é a menor largura par em q
 " *" de coluna obrigatória (`features/central/itens.tsx:45`, `itens-salvos.tsx:56`). As chaves (`armazem`,
 `armazemPorItem`, `armazemForcado`, `exigeArmazem`), os testids e a ordem das colunas não mudam — a ordem muda na F3b.
 As "colunas Armazém" das seções anteriores são esta coluna, com o nome de antes.
+
+### As regras gerais da TOP e a aprovação nas Centrais de Vendas e de Compras (OPERACOES-01 F2, decisão 279)
+
+As duas Centrais leem `regrasGerais` de `/regras-da-operacao` (venda: `features/sales/regras-da-operacao.ts`; compra:
+`features/compras/layout-da-central.ts`), sempre pelo leitor do motor (`lerRegrasGerais`), e mostram o que a
+gravação vai fazer: "Salvar e confirmar" (`rotuloDoSalvar`) e a pendência de item só quando ela vale
+(`exigeAoMenosUmItem`; na compra, nunca dispensada no receber). O aviso do Salvar é o do motor (`avisarSalvo`), na
+venda pelo `useCriarDocumento` e na compra pelo `salvarM` do estado (lançar e receber). O Confirmar segue a regra do
+motor (`confirmarPodeAbrir`/`abreConfirmarNaChegada`), na pílula e na chegada.
+
+Na consulta da venda (variante `sale`) e da compra, antes dos campos, as duas montam o bloco da aprovação de
+`features/aprovacoes/aprovacao-do-documento.tsx` (`AprovacaoDoDocumento`), com o prefixo de testid da Central. O
+bloco pergunta `GET /api/aprovacoes/<área>/<id>` só com o documento aberto, decide pelas rotas da fila e usa o
+diálogo dela (`features/aprovacoes/decisao-de-aprovacao.tsx`, extraído de `fila-de-aprovacao.tsx`). Portas, textos e
+o leitor da resposta moram em `features/aprovacoes/areas-de-aprovacao.ts`. O motor não importa `features/aprovacoes`:
+quem monta o bloco é a Central.
+
+O que não mudou: os corpos do POST, do `/convert` e da decisão; os testids; a pílula "Confirmar venda"/"Confirmar
+compra" da criação; a conversão pedido → venda. A Central de Estoque só passou a usar o aviso do motor (a F5 a leva ao
+resto).
 
 ## Central Financeira (OPERACOES-01 F8, decisão 285)
 

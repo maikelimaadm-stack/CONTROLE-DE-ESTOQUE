@@ -1,7 +1,7 @@
 import { test, expect, type Page, type Request } from "@playwright/test";
 import { login, api, uniq, pickRef, adicionarItemNaCentral, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
 import { criarParceiro } from "./aj02-comum";
-import { cfg4, criarTopViaApi, excluirTopE2E, type RegrasGeraisE2E } from "./top-config-08-comum";
+import { cfg4, cfg5, criarTopViaApi, detalheTopNoServidor, excluirTopE2E, type RegrasGeraisE2E } from "./top-config-08-comum";
 
 /**
  * OPERACOES-01 · F2 (decisão 279) — A CENTRAL DE VENDAS USA AS REGRAS GERAIS DA TOP (API e banco REAIS; nada mockado).
@@ -26,9 +26,11 @@ import { cfg4, criarTopViaApi, excluirTopE2E, type RegrasGeraisE2E } from "./top
  * │ pendência é contado pelo MESMO ouvinte que, no caso Permitido, contou exatamente um POST.                      │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
- * A configuração da TOP nasce do neutro do domínio (`cfg4`, das peças comuns da TOP-CONFIG-08, só importadas) e é
- * gravada pela API administrativa no próprio teste. O formato gravado não é conferido aqui de propósito: quem diz o
- * que a TOP executa é o servidor, pela MESMA régua da gravação, no `regrasGerais` do fio — é essa a premissa da tela.
+ * A configuração da TOP nasce do neutro do domínio (`cfg4`/`cfg5`, das peças comuns da TOP-CONFIG-08, só importadas)
+ * e é gravada pela API administrativa no próprio teste. Quem diz o que a TOP executa é o servidor, pela MESMA régua da
+ * gravação, no `regrasGerais` do fio — é essa a premissa da tela. O formato gravado é premissa à parte (o detalhe da
+ * TOP no servidor): a TOP Automática do F2V-1 é do FORMATO 5 — o que o editor grava desde a F4 (decisão 281) — e as
+ * outras, do 4; os dois formatos passam pela mesma Central.
  * Cada caso cria o próprio cliente; o produto é o primeiro que a pesquisa oferece, de 1 × 40,00, SEM local de estoque
  * (nada de saldo em jogo). Nada é apagado (decisão 247): no `finally`, o que ficou aberto é cancelado e as TOPs saem
  * pela exclusão lógica da própria API, para o lançador das próximas execuções não herdar uma operação que confirma
@@ -55,10 +57,11 @@ const avisoDoSalvar = (page: Page, tipo: "success" | "info" | "warning") =>
 /** Todos os avisos na tela — um Salvar dá UM aviso. */
 const avisos = (page: Page) => page.locator("[data-sonner-toast]");
 
-/** Uma TOP de venda nova, com as regras gerais pedidas sobre o neutro do domínio. */
-async function criarTopDeVenda(page: Page, r: RegrasGeraisE2E, tops: string[]): Promise<string> {
-  const { id } = await criarTopViaApi(page, "vendas.venda", cfg4(r), { rotulo: "F2V vendas.venda" });
+/** Uma TOP de venda nova, com as regras gerais pedidas sobre o neutro do domínio, no formato pedido (premissa lida no servidor). */
+async function criarTopDeVenda(page: Page, r: RegrasGeraisE2E, tops: string[], formato: 4 | 5 = 4): Promise<string> {
+  const { id } = await criarTopViaApi(page, "vendas.venda", formato === 5 ? cfg5(r) : cfg4(r), { rotulo: "F2V vendas.venda" });
   tops.push(id);
+  expect((await detalheTopNoServidor(page, id)).configuracaoSchema, `premissa: a TOP foi gravada no formato ${formato}`).toBe(formato);
   return id;
 }
 
@@ -141,9 +144,9 @@ test("F2V-1 — TOP Automática: o Salvar se chama 'Salvar e confirmar', salva c
     await expect(avisos(page), "um aviso só").toHaveCount(1);
     await consultaAbre(page, deHoje.corpo.id, "open");
 
-    // (2) TOP AUTOMÁTICA: o servidor declara a confirmação no Salvar, a Central diz isso ANTES de salvar, e o aviso
-    //     sai da RESPOSTA.
-    const automatica = await criarTopDeVenda(page, { confirmacao: "automatica" }, tops);
+    // (2) TOP AUTOMÁTICA, no FORMATO 5 (o que o editor grava desde a F4): o servidor declara a confirmação no Salvar,
+    //     a Central diz isso ANTES de salvar, e o aviso sai da RESPOSTA.
+    const automatica = await criarTopDeVenda(page, { confirmacao: "automatica" }, tops, 5);
     const regrasAutomatica = await abrirCriacao(page, automatica);
     expect(regrasAutomatica.regrasGerais, "o servidor declara: a TOP Automática confirma ao salvar (e pede item)").toEqual({ confirmacaoAutomatica: true, aceitaSemItens: false });
     await adicionarUmItem(page);

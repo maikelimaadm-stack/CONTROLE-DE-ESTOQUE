@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import pg from "pg";
 import { randomUUID } from "node:crypto";
-import { configuracaoNeutraTopV2, regrasGeraisDaVersaoTop } from "@agro/domain";
+import { configuracaoNeutraTopV2, configuracaoNeutraTopV5, regrasGeraisDaVersaoTop, type ConfiguracaoTipoOperacaoV5 } from "@agro/domain";
 import {
   c, iniciar, encerrar, j, erro, cfg3, cfg4, top, novaVersao, revisaoTop, versaoAtualNoBanco, versaoDireta,
   produto, produtoComSaldo, itemVenda, corpoVenda, lancarVenda, vendaLancada, patchVenda, versaoDaVenda, situacaoNoBanco,
@@ -33,6 +33,9 @@ import {
  *         porta, as regras e os efeitos previstos);
  *         nenhuma leitura própria da gravação (`lerVersaoCongeladaTop`). O "como antes" é o desenho do diff (nenhuma
  *         chamada nova ao banco nas rotas); o teste fixa o número para que uma leitura a mais reprove.
+ *   RG-9  FORMATO 5 (OPERACOES-01 F4, decisão 281 — o que o editor grava desde a F4): o bloco e a gravação pela MESMA
+ *         régua, na venda e na compra — Automática + Permitido → { true, true } e o POST confirma e aceita itens
+ *         vazios; o 5 neutro → { false, false } e a recusa de hoje.
  *
  * O QUE CONTA COMO PROVA: toda conclusão vem com a premissa — a versão no formato pedido (lida no banco), o que a
  * função da gravação diz da versão guardada, e o efeito no banco (situação, itens) do POST que o bloco anuncia.
@@ -466,5 +469,69 @@ describe("RG-8 o bloco não custa consulta", () => {
     expect(daFamilia[0], "e ela É a leitura das regras da versão (a de `regrasPorFiltro`, com o subselect das condições)").toMatch(/tipos_operacao_versao_condicoes/);
     expect(leemAVersao(a.sqls), "a versão lida três vezes — a porta, as regras e os efeitos previstos da compra (`efeitosPrevistosDaCompra`) —, nenhuma a mais").toHaveLength(3);
     expect(a.sqls.filter((s) => /select v\.configuracao, t\.codigo_base/.test(s)), "nenhuma leitura própria da gravação").toHaveLength(0);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+// RG-9
+// ───────────────────────────────────────────────────────────────────────────────────────────────────
+/** O neutro do FORMATO 5 do domínio (um dono só), com o ajuste do caso. Cada chamada devolve um objeto novo. */
+function cfg5(ajuste: (x: ConfiguracaoTipoOperacaoV5) => void = () => {}): ConfiguracaoTipoOperacaoV5 {
+  const x = configuracaoNeutraTopV5();
+  ajuste(x);
+  return x;
+}
+const automaticaEPermitido5 = () => cfg5((x) => { x.geral.confirmacao = "automatica"; x.geral.documentoSemItens = "permitido"; });
+
+describe("RG-9 formato 5 (F4, decisão 281): o bloco e a gravação pela MESMA régua", () => {
+  it("RG-9a venda no formato 5: Automática + Permitido → { true, true } por último, o POST confirma com item e grava items []; o 5 neutro → { false, false } e a recusa de hoje", async () => {
+    const t = await topDa("vendas.venda", automaticaEPermitido5());
+    expect(await daGravacao(t, "vendas.venda"), "premissa: a gravação executa o 5 — confirma e aceita sem itens").toEqual(AS_DUAS);
+    const b = await ok(regrasVenda("sales", `?tipo_operacao_id=${t}`));
+    expect(Object.keys(b), "as chaves de hoje e regrasGerais por último").toEqual(CHAVES_VENDA);
+    expect(b).toMatchObject({ formato: 5, regrasGerais: AS_DUAS });
+
+    const p = await produtoComSaldo("5");
+    const comItem = await lancarVenda(corpoVenda([itemVenda(p.id, "1", "10.00")], { tipo_operacao_id: t }));
+    expect(comItem.statusCode, comItem.body).toBe(201);
+    const ci = j(comItem) as Record<string, unknown> & { id: string };
+    expect([Object.keys(ci), ci.confirmacaoAutomatica], "o 201 diz o que o bloco anunciou").toEqual([[...CHAVES_DO_POST_VENDA, "confirmacaoAutomatica"], { confirmado: true }]);
+    expect(await situacaoNoBanco("sales_documents", ci.id), "confirmada no banco").toBe("confirmed");
+    const vazio = await lancarVenda(corpoVenda([], { tipo_operacao_id: t }));
+    expect(vazio.statusCode, vazio.body).toBe(201);
+    expect(await itensDaVenda((j(vazio) as { id: string }).id), "salva sem itens").toBe(0);
+
+    const neutra = await topDa("vendas.venda", cfg5());
+    expect(await daGravacao(neutra, "vendas.venda"), "premissa: o 5 neutro não confirma nem aceita sem itens").toEqual(NEUTRO);
+    expect(await blocoVenda("sales", neutra)).toEqual(NEUTRO);
+    const recusada = await lancarVenda(corpoVenda([], { tipo_operacao_id: neutra }));
+    expect(recusada.statusCode, recusada.body).toBe(422);
+    expect(erro(recusada)).toEqual(RECUSA_VENDA_SEM_ITENS);
+  });
+
+  it("RG-9b compra no formato 5: Automática + Permitido → { true, true } por último, o POST confirma com item e grava itens []; o 5 neutro → { false, false } e a recusa de hoje", async () => {
+    const t = await topDa("compras.compra", automaticaEPermitido5());
+    expect(await daGravacao(t, "compras.compra"), "premissa: a gravação executa o 5 — confirma e aceita sem itens").toEqual(AS_DUAS);
+    const b = await ok(regrasCompra("compras", `?tipo_operacao_id=${t}`));
+    expect(Object.keys(b), "as chaves de hoje e regrasGerais por último").toEqual(CHAVES_COMPRA);
+    expect(b).toMatchObject({ formato: 5, regrasGerais: AS_DUAS });
+
+    const prod = await produto();
+    const comItem = await lancarCompra("compra", corpoCompra([itemCompra(prod.id, "1", "10.00")], { tipo_operacao_id: t }));
+    expect(comItem.statusCode, comItem.body).toBe(201);
+    const ci = j(comItem) as Record<string, unknown> & { id: string };
+    expect([Object.keys(ci), ci.situacao, ci.confirmacaoAutomatica], "o 201 diz o que o bloco anunciou")
+      .toEqual([[...CHAVES_DO_POST_COMPRA, "confirmacaoAutomatica"], "confirmado", { confirmado: true }]);
+    expect(await situacaoNoBanco("documentos_compra", ci.id), "confirmada no banco").toBe("confirmado");
+    const vazio = await lancarCompra("compra", corpoCompra([], { tipo_operacao_id: t }));
+    expect(vazio.statusCode, vazio.body).toBe(201);
+    expect(await itensDaCompra((j(vazio) as { id: string }).id), "salva sem itens").toBe(0);
+
+    const neutra = await topDa("compras.compra", cfg5());
+    expect(await daGravacao(neutra, "compras.compra"), "premissa: o 5 neutro não confirma nem aceita sem itens").toEqual(NEUTRO);
+    expect(await blocoCompra("compras", neutra)).toEqual(NEUTRO);
+    const recusada = await lancarCompra("compra", corpoCompra([], { tipo_operacao_id: neutra }));
+    expect(recusada.statusCode, recusada.body).toBe(422);
+    expect(erro(recusada)).toEqual(RECUSA_COMPRA_SEM_ITENS);
   });
 });
