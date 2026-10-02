@@ -24,7 +24,7 @@ publica em `GET /api/admin/tipos-operacao/capabilities` › `formato5.catalogo`,
 | 2 | Vendas | Pedido | `pedido_venda` | `vendas.pedido` | sim | — |
 | 3 | Vendas | Venda | `venda` | `vendas.venda` | sim | — |
 | 4 | Compras | Pedido | `pedido_compra` | `compras.pedido` | sim | — |
-| 5 | Compras | Orçamento | `orcamento_compra` | `compras.orcamento` | não | F6b (283) |
+| 5 | Compras | Orçamento | `orcamento_compra` | `compras.orcamento` | sim | F6b (283) |
 | 6 | Compras | Compra | `compra` | `compras.compra` | sim | — |
 | 7 | Movimentação interna | Requisição | `requisicao` | `estoque.requisicao_material` (a espécie NOVA; a `estoque.requisicao` antiga continua a de `erp.requisitions`) | não | F5b (282) |
 | 8 | Movimentação interna | Consumo | `consumo` | `estoque.consumo` | não | F5b (282) |
@@ -47,12 +47,13 @@ Regras:
 - A família de cada tipo é PERGUNTADA ao registry (pela tabela e pela variante), nunca escrita no catálogo. Registry
   sem a variante = tipo sem família.
 - "Tem tela" só vale com família (fail-closed).
-- "Tem tela" = a tela que lança o documento cita a TOP. Hoje, os 9 cujo documento cita a TOP e os 3 do Financeiro (F9,
-  decisão 286: o lançamento avulso da Central e o "Novo movimento bancário" escolhem a TOP primeiro) — 12 com tela. A
-  F5a (decisão 282) criou a família das três da movimentação interna, e a F6a (decisão 283), a do orçamento de compra, e
-  as deixou sem tela: o documento já existe na API, e a tela é da F5b e da F6b. A F9a criou a do movimento bancário
+- "Tem tela" = a tela que lança o documento cita a TOP. Hoje, os 9 cujo documento cita a TOP, os 3 do Financeiro (F9,
+  decisão 286: o lançamento avulso da Central e o "Novo movimento bancário" escolhem a TOP primeiro) e o orçamento de
+  compra (F6b, decisão 283: nasce do pedido aprovado para orçamento, pela TOP do leque do pedido) — 13 com tela. A F5a
+  (decisão 282) criou a família das três da movimentação interna e as deixou sem tela: o documento já existe na API, e a
+  tela é da F5b. A F6a (decisão 283) criou a do orçamento de compra, e a F6b, a tela. A F9a criou a do movimento bancário
   (`financeiro.movimento_bancario`, a tabela `erp.bank_movements` inteira). Hoje, 20 dos 22 tipos têm família; sem
-  família, só Manejo e Batelada. O registry tem 28 famílias, e 16 delas ficam sem tela no passo 1.
+  família, só Manejo e Batelada. O registry tem 28 famílias, e 15 delas ficam sem tela no passo 1.
 - **Ligar um tipo** é trabalho da fase que cria a tela: ela troca a linha do catálogo — `temTela`, e a família quando ela
   nascer no registry — e atualiza os testes que fixam o estado de hoje (`top-formato5-catalogo.test.ts` CT-1/CT-2,
   `top-formato5-top.test.ts` T5-1, `tipos-operacao.spec.ts`, `top-assistente.spec.ts`).
@@ -99,7 +100,7 @@ diz o que o editor do 5 mostra e o que o servidor aceita no 5. Ele é DERIVADO, 
 | `vendas.orcamento` | Identificação, Geral, Próximas operações, Estoque, Financeiro, Fiscal | idem venda | Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
 | `compras.pedido` | Identificação, Geral, Próximas operações, Estoque, Fluxo de compra, Padrões financeiros, Financeiro, Fiscal, Aprovação | Exigir fornecedor, centro de resultado, observação, transportadora | Destino, Fluxo, Divergência com o pedido |
 | `compras.compra` | Identificação, Geral, Estoque, Divergência com o pedido, Padrões financeiros, Financeiro, Fiscal, Aprovação, Execução | idem pedido de compra | Destino, Fluxo, Fluxo de compra |
-| `compras.orcamento` (F6a; sem tela até a F6b) | Identificação, Geral, Estoque, Financeiro, Fiscal | Exigir fornecedor, observação | Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
+| `compras.orcamento` (F6a; com tela desde a F6b) | Identificação, Geral, Estoque, Financeiro, Fiscal | Exigir fornecedor, observação | Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
 | `estoque.entrada`, `.transferencia`, `.ajuste`, `.devolucao_consumo` | Identificação, Geral, Estoque, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
 | `estoque.saida`, `estoque.requisicao_material` | Identificação, Geral, Estoque, Destino, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
 | `estoque.consumo` | Identificação, Geral, Estoque, Destino, Fluxo, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
@@ -302,7 +303,7 @@ sales) e `GET /api/compras/<seg>/regras-da-operacao` (pedidos, compras): a respo
 | Rota | Capacidade | Documento | 404 (a MESMA do GET por id, corpo idêntico) |
 |---|---|---|---|
 | `GET /api/aprovacoes/vendas/:id` | `sales.view` | a venda (`kind = 'sale'`) | id fora da forma, inexistente, de outra organização, fora do escopo de empresa do módulo vendas, excluída, orçamento ou pedido |
-| `GET /api/aprovacoes/compras/:id` | `compras.view` | a compra (`especie = 'compra'`) | id fora da forma, inexistente, de outra organização, fora do escopo do módulo compras, pedido de compra |
+| `GET /api/aprovacoes/compras/:id` | `compras.view`; o PEDIDO de compra também com `pedidos_compra.view` (AND; F6b, decisão 283) | a compra (`especie = 'compra'`) e, desde a F6b, o pedido de compra (`especie = 'pedido'`; aberto: a conta do FINALIZAR, com a cobertura do valor) | id fora da forma (sem ir ao SQL), inexistente, de outra organização, fora do escopo do módulo compras, orçamento de compra, pedido sem `pedidos_compra.view` |
 
 - Ordem das recusas: 403 sem a capacidade (antes de qualquer leitura) → 422 `VALIDATION_ERROR` em QUALQUER parâmetro
   de consulta ("Parâmetro não reconhecido na situação da aprovação"; repetido: "Parâmetro repetido: informe um valor
@@ -743,11 +744,9 @@ devolução antiga, `reason_note` e os relatórios que só leem as tabelas antig
 > layouts com as sete famílias de estoque). Sem variável. Implantação em `docs/DEPLOYMENT.md` § OPERACOES-01 › F6a. A
 > F6b (as telas da Central de Compras) acrescenta a subseção dela.
 
-A F6a fez banco (0044), domínio, API e as abas do editor da TOP. As telas da Central de Compras são da F6b; até lá, nada
-disto aparece na Central de Compras, e a capacidade `finalizacaoEOrcamento: 1` (em `GET /api/compras/{pedidos,compras,orcamentos}/operation-types`)
-diz ao web que o servidor tem tudo o que segue. O menu (`apps/web/nav.registry.mjs`) não muda: a entrada do orçamento
-de compra vem com a F6b. Com "Exigir pedido finalizado para receber" = Sim, o web deste HEAD não recebe o pedido (409, e
-não há botão Finalizar até a F6b): as regras se ligam só com as telas da F6b no ar.
+A F6a fez banco (0044), domínio, API e as abas do editor da TOP; as telas da Central de Compras e o menu vieram na
+F6b (subseção seguinte). A capacidade `finalizacaoEOrcamento: 1` (em `GET /api/compras/{pedidos,compras,orcamentos}/operation-types`)
+diz ao web que o servidor tem tudo o que segue.
 
 **Máquina de estados** (`erp.documentos_compra.situacao`, transição v3 da 0044):
 
@@ -828,7 +827,8 @@ Anexo do orçamento: `orcamentos_compra.view`.
   desconto do pedido ficam; totais e plano refeitos; o prazo não vai. Um vencedor por pedido, sem reescolha. O valor do
   pedido muda: a aprovação anterior deixa de cobrir.
 - **Sem cascata:** finalizar, receber e cancelar o pedido não mexem nos orçamentos abertos; depois disso o vencedor é
-  recusado, e eles ficam abertos até serem cancelados (a F6b trata).
+  recusado, e eles ficam abertos até serem cancelados (desde a F6b, a aba "Orçamentos" do pedido avisa e oferece
+  Cancelar em cada um).
 
 **A divergência com o pedido** (seção `divergenciaPedido` da TOP da COMPRA, §2), só na compra gerada de um pedido, no
 planejamento da confirmação, logo depois da aprovação e antes de qualquer efeito:
@@ -856,8 +856,125 @@ o saldo e cancelar o pedido os acertam. A resposta do finalizar e a prévia da f
 `cancelled`. O salvar do pedido cuja TOP provisiona, e o da compra que gera título numa TOP no 5 com padrões, conferem
 os padrões da TOP (§7). Sem a provisão ligada (o neutro, e toda TOP nos formatos 1 a 4), o pedido não tem previsto.
 
-**Fica para a F6b:** as telas (Finalizar e a prévia, Aprovado para orçamento, os orçamentos, Escolher vencedor, a
-divergência na prévia), o E2E do fluxo, o K-1 de compras, o menu e a chave de idempotência da Central de Compras.
+**F6b:** as telas, o E2E do fluxo, o K-1 de compras, o menu e a chave de idempotência da Central de Compras — ver a
+subseção seguinte.
+
+### F6b — as telas de Compras: finalizar, aprovar para orçamento, o orçamento e o vencedor (decisão 283) · IMPLEMENTADO
+
+> Parte F6b da decisão 283. Sem migration, sem permissão, rota, capacidade ou código de erro novos. Implantação em
+> `docs/DEPLOYMENT.md` § OPERACOES-01 › F6b.
+
+**A capacidade.** Tudo o que segue depende de `finalizacaoEOrcamento` declarada pela API, lida nas portas
+`operation-types` de compras que o usuário LANÇA (`useFinalizacaoEOrcamento`,
+`apps/web/src/features/compras/pedido-e-orcamento.ts:57`): alguma declara → "sim"; alguma pendente → "carregando"; senão
+→ "nao" (fail-closed). "carregando" e "nao" mostram a Central de hoje e não perguntam nada novo (K-1). A porta do
+orçamento só é perguntada depois que outra porta declara a capacidade, ou quando o usuário só lança orçamento: contra a
+API anterior, só esse papel pergunta uma porta que não existe (404 de rota; a tela é a de hoje). A consulta da COMPRA não
+pergunta as portas. Valem SEM a capacidade (a API anterior nunca os manda): o pedido `finalizado` recebe, encerra o saldo
+e se cancela; `exigeFinalizar` nos próximos passos; e a regra da chave de idempotência.
+
+**API (aditiva, só de leitura; sem idempotência, auditoria ou ROW COUNT).**
+
+| rota | o que muda | capacidade (AND) | recusas |
+|---|---|---|---|
+| `GET /api/aprovacoes/compras/:id` | lê também o PEDIDO: aberto → a conta do FINALIZAR, com a cobertura (a aprovação que não cobre o total atual ou outra versão da TOP volta a `pendente`); não aberto → `nao_aberto`, sem ler a TOP. Não lê os orçamentos nem os preços. A forma é a de hoje, `{situacao, ultimaDecisao}` | `compras.view` (a porta) ∧, no pedido, `pedidos_compra.view` | 403 sem `compras.view`, antes de ler → 422 parâmetro → a MESMA 404 (id malformado, sem ir ao SQL; inexistente; outra organização; fora do escopo; orçamento; pedido sem `pedidos_compra.view`) |
+| `GET /api/compras/pedidos/:id/proximos-passos` | + `orcamentos` no FIM: `[{tipoOperacaoId, codigo, nome, codigoBase, familiaRotulo, especie: "orcamento", ordem, emPartes}]`, o leque de TOPs de orçamento da versão congelada do pedido (não configurada → `[]`); `items` continua só a compra; as duas espécies saem de UMA leitura da política (nenhuma consulta a mais) | a de hoje (`pedidos_compra.view`); `orcamentos` só com `orcamentos_compra.create` (sem ela, a chave não existe) | as de hoje |
+| `GET /api/compras/pedidos/:id` | cada elemento de `orcamentos` ganha, no FIM, `condicao_pagamento_codigo`, `condicao_pagamento_nome` (`null` sem condição) e `itens: [{item_pedido_orcado_id, valor_unitario, valor_total}]` (decimais em texto, na ordem da posição; `[]` sem item) — UMA consulta para todos os orçamentos | a de hoje; `orcamentos` só com `orcamentos_compra.view` (F6a) | as de hoje |
+
+**Pedido** (`/compras/pedidos/:id`, com a capacidade):
+
+| elemento | testid | aparece | habilitado / texto |
+|---|---|---|---|
+| Finalizar | `compras-finalizar` | `pedidos_compra.edit` | só aberto; senão a dica "Só pedido aberto é finalizado." → o diálogo |
+| prévia da finalização | `compras-previa-finalizacao` (`data-situacao` carregando · pronta · indisponivel · erro); `-aprovacao` (`data-situacao`); `-recusas`; `-indisponivel`; `-erro` | no diálogo aberto (`staleTime` 0) | "Finalizar confirma o pedido de compra: ele não volta a aberto. Não mexe em estoque, e os orçamentos abertos continuam abertos. Se esta operação provisiona contas a pagar, os títulos previstos nascem agora." · aprovação: "Esta operação não exige aprovação para finalizar." · "Aguardando aprovação: o pedido está na fila de Aprovações." · "Aprovado." · "Reprovado: o pedido só é finalizado depois de uma aprovação nova."; com recusa, o botão trava e nada é enviado; ausente ou 5xx: "A prévia da finalização não está disponível neste servidor. A finalização continua conferida pelo servidor." → `POST …/finalizar` `{}`. A prévia não antecipa a recusa da provisão (escolha (h) da F9b): o 422 aparece no diálogo, que fica aberto |
+| Aprovar para orçamento | `compras-aprovar-para-orcamento` | `compras.edit` ∧ `pedidos_compra.view`, aberto, ainda não aprovado | "Aprovar o pedido {código} para orçamento?" — "O pedido passa a receber orçamentos de compra, um por fornecedor. A aprovação para orçamento fica registrada com quem aprovou e quando, e não se desfaz." → `POST …/aprovar-para-orcamento` `{}` |
+| Novo orçamento | `compras-novo-orcamento` (`data-top-id` com uma TOP) | `orcamentos_compra.create`, aberto, aprovado para orçamento | uma TOP: a criação; várias: o menu "Orçamento em {código} — {nome}"; desabilitado: `MSG_PEDIDO_JA_TEM_VENCEDOR` (primeiro) · "Carregando as operações de orçamento…" · "As operações de orçamento estão indisponíveis nesta versão do servidor." · o erro · `MSG_PEDIDO_SEM_TOP_DE_ORCAMENTO` |
+| Aprovação | `central-compras-aprovacao` | aberto, TOP exigindo (pendente, aprovado, reprovado) | Aprovar/Reprovar com `pedidos_compra.approve` ∧ `compras.approve` |
+| Dados adicionais | `compras-consulta-aprovado-orcamento`, `compras-consulta-finalizado` | com a data | "{data e hora} por {nome}" (nome ausente → "—") |
+| Receber… | os de hoje | aberto ou finalizado (sem permissão, some) | aberto com `exigeFinalizar`: "Este pedido precisa ser finalizado antes de ser recebido."; fora de aberto/finalizado: "Só pedido aberto ou finalizado é recebido" (sem a capacidade, "Só pedido aberto é recebido") |
+| Encerrar saldo / Cancelar | os de hoje | também no finalizado | cancelar o finalizado: "O pedido finalizado passa a cancelado e não pode mais ser recebido." |
+| selo | — | — | Finalizado = informativo; Escolhido = positivo; Não escolhido = neutro |
+
+**A aba "Orçamentos"** (`compras-orcamentos`), antes de "Observações", com o número dos não cancelados — só com a
+capacidade, a chave `orcamentos` na leitura e o pedido aprovado para orçamento OU com orçamento (o pedido que não usa
+cotação mantém as abas de hoje):
+- vazio (`compras-orcamentos-vazio`): "Nenhum orçamento deste pedido. Use “Novo orçamento” na barra.";
+- o aviso dos abertos (`compras-orcamentos-abertos-aviso`), com o pedido fora de "aberto": "Este pedido não está mais
+  aberto: os orçamentos abertos não podem ser escolhidos. Cancele-os." (SEM cascata: finalizar, receber e cancelar o
+  pedido não mexem nos orçamentos);
+- a relação (`compras-orcamentos-relacao`; linha `compras-orcamento-linha` com `data-id`/`data-situacao`): Código (link
+  `compras-orcamento-link`) · Fornecedor · Situação · Condição de pagamento ("{código} — {nome}" ou "—") · Prazo de
+  entrega (dias) · Validade · Total (`compras-orcamento-total`; "Menor total", `compras-orcamento-menor-total`) · Ações;
+- o mapa "Preço por item" (`compras-orcamentos-mapa`; linha `-mapa-linha` com `data-item-id`; célula `-mapa-celula` com
+  `data-orcamento-id` e `data-menor`), quando todos os não cancelados trazem os preços; uma coluna por orçamento não
+  cancelado ("{código} · {fornecedor}"); "menor" na célula de menor preço;
+- comparações decimais (`D`); empate marca todos; cancelados não entram;
+- "Escolher" (`compras-orcamento-escolher-<id>`): `pedidos_compra.edit` ∧ `orcamentos_compra.edit`, orçamento aberto;
+  desabilitado, na ordem do servidor: `MSG_VENCEDOR_SO_PEDIDO_ABERTO` → `MSG_VENCEDOR_PEDIDO_COM_COMPRA` →
+  `MSG_PEDIDO_JA_TEM_VENCEDOR`; o diálogo "Escolher o orçamento {código} como vencedor?" — "O pedido passa a ter o
+  fornecedor {fornecedor}, os preços deste orçamento (sem o desconto dos itens) e a condição de pagamento dele — sem
+  condição no orçamento, a do pedido fica. Os outros orçamentos abertos ficam não escolhidos. A escolha não se desfaz, e se
+  o total do pedido subir a aprovação dele precisa ser feita de novo." → `POST …/orcamentos/:orcamentoId/escolher` `{}`,
+  uma Idempotency-Key por par pedido × orçamento;
+- "Cancelar" (`compras-orcamento-cancelar-<id>`): `orcamentos_compra.delete`, orçamento aberto, em qualquer situação do
+  pedido → o diálogo do motor → `POST /api/compras/orcamentos/:id/cancel`.
+
+**Orçamento** (sem rota nova: a Central e a consulta de compras despacham a espécie `orcamento`):
+- criação `/compras/orcamentos/new?tipo_operacao_id=…&pedido=…` (`compras-orcamento-central`, `data-modo="criacao"`):
+  antes do formulário, nesta ordem e sem POST, cada recusa com a sua mensagem (`compras-orcamento-recusado`,
+  `data-motivo`): sem pedido → "O orçamento de compra nasce do pedido: abra um pedido aprovado para orçamento e use
+  “Novo orçamento”." (`compras-orcamento-sem-pedido`, link "Ir para Documentos de compra"); sem `orcamentos_compra.create`
+  → "Você não tem permissão para lançar orçamento de compra."; sem a capacidade → "O orçamento de compra está indisponível
+  nesta versão do servidor."; o pedido não aberto, não aprovado para orçamento ou com vencedor → a mensagem do domínio; o
+  leque (TOP fora dele ou vazio → `MSG_PEDIDO_SEM_TOP_DE_ORCAMENTO`; várias sem escolha → os botões
+  `compras-orcamento-escolher-top-<id>`);
+- o formulário, no motor: a faixa `compras-orcamento-do-pedido` com o link do pedido; os Dados pelo layout da TOP do
+  orçamento (Empresa do pedido em leitura, Fornecedor, Data do documento, Condição de pagamento com as permitidas, Prazo de
+  entrega em dias inteiros de 0 a 3650 — "Informe o prazo de entrega em dias inteiros, de 0 a 3650." —, Validade — não
+  antes da data —, Observação); a grade com TODOS os itens do pedido (`compras-orcamento-item-<itemDoPedido>`), produto e
+  quantidade travados, sem Local de estoque e sem "Saldo"; só o preço se digita (vazio = "0"); Salvar (`compras-salvar`)
+  → `POST /api/compras/pedidos/:id/orcamentos` com `{tipo_operacao_id, fornecedor_id, data_documento,
+  condicao_pagamento_id?, prazo_entrega_dias?, validade_orcamento?, observacao?, itens: [{item_pedido_id, valor_unitario}]}`;
+  o 409 do fornecedor repetido aparece também no campo Fornecedor;
+- consulta `/compras/orcamentos/:id` (`compras-consulta-corpo`, `data-especie="orcamento"`): sem Novo e sem Duplicar;
+  "Editar orçamento" (`compras-orcamento-editar`; `orcamentos_compra.edit`; só aberto, senão `MSG_ORCAMENTO_NAO_ABERTO`)
+  edita NO LUGAR (`data-modo="edicao"`): Fornecedor, Empresa, Data e Pedido em leitura; `PUT` com TODAS as chaves
+  (`{condicao_pagamento_id, prazo_entrega_dias, validade_orcamento, observacao, itens: [{id, valor_unitario}]}`); sem
+  alteração, o Descartar é "Voltar à consulta"; "Cancelar orçamento de compra…" (`compras-cancelar`;
+  `orcamentos_compra.delete`; só aberto): "O orçamento passa a cancelado e libera o fornecedor para um orçamento novo
+  neste pedido."; Escolher NÃO está aqui (é da aba do pedido).
+
+**Compra — a divergência na prévia** (`compras-previa-divergencia`, `data-modo`, `data-bloqueia`), entre as recusas e o
+Estoque, só quando o servidor manda `divergencia`: "A compra difere do pedido de origem. Esta operação só avisa: a
+confirmação continua possível." · "A compra difere do pedido além da tolerância desta operação: a confirmação é
+recusada." · "A compra difere do pedido dentro da tolerância desta operação." · sem itens: "A compra não difere do pedido
+de origem."; "Tolerância: preço {p}% · quantidade {q}%." (vírgula decimal); uma linha por item
+(`compras-previa-divergencia-item`, `data-campo`, `data-acima`): Produto · O que difere (Preço ou Quantidade) · No pedido ·
+Na compra · Diferença ("+20,00%"; sem preço no pedido, "—") · Acima da tolerância (Sim ou Não). O botão segue
+`podeConfirmar`. Fora da forma → a prévia inteira "indisponível".
+
+**Portal de Compras:** o "Novo" não oferece orçamento (nasce do pedido); o Tipo "Orçamento de compra" segue a capacidade
+lida — "nao" (a API anterior) o tira e a URL `?especie=orcamento` cai em "Todos"; "carregando", ilegível (o usuário não
+lança nada) e só-orçamento o mantêm; quem SÓ vê orçamento abre a lista já nele; a sonda da lista leva a espécie do Tipo
+(`?limit=1&especie=…`).
+
+**Menu** (`apps/web/nav.registry.mjs`): Compras › Documentos e o detalhe do documento de compra aceitam também
+`orcamentos_compra.view`, com as palavras-chave "orçamento de compra" e "cotação"; a descrição de Aprovações › Compras
+passa a "Compras e pedidos de compra que aguardam aprovação" (a porta `compras.approve` não muda). Sem rota nova.
+
+**Idempotência:** na Central de Compras (Salvar, Confirmar, Cancelar, Encerrar saldo, Finalizar, Aprovar para orçamento)
+e no orçamento (Salvar, Cancelar, Escolher), a chave só troca quando o servidor RESPONDEU com recusa 4xx que não seja
+`CONCURRENCY_CONFLICT`; rede, 5xx e resposta perdida mantêm a chave (o reenvio recebe a resposta gravada). O reenvio com a
+mesma chave e OUTROS dados, depois de uma tentativa sem resposta, recebe 409 e mostra `MSG_REENVIO_COM_OUTROS_DADOS`: "A
+tentativa anterior ficou sem resposta do servidor e pode ter sido gravada. Os dados mudaram desde então, e nada foi
+gravado agora: confira o documento antes de tentar de novo." — decidido pelo que a tela sabe (a tentativa sem resposta, o
+corpo mudado e o 409 `CONFLICT`), nunca pelo texto do servidor. Depois de cada ação, só as leituras de documento de
+compra, a lista única, as prévias, os próximos passos e a aprovação de compras são perguntados de novo.
+
+**Fora:** cascata e cancelamento em lote dos orçamentos; reescolher o vencedor; desfazer a finalização; exigir o par
+aprovação ⇒ "Exigir pedido finalizado para receber" na gravação (decisão PENDENTE do Maike); esconder Estoque e Fiscal do
+perfil do orçamento; a prévia da finalização mostrar a provisão (F9b); as pendências da F9b para as telas de Compras além
+do botão Finalizar (F11).
 
 ## 5. Entrada de nota por XML
 
@@ -1207,7 +1324,7 @@ da PR); trocar o imóvel ou a TOP de movimento confirmado (sem rota).
 > Sem migration (usa a 0044 e a 0045; as migrations continuam 45), sem capacidade, rota, permissão ou código de erro
 > novos. Implantação em `docs/DEPLOYMENT.md` § OPERACOES-01 › F9b. A seção do formato 5: §2 ("Padrões financeiros",
 > com o pedido de compra e a compra). A tela da Central de Compras é da F6b/F11 (pendências no fim); o botão Finalizar
-> é da F6b.
+> entrou na F6b (§4).
 
 **A provisão do pedido de compra** (`apps/api/src/lib/financeiro-provisao.ts`: um núcleo, `sincronizar`, `:229-326`; a
 fonte `documentos_compra`, `:191-218`; a venda, `:158-184`, não muda). Nasce DESLIGADA: o neutro é o de hoje, nenhum
@@ -1287,8 +1404,9 @@ Os riscos (a trava, um cadastro inativado da TOP do pedido barrando até o estor
 reversão) estão na decisão 286, parte F9b.
 
 **Fora (F9b):** a prévia da finalização e a da confirmação mostrando a provisão; as parcelas da compra vindas do XML
-(F7). **Pendente das telas de Compras (F6b/F11):**
-- o botão Finalizar (F6b): é a única porta de tela para a provisão; sem ele, só a API finaliza;
+(F7). **Pendente das telas de Compras (F11):**
+- ~~o botão Finalizar~~ FEITO na F6b (§4): a única porta de tela para a provisão; a prévia não a mostra (escolha (h) da
+  F9b), e o texto do diálogo diz que os títulos previstos nascem ao finalizar quando a operação provisiona;
 - os previstos à parte na lista de títulos do pedido, com "Prevista";
 - "(padrão da operação)" quando aparece `padraoDaTop`;
 - pré-preencher a natureza e o centro pelos padrões da TOP;

@@ -2308,9 +2308,10 @@ com a 0043, e o deploy é refeito.
   premissa passou a tirar as seções de extensão do corpo no 5). A Central de Compras desta parte não pede nada novo: o
   Tipo "Orçamento de compra" só aparece com `orcamentos_compra.view`, que a API anterior não conhece. O K-1 de compras
   (`finalizacaoEOrcamento`) é da F6b, que consome a chave.
-- **Com "Exigir pedido finalizado para receber" = Sim, o web deste HEAD não recebe o pedido**: o Receber da Central
+- **Com "Exigir pedido finalizado para receber" = Sim, o web só com a F6a não recebe o pedido**: o Receber da Central
   continua habilitado no pedido aberto, o servidor responde 409 "Este pedido precisa ser finalizado antes de ser
-  recebido.", e não há botão Finalizar até a F6b. Ligue as regras só com as telas da F6b no ar (passo 7).
+  recebido.", e não há botão Finalizar até a F6b. Desde a F6b (§ F6b, na mesma PR), o "Receber…" do pedido aberto fica
+  desabilitado com essa mensagem e o Finalizar está na tela. Ligue as regras só com as telas da F6b no ar (passo 7).
 
 **Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
 apagado — decisão 247): nenhuma linha muda; sem backfill. Colunas novas nulas; CHECKs só alargados; os novos só
@@ -2345,10 +2346,10 @@ leitura (nada é gravado); o passo 7 grava, e só com a decisão dele.
    "Fluxo de compra", "Exigir pedido finalizado para receber" = Não, com a ajuda que termina em "… como hoje — e o
    aberto é recebido sem passar pela aprovação desta TOP, que só vale ao finalizar."; na "Aprovação", "Sem aprovação",
    com "Sempre" e "A partir de um valor" habilitados. Fechar sem salvar.
-3. "Novo" › Compras › Compra (o passo 1 não oferece Orçamento de compra): a aba "Divergência com o pedido" com
-   "Divergência" = Nenhuma e as duas tolerâncias em "0", desabilitadas; "Avisar" as habilita; digitar "150" mostra
-   "Informe um percentual de 0 a 100, com até duas casas decimais."; voltar a "Nenhuma" põe "0" de novo. Fechar sem
-   salvar.
+3. "Novo" › Compras › Compra (desde a F6b, o passo 1 também oferece "Orçamento" em Compras): a aba "Divergência com o
+   pedido" com "Divergência" = Nenhuma e as duas tolerâncias em "0", desabilitadas; "Avisar" as habilita; digitar
+   "150" mostra "Informe um percentual de 0 a 100, com até duas casas decimais."; voltar a "Nenhuma" põe "0" de novo.
+   Fechar sem salvar.
 4. Aprovações › Compras: a lista de hoje (nenhuma TOP de pedido de produção exige aprovação).
 5. Compras › Documentos: o Tipo oferece "Orçamento de compra" — escolhido, a lista vem vazia; o filtro Situação lista
    também Finalizado, Escolhido e Não escolhido.
@@ -2362,6 +2363,122 @@ leitura (nada é gravado); o passo 7 grava, e só com a decisão dele.
 **Decisão pendente do Maike** (registrada na decisão 283, não tomada aqui): exigir o par na gravação da TOP de pedido de
 compra — aprovação diferente de "Sem aprovação" ⇒ "Exigir pedido finalizado para receber" = Sim (E12). Hoje é só
 declarado, na ajuda da aba "Fluxo de compra".
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
+### F6b — as telas de Compras: finalizar, aprovar para orçamento, o orçamento de compra e o vencedor (OPERACOES-01, sem migration)
+
+Decisão 283, parte F6b. **Sem migration, sem variável, sem permissão nova, sem rota nova, sem capacidade nova, sem
+código de erro novo.** As migrations continuam 45, a última a 0045. Usa o que a 0044 e as rotas da F6a já criaram. O
+que entra:
+- web, na Central de Compras (sobre o motor, sem mudá-lo), tudo atrás da capacidade `finalizacaoEOrcamento` que a F6a
+  declara em `GET /api/compras/{pedidos,compras,orcamentos}/operation-types`:
+  - no pedido: "Finalizar" (com a prévia), "Aprovar para orçamento", "Novo orçamento", o bloco da Aprovação, a aba
+    "Orçamentos" (comparar, "Escolher", "Cancelar") e "Finalizado"/"Aprovado para orçamento" nos Dados adicionais;
+  - o orçamento de compra: a criação a partir do pedido, a consulta, editar no lugar e cancelar;
+  - na compra: a divergência com o pedido na prévia da confirmação;
+  - no Portal: o "Novo" sem orçamento avulso e o Tipo "Orçamento de compra" pela capacidade;
+  - sem a capacidade: o pedido FINALIZADO recebe, encerra o saldo e se cancela na tela; a chave de idempotência da Central
+    de Compras só troca quando o servidor recusa;
+- API, ADITIVA e só de leitura:
+  - `GET /api/aprovacoes/compras/:id` lê também o pedido (`compras.view` ∧ `pedidos_compra.view`);
+  - `GET /api/compras/pedidos/:id/proximos-passos` ganha `orcamentos` no fim (com `orcamentos_compra.create`);
+  - a leitura do pedido traz, em cada orçamento, a condição e o preço de cada item (com `orcamentos_compra.view`);
+- domínio: o tipo `orcamento_compra` ganha tela (o passo 1 do assistente oferece "Orçamento" em Compras; 13 tipos com
+  tela, 15 das 28 famílias sem tela no passo 1);
+- editor da TOP: só a ajuda da aba Aprovação no pedido de compra;
+- menu (`apps/web/nav.registry.mjs`, aplicado pelo coordenador no merge da fase, no mesmo commit das telas):
+  `orcamentos_compra.view` em Compras › Documentos e no detalhe do documento de compra, com as palavras-chave "orçamento
+  de compra" e "cotação"; a descrição de Aprovações › Compras passa a "Compras e pedidos de compra que aguardam
+  aprovação" (a porta `compras.approve` não muda).
+
+**Migration:** nenhuma. Nada a aplicar no banco.
+
+**Ordem do deploy:** a F6b não tem exigência própria. Na PR #90 vale a ordem das fases com migration (0042 → 0043 → 0044
+→ 0045, depois a API, depois o web). As regras de compras que travam — a aprovação no pedido, "Exigir pedido finalizado
+para receber" e a divergência em "Bloquear" — só se ligam, TOP por TOP, DEPOIS deste web no ar.
+
+**Version skew** (base `622f194`; provas em arquivos próprios, fora da suíte comum):
+- **Sentido 1 — web novo × API da base** (janela "web antes da API" e reversão só da API): a base não declara
+  `finalizacaoEOrcamento`, e a consulta do pedido é a de HOJE — sem Finalizar, Aprovar para orçamento, Novo orçamento, aba
+  "Orçamentos" nem bloco da aprovação; as abas de hoje, exatas; o "Receber…" de hoje — e NENHUMA pergunta a
+  `/previa-finalizacao`, a `/api/aprovacoes/compras/<pedido>` ou a caminho com `/orcamentos`; no Portal, o Tipo
+  "Orçamento de compra" não existe e nada de orçamento é perguntado (K1-1). A prévia da compra da base, sem
+  `divergencia`, é lida como "pronta" e confirma (200) (K1-2). `f6b-compras-skew-api-producao.spec.ts`, 2 casos, com o
+  vigia (nenhum 404, 422 ou 5xx). O ramo "mundo novo" do mesmo arquivo só roda quando a base de skew tiver a F6.
+  **Não coberto:** o pedido FINALIZADO gravado antes de reverter a API (ver Reversão); e o papel que só lança orçamento
+  (só `orcamentos_compra.create` entre as de compras), que pergunta a porta do orçamento que a base não tem — 404 de
+  rota no fio, e a tela é a de hoje.
+- **Sentido 2 — web da base × API nova** (janela "API antes do web" e reversão só do web): igual a hoje. O web da base não
+  pergunta a situação do pedido, ignora `orcamentos` nos próximos passos e as chaves a mais da leitura, e recebe e confirma
+  o pedido cujo leque tem orçamento como hoje (K2-1, `f6b-compras-skew-web-anterior.spec.ts`, 1 caso, com o vigia). O resto
+  é o K-2 da F6a (o pedido finalizado aparece "Desconhecido" no web da base, sem Receber).
+- O web F6b sobre a API F6a sem F6b não existe em produção (a mesma PR). Mesmo assim, o web tolera: sem `orcamentos` nos
+  próximos passos, o "Novo orçamento" fica indisponível; sem os preços, a aba compara só os totais; a situação do pedido
+  em 404 esconde o bloco.
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247): o deploy não grava nada; nenhuma linha muda; sem backfill. Produção (leitura de 02/10, decisão
+281): nenhum documento de compra listado; 3 TOPs — a de pedido de compra no formato 3, sem destino de orçamento e sem
+aprovação. O que muda para quem usa (o Administrador, o único com as permissões da F6a):
+- Compras › Documentos: o Tipo oferece "Orçamento de compra" (lista vazia: não há orçamento) e o "Novo" não o oferece;
+- num pedido de compra ABERTO (nenhum hoje): "Finalizar" e "Aprovar para orçamento" na barra;
+- o passo 1 do assistente da TOP: "Orçamento" em Compras;
+- a TOP de pedido de compra, aba "Aprovação": a ajuda nova;
+- no menu, a descrição de Aprovações › Compras: "Compras e pedidos de compra que aguardam aprovação" (a fila não muda);
+- para todos, sem a capacidade inclusive: depois de uma queda de rede, o reenvio do Salvar, Confirmar, Cancelar ou
+  Encerrar saldo de compras leva a mesma chave (nunca um segundo documento); o reenvio com outros dados mostra o aviso
+  "A tentativa anterior ficou sem resposta do servidor e pode ter sido gravada. …".
+Finalizar, aprovar para orçamento e escolher o vencedor gravam e não se desfazem: só com a decisão do Maike.
+
+**Reversão:** redeploy do web e/ou da API anteriores; nada no banco. Os pedidos finalizados, os orçamentos e as decisões
+gravados ficam (decisão 247). Enquanto ninguém finalizar pedido nem lançar orçamento, a reversão não deixa resto.
+Depois:
+- reverter só o web = o sentido 2 acima (e o K-2 da F6a);
+- reverter só a API = o sentido 1 acima, com UMA diferença: o pedido FINALIZADO já gravado continua com "Receber…",
+  "Encerrar saldo" e "Cancelar pedido de compra…" na tela (o web aceita o finalizado sem a capacidade), e a API anterior
+  recusa — 409 "Este pedido não está aberto." no receber e no encerrar, 404 no cancelar (§ F6a, Reversão). Um papel com
+  `orcamentos_compra.view` que não lança nada de compras vê o Tipo "Orçamento de compra" com a lista vazia. A correção é
+  voltar a API nova;
+- reverter os dois = a reversão da F6a.
+
+**Roteiro do Maike em produção** (depois do deploy; produção é operacional — decisões 240 e 247). Os passos 1 a 5 são só
+leitura (nada é gravado). Os passos 6 a 8 gravam, só com a decisão dele, um por vez.
+1. Compras › Documentos: o Tipo oferece "Orçamento de compra" — escolhido, a lista vem vazia e o "Novo" não existe; no
+   Tipo "Todos", o "Novo" lista só as TOPs de pedido de compra e de compra (nenhuma de orçamento).
+2. Configurações › Operações › Tipos de Operação › "Novo": o passo 1, grupo Compras, oferece "Pedido", "Orçamento" e
+   "Compra". Fechar sem salvar.
+3. A TOP de pedido de compra, aba "Aprovação": a ajuda "No pedido de compra, a aprovação vale ao finalizar: com
+   aprovação, o pedido só é finalizado depois de aprovado em Aprovações, por quem tem as permissões Aprovar de Pedidos
+   de Compra e Aprovar de Compras. …". Fechar sem salvar.
+4. Abrir `/compras/orcamentos/new` (sem pedido): "O orçamento de compra nasce do pedido: abra um pedido aprovado para
+   orçamento e use “Novo orçamento”." e o link "Ir para Documentos de compra". Nada é gravado.
+5. Aprovações › Compras: a lista de hoje.
+6. (Decisão do Maike; grava.) Criar a TOP de orçamento de compra pelo assistente (Compras › Orçamento) e incluí-la nas
+   "Próximas operações" da TOP de pedido de compra. Salvar a TOP de pedido grava uma versão nova, no formato 5 (o editor
+   mostra antes o que volta ao padrão). O leque vale só para os pedidos salvos DEPOIS.
+7. (Decisão do Maike; grava.) Um pedido de compra de teste nessa TOP, com dois itens. Conferir, nesta ordem:
+   - "Aprovar para orçamento" → confirmar → "Aprovado para orçamento" nos Dados adicionais; a pílula some;
+   - "Novo orçamento" → a Central do orçamento com a faixa do pedido, as linhas do pedido travadas e sem Local de estoque
+     → fornecedor A, preços → Salvar → a consulta do orçamento (Aberto);
+   - de novo, com o fornecedor B, mais barato; o mesmo fornecedor A de novo é recusado ("Este pedido já tem orçamento
+     deste fornecedor.");
+   - a aba "Orçamentos" do pedido: "Menor total" no B e "menor" nos preços dele → "Escolher" o B → B "Escolhido", A "Não
+     escolhido"; o pedido com o fornecedor e os preços do B;
+   - "Finalizar" → o diálogo com o texto "Finalizar confirma o pedido de compra: ele não volta a aberto. Não mexe em
+     estoque, e os orçamentos abertos continuam abertos. Se esta operação provisiona contas a pagar, os títulos previstos
+     nascem agora." e a prévia "Esta operação não exige aprovação para finalizar." → confirmar → "Finalizado", com
+     "Receber…" habilitado.
+   Nada se apaga (decisão 247): o pedido e os orçamentos de teste ficam (cancele o pedido, se quiser).
+8. (Decisão do Maike; grava; TOP por TOP.) Ligar a Aprovação no pedido de compra JUNTO com "Exigir pedido finalizado
+   para receber" (para o pedido não ser recebido sem aprovação), e a Divergência na compra. Num pedido novo: o bloco
+   "Aguardando aprovação"; "Receber…" desabilitado com "Este pedido precisa ser finalizado antes de ser recebido.";
+   "Finalizar" recusado na prévia até a aprovação. Com a provisão da F9b ligada, finalizar cria os previstos — o roteiro
+   da § F9b, passos 6 a 8, passa a ter o botão Finalizar.
+
+**Decisão pendente do Maike** (registrada na decisão 283, não tomada aqui): exigir o par na gravação da TOP de pedido de
+compra — aprovação diferente de "Sem aprovação" ⇒ "Exigir pedido finalizado para receber" = Sim. A F6b só o declara, na
+ajuda da aba "Aprovação".
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 
@@ -2545,7 +2662,8 @@ migration (0042 → 0043 → 0044 → 0045, depois a API, depois o web), descrit
 **Version skew** (base `622f194`): nenhum K-1 ou K-2 novo, porque nenhum corpo, resposta ou capacidade que um web de
 produção usa muda.
 - **Sentido 1 — web novo × API da base:** sem o bloco `formato5`, o editor da TOP é o do 4, sem a aba (o K-1 do formato
-  5, da F4). A Central de Compras desta branch não pede nada novo.
+  5, da F4). A Central de Compras desta fase não pede nada novo (as telas da F6b, na mesma PR, têm o K-1 próprio —
+  § F6b).
 - **Sentido 2 — web da base × API nova:** toda TOP de produção está nos formatos 1 a 4.
   - O salvar, a prévia, a confirmação e a auditoria da compra são os de hoje, chave por chave (CC-5).
   - Finalizar, receber, encerrar e cancelar não deixam previsto nem trilha `provisao` (PC-9). A premissa do PC-1 prova
@@ -2588,7 +2706,7 @@ Reverter só o web = o sentido 2 acima.
 
 **Roteiro do Maike em produção** (depois do deploy; produção é operacional — decisões 240 e 247). Os passos 1 a 5 são só
 leitura (nada é gravado). Os passos 6 a 8 gravam, só com a decisão dele, um por vez, e só com o botão Finalizar da F6b
-no ar: até lá, só a API finaliza, e esses passos ficam PENDING.
+no ar (§ F6b, na mesma PR).
 1. Configurações › Operações › Tipos de Operação › a TOP de pedido de compra.
    - As abas: Identificação, Geral, Próximas operações, Estoque, Fluxo de compra, Padrões financeiros, Financeiro,
      Fiscal e Aprovação.
@@ -2611,24 +2729,24 @@ no ar: até lá, só a API finaliza, e esses passos ficam PENDING.
 4. Financeiro › Títulos › A pagar: o cartão "Previstos" com 0.
 5. (Se alguma compra for confirmada depois do deploy) o detalhe do título dela mostra a origem "Compra <código>" e
    "Tipo de operação: <código> — <nome> (versão N)".
-6. (Decisão do Maike; grava; PENDING até a F6b.) Na TOP de pedido de compra:
+6. (Decisão do Maike; grava.) Na TOP de pedido de compra:
    - escolher a natureza de despesa e o centro de resultado padrão — ou decidir que todo pedido os informe;
    - marcar "Provisionar a pagar ao finalizar o pedido";
    - salvar: nasce uma versão nova, no formato 5.
    A provisão vale só para os pedidos salvos DEPOIS.
-7. (Decisão do Maike; grava; PENDING até a F6b.) Um pedido de compra de teste nessa TOP, com duas parcelas; Finalizar.
+7. (Decisão do Maike; grava.) Um pedido de compra de teste nessa TOP, com duas parcelas; Finalizar.
    Conferir:
    - Financeiro › Títulos › A pagar › "Previstos" mostra as duas parcelas, com a origem "Pedido de compra <código>", o
      aviso do previsto e sem Baixar;
    - a consulta do pedido, aba Financeiro, mostra a situação "Prevista".
-8. (Decisão do Maike; grava; PENDING até a F6b.) Receber uma parte e confirmar a compra:
+8. (Decisão do Maike; grava.) Receber uma parte e confirmar a compra:
    - os previstos passam ao que falta;
    - os anteriores ficam "Cancelada", com o motivo "Compra <código> confirmada";
    - cancelar o pedido de teste, ou encerrar o saldo, cancela os previstos com o motivo.
    Nada se apaga (decisão 247): o pedido de teste fica cancelado na história.
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção, e os passos 6 a 8
-dependem do botão Finalizar da F6b.
+gravam (só com a decisão dele).
 
 ## VISUAL-UX-04b — correções da Central de Compras (sem migration)
 

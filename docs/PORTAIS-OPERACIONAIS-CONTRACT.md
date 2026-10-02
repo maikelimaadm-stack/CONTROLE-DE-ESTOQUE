@@ -57,9 +57,10 @@ As famílias citadas aqui são as declaradas no registry — este documento as r
 
 ### Portal de Compras
 Processos de compra, da solicitação ao recebimento. Famílias hoje declaradas no escopo: `compras.solicitacao`,
-`compras.pedido`, `compras.compra` (COMPRAS-01, decisão 267) e `compras.orcamento` (OPERACOES-01 F6a, decisão 283; sem
-tela até a F6b). O lançamento de Pedido de compra e de Compra escolhe uma TOP configurada da família (obrigatória); a
-solicitação continua sem TOP. O Pedido de compra tem próximos passos (COMPRAS-02, decisão 268): recebê-lo, inteiro ou
+`compras.pedido`, `compras.compra` (COMPRAS-01, decisão 267) e `compras.orcamento` (OPERACOES-01 F6a, decisão 283; com
+tela desde a F6b: nasce do pedido aprovado para orçamento, nunca do "Novo"). O lançamento de Pedido de compra e de
+Compra escolhe uma TOP configurada da família (obrigatória); a solicitação continua sem TOP. O Pedido de compra tem
+próximos passos (COMPRAS-02, decisão 268): recebê-lo, inteiro ou
 em partes, gera uma Compra ligada a ele — e, desde a decisão 283, o pedido aprovado para orçamento recebe orçamentos de
 compra (a segunda aresta, pedido → orçamento). Os campos da Central de Compras seguem o layout do documento ligado à
 TOP (COMPRAS-03, decisão 269), o mesmo mecanismo de Vendas.
@@ -379,9 +380,24 @@ API e no editor da TOP (as telas da Central de Compras são da F6b):**
 - na TOP (formato 5): "Exigir pedido finalizado para receber" no pedido e "Divergência com o pedido" na compra, as duas
   desligadas por padrão.
 
-A Central de Compras de hoje não muda, nem o menu: o orçamento só aparece no Tipo da lista e na consulta genérica para
-quem tem `orcamentos_compra.view`. Com "Exigir pedido finalizado para receber" = Sim, esta tela não recebe o pedido até a
-F6b pôr o Finalizar. Contrato em `docs/OPERACOES-CONTRACT.md` §4.
+As telas vieram na F6b (bloco seguinte). Contrato em `docs/OPERACOES-CONTRACT.md` §4.
+
+**O que EXISTE (OPERACOES-01 F6b, decisão 283) — as telas, na Central de Compras, só com a capacidade
+`finalizacaoEOrcamento` declarada pela API (sem ela, a Central de hoje):**
+
+- no pedido: "Finalizar" (com a prévia do servidor), "Aprovar para orçamento", "Novo orçamento" (pelo leque de TOPs de
+  orçamento do pedido), o bloco da Aprovação (Aprovar/Reprovar a quem tem `pedidos_compra.approve` e `compras.approve`) e
+  a aba "Orçamentos" (a comparação por total e por preço de item, "Escolher" o vencedor e "Cancelar"; sem cascata: os
+  abertos de um pedido que não está mais aberto são avisados e cancelados um a um);
+- o orçamento de compra: nasce SÓ do pedido aprovado para orçamento (o "Novo" do Portal e o da barra não o oferecem),
+  com os itens do pedido travados e o preço digitado; a consulta edita no lugar e cancela;
+- na compra: a divergência com o pedido na prévia da confirmação;
+- no Portal: o Tipo "Orçamento de compra" (com `orcamentos_compra.view`; quem só tem essa capacidade abre a lista já
+  nele), que segue a capacidade lida — contra a API anterior ele some, porque a lista dela viria vazia; o menu Compras ›
+  Documentos e o detalhe do documento de compra aceitam `orcamentos_compra.view`.
+
+O pedido finalizado recebe, encerra o saldo e se cancela pela tela. Com "Exigir pedido finalizado para receber" = Sim,
+o "Receber…" do pedido aberto fica desabilitado até ele ser finalizado. Contrato em `docs/OPERACOES-CONTRACT.md` §4 (F6b).
 
 **O que FALTA (e não deve ser simulado):**
 

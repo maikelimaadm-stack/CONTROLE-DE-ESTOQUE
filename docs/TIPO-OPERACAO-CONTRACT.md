@@ -2026,7 +2026,7 @@ id (`docs/OPERACOES-CONTRACT.md` §3).
 | `GET /api/aprovacoes/compras` | `compras.approve` | — (`?page=&pageSize=`) |
 | `POST /api/aprovacoes/compras/:id/aprovar` | `compras.approve` | `{ observacao? }` |
 | `POST /api/aprovacoes/compras/:id/reprovar` | `compras.approve` | `{ motivo }` |
-| `GET /api/aprovacoes/compras/:id` | `compras.view` (a do GET da compra por id) | — (nenhum parâmetro: qualquer um → 422) |
+| `GET /api/aprovacoes/compras/:id` | `compras.view` (a do GET da compra por id); o pedido de compra, também `pedidos_compra.view` (F6b, decisão 283) | — (nenhum parâmetro: qualquer um → 422) |
 | `GET /api/aprovacoes/estoque` | porta dinâmica: qualquer `.approve` das quatro espécies; nenhuma → 403 | — (`?page=&pageSize=`) |
 | `POST /api/aprovacoes/estoque/:segmento/:id/aprovar` | `<recurso da espécie>.approve` | `{ observacao? }` |
 | `POST /api/aprovacoes/estoque/:segmento/:id/reprovar` | `<recurso da espécie>.approve` | `{ motivo }` |
@@ -2124,6 +2124,16 @@ ser finalizado."), na prévia da finalização e na fila (a linha volta). A fila
 Aprovar o pedido não o finaliza. **Declarado:** com "Exigir pedido finalizado para receber" = Não (o neutro da seção
 `fluxoCompra`, §18.9), o pedido ABERTO é recebido sem passar pela aprovação — quem quer o pedido controlado liga as duas
 regras; exigir o par na gravação é decisão PENDENTE do Maike (decisão 283).
+
+**Na tela (F6b).** A consulta do pedido aberto mostra o bloco da Aprovação (a situação de `GET /api/aprovacoes/compras/:id`,
+que desde a F6b lê o pedido com `compras.view` ∧ `pedidos_compra.view`, pela conta do finalizar com a cobertura), com
+Aprovar e Reprovar a quem tem `pedidos_compra.approve` ∧ `compras.approve`; a prévia do "Finalizar" diz a mesma situação.
+A ajuda da aba Aprovação no editor do pedido de compra (`apps/web/src/features/admin/top-editor.tsx:1223`) é: "No pedido
+de compra, a aprovação vale ao finalizar: com aprovação, o pedido só é finalizado depois de aprovado em Aprovações, por
+quem tem as permissões Aprovar de Pedidos de Compra e Aprovar de Compras. Se o valor do pedido subir depois da aprovação
+(o orçamento vencedor muda os preços), ela precisa ser feita de novo. O pedido aberto é recebido sem passar pela
+aprovação, a não ser que a aba Fluxo de compra exija o pedido finalizado para receber." As outras famílias mantêm a ajuda
+de hoje.
 
 ### 17.6 Alteração após confirmar: recusada no formato 4
 
@@ -2338,9 +2348,10 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 - `CATALOGO_TOP = {grupos, tipos, perfis}` (`:258-262`), com:
   - `GRUPOS_TIPO_MOVIMENTO_TOP` e os rótulos;
   - `CATALOGO_TIPOS_MOVIMENTO_TOP` (22 tipos, `:140-165`; desde a OPERACOES-01, 20 com família: requisição de material,
-    consumo e devolução de consumo ganharam a família na F5a, decisão 282, e o orçamento de compra, `compras.orcamento`,
-    na F6a, decisão 283 — os quatro sem tela —, e o movimento bancário, `financeiro.movimento_bancario`, na F9a, decisão
-    286 — com tela, como a conta a pagar e a conta a receber; 12 com tela; sem família, só manejo e batelada);
+    consumo e devolução de consumo ganharam a família na F5a, decisão 282 — os três sem tela —, o orçamento de compra,
+    `compras.orcamento`, na F6a, decisão 283 — com tela desde a F6b —, e o movimento bancário,
+    `financeiro.movimento_bancario`, na F9a, decisão 286 — com tela, como a conta a pagar e a conta a receber; 13 com tela;
+    sem família, só manejo e batelada);
   - `PERFIS_TIPO_TOP` (um por família do registry — 28 desde a F5a, a F6a e a F9a —, `:244`).
   Congelado. Nenhum código de família escrito: o gate `node scripts/familia-operacional-ssot-audit.mjs` passa.
 - `perfilDoTipoTop(família, definicoes?)` (`:212-237`) deriva o perfil de `familiaTemProximasOperacoes`,
@@ -2488,7 +2499,7 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 - As seções das F7 e F10 e as telas dos tipos "sem tela ainda", cada uma na sua fase (`docs/OPERACOES-CONTRACT.md` §1
   e §2). As da F5 (Destino e Fluxo) entraram na F5a, as da F6 (Fluxo de compra e Divergência com o pedido), na F6a, e a
   da F9 (Padrões financeiros), na F9a (§18.10);
-  a tela da requisição, do consumo e da devolução de consumo é da F5b, e a do orçamento de compra, da F6b.
+  a tela da requisição, do consumo e da devolução de consumo é da F5b; a do orçamento de compra entrou na F6b (§18.9).
 - As famílias novas no registry: manejo e batelada (requisição de material, consumo e devolução de consumo nasceram na
   F5a; orçamento de compra, na F6a; o movimento bancário nasceu na F9a).
 - A prova do lado verdadeiro do detector, depois do merge, e a medição do CONJUNTO de seções (F5a, F6a e F9a).
@@ -2513,7 +2524,8 @@ elas ligam, em §4. Aqui, o que é do contrato da TOP:
 - **Perfis derivados:** o pedido de compra ganha as abas "Fluxo de compra" e "Aprovação" (a matriz aceita a aprovação,
   §17.2); a compra, "Divergência com o pedido"; o orçamento de compra (`compras.orcamento`, família nova) tem
   Identificação, Geral, Estoque, Financeiro e Fiscal, com as exigências "Exigir fornecedor" e "Exigir observação"
-  (`EXIGENCIAS_GERAIS_ORCAMENTO_COMPRA_TOP`, `tipo-operacao-restricoes.ts:161`), e nenhum tipo com tela até a F6b. Toda
+  (`EXIGENCIAS_GERAIS_ORCAMENTO_COMPRA_TOP`, `tipo-operacao-restricoes.ts:161`), e o tipo `orcamento_compra` com tela
+  desde a F6b (o perfil não mudou: Estoque e Fiscal continuam, como no orçamento de venda). Toda
   outra família tem as duas seções no padrão (Destino e Fluxo, da F5a, seguem `docs/OPERACOES-CONTRACT.md` §2).
 - **No 5, fora do tipo:** a seção que a família não usa, fora do padrão, é a recusa de §18.5 ("Esta operação não usa a
   seção Fluxo de compra." / "… Divergência com o pedido."); a volta ao padrão a zera antes de gravar.
@@ -2527,6 +2539,9 @@ elas ligam, em §4. Aqui, o que é do contrato da TOP:
   do mapa e o `ErrorState` geral aparece do mesmo jeito.
 - **Skew:** sem o bloco `formato5`, o editor do 4, sem as abas (K-1 do 5, com a premissa que tira as seções de extensão
   do corpo no 5). O editor da base grava o 4 contra a API nova, sem promover (K-2 do 5).
+- **Telas (F6b):** o passo 1 do assistente oferece "Orçamento" em Compras (`temTela: true`,
+  `packages/domain/src/tipo-operacao-catalogo.ts:146`); a ajuda da aba Aprovação no pedido de compra é a do §17.5; o
+  editor não ganha aba nem campo.
 
 ### 18.10 Os padrões financeiros (OPERACOES-01 F9a, decisão 286)
 

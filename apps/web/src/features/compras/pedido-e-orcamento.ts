@@ -50,7 +50,8 @@ export { declaraFinalizacaoEOrcamento };
  * espécies de `variantesDeCompra()` que o usuário pode LANÇAR (`can(`${v.perm}.create`)`): alguma declara → "sim";
  * alguma ainda pendente → "carregando"; senão (nenhuma declara, erro, ou o usuário não lança espécie nenhuma) → "nao"
  * (fail-closed: a Central de hoje). A porta do ORÇAMENTO só é perguntada quando outra já declarou, ou quando o usuário
- * não lança outra espécie: contra a API anterior (sem a rota do orçamento) nenhuma pergunta dá 404.
+ * não lança outra espécie: contra a API anterior (sem a rota do orçamento), quem lança outra espécie não pergunta ao
+ * orçamento; quem só lança orçamento pergunta e leva a 404 de rota, lida como "nao" (a Central de hoje).
  * Enquanto as permissões carregam (`useAuth().loading`), "carregando". `habilitado` falso (a tela que não usa a
  * capacidade — a consulta da COMPRA): nenhuma pergunta, e "nao".
  */
