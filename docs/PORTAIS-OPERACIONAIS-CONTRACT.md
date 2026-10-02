@@ -556,3 +556,11 @@ estoque"). A coluna da grade tem 122 px (antes 108): é a menor largura par em q
 " *" de coluna obrigatória (`features/central/itens.tsx:45`, `itens-salvos.tsx:56`). As chaves (`armazem`,
 `armazemPorItem`, `armazemForcado`, `exigeArmazem`), os testids e a ordem das colunas não mudam — a ordem muda na F3b.
 As "colunas Armazém" das seções anteriores são esta coluna, com o nome de antes.
+
+## Central Financeira (OPERACOES-01 F8, decisão 285)
+
+As "Movimentações Financeiras" do §3 ganham a sua Central: o menu Financeiro com Títulos, Bancos e caixa, Conciliação,
+Fluxo e resultado e Adiantamentos. O financeiro NÃO usa o motor da Central de documento (VISUAL-UX-04): cada linha é uma
+parcela de título, e a grade é a `DataTable` sobre o `Base1Grid`, com seleção para as ações em lote. Baixa, estorno,
+transferência, adiantamento e compensação continuam efeitos de um título ou de uma conta, sem TOP: a TOP financeira é da
+F9 (decisão 286). Contrato em `docs/OPERACOES-CONTRACT.md` §6.

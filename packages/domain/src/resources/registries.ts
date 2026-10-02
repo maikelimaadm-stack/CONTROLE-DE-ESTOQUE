@@ -194,6 +194,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       S("nature", "Tipo", [["income", "Receita"], ["expense", "Despesa"], ["both", "Receita e despesa"]], { required: true, herdaDoSuperior: true, help: "Natureza filha segue o Tipo da superior (salvo superior Receita e despesa).", list: true, filter: true, span: 2 }),
       S("kind", "Analítica", [["analytic", "Sim"], ["synthetic", "Não"]], { default: "analytic", list: true, help: "Sim: recebe lançamentos. Não: sintética, só agrupa outras.", span: 2 }),
       S("classification", "Classificação", [["unclassified", "Não Classificado"], ["capex", "CAPEX"], ["opex", "OPEX"]], { span: 3 }),
+      S("grupo_dre", "Grupo do DRE", [["receitas", "Receitas"], ["deducoes", "Deduções"], ["custos", "Custos"], ["despesas", "Despesas"], ["investimentos", "Investimentos"]], { help: "Vazio: herda da natureza superior; sem superior marcada, sai do Tipo (Receita → Receitas; Despesa CAPEX → Investimentos; Despesa → Despesas).", span: 3 }),
       B("is_tax", "É tributo?", { span: 2 }), REF("parent_id", "Natureza superior", "financial_categories", { span: 5 }), active()
     ]
   },

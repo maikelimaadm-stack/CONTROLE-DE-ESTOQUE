@@ -1736,6 +1736,134 @@ leitura (nada é gravado). O passo 5 grava, e só com a decisão dele.
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 
+### F8 — Central Financeira (OPERACOES-01, migration 0042)
+
+Decisão 285. **Uma migration: `0042_central_financeira.sql`** (pre-deploy; trava (2026,76); `lock_timeout` 2 s;
+pré-condições nomeadas `OPERACOES-01 F8: …`, a primeira é "já aplicada"; pós-condições só de catálogo; aditiva; sem
+backfill). Sem variável, sem permissão nova. Rotas novas no prefixo próprio `/api/financeiro/*` e a capacidade
+`GET /api/financeiro/capacidades` → `{ "centralFinanceira": 1 }`: o web novo só mostra a Central quando a API a declara;
+sem ela (404 de rota, erro ou outra forma), é o Financeiro de hoje, idêntico. Contrato em `docs/OPERACOES-CONTRACT.md` §6.
+
+**Migration — o que faz** (nenhuma linha existente é reescrita):
+- colunas novas, todas anuláveis e sem default: `bank_accounts.data_saldo_inicial`; `financial_titles.data_competencia`,
+  `.conta_prevista_id`, `.cancel_reason`, `.cancelled_at`, `.cancelled_by`; `title_settlements.lote_id`, `.tarifa`,
+  `.adiantamento_id`, `.natureza_desconto_id`; `bank_movements.tipo_transferencia`, `.title_settlement_id`,
+  `.componente_baixa`, `.lote_baixa_id`, `.cancel_reason`, `.cancelled_at`, `.cancelled_by`;
+  `financial_categories.grupo_dre` — com as chaves `(id, organization_id)` que as FKs compostas pedem, 13 FKs compostas
+  sem ação de exclusão, 2 FKs de trilha para `erp.users`, 5 CHECKs e 6 índices parciais;
+- tabela nova `erp.financeiro_naturezas_padrao` (configuração da organização, vazia, sem empresa: RLS forçada com
+  `tenant_isolation`, auditoria, `updated_at` por gatilho; o `erp_app` lê, insere e altera, sem DELETE nem TRUNCATE; não
+  entra em `scripts/company-rls-modules.json`);
+- `erp.refresh_title_status` com a soma `sum(amount)` (era `sum(amount + discount)`): o desconto da baixa passa a contar
+  UMA vez. Mesma assinatura, linguagem e privilégios; não recalcula título algum — só vale na próxima baixa ou estorno;
+- gatilho `trg_bm_confirmado_imutavel`: movimento bancário confirmado não muda data, valor, juros, conta, tipo,
+  categoria, destino, empresa nem rótulo da transferência (`CONFLICT`, 409 em todo binário);
+- gatilho `trg_ts_credito_conferir`: o uso do crédito de um adiantamento confere adiantamento, parceiro, empresa,
+  direção e crédito;
+- porta `erp.extrato_conta_organizacao(uuid[], date, date)`, SECURITY DEFINER estreita no molde da
+  `erp.movimentos_conta_organizacao` (0015) — EXECUTE só do `erp_app`;
+- o `erp_app` perde DELETE e TRUNCATE em `financial_titles`, `title_settlements`, `bank_movements` e
+  `bank_movement_apportionments`, e UPDATE em `bank_movement_apportionments`.
+
+**Pré-condições (a migration recusa sem aplicar nada, com a mensagem `OPERACOES-01 F8: …` que nomeia o que falta):**
+P1 já aplicada (a tabela nova, `title_settlements.lote_id` ou `bank_movements.tipo_transferencia` já existe); P2 papel
+`erp_app` ausente; P3 quem aplica não atravessa RLS (precisa ser superusuário ou `BYPASSRLS`: é o dono da função
+SECURITY DEFINER e lê o acervo); P4 alguma das 55 colunas que a migration lê ausente; P5 a chave
+`uq_financial_categories_tenant` ausente; P6 alguma função chamada ausente (`tenant_visible`, `audit_row`,
+`current_org_id`, `effective_user_id`, `has_permission`, `refresh_title_status`, `title_settlement_changed`,
+`set_updated_at`); P7 os gatilhos do ledger diferentes dos de hoje (`title_settlements`: `trg_settlement_changed`;
+`bank_movements`: `trg_bm_audit`; `financial_titles`: `trg_ft_audit`, `trg_ft_updated`); **P8 há baixa confirmada com
+desconto** (até 20 ids no diagnóstico) — a soma muda de sentido e uma baixa assim passaria a quitar menos; um humano
+decide. Os ALTER TABLE pedem trava curta em `bank_accounts`, `financial_titles`, `title_settlements`, `bank_movements`,
+`financial_categories` e `users`: com uma transação longa segurando uma delas, a migration desiste em 2 s sem aplicar
+nada, e o deploy é refeito (seguro). Em erro, publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0042) → API → web.** Na PR #90, a ordem do deploy é a das fases com migration (0042 a 0048, nas seções
+delas); a 0042 é a primeira. O menu (`apps/web/nav.registry.mjs`) vai no MESMO deploy do web desta fase. Janelas:
+1. **API anterior × banco novo:** os INSERTs dela ignoram as colunas novas e nunca gravam `adiantamento_id` (o gatilho
+   do crédito não dispara para ela); ela não apaga o ledger nem chama a função do extrato. Declarado: (a) a baixa COM
+   desconto feita por ela quita o título só pelo `amount` e deixa o valor do desconto em aberto (ela confere
+   `amount + discount ≤ saldo`, mais estrita: nunca estoura); (b) o PUT de movimento que troca o rateio recebe 403 (ela
+   apaga `bank_movement_apportionments`, e o `erp_app` não apaga mais); (c) o PUT que muda valor, data ou conta de
+   movimento confirmado recebe 409 do gatilho. A web anterior não tem tela de PUT de movimento. Produção não tem baixa
+   nem movimento (02/10).
+2. **Web anterior × API nova** (janela "API antes do web" e reversão só do web): as rotas `/api/financial/*` recebem os
+   corpos de hoje e devolvem as chaves de hoje, só com acréscimos. Mudam, de propósito (os defeitos): título gerado por
+   documento não se edita (valor, parceiro, rateio…) nem se cancela pelo financeiro (409); movimento confirmado não
+   muda valor nem data (409); "gera obrigação" sem empresa → 422; conta OFX inválida → 422; transferência com destino
+   inválido → 422; a baixa com desconto quita o `amount` e movimenta valor − desconto — o "Valor líquido do movimento"
+   que a tela antiga mostra; adiantamento pelo tipo de título aparece como "Adiantamento/Pendente"; a contagem de anexos
+   passa a contar; baixa em lote "Único" com títulos de 2 ou mais empresas → 422, título fora do escopo no lote é pulado
+   (antes, 404 do lote inteiro), id repetido → 422; baixa cruzada com desconto: o contrário abate valor − desconto.
+   Provado pelo K-2 (`central-financeira-skew-web-anterior.spec.ts`, 3 casos: a lista antiga com as chaves e os tipos
+   de hoje; a baixa antiga com Desconto 10 → "Baixada" e o movimento de saldo − 10; lote, cancelamento em lote e OFX
+   antigos com os corpos e as chaves de hoje).
+3. **Web nova × API anterior** (janela "web antes da API" e reversão só da API): a capacidade dá 404, e a página é o
+   Financeiro de hoje — mesmas abas, formulário com rateio por %, diálogo de baixa sem Tarifa, corpo do `/settle` sem
+   `tarifa`, `excedente` nem `adiantamento_id` — e nenhum outro pedido sai para `/api/financeiro/*` (K-1,
+   `central-financeira-skew-api-producao.spec.ts`, 3 casos, contando os pedidos no fio). Diferenças inócuas: o
+   cancelamento de movimento manda o motivo digitado (a API anterior o descarta, como descartava o fixo), e o link da
+   baixa no detalhe do movimento segue o de hoje (a API anterior não manda `direction`). Declarado: o menu do web novo
+   mostra as áreas novas (Títulos, Bancos e caixa…), que a tela de hoje não tem — o link cai na aba padrão (Contas) —,
+   e não mostra Contas nem Caixa e Bancos, que a tela de hoje continua mostrando como abas.
+
+Os dois sentidos rodam no job `skew` do CI, contra os binários reais da base (`622f194`), e os specs escolhem o ramo pelo
+mundo medido na hora (K-1: a base responde 404 ou 200 a `GET /api/financeiro/capacidades`; K-2: o web da base conhece ou
+não a rota da capacidade, por `git grep` na árvore da base).
+
+**Impacto em dados reais:** nenhuma linha muda; sem backfill. Produção (02/10): 1 título financeiro, zero baixas, zero
+contas bancárias, zero movimentos bancários e zero OFX — a P8 passa, e as telas de Bancos e caixa, Conciliação e
+Adiantamentos abrem vazias. O título de produção continua com o mesmo saldo e situação: a soma nova só vale na próxima
+baixa. Se ele foi gerado por documento (Origem diferente de "Avulso"), passa a mudar pelo financeiro só no vencimento,
+na conta prevista e na observação. Sem natureza padrão configurada (a tabela nasce vazia), juros, multa e acréscimo
+ficam no movimento principal, como hoje, e a baixa com tarifa é recusada até alguém configurar a natureza da tarifa.
+Nenhuma natureza tem `grupo_dre`: o DRE sai pelos padrões derivados (receita → Receitas; despesa CAPEX →
+Investimentos; despesa → Despesas); Deduções e Custos só aparecem com a marcação no cadastro. O que muda para fora do
+sistema: o menu Financeiro (as áreas novas; Contas e Caixa e Bancos saem do menu e da busca, e continuam pela URL e
+pelos favoritos).
+
+**Reversão:** API e web voltam por redeploy da versão anterior; o banco fica (aditivo; a tabela nova nunca se apaga,
+decisão 247; devolver DELETE ao `erp_app` ou desligar um gatilho só com migration nova, por decisão humana). Reverter
+só o web = janela 2; reverter só a API = janela 3 sobre o banco novo, com a janela 1. Enquanto ninguém usar a Central
+(baixa com componente, tarifa, excedente, lote ou encontro de contas com desconto), a reversão não deixa resto. Depois:
+- a API anterior não estorna a baixa CRUZADA com desconto feita pela nova: o espelho abate valor − desconto e ela acha o
+  par só pelo `amount` igual → 409 "Par da baixa cruzada não identificado com exatidão: cancelamento bloqueado"
+  (fail-closed; nada corrompe);
+- o estorno pela API anterior de uma baixa com componentes, tarifa ou excedente cancela a baixa e o principal (se nenhuma
+  outra baixa o usa), e deixa CONFIRMADOS os movimentos de componente, a tarifa do lote e o título-crédito do excedente
+  (com excedente, o principal também fica: a baixa do crédito o compartilha);
+- a API anterior deixa estornar direto um movimento de componente (ela não conhece `title_settlement_id`).
+A correção, nos três, é voltar a API nova e estornar por ela. Por isso: use os recursos novos de baixa em produção só
+depois de conferir o deploy (roteiro abaixo).
+
+**Roteiro do Maike em produção** (produção é operacional — decisões 240 e 247). Os passos 0 a 9 são só leitura (nada é
+gravado); o passo 10 grava, e só com a decisão dele.
+0. Antes do deploy (leitura): o ledger de migrations termina na 0041; nenhuma baixa confirmada com desconto (a P8 refaz a
+   pergunta na hora de aplicar).
+1. Menu Financeiro: Títulos, Bancos e caixa, Conciliação, Fluxo e resultado, Adiantamentos, Visão Geral, Planejamento,
+   Compromissos, nesta ordem; Contas e Caixa e Bancos fora do menu; a busca do menu por "contas a pagar" leva a Títulos.
+   `/financeiro?tab=contas&sub=pagar` ainda abre a lista de hoje.
+2. Títulos › A pagar, A receber e Todos: o título de produção aparece; os cartões (Vencidos, Vencem hoje, A vencer,
+   Pagos/Recebidos no período) contam e somam; "Previstos" desabilitado com "Os previstos chegam com a provisão pela
+   TOP"; o rodapé "Totais do filtro". Exportar CSV abre a planilha com o dinheiro em texto. Nenhuma ação em lote.
+3. Abrir o título: "Origem" com o rótulo (e "Abrir origem" quando ele vem de documento, com o aviso "Título gerado por …"
+   e sem Editar nem Cancelar). "Baixar" abre o diálogo novo (Tipo, Conta bancária, Valor, Juros, Multa, Desconto,
+   Acréscimo, Tarifa, Movimento). Fechar sem confirmar.
+4. "+ Novo" › Nova despesa: o lançamento avulso (Competência, Conta prevista, Rateio em R$ com "Falta R$ …", "Já pago",
+   Anexos). Voltar sem salvar.
+5. Bancos e caixa › Contas: vazia (produção sem conta), com o link "Cadastro de contas"; Extrato: "Escolha uma conta
+   para ver o extrato."; Transferências: o formulário (Tipo, Conta de origem, Conta de destino…). Fechar sem lançar.
+6. Conciliação: a lista de importações vazia; "Importar OFX" pede a conta. Fechar.
+7. Fluxo e resultado › Fluxo de caixa do mês; "Incluir previstos" desabilitado. Resultado (DRE): competência e caixa do
+   mês, por grupo.
+8. Adiantamentos: vazio.
+9. Configurações › Financeiro › "Naturezas padrão da baixa": os 9 campos vazios. Cadastros › Naturezas: o campo "Grupo do
+   DRE". Não salvar.
+10. (Decisão do Maike; grava.) Configurar as naturezas padrão (juros, multa, acréscimo, desconto e tarifa) e, se quiser,
+    o "Grupo do DRE" das naturezas de dedução e de custo.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
 ## VISUAL-UX-04b — correções da Central de Compras (sem migration)
 
 Decisão 278. **Só web**: sem migration, sem rota, sem API, sem variável, sem permissão, sem domínio. Conserta regressões

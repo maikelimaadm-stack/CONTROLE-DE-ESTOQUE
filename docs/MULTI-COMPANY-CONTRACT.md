@@ -292,6 +292,14 @@ explícito nas duas tabelas, sem SQL dinâmico e com `execute` revogado de `publ
 ORGANIZAÇÃO — e só dela. A listagem normal de movimentos (`/financial/bank-movements`) continua recortada por
 empresa: o que mudou é o AGREGADO DE CONTA, não a leitura de lançamento.
 
+A Central Financeira (OPERACOES-01 F8, migration 0042, decisão 285) acrescenta a mesma porta para o EXTRATO com saldo
+real × saldo conciliado: `erp.extrato_conta_organizacao(contas, de, até)`, com as mesmas cinco propriedades (organização
+da GUC do servidor, `bank_accounts.view` **e** `bank_movements.view` reconferidas dentro, predicado de tenant nas duas
+tabelas, `search_path` fixo, sem SQL dinâmico, `execute` revogado de `public` e concedido só a `erp_app`) e as colunas
+de conciliação (`reconciled_at`, `ofx_transaction_id`) e de transferência (`tipo_transferencia`). As rotas
+`/api/financeiro/contas`, `/api/financeiro/extrato` e o fluxo de caixa da organização leem por ela; o fluxo **por empresa** lê
+`erp.bank_movements` sob a RLS e não tem saldo — saldo de conta é da organização.
+
 Não existe rateio inventado do saldo inicial: seria trocar um vazamento por um número financeiramente falso.
 No painel financeiro, quem não tem a capacidade de organização recebe o bloco de bancos vazio e sinalizado
 (`banks_escopo: "restrito"`) — nunca um total que soma empresas que a pessoa não enxerga.

@@ -39,6 +39,16 @@ disponibilidade responsiva (1024–1920: sempre acessível — módulos que não
 | Estoque | Ações | Transferência entre empresas | `/estoque/transferencias/new?kind=farm` | farm_transfers.create | sim | não | aba própria (/estoque/transferencias/new) | barra ou **Mais** |
 | Estoque | Ações | Nova produção de ração | `/estoque/batidas/new` | feed_batches.create | sim | não | aba própria (/estoque/batidas/new) | barra ou **Mais** |
 | Financeiro | (módulo) | Financeiro | `/financeiro` | união das áreas | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
+| Financeiro | Títulos | A receber | `/financeiro?tab=titulos&sub=receber` | receivables.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
+| Financeiro | Títulos | A pagar | `/financeiro?tab=titulos&sub=pagar` | payables.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
+| Financeiro | Títulos | Todos | `/financeiro?tab=titulos&sub=todos` | payables.view \| receivables.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
+| Financeiro | Bancos e caixa | Contas | `/financeiro?tab=bancos&sub=contas` | bank_accounts.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
+| Financeiro | Bancos e caixa | Extrato | `/financeiro?tab=bancos&sub=extrato` | bank_movements.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
+| Financeiro | Bancos e caixa | Transferências | `/financeiro?tab=bancos&sub=transferencias` | bank_movements.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
+| Financeiro | Conciliação | Conciliação | `/financeiro?tab=conciliacao` | ofx_imports.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
+| Financeiro | Fluxo e resultado | Fluxo de caixa | `/financeiro?tab=fluxo&sub=fluxo` | cash_flow.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
+| Financeiro | Fluxo e resultado | Resultado (DRE) | `/financeiro?tab=fluxo&sub=resultado` | report.dre.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
+| Financeiro | Adiantamentos | Adiantamentos | `/financeiro?tab=adiantamentos` | payables.view \| receivables.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
 | Financeiro | Visão Geral | Visão Geral | `/financeiro?tab=visao-geral` | dashboard.financial.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
 | Financeiro | Contas | A Pagar | `/financeiro?tab=contas&sub=pagar` | payables.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
 | Financeiro | Contas | A Receber | `/financeiro?tab=contas&sub=receber` | receivables.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
@@ -49,9 +59,11 @@ disponibilidade responsiva (1024–1920: sempre acessível — módulos que não
 | Financeiro | Caixa e Bancos | Meses conciliados | `/financeiro?tab=caixa&sub=historico` | ofx_report.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
 | Financeiro | Caixa e Bancos | Contas Bancárias | `/financeiro?tab=caixa&sub=bancos` | bank_accounts.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
 | Financeiro | Planejamento | Planejamento | `/financeiro?tab=planejamento` | budget_plannings.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
+| Financeiro | Compromissos | Compromissos | `/financeiro?tab=compromissos` | contracts.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
 | Financeiro | Ações | Nova despesa (conta a pagar) | `/financeiro/contas-a-pagar/new` | payables.create | sim | não | aba própria (/financeiro/contas-a-pagar/new) | barra ou **Mais** |
 | Financeiro | Ações | Nova receita (conta a receber) | `/financeiro/contas-a-receber/new` | receivables.create | sim | não | aba própria (/financeiro/contas-a-receber/new) | barra ou **Mais** |
 | Financeiro | Ações | Novo movimento bancário | `/financeiro/movimentos/new` | bank_movements.create | sim | não | aba própria (/financeiro/movimentos/new) | barra ou **Mais** |
+| Financeiro | Ações | Nova transferência entre contas | `/financeiro?tab=bancos&sub=transferencias&nova=1` | bank_movements.create | sim | não | aba do módulo Financeiro | barra ou **Mais** |
 | Vendas | (módulo) | Vendas | `/vendas` | união das áreas | sim | sim | aba do módulo Vendas | barra ou **Mais** |
 | Vendas | Documentos comerciais | Documentos comerciais | `/vendas?tab=documentos` | budgets.view \| orders.view \| sales.view | sim | sim | aba do módulo Vendas | barra ou **Mais** |
 | Pecuária | (módulo) | Pecuária | `/pecuaria` | união das áreas | sim | sim | aba do módulo Pecuária | barra ou **Mais** |
@@ -138,6 +150,7 @@ disponibilidade responsiva (1024–1920: sempre acessível — módulos que não
 | Configurações | Financeiro | Formas de Pagamento | `/configuracoes?tab=financeiro&sub=payment-methods` | sales.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Financeiro | Condições de Pagamento | `/configuracoes?tab=financeiro&sub=condicoes-pagamento` | sales.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Financeiro | Congelamentos | `/configuracoes?tab=financeiro&sub=financial-freezes` | financial_freezes.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Configurações | Financeiro | Naturezas padrão da baixa | `/configuracoes?tab=financeiro&sub=naturezas-baixa` | financial_categories.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Pecuária | Espécies / Categorias / Raças | `/configuracoes?tab=pecuaria&sub=animal-categories` | animals.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Pecuária | Tipos de Identificação | `/configuracoes?tab=pecuaria&sub=identification-types` | animals.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Pecuária | Parâmetros de Peso | `/configuracoes?tab=pecuaria&sub=weight-parameters` | weight_parameters.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
@@ -174,4 +187,4 @@ disponibilidade responsiva (1024–1920: sempre acessível — módulos que não
 | Aprovações | Compras | Compras | `/aprovacoes?tab=compras` | compras.approve | sim | sim | aba do módulo Aprovações | barra ou **Mais** |
 | Aprovações | Estoque | Estoque | `/aprovacoes?tab=estoque` | entradas_estoque.approve \| saidas_estoque.approve \| transferencias_estoque.approve \| ajustes_estoque.approve | sim | sim | aba do módulo Aprovações | barra ou **Mais** |
 
-Total: 166 destinos · 14 módulos. Menu, mega-menu, busca (`searchNav`), favoritos e abas convergem a este mesmo universo (nenhuma árvore paralela).
+Total: 179 destinos · 14 módulos. Menu, mega-menu, busca (`searchNav`), favoritos e abas convergem a este mesmo universo (nenhuma árvore paralela).

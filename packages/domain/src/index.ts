@@ -29,3 +29,4 @@ export * from "./documento.js";
 export * from "./resources/index.js";
 export * from "./tipo-operacao-secoes-v5.js";
 export * from "./tipo-operacao-catalogo.js";
+export * from "./financeiro-central.js";
