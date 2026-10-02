@@ -40,7 +40,16 @@ const sessao = (page: Page) => page.evaluate(() => JSON.parse(localStorage.getIt
  */
 function vigiar(page: Page) {
   const falhas: string[] = []; const respostas: { url: string; status: number }[] = [];
-  page.on("requestfailed", (r) => { if (r.url().includes(API)) falhas.push(`${r.url()} → ${r.failure()?.errorText ?? "?"}`); });
+  page.on("requestfailed", (r) => {
+    if (!r.url().includes(API)) return;
+    const erro = r.failure()?.errorText ?? "?";
+    // Uma LEITURA que a própria página cancela ao trocar de tela (navegação ou desmontagem com AbortSignal) chega aqui
+    // como `net::ERR_ABORTED` — a requisição existiu e a página desistiu dela; não é bloqueio. O motor da Central
+    // (VISUAL-UX-04) relê a consulta e as TOPs depois de salvar e as cancela ao sair. Bloqueio (CORS, `net::ERR_FAILED`),
+    // qualquer outro erro e QUALQUER escrita abortada continuam sendo falha.
+    if (erro === "net::ERR_ABORTED" && r.method() === "GET") { console.log(`[skew] leitura cancelada pela página (não é bloqueio): ${r.url()}`); return; }
+    falhas.push(`${r.method()} ${r.url()} → ${erro}`);
+  });
   page.on("console", (m) => { if (m.type() === "error" && /CORS|preflight|Access-Control/i.test(m.text())) falhas.push(`console: ${m.text()}`); });
   page.on("response", (r) => { if (r.url().includes("/api/")) respostas.push({ url: r.url(), status: r.status() }); });
   return {
@@ -287,10 +296,16 @@ test("TOP-CONFIG-04A · o web da base renomeia uma TOP do formato 2 e a configur
 function pendenciaNoClique(): boolean {
   const raiz = path.resolve(__dirname, "../../..");
   const sha = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
-  try {
-    execFileSync("git", ["grep", "-q", "data-testid=\"central-vendas-pendencias\"", sha, "--", "apps/web/src"], { cwd: raiz });
-    return true;
-  } catch { return false; }
+  // A pílula de pendências tem duas grafias no fonte da base: a literal da VISUAL-UX-02 (na Central de Vendas) e a do
+  // motor da Central desde a VISUAL-UX-04 (`features/central/barra.tsx`), que monta o testid com o prefixo da Central
+  // (`central-vendas` na de Vendas). Qualquer uma das duas é o mundo em que o Salvar não se desabilita por pendência.
+  const grafias = ["data-testid=\"central-vendas-pendencias\"", "data-testid={`${prefixoTestid}-pendencias`}"];
+  return grafias.some((grafia) => {
+    try {
+      execFileSync("git", ["grep", "-qF", grafia, sha, "--", "apps/web/src"], { cwd: raiz });
+      return true;
+    } catch { return false; }
+  });
 }
 function rotulosDaClassificacaoNoWebDaBase(): { natureza: string; centro: string } | null {
   const raiz = path.resolve(__dirname, "../../..");
