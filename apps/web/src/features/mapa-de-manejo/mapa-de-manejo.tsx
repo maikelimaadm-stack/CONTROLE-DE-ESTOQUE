@@ -123,6 +123,8 @@ export function MapaDeManejo() {
   const editandoContornoIdRef = React.useRef<string | null>(null);
   React.useEffect(() => { editandoContornoIdRef.current = editandoContornoId; }, [editandoContornoId]);
   const soltarArrastoRef = React.useRef<(() => void) | null>(null);
+  /** True enquanto o usuário pan/zoom o mapa — bloqueia o cursor de inserção. */
+  const mapaMovendoRef = React.useRef(false);
   const [, redesenhar] = React.useReducer((n: number) => n + 1, 0);
 
   const listaQuery = useQuery({
@@ -172,6 +174,9 @@ export function MapaDeManejo() {
   // ---------- eventos do desenho (px relativos ao mapa) ----------
   function aoMover(px: Px, alt: boolean, shift: boolean) {
     if (!ativo()) return;
+    // Só acompanha o mouse de verdade — durante pan/zoom do mapa o mousemove do MapLibre
+    // não deve reposicionar o cursor (senão parece “puxar” o desenho).
+    if (mapaMovendoRef.current) return;
     const e = ed.current;
     if (e.arrasto) return;
     const pts = ptsPx();
@@ -387,12 +392,14 @@ export function MapaDeManejo() {
         m.on("click", (ev) => aoClicar(px(ev), ev.originalEvent.altKey, ev.originalEvent.shiftKey, ev.originalEvent.detail));
         m.on("dblclick", (ev) => { if (!ativo()) return; ev.preventDefault(); aoDuploClique(px(ev)); });
         m.on("contextmenu", (ev) => { if (!ativo()) return; ev.originalEvent.preventDefault(); desfazer(); });
-        // Ao pan/zoom: some o cursor de inserção — senão o px de tela fica “puxando” o elástico no mapa.
+        // Ao pan/zoom: some o cursor de inserção e ignore mousemove até soltar.
         m.on("movestart", () => {
           if (!desenhandoRef.current || ed.current.arrasto) return;
+          mapaMovendoRef.current = true;
           Object.assign(ed.current, { cur: null, raw: null, ima: null, hover: null, travado: false });
           flushSync(() => redesenhar());
         });
+        m.on("moveend", () => { mapaMovendoRef.current = false; });
         // A camada do desenho e os nomes são DOM por cima do canvas. Redesenhá-los num quadro DEPOIS do mapa os
         // fazia "tremer" ao arrastar; agora acompanham o MESMO quadro: no fim de cada render do mapa (dentro do
         // requestAnimationFrame dele) a tela é atualizada de forma síncrona — só quando a vista mudou de fato.
@@ -403,12 +410,12 @@ export function MapaDeManejo() {
           if (agora === vista) return;
           vista = agora;
           const edAtual = ed.current;
-          // Durante mudança de vista, não manter cursor livre em px de tela (puxava o inserir-pontos).
-          if (!edAtual.arrasto && !edAtual.ima?.lngLat) {
+          if (mapaMovendoRef.current && !edAtual.arrasto) {
+            // Vista mudando por gesto: não manter cursor livre em px de tela.
             if (edAtual.cur || edAtual.raw || edAtual.ima || edAtual.hover) {
               Object.assign(edAtual, { cur: null, raw: null, ima: null, hover: null, travado: false });
             }
-          } else if (edAtual.ima?.lngLat) {
+          } else if (edAtual.ima?.lngLat && !edAtual.arrasto) {
             // Ímã grudado: acompanha o vértice/aresta geográfico.
             const pxIma = { x: m.project(edAtual.ima.lngLat).x, y: m.project(edAtual.ima.lngLat).y };
             let aresta = edAtual.ima.aresta;
@@ -431,7 +438,8 @@ export function MapaDeManejo() {
               if (melhor) aresta = [melhor.a, melhor.b];
             }
             edAtual.ima = { ...edAtual.ima, px: pxIma, aresta };
-            if (!edAtual.arrasto) { edAtual.cur = pxIma; edAtual.raw = pxIma; }
+            edAtual.cur = pxIma;
+            edAtual.raw = pxIma;
           }
           flushSync(() => redesenhar());
         });

@@ -5,15 +5,15 @@ import type { Acerto, Ima, Px } from "./editor-desenho";
 
 /**
  * Camada visual do editor de desenho, por cima do canvas do mapa. Só apresenta: pointer-events none.
- * Linha e ímã brancos sem borda; pontos azuis brilhosos sem borda.
+ * Linha e ímã brancos; pontos verdes de registro (sem brilho, sem borda).
  */
 
 export const COR_DESENHO = {
   linha: "#ffffff",
   elastico: "#ffffff",
   ima: "#ffffff",
-  /** Pontos do cadastro — azul limpo. */
-  ponto: "#3b82f6",
+  /** Pontos do cadastro — verde de registro/salvar. */
+  ponto: "#40de63",
   meio: "#ffffff",
   guia: "#ffffff"
 } as const;
@@ -45,14 +45,9 @@ interface Props {
 }
 
 const lista = (pts: Px[]) => pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
-const AFORDANCIA: Record<Acerto["tipo"], { texto: string; cor: string }> = {
-  vertice: { texto: "Segure para arrastar · 2 cliques apagam", cor: COR_DESENHO.ponto },
-  meio: { texto: "Segure para criar um ponto", cor: COR_DESENHO.linha },
-  poligono: { texto: "Segure para mover a área", cor: "#93c5fd" }
-};
 
 export function CamadaDesenho(p: Props) {
-  const { pts, fechado, cur, raw, ima, arrastando } = p;
+  const { pts, fechado, cur, ima, arrastando } = p;
   const fillPreview = p.corPreview && fechado ? p.corPreview : COR_DESENHO.linha;
   const ultimo = pts.length ? pts[pts.length - 1]! : null;
   const primeiro = pts.length ? pts[0]! : null;
@@ -66,7 +61,6 @@ export function CamadaDesenho(p: Props) {
       meios.push({ px: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, i: j });
     }
   }
-  const afordancia = p.desenhando && p.hover && !arrastando && cur ? AFORDANCIA[p.hover.tipo] : null;
 
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden" data-testid="mapa-camada-desenho">
@@ -134,29 +128,32 @@ export function CamadaDesenho(p: Props) {
 
             {meios.map((m) => (
               <g key={m.i}>
-                {m.i === hm && <circle cx={m.px.x} cy={m.px.y} r={7} fill={COR_DESENHO.ponto} fillOpacity={0.25} />}
-                <circle cx={m.px.x} cy={m.px.y} r={2.2} fill={COR_DESENHO.ponto} fillOpacity={0.9} />
+                {m.i === hm && <circle cx={m.px.x} cy={m.px.y} r={6} fill={COR_DESENHO.ponto} fillOpacity={0.22} />}
+                <circle cx={m.px.x} cy={m.px.y} r={2} fill={COR_DESENHO.ponto} />
               </g>
             ))}
 
             {pts.map((v, i) => (
               <g key={i}>
                 {(p.grudados[i] || i === p.arrastoVertice || i === hv) && (
-                  <circle cx={v.x} cy={v.y} r={8} fill={COR_DESENHO.ponto} fillOpacity={0.22} />
+                  <circle cx={v.x} cy={v.y} r={6} fill={COR_DESENHO.ponto} fillOpacity={0.2} />
                 )}
-                {/* Ponto azul limpo: aura suave + disco sólido, sem borda. */}
-                <circle cx={v.x} cy={v.y} r={6} fill={COR_DESENHO.ponto} fillOpacity={0.28} />
-                <circle cx={v.x} cy={v.y} r={3.4} fill={COR_DESENHO.ponto} />
+                <circle cx={v.x} cy={v.y} r={3.2} fill={COR_DESENHO.ponto} />
               </g>
             ))}
 
-            {/* Ímã branco — só a marca no alvo (sem linha pontilhada até o cursor). */}
+            {/* Ímã branco no alvo — acompanha só o snap, sem tooltip. */}
             {ima && cur && (
               <g data-testid="mapa-ima-marca" data-tipo={ima.tipo}>
-                <circle cx={cur.x} cy={cur.y} r={10} fill={COR_DESENHO.ima} fillOpacity={0.14} />
-                <circle cx={cur.x} cy={cur.y} r={5.5} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.5} strokeOpacity={0.9} />
-                <circle cx={cur.x} cy={cur.y} r={2.5} fill={ima.tipo === "fechar" ? COR_DESENHO.ponto : COR_DESENHO.ima} />
+                <circle cx={cur.x} cy={cur.y} r={9} fill={COR_DESENHO.ima} fillOpacity={0.14} />
+                <circle cx={cur.x} cy={cur.y} r={5} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.5} strokeOpacity={0.9} />
+                <circle cx={cur.x} cy={cur.y} r={2.4} fill={ima.tipo === "fechar" ? COR_DESENHO.ponto : COR_DESENHO.ima} />
               </g>
+            )}
+
+            {/* Cursor livre: só sob o mouse (sem linha até o último ponto). */}
+            {cur && !ima && !fechado && !arrastando && !p.hover && (
+              <circle cx={cur.x} cy={cur.y} r={2.2} fill={COR_DESENHO.ima} />
             )}
           </svg>
 
@@ -168,10 +165,6 @@ export function CamadaDesenho(p: Props) {
 
           {p.travado && cur && p.rumo !== null && !fechado && (
             <div className="absolute -translate-x-1/2 -translate-y-full rounded bg-slate-900/80 px-1.5 py-px text-[10px] tabular-nums text-sky-100" style={{ left: cur.x, top: cur.y - 14 }} data-testid="mapa-rumo">{p.rumo}°</div>
-          )}
-
-          {afordancia && cur && (
-            <div className="absolute whitespace-nowrap rounded-full border bg-slate-900/95 px-2.5 py-0.5 text-[11px]" style={{ left: cur.x + 16, top: cur.y + 12, borderColor: afordancia.cor, color: afordancia.cor }}>{afordancia.texto}</div>
           )}
         </>
       )}
