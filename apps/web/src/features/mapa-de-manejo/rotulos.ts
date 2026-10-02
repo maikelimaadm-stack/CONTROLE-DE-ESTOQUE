@@ -21,9 +21,9 @@ export interface RotuloAreaVisivel extends RotuloAreaBruto {
  * Três degraus só: longe / médio / perto.
  */
 export function fontesDoZoom(zoom: number): { nome: number; ha: number } {
-  if (zoom < 13) return { nome: 9, ha: 7.5 };
-  if (zoom < 16) return { nome: 10, ha: 8.5 };
-  return { nome: 11, ha: 9 };
+  if (zoom < 13) return { nome: 7, ha: 6 };
+  if (zoom < 16) return { nome: 7.5, ha: 6.5 };
+  return { nome: 8, ha: 7 };
 }
 
 function caixa(r: RotuloAreaBruto, pad: number, fonteNome: number) {
