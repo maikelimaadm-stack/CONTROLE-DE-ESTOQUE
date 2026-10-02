@@ -1,5 +1,10 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { login, api, uniq, pickRef, empresaAtiva, primeiroId } from "./helpers";
+/**
+ * O `pickRef` do helpers monta a regex com o texto cru: um nome do seed como "[DEMO] Agropecuária" vira classe de
+ * caracteres e nunca casa. A busca usa o nome sem o prefixo entre colchetes (os 12 primeiros caracteres do resto).
+ */
+const buscaSemColchetes = (nome: string) => nome.replace(/^\[[^\]]*\]\s*/, "").slice(0, 12);
 
 /**
  * CENTRAL DE COMPRAS NO MOTOR DA CENTRAL (VISUAL-UX-04, docs/DECISIONS.md 276) — parte A: CC-1 a CC-5.
@@ -264,7 +269,7 @@ test("CC-1 — as MESMAS medidas do VD-1 na Central de Compras, na criação e n
   const espaco = abaixo === null ? null : Math.round(abaixo - (bForn.y + bForn.height));
   expect.soft(espaco, "espaço entre campos").toBe(MEDIDAS.campo.espaco);
   // preenchida
-  await pickRef(page, "Fornecedor", b.fornecedor.nome.slice(0, 12));
+  await pickRef(page, "Fornecedor", buscaSemColchetes(b.fornecedor.nome));
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   const cheia = await medirCaixa(fornecedor);
   expect.soft([cheia?.fundo, cheia?.borda], "caixa preenchida").toEqual([MEDIDAS.campo.preenchida, MEDIDAS.campo.preenchidaBorda]);
@@ -622,7 +627,7 @@ test("CC-5 — Descartar: pergunta, Continuar editando mantém, confirmar volta 
   await expect(descartar, "sem alteração, nada a descartar").toBeDisabled();
   const escritas = registrarEscritas(page);
 
-  await pickRef(page, "Fornecedor", b.fornecedor.nome.slice(0, 12));
+  await pickRef(page, "Fornecedor", buscaSemColchetes(b.fornecedor.nome));
   await abrirAba(page, "Observações");
   await page.getByTestId("compras-observacao").fill("vai ser descartado");
   await expect(page.getByTestId(`${WORKSPACE}-alterado`)).toBeVisible();
