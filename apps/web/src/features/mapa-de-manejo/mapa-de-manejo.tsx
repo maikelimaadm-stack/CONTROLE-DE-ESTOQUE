@@ -7,7 +7,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, qs, newIdem } from "@/lib/api";
 import { useAuth, empresasDoContexto } from "@/lib/auth";
 import { useEmpresaPadrao } from "@/features/docs/shared";
-import { Card, CardBody, Button, Spinner, EmptyState, Field, Input, ConfirmDialog } from "@/components/ui";
+import { Card, CardBody, Button, Spinner, EmptyState, ErrorState, Field, Input, ConfirmDialog } from "@/components/ui";
 import { cn, num } from "@/lib/utils";
 import { criarSessaoGoogle, estiloSatelite, estiloFundoLiso, fonteRaster, ID_BASE, type TipoBase, CENTRO_PADRAO, ZOOM_PADRAO } from "./basemap";
 import {
@@ -499,7 +499,9 @@ export function MapaDeManejo() {
                   {areas.length > 0 && <span className="font-normal normal-case tabular-nums text-slate-400">{areas.length} · {num(totalHa, 2)} ha</span>}
                 </div>
                 {listaQuery.isLoading && <Spinner />}
-                {!listaQuery.isLoading && areas.length === 0 && <EmptyState title="Nenhuma área cadastrada" description="Use “Nova área” para desenhar a primeira no mapa." />}
+                {/* recusa da API não pode virar "lista vazia": quem vê vazio acha que não há área, e não que a leitura falhou */}
+                {listaQuery.error && <ErrorState title="Não foi possível carregar as áreas" error={listaQuery.error} onRetry={() => void listaQuery.refetch()} />}
+                {!listaQuery.isLoading && !listaQuery.error && areas.length === 0 && <EmptyState title="Nenhuma área cadastrada" description="Use “Nova área” para desenhar a primeira no mapa." />}
                 {areas.map((a) => (
                   <button key={a.id} type="button" data-testid="mapa-item-area" onClick={() => { setSelecionada(a.id); const g = a.geometria; const m = mapRef.current; if (g && m) { const b = limites(g); if (b) m.fitBounds(b, { padding: 60, maxZoom: 16 }); } }}
                     className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-100 ${a.id === selecionada ? "bg-slate-100 ring-1 ring-slate-300" : ""}`}>
