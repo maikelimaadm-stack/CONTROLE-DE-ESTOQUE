@@ -57,11 +57,12 @@ As famílias citadas aqui são as declaradas no registry — este documento as r
 
 ### Portal de Compras
 Processos de compra, da solicitação ao recebimento. Famílias hoje declaradas no escopo: `compras.solicitacao`,
-`compras.pedido` e `compras.compra` (COMPRAS-01, decisão 267). O lançamento de Pedido de compra e de Compra escolhe
-uma TOP configurada da família (obrigatória); a solicitação continua sem TOP. O Pedido de compra tem próximos passos
-(COMPRAS-02, decisão 268): recebê-lo, inteiro ou em partes, gera uma Compra ligada a ele — a única aresta executável
-do grafo de compras. Os campos da Central de Compras seguem o layout do documento ligado à TOP (COMPRAS-03, decisão
-269), o mesmo mecanismo de Vendas.
+`compras.pedido`, `compras.compra` (COMPRAS-01, decisão 267) e `compras.orcamento` (OPERACOES-01 F6a, decisão 283; sem
+tela até a F6b). O lançamento de Pedido de compra e de Compra escolhe uma TOP configurada da família (obrigatória); a
+solicitação continua sem TOP. O Pedido de compra tem próximos passos (COMPRAS-02, decisão 268): recebê-lo, inteiro ou
+em partes, gera uma Compra ligada a ele — e, desde a decisão 283, o pedido aprovado para orçamento recebe orçamentos de
+compra (a segunda aresta, pedido → orçamento). Os campos da Central de Compras seguem o layout do documento ligado à
+TOP (COMPRAS-03, decisão 269), o mesmo mecanismo de Vendas.
 
 ### Portal de Vendas
 Orçamento, pedido e venda — as três variantes de `erp.sales_documents`, que a BASE2-03C já unificou na
@@ -329,9 +330,10 @@ aba "Processos"). Não mudaram, e não viram documento de compra.
 **O que EXISTE (COMPRAS-02, decisão 268) — o pedido vira compra:**
 
 - **o grafo de compras**: a TOP de Pedido de compra declara, na aba "Próximas operações" (a mesma de Vendas), as TOPs
-  de Compra para onde o pedido pode ir, com ou sem "Em partes". É a ÚNICA aresta executável em compras — a compra não
-  converte e o pedido não nasce de conversão —, e nenhuma aresta cruza Vendas e Compras, em nenhum sentido. Sem ponte
-  legada: pedido sem política declarada não tem próximo passo;
+  de Compra para onde o pedido pode ir, com ou sem "Em partes". Com o pedido → orçamento (decisão 283), são as únicas
+  arestas executáveis em compras — a compra e o orçamento não convertem e o pedido não nasce de conversão —, e nenhuma
+  aresta cruza Vendas e Compras, em nenhum sentido. Sem ponte legada: pedido sem política declarada não tem próximo
+  passo;
 - **os próximos passos do pedido** (`GET /api/compras/pedidos/:id/proximos-passos`, o contrato do de Vendas): o leque
   da versão congelada do pedido, com a disponibilidade de cada destino avaliada agora;
 - **receber = lançar uma Compra com origem**: escolher a TOP de Compra abre a Central de Compras em modo receber pedido
@@ -366,6 +368,21 @@ aba "Processos"). Não mudaram, e não viram documento de compra.
 - **sem padrão de cadastro na Natureza de despesa** nesta fatia (o filtro de despesa ou "ambas" não cabe na
   conferência do padrão).
 
+**O que EXISTE (OPERACOES-01 F6a, decisão 283) — pedido finalizado, aprovação do pedido e orçamento de compra, só na
+API e no editor da TOP (as telas da Central de Compras são da F6b):**
+
+- o pedido de compra ganha a situação **Finalizado** (Finalizar = a confirmação do pedido), com a aprovação da TOP ao
+  finalizar; a fila Aprovações › Compras lista o pedido para quem aprova pedido (`pedidos_compra.approve`);
+- "Aprovado para orçamento" no pedido, e o **orçamento de compra** — espécie `orcamento` do documento de compra, um por
+  fornecedor, ligado ao pedido por vínculo próprio (não consome o saldo), com preço, prazo, validade e condição, sem
+  estoque nem financeiro; "Escolher vencedor" leva fornecedor, preços e condição ao pedido;
+- na TOP (formato 5): "Exigir pedido finalizado para receber" no pedido e "Divergência com o pedido" na compra, as duas
+  desligadas por padrão.
+
+A Central de Compras de hoje não muda, nem o menu: o orçamento só aparece no Tipo da lista e na consulta genérica para
+quem tem `orcamentos_compra.view`. Com "Exigir pedido finalizado para receber" = Sim, esta tela não recebe o pedido até a
+F6b pôr o Finalizar. Contrato em `docs/OPERACOES-CONTRACT.md` §4.
+
 **O que FALTA (e não deve ser simulado):**
 
 - o desenho visual da Central de Compras alinhado ao da Central de Vendas, com as zonas "de verdade" (faixa F2);
@@ -387,10 +404,13 @@ regra unificada — o documento de estoque não funde serviço, permissão nem e
 
 | Espécie | Segmento (URL e API) | Família da TOP | Recurso de permissão | Movimento na confirmação |
 | --- | --- | --- | --- | --- |
-| Entrada | `entradas` | `estoque.entrada` | `entradas_estoque` | `entry`, pelo custo INFORMADO no item, com lote e validade |
+| Entrada | `entradas` | `estoque.entrada` | `entradas_estoque` | `entry`, pelo custo informado no item ou, vazio, o custo médio do produto (OPERACOES-01 F5a), com lote e validade |
 | Saída | `saidas` | `estoque.saida` | `saidas_estoque` | `writeoff`, pelo custo médio; lote informado ou escolhido pela validade (vencido só sai informado, decisão 254) |
 | Transferência | `transferencias` | `estoque.transferencia` | `transferencias_estoque` | `transfer_out` na origem e `transfer_in` no destino, parte por parte, com o MESMO custo, lote e validade |
-| Ajuste (inventário) | `ajustes` | `estoque.ajuste` | `ajustes_estoque` | pela diferença contado − saldo: `correction_in` (> 0, pelo custo médio atual), `correction_out` (< 0), nenhum (zero) |
+| Ajuste (inventário) | `ajustes` | `estoque.ajuste` | `ajustes_estoque` | pela diferença contado − saldo: `correction_in` (> 0, pelo custo informado ou o médio atual), `correction_out` (< 0), nenhum (zero) |
+| Requisição (de material) | `requisicoes` | `estoque.requisicao_material` | `requisicoes_estoque` | nenhum: a confirmada é a PENDENTE e reserva o pedido no local de estoque (OPERACOES-01 F5a) |
+| Consumo | `consumos` | `estoque.consumo` | `consumos_estoque` | `requisition` (baixa), pelo custo médio; pode atender uma requisição (OPERACOES-01 F5a) |
+| Devolução de consumo | `devolucoes-consumo` | `estoque.devolucao_consumo` | `devolucoes_consumo_estoque` | `devolution` (volta), pelo custo do item do consumo de origem (OPERACOES-01 F5a) |
 
 **Rotas.** API: `GET /api/estoque/documentos` (a lista única: espécie, situação, período, armazém de origem ou destino,
 TOP, empresa e busca por código, com paginação, ordem e busca no servidor e número fixo de consultas);
@@ -436,13 +456,30 @@ ajuste a partir do Saldo e as rotas `/stock/*`): tudo continua como está, inclu
 o Documento fiscal de Estoque e a produção de ração. O documento de estoque não as substitui nesta fatia.
 
 **O que FALTA (e não deve ser simulado):** editar documento aberto (cancela-se e lança-se outro), layout do documento
-por TOP, transferência entre empresas no documento, centro de resultado no documento, anexos no documento de estoque,
-a execução configurada das famílias novas (TOP-CONFIG-04C) e a troca das telas antigas.
+por TOP, transferência entre empresas no documento, anexos no documento de estoque, a execução configurada das famílias
+novas (TOP-CONFIG-04C) e a troca das telas antigas. O destino — o centro de resultado e as outras cinco dimensões — está
+no documento desde a OPERACOES-01 F5a, pela API.
+
+### A movimentação interna no documento (OPERACOES-01 F5a, decisão 282)
+
+O documento de estoque passa a ter SETE espécies: a requisição de material, o consumo e a devolução de consumo, ao lado
+das quatro de cima. Elas trazem:
+- o DESTINO no cabeçalho (centro de resultado, máquina/equipamento, ordem de serviço, lote de animais, área/talhão e
+  safra), que vai para o razão;
+- a ORIGEM (consumo → requisição, devolução → consumo);
+- o atendimento calculado da requisição e o encerramento do saldo;
+- a reserva da requisição no disponível.
+
+A saída ganha motivo e justificativa. Tudo isso está só no banco e na API (aditiva; capacidade `movimentacaoInterna:
+1`): a Central de Estoque deste web continua lançando as quatro de antes, igual, e passa ao motor da Central na F5b; o
+menu também não muda até a F5b. Contrato em `docs/OPERACOES-CONTRACT.md` §3 (F5a), e as seções Destino e Fluxo da TOP
+no §2.
 
 ### Famílias de TOP de estoque
 
-As famílias de TOP do documento de estoque (as quatro novas, as oito antigas, o movimento pela espécie, as exigências
-gerais, o editor e a TOP no documento) estão em `docs/TIPO-OPERACAO-CONTRACT.md` §16 (decisão 274).
+As famílias de TOP do documento de estoque (as quatro novas e, desde a OPERACOES-01 F5a, as três da movimentação
+interna; as oito antigas; o movimento pela espécie, as exigências gerais, o editor e a TOP no documento) estão em
+`docs/TIPO-OPERACAO-CONTRACT.md` §16 (decisões 274 e 282).
 
 ### Situação no programa
 

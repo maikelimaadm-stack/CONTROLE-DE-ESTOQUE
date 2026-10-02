@@ -24,11 +24,11 @@ publica em `GET /api/admin/tipos-operacao/capabilities` › `formato5.catalogo`,
 | 2 | Vendas | Pedido | `pedido_venda` | `vendas.pedido` | sim | — |
 | 3 | Vendas | Venda | `venda` | `vendas.venda` | sim | — |
 | 4 | Compras | Pedido | `pedido_compra` | `compras.pedido` | sim | — |
-| 5 | Compras | Orçamento | `orcamento_compra` | — (a criar) | não | F6 (283) |
+| 5 | Compras | Orçamento | `orcamento_compra` | `compras.orcamento` | não | F6b (283) |
 | 6 | Compras | Compra | `compra` | `compras.compra` | sim | — |
-| 7 | Movimentação interna | Requisição | `requisicao` | — (a espécie NOVA, não a `estoque.requisicao` antiga) | não | F5 (282) |
-| 8 | Movimentação interna | Consumo | `consumo` | — (a criar) | não | F5 (282) |
-| 9 | Movimentação interna | Devolução de consumo | `devolucao_consumo` | — (a criar) | não | F5 (282) |
+| 7 | Movimentação interna | Requisição | `requisicao` | `estoque.requisicao_material` (a espécie NOVA; a `estoque.requisicao` antiga continua a de `erp.requisitions`) | não | F5b (282) |
+| 8 | Movimentação interna | Consumo | `consumo` | `estoque.consumo` | não | F5b (282) |
+| 9 | Movimentação interna | Devolução de consumo | `devolucao_consumo` | `estoque.devolucao_consumo` | não | F5b (282) |
 | 10 | Movimentação interna | Entrada | `entrada` | `estoque.entrada` | sim | — |
 | 11 | Movimentação interna | Saída/baixa | `saida` | `estoque.saida` | sim | — |
 | 12 | Movimentação interna | Transferência | `transferencia` | `estoque.transferencia` | sim | — |
@@ -47,7 +47,10 @@ Regras:
 - A família de cada tipo é PERGUNTADA ao registry (pela tabela e pela variante), nunca escrita no catálogo. Registry
   sem a variante = tipo sem família.
 - "Tem tela" só vale com família (fail-closed).
-- "Tem tela" = a tela que lança o documento cita a TOP. Hoje, só os 9 cujo documento cita a TOP.
+- "Tem tela" = a tela que lança o documento cita a TOP. Hoje, só os 9 cujo documento cita a TOP. A F5a (decisão 282)
+  criou a família das três da movimentação interna, e a F6a (decisão 283), a do orçamento de compra, e as deixou sem
+  tela: o documento já existe na API, e a tela é da F5b e da F6b. Hoje, 19 dos 22 tipos têm família; sem família, só
+  Manejo, Batelada e Movimento bancário.
 - **Ligar um tipo** é trabalho da fase que cria a tela: ela troca a linha do catálogo — `temTela`, e a família quando ela
   nascer no registry — e atualiza os testes que fixam o estado de hoje (`top-formato5-catalogo.test.ts` CT-1/CT-2,
   `top-formato5-top.test.ts` T5-1, `tipos-operacao.spec.ts`, `top-assistente.spec.ts`).
@@ -64,7 +67,8 @@ Regras:
 ### O formato 5 e o perfil de cada tipo (decisão 281) · IMPLEMENTADO
 
 **O formato 5** é o formato 4 + as SEÇÕES DE EXTENSÃO das fases F5 a F10, cada uma uma chave de raiz nova da
-configuração da TOP. Na F4 a lista de seções nasce VAZIA. O contrato técnico — o leitor, a leitura dos formatos 1 a 4
+configuração da TOP. Na F4 a lista de seções nasceu VAZIA; a F5a (decisão 282) acrescentou `destino` e `fluxo`, e a
+F6a (decisão 283), `fluxoCompra` e `divergenciaPedido`, nesta ordem (subseções abaixo). O contrato técnico — o leitor, a leitura dos formatos 1 a 4
 como 5, o ponto de extensão, as recusas, a capacidade e o skew — está em `docs/TIPO-OPERACAO-CONTRACT.md` §18.
 - Toda TOP gravada nos formatos 1 a 4 é LIDA como 5, com os padrões de hoje. Nada é gravado até alguém salvar.
 - Salvar com mudança grava o 5, e o formato não volta atrás.
@@ -87,12 +91,15 @@ diz o que o editor do 5 mostra e o que o servidor aceita no 5. Ele é DERIVADO, 
 
 | famílias | abas no editor do 5 | exigências da Geral | seções no padrão |
 |---|---|---|---|
-| `vendas.venda` | Identificação, Geral, Próximas operações, Estoque, Financeiro, Fiscal, Aprovação, Execução | Exigir cliente, centro de resultado, observação, transportadora | — |
-| `vendas.orcamento`, `vendas.pedido` | Identificação, Geral, Próximas operações, Estoque, Financeiro, Fiscal | idem venda | — |
-| `compras.pedido` | Identificação, Geral, Próximas operações, Estoque, Financeiro, Fiscal | Exigir fornecedor, centro de resultado, observação, transportadora | — |
-| `compras.compra` | Identificação, Geral, Estoque, Financeiro, Fiscal, Aprovação, Execução | idem pedido de compra | — |
-| `estoque.entrada`, `.saida`, `.transferencia`, `.ajuste` | Identificação, Geral, Estoque, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal |
-| as 14 sem documento que cite a TOP (as 8 antigas, Módulos e Financeiro) | Identificação, Geral, Estoque, Financeiro, Fiscal | Exigir parceiro, centro de resultado, observação, transportadora | — |
+| `vendas.venda` | Identificação, Geral, Próximas operações, Estoque, Financeiro, Fiscal, Aprovação, Execução | Exigir cliente, centro de resultado, observação, transportadora | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
+| `vendas.orcamento`, `vendas.pedido` | Identificação, Geral, Próximas operações, Estoque, Financeiro, Fiscal | idem venda | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
+| `compras.pedido` | Identificação, Geral, Próximas operações, Estoque, Fluxo de compra, Financeiro, Fiscal, Aprovação | Exigir fornecedor, centro de resultado, observação, transportadora | Destino, Fluxo, Divergência com o pedido |
+| `compras.compra` | Identificação, Geral, Estoque, Divergência com o pedido, Financeiro, Fiscal, Aprovação, Execução | idem pedido de compra | Destino, Fluxo, Fluxo de compra |
+| `compras.orcamento` (F6a; sem tela até a F6b) | Identificação, Geral, Estoque, Financeiro, Fiscal | Exigir fornecedor, observação | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
+| `estoque.entrada`, `.transferencia`, `.ajuste`, `.devolucao_consumo` | Identificação, Geral, Estoque, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
+| `estoque.saida`, `estoque.requisicao_material` | Identificação, Geral, Estoque, Destino, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Fluxo, Fluxo de compra, Divergência com o pedido |
+| `estoque.consumo` | Identificação, Geral, Estoque, Destino, Fluxo, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Fluxo de compra, Divergência com o pedido |
+| as 14 sem documento que cite a TOP (as 8 antigas, Módulos e Financeiro) | Identificação, Geral, Estoque, Financeiro, Fiscal | Exigir parceiro, centro de resultado, observação, transportadora | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
 
 Some do editor do 5 só a aba cujo valor o servidor já obriga ao padrão: Próximas operações sem destino possível,
 Aprovação só "Sem aprovação", Execução sem execução configurada — e Financeiro e Fiscal no documento de estoque
@@ -103,12 +110,105 @@ Aprovação só "Sem aprovação", Execução sem execução configurada — e F
 | o quê | código | caminho | mensagem |
 |---|---|---|---|
 | exigência que o documento do tipo não tem | `TIPO_OPERACAO_CONFIGURACAO_INVALIDA` (`combinacao_nao_suportada`) | `geral.<chave>` | O documento desta operação não tem este campo. |
-| seção que o tipo não usa, fora do padrão | idem | `estoque`, `financeiro`, `fiscal` ou o nome da seção | Esta operação não usa a seção <Seção>. |
+| seção que o tipo não usa, fora do padrão | idem | `estoque`, `financeiro`, `fiscal` ou o nome da seção (`destino`, `fluxo`, `fluxoCompra`, `divergenciaPedido`) | Esta operação não usa a seção <Seção>. |
 | condição de pagamento num tipo sem Financeiro (a lista enviada, ou a preservada quando o PUT traz a configuração sem a lista) | `TIPO_OPERACAO_CONDICOES_INVALIDAS` | `condicoesPermitidas` | Esta operação não usa condições de pagamento. |
 
 O editor do 5 nunca chega a essas recusas: antes de gravar ele volta ao padrão o que o tipo não aceita e lista no
 diálogo "Estas regras passam a valer" ("Exigir parceiro: Sim → Não", "Financeiro: volta ao padrão", "Condições de
 pagamento: voltam ao padrão").
+
+### Destino e Fluxo — as seções da F5a (decisão 282) · IMPLEMENTADO
+
+Duas seções de extensão do formato 5, declaradas pelo ponto de extensão (`docs/TIPO-OPERACAO-CONTRACT.md` §18.3):
+`packages/domain/src/tipo-operacao-secao-destino.ts` e `tipo-operacao-secao-fluxo.ts`, as duas primeiras de
+`DEFINICOES_SECOES_V5` (a ordem das abas, depois de Estoque; as da F6a vêm depois delas). **As regras que travam nascem
+DESLIGADAS:** no neutro, nada é exigido nem aceito de novo, e quem liga é o Maike, TOP por TOP.
+
+**Destino** (`destino`, aba "Destino"): para onde vai o que sai do estoque.
+
+| chave | rótulo | coluna no documento | alvo | valores | neutro |
+|---|---|---|---|---|---|
+| `centroCusto` | Centro de resultado | `centro_custo_id` | `erp.cost_centers` (organização; analítico) | `nao_usada` "Não usada" · `opcional` "Opcional" · `obrigatoria` "Obrigatória" | `nao_usada` |
+| `equipamento` | Máquina/equipamento | `equipamento_id` | `erp.equipments` (empresa do documento) | idem | `nao_usada` |
+| `ordemServico` | Ordem de serviço | `ordem_servico_id` | `erp.service_orders` (empresa; aberta ou em andamento) | idem | `nao_usada` |
+| `loteAnimais` | Lote de animais | `lote_animais_id` | `erp.batches` (empresa) | idem | `nao_usada` |
+| `area` | Área/talhão | `area_id` | `erp.areas` (empresa) | idem | `nao_usada` |
+| `safra` | Safra | `safra_id` | `erp.harvests` (organização) | idem | `nao_usada` |
+
+A lista das dimensões tem UM dono: `CAMPOS_DESTINO_ESTOQUE` (`packages/domain/src/estoque-documento.ts:191`). A seção
+Destino, a API e o web leem dali. Usam a seção a requisição, o consumo e a saída (`usadaPor`, perguntado ao registry).
+A devolução de consumo leva o destino COPIADO do consumo e não usa a seção.
+
+**Fluxo** (`fluxo`, aba "Fluxo"): só o consumo.
+
+| chave | rótulo | valores | neutro |
+|---|---|---|---|
+| `exigeRequisicao` | Exigir requisição | `nao` "Não" · `algum_item` "Em algum item" · `todos` "Em todos os itens" | `nao` |
+| `permiteParcial` | Atender requisição em parte | `true` "Sim" · `false` "Não" | `true` |
+
+**Na TOP (API da TOP, só no 5).** A seção ausente vale o neutro. A presente é lida estrita:
+- valor fora da lista → `valor_invalido` em `destino.<chave>` ou `fluxo.<chave>`;
+- chave desconhecida → `campo_desconhecido`;
+- tipo errado, ou dimensão que falta numa seção presente → `tipo_invalido`.
+Nos formatos 1 a 4, a chave é recusada (`campo_desconhecido` em `destino`/`fluxo`). Fora do neutro numa família que
+não a usa → 422 `combinacao_nao_suportada` no caminho da seção: "Esta operação não usa a seção Destino." ou "Esta
+operação não usa a seção Fluxo.". O editor do 5 volta a seção ao padrão antes de gravar, e o histórico mostra o bloco
+de cada uma (as `linhas`, ex.: "Centro de resultado: Obrigatória", "Exigir requisição: Em todos os itens").
+
+**No lançamento do documento de estoque** (a seção da versão CONGELADA; formatos 1 a 4 → o neutro; versão ilegível →
+o neutro, e quem recusa é a confirmação). Cada recusa é 422 `VALIDATION_ERROR`, no campo:
+
+| regra | caminho | mensagem |
+|---|---|---|
+| dimensão informada que a TOP não usa (o herdado reenviado não conta como informado) | a coluna (`centro_custo_id`…) | Esta operação não usa <dimensão em minúsculas>. (ex.: "Esta operação não usa máquina/equipamento.") |
+| dimensão obrigatória sem valor final (informado ou herdado da requisição) | a coluna | Esta operação exige <dimensão em minúsculas>. (ex.: "Esta operação exige centro de resultado.") |
+| `exigeRequisicao` "algum_item" ou "todos", consumo sem requisição | `origem_documento_id` | Esta operação exige requisição: informe a requisição de origem. |
+| "algum_item", com a requisição e nenhum item ligado | `itens` | Esta operação exige ao menos um item da requisição. |
+| "todos", item não ligado | `itens.<i>.origem_item_id` | Esta operação exige que todo item venha da requisição. |
+| `permiteParcial` falso, consumo que não leva o saldo inteiro de todos os itens pendentes | `itens` | Esta operação não atende requisição em parte: leve o saldo inteiro de todos os itens pendentes da requisição. |
+
+As duas funções que dão essas recusas moram no domínio (`recusasDoDestinoPelaTop`, `recusasDoFluxoDoConsumo`); a API só
+as aplica.
+
+### Fluxo de compra (`fluxoCompra`, decisão 283) · IMPLEMENTADO
+
+| | |
+|---|---|
+| chave de raiz | `fluxoCompra` |
+| rótulo da aba | Fluxo de compra (depois de Estoque) |
+| campos | `exigeFinalizar` — booleano; na tela, "Exigir pedido finalizado para receber" (Não / Sim) |
+| neutro (o de hoje) | `{ "exigeFinalizar": false }` |
+| famílias que a usam | só `compras.pedido` (perguntado ao registry pela espécie); nas outras, fica no padrão |
+| quem executa | a API, no receber, lendo a versão congelada DO PEDIDO; o banco aceita receber de aberto e de finalizado |
+| recusas próprias | leitura estrita: `tipo_invalido` e `campo_desconhecido` em `fluxoCompra.<campo>`; fora do pedido e fora do padrão → "Esta operação não usa a seção Fluxo de compra." |
+
+Ajuda (texto exato): "Exigir pedido finalizado para receber: com Sim, o pedido só é recebido depois de finalizado (e, se
+esta TOP exige aprovação, aprovado). Com Não, o pedido aberto ou finalizado é recebido, como hoje — e o aberto é
+recebido sem passar pela aprovação desta TOP, que só vale ao finalizar."
+
+### Divergência com o pedido (`divergenciaPedido`, decisão 283) · IMPLEMENTADO
+
+| | |
+|---|---|
+| chave de raiz | `divergenciaPedido` |
+| rótulo da aba | Divergência com o pedido (depois de Estoque) |
+| campos | `modo`: `nenhuma` · `avisa` · `bloqueia` ("Nenhuma", "Avisar", "Bloquear"); `toleranciaPrecoPercentual` e `toleranciaQuantidadePercentual`: TEXTO decimal de "0" a "100", até 2 casas, ponto como separador — nunca número |
+| neutro (o de hoje) | `{ "modo": "nenhuma", "toleranciaPrecoPercentual": "0", "toleranciaQuantidadePercentual": "0" }` |
+| normalização | com "Nenhuma", as tolerâncias voltam a "0" (não decidem nada); o decimal digitado não é reformatado |
+| famílias que a usam | só `compras.compra`; nas outras, fica no padrão |
+| quem executa | a API, na prévia e na confirmação da COMPRA gerada de um pedido (§4) |
+| recusas próprias | leitura estrita: modo fora da lista, tolerância fora da forma ou acima de 100 → `valor_invalido`; número em vez de texto → `tipo_invalido`; chave a mais → `campo_desconhecido`, em `divergenciaPedido.<campo>`; fora da compra e fora do padrão → "Esta operação não usa a seção Divergência com o pedido." |
+
+Na tela, o aviso de cliente "Informe um percentual de 0 a 100, com até duas casas decimais." (só apresentação), e o
+422 do servidor no campo ("Valor inválido: confira o que foi informado neste campo."). Ao trocar o modo, a tela aplica a
+normalização do domínio: com "Nenhuma", as tolerâncias voltam a "0", e um valor recusado nunca fica preso num campo
+desabilitado. Histórico: "Divergência com o pedido: Bloquear", "Tolerância de preço: 5.5%", "Tolerância de quantidade:
+10%".
+
+**Leitura pela execução das duas seções de compras** (`packages/domain/src/compras-finalizacao-orcamento.ts:64-77`), a
+ordem das regras gerais: sem versão congelada → neutro; formato desconhecido → ilegível (409
+`TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`); formatos 1 a 4 → neutro SEM LER a configuração, mesmo malformada (nunca recusa
+nova — regra 4 da decisão 277); 5 malformado → ilegível; 5 → a seção lida e normalizada.
 
 ### As seções das fases seguintes · DESTINO DECLARADO (não implementado)
 
@@ -118,11 +218,9 @@ nomes são fixados pelo coordenador. A sugestão do plano da F4, não normativa:
 
 | fase | seção sugerida | o que decide | neutro (o padrão de hoje) |
 |---|---|---|---|
-| F5 (282) | `destino` | cada dimensão de destino obrigatória, opcional ou não usada | não usada |
-| F5 (282) | `fluxo` | exigir requisição (não, algum item, todos) e permitir parcial | não |
-| F5 (282) | `entrada` | entrada sem nota e saldo inicial | como hoje |
-| F6 (283) | `finalizacao` | o pedido de compra exige finalizar com aprovação | não |
-| F6 (283) | `divergencia` | divergência com o pedido: nenhuma, avisa ou bloqueia, com tolerâncias em % (decimal em string) | nenhuma |
+| F5 (282) | `destino` e `fluxo` | IMPLEMENTADAS — subseção "Destino e Fluxo" acima | — |
+| F5 (282) | `entrada` | não implementada na F5a: "sem nota" e "saldo inicial" são TOPs de entrada comuns (movimento `entry`); o saldo inicial com `opening_balance` e a recusa de duplicidade é pergunta ao Maike antes da F11 (decisão 282) | como hoje |
+| F6 (283) | `fluxoCompra` e `divergenciaPedido` | IMPLEMENTADAS — subseções acima | — |
 | F9 (286) | `financeiroPadrao` | natureza, centro, tipo de título, forma e conta padrão — em TABELA da versão, nunca UUID no JSON | sem padrão |
 
 ## 3. Centrais e modos de produto
@@ -228,7 +326,8 @@ Os identificadores NÃO mudam e não são texto: tabela `erp.warehouses`, coluna
 `*-armazem*`, chaves de enum, código `estoque.transferencia_entre_armazens` e a chave i18n dele, chaves de contrato
 (`exigeArmazem`, `armazemPorItem`, `armazemForcado`, `estoqueDoArmazem`, `itensSemArmazem`, `armazemPadrao`), parâmetro
 `armazem_id`, códigos de erro e o código de dicionário `ERP-CADASTROS-ARMAZEM`. Mensagem de erro muda só no `message`.
-Pendente, declarado: as mensagens das funções do banco (0003, 0029, 0036, 0040) até uma migration de estoque.
+As mensagens das funções do banco (0003, 0029, 0036, 0040) dizem "local de estoque" desde a 0043 (OPERACOES-01 F5a,
+decisão 282).
 
 **`GET /api/resources/:key/options`** (o seletor de cadastro; o `RefSelect`):
 - Permissão: a de antes — sem permissão própria, com o escopo do cadastro apontado (`<recurso>.view` resolvido) e as
@@ -273,9 +372,310 @@ CSV). A lista de baixas mostra o rótulo, nunca o valor cru.
 (F3b); "carregar mais" e `total` no seletor; CPF/CNPJ ou razão na opção; índice de prefixo ou trigram (precisa de
 migration); a pesquisa do seletor de Funcionários.
 
+### F5a — a movimentação interna no documento de estoque (decisão 282) · IMPLEMENTADO no banco e na API (a tela é da F5b)
+
+> Parte F5a da decisão 282. Migration 0043. Sem variável. Uma rota nova; as das três espécies saem do laço de hoje.
+> Capacidade aditiva `movimentacaoInterna: 1`. A Central de Estoque NÃO muda até a F5b: o web desta fase lança só as
+> quatro espécies de hoje, e o menu (`apps/web/nav.registry.mjs`) não muda — as entradas das espécies novas vêm com a
+> F5b. A PR #90 não vai à produção sem a F5b. Implantação em `docs/DEPLOYMENT.md` § OPERACOES-01 › F5a.
+
+**As sete espécies do documento de estoque** (`erp.documentos_estoque`; domínio: `TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE`).
+
+| Espécie | Segmento | Família da TOP | Recurso | Origem | Destino | Na confirmação |
+|---|---|---|---|---|---|---|
+| Entrada | `entradas` | `estoque.entrada` | `entradas_estoque` | — | — | `entry`, pelo custo informado ou, vazio, o custo médio do produto (gravado no item) |
+| Saída | `saidas` | `estoque.saida` | `saidas_estoque` | — | pela TOP | `writeoff`, pelo custo médio |
+| Transferência | `transferencias` | `estoque.transferencia` | `transferencias_estoque` | — | — | `transfer_out` e `transfer_in` |
+| Ajuste | `ajustes` | `estoque.ajuste` | `ajustes_estoque` | — | — | `correction_in`/`correction_out`, pelo custo informado ou como hoje |
+| Requisição (de material) | `requisicoes` | `estoque.requisicao_material` | `requisicoes_estoque` | — | pela TOP | NENHUM movimento: passa a pendente e RESERVA o pedido no local de estoque |
+| Consumo | `consumos` | `estoque.consumo` | `consumos_estoque` | uma requisição (opcional; a TOP pode exigir) | pela TOP; herda o da requisição | `requisition` (−1), pelo custo médio |
+| Devolução de consumo | `devolucoes-consumo` | `estoque.devolucao_consumo` | `devolucoes_consumo_estoque` | um consumo (obrigatório) | copiado do consumo | `devolution` (+1), pelo custo do item do consumo |
+
+Permissões: view, create, edit e approve por recurso, sem delete, em "Operacional > Estoque", no escopo do módulo
+`estoque`. Confirmar, cancelar e encerrar o saldo exigem `.edit`.
+
+**Rotas** (prefixo `/api`; 404 uniforme para id malformado, inexistente, outro tenant, fora de escopo e outra espécie;
+Idempotency-Key nos POST de lançar, confirmar, cancelar e encerrar, conferida DEPOIS da 404):
+
+| Método e caminho | Permissão | Desta fase |
+|---|---|---|
+| GET `/estoque/{requisicoes,consumos,devolucoes-consumo}/operation-types` | `<recurso>.create` | as três (laço) |
+| GET e POST `/estoque/<segmento>`; GET `/estoque/<segmento>/:id` | `.view` / `.create` | as três |
+| GET `…/:id/previa-confirmacao`; POST `…/:id/confirmar`; POST `…/:id/cancelar` | `.view` / `.edit` / `.edit` | as três |
+| POST `/estoque/requisicoes/:id/encerrar-saldo` | `requisicoes_estoque.edit` | **nova** |
+| GET `/aprovacoes/estoque`; POST `/aprovacoes/estoque/<segmento>/:id/{aprovar,reprovar}` | `<recurso>.approve` | as três entram pelo laço |
+| GET `/estoque/documentos` (lista única) | a `.view` de cada uma das sete | campos e filtros novos |
+| GET `/stock/balances` | `stocks.view` | a linha ganha `empresa_id` |
+
+**Corpo do POST `/estoque/<segmento>`** (`.strict()` nos dois níveis; os campos novos são OPCIONAIS, e o corpo de antes
+continua valendo):
+- no cabeçalho: `origem_documento_id`; o destino (`centro_custo_id`, `equipamento_id`, `ordem_servico_id`,
+  `lote_animais_id`, `area_id`, `safra_id`); `motivo_saida` (os 13 de `MOTIVOS_SAIDA_ESTOQUE`); `justificativa` (até
+  2000);
+- no item: `origem_item_id`.
+
+As recusas saem juntas num 422 `VALIDATION_ERROR` (`details[{path, message}]`; a mensagem é a do primeiro):
+- custo: opcional na entrada e no ajuste. Na requisição, "A requisição não tem custo: não informe o custo". Nas outras,
+  "O custo d<a espécie> é calculado na confirmação: não informe o custo";
+- requisição: "A requisição reserva pelo produto no local de estoque: não informe lote nem validade";
+- origem:
+  - fora do consumo e da devolução → "A origem é só do consumo e da devolução de consumo";
+  - na devolução, sem origem → "Informe o consumo de origem", e cada item sem a dele → "Informe o item do consumo que
+    volta";
+  - no consumo, item com origem sem o cabeçalho → "Informe a requisição de origem";
+- destino:
+  - fora da requisição, do consumo e da saída → "O destino é só da requisição, do consumo e da saída";
+  - na devolução → "O destino da devolução de consumo é o do consumo de origem: não informe";
+- motivo e justificativa:
+  - fora da saída → "O motivo é só da saída" / "A justificativa é só da saída";
+  - motivo sem justificativa → "Informe a justificativa da saída";
+  - justificativa sem motivo → "Informe o motivo da saída".
+  O par é OPCIONAL de forma TRANSITÓRIA, enquanto o web anterior puder estar no ar (decisão 282, pendência registrada);
+  a tela nova manda os dois sempre.
+
+Ordem das conferências: forma → TOP → a configuração da versão congelada, lida uma vez (exigências gerais e as seções
+`destino`/`fluxo`) → locais de estoque → itens → ORIGEM → DESTINO → FLUXO → exigências gerais. Só depois vêm o número
+(nenhuma recusa queima código), o cabeçalho com o destino FINAL, o ID Global e os itens com a origem.
+
+**Origem.** A origem é lida com o MESMO recorte do GET e `for share`; os itens dela são travados `for update` em ordem
+de id e, depois da trava, relidos com o que já foi ligado.
+- Recusa uma origem que não é a espécie esperada, é de outra empresa ou de outro local de estoque, ou não está na
+  situação que atende — tudo com a MESMA recusa, em `origem_documento_id`:
+  - "Requisição de origem inválida: escolha uma requisição pendente da mesma empresa e do mesmo local de estoque";
+  - "Consumo de origem inválido: escolha um consumo confirmado da mesma empresa e do mesmo local de estoque".
+- Por item: "O item não é da requisição de origem" (ou "… do consumo de origem"); "O produto difere do item da
+  requisição" (ou "… do item do consumo"); "Passa do saldo pendente do item da requisição: há <n>" (ou "Passa do que o
+  consumo baixou e ainda não voltou: há <n>").
+- O gatilho dos itens (0043) é a rede: duas partes simultâneas fazem fila e somam.
+
+**Destino.** As referências informadas são conferidas numa consulta só, com a MESMA recusa para o inexistente, o de
+outra empresa e o de outra organização:
+
+| dimensão | mensagem |
+|---|---|
+| centro de resultado | "Centro de resultado inválido: escolha um centro de resultado analítico e ativo da organização" |
+| máquina/equipamento | "Máquina/equipamento inválido: escolha uma máquina/equipamento ativo da empresa do documento" |
+| ordem de serviço | "Ordem de serviço inválida: escolha uma ordem de serviço aberta ou em andamento da empresa do documento" |
+| lote de animais | "Lote de animais inválido: escolha um lote de animais ativo da empresa do documento" |
+| área/talhão | "Área/talhão inválida: escolha uma área/talhão ativa da empresa do documento" |
+| safra | "Safra inválida: escolha uma safra ativa da organização" |
+
+- O consumo HERDA cada dimensão que a requisição tem. Informar outra dá "O destino do consumo é o da requisição de
+  origem". Reenviar a MESMA é o mesmo que omiti-la: não passa de novo pela conferência nem pela seção da TOP do consumo.
+- Depois vem a seção Destino da TOP (§2).
+- Todo movimento do documento leva o destino do cabeçalho, e o estorno o copia.
+
+**Resposta do POST:** `{ id, codigo, especie, situacao: "aberto" }`, com `confirmacaoAutomatica` só na TOP Automática —
+inalterada.
+
+**Leitura** (`GET /estoque/<segmento>/:id`; as mesmas TRÊS consultas):
+- o cabeçalho ganha as colunas novas e os nomes do destino: `centro_custo_nome`, `equipamento_nome`,
+  `ordem_servico_codigo`, `lote_animais_nome`, `area_nome`, `safra_nome`;
+- ganha também `saldo_encerrado_por_nome` e:
+  - `origem` — `{id, codigo, especie, situacao}` ou `null`;
+  - `vinculados` — `[{id, codigo, especie, situacao, data_documento}]`, os documentos que apontam este como origem;
+  - `atendimento` — `pendente | parcial | atendido | encerrado` na requisição confirmada, e `null` nas outras;
+- a `origem` e os `vinculados` só trazem as espécies que quem lê pode VER (a `.view` de cada uma). O documento sem a
+  capacidade some como se não existisse, e `origem_documento_id` continua (é deste documento);
+- os itens ganham:
+  - `origem_item_id`;
+  - `quantidade_atendida` — na requisição: os consumos não cancelados;
+  - `saldo_pendente` — na requisição confirmada; `"0.0000"` com o saldo encerrado;
+  - `quantidade_devolvida` — no consumo: as devoluções não canceladas.
+  Os números vêm como texto.
+
+**Lista** (`GET /estoque/documentos`): cada linha ganha `atendimento` e `origem_documento_id`. Os filtros novos, sem
+consulta nova:
+- `atendimento`, em CSV de `pendente,parcial,atendido,encerrado`, aplicado no WHERE antes do LIMIT; valor fora → 422 no
+  parâmetro;
+- `origem_documento_id`; uuid malformado → zero linhas.
+
+**Prévia** (`contractVersion` continua 1):
+- requisição: `saldo_atual` é o DISPONÍVEL do par (o físico de todos os lotes menos o reservado pelos OUTROS),
+  descontado do que os itens anteriores do mesmo produto já pediram; `movimento: null`; a chave aditiva
+  `baseDoSaldo: "disponivel"`, só nela;
+- consumo: como a saída (o físico; `movimento: "writeoff"`, a lista que o web anterior lê; o razão grava `requisition`);
+- devolução: como a entrada (`movimento: "entry"`);
+- as quatro de hoje: o corpo de hoje, chave por chave.
+
+**Confirmar** (a MESMA função; resposta `{ id, situacao: "confirmado", movimentos }`):
+- requisição: sem período e sem movimento (`movimentos: 0`); trava os produtos (`SQL_TRAVA_PRODUTOS`, em ordem de id);
+  confere o disponível depois da trava; falta → 422 por item, "Disponível insuficiente de <produto> no local de estoque:
+  há <n>, a requisição pede <q>.", sem reserva parcial;
+- consumo: como a saída. A guarda da reserva tira da conta a parte do próprio consumo;
+- devolução de consumo: `devolution`, pelo custo do item do consumo;
+- entrada sem custo: o custo médio do produto, gravado no item;
+- ajuste com custo: pelo custo informado.
+A aprovação ("Sempre") vale para as três como para as quatro (409 `APROVACAO_PENDENTE`).
+
+**Cancelar:**
+- a requisição confirmada com consumo vivo → 409 "Esta requisição tem consumos: cancele-os ou encerre o saldo.";
+- o consumo confirmado com devolução viva → 409 "Este consumo tem devoluções: cancele-as primeiro.";
+- a requisição confirmada sem dependente cancela SEM estorno, e a reserva some.
+
+**Encerrar o saldo** (`POST /estoque/requisicoes/:id/encerrar-saldo`):
+- corpo `{ "motivo": "<1 a 500>" }`, `.strict()`;
+- com o cabeçalho travado, cada uma 409, nesta ordem:
+  - "Esta requisição não está pendente.";
+  - "O saldo desta requisição já foi encerrado.";
+  - "Esta requisição ainda não foi atendida: cancele-a em vez de encerrar o saldo." — julgado pelos itens lidos depois da
+    trava;
+  - "Esta requisição não tem saldo a encerrar.";
+- o UPDATE confere o ROW COUNT;
+- auditoria `encerrar_saldo` `{motivo}`;
+- resposta `{ id, situacao: "confirmado", atendimento: "encerrado" }`;
+- o consumo ABERTO que a atende continua reservando a parte dele.
+
+**Reserva no disponível** (o núcleo da 0035 com a parte C): o reservado do par é A + B (pedidos de venda) + C1 (o saldo
+pendente das requisições confirmadas sem saldo encerrado) + C2 (os itens ligados dos consumos abertos). O Saldo, a
+prévia da venda e a guarda das saídas veem a requisição. A mensagem da guarda é a de hoje: `INSUFFICIENT_STOCK:
+disponível … < solicitado … (… reservado para pedidos)`.
+
+**Capacidade:** as sete `operation-types` declaram `capacidades: { documentoEstoque: 1, movimentacaoInterna: 1 }`.
+`movimentacaoInterna: 1` (`CAPACIDADE_MOVIMENTACAO_INTERNA`) declara:
+- as três espécies, o destino, o motivo e a justificativa, a entrada sem custo, o custo no ajuste e a origem;
+- o encerramento do saldo, `atendimento`, `vinculados` e `baseDoSaldo`;
+- o `empresa_id` do Saldo.
+O leitor é `entendeMovimentacaoInterna`: só `=== 1`; qualquer outra forma é "não declarada". A web desta fase não lê a
+chave; a F5b lê.
+
+**O razão e quem grava nele:**
+- a OS finalizada grava o centro de resultado, a safra e a própria OS;
+- o manejo grava o lote de animais;
+- o estorno copia o destino e a cultura do original;
+- "Saídas x Centro de Resultado" não soma a saída estornada.
+
+**Fora (F5a) e para a F5b:**
+- a Central de Estoque no motor, com as sete espécies (`TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE`), lendo
+  `movimentacaoInterna`;
+- `temTela: true` no catálogo e o menu (`apps/web/nav.registry.mjs`, que esta parte não muda);
+- o link do ID Global das três;
+- a devolução pré-preenchida pela saída;
+- o ajuste a partir do Saldo no documento novo;
+- o seletor de OS do destino (não existe `/api/resources/service_orders/options`);
+- o layout por TOP do estoque (o CHECK já aceita as sete famílias; falta o catálogo de layout no domínio);
+- motivo e justificativa sempre enviados.
+
+As decisões pendentes do Maike — o par motivo/justificativa obrigatório no servidor depois que o web anterior sair de
+produção (I-1) e as perguntas antes da F11 (saldo inicial, entrada sem NF, requisição antiga, o neutro do Destino, a
+devolução antiga, `reason_note` e os relatórios que só leem as tabelas antigas; I-2 e I-3) — estão na decisão 282.
+
 ## 4. Compras: pedido, orçamento e finalização com aprovação
 
-A preencher pela F6 (decisão 283).
+### F6a — o pedido finalizado, a aprovação do pedido e o orçamento de compra (decisão 283) · IMPLEMENTADO NA API
+
+> Parte F6a da decisão 283. Migration 0044 (depois da 0043, da qual depende: a pré-condição 2.9 exige o CHECK de
+> layouts com as sete famílias de estoque). Sem variável. Implantação em `docs/DEPLOYMENT.md` § OPERACOES-01 › F6a. A
+> F6b (as telas da Central de Compras) acrescenta a subseção dela.
+
+A F6a fez banco (0044), domínio, API e as abas do editor da TOP. As telas da Central de Compras são da F6b; até lá, nada
+disto aparece na Central de Compras, e a capacidade `finalizacaoEOrcamento: 1` (em `GET /api/compras/{pedidos,compras,orcamentos}/operation-types`)
+diz ao web que o servidor tem tudo o que segue. O menu (`apps/web/nav.registry.mjs`) não muda: a entrada do orçamento
+de compra vem com a F6b. Com "Exigir pedido finalizado para receber" = Sim, o web deste HEAD não recebe o pedido (409, e
+não há botão Finalizar até a F6b): as regras se ligam só com as telas da F6b no ar.
+
+**Máquina de estados** (`erp.documentos_compra.situacao`, transição v3 da 0044):
+
+| espécie | situações | passagens |
+|---|---|---|
+| pedido | aberto · finalizado · convertido · cancelado | aberto → finalizado (Finalizar); aberto ou finalizado → convertido (saldo zerado ou encerrado); convertido → a situação de antes de converter (compra cancelada, sem saldo encerrado); aberto ou finalizado → cancelado (sem compra viva). Finalizado nunca volta a aberto. |
+| orçamento | aberto · escolhido · nao_escolhido · cancelado | aberto → escolhido (vencedor) / nao_escolhido (os outros) / cancelado. Escolhido e não escolhido são finais. Nunca confirmado nem convertido. |
+| compra | aberto · confirmado · cancelado | como hoje |
+
+"Parcial" e "atendido" do pedido continuam calculados pelo saldo.
+
+**Rotas** (prefixo `/api`; corpo `.strict()`, chave desconhecida → 422; id malformado, inexistente, de outro tenant,
+fora do escopo e de outra espécie → a MESMA 404; 403 só para falta de capacidade; toda escrita com Idempotency-Key —
+autor no hash, visibilidade antes da chave —, ROW COUNT e auditoria):
+
+| método e caminho | capacidade (AND) | corpo | resposta |
+|---|---|---|---|
+| GET `/compras/pedidos/:id/previa-finalizacao` | `pedidos_compra.view` | — | `{contractVersion: 1, podeFinalizar, recusas: [{code, message, details}], aprovacao: {situacao: "nao_exigida" \| "pendente" \| "aprovado" \| "reprovado"} \| null}` |
+| POST `/compras/pedidos/:id/finalizar` | `pedidos_compra.edit` | `{}` | `{id, situacao: "finalizado", finalizado_em, finalizado_por}` |
+| POST `/compras/pedidos/:id/aprovar-para-orcamento` | `compras.edit` ∧ `pedidos_compra.view` | `{}` | `{id, aprovado_orcamento_em, aprovado_orcamento_por}` |
+| POST `/compras/pedidos/:id/orcamentos` | `orcamentos_compra.create` ∧ `pedidos_compra.view` | `{tipo_operacao_id, fornecedor_id, data_documento, condicao_pagamento_id?, prazo_entrega_dias? (0..3650), validade_orcamento?, observacao? (≤ 2000), itens?: [{item_pedido_id, valor_unitario}]}` | 201 `{id, codigo, especie: "orcamento", situacao: "aberto", pedido_orcado_id, fornecedor_id, valor_itens, valor_total}` |
+| POST `/compras/pedidos/:id/orcamentos/:orcamentoId/escolher` | `pedidos_compra.edit` ∧ `orcamentos_compra.edit` | `{}` | `{pedido: {id, situacao: "aberto", fornecedor_id, condicao_pagamento_id, valor_itens, valor_total}, vencedor: {id, situacao: "escolhido"}, naoEscolhidos: [ids]}` |
+| GET `/compras/orcamentos` | `orcamentos_compra.view` | query da lista de compras + `pedido_orcado_id` | a página da lista de compras |
+| GET `/compras/orcamentos/operation-types` | `orcamentos_compra.create` | — | o contrato das outras espécies, família `compras.orcamento`, `finalizacaoEOrcamento` no fim |
+| GET `/compras/orcamentos/regras-da-operacao?tipo_operacao_id=` | `orcamentos_compra.create` | — | `{contractVersion: 1, formato, exigencias, condicoesPermitidas, geraTitulos: false, exigeFormaPagamento: false, exigeVencimento: false, exigeArmazem: false}` |
+| GET `/compras/orcamentos/layout-efetivo?tipo_operacao_id=` | `orcamentos_compra.create` | — | o layout efetivo da TOP de orçamento |
+| GET `/compras/orcamentos/:id` | `orcamentos_compra.view` | — | a leitura do documento de compra |
+| PUT `/compras/orcamentos/:id` | `orcamentos_compra.edit` | `{condicao_pagamento_id, prazo_entrega_dias, validade_orcamento, observacao, itens: [{id, valor_unitario}]}` (todas as chaves; anuláveis onde diz) | a leitura depois de gravar |
+| POST `/compras/orcamentos/:id/cancel` | `orcamentos_compra.delete` | `{motivo?}` (1..500) | `{id, situacao: "cancelado"}` |
+
+Não existe `POST /compras/orcamentos`: o orçamento nasce do pedido. TOP ausente, malformada, de outra família, inativa,
+excluída ou de outra organização nas portas de leitura do lançamento → a MESMA 404.
+
+**Mudanças aditivas nas rotas de hoje:** a leitura do pedido e da compra ganha as colunas novas, `finalizado_por_nome`,
+`aprovado_orcamento_por_nome` e `pedido_orcado_codigo`; no pedido, `orcamentos` (id, código, situação, fornecedor_id,
+fornecedor_nome, condicao_pagamento_id, prazo_entrega_dias, validade_orcamento, valor_total; inclusive cancelados, na
+ordem em que nasceram) SÓ para quem tem `orcamentos_compra.view` — sem ela a chave não existe e a consulta nem roda (a
+leitura do pedido não é uma segunda porta para o orçamento: CAPACIDADE ∧ ESCOPO). `GET /compras/documentos`
+traz orçamento só com `especie=orcamento` E `orcamentos_compra.view`. `GET /compras/pedidos/:id/proximos-passos` ganha
+`exigeFinalizar` no fim (ilegível → `true`); os itens continuam só os de compra. Receber, encerrar o saldo e cancelar
+aceitam o pedido finalizado. A prévia da compra ganha `divergencia` no fim, só quando se aplica. A fila
+`GET /api/aprovacoes/compras` lista o pedido para quem tem `compras.approve` ∧ `pedidos_compra.approve`, com
+`especie: "pedido"`; aprovar o pedido não o finaliza.
+
+**Permissões:** `pedidos_compra.approve` ("Aprovar") e o recurso `orcamentos_compra` ("Orçamentos de Compra", CRUD,
+"Operacional > Compras", módulo `compras`). ID Global do orçamento: `/compras/orcamentos/:id`, `orcamentos_compra.view`.
+Anexo do orçamento: `orcamentos_compra.view`.
+
+**Regras:**
+- **Finalizar** só o pedido aberto ("Só pedido aberto é finalizado."). Com aprovação na versão congelada (formato 4 ou
+  5; "Sempre", ou "A partir de um valor" com o total ATUAL): sem decisão, ou aprovada que não cobre (valor aprovado <
+  total atual, ou outra versão da TOP) → 409 `APROVACAO_PENDENTE` "Este pedido precisa de aprovação antes de ser
+  finalizado."; reprovada → 409 `APROVACAO_REPROVADA`. A guarda da 0044 faz a mesma conta no banco.
+- **A aprovação do pedido vale ao FINALIZAR.** Com "Exigir pedido finalizado para receber" = Não (o neutro), o pedido
+  ABERTO é recebido sem passar por ela; quem quer o pedido controlado liga as duas regras. O pedido aberto que exige
+  aprovação fica na fila enquanto estiver aberto. Exigir o par na gravação (aprovação diferente de "Sem aprovação" ⇒
+  "Exigir pedido finalizado para receber" = Sim) é decisão PENDENTE do Maike (decisão 283).
+- **Receber** com `fluxoCompra.exigeFinalizar` e o pedido aberto → 409 "Este pedido precisa ser finalizado antes de ser
+  recebido.".
+- **Aprovado para orçamento** uma vez, com o pedido aberto ("Só pedido aberto é aprovado para orçamento." / "Este pedido
+  já está aprovado para orçamento.").
+- **Orçamento:** só de pedido aberto ("Só pedido aberto recebe orçamento.") e aprovado para orçamento ("Este pedido não
+  está aprovado para orçamento."); a TOP é um destino de orçamento do leque da versão do pedido ("A TOP deste pedido não
+  tem orçamento nas próximas operações.", 422 `TIPO_OPERACAO_INDISPONIVEL`); um vivo por fornecedor ("Este pedido já tem
+  orçamento deste fornecedor."); depois do vencedor, nenhum ("Este pedido já tem orçamento vencedor."); item repetido ou
+  de outro pedido → 422 "Item que não é deste pedido."; validade antes da data → 422 "A validade do orçamento não pode
+  ser anterior à data do documento."; no PUT, os itens são exatamente as linhas do orçamento, uma vez cada → senão 422
+  "Informe o preço de cada item do orçamento, uma vez cada."; editar ou cancelar só aberto ("Este orçamento não está
+  aberto.") e com o pedido aberto ("O pedido deste orçamento não está aberto."). Exigências da Geral do orçamento: só
+  fornecedor e observação; condições permitidas e layout da TOP do orçamento, como na compra. Puxa todos os itens do
+  pedido (produto, Local de estoque, quantidade, posição), preço digitado ou "0"; sem frete, outras despesas e desconto;
+  não mexe em estoque nem em financeiro; NÃO consome o saldo do pedido.
+- **Escolher o vencedor** só com o pedido aberto ("O vencedor só é escolhido com o pedido aberto.") e sem compra gerada,
+  inclusive cancelada ("Este pedido já gerou compra: o orçamento vencedor não pode mais ser escolhido."); o vencedor
+  cobre cada item do pedido com uma linha ("O orçamento não cobre os itens do pedido."); a condição do vencedor tem de
+  estar entre as permitidas da TOP DO PEDIDO (422 `CONDICAO_PAGAMENTO_NAO_PERMITIDA`). Leva fornecedor, preço de cada
+  item (desconto do item zerado) e condição — sem condição no vencedor, a do pedido fica; frete, outras despesas e
+  desconto do pedido ficam; totais e plano refeitos; o prazo não vai. Um vencedor por pedido, sem reescolha. O valor do
+  pedido muda: a aprovação anterior deixa de cobrir.
+- **Sem cascata:** finalizar, receber e cancelar o pedido não mexem nos orçamentos abertos; depois disso o vencedor é
+  recusado, e eles ficam abertos até serem cancelados (a F6b trata).
+
+**A divergência com o pedido** (seção `divergenciaPedido` da TOP da COMPRA, §2), só na compra gerada de um pedido, no
+planejamento da confirmação, logo depois da aprovação e antes de qualquer efeito:
+- **preço, por linha da compra:** líquido unitário = valor total ÷ quantidade (6 casas, meio para cima), dos dois lados;
+  `diferencaPercentual` = (compra − pedido) ÷ pedido × 100, com sinal, 2 casas; para mais e para menos; base zero no
+  pedido → diverge se a compra não é zero, sem percentual, sempre acima;
+- **quantidade, por item do pedido trazido NESTA compra:** a soma das linhas ligadas a ele (o lote divide linhas) contra
+  o saldo ANTES desta compra (a quantidade do item menos o ligado nas OUTRAS compras não canceladas); saldo zero não
+  entra; o item do pedido que esta compra não traz NÃO entra — com "Bloquear", a entrega parcial acima da tolerância
+  bloqueia, e omitir o item não bloqueia (o saldo dele fica no pedido);
+- **acima da tolerância** = |diferença %| > tolerância, comparada exata antes de arredondar (o igual não passa);
+- **"Avisar":** a prévia ganha `divergencia: {modo, toleranciaPrecoPercentual, toleranciaQuantidadePercentual, itens:
+  [{campo: "preco" | "quantidade", itemPedidoId, itemIds, produto, valorPedido, valorCompra, diferencaPercentual,
+  acimaDaTolerancia}], bloqueia}` (só o que diverge; por item do pedido na ordem das linhas, o preço antes da
+  quantidade); a compra confirma; a auditoria `confirm` guarda `divergencia: {modo, itens}` quando há item;
+- **"Bloquear" com item acima:** a prévia recusa e a confirmação manual dá 409 `DIVERGENCIA_COM_O_PEDIDO` "A compra
+  diverge do pedido além da tolerância desta operação.", `details.itens` = os itens acima, sem efeito; a automática deixa
+  a compra salva e aberta, `confirmacaoAutomatica` "recusada" com o MESMO corpo;
+- compra sem origem, TOP sem a seção ou "Nenhuma": a chave `divergencia` não existe na prévia (o corpo de hoje).
+
+**Fica para a F6b:** as telas (Finalizar e a prévia, Aprovado para orçamento, os orçamentos, Escolher vencedor, a
+divergência na prévia), o E2E do fluxo, o K-1 de compras, o menu e a chave de idempotência da Central de Compras.
 
 ## 5. Entrada de nota por XML
 
