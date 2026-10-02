@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 204 |
-| Tabelas com `organization_id` (escopo de organização) | 147 |
+| Tabelas no schema `erp` | 203 |
+| Tabelas com `organization_id` (escopo de organização) | 146 |
 | Tabelas com coluna de empresa (hoje `farm_id`) | 59 |
 | Entidades curadas neste dicionário | 54 |
 | Entidades com ID Global | 25 |
 | Entidades com Tipo de Operação | 15 |
-| Tipos de Operação referenciados | 23 |
-| Cobertura curada | 26.5% |
+| Tipos de Operação referenciados | 26 |
+| Cobertura curada | 26.6% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -758,7 +758,7 @@ Quais campos o documento comercial de uma família mostra, em que ordem, com que
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `nome` |  | text | sim |  |  |  |  |
-| `familia` | Movimento | text | sim |  |  | `vendas.orcamento` · `vendas.pedido` · `vendas.venda` · `compras.pedido` · `compras.compra` | Família canônica do documento: as três de venda e as duas de compra (pedido de compra e compra, decisão 269). Uma TOP só se liga a layout da própria família (gatilho do banco). |
+| `familia` | Movimento | text | sim |  |  | `vendas.orcamento` · `vendas.pedido` · `vendas.venda` · `compras.pedido` · `compras.compra` · `estoque.entrada` · `estoque.saida` · `estoque.transferencia` · `estoque.ajuste` · `estoque.requisicao_material` · `estoque.consumo` · `estoque.devolucao_consumo` | Família canônica do documento: as três de venda e as duas de compra (pedido de compra e compra, decisão 269). Uma TOP só se liga a layout da própria família (gatilho do banco). |
 | `padrao` | Padrão da família | boolean | sim |  |  |  | Usado pela TOP da família que não tem layout ligado. No máximo um ativo e vivo por organização e família (índice único parcial). |
 | `estrutura` |  | jsonb | sim |  |  |  |  |
 | `is_active` |  | boolean | sim |  |  |  |  |
@@ -1060,7 +1060,7 @@ Produção de ração a partir de uma fórmula: consome insumos e gera produto a
 
 ### ERP-ESTOQUE-DOCUMENTO — Documento de Estoque
 
-Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. A coluna `especie` decide a operação e a tela (entrada, saída, transferência, ajuste de inventário). Nasce aberto e só mexe no saldo quando é confirmado; o movimento é o da espécie, gravado no razão de estoque com origem `documentos_estoque`.
+Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. A coluna `especie` decide a operação e a tela (entrada, saída, transferência, ajuste de inventário e, desde a decisão 282, a movimentação interna: requisição de material, consumo e devolução de consumo). Nasce aberto e só mexe no saldo quando é confirmado; o movimento é o da espécie, gravado no razão de estoque com origem `documentos_estoque`. A requisição confirmada não move o razão: reserva no local de estoque até ser atendida por consumos ou ter o saldo encerrado.
 
 | Propriedade | Valor |
 | --- | --- |
@@ -1071,8 +1071,8 @@ Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. 
 | Exclusão lógica | não |
 | ID Global | sim |
 | Discriminador | `especie` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
-| Rotas por variante | `entrada` → `/estoque/movimentacoes/entradas/:id` · `saida` → `/estoque/movimentacoes/saidas/:id` · `transferencia` → `/estoque/movimentacoes/transferencias/:id` · `ajuste` → `/estoque/movimentacoes/ajustes/:id` |
-| Tipo de Operação | `estoque.entrada` (Entrada de estoque) · `estoque.saida` (Saída de estoque) · `estoque.transferencia` (Transferência de estoque) · `estoque.ajuste` (Ajuste de estoque (inventário)) |
+| Rotas por variante | `entrada` → `/estoque/movimentacoes/entradas/:id` · `saida` → `/estoque/movimentacoes/saidas/:id` · `transferencia` → `/estoque/movimentacoes/transferencias/:id` · `ajuste` → `/estoque/movimentacoes/ajustes/:id` · `requisicao` → `/estoque/movimentacoes/requisicoes/:id` · `consumo` → `/estoque/movimentacoes/consumos/:id` · `devolucao_consumo` → `/estoque/movimentacoes/devolucoes-consumo/:id` |
+| Tipo de Operação | `estoque.entrada` (Entrada de estoque) · `estoque.saida` (Saída de estoque) · `estoque.transferencia` (Transferência de estoque) · `estoque.ajuste` (Ajuste de estoque (inventário)) · `estoque.requisicao_material` (Requisição de material) · `estoque.consumo` (Consumo) · `estoque.devolucao_consumo` (Devolução de consumo) |
 | Discriminador do Tipo de Operação | `especie` (decide qual das operações acima o registro é) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
@@ -1080,9 +1080,9 @@ Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. 
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
-| `especie` | Espécie | text | sim |  |  | `entrada` · `saida` · `transferencia` · `ajuste` | entrada \| saida \| transferencia \| ajuste. Valor canônico persistido; o rótulo é traduzido na apresentação. |
+| `especie` | Espécie | text | sim |  |  | `entrada` · `saida` · `transferencia` · `ajuste` · `requisicao` · `consumo` · `devolucao_consumo` | entrada \| saida \| transferencia \| ajuste \| requisicao \| consumo \| devolucao_consumo. Valor canônico persistido; o rótulo é traduzido na apresentação. A família da requisição é `estoque.requisicao_material` (a `estoque.requisicao` é a da tabela antiga `erp.requisitions`). |
 | `codigo` |  | text | sim |  |  |  |  |
-| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `cancelado` | aberto \| confirmado \| cancelado. Aberto → confirmado, aberto → cancelado, confirmado → cancelado (com estorno). Nada volta; cancelado é final. |
+| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `cancelado` | aberto \| confirmado \| cancelado. Aberto → confirmado, aberto → cancelado, confirmado → cancelado (com estorno). Nada volta; cancelado é final. Na requisição, confirmado é a pendente (reservando); o atendimento (pendente, atendida em parte, atendida, saldo encerrado) é calculado, não gravado. |
 | `tipo_operacao_id` |  | uuid | sim |  |  |  |  |
 | `tipo_operacao_versao_id` |  | uuid | sim |  |  |  |  |
 | `armazem_id` | Local de estoque | uuid | sim |  |  |  | Local de estoque do movimento (a origem, na transferência). Da mesma empresa do documento. |
@@ -1097,6 +1097,18 @@ Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. 
 | `motivo_cancelamento` |  | text | não |  |  |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `atualizado_em` |  | timestamptz | sim |  |  |  |  |
+| `origem_documento_id` | Documento de origem | uuid | não |  |  |  | Só no consumo (a requisição que ele atende, opcional) e na devolução de consumo (o consumo de que ela volta, obrigatório). Mesma empresa e mesmo local de estoque; não muda depois do lançamento; FK composta com o tenant. |
+| `centro_custo_id` | Centro de resultado (destino) | uuid | não |  |  |  | Destino da saída, da requisição e do consumo (a devolução de consumo copia o do consumo). Centro de resultado analítico e ativo da organização; vazio nas outras espécies. FK composta com o tenant. |
+| `equipamento_id` | Máquina/equipamento (destino) | uuid | não |  |  |  | Destino da saída, da requisição e do consumo. Máquina/equipamento ativo da empresa do documento; vazio nas outras espécies. FK composta com o tenant. |
+| `ordem_servico_id` | Ordem de serviço (destino) | uuid | não |  |  |  | Destino da saída, da requisição e do consumo. Ordem de serviço aberta ou em andamento da empresa do documento; vazio nas outras espécies. FK composta com o tenant. |
+| `lote_animais_id` | Lote de animais (destino) | uuid | não |  |  |  | Destino da saída, da requisição e do consumo. Lote de animais ativo da empresa do documento; vazio nas outras espécies. FK composta com o tenant. |
+| `area_id` | Área/talhão (destino) | uuid | não |  |  |  | Destino da saída, da requisição e do consumo. Área ativa da empresa do documento; vazio nas outras espécies. FK composta com o tenant. |
+| `safra_id` | Safra (destino) | uuid | não |  |  |  | Destino da saída, da requisição e do consumo. Safra ativa da organização; vazio nas outras espécies. FK composta com o tenant. |
+| `motivo_saida` | Motivo da saída | text | não |  |  |  | Só na saída: um dos 13 motivos da baixa antiga. Anda em PAR com a justificativa (os dois ou nenhum). |
+| `justificativa` | Justificativa da saída | text | não |  |  |  | Só na saída: o porquê da saída, não vazio, até 2000 caracteres. Anda em PAR com o motivo. |
+| `saldo_encerrado_em` | Saldo encerrado em | timestamptz | não |  |  |  | Só na requisição confirmada: quando o saldo pendente foi encerrado (a reserva do saldo acaba). Anda junto com saldo_encerrado_por e saldo_encerrado_motivo; acontece uma vez. |
+| `saldo_encerrado_por` | Saldo encerrado por | uuid | não | FK | `erp.users` |  | Só na requisição: quem encerrou o saldo pendente. |
+| `saldo_encerrado_motivo` | Motivo do encerramento do saldo | text | não |  |  |  | Só na requisição: por que o saldo pendente foi encerrado. |
 
 ### ERP-ESTOQUE-DOCUMENTO-ITEM — Item do Documento de Estoque
 
@@ -1116,18 +1128,19 @@ Linha de produto do documento de estoque. Identidade pertence ao documento; só 
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
 | `documento_id` |  | uuid | sim |  |  |  |  |
-| `especie` |  | text | sim |  |  | `entrada` · `saida` · `transferencia` · `ajuste` |  |
+| `especie` |  | text | sim |  |  | `entrada` · `saida` · `transferencia` · `ajuste` · `requisicao` · `consumo` · `devolucao_consumo` |  |
 | `posicao` |  | integer | sim |  |  |  |  |
 | `produto_id` |  | uuid | sim |  |  |  |  |
 | `lote` |  | text | não |  |  |  |  |
 | `validade` |  | date | não |  |  |  |  |
-| `quantidade` | Quantidade | numeric(18,4) | não |  |  |  | Entrada, saída e transferência: maior que zero. Vazia no ajuste. |
+| `quantidade` | Quantidade | numeric(18,4) | não |  |  |  | Entrada, saída, transferência, requisição, consumo e devolução de consumo: maior que zero. Vazia no ajuste. |
 | `quantidade_contada` | Quantidade contada | numeric(18,4) | não |  |  |  | Só no ajuste: a contagem do inventário (zero ou mais). A diferença para o saldo é calculada na confirmação. |
-| `custo_unitario` | Custo unitário | numeric(18,6) | não |  |  |  | Informado na entrada. Nas outras espécies é preenchido na confirmação com o custo do movimento. |
+| `custo_unitario` | Custo unitário | numeric(18,6) | não |  |  |  | Informado na entrada — vazio, a confirmação grava o custo médio do produto — e opcional no ajuste; nas outras espécies, o custo do movimento gravado na confirmação. Vazio na requisição (ela não move o razão). |
 | `saldo_na_confirmacao` | Saldo na confirmação | numeric(18,4) | não |  |  |  | Só no ajuste: o saldo do local de estoque × produto × lote lido sob trava na confirmação. |
 | `diferenca` | Diferença | numeric(18,4) | não |  |  |  | Só no ajuste: contada menos o saldo na confirmação. Positiva gera correção de entrada; negativa, correção de saída; zero não move estoque. |
 | `observacao` |  | text | não |  |  |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
+| `origem_item_id` | Item de origem | uuid | não |  |  |  | No consumo que atende uma requisição: o item da requisição que esta linha atende (o consumo pode ter linhas sem origem). Na devolução de consumo: o item do consumo que volta (obrigatório). Mesmo produto; a soma das linhas ligadas não passa do saldo do item de origem (gatilho, decisão 282). |
 
 ### ERP-ESTOQUE-MOVIMENTO — Movimento de Estoque
 
@@ -1168,6 +1181,10 @@ Razão imutável de estoque (custo médio e saldo). Não é lançamento: é cons
 | `created_by` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `equipamento_id` |  | uuid | não |  |  |  |  |
+| `ordem_servico_id` |  | uuid | não |  |  |  |  |
+| `lote_animais_id` |  | uuid | não |  |  |  |  |
+| `area_id` |  | uuid | não |  |  |  |  |
 
 ## Compras
 
@@ -1361,11 +1378,6 @@ Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/rec
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
-| `data_competencia` |  | date | não |  |  |  |  |
-| `conta_prevista_id` |  | uuid | não |  |  |  |  |
-| `cancel_reason` |  | text | não |  |  |  |  |
-| `cancelled_at` |  | timestamptz | não |  |  |  |  |
-| `cancelled_by` |  | uuid | não |  |  |  |  |
 
 ### ERP-FINANCEIRO-BAIXA — Baixa de Título
 
@@ -1406,10 +1418,6 @@ Pagamento/recebimento parcial ou total de um título. Identidade pertence ao tí
 | `cancel_reason` |  | text | não |  |  |  |  |
 | `created_by` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
-| `lote_id` |  | uuid | não |  |  |  |  |
-| `tarifa` |  | numeric(18,2) | não |  |  |  |  |
-| `adiantamento_id` |  | uuid | não |  |  |  |  |
-| `natureza_desconto_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-FINANCEIRO-MOVIMENTO-BANCARIO — Movimento Bancário
 
@@ -1456,13 +1464,6 @@ Lançamento em conta bancária (transferência, tarifa, aplicação).
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | não |  |  |  |  |
-| `tipo_transferencia` |  | text | não |  |  |  |  |
-| `title_settlement_id` |  | uuid | não |  |  |  |  |
-| `componente_baixa` |  | text | não |  |  |  |  |
-| `lote_baixa_id` |  | uuid | não |  |  |  |  |
-| `cancel_reason` |  | text | não |  |  |  |  |
-| `cancelled_at` |  | timestamptz | não |  |  |  |  |
-| `cancelled_by` |  | uuid | não |  |  |  |  |
 
 ### ERP-FINANCEIRO-IMPORTACAO-OFX — Importação OFX
 
@@ -1926,7 +1927,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.authorizers` | 13 | sim | — | sim |
 | `erp.bank_account_empresas` | 2 | não | `empresa_id` | não |
 | `erp.bank_account_proprietaries` | 2 | não | — | não |
-| `erp.bank_accounts` | 21 | sim | — | sim |
+| `erp.bank_accounts` | 20 | sim | — | sim |
 | `erp.bank_movement_apportionments` | 8 | não | — | não |
 | `erp.batch_categories` | 2 | não | — | não |
 | `erp.batches` | 21 | sim | `empresa_id` | sim |
@@ -1972,8 +1973,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.feedlot_corrals` | 10 | sim | — | sim |
 | `erp.feedlot_sectors` | 8 | sim | — | sim |
 | `erp.feedlot_yards` | 8 | sim | `empresa_id` | sim |
-| `erp.financeiro_naturezas_padrao` | 13 | sim | — | não |
-| `erp.financial_categories` | 14 | sim | — | sim |
+| `erp.financial_categories` | 13 | sim | — | sim |
 | `erp.financial_freezes` | 9 | sim | `empresa_id` | não |
 | `erp.fodders` | 7 | sim | — | sim |
 | `erp.grazing_modules` | 13 | sim | `empresa_id` | sim |

@@ -93,6 +93,10 @@ export const ptBR: Catalogo = {
     "top.estoque.saida": "Saída de estoque",
     "top.estoque.transferencia": "Transferência de estoque",
     "top.estoque.ajuste": "Ajuste de estoque (inventário)",
+    // OPERACOES-01 F5a (decisão 282): a movimentação interna no documento de estoque.
+    "top.estoque.requisicao_material": "Requisição de material",
+    "top.estoque.consumo": "Consumo",
+    "top.estoque.devolucao_consumo": "Devolução de consumo",
     "top.compras.solicitacao": "Solicitação de compra",
     "top.compras.pedido": "Pedido de compra",
     "top.compras.compra": "Compra",

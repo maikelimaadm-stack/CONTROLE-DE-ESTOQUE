@@ -91,6 +91,8 @@ const MATRIZ_DA_SPEC: readonly Linha[] = [
   documentoConfirmado("vendas.venda", MOTIVO.alteracaoVenda),
   documentoConfirmado("compras.compra", MOTIVO.alteracaoCompra),
   estoque("estoque.entrada"), estoque("estoque.saida"), estoque("estoque.transferencia"), estoque("estoque.ajuste"),
+  // OPERACOES-01 F5a (decisão 282): as três espécies da movimentação interna, com a linha do estoque, depois do ajuste.
+  estoque("estoque.requisicao_material"), estoque("estoque.consumo"), estoque("estoque.devolucao_consumo"),
   orcamentoOuPedido("vendas.orcamento"), orcamentoOuPedido("vendas.pedido"), orcamentoOuPedido("compras.pedido"),
 ];
 /** "Qualquer outra família": uma antiga de estoque, a solicitação de compra e uma do financeiro. Não são linhas da matriz. */

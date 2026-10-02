@@ -135,13 +135,14 @@ async function condicoesNoBanco(topId: string): Promise<string[]> {
 // T5-1
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
 describe("T5-1 — capacidades: o bloco formato5 na raiz, com o catálogo do domínio", () => {
-  it("T5-1 formato5 = {suportado, versaoSchema 5, secoes [], leituraDoDetalhe, catalogo} depois de regrasGerais; os blocos de hoje iguais, nas duas instâncias", async () => {
+  it("T5-1 formato5 = {suportado, versaoSchema 5, secoes [destino, fluxo], leituraDoDetalhe, catalogo} depois de regrasGerais; os blocos de hoje iguais, nas duas instâncias", async () => {
     for (const [app, ligado] of [[c.h.app, false], [c.ligada, true]] as const) {
       const r = await app.inject({ method: "GET", url: "/api/admin/tipos-operacao/capabilities", headers: c.h.headers() });
       expect(r.statusCode, r.body).toBe(200);
       const d = j(r);
       // O bloco novo: o catálogo é o MESMO do domínio (fonte única), serializado.
-      expect(d.formato5).toEqual({ suportado: true, versaoSchema: 5, secoes: [], leituraDoDetalhe: "formato_gravado", catalogo: JSON.parse(JSON.stringify(CATALOGO_TOP)) });
+      // OPERACOES-01 F5a (decisão 282): as seções Destino e Fluxo saem da lista do domínio (nenhum código da rota mudou).
+      expect(d.formato5).toEqual({ suportado: true, versaoSchema: 5, secoes: ["destino", "fluxo"], leituraDoDetalhe: "formato_gravado", catalogo: JSON.parse(JSON.stringify(CATALOGO_TOP)) });
       const chaves = Object.keys(d);
       expect(chaves.indexOf("formato5"), "na RAIZ, depois de regrasGerais").toBeGreaterThan(chaves.indexOf("regrasGerais"));
       expect(chaves.indexOf("regrasGerais"), "premissa: regrasGerais está na raiz").toBeGreaterThan(-1);
@@ -164,7 +165,10 @@ describe("T5-1 — capacidades: o bloco formato5 na raiz, com o catálogo do dom
       expect(catalogo!.tipos, "premissa: há tipos declarados SEM tela (a fase que cria a tela os liga)").toHaveLength(22);
       expect(catalogo!.perfis.map((p) => p.familia)).toEqual([...CODIGOS_TIPO_OPERACAO]);
     }
-    // /familias continua o registry INTEIRO (o catálogo não o recorta): as 23 famílias, com ou sem tela.
+    // /familias continua o registry INTEIRO (o catálogo não o recorta): as 26 famílias (F5a: + requisição de material,
+    // consumo e devolução de consumo, ainda sem tela), com ou sem tela.
+    expect(CODIGOS_TIPO_OPERACAO, "premissa: o registry tem as três famílias da movimentação interna")
+      .toEqual(expect.arrayContaining(["estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo"]));
     const f = await c.ligada.inject({ method: "GET", url: "/api/admin/tipos-operacao/familias", headers: c.h.headers() });
     expect(f.statusCode, f.body).toBe(200);
     expect((j(f).items as { codigo: string }[]).map((x) => x.codigo)).toEqual([...CODIGOS_TIPO_OPERACAO]);

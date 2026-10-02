@@ -189,12 +189,15 @@ export default async function fleetHrRoutes(app: FastifyInstance) {
   }
   app.post("/service-orders/:id/status", async (req) => runService(app, req, "service_orders.edit", async (ctx) => {
     const { id } = req.params as { id: string }; const d = z.object({ status: z.enum(["in_progress", "finished", "cancelled"]) }).parse(req.body);
-    const cur = await ctx.tx.query<{ status: string; empresa_id: string; order_date: string; code: string }>("select status, empresa_id, order_date, code from erp.service_orders where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!cur.rows[0]) throw notFound(); await exigirEmpresaVisivel(ctx, cur.rows[0].empresa_id, "OS");
+    const cur = await ctx.tx.query<{ status: string; empresa_id: string; order_date: string; code: string; cost_center_id: string | null; harvest_id: string | null }>("select status, empresa_id, order_date, code, cost_center_id, harvest_id from erp.service_orders where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!cur.rows[0]) throw notFound(); await exigirEmpresaVisivel(ctx, cur.rows[0].empresa_id, "OS");
     const allowed: Record<string, string[]> = { open: ["in_progress", "cancelled"], in_progress: ["finished", "cancelled"] };
     if (!allowed[cur.rows[0].status]?.includes(d.status)) throw err("INVALID_STATUS_TRANSITION", `De ${cur.rows[0].status} para ${d.status}`);
     if (d.status === "finished") { // baixa insumos/EPIs do estoque ao finalizar
+      // O movimento leva o DESTINO que a OS já tem (OPERACOES-01 F5a, decisão 282): o centro de resultado, a safra e
+      // a própria OS. A data continua a de hoje, como antes.
+      const os = cur.rows[0];
       const ins = await ctx.tx.query<{ product_id: string; warehouse_id: string | null; quantity: string }>("select product_id, warehouse_id, quantity from erp.service_order_lines where order_id=$1 and section in ('input','ppe') and product_id is not null", [id]);
-      for (const l of ins.rows) if (l.warehouse_id && D(l.quantity).gt(0)) await postStock(ctx, { empresaId: cur.rows[0].empresa_id, warehouseId: l.warehouse_id, productId: l.product_id, movementType: "requisition", direction: -1, quantity: l.quantity, sourceType: "service_orders", sourceId: id, date: todayISO(), note: `OS ${cur.rows[0].code}` });
+      for (const l of ins.rows) if (l.warehouse_id && D(l.quantity).gt(0)) await postStock(ctx, { empresaId: os.empresa_id, warehouseId: l.warehouse_id, productId: l.product_id, movementType: "requisition", direction: -1, quantity: l.quantity, costCenterId: os.cost_center_id, harvestId: os.harvest_id, ordemServicoId: id, sourceType: "service_orders", sourceId: id, date: todayISO(), note: `OS ${os.code}` });
     }
     await ctx.tx.query("update erp.service_orders set status=$2, started_at=case when $2='in_progress' then now() else started_at end, finished_at=case when $2='finished' then now() else finished_at end, updated_at=now() where id=$1", [id, d.status]);
     await audit(ctx.tx, ctx, "service_orders", id, d.status); return { id, status: d.status };

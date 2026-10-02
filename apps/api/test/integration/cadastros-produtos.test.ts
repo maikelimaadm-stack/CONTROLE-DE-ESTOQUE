@@ -94,10 +94,10 @@ describe("PR-2 — controle de lote exige lote na entrada e na saída", () => {
 
 describe("PR-3 — mudar o controle com saldo → 422; sem saldo pode; movimentos existentes não mudam", () => {
   // R1-1 g: a mensagem EXATA — o saldo conferido é o da organização inteira, e "transfira" não resolve
-  // OPERACOES-01 F3a (decisão 280): a API diz "locais de estoque"; o gatilho fica com o texto dele (dois textos, cada um no seu lugar)
+  // OPERACOES-01 F3a (decisão 280): a API diz "locais de estoque"
   const MSG_DA_API = "O produto tem saldo em estoque: zere o saldo em todos os locais de estoque antes de mudar o controle de lote.";
-  // a mensagem do gatilho é da migration 0029, já aplicada; só muda por migration nova
-  const MSG_DO_GATILHO_0029 = "O produto tem saldo em estoque: zere o saldo em todos os armazéns antes de mudar o controle de lote.";
+  // o gatilho da 0029 (erp.products_controle_lote) teve o texto trocado pela 0043 (OPERACOES-01 F5a, decisão 282): agora é o MESMO da API
+  const MSG_DO_GATILHO_0029 = "O produto tem saldo em estoque: zere o saldo em todos os locais de estoque antes de mudar o controle de lote.";
   it("com saldo 422 'zere o saldo em todos os locais de estoque' (API) e o texto da 0029 (banco); saldo zerado → muda; o movimento antigo fica igual", async () => {
     const p = criado(await post({ ...base, description: nome("muda") }));
     expect((await saldoInicial(p)).statusCode).toBe(201);

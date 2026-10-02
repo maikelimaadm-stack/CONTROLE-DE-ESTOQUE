@@ -255,8 +255,8 @@ describe("0038 — sobre o acervo de layouts de venda, como o runner aplica", ()
     expect(ledger).toEqual({ n: 38, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
     // No disco há mais do que o ledger deste arquivo (ele sobe só até a 0038): a 0039 (EDITAR-01), a 0040
-    // (ESTOQUE-01), a 0041 (TOP-CONFIG-08) e a 0042 (OPERACOES-01 F8) vêm depois.
-    expect(noDisco.length, "42 migrations no repositório").toBe(42);
+    // (ESTOQUE-01), a 0041 (TOP-CONFIG-08), a 0042 (OPERACOES-01 F8) e a 0043 (OPERACOES-01 F5a) vêm depois.
+    expect(noDisco.length, "43 migrations no repositório").toBe(43);
     expect(noDisco[37]).toBe(ALVO);
     expect(noDisco[38], "a 0039 logo depois da 0038 no repositório").toBe("0039_versao_do_documento_de_venda.sql");
     expect(await retrato(), "nenhuma linha de layout ou de ligação muda").toEqual(antes);
@@ -410,16 +410,19 @@ describe("leitor de schema dos gates: CHECK refeito por ALTER TABLE (item 0 g)",
   beforeAll(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "leitor-checks-")); });
   afterAll(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
-  it("G1 as migrations reais: a situação do documento de compra com 'convertido' (0037) e a família do layout com as cinco (0038)", async () => {
+  it("G1 as migrations reais: a situação do documento de compra com 'convertido' (0037) e a família do layout com as cinco da 0038 e as sete de estoque da 0043", async () => {
     const real = await lerSchema();
     expect(real.get("erp.documentos_compra")!.columns.get("situacao")).toMatchObject({
       check: "situacao in ('aberto','confirmado','convertido','cancelado')", checkNome: "chk_documentos_compra_situacao" });
     expect(real.get("erp.layouts_documento")!.columns.get("familia")).toMatchObject({
-      check: "familia in ('vendas.orcamento', 'vendas.pedido', 'vendas.venda', 'compras.pedido', 'compras.compra')", checkNome: "chk_layouts_documento_familia" });
+      check: "familia in ('vendas.orcamento', 'vendas.pedido', 'vendas.venda', 'compras.pedido', 'compras.compra', 'estoque.entrada', 'estoque.saida', "
+        + "'estoque.transferencia', 'estoque.ajuste', 'estoque.requisicao_material', 'estoque.consumo', 'estoque.devolucao_consumo')",
+      checkNome: "chk_layouts_documento_familia" });
     // E o documento gerado publica isso na coluna "Valores" (o gate `data-dictionary --check` confere o resto).
     const documento = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../docs/DATA-DICTIONARY.md"), "utf8");
     expect(documento).toContain("| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `convertido` · `cancelado` |");
-    expect(documento).toContain("| `familia` | Movimento | text | sim |  |  | `vendas.orcamento` · `vendas.pedido` · `vendas.venda` · `compras.pedido` · `compras.compra` |");
+    expect(documento).toContain("| `familia` | Movimento | text | sim |  |  | `vendas.orcamento` · `vendas.pedido` · `vendas.venda` · `compras.pedido` · `compras.compra` · "
+      + "`estoque.entrada` · `estoque.saida` · `estoque.transferencia` · `estoque.ajuste` · `estoque.requisicao_material` · `estoque.consumo` · `estoque.devolucao_consumo` |");
   });
 
   it("G2 drop e add na MESMA instrução, com o mesmo nome: vale o CHECK novo", async () => {

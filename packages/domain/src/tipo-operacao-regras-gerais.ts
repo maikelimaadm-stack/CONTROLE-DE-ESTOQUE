@@ -61,7 +61,7 @@ import {
   type PoliticaDocumentoSemItens,
 } from "./tipo-operacao-configuracao.js";
 import { familiaOperacionalDeDocumentoCompra, familiaOperacionalDeDocumentoVenda } from "./tipo-operacao-configurado.js";
-import { ESPECIES_DOCUMENTO_ESTOQUE, familiaOperacionalDeDocumentoEstoque } from "./estoque-documento.js";
+import { TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE, familiaOperacionalDeDocumentoEstoque } from "./estoque-documento.js";
 import { formatarDinheiroBr } from "./tipo-operacao-restricoes.js";
 
 // ---------------------------------------------------------------------------------------------------
@@ -144,7 +144,7 @@ const linhaDoDocumentoConfirmado = (familia: string, motivoAlteracao: string): I
   aprovacao: regra(POLITICAS_APROVACAO, null),
 });
 
-/** As quatro espécies de estoque: confirmação inteira; aprovação só Sempre (o valor só existe na confirmação). */
+/** As sete espécies de estoque: confirmação inteira; aprovação só Sempre (o valor só existe na confirmação). */
 const linhaDoEstoque = (familia: string): ItemMatrizRegrasGeraisTop => Object.freeze({
   familia,
   confirmacao: regra(MODOS_CONFIRMACAO, null),
@@ -180,14 +180,14 @@ const linhaSe = (familia: string | undefined, montar: (f: string) => ItemMatrizR
   familia ? [montar(familia)] : [];
 
 /**
- * A MATRIZ. Venda, compra, as quatro espécies de estoque, orçamento, pedido de venda e pedido de compra —
+ * A MATRIZ. Venda, compra, as sete espécies de estoque, orçamento, pedido de venda e pedido de compra —
  * nesta ordem. A API confere a gravação do formato 4 (e do 5) contra ela; o servidor a publica no bloco
  * `regrasGerais` das capabilities; o editor lê a publicada (`lerMatrizRegrasGeraisTop`).
  */
 export const MATRIZ_REGRAS_GERAIS_TOP: readonly ItemMatrizRegrasGeraisTop[] = Object.freeze([
   ...linhaSe(familiaOperacionalDeDocumentoVenda("sale"), (f) => linhaDoDocumentoConfirmado(f, MOTIVO_ALTERACAO_VENDA)),
   ...linhaSe(familiaOperacionalDeDocumentoCompra("compra"), (f) => linhaDoDocumentoConfirmado(f, MOTIVO_ALTERACAO_COMPRA)),
-  ...ESPECIES_DOCUMENTO_ESTOQUE.flatMap((especie) => linhaSe(familiaOperacionalDeDocumentoEstoque(especie), linhaDoEstoque)),
+  ...TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE.flatMap((especie) => linhaSe(familiaOperacionalDeDocumentoEstoque(especie), linhaDoEstoque)),
   ...linhaSe(familiaOperacionalDeDocumentoVenda("budget"), linhaDoOrcamentoOuPedido),
   ...linhaSe(familiaOperacionalDeDocumentoVenda("order"), linhaDoOrcamentoOuPedido),
   ...linhaSe(familiaOperacionalDeDocumentoCompra("pedido"), linhaDoOrcamentoOuPedido),

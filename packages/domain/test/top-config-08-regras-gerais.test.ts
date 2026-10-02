@@ -115,6 +115,10 @@ const ESPERADA: ItemMatrizRegrasGeraisTop[] = [
   estoque("estoque.saida"),
   estoque("estoque.transferencia"),
   estoque("estoque.ajuste"),
+  // OPERACOES-01 F5a (decisão 282): a movimentação interna no documento de estoque — a mesma linha do estoque.
+  estoque("estoque.requisicao_material"),
+  estoque("estoque.consumo"),
+  estoque("estoque.devolucao_consumo"),
   orcamentoOuPedido("vendas.orcamento"),
   orcamentoOuPedido("vendas.pedido"),
   orcamentoOuPedido("compras.pedido"),
@@ -136,7 +140,7 @@ const OUTRAS = [
 ];
 
 describe("TOP-CONFIG-08 — a matriz por família (MATRIZ_REGRAS_GERAIS_TOP)", () => {
-  it("tem exatamente as 9 famílias, na ordem, com os aceitos e os motivos exatos", () => {
+  it("tem exatamente as 12 famílias, na ordem, com os aceitos e os motivos exatos", () => {
     expect(MATRIZ_REGRAS_GERAIS_TOP.map((m) => m.familia)).toEqual(ESPERADA.map((m) => m.familia));
     expect(clonar(MATRIZ_REGRAS_GERAIS_TOP)).toEqual(ESPERADA);
   });
@@ -200,9 +204,9 @@ describe("TOP-CONFIG-08 — validarRegrasGeraisTop (o 422 da gravação no forma
     for (const v of POLITICAS_APROVACAO) if (!m.aprovacao.aceitos.includes(v)) casos.push([m.familia, "aprovacao.politica", { politica: v }, m.aprovacao.motivo!]);
   }
 
-  it("a tabela de casos cobre as 9 famílias (nenhuma aceita tudo: a alteração é sempre Bloqueada)", () => {
-    expect(new Set(casos.map((c) => c[0])).size).toBe(9);
-    expect(casos.length).toBe(2 * 1 + 4 * 3 + 3 * 5); // venda/compra: 1 cada; estoque: 3 cada; orçamento/pedidos: 5 cada
+  it("a tabela de casos cobre as 12 famílias (nenhuma aceita tudo: a alteração é sempre Bloqueada)", () => {
+    expect(new Set(casos.map((c) => c[0])).size).toBe(12);
+    expect(casos.length).toBe(2 * 1 + 7 * 3 + 3 * 5); // venda/compra: 1 cada; estoque (7 espécies): 3 cada; orçamento/pedidos: 5 cada
   });
 
   it.each(casos)("%s — %s fora da matriz → combinacao_nao_suportada com o motivo exato", (familia, caminho, regras, mensagem) => {

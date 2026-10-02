@@ -130,10 +130,11 @@ const familiaDaTabela = (tabela: string, valor?: string): string | undefined => 
 
 /**
  * OS 22 TIPOS, NA ORDEM DO PEDIDO. Só os 9 cujo documento cita a TOP (venda, compra e o documento de estoque) têm
- * tela hoje. "Requisição" é a espécie NOVA da F5 (família ainda inexistente), não a requisição antiga do estoque; os
- * tipos de Módulos e do Financeiro que já têm família ficam com ela, sem tela: a F10 e a F9 os ligam. Orçamento de
- * compra (F6), consumo e devolução de consumo (F5), manejo e batelada (F10) e movimento bancário (F9) nascem sem
- * família — a fase dona cria a família no registry e troca a linha.
+ * tela hoje. "Requisição", "Consumo" e "Devolução de consumo" são as espécies NOVAS do documento de estoque (F5a:
+ * `estoque.requisicao_material`, não a `estoque.requisicao` da requisição antiga), sem tela até a F5b; os tipos de
+ * Módulos e do Financeiro que já têm família ficam com ela, sem tela: a F10 e a F9 os ligam. Orçamento de compra (F6),
+ * manejo e batelada (F10) e movimento bancário (F9) nascem sem família — a fase dona cria a família no registry e
+ * troca a linha.
  */
 export const CATALOGO_TIPOS_MOVIMENTO_TOP: readonly TipoDeMovimentoTop[] = Object.freeze([
   tipo("orcamento_venda", "vendas", "Orçamento", familiaOperacionalDeDocumentoVenda("budget"), true),
@@ -142,9 +143,10 @@ export const CATALOGO_TIPOS_MOVIMENTO_TOP: readonly TipoDeMovimentoTop[] = Objec
   tipo("pedido_compra", "compras", "Pedido", familiaOperacionalDeDocumentoCompra("pedido"), true),
   tipo("orcamento_compra", "compras", "Orçamento", null, false),
   tipo("compra", "compras", "Compra", familiaOperacionalDeDocumentoCompra("compra"), true),
-  tipo("requisicao", "movimentacao_interna", "Requisição", null, false),
-  tipo("consumo", "movimentacao_interna", "Consumo", null, false),
-  tipo("devolucao_consumo", "movimentacao_interna", "Devolução de consumo", null, false),
+  // OPERACOES-01 F5a (decisão 282): as famílias da movimentação interna nascem no registry; a tela que as lança é da F5b.
+  tipo("requisicao", "movimentacao_interna", "Requisição", familiaOperacionalDeDocumentoEstoque("requisicao"), false),
+  tipo("consumo", "movimentacao_interna", "Consumo", familiaOperacionalDeDocumentoEstoque("consumo"), false),
+  tipo("devolucao_consumo", "movimentacao_interna", "Devolução de consumo", familiaOperacionalDeDocumentoEstoque("devolucao_consumo"), false),
   tipo("entrada", "movimentacao_interna", "Entrada", familiaOperacionalDeDocumentoEstoque("entrada"), true),
   tipo("saida", "movimentacao_interna", "Saída/baixa", familiaOperacionalDeDocumentoEstoque("saida"), true),
   tipo("transferencia", "movimentacao_interna", "Transferência", familiaOperacionalDeDocumentoEstoque("transferencia"), true),

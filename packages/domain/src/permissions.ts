@@ -173,6 +173,11 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   R("saidas_estoque", "Saídas de Estoque", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
   R("transferencias_estoque", "Transferências de Estoque", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
   R("ajustes_estoque", "Ajustes de Estoque", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
+  // OPERACOES-01 F5a (decisão 282): a movimentação interna no documento de estoque, um recurso por espécie, sem
+  // `delete` (o documento cancela). Encerrar o saldo da requisição exige `requisicoes_estoque.edit`.
+  R("requisicoes_estoque", "Requisições de Material", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
+  R("consumos_estoque", "Consumos de Estoque", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
+  R("devolucoes_consumo_estoque", "Devoluções de Consumo", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
   R("service_orders", "Ordens de Serviço", "Operacional > Ordens de Serviço", [...CRUD, "monitor", "rate"]),
   // Financeiro
   R("payables", "Contas a Pagar", "Financeiro", [...CRUD, "settle", "cancel_settlement", "import", "export", "receipt", "boleto", "duplicate"]),
