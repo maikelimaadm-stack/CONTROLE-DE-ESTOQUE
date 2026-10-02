@@ -998,8 +998,22 @@ export function assinaturaRascunho(r: RascunhoTop): string {
  * `TIPO_OPERACAO_CONFIGURACAO_INVALIDA` e `TIPO_OPERACAO_CONDICOES_INVALIDAS` trazem `details.recusas`
  * `[{caminho, mensagem}]`. Qualquer outra forma devolve `{}` e o erro segue para o `ErrorState` geral —
  * item malformado é ignorado só neste mapa, nunca o erro inteiro.
+ *
+ * OPERACOES-01 F6a: as recusas do PARSE (o leitor estrito do domínio) chegam só com `{motivo, caminho}`, sem
+ * `mensagem` — e um campo das seções do formato 5 que o editor não confere antes de enviar (a tolerância "150" da
+ * divergência) ficava sem o erro ao lado. Sem a mensagem, o texto vem de `MENSAGEM_DA_RECUSA_SEM_TEXTO`, pelo motivo
+ * (só apresentação); motivo desconhecido continua fora do mapa. O `ErrorState` geral aparece do mesmo jeito.
  */
 export const CODIGOS_ERRO_DE_CAMPO_TOP = ["TIPO_OPERACAO_CONFIGURACAO_INVALIDA", "TIPO_OPERACAO_CONDICOES_INVALIDAS"] as const;
+export const MENSAGEM_DA_RECUSA_SEM_TEXTO: Readonly<Record<string, string>> = Object.freeze({
+  valor_invalido: "Valor inválido: confira o que foi informado neste campo.",
+  tipo_invalido: "Valor em formato inválido neste campo.",
+  campo_desconhecido: "Este campo não é aceito por este servidor."
+});
+const mensagemDaRecusa = (r: Record<string, unknown>): string | null => {
+  if (ehTexto(r.mensagem)) return r.mensagem;
+  return ehTexto(r.motivo) && Object.hasOwn(MENSAGEM_DA_RECUSA_SEM_TEXTO, r.motivo) ? MENSAGEM_DA_RECUSA_SEM_TEXTO[r.motivo]! : null;
+};
 /** TOP-CONFIG-07: o 422 `VALIDATION_ERROR` da reserva fora da família do pedido (`details [{path, message}]`). */
 export const CAMINHO_ERRO_RESERVA_ESTOQUE = "reservaEstoque";
 export function errosDeCampoDoServidor(e: unknown): Record<string, string> {
@@ -1013,7 +1027,8 @@ export function errosDeCampoDoServidor(e: unknown): Record<string, string> {
   if (!ehObjeto(d) || !Array.isArray(d.recusas)) return {};
   const mapa: Record<string, string> = {};
   for (const r of d.recusas) {
-    if (ehObjeto(r) && ehTexto(r.caminho) && ehTexto(r.mensagem) && !(r.caminho in mapa)) mapa[r.caminho] = r.mensagem;
+    const mensagem = ehObjeto(r) ? mensagemDaRecusa(r) : null;
+    if (ehObjeto(r) && ehTexto(r.caminho) && mensagem !== null && !(r.caminho in mapa)) mapa[r.caminho] = mensagem;
   }
   return mapa;
 }

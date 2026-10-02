@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page, type Request } from "@playwright/test";
+import { SECOES_EXTENSAO_V5, secoesExtensaoNeutrasTop } from "@agro/domain";
 import { login, api, uniq } from "./helpers";
 import {
   abrirTelaDeTops, cfg4, cfg5, chamarApi, codigoTopE2E, detalheTopNoServidor, escolherTipoNoAssistente, excluirTopE2E,
@@ -108,10 +109,15 @@ test("OPERACOES-01 F4 · K-1 do 5 (sentido 1) — a base sem o formato 5 RECUSA 
     expect(await idPeloCodigo(page, codigo), "e nada foi criado").toBeNull();
 
     // A PREMISSA AO LADO: o MESMO corpo, só com o número 4, a base aceita (201) — a recusa acima é do número, não do
-    // conteúdo (o 5 da F4 é o 4 com as seções de extensão, nenhuma ainda).
+    // conteúdo (o 5 é o 4 com as seções de extensão, todas no NEUTRO; desde a F6a as seções existem, então elas saem
+    // do corpo do 4, que não as conhece — a lista e o neutro vêm do domínio deste HEAD, nunca de um literal).
     const codigo4 = codigoTopE2E();
     const no4 = cfg4();
-    expect({ ...no5, versaoSchema: 4 }, "premissa: o 5 da F4 é o 4 com outro número").toEqual(no4);
+    const ehExtensao = (k: string) => (SECOES_EXTENSAO_V5 as readonly string[]).includes(k);
+    expect(Object.fromEntries(Object.entries(no5).filter(([k]) => ehExtensao(k))), "premissa: as seções de extensão do corpo no 5 estão no neutro")
+      .toEqual(secoesExtensaoNeutrasTop());
+    expect({ ...Object.fromEntries(Object.entries(no5).filter(([k]) => !ehExtensao(k))), versaoSchema: 4 },
+      "premissa: o 5, sem as seções de extensão, é o 4 com outro número").toEqual(no4);
     const aceito = await chamarApi<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo: codigo4, codigoBase: "vendas.venda", nome: uniq("K-1 do 5 · corpo no 4"), configuracao: no4 });
     expect(aceito.status, "o mesmo corpo no 4 a base aceita").toBe(201);
     const d4 = await detalheTopNoServidor(page, aceito.corpo.id);
