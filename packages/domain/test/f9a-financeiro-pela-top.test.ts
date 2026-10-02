@@ -74,9 +74,9 @@ import { DICIONARIO_DE_DADOS } from "../dicionario-dados.mjs";
 /**
  * OPERACOES-01 F9a (decisão 286) — O FINANCEIRO PELA TOP, NO DOMÍNIO.
  *
- * F9-S  a seção `financeiroPadrao` do formato 5: neutro = hoje; leitura estrita; normalizar idempotente; as 6 famílias;
+ * F9-S  a seção `financeiroPadrao` do formato 5: neutro = hoje; leitura estrita; normalizar idempotente; as 8 famílias;
  *       recusada nos formatos 1 a 4 e lida no neutro; a recusa por família (provisão e "exigir").
- * F9-P  o perfil dos padrões por família (a matriz), as regras de provisão (a compra declarada e não executada).
+ * F9-P  o perfil dos padrões por família (a matriz), as regras de provisão (as duas executam; a do pedido de compra desde a F9b).
  * F9-C  a classificação (documento → TOP → exigir → legado) e a troca dos padrões.
  * F9-A  o alvo da provisão e as parcelas.
  * F9-K  as capacidades (financeiro pela TOP, LCDPR), o previsto como situação e os rótulos.
@@ -95,7 +95,7 @@ const MOVIMENTO = "financeiro.movimento_bancario";
 const SOLICITACAO = "compras.solicitacao";
 const PEDIDO_COMPRA = "compras.pedido";
 const COMPRA = "compras.compra";
-const AS_SEIS = [PEDIDO_VENDA, VENDA, A_RECEBER, A_PAGAR, MOVIMENTO, SOLICITACAO];
+const AS_OITO = [PEDIDO_VENDA, VENDA, A_RECEBER, A_PAGAR, MOVIMENTO, SOLICITACAO, PEDIDO_COMPRA, COMPRA];
 
 const NEUTRO: SecaoFinanceiroPadrao = { provisao: false, documentoTroca: true, semClassificacao: "padrao_legado" };
 const LIGADA: SecaoFinanceiroPadrao = { provisao: true, documentoTroca: false, semClassificacao: "exigir" };
@@ -198,15 +198,15 @@ describe("F9-S a seção financeiroPadrao do formato 5", () => {
     expect(secoesAlteradasTop(v4, ligada)).toEqual(["financeiroPadrao"]);
   });
 
-  it("F9-S8 usadaPor = exatamente as 6 famílias da matriz (perguntado ao registry)", () => {
+  it("F9-S8 usadaPor = exatamente as 8 famílias da matriz (perguntado ao registry; as duas de compras desde a F9b)", () => {
     const usam = CODIGOS_TIPO_OPERACAO.filter((f) => SECAO_FINANCEIRO_PADRAO.usadaPor(f));
-    expect(new Set(usam)).toEqual(new Set(AS_SEIS));
-    expect(usam).toHaveLength(6);
-    for (const f of [ORCAMENTO_VENDA, PEDIDO_COMPRA, COMPRA, "estoque.entrada", "frota_ativos.abastecimento", "", "vendas.devolucao"]) {
+    expect(new Set(usam)).toEqual(new Set(AS_OITO));
+    expect(usam).toHaveLength(8);
+    for (const f of [ORCAMENTO_VENDA, "compras.orcamento", "estoque.entrada", "frota_ativos.abastecimento", "", "vendas.devolucao"]) {
       expect(SECAO_FINANCEIRO_PADRAO.usadaPor(f), f).toBe(false);
     }
-    // A premissa: as seis estão declaradas no registry.
-    for (const f of AS_SEIS) expect(tipoOperacao(f), f).toBeDefined();
+    // A premissa: as oito estão declaradas no registry.
+    for (const f of AS_OITO) expect(tipoOperacao(f), f).toBeDefined();
   });
 
   it("F9-S9 as linhas do histórico: três, com os rótulos e os valores em português", () => {
@@ -223,19 +223,22 @@ describe("F9-S a seção financeiroPadrao do formato 5", () => {
     expect(Object.keys(ROTULOS_SEM_CLASSIFICACAO_TOP)).toEqual([...SEM_CLASSIFICACAO_TOP]);
   });
 
-  it("F9-S10 recusas por família: a provisão só no pedido de venda; \"exigir\" só onde o documento pode vir sem natureza e centro", () => {
+  it("F9-S10 recusas por família: a provisão só nos dois pedidos (venda e compra); \"exigir\" só onde o documento pode vir sem natureza e centro", () => {
     expect(recusasDoFinanceiroPadraoDaFamilia(PEDIDO_VENDA, LIGADA)).toEqual([]);
     const provisao = { motivo: "combinacao_nao_suportada", caminho: "financeiroPadrao.provisao", mensagem: MENSAGEM_PROVISAO_FORA_DA_FAMILIA };
     const exigir = { motivo: "combinacao_nao_suportada", caminho: "financeiroPadrao.semClassificacao", mensagem: MENSAGEM_EXIGIR_FORA_DA_FAMILIA };
+    // F9b: o pedido de compra provisiona (só "exigir" é recusado: a compra não tem padrão legado); a compra, não.
+    expect(recusasDoFinanceiroPadraoDaFamilia(PEDIDO_COMPRA, LIGADA)).toEqual([exigir]);
+    expect(recusasDoFinanceiroPadraoDaFamilia(COMPRA, LIGADA)).toEqual([provisao, exigir]);
     expect(recusasDoFinanceiroPadraoDaFamilia(VENDA, LIGADA)).toEqual([provisao]);
     expect(recusasDoFinanceiroPadraoDaFamilia(SOLICITACAO, LIGADA)).toEqual([provisao]);
     for (const f of [A_PAGAR, A_RECEBER, MOVIMENTO]) expect(recusasDoFinanceiroPadraoDaFamilia(f, LIGADA), f).toEqual([provisao, exigir]);
     expect(recusasDoFinanceiroPadraoDaFamilia(MOVIMENTO, { ...NEUTRO, semClassificacao: "exigir" })).toEqual([exigir]);
-    // O neutro nunca é recusado, em nenhuma das seis.
-    for (const f of AS_SEIS) expect(recusasDoFinanceiroPadraoDaFamilia(f, NEUTRO), f).toEqual([]);
+    // O neutro nunca é recusado, em nenhuma das oito.
+    for (const f of AS_OITO) expect(recusasDoFinanceiroPadraoDaFamilia(f, NEUTRO), f).toEqual([]);
     // Família sem a seção: a recusa da seção inteira é do catálogo, não daqui.
     expect(recusasDoFinanceiroPadraoDaFamilia(ORCAMENTO_VENDA, LIGADA)).toEqual([]);
-    expect(MENSAGEM_PROVISAO_FORA_DA_FAMILIA).toBe("A provisão vale só no pedido de venda.");
+    expect(MENSAGEM_PROVISAO_FORA_DA_FAMILIA).toBe("A provisão vale só no pedido de venda e no pedido de compra.");
     expect(MENSAGEM_EXIGIR_FORA_DA_FAMILIA).toBe(
       "O lançamento desta operação sempre informa natureza e centro: deixe \"Usar a 1ª natureza e o 1º centro por código (como hoje)\".",
     );
@@ -279,32 +282,34 @@ describe("F9-P o perfil dos padrões por família e as regras de provisão", () 
     expect(perfilDosPadroesFinanceiros(MOVIMENTO)).toEqual({ provisao: false, semClassificacao: false, trocaPeloDocumento: true, campos: ["natureza", "centro", "conta"], naturezas: ["income", "expense", "both"] });
     // A solicitação não informa nenhum padrão no documento: a regra "o documento troca" não tem efeito nela.
     expect(perfilDosPadroesFinanceiros(SOLICITACAO)).toEqual({ provisao: false, semClassificacao: true, trocaPeloDocumento: false, campos: doTitulo, naturezas: ["expense", "both"] });
+    // F9b: o pedido de compra (provisão a pagar ao finalizar) e a compra — sem "sem natureza e centro" (não há legado).
+    expect(familiaOperacionalDeDocumentoCompra("compra"), "premissa: a compra pelo registry").toBe(COMPRA);
+    expect(perfilDosPadroesFinanceiros(PEDIDO_COMPRA)).toEqual({ provisao: true, semClassificacao: false, trocaPeloDocumento: true, campos: todos, naturezas: ["expense", "both"] });
+    expect(perfilDosPadroesFinanceiros(COMPRA)).toEqual({ provisao: false, semClassificacao: false, trocaPeloDocumento: true, campos: todos, naturezas: ["expense", "both"] });
     expect([...CAMPOS_PADRAO_FINANCEIRO]).toEqual(["natureza", "centro", "tipoTitulo", "formaPagamento", "conta"]);
   });
 
-  it("F9-P3 as outras famílias não têm perfil — o pedido de compra e a compra inclusive (F9b)", () => {
-    for (const f of CODIGOS_TIPO_OPERACAO.filter((x) => !AS_SEIS.includes(x))) {
+  it("F9-P3 as outras famílias não têm perfil — o orçamento de compra inclusive", () => {
+    for (const f of CODIGOS_TIPO_OPERACAO.filter((x) => !AS_OITO.includes(x))) {
       expect(perfilDosPadroesFinanceiros(f), f).toBeNull();
       expect(familiaUsaPadroesFinanceiros(f), f).toBe(false);
     }
-    expect(perfilDosPadroesFinanceiros(PEDIDO_COMPRA)).toBeNull();
-    expect(perfilDosPadroesFinanceiros(COMPRA)).toBeNull();
+    expect(perfilDosPadroesFinanceiros("compras.orcamento")).toBeNull();
     expect(perfilDosPadroesFinanceiros("vendas.devolucao")).toBeNull();
     expect(perfilDosPadroesFinanceiros("")).toBeNull();
-    // A premissa: as duas de compras existem no registry (a ausência de perfil é escolha, não falta de família).
-    expect(tipoOperacao(PEDIDO_COMPRA)).toBeDefined();
-    expect(tipoOperacao(COMPRA)).toBeDefined();
+    // A premissa: o orçamento de compra existe no registry (a ausência de perfil é escolha, não falta de família).
+    expect(tipoOperacao("compras.orcamento")).toBeDefined();
   });
 
-  it("F9-P4 as regras de provisão: o pedido de venda (ao salvar, executa) e o pedido de compra finalizado (declarado, NÃO executa até a F9b)", () => {
+  it("F9-P4 as regras de provisão: o pedido de venda (ao salvar) e o pedido de compra finalizado (ao finalizar, F9b) — as duas executam", () => {
     expect(REGRAS_DE_PROVISAO).toEqual([
       { familia: PEDIDO_VENDA, direcao: "receivable", momento: "ao_salvar_o_pedido", executa: true },
-      { familia: PEDIDO_COMPRA, direcao: "payable", momento: "ao_finalizar_o_pedido", executa: false },
+      { familia: PEDIDO_COMPRA, direcao: "payable", momento: "ao_finalizar_o_pedido", executa: true },
     ]);
     expect(Object.isFrozen(REGRAS_DE_PROVISAO)).toBe(true);
-    expect(regraDeProvisaoDaFamilia(PEDIDO_COMPRA)?.executa).toBe(false);
+    expect(regraDeProvisaoDaFamilia(PEDIDO_COMPRA)?.executa).toBe(true);
     expect(provisaoExecutavelNaFamilia(PEDIDO_VENDA)).toBe(true);
-    expect(provisaoExecutavelNaFamilia(PEDIDO_COMPRA)).toBe(false);
+    expect(provisaoExecutavelNaFamilia(PEDIDO_COMPRA)).toBe(true);
     for (const f of [VENDA, ORCAMENTO_VENDA, COMPRA, A_PAGAR, "vendas.devolucao"]) {
       expect(regraDeProvisaoDaFamilia(f), f).toBeUndefined();
       expect(provisaoExecutavelNaFamilia(f), f).toBe(false);

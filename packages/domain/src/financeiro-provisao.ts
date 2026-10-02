@@ -10,8 +10,12 @@
  *
  * ESTE ARQUIVO É A REGRA PURA, sem banco: QUEM provisiona (a família e a direção), QUANDO (o momento), QUANTO falta
  * prever (o ALVO, recalculado a cada evento — a sincronização é idempotente) e se as parcelas mudaram. Quem grava é a
- * API (`apps/api/src/lib/financeiro-provisao.ts`), chamada ao salvar o pedido, confirmar ou cancelar a venda dele,
- * encerrar o saldo e cancelar o pedido.
+ * API (`apps/api/src/lib/financeiro-provisao.ts`), nas duas regras que ela executa:
+ *   · o PEDIDO DE VENDA provisiona A RECEBER — chamada ao salvar o pedido, confirmar ou cancelar a venda dele, encerrar
+ *     o saldo e cancelar o pedido;
+ *   · o PEDIDO DE COMPRA provisiona A PAGAR ao ser FINALIZADO (`documentos_compra.finalizado_em`, 0044) — chamada ao
+ *     finalizar, receber, confirmar ou cancelar a compra gerada dele, encerrar o saldo e cancelar o pedido (OPERACOES-01
+ *     F9b). O pedido de compra nunca finalizado não provisiona.
  *
  * A REGRA QUE TRAVA NASCE DESLIGADA (decisão 281, item (4) da 240): a provisão só vale numa TOP gravada no formato 5
  * com `financeiroPadrao.provisao` ligada, TOP por TOP. Nenhuma TOP de hoje provisiona.
@@ -34,9 +38,9 @@ export interface RegraDeProvisao {
   readonly direcao: DirecaoDoTitulo;
   readonly momento: MomentoDaProvisao;
   /**
-   * A API já executa esta regra? A provisão do pedido de COMPRA depende da situação "finalizado" do pedido (a 0044,
-   * F6a) e é ligada na F9b: até lá ela fica DECLARADA aqui com `executa: false`, e a TOP do pedido de compra não
-   * aceita a provisão ligada (`recusasDoFinanceiroPadraoDaFamilia`).
+   * A API executa esta regra? As duas regras de hoje executam: a do pedido de venda desde a F9a e a do pedido de
+   * COMPRA desde a F9b (depois da situação "finalizado" do pedido, 0044, F6a). Regra com `executa: false` fica só
+   * DECLARADA: a TOP da família não aceita a provisão ligada (`recusasDoFinanceiroPadraoDaFamilia`).
    */
   readonly executa: boolean;
 }
@@ -46,14 +50,15 @@ const regra = (familia: string | undefined, direcao: DirecaoDoTitulo, momento: M
   typeof familia === "string" ? [Object.freeze({ familia, direcao, momento, executa })] : [];
 
 /**
- * AS REGRAS DE PROVISÃO, por família:
+ * AS REGRAS DE PROVISÃO, por família (as duas executam):
  *   · o PEDIDO DE VENDA provisiona A RECEBER ao ser SALVO (criar, editar, converter o orçamento) — o pedido de venda
- *     não tem confirmação; a API já executa;
- *   · o PEDIDO DE COMPRA FINALIZADO provisiona A PAGAR — declarado, executado só na F9b (ver `executa`).
+ *     não tem confirmação (F9a);
+ *   · o PEDIDO DE COMPRA provisiona A PAGAR ao ser FINALIZADO (`finalizado_em`, que a 0044 nunca apaga: o convertido e
+ *     o reaberto depois de finalizado continuam provisionando; o nunca finalizado, não) — OPERACOES-01 F9b.
  */
 export const REGRAS_DE_PROVISAO: readonly RegraDeProvisao[] = Object.freeze([
   ...regra(familiaOperacionalDeDocumentoVenda("order"), "receivable", "ao_salvar_o_pedido", true),
-  ...regra(familiaOperacionalDeDocumentoCompra("pedido"), "payable", "ao_finalizar_o_pedido", false),
+  ...regra(familiaOperacionalDeDocumentoCompra("pedido"), "payable", "ao_finalizar_o_pedido", true),
 ]);
 
 /** A regra de provisão da família, ou `undefined` (a família não provisiona). */
@@ -64,7 +69,7 @@ export function regraDeProvisaoDaFamilia(familia: string): RegraDeProvisao | und
 /** A família provisiona HOJE (tem regra e a API a executa)? É a pergunta da seção, do editor e da API. */
 export const provisaoExecutavelNaFamilia = (familia: string): boolean => regraDeProvisaoDaFamilia(familia)?.executa === true;
 
-/** Uma parte faturada do documento (a venda gerada do pedido), pela situação que conta para a provisão. */
+/** Uma parte faturada do documento (a venda ou a compra gerada do pedido), pela situação que conta para a provisão. */
 export interface ParteDaProvisao {
   /** O total da parte, em string decimal. */
   readonly total: string;
@@ -78,19 +83,22 @@ export interface EntradaDoAlvoDaProvisao {
   readonly provisaoLigada: boolean;
   /** O documento está cancelado? */
   readonly cancelado: boolean;
-  /** O saldo a faturar foi encerrado (só o que já foi gerado continua esperado)? */
+  /**
+   * Não há mais nada a gerar do documento — o saldo foi encerrado ou o pedido foi convertido (só o que já foi gerado
+   * continua esperado)?
+   */
   readonly saldoEncerrado: boolean;
   /** O total do documento, em string decimal. */
   readonly totalDoDocumento: string;
-  /** As partes faturadas do documento (as vendas geradas dele), de qualquer situação. */
+  /** As partes faturadas do documento (as vendas ou as compras geradas dele), de qualquer situação. */
   readonly partes: readonly ParteDaProvisao[];
 }
 
 /**
  * O ALVO DA PROVISÃO: quanto o documento ainda promete de caixa, em string com 2 casas, NUNCA negativo.
  *   · TOP que não provisiona, ou documento cancelado → `"0.00"` (o previsto sai inteiro);
- *   · esperado = com o saldo ENCERRADO, a soma das partes não canceladas (o que foi gerado); senão, o total do
- *     documento;
+ *   · esperado = com o saldo ENCERRADO (ou o pedido convertido: nada mais a gerar), a soma das partes não canceladas
+ *     (o que foi gerado); senão, o total do documento;
  *   · realizado = a soma das partes CONFIRMADAS (elas já têm os títulos de verdade);
  *   · alvo = max(0, esperado − realizado). A parte ainda aberta continua prevista até ser confirmada.
  * Dinheiro em `decimal.js`, nunca ponto flutuante. Valor que não é decimal LANÇA (é defeito de quem chama).
@@ -143,3 +151,21 @@ export const MOTIVOS_DA_PROVISAO = Object.freeze({
   pedidoCancelado: (motivo: string | null): string => (motivo?.trim() ? `Pedido cancelado: ${motivo.trim()}` : "Pedido cancelado"),
   semProvisao: "A operação do pedido não provisiona mais",
 } as const);
+
+/**
+ * Os motivos gravados no previsto do PEDIDO DE COMPRA que sai cancelado (`cancel_reason`). Encerrar o saldo, cancelar o
+ * pedido e a TOP que deixou de provisionar usam os de `MOTIVOS_DA_PROVISAO` (o mesmo texto da venda).
+ */
+export const MOTIVOS_DA_PROVISAO_COMPRA = Object.freeze({
+  pedidoFinalizado: "Pedido finalizado",
+  recebido: (codigo: string): string => `Recebido na compra ${codigo}`,
+  compraConfirmada: (codigo: string): string => `Compra ${codigo} confirmada`,
+  compraCancelada: (codigo: string): string => `Compra ${codigo} cancelada`,
+} as const);
+
+/**
+ * 422 — o pedido de compra cuja TOP provisiona e que não tem natureza e centro, nem no documento nem nos padrões da TOP. A
+ * compra não tem "padrão legado" (a 1ª por código): sem o par, a provisão não tem rateio.
+ */
+export const MENSAGEM_PEDIDO_DE_COMPRA_SEM_CLASSIFICACAO =
+  "Esta operação provisiona contas a pagar ao finalizar o pedido: informe a natureza financeira e o centro de resultado, ou configure os padrões da TOP.";

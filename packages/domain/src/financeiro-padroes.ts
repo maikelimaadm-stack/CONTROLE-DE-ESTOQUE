@@ -19,7 +19,7 @@
  * escrito aqui (`familia-operacional-ssot-audit`). Família que o registry não declara não tem perfil (fail-closed).
  */
 import { resolverTipoOperacao } from "./tipo-operacao.js";
-import { familiaOperacionalDeDocumentoVenda } from "./tipo-operacao-configurado.js";
+import { familiaOperacionalDeDocumentoCompra, familiaOperacionalDeDocumentoVenda } from "./tipo-operacao-configurado.js";
 import { provisaoExecutavelNaFamilia } from "./financeiro-provisao.js";
 
 /** Os padrões que uma TOP pode ter, na ordem fixa (a das recusas e da tela). */
@@ -61,8 +61,9 @@ export interface PerfilDosPadroesFinanceiros {
   /** A família provisiona (a caixa "Provisionar" aparece e pode ser ligada)? */
   readonly provisao: boolean;
   /**
-   * A regra "sem natureza e centro" vale nela? Só onde o documento pode chegar SEM natureza e centro (a venda, o
-   * pedido, a solicitação). O lançamento avulso e o movimento sempre os informam (o rateio é obrigatório).
+   * A regra "sem natureza e centro" vale nela? Só onde o documento pode chegar SEM natureza e centro e hoje recai na
+   * 1ª por código (a venda, o pedido de venda, a solicitação). O lançamento avulso e o movimento sempre os informam (o
+   * rateio é obrigatório); a compra e o pedido de compra não têm padrão legado (sem o par, a recusa de hoje).
    */
   readonly semClassificacao: boolean;
   /**
@@ -106,9 +107,13 @@ interface LinhaDoPerfil {
  *   conta a pagar           | não                   | sim               | natureza, centro, tipo de título, conta   | despesa
  *   movimento bancário      | não                   | sim               | natureza, centro, conta                   | qualquer
  *   solicitação de compra   | sim                   | não               | natureza, centro, tipo de título, conta   | despesa
+ *   pedido de compra        | não                   | sim               | os cinco                                  | despesa
+ *   compra                  | não                   | sim               | os cinco                                  | despesa
  *
- * ("receita" e "despesa" aceitam também a natureza "Receita e despesa".) As outras famílias não usam a seção — entre
- * elas o pedido de compra e a compra, que a F9b liga junto com a provisão do pedido de compra finalizado.
+ * ("receita" e "despesa" aceitam também a natureza "Receita e despesa".) O pedido de compra e a compra (F9b) não têm
+ * "sem natureza e centro": a compra não tem padrão legado — sem o par no documento nem na TOP, ela é recusada como hoje,
+ * e a API a classifica sempre com "exigir". As outras famílias não usam a seção (o orçamento de venda e o de compra, o
+ * estoque, os módulos…).
  */
 const MATRIZ: readonly LinhaDoPerfil[] = [
   { familia: familiaOperacionalDeDocumentoVenda("order"), semClassificacao: true, trocaPeloDocumento: true, campos: TODOS, naturezas: RECEITA },
@@ -117,6 +122,10 @@ const MATRIZ: readonly LinhaDoPerfil[] = [
   { familia: resolverTipoOperacao("erp.financial_titles", "payable")?.codigo, semClassificacao: false, trocaPeloDocumento: true, campos: DO_TITULO, naturezas: DESPESA },
   { familia: resolverTipoOperacao("erp.bank_movements")?.codigo, semClassificacao: false, trocaPeloDocumento: true, campos: DO_MOVIMENTO, naturezas: QUALQUER },
   { familia: resolverTipoOperacao("erp.purchase_requests")?.codigo, semClassificacao: true, trocaPeloDocumento: false, campos: DO_TITULO, naturezas: DESPESA },
+  // OPERACOES-01 F9b: o pedido de compra (provisão a pagar ao finalizar) e a compra. A compra não tem "padrão legado":
+  // sem natureza e centro no documento nem na TOP, ela é recusada como hoje — "sem natureza e centro" não vale aqui.
+  { familia: familiaOperacionalDeDocumentoCompra("pedido"), semClassificacao: false, trocaPeloDocumento: true, campos: TODOS, naturezas: DESPESA },
+  { familia: familiaOperacionalDeDocumentoCompra("compra"), semClassificacao: false, trocaPeloDocumento: true, campos: TODOS, naturezas: DESPESA },
 ];
 
 const PERFIS: ReadonlyMap<string, PerfilDosPadroesFinanceiros> = new Map(
