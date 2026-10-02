@@ -1,6 +1,6 @@
 # Paridade de Campos
 
-_Gerado por `node scripts/parity.mjs` em 2026-10-01 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação) · UNIFICADO (tela absorvida como aba/filtro/ação de uma área unificada — ver docs/UX-ARCHITECTURE.md; a rota antiga redireciona)._
+_Gerado por `node scripts/parity.mjs` em 2026-10-02 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação) · UNIFICADO (tela absorvida como aba/filtro/ação de uma área unificada — ver docs/UX-ARCHITECTURE.md; a rota antiga redireciona)._
 
 Comparação quantitativa por tela: campos de formulário / filtros / colunas observados na referência × campos declarados no nosso código (registro declarativo de cadastros em packages/domain/src/resources ou `<Field>` nas páginas). A comparação nome-a-nome está em docs/reference/screens/*.md (referência) e nos próprios registries (nosso). Diferenças intencionais: campos de marketing/licença omitidos; campos calculados exibidos no detalhe e não no formulário.
 
@@ -317,7 +317,7 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-333 | Conta Bancaria | `/cadastros/bank_accounts/new` | 16 | 0 | 0 | 15 | TESTADO |
 | SCR-335 | Contas Bancárias | `/cadastros/bank_accounts/[id]` | 16 | 0 | 0 | 15 | TESTADO |
 | SCR-336 | Saldo Inicial- Contas | `/financeiro/saldo-inicial/new` | 12 | 0 | 4 | — | IMPLEMENTADO |
-| SCR-338 | Categoria Financeira | `/cadastros/financial_categories/[id]` | 8 | 0 | 0 | 8 | TESTADO |
+| SCR-338 | Categoria Financeira | `/cadastros/financial_categories/[id]` | 8 | 0 | 0 | 9 | TESTADO |
 | SCR-340 | Inscrições Estaduais | `/fiscal/[id]` | 26 | 0 | 5 | — | NÃO INICIADO |
 | SCR-341 | Sincronização DFe | `/fiscal/new` | 2 | 0 | 0 | — | NÃO INICIADO |
 | SCR-342 | Sincronização NFS-e | `/fiscal/new` | 2 | 0 | 0 | — | NÃO INICIADO |
