@@ -225,7 +225,7 @@ nomes são fixados pelo coordenador. A sugestão do plano da F4, não normativa:
 
 ## 3. Centrais e modos de produto
 
-A preencher pelas F3 (F3b), F5 e F10 (decisões 280, 282 e 287).
+A preencher pelas F5 e F10 (decisões 282 e 287).
 
 ### F2 — as Centrais de Vendas e de Compras usam as regras gerais da TOP (decisão 279) · IMPLEMENTADO
 
@@ -369,8 +369,133 @@ na ordem dele, com `payment_with_product` = "Pagamento com produto"; a fonte é 
 CSV). A lista de baixas mostra o rótulo, nunca o valor cru.
 
 **Fora (F3a):** o local antes do produto, o local padrão no cabeçalho e a pesquisa de produto com o saldo do local
-(F3b); "carregar mais" e `total` no seletor; CPF/CNPJ ou razão na opção; índice de prefixo ou trigram (precisa de
-migration); a pesquisa do seletor de Funcionários.
+(feitos na F3b, abaixo); "carregar mais" e `total` no seletor; CPF/CNPJ ou razão na opção; índice de prefixo ou
+trigram (precisa de migration); a pesquisa do seletor de Funcionários.
+
+### F3b — o local antes do produto e a pesquisa de produto com o saldo do local (decisão 280) · IMPLEMENTADO
+
+> Parte F3b da decisão 280. Sem migration, sem permissão nova, sem variável. Uma rota nova de LEITURA declara a
+> capacidade; a pesquisa de produto ganha parâmetros e chaves aditivos. Nenhum corpo de POST/PUT/PATCH muda. O contrato
+> da rota de pesquisa mora em `docs/PERSONALIZACAO.md` ("Pesquisa de produtos"); o do motor, em
+> `docs/PORTAIS-OPERACIONAIS-CONTRACT.md` (motor da Central).
+
+**A ordem: o Local de estoque antes do produto.**
+- Catálogo de itens de VENDA (`packages/domain/src/layout-documento.ts`, `CATALOGO_VENDAS`): `warehouse_id, codigo,
+  product_id, estoque, quantity, unit_price, discount, discount_percent, total`. Só a posição do local mudou (rótulo,
+  `sistema` e `referencia` iguais). Ele gera o layout do sistema (`LAYOUT_DO_SISTEMA`, o `layout-efetivo` da TOP de venda
+  sem layout ligado) e o "Restaurar padrão" do configurador.
+- Catálogo de COMPRAS: sem mudança (já `armazem_id, produto_id, …`), sem coluna Estoque.
+- Motor sem layout (`features/central/itens.tsx`): grade `armazem, codigo, produto, estoque, …` (`:68`) e formulário
+  do item `armazem, produto, estoque, …` (`:76`).
+- Coluna FORÇADA sobre o layout: `armazemForcado` (`itens.tsx:195-198`) e a reserva de estoque da venda
+  (`comColunasDaReserva`, `vendas/[kind]/new/page.tsx:133-139`) a põem logo ANTES do primeiro entre Código e Produto
+  presentes (sem nenhum dos dois, no início).
+- Consulta: `colunas.leitura` da venda (`central-vendas-adaptador.ts:64`: Local, Código, Produto, Estoque, …) e da
+  compra (`compras/central/adaptador.ts:73`: Local, Código, Produto, …); o formulário de leitura do item com o Local
+  antes do Produto (`itens-salvos.tsx:85-88`).
+- Central de Compras, também: a prévia do "Confirmar compra" (Local de estoque → Produto, `dialogos-compra.tsx:49-51`)
+  e a relação "Entradas no estoque do documento …" da consulta (Data → Local de estoque → Produto,
+  `consulta-corpo.tsx:121-125`).
+- Layout SALVO manda na ordem (decisão 276): nenhum layout gravado é reordenado (decisão 240).
+
+**O "Local de estoque" do cabeçalho** (`features/central/local-padrao.tsx`: `useLocalDoCabecalho` e
+`CampoDoLocalPadrao`):
+- Onde: na CRIAÇÃO. Na venda, logo depois do Tipo de Operação (`new/page.tsx:940`). Na compra, logo depois da Empresa,
+  na zona onde ela estiver: Dados principais, Dados adicionais ou a aba do painel (`criacao-dados.tsx:164-169`). Quando
+  a Empresa mora em Dados adicionais, o campo conta em "Dados adicionais · N campos". No receber pedido não aparece
+  (`estado.ts:530`).
+- Quando: só com a coluna do local na grade — sem layout, com o layout que a desenha, ou forçada pela regra/reserva
+  (`localNaGrade`). Com o local escondido pelo layout, a linha nasce sem local, como antes.
+- O que oferece: os locais da empresa do documento (`RefSelect` de `warehouses` com `empresa_id`); desabilitado sem
+  empresa; sem `data-campo` (não é campo do layout), sem "*", fora das pendências.
+- Valor: começa no padrão de cadastro do layout para a empresa do documento (o "armazém padrão" da VENDAS-A3-1b). A
+  escolha vale para a empresa em que foi feita: trocar a empresa volta ao padrão da empresa nova
+  (`local-padrao.tsx:23-29`).
+- Efeito: só a linha NOVA nasce com ele (`armazemPadrao` do motor); a linha troca o seu na célula; trocar o cabeçalho
+  não mexe nas linhas que já existem.
+- Estado da TELA:
+  - nunca vai no corpo do POST/PUT (W4, CC-7, F3B-V1, F3B-C1, K-1a, K-1b);
+  - não conta como alteração (F3B-V1, F3B-C1);
+  - fica fora da cópia do Duplicar POR CONSTRUÇÃO (fora de `h`), sem teste próprio;
+  - o Descartar o devolve ao padrão: o vazio sem padrão; o padrão do layout depois de uma escolha (F3B-V1, F3B-C1).
+- Testids: `central-vendas-local-padrao`, `central-compras-local-padrao`. Rótulo "Local de estoque"; dica "Local de
+  estoque das linhas novas. Cada item pode trocar o seu."
+
+**`GET /api/produtos/pesquisa` — o que a F3b acrescenta** (a rota inteira: `docs/PERSONALIZACAO.md`):
+
+| parâmetro | forma | ausente | recusa (422 `VALIDATION_ERROR`) |
+|---|---|---|---|
+| `pagina` | só dígitos canônicos, 1–1000 (`LIMITE_DE_PAGINAS`) | 1 | 0, 1001, "01", "1.5", "1e1", " 2", vazia, repetida |
+| `com_saldo` | `true` \| `false` (grafia exata) | `false` | outra grafia, repetido; `true` sem `armazem_id` (`details: [{path:"com_saldo", message:"com_saldo exige armazem_id"}]`, de forma, antes de qualquer permissão) |
+| `controla_estoque` | `true` \| `false` (grafia exata) | `false` | outra grafia, repetido |
+
+- Resposta: `{ itens, estoqueDoArmazem, pagina, temMais, filtradoPorSaldo }`, NESTA ordem e sempre com as cinco
+  chaves. `pagina` = a respondida. `temMais` = há produto depois desta página (a consulta pede `limite + 1`); sem total.
+  `filtradoPorSaldo` = o filtro foi APLICADO. `estoqueDoArmazem` = `true` também com o filtro aplicado e a página vazia;
+  sem `com_saldo`, como antes.
+- `com_saldo=true` (as saídas): só o produto que controla estoque com saldo > 0 no local (a SOMA dos lotes) e o que não
+  controla. O filtro está no WHERE, antes do LIMIT; `limit`/`offset` vão por parâmetro (`produtos-pesquisa.ts:112-123`).
+- `controla_estoque=true`: só produto que controla estoque (a Central de Estoque, F5b).
+- **Sem oráculo.** O filtro só vale para quem vê o saldo DAQUELE local: `stocks.view` ∧ local da organização, não
+  excluído, de empresa viva e no escopo de empresa do módulo de ESTOQUE. É uma regra só, `armazemVisivelSql`
+  (`produtos-pesquisa.ts:79-84`), para o filtro (Q0) e para o saldo. Para qualquer outro, `com_saldo` é IGNORADO e a
+  resposta é byte a byte a do pedido sem ele, igual entre todos os "nãos" (PS-4): sem a permissão, local fora do escopo
+  de estoque (mesmo visível noutro módulo), de outra organização, excluído ou inexistente. Não é 403 nem 422.
+- Custo: sem `com_saldo`, as consultas de antes (produtos e, com estoque, saldos). Com `com_saldo=true`,
+  `stocks.view` e `armazem_id`, mais UMA do local (Q0), visível ou não. São no máximo três consultas fixas,
+  independentes do número de produtos e as mesmas para o local visível e o invisível (PS-7). Nunca N+1.
+
+**`GET /api/produtos/pesquisa/capacidades`** (rota NOVA, mesmo arquivo e mesmo plugin; nada muda em `server.ts`):
+- `{ "capacidades": { "pesquisaDeProdutos": 1 } }` para qualquer membro autenticado, sem consulta a dado; sem sessão,
+  401.
+- Versão 1 significa: a rota aceita `pagina`, `com_saldo` e `controla_estoque` e responde `pagina`, `temMais` e
+  `filtradoPorSaldo`. Versão nova = valor novo.
+- Na API anterior a rota não existe (404 de rota). A chave NÃO está em `/auth/context`.
+
+**A pesquisa de produto na Central** (motor; `pesquisa.tsx`, `pesquisa-de-produtos.ts`):
+- Fonte:
+  - a capacidade é lida uma vez por carregamento da página (`useFonteDaPesquisaDeProdutos`), com forma e versão
+    EXATAS. Qualquer outra coisa — 404 (não repetido), erro, rede ou forma diferente — é a pesquisa de hoje;
+  - enquanto ela não chega, `data-fonte="carregando"` e nenhum pedido de opções.
+- Fonte nova (`data-fonte="pesquisa"`):
+  - pedido: `busca` aparada e cortada em 100; `armazem_id` = o local da LINHA, nunca o do cabeçalho; `limite=50`;
+    `pagina`; `com_saldo=true` só na saída E com o local; `controla_estoque=true` só com `soControlaEstoque`;
+  - chave de cache própria, nunca a `["options", …]` do `RefSelect`;
+  - "Mostrar mais" (testid `<prefixo>-pesquisa-mais`; "Carregando…" enquanto busca) enquanto `temMais`, até a página
+    1000; as páginas se acumulam na ordem do servidor.
+- Fonte de hoje (`data-fonte="opcoes"`): `/api/resources/products/options`, mesma URL e mesma chave de cache de antes.
+  A pesquisa de LOCAL usa sempre esta.
+- Colunas: "Código | Descrição" e, quando uma página disse `estoqueDoArmazem` ou `filtradoPorSaldo`, "Estoque" (o
+  saldo com 4 casas, "—" se nulo). Uma vez à vista, a coluna fica enquanto o painel está aberto. `data-coluna`
+  (`codigo`, `descricao`, `estoque`) nas células e no cabeçalho, nas duas fontes.
+- Sentido (`pesquisaDeProduto` do motor):
+  - `PESQUISA_DE_PRODUTO_DA_SAIDA` (Central de Vendas: orçamento, pedido e venda) — "Só com saldo neste local" (testid
+    `<prefixo>-pesquisa-so-com-saldo`) aparece com o local na linha e o saldo à vista, vem marcado e volta marcado a cada
+    abertura;
+  - `PESQUISA_DE_PRODUTO_DA_ENTRADA` (Central de Compras, lançar) — tudo, com o saldo;
+  - ausente = entrada (o receber pedido não pesquisa produto).
+- Vazio com o filtro: "Nenhum produto com saldo neste local."; sem o filtro, "Nenhuma opção encontrada"; erro, "Não foi
+  possível carregar a lista.".
+- Teclado: Esc fecha de qualquer ponto do painel; ↑ ↓ Enter só com o foco na busca ou na lista (↑ ↓ por todas as
+  páginas carregadas). O placeholder continua "Pesquisar pela descrição".
+- A escolha leva `{ id, label, code }`, sem o saldo.
+
+**Compatibilidade** (base `622f194`, provas K-1a/b e K-2a/b):
+- Web desta fase × API da base: capacidade 404 ⇔ `pagina` 422. A pesquisa de hoje, zero pedido à rota nova, a grade na
+  ordem do layout da base, o local do cabeçalho na linha nova e o POST de hoje (201).
+- Web da base × API desta fase: o web da base desenha o layout do sistema novo (Local primeiro), pesquisa em
+  `/options`, grava (201). A rota, com os parâmetros de hoje, mantém as chaves e o significado.
+
+**Fora (F3b):**
+- Central de Estoque: F5b; herda a pesquisa com `soControlaEstoque: true`, e o local do cabeçalho de lá É o
+  `armazem_id` gravado.
+- Telas que continuam Produto → Local:
+  - o lançamento de manejo da pecuária: tela de módulo, da F10;
+  - as listagens de correções e de saldos iniciais: telas antigas, cujo destino a F11 decide;
+  - o detalhe do documento de estoque e a relação de movimentos da Central de Estoque (F5b).
+- Na pesquisa: o saldo disponível (com reserva), o total, a ordem por saldo e o debounce.
+- No item e no documento: o filtro de empresa na célula do local do item; a coluna Estoque na compra; gravar o local do
+  cabeçalho; reordenar layouts salvos.
 
 ### F5a — a movimentação interna no documento de estoque (decisão 282) · IMPLEMENTADO no banco e na API (a tela é da F5b)
 

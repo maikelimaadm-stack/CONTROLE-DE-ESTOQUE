@@ -1700,6 +1700,93 @@ Reverter o web = sentido 2.
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 
+### F3b — o local antes do produto e a pesquisa de produto com o saldo do local (OPERACOES-01, sem migration)
+
+Decisão 280 (parte F3b). **Sem migration, sem variável, sem permissão nova, sem flag.** O que entra:
+- uma rota nova de LEITURA, `GET /api/produtos/pesquisa/capacidades` → `{"capacidades":{"pesquisaDeProdutos":1}}`;
+- três parâmetros ADITIVOS em `GET /api/produtos/pesquisa` (`pagina`, `com_saldo`, `controla_estoque`) e três chaves
+  novas no fim da resposta (`pagina`, `temMais`, `filtradoPorSaldo`);
+- no catálogo de itens de venda (domínio), o Local de estoque antes do produto. É esse catálogo que gera o layout do
+  sistema, devolvido em `layout-efetivo` para a TOP de venda sem layout ligado;
+- nas Centrais de Vendas e de Compras, o "Local de estoque" do cabeçalho (estado da tela, fora do corpo) e a pesquisa
+  de produto na rota nova, com o saldo do local da linha (só com saldo nas saídas).
+
+Nenhum corpo de POST/PUT/PATCH muda.
+
+**Migration:** nenhuma. Nada a aplicar no banco.
+
+**Ordem do deploy:** API e web em QUALQUER ordem (provado nos dois sentidos, abaixo). A F3b entrou na branch depois da
+F8 (0042), da F5a (0043) e da F6a (0044) e não acrescenta migration: na PR #90, a ordem do deploy é a das fases com
+migration, nas seções delas.
+
+**Impacto em dados reais:** nada é gravado, reescrito nem apagado; sem backfill; nenhum layout salvo é reordenado. O
+que muda na TELA de produção (02/10: 3 TOPs — pedido de compra, orçamento de venda e pedido de venda —; 2 movimentos de
+estoque):
+- depois do deploy da API, a TOP de venda sem layout ligado abre a grade com Local de estoque → Código → Produto →
+  Estoque. A TOP 1 Orçamento, com o layout 0001 ligado (§ VENDAS-A3-1d_R1), continua na ordem do layout salvo. As duas
+  TOPs de venda podem ficar com ordens diferentes até alguém reordenar o 0001 (o "Restaurar padrão" do configurador
+  aplica a ordem nova; salvar grava no layout);
+- depois do deploy do web, a criação da venda e da compra ganha o campo "Local de estoque" (na venda, logo depois do
+  Tipo de Operação; na compra, logo depois da Empresa, na zona onde ela estiver), só quando a coluna do local está na
+  grade. Ele vem vazio quando o layout não tem padrão de cadastro do local;
+- depois do deploy dos DOIS (a pesquisa nova só entra com a capacidade da API nova), na venda, com local na linha e
+  `stocks.view`, a pesquisa de produto vem com "Só com saldo neste local" marcado. Com 2 movimentos de estoque, aparece quase só produto que não controla estoque; desmarcar mostra
+  tudo. É efeito novo LIGADO: exceção ao item (4) da decisão 240, pelo pedido de 02/10 (decisões 280 e 281). Sem
+  `stocks.view`, a pesquisa mostra tudo, sem saldo, como hoje.
+
+**Version skew** (base `622f194`; provas em arquivos próprios, fora da suíte comum):
+- **Sentido 1 — web novo × API da base** (janela "web antes da API" e reversão só da API):
+  - a tela pergunta `GET /api/produtos/pesquisa/capacidades`, recebe 404 de rota e usa a pesquisa de HOJE
+    (`/api/resources/products/options`, Código | Descrição, `data-fonte="opcoes"`, sem coluna Estoque e sem o
+    controle);
+  - zero pedido a `/api/produtos/pesquisa` e nenhum parâmetro novo (a base os recusaria com 422);
+  - a grade segue o layout que a base manda (Produto antes do Local);
+  - o "Local de estoque" do cabeçalho existe (a base serve os locais da empresa) e preenche a linha nova; o POST leva as
+    chaves de hoje e a base grava (201).
+
+  Prova: `operacoes-01-f3b-skew-api-producao.spec.ts`, K-1a (venda) e K-1b (compra). O mundo é perguntado à base na
+  hora: capacidade 404 ⇔ `pagina` 422.
+- **Sentido 2 — web da base × API nova** (janela "API antes do web" e reversão só do web):
+  - o web da base nunca chama a rota nova nem manda parâmetro novo, e pesquisa em `/options`;
+  - o `layout-efetivo` da TOP de venda sem layout ligado chega com o Local primeiro, e o web da base desenha nessa ordem
+    (o layout manda desde a A3-1);
+  - o POST de hoje é aceito (201), e nenhuma resposta 404/422/5xx chega ao web da base (K-2a de
+    `operacoes-01-f3b-skew-web-anterior.spec.ts`);
+  - a rota, com os parâmetros de hoje, responde `itens` e `estoqueDoArmazem` primeiro, as seis chaves do item e o mesmo
+    significado (sem filtro, o produto sem saldo aparece), com as três chaves novas no fim (K-2b).
+
+**Reversão:** redeploy da API e/ou do web anteriores; nada a desfazer em banco ou configuração.
+- Reverter a API = sentido 1. A ordem volta à de antes (o layout do sistema é da API), e a pesquisa volta à de hoje.
+- DECLARADO: a aba aberta com o web novo leu a capacidade UMA vez, da API nova, e continua pedindo a pesquisa nova. A
+  API anterior recusa (422, `pagina` desconhecido), e o painel de pesquisa de produto diz "Não foi possível carregar a
+  lista." até a página ser RECARREGADA. Nada é gravado.
+- Reverter o web = sentido 2.
+
+**Roteiro do Maike** (produção; produção é operacional — decisões 240 e 247. Só leitura: nada é gravado; sempre
+DESCARTAR, nunca Salvar):
+1. Vendas › + Novo › a TOP de pedido de venda. Com as ferramentas do navegador abertas na aba Rede, o pedido
+   `produtos/pesquisa/capacidades` responde 200 com `{"capacidades":{"pesquisaDeProdutos":1}}`.
+2. Na mesma criação:
+   - a grade começa por "Local de estoque" e depois "Código", "Produto", "Estoque" (se essa TOP tiver layout ligado,
+     vale a ordem dele);
+   - o campo "Local de estoque" vem logo depois do Tipo de Operação; o mouse sobre ele mostra a dica;
+   - escolher um local → "Adicionar produto" → a linha nasce com ele;
+   - clicar no Produto da linha: o painel mostra "Código | Descrição | Estoque" e "Só com saldo neste local" marcado;
+   - desmarcar → aparecem também os produtos sem saldo, com "0,0000";
+   - Esc fecha; Descartar.
+3. Vendas › + Novo › a TOP 1 Orçamento (layout 0001 ligado): a grade fica na ordem do layout 0001, sem reordenar. O
+   campo do cabeçalho só aparece se o 0001 mostra a coluna do local. Descartar.
+4. Compras › + Novo › a TOP de pedido de compra:
+   - "Local de estoque" vem logo depois da Empresa; escolher um local → "Adicionar produto" → a linha nasce com ele;
+   - a pesquisa de produto mostra tudo, com a coluna Estoque e sem "Só com saldo neste local";
+   - Descartar.
+5. Vendas › o pedido de venda aberto (consulta): a grade dos itens começa por "Local de estoque", e no formulário do
+   item "Local de estoque" vem antes de "Produto".
+6. (Se houver usuário sem a permissão de ver estoque) a pesquisa de produto da venda mostra todos os produtos, sem
+   coluna Estoque e sem o controle.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
 ### F4 — a TOP pelo tipo de movimento e o formato 5 (OPERACOES-01, sem migration)
 
 Decisão 281. **Sem migration, sem variável, sem permissão nova, sem rota nova.** Uma chave nova, aditiva, nas

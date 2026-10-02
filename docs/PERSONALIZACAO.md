@@ -66,26 +66,41 @@ No servidor (`advancedClause` em `apps/api/src/routes/resources.ts`) o nome da c
 
 `module` = chave do recurso (`products`) ou id derivado do endpoint (`stock.entries`); `screen` = `list` | `form` | outros (documento livre, validado só por tamanho).
 
-### Pesquisa de produtos — `GET /api/produtos/pesquisa` (ANEXOS-PESQUISA-01, decisão 271)
+### Pesquisa de produtos — `GET /api/produtos/pesquisa` (ANEXOS-PESQUISA-01, decisão 271 · OPERACOES-01 F3b, decisão 280)
 
-Consulta de LEITURA para o seletor de produto dos lançamentos. Implementação: `apps/api/src/routes/produtos-pesquisa.ts`.
+Consulta de LEITURA para o seletor de produto dos lançamentos; desde a OPERACOES-01 F3b, a pesquisa de produto das
+Centrais de Vendas e de Compras. Implementação: `apps/api/src/routes/produtos-pesquisa.ts`.
 
-- **Query estrita**: `busca` (texto aparado, 0–100), `armazem_id` (uuid, opcional), `limite` (1–50, padrão 20).
-  Chave desconhecida, `limite` fora da faixa ou `armazem_id` malformado → 422.
+- **Query estrita**: `busca` (texto aparado, 0–100), `armazem_id` (uuid, opcional), `limite` (1–50, padrão 20),
+  `pagina` (só dígitos canônicos, 1–1000, padrão 1), `com_saldo` e `controla_estoque` (`true|false`, grafia exata).
+  Chave desconhecida, valor fora da forma ou da faixa, parâmetro repetido, `armazem_id` malformado ou `com_saldo=true`
+  sem `armazem_id` → 422.
 - **Permissão e campos**: os MESMOS de `GET /api/resources/products/options` (módulo de `products.view`); campo que
   o usuário não vê sai `null`.
-- **Resposta**: `{ itens: [{ id, codigo, descricao, referencia, unidade, estoque }], estoqueDoArmazem: boolean }`.
-  `referencia` = `reference` ou `null`; `unidade` = o mesmo rótulo de `measurement_id_label` de
-  `GET /api/resources/products/:id`; `estoque` = string com 4 casas ou `null`.
+- **Resposta**: `{ itens: [{ id, codigo, descricao, referencia, unidade, estoque }], estoqueDoArmazem, pagina, temMais,
+  filtradoPorSaldo }` — nesta ordem; as três últimas sempre presentes, ao fim. `referencia` = `reference` ou `null`;
+  `unidade` = o mesmo rótulo de `measurement_id_label` de `GET /api/resources/products/:id`; `estoque` = string com 4
+  casas ou `null`. `pagina` = a respondida; `temMais` = há produto depois desta página (sem total).
 - **Busca**: cada palavra bate em código (começa com) OU descrição (contém) OU referência (contém); palavras com E;
   sem diferenciar maiúsculas; `%` e `_` são texto. Busca vazia → os primeiros por descrição. Só produto ativo, não
-  excluído, da organização. Ordem: código igual ao texto primeiro, depois descrição.
-- **Estoque**: só com `stocks.view` E `armazem_id` E armazém da organização no escopo de empresa do módulo de
-  estoque. É o saldo FÍSICO (soma de todos os lotes do produto no armazém), **sem descontar reserva**. Qualquer
-  "não" (sem `stocks.view`, sem `armazem_id`, armazém de empresa fora do escopo, de outra organização ou
-  inexistente) responde IDÊNTICO: `estoque` nulo em todos e `estoqueDoArmazem=false`.
-- **Custo**: UMA consulta de produtos e, com estoque, UMA de saldos (`any($ids)`) — nunca N+1.
-- **API anterior**: a rota não existe → 404 de rota; a tela que vier a usá-la cai no `/api/resources/products/options`.
+  excluído, da organização. Ordem: código igual ao texto primeiro, depois descrição, depois id (página estável).
+- **Estoque**: só com `stocks.view` E `armazem_id` E local de estoque da organização, não excluído, de empresa viva e
+  no escopo de empresa do módulo de estoque. É o saldo FÍSICO (soma de todos os lotes do produto no local), **sem
+  descontar reserva**. Qualquer "não" (sem `stocks.view`, sem `armazem_id`, local de empresa fora do escopo, de outra
+  organização, excluído ou inexistente) responde IDÊNTICO: `estoque` nulo em todos e `estoqueDoArmazem=false`.
+- **Só com saldo** (`com_saldo=true`): só o produto que controla estoque com saldo > 0 no local (soma dos lotes) e o
+  que não controla; filtro no SQL antes do LIMIT (a página não sai curta). Vale SÓ para quem vê o saldo daquele local
+  (a mesma regra do Estoque, acima). Para qualquer outro chamador o parâmetro é IGNORADO e a resposta é idêntica à do
+  pedido sem ele (sem oráculo do saldo). Com o filtro aplicado, `filtradoPorSaldo=true` e `estoqueDoArmazem=true`,
+  mesmo com a página vazia.
+- **Só quem controla estoque** (`controla_estoque=true`): só produto com `control_stock`.
+- **Custo**: UMA consulta de produtos e, com estoque, UMA de saldos (`unnest($ids)`). Com `com_saldo=true`,
+  `stocks.view` e `armazem_id`, mais UMA do local (Q0), visível ou não. No máximo três, fixas e iguais para o local
+  visível e o invisível; nunca N+1.
+- **Capacidade**: `GET /api/produtos/pesquisa/capacidades` → `{ capacidades: { pesquisaDeProdutos: 1 } }` (qualquer
+  membro autenticado). A tela só manda `pagina`, `com_saldo` e `controla_estoque` com essa declaração exata.
+- **API anterior**: sem a rota de capacidade (404 de rota), a tela usa `/api/resources/products/options`, a pesquisa de
+  antes, e não chama esta rota.
 
 ## Layout de formulário (`screen = form`)
 Documento **painéis → cards → linhas → campos** (`FormLayout` em `@agro/shared`): `panels[]`, `cards[{panelId, colSpan 6|12, rows[{fieldIds[]}]}]`, `hiddenFieldIds`, `lockedFieldIds`, `requiredFieldIds`, `fieldSizes`, `fieldLabels`, `fieldDefaultValues`. Regras: máx. 7 campos por linha em card de largura 12 e 4 em largura 6; campo obrigatório na definição nunca pode ser ocultado; campos sem posição são anexados ao card "Outros campos". Implementado em todos os cadastros declarativos (`ResourceForm`): a página **Configuração de layout** (rota `/cadastros/:recurso/configuracao-layout`; código em `apps/web/src/features/resources/form-layout.tsx` e `apps/web/src/features/resources/configuracao-layout/`) edita esse mesmo documento, sem chave nova — ver a seção [Configuração de layout](#configuração-de-layout). Campos obrigatórios na definição ("campos do sistema") não saem do formulário, não podem ser ocultados nem deixar de ser obrigatórios; campos só leitura na definição ficam com "Somente leitura" travado. O padrão da organização (usar / remover) e o Restaurar padrão ficam na barra da página.
