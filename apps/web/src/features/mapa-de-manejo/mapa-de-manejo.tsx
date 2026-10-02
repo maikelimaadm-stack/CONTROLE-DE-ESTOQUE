@@ -386,6 +386,12 @@ export function MapaDeManejo() {
         m.on("click", (ev) => aoClicar(px(ev), ev.originalEvent.altKey, ev.originalEvent.shiftKey, ev.originalEvent.detail));
         m.on("dblclick", (ev) => { if (!ativo()) return; ev.preventDefault(); aoDuploClique(px(ev)); });
         m.on("contextmenu", (ev) => { if (!ativo()) return; ev.originalEvent.preventDefault(); desfazer(); });
+        // Ao pan/zoom: some o cursor de inserção — senão o px de tela fica “puxando” o elástico no mapa.
+        m.on("movestart", () => {
+          if (!desenhandoRef.current || ed.current.arrasto) return;
+          Object.assign(ed.current, { cur: null, raw: null, ima: null, hover: null, travado: false });
+          flushSync(() => redesenhar());
+        });
         // A camada do desenho e os nomes são DOM por cima do canvas. Redesenhá-los num quadro DEPOIS do mapa os
         // fazia "tremer" ao arrastar; agora acompanham o MESMO quadro: no fim de cada render do mapa (dentro do
         // requestAnimationFrame dele) a tela é atualizada de forma síncrona — só quando a vista mudou de fato.
@@ -395,16 +401,20 @@ export function MapaDeManejo() {
           const agora = `${c.lng},${c.lat},${m.getZoom()},${m.getBearing()},${tela.width}x${tela.height}`;
           if (agora === vista) return;
           vista = agora;
-          // Reprojeta o ímã a partir do lngLat (e a aresta, se houver): no pan ele acompanha o cadastro, sem “arrastar” o ponto na tela.
           const edAtual = ed.current;
-          if (edAtual.ima?.lngLat) {
+          // Durante mudança de vista, não manter cursor livre em px de tela (puxava o inserir-pontos).
+          if (!edAtual.arrasto && !edAtual.ima?.lngLat) {
+            if (edAtual.cur || edAtual.raw || edAtual.ima || edAtual.hover) {
+              Object.assign(edAtual, { cur: null, raw: null, ima: null, hover: null, travado: false });
+            }
+          } else if (edAtual.ima?.lngLat) {
+            // Ímã grudado: acompanha o vértice/aresta geográfico.
             const pxIma = { x: m.project(edAtual.ima.lngLat).x, y: m.project(edAtual.ima.lngLat).y };
             let aresta = edAtual.ima.aresta;
             if (edAtual.ima.tipo === "aresta" && aresta) {
-              // Aresta guardada em px fica obsoleta no pan — reancora pelos extremos geográficos do alvo mais próximo.
               const alvos = areasRef.current.flatMap((a) => {
                 const coords = anelAberto(a.geometria);
-                return coords.length >= 2 ? [{ coords, pts: coords.map((ll) => ({ x: m.project(ll).x, y: m.project(ll).y })) }] : [];
+                return coords.length >= 2 ? [{ pts: coords.map((ll) => ({ x: m.project(ll).x, y: m.project(ll).y })) }] : [];
               });
               let melhor: { d: number; a: Px; b: Px } | null = null;
               for (const alvo of alvos) {
@@ -420,11 +430,7 @@ export function MapaDeManejo() {
               if (melhor) aresta = [melhor.a, melhor.b];
             }
             edAtual.ima = { ...edAtual.ima, px: pxIma, aresta };
-            if (!edAtual.arrasto) {
-              // raw em px de tela fica obsoleto no pan — sem isso a linha pontilhada “arrasta” o ponto do cadastro.
-              edAtual.cur = pxIma;
-              edAtual.raw = pxIma;
-            }
+            if (!edAtual.arrasto) { edAtual.cur = pxIma; edAtual.raw = pxIma; }
           }
           flushSync(() => redesenhar());
         });
