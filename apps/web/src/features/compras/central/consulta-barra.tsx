@@ -28,7 +28,8 @@ import type { Cabecalho, CopiaDeCompra, EstadoDaConsulta } from "./estado";
  *
  * Esquerda: [Novo documento +] [Duplicar documento] [pílula]. Direita: [Salvo | Confirmando…] [Posição do rótulo] [Ações rápidas].
  *   - Compra: pílula "Confirmar compra" (abre o diálogo da prévia — `e.setConfirmando(true)`); visível e DESABILITADA
- *     quando a compra não está aberta (confirmada, cancelada).
+ *     quando a compra não está aberta (confirmada, cancelada). O handler confere a MESMA regra (`e.podeConfirmar`, a do
+ *     motor): `disabled` é apresentação.
  *   - Pedido: pílula "Receber…" pelos Próximos passos (um passo → a Central em modo receber; vários → menu; nenhum,
  *     indisponível ou pedido fechado → desabilitada com a dica), e "Encerrar saldo" (motivo obrigatório).
  * Os estados dos Próximos passos ficam VISÍVEIS com os testids de hoje (`compras-proximos-passos[data-situacao]`,
@@ -158,7 +159,7 @@ export function useBarraDaConsulta({ e, rotulo, densidade, onDensidade, salvoVis
     {podeCriar && <BotaoDaBarra rotulo="Duplicar documento" dica={e.dicaDuplicarDesabilitado ?? "Duplicar documento"} disabled={!e.podeDuplicar}
       data-testid={`${PREFIXO}-duplicar`} onClick={duplicar}><IconeDuplicar /></BotaoDaBarra>}
     {e.ehCompra && can("compras.edit") && <PilulaDaBarra icone={<IconeConfirmar />} dica="Confirmar compra" disabled={!e.podeConfirmar || e.confirmarOcupado}
-      data-testid="compras-confirmar" onClick={() => e.setConfirmando(true)}>Confirmar compra</PilulaDaBarra>}
+      data-testid="compras-confirmar" onClick={() => { if (e.podeConfirmar) e.setConfirmando(true); }}>Confirmar compra</PilulaDaBarra>}
     {e.ehPedido && (e.podeReceber || e.situacao !== "aberto")
       && (e.podeReceber ? <SituacaoDosProximosPassos estado={e.passos}>{pilulaReceber}</SituacaoDosProximosPassos> : pilulaReceber)}
     {e.podeEncerrarSaldo && <PilulaDaBarra icone={<IconeEncerrarSaldo />} dica="Encerrar o saldo a receber" data-testid="compras-encerrar-saldo"

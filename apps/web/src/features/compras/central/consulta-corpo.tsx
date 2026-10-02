@@ -11,6 +11,7 @@ import { CampoLeitura, ColunaDeCampos, DadosAdicionais } from "@/features/centra
 import { ItensSalvos } from "@/features/central/itens-salvos";
 import { PainelColuna, PainelLargo, PainelRepartido, PlanoEmLeitura, Relacao, Selo, TitulosDoDocumento, type ColunaDaRelacao } from "@/features/central/painel";
 import type { AbaDoPainel } from "@/features/central/contrato";
+import { AprovacaoDoDocumento } from "@/features/aprovacoes/aprovacao-do-documento";
 import { zonasDaCentral, type ZonasDaCentral } from "../layout-da-central";
 import { rotaDoDocumento } from "../documentos-compra-list";
 import { PREFIXO_CENTRAL_COMPRAS, colunasDosItensDeCompras, linkDoTituloDeCompra } from "./adaptador";
@@ -51,7 +52,12 @@ export function itemParaOMotor(it: Row): Row {
   };
 }
 
-/** Dados principais e Dados adicionais (Movimento, Versão da TOP, Origem). */
+/**
+ * Dados principais e Dados adicionais (Movimento, Versão da TOP, Origem). Na COMPRA, antes dos campos, a situação da
+ * aprovação (OPERACOES-01 F2): o bloco de Aprovações, que só aparece com a compra aberta e a TOP exigindo aprovação, e
+ * oferece Aprovar/Reprovar a quem tem `compras.approve`. O pedido de compra não passa por aprovação (a 0041 só aceita
+ * a compra).
+ */
 export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: ZonasDaCentral }) {
   const tr = useTradutor();
   const [maisDados, setMaisDados] = React.useState(false);
@@ -67,6 +73,8 @@ export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: Zon
     ? (recebidoPorItem ? "Recebido de pedido" : "Lançamento direto")
     : <Link data-testid="compras-origem" className="text-brand-700 underline" href={e.rotaDaOrigem}>{e.rotuloDoPedido}{d["origem_codigo"] ? ` ${String(d["origem_codigo"])}` : ""}</Link>;
   return <>
+    {e.ehCompra && <AprovacaoDoDocumento area="compras" documentoId={String(d["id"])} documentoAberto={e.situacao === "aberto"}
+      prefixoTestid={PREFIXO_CENTRAL_COMPRAS} codigo={t(d["codigo"])} />}
     <ColunaDeCampos>
       <CampoLeitura rotulo="Fornecedor" adorno="pesquisa" testId="compras-consulta-fornecedor" valor={t(d["fornecedor_nome"])} />
       <CampoLeitura rotulo="Empresa" adorno="pesquisa" testId="compras-consulta-empresa" valor={t(d["empresa_nome"])} />

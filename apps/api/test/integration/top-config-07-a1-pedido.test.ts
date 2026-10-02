@@ -316,7 +316,8 @@ describe("GET do documento — reserva_estoque e reservado por item", () => {
 describe("/regras-da-operacao — reservaEstoque (aditivo)", () => {
   it("pedido com reserva → true; pedido sem reserva → false; orçamento → false; o resto da resposta não muda", async () => {
     const r = await regras("orders", topReserva);
-    expect(r).toEqual({ formato: expect.any(Number), exigencias: [], condicoesPermitidas: null, clienteEmAtraso: { politica: "nao_valida", toleranciaDias: 0 }, reservaEstoque: true });
+    // OPERACOES-01 F2 (decisão 279): + `regrasGerais`, por último — pedido nunca executa regra geral: sempre o neutro.
+    expect(r).toEqual({ formato: expect.any(Number), exigencias: [], condicoesPermitidas: null, clienteEmAtraso: { politica: "nao_valida", toleranciaDias: 0 }, reservaEstoque: true, regrasGerais: { confirmacaoAutomatica: false, aceitaSemItens: false } });
     expect((await regras("orders", topSemReserva)).reservaEstoque).toBe(false);
     expect((await regras("budgets", topOrcamento)).reservaEstoque).toBe(false);
   });

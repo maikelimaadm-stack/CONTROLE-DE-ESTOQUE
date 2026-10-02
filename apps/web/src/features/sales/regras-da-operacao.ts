@@ -10,6 +10,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CAPACIDADE_REGRAS_DA_OPERACAO, POLITICAS_CLIENTE_EM_ATRASO, type RegrasDaOperacaoResposta, type SituacaoClienteResposta } from "@agro/domain";
 import { api, type ApiError } from "@/lib/api";
+import { lerRegrasGerais, type RegrasGeraisDaCentral } from "@/features/central/regras-gerais";
 import type { EstadoTop } from "@/features/sales/tipo-operacao-select";
 
 const ehObjeto = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -26,8 +27,13 @@ export function entendeRegrasDaOperacao(e: EstadoTop): boolean {
  * As regras como a tela as usa: a resposta conferida + `reservaEstoque` (TOP-CONFIG-07), que é ADITIVO — a API
  * anterior não o manda, e ausente (ou qualquer valor que não seja `true`) é "esta operação não reserva": a Central é
  * a de antes. Não trava a resposta inteira: as outras regras continuam valendo.
+ *
+ * `regrasGerais` (OPERACOES-01 F2, decisão 279) também é ADITIVO: o servidor diz, pela MESMA régua da gravação, se o
+ * Salvar desta TOP também confirma e se o documento pode ser salvo sem itens. Quem lê é o motor (`lerRegrasGerais`):
+ * ausente (API anterior) ou fora da forma é o neutro inteiro — o rótulo "Salvar" e a pendência "ao menos um item" de
+ * antes. Também não trava a resposta inteira.
  */
-export type RegrasDaOperacaoNaTela = RegrasDaOperacaoResposta & { reservaEstoque: boolean };
+export type RegrasDaOperacaoNaTela = RegrasDaOperacaoResposta & { reservaEstoque: boolean; regrasGerais: RegrasGeraisDaCentral };
 
 /**
  * O QUE A RESERVA EXIGE DO ITEM — a chave do catálogo da linha do item que a API cobra quando a versão da TOP
@@ -50,7 +56,8 @@ export function lerRegrasDaOperacao(bruto: unknown): RegrasDaOperacaoNaTela | nu
   if (cp !== null && !(Array.isArray(cp) && cp.every(ehUuid))) return null;
   const ca = bruto.clienteEmAtraso;
   if (!ehObjeto(ca) || !(POLITICAS_CLIENTE_EM_ATRASO as readonly unknown[]).includes(ca.politica) || typeof ca.toleranciaDias !== "number") return null;
-  return { ...(bruto as unknown as RegrasDaOperacaoResposta), reservaEstoque: bruto.reservaEstoque === true };
+  // As duas chaves aditivas vêm DEPOIS do espalhamento: o valor lido sobrescreve o bruto, nunca o contrário.
+  return { ...(bruto as unknown as RegrasDaOperacaoResposta), reservaEstoque: bruto.reservaEstoque === true, regrasGerais: lerRegrasGerais(bruto.regrasGerais) };
 }
 
 /** As regras da versão ATUAL da TOP escolhida. `ativo` = capacidade exata E TOP escolhida. */

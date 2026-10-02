@@ -1388,7 +1388,8 @@ export default async function salesRoutes(app: FastifyInstance) {
       if (!v.rows[0]) throw notFound("Tipo de operação");
       const reservaEstoque = kind === "order" && v.rows[0].reserva_estoque === true;
       // EDITAR-01: a MONTAGEM é a mesma do `GET <base>/:id/edicao` (lá, pela versão CONGELADA do documento) — um dono só.
-      return respostaDasRegrasDaOperacao(await regrasDaTopAtual(ctx, bruto), reservaEstoque);
+      // F2 (decisão 279): `regrasGerais` da versão ATUAL, só na venda — a régua de `aceitaSemItens`/`confirmacaoAutomaticaDaVenda`.
+      return respostaDasRegrasDaOperacao(await regrasDaTopAtual(ctx, bruto), reservaEstoque, kind === "sale");
     }));
     /**
      * LAYOUT EFETIVO da TOP escolhida (VENDAS-A3-1) — mesma permissão e porta de `operation-types`. TOP que a

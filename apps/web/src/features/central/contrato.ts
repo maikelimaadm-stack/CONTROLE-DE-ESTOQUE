@@ -364,3 +364,31 @@ export type CopiaValePara = <C>(copia: CopiaEmMemoria<C> | null, segmento: strin
 /** salvo.ts: entrega/consumo do "Salvo" pela chave do adaptador. */
 export type EntregarSalvo = (chave: (id: string) => string, id: string, depois: DepoisDeSalvar) => void;
 export type ConsumirSalvo = (chave: (id: string) => string, id: string) => DepoisDeSalvar | null;
+
+/* ─────────────── F2 (decisão 279) — o Salvar da Central e as regras gerais da TOP ─────────────── */
+
+/**
+ * O resultado da confirmação automática (TOP no formato 4 com Confirmação Automática), como o servidor o devolve no
+ * 201 do POST que grava o documento, no `/convert` do pedido de compra e no 200 da decisão de aprovar. Sem a chave: a
+ * TOP não confirma sozinha (formato 1 a 3, ou Manual) — o corpo de antes.
+ */
+export type ResultadoConfirmacaoAutomatica =
+  | { confirmado: true }
+  | { confirmado: false; motivo: "aguardando_aprovacao" }
+  | { confirmado: false; motivo: "sem_permissao" }
+  | { confirmado: false; motivo: "recusada"; erro: { code: string; message: string; details?: unknown } };
+
+/** O 201 do Salvar: o id do documento gravado e, só com a TOP de Confirmação Automática, o que a confirmação fez. */
+export interface RespostaDoSalvar { id: string; confirmacaoAutomatica?: ResultadoConfirmacaoAutomatica }
+
+/** O tom do aviso do Salvar — o nome da função do `toast` que o mostra. */
+export type TipoDoAviso = "success" | "info" | "warning";
+/** O aviso do Salvar: UM por Salvar, com o tom e o texto exato. */
+export interface AvisoDoSalvar { tipo: TipoDoAviso; texto: string }
+
+/**
+ * As regras gerais da TOP que a Central precisa ANTES de salvar (`regrasGerais` de `/regras-da-operacao`): se o Salvar
+ * também confirma e se o documento pode ser salvo sem itens. Quem decide o valor é o servidor, pela MESMA régua da
+ * gravação; a Central só lê.
+ */
+export interface RegrasGeraisDaCentral { confirmacaoAutomatica: boolean; aceitaSemItens: boolean }

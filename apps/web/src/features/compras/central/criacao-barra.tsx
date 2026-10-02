@@ -18,7 +18,8 @@ import type { EstadoDaCriacao, TravaDoSalvar } from "./estado";
  *
  * O que cada botão FAZ mora no estado (`useEstadoDaCriacao`): aqui nada chama a API. As checagens do Salvar são as
  * do estado (obrigatórios do layout, exigências da TOP, itens); clicar com pendência = zero POST e a pílula abre.
- * O Salvar continua DESABILITADO por estado (`travaDoSalvar`), com a dica do motivo.
+ * O Salvar continua DESABILITADO por estado (`travaDoSalvar`), com a dica do motivo. O rótulo dele vem do estado
+ * (`rotuloDoSalvar`, OPERACOES-01 F2): "Salvar e confirmar" com a TOP de Confirmação Automática, "Salvar" no resto.
  */
 
 export const PREFIXO = PREFIXO_CENTRAL_COMPRAS;
@@ -96,7 +97,7 @@ export function useBarraDaCriacao({ e, densidade, onDensidade, onIr = irParaPend
   const acoes = <ConjuntoDaBarra>
     <BotaoDaBarra rotulo="Descartar alterações" disabled={(!e.alterado && !receber) || e.salvando} data-testid={`${PREFIXO}-descartar`}
       onClick={() => setPerguntaDescartar(true)}><IconeDescartar /></BotaoDaBarra>
-    <BotaoDaBarra rotulo="Salvar" dica={dicaTrava ?? "Salvar"} ocupado={e.salvando} disabled={e.salvarDesabilitado}
+    <BotaoDaBarra rotulo={e.rotuloDoSalvar} dica={dicaTrava ?? e.rotuloDoSalvar} ocupado={e.salvando} disabled={e.salvarDesabilitado}
       data-testid="compras-salvar" onClick={() => clicarSalvar(false)}><IconeSalvar /></BotaoDaBarra>
     {podeConfirmar && <PilulaDaBarra icone={<IconeConfirmar />} dica={dicaTrava ?? "Confirmar compra"} disabled={e.salvarDesabilitado}
       data-testid={`${PREFIXO}-confirmar`} onClick={() => clicarSalvar(true)}>Confirmar compra</PilulaDaBarra>}

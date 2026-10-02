@@ -1,10 +1,18 @@
 /**
- * ═══ APROVAÇÕES DE COMPRA (TOP-CONFIG-08, decisão 277) ═══
+ * ═══ APROVAÇÕES DE COMPRA (TOP-CONFIG-08, decisão 277; OPERACOES-01 F2, decisão 279) ═══
  *
  * A compra cuja versão congelada da TOP está no FORMATO 4 e exige aprovação (Sempre, ou A partir de um valor com o
  * `valor_total` ATUAL ≥ o mínimo) só confirma depois de aprovada. Este arquivo é a porta de quem APROVA: a fila e as
- * duas decisões. Quem EXPLICA a recusa na confirmação é o passo do planejamento (`compras-confirmacao.ts`); quem
- * BARRA no fundo é a guarda de transição da 0041 (`trg_documentos_compra_aprovacao`).
+ * duas decisões, sob `compras.approve`. Quem EXPLICA a recusa na confirmação é o passo do planejamento
+ * (`compras-confirmacao.ts`); quem BARRA no fundo é a guarda de transição da 0041 (`trg_documentos_compra_aprovacao`).
+ *
+ * E a quarta rota, de LEITURA (F2, decisão 279): `GET /api/aprovacoes/compras/:id` → `{ situacao, ultimaDecisao }` de
+ * UMA compra, para a consulta da Central de Compras (o contrato em `aprovacoes-situacao.ts`). Fica em `compras.view`:
+ * quem vê o documento vê a situação dele (a prévia do Confirmar já a dizia sob a mesma capacidade); quem DECIDE
+ * continua sendo `compras.approve`. Ordem das recusas: 403 sem `compras.view` (o `runService`, antes de qualquer
+ * leitura) → 422 parâmetro de consulta (qualquer um) → a MESMA 404 do `GET /api/compras/compras/:id` (a mesma
+ * leitura, `lerDocumentoCompra`: id fora da forma, inexistente, outra organização, fora do escopo do módulo compras,
+ * pedido de compra). Só leitura, consultas fixas.
  *
  * PREFIXO PRÓPRIO (`/api/aprovacoes/...`): o binário anterior não conhece a rota e responde o 404 limpo de rota
  * inexistente — a tela nova lê esse 404 como "aprovações indisponíveis neste servidor", sem quebrar o resto.
@@ -62,12 +70,15 @@ import { pageQuerySchema } from "../lib/pagination.js";
 import { situacaoDaAprovacao, registrarDecisao } from "../lib/aprovacao-documento.js";
 import { confirmaAutomaticamente, tentarConfirmacaoAutomatica, lerVersaoCongeladaTop, type ResultadoConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
 import { lerDocumentoCompra } from "./compras.js";
+import { recusarParametrosDaSituacao, respostaDaSituacaoDaAprovacao, type RespostaDaSituacaoDaAprovacao } from "./aprovacoes-situacao.js";
 import { confirmarCompraNaTransacao } from "./compras-confirmacao.js";
 import { paginaComIdGlobal } from "../lib/id-global.js";
 
 /** A capacidade da porta: decidir a aprovação da compra. A confirmação automática pede a DELA (`compras.edit`). */
 const PERMISSAO_APROVAR = "compras.approve";
 const PERMISSAO_CONFIRMAR = "compras.edit";
+/** A capacidade da leitura da situação (F2): a MESMA do GET da compra por id. */
+const PERMISSAO_VER = "compras.view";
 
 // ─────────────── contrato de entrada (estrito) ───────────────
 
@@ -239,6 +250,30 @@ async function decidir(app: FastifyInstance, req: FastifyRequest, decisao: Decis
   });
 }
 
+// ─────────────── a situação de UMA compra (F2, decisão 279) ───────────────
+
+/**
+ * A SITUAÇÃO DA APROVAÇÃO DE UMA COMPRA, para a consulta da Central de Compras. Quem chama já passou pelo
+ * `compras.view`. O documento é achado pela MESMA leitura do GET por id (`lerDocumentoCompra`, espécie `compra`), que
+ * já recusa o id fora da forma e aplica organização, escopo de empresa e espécie: a 404 é a mesma, com o mesmo corpo.
+ * A compra não tem versão do documento: a decisão vigente é a última (a régua de `situacaoDaAprovacao`).
+ */
+async function situacaoDaCompra(ctx: ServiceCtx, params: unknown, query: unknown): Promise<RespostaDaSituacaoDaAprovacao> {
+  // 1. Parâmetro de consulta: 422, antes de qualquer leitura (nunca ignorado).
+  recusarParametrosDaSituacao(query);
+  // 2 e 3. Forma do id e visibilidade — a leitura do GET por id, com o id como ele o recebe.
+  const doc = await lerDocumentoCompra(ctx, (params as { id: string }).id, "compra");
+  // 4. A conta (o contrato em `aprovacoes-situacao.ts`).
+  return respostaDaSituacaoDaAprovacao(ctx, {
+    modulo: "compras",
+    documentoId: String(doc["id"]),
+    aberto: doc["situacao"] === "aberto",
+    versaoDocumento: null,
+    valorDocumento: String(doc["valor_total"]),
+    tipoOperacaoVersaoId: typeof doc["tipo_operacao_versao_id"] === "string" ? doc["tipo_operacao_versao_id"] : null,
+  });
+}
+
 // ─────────────── rotas ───────────────
 
 export default async function aprovacoesComprasRoutes(app: FastifyInstance) {
@@ -250,4 +285,7 @@ export default async function aprovacoesComprasRoutes(app: FastifyInstance) {
 
   /** REPROVAR `{ motivo }` — a compra fica aberta; uma aprovação nova, depois, a libera. */
   app.post("/aprovacoes/compras/:id/reprovar", async (req) => decidir(app, req, "reprovado"));
+
+  /** A SITUAÇÃO da aprovação de UMA compra: leitura sob `compras.view` (quem vê o documento vê a situação). */
+  app.get("/aprovacoes/compras/:id", async (req) => runService(app, req, PERMISSAO_VER, (ctx) => situacaoDaCompra(ctx, req.params, req.query)));
 }
