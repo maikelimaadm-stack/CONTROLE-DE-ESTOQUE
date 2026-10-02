@@ -2742,3 +2742,17 @@ código do servidor.
 **Gate externo (PENDING).** A prova visual do satélite do Google depende da chave real em produção e não é
 substituível por mock/preview — fica `PENDING` até a validação autenticada em produção. O desenho do
 polígono, o cálculo de área (cliente) e o CRUD por empresa são provados sem a chave (integração + e2e).
+
+**Bases e localização.** A tela alterna SATÉLITE e MAPA de ruas — as duas pela mesma Map Tiles API
+(`mapType` `satellite` e `roadmap`; a de ruas abre sob demanda na primeira troca). "Minha localização" é o
+controle de geolocalização do MapLibre: pede a permissão do navegador e só funciona em HTTPS (produção e
+preview da Vercel já são).
+
+**Editor de desenho próprio (sem Terra Draw) e `maplibre-gl` 5.** As funções do protótipo aprovado (ímã em
+vértice/aresta com tolerância em px, Alt solta, Shift trava 45°, desfazer/refazer, ponto do meio, mover a
+área, medidas ao vivo) rodam num editor próprio sobre o MapLibre (`apps/web/src/features/mapa-de-manejo/
+editor-desenho.ts`), sem dependência nova. O `maplibre-gl` fica na linha **5** (UMD com o worker embutido):
+a linha 6 é só ESM e procura o worker num arquivo à parte, que o `next build` não publica — sem worker, as
+fontes GeoJSON (as áreas gravadas) não desenham. Subir para a 6 exige servir `maplibre-gl-worker.mjs` +
+`maplibre-gl-shared.mjs` pela própria origem e chamar `setWorkerUrl`. O e2e do editor desenha no canvas de
+verdade (WebGL por SwiftShader no Chromium do CI).
