@@ -1,13 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate } from "@agro/shared";
-import { nextPurchaseStatus, allowedPurchaseActions, authorizerCanApprove, PURCHASE_STATUS_LABELS, slaStatus, type PurchaseRequestStatus, type PurchaseAction } from "@agro/domain";
+import { nextPurchaseStatus, allowedPurchaseActions, authorizerCanApprove, PURCHASE_STATUS_LABELS, slaStatus, resolverTipoOperacao, type PurchaseRequestStatus, type PurchaseAction } from "@agro/domain";
 import { runService, nextCode, idempotent, audit } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
 import { empresaScope, exigirEmpresaDeLancamento, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
-import { createTitles } from "../services/financial-core.js";
+import { createTitles, type TitleInput } from "../services/financial-core.js";
+import { classificacaoLegada, financeiroDaTopPadrao, MENSAGEM_SOLICITACAO_EXIGE_CLASSIFICACAO } from "../lib/financeiro-classificacao.js";
+import { contaPadraoUtilizavel, MENSAGEM_CONTA_PADRAO_INUTILIZAVEL } from "../lib/financeiro-padroes-top.js";
 import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
@@ -232,11 +234,33 @@ export default async function supplyRoutes(app: FastifyInstance) {
         // Gera conta a pagar para tipos não-produto ao finalizar (fluxo "Financeiro" da solicitação)
         const items = await ctx.tx.query<{ amount: string | null; reference_value: string | null; quantity: string; description: string }>("select amount, reference_value, quantity, description from erp.purchase_request_items where request_id=$1", [id]);
         const total = items.rows.reduce((a, i) => a.plus(D(i.amount ?? D(i.reference_value ?? 0).mul(i.quantity))), D(0));
-        const cat = (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature='expense' and kind='analytic' and is_active and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
-        const cc = (await ctx.tx.query<{ id: string }>("select id from erp.cost_centers where organization_id=$1 and kind='analytic' and is_active and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
-        if (total.gt(0) && cat && cc && hasPermission(ctx, "purchase_requests.financial")) {
-          const t = await createTitles(ctx, { empresaId: r.empresa_id, direction: "payable", number: `SOL-${r.code}`, personId: null, amount: money(total), emissionDate: new Date().toISOString().slice(0, 10), dueDate: ((r as { financial_due_date?: string | null }).financial_due_date) ?? new Date().toISOString().slice(0, 10), note: `Solicitação ${r.code}: ${items.rows.map((i) => i.description).join("; ")}`, apportionment: [{ financialCategoryId: cat.id, costCenterId: cc.id, percentage: "100" }], sourceType: "purchase_requests", sourceId: id });
+        const gerarTitulo = async (cat: string, cc: string, pelaTop: Pick<TitleInput, "titleTypeId" | "contaPrevistaId" | "tipoOperacaoId" | "tipoOperacaoVersaoId"> = {}) => {
+          const t = await createTitles(ctx, { empresaId: r.empresa_id, direction: "payable", number: `SOL-${r.code}`, personId: null, amount: money(total), emissionDate: new Date().toISOString().slice(0, 10), dueDate: ((r as { financial_due_date?: string | null }).financial_due_date) ?? new Date().toISOString().slice(0, 10), note: `Solicitação ${r.code}: ${items.rows.map((i) => i.description).join("; ")}`, apportionment: [{ financialCategoryId: cat, costCenterId: cc, percentage: "100" }], sourceType: "purchase_requests", sourceId: id, ...pelaTop });
           await addEvent(ctx, id, r.status, r.status, "financial", `Títulos gerados: ${t.ids.length}`);
+        };
+        /*
+         * OPERACOES-01 F9 (decisão 286) — A TOP PADRÃO DA SOLICITAÇÃO, só quando haverá título (total > 0 e a permissão
+         * do financeiro) e ANTES de qualquer gravação. O registro não cita TOP: vale a TOP marcada como padrão da família
+         * na organização, na versão corrente. Com padrões (formato 5): a natureza e o centro dela (o que faltar sai do
+         * padrão legado), o tipo de título e a conta, e a TOP e a versão no título. "Exigir" sem natureza e centro na TOP
+         * → 422, sem título e sem transição. Sem TOP padrão, fora do 5 ou sem padrões → o código de antes, intacto (a 1ª
+         * natureza de despesa e o 1º centro por código; sem os dois, o título não nasce).
+         */
+        const pelaTop = total.gt(0) && hasPermission(ctx, "purchase_requests.financial")
+          ? await financeiroDaTopPadrao(ctx, resolverTipoOperacao("erp.purchase_requests")?.codigo) : { tipo: "sem_top" as const };
+        if (pelaTop.tipo === "exigir") throw validation(MENSAGEM_SOLICITACAO_EXIGE_CLASSIFICACAO);
+        if (pelaTop.tipo === "top") {
+          const legado = await classificacaoLegada(ctx, "expense", { natureza: pelaTop.naturezaId === null, centro: pelaTop.centroCustoId === null });
+          const cat = pelaTop.naturezaId ?? legado.naturezaId;
+          const cc = pelaTop.centroCustoId ?? legado.centroCustoId;
+          if (cat && cc) {
+            // A conta padrão inativada ou excluída depois de gravada a TOP → 422 antes do título (e sem transição).
+            if (pelaTop.contaBancariaId && !(await contaPadraoUtilizavel(ctx, pelaTop.contaBancariaId, { trava: true }))) throw validation(MENSAGEM_CONTA_PADRAO_INUTILIZAVEL);
+            await gerarTitulo(cat, cc, { titleTypeId: pelaTop.tipoTituloId, contaPrevistaId: pelaTop.contaBancariaId, tipoOperacaoId: pelaTop.top.tipoOperacaoId, tipoOperacaoVersaoId: pelaTop.top.tipoOperacaoVersaoId });
+          }
+        } else {
+          const { naturezaId: cat, centroCustoId: cc } = await classificacaoLegada(ctx, "expense");
+          if (total.gt(0) && cat && cc && hasPermission(ctx, "purchase_requests.financial")) await gerarTitulo(cat, cc);
         }
       }
       const next = await transition(ctx, id, action, d.justification, { expectedVersion: d.version, responsible: d.responsible_user_id ?? undefined });

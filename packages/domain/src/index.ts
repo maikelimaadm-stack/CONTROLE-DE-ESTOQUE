@@ -36,3 +36,6 @@ export * from "./financeiro-central.js";
 export * from "./tipo-operacao-secao-fluxo-compra.js";
 export * from "./tipo-operacao-secao-divergencia-pedido.js";
 export * from "./compras-finalizacao-orcamento.js";
+// OPERACOES-01 F9 (decisão 286): a seção "Padrões financeiros" do formato 5 (a provisão, os padrões e o LCDPR saem
+// pelo barril da Central Financeira).
+export * from "./tipo-operacao-secao-financeiro-padrao.js";

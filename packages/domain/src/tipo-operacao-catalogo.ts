@@ -129,12 +129,13 @@ const tipo = (chave: string, grupo: GrupoTipoMovimentoTop, rotulo: string, famil
 const familiaDaTabela = (tabela: string, valor?: string): string | undefined => resolverTipoOperacao(tabela, valor)?.codigo;
 
 /**
- * OS 22 TIPOS, NA ORDEM DO PEDIDO. Só os 9 cujo documento cita a TOP (venda, compra e o documento de estoque) têm
- * tela hoje. "Requisição", "Consumo" e "Devolução de consumo" são as espécies NOVAS do documento de estoque (F5a:
+ * OS 22 TIPOS, NA ORDEM DO PEDIDO. Os 9 cujo documento cita a TOP (venda, compra e o documento de estoque) têm tela,
+ * e os 3 do Financeiro também (F9, decisão 286: o lançamento avulso da Central e o "Novo movimento bancário" escolhem a
+ * TOP primeiro). "Requisição", "Consumo" e "Devolução de consumo" são as espécies NOVAS do documento de estoque (F5a:
  * `estoque.requisicao_material`, não a `estoque.requisicao` da requisição antiga), sem tela até a F5b; os tipos de
- * Módulos e do Financeiro que já têm família ficam com ela, sem tela: a F10 e a F9 os ligam. O orçamento de compra já
- * tem família (F6a, decisão 283) e fica sem tela até a F6b criar a tela que o lança. Manejo e batelada (F10) e
- * movimento bancário (F9) nascem sem família — a fase dona cria a família no registry e troca a linha.
+ * Módulos que já têm família ficam com ela, sem tela: a F10 os liga. O orçamento de compra já tem família (F6a, decisão
+ * 283) e fica sem tela até a F6b criar a tela que o lança. Manejo e batelada (F10) nascem sem família — a fase dona
+ * cria a família no registry e troca a linha.
  */
 export const CATALOGO_TIPOS_MOVIMENTO_TOP: readonly TipoDeMovimentoTop[] = Object.freeze([
   tipo("orcamento_venda", "vendas", "Orçamento", familiaOperacionalDeDocumentoVenda("budget"), true),
@@ -158,9 +159,9 @@ export const CATALOGO_TIPOS_MOVIMENTO_TOP: readonly TipoDeMovimentoTop[] = Objec
   tipo("manejo", "modulos", "Manejo", null, false),
   tipo("batelada", "modulos", "Batelada", null, false),
   tipo("producao_racao", "modulos", "Produção de ração", familiaDaTabela("erp.feed_batches"), false),
-  tipo("conta_pagar", "financeiro", "Conta a pagar", familiaDaTabela("erp.financial_titles", "payable"), false),
-  tipo("conta_receber", "financeiro", "Conta a receber", familiaDaTabela("erp.financial_titles", "receivable"), false),
-  tipo("movimento_bancario", "financeiro", "Movimento bancário", null, false),
+  tipo("conta_pagar", "financeiro", "Conta a pagar", familiaDaTabela("erp.financial_titles", "payable"), true),
+  tipo("conta_receber", "financeiro", "Conta a receber", familiaDaTabela("erp.financial_titles", "receivable"), true),
+  tipo("movimento_bancario", "financeiro", "Movimento bancário", familiaDaTabela("erp.bank_movements"), true),
 ]);
 
 // ---------------------------------------------------------------------------------------------------

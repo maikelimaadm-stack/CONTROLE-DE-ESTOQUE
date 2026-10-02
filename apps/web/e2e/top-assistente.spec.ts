@@ -46,8 +46,8 @@ async function catalogoPublicado(page: Page): Promise<CatalogoTop> {
   const c = await api<CapacidadesFormato5E2E>(page, "GET", "/api/admin/tipos-operacao/capabilities");
   expect(c.formato5?.suportado, "premissa: este servidor declara o formato 5").toBe(true);
   expect(c.formato5?.versaoSchema, "premissa: no formato 5").toBe(5);
-  expect(c.formato5?.secoes, "premissa: as seções de extensão do 5 são Destino e Fluxo, da F5a (decisão 282), e Fluxo de compra e Divergência, da F6a (decisão 283); o editor só liga com o mesmo conjunto")
-    .toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+  expect(c.formato5?.secoes, "premissa: as seções de extensão do 5 são Destino e Fluxo, da F5a (decisão 282), Fluxo de compra e Divergência, da F6a (decisão 283), e Padrões financeiros, da F9 (decisão 286); o editor só liga com o mesmo conjunto")
+    .toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
   return c.formato5!.catalogo;
 }
 
@@ -95,11 +95,11 @@ test("AS-1 — Novo começa pelo tipo de movimento (só os tipos com tela do cat
   await login(page);
   const catalogo = await catalogoPublicado(page);
   const comTela = catalogo.tipos.filter((t) => t.temTela);
-  expect(comTela, "premissa: o catálogo publicado tem 9 tipos com tela").toHaveLength(9);
+  expect(comTela, "premissa: o catálogo publicado tem 12 tipos com tela (os 9 com documento e os 3 do Financeiro)").toHaveLength(12);
   const familias = await api<{ items: { codigo: string }[] }>(page, "GET", "/api/admin/tipos-operacao/familias");
   expect(familias.items.length, "premissa: o registry (/familias, inteiro) tem mais famílias do que tipos com tela").toBeGreaterThan(comTela.length);
   const semTela = catalogo.tipos.filter((t) => !t.temTela && t.familia !== null).map((t) => t.familia);
-  expect(semTela.length, "premissa: há tipos COM família e SEM tela (os módulos e o financeiro)").toBeGreaterThan(0);
+  expect(semTela.length, "premissa: há tipos COM família e SEM tela (os módulos)").toBeGreaterThan(0);
 
   await abrirTelaDeTops(page);
   const codigo = codigoTopE2E();
@@ -116,15 +116,18 @@ test("AS-1 — Novo começa pelo tipo de movimento (só os tipos com tela do cat
 
     // OS GRUPOS E OS TIPOS: os de hoje, por extenso, e exatamente os com tela do catálogo publicado.
     const grupos = forma.locator("[data-testid^='top-assistente-grupo-']");
-    await expect(grupos, "Módulos e Financeiro não aparecem: nenhum tipo deles tem tela").toHaveCount(3);
+    await expect(grupos, "Módulos não aparece: nenhum tipo dele tem tela").toHaveCount(4);
     expect(await grupos.evaluateAll((gs) => gs.map((g) => g.getAttribute("data-testid"))))
-      .toEqual(["top-assistente-grupo-vendas", "top-assistente-grupo-compras", "top-assistente-grupo-movimentacao_interna"]);
+      .toEqual(["top-assistente-grupo-vendas", "top-assistente-grupo-compras", "top-assistente-grupo-movimentacao_interna", "top-assistente-grupo-financeiro"]);
     await expect(forma.getByTestId("top-assistente-grupo-vendas").getByRole("heading")).toHaveText("Vendas");
     await expect(forma.getByTestId("top-assistente-grupo-movimentacao_interna").getByRole("heading")).toHaveText("Movimentação interna");
     const botoes = (g: string) => forma.getByTestId(`top-assistente-grupo-${g}`).locator("[data-testid^='top-assistente-tipo-']");
     await expect(botoes("vendas")).toHaveText(["Orçamento", "Pedido", "Venda"]);
     await expect(botoes("compras")).toHaveText(["Pedido", "Compra"]);
     await expect(botoes("movimentacao_interna")).toHaveText(["Entrada", "Saída/baixa", "Transferência", "Ajuste"]);
+    // OPERACOES-01 F9 (decisão 286): o Financeiro ganhou tela (o lançamento avulso e o movimento escolhem a TOP primeiro).
+    await expect(forma.getByTestId("top-assistente-grupo-financeiro").getByRole("heading")).toHaveText("Financeiro");
+    await expect(botoes("financeiro")).toHaveText(["Conta a pagar", "Conta a receber", "Movimento bancário"]);
     const oferecidas = await forma.locator("[data-testid^='top-assistente-tipo-']").evaluateAll((bs) => bs.map((b) => b.getAttribute("data-familia")));
     expect(oferecidas, "os botões são os tipos com tela do catálogo publicado, na ordem dele").toEqual(comTela.map((t) => t.familia));
     for (const f of semTela) expect(oferecidas, `a família sem tela ${f} não é oferecida`).not.toContain(f);

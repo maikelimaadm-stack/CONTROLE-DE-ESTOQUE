@@ -34,6 +34,12 @@ import { versaoReservaEstoque, origemReservaEstoque, conferirReservaDoDocumento,
 import { regrasGeraisDaVersaoTop } from "@agro/domain";
 import { confirmaAutomaticamente, tentarConfirmacaoAutomatica, lerVersaoCongeladaTop, type ResultadoConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
 import { recusaDaAprovacao } from "../lib/aprovacao-documento.js";
+// OPERACOES-01 F9 (decisão 286): o padrão financeiro da TOP no formato 5 (a venda e o pedido) e a provisão do pedido.
+import { MENSAGEM_EXIGE_CLASSIFICACAO, MOTIVOS_DA_PROVISAO, camposTrocadosDosPadroes, mensagemDosPadroesTrocados, perfilDosPadroesFinanceiros, planoDaClassificacao } from "@agro/domain";
+import { padroesDaTopParaExecucao } from "../lib/financeiro-top.js";
+import { contaPadraoUtilizavel, MENSAGEM_CONTA_PADRAO_INUTILIZAVEL, type PadroesFinanceirosResolvidos } from "../lib/financeiro-padroes-top.js";
+import { classificacaoLegada, MENSAGEM_SEM_CLASSIFICACAO_LEGADA } from "../lib/financeiro-classificacao.js";
+import { sincronizarProvisaoDoPedido, travarPedidoDaProvisao } from "../lib/financeiro-provisao.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -657,6 +663,9 @@ async function writeDoc(ctx: ServiceCtx, kind: SalesKind, d: z.infer<typeof docS
       }
     }
   }
+  // OPERACOES-01 F9 (decisão 286): o pedido de venda refaz a PROVISÃO a cada gravação (criar, PUT, PATCH, conversão do
+  // orçamento) — idempotente; TOP que não provisiona e nenhum previsto gravado = nenhum efeito.
+  if (kind === "order") await sincronizarProvisaoDoPedido(ctx, id, MOTIVOS_DA_PROVISAO.pedidoGravado);
   return { id, ...totals };
 }
 
@@ -900,9 +909,12 @@ async function politicaDaVenda(ctx: ServiceCtx, versaoId: string | null, execuca
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 /** A venda como a confirmação a lê (`getDoc` da variante `sale`). */
-type VendaParaConfirmar = Record<string, unknown> & { id: string; kind: SalesKind; status: string; version: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string; product_name: string; product_control_stock: boolean; warehouse_name: string | null }[] };
-/** A classificação que vai para o rateio dos títulos: a do documento, ou o recuo "padrão legado". */
-type ClassificacaoResolvida = ClassificacaoFinanceira & { origem: "documento" | "padrão legado" };
+type VendaParaConfirmar = Record<string, unknown> & { id: string; kind: SalesKind; status: string; version: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null; origin_document_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string; product_name: string; product_control_stock: boolean; warehouse_name: string | null }[] };
+/**
+ * A classificação que vai para o rateio dos títulos: a do documento, o padrão da TOP (formato 5, F9) ou o recuo
+ * "padrão legado". No fio da prévia o "padrão da TOP" sai como "documento" + `padraoDaTop` (a web conhece dois valores).
+ */
+type ClassificacaoResolvida = ClassificacaoFinanceira & { origem: "documento" | "padrão da TOP" | "padrão legado" };
 
 /** O que a confirmação vai fazer com esta venda — decidido ANTES do primeiro efeito. */
 interface PlanoDaConfirmacao {
@@ -914,6 +926,8 @@ interface PlanoDaConfirmacao {
   classificacao: ClassificacaoResolvida | null;
   /** O parcelamento gravado no documento, lido na hora em que alguém precisa dele — como sempre foi. */
   lerPlano: () => InstallmentPlan | null;
+  /** F9: os padrões financeiros da versão congelada (tipo de título e conta vão para os títulos); `null` fora do 5 ou sem título. */
+  padroes: PadroesFinanceirosResolvidos | null;
 }
 
 /**
@@ -956,7 +970,7 @@ function tituloDaVenda(d: VendaParaConfirmar, plan: InstallmentPlan | null) {
  */
 async function planejarConfirmacao(ctx: ServiceCtx, d: VendaParaConfirmar, execucaoConfiguradaHabilitada: boolean, modo: ModoDoPlanejamento): Promise<PlanoDaConfirmacao> {
   const lerPlano = () => d.installment_plan && (d.installment_plan as { installments?: number }).installments ? installmentPlanSchema.parse(d.installment_plan) : null;
-  const plano: PlanoDaConfirmacao = { politica: null, baixaEstoque: false, geraTitulos: false, classificacao: null, lerPlano };
+  const plano: PlanoDaConfirmacao = { politica: null, baixaEstoque: false, geraTitulos: false, classificacao: null, lerPlano, padroes: null };
 
   // A variante já foi amarrada no carregamento (`getDoc(..., "sale")`): orçamento e pedido passados aqui
   // respondem 404, como qualquer UUID que a rota de vendas não serve. A conferência antiga
@@ -1020,7 +1034,29 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: VendaParaConfirmar, execu
   // com o financeiro configurado "nenhum" nada é exigido nem validado (efeito que não acontece não exige
   // cadastro). Documento classificado → revalidado pela MESMA porta, e NUNCA recua para a "primeira por
   // código" (seria trocar em silêncio a escolha do usuário). Documento sem classificação → o recuo de sempre.
+  //
+  // OPERACOES-01 F9 (decisão 286) — O PADRÃO FINANCEIRO DA TOP, da versão CONGELADA (só o formato 5 o tem; 1 a 4 e sem
+  // TOP = o neutro, e o caminho é exatamente o de antes). Sem classificação no documento, a ordem é: o par da TOP
+  // ("padrão da TOP", pela MESMA porta — padrão inativado recusa) → "exigir" recusa → o padrão legado de antes, só no
+  // campo que a TOP não deu. E a TOP que não deixa o documento trocar os padrões recusa a venda que informou outro.
   if (plano.geraTitulos) {
+    const fp = await padroesDaTopParaExecucao(ctx, d.tipo_operacao_versao_id);
+    plano.padroes = fp.padroes;
+    // A conta padrão vai para os títulos: inativada ou excluída depois de gravada a TOP → recusa (como a natureza e o centro).
+    if (fp.padroes?.contaBancariaId && !(await contaPadraoUtilizavel(ctx, fp.padroes.contaBancariaId, { trava: modo.trava }))) {
+      modo.recusar(new DomainError("TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA", MENSAGEM_CONTA_PADRAO_INUTILIZAVEL,
+        { exigencias: [{ caminho: "padroesFinanceiros.contaBancariaId", mensagem: MENSAGEM_CONTA_PADRAO_INUTILIZAVEL }] }));
+    }
+    // O padrão da TOP passa pela porta da venda com as naturezas que a TOP aceitou ao ser gravada (o perfil da família).
+    const regraDoPadrao: RegraDaClassificacao = { ...REGRA_CLASSIFICACAO_VENDA, naturezas: (fp.familia ? perfilDosPadroesFinanceiros(fp.familia)?.naturezas : undefined) ?? REGRA_CLASSIFICACAO_VENDA.naturezas };
+    const comOPadrao = async (par: ClassificacaoFinanceira, origem: ClassificacaoResolvida["origem"]) => {
+      try {
+        plano.classificacao = { ...await validarClassificacaoDoDocumento(ctx, regraDoPadrao, par, "confirmacao", { trava: modo.trava }), origem };
+      } catch (e) {
+        if (!(e instanceof DomainError)) throw e;
+        modo.recusar(e);
+      }
+    };
     if (d.categoria_financeira_id && d.centro_custo_id) {
       try {
         plano.classificacao = { ...await validarClassificacaoFinanceira(ctx, { categoriaFinanceiraId: d.categoria_financeira_id, centroCustoId: d.centro_custo_id }, "confirmacao", { trava: modo.trava }), origem: "documento" };
@@ -1029,11 +1065,28 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: VendaParaConfirmar, execu
         modo.recusar(e);
       }
     } else {
-      // Receita: categoria padrão de venda de produtos (1ª analítica de receita) e centro de custo padrão da fazenda
-      const cat = (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature='income' and kind='analytic' and is_active and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
-      const cc = (await ctx.tx.query<{ id: string }>("select cc.id from erp.cost_centers cc where cc.organization_id=$1 and cc.kind='analytic' and cc.is_active and cc.deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
-      if (!cat || !cc) modo.recusar(validation("Cadastre uma natureza de receita analítica e um centro de resultado analítico"));
-      else plano.classificacao = { categoriaFinanceiraId: cat.id, centroCustoId: cc.id, origem: "padrão legado" };
+      const pc = planoDaClassificacao({ documento: { naturezaId: null, centroCustoId: null }, padrao: fp.padroes, semClassificacao: fp.secao.semClassificacao });
+      if (pc.tipo === "pronta") await comOPadrao({ categoriaFinanceiraId: pc.naturezaId, centroCustoId: pc.centroCustoId }, "padrão da TOP");
+      else if (pc.tipo === "exigir") {
+        modo.recusar(new DomainError("TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA", MENSAGEM_EXIGE_CLASSIFICACAO,
+          { exigencias: [{ caminho: "financeiroPadrao.semClassificacao", mensagem: MENSAGEM_EXIGE_CLASSIFICACAO }] }));
+      } else {
+        // Receita: o PADRÃO LEGADO (1ª natureza analítica de receita e 1º centro analítico por código), as consultas de
+        // antes — só no campo que a TOP não deu. Sem nada da TOP, exatamente o caminho de antes (sem revalidar).
+        const legado = await classificacaoLegada(ctx, "income", { natureza: pc.naturezaId === null, centro: pc.centroCustoId === null });
+        const cat = pc.naturezaId ?? legado.naturezaId;
+        const cc = pc.centroCustoId ?? legado.centroCustoId;
+        if (!cat || !cc) modo.recusar(validation(MENSAGEM_SEM_CLASSIFICACAO_LEGADA));
+        else if (pc.naturezaId === null && pc.centroCustoId === null) plano.classificacao = { categoriaFinanceiraId: cat, centroCustoId: cc, origem: "padrão legado" };
+        else await comOPadrao({ categoriaFinanceiraId: cat, centroCustoId: cc }, "padrão legado");
+      }
+    }
+    if (fp.padroes && !fp.secao.documentoTroca) {
+      const campos = camposTrocadosDosPadroes(fp.padroes, { naturezaIds: [d.categoria_financeira_id], centroCustoIds: [d.centro_custo_id], formaPagamentoId: d.payment_method_id });
+      if (campos.length) {
+        const mensagem = mensagemDosPadroesTrocados(campos);
+        modo.recusar(new DomainError("TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA", mensagem, { exigencias: [{ caminho: "financeiroPadrao.documentoTroca", mensagem }] }));
+      }
     }
   }
 
@@ -1114,6 +1167,8 @@ export async function confirmarVendaNaTransacao(app: FastifyInstance, ctx: Servi
 
 async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabilitada: boolean, o: { automatica: boolean }) {
   const d = await getDoc(ctx, id, "sale", { lock: true }) as VendaParaConfirmar;
+  // F9 (decisão 286): o pedido de origem travado ANTES dos efeitos (a provisão dele é refeita no fim) — venda → pedido.
+  if (d.origin_document_id) await travarPedidoDaProvisao(ctx, d.origin_document_id);
   // O PLANEJAMENTO é o mesmo da prévia (`planejarConfirmacao`); aqui, no modo que LANÇA a primeira recusa.
   const plano = await planejarConfirmacao(ctx, d, execucaoConfiguradaHabilitada, MODO_CONFIRMACAO);
   // No modo da confirmação toda recusa lança: chegar aqui sem política é impossível — e seguir sem ela seria
@@ -1137,7 +1192,10 @@ async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabil
   // recusar a venda por um motivo que não existe.
   let titleIds: string[] = [];
   if (plano.geraTitulos && classificacao) {
-    const t = await createTitles(ctx, { empresaId: d.empresa_id, direction: "receivable", number: `VND-${d.code}`, personId: d.client_id, ...tituloDaVenda(d, lerPlano()), emissionDate: d.document_date, note: `Venda ${d.code}`, isDeductible: Boolean((d.installment_plan as { is_deductible?: boolean }).is_deductible), apportionment: [{ financialCategoryId: classificacao.categoriaFinanceiraId, costCenterId: classificacao.centroCustoId, percentage: "100" }], sourceType: "sales_documents", sourceId: id });
+    // F9: o tipo de título e a conta prevista dos padrões da TOP (formato 5; ausentes = nulos, como antes), e a TOP e a
+    // versão da venda gravadas no título (qualquer formato; venda sem TOP = nulos, como antes).
+    const t = await createTitles(ctx, { empresaId: d.empresa_id, direction: "receivable", number: `VND-${d.code}`, personId: d.client_id, ...tituloDaVenda(d, lerPlano()), emissionDate: d.document_date, note: `Venda ${d.code}`, isDeductible: Boolean((d.installment_plan as { is_deductible?: boolean }).is_deductible), apportionment: [{ financialCategoryId: classificacao.categoriaFinanceiraId, costCenterId: classificacao.centroCustoId, percentage: "100" }], sourceType: "sales_documents", sourceId: id,
+      titleTypeId: plano.padroes?.tipoTituloId ?? null, contaPrevistaId: plano.padroes?.contaBancariaId ?? null, tipoOperacaoId: d.tipo_operacao_id ?? null, tipoOperacaoVersaoId: d.tipo_operacao_versao_id ?? null });
     titleIds = t.ids;
   }
 
@@ -1159,6 +1217,9 @@ async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabil
   // chegam aqui, e zero linha sem conferência seria sucesso sem efeito.
   const u = await ctx.tx.query("update erp.sales_documents set status='confirmed', updated_at=now() where id=$1 and organization_id=$2 and status not in ('confirmed','invoiced','cancelled')", [id, ctx.orgId]);
   if (u.rowCount !== 1) throw notFound("Documento");
+  // F9 (decisão 286): a venda faturada dá lugar, no pedido de origem, ao que ele ainda previa (total ou parcial).
+  // Origem que não é pedido de venda (orçamento) → nada.
+  if (d.origin_document_id) await sincronizarProvisaoDoPedido(ctx, d.origin_document_id, MOTIVOS_DA_PROVISAO.faturado(d.code));
   // A EVIDÊNCIA DO DOCUMENTO: qual versão valeu, qual autoridade decidiu cada efeito, e o que foi de fato
   // materializado. `titles` continua com o nome de sempre — é o que leitores anteriores da trilha conhecem.
   await audit(ctx.tx, ctx, "sales_documents", id, "confirm", {
@@ -1217,14 +1278,16 @@ async function previaDaConfirmacao(ctx: ServiceCtx, id: string, execucaoConfigur
   const plano = await planejarConfirmacao(ctx, d, execucaoConfiguradaHabilitada, modo);
 
   // Código e nome de categoria e centro que IRÃO para o rateio — a do documento ou a do recuo.
-  let classificacao: { origem: ClassificacaoResolvida["origem"]; categoria: { id: string; codigo: string; nome: string }; centro: { id: string; codigo: string; nome: string } } | null = null;
+  // F9: no FIO a origem continua nos dois valores que as webs conhecem — o "padrão da TOP" sai como "documento" com
+  // `padraoDaTop: true` (aditivo); a auditoria da confirmação guarda "padrão da TOP".
+  let classificacao: { origem: "documento" | "padrão legado"; padraoDaTop?: true; categoria: { id: string; codigo: string; nome: string }; centro: { id: string; codigo: string; nome: string } } | null = null;
   if (plano.classificacao) {
     const r = (await ctx.tx.query<{ cat_codigo: string; cat_nome: string; cc_codigo: string; cc_nome: string }>(
       `select c.code as cat_codigo, c.name as cat_nome, cc.code as cc_codigo, cc.name as cc_nome
          from erp.financial_categories c, erp.cost_centers cc
         where c.id = $1 and c.organization_id = $3 and cc.id = $2 and cc.organization_id = $3`,
       [plano.classificacao.categoriaFinanceiraId, plano.classificacao.centroCustoId, ctx.orgId])).rows[0];
-    if (r) classificacao = { origem: plano.classificacao.origem,
+    if (r) classificacao = { ...(plano.classificacao.origem === "padrão da TOP" ? { origem: "documento" as const, padraoDaTop: true as const } : { origem: plano.classificacao.origem }),
       categoria: { id: plano.classificacao.categoriaFinanceiraId, codigo: r.cat_codigo, nome: r.cat_nome },
       centro: { id: plano.classificacao.centroCustoId, codigo: r.cc_codigo, nome: r.cc_nome } };
   }
@@ -1623,8 +1686,10 @@ export default async function salesRoutes(app: FastifyInstance) {
       return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
         { action: "cancel_sales_document", sourceId: id, sourceKind: kind, reason: motivo, actorId: ctx.user.id },
         async () => {
-      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; origin_document_id: string | null; items: { origem_item_id: string | null }[] };
+      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; code: string; origin_document_id: string | null; items: { origem_item_id: string | null }[] };
       if (cur.status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelado");
+      // F9 (decisão 286): a venda com origem trava o pedido ANTES dos estornos (a provisão dele é refeita no fim).
+      if (cur.kind === "sale" && cur.origin_document_id) await travarPedidoDaProvisao(ctx, cur.origin_document_id);
       // TOP-CONFIG-06: a ORIGEM com parte não cancelada não se cancela — as partes continuariam citando um
       // documento cancelado, com saldo que ninguém mais controla.
       if ((await partesDaOrigem(ctx, id)).ativas > 0) throw err("INVALID_STATUS_TRANSITION", MSG_ORIGEM_COM_PARTES_ATIVAS_CANCEL);
@@ -1665,6 +1730,10 @@ export default async function salesRoutes(app: FastifyInstance) {
           await audit(ctx.tx, ctx, "sales_documents", cur.origin_document_id, "parte_cancelada", { parte: id }, { before: { status: "converted" }, after: { status: "open" } });
         }
       }
+      // F9 (decisão 286): o pedido cancelado cancela os previstos dele; a venda cancelada devolve ao pedido de origem o
+      // que ela faturava (o previsto volta). Orçamento e venda sem origem → nada.
+      if (cur.kind === "order") await sincronizarProvisaoDoPedido(ctx, id, MOTIVOS_DA_PROVISAO.pedidoCancelado(motivo));
+      else if (cur.kind === "sale" && cur.origin_document_id) await sincronizarProvisaoDoPedido(ctx, cur.origin_document_id, MOTIVOS_DA_PROVISAO.vendaCancelada(cur.code));
       return { id, status: "cancelled" };
         })).result;
     }));
@@ -1950,6 +2019,8 @@ export default async function salesRoutes(app: FastifyInstance) {
           // ROW COUNT SOB RLS: zero linha sem conferência seria "encerrado" sem efeito.
           if (u.rowCount !== 1) throw notFound("Documento");
           await audit(ctx.tx, ctx, "sales_documents", id, "encerrar_saldo", { motivo, saldo: saldo.toFixed(4) }, { before: { status: cur.status }, after: { status: "converted" } });
+          // F9 (decisão 286): com o saldo encerrado, o pedido só prevê o que as partes geradas ainda não faturaram.
+          if (kind === "order") await sincronizarProvisaoDoPedido(ctx, id, MOTIVOS_DA_PROVISAO.saldoEncerrado(motivo));
           return { id, status: "converted" };
         })).result;
     }));

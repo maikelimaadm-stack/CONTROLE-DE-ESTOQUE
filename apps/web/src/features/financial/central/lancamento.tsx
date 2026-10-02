@@ -13,6 +13,8 @@ import { RefSelect } from "@/components/ui/ref-select";
 import { PlanEditor, defaultPlan, useEmpresaPadrao, useDoc, LoadingOr, type Plan, type Row } from "@/features/docs/shared";
 import { dirCfg, type Dir } from "@/features/financial/titles";
 import { RateioEmReais, linhaDeRateioVazia, lerDecimal, rateioParaApi, situacaoDoRateio, type LinhaRateio } from "./rateio-em-reais";
+import { useFinanceiroPelaTop } from "./capacidade";
+import { SeletorDeTopFinanceira, linhasComATrava, primeiraLinhaComOsPadroes, textoDoRateioTravado, travaDaTop, type TopFinanceira } from "./top-financeira";
 
 const FORMAS: [string, string][] = [["single", "À vista"], ["installments", "Parcelado"], ["recurring", "Recorrente"], ["advance", "Adiantamento"]];
 const TIPOS_DE_DOCUMENTO = ["nfe", "cte", "nfse", "nfce", "danfe", "darf", "dare", "gru", "other"];
@@ -48,10 +50,16 @@ const texto = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 const data10 = (v: unknown) => texto(v).slice(0, 10);
 
 /**
- * LANÇAMENTO AVULSO DA CENTRAL FINANCEIRA (OPERACOES-01 F8, decisão 285) — o formulário de hoje no desenho novo; a TOP
- * financeira escolhida primeiro chega na F9. Parceiro, empresa, emissão e competência, vencimento, valor; natureza,
- * centro, safra e área num RATEIO EM R$ que fecha no líquido; tipo de título, conta prevista, nº do documento,
- * histórico; parcelar em N ou recorrência; "Já pago" (baixa na hora pelo saldo) e anexos (sobem depois do título).
+ * LANÇAMENTO AVULSO DA CENTRAL FINANCEIRA (OPERACOES-01 F8, decisão 285) — o formulário de hoje no desenho novo.
+ * Parceiro, empresa, emissão e competência, vencimento, valor; natureza, centro, safra e área num RATEIO EM R$ que
+ * fecha no líquido; tipo de título, conta prevista, nº do documento, histórico; parcelar em N ou recorrência; "Já
+ * pago" (baixa na hora pelo saldo) e anexos (sobem depois do título).
+ *
+ * A TOP PRIMEIRO (OPERACOES-01 F9, decisão 286): com `financeiroPelaTop` declarado e SÓ no lançamento novo, o primeiro
+ * campo é o tipo de operação da família (conta a pagar ou a receber). Escolher a TOP aplica o tipo de título, a conta
+ * prevista e a natureza e o centro da 1ª linha do rateio — só o que ela tem, sem apagar o resto do que o usuário
+ * digitou —, e o corpo leva `tipo_operacao_id`. Com "o documento pode trocar os padrões" desligado, esses campos
+ * travam (o servidor recusa a troca). Sem a capacidade, ou sem TOP escolhida, o corpo é o de HOJE, idêntico.
  *
  * TÍTULO GERADO POR DOCUMENTO (venda, compra, nota…), em edição: só vencimento, conta prevista e observação mudam — o
  * resto mostra o que a origem gravou, travado, e o pedido leva SÓ as três chaves (o servidor recusa o resto com 409).
@@ -64,6 +72,17 @@ export function LancamentoAvulso({ dir, id }: { dir: Dir; id?: string }) {
   const [plan, setPlan] = React.useState<Plan>(defaultPlan());
   const [arquivos, setArquivos] = React.useState<File[]>([]);
   const chave = React.useRef(newIdem());
+  // F9: a TOP do lançamento novo (só com a capacidade); a trava dos padrões quando ela não deixa trocar.
+  const comTop = useFinanceiroPelaTop() && !id;
+  const [top, setTop] = React.useState<TopFinanceira | null>(null);
+  const trava = React.useMemo(() => travaDaTop(comTop ? top : null), [comTop, top]);
+  const mudarLinhas = React.useCallback((ls: LinhaRateio[]) => setLinhas(linhasComATrava(ls, trava)), [trava]);
+  const escolherTop = (t: TopFinanceira | null) => {
+    setTop(t);
+    if (!t) return;
+    setH((o) => ({ ...o, title_type_id: t.padroes.tipoTitulo?.id ?? o.title_type_id, conta_prevista_id: t.padroes.conta?.id ?? o.conta_prevista_id }));
+    setLinhas((ls) => linhasComATrava(primeiraLinhaComOsPadroes(ls, t), travaDaTop(t)));
+  };
   React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
   React.useEffect(() => {
     const d = existente.data; if (!d) return;
@@ -100,7 +119,9 @@ export function LancamentoAvulso({ dir, id }: { dir: Dir; id?: string }) {
     appropriation: h.appropriation, appropriation_type: h.appropriation === "indirect" ? h.appropriation_type || "indirect" : null,
     apportionment: rateioParaApi(linhas), plan: parcelado ? plan : null,
     auto_settle: h.ja_pago && h.ja_pago_conta ? { bank_account_id: h.ja_pago_conta, date: h.ja_pago_data } : null,
-    data_competencia: h.data_competencia || null, conta_prevista_id: h.conta_prevista_id || null
+    data_competencia: h.data_competencia || null, conta_prevista_id: h.conta_prevista_id || null,
+    // F9: a TOP escolhida (só no novo e com a capacidade); sem ela, a chave não existe — o corpo de hoje.
+    ...(comTop && top ? { tipo_operacao_id: top.id } : {})
   });
   // Edição: os campos de hoje, sem forma de pagamento, plano, recorrência nem "já pago" (o servidor não os muda), com o
   // `version` lido — o título que mudou desde a abertura é recusado (409), nunca sobrescrito.
@@ -136,18 +157,21 @@ export function LancamentoAvulso({ dir, id }: { dir: Dir; id?: string }) {
     <Button size="sm" loading={ocupado} disabled={Boolean(pendencia)} title={pendencia ?? undefined} onClick={() => (id ? editar.mutate() : criar.mutate())}>Salvar</Button>
   </>} /><CardBody className="space-y-4">
     <LoadingOr q={{ isLoading: Boolean(id) && existente.isLoading, error: existente.error }}>
+      {comTop && <div className="grid grid-cols-12 gap-3" data-testid="fin-lancamento-operacao">
+        <SeletorDeTopFinanceira direcao={dir === "payable" ? "pagar" : "receber"} valor={top?.id ?? null} onChange={escolherTop} testId="fin-lancamento-top" />
+      </div>}
       {travadoPelaOrigem && <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800" data-testid="fin-aviso-origem">Título gerado por {origem}: valor, parceiro e rateio mudam pela origem.</p>}
       <div className="grid grid-cols-12 gap-3">
         <Field label="Empresa" required span={3}><RefSelect resource="empresas" value={h.empresa_id} disabled={travar || Boolean(id)} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>
         <Field label="Nº do documento" required span={2}><Input value={h.number} disabled={travar} maxLength={40} onChange={(e) => setH({ ...h, number: e.target.value })} /></Field>
         <Field label={c.person} required span={4}><RefSelect resource="people" value={h.person_id} disabled={travar} onChange={(v) => setH({ ...h, person_id: v ?? "" })} filter={c.personFilter} /></Field>
-        <Field label="Tipo de título" span={3}><RefSelect resource="title_types" value={h.title_type_id} disabled={travar} onChange={(v) => setH({ ...h, title_type_id: v ?? "" })} /></Field>
+        <Field label="Tipo de título" span={3} help={trava.tipoTitulo ? "Padrão da operação: não muda neste lançamento" : undefined}><RefSelect resource="title_types" value={h.title_type_id} disabled={travar || Boolean(trava.tipoTitulo)} onChange={(v) => setH({ ...h, title_type_id: v ?? "" })} /></Field>
         <Field label="Emissão" required span={2}><Input type="date" value={h.emission_date} disabled={travar} onChange={(e) => setH({ ...h, emission_date: e.target.value })} /></Field>
         <Field label="Competência" span={2} help="Mês do resultado (DRE por competência); vazio = a emissão"><Input type="date" value={h.data_competencia} disabled={travar} onChange={(e) => setH({ ...h, data_competencia: e.target.value })} /></Field>
         <Field label="Vencimento" required span={2}><Input type="date" value={h.due_date} onChange={(e) => setH({ ...h, due_date: e.target.value })} /></Field>
         <Field label="Valor" required span={2}><Input type="number" step="0.01" min="0.01" value={h.amount} disabled={travar} onChange={(e) => setH({ ...h, amount: e.target.value })} /></Field>
         <Field label="Desconto" span={2}><Input type="number" step="0.01" min="0" value={h.discount} disabled={travar} onChange={(e) => setH({ ...h, discount: e.target.value })} /></Field>
-        <Field label="Conta prevista" span={2} help="A conta por onde o título deve ser pago ou recebido (fluxo de caixa)"><RefSelect resource="bank_accounts" value={h.conta_prevista_id} onChange={(v) => setH({ ...h, conta_prevista_id: v ?? "" })} /></Field>
+        <Field label="Conta prevista" span={2} help={trava.conta ? "Padrão da operação: não muda neste lançamento" : "A conta por onde o título deve ser pago ou recebido (fluxo de caixa)"}><RefSelect resource="bank_accounts" value={h.conta_prevista_id} disabled={Boolean(trava.conta)} onChange={(v) => setH({ ...h, conta_prevista_id: v ?? "" })} /></Field>
         <Field label="Forma de pagamento" span={3}><NativeSelect value={h.payment_type} disabled={Boolean(id)} onChange={(e) => setH({ ...h, payment_type: e.target.value })}>
           {FORMAS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           {!FORMAS.some(([v]) => v === h.payment_type) && <option value={h.payment_type}>{enumLabel("payment_type", h.payment_type)}</option>}
@@ -173,7 +197,8 @@ export function LancamentoAvulso({ dir, id }: { dir: Dir; id?: string }) {
       </div>
 
       <h3 className="text-xs font-semibold uppercase text-brand-700">Rateio em R$ (natureza, centro de resultado, safra e área)</h3>
-      <RateioEmReais total={liquido} linhas={linhas} onChange={setLinhas} desabilitado={travar} />
+      {textoDoRateioTravado(trava) && <p className="text-[12px] text-amber-800" data-testid="fin-rateio-travado">{textoDoRateioTravado(trava)}</p>}
+      <RateioEmReais total={liquido} linhas={linhas} onChange={mudarLinhas} desabilitado={travar} travados={{ natureza: Boolean(trava.natureza), centro: Boolean(trava.centro) }} />
       {!id && <>
         <h3 className="text-xs font-semibold uppercase text-brand-700">Já pago e anexos</h3>
         <div className="grid grid-cols-12 gap-3">

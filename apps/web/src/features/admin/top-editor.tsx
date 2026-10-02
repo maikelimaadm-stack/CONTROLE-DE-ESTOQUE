@@ -4,6 +4,7 @@ import { CondicoesPermitidasTop } from "./top-condicoes-permitidas";
 import { FiscalFormato3 } from "./top-fiscal-formato3";
 import { AssistenteTipoDeMovimento } from "./top-assistente";
 import { SecaoDoFormato5, ehSecaoDeExtensaoV5 } from "./top-secoes-formato5";
+import { PadroesFinanceirosDaTop } from "./top-padroes-financeiros";
 import * as React from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
@@ -16,9 +17,9 @@ import {
   ABAS_FIXAS_EDITOR_TOP, ATUALIZACOES_ESTOQUE, ATUALIZACOES_FINANCEIRO, CALCULOS_TRIBUTARIOS, ENUM_LABELS, MENSAGEM_FAMILIA_SEM_EXECUCAO_TOP,
   LIMITE_CONDICOES_PERMITIDAS, MODOS_CONFIRMACAO, MODOS_EXECUCAO_TOP, MODOS_FINANCEIRO, MOMENTOS_APROVACAO, MOMENTOS_EFEITO,
   POLITICAS_ALTERACAO, POLITICAS_APROVACAO, POLITICAS_CLIENTE_EM_ATRASO, POLITICAS_DOCUMENTO_SEM_ITENS, POLITICAS_SALDO_NEGATIVO,
-  ROTULOS_SECAO_CONFIGURACAO_TOP, SECOES_EXTENSAO_V5, TOLERANCIA_ATRASO_MAXIMA_DIAS,
+  ROTULOS_SECAO_CONFIGURACAO_TOP, SECAO_FINANCEIRO_PADRAO, SECOES_EXTENSAO_V5, TOLERANCIA_ATRASO_MAXIMA_DIAS,
   configuracaoNeutraTopV4, configuracaoTopParaEdicao, definicaoDaSecaoV5, efeitosAtivadosTop, ehFamiliaDeDocumentoEstoque, exigenciasGeraisDaFamiliaTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, familiaOperacionalDeDocumentoVenda,
-  condicoesQueVoltamPeloPerfilTop, formato5Top, normalizarConfiguracaoTop, normalizarPeloPerfilTop, normalizarRegrasGeraisDaFamiliaTop, perfilDaFamiliaTop, regrasGeraisDaFamiliaTop, regrasGeraisQuePassamAValer, restricoesExecutamTop, tipoOperacao,
+  condicoesQueVoltamPeloPerfilTop, formato5Top, normalizarConfiguracaoTop, normalizarPeloPerfilTop, normalizarRegrasGeraisDaFamiliaTop, perfilDaFamiliaTop, perfilDosPadroesFinanceiros, regrasGeraisDaFamiliaTop, regrasGeraisQuePassamAValer, restricoesExecutamTop, tipoOperacao,
   recusasFiscaisDaFamiliaTop, validarExecucaoTop,
   type AbaEditorTop, type ConfiguracaoComRegrasGeraisTop, type ConfiguracaoComRestricoesTop, type ConfiguracaoTipoOperacaoV2,
   type ConfiguracaoTipoOperacaoV5, type EfeitoExecucaoTop,
@@ -28,7 +29,8 @@ import {
 import {
   CAMINHO_ERRO_RESERVA_ESTOQUE, MensagemCapacidadesTop, ROTULOS_TOP, aplicarNoFormato3, assinaturaRascunho, capacidadesDeExecucao, catalogoDoEditor, configuracaoDoRascunhoParaEnvio,
   configuracaoIlegivelNoEditor, configuracaoInicial, configuracaoInicialV3, configuracaoInicialV4, configuracaoInicialV5, ehConflitoDeConcorrencia, errosDeCampoDoServidor, lerDetalheTop, limiteDeDestinos,
-  matrizRegrasGerais, podeConfigurar, podeConfigurarDestinos, podeConfigurarEmPartes, podeConfigurarFormato5, podeConfigurarRegrasGerais, podeConfigurarReservaEstoque,
+  matrizRegrasGerais, padroesFinanceirosIniciais, padroesFinanceirosParaEnvio, padroesFinanceirosVaziosEmEdicao, podeConfigurar, podeConfigurarDestinos, podeConfigurarEmPartes, podeConfigurarFormato5,
+  podeConfigurarPadroesFinanceiros, podeConfigurarRegrasGerais, podeConfigurarReservaEstoque,
   podeConfigurarRestricoes, useCapacidadesTop, useDestinosPossiveis, valorMinimoAceitavel,
   type CapacidadesExecucaoTop, type DestinoEmEdicao, type EstadoCapacidadesTop, type RascunhoTop
 } from "./top-contrato";
@@ -408,6 +410,11 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
   const restricoes = podeConfigurarRestricoes(capacidades);
   /** TOP-CONFIG-07 — o servidor grava a reserva de estoque na versão (`capabilities.reservaEstoque === 1`). */
   const reservaConfiguravel = podeConfigurarReservaEstoque(capacidades);
+  /**
+   * OPERACOES-01 F9 (decisão 286) — o servidor grava os padrões financeiros da versão (`capabilities.padroesFinanceiros
+   * === 1`) E o editor é o do formato 5 (a pergunta inclui `podeConfigurarFormato5`).
+   */
+  const padroesConfiguraveis = podeConfigurarPadroesFinanceiros(capacidades);
   const idDicaReserva = React.useId();
   /**
    * TOP-CONFIG-08 (decisão 277) — o servidor declarou o bloco `regrasGerais` (legível, formato 4)? Só então o rascunho
@@ -487,6 +494,12 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
      * se a chave É ENVIADA é a gravação.
      */
     ...(detalhe ? (detalhe.reservaEstoque !== null ? { reservaEstoque: detalhe.reservaEstoque } : {}) : { reservaEstoque: false }),
+    /**
+     * OPERACOES-01 F9 — os padrões financeiros, na régua da reserva: os LIDOS na edição (ausentes quando o servidor não
+     * os informou: os campos ficam bloqueados e a chave não vai no corpo), os cinco vazios na criação; nunca declarados
+     * ao abrir. Não depende das capacidades: quem decide se a chave É ENVIADA é a gravação.
+     */
+    ...padroesFinanceirosIniciais(detalhe),
     ...camposDeRestricoes(restricoes, regrasGerais, formato5, detalhe)
   }), [detalhe, restricoes, regrasGerais, formato5]);
 
@@ -631,6 +644,8 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
   const escolherTipo = (familia: string) => {
     mudar({
       codigoBase: familia, destinos: [], destinosDeclarados: false, reservaEstoque: false,
+      // OPERACOES-01 F9: os padrões financeiros também são do tipo (o perfil decide os campos): recomeçam vazios.
+      padroesFinanceiros: padroesFinanceirosVaziosEmEdicao(), padroesDeclarados: false,
       configuracao: configuracaoInicial(null), ...camposDeRestricoes(restricoes, regrasGerais, formato5, null)
     });
     setAba("identificacao");
@@ -692,6 +707,15 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
    */
   const reservaOferecida = reservaConfiguravel && !!FAMILIA_DO_PEDIDO && rascunho.codigoBase === FAMILIA_DO_PEDIDO;
   const reservaIlegivel = reservaOferecida && rascunho.reservaEstoque === undefined;
+  /**
+   * OPERACOES-01 F9 (decisão 286) — os campos dos PADRÕES FINANCEIROS existem? A capacidade declarada (com o editor do
+   * 5), o rascunho no 5 e a família com perfil de padrões (`perfilDosPadroesFinanceiros`, o domínio). Ficam na aba
+   * "Padrões financeiros", embaixo das regras da seção. `padroesIlegiveis`: o detalhe não os informou — os campos ficam
+   * bloqueados e nada sobre eles é enviado (ausente = o servidor preserva).
+   */
+  const padroesOferecidos = liberado && padroesConfiguraveis && !!rascunho.configuracaoV5 && !!rascunho.codigoBase
+    && perfilDosPadroesFinanceiros(rascunho.codigoBase) !== null;
+  const padroesIlegiveis = padroesOferecidos && rascunho.padroesFinanceiros === undefined;
   const bloqueioDaSecao = (efeito: EfeitoExecucaoTop): BloqueioDaSecao =>
     recusasExecucao.some((r) => r.caminho === `execucao.${efeito}` || r.caminho.startsWith(`${efeito}.`)) ? "combinacao_recusada"
       : execucao.suportado && !execucao.runtimeHabilitado ? "execucao_desligada" : null;
@@ -740,6 +764,15 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
        * (`reservaIlegivel`) simplesmente não vai.
        */
       if (liberado && reservaOferecida && rascunho.reservaEstoque !== undefined) base.reservaEstoque = rascunho.reservaEstoque;
+      /**
+       * OPERACOES-01 F9 — `padroesFinanceiros` só viaja com a capacidade declarada, GRAVANDO O 5 (os padrões só valem
+       * numa versão no 5: o servidor recusa o resto) e DECLARADO (o usuário mexeu num padrão; a régua das condições).
+       * Intocados = a chave ausente = o servidor preserva os vigentes e os copia para a versão nova.
+       */
+      if (padroesOferecidos && !padroesIlegiveis && rascunho.padroesFinanceiros && rascunho.padroesDeclarados
+        && envio !== null && formato5Top(envio) && base.configuracao !== undefined) {
+        base.padroesFinanceiros = padroesFinanceirosParaEnvio(rascunho.padroesFinanceiros);
+      }
       if (edicao) return api(`/api/admin/tipos-operacao/${id}`, { method: "PUT", body: { ...base, revisao } });
       return api("/api/admin/tipos-operacao", {
         method: "POST",
@@ -1237,6 +1270,15 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
                 onChange={mudarSecaoDeExtensao} />
             </div>
             <ErroDaSecao erros={errosCampo} caminho={aba} />
+            {/* OPERACOES-01 F9 — embaixo das regras da seção, os PADRÕES da tabela da versão (fora do JSON), só com a
+                capacidade e na família que os usa. Não lidos: bloqueados, e nada sobre eles é enviado. */}
+            {aba === SECAO_FINANCEIRO_PADRAO.nome && padroesOferecidos && (padroesIlegiveis || !rascunho.padroesFinanceiros
+              ? <p data-testid="top-padroes-financeiros-ilegiveis" className="col-span-12 border-t border-slate-200 pt-3 text-[12px] text-amber-700">
+                  Este servidor não informou os padrões financeiros desta versão. Eles ficam bloqueados e nada sobre eles é
+                  enviado ao salvar, para não substituir padrões que não foram lidos.
+                </p>
+              : <PadroesFinanceirosDaTop familia={rascunho.codigoBase} valor={rascunho.padroesFinanceiros} erros={errosCampo}
+                  onChange={(v) => mudar({ padroesFinanceiros: v, padroesDeclarados: true })} />)}
           </CorpoDaSecao>}
 
           {conflito && <p data-testid="top-conflito" className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
@@ -1355,6 +1397,8 @@ function comConfiguracaoNormalizada(r: RascunhoTop, c: ConfiguracaoComRegrasGera
  */
 function abaDoCaminho(caminho: string): ChaveAba {
   if (caminho === "estoque" || caminho === "financeiro" || caminho === "fiscal") return caminho;
+  // OPERACOES-01 F9: os padrões financeiros (a tabela da versão) moram embaixo da aba "Padrões financeiros".
+  if (caminho === "padroesFinanceiros" || caminho.startsWith("padroesFinanceiros.")) return SECAO_FINANCEIRO_PADRAO.nome;
   const extensao = SECOES_EXTENSAO_V5.find((nome) => caminho === nome || caminho.startsWith(`${nome}.`));
   if (extensao !== undefined) return extensao;
   if (caminho === CAMINHO_ERRO_RESERVA_ESTOQUE) return "estoque";

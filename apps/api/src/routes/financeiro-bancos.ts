@@ -480,7 +480,6 @@ export default async function financeiroBancosRoutes(app: FastifyInstance) {
   // ---------- Fluxo e resultado ----------
   app.get("/financeiro/fluxo", async (req) => runService(app, req, "cash_flow.view", async (ctx) => {
     const q = fluxoQuery.parse(req.query);
-    if (q.previstos === "1") throw validation("Os previstos chegam com a provisão pela TOP", [{ path: ["previstos"], message: "Os previstos chegam com a provisão pela TOP" }]);
     const porOrganizacao = !q.empresa_id && q.agrupar_por !== "empresa";
     // Ler movimentos exige a capacidade deles; o fluxo da ORGANIZAÇÃO soma todas as empresas da conta e exige também
     // a capacidade de organização (a mesma porta do saldo).
@@ -488,7 +487,8 @@ export default async function financeiroBancosRoutes(app: FastifyInstance) {
     if (porOrganizacao) requirePermission(ctx, "bank_accounts.view");
     const { de, ate } = await intervalo(ctx, q.de, q.ate);
     const direcoes = (["receivable", "payable"] as const).filter((dir) => hasPermission(ctx, permOf(dir, "view")));
-    return montarFluxo(ctx, { de, ate, agrupamento: q.agrupamento, contas: q.contas ?? null, empresaId: q.empresa_id ?? null, agruparPor: q.agrupar_por, direcoes });
+    // F9 (decisão 286): `previstos=1` traz a série SEPARADA da provisão (os títulos previstos); sem ele, a resposta da F8.
+    return montarFluxo(ctx, { de, ate, agrupamento: q.agrupamento, contas: q.contas ?? null, empresaId: q.empresa_id ?? null, agruparPor: q.agrupar_por, direcoes, previstos: q.previstos === "1" });
   }));
 
   app.get("/financeiro/resultado", async (req) => runService(app, req, "report.dre.view", async (ctx) => {
@@ -502,7 +502,7 @@ export default async function financeiroBancosRoutes(app: FastifyInstance) {
     const q = adiantamentosQuery.parse(req.query);
     const { ctx, direcoes } = await porDirecoes(ctx0, q.direcao);
     const params: unknown[] = [ctx.orgId, direcoes];
-    const where = ["t.organization_id=$1", "t.deleted_at is null", "t.status<>'cancelled'", "t.direction = any($2::text[])", EH_ADIANTAMENTO];
+    const where = ["t.organization_id=$1", "t.deleted_at is null", "t.status not in ('cancelled','previsto')", "t.direction = any($2::text[])", EH_ADIANTAMENTO];
     if (q.pessoa_id) { params.push(q.pessoa_id); where.push(`t.person_id=$${params.length}`); }
     if (q.empresa_id) { params.push(q.empresa_id); where.push(`t.empresa_id=$${params.length}`); }
     where.push(...empresaScope(ctx, "t", params, { ignoreSelected: true }));
@@ -526,7 +526,7 @@ export default async function financeiroBancosRoutes(app: FastifyInstance) {
     const q = titulosDeAdiantamentoQuery.parse(req.query);
     const { ctx } = await porDirecoes(ctx0, q.direcao);
     const params: unknown[] = [ctx.orgId, q.direcao];
-    const where = ["t.organization_id=$1", "t.deleted_at is null", "t.status<>'cancelled'", "t.direction=$2", EH_ADIANTAMENTO];
+    const where = ["t.organization_id=$1", "t.deleted_at is null", "t.status not in ('cancelled','previsto')", "t.direction=$2", EH_ADIANTAMENTO];
     if (q.pessoa_id) { params.push(q.pessoa_id); where.push(`t.person_id=$${params.length}`); }
     if (q.empresa_id) { params.push(q.empresa_id); where.push(`t.empresa_id=$${params.length}`); }
     where.push(...empresaScope(ctx, "t", params, { ignoreSelected: true }));

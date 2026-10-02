@@ -221,7 +221,10 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     // A OPERACOES-01 F6a é a vigésima oitava: a 0044 acrescenta colunas (finalização e aprovação para orçamento do
     // pedido, o vínculo do orçamento de compra) e troca gatilhos de `erp.documentos_compra`, de
     // `erp.documentos_compra_itens` e de `erp.aprovacoes_compra` — nada no recorte que a purga lê.
-    expect(noDisco.length, "44 migrations no repositório").toBe(44);
+    // A OPERACOES-01 F9 é a vigésima nona: a 0045 cria `erp.imoveis_rurais` e `erp.tipos_operacao_versao_financeiro`
+    // (tabelas novas, vazias), acrescenta colunas anuláveis ao financeiro (títulos, baixas, movimentos, naturezas), alarga
+    // o CHECK de situação do título com 'previsto' e acrescenta a guarda do previsto — nada no recorte que a purga lê.
+    expect(noDisco.length, "45 migrations no repositório").toBe(45);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
     expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");
@@ -250,6 +253,7 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     expect(noDisco[41], "e a 42ª é a Central Financeira (OPERACOES-01 F8)").toBe("0042_central_financeira.sql");
     expect(noDisco[42], "e a 43ª é a movimentação interna no documento de estoque (OPERACOES-01 F5a)").toBe("0043_movimentacao_interna_estoque.sql");
     expect(noDisco[43], "e a 44ª é o pedido de compra finalizado e o orçamento de compra (OPERACOES-01 F6a)").toBe("0044_pedido_finalizado_e_orcamento_de_compra.sql");
+    expect(noDisco[44], "e a 45ª é o financeiro pela TOP e o LCDPR (OPERACOES-01 F9)").toBe("0045_financeiro_pela_top_e_lcdpr.sql");
   });
 
   it("as 16 anteriores aplicam, e a 0017 aplica sozinha em seguida", () => {

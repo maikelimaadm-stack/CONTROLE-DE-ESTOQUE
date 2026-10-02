@@ -81,7 +81,7 @@ function perfilPublicado(catalogo: CatalogoTop, familia: string) {
 /** As capacidades do formato 5 com as DUAS seções desta fase — a premissa de todo caso daqui. */
 async function premissaDasSecoes(page: Page): Promise<CatalogoTop> {
   const c = await api<CapacidadesFormato5E2E>(page, "GET", "/api/admin/tipos-operacao/capabilities");
-  expect(c.formato5?.secoes, "premissa: o servidor declara as seções de compras da F6a, depois das da F5a").toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+  expect(c.formato5?.secoes, "premissa: o servidor declara as seções de compras da F6a, depois das da F5a (e antes da da F9)").toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
   return catalogoPublicadoE2E(page);
 }
 

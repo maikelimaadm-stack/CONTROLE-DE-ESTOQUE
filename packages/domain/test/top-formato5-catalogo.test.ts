@@ -44,7 +44,7 @@ import { ehFamiliaDeDocumentoEstoque } from "../src/estoque-documento.js";
  * OPERACOES-01 F4 (decisão 281) — O CATÁLOGO ÚNICO "O QUE CADA TIPO MOSTRA E ACEITA".
  *
  * CT-1 os grupos e os 22 tipos, na ordem do pedido, com a família perguntada ao registry.
- * CT-2 só os 9 tipos cujo documento cita a TOP têm tela; o passo 1 oferece só eles.
+ * CT-2 só os 9 tipos cujo documento cita a TOP e os 3 do Financeiro (F9) têm tela; o passo 1 oferece só eles.
  * CT-3 um perfil por família do registry; as 8 famílias antigas ficam fora do passo 1.
  * CT-4 os perfis derivados — cada um com a premissa de cada predicado de onde ele sai.
  * CT-5 a recusa do formato 5 (e só do 5).
@@ -125,7 +125,7 @@ describe("CT-1 o catálogo: grupos e tipos", () => {
       ["producao_racao", "modulos", "Produção de ração", "estoque.producao_de_racao"],
       ["conta_pagar", "financeiro", "Conta a pagar", "financeiro.conta_a_pagar"],
       ["conta_receber", "financeiro", "Conta a receber", "financeiro.conta_a_receber"],
-      ["movimento_bancario", "financeiro", "Movimento bancário", null],
+      ["movimento_bancario", "financeiro", "Movimento bancário", "financeiro.movimento_bancario"],
     ]);
     expect(CATALOGO_TOP.tipos).toBe(CATALOGO_TIPOS_MOVIMENTO_TOP);
   });
@@ -140,9 +140,10 @@ describe("CT-1 o catálogo: grupos e tipos", () => {
       }
     }
     expect(new Set(familias).size).toBe(familias.length);
-    // 9 com tela + 3 da movimentação interna (F5a, sem tela) + o orçamento de compra (F6a, sem tela até a F6b) + 6 dos
-    // módulos e do financeiro que já existem no registry (sem tela); 3 tipos ainda sem família.
-    expect(familias).toHaveLength(19);
+    // 9 com documento que cita a TOP + 3 da movimentação interna (F5a, sem tela até a F5b) + o orçamento de compra
+    // (F6a, sem tela até a F6b) + 3 do financeiro (F9, com tela) + 4 dos módulos que já existem no registry (sem tela);
+    // 2 tipos ainda sem família (manejo e batelada, F10).
+    expect(familias).toHaveLength(20);
   });
 
   it("CT-1 o catálogo é congelado (nenhum consumidor muda o que o outro vê)", () => {
@@ -158,36 +159,38 @@ describe("CT-1 o catálogo: grupos e tipos", () => {
 // ---------------------------------------------------------------------------------------------------
 
 describe("CT-2 só os tipos cujo documento cita a TOP aparecem para escolha", () => {
-  it("CT-2 as famílias com tela são EXATAMENTE as da matriz das regras gerais (o documento que cita a TOP), menos as três da movimentação interna (F5a) e o orçamento de compra (F6a), ainda sem tela", () => {
+  it("CT-2 as famílias com tela: as da matriz das regras gerais (o documento que cita a TOP), menos as três da movimentação interna (F5a) e o orçamento de compra (F6a), ainda sem tela, e as 3 do Financeiro (F9)", () => {
     expect(MATRIZ_REGRAS_GERAIS_TOP, "a premissa: a matriz tem as 13 famílias com documento").toHaveLength(13);
     const semTelaAinda = ["estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo", "compras.orcamento"];
     for (const f of semTelaAinda) expect(MATRIZ_REGRAS_GERAIS_TOP.some((m) => m.familia === f), `a premissa: ${f} tem documento`).toBe(true);
+    const financeiras = ["financeiro.conta_a_pagar", "financeiro.conta_a_receber", "financeiro.movimento_bancario"];
+    // A premissa: as do Financeiro não têm linha na matriz (não são documento com produto) — a tela delas é o
+    // lançamento avulso da Central Financeira e o "Novo movimento bancário", que escolhem a TOP primeiro.
+    for (const f of financeiras) expect(MATRIZ_REGRAS_GERAIS_TOP.some((m) => m.familia === f), f).toBe(false);
     const comTela = CATALOGO_TIPOS_MOVIMENTO_TOP.filter((t) => t.temTela).map((t) => t.familia);
-    expect(new Set(comTela)).toEqual(new Set(MATRIZ_REGRAS_GERAIS_TOP.map((m) => m.familia).filter((f) => !semTelaAinda.includes(f))));
-    expect(comTela).toHaveLength(9);
+    expect(new Set(comTela)).toEqual(new Set([...MATRIZ_REGRAS_GERAIS_TOP.map((m) => m.familia).filter((f) => !semTelaAinda.includes(f)), ...financeiras]));
+    expect(comTela).toHaveLength(12);
   });
 
-  it("CT-2 os 13 sem tela: orçamento de compra, requisição, consumo, devolução de consumo, os 6 módulos e os 3 do financeiro", () => {
+  it("CT-2 os 10 sem tela: orçamento de compra, requisição, consumo, devolução de consumo e os 6 módulos", () => {
     expect(CATALOGO_TIPOS_MOVIMENTO_TOP.filter((t) => !t.temTela).map((t) => t.chave)).toEqual([
       "orcamento_compra", "requisicao", "consumo", "devolucao_consumo",
       "abastecimento", "manutencao", "ordem_servico", "manejo", "batelada", "producao_racao",
-      "conta_pagar", "conta_receber", "movimento_bancario",
     ]);
   });
 
-  it("CT-2 o passo 1: Vendas (3), Compras (2), Movimentação interna (4); Módulos e Financeiro não aparecem", () => {
+  it("CT-2 o passo 1: Vendas (3), Compras (2), Movimentação interna (4), Financeiro (3); Módulos não aparece", () => {
     const passo1 = tiposParaEscolhaTop(CATALOGO_TOP);
     expect(passo1.map((g) => [g.grupo.chave, g.tipos.map((t) => t.chave)])).toEqual([
       ["vendas", ["orcamento_venda", "pedido_venda", "venda"]],
       ["compras", ["pedido_compra", "compra"]],
       ["movimentacao_interna", ["entrada", "saida", "transferencia", "ajuste"]],
+      ["financeiro", ["conta_pagar", "conta_receber", "movimento_bancario"]],
     ]);
-    // A premissa: os dois grupos que somem EXISTEM no catálogo, com tipos (todos sem tela).
-    for (const g of ["modulos", "financeiro"] as const) {
-      const tipos = CATALOGO_TOP.tipos.filter((t) => t.grupo === g);
-      expect(tipos.length, g).toBeGreaterThan(0);
-      expect(tipos.every((t) => !t.temTela), g).toBe(true);
-    }
+    // A premissa: o grupo que some EXISTE no catálogo, com tipos (todos sem tela).
+    const modulos = CATALOGO_TOP.tipos.filter((t) => t.grupo === "modulos");
+    expect(modulos.length).toBeGreaterThan(0);
+    expect(modulos.every((t) => !t.temTela)).toBe(true);
   });
 
   it("CT-2 ligar um tipo (o que a fase dona faz) o põe no passo 1, no grupo e na ordem dele", () => {
@@ -195,7 +198,7 @@ describe("CT-2 só os tipos cujo documento cita a TOP aparecem para escolha", ()
       ...CATALOGO_TOP,
       tipos: CATALOGO_TOP.tipos.map((t) => (t.chave === "abastecimento" ? { ...t, temTela: true } : t)),
     };
-    expect(tiposParaEscolhaTop(ligado).map((g) => g.grupo.chave)).toEqual(["vendas", "compras", "movimentacao_interna", "modulos"]);
+    expect(tiposParaEscolhaTop(ligado).map((g) => g.grupo.chave)).toEqual(["vendas", "compras", "movimentacao_interna", "modulos", "financeiro"]);
     expect(tiposParaEscolhaTop(ligado)[3]?.tipos.map((t) => t.chave)).toEqual(["abastecimento"]);
   });
 });
@@ -205,8 +208,8 @@ describe("CT-2 só os tipos cujo documento cita a TOP aparecem para escolha", ()
 // ---------------------------------------------------------------------------------------------------
 
 describe("CT-3 um perfil por família do registry", () => {
-  it("CT-3 27 perfis, na ordem do registry", () => {
-    expect(CODIGOS_TIPO_OPERACAO, "a premissa: o registry tem 27 famílias").toHaveLength(27);
+  it("CT-3 28 perfis, na ordem do registry", () => {
+    expect(CODIGOS_TIPO_OPERACAO, "a premissa: o registry tem 28 famílias").toHaveLength(28);
     expect(PERFIS_TIPO_TOP.map((p) => p.familia)).toEqual([...CODIGOS_TIPO_OPERACAO]);
     expect(CATALOGO_TOP.perfis).toBe(PERFIS_TIPO_TOP);
   });
@@ -245,18 +248,19 @@ describe("CT-4 os perfis derivados", () => {
   it("CT-4 venda: todas as abas; exigências do documento de venda", () => {
     expect(predicados(VENDA)).toEqual({ destinos: true, estoqueDoc: false, aprovacao: true, execucao: true, comDocumento: true });
     const p = perfil(VENDA);
-    expect(p.abas).toEqual(["identificacao", "geral", "destinos", "estoque", "financeiro", "fiscal", "aprovacao", "execucao"]);
+    expect(p.abas).toEqual(["identificacao", "geral", "destinos", "estoque", "financeiroPadrao", "financeiro", "fiscal", "aprovacao", "execucao"]);
     expect(rotulos(p)).toEqual(VENDAS);
     expect(p.secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
   });
 
-  it("CT-4 orçamento e pedido de venda: sem Aprovação e sem Execução (o servidor já obriga o padrão)", () => {
+  it("CT-4 orçamento e pedido de venda: sem Aprovação e sem Execução (o servidor já obriga o padrão); Padrões financeiros só no pedido (F9)", () => {
     for (const f of ["vendas.orcamento", "vendas.pedido"]) {
       expect(predicados(f), f).toEqual({ destinos: true, estoqueDoc: false, aprovacao: false, execucao: false, comDocumento: true });
       const p = perfil(f);
-      expect(p.abas, f).toEqual(["identificacao", "geral", "destinos", "estoque", "financeiro", "fiscal"]);
+      const pedido = f === "vendas.pedido";
+      expect(p.abas, f).toEqual(["identificacao", "geral", "destinos", "estoque", ...(pedido ? ["financeiroPadrao"] : []), "financeiro", "fiscal"]);
       expect(rotulos(p), f).toEqual(VENDAS);
-      expect(p.secoesNeutras, f).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+      expect(p.secoesNeutras, f).toEqual(pedido ? ["destino", "fluxo", "fluxoCompra", "divergenciaPedido"] : ["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
     }
   });
 
@@ -265,7 +269,8 @@ describe("CT-4 os perfis derivados", () => {
     expect(predicados(f)).toEqual({ destinos: true, estoqueDoc: false, aprovacao: true, execucao: false, comDocumento: true });
     expect(perfil(f).abas).toEqual(["identificacao", "geral", "destinos", "estoque", "fluxoCompra", "financeiro", "fiscal", "aprovacao"]);
     expect(rotulos(perfil(f))).toEqual(COMPRAS);
-    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "divergenciaPedido"]);
+    // Os padrões financeiros e a provisão do pedido de compra finalizado são da F9b (a situação nasce na F6a).
+    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "divergenciaPedido", "financeiroPadrao"]);
   });
 
   it("CT-4 compra: sem Próximas operações; com Aprovação e Execução", () => {
@@ -273,7 +278,7 @@ describe("CT-4 os perfis derivados", () => {
     expect(predicados(f)).toEqual({ destinos: false, estoqueDoc: false, aprovacao: true, execucao: true, comDocumento: true });
     expect(perfil(f).abas).toEqual(["identificacao", "geral", "estoque", "divergenciaPedido", "financeiro", "fiscal", "aprovacao", "execucao"]);
     expect(rotulos(perfil(f))).toEqual(COMPRAS);
-    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra"]);
+    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "financeiroPadrao"]);
   });
 
   it("CT-4 as 4 espécies do documento de estoque: Identificação, Geral, Estoque (+ Destino na saída, F5a) e Aprovação; só Observação; Estoque, Financeiro e Fiscal no padrão", () => {
@@ -283,7 +288,7 @@ describe("CT-4 os perfis derivados", () => {
       const saida = f === "estoque.saida";
       expect(p.abas, f).toEqual(["identificacao", "geral", "estoque", ...(saida ? ["destino"] : []), "aprovacao"]);
       expect(rotulos(p), f).toEqual(["Observação"]);
-      expect(p.secoesNeutras, f).toEqual(["estoque", "financeiro", "fiscal", ...(saida ? [] : ["destino"]), "fluxo", "fluxoCompra", "divergenciaPedido"]);
+      expect(p.secoesNeutras, f).toEqual(["estoque", "financeiro", "fiscal", ...(saida ? [] : ["destino"]), "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
     }
   });
 
@@ -293,16 +298,21 @@ describe("CT-4 os perfis derivados", () => {
     expect(perfil(f).abas).toEqual(["identificacao", "geral", "estoque", "financeiro", "fiscal"]);
     expect(perfil(f).exigencias).toEqual(EXIGENCIAS_GERAIS_SEM_DOCUMENTO_TOP);
     expect(rotulos(perfil(f))).toEqual(["Parceiro", "Centro de resultado", "Observação", "Transportadora"]);
-    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
   });
 
-  it("CT-4 as 14 famílias sem documento têm o mesmo perfil (abas de hoje, exigências genéricas)", () => {
+  it("CT-4 as 15 famílias sem documento têm o mesmo perfil (abas de hoje, exigências genéricas); as 4 do financeiro (F9) com Padrões financeiros", () => {
     const semDocumento = PERFIS_TIPO_TOP.filter((p) => !MATRIZ_REGRAS_GERAIS_TOP.some((m) => m.familia === p.familia));
-    expect(semDocumento).toHaveLength(14);
+    expect(semDocumento).toHaveLength(15);
+    const comPadroes = ["compras.solicitacao", "financeiro.conta_a_pagar", "financeiro.conta_a_receber", "financeiro.movimento_bancario"];
     for (const p of semDocumento) {
-      expect(p.abas, p.familia).toEqual(["identificacao", "geral", "estoque", "financeiro", "fiscal"]);
+      const usa = comPadroes.includes(p.familia);
+      expect(p.abas, p.familia).toEqual(["identificacao", "geral", "estoque", ...(usa ? ["financeiroPadrao"] : []), "financeiro", "fiscal"]);
       expect(p.exigencias, p.familia).toEqual(EXIGENCIAS_GERAIS_SEM_DOCUMENTO_TOP);
+      expect(p.secoesNeutras, p.familia).toEqual(usa ? ["destino", "fluxo", "fluxoCompra", "divergenciaPedido"] : ["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
     }
+    // A premissa: as quatro estão mesmo entre as sem documento.
+    expect(semDocumento.filter((p) => comPadroes.includes(p.familia))).toHaveLength(4);
   });
 
   it("CT-4 toda aba de perfil é conhecida (fixa ou seção de extensão do produto) e toda exigência é uma das quatro", () => {
@@ -446,10 +456,11 @@ describe("CT-5 o servidor recusa no 5 o que o tipo não aceita", () => {
     expect(recusaDasCondicoesDoPerfilTop(VENDA, c, 1, semFinanceiroNaVenda)).not.toBeNull();
   });
 
-  it("CT-5 os rótulos das seções: os seis de hoje e os das seções de extensão (F5a e F6a), um por seção comparada", () => {
+  it("CT-5 os rótulos das seções: os seis de hoje e os das seções de extensão (F5a, F6a e F9), um por seção comparada", () => {
     expect(ROTULOS_SECAO_CONFIGURACAO_TOP).toEqual({
       geral: "Geral", estoque: "Estoque", financeiro: "Financeiro", fiscal: "Fiscal", aprovacao: "Aprovação", execucao: "Execução",
       destino: "Destino", fluxo: "Fluxo", fluxoCompra: "Fluxo de compra", divergenciaPedido: "Divergência com o pedido",
+      financeiroPadrao: "Padrões financeiros",
     });
     expect(Object.keys(ROTULOS_SECAO_CONFIGURACAO_TOP)).toEqual([...SECOES_CONFIGURACAO_TOP_V5]);
   });

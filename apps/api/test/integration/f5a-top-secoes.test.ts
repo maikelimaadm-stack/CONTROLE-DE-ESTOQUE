@@ -121,7 +121,7 @@ describe("FS-0 — premissas: as famílias do registry, o neutro do domínio e o
     expect(neutro.fluxo, "Fluxo: consumo direto, atende em parte").toEqual(NEUTRO_FLUXO);
     const r = await c.ligada.inject({ method: "GET", url: "/api/admin/tipos-operacao/capabilities", headers: c.h.headers() });
     expect(r.statusCode, r.body).toBe(200);
-    expect((j(r).formato5 as { secoes: unknown }).secoes, "o servidor lê e grava as duas (e as de compras da F6a)").toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+    expect((j(r).formato5 as { secoes: unknown }).secoes, "o servidor lê e grava as duas (e as de compras da F6a e a da F9)").toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
   });
 });
 

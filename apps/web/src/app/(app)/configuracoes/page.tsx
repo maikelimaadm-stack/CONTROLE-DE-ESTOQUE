@@ -57,7 +57,8 @@ function Inner() {
       // Naturezas · Centros de Resultado · Plano de Contas, nesta ordem (decisão 250)
       res("configuracoes.financeiro.financial-categories", "financial_categories"), res("configuracoes.financeiro.cost-centers", "cost_centers"), res("configuracoes.financeiro.chart-accounts", "chart_accounts"),
       res("configuracoes.financeiro.title-types", "title_types"), res("configuracoes.financeiro.payment-methods", "payment_methods"), res("configuracoes.financeiro.condicoes-pagamento", "condicoes_pagamento"), res("configuracoes.financeiro.financial-freezes", "financial_freezes"),
-      tab("configuracoes.financeiro.naturezas-baixa", scroll(<NaturezasPadraoDaBaixa />))
+      tab("configuracoes.financeiro.naturezas-baixa", scroll(<NaturezasPadraoDaBaixa />)),
+      res("configuracoes.financeiro.imoveis-rurais", "imoveis_rurais")
     ]} />),
     tab("configuracoes.pecuaria", <ViewSegment tabs={[
       res("configuracoes.pecuaria.animal-categories", "animal_categories"), res("configuracoes.pecuaria.identification-types", "identification_types"), res("configuracoes.pecuaria.weight-parameters", "weight_parameters"), res("configuracoes.pecuaria.fodders", "fodders"),

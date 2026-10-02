@@ -30,6 +30,7 @@
   "fuel_supplies": "frota_ativos",
   "grazing_modules": "pecuaria",
   "herd_lots": "pecuaria",
+  "imoveis_rurais": "financeiro",
   "input_entries": "estoque",
   "invoices": "estoque",
   "journal_entries": "fiscal",

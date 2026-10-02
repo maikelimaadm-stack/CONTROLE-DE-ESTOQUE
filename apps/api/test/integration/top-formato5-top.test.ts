@@ -59,10 +59,14 @@ const MSG = {
 } as const;
 const recusaDoPerfil = (caminho: string, mensagem: string) => ({ motivo: "combinacao_nao_suportada", caminho, mensagem });
 
-/** As 9 famílias cujo documento cita a TOP — as únicas com tela no passo 1 (plano F4 §1.2.4), escritas à mão. */
+/**
+ * As 9 famílias cujo documento cita a TOP (plano F4 §1.2.4) e as 3 do Financeiro (F9, decisão 286: o lançamento avulso
+ * e o movimento bancário escolhem a TOP primeiro) — as únicas com tela no passo 1, escritas à mão.
+ */
 const FAMILIAS_COM_TELA = [
   "vendas.orcamento", "vendas.pedido", "vendas.venda", "compras.pedido", "compras.compra",
   "estoque.entrada", "estoque.saida", "estoque.transferencia", "estoque.ajuste",
+  "financeiro.conta_a_pagar", "financeiro.conta_a_receber", "financeiro.movimento_bancario",
 ];
 
 // ─────────────── testemunhas ───────────────
@@ -135,15 +139,15 @@ async function condicoesNoBanco(topId: string): Promise<string[]> {
 // T5-1
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
 describe("T5-1 — capacidades: o bloco formato5 na raiz, com o catálogo do domínio", () => {
-  it("T5-1 formato5 = {suportado, versaoSchema 5, secoes [destino, fluxo, fluxoCompra, divergenciaPedido], leituraDoDetalhe, catalogo} depois de regrasGerais; os blocos de hoje iguais, nas duas instâncias", async () => {
+  it("T5-1 formato5 = {suportado, versaoSchema 5, secoes [destino, fluxo, fluxoCompra, divergenciaPedido, financeiroPadrao], leituraDoDetalhe, catalogo} depois de regrasGerais; os blocos de hoje iguais, nas duas instâncias", async () => {
     for (const [app, ligado] of [[c.h.app, false], [c.ligada, true]] as const) {
       const r = await app.inject({ method: "GET", url: "/api/admin/tipos-operacao/capabilities", headers: c.h.headers() });
       expect(r.statusCode, r.body).toBe(200);
       const d = j(r);
       // O bloco novo: o catálogo é o MESMO do domínio (fonte única), serializado.
-      // OPERACOES-01 F5a (decisão 282) e F6a (decisão 283): as seções Destino, Fluxo, Fluxo de compra e Divergência saem
-      // da lista do domínio, nesta ordem (nenhum código da rota mudou).
-      expect(d.formato5).toEqual({ suportado: true, versaoSchema: 5, secoes: ["destino", "fluxo", "fluxoCompra", "divergenciaPedido"], leituraDoDetalhe: "formato_gravado", catalogo: JSON.parse(JSON.stringify(CATALOGO_TOP)) });
+      // OPERACOES-01 F5a (decisão 282), F6a (decisão 283) e F9 (decisão 286): as seções Destino, Fluxo, Fluxo de compra,
+      // Divergência e Padrões financeiros saem da lista do domínio, nesta ordem (nenhum código da rota mudou).
+      expect(d.formato5).toEqual({ suportado: true, versaoSchema: 5, secoes: ["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"], leituraDoDetalhe: "formato_gravado", catalogo: JSON.parse(JSON.stringify(CATALOGO_TOP)) });
       const chaves = Object.keys(d);
       expect(chaves.indexOf("formato5"), "na RAIZ, depois de regrasGerais").toBeGreaterThan(chaves.indexOf("regrasGerais"));
       expect(chaves.indexOf("regrasGerais"), "premissa: regrasGerais está na raiz").toBeGreaterThan(-1);
@@ -158,7 +162,7 @@ describe("T5-1 — capacidades: o bloco formato5 na raiz, com o catálogo do dom
       expect(d.destinos).toMatchObject({ suportado: true, emPartes: 1 });
 
       // O catálogo PUBLICADO é legível pelo leitor estrito do domínio (o que o editor usa) e diz o que a SPEC diz:
-      // os 5 grupos, os 9 tipos com tela (à mão) e um perfil por família do registry.
+      // os 5 grupos, os 12 tipos com tela (à mão) e um perfil por família do registry.
       const catalogo = lerCatalogoTop((d.formato5 as { catalogo: unknown }).catalogo);
       expect(catalogo, "o leitor estrito aceita o catálogo publicado").not.toBeNull();
       expect(catalogo!.grupos.map((g) => g.chave)).toEqual(["vendas", "compras", "movimentacao_interna", "modulos", "financeiro"]);
@@ -166,11 +170,12 @@ describe("T5-1 — capacidades: o bloco formato5 na raiz, com o catálogo do dom
       expect(catalogo!.tipos, "premissa: há tipos declarados SEM tela (a fase que cria a tela os liga)").toHaveLength(22);
       expect(catalogo!.perfis.map((p) => p.familia)).toEqual([...CODIGOS_TIPO_OPERACAO]);
     }
-    // /familias continua o registry INTEIRO (o catálogo não o recorta): as 27 famílias (F5a: + requisição de material,
-    // consumo e devolução de consumo; F6a: + compras.orcamento — todas ainda sem tela), com ou sem tela.
-    expect(CODIGOS_TIPO_OPERACAO, "premissa: o registry tem 27 famílias").toHaveLength(27);
-    expect(CODIGOS_TIPO_OPERACAO, "premissa: o registry tem as três famílias da movimentação interna e o orçamento de compra")
-      .toEqual(expect.arrayContaining(["estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo", "compras.orcamento"]));
+    // /familias continua o registry INTEIRO (o catálogo não o recorta): as 28 famílias (F5a: + requisição de material,
+    // consumo e devolução de consumo; F6a: + compras.orcamento — ainda sem tela; F9: + financeiro.movimento_bancario,
+    // com tela), com ou sem tela.
+    expect(CODIGOS_TIPO_OPERACAO, "premissa: o registry tem 28 famílias").toHaveLength(28);
+    expect(CODIGOS_TIPO_OPERACAO, "premissa: o registry tem as três famílias da movimentação interna, o orçamento de compra e o movimento bancário")
+      .toEqual(expect.arrayContaining(["estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo", "compras.orcamento", "financeiro.movimento_bancario"]));
     const f = await c.ligada.inject({ method: "GET", url: "/api/admin/tipos-operacao/familias", headers: c.h.headers() });
     expect(f.statusCode, f.body).toBe(200);
     expect((j(f).items as { codigo: string }[]).map((x) => x.codigo)).toEqual([...CODIGOS_TIPO_OPERACAO]);

@@ -492,11 +492,11 @@ describe("MI-6 recusasDoFluxoDoConsumo", () => {
 describe("MI-7 os perfis, a recusa do formato 5 e o catálogo", () => {
   it("MI-7 os perfis das três novas e da saída", () => {
     expect(perfil(REQUISICAO).abas).toEqual(["identificacao", "geral", "estoque", "destino", "aprovacao"]);
-    expect(perfil(REQUISICAO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+    expect(perfil(REQUISICAO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
     expect(perfil(CONSUMO).abas).toEqual(["identificacao", "geral", "estoque", "destino", "fluxo", "aprovacao"]);
-    expect(perfil(CONSUMO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "fluxoCompra", "divergenciaPedido"]);
+    expect(perfil(CONSUMO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
     expect(perfil(DEVOLUCAO).abas).toEqual(["identificacao", "geral", "estoque", "aprovacao"]);
-    expect(perfil(DEVOLUCAO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+    expect(perfil(DEVOLUCAO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
     expect(perfil(SAIDA).abas).toEqual(["identificacao", "geral", "estoque", "destino", "aprovacao"]);
     for (const f of [REQUISICAO, CONSUMO, DEVOLUCAO]) expect(perfil(f).exigencias.map((e) => e.rotulo), f).toEqual(["Observação"]);
   });
@@ -504,7 +504,7 @@ describe("MI-7 os perfis, a recusa do formato 5 e o catálogo", () => {
   it("MI-7 entrada, transferência e ajuste: sem Destino e sem Fluxo (as duas no padrão)", () => {
     for (const f of [ENTRADA, "estoque.transferencia", "estoque.ajuste"]) {
       expect(perfil(f).abas, f).toEqual(["identificacao", "geral", "estoque", "aprovacao"]);
-      expect(perfil(f).secoesNeutras, f).toEqual(["estoque", "financeiro", "fiscal", "destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+      expect(perfil(f).secoesNeutras, f).toEqual(["estoque", "financeiro", "fiscal", "destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
     }
   });
 

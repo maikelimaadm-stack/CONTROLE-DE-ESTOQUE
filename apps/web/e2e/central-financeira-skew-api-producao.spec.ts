@@ -49,7 +49,9 @@ async function perguntarABase(page: Page): Promise<Mundo> {
   expect([200, 404], "a base ou declara a capacidade ou não conhece a rota — outro código é defeito, não skew").toContain(r.status());
   let mundo: Mundo = "legado";
   if (r.status() === 200) {
-    expect(await r.json(), "a base declara a Central na forma e versão exatas").toEqual({ centralFinanceira: 1 });
+    // OPERACOES-01 F9 (decisão 286): a base que já tem a F9 declara também `financeiroPelaTop: 1` na MESMA resposta —
+    // as duas formas exatas, e nenhuma outra.
+    expect([{ centralFinanceira: 1 }, { centralFinanceira: 1, financeiroPelaTop: 1 }], "a base declara a Central na forma e versão exatas").toContainEqual(await r.json());
     mundo = "central";
   }
   console.log(`[skew] OPERACOES-01 F8 · K-1 · a base responde ${r.status()} a GET /api/financeiro/capacidades → mundo ${mundo}`);

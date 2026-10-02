@@ -317,7 +317,7 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-333 | Conta Bancaria | `/cadastros/bank_accounts/new` | 16 | 0 | 0 | 15 | TESTADO |
 | SCR-335 | Contas Bancárias | `/cadastros/bank_accounts/[id]` | 16 | 0 | 0 | 15 | TESTADO |
 | SCR-336 | Saldo Inicial- Contas | `/financeiro/saldo-inicial/new` | 12 | 0 | 4 | — | IMPLEMENTADO |
-| SCR-338 | Categoria Financeira | `/cadastros/financial_categories/[id]` | 8 | 0 | 0 | 9 | TESTADO |
+| SCR-338 | Categoria Financeira | `/cadastros/financial_categories/[id]` | 8 | 0 | 0 | 10 | TESTADO |
 | SCR-340 | Inscrições Estaduais | `/fiscal/[id]` | 26 | 0 | 5 | — | NÃO INICIADO |
 | SCR-341 | Sincronização DFe | `/fiscal/new` | 2 | 0 | 0 | — | NÃO INICIADO |
 | SCR-342 | Sincronização NFS-e | `/fiscal/new` | 2 | 0 | 0 | — | NÃO INICIADO |
