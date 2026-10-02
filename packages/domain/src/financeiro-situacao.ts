@@ -2,10 +2,19 @@ import { D, DomainError, money } from "@agro/shared";
 
 /**
  * Situação do título na Central Financeira (decisão 285). "A vencer" e "vencido" são CALCULADOS pela data (o banco
- * guarda só `open`); `previsto` existe desde já para a provisão pela TOP (F9) e hoje nenhum título chega nele.
+ * guarda só `open`). `previsto` é o título da PROVISÃO pela TOP (F9, decisão 286; `status = 'previsto'`, 0045): fora
+ * das baixas e das listas padrão, só nasce quando uma TOP no formato 5 liga a provisão (`financeiro-provisao.ts`).
  */
 export const SITUACOES_TITULO = ["a_vencer", "vencido", "parcial", "baixado", "previsto", "cancelado"] as const;
 export type SituacaoTitulo = (typeof SITUACOES_TITULO)[number];
+
+/**
+ * As situações da LISTA PADRÃO da Central (sem filtro de situação): tudo menos o cancelado e o previsto — o previsto é
+ * promessa de caixa, não lançamento, e aparece só pedido (o cartão "Previstos" ou a situação "Previsto").
+ */
+export const SITUACOES_TITULO_DA_LISTA: readonly SituacaoTitulo[] = Object.freeze(
+  SITUACOES_TITULO.filter((s) => s !== "cancelado" && s !== "previsto"),
+);
 
 /** Situação exibida a partir do `status` gravado e do vencimento. Status desconhecido é erro, nunca "a vencer". */
 export function situacaoDoTitulo(t: { status: string; dueDate: string }, hoje: string): SituacaoTitulo {
@@ -19,7 +28,7 @@ export function situacaoDoTitulo(t: { status: string; dueDate: string }, hoje: s
   }
 }
 
-/** Cartões do topo da lista de títulos (também filtram). `previstos` fica vazio até a F9. */
+/** Cartões do topo da lista de títulos (também filtram). `previstos` conta os títulos previstos da provisão (F9). */
 export const CARTOES_TITULO = ["vencidos", "vence_hoje", "a_vencer", "pagos_no_periodo", "previstos"] as const;
 export type CartaoTitulo = (typeof CARTOES_TITULO)[number];
 

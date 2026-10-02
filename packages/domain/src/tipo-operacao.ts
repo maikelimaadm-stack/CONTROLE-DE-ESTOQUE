@@ -156,6 +156,9 @@ export const TIPOS_OPERACAO: readonly TipoOperacao[] = Object.freeze([
   // receber" era UMA string para DUAS operações com efeito financeiro oposto.
   T("financeiro.conta_a_pagar", "financeiro", variante("erp.financial_titles", "direction", "payable")),
   T("financeiro.conta_a_receber", "financeiro", variante("erp.financial_titles", "direction", "receivable")),
+  // OPERACOES-01 F9 (decisão 286): o movimento bancário é uma operação só (a tabela inteira). O "Novo movimento
+  // bancário" cita a TOP desde a F9 (o lançamento escolhe a TOP primeiro, e ela preenche os padrões).
+  T("financeiro.movimento_bancario", "financeiro", entidade("erp.bank_movements")),
 
   // ---------- Vendas ----------
   // Mesma tabela, três etapas comerciais distintas (`kind`). Também vinham numa string só.

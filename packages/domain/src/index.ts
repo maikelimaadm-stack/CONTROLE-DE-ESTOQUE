@@ -30,3 +30,6 @@ export * from "./resources/index.js";
 export * from "./tipo-operacao-secoes-v5.js";
 export * from "./tipo-operacao-catalogo.js";
 export * from "./financeiro-central.js";
+// OPERACOES-01 F9 (decisão 286): a seção "Padrões financeiros" do formato 5 (a provisão, os padrões e o LCDPR saem
+// pelo barril da Central Financeira).
+export * from "./tipo-operacao-secao-financeiro-padrao.js";

@@ -323,11 +323,21 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   },
   {
     codigo: "ERP-FINANCEIRO-MOVIMENTO-BANCARIO", tabela: "erp.bank_movements", nome: "Movimento Bancário", modulo: "FINANCEIRO", natureza: "entidade", idGlobal: true, rota: "/financeiro/movimentos/:id",
+    top: "financeiro.movimento_bancario",
     descricao: "Lançamento em conta bancária (transferência, tarifa, aplicação)."
   },
   {
     codigo: "ERP-FINANCEIRO-IMPORTACAO-OFX", tabela: "erp.ofx_imports", nome: "Importação OFX", modulo: "FINANCEIRO", natureza: "entidade", idGlobal: true, rota: "/financeiro/ofx/:id",
     descricao: "Importação de extrato bancário para conciliação. Pertence à conta bancária, não a uma empresa."
+  },
+  // OPERACOES-01 F9 (decisão 286): o imóvel rural do LCDPR e os padrões financeiros da versão da TOP (0045).
+  {
+    codigo: "ERP-FINANCEIRO-IMOVEL-RURAL", tabela: "erp.imoveis_rurais", nome: "Imóvel Rural", modulo: "FINANCEIRO", natureza: "entidade", idGlobal: false,
+    descricao: "Imóvel rural do LCDPR (nome, CIB/NIRF, CAEPF, IE, tipo de exploração, % de participação), por empresa; o padrão da empresa vai para a baixa e o movimento."
+  },
+  {
+    codigo: "ERP-FINANCEIRO-PADROES-TOP", tabela: "erp.tipos_operacao_versao_financeiro", nome: "Padrões Financeiros da Versão da TOP", modulo: "FINANCEIRO", natureza: "linha", idGlobal: false,
+    descricao: "Padrões financeiros de uma versão de TOP (natureza, centro, tipo de título, forma, conta). Imutável como a versão."
   },
 
   // ---------- Vendas ----------

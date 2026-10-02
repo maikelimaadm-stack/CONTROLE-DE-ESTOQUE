@@ -39,6 +39,12 @@
  * o comportamento de hoje — nenhuma regra nova vale numa TOP até alguém ligá-la, TOP por TOP.
  */
 
+// As seções das fases. Cada arquivo de seção importa deste SÓ TIPOS (`import type`): este arquivo importa o dele
+// para montar a lista, e um VALOR importado de volta faria o ciclo existir em tempo de execução (quem fosse avaliado
+// primeiro leria o outro ainda não inicializado).
+// OPERACOES-01 F9 (decisão 286):
+import { SECAO_FINANCEIRO_PADRAO } from "./tipo-operacao-secao-financeiro-padrao.js";
+
 /**
  * As chaves de raiz que o formato 4 já usa. Uma seção de extensão NUNCA tem um destes nomes: colidir
  * reescreveria uma seção de hoje com o leitor de outra. É a lista `["versaoSchema", ...SECOES_CONFIGURACAO_TOP_V2]`
@@ -108,10 +114,13 @@ export const definirSecaoV5 = <const N extends string, T extends object>(
 ): DefinicaoSecaoV5<N extends ChaveRaizReservadaTop ? never : N, T> => Object.freeze(d);
 
 /**
- * A LISTA. VAZIA NA F4 — cada fase F5 a F10 acrescenta a SUA definição aqui (uma linha + o import) e mais nada no
- * leitor. A ordem é a das abas no editor (depois de Estoque) e a da auditoria (depois de Execução).
+ * A LISTA. Nasceu VAZIA na F4 — cada fase F5 a F10 acrescenta a SUA definição aqui (uma linha + o import) e mais nada
+ * no leitor. A ordem é a das abas no editor (depois de Estoque) e a da auditoria (depois de Execução).
  */
-export const DEFINICOES_SECOES_V5 = [] as const satisfies readonly DefinicaoSecaoV5[];
+export const DEFINICOES_SECOES_V5 = [
+  // OPERACOES-01 F9 (decisão 286): os padrões financeiros e a provisão (venda, pedido, financeiro, solicitação).
+  SECAO_FINANCEIRO_PADRAO,
+] as const satisfies readonly DefinicaoSecaoV5[];
 export type DefinicoesSecoesV5 = typeof DEFINICOES_SECOES_V5;
 
 /** O nome de cada seção de extensão (`never` na F4). */

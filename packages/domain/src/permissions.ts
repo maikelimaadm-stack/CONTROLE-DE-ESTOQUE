@@ -51,6 +51,8 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   R("bank_accounts", "Contas Bancárias", "Cadastros Base > Financeiros"),
   R("opening_movements", "Saldo Inicial", "Cadastros Base > Financeiros"),
   R("financial_categories", "Naturezas", "Cadastros Base > Financeiros"),
+  // OPERACOES-01 F9 (decisão 286): o imóvel rural do LCDPR, cadastro DE EMPRESA (o escopo é o do financeiro).
+  R("imoveis_rurais", "Imóveis rurais", "Cadastros Base > Financeiros"),
   R("nfe_issuers", "Emissores NFe", "Cadastros Base > Fiscais"),
   R("dfe_sync", "Sinc. DFe", "Cadastros Base > Fiscais"),
   R("nfse_sync", "Sinc. NFS-e", "Cadastros Base > Fiscais"),

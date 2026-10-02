@@ -128,6 +128,8 @@ const RECURSOS_POR_MODULO: Readonly<Record<string, readonly string[]>> = {
     "entradas_estoque", "saidas_estoque", "transferencias_estoque", "ajustes_estoque"
   ],
   financeiro: [
+    // OPERACOES-01 F9 (decisão 286): o imóvel rural do LCDPR é da empresa (RLS por empresa, FK composta).
+    "imoveis_rurais",
     "opening_movements", "payables", "receivables", "bank_movements", "cash_flow", "ofx_imports",
     "ofx_report", "contracts", "budget_plannings", "financial_freezes", "movement_sheets",
     "dashboard.financial", "dashboard.cash_book",
