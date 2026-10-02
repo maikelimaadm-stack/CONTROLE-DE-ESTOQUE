@@ -55,7 +55,9 @@ describe("CO-D1 famílias do documento de compra", () => {
     expect(validarRegistroTipoOperacao()).toEqual([]);
   });
   it("espécie desconhecida, vazia ou ausente não tem família (fail-closed)", () => {
-    for (const x of ["orcamento", "", null, undefined, "sale"]) expect(familiaOperacionalDeDocumentoCompra(x)).toBeUndefined();
+    for (const x of ["", null, undefined, "sale", "budget", "Orcamento"]) expect(familiaOperacionalDeDocumentoCompra(x)).toBeUndefined();
+    // OPERACOES-01 F6a (decisão 283): "orcamento" passou a ser espécie do documento de compra, com família própria.
+    expect(familiaOperacionalDeDocumentoCompra("orcamento")).toBe("compras.orcamento");
   });
 });
 
@@ -207,10 +209,10 @@ describe("CO-D5 cliente em atraso não vale para compras", () => {
 });
 
 describe("CO-D6 permissões, módulo, rótulos e ID Global", () => {
-  it("pedidos_compra e compras: CRUD em Operacional > Compras, módulo compras; só compras aprova (TOP-CONFIG-08)", () => {
-    // O pedido não é confirmado (é recebido em outro documento), então não tem o que aprovar: só a compra ganha `approve`.
+  it("pedidos_compra e compras: CRUD em Operacional > Compras, módulo compras; a compra e (F6a) o pedido aprovam", () => {
+    // TOP-CONFIG-08: a compra aprova antes de confirmar. OPERACOES-01 F6a (decisão 283): o pedido aprova ao FINALIZAR.
     for (const [key, label, actions] of [
-      ["pedidos_compra", "Pedidos de Compra", ["view", "create", "edit", "delete"]],
+      ["pedidos_compra", "Pedidos de Compra", ["view", "create", "edit", "delete", "approve"]],
       ["compras", "Compras", ["view", "create", "edit", "delete", "approve"]]
     ] as const) {
       const r = PERMISSION_RESOURCES.find((x) => x.key === key);

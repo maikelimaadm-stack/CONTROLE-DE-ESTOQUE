@@ -681,23 +681,27 @@ registry de que TABELA COMERCIAL cada família é variante — `erp.sales_docume
 3. **destino não pode ser da MESMA família da origem** — "deste pedido gere outro pedido" não é
    conversão, é cópia de documento: outra funcionalidade, com outras perguntas, que esta fatia não
    implementa;
-4. **em compras, só a aresta que tem serviço: `compras.pedido → compras.compra`** (decisão 268). A compra
-   não converte (não existe rota de conversão a partir dela) e o pedido não nasce de conversão; qualquer
-   outra aresta de compras seria o botão sem serviço da regra 1. A aresta é escrita em ESPÉCIES (o dado que
-   o banco persiste), não em códigos de família — não é uma segunda lista, e renomear a família no registry
-   não a desfaz. Em vendas esta regra não existe e nada mudou.
+4. **em compras, só as arestas que têm serviço: `compras.pedido → compras.compra` (decisão 268) e
+   `compras.pedido → compras.orcamento` (decisão 283)** — o recebimento, que copia os itens com a origem e
+   consome o saldo, e o orçamento de compra, que nasce do pedido aprovado para orçamento por vínculo próprio,
+   sem consumir saldo. A compra e o orçamento não convertem (não existe rota de conversão a partir deles; o
+   vencedor leva preços ao pedido, não gera documento) e o pedido não nasce de conversão; qualquer outra aresta
+   de compras seria o botão sem serviço da regra 1. As arestas são uma LISTA congelada escrita em ESPÉCIES (o
+   dado que o banco persiste; `ARESTAS_EXECUTAVEIS_EM_COMPRAS`, `packages/domain/src/tipo-operacao-destinos.ts:133`),
+   não em códigos de família — não é uma segunda lista, e renomear a família no registry não a desfaz. Em
+   vendas esta regra não existe e nada mudou.
 
 Os dois grafos, hoje:
 
 | Tabela | Arestas que o produto executa |
 | --- | --- |
 | `erp.sales_documents` | qualquer par de famílias DIFERENTES entre `vendas.orcamento`, `vendas.pedido` e `vendas.venda` (a organização escolhe quais habilita) |
-| `erp.documentos_compra` | só `compras.pedido → compras.compra`; `compras.solicitacao` mora em outra tabela e não entra no grafo |
+| `erp.documentos_compra` | `compras.pedido → compras.compra` e `compras.pedido → compras.orcamento` (decisão 283); `compras.solicitacao` mora em outra tabela e não entra no grafo |
 
 O que **não** existe, deliberadamente: nenhuma ordem obrigatória entre as famílias de VENDAS. Orçamento
 pode apontar direto para venda, pulando o pedido, porque isso é decisão da organização — e era exatamente
-o que a cadeia fixa no código impedia. Compras tem uma aresta só porque só uma tem serviço atrás; quando
-outra ganhar serviço (solicitação → pedido, por exemplo), ela entra na regra 4, não numa lista.
+o que a cadeia fixa no código impedia. Compras tem só as arestas que têm serviço atrás; quando outra ganhar
+serviço (solicitação → pedido, por exemplo), ela entra em `ARESTAS_EXECUTAVEIS_EM_COMPRAS` (regra 4).
 
 O banco recusa, por check, o **laço sobre a própria TOP** (`destino_tipo_operacao_id <>
 origem_tipo_operacao_id`): é o único caso de ciclo sempre absurdo. Ciclos mais longos entre TOPs
@@ -1644,11 +1648,13 @@ só o dono e o `erp_app` a executam.
 O documento de estoque (`erp.documentos_estoque`, 0040) e o Portal de Estoque estão em
 `docs/PORTAIS-OPERACIONAIS-CONTRACT.md`, § Portal de Estoque; aqui ficam as famílias de TOP dele (decisão 274).
 
-- **Quatro famílias novas**, todas do módulo `estoque` e variantes de `erp.documentos_estoque` pela coluna `especie`:
+- **Sete famílias**, todas do módulo `estoque` e variantes de `erp.documentos_estoque` pela coluna `especie`:
   `estoque.entrada` ("Entrada de estoque"), `estoque.saida` ("Saída de estoque"), `estoque.transferencia`
-  ("Transferência de estoque") e `estoque.ajuste` ("Ajuste de estoque (inventário)"). O registry é a fonte única; o
-  domínio deriva delas o segmento, o recurso e a família de cada espécie, e espécie que o registry não declara não tem
-  família (fail-closed).
+  ("Transferência de estoque") e `estoque.ajuste` ("Ajuste de estoque (inventário)") e, desde a OPERACOES-01 F5a
+  (decisão 282), `estoque.requisicao_material` ("Requisição de material" — a requisição NOVA; a `estoque.requisicao`
+  antiga continua sendo a de `erp.requisitions`), `estoque.consumo` ("Consumo") e `estoque.devolucao_consumo`
+  ("Devolução de consumo"). O registry é a fonte única; o domínio deriva delas o segmento, o recurso e a família de
+  cada espécie, e espécie que o registry não declara não tem família (fail-closed).
 - **As oito famílias antigas de estoque** (`estoque.entrada_manual`, `estoque.documento_fiscal`, `estoque.requisicao`,
   `estoque.baixa`, `estoque.devolucao`, `estoque.transferencia_entre_armazens`, `estoque.transferencia_entre_empresas`
   e `estoque.producao_de_racao`) ficam como estão: presas às tabelas antigas, sem consumidor.
@@ -1660,7 +1666,9 @@ O documento de estoque (`erp.documentos_estoque`, 0040) e o Portal de Estoque es
   para as famílias de estoque nunca caírem no mapa da venda; "Cliente em atraso" diferente de "não valida" é recusado
   pela API da TOP (422 no campo).
 - **Editor da TOP** para as famílias de estoque: aparece só o que se aplica — Geral com a observação; na seção Estoque, o
-  texto "O movimento é definido pela espécie"; Financeiro, Fiscal, Aprovação e Próximas operações escondidos.
+  texto "O movimento é definido pela espécie"; Financeiro, Fiscal, Aprovação e Próximas operações escondidos. No editor
+  do formato 5 (decisão 281), a saída, a requisição e o consumo mostram a aba Destino, e o consumo, a aba Fluxo
+  (decisão 282); as três da movimentação interna ainda não aparecem no passo 1 (sem tela até a F5b).
 - **A TOP no documento**: obrigatória, só da família da espécie (conferido pela API e pelo gatilho do banco), versão
   congelada no lançamento, imutáveis depois. O ledger (`erp.stock_movements`) nunca recebe TOP: recebe o movimento, com
   a origem no `source_type`.
@@ -1724,15 +1732,17 @@ com só "Sempre" marca `aprovacao` e não `geral`. As duas aparecem no históric
 ### 17.2 A matriz por família
 
 `MATRIZ_REGRAS_GERAIS_TOP` (domínio, fonte única): o que cada família ACEITA em cada regra e, para o que não aceita, o
-MOTIVO. As famílias são perguntadas ao registry pela variante de cada documento (venda, compra, as quatro espécies de
-estoque, orçamento, pedido de venda, pedido de compra); família fora da matriz cai no padrão "sem documento"
+MOTIVO. As famílias são perguntadas ao registry pela variante de cada documento (venda, compra, as sete espécies de
+estoque — as quatro da ESTOQUE-01 e as três da movimentação interna, OPERACOES-01 F5a —, orçamento, pedido de venda,
+pedido de compra e, desde a decisão 283, orçamento de compra); família fora da matriz cai no padrão "sem documento"
 (`regrasGeraisDaFamiliaTop`), que só aceita o neutro — a família nova do registry nasce fechada.
 
 | Família | Confirmação | Documento sem itens | Alteração após confirmar | Aprovação |
 | --- | --- | --- | --- | --- |
 | `vendas.venda`, `compras.compra` | Manual, Automática | Proibido, Permitido | Bloqueada | Sem aprovação, Sempre, A partir de um valor |
-| `estoque.entrada`, `estoque.saida`, `estoque.transferencia`, `estoque.ajuste` | Manual, Automática | Proibido | Bloqueada | Sem aprovação, Sempre |
-| `vendas.orcamento`, `vendas.pedido`, `compras.pedido` | Manual | Proibido | Bloqueada | Sem aprovação |
+| `estoque.entrada`, `estoque.saida`, `estoque.transferencia`, `estoque.ajuste`, `estoque.requisicao_material`, `estoque.consumo`, `estoque.devolucao_consumo` | Manual, Automática | Proibido | Bloqueada | Sem aprovação, Sempre |
+| `compras.pedido` (decisão 283: a aprovação acontece ao FINALIZAR o pedido) | Manual | Proibido | Bloqueada | Sem aprovação, Sempre, A partir de um valor |
+| `vendas.orcamento`, `vendas.pedido`, `compras.orcamento` | Manual | Proibido | Bloqueada | Sem aprovação |
 | qualquer outra (as oito antigas de estoque, `compras.solicitacao`, `financeiro.*`) | Manual | Proibido | Bloqueada | Sem aprovação |
 
 Motivos — texto exato; o editor o mostra ao lado da opção desabilitada e a API o devolve na recusa:
@@ -1750,7 +1760,7 @@ Motivos — texto exato; o editor o mostra ao lado da opção desabilitada e a A
 | | orçamento e pedidos | "Este documento não é confirmado: ele é convertido ou recebido em outro." |
 | | outra família | "Esta operação ainda não tem documento no sistema." |
 | Aprovação (`aprovacao.politica`) | estoque, opção "A partir de um valor" | "O valor do documento de estoque só é conhecido na confirmação: use "Sempre"." |
-| | orçamento e pedidos | "A aprovação acontece antes da confirmação, e este documento não é confirmado." |
+| | orçamento, pedido de venda e orçamento de compra (o pedido de compra aceita as três políticas) | "A aprovação acontece antes da confirmação, e este documento não é confirmado." |
 | | outra família | "Esta operação ainda não tem documento no sistema." |
 
 - **Portão da GRAVAÇÃO.** No formato 4, o `POST` (sempre) e o `PUT` (quando o corpo traz `configuracao`) conferem as quatro
@@ -1881,7 +1891,8 @@ lançamentos da organização esperam por ele até o commit.
 
 ### 17.5 Aprovação
 
-**Vale para** `vendas.venda` e `compras.compra` (Sempre ou A partir de um valor) e as quatro espécies de estoque (Sempre).
+**Vale para** `vendas.venda`, `compras.compra` e, ao FINALIZAR, `compras.pedido` (Sempre ou A partir de um valor;
+decisão 283) e as sete espécies de estoque (Sempre; as três da movimentação interna desde a decisão 282).
 "Exige aprovação" = a versão congelada está no formato 4 e a política é "Sempre", ou é "A partir de um valor" e o total
 ATUAL do documento é ≥ o valor mínimo — decimal em texto; "a partir de" inclui o igual. O documento de estoque não tem
 valor antes da confirmação: a conta recebe nulo, e "A partir de um valor" sem valor exige. A conta é UMA, em dois lugares,
@@ -1920,8 +1931,8 @@ SQL, e o `erp_app` a executa.
   escrita de quem decide, no módulo da transação (`erp.empresa_escrita_permitida`, o predicado do `with check` da
   política) → `NOT_FOUND`, antes de ler o documento (pelo mesmo motivo, dentro da organização); depois lê, `for share`, SÓ
   o documento que passa pelo filtro inteiro da `NOT_FOUND`, no próprio `where` — id, organização da GUC e empresa da
-  linha; na venda, também `kind` `sale` e não excluída; na compra, espécie `compra`: inexistente, de outra empresa,
-  excluído ou de outra espécie → `NOT_FOUND` (a mesma recusa), na hora, sem ser lido nem travado — mesmo segurado
+  linha; na venda, também `kind` `sale` e não excluída; na compra, espécie `compra` ou `pedido` (desde a 0044,
+  conferência v2; o orçamento de compra é a `NOT_FOUND`): inexistente, de outra empresa, excluído ou de outra espécie → `NOT_FOUND` (a mesma recusa), na hora, sem ser lido nem travado — mesmo segurado
   `for update` por outra sessão, a recusa não espera a trava (a espera, e o `lock_timeout` dela, revelariam que ele
   existe); venda com `versao_documento` diferente da `version` atual → `CONCURRENCY_CONFLICT`; documento que não está
   aberto (venda `open`/`approved`, compra e estoque `aberto`) → `CONFLICT` "Só documento aberto passa por aprovação.";
@@ -2099,6 +2110,21 @@ documento pelas rotas de hoje. O menu chegou ao limite do nav-audit.
 
 O `fromPgError` já traduz qualquer prefixo `CODIGO:` do banco e não mudou: o nome do código no SQL é idêntico ao do mapa.
 
+**O pedido de compra (OPERACOES-01 F6a, decisão 283).** O pedido é aprovado ao FINALIZAR (a confirmação do pedido,
+aberto → finalizado), com a MESMA conta (`exigeAprovacao` / `erp.top_exige_aprovacao`, total ATUAL, versão congelada no
+formato 4 ou 5). A 0041 não foi editada: a 0044 troca a conferência da decisão pela v2 (`erp.aprovacoes_compra_conferir_v2`,
+espécie compra OU pedido) e cria a guarda `trg_documentos_compra_finalizacao` (BEFORE UPDATE OF situacao, só na
+passagem aberto → finalizado do pedido), com mensagens próprias: "Este pedido de compra precisa de aprovação antes de
+ser finalizado." e "Este pedido de compra foi reprovado e não pode ser finalizado." (`CONFLICT`). A cobertura é a da
+compra: a última decisão aprovada, valor aprovado ≥ o maior total entre antes e depois do UPDATE e a versão da TOP de
+depois. O pedido TEM edição de valor (o vencedor do orçamento leva preços a ele): a aprovação que deixou de cobrir não
+vale, e a API a trata como pendente — no finalizar (409 `APROVACAO_PENDENTE` "Este pedido precisa de aprovação antes de
+ser finalizado."), na prévia da finalização e na fila (a linha volta). A fila de compras lista o pedido só para quem tem
+`compras.approve` ∧ `pedidos_compra.approve`; quem não aprova pedido recebe a MESMA 404 de inexistente ao decidir.
+Aprovar o pedido não o finaliza. **Declarado:** com "Exigir pedido finalizado para receber" = Não (o neutro da seção
+`fluxoCompra`, §18.9), o pedido ABERTO é recebido sem passar pela aprovação — quem quer o pedido controlado liga as duas
+regras; exigir o par na gravação é decisão PENDENTE do Maike (decisão 283).
+
 ### 17.6 Alteração após confirmar: recusada no formato 4
 
 - No formato 4 TODA família aceita só "Bloqueada", com o motivo da matriz (§17.2): 422 `combinacao_nao_suportada` em
@@ -2133,7 +2159,8 @@ formato 3, textos e abas de hoje. Com ele:
 - regra que a família só aceita no neutro some; opção que a família não aceita aparece desabilitada, com o motivo da matriz
   ao lado (`top-regra-motivo-<campo>`). Por família: venda e compra — Confirmação, Documento sem itens e a aba Aprovação,
   com Alteração escondida; estoque — Confirmação e a aba Aprovação ("A partir de um valor" desabilitada, com o motivo), com
-  Documento sem itens e Alteração escondidos; orçamento e pedidos — as quatro escondidas;
+  Documento sem itens e Alteração escondidos; orçamento e pedidos — as quatro escondidas (desde a OPERACOES-01 F6a,
+  decisão 283, o pedido de compra mostra a aba Aprovação, com as três políticas);
 - uma 422 em `geral.*` ou `aprovacao.*` abre a aba do campo;
 - **a ajuda da Geral** (`AJUDA_COM_REGRAS_GERAIS.geral`; aparece em toda família que não é documento de estoque,
   orçamento e pedidos inclusive, onde Confirmação e Documento sem itens ficam escondidos; o documento de estoque tem a
@@ -2260,7 +2287,9 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 - **`definirSecaoV5`** (`:106-108`) congela a definição e infere o nome literal. Um nome de `CHAVES_RAIZ_RESERVADAS_TOP`
   (`versaoSchema`, `geral`, `estoque`, `financeiro`, `fiscal`, `aprovacao`, `execucao`) NÃO COMPILA: o tipo do nome
   vira `never`.
-- **A LISTA:** `DEFINICOES_SECOES_V5` (`:114`), VAZIA na F4. Dela saem `NomeSecaoExtensaoV5`, `SecoesExtensaoV5`,
+- **A LISTA:** `DEFINICOES_SECOES_V5` (`:125-132`), VAZIA na F4; desde a OPERACOES-01, `[SECAO_DESTINO, SECAO_FLUXO,
+  SECAO_FLUXO_COMPRA, SECAO_DIVERGENCIA_PEDIDO]` — as duas da F5a (decisão 282) e as duas da F6a (decisão 283, §18.9),
+  nesta ordem, que é a das abas e a da auditoria. Dela saem `NomeSecaoExtensaoV5`, `SecoesExtensaoV5`,
   `SECOES_EXTENSAO_V5` e os rótulos, sem segunda declaração. A única conversão de tipo do ponto de extensão mora ali,
   documentada (`montarSecoesExtensaoV5`, `nomeDaSecaoV5`).
 - **A leitura** (`lerConfiguracaoTop`, `tipo-operacao-configuracao.ts:775`): num 5, as chaves de raiz são as do 2 + os
@@ -2279,7 +2308,14 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
   5. o compilador cobra a aba no web;
   6. nada do tipo literal `{}`.
 - **Como uma fase acrescenta a sua seção:**
-  - (a) `packages/domain/src/tipo-operacao-secao-<nome>.ts` com o tipo e `export const SECAO_<NOME> = definirSecaoV5({…})`;
+  - (a) `packages/domain/src/tipo-operacao-secao-<nome>.ts` com o tipo e `export const SECAO_<NOME>:
+    DefinicaoSecaoV5<"<nome>", T> = Object.freeze({…})`, importando do ponto de extensão SÓ os tipos (`import type`). O
+    ponto de extensão importa o arquivo da seção como VALOR para montar a lista; se o arquivo da seção importasse dele
+    um VALOR (`definirSecaoV5`), o ciclo existiria em tempo de execução, e quem fosse avaliado primeiro leria o outro
+    ainda não inicializado. O tipo explícito faz o compilador cobrar o mesmo que `definirSecaoV5` cobrava, e o nome
+    reservado é recusado pelo teste de contrato (F5-D1). É o molde da F5a e da F6a
+    (`tipo-operacao-secao-destino.ts:72`, `tipo-operacao-secao-fluxo.ts:43`, `tipo-operacao-secao-fluxo-compra.ts:33`,
+    `tipo-operacao-secao-divergencia-pedido.ts:43`);
   - (b) UMA linha em `DEFINICOES_SECOES_V5`, mais o import;
   - (c) o componente da aba em `COMPONENTES_DAS_SECOES_V5` (`apps/web/src/features/admin/top-secoes-formato5.tsx:39`) —
     o compilador recusa o registro sem ela;
@@ -2291,6 +2327,9 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 - **Quem acrescenta uma seção também:**
   - atualiza as premissas que fixam o estado da F4 (`SECOES_EXTENSAO_V5` [] em F5-D1, T5-1 e `top-assistente.spec.ts`);
   - faz o detector do skew medir o CONJUNTO de seções da base, além da marca do assistente (§18.6).
+  A F5a e a F6a atualizaram as premissas (F5-D1, T5-1, `top-assistente.spec.ts`, CT-*) com o conjunto juntado. As duas
+  acrescentaram seções AO MESMO TEMPO, e a base `622f194` nem tem o editor do 5 (o detector dá falso nos dois casos): a
+  medição do CONJUNTO pelo detector é feita uma vez, depois que as duas entrarem na main — PENDENTE (coordenador).
 - O nome `secaoInexistente` é o sentinela dos testes (F5-D3, T5-5) e nenhuma fase o declara.
 
 ### 18.4 O catálogo por tipo e o perfil
@@ -2298,8 +2337,10 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 `packages/domain/src/tipo-operacao-catalogo.ts`. As tabelas estão em `docs/OPERACOES-CONTRACT.md` §1 e §2.
 - `CATALOGO_TOP = {grupos, tipos, perfis}` (`:258-262`), com:
   - `GRUPOS_TIPO_MOVIMENTO_TOP` e os rótulos;
-  - `CATALOGO_TIPOS_MOVIMENTO_TOP` (22 tipos, `:138-161`);
-  - `PERFIS_TIPO_TOP` (um por família do registry, `:240`).
+  - `CATALOGO_TIPOS_MOVIMENTO_TOP` (22 tipos, `:139-164`; desde a OPERACOES-01, 19 com família: requisição de material,
+    consumo e devolução de consumo ganharam a família na F5a, decisão 282, e o orçamento de compra, `compras.orcamento`,
+    na F6a, decisão 283 — os quatro sem tela; sem família, só manejo, batelada e movimento bancário);
+  - `PERFIS_TIPO_TOP` (um por família do registry — 27 desde a F5a e a F6a —, `:243`).
   Congelado. Nenhum código de família escrito: o gate `node scripts/familia-operacional-ssot-audit.mjs` passa.
 - `perfilDoTipoTop(família, definicoes?)` (`:212-237`) deriva o perfil de `familiaTemProximasOperacoes`,
   `regrasGeraisDaFamiliaTop`, `familiaAceitaExecucaoConfiguradaTop`, `ehFamiliaDeDocumentoEstoque` e
@@ -2356,7 +2397,8 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 
 - `contractVersion`, `configuracao` (1), `restricoes` (3) e `regrasGerais` (4) NÃO mudam: o editor anterior compara
   esses números.
-- `secoes` = as seções de extensão que ESTE servidor lê e grava (nenhuma na F4).
+- `secoes` = as seções de extensão que ESTE servidor lê e grava (nenhuma na F4; `["destino", "fluxo", "fluxoCompra",
+  "divergenciaPedido"]` desde a F5a e a F6a, decisões 282 e 283).
 - O web lê o bloco na régua do `regrasGerais` (`lerFormato5DasCapacidades`, `apps/web/src/features/admin/top-contrato.tsx:214`):
   presente e ilegível = ausente, sem negar o resto.
 - `podeConfigurarFormato5` (`:417`) exige, todos juntos:
@@ -2377,7 +2419,8 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
   - A prova reversa do lado FALSO usa `COMMITS_DO_EDITOR_DA_TOP.formato4`, com a marca do 4 no mesmo commit.
   - O lado VERDADEIRO não tem commit fixo até esta fase entrar na main. Depois, o SHA do merge entra como `formato5`.
   - Ele supõe a base e o HEAD com o MESMO conjunto de seções. A primeira fase que acrescentar uma seção mede também o
-    conjunto (§18.3).
+    conjunto (§18.3). Pendente desde a F5a e a F6a, que acrescentaram seções ao mesmo tempo: medir o conjunto depois
+    de juntar as duas — ainda não medido.
 
 ### 18.7 O editor
 
@@ -2421,10 +2464,16 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
   Identificação, onde o editor cai (`top-erro-<caminho>`). Só acontece com servidor e catálogo divergentes.
 - **Abas de extensão:** a aba de uma seção nova é desenhada pelo registro `COMPONENTES_DAS_SECOES_V5`
   (`top-secoes-formato5.tsx:39`, `SecaoDoFormato5`, `:54`). O editor não muda quando uma fase acrescenta uma seção.
+  Desde a F5a: `AbaDestino` (`apps/web/src/features/admin/top-secao-destino.tsx`; `top-secao-destino`, um `NativeSelect`
+  por dimensão, `top-campo-destino-{centro-custo,equipamento,ordem-servico,lote-animais,area,safra}`, erro de campo
+  `top-erro-destino-<dimensão>`) e `AbaFluxo` (`top-secao-fluxo.tsx`; `top-secao-fluxo`,
+  `top-campo-fluxo-exige-requisicao`, `top-campo-fluxo-permite-parcial` com "Não"/"Sim", `top-erro-fluxo-<campo>`), nas
+  abas `top-aba-destino` e `top-aba-fluxo`; desde a F6a, as abas de compras (§18.9).
 - **Histórico** (`top-historico.tsx`):
   - `secoesAlteradas` aceita os nomes de `SECOES_CONFIGURACAO_TOP_V5`;
   - numa versão no 5, um bloco por seção de extensão, com o rótulo e as `linhas` da definição
-    (`blocosDasSecoesDeExtensao`, `:341`; nenhum na F4);
+    (`blocosDasSecoesDeExtensao`, `:341`; nenhum na F4; Destino e Fluxo desde a F5a, "Fluxo de compra" e "Divergência
+    com o pedido" desde a F6a);
   - "Formato da configuração: 5" e "Regras gerais e aprovação: executadas" saem do portão do domínio.
 - **"Local de estoque"** (os dois editores e o histórico; identificadores iguais):
   - "Exigir local de estoque" (`top-campo-estoque-armazem`; histórico `:374`);
@@ -2434,10 +2483,44 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 
 ### 18.8 O que fica para depois
 
-- As seções das F5 a F10 e as telas dos tipos "sem tela ainda", cada uma na sua fase (`docs/OPERACOES-CONTRACT.md` §1
-  e §2).
-- As famílias novas no registry: orçamento de compra, requisição, consumo e devolução de consumo, manejo, batelada e
-  movimento bancário.
-- A prova do lado verdadeiro do detector, depois do merge.
+- As seções das F7 a F10 e as telas dos tipos "sem tela ainda", cada uma na sua fase (`docs/OPERACOES-CONTRACT.md` §1
+  e §2). As da F5 (Destino e Fluxo) entraram na F5a, e as da F6 (Fluxo de compra e Divergência com o pedido), na F6a;
+  a tela da requisição, do consumo e da devolução de consumo é da F5b, e a do orçamento de compra, da F6b.
+- As famílias novas no registry: manejo, batelada e movimento bancário (requisição de material, consumo e devolução de
+  consumo nasceram na F5a; orçamento de compra, na F6a).
+- A prova do lado verdadeiro do detector, depois do merge, e a medição do CONJUNTO de seções (F5a e F6a).
 - Os rótulos de enum da TOP no web (`ROTULOS_TOP`): dívida anterior, fora desta fase.
 - O comportamento das Centrais com documento sem item é da F2 (decisão 279).
+
+### 18.9 As seções de compras (OPERACOES-01 F6a, decisão 283)
+
+O produto (chave, rótulo, campos, neutro, famílias e recusas) está em `docs/OPERACOES-CONTRACT.md` §2; as regras que
+elas ligam, em §4. Aqui, o que é do contrato da TOP:
+- **Arquivos folha:** `packages/domain/src/tipo-operacao-secao-fluxo-compra.ts` e `…-divergencia-pedido.ts`, com
+  `import type` do ponto de extensão (§18.3 (a)) e `tipo-operacao-configurado.ts` (o registry); a família é perguntada
+  ao registry pela espécie. A lista, depois das duas da F5a (decisão 282): `DEFINICOES_SECOES_V5 = [SECAO_DESTINO,
+  SECAO_FLUXO, SECAO_FLUXO_COMPRA, SECAO_DIVERGENCIA_PEDIDO]` (`tipo-operacao-secoes-v5.ts:125-132`); as abas:
+  `COMPONENTES_DAS_SECOES_V5` (`top-secoes-formato5.tsx:46-51`; `SecaoFluxoCompra` em `top-secao-fluxo-compra.tsx`,
+  `top-campo-fluxoCompra-exigeFinalizar`; `SecaoDivergenciaPedido` em `top-secao-divergencia-pedido.tsx`,
+  `top-campo-divergenciaPedido-<campo>`, com o aviso `top-aviso-<caminho>`; as abas `top-aba-fluxoCompra` e
+  `top-aba-divergenciaPedido`). O leitor, a normalização, a comparação, a auditoria e as capabilities não mudaram.
+- **Capabilities:** `formato5.secoes` = `["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]`. O editor do 5 só
+  liga com o MESMO conjunto que a tela escreve: na junção com a F5a, a lista do domínio e o registro do web mudaram
+  juntos.
+- **Perfis derivados:** o pedido de compra ganha as abas "Fluxo de compra" e "Aprovação" (a matriz aceita a aprovação,
+  §17.2); a compra, "Divergência com o pedido"; o orçamento de compra (`compras.orcamento`, família nova) tem
+  Identificação, Geral, Estoque, Financeiro e Fiscal, com as exigências "Exigir fornecedor" e "Exigir observação"
+  (`EXIGENCIAS_GERAIS_ORCAMENTO_COMPRA_TOP`, `tipo-operacao-restricoes.ts:161`), e nenhum tipo com tela até a F6b. Toda
+  outra família tem as duas seções no padrão (Destino e Fluxo, da F5a, seguem `docs/OPERACOES-CONTRACT.md` §2).
+- **No 5, fora do tipo:** a seção que a família não usa, fora do padrão, é a recusa de §18.5 ("Esta operação não usa a
+  seção Fluxo de compra." / "… Divergência com o pedido."); a volta ao padrão a zera antes de gravar.
+- **Execução** (`compras-finalizacao-orcamento.ts:64-77`): sem versão → neutro; formato desconhecido → ilegível; 1 a 4
+  → neutro SEM LER (mesmo malformado; regra 4 da 277); 5 malformado → ilegível; 5 → a seção. `fluxoCompra` é lida da
+  versão DO PEDIDO no receber; `divergenciaPedido`, da versão DA COMPRA na prévia e na confirmação.
+- **Erro de campo no editor:** a recusa do leitor (`{motivo, caminho}`, sem `mensagem`) aparece no campo com um texto
+  pelo motivo (`MENSAGEM_DA_RECUSA_SEM_TEXTO`, `apps/web/src/features/admin/top-contrato.tsx:1008`: `valor_invalido`
+  "Valor inválido: confira o que foi informado neste campo.", `tipo_invalido` "Valor em formato inválido neste campo.",
+  `campo_desconhecido` "Este campo não é aceito por este servidor."), em qualquer formato; motivo desconhecido fica fora
+  do mapa e o `ErrorState` geral aparece do mesmo jeito.
+- **Skew:** sem o bloco `formato5`, o editor do 4, sem as abas (K-1 do 5, com a premissa que tira as seções de extensão
+  do corpo no 5). O editor da base grava o 4 contra a API nova, sem promover (K-2 do 5).

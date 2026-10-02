@@ -512,7 +512,7 @@ describe("DB-5/DB-6 — a 0043 sobre o banco até a 0042, como o runner aplica",
     const ledger = (await db.query<{ n: number; ultima: string }>("select count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
     expect(ledger).toEqual({ n: 43, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
-    expect(noDisco.length, "43 migrations no repositório (0001..0043)").toBe(43);
+    expect(noDisco.length, "44 migrations no repositório (0001..0044; a 0044 é da F6a)").toBe(44);
     expect(noDisco[42]).toBe(ALVO);
     expect(await marcas()).toEqual({ coluna: 1, funcao: "erp.documentos_estoque_item_origem_guarda()" });
     // A trava é de transação: depois do commit, outra sessão a obtém.

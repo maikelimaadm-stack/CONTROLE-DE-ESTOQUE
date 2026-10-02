@@ -157,8 +157,11 @@ const DEFS: readonly DefinicaoSecaoV5[] = [SECAO_DE_TESTE];
 const secaoTeste = (ajuste: Partial<SecaoTeste> = {}): SecaoTeste => Object.assign(SECAO_DE_TESTE.neutro(), ajuste);
 const BLOQUEIA: SecaoTeste = { modo: "bloqueia", notificar: true, tolerancia: "12.50", dias: 3, nota: "Conferir" };
 
-/** Um 5 bruto (JSON) com a seção de teste presente. */
-const v5ComTeste = (teste: unknown): Saco => ({ ...sujar(configuracaoNeutraTopV5(DEFS)), teste });
+/**
+ * Um 5 bruto (JSON) com a seção de teste presente — e SÓ ela: o neutro do 5 montado com a lista vazia, porque a máquina
+ * é provada com `DEFS` (a seção fictícia sozinha); as seções do produto (F6a em diante) seriam chave desconhecida nela.
+ */
+const v5ComTeste = (teste: unknown): Saco => ({ ...sujar(configuracaoNeutraTopV5([])), teste });
 
 // ---------------------------------------------------------------------------------------------------
 // OS FORMATOS DE ORIGEM
@@ -262,12 +265,16 @@ describe("F5-D1 as constantes do formato 5 e o contrato das seções", () => {
     expect(SECOES_CONFIGURACAO_TOP).toEqual(["geral", "estoque", "financeiro", "fiscal", "aprovacao"]);
   });
 
-  it("F5-D1 as seções de extensão do produto (F5a: Destino e Fluxo); as seções da auditoria são as do formato 2 mais elas", () => {
-    expect(DEFINICOES_SECOES_V5.map((d: DefinicaoSecaoV5) => d.nome)).toEqual(["destino", "fluxo"]);
-    expect(SECOES_EXTENSAO_V5).toEqual(["destino", "fluxo"]);
-    expect(ROTULOS_SECOES_EXTENSAO_V5).toEqual({ destino: "Destino", fluxo: "Fluxo" });
-    expect(SECOES_CONFIGURACAO_TOP_V5).toEqual([...SECOES_CONFIGURACAO_TOP_V2, "destino", "fluxo"]);
-    expect(secoesExtensaoNeutrasTop()).toEqual({ destino: definicaoDaSecaoV5("destino")?.neutro(), fluxo: definicaoDaSecaoV5("fluxo")?.neutro() });
+  it("F5-D1 as seções de extensão do produto (F5a: Destino e Fluxo; F6a: Fluxo de compra e Divergência com o pedido); as seções da auditoria são as do formato 2 mais elas", () => {
+    expect(DEFINICOES_SECOES_V5.map((d: DefinicaoSecaoV5) => d.nome)).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+    expect(SECOES_EXTENSAO_V5).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+    expect(ROTULOS_SECOES_EXTENSAO_V5).toEqual({ destino: "Destino", fluxo: "Fluxo", fluxoCompra: "Fluxo de compra", divergenciaPedido: "Divergência com o pedido" });
+    expect(SECOES_CONFIGURACAO_TOP_V5).toEqual([...SECOES_CONFIGURACAO_TOP_V2, "destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+    expect(secoesExtensaoNeutrasTop()).toEqual({
+      destino: definicaoDaSecaoV5("destino")?.neutro(), fluxo: definicaoDaSecaoV5("fluxo")?.neutro(),
+      fluxoCompra: { exigeFinalizar: false },
+      divergenciaPedido: { modo: "nenhuma", toleranciaPrecoPercentual: "0", toleranciaQuantidadePercentual: "0" },
+    });
   });
 
   it("F5-D1 os nomes reservados são exatamente as chaves de raiz de hoje", () => {
@@ -307,6 +314,8 @@ describe("F5-D2 o neutro do formato 5", () => {
     const n4 = configuracaoNeutraTopV4();
     expect(n5).toEqual({ ...n4, versaoSchema: 5, ...secoesExtensaoNeutrasTop() });
     expect(Object.keys(n5).sort()).toEqual([...Object.keys(n4), ...SECOES_EXTENSAO_V5].sort());
+    // A premissa: sem as seções de extensão, é o neutro do 4 com o número 5.
+    expect(configuracaoNeutraTopV5([])).toEqual({ ...n4, versaoSchema: 5 });
   });
 
   it("F5-D2 o leitor devolve o neutro do 5 igual a ele, no 5", () => {
@@ -476,7 +485,7 @@ describe("F5-D4 a máquina das seções (seção fictícia passada como `definic
     const lidas = raiz(secoesExtensaoDaVersaoTop(v5, DEFS));
     expect(lidas).toEqual({ teste: BLOQUEIA });
     expect(lidas.teste).not.toBe(raiz(v5).teste);
-    // A premissa do neutro: com a lista do produto, cada seção dela no neutro.
+    // A premissa do neutro: com a lista do produto, um 4 tem cada seção do produto no neutro — nada além.
     expect(secoesExtensaoDaVersaoTop(v4ComRegras())).toEqual(secoesExtensaoNeutrasTop());
   });
 

@@ -25,6 +25,7 @@ import financeiroTitulosRoutes from "./routes/financeiro-titulos.js";
 import financeiroBancosRoutes from "./routes/financeiro-bancos.js";
 import salesRoutes from "./routes/sales.js";
 import comprasRoutes from "./routes/compras.js";
+import comprasOrcamentoRoutes from "./routes/compras-orcamento.js";
 import estoqueRoutes from "./routes/estoque-documentos.js";
 import aprovacoesVendasRoutes from "./routes/aprovacoes-vendas.js";
 import aprovacoesComprasRoutes from "./routes/aprovacoes-compras.js";
@@ -88,6 +89,7 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   await app.register(financeiroBancosRoutes, { prefix: "/api" });
   await app.register(salesRoutes, { prefix: "/api" });
   await app.register(comprasRoutes, { prefix: "/api" });
+  await app.register(comprasOrcamentoRoutes, { prefix: "/api" });
   await app.register(estoqueRoutes, { prefix: "/api" });
   // TOP-CONFIG-08 (decisão 277): as aprovações moram num prefixo PRÓPRIO, /api/aprovacoes, e não dentro de
   // /api/sales, /api/compras ou /api/estoque. Assim o binário anterior, que não conhece estas rotas,

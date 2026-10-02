@@ -18,7 +18,8 @@ import { TIPOS_OPERACAO, tipoOperacao } from "./tipo-operacao.js";
 const variantesDaTabela = (tabela: string): string[] => TIPOS_OPERACAO.filter((t) => t.origem.tabela === tabela).map((t) => t.codigo);
 /** As famílias da Central de Vendas: as variantes de `erp.sales_documents` (orçamento, pedido, venda). */
 export const FAMILIAS_COM_LAYOUT_DE_VENDAS: readonly string[] = Object.freeze(variantesDaTabela("erp.sales_documents"));
-/** COMPRAS-03: as famílias da Central de Compras: as variantes de `erp.documentos_compra` (pedido, compra). */
+/** COMPRAS-03: as famílias da Central de Compras: as variantes de `erp.documentos_compra` (pedido, compra e, desde a
+ *  F6a, orçamento). */
 export const FAMILIAS_COM_LAYOUT_DE_COMPRAS: readonly string[] = Object.freeze(variantesDaTabela("erp.documentos_compra"));
 /**
  * Todas as famílias com layout. VENDAS PRIMEIRO, de propósito: no registry as de compras vêm antes das de vendas, e o
@@ -149,13 +150,35 @@ function catalogoDeCompras(daCompra: boolean): readonly CampoDoCatalogo[] {
   ]);
 }
 /**
+ * OPERACOES-01 F6a (decisão 283): o catálogo do ORÇAMENTO DE COMPRA — as chaves do corpo do orçamento (criar e editar).
+ * O orçamento nasce do pedido: empresa e itens (produto e quantidade) vêm dele; o que se digita é o preço de cada item,
+ * a condição, o prazo de entrega (dias), a validade e a observação. Sem frete, outras despesas, desconto, natureza,
+ * centro, transportadora, forma de pagamento, parcelas, Local de estoque, lote e validade de item: o orçamento não mexe
+ * em estoque nem em financeiro, e o layout dele não pode citar o que o corpo não tem.
+ */
+function catalogoDoOrcamento(): readonly CampoDoCatalogo[] {
+  return Object.freeze([
+    C("empresa_id", "Empresa", "empresa", { sistema: "sempre" }),
+    C("fornecedor_id", "Fornecedor", "referencia", { sistema: "sempre", referencia: { recurso: "people", filtro: { is_provider: "true" } } }),
+    C("data_documento", "Data do documento", "data", { sistema: "sempre" }),
+    C("condicao_pagamento_id", "Condição de pagamento", "referencia", { referencia: { recurso: "condicoes_pagamento" } }),
+    C("prazo_entrega_dias", "Prazo de entrega (dias)", "numero"),
+    C("validade_orcamento", "Validade do orçamento", "data"),
+    C("observacao", "Observação", "texto_longo"),
+    I("produto_id", "Produto", "referencia", { sistema: "sempre" }),
+    I("quantidade", "Quantidade", "numero", { sistema: "sempre" }),
+    I("valor_unitario", "Valor unitário", "numero", { sistema: "sempre" })
+  ]);
+}
+/**
  * Pela ESPÉCIE do documento (`erp.documentos_compra.especie`, o valor que o banco persiste), lida do registry pela
  * variante da família — nunca pelo código da família, para o registry continuar sendo o único dono da lista de famílias.
  * Espécie nova no registry sem catálogo aqui: nenhum campo (fail-closed), nunca o catálogo da vizinha.
  */
 const CATALOGO_DE_COMPRAS_POR_ESPECIE: ReadonlyMap<string, readonly CampoDoCatalogo[]> = new Map([
   ["pedido", catalogoDeCompras(false)],
-  ["compra", catalogoDeCompras(true)]
+  ["compra", catalogoDeCompras(true)],
+  ["orcamento", catalogoDoOrcamento()]
 ]);
 
 /** O catálogo da família: vendas → CATALOGO_VENDAS; compras → o da espécie; outra → nenhum (fail-closed). */
@@ -377,10 +400,14 @@ export const mensagemCampoObrigatorio = (rotulo: string) => `O campo '${rotulo}'
 export const COLUNAS_COM_PADRAO_REGISTRO: readonly string[] = Object.freeze(["warehouse_id"]);
 const COLUNAS_COM_PADRAO_REGISTRO_DE_COMPRAS: readonly string[] = Object.freeze(["armazem_id"]);
 const NENHUMA_COLUNA: readonly string[] = Object.freeze([]);
+/** OPERACOES-01 F6a: todas as `colunas` existem nos itens do catálogo da família? */
+const colunasDoCatalogo = (familia: string, colunas: readonly string[]): boolean =>
+  colunas.every((col) => catalogoDaFamilia(familia).some((c) => c.parte === "itens" && c.chave === col));
 /** COMPRAS-03: as colunas de item que aceitam padrão registro NA FAMÍLIA — o Armazém de cada corpo; outra família, nenhuma. */
 export function colunasComPadraoRegistro(familia: string): readonly string[] {
   if (familiaDeVendas(familia)) return COLUNAS_COM_PADRAO_REGISTRO;
-  if (familiaDeCompras(familia)) return COLUNAS_COM_PADRAO_REGISTRO_DE_COMPRAS;
+  // OPERACOES-01 F6a: só a espécie cujo catálogo TEM a coluna (o orçamento de compra não tem Local de estoque: nenhuma).
+  if (familiaDeCompras(familia)) return colunasDoCatalogo(familia, COLUNAS_COM_PADRAO_REGISTRO_DE_COMPRAS) ? COLUNAS_COM_PADRAO_REGISTRO_DE_COMPRAS : NENHUMA_COLUNA;
   return NENHUMA_COLUNA;
 }
 /** Chave do padrão de cadastro nos mapas da API: o campo (cabeçalho/rodapé) ou "itens.<coluna>". */

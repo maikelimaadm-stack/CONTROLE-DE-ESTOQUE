@@ -32,3 +32,7 @@ export * from "./tipo-operacao-secao-destino.js";
 export * from "./tipo-operacao-secao-fluxo.js";
 export * from "./tipo-operacao-catalogo.js";
 export * from "./financeiro-central.js";
+// OPERACOES-01 F6a (decisão 283): as seções de compras do formato 5 e a finalização/orçamento de compra.
+export * from "./tipo-operacao-secao-fluxo-compra.js";
+export * from "./tipo-operacao-secao-divergencia-pedido.js";
+export * from "./compras-finalizacao-orcamento.js";

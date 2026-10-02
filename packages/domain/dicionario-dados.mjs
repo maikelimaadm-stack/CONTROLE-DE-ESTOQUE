@@ -208,7 +208,7 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     codigo: "ERP-CADASTROS-LAYOUT-DOCUMENTO", tabela: "erp.layouts_documento", nome: "Layout do Documento", modulo: "CADASTROS", natureza: "entidade", idGlobal: false,
     descricao: "Quais campos o documento comercial de uma família mostra, em que ordem, com que rótulo, se são obrigatórios ou editáveis e com que valor padrão — configurado pela organização e ligado às TOPs (decisões 259 a 262; compras na decisão 269). Cadastro de organização, sem empresa; a conta (catálogo por família, validação, ligado → padrão → sistema) mora no domínio.",
     campos: {
-      familia: { nome: "Movimento", descricao: "Família canônica do documento: as três de venda e as duas de compra (pedido de compra e compra, decisão 269). Uma TOP só se liga a layout da própria família (gatilho do banco)." },
+      familia: { nome: "Movimento", descricao: "Família canônica do documento: as três de venda, as três de compra (pedido de compra e compra, decisão 269; orçamento de compra, decisão 283) e as sete do documento de estoque (decisões 274 e 282). Uma TOP só se liga a layout da própria família (gatilho do banco)." },
       padrao: { nome: "Padrão da família", descricao: "Usado pela TOP da família que não tem layout ligado. No máximo um ativo e vivo por organização e família (índice único parcial)." }
     }
   },
@@ -302,12 +302,19 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   },
   {
     codigo: "ERP-COMPRAS-DOCUMENTO", tabela: "erp.documentos_compra", nome: "Documento de Compra", modulo: "COMPRAS", natureza: "entidade", idGlobal: true,
-    discriminador: "especie", rotas: { pedido: "/compras/pedidos/:id", compra: "/compras/compras/:id" },
+    discriminador: "especie", rotas: { pedido: "/compras/pedidos/:id", compra: "/compras/compras/:id", orcamento: "/compras/orcamentos/:id" },
     discriminadorTop: "especie",
-    tops: ["compras.pedido", "compras.compra"], descricao: "Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa e a tela (pedido de compra, compra). A Compra confirmada dá entrada no estoque e gera as contas a pagar.",
+    tops: ["compras.pedido", "compras.compra", "compras.orcamento"], descricao: "Documento comercial de compra (decisões 267 e 283). A coluna `especie` decide a etapa e a tela (pedido de compra, compra, orçamento de compra). A Compra confirmada dá entrada no estoque e gera as contas a pagar; o orçamento de compra cota um pedido (um por fornecedor) e não mexe em estoque nem em financeiro.",
     campos: {
-      especie: { nome: "Espécie", descricao: "pedido | compra. Valor canônico persistido; o rótulo é traduzido na apresentação." },
-      situacao: { nome: "Situação", descricao: "aberto | confirmado (só compra) | convertido (só pedido: saldo recebido por inteiro ou encerrado) | cancelado. Cancelado é final; o pedido convertido volta a aberto quando uma compra dele é cancelada, salvo com saldo encerrado (decisão 268)." },
+      especie: { nome: "Espécie", descricao: "pedido | compra | orcamento. Valor canônico persistido; o rótulo é traduzido na apresentação." },
+      situacao: { nome: "Situação", descricao: "aberto | confirmado (só compra) | finalizado (só pedido: a confirmação do pedido, com a aprovação quando a TOP exige) | convertido (só pedido: saldo recebido por inteiro ou encerrado) | escolhido e nao_escolhido (só orçamento: o vencedor e os outros) | cancelado. Cancelado é final; o pedido convertido volta à situação de antes (aberto ou finalizado) quando uma compra dele é cancelada, salvo com saldo encerrado (decisões 268 e 283)." },
+      finalizado_em: { nome: "Finalizado em", descricao: "Só pedido: quando foi finalizado (a confirmação do pedido), gravado na passagem de aberto para finalizado (decisão 283)." },
+      finalizado_por: { nome: "Finalizado por", descricao: "Só pedido: quem finalizou. Anda junto com finalizado_em." },
+      aprovado_orcamento_em: { nome: "Aprovado para orçamento em", descricao: "Só pedido: quando foi aprovado para orçamento; gravado uma vez, com o pedido aberto (decisão 283)." },
+      aprovado_orcamento_por: { nome: "Aprovado para orçamento por", descricao: "Só pedido: quem aprovou para orçamento. Anda junto com aprovado_orcamento_em." },
+      pedido_orcado_id: { nome: "Pedido orçado", descricao: "Só orçamento: o pedido de compra que ele cota (FK composta com o tenant). Não consome saldo nem prende o fornecedor do pedido; não muda depois do lançamento." },
+      prazo_entrega_dias: { nome: "Prazo de entrega (dias)", descricao: "Só orçamento: prazo de entrega em dias (0 a 3650)." },
+      validade_orcamento: { nome: "Validade do orçamento", descricao: "Só orçamento: até quando o preço vale. Não é anterior à data do documento." },
       origem_documento_id: { nome: "Pedido de origem", descricao: "Só compra: o pedido de compra de que ela foi recebida (decisão 268). Mesma empresa e mesmo fornecedor; não muda depois do lançamento; FK composta com o tenant." },
       saldo_encerrado_em: { nome: "Saldo encerrado em", descricao: "Só pedido: quando o saldo a receber foi encerrado. Anda junto com saldo_encerrado_por e saldo_encerrado_motivo, gravados na passagem de aberto para convertido." },
       saldo_encerrado_por: { nome: "Saldo encerrado por", descricao: "Só pedido: quem encerrou o saldo a receber." },
@@ -320,7 +327,8 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     codigo: "ERP-COMPRAS-DOCUMENTO-ITEM", tabela: "erp.documentos_compra_itens", nome: "Item do Documento de Compra", modulo: "COMPRAS", natureza: "linha", idGlobal: false,
     descricao: "Linha de produto do documento de compra. Identidade pertence ao documento; só muda com o documento aberto.",
     campos: {
-      origem_item_id: { nome: "Item do pedido de origem", descricao: "Só na compra recebida de um pedido: o item do pedido que esta linha recebe. Mesmo produto; a soma recebida por compras não canceladas não passa da quantidade do item (gatilho, decisão 268)." }
+      origem_item_id: { nome: "Item do pedido de origem", descricao: "Só na compra recebida de um pedido: o item do pedido que esta linha recebe. Mesmo produto; a soma recebida por compras não canceladas não passa da quantidade do item (gatilho, decisão 268)." },
+      item_pedido_orcado_id: { nome: "Item do pedido orçado", descricao: "Só no orçamento de compra: o item do pedido que esta linha cota (mesmo produto e quantidade; FK composta com o tenant). Não consome saldo (decisão 283)." }
     }
   },
 

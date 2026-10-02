@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page, type Request } from "@playwright/test";
-import { SECOES_EXTENSAO_V5 } from "@agro/domain";
+import { SECOES_EXTENSAO_V5, secoesExtensaoNeutrasTop } from "@agro/domain";
 import { login, api, uniq } from "./helpers";
 import {
   abrirTelaDeTops, cfg4, cfg5, chamarApi, codigoTopE2E, detalheTopNoServidor, escolherTipoNoAssistente, excluirTopE2E,
@@ -110,12 +110,15 @@ test("OPERACOES-01 F4 · K-1 do 5 (sentido 1) — a base sem o formato 5 RECUSA 
 
     // A PREMISSA AO LADO: o MESMO corpo, só com o número 4 e sem as seções de extensão (que o 4 não tem), a base aceita
     // (201) — a recusa acima é do número, não do conteúdo. O 5 é o 4 MAIS as seções de extensão da lista do domínio
-    // (`SECOES_EXTENSAO_V5`; desde a F5a, Destino e Fluxo), todas no neutro — e nada além delas.
+    // (`SECOES_EXTENSAO_V5`; desde a F5a, Destino e Fluxo; desde a F6a, Fluxo de compra e Divergência), todas no NEUTRO
+    // — e nada além delas. A lista e o neutro vêm do domínio deste HEAD, nunca de um literal.
     const codigo4 = codigoTopE2E();
     const no4 = cfg4();
     const extensoes: readonly string[] = SECOES_EXTENSAO_V5;
     const chavesSoDo5 = Object.keys(no5).filter((k) => !(k in no4));
     expect([...chavesSoDo5].sort(), "premissa: o que o 5 tem a mais que o 4 são exatamente as seções de extensão").toEqual([...extensoes].sort());
+    expect(Object.fromEntries(Object.entries(no5).filter(([k]) => extensoes.includes(k))), "premissa: as seções de extensão do corpo no 5 estão no neutro")
+      .toEqual(secoesExtensaoNeutrasTop());
     const no5SemExtensoes = Object.fromEntries(Object.entries(no5).filter(([k]) => !extensoes.includes(k)));
     expect({ ...no5SemExtensoes, versaoSchema: 4 }, "premissa: sem as seções de extensão, o 5 é o 4 com outro número").toEqual(no4);
     const aceito = await chamarApi<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo: codigo4, codigoBase: "vendas.venda", nome: uniq("K-1 do 5 · corpo no 4"), configuracao: no4 });
