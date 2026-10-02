@@ -19,7 +19,9 @@ import { entendeLayoutDocumento, podeLancar, type EstadoTop, type TopOperacional
 import { topSelecionada } from "@/features/sales/lancador-tipo-operacao";
 import type { AdaptadorDaCentral, CopiaEmMemoria, DepoisDeSalvar, Pendencia } from "@/features/central/contrato";
 import { descartarCopia, espiarCopia } from "@/features/central/duplicar-memoria";
-import { consumirSalvo, descartarSalvo, entregarSalvo } from "@/features/central/salvo";
+import { abreConfirmarNaChegada, confirmarPodeAbrir, consumirSalvo, descartarSalvo, entregarSalvo } from "@/features/central/salvo";
+import { avisarSalvo, type RespostaDoSalvar } from "@/features/central/salvar";
+import { exigeAoMenosUmItem, rotuloDoSalvar } from "@/features/central/regras-gerais";
 import { useTopsDaEspecie, varianteDeCompra, type VarianteDeCompra } from "../variantes";
 import { useRecebimentoDoPedido, type EstadoDoRecebimento } from "../receber-pedido";
 import { acompanharDescontoDaOrigem, cabecalhoDoPedido, linhasDoRecebimento, temRecebimentoDeclarado } from "../recebimento-linhas";
@@ -287,6 +289,13 @@ export interface EstadoDaCriacao {
   setPendenciasAbertas: (v: boolean) => void;
 
   /* salvar */
+  /**
+   * O rótulo (e a dica) do Salvar, pelas regras gerais da TOP que o servidor declarou: "Salvar e confirmar" quando a
+   * TOP desta compra confirma sozinha e quem salva pode confirmar a compra (`compras.edit`, a capacidade que a
+   * confirmação automática confere) — também no receber, porque o `/convert` confirma a compra gerada pela TOP dela.
+   * Sem a declaração (API anterior), ou sem a capacidade, "Salvar", como antes.
+   */
+  rotuloDoSalvar: string;
   travaDoSalvar: TravaDoSalvar;
   /** Desabilitado POR ESTADO (pendência não desabilita: o clique abre a pílula, zero POST). */
   salvarDesabilitado: boolean;
@@ -309,7 +318,7 @@ export interface EstadoDaCriacao {
 }
 
 export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, pedidoId, topDaUrl, top: topDoLancamento, escritaTopConfirmada }: PropsDoEstadoDaCriacao): EstadoDaCriacao {
-  const router = useRouter(); const tr = useTradutor(); const qc = useQueryClient();
+  const router = useRouter(); const tr = useTradutor(); const qc = useQueryClient(); const { can } = useAuth();
   const ehCompra = variante.variante === "compra";
   const familia = variante.familia;
   const empresaPadrao = useEmpresaPadrao();
@@ -404,9 +413,11 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const chave = React.useRef(newIdem());
   const depoisDeSalvar = React.useRef<DepoisDeSalvar>({ confirmar: false });
   const salvarM = useMutation({
-    mutationFn: () => api<{ id: string }>(porta, { method: "POST", body: corpo(), idempotencyKey: chave.current }),
+    mutationFn: () => api<RespostaDoSalvar>(porta, { method: "POST", body: corpo(), idempotencyKey: chave.current }),
     onSuccess: (r) => {
-      toast.success("Salvo com sucesso");
+      // O aviso sai da RESPOSTA (`confirmacaoAutomatica`), pelo motor — um por Salvar, lançar ou receber; sem a chave,
+      // o "Salvo com sucesso" de antes.
+      avisarSalvo(r);
       void qc.invalidateQueries();
       // O "Salvo ✓" (e o pedido de abrir o Confirmar) vão à consulta pela memória, nunca pela URL.
       entregarSalvo(chaveDepoisDeSalvarDeCompra, r.id, depoisDeSalvar.current);
@@ -503,9 +514,12 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const erro = (c: string) => errosDaTela[c];
   const errosDeItens = Object.entries(errosDaTela).filter(([c]) => c.startsWith("itens"));
 
-  /** PENDÊNCIAS: sem itens + o que o layout cobra (a pílula vermelha "N pendências"). */
+  /* SEM ITENS (OPERACOES-01 F2): só quando o servidor declarou que a TOP aceita a compra sem itens — e NUNCA no receber
+     do pedido: o `/convert` sempre exige item (o recebimento é dos itens do pedido). */
+  const aceitaSemItensAqui = !modoReceber && !exigeAoMenosUmItem(regras?.regrasGerais);
+  /** PENDÊNCIAS: sem itens (a não ser que a TOP aceite) + o que o layout cobra (a pílula vermelha "N pendências"). */
   const pendencias: Pendencia[] = [
-    ...(itens.length ? [] : [{ caminho: "itens", rotulo: "Itens", mensagem: "Inclua ao menos um item." }]),
+    ...(itens.length || aceitaSemItensAqui ? [] : [{ caminho: "itens", rotulo: "Itens", mensagem: "Inclua ao menos um item." }]),
     ...listaFaltando.map((f) => ({ caminho: f.caminho, rotulo: f.caminho.startsWith("itens") ? descreverCaminhoDeItem(f.caminho) : f.rotulo, mensagem: mensagemCampoObrigatorio(f.rotulo) }))
   ];
 
@@ -582,6 +596,7 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     doPedido: (c) => modoReceber && doPedido.current.has(c),
     armazemPadrao, colunasDoLayout, fieldsDosItens,
     erro, errosDaTela, errosDeItens, pendencias, pendenciasAbertas, setPendenciasAbertas,
+    rotuloDoSalvar: rotuloDoSalvar(regras?.regrasGerais, can("compras.edit")),
     travaDoSalvar, salvarDesabilitado: travaDoSalvar !== null, salvando: salvarM.isPending, salvar,
     podeConfirmarNaCriacao: ehCompra && !modoReceber,
     corpo,
@@ -705,15 +720,20 @@ export function useEstadoDaConsulta({ variante, id }: { variante: VarianteDeComp
   const podeReceber = ehPedido && situacao === "aberto" && can(`${variante.perm}.edit`) && Boolean(varianteDaCompra) && can(`${varianteDaCompra?.perm ?? ""}.create`);
   const passos = useProximosPassosDoPedido(variante.segmento, id, podeReceber);
   const podeEncerrarSaldo = ehPedido && situacao === "aberto" && recebimentoDeclarado && comCompraViva && pedidoTemSaldo(itens) && can(`${variante.perm}.edit`);
-  const podeConfirmar = ehCompra && situacao === "aberto" && can("compras.edit");
+  /* O DIÁLOGO DE CONFIRMAR só abre em documento ABERTO e para quem pode confirmar — a regra ÚNICA do motor
+     (`confirmarPodeAbrir`), para a pílula e para a chegada da criação. */
+  const documentoAberto = situacao === "aberto";
+  const confirmaPelaCapacidade = ehCompra && can("compras.edit");
+  const podeConfirmar = confirmarPodeAbrir(documentoAberto, confirmaPelaCapacidade);
   /* CONFIRMAR PEDIDO NA CRIAÇÃO (como na venda): atendido UMA vez, com o documento carregado, e só se a compra AINDA
-     pode ser confirmada (situação "aberto" e `compras.edit`). Chegou confirmada (ou noutra situação): o diálogo não abre. */
+     pode ser confirmada (situação "aberto" e `compras.edit`). Chegou confirmada (ou noutra situação — inclusive pelo
+     "Salvar e confirmar" da TOP de Confirmação Automática): o diálogo não abre. */
   const pedidoDeConfirmarTratado = React.useRef(false);
   React.useEffect(() => {
     if (!d || pedidoDeConfirmarTratado.current) return;
     pedidoDeConfirmarTratado.current = true;
-    if (salvo?.confirmar && podeConfirmar) setConfirmando(true);
-  }, [d, salvo, podeConfirmar]);
+    if (abreConfirmarNaChegada(salvo, documentoAberto, confirmaPelaCapacidade)) setConfirmando(true);
+  }, [d, salvo, documentoAberto, confirmaPelaCapacidade]);
   const podeCancelar = (situacao === "aberto" || situacao === "confirmado") && can(`${variante.perm}.delete`);
   const origemId = ehCompra && d && typeof d["origem_documento_id"] === "string" ? d["origem_documento_id"] : "";
   const saldoEncerradoEm = ehPedido && d && typeof d["saldo_encerrado_em"] === "string" ? d["saldo_encerrado_em"] : "";

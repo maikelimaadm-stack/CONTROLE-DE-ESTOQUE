@@ -31,6 +31,11 @@ import { varianteDeVenda } from "@/features/sales/variantes";
 import { DialogoEncerrarSaldo, ItensDaConversao, ehParteGerada, fraseItensDaOrigem, itensParaEnvio, linhasIniciais, saldoDoItem, temParteGerada, useOrigemDaParte, type LinhaDaParte } from "@/features/sales/faturar-em-partes";
 import { D } from "@agro/shared";
 import { usePreviaDaConfirmacao, linhaDeEstoque, linhaFinanceira, padraoAutomaticoPrevisto, TEXTO_SEM_PREVIA, type EstadoDaPrevia } from "@/features/sales/previa-confirmacao";
+/* OPERACOES-01 F2 (decisão 279): o diálogo de Confirmar só em documento aberto (UMA regra, do motor) e a situação da
+   aprovação na consulta (o bloco das Aprovações, o mesmo diálogo da fila). */
+import { abreConfirmarNaChegada, confirmarPodeAbrir } from "@/features/central/salvo";
+import { AprovacaoDoDocumento } from "@/features/aprovacoes/aprovacao-do-documento";
+import { PREFIXO_CENTRAL_VENDAS } from "@/features/sales/central-vendas-adaptador";
 
 /** O snapshot da TOP como o servidor o devolve: nome e versão CONGELADOS no instante do lançamento. */
 interface TopSnapshot { id: string; codigo: string; nome: string; versao: number; codigoBase: string; familiaRotulo: string | null }
@@ -178,7 +183,9 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
     if (!d || !depoisDeSalvar || chegadaTratada.current) return;
     chegadaTratada.current = true;
     setSalvoVisivel(true);
-    if (depoisDeSalvar.confirmar && String(d["kind"]) === "sale" && ["open", "approved"].includes(String(d["status"])) && can("sales.edit")) {
+    /* OPERACOES-01 F2: a regra do motor — só quando o clique foi "Confirmar venda", em venda ABERTA ("approved" é o
+       legado da 0005, aberto) e para quem pode confirmar. Chegou confirmada (TOP de Confirmação Automática): só o "Salvo". */
+    if (abreConfirmarNaChegada(depoisDeSalvar, ["open", "approved"].includes(String(d["status"])), String(d["kind"]) === "sale" && can("sales.edit"))) {
       setAberturasDoConfirmar((n) => n + 1); setConfirmar("confirm");
     }
   }, [d, depoisDeSalvar, can]);
@@ -340,9 +347,10 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         {/* VISUAL-UX-02 W1 — consulta: [Novo documento +] [Duplicar documento] [pílula] */}
         {k && can(`${k.perm}.create`) && varianteDoRegistro && <NovoDocumento variante={varianteDoRegistro} />}
         {k && can(`${k.perm}.create`) && <BotaoDaBarra rotulo="Duplicar documento" dica={motivoSemCopia ?? "Duplicar documento"} disabled={motivoSemCopia !== null} data-testid="central-vendas-duplicar" onClick={duplicar}><IconeDuplicar /></BotaoDaBarra>}
-        {/* Venda: Confirmar venda, visível e DESABILITADA quando o documento não está aberto (confirmada, cancelada…) */}
-        {variante === "sale" && can("sales.edit") && <PilulaDaBarra icone={<IconeConfirmar />} dica="Confirmar venda" disabled={!editavel || act.isPending} data-testid="central-vendas-confirmar"
-          onClick={() => { setAberturasDoConfirmar((n) => n + 1); setConfirmar("confirm"); }}>Confirmar venda</PilulaDaBarra>}
+        {/* Venda: Confirmar venda, visível e DESABILITADA quando o documento não está aberto (confirmada, cancelada…).
+            OPERACOES-01 F2: a regra é a do motor (`confirmarPodeAbrir`), no `disabled` E no handler — `disabled` é apresentação. */}
+        {variante === "sale" && can("sales.edit") && <PilulaDaBarra icone={<IconeConfirmar />} dica="Confirmar venda" disabled={!confirmarPodeAbrir(editavel, can("sales.edit")) || act.isPending} data-testid="central-vendas-confirmar"
+          onClick={() => { if (!confirmarPodeAbrir(editavel, can("sales.edit"))) return; setAberturasDoConfirmar((n) => n + 1); setConfirmar("confirm"); }}>Confirmar venda</PilulaDaBarra>}
         {/* CONVERTER exige AS DUAS capacidades, como a API passou a exigir: editar a FONTE e criar o
             DESTINO. Mostrar o botão só com a do destino ofereceria uma ação que a API recusa com 403. */}
         {k && ofereceConversao && editavel && can(`${k.perm}.edit`) && <PilulaDaBarra icone={<IconeConverter />} data-testid="acao-conversao" onClick={abrirConversao}>{rotuloDaConversao}</PilulaDaBarra>}
@@ -355,6 +363,10 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         <AcoesRapidas antes={rapidasAntes} depois={rapidasDepois} />
       </ConjuntoDireito>}
       dados={<>
+        {/* OPERACOES-01 F2 (decisão 279): a situação da aprovação da VENDA aberta cuja TOP a exige, com Aprovar/Reprovar
+            para quem tem `sales.approve` — o servidor responde a situação; sem nada a dizer (não exigida, fechada, API
+            anterior, erro) o bloco não aparece. A decisão vale para a `version` que esta consulta mostra. */}
+        {variante === "sale" && <AprovacaoDoDocumento area="vendas" documentoId={String(d["id"])} documentoAberto={editavel} versao={String(d["version"] ?? "")} prefixoTestid={PREFIXO_CENTRAL_VENDAS} codigo={codigo} />}
         {/* VISUAL-UX-02: a coluna do desenho. Número, Natureza e Centro ficam em Dados principais (o skew os lê lá). */}
         <ColunaDeCampos>
           <CampoLeitura rotulo="Cliente" adorno="pesquisa" testId="central-vendas-campo" valor={`${d["client_name"] ?? ""} ${d["client_document"] ?? ""}`.trim()} />

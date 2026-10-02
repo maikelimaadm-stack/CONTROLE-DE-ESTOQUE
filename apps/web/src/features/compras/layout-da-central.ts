@@ -4,6 +4,7 @@ import {
 } from "@agro/domain";
 import { todayISO } from "@/lib/utils";
 import type { ColunaDoEditorDeItens, ColunaDoLayoutNoEditor } from "@/features/docs/shared";
+import { lerRegrasGerais, type RegrasGeraisDaCentral } from "@/features/central/regras-gerais";
 
 /**
  * O LAYOUT DO DOCUMENTO NA CENTRAL DE COMPRAS (COMPRAS-03, decisão 269) — contas PURAS, sem React e sem rede.
@@ -91,10 +92,16 @@ export const hrefDoConfigurador = (l: LayoutQueVale) => (l.origem !== "sistema" 
  * REGRAS DA OPERAÇÃO da compra (`/api/compras/{seg}/regras-da-operacao`), conferidas. Forma estranha = `null` (nenhum
  * asterisco a mais). COMPRAS-03: `exigeFormaPagamento`, `exigeVencimento` e `exigeArmazem` — ausentes na API anterior,
  * e aí valem `false` (a Central de hoje, sem campo forçado nem asterisco a mais).
+ *
+ * OPERACOES-01 F2 (decisão 279): `regrasGerais` — se o Salvar também confirma e se a compra pode ser salva sem itens —,
+ * lido pelo leitor ÚNICO do motor (`lerRegrasGerais`). Ausente (API anterior) ou fora da forma = o neutro inteiro: o
+ * rótulo "Salvar" e a pendência de item de antes. Ele não decide a forma das outras chaves: um bloco estranho não
+ * derruba as regras da compra.
  */
 export interface RegrasDaCompra {
   exigencias: string[]; condicoesPermitidas: string[] | null; geraTitulos: boolean | null;
   exigeFormaPagamento: boolean; exigeVencimento: boolean; exigeArmazem: boolean;
+  regrasGerais: RegrasGeraisDaCentral;
 }
 export function lerRegras(v: unknown): RegrasDaCompra | null {
   if (!ehObj(v) || !Array.isArray(v.exigencias) || !v.exigencias.every((x) => typeof x === "string")) return null;
@@ -102,7 +109,8 @@ export function lerRegras(v: unknown): RegrasDaCompra | null {
   if (cp !== null && cp !== undefined && !(Array.isArray(cp) && cp.every((x) => typeof x === "string"))) return null;
   return {
     exigencias: v.exigencias as string[], condicoesPermitidas: (cp as string[] | null | undefined) ?? null, geraTitulos: typeof v.geraTitulos === "boolean" ? v.geraTitulos : null,
-    exigeFormaPagamento: v.exigeFormaPagamento === true, exigeVencimento: v.exigeVencimento === true, exigeArmazem: v.exigeArmazem === true
+    exigeFormaPagamento: v.exigeFormaPagamento === true, exigeVencimento: v.exigeVencimento === true, exigeArmazem: v.exigeArmazem === true,
+    regrasGerais: lerRegrasGerais(v.regrasGerais)
   };
 }
 

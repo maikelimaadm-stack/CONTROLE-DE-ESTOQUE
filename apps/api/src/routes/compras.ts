@@ -51,6 +51,7 @@ import {
 import { layoutEfetivo, respostaDoLayoutEfetivo } from "../lib/layout-documento.js";
 import { lerVersaoCongeladaTop, confirmaAutomaticamente, tentarConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
 import { regrasDaVersaoTop, regrasDaTopAtual } from "./vendas-regras-operacao.js";
+import { regrasGeraisDaVariante } from "./regras-gerais-da-central.js";
 import {
   registrarConfirmacaoCompras, cancelarCompraConfirmada, conferirNotaDuplicada, confirmarCompraNaTransacao,
 } from "./compras-confirmacao.js";
@@ -679,6 +680,12 @@ export default async function comprasRoutes(app: FastifyInstance) {
      * lançamento cobra (`efeitosPrevistosDaCompra`, da versão ATUAL): a Central desenha esses campos mesmo que o
      * layout os esconda, porque esconder um campo que a regra vai exigir faria o Salvar recusar algo invisível.
      * Pedido nunca gera efeito: os três são false.
+     *
+     * OPERACOES-01 F2 (decisão 279): + `regrasGerais: { confirmacaoAutomatica, aceitaSemItens }`, a ÚLTIMA chave, da
+     * versão ATUAL e pela MESMA régua do POST (`regrasGeraisDaVersaoTop`; a confirmação automática e os itens vazios
+     * só valem na espécie `compra` — `topQueAceitaSemItens` e o gancho do POST). Pedido de compra: sempre
+     * `{ false, false }`. Aditivo, sem capacidade nova (o molde de `exigeArmazem`): a Central anterior pega as chaves
+     * de hoje campo a campo e ignora esta. Nenhuma consulta a mais (vem da mesma leitura de `regrasDaTopAtual`).
      */
     app.get(`${base}/regras-da-operacao`, async (req) => runService(app, req, `${recurso}.create`, async (ctx) => {
       const familia = familiaDaEspecie(especie);
@@ -689,7 +696,7 @@ export default async function comprasRoutes(app: FastifyInstance) {
            join erp.tipos_operacao_versoes v on v.tipo_operacao_id = t.id and v.organization_id = t.organization_id and v.versao = t.versao_atual
           where t.id = $1 and t.organization_id = $2 and t.codigo_base = $3 and t.ativo and t.excluido_em is null`, [bruto, ctx.orgId, familia]);
       if (!v.rows[0]) throw notFound("Tipo de operação");
-      const { formato, regras } = await regrasDaTopAtual(ctx, bruto);
+      const { formato, regras, regrasGerais } = await regrasDaTopAtual(ctx, bruto);
       // A versão ATUAL gera contas a pagar? (a tela marca natureza/centro como obrigatórios). Pedido nunca gera.
       const efeitos = especie === "compra"
         ? await efeitosPrevistosDaCompra(ctx, { tipoOperacaoVersaoId: v.rows[0].versao_id, codigoBase: familia }, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED)
@@ -703,6 +710,7 @@ export default async function comprasRoutes(app: FastifyInstance) {
         exigeFormaPagamento: efeitos?.exigeFormaPagamento ?? false,
         exigeVencimento: efeitos?.exigeVencimento ?? false,
         exigeArmazem: efeitos?.exigeArmazem ?? false,
+        regrasGerais: regrasGeraisDaVariante(regrasGerais, especie === "compra"),
       };
     }));
 

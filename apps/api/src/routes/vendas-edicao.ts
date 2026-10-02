@@ -6,7 +6,8 @@ import { runService, requirePermission } from "../lib/service.js";
 import { notFound } from "../lib/errors.js";
 import { respostaDoLayoutEfetivo, type LayoutEfetivoDaCentral } from "../lib/layout-documento.js";
 import { recusaDaEdicao, limitesDaEdicao, type LimitesDaEdicao } from "./vendas-edicao-regras.js";
-import { regrasDaVersaoCongelada, respostaDasRegrasDaOperacao, type RegrasDaOperacaoDaVenda, type RegrasDaVersaoTop } from "./vendas-regras-operacao.js";
+import { regrasDaVersaoCongelada, respostaDasRegrasDaOperacao, type LidasDaVersaoTop, type RegrasDaOperacaoDaVenda } from "./vendas-regras-operacao.js";
+import { regrasGeraisNeutrasDaCentral } from "./regras-gerais-da-central.js";
 import { respostaDaSituacaoCliente } from "./vendas-atraso-cliente.js";
 
 /** Dependências que moram em `sales.ts` e chegam por parâmetro: sem import circular entre as rotas. */
@@ -36,7 +37,9 @@ type DocumentoDaEdicao = {
  *                              ITEM — travado só o item de produto que controla estoque, na venda gerada de pedido que
  *                              reserva estoque. Item sem controle de estoque fica livre, como a gravação o deixa.
  *  - `version`              → a do documento, para a PATCH mandar de volta (concorrência otimista).
- *  - `regras`               → o MESMO contrato de `/regras-da-operacao`, pela versão CONGELADA.
+ *  - `regras`               → o MESMO contrato de `/regras-da-operacao`, pela versão CONGELADA — inclusive
+ *                              `regrasGerais` (F2, decisão 279: confirma ao salvar? aceita sem itens?), da versão
+ *                              CONGELADA, que é a que a PATCH executa; só a venda executa (orçamento e pedido: neutro).
  *  - `condicoesPermitidas`  → o MESMO valor de `regras.condicoesPermitidas` (mesma referência; null = todas).
  *  - `layout`               → o MESMO contrato de `/layout-efetivo`, pela TOP do documento (o que a PATCH cobra).
  *  - `situacaoCliente`      → o MESMO contrato de `/situacao-cliente`, para o cliente GRAVADO, pela versão CONGELADA.
@@ -53,7 +56,7 @@ export interface EdicaoDoDocumentoDeVenda {
 }
 
 /** Documento sem TOP (legado, anterior às operações): nada a ler de versão — a resposta NEUTRA das duas montagens. */
-const SEM_VERSAO: { formato: number; regras: RegrasDaVersaoTop | null } = { formato: 0, regras: null };
+const SEM_VERSAO: LidasDaVersaoTop = { formato: 0, regras: null, regrasGerais: regrasGeraisNeutrasDaCentral() };
 
 /**
  * EDITAR-01 (decisão 272, item 1.3) — `GET <base>/:id/edicao`: o que a tela precisa para abrir a edição de um documento
@@ -103,7 +106,8 @@ export function registrarEdicaoDeVenda(app: FastifyInstance, kind: SalesKind, ba
       // A versão CONGELADA (0021: `tipo_operacao_id` e `tipo_operacao_versao_id` são nulos juntos ou preenchidos juntos).
       const congelada = doc.tipo_operacao_versao_id ? await regrasDaVersaoCongelada(ctx, doc.tipo_operacao_versao_id) : SEM_VERSAO;
       // `reserva_estoque` do GET já é o da versão CONGELADA (e só pedido pode ser true) — a mesma regra de `/regras-da-operacao`.
-      const regras = respostaDasRegrasDaOperacao(congelada, kind === "order" && doc.reserva_estoque === true);
+      // `regrasGerais` só na venda — a régua da PATCH (`aceitaSemItens`/`confirmacaoAutomaticaDaVenda` em sales.ts).
+      const regras = respostaDasRegrasDaOperacao(congelada, kind === "order" && doc.reserva_estoque === true, kind === "sale");
       // Sem TOP → `null` → layout do SISTEMA (o mesmo que a PATCH usaria; ela recusa antes, mas a tela mostra o documento).
       const layout = await respostaDoLayoutEfetivo(ctx, familia, doc.tipo_operacao_id);
       // O cliente GRAVADO, pela política da versão congelada. Sem regras do formato 3 → `nao_valida`, sem consultar o atraso.
