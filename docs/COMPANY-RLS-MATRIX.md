@@ -61,14 +61,14 @@ títulos, 10 empresas no seletor) — muda o PLANO, não a autorização. Só a 
 
 ## Categorias
 
-- **A** — EMPRESA ÚNICA OBRIGATÓRIA (41 tabelas)
+- **A** — EMPRESA ÚNICA OBRIGATÓRIA (42 tabelas)
 - **B** — EMPRESA ÚNICA ANULÁVEL (6 tabelas)
 - **C** — ORIGEM + DESTINO (três contratos por domínio) (3 tabelas)
 - **D** — TABELA EMPRESAS (1 tabela)
 - **E** — PORTA DINÂMICA / ESPECIAL (8 tabelas)
 - **F** — ORGANIZAÇÃO — SEM RLS EMPRESARIAL (1 tabela)
 
-## Tabelas (60)
+## Tabelas (61)
 
 | Tabela | Coluna(s) canônica(s) | Módulo | Cat. | Nulo? | Leitura | Escrita | Semântica POR COMANDO |
 | --- | --- | --- | :---: | :---: | --- | --- | --- |
@@ -107,6 +107,7 @@ títulos, 10 empresas no seletor) — muda o PLANO, não a autorização. Só a 
 | `erp.fuel_supplies` | `empresa_id` | frota_ativos | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.grazing_modules` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.herd_lots` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.imoveis_rurais` | `empresa_id` | financeiro | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.input_entries` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.invoices` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.journal_entries` | `empresa_id` | fiscal | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita (origem)**<br>UPDATE: using=**escrita (origem)** · check=**escrita (origem)**<br>DELETE: using=**escrita (origem)** |

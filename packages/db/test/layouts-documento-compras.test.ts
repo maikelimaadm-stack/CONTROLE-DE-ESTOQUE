@@ -247,7 +247,7 @@ describe("0038 — sobre o acervo de layouts de venda, como o runner aplica", ()
     expect((await db.query("select 1 from pg_roles where rolname like 'c03r\\_%'")).rowCount).toBe(0);
   });
 
-  it("LB5 aplica: ledger com 38 (a 0038 por último NESTE banco), 42 no repositório (a 0039 logo depois dela), layouts e ligações idênticos, CHECK com as cinco famílias do domínio, gatilho intacto", async () => {
+  it("LB5 aplica: ledger com 38 (a 0038 por último NESTE banco), 43 no repositório (a 0039 logo depois dela), layouts e ligações idênticos, CHECK com as cinco famílias do domínio, gatilho intacto", async () => {
     await aplicar();
     // Este arquivo sobe o banco só até a 0038: o ledger dele termina nela. O repositório já tem a 0039 (EDITAR-01),
     // provada em editar-01-versao.test.ts.
@@ -255,8 +255,8 @@ describe("0038 — sobre o acervo de layouts de venda, como o runner aplica", ()
     expect(ledger).toEqual({ n: 38, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
     // No disco há mais do que o ledger deste arquivo (ele sobe só até a 0038): a 0039 (EDITAR-01), a 0040
-    // (ESTOQUE-01), a 0041 (TOP-CONFIG-08) e a 0042 (OPERACOES-01 F8) vêm depois.
-    expect(noDisco.length, "42 migrations no repositório").toBe(42);
+    // (ESTOQUE-01), a 0041 (TOP-CONFIG-08), a 0042 (OPERACOES-01 F8) e a 0045 (OPERACOES-01 F9) vêm depois.
+    expect(noDisco.length, "43 migrations no repositório").toBe(43);
     expect(noDisco[37]).toBe(ALVO);
     expect(noDisco[38], "a 0039 logo depois da 0038 no repositório").toBe("0039_versao_do_documento_de_venda.sql");
     expect(await retrato(), "nenhuma linha de layout ou de ligação muda").toEqual(antes);

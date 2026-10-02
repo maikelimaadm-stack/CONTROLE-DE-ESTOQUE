@@ -168,15 +168,16 @@ describe("premissas e catálogo", () => {
     expect(t.map((x) => x.codigo_base)).toEqual(["compras.compra", "compras.pedido"]);
   });
 
-  it("a 0037 é a 37ª migration do ledger; depois dela, a 0038 (COMPRAS-03), a 0039 (EDITAR-01), a 0040 (ESTOQUE-01), a 0041 (TOP-CONFIG-08) e a 0042 (OPERACOES-01 F8)", async () => {
+  it("a 0037 é a 37ª migration do ledger; depois dela, a 0038 (COMPRAS-03), a 0039 (EDITAR-01), a 0040 (ESTOQUE-01), a 0041 (TOP-CONFIG-08), a 0042 (OPERACOES-01 F8) e a 0045 (OPERACOES-01 F9)", async () => {
     // A posição da 0037 continua sendo a 37ª; a contagem total acompanha a ordem do repositório (a 0038 alarga
     // o CHECK de família dos layouts e fixa o search_path destas funções — layouts-documento-compras.test.ts; a 0039
     // dá versão ao documento de venda — editar-01-versao.test.ts; a 0040 cria o documento de estoque —
     // estoque-01-0040.test.ts; a 0041 cria as aprovações e a guarda de aprovação da compra — top-config-08-0041.test.ts;
-    // a 0042 cria a Central Financeira — operacoes-01-0042.test.ts).
+    // a 0042 cria a Central Financeira — operacoes-01-0042.test.ts; a 0045 liga o financeiro à TOP e cria o imóvel rural
+    // do LCDPR — operacoes-01-0045.test.ts).
     const r = (await db.query<{ ate: number; n: number; ultima: string }>(
       "select count(*) filter (where name <= '0037_receber_pedido_de_compra.sql')::int ate, count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
-    expect(r).toEqual({ ate: 37, n: 42, ultima: "0042_central_financeira.sql" });
+    expect(r).toEqual({ ate: 37, n: 43, ultima: "0045_financeiro_pela_top_e_lcdpr.sql" });
   });
 
   it("colunas novas: tipo e nulidade", async () => {

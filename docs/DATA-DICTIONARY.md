@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 204 |
-| Tabelas com `organization_id` (escopo de organização) | 147 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 59 |
-| Entidades curadas neste dicionário | 54 |
+| Tabelas no schema `erp` | 206 |
+| Tabelas com `organization_id` (escopo de organização) | 149 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 60 |
+| Entidades curadas neste dicionário | 56 |
 | Entidades com ID Global | 25 |
-| Entidades com Tipo de Operação | 15 |
-| Tipos de Operação referenciados | 23 |
-| Cobertura curada | 26.5% |
+| Entidades com Tipo de Operação | 16 |
+| Tipos de Operação referenciados | 24 |
+| Cobertura curada | 27.2% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -1352,7 +1352,7 @@ Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/rec
 | `harvest_id` |  | uuid | não | FK | `erp.harvests` |  |  |
 | `paid_amount` |  | numeric(18,2) | sim |  |  |  |  |
 | `balance` |  | numeric(18,2) | não |  |  |  |  |
-| `status` |  | text | sim |  |  | `open` · `partially_paid` · `paid` · `cancelled` |  |
+| `status` |  | text | sim |  |  | `open` · `partially_paid` · `paid` · `cancelled` · `previsto` |  |
 | `source_type` |  | text | não |  |  |  |  |
 | `source_id` |  | uuid | não |  |  |  |  |
 | `version` |  | int | sim |  |  |  |  |
@@ -1366,6 +1366,8 @@ Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/rec
 | `cancel_reason` |  | text | não |  |  |  |  |
 | `cancelled_at` |  | timestamptz | não |  |  |  |  |
 | `cancelled_by` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-FINANCEIRO-BAIXA — Baixa de Título
 
@@ -1410,6 +1412,7 @@ Pagamento/recebimento parcial ou total de um título. Identidade pertence ao tí
 | `tarifa` |  | numeric(18,2) | não |  |  |  |  |
 | `adiantamento_id` |  | uuid | não |  |  |  |  |
 | `natureza_desconto_id` |  | uuid | não |  |  |  |  |
+| `imovel_rural_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-FINANCEIRO-MOVIMENTO-BANCARIO — Movimento Bancário
 
@@ -1424,6 +1427,7 @@ Lançamento em conta bancária (transferência, tarifa, aplicação).
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/financeiro/movimentos/:id` |
+| Tipo de Operação | `financeiro.movimento_bancario` (Movimento bancário) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1463,6 +1467,9 @@ Lançamento em conta bancária (transferência, tarifa, aplicação).
 | `cancel_reason` |  | text | não |  |  |  |  |
 | `cancelled_at` |  | timestamptz | não |  |  |  |  |
 | `cancelled_by` |  | uuid | não |  |  |  |  |
+| `imovel_rural_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-FINANCEIRO-IMPORTACAO-OFX — Importação OFX
 
@@ -1492,6 +1499,63 @@ Importação de extrato bancário para conciliação. Pertence à conta bancári
 | `created_by` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
+
+### ERP-FINANCEIRO-IMOVEL-RURAL — Imóvel Rural
+
+Imóvel rural do LCDPR (nome, CIB/NIRF, CAEPF, IE, tipo de exploração, % de participação), por empresa; o padrão da empresa vai para a baixa e o movimento.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.imoveis_rurais` |
+| Natureza | entidade |
+| Escopo de organização | sim |
+| Escopo de empresa | `empresa_id` |
+| Exclusão lógica | sim |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `empresa_id` |  | uuid | sim |  |  |  |  |
+| `nome` |  | text | sim |  |  |  |  |
+| `cib` |  | text | não |  |  |  |  |
+| `caepf` |  | text | não |  |  |  |  |
+| `inscricao_estadual` |  | text | não |  |  |  |  |
+| `tipo_exploracao` |  | text | sim |  |  | `individual` · `condominio` · `arrendado` · `parceria` · `comodato` · `outros` |  |
+| `participacao` |  | numeric(5,2) | sim |  |  |  |  |
+| `padrao` |  | boolean | sim |  |  |  |  |
+| `is_active` |  | boolean | sim |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `updated_at` |  | timestamptz | sim |  |  |  |  |
+| `deleted_at` |  | timestamptz | não |  |  |  |  |
+
+### ERP-FINANCEIRO-PADROES-TOP — Padrões Financeiros da Versão da TOP
+
+Padrões financeiros de uma versão de TOP (natureza, centro, tipo de título, forma, conta). Imutável como a versão.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.tipos_operacao_versao_financeiro` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `origem_versao_id` |  | uuid | sim |  |  |  |  |
+| `origem_tipo_operacao_id` |  | uuid | sim |  |  |  |  |
+| `natureza_id` |  | uuid | não |  |  |  |  |
+| `centro_custo_id` |  | uuid | não |  |  |  |  |
+| `tipo_titulo_id` |  | uuid | não |  |  |  |  |
+| `forma_pagamento_id` |  | uuid | não |  |  |  |  |
+| `conta_bancaria_id` |  | uuid | não |  |  |  |  |
+| `criado_por` |  | uuid | não | FK | `erp.users` |  |  |
+| `criado_em` |  | timestamptz | sim |  |  |  |  |
 
 ## Vendas
 
@@ -1973,7 +2037,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.feedlot_sectors` | 8 | sim | — | sim |
 | `erp.feedlot_yards` | 8 | sim | `empresa_id` | sim |
 | `erp.financeiro_naturezas_padrao` | 13 | sim | — | não |
-| `erp.financial_categories` | 14 | sim | — | sim |
+| `erp.financial_categories` | 15 | sim | — | sim |
 | `erp.financial_freezes` | 9 | sim | `empresa_id` | não |
 | `erp.fodders` | 7 | sim | — | sim |
 | `erp.grazing_modules` | 13 | sim | `empresa_id` | sim |
