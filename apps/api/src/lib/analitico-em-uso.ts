@@ -73,6 +73,8 @@ export const REFERENCIAS_DE_USO: Readonly<Record<string, readonly ReferenciaDeUs
     r("bank_movement_apportionments", "cost_center_id"),
     r("devolution_items", "cost_center_id"),
     r("documentos_compra", "centro_custo_id"),
+    // OPERACOES-01 F5a (0043): o destino gravado no cabeçalho do documento de estoque.
+    r("documentos_estoque", "centro_custo_id"),
     r("empresa_cost_centers", "cost_center_id"),
     r("employee_profiles", "cost_center_id"),
     r("equipment_cost_centers", "cost_center_id"),
