@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 203 |
-| Tabelas com `organization_id` (escopo de organização) | 146 |
+| Tabelas no schema `erp` | 204 |
+| Tabelas com `organization_id` (escopo de organização) | 147 |
 | Tabelas com coluna de empresa (hoje `farm_id`) | 59 |
 | Entidades curadas neste dicionário | 54 |
 | Entidades com ID Global | 25 |
 | Entidades com Tipo de Operação | 15 |
 | Tipos de Operação referenciados | 26 |
-| Cobertura curada | 26.6% |
+| Cobertura curada | 26.5% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -1378,6 +1378,11 @@ Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/rec
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `data_competencia` |  | date | não |  |  |  |  |
+| `conta_prevista_id` |  | uuid | não |  |  |  |  |
+| `cancel_reason` |  | text | não |  |  |  |  |
+| `cancelled_at` |  | timestamptz | não |  |  |  |  |
+| `cancelled_by` |  | uuid | não |  |  |  |  |
 
 ### ERP-FINANCEIRO-BAIXA — Baixa de Título
 
@@ -1418,6 +1423,10 @@ Pagamento/recebimento parcial ou total de um título. Identidade pertence ao tí
 | `cancel_reason` |  | text | não |  |  |  |  |
 | `created_by` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
+| `lote_id` |  | uuid | não |  |  |  |  |
+| `tarifa` |  | numeric(18,2) | não |  |  |  |  |
+| `adiantamento_id` |  | uuid | não |  |  |  |  |
+| `natureza_desconto_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-FINANCEIRO-MOVIMENTO-BANCARIO — Movimento Bancário
 
@@ -1464,6 +1473,13 @@ Lançamento em conta bancária (transferência, tarifa, aplicação).
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | não |  |  |  |  |
+| `tipo_transferencia` |  | text | não |  |  |  |  |
+| `title_settlement_id` |  | uuid | não |  |  |  |  |
+| `componente_baixa` |  | text | não |  |  |  |  |
+| `lote_baixa_id` |  | uuid | não |  |  |  |  |
+| `cancel_reason` |  | text | não |  |  |  |  |
+| `cancelled_at` |  | timestamptz | não |  |  |  |  |
+| `cancelled_by` |  | uuid | não |  |  |  |  |
 
 ### ERP-FINANCEIRO-IMPORTACAO-OFX — Importação OFX
 
@@ -1927,7 +1943,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.authorizers` | 13 | sim | — | sim |
 | `erp.bank_account_empresas` | 2 | não | `empresa_id` | não |
 | `erp.bank_account_proprietaries` | 2 | não | — | não |
-| `erp.bank_accounts` | 20 | sim | — | sim |
+| `erp.bank_accounts` | 21 | sim | — | sim |
 | `erp.bank_movement_apportionments` | 8 | não | — | não |
 | `erp.batch_categories` | 2 | não | — | não |
 | `erp.batches` | 21 | sim | `empresa_id` | sim |
@@ -1973,7 +1989,8 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.feedlot_corrals` | 10 | sim | — | sim |
 | `erp.feedlot_sectors` | 8 | sim | — | sim |
 | `erp.feedlot_yards` | 8 | sim | `empresa_id` | sim |
-| `erp.financial_categories` | 13 | sim | — | sim |
+| `erp.financeiro_naturezas_padrao` | 13 | sim | — | não |
+| `erp.financial_categories` | 14 | sim | — | sim |
 | `erp.financial_freezes` | 9 | sim | `empresa_id` | não |
 | `erp.fodders` | 7 | sim | — | sim |
 | `erp.grazing_modules` | 13 | sim | `empresa_id` | sim |
