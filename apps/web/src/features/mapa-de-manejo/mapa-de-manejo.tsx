@@ -65,6 +65,18 @@ const editorVazio = (): Editor => ({
   arrasto: null, hover: null, acao: "Clique no mapa para marcar os pontos", ultimoClique: null
 });
 const livre = (ll: LngLat): PontoDesenho => ({ lng: ll[0], lat: ll[1], grudado: false, tipo: null, de: null });
+/** Textos dos controles do MapLibre (dicas dos botões) em PT-BR — o padrão do pacote é inglês. */
+const TEXTOS_DO_MAPA: Record<string, string> = {
+  "AttributionControl.ToggleAttribution": "Mostrar ou ocultar os créditos do mapa",
+  "AttributionControl.MapFeedback": "Enviar comentário sobre o mapa",
+  "GeolocateControl.FindMyLocation": "Minha localização",
+  "GeolocateControl.LocationNotAvailable": "Localização indisponível",
+  "NavigationControl.ResetBearing": "Voltar o norte para cima",
+  "NavigationControl.ZoomIn": "Aproximar",
+  "NavigationControl.ZoomOut": "Afastar"
+};
+/** Acima disto (em metros) a localização é avisada como aproximada — GPS de celular fica bem abaixo. */
+const PRECISAO_BOA_M = 50;
 /** Janela do duplo clique: o ponto criado pelo 1º clique do gesto não é apagado pelo dblclick do mesmo gesto. */
 const JANELA_DUPLO_MS = 600;
 
@@ -88,6 +100,8 @@ export function MapaDeManejo() {
   const [form, setForm] = React.useState<{ nome: string; cor: string; tamanho_ha: string }>({ nome: "", cor: COR_PADRAO, tamanho_ha: "" });
   const [excluir, setExcluir] = React.useState<AreaApi | null>(null);
   const [erro, setErro] = React.useState<string | null>(null);
+  const [localizacao, setLocalizacao] = React.useState<{ precisao: number } | null>(null);
+  const [erroLocalizacao, setErroLocalizacao] = React.useState<string | null>(null);
   const [cfg, setCfg] = React.useState<ConfigIma>(IMA_PADRAO);
 
   // Refs lidos pelos eventos do mapa (registrados uma vez só).
@@ -281,13 +295,24 @@ export function MapaDeManejo() {
         // mapa sempre norte para cima: o botão direito é "desfazer" no desenho e o rumo do Shift é de bússola
         dragRotate: false,
         pitchWithRotate: false,
-        touchPitch: false
+        touchPitch: false,
+        locale: TEXTOS_DO_MAPA
       });
       m.touchZoomRotate.disableRotation();
       mapaCleanup = m;
       m.addControl(new maplibre.NavigationControl({ showCompass: false }), "bottom-right");
-      // "Habilitar minha localização": o controle do MapLibre pede a permissão do navegador e centra no usuário.
-      m.addControl(new maplibre.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }), "bottom-right");
+      // "Habilitar minha localização": o controle do MapLibre pede a permissão do navegador e segue o usuário.
+      // Sempre a posição NOVA (maximumAge 0) e tempo para o GPS fixar; a precisão vai para a tela, porque no
+      // computador a posição vem da rede e pode errar centenas de metros — quem olha o ponto precisa saber disso.
+      const geo = new maplibre.GeolocateControl({ positionOptions: { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }, fitBoundsOptions: { maxZoom: 18 }, trackUserLocation: true });
+      geo.on("geolocate", (ev: { coords?: GeolocationCoordinates }) => {
+        const precisao = ev.coords?.accuracy;
+        if (typeof precisao === "number") { setLocalizacao({ precisao }); setErroLocalizacao(null); }
+      });
+      geo.on("error", (ev: { code?: number }) => {
+        setErroLocalizacao(ev.code === 1 ? "Localização bloqueada: libere a permissão de localização no navegador." : ev.code === 3 ? "A localização demorou demais. Toque de novo no botão de localização." : "Localização indisponível agora.");
+      });
+      m.addControl(geo, "bottom-right");
       mapRef.current = m;
 
       m.on("load", () => {
@@ -565,6 +590,22 @@ export function MapaDeManejo() {
               <span className={cn("h-2 w-2 shrink-0 rounded-full", e.arrasto ? "bg-yellow-400" : "bg-green-500")} aria-hidden />
               <span className="truncate text-slate-700" data-testid="mapa-acao">{e.acao}</span>
               <span className="shrink-0 tabular-nums text-slate-400">· {cfg.ligado ? `ímã ${cfg.tolerancia} px ≈ ${num(Math.round(cfg.tolerancia * metrosPorPx), 0)} m` : "ímã desligado"}</span>
+            </div>
+          )}
+
+          {/* precisão da minha localização (acima dos botões de zoom/localização) */}
+          {(localizacao || erroLocalizacao) && (
+            <div className="pointer-events-none absolute bottom-[7.5rem] right-2 max-w-xs rounded-md border border-slate-200 bg-white/95 px-3 py-1.5 text-xs shadow-sm" data-testid="mapa-localizacao">
+              {erroLocalizacao ? (
+                <span className="text-red-600">{erroLocalizacao}</span>
+              ) : localizacao && (
+                <>
+                  <span className="font-medium tabular-nums text-slate-700">Sua localização: precisão de ± {num(Math.round(localizacao.precisao), 0)} m</span>
+                  {localizacao.precisao > PRECISAO_BOA_M && (
+                    <span className="mt-0.5 block text-amber-700" data-testid="mapa-localizacao-aproximada">Posição aproximada: no computador ela vem da rede (Wi-Fi). No celular com GPS ligado fica precisa.</span>
+                  )}
+                </>
+              )}
             </div>
           )}
 
