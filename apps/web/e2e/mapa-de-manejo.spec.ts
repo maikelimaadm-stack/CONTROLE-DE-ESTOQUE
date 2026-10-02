@@ -62,7 +62,12 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
     const em = await abrirEditor(page);
     const clicar = (dx: number, dy: number, opts?: { button?: "right" }) => { const p = em(dx, dy); return page.mouse.click(p.x, p.y, opts); };
 
-    // ímã fixo (ícone só; 8 px, vértice+aresta); mapa vazio → pontos livres
+    // ímã liga/desliga no ícone (padrão 8 px, vértice+aresta); mapa vazio → pontos livres
+    await expect(page.getByTestId("mapa-ima-toggle")).toHaveAttribute("aria-pressed", "true");
+    await page.getByTestId("mapa-ima-toggle").click();
+    await expect(page.getByTestId("mapa-ima-toggle")).toHaveAttribute("aria-pressed", "false");
+    await page.getByTestId("mapa-ima-toggle").click();
+    await expect(page.getByTestId("mapa-ima-toggle")).toHaveAttribute("aria-pressed", "true");
     await clicar(-L, -L); await clicar(L, -L); await clicar(L, L);
     await expect(pontos).toHaveText("3");
     await expect(page.getByTestId("mapa-lado"), "aberta: um rótulo de medida por lado traçado").toHaveCount(2);

@@ -108,10 +108,12 @@ export function MapaDeManejo() {
   const [erro, setErro] = React.useState<string | null>(null);
   const [localizacao, setLocalizacao] = React.useState<{ precisao: number } | null>(null);
   const [erroLocalizacao, setErroLocalizacao] = React.useState<string | null>(null);
+  const [cfg, setCfg] = React.useState<ConfigIma>(IMA_PADRAO);
   // Refs lidos pelos eventos do mapa (registrados uma vez só).
   const ed = React.useRef<Editor>(editorVazio());
-  /** Ímã fixo: 8 px, vértice + aresta (sem painel de ajuste na UI). */
+  /** Ímã: tolerância 8 px, vértice+aresta; liga/desliga pelo ícone. */
   const cfgRef = React.useRef<ConfigIma>(IMA_PADRAO);
+  React.useEffect(() => { cfgRef.current = cfg; }, [cfg]);
   const desenhandoRef = React.useRef(false);
   const formAbertoRef = React.useRef(false);
   const areasRef = React.useRef<AreaApi[]>([]);
@@ -608,6 +610,20 @@ export function MapaDeManejo() {
     if (e.pontos.length >= 3) { fechar("Fechado"); return; }
     e.acao = "Marque pelo menos 3 pontos"; redesenhar();
   }
+
+  function toggleIma() {
+    setCfg((c) => {
+      const ligado = !c.ligado;
+      const novo = { ...c, ligado };
+      cfgRef.current = novo;
+      const e = ed.current;
+      e.ima = null;
+      e.acao = ligado ? "Ímã ligado" : "Ímã desligado";
+      redesenhar();
+      return novo;
+    });
+  }
+
   // Troca entre satélite e ruas sem recarregar o estilo: a base de ruas entra sob demanda, sob as áreas.
   async function trocarBase(novo: TipoBase) {
     if (novo === base || semImagem) return;
@@ -777,7 +793,7 @@ export function MapaDeManejo() {
                     <Button type="button" size="icon" variant="ghost" onClick={refazer} disabled={!podeRefazer(e.hist)} aria-label="Refazer" title="Refazer (Ctrl+Shift+Z)" data-testid="mapa-refazer"><Redo2 className="h-4 w-4" aria-hidden /></Button>
                     <Button type="button" size="icon" variant="ghost" onClick={recomecar} aria-label="Recomeçar" title="Recomeçar" data-testid="mapa-recomecar"><RotateCcw className="h-4 w-4" aria-hidden /></Button>
                   </div>
-                  <BarraIma />
+                  <BarraIma ligado={cfg.ligado} onToggle={toggleIma} />
                 </div>
               )}
             </div>
