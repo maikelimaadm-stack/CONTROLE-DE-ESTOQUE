@@ -1650,6 +1650,294 @@ a aparecer quando a mudança voltar; dado de produção não se apaga (decisão 
 **Roteiro do Maike (produção):** Vendas › marcar uma venda › Anexos › enviar um PDF — aparece na lista, baixa e
 o histórico da venda mostra o anexo adicionado.
 
+## TOP-CONFIG-08 — regras gerais e aprovação da TOP (0041)
+
+Decisão 277. **Uma migration: `0041_regras_gerais_e_aprovacao_da_top.sql`** (pre-deploy, como a 0040; trava (2026,75),
+`lock_timeout` 2 s, pré/pós-condições nomeadas `TOP-CONFIG-08: ...` — a primeira é "já aplicada" —, não destrutiva, sem
+backfill): três tabelas de DECISÃO de aprovação, vazias, uma ao lado de cada documento — `erp.aprovacoes_venda`
+(`erp.sales_documents`), `erp.aprovacoes_compra` (`erp.documentos_compra`) e `erp.aprovacoes_estoque`
+(`erp.documentos_estoque`) —, só de inserção (gatilho de imutabilidade por linha contra UPDATE e DELETE e por comando
+contra TRUNCATE — nem o dono edita, apaga ou esvazia uma tabela de decisões — e, para o papel da API, só `select` e
+`insert`), com FKs para o documento, a versão da TOP, a TOP e a empresa (composta, `(organization_id, empresa_id)`), RLS
+forçada com a política `tenant_e_empresa` da 0040 (módulos `vendas`, `compras` e `estoque`), `erp.audit_row` e o índice
+`(organization_id, documento_id, id desc)`; a conta `erp.top_exige_aprovacao(jsonb, numeric)` (imutável, não lê tabela,
+a mesma de `exigeAprovacao` do domínio; o papel da API a executa, porque a fila de aprovações a usa em SQL); um gatilho
+de inserção por tabela (`trg_aprovacoes_venda_conferir`, `trg_aprovacoes_compra_conferir`,
+`trg_aprovacoes_estoque_conferir`; SECURITY DEFINER, `search_path` fixo, organização e usuário da GUC do servidor —
+linha de outra organização, ou sem organização na GUC, recebe a `NOT_FOUND` antes de ler qualquer documento, e linha de
+empresa fora do escopo de escrita de quem decide no módulo da transação (`erp.empresa_escrita_permitida`, o predicado do
+`with check` da política) também), que lê `for share` só o documento que passa pelo filtro inteiro da `NOT_FOUND`, no
+próprio `where` — id, organização da GUC e empresa da linha; na venda, também `kind` `sale` e não excluída; na compra,
+espécie `compra` —, de modo que documento de outra empresa, de outra espécie ou excluído recebe a `NOT_FOUND` na hora,
+sem ser lido nem travado (mesmo quando outra sessão o segura `for update`), e que confere o documento aberto, que exige
+aprovação pelo total ATUAL — na venda, também a versão atual —, e ATRIBUI do documento a TOP, a versão congelada e o
+valor, e da transação `decidido_por` e `decidido_em`; e três guardas de transição BEFORE UPDATE da situação —
+`trg_sales_documents_aprovacao` (o mesmo WHEN da 0023; procura a decisão da versão `OLD.version` e dispara antes das
+três de hoje), `trg_documentos_compra_aprovacao` e `trg_documentos_estoque_aprovacao` (aberto → confirmado) —, que
+recusam com `CONFLICT` (mensagem fixa de uma linha: 409 em todo binário) a entrada no confirmado de documento cuja
+versão congelada está no formato 4, exige aprovação e não tem a vigente aprovada. A aprovação só cobre o valor e a
+versão que aprovou: na venda e na compra, a vigente aprovada só vale com o valor aprovado ≥ o maior total (o de antes e
+o de depois do UPDATE) e a versão da TOP aprovada igual à de depois do UPDATE; no estoque, só a versão; senão, a MESMA
+recusa "precisa de aprovação" — confirmar e, no mesmo UPDATE, subir o total ou trocar a TOP não aproveita a aprovação
+antiga. Na venda, o UPDATE que confirma e, no mesmo comando, deixa a TOP nula não dispara a guarda (o MESMO WHEN da
+0023, que também não dispara): a API recusa tirar a TOP, e a guarda de banco para isso é de outra fatia. A reprovação
+exige motivo com ao menos um caractere fora da classe `[[:space:]]` do banco (CHECK `observacao ~ '[^[:space:]]'`: motivo
+só de espaço, tab ou quebra de linha é recusado; a API apara o motivo antes). Formato 1 a 3 nunca é barrado. As pós-condições conferem objetos (as tabelas, a
+RLS forçada e a política única, as 12 FKs sem cascata, os 9 CHECKs, os índices, a forma da conta e das funções de
+gatilho, EXECUTE das funções de gatilho só do dono, os 12 gatilhos das tabelas de aprovação — o conjunto exato, nenhum a
+mais, os 3 de TRUNCATE inclusive —, as 3 guardas, o WHEN igual ao da 0023, os quatro BEFORE UPDATE por linha da venda
+por nome — a guarda da aprovação primeiro, a 0039 por último — e os privilégios); não comparam contagens de tabelas
+vivas. As permissões novas (`sales.approve`, `compras.approve`, `entradas_estoque.approve`, `saidas_estoque.approve`,
+`transferencias_estoque.approve`, `ajustes_estoque.approve` — "Aprovar") não têm migration: o pre-deploy sincroniza o
+catálogo e o perfil Administrador do sistema as recebe; os outros perfis, o Maike dá na tela de perfis. Rotas novas num
+prefixo próprio, `/api/aprovacoes/{vendas,compras,estoque}`, e o módulo Aprovações (`/aprovacoes`) no menu — o 14º, o
+limite do menu. Nenhuma variável nova.
+
+**Pré-condição:** quem aplica a 0041 é o dono das funções SECURITY DEFINER e precisa atravessar RLS (superusuário ou
+`BYPASSRLS`) — a própria migration recusa, com `TOP-CONFIG-08: o papel que aplica a migration (dono das funcoes
+SECURITY DEFINER) nao atravessa RLS; ...`, e nada é aplicado. Também recusa, sempre com a mensagem `TOP-CONFIG-08: ...`
+que nomeia o que falta e sem aplicar nada: já aplicada (as tabelas, as funções ou as guardas já existem — a primeira
+pergunta); o papel `erp_app` ausente; uma coluna que os gatilhos leem ausente (`sales_documents`: `version`, `total`,
+`status`, `kind`, `empresa_id`, `deleted_at`, `tipo_operacao_id`, `tipo_operacao_versao_id`; `documentos_compra`:
+`valor_total`, `situacao`, `especie`, `empresa_id`, `tipo_operacao_id`, `tipo_operacao_versao_id`;
+`documentos_estoque`: `situacao`, `empresa_id`, `tipo_operacao_id`, `tipo_operacao_versao_id`;
+`tipos_operacao_versoes.configuracao`); a chave alvo de uma FK composta (`uq_tipos_operacao_versoes_tenant` da 0021,
+`uq_tipos_operacao_tenant` da 0020, `uq_documentos_compra_tenant` da 0036, `uq_documentos_estoque_tenant` da 0040, a
+chave `(organization_id, id)` de `erp.empresas`); as funções de auditoria, RLS, organização, usuário e escopo de escrita
+que a política e os gatilhos chamam (`erp.current_org_id()` e `erp.empresa_escrita_permitida(uuid)` inclusive); os
+módulos de escopo `vendas`, `compras` e `estoque`; e os BEFORE UPDATE por linha de `erp.sales_documents` diferentes,
+por nome e por função, dos três de hoje (`trg_sales_documents_classificacao_financeira` da 0024,
+`trg_sales_documents_execucao_configurada` da 0023 e `trg_sales_documents_versao` da 0039) — é sobre esse conjunto que
+vale "a guarda da aprovação dispara primeiro e a versão continua a última". Os gatilhos e as FKs novas pedem uma trava
+curta em `erp.sales_documents`, `erp.documentos_compra`, `erp.documentos_estoque` e nas tabelas referenciadas: com uma
+transação longa segurando uma delas, a migration desiste em 2 s sem aplicar nada, e o deploy é refeito (seguro: nada foi
+aplicado). Em erro, publique o nome do papel, nunca a conexão.
+
+**Pré-condições da 0041 conferidas em produção pela revisão (01/10, só leitura):** os três BEFORE UPDATE por linha da
+venda (`trg_sales_documents_classificacao_financeira`, `trg_sales_documents_execucao_configurada` e
+`trg_sales_documents_versao`); os módulos de escopo, as colunas, as chaves, as funções e o papel `erp_app` presentes; as
+tabelas de aprovação ausentes; o ledger em 40. A conferência não substitui a da própria migration, que refaz cada
+pergunta na hora de aplicar.
+
+**Ordem: banco (0041) → API → web.** Janelas:
+1. **API anterior × banco novo:** a API anterior não conhece as tabelas novas, a conta nem as permissões novas, e não as
+   lê. A guarda nova da venda dispara antes das três de hoje, não muda o NEW e, sem versão no formato 4, só lê e deixa
+   passar; o mesmo vale para as guardas da compra e do estoque. Nenhuma versão no formato 4 existe antes da API nova (o
+   domínio anterior recusa o 4 na gravação): venda, compra e documento de estoque confirmam exatamente como hoje, com o
+   mesmo resultado, código e mensagem. Depois que a API nova gravar uma TOP no formato 4, uma instância anterior ainda no
+   pool que tente confirmar um documento dela recebe 409: na venda e na compra pela própria API ("configuração
+   ilegível", `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`), e no documento de estoque que exige aprovação pela guarda do banco
+   (`CONFLICT`).
+2. **web ANTERIOR × API nova:** a web anterior não tem o módulo Aprovações nem os textos novos do editor. O editor
+   anterior ignora o bloco `regrasGerais` das capabilities (os blocos de hoje não mudam; `configuracao.versaoSchema`
+   continua 1) e grava o formato 3 como hoje; corpo no formato 1 a 3 sobre TOP cuja versão vigente já está no 4 → 422
+   `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO` (o formato não retrocede), nada gravado. `POST` e confirmação com
+   TOP de formato 1 a 3 — todas as de produção — devolvem o corpo de hoje, chave por chave: `confirmacaoAutomatica` só
+   aparece com versão no formato 4 Automática, e a prévia do estoque só ganha `recusas` com versão no formato 4 (ou
+   ilegível). A Central de Vendas (que não muda nesta fatia) já mostra as recusas da prévia, a da aprovação inclusive.
+   Declarado: a Central de Estoque anterior mostra "prévia indisponível" diante de uma recusa de aprovação e deixa
+   clicar Confirmar — o servidor responde 409 `APROVACAO_PENDENTE` (ou `APROVACAO_REPROVADA`), e nada é confirmado.
+   Declarado também: com TOP no formato 4 Automática (o editor anterior não a grava), a Central de Estoque anterior diz
+   "Salvo com sucesso" também quando o servidor confirmou ou a automática não aconteceu; a consulta que ela abre em
+   seguida mostra a situação que o servidor leu.
+3. **web NOVA × API anterior:** sem o bloco `regrasGerais` nas capabilities, o editor grava o formato 3, com os textos e
+   as abas de hoje, e o histórico da TOP não mostra nenhuma das duas linhas "Regras gerais e aprovação: …", em versão
+   nenhuma (nem na do formato 3 que traz as chaves das regras gerais): elas só aparecem com o bloco. O módulo
+   Aprovações recebe 404 nas rotas novas — o prefixo próprio responde um 404 limpo no binário anterior — e mostra "As
+   aprovações ainda não estão disponíveis neste servidor.", sem quebrar o resto do sistema. As Centrais ficam iguais; a
+   de Estoque, sem `recusas` na prévia e sem `confirmacaoAutomatica` no `POST` (a API anterior não manda nenhuma das
+   duas), se comporta como hoje: a prévia de hoje e o aviso "Salvo com sucesso".
+
+As três janelas são provadas no CI pelo job `skew` (K-1 e K-2, `docs/TESTING.md`), contra os binários reais da base: o
+sentido 1 sobe a API da base sobre o banco migrado e semeado por este HEAD, com a web deste HEAD (janelas 1 e 3); o
+sentido 2, a web da base contra a API deste HEAD (janela 2). Os specs perguntam à API da base, na hora, se ela declara o
+bloco `regrasGerais` e se responde `GET /api/aprovacoes/vendas` (404 = mundo legado), e passam nos dois mundos. O
+aviso do Salvar da Central de Estoque não passa pelo job `skew` (o K-1 lança o documento de estoque pela API): o caminho
+"sem a chave → Salvo com sucesso" é provado pelo passo (1) do W-5b, com uma TOP no formato 3 na API deste HEAD. Até a
+VISUAL-UX-04b entrar e esta trazer a main, o job fica vermelho no sentido 2 por casos de outras fatias, sem defeito
+desta (a ordem de merge, abaixo).
+
+**Impacto em dados reais: nenhum dado muda; as TOPs de produção continuam no formato delas, e nada passa a executar até
+alguém gravar uma TOP no formato 4.** Tabelas novas, vazias; nenhuma linha existente muda (produção, lida em
+01/10/2026: três TOPs — o pedido de compra no formato 3, com Confirmação Automática, Documento sem itens Permitido e
+Alteração Permitida; o orçamento e o pedido de venda no formato 2, com Alteração Permitida —, e nenhuma TOP de venda,
+de compra ou de estoque). Nada disso executa hoje e continua sem executar, porque só o formato 4 executa. O seed do
+pre-deploy acrescenta ao catálogo as seis permissões `.approve` e as dá ao perfil Administrador do sistema — o caminho
+de toda permissão nova; nenhum outro perfil muda. Com elas, o Administrador passa a ver o módulo Aprovações (a lista
+vazia: "Nenhum documento aguardando aprovação.").
+
+**A Central de Estoque, ao salvar, diz o resultado da confirmação automática (W-5b e W-5c).** O aviso sai do
+`confirmacaoAutomatica` que o `POST` devolve, nunca da TOP da tela: `{confirmado: true}` → "Salvo e confirmado."
+(sucesso); `aguardando_aprovacao` → "Salvo. Este documento precisa de aprovação antes de ser confirmado." (informação);
+`sem_permissao` → "Salvo, mas não confirmado: você não tem permissão para confirmar este documento." (atenção);
+`recusada` → "Salvo, mas não confirmado: <a mensagem do servidor>." (atenção; a mensagem é a MESMA que o Confirmar
+daria, com um ponto final só); sem a chave (formato 1 a 3, Manual, ou API anterior) ou com resultado fora do contrato →
+o "Salvo com sucesso" de hoje. Depois do aviso, a consulta abre como hoje. Um Salvar dá um aviso só, nunca o novo ao
+lado do de hoje. O `sem_permissao` é provado pelo W-5c: um membro que lança saída sem a permissão de confirmá-la (sem
+`saidas_estoque.edit`) salva pela Central com a TOP Automática → "Salvo, mas não confirmado: você não tem permissão
+para confirmar este documento.", um aviso só, a consulta em Aberto e o saldo parado; o mesmo lançamento pelo
+administrador confirma.
+
+**Declarado (fica para a fatia F2 da Central no motor):** a Central de Vendas e a de Compras não mudam nesta fatia.
+Com uma TOP de venda Automática, "Confirmar venda" na criação salva, o `POST` já confirma, e a consulta abre a venda
+confirmada, sem o diálogo de confirmação e sem segundo `/confirm` (W-4c): a consulta da venda, depois de carregar, só
+abre o diálogo para venda que chega `open` ou `approved` e para quem tem `sales.edit` (o efeito da chegada depois de
+salvar, em `apps/web/src/app/(app)/vendas/[kind]/[id]/page.tsx`). Com uma TOP de compra Automática, "Confirmar compra"
+na criação salva e o `POST` já confirma; enquanto a VISUAL-UX-04b (decisão 278, PR a abrir) não estiver na main, a
+consulta da compra abre o diálogo de confirmação só pelo pedido do clique, sem olhar a situação (o estado inicial de
+`confirmando` em `apps/web/src/features/compras/central/estado.ts`): o diálogo aparece sobre uma compra já confirmada,
+a prévia dele recusa ("Compra já confirmada") e o Confirmar fica desabilitado; a compra fica confirmada, sem efeito
+duplicado. A VISUAL-UX-04b, que entra ANTES desta (a ordem de merge, abaixo), faz a consulta da compra conferir a
+situação e a permissão depois de carregar, antes de abrir o diálogo, como a da venda: com ela na main, a compra
+confirmada sozinha abre a consulta em Confirmado, sem diálogo. Se esta entrar sem a VISUAL-UX-04b na main, com TOP de
+compra Automática, use "Salvar" na criação. Nas duas Centrais, ao salvar, o aviso continua o "Salvo com sucesso" de hoje também quando a confirmação automática não
+aconteceu: `recusada` → o documento aparece Aberto, e o motivo surge na prévia ou no `/confirm`; `sem_permissao` →
+aparece Aberto, sem o Confirmar para quem salvou. O rótulo "Salvar e confirmar", o aviso do Salvar pelo resultado da
+confirmação automática, os itens vazios que a TOP permite — e, junto, a ajuda da Geral do editor no formato 4, que hoje
+diz "nas Centrais de Vendas e de Compras o lançamento ainda pede ao menos um item", com os dois E2E que a conferem letra
+por letra (W-1 e K-1) — e a situação da aprovação e o Aprovar/Reprovar na consulta ficam para essa fatia. O servidor é
+a regra: a aprovação se dá em Aprovações.
+
+**Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0041 fica e convive com a API
+anterior (janela 1). Código: o binário anterior não confirma venda nem compra com TOP formato 4 — 409 "configuração
+ilegível" (`TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`), como hoje com formato desconhecido; no estoque ele não lê a
+configuração, e quem barra o documento que exige aprovação é a guarda do banco (409 `CONFLICT`). Código: documento
+lançado no binário anterior com TOP formato 4 fica sem exigências e sem condições permitidas, porque `regrasDaVersaoTop`
+devolve nulo para formato desconhecido, e não confirma sozinho; o binário anterior também não edita TOP cuja versão
+vigente está no formato 4 (422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`: a escrita fecha). Documento confirmado
+antes da reversão, pela automática ou depois de aprovado, continua confirmado, com os efeitos que deu. Banco: as
+tabelas de aprovação NUNCA se apagam nem se esvaziam — são dado real (decisão 247), e o gatilho de TRUNCATE recusa até o
+dono, com `CONFLICT: A decisão de aprovação não aceita TRUNCATE (uma decisão nova registra a mudança).`; declarado:
+`TRUNCATE … CASCADE` de `erp.sales_documents`, `erp.documentos_compra` ou `erp.documentos_estoque` passa a ser recusado
+com a mesma `CONFLICT`, porque o gatilho dispara também nas tabelas alcançadas pela cascata (nenhum script nem teste do
+repositório faz TRUNCATE; o reset dos testes derruba o schema); desligar as guardas ou a conta só com uma migration
+NOVA, por decisão do Maike — nunca editando a 0041. Nada de apagar dado de produção: documento se cancela, com estorno.
+
+**Já na main e trazidas para esta branch (merge, sem rebase; base `1303de3`):** a #84 (decisão 275), a #86 (F3, só um
+teste de outra fatia e a linha dela no TESTING) e a #87 (decisão 276, Central de Compras no motor da Central, F2, só
+`apps/web` e documentos) entraram antes. Esta fatia não edita nenhum arquivo delas; os E2E daqui (W-3, W-4) só leem os
+`data-testid` `central-vendas-*`, que o motor da Central mantém pelo prefixo, e foram rodados de novo depois de trazer
+a main. Nenhuma das três tem migration: a contagem de migrations continua 41 (a 0041 por último), e os gerados foram
+refeitos depois do merge.
+
+**Merge depois da VISUAL-UX-04b (PR a abrir; número quando existir).** Motivo: o conserto dos dois detectores do
+`apps/web/e2e/skew-web-anterior.spec.ts` (spec de outra fatia) que erram sobre o web da base no motor da Central — a
+pílula de pendências só pelo literal `central-vendas-pendencias`, e não pelo prefixo do motor; e o vigia de requisições
+que conta como bloqueio uma leitura que a própria página cancela ao trocar de tela — vai na VISUAL-UX-04b (correções da
+Central de Compras, decisão 278), e não nesta PR: as duas não podem mudar o mesmo arquivo (PRE-PR-02). O ajuste que
+esta branch tinha feito (`b1928e9`) saiu pelo commit de reversão `e1ab554`, e esta PR não muda mais esse spec (o diff
+contra a main não o lista). A VISUAL-UX-04b também traz a consulta da compra que confere a situação antes de abrir o
+diálogo (acima). Consequência declarada: até a VISUAL-UX-04b entrar e esta trazer a main, o job de Version skew desta
+PR fica vermelho no sentido 2 sem defeito desta fatia — sobre o web da base `1303de3`, o A1-K2 (caso de outra fatia)
+falha no detector, e os 14 casos seguintes do modo serial não rodam (CP-K2 e LD-K2 entre eles, que falham também se
+rodarem sem o conserto do vigia); depois de trazer a main, o CI roda de novo no HEAD novo.
+
+**Roteiro do Maike (cria TOPs e documentos reais; produção é operacional — decisões 240 e 247, nada é apagado):**
+1. Configurações › Usuários e Permissões › Perfis e Permissões: dar "Aprovar" (Vendas, Compras e as quatro espécies de
+   Estoque, conforme o caso) aos perfis que aprovam. O Administrador do sistema já recebeu as seis no pre-deploy; quem
+   tem alguma vê o módulo Aprovações no menu.
+2. Configurações › Operações › Tipos de Operação: abrir a TOP de pedido de compra (formato 3: Automática, Permitido,
+   Permitida) e salvar — o diálogo "Estas regras passam a valer" mostra o que volta ao padrão ("Confirmação: Automática
+   → Manual", "Documento sem itens: Permitido → Proibido", "Alteração após confirmar: Permitida → Bloqueada"); "Salvar
+   assim mesmo" → versão nova no formato 4, no neutro (o pedido só aceita o neutro; nada passa a executar).
+3. Criar as TOPs de venda, de compra e de estoque com Confirmação Automática e/ou Aprovação (Sempre; na venda e na
+   compra também "A partir de um valor") e salvar — o histórico mostra "Regras gerais e aprovação: executadas". Com a
+   VISUAL-UX-04b na main (a ordem de merge, acima), "Confirmar compra" na criação com a TOP de compra Automática abre a
+   consulta em Confirmado, sem diálogo. Se esta entrar sem a VISUAL-UX-04b na main, com a TOP de compra Automática, use
+   "Salvar" na criação da compra, não "Confirmar compra": o `POST` já confirma, e o "Confirmar compra" abriria o
+   diálogo de confirmação sobre a compra já confirmada (a prévia recusa com "Compra já confirmada"; nada é duplicado).
+4. Salvar um documento com a TOP Automática, sem aprovação → ele volta confirmado (estoque e financeiro como na
+   confirmação manual; a Central de Estoque avisa "Salvo e confirmado.", e as de Vendas e de Compras, o "Salvo com
+   sucesso" de hoje, com a consulta em Confirmado). Com aprovação → fica aberto e aparece em Aprovações (aba Vendas,
+   Compras ou Estoque; com a TOP Automática, a Central de Estoque avisa "Salvo. Este documento precisa de aprovação
+   antes de ser confirmado."); Aprovar → com a TOP Automática, confirma no mesmo clique ("Aprovado e confirmado."); com
+   a Manual, "Aprovado." e o Confirmar da consulta passa.
+5. (Para desfazer a prova) cancelar os documentos: os confirmados são estornados. As decisões de aprovação ficam (só
+   inserção).
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção. A conferência é SÓ DE
+LEITURA, pela conexão operacional, depois do pre-deploy e antes do passo 2 do roteiro:
+
+```sql
+begin transaction read only;
+
+-- 1. o ledger: 41 migrations, a última é a 0041
+select count(*) as migrations, max(name) as ultima from public.erp_migrations;
+--    esperado: 41 · 0041_regras_gerais_e_aprovacao_da_top.sql
+
+-- 2. as três tabelas: RLS habilitada e FORÇADA, a política única, os privilégios do papel da API e o CHECK do motivo
+select c.relname as tabela, c.relrowsecurity as rls, c.relforcerowsecurity as forcada,
+       (select string_agg(p.policyname, ',') from pg_policies p
+         where p.schemaname = 'erp' and p.tablename = c.relname) as politicas,
+       has_table_privilege('erp_app', c.oid, 'select') as sel, has_table_privilege('erp_app', c.oid, 'insert') as ins,
+       has_table_privilege('erp_app', c.oid, 'update') as upd, has_table_privilege('erp_app', c.oid, 'delete') as del,
+       has_table_privilege('erp_app', c.oid, 'truncate') as trunc,
+       (select pg_get_constraintdef(k.oid) from pg_constraint k
+         where k.conrelid = c.oid and k.conname = 'chk_' || c.relname || '_reprovacao') as reprovacao
+  from pg_class c join pg_namespace n on n.oid = c.relnamespace
+ where n.nspname = 'erp' and c.relname in ('aprovacoes_venda', 'aprovacoes_compra', 'aprovacoes_estoque')
+ order by c.relname;
+--    esperado: 3 linhas · rls e forcada true · politicas tenant_e_empresa · sel e ins true · upd, del e trunc false ·
+--    reprovacao com observacao ~ '[^[:space:]]' (um caractere fora de [[:space:]]; nunca btrim)
+
+-- 3. os gatilhos: 3 guardas, 3 de inserção, 3 de imutabilidade por linha, 3 de TRUNCATE (e os 3 de auditoria), todos
+--    ligados ('O')
+select c.relname as tabela, t.tgname as gatilho, t.tgenabled as ligado, p.proname as funcao,
+       case when (t.tgtype & 1) = 1 then 'linha' else 'comando' end as nivel,
+       (t.tgtype & 32) = 32 as no_truncate
+  from pg_trigger t
+  join pg_class c on c.oid = t.tgrelid
+  join pg_proc p on p.oid = t.tgfoid
+ where not t.tgisinternal
+   and (t.tgname in ('trg_sales_documents_aprovacao', 'trg_documentos_compra_aprovacao',
+                     'trg_documentos_estoque_aprovacao')
+        or t.tgname like 'trg\_aprovacoes\_%')
+ order by c.relname, t.tgname;
+--    esperado: 15 linhas, todas 'O' — as guardas sales_documents → venda_aprovacao_guarda, documentos_compra →
+--    documentos_compra_aprovacao_guarda e documentos_estoque → documentos_estoque_aprovacao_guarda; em cada tabela de
+--    aprovação, _conferir → aprovacoes_<documento>_conferir, _imutavel e _imutavel_truncate → aprovacoes_imutavel e
+--    _audit → audit_row; nivel 'comando' e no_truncate true SÓ nos três _imutavel_truncate (os outros 12: 'linha' e
+--    false)
+
+-- 4. a ordem dos BEFORE UPDATE por linha da venda: a guarda da aprovação primeiro, a versão (0039) por último
+select array_agg(t.tgname::text order by t.tgname collate "C") as before_update
+  from pg_trigger t
+ where t.tgrelid = 'erp.sales_documents'::regclass and not t.tgisinternal
+   and (t.tgtype & 1) = 1 and (t.tgtype & 2) = 2 and (t.tgtype & 16) = 16;
+--    esperado: {trg_sales_documents_aprovacao, trg_sales_documents_classificacao_financeira,
+--               trg_sales_documents_execucao_configurada, trg_sales_documents_versao}
+
+-- 5. a conta: imutável, sem SECURITY DEFINER, search_path fixo; o papel da API executa e PUBLIC não
+select p.provolatile as volatilidade, p.prosecdef as definer, p.proconfig as configuracao,
+       has_function_privilege('erp_app', p.oid, 'execute') as erp_app,
+       has_function_privilege('public', p.oid, 'execute') as publico
+  from pg_proc p
+ where p.oid = 'erp.top_exige_aprovacao(jsonb,numeric)'::regprocedure;
+--    esperado: i · false · {"search_path=erp, pg_temp"} · true · false
+
+-- 6. as seis permissões Aprovar: no catálogo, no Administrador do sistema e em nenhum outro perfil (ainda)
+select p.key,
+       (select count(*) from erp.role_permissions rp join erp.roles r on r.id = rp.role_id
+         where rp.permission_key = p.key and r.is_system and r.name = 'Administrador') as administradores,
+       (select count(*) from erp.role_permissions rp join erp.roles r on r.id = rp.role_id
+         where rp.permission_key = p.key and not (r.is_system and r.name = 'Administrador')) as outros_perfis,
+       (select count(*) from erp.roles r where r.is_system and r.name = 'Administrador') as perfis_administrador
+  from erp.permissions p
+ where p.key in ('sales.approve', 'compras.approve', 'entradas_estoque.approve', 'saidas_estoque.approve',
+                 'transferencias_estoque.approve', 'ajustes_estoque.approve')
+ order by p.key;
+--    esperado: 6 linhas · administradores = perfis_administrador · outros_perfis 0 (até o passo 1 do roteiro)
+
+-- 7. nenhuma versão de TOP no formato 4 antes de o Maike salvar
+select configuracao_schema_version as formato, count(*) as versoes
+  from erp.tipos_operacao_versoes
+ group by 1
+ order by 1;
+--    esperado: nenhuma linha com formato 4 (até o passo 2 do roteiro)
+
+rollback;
+```
+
 ## ESTOQUE-01 — documento de estoque (0040)
 
 Decisão 274. **Uma migration: `0040_documento_de_estoque.sql`** (pre-deploy, como a 0036; trava (2026,74),

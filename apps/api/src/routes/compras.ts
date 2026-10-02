@@ -19,6 +19,11 @@
  * `operation-types` declara `layoutDocumento`, `/layout-efetivo` responde o contrato de vendas, e `lancar` cobra os
  * obrigatórios do layout da TOP (inclusive no recebimento). Confirmar e cancelar não cobram layout.
  *
+ * TOP-CONFIG-08 (decisão 277): com a versão congelada da TOP no FORMATO 4, o POST da COMPRA executa duas regras
+ * gerais — DOCUMENTO SEM ITENS (itens vazios só com "Permitido"; o pedido nunca) e CONFIRMAÇÃO AUTOMÁTICA (no fim do
+ * POST, a MESMA confirmação do /confirm, num savepoint). Versão no formato 1, 2 ou 3: rotas, corpos e respostas de
+ * hoje, chave por chave.
+ *
  * O que NÃO existe aqui (fora da fatia): editar documento salvo.
  */
 import type { FastifyInstance } from "fastify";
@@ -30,6 +35,7 @@ import {
   ERRO_EXIGENCIA_NAO_ATENDIDA, MENSAGEM_EXIGENCIA_NAO_ATENDIDA, ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA, MENSAGEM_CONDICAO_NAO_PERMITIDA,
   CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_REGRAS_DA_OPERACAO, saldoDoItemDoPedido,
   CAPACIDADE_LAYOUT_DOCUMENTO, ERRO_LAYOUT_CAMPO_OBRIGATORIO, camposObrigatoriosFaltando, mensagemCampoObrigatorio,
+  regrasGeraisDaVersaoTop,
 } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit } from "../lib/service.js";
@@ -43,8 +49,11 @@ import {
   type ClassificacaoFinanceira, type RegraDaClassificacao, type TopDoLancamento,
 } from "../lib/documento-comercial.js";
 import { layoutEfetivo, respostaDoLayoutEfetivo } from "../lib/layout-documento.js";
+import { lerVersaoCongeladaTop, confirmaAutomaticamente, tentarConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
 import { regrasDaVersaoTop, regrasDaTopAtual } from "./vendas-regras-operacao.js";
-import { registrarConfirmacaoCompras, cancelarCompraConfirmada, conferirNotaDuplicada } from "./compras-confirmacao.js";
+import {
+  registrarConfirmacaoCompras, cancelarCompraConfirmada, conferirNotaDuplicada, confirmarCompraNaTransacao,
+} from "./compras-confirmacao.js";
 import {
   registrarRecebimentoCompras, conferirCancelamentoDoPedido, travarPedidoDeOrigemDaCompra, reabrirPedidoDeOrigem,
 } from "./compras-recebimento.js";
@@ -120,6 +129,45 @@ const documentoSchema = z.object({
   itens: z.array(itemSchema).min(1),
 }).strict();
 export type DocumentoCompraEntrada = z.infer<typeof documentoSchema>;
+
+/**
+ * TOP-CONFIG-08 (decisão 277) — O IRMÃO SEM O MÍNIMO DE ITENS. `documentoSchema` NÃO é relaxado: continua o contrato
+ * de todo corpo e a FONTE da recusa; o recebimento deriva dele e continua com `min(1)`. O irmão é o MESMO esquema com
+ * `itens` sem mínimo, lido SÓ pelo POST da compra (`lerCorpoDoLancamento`): quem decide se a compra aceita itens
+ * vazios é a versão da TOP, e a TOP só é conhecida depois do corpo. Mesmas chaves, na mesma ordem, com as mesmas
+ * transformações: para todo corpo com item, a saída é a do estrito — e o hash da idempotência também.
+ */
+const documentoSemMinimoDeItensSchema = documentoSchema.extend({ itens: z.array(itemSchema) }).strict();
+
+/** A regra dos itens do estrito, sozinha: a recusa de HOJE quando os itens vazios são o único defeito do corpo. */
+const itensDoContratoEstrito = documentoSchema.pick({ itens: true });
+
+/**
+ * TOP-CONFIG-08 — O CORPO DO POST. Pedido: o estrito, como hoje (a família do pedido só aceita "Proibido",
+ * MATRIZ_REGRAS_GERAIS_TOP). Compra: o irmão; se ELE recusa, a recusa que sai é a do ESTRITO — o irmão é o estrito
+ * menos uma regra, então o que um recusa o outro também recusa —, e o 422 fica idêntico ao de hoje, inclusive o
+ * `itens: Valor mínimo: 1` junto de outro defeito, ou sem `tipo_operacao_id` (compra sem TOP: a recusa vem logo
+ * depois da leitura do corpo, como hoje). Corpo válido com itens vazios só se decide depois da TOP
+ * (`topQueAceitaSemItens`, em `lancar`).
+ */
+function lerCorpoDoLancamento(especie: EspecieCompra, bruto: unknown): DocumentoCompraEntrada {
+  if (especie !== "compra") return documentoSchema.parse(bruto);
+  const irmao = documentoSemMinimoDeItensSchema.safeParse(bruto);
+  if (irmao.success) return irmao.data;
+  documentoSchema.parse(bruto);
+  // Inalcançável: o estrito recusou na linha de cima. Fica a recusa do irmão, para nunca seguir com corpo inválido.
+  throw irmao.error;
+}
+
+/**
+ * A recusa de HOJE para itens vazios — a do próprio esquema estrito (VALIDATION_ERROR `itens: Valor mínimo: 1`,
+ * details [{ path: "itens", message: "Valor mínimo: 1" }], pelo plugin de erros), nunca uma cópia do texto.
+ */
+function recusaDosItensVazios() {
+  const r = itensDoContratoEstrito.safeParse({ itens: [] });
+  if (r.success) throw new Error("documentoSchema deixou de exigir item: a recusa dos itens vazios perdeu a fonte");
+  return r.error;
+}
 
 /**
  * COMPRAS-02 (decisão 268) — O CORPO DO RECEBIMENTO (`POST /compras/pedidos/:id/convert`). É o corpo de lançar
@@ -496,20 +544,52 @@ function recusaDaNotaInvisivel(e: unknown): never {
 }
 
 /**
+ * TOP-CONFIG-08 (decisão 277) — DOCUMENTO SEM ITENS. Itens vazios só passam numa COMPRA cuja versão da TOP — a que
+ * este lançamento congela — está no FORMATO 4 com "Documento sem itens: Permitido" (`regrasGeraisDaVersaoTop`, que lê
+ * a versão como ela foi gravada). Formato 1 a 3, "Proibido", configuração ilegível ou pedido → a recusa de HOJE, a do
+ * esquema estrito (`recusaDosItensVazios`).
+ *
+ * A ORDEM NOVA, declarada: a regra precisa da TOP, então, com itens vazios, a TOP é resolvida PRIMEIRO, e a recusa
+ * da TOP (TIPO_OPERACAO_INDISPONIVEL) e a da empresa (`exigirEmpresaDeLancamento`, na rota) podem vir ANTES da dos
+ * itens. Nada mais passa na frente: esta conferência roda antes das de forma, parceiros, classificação e do resto.
+ * Quando os itens vazios são o único defeito do corpo, a resposta é a de hoje.
+ *
+ * Devolve a TOP já resolvida (e travada `for share`), que `lancar` usa como a TOP do documento: a versão que permitiu
+ * é a versão congelada, sem segunda resolução. O recebimento nunca chega aqui (`recebimentoSchema` mantém o `min(1)`).
+ */
+async function topQueAceitaSemItens(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada): Promise<TopDoLancamento> {
+  if (especie !== "compra") throw recusaDosItensVazios();
+  const top = await resolverTopParaLancamento(ctx, familiaDaEspecie(especie), d.tipo_operacao_id);
+  const r = regrasGeraisDaVersaoTop(await lerVersaoCongeladaTop(ctx, top.tipoOperacaoVersaoId));
+  if (!r.ok || !r.regras.aceitaSemItens) throw recusaDosItensVazios();
+  return top;
+}
+
+/**
  * LANÇAR — a porta ÚNICA das regras de lançamento, para o POST da espécie e para o RECEBIMENTO do pedido (COMPRAS-02,
  * com `origem`). Receber não tem regra própria de TOP, natureza, condição, itens, lote, efeitos previstos, nota
  * duplicada ou totais: uma segunda cópia "equivalente" divergiria na primeira fatia que mexesse numa das duas.
+ *
+ * TOP-CONFIG-08: devolve o corpo de HOJE, chave por chave (é o que o recebimento espalha na resposta dele). O POST
+ * chama `lancarComTop`, que devolve também a TOP congelada, para decidir a confirmação automática sem reler o
+ * documento. A confirmação NUNCA mora aqui dentro: ela é o fim de cada caminho que grava, e este serve aos dois.
  */
 export async function lancar(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, execucaoConfiguradaHabilitada: boolean, origem?: OrigemDoLancamento) {
+  return (await lancarComTop(ctx, especie, d, execucaoConfiguradaHabilitada, origem)).documento;
+}
+
+async function lancarComTop(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, execucaoConfiguradaHabilitada: boolean, origem?: OrigemDoLancamento) {
   // Contrato interno, não entrada do cliente: origem só na compra, e uma ligação por linha. Quebrar isto é defeito
   // de quem chama — o gatilho da 0037 recusaria depois, mas com uma mensagem que não aponta o chamador.
   if (origem && (especie !== "compra" || origem.itemOrigemIds.length !== d.itens.length)) {
     throw new Error("lancar: origem só na compra, com um item de origem por linha do corpo");
   }
+  // TOP-CONFIG-08: itens vazios → a TOP e a regra dela ANTES de qualquer outra conferência (ver `topQueAceitaSemItens`).
+  const topDoSemItens = d.itens.length === 0 ? await topQueAceitaSemItens(ctx, especie, d) : null;
   conferirCamposDaEspecie(especie, d);
   conferirFormaDoDocumento(d);
   const familia = familiaDaEspecie(especie);
-  const top = await resolverTopParaLancamento(ctx, familia, d.tipo_operacao_id);
+  const top = topDoSemItens ?? await resolverTopParaLancamento(ctx, familia, d.tipo_operacao_id);
   await conferirParceiros(ctx, d);
   const classificacao = await classificacaoDaCompra(ctx, d);
   const condicao = d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null;
@@ -560,7 +640,7 @@ export async function lancar(ctx: ServiceCtx, especie: EspecieCompra, d: Documen
   await audit(ctx.tx, ctx, "documentos_compra", id, "create",
     { especie, codigo, tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao,
       ...(origem ? { from: origem.documentoId } : {}) });
-  return { id, codigo, especie, situacao: "aberto", valor_itens: totais.subtotal, valor_total: totais.total };
+  return { documento: { id, codigo, especie, situacao: "aberto", valor_itens: totais.subtotal, valor_total: totais.total }, top };
 }
 
 // ─────────────── rotas ───────────────
@@ -647,13 +727,47 @@ export default async function comprasRoutes(app: FastifyInstance) {
 
     app.get(`${base}/:id`, async (req) => runService(app, req, `${recurso}.view`, (ctx) => lerDocumentoCompra(ctx, (req.params as { id: string }).id, especie)));
 
-    /** LANÇAR. TOP obrigatória (congelada pelo servidor). Idempotency-Key com o USUÁRIO no hash. */
+    /**
+     * LANÇAR. TOP obrigatória (congelada pelo servidor). Idempotency-Key com o USUÁRIO no hash.
+     *
+     * TOP-CONFIG-08 (decisão 277), só na COMPRA e só com a versão congelada no formato 4:
+     *  · SEM ITENS: o corpo passa pelo irmão sem o mínimo (`lerCorpoDoLancamento`); a regra roda em `lancar`, logo
+     *    depois da TOP — a recusa da empresa e a da TOP podem vir antes da dos itens (a ordem nova, declarada).
+     *  · CONFIRMAÇÃO AUTOMÁTICA, no FIM MESMO: dentro do `idempotent` e depois da auditoria "create" (a última coisa de
+     *    `lancar`), a MESMA confirmação do POST /confirm (`confirmarCompraNaTransacao`), num savepoint, por quem salvou
+     *    e com a capacidade da confirmação manual (`compras.edit`): a TOP nunca dá a ninguém um poder que ele não
+     *    tem. Recusou (saldo, período, exigência, aprovação, a guarda da 0041): só a confirmação volta, e a compra fica
+     *    salva e aberta, com o motivo. NUNCA dentro de `lancar`, que também serve ao receber (que tem o gancho dele).
+     *  · RESPOSTA: sem a automática, a de hoje, chave por chave; com ela, + `confirmacaoAutomatica`, e `situacao`
+     *    "confirmado" quando confirmou. O replay da Idempotency-Key devolve o corpo gravado, com o resultado, e nunca
+     *    confirma duas vezes.
+     *  · TRAVAS: contador do código → INSERT → contador do ID Global → itens (`lancar`); a confirmação pega o documento
+     *    (desta transação), o contador do ID Global (já preso) e só então o estoque — a ordem da manual (documento →
+     *    contador do ID Global → estoque). Compra e estoque: sem ciclo entre si; possível com a confirmação MANUAL de
+     *    VENDA do mesmo produto (40P01), que trava saldo e produto (`postStock`) e só depois o contador (`createTitles`)
+     *    — o mesmo ciclo que a confirmação manual da compra já tinha. Desfecho do CA-12: a automática que perde vira
+     *    "recusada" (compra salva e aberta, CONCURRENCY_CONFLICT), ou a manual da venda recebe o 409 de hoje. Risco
+     *    declarado: o contador do ID Global fica preso durante a confirmação, e os lançamentos da organização esperam
+     *    por ele.
+     */
     app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${recurso}.create`, async (ctx) => {
-      const d = documentoSchema.parse(req.body);
+      const d = lerCorpoDoLancamento(especie, req.body);
       await exigirEmpresaDeLancamento(ctx, d.empresa_id);
       return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
         { action: "lancar_documento_compra", especie, corpo: d, actorId: ctx.user.id },
-        () => lancar(ctx, especie, d, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED))).result;
+        async () => {
+          const { documento, top } = await lancarComTop(ctx, especie, d, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED);
+          const confirmacaoAutomatica = (especie === "compra" && (await confirmaAutomaticamente(ctx, top.tipoOperacaoVersaoId)))
+            ? await tentarConfirmacaoAutomatica(ctx, {
+              permissao: "compras.edit",
+              confirmar: () => confirmarCompraNaTransacao(app, ctx, documento.id, { automatica: true }),
+            })
+            : undefined;
+          // Formato 1 a 3, Manual ou pedido: SEM a chave nova — o corpo é o de hoje, chave por chave.
+          if (!confirmacaoAutomatica) return documento;
+          // Confirmada, a situação da resposta é a da compra, que deixou de ser o "aberto" de `lancar`.
+          return { ...documento, ...(confirmacaoAutomatica.confirmado ? { situacao: "confirmado" } : {}), confirmacaoAutomatica };
+        })).result;
     })));
 
     /**

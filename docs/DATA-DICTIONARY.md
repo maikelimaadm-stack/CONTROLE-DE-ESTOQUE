@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 200 |
-| Tabelas com `organization_id` (escopo de organização) | 143 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 56 |
+| Tabelas no schema `erp` | 203 |
+| Tabelas com `organization_id` (escopo de organização) | 146 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 59 |
 | Entidades curadas neste dicionário | 54 |
 | Entidades com ID Global | 25 |
 | Entidades com Tipo de Operação | 15 |
 | Tipos de Operação referenciados | 23 |
-| Cobertura curada | 27.0% |
+| Cobertura curada | 26.6% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -1900,6 +1900,9 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.animal_species` | 3 | sim | — | não |
 | `erp.apportionment_categories` | 7 | sim | — | sim |
 | `erp.apportionment_category_items` | 4 | não | — | não |
+| `erp.aprovacoes_compra` | 11 | sim | `empresa_id` | não |
+| `erp.aprovacoes_estoque` | 10 | sim | `empresa_id` | não |
+| `erp.aprovacoes_venda` | 12 | sim | `empresa_id` | não |
 | `erp.areas` | 13 | sim | `empresa_id` | sim |
 | `erp.attachment_blobs` | 3 | sim | — | não |
 | `erp.attachments` | 12 | sim | — | não |

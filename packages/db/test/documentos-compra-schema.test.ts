@@ -149,9 +149,10 @@ describe("premissas do cenário", () => {
     expect(pol).toEqual([{ tablename: "documentos_compra", policyname: "tenant_e_empresa", cmd: "ALL" }, { tablename: "documentos_compra_itens", policyname: "api_child", cmd: "ALL" }]);
     const trg = (await db.query<{ tgname: string }>(
       "select tgname from pg_trigger where tgrelid in ('erp.documentos_compra'::regclass, 'erp.documentos_compra_itens'::regclass) and not tgisinternal and tgenabled='O' order by tgname")).rows.map((x) => x.tgname);
-    // A 0037 (COMPRAS-02) acrescenta o gatilho da origem nos itens; os quatro da 0036 continuam, com os mesmos nomes.
-    expect(trg).toEqual(["trg_documentos_compra_audit", "trg_documentos_compra_conferir", "trg_documentos_compra_itens_documento_aberto",
-      "trg_documentos_compra_itens_origem_guarda", "trg_documentos_compra_transicao"]);
+    // A 0037 (COMPRAS-02) acrescenta o gatilho da origem nos itens; a 0041 (TOP-CONFIG-08), a guarda da aprovação no
+    // cabeçalho. Os quatro da 0036 continuam, com os mesmos nomes.
+    expect(trg).toEqual(["trg_documentos_compra_aprovacao", "trg_documentos_compra_audit", "trg_documentos_compra_conferir",
+      "trg_documentos_compra_itens_documento_aberto", "trg_documentos_compra_itens_origem_guarda", "trg_documentos_compra_transicao"]);
     expect((await db.query("select 1 from pg_constraint where conname='uq_warehouses_tenant' and contype='u'")).rowCount).toBe(1);
   });
 });

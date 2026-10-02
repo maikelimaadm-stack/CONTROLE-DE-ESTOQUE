@@ -168,14 +168,14 @@ describe("premissas e catálogo", () => {
     expect(t.map((x) => x.codigo_base)).toEqual(["compras.compra", "compras.pedido"]);
   });
 
-  it("a 0037 é a 37ª migration do ledger; depois dela, a 0038 (COMPRAS-03), a 0039 (EDITAR-01) e a 0040 (ESTOQUE-01)", async () => {
+  it("a 0037 é a 37ª migration do ledger; depois dela, a 0038 (COMPRAS-03), a 0039 (EDITAR-01), a 0040 (ESTOQUE-01) e a 0041 (TOP-CONFIG-08)", async () => {
     // A posição da 0037 continua sendo a 37ª; a contagem total acompanha a ordem do repositório (a 0038 alarga
     // o CHECK de família dos layouts e fixa o search_path destas funções — layouts-documento-compras.test.ts; a 0039
     // dá versão ao documento de venda — editar-01-versao.test.ts; a 0040 cria o documento de estoque —
-    // estoque-01-0040.test.ts).
+    // estoque-01-0040.test.ts; a 0041 cria as aprovações e a guarda de aprovação da compra — top-config-08-0041.test.ts).
     const r = (await db.query<{ ate: number; n: number; ultima: string }>(
       "select count(*) filter (where name <= '0037_receber_pedido_de_compra.sql')::int ate, count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
-    expect(r).toEqual({ ate: 37, n: 40, ultima: "0040_documento_de_estoque.sql" });
+    expect(r).toEqual({ ate: 37, n: 41, ultima: "0041_regras_gerais_e_aprovacao_da_top.sql" });
   });
 
   it("colunas novas: tipo e nulidade", async () => {
@@ -210,7 +210,9 @@ describe("premissas e catálogo", () => {
     const t = (await db.query<{ tgname: string; def: string }>(
       `select tgname, pg_get_triggerdef(oid) def from pg_trigger
         where tgrelid in ('erp.documentos_compra'::regclass, 'erp.documentos_compra_itens'::regclass) and not tgisinternal and tgenabled='O' order by tgname`)).rows;
+    // A 0041 (TOP-CONFIG-08) acrescenta a guarda da aprovação, só na entrada em confirmado; os outros não mudam.
     expect(t).toEqual([
+      { tgname: "trg_documentos_compra_aprovacao", def: "CREATE TRIGGER trg_documentos_compra_aprovacao BEFORE UPDATE OF situacao ON erp.documentos_compra FOR EACH ROW WHEN (((old.situacao = 'aberto'::text) AND (new.situacao = 'confirmado'::text))) EXECUTE FUNCTION erp.documentos_compra_aprovacao_guarda()" },
       { tgname: "trg_documentos_compra_audit", def: "CREATE TRIGGER trg_documentos_compra_audit AFTER INSERT OR DELETE OR UPDATE ON erp.documentos_compra FOR EACH ROW EXECUTE FUNCTION erp.audit_row()" },
       { tgname: "trg_documentos_compra_conferir", def: "CREATE TRIGGER trg_documentos_compra_conferir BEFORE INSERT OR UPDATE ON erp.documentos_compra FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_conferir_v2()" },
       { tgname: "trg_documentos_compra_itens_documento_aberto", def: "CREATE TRIGGER trg_documentos_compra_itens_documento_aberto BEFORE INSERT OR DELETE OR UPDATE ON erp.documentos_compra_itens FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_itens_documento_aberto()" },

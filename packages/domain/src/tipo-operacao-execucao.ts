@@ -430,10 +430,10 @@ export function resolverPoliticaEfetivaDaVenda(entrada: EntradaPoliticaDaVenda):
  *   · sem TOP                          → não (a guarda nem olha);
  *   · formato 1                        → não (legado para sempre);
  *   · formato 2 com legado/legado      → não (legado declarado);
- *   · qualquer outro caso              → SIM: formato 2 com algo configurado, formato 3 com QUALQUER
+ *   · qualquer outro caso              → SIM: formato 2 com algo configurado, formato 3 ou 4 com QUALQUER
  *                                         execução (inclusive o neutro legado/legado) e formato futuro.
  * Sem a marca no formato 3, a guarda recusa ("formato que este banco ainda não conhece") — e a primeira
- * TOP de venda salva no editor novo não confirmava.
+ * TOP de venda salva no editor novo não confirmava. O formato 4 (TOP-CONFIG-08) confirma pela marca, como o 3.
  */
 export function confirmacaoExigeMarcaDaGuarda(p: Pick<PoliticaEfetivaDaVenda, "origem" | "estoque" | "financeiro">): boolean {
   if (p.origem === "sem_top" || p.origem === VERSAO_SCHEMA_CONFIGURACAO_TOP) return false;

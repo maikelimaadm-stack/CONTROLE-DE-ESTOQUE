@@ -22,8 +22,17 @@
  * código → contador do ID Global → itens de origem, `for update` no gatilho da 0037). Cancelamento de compra
  * gerada: compra → pedido, e o pedido ANTES de qualquer movimento de estoque (ver `cancelarCompraConfirmada`).
  *
+ * ┌─ TOP-CONFIG-08 (decisão 277) — A COMPRA GERADA SE CONFIRMA SOZINHA? ─────────────────────────────────┐
+ * │ Só quando a versão congelada DELA (a da TOP de destino, nunca a do pedido) está no formato 4 com       │
+ * │ Confirmação Automática. A tentativa é a ÚLTIMA coisa do recebimento — depois de o pedido virar         │
+ * │ convertido e da auditoria "convert" — e nunca dentro de `lancar`, que também serve ao POST de compra.   │
+ * │ Ela chama a MESMA confirmação do POST /confirm, num savepoint: recusou, a compra fica salva e aberta e   │
+ * │ o pedido convertido como hoje. Formato 1–3 ou Manual: o corpo da resposta é o de hoje, chave por chave. │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
  * As rotas são registradas por `registrarRecebimentoCompras(app)`, chamada pelo registro de `compras.ts`. Nada
- * aqui é avaliado no carregamento do módulo além de constantes locais: `compras.ts` e este arquivo se importam.
+ * aqui é avaliado no carregamento do módulo além de constantes locais: `compras.ts` e este arquivo se importam, e
+ * `compras-confirmacao.ts` também (ela trava e reabre o pedido de origem; este arquivo chama a confirmação dela).
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -37,7 +46,9 @@ import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, idempotent, audit, requirePermission } from "../lib/service.js";
 import { notFound, err } from "../lib/errors.js";
 import { exigirEmpresaDeLancamento, type ServiceCtx } from "../lib/context.js";
+import { confirmaAutomaticamente, tentarConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
 import { lerDocumentoCompra, lancar, recebimentoSchema, type DocumentoCompraEntrada, type RecebimentoEntrada } from "./compras.js";
+import { confirmarCompraNaTransacao } from "./compras-confirmacao.js";
 
 const t = criarTradutor(ptBR);
 
@@ -143,10 +154,27 @@ function recusaDosItens(recusas: readonly RecusaItemDoRecebimento[]): DomainErro
 // ─────────────── receber ───────────────
 
 /**
+ * A VERSÃO CONGELADA DA COMPRA GERADA — lida da linha que `lancar` acabou de gravar, e não da TOP do corpo: a
+ * versão que vale é a que a compra cita (a TOP pode ganhar versão nova entre o lançamento e a leitura, e a compra
+ * continua na dela). A linha foi inserida nesta transação; não lê-la é corrupção, nunca "sem TOP".
+ */
+async function versaoCongeladaDaCompraGerada(ctx: ServiceCtx, compraId: string): Promise<string | null> {
+  const r = await ctx.tx.query<{ tipo_operacao_versao_id: string | null }>(
+    "select tipo_operacao_versao_id from erp.documentos_compra where id = $1 and organization_id = $2 and especie = 'compra'",
+    [compraId, ctx.orgId]);
+  const linha = r.rows[0];
+  if (!linha) throw notFound("Documento");
+  return linha.tipo_operacao_versao_id;
+}
+
+/**
  * RECEBER O PEDIDO — dentro da transação da rota, sob a chave de idempotência. Nada é gravado antes de TODAS as
  * conferências; um throw desfaz a transação inteira (pedido aberto, zero compra, zero auditoria).
+ *
+ * TOP-CONFIG-08: o `app` entra para a confirmação automática da compra gerada — o gate da execução configurada
+ * sai dele aqui dentro (o mesmo de `confirmarCompraNaTransacao`), para o lançamento e a confirmação lerem o MESMO.
  */
-async function receberPedido(ctx: ServiceCtx, pedidoId: string, corpo: RecebimentoEntrada, execucaoConfiguradaHabilitada: boolean) {
+async function receberPedido(app: FastifyInstance, ctx: ServiceCtx, pedidoId: string, corpo: RecebimentoEntrada) {
   // 1ª TRAVA: o pedido. Duas conversões sobre o mesmo saldo se enfileiram aqui, e a segunda lê (nos itens, lidos
   // depois da trava) o recebido que a primeira gravou. O gatilho da origem é a rede.
   const pedido = comoPedido(await lerDocumentoCompra(ctx, pedidoId, "pedido", { lock: true }));
@@ -183,7 +211,7 @@ async function receberPedido(ctx: ServiceCtx, pedidoId: string, corpo: Recebimen
   // (`atribuirIdGlobal`, antes das linhas) → itens de origem (gatilho, no INSERT de cada linha). NÃO se trava o
   // contador do ID Global antes de `lancar`: o POST de compra comum pega código → ID Global, e a ordem invertida
   // aqui fecharia um ciclo (ABBA) entre um recebimento e um lançamento simultâneos na mesma organização.
-  const compra = await lancar(ctx, "compra", d, execucaoConfiguradaHabilitada,
+  const compra = await lancar(ctx, "compra", d, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED,
     { documentoId: pedidoId, itemOrigemIds: v.itens.map((i) => i.itemOrigemId) });
 
   // O pedido só vira convertido quando esta compra zera o saldo de TODOS os itens.
@@ -199,7 +227,35 @@ async function receberPedido(ctx: ServiceCtx, pedidoId: string, corpo: Recebimen
     { to: compra.id, tipoOperacaoDestinoId: passo.tipoOperacaoId, emPartes: passo.emPartes, zeraOSaldo: zera,
       itens: v.itens.map((i) => ({ origemItemId: i.itemOrigemId, quantidade: i.quantidade })) },
     zera ? { before: { situacao: "aberto" }, after: { situacao: "convertido" } } : undefined);
-  return { ...compra, from: pedidoId, pedidoSituacao: zera ? "convertido" : "aberto" };
+  const corpoDeHoje = { ...compra, from: pedidoId, pedidoSituacao: zera ? "convertido" : "aberto" };
+
+  // TOP-CONFIG-08 (decisão 277) — A CONFIRMAÇÃO AUTOMÁTICA DA COMPRA GERADA, no fim MESMO: o pedido já está
+  // convertido (ou aberto, recebido em parte) e auditado. Quem confirma é quem recebeu, com a capacidade da
+  // confirmação manual (`compras.edit`); a TOP nunca dá a ninguém um poder que ele não tem. A tentativa roda num
+  // savepoint: recusa de domínio ou do banco (saldo, período, exigência, aprovação, a guarda da 0041) volta só a
+  // confirmação — a compra fica salva e aberta, o pedido como acima, e a resposta diz o porquê. Erro que não é de
+  // domínio sobe (500) e desfaz o recebimento inteiro, como hoje.
+  // TRAVAS: as do recebimento (pedido → contador do código → contador do ID Global → itens de origem) já estão
+  // tomadas; a confirmação pega a compra (desta transação), o contador do ID Global (já preso) e então o estoque —
+  // a ordem da confirmação manual da compra. Compra e estoque: sem ciclo entre si; possível com a confirmação MANUAL
+  // de VENDA do mesmo produto (40P01), que trava saldo e produto (`postStock`) e só depois o contador (`createTitles`)
+  // — o ciclo que a confirmação manual da compra já tinha. Desfecho do CA-12: a automática que perde vira "recusada"
+  // (a compra salva e aberta, o pedido como acima, CONCURRENCY_CONFLICT), ou a manual da venda recebe o 409 de hoje.
+  // O contador do ID Global fica preso durante a confirmação: os lançamentos da organização esperam por ele (risco
+  // declarado na decisão 277).
+  // IDEMPOTÊNCIA: isto roda DENTRO do `idempotent` da rota, então o resultado entra no corpo gravado; o replay
+  // devolve o mesmo corpo e não confirma de novo.
+  const versaoDaCompra = await versaoCongeladaDaCompraGerada(ctx, compra.id);
+  const confirmacaoAutomatica = (await confirmaAutomaticamente(ctx, versaoDaCompra))
+    ? await tentarConfirmacaoAutomatica(ctx, {
+      permissao: "compras.edit",
+      confirmar: () => confirmarCompraNaTransacao(app, ctx, compra.id, { automatica: true }),
+    })
+    : undefined;
+  // Formato 1–3 ou Manual: SEM a chave nova — o corpo é o de hoje, chave por chave.
+  if (!confirmacaoAutomatica) return corpoDeHoje;
+  // Confirmada: a situação da resposta é a da compra gerada, que deixou de ser a "aberto" herdada de `lancar`.
+  return { ...corpoDeHoje, ...(confirmacaoAutomatica.confirmado ? { situacao: "confirmado" } : {}), confirmacaoAutomatica };
 }
 
 // ─────────────── encerrar o saldo ───────────────
@@ -311,7 +367,7 @@ export function registrarRecebimentoCompras(app: FastifyInstance) {
     await lerDocumentoCompra(ctx, id, "pedido");
     return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
       { action: "receber_pedido_compra", pedidoId: id, userId: ctx.user.id, corpo },
-      () => receberPedido(ctx, id, corpo, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED))).result;
+      () => receberPedido(app, ctx, id, corpo))).result;
   })));
 
   /** ENCERRAR O SALDO — muta o pedido (`pedidos_compra.edit`). Idempotente, com o autor e o motivo no hash. */

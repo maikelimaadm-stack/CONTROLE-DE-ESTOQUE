@@ -26,6 +26,7 @@ import { travarContadorIdGlobal } from "../lib/id-global.js";
 import { lerDocumentoCompra, REGRA_CLASSIFICACAO_COMPRA } from "./compras.js";
 import { validarClassificacaoDoDocumento } from "../lib/documento-comercial.js";
 import { travarPedidoDeOrigemDaCompra, reabrirPedidoDeOrigem } from "./compras-recebimento.js";
+import { recusaDaAprovacao } from "../lib/aprovacao-documento.js";
 
 /** Versão do contrato da prévia. A web confere forma E versão antes de usar o corpo. */
 export const CONTRATO_PREVIA_CONFIRMACAO_COMPRA = 1;
@@ -78,8 +79,13 @@ async function itensDaCompra(ctx: ServiceCtx, documentoId: string): Promise<Item
   return r.rows;
 }
 
-/** A política da versão congelada — recusa tipada, nunca "então é o padrão". */
-async function politicaDaCompra(ctx: ServiceCtx, versaoId: string, execucaoConfiguradaHabilitada: boolean): Promise<PoliticaDaCompra> {
+/**
+ * A política da versão congelada — recusa tipada, nunca "então é o padrão". TOP-CONFIG-08 (decisão 277): devolve
+ * também a versão congelada que acabou de ler (família e configuração), para o passo da aprovação conferir a MESMA
+ * versão sem uma segunda consulta.
+ */
+async function politicaDaCompra(ctx: ServiceCtx, versaoId: string, execucaoConfiguradaHabilitada: boolean):
+  Promise<{ politica: PoliticaDaCompra; versaoTop: { codigoBase: string; configuracao: unknown } }> {
   const r = await ctx.tx.query<{ configuracao: unknown; codigo_base: string }>(
     `select v.configuracao, t.codigo_base
        from erp.tipos_operacao_versoes v
@@ -88,8 +94,9 @@ async function politicaDaCompra(ctx: ServiceCtx, versaoId: string, execucaoConfi
   const linha = r.rows[0];
   // A TOP é obrigatória na compra (NOT NULL + FK composta): sem a linha é corrupção, nunca "padrão".
   if (!linha) throw new DomainError("TIPO_OPERACAO_INDISPONIVEL", "Tipo de operação indisponível para este documento");
-  const res = resolverPoliticaEfetivaDaCompra({ versaoCongelada: { codigoBase: linha.codigo_base, configuracao: linha.configuracao }, execucaoConfiguradaHabilitada });
-  if (res.ok) return res.politica;
+  const versaoTop = { codigoBase: linha.codigo_base, configuracao: linha.configuracao };
+  const res = resolverPoliticaEfetivaDaCompra({ versaoCongelada: versaoTop, execucaoConfiguradaHabilitada });
+  if (res.ok) return { politica: res.politica, versaoTop };
   const mensagem = res.motivo === "execucao_desligada"
     ? "A operação desta compra usa execução configurada, que ainda não está habilitada neste ambiente. A compra não foi confirmada."
     : res.motivo === "configuracao_ilegivel"
@@ -135,7 +142,8 @@ function tituloDaCompra(d: CompraParaConfirmar, plano: InstallmentPlan | null) {
 
 /**
  * O PLANEJAMENTO DA CONFIRMAÇÃO — UMA função, para a confirmação E para a prévia. Ordem: situação → política da
- * versão congelada e gate → exigências da política → período → classificação financeira → custo de entrada.
+ * versão congelada e gate → aprovação (TOP-CONFIG-08) → exigências da política → período → classificação
+ * financeira → custo de entrada.
  */
 async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, itens: ItemDaCompra[], execucaoConfiguradaHabilitada: boolean, modo: ModoDoPlanejamento): Promise<PlanoDaConfirmacao> {
   const dataEntrada = d.data_entrada ?? d.data_documento;
@@ -144,8 +152,9 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
   if (d.situacao === "cancelado") { modo.recusar(err("ALREADY_CANCELLED", "Compra cancelada")); return plano; }
 
   let politica: PoliticaDaCompra;
+  let versaoTop: { codigoBase: string; configuracao: unknown };
   try {
-    politica = await politicaDaCompra(ctx, d.tipo_operacao_versao_id, execucaoConfiguradaHabilitada);
+    ({ politica, versaoTop } = await politicaDaCompra(ctx, d.tipo_operacao_versao_id, execucaoConfiguradaHabilitada));
   } catch (e) {
     if (!(e instanceof DomainError)) throw e;
     modo.recusar(e); return plano;
@@ -154,8 +163,29 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
   // PADRÃO da compra: entrada dos itens com armazém e conta a pagar do total.
   plano.daEntrada = politica.estoque.autoridade === "padrao" || politica.estoque.efeito === "entrada";
   // Valor zero não gera título (nem exige natureza/centro) — a prévia e a confirmação leem a MESMA regra.
+  // TOP-CONFIG-08: a compra SEM ITENS (formato 4 com "Permitido") cai na mesma regra — total 0 não gera título, e
+  // o frete sozinho gera o título do total; sem item não há entrada (o rateio abaixo só roda com itens).
   plano.geraTitulos = (politica.financeiro.autoridade === "padrao" || politica.financeiro.efeito === "pagar") && D(d.valor_total).gt(0);
   plano.plano = lerPlano(d.plano_parcelas);
+
+  // A APROVAÇÃO (TOP-CONFIG-08, decisão 277) — logo depois da política da versão e ANTES das exigências e de
+  // qualquer efeito: a versão congelada no formato 4 que exige aprovação (Sempre, ou A partir de um valor com o
+  // total ATUAL ≥ o mínimo) só confirma com a última decisão "aprovado". Pendente → 409 APROVACAO_PENDENTE;
+  // reprovada → 409 APROVACAO_REPROVADA com o motivo. Na confirmação automática, a pendente é o
+  // "aguardando_aprovacao" (`tentarConfirmacaoAutomatica`); na prévia, uma recusa como as outras, e
+  // `podeConfirmar` fica falso. Formato 1 a 3 nunca exige: nada muda para eles. A compra não tem edição, então a
+  // decisão vigente é a última (`versaoDocumento` nulo). A guarda de transição da 0041 barra o mesmo no banco;
+  // aqui é quem EXPLICA.
+  let recusaDaAprovacaoDoDocumento: DomainError | null;
+  try {
+    recusaDaAprovacaoDoDocumento = await recusaDaAprovacao(ctx,
+      { modulo: "compras", documentoId: d.id, versaoDocumento: null, valorDocumento: d.valor_total, versaoTop });
+  } catch (e) {
+    // Fail-closed: formato 4 ilegível chega aqui como TIPO_OPERACAO_EXECUCAO_INDISPONIVEL (a política já recusaria antes).
+    if (!(e instanceof DomainError)) throw e;
+    recusaDaAprovacaoDoDocumento = e;
+  }
+  if (recusaDaAprovacaoDoDocumento) modo.recusar(recusaDaAprovacaoDoDocumento);
 
   // AS EXIGÊNCIAS DA POLÍTICA — todas conferidas, todas juntas, antes de qualquer efeito.
   const exigencias: { caminho: string; mensagem: string }[] = [];
@@ -209,8 +239,20 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
   return plano;
 }
 
-/** CONFIRMAR a Compra — dentro da transação da rota, sob a chave de idempotência. */
-async function confirmarCompra(ctx: ServiceCtx, id: string, execucaoConfiguradaHabilitada: boolean) {
+/**
+ * CONFIRMAR a Compra — dentro da transação de quem chama. É a ÚNICA confirmação da compra (TOP-CONFIG-08, decisão
+ * 277): o POST /confirm a chama sob a chave de idempotência, e a confirmação AUTOMÁTICA (o fim do POST e do receber
+ * pedido, e o aprovar) a chama num savepoint (`tentarConfirmacaoAutomatica`). Mesmo planejamento, mesmas recusas,
+ * mesmos efeitos — não existe segundo caminho de confirmação. O gate da execução configurada sai de `app.config`
+ * aqui dentro, para nenhum chamador poder passar outro. `automatica` só acrescenta `automatica: true` ao metadata da
+ * auditoria "confirm"; a da confirmação manual fica idêntica à de hoje, chave por chave.
+ */
+export async function confirmarCompraNaTransacao(app: FastifyInstance, ctx: ServiceCtx, id: string, o: { automatica: boolean }) {
+  return confirmarCompra(ctx, id, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED, o);
+}
+
+/** CONFIRMAR a Compra — o corpo de `confirmarCompraNaTransacao`. */
+async function confirmarCompra(ctx: ServiceCtx, id: string, execucaoConfiguradaHabilitada: boolean, o: { automatica: boolean }) {
   // 1ª TRAVA: o documento. A segunda confirmação espera aqui e relê `confirmado` (409, sem efeito).
   const d = comoCompra(await lerDocumentoCompra(ctx, id, "compra", { lock: true }) as Record<string, unknown>);
   const itens = await itensDaCompra(ctx, d.id);
@@ -254,6 +296,8 @@ async function confirmarCompra(ctx: ServiceCtx, id: string, execucaoConfiguradaH
     execucao: { origem: politica.origem, ...resumoDaPoliticaDaCompra(politica) },
     custoDeEntrada: plano.entradas.map((e) => ({ itemId: e.item.id, valorEntrada: e.valorEntrada, custoUnitario: e.custoUnitario })),
     ...(titulos.length && plano.classificacao ? { classificacaoFinanceira: plano.classificacao } : {}),
+    // TOP-CONFIG-08: a chave existe SÓ na automática — a auditoria da manual não ganha `automatica: false`.
+    ...(o.automatica ? { automatica: true } : {}),
   });
   return { id: d.id, situacao: "confirmado", titulo_ids: titulos, movimento_ids: movimentos };
 }
@@ -444,6 +488,6 @@ export function registrarConfirmacaoCompras(app: FastifyInstance) {
     await lerDocumentoCompra(ctx, id, "compra", { lock: false });
     return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
       { action: "confirm_documento_compra", sourceId: id, actorId: ctx.user.id },
-      () => confirmarCompra(ctx, id, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED))).result;
+      () => confirmarCompraNaTransacao(app, ctx, id, { automatica: false }))).result;
   }));
 }

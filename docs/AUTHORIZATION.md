@@ -1,7 +1,7 @@
 # Autorização
 
 ## Catálogo
-`packages/domain/src/permissions.ts` declara recursos × ações (`<recurso>.<ação>`), 773 chaves, espelhando os 666 checkboxes da referência (`docs/reference/PERMISSIONS.md`) e acrescentando ações de fluxo (`settle`, `cancel_settlement`, `transfer`, `process`, `generate_financial`, `export`, `reconcile`…). `GET /api/admin/permissions` devolve a árvore usada pela tela de perfis.
+`packages/domain/src/permissions.ts` declara recursos × ações (`<recurso>.<ação>`), 812 chaves, espelhando os 666 checkboxes da referência (`docs/reference/PERMISSIONS.md`) e acrescentando ações de fluxo (`settle`, `cancel_settlement`, `transfer`, `process`, `generate_financial`, `export`, `reconcile`…). `GET /api/admin/permissions` devolve a árvore usada pela tela de perfis.
 
 ## Perfis
 - `erp.roles` por organização; `role_permissions` (chave). Perfis de sistema (`is_system`) têm permissões fixas.
