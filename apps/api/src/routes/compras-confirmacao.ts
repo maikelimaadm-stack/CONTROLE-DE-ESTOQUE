@@ -18,6 +18,11 @@
  * logo depois da aprovação, numa consulta só. "Avisar": a prévia mostra (`divergencia`, no fim do corpo). "Bloquear":
  * acima da tolerância, a prévia recusa e a confirmação (manual e automática) também — DIVERGENCIA_COM_O_PEDIDO, 409,
  * antes de qualquer efeito. Sem a seção (formatos 1 a 4, mesmo malformados, ou o neutro do 5) ou sem origem: nada muda.
+ *
+ * OPERACOES-01 F9b (decisão 286) — OS PADRÕES DA TOP NA COMPRA E A PROVISÃO DO PEDIDO: sem natureza e centro no
+ * documento, o par da TOP (formato 5, versão congelada) classifica os títulos; o tipo de título e a conta prevista da TOP
+ * e a TOP e a versão da compra vão para o título; a compra com origem trava o pedido logo depois de si (compra → pedido →
+ * contador → estoque) e, confirmada ou estornada, refaz a provisão dele.
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -36,6 +41,11 @@ import { lerDocumentoCompra, REGRA_CLASSIFICACAO_COMPRA } from "./compras.js";
 import { validarClassificacaoDoDocumento } from "../lib/documento-comercial.js";
 import { travarPedidoDeOrigemDaCompra, reabrirPedidoDeOrigem } from "./compras-recebimento.js";
 import { recusaDaAprovacao } from "../lib/aprovacao-documento.js";
+// OPERACOES-01 F9b (decisão 286): os padrões financeiros da TOP na confirmação e a provisão do pedido de origem.
+import { padroesDasVersoesParaExecucao } from "../lib/financeiro-top.js";
+import { contaPadraoUtilizavel, MENSAGEM_CONTA_PADRAO_INUTILIZAVEL, type PadroesFinanceirosResolvidos } from "../lib/financeiro-padroes-top.js";
+import { sincronizarProvisaoDoPedidoDeCompra, travarPedidoDeCompraDaProvisao } from "../lib/financeiro-provisao.js";
+import { planoDaClassificacao, camposTrocadosDosPadroes, mensagemDosPadroesTrocados, MOTIVOS_DA_PROVISAO_COMPRA } from "@agro/domain";
 
 /** Versão do contrato da prévia. A web confere forma E versão antes de usar o corpo. */
 export const CONTRATO_PREVIA_CONFIRMACAO_COMPRA = 1;
@@ -50,6 +60,8 @@ export interface CompraParaConfirmar {
   forma_pagamento_id: string | null; plano_parcelas: unknown; valor_total: string;
   /** OPERACOES-01 F6a: o pedido de onde a compra veio (nulo = compra direta). Decide se a divergência se aplica. */
   origem_documento_id: string | null;
+  /** OPERACOES-01 F9b: a TOP da compra (sempre presente), que vai para o título com a versão. */
+  tipo_operacao_id: string;
 }
 
 /** O item como a confirmação o lê: a linha do item e o controle de estoque do produto. */
@@ -74,6 +86,8 @@ function comoCompra(d: Record<string, unknown>): CompraParaConfirmar {
     categoria_financeira_id: (d.categoria_financeira_id as string | null) ?? null, centro_custo_id: (d.centro_custo_id as string | null) ?? null,
     forma_pagamento_id: (d.forma_pagamento_id as string | null) ?? null, plano_parcelas: d.plano_parcelas ?? null, valor_total: String(d.valor_total ?? "0"),
     origem_documento_id: (d.origem_documento_id as string | null) ?? null,
+    // OPERACOES-01 F9b: a TOP da compra (NOT NULL na espécie compra).
+    tipo_operacao_id: String(d.tipo_operacao_id),
   };
 }
 
@@ -180,6 +194,12 @@ interface PlanoDaConfirmacao {
    * `null` nos outros casos, e a prévia então não ganha a chave.
    */
   divergencia: ResultadoDivergencia | null;
+  /**
+   * OPERACOES-01 F9b: os padrões financeiros da versão congelada (formato 5; `null` nos outros, ou sem padrões) — o tipo
+   * de título e a conta prevista vão para os títulos — e se a classificação saiu do PAR da TOP (o documento não tinha).
+   */
+  padroes: PadroesFinanceirosResolvidos | null;
+  classificacaoDaTop: boolean;
 }
 
 const MSG_NATUREZA_OBRIGATORIA = "Informe a natureza financeira e o centro de resultado: a confirmação gera contas a pagar.";
@@ -200,7 +220,8 @@ function tituloDaCompra(d: CompraParaConfirmar, plano: InstallmentPlan | null) {
  */
 async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, itens: ItemDaCompra[], execucaoConfiguradaHabilitada: boolean, modo: ModoDoPlanejamento): Promise<PlanoDaConfirmacao> {
   const dataEntrada = d.data_entrada ?? d.data_documento;
-  const plano: PlanoDaConfirmacao = { politica: null, daEntrada: false, geraTitulos: false, entradas: [], itensForaDaEntrada: 0, classificacao: null, plano: null, dataEntrada, divergencia: null };
+  const plano: PlanoDaConfirmacao = { politica: null, daEntrada: false, geraTitulos: false, entradas: [], itensForaDaEntrada: 0, classificacao: null, plano: null, dataEntrada, divergencia: null,
+    padroes: null, classificacaoDaTop: false };
   if (d.situacao === "confirmado") { modo.recusar(err("ALREADY_CONFIRMED", "Compra já confirmada")); return plano; }
   if (d.situacao === "cancelado") { modo.recusar(err("ALREADY_CANCELLED", "Compra cancelada")); return plano; }
 
@@ -282,19 +303,38 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
   });
 
   // CLASSIFICAÇÃO: obrigatória quando HAVERÁ título — sem padrão silencioso ("primeira por código" não existe aqui).
+  // OPERACOES-01 F9b (decisão 286): sem natureza e centro no documento, o PAR da TOP (formato 5, versão congelada — a
+  // mesma linha que a política acabou de ler, sem reler) classifica, pela MESMA porta. Depois, a conta padrão
+  // inutilizável e a troca proibida (o salvar já recusou a troca; aqui é a rede). Formatos 1 a 4: nenhuma consulta nova.
   if (plano.geraTitulos) {
-    if (!d.categoria_financeira_id || !d.centro_custo_id) {
+    const fp = (await padroesDasVersoesParaExecucao(ctx, [{ id: d.tipo_operacao_versao_id, configuracao: versaoTop.configuracao, codigo_base: versaoTop.codigoBase }]))
+      .get(d.tipo_operacao_versao_id.toLowerCase()) ?? null;
+    plano.padroes = fp?.padroes ?? null;
+    const recusaDaTop = (caminho: string, mensagem: string) => new DomainError("TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA", mensagem, { exigencias: [{ caminho, mensagem }] });
+    const pc = !d.categoria_financeira_id && !d.centro_custo_id && fp
+      ? planoDaClassificacao({ documento: { naturezaId: null, centroCustoId: null }, padrao: fp.padroes, semClassificacao: "exigir" })
+      : null;
+    const par = pc?.tipo === "pronta" ? { categoriaFinanceiraId: pc.naturezaId, centroCustoId: pc.centroCustoId }
+      : d.categoria_financeira_id && d.centro_custo_id ? { categoriaFinanceiraId: d.categoria_financeira_id, centroCustoId: d.centro_custo_id } : null;
+    if (!par) {
       const campo = d.categoria_financeira_id ? "centro_custo_id" : "categoria_financeira_id";
       modo.recusar(validation(MSG_NATUREZA_OBRIGATORIA, [{ path: campo, message: MSG_NATUREZA_OBRIGATORIA }]));
     } else {
       // A porta única da classificação, com a regra da compra (a mesma do lançamento).
       try {
-        plano.classificacao = await validarClassificacaoDoDocumento(ctx, REGRA_CLASSIFICACAO_COMPRA,
-          { categoriaFinanceiraId: d.categoria_financeira_id, centroCustoId: d.centro_custo_id }, "confirmacao", { trava: modo.trava });
+        plano.classificacao = await validarClassificacaoDoDocumento(ctx, REGRA_CLASSIFICACAO_COMPRA, par, "confirmacao", { trava: modo.trava });
+        plano.classificacaoDaTop = pc?.tipo === "pronta";
       } catch (e) {
         if (!(e instanceof DomainError)) throw e;
         modo.recusar(e);
       }
+    }
+    if (fp?.padroes?.contaBancariaId && !(await contaPadraoUtilizavel(ctx, fp.padroes.contaBancariaId, { trava: modo.trava }))) {
+      modo.recusar(recusaDaTop("padroesFinanceiros.contaBancariaId", MENSAGEM_CONTA_PADRAO_INUTILIZAVEL));
+    }
+    if (fp?.padroes && !fp.secao.documentoTroca) {
+      const campos = camposTrocadosDosPadroes(fp.padroes, { naturezaIds: [d.categoria_financeira_id], centroCustoIds: [d.centro_custo_id], formaPagamentoId: d.forma_pagamento_id });
+      if (campos.length) modo.recusar(recusaDaTop("financeiroPadrao.documentoTroca", mensagemDosPadroesTrocados(campos)));
     }
   }
 
@@ -325,6 +365,10 @@ export async function confirmarCompraNaTransacao(app: FastifyInstance, ctx: Serv
 async function confirmarCompra(ctx: ServiceCtx, id: string, execucaoConfiguradaHabilitada: boolean, o: { automatica: boolean }) {
   // 1ª TRAVA: o documento. A segunda confirmação espera aqui e relê `confirmado` (409, sem efeito).
   const d = comoCompra(await lerDocumentoCompra(ctx, id, "compra", { lock: true }) as Record<string, unknown>);
+  // OPERACOES-01 F9b (decisão 286): a compra com origem trava o PEDIDO logo depois de si e ANTES do contador do ID Global e
+  // do estoque (compra → pedido → contador → estoque): a provisão dele é refeita no fim, e o receber/encerrar (que pegam o
+  // pedido primeiro) nunca esperam por esta compra. Sem origem: nada.
+  if (d.origem_documento_id) await travarPedidoDeCompraDaProvisao(ctx, d.origem_documento_id);
   const itens = await itensDaCompra(ctx, d.id);
   const plano = await planejarConfirmacao(ctx, d, itens, execucaoConfiguradaHabilitada, MODO_CONFIRMACAO);
   const politica = plano.politica;
@@ -354,18 +398,26 @@ async function confirmarCompra(ctx: ServiceCtx, id: string, execucaoConfiguradaH
     const t = await createTitles(ctx, { empresaId: d.empresa_id, direction: "payable", number: d.numero_nota?.trim() ? d.numero_nota.trim() : `CMP-${d.codigo}`,
       personId: d.fornecedor_id, ...tituloDaCompra(d, plano.plano), emissionDate: d.data_documento, note: `Compra ${d.codigo}`,
       apportionment: [{ financialCategoryId: plano.classificacao.categoriaFinanceiraId, costCenterId: plano.classificacao.centroCustoId, percentage: "100" }],
-      sourceType: "documentos_compra", sourceId: d.id });
+      sourceType: "documentos_compra", sourceId: d.id,
+      // OPERACOES-01 F9b: o tipo de título e a conta prevista da TOP (formato 5), e a TOP e a versão da compra (qualquer formato).
+      titleTypeId: plano.padroes?.tipoTituloId ?? null, contaPrevistaId: plano.padroes?.contaBancariaId ?? null,
+      tipoOperacaoId: d.tipo_operacao_id, tipoOperacaoVersaoId: d.tipo_operacao_versao_id });
     titulos = t.ids;
   }
 
   // ROW COUNT SOB RLS, com a transição conferida no `where`.
   const u = await ctx.tx.query("update erp.documentos_compra set situacao='confirmado', atualizado_em=now() where id=$1 and organization_id=$2 and especie='compra' and situacao='aberto'", [d.id, ctx.orgId]);
   if (u.rowCount !== 1) throw notFound("Documento");
+  // OPERACOES-01 F9b: a compra confirmada dá lugar, no pedido de origem, ao que ele ainda previa (total ou parcial).
+  if (d.origem_documento_id) await sincronizarProvisaoDoPedidoDeCompra(ctx, d.origem_documento_id, MOTIVOS_DA_PROVISAO_COMPRA.compraConfirmada(d.codigo));
   await audit(ctx.tx, ctx, "documentos_compra", d.id, "confirm", {
     titulos, movimentos, tipoOperacaoVersaoId: d.tipo_operacao_versao_id,
     execucao: { origem: politica.origem, ...resumoDaPoliticaDaCompra(politica) },
     custoDeEntrada: plano.entradas.map((e) => ({ itemId: e.item.id, valorEntrada: e.valorEntrada, custoUnitario: e.custoUnitario })),
-    ...(titulos.length && plano.classificacao ? { classificacaoFinanceira: plano.classificacao } : {}),
+    // OPERACOES-01 F9b: a origem "padrão da TOP" só quando o par veio da TOP — sem ela, chave por chave a de hoje.
+    ...(titulos.length && plano.classificacao
+      ? { classificacaoFinanceira: plano.classificacaoDaTop ? { ...plano.classificacao, origem: "padrão da TOP" } : plano.classificacao }
+      : {}),
     // OPERACOES-01 F6a: a divergência que a TOP mandou AVISAR (ou que ficou dentro da tolerância do "Bloquear"), só
     // quando houve — a auditoria de toda TOP sem a seção fica a de hoje, chave por chave.
     ...(plano.divergencia && plano.divergencia.itens.length ? { divergencia: { modo: plano.divergencia.modo, itens: plano.divergencia.itens } } : {}),
@@ -398,7 +450,8 @@ async function previaDaConfirmacao(ctx: ServiceCtx, id: string, execucaoConfigur
   };
   const plano = await planejarConfirmacao(ctx, d, itens, execucaoConfiguradaHabilitada, modo);
 
-  let classificacao: { categoria: { id: string; codigo: string; nome: string }; centro: { id: string; codigo: string; nome: string } } | null = null;
+  // OPERACOES-01 F9b: `padraoDaTop` só quando o par veio da TOP (aditivo, no fim do objeto).
+  let classificacao: { categoria: { id: string; codigo: string; nome: string }; centro: { id: string; codigo: string; nome: string }; padraoDaTop?: true } | null = null;
   if (plano.classificacao) {
     const r = (await ctx.tx.query<{ cat_codigo: string; cat_nome: string; cc_codigo: string; cc_nome: string }>(
       `select c.code as cat_codigo, c.name as cat_nome, cc.code as cc_codigo, cc.name as cc_nome
@@ -406,7 +459,8 @@ async function previaDaConfirmacao(ctx: ServiceCtx, id: string, execucaoConfigur
         where c.id = $1 and c.organization_id = $3 and cc.id = $2 and cc.organization_id = $3`,
       [plano.classificacao.categoriaFinanceiraId, plano.classificacao.centroCustoId, ctx.orgId])).rows[0];
     if (r) classificacao = { categoria: { id: plano.classificacao.categoriaFinanceiraId, codigo: r.cat_codigo, nome: r.cat_nome },
-      centro: { id: plano.classificacao.centroCustoId, codigo: r.cc_codigo, nome: r.cc_nome } };
+      centro: { id: plano.classificacao.centroCustoId, codigo: r.cc_codigo, nome: r.cc_nome },
+      ...(plano.classificacaoDaTop ? { padraoDaTop: true as const } : {}) };
   }
 
   // As parcelas saem da MESMA conta que `createTitles` grava.
@@ -501,6 +555,8 @@ export async function cancelarCompraConfirmada(ctx: ServiceCtx, doc: Record<stri
   if (u.rowCount !== 1) throw notFound("Documento");
   await audit(ctx.tx, ctx, "documentos_compra", id, "cancel", { ...(opcoes.motivo ? { motivo: opcoes.motivo } : {}), estornos, titulosCancelados: tc.rowCount ?? 0 });
   await reabrirPedidoDeOrigem(ctx, pedidoDeOrigem, id);
+  // OPERACOES-01 F9b: o estorno devolve ao pedido de origem o que a compra realizou (e pode tê-lo reaberto).
+  if (pedidoDeOrigem) await sincronizarProvisaoDoPedidoDeCompra(ctx, pedidoDeOrigem.id, MOTIVOS_DA_PROVISAO_COMPRA.compraCancelada(String(doc.codigo)));
   return { id, situacao: "cancelado" };
 }
 

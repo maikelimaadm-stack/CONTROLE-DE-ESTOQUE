@@ -39,6 +39,7 @@ const ROTULO_DA_ABA: Readonly<Record<string, string>> = {
   estoque: "Estoque",
   fluxoCompra: "Fluxo de compra",
   divergenciaPedido: "Divergência com o pedido",
+  financeiroPadrao: "Padrões financeiros",
   financeiro: "Financeiro",
   fiscal: "Fiscal",
   aprovacao: "Aprovação",
@@ -130,8 +131,8 @@ test("S-1 — pedido de compra pelo assistente: as abas 'Fluxo de compra' e 'Apr
   await login(page);
   const catalogo = await premissaDasSecoes(page);
   const perfil = perfilPublicado(catalogo, "compras.pedido");
-  expect(perfil.abas, "premissa: o perfil publicado do pedido de compra tem o fluxo e a aprovação, e não a divergência")
-    .toEqual(["identificacao", "geral", "destinos", "estoque", "fluxoCompra", "financeiro", "fiscal", "aprovacao"]);
+  expect(perfil.abas, "premissa: o perfil publicado do pedido de compra tem o fluxo, os padrões financeiros (F9b) e a aprovação, e não a divergência")
+    .toEqual(["identificacao", "geral", "destinos", "estoque", "fluxoCompra", "financeiroPadrao", "financeiro", "fiscal", "aprovacao"]);
   expect(perfil.secoesNeutras, "premissa: a divergência fica no padrão no pedido").toContain("divergenciaPedido");
 
   let id: string | null = null;
@@ -195,8 +196,8 @@ test("S-2 — compra pelo assistente: a aba 'Divergência com o pedido' (sem a d
   await login(page);
   const catalogo = await premissaDasSecoes(page);
   const perfil = perfilPublicado(catalogo, "compras.compra");
-  expect(perfil.abas, "premissa: o perfil publicado da compra tem a divergência, e não o fluxo")
-    .toEqual(["identificacao", "geral", "estoque", "divergenciaPedido", "financeiro", "fiscal", "aprovacao", "execucao"]);
+  expect(perfil.abas, "premissa: o perfil publicado da compra tem a divergência e os padrões financeiros (F9b), e não o fluxo")
+    .toEqual(["identificacao", "geral", "estoque", "divergenciaPedido", "financeiroPadrao", "financeiro", "fiscal", "aprovacao", "execucao"]);
   expect(perfil.secoesNeutras, "premissa: o fluxo de compra fica no padrão na compra").toContain("fluxoCompra");
 
   let id: string | null = null;

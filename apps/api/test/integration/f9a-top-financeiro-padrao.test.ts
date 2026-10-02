@@ -52,7 +52,7 @@ const MSG = {
   tipoTitulo: "Tipo de título padrão inválido.",
   forma: "Forma de pagamento padrão inválida: escolha uma forma ativa.",
   conta: "Conta padrão inválida: escolha uma conta ativa da organização.",
-  provisaoForaDaFamilia: "A provisão vale só no pedido de venda.",
+  provisaoForaDaFamilia: "A provisão vale só no pedido de venda e no pedido de compra.",
   exigirForaDaFamilia: "O lançamento desta operação sempre informa natureza e centro: deixe \"Usar a 1ª natureza e o 1º centro por código (como hoje)\".",
   secaoForaDoTipo: "Esta operação não usa a seção Padrões financeiros.",
   envelope: "A configuração operacional enviada é inválida",
