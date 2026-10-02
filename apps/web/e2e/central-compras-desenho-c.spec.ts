@@ -1,0 +1,409 @@
+import { test, expect, type Page, type Locator } from "@playwright/test";
+import fs from "node:fs";
+import path from "node:path";
+import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
+
+/**
+ * CENTRAL DE COMPRAS NO MOTOR DA CENTRAL (VISUAL-UX-04, docs/DECISIONS.md 276) — parte C: CC-11 a CC-14.
+ *
+ * ┌─ O QUE ESTE ARQUIVO PROVA ─────────────────────────────────────────────────────────────────────┐
+ * │ CC-11 a consulta: abas (Totais com o total do SERVIDOR, Financeiro com as contas a pagar e o     │
+ * │       contador, Estoque, Fiscal quando o layout não põe a nota nos Dados, Compras geradas no     │
+ * │       pedido) e Dados adicionais com Movimento, Versão da TOP e Origem.                          │
+ * │ CC-12 Ampliar e restaurar as três regiões, nada persiste; aba alterada avisa ao fechar.          │
+ * │ CC-13 esqueleto com a leitura atrasada (5 barras de 34 px); reduced-motion sem animação.         │
+ * │ CC-14 evidência: pares Venda × Compra por estado, em 1440×900 e 1280×720, sem rolagem horizontal.│
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * Toda fixture é criada pela API neste arquivo (TOP, produto, compra, pedido, venda) e conferida no servidor. Nada
+ * depende de contagem global nem do que outro spec deixou.
+ */
+
+const P = "central-compras";
+const PV = "central-vendas";
+const ESQUELETO = { barra: 34, quantas: 5 } as const;
+
+/* ═════════════════════════════════════════════ fixtures ═════════════════════════════════════════════ */
+
+type Opcao = { id: string; label: string };
+const codigoTop = (p: string) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+async function cadastrarTop(page: Page, codigoBase: "compras.compra" | "compras.pedido" | "vendas.venda", extra: Record<string, unknown> = {}) {
+  const prefixo = { "compras.compra": "7", "compras.pedido": "5", "vendas.venda": "8" }[codigoBase];
+  const codigo = codigoTop(prefixo);
+  const nome = uniq({ "compras.compra": "Compra CC-C", "compras.pedido": "Pedido CC-C", "vendas.venda": "Venda CC-C" }[codigoBase]);
+  const criado = await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo, codigoBase, nome, ...extra });
+  return { id: criado.id, codigo, nome };
+}
+
+async function cenario(page: Page) {
+  const empresa = await empresaAtiva(page);
+  const fornecedor = await primeiroId(page, "/api/resources/people?is_provider=true&pageSize=1");
+  const armazem = await primeiroId(page, `/api/resources/warehouses?empresa_id=${empresa}&pageSize=1`);
+  const naturezas = await api<Opcao[]>(page, "GET", "/api/resources/financial_categories/options?kind=analytic&nature=expense");
+  const centros = await api<Opcao[]>(page, "GET", "/api/resources/cost_centers/options?kind=analytic");
+  const grupos = await api<Opcao[]>(page, "GET", "/api/resources/product_groups/options?kind=analytic");
+  const un = (await api<Opcao[]>(page, "GET", "/api/resources/measurement_units/options")).find((u) => u.label.toUpperCase() === "UN");
+  expect(naturezas.length && centros.length && grupos.length && un, "premissa: natureza, centro, grupo e unidade UN no seed").toBeTruthy();
+  const produto = await api<{ id: string }>(page, "POST", "/api/resources/products", {
+    description: uniq("CC-C produto"), group_id: grupos[0]!.id, measurement_id: un!.id, financial_category_id: naturezas[0]!.id
+  });
+  const topCompra = await cadastrarTop(page, "compras.compra");
+  const topPedido = await cadastrarTop(page, "compras.pedido", { destinos: [{ tipoOperacaoId: topCompra.id, ordem: 0, emPartes: true }] });
+  return { empresa, fornecedor, armazem, natureza: naturezas[0]!, centro: centros[0]!, produto: produto.id, topCompra, topPedido };
+}
+type Cenario = Awaited<ReturnType<typeof cenario>>;
+
+type Detalhe = Record<string, unknown> & { codigo: string; situacao: string; valor_total: string; titulos: { id: string }[]; movimentos: unknown[]; compras_geradas?: { id: string; codigo: string }[] };
+const ler = (page: Page, segmento: "compras" | "pedidos", id: string) => api<Detalhe>(page, "GET", `/api/compras/${segmento}/${id}`);
+
+async function compraPelaApi(page: Page, c: Cenario, extra: Record<string, unknown> = {}) {
+  const { id } = await api<{ id: string }>(page, "POST", "/api/compras/compras", {
+    empresa_id: c.empresa, tipo_operacao_id: c.topCompra.id, fornecedor_id: c.fornecedor, data_documento: "2026-09-01",
+    categoria_financeira_id: c.natureza.id, centro_custo_id: c.centro.id, frete: "7.00",
+    itens: [{ produto_id: c.produto, armazem_id: c.armazem, quantidade: "3", valor_unitario: "10.00" }], ...extra
+  });
+  return { id, ...(await ler(page, "compras", id)) };
+}
+
+async function pedidoPelaApi(page: Page, c: Cenario) {
+  const { id } = await api<{ id: string }>(page, "POST", "/api/compras/pedidos", {
+    empresa_id: c.empresa, tipo_operacao_id: c.topPedido.id, fornecedor_id: c.fornecedor, data_documento: "2026-09-01",
+    categoria_financeira_id: c.natureza.id, centro_custo_id: c.centro.id,
+    itens: [{ produto_id: c.produto, quantidade: "10", valor_unitario: "20.00" }]
+  });
+  const lido = await ler(page, "pedidos", id);
+  return { id, codigo: lido.codigo, itemId: (lido["itens"] as { id: string }[])[0]!.id };
+}
+
+async function vendaPelaApi(page: Page, extra: Record<string, unknown> = {}) {
+  const empresa = await empresaAtiva(page);
+  const cliente = await primeiroId(page, "/api/resources/people?is_client=true&pageSize=1");
+  const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
+  const { id } = await api<{ id: string }>(page, "POST", "/api/sales/sales", {
+    empresa_id: empresa, document_date: "2026-09-01", client_id: cliente,
+    items: [{ product_id: produto, warehouse_id: null, quantity: "2", unit_price: "10.00" }], ...extra
+  });
+  const d = await api<{ code: string }>(page, "GET", `/api/sales/sales/${id}`);
+  expect(d.code, "premissa: a venda tem código").toBeTruthy();
+  return { id, codigo: d.code };
+}
+
+/* ═════════════════════════════════════════════ tela ═════════════════════════════════════════════ */
+
+async function abrirConsulta(page: Page, doc: { id: string; codigo: string }, segmento: "compras" | "pedidos" = "compras") {
+  await page.goto(`/compras/${segmento}/${doc.id}`);
+  await expect(page.getByTestId(P)).toBeVisible();
+  await expect(page.getByTestId(`${P}-identidade-nome`), "premissa: a tela desenhou ESTE documento").toHaveText(doc.codigo);
+}
+
+async function abrirAba(page: Page, prefixo: string, nome: string | RegExp) {
+  const aba = page.getByTestId(`${prefixo}-painel`).getByRole("tab", { name: nome });
+  await aba.click();
+  await expect(aba).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId(`${prefixo}-painel`).getByRole("tabpanel")).toBeVisible();
+}
+
+async function abrirDadosAdicionais(page: Page) {
+  const grupo = page.getByTestId(`${P}-dados`).getByRole("button", { name: /^Dados adicionais/ });
+  await expect(grupo, "o grupo Dados adicionais existe na consulta").toBeVisible();
+  if ((await grupo.getAttribute("aria-expanded")) !== "true") await grupo.click();
+  await expect(grupo).toHaveAttribute("aria-expanded", "true");
+}
+
+/** Abre o leque de Ações rápidas (se fechado) e devolve o item. */
+async function itemDoLeque(page: Page, prefixo: string, testId: string) {
+  const leque = page.getByTestId(`${prefixo}-acoes-rapidas`);
+  if ((await leque.getAttribute("aria-expanded")) !== "true") {
+    await expect(page.getByTestId(testId), "o leque anterior terminou de recolher").toHaveCount(0);
+    await leque.click();
+  }
+  await expect(leque).toHaveAttribute("aria-expanded", "true");
+  const item = page.getByTestId(testId);
+  await expect(item).toBeVisible();
+  return item;
+}
+
+const chavesDoNavegador = (page: Page) => page.evaluate(() => ({ local: Object.keys(localStorage).sort(), sessao: Object.keys(sessionStorage).sort() }));
+const reais = (v: string) => Number(v).toFixed(2).replace(".", ",");
+const campo = (escopo: Locator, rotulo: string) => escopo.locator(`[data-campo="${rotulo}"]`);
+
+/* ═════════════════════════════════════════════ CC-11 consulta ═════════════════════════════════════════════ */
+
+test("CC-11 — consulta: Totais com o total do servidor, Financeiro com as contas a pagar e o contador, Estoque, Fiscal, Compras geradas no pedido; Dados adicionais com Movimento, Versão e Origem", async ({ page }) => {
+  await login(page);
+  const c = await cenario(page);
+  const antes = await chavesDoNavegador(page);
+
+  // COMPRA CONFIRMADA: títulos e entradas no estoque existem no servidor
+  const nota = uniq("NF-CC11").replace(/\s+/g, "");
+  const compra = await compraPelaApi(page, c, { numero_nota: nota, serie_nota: "7" });
+  await api(page, "POST", `/api/compras/compras/${compra.id}/confirm`, {});
+  const lida = await ler(page, "compras", compra.id);
+  expect(lida.situacao, "premissa: a compra foi confirmada").not.toBe("aberto");
+  expect(lida.titulos.length, "premissa: a confirmação gerou contas a pagar").toBeGreaterThan(0);
+  expect(lida.movimentos.length, "premissa: a confirmação gerou entradas no estoque").toBeGreaterThan(0);
+  await abrirConsulta(page, { id: compra.id, codigo: lida.codigo });
+
+  const painel = page.getByTestId(`${P}-painel`);
+  const nomes = (await painel.getByRole("tab").allInnerTexts()).map((n) => n.replace(/\d+/g, "").trim());
+  const dados = page.getByTestId(`${P}-dados`);
+  // Fiscal só é aba quando o layout NÃO põe nota, série e entrada nos Dados: a prova é que a nota aparece em UM lugar
+  const fiscalNaAba = nomes.includes("Fiscal");
+  expect(nomes, "as abas da consulta da compra").toEqual(["Totais", "Financeiro", "Frete e transporte", ...(fiscalNaAba ? ["Fiscal"] : []), "Estoque", "Observações"]);
+
+  // TOTAIS: o total do SERVIDOR, campo travado
+  await abrirAba(page, P, "Totais");
+  await expect(page.getByTestId(`${P}-total`)).toContainText(reais(lida.valor_total));
+  await expect(page.getByTestId("compras-consulta-total"), "o testid de antes no elemento equivalente").toBeVisible();
+
+  // FINANCEIRO: contador = títulos do servidor; link para a conta a pagar
+  await expect(painel.getByRole("tab", { name: /Financeiro/ }), "o contador de contas a pagar").toContainText(String(lida.titulos.length));
+  await abrirAba(page, P, /Financeiro/);
+  const fin = painel.getByRole("tabpanel");
+  await expect(fin.locator(`a[href="/financeiro/contas-a-pagar/${lida.titulos[0]!.id}"]`)).toBeVisible();
+  await expect(fin.locator("input:not([type=hidden]):enabled, select:enabled, textarea:enabled"), "nada editável no plano da consulta").toHaveCount(0);
+
+  // ESTOQUE: as entradas do servidor, com contador
+  await expect(painel.getByRole("tab", { name: /Estoque/ })).toContainText(String(lida.movimentos.length));
+  await abrirAba(page, P, /Estoque/);
+  await expect(page.getByTestId("compras-consulta-movimentos")).toBeVisible();
+  await expect(page.getByTestId("compras-consulta-movimentos").getByTestId("base2-items-linha"), "uma linha por entrada do servidor").toHaveCount(lida.movimentos.length);
+
+  // FISCAL: a nota aparece na aba OU nos Dados — nunca nos dois, nunca em nenhum
+  if (fiscalNaAba) {
+    await abrirAba(page, P, "Fiscal");
+    await expect(painel.getByRole("tabpanel")).toContainText(nota);
+    await expect(dados, "nota na aba Fiscal, não nos Dados").not.toContainText(nota);
+  } else {
+    await expect(dados, "nota nos Dados quando o layout os põe lá").toContainText(nota);
+  }
+
+  // DADOS ADICIONAIS: Movimento, Versão da TOP, Origem "Lançamento direto"
+  await abrirDadosAdicionais(page);
+  await expect(campo(dados, "Movimento")).not.toBeEmpty();
+  await expect(campo(dados, "Versão da TOP")).toContainText("1");
+  await expect(campo(dados, "Origem")).toContainText("Lançamento direto");
+
+  // PEDIDO: Compras geradas com o link; a compra gerada mostra a Origem com link para o pedido
+  const pedido = await pedidoPelaApi(page, c);
+  const gerada = await api<{ id: string }>(page, "POST", `/api/compras/pedidos/${pedido.id}/convert`, {
+    tipo_operacao_id: c.topCompra.id, data_documento: "2026-09-02", categoria_financeira_id: c.natureza.id, centro_custo_id: c.centro.id,
+    itens: [{ item_origem_id: pedido.itemId, armazem_id: c.armazem, quantidade: "4", valor_unitario: "20.00" }]
+  });
+  const doPedido = await ler(page, "pedidos", pedido.id);
+  expect((doPedido.compras_geradas ?? []).map((g) => g.id), "premissa: o servidor declara a compra gerada").toEqual([gerada.id]);
+  await abrirConsulta(page, pedido, "pedidos");
+  const nomesDoPedido = (await painel.getByRole("tab").allInnerTexts()).map((n) => n.replace(/\d+/g, "").trim());
+  expect(nomesDoPedido, "as abas da consulta do pedido").toEqual(["Totais", "Financeiro", "Frete e transporte", "Compras geradas", "Observações"]);
+  await expect(page.getByTestId(`${P}-total`)).toContainText(reais(doPedido.valor_total));
+  await expect(painel.getByRole("tab", { name: /Compras geradas/ })).toContainText("1");
+  await abrirAba(page, P, /Compras geradas/);
+  const link = page.getByTestId("compras-gerada");
+  await expect(link).toHaveCount(1);
+  await expect(link).toHaveAttribute("href", new RegExp(`/compras/compras/${gerada.id}$`));
+  await expect(link).toHaveText(doPedido.compras_geradas![0]!.codigo);
+
+  const lidaGerada = await ler(page, "compras", gerada.id);
+  await abrirConsulta(page, { id: gerada.id, codigo: lidaGerada.codigo });
+  await abrirDadosAdicionais(page);
+  const origem = page.getByTestId("compras-origem");
+  await expect(origem).toHaveAttribute("href", new RegExp(`/compras/pedidos/${pedido.id}$`));
+  await expect(origem).toContainText(pedido.codigo);
+  expect(await chavesDoNavegador(page), "a consulta não escreve no navegador").toEqual(antes);
+});
+
+/* ═════════════════════════════════════════════ CC-12 ampliar e aba alterada ═════════════════════════════════════════════ */
+
+test("CC-12 — Ampliar e restaurar as três regiões; Dados em duas colunas; nada persiste; aba alterada avisa ao fechar", async ({ page }) => {
+  await login(page);
+  const c = await cenario(page);
+  const compra = await compraPelaApi(page, c);
+  const antes = await chavesDoNavegador(page);
+  await abrirConsulta(page, compra);
+  const ws = page.getByTestId(P);
+  const regioes = { dados: `${P}-dados`, itens: `${P}-itens`, painel: `${P}-painel` } as const;
+  for (const [regiao, testId] of Object.entries(regioes) as [keyof typeof regioes, string][]) {
+    const botao = page.getByTestId(`${P}-ampliar-${regiao}`);
+    await expect(botao).toHaveAccessibleName(/^Ampliar/);
+    await botao.click();
+    await expect(ws).toHaveAttribute("data-ampliado", regiao);
+    await expect(page.getByTestId(testId), `${regiao} ampliado continua visível`).toBeVisible();
+    for (const [outra, outroId] of Object.entries(regioes)) if (outra !== regiao) await expect(page.getByTestId(outroId), `ampliar ${regiao} esconde ${outra}`).toBeHidden();
+    if (regiao === "dados") {
+      const xs = await page.getByTestId(`${P}-dados`).locator("[data-campo]").evaluateAll((els) => [...new Set(els.filter((e) => e.getBoundingClientRect().width > 0).map((e) => Math.round(e.getBoundingClientRect().left)))]);
+      expect(xs.length, "Dados ampliado: campos em duas colunas").toBeGreaterThanOrEqual(2);
+    }
+    await expect(botao).toHaveAccessibleName("Restaurar layout");
+    await botao.click();
+    await expect(ws).not.toHaveAttribute("data-ampliado", /.+/);
+    for (const id of Object.values(regioes)) await expect(page.getByTestId(id)).toBeVisible();
+  }
+  await page.getByTestId(`${P}-ampliar-painel`).click();
+  await expect(ws).toHaveAttribute("data-ampliado", "painel");
+  expect(await chavesDoNavegador(page), "ampliar não deixa rastro no navegador").toEqual(antes);
+  await page.reload();
+  await expect(page.getByTestId(`${P}-identidade-nome`)).toHaveText(compra.codigo);
+  await expect(page.getByTestId(P), "remontar volta ao normal").not.toHaveAttribute("data-ampliado", /.+/);
+
+  // ABA ALTERADA: a criação com algo digitado avisa ao fechar a aba do espaço de trabalho (useDirtyTab)
+  await page.goto(`/compras/compras/new?tipo_operacao_id=${c.topCompra.id}`);
+  await expect(page.getByTestId("compras-top-travada"), "a criação montou com a TOP").toBeVisible();
+  await abrirAba(page, P, "Observações");
+  await page.getByTestId("compras-observacao").fill("rascunho que não pode sumir calado");
+  await expect(page.getByTestId(`${P}-alterado`)).toBeVisible();
+  const aba = page.getByTestId("workspace-tabs").locator('[role="tab"][aria-selected="true"]');
+  const abaDoLancamento = page.getByTestId("workspace-tab").filter({ has: page.getByLabel("Alterações não salvas") });
+  await expect(abaDoLancamento, "a aba do espaço de trabalho marca a alteração").toHaveCount(1);
+  await abaDoLancamento.getByRole("button", { name: /Fechar aba/ }).click();
+  const dlg = page.getByTestId("confirm-dialog");
+  await expect(dlg).toBeVisible();
+  await expect(dlg.getByRole("heading", { name: /^Fechar .+\?$/ })).toBeVisible();
+  await expect(dlg).toContainText("Existem alterações não salvas. Ao fechar, elas serão descartadas.");
+  await dlg.getByRole("button", { name: "Continuar editando", exact: true }).click();
+  await expect(dlg).toBeHidden();
+  await expect(abaDoLancamento, "continuar editando mantém a aba").toHaveCount(1);
+  await expect(page.getByTestId("compras-observacao"), "e o que foi digitado").toHaveValue("rascunho que não pode sumir calado");
+  await abaDoLancamento.getByRole("button", { name: /Fechar aba/ }).click();
+  await page.getByTestId("confirm-dialog-confirm").click();
+  await expect(abaDoLancamento, "confirmar fecha a aba").toHaveCount(0);
+  await expect(aba).toBeVisible();
+});
+
+/* ═════════════════════════════════════════════ CC-13 esqueleto ═════════════════════════════════════════════ */
+
+test("CC-13 — esqueleto com a leitura atrasada: cinco barras de 34 px com brilho; reduced-motion sem animação", async ({ page }) => {
+  await login(page);
+  const c = await cenario(page);
+  const compra = await compraPelaApi(page, c);
+  for (const movimento of ["no-preference", "reduce"] as const) {
+    await page.emulateMedia({ reducedMotion: movimento });
+    let soltar!: () => void;
+    const segura = new Promise<void>((ok) => { soltar = ok; });
+    await page.route(`**/api/compras/compras/${compra.id}`, async (rota) => { if (rota.request().method() === "GET") await segura; await rota.continue(); });
+    await page.goto(`/compras/compras/${compra.id}`);
+    const esqueleto = page.getByTestId(`${P}-esqueleto`);
+    await expect(esqueleto, "a leitura pendente monta a Central com o esqueleto").toBeVisible();
+    const barras = await esqueleto.evaluate((raiz, alt) => [...raiz.querySelectorAll<HTMLElement>("*")]
+      .filter((el) => Math.round(el.getBoundingClientRect().height) === alt)
+      .map((el) => ({ animacao: getComputedStyle(el).animationName, duracao: getComputedStyle(el).animationDuration })), ESQUELETO.barra);
+    expect(barras.length, "cinco barras de 34 px").toBe(ESQUELETO.quantas);
+    if (movimento === "reduce") expect(barras.every((b) => b.animacao === "none" || parseFloat(b.duracao) === 0), "reduced-motion: sem animação").toBe(true);
+    else expect(barras.some((b) => b.animacao !== "none" && parseFloat(b.duracao) > 0), "sem a preferência, há brilho — senão o caso acima seria vazio").toBe(true);
+    soltar();
+    await expect(page.getByTestId(`${P}-identidade-nome`)).toHaveText(compra.codigo);
+    await expect(esqueleto).toHaveCount(0);
+    await page.unroute(`**/api/compras/compras/${compra.id}`);
+  }
+});
+
+/* ═════════════════════════════════════════════ CC-14 evidência ═════════════════════════════════════════════ */
+
+/**
+ * PARES VENDA × COMPRA por estado, em 1440×900 e 1280×720: `<cena>__venda__<w>x<h>.png` ao lado de
+ * `<cena>__compra__<w>x<h>.png`, na pasta EVIDENCIA_DIR (fora do commit). Sem EVIDENCIA_DIR, as fotos vão para a pasta
+ * de saída do próprio teste — o caso RODA sempre (a prova sem rolagem horizontal não depende da pasta).
+ */
+test("CC-14 — evidência: pares Venda × Compra por estado em 1440×900 e 1280×720, sem rolagem horizontal", async ({ page }, info) => {
+  test.setTimeout(300_000);
+  const pasta = process.env.EVIDENCIA_DIR ?? info.outputPath("evidencia");
+  fs.mkdirSync(pasta, { recursive: true });
+  await login(page);
+  const c = await cenario(page);
+  const topVenda = await cadastrarTop(page, "vendas.venda");
+  const venda = await vendaPelaApi(page, { tipo_operacao_id: topVenda.id, installment_plan: { installments: 2, first_due_date: "2026-10-15", mode: "interval", interval_days: 30 } });
+  const vendaConfirmada = await vendaPelaApi(page, { tipo_operacao_id: topVenda.id });
+  await api(page, "POST", `/api/sales/sales/${vendaConfirmada.id}/confirm`, {});
+  const compra = await compraPelaApi(page, c);
+  const compraConfirmada = await compraPelaApi(page, c);
+  await api(page, "POST", `/api/compras/compras/${compraConfirmada.id}/confirm`, {});
+  expect((await ler(page, "compras", compraConfirmada.id)).situacao, "premissa: a compra confirmada").not.toBe("aberto");
+
+  const fotos: string[] = [];
+  const foto = async (cena: string, lado: "venda" | "compra", w: number, h: number) => {
+    const rolagem = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(rolagem, `${cena} (${lado}): rolagem horizontal em ${w}×${h}`).toBeLessThanOrEqual(0);
+    await page.mouse.move(5, h - 5); await page.waitForTimeout(450);
+    const arquivo = path.join(pasta, `${cena}__${lado}__${w}x${h}.png`);
+    await page.screenshot({ path: arquivo });
+    fotos.push(arquivo);
+  };
+
+  type Lado = {
+    lado: "venda" | "compra"; prefixo: string; aberto: { id: string; codigo: string }; confirmado: { id: string; codigo: string };
+    rotaCriacao: string; rotaConsulta: (id: string) => string; rotaLeitura: (id: string) => string;
+    observacao: () => Locator; confirmar: string; abas: readonly string[];
+  };
+  const lados: Lado[] = [
+    {
+      lado: "venda", prefixo: PV, aberto: venda, confirmado: vendaConfirmada,
+      rotaCriacao: `/vendas/sales/new?tipo_operacao_id=${topVenda.id}`, rotaConsulta: (id) => `/vendas/sales/${id}`, rotaLeitura: (id) => `**/api/sales/sales/${id}`,
+      observacao: () => page.getByTestId(`${PV}-painel`).getByLabel("Observação"), confirmar: "Confirmar venda", abas: ["Totais", "Financeiro", "Frete e transporte"]
+    },
+    {
+      lado: "compra", prefixo: P, aberto: compra, confirmado: compraConfirmada,
+      rotaCriacao: `/compras/compras/new?tipo_operacao_id=${c.topCompra.id}`, rotaConsulta: (id) => `/compras/compras/${id}`, rotaLeitura: (id) => `**/api/compras/compras/${id}`,
+      observacao: () => page.getByTestId("compras-observacao"), confirmar: "Confirmar compra", abas: ["Totais", "Financeiro", "Frete e transporte"]
+    }
+  ];
+
+  for (const [w, h] of [[1440, 900], [1280, 720]] as const) {
+    await page.setViewportSize({ width: w, height: h });
+    for (const l of lados) {
+      const consulta = async (doc: { id: string; codigo: string }) => {
+        await page.goto(l.rotaConsulta(doc.id));
+        await expect(page.getByTestId(`${l.prefixo}-identidade-nome`), `${l.lado}: a tela desenhou ESTE documento`).toHaveText(doc.codigo);
+      };
+      // criação
+      await page.goto(l.rotaCriacao);
+      await expect(page.getByTestId(l.prefixo)).toBeVisible();
+      await expect(page.getByTestId(`${l.prefixo}-descartar`)).toBeVisible();
+      await foto("novo-documento", l.lado, w, h);
+      await abrirAba(page, l.prefixo, "Observações");
+      await l.observacao().fill("rascunho da evidência");
+      await page.getByTestId(`${l.prefixo}-descartar`).click();
+      await expect(page.getByTestId("confirm-dialog")).toBeVisible();
+      await foto("descartando", l.lado, w, h);
+      await page.getByTestId("confirm-dialog").getByRole("button", { name: "Descartar alterações", exact: true }).click();
+      await expect(page.getByTestId(`${l.prefixo}-alterado`), "descartado: nada sujo antes de sair").toHaveCount(0);
+      // consulta
+      await consulta(l.aberto);
+      await foto("view-documento", l.lado, w, h);
+      for (const aba of l.abas) { await abrirAba(page, l.prefixo, aba); await foto(aba === "Frete e transporte" ? "frete" : aba.toLowerCase(), l.lado, w, h); }
+      await abrirAba(page, l.prefixo, "Financeiro");
+      await page.getByTestId(`${l.prefixo}-ampliar-painel`).click();
+      await foto("financeiro-ampliado", l.lado, w, h);
+      await page.getByTestId(`${l.prefixo}-ampliar-painel`).click();
+      await page.getByTestId(`${l.prefixo}-divisor-horizontal`).focus(); await page.keyboard.press("Home");
+      await foto("painel-estreito", l.lado, w, h);
+      await page.keyboard.press("End");
+      await foto("painel-largo", l.lado, w, h);
+      await page.getByTestId(`${l.prefixo}-acoes`).getByRole("button", { name: l.confirmar }).click();
+      await expect(page.getByTestId("confirm-dialog")).toBeVisible();
+      await foto("confirmando", l.lado, w, h);
+      await page.keyboard.press("Escape");
+      await expect(page.getByTestId("confirm-dialog")).toHaveCount(0);
+      await (await itemDoLeque(page, l.prefixo, `${l.prefixo}-documentos`)).click();
+      await expect(page.getByTestId(`${l.prefixo}-documentos-lista`)).toBeVisible();
+      await foto("multi-view", l.lado, w, h);
+      await page.keyboard.press("Escape");
+      await consulta(l.confirmado);
+      await foto("confirmado", l.lado, w, h);
+      // carregando: a leitura do documento fica segura no fio
+      let soltar!: () => void;
+      const segura = new Promise<void>((ok) => { soltar = ok; });
+      await page.route(l.rotaLeitura(l.aberto.id), async (rota) => { if (rota.request().method() === "GET") await segura; await rota.continue(); });
+      await page.goto(l.rotaConsulta(l.aberto.id));
+      await expect(page.getByTestId(`${l.prefixo}-esqueleto`)).toBeVisible();
+      await foto("carregando", l.lado, w, h);
+      soltar();
+      await expect(page.getByTestId(`${l.prefixo}-identidade-nome`)).toHaveText(l.aberto.codigo);
+      await page.unroute(l.rotaLeitura(l.aberto.id));
+    }
+  }
+  // cada cena tem o PAR: a mesma cena e a mesma viewport nos dois lados
+  const semPar = fotos.filter((f) => f.includes("__venda__") && !fotos.includes(f.replace("__venda__", "__compra__")));
+  expect(semPar, "toda foto da venda tem a da compra ao lado").toEqual([]);
+  expect(fotos.length, "13 cenas × 2 lados × 2 viewports").toBe(13 * 2 * 2);
+  info.annotations.push({ type: "evidencia", description: `${fotos.length} fotos (pares Venda × Compra) em ${pasta}` });
+});

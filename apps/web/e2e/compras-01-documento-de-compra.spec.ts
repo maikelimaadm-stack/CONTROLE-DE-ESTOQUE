@@ -23,7 +23,7 @@ async function escolher(page: Page, rotulo: string, nome: string) {
 }
 async function escolherNaLinha(page: Page, botao: import("@playwright/test").Locator, nome: string) {
   await botao.click();
-  await page.getByPlaceholder("Pesquisar...").fill(nome.slice(0, 20));
+  await page.getByPlaceholder("Pesquisar pela descrição").fill(nome.slice(0, 20));
   await page.getByRole("option", { name: literal(nome.slice(0, 20)) }).first().click();
 }
 type Saldo = { quantity: string; average_cost?: string };
@@ -74,12 +74,12 @@ test("CO-W1 — Compras › Novo → TOP de Compra → Central → salvar → co
   await escolher(page, "Centro de resultado", c.centro.label);
   await page.getByTestId("compras-frete").fill("10.00");
   const itens = page.getByTestId("compras-itens");
-  await itens.getByRole("button", { name: "Adicionar item" }).click();
+  await itens.getByTestId("central-compras-adicionar-item").click();
   const linha = itens.locator("tbody tr").first();
-  await escolherNaLinha(page, linha.locator("button").nth(0), c.nomeArmazem);
-  await escolherNaLinha(page, linha.locator("button").nth(1), c.nomeProduto);
-  await linha.locator("input[type=number]").nth(0).fill("5");
-  await linha.locator("input[type=number]").nth(1).fill("20");
+  await escolherNaLinha(page, linha.getByTestId("central-compras-armazem"), c.nomeArmazem);
+  await escolherNaLinha(page, linha.getByTestId("central-compras-produto"), c.nomeProduto);
+  await linha.getByLabel("Quantidade do item 1").fill("5");
+  await linha.getByLabel("Valor unitário do item 1").fill("20");
   // 5 × 20,00 + frete 10,00 = 110,00.
   await expect(page.getByTestId("compras-total")).toContainText("110,00");
   await page.getByTestId("compras-salvar").click();
@@ -100,11 +100,13 @@ test("CO-W1 — Compras › Novo → TOP de Compra → Central → salvar → co
   await expect(page.getByTestId("compras-previa-estoque")).toContainText(c.nomeProduto);
   await expect(page.getByTestId("compras-previa-estoque")).toContainText("110,00");
   await expect(page.getByTestId("compras-previa-financeiro")).toContainText("110,00");
-  await page.getByTestId("compras-confirmar-executar").click();
+  await page.getByTestId("confirm-dialog-confirm").click();
 
   // (5) O DOCUMENTO mostra a entrada e as contas a pagar — e o servidor diz o mesmo.
   await expect(corpo).toHaveAttribute("data-situacao", "confirmado");
+  await page.getByRole("tab", { name: /^Estoque/ }).click();
   await expect(page.getByTestId("compras-consulta-movimentos")).toContainText(c.nomeProduto);
+  await page.getByRole("tab", { name: /^Financeiro/ }).click();
   await expect(page.getByTestId("compras-consulta-titulos")).toContainText("110,00");
   const saldo = await api<Saldo>(page, "GET", `/api/stock/balances/${c.armazem}/${c.produto}`);
   expect(saldo.quantity, "a entrada vale no servidor").toBe("5.0000");

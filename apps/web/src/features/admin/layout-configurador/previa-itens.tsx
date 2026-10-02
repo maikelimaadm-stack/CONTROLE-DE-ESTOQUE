@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import estilos from "../../sales/central-vendas-workspace.module.css";
+import estilos from "../../central/moldura.module.css";
 import { CampoPrevia } from "./campo-previa";
 import { chaveDeColuna, useConfigurador, type ZonaDoLayout } from "./contrato";
 import { useZonaDeSoltura } from "./zona";

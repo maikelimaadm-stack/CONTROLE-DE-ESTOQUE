@@ -33,7 +33,7 @@ async function escolher(page: Page, rotulo: string, nome: string) {
 }
 async function escolherNaLinha(page: Page, botao: Locator, nome: string) {
   await botao.click();
-  await page.getByPlaceholder("Pesquisar...").fill(nome.slice(0, 20));
+  await page.getByPlaceholder("Pesquisar pela descrição").fill(nome.slice(0, 20));
   await page.getByRole("option", { name: literal(nome.slice(0, 20)) }).first().click();
 }
 
@@ -96,11 +96,13 @@ async function conferirLayoutNaCentral(page: Page, layoutId: string) {
   await expect(campo(page, "fornecedor_id")).toHaveCount(1);
   await expect(campo(page, "numero_nota").locator("label"), "o rótulo do layout").toHaveText(new RegExp(`^${ROTULO_NOTA.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   await expect(central.locator("label", { hasText: "Número da nota" }), "o rótulo de hoje saiu").toHaveCount(0);
+  // A Observação mora na aba "Observações" do painel de baixo.
+  await central.getByRole("tab", { name: /^Observações/ }).click();
   await expect(campo(page, "observacao")).toHaveAttribute("data-obrigatorio", "true");
-  await expect(campo(page, "observacao").locator("label .req"), "o \"*\" da Observação").toHaveCount(1);
+  await expect(campo(page, "observacao").locator(`label [data-parte="req"]`), "o \"*\" da Observação").toHaveCount(1);
   await expect(campo(page, "transportadora_id"), "a Transportadora está fora do layout").toHaveCount(0);
   await expect(central.locator("label", { hasText: "Transportadora" }), "e não aparece na Central").toHaveCount(0);
-  await expect(page.getByTestId("compras-itens").locator('th[data-coluna="armazem_id"]'), "as colunas dos itens também seguem o layout").toHaveCount(1);
+  await expect(page.getByTestId("compras-itens").locator('th[data-campo="armazem_id"]'), "as colunas dos itens também seguem o layout").toHaveCount(1);
 }
 
 test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigatória, Fornecedor padrão) governa a Central; sem Observação recusa no campo; no modo receber vale o mesmo layout e o pedido vence o padrão", async ({ page }) => {
@@ -120,7 +122,7 @@ test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigat
   await page.goto(`/compras/compras/new?tipo_operacao_id=${c.topCompra.id}`);
   await expect(central).toBeVisible();
   await expect(central).toHaveAttribute("data-modo", "lancar");
-  await expect(page.getByTestId("compras-top-travada"), "a TOP escolhida, travada").toHaveValue(new RegExp(`^${c.topCompra.codigo} — `));
+  await expect(page.getByTestId("compras-top-travada"), "a TOP escolhida, travada").toContainText(`${c.topCompra.codigo} · `);
   await conferirLayoutNaCentral(page, c.layout);
   await expect(campo(page, "fornecedor_id").locator("button").first(), "o Fornecedor padrão do layout, aplicado ao abrir").toContainText(c.fornecedor.nomePadrao);
 
@@ -128,15 +130,20 @@ test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigat
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
   const itens = page.getByTestId("compras-itens");
-  await itens.getByRole("button", { name: "Adicionar item" }).click();
+  await itens.getByTestId("central-compras-adicionar-item").click();
   const linha = itens.locator("tbody tr").first();
-  await escolherNaLinha(page, linha.locator("button").nth(0), c.nomeArmazem);
-  await escolherNaLinha(page, linha.locator("button").nth(1), c.produto.nome);
-  await linha.locator("input[type=number]").nth(0).fill("2");
-  await linha.locator("input[type=number]").nth(1).fill("15");
+  await escolherNaLinha(page, linha.getByTestId("central-compras-armazem"), c.nomeArmazem);
+  await escolherNaLinha(page, linha.getByTestId("central-compras-produto"), c.produto.nome);
+  await linha.getByLabel("Quantidade do item 1").fill("2");
+  await linha.getByLabel("Valor unitário do item 1").fill("15");
+  await central.getByRole("tab", { name: /^Totais/ }).click();
   await expect(page.getByTestId("compras-total")).toContainText("30,00");
   await expect(page.getByTestId("compras-salvar"), "premissa: o layout chegou e o Salvar está liberado").toBeEnabled();
   await page.getByTestId("compras-salvar").click();
+  // A Observação está na aba "Observações" (a Totais estava à vista): a pendência marca a aba, e o erro está no campo.
+  const abaObservacoes = central.getByRole("tab", { name: /^Observações/ });
+  await expect(abaObservacoes.getByRole("img", { name: "Com pendência" }), "a aba da Observação acusa a pendência").toHaveCount(1);
+  await abaObservacoes.click();
   await expect(campo(page, "observacao"), "a recusa aparece NO campo, com o rótulo do layout").toContainText(erroDaObservacao);
   await expect(campo(page, "fornecedor_id"), "o Fornecedor (preenchido pelo padrão) não é cobrado").not.toContainText("é obrigatório");
   await expect(page).toHaveURL(/\/compras\/compras\/new\?/);

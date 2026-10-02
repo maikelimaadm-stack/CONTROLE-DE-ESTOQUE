@@ -1,5 +1,5 @@
 /*
- * GRADE DE ITENS DA CENTRAL DE VENDAS — APRESENTAÇÃO DO DESENHO (VISUAL-UX-02, decisão 270).
+ * GRADE DE ITENS DA CENTRAL (motor) — APRESENTAÇÃO DO DESENHO (VISUAL-UX-02, decisão 270).
  *
  * As medidas saem do CSS do desenho aprovado (seções "itens", "pesquisa de produto" e DENSIDADE): barra de itens
  * de 36px (+1 de borda), cabeçalho da grade de 28px, linha de 23px (+1 de borda), rodapé de 32px (+1 de borda),
@@ -8,7 +8,7 @@
  * O desenho mede em `content-box` (altura + borda), a casa usa `border-box`: onde a borda soma à altura do desenho, a
  * regra declara `box-sizing: content-box` para chegar ao MESMO número (barra 37, cabeçalho 29, linha 24, rodapé 33).
  *
- * Classes SÓ desta folha: `.grade`/`.gradeRolagem` de `central-vendas-workspace.module.css` também desenham a prévia
+ * Classes SÓ desta folha: `.grade`/`.gradeRolagem` de `moldura.module.css` também desenham a prévia
  * do configurador de layouts (`admin/layout-configurador/previa-itens.tsx`) e ficam como estão. As cores repetem o
  * hexadecimal, como o CSS da Central já faz — a catraca de nomenclatura conta cada token herdado como dívida.
  * O movimento usa as variáveis de `.workspace` (a moldura da Central), que zera tudo com prefers-reduced-motion.
@@ -372,7 +372,7 @@
 
 /*
  * ═════════════ ITENS DA CRIAÇÃO (VISUAL-UX-02, Fase B) ═════════════
- * Classes SÓ da grade editável da criação (`central-vendas-itens.tsx`); as da consulta acima ficam como estão.
+ * Classes SÓ da grade editável da criação (`itens.tsx`); as da consulta acima ficam como estão.
  * Medidas e cores do desenho: círculo de seleção de 15px numa coluna de 34px, linha marcada com o verde a 7% e o
  * filete de 2px, linha com pendência em #fff7f7, célula de pesquisa com a lupa à esquerda, entrada de 74px.
  */
