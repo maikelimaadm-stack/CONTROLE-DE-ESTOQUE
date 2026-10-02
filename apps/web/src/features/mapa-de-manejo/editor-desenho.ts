@@ -38,9 +38,9 @@ export const TOLERANCIA_MIN = 1;
 export const TOLERANCIA_MAX = 200;
 
 export type Acerto = { tipo: "vertice"; i: number } | { tipo: "meio"; i: number; px: Px } | { tipo: "poligono" };
-/** Raio de pega do ponto e do ponto do meio, em px. */
-export const RAIO_VERTICE = 13;
-export const RAIO_MEIO = 12;
+/** Raio de pega do ponto e do ponto do meio, em px (pontos menores na tela → pega um pouco menor). */
+export const RAIO_VERTICE = 8;
+export const RAIO_MEIO = 7;
 
 export const distancia = (a: Px, b: Px) => Math.hypot(a.x - b.x, a.y - b.y);
 
@@ -169,10 +169,40 @@ export function anelAberto(g: Polygon | null | undefined): LngLat[] {
   return anel;
 }
 
-export const centroPx = (pts: Px[]): Px => {
+/**
+ * Centroide geométrico do polígono (fórmula de área / shoelace) em coordenadas geográficas.
+ * Polígono inválido ou degenerado → centro da caixa envolvente.
+ */
+export function centroideLngLat(coords: LngLat[]): LngLat | null {
+  if (coords.length < 3) return null;
+  let a = 0, cx = 0, cy = 0;
+  for (let i = 0; i < coords.length; i++) {
+    const [x0, y0] = coords[i]!;
+    const [x1, y1] = coords[(i + 1) % coords.length]!;
+    const cruz = x0 * y1 - x1 * y0;
+    a += cruz; cx += (x0 + x1) * cruz; cy += (y0 + y1) * cruz;
+  }
+  if (Math.abs(a) < 1e-18) {
+    let oeste = Infinity, sul = Infinity, leste = -Infinity, norte = -Infinity;
+    for (const [lng, lat] of coords) {
+      if (lng < oeste) oeste = lng; if (lng > leste) leste = lng;
+      if (lat < sul) sul = lat; if (lat > norte) norte = lat;
+    }
+    if (!Number.isFinite(oeste)) return null;
+    return [(oeste + leste) / 2, (sul + norte) / 2];
+  }
+  return [cx / (3 * a), cy / (3 * a)];
+}
+
+/** Centroide em pixels: projeta o centroide geográfico; se falhar, média dos pontos na tela. */
+export const centroPx = (pts: Px[], coords?: LngLat[], projetar?: (ll: LngLat) => Px): Px => {
+  if (coords && projetar && coords.length >= 3) {
+    const c = centroideLngLat(coords);
+    if (c) return projetar(c);
+  }
   let x = 0, y = 0;
   for (const p of pts) { x += p.x; y += p.y; }
-  return { x: x / pts.length, y: y / pts.length };
+  return { x: x / Math.max(1, pts.length), y: y / Math.max(1, pts.length) };
 };
 
 // ---------- histórico (desfazer / refazer) ----------

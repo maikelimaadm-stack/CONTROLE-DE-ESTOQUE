@@ -3,7 +3,7 @@ import * as React from "react";
 import { flushSync } from "react-dom";
 import type { Feature, Polygon } from "geojson";
 import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
-import { Magnet, Redo2, RotateCcw, Undo2 } from "lucide-react";
+import { Check, Redo2, RotateCcw, Undo2 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, qs, newIdem } from "@/lib/api";
 import { useAuth, empresasDoContexto } from "@/lib/auth";
@@ -12,13 +12,13 @@ import { Card, CardBody, Button, Spinner, EmptyState, ErrorState, Field, Input, 
 import { cn, num } from "@/lib/utils";
 import { criarSessaoGoogle, estiloSatelite, estiloFundoLiso, fonteRaster, ID_BASE, type TipoBase, CENTRO_PADRAO, ZOOM_PADRAO } from "./basemap";
 import {
-  IMA_PADRAO, acertar, acharIma, anelAberto, areaHa, centroPx, coordsDe, distanciaM, lerPasso, novoHistorico, perimetroM, podeDesfazer,
+  IMA_PADRAO, acertar, acharIma, anelAberto, areaHa, centroPx, centroideLngLat, coordsDe, distanciaM, lerPasso, novoHistorico, perimetroM, podeDesfazer,
   podeRefazer, poligonoGeoJSON, registrar, rumoGraus, travarAngulo,
   type Acerto, type AlvoPx, type ConfigIma, type Historico, type Ima, type LngLat, type PontoDesenho, type Px, type Retrato
 } from "./editor-desenho";
 import { CamadaDesenho, type Lado, type RotuloArea } from "./camada-desenho";
-import { PainelDesenho } from "./painel-desenho";
-import { PALETA_AREAS, proximaCor } from "./cores";
+import { BarraIma } from "./barra-ima";
+import { COR_PADRAO_AREA, PALETA_AREAS, corBordaNoMapa, corExibidaNoMapa } from "./cores";
 
 /**
  * MAPA-01 (decisão 289) — Mapa de Manejo: cadastro de áreas NEUTRO (lavoura e pecuária). Só nome, tamanho e
@@ -37,8 +37,10 @@ interface AreaApi {
   geometria: Polygon | null;
 }
 
-const COR_PADRAO = "#facc15";
+const COR_PADRAO = COR_PADRAO_AREA;
 const hectares = (v: AreaApi["tamanho_ha"]) => (v === null || v === undefined || v === "" ? 0 : Number(v));
+/** Hover do polígono gravado (feature-state). */
+const HOVER_BORDA = "#e5ede9";
 
 type Rascunho = { geometria: Polygon; tamanho_ha: number };
 
@@ -97,7 +99,9 @@ export function MapaDeManejo() {
   const [desenhando, setDesenhando] = React.useState(false);
   const [rascunho, setRascunho] = React.useState<Rascunho | null>(null);
   const [selecionada, setSelecionada] = React.useState<string | null>(null);
-  const [form, setForm] = React.useState<{ nome: string; cor: string; tamanho_ha: string }>({ nome: "", cor: COR_PADRAO, tamanho_ha: "" });
+  const [form, setForm] = React.useState<{ nome: string; cor: string; tamanho_ha: string; area_total_ha: string }>({
+    nome: "", cor: COR_PADRAO, tamanho_ha: "", area_total_ha: ""
+  });
   const [excluir, setExcluir] = React.useState<AreaApi | null>(null);
   const [erro, setErro] = React.useState<string | null>(null);
   const [localizacao, setLocalizacao] = React.useState<{ precisao: number } | null>(null);
@@ -167,7 +171,9 @@ export function MapaDeManejo() {
     } else if (e.fechado) {
       Object.assign(e, { hover: null, cur: px, raw: null, ima: null, travado: false });
     } else {
-      const s = acharIma(px, alvosPx(), cfgRef.current, { pts, fechado: false }, { soltar: alt, semFechar: false });
+      const s0 = acharIma(px, alvosPx(), cfgRef.current, { pts, fechado: false }, { soltar: alt, semFechar: false });
+      // Guarda lngLat também na aresta: no pan do mapa o px é reprojetado a partir disso (não “arrasta” o ponto cadastrado).
+      const s = s0 && !s0.lngLat ? { ...s0, lngLat: desproj(s0.px) } : s0;
       const travar = shift && !s && pts.length > 0;
       Object.assign(e, { hover: null, raw: px, cur: s ? s.px : travar ? travarAngulo(pts[pts.length - 1]!, px) : px, ima: s, travado: travar });
     }
@@ -200,7 +206,8 @@ export function MapaDeManejo() {
     const e = ed.current; const d = e.arrasto;
     if (!d) return;
     if (d.tipo === "vertice") {
-      const s = acharIma(px, alvosPx(), cfgRef.current, { pts: ptsPx(), fechado: e.fechado }, { soltar: alt, semFechar: true });
+      const s0 = acharIma(px, alvosPx(), cfgRef.current, { pts: ptsPx(), fechado: e.fechado }, { soltar: alt, semFechar: true });
+      const s = s0 && !s0.lngLat ? { ...s0, lngLat: desproj(s0.px) } : s0;
       const np = e.pontos.slice(); np[d.i] = s ? doIma(s) : livre(desproj(px)); e.pontos = np;
       Object.assign(e, { raw: px, cur: s ? s.px : px, ima: s });
     } else {
@@ -313,12 +320,38 @@ export function MapaDeManejo() {
       m.on("load", () => {
         if (cancelado) return;
         m.addSource("areas", { type: "geojson", data: { type: "FeatureCollection", features: [] }, promoteId: "id" });
-        m.addLayer({ id: "areas-fill", type: "fill", source: "areas", paint: { "fill-color": ["coalesce", ["get", "cor"], COR_PADRAO], "fill-opacity": ["case", ["boolean", ["feature-state", "selecionada"], false], 0.45, 0.25] } });
-        m.addLayer({ id: "areas-contorno-sombra", type: "line", source: "areas", paint: { "line-color": "#0f172a", "line-opacity": 0.55, "line-width": ["case", ["boolean", ["feature-state", "selecionada"], false], 7, 5.5] } });
-        m.addLayer({ id: "areas-contorno", type: "line", source: "areas", paint: { "line-color": ["coalesce", ["get", "cor"], COR_PADRAO], "line-width": ["case", ["boolean", ["feature-state", "selecionada"], false], 3.5, 2.5] } });
+        // Densidade da ficha: fill 58%/66%, traço 1,2/1,8 px, hover com borda clara.
+        m.addLayer({
+          id: "areas-fill", type: "fill", source: "areas",
+          paint: {
+            "fill-color": ["coalesce", ["get", "cor_exibida"], COR_PADRAO],
+            "fill-opacity": ["case", ["boolean", ["feature-state", "hover"], false], 0.66, 0.58]
+          }
+        });
+        m.addLayer({
+          id: "areas-contorno", type: "line", source: "areas",
+          paint: {
+            "line-color": ["case", ["boolean", ["feature-state", "hover"], false], HOVER_BORDA, ["coalesce", ["get", "cor_borda"], COR_PADRAO]],
+            "line-opacity": ["case", ["boolean", ["feature-state", "hover"], false], 0.95, 0.8],
+            "line-width": ["case", ["boolean", ["feature-state", "hover"], false], 1.8, 1.2]
+          }
+        });
         m.on("click", "areas-fill", (e) => { if (desenhandoRef.current) return; const f = e.features?.[0]; if (f && f.properties) setSelecionada(String(f.properties.id)); });
-        m.on("mouseenter", "areas-fill", () => { if (!desenhandoRef.current) m.getCanvas().style.cursor = "pointer"; });
-        m.on("mouseleave", "areas-fill", () => { if (!desenhandoRef.current) m.getCanvas().style.cursor = ""; });
+        let hoverId: string | null = null;
+        m.on("mousemove", "areas-fill", (e) => {
+          if (desenhandoRef.current) return;
+          m.getCanvas().style.cursor = "pointer";
+          const id = e.features?.[0]?.properties?.id != null ? String(e.features[0].properties.id) : null;
+          if (id === hoverId) return;
+          if (hoverId) try { m.setFeatureState({ source: "areas", id: hoverId }, { hover: false }); } catch { /* */ }
+          hoverId = id;
+          if (hoverId) try { m.setFeatureState({ source: "areas", id: hoverId }, { hover: true }); } catch { /* */ }
+        });
+        m.on("mouseleave", "areas-fill", () => {
+          if (!desenhandoRef.current) m.getCanvas().style.cursor = "";
+          if (hoverId) try { m.setFeatureState({ source: "areas", id: hoverId }, { hover: false }); } catch { /* */ }
+          hoverId = null;
+        });
 
         // editor de desenho
         const px = (ev: { point: { x: number; y: number } }): Px => ({ x: ev.point.x, y: ev.point.y });
@@ -338,6 +371,37 @@ export function MapaDeManejo() {
           const agora = `${c.lng},${c.lat},${m.getZoom()},${m.getBearing()},${tela.width}x${tela.height}`;
           if (agora === vista) return;
           vista = agora;
+          // Reprojeta o ímã a partir do lngLat (e a aresta, se houver): no pan ele acompanha o cadastro, sem “arrastar” o ponto na tela.
+          const edAtual = ed.current;
+          if (edAtual.ima?.lngLat) {
+            const pxIma = { x: m.project(edAtual.ima.lngLat).x, y: m.project(edAtual.ima.lngLat).y };
+            let aresta = edAtual.ima.aresta;
+            if (edAtual.ima.tipo === "aresta" && aresta) {
+              // Aresta guardada em px fica obsoleta no pan — reancora pelos extremos geográficos do alvo mais próximo.
+              const alvos = areasRef.current.flatMap((a) => {
+                const coords = anelAberto(a.geometria);
+                return coords.length >= 2 ? [{ coords, pts: coords.map((ll) => ({ x: m.project(ll).x, y: m.project(ll).y })) }] : [];
+              });
+              let melhor: { d: number; a: Px; b: Px } | null = null;
+              for (const alvo of alvos) {
+                for (let i = 0; i < alvo.pts.length; i++) {
+                  const a = alvo.pts[i]!, b = alvo.pts[(i + 1) % alvo.pts.length]!;
+                  const vx = b.x - a.x, vy = b.y - a.y, l2 = vx * vx + vy * vy;
+                  const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((pxIma.x - a.x) * vx + (pxIma.y - a.y) * vy) / l2));
+                  const qx = a.x + t * vx, qy = a.y + t * vy;
+                  const d = Math.hypot(pxIma.x - qx, pxIma.y - qy);
+                  if (!melhor || d < melhor.d) melhor = { d, a, b };
+                }
+              }
+              if (melhor) aresta = [melhor.a, melhor.b];
+            }
+            edAtual.ima = { ...edAtual.ima, px: pxIma, aresta };
+            if (!edAtual.arrasto) {
+              // raw em px de tela fica obsoleto no pan — sem isso a linha pontilhada “arrasta” o ponto do cadastro.
+              edAtual.cur = pxIma;
+              edAtual.raw = pxIma;
+            }
+          }
           flushSync(() => redesenhar());
         });
         setMapaPronto(true);
@@ -384,23 +448,29 @@ export function MapaDeManejo() {
     if (!src) return;
     const features: Feature<Polygon>[] = areas
       .filter((a) => a.geometria && a.geometria.type === "Polygon")
-      .map((a) => ({ type: "Feature", id: a.id, properties: { id: a.id, nome: a.nome, cor: a.cor ?? COR_PADRAO }, geometry: a.geometria as Polygon }));
+      .map((a) => {
+        const exibida = corExibidaNoMapa(a.cor);
+        return {
+          type: "Feature" as const,
+          id: a.id,
+          properties: { id: a.id, nome: a.nome, cor: a.cor ?? COR_PADRAO, cor_exibida: exibida, cor_borda: corBordaNoMapa(exibida) },
+          geometry: a.geometria as Polygon
+        };
+      });
     src.setData({ type: "FeatureCollection", features });
   }, [areas, mapaPronto]);
-
-  // ---------- realce da selecionada ----------
-  React.useEffect(() => {
-    const mapa = mapRef.current;
-    if (!mapa || !mapaPronto) return;
-    for (const a of areas) { try { mapa.setFeatureState({ source: "areas", id: a.id }, { selecionada: a.id === selecionada }); } catch { /* fonte ainda não pronta */ } }
-  }, [selecionada, areas, mapaPronto]);
 
   const salvar = useMutation({
     mutationFn: async () => {
       if (!rascunho) return;
       if (!empresaId) throw new Error("Nenhuma empresa disponível para cadastrar a área.");
       const tamanho = form.tamanho_ha.trim() === "" ? rascunho.tamanho_ha : Number(form.tamanho_ha.replace(",", "."));
-      await api("/api/resources/mapa_areas", { method: "POST", idempotencyKey: newIdem(), body: { empresa_id: empresaId, nome: form.nome.trim(), cor: form.cor, tamanho_ha: tamanho, geometria: rascunho.geometria } });
+      const nome = form.nome.trim().toLocaleUpperCase("pt-BR");
+      await api("/api/resources/mapa_areas", {
+        method: "POST",
+        idempotencyKey: newIdem(),
+        body: { empresa_id: empresaId, nome, cor: form.cor, tamanho_ha: tamanho, geometria: rascunho.geometria }
+      });
     },
     onSuccess: () => { sairDoDesenho(); setErro(null); void queryClient.invalidateQueries({ queryKey: ["mapa-areas"] }); },
     onError: (e: unknown) => setErro(e instanceof Error ? e.message : "Não foi possível salvar a área.")
@@ -429,19 +499,20 @@ export function MapaDeManejo() {
     const e = ed.current;
     if (e.fechado && e.pontos.length >= 3) {
       const ha = Math.round(areaHa(coordsDe(e.pontos)) * 10000) / 10000;
+      const haStr = (Math.round(ha * 100) / 100).toFixed(2);
       setRascunho({ geometria: poligonoGeoJSON(e.pontos), tamanho_ha: ha });
-      setForm({ nome: "", cor: proximaCor(areas.map((a) => a.cor)), tamanho_ha: String(ha) });
+      setForm({ nome: "", cor: COR_PADRAO, tamanho_ha: haStr, area_total_ha: haStr });
       return;
     }
     if (e.pontos.length >= 3) { fechar("Fechado"); return; }
     e.acao = "Marque pelo menos 3 pontos"; redesenhar();
   }
   function mudarIma(m: Partial<ConfigIma>) {
-    const novo = { ...cfgRef.current, ...m };
+    // Ímã permanece ligado — a barra só ajusta tolerância / vértice / aresta.
+    const novo = { ...cfgRef.current, ...m, ligado: true };
     cfgRef.current = novo; setCfg(novo);
     const e = ed.current; e.ima = null;
-    if (m.ligado !== undefined) e.acao = novo.ligado ? "Ímã ligado" : "Ímã desligado";
-    else if (m.tolerancia !== undefined) e.acao = `Ímã em ${novo.tolerancia} px ≈ ${num(Math.round(novo.tolerancia * metrosPorPx), 0)} m neste zoom`;
+    if (m.tolerancia !== undefined) e.acao = `Ímã em ${novo.tolerancia} px ≈ ${num(Math.round(novo.tolerancia * metrosPorPx), 0)} m neste zoom`;
     redesenhar();
   }
 
@@ -474,7 +545,13 @@ export function MapaDeManejo() {
     return distanciaM([a.lng, a.lat], [b.lng, b.lat]) / 100;
   })();
   const rotulosAreas: RotuloArea[] = mapa
-    ? areas.flatMap((a) => { const anel = anelAberto(a.geometria); return anel.length >= 3 ? [{ id: a.id, px: centroPx(anel.map(proj)), nome: a.nome, ha: hectares(a.tamanho_ha) }] : []; })
+    ? areas.flatMap((a) => {
+      const anel = anelAberto(a.geometria);
+      if (anel.length < 3) return [];
+      const c = centroideLngLat(anel);
+      const px = c ? proj(c) : centroPx(anel.map(proj), anel, proj);
+      return [{ id: a.id, px, nome: a.nome, ha: hectares(a.tamanho_ha) }];
+    })
     : [];
   const e = ed.current;
   const ptsTela = mapa && desenhando ? ptsPx() : [];
@@ -490,10 +567,12 @@ export function MapaDeManejo() {
   }
   const ultimoTela = ptsTela.length ? ptsTela[ptsTela.length - 1]! : null;
   const arrastoVertice = e.arrasto?.tipo === "vertice" ? e.arrasto.i : -1;
+  const centroDesenho = ptsTela.length >= 3 ? centroPx(ptsTela, coords, proj) : null;
 
   const selecionadaObj = areas.find((a) => a.id === selecionada) ?? null;
   const podeCadastrar = Boolean(empresaId);
   const totalHa = areas.reduce((s, a) => s + hectares(a.tamanho_ha), 0);
+  const confirmarRotulo = e.fechado ? "Gravar área" : e.pontos.length >= 3 ? "Fechar polígono" : "Marque 3 pontos";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
@@ -509,53 +588,72 @@ export function MapaDeManejo() {
             <p className="text-xs text-slate-500">Áreas da propriedade desenhadas no mapa (lavoura e pecuária).</p>
           )}
         </div>
-        <Button type="button" onClick={iniciarDesenho} disabled={!mapaPronto || desenhando || !podeCadastrar} data-testid="mapa-nova-area">Nova área</Button>
+        {!desenhando && (
+          <Button type="button" onClick={iniciarDesenho} disabled={!mapaPronto || !podeCadastrar} data-testid="mapa-nova-area">Nova área</Button>
+        )}
+        {desenhando && !rascunho && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button type="button" onClick={confirmar} disabled={!e.fechado && e.pontos.length < 3} data-testid="mapa-confirmar">
+              <Check className="h-4 w-4" aria-hidden />{confirmarRotulo}
+            </Button>
+            <Button type="button" variant="ghost" onClick={sairDoDesenho} data-testid="mapa-cancelar-desenho">Cancelar</Button>
+          </div>
+        )}
       </div>
 
       {!podeCadastrar && <Card><CardBody><p className="text-sm text-amber-700">Nenhuma empresa disponível para cadastrar áreas.</p></CardBody></Card>}
       {erro && <Card><CardBody><p className="text-sm text-red-600" data-testid="mapa-erro">{erro}</p></CardBody></Card>}
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 lg:grid-cols-[320px_1fr]">
-        {/* Painel: ferramentas do desenho, ou a lista de áreas */}
-        <Card className="min-h-0 overflow-hidden">
-          <CardBody className="flex h-full min-h-0 flex-col gap-1 overflow-auto">
-            {desenhando ? (
-              <PainelDesenho cfg={cfg} onCfg={mudarIma} metrosPorPx={metrosPorPx} pontos={e.pontos} arrastoVertice={arrastoVertice} fechado={e.fechado}
-                onRecomecar={recomecar} onCancelar={sairDoDesenho} onConfirmar={confirmar} />
-            ) : (
-              <>
-                <div className="mb-1 flex items-baseline justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <span>Áreas</span>
-                  {areas.length > 0 && <span className="font-normal normal-case tabular-nums text-slate-400">{areas.length} · {num(totalHa, 2)} ha</span>}
-                </div>
-                {listaQuery.isLoading && <Spinner />}
-                {/* recusa da API não pode virar "lista vazia": quem vê vazio acha que não há área, e não que a leitura falhou */}
-                {listaQuery.error && <ErrorState title="Não foi possível carregar as áreas" error={listaQuery.error} onRetry={() => void listaQuery.refetch()} />}
-                {!listaQuery.isLoading && !listaQuery.error && areas.length === 0 && <EmptyState title="Nenhuma área cadastrada" description="Use “Nova área” para desenhar a primeira no mapa." />}
-                {areas.map((a) => (
-                  <button key={a.id} type="button" data-testid="mapa-item-area" onClick={() => { setSelecionada(a.id); const g = a.geometria; const m = mapRef.current; if (g && m) { const b = limites(g); if (b) m.fitBounds(b, { padding: 60, maxZoom: 16 }); } }}
-                    className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-100 ${a.id === selecionada ? "bg-slate-100 ring-1 ring-slate-300" : ""}`}>
-                    <span className="h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: a.cor ?? COR_PADRAO }} aria-hidden />
-                    <span className="min-w-0 flex-1 truncate font-medium text-slate-700">{a.nome}</span>
-                    <span className="shrink-0 text-xs tabular-nums text-slate-500">{num(hectares(a.tamanho_ha), 2)} ha</span>
-                  </button>
-                ))}
-              </>
-            )}
-          </CardBody>
-        </Card>
+      <div className={cn("grid min-h-0 flex-1 gap-2", desenhando ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-[280px_1fr]")}>
+        {/* Lista de áreas — só fora do desenho (lateral do desenho removida). */}
+        {!desenhando && (
+          <Card className="min-h-0 overflow-hidden">
+            <CardBody className="flex h-full min-h-0 flex-col gap-1 overflow-auto">
+              <div className="mb-1 flex items-baseline justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <span>Áreas</span>
+                {areas.length > 0 && <span className="font-normal normal-case tabular-nums text-slate-400">{areas.length} · {num(totalHa, 2)} ha</span>}
+              </div>
+              {listaQuery.isLoading && <Spinner />}
+              {listaQuery.error && <ErrorState title="Não foi possível carregar as áreas" error={listaQuery.error} onRetry={() => void listaQuery.refetch()} />}
+              {!listaQuery.isLoading && !listaQuery.error && areas.length === 0 && <EmptyState title="Nenhuma área cadastrada" description="Use “Nova área” para desenhar a primeira no mapa." />}
+              {areas.map((a) => (
+                <button key={a.id} type="button" data-testid="mapa-item-area" onClick={() => { setSelecionada(a.id); const g = a.geometria; const m = mapRef.current; if (g && m) { const b = limites(g); if (b) m.fitBounds(b, { padding: 60, maxZoom: 16 }); } }}
+                  className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-100 ${a.id === selecionada ? "bg-slate-100 ring-1 ring-slate-300" : ""}`}>
+                  <span className="h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: a.cor ?? COR_PADRAO }} aria-hidden />
+                  <span className="min-w-0 flex-1 truncate font-medium text-slate-700">{a.nome}</span>
+                  <span className="shrink-0 text-xs tabular-nums text-slate-500">{num(hectares(a.tamanho_ha), 2)} ha</span>
+                </button>
+              ))}
+            </CardBody>
+          </Card>
+        )}
 
-        {/* Mapa */}
         <Card className="relative min-h-0 overflow-hidden">
           <div ref={containerRef} data-testid="mapa-canvas" className="h-full min-h-[420px] w-full" />
           {mapaPronto && (
-            <CamadaDesenho desenhando={desenhando} rotulosAreas={rotulosAreas} pts={ptsTela} grudados={e.pontos.map((p) => p.grudado)} fechado={e.fechado}
-              cur={e.cur} raw={e.raw} ima={e.ima} travado={e.travado} rumo={e.travado && e.cur && ultimoTela ? rumoGraus(ultimoTela, e.cur) : null}
-              arrastando={e.arrasto !== null} arrastoVertice={arrastoVertice} hover={e.hover} lados={lados} areaHaAtual={haAtual} centro={ptsTela.length >= 3 ? centroPx(ptsTela) : null} />
+            <CamadaDesenho
+              desenhando={desenhando}
+              rotulosAreas={rotulosAreas}
+              ocultarRotulos={desenhando && !rascunho}
+              pts={ptsTela}
+              grudados={e.pontos.map((p) => p.grudado)}
+              fechado={e.fechado}
+              cur={e.cur}
+              raw={e.raw}
+              ima={e.ima}
+              travado={e.travado}
+              rumo={e.travado && e.cur && ultimoTela ? rumoGraus(ultimoTela, e.cur) : null}
+              arrastando={e.arrasto !== null}
+              arrastoVertice={arrastoVertice}
+              hover={e.hover}
+              lados={lados}
+              areaHaAtual={haAtual}
+              centro={centroDesenho}
+              corPreview={rascunho ? corExibidaNoMapa(form.cor) : null}
+            />
           )}
           {!mapaPronto && <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"><Spinner /></div>}
 
-          {/* canto superior esquerdo: base do mapa, medidas e ferramentas do desenho */}
           {mapaPronto && (
             <div className="pointer-events-none absolute left-2 top-2 flex max-w-[calc(100%-1rem)] flex-col items-start gap-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -571,34 +669,34 @@ export function MapaDeManejo() {
                 )}
                 {desenhando && (
                   <div className="flex flex-wrap items-center gap-1.5 text-xs" data-testid="mapa-medidas">
-                    <span className="rounded-full border border-slate-200 bg-white/95 px-2.5 py-1 shadow-sm">Área <b className="tabular-nums text-amber-600" data-testid="mapa-medida-area">{num(haAtual, 2)}</b> ha</span>
+                    <span className="rounded-full border border-slate-200 bg-white/95 px-2.5 py-1 shadow-sm">Área <b className="tabular-nums text-emerald-700" data-testid="mapa-medida-area">{num(haAtual, 2)}</b> ha</span>
                     <span className="rounded-full border border-slate-200 bg-white/95 px-2.5 py-1 shadow-sm">Perímetro <b className="tabular-nums">{num(Math.round(perimetro), 0)}</b> m</span>
                     <span className="rounded-full border border-slate-200 bg-white/95 px-2.5 py-1 shadow-sm">Pontos <b className="tabular-nums" data-testid="mapa-medida-pontos">{e.pontos.length}</b></span>
-                    <span className="rounded-full border border-yellow-300 bg-yellow-50/95 px-2.5 py-1 shadow-sm">Grudados <b className="tabular-nums text-amber-600" data-testid="mapa-medida-grudados">{e.pontos.filter((p) => p.grudado).length}</b></span>
+                    <span className="rounded-full border border-emerald-300 bg-emerald-50/95 px-2.5 py-1 shadow-sm">Grudados <b className="tabular-nums text-emerald-700" data-testid="mapa-medida-grudados">{e.pontos.filter((p) => p.grudado).length}</b></span>
                   </div>
                 )}
               </div>
               {desenhando && !rascunho && (
-                <div className="pointer-events-auto flex flex-col gap-1 rounded-md bg-white/95 p-1 shadow-sm" role="toolbar" aria-label="Ferramentas do desenho">
-                  <Button type="button" size="icon" variant="ghost" onClick={desfazer} disabled={!podeDesfazer(e.hist)} aria-label="Desfazer" title="Desfazer (Ctrl+Z, botão direito)" data-testid="mapa-desfazer"><Undo2 className="h-4 w-4" aria-hidden /></Button>
-                  <Button type="button" size="icon" variant="ghost" onClick={refazer} disabled={!podeRefazer(e.hist)} aria-label="Refazer" title="Refazer (Ctrl+Shift+Z)" data-testid="mapa-refazer"><Redo2 className="h-4 w-4" aria-hidden /></Button>
-                  <Button type="button" size="icon" variant={cfg.ligado ? "default" : "ghost"} onClick={() => mudarIma({ ligado: !cfg.ligado })} aria-pressed={cfg.ligado} aria-label="Ligar ou desligar o ímã" title="Ímã (Alt solta enquanto segura)"><Magnet className="h-4 w-4" aria-hidden /></Button>
-                  <Button type="button" size="icon" variant="ghost" onClick={recomecar} aria-label="Recomeçar" title="Recomeçar"><RotateCcw className="h-4 w-4" aria-hidden /></Button>
+                <div className="pointer-events-auto flex flex-col items-start gap-1" role="toolbar" aria-label="Ferramentas do desenho">
+                  <div className="flex flex-col gap-1 rounded-md bg-white/95 p-1 shadow-sm">
+                    <Button type="button" size="icon" variant="ghost" onClick={desfazer} disabled={!podeDesfazer(e.hist)} aria-label="Desfazer" title="Desfazer (Ctrl+Z, botão direito)" data-testid="mapa-desfazer"><Undo2 className="h-4 w-4" aria-hidden /></Button>
+                    <Button type="button" size="icon" variant="ghost" onClick={refazer} disabled={!podeRefazer(e.hist)} aria-label="Refazer" title="Refazer (Ctrl+Shift+Z)" data-testid="mapa-refazer"><Redo2 className="h-4 w-4" aria-hidden /></Button>
+                    <Button type="button" size="icon" variant="ghost" onClick={recomecar} aria-label="Recomeçar" title="Recomeçar" data-testid="mapa-recomecar"><RotateCcw className="h-4 w-4" aria-hidden /></Button>
+                  </div>
+                  <BarraIma cfg={cfg} onCfg={mudarIma} metrosPorPx={metrosPorPx} />
                 </div>
               )}
             </div>
           )}
 
-          {/* o que acabou de acontecer + ímã */}
           {desenhando && (
             <div className="pointer-events-none absolute bottom-2 left-2 flex max-w-[calc(100%-7rem)] items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-3 py-1 text-xs shadow-sm">
-              <span className={cn("h-2 w-2 shrink-0 rounded-full", e.arrasto ? "bg-yellow-400" : "bg-green-500")} aria-hidden />
+              <span className={cn("h-2 w-2 shrink-0 rounded-full", e.arrasto ? "bg-emerald-400" : "bg-green-500")} aria-hidden />
               <span className="truncate text-slate-700" data-testid="mapa-acao">{e.acao}</span>
-              <span className="shrink-0 tabular-nums text-slate-400">· {cfg.ligado ? `ímã ${cfg.tolerancia} px ≈ ${num(Math.round(cfg.tolerancia * metrosPorPx), 0)} m` : "ímã desligado"}</span>
+              <span className="shrink-0 tabular-nums text-slate-400">· ímã {cfg.tolerancia} px ≈ {num(Math.round(cfg.tolerancia * metrosPorPx), 0)} m</span>
             </div>
           )}
 
-          {/* precisão da minha localização (acima dos botões de zoom/localização) */}
           {(localizacao || erroLocalizacao) && (
             <div className="pointer-events-none absolute bottom-[7.5rem] right-2 max-w-xs rounded-md border border-slate-200 bg-white/95 px-3 py-1.5 text-xs shadow-sm" data-testid="mapa-localizacao">
               {erroLocalizacao ? (
@@ -614,26 +712,51 @@ export function MapaDeManejo() {
             </div>
           )}
 
-          {/* Formulário da área recém-desenhada */}
+          {/* Ficha ao fechar o polígono: cores em listagem; preview imediato no mapa. */}
           {rascunho && (
-            <Card className="absolute right-2 top-2 w-72 shadow-lg">
-              <CardBody className="flex flex-col gap-2">
+            <Card className="absolute right-2 top-2 max-h-[calc(100%-1rem)] w-80 overflow-auto shadow-lg">
+              <CardBody className="flex flex-col gap-2.5">
                 <div className="text-sm font-semibold text-slate-800">Nova área</div>
                 {empresaNome && <div className="text-xs text-slate-500">Empresa: <span className="font-medium text-slate-700">{empresaNome}</span></div>}
-                <Field label="Nome" required><Input value={form.nome} onChange={(ev) => setForm((f) => ({ ...f, nome: ev.target.value }))} data-testid="mapa-form-nome" /></Field>
-                <Field label="Tamanho (ha)"><Input type="number" step="0.0001" value={form.tamanho_ha} onChange={(ev) => setForm((f) => ({ ...f, tamanho_ha: ev.target.value }))} data-testid="mapa-form-tamanho" /></Field>
+                <Field label="Área total (ha)">
+                  <Input value={form.area_total_ha} readOnly data-testid="mapa-form-area-total" className="bg-slate-50 tabular-nums" />
+                </Field>
+                <Field label="Área pastejada ou arável (ha)" required>
+                  <Input type="number" step="0.01" value={form.tamanho_ha} onChange={(ev) => setForm((f) => ({ ...f, tamanho_ha: ev.target.value }))} data-testid="mapa-form-tamanho" className="tabular-nums" />
+                </Field>
+                <Field label="Nome" required>
+                  <Input
+                    value={form.nome}
+                    onChange={(ev) => setForm((f) => ({ ...f, nome: ev.target.value.toLocaleUpperCase("pt-BR") }))}
+                    data-testid="mapa-form-nome"
+                    placeholder="NOME DA ÁREA"
+                  />
+                </Field>
                 <div>
-                  <div className="mb-1 text-xs font-medium text-slate-600">Cor</div>
-                  <div className="grid grid-cols-10 gap-1" role="radiogroup" aria-label="Cor da área" data-testid="mapa-form-cor">
+                  <div className="mb-1.5 text-xs font-medium text-slate-600">Cor no mapa</div>
+                  <div className="flex flex-col gap-1" role="radiogroup" aria-label="Cor da área" data-testid="mapa-form-cor">
                     {PALETA_AREAS.map((p) => (
-                      <button key={p.cor} type="button" role="radio" aria-checked={form.cor === p.cor} aria-label={p.nome} title={p.nome} data-testid="mapa-cor-opcao"
+                      <button
+                        key={p.cor}
+                        type="button"
+                        role="radio"
+                        aria-checked={form.cor === p.cor}
+                        aria-label={p.nome}
+                        data-testid="mapa-cor-opcao"
                         onClick={() => setForm((f) => ({ ...f, cor: p.cor }))}
-                        className={cn("h-5 w-5 rounded-full border border-slate-300 transition", form.cor === p.cor ? "ring-2 ring-slate-800 ring-offset-1" : "hover:scale-110")}
-                        style={{ backgroundColor: p.cor }} />
+                        className={cn(
+                          "flex items-center gap-2.5 rounded-md border px-2 py-1.5 text-left text-sm transition",
+                          form.cor === p.cor ? "border-emerald-600 bg-emerald-50 ring-1 ring-emerald-600" : "border-slate-200 bg-white hover:bg-slate-50"
+                        )}
+                      >
+                        <span className="h-5 w-5 shrink-0 rounded border border-slate-300" style={{ backgroundColor: p.cor }} aria-hidden />
+                        <span className="min-w-0 flex-1 font-medium text-slate-700">{p.nome}</span>
+                        <span className="text-[10px] tabular-nums text-slate-400">{p.cor}</span>
+                      </button>
                     ))}
                   </div>
                 </div>
-                <div className="flex justify-end gap-2">
+                <div className="flex justify-end gap-2 pt-1">
                   <Button type="button" variant="ghost" onClick={() => setRascunho(null)}>Voltar ao desenho</Button>
                   <Button type="button" onClick={() => salvar.mutate()} loading={salvar.isPending} disabled={form.nome.trim() === ""} data-testid="mapa-form-salvar">Salvar</Button>
                 </div>
@@ -641,7 +764,6 @@ export function MapaDeManejo() {
             </Card>
           )}
 
-          {/* Detalhe da área selecionada */}
           {selecionadaObj && !desenhando && (
             <Card className="absolute right-2 top-2 w-72 shadow-lg">
               <CardBody className="flex flex-col gap-2">
