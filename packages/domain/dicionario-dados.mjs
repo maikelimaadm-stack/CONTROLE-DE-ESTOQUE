@@ -379,11 +379,16 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   {
     codigo: "ERP-PECUARIA-MANEJO", tabela: "erp.animal_handlings", nome: "Manejo", modulo: "PECUARIA", natureza: "entidade", idGlobal: true,
     discriminador: "handling_type", rotas: { nutrition: "/pecuaria/manejo/nutrition/:id", sanitary: "/pecuaria/manejo/sanitary/:id", weaning: "/pecuaria/manejo/weaning/:id", separation: "/pecuaria/manejo/separation/:id", pasture: "/pecuaria/manejo/pasture/:id", locate: "/pecuaria/manejo/locate/:id" },
+    top: "pecuaria.manejo",
     descricao: "Manejo sanitário, nutricional ou reprodutivo aplicado a animais/lotes."
   },
   {
     codigo: "ERP-PECUARIA-PESAGEM", tabela: "erp.weighings", nome: "Pesagem", modulo: "PECUARIA", natureza: "entidade", idGlobal: true, rota: "/pecuaria/pesagens/:id",
     descricao: "Evento de pesagem de animais, base de desempenho e ganho de peso."
+  },
+  {
+    codigo: "ERP-PECUARIA-BATELADA", tabela: "erp.diet_batches", nome: "Batelada", modulo: "PECUARIA", natureza: "entidade", idGlobal: false,
+    top: "confinamento.batelada", descricao: "Batelada de dieta do confinamento: consome os ingredientes da dieta (kg × %) do local de estoque e calcula o custo por kg."
   },
 
   // ---------- Frota e ativos ----------

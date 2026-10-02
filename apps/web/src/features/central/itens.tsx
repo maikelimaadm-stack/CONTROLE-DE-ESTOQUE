@@ -38,6 +38,9 @@ export type { ChaveCampoDoItem, ChaveColunaDoItem, ItensDaOrigem, LayoutDosItens
  * layout); a linha nova nasce com o `armazemPadrao` (o "Local de estoque" do cabeçalho, estado da tela); a pesquisa de
  * produto usa o local da LINHA e o sentido da espécie (`pesquisaDeProduto`; ausente = entrada) — com a capacidade da
  * pesquisa nova; sem ela, a de hoje.
+ *
+ * OPERACOES-01 F10 (decisão 287): `linhaUnica` (padrão `false`) deixa a grade com a linha que a página criou — sem
+ * Adicionar, Duplicar e Remover (o abastecimento); sem a prop, nada muda.
  */
 
 /** A linha nova: quantidade 1, unitário 0, gera estoque; com armazém padrão, só o `warehouse_id` a mais. */
@@ -155,7 +158,7 @@ function CodigoDoProduto({ id, conhecido }: { id?: string; conhecido?: OpcaoReal
 
 export function ItensDaCentral({
   prefixoTestid, colunas: colunasDaEspecie, items, onChange, layout, erros, armazemPadrao, pesquisaDeProduto = null, reservaEstoque = null,
-  armazemPorItem, armazemForcado = false, custoMedioNoUnitario = true, lote = null, daOrigem = null
+  armazemPorItem, armazemForcado = false, custoMedioNoUnitario = true, lote = null, daOrigem = null, linhaUnica = false
 }: PropsDosItens) {
   const tid = (sufixo: string) => `${prefixoTestid}-${sufixo}`;
   // a capacidade da pesquisa nova é perguntada ao montar os itens (uma vez por sessão): ao abrir a pesquisa ela já chegou
@@ -247,8 +250,8 @@ export function ItensDaCentral({
   const corrente = mostraFormulario ? atual : sel;
 
   /** Modo "da origem": não se acrescenta nem duplica; com a quantidade travada, também não se remove. */
-  const podeAdicionar = !daOrigem;
-  const podeRemover = !daOrigem?.quantidadeTravada;
+  const podeAdicionar = !daOrigem && !linhaUnica;
+  const podeRemover = !daOrigem?.quantidadeTravada && !linhaUnica;
 
   const atualizar = (i: number, chave: string, v: unknown) => onChange(items.map((it, j) => (j === i ? { ...it, [chave]: v } : it)));
   const adicionar = () => {

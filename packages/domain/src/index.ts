@@ -18,6 +18,8 @@ export * from "./tipo-operacao-destinos.js";
 export * from "./faturamento-parcial.js";
 export * from "./tipo-operacao-execucao.js";
 export * from "./tipo-operacao-regras-gerais.js";
+// OPERACOES-01 F10 (decisão 287): os módulos com produto que citam a TOP no próprio registro.
+export * from "./centrais-dos-modulos.js";
 export * from "./compras-custo-entrada.js";
 export * from "./compras-recebimento.js";
 export * from "./estoque-documento.js";

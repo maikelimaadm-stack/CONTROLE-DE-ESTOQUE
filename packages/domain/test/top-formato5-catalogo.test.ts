@@ -44,7 +44,8 @@ import { ehFamiliaDeDocumentoEstoque } from "../src/estoque-documento.js";
  * OPERACOES-01 F4 (decisão 281) — O CATÁLOGO ÚNICO "O QUE CADA TIPO MOSTRA E ACEITA".
  *
  * CT-1 os grupos e os 22 tipos, na ordem do pedido, com a família perguntada ao registry.
- * CT-2 só os 9 tipos cujo documento cita a TOP têm tela; o passo 1 oferece só eles.
+ * CT-2 só os tipos cujo documento cita a TOP têm tela (os 9 de venda, compra e estoque e, desde a F10, os 6 de
+ *      Módulos); o passo 1 oferece só eles.
  * CT-3 um perfil por família do registry; as 8 famílias antigas ficam fora do passo 1.
  * CT-4 os perfis derivados — cada um com a premissa de cada predicado de onde ele sai.
  * CT-5 a recusa do formato 5 (e só do 5).
@@ -120,8 +121,9 @@ describe("CT-1 o catálogo: grupos e tipos", () => {
       ["abastecimento", "modulos", "Abastecimento", "frota_ativos.abastecimento"],
       ["manutencao", "modulos", "Manutenção", "frota_ativos.manutencao"],
       ["ordem_servico", "modulos", "Ordem de serviço", "ordens_servico.ordem_de_servico"],
-      ["manejo", "modulos", "Manejo", null],
-      ["batelada", "modulos", "Batelada", null],
+      // OPERACOES-01 F10 (decisão 287): manejo e batelada ganharam a família no registry.
+      ["manejo", "modulos", "Manejo", "pecuaria.manejo"],
+      ["batelada", "modulos", "Batelada", "confinamento.batelada"],
       ["producao_racao", "modulos", "Produção de ração", "estoque.producao_de_racao"],
       ["conta_pagar", "financeiro", "Conta a pagar", "financeiro.conta_a_pagar"],
       ["conta_receber", "financeiro", "Conta a receber", "financeiro.conta_a_receber"],
@@ -140,9 +142,11 @@ describe("CT-1 o catálogo: grupos e tipos", () => {
       }
     }
     expect(new Set(familias).size).toBe(familias.length);
-    // 9 com tela + 3 da movimentação interna (F5a, sem tela) + o orçamento de compra (F6a, sem tela até a F6b) + 6 dos
-    // módulos e do financeiro que já existem no registry (sem tela); 3 tipos ainda sem família.
-    expect(familias).toHaveLength(19);
+    // 9 com tela + os 6 dos módulos (F10, com tela; manejo e batelada com família nova) + 3 da movimentação interna
+    // (F5a, sem tela) + o orçamento de compra (F6a, sem tela até a F6b) + os 2 do financeiro que já existem no registry
+    // (sem tela); 1 tipo ainda sem família (o movimento bancário).
+    expect(CATALOGO_TIPOS_MOVIMENTO_TOP.filter((t) => t.familia === null).map((t) => t.chave), "a premissa: só o movimento bancário sem família").toEqual(["movimento_bancario"]);
+    expect(familias).toHaveLength(21);
   });
 
   it("CT-1 o catálogo é congelado (nenhum consumidor muda o que o outro vê)", () => {
@@ -158,45 +162,51 @@ describe("CT-1 o catálogo: grupos e tipos", () => {
 // ---------------------------------------------------------------------------------------------------
 
 describe("CT-2 só os tipos cujo documento cita a TOP aparecem para escolha", () => {
-  it("CT-2 as famílias com tela são EXATAMENTE as da matriz das regras gerais (o documento que cita a TOP), menos as três da movimentação interna (F5a) e o orçamento de compra (F6a), ainda sem tela", () => {
-    expect(MATRIZ_REGRAS_GERAIS_TOP, "a premissa: a matriz tem as 13 famílias com documento").toHaveLength(13);
+  it("CT-2 as famílias com tela são EXATAMENTE as da matriz das regras gerais (o documento que cita a TOP, e os 6 módulos da F10), menos as três da movimentação interna (F5a) e o orçamento de compra (F6a), ainda sem tela", () => {
+    expect(MATRIZ_REGRAS_GERAIS_TOP, "a premissa: a matriz tem as 13 famílias com documento e as 6 dos módulos (F10)").toHaveLength(19);
     const semTelaAinda = ["estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo", "compras.orcamento"];
     for (const f of semTelaAinda) expect(MATRIZ_REGRAS_GERAIS_TOP.some((m) => m.familia === f), `a premissa: ${f} tem documento`).toBe(true);
     const comTela = CATALOGO_TIPOS_MOVIMENTO_TOP.filter((t) => t.temTela).map((t) => t.familia);
     expect(new Set(comTela)).toEqual(new Set(MATRIZ_REGRAS_GERAIS_TOP.map((m) => m.familia).filter((f) => !semTelaAinda.includes(f))));
-    expect(comTela).toHaveLength(9);
+    // 9 de venda, compra e estoque + os 6 dos módulos (F10, decisão 287).
+    expect(comTela).toHaveLength(15);
   });
 
-  it("CT-2 os 13 sem tela: orçamento de compra, requisição, consumo, devolução de consumo, os 6 módulos e os 3 do financeiro", () => {
+  it("CT-2 os 7 sem tela: orçamento de compra, requisição, consumo, devolução de consumo e os 3 do financeiro", () => {
     expect(CATALOGO_TIPOS_MOVIMENTO_TOP.filter((t) => !t.temTela).map((t) => t.chave)).toEqual([
       "orcamento_compra", "requisicao", "consumo", "devolucao_consumo",
-      "abastecimento", "manutencao", "ordem_servico", "manejo", "batelada", "producao_racao",
       "conta_pagar", "conta_receber", "movimento_bancario",
     ]);
   });
 
-  it("CT-2 o passo 1: Vendas (3), Compras (2), Movimentação interna (4); Módulos e Financeiro não aparecem", () => {
+  it("CT-2 o passo 1: Vendas (3), Compras (2), Movimentação interna (4), Módulos (6, F10); Financeiro não aparece", () => {
     const passo1 = tiposParaEscolhaTop(CATALOGO_TOP);
     expect(passo1.map((g) => [g.grupo.chave, g.tipos.map((t) => t.chave)])).toEqual([
       ["vendas", ["orcamento_venda", "pedido_venda", "venda"]],
       ["compras", ["pedido_compra", "compra"]],
       ["movimentacao_interna", ["entrada", "saida", "transferencia", "ajuste"]],
+      ["modulos", ["abastecimento", "manutencao", "ordem_servico", "manejo", "batelada", "producao_racao"]],
     ]);
-    // A premissa: os dois grupos que somem EXISTEM no catálogo, com tipos (todos sem tela).
-    for (const g of ["modulos", "financeiro"] as const) {
-      const tipos = CATALOGO_TOP.tipos.filter((t) => t.grupo === g);
-      expect(tipos.length, g).toBeGreaterThan(0);
-      expect(tipos.every((t) => !t.temTela), g).toBe(true);
-    }
+    // A premissa: o grupo que some EXISTE no catálogo, com tipos (todos sem tela).
+    const financeiro = CATALOGO_TOP.tipos.filter((t) => t.grupo === "financeiro");
+    expect(financeiro.length).toBeGreaterThan(0);
+    expect(financeiro.every((t) => !t.temTela)).toBe(true);
   });
 
-  it("CT-2 ligar um tipo (o que a fase dona faz) o põe no passo 1, no grupo e na ordem dele", () => {
-    const ligado: CatalogoTop = {
+  it("CT-2 desligar um tipo o tira do passo 1; desligar os 6 de Módulos tira o grupo (sobre um catálogo derivado)", () => {
+    const desligar = (chaves: readonly string[]): CatalogoTop => ({
       ...CATALOGO_TOP,
-      tipos: CATALOGO_TOP.tipos.map((t) => (t.chave === "abastecimento" ? { ...t, temTela: true } : t)),
-    };
-    expect(tiposParaEscolhaTop(ligado).map((g) => g.grupo.chave)).toEqual(["vendas", "compras", "movimentacao_interna", "modulos"]);
-    expect(tiposParaEscolhaTop(ligado)[3]?.tipos.map((t) => t.chave)).toEqual(["abastecimento"]);
+      tipos: CATALOGO_TOP.tipos.map((t) => (chaves.includes(t.chave) ? { ...t, temTela: false } : t)),
+    });
+    const modulosDo = (c: CatalogoTop) => tiposParaEscolhaTop(c).find((g) => g.grupo.chave === "modulos")?.tipos.map((t) => t.chave);
+    // A premissa: no catálogo do produto, o abastecimento está no passo 1.
+    expect(modulosDo(CATALOGO_TOP)).toContain("abastecimento");
+    expect(modulosDo(desligar(["abastecimento"]))).toEqual(["manutencao", "ordem_servico", "manejo", "batelada", "producao_racao"]);
+    const seis = ["abastecimento", "manutencao", "ordem_servico", "manejo", "batelada", "producao_racao"];
+    const semModulos = tiposParaEscolhaTop(desligar(seis));
+    expect(semModulos.some((g) => g.grupo.chave === "modulos")).toBe(false);
+    // Os outros grupos não mudam (os que as outras fases ligam continuam como estão).
+    expect(semModulos.map((g) => g.grupo.chave)).toEqual(tiposParaEscolhaTop(CATALOGO_TOP).map((g) => g.grupo.chave).filter((g) => g !== "modulos"));
   });
 });
 
@@ -205,8 +215,8 @@ describe("CT-2 só os tipos cujo documento cita a TOP aparecem para escolha", ()
 // ---------------------------------------------------------------------------------------------------
 
 describe("CT-3 um perfil por família do registry", () => {
-  it("CT-3 27 perfis, na ordem do registry", () => {
-    expect(CODIGOS_TIPO_OPERACAO, "a premissa: o registry tem 27 famílias").toHaveLength(27);
+  it("CT-3 29 perfis, na ordem do registry", () => {
+    expect(CODIGOS_TIPO_OPERACAO, "a premissa: o registry tem 29 famílias (27 + manejo e batelada, F10)").toHaveLength(29);
     expect(PERFIS_TIPO_TOP.map((p) => p.familia)).toEqual([...CODIGOS_TIPO_OPERACAO]);
     expect(CATALOGO_TOP.perfis).toBe(PERFIS_TIPO_TOP);
   });
@@ -287,18 +297,42 @@ describe("CT-4 os perfis derivados", () => {
     }
   });
 
-  it("CT-4 família sem documento (abastecimento): Estoque, Financeiro e Fiscal como hoje; as quatro exigências genéricas", () => {
+  it("CT-4 abastecimento (F10): com documento — o registro do módulo; Estoque, Financeiro e Fiscal como hoje; exigências do registro", () => {
     const f = "frota_ativos.abastecimento";
-    expect(predicados(f)).toEqual({ destinos: false, estoqueDoc: false, aprovacao: false, execucao: false, comDocumento: false });
+    expect(predicados(f)).toEqual({ destinos: false, estoqueDoc: false, aprovacao: false, execucao: false, comDocumento: true });
     expect(perfil(f).abas).toEqual(["identificacao", "geral", "estoque", "financeiro", "fiscal"]);
-    expect(perfil(f).exigencias).toEqual(EXIGENCIAS_GERAIS_SEM_DOCUMENTO_TOP);
-    expect(rotulos(perfil(f))).toEqual(["Parceiro", "Centro de resultado", "Observação", "Transportadora"]);
+    expect(perfil(f).exigencias).toEqual([
+      { chave: "exigeCentroResultado", rotulo: "Centro de resultado" },
+      { chave: "exigeObservacao", rotulo: "Observação" },
+    ]);
     expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
   });
 
-  it("CT-4 as 14 famílias sem documento têm o mesmo perfil (abas de hoje, exigências genéricas)", () => {
+  it("CT-4 os 6 módulos (F10): as abas sem Aprovação nem Execução e as exigências que o registro de cada um tem", () => {
+    const esperadas: ReadonlyArray<readonly [string, string[]]> = [
+      ["frota_ativos.abastecimento", ["Centro de resultado", "Observação"]],
+      ["frota_ativos.manutencao", ["Observação"]],
+      ["ordens_servico.ordem_de_servico", ["Centro de resultado", "Descrição"]],
+      ["pecuaria.manejo", ["Observação"]],
+      ["confinamento.batelada", []],
+      ["estoque.producao_de_racao", []],
+    ];
+    for (const [f, exigencias] of esperadas) {
+      expect(predicados(f), f).toEqual({ destinos: false, estoqueDoc: false, aprovacao: false, execucao: false, comDocumento: true });
+      expect(perfil(f).abas, f).toEqual(["identificacao", "geral", "estoque", "financeiro", "fiscal"]);
+      expect(rotulos(perfil(f)), f).toEqual(exigencias);
+    }
+  });
+
+  it("CT-4 as 10 famílias sem documento têm o mesmo perfil (abas de hoje, exigências genéricas)", () => {
     const semDocumento = PERFIS_TIPO_TOP.filter((p) => !MATRIZ_REGRAS_GERAIS_TOP.some((m) => m.familia === p.familia));
-    expect(semDocumento).toHaveLength(14);
+    // As 7 antigas de estoque (a produção de ração saiu: é módulo desde a F10), a solicitação de compra e as 2 do financeiro.
+    expect(semDocumento.map((p) => p.familia)).toEqual([
+      "estoque.entrada_manual", "estoque.documento_fiscal", "estoque.requisicao", "estoque.baixa", "estoque.devolucao",
+      "estoque.transferencia_entre_armazens", "estoque.transferencia_entre_empresas", "compras.solicitacao",
+      "financeiro.conta_a_pagar", "financeiro.conta_a_receber",
+    ]);
+    expect(semDocumento).toHaveLength(10);
     for (const p of semDocumento) {
       expect(p.abas, p.familia).toEqual(["identificacao", "geral", "estoque", "financeiro", "fiscal"]);
       expect(p.exigencias, p.familia).toEqual(EXIGENCIAS_GERAIS_SEM_DOCUMENTO_TOP);
@@ -417,6 +451,21 @@ describe("CT-5 o servidor recusa no 5 o que o tipo não aceita", () => {
       x.fiscal.habilitado = true;
     });
     expect(recusasDoPerfilTop(VENDA, c)).toEqual([]);
+  });
+
+  it("CT-5 módulo (F10) no 5: a exigência que o registro do módulo não tem é recusada; a que ele tem passa", () => {
+    // A premissa: as do perfil de cada um (o mapa do registro).
+    expect(perfil("frota_ativos.manutencao").exigencias.map((e) => e.chave)).toEqual(["exigeObservacao"]);
+    expect(recusasDoPerfilTop("frota_ativos.manutencao", v5((x) => { x.geral.exigeCentroResultado = true; })))
+      .toEqual([recusa("geral.exigeCentroResultado", MENSAGEM_EXIGENCIA_FORA_DO_TIPO)]);
+    expect(recusasDoPerfilTop("frota_ativos.manutencao", v5((x) => { x.geral.exigeObservacao = true; }))).toEqual([]);
+    expect(recusasDoPerfilTop("frota_ativos.abastecimento", v5((x) => { x.geral.exigeCentroResultado = true; x.geral.exigeObservacao = true; }))).toEqual([]);
+    expect(recusasDoPerfilTop("confinamento.batelada", v5((x) => { x.geral.exigeObservacao = true; x.geral.exigeParceiro = true; }))).toEqual([
+      recusa("geral.exigeParceiro", MENSAGEM_EXIGENCIA_FORA_DO_TIPO),
+      recusa("geral.exigeObservacao", MENSAGEM_EXIGENCIA_FORA_DO_TIPO),
+    ]);
+    // O mesmo conteúdo no 4: nada (a régua de hoje, valor por valor).
+    expect(recusasDoPerfilTop("frota_ativos.manutencao", comoV4(v5((x) => { x.geral.exigeCentroResultado = true; })))).toEqual([]);
   });
 
   it("CT-5 família sem perfil, ou fora do 5 → nada", () => {
@@ -566,7 +615,7 @@ describe("CT-7 lerCatalogoTop (estrito)", () => {
     ["tipo com família que não é texto", (c) => { tipoDe(c, "manejo").familia = 7; return c; }],
     ["tipo com família repetida", (c) => { tipoDe(c, "manejo").familia = "vendas.venda"; return c; }],
     ["tipo com temTela que não é booleano", (c) => { tipoDe(c, "venda").temTela = "sim"; return c; }],
-    ["tipo com tela e sem família", (c) => { tipoDe(c, "manejo").temTela = true; return c; }],
+    ["tipo com tela e sem família", (c) => { const t = tipoDe(c, "manejo"); t.familia = null; t.temTela = true; return c; }],
     ["tipo com tela e sem perfil", (c) => ({ ...c, perfis: lista(c, "perfis").filter((p) => p.familia !== "vendas.venda") })],
     ["perfil com chave a mais", (c) => { perfilDe(c, VENDA).cor = "azul"; return c; }],
     ["perfil com família repetida", (c) => { perfilDe(c, "estoque.baixa").familia = "estoque.requisicao"; return c; }],

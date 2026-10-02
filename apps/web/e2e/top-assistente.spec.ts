@@ -95,11 +95,12 @@ test("AS-1 — Novo começa pelo tipo de movimento (só os tipos com tela do cat
   await login(page);
   const catalogo = await catalogoPublicado(page);
   const comTela = catalogo.tipos.filter((t) => t.temTela);
-  expect(comTela, "premissa: o catálogo publicado tem 9 tipos com tela").toHaveLength(9);
+  // 9 dos documentos (venda, compra e estoque) e, desde a F10 (decisão 287), os 6 de Módulos
+  expect(comTela, "premissa: o catálogo publicado tem 15 tipos com tela").toHaveLength(15);
   const familias = await api<{ items: { codigo: string }[] }>(page, "GET", "/api/admin/tipos-operacao/familias");
   expect(familias.items.length, "premissa: o registry (/familias, inteiro) tem mais famílias do que tipos com tela").toBeGreaterThan(comTela.length);
   const semTela = catalogo.tipos.filter((t) => !t.temTela && t.familia !== null).map((t) => t.familia);
-  expect(semTela.length, "premissa: há tipos COM família e SEM tela (os módulos e o financeiro)").toBeGreaterThan(0);
+  expect(semTela.length, "premissa: há tipos COM família e SEM tela (o financeiro e os que esperam a tela da F5b e da F6b)").toBeGreaterThan(0);
 
   await abrirTelaDeTops(page);
   const codigo = codigoTopE2E();
@@ -114,17 +115,20 @@ test("AS-1 — Novo começa pelo tipo de movimento (só os tipos com tela do cat
     await expect(forma.getByTestId("top-aviso-versionamento")).toHaveCount(0);
     await expect(page.getByTestId("top-salvar"), "sem tipo, nada a salvar").toBeDisabled();
 
-    // OS GRUPOS E OS TIPOS: os de hoje, por extenso, e exatamente os com tela do catálogo publicado.
+    // OS GRUPOS E OS TIPOS: os de hoje, por extenso, e exatamente os com tela do catálogo publicado. Desde a F10
+    // (decisão 287) os 6 de Módulos têm tela; o Financeiro continua fora (nenhum tipo dele tem tela).
     const grupos = forma.locator("[data-testid^='top-assistente-grupo-']");
-    await expect(grupos, "Módulos e Financeiro não aparecem: nenhum tipo deles tem tela").toHaveCount(3);
+    await expect(grupos, "Financeiro não aparece: nenhum tipo dele tem tela").toHaveCount(4);
     expect(await grupos.evaluateAll((gs) => gs.map((g) => g.getAttribute("data-testid"))))
-      .toEqual(["top-assistente-grupo-vendas", "top-assistente-grupo-compras", "top-assistente-grupo-movimentacao_interna"]);
+      .toEqual(["top-assistente-grupo-vendas", "top-assistente-grupo-compras", "top-assistente-grupo-movimentacao_interna", "top-assistente-grupo-modulos"]);
     await expect(forma.getByTestId("top-assistente-grupo-vendas").getByRole("heading")).toHaveText("Vendas");
     await expect(forma.getByTestId("top-assistente-grupo-movimentacao_interna").getByRole("heading")).toHaveText("Movimentação interna");
     const botoes = (g: string) => forma.getByTestId(`top-assistente-grupo-${g}`).locator("[data-testid^='top-assistente-tipo-']");
     await expect(botoes("vendas")).toHaveText(["Orçamento", "Pedido", "Venda"]);
     await expect(botoes("compras")).toHaveText(["Pedido", "Compra"]);
     await expect(botoes("movimentacao_interna")).toHaveText(["Entrada", "Saída/baixa", "Transferência", "Ajuste"]);
+    await expect(forma.getByTestId("top-assistente-grupo-modulos").getByRole("heading")).toHaveText("Módulos");
+    await expect(botoes("modulos")).toHaveText(["Abastecimento", "Manutenção", "Ordem de serviço", "Manejo", "Batelada", "Produção de ração"]);
     const oferecidas = await forma.locator("[data-testid^='top-assistente-tipo-']").evaluateAll((bs) => bs.map((b) => b.getAttribute("data-familia")));
     expect(oferecidas, "os botões são os tipos com tela do catálogo publicado, na ordem dele").toEqual(comTela.map((t) => t.familia));
     for (const f of semTela) expect(oferecidas, `a família sem tela ${f} não é oferecida`).not.toContain(f);

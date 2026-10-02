@@ -321,6 +321,11 @@ export interface PropsDosItens {
   lote?: LoteDosItens | null;
   /** Desligado por padrão. */
   daOrigem?: ItensDaOrigem | null;
+  /**
+   * OPERACOES-01 F10 (decisão 287): UMA linha só (o abastecimento) — sem Adicionar, Duplicar e Remover; a linha nasce
+   * com a página. Padrão `false` (o de hoje).
+   */
+  linhaUnica?: boolean;
 }
 
 /* ─────────────── M8 — itens-salvos.tsx e configurar-colunas.tsx ─────────────── */

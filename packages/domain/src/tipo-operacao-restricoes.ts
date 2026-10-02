@@ -22,6 +22,7 @@ import {
 import { tipoOperacao } from "./tipo-operacao.js";
 import { TABELA_DOCUMENTO_COMPRA, familiaOperacionalDeDocumentoCompra } from "./tipo-operacao-configurado.js";
 import { TABELA_DOCUMENTO_ESTOQUE } from "./estoque-documento.js";
+import { exigenciasGeraisDoModuloTop } from "./centrais-dos-modulos.js";
 
 // ─────────────── capacidade e códigos ───────────────
 
@@ -176,7 +177,8 @@ export type DocumentoEstoqueParaExigencias = Partial<Record<CampoExigidoEstoqueT
 /**
  * O mapa de exigências do DOCUMENTO que a família lança: o orçamento de compra → o mapa do orçamento (fornecedor e
  * observação; perguntado ao registry pela espécie); as outras famílias do documento de compra → mapa da compra;
- * famílias do documento de estoque → mapa do estoque (só a observação); qualquer outra → o mapa da venda (o
+ * famílias do documento de estoque → mapa do estoque (só a observação); módulo com TOP (OPERACOES-01 F10, decisão
+ * 287) → o mapa do registro do módulo (`EXIGENCIAS_GERAIS_DOS_MODULOS_TOP`); qualquer outra → o mapa da venda (o
  * comportamento de sempre, que não muda).
  */
 export function exigenciasGeraisDaFamiliaTop(familia: string): readonly ExigenciaGeralTop[] {
@@ -186,6 +188,8 @@ export function exigenciasGeraisDaFamiliaTop(familia: string): readonly Exigenci
   }
   if (tabela === TABELA_DOCUMENTO_COMPRA) return EXIGENCIAS_GERAIS_COMPRA_TOP;
   if (tabela === TABELA_DOCUMENTO_ESTOQUE) return EXIGENCIAS_GERAIS_ESTOQUE_TOP;
+  const doModulo = exigenciasGeraisDoModuloTop(familia);
+  if (doModulo) return doModulo;
   return EXIGENCIAS_GERAIS_TOP;
 }
 

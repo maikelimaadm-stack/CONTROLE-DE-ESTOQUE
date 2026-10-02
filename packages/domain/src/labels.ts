@@ -80,6 +80,8 @@ export const ENUM_LABELS = {
   trigger_type: { hours: "Horas", km: "Km", days: "Dias" },
   equipment_type: { own: "Próprio", outsourced: "Terceirizado" },
   os_section: { labor: "Mão de obra", machine: "Equipamentos", input: "Insumos", ppe: "EPIs", production: "Produção" },
+  /** OPERACOES-01 F10 (decisão 287): a situação da ORDEM DE SERVIÇO na frase (feminino: "ela está finalizada"); o selo continua `status`. */
+  os_status: { open: "Aberta", in_progress: "Em andamento", finished: "Finalizada", evaluated: "Avaliada", cancelled: "Cancelada" },
   hr_event_kind: { absence: "Falta", justified: "Falta justificada", half_day: "Meio período", delay: "Atraso" },
   notification_kind: { purchase_pending: "Compras pendentes", stock_min: "Estoque mínimo", title_due: "Títulos a vencer", birthday: "Aniversário", document_expiring: "Documento vencendo" },
   /** Ações registradas na auditoria: as ações de permissão (Visualizar, Criar, …) mais as operações internas. */

@@ -59,10 +59,16 @@ const MSG = {
 } as const;
 const recusaDoPerfil = (caminho: string, mensagem: string) => ({ motivo: "combinacao_nao_suportada", caminho, mensagem });
 
-/** As 9 famílias cujo documento cita a TOP — as únicas com tela no passo 1 (plano F4 §1.2.4), escritas à mão. */
+/**
+ * As 15 famílias com tela no passo 1, escritas à mão, na ordem do catálogo: as 9 cujo documento cita a TOP (plano F4
+ * §1.2.4) e, desde a OPERACOES-01 F10 (decisão 287), as 6 de Módulos — a Central de cada módulo cita a TOP no próprio
+ * registro (manejo e batelada ganharam a família no registry nessa fase).
+ */
 const FAMILIAS_COM_TELA = [
   "vendas.orcamento", "vendas.pedido", "vendas.venda", "compras.pedido", "compras.compra",
   "estoque.entrada", "estoque.saida", "estoque.transferencia", "estoque.ajuste",
+  "frota_ativos.abastecimento", "frota_ativos.manutencao", "ordens_servico.ordem_de_servico",
+  "pecuaria.manejo", "confinamento.batelada", "estoque.producao_de_racao",
 ];
 
 // ─────────────── testemunhas ───────────────
@@ -158,7 +164,7 @@ describe("T5-1 — capacidades: o bloco formato5 na raiz, com o catálogo do dom
       expect(d.destinos).toMatchObject({ suportado: true, emPartes: 1 });
 
       // O catálogo PUBLICADO é legível pelo leitor estrito do domínio (o que o editor usa) e diz o que a SPEC diz:
-      // os 5 grupos, os 9 tipos com tela (à mão) e um perfil por família do registry.
+      // os 5 grupos, os 15 tipos com tela (à mão; F10: + os 6 de Módulos) e um perfil por família do registry.
       const catalogo = lerCatalogoTop((d.formato5 as { catalogo: unknown }).catalogo);
       expect(catalogo, "o leitor estrito aceita o catálogo publicado").not.toBeNull();
       expect(catalogo!.grupos.map((g) => g.chave)).toEqual(["vendas", "compras", "movimentacao_interna", "modulos", "financeiro"]);
@@ -166,11 +172,12 @@ describe("T5-1 — capacidades: o bloco formato5 na raiz, com o catálogo do dom
       expect(catalogo!.tipos, "premissa: há tipos declarados SEM tela (a fase que cria a tela os liga)").toHaveLength(22);
       expect(catalogo!.perfis.map((p) => p.familia)).toEqual([...CODIGOS_TIPO_OPERACAO]);
     }
-    // /familias continua o registry INTEIRO (o catálogo não o recorta): as 27 famílias (F5a: + requisição de material,
-    // consumo e devolução de consumo; F6a: + compras.orcamento — todas ainda sem tela), com ou sem tela.
-    expect(CODIGOS_TIPO_OPERACAO, "premissa: o registry tem 27 famílias").toHaveLength(27);
-    expect(CODIGOS_TIPO_OPERACAO, "premissa: o registry tem as três famílias da movimentação interna e o orçamento de compra")
-      .toEqual(expect.arrayContaining(["estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo", "compras.orcamento"]));
+    // /familias continua o registry INTEIRO (o catálogo não o recorta): as 29 famílias (F5a: + requisição de material,
+    // consumo e devolução de consumo; F6a: + compras.orcamento — todas ainda sem tela; F10: + pecuaria.manejo e
+    // confinamento.batelada, com tela), com ou sem tela.
+    expect(CODIGOS_TIPO_OPERACAO, "premissa: o registry tem 29 famílias").toHaveLength(29);
+    expect(CODIGOS_TIPO_OPERACAO, "premissa: o registry tem as três famílias da movimentação interna, o orçamento de compra e as duas da F10 (manejo e batelada)")
+      .toEqual(expect.arrayContaining(["estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo", "compras.orcamento", "pecuaria.manejo", "confinamento.batelada"]));
     const f = await c.ligada.inject({ method: "GET", url: "/api/admin/tipos-operacao/familias", headers: c.h.headers() });
     expect(f.statusCode, f.body).toBe(200);
     expect((j(f).items as { codigo: string }[]).map((x) => x.codigo)).toEqual([...CODIGOS_TIPO_OPERACAO]);

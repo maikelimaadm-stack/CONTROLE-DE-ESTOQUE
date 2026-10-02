@@ -31,6 +31,8 @@
  * │ estoque "a partir de valor" o valor do documento de estoque só se conhece na confirmação.          │
  * │ orçamento e pedidos        não são confirmados: são convertidos ou recebidos em outro documento.    │
  * │                            O pedido de compra aceita a aprovação: ela acontece ao finalizar (F6a).  │
+ * │ os módulos (F10)           têm documento — o registro do módulo — e aceitam só o neutro: o          │
+ * │                            lançamento move o estoque ao gravar (a OS, ao finalizar).                │
  * │ qualquer outra família     não tem documento no sistema que execute a regra.                        │
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
@@ -64,6 +66,7 @@ import {
 import { familiaOperacionalDeDocumentoCompra, familiaOperacionalDeDocumentoVenda } from "./tipo-operacao-configurado.js";
 import { TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE, familiaOperacionalDeDocumentoEstoque } from "./estoque-documento.js";
 import { formatarDinheiroBr } from "./tipo-operacao-restricoes.js";
+import { MODULOS_COM_TOP, familiaDoModuloComTop } from "./centrais-dos-modulos.js";
 
 // ---------------------------------------------------------------------------------------------------
 // 1. AS MENSAGENS DA APROVAÇÃO — ditas igual na confirmação, nas rotas de aprovação e na tela
@@ -128,6 +131,7 @@ const MOTIVO_ALTERACAO_COMPRA = "Alterar uma compra confirmada ainda não tem ex
 const MOTIVO_ALTERACAO_ESTOQUE = "Documento de estoque confirmado não se altera: cancele e lance outro.";
 const MOTIVO_APROVACAO_POR_VALOR_ESTOQUE = "O valor do documento de estoque só é conhecido na confirmação: use \"Sempre\".";
 const MOTIVO_APROVACAO_SEM_CONFIRMACAO = "A aprovação acontece antes da confirmação, e este documento não é confirmado.";
+const MOTIVO_MODULO = "O lançamento deste módulo não executa esta regra: ele move o estoque ao gravar (a ordem de serviço, ao finalizar).";
 
 /** Regra congelada, com a lista copiada: quem lê a matriz nunca altera o que outro consumidor vê. */
 const regra = <T>(aceitos: readonly T[], motivo: string | null): RegraDaFamiliaTop<T> =>
@@ -178,7 +182,21 @@ const linhaDoPedidoDeCompra = (familia: string): ItemMatrizRegrasGeraisTop => Ob
 });
 
 /**
- * Qualquer família fora da matriz (as oito antigas de estoque, a solicitação de compra, o financeiro…): só
+ * OPERACOES-01 F10 (decisão 287): os MÓDULOS com TOP (abastecimento, manutenção, OS, manejo, batelada, produção de
+ * ração). Eles têm documento — o registro do módulo, que cita a TOP —, então o perfil do editor usa o mapa de
+ * exigências do registro (e não as quatro genéricas); mas o lançamento não é confirmado nem aprovado: move o estoque
+ * ao gravar (a OS, ao finalizar). Só o neutro, com o motivo próprio.
+ */
+const linhaDoModulo = (familia: string): ItemMatrizRegrasGeraisTop => Object.freeze({
+  familia,
+  confirmacao: regra<ModoConfirmacao>(["manual"], MOTIVO_MODULO),
+  documentoSemItens: regra<PoliticaDocumentoSemItens>(["proibido"], MOTIVO_MODULO),
+  alteracaoAposConfirmacao: regra<PoliticaAlteracao>(["bloqueada"], MOTIVO_MODULO),
+  aprovacao: regra<PoliticaAprovacao>(["nenhuma"], MOTIVO_MODULO),
+});
+
+/**
+ * Qualquer família fora da matriz (as sete antigas de estoque, a solicitação de compra, o financeiro…): só
  * o neutro. NÃO é linha da matriz — é o padrão de `regrasGeraisDaFamiliaTop`, para que a família nova do
  * registry nasça fechada, e não aberta por esquecimento.
  */
@@ -195,15 +213,17 @@ const linhaSe = (familia: string | undefined, montar: (f: string) => ItemMatrizR
   familia ? [montar(familia)] : [];
 
 /**
- * A MATRIZ. Venda, compra, as sete espécies de estoque, orçamento, pedido de venda, pedido de compra e (desde a
- * F6a, decisão 283) orçamento de compra — nesta ordem. O pedido de compra aceita a aprovação (ao finalizar); o
- * orçamento de compra é como o orçamento de venda. A API confere a gravação do formato 4 (e do 5) contra ela; o
- * servidor a publica no bloco `regrasGerais` das capabilities; o editor lê a publicada (`lerMatrizRegrasGeraisTop`).
+ * A MATRIZ. Venda, compra, as sete espécies de estoque, os seis módulos com TOP (F10, decisão 287: só o neutro),
+ * orçamento, pedido de venda, pedido de compra e (desde a F6a, decisão 283) orçamento de compra — nesta ordem. O pedido
+ * de compra aceita a aprovação (ao finalizar); o orçamento de compra é como o orçamento de venda. A API confere a
+ * gravação do formato 4 (e do 5) contra ela; o servidor a publica no bloco `regrasGerais` das capabilities; o editor
+ * lê a publicada (`lerMatrizRegrasGeraisTop`).
  */
 export const MATRIZ_REGRAS_GERAIS_TOP: readonly ItemMatrizRegrasGeraisTop[] = Object.freeze([
   ...linhaSe(familiaOperacionalDeDocumentoVenda("sale"), (f) => linhaDoDocumentoConfirmado(f, MOTIVO_ALTERACAO_VENDA)),
   ...linhaSe(familiaOperacionalDeDocumentoCompra("compra"), (f) => linhaDoDocumentoConfirmado(f, MOTIVO_ALTERACAO_COMPRA)),
   ...TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE.flatMap((especie) => linhaSe(familiaOperacionalDeDocumentoEstoque(especie), linhaDoEstoque)),
+  ...MODULOS_COM_TOP.flatMap((m) => linhaSe(familiaDoModuloComTop(m), linhaDoModulo)),
   ...linhaSe(familiaOperacionalDeDocumentoVenda("budget"), linhaDoOrcamentoOuPedido),
   ...linhaSe(familiaOperacionalDeDocumentoVenda("order"), linhaDoOrcamentoOuPedido),
   ...linhaSe(familiaOperacionalDeDocumentoCompra("pedido"), linhaDoPedidoDeCompra),
