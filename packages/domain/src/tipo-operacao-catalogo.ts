@@ -141,8 +141,8 @@ export const CATALOGO_TIPOS_MOVIMENTO_TOP: readonly TipoDeMovimentoTop[] = Objec
   tipo("pedido_venda", "vendas", "Pedido", familiaOperacionalDeDocumentoVenda("order"), true),
   tipo("venda", "vendas", "Venda", familiaOperacionalDeDocumentoVenda("sale"), true),
   tipo("pedido_compra", "compras", "Pedido", familiaOperacionalDeDocumentoCompra("pedido"), true),
-  // OPERACOES-01 F6a (decisão 283): a família do orçamento de compra nasce no registry; a tela que o lança é da F6b.
-  tipo("orcamento_compra", "compras", "Orçamento", familiaOperacionalDeDocumentoCompra("orcamento"), false),
+  // OPERACOES-01 F6a (decisão 283): a família do orçamento de compra nasce no registry; F6b: a tela (a Central de Compras).
+  tipo("orcamento_compra", "compras", "Orçamento", familiaOperacionalDeDocumentoCompra("orcamento"), true),
   tipo("compra", "compras", "Compra", familiaOperacionalDeDocumentoCompra("compra"), true),
   // OPERACOES-01 F5a (decisão 282): as famílias da movimentação interna nascem no registry; a tela que as lança é da F5b.
   tipo("requisicao", "movimentacao_interna", "Requisição", familiaOperacionalDeDocumentoEstoque("requisicao"), false),

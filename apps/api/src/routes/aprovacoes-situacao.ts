@@ -1,10 +1,11 @@
 /**
- * ═══ A SITUAÇÃO DA APROVAÇÃO DE UM DOCUMENTO (OPERACOES-01 F2, decisão 279) ═══
+ * ═══ A SITUAÇÃO DA APROVAÇÃO DE UM DOCUMENTO (OPERACOES-01 F2, decisão 279; F6b, decisão 283) ═══
  *
  * Módulo de APOIO das duas leituras novas — não registra rota (sem `export default`):
  *
- *   GET /api/aprovacoes/vendas/:id    (`sales.view`,   `aprovacoes-vendas.ts`)
- *   GET /api/aprovacoes/compras/:id   (`compras.view`, `aprovacoes-compras.ts`)
+ *   GET /api/aprovacoes/vendas/:id    (`sales.view`,   `aprovacoes-vendas.ts`)          — a venda
+ *   GET /api/aprovacoes/compras/:id   (`compras.view`, `aprovacoes-compras.ts`)        — a compra e, desde a F6b, o
+ *                                     pedido de compra (`compras.view` ∧ `pedidos_compra.view`)
  *
  * A consulta do documento (as Centrais de Vendas e de Compras) pergunta "este documento aguarda aprovação? quem
  * decidiu por último?" sem precisar de `<recurso>.approve`: quem VÊ o documento vê a situação dele; quem DECIDE
@@ -22,13 +23,18 @@
  *                     (`lib/aprovacao-documento.ts`), sobre a versão CONGELADA e o valor ATUAL → `nao_exigida` |
  *                     `pendente` | `aprovado` | `reprovado`. Formato 4 ilegível → o TIPO_OPERACAO_EXECUCAO_INDISPONIVEL
  *                     que a conta já lança (fail-closed; a porta administrativa não deixa gravar tal versão).
+ *                     F6b: o PEDIDO de compra aberto usa a conta do FINALIZAR (`situacaoDaAprovacaoDoPedido`, em
+ *                     `compras-finalizacao.ts`), que soma a COBERTURA do valor — a aprovação que não cobre o total
+ *                     atual (o vencedor do orçamento mudou os preços) ou outra versão da TOP volta a "pendente". A rota
+ *                     a entrega como `contaDoAberto`; a venda e a compra não a passam e seguem a conta da `lib`.
  *   · `ultimaDecisao` — a última decisão do documento, de QUALQUER versão (a mesma `ultimaDecisao` da linha da fila):
  *                     numa venda aprovada e alterada depois, a situação volta a "pendente" e a última decisão continua
  *                     dizendo o que foi decidido antes, por quem e quando. `null` sem decisão nenhuma. Lida também no
  *                     documento que não está aberto (a história de quem o viu passar pela aprovação).
  *
  * SÓ LEITURA, CONSULTAS FIXAS: a leitura do documento (de quem chama) + no máximo 1 da versão da TOP + no máximo 1 da
- * decisão vigente + 1 da última decisão — nenhuma por item. Sem idempotência, sem auditoria, sem ROW COUNT a conferir.
+ * decisão vigente (+ no pedido, 1 da cobertura, só quando aprovada) + 1 da última decisão — nenhuma por item. Sem
+ * idempotência, sem auditoria, sem ROW COUNT a conferir.
  *
  * O SQL da última decisão é FIXO por módulo, montado NA CARGA deste arquivo a partir da whitelist `TABELA_DA_APROVACAO`
  * (o mesmo dono das tabelas de aprovação): nenhum identificador vem de entrada. O índice (organization_id, documento_id,
@@ -42,7 +48,7 @@ import { lerVersaoCongeladaTop } from "../lib/confirmacao-automatica.js";
 
 // ─────────────── o contrato ───────────────
 
-/** Os documentos que têm a consulta da situação: a venda e a compra (o estoque fica para a F5). */
+/** Os documentos que têm a consulta da situação: a venda e a compra — a compra e o pedido de compra (o estoque fica para a F5). */
 export type ModuloDaConsulta = "vendas" | "compras";
 
 /**
@@ -146,11 +152,19 @@ async function lerUltimaDecisao(ctx: ServiceCtx, modulo: ModuloDaConsulta, docum
 
 /**
  * A situação da aprovação do documento VISÍVEL que a rota já leu. Não aberto → `nao_aberto`, sem ler a TOP; aberto →
- * a conta da `lib` (a mesma da confirmação e das decisões). Depois, UMA consulta da última decisão.
+ * a conta da `lib` (a mesma da confirmação e das decisões) ou, quando a rota a entrega, `contaDoAberto` (OPERACOES-01
+ * F6b: a do finalizar do pedido de compra, com a cobertura). `contaDoAberto` só roda no aberto. Depois, UMA consulta
+ * da última decisão.
  */
-export async function respostaDaSituacaoDaAprovacao(ctx: ServiceCtx, d: DocumentoDaSituacao): Promise<RespostaDaSituacaoDaAprovacao> {
+export async function respostaDaSituacaoDaAprovacao(
+  ctx: ServiceCtx,
+  d: DocumentoDaSituacao,
+  contaDoAberto?: () => Promise<Exclude<SituacaoNaConsulta, "nao_aberto">>,
+): Promise<RespostaDaSituacaoDaAprovacao> {
   let situacao: SituacaoNaConsulta = "nao_aberto";
-  if (d.aberto) {
+  if (d.aberto && contaDoAberto) {
+    situacao = await contaDoAberto();
+  } else if (d.aberto) {
     const versaoTop = await lerVersaoCongeladaTop(ctx, d.tipoOperacaoVersaoId);
     situacao = await situacaoDaAprovacao(ctx,
       { modulo: d.modulo, documentoId: d.documentoId, versaoDocumento: d.versaoDocumento, valorDocumento: d.valorDocumento, versaoTop });

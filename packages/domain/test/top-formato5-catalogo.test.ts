@@ -140,8 +140,8 @@ describe("CT-1 o catálogo: grupos e tipos", () => {
       }
     }
     expect(new Set(familias).size).toBe(familias.length);
-    // 9 com tela + 3 da movimentação interna (F5a, sem tela) + o orçamento de compra (F6a, sem tela até a F6b) + 6 dos
-    // módulos e do financeiro que já existem no registry (sem tela); 3 tipos ainda sem família.
+    // 10 com tela (o orçamento de compra desde a F6b) + 3 da movimentação interna (F5a, sem tela) + 6 dos módulos e do
+    // financeiro que já existem no registry (sem tela); 3 tipos ainda sem família.
     expect(familias).toHaveLength(19);
   });
 
@@ -158,28 +158,29 @@ describe("CT-1 o catálogo: grupos e tipos", () => {
 // ---------------------------------------------------------------------------------------------------
 
 describe("CT-2 só os tipos cujo documento cita a TOP aparecem para escolha", () => {
-  it("CT-2 as famílias com tela são EXATAMENTE as da matriz das regras gerais (o documento que cita a TOP), menos as três da movimentação interna (F5a) e o orçamento de compra (F6a), ainda sem tela", () => {
+  it("CT-2 as famílias com tela são EXATAMENTE as da matriz das regras gerais (o documento que cita a TOP), menos as três da movimentação interna (F5a), ainda sem tela", () => {
     expect(MATRIZ_REGRAS_GERAIS_TOP, "a premissa: a matriz tem as 13 famílias com documento").toHaveLength(13);
-    const semTelaAinda = ["estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo", "compras.orcamento"];
+    const semTelaAinda = ["estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo"];
     for (const f of semTelaAinda) expect(MATRIZ_REGRAS_GERAIS_TOP.some((m) => m.familia === f), `a premissa: ${f} tem documento`).toBe(true);
     const comTela = CATALOGO_TIPOS_MOVIMENTO_TOP.filter((t) => t.temTela).map((t) => t.familia);
     expect(new Set(comTela)).toEqual(new Set(MATRIZ_REGRAS_GERAIS_TOP.map((m) => m.familia).filter((f) => !semTelaAinda.includes(f))));
-    expect(comTela).toHaveLength(9);
+    expect(comTela).toHaveLength(10);
+    expect(comTela, "o orçamento de compra tem tela desde a F6b").toContain("compras.orcamento");
   });
 
-  it("CT-2 os 13 sem tela: orçamento de compra, requisição, consumo, devolução de consumo, os 6 módulos e os 3 do financeiro", () => {
+  it("CT-2 os 12 sem tela: requisição, consumo, devolução de consumo, os 6 módulos e os 3 do financeiro", () => {
     expect(CATALOGO_TIPOS_MOVIMENTO_TOP.filter((t) => !t.temTela).map((t) => t.chave)).toEqual([
-      "orcamento_compra", "requisicao", "consumo", "devolucao_consumo",
+      "requisicao", "consumo", "devolucao_consumo",
       "abastecimento", "manutencao", "ordem_servico", "manejo", "batelada", "producao_racao",
       "conta_pagar", "conta_receber", "movimento_bancario",
     ]);
   });
 
-  it("CT-2 o passo 1: Vendas (3), Compras (2), Movimentação interna (4); Módulos e Financeiro não aparecem", () => {
+  it("CT-2 o passo 1: Vendas (3), Compras (3), Movimentação interna (4); Módulos e Financeiro não aparecem", () => {
     const passo1 = tiposParaEscolhaTop(CATALOGO_TOP);
     expect(passo1.map((g) => [g.grupo.chave, g.tipos.map((t) => t.chave)])).toEqual([
       ["vendas", ["orcamento_venda", "pedido_venda", "venda"]],
-      ["compras", ["pedido_compra", "compra"]],
+      ["compras", ["pedido_compra", "orcamento_compra", "compra"]],
       ["movimentacao_interna", ["entrada", "saida", "transferencia", "ajuste"]],
     ]);
     // A premissa: os dois grupos que somem EXISTEM no catálogo, com tipos (todos sem tela).

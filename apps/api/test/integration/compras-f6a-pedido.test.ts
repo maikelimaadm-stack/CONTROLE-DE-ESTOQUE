@@ -512,8 +512,11 @@ describe("FP-6 a capacidade e a leitura", () => {
 
     // A LEITURA DO PEDIDO: o orçamento dele (uma linha), e o nome de quem aprovou para orçamento.
     const lido = j(await lerCompra("pedido", ped.id));
+    // OPERACOES-01 F6b: + a condição (nula: o orçamento não tem) e o preço do item, no fim — os valores gravados acima.
     expect(lido.orcamentos).toEqual([{ id: orc, codigo, situacao: "aberto", fornecedor_id: c.I.provider, fornecedor_nome: fornecedor,
-      condicao_pagamento_id: null, prazo_entrega_dias: 7, validade_orcamento: "2026-10-10", valor_total: "28.50" }]);
+      condicao_pagamento_id: null, prazo_entrega_dias: 7, validade_orcamento: "2026-10-10", valor_total: "28.50",
+      condicao_pagamento_codigo: null, condicao_pagamento_nome: null,
+      itens: [{ item_pedido_orcado_id: ped.itens[0]!.id, valor_unitario: "9.500000", valor_total: "28.50" }] }]);
     expect([lido.aprovado_orcamento_por, lido.aprovado_orcamento_por_nome]).toEqual([c.h.demo.adminUserId, expect.any(String)]);
 
     // A LISTA ÚNICA: sem o filtro, as espécies de hoje (o orçamento não aparece); com `especie=orcamento`, aparece.
