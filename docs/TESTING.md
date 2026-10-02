@@ -86,6 +86,8 @@
 
 Pré-requisitos locais: Postgres 16 em `TEST_DATABASE_URL` (padrão `postgresql://postgres@127.0.0.1:5433/agro_erp_test`); o setup cria o papel `erp_app_test`. E2E: builds de `@agro/api` e `@agro/web` (`NEXT_PUBLIC_API_URL` apontando para `http://127.0.0.1:3333`), Chromium do Playwright (`PLAYWRIGHT_CHROMIUM` para binário customizado).
 
+Datas nos testes (PROCESSO-03): data que o resultado compara com hoje é relativa a hoje — no banco, `current_date + N` (`select (current_date + N)::text`, nunca a data do Node, que pode cair em outro dia pelo fuso); no E2E, hoje + N com folga de pelo menos 2 dias; no unitário cuja função recebe "hoje", um hoje fixo com datas fixas. Data que só é gravada e lida de volta fica fixa.
+
 Resultados da última execução local (16/09/2026, PRE-BASE2-05C-2): unitários **305 ✓** (shared 15, plataforma 78, domain 72, api 140) · schema/RLS/migrations **162 ✓** · integração API **476 ✓** · `pnpm gate:05c2` ✓ · typecheck ✓ · lint ✓ · paridade ✓.
 
 ## Defeito conhecido na suíte obrigatória
