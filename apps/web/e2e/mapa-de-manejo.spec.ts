@@ -24,7 +24,7 @@ test("o módulo Mapa de Manejo abre e lista as áreas", async ({ page }) => {
 test.describe("editor de desenho do Mapa de Manejo", () => {
   /** Meia largura, em px a partir do centro do mapa, do quadrado da primeira área. */
   const L = 100;
-  type Area = { nome: string; geometria: { type: string; coordinates: number[][][] } | null };
+  type Area = { nome: string; cor: string | null; geometria: { type: string; coordinates: number[][][] } | null };
 
   /**
    * Cada tentativa desenha numa faixa própria do mapa (deslocada 250 px por tentativa): as áreas gravadas por uma
@@ -100,6 +100,11 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
     const primeira = uniq("Talhão E2E");
     await confirmar.click();
     await expect(page.getByTestId("mapa-form-tamanho"), "o tamanho vem calculado do desenho").not.toHaveValue("");
+    // cor: só pela paleta de 20, com uma já sugerida; escolhe Verde
+    await expect(page.getByTestId("mapa-cor-opcao")).toHaveCount(20);
+    await expect(page.locator('[data-testid="mapa-cor-opcao"][aria-checked="true"]'), "a área nova já vem com uma cor da paleta").toHaveCount(1);
+    await page.getByRole("radio", { name: "Verde", exact: true }).click();
+    await expect(page.getByRole("radio", { name: "Verde", exact: true })).toHaveAttribute("aria-checked", "true");
     await page.getByTestId("mapa-form-nome").fill(primeira);
     await page.getByTestId("mapa-form-salvar").click();
     await expect(page.getByTestId("mapa-instrucao")).toBeHidden();
@@ -139,6 +144,7 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
 
     // a divisa não tem fresta: o vértice grudado é a MESMA coordenada de uma área vizinha
     const lista = await api<{ items: Area[] }>(page, "GET", "/api/resources/mapa_areas?pageSize=500");
+    expect(lista.items.find((a) => a.nome === primeira)?.cor, "a cor escolhida na paleta é a gravada").toBe("#22c55e");
     const gravada = lista.items.find((a) => a.nome === segunda);
     const anel = gravada?.geometria?.coordinates[0] ?? [];
     expect(anel.length, "polígono canônico: 3 pontos + o de fechamento").toBe(4);

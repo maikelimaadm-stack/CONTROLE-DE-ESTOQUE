@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import { flushSync } from "react-dom";
 import type { Feature, Polygon } from "geojson";
 import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
 import { Magnet, Redo2, RotateCcw, Undo2 } from "lucide-react";
@@ -17,6 +18,7 @@ import {
 } from "./editor-desenho";
 import { CamadaDesenho, type Lado, type RotuloArea } from "./camada-desenho";
 import { PainelDesenho } from "./painel-desenho";
+import { PALETA_AREAS, proximaCor } from "./cores";
 
 /**
  * MAPA-01 (decisão 279) — Mapa de Manejo: cadastro de áreas NEUTRO (lavoura e pecuária). Só nome, tamanho e
@@ -36,8 +38,6 @@ interface AreaApi {
 }
 
 const COR_PADRAO = "#facc15";
-/** Cor sugerida para a área nova (gira pela paleta do protótipo); o usuário troca no formulário. */
-const PALETA = ["#82b1ff", "#ffab91", "#b39ddb", "#80deea", "#fff59d", "#a5d6a7"];
 const hectares = (v: AreaApi["tamanho_ha"]) => (v === null || v === undefined || v === "" ? 0 : Number(v));
 
 type Rascunho = { geometria: Polygon; tamanho_ha: number };
@@ -110,7 +110,6 @@ export function MapaDeManejo() {
   const desenhandoRef = React.useRef(false);
   const formAbertoRef = React.useRef(false);
   const areasRef = React.useRef<AreaApi[]>([]);
-  const quadroRef = React.useRef<number | null>(null);
   const soltarArrastoRef = React.useRef<(() => void) | null>(null);
   const [, redesenhar] = React.useReducer((n: number) => n + 1, 0);
 
@@ -129,10 +128,6 @@ export function MapaDeManejo() {
   const alvosPx = (): AlvoPx[] => areasRef.current.flatMap((a) => { const coords = anelAberto(a.geometria); return coords.length >= 2 ? [{ nome: a.nome, coords, pts: coords.map(proj) }] : []; });
   const ativo = () => desenhandoRef.current && !formAbertoRef.current;
   const doIma = (s: Ima): PontoDesenho => { const ll = s.lngLat ?? desproj(s.px); return { lng: ll[0], lat: ll[1], grudado: true, tipo: s.tipo === "aresta" ? "aresta" : "vertice", de: s.de }; };
-  const agendarRedesenho = () => {
-    if (quadroRef.current !== null) return;
-    quadroRef.current = requestAnimationFrame(() => { quadroRef.current = null; redesenhar(); });
-  };
 
   // ---------- histórico ----------
   function aplicar(r: Retrato, acao?: string) {
@@ -319,7 +314,8 @@ export function MapaDeManejo() {
         if (cancelado) return;
         m.addSource("areas", { type: "geojson", data: { type: "FeatureCollection", features: [] }, promoteId: "id" });
         m.addLayer({ id: "areas-fill", type: "fill", source: "areas", paint: { "fill-color": ["coalesce", ["get", "cor"], COR_PADRAO], "fill-opacity": ["case", ["boolean", ["feature-state", "selecionada"], false], 0.45, 0.25] } });
-        m.addLayer({ id: "areas-contorno", type: "line", source: "areas", paint: { "line-color": ["coalesce", ["get", "cor"], COR_PADRAO], "line-width": ["case", ["boolean", ["feature-state", "selecionada"], false], 3, 2] } });
+        m.addLayer({ id: "areas-contorno-sombra", type: "line", source: "areas", paint: { "line-color": "#0f172a", "line-opacity": 0.55, "line-width": ["case", ["boolean", ["feature-state", "selecionada"], false], 7, 5.5] } });
+        m.addLayer({ id: "areas-contorno", type: "line", source: "areas", paint: { "line-color": ["coalesce", ["get", "cor"], COR_PADRAO], "line-width": ["case", ["boolean", ["feature-state", "selecionada"], false], 3.5, 2.5] } });
         m.on("click", "areas-fill", (e) => { if (desenhandoRef.current) return; const f = e.features?.[0]; if (f && f.properties) setSelecionada(String(f.properties.id)); });
         m.on("mouseenter", "areas-fill", () => { if (!desenhandoRef.current) m.getCanvas().style.cursor = "pointer"; });
         m.on("mouseleave", "areas-fill", () => { if (!desenhandoRef.current) m.getCanvas().style.cursor = ""; });
@@ -333,14 +329,23 @@ export function MapaDeManejo() {
         m.on("click", (ev) => aoClicar(px(ev), ev.originalEvent.altKey, ev.originalEvent.shiftKey, ev.originalEvent.detail));
         m.on("dblclick", (ev) => { if (!ativo()) return; ev.preventDefault(); aoDuploClique(px(ev)); });
         m.on("contextmenu", (ev) => { if (!ativo()) return; ev.originalEvent.preventDefault(); desfazer(); });
-        m.on("move", () => agendarRedesenho());
+        // A camada do desenho e os nomes são DOM por cima do canvas. Redesenhá-los num quadro DEPOIS do mapa os
+        // fazia "tremer" ao arrastar; agora acompanham o MESMO quadro: no fim de cada render do mapa (dentro do
+        // requestAnimationFrame dele) a tela é atualizada de forma síncrona — só quando a vista mudou de fato.
+        let vista = "";
+        m.on("render", () => {
+          const c = m.getCenter(), tela = m.getCanvas();
+          const agora = `${c.lng},${c.lat},${m.getZoom()},${m.getBearing()},${tela.width}x${tela.height}`;
+          if (agora === vista) return;
+          vista = agora;
+          flushSync(() => redesenhar());
+        });
         setMapaPronto(true);
       });
     })();
     return () => {
       cancelado = true;
       soltarArrastoRef.current?.();
-      if (quadroRef.current !== null) cancelAnimationFrame(quadroRef.current);
       mapaCleanup?.remove(); mapRef.current = null;
     };
   }, []);
@@ -425,7 +430,7 @@ export function MapaDeManejo() {
     if (e.fechado && e.pontos.length >= 3) {
       const ha = Math.round(areaHa(coordsDe(e.pontos)) * 10000) / 10000;
       setRascunho({ geometria: poligonoGeoJSON(e.pontos), tamanho_ha: ha });
-      setForm({ nome: "", cor: PALETA[areas.length % PALETA.length] ?? COR_PADRAO, tamanho_ha: String(ha) });
+      setForm({ nome: "", cor: proximaCor(areas.map((a) => a.cor)), tamanho_ha: String(ha) });
       return;
     }
     if (e.pontos.length >= 3) { fechar("Fechado"); return; }
@@ -617,7 +622,17 @@ export function MapaDeManejo() {
                 {empresaNome && <div className="text-xs text-slate-500">Empresa: <span className="font-medium text-slate-700">{empresaNome}</span></div>}
                 <Field label="Nome" required><Input value={form.nome} onChange={(ev) => setForm((f) => ({ ...f, nome: ev.target.value }))} data-testid="mapa-form-nome" /></Field>
                 <Field label="Tamanho (ha)"><Input type="number" step="0.0001" value={form.tamanho_ha} onChange={(ev) => setForm((f) => ({ ...f, tamanho_ha: ev.target.value }))} data-testid="mapa-form-tamanho" /></Field>
-                <Field label="Cor"><input type="color" value={form.cor} onChange={(ev) => setForm((f) => ({ ...f, cor: ev.target.value }))} className="h-8 w-16 cursor-pointer rounded border border-slate-300" data-testid="mapa-form-cor" /></Field>
+                <div>
+                  <div className="mb-1 text-xs font-medium text-slate-600">Cor</div>
+                  <div className="grid grid-cols-10 gap-1" role="radiogroup" aria-label="Cor da área" data-testid="mapa-form-cor">
+                    {PALETA_AREAS.map((p) => (
+                      <button key={p.cor} type="button" role="radio" aria-checked={form.cor === p.cor} aria-label={p.nome} title={p.nome} data-testid="mapa-cor-opcao"
+                        onClick={() => setForm((f) => ({ ...f, cor: p.cor }))}
+                        className={cn("h-5 w-5 rounded-full border border-slate-300 transition", form.cor === p.cor ? "ring-2 ring-slate-800 ring-offset-1" : "hover:scale-110")}
+                        style={{ backgroundColor: p.cor }} />
+                    ))}
+                  </div>
+                </div>
                 <div className="flex justify-end gap-2">
                   <Button type="button" variant="ghost" onClick={() => setRascunho(null)}>Voltar ao desenho</Button>
                   <Button type="button" onClick={() => salvar.mutate()} loading={salvar.isPending} disabled={form.nome.trim() === ""} data-testid="mapa-form-salvar">Salvar</Button>

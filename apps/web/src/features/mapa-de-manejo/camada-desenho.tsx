@@ -8,7 +8,12 @@ import type { Acerto, Ima, Px } from "./editor-desenho";
  * tudo já projetado em pixels e não captura evento nenhum (pointer-events: none) — quem decide é o editor.
  */
 
-export const COR_DESENHO = { aberto: "#facc15", fechado: "#22c55e", ima: "#facc15", meio: "#38bdf8", guia: "#7dd3fc", contorno: "#0f172a" } as const;
+/**
+ * Cores do desenho. A linha é CIANO com contorno escuro: contrasta com o verde e o marrom do satélite e com o
+ * fundo claro do mapa de ruas (o amarelo/verde de antes sumia na lavoura). O ímã fica AMARELO, para não se
+ * confundir com a linha; o elástico até o cursor é BRANCO tracejado (ainda não é lado).
+ */
+export const COR_DESENHO = { linha: "#22d3ee", elastico: "#ffffff", ima: "#facc15", meio: "#ffffff", guia: "#e0f2fe", contorno: "#0f172a" } as const;
 
 export interface RotuloArea { id: string; px: Px; nome: string; ha: number }
 export interface Lado { px: Px; metros: number }
@@ -35,13 +40,13 @@ interface Props {
 const lista = (pts: Px[]) => pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
 const AFORDANCIA: Record<Acerto["tipo"], { texto: string; cor: string }> = {
   vertice: { texto: "Segure para arrastar este ponto · 2 cliques apagam", cor: COR_DESENHO.ima },
-  meio: { texto: "Segure para criar um ponto aqui", cor: COR_DESENHO.meio },
+  meio: { texto: "Segure para criar um ponto aqui", cor: COR_DESENHO.linha },
   poligono: { texto: "Segure para mover a área inteira", cor: "#c084fc" }
 };
 
 export function CamadaDesenho(p: Props) {
   const { pts, fechado, cur, raw, ima, arrastando } = p;
-  const linha = fechado ? COR_DESENHO.fechado : COR_DESENHO.aberto;
+  const linha = COR_DESENHO.linha;
   const ultimo = pts.length ? pts[pts.length - 1]! : null;
   const primeiro = pts.length ? pts[0]! : null;
   const hm = p.hover?.tipo === "meio" ? p.hover.i : -1;
@@ -73,23 +78,23 @@ export function CamadaDesenho(p: Props) {
                 <line x1={ima.aresta[0].x} y1={ima.aresta[0].y} x2={ima.aresta[1].x} y2={ima.aresta[1].y} stroke={COR_DESENHO.ima} strokeWidth={3} />
               </g>
             )}
-            {pts.length >= 3 && <polygon points={lista(pts)} fill={linha} fillOpacity={fechado ? 0.3 : 0.22} stroke="none" />}
+            {pts.length >= 3 && <polygon points={lista(pts)} fill={linha} fillOpacity={fechado ? 0.3 : 0.18} stroke="none" />}
             {pts.length >= 2 && (
               <g fill="none" strokeLinejoin="round" strokeLinecap="round">
-                <polyline points={lista(pts)} stroke={COR_DESENHO.contorno} strokeOpacity={0.55} strokeWidth={6} />
-                <polyline points={lista(pts)} stroke={linha} strokeWidth={3} />
+                <polyline points={lista(pts)} stroke={COR_DESENHO.contorno} strokeOpacity={0.6} strokeWidth={7.5} />
+                <polyline points={lista(pts)} stroke={linha} strokeWidth={3.5} />
               </g>
             )}
             {fechado && ultimo && primeiro && (
               <g strokeLinecap="round">
-                <line x1={ultimo.x} y1={ultimo.y} x2={primeiro.x} y2={primeiro.y} stroke={COR_DESENHO.contorno} strokeOpacity={0.55} strokeWidth={6} />
-                <line x1={ultimo.x} y1={ultimo.y} x2={primeiro.x} y2={primeiro.y} stroke={linha} strokeWidth={3} />
+                <line x1={ultimo.x} y1={ultimo.y} x2={primeiro.x} y2={primeiro.y} stroke={COR_DESENHO.contorno} strokeOpacity={0.6} strokeWidth={7.5} />
+                <line x1={ultimo.x} y1={ultimo.y} x2={primeiro.x} y2={primeiro.y} stroke={linha} strokeWidth={3.5} />
               </g>
             )}
             {cur && ultimo && !fechado && !arrastando && (
               <g strokeLinecap="round">
-                <line x1={ultimo.x} y1={ultimo.y} x2={cur.x} y2={cur.y} stroke={COR_DESENHO.contorno} strokeOpacity={0.5} strokeWidth={5} />
-                <line x1={ultimo.x} y1={ultimo.y} x2={cur.x} y2={cur.y} stroke={COR_DESENHO.aberto} strokeWidth={2.4} strokeDasharray="7 5" />
+                <line x1={ultimo.x} y1={ultimo.y} x2={cur.x} y2={cur.y} stroke={COR_DESENHO.contorno} strokeOpacity={0.55} strokeWidth={6} />
+                <line x1={ultimo.x} y1={ultimo.y} x2={cur.x} y2={cur.y} stroke={COR_DESENHO.elastico} strokeWidth={2.4} strokeDasharray="7 5" />
               </g>
             )}
             {p.travado && cur && ultimo && !fechado && (
@@ -100,7 +105,7 @@ export function CamadaDesenho(p: Props) {
               <g key={m.i}>
                 {m.i === hm && (
                   <g>
-                    <circle cx={m.px.x} cy={m.px.y} r={16} fill={COR_DESENHO.meio} fillOpacity={0.22} />
+                    <circle cx={m.px.x} cy={m.px.y} r={16} fill={COR_DESENHO.linha} fillOpacity={0.3} />
                     <g stroke="#ffffff" strokeWidth={2.2} strokeLinecap="round">
                       <line x1={m.px.x - 5} y1={m.px.y} x2={m.px.x + 5} y2={m.px.y} />
                       <line x1={m.px.x} y1={m.px.y - 5} x2={m.px.x} y2={m.px.y + 5} />
@@ -132,7 +137,7 @@ export function CamadaDesenho(p: Props) {
                   <line x1={cur.x - 40} y1={cur.y} x2={cur.x - 22} y2={cur.y} />
                   <line x1={cur.x + 22} y1={cur.y} x2={cur.x + 40} y2={cur.y} />
                 </g>
-                <circle cx={cur.x} cy={cur.y} r={7} fill={ima.tipo === "fechar" ? COR_DESENHO.fechado : COR_DESENHO.ima} stroke={COR_DESENHO.contorno} strokeWidth={1.8} />
+                <circle cx={cur.x} cy={cur.y} r={7} fill={ima.tipo === "fechar" ? COR_DESENHO.linha : COR_DESENHO.ima} stroke={COR_DESENHO.contorno} strokeWidth={1.8} />
               </g>
             )}
 
@@ -153,7 +158,7 @@ export function CamadaDesenho(p: Props) {
 
           {/* área ao vivo no centro */}
           {p.centro && pts.length >= 3 && (
-            <div className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border bg-slate-900/90 px-3 py-1 text-xs font-medium tabular-nums ${fechado ? "border-green-500 text-green-100" : "border-yellow-400 text-yellow-100"}`} style={{ left: p.centro.x, top: p.centro.y }}>
+            <div className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border bg-slate-900/90 px-3 py-1 text-xs font-medium tabular-nums ${fechado ? "border-cyan-300 text-cyan-50" : "border-cyan-400/70 text-cyan-100"}`} style={{ left: p.centro.x, top: p.centro.y }}>
               Área: {num(p.areaHaAtual, 2)} ha
             </div>
           )}
