@@ -28,7 +28,8 @@ import { TEST_URL } from "./setup.js";
  * RLS, com as GUCs da transação — o caminho que a API percorre).
  *
  * No fim, o leitor de schema dos gates (`scripts/lib/schema.mjs`, item 0 g): o CHECK refeito por `alter table` é o
- * que o dicionário de dados publica como "Valores" — a situação do pedido com 'convertido' e as cinco famílias.
+ * que o dicionário de dados publica como "Valores" — a situação e a família como o ÚLTIMO `alter table` as deixou
+ * (hoje a 0044, OPERACOES-01 F6a: a situação com 'finalizado', 'escolhido' e 'nao_escolhido', e as seis famílias).
  */
 let db: Db; let app: Db; let demo: DemoOrg;
 let empresa: string; let fornecedor: string; let produto: string;
@@ -247,7 +248,7 @@ describe("0038 — sobre o acervo de layouts de venda, como o runner aplica", ()
     expect((await db.query("select 1 from pg_roles where rolname like 'c03r\\_%'")).rowCount).toBe(0);
   });
 
-  it("LB5 aplica: ledger com 38 (a 0038 por último NESTE banco), 41 no repositório (a 0039 logo depois dela), layouts e ligações idênticos, CHECK com as cinco famílias do domínio, gatilho intacto", async () => {
+  it("LB5 aplica: ledger com 38 (a 0038 por último NESTE banco), 42 no repositório (a 0039 logo depois dela), layouts e ligações idênticos, CHECK com as cinco famílias da 0038 (o domínio menos compras.orcamento, da 0044), gatilho intacto", async () => {
     await aplicar();
     // Este arquivo sobe o banco só até a 0038: o ledger dele termina nela. O repositório já tem a 0039 (EDITAR-01),
     // provada em editar-01-versao.test.ts.
@@ -255,16 +256,19 @@ describe("0038 — sobre o acervo de layouts de venda, como o runner aplica", ()
     expect(ledger).toEqual({ n: 38, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
     // No disco há mais do que o ledger deste arquivo (ele sobe só até a 0038): a 0039 (EDITAR-01), a 0040
-    // (ESTOQUE-01) e a 0041 (TOP-CONFIG-08) vêm depois.
-    expect(noDisco.length, "41 migrations no repositório").toBe(41);
+    // (ESTOQUE-01), a 0041 (TOP-CONFIG-08) e a 0044 (OPERACOES-01 F6a) vêm depois.
+    expect(noDisco.length, "42 migrations no repositório").toBe(42);
     expect(noDisco[37]).toBe(ALVO);
     expect(noDisco[38], "a 0039 logo depois da 0038 no repositório").toBe("0039_versao_do_documento_de_venda.sql");
     expect(await retrato(), "nenhuma linha de layout ou de ligação muda").toEqual(antes);
     expect(await familiasDoCheck()).toEqual(CINCO);
-    // Uma lista só: o CHECK do banco é o conjunto do domínio — três de venda, duas de compra.
-    expect([...FAMILIAS_COM_LAYOUT].sort()).toEqual(CINCO);
+    // Uma lista só: o CHECK da 0038 é o conjunto do domínio de HOJE menos compras.orcamento — a família que a 0044
+    // (OPERACOES-01 F6a) acrescenta ao CHECK (provado em compras-f6a-0044.test.ts; este banco para na 0038). O
+    // domínio tem as três de venda e as três de compra, na ordem do registry.
+    expect([...FAMILIAS_COM_LAYOUT].filter((f) => f !== "compras.orcamento").sort()).toEqual(CINCO);
+    expect([...FAMILIAS_COM_LAYOUT].sort(), "o domínio tem exatamente uma família a mais que a 0038").toEqual([...CINCO, "compras.orcamento"].sort());
     expect([...FAMILIAS_COM_LAYOUT_DE_VENDAS].sort()).toEqual(["vendas.orcamento", "vendas.pedido", "vendas.venda"]);
-    expect([...FAMILIAS_COM_LAYOUT_DE_COMPRAS].sort()).toEqual(["compras.compra", "compras.pedido"]);
+    expect([...FAMILIAS_COM_LAYOUT_DE_COMPRAS]).toEqual(["compras.pedido", "compras.compra", "compras.orcamento"]);
     const chk = (await db.query<{ convalidated: boolean; coluna: string }>(
       `select c.convalidated, a.attname coluna from pg_constraint c join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any (c.conkey)
         where c.conrelid='erp.layouts_documento'::regclass and c.conname='chk_layouts_documento_familia'`)).rows;
@@ -410,16 +414,20 @@ describe("leitor de schema dos gates: CHECK refeito por ALTER TABLE (item 0 g)",
   beforeAll(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "leitor-checks-")); });
   afterAll(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
-  it("G1 as migrations reais: a situação do documento de compra com 'convertido' (0037) e a família do layout com as cinco (0038)", async () => {
+  it("G1 as migrations reais: a situação e a espécie do documento de compra e a família do layout como a 0044 as deixou (refeitas por alter table)", async () => {
     const real = await lerSchema();
+    // A 0037 acrescentou 'convertido'; a 0044 (OPERACOES-01 F6a), 'finalizado', 'escolhido' e 'nao_escolhido' — e a
+    // espécie 'orcamento', e a família compras.orcamento ao layout. É o ÚLTIMO alter que vale.
     expect(real.get("erp.documentos_compra")!.columns.get("situacao")).toMatchObject({
-      check: "situacao in ('aberto','confirmado','convertido','cancelado')", checkNome: "chk_documentos_compra_situacao" });
+      check: "situacao in ('aberto','confirmado','convertido','cancelado','finalizado','escolhido','nao_escolhido')", checkNome: "chk_documentos_compra_situacao" });
+    expect(real.get("erp.documentos_compra")!.columns.get("especie")).toMatchObject({
+      check: "especie in ('pedido','compra','orcamento')", checkNome: "chk_documentos_compra_especie" });
     expect(real.get("erp.layouts_documento")!.columns.get("familia")).toMatchObject({
-      check: "familia in ('vendas.orcamento', 'vendas.pedido', 'vendas.venda', 'compras.pedido', 'compras.compra')", checkNome: "chk_layouts_documento_familia" });
+      check: "familia in ('vendas.orcamento', 'vendas.pedido', 'vendas.venda', 'compras.pedido', 'compras.compra', 'compras.orcamento')", checkNome: "chk_layouts_documento_familia" });
     // E o documento gerado publica isso na coluna "Valores" (o gate `data-dictionary --check` confere o resto).
     const documento = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../docs/DATA-DICTIONARY.md"), "utf8");
-    expect(documento).toContain("| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `convertido` · `cancelado` |");
-    expect(documento).toContain("| `familia` | Movimento | text | sim |  |  | `vendas.orcamento` · `vendas.pedido` · `vendas.venda` · `compras.pedido` · `compras.compra` |");
+    expect(documento).toContain("| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `convertido` · `cancelado` · `finalizado` · `escolhido` · `nao_escolhido` |");
+    expect(documento).toContain("| `familia` | Movimento | text | sim |  |  | `vendas.orcamento` · `vendas.pedido` · `vendas.venda` · `compras.pedido` · `compras.compra` · `compras.orcamento` |");
   });
 
   it("G2 drop e add na MESMA instrução, com o mesmo nome: vale o CHECK novo", async () => {
