@@ -280,14 +280,25 @@ export function MapaDeManejo() {
   function iniciarArrasto() {
     const m = mapRef.current;
     if (!m) return;
+    // Trava o pan do mapa enquanto o ponto/área acompanha o mouse — senão o mapa
+    // “puxa” e o pontinho parece bugado.
+    m.dragPan.disable();
     const caixa = m.getCanvasContainer();
-    const mover = (ev: PointerEvent) => { const r = caixa.getBoundingClientRect(); aoArrastar({ x: ev.clientX - r.left, y: ev.clientY - r.top }, ev.altKey); };
+    const mover = (ev: PointerEvent) => {
+      const r = caixa.getBoundingClientRect();
+      aoArrastar({ x: ev.clientX - r.left, y: ev.clientY - r.top }, ev.altKey);
+    };
     const soltar = () => {
-      window.removeEventListener("pointermove", mover); window.removeEventListener("pointerup", soltar); window.removeEventListener("pointercancel", soltar);
+      window.removeEventListener("pointermove", mover);
+      window.removeEventListener("pointerup", soltar);
+      window.removeEventListener("pointercancel", soltar);
       soltarArrastoRef.current = null;
+      m.dragPan.enable();
       aoSoltar();
     };
-    window.addEventListener("pointermove", mover); window.addEventListener("pointerup", soltar); window.addEventListener("pointercancel", soltar);
+    window.addEventListener("pointermove", mover);
+    window.addEventListener("pointerup", soltar);
+    window.addEventListener("pointercancel", soltar);
     soltarArrastoRef.current = soltar;
   }
 
@@ -411,14 +422,14 @@ export function MapaDeManejo() {
           vista = agora;
           const edAtual = ed.current;
           if (edAtual.arrasto) {
-            // Arrasto de ponto/área: só redesenha com a projeção nova dos pontos.
+            // Arrasto: pontos já vêm do pointermove; só redesenha na projeção nova.
           } else if (mapaMovendoRef.current) {
-            // Pan/zoom: cursor de inserção some — volta só no próximo mousemove real.
+            // Pan/zoom: some o cursor de inserção — volta no próximo mousemove do mouse.
             if (edAtual.cur || edAtual.raw || edAtual.ima || edAtual.hover) {
               Object.assign(edAtual, { cur: null, raw: null, ima: null, hover: null, travado: false });
             }
           } else if (edAtual.ima?.lngLat) {
-            // Ímã grudado no mapa: acompanha o vértice/aresta geográfico (não o pan do mouse).
+            // Ímã grudado no mapa: acompanha o vértice/aresta geográfico.
             const pxIma = { x: m.project(edAtual.ima.lngLat).x, y: m.project(edAtual.ima.lngLat).y };
             let aresta = edAtual.ima.aresta;
             if (edAtual.ima.tipo === "aresta" && aresta) {
@@ -442,10 +453,8 @@ export function MapaDeManejo() {
             edAtual.ima = { ...edAtual.ima, px: pxIma, aresta };
             edAtual.cur = pxIma;
             edAtual.raw = pxIma;
-          } else if (edAtual.cur || edAtual.raw || edAtual.hover) {
-            // Cursor livre é posição de tela do mouse — some se a vista mudou sem mousemove novo.
-            Object.assign(edAtual, { cur: null, raw: null, ima: null, hover: null, travado: false });
           }
+          // Cursor livre (sem ímã): fica onde o mouse deixou — não some só porque a vista redesenhou.
           flushSync(() => redesenhar());
         });
         setMapaPronto(true);

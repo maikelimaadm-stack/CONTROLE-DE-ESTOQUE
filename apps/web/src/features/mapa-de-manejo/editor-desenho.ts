@@ -38,9 +38,9 @@ export const TOLERANCIA_MIN = 1;
 export const TOLERANCIA_MAX = 200;
 
 export type Acerto = { tipo: "vertice"; i: number } | { tipo: "meio"; i: number; px: Px } | { tipo: "poligono" };
-/** Raio de pega do ponto e do ponto do meio, em px (pontos menores na tela → pega um pouco menor). */
-export const RAIO_VERTICE = 8;
-export const RAIO_MEIO = 7;
+/** Raio de pega do ponto e do ponto do meio, em px (pontos um pouco maiores na tela). */
+export const RAIO_VERTICE = 10;
+export const RAIO_MEIO = 8;
 
 export const distancia = (a: Px, b: Px) => Math.hypot(a.x - b.x, a.y - b.y);
 

@@ -130,18 +130,18 @@ export function CamadaDesenho(p: Props) {
                 key={m.i}
                 cx={m.px.x}
                 cy={m.px.y}
-                r={m.i === hm ? 2.6 : 2}
+                r={m.i === hm ? 3.2 : 2.6}
                 fill={COR_DESENHO.ponto}
               />
             ))}
 
-            {/* Pontos flat verdes de registro — sem aura, sem brilho, sem borda. */}
+            {/* Pontos flat verdes de registro — um pouco maiores, sem aura/brilho. */}
             {pts.map((v, i) => (
               <circle
                 key={i}
                 cx={v.x}
                 cy={v.y}
-                r={i === p.arrastoVertice || i === hv ? 3.8 : 3.2}
+                r={i === p.arrastoVertice || i === hv ? 5.2 : 4.4}
                 fill={COR_DESENHO.ponto}
               />
             ))}
@@ -149,14 +149,14 @@ export function CamadaDesenho(p: Props) {
             {/* Ímã branco no alvo — acompanha só o snap, sem tooltip. */}
             {ima && cur && (
               <g data-testid="mapa-ima-marca" data-tipo={ima.tipo}>
-                <circle cx={cur.x} cy={cur.y} r={5} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.5} strokeOpacity={0.9} />
-                <circle cx={cur.x} cy={cur.y} r={2.4} fill={ima.tipo === "fechar" ? COR_DESENHO.ponto : COR_DESENHO.ima} />
+                <circle cx={cur.x} cy={cur.y} r={5.5} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.5} strokeOpacity={0.9} />
+                <circle cx={cur.x} cy={cur.y} r={2.6} fill={ima.tipo === "fechar" ? COR_DESENHO.ponto : COR_DESENHO.ima} />
               </g>
             )}
 
-            {/* Cursor livre: exatamente sob o mouse (só mousemove real, nunca pan). */}
+            {/* Cursor livre: exatamente sob o mouse. */}
             {cur && !ima && !fechado && !arrastando && !p.hover && (
-              <circle cx={cur.x} cy={cur.y} r={2.2} fill={COR_DESENHO.ima} />
+              <circle cx={cur.x} cy={cur.y} r={2.6} fill={COR_DESENHO.ima} />
             )}
           </svg>
 
