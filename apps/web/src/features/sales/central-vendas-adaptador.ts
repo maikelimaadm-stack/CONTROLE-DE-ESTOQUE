@@ -52,6 +52,7 @@ export const fonteDosDocumentosDeVendas: FonteDosDocumentosAbertos = {
 /**
  * As colunas dos itens da venda. `doSistema`: o catálogo de VENDAS pelo nome (COMPRAS-03, decisão 269) — as colunas
  * do sistema não levam "*" na grade. `doCatalogo`: a chave do catálogo ↔ a coluna da Central, a de sempre.
+ * `leitura` (a consulta): o Local de estoque antes do produto, a mesma ordem do catálogo (OPERACOES-01 F3b, decisão 280).
  */
 const DO_CATALOGO: Readonly<Record<string, ChaveColunaDoItem>> = {
   codigo: "codigo", product_id: "produto", warehouse_id: "armazem", estoque: "estoque", quantity: "quantidade",
@@ -60,7 +61,7 @@ const DO_CATALOGO: Readonly<Record<string, ChaveColunaDoItem>> = {
 export const colunasDosItensDeVendas: ColunasDosItens = {
   doSistema: new Set(CATALOGO_VENDAS.filter((c) => c.parte === "itens" && c.sistema).map((c) => c.chave)),
   doCatalogo: DO_CATALOGO,
-  leitura: ["codigo", "produto", "armazem", "estoque", "quantidade", "unitario", "desconto", "descontoPercentual", "total"]
+  leitura: ["armazem", "codigo", "produto", "estoque", "quantidade", "unitario", "desconto", "descontoPercentual", "total"]
 };
 
 /* ── novo documento ── */

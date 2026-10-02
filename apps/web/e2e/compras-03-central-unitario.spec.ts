@@ -26,12 +26,13 @@ import { colunasDoEditor, estruturaComExigidos, zonasDaCentral } from "../src/fe
  * linha (`chamada`, a posição no arquivo), e o `fields` literal de cada linha tem de estar DENTRO daquela chamada —
  * uma segunda chamada num arquivo que já está na tabela reprova. A do MOTOR (`COMBINACOES_DO_MOTOR`) cobra o mesmo de
  * quem desenha a grade do motor (`features/central/itens.tsx`), com as chaves que mudam o que ele faz —
- * `armazemPorItem`, `armazemForcado`, `custoMedioNoUnitario`, `lote`, `daOrigem` — lidas na chamada INTEIRA (a leitura
- * equilibra as chaves `{…}`: um `/>` dentro de uma prop não a corta). E `COMBINACOES_DA_COMPRA` mede as colunas que a
- * compra ENTREGA ao motor em cada combinação de layout × regra × lote: `colunasDoEditor` é a função REAL (importada),
+ * `armazemPorItem`, `armazemForcado`, `custoMedioNoUnitario`, `lote`, `daOrigem`, `pesquisaDeProduto` — lidas na
+ * chamada INTEIRA (a leitura equilibra as chaves `{…}`: um `/>` dentro de uma prop não a corta). E
+ * `COMBINACOES_DA_COMPRA` mede as colunas que a compra ENTREGA ao motor em cada combinação de layout × regra × lote: `colunasDoEditor` é a função REAL (importada),
  * mas as colunas FORÇADAS que a compra lhe passa são uma RÉPLICA escrita à mão (`forcadasDaCompra`, abaixo), porque a
  * conta original vive dentro do hook da criação e não se importa aqui. O motor mesmo (um componente React com CSS) não
- * roda sem navegador — o que ele e o hook fazem está provado nos E2E (LC-W1, CX-1, CX-2, CX-3).
+ * roda sem navegador — o que ele e o hook fazem está provado nos E2E (LC-W1, CX-1, CX-2, CX-3; a pesquisa de produto
+ * da linha, em F3B-V2 e F3B-C1 de `operacoes-01-f3b-vendas.spec.ts`/`-compras.spec.ts`).
  */
 
 const PEDIDO = "compras.pedido";
@@ -213,31 +214,41 @@ test.describe("colunasDoEditor", () => {
  * expressão EXATA entre chaves (`custoMedioNoUnitario={false}` → "false").
  */
 type ChaveDaChamada = "ausente" | "ligada" | string;
-const CHAVES_DO_MOTOR = ["armazemPorItem", "armazemForcado", "custoMedioNoUnitario", "lote", "daOrigem"] as const;
+const CHAVES_DO_MOTOR = ["armazemPorItem", "armazemForcado", "custoMedioNoUnitario", "lote", "daOrigem", "pesquisaDeProduto"] as const;
 
 /**
  * AS CHAMADAS DO MOTOR (`ItensDaCentral` de `features/central/itens.tsx`) no repositório e o que cada uma liga. O que
  * as chaves fazem no motor hoje (`itens.tsx`):
  * - `armazemPorItem` — a coluna Armazém é PERMITIDA (`ligada`: só `false` a desliga); permitir não é forçar: com
  *   layout, ela aparece se o layout a mostra (decisão 278, S2);
- * - `armazemForcado` (padrão `false`) — com layout, a coluna aparece mesmo que o layout a esconda, logo depois do Produto;
+ * - `armazemForcado` (padrão `false`) — com layout, a coluna aparece mesmo que o layout a esconda, logo antes do
+ *   Código/Produto (OPERACOES-01 F3b, decisão 280: o Local de estoque antes do produto; sem nenhum dos dois, no início);
  * - `custoMedioNoUnitario` (padrão `true`, a venda) — o custo médio do armazém preenche o unitário vazio ou "0"; com
  *   `false` o saldo continua lido e nada é escrito (decisão 278, M1);
  * - `lote` (padrão desligado) — as colunas Lote e Validade por linha;
- * - `daOrigem` (padrão desligado) — a coluna Saldo, o produto travado, sem Adicionar nem Duplicar (o receber pedido).
+ * - `daOrigem` (padrão desligado) — a coluna Saldo, o produto travado, sem Adicionar nem Duplicar (o receber pedido);
+ * - `pesquisaDeProduto` (padrão: entrada) — a pesquisa de produto da linha (OPERACOES-01 F3b, decisão 280). Com a
+ *   capacidade `pesquisaDeProdutos` da API, ela vai a `/api/produtos/pesquisa` pelo Local de estoque DA LINHA, com a
+ *   coluna Estoque para quem vê o saldo daquele local; `PESQUISA_DE_PRODUTO_DA_SAIDA` liga "Só com saldo neste local"
+ *   (`com_saldo=true`) e `PESQUISA_DE_PRODUTO_DA_ENTRADA` mostra tudo, com o saldo. Sem a capacidade (a API anterior),
+ *   a pesquisa de hoje, `/api/resources/products/options`, idêntica. Ausente = entrada (o receber pedido não pesquisa
+ *   produto: ele vem travado do pedido).
  */
 const COMBINACOES_DO_MOTOR: ({ onde: string; arquivo: string; prova: string } & Record<(typeof CHAVES_DO_MOTOR)[number], ChaveDaChamada>)[] = [
   {
-    onde: "Central de Vendas", arquivo: "src/features/sales/central-vendas-itens.tsx", prova: "CX-3 (o unitário vazio vira o custo médio)",
-    armazemPorItem: "ausente", armazemForcado: "ausente", custoMedioNoUnitario: "ausente", lote: "ausente", daOrigem: "ausente"
+    onde: "Central de Vendas", arquivo: "src/features/sales/central-vendas-itens.tsx", prova: "CX-3 (o unitário vazio vira o custo médio), F3B-V2 (a saída só com saldo)",
+    armazemPorItem: "ausente", armazemForcado: "ausente", custoMedioNoUnitario: "ausente", lote: "ausente", daOrigem: "ausente",
+    pesquisaDeProduto: "PESQUISA_DE_PRODUTO_DA_SAIDA"
   },
   {
-    onde: "Central de Compras · lançar", arquivo: "src/features/compras/central/criacao-itens.tsx", prova: "CX-1 (o 0 continua 0), LC-W1 (o layout esconde o Armazém)",
-    armazemPorItem: "ligada", armazemForcado: "regras?.exigeArmazem === true", custoMedioNoUnitario: "false", lote: "controleDeLote", daOrigem: "ausente"
+    onde: "Central de Compras · lançar", arquivo: "src/features/compras/central/criacao-itens.tsx", prova: "CX-1 (o 0 continua 0), LC-W1 (o layout esconde o Armazém), F3B-C1 (a entrada com tudo e o saldo)",
+    armazemPorItem: "ligada", armazemForcado: "regras?.exigeArmazem === true", custoMedioNoUnitario: "false", lote: "controleDeLote", daOrigem: "ausente",
+    pesquisaDeProduto: "PESQUISA_DE_PRODUTO_DA_ENTRADA"
   },
   {
     onde: "Central de Compras · receber pedido", arquivo: "src/features/compras/central/receber.tsx", prova: "CX-2 (o /convert leva 0), CC-9 (a coluna do saldo)",
-    armazemPorItem: "ligada", armazemForcado: "regras?.exigeArmazem === true", custoMedioNoUnitario: "false", lote: "controleDeLote", daOrigem: "daOrigem"
+    armazemPorItem: "ligada", armazemForcado: "regras?.exigeArmazem === true", custoMedioNoUnitario: "false", lote: "controleDeLote", daOrigem: "daOrigem",
+    pesquisaDeProduto: "ausente"
   }
 ];
 test("as 3 chamadas do motor estão na tabela", () => { expect(COMBINACOES_DO_MOTOR).toHaveLength(3); });
@@ -367,7 +378,7 @@ test.describe("zonasDaCentral", () => {
 
   test("adicionais pelo grupo; abas na ordem do layout; aba vazia some sem renumerar; campo fora do catálogo não é desenhado", () => {
     const z = zonasDaCentral(COMPRA, estrutura(
-      [campo("empresa_id"), campo("observacao", { grupo: "adicionais" }), campo("nao_existe"), campo("fornecedor_id", { grupo: "principais" })],
+      [campo("empresa_id"), campo("observacao", { grupo: "adicionais" }), campo("nao_existe"), campo("fornecedor_id", { grupo: "principal" })],
       [{ aba: "Vazia", campos: [campo("nao_existe")] }, { aba: "Nota", campos: [campo("numero_nota"), campo("serie_nota")] }]
     ));
     expect(z).toEqual({ principais: ["empresa_id", "fornecedor_id"], adicionais: ["observacao"], abas: [{ indice: 1, aba: "Nota", campos: ["numero_nota", "serie_nota"] }] });

@@ -46,8 +46,9 @@ function CorpoDaPrevia({ previa }: { previa: PreviaDaConfirmacaoCompra }) {
         ? <>
           <p className="mb-1 text-slate-600">Entrada no estoque{estoque.dataEntrada ? ` em ${dateBR(estoque.dataEntrada)}` : ""}, com o custo de cada item (frete, outras despesas e desconto rateados).</p>
           <SimpleTable rows={estoque.itens as unknown as Row[]} cols={[
-            { key: "produto", label: "Produto" },
+            // o Local de estoque antes do Produto (OPERACOES-01 F3b, decisão 280)
             { key: "armazem", label: "Local de estoque", render: (r) => t(r["armazem"]) },
+            { key: "produto", label: "Produto" },
             { key: "lote", label: "Lote", render: (r) => t(r["lote"]) },
             { key: "quantidade", label: "Quantidade", align: "right", render: (r) => num(r["quantidade"] as string, 4) },
             { key: "valorEntrada", label: "Valor de entrada", align: "right", render: (r) => brl(r["valorEntrada"] as string) },

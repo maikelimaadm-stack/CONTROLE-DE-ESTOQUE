@@ -38,6 +38,10 @@ import { FaixaAtrasoCliente, bloqueiaSalvar } from "@/features/sales/faixa-atras
 /* TOP-CONFIG-07 — reserva de estoque (só com `regras.reservaEstoque === true`, na família do pedido). */
 import { familiaOperacionalDeDocumentoVenda, type ColunaDoLayout } from "@agro/domain";
 import { CAMPOS_DO_ITEM_EXIGIDOS_PELA_RESERVA, ehCaminhoDeItemDaReserva } from "@/features/sales/regras-da-operacao";
+/* OPERACOES-01 F3b (decisão 280): o "Local de estoque" do cabeçalho, para as linhas novas (estado da tela). */
+import { CampoDoLocalPadrao, useLocalDoCabecalho } from "@/features/central/local-padrao";
+import type { LocalDeEstoque } from "@/features/central/contrato";
+import { PREFIXO_CENTRAL_VENDAS } from "@/features/sales/central-vendas-adaptador";
 
 const T: Record<string, string> = { budgets: "Novo Orçamento", orders: "Novo Pedido de Venda", sales: "Nova Venda" };
 /** VISUAL-UX-02 Fase B: as mensagens das pendências de natureza e centro (no campo e na lista "N pendências"). */
@@ -121,15 +125,17 @@ const hrefDoConfigurador = (l: LayoutQueVale) => (l.origem !== "sistema" && l.id
 
 /**
  * TOP-CONFIG-07 — A RESERVA VENCE O LAYOUT NOS ITENS (a mesma régua de "a exigência da TOP vence o layout" no
- * cabeçalho): a coluna que a reserva exige e o layout não desenha entra mesmo assim, logo depois do Produto (onde o
- * layout do sistema a põe) — sem ela o operador não teria onde escolher o armazém que o servidor cobra. Só o DESENHO:
- * a cobrança do layout continua lendo `layout`, e o "*" vem da reserva (`ItensDaCentral`), não daqui.
+ * cabeçalho): a coluna que a reserva exige e o layout não desenha entra mesmo assim, logo antes do Código/Produto (onde
+ * o layout do sistema a põe — OPERACOES-01 F3b, decisão 280: o local antes do produto; a mesma régua do `armazemForcado`
+ * do motor; sem nenhum dos dois, no início) — sem ela o operador não teria onde escolher o local que o servidor cobra.
+ * Só o DESENHO: a cobrança do layout continua lendo `layout`, e o "*" vem da reserva (`ItensDaCentral`), não daqui.
  */
 function comColunasDaReserva(itens: readonly ColunaDoLayout[]): readonly ColunaDoLayout[] {
   const faltam = CAMPOS_DO_ITEM_EXIGIDOS_PELA_RESERVA.filter((c) => !itens.some((x) => x.campo === c));
   if (!faltam.length) return itens;
   const lista = [...itens];
-  lista.splice(lista.findIndex((x) => x.campo === "product_id") + 1, 0, ...faltam.map((campo): ColunaDoLayout => ({ campo, obrigatorio: false })));
+  const ancoras = lista.map((x, i) => (x.campo === "codigo" || x.campo === "product_id" ? i : -1)).filter((i) => i >= 0);
+  lista.splice(ancoras.length ? Math.min(...ancoras) : 0, 0, ...faltam.map((campo): ColunaDoLayout => ({ campo, obrigatorio: false })));
   return lista;
 }
 
@@ -867,15 +873,24 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
   /* TOP-CONFIG-07: com a reserva, a coluna do armazém entra mesmo que o layout não a desenhe (`comColunasDaReserva`). */
   const layoutDosItens = React.useMemo(() => (layout ? { colunas: reservaAtiva ? comColunasDaReserva(layout.itens) : layout.itens } : null), [layout, reservaAtiva]);
   /**
-   * ARMAZÉM PADRÃO (VENDAS-A3-1b): o padrão da coluna Armazém vale SÓ para a empresa do documento de AGORA
-   * (`empresaId` da resposta === `h.empresa_id`); de outra empresa, ou sem empresa na resposta, nenhum. Só a linha NOVA o
-   * recebe — trocar a empresa não mexe nas linhas que já existem.
+   * O PADRÃO DO LOCAL (VENDAS-A3-1b): o padrão de cadastro da coluna do local vale SÓ para a empresa do documento de
+   * AGORA (`empresaId` da resposta === `h.empresa_id`); de outra empresa, ou sem empresa na resposta, nenhum.
    */
   const padraoArmazem = layout && layout.itens.some((c) => c.campo === "warehouse_id") ? padroes.validos.get(chavePadraoDeCadastro("itens", "warehouse_id")) : undefined;
-  const armazemPadrao = React.useMemo(
-    () => (padraoArmazem && padraoArmazem.empresaId && padraoArmazem.empresaId === h.empresa_id ? { id: padraoArmazem.id, rotulo: padraoArmazem.rotulo } : null),
+  const padraoDoLocal = React.useMemo(
+    (): LocalDeEstoque | null => (padraoArmazem && padraoArmazem.empresaId && padraoArmazem.empresaId === h.empresa_id ? { id: padraoArmazem.id, rotulo: padraoArmazem.rotulo } : null),
     [padraoArmazem, h.empresa_id]
   );
+  /**
+   * O "LOCAL DE ESTOQUE" DO CABEÇALHO (OPERACOES-01 F3b, decisão 280): começa no padrão do local e o usuário o troca nos
+   * Dados principais; cada linha NOVA nasce com ele, e a linha troca o seu na própria célula. É estado da TELA: fora de
+   * `h`, então fora do corpo do POST, do `sujo`, da cópia do Duplicar e das pendências do Salvar (o W4 confere o corpo
+   * exato). Trocar a empresa volta ao padrão da empresa nova; o Descartar remonta o formulário e volta ao padrão.
+   * Só existe quando a coluna do local está na grade (sem layout, o motor a desenha; com layout, ele a desenha ou a
+   * reserva a força): com o local escondido pelo layout, a linha nasce sem local, como antes.
+   */
+  const local = useLocalDoCabecalho(padraoDoLocal, h.empresa_id);
+  const localNaGrade = !layoutDosItens || layoutDosItens.colunas.some((c) => c.campo === "warehouse_id");
 
   /* ── VISUAL-UX-02 W1 — a barra da criação ── */
   const [perguntaDescartar, setPerguntaDescartar] = React.useState(false);
@@ -922,6 +937,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
         <ColunaDeCampos>
           {principais.slice(0, posTop).map(render)}
           {contextoOperacional}
+          {localNaGrade && <CampoDoLocalPadrao prefixoTestid={PREFIXO_CENTRAL_VENDAS} empresaId={h.empresa_id} valor={local.local} onChange={local.escolher} />}
           {principais.slice(posTop, posResponsavel).map(render)}
           {responsavel}
           {principais.slice(posResponsavel).map(render)}
@@ -930,7 +946,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
           {adicionais.map(render)}
         </DadosAdicionais>
       </>}
-      itens={<ItensDaCentral items={items} onChange={setItems} layout={layoutDosItens} erros={layout || regras ? erros : undefined} armazemPadrao={armazemPadrao} reservaEstoque={reservaDosItens} />}
+      itens={<ItensDaCentral items={items} onChange={setItems} layout={layoutDosItens} erros={layout || regras ? erros : undefined} armazemPadrao={localNaGrade ? local.local : null} reservaEstoque={reservaDosItens} />}
       abas={abas}
     />
 

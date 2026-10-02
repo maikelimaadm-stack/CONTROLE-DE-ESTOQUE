@@ -32,8 +32,10 @@ describe("LD-D1 layout do sistema reproduz a Central de hoje", () => {
       ["Fiscal", ["is_deductible"]],
       ["Observações", ["note"]]
     ]);
+    // OPERACOES-01 F3b (decisão 280): o Local de estoque vem antes do produto, e o Código fica junto do Produto. A
+    // lista continua EXATA (só a posição do Local mudou); o total segue no índice 8 e o anexado ao fim, no 9.
     expect(l.itens.map((c) => c.campo)).toEqual([
-      "codigo", "product_id", "warehouse_id", "estoque", "quantity", "unit_price", "discount", "discount_percent", "total"
+      "warehouse_id", "codigo", "product_id", "estoque", "quantity", "unit_price", "discount", "discount_percent", "total"
     ]);
     // Decisão 261 (VENDAS-A3-1c): o layout do sistema passa a DECLARAR o grupo — só o Proprietário, em "Dados
     // adicionais", onde a Central já o mostrava. Nenhum outro campo ganha grupo (ausente = principal).
@@ -132,7 +134,9 @@ describe("LD-D4 camposObrigatoriosFaltando", () => {
     expect(camposObrigatoriosFaltando(F, l, cheio(), cap)).toEqual([{ caminho: "transporter_id", rotulo: "Transp." }]);
   });
   it("item obrigatório vazio na linha 1", () => {
-    const l = sis(); at(l.itens, 2).obrigatorio = true;
+    // decisão 280 (F3b): o Local de estoque é a PRIMEIRA coluna do layout do sistema (era a terceira)
+    const l = sis(); expect(at(l.itens, 0).campo, "premissa: a coluna 0 é o Local de estoque").toBe("warehouse_id");
+    at(l.itens, 0).obrigatorio = true;
     const d = cheio(); at(d.items, 0).warehouse_id = "w";
     expect(camposObrigatoriosFaltando(F, l, d, cap)).toEqual([{ caminho: "items[1].warehouse_id", rotulo: "Local de estoque" }]);
   });

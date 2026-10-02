@@ -8,9 +8,11 @@ import { RefSelect } from "@/components/ui/ref-select";
 import { MensagemTop } from "@/features/sales/tipo-operacao-select";
 import { CampoDaCentral, ColunaDeCampos, DadosAdicionais, DataDaCentral, type IconeDoCampo } from "@/features/central/campo";
 import { PlanoDaCentral } from "@/features/central/painel";
+import { CampoDoLocalPadrao } from "@/features/central/local-padrao";
 import type { IdentidadeDoDocumento } from "@/features/central/contrato";
 import estilosCv from "@/features/central/moldura.module.css";
 import { hrefDoConfigurador, textoDoLayoutQueVale } from "../layout-da-central";
+import { PREFIXO_CENTRAL_COMPRAS } from "./adaptador";
 import { opcoesDeNaturezaDeDespesa, type ChaveDoCabecalho, type EstadoDaCriacao } from "./estado";
 
 /**
@@ -21,6 +23,10 @@ import { opcoesDeNaturezaDeDespesa, type ChaveDoCabecalho, type EstadoDaCriacao 
  * (COMPRAS-03: principais, adicionais e abas do rodapé), os padrões, a linha do layout e os avisos —, agora no
  * campo do desenho (`CampoDaCentral`). Nada aqui decide valor, obrigatoriedade, erro ou corpo: tudo vem de
  * `useEstadoDaCriacao`. Os testids `compras-*` de hoje continuam no elemento equivalente.
+ *
+ * OPERACOES-01 F3b (decisão 280): na criação, com a coluna do local na grade, o "Local de estoque" das linhas novas
+ * (`CampoDoLocalPadrao`, `central-compras-local-padrao`) logo depois da Empresa, onde ela estiver — estado da tela,
+ * fora do corpo; no receber não aparece.
  */
 
 /** "Novo pedido de compra" / "Nova compra" — o nome do documento ainda sem número; o ponto acende com alteração. */
@@ -151,24 +157,33 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   </div>;
 
   const { principais, adicionais, abas } = e.zonas;
-  const quantidade = adicionais.length + abas.reduce((n, a) => n + a.campos.length, 0);
+  /* O "Local de estoque" do cabeçalho vai logo DEPOIS da Empresa (o local é da empresa do documento), na zona onde a
+     Empresa estiver desenhada — os principais, os adicionais ou a aba do painel que a recebeu (o painel desenha cada
+     campo por este mesmo componente). A Empresa é obrigatória do sistema (todo layout a tem): o campo aparece uma vez
+     só, nunca ao lado de outro campo. Não é campo do layout: sem `data-campo`, sem "*", fora das pendências. */
+  const comOLocal = (campos: readonly string[]) => campos.flatMap((c) => (c === "empresa_id" && e.localNaGrade
+    ? [render(c), <CampoDoLocalPadrao key="local-padrao" prefixoTestid={PREFIXO_CENTRAL_COMPRAS} empresaId={h.empresa_id} valor={e.localDoCabecalho} onChange={e.escolherLocal} />]
+    : [render(c)]));
+  const recolhidos = [...adicionais, ...abas.flatMap((a) => a.campos)];
+  // o Local de estoque conta como campo de Dados adicionais quando a Empresa mora lá
+  const quantidade = recolhidos.length + (e.localNaGrade && recolhidos.includes("empresa_id") ? 1 : 0);
   /* Campo com erro numa zona recolhida não ficaria à vista: com erro lá dentro, Dados adicionais abre. */
-  const erroEscondido = [...adicionais, ...abas.flatMap((a) => a.campos)].some((c) => Boolean(e.erro(c)));
+  const erroEscondido = recolhidos.some((c) => Boolean(e.erro(c)));
   const aberto = maisDados || erroEscondido;
 
   return <>
     {linhaDoLayout}
     <ColunaDeCampos>
       {top}
-      {principais.map(render)}
+      {comOLocal(principais)}
     </ColunaDeCampos>
     <DadosAdicionais quantidade={quantidade} aberto={aberto} onAlternar={() => setMaisDados(!aberto)}>
       {adicionais.length > 0 && <div data-testid="compras-zona-adicionais">
-        <ColunaDeCampos>{adicionais.map(render)}</ColunaDeCampos>
+        <ColunaDeCampos>{comOLocal(adicionais)}</ColunaDeCampos>
       </div>}
       {abas.map((a) => <div key={a.indice} data-testid={`compras-zona-aba-${a.indice}`} className="space-y-1">
         <p className="text-[11px] font-semibold uppercase text-slate-500">{a.aba}</p>
-        <ColunaDeCampos>{a.campos.map(render)}</ColunaDeCampos>
+        <ColunaDeCampos>{comOLocal(a.campos)}</ColunaDeCampos>
       </div>)}
     </DadosAdicionais>
   </>;

@@ -75,7 +75,7 @@ const C = (chave: string, rotulo: string, tipo: TipoDoCampoLayout, extra: Partia
 const R = (aba: string, chave: string, rotulo: string, tipo: TipoDoCampoLayout, extra: Partial<CampoDoCatalogo> = {}): CampoDoCatalogo => ({ chave, rotulo, parte: "rodape", aba, tipo, ...extra });
 const I = (chave: string, rotulo: string, tipo: TipoDoCampoLayout, extra: Partial<CampoDoCatalogo> = {}): CampoDoCatalogo => ({ chave, rotulo, parte: "itens", tipo, ...extra });
 
-/** O catálogo das vendas (orçamento, pedido, venda): exatamente os campos da Central de hoje, na ordem de hoje. */
+/** O catálogo das vendas (orçamento, pedido, venda): exatamente os campos da Central de hoje; nos itens, o Local de estoque antes do produto (decisão 280). */
 export const CATALOGO_VENDAS: readonly CampoDoCatalogo[] = [
   C("client_id", "Cliente", "referencia", { sistema: "sempre", referencia: { recurso: "people", filtro: { is_client: "true" } } }),
   C("empresa_id", "Empresa", "empresa", { sistema: "sempre" }),
@@ -96,9 +96,10 @@ export const CATALOGO_VENDAS: readonly CampoDoCatalogo[] = [
   R("Frete e transporte", "freight_icms", "ICMS frete", "numero", { sempreTemValor: true }),
   R("Fiscal", "is_deductible", "Dedutível", "booleano", { sempreTemValor: true }),
   R("Observações", "note", "Observação", "texto_longo"),
+  // OPERACOES-01 F3b (decisão 280): o Local de estoque vem antes do produto; o Código fica junto do Produto
+  I("warehouse_id", "Local de estoque", "referencia", { referencia: { recurso: "warehouses" } }),
   I("codigo", "Código", "texto", { somenteLeitura: true }),
   I("product_id", "Produto", "referencia", { sistema: "sempre" }),
-  I("warehouse_id", "Local de estoque", "referencia", { referencia: { recurso: "warehouses" } }),
   I("estoque", "Estoque", "numero", { somenteLeitura: true }),
   I("quantity", "Quantidade", "numero", { sistema: "sempre" }),
   I("unit_price", "Valor unitário", "numero", { sistema: "sempre" }),
@@ -138,7 +139,7 @@ function catalogoDeCompras(daCompra: boolean): readonly CampoDoCatalogo[] {
     C("desconto", "Desconto", "numero", { sempreTemValor: true }),
     C("plano_parcelas", "Parcelas", "plano", { sempreTemValor: true }),
     C("observacao", "Observação", "texto_longo"),
-    // a ordem das colunas é a do ItemsEditor de hoje (os E2E de compras localizam armazém e produto pela posição)
+    // o Local de estoque antes do Produto (decisão 280); a ordem é a do ItemsEditor de hoje
     I("armazem_id", "Local de estoque", "referencia", { referencia: { recurso: "warehouses" } }),
     I("produto_id", "Produto", "referencia", { sistema: "sempre" }),
     I("quantidade", "Quantidade", "numero", { sistema: "sempre" }),
