@@ -537,10 +537,11 @@ Na Central de Compras:
 - a Origem "Recebido de pedido" lê `origem_item_id`, a coluna da 0037 que a leitura devolve; `item_origem_id` é só a
   chave do corpo do `/convert`;
 - "Confirmar compra" na criação: o diálogo abre depois de a compra salva carregar, uma vez, e só se ela ainda pode ser
-  confirmada (situação "aberto" e `compras.edit`); compra que chega confirmada não abre o diálogo nem pede a prévia;
+  confirmada (situação "aberto" e `compras.edit`); compra que chega confirmada não abre o diálogo nem pede a prévia —
+  é o caso da TOP de compra no formato 4 com Confirmação Automática (decisão 277): a consulta abre em Confirmado;
 - Duplicar: a TOP do original que não abre o formulário dá o lançador e descarta a cópia em memória, e o formulário que
   monta encerra a entrega sempre — como na venda.
 
 Declarado na decisão 278, sem conserto aqui: a `Idempotency-Key` trocada a cada erro, inclusive na queda de rede (fatia
-própria), e a tela das regras gerais da #88 — o resultado da confirmação automática e a compra sem itens (fatia F2 depois
-da #88).
+própria), e a tela das regras gerais da #88 (decisão 277, já na main) — o aviso do resultado da confirmação automática ao
+salvar e a compra sem itens (fatia F2 própria).

@@ -1643,16 +1643,25 @@ de um lote só, a coluna `average_cost`, a soma sem o recomeço); a mesma recons
 **Version skew:** web nova contra a API da base — as mesmas portas e os mesmos corpos (o unitário só deixa de ser
 preenchido; nenhuma chave nova em corpo, URL ou navegador); web anterior contra a API nova — nada muda na API. No CI, a
 prova reversa do detector busca três commits da main por SHA (o checkout do job é raso): sem rede, ela fica vermelha com
-a mensagem, nunca verde vazia.
+a mensagem, nunca verde vazia — e, num spec próprio fora do modo serial (`visual-ux-04b-skew-web-anterior.spec.ts`),
+reprova só ela, sem levar os casos do modo serial.
 
 **Reversão:** redeploy do web anterior. Nada a desfazer em banco ou configuração. Declarado: reverter religa o M1 (o
 custo médio volta a ser escrito no unitário da compra) e as 2 casas da consulta — reverter é decisão do Maike.
 
-**Merge ANTES da #88 (TOP-CONFIG-08, decisão 277).** Motivo: o conserto dos detectores do
-`apps/web/e2e/skew-web-anterior.spec.ts` (M2) mora nesta fatia por decisão do Maike — as duas PRs não podem mudar o
-mesmo arquivo (PRE-PR-02) —, e o job de Version skew da #88 fica vermelho no sentido 2 até esta entrar e a #88 trazer a
-main. Esta fatia não tem migration, API nem arquivo da #88; na `docs/DECISIONS.md`, quem entrar depois mantém as duas
-linhas, a 277 antes da 278.
+**Ordem: sem predecessora aberta — a #88 já está na main.** A ordem planejada era esta ANTES da #88 (TOP-CONFIG-08,
+decisão 277); a #88 entrou primeiro (`57b30e2`, 02/10/2026 02:45 UTC), e o job de Version skew da main ficou vermelho
+no sentido 2 — web da base `1303de3` × API do `57b30e2`: o A1-K2 erra no detector da pílula de pendências (o web da
+base está no motor da Central, e o caso esperava o Salvar desabilitado), e os 14 casos seguintes do modo serial não
+rodam. É o defeito que o M2 desta fatia conserta. Com a base na `57b30e2`, o mesmo job tinha um segundo vermelho, que a
+#88 trouxe e não podia consertar: o TOP-CONFIG-04A esperava o formato 3 da TOP renomeada pelo web da base, que agora
+grava o 4 (esperado 3, recebido 4) — esta fatia o conserta também. Esta branch trouxe a main (merge, sem rebase); no CI desta PR o skew
+roda contra a base da PR (`pull_request.base.sha`). A 277 e a seção TOP-CONFIG-08 desta DEPLOYMENT (o "Merge depois
+da VISUAL-UX-04b", o "Declarado" e o passo 3 do roteiro) são da #88 e ficam como estão: descrevem a ordem planejada.
+Com esta na main vale o ramo "com a VISUAL-UX-04b na main" delas: o "Confirmar compra" na criação com TOP de compra
+Automática deixa de abrir o diálogo sobre a compra já confirmada — a consulta abre em Confirmado, sem prévia e sem
+segundo `/confirm` (CX-6) —, e deixa de ser preciso usar "Salvar" no lugar de "Confirmar compra". Na
+`docs/DECISIONS.md`, a 277 fica antes da 278.
 
 **Roteiro do Maike (produção; produção é operacional — decisões 240 e 247, nada é apagado):**
 1. Depois do deploy (uma aba aberta com o web anterior continua com o M1 até recarregar): a premissa e a consulta
@@ -1666,10 +1675,12 @@ linhas, a 277 antes da 278.
    a não ser que a TOP exija o armazém — aí a coluna aparece mesmo com o layout escondendo.
 5. Origem: numa compra recebida de pedido, "Origem" é o link "Pedido de compra <código>"; numa compra direta,
    "Lançamento direto" (como antes).
-6. Confirmar: Compras › + Novo › Compra › preencher › "Confirmar compra": a compra salva abre com o diálogo e a prévia;
-   fechar deixa Aberta (a compra de teste fica Aberta e, se não servir, se cancela — nada se apaga). Abrir a consulta de
-   uma compra já confirmada: nenhum diálogo. A prova de que a compra que CHEGA confirmada não abre o diálogo depende da
-   confirmação automática da #88; até lá, fica nos E2E.
+6. Confirmar: Compras › + Novo › Compra › uma TOP de Confirmação Manual › preencher › "Confirmar compra": a compra
+   salva abre com o diálogo e a prévia; fechar deixa Aberta (a compra de teste fica Aberta e, se não servir, se cancela — nada se apaga). Abrir a consulta de
+   uma compra já confirmada: nenhum diálogo. A compra que CHEGA confirmada (TOP de compra no formato 4 com Confirmação
+   Automática, da #88) abre a consulta em Confirmado, sem o diálogo e sem a prévia — provado no E2E pelo CX-6. Conferir
+   em produção é opcional: só com uma TOP assim já criada (o passo 3 do roteiro da TOP-CONFIG-08), e a compra lançada
+   fica CONFIRMADA, com estoque e conta a pagar — dado real; se não servir, cancelar com estorno (nada se apaga).
 7. Duplicar: na consulta de uma compra, Duplicar abre um rascunho da mesma TOP com "Cópia aberta como rascunho";
    Descartar.
 8. A venda não muda: Vendas › Novo › Venda, um produto com saldo: o unitário vazio é preenchido pelo custo médio, como

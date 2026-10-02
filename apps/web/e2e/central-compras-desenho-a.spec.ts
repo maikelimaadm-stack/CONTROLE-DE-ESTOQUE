@@ -588,24 +588,22 @@ test("CC-4b — Duplicar: lote e validade NÃO vêm; compra com origem e documen
   expect((await page.getByTestId(`${WORKSPACE}-duplicar`).getAttribute("data-dica")) ?? "", "a dica diz o motivo").toMatch(/Tipo de Operação/);
   await page.unroute(`**/api/compras/compras/${semTop.id}`);
 
-  // TOP QUE FICOU INATIVA: a mensagem de hoje do lançamento, e nada abre
+  // TOP QUE FICOU INATIVA: a mensagem de hoje do lançamento, e nada abre. Que a cópia descartada NÃO reaparece é o CX-7
+  // (central-compras-correcoes): aqui não dá para prová-lo — voltar à criação por `page.goto` recarrega a página (a
+  // memória da cópia some de qualquer jeito), e a lista de TOPs sem a inativa fica em cache, então a MESMA criação não
+  // abre pelo histórico. Uma asserção que passaria com o defeito não fica aqui.
   const topInativa = await cadastrarTop(page);
   const produto = await produtoNovo(page, b);
   const compra = await compraPelaApi(page, b, topInativa.id, produto.id, { observacao: "não pode reaparecer" });
   const atual = await api<{ revisao: number }>(page, "GET", `/api/admin/tipos-operacao/${topInativa.id}`);
   await api(page, "PUT", `/api/admin/tipos-operacao/${topInativa.id}`, { ativo: false, revisao: atual.revisao });
-  const outra = await cadastrarTop(page);
   await abrirConsulta(page, compra);
   const escritas = registrarEscritas(page);
   await page.getByTestId(`${WORKSPACE}-duplicar`).click();
+  await expect(page).toHaveURL(new RegExp(`/compras/compras/new\\?tipo_operacao_id=${topInativa.id}$`));
   await expect(page.getByTestId("top-indisponivel"), "a mensagem de hoje").toBeVisible();
   await expect(page.getByTestId(WORKSPACE), "nada aberto com a TOP inativa").toHaveCount(0);
-  // a cópia não reaparece: um lançamento com outra TOP nasce limpo
-  await abrirCriacao(page, outra.id);
-  await expect(page.getByTestId(`${WORKSPACE}-alterado`), "lançamento limpo").toHaveCount(0);
-  await abrirAba(page, "Observações");
-  await expect(page.getByTestId("compras-observacao")).toHaveValue("");
-  expect(escritas).toEqual([]);
+  expect(escritas, "duplicar para a TOP inativa não escreveu nada").toEqual([]);
 });
 
 /**

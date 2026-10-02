@@ -1,7 +1,8 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Request as Requisicao } from "@playwright/test";
 import { login, adicionarItemNaCentral, uniq, pickRef, preencherClassificacaoFinanceira } from "./helpers";
 import { baseTemFatiaDeCadastro, cpfValido } from "./skew-fichas-cadastro";
 import { criarEmpresaEConferirContador } from "./skew-contador-empresa";
+import { editorDaBaseGravaFormato4, pendenciaNoClique } from "./skew-fonte-da-base";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
@@ -37,17 +38,40 @@ const sessao = (page: Page) => page.evaluate(() => JSON.parse(localStorage.getIt
  * Vigia do navegador. Falha de CORS não vira exceção de JavaScript nem resposta HTTP: o Chromium aborta a
  * requisição ANTES de ela existir para a aplicação (`net::ERR_FAILED`) e escreve no console. Sem este
  * coletor, a tela renderiza vazia e o teste passa — que é exatamente o modo de falha desta janela.
+ *
+ * UMA exceção, estreita: a LEITURA (`GET` em `/api/`) que estava EM VOO quando o quadro principal trocou de documento
+ * chega aqui como `net::ERR_ABORTED` — quem desistiu dela foi o navegador, porque a página saiu (o `page.goto` do
+ * próprio caso enquanto o motor da Central ainda relê a consulta e as TOPs depois de salvar). "Em voo na troca" é
+ * medido na ordem dos eventos: há um pedido de documento do quadro principal DEPOIS do início da leitura, ou um pedido
+ * anterior cujo documento ainda não tinha carregado quando ela começou (`domcontentloaded`, que navegação na mesma
+ * página não dispara). O web não cancela leitura por conta própria (`apps/web/src` não tem `AbortController` nem
+ * `signal`): cancelamento SEM troca de documento — a página desistindo de uma leitura —, qualquer outro erro (CORS,
+ * `net::ERR_FAILED`) e QUALQUER escrita abortada continuam sendo falha.
  */
 function vigiar(page: Page) {
   const falhas: string[] = []; const respostas: { url: string; status: number }[] = [];
+  // Um relógio só, na ordem em que o navegador entrega os eventos.
+  let passo = 0;
+  const inicioDaLeitura = new Map<Requisicao, number>();
+  const documentosPedidos: number[] = []; const documentosCarregados: number[] = [];
+  page.on("request", (r) => {
+    passo += 1;
+    if (r.isNavigationRequest() && r.frame() === page.mainFrame()) documentosPedidos.push(passo);
+    else if (r.method() === "GET" && r.url().includes(API)) inicioDaLeitura.set(r, passo);
+  });
+  page.on("domcontentloaded", () => { passo += 1; documentosCarregados.push(passo); });
+  const emVooNaTrocaDeDocumento = (r: Requisicao) => {
+    const inicio = inicioDaLeitura.get(r);
+    return inicio !== undefined
+      && documentosPedidos.some((pedido) => !documentosCarregados.some((carregado) => pedido < carregado && carregado < inicio));
+  };
   page.on("requestfailed", (r) => {
     if (!r.url().includes(API)) return;
     const erro = r.failure()?.errorText ?? "?";
-    // Uma LEITURA que a própria página cancela ao trocar de tela (navegação ou desmontagem com AbortSignal) chega aqui
-    // como `net::ERR_ABORTED` — a requisição existiu e a página desistiu dela; não é bloqueio. O motor da Central
-    // (VISUAL-UX-04) relê a consulta e as TOPs depois de salvar e as cancela ao sair. Bloqueio (CORS, `net::ERR_FAILED`),
-    // qualquer outro erro e QUALQUER escrita abortada continuam sendo falha.
-    if (erro === "net::ERR_ABORTED" && r.method() === "GET") { console.log(`[skew] leitura cancelada pela página (não é bloqueio): ${r.url()}`); return; }
+    if (erro === "net::ERR_ABORTED" && r.method() === "GET" && new URL(r.url()).pathname.startsWith("/api/") && emVooNaTrocaDeDocumento(r)) {
+      console.log(`[skew] leitura em voo cancelada pela troca de documento (não é bloqueio): ${r.url()}`);
+      return;
+    }
     falhas.push(`${r.method()} ${r.url()} → ${erro}`);
   });
   page.on("console", (m) => { if (m.type() === "error" && /CORS|preflight|Access-Control/i.test(m.text())) falhas.push(`console: ${m.text()}`); });
@@ -275,101 +299,14 @@ test("TOP-CONFIG-04A · o web da base renomeia uma TOP do formato 2 e a configur
   // O SERVIDOR é o árbitro: nome novo, versão nova, e a configuração do formato 2 INTEIRA preservada.
   const d = await (await request.get(`${API}/api/admin/tipos-operacao/${id}`, { headers: auth })).json() as
     { nome: string; versao: number; configuracaoSchema: number; configuracao: { valor: typeof configuracao } };
-  // Formato gravado depende do MUNDO da base: o web da base com a TOP-CONFIG-05 (declara as regras da operação)
-  // grava o formato 3 quando o servidor declara `restricoes` — o mesmo que W2/W3 do editor esperam. Sem ela, o 2.
-  const formatoEsperado = process.env.SKEW_BASE_TEM_REGRAS_DA_OPERACAO === "1" ? 3 : 2;
+  // Formato gravado depende do MUNDO da base: o web da base com a TOP-CONFIG-08 grava o formato 4 (o servidor deste
+  // HEAD declara o bloco `regrasGerais`); com a TOP-CONFIG-05 (declara as regras da operação), o 3 quando o servidor
+  // declara `restricoes` — o mesmo que W2/W3 do editor esperam. Sem nenhuma das duas, o 2.
+  const formatoEsperado = editorDaBaseGravaFormato4() ? 4 : process.env.SKEW_BASE_TEM_REGRAS_DA_OPERACAO === "1" ? 3 : 2;
   expect([d.nome, d.versao, d.configuracaoSchema]).toEqual([nome, 2, formatoEsperado]);
   expect(d.configuracao.valor.execucao, "o bloco de execução não foi apagado").toEqual({ estoque: "legado", financeiro: "legado" });
   expect(d.configuracao.valor.estoque.atualizacao, "nem a seção que ele não sabia ler").toBe("saida");
   v.semBloqueio();
-});
-
-/**
- * A pílula de pendências tem duas grafias no fonte do web: a literal da VISUAL-UX-02 (na Central de Vendas) e a do
- * motor da Central desde a VISUAL-UX-04 (`PendenciasDoDocumento` em `features/central/barra.tsx`), que monta o testid
- * com o prefixo da Central (`central-vendas` na de Vendas). Qualquer uma das duas é o mundo em que o Salvar não se
- * desabilita por pendência.
- */
-const PILULA_LITERAL = "data-testid=\"central-vendas-pendencias\"";
-const PILULA_DO_MOTOR = "data-testid={`${prefixoTestid}-pendencias`}";
-const GRAFIAS_DA_PENDENCIA: readonly string[] = [PILULA_LITERAL, PILULA_DO_MOTOR];
-
-/** A base desta execução — gravada por `scripts/api-anterior.mjs` ao montar a árvore, provada pelo caso IDENTIDADE. */
-function shaDaBase(): string {
-  const sha = fs.readFileSync(path.join(path.resolve(__dirname, "../../.."), ".api-anterior.base"), "utf8").trim();
-  expect(sha, "`.api-anterior.base` é gravado por scripts/api-anterior.mjs ao montar a árvore").toMatch(/^[0-9a-f]{40}$/);
-  return sha;
-}
-
-/**
- * O commit tem de estar no clone ANTES de o detector ler o fonte dele. O checkout do job `skew` do CI é RASO
- * (`actions/checkout` sem `fetch-depth`: só o commit do checkout; a base entra por `scripts/api-anterior.mjs`, com
- * `--depth=1`), e um `git grep` contra um SHA ausente sai com erro — que um detector descuidado leria como "não tem a
- * grafia", escolhendo um mundo em silêncio. Ausente: busca SÓ aquele commit, como o `api-anterior.mjs` faz com a base
- * (`--depth=1` apenas em clone raso, para não encurtar um clone completo). Ainda ausente: REPROVA com o motivo.
- */
-function garantirCommit(sha: string): void {
-  const raiz = path.resolve(__dirname, "../../..");
-  const presente = () => {
-    try { execFileSync("git", ["cat-file", "-e", `${sha}^{commit}`], { cwd: raiz, stdio: "pipe" }); return true; } catch { return false; }
-  };
-  if (presente()) return;
-  const raso = execFileSync("git", ["rev-parse", "--is-shallow-repository"], { cwd: raiz, encoding: "utf8" }).trim() === "true";
-  try { execFileSync("git", ["fetch", "--quiet", ...(raso ? ["--depth=1"] : []), "origin", sha], { cwd: raiz, stdio: "pipe" }); } catch { /* o motivo vai na falha abaixo */ }
-  if (!presente()) {
-    throw new Error(`o commit ${sha} não está neste clone${raso ? " (raso)" : ""} e \`git fetch origin ${sha}\` não o trouxe: `
-      + "o detector não decide mundo sobre um fonte que não consegue ler.");
-  }
-}
-
-/** Quais grafias da pílula o fonte do web contém no commit `sha`. Erro de leitura REPROVA — nunca vira "nenhuma". */
-function grafiasDaPendencia(sha: string): string[] {
-  const raiz = path.resolve(__dirname, "../../..");
-  garantirCommit(sha);
-  return GRAFIAS_DA_PENDENCIA.filter((grafia) => {
-    try {
-      execFileSync("git", ["grep", "-qF", grafia, sha, "--", "apps/web/src"], { cwd: raiz, stdio: "pipe" });
-      return true;
-    } catch (erro) {
-      if ((erro as { status?: number | null }).status === 1) return false;   // 1 = nenhuma ocorrência; o resto é erro
-      throw erro;
-    }
-  });
-}
-
-/**
- * O web da base mostra pendência no CLIQUE do Salvar (VISUAL-UX-02, decisão 270) em vez de desabilitá-lo? Lido do
- * fonte do commit — por padrão a base desta execução; a prova reversa abaixo passa commits fixos.
- */
-function pendenciaNoClique(sha: string = shaDaBase()): boolean {
-  return grafiasDaPendencia(sha).length > 0;
-}
-
-/**
- * Três commits FIXOS da main, um por mundo da pílula. Nenhum é a base desta execução: ela muda a cada PR e só
- * exercitaria o ramo dela.
- */
-const COMMITS_DA_PILULA = {
-  /** #77 — o pai do commit que introduziu o literal (`git log -S'data-testid="central-vendas-pendencias"' -- apps/web/src`, o mais antigo, `~1`). */
-  semPilula: "93497b1f5e0b6fc4c9a036ecbe436d8d45395269",
-  /** #79 — a VISUAL-UX-02 na main: só o literal. */
-  literal: "4fbcdf4fd2c8cc63087bc493f4f6f218372a21de",
-  /** #87 — a VISUAL-UX-04 na main: só o motor. */
-  motor: "1303de3384c726859a5560d04d5d6ae5241cd38e"
-} as const;
-
-/**
- * PROVA REVERSA DO DETECTOR, SEM NAVEGADOR. `pendenciaNoClique` decide o ramo do A1-K2 (Salvar desabilitado × pendência
- * no clique) e já errou em silêncio uma vez: só conhecia o literal da VISUAL-UX-02 e, com a base no motor da Central,
- * escolheu o mundo do Salvar desabilitado — o A1-K2 ficou vermelho e levou os casos seguintes do modo serial. Aqui cada
- * grafia é provada SOZINHA: o commit do literal não tem a do motor e vice-versa, então tirar qualquer uma das duas do
- * detector reprova este caso.
- */
-test("VISUAL-UX-04b · prova reversa do detector da pendência no clique: sem a pílula → false; literal da VISUAL-UX-02 → true; motor da Central → true", () => {
-  expect(grafiasDaPendencia(COMMITS_DA_PILULA.semPilula), "#77: anterior à pílula — nenhuma das duas grafias").toStrictEqual([]);
-  expect(grafiasDaPendencia(COMMITS_DA_PILULA.literal), "#79 (VISUAL-UX-02): só o literal").toStrictEqual([PILULA_LITERAL]);
-  expect(grafiasDaPendencia(COMMITS_DA_PILULA.motor), "#87 (VISUAL-UX-04): só o motor").toStrictEqual([PILULA_DO_MOTOR]);
-  expect([COMMITS_DA_PILULA.semPilula, COMMITS_DA_PILULA.literal, COMMITS_DA_PILULA.motor].map((sha) => pendenciaNoClique(sha))).toStrictEqual([false, true, true]);
 });
 
 /**

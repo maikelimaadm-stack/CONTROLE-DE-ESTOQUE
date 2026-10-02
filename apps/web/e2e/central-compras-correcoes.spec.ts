@@ -1,8 +1,9 @@
 import { test, expect, type Locator, type Page, type Response } from "@playwright/test";
 import { login, api, uniq, empresaAtiva, abrirLancamentoDeVendas, escolherTopEContinuar } from "./helpers";
+import { cfg4, criarTopViaApi, detalheTopNoServidor, excluirTopE2E } from "./top-config-08-comum";
 
 /**
- * CENTRAL DE COMPRAS — AS CORREÇÕES DA VISUAL-UX-04b (regressões da VISUAL-UX-04, já em produção) · CX-1 a CX-5.
+ * CENTRAL DE COMPRAS — AS CORREÇÕES DA VISUAL-UX-04b (regressões da VISUAL-UX-04, já em produção) · CX-1 a CX-7.
  *
  * ┌─ O QUE ESTE ARQUIVO PROVA ─────────────────────────────────────────────────────────────────────┐
  * │ CX-1 lançamento da COMPRA: o valor unitário "0" continua "0" depois de escolher produto e       │
@@ -11,6 +12,12 @@ import { login, api, uniq, empresaAtiva, abrirLancamentoDeVendas, escolherTopECo
  * │ CX-3 a VENDA não muda: o unitário vazio continua preenchido pelo custo médio do armazém.         │
  * │ CX-4 saldo de 4 casas: 0,0040 aparece "0,0040" na consulta (e Receber/Encerrar coerentes).       │
  * │ CX-5 "Recebido de pedido" quando o item tem `origem_item_id` (a chave que a leitura devolve).    │
+ * │ CX-6 "Confirmar compra" na criação com TOP formato 4 "Confirmação: Automática": o POST confirma, │
+ * │      a consulta abre Confirmado e o diálogo NÃO abre (sem prévia, sem segundo /confirm); com a   │
+ * │      TOP manual, o MESMO botão abre o diálogo.                                                   │
+ * │ CX-7 Duplicar para uma TOP que a criação não abre: a cópia é DESCARTADA e não reaparece quando o │
+ * │      lançamento da MESMA TOP abre de novo (pelo histórico, sem recarregar); com a TOP            │
+ * │      disponível, o MESMO Duplicar traz a cópia.                                                  │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * Cada caso cria os PRÓPRIOS dados pela API (fornecedor, armazém, produto, TOPs, pedido, entrada de estoque) e lê de
@@ -215,8 +222,12 @@ test("CX-2 — RECEBER pedido: o valor unitário '0' continua '0' depois de esco
   await page.getByTestId("compras-salvar").click();
   const resposta = await convert;
   expect(resposta.status(), "o recebimento foi aceito").toBe(201);
-  const corpo = resposta.request().postDataJSON() as { itens: Record<string, unknown>[] };
+  const corpo = resposta.request().postDataJSON() as { itens: Record<string, unknown>[] } & Record<string, unknown>;
   expect(corpo.itens, "um item").toHaveLength(1);
+  // AS MESMAS CHAVES DO /convert DE HOJE no item, conjunto EXATO (o mesmo `camposDoItem` da Central anterior à #87): o
+  // item do pedido no lugar do produto, sem chave nova e sem chave a menos — só o VALOR do unitário é o que a 278 muda.
+  expect(corpo.itens.map((i) => Object.keys(i).sort()), "as MESMAS chaves do item do /convert").toEqual([["armazem_id", "item_origem_id", "quantidade", "valor_unitario"]]);
+  expect([corpo["empresa_id"], corpo["fornecedor_id"]], "empresa e fornecedor vêm do pedido: o corpo do /convert não os leva").toEqual([undefined, undefined]);
   expect(corpo.itens[0], "o /convert leva o valor unitário 0, com o item do pedido e o armazém escolhido").toMatchObject({ item_origem_id: pedido.itemId, armazem_id: c.armazem.id, valor_unitario: "0" });
 
   await expect(page).toHaveURL(/\/compras\/compras\/[0-9a-f-]{36}$/);
@@ -340,4 +351,170 @@ test("CX-5 — 'Recebido de pedido' aparece quando o item tem origem_item_id (a 
   await abrirConsulta(diretaId, direta.codigo);
   await expect(origem, "sem origem nenhuma: 'Lançamento direto'").toContainText("Lançamento direto");
   await expect(origem).not.toContainText("Recebido de pedido");
+});
+
+/* ═════════════════════════════════════════════ CX-6 ═════════════════════════════════════════════ */
+
+const ehPostDaCompra = (r: Response) => r.request().method() === "POST" && caminho(r) === "/api/compras/compras";
+
+/** Lança uma compra PELA TELA na TOP dada: fornecedor, classificação e um item (5 × 20,00) com o produto e o armazém do cenário. */
+async function preencherCompraPelaTela(page: Page, c: Cenario, top: { id: string; codigo: string }) {
+  await page.goto(`/compras/compras/new?tipo_operacao_id=${top.id}`);
+  await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
+  await expect(page.getByTestId("compras-top-travada"), "a criação montou com a TOP pedida").toContainText(top.codigo);
+  await escolher(page, "Fornecedor", c.fornecedor.nome);
+  await escolher(page, "Natureza de despesa", c.natureza.label);
+  await escolher(page, "Centro de resultado", c.centro.label);
+  await page.getByTestId(`${P}-adicionar-item`).click();
+  const linha = page.getByTestId(`${P}-linha`).first();
+  await escolherNaCelula(page, P, linha.getByTestId(`${P}-produto`), c.produto.nome);
+  await escolherNaCelula(page, P, linha.getByTestId(`${P}-armazem`), c.armazem.nome);
+  await linha.getByLabel("Quantidade do item 1").fill("5");
+  await linha.getByLabel("Valor unitário do item 1").fill("20");
+  await expect(page.getByTestId(`${P}-subtotal`)).toContainText("100,00");
+}
+
+/**
+ * O clique "Confirmar compra" da criação é "Salvar + pedir o diálogo de Confirmar na consulta". Com a TOP no FORMATO 4
+ * "Confirmação: Automática" (a #88, decisão 277), o POST já confirma — e a consulta só atende o pedido com a compra
+ * ABERTA: chegando confirmada, mostra o "Salvo" e nenhum diálogo, nenhuma prévia, nenhum segundo /confirm. A ausência é
+ * lida DEPOIS do documento desenhado e do "Salvo" (os dois sinais de que o pedido da criação já foi tratado), e a
+ * PRESENÇA está ao lado: o MESMO botão, com a TOP manual do cenário, abre o diálogo com a prévia.
+ * A TOP Automática é criada aqui pela porta administrativa e sai no fim pela exclusão lógica da própria API, para não
+ * sobrar no lançador de quem vier depois uma operação que confirma sozinha.
+ */
+test("CX-6 — 'Confirmar compra' na criação com TOP formato 4 'Confirmação: Automática': o POST confirma, a consulta abre Confirmado e o diálogo NÃO abre (nenhum segundo /confirm); com a TOP manual, o mesmo botão abre o diálogo", async ({ page }) => {
+  await login(page);
+  const c = await cenario(page);
+  const automatica = await criarTopViaApi(page, "compras.compra", cfg4({ confirmacao: "automatica" }), { rotulo: "CX-6 automática" });
+  try {
+    const lida = await detalheTopNoServidor(page, automatica.id);
+    expect([lida.configuracaoSchema, lida.configuracao.versaoSchema, lida.configuracao.valor?.geral.confirmacao], "PREMISSA: a TOP gravou no FORMATO 4 (o único que executa), com Confirmação Automática")
+      .toEqual([4, 4, "automatica"]);
+
+    const confirms: string[] = []; const previas: string[] = [];
+    page.on("request", (r) => {
+      const p = new URL(r.url()).pathname;
+      if (r.method() === "POST" && /^\/api\/compras\/compras\/[^/]+\/confirm$/.test(p)) confirms.push(p);
+      if (r.method() === "GET" && /^\/api\/compras\/compras\/[^/]+\/previa-confirmacao$/.test(p)) previas.push(p);
+    });
+    const dialogo = page.getByTestId("confirm-dialog");
+    const corpoDaConsulta = page.getByTestId("compras-consulta-corpo");
+
+    // (1) PREMISSA — TOP MANUAL: o mesmo "Confirmar compra" salva a compra ABERTA e a consulta abre o diálogo, com a prévia
+    await preencherCompraPelaTela(page, c, c.topCompra);
+    const postManual = page.waitForResponse(ehPostDaCompra);
+    await page.getByTestId(`${P}-confirmar`).click();
+    const rManual = await postManual;
+    expect(rManual.status(), "a compra manual foi salva").toBe(201);
+    const corpoManual = await rManual.json() as Record<string, unknown>;
+    expect([corpoManual["situacao"], "confirmacaoAutomatica" in corpoManual], "PREMISSA: a TOP do cenário confirma à mão — aberta, e o corpo de hoje, sem a chave nova").toEqual(["aberto", false]);
+    await expect(page).toHaveURL(new RegExp(`/compras/compras/${String(corpoManual["id"])}$`));
+    await expect(corpoDaConsulta).toHaveAttribute("data-situacao", "aberto");
+    await expect(dialogo, "PREMISSA: compra ABERTA — o pedido de Confirmar da criação abre o diálogo").toBeVisible();
+    await expect(page.getByTestId("compras-previa"), "com a prévia da confirmação").toHaveAttribute("data-situacao", "pronta");
+    expect(previas.length, "premissa: a prévia foi pedida ao servidor").toBeGreaterThan(0);
+    await dialogo.getByRole("button", { name: "Voltar", exact: true }).click();
+    await expect(dialogo).toHaveCount(0);
+    expect(confirms, "voltar não confirma").toEqual([]);
+    previas.length = 0;
+
+    // (2) TOP AUTOMÁTICA: o POST confirma; a consulta abre Confirmado, com o "Salvo", e o diálogo NÃO abre
+    await preencherCompraPelaTela(page, c, automatica);
+    await expect(page.getByTestId(`${P}-confirmar`), "a criação da compra oferece 'Confirmar compra'").toContainText("Confirmar compra");
+    const post = page.waitForResponse(ehPostDaCompra);
+    await page.getByTestId(`${P}-confirmar`).click();
+    const r = await post;
+    expect(r.status(), "a compra foi salva").toBe(201);
+    const corpo = await r.json() as { id: string; situacao: string; confirmacaoAutomatica?: unknown };
+    expect([corpo.situacao, corpo.confirmacaoAutomatica], "o POST já confirmou (a confirmação automática da TOP)").toEqual(["confirmado", { confirmado: true }]);
+    await expect(page).toHaveURL(new RegExp(`/compras/compras/${corpo.id}$`));
+    await expect(corpoDaConsulta, "a consulta abre a compra CONFIRMADA").toHaveAttribute("data-situacao", "confirmado");
+    await expect(page.getByTestId(`${P}-salvo`), "premissa: a entrega da criação (o 'Salvo', com o pedido de Confirmar) chegou à consulta").toBeVisible();
+    await expect(dialogo, "confirmada: o diálogo de Confirmar NÃO abre").toHaveCount(0);
+    expect(previas, "nenhuma prévia pedida para a compra confirmada").toEqual([]);
+    expect(confirms, "nenhum /confirm: a compra confirmou UMA vez, no POST").toEqual([]);
+
+    // NO SERVIDOR: confirmada, com UMA confirmação na trilha — a automática
+    const gravada = await api<{ situacao: string }>(page, "GET", `/api/compras/compras/${corpo.id}`);
+    expect(gravada.situacao, "o servidor diz confirmado").toBe("confirmado");
+    const trilha = await api<{ items: { action: string; metadata: Record<string, unknown> | null }[] }>(page, "GET", `/api/admin/audit?entity=documentos_compra&entity_id=${corpo.id}`);
+    expect(trilha.items.filter((x) => x.action === "confirm").map((x) => x.metadata?.["automatica"]), "uma confirmação na trilha, a automática").toEqual([true]);
+    await expect(dialogo, "e o diálogo continua fechado depois das leituras").toHaveCount(0);
+    expect(confirms, "e nenhum /confirm saiu depois").toEqual([]);
+  } finally {
+    await excluirTopE2E(page, automatica.id);
+  }
+});
+
+/* ═════════════════════════════════════════════ CX-7 ═════════════════════════════════════════════ */
+
+/**
+ * Duplicar leva a cópia em MEMÓRIA da aba (nada no navegador, nada no servidor) para a criação da TOP do original. Quando
+ * essa TOP não abre o formulário, a criação mostra o lançador — e a cópia tem de ser DESCARTADA ali, senão fica na
+ * memória e reaparece na próxima criação da mesma TOP. A TOP fica indisponível do jeito que dá para desfazer sem
+ * recarregar: o servidor sem a lista de TOPs (5xx; a TOP inativa cai no MESMO ramo do lançador, mas a lista boa fica em
+ * cache e não volta pelo histórico). A volta à criação é pelo HISTÓRICO (`goBack`/`goForward`), nunca por `page.goto`: o
+ * recarregamento apagaria a memória e o caso passaria sem provar nada — a premissa "não recarregou" é lida.
+ * A PRESENÇA está ao lado: na MESMA memória, com a TOP disponível, o MESMO Duplicar traz a cópia.
+ */
+test("CX-7 — Duplicar para uma TOP que a criação não abre: a cópia é descartada e não reaparece ao abrir de novo o lançamento da mesma TOP, já disponível; com a TOP disponível, a cópia aparece", async ({ page }) => {
+  await login(page);
+  const c = await cenario(page);
+  const observacao = `CX-7 não pode reaparecer ${Date.now().toString(36)}`;
+  const { id } = await api<{ id: string }>(page, "POST", "/api/compras/compras", {
+    empresa_id: c.empresa, tipo_operacao_id: c.topCompra.id, fornecedor_id: c.fornecedor.id, data_documento: "2026-09-01",
+    categoria_financeira_id: c.natureza.id, centro_custo_id: c.centro.id, observacao,
+    itens: [{ produto_id: c.produto.id, armazem_id: c.armazem.id, quantidade: "2", valor_unitario: "10.00" }]
+  });
+  const original = await api<{ codigo: string; observacao: string; itens: unknown[] }>(page, "GET", `/api/compras/compras/${id}`);
+  expect([original.observacao, original.itens.length], "premissa: o original tem a observação e um item").toEqual([observacao, 1]);
+
+  const LISTA = "/api/compras/compras/operation-types";
+  const ehLista = (u: URL) => u.pathname === LISTA;
+  const criacaoDaTop = new RegExp(`/compras/compras/new\\?tipo_operacao_id=${c.topCompra.id}$`);
+  const identidade = page.getByTestId(`${P}-identidade-nome`);
+  const semRecarga = () => page.evaluate(() => (window as unknown as Record<string, unknown>)["__cx7SemRecarga"]);
+  const observacaoNaCriacao = async () => {
+    const aba = page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Observações" });
+    await aba.click();
+    await expect(aba).toHaveAttribute("aria-selected", "true");
+    return page.getByTestId("compras-observacao");
+  };
+
+  // (1) A TOP NÃO ABRE O FORMULÁRIO: o servidor sem a lista de TOPs — a criação mostra o lançador de hoje, e nada abre
+  await page.route(ehLista, (r) => r.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "ERROR", message: "indisponível (simulado)" } }) }));
+  await page.goto(`/compras/compras/${id}`);
+  await expect(identidade, "premissa: a consulta desenhou o original").toHaveText(original.codigo);
+  await page.evaluate(() => { Object.assign(window, { __cx7SemRecarga: true }); });
+  await page.getByTestId(`${P}-duplicar`).click();
+  await expect(page).toHaveURL(criacaoDaTop);
+  await expect(page.getByTestId("top-nao-confirmado"), "a TOP não confirmada: o lançador, com a mensagem de hoje").toBeVisible();
+  await expect(page.getByTestId(P), "nada aberto com a TOP que não abre").toHaveCount(0);
+
+  // (2) A LISTA VOLTA. Volta ao original e avança à MESMA criação pelo histórico — a memória da aba vive
+  await page.unroute(ehLista);
+  const listaOk = page.waitForResponse((r) => caminho(r) === LISTA && r.status() === 200);
+  await page.goBack();
+  await expect(identidade).toHaveText(original.codigo);
+  await listaOk;
+  await page.goForward();
+  await expect(page).toHaveURL(criacaoDaTop);
+  await expect(page.getByTestId("compras-top-travada"), "premissa: agora a criação MONTA, com a TOP do original").toContainText(c.topCompra.codigo);
+  expect(await semRecarga(), "premissa: a página NÃO recarregou (a memória da aba viveu)").toBe(true);
+  await expect(page.getByTestId(`${P}-alterado`), "a cópia descartada não reaparece: lançamento limpo").toHaveCount(0);
+  await expect(page.getByTestId(`${P}-linha`), "sem o item da cópia").toHaveCount(0);
+  await expect(await observacaoNaCriacao(), "sem a observação da cópia").toHaveValue("");
+
+  // (3) PREMISSA: com a TOP disponível, o MESMO Duplicar, na MESMA memória, traz a cópia para a MESMA criação
+  await page.goBack();
+  await expect(identidade).toHaveText(original.codigo);
+  await page.getByTestId(`${P}-duplicar`).click();
+  await expect(page).toHaveURL(criacaoDaTop);
+  await expect(page.getByText("Cópia aberta como rascunho"), "o aviso da cópia").toBeVisible();
+  await expect(page.getByTestId("compras-top-travada")).toContainText(c.topCompra.codigo);
+  await expect(page.getByTestId(`${P}-alterado`), "PREMISSA: a cópia aparece (conta como alteração)").toBeVisible();
+  await expect(page.getByTestId(`${P}-linha`), "com o item do original").toHaveCount(1);
+  await expect(await observacaoNaCriacao(), "e a observação do original").toHaveValue(observacao);
+  expect(await semRecarga(), "premissa: a MESMA memória (sem recarregar)").toBe(true);
 });
