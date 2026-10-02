@@ -1620,6 +1620,122 @@ Reverter o web = sentido 2.
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 
+### F4 — a TOP pelo tipo de movimento e o formato 5 (OPERACOES-01, sem migration)
+
+Decisão 281. **Sem migration, sem variável, sem permissão nova, sem rota nova.** Uma chave nova, aditiva, nas
+capabilities da TOP: `formato5`, na raiz, depois de `regrasGerais`. `contractVersion`, `configuracao` (1), `restricoes`
+(3) e `regrasGerais` (4) não mudam. A criação da TOP começa pelo tipo de movimento (o assistente: só os 9 tipos com
+tela). As abas mostram só o que vale para o tipo. Toda TOP é LIDA no formato 5 — o 4 mais as seções de extensão das
+fases seguintes, nenhuma nesta —, e salvar com mudança grava o 5. No 5 o servidor recusa (422) o que o tipo não aceita.
+O editor e o histórico da TOP dizem "local de estoque".
+
+**Migration:** nenhuma. O 5 entra sem DDL:
+- o CHECK de schema da 0022 não tem teto;
+- `erp.top_exige_aprovacao` (0041) trata `versaoSchema` ≥ 4 — provado sobre uma versão gravada no 5
+  (`packages/db/test/top-formato5-0041.test.ts`, B5-1 e B5-2);
+- a venda no 5 confirma com a marca da guarda da 0023.
+A 0041 não foi editada.
+
+**Ordem do deploy:** esta fase não impõe ordem entre API e web — os dois sentidos do skew estão provados (abaixo). Duas
+condições da PR #90:
+- a F2 (decisão 279) vai no MESMO deploy: a ajuda nova da Geral diz que as Centrais de Vendas e de Compras aceitam o
+  documento sem item quando a TOP permite, e isso só é verdade com a F2;
+- a ordem do deploy da PR é a das fases com migration (F5 a F10), nas seções delas.
+
+**Impacto em dados reais:** nenhum registro é reescrito; sem backfill.
+- As TOPs de produção continuam no formato em que foram gravadas e são LIDAS como 5 (no editor, na API e na execução,
+  pelo número GRAVADO: um formato 3 nunca passa a executar regra geral por ser lido como 5). Nada é gravado até alguém
+  salvar.
+- Salvar uma TOP cuja configuração já cabe no tipo, sem mexer, não grava (nenhuma versão, nenhuma trilha).
+- Salvar com mudança cria a versão N+1 no formato 5.
+- As 3 TOPs de produção NÃO estão nesse caso (leitura de 01/10, decisão 277):
+  - o pedido de compra, no formato 3, com Confirmação Automática, Documento sem itens Permitido e Alteração Permitida;
+  - o orçamento e o pedido de venda, no formato 2, com Alteração Permitida.
+
+  O tipo delas só aceita o neutro. O primeiro Salvar, mesmo sem mexer, abre o diálogo "Estas regras passam a valer" com
+  o que volta ao padrão: "Confirmação: Automática → Manual", "Documento sem itens: Permitido → Proibido", "Alteração
+  após confirmar: Permitida → Bloqueada". "Voltar e revisar" não grava nada. "Salvar assim mesmo" grava a N+1 no 5, no
+  neutro, e nada passa a executar. É o comportamento do editor do 4 de hoje.
+- Numa TOP de documento de estoque com condições de pagamento permitidas, o diálogo lista também "Condições de
+  pagamento: voltam ao padrão", e a versão nova sai sem elas. Não há caso em produção.
+- A tela passa a CRIAR TOP só dos 9 tipos com tela. As TOPs de outras famílias que já existam continuam editáveis.
+  Produção não tem nenhuma.
+
+**Version skew** (base `622f194`; os specs novos entram nos configs de skew pelo nome e ficam fora da suíte comum):
+- **Sentido 1 — web novo × API da base** (janela "web antes da API" e reversão só da API): sem o bloco `formato5`, o web
+  é o editor do 4 de hoje — seletor de família, ajuda antiga da Geral, Execução indisponível no pedido, gravação no 4
+  (`top-formato5-skew-api-producao.spec.ts`, K-1 do 5, 2 casos). O web nunca manda o 5 a quem não o declarou. A base
+  recusa um corpo no 5 com 422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`, e nada é criado. O K-1 da TOP-CONFIG-08
+  escolhe o mundo pela capacidade: legado → formato 3; novo → formato 4 e ajuda antiga; formato5 → formato 5 e ajuda nova.
+- **Sentido 2 — web da base × API nova** (janela "API antes do web" e reversão só do web): a API declara o bloco a mais,
+  que o web da base ignora. O editor da base grava o 4, e a API guarda a N+1 no 4, sem promover. Uma TOP já gravada no 5
+  abre com as seções de operação BLOQUEADAS (`top-config-ilegivel`). Renomear manda o PUT sem `configuracao`, e a versão
+  nova guarda o 5 inteiro. O histórico da base lista as versões; nenhum 404, 422 ou 5xx no navegador
+  (`top-formato5-skew-web-anterior.spec.ts`, K-2 do 5, 3 casos). As Centrais da base leem `/regras-da-operacao` com
+  `formato` 5, e o leitor delas só exige um número.
+- O detector `editorDaBaseGravaFormato5` (marca `top-assistente` no fonte do commit da base) tem prova reversa do lado
+  falso. O lado verdadeiro só ganha commit fixo depois que esta fase entrar na main.
+
+**Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. Enquanto nenhuma TOP for gravada no
+5, nada muda. Depois que uma TOP for gravada no 5, o binário anterior não a lê:
+- (a) **Escrita.** A API anterior recusa QUALQUER PUT numa TOP cuja versão vigente está no 5 — renomear, ativar,
+  desativar e marcar como padrão inclusive — com 422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`
+  (`622f194:apps/api/src/routes/tipos-operacao.ts:1009`). O editor anterior abre a configuração bloqueada. A TOP no 5
+  fica congelada até o binário novo voltar. Só na janela de skew com a API NOVA (web anterior × API desta versão) o
+  renomear funciona e preserva o 5.
+- (b) **Confirmação.** O binário anterior não confirma venda, compra NEM documento de estoque cuja versão congelada está
+  no 5: 409 `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`, a "configuração ilegível", fail-closed, como com formato desconhecido.
+  No estoque, a mensagem termina com "O documento não foi confirmado.", e a prévia traz a recusa em `recusas`, com
+  `podeConfirmar` falso (`622f194:apps/api/src/routes/estoque-confirmacao.ts:171-180`). Nada confirma sozinho
+  (`confirmaAutomaticamente` → falso). A guarda da 0041 continua o fundo.
+- (c) **Aprovações.** A fila anterior conta pela SQL (`erp.top_exige_aprovacao`, que trata ≥ 4) e LISTA o documento com
+  TOP no 5 que exige aprovação. Aprovar e Reprovar, que perguntam ao domínio anterior, respondem 409
+  `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`. É o risco "formato futuro" que a decisão 277 declarou, agora com o 5.
+- (d) **Lançamento.** O documento LANÇADO no binário anterior com TOP no 5 fica sem as regras dela:
+  - venda e compra: sem exigências, sem condições permitidas e sem a conferência de cliente em atraso
+    (`regrasDaVersaoTop` devolve nulo para formato desconhecido, `622f194:apps/api/src/routes/vendas-regras-operacao.ts:41`,
+    e `cobrarRegrasDaOperacao` não cobra nada, `:106`);
+  - orçamento e pedido de venda e pedido de compra, que não se confirmam: passam sem restrição nenhuma;
+  - documento de estoque: "Exigir observação" deixa de ser cobrada
+    (`622f194:apps/api/src/routes/estoque-documentos.ts:289`);
+  - itens vazios: recebem o 422 de hoje, mesmo com a TOP permitindo.
+  É o risco que a TOP-CONFIG-08 declarou para o 4, agora para toda TOP salva no 5.
+- Documento confirmado antes da reversão continua confirmado, com os efeitos que deu.
+- **Por isso:** gravar a primeira TOP no 5 em produção é o que torna a reversão cara. Faça-o só depois de conferir o
+  deploy (roteiro abaixo), e é decisão do Maike.
+
+**Roteiro do Maike em produção (depois do deploy; produção é operacional — decisões 240 e 247):** os passos 1 a 4 são só
+leitura (nada é gravado). O passo 5 grava, e só com a decisão dele.
+1. Configurações › Operações › Tipos de Operação › Novo — o passo 1, "Passo 1 de 2: escolha o tipo de movimento.
+   Depois, as abas mostram só o que vale para ele.":
+   - Vendas (Orçamento, Pedido, Venda), Compras (Pedido, Compra), Movimentação interna (Entrada, Saída/baixa,
+     Transferência, Ajuste);
+   - Módulos e Financeiro NÃO aparecem.
+2. Escolher Entrada:
+   - "Movimento" só leitura, com "Trocar";
+   - as abas Identificação, Geral, Estoque e Aprovação;
+   - na Geral, só "Exigir observação".
+   "Trocar" → Venda:
+   - as abas Identificação, Geral, Próximas operações, Estoque, Financeiro, Fiscal, Aprovação e Execução;
+   - na Geral, "Exigir cliente", e a ajuda termina em "Documento sem itens: quando esta operação permite, as Centrais
+     de Vendas, de Compras e de Estoque aceitam o documento sem item. As exigências de preenchimento são cobradas no
+     lançamento.".
+   Fechar sem salvar.
+3. Abrir a TOP de pedido de compra:
+   - as abas Identificação, Geral, Próximas operações, Estoque, Financeiro e Fiscal, sem Aprovação e sem Execução;
+   - na Geral, "Exigir fornecedor";
+   - na Estoque, "Exigir local de estoque".
+   Clicar Salvar SEM mexer → o diálogo "Estas regras passam a valer" lista o que volta ao padrão (se ela ainda estiver
+   como em 01/10). Clicar "Voltar e revisar" e fechar sem salvar. Fazer o mesmo no orçamento e no pedido de venda
+   ("Alteração após confirmar: Permitida → Bloqueada", se ainda Permitida).
+4. Em cada TOP, Histórico: as versões continuam com o formato em que foram gravadas ("Formato da configuração: 2" ou
+   "3").
+5. (Decisão do Maike; grava; ver Reversão.) "Salvar assim mesmo" numa delas:
+   - versão nova no formato 5, no neutro, e o histórico diz "Formato da configuração: 5";
+   - nada passa a executar: orçamento e pedidos só aceitam o neutro.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
 ## VISUAL-UX-04b — correções da Central de Compras (sem migration)
 
 Decisão 278. **Só web**: sem migration, sem rota, sem API, sem variável, sem permissão, sem domínio. Conserta regressões
@@ -2018,9 +2134,10 @@ confirmada sozinha abre a consulta em Confirmado, sem diálogo. Se esta entrar s
 compra Automática, use "Salvar" na criação. Nas duas Centrais, ao salvar, o aviso continua o "Salvo com sucesso" de hoje também quando a confirmação automática não
 aconteceu: `recusada` → o documento aparece Aberto, e o motivo surge na prévia ou no `/confirm`; `sem_permissao` →
 aparece Aberto, sem o Confirmar para quem salvou. O rótulo "Salvar e confirmar", o aviso do Salvar pelo resultado da
-confirmação automática, os itens vazios que a TOP permite — e, junto, a ajuda da Geral do editor no formato 4, que hoje
+confirmação automática, os itens vazios que a TOP permite — e, junto, a ajuda da Geral do editor no formato 4, que
 diz "nas Centrais de Vendas e de Compras o lançamento ainda pede ao menos um item", com os dois E2E que a conferem letra
-por letra (W-1 e K-1) — e a situação da aprovação e o Aprovar/Reprovar na consulta ficam para essa fatia. O servidor é
+por letra (W-1 e K-1) (desde a OPERACOES-01 F4, decisão 281, o editor do formato 5 diz o texto novo, e o do formato 4,
+que só roda contra a API anterior, mantém este) — e a situação da aprovação e o Aprovar/Reprovar na consulta ficam para essa fatia. O servidor é
 a regra: a aprovação se dá em Aprovações.
 
 **Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0041 fica e convive com a API

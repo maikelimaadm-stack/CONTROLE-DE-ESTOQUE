@@ -2136,7 +2136,10 @@ formato 3, textos e abas de hoje. Com ele:
   documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: o servidor aceita o documento sem
   item, mas nas Centrais de Vendas e de Compras o lançamento ainda pede ao menos um item. As exigências de preenchimento
   são cobradas no lançamento." — as Centrais de Vendas e de Compras não leem `confirmacaoAutomatica` ao salvar e ainda
-  pedem um item (§17.8); a fatia que mudar isso troca este texto junto;
+  pedem um item (§17.8); a fatia que mudar isso troca este texto junto. Desde a OPERACOES-01 F4 (decisão 281), este é o
+  texto do editor do FORMATO 4, que só roda contra um servidor sem a capacidade `formato5`; o editor do 5 diz que, quando
+  a TOP permite, as Centrais de Vendas, de Compras e de Estoque aceitam o documento sem item (§18.7). O W-1 confere o
+  novo e o K-1 confere o de cada mundo;
 - **diálogo "Estas regras passam a valer"** (`top-regras-passam-a-valer`), só na EDIÇÃO de uma TOP que já existe e, quando
   os dois valem, depois do diálogo das exigências (§13): a lista do que passa a executar ("Confirmação automática",
   "Documento sem itens permitido", "Aprovação sempre", "Aprovação a partir de R$ <valor>") e, quando houver, "Estas opções
@@ -2184,3 +2187,251 @@ sem o Confirmar para quem salvou —; os itens vazios quando a TOP permite (e, j
 E2E que a conferem letra por letra, W-1 e K-1); a situação da aprovação e o Aprovar/Reprovar na consulta. **Fatias
 próprias:** alteração após confirmar, notificação para quem aprova, aprovação de pedido, financeiro "Previsão",
 devolução de venda e de compra, campos por TOP no estoque.
+
+## 18. Formato 5: o tipo de movimento primeiro e as seções de extensão (OPERACOES-01 F4)
+
+Decisão 281. O produto (os tipos, os perfis por família e as recusas, em tabela) está em
+`docs/OPERACOES-CONTRACT.md` §1 e §2. Aqui ficam o formato, o leitor, o ponto de extensão, a API, a capacidade, o
+skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.top_exige_aprovacao` (0041) trata ≥ 4
+(provado sobre uma linha gravada no 5, `packages/db/test/top-formato5-0041.test.ts`).
+
+### 18.1 O formato 5
+
+- `VERSAO_SCHEMA_CONFIGURACAO_TOP_V5 = 5` e `VERSOES_SCHEMA_CONFIGURACAO_TOP = [1, 2, 3, 4, 5]`
+  (`packages/domain/src/tipo-operacao-configuracao.ts:123-130`). Continuam iguais `VERSAO_SCHEMA_CONFIGURACAO_TOP` (1,
+  o do neutro e do `DEFAULT` da 0022) e `SECOES_CONFIGURACAO_TOP` (5 seções, publicada em `capabilities.configuracao`).
+- `ConfiguracaoTipoOperacaoV5` = o 4 com `versaoSchema` 5 + `SecoesExtensaoV5` (`:337`). `ConfiguracaoComRestricoesTop`
+  = 3 | 4 | 5 e `ConfiguracaoComRegrasGeraisTop` = 4 | 5 (`:342-345`).
+- **Portões:**
+  - `restricoesExecutamTop` → 3, 4 e 5;
+  - `regrasGeraisExecutamTop` → 4 e 5;
+  - `formato5Top` → 5;
+  - `versaoSchemaExecutaRegrasGeraisTop(número)` → 4 ou 5 (`:354-375`).
+  Quem pergunta "isto executa?" pergunta a um portão, nunca compara com um número. A prévia do estoque, a última
+  comparação exata com o 4, passou ao portão (`apps/api/src/routes/estoque-confirmacao.ts:186`).
+- **O 5 executa tudo o que o 4 executa:**
+  - regras gerais e aprovação (`regrasGeraisDaVersaoTop`; um 5 malformado é ILEGÍVEL, nunca o neutro);
+  - restrições, execução configurada e política da venda e da compra (`origem: 5`);
+  - a marca da guarda da 0023.
+- `SECOES_CONFIGURACAO_TOP_V5` = as seis de hoje + as de extensão, na ordem da lista (`:404`). É o tipo das seções da
+  auditoria (`secoesAlteradas`), do histórico e do 422.
+- O 6 é o formato desconhecido: `schema_nao_suportado` → 422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`, com
+  `versoesSuportadas` [1, 2, 3, 4, 5].
+
+### 18.2 Os formatos 1 a 4 lidos como 5
+
+- **A vista do 5 é do domínio:** `configuracaoTopParaEdicaoV5` (`:1154`) = a vista do 4 de hoje com o número 5 e cada
+  seção de extensão no neutro. É a mesma no editor e na comparação. `configuracaoV5DaV4` (`:1132`) é a promoção
+  explícita do 3 e do 4. Ler não regrava.
+- **O detalhe e o histórico devolvem a versão COMO GRAVADA** (`leituraDoDetalhe: "formato_gravado"`): uma TOP no 1 a
+  4 continua 1 a 4 no GET.
+- **A execução segue o número GRAVADO.** Uma seção de extensão numa versão 1 a 4 vale o neutro
+  (`secoesExtensaoDaVersaoTop`, `:735`), e um 3 com Automática gravada nunca passa a executar por ser "lido como 5".
+- **Comparação** (`configuracoesTopIguais`, `:1204`; `secoesAlteradasTop`, `:1240`): na vista do 5, sem o número, com
+  o termo das regras gerais de hoje.
+  - 1 a 4 salvo no 5 sem mudança → no-op: nenhuma versão, revisão ou trilha (precedente da 277).
+  - O que passa a EXECUTAR é mudança: a regra geral de um 1 a 3, ou a exigência de um 1.
+  - Do 4 ao 5 nada passa a valer.
+- **Não retrocede:** um corpo de formato menor que o da vigente → 422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`
+  `{versaoEnviada, versaoVigente}` (`apps/api/src/routes/tipos-operacao.ts:1105-1109`). O 4 sobre o 5 perderia as
+  seções de extensão em silêncio.
+
+### 18.3 As seções de extensão (o ponto de extensão)
+
+`packages/domain/src/tipo-operacao-secoes-v5.ts` é um arquivo FOLHA: não importa a configuração, que o importa.
+
+- **`DefinicaoSecaoV5<N, T>`** (`:80-99`):
+  - `nome` (a chave de raiz e o nome da aba), `rotulo`, `ajuda` e `chaves` (as aceitas dentro da seção);
+  - `neutro()` — o padrão de hoje, objeto novo a cada chamada;
+  - `ler(leitor)` — campo a campo, SÓ pelo `LeitorDeSecaoTop`;
+  - `normalizar(valor)` — idempotente, não muta;
+  - `usadaPor(família)` — perguntado ao registry, nunca por literal;
+  - `linhas(valor)` — `[rótulo, valor]` para o histórico.
+  São métodos, e não propriedades-função: a bivariância é o que deixa a lista heterogênea tipar sem conversão.
+- **`LeitorDeSecaoTop`** (`:57-71`): `booleano`, `enumerado` (fora da lista = `valor_invalido`, nunca o vizinho),
+  `inteiro` (faixa fechada), `decimal` (STRING `^\d{1,13}(\.\d{1,casas})?$`, de 0 ao máximo — nunca ponto flutuante) e
+  `texto` (até o máximo). Cada leitura acumula a recusa em `<secao>.<campo>`.
+- **`definirSecaoV5`** (`:106-108`) congela a definição e infere o nome literal. Um nome de `CHAVES_RAIZ_RESERVADAS_TOP`
+  (`versaoSchema`, `geral`, `estoque`, `financeiro`, `fiscal`, `aprovacao`, `execucao`) NÃO COMPILA: o tipo do nome
+  vira `never`.
+- **A LISTA:** `DEFINICOES_SECOES_V5` (`:114`), VAZIA na F4. Dela saem `NomeSecaoExtensaoV5`, `SecoesExtensaoV5`,
+  `SECOES_EXTENSAO_V5` e os rótulos, sem segunda declaração. A única conversão de tipo do ponto de extensão mora ali,
+  documentada (`montarSecoesExtensaoV5`, `nomeDaSecaoV5`).
+- **A leitura** (`lerConfiguracaoTop`, `tipo-operacao-configuracao.ts:775`): num 5, as chaves de raiz são as do 2 + os
+  nomes da lista.
+  - A seção AUSENTE — chave não PRÓPRIA do objeto, `Object.hasOwn` (`:705`) — vale `neutro()`.
+  - PRESENTE, é lida estrita: não-objeto (inclusive `undefined` presente) → `tipo_invalido` em `<nome>`; chave fora de
+    `chaves` → `campo_desconhecido` em `<nome>.<chave>`; depois, `normalizar`.
+  - Nos formatos 1 a 4, a mesma chave → `campo_desconhecido` (o 4 nunca carrega seção nova).
+  - As recusas saem na ordem fixa: raiz, seções de hoje, seções de extensão.
+- **As seis regras, para as fases F5 a F10** (no cabeçalho do arquivo):
+  1. seção nova = chave de RAIZ nova, nunca chave nova dentro de uma seção de hoje;
+  2. ausente num 5 = neutro, presente = estrita, nos formatos 1 a 4 = recusada;
+  3. o arquivo da seção só importa o ponto de extensão e módulos que não importam a configuração;
+  4. nada de UUID no JSON — alvo concreto vai em tabela da versão, no molde de `erp.tipos_operacao_versao_condicoes`
+     (0033);
+  5. o compilador cobra a aba no web;
+  6. nada do tipo literal `{}`.
+- **Como uma fase acrescenta a sua seção:**
+  - (a) `packages/domain/src/tipo-operacao-secao-<nome>.ts` com o tipo e `export const SECAO_<NOME> = definirSecaoV5({…})`;
+  - (b) UMA linha em `DEFINICOES_SECOES_V5`, mais o import;
+  - (c) o componente da aba em `COMPONENTES_DAS_SECOES_V5` (`apps/web/src/features/admin/top-secoes-formato5.tsx:39`) —
+    o compilador recusa o registro sem ela;
+  - (d) os testes da seção.
+  O teste de contrato de `packages/domain/test/top-formato5.test.ts` (F5-D1, "toda seção do produto cumpre o contrato")
+  passa a valer para ela sozinho. O leitor, a normalização, a comparação, a auditoria, o histórico
+  (`blocosDasSecoesDeExtensao`), o perfil (aba depois de Estoque; seção no padrão nas famílias que não a usam), as
+  capabilities (`formato5.secoes`) e o 422 (`mensagemSecaoForaDoTipo`) NÃO mudam.
+- **Quem acrescenta uma seção também:**
+  - atualiza as premissas que fixam o estado da F4 (`SECOES_EXTENSAO_V5` [] em F5-D1, T5-1 e `top-assistente.spec.ts`);
+  - faz o detector do skew medir o CONJUNTO de seções da base, além da marca do assistente (§18.6).
+- O nome `secaoInexistente` é o sentinela dos testes (F5-D3, T5-5) e nenhuma fase o declara.
+
+### 18.4 O catálogo por tipo e o perfil
+
+`packages/domain/src/tipo-operacao-catalogo.ts`. As tabelas estão em `docs/OPERACOES-CONTRACT.md` §1 e §2.
+- `CATALOGO_TOP = {grupos, tipos, perfis}` (`:258-262`), com:
+  - `GRUPOS_TIPO_MOVIMENTO_TOP` e os rótulos;
+  - `CATALOGO_TIPOS_MOVIMENTO_TOP` (22 tipos, `:138-161`);
+  - `PERFIS_TIPO_TOP` (um por família do registry, `:240`).
+  Congelado. Nenhum código de família escrito: o gate `node scripts/familia-operacional-ssot-audit.mjs` passa.
+- `perfilDoTipoTop(família, definicoes?)` (`:212-237`) deriva o perfil de `familiaTemProximasOperacoes`,
+  `regrasGeraisDaFamiliaTop`, `familiaAceitaExecucaoConfiguradaTop`, `ehFamiliaDeDocumentoEstoque` e
+  `exigenciasGeraisDaFamiliaTop`. Mudou uma delas, o perfil muda junto. `perfilDaFamiliaTop` devolve `null` para
+  família sem perfil — quem chama NEGA, nunca usa um vizinho.
+- `lerCatalogoTop(bruto)` (`:372-380`) é ESTRITO: qualquer desvio devolve `null`, e devolve objetos novos (molde:
+  `lerMatrizRegrasGeraisTop`). Desvio:
+  - chaves a mais ou a menos em qualquer nível;
+  - grupo fora do domínio ou repetido;
+  - chave de tipo fora de `^[a-z][a-z0-9_]*$` ou repetida;
+  - família repetida entre tipos;
+  - `temTela` verdadeiro sem família ou sem perfil;
+  - aba ou seção neutra desconhecida ou repetida;
+  - exigência fora das quatro;
+  - rótulo vazio.
+- `tiposParaEscolhaTop` (`:389-393`): o passo 1 — só `temTela`, agrupado na ordem do catálogo; grupo vazio some.
+
+### 18.5 As recusas do formato 5 (API)
+
+`apps/api/src/routes/tipos-operacao.ts`:
+- **`conferirFiscalDaFamilia`** (POST sempre; PUT quando o corpo traz `configuracao`) acrescenta
+  `recusasDoPerfilTop(codigoBase, config)` NO FIM da MESMA lista (`:243-247`) — fiscais, cliente em atraso, regras
+  gerais, perfil —, num 422 só `TIPO_OPERACAO_CONFIGURACAO_INVALIDA` `{recusas}`. Cada recusa do perfil é
+  `{motivo: "combinacao_nao_suportada", caminho, mensagem}`:
+  - exigência marcada fora do perfil → `geral.<chave>`, "O documento desta operação não tem este campo.";
+  - seção de `secoesNeutras` fora do neutro do 5, comparada depois de normalizar → `<secao>`, "Esta operação não usa a
+    seção <Rótulo>.".
+  Ordem fixa: exigências (parceiro, centro, observação, transportadora) e depois as seções.
+- **Condições** (`conferirCondicoesDoPerfil`, `:283-292`; régua `recusaDasCondicoesDoPerfilTop`, catálogo `:457-467`):
+  - só no 5, só com alguma condição e só quando o tipo não tem a aba Financeiro → 422
+    `TIPO_OPERACAO_CONDICOES_INVALIDAS` `{recusas: [{caminho: "condicoesPermitidas", mensagem: "Esta operação não usa
+    condições de pagamento."}]}`;
+  - a lista ENVIADA (POST `:957-962` e PUT `:1163-1166`), ANTES de conferir as condições (nem a consulta acontece), com
+    o envelope "As condições de pagamento permitidas enviadas são inválidas";
+  - a lista PRESERVADA, quando o PUT traz a configuração sem a lista (`:1167-1170`), com o envelope "As condições de
+    pagamento permitidas da versão vigente são inválidas para esta operação; envie a lista vazia". O editor do 5 manda
+    `[]` e lista a volta no diálogo (`condicoesQueVoltamPeloPerfilTop`).
+- **Renomear, ativar, desativar e marcar como padrão** (PUT sem `configuracao`) não reconferem o perfil, nem as
+  condições preservadas: nunca congelam uma TOP.
+- **Formatos 1 a 4:** o domínio devolve `[]` e `null` — conferidos como antes, valor por valor.
+- Também não mudam:
+  - o POST sem `configuracao` continua o neutro do formato 2;
+  - o POST no 5 de família sem tela, ou fora do catálogo de tipos, é aceito;
+  - `/familias` devolve o registry inteiro;
+  - escopo, RLS, 404 único, permissões, `revisao` otimista e ROW COUNT;
+  - `secoesComReserva` passa a filtrar `SECOES_CONFIGURACAO_TOP_V5` (`:630-631`).
+
+### 18.6 Capacidade `formato5` e version skew
+
+`GET /api/admin/tipos-operacao/capabilities` (`tipos_operacao.view`) ganha, NA RAIZ e depois de `regrasGerais`
+(`tipos-operacao.ts:749-755`):
+
+    formato5: { suportado: true, versaoSchema: 5, secoes: [...SECOES_EXTENSAO_V5], leituraDoDetalhe: "formato_gravado", catalogo: CATALOGO_TOP }
+
+- `contractVersion`, `configuracao` (1), `restricoes` (3) e `regrasGerais` (4) NÃO mudam: o editor anterior compara
+  esses números.
+- `secoes` = as seções de extensão que ESTE servidor lê e grava (nenhuma na F4).
+- O web lê o bloco na régua do `regrasGerais` (`lerFormato5DasCapacidades`, `apps/web/src/features/admin/top-contrato.tsx:214`):
+  presente e ilegível = ausente, sem negar o resto.
+- `podeConfigurarFormato5` (`:417`) exige, todos juntos:
+  - `podeConfigurarRegrasGerais`;
+  - o bloco legível, com `versaoSchema` 5;
+  - o MESMO conjunto de `secoes` que a tela escreve;
+  - o catálogo legível.
+  Senão, editor do 4 — e TOP no 5 bloqueada nele (`configuracaoIlegivelNoEditor`).
+
+| Combinação | Comportamento | Prova |
+| --- | --- | --- |
+| web nova × API anterior | sem o bloco, o editor do 4 de hoje: seletor de família, ajuda antiga, Execução indisponível no pedido, grava o 4. A base recusa um corpo no 5 (422 `…_SCHEMA_NAO_SUPORTADO`, nada criado) | K-1 do 5 (`top-formato5-skew-api-producao.spec.ts`); K-1 da TOP-CONFIG-08 em três mundos |
+| API nova × web anterior | o bloco é ignorado. O editor anterior grava o 4, e a API guarda a N+1 no 4, sem promover. Uma TOP no 5 abre com as seções bloqueadas (`top-config-ilegivel`), e renomear (PUT sem `configuracao`) guarda o 5 IDÊNTICO. O histórico anterior lista as versões | K-2 do 5 (`top-formato5-skew-web-anterior.spec.ts`); K-2 da TOP-CONFIG-08; TOP-CONFIG-04A |
+| API anterior × versão no 5 (reversão) | qualquer PUT na TOP com vigente no 5 → 422 `…_SCHEMA_NAO_SUPORTADO` (a TOP congela). Venda, compra e documento de estoque com versão congelada no 5 → 409 `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`. A fila de Aprovações lista (SQL ≥ 4) o que Aprovar e Reprovar recusam (409). O documento lançado nela fica sem as regras da TOP | `docs/DEPLOYMENT.md` § OPERACOES-01 › F4 |
+
+- **O detector do web da base** (`editorDaBaseGravaFormato5`, `apps/web/e2e/skew-fonte-da-base.ts`) lê o fonte do
+  commit pela marca `top-assistente`, e não pelo comportamento: a API deste HEAD declara o bloco nos dois mundos.
+  - A prova reversa do lado FALSO usa `COMMITS_DO_EDITOR_DA_TOP.formato4`, com a marca do 4 no mesmo commit.
+  - O lado VERDADEIRO não tem commit fixo até esta fase entrar na main. Depois, o SHA do merge entra como `formato5`.
+  - Ele supõe a base e o HEAD com o MESMO conjunto de seções. A primeira fase que acrescentar uma seção mede também o
+    conjunto (§18.3).
+
+### 18.7 O editor
+
+- **Sem o editor do 5** (servidor sem o bloco), tudo é o de hoje, byte a byte, menos o rename do "local de estoque",
+  que vale nos dois editores (abaixo).
+- **Passo 1** (só na CRIAÇÃO, com o editor do 5 e sem movimento escolhido; `top-editor.tsx:501`):
+  `AssistenteTipoDeMovimento` (`apps/web/src/features/admin/top-assistente.tsx`).
+  - `data-testid="top-assistente"`;
+  - `top-assistente-passo`, com o texto exato "Passo 1 de 2: escolha o tipo de movimento. Depois, as abas mostram só o
+    que vale para ele.";
+  - por grupo, `top-assistente-grupo-<grupo>` com um `role="group"` (`aria-label` = rótulo do grupo);
+  - por tipo, um botão `top-assistente-tipo-<chave>` com `data-familia="<família>"` e o rótulo do tipo;
+  - layout `flex flex-wrap`, que cabe em 360 px.
+- **Passo 2:**
+  - "Movimento" (`top-campo-familia`) só leitura, `"<rótulo> (<família>)"`;
+  - `top-assistente-trocar` ("Trocar") volta ao passo 1 com o mesmo reset da escolha;
+  - na EDIÇÃO a família continua imutável, sem Trocar.
+- **Abas:** as do perfil do tipo no catálogo PUBLICADO (`perfilDaFamiliaTop`). Família sem perfil → configuração
+  bloqueada.
+- **Geral:**
+  - as regras da matriz (como no 4) e SÓ as exigências do perfil, na ordem fixa, com o rótulo do tipo: "Exigir
+    cliente", "Exigir fornecedor" ou "Exigir parceiro"; "Exigir centro de resultado"; "Exigir observação"; a caixa
+    "Exigir transportadora". Os testids são os de hoje.
+  - A ajuda, fora do documento de estoque (`AJUDA_FORMATO5_GERAL`, `top-editor.tsx:223-224`): "Confirmação automática:
+    o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a
+    confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: quando
+    esta operação permite, as Centrais de Vendas, de Compras e de Estoque aceitam o documento sem item. As exigências
+    de preenchimento são cobradas no lançamento."
+  - No documento de estoque, a de hoje ("No documento de estoque valem a confirmação automática e a observação
+    obrigatória.").
+- **Antes de gravar** (só no 5), a ordem é:
+  1. `normalizarRegrasGeraisDaFamiliaTop` (matriz);
+  2. `normalizarPeloPerfilTop` (o que o tipo não aceita volta ao padrão);
+  3. `condicoesQueVoltamPeloPerfilTop` (a lista de condições vai `[]`).
+  Na EDIÇÃO, o diálogo "Estas regras passam a valer" (`top-regras-passam-a-valer`) lista, sob "Estas opções voltam ao
+  padrão, porque esta operação não as executa:", primeiro as regras e depois o que o tipo não aceita. Cada item é um
+  `top-regra-volta-ao-padrao` com `data-caminho`: "Exigir parceiro: Sim → Não", "Financeiro: volta ao padrão",
+  "Condições de pagamento: voltam ao padrão".
+- **422 → aba:** `abaDoCaminho` aceita o caminho EXATO da seção (`estoque`, `financeiro`, `fiscal`) e as seções de
+  extensão (`<nome>` ou `<nome>.…`). No editor do 5, o erro cujo caminho não tem aba no tipo — ou nenhuma — aparece na
+  Identificação, onde o editor cai (`top-erro-<caminho>`). Só acontece com servidor e catálogo divergentes.
+- **Abas de extensão:** a aba de uma seção nova é desenhada pelo registro `COMPONENTES_DAS_SECOES_V5`
+  (`top-secoes-formato5.tsx:39`, `SecaoDoFormato5`, `:54`). O editor não muda quando uma fase acrescenta uma seção.
+- **Histórico** (`top-historico.tsx`):
+  - `secoesAlteradas` aceita os nomes de `SECOES_CONFIGURACAO_TOP_V5`;
+  - numa versão no 5, um bloco por seção de extensão, com o rótulo e as `linhas` da definição
+    (`blocosDasSecoesDeExtensao`, `:341`; nenhum na F4);
+  - "Formato da configuração: 5" e "Regras gerais e aprovação: executadas" saem do portão do domínio.
+- **"Local de estoque"** (os dois editores e o histórico; identificadores iguais):
+  - "Exigir local de estoque" (`top-campo-estoque-armazem`; histórico `:374`);
+  - o aviso `top-estoque-definido-pela-especie` ("… a entrada põe a quantidade no local de estoque …");
+  - a dica da reserva ("O pedido separa as quantidades no local de estoque de cada item. …").
+  A F3a (decisão 280) fez o mesmo nas recusas de `exigeArmazem` e da reserva (só `message`).
+
+### 18.8 O que fica para depois
+
+- As seções das F5 a F10 e as telas dos tipos "sem tela ainda", cada uma na sua fase (`docs/OPERACOES-CONTRACT.md` §1
+  e §2).
+- As famílias novas no registry: orçamento de compra, requisição, consumo e devolução de consumo, manejo, batelada e
+  movimento bancário.
+- A prova do lado verdadeiro do detector, depois do merge.
+- Os rótulos de enum da TOP no web (`ROTULOS_TOP`): dívida anterior, fora desta fase.
+- O comportamento das Centrais com documento sem item é da F2 (decisão 279).

@@ -112,18 +112,17 @@ const respostaDoPut = (page: Page, id: string) =>
  * K-2 DO 5 · O DETECTOR DO MUNDO (PROVA REVERSA, SEM NAVEGADOR)
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
 
-test("OPERACOES-01 F4 · K-2 do 5 (sentido 2) — o detector `editorDaBaseGravaFormato5` lê o fonte do commit: na TOP-CONFIG-08 da main (o editor do 4) dá FALSO, com a marca do 4 presente no MESMO commit", () => {
+test("OPERACOES-01 F4 · K-2 do 5 (sentido 2) — o detector `editorDaBaseGravaFormato5` lê o fonte do commit: na TOP-CONFIG-08 da main (o editor do 4) dá FALSO e no commit da F4 dá VERDADEIRO, com a marca do 4 presente nos dois", () => {
   const sha = COMMITS_DO_EDITOR_DA_TOP.formato4;
   // A PREMISSA: o detector consegue ler o fonte deste commit — a marca do editor do 4 está lá. Sem ela, o "falso" abaixo
   // poderia ser só um commit que não se leu.
   expect(editorDaBaseGravaFormato4(sha), "premissa: o commit da TOP-CONFIG-08 tem o diálogo das regras gerais (o editor do 4)").toBe(true);
   expect(editorDaBaseGravaFormato5(sha), "o editor do 4 não tem o assistente: não grava o 5").toBe(false);
-  // O LADO VERDADEIRO não tem commit fixo enquanto a F4 não entrar na main (nenhum commit da main tem o assistente):
-  // declarado, e não fabricado. Quando ela entrar, o merge dela vira o commit fixo do lado verdadeiro.
-  test.info().annotations.push({
-    type: "declarado",
-    description: "o lado verdadeiro de editorDaBaseGravaFormato5 não tem commit fixo até a F4 (OPERACOES-01) entrar na main"
-  });
+  // O LADO VERDADEIRO: o commit da F4 (OPERACOES-01) tem o assistente — e o diálogo do 4 continua lá (o 5 é o 4 + o
+  // passo 1), então as duas marcas aparecem no MESMO commit e só a do 5 decide.
+  const sha5 = COMMITS_DO_EDITOR_DA_TOP.formato5;
+  expect(editorDaBaseGravaFormato4(sha5), "premissa: o commit da F4 também tem o diálogo das regras gerais").toBe(true);
+  expect(editorDaBaseGravaFormato5(sha5), "o editor da F4 tem o assistente: grava o 5").toBe(true);
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════════

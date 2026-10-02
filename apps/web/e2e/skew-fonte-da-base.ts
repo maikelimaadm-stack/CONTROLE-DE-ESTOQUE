@@ -112,7 +112,9 @@ export const COMMITS_DO_EDITOR_DA_TOP = {
   /** #87 — a main antes da TOP-CONFIG-08: o editor grava o formato 3. */
   semFormato4: "1303de3384c726859a5560d04d5d6ae5241cd38e",
   /** #88 — a TOP-CONFIG-08 na main: o editor grava o formato 4. */
-  formato4: "57b30e2833ee058d7099656cf0d17e811843717f"
+  formato4: "57b30e2833ee058d7099656cf0d17e811843717f",
+  /** OPERACOES-01 F4 (PR #90, o commit da fase na branch, mesclado por merge): o editor grava o formato 5. */
+  formato5: "0d1c882dbb71338c242a987b4fb8a9f1ff68bc55"
 } as const;
 
 /**
@@ -122,9 +124,8 @@ export const COMMITS_DO_EDITOR_DA_TOP = {
  *
  * PROVA REVERSA: o lado FALSO é provado com `COMMITS_DO_EDITOR_DA_TOP.formato4` (a TOP-CONFIG-08 na main, o editor do 4)
  * no K-2 do 5 (`top-formato5-skew-web-anterior.spec.ts`), ao lado da marca do 4 no MESMO commit — a prova de que o
- * detector lê o fonte. O lado VERDADEIRO não tem commit fixo enquanto a F4 não entrar na main: até lá, nenhum commit
- * da main tem o assistente. Quando entrar, o merge dela entra em `COMMITS_DO_EDITOR_DA_TOP` (como `formato5`), e a
- * prova passa a ter os dois lados.
+ * detector lê o fonte. O lado VERDADEIRO é provado com `COMMITS_DO_EDITOR_DA_TOP.formato5` (o commit da F4 na branch da
+ * PR #90, que entra na main por merge e continua alcançável por SHA), com a marca do 4 presente no mesmo commit.
  */
 export function editorDaBaseGravaFormato5(sha: string = shaDaBase()): boolean {
   return fonteDoWebContem(sha, "top-assistente");

@@ -249,7 +249,7 @@ async function conferirCadastros(ctx: ServiceCtx, doc: DocumentoEstoqueLido): Pr
     "select id from erp.warehouses where id = any($1::uuid[]) and organization_id = $2 and empresa_id = $3 and deleted_at is null and is_active",
     [armazens, ctx.orgId, doc.empresa_id]);
   const ativos = new Set(w.rows.map((x) => x.id));
-  const msgArmazem = "Armazém inativo ou excluído desde o lançamento: reative-o no cadastro ou cancele o documento";
+  const msgArmazem = "Local de estoque inativo ou excluído desde o lançamento: reative-o no cadastro ou cancele o documento";
   if (!ativos.has(doc.armazem_id)) recusas.push({ path: "armazem_id", message: msgArmazem });
   if (doc.armazem_destino_id && !ativos.has(doc.armazem_destino_id)) recusas.push({ path: "armazem_destino_id", message: msgArmazem });
 
@@ -353,7 +353,7 @@ export async function confirmarDocumentoEstoqueNaTransacao(ctx: ServiceCtx, espe
     const faltas = plano.map((p, i) => ({ p, i })).filter(({ p }) => p.insuficiente);
     if (faltas.length) {
       const detalhes = faltas.map(({ p, i }) => ({ path: caminhoDoItem(i, "quantidade"),
-        message: `Saldo insuficiente de ${p.produto_nome}${p.lote ? ` (lote ${p.lote})` : ""} no armazém de origem: há ${quantidadeLegivel(p.saldo_atual)}, o item pede ${quantidadeLegivel(doc.itens[i]!.quantidade!)}.` }));
+        message: `Saldo insuficiente de ${p.produto_nome}${p.lote ? ` (lote ${p.lote})` : ""} no local de estoque de origem: há ${quantidadeLegivel(p.saldo_atual)}, o item pede ${quantidadeLegivel(doc.itens[i]!.quantidade!)}.` }));
       throw recusar(detalhes[0]!.message, detalhes);
     }
     for (const it of doc.itens) {
@@ -479,7 +479,7 @@ async function conferirEntradasNaoConsumidas(ctx: ServiceCtx, doc: DocumentoEsto
   };
   const detalhes = faltas.rows.map((f) => ({
     path: caminhoDoItem(itemDoBalde(f.produto_id, f.lote), "quantidade"),
-    message: `O estoque de ${f.produto} no armazém ${f.armazem}${f.lote ? ` (lote ${f.lote})` : ""} já foi consumido: entrou ${quantidadeLegivel(f.entrou)}, o saldo é ${quantidadeLegivel(f.saldo)}. O estorno deixaria o saldo negativo.`,
+    message: `O estoque de ${f.produto} no local de estoque ${f.armazem}${f.lote ? ` (lote ${f.lote})` : ""} já foi consumido: entrou ${quantidadeLegivel(f.entrou)}, o saldo é ${quantidadeLegivel(f.saldo)}. O estorno deixaria o saldo negativo.`,
   }));
   throw recusar(`O estoque que este documento deu de entrada já foi consumido; o cancelamento deixaria o saldo negativo. ${detalhes.map((d) => d.message).join(" ")}`, detalhes);
 }
