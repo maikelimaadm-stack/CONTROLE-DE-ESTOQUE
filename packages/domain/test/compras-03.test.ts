@@ -191,16 +191,29 @@ describe("C3-D2 catálogos de compras", () => {
 
 describe("C3-D3 vendas NÃO mudou um byte", () => {
   // sha256 de JSON.stringify, calculado sobre o domínio de origin/main 93497b1 (antes da COMPRAS-03)
-  it("CATALOGO_VENDAS idêntico (fora o rótulo 'Local de estoque' da OPERACOES-01 F3a, decisão 280)", () => {
+  // OPERACOES-01 F3b (decisão 280): o Local de estoque passou a abrir os itens de venda. Devolvido para logo depois do
+  // Produto (a posição de 93497b1), catálogo e layout do sistema voltam a ser os de 93497b1 byte a byte.
+  const localDepoisDoProduto = <T>(lista: readonly T[], chave: (x: T) => string): T[] => {
+    const i = lista.findIndex((x) => chave(x) === "warehouse_id");
+    const sem = lista.filter((_, j) => j !== i);
+    const p = sem.findIndex((x) => chave(x) === "product_id");
+    return [...sem.slice(0, p + 1), at(lista, i), ...sem.slice(p + 1)];
+  };
+  it("CATALOGO_VENDAS idêntico (fora o rótulo 'Local de estoque' da F3a e o Local antes do Produto da F3b, decisão 280)", () => {
     const coluna = CATALOGO_VENDAS.find((c) => c.parte === "itens" && c.chave === "warehouse_id");
     expect(coluna?.rotulo).toBe("Local de estoque");
-    // com o rótulo de antes no lugar do novo, o catálogo é o de 93497b1 byte a byte: o rename foi a ÚNICA mudança
-    const comORotuloDeAntes = CATALOGO_VENDAS.map((c) => (c === coluna ? { ...c, rotulo: "Armazém" } : c));
-    expect(sha(comORotuloDeAntes)).toBe("8e61b2e21d907956cfde7db1b2f8e5dfb43ecb9b8e302a7e1f05e34e4e52c13c");
-    expect(sha(CATALOGO_VENDAS)).toBe("4a549aa2f9d5f90a068a2028da18e8ae31bbf5e38710595a32b6241e05561e11");
+    expect(CATALOGO_VENDAS.filter((c) => c.parte === "itens").map((c) => c.chave).slice(0, 3), "premissa: o Local abre os itens").toEqual(["warehouse_id", "codigo", "product_id"]);
+    // com o rótulo de antes e o Local de volta depois do Produto, o catálogo é o de 93497b1 byte a byte: o rename (F3a)
+    // e a posição do Local (F3b) foram as ÚNICAS mudanças
+    const deAntes = localDepoisDoProduto(CATALOGO_VENDAS, (c) => (c.parte === "itens" ? c.chave : "")).map((c) => (c === coluna ? { ...c, rotulo: "Armazém" } : c));
+    expect(sha(deAntes)).toBe("8e61b2e21d907956cfde7db1b2f8e5dfb43ecb9b8e302a7e1f05e34e4e52c13c");
+    expect(sha(CATALOGO_VENDAS)).toBe("aac5e7eeb5235c4c46d64fb9294d822155e05f542bddbd40cedc1d2aa3e71a9e");
   });
-  it.each(FAMILIAS_COM_LAYOUT_DE_VENDAS)("LAYOUT_DO_SISTEMA(%s) idêntico", (f) => {
-    expect(sha(LAYOUT_DO_SISTEMA(f))).toBe("d6c475ec8741549071d46c2bec264f73816ea9ae385b9438d788ceb41e9bb9f7");
+  it.each(FAMILIAS_COM_LAYOUT_DE_VENDAS)("LAYOUT_DO_SISTEMA(%s) idêntico (fora a posição do Local, decisão 280)", (f) => {
+    const l = LAYOUT_DO_SISTEMA(f);
+    expect(at(l.itens, 0).campo, "premissa: o Local abre os itens").toBe("warehouse_id");
+    expect(sha({ ...l, itens: localDepoisDoProduto(l.itens, (c) => c.campo) })).toBe("d6c475ec8741549071d46c2bec264f73816ea9ae385b9438d788ceb41e9bb9f7");
+    expect(sha(l)).toBe("dc34dd54b2ea49c67947cffb1338e70bb7d45ebe21d3eed66aa93e64b449b582");
   });
   it("COLUNAS_COM_PADRAO_REGISTRO continua exportada = a de vendas", () => {
     expect(COLUNAS_COM_PADRAO_REGISTRO).toEqual(["warehouse_id"]);
