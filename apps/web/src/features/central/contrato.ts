@@ -146,12 +146,6 @@ export interface AdaptadorDaCentral {
   chaveDoSalvo: (id: string) => string;
   /** Chave da cópia que espera a criação desta espécie. */
   chaveDaCopia: (segmento: string) => string;
-  cancelamento: {
-    /** Chave i18n/do corpo onde vai o motivo (ex.: `reason`, `motivo`). */
-    chaveDoMotivo: string;
-    /** O motivo quando ninguém escreveu outro. */
-    motivoVazio: string;
-  };
 }
 
 /* ─────────────── M1 — moldura.tsx (+ moldura.module.css) ─────────────── */

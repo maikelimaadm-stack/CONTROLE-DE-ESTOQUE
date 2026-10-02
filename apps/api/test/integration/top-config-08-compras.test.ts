@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { configuracaoNeutraTop, configuracaoNeutraTopV2 } from "@agro/domain";
+import { configuracaoNeutraTop, configuracaoNeutraTopV2, mensagemAprovacaoReprovada } from "@agro/domain";
 import { fromPgError } from "../../src/lib/errors.js";
 import {
   c, iniciar, encerrar, j, erro, unico, cfg3, cfg4, top, versaoAtualNoBanco, usuario, produto, saldo,
@@ -553,7 +553,7 @@ describe("AP-7 compra: o ciclo da aprovação (Sempre e A partir de um valor)", 
     expect((await auditoriaDe("documentos_compra", b.id, "reject")).map((a) => a.metadata)).toEqual([{ motivo }]);
     const recusada = await confirmarCompra(b.id);
     expect(recusada.statusCode, recusada.body).toBe(409);
-    expect(erro(recusada)).toEqual({ code: "APROVACAO_REPROVADA", message: `Este documento foi reprovado: ${motivo}.`,
+    expect(erro(recusada)).toEqual({ code: "APROVACAO_REPROVADA", message: "Este documento foi reprovado: Preço acima do combinado.",
       details: { motivo, decididoPor: { id: c.h.demo.adminUserId, nome: expect.any(String) }, decididoEm: (j(rr).aprovacao as { decididoEm: string }).decididoEm } });
     expect(j(await previaCompra(b.id)).recusas).toEqual([erro(recusada)]);
     expect(await semEfeito(b.id)).toEqual(["aberto", 0, 0, 0]);
@@ -568,6 +568,26 @@ describe("AP-7 compra: o ciclo da aprovação (Sempre e A partir de um valor)", 
     expect([j(pvOk).podeConfirmar, j(pvOk).recusas]).toEqual([true, []]);
     expect((await confirmarCompra(b.id)).statusCode).toBe(200);
     await esperarConfirmada(b.id, { produtoId: p.id, quantidade: "3", total: "30.00" });
+  });
+
+  it("AP-7a2 o motivo que JÁ fecha a frase (\"Preço alto.\") → o 409 diz \"…reprovado: Preço alto.\", com UM ponto final só; a prévia diz o mesmo", async () => {
+    const topId = await topCompra(sempre());
+    const p = await produto();
+    const b = await compraLancada("compra", corpoCompra([itemCompra(p.id, "1", "10.00")], { tipo_operacao_id: topId }));
+    const motivo = "Preço alto.";
+    const rr = await reprovar("compras", b.id, { motivo });
+    expect(rr.statusCode, rr.body).toBe(200);
+    expect((await decisoesDe("aprovacoes_compra", b.id)).map((d) => [d.decisao, d.observacao]),
+      "premissa: o motivo gravado já termina em ponto").toEqual([["reprovado", motivo]]);
+
+    const recusada = await confirmarCompra(b.id);
+    expect(recusada.statusCode, recusada.body).toBe(409);
+    expect(erro(recusada)).toEqual({ code: "APROVACAO_REPROVADA", message: "Este documento foi reprovado: Preço alto.",
+      details: { motivo, decididoPor: { id: c.h.demo.adminUserId, nome: expect.any(String) }, decididoEm: (j(rr).aprovacao as { decididoEm: string }).decididoEm } });
+    expect(erro(recusada).message.match(/\.+$/u)?.[0], "UM ponto final só, nunca \"..\"").toBe(".");
+    expect(erro(recusada).message, "o texto à mão e a função do domínio dizem o mesmo").toBe(mensagemAprovacaoReprovada(motivo));
+    expect(j(await previaCompra(b.id)).recusas).toEqual([erro(recusada)]);
+    expect(await semEfeito(b.id)).toEqual(["aberto", 0, 0, 0]);
   });
 
   it("AP-7b A partir de 1500.00: total 1500.00 (com frete) exige e, aprovada, confirma; 1499.99 não exige (aprovar → 409 NAO_EXIGIDA) e confirma direto", async () => {

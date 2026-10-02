@@ -1,5 +1,6 @@
-import { test, expect, type Locator, type Page, type Request } from "@playwright/test";
+import type { Locator, Page, Request } from "@playwright/test";
 import { login, api, uniq, empresaAtiva } from "./helpers";
+import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 
 /**
  * CENTRAL DE COMPRAS NO MOTOR — COMPORTAMENTO (VISUAL-UX-04, decisão 276) · CC-6 a CC-10.
@@ -9,15 +10,13 @@ import { login, api, uniq, empresaAtiva } from "./helpers";
  * (CC-1) e a barra (CC-2..5) moram nos arquivos -a e -c.
  *
  * Cada caso monta os PRÓPRIOS dados pela API (TOPs, fornecedor, armazém, produtos, pedido) — nenhum é "o primeiro da
- * lista": nenhuma conta depende do que outro spec deixou no banco. O que vai no fio é contado no fio (`request`), nunca
- * deduzido da tela.
+ * lista": nenhuma conta depende do que outro spec deixou no banco; a referência do seed (unidade, grupo, natureza,
+ * centro) vem pelo NOME. Os cadastros que o caso cria saem no fim, passou ou falhou (`central-compras-fixtures.ts`); os
+ * documentos ficam. O que vai no fio é contado no fio (`request`), nunca deduzido da tela.
  */
 
 const P = "central-compras";
-type Opcao = { id: string; label: string };
 const literal = (t: string) => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-/** Código de TOP único por execução (tempo + sorteio), como nos arquivos -a e -c — 5 dígitos sorteados colidiam no banco. */
-const codigoTop = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const UUID_INEXISTENTE = "00000000-0000-4000-8000-000000000000";
 
 /** Escolhe no RefSelect da Central pelo rótulo do campo (nome escapado: nomes do seed têm colchetes). */
@@ -60,37 +59,30 @@ async function itemDoLeque(page: Page, testId: string) {
   return item;
 }
 
-/** O cadastro de base: TOP de Compra e de Pedido (Pedido → Compra, em partes), dois produtos, armazém e fornecedor CRIADOS aqui, natureza, centro. */
+/** O cadastro de base: TOP de Compra e de Pedido (Pedido → Compra, em partes), dois produtos, armazém e fornecedor CRIADOS aqui; natureza e centro do seed, pelo nome. */
 async function cenario(page: Page) {
-  const topCompra = { codigo: `4${codigoTop()}`, id: "" };
-  topCompra.id = (await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo: topCompra.codigo, codigoBase: "compras.compra", nome: uniq("Compra CC-B") })).id;
-  const topPedido = { codigo: `3${codigoTop()}`, id: "" };
-  topPedido.id = (await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", {
+  const topCompra = { codigo: codigoTop("4"), id: "" };
+  topCompra.id = (await criarTop(page, { codigo: topCompra.codigo, codigoBase: "compras.compra", nome: uniq("Compra CC-B") })).id;
+  const topPedido = { codigo: codigoTop("3"), id: "" };
+  topPedido.id = (await criarTop(page, {
     codigo: topPedido.codigo, codigoBase: "compras.pedido", nome: uniq("Pedido CC-B"),
     destinos: [{ tipoOperacaoId: topCompra.id, ordem: 0, emPartes: true }]
   })).id;
-  const unidades = await api<Opcao[]>(page, "GET", "/api/resources/measurement_units/options");
-  const un = unidades.find((u) => u.label.toUpperCase() === "UN");
-  expect(un, "premissa: o seed tem a unidade UN").toBeTruthy();
-  const grupos = await api<Opcao[]>(page, "GET", "/api/resources/product_groups/options?kind=analytic");
-  const naturezas = await api<Opcao[]>(page, "GET", "/api/resources/financial_categories/options?kind=analytic&nature=expense");
-  expect(naturezas.length, "premissa: há natureza de despesa analítica").toBeGreaterThan(0);
-  const centros = await api<Opcao[]>(page, "GET", "/api/resources/cost_centers/options?kind=analytic");
-  expect(centros.length, "premissa: há centro analítico").toBeGreaterThan(0);
+  const ref = await referenciasDoSeed(page);
   const produto = async (nome: string) => {
-    const p = await api<{ id: string }>(page, "POST", "/api/resources/products", { description: uniq(nome), group_id: grupos[0]!.id, measurement_id: un!.id, financial_category_id: naturezas[0]!.id });
+    const p = await criarCadastro(page, "products", { description: uniq(nome), group_id: ref.grupo.id, measurement_id: ref.unidade.id, financial_category_id: ref.natureza.id });
     return { id: p.id, nome: String((await api<Record<string, unknown>>(page, "GET", `/api/resources/products/${p.id}`))["description"]) };
   };
   const a = await produto("CC-B produto A");
   const b = await produto("CC-B produto B");
   const empresa = await empresaAtiva(page);
-  const armazem = (await api<{ id: string }>(page, "POST", "/api/resources/warehouses", {
+  const armazem = (await criarCadastro(page, "warehouses", {
     empresa_id: empresa, initials: `B${Date.now().toString(36).slice(-4).toUpperCase()}`, description: uniq("CC-B arm"), type: "inputs"
   })).id;
   const nomeArmazem = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/warehouses/${armazem}`))["description"]);
-  const fornecedor = (await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("CC-B forn"), person_type: "legal", is_provider: true })).id;
+  const fornecedor = (await criarCadastro(page, "people", { name: uniq("CC-B forn"), person_type: "legal", is_provider: true })).id;
   const nomeFornecedor = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/people/${fornecedor}`))["name"]);
-  return { topCompra, topPedido, a, b, empresa, armazem, nomeArmazem, fornecedor, nomeFornecedor, natureza: naturezas[0]!, centro: centros[0]! };
+  return { topCompra, topPedido, a, b, empresa, armazem, nomeArmazem, fornecedor, nomeFornecedor, natureza: ref.natureza, centro: ref.centro };
 }
 type Cenario = Awaited<ReturnType<typeof cenario>>;
 

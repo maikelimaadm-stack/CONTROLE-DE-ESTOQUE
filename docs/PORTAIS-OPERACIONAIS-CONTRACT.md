@@ -493,8 +493,10 @@ pela decisão 278: a 276 dizia "não há rota de API".)
 - `colunasDosItens` — colunas do sistema, mapa catálogo → coluna do motor e as colunas da leitura;
 - `acoes` — o que a espécie põe na barra e no leque (o motor só dispõe);
 - `entidadeDoHistorico` (ou null), `linkDoTitulo`, `linkDoDerivado`;
-- `chaveDoSalvo` e `chaveDaCopia` — chaves do Map em memória, nunca do armazenamento do navegador;
-- `cancelamento` — a chave do motivo no corpo (`reason` na venda, `motivo` na compra) e o vazio.
+- `chaveDoSalvo` e `chaveDaCopia` — chaves do Map em memória, nunca do armazenamento do navegador.
+
+O corpo do cancelamento é da espécie (`reason` na venda, `motivo` na compra, com o motivo vazio pelo `motivoVazio` do
+diálogo): o campo `cancelamento` do contrato saiu na OPERACOES-01 (decisão 278), porque nenhuma leitura o usava.
 
 O que é regra continua na espécie: a venda (`features/sales/`) mantém o lançamento, os derivados, o cliente em atraso,
 a reserva e o faturar em partes; a compra (`features/compras/central/`) mantém o estado do documento, o receber pedido,

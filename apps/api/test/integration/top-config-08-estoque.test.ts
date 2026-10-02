@@ -384,7 +384,8 @@ describe("AP-7 — estoque, aprovação Sempre: o ciclo na confirmação e na pr
     const reprovada = await confirmarEstoque("saida", id);
     expect(reprovada.statusCode, reprovada.body).toBe(409);
     expect(erro(reprovada)).toEqual(REPROVADA);
-    expect(REPROVADA.message, "a mensagem exata do contrato").toBe(`Este documento foi reprovado: ${motivo}.`);
+    expect(REPROVADA.message, "a mensagem exata do contrato, à mão (o motivo não fecha a frase: o ponto é da mensagem)")
+      .toBe("Este documento foi reprovado: Quantidade acima do combinado.");
     const pv2 = await lerPrevia("saida", id);
     expect([pv2.recusas, pv2.podeConfirmar]).toEqual([[REPROVADA], false]);
     expect(await movimentosDe("documentos_estoque", id)).toEqual([]);
@@ -407,6 +408,27 @@ describe("AP-7 — estoque, aprovação Sempre: o ciclo na confirmação e na pr
       ["approve", { observacao: "Conferido" }],
       ["confirm", { especie: "saida", movimentos: 1, tipoOperacaoVersaoId: doc.tipo_operacao_versao_id }],
     ]);
+  });
+
+  it("AP-7a2 entrada, o motivo que JÁ fecha a frase (\"Preço alto.\") → o 409 diz \"…reprovado: Preço alto.\", com UM ponto final só; a prévia diz o mesmo", async () => {
+    const topId = await top4("entrada", SEMPRE);
+    const p = await produto();
+    const { id } = await estoqueLancado("entrada", [item("entrada", p.id)], { tipo_operacao_id: topId });
+    const motivo = "Preço alto.";
+    const rep = await reprovar("entrada", id, { motivo });
+    expect(rep.statusCode, rep.body).toBe(200);
+    const d1 = await decisoes(id);
+    expect(d1.map((x) => [x.decisao, x.observacao]), "premissa: o motivo gravado já termina em ponto").toEqual([["reprovado", motivo]]);
+
+    const reprovada = await confirmarEstoque("entrada", id);
+    expect(reprovada.statusCode, reprovada.body).toBe(409);
+    expect(erro(reprovada)).toEqual({ code: "APROVACAO_REPROVADA", message: "Este documento foi reprovado: Preço alto.",
+      details: { motivo, decididoPor: { id: c.h.demo.adminUserId, nome: await nomeDoAdmin() }, decididoEm: d1[0]!.decididoEm } });
+    expect(erro(reprovada).message.match(/\.+$/u)?.[0], "UM ponto final só, nunca \"..\"").toBe(".");
+    expect(erro(reprovada).message, "o texto à mão e a função do domínio dizem o mesmo").toBe(mensagemAprovacaoReprovada(motivo));
+    const pv = await lerPrevia("entrada", id);
+    expect([pv.recusas, pv.podeConfirmar]).toEqual([[erro(reprovada)], false]);
+    expect([(await docNoBanco(id)).situacao, await movimentosDe("documentos_estoque", id)]).toEqual(["aberto", []]);
   });
 
   it.each(ESPECIES)("AP-7b %s: pendente → 409 APROVACAO_PENDENTE sem efeito; aprovar → a confirmação passa e move", async (e) => {

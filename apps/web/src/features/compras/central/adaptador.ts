@@ -127,7 +127,6 @@ export function adaptadorDaCentralDeCompras(variante: VarianteDeCompra, rotulo: 
     linkDoTitulo: linkDoTituloDeCompra,
     linkDoDerivado: (d) => rotaDoDocumento({ id: d["id"], especie: "compra" }),
     chaveDoSalvo: chaveDepoisDeSalvarDeCompra,
-    chaveDaCopia: chaveDaCopiaDeCompra,
-    cancelamento: { chaveDoMotivo: "motivo", motivoVazio: MOTIVO_VAZIO_DA_COMPRA }
+    chaveDaCopia: chaveDaCopiaDeCompra
   };
 }

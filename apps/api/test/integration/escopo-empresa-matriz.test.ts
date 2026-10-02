@@ -25,6 +25,15 @@ async function member(name: string, email: string, empresaIds: string[]): Promis
   return { authorization: `Bearer ${j(login).token}`, "x-org-id": h.demo.orgId };
 }
 const get = (url: string, headers: Hdr) => h.app.inject({ method: "GET", url, headers });
+/**
+ * HOJE no relógio do BANCO (`current_date`), em ISO. Painel com janela (o padrão é 1º de janeiro do ano corrente até
+ * hoje) só prova o recorte se o registro do caso estiver DENTRO dela: data fixa sai da janela na virada do ano, e o
+ * "maior que" vira 0 > 0. Por isso a data do caso sai daqui, e a janela que o painel respondeu é conferida ao lado.
+ */
+async function hojeNoBanco(): Promise<string> {
+  const admin = createPool(TEST_URL, { max: 1 });
+  try { return (await admin.query<{ hoje: string }>("select to_char(current_date, 'YYYY-MM-DD') as hoje")).rows[0]!.hoje; } finally { await admin.end(); }
+}
 const mk = async (url: string, payload: Record<string, unknown>) => { const r = await h.app.inject({ method: "POST", url, headers: h.headers(), payload }); expect(r.statusCode, `${url}: ${r.body}`).toBe(201); return j(r).id as string; };
 /** Verifica lista + detalhe para os três perfis: A vê só a; AB e OWNER veem a e b. `listUrl` opcional (ex.: lista com filtros). */
 async function matrix(label: string, base: string, a: string, b: string, listUrl = base, itemsKey = "items") {
@@ -126,11 +135,17 @@ describe("matriz cross-farm: leituras, detalhes, contadores, dashboards, relató
     expect(typeof det.warehouse_name).toBe("string"); expect(items.length).toBe(1); expect(items[0]!.warehouse_name).toBe(det.warehouse_name); expect((det.movements as unknown[]).length).toBeGreaterThan(0);
   });
   it("COMPRAS: solicitações (lista/detalhe/contadores) continuam corretas", async () => {
-    const reqp = (farm: string) => ({ empresa_id: farm, request_date: "2026-09-01", request_type: "product", description: "Matriz", justification: "x", priority: "high", items: [{ product_id: I.product, description: "Sal", quantity: "1", reference_value: "5" }] });
+    const hoje = await hojeNoBanco();
+    const reqp = (farm: string) => ({ empresa_id: farm, request_date: hoje, request_type: "product", description: "Matriz", justification: "x", priority: "high", items: [{ product_id: I.product, description: "Sal", quantity: "1", reference_value: "5" }] });
     const ra = await mk("/api/supply/requests", reqp(empresaA)); const rb = await mk("/api/supply/requests", reqp(empresaB));
     await matrix("supply-requests", "/api/supply/requests", ra, rb);
     const cA = j(await get("/api/supply/requests/counts", A)) as { all: number }; const cO = j(await get("/api/supply/requests/counts", OWNER)) as { all: number }; expect(cO.all).toBeGreaterThan(cA.all);
-    const dashA = j(await get("/api/dashboards/supply", A)).by_status as { n: number }[]; const dashO = j(await get("/api/dashboards/supply", OWNER)).by_status as { n: number }[];
+    const painelA = j(await get("/api/dashboards/supply", A)); const painelO = j(await get("/api/dashboards/supply", OWNER));
+    for (const painel of [painelA, painelO]) {
+      const { start, end } = painel.period as { start: string; end: string };
+      expect([start <= hoje, hoje <= end], `premissa: a janela do painel (${start} a ${end}) contém a data das solicitações (${hoje})`).toEqual([true, true]);
+    }
+    const dashA = painelA.by_status as { n: number }[]; const dashO = painelO.by_status as { n: number }[];
     expect(dashO.reduce((s, x) => s + Number(x.n), 0)).toBeGreaterThan(dashA.reduce((s, x) => s + Number(x.n), 0));
   });
   it("PECUÁRIA: manejos, pesagens, animais e dashboard continuam corretos; localizar animal não vaza outra fazenda", async () => {
