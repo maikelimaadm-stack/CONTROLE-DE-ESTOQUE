@@ -70,9 +70,12 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
     await expect(page.getByTestId("mapa-ima-toggle")).toHaveAttribute("aria-pressed", "true");
     await clicar(-L, -L); await clicar(L, -L); await clicar(L, L);
     await expect(pontos).toHaveText("3");
-    await expect(page.getByTestId("mapa-lado"), "aberta: um rótulo de medida por lado traçado").toHaveCount(2);
     await expect(page.getByTestId("mapa-medida-area")).not.toHaveText("0,00");
     await expect(confirmar).toHaveText(/Fechar polígono/);
+    await expect(page.getByTestId("mapa-lado")).toHaveCount(0);
+    await page.getByTestId("mapa-metragem-toggle").click();
+    await expect(page.getByTestId("mapa-metragem-toggle")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("mapa-lado"), "aberta: um rótulo de medida por lado traçado").toHaveCount(2);
 
     await page.keyboard.press("Control+z"); await expect(pontos).toHaveText("2");
     await page.keyboard.press("Control+Shift+z"); await expect(pontos).toHaveText("3");

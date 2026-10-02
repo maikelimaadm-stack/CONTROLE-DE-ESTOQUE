@@ -36,8 +36,8 @@ interface Props {
   arrastoVertice: number;
   hover: Acerto | null;
   lados: Lado[];
-  areaHaAtual: number;
-  centro: Px | null;
+  /** Quando true, mostra rótulos de metros em cada lado. */
+  mostrarMetragem?: boolean;
   /** Cor de preview da área em gravação (listagem de cores — atualiza na hora). */
   corPreview?: string | null;
   /** Esconde rótulos das áreas gravadas (ex.: durante o desenho). */
@@ -160,17 +160,11 @@ export function CamadaDesenho(p: Props) {
             )}
           </svg>
 
-          {p.lados.map((l, i) => (
+          {p.mostrarMetragem && p.lados.map((l, i) => (
             <div key={i} className="absolute -translate-x-1/2 -translate-y-full rounded bg-slate-900/80 px-1.5 py-px text-[10px] tabular-nums text-amber-100" style={{ left: l.px.x, top: l.px.y - 6 }} data-testid="mapa-lado">
               {num(Math.round(l.metros), 0)} m
             </div>
           ))}
-
-          {p.centro && pts.length >= 3 && !p.corPreview && (
-            <div className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border bg-slate-900/90 px-2.5 py-0.5 text-[11px] font-medium tabular-nums ${fechado ? "border-cyan-300 text-cyan-50" : "border-cyan-400/70 text-cyan-100"}`} style={{ left: p.centro.x, top: p.centro.y }}>
-              {num(p.areaHaAtual, 2)} ha
-            </div>
-          )}
 
           {p.travado && cur && p.rumo !== null && !fechado && (
             <div className="absolute -translate-x-1/2 -translate-y-full rounded bg-slate-900/80 px-1.5 py-px text-[10px] tabular-nums text-sky-100" style={{ left: cur.x, top: cur.y - 14 }} data-testid="mapa-rumo">{p.rumo}°</div>

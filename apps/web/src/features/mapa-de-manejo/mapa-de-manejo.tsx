@@ -109,6 +109,7 @@ export function MapaDeManejo() {
   const [localizacao, setLocalizacao] = React.useState<{ precisao: number } | null>(null);
   const [erroLocalizacao, setErroLocalizacao] = React.useState<string | null>(null);
   const [cfg, setCfg] = React.useState<ConfigIma>(IMA_PADRAO);
+  const [mostrarMetragem, setMostrarMetragem] = React.useState(false);
   // Refs lidos pelos eventos do mapa (registrados uma vez só).
   const ed = React.useRef<Editor>(editorVazio());
   /** Ímã: tolerância 8 px, vértice+aresta; liga/desliga pelo ícone. */
@@ -630,6 +631,15 @@ export function MapaDeManejo() {
     });
   }
 
+  function toggleMetragem() {
+    setMostrarMetragem((v) => {
+      const prox = !v;
+      ed.current.acao = prox ? "Metragem visível" : "Metragem oculta";
+      redesenhar();
+      return prox;
+    });
+  }
+
   // Troca entre satélite e ruas sem recarregar o estilo: a base de ruas entra sob demanda, sob as áreas.
   async function trocarBase(novo: TipoBase) {
     if (novo === base || semImagem) return;
@@ -675,7 +685,6 @@ export function MapaDeManejo() {
   }
   const ultimoTela = ptsTela.length ? ptsTela[ptsTela.length - 1]! : null;
   const arrastoVertice = e.arrasto?.tipo === "vertice" ? e.arrasto.i : -1;
-  const centroDesenho = ptsTela.length >= 3 ? centroPx(ptsTela, coords, proj) : null;
 
   const selecionadaObj = areas.find((a) => a.id === selecionada) ?? null;
   const podeCadastrar = Boolean(empresaId);
@@ -763,8 +772,7 @@ export function MapaDeManejo() {
               arrastoVertice={arrastoVertice}
               hover={e.hover}
               lados={lados}
-              areaHaAtual={haAtual}
-              centro={centroDesenho}
+              mostrarMetragem={mostrarMetragem}
               corPreview={rascunho ? corExibidaNoMapa(form.cor) : null}
             />
           )}
@@ -799,7 +807,12 @@ export function MapaDeManejo() {
                     <Button type="button" size="icon" variant="ghost" onClick={refazer} disabled={!podeRefazer(e.hist)} aria-label="Refazer" title="Refazer (Ctrl+Shift+Z)" data-testid="mapa-refazer"><Redo2 className="h-4 w-4" aria-hidden /></Button>
                     <Button type="button" size="icon" variant="ghost" onClick={recomecar} aria-label="Recomeçar" title="Recomeçar" data-testid="mapa-recomecar"><RotateCcw className="h-4 w-4" aria-hidden /></Button>
                   </div>
-                  <BarraIma ligado={cfg.ligado} onToggle={toggleIma} />
+                  <BarraIma
+                    ligado={cfg.ligado}
+                    onToggle={toggleIma}
+                    metragem={mostrarMetragem}
+                    onToggleMetragem={toggleMetragem}
+                  />
                 </div>
               )}
             </div>
