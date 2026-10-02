@@ -8,7 +8,7 @@ PRE-BASE2-03, um total único mentiria: `farm_id` numa migration aplicada é his
 cliente HTTP é ponte com prazo, e "fazenda" no comentário de uma rota é o produto ainda falando o
 nicho. Por isso cada ocorrência é classificada em um dos três baldes abaixo — e a catraca trava só o terceiro.
 
-Total medido: **1769** ocorrências · 3 tabelas com coluna de empresa.
+Total medido: **1767** ocorrências · 3 tabelas com coluna de empresa.
 
 ## Classificação (o número que importa é o balde 3)
 
@@ -16,7 +16,7 @@ Total medido: **1769** ocorrências · 3 tabelas com coluna de empresa.
 | --- | --- | ---: | --- | --- |
 | 1 | **LEGADO HISTÓRICO** | 1309 | não | Migrations aplicadas e documentação. O nome legado aqui é registro do que aconteceu; reescrever é falsificar história. |
 | 2 | **COMPATIBILIDADE TRANSITÓRIA PERMITIDA** | 350 | não | Arquivos declarados em scripts/lib/empresa-compat-surface.mjs, cada um com motivo. Removidos em PRE-BASE2-05C-1 (purga física: colunas legadas, as cinco views de nome antigo e os gatilhos de espelho) — apenas a categoria PONTE_FISICA; ver CATEGORIAS_COMPAT. |
-| 3 | **DÍVIDA DE PRODUTO PROIBIDA** | 110 | **sim — só diminui** | O produto ainda fala o nicho onde não precisa. Alvo: zero. A catraca só deixa diminuir. |
+| 3 | **DÍVIDA DE PRODUTO PROIBIDA** | 108 | **sim — só diminui** | O produto ainda fala o nicho onde não precisa. Alvo: zero. A catraca só deixa diminuir. |
 
 A regra que impede maquiagem: **arquivo não declarado cai no balde 3 por definição.** Esconder dívida
 exige declarar o arquivo com motivo em `scripts/lib/empresa-compat-surface.mjs` — e a declaração aparece no diff.
@@ -26,7 +26,7 @@ exige declarar o arquivo com motivo em `scripts/lib/empresa-compat-surface.mjs` 
 | Superfície | 1. Histórico | 2. Compatibilidade | 3. Dívida (travada) | Total |
 | --- | ---: | ---: | ---: | ---: |
 | Schema (migrations) | 476 | 0 | 0 | 476 |
-| API — código | 0 | 9 | **44** | 53 |
+| API — código | 0 | 9 | **42** | 51 |
 | API — testes | 0 | 50 | **51** | 101 |
 | Núcleo neutro de nicho (plataforma) | 0 | 4 | 0 | 4 |
 | Pacotes compartilhados | 0 | 171 | **11** | 182 |
@@ -36,7 +36,7 @@ exige declarar o arquivo com motivo em `scripts/lib/empresa-compat-surface.mjs` 
 | Scripts e gates | 0 | 83 | **4** | 87 |
 | Documentação ativa | 320 | 0 | 0 | 320 |
 | Documentação histórica (referência externa) | 513 | 0 | 0 | 513 |
-| **Total** | **1309** | **350** | **110** | **1769** |
+| **Total** | **1309** | **350** | **108** | **1767** |
 
 ## Balde 2 — a ponte declarada
 
@@ -101,7 +101,7 @@ Onde o produto ainda fala o nicho sem precisar. Ordem de ataque: quem concentra 
 | `apps/api/test/integration/api.test.ts` | API — testes | 16 |
 | `apps/api/test/integration/escopo-empresa-matriz.test.ts` | API — testes | 16 |
 | `apps/api/test/unit/escopo-empresa-guard.test.ts` | API — testes | 11 |
-| `apps/api/src/routes/resources.ts` | API — código | 8 |
+| `apps/api/src/routes/resources.ts` | API — código | 7 |
 | `apps/api/src/routes/stock.ts` | API — código | 7 |
 | `apps/api/src/routes/livestock.ts` | API — código | 5 |
 | `apps/api/src/routes/admin.ts` | API — código | 4 |
@@ -121,9 +121,9 @@ Onde o produto ainda fala o nicho sem precisar. Ordem de ataque: quem concentra 
 | `apps/api/src/routes/sales.ts` | API — código | 1 |
 | `apps/api/src/routes/supply.ts` | API — código | 1 |
 | `apps/api/src/server.ts` | API — código | 1 |
-| `apps/api/src/services/stock-core.ts` | API — código | 1 |
 | `apps/api/test/unit/escopo-classificacao.test.ts` | API — testes | 1 |
-| _… mais 6 arquivo(s)_ | | 6 |
+| `packages/db/src/origem-organizacao.ts` | Pacotes compartilhados | 1 |
+| _… mais 5 arquivo(s)_ | | 5 |
 
 ## Por símbolo (o que precisa migrar)
 
@@ -138,7 +138,7 @@ Onde o produto ainda fala o nicho sem precisar. Ordem de ataque: quem concentra 
 | `farmScope` | contrato | 3 | 2 | `escopoEmpresa` |
 | `allowedFarms` | contrato | 6 | 3 | `escopoEmpresa (@erp/plataforma)` |
 | `farms` | contrato | 89 | 6 | `/empresas` |
-| `fazenda` | texto | 656 | 77 | `Empresa (i18n: termos.empresa)` |
+| `fazenda` | texto | 654 | 75 | `Empresa (i18n: termos.empresa)` |
 
 `dado` = exige migration e backfill · `contrato` = quebra clientes se mudar sem compatibilidade · `texto` = rótulo, resolvido por i18n.
 

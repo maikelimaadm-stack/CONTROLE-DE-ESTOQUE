@@ -97,7 +97,7 @@ export const CATALOGO_VENDAS: readonly CampoDoCatalogo[] = [
   R("Observações", "note", "Observação", "texto_longo"),
   I("codigo", "Código", "texto", { somenteLeitura: true }),
   I("product_id", "Produto", "referencia", { sistema: "sempre" }),
-  I("warehouse_id", "Armazém", "referencia", { referencia: { recurso: "warehouses" } }),
+  I("warehouse_id", "Local de estoque", "referencia", { referencia: { recurso: "warehouses" } }),
   I("estoque", "Estoque", "numero", { somenteLeitura: true }),
   I("quantity", "Quantidade", "numero", { sistema: "sempre" }),
   I("unit_price", "Valor unitário", "numero", { sistema: "sempre" }),
@@ -138,7 +138,7 @@ function catalogoDeCompras(daCompra: boolean): readonly CampoDoCatalogo[] {
     C("plano_parcelas", "Parcelas", "plano", { sempreTemValor: true }),
     C("observacao", "Observação", "texto_longo"),
     // a ordem das colunas é a do ItemsEditor de hoje (os E2E de compras localizam armazém e produto pela posição)
-    I("armazem_id", "Armazém", "referencia", { referencia: { recurso: "warehouses" } }),
+    I("armazem_id", "Local de estoque", "referencia", { referencia: { recurso: "warehouses" } }),
     I("produto_id", "Produto", "referencia", { sistema: "sempre" }),
     I("quantidade", "Quantidade", "numero", { sistema: "sempre" }),
     I("valor_unitario", "Valor unitário", "numero", { sistema: "sempre" }),

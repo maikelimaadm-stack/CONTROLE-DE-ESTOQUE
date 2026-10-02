@@ -121,7 +121,7 @@ describe("LB-D1 padrão registro: aceito em cada campo de referência e na colun
   it("coluna Armazém com id que não é UUID → erro em itens[i].valorPadrao", () => {
     for (const [nome, id] of IDS_INVALIDOS) {
       const l = sis(); const { x, caminho } = naColuna(l, "warehouse_id"); x.valorPadrao = { tipo: "registro", id } as ValorPadraoLayout;
-      expect(validarEstruturaLayout(F, l), nome).toEqual([{ caminho: `${caminho}.valorPadrao`, mensagem: incompativel("Armazém") }]);
+      expect(validarEstruturaLayout(F, l), nome).toEqual([{ caminho: `${caminho}.valorPadrao`, mensagem: incompativel("Local de estoque") }]);
     }
   });
 
@@ -132,7 +132,7 @@ describe("LB-D1 padrão registro: aceito em cada campo de referência e na colun
     ];
     for (const v of padroes) {
       const l = sis(); const { x, caminho } = naColuna(l, "warehouse_id"); x.valorPadrao = v;
-      expect(validarEstruturaLayout(F, l), JSON.stringify(v)).toEqual([{ caminho: `${caminho}.valorPadrao`, mensagem: incompativel("Armazém") }]);
+      expect(validarEstruturaLayout(F, l), JSON.stringify(v)).toEqual([{ caminho: `${caminho}.valorPadrao`, mensagem: incompativel("Local de estoque") }]);
     }
   });
 
@@ -200,7 +200,7 @@ describe("padroesRegistroDaEstrutura", () => {
         referencia: { recurso: "people", filtro: { is_client: "true" } } },
       { chave: "transporter_id", caminho: `${tra.caminho}.valorPadrao`, parte: "rodape", campo: "transporter_id", id: UUID2, rotulo: "Transp.",
         referencia: { recurso: "people", filtro: { is_transporter: "true" } } },
-      { chave: "itens.warehouse_id", caminho: `${arm.caminho}.valorPadrao`, parte: "itens", campo: "warehouse_id", id: UUID3, rotulo: "Armazém",
+      { chave: "itens.warehouse_id", caminho: `${arm.caminho}.valorPadrao`, parte: "itens", campo: "warehouse_id", id: UUID3, rotulo: "Local de estoque",
         referencia: { recurso: "warehouses" } }
     ]);
     expect(cli.caminho).toBe("cabecalho[0]");

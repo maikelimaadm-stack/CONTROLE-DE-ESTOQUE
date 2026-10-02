@@ -134,7 +134,7 @@ describe("LD-D4 camposObrigatoriosFaltando", () => {
   it("item obrigatório vazio na linha 1", () => {
     const l = sis(); at(l.itens, 2).obrigatorio = true;
     const d = cheio(); at(d.items, 0).warehouse_id = "w";
-    expect(camposObrigatoriosFaltando(F, l, d, cap)).toEqual([{ caminho: "items[1].warehouse_id", rotulo: "Armazém" }]);
+    expect(camposObrigatoriosFaltando(F, l, d, cap)).toEqual([{ caminho: "items[1].warehouse_id", rotulo: "Local de estoque" }]);
   });
   it("campo com capacidade ausente não é cobrado", () => {
     const d = cheio(); d.categoria_financeira_id = ""; d.centro_custo_id = undefined;

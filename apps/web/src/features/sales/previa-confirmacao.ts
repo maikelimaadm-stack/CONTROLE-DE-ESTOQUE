@@ -108,8 +108,8 @@ export function linhaDeEstoque(p: PreviaDaConfirmacao): string | null {
   if (efeito !== "baixa") return null;
   // A operação baixa, mas NENHUM item tem armazém: a confirmação não gera movimento — "baixa o estoque de 0
   // itens" seria anunciar um efeito que não acontece.
-  if (itensQueBaixam === 0) return itensSemArmazem > 0 ? `Não movimenta estoque: ${itensSemArmazem === 1 ? "o item não tem" : `os ${itensSemArmazem} itens não têm`} armazém.` : "Não movimenta estoque.";
-  const fora = itensSemArmazem > 0 ? ` ${itens(itensSemArmazem)} sem armazém ${itensSemArmazem === 1 ? "fica" : "ficam"} de fora.` : "";
+  if (itensQueBaixam === 0) return itensSemArmazem > 0 ? `Não movimenta estoque: ${itensSemArmazem === 1 ? "o item não tem" : `os ${itensSemArmazem} itens não têm`} local de estoque.` : "Não movimenta estoque.";
+  const fora = itensSemArmazem > 0 ? ` ${itens(itensSemArmazem)} sem local de estoque ${itensSemArmazem === 1 ? "fica" : "ficam"} de fora.` : "";
   return `Baixa o estoque de ${itens(itensQueBaixam)}.${fora}`;
 }
 

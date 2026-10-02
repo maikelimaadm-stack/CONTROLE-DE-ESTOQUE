@@ -149,7 +149,7 @@ describe("LD-A6 coluna obrigatória do item", () => {
     await layout("budget", estruturaExigindo("budget", [], [{ campo: "warehouse_id" }]), { ligarA: T });
     const r = await criar("budget", { tipo_operacao_id: T, items: [ITEM(), ITEM({ warehouse_id: null })] });
     expect(r.statusCode, r.body).toBe(422);
-    expect(j(r).error).toEqual(recusa([{ path: "items[1].warehouse_id", rotulo: "Armazém" }]));
+    expect(j(r).error).toEqual(recusa([{ path: "items[1].warehouse_id", rotulo: "Local de estoque" }]));
     await documento("budget", { tipo_operacao_id: T, items: [ITEM(), ITEM()] });
   });
 });

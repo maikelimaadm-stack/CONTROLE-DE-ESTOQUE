@@ -185,10 +185,10 @@ const informado = (v: unknown) => v !== undefined && v !== null;
 function conferirFormaDaEspecie(especie: EspecieEstoque, d: DocumentoEstoqueEntrada): { quantidades: (string | null)[]; contadas: (string | null)[]; custos: (string | null)[] } {
   const recusas: Recusa[] = [];
   if (especie === "transferencia") {
-    if (!d.armazem_destino_id) recusas.push({ path: "armazem_destino_id", message: "Informe o armazém de destino da transferência" });
-    else if (d.armazem_destino_id === d.armazem_id) recusas.push({ path: "armazem_destino_id", message: "O armazém de destino tem de ser diferente do armazém de origem" });
+    if (!d.armazem_destino_id) recusas.push({ path: "armazem_destino_id", message: "Informe o local de estoque de destino da transferência" });
+    else if (d.armazem_destino_id === d.armazem_id) recusas.push({ path: "armazem_destino_id", message: "O local de estoque de destino tem de ser diferente do local de estoque de origem" });
   } else if (d.armazem_destino_id) {
-    recusas.push({ path: "armazem_destino_id", message: `O armazém de destino é só da transferência: não informe n${ROTULO_LONGO[especie]}` });
+    recusas.push({ path: "armazem_destino_id", message: `O local de estoque de destino é só da transferência: não informe n${ROTULO_LONGO[especie]}` });
   }
   const numero = (i: number, campo: string, valor: unknown, limite: typeof LIMITE_QUANTIDADE_ESTOQUE | typeof LIMITE_CUSTO_ESTOQUE, minimo: "positivo" | "naoNegativo", faltando: string): string | null => {
     if (!informado(valor)) { recusas.push({ path: caminhoDoItem(i, campo), message: faltando }); return null; }
@@ -232,7 +232,7 @@ async function conferirArmazens(ctx: ServiceCtx, d: DocumentoEstoqueEntrada): Pr
     [pedidos, ctx.orgId, d.empresa_id]);
   const validos = new Set(r.rows.map((w) => w.id));
   const recusas: Recusa[] = [];
-  const message = "Armazém inválido: escolha um armazém ativo da empresa do documento";
+  const message = "Local de estoque inválido: escolha um local de estoque ativo da empresa do documento";
   if (!validos.has(d.armazem_id)) recusas.push({ path: "armazem_id", message });
   if (d.armazem_destino_id && !validos.has(d.armazem_destino_id)) recusas.push({ path: "armazem_destino_id", message });
   if (recusas.length) throw recusar(recusas);

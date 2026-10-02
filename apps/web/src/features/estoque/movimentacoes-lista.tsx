@@ -92,9 +92,9 @@ function ListaDeDocumentosDeEstoque({ especie, situacao, barra, opcoesTop }: {
     { ...colDate("data_documento", "Data"), filterable: false },
     { key: "especie", label: "Espécie", render: (r) => rotuloDaEspecie(r["especie"]), text: (r) => rotuloDaEspecie(r["especie"]), filterable: false },
     colTipoOperacao(),
-    { key: "armazem_nome", label: "Armazém", filterable: false },
+    { key: "armazem_nome", label: "Local de estoque", filterable: false },
     // Só a transferência tem destino; nas outras espécies a célula fica com o traço de "não se aplica".
-    { key: "armazem_destino_nome", label: "Armazém de destino", render: (r) => textoOuTraco(r["armazem_destino_nome"]), text: (r) => textoOuTraco(r["armazem_destino_nome"]), filterable: false },
+    { key: "armazem_destino_nome", label: "Local de estoque de destino", render: (r) => textoOuTraco(r["armazem_destino_nome"]), text: (r) => textoOuTraco(r["armazem_destino_nome"]), filterable: false },
     { key: "empresa_nome", label: "Empresa", filterable: false },
     { key: "quantidade_itens", label: "Itens", kind: "number", align: "right", filterable: false },
     {
@@ -121,7 +121,7 @@ function ListaDeDocumentosDeEstoque({ especie, situacao, barra, opcoesTop }: {
     filters={[
       { name: "start_date", label: "Data inicial", type: "date" },
       { name: "end_date", label: "Data final", type: "date" },
-      { name: "armazem_id", label: "Armazém", type: "ref", resource: "warehouses" },
+      { name: "armazem_id", label: "Local de estoque", type: "ref", resource: "warehouses" },
       { name: "empresa_id", label: "Empresa", type: "ref", resource: "empresas" },
       { name: "search", label: "Código", type: "text" },
       ...(opcoesTop.length ? [{ name: "tipo_operacao_id", label: "Tipo de Operação", type: "select" as const, options: opcoesTop }] : [])

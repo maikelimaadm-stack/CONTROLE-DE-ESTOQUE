@@ -279,7 +279,7 @@ describe("exigências da versão congelada — conferidas TODAS antes do primeir
     const r = await confirmar(ligada, id);
     expect(r.statusCode, r.body).toBe(422);
     expect(j(r).error!.code).toBe("TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA");
-    expect(j(r).error!.details).toEqual({ exigencias: [{ caminho: "estoque.exigeArmazem", mensagem: "Informe o armazém de todos os itens" }] });
+    expect(j(r).error!.details).toEqual({ exigencias: [{ caminho: "estoque.exigeArmazem", mensagem: "Informe o local de estoque de todos os itens" }] });
     expect(await efeitos(id)).toMatchObject({ status: "open", saidas: 0, titulos: 0, auditorias: 0 });
     // A premissa: a mesma TOP, com todos os itens no armazém, confirma e baixa os dois.
     const certa = await venda(topId, {}, [

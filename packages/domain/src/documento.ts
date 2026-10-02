@@ -18,6 +18,21 @@ export function normalizarDocumento(valor: string): string {
   return String(valor ?? "").replace(/[\s.\-/]/g, "").toUpperCase();
 }
 
+/** Mínimo de posições (já normalizadas) para a pesquisa por documento: "1" casaria todo CPF/CNPJ. */
+export const MINIMO_DOCUMENTO_PESQUISA = 3;
+
+/**
+ * Texto de PESQUISA por CPF/CNPJ (OPERACOES-01 F3a, decisão 280): só [0-9A-Z], em maiúsculas — a MESMA normalização
+ * do índice ux_people_documento_normalizado (0027, `upper(regexp_replace(document, '[^0-9A-Za-z]', '', 'g'))`), que
+ * mantém as LETRAS do CNPJ alfanumérico. `null` quando o texto não parece documento: menos de
+ * MINIMO_DOCUMENTO_PESQUISA posições ou nenhum dígito (um nome não vira pesquisa de documento). A API compara por
+ * PREFIXO com a coluna normalizada pela mesma expressão; o resultado só tem [0-9A-Z] (nada a escapar no `like`).
+ */
+export function documentoParaPesquisa(texto: string): string | null {
+  const n = String(texto ?? "").replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+  return n.length >= MINIMO_DOCUMENTO_PESQUISA && /\d/.test(n) ? n : null;
+}
+
 const valorDe = (c: string) => c.charCodeAt(0) - 48;
 const dv = (base: string, pesos: number[]) => {
   const soma = pesos.reduce((acc, p, i) => acc + valorDe(base[i]!) * p, 0);

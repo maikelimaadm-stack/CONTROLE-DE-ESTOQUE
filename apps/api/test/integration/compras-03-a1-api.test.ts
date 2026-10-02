@@ -235,7 +235,7 @@ describe("A1-3 — cobrança do layout ao lançar", () => {
     expect(j(r).error).toMatchObject({ code: "LAYOUT_CAMPO_OBRIGATORIO", message: mensagemCampoObrigatorio("Obs. da nota") });
     expect(detalhes(r)).toEqual([
       { path: "observacao", message: mensagemCampoObrigatorio("Obs. da nota") },
-      { path: "itens[1].armazem_id", message: mensagemCampoObrigatorio("Armazém") },
+      { path: "itens[1].armazem_id", message: mensagemCampoObrigatorio("Local de estoque") },
     ]);
     expect(await documentosNoBanco()).toBe(antes);
     // Observação só com espaços é vazia (a mesma regra da tela).

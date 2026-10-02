@@ -53,7 +53,7 @@ function catalogoDeColunas(prefixoTestid: string, casas: number): Partial<Record
   return {
     codigo: { chave: "codigo", rotulo: "Código", largura: 70, celula: (it) => textoDoItem(it["product_code"]) },
     produto: { chave: "produto", rotulo: "Produto", largura: 170, elastica: true, celula: (it) => textoDoItem(it["product_name"]) },
-    armazem: { chave: "armazem", rotulo: "Armazém", largura: 108, celula: (it) => textoDoItem(it["warehouse_name"]) },
+    armazem: { chave: "armazem", rotulo: "Local de estoque", largura: 122, celula: (it) => textoDoItem(it["warehouse_name"]) },
     estoque: { chave: "estoque", rotulo: "Estoque", largura: 74, numero: true, estoque: true, celula: (it) => <SaldoDoItem it={it} /> },
     quantidade: { chave: "quantidade", rotulo: "Quantidade", largura: 104, numero: true, celula: (it) => <span className={grade.quantidade}>
       <span data-testid={`${prefixoTestid}-quantidade`}>{num(String(it["quantity"] ?? "0"), casas)}</span>
@@ -85,7 +85,7 @@ const COLUNAS_DA_RESERVA: readonly ColunaDoItemSalvo[] = [
 /** Os campos do formulário de leitura; a quantidade nas mesmas casas da grade. */
 const camposDoItemSalvo = (casas: number): readonly CampoDoItemSalvo[] => [
   { chave: "produto", rotulo: "Produto", adorno: "pesquisa", valor: (it) => (it["product_code"] ? `${texto(it["product_code"])} · ${texto(it["product_name"])}` : texto(it["product_name"])) },
-  { chave: "armazem", rotulo: "Armazém", adorno: "pesquisa", valor: (it) => texto(it["warehouse_name"]) },
+  { chave: "armazem", rotulo: "Local de estoque", adorno: "pesquisa", valor: (it) => texto(it["warehouse_name"]) },
   { chave: "estoque", rotulo: "Estoque", adorno: "travado", valor: (it) => <><SaldoDoItem it={it} />{it["unit"] ? ` ${texto(it["unit"])}` : ""}</> },
   { chave: "unidade", rotulo: "Unidade", adorno: "travado", valor: (it) => texto(it["unit"]) },
   { chave: "quantidade", rotulo: "Quantidade", valor: (it) => num(String(it["quantity"] ?? "0"), casas) },

@@ -114,8 +114,8 @@ export default async function stockRoutes(app: FastifyInstance) {
   app.get("/stock/balances/:warehouseId/:productId", async (req) => runService(app, req, "stocks.view", async (ctx) => {
     const { warehouseId, productId } = req.params as { warehouseId: string; productId: string };
     const wh = await ctx.tx.query<{ empresa_id: string }>("select empresa_id from erp.warehouses where id=$1 and organization_id=$2", [warehouseId, ctx.orgId]);
-    if (!wh.rows[0]) throw notFound("Armazém");
-    await exigirEmpresaVisivel(ctx, wh.rows[0].empresa_id, "Armazém");
+    if (!wh.rows[0]) throw notFound("Local de estoque");
+    await exigirEmpresaVisivel(ctx, wh.rows[0].empresa_id, "Local de estoque");
     const b = await currentBalance(ctx, warehouseId, productId);
     const lots = await ctx.tx.query("select provider_lot, quantity, average_cost, total_value, expiration_date from erp.stock_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and quantity<>0 order by expiration_date nulls last", [ctx.orgId, warehouseId, productId]);
     // RESERVA DE ESTOQUE (TOP-CONFIG-07): `quantity` continua o físico (todos os lotes); `reservado` vem da porta
@@ -142,7 +142,7 @@ export default async function stockRoutes(app: FastifyInstance) {
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
       // o lote já vem aparado; o gravado antes do R1-1 pode ter espaços — a conferência apara os dois lados
       const exists = await ctx.tx.query("select 1 from erp.opening_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and nullif(btrim(provider_lot),'') is not distinct from $4::text and status='confirmed'", [ctx.orgId, d.warehouse_id, d.product_id, d.provider_lot]);
-      if (exists.rowCount) throw err("DUPLICATE_DOCUMENT", "Já existe estoque inicial confirmado para este produto/armazém/lote");
+      if (exists.rowCount) throw err("DUPLICATE_DOCUMENT", "Já existe estoque inicial confirmado para este produto/local de estoque/lote");
       const total = lineTotal(d.quantity, d.unit_value);
       const r = await ctx.tx.query<{ id: string }>("insert into erp.opening_balances(organization_id,empresa_id,warehouse_id,product_id,quantity,unit_value,total_value,provider_lot,expiration_date,cultivation_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id", [ctx.orgId, d.empresa_id, d.warehouse_id, d.product_id, d.quantity, d.unit_value, total, d.provider_lot ?? null, d.expiration_date ?? null, d.cultivation_id ?? null, ctx.user.id]);
       await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: d.product_id, movementType: "opening_balance", direction: 1, quantity: d.quantity, unitCost: d.unit_value, providerLot: d.provider_lot, expirationDate: d.expiration_date, cultivationId: d.cultivation_id, sourceType: "opening_balances", sourceId: r.rows[0]!.id, date: new Date().toISOString().slice(0, 10) });
@@ -174,7 +174,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       const id = r.rows[0]!.id;
       await atribuirIdGlobal(ctx, "input_entries", id);
       for (const [i, it] of d.items.entries()) {
-        if (it.generate_stock && !it.warehouse_id) throw validation(`Item ${i + 1}: armazém obrigatório quando gera estoque`);
+        if (it.generate_stock && !it.warehouse_id) throw validation(`Item ${i + 1}: local de estoque obrigatório quando gera estoque`);
         await ctx.tx.query("insert into erp.input_entry_items(entry_id,product_id,measurement_id,quantity,unit_value,total_value,generate_stock,warehouse_id,appropriation_type,provider_lot,expiration_date,cultivation_id,financial_category_id,cost_center_id,position) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)", [id, it.product_id, it.measurement_id ?? null, it.quantity, it.unit_value, lineTotal(it.quantity, it.unit_value), it.generate_stock, it.warehouse_id ?? null, it.appropriation_type ?? null, it.provider_lot ?? null, it.expiration_date ?? null, it.cultivation_id ?? null, it.financial_category_id ?? null, it.cost_center_id ?? null, i]);
         if (it.generate_stock) { await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id!, productId: it.product_id, movementType: "entry", direction: 1, quantity: it.quantity, unitCost: it.unit_value, providerLot: it.provider_lot, expirationDate: it.expiration_date, costCenterId: it.cost_center_id, harvestId: d.harvest_id, cultivationId: it.cultivation_id, sourceType: "input_entries", sourceId: id, date: d.entry_date }); await ctx.tx.query("update erp.products set last_purchase_date=$2 where id=$1", [it.product_id, d.entry_date]); }
       }
@@ -253,7 +253,7 @@ export default async function stockRoutes(app: FastifyInstance) {
         await ctx.tx.query("insert into erp.invoice_items(invoice_id,product_id,xml_product_description,measurement_id,quantity,unit_value,discount,ipi,icms,total,generate_stock,warehouse_id,appropriation_type,provider_lot,expiration_date,cultivation_id,financial_category_id,cost_center_id,is_equipment,equipment_id,grain_quality,position) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)",
           [id, it.product_id, it.xml_product_description ?? null, it.measurement_id ?? null, it.quantity, it.unit_value, it.discount, it.ipi, it.icms, itemTotal, it.generate_stock, it.warehouse_id ?? null, it.appropriation_type ?? null, it.provider_lot ?? null, it.expiration_date ?? null, it.cultivation_id ?? null, it.financial_category_id ?? null, it.cost_center_id ?? null, it.is_equipment, equipmentId, JSON.stringify(it.grain_quality ?? {}), i]);
         if (it.generate_stock) {
-          if (!it.warehouse_id) throw validation(`Item ${i + 1}: armazém obrigatório quando gera estoque`);
+          if (!it.warehouse_id) throw validation(`Item ${i + 1}: local de estoque obrigatório quando gera estoque`);
           // custo unitário de entrada inclui IPI e rateio do frete por valor
           const share = products.isZero() ? D(0) : D(it.quantity).mul(it.unit_value).div(products);
           const cost = D(itemTotal).plus(share.mul(d.freight)).plus(share.mul(d.other_expenses)).div(it.quantity);
@@ -427,7 +427,7 @@ export default async function stockRoutes(app: FastifyInstance) {
     const destFarm = d.kind === "farm" ? d.empresa_destino_id : d.empresa_origem_id;
     if (!destFarm) throw validation("Fazenda destino obrigatória"); await exigirEmpresa(ctx, destFarm);
     if (d.kind === "farm" && destFarm === d.empresa_origem_id) throw validation("Transferência entre fazendas exige fazendas distintas");
-    if (d.origin_warehouse_id === d.destination_warehouse_id) throw err("SAME_WAREHOUSE_TRANSFER", "Armazém de origem e destino iguais");
+    if (d.origin_warehouse_id === d.destination_warehouse_id) throw err("SAME_WAREHOUSE_TRANSFER", "Local de estoque de origem e de destino iguais");
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
       // HOTFIX 0019: UM contador por namespace de unicidade. `erp.warehouse_transfers` tem
       // `unique (organization_id, code)` — sem `kind` —, então as duas variantes compartilham o

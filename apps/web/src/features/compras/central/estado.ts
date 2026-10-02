@@ -79,7 +79,7 @@ export function errosDoServidor(e: unknown): Record<string, string> {
 }
 
 const ROTULO_DO_CAMPO_DO_ITEM: Record<string, string> = {
-  produto_id: "produto", item_origem_id: "item do pedido", armazem_id: "armazém", quantidade: "quantidade", valor_unitario: "valor unitário",
+  produto_id: "produto", item_origem_id: "item do pedido", armazem_id: "local de estoque", quantidade: "quantidade", valor_unitario: "valor unitário",
   desconto: "desconto", desconto_percentual: "desconto %", lote: "lote", validade: "validade"
 };
 /** `itens.0.lote` / `itens[0].lote` → "Item 1 · lote". */

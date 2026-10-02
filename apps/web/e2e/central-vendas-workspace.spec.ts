@@ -683,7 +683,7 @@ test("W16 — no formulário do item a pesquisa abre EM FLUXO e empurra os campo
   await adicionarItemComProduto(page, 0);
   await page.getByRole("button", { name: "Formulário", exact: true }).click();
   const form = page.getByTestId("central-vendas-item-form");
-  const armazem = form.getByLabel("Armazém");
+  const armazem = form.getByLabel("Local de estoque");
   const antes = (await armazem.boundingBox())!.y;
   await form.getByLabel("Produto").click();
   await expect(painelDePesquisa(page)).toHaveAttribute("data-modo", "fluxo");
@@ -807,7 +807,7 @@ test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visõe
 
 /* ════════════════════════════════ R2 — fechamento de fidelidade ════════════════════════════════ */
 
-const ROTULOS_DA_GRADE = ["Código", "Produto", "Armazém", "Estoque", "Quantidade", "Valor unitário", "Desconto", "Desconto %", "Total"];
+const ROTULOS_DA_GRADE = ["Código", "Produto", "Local de estoque", "Estoque", "Quantidade", "Valor unitário", "Desconto", "Desconto %", "Total"];
 /** Os títulos das colunas da grade, sem a coluna do círculo de seleção (Fase B; antes a da lixeira), que não tem texto. */
 const cabecalhos = async (page: Page) => (await page.getByTestId("central-vendas-grade").locator("thead th").allInnerTexts()).map((t) => t.trim()).filter(Boolean);
 const aba = (page: Page, chave: string) => page.locator(`[data-testid="workspace-tab"][data-tab-key="${chave}"]`);
@@ -882,6 +882,34 @@ test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos 
   await expect(configurar).toHaveAttribute("data-dica", "Configurar colunas");
   await expect(configurar).toHaveAttribute("aria-expanded", "false");
   expect(await cabecalhos(page), "padrão do design: nove colunas, nesta ordem").toEqual(ROTULOS_DA_GRADE);
+  // "Local de estoque" (OPERACOES-01 F3a, decisão 280) é mais comprido que o rótulo de antes: o cabeçalho cabe INTEIRO
+  // na largura da coluna — a reticência do `th` esconderia o corte da asserção acima, que lê o texto do DOM. A medida é
+  // a do TEXTO (um Range dá a largura inteira mesmo sob a reticência) contra a CAIXA de conteúdo (sem o padding), em
+  // frações de pixel: `scrollWidth`/`clientWidth` são arredondados e deixam passar um corte de até meio pixel. E vale
+  // também com o " *" que a grade acrescenta quando a coluna é obrigatória (layout, regra da TOP, reserva de estoque):
+  // o MESMO elemento de `itens.tsx`, posto no MESMO `th` só para a medida e tirado em seguida.
+  const cabecalhoDoLocal = page.getByTestId("central-vendas-grade").getByRole("columnheader", { name: "Local de estoque", exact: true });
+  await expect(cabecalhoDoLocal, "premissa: o cabeçalho do local de estoque está na grade").toHaveCount(1);
+  const medida = await cabecalhoDoLocal.evaluate((th) => {
+    const larguraDoTexto = () => { const r = document.createRange(); r.selectNodeContents(th); return r.getBoundingClientRect().width; };
+    const estilo = getComputedStyle(th);
+    const caixa = th.clientWidth - parseFloat(estilo.paddingLeft) - parseFloat(estilo.paddingRight);
+    const rotulo = larguraDoTexto();
+    const filhos = th.childNodes.length;
+    const req = document.createElement("span");
+    req.className = "req text-red-500";
+    req.textContent = " *";
+    th.append(req);
+    const comAsterisco = larguraDoTexto();
+    req.remove();
+    return { caixa, rotulo, comAsterisco, filhos, rolagem: th.scrollWidth, cliente: th.clientWidth };
+  });
+  expect(medida.filhos, "premissa: o cabeçalho é só o rótulo (coluna não obrigatória nesta TOP)").toBe(1);
+  expect(medida.caixa, "premissa: a caixa do cabeçalho tem largura medida").toBeGreaterThan(0);
+  expect(medida.comAsterisco, "premissa: o \" *\" acrescenta largura à medida").toBeGreaterThan(medida.rotulo);
+  expect(medida.rotulo, `o cabeçalho "Local de estoque" não está cortado (${medida.rotulo}px de texto em ${medida.caixa}px)`).toBeLessThanOrEqual(medida.caixa);
+  expect(medida.rolagem, "nem pela medida arredondada do navegador").toBeLessThanOrEqual(medida.cliente);
+  expect(medida.comAsterisco, `"Local de estoque *" (coluna obrigatória) também cabe (${medida.comAsterisco}px de texto em ${medida.caixa}px)`).toBeLessThanOrEqual(medida.caixa);
   await configurar.click();
   await expect(configurar).toHaveAttribute("aria-expanded", "true");
   const cfg = page.getByTestId("central-vendas-configuracao");

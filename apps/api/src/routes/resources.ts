@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { getResource, getReferencia, nomeDoMunicipio, partesDaReferencia, RESOURCES, tipoEntidadeDaTabela, type ChaveReferencia, type FieldDef, type ResourceDef } from "@agro/domain";
+import { documentoParaPesquisa, getResource, getReferencia, nomeDoMunicipio, partesDaReferencia, RESOURCES, tipoEntidadeDaTabela, type ChaveReferencia, type FieldDef, type ResourceDef } from "@agro/domain";
 import { isISODate, parseFilterKey, filterKindOf, isValidOperator, decodeRange, decodeList, relativeDateRange } from "@agro/shared";
 import { ident, SqlBuilder } from "../lib/sql.js";
 import { pageQuerySchema, extractFilters } from "../lib/pagination.js";
@@ -425,8 +425,48 @@ function leiturasDeclaradasDaTabela(table: string): string[] {
   return [...new Set(RESOURCES.flatMap((r) => (r.detalhes ?? []).flatMap((d) => (d.table === table && d.permissoes ? [d.permissoes.ler] : []))))];
 }
 
-/** Opções para selects (busca por rótulo, limitada), respeitando tenant/fazenda. */
-export async function options(ctx: ServiceCtx, def: ResourceDef, search: string | undefined, extra: Record<string, string>) {
+/** A página de hoje do seletor: quem não pede página (o web, nesta fase) recebe a 1ª, com estes itens. */
+export const OPCOES_POR_PAGINA = 200;
+
+/**
+ * Parâmetro dado UMA vez: repetido, ele chega como array. A recusa diz isso (sem esta checagem, o array cairia no
+ * "Campo obrigatório" genérico do plugin de erros, que confunde quem mandou o parâmetro duas vezes).
+ */
+const parametroUnico = z.custom<string>((v) => typeof v === "string", { message: "Informe o parâmetro uma vez só." });
+/**
+ * Inteiro positivo só com dígitos: "0", "", "1.5", "1e1", " 2", "+3" e "0x10" não passam. A mensagem sai em português
+ * pelo plugin de erros ("page: Formato inválido", "pageSize: Valor máximo: 200").
+ */
+const inteiroDoSeletor = (max: number) => parametroUnico.pipe(z.string().regex(/^[1-9][0-9]*$/)).transform(Number).pipe(z.number().int().min(1).max(max));
+
+/**
+ * Consulta do seletor (`GET /resources/:key/options`, OPERACOES-01 F3a, decisão 280): `page`/`pageSize` com os MESMOS
+ * nomes do protocolo de listagem, ausentes = a página de hoje (1 × OPCOES_POR_PAGINA). Entrada não canônica é recusada
+ * (422), nunca traduzida: o `z.coerce` da listagem aceitaria " 2" e "1e1". A `search` repetida também (array): antes ela
+ * virava "a,b" em silêncio e, no ramo da pesquisa do seletor, quebraria o `escapeLike`.
+ */
+export const consultaDoSeletorSchema = z.object({
+  search: parametroUnico.optional(),
+  page: inteiroDoSeletor(10_000).default(1),
+  pageSize: inteiroDoSeletor(OPCOES_POR_PAGINA).default(OPCOES_POR_PAGINA)
+});
+
+/**
+ * Opções para selects (busca por rótulo, paginada no servidor), respeitando tenant/empresa.
+ *
+ * OPERACOES-01 F3a (decisão 280):
+ * - PESQUISA DO SELETOR: o ramo do rótulo é IDÊNTICO ao de antes para todo recurso (sem `escapeLike`, como sempre —
+ *   mudá-lo mudaria todo seletor). O recurso que declara `pesquisaDoSeletor` (hoje só Parceiros), fora de árvore e com
+ *   rótulo próprio, ganha um OR: as colunas `texto` por "contém" (com `escapeLike`: o `%` digitado é literal) e a coluna
+ *   `documento` NORMALIZADA pela mesma expressão do índice ux_people_documento_normalizado (só [0-9A-Z], maiúsculas — o
+ *   CNPJ alfanumérico mantém as letras), por PREFIXO, só quando `documentoParaPesquisa` reconhece um documento. Coluna
+ *   sigilosa que o usuário não vê não entra (a busca seria pergunta sobre o valor). Identificadores só da definição.
+ *   Os termos novos exigem `<recurso>.view` (a capacidade que protege a listagem do cadastro): sem ela, o seletor acha
+ *   pelo rótulo, como sempre, e pelo documento só por IGUALDADE com o normalizado completo (o que `?document=` já dá).
+ * - PÁGINA: `limit`/`offset` parametrizados, desempate final por `t.id` (página estável). A resposta continua o ARRAY de
+ *   antes, sem chave nova (o web da base lê array), e é UMA consulta (a árvore ganha a dos caminhos, como antes).
+ */
+export async function options(ctx: ServiceCtx, def: ResourceDef, search: string | undefined, extra: Record<string, string>, pagina: { page: number; pageSize: number } = { page: 1, pageSize: OPCOES_POR_PAGINA }) {
   const existing = await checkColumns(ctx, def);
   const b = new SqlBuilder(); const where: string[] = [];
   // labelField que é referência (ex.: authorizers.user_id) mostra o rótulo da tabela referenciada
@@ -445,13 +485,32 @@ export async function options(ctx: ServiceCtx, def: ResourceDef, search: string 
   if (escO.ativo && existing.has("empresa_id")) where.push(...empresaScopeBuilder(ctx, "t.empresa_id", b, { nullable: escO.nullable }));
   // árvore com código: a busca acha também pelo código ("1.01"), e a ordem é a da árvore (o código).
   const arvore = Boolean(def.tree) && existing.has("parent_id") && existing.has("code") && !refDef;
-  if (search) where.push(arvore ? `(${labelExpr} ilike ${b.add(`%${search}%`)} or t.code ilike ${b.add(`${escapeLike(search)}%`)})` : `${labelExpr} ilike ${b.add(`%${search}%`)}`);
+  if (search) {
+    const termos = [arvore ? `(${labelExpr} ilike ${b.add(`%${search}%`)} or t.code ilike ${b.add(`${escapeLike(search)}%`)})` : `${labelExpr} ilike ${b.add(`%${search}%`)}`];
+    const pesquisa = def.pesquisaDoSeletor;
+    if (pesquisa && !refDef && !arvore) {
+      // CAPACIDADE ∧ ESCOPO: o seletor não exige permissão própria, mas o documento e a razão social/nome completo são o
+      // que a LISTAGEM do cadastro mostra só com `<recurso>.view`. Sem ela, nada de "contém" na razão nem de PREFIXO no
+      // documento (o prefixo, dígito a dígito, recuperaria o CPF inteiro): só a IGUALDADE com o documento normalizado
+      // completo — o mesmo que o filtro `?document=` do seletor já responde, sem enumeração.
+      const podeListar = hasPermission(ctx, `${def.permission}.view`);
+      const pesquisavel = (nome: string) => { const f = def.fields.find((x) => x.name === nome); return Boolean(f && existing.has(nome) && podeVerCampo(ctx, f)); };
+      const texto = podeListar ? (pesquisa.texto ?? []).filter(pesquisavel) : [];
+      if (texto.length) { const p = b.add(`%${escapeLike(search)}%`); for (const c of texto) termos.push(`t.${ident(c)}::text ilike ${p}`); }
+      const doc = documentoParaPesquisa(search);
+      if (doc && pesquisa.documento && pesquisavel(pesquisa.documento)) {
+        const normalizado = `upper(regexp_replace(t.${ident(pesquisa.documento)}, '[^0-9A-Za-z]', '', 'g'))`;
+        termos.push(podeListar ? `${normalizado} like ${b.add(`${doc}%`)}` : `${normalizado} = ${b.add(doc)}`);
+      }
+    }
+    where.push(termos.length > 1 ? `(${termos.join(" or ")})` : termos[0]!);
+  }
   // filtro do seletor (`?campo=valor`) por campo sigiloso também é pergunta sobre o valor (R1-2)
   for (const k of Object.keys(extra)) exigirCampoVisivel(ctx, def, k, "no filtro do seletor");
   for (const [k, v] of Object.entries(extra)) if (existing.has(k) && k !== "include_inactive") where.push(`t.${ident(k)} = ${b.add(v)}`);
   const codeSel = existing.has("code") ? ", t.code::text as code" : ", null as code";
   const kindSel = arvore && existing.has("kind") ? ", t.kind::text as kind" : "";
-  const r = await ctx.tx.query(`select t.id, ${labelExpr} as label ${codeSel}${kindSel} from erp.${ident(def.table)} t ${join} ${where.length ? "where " + where.join(" and ") : ""} order by ${arvore ? "t.code, 2" : "2"} limit 200`, b.params);
+  const r = await ctx.tx.query(`select t.id, ${labelExpr} as label ${codeSel}${kindSel} from erp.${ident(def.table)} t ${join} ${where.length ? "where " + where.join(" and ") : ""} order by ${arvore ? "t.code, 2" : "2"}, t.id limit ${b.add(pagina.pageSize)} offset ${b.add((pagina.page - 1) * pagina.pageSize)}`, b.params);
   if (!arvore || !r.rows.length) return r.rows;
   const caminhos = await caminhosNaArvore(ctx, def, r.rows.map((x) => String((x as { id: string }).id)));
   return r.rows.map((x) => ({ ...x, caminho: caminhos.get(String((x as { id: string }).id)) ?? null }));
@@ -506,11 +565,15 @@ export default async function resourceRoutes(app: FastifyInstance) {
   app.get("/resources", async (req) => { const ctx = app.requireCtx(req); return RESOURCES.filter((r) => hasPermission(ctx, `${r.permission}.view`)).map(({ key, label, labelPlural, route, permission }) => ({ key, label, labelPlural, route, permission })); });
   app.get("/resources/:key/definition", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); app.requireCtx(req); return def; });
   app.get("/resources/:key", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.view`, (ctx) => listResource(ctx, def, req.query as Record<string, unknown>)); });
-  app.get("/resources/:key/options", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const { search, ...extra } = req.query as Record<string, string>; // seletor de um cadastro referenciado: sem permissão própria, mas o ESCOPO é o do recurso apontado
+  app.get("/resources/:key/options", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); // seletor de um cadastro referenciado: sem permissão própria, mas o ESCOPO é o do recurso apontado.
+    // `page`/`pageSize` saem de `extra` aqui: nunca viram filtro de coluna (F3a, decisão 280).
+    const { search, page, pageSize, ...extra } = req.query as Record<string, string>;
     return runService(app, req, null, async (ctx) => {
       // linhas de grade de OUTRO cadastro com leitura declarada (R1-2): a mesma leitura, antes de qualquer consulta
       for (const p of leiturasDeclaradasDaTabela(def.table)) requirePermission(ctx, p);
-      return options(await comPermissaoResolvida(ctx, `${def.permission}.view`), def, search, extra);
+      // forma canônica da busca e da página, depois da autenticação: malformado ou repetido → 422, nada consultado
+      const q = consultaDoSeletorSchema.parse({ search, page, pageSize });
+      return options(await comPermissaoResolvida(ctx, `${def.permission}.view`), def, q.search, extra, { page: q.page, pageSize: q.pageSize });
     }); });
   app.get("/resources/:key/proximo-codigo", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const q = z.object({ parent_id: z.string().uuid().optional() }).strict().parse(req.query); return runService(app, req, `${def.permission}.create`, async (ctx) => def.codigoAutomatico === "sequencial" && !q.parent_id ? { codigo: await proximoCodigo(ctx, def), mascara: null } : sugerirCodigo(ctx, def, q.parent_id ?? null)); });
   app.get("/resources/:key/distinct", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const q = z.object({ field: z.string().regex(/^[a-z_][a-z0-9_]*$/), search: z.string().max(200).optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query); return runService(app, req, `${def.permission}.view`, (ctx) => distinctValues(ctx, def, q.field, q.search, q.limit)); });

@@ -160,7 +160,7 @@ export function ItemsEditor({ items, onChange, fields, defaults, loteDaLinha, da
   };
   const th = (c: ColunaDesenhada) => {
     switch (c) {
-      case "warehouse": return cabecalho(c, "Armazém", "min-w-[160px]");
+      case "warehouse": return cabecalho(c, "Local de estoque", "min-w-[160px]");
       case "product": return cabecalho(c, "Produto", "min-w-[240px]");
       case "stock": return cabecalho(c, "Estoque", "text-right");
       case "saldo": return <th key={c} className="w-24 text-right">Saldo</th>;

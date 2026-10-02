@@ -100,7 +100,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("description", "Descrição", { required: true, list: true, search: true, span: 6 }), REF("parent_id", "Endereçamento pai", "addressings", { list: true, span: 6 })]
   },
   {
-    key: "warehouses", importacao: true, label: "Armazém", labelPlural: "Armazéns", table: "warehouses", permission: "warehouses", labelField: "description", route: "/cadastros/armazens", softDelete: true, empresaScoped: true,
+    key: "warehouses", importacao: true, label: "Local de estoque", labelPlural: "Locais de estoque", table: "warehouses", permission: "warehouses", labelField: "description", route: "/cadastros/armazens", softDelete: true, empresaScoped: true,
     fields: [
       REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }),
       T("initials", "Sigla", { required: true, list: true, search: true, span: 2 }), T("description", "Descrição", { required: true, list: true, search: true, span: 4 }),
@@ -125,8 +125,8 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       B("control_stock", "Controla estoque", { default: true, section: "Estoque", help: "Gerencia o produto no estoque e calcula custo médio automaticamente", span: 3 }),
       { name: "min_stock", label: "Estoque mínimo", type: "quantity", section: "Estoque", list: true, help: "Alerta quando o estoque atingir ou ficar abaixo", span: 3 },
       { name: "estoque_maximo", label: "Estoque máximo", type: "quantity", section: "Estoque", span: 3 },
-      REF("default_warehouse_id", "Armazém padrão", "warehouses", { section: "Estoque", span: 4 }), REF("addressing_id", "Endereçamento", "addressings", { section: "Estoque", span: 4 }),
-      S("controle_lote", "Controle de lote", [["nenhum", "Nenhum"], ["lote", "Lote"], ["lote_validade", "Lote + validade"]], { default: "nenhum", filter: true, section: "Estoque", help: "Lote: exige o lote na entrada; na saída sem lote informado, o sistema escolhe pela validade mais próxima (lote vencido só sai informado). Lote + validade: também exige a validade na entrada. Mudar com saldo exige zerar o saldo em todos os armazéns.", span: 4 }),
+      REF("default_warehouse_id", "Local de estoque padrão", "warehouses", { section: "Estoque", span: 4, rotulosAnteriores: ["Armazém padrão"] }), REF("addressing_id", "Endereçamento", "addressings", { section: "Estoque", span: 4 }),
+      S("controle_lote", "Controle de lote", [["nenhum", "Nenhum"], ["lote", "Lote"], ["lote_validade", "Lote + validade"]], { default: "nenhum", filter: true, section: "Estoque", help: "Lote: exige o lote na entrada; na saída sem lote informado, o sistema escolhe pela validade mais próxima (lote vencido só sai informado). Lote + validade: também exige a validade na entrada. Mudar com saldo exige zerar o saldo em todos os locais de estoque.", span: 4 }),
       { name: "withdrawal_period_days", label: "Período de Carência (dias)", type: "integer", section: "Estoque", help: "Dias de espera após aplicação antes de vender/abater o animal", span: 3 },
       // legado derivado do controle: continua na leitura (relatórios, web anterior); gravado pela API a partir do controle
       B("has_lot", "Controla lote (derivado)", { readOnly: true, section: "Estoque", help: "Derivado do Controle de lote", span: 3 }),
@@ -478,6 +478,8 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     // PARCEIRO (CADASTROS Fase 4, decisão 253): a tabela, a chave, a permissão e a rota continuam `people`;
     // a tela é a FICHA EM ABAS declarada em `abas`/`detalhes`/`perfis` abaixo.
     key: "people", importacao: true, label: "Parceiro", labelPlural: "Parceiros", table: "people", permission: "people", labelField: "name", route: "/cadastros/pessoas", softDelete: true, codeEntity: "person", importExport: true, defaultSort: "name",
+    // OPERACOES-01 F3a (decisão 280): o seletor de Parceiros acha também pela razão social/nome completo e pelo CPF/CNPJ normalizado
+    pesquisaDoSeletor: { texto: ["legal_name"], documento: "document" },
     fields: [
       // AJUSTES 01 (decisão 257, C-3/C-4): Código (travado) fica no cabeçalho fixo (e só leitura no topo da 1ª aba); Identificação na ordem do padrão
       // de tela; campos de Física só aparecem em Física e os de Jurídica só em Jurídica (a API recusa o do outro tipo)

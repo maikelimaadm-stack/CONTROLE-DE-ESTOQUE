@@ -713,7 +713,7 @@ Fornecedores do produto (CADASTROS Fase 6): só parceiro com tipo Fornecedor, c�
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### ERP-CADASTROS-ARMAZEM — Armazém
+### ERP-CADASTROS-ARMAZEM — Local de estoque
 
 Local de guarda de estoque, pertencente a uma empresa.
 
@@ -989,7 +989,7 @@ Retorno de produtos ao estoque a partir de uma requisição.
 
 ### ERP-ESTOQUE-TRANSFERENCIA — Transferência
 
-Movimentação de produtos entre armazéns ou entre empresas. A coluna `kind` decide QUAL das duas operações é: dentro da mesma empresa, ou atravessando a fronteira de empresa — a rota de detalhe é a mesma para as duas, a operação não.
+Movimentação de produtos entre locais de estoque ou entre empresas. A coluna `kind` decide QUAL das duas operações é: dentro da mesma empresa, ou atravessando a fronteira de empresa — a rota de detalhe é a mesma para as duas, a operação não.
 
 | Propriedade | Valor |
 | --- | --- |
@@ -1000,7 +1000,7 @@ Movimentação de produtos entre armazéns ou entre empresas. A coluna `kind` de
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/transferencias/:id` |
-| Tipo de Operação | `estoque.transferencia_entre_armazens` (Transferência entre armazéns) · `estoque.transferencia_entre_empresas` (Transferência entre empresas) |
+| Tipo de Operação | `estoque.transferencia_entre_armazens` (Transferência entre locais de estoque) · `estoque.transferencia_entre_empresas` (Transferência entre empresas) |
 | Discriminador do Tipo de Operação | `kind` (decide qual das operações acima o registro é) |
 | Migração | Possui DUAS colunas de empresa (origem e destino): o escopo de leitura considera ambas. |
 
@@ -1085,8 +1085,8 @@ Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. 
 | `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `cancelado` | aberto \| confirmado \| cancelado. Aberto → confirmado, aberto → cancelado, confirmado → cancelado (com estorno). Nada volta; cancelado é final. |
 | `tipo_operacao_id` |  | uuid | sim |  |  |  |  |
 | `tipo_operacao_versao_id` |  | uuid | sim |  |  |  |  |
-| `armazem_id` | Armazém | uuid | sim |  |  |  | Armazém do movimento (a origem, na transferência). Da mesma empresa do documento. |
-| `armazem_destino_id` | Armazém de destino | uuid | não |  |  |  | Só na transferência, e diferente da origem. Da mesma empresa do documento: transferência entre empresas continua nas telas antigas. |
+| `armazem_id` | Local de estoque | uuid | sim |  |  |  | Local de estoque do movimento (a origem, na transferência). Da mesma empresa do documento. |
+| `armazem_destino_id` | Local de estoque de destino | uuid | não |  |  |  | Só na transferência, e diferente da origem. Da mesma empresa do documento: transferência entre empresas continua nas telas antigas. |
 | `data_documento` |  | date | sim |  |  |  |  |
 | `observacao` |  | text | não |  |  |  |  |
 | `criado_por` |  | uuid | não | FK | `erp.users` |  |  |
@@ -1124,7 +1124,7 @@ Linha de produto do documento de estoque. Identidade pertence ao documento; só 
 | `quantidade` | Quantidade | numeric(18,4) | não |  |  |  | Entrada, saída e transferência: maior que zero. Vazia no ajuste. |
 | `quantidade_contada` | Quantidade contada | numeric(18,4) | não |  |  |  | Só no ajuste: a contagem do inventário (zero ou mais). A diferença para o saldo é calculada na confirmação. |
 | `custo_unitario` | Custo unitário | numeric(18,6) | não |  |  |  | Informado na entrada. Nas outras espécies é preenchido na confirmação com o custo do movimento. |
-| `saldo_na_confirmacao` | Saldo na confirmação | numeric(18,4) | não |  |  |  | Só no ajuste: o saldo do armazém × produto × lote lido sob trava na confirmação. |
+| `saldo_na_confirmacao` | Saldo na confirmação | numeric(18,4) | não |  |  |  | Só no ajuste: o saldo do local de estoque × produto × lote lido sob trava na confirmação. |
 | `diferenca` | Diferença | numeric(18,4) | não |  |  |  | Só no ajuste: contada menos o saldo na confirmação. Positiva gera correção de entrada; negativa, correção de saída; zero não move estoque. |
 | `observacao` |  | text | não |  |  |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |

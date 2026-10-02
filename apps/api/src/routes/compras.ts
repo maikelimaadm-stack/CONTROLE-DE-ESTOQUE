@@ -470,13 +470,13 @@ async function conferirItens(ctx: ServiceCtx, especie: EspecieCompra, d: Documen
   d.itens.forEach((it, i) => {
     const p = porProduto.get(it.produto_id);
     if (!p) throw recusaDoItem(i, "produto_id", "Produto inválido");
-    if (it.armazem_id && !armazemValido.has(it.armazem_id)) throw recusaDoItem(i, "armazem_id", "Armazém inválido: escolha um armazém ativo da empresa do documento");
+    if (it.armazem_id && !armazemValido.has(it.armazem_id)) throw recusaDoItem(i, "armazem_id", "Local de estoque inválido: escolha um local de estoque ativo da empresa do documento");
     if (it.lote && p.controle_lote === "nenhum") throw recusaDoItem(i, "lote", "Este produto não controla lote: não informe o lote");
     if (it.validade && p.controle_lote !== "lote_validade") throw recusaDoItem(i, "validade", "Este produto não controla validade: não informe a validade");
     // Produto sem controle de estoque não entra no estoque: armazém, lote e validade não são exigidos.
     if (especie !== "compra" || !efeitos || !p.control_stock || !efeitos.entrada) return;
     if (!it.armazem_id) {
-      if (efeitos.exigeArmazem) throw recusaDoItem(i, "armazem_id", "A operação desta compra exige o armazém de todos os itens");
+      if (efeitos.exigeArmazem) throw recusaDoItem(i, "armazem_id", "A operação desta compra exige o local de estoque de todos os itens");
       return;
     }
     if (p.controle_lote !== "nenhum" && !it.lote) throw recusaDoItem(i, "lote", "Este produto controla lote: informe o lote");

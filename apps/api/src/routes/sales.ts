@@ -1002,7 +1002,7 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: VendaParaConfirmar, execu
   // AS EXIGÊNCIAS DA VERSÃO CONGELADA — todas conferidas, todas juntas, antes de qualquer efeito.
   const exigencias: { caminho: string; mensagem: string }[] = [];
   if (politica.estoque.autoridade === "configurada" && politica.estoque.efeito === "saida" && politica.estoque.exigeArmazem && d.items.some((it) => !it.warehouse_id)) {
-    exigencias.push({ caminho: "estoque.exigeArmazem", mensagem: "Informe o armazém de todos os itens" });
+    exigencias.push({ caminho: "estoque.exigeArmazem", mensagem: "Informe o local de estoque de todos os itens" });
   }
   if (politica.financeiro.autoridade === "configurada" && politica.financeiro.efeito === "receber") {
     if (politica.financeiro.exigeFormaPagamento && !d.payment_method_id) exigencias.push({ caminho: "financeiro.exigeFormaPagamento", mensagem: "Informe a forma de pagamento" });
@@ -1093,7 +1093,7 @@ async function conferirReservaNaSaida(ctx: ServiceCtx, d: VendaParaConfirmar, mo
     if (!s) throw new Error(`conferirReservaNaSaida: par ${chave} sem saldo lido`);
     if (!D(s.reservado).gt(0) || !D(p.quantidade).gt(s.disponivel)) continue;
     faltas.push({
-      linha: `${p.produto} no armazém ${p.armazem}: disponível ${quantidadeLegivel(s.disponivel)}, solicitado ${quantidadeLegivel(p.quantidade)} (${quantidadeLegivel(s.reservado)} reservado para pedidos).`,
+      linha: `${p.produto} no local de estoque ${p.armazem}: disponível ${quantidadeLegivel(s.disponivel)}, solicitado ${quantidadeLegivel(p.quantidade)} (${quantidadeLegivel(s.reservado)} reservado para pedidos).`,
       detalhe: { produto_id: p.productId, armazem_id: p.warehouseId, fisico: s.fisico, reservado: s.reservado, disponivel: s.disponivel, solicitado: p.quantidade },
     });
   }

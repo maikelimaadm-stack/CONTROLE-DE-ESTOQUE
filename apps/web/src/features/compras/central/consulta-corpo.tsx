@@ -113,7 +113,7 @@ export function ItensDaConsulta({ e }: { e: EstadoDaConsulta }) {
 const COLUNAS_DOS_MOVIMENTOS: readonly ColunaDaRelacao[] = [
   { chave: "movement_date", rotulo: "Data", celula: (r) => dataOuVazio(r["movement_date"]) || "—" },
   { chave: "product_name", rotulo: "Produto", celula: (r) => t(r["product_name"] ?? r["product_id"]) || "—" },
-  { chave: "warehouse_name", rotulo: "Armazém", celula: (r) => t(r["warehouse_name"]) || "—" },
+  { chave: "warehouse_name", rotulo: "Local de estoque", celula: (r) => t(r["warehouse_name"]) || "—" },
   { chave: "movement_type", rotulo: "Movimento", celula: (r) => enumLabel("stock_movement_type", r["movement_type"]) },
   { chave: "quantity", rotulo: "Quantidade", direita: true, celula: (r) => num(String(r["quantity"] ?? "0"), 4) },
   { chave: "unit_cost", rotulo: "Custo unitário", direita: true, celula: (r) => brl(String(r["unit_cost"] ?? "0")) },

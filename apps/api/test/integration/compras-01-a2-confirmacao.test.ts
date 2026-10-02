@@ -234,7 +234,7 @@ describe("A2-3 estorno da compra confirmada", () => {
     expect(r.statusCode, r.body).toBe(409);
     expect(j(r).error!.code).toBe("INSUFFICIENT_STOCK");
     expect(j(r).error!.message).toMatch(/Sal Mineral/);
-    expect(j(r).error!.message).toMatch(/armazém/);
+    expect(j(r).error!.message).toMatch(/ no local de estoque /);
     const e = await efeitos(id);
     expect([e.situacao, e.estornos, e.titulosAtivos]).toEqual(["confirmado", 0, 1]);
   });

@@ -152,7 +152,7 @@ export async function chaveDoLote(ctx: ServiceCtx, warehouseId: string, productI
     "select provider_lot from erp.stock_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and btrim(provider_lot) = $4 and quantity <> 0 order by provider_lot",
     [ctx.orgId, warehouseId, productId, loteAparado]);
   if (r.rows.length > 1) {
-    throw validation(`O lote "${loteAparado}" tem ${r.rows.length} saldos neste armazém que só diferem por espaços nas pontas (gravados antes de o lote ser aparado). Não é possível escolher entre eles pelo lote informado: movimente sem informar o lote (a escolha automática por validade usa cada saldo) ou peça ao administrador o acerto desses saldos.`,
+    throw validation(`O lote "${loteAparado}" tem ${r.rows.length} saldos neste local de estoque que só diferem por espaços nas pontas (gravados antes de o lote ser aparado). Não é possível escolher entre eles pelo lote informado: movimente sem informar o lote (a escolha automática por validade usa cada saldo) ou peça ao administrador o acerto desses saldos.`,
       [{ path: "provider_lot", message: "Lote com saldos duplicados por espaços" }]);
   }
   return r.rows[0]?.provider_lot ?? loteAparado;
@@ -188,8 +188,8 @@ export async function postStock(ctx: ServiceCtx, p: StockPost): Promise<Resultad
   if (!prod.rows[0]) throw validation("Produto inválido");
   if (!prod.rows[0].control_stock) throw err("PRODUCT_NOT_STOCK_CONTROLLED", "Produto não controla estoque");
   const wh = await ctx.tx.query<{ empresa_id: string; is_active: boolean }>("select empresa_id, is_active from erp.warehouses where id=$1 and organization_id=$2 and deleted_at is null", [p.warehouseId, ctx.orgId]);
-  if (!wh.rows[0]) throw validation("Armazém inválido");
-  if (wh.rows[0].empresa_id !== p.empresaId) throw err("WAREHOUSE_FARM_MISMATCH", "Armazém não pertence à fazenda informada");
+  if (!wh.rows[0]) throw validation("Local de estoque inválido");
+  if (wh.rows[0].empresa_id !== p.empresaId) throw err("WAREHOUSE_FARM_MISMATCH", "Local de estoque não pertence à empresa informada");
   // A quantidade é conferida na escala do ledger (4 casas): "0.00004" vira 0 no INSERT, e a divisão por lotes
   // receberia zero para dividir (revisão do R1: respondia 500). Quantidade que arredonda a zero não é positiva.
   if (D(fqty(p.quantity)).lte(0)) throw validation("Quantidade deve ser positiva");

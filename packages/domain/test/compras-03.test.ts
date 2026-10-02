@@ -126,7 +126,7 @@ const CABECALHO_DA_COMPRA: readonly [string, string, string][] = [
   ["observacao", "Observação", "texto_longo"]
 ];
 const ITENS_DO_PEDIDO: readonly [string, string, string][] = [
-  ["armazem_id", "Armazém", "referencia"],
+  ["armazem_id", "Local de estoque", "referencia"],
   ["produto_id", "Produto", "referencia"],
   ["quantidade", "Quantidade", "numero"],
   ["valor_unitario", "Valor unitário", "numero"],
@@ -191,8 +191,13 @@ describe("C3-D2 catálogos de compras", () => {
 
 describe("C3-D3 vendas NÃO mudou um byte", () => {
   // sha256 de JSON.stringify, calculado sobre o domínio de origin/main 93497b1 (antes da COMPRAS-03)
-  it("CATALOGO_VENDAS idêntico", () => {
-    expect(sha(CATALOGO_VENDAS)).toBe("8e61b2e21d907956cfde7db1b2f8e5dfb43ecb9b8e302a7e1f05e34e4e52c13c");
+  it("CATALOGO_VENDAS idêntico (fora o rótulo 'Local de estoque' da OPERACOES-01 F3a, decisão 280)", () => {
+    const coluna = CATALOGO_VENDAS.find((c) => c.parte === "itens" && c.chave === "warehouse_id");
+    expect(coluna?.rotulo).toBe("Local de estoque");
+    // com o rótulo de antes no lugar do novo, o catálogo é o de 93497b1 byte a byte: o rename foi a ÚNICA mudança
+    const comORotuloDeAntes = CATALOGO_VENDAS.map((c) => (c === coluna ? { ...c, rotulo: "Armazém" } : c));
+    expect(sha(comORotuloDeAntes)).toBe("8e61b2e21d907956cfde7db1b2f8e5dfb43ecb9b8e302a7e1f05e34e4e52c13c");
+    expect(sha(CATALOGO_VENDAS)).toBe("4a549aa2f9d5f90a068a2028da18e8ae31bbf5e38710595a32b6241e05561e11");
   });
   it.each(FAMILIAS_COM_LAYOUT_DE_VENDAS)("LAYOUT_DO_SISTEMA(%s) idêntico", (f) => {
     expect(sha(LAYOUT_DO_SISTEMA(f))).toBe("d6c475ec8741549071d46c2bec264f73816ea9ae385b9438d788ceb41e9bb9f7");
@@ -204,7 +209,7 @@ describe("C3-D3 vendas NÃO mudou um byte", () => {
   it("camposObrigatoriosFaltando de vendas: linhas em `items`, caminho items[i].campo; `itens` não é lido", () => {
     const l = sis("vendas.pedido"); at(l.itens, naColuna(l, "warehouse_id")).obrigatorio = true;
     const doc = { client_id: "c", empresa_id: "e", document_date: "2026-01-01", items: [{ product_id: "p", quantity: "1", unit_price: "2" }], itens: [{}, {}] };
-    expect(camposObrigatoriosFaltando("vendas.pedido", l, doc)).toEqual([{ caminho: "items[0].warehouse_id", rotulo: "Armazém" }]);
+    expect(camposObrigatoriosFaltando("vendas.pedido", l, doc)).toEqual([{ caminho: "items[0].warehouse_id", rotulo: "Local de estoque" }]);
   });
 });
 
@@ -260,7 +265,7 @@ describe("C3-D5 chave das linhas e coluna de padrão por família", () => {
       at(l.itens, i).valorPadrao = reg();
       expect(erros(f, l), f).toEqual([]);
       at(l.itens, i).valorPadrao = { tipo: "literal", valor: "x" };
-      expect(erros(f, l), f).toEqual([{ caminho: `itens[${i}].valorPadrao`, mensagem: incompativel("Armazém") }]);
+      expect(erros(f, l), f).toEqual([{ caminho: `itens[${i}].valorPadrao`, mensagem: incompativel("Local de estoque") }]);
       at(l.itens, i).valorPadrao = reg("nao-e-uuid");
       expect(caminhos(f, l), f).toEqual([`itens[${i}].valorPadrao`]);
       const l2 = sis(f); l2.itens.push({ campo: "warehouse_id", obrigatorio: false, valorPadrao: reg() });
@@ -293,7 +298,7 @@ describe("C3-D6 camposObrigatoriosFaltando em compras: caminho itens[i].campo", 
   it("coluna obrigatória do layout vazia na linha 1 → itens[1].armazem_id, com o rótulo do layout", () => {
     const l = sis(); const i = naColuna(l, "armazem_id");
     at(l.itens, i).obrigatorio = true;
-    expect(camposObrigatoriosFaltando(COMPRA, l, cheio())).toEqual([{ caminho: "itens[1].armazem_id", rotulo: "Armazém" }]);
+    expect(camposObrigatoriosFaltando(COMPRA, l, cheio())).toEqual([{ caminho: "itens[1].armazem_id", rotulo: "Local de estoque" }]);
     at(l.itens, i).rotulo = "Depósito";
     expect(camposObrigatoriosFaltando(COMPRA, l, cheio())).toEqual([{ caminho: "itens[1].armazem_id", rotulo: "Depósito" }]);
     const lote = sis(); at(lote.itens, naColuna(lote, "lote")).obrigatorio = true;
@@ -305,7 +310,7 @@ describe("C3-D6 camposObrigatoriosFaltando em compras: caminho itens[i].campo", 
     expect(camposObrigatoriosFaltando(PEDIDO, l, d)).toEqual([]);
     const linha = { produto_id: "p", quantidade: "1", valor_unitario: "2" };
     d.itens = [{ ...linha, armazem_id: "a" }, linha];
-    expect(camposObrigatoriosFaltando(PEDIDO, l, d)).toEqual([{ caminho: "itens[1].armazem_id", rotulo: "Armazém" }]);
+    expect(camposObrigatoriosFaltando(PEDIDO, l, d)).toEqual([{ caminho: "itens[1].armazem_id", rotulo: "Local de estoque" }]);
   });
   it("linha que não é objeto conta como vazia (cobra); `itens` que não é lista não tem linha", () => {
     const l = sis(PEDIDO); at(l.itens, naColuna(l, "armazem_id")).obrigatorio = true;
@@ -462,7 +467,7 @@ describe("C3-D9 padrões de cadastro da estrutura de compras", () => {
     const i = noCabecalho(l, "fornecedor_id"); const j = naColuna(l, "armazem_id");
     expect(padroesRegistroDaEstrutura(COMPRA, l)).toEqual([
       { chave: "fornecedor_id", caminho: `cabecalho[${i}].valorPadrao`, parte: "cabecalho", campo: "fornecedor_id", id: UUID, rotulo: "Fornecedor", referencia: { recurso: "people", filtro: { is_provider: "true" } } },
-      { chave: "itens.armazem_id", caminho: `itens[${j}].valorPadrao`, parte: "itens", campo: "armazem_id", id: UUID, rotulo: "Armazém", referencia: { recurso: "warehouses" } }
+      { chave: "itens.armazem_id", caminho: `itens[${j}].valorPadrao`, parte: "itens", campo: "armazem_id", id: UUID, rotulo: "Local de estoque", referencia: { recurso: "warehouses" } }
     ]);
     const sem = removerPadroesRegistro(l);
     expect(padroesRegistroDaEstrutura(COMPRA, sem)).toEqual([]);

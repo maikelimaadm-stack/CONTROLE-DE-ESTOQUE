@@ -115,7 +115,7 @@ async function conferirLayoutNaCentral(page: Page, layoutId: string) {
   const itens = page.getByTestId("compras-itens");
   await expect(itens.locator('th[data-campo="produto_id"]'), "a grade dos itens desenhou as colunas pelo layout").toHaveCount(1);
   await expect(itens.locator('th[data-campo="armazem_id"]'), "o Armazém escondido pelo layout não aparece nos itens").toHaveCount(0);
-  await expect(itens.getByRole("columnheader", { name: "Armazém" }), "nem pelo rótulo").toHaveCount(0);
+  await expect(itens.getByRole("columnheader", { name: "Local de estoque" }), "nem pelo rótulo").toHaveCount(0);
 }
 
 test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigatória, Fornecedor padrão) governa a Central; sem Observação recusa no campo; no modo receber vale o mesmo layout e o pedido vence o padrão", async ({ page }) => {

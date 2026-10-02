@@ -184,7 +184,7 @@ for (const variante of ["budget", "order", "sale"] as Variante[]) {
     await expect(page.getByTestId("central-vendas-itens-contagem")).toHaveText(`(${d.itens})`);
     await expect(page.getByTestId("central-vendas-linha")).toHaveCount(d.itens);
     const grade = page.getByTestId("central-vendas-grade");
-    for (const coluna of ["Código", "Produto", "Armazém", "Quantidade", "Valor unitário", "Desconto", "Total"]) {
+    for (const coluna of ["Código", "Produto", "Local de estoque", "Quantidade", "Valor unitário", "Desconto", "Total"]) {
       await expect(grade.locator("thead th", { hasText: coluna }).first()).toBeVisible();
     }
     await expect(grade.locator("input"), "consulta: nada editável na grade").toHaveCount(0);

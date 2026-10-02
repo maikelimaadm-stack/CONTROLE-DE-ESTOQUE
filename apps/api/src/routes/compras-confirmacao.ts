@@ -191,7 +191,7 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
   const exigencias: { caminho: string; mensagem: string }[] = [];
   if (politica.estoque.autoridade === "configurada" && politica.estoque.efeito === "entrada" && politica.estoque.exigeArmazem
       && itens.some((it) => it.controla_estoque && !it.armazem_id)) {
-    exigencias.push({ caminho: "estoque.exigeArmazem", mensagem: "Informe o armazém de todos os itens" });
+    exigencias.push({ caminho: "estoque.exigeArmazem", mensagem: "Informe o local de estoque de todos os itens" });
   }
   // COMPRAS-03 (item 0): forma e vencimento só quando a compra GERA título (`plano.geraTitulos`: conta a pagar E
   // valor > 0) — a mesma regra do salvar (`conferirExigenciasDoTitulo`). Compra de valor zero não gera título, e
@@ -414,7 +414,7 @@ export async function cancelarCompraConfirmada(ctx: ServiceCtx, doc: Record<stri
       where coalesce(s.quantity, 0) < e.q
       order by 1, 2`, [ctx.orgId, id]);
   if (faltas.rows.length) {
-    const linhas = faltas.rows.map((f) => `${f.produto} no armazém ${f.armazem}${f.lote ? ` (lote ${f.lote})` : ""}: entrou ${quantidadeLegivel(f.entrou)}, saldo ${quantidadeLegivel(f.saldo)}`);
+    const linhas = faltas.rows.map((f) => `${f.produto} no local de estoque ${f.armazem}${f.lote ? ` (lote ${f.lote})` : ""}: entrou ${quantidadeLegivel(f.entrou)}, saldo ${quantidadeLegivel(f.saldo)}`);
     throw err("INSUFFICIENT_STOCK", `O estoque desta compra já foi consumido; o estorno deixaria o saldo negativo. ${linhas.join("; ")}.`,
       faltas.rows.map((f, i) => ({ produto: f.produto, armazem: f.armazem, lote: f.lote, entrou: f.entrou, saldo: f.saldo, message: linhas[i] })));
   }

@@ -61,8 +61,8 @@ const VOLTAR = "/estoque?tab=movimentacoes";
 const traco = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : String(v));
 /** O rótulo do campo do cabeçalho para o erro que cai na lista (nunca a chave técnica na tela). */
 const ROTULO_DO_CAMPO_DO_CABECALHO: Record<string, string> = {
-  empresa_id: "Empresa", tipo_operacao_id: "Tipo de Operação", data_documento: "Data do documento", armazem_id: "Armazém",
-  armazem_destino_id: "Armazém de destino", observacao: "Observação"
+  empresa_id: "Empresa", tipo_operacao_id: "Tipo de Operação", data_documento: "Data do documento", armazem_id: "Local de estoque",
+  armazem_destino_id: "Local de estoque de destino", observacao: "Observação"
 };
 const rotuloDoErro = (caminho: string) => (caminho.startsWith("itens") ? descreverCaminhoDeItem(caminho) : ROTULO_DO_CAMPO_DO_CABECALHO[caminho] ?? "Documento");
 
@@ -170,10 +170,10 @@ function FormularioEstoque({ variante, estado, top, escritaTopConfirmada }: {
   const montar = (): { corpo: Record<string, unknown> } | { erros: Record<string, string> } => {
     const e: Record<string, string> = {};
     if (!h.empresa_id) e["empresa_id"] = "Informe a empresa";
-    if (!h.armazem_id) e["armazem_id"] = ehTransferencia ? "Informe o armazém de origem" : "Informe o armazém";
+    if (!h.armazem_id) e["armazem_id"] = ehTransferencia ? "Informe o local de estoque de origem" : "Informe o local de estoque";
     if (ehTransferencia) {
-      if (!h.armazem_destino_id) e["armazem_destino_id"] = "Informe o armazém de destino da transferência";
-      else if (h.armazem_destino_id === h.armazem_id) e["armazem_destino_id"] = "O armazém de destino tem de ser diferente do armazém de origem";
+      if (!h.armazem_destino_id) e["armazem_destino_id"] = "Informe o local de estoque de destino da transferência";
+      else if (h.armazem_destino_id === h.armazem_id) e["armazem_destino_id"] = "O local de estoque de destino tem de ser diferente do local de estoque de origem";
     }
     if (!h.data_documento) e["data_documento"] = "Informe a data do documento";
     if (!linhas.length) e["itens"] = "Inclua ao menos um item";
@@ -264,13 +264,13 @@ function FormularioEstoque({ variante, estado, top, escritaTopConfirmada }: {
           </Field>
           {/* O invólucro só leva o contrato do teste: `display: contents` não ocupa lugar no grid. */}
           <div data-testid="estoque-central-armazem" style={{ display: "contents" }}>
-            <Field label={ehTransferencia ? "Armazém de origem" : "Armazém"} required span={4} error={erro("armazem_id")}>
+            <Field label={ehTransferencia ? "Local de estoque de origem" : "Local de estoque"} required span={4} error={erro("armazem_id")}>
               <RefSelect resource="warehouses" value={h.armazem_id} disabled={!h.empresa_id || undefined} filter={{ empresa_id: h.empresa_id }}
                 excluirIds={ehTransferencia && h.armazem_destino_id ? [h.armazem_destino_id] : undefined} onChange={(v) => mudar({ armazem_id: v ?? "" })} />
             </Field>
           </div>
           {ehTransferencia && <div data-testid="estoque-central-armazem-destino" style={{ display: "contents" }}>
-            <Field label="Armazém de destino" required span={4} error={erro("armazem_destino_id")}>
+            <Field label="Local de estoque de destino" required span={4} error={erro("armazem_destino_id")}>
               <RefSelect resource="warehouses" value={h.armazem_destino_id} disabled={!h.empresa_id || undefined} filter={{ empresa_id: h.empresa_id }}
                 excluirIds={h.armazem_id ? [h.armazem_id] : undefined} onChange={(v) => mudar({ armazem_destino_id: v ?? "" })} />
             </Field>
@@ -383,8 +383,8 @@ function ConsultaEstoque({ variante, id }: { variante: VarianteDeEstoque; id: st
             {top ? `${top.codigo} — ${top.nome}${top.versao ? ` (versão ${top.versao})` : ""}` : "—"}
           </span>],
           ["Empresa", traco(d.empresa_nome)],
-          [ehTransferencia ? "Armazém de origem" : "Armazém", <span key="a" data-testid="estoque-central-armazem">{traco(d.armazem_nome)}</span>],
-          ...(ehTransferencia ? [["Armazém de destino", <span key="ad" data-testid="estoque-central-armazem-destino">{traco(d.armazem_destino_nome)}</span>] as [string, React.ReactNode]] : []),
+          [ehTransferencia ? "Local de estoque de origem" : "Local de estoque", <span key="a" data-testid="estoque-central-armazem">{traco(d.armazem_nome)}</span>],
+          ...(ehTransferencia ? [["Local de estoque de destino", <span key="ad" data-testid="estoque-central-armazem-destino">{traco(d.armazem_destino_nome)}</span>] as [string, React.ReactNode]] : []),
           ["Data do documento", <span key="d" data-testid="estoque-central-data">{dateBR(d.data_documento)}</span>],
           ["Lançado por", traco(d.criado_por_nome)],
           ...(d.confirmado_em ? [["Confirmado", `${dateTimeBR(d.confirmado_em)} por ${traco(d.confirmado_por_nome)}`] as [string, React.ReactNode]] : []),
@@ -403,7 +403,7 @@ function ConsultaEstoque({ variante, id }: { variante: VarianteDeEstoque; id: st
       {(d.movimentos ?? []).length ? <SimpleTable rows={d.movimentos} cols={[
         { key: "movement_date", label: "Data", render: (r) => (r["movement_date"] ? dateBR(r["movement_date"] as string) : "—") },
         { key: "product_name", label: "Produto", render: (r) => traco(r["product_name"]) },
-        { key: "warehouse_name", label: "Armazém", render: (r) => traco(r["warehouse_name"]) },
+        { key: "warehouse_name", label: "Local de estoque", render: (r) => traco(r["warehouse_name"]) },
         { key: "movement_type", label: "Movimento", render: (r) => enumLabel("stock_movement_type", r["movement_type"]) },
         { key: "provider_lot", label: "Lote", render: (r) => traco(r["provider_lot"]) },
         { key: "quantity", label: "Quantidade", align: "right", render: (r) => num(r["quantity"] as string, 4) },
@@ -471,7 +471,7 @@ function CorpoDaPrevia({ previa, especie }: { previa: PreviaDaConfirmacaoEstoque
       {previa.recusas.map((r, i) => <li key={`${r.code}:${i}`} data-testid="estoque-previa-recusa" data-code={r.code}>{r.message}</li>)}
     </ul>}
     {faltaSaldo && <p data-testid="estoque-previa-bloqueio" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-red-800">
-      Há item sem saldo suficiente no armazém de origem. Ajuste o documento ou o saldo antes de confirmar.
+      Há item sem saldo suficiente no local de estoque de origem. Ajuste o documento ou o saldo antes de confirmar.
     </p>}
     <div className="overflow-x-auto rounded border"><table className="table-dense w-full text-[12.5px]"><thead><tr>
       <th>Produto</th>

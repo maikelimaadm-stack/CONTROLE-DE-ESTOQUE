@@ -201,7 +201,7 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     descricao: "Fornecedores do produto (CADASTROS Fase 6): só parceiro com tipo Fornecedor, código do produto no fornecedor, unidade de compra e no máximo um preferencial."
   },
   {
-    codigo: "ERP-CADASTROS-ARMAZEM", tabela: "erp.warehouses", nome: "Armazém", modulo: "CADASTROS", natureza: "entidade", idGlobal: false,
+    codigo: "ERP-CADASTROS-ARMAZEM", tabela: "erp.warehouses", nome: "Local de estoque", modulo: "CADASTROS", natureza: "entidade", idGlobal: false,
     descricao: "Local de guarda de estoque, pertencente a uma empresa."
   },
   {
@@ -241,7 +241,7 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   {
     codigo: "ERP-ESTOQUE-TRANSFERENCIA", tabela: "erp.warehouse_transfers", nome: "Transferência", modulo: "ESTOQUE", natureza: "entidade", idGlobal: true, rota: "/estoque/transferencias/:id",
     discriminadorTop: "kind", tops: ["estoque.transferencia_entre_armazens", "estoque.transferencia_entre_empresas"],
-    descricao: "Movimentação de produtos entre armazéns ou entre empresas. A coluna `kind` decide QUAL das duas operações é: dentro da mesma empresa, ou atravessando a fronteira de empresa — a rota de detalhe é a mesma para as duas, a operação não.",
+    descricao: "Movimentação de produtos entre locais de estoque ou entre empresas. A coluna `kind` decide QUAL das duas operações é: dentro da mesma empresa, ou atravessando a fronteira de empresa — a rota de detalhe é a mesma para as duas, a operação não.",
     migracao: "Possui DUAS colunas de empresa (origem e destino): o escopo de leitura considera ambas."
   },
   {
@@ -260,8 +260,8 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     campos: {
       especie: { nome: "Espécie", descricao: "entrada | saida | transferencia | ajuste. Valor canônico persistido; o rótulo é traduzido na apresentação." },
       situacao: { nome: "Situação", descricao: "aberto | confirmado | cancelado. Aberto → confirmado, aberto → cancelado, confirmado → cancelado (com estorno). Nada volta; cancelado é final." },
-      armazem_id: { nome: "Armazém", descricao: "Armazém do movimento (a origem, na transferência). Da mesma empresa do documento." },
-      armazem_destino_id: { nome: "Armazém de destino", descricao: "Só na transferência, e diferente da origem. Da mesma empresa do documento: transferência entre empresas continua nas telas antigas." }
+      armazem_id: { nome: "Local de estoque", descricao: "Local de estoque do movimento (a origem, na transferência). Da mesma empresa do documento." },
+      armazem_destino_id: { nome: "Local de estoque de destino", descricao: "Só na transferência, e diferente da origem. Da mesma empresa do documento: transferência entre empresas continua nas telas antigas." }
     }
   },
   {
@@ -271,7 +271,7 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
       quantidade: { nome: "Quantidade", descricao: "Entrada, saída e transferência: maior que zero. Vazia no ajuste." },
       quantidade_contada: { nome: "Quantidade contada", descricao: "Só no ajuste: a contagem do inventário (zero ou mais). A diferença para o saldo é calculada na confirmação." },
       custo_unitario: { nome: "Custo unitário", descricao: "Informado na entrada. Nas outras espécies é preenchido na confirmação com o custo do movimento." },
-      saldo_na_confirmacao: { nome: "Saldo na confirmação", descricao: "Só no ajuste: o saldo do armazém × produto × lote lido sob trava na confirmação." },
+      saldo_na_confirmacao: { nome: "Saldo na confirmação", descricao: "Só no ajuste: o saldo do local de estoque × produto × lote lido sob trava na confirmação." },
       diferenca: { nome: "Diferença", descricao: "Só no ajuste: contada menos o saldo na confirmação. Positiva gera correção de entrada; negativa, correção de saída; zero não move estoque." }
     }
   },

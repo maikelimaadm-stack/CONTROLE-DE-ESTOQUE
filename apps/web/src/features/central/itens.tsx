@@ -41,7 +41,8 @@ const linhaNova = (armazem?: string): ItemRow => ({ product_id: "", quantity: "1
 const COLUNAS: Record<ChaveColunaDoItem, { rotulo: string; largura: number; numero?: boolean; elastica?: boolean }> = {
   codigo: { rotulo: "Código", largura: 70 },
   produto: { rotulo: "Produto", largura: 170, elastica: true },
-  armazem: { rotulo: "Armazém", largura: 108 },
+  // 122, não os 108 do protótipo: "Local de estoque" (OPERACOES-01 F3a) cabe inteiro também com o "*" de coluna obrigatória
+  armazem: { rotulo: "Local de estoque", largura: 122 },
   estoque: { rotulo: "Estoque", largura: 74, numero: true },
   saldo: { rotulo: "Saldo", largura: 90, numero: true },
   quantidade: { rotulo: "Quantidade", largura: 104, numero: true },
@@ -59,7 +60,7 @@ const ORDEM_COLUNAS: readonly ChaveColunaDoItem[] = ["codigo", "produto", "armaz
 const OPCIONAIS: ReadonlySet<ChaveColunaDoItem> = new Set(["saldo", "lote", "validade"]);
 
 const CAMPOS: Record<ChaveCampoDoItem, string> = {
-  produto: "Produto", armazem: "Armazém", estoque: "Estoque", saldo: "Saldo", unidade: "Unidade", quantidade: "Quantidade",
+  produto: "Produto", armazem: "Local de estoque", estoque: "Estoque", saldo: "Saldo", unidade: "Unidade", quantidade: "Quantidade",
   unitario: "Valor unitário", desconto: "Desconto", descontoPercentual: "Desconto %", total: "Total", lote: "Lote", validade: "Validade"
 };
 const ORDEM_CAMPOS: readonly ChaveCampoDoItem[] = ["produto", "armazem", "estoque", "saldo", "unidade", "quantidade", "unitario", "desconto", "descontoPercentual", "total", "lote", "validade"];
@@ -304,7 +305,7 @@ export function ItensDaCentral({
           aberto={pesquisa?.linha === i && pesquisa.campo === "product_id"} testId={tid("produto")}
           onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "product_id", ancora: el, modo: "flutuante" }); }} />}</td>;
       case "armazem": return <td key={k}><CelulaDeReferencia recurso="warehouses" id={it.warehouse_id} conhecido={it.warehouse_id ? conhecidos[it.warehouse_id] : undefined} vazio="—"
-        rotuloAcao={(o) => (o ? `Armazém: ${o.label}` : "Armazém")}
+        rotuloAcao={(o) => (o ? `Local de estoque: ${o.label}` : "Local de estoque")}
         aberto={pesquisa?.linha === i && pesquisa.campo === "warehouse_id"} testId={tid("armazem")}
         onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "warehouse_id", ancora: el, modo: "flutuante" }); }} /></td>;
       case "estoque": return <td key={k} className={cn(grade.numero, grade.estoque)}>{saldoDoItem(it)}</td>;
@@ -374,7 +375,7 @@ export function ItensDaCentral({
   </div>;
 
   const pesquisaEmFluxo = (campo: "product_id" | "warehouse_id") => pesquisa && pesquisa.modo === "fluxo" && pesquisa.campo === campo && pesquisa.linha === atual
-    ? <PainelDePesquisa key={`fluxo-${campo}`} recurso={campo === "product_id" ? "products" : "warehouses"} rotulo={campo === "product_id" ? "Pesquisar produto" : "Pesquisar armazém"}
+    ? <PainelDePesquisa key={`fluxo-${campo}`} recurso={campo === "product_id" ? "products" : "warehouses"} rotulo={campo === "product_id" ? "Pesquisar produto" : "Pesquisar local de estoque"}
         valor={item?.[campo] as string | undefined} modo="fluxo" ancora={pesquisa.ancora} onEscolher={escolher} onFechar={fechar} testId={tid("pesquisa")} />
     : null;
 
@@ -493,7 +494,7 @@ export function ItensDaCentral({
       <span>Subtotal dos itens <b className={grade.rodapeValor} data-testid={tid("subtotal")}>{brl(subtotal)}</b></span>
     </div>
     {pesquisa?.modo === "flutuante" && <PainelDePesquisa recurso={pesquisa.campo === "product_id" ? "products" : "warehouses"}
-      rotulo={pesquisa.campo === "product_id" ? "Pesquisar produto" : "Pesquisar armazém"} valor={items[pesquisa.linha]?.[pesquisa.campo] as string | undefined}
+      rotulo={pesquisa.campo === "product_id" ? "Pesquisar produto" : "Pesquisar local de estoque"} valor={items[pesquisa.linha]?.[pesquisa.campo] as string | undefined}
       modo="flutuante" ancora={pesquisa.ancora} onEscolher={escolher} onFechar={fechar} testId={tid("pesquisa")} />}
   </>;
 }
