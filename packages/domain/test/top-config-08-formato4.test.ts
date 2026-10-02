@@ -50,7 +50,8 @@ import { familiaOperacionalDeDocumentoCompra, familiaOperacionalDeDocumentoVenda
  * aprovação.
  *
  * F4-D1 prova que o 4 é lido, normalizado e editado SEM VIRAR 3 no caminho (a API grava o número a partir do
- * normalizado: se ele se perdesse, a versão seria gravada no 3 e nada executaria) e que o 5 continua recusado.
+ * normalizado: se ele se perdesse, a versão seria gravada no 3 e nada executaria) e que o formato futuro (o 6,
+ * desde que a OPERACOES-01 F4 tornou o 5 conhecido — decisão 281) continua recusado.
  * F4-D2 prova a comparação SEM o número: 3 → 4 no neutro não é mudança; 3 → 4 com regra fora do neutro é, porque
  * ela passa a valer — e as seções alteradas dizem qual (geral, aprovacao), cada uma por si.
  * F4-D3 prova os portões: as restrições executam no 3 e no 4; as regras gerais, só no 4.
@@ -146,7 +147,8 @@ function com<T extends ConfiguracaoTipoOperacao>(c: T, ajuste: (x: ConfiguracaoT
 describe("F4-D1 o formato 4 é conhecido e preserva o número", () => {
   it("F4-D1 a constante é 4, entra na lista dos formatos lidos, e as do 1, 2 e 3 não mudam", () => {
     expect(VERSAO_SCHEMA_CONFIGURACAO_TOP_V4).toBe(4);
-    expect(VERSOES_SCHEMA_CONFIGURACAO_TOP).toEqual([1, 2, 3, 4]);
+    // OPERACOES-01 F4 (decisão 281): o 5 entrou na lista depois do 4; o 4 continua nela, com o mesmo número.
+    expect(VERSOES_SCHEMA_CONFIGURACAO_TOP).toEqual([1, 2, 3, 4, 5]);
     expect(VERSAO_SCHEMA_CONFIGURACAO_TOP).toBe(1);
     expect(VERSAO_SCHEMA_CONFIGURACAO_TOP_V2).toBe(2);
     expect(VERSAO_SCHEMA_CONFIGURACAO_TOP_V3).toBe(3);
@@ -212,8 +214,10 @@ describe("F4-D1 o formato 4 é conhecido e preserva o número", () => {
     }
   });
 
-  it("F4-D1 o formato 5 (e o 4 em texto) continua recusado como schema_nao_suportado, antes de ler campo", () => {
-    for (const versao of [5, Math.max(...VERSOES_SCHEMA_CONFIGURACAO_TOP) + 1, "4", 4.5, 0]) {
+  it("F4-D1 o formato 6 (o futuro; e o 4 em texto) continua recusado como schema_nao_suportado, antes de ler campo", () => {
+    // A premissa: desde a OPERACOES-01 F4 (decisão 281) o 5 é conhecido, e o 6 é o primeiro formato futuro.
+    expect(Math.max(...VERSOES_SCHEMA_CONFIGURACAO_TOP) + 1).toBe(6);
+    for (const versao of [6, Math.max(...VERSOES_SCHEMA_CONFIGURACAO_TOP) + 1, "4", "5", 4.5, 0]) {
       const c = { ...sujar(configuracaoNeutraTopV4()), versaoSchema: versao };
       expect(recusasDe(c), `versaoSchema ${JSON.stringify(versao)}`).toEqual([{ motivo: "schema_nao_suportado", caminho: "versaoSchema" }]);
       expect(versaoSchemaDaConfiguracaoTop(c)).toBeNull();
@@ -496,9 +500,11 @@ describe("F4-D4 política efetiva e a marca da guarda com versão no formato 4",
     if (r3.ok && r4.ok) expect(r4.politica).toEqual({ ...r3.politica, origem: 4 });
   });
 
-  it("F4-D4 formato 4 malformado e formato 5 → configuracao_ilegivel, na venda e na compra (nunca legado)", () => {
+  it("F4-D4 formato 4 malformado e formato 6 (o futuro) → configuracao_ilegivel, na venda e na compra (nunca legado)", () => {
     const malformado = { ...sujar(configuracaoNeutraTopV4()), regrasGerais: {} };
-    const futuro = { ...sujar(configuracaoNeutraTopV4()), versaoSchema: 5 };
+    // OPERACOES-01 F4 (decisão 281): o 5 é conhecido; o futuro é o 6 (a premissa abaixo).
+    expect(versaoSchemaDaConfiguracaoTop({ versaoSchema: 6 })).toBeNull();
+    const futuro = { ...sujar(configuracaoNeutraTopV4()), versaoSchema: 6 };
     for (const c of [malformado, futuro]) {
       expect(venda(c)).toEqual({ ok: false, motivo: "configuracao_ilegivel", recusas: [] });
       expect(compra(c)).toEqual({ ok: false, motivo: "configuracao_ilegivel", recusas: [] });

@@ -6,9 +6,9 @@ import { dateTimeBR } from "@/lib/utils";
 import { COPY } from "@/lib/copy";
 import { Badge, Button, Dialog, EmptyState, ErrorState, LoadingState } from "@/components/ui";
 import {
-  ENUM_LABELS, SECOES_CONFIGURACAO_TOP_V2, VERSAO_SCHEMA_CONFIGURACAO_TOP, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
-  declaraRegrasGerais, execucaoDeclaradaTop, regrasGeraisExecutamTop, restricoesExecutamTop,
-  type ConfiguracaoTipoOperacao, type PoliticaClienteEmAtraso, type SecaoConfiguracaoTopV2
+  DEFINICOES_SECOES_V5, ENUM_LABELS, SECOES_CONFIGURACAO_TOP_V5, VERSAO_SCHEMA_CONFIGURACAO_TOP, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
+  declaraRegrasGerais, execucaoDeclaradaTop, formato5Top, regrasGeraisExecutamTop, restricoesExecutamTop, secoesExtensaoDaVersaoTop,
+  type ConfiguracaoTipoOperacao, type DefinicaoSecaoV5, type PoliticaClienteEmAtraso, type SecaoConfiguracaoTopV5
 } from "@agro/domain";
 import {
   ROTULOS_SECAO_TOP, ROTULOS_TOP, lerConfiguracaoDoServidor, podeConfigurarRegrasGerais, useCapacidadesTop,
@@ -46,8 +46,11 @@ interface VersaoTop {
   criadoEm: string;
   criadoPor: string | null;
   configuracao: ConfiguracaoDoServidor | null;
-  /** `null` = não dá para comparar com a anterior (ausente ou ilegível). Diferente de `[]` ("nada mudou"). */
-  secoesAlteradas: SecaoConfiguracaoTopV2[] | null;
+  /**
+   * `null` = não dá para comparar com a anterior (ausente ou ilegível). Diferente de `[]` ("nada mudou"). OPERACOES-01
+   * F4: os nomes são os do formato 5 (`SECOES_CONFIGURACAO_TOP_V5`: os de hoje e as seções de extensão).
+   */
+  secoesAlteradas: SecaoConfiguracaoTopV5[] | null;
   destinos: DestinoDaVersao[] | null;
   /**
    * ESTA VERSÃO CHEGOU A DECLARAR POLÍTICA DE PRÓXIMAS OPERAÇÕES?
@@ -95,9 +98,10 @@ function lerVersao(bruto: unknown): VersaoTop | null {
     criadoPor: ehTexto(bruto.criadoPor) ? bruto.criadoPor : null,
     configuracao: bruto.configuracao === undefined ? null : lerConfiguracaoDoServidor(bruto.configuracao),
     // `execucao` é uma seção de comparação desde a TOP-CONFIG-04A: é ela que marca, no histórico, a versão
-    // em que um efeito trocou de autoridade (legado ↔ configuração da TOP).
-    secoesAlteradas: Array.isArray(secoes) && secoes.every((s): s is SecaoConfiguracaoTopV2 =>
-      (SECOES_CONFIGURACAO_TOP_V2 as readonly string[]).includes(s as string)) ? [...secoes] : null,
+    // em que um efeito trocou de autoridade (legado ↔ configuração da TOP). OPERACOES-01 F4: as seções de extensão do
+    // formato 5 também (a lista do domínio); um nome que esta tela não conhece continua degradando a lista para `null`.
+    secoesAlteradas: Array.isArray(secoes) && secoes.every((s): s is SecaoConfiguracaoTopV5 =>
+      (SECOES_CONFIGURACAO_TOP_V5 as readonly string[]).includes(s as string)) ? [...secoes] : null,
     destinos: Array.isArray(bruto.destinos) && bruto.destinos.every(ehDestinoDaVersao)
       ? [...(bruto.destinos as DestinoDaVersao[])].sort((a, b) => a.ordem - b.ordem)
       : null,
@@ -248,7 +252,7 @@ function regrasGeraisDaVersao(versao: VersaoTop): "executadas" | "registradas" |
  * `null` e `[]` dizem coisas DIFERENTES e a tela não pode colapsá-las: `[]` é "comparei e nada mudou";
  * `null` é "não dá para comparar" (primeira versão, ou versão anterior em formato ilegível).
  */
-function resumoDeSecoes(secoes: SecaoConfiguracaoTopV2[] | null): string {
+function resumoDeSecoes(secoes: SecaoConfiguracaoTopV5[] | null): string {
   if (secoes === null) return "Não é possível comparar com a versão anterior.";
   if (secoes.length === 0) return "Nenhuma seção de configuração mudou nesta versão.";
   return secoes.map((s) => ROTULOS_SECAO_TOP[s]).join(", ");
@@ -328,6 +332,23 @@ const simNao = (v: boolean) => (v ? "Sim" : "Não");
 const ROTULOS_CLIENTE_EM_ATRASO = { nao_valida: "Não valida", avisa: "Avisa", bloqueia: "Bloqueia" } satisfies Record<PoliticaClienteEmAtraso, string>;
 const textoOuTraco = (v: string) => (v.length > 0 ? v : "—");
 
+/**
+ * OPERACOES-01 F4 — os blocos das SEÇÕES DE EXTENSÃO de uma versão do formato 5, um por seção, na ordem da lista do
+ * domínio, com o rótulo e as linhas da PRÓPRIA definição (`linhas`). Só numa versão gravada no 5: as de 1 a 4 não
+ * tinham a seção, e mostrar o neutro dela ali seria inventar registro (a mesma régua das chaves do formato 3). O valor
+ * é o que a execução lê (`secoesExtensaoDaVersaoTop`: normalizado e copiado), nunca a chave crua. Nenhum na F4.
+ */
+function blocosDasSecoesDeExtensao(valor: ConfiguracaoTipoOperacao): { chave: SecaoConfiguracaoTopV5; itens: (readonly [string, string])[] }[] {
+  if (!formato5Top(valor)) return [];
+  const secoes: Readonly<Record<string, unknown>> = secoesExtensaoDaVersaoTop(valor);
+  const definicoes: readonly DefinicaoSecaoV5[] = DEFINICOES_SECOES_V5;
+  return definicoes.flatMap((d) => {
+    const v = secoes[d.nome];
+    const chave = SECOES_CONFIGURACAO_TOP_V5.find((s) => s === d.nome);
+    return chave !== undefined && typeof v === "object" && v !== null ? [{ chave, itens: [...d.linhas(v)] }] : [];
+  });
+}
+
 /** As mesmas seções do editor, sem nenhum controle: aqui não se altera nada. */
 function SecoesSomenteLeitura({ valor }: { valor: ConfiguracaoTipoOperacao }) {
   // A EXECUÇÃO DAQUELA VERSÃO, lida pela única função que a interpreta. Uma versão do formato 1 é legado
@@ -337,7 +358,7 @@ function SecoesSomenteLeitura({ valor }: { valor: ConfiguracaoTipoOperacao }) {
   // Versões 1/2 aparecem como sempre apareceram: mostrar "Exigir transportadora: Não" numa versão que nem tinha a
   // chave seria inventar registro.
   const v3 = restricoesExecutamTop(valor) ? valor : null;
-  const blocos: { chave: SecaoConfiguracaoTopV2; itens: [string, string][]; nota?: string }[] = [
+  const blocos: { chave: SecaoConfiguracaoTopV5; itens: (readonly [string, string])[]; nota?: string }[] = [
     { chave: "geral", itens: [
       ["Confirmação", ROTULOS_TOP.confirmacao[valor.geral.confirmacao]],
       ["Alteração após confirmar", ROTULOS_TOP.alteracao[valor.geral.alteracaoAposConfirmacao]],
@@ -350,7 +371,7 @@ function SecoesSomenteLeitura({ valor }: { valor: ConfiguracaoTipoOperacao }) {
     { chave: "estoque", itens: [
       ["Movimentação", ROTULOS_TOP.estoqueAtualizacao[valor.estoque.atualizacao]],
       ["Momento do efeito", ROTULOS_TOP.momentoEfeito[valor.estoque.momento]],
-      ["Exigir armazém", simNao(valor.estoque.exigeArmazem)],
+      ["Exigir local de estoque", simNao(valor.estoque.exigeArmazem)],
       ["Saldo negativo", ROTULOS_TOP.saldoNegativo[valor.estoque.saldoNegativo]]
     ] },
     { chave: "financeiro", itens: [
@@ -390,7 +411,8 @@ function SecoesSomenteLeitura({ valor }: { valor: ConfiguracaoTipoOperacao }) {
       ["Financeiro", ENUM_LABELS.top_execucao[execucao.financeiro]]
     ], nota: valor.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP
       ? "Versão gravada antes da execução configurada: estoque e financeiro seguem o comportamento legado, seja qual for a declaração das seções acima."
-      : undefined }
+      : undefined },
+    ...blocosDasSecoesDeExtensao(valor)
   ];
   return <div className="grid gap-3 md:grid-cols-2" data-testid="top-versao-configuracao">
     {blocos.map((b) => <div key={b.chave} data-testid={`top-versao-secao-${b.chave}`}>

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { login, api, uniq, empresaAtiva } from "./helpers";
+import { catalogoPublicadoE2E, escolherTipoNoAssistente } from "./top-config-08-comum";
 
 /**
  * CONFIGURAÇÕES › OPERAÇÕES › TIPOS DE OPERAÇÃO — o caminho que o usuário faz de verdade.
@@ -8,6 +9,10 @@ import { login, api, uniq, empresaAtiva } from "./helpers";
  * pode provar é que a TELA existe, que a navegação chega até ela e que a sequência real —
  * cadastrar → editar → ver a versão 2 → definir padrão → desativar — funciona ponta a ponta, com o dado
  * indo ao banco e voltando.
+ *
+ * OPERACOES-01 F4 (decisão 281): com o servidor que declara o formato 5, cadastrar começa pelo TIPO DE MOVIMENTO
+ * (o passo 1, o assistente) e o código e o nome vêm depois; os tipos oferecidos são os do catálogo que o servidor
+ * publica, só os que já têm tela.
  */
 const ROTA = "/configuracoes?tab=operacoes&sub=tipos-operacao";
 
@@ -33,11 +38,12 @@ test("cadastra, edita (versão 2), define padrão e desativa um tipo de operaç�
   await page.getByRole("button", { name: "Novo tipo de operação" }).click();
   const forma = page.getByTestId("form-tipo-operacao");
   await expect(forma).toBeVisible();
+  // O tipo de movimento vem PRIMEIRO, do catálogo que o SERVIDOR publica (a tela não tem lista própria); o código e o
+  // nome, depois. Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API
+  // seguem `familia`).
+  await escolherTipoNoAssistente(forma, "vendas.venda");
   await forma.getByLabel("Código").fill(codigo);
   await forma.getByLabel("Nome").fill(nome);
-  // A família vem do SERVIDOR (derivada do registry); a tela não tem catálogo próprio.
-  // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
-  await forma.getByTestId("top-campo-familia").selectOption("vendas.venda");
   await forma.getByRole("button", { name: "Salvar" }).click();
   await expect(forma).toBeHidden();
 
@@ -96,10 +102,10 @@ test("exclui pela tela — e a tela ENVIA a revisão da linha", async ({ page })
   const codigo = `22${Date.now().toString().slice(-4)}`;
   await page.getByRole("button", { name: "Novo tipo de operação" }).click();
   const forma = page.getByTestId("form-tipo-operacao");
+  // O passo 1 primeiro (o tipo de movimento); o código e o nome são do passo 2.
+  await escolherTipoNoAssistente(forma, "vendas.orcamento");
   await forma.getByLabel("Código").fill(codigo);
   await forma.getByLabel("Nome").fill(uniq("Para excluir"));
-  // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
-  await forma.getByTestId("top-campo-familia").selectOption("vendas.orcamento");
   await forma.getByRole("button", { name: "Salvar" }).click();
   await expect(forma).toBeHidden();
   await expect(page.getByRole("row").filter({ hasText: codigo }).first()).toBeVisible();
@@ -120,18 +126,33 @@ test("exclui pela tela — e a tela ENVIA a revisão da linha", async ({ page })
   expect(exclusoes[0]).toMatch(/[?&]revisao=\d+/);
 });
 
-test("a família operacional oferecida vem do servidor, não de uma lista da tela", async ({ page }) => {
+test("os tipos de movimento oferecidos no passo 1 vêm do catálogo publicado pelo servidor (só os que têm tela), não de uma lista da tela", async ({ page }) => {
   await login(page);
+  // AS PREMISSAS, LIDAS NO SERVIDOR: o catálogo publicado tem 9 tipos com tela, e o registry (`/familias`, que continua
+  // devolvendo TODAS as famílias) tem 23 — 14 delas sem tela no passo 1 (as telas antigas, os módulos e o financeiro).
+  // Sem as famílias sem tela, "nenhuma delas aparece" seria verdade de graça.
+  const catalogo = await catalogoPublicadoE2E(page);
+  const comTela = catalogo.tipos.filter((t) => t.temTela).map((t) => t.familia);
+  expect(comTela, "premissa: o catálogo publicado tem 9 tipos com tela").toHaveLength(9);
+  expect(comTela.every((f) => typeof f === "string"), "premissa: todo tipo com tela tem família").toBe(true);
   const doServidor = await api<{ items: { codigo: string }[] }>(page, "GET", "/api/admin/tipos-operacao/familias");
+  expect(doServidor.items, "premissa: o registry inteiro tem 23 famílias").toHaveLength(23);
+  const semTela = doServidor.items.map((f) => f.codigo).filter((f) => !comTela.includes(f));
+  expect(semTela, "premissa: 14 famílias do registry não têm tela no passo 1").toHaveLength(14);
+
   await abrirTela(page);
   await page.getByRole("button", { name: "Novo tipo de operação" }).click();
-  // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
-  const seletor = page.getByTestId("form-tipo-operacao").getByTestId("top-campo-familia");
-  const opcoes = await seletor.locator("option").evaluateAll((os) =>
-    os.map((o) => (o as HTMLOptionElement).value).filter(Boolean));
-  // Uma lista digitada na tela divergiria aqui na primeira família nova — e é exatamente essa divergência
-  // silenciosa que o gate estático e esta asserção existem para tornar barulhenta.
-  expect(opcoes.sort()).toEqual(doServidor.items.map((f) => f.codigo).sort());
+  const forma = page.getByTestId("form-tipo-operacao");
+  await expect(forma.getByTestId("top-assistente"), "a criação começa pelo passo 1").toBeVisible();
+  // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" — e no passo 1 nem há o campo: o seletor
+  // plano das 23 famílias deu lugar aos tipos agrupados.
+  await expect(forma.getByTestId("top-campo-familia"), "o seletor de família não existe no passo 1").toHaveCount(0);
+  const oferecidas = await forma.locator("[data-testid^='top-assistente-tipo-']").evaluateAll((bs) =>
+    bs.map((b) => b.getAttribute("data-familia")));
+  // Uma lista digitada na tela divergiria aqui no primeiro tipo que ganhasse tela — e é exatamente essa divergência
+  // silenciosa que o gate estático e esta asserção existem para tornar barulhenta. A ORDEM é a do catálogo.
+  expect(oferecidas, "os tipos oferecidos são os com tela do catálogo publicado, na ordem dele").toEqual(comTela);
+  for (const f of semTela) expect(oferecidas, `a família sem tela ${f} não é oferecida`).not.toContain(f);
 });
 
 test("REGRESSÃO: o detalhe do Modelo Base 2 não passou a depender da API administrativa", async ({ page }) => {

@@ -28,6 +28,11 @@ import { abrirHistoricoDaTop, abrirTelaDeTops, cfg3, criarTopViaApi, detalheTopN
  *   · MUNDO NOVO (a base já com a fatia, depois do merge): o editor mostra o bloco (os textos da seção 8 e o diálogo) e
  *     grava o formato 4; Aprovações carrega a fila que o servidor declara; as Centrais, iguais; e o histórico diz da
  *     versão do formato 3 o que ela era: "registradas, sem execução".
+ *   · MUNDO DO FORMATO 5 (OPERACOES-01 F4, decisão 281: a base já com a F4, que declara também o bloco `formato5`): o
+ *     editor é o do 5 — os textos do mundo novo, MENOS a ajuda da Geral, que passa a dizer que as Centrais aceitam o
+ *     documento sem item quando a TOP permite — e grava o formato 5; Aprovações, Centrais e histórico como no mundo novo.
+ *     A base de hoje (622f194) é o mundo NOVO: o editor deste HEAD, sem o bloco do 5, continua o do 4 — ajuda ANTIGA e
+ *     corpo 4. Cada mundo exige a SUA ajuda e proíbe as dos outros dois.
  * Não há mock: o servidor é o binário da base, servindo o banco migrado e semeado por este HEAD.
  */
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333";
@@ -50,9 +55,27 @@ const TEXTOS_NOVOS = {
   avisoUltimaFrase: "O fiscal continua registrando a intenção da operação, sem executá-la.",
   declarativo: "Preparado, ainda não executado: o fiscal. Ele fica registrado nesta versão, mas nada o executa nesta etapa do produto."
 } as const;
+/**
+ * OPERACOES-01 F4 — os textos do EDITOR DO 5: os do mundo novo, com a ajuda da Geral nova (a frase do documento sem
+ * itens). É o único texto deste caso que muda com o 5.
+ */
+const TEXTOS_FORMATO5 = {
+  ...TEXTOS_NOVOS,
+  ajudaGeral: "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: quando esta operação permite, as Centrais de Vendas, de Compras e de Estoque aceitam o documento sem item. As exigências de preenchimento são cobradas no lançamento."
+} as const;
 const MSG_APROVACOES_INDISPONIVEIS = "As aprovações ainda não estão disponíveis neste servidor.";
 
-type Mundo = "legado" | "novo";
+/**
+ * O mundo da base: `legado` (sem o bloco `regrasGerais`), `novo` (com ele, sem o `formato5` — a base de hoje) ou
+ * `formato5` (com os dois). Os casos de Aprovações, Centrais e histórico só distinguem o legado dos outros dois: o 5 não
+ * muda nada deles.
+ */
+type Mundo = "legado" | "novo" | "formato5";
+type TextosDoEditor = Readonly<Record<keyof typeof TEXTOS_DE_HOJE, string>>;
+const TEXTOS_DO_MUNDO: Readonly<Record<Mundo, TextosDoEditor>> = { legado: TEXTOS_DE_HOJE, novo: TEXTOS_NOVOS, formato5: TEXTOS_FORMATO5 };
+const MUNDOS = Object.keys(TEXTOS_DO_MUNDO) as Mundo[];
+/** O formato que o editor deste HEAD grava em cada mundo (o que a base daquele mundo executa). */
+const FORMATO_DO_MUNDO: Readonly<Record<Mundo, number>> = { legado: 3, novo: 4, formato5: 5 };
 type DetalheTop = { versao: number; revisao: number; configuracaoSchema: number; configuracao: { valor: { versaoSchema: number; geral: { confirmacao: string } } } };
 
 /** Cabeçalhos da sessão gravada pelo web depois do login, para perguntar à base direto. */
@@ -81,7 +104,7 @@ function vigiar(page: Page) {
 async function perguntarABase(page: Page, cab: Record<string, string>): Promise<{ mundo: Mundo; totalDaFila: number | null }> {
   const cap = await page.request.get(`${API}/api/admin/tipos-operacao/capabilities`, { headers: cab });
   expect(cap.status(), "premissa: a base serve as capacidades da administração de TOP").toBe(200);
-  const capacidades = await cap.json() as { contractVersion?: number; restricoes?: { suportado?: boolean; versaoSchema?: number }; regrasGerais?: unknown };
+  const capacidades = await cap.json() as { contractVersion?: number; restricoes?: { suportado?: boolean; versaoSchema?: number }; regrasGerais?: unknown; formato5?: unknown };
   expect(capacidades.contractVersion, "o contrato que o web lê continua o 1, nos dois mundos").toBe(1);
   // O editor sem o bloco grava o formato 3 SÓ porque a base declara as restrições (TOP-CONFIG-05); sem elas o ramo
   // legado mediria outro editor (o do formato 2), e o caso provaria a coisa errada.
@@ -92,14 +115,19 @@ async function perguntarABase(page: Page, cab: Record<string, string>): Promise<
   const temBloco = capacidades.regrasGerais !== undefined;
   const temFila = fila.status() === 200;
   expect(temFila, "o bloco `regrasGerais` e a fila de aprovação nascem no MESMO binário: uma resposta sem a outra é defeito").toBe(temBloco);
-  const mundo: Mundo = temBloco ? "novo" : "legado";
+  // OPERACOES-01 F4: o bloco `formato5` só existe por cima do do 4 (o editor do 5 exige o do 4) — sem `regrasGerais`, com
+  // `formato5` é defeito, não skew.
+  const temFormato5 = capacidades.formato5 !== undefined;
+  if (!temBloco) expect(capacidades.formato5, "o formato 5 nasce por cima do 4: sem `regrasGerais`, nada de `formato5`").toBeUndefined();
+  const mundo: Mundo = !temBloco ? "legado" : temFormato5 ? "formato5" : "novo";
   let totalDaFila: number | null = null;
-  if (mundo === "novo") {
-    expect(capacidades.regrasGerais, "o bloco declarado é o do formato 4").toMatchObject({ suportado: true, versaoSchema: 4 });
+  if (mundo !== "legado") {
+    expect(capacidades.regrasGerais, "o bloco declarado é o do formato 4 (o 5 não o muda)").toMatchObject({ suportado: true, versaoSchema: 4 });
     totalDaFila = Number((await fila.json() as { total: number }).total);
     expect(Number.isInteger(totalDaFila), "a fila declara o total, como as listas de hoje").toBe(true);
   }
-  console.log(`[skew] TOP-CONFIG-08 · K-1 · a base responde ${fila.status()} a GET /api/aprovacoes/vendas e ${temBloco ? "DECLARA" : "NÃO declara"} o bloco regrasGerais → mundo ${mundo}`);
+  if (mundo === "formato5") expect(capacidades.formato5, "o bloco do formato 5").toMatchObject({ suportado: true, versaoSchema: 5 });
+  console.log(`[skew] TOP-CONFIG-08 · K-1 · a base responde ${fila.status()} a GET /api/aprovacoes/vendas, ${temBloco ? "DECLARA" : "NÃO declara"} o bloco regrasGerais e ${temFormato5 ? "DECLARA" : "NÃO declara"} o bloco formato5 → mundo ${mundo}`);
   return { mundo, totalDaFila };
 }
 
@@ -126,7 +154,7 @@ async function abrirEditor(page: Page, codigo: string) {
  * K-1 · O EDITOR DA TOP
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
 
-test("TOP-CONFIG-08 · K-1 (sentido 1) — o editor deste web sobre a API da base: sem o bloco `regrasGerais`, os textos de hoje, sem o diálogo das regras, e grava o formato 3; com o bloco, os textos novos, o diálogo e o formato 4", async ({ page }) => {
+test("TOP-CONFIG-08 · K-1 (sentido 1) — o editor deste web sobre a API da base: sem o bloco `regrasGerais`, os textos de hoje, sem o diálogo das regras, e grava o formato 3; com o bloco, os textos novos, o diálogo e o formato 4; com o `formato5` também, a ajuda nova da Geral e o formato 5", async ({ page }) => {
   const v = vigiar(page);
   await login(page);
   const { mundo } = await perguntarABase(page, await cabecalhosDaSessao(page));
@@ -138,16 +166,19 @@ test("TOP-CONFIG-08 · K-1 (sentido 1) — o editor deste web sobre a API da bas
   expect(antes.configuracaoSchema, "premissa: sem configuração no corpo, a base grava o formato 2").toBe(2);
 
   const forma = await abrirEditor(page, codigo);
-  const textos = mundo === "novo" ? TEXTOS_NOVOS : TEXTOS_DE_HOJE;
-  const outros = mundo === "novo" ? TEXTOS_DE_HOJE : TEXTOS_NOVOS;
+  const textos = TEXTOS_DO_MUNDO[mundo];
+  /** Os textos de cada chave que os OUTROS mundos dizem e este não diz — proibidos aqui (os iguais não discriminam). */
+  const dosOutros = (chave: keyof TextosDoEditor) =>
+    [...new Set(MUNDOS.filter((m) => m !== mundo).map((m) => TEXTOS_DO_MUNDO[m][chave]))].filter((t) => t !== textos[chave]);
   const aviso = forma.getByTestId("top-aviso-versionamento");
   await expect(aviso, "o aviso de versionamento termina na frase deste mundo").toContainText(textos.avisoUltimaFrase);
-  await expect(aviso, "e nunca na do outro").not.toContainText(outros.avisoUltimaFrase);
+  for (const outra of dosOutros("avisoUltimaFrase")) await expect(aviso, "e nunca na de outro").not.toContainText(outra);
 
-  // GERAL: a ajuda e os campos das regras gerais.
+  // GERAL: a ajuda e os campos das regras gerais. A ajuda é a única que distingue os TRÊS mundos.
   await forma.getByTestId("top-aba-geral").click();
   await expect(forma.getByText(textos.ajudaGeral, { exact: true }), "a ajuda da Geral é a deste mundo").toBeVisible();
-  await expect(forma.getByText(outros.ajudaGeral, { exact: true }), "e não a do outro").toHaveCount(0);
+  expect(dosOutros("ajudaGeral"), "premissa: a ajuda da Geral de cada um dos outros dois mundos é diferente desta").toHaveLength(2);
+  for (const outra of dosOutros("ajudaGeral")) await expect(forma.getByText(outra, { exact: true }), "e não a de outro mundo").toHaveCount(0);
   const confirmacao = forma.getByTestId("top-campo-geral-confirmacao");
   await expect(confirmacao, "a Confirmação aparece nos dois mundos (a venda aceita Automática)").toBeVisible();
   await expect(forma.getByTestId("top-campo-geral-sem-itens"), "o Documento sem itens também (a venda aceita Permitido)").toBeVisible();
@@ -167,7 +198,7 @@ test("TOP-CONFIG-08 · K-1 (sentido 1) — o editor deste web sobre a API da bas
   // APROVAÇÃO: a ajuda deste mundo, e "A partir de um valor" escolhível (a venda aceita as três políticas).
   await forma.getByTestId("top-aba-aprovacao").click();
   await expect(forma.getByText(textos.ajudaAprovacao, { exact: true }), "a ajuda da Aprovação é a deste mundo").toBeVisible();
-  await expect(forma.getByText(outros.ajudaAprovacao, { exact: true })).toHaveCount(0);
+  for (const outra of dosOutros("ajudaAprovacao")) await expect(forma.getByText(outra, { exact: true })).toHaveCount(0);
   await expect(forma.getByTestId("top-campo-aprovacao-politica").locator("option[disabled]"), "nenhuma política desabilitada na venda").toHaveCount(0);
 
   // EXECUÇÃO: a frase do que continua só declarado. A base declara a execução configurada (TOP-CONFIG-04A).
@@ -182,8 +213,9 @@ test("TOP-CONFIG-08 · K-1 (sentido 1) — o editor deste web sobre a API da bas
   const resposta = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().includes(`/api/admin/tipos-operacao/${top.id}`));
   await forma.getByTestId("top-salvar").click();
   const dialogoDasRegras = page.getByTestId("top-regras-passam-a-valer");
-  if (mundo === "novo") {
-    // Editar uma TOP que já existe e ligar uma regra que passa a executar: o diálogo pergunta antes de gravar.
+  if (mundo !== "legado") {
+    // Editar uma TOP que já existe e ligar uma regra que passa a executar: o diálogo pergunta antes de gravar (no editor
+    // do 4 e no do 5: a versão vigente é do formato 2, onde a Automática não executava).
     await expect(dialogoDasRegras, "com o bloco, o diálogo das regras abre antes de gravar").toBeVisible();
     await expect(dialogoDasRegras).toContainText("Estas regras passam a valer");
     await expect(dialogoDasRegras.getByTestId("top-regra-passa-a-valer"), "a lista é a do domínio: a confirmação automática").toHaveText(["Confirmação automática"]);
@@ -192,7 +224,7 @@ test("TOP-CONFIG-08 · K-1 (sentido 1) — o editor deste web sobre a API da bas
   expect((await resposta).status(), "a base aceita o que este web enviou").toBe(200);
   await expect(dialogoDasRegras, "nenhum diálogo das regras fica na tela").toHaveCount(0);
   expect(corpos, "uma gravação").toHaveLength(1);
-  const formato = mundo === "novo" ? 4 : 3;
+  const formato = FORMATO_DO_MUNDO[mundo];
   expect(corpos[0]!.configuracao?.versaoSchema, `o web gravou no formato que a base deste mundo executa (${formato})`).toBe(formato);
   expect(corpos[0]!.configuracao?.geral?.confirmacao).toBe("automatica");
   const depois = await detalheTop(page, top.id);

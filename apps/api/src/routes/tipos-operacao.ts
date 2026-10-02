@@ -13,9 +13,12 @@ import {
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V4,
+  VERSAO_SCHEMA_CONFIGURACAO_TOP_V5,
   VERSOES_SCHEMA_CONFIGURACAO_TOP,
   SECOES_CONFIGURACAO_TOP,
-  SECOES_CONFIGURACAO_TOP_V2,
+  SECOES_CONFIGURACAO_TOP_V5,
+  SECOES_EXTENSAO_V5,
+  CATALOGO_TOP,
   MATRIZ_EXECUCAO_TOP,
   MATRIZ_REGRAS_GERAIS_TOP,
   configuracaoNeutraTopV2,
@@ -35,9 +38,11 @@ import {
   restricoesExecutamTop,
   regrasGeraisExecutamTop,
   validarRegrasGeraisTop,
+  recusasDoPerfilTop,
+  recusaDasCondicoesDoPerfilTop,
   type DestinoOperacaoV1,
   type ConfiguracaoTipoOperacao,
-  type SecaoConfiguracaoTopV2
+  type SecaoConfiguracaoTopV5
 } from "@agro/domain";
 import { DomainError } from "@agro/shared";
 import { criarTradutor, ptBR } from "@erp/plataforma";
@@ -229,8 +234,17 @@ function conferirFiscalDaFamilia(config: ConfiguracaoTipoOperacao, codigoBase: s
   // pedido recebe as duas de uma vez, cada uma no seu `caminho`, em vez de descobrir a segunda só depois de corrigir
   // a primeira. Formatos 1 a 3 não passam pela matriz: neles as regras gerais só DECLARAM (nada as executa), e a
   // gravação continua a de hoje, valor por valor — inclusive a TOP de pedido de compra de produção, no formato 3.
+  //
+  // OPERACOES-01 F4 (decisão 281): no FORMATO 5, o que o TIPO não aceita (o perfil do catálogo do domínio,
+  // `recusasDoPerfilTop`) — a exigência de um campo que o documento do tipo não tem e a seção que o tipo não usa fora
+  // do padrão (no documento de estoque: Estoque, Financeiro e Fiscal). NO FIM DA MESMA LISTA, pelo mesmo motivo das
+  // regras gerais: um 422 só, cada recusa no seu `caminho`. Formatos 1 a 4: o domínio devolve `[]` — uma versão
+  // gravada antes do catálogo nunca passa a ser recusada por ele, e o 4 continua conferido como hoje.
   const regrasGerais = regrasGeraisExecutamTop(config) ? validarRegrasGeraisTop(codigoBase, config) : [];
-  const recusas = [...recusasFiscaisDaFamiliaTop(config, codigoBase), ...recusasClienteEmAtrasoDaFamiliaTop(config, codigoBase), ...regrasGerais];
+  const recusas = [
+    ...recusasFiscaisDaFamiliaTop(config, codigoBase), ...recusasClienteEmAtrasoDaFamiliaTop(config, codigoBase), ...regrasGerais,
+    ...recusasDoPerfilTop(codigoBase, config),
+  ];
   if (recusas.length) {
     throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_INVALIDA",
       "A configuração operacional enviada é inválida", { recusas });
@@ -240,14 +254,40 @@ function conferirFiscalDaFamilia(config: ConfiguracaoTipoOperacao, codigoBase: s
 const MENSAGEM_CONDICAO_INEXISTENTE = "Condição de pagamento inexistente ou inativa.";
 
 /**
- * Condições permitidas presentes exigem a configuração resultante no formato 3 — ou no 4 (TOP-CONFIG-08), que executa
- * tudo o que o 3 executa (`restricoesExecutamTop`). A mensagem continua a de hoje: quem a recebe mandou o 1 ou o 2.
+ * Condições permitidas presentes exigem a configuração resultante no formato 3 — ou no 4 (TOP-CONFIG-08) ou no 5 (F4,
+ * decisão 281), que executam tudo o que o 3 executa (`restricoesExecutamTop`). A mensagem continua a de hoje: quem a
+ * recebe mandou o 1 ou o 2.
  */
 function exigirFormato3ParaCondicoes(config: ConfiguracaoTipoOperacao): void {
   if (!restricoesExecutamTop(config)) {
     throw new DomainError("TIPO_OPERACAO_CONDICOES_INVALIDAS",
       "As condições de pagamento permitidas enviadas são inválidas",
       { recusas: [{ caminho: "condicoesPermitidas", mensagem: "Condições permitidas exigem a configuração no formato 3." }] });
+  }
+}
+
+/**
+ * OPERACOES-01 F4 (decisão 281) — CONDIÇÕES PERMITIDAS NUM TIPO SEM FINANCEIRO, no formato 5.
+ *
+ * A pergunta é do perfil do tipo no catálogo do domínio (`recusaDasCondicoesDoPerfilTop`): só no 5, só com alguma
+ * condição, e só quando o tipo não tem a aba Financeiro (o documento de estoque). A lista conferida é a que a versão
+ * nova vai carregar:
+ *   · `"enviadas"` — a lista veio no corpo. Roda onde `exigirFormato3ParaCondicoes` roda e ANTES de
+ *     `conferirCondicoes`: a resposta é sobre o TIPO, e vale qualquer que seja a condição (nem a consulta acontece);
+ *   · `"preservadas"` — o PUT trouxe a configuração (no 5) SEM a lista: a da vigente seria copiada para a versão nova
+ *     (ausente = preservar). Uma TOP de documento de estoque gravada no 4 com condições não vira um 5 com condições:
+ *     o editor do 5 manda a lista vazia (`condicoesQueVoltamPeloPerfilTop`, no diálogo) e o servidor recusa o resto.
+ *     Renomear (PUT sem `configuracao`) não passa por aqui, como não passa pelo resto do perfil.
+ * Mesmo código e mesma forma da recusa das condições de hoje. Formatos 1 a 4: o domínio devolve `null` (nada muda).
+ */
+function conferirCondicoesDoPerfil(codigoBase: string, config: ConfiguracaoTipoOperacao, quantidade: number, origem: "enviadas" | "preservadas"): void {
+  const recusa = recusaDasCondicoesDoPerfilTop(codigoBase, config, quantidade);
+  if (recusa) {
+    throw new DomainError("TIPO_OPERACAO_CONDICOES_INVALIDAS",
+      origem === "enviadas"
+        ? "As condições de pagamento permitidas enviadas são inválidas"
+        : "As condições de pagamento permitidas da versão vigente são inválidas para esta operação; envie a lista vazia",
+      { recusas: [{ caminho: recusa.caminho, mensagem: recusa.mensagem }] });
   }
 }
 
@@ -584,10 +624,11 @@ function conferirReservaDaFamilia(codigoBase: string, reservaEstoque: boolean | 
  *
  * A reserva mora numa COLUNA da versão, não no payload da configuração, então `secoesAlteradasTop` não a vê.
  * Na tela ela está na aba Estoque; a trilha e o histórico precisam dizer "mexeram no estoque" pelo mesmo
- * motivo que dizem das outras seções. A ordem continua a do domínio (`SECOES_CONFIGURACAO_TOP_V2`).
+ * motivo que dizem das outras seções. A ordem continua a do domínio (`SECOES_CONFIGURACAO_TOP_V5`: as seis de hoje e,
+ * depois delas, as seções de extensão do formato 5 — nenhuma na F4; a de cada fase seguinte entra aqui sozinha).
  */
-const secoesComReserva = (secoes: readonly SecaoConfiguracaoTopV2[], mudouReserva: boolean): SecaoConfiguracaoTopV2[] =>
-  SECOES_CONFIGURACAO_TOP_V2.filter((s) => secoes.includes(s) || (mudouReserva && s === "estoque"));
+const secoesComReserva = (secoes: readonly SecaoConfiguracaoTopV5[], mudouReserva: boolean): SecaoConfiguracaoTopV5[] =>
+  SECOES_CONFIGURACAO_TOP_V5.filter((s) => secoes.includes(s) || (mudouReserva && s === "estoque"));
 
 /** O DETALHE — aí sim com a configuração, porque é a tela que vai editá-la. */
 const paraTelaDetalhe = (r: LinhaTipoOperacao) => ({
@@ -688,7 +729,30 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
      * editor desabilita a opção com o motivo dela — nunca uma cópia própria. Ausente = servidor anterior: o editor
      * grava o formato 3 como hoje. Nada aqui depende do gate de execução: a matriz é do PEDIDO, não da instância.
      */
-    regrasGerais: { suportado: true, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V4, matriz: MATRIZ_REGRAS_GERAIS_TOP }
+    regrasGerais: { suportado: true, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V4, matriz: MATRIZ_REGRAS_GERAIS_TOP },
+    /**
+     * O FORMATO 5 E O CATÁLOGO POR TIPO (OPERACOES-01 F4, decisão 281) — bloco OPCIONAL novo na raiz, pelo precedente
+     * de `regrasGerais`: `contractVersion`, `configuracao` (1), `restricoes` (3) e `regrasGerais` (4) NÃO mudam, e os
+     * blocos acima ficam como estão — o editor anterior compara esses números e travaria a edição de toda TOP se
+     * mudassem. Presente = este servidor LÊ e GRAVA o formato 5 (o 4 + as seções de extensão), EXECUTA o 5 como o 4,
+     * e recusa no 5 o que o tipo não aceita (`conferirFiscalDaFamilia`, `conferirCondicoesDoPerfil`):
+     *   · `secoes` — as seções de extensão que ESTE servidor lê e grava (nenhuma na F4; cada fase acrescenta a sua). O
+     *     editor só grava o 5 quando o conjunto é igual ao que ele escreve: gravar um 5 sem uma seção que o servidor
+     *     tem a zeraria em silêncio;
+     *   · `leituraDoDetalhe: "formato_gravado"` — o detalhe e o histórico devolvem a versão COMO GRAVADA (uma TOP no 1
+     *     a 4 continua 1 a 4 no GET; o editor anterior continua lendo o que lê hoje). A vista do 5 é do domínio
+     *     (`configuracaoTopParaEdicaoV5`), e nada é gravado até alguém salvar com mudança;
+     *   · `catalogo` — os grupos, os tipos de movimento (com `temTela`) e o perfil de cada família: o MESMO catálogo do
+     *     domínio que a gravação confere, nunca uma cópia própria da tela.
+     * Ausente = servidor anterior: o editor é o do formato 4 e grava o 4.
+     */
+    formato5: {
+      suportado: true,
+      versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V5,
+      secoes: [...SECOES_EXTENSAO_V5],
+      leituraDoDetalhe: "formato_gravado",
+      catalogo: CATALOGO_TOP
+    }
   })));
 
   /**
@@ -886,11 +950,16 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       // TOP-CONFIG-08 (decisão 277): os formatos 1 a 4 entram por aqui, e o NÚMERO GRAVADO em
       // `configuracao_schema_version` sai DESTE valor normalizado (o `insert` da versão abaixo), nunca do corpo cru.
       // A leitura do domínio preserva o 4; se ela o perdesse, a versão viraria 3 em silêncio e nada executaria.
+      // OPERACOES-01 F4 (decisão 281): o formato 5 entra pela MESMA porta, e a leitura também preserva o 5.
       const configuracao = d.configuracao === undefined ? configuracaoNeutraTopV2() : configuracaoPedida(d.configuracao);
       conferirFiscalDaFamilia(configuracao, d.codigoBase);
       conferirExecucaoPedida(d.codigoBase, null, configuracao, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED);
       // CONDIÇÕES PERMITIDAS: ausente no POST = sem lista. Presente exige formato 3 e é conferida em UMA consulta.
-      if (d.condicoesPermitidas !== undefined) exigirFormato3ParaCondicoes(configuracao);
+      // No formato 5, o tipo sem Financeiro não aceita condição nenhuma (antes da consulta; F4, decisão 281).
+      if (d.condicoesPermitidas !== undefined) {
+        exigirFormato3ParaCondicoes(configuracao);
+        conferirCondicoesDoPerfil(d.codigoBase, configuracao, d.condicoesPermitidas.length, "enviadas");
+      }
       const condicoes = d.condicoesPermitidas === undefined ? [] : await conferirCondicoes(ctx, d.condicoesPermitidas);
 
       const nasceuPadrao = d.padrao && d.ativo;
@@ -1029,6 +1098,10 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     // é decidido aqui pelo número: é `configuracoesTopIguais` (abaixo), que compara sem o `versaoSchema` e com o termo
     // das regras gerais. 3 → 4 com as quatro no neutro não cria versão; com alguma fora do neutro, cria a N+1, e
     // `secoesAlteradasTop` marca `geral`/`aprovacao`, cada uma por si.
+    //
+    // OPERACOES-01 F4 (decisão 281): e o formato 5. v4 sobre v5 é recusado (o 5 nunca volta a 4 — perderia as seções de
+    // extensão em silêncio); 1 a 4 sobre um vigente 1 a 4 seguem como acima, e o 5 sobre eles passa. Mudança, ou não,
+    // é `configuracoesTopIguais`, que compara na VISTA DO 5 (domínio): o 4 salvo no 5 sem mexer não cria versão.
     if (configuracao.versaoSchema < atualConfig.valor.versaoSchema) {
       throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO",
         "Este tipo de operação já usa o formato atual de configuração; recarregue a tela antes de editar",
@@ -1087,7 +1160,14 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
      * Mudança do CONJUNTO é conteúdo (versão nova); o mesmo conjunto é no-op.
      */
     const condicoesAtuais = ((await condicoesDaVersao(ctx, [antes.versao_id])).get(antes.versao_id) ?? []).map((c) => c.id);
-    if (d.condicoesPermitidas !== undefined) exigirFormato3ParaCondicoes(configuracao);
+    if (d.condicoesPermitidas !== undefined) {
+      exigirFormato3ParaCondicoes(configuracao);
+      // F4 (decisão 281): no formato 5, o tipo sem Financeiro não aceita condição nenhuma — antes da consulta.
+      conferirCondicoesDoPerfil(antes.codigo_base, configuracao, d.condicoesPermitidas.length, "enviadas");
+    } else if (d.configuracao !== undefined) {
+      // F4 (decisão 281): a configuração veio sem a lista — a PRESERVADA também tem de caber no tipo, no 5.
+      conferirCondicoesDoPerfil(antes.codigo_base, configuracao, condicoesAtuais.length, "preservadas");
+    }
     const condicoes = d.condicoesPermitidas === undefined ? condicoesAtuais : await conferirCondicoes(ctx, d.condicoesPermitidas);
     const mudouCondicoes = !mesmoConjunto(condicoesAtuais, condicoes);
 

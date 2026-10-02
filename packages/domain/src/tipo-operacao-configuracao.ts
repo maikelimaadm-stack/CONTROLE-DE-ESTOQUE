@@ -31,6 +31,10 @@
  * │ restrições (decisão 263); o formato 4 é o das regras gerais e da aprovação (decisão 277). Uma       │
  * │ versão gravada quando nada executava nunca passa a executar sozinha: quem pergunta "isto executa?" │
  * │ pergunta a `restricoesExecutamTop` / `regrasGeraisExecutamTop`, nunca ao conteúdo das seções.      │
+ * │                                                                                                     │
+ * │ O FORMATO 5 (decisão 281) executa tudo o que o 4 executa e é o portão das SEÇÕES DE EXTENSÃO das    │
+ * │ fases F5 a F10 (`tipo-operacao-secoes-v5.ts`): numa versão 1 a 4 elas são lidas no neutro — nunca   │
+ * │ deduzidas do conteúdo — e só uma versão gravada no 5 executa o que elas dizem.                      │
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ POR QUE VERSIONADA, E POR QUE IMUTÁVEL ───────────────────────────────────────────────────────────┐
@@ -51,6 +55,17 @@
  * │ declarada como dívida no contrato em vez de improvisada aqui.                                       │
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
+import { D } from "@agro/shared";
+import {
+  DEFINICOES_SECOES_V5,
+  SECOES_EXTENSAO_V5,
+  montarSecoesExtensaoV5,
+  nomeDaSecaoV5,
+  type DefinicaoSecaoV5,
+  type LeitorDeSecaoTop,
+  type NomeSecaoExtensaoV5,
+  type SecoesExtensaoV5,
+} from "./tipo-operacao-secoes-v5.js";
 
 /**
  * O FORMATO 1 — o da TOP-CONFIG-03, o do neutro e o do `DEFAULT` da migration 0022.
@@ -92,9 +107,25 @@ export const VERSAO_SCHEMA_CONFIGURACAO_TOP_V3 = 3 as const;
  */
 export const VERSAO_SCHEMA_CONFIGURACAO_TOP_V4 = 4 as const;
 
+/**
+ * O FORMATO 5 (OPERACOES-01 F4, decisão 281): o 4 + as SEÇÕES DE EXTENSÃO na raiz, declaradas em
+ * `tipo-operacao-secoes-v5.ts` (`DEFINICOES_SECOES_V5`, vazia na F4 — cada fase F5 a F10 acrescenta a sua). Executa
+ * TUDO o que o 4 executa (restrições, regras gerais, aprovação: `erp.top_exige_aprovacao` da 0041 já trata ≥ 4) e,
+ * de cada seção nova, o que a fase dona dela executar.
+ *
+ * Num 5, a seção de extensão AUSENTE é lida como o neutro dela (o padrão de hoje): o 5 cresce por fase, e o 5
+ * gravado antes de uma fase continua legível depois dela. Nos formatos 1 a 4 a chave é recusada.
+ *
+ * As TOPs gravadas nos formatos 1 a 4 são LIDAS como 5 (`configuracaoTopParaEdicaoV5`) sem regravar nada: só uma
+ * gravação nova grava o 5. E O 5 NUNCA VIRA 4 NO CAMINHO: leitura, normalização e edição PRESERVAM o número — se ele
+ * se perdesse, a API gravaria `configuracao_schema_version` 4 em silêncio e as seções novas sumiriam da versão.
+ */
+export const VERSAO_SCHEMA_CONFIGURACAO_TOP_V5 = 5 as const;
+
 /** Os formatos que este código sabe LER. Qualquer outro é recusado — nunca lido "parecido". */
 export const VERSOES_SCHEMA_CONFIGURACAO_TOP = [
   VERSAO_SCHEMA_CONFIGURACAO_TOP, VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3, VERSAO_SCHEMA_CONFIGURACAO_TOP_V4,
+  VERSAO_SCHEMA_CONFIGURACAO_TOP_V5,
 ] as const;
 export type VersaoSchemaConfiguracaoTop = (typeof VERSOES_SCHEMA_CONFIGURACAO_TOP)[number];
 
@@ -299,25 +330,50 @@ export interface ConfiguracaoTipoOperacaoV4 extends Omit<ConfiguracaoTipoOperaca
   versaoSchema: typeof VERSAO_SCHEMA_CONFIGURACAO_TOP_V4;
 }
 
-/** Os formatos cujas RESTRIÇÕES executam (o 3 e o 4). É o que `restricoesExecutamTop` estreita. */
-export type ConfiguracaoComRestricoesTop = ConfiguracaoTipoOperacaoV3 | ConfiguracaoTipoOperacaoV4;
+/**
+ * O formato 5: as MESMAS chaves do 4, com `versaoSchema` 5, mais uma chave de raiz por seção de extensão
+ * (`SecoesExtensaoV5`, vazia na F4). Tipo, e não interface, porque as seções saem de um tipo mapeado da lista.
+ */
+export type ConfiguracaoTipoOperacaoV5 = Omit<ConfiguracaoTipoOperacaoV4, "versaoSchema">
+  & { versaoSchema: typeof VERSAO_SCHEMA_CONFIGURACAO_TOP_V5 }
+  & SecoesExtensaoV5;
+
+/** Os formatos cujas RESTRIÇÕES executam (o 3, o 4 e o 5). É o que `restricoesExecutamTop` estreita. */
+export type ConfiguracaoComRestricoesTop = ConfiguracaoTipoOperacaoV3 | ConfiguracaoTipoOperacaoV4 | ConfiguracaoTipoOperacaoV5;
+
+/** Os formatos cujas REGRAS GERAIS e APROVAÇÃO executam (o 4 e o 5). É o que `regrasGeraisExecutamTop` estreita. */
+export type ConfiguracaoComRegrasGeraisTop = ConfiguracaoTipoOperacaoV4 | ConfiguracaoTipoOperacaoV5;
 
 /** Qualquer configuração que este código sabe ler. Quem precisa distinguir pergunta às funções abaixo. */
 export type ConfiguracaoTipoOperacao = ConfiguracaoTipoOperacaoV1 | ConfiguracaoTipoOperacaoV2 | ConfiguracaoComRestricoesTop;
 
 /**
- * As RESTRIÇÕES desta configuração executam (decisão 263)? Formato 3 e formato 4 — tudo o que o 3 executa vale
- * igual no 4 (exigências, condições permitidas, cliente em atraso, transportadora e CFOP). 1 e 2: legado.
+ * As RESTRIÇÕES desta configuração executam (decisão 263)? Formatos 3, 4 e 5 — tudo o que o 3 executa vale igual no
+ * 4 e no 5 (exigências, condições permitidas, cliente em atraso, transportadora e CFOP). 1 e 2: legado.
  */
 export const restricoesExecutamTop = (c: ConfiguracaoTipoOperacao): c is ConfiguracaoComRestricoesTop =>
-  c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3 || c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4;
+  c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3 || c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4
+  || c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V5;
+
+/**
+ * O FORMATO GRAVADO executa as regras gerais e a aprovação? 4 ou 5 — e mais nenhum: 1 a 3 são o corte (decisão
+ * 277), e um número desconhecido (`null`) não executa nada. É a pergunta de quem só tem o NÚMERO da versão
+ * (`versaoSchemaDaConfiguracaoTop`), como a prévia da confirmação do estoque e a execução das regras gerais —
+ * ninguém compara o número com o 4 diretamente, porque "4" deixou de ser o único que executa.
+ */
+export const versaoSchemaExecutaRegrasGeraisTop = (v: number | null): boolean =>
+  v === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4 || v === VERSAO_SCHEMA_CONFIGURACAO_TOP_V5;
 
 /**
  * As REGRAS GERAIS (confirmação automática, documento sem itens) e a APROVAÇÃO desta configuração executam
- * (decisão 277)? SÓ no formato 4. O formato 3 com "Automática" gravado continua só declarando: é o corte.
+ * (decisão 277)? Nos formatos 4 e 5. O formato 3 com "Automática" gravado continua só declarando: é o corte.
  */
-export const regrasGeraisExecutamTop = (c: ConfiguracaoTipoOperacao): c is ConfiguracaoTipoOperacaoV4 =>
-  c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4;
+export const regrasGeraisExecutamTop = (c: ConfiguracaoTipoOperacao): c is ConfiguracaoComRegrasGeraisTop =>
+  versaoSchemaExecutaRegrasGeraisTop(c.versaoSchema);
+
+/** A configuração está no formato 5 (o que carrega as seções de extensão)? */
+export const formato5Top = (c: ConfiguracaoTipoOperacao): c is ConfiguracaoTipoOperacaoV5 =>
+  c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V5;
 
 /** Alguma das três regras de `geral` (confirmação, sem itens, alteração) está fora do neutro? */
 const declaraRegraNoGeral = (c: ConfiguracaoTipoOperacao): boolean =>
@@ -339,6 +395,14 @@ export const declaraRegrasGerais = (c: ConfiguracaoTipoOperacao): boolean => dec
  */
 export const SECOES_CONFIGURACAO_TOP_V2 = [...SECOES_CONFIGURACAO_TOP, "execucao"] as const;
 export type SecaoConfiguracaoTopV2 = (typeof SECOES_CONFIGURACAO_TOP_V2)[number];
+
+/**
+ * As seções que a auditoria, o histórico e `secoesAlteradasTop` comparam no formato 5: as do formato 2 mais as de
+ * extensão, na ordem da lista (`SECOES_EXTENSAO_V5`). Na F4 é igual à do formato 2. A lista do formato 1
+ * (`SECOES_CONFIGURACAO_TOP`, publicada em `capabilities.configuracao.secoes`) continua sem mudar.
+ */
+export const SECOES_CONFIGURACAO_TOP_V5: readonly SecaoConfiguracaoTopV5[] = Object.freeze([...SECOES_CONFIGURACAO_TOP_V2, ...SECOES_EXTENSAO_V5]);
+export type SecaoConfiguracaoTopV5 = SecaoConfiguracaoTopV2 | NomeSecaoExtensaoV5;
 
 // ---------------------------------------------------------------------------------------------------
 // 3. O NEUTRO — UM DONO SÓ
@@ -428,6 +492,22 @@ export function configuracaoNeutraTopV3(): ConfiguracaoTipoOperacaoV3 {
  */
 export function configuracaoNeutraTopV4(): ConfiguracaoTipoOperacaoV4 {
   return { ...configuracaoNeutraTopV3(), versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V4 };
+}
+
+/**
+ * As seções de extensão no NEUTRO de cada uma — o padrão de hoje: toda regra que trava nasce desligada (decisão
+ * 281). Objetos novos a cada chamada. `definicoes` é parâmetro só para teste.
+ */
+export function secoesExtensaoNeutrasTop(definicoes: readonly DefinicaoSecaoV5[] = DEFINICOES_SECOES_V5): SecoesExtensaoV5 {
+  return montarSecoesExtensaoV5(definicoes, (d) => d.neutro());
+}
+
+/**
+ * O NEUTRO DO FORMATO 5 — o neutro do 4 com o número 5 e cada seção de extensão no neutro dela. Derivado, e não um
+ * literal: o neutro continua tendo um dono só. `definicoes` é parâmetro só para teste.
+ */
+export function configuracaoNeutraTopV5(definicoes: readonly DefinicaoSecaoV5[] = DEFINICOES_SECOES_V5): ConfiguracaoTipoOperacaoV5 {
+  return { ...configuracaoNeutraTopV4(), versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V5, ...secoesExtensaoNeutrasTop(definicoes) };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -568,6 +648,98 @@ function texto(s: Record<string, unknown> | null, secaoNome: string, campo: stri
 }
 
 /**
+ * Decimal em string, de 0 a `maximo`, com até `casas` casas — a mesma régua de forma de `aprovacao.valorMinimo`
+ * (só dígitos, nada de sinal, espaço, notação científica ou `Infinity`), comparada em `decimal.js`, nunca em ponto
+ * flutuante. `casas` fora de 0..13 é erro de quem declarou a seção: a recusa é do campo, nunca um aceite.
+ */
+function decimalDaSecao(s: Record<string, unknown>, secaoNome: string, campo: string, casas: number, maximo: string, recusas: RecusaConfiguracaoTop[]): string {
+  const v = s[campo];
+  if (typeof v !== "string") { recusas.push({ motivo: "tipo_invalido", caminho: `${secaoNome}.${campo}` }); return "0"; }
+  const casasValidas = Number.isInteger(casas) && casas >= 0 && casas <= 13;
+  const forma = casasValidas ? new RegExp(casas === 0 ? "^\\d{1,13}$" : `^\\d{1,13}(\\.\\d{1,${casas}})?$`) : null;
+  let dentro = false;
+  try {
+    dentro = forma !== null && forma.test(v) && D(v).lte(D(maximo));
+  } catch {
+    dentro = false;
+  }
+  if (!dentro) { recusas.push({ motivo: "valor_invalido", caminho: `${secaoNome}.${campo}` }); return "0"; }
+  return v;
+}
+
+/**
+ * O leitor que uma seção de extensão recebe: os MESMOS helpers estritos das seções de hoje, presos à seção e à lista
+ * de recusas desta leitura. A seção nunca vê o objeto bruto — só pede campo a campo.
+ */
+function leitorDaSecao(s: Record<string, unknown>, secaoNome: string, recusas: RecusaConfiguracaoTop[]): LeitorDeSecaoTop {
+  return {
+    booleano(campo: string): boolean { return booleano(s, secaoNome, campo, recusas); },
+    enumerado<T extends string>(campo: string, aceitos: readonly T[]): T { return enumerado(s, secaoNome, campo, aceitos, recusas); },
+    inteiro(campo: string, minimo: number, maximo: number): number { return inteiro(s, secaoNome, campo, minimo, maximo, recusas); },
+    decimal(campo: string, casas: number, maximo: string): string { return decimalDaSecao(s, secaoNome, campo, casas, maximo, recusas); },
+    texto(campo: string, maximo: number): string { return texto(s, secaoNome, campo, maximo, null, recusas); },
+  };
+}
+
+/** Cópia profunda de um valor JSON (objeto, lista, escalar): nada do resultado aponta para a entrada. */
+function copiaJson(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(copiaJson);
+  if (ehObjeto(v)) return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, copiaJson(x)]));
+  return v;
+}
+const copiaDaSecao = (s: Record<string, unknown>): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(s).map(([k, x]) => [k, copiaJson(x)]));
+
+/**
+ * As seções de extensão de um candidato do formato 5, lidas pela regra 2 do ponto de extensão
+ * (`tipo-operacao-secoes-v5.ts`): AUSENTE (a chave não é própria do candidato) → o neutro da seção; presente e
+ * não-objeto → `tipo_invalido` em `<nome>`; chave fora de `chaves` → `campo_desconhecido` em `<nome>.<chave>`; os
+ * campos lidos SÓ pelo leitor; depois a normalização da seção. Na recusa, o valor devolvido é preenchimento.
+ */
+function lerSecoesExtensao(
+  bruto: Record<string, unknown>,
+  definicoes: readonly DefinicaoSecaoV5[],
+  recusas: RecusaConfiguracaoTop[],
+): SecoesExtensaoV5 {
+  return montarSecoesExtensaoV5(definicoes, (d) => {
+    if (!Object.hasOwn(bruto, d.nome)) return d.neutro();
+    const s = bruto[d.nome];
+    if (!ehObjeto(s)) {
+      recusas.push({ motivo: "tipo_invalido", caminho: d.nome });
+      return d.neutro();
+    }
+    conferirChaves(s, d.nome, d.chaves, recusas);
+    const antes = recusas.length;
+    const lido = d.ler(leitorDaSecao(s, d.nome, recusas));
+    return recusas.length === antes ? d.normalizar(lido) : d.neutro();
+  });
+}
+
+/**
+ * As seções de extensão de uma configuração do formato 5, NORMALIZADAS e COPIADAS (nenhuma aponta para a entrada).
+ * Seção que falta no objeto (só alcançável em memória: o leitor sempre a preenche) → o neutro dela, a mesma regra 2.
+ */
+function secoesExtensaoNormalizadas(c: ConfiguracaoTipoOperacaoV5, definicoes: readonly DefinicaoSecaoV5[]): SecoesExtensaoV5 {
+  const raiz: Readonly<Record<string, unknown>> = c;
+  return montarSecoesExtensaoV5(definicoes, (d) => {
+    const s = raiz[d.nome];
+    return ehObjeto(s) ? d.normalizar(copiaDaSecao(s)) : d.neutro();
+  });
+}
+
+/**
+ * AS SEÇÕES DE EXTENSÃO QUE A EXECUÇÃO LÊ desta versão. Formatos 1 a 4 → o neutro de cada uma (a seção não existia
+ * quando a versão foi gravada: o conteúdo de hoje nunca é deduzido para ela); formato 5 → as dela, normalizadas e
+ * copiadas. É a pergunta que o serviço dono de cada seção faz — nunca `c[nome]` direto. `definicoes` só para teste.
+ */
+export function secoesExtensaoDaVersaoTop(
+  c: ConfiguracaoTipoOperacao,
+  definicoes: readonly DefinicaoSecaoV5[] = DEFINICOES_SECOES_V5,
+): SecoesExtensaoV5 {
+  return formato5Top(c) ? secoesExtensaoNormalizadas(c, definicoes) : secoesExtensaoNeutrasTop(definicoes);
+}
+
+/**
  * O formato que o candidato DECLARA, se for um que este código conhece — e nada além disso.
  *
  * É a fronteira que identifica a versão. Nenhum outro lugar compara `versaoSchema` com número: quem
@@ -580,7 +752,7 @@ export function versaoSchemaDaConfiguracaoTop(bruto: unknown): VersaoSchemaConfi
 }
 
 /**
- * Transforma `unknown` em configuração PROVADA (formato 1 a 4), ou devolve as recusas.
+ * Transforma `unknown` em configuração PROVADA (formato 1 a 5), ou devolve as recusas.
  *
  * O corpo que chega do cliente — e o que volta do banco — é `unknown` até aqui. Uma asserção de tipo
  * (`as ConfiguracaoTipoOperacaoV1`) seria uma promessa do TypeScript que o runtime não cumpre: o
@@ -591,10 +763,16 @@ export function versaoSchemaDaConfiguracaoTop(bruto: unknown): VersaoSchemaConfi
  * um payload cuja decisão de execução ninguém tomou, e tratá-lo como legado seria adivinhar. O formato 4 é
  * lido com as MESMAS chaves e a MESMA estrictez do 3, e sai com `versaoSchema` 4 — nunca 3.
  *
+ * O FORMATO 5 (decisão 281) é lido com as chaves e a estrictez do 3 e do 4, MAIS as seções de extensão
+ * (`DEFINICOES_SECOES_V5`): cada uma é uma chave de raiz a mais; AUSENTE vale o neutro dela, PRESENTE é lida estrita
+ * (tipo, chaves, valores) e normalizada. Nos formatos 1 a 4 a mesma chave é `campo_desconhecido` — o 4 nunca carrega
+ * seção nova. Sai com `versaoSchema` 5 — nunca 4. `definicoes` é parâmetro só para teste (a máquina das seções
+ * provada com uma seção fictícia); produção usa sempre a lista do produto.
+ *
  * NÃO MUTA a entrada e NÃO devolve referência a ela: o resultado é construído campo a campo, então quem
  * chamou pode continuar usando o objeto original sem descobrir que ele mudou de forma.
  */
-export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
+export function lerConfiguracaoTop(bruto: unknown, definicoes: readonly DefinicaoSecaoV5[] = DEFINICOES_SECOES_V5): ResultadoConfiguracaoTop {
   const recusas: RecusaConfiguracaoTop[] = [];
 
   if (!ehObjeto(bruto)) return { ok: false, recusas: [{ motivo: "tipo_invalido", caminho: "" }] };
@@ -606,9 +784,13 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
     return { ok: false, recusas: [{ motivo: "schema_nao_suportado", caminho: "versaoSchema" }] };
   }
 
-  // Formato 3 e formato 4: as MESMAS chaves, lidas do mesmo jeito. Só o número de saída difere.
-  const comRestricoes = versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3 || versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4;
-  for (const k of chavesDesconhecidas(bruto, versao === VERSAO_SCHEMA_CONFIGURACAO_TOP ? CHAVES_RAIZ : CHAVES_RAIZ_V2)) {
+  // Formatos 3, 4 e 5: as MESMAS chaves, lidas do mesmo jeito. Só o número de saída difere — e o 5 tem, além delas,
+  // uma chave de raiz por seção de extensão.
+  const formato5 = versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V5;
+  const comRestricoes = versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3 || versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4 || formato5;
+  const chavesDaRaiz: readonly string[] = versao === VERSAO_SCHEMA_CONFIGURACAO_TOP ? CHAVES_RAIZ
+    : formato5 ? [...CHAVES_RAIZ_V2, ...definicoes.map((d) => d.nome)] : CHAVES_RAIZ_V2;
+  for (const k of chavesDesconhecidas(bruto, chavesDaRaiz)) {
     recusas.push({ motivo: "campo_desconhecido", caminho: k });
   }
 
@@ -694,7 +876,7 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
     return { ok: true, valor: normalizarConfiguracaoTop({ versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, ...secoes, execucao }) };
   }
 
-  // FORMATOS 3 E 4: as chaves novas são OBRIGATÓRIAS (estrito como o formato 2 com `execucao`). CFOP aqui só tem
+  // FORMATOS 3, 4 E 5: as chaves novas são OBRIGATÓRIAS (estrito como o formato 2 com `execucao`). CFOP aqui só tem
   // a FORMA conferida; as regras de sentido (dentro/fora/exterior, mesmo sentido, sentido do movimento) moram
   // em `recusasFiscaisDaFamiliaTop` (`tipo-operacao-restricoes.ts`), porque dependem da família da TOP.
   const cfop = (campo: string) => texto(fi, "fiscal", campo, 4, FORMA_CFOP, recusas);
@@ -717,13 +899,18 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
     },
     execucao,
   };
+  // As seções de extensão: só no 5 (nos formatos 3 e 4 a chave já saiu acima como `campo_desconhecido`).
+  const extensoes = formato5 ? lerSecoesExtensao(bruto, definicoes, recusas) : null;
   if (recusas.length) return { ok: false, recusas };
   // O NÚMERO QUE ENTROU É O NÚMERO QUE SAI. Montar o resultado com o 3 fixo foi o que este ponto fazia antes do
   // formato 4 existir; hoje isso rebaixaria um 4 em silêncio, e a versão gravada a partir dele deixaria de executar.
-  const valor: ConfiguracaoComRestricoesTop = versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4
-    ? { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V4, ...corpo }
-    : { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3, ...corpo };
-  return { ok: true, valor: normalizarConfiguracaoTop(valor) };
+  // O mesmo vale para o 5: devolvê-lo como 4 apagaria as seções de extensão da próxima versão gravada.
+  const valor: ConfiguracaoComRestricoesTop = extensoes !== null
+    ? { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V5, ...corpo, ...extensoes }
+    : versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4
+      ? { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V4, ...corpo }
+      : { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3, ...corpo };
+  return { ok: true, valor: normalizarConfiguracaoTop(valor, definicoes) };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -738,28 +925,35 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
  * versões semanticamente idênticas teriam bytes diferentes, o "no-op" pararia de ser detectado e o
  * histórico ganharia versões que não mudaram nada. Normalizar aqui é o que torna a comparação confiável.
  *
- * PRESERVA O FORMATO. Um v2 sai v2, com o `execucao` intocado; um v1 sai v1; um v3 sai v3 e um v4 sai v4.
- * Normalizar nunca rebaixa nem promove formato — rebaixar um v2 para v1 apagaria a decisão de execução em
+ * PRESERVA O FORMATO. Um v2 sai v2, com o `execucao` intocado; um v1 sai v1; um v3 sai v3, um v4 sai v4 e um v5
+ * sai v5. Normalizar nunca rebaixa nem promove formato — rebaixar um v2 para v1 apagaria a decisão de execução em
  * silêncio, rebaixar um v4 para v3 desligaria as regras gerais e a aprovação (a API grava o número a partir do
- * normalizado), e promover um v1 reescreveria o histórico. `execucao` também não é "normalizada" pela seção:
- * `configurada` com `atualizacao = "nenhuma"` é uma decisão legítima (a venda não movimenta), não um campo pendurado.
+ * normalizado), rebaixar um v5 para v4 apagaria as seções de extensão, e promover um v1 reescreveria o histórico.
+ * `execucao` também não é "normalizada" pela seção: `configurada` com `atualizacao = "nenhuma"` é uma decisão
+ * legítima (a venda não movimenta), não um campo pendurado.
  *
- * IDEMPOTENTE: normalizar duas vezes dá o mesmo resultado. Não muta a entrada.
+ * IDEMPOTENTE: normalizar duas vezes dá o mesmo resultado. Não muta a entrada. `definicoes` (as seções de
+ * extensão do 5) é parâmetro só para teste.
  */
-export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV1): ConfiguracaoTipoOperacaoV1;
-export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV2): ConfiguracaoTipoOperacaoV2;
-export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV3): ConfiguracaoTipoOperacaoV3;
-export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV4): ConfiguracaoTipoOperacaoV4;
-export function normalizarConfiguracaoTop(c: ConfiguracaoComRestricoesTop): ConfiguracaoComRestricoesTop;
-export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacao): ConfiguracaoTipoOperacao;
-export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacao): ConfiguracaoTipoOperacao {
+export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV1, definicoes?: readonly DefinicaoSecaoV5[]): ConfiguracaoTipoOperacaoV1;
+export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV2, definicoes?: readonly DefinicaoSecaoV5[]): ConfiguracaoTipoOperacaoV2;
+export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV3, definicoes?: readonly DefinicaoSecaoV5[]): ConfiguracaoTipoOperacaoV3;
+export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV4, definicoes?: readonly DefinicaoSecaoV5[]): ConfiguracaoTipoOperacaoV4;
+export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV5, definicoes?: readonly DefinicaoSecaoV5[]): ConfiguracaoTipoOperacaoV5;
+export function normalizarConfiguracaoTop(c: ConfiguracaoComRegrasGeraisTop, definicoes?: readonly DefinicaoSecaoV5[]): ConfiguracaoComRegrasGeraisTop;
+export function normalizarConfiguracaoTop(c: ConfiguracaoComRestricoesTop, definicoes?: readonly DefinicaoSecaoV5[]): ConfiguracaoComRestricoesTop;
+export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacao, definicoes?: readonly DefinicaoSecaoV5[]): ConfiguracaoTipoOperacao;
+export function normalizarConfiguracaoTop(
+  c: ConfiguracaoTipoOperacao,
+  definicoes: readonly DefinicaoSecaoV5[] = DEFINICOES_SECOES_V5,
+): ConfiguracaoTipoOperacao {
   const neutro = configuracaoNeutraTop();
   const estoqueLigado = c.estoque.atualizacao !== "nenhuma";
   const financeiroLigado = c.financeiro.atualizacao !== "nenhuma";
   const fiscalLigado = c.fiscal.habilitado;
   const porValor = c.aprovacao.politica === "por_valor";
 
-  if (restricoesExecutamTop(c)) return normalizarV3(c);
+  if (restricoesExecutamTop(c)) return normalizarV3(c, definicoes);
 
   const secoes: Omit<ConfiguracaoTipoOperacaoV1, "versaoSchema"> = {
     geral: { ...c.geral },
@@ -784,19 +978,21 @@ export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacao): Configur
 }
 
 /**
- * A normalização dos formatos 3 e 4 (as mesmas chaves) — a mesma régua do formato 2 nas chaves antigas, mais:
+ * A normalização dos formatos 3, 4 e 5 (as mesmas chaves) — a mesma régua do formato 2 nas chaves antigas, mais:
  *   · fiscal desligado zera TAMBÉM as chaves fiscais novas (elas são parte do fiscal);
  *   · `clienteEmAtraso`/`toleranciaAtrasoDias` NÃO dependem de `financeiro.atualizacao` — um Pedido não gera
  *     título e ainda assim pode recusar cliente em atraso; só a tolerância zera quando a política é `nao_valida`;
  *   · `exigeTransportadora` é independente, como as outras exigências de `geral`;
  *   · as regras gerais do formato 4 (confirmação, sem itens, alteração) são independentes entre si e não zeram
- *     nada: quem diz o que a FAMÍLIA aceita é a matriz da gravação (`tipo-operacao-regras-gerais.ts`), não esta régua.
- * O número que entra é o que sai: 3 fica 3, 4 fica 4.
+ *     nada: quem diz o que a FAMÍLIA aceita é a matriz da gravação (`tipo-operacao-regras-gerais.ts`), não esta régua;
+ *   · no formato 5, cada seção de extensão passa pela normalização DELA e sai COPIADA (ausente → o neutro dela).
+ * O número que entra é o que sai: 3 fica 3, 4 fica 4, 5 fica 5.
  */
-function normalizarV3(c: ConfiguracaoTipoOperacaoV3): ConfiguracaoTipoOperacaoV3;
-function normalizarV3(c: ConfiguracaoTipoOperacaoV4): ConfiguracaoTipoOperacaoV4;
-function normalizarV3(c: ConfiguracaoComRestricoesTop): ConfiguracaoComRestricoesTop;
-function normalizarV3(c: ConfiguracaoComRestricoesTop): ConfiguracaoComRestricoesTop {
+function normalizarV3(c: ConfiguracaoTipoOperacaoV3, definicoes: readonly DefinicaoSecaoV5[]): ConfiguracaoTipoOperacaoV3;
+function normalizarV3(c: ConfiguracaoTipoOperacaoV4, definicoes: readonly DefinicaoSecaoV5[]): ConfiguracaoTipoOperacaoV4;
+function normalizarV3(c: ConfiguracaoTipoOperacaoV5, definicoes: readonly DefinicaoSecaoV5[]): ConfiguracaoTipoOperacaoV5;
+function normalizarV3(c: ConfiguracaoComRestricoesTop, definicoes: readonly DefinicaoSecaoV5[]): ConfiguracaoComRestricoesTop;
+function normalizarV3(c: ConfiguracaoComRestricoesTop, definicoes: readonly DefinicaoSecaoV5[]): ConfiguracaoComRestricoesTop {
   const base = normalizarConfiguracaoTop({
     versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
     geral: c.geral, estoque: c.estoque, financeiro: c.financeiro, fiscal: c.fiscal, aprovacao: c.aprovacao, execucao: c.execucao,
@@ -823,6 +1019,7 @@ function normalizarV3(c: ConfiguracaoComRestricoesTop): ConfiguracaoComRestricoe
     aprovacao: base.aprovacao,
     execucao: base.execucao,
   };
+  if (formato5Top(c)) return { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V5, ...corpo, ...secoesExtensaoNormalizadas(c, definicoes) };
   return c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4
     ? { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V4, ...corpo }
     : { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3, ...corpo };
@@ -869,8 +1066,9 @@ export function configuracaoTopParaEdicao(c: ConfiguracaoTipoOperacao): Configur
   const n = normalizarConfiguracaoTop(c);
   if (n.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2) return n;
   if (restricoesExecutamTop(n)) {
-    // VISTA do formato 2 de uma versão do formato 3 ou 4: as chaves novas ficam de fora. Só para exibição por quem
-    // não conhece o formato 3 — gravar isto sobre um formato 3 ou 4 é recusado pelo servidor (formato não retrocede).
+    // VISTA do formato 2 de uma versão do formato 3, 4 ou 5: as chaves novas (e as seções de extensão) ficam de fora.
+    // Só para exibição por quem não conhece o formato 3 — gravar isto sobre um 3, 4 ou 5 é recusado pelo servidor
+    // (formato não retrocede).
     const pick = <T extends object, K extends keyof T>(o: T, ks: readonly K[]): Pick<T, K> =>
       Object.fromEntries(ks.map((k) => [k, o[k]])) as Pick<T, K>;
     return {
@@ -889,6 +1087,7 @@ export function configuracaoTopParaEdicao(c: ConfiguracaoTipoOperacao): Configur
  * O FORMATO 4 CONTINUA 4 (TOP-CONFIG-08). As chaves são as mesmas, e o editor de hoje — que só conhece o 3 —
  * edita as do 4 sem saber; devolver o 4 como 3 aqui faria a próxima gravação rebaixar a versão em silêncio, e as
  * regras gerais e a aprovação deixariam de executar. Por isso o tipo de saída é `ConfiguracaoComRestricoesTop`.
+ * O FORMATO 5 CONTINUA 5 pelo mesmo motivo (decisão 281), com as seções de extensão.
  */
 export function configuracaoTopParaEdicaoV3(c: ConfiguracaoTipoOperacao): ConfiguracaoComRestricoesTop {
   const n = normalizarConfiguracaoTop(c);
@@ -906,7 +1105,9 @@ export function configuracaoTopParaEdicaoV3(c: ConfiguracaoTipoOperacao): Config
 /**
  * A configuração do formato 3 levada ao formato 4: as MESMAS chaves e os mesmos valores, com `versaoSchema` 4,
  * normalizada. É a promoção que o editor faz ao gravar no formato 4 — explícita, nunca a normalização.
- * Um formato 4 entra e sai igual (idempotente). Não muta a entrada.
+ * Um formato 4 entra e sai igual (idempotente). Um formato 5 sai como a VISTA do 4 (as mesmas chaves, sem as seções
+ * de extensão) — só para exibir e comparar no editor do 4; quem edita o 5 é o editor do 5, e o servidor recusa um 4
+ * gravado sobre um 5 (o formato não retrocede). Não muta a entrada.
  */
 export function configuracaoV4DaV3(c3: ConfiguracaoComRestricoesTop): ConfiguracaoTipoOperacaoV4 {
   return normalizarConfiguracaoTop({ ...c3, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V4 });
@@ -915,13 +1116,50 @@ export function configuracaoV4DaV3(c3: ConfiguracaoComRestricoesTop): Configurac
 /**
  * A configuração no formato 4, PARA EXIBIR E EDITAR no editor que conhece as regras gerais (TOP-CONFIG-08).
  * Formato 1/2 passa pela vista do formato 3 de hoje (chaves novas no neutro); 3 vira 4 com as mesmas chaves;
- * 4 sai como está, normalizado. Ler não regrava nada: a versão continua no formato dela no banco.
+ * 4 sai como está, normalizado; 5 sai como a VISTA do 4 (sem as seções de extensão: só exibição). Ler não regrava
+ * nada: a versão continua no formato dela no banco.
  */
 export function configuracaoTopParaEdicaoV4(c: ConfiguracaoTipoOperacao): ConfiguracaoTipoOperacaoV4 {
   return configuracaoV4DaV3(configuracaoTopParaEdicaoV3(c));
 }
 
-/** Exigência de `geral` que o formato 1/2 só DECLARAVA e os formatos 3 e 4 EXECUTAM. */
+/**
+ * A configuração com restrições levada ao formato 5 (decisão 281): 3 e 4 → as MESMAS chaves e valores, com
+ * `versaoSchema` 5 e cada seção de extensão no NEUTRO dela (o padrão de hoje); 5 entra e sai igual, normalizado
+ * (idempotente). É a promoção EXPLÍCITA que o editor do 5 faz — nunca a normalização. Não muta a entrada.
+ * `definicoes` é parâmetro só para teste.
+ */
+export function configuracaoV5DaV4(
+  c: ConfiguracaoComRestricoesTop,
+  definicoes: readonly DefinicaoSecaoV5[] = DEFINICOES_SECOES_V5,
+): ConfiguracaoTipoOperacaoV5 {
+  if (formato5Top(c)) return normalizarConfiguracaoTop(c, definicoes);
+  const { versaoSchema: _anterior, ...corpo } = normalizarConfiguracaoTop(c, definicoes);
+  return normalizarConfiguracaoTop(
+    { ...corpo, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V5, ...secoesExtensaoNeutrasTop(definicoes) },
+    definicoes,
+  );
+}
+
+/**
+ * A configuração no formato 5, PARA EXIBIR, EDITAR E COMPARAR (decisão 281): as TOPs gravadas nos formatos 1 a 4 são
+ * LIDAS como 5 com os padrões de hoje. 1/2/3/4 passam pela vista do 4 de hoje (`configuracaoTopParaEdicaoV4`, o
+ * mesmo caminho de sempre) e dali ao 5 com as seções de extensão no neutro; 5 sai como está, normalizado.
+ *
+ * LER NÃO REGRAVA: a versão continua no formato dela no banco, e só uma gravação nova (que mude algo — salvar sem
+ * mexer não é escrita) grava o 5. E ler como 5 NÃO FAZ EXECUTAR: a execução segue o número GRAVADO
+ * (`restricoesExecutamTop`, `regrasGeraisExecutamTop`, `secoesExtensaoDaVersaoTop`) — um 3 com "Automática" lido
+ * como 5 continua não confirmando sozinho. `definicoes` é parâmetro só para teste.
+ */
+export function configuracaoTopParaEdicaoV5(
+  c: ConfiguracaoTipoOperacao,
+  definicoes: readonly DefinicaoSecaoV5[] = DEFINICOES_SECOES_V5,
+): ConfiguracaoTipoOperacaoV5 {
+  if (formato5Top(c)) return normalizarConfiguracaoTop(c, definicoes);
+  return configuracaoV5DaV4(configuracaoTopParaEdicaoV4(c), definicoes);
+}
+
+/** Exigência de `geral` que o formato 1/2 só DECLARAVA e os formatos 3, 4 e 5 EXECUTAM. */
 const exigeAlgoNoGeral = (c: ConfiguracaoTipoOperacao): boolean =>
   c.geral.exigeParceiro || c.geral.exigeCentroResultado || c.geral.exigeObservacao;
 
@@ -946,25 +1184,41 @@ function canonico(v: unknown): string {
 }
 
 /**
- * Duas configurações significam a mesma coisa? Compara DEPOIS de normalizar as duas, na vista do formato 4 —
- * isto é, com as chaves de todos os formatos e SEM o número do formato (as duas vistas têm o mesmo 4).
+ * Duas configurações significam a mesma coisa? Compara DEPOIS de normalizar as duas, na vista do formato 5
+ * (`configuracaoTopParaEdicaoV5`, decisão 281) — isto é, com as chaves de todos os formatos e as seções de extensão,
+ * e SEM o número do formato (as duas vistas têm o mesmo 5).
  *
  * SEM O NÚMERO DE PROPÓSITO: um v1 e um v2 com os dois efeitos em `legado` e as mesmas seções SIGNIFICAM a
- * mesma coisa, e um v3 e um v4 com as quatro regras gerais no neutro também. Compará-los como diferentes faria
- * o editor novo, ao salvar sem mexer numa TOP antiga, criar a versão N+1 só para trocar o formato — e "salvar
- * sem alterar não é escrita" deixaria de valer.
+ * mesma coisa, um v3 e um v4 com as quatro regras gerais no neutro também, e um v4 e um v5 com as seções de
+ * extensão no neutro também. Compará-los como diferentes faria o editor novo, ao salvar sem mexer numa TOP antiga,
+ * criar a versão N+1 só para trocar o formato — e "salvar sem alterar não é escrita" deixaria de valer (precedente
+ * da 277). NA VISTA DO 5, e não na do 4: na do 4 uma mudança SÓ numa seção de extensão seria invisível, e a API
+ * responderia "nada mudou" sem gravar a versão.
  *
  * O QUE O NÚMERO MUDA ENTRA PELOS TERMOS DE EXECUÇÃO, um por portão: mesmas chaves não bastam quando o formato
  * novo passaria a EXECUTAR o que o anterior só declarava — aí a troca de formato é mudança de comportamento, e
- * cria versão. Os termos olham só `a`: com as vistas iguais, o que `a` declara é o que `b` declara.
+ * cria versão. Os termos olham só `a`: com as vistas iguais, o que `a` declara é o que `b` declara. O 5 não tem
+ * termo próprio: o que ele executa a mais mora nas seções de extensão, que o 1-4 não têm — na vista, elas estão no
+ * neutro, e qualquer seção fora do neutro já é diferença de conteúdo. `definicoes` é parâmetro só para teste.
  */
-export const configuracoesTopIguais = (a: ConfiguracaoTipoOperacao, b: ConfiguracaoTipoOperacao): boolean =>
-  canonico(configuracaoTopParaEdicaoV4(a)) === canonico(configuracaoTopParaEdicaoV4(b))
+export const configuracoesTopIguais = (
+  a: ConfiguracaoTipoOperacao,
+  b: ConfiguracaoTipoOperacao,
+  definicoes: readonly DefinicaoSecaoV5[] = DEFINICOES_SECOES_V5,
+): boolean =>
+  canonico(configuracaoTopParaEdicaoV5(a, definicoes)) === canonico(configuracaoTopParaEdicaoV5(b, definicoes))
   // FORMATO 3 × ANTERIOR (decisão 263): as exigências gerais passam a ser cobradas.
   && (restricoesExecutamTop(a) === restricoesExecutamTop(b) || !exigeAlgoNoGeral(a))
-  // FORMATO 4 × ANTERIOR (decisão 277): as regras gerais e a aprovação passam a executar. 3 → 4 no neutro (Manual,
-  // Proibido, Bloqueada, Sem aprovação) não é mudança; com qualquer uma fora do neutro, é a versão N+1.
+  // FORMATO 4/5 × ANTERIOR (decisão 277): as regras gerais e a aprovação passam a executar. 3 → 4 (ou 5) no neutro
+  // (Manual, Proibido, Bloqueada, Sem aprovação) não é mudança; com qualquer uma fora do neutro, é a versão N+1.
   && (regrasGeraisExecutamTop(a) === regrasGeraisExecutamTop(b) || !declaraRegrasGerais(a));
+
+/**
+ * Os nomes das seções comparadas, na ordem da auditoria: as do formato 2 e as de extensão. Com a lista do produto é
+ * `SECOES_CONFIGURACAO_TOP_V5`; com a de teste, a forma que o teste confere (`nomeDaSecaoV5`).
+ */
+const secoesComparadas = (definicoes: readonly DefinicaoSecaoV5[]): readonly SecaoConfiguracaoTopV5[] =>
+  [...SECOES_CONFIGURACAO_TOP_V2, ...definicoes.map(nomeDaSecaoV5)];
 
 /**
  * Quais seções mudaram, para a auditoria.
@@ -976,23 +1230,70 @@ export const configuracoesTopIguais = (a: ConfiguracaoTipoOperacao, b: Configura
  * autoridade (legado ↔ configurada) — é a linha que identifica o cutover no histórico.
  *
  * "PASSA A VALER" TAMBÉM É MUDANÇA DA SEÇÃO, mesmo com os valores iguais: `geral` aparece quando a troca de
- * formato liga as exigências (formato 3) ou as regras gerais (formato 4) que o `antes` declarava; `aprovacao`
- * aparece quando a troca para o formato 4 liga a aprovação que o `antes` declarava. Cada uma por si: a 3 → 4 com
- * só "Sempre" marca `aprovacao` e não `geral`.
+ * formato liga as exigências (formato 3) ou as regras gerais (formato 4 ou 5) que o `antes` declarava; `aprovacao`
+ * aparece quando a troca para o formato 4 ou 5 liga a aprovação que o `antes` declarava. Cada uma por si: a 3 → 4
+ * com só "Sempre" marca `aprovacao` e não `geral`.
+ *
+ * Compara na VISTA DO 5 (como `configuracoesTopIguais`): uma seção de extensão que sai do neutro aparece com o nome
+ * dela, depois de `execucao`, na ordem de `SECOES_CONFIGURACAO_TOP_V5`. `definicoes` é parâmetro só para teste.
  */
 export function secoesAlteradasTop(
   antes: ConfiguracaoTipoOperacao,
   depois: ConfiguracaoTipoOperacao,
-): SecaoConfiguracaoTopV2[] {
-  const a = configuracaoTopParaEdicaoV4(antes);
-  const b = configuracaoTopParaEdicaoV4(depois);
+  definicoes: readonly DefinicaoSecaoV5[] = DEFINICOES_SECOES_V5,
+): SecaoConfiguracaoTopV5[] {
+  const a: Readonly<Record<string, unknown>> = configuracaoTopParaEdicaoV5(antes, definicoes);
+  const b: Readonly<Record<string, unknown>> = configuracaoTopParaEdicaoV5(depois, definicoes);
   const passouAExecutar = restricoesExecutamTop(antes) !== restricoesExecutamTop(depois) && exigeAlgoNoGeral(antes);
   const trocouPortaoDasRegras = regrasGeraisExecutamTop(antes) !== regrasGeraisExecutamTop(depois);
   const geralPassaAValer = trocouPortaoDasRegras && declaraRegraNoGeral(antes);
   const aprovacaoPassaAValer = trocouPortaoDasRegras && declaraAprovacao(antes);
-  return SECOES_CONFIGURACAO_TOP_V2.filter((s) => canonico(a[s]) !== canonico(b[s])
+  return secoesComparadas(definicoes).filter((s) => canonico(a[s]) !== canonico(b[s])
     || (s === "geral" && (passouAExecutar || geralPassaAValer))
     || (s === "aprovacao" && aprovacaoPassaAValer));
+}
+
+/**
+ * A seção desta configuração do 5 está no NEUTRO do 5? Compara as duas DEPOIS de normalizar, na forma canônica
+ * (a mesma régua de `configuracoesTopIguais`). É a pergunta do catálogo por tipo: a seção que o tipo não usa tem de
+ * ficar no padrão. `definicoes` é parâmetro só para teste.
+ */
+export function secaoNoNeutroTopV5(
+  c: ConfiguracaoTipoOperacaoV5,
+  secao: SecaoConfiguracaoTopV5,
+  definicoes: readonly DefinicaoSecaoV5[] = DEFINICOES_SECOES_V5,
+): boolean {
+  const atual: Readonly<Record<string, unknown>> = normalizarConfiguracaoTop(c, definicoes);
+  const neutro: Readonly<Record<string, unknown>> = configuracaoNeutraTopV5(definicoes);
+  return canonico(atual[secao]) === canonico(neutro[secao]);
+}
+
+/**
+ * A configuração do 5 com ESTAS seções de volta ao neutro do 5 (as outras como estão), normalizada — nenhuma seção
+ * aponta para a entrada, que não é mutada. É a volta ao padrão que o editor do 5 faz antes de gravar o que o tipo
+ * não usa (`normalizarPeloPerfilTop`). `definicoes` é parâmetro só para teste.
+ */
+export function voltarSecoesAoNeutroTopV5(
+  c: ConfiguracaoTipoOperacaoV5,
+  secoes: readonly SecaoConfiguracaoTopV5[],
+  definicoes: readonly DefinicaoSecaoV5[] = DEFINICOES_SECOES_V5,
+): ConfiguracaoTipoOperacaoV5 {
+  const neutro = configuracaoNeutraTopV5(definicoes);
+  const raiz: Readonly<Record<string, unknown>> = c;
+  const volta = (s: SecaoConfiguracaoTopV5): boolean => secoes.includes(s);
+  return normalizarConfiguracaoTop({
+    versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V5,
+    geral: volta("geral") ? neutro.geral : c.geral,
+    estoque: volta("estoque") ? neutro.estoque : c.estoque,
+    financeiro: volta("financeiro") ? neutro.financeiro : c.financeiro,
+    fiscal: volta("fiscal") ? neutro.fiscal : c.fiscal,
+    aprovacao: volta("aprovacao") ? neutro.aprovacao : c.aprovacao,
+    execucao: volta("execucao") ? neutro.execucao : c.execucao,
+    ...montarSecoesExtensaoV5(definicoes, (d) => {
+      const s = raiz[d.nome];
+      return volta(nomeDaSecaoV5(d)) || !ehObjeto(s) ? d.neutro() : s;
+    }),
+  }, definicoes);
 }
 
 /**

@@ -27,7 +27,8 @@
  * para baixo NÃO passa pela guarda, por desenho da 0035: o inventário registra o que existe, mesmo que o físico
  * fique abaixo do prometido (o disponível pode ficar negativo — a 0035 já prevê).
  *
- * REGRAS GERAIS DA TOP (TOP-CONFIG-08, decisão 277): só a versão congelada no FORMATO 4 executa. A confirmação ganha
+ * REGRAS GERAIS DA TOP (TOP-CONFIG-08, decisão 277): só a versão congelada no FORMATO 4 executa (e no 5, que
+ * executa tudo o que o 4 executa — OPERACOES-01 F4, decisão 281). A confirmação ganha
  * o passo da APROVAÇÃO logo depois da situação (`recusaDoDocumento`), e a prévia ganha a lista ADITIVA `recusas`.
  * A confirmação é UMA função (`confirmarDocumentoEstoqueNaTransacao`), que a rota `/confirmar` e a confirmação
  * automática chamam — a automática só acrescenta `automatica: true` à auditoria "confirm".
@@ -38,7 +39,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, qty as fqty, DomainError } from "@agro/shared";
-import { regrasGeraisDaVersaoTop, versaoSchemaDaConfiguracaoTop, VERSAO_SCHEMA_CONFIGURACAO_TOP_V4, type EspecieEstoque } from "@agro/domain";
+import { regrasGeraisDaVersaoTop, versaoSchemaDaConfiguracaoTop, versaoSchemaExecutaRegrasGeraisTop, type EspecieEstoque } from "@agro/domain";
 import { runService, idempotent, audit, assertPeriodOpen } from "../lib/service.js";
 import { notFound, validation, err, fromPgError } from "../lib/errors.js";
 import type { ServiceCtx } from "../lib/context.js";
@@ -159,10 +160,10 @@ async function planejarSaldos(ctx: ServiceCtx, doc: DocumentoEstoqueLido): Promi
  *
  *   · a configuração é lida AQUI, numa consulta própria (`lerVersaoCongeladaTop`): a leitura do documento
  *     (`lerDocumentoEstoque`) serve também o GET, a lista e o cancelamento, e não muda por causa da aprovação;
- *   · versão ilegível (formato desconhecido, ou formato 4 malformado) → 409 TIPO_OPERACAO_EXECUCAO_INDISPONIVEL,
+ *   · versão ilegível (formato desconhecido, ou formato 4 ou 5 malformado) → 409 TIPO_OPERACAO_EXECUCAO_INDISPONIVEL,
  *     como na compra: ninguém sabe o que ela decidiu, e "então é o neutro" seria adivinhar;
- *   · sem TOP, ou formato 1, 2 ou 3 → nenhuma recusa: o corte da 277, só o formato 4 executa a aprovação;
- *   · formato 4 com aprovação exigida e não vigente → 409 APROVACAO_PENDENTE ou APROVACAO_REPROVADA. O valor do
+ *   · sem TOP, ou formato 1, 2 ou 3 → nenhuma recusa: o corte da 277, só o formato 4 ou 5 executa a aprovação;
+ *   · formato 4 ou 5 com aprovação exigida e não vigente → 409 APROVACAO_PENDENTE ou APROVACAO_REPROVADA. O valor do
  *     documento de estoque só é conhecido na confirmação (`valorDocumento: null`), e por isso a matriz só lhe
  *     aceita "Sempre".
  * A guarda do banco (0041, `trg_documentos_estoque_aprovacao`) é o fundo, inclusive para o binário anterior; quem
@@ -180,7 +181,9 @@ async function recusaDoDocumento(ctx: ServiceCtx, doc: DocumentoEstoqueLido): Pr
       alemDoFormato3: true,
     };
   }
-  const alemDoFormato3 = versaoTop !== null && versaoSchemaDaConfiguracaoTop(versaoTop.configuracao) === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4;
+  // O PORTÃO do domínio (formato 4 ou 5), nunca a comparação com um número: o 5 executa tudo o que o 4 executa
+  // (OPERACOES-01 F4, decisão 281), e a prévia de um documento com a versão no 5 continua trazendo `recusas`.
+  const alemDoFormato3 = versaoTop !== null && versaoSchemaExecutaRegrasGeraisTop(versaoSchemaDaConfiguracaoTop(versaoTop.configuracao));
   return { recusa: await recusaDaAprovacao(ctx, { modulo: "estoque", documentoId: doc.id, versaoDocumento: null, valorDocumento: null, versaoTop }), alemDoFormato3 };
 }
 
@@ -194,8 +197,8 @@ interface RecusaDaPrevia { code: string; message: string; details?: unknown }
 
 /**
  * `recusas` (TOP-CONFIG-08) é ADITIVO: as recusas do DOCUMENTO (a versão ilegível e a aprovação), lista vazia quando
- * não há. A chave só existe quando a versão congelada está no formato 4 (ou é ilegível): sem TOP e nos formatos 1, 2
- * e 3 a resposta é a de hoje, chave por chave — o corte da 277 vale também para o corpo. Com recusa, `podeConfirmar`
+ * não há. A chave só existe quando a versão congelada está no formato 4 ou 5 (ou é ilegível): sem TOP e nos formatos
+ * 1, 2 e 3 a resposta é a de hoje, chave por chave — o corte da 277 vale também para o corpo. Com recusa, `podeConfirmar`
  * é falso — a confirmação recusaria do mesmo jeito. Nenhuma outra chave muda, e `contractVersion` continua 1: a web
  * anterior ignora a chave nova.
  */

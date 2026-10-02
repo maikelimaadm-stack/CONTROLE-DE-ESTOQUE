@@ -35,12 +35,17 @@ import { cadastroDeEstoque, hojeISO, saldoNoServidor } from "./estoque-01-comum"
  * (`top-regras-passam-a-valer`, o testId fixo da seção 8)? Não → mundo legado (a base de hoje): o editor anterior grava o
  * 3. Sim → mundo novo (a base já com a fatia): o editor anterior é o desta fatia, e grava o 4 com o diálogo. A API deste
  * HEAD entra como PREMISSA: ela declara o bloco e serve a fila — é ela que está sendo julgada.
+ *
+ * OPERACOES-01 F4 (decisão 281): um TERCEIRO mundo, medido do mesmo jeito — o web da base conhece também o ASSISTENTE da
+ * TOP (`top-assistente`, o testId fixo do passo 1, que só existe no editor do formato 5)? Sim → mundo formato5: o editor
+ * anterior é o do 5, lê a TOP como 5, pergunta pelo MESMO diálogo e grava o 5. O K-2 do 5 propriamente dito mora em
+ * `top-formato5-skew-web-anterior.spec.ts`; aqui o mundo só decide o formato que o editor da base envia.
  */
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333";
 const ROTA_TOPS = "/configuracoes?tab=operacoes&sub=tipos-operacao";
 const MENSAGEM_APROVACAO_PENDENTE = "Este documento precisa de aprovação antes de ser confirmado.";
 
-type Mundo = "legado" | "novo";
+type Mundo = "legado" | "novo" | "formato5";
 type DetalheTop = { versao: number; configuracaoSchema: number; configuracao: { valor: { geral: { confirmacao: string } } } };
 type Erro = { error: { code: string; message: string } };
 
@@ -51,14 +56,19 @@ type Erro = { error: { code: string; message: string } };
  */
 function mundoDoWebDaBase(): Mundo {
   const arvore = path.resolve(__dirname, "../../..", ".api-anterior");
-  let ocorrencias = "";
-  try {
-    ocorrencias = execFileSync("git", ["grep", "-c", "-F", "top-regras-passam-a-valer", "HEAD", "--", "apps/web/src"], { cwd: arvore }).toString().trim();
-  } catch (e) {
-    if ((e as { status?: number }).status !== 1) throw new Error(`não foi possível medir a árvore da base em ${arvore}: ${String(e)}`);
-  }
-  const mundo: Mundo = ocorrencias ? "novo" : "legado";
-  console.log(`[skew] TOP-CONFIG-08 · K-2 · o web da base ${ocorrencias ? "CONHECE" : "NÃO conhece"} o diálogo das regras gerais (${ocorrencias.replace(/\n/g, ", ") || "0 ocorrências"}) → mundo ${mundo}`);
+  const contar = (marca: string): string => {
+    try {
+      return execFileSync("git", ["grep", "-c", "-F", marca, "HEAD", "--", "apps/web/src"], { cwd: arvore }).toString().trim();
+    } catch (e) {
+      if ((e as { status?: number }).status !== 1) throw new Error(`não foi possível medir a árvore da base em ${arvore}: ${String(e)}`);
+      return "";
+    }
+  };
+  const ocorrencias = contar("top-regras-passam-a-valer");
+  // O assistente (editor do 5) só conta no mundo que já tem o diálogo: o editor do 5 é o do 4 mais o passo 1.
+  const assistente = ocorrencias ? contar("top-assistente") : "";
+  const mundo: Mundo = !ocorrencias ? "legado" : assistente ? "formato5" : "novo";
+  console.log(`[skew] TOP-CONFIG-08 · K-2 · o web da base ${ocorrencias ? "CONHECE" : "NÃO conhece"} o diálogo das regras gerais (${ocorrencias.replace(/\n/g, ", ") || "0 ocorrências"}) e ${assistente ? "CONHECE" : "NÃO conhece"} o assistente da TOP (${assistente.replace(/\n/g, ", ") || "0 ocorrências"}) → mundo ${mundo}`);
   return mundo;
 }
 
@@ -155,13 +165,13 @@ test("TOP-CONFIG-08 · K-2 (sentido 2) — o editor da TOP do web da base contra
   const resposta = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().includes(`/api/admin/tipos-operacao/${top.id}`));
   await forma.getByTestId("top-salvar").click();
   const dialogoDasRegras = page.getByTestId("top-regras-passam-a-valer");
-  if (mundo === "novo") {
-    await expect(dialogoDasRegras, "o editor da base, já na fatia, pergunta antes de gravar o formato 4").toBeVisible();
+  if (mundo !== "legado") {
+    await expect(dialogoDasRegras, `o editor da base, já na fatia, pergunta antes de gravar o formato ${mundo === "formato5" ? 5 : 4}`).toBeVisible();
     await dialogoDasRegras.getByTestId("top-regras-salvar").click();
   }
   expect((await resposta).status(), "a API deste HEAD aceita o que o editor anterior enviou").toBe(200);
   expect(corpos, "uma gravação").toHaveLength(1);
-  const formato = mundo === "novo" ? 4 : 3;
+  const formato = mundo === "formato5" ? 5 : mundo === "novo" ? 4 : 3;
   expect(corpos[0]!.configuracao?.versaoSchema, `o editor anterior gravou o formato ${formato}`).toBe(formato);
   expect(corpos[0]!.configuracao?.geral?.confirmacao).toBe("automatica");
   if (mundo === "legado") await expect(dialogoDasRegras, "o web de hoje não tem o diálogo das regras").toHaveCount(0);

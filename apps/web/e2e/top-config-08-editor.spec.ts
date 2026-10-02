@@ -2,13 +2,20 @@ import { test, expect, type Locator, type Page, type Request } from "@playwright
 import { configuracaoNeutraTopV2, type ConfiguracaoTipoOperacao } from "@agro/domain";
 import { api, login, uniq } from "./helpers";
 import {
-  abrirEditorDaTop, abrirHistoricoDaTop, abrirTelaDeTops, cfg3, cfg4, codigoTopE2E, criarTopViaApi, detalheTopNoServidor,
-  excluirTopE2E, type TopE2E
+  abrirEditorDaTop, abrirHistoricoDaTop, abrirTelaDeTops, catalogoPublicadoE2E, cfg3, cfg4, codigoTopE2E, criarTopViaApi,
+  detalheTopNoServidor, escolherTipoNoAssistente, excluirTopE2E, type TopE2E
 } from "./top-config-08-comum";
 
 /**
  * CONFIGURAÇÕES › OPERAÇÕES › TIPOS DE OPERAÇÃO — O EDITOR NO FORMATO 4: REGRAS GERAIS E APROVAÇÃO (TOP-CONFIG-08,
  * decisão 277), W-1 e W-2.
+ *
+ * OPERACOES-01 F4 (decisão 281): o servidor deste HEAD declara também o formato 5, e o editor passa a ser o DO 5 — as
+ * regras gerais e a aprovação são as mesmas do 4 (o 5 é o 4 + as seções de extensão), mas a gravação sai no formato 5,
+ * as abas são as do perfil do tipo (Execução some onde o tipo não aceita execução configurada) e a ajuda da Geral diz
+ * que as Centrais aceitam o documento sem item quando a TOP permite. As TOPs que estes casos criam pela API continuam
+ * no formato 4 (ou 3, ou 2): o que se mede é o editor do 5 lendo e regravando o que já existe. O editor do 4 (o de
+ * antes, contra um servidor sem o formato 5) é medido no K-1 (`top-config-08-skew-api-producao.spec.ts`).
  *
  * ┌─ O QUE SÓ ESTE ARQUIVO PODE PROVAR ────────────────────────────────────────────────────────────────┐
  * │ A integração prova que a API grava o formato 4 e recusa (422) a regra que a família não aceita. O   │
@@ -34,8 +41,14 @@ import {
  * do componente faria o teste concordar com qualquer coisa que o componente dissesse.
  */
 const TEXTOS = {
+  /**
+   * A ajuda da Geral do EDITOR DO 5 (decisão 281; item 4 do coordenador da F4): quando a TOP permite, as Centrais de
+   * Vendas, de Compras e de Estoque aceitam o documento sem item. Só a frase do documento sem itens mudou.
+   */
   ajudaGeral:
-    "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: o servidor aceita o documento sem item, mas nas Centrais de Vendas e de Compras o lançamento ainda pede ao menos um item. As exigências de preenchimento são cobradas no lançamento.",
+    "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: quando esta operação permite, as Centrais de Vendas, de Compras e de Estoque aceitam o documento sem item. As exigências de preenchimento são cobradas no lançamento.",
+  /** O trecho que só a ajuda ANTIGA (a do editor do 4) tem: PROIBIDO na tela do editor do 5. */
+  ajudaGeralAntiga: "o lançamento ainda pede ao menos um item",
   ajudaAprovacao:
     "Com aprovação, o documento só é confirmado depois de aprovado em Aprovações, por quem tem a permissão Aprovar. Alterar a venda depois de aprovada pede uma aprovação nova.",
   ajudaGeralEstoque: "No documento de estoque valem a confirmação automática e a observação obrigatória.",
@@ -89,7 +102,7 @@ const secoesDaVersao = (linha: Locator) => linha.locator("p", { hasText: "Seçõ
  * W-1 — CADA FAMÍLIA VÊ SÓ O QUE EXECUTA; OS TEXTOS NOVOS; SALVAR GRAVA O FORMATO 4; O HISTÓRICO DIZ "EXECUTADAS"
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
 
-test("W-1 — venda no formato 4: Confirmação, Documento sem itens e a aba Aprovação, sem Alteração; os textos novos; Automática grava a versão 2 no formato 4 e o histórico diz 'executadas'", async ({ page }) => {
+test("W-1 — venda gravada no formato 4: Confirmação, Documento sem itens e a aba Aprovação, sem Alteração; os textos novos; Automática grava a versão 2 no formato 5 e o histórico diz 'executadas'", async ({ page }) => {
   await login(page);
   const top = await criarTopViaApi(page, "vendas.venda", cfg4(), { rotulo: "Venda W-1" });
   try {
@@ -106,7 +119,8 @@ test("W-1 — venda no formato 4: Confirmação, Documento sem itens e a aba Apr
 
     // GERAL — a ajuda nova; Confirmação e Documento sem itens com TODAS as opções; Alteração escondida (a venda só aceita Bloqueada).
     await forma.getByTestId("top-aba-geral").click();
-    await expect(forma.getByText(TEXTOS.ajudaGeral, { exact: true }), "a ajuda da Geral diz que a confirmação automática EXECUTA").toBeVisible();
+    await expect(forma.getByText(TEXTOS.ajudaGeral, { exact: true }), "a ajuda da Geral diz que a confirmação automática EXECUTA e que as Centrais aceitam o documento sem item").toBeVisible();
+    await expect(forma.getByText(TEXTOS.ajudaGeralAntiga), "a ajuda do editor do 4 (as Centrais ainda pedem um item) não aparece").toHaveCount(0);
     const confirmacao = forma.getByTestId(CAMPO.confirmacao);
     await expect(confirmacao).toHaveValue("manual");
     expect(await opcoesDoCampo(confirmacao), "a venda aceita Manual e Automática").toEqual({ manual: true, automatica: true });
@@ -127,7 +141,8 @@ test("W-1 — venda no formato 4: Confirmação, Documento sem itens e a aba Apr
     await forma.getByTestId("top-aba-execucao").click();
     await expect(forma.getByTestId("top-execucao-declarativo")).toHaveText(TEXTOS.execucaoDeclarativo);
 
-    // SALVAR COM AUTOMÁTICA — a versão vigente já é formato 4: nada "passa a valer" (é uma edição comum), sem diálogo.
+    // SALVAR COM AUTOMÁTICA — a versão vigente já é formato 4 (as regras já executam): nada "passa a valer" (é uma
+    // edição comum), sem diálogo — o 4 lido como 5 não muda o que executa.
     await forma.getByTestId("top-aba-geral").click();
     await confirmacao.selectOption("automatica");
     const put = page.waitForRequest(ehPutDaTop(top.id));
@@ -135,7 +150,7 @@ test("W-1 — venda no formato 4: Confirmação, Documento sem itens e a aba Apr
     await forma.getByTestId("top-salvar").click();
     const corpo = (await put).postDataJSON() as CorpoGravado;
     expect((await resposta).status(), "PUT 200").toBe(200);
-    expect(corpo.configuracao?.versaoSchema, "o corpo enviado é o formato 4").toBe(4);
+    expect(corpo.configuracao?.versaoSchema, "o corpo enviado é o formato 5").toBe(5);
     expect(corpo.configuracao?.geral.confirmacao, "com Automática").toBe("automatica");
     await expect(page.getByTestId("top-regras-passam-a-valer"), "edição de uma versão já no formato 4 não pergunta").toHaveCount(0);
     await expect(forma).toBeHidden();
@@ -146,8 +161,8 @@ test("W-1 — venda no formato 4: Confirmação, Documento sem itens e a aba Apr
      */
     const depois = await configuracaoNoServidor(page, top.id);
     expect(depois.versao, "regra geral é conteúdo: versão nova").toBe(2);
-    expect(depois.schema, "a versão nova é do formato 4 (a coluna)").toBe(4);
-    expect(depois.valor.versaoSchema, "e o payload também").toBe(4);
+    expect(depois.schema, "a versão nova é do formato 5 (a coluna)").toBe(5);
+    expect(depois.valor.versaoSchema, "e o payload também").toBe(5);
     expect(depois.valor.geral.confirmacao, "Automática").toBe("automatica");
     expect(depois.valor.geral.documentoSemItens, "o resto continua no neutro").toBe("proibido");
     expect(depois.valor.geral.alteracaoAposConfirmacao).toBe("bloqueada");
@@ -159,7 +174,7 @@ test("W-1 — venda no formato 4: Confirmação, Documento sem itens e a aba Apr
     await expect(linhas, "duas gravações, duas versões").toHaveCount(2);
     const v2 = linhas.nth(0); const v1 = linhas.nth(1);
     await expect(v2).toContainText("Versão 2");
-    await expect(v2).toContainText("Formato da configuração: 4");
+    await expect(v2).toContainText("Formato da configuração: 5");
     await expect(v2.getByTestId("top-historico-regras-executadas")).toHaveText(TEXTOS.historicoExecutadas);
     await expect(v2.getByTestId("top-historico-regras-registradas")).toHaveCount(0);
     await expect(secoesDaVersao(v2)).toHaveText("Seções alteradas: Geral");
@@ -171,27 +186,39 @@ test("W-1 — venda no formato 4: Confirmação, Documento sem itens e a aba Apr
   }
 });
 
-test("W-1 — orçamento, pedido de venda e pedido de compra: Confirmação, Documento sem itens, Alteração e a aba Aprovação escondidos", async ({ page }) => {
+test("W-1 — orçamento, pedido de venda e pedido de compra: Confirmação, Documento sem itens, Alteração e as abas Aprovação e Execução escondidos", async ({ page }) => {
   await login(page);
+  // A PREMISSA NO SERVIDOR: nenhum dos três tem execução configurada no perfil que ele publica (a aba não decidiria nada).
+  const catalogo = await catalogoPublicadoE2E(page);
+  /** O rótulo do parceiro no documento de cada tipo — o que o editor do 5 mostra na Geral ("Exigir cliente"…). */
+  const PARCEIRO_DO_TIPO: Readonly<Record<string, string>> = { "vendas.orcamento": "Exigir cliente", "vendas.pedido": "Exigir cliente", "compras.pedido": "Exigir fornecedor" };
   const tops: TopE2E[] = [];
   try {
     for (const codigoBase of ["vendas.orcamento", "vendas.pedido", "compras.pedido"]) {
+      const perfil = catalogo.perfis.find((p) => p.familia === codigoBase);
+      expect(perfil?.abas, `premissa: o perfil publicado de ${codigoBase} não tem a aba Execução`).not.toContain("execucao");
+      expect(perfil?.abas, `premissa: e tem Próximas operações`).toContain("destinos");
       tops.push(await criarTopViaApi(page, codigoBase, cfg4(), { rotulo: `W-1 ${codigoBase}` }));
     }
     await abrirTelaDeTops(page);
     for (const top of tops) {
       const forma = await abrirEditorDaTop(page, top.codigo);
-      // PRESENÇA ANTES DA AUSÊNCIA: o editor do formato 4 montou (o aviso com a última frase nova) e a Geral existe —
-      // as exigências de preenchimento continuam valendo para estes documentos.
-      await expect(forma.getByTestId("top-aviso-versionamento"), `${top.codigoBase}: o editor é o do formato 4`).toHaveText(TEXTOS.avisoVersionamento);
+      // PRESENÇA ANTES DA AUSÊNCIA: o editor do formato 5 montou (o aviso com a última frase nova, a ajuda nova e o
+      // parceiro com o rótulo do tipo) e a Geral existe — as exigências de preenchimento continuam valendo para estes
+      // documentos.
+      await expect(forma.getByTestId("top-aviso-versionamento"), `${top.codigoBase}: o aviso do editor com as regras gerais`).toHaveText(TEXTOS.avisoVersionamento);
       await forma.getByTestId("top-aba-geral").click();
       await expect(forma.getByTestId("top-campo-geral-observacao"), `${top.codigoBase}: a Geral abriu`).toBeVisible();
+      await expect(forma.getByLabel(PARCEIRO_DO_TIPO[top.codigoBase]!, { exact: true }), `${top.codigoBase}: o editor é o do 5 (o rótulo do tipo)`)
+        .toHaveAttribute("data-testid", "top-campo-geral-parceiro");
+      await expect(forma.getByText(TEXTOS.ajudaGeral, { exact: true }), `${top.codigoBase}: a ajuda da Geral do editor do 5`).toBeVisible();
       for (const campo of [CAMPO.confirmacao, CAMPO.semItens, CAMPO.alteracao]) {
         await expect(forma.getByTestId(campo), `${top.codigoBase}: ${campo} some (a família só aceita o neutro)`).toHaveCount(0);
       }
       await expect(forma.getByTestId("top-aba-aprovacao"), `${top.codigoBase}: a aba Aprovação some`).toHaveCount(0);
       await expect(forma.locator("[data-testid^='top-regra-motivo-']"), `${top.codigoBase}: campo escondido não deixa motivo solto`).toHaveCount(0);
-      await expect(forma.getByTestId("top-aba-execucao"), `${top.codigoBase}: as outras abas continuam`).toBeVisible();
+      await expect(forma.getByTestId("top-aba-execucao"), `${top.codigoBase}: a aba Execução some (o tipo não aceita execução configurada)`).toHaveCount(0);
+      await expect(forma.getByTestId("top-aba-destinos"), `${top.codigoBase}: as outras abas continuam`).toBeVisible();
       await forma.getByTestId("top-cancelar").click();
       await expect(forma, "sem alteração, fechar não pergunta nada").toBeHidden();
     }
@@ -200,7 +227,7 @@ test("W-1 — orçamento, pedido de venda e pedido de compra: Confirmação, Doc
   }
 });
 
-test("W-1 — as quatro espécies de estoque: Confirmação e a aba Aprovação, com 'A partir de um valor' desabilitada e o motivo da matriz ao lado", async ({ page }) => {
+test("W-1 — as quatro espécies de estoque: Confirmação e a aba Aprovação (sem Execução), com 'A partir de um valor' desabilitada e o motivo da matriz ao lado", async ({ page }) => {
   await login(page);
   const tops: TopE2E[] = [];
   try {
@@ -224,8 +251,12 @@ test("W-1 — as quatro espécies de estoque: Confirmação e a aba Aprovação,
       await expect(forma.getByTestId("top-campo-geral-parceiro"), `${top.codigoBase}: o estoque não tem parceiro`).toHaveCount(0);
 
       // APROVAÇÃO — volta para o estoque com o bloco; "A partir de um valor" aparece DESABILITADA, com o motivo exato.
-      // Financeiro, fiscal e próximas operações continuam fora do documento de estoque.
-      for (const fora of ["destinos", "financeiro", "fiscal"]) {
+      // Financeiro, fiscal e próximas operações continuam fora do documento de estoque; no editor do 5 a Execução
+      // também (as espécies de estoque não têm execução configurada: a aba não decidiria nada). As abas que ficam são
+      // exatamente as do perfil — a presença ao lado da ausência.
+      await expect(forma.locator("[role='tablist'] [data-testid^='top-aba-']"), `${top.codigoBase}: as abas do documento de estoque no editor do 5`)
+        .toHaveText(["Identificação", "Geral", "Estoque", "Aprovação"]);
+      for (const fora of ["destinos", "financeiro", "fiscal", "execucao"]) {
         await expect(forma.getByTestId(`top-aba-${fora}`), `${top.codigoBase}: a aba ${fora} não se aplica`).toHaveCount(0);
       }
       await forma.getByTestId("top-aba-aprovacao").click();
@@ -246,7 +277,7 @@ test("W-1 — as quatro espécies de estoque: Confirmação e a aba Aprovação,
   }
 });
 
-test("W-1 — criação: trocar a família volta as regras ao neutro do formato 4, e o POST sai no formato 4 sem diálogo", async ({ page }) => {
+test("W-1 — criação pelo assistente: Trocar o tipo de movimento volta as regras ao neutro do formato 5, e o POST sai no formato 5 sem diálogo", async ({ page }) => {
   await login(page);
   await abrirTelaDeTops(page);
   const codigo = codigoTopE2E();
@@ -255,26 +286,30 @@ test("W-1 — criação: trocar a família volta as regras ao neutro do formato 
     await page.getByRole("button", { name: "Novo tipo de operação" }).click();
     const forma = page.getByTestId("form-tipo-operacao");
     await expect(forma).toBeVisible();
+    // O PASSO 1: o tipo de movimento antes de tudo. Depois, código e nome.
+    await escolherTipoNoAssistente(forma, "vendas.venda");
     await forma.getByTestId("top-campo-codigo").fill(codigo);
     await forma.getByTestId("top-campo-nome").fill(uniq("Venda criada W-1"));
-    await forma.getByTestId("top-campo-familia").selectOption("vendas.venda");
 
     // Venda: marca Automática.
     await forma.getByTestId("top-aba-geral").click();
     await forma.getByTestId(CAMPO.confirmacao).selectOption("automatica");
     await expect(forma.getByTestId(CAMPO.confirmacao)).toHaveValue("automatica");
 
-    // Troca para o orçamento: os campos somem (a família só aceita o neutro)…
+    // TROCAR → o passo 1 de novo → Orçamento: os campos somem (a família só aceita o neutro)…
     await forma.getByTestId("top-aba-identificacao").click();
-    await forma.getByTestId("top-campo-familia").selectOption("vendas.orcamento");
+    await forma.getByTestId("top-assistente-trocar").click();
+    await escolherTipoNoAssistente(forma, "vendas.orcamento");
+    await expect(forma.getByTestId("top-campo-codigo"), "o código digitado fica: ele não depende do tipo").toHaveValue(codigo);
     await forma.getByTestId("top-aba-geral").click();
     await expect(forma.getByTestId("top-campo-geral-observacao")).toBeVisible();
     await expect(forma.getByTestId(CAMPO.confirmacao)).toHaveCount(0);
-    // …e de volta à venda, a Automática NÃO ficou escondida no rascunho: o campo volta no neutro.
+    // …e TROCAR de volta para a venda: a Automática NÃO ficou escondida no rascunho — o campo volta no neutro.
     await forma.getByTestId("top-aba-identificacao").click();
-    await forma.getByTestId("top-campo-familia").selectOption("vendas.venda");
+    await forma.getByTestId("top-assistente-trocar").click();
+    await escolherTipoNoAssistente(forma, "vendas.venda");
     await forma.getByTestId("top-aba-geral").click();
-    await expect(forma.getByTestId(CAMPO.confirmacao), "trocar a família volta ao neutro do formato 4").toHaveValue("manual");
+    await expect(forma.getByTestId(CAMPO.confirmacao), "trocar o tipo volta ao neutro do formato 5").toHaveValue("manual");
 
     // Automática e aprovação Sempre, e salvar: na criação não há o que "passaria a valer" — sem diálogo.
     await forma.getByTestId(CAMPO.confirmacao).selectOption("automatica");
@@ -284,7 +319,7 @@ test("W-1 — criação: trocar a família volta as regras ao neutro do formato 
     await forma.getByTestId("top-salvar").click();
     const corpo = (await post).postDataJSON() as CorpoGravado & { codigo?: string; codigoBase?: string };
     expect(corpo.codigoBase).toBe("vendas.venda");
-    expect(corpo.configuracao?.versaoSchema, "a criação grava o formato 4").toBe(4);
+    expect(corpo.configuracao?.versaoSchema, "a criação grava o formato 5").toBe(5);
     expect(corpo.configuracao?.geral.confirmacao).toBe("automatica");
     expect(corpo.configuracao?.aprovacao.politica).toBe("sempre");
     await expect(forma).toBeHidden();
@@ -295,7 +330,7 @@ test("W-1 — criação: trocar a família volta as regras ao neutro do formato 
     expect(id, "a TOP criada pela tela existe no servidor").toBeTruthy();
     const gravada = await configuracaoNoServidor(page, id!);
     expect(gravada.versao, "a criação é UMA versão").toBe(1);
-    expect(gravada.schema, "no formato 4").toBe(4);
+    expect(gravada.schema, "no formato 5").toBe(5);
     expect(gravada.valor.geral.confirmacao).toBe("automatica");
     expect(gravada.valor.aprovacao.politica).toBe("sempre");
   } finally {
@@ -307,7 +342,7 @@ test("W-1 — criação: trocar a família volta as regras ao neutro do formato 
  * W-2 — A TOP DE PEDIDO DE COMPRA DE PRODUÇÃO (FORMATO 3, AUTOMÁTICA/PERMITIDO/PERMITIDA): O QUE VOLTA AO PADRÃO
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
 
-test("W-2 — pedido de compra no formato 3 com os valores de produção: o diálogo lista o que volta ao padrão; voltar não grava; 'Salvar assim mesmo' grava o formato 4 no neutro", async ({ page }) => {
+test("W-2 — pedido de compra no formato 3 com os valores de produção: o diálogo lista o que volta ao padrão; voltar não grava; 'Salvar assim mesmo' grava o formato 5 no neutro", async ({ page }) => {
   await login(page);
   // A forma EXATA da produção (lida em 01/10): formato 3, Automática, Permitido, Permitida — o resto no neutro.
   const top = await criarTopViaApi(page, "compras.pedido",
@@ -358,7 +393,7 @@ test("W-2 — pedido de compra no formato 3 com os valores de produção: o diá
     expect(aindaAntes.schema).toBe(3);
     expect(escritas, "nenhum PUT saiu ao voltar").toEqual([]);
 
-    // SALVAR → SALVAR ASSIM MESMO → PUT com o formato 4 no neutro.
+    // SALVAR → SALVAR ASSIM MESMO → PUT com o formato 5 no neutro.
     await forma.getByTestId("top-salvar").click();
     await expect(dialogo).toBeVisible();
     const put = page.waitForRequest(ehPutDaTop(top.id));
@@ -366,7 +401,7 @@ test("W-2 — pedido de compra no formato 3 com os valores de produção: o diá
     await dialogo.getByTestId("top-regras-salvar").click();
     const corpo = (await put).postDataJSON() as CorpoGravado;
     expect((await resposta).status(), "PUT 200 (o servidor aceita: a matriz do pedido só tem o neutro)").toBe(200);
-    expect(corpo.configuracao?.versaoSchema, "o corpo enviado é o formato 4").toBe(4);
+    expect(corpo.configuracao?.versaoSchema, "o corpo enviado é o formato 5").toBe(5);
     expect(corpo.configuracao?.geral.confirmacao).toBe("manual");
     expect(corpo.configuracao?.geral.documentoSemItens).toBe("proibido");
     expect(corpo.configuracao?.geral.alteracaoAposConfirmacao).toBe("bloqueada");
@@ -375,8 +410,8 @@ test("W-2 — pedido de compra no formato 3 com os valores de produção: o diá
 
     const depois = await configuracaoNoServidor(page, top.id);
     expect(depois.versao, "as regras voltaram ao padrão: é mudança, versão nova").toBe(2);
-    expect(depois.schema, "no formato 4").toBe(4);
-    expect(depois.valor.versaoSchema).toBe(4);
+    expect(depois.schema, "no formato 5").toBe(5);
+    expect(depois.valor.versaoSchema).toBe(5);
     expect([depois.valor.geral.confirmacao, depois.valor.geral.documentoSemItens, depois.valor.geral.alteracaoAposConfirmacao, depois.valor.aprovacao.politica],
       "as quatro regras no neutro").toEqual(["manual", "proibido", "bloqueada", "nenhuma"]);
 
@@ -386,7 +421,7 @@ test("W-2 — pedido de compra no formato 3 com os valores de produção: o diá
     await expect(linhas).toHaveCount(2);
     const v2 = linhas.nth(0); const v1 = linhas.nth(1);
     await expect(v2).toContainText("Versão 2");
-    await expect(v2).toContainText("Formato da configuração: 4");
+    await expect(v2).toContainText("Formato da configuração: 5");
     await expect(secoesDaVersao(v2)).toHaveText("Seções alteradas: Geral");
     await expect(v2.getByTestId("top-historico-regras-executadas"), "a versão 2 está no neutro").toHaveCount(0);
     await expect(v2.getByTestId("top-historico-regras-registradas")).toHaveCount(0);
@@ -441,12 +476,12 @@ test("W-2 — venda no formato 2 com observação, Automática e aprovação por
     const put = page.waitForRequest(ehPutDaTop(top.id));
     await regras.getByTestId("top-regras-salvar").click();
     const corpo = (await put).postDataJSON() as CorpoGravado;
-    expect(corpo.configuracao?.versaoSchema, "o corpo enviado é o formato 4").toBe(4);
+    expect(corpo.configuracao?.versaoSchema, "o corpo enviado é o formato 5").toBe(5);
     await expect(forma).toBeHidden();
 
     const depois = await configuracaoNoServidor(page, top.id);
     expect(depois.versao, "as regras passam a valer: versão nova").toBe(2);
-    expect(depois.schema).toBe(4);
+    expect(depois.schema, "no formato 5").toBe(5);
     expect(depois.valor.geral.confirmacao).toBe("automatica");
     expect(depois.valor.geral.exigeObservacao).toBe(true);
     expect(depois.valor.aprovacao).toMatchObject({ politica: "por_valor", valorMinimo: "1500.00" });
