@@ -22,9 +22,12 @@ test.describe("modelo base: seleção, registro, anexos", () => {
   test("modo registro: abre o selecionado, navega, volta com o registro selecionado; edição só Salvar; novo sem navegação", async ({ page }) => {
     await login(page); await page.goto("/cadastros/empresas");
     const rows = page.getByTestId("b1-row"); await expect(rows.nth(1)).toBeVisible();
+    // O total vem da lista (outros specs do mesmo banco criam empresas): a premissa é haver pelo menos duas, e o
+    // contador do registro tem de dizer a posição e o MESMO total que a tabela lista.
+    const total = await rows.count(); expect(total, "premissa: a lista tem pelo menos duas empresas").toBeGreaterThanOrEqual(2);
     await rows.nth(1).click(); await page.getByLabel("Registro", { exact: true }).click();
-    const form = page.getByTestId("b1-form"); await expect(form).toBeVisible(); await expect(form.getByText("2/2")).toBeVisible();
-    await page.getByLabel("Anterior").click(); await expect(form.getByText("1/2")).toBeVisible();
+    const form = page.getByTestId("b1-form"); await expect(form).toBeVisible(); await expect(form.getByText(`2/${total}`)).toBeVisible();
+    await page.getByLabel("Anterior").click(); await expect(form.getByText(`1/${total}`)).toBeVisible();
     // volta para a tabela: o registro aberto (1º) fica selecionado
     await page.getByLabel("Tabela", { exact: true }).click(); await expect(rows.nth(0)).toHaveClass(/selected/); await expect(page.getByText("Selecionados: 1")).toBeVisible();
     // edição: só Salvar/Cancelar, sem Novo, sem alternância de modo, navegação bloqueada

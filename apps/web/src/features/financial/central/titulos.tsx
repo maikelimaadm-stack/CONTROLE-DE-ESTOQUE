@@ -206,7 +206,11 @@ export function CentralTitulos({ direcao }: { direcao: DirecaoDaCentral }) {
       })}
     </div>
 
-    <FilterBar f={f} set={set} reset={() => { reset(); aplicar({}); }} onApply={() => aplicar({ ...f })} filters={filtros} />
+    {/* A faixa de filtros não encolhe: na coluna flex (min-h-0) com a lista cheia, a `.mg-rail` (min-height fixo) deixava
+
+        a última linha dos filtros vazar por baixo da barra de ações em lote — o "Filtrar" ficava inalcançável. */}
+
+    <div className="shrink-0"><FilterBar f={f} set={set} reset={() => { reset(); aplicar({}); }} onApply={() => aplicar({ ...f })} filters={filtros} /></div>
 
     <div className="flex flex-wrap items-center gap-1.5" role="toolbar" aria-label="Ações em lote">
       <span className="mr-1 text-[12px] text-slate-500" data-testid="fin-lote-contagem">{sel.size ? `${sel.size} selecionado(s)` : "Selecione títulos para agir em lote"}</span>
