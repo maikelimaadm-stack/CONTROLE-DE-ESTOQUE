@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   configuracaoNeutraTopV5, configuracaoTopParaEdicaoV5, familiaOperacionalDeDocumentoEstoque, lerConfiguracaoTop,
   secoesExtensaoDaVersaoTop,
+  secoesExtensaoNeutrasTop,
   type ConfiguracaoTipoOperacao, type ConfiguracaoTipoOperacaoV5, type EspecieEstoque,
 } from "@agro/domain";
 import {
@@ -277,7 +278,8 @@ describe("FS-5 — consumo no formato 4, lido como 5", () => {
     expect(lida.valor, "o 4 não tem as seções novas").not.toHaveProperty("destino");
     expect(lida.valor).not.toHaveProperty("fluxo");
     // A EXECUÇÃO lê a versão gravada: as duas no neutro (nada trava).
-    expect(secoesExtensaoDaVersaoTop(lida.valor)).toEqual({ destino: NEUTRO_DESTINO, fluxo: NEUTRO_FLUXO });
+    // As duas desta fase, escritas à mão; as das outras fases (F6a em diante) também no neutro do domínio.
+    expect(secoesExtensaoDaVersaoTop(lida.valor)).toEqual({ ...secoesExtensaoNeutrasTop(), destino: NEUTRO_DESTINO, fluxo: NEUTRO_FLUXO });
     // O EDITOR lê a vista do 5: as duas no neutro.
     const vista = configuracaoTopParaEdicaoV5(lida.valor);
     expect([vista.versaoSchema, vista.destino, vista.fluxo]).toEqual([5, NEUTRO_DESTINO, NEUTRO_FLUXO]);
@@ -314,7 +316,8 @@ describe("FS-6 — um 5 gravado antes desta fase (sem as chaves)", () => {
 
     const lida = await configuracaoDoDetalhe(id);
     expect(lida.versaoSchema).toBe(5);
-    expect(secoesExtensaoDaVersaoTop(lida.valor), "a seção ausente num 5 vale o neutro").toEqual({ destino: NEUTRO_DESTINO, fluxo: NEUTRO_FLUXO });
+    expect(secoesExtensaoDaVersaoTop(lida.valor), "a seção ausente num 5 vale o neutro (as das outras fases também)")
+      .toEqual({ ...secoesExtensaoNeutrasTop(), destino: NEUTRO_DESTINO, fluxo: NEUTRO_FLUXO });
     const vista = configuracaoTopParaEdicaoV5(lida.valor);
     const f = await foto(id);
     const r = await editarTop(id, { configuracao: vista });
