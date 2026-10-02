@@ -1899,7 +1899,7 @@ SQL, e o `erp_app` a executa.
 | `versao_documento` (bigint) | a `version` do documento (0039) | — | — |
 | `valor_documento` (`numeric(18,2)`) | o `total` | o `valor_total` | — |
 | `decisao` (`aprovado` \| `reprovado`) | sim | sim | sim |
-| `observacao` (até 500; obrigatória na reprovação, com ao menos um caractere que não seja espaço em branco, por CHECK: `observacao ~ '[^[:space:]]'` — motivo só de espaço, tab ou quebra de linha é recusado) | sim | sim | sim |
+| `observacao` (até 500; obrigatória na reprovação, com ao menos um caractere fora da classe `[[:space:]]` do banco, por CHECK: `observacao ~ '[^[:space:]]'` — motivo só de espaço, tab ou quebra de linha é recusado; a classe segue o ctype do banco, e a API apara o motivo antes) | sim | sim | sim |
 | `decidido_por` (FK `erp.users`), `decidido_em` | sim | sim | sim |
 
 - **Uma linha por DECISÃO, só inserção.** Gatilhos de imutabilidade — por linha (UPDATE e DELETE) e por comando (BEFORE
@@ -1976,8 +1976,9 @@ migração) continua guardado pela decisão da linha:
   MAIOR valor entre o de antes e o de depois do UPDATE (venda: `total`; compra: `valor_total`; `numeric(18,2)` dos dois
   lados) E se a `tipo_operacao_versao_id` dela for a de DEPOIS do UPDATE; no estoque, que não tem valor, só a versão.
   Senão, a MESMA `CONFLICT: Este documento precisa de aprovação antes de ser confirmado.` da falta de decisão: confirmar
-  e, no mesmo UPDATE, subir o total ou trocar a TOP não aproveita a aprovação antiga. Na compra e no estoque, que não têm
-  edição, isso também pega valor ou TOP mudados por fora depois da decisão.
+  e, no mesmo UPDATE, subir o total ou trocar a TOP não aproveita a aprovação antiga. Na compra, isso também pega o valor
+  mudado por fora depois da decisão; a TOP e a versão da compra e do estoque já não mudam depois do lançamento (0036 e
+  0040), e ali a conferência da versão é só defesa em profundidade.
 - **A TOP tirada no mesmo UPDATE (venda).** O UPDATE que confirma a venda e, no MESMO comando, deixa
   `tipo_operacao_versao_id` nula NÃO dispara a guarda: o WHEN é o MESMO da 0023 (com versão congelada), que também não
   dispara. A API recusa tirar a TOP de uma venda (`PUT` com `tipo_operacao_id: null` → 422 `VALIDATION_ERROR`; a `PATCH`

@@ -1653,8 +1653,8 @@ o de depois do UPDATE) e a versão da TOP aprovada igual à de depois do UPDATE;
 recusa "precisa de aprovação" — confirmar e, no mesmo UPDATE, subir o total ou trocar a TOP não aproveita a aprovação
 antiga. Na venda, o UPDATE que confirma e, no mesmo comando, deixa a TOP nula não dispara a guarda (o MESMO WHEN da
 0023, que também não dispara): a API recusa tirar a TOP, e a guarda de banco para isso é de outra fatia. A reprovação
-exige motivo com ao menos um caractere que não seja espaço em branco (CHECK `observacao ~ '[^[:space:]]'`: motivo só de
-tab ou de quebra de linha é recusado). Formato 1 a 3 nunca é barrado. As pós-condições conferem objetos (as tabelas, a
+exige motivo com ao menos um caractere fora da classe `[[:space:]]` do banco (CHECK `observacao ~ '[^[:space:]]'`: motivo
+só de espaço, tab ou quebra de linha é recusado; a API apara o motivo antes). Formato 1 a 3 nunca é barrado. As pós-condições conferem objetos (as tabelas, a
 RLS forçada e a política única, as 12 FKs sem cascata, os 9 CHECKs, os índices, a forma da conta e das funções de
 gatilho, EXECUTE das funções de gatilho só do dono, os 12 gatilhos das tabelas de aprovação — o conjunto exato, nenhum a
 mais, os 3 de TRUNCATE inclusive —, as 3 guardas, o WHEN igual ao da 0023, os quatro BEFORE UPDATE por linha da venda
@@ -1798,7 +1798,7 @@ select c.relname as tabela, c.relrowsecurity as rls, c.relforcerowsecurity as fo
  where n.nspname = 'erp' and c.relname in ('aprovacoes_venda', 'aprovacoes_compra', 'aprovacoes_estoque')
  order by c.relname;
 --    esperado: 3 linhas · rls e forcada true · politicas tenant_e_empresa · sel e ins true · upd, del e trunc false ·
---    reprovacao com observacao ~ '[^[:space:]]' (um caractere que não seja espaço em branco; nunca btrim)
+--    reprovacao com observacao ~ '[^[:space:]]' (um caractere fora de [[:space:]]; nunca btrim)
 
 -- 3. os gatilhos: 3 guardas, 3 de inserção, 3 de imutabilidade por linha, 3 de TRUNCATE (e os 3 de auditoria), todos
 --    ligados ('O')

@@ -71,8 +71,9 @@
 --        for ≥ o MAIOR valor entre o de antes e o de depois (venda: total; compra: valor_total; numeric(18,2) dos
 --        dois lados, sem arredondamento) e se a tipo_operacao_versao_id dela for a de DEPOIS do UPDATE (no estoque,
 --        que não tem valor, só a versão). Confirmar e, no mesmo comando, subir o valor ou trocar a TOP recebe a
---        MESMA 'CONFLICT' de "precisa de aprovação" que a falta de decisão recebe. Na compra e no estoque, que não
---        têm edição, isso também pega valor ou TOP mudados por fora depois da decisão;
+--        MESMA 'CONFLICT' de "precisa de aprovação" que a falta de decisão recebe. Na compra, isso também pega o
+--        valor mudado por fora depois da decisão; a TOP e a versão da compra e do estoque já não mudam depois do
+--        lançamento (0036 e 0040), e ali a conferência da versão é só defesa em profundidade;
 --      · o UPDATE que confirma a venda e, no MESMO comando, deixa a TOP nula NÃO dispara a guarda: o WHEN é o MESMO
 --        da 0023 (NEW.tipo_operacao_versao_id is not null). A API recusa tirar a TOP de uma venda
 --        (apps/api/src/routes/sales.ts: "tipo_operacao_id não pode ser removido de um documento"), e os UPDATEs de
@@ -223,8 +224,9 @@ create table erp.aprovacoes_venda (
   observacao text constraint chk_aprovacoes_venda_observacao check (observacao is null or length(observacao) <= 500),
   decidido_por uuid not null references erp.users(id),
   decidido_em timestamptz not null default now(),
-  -- Reprovação exige motivo com ao menos um caractere que não seja espaço em branco ([:space:]: espaço, tab,
-  -- quebra de linha…): btrim só tira o espaço, e um motivo feito só de tab ou de quebra de linha passaria.
+  -- Reprovação exige motivo com ao menos um caractere fora da classe [[:space:]] do banco (espaço, tab, quebra de
+  -- linha…): btrim só tira o espaço, e um motivo feito só de tab ou de quebra de linha passaria. A classe segue o
+  -- ctype do banco (o espaço inseparável não entra nela); a API apara o motivo antes de gravar (z.string().trim()).
   constraint chk_aprovacoes_venda_reprovacao check (decisao = 'aprovado' or (observacao is not null and observacao ~ '[^[:space:]]')),
   -- A venda não tem chave (id, organization_id), e esta fatia não cria uma: o gatilho de inserção confere a organização.
   constraint fk_aprovacoes_venda_documento foreign key (documento_id) references erp.sales_documents (id),
@@ -283,7 +285,7 @@ comment on column erp.aprovacoes_venda.tipo_operacao_versao_id is 'Versão conge
 comment on column erp.aprovacoes_venda.versao_documento is 'Versão do documento (sales_documents.version) que a decisão aprova ou reprova; tem de ser a atual na inserção.';
 comment on column erp.aprovacoes_venda.valor_documento is 'Total do documento no momento da decisão (atribuído pelo gatilho, do documento).';
 comment on column erp.aprovacoes_venda.decisao is 'aprovado ou reprovado.';
-comment on column erp.aprovacoes_venda.observacao is 'Observação da aprovação (opcional) ou motivo da reprovação (obrigatório, com ao menos um caractere que não seja espaço em branco); até 500 caracteres.';
+comment on column erp.aprovacoes_venda.observacao is 'Observação da aprovação (opcional) ou motivo da reprovação (obrigatório, com ao menos um caractere fora da classe [[:space:]] do banco: espaço, tab, quebra de linha); até 500 caracteres.';
 comment on column erp.aprovacoes_venda.decidido_por is 'Usuário que decidiu (atribuído pelo gatilho: o usuário da transação).';
 comment on column erp.aprovacoes_venda.decidido_em is 'Momento da decisão (atribuído pelo gatilho).';
 
@@ -296,7 +298,7 @@ comment on column erp.aprovacoes_compra.tipo_operacao_id is 'TOP do documento na
 comment on column erp.aprovacoes_compra.tipo_operacao_versao_id is 'Versão congelada da TOP do documento na decisão (FK de três colunas; atribuída pelo gatilho).';
 comment on column erp.aprovacoes_compra.valor_documento is 'Valor total do documento no momento da decisão (atribuído pelo gatilho, do documento).';
 comment on column erp.aprovacoes_compra.decisao is 'aprovado ou reprovado.';
-comment on column erp.aprovacoes_compra.observacao is 'Observação da aprovação (opcional) ou motivo da reprovação (obrigatório, com ao menos um caractere que não seja espaço em branco); até 500 caracteres.';
+comment on column erp.aprovacoes_compra.observacao is 'Observação da aprovação (opcional) ou motivo da reprovação (obrigatório, com ao menos um caractere fora da classe [[:space:]] do banco: espaço, tab, quebra de linha); até 500 caracteres.';
 comment on column erp.aprovacoes_compra.decidido_por is 'Usuário que decidiu (atribuído pelo gatilho: o usuário da transação).';
 comment on column erp.aprovacoes_compra.decidido_em is 'Momento da decisão (atribuído pelo gatilho).';
 
@@ -308,7 +310,7 @@ comment on column erp.aprovacoes_estoque.documento_id is 'Documento de estoque d
 comment on column erp.aprovacoes_estoque.tipo_operacao_id is 'TOP do documento na decisão (atribuída pelo gatilho, do documento).';
 comment on column erp.aprovacoes_estoque.tipo_operacao_versao_id is 'Versão congelada da TOP do documento na decisão (FK de três colunas; atribuída pelo gatilho).';
 comment on column erp.aprovacoes_estoque.decisao is 'aprovado ou reprovado.';
-comment on column erp.aprovacoes_estoque.observacao is 'Observação da aprovação (opcional) ou motivo da reprovação (obrigatório, com ao menos um caractere que não seja espaço em branco); até 500 caracteres.';
+comment on column erp.aprovacoes_estoque.observacao is 'Observação da aprovação (opcional) ou motivo da reprovação (obrigatório, com ao menos um caractere fora da classe [[:space:]] do banco: espaço, tab, quebra de linha); até 500 caracteres.';
 comment on column erp.aprovacoes_estoque.decidido_por is 'Usuário que decidiu (atribuído pelo gatilho: o usuário da transação).';
 comment on column erp.aprovacoes_estoque.decidido_em is 'Momento da decisão (atribuído pelo gatilho).';
 
