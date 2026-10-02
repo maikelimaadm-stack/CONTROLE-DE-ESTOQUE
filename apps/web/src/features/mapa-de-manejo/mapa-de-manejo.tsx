@@ -106,10 +106,9 @@ export function MapaDeManejo() {
   const [erro, setErro] = React.useState<string | null>(null);
   const [localizacao, setLocalizacao] = React.useState<{ precisao: number } | null>(null);
   const [erroLocalizacao, setErroLocalizacao] = React.useState<string | null>(null);
-  const [cfg, setCfg] = React.useState<ConfigIma>(IMA_PADRAO);
-
   // Refs lidos pelos eventos do mapa (registrados uma vez só).
   const ed = React.useRef<Editor>(editorVazio());
+  /** Ímã fixo: 8 px, vértice + aresta (sem painel de ajuste na UI). */
   const cfgRef = React.useRef<ConfigIma>(IMA_PADRAO);
   const desenhandoRef = React.useRef(false);
   const formAbertoRef = React.useRef(false);
@@ -508,15 +507,6 @@ export function MapaDeManejo() {
     if (e.pontos.length >= 3) { fechar("Fechado"); return; }
     e.acao = "Marque pelo menos 3 pontos"; redesenhar();
   }
-  function mudarIma(m: Partial<ConfigIma>) {
-    // Ímã permanece ligado — a barra só ajusta tolerância / vértice / aresta.
-    const novo = { ...cfgRef.current, ...m, ligado: true };
-    cfgRef.current = novo; setCfg(novo);
-    const e = ed.current; e.ima = null;
-    if (m.tolerancia !== undefined) e.acao = `Ímã em ${novo.tolerancia} px ≈ ${num(Math.round(novo.tolerancia * metrosPorPx), 0)} m neste zoom`;
-    redesenhar();
-  }
-
   // Troca entre satélite e ruas sem recarregar o estilo: a base de ruas entra sob demanda, sob as áreas.
   async function trocarBase(novo: TipoBase) {
     if (novo === base || semImagem) return;
@@ -539,12 +529,6 @@ export function MapaDeManejo() {
 
   // ---------- derivados para a tela ----------
   const mapa = mapaPronto ? mapRef.current : null;
-  const metrosPorPx = (() => {
-    if (!mapa) return 0;
-    const c = mapa.getCanvasContainer(); const x = c.clientWidth / 2, y = c.clientHeight / 2;
-    const a = mapa.unproject([x, y]), b = mapa.unproject([x + 100, y]);
-    return distanciaM([a.lng, a.lat], [b.lng, b.lat]) / 100;
-  })();
   const rotulosAreas: RotuloArea[] = mapa
     ? areas.flatMap((a) => {
       const anel = anelAberto(a.geometria);
@@ -684,7 +668,7 @@ export function MapaDeManejo() {
                     <Button type="button" size="icon" variant="ghost" onClick={refazer} disabled={!podeRefazer(e.hist)} aria-label="Refazer" title="Refazer (Ctrl+Shift+Z)" data-testid="mapa-refazer"><Redo2 className="h-4 w-4" aria-hidden /></Button>
                     <Button type="button" size="icon" variant="ghost" onClick={recomecar} aria-label="Recomeçar" title="Recomeçar" data-testid="mapa-recomecar"><RotateCcw className="h-4 w-4" aria-hidden /></Button>
                   </div>
-                  <BarraIma cfg={cfg} onCfg={mudarIma} metrosPorPx={metrosPorPx} />
+                  <BarraIma />
                 </div>
               )}
             </div>
@@ -694,7 +678,6 @@ export function MapaDeManejo() {
             <div className="pointer-events-none absolute bottom-2 left-2 flex max-w-[calc(100%-7rem)] items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-3 py-1 text-xs shadow-sm">
               <span className={cn("h-2 w-2 shrink-0 rounded-full", e.arrasto ? "bg-emerald-400" : "bg-green-500")} aria-hidden />
               <span className="truncate text-slate-700" data-testid="mapa-acao">{e.acao}</span>
-              <span className="shrink-0 tabular-nums text-slate-400">· ímã {cfg.tolerancia} px ≈ {num(Math.round(cfg.tolerancia * metrosPorPx), 0)} m</span>
             </div>
           )}
 

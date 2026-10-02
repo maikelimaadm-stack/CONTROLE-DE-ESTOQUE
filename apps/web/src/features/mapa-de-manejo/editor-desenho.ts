@@ -32,7 +32,7 @@ export interface Ima {
 export interface AlvoPx { nome: string; pts: Px[]; coords: LngLat[] }
 
 export interface ConfigIma { ligado: boolean; tolerancia: number; vertice: boolean; aresta: boolean }
-export const IMA_PADRAO: ConfigIma = { ligado: true, tolerancia: 14, vertice: true, aresta: true };
+export const IMA_PADRAO: ConfigIma = { ligado: true, tolerancia: 8, vertice: true, aresta: true };
 export const TOLERANCIAS_RAPIDAS = [8, 14, 22, 32] as const;
 export const TOLERANCIA_MIN = 1;
 export const TOLERANCIA_MAX = 200;

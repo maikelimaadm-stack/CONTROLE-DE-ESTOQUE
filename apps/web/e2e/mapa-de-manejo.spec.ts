@@ -2,12 +2,32 @@ import { test, expect, type Page } from "@playwright/test";
 import { api, login, uniq } from "./helpers";
 
 /**
- * MAPA-01 — Mapa de Manejo (UX: ímã compacto, sem lateral de desenho, paleta 9 cores).
+ * MAPA-01 — Mapa de Manejo (UX: ímã só ícone a 8 px, sem lateral de desenho, paleta 9 cores).
  */
 test.use({ launchOptions: { ...(process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {}), args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist"] } });
 
+async function limparAreas(page: Page) {
+  const lista = await api<{ items: { id: string }[] }>(page, "GET", "/api/resources/mapa_areas?pageSize=500");
+  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333";
+  for (const a of lista.items ?? []) {
+    await page.evaluate(async ({ id, base }) => {
+      const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string | null; empresaId: string | null };
+      const res = await fetch(`${base}/api/resources/mapa_areas/${id}`, {
+        method: "DELETE",
+        headers: {
+          authorization: `Bearer ${s.token}`,
+          ...(s.orgId ? { "x-org-id": s.orgId } : {}),
+          ...(s.empresaId ? { "x-empresa-id": s.empresaId } : {})
+        }
+      });
+      if (!res.ok) throw new Error(`DELETE mapa_areas ${id}: ${res.status}`);
+    }, { id: a.id, base });
+  }
+}
+
 test("o módulo Mapa de Manejo abre e lista as áreas", async ({ page }) => {
   await login(page);
+  await limparAreas(page);
   await page.goto("/mapa-de-manejo");
   await expect(page.getByRole("heading", { name: "Mapa de Manejo" })).toBeVisible();
   await expect(page.getByTestId("mapa-nova-area")).toBeVisible();
@@ -33,6 +53,7 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
 
   test("desenha com as ferramentas do editor, grava, e a segunda área gruda na primeira", async ({ page }) => {
     await login(page);
+    await limparAreas(page);
     await page.goto("/mapa-de-manejo");
     const pontos = page.getByTestId("mapa-medida-pontos");
     const acao = page.getByTestId("mapa-acao");
@@ -41,7 +62,7 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
     const em = await abrirEditor(page);
     const clicar = (dx: number, dy: number, opts?: { button?: "right" }) => { const p = em(dx, dy); return page.mouse.click(p.x, p.y, opts); };
 
-    // ímã fica sempre ligado (sem botão liga/desliga); mapa vazio → pontos livres
+    // ímã fixo (ícone só; 8 px, vértice+aresta); mapa vazio → pontos livres
     await clicar(-L, -L); await clicar(L, -L); await clicar(L, L);
     await expect(pontos).toHaveText("3");
     await expect(page.getByTestId("mapa-lado"), "aberta: um rótulo de medida por lado traçado").toHaveCount(2);
@@ -88,16 +109,16 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
     await expect(page.getByTestId("mapa-instrucao")).toBeHidden();
     await expect(page.getByTestId("mapa-item-area").filter({ hasText: primeira })).toBeVisible();
 
-    // ---------- 2ª área: ímã ----------
+    // ---------- 2ª área: ímã (tolerância padrão 8 px) ----------
     await abrirEditor(page);
-    const perto = em(L + 6, -L - 5);
+    const perto = em(L + 5, -L - 4);
     await page.mouse.move(perto.x, perto.y);
     await expect(page.getByTestId("mapa-ima-marca")).toHaveAttribute("data-tipo", "vertice");
     await page.mouse.click(perto.x, perto.y);
     await expect(acao).toHaveText(/^Ponto grudou no vértice de /);
     await expect(page.getByTestId("mapa-medida-grudados")).toHaveText("1");
 
-    await clicar(L + 8, 0);
+    await clicar(L + 4, 0);
     await expect(acao).toHaveText(/^Ponto grudou na aresta de /);
     await expect(page.getByTestId("mapa-medida-grudados")).toHaveText("2");
 
