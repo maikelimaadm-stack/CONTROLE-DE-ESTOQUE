@@ -2559,18 +2559,29 @@ Aqui, o que é do contrato da TOP:
   nega o corpo inteiro (a régua das condições).
 - **Perfis derivados:** a aba "Padrões financeiros" depois de Estoque (e das seções da F5a e da F6a que a família usar)
   em `vendas.pedido`, `vendas.venda`, `financeiro.conta_a_pagar`, `financeiro.conta_a_receber`,
-  `financeiro.movimento_bancario` e `compras.solicitacao`; toda outra família a tem no padrão (o pedido de compra e a
-  compra até a F9b). A família nova `financeiro.movimento_bancario` (a tabela `erp.bank_movements` inteira) e os tipos
-  `conta_pagar`, `conta_receber` e `movimento_bancario` com tela: o assistente passa a oferecer o grupo Financeiro. Com a
-  F5a e a F6a: 28 famílias no registry (28 perfis), 22 tipos no catálogo, 20 com família, 12 com tela e 16 famílias sem
-  tela no passo 1; a matriz das regras gerais continua com 13 (as do Financeiro não entram).
+  `financeiro.movimento_bancario`, `compras.solicitacao` e, desde a F9b, `compras.pedido` (depois de "Fluxo de compra")
+  e `compras.compra` (depois de "Divergência com o pedido"); toda outra família a tem no padrão. A família nova
+  `financeiro.movimento_bancario` (a tabela `erp.bank_movements` inteira) e os tipos `conta_pagar`, `conta_receber` e
+  `movimento_bancario` com tela: o assistente passa a oferecer o grupo Financeiro. Com a F5a e a F6a: 28 famílias no
+  registry (28 perfis), 22 tipos no catálogo, 20 com família, 12 com tela e 16 famílias sem tela no passo 1; a matriz
+  das regras gerais continua com 13 (as do Financeiro não entram).
 - **No 5, fora do tipo:** a seção fora do neutro numa família que não a usa é a recusa de §18.5 ("Esta operação não usa a
   seção Padrões financeiros."); dentro da família, `recusasDoFinanceiroPadraoDaFamilia` (a provisão fora do pedido de
-  venda, "exigir" onde não há "sem natureza e centro"), na lista única de `conferirFiscalDaFamilia` (`:288`).
+  venda e do pedido de compra — F9b —, "exigir" onde não há "sem natureza e centro": o avulso, o movimento, o pedido de
+  compra e a compra), na lista única de `conferirFiscalDaFamilia` (`:288`).
 - **Execução** (`apps/api/src/lib/financeiro-top.ts:62-74`): sem versão ou versão inexistente → neutro; ilegível ou 1 a 4
   → neutro e padrões nulos; 5 de família sem perfil → neutro; 5 → a seção e os padrões da versão CONGELADA no documento
   (a TOP corrente no avulso e no movimento; a TOP padrão da família na solicitação). A conta padrão é reconferida por
   quem lança (`contaPadraoUtilizavel`, `apps/api/src/lib/financeiro-padroes-top.ts:181-196`, com
   `MENSAGEM_CONTA_PADRAO_INUTILIZAVEL`): a versão é imutável, o cadastro da conta não.
+- **Compras (F9b):** o perfil de `compras.pedido` (com a provisão, a pagar, momento `ao_finalizar_o_pedido`) e o de
+  `compras.compra` (sem) têm `semClassificacao: false`: a classificação delas é sempre `planoDaClassificacao` com
+  "exigir" (documento → padrão da TOP → recusa), nunca o legado. A API lê a versão CONGELADA do documento em três
+  pontos:
+  - no salvar, `padroesDaTopNoSalvarDaCompra` (`apps/api/src/lib/financeiro-compra.ts`);
+  - na confirmação, `padroesDasVersoesParaExecucao` sobre a linha da versão já lida
+    (`apps/api/src/routes/compras-confirmacao.ts:310-311`; formatos 1 a 4 sem consulta nova);
+  - na provisão, a fonte `documentos_compra` do núcleo (`apps/api/src/lib/financeiro-provisao.ts:191-218`).
+  O produto (eventos, recusas, compatibilidade) está em `docs/OPERACOES-CONTRACT.md` §7 (F9b).
 - **Skew:** sem `padroesFinanceiros`, o editor não mostra os campos e não manda a chave (a API anterior a recusaria). O
   detector do web da base continua o da F4 (o CONJUNTO de seções é medido na F12).

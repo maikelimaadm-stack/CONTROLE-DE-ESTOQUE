@@ -1877,20 +1877,23 @@ leitura (nada é gravado). O passo 5 grava, e só com a decisão dele.
    Depois, as abas mostram só o que vale para ele.":
    - Vendas (Orçamento, Pedido, Venda), Compras (Pedido, Compra), Movimentação interna (Entrada, Saída/baixa,
      Transferência, Ajuste);
-   - Módulos e Financeiro NÃO aparecem.
+   - Módulos NÃO aparecem; Financeiro (Conta a pagar, Conta a receber, Movimento bancário) aparece desde a F9a
+     (decisão 286).
 2. Escolher Entrada:
    - "Movimento" só leitura, com "Trocar";
    - as abas Identificação, Geral, Estoque e Aprovação;
    - na Geral, só "Exigir observação".
    "Trocar" → Venda:
-   - as abas Identificação, Geral, Próximas operações, Estoque, Financeiro, Fiscal, Aprovação e Execução;
+   - as abas Identificação, Geral, Próximas operações, Estoque, Padrões financeiros (desde a F9a), Financeiro, Fiscal,
+     Aprovação e Execução;
    - na Geral, "Exigir cliente", e a ajuda termina em "Documento sem itens: quando esta operação permite, a venda e a
      compra podem ser salvas sem item nas Centrais de Vendas e de Compras (o recebimento de um pedido sempre pede
      item). As exigências de preenchimento são cobradas no lançamento.".
    Fechar sem salvar.
 3. Abrir a TOP de pedido de compra:
-   - as abas Identificação, Geral, Próximas operações, Estoque, Fluxo de compra, Financeiro, Fiscal e Aprovação, sem
-     Execução (Fluxo de compra e Aprovação desde a F6a, decisão 283);
+   - as abas Identificação, Geral, Próximas operações, Estoque, Fluxo de compra, Padrões financeiros, Financeiro,
+     Fiscal e Aprovação, sem Execução (Fluxo de compra e Aprovação desde a F6a, decisão 283; Padrões financeiros desde
+     a F9b, decisão 286);
    - na Geral, "Exigir fornecedor";
    - na Estoque, "Exigir local de estoque".
    Clicar Salvar SEM mexer → o diálogo "Estas regras passam a valer" lista o que volta ao padrão (se ela ainda estiver
@@ -2338,10 +2341,10 @@ leitura (nada é gravado); o passo 7 grava, e só com a decisão dele.
 1. Perfis de usuário: "Pedidos de Compra" tem "Aprovar"; "Orçamentos de Compra" (Ver, Criar, Editar, Excluir) aparece em
    Operacional › Compras; o Administrador tem todas. Fechar sem salvar.
 2. Configurações › Operações › Tipos de Operação › a TOP de pedido de compra: as abas Identificação, Geral, Próximas
-   operações, Estoque, Fluxo de compra, Financeiro, Fiscal e Aprovação (sem Execução). Na "Fluxo de compra", "Exigir
-   pedido finalizado para receber" = Não, com a ajuda que termina em "… como hoje — e o aberto é recebido sem passar pela
-   aprovação desta TOP, que só vale ao finalizar."; na "Aprovação", "Sem aprovação", com "Sempre" e "A partir de um
-   valor" habilitados. Fechar sem salvar.
+   operações, Estoque, Fluxo de compra, Padrões financeiros (F9b), Financeiro, Fiscal e Aprovação (sem Execução). Na
+   "Fluxo de compra", "Exigir pedido finalizado para receber" = Não, com a ajuda que termina em "… como hoje — e o
+   aberto é recebido sem passar pela aprovação desta TOP, que só vale ao finalizar."; na "Aprovação", "Sem aprovação",
+   com "Sempre" e "A partir de um valor" habilitados. Fechar sem salvar.
 3. "Novo" › Compras › Compra (o passo 1 não oferece Orçamento de compra): a aba "Divergência com o pedido" com
    "Divergência" = Nenhuma e as duas tolerâncias em "0", desabilitadas; "Avisar" as habilita; digitar "150" mostra
    "Informe um percentual de 0 a 100, com até duas casas decimais."; voltar a "Nenhuma" põe "0" de novo. Fechar sem
@@ -2514,6 +2517,118 @@ gravado); os passos 10 a 13 gravam, e só com a decisão dele, um por vez.
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção; a P8 depende do texto
 que o Postgres de produção devolve no passo 0.
+
+### F9b — a provisão do pedido de compra finalizado e os padrões da TOP na compra (OPERACOES-01, sem migration)
+
+Decisão 286, parte F9b. **Sem migration, sem variável, sem permissão nova, sem rota nova, sem capacidade nova, sem
+código de erro novo.** As migrations continuam 45, a última a 0045. Usa o que a 0044 (F6a:
+`documentos_compra.finalizado_em`) e a 0045 (F9a: o título `previsto`, a TOP e a versão no título, os padrões da versão)
+já criaram. O que entra:
+- domínio:
+  - a regra de provisão do pedido de compra passa a EXECUTAR (a pagar, ao finalizar);
+  - `compras.pedido` e `compras.compra` ganham o perfil dos padrões financeiros, e com ele a aba "Padrões financeiros"
+    no editor das duas. O catálogo publicado (`formato5.catalogo.perfis`) muda junto;
+- API:
+  - a provisão do pedido de compra (`apps/api/src/lib/financeiro-provisao.ts`: um núcleo com duas fontes; a venda não
+    muda);
+  - os padrões da TOP no salvar da compra e do pedido (`apps/api/src/lib/financeiro-compra.ts`, novo) e na confirmação
+    da compra;
+  - a TOP e a versão no título da compra, em qualquer formato;
+- web: só a ajuda da caixa da provisão no editor da TOP, que passa a vir do momento da regra. A Central de Compras não
+  muda nesta fase.
+
+**Migration:** nenhuma. Nada a aplicar no banco.
+
+**Ordem do deploy:** a F9b não tem exigência própria nem acrescenta migration. Na PR #90 vale a ordem das fases com
+migration (0042 → 0043 → 0044 → 0045, depois a API, depois o web), descrita nas seções delas.
+
+**Version skew** (base `622f194`): nenhum K-1 ou K-2 novo, porque nenhum corpo, resposta ou capacidade que um web de
+produção usa muda.
+- **Sentido 1 — web novo × API da base:** sem o bloco `formato5`, o editor da TOP é o do 4, sem a aba (o K-1 do formato
+  5, da F4). A Central de Compras desta branch não pede nada novo.
+- **Sentido 2 — web da base × API nova:** toda TOP de produção está nos formatos 1 a 4.
+  - O salvar, a prévia, a confirmação e a auditoria da compra são os de hoje, chave por chave (CC-5).
+  - Finalizar, receber, encerrar e cancelar não deixam previsto nem trilha `provisao` (PC-9). A premissa do PC-1 prova
+    o mesmo: o mesmo pedido numa TOP no 4, finalizado, não provisiona.
+  - Muda, de forma aditiva: o título da compra confirmada guarda a TOP e a versão. Nenhuma resposta antiga lê essas
+    colunas (`GET /compras/compras/:id` lista `id, code, number, installment_number, due_date, amount, balance,
+    status`).
+- Os skews que já existem e passam pela TOP e por compras não mudaram e rodam no job `skew` do CI:
+  `top-formato5-skew-*`, `f6a-compras-skew-web-anterior` e `f9-financeiro-skew-*`.
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247): nenhuma linha existente é reescrita nem apagada; sem backfill. Produção (leitura de 02/10,
+decisão 281): 3 TOPs, a de pedido de compra no formato 3 (`apps/api/src/routes/tipos-operacao.ts:271`); nenhum documento
+de compra listado; 1 título financeiro. A provisão do pedido de compra finalizado nasce DESLIGADA (o neutro = hoje:
+nenhum título previsto). Nenhum previsto nasce até alguém fazer as duas coisas: ligar a provisão numa TOP de pedido de
+compra (o que a grava no formato 5) e finalizar um pedido salvo nessa versão. **Um efeito aditivo nos dados, mesmo sem
+nada ligado:** a compra confirmada depois do deploy grava a TOP e a versão no título (`tipo_operacao_id` e
+`tipo_operacao_versao_id`, colunas da 0045; os títulos que já existem continuam com elas nulas). O detalhe desse título
+passa a mostrar, em "Tipo de operação", o código, o nome e a versão da TOP da compra. Fora dos dados, com as TOPs de
+hoje:
+- a confirmação de uma compra gerada de pedido trava o pedido antes do contador do ID Global;
+- o salvar do pedido, e o da compra que gera título, leem a versão da TOP uma vez a mais;
+- cada evento do pedido (finalizar, receber, confirmar ou cancelar a compra gerada, encerrar o saldo, cancelar) faz de
+  uma a três leituras a mais, sem efeito nem trilha;
+- no editor da TOP, o pedido de compra e a compra mostram a aba "Padrões financeiros", no neutro. Em todas as famílias,
+  a ajuda da aba deixa de dizer "e, sem natureza e centro, vale a 1ª por código".
+
+**Reversão:** redeploy da API e/ou do web anteriores; nada no banco. Não deixa resto enquanto ninguém fizer uma destas
+duas coisas: ligar a provisão numa TOP de pedido de compra, ou salvar uma compra sem natureza e centro pelo par da TOP.
+Os títulos de compra com a TOP e a versão ficam (colunas da 0045, que a API anterior não lê). Depois:
+- os previstos a pagar gravados deixam de ser sincronizados pela API anterior. Confirmar ou cancelar a compra, encerrar
+  o saldo ou cancelar o pedido os deixam como estavam.
+  - A lista antiga os mostra como "A vencer", e os relatórios da API anterior os somam (como na F9a).
+  - Nenhuma baixa passa: o banco recusa.
+  - A correção é voltar a API nova: o próximo evento do pedido os acerta.
+- a compra e o pedido cuja versão congelada está no 5 seguem a reversão da F4 (§ F4, "Reversão", item (b): o binário
+  anterior não confirma documento com a versão no 5).
+
+Reverter só o web = o sentido 2 acima.
+
+**Roteiro do Maike em produção** (depois do deploy; produção é operacional — decisões 240 e 247). Os passos 1 a 5 são só
+leitura (nada é gravado). Os passos 6 a 8 gravam, só com a decisão dele, um por vez, e só com o botão Finalizar da F6b
+no ar: até lá, só a API finaliza, e esses passos ficam PENDING.
+1. Configurações › Operações › Tipos de Operação › a TOP de pedido de compra.
+   - As abas: Identificação, Geral, Próximas operações, Estoque, Fluxo de compra, Padrões financeiros, Financeiro,
+     Fiscal e Aprovação.
+   - Na "Padrões financeiros":
+     - a ajuda da aba: "Provisão e padrões do lançamento financeiro desta operação. Tudo nasce desligado: sem padrão, o
+       documento decide, como hoje.";
+     - "Provisionar a pagar ao finalizar o pedido" desmarcada, com a ajuda "O pedido finalizado gera títulos previstos a
+       pagar, fora das baixas. A compra confirmada os troca pelos títulos de verdade; encerrar o saldo ou cancelar o
+       pedido os cancela.";
+     - "O documento pode trocar os padrões" marcada;
+     - nenhum "Sem natureza e centro";
+     - em "Padrões do lançamento", os cinco campos com "Sem padrão".
+   - Fechar sem salvar.
+2. "Novo" › Compras › Compra: a aba "Padrões financeiros" logo depois de "Divergência com o pedido". Ela vem sem a caixa
+   da provisão e sem "Sem natureza e centro"; a ajuda da "Natureza padrão" diz "Uma natureza analítica e ativa de
+   despesa (ou de receita e despesa).". Fechar sem salvar.
+3. A TOP de pedido de venda, aba "Padrões financeiros": "Provisionar a receber ao salvar o pedido" com a ajuda de antes
+   ("O pedido gera títulos previstos, fora das baixas. A venda os troca pelos títulos de verdade; …"). Fechar sem
+   salvar.
+4. Financeiro › Títulos › A pagar: o cartão "Previstos" com 0.
+5. (Se alguma compra for confirmada depois do deploy) o detalhe do título dela mostra a origem "Compra <código>" e
+   "Tipo de operação: <código> — <nome> (versão N)".
+6. (Decisão do Maike; grava; PENDING até a F6b.) Na TOP de pedido de compra:
+   - escolher a natureza de despesa e o centro de resultado padrão — ou decidir que todo pedido os informe;
+   - marcar "Provisionar a pagar ao finalizar o pedido";
+   - salvar: nasce uma versão nova, no formato 5.
+   A provisão vale só para os pedidos salvos DEPOIS.
+7. (Decisão do Maike; grava; PENDING até a F6b.) Um pedido de compra de teste nessa TOP, com duas parcelas; Finalizar.
+   Conferir:
+   - Financeiro › Títulos › A pagar › "Previstos" mostra as duas parcelas, com a origem "Pedido de compra <código>", o
+     aviso do previsto e sem Baixar;
+   - a consulta do pedido, aba Financeiro, mostra a situação "Prevista".
+8. (Decisão do Maike; grava; PENDING até a F6b.) Receber uma parte e confirmar a compra:
+   - os previstos passam ao que falta;
+   - os anteriores ficam "Cancelada", com o motivo "Compra <código> confirmada";
+   - cancelar o pedido de teste, ou encerrar o saldo, cancela os previstos com o motivo.
+   Nada se apaga (decisão 247): o pedido de teste fica cancelado na história.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção, e os passos 6 a 8
+dependem do botão Finalizar da F6b.
 
 ## VISUAL-UX-04b — correções da Central de Compras (sem migration)
 

@@ -97,8 +97,8 @@ diz o que o editor do 5 mostra e o que o servidor aceita no 5. Ele é DERIVADO, 
 | `vendas.venda` | Identificação, Geral, Próximas operações, Estoque, Padrões financeiros, Financeiro, Fiscal, Aprovação, Execução | Exigir cliente, centro de resultado, observação, transportadora | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
 | `vendas.pedido` | Identificação, Geral, Próximas operações, Estoque, Padrões financeiros, Financeiro, Fiscal | idem venda | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
 | `vendas.orcamento` | Identificação, Geral, Próximas operações, Estoque, Financeiro, Fiscal | idem venda | Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
-| `compras.pedido` | Identificação, Geral, Próximas operações, Estoque, Fluxo de compra, Financeiro, Fiscal, Aprovação | Exigir fornecedor, centro de resultado, observação, transportadora | Destino, Fluxo, Divergência com o pedido, Padrões financeiros (até a F9b) |
-| `compras.compra` | Identificação, Geral, Estoque, Divergência com o pedido, Financeiro, Fiscal, Aprovação, Execução | idem pedido de compra | Destino, Fluxo, Fluxo de compra, Padrões financeiros (até a F9b) |
+| `compras.pedido` | Identificação, Geral, Próximas operações, Estoque, Fluxo de compra, Padrões financeiros, Financeiro, Fiscal, Aprovação | Exigir fornecedor, centro de resultado, observação, transportadora | Destino, Fluxo, Divergência com o pedido |
+| `compras.compra` | Identificação, Geral, Estoque, Divergência com o pedido, Padrões financeiros, Financeiro, Fiscal, Aprovação, Execução | idem pedido de compra | Destino, Fluxo, Fluxo de compra |
 | `compras.orcamento` (F6a; sem tela até a F6b) | Identificação, Geral, Estoque, Financeiro, Fiscal | Exigir fornecedor, observação | Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
 | `estoque.entrada`, `.transferencia`, `.ajuste`, `.devolucao_consumo` | Identificação, Geral, Estoque, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
 | `estoque.saida`, `estoque.requisicao_material` | Identificação, Geral, Estoque, Destino, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
@@ -224,12 +224,12 @@ tabela da versão (§7).
 
 | campo | valores | neutro (o de hoje) | o que decide |
 |---|---|---|---|
-| `provisao` | booleano | `false` | o pedido de venda gera títulos PREVISTOS a receber ao ser salvo (§7) |
+| `provisao` | booleano | `false` | o pedido de venda gera títulos PREVISTOS a receber ao ser salvo; o pedido de compra, a pagar ao ser FINALIZADO (F9b) (§7) |
 | `documentoTroca` | booleano | `true` | desligado, o documento que informa natureza, centro, tipo de título, forma ou conta DIFERENTES dos padrões da TOP é recusado (vazio usa o padrão) |
-| `semClassificacao` | `padrao_legado` · `exigir` | `padrao_legado` | sem natureza e centro no documento nem na TOP: a 1ª natureza e o 1º centro por código (hoje) ou recusa |
+| `semClassificacao` | `padrao_legado` · `exigir` | `padrao_legado` | sem natureza e centro no documento nem na TOP: a 1ª natureza e o 1º centro por código (hoje) ou recusa; não vale no pedido de compra nem na compra, que não têm padrão legado (F9b) |
 
 Famílias que usam a seção (o perfil dos padrões, `perfilDosPadroesFinanceiros`; a matriz em
-`packages/domain/src/financeiro-padroes.ts:113-120`; toda outra família a tem no padrão):
+`packages/domain/src/financeiro-padroes.ts:118-129`; toda outra família a tem no padrão):
 
 | família | provisão | "sem natureza e centro" | o documento troca (`trocaPeloDocumento`) | padrões | natureza aceita |
 |---|---|---|---|---|---|
@@ -239,20 +239,26 @@ Famílias que usam a seção (o perfil dos padrões, `perfilDosPadroesFinanceiro
 | `financeiro.conta_a_pagar` | não | não | sim | natureza, centro, tipo de título, conta | despesa (`expense` ou `both`) |
 | `financeiro.movimento_bancario` | não | não | sim | natureza, centro, conta | qualquer |
 | `compras.solicitacao` | não | sim | não (o documento não informa padrão) | natureza, centro, tipo de título, conta | despesa (`expense` ou `both`) |
+| `compras.pedido` (F9b) | sim — a pagar, ao FINALIZAR | não (a compra não tem padrão legado) | sim | natureza, centro, tipo de título, forma, conta | despesa (`expense` ou `both`) |
+| `compras.compra` (F9b) | não | não (a compra não tem padrão legado) | sim | natureza, centro, tipo de título, forma, conta | despesa (`expense` ou `both`) |
 
-O pedido e a compra de COMPRAS não usam a seção até a F9b (a regra de provisão do pedido de compra finalizado está
-declarada com `executa: false`, `packages/domain/src/financeiro-provisao.ts:54-57`).
+O pedido de compra e a compra (F9b) não têm "sem natureza e centro": sem o par no documento nem na TOP, a compra é
+recusada como hoje, e o pedido cuja TOP provisiona também (§7). As duas regras de provisão executam
+(`packages/domain/src/financeiro-provisao.ts:59-62`).
 
 Recusas no 5 (422 `TIPO_OPERACAO_CONFIGURACAO_INVALIDA`, `combinacao_nao_suportada`): `financeiroPadrao.provisao` "A
-provisão vale só no pedido de venda."; `financeiroPadrao.semClassificacao` "O lançamento desta operação sempre informa
-natureza e centro: deixe "Usar a 1ª natureza e o 1º centro por código (como hoje)"."; a seção fora do neutro numa
-família que não a usa → "Esta operação não usa a seção Padrões financeiros.". Nos formatos 1 a 4 a chave é recusada
-(`campo_desconhecido`) e a execução lê o neutro.
+provisão vale só no pedido de venda e no pedido de compra."; `financeiroPadrao.semClassificacao` "O lançamento desta
+operação sempre informa natureza e centro: deixe "Usar a 1ª natureza e o 1º centro por código (como hoje)"."; a seção
+fora do neutro numa família que não a usa → "Esta operação não usa a seção Padrões financeiros.". Nos formatos 1 a 4 a
+chave é recusada (`campo_desconhecido`) e a execução lê o neutro.
 
-O editor mostra só o que a família usa: a caixa "Provisionar a receber ao salvar o pedido" só no pedido de venda; "Sem
-natureza e centro" na venda e na solicitação, e no pedido só com a provisão marcada; "O documento pode trocar os padrões"
-onde o documento informa algum padrão (não na solicitação). Um valor gravado fora do neutro continua visível para poder
-ser desligado; o servidor aceita as duas regras escondidas (sem efeito).
+O editor mostra só o que a família usa: a caixa da provisão só nos dois pedidos, com o rótulo e a ajuda da REGRA da
+família — "Provisionar a receber ao salvar o pedido" no de venda e "Provisionar a pagar ao finalizar o pedido" no de
+compra, com a ajuda "O pedido finalizado gera títulos previstos a pagar, fora das baixas. A compra confirmada os troca
+pelos títulos de verdade; encerrar o saldo ou cancelar o pedido os cancela."; "Sem natureza e centro" na venda e na
+solicitação, e no pedido de venda só com a provisão marcada (nunca no pedido de compra nem na compra); "O documento pode
+trocar os padrões" onde o documento informa algum padrão (não na solicitação). Um valor gravado fora do neutro continua
+visível para poder ser desligado; o servidor aceita as duas regras escondidas (sem efeito).
 
 ### As seções das fases seguintes · DESTINO DECLARADO (não implementado)
 
@@ -265,7 +271,7 @@ nomes são fixados pelo coordenador. A sugestão do plano da F4, não normativa:
 | F5 (282) | `destino` e `fluxo` | IMPLEMENTADAS — subseção "Destino e Fluxo" acima | — |
 | F5 (282) | `entrada` | não implementada na F5a: "sem nota" e "saldo inicial" são TOPs de entrada comuns (movimento `entry`); o saldo inicial com `opening_balance` e a recusa de duplicidade é pergunta ao Maike antes da F11 (decisão 282) | como hoje |
 | F6 (283) | `fluxoCompra` e `divergenciaPedido` | IMPLEMENTADAS — subseções acima | — |
-| F9 (286) | `financeiroPadrao` | IMPLEMENTADA (F9a) — subseção "Padrões financeiros" acima | — |
+| F9 (286) | `financeiroPadrao` | IMPLEMENTADA (F9a; as famílias de compras na F9b) — subseção "Padrões financeiros" acima | — |
 
 ## 3. Centrais e modos de produto
 
@@ -843,6 +849,13 @@ planejamento da confirmação, logo depois da aprovação e antes de qualquer ef
   a compra salva e aberta, `confirmacaoAutomatica` "recusada" com o MESMO corpo;
 - compra sem origem, TOP sem a seção ou "Nenhuma": a chave `divergencia` não existe na prévia (o corpo de hoje).
 
+**Desde a F9b (decisão 286, §7):** com a provisão ligada na TOP do pedido (formato 5, "Provisionar a pagar ao finalizar
+o pedido"), FINALIZAR faz nascer os títulos PREVISTOS a pagar. Receber, confirmar ou cancelar a compra gerada, encerrar
+o saldo e cancelar o pedido os acertam. A resposta do finalizar e a prévia da finalização não mudam. A leitura do pedido
+(`GET /compras/pedidos/:id`) lista os previstos em `titulos`, vivos e cancelados, com `status` `previsto` ou
+`cancelled`. O salvar do pedido cuja TOP provisiona, e o da compra que gera título numa TOP no 5 com padrões, conferem
+os padrões da TOP (§7). Sem a provisão ligada (o neutro, e toda TOP nos formatos 1 a 4), o pedido não tem previsto.
+
 **Fica para a F6b:** as telas (Finalizar e a prévia, Aprovado para orçamento, os orçamentos, Escolher vencedor, a
 divergência na prévia), o E2E do fluxo, o K-1 de compras, o menu e a chave de idempotência da Central de Compras.
 
@@ -1033,7 +1046,8 @@ por alçada, contabilização e retenções, o arquivo oficial do LCDPR (fora da
 
 > Migration `0045_financeiro_pela_top_e_lcdpr.sql` (a última da PR, depois da 0044; não depende da 0043 nem da 0044).
 > Permissão nova: `imoveis_rurais.*`. Implantação em `docs/DEPLOYMENT.md` § OPERACOES-01 › F9a. A seção do formato 5:
-> §2 ("Padrões financeiros"). A F9b liga a provisão do pedido de compra finalizado e a TOP na compra.
+> §2 ("Padrões financeiros"). A F9b (subseção abaixo) liga a provisão do pedido de compra finalizado e os padrões da
+> TOP na compra.
 
 **Capacidades (todas aditivas, forma e versão exatas; ausente = a tela de hoje e nenhum pedido às rotas novas):**
 
@@ -1181,12 +1195,107 @@ família, versão corrente, a padrão primeiro; padrões só de versão no 5).
 | web anterior × API nova | corpos e chaves de hoje; o imóvel padrão aplicado na baixa e no movimento sem imóvel; o previsto fora da lista antiga e dos totais; a natureza preserva o tipo LCDPR; o "padrão legado" da venda intacto nas TOPs 1 a 4 | K-2 (`f9-financeiro-skew-web-anterior`) + CP-3 |
 | API anterior × banco novo | nada muda até alguém ligar a provisão; com previstos, a lista antiga os mostra como "A vencer" e os relatórios dela os somam, sem baixa possível | `operacoes-01-0045` (DB-4c) |
 
-**Fora (F9a):** a provisão e a TOP do pedido de compra e da compra (F9b); as parcelas do XML (F7/F9b); a pecuária (F10);
-o adiantamento salarial (`fleet-hr.ts`, F10); o pré-preenchimento dos padrões e a trava com `documentoTroca` desligado na
-Central de Vendas, o "(padrão da operação)" na prévia e os previstos à parte no detalhe do pedido (F2/F3b); a trava pela
-prop no editor de rateio compartilhado do "Novo movimento bancário" e o imóvel na baixa em lote da Central (pendências
-registradas na decisão 286); o arquivo oficial do LCDPR e a exportação da conferência (fora da PR); trocar o imóvel ou a
-TOP de movimento confirmado (sem rota).
+**Fora (F9a):** a provisão e a TOP do pedido de compra e da compra (feitas na F9b, abaixo); as parcelas do XML (F7); a
+pecuária (F10); o adiantamento salarial (`fleet-hr.ts`, F10); o pré-preenchimento dos padrões e a trava com
+`documentoTroca` desligado na Central de Vendas, o "(padrão da operação)" na prévia e os previstos à parte no detalhe do
+pedido (F2/F3b); a trava pela prop no editor de rateio compartilhado do "Novo movimento bancário" e o imóvel na baixa em
+lote da Central (pendências registradas na decisão 286); o arquivo oficial do LCDPR e a exportação da conferência (fora
+da PR); trocar o imóvel ou a TOP de movimento confirmado (sem rota).
+
+### F9b — a provisão do pedido de compra finalizado e os padrões da TOP na compra (decisão 286) · IMPLEMENTADO
+
+> Sem migration (usa a 0044 e a 0045; as migrations continuam 45), sem capacidade, rota, permissão ou código de erro
+> novos. Implantação em `docs/DEPLOYMENT.md` § OPERACOES-01 › F9b. A seção do formato 5: §2 ("Padrões financeiros",
+> com o pedido de compra e a compra). A tela da Central de Compras é da F6b/F11 (pendências no fim); o botão Finalizar
+> é da F6b.
+
+**A provisão do pedido de compra** (`apps/api/src/lib/financeiro-provisao.ts`: um núcleo, `sincronizar`, `:229-326`; a
+fonte `documentos_compra`, `:191-218`; a venda, `:158-184`, não muda). Nasce DESLIGADA: o neutro é o de hoje, nenhum
+título previsto. O pedido cuja versão CONGELADA da TOP está no 5 com `provisao` ligada provisiona A PAGAR quando
+`finalizado_em` não é nulo. Por isso:
+- o convertido e o reaberto depois de finalizados continuam provisionando;
+- o nunca finalizado não provisiona: uma leitura e nada mais;
+- quem finaliza depois de receber em parte provisiona o que falta.
+
+ALVO = (o valor do pedido; com o saldo encerrado ou o pedido convertido, Σ das compras geradas não canceladas) − Σ
+compras confirmadas. É zero com o pedido cancelado ou com a TOP sem provisão. As mesmas parcelas, empresa, fornecedor,
+versão e classificação → nada muda. Senão:
+- os atuais saem CANCELADOS (`cancel_reason`, `cancelled_at`, `cancelled_by`; ROW COUNT conferido; nunca apagados —
+  decisão 247);
+- com alvo > 0, nascem os novos: número `PC-<código>` (as parcelas com o sufixo `-1`, `-2`…), nota "Previsto do
+  pedido de compra <código>", as parcelas do plano do pedido aplicadas ao alvo, emissão hoje, não dedutível, o tipo de
+  título e a conta da TOP, a TOP e a versão do pedido, origem `documentos_compra` = o pedido;
+- a trilha `provisao` fica no pedido.
+
+| evento | rota | o previsto passa a esperar | motivo nos que saem |
+|---|---|---|---|
+| finalizar | `POST /compras/pedidos/:id/finalizar` | o valor do pedido − as compras confirmadas | "Pedido finalizado" |
+| receber | `POST /compras/pedidos/:id/convert` | se a compra zerou o saldo (convertido): só o que virou compra | "Recebido na compra <código>" |
+| confirmar a compra gerada | `POST /compras/compras/:id/confirm`; a automática ao salvar, ao receber e ao aprovar (a mesma função) | menos a compra confirmada | "Compra <código> confirmada" |
+| cancelar a compra gerada confirmada (estorno) | `POST /compras/compras/:id/cancel` | mais a compra estornada; o pedido convertido reabre | "Compra <código> cancelada" |
+| cancelar a compra gerada aberta | `POST /compras/compras/:id/cancel` | o pedido convertido reabre: o valor do pedido de novo | "Compra <código> cancelada" |
+| encerrar o saldo | `POST /compras/pedidos/:id/encerrar-saldo` | só o que virou compra e ainda não foi confirmado | "Saldo do pedido encerrado: <motivo>" |
+| cancelar o pedido | `POST /compras/pedidos/:id/cancel` | zero | "Pedido cancelado[: <motivo>]" |
+
+A compra com origem trava o pedido logo depois de si e ANTES do contador do ID Global e do estoque
+(`travarPedidoDeCompraDaProvisao`). A ordem é compra → pedido → contador → estoque. O receber, o encerrar, o finalizar e
+o cancelar do pedido pegam o pedido primeiro. As sincronizações rodam dentro do `idempotent` da rota: o replay devolve o
+corpo gravado. O previsto nasce na empresa do pedido, sob a RLS da transação, pela capacidade da rota de quem
+finaliza, recebe, confirma, cancela ou encerra (como os títulos da compra hoje; não exige `payables.create`). No
+Financeiro, a origem dele é "Pedido de compra <código>".
+
+**Os padrões da TOP na compra:**
+- **no SALVAR** (`padroesDaTopNoSalvarDaCompra`, `apps/api/src/lib/financeiro-compra.ts`; o POST das duas espécies e o
+  RECEBER). A compra e o pedido não se editam, então o que só depende do documento é recusado antes do número:
+  - a troca proibida, na compra que gera título e no pedido cuja TOP provisiona;
+  - no pedido cuja TOP provisiona, a falta do par. Vale com qualquer total, zero inclusive, porque o vencedor do
+    orçamento grava o valor do pedido aberto sem passar pelo salvar.
+  - A compra sem natureza e centro, com o PAR na TOP, salva: a exigência de hoje é dispensada.
+  - Formatos 1 a 4, ou o 5 sem padrões e sem provisão: nada muda. Sem consulta quando a compra não gera título; o
+    pedido lê a versão uma vez.
+- **na CONFIRMAÇÃO e na PRÉVIA** (`apps/api/src/routes/compras-confirmacao.ts`):
+  - sem natureza e centro no documento, o par da TOP classifica, revalidado pela MESMA porta da classificação da
+    compra. A versão é a congelada, já lida: nos formatos 1 a 4, nenhuma consulta nova;
+  - depois, a conta padrão inutilizável e a troca (a rede);
+  - o título leva o tipo de título e a conta prevista da TOP (formato 5), e a TOP e a versão da compra em QUALQUER
+    formato (`tipo_operacao_id` e `tipo_operacao_versao_id`; o único efeito novo nos dados com tudo desligado);
+  - só com o par da TOP: a prévia ganha `financeiro.classificacao.padraoDaTop: true` (no fim, aditivo), e a auditoria
+    `confirm` ganha `classificacaoFinanceira.origem: "padrão da TOP"`. Sem ela, chave por chave a de hoje;
+  - a forma padrão só confere.
+
+| onde | quando | código / caminho | mensagem |
+|---|---|---|---|
+| salvar a compra (POST e receber) | gera título, `documentoTroca` desligado e natureza, centro ou forma diferentes do padrão | 422 `TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA`, `financeiroPadrao.documentoTroca` | Esta operação não deixa trocar a natureza e o centro de resultado: use o padrão da TOP. (os campos trocados) |
+| salvar o pedido | a TOP provisiona; a troca, idem | idem | idem |
+| salvar o pedido | a TOP provisiona (qualquer total) e nem o pedido nem a TOP têm o par | 422 `VALIDATION_ERROR`, `details[0].path = "categoria_financeira_id"` | Esta operação provisiona contas a pagar ao finalizar o pedido: informe a natureza financeira e o centro de resultado, ou configure os padrões da TOP. |
+| salvar a compra | gera título, sem natureza e centro, e a TOP sem o par (ou no 1 a 4) | 422 `VALIDATION_ERROR` (o de hoje) | Informe a natureza financeira e o centro de resultado: esta compra gera contas a pagar |
+| prévia e confirmação da compra | a conta padrão da TOP DA COMPRA inativa ou excluída | 422 `TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA`, `padroesFinanceiros.contaBancariaId` | A conta padrão da operação está inativa ou foi excluída: ajuste os padrões da TOP. |
+| prévia e confirmação da compra | a troca (a rede) | idem, `financeiroPadrao.documentoTroca` | a da troca |
+| prévia e confirmação da compra | sem o par no documento nem na TOP | 422 `VALIDATION_ERROR` (o de hoje) | Informe a natureza financeira e o centro de resultado: a confirmação gera contas a pagar. |
+| finalizar, receber, confirmar, cancelar a compra, encerrar, cancelar o pedido | o previsto novo do pedido não consegue nascer: a troca; sem o par (`financeiroPadrao.provisao`, a rede); a conta padrão da TOP DO PEDIDO inutilizável; a natureza ou o centro inativados | 422, o da causa; na confirmação automática, "recusada" e a compra aberta | a da causa; nada gravado. A prévia da confirmação NÃO antecipa (`podeConfirmar: true`) |
+| baixa num previsto a pagar | sempre | 409 `CONFLICT` (a API; o banco, 0045, é a rede) | Título previsto não recebe baixa: ele dá lugar ao título de verdade quando o documento é faturado. |
+
+**Compatibilidade** (base `622f194`):
+
+| Janela | O que acontece | Prova |
+|---|---|---|
+| web nova × API anterior | sem `formato5`: o editor do 4, sem a aba; a Central de Compras não pede nada novo | K-1 do formato 5 (F4) |
+| web anterior × API nova | TOP 1 a 4: o salvar, a prévia, a confirmação e a auditoria de hoje; o título da compra ganha a TOP e a versão (nenhuma resposta antiga as lê); finalizar, receber, encerrar e cancelar sem previsto nem trilha | CC-5, PC-9, a premissa do PC-1 |
+| API anterior × banco | sem migration: nada novo | — |
+
+Os riscos (a trava, um cadastro inativado da TOP do pedido barrando até o estorno, os códigos e IDs Globais gastos, a
+reversão) estão na decisão 286, parte F9b.
+
+**Fora (F9b):** a prévia da finalização e a da confirmação mostrando a provisão; as parcelas da compra vindas do XML
+(F7). **Pendente das telas de Compras (F6b/F11):**
+- o botão Finalizar (F6b): é a única porta de tela para a provisão; sem ele, só a API finaliza;
+- os previstos à parte na lista de títulos do pedido, com "Prevista";
+- "(padrão da operação)" quando aparece `padraoDaTop`;
+- pré-preencher a natureza e o centro pelos padrões da TOP;
+- antes de omitir a natureza e o centro na tela, uma capacidade ou `padroesFinanceiros` em
+  `GET /compras/*/regras-da-operacao`: o contrato novo (`padraoDaTop` e a compra sem natureza e centro no POST) não tem
+  capacidade. Hoje a Central os marca como obrigatórios na compra que gera título; o web de produção não é afetado (o
+  validador da prévia da base tolera a chave a mais).
 
 ## 8. Mapa "tela antiga → central nova"
 
