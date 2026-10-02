@@ -1,6 +1,6 @@
 import { test, expect, type Page, type Request, type Response } from "@playwright/test";
 import { MENSAGEM_APROVACAO_PENDENTE } from "@agro/domain";
-import { login, api, uniq, pickRef, adicionarItemNaCentral, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
+import { login, logout, api, uniq, empresaAtiva, pickRef, adicionarItemNaCentral, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
 import { criarParceiro } from "./aj02-comum";
 import { cadastroDeEstoque, criarTopDeEstoque, entradaConfirmadaPelaApi, escolherNaReferencia, hojeISO, saldoNoServidor } from "./estoque-01-comum";
 import { cfg3, cfg4, criarTopViaApi, detalheTopNoServidor, excluirTopE2E } from "./top-config-08-comum";
@@ -22,6 +22,10 @@ import { cfg3, cfg4, criarTopViaApi, detalheTopNoServidor, excluirTopE2E } from 
  * │   "Salvo com sucesso" (o de hoje); Automática sem saldo → "Salvo, mas não confirmado: <mensagem   │
  * │   do servidor>."; Automática → "Salvo e confirmado."; Automática + "Sempre" → "Salvo. Este        │
  * │   documento precisa de aprovação antes de ser confirmado." — cada um com a consulta que abre.     │
+ * │ W-5c Central de Estoque, quem LANÇA saída mas não pode CONFIRMÁ-LA (papel sem `saidas_estoque.   │
+ * │   edit`), com TOP Automática e saldo que cobre: `sem_permissao` no corpo → "Salvo, mas não       │
+ * │   confirmado: você não tem permissão para confirmar este documento.", aberto, saldo parado; o     │
+ * │   MESMO lançamento pelo administrador confirma.                                                  │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ A REGRA ANTI-VACUIDADE ───────────────────────────────────────────────────────────────────────┐
@@ -319,6 +323,7 @@ test("W-5 — Central de Estoque, TOP formato 4 'Sempre': a prévia mostra a rec
     expect([doc.situacao, "confirmacaoAutomatica" in doc], "aberta; TOP manual não ganha a chave nova").toEqual(["aberto", false]);
     // Sem a chave nova, o aviso é o de hoje (TOP formato 4 MANUAL; o formato 3 é o W-5b).
     await expect(avisoDoSalvar(page, "success"), "TOP Manual: o aviso de hoje, byte a byte").toHaveText(["Salvo com sucesso"]);
+    await expect(avisos(page), "um aviso só").toHaveCount(1);
     await consultaAbre(page, "saidas", doc, "aberto");
 
     // (2) A PRÉVIA: o CORPO primeiro — saldo coberto (nada insuficiente) e a recusa da aprovação.
@@ -375,7 +380,7 @@ test("W-5 — Central de Estoque, TOP formato 4 'Sempre': a prévia mostra a rec
  *       que o servidor pôs no corpo (lida do fio, nunca escrita aqui), com o ponto final dela uma vez só;
  *   (3) Automática numa entrada: confirma no POST, e o saldo sobe;
  *   (4) Automática + "Sempre" numa saída COBERTA pelo saldo de (3): para na aprovação, antes de qualquer efeito.
- * O "sem permissão" exige quem lança sem poder confirmar e não está aqui.
+ * O "sem permissão" exige quem lança sem poder confirmar: é o W-5c, logo abaixo.
  */
 test("W-5b — Central de Estoque, o aviso do Salvar pelo resultado da confirmação automática: formato 3 'Salvo com sucesso'; Automática sem saldo 'Salvo, mas não confirmado: …'; Automática 'Salvo e confirmado.'; Automática + 'Sempre' 'Salvo. … aprovação …'", async ({ page }) => {
   await login(page);
@@ -430,6 +435,82 @@ test("W-5b — Central de Estoque, o aviso do Salvar pelo resultado da confirma�
     await consultaAbre(page, "saidas", pendente, "aberto");
     expect((await saldoNoServidor(page, c.armazem, c.produto)).quantity, "a aprovação pendente não moveu o saldo").toBe("5.0000");
   } finally {
+    await limpar(page, [], estoque, tops);
+  }
+});
+
+/**
+ * O AVISO "SEM PERMISSÃO" — quem LANÇA a saída mas não pode CONFIRMÁ-LA. A confirmação automática é feita por quem
+ * salvou, com a capacidade da confirmação manual (`saidas_estoque.edit`): a TOP nunca dá a ninguém um poder que ele
+ * não tem. O papel do caso nasce pela API (o molde do W-3c): VER e LANÇAR saídas, e o que a Central pede para lançar
+ * (armazém e produto) — SEM `saidas_estoque.edit` —, com o escopo de estoque EXPLÍCITO na empresa do cadastro.
+ * A premissa fica ao lado: o MESMO lançamento (a mesma TOP, o mesmo armazém, o mesmo produto, a mesma quantidade,
+ * sobre o mesmo saldo) pelo administrador confirma — o que faltou ao primeiro foi só a capacidade.
+ */
+test("W-5c — Central de Estoque, quem lança sem poder confirmar, TOP Automática com saldo: 'Salvo, mas não confirmado: você não tem permissão …', aberto, saldo parado; o mesmo lançamento pelo administrador confirma", async ({ page }) => {
+  await login(page);
+  const estoque: { segmento: string; id: string }[] = []; const tops: string[] = [];
+  const marca = Date.now().toString(36);
+  const credencial = { email: `lancador.saidas.${marca}@e2e.local`, password: "Demo@12345" };
+  let comoLancador = false;
+  try {
+    const c = await cadastroDeEstoque(page);
+    // Partida: 5 unidades (uma entrada de TOP sem regra geral, confirmada pela API — o caso é a saída).
+    const { id: topEntrada } = await criarTopDeEstoque(page, "entrada");
+    tops.push(topEntrada);
+    await entradaConfirmadaPelaApi(page, { top: topEntrada, empresa: c.empresa, armazem: c.armazem, produto: c.produto }, "5", "10");
+    expect((await saldoNoServidor(page, c.armazem, c.produto)).quantity, "premissa: a partida é 5").toBe("5.0000");
+    const top = await criarTopFormato4(page, "estoque.saida", { confirmacao: "automatica", aprovacao: "nenhuma" }, tops);
+
+    // Quem lança saídas e não as confirma. O escopo é EXPLÍCITO: sem ele o servidor é fail-closed e o lançamento
+    // seria recusado por falta de acesso à empresa — aqui ele grava, e só a confirmação fica de fora.
+    const papel = await api<{ id: string }>(page, "POST", "/api/admin/roles", {
+      name: `Lançador de saídas E2E ${marca}`, permissions: ["saidas_estoque.view", "saidas_estoque.create", "warehouses.view", "products.view"]
+    });
+    await api(page, "POST", "/api/admin/members", {
+      name: "Lançador de Saídas E2E", email: credencial.email, password: credencial.password, role_id: papel.id,
+      escopos_empresas: [{ modulo: "estoque", modo: "selecionadas", empresas: [c.empresa] }]
+    });
+    await logout(page);
+    await login(page, credencial);
+    comoLancador = true;
+
+    // O SERVIDOR primeiro: ele lança, não confirma, e opera na empresa do cadastro (a que a Central escolhe sozinha).
+    const contexto = await api<{ isOwner: boolean; permissions: string[] }>(page, "GET", "/api/auth/context");
+    expect([contexto.isOwner, contexto.permissions.includes("saidas_estoque.create"), contexto.permissions.includes("saidas_estoque.edit")],
+      "premissa: não é dono, LANÇA saída e NÃO a confirma").toEqual([false, true, false]);
+    expect(await empresaAtiva(page), "premissa: a empresa da Central dele é a do cadastro (a do armazém)").toBe(c.empresa);
+
+    // (1) PELA CENTRAL DE ESTOQUE, por ele: 2 de 5 — o saldo cobre, a TOP é Automática, falta só a capacidade.
+    const semPermissao = await salvarNaCentralEstoque(page, { segmento: "saidas", especie: "saida", top, c, quantidade: "2" }, estoque);
+    expect([semPermissao.situacao, semPermissao.confirmacaoAutomatica], "o corpo do 201: salvo e aberto, e o motivo é a capacidade")
+      .toEqual(["aberto", { confirmado: false, motivo: "sem_permissao" }]);
+    await expect(avisoDoSalvar(page, "warning"), "o aviso de quem não pode confirmar, no tom de atenção")
+      .toHaveText(["Salvo, mas não confirmado: você não tem permissão para confirmar este documento."]);
+    await expect(avisos(page), "um aviso só (nada de 'Salvo com sucesso' ao lado)").toHaveCount(1);
+    await consultaAbre(page, "saidas", semPermissao, "aberto");
+
+    // De volta ao administrador: o saldo é lido por quem pode ler (o lançador não tem `stocks.view`).
+    await logout(page);
+    await login(page);
+    comoLancador = false;
+    const lido = await api<{ situacao: string }>(page, "GET", `/api/estoque/saidas/${semPermissao.id}`);
+    expect(lido.situacao, "no servidor também: aberto").toBe("aberto");
+    expect((await saldoNoServidor(page, c.armazem, c.produto)).quantity, "sem a confirmação, o saldo ficou parado").toBe("5.0000");
+
+    // (2) A PREMISSA: o MESMO lançamento, sobre o MESMO saldo, por quem pode confirmar — confirma no fim do POST.
+    const completo = await salvarNaCentralEstoque(page, { segmento: "saidas", especie: "saida", top, c, quantidade: "2" }, estoque);
+    expect([completo.situacao, completo.confirmacaoAutomatica], "premissa: com a capacidade, a mesma TOP confirma").toEqual(["confirmado", { confirmado: true }]);
+    await expect(avisoDoSalvar(page, "success")).toHaveText(["Salvo e confirmado."]);
+    await expect(avisos(page), "um aviso só").toHaveCount(1);
+    await consultaAbre(page, "saidas", completo, "confirmado");
+    expect((await saldoNoServidor(page, c.armazem, c.produto)).quantity, "a saída confirmada baixou o saldo").toBe("3.0000");
+  } finally {
+    // De volta ao administrador para limpar (o lançador não cancela documento).
+    if (comoLancador) {
+      await logout(page).catch(() => page.evaluate(() => localStorage.removeItem("agro.session")));
+      await login(page);
+    }
     await limpar(page, [], estoque, tops);
   }
 });

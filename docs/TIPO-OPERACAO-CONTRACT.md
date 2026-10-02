@@ -2158,22 +2158,26 @@ formato 3, textos e abas de hoje. Com ele:
 | API anterior × versão no formato 4 (reversão) | não confirma venda nem compra: 409 `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL` (configuração ilegível), como hoje com formato desconhecido; no estoque ela não lê a configuração, e quem barra o documento que exige aprovação é a guarda do banco (409 `CONFLICT`); documento lançado nela com TOP formato 4 fica sem exigências e sem condições permitidas (`regrasDaVersaoTop` devolve nulo para formato desconhecido); não edita TOP com versão vigente no formato 4 (422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`: a escrita fecha, §11.2) |
 
 **A Central de Estoque lê o resultado ao salvar** (`apps/web/src/features/estoque/central-estoque.tsx`, `avisarSalvo`;
-W-5b). O aviso sai da resposta do `POST`, nunca da TOP da tela: `{confirmado: true}` → "Salvo e confirmado.";
-`aguardando_aprovacao` → "Salvo. Este documento precisa de aprovação antes de ser confirmado."; `sem_permissao` →
-"Salvo, mas não confirmado: você não tem permissão para confirmar este documento."; `recusada` → "Salvo, mas não
-confirmado: <`erro.message`>." — a mensagem do servidor com um ponto final só, pela mesma regra da fila de Aprovações
-(`mensagemDoServidorNoMolde`); sem a chave, ou com resultado fora do contrato (motivo desconhecido, `recusada` sem
-mensagem) → o "Salvo com sucesso" de hoje. Depois do aviso, a consulta abre como hoje.
+W-5b, e o `sem_permissao` no W-5c). O aviso sai da resposta do `POST`, nunca da TOP da tela: `{confirmado: true}` →
+"Salvo e confirmado."; `aguardando_aprovacao` → "Salvo. Este documento precisa de aprovação antes de ser confirmado.";
+`sem_permissao` → "Salvo, mas não confirmado: você não tem permissão para confirmar este documento."; `recusada` →
+"Salvo, mas não confirmado: <`erro.message`>." — a mensagem do servidor com um ponto final só, pela mesma regra da fila
+de Aprovações (`mensagemDoServidorNoMolde`); sem a chave, ou com resultado fora do contrato (motivo desconhecido,
+`recusada` sem mensagem) → o "Salvo com sucesso" de hoje. Um Salvar dá um aviso só. Depois do aviso, a consulta abre
+como hoje.
 
 **Fica para a fatia F2 da Central no motor** (Central de Vendas e Central de Compras, nenhum arquivo delas mudou aqui):
 o "Salvar e confirmar" quando a TOP é automática — até lá, "Confirmar venda" na criação de uma venda automática salva, o
 `POST` já confirma, e a consulta abre a venda confirmada, sem o diálogo de confirmação, sem prévia e sem segundo
 `/confirm` (o diálogo só abre para venda que chega aberta, como quando a automática não confirma); e "Confirmar compra"
-na criação de uma compra automática salva e o `POST` já confirma, mas a consulta abre o diálogo de confirmação só pelo
-pedido do clique, sem olhar a situação (`apps/web/src/features/compras/central/estado.ts`, o estado inicial de
-`confirmando`; a venda olha `open`/`approved`): o diálogo aparece sobre a compra já confirmada, a prévia dele recusa
-("Compra já confirmada", `ALREADY_CONFIRMED`) e o Confirmar fica desabilitado; a compra fica confirmada, sem efeito
-duplicado. Até a F2, com TOP de compra Automática, "Salvar" na criação —; o aviso do Salvar pelo resultado da
+na criação de uma compra automática salva e o `POST` já confirma; enquanto a VISUAL-UX-04b (decisão 278) não estiver na
+main, a consulta abre o diálogo de confirmação só pelo pedido do clique, sem olhar a situação
+(`apps/web/src/features/compras/central/estado.ts`, o estado inicial de `confirmando`; a venda olha `open`/`approved`):
+o diálogo aparece sobre a compra já confirmada, a prévia dele recusa ("Compra já confirmada", `ALREADY_CONFIRMED`) e o
+Confirmar fica desabilitado; a compra fica confirmada, sem efeito duplicado. A VISUAL-UX-04b entra antes desta e faz
+a consulta da compra conferir a situação e a permissão depois de carregar, antes de abrir o diálogo, como a da venda:
+com ela na main, a compra confirmada sozinha abre a consulta em Confirmado, sem diálogo. Se esta entrar sem a
+VISUAL-UX-04b na main, com TOP de compra Automática, use "Salvar" na criação —; o aviso do Salvar pelo resultado da
 confirmação automática — hoje as duas dizem o "Salvo com sucesso" de sempre também quando ela não aconteceu:
 `recusada` → o documento aparece Aberto, e o motivo surge na prévia ou no `/confirm`; `sem_permissao` → aparece Aberto,
 sem o Confirmar para quem salvou —; os itens vazios quando a TOP permite (e, junto, a ajuda da Geral do §17.7 e os dois

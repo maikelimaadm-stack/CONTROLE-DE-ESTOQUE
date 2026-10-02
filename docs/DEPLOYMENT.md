@@ -1753,7 +1753,9 @@ sentido 1 sobe a API da base sobre o banco migrado e semeado por este HEAD, com 
 sentido 2, a web da base contra a API deste HEAD (janela 2). Os specs perguntam à API da base, na hora, se ela declara o
 bloco `regrasGerais` e se responde `GET /api/aprovacoes/vendas` (404 = mundo legado), e passam nos dois mundos. O
 aviso do Salvar da Central de Estoque não passa pelo job `skew` (o K-1 lança o documento de estoque pela API): o caminho
-"sem a chave → Salvo com sucesso" é provado pelo passo (1) do W-5b, com uma TOP no formato 3 na API deste HEAD.
+"sem a chave → Salvo com sucesso" é provado pelo passo (1) do W-5b, com uma TOP no formato 3 na API deste HEAD. Até a
+VISUAL-UX-04b entrar e esta trazer a main, o job fica vermelho no sentido 2 por casos de outras fatias, sem defeito
+desta (a ordem de merge, abaixo).
 
 **Impacto em dados reais: nenhum dado muda; as TOPs de produção continuam no formato delas, e nada passa a executar até
 alguém gravar uma TOP no formato 4.** Tabelas novas, vazias; nenhuma linha existente muda (produção, lida em
@@ -1764,24 +1766,31 @@ pre-deploy acrescenta ao catálogo as seis permissões `.approve` e as dá ao pe
 de toda permissão nova; nenhum outro perfil muda. Com elas, o Administrador passa a ver o módulo Aprovações (a lista
 vazia: "Nenhum documento aguardando aprovação.").
 
-**A Central de Estoque, ao salvar, diz o resultado da confirmação automática (W-5b).** O aviso sai do
+**A Central de Estoque, ao salvar, diz o resultado da confirmação automática (W-5b e W-5c).** O aviso sai do
 `confirmacaoAutomatica` que o `POST` devolve, nunca da TOP da tela: `{confirmado: true}` → "Salvo e confirmado."
 (sucesso); `aguardando_aprovacao` → "Salvo. Este documento precisa de aprovação antes de ser confirmado." (informação);
 `sem_permissao` → "Salvo, mas não confirmado: você não tem permissão para confirmar este documento." (atenção);
 `recusada` → "Salvo, mas não confirmado: <a mensagem do servidor>." (atenção; a mensagem é a MESMA que o Confirmar
 daria, com um ponto final só); sem a chave (formato 1 a 3, Manual, ou API anterior) ou com resultado fora do contrato →
-o "Salvo com sucesso" de hoje. Depois do aviso, a consulta abre como hoje. O `sem_permissao` não tem prova E2E (pede quem
-lança sem poder confirmar).
+o "Salvo com sucesso" de hoje. Depois do aviso, a consulta abre como hoje. Um Salvar dá um aviso só, nunca o novo ao
+lado do de hoje. O `sem_permissao` é provado pelo W-5c: um membro que lança saída sem a permissão de confirmá-la (sem
+`saidas_estoque.edit`) salva pela Central com a TOP Automática → "Salvo, mas não confirmado: você não tem permissão
+para confirmar este documento.", um aviso só, a consulta em Aberto e o saldo parado; o mesmo lançamento pelo
+administrador confirma.
 
-**Declarado (fica para a fatia F2 da Central no motor, depois da PR da Central de Compras):** a Central de Vendas e a de
-Compras não mudam nesta fatia. Com uma TOP de venda Automática, "Confirmar venda" na criação salva, o `POST` já
-confirma, e a consulta abre a venda confirmada, sem o diálogo de confirmação e sem segundo `/confirm` (W-4c). Com uma
-TOP de compra Automática, "Confirmar compra" na criação salva e o `POST` já confirma, mas a consulta abre o diálogo de
-confirmação só pelo pedido do clique, sem olhar a situação (`apps/web/src/features/compras/central/estado.ts:663`; a de
-Vendas olha `open`/`approved`, `apps/web/src/app/(app)/vendas/[kind]/[id]/page.tsx:181`, o W-4c): o diálogo aparece
-sobre uma compra já confirmada, a prévia dele recusa ("Compra já confirmada") e o Confirmar fica desabilitado; a compra
-fica confirmada, sem efeito duplicado. Até a F2, com TOP de compra Automática, use "Salvar" na criação. Nas duas
-Centrais, ao salvar, o aviso continua o "Salvo com sucesso" de hoje também quando a confirmação automática não
+**Declarado (fica para a fatia F2 da Central no motor):** a Central de Vendas e a de Compras não mudam nesta fatia.
+Com uma TOP de venda Automática, "Confirmar venda" na criação salva, o `POST` já confirma, e a consulta abre a venda
+confirmada, sem o diálogo de confirmação e sem segundo `/confirm` (W-4c): a consulta da venda, depois de carregar, só
+abre o diálogo para venda que chega `open` ou `approved` e para quem tem `sales.edit` (o efeito da chegada depois de
+salvar, em `apps/web/src/app/(app)/vendas/[kind]/[id]/page.tsx`). Com uma TOP de compra Automática, "Confirmar compra"
+na criação salva e o `POST` já confirma; enquanto a VISUAL-UX-04b (decisão 278, PR a abrir) não estiver na main, a
+consulta da compra abre o diálogo de confirmação só pelo pedido do clique, sem olhar a situação (o estado inicial de
+`confirmando` em `apps/web/src/features/compras/central/estado.ts`): o diálogo aparece sobre uma compra já confirmada,
+a prévia dele recusa ("Compra já confirmada") e o Confirmar fica desabilitado; a compra fica confirmada, sem efeito
+duplicado. A VISUAL-UX-04b, que entra ANTES desta (a ordem de merge, abaixo), faz a consulta da compra conferir a
+situação e a permissão depois de carregar, antes de abrir o diálogo, como a da venda: com ela na main, a compra
+confirmada sozinha abre a consulta em Confirmado, sem diálogo. Se esta entrar sem a VISUAL-UX-04b na main, com TOP de
+compra Automática, use "Salvar" na criação. Nas duas Centrais, ao salvar, o aviso continua o "Salvo com sucesso" de hoje também quando a confirmação automática não
 aconteceu: `recusada` → o documento aparece Aberto, e o motivo surge na prévia ou no `/confirm`; `sem_permissao` →
 aparece Aberto, sem o Confirmar para quem salvou. O rótulo "Salvar e confirmar", o aviso do Salvar pelo resultado da
 confirmação automática, os itens vazios que a TOP permite — e, junto, a ajuda da Geral do editor no formato 4, que hoje
@@ -1804,19 +1813,23 @@ com a mesma `CONFLICT`, porque o gatilho dispara também nas tabelas alcançadas
 repositório faz TRUNCATE; o reset dos testes derruba o schema); desligar as guardas ou a conta só com uma migration
 NOVA, por decisão do Maike — nunca editando a 0041. Nada de apagar dado de produção: documento se cancela, com estorno.
 
-**Merge depois de #86 e de #87 — as duas já estão na main e foram trazidas para esta branch (merge, sem rebase):** a
-#84 (decisão 275), a #86 (F3, só um teste de outra fatia e a linha dela no TESTING) e a #87 (decisão 276, Central de
-Compras no motor da Central, F2, só `apps/web` e documentos) entraram antes. Esta fatia não edita nenhum arquivo delas;
-os E2E daqui (W-3, W-4) só leem os `data-testid` `central-vendas-*`, que o motor da Central mantém pelo prefixo, e foram
-rodados de novo depois de trazer a main. Nenhuma das três tem migration: a contagem de migrations continua 41 (a 0041
-por último), e os gerados foram refeitos depois do merge. Ao trazer a main com a #87, dois detectores do
-`apps/web/e2e/skew-web-anterior.spec.ts` (spec de outra fatia, sem PR aberta; nem a #84, nem a #86, nem a #87 o
-editaram) foram ajustados NESTA PR para o web da base no motor da Central — nada da API desta fatia: a pílula de
-pendências é reconhecida também pelo prefixo do motor (`${prefixoTestid}-pendencias`, além do literal
-`central-vendas-pendencias`), e o vigia de requisições não conta como bloqueio uma LEITURA (`GET`) que a própria página
-cancela ao trocar de tela (`net::ERR_ABORTED`; vai para o log). Bloqueio (`net::ERR_FAILED`, CORS), qualquer outro erro
-e qualquer escrita abortada continuam falha. O commit `b1928e9` registra a prova local (base `1303de3`, sentido 2, só
-esse spec): antes 1 vermelho e 14 sem rodar; depois 23 de 23.
+**Já na main e trazidas para esta branch (merge, sem rebase; base `1303de3`):** a #84 (decisão 275), a #86 (F3, só um
+teste de outra fatia e a linha dela no TESTING) e a #87 (decisão 276, Central de Compras no motor da Central, F2, só
+`apps/web` e documentos) entraram antes. Esta fatia não edita nenhum arquivo delas; os E2E daqui (W-3, W-4) só leem os
+`data-testid` `central-vendas-*`, que o motor da Central mantém pelo prefixo, e foram rodados de novo depois de trazer
+a main. Nenhuma das três tem migration: a contagem de migrations continua 41 (a 0041 por último), e os gerados foram
+refeitos depois do merge.
+
+**Merge depois da VISUAL-UX-04b (PR a abrir; número quando existir).** Motivo: o conserto dos dois detectores do
+`apps/web/e2e/skew-web-anterior.spec.ts` (spec de outra fatia) que erram sobre o web da base no motor da Central — a
+pílula de pendências só pelo literal `central-vendas-pendencias`, e não pelo prefixo do motor; e o vigia de requisições
+que conta como bloqueio uma leitura que a própria página cancela ao trocar de tela — vai na VISUAL-UX-04b (correções da
+Central de Compras, decisão 278), e não nesta PR: as duas não podem mudar o mesmo arquivo (PRE-PR-02). O ajuste que
+esta branch tinha feito (`b1928e9`) saiu pelo commit de reversão `e1ab554`, e esta PR não muda mais esse spec (o diff
+contra a main não o lista). A VISUAL-UX-04b também traz a consulta da compra que confere a situação antes de abrir o
+diálogo (acima). Consequência declarada: até a VISUAL-UX-04b entrar e esta trazer a main, o job de Version skew desta
+PR fica vermelho no sentido 2 sem defeito desta fatia — A1-K2, CP-K2 e LD-K2, casos de outras fatias, sobre o web da
+base `1303de3`; depois de trazer a main, o CI roda de novo no HEAD novo.
 
 **Roteiro do Maike (cria TOPs e documentos reais; produção é operacional — decisões 240 e 247, nada é apagado):**
 1. Configurações › Usuários e Permissões › Perfis e Permissões: dar "Aprovar" (Vendas, Compras e as quatro espécies de
@@ -1827,10 +1840,11 @@ esse spec): antes 1 vermelho e 14 sem rodar; depois 23 de 23.
    → Manual", "Documento sem itens: Permitido → Proibido", "Alteração após confirmar: Permitida → Bloqueada"); "Salvar
    assim mesmo" → versão nova no formato 4, no neutro (o pedido só aceita o neutro; nada passa a executar).
 3. Criar as TOPs de venda, de compra e de estoque com Confirmação Automática e/ou Aprovação (Sempre; na venda e na
-   compra também "A partir de um valor") e salvar — o histórico mostra "Regras gerais e aprovação: executadas". Até a
-   fatia F2 da Central no motor, com a TOP de compra Automática, use "Salvar" na criação da compra, não "Confirmar
-   compra": o `POST` já confirma, e o "Confirmar compra" abriria o diálogo de confirmação sobre a compra já confirmada
-   (a prévia recusa com "Compra já confirmada"; nada é duplicado).
+   compra também "A partir de um valor") e salvar — o histórico mostra "Regras gerais e aprovação: executadas". Com a
+   VISUAL-UX-04b na main (a ordem de merge, acima), "Confirmar compra" na criação com a TOP de compra Automática abre a
+   consulta em Confirmado, sem diálogo. Se esta entrar sem a VISUAL-UX-04b na main, com a TOP de compra Automática, use
+   "Salvar" na criação da compra, não "Confirmar compra": o `POST` já confirma, e o "Confirmar compra" abriria o
+   diálogo de confirmação sobre a compra já confirmada (a prévia recusa com "Compra já confirmada"; nada é duplicado).
 4. Salvar um documento com a TOP Automática, sem aprovação → ele volta confirmado (estoque e financeiro como na
    confirmação manual; a Central de Estoque avisa "Salvo e confirmado.", e as de Vendas e de Compras, o "Salvo com
    sucesso" de hoje, com a consulta em Confirmado). Com aprovação → fica aberto e aparece em Aprovações (aba Vendas,

@@ -111,7 +111,7 @@ interface Cabecalho { empresa_id: string; armazem_id: string; armazem_destino_id
  * servidor tentou confirmar no fim do POST, por quem salvou (TOP-CONFIG-08, decisão 277). Formato 1 a 3, ou Manual:
  * o corpo de hoje, sem a chave.
  */
-interface RespostaDoSalvar { id: string; situacao?: string; confirmacaoAutomatica?: ResultadoConfirmacaoAutomatica }
+interface RespostaDoSalvar { id: string; confirmacaoAutomatica?: ResultadoConfirmacaoAutomatica }
 
 /**
  * O AVISO DO SALVAR, lido da resposta — nunca suposto pela TOP da tela:
