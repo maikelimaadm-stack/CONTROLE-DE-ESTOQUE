@@ -711,6 +711,14 @@ desenvolvimento a partir daqui é a decisão 240 com a 247.
 | 20:12:27 | Railway `api`: `ORGANIZACAO_LIMPA_ON_DEPLOY=0` e `ADMIN_PASSWORD` substituída por um texto não secreto (sem deploy) |
 | depois | o Maike entrou pela interface com sucesso |
 
+**Desde a 0041 (TOP-CONFIG-08, decisão 277), o comando de 20:03:21 FALHA** (OPERACOES-01, decisão 278). As três
+tabelas de aprovação (`erp.aprovacoes_venda`, `aprovacoes_compra`, `aprovacoes_estoque`) têm gatilho `BEFORE TRUNCATE`
+de imutabilidade, e um `TRUNCATE … CASCADE` alcança essas tabelas a partir de qualquer tabela de que elas dependem por
+chave estrangeira, direta ou indiretamente: `organizations`, `users`, `empresas`, `tipos_operacao`,
+`tipos_operacao_versoes`, `sales_documents`, `documentos_compra`, `documentos_estoque` e as que estas referenciam (por
+exemplo, `people`). O comando inteiro é recusado e nada é truncado. A linha acima é histórico e fica como está; a regra
+permanente continua a da decisão 247: dado de produção não se apaga.
+
 Estados: `PENDING` = não feito ou não comprovado. `OK` = feito, com evidência datada. Nenhum item vira `OK`
 por declaração, preview, `localhost`, CI ou "deploy verde". **Bloqueia** = sem ele, a primeira transação real
 não acontece.
