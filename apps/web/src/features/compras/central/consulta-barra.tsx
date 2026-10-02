@@ -1,6 +1,7 @@
 "use client";
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { MSG_PEDIDO_PRECISA_FINALIZAR_PARA_RECEBER } from "@agro/domain";
 import { useAuth } from "@/lib/auth";
 import { todayISO } from "@/lib/utils";
 import { useWorkspaceTabs } from "@/lib/workspace-tabs";
@@ -14,14 +15,16 @@ import { DialogoCancelarDocumento } from "@/features/central/dialogos";
 import { entregarCopia, montarCopia } from "@/features/central/duplicar-memoria";
 import {
   BotaoDaBarra, ConjuntoDaBarra, ConjuntoDireito, IconeCancelarDocumento, IconeConfirmar, IconeConverter, IconeDuplicar, IconeEncerrarSaldo,
-  IconeHistorico, IconeImprimir, IndicadorConfirmando, IndicadorSalvo, PilulaDaBarra, PosicaoDoRotulo, type ItemRapido, type PosicaoDoRotuloValor
+  IconeHistorico, IconeImprimir, IconeNovo, IconeRaio, IndicadorConfirmando, IndicadorSalvo, PilulaDaBarra, PosicaoDoRotulo, type ItemRapido,
+  type PosicaoDoRotuloValor
 } from "@/features/central/barra";
 import { TEXTO_SEM_PROXIMA_OPERACAO, rotaDeReceber, type EstadoProximosPassosDoPedido } from "../proximos-passos-pedido";
 import {
   ENTIDADE_DO_HISTORICO_DE_COMPRA, MOTIVO_VAZIO_DA_COMPRA, PREFIXO_CENTRAL_COMPRAS, chaveDaCopiaDeCompra, fonteDoNovoDocumentoDeCompra,
   fonteDosDocumentosDeCompras, rotaDaNovaCompra
 } from "./adaptador";
-import type { Cabecalho, CopiaDeCompra, EstadoDaConsulta } from "./estado";
+import type { Cabecalho, CopiaDeCompra, EstadoDaConsulta, OpcaoDeNovoOrcamento } from "./estado";
+import { DialogoAprovarParaOrcamento, DialogoFinalizarPedido } from "./dialogos-pedido";
 
 /**
  * BARRA DA CONSULTA DA CENTRAL DE COMPRAS (VISUAL-UX-04, decisão 276) — o modelo da venda, sobre o motor.
@@ -34,6 +37,9 @@ import type { Cabecalho, CopiaDeCompra, EstadoDaConsulta } from "./estado";
  *     indisponível ou pedido fechado → desabilitada com a dica), e "Encerrar saldo" (motivo obrigatório).
  * Os estados dos Próximos passos ficam VISÍVEIS com os testids de hoje (`compras-proximos-passos[data-situacao]`,
  * `-indisponivel`, `-vazio`, `-erro`).
+ *   - Pedido com a capacidade da F6 (OPERACOES-01 F6b, decisão 283; sem ela, a barra de hoje): "Finalizar" (com a
+ *     prévia do servidor), "Aprovar para orçamento" e "Novo orçamento" (pelo leque de TOPs de orçamento do pedido); o
+ *     "Receber…" também no pedido FINALIZADO, e desabilitado no aberto cuja TOP exige o pedido finalizado.
  *
  * Nada aqui chama a API de escrita: confirmar, cancelar e encerrar moram no estado (`useEstadoDaConsulta`).
  * Duplicar entrega a cópia em memória (nada na URL além da TOP, nada em storage) e abre a criação.
@@ -68,16 +74,22 @@ export function copiaDaCompra(d: Row, segmento: string, tipoOperacaoId: string):
   return montarCopia<Partial<Cabecalho>>(segmento, tipoOperacaoId, cabecalho, itens, null);
 }
 
-/** A dica da pílula "Receber…" desabilitada — null quando há o que receber. */
+/**
+ * A dica da pílula "Receber…" desabilitada — null quando há o que receber. Fora de aberto/finalizado, com a capacidade da
+ * F6 o texto diz as duas situações; sem ela, o texto de hoje. O ABERTO cuja TOP exige o pedido finalizado: a mensagem do
+ * servidor (o `/convert` recusaria com ela).
+ */
 function dicaDoReceber(e: EstadoDaConsulta): string | null {
-  if (e.situacao !== "aberto") return "Só pedido aberto é recebido";
+  if (!e.pedidoEmAndamento) return e.capacidade === "sim" ? "Só pedido aberto ou finalizado é recebido" : "Só pedido aberto é recebido";
   if (!e.podeReceber) return "Sem permissão para receber este pedido";
   const p = e.passos;
   switch (p.situacao) {
     case "carregando": return "Carregando os próximos passos…";
     case "indisponivel": return "Próximos passos indisponíveis nesta versão do servidor";
     case "erro": return p.mensagem;
-    case "pronto": return p.itens.some((x) => rotaDeReceber(x, e.id)) ? null : TEXTO_SEM_PROXIMA_OPERACAO;
+    case "pronto":
+      if (!p.itens.some((x) => rotaDeReceber(x, e.id))) return TEXTO_SEM_PROXIMA_OPERACAO;
+      return p.exigeFinalizar && e.situacao === "aberto" ? MSG_PEDIDO_PRECISA_FINALIZAR_PARA_RECEBER : null;
   }
 }
 
@@ -94,6 +106,7 @@ function SituacaoDosProximosPassos({ estado, children }: { estado: EstadoProximo
 }
 
 const rotuloDoPasso = (x: { codigo: string; nome: string; emPartes: boolean }) => `Receber em ${x.codigo} — ${x.nome}${x.emPartes ? " (em partes)" : ""}`;
+const rotuloDoOrcamento = (o: OpcaoDeNovoOrcamento) => `Orçamento em ${o.top.codigo} — ${o.top.nome}`;
 
 export interface PropsDaBarraDaConsulta {
   e: EstadoDaConsulta;
@@ -105,7 +118,10 @@ export interface PropsDaBarraDaConsulta {
   salvoVisivel: boolean;
 }
 
-/** A barra pronta para a moldura do motor: `acoes` (esquerda), `direita` e os `dialogos` (Cancelar, Encerrar saldo, Histórico, Duplicar sobre rascunho). */
+/**
+ * A barra pronta para a moldura do motor: `acoes` (esquerda), `direita` e os `dialogos` (Cancelar, Encerrar saldo,
+ * Histórico, Duplicar sobre rascunho e, no pedido com a capacidade da F6, Finalizar e Aprovar para orçamento).
+ */
 export function useBarraDaConsulta({ e, rotulo, densidade, onDensidade, salvoVisivel }: PropsDaBarraDaConsulta): {
   acoes: React.ReactNode; direita: React.ReactNode; dialogos: React.ReactNode;
 } {
@@ -154,16 +170,39 @@ export function useBarraDaConsulta({ e, rotulo, densidade, onDensidade, salvoVis
       items={passosComRota.map(({ x, rota }) => ({ label: rotuloDoPasso(x), onClick: () => router.push(rota) }))} />;
   })();
 
+  /* NOVO ORÇAMENTO (F6b) — uma TOP no leque: a pílula leva direto à criação; várias: o menu; senão, desabilitada com a
+     dica. O handler confere a MESMA regra do `disabled`. */
+  const { novoOrcamento } = e;
+  const abrirOrcamento = (o: OpcaoDeNovoOrcamento) => { if (novoOrcamento.dicaDesabilitada === null) router.push(o.rota); };
+  const pilulaNovoOrcamento = (() => {
+    if (!novoOrcamento.visivel) return null;
+    const [unicaTop] = novoOrcamento.opcoes;
+    if (novoOrcamento.dicaDesabilitada !== null || !unicaTop) {
+      return <PilulaDaBarra icone={<IconeNovo />} dica={novoOrcamento.dicaDesabilitada ?? "Novo orçamento"} disabled data-testid="compras-novo-orcamento">Novo orçamento</PilulaDaBarra>;
+    }
+    if (novoOrcamento.opcoes.length === 1) {
+      return <PilulaDaBarra icone={<IconeNovo />} dica={rotuloDoOrcamento(unicaTop)} data-testid="compras-novo-orcamento" data-top-id={unicaTop.top.tipoOperacaoId}
+        onClick={() => abrirOrcamento(unicaTop)}>Novo orçamento</PilulaDaBarra>;
+    }
+    return <Menu trigger={<PilulaDaBarra icone={<IconeNovo />} dica="Escolher a operação de orçamento" data-testid="compras-novo-orcamento">Novo orçamento</PilulaDaBarra>}
+      items={novoOrcamento.opcoes.map((o) => ({ label: rotuloDoOrcamento(o), onClick: () => abrirOrcamento(o) }))} />;
+  })();
+
   const acoes = <ConjuntoDaBarra>
     {podeCriar && <NovoDocumento prefixoTestid={PREFIXO} fonte={fonteNovo} />}
     {podeCriar && <BotaoDaBarra rotulo="Duplicar documento" dica={e.dicaDuplicarDesabilitado ?? "Duplicar documento"} disabled={!e.podeDuplicar}
       data-testid={`${PREFIXO}-duplicar`} onClick={duplicar}><IconeDuplicar /></BotaoDaBarra>}
     {e.ehCompra && can("compras.edit") && <PilulaDaBarra icone={<IconeConfirmar />} dica="Confirmar compra" disabled={!e.podeConfirmar || e.confirmarOcupado}
       data-testid="compras-confirmar" onClick={() => { if (e.podeConfirmar) e.setConfirmando(true); }}>Confirmar compra</PilulaDaBarra>}
-    {e.ehPedido && (e.podeReceber || e.situacao !== "aberto")
+    {e.ehPedido && (e.podeReceber || !e.pedidoEmAndamento)
       && (e.podeReceber ? <SituacaoDosProximosPassos estado={e.passos}>{pilulaReceber}</SituacaoDosProximosPassos> : pilulaReceber)}
     {e.podeEncerrarSaldo && <PilulaDaBarra icone={<IconeEncerrarSaldo />} dica="Encerrar o saldo a receber" data-testid="compras-encerrar-saldo"
       onClick={() => e.setEncerrando(true)}>Encerrar saldo</PilulaDaBarra>}
+    {e.finalizar.visivel && <PilulaDaBarra icone={<IconeConfirmar />} dica={e.finalizar.dicaDesabilitada ?? "Finalizar o pedido de compra"}
+      disabled={e.finalizar.dicaDesabilitada !== null} ocupado={e.finalizar.ocupado} data-testid="compras-finalizar" onClick={e.finalizar.abrir}>Finalizar</PilulaDaBarra>}
+    {e.aprovarParaOrcamento.visivel && <PilulaDaBarra icone={<IconeRaio />} dica="Aprovar o pedido para orçamento" ocupado={e.aprovarParaOrcamento.ocupado}
+      data-testid="compras-aprovar-para-orcamento" onClick={e.aprovarParaOrcamento.abrir}>Aprovar para orçamento</PilulaDaBarra>}
+    {pilulaNovoOrcamento}
   </ConjuntoDaBarra>;
 
   /* O LEQUE: Imprimir, Histórico, N documentos abertos, Cancelar <espécie>… (vermelho). Sem Anexos. */
@@ -191,6 +230,10 @@ export function useBarraDaConsulta({ e, rotulo, densidade, onDensidade, salvoVis
     <ConfirmDialog open={perguntaDuplicar} onOpenChange={setPerguntaDuplicar} title="Substituir o rascunho?"
       description={`Já há um lançamento de ${especie} com alterações não salvas. A cópia o substitui.`}
       confirmLabel="Duplicar mesmo assim" dismissLabel="Continuar editando" onConfirm={abrirCopia} />
+    {e.finalizar.visivel && <DialogoFinalizarPedido id={id} aberto={e.finalizar.aberto} onFechar={e.finalizar.fechar} codigo={codigo}
+      carregando={e.finalizar.ocupado} onFinalizar={e.finalizar.executar} />}
+    {e.aprovarParaOrcamento.visivel && <DialogoAprovarParaOrcamento aberto={e.aprovarParaOrcamento.aberto} onFechar={e.aprovarParaOrcamento.fechar}
+      codigo={codigo} carregando={e.aprovarParaOrcamento.ocupado} onAprovar={e.aprovarParaOrcamento.executar} />}
   </>;
   return { acoes, direita, dialogos };
 }

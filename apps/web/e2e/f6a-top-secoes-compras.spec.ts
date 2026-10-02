@@ -50,6 +50,12 @@ const TEXTOS = {
     "Exigir pedido finalizado para receber: com Sim, o pedido só é recebido depois de finalizado (e, se esta TOP exige aprovação, aprovado). Com Não, o pedido aberto ou finalizado é recebido, como hoje — e o aberto é recebido sem passar pela aprovação desta TOP, que só vale ao finalizar.",
   ajudaDivergencia:
     "Na compra recebida de um pedido, compara cada item com o pedido: o preço unitário líquido e a quantidade (contra o saldo do pedido). Nenhuma: não compara, como hoje. Avisar: a prévia da confirmação mostra a divergência. Bloquear: a compra com divergência acima da tolerância não é confirmada. Tolerância em %, de 0 a 100, com ponto como separador decimal.",
+  /** OPERACOES-01 F6b: a ajuda da aba Aprovação no PEDIDO de compra — a aprovação vale ao finalizar. */
+  ajudaAprovacaoPedido:
+    "No pedido de compra, a aprovação vale ao finalizar: com aprovação, o pedido só é finalizado depois de aprovado em Aprovações, por quem tem as permissões Aprovar de Pedidos de Compra e Aprovar de Compras. Se o valor do pedido subir depois da aprovação (o orçamento vencedor muda os preços), ela precisa ser feita de novo. O pedido aberto é recebido sem passar pela aprovação, a não ser que a aba Fluxo de compra exija o pedido finalizado para receber.",
+  /** A ajuda da aba Aprovação de HOJE, que os outros documentos (a compra inclusive) mantêm. */
+  ajudaAprovacaoGeral:
+    "Com aprovação, o documento só é confirmado depois de aprovado em Aprovações, por quem tem a permissão Aprovar. Alterar a venda depois de aprovada pede uma aprovação nova.",
   /** O aviso do CLIENTE ao lado da tolerância fora da forma (só apresentação: não bloqueia o envio). */
   avisoPercentual: "Informe um percentual de 0 a 100, com até duas casas decimais.",
   /** A mensagem do 422 de configuração (`TIPO_OPERACAO_CONFIGURACAO_INVALIDA`), a que o editor mostra no erro geral. */
@@ -153,7 +159,11 @@ test("S-1 — pedido de compra pelo assistente: as abas 'Fluxo de compra' e 'Apr
     await expect(exige).toHaveValue("true");
 
     // APROVAÇÃO: o pedido de compra aceita as três políticas (decisão 283: aprova ao finalizar), sem motivo de recusa.
+    // A AJUDA (OPERACOES-01 F6b): a do pedido, que diz que a aprovação vale ao FINALIZAR — e não a de hoje, que fala em
+    // "confirmado" (a premissa: a compra, no S-2, continua com a de hoje).
     await forma.getByTestId("top-aba-aprovacao").click();
+    await expect(forma.getByText(TEXTOS.ajudaAprovacaoPedido, { exact: true }), "a ajuda da Aprovação do pedido diz 'ao finalizar'").toBeVisible();
+    await expect(forma.getByText(TEXTOS.ajudaAprovacaoGeral, { exact: true }), "a ajuda de hoje não aparece no pedido de compra").toHaveCount(0);
     const politica = forma.getByTestId(CAMPO.aprovacao);
     await expect(politica, "nasce sem aprovação").toHaveValue("nenhuma");
     expect(await opcoesDoCampo(politica), "o pedido de compra aceita as três políticas").toEqual({ nenhuma: true, sempre: true, por_valor: true });
@@ -246,6 +256,11 @@ test("S-2 — compra pelo assistente: a aba 'Divergência com o pedido' (sem a d
     await expect(preco).toHaveValue("5.5");
     await expect(quantidade).toHaveValue("10");
     await expect(forma.locator("[data-testid^='top-aviso-divergenciaPedido.']"), "a forma é aceita: nenhum aviso").toHaveCount(0);
+
+    // A AJUDA DA APROVAÇÃO NA COMPRA (a premissa do S-1): a de hoje, letra por letra — a do pedido não aparece.
+    await forma.getByTestId("top-aba-aprovacao").click();
+    await expect(forma.getByText(TEXTOS.ajudaAprovacaoGeral, { exact: true }), "a compra mantém a ajuda da Aprovação de hoje").toBeVisible();
+    await expect(forma.getByText(TEXTOS.ajudaAprovacaoPedido, { exact: true }), "a ajuda do pedido não aparece na compra").toHaveCount(0);
 
     // SALVAR → o POST no 5 com a seção como foi digitada ("5.5", não "5.50"), e o resto no neutro.
     const post = page.waitForRequest(ehPostDeTop);

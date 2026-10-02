@@ -1,6 +1,6 @@
 "use client";
 import type * as React from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { brl } from "@/lib/utils";
 import { api, ApiError } from "@/lib/api";
 import { enumLabel, enumOptions } from "@/lib/copy";
@@ -25,7 +25,7 @@ import { useOpcoesDeTopDeCompras, varianteDeCompra } from "./variantes";
  * indisponível nesta versão do servidor — e não mostra uma lista vazia, que afirmaria "não há documentos".
  */
 export function DocumentosDeCompraList({ especie, barra }: { especie: string; barra?: React.ReactNode }) {
-  const disponivel = usePortaDisponivel();
+  const disponivel = usePortaDisponivel(especie);
   const opcoesTop = useOpcoesDeTopDeCompras();
 
   if (disponivel === "carregando") return <LoadingState />;
@@ -89,12 +89,15 @@ export function rotaDoDocumento(r: Row): string {
 /**
  * A porta da lista existe neste servidor? Uma pergunta de uma linha, só para distinguir a API anterior (404) do
  * resto. 403 (sem nenhuma capacidade de leitura) e os demais erros NÃO são "ausente": a lista monta e mostra o
- * erro que o servidor deu.
+ * erro que o servidor deu. A sonda leva a MESMA espécie que a lista pede (OPERACOES-01 F6b, decisão 283): quem só lê
+ * orçamento de compra tem a lista no Tipo dele, e a sonda sem a espécie lhe responderia 403 por nada.
  */
-function usePortaDisponivel(): "carregando" | "ausente" | "presente" {
+function usePortaDisponivel(especie: string): "carregando" | "ausente" | "presente" {
   const q = useQuery<unknown, ApiError>({
-    queryKey: ["compras-documentos-porta"],
-    queryFn: () => api<unknown>("/api/compras/documentos?limit=1"),
+    queryKey: ["compras-documentos-porta", especie],
+    queryFn: () => api<unknown>(`/api/compras/documentos?${new URLSearchParams({ limit: "1", ...(especie ? { especie } : {}) }).toString()}`),
+    // Trocar o Tipo não pisca a aba: a resposta da sonda anterior vale enquanto a da espécie nova chega.
+    placeholderData: keepPreviousData,
     retry: false,
     staleTime: 5 * 60_000
   });

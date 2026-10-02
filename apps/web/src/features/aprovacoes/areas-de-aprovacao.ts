@@ -216,9 +216,20 @@ export const CONFIGURACAO_DAS_AREAS: Readonly<Record<AreaDeAprovacao, Configurac
  */
 const ESPECIE_DA_CONSULTA: Readonly<Record<AreaDaConsulta, string>> = Object.freeze({ vendas: "venda", compras: "compra" });
 
-/** O documento da consulta (segmento e família de capacidade), pelas MESMAS variantes da fila. */
-export const documentoDaConsulta = (area: AreaDaConsulta): DocumentoDaLinha | undefined =>
-  CONFIGURACAO_DAS_AREAS[area].documento(ESPECIE_DA_CONSULTA[area]);
+/**
+ * O documento da consulta (segmento e família de capacidade), pelas MESMAS variantes da fila. `especie` ausente = a
+ * espécie da consulta da área (a venda, a compra); presente = outra espécie que a mesma área aprova (OPERACOES-01 F6b,
+ * decisão 283: o pedido de compra, que se aprova ao finalizar).
+ */
+export const documentoDaConsulta = (area: AreaDaConsulta, especie?: string): DocumentoDaLinha | undefined =>
+  CONFIGURACAO_DAS_AREAS[area].documento(especie ?? ESPECIE_DA_CONSULTA[area]);
+
+/**
+ * A capacidade da PORTA da rota de decisão de cada área (`POST /api/aprovacoes/<área>/<id>/aprovar|reprovar`), que a
+ * rota exige ANTES da capacidade da espécie. Na espécie da consulta as duas coincidem (`sales.approve`,
+ * `compras.approve`); noutra espécie (o pedido de compra) a decisão exige as duas — AND, como a rota.
+ */
+export const PERMISSAO_DA_PORTA_DA_DECISAO: Readonly<Record<AreaDaConsulta, string>> = Object.freeze({ vendas: "sales.approve", compras: "compras.approve" });
 
 /**
  * O corpo da decisão — estrito, como as rotas o leem:

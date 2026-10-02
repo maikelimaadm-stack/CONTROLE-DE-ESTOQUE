@@ -249,9 +249,14 @@ const COMBINACOES_DO_MOTOR: ({ onde: string; arquivo: string; prova: string } & 
     onde: "Central de Compras · receber pedido", arquivo: "src/features/compras/central/receber.tsx", prova: "CX-2 (o /convert leva 0), CC-9 (a coluna do saldo)",
     armazemPorItem: "ligada", armazemForcado: "regras?.exigeArmazem === true", custoMedioNoUnitario: "false", lote: "controleDeLote", daOrigem: "daOrigem",
     pesquisaDeProduto: "ausente"
+  },
+  {
+    onde: "Central de Compras · orçamento", arquivo: "src/features/compras/orcamento/central-orcamento.tsx", prova: "F6B-O2 (o preço digitado, sem custo médio; produto e quantidade do pedido, travados)",
+    armazemPorItem: "false", armazemForcado: "ausente", custoMedioNoUnitario: "false", lote: "ausente", daOrigem: "daOrigem",
+    pesquisaDeProduto: "ausente"
   }
 ];
-test("as 3 chamadas do motor estão na tabela", () => { expect(COMBINACOES_DO_MOTOR).toHaveLength(3); });
+test("as 4 chamadas do motor estão na tabela", () => { expect(COMBINACOES_DO_MOTOR).toHaveLength(4); });
 
 /** O nome com que o arquivo importa o motor (`ItensDaCentral`, ou o apelido do `as`), ou `null` se não o importa. */
 function nomeDoMotorNoArquivo(arquivo: string, texto: string): string | null {
