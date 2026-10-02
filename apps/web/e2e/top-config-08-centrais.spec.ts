@@ -3,7 +3,7 @@ import { MENSAGEM_APROVACAO_PENDENTE } from "@agro/domain";
 import { login, api, uniq, pickRef, adicionarItemNaCentral, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
 import { criarParceiro } from "./aj02-comum";
 import { cadastroDeEstoque, criarTopDeEstoque, entradaConfirmadaPelaApi, escolherNaReferencia, hojeISO, saldoNoServidor } from "./estoque-01-comum";
-import { cfg4, criarTopViaApi, detalheTopNoServidor, excluirTopE2E } from "./top-config-08-comum";
+import { cfg3, cfg4, criarTopViaApi, detalheTopNoServidor, excluirTopE2E } from "./top-config-08-comum";
 
 /**
  * TOP-CONFIG-08 (W-4, W-5) — AS CENTRAIS DE HOJE DIANTE DE UMA TOP NO FORMATO 4 (API e banco REAIS; nada mockado).
@@ -18,6 +18,10 @@ import { cfg4, criarTopViaApi, detalheTopNoServidor, excluirTopE2E } from "./top
  * │ W-5 Central de Estoque: o documento de TOP formato 4 "Sempre" → a prévia mostra a recusa da       │
  * │   aprovação (`estoque-previa-recusa`), SEM o aviso de saldo (`estoque-previa-bloqueio`), e o      │
  * │   Confirmar desabilitado; aprovado, libera e confirma.                                            │
+ * │ W-5b Central de Estoque, o AVISO do Salvar lido do `confirmacaoAutomatica` do POST: formato 3 →   │
+ * │   "Salvo com sucesso" (o de hoje); Automática sem saldo → "Salvo, mas não confirmado: <mensagem   │
+ * │   do servidor>."; Automática → "Salvo e confirmado."; Automática + "Sempre" → "Salvo. Este        │
+ * │   documento precisa de aprovação antes de ser confirmado." — cada um com a consulta que abre.     │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ A REGRA ANTI-VACUIDADE ───────────────────────────────────────────────────────────────────────┐
@@ -35,7 +39,7 @@ import { cfg4, criarTopViaApi, detalheTopNoServidor, excluirTopE2E } from "./top
 
 type Regras = { confirmacao: "manual" | "automatica"; aprovacao: "nenhuma" | "sempre" };
 type Venda = { id: string; code: string; status: string; version: string; titles: { id: string }[] };
-type ResultadoAutomatica = { confirmado: boolean; motivo?: string };
+type ResultadoAutomatica = { confirmado: boolean; motivo?: string; erro?: Recusa };
 type Recusa = { code: string; message: string; details?: unknown };
 type PreviaVenda = { podeConfirmar: boolean; recusas: Recusa[] };
 type PreviaEstoque = { podeConfirmar: boolean; recusas?: Recusa[]; itens: { insuficiente: boolean; saldo_atual: string; saldo_depois: string }[] };
@@ -245,6 +249,59 @@ async function fecharPreviaEstoque(page: Page) {
   await expect(page.getByTestId("estoque-previa")).toHaveCount(0);
 }
 
+type CadastroEstoque = Awaited<ReturnType<typeof cadastroDeEstoque>>;
+/** O 201 do POST do documento de estoque — com `confirmacaoAutomatica` só quando a TOP é formato 4 Automática. */
+type DocSalvoEstoque = { id: string; codigo: string; situacao: string; confirmacaoAutomatica?: ResultadoAutomatica };
+
+/**
+ * Lança PELA CENTRAL DE ESTOQUE um documento de um item (o produto e o armazém do cadastro do caso) com a TOP dada, e
+ * Salva. Devolve o CORPO do 201 que a própria tela recebeu, no instante do aviso: quem chama confere o aviso, e só
+ * depois a consulta que a Central abre.
+ */
+async function salvarNaCentralEstoque(
+  page: Page,
+  o: { segmento: "entradas" | "saidas"; especie: "entrada" | "saida"; top: string; c: CadastroEstoque; quantidade: string; custo?: string },
+  estoque: { segmento: string; id: string }[]
+): Promise<DocSalvoEstoque> {
+  await page.goto(`/estoque/movimentacoes/${o.segmento}/new?tipo_operacao_id=${o.top}`);
+  const central = page.getByTestId("estoque-central");
+  await expect(central).toHaveAttribute("data-especie", o.especie);
+  await expect(central).toHaveAttribute("data-modo", "criacao");
+  await expect(page.getByTestId("estoque-central-top"), "a TOP do caso vem travada").toHaveAttribute("data-tipo-operacao-id", o.top);
+  await escolherNaReferencia(page, page.getByTestId("estoque-central-armazem"), o.c.nomeArmazem);
+  await page.getByTestId("estoque-item-adicionar").click();
+  const linha = page.getByTestId("estoque-item").first();
+  await escolherNaReferencia(page, linha.getByTestId("estoque-item-produto"), o.c.nomeProduto);
+  await linha.getByTestId("estoque-item-quantidade").fill(o.quantidade);
+  if (o.custo !== undefined) await linha.getByTestId("estoque-item-custo").fill(o.custo);
+  const salvou = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === `/api/estoque/${o.segmento}`);
+  await page.getByTestId("estoque-salvar").click();
+  const criado = await salvou;
+  expect(criado.status(), "o documento foi salvo").toBe(201);
+  const doc = await criado.json() as DocSalvoEstoque;
+  estoque.push({ segmento: o.segmento, id: doc.id });
+  return doc;
+}
+
+/**
+ * O aviso do Salvar: o toast do TIPO dado (`erp-toast-panel--<tipo>`), pela descrição — o título é o fixo do tipo. O
+ * tipo entra no seletor: o texto certo no tom errado também reprova.
+ */
+const avisoDoSalvar = (page: Page, tipo: "success" | "info" | "warning") =>
+  page.locator(`[data-sonner-toast] .erp-toast-panel--${tipo} .erp-toast-panel__description`);
+/** Todos os avisos na tela — um Salvar dá UM aviso, nunca o novo ao lado do de hoje. */
+const avisos = (page: Page) => page.locator("[data-sonner-toast]");
+
+/** Depois do aviso, a Central abre a consulta DESTE documento, na situação que o servidor leu. */
+async function consultaAbre(page: Page, segmento: string, doc: DocSalvoEstoque, situacao: "aberto" | "confirmado") {
+  await expect(page, "depois do POST a Central abre a consulta do documento salvo").toHaveURL(new RegExp(`/estoque/movimentacoes/${segmento}/${doc.id}$`));
+  const central = page.getByTestId("estoque-central");
+  await expect(central).toHaveAttribute("data-modo", "consulta");
+  await expect(page.getByTestId("estoque-central-codigo"), "a consulta desenhou ESTE documento").toHaveText(doc.codigo);
+  await expect(central, `a consulta abre ${situacao}`).toHaveAttribute("data-situacao", situacao);
+  await expect(page.getByTestId("estoque-central-situacao")).toHaveAttribute("data-situacao", situacao);
+}
+
 test("W-5 — Central de Estoque, TOP formato 4 'Sempre': a prévia mostra a recusa da aprovação, SEM o aviso de saldo, e o Confirmar desabilitado; aprovada, libera e confirma", async ({ page }) => {
   await login(page);
   const estoque: { segmento: string; id: string }[] = []; const tops: string[] = [];
@@ -258,24 +315,11 @@ test("W-5 — Central de Estoque, TOP formato 4 'Sempre': a prévia mostra a rec
     const top = await criarTopFormato4(page, "estoque.saida", { confirmacao: "manual", aprovacao: "sempre" }, tops);
 
     // (1) A SAÍDA COBERTA, lançada PELA CENTRAL DE ESTOQUE: 2 de 5.
-    await page.goto(`/estoque/movimentacoes/saidas/new?tipo_operacao_id=${top}`);
-    const central = page.getByTestId("estoque-central");
-    await expect(central).toHaveAttribute("data-especie", "saida");
-    await expect(central).toHaveAttribute("data-modo", "criacao");
-    await expect(page.getByTestId("estoque-central-top"), "a TOP formato 4 vem travada").toHaveAttribute("data-tipo-operacao-id", top);
-    await escolherNaReferencia(page, page.getByTestId("estoque-central-armazem"), c.nomeArmazem);
-    await page.getByTestId("estoque-item-adicionar").click();
-    const linha = page.getByTestId("estoque-item").first();
-    await escolherNaReferencia(page, linha.getByTestId("estoque-item-produto"), c.nomeProduto);
-    await linha.getByTestId("estoque-item-quantidade").fill("2");
-    const salvou = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/estoque/saidas");
-    await page.getByTestId("estoque-salvar").click();
-    const criado = await salvou;
-    expect(criado.status(), "a saída foi salva").toBe(201);
-    const doc = await criado.json() as { id: string; codigo: string; situacao: string };
-    estoque.push({ segmento: "saidas", id: doc.id });
+    const doc = await salvarNaCentralEstoque(page, { segmento: "saidas", especie: "saida", top, c, quantidade: "2" }, estoque);
     expect([doc.situacao, "confirmacaoAutomatica" in doc], "aberta; TOP manual não ganha a chave nova").toEqual(["aberto", false]);
-    await expect(page).toHaveURL(new RegExp(`/estoque/movimentacoes/saidas/${doc.id}$`));
+    // Sem a chave nova, o aviso é o de hoje (TOP formato 4 MANUAL; o formato 3 é o W-5b).
+    await expect(avisoDoSalvar(page, "success"), "TOP Manual: o aviso de hoje, byte a byte").toHaveText(["Salvo com sucesso"]);
+    await consultaAbre(page, "saidas", doc, "aberto");
 
     // (2) A PRÉVIA: o CORPO primeiro — saldo coberto (nada insuficiente) e a recusa da aprovação.
     const previa = await abrirPreviaEstoque(page, "saidas", doc.id);
@@ -318,6 +362,73 @@ test("W-5 — Central de Estoque, TOP formato 4 'Sempre': a prévia mostra a rec
     await page.getByTestId("estoque-previa-confirmar").click();
     await expect(page.getByTestId("estoque-central")).toHaveAttribute("data-situacao", "confirmado");
     expect((await saldoNoServidor(page, c.armazem, c.produto)).quantity, "a saída aprovada baixou o saldo").toBe("3.0000");
+  } finally {
+    await limpar(page, [], estoque, tops);
+  }
+});
+
+/**
+ * O AVISO DO SALVAR NA CENTRAL DE ESTOQUE, lido do `confirmacaoAutomatica` que o POST devolve — o mesmo produto, o
+ * mesmo armazém, quatro TOPs, numa ordem que deixa cada premissa medida no servidor ao lado da conclusão:
+ *   (1) formato 3 com "Automática" só DECLARADA (o corte da decisão 277): o corpo de hoje e o aviso de hoje;
+ *   (2) Automática com o saldo ZERO: a confirmação recusa, o documento fica salvo e aberto, e o aviso traz a mensagem
+ *       que o servidor pôs no corpo (lida do fio, nunca escrita aqui), com o ponto final dela uma vez só;
+ *   (3) Automática numa entrada: confirma no POST, e o saldo sobe;
+ *   (4) Automática + "Sempre" numa saída COBERTA pelo saldo de (3): para na aprovação, antes de qualquer efeito.
+ * O "sem permissão" exige quem lança sem poder confirmar e não está aqui.
+ */
+test("W-5b — Central de Estoque, o aviso do Salvar pelo resultado da confirmação automática: formato 3 'Salvo com sucesso'; Automática sem saldo 'Salvo, mas não confirmado: …'; Automática 'Salvo e confirmado.'; Automática + 'Sempre' 'Salvo. … aprovação …'", async ({ page }) => {
+  await login(page);
+  const estoque: { segmento: string; id: string }[] = []; const tops: string[] = [];
+  try {
+    const c = await cadastroDeEstoque(page);
+    expect(Number((await saldoNoServidor(page, c.armazem, c.produto)).quantity), "premissa: o produto novo começa sem saldo").toBe(0);
+
+    // (1) O CASO DE HOJE — formato 3 que declara "Automática": o formato 3 só declara, nada confirma sozinho.
+    const top3 = await criarTopViaApi(page, "estoque.entrada", cfg3({ confirmacao: "automatica" }), { rotulo: "W-5b formato 3" });
+    tops.push(top3.id);
+    const lida3 = await detalheTopNoServidor(page, top3.id);
+    expect([lida3.configuracaoSchema, lida3.configuracao.valor?.geral.confirmacao], "premissa: formato 3, com a 'Automática' só declarada")
+      .toEqual([3, "automatica"]);
+    const deHoje = await salvarNaCentralEstoque(page, { segmento: "entradas", especie: "entrada", top: top3.id, c, quantidade: "1", custo: "10" }, estoque);
+    expect([deHoje.situacao, "confirmacaoAutomatica" in deHoje], "o corpo de hoje: aberto, SEM a chave nova").toEqual(["aberto", false]);
+    await expect(avisoDoSalvar(page, "success"), "sem a chave, o aviso de hoje, byte a byte").toHaveText(["Salvo com sucesso"]);
+    await expect(avisos(page), "um aviso só").toHaveCount(1);
+    await consultaAbre(page, "entradas", deHoje, "aberto");
+
+    // (2) AUTOMÁTICA SEM SALDO: o servidor tenta, a confirmação recusa — salvo e aberto.
+    const topRecusa = await criarTopFormato4(page, "estoque.saida", { confirmacao: "automatica", aprovacao: "nenhuma" }, tops);
+    const recusado = await salvarNaCentralEstoque(page, { segmento: "saidas", especie: "saida", top: topRecusa, c, quantidade: "2" }, estoque);
+    const resultado = recusado.confirmacaoAutomatica;
+    expect([recusado.situacao, resultado?.confirmado, resultado?.motivo], "o servidor tentou e recusou: o documento fica salvo e aberto")
+      .toEqual(["aberto", false, "recusada"]);
+    const mensagem = resultado?.erro?.message ?? "";
+    // A premissa do molde: a mensagem é a do saldo e termina em UM ponto — o aviso não pode dobrá-lo nem perdê-lo.
+    expect(mensagem, "premissa: a recusa é a do saldo, e a mensagem do servidor termina em ponto").toMatch(/^Saldo insuficiente .*[^.]\.$/);
+    await expect(avisoDoSalvar(page, "warning"), "o aviso traz a mensagem do servidor, com o ponto final uma vez só")
+      .toHaveText([`Salvo, mas não confirmado: ${mensagem}`]);
+    await expect(avisos(page), "um aviso só (nada de 'Salvo com sucesso' ao lado)").toHaveCount(1);
+    await consultaAbre(page, "saidas", recusado, "aberto");
+    expect(Number((await saldoNoServidor(page, c.armazem, c.produto)).quantity), "a recusa não moveu o saldo").toBe(0);
+
+    // (3) AUTOMÁTICA numa ENTRADA: confirma no fim do POST.
+    const topConfirma = await criarTopFormato4(page, "estoque.entrada", { confirmacao: "automatica", aprovacao: "nenhuma" }, tops);
+    const confirmado = await salvarNaCentralEstoque(page, { segmento: "entradas", especie: "entrada", top: topConfirma, c, quantidade: "5", custo: "10" }, estoque);
+    expect([confirmado.situacao, confirmado.confirmacaoAutomatica], "o servidor confirmou no fim do POST").toEqual(["confirmado", { confirmado: true }]);
+    await expect(avisoDoSalvar(page, "success")).toHaveText(["Salvo e confirmado."]);
+    await expect(avisos(page), "um aviso só").toHaveCount(1);
+    await consultaAbre(page, "entradas", confirmado, "confirmado");
+    expect((await saldoNoServidor(page, c.armazem, c.produto)).quantity, "a entrada confirmada subiu o saldo (e cobre a saída de (4))").toBe("5.0000");
+
+    // (4) AUTOMÁTICA + "SEMPRE" numa saída COBERTA (2 de 5): a única razão para não confirmar é a aprovação.
+    const topAprovacao = await criarTopFormato4(page, "estoque.saida", { confirmacao: "automatica", aprovacao: "sempre" }, tops);
+    const pendente = await salvarNaCentralEstoque(page, { segmento: "saidas", especie: "saida", top: topAprovacao, c, quantidade: "2" }, estoque);
+    expect([pendente.situacao, pendente.confirmacaoAutomatica], "o servidor parou na aprovação")
+      .toEqual(["aberto", { confirmado: false, motivo: "aguardando_aprovacao" }]);
+    await expect(avisoDoSalvar(page, "info")).toHaveText(["Salvo. Este documento precisa de aprovação antes de ser confirmado."]);
+    await expect(avisos(page), "um aviso só").toHaveCount(1);
+    await consultaAbre(page, "saidas", pendente, "aberto");
+    expect((await saldoNoServidor(page, c.armazem, c.produto)).quantity, "a aprovação pendente não moveu o saldo").toBe("5.0000");
   } finally {
     await limpar(page, [], estoque, tops);
   }

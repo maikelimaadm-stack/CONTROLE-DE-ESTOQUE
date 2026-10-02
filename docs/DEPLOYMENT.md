@@ -1737,17 +1737,23 @@ pergunta na hora de aplicar.
    ilegível). A Central de Vendas (que não muda nesta fatia) já mostra as recusas da prévia, a da aprovação inclusive.
    Declarado: a Central de Estoque anterior mostra "prévia indisponível" diante de uma recusa de aprovação e deixa
    clicar Confirmar — o servidor responde 409 `APROVACAO_PENDENTE` (ou `APROVACAO_REPROVADA`), e nada é confirmado.
+   Declarado também: com TOP no formato 4 Automática (o editor anterior não a grava), a Central de Estoque anterior diz
+   "Salvo com sucesso" também quando o servidor confirmou ou a automática não aconteceu; a consulta que ela abre em
+   seguida mostra a situação que o servidor leu.
 3. **web NOVA × API anterior:** sem o bloco `regrasGerais` nas capabilities, o editor grava o formato 3, com os textos e
    as abas de hoje, e o histórico da TOP não mostra nenhuma das duas linhas "Regras gerais e aprovação: …", em versão
    nenhuma (nem na do formato 3 que traz as chaves das regras gerais): elas só aparecem com o bloco. O módulo
    Aprovações recebe 404 nas rotas novas — o prefixo próprio responde um 404 limpo no binário anterior — e mostra "As
    aprovações ainda não estão disponíveis neste servidor.", sem quebrar o resto do sistema. As Centrais ficam iguais; a
-   de Estoque, sem `recusas` na prévia, se comporta como hoje.
+   de Estoque, sem `recusas` na prévia e sem `confirmacaoAutomatica` no `POST` (a API anterior não manda nenhuma das
+   duas), se comporta como hoje: a prévia de hoje e o aviso "Salvo com sucesso".
 
 As três janelas são provadas no CI pelo job `skew` (K-1 e K-2, `docs/TESTING.md`), contra os binários reais da base: o
 sentido 1 sobe a API da base sobre o banco migrado e semeado por este HEAD, com a web deste HEAD (janelas 1 e 3); o
 sentido 2, a web da base contra a API deste HEAD (janela 2). Os specs perguntam à API da base, na hora, se ela declara o
-bloco `regrasGerais` e se responde `GET /api/aprovacoes/vendas` (404 = mundo legado), e passam nos dois mundos.
+bloco `regrasGerais` e se responde `GET /api/aprovacoes/vendas` (404 = mundo legado), e passam nos dois mundos. O
+aviso do Salvar da Central de Estoque não passa pelo job `skew` (o K-1 lança o documento de estoque pela API): o caminho
+"sem a chave → Salvo com sucesso" é provado pelo passo (1) do W-5b, com uma TOP no formato 3 na API deste HEAD.
 
 **Impacto em dados reais: nenhum dado muda; as TOPs de produção continuam no formato delas, e nada passa a executar até
 alguém gravar uma TOP no formato 4.** Tabelas novas, vazias; nenhuma linha existente muda (produção, lida em
@@ -1758,11 +1764,30 @@ pre-deploy acrescenta ao catálogo as seis permissões `.approve` e as dá ao pe
 de toda permissão nova; nenhum outro perfil muda. Com elas, o Administrador passa a ver o módulo Aprovações (a lista
 vazia: "Nenhum documento aguardando aprovação.").
 
+**A Central de Estoque, ao salvar, diz o resultado da confirmação automática (W-5b).** O aviso sai do
+`confirmacaoAutomatica` que o `POST` devolve, nunca da TOP da tela: `{confirmado: true}` → "Salvo e confirmado."
+(sucesso); `aguardando_aprovacao` → "Salvo. Este documento precisa de aprovação antes de ser confirmado." (informação);
+`sem_permissao` → "Salvo, mas não confirmado: você não tem permissão para confirmar este documento." (atenção);
+`recusada` → "Salvo, mas não confirmado: <a mensagem do servidor>." (atenção; a mensagem é a MESMA que o Confirmar
+daria, com um ponto final só); sem a chave (formato 1 a 3, Manual, ou API anterior) ou com resultado fora do contrato →
+o "Salvo com sucesso" de hoje. Depois do aviso, a consulta abre como hoje. O `sem_permissao` não tem prova E2E (pede quem
+lança sem poder confirmar).
+
 **Declarado (fica para a fatia F2 da Central no motor, depois da PR da Central de Compras):** a Central de Vendas e a de
 Compras não mudam nesta fatia. Com uma TOP de venda Automática, "Confirmar venda" na criação salva, o `POST` já
-confirma, e a consulta abre a venda confirmada, sem o diálogo de confirmação e sem segundo `/confirm` (W-4c); o rótulo
-"Salvar e confirmar", os itens vazios que a TOP permite e a situação da aprovação e o Aprovar/Reprovar na consulta
-ficam para essa fatia. O servidor é a regra: a aprovação se dá em Aprovações.
+confirma, e a consulta abre a venda confirmada, sem o diálogo de confirmação e sem segundo `/confirm` (W-4c). Com uma
+TOP de compra Automática, "Confirmar compra" na criação salva e o `POST` já confirma, mas a consulta abre o diálogo de
+confirmação só pelo pedido do clique, sem olhar a situação (`apps/web/src/features/compras/central/estado.ts:663`; a de
+Vendas olha `open`/`approved`, `apps/web/src/app/(app)/vendas/[kind]/[id]/page.tsx:181`, o W-4c): o diálogo aparece
+sobre uma compra já confirmada, a prévia dele recusa ("Compra já confirmada") e o Confirmar fica desabilitado; a compra
+fica confirmada, sem efeito duplicado. Até a F2, com TOP de compra Automática, use "Salvar" na criação. Nas duas
+Centrais, ao salvar, o aviso continua o "Salvo com sucesso" de hoje também quando a confirmação automática não
+aconteceu: `recusada` → o documento aparece Aberto, e o motivo surge na prévia ou no `/confirm`; `sem_permissao` →
+aparece Aberto, sem o Confirmar para quem salvou. O rótulo "Salvar e confirmar", o aviso do Salvar pelo resultado da
+confirmação automática, os itens vazios que a TOP permite — e, junto, a ajuda da Geral do editor no formato 4, que hoje
+diz "nas Centrais de Vendas e de Compras o lançamento ainda pede ao menos um item", com os dois E2E que a conferem letra
+por letra (W-1 e K-1) — e a situação da aprovação e o Aprovar/Reprovar na consulta ficam para essa fatia. O servidor é
+a regra: a aprovação se dá em Aprovações.
 
 **Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0041 fica e convive com a API
 anterior (janela 1). Código: o binário anterior não confirma venda nem compra com TOP formato 4 — 409 "configuração
@@ -1784,7 +1809,14 @@ NOVA, por decisão do Maike — nunca editando a 0041. Nada de apagar dado de pr
 Compras no motor da Central, F2, só `apps/web` e documentos) entraram antes. Esta fatia não edita nenhum arquivo delas;
 os E2E daqui (W-3, W-4) só leem os `data-testid` `central-vendas-*`, que o motor da Central mantém pelo prefixo, e foram
 rodados de novo depois de trazer a main. Nenhuma das três tem migration: a contagem de migrations continua 41 (a 0041
-por último), e os gerados foram refeitos depois do merge.
+por último), e os gerados foram refeitos depois do merge. Ao trazer a main com a #87, dois detectores do
+`apps/web/e2e/skew-web-anterior.spec.ts` (spec de outra fatia, sem PR aberta; nem a #84, nem a #86, nem a #87 o
+editaram) foram ajustados NESTA PR para o web da base no motor da Central — nada da API desta fatia: a pílula de
+pendências é reconhecida também pelo prefixo do motor (`${prefixoTestid}-pendencias`, além do literal
+`central-vendas-pendencias`), e o vigia de requisições não conta como bloqueio uma LEITURA (`GET`) que a própria página
+cancela ao trocar de tela (`net::ERR_ABORTED`; vai para o log). Bloqueio (`net::ERR_FAILED`, CORS), qualquer outro erro
+e qualquer escrita abortada continuam falha. O commit `b1928e9` registra a prova local (base `1303de3`, sentido 2, só
+esse spec): antes 1 vermelho e 14 sem rodar; depois 23 de 23.
 
 **Roteiro do Maike (cria TOPs e documentos reais; produção é operacional — decisões 240 e 247, nada é apagado):**
 1. Configurações › Usuários e Permissões › Perfis e Permissões: dar "Aprovar" (Vendas, Compras e as quatro espécies de
@@ -1795,11 +1827,16 @@ por último), e os gerados foram refeitos depois do merge.
    → Manual", "Documento sem itens: Permitido → Proibido", "Alteração após confirmar: Permitida → Bloqueada"); "Salvar
    assim mesmo" → versão nova no formato 4, no neutro (o pedido só aceita o neutro; nada passa a executar).
 3. Criar as TOPs de venda, de compra e de estoque com Confirmação Automática e/ou Aprovação (Sempre; na venda e na
-   compra também "A partir de um valor") e salvar — o histórico mostra "Regras gerais e aprovação: executadas".
+   compra também "A partir de um valor") e salvar — o histórico mostra "Regras gerais e aprovação: executadas". Até a
+   fatia F2 da Central no motor, com a TOP de compra Automática, use "Salvar" na criação da compra, não "Confirmar
+   compra": o `POST` já confirma, e o "Confirmar compra" abriria o diálogo de confirmação sobre a compra já confirmada
+   (a prévia recusa com "Compra já confirmada"; nada é duplicado).
 4. Salvar um documento com a TOP Automática, sem aprovação → ele volta confirmado (estoque e financeiro como na
-   confirmação manual). Com aprovação → fica aberto e aparece em Aprovações (aba Vendas, Compras ou Estoque); Aprovar →
-   com a TOP Automática, confirma no mesmo clique ("Aprovado e confirmado."); com a Manual, "Aprovado." e o Confirmar
-   da consulta passa.
+   confirmação manual; a Central de Estoque avisa "Salvo e confirmado.", e as de Vendas e de Compras, o "Salvo com
+   sucesso" de hoje, com a consulta em Confirmado). Com aprovação → fica aberto e aparece em Aprovações (aba Vendas,
+   Compras ou Estoque; com a TOP Automática, a Central de Estoque avisa "Salvo. Este documento precisa de aprovação
+   antes de ser confirmado."); Aprovar → com a TOP Automática, confirma no mesmo clique ("Aprovado e confirmado."); com
+   a Manual, "Aprovado." e o Confirmar da consulta passa.
 5. (Para desfazer a prova) cancelar os documentos: os confirmados são estornados. As decisões de aprovação ficam (só
    inserção).
 

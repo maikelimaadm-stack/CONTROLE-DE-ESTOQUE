@@ -2128,6 +2128,15 @@ formato 3, textos e abas de hoje. Com ele:
   com Alteração escondida; estoque — Confirmação e a aba Aprovação ("A partir de um valor" desabilitada, com o motivo), com
   Documento sem itens e Alteração escondidos; orçamento e pedidos — as quatro escondidas;
 - uma 422 em `geral.*` ou `aprovacao.*` abre a aba do campo;
+- **a ajuda da Geral** (`AJUDA_COM_REGRAS_GERAIS.geral`; aparece em toda família que não é documento de estoque,
+  orçamento e pedidos inclusive, onde Confirmação e Documento sem itens ficam escondidos; o documento de estoque tem a
+  sua, "No documento de estoque valem a confirmação automática e a observação obrigatória.") diz o que vale HOJE para
+  quem lança venda e compra, e não só o que o servidor aceita, letra por letra: "Confirmação automática: o documento é
+  confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o
+  documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: o servidor aceita o documento sem
+  item, mas nas Centrais de Vendas e de Compras o lançamento ainda pede ao menos um item. As exigências de preenchimento
+  são cobradas no lançamento." — as Centrais de Vendas e de Compras não leem `confirmacaoAutomatica` ao salvar e ainda
+  pedem um item (§17.8); a fatia que mudar isso troca este texto junto;
 - **diálogo "Estas regras passam a valer"** (`top-regras-passam-a-valer`), só na EDIÇÃO de uma TOP que já existe e, quando
   os dois valem, depois do diálogo das exigências (§13): a lista do que passa a executar ("Confirmação automática",
   "Documento sem itens permitido", "Aprovação sempre", "Aprovação a partir de R$ <valor>") e, quando houver, "Estas opções
@@ -2144,14 +2153,30 @@ formato 3, textos e abas de hoje. Com ele:
 
 | Combinação | Comportamento |
 | --- | --- |
-| web nova × API anterior | sem o bloco `regrasGerais`, o editor grava o formato 3 com os textos de hoje, e o histórico da TOP não mostra nenhuma das duas linhas "Regras gerais e aprovação: …"; Aprovações recebe 404 nas rotas novas e mostra "As aprovações ainda não estão disponíveis neste servidor.", sem quebrar o resto |
-| API nova × web anterior | o editor anterior grava o formato 3 como hoje; corpo no formato 1 a 3 sobre versão vigente no 4 → a 422 do formato que não retrocede; `POST` e confirmação com TOP de formato 1 a 3 dão o corpo de hoje; a Central de Estoque anterior mostra "prévia indisponível" diante de uma recusa de aprovação e deixa clicar — o servidor responde 409 |
+| web nova × API anterior | sem o bloco `regrasGerais`, o editor grava o formato 3 com os textos de hoje, e o histórico da TOP não mostra nenhuma das duas linhas "Regras gerais e aprovação: …"; Aprovações recebe 404 nas rotas novas e mostra "As aprovações ainda não estão disponíveis neste servidor.", sem quebrar o resto; a Central de Estoque, sem `confirmacaoAutomatica` no `POST`, dá o "Salvo com sucesso" de hoje |
+| API nova × web anterior | o editor anterior grava o formato 3 como hoje; corpo no formato 1 a 3 sobre versão vigente no 4 → a 422 do formato que não retrocede; `POST` e confirmação com TOP de formato 1 a 3 dão o corpo de hoje; a Central de Estoque anterior mostra "prévia indisponível" diante de uma recusa de aprovação e deixa clicar — o servidor responde 409; com TOP no formato 4 Automática (o editor anterior não a grava), ela diz "Salvo com sucesso" também quando o servidor confirmou ou a automática não aconteceu, e a consulta mostra a situação que o servidor leu |
 | API anterior × versão no formato 4 (reversão) | não confirma venda nem compra: 409 `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL` (configuração ilegível), como hoje com formato desconhecido; no estoque ela não lê a configuração, e quem barra o documento que exige aprovação é a guarda do banco (409 `CONFLICT`); documento lançado nela com TOP formato 4 fica sem exigências e sem condições permitidas (`regrasDaVersaoTop` devolve nulo para formato desconhecido); não edita TOP com versão vigente no formato 4 (422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`: a escrita fecha, §11.2) |
+
+**A Central de Estoque lê o resultado ao salvar** (`apps/web/src/features/estoque/central-estoque.tsx`, `avisarSalvo`;
+W-5b). O aviso sai da resposta do `POST`, nunca da TOP da tela: `{confirmado: true}` → "Salvo e confirmado.";
+`aguardando_aprovacao` → "Salvo. Este documento precisa de aprovação antes de ser confirmado."; `sem_permissao` →
+"Salvo, mas não confirmado: você não tem permissão para confirmar este documento."; `recusada` → "Salvo, mas não
+confirmado: <`erro.message`>." — a mensagem do servidor com um ponto final só, pela mesma regra da fila de Aprovações
+(`mensagemDoServidorNoMolde`); sem a chave, ou com resultado fora do contrato (motivo desconhecido, `recusada` sem
+mensagem) → o "Salvo com sucesso" de hoje. Depois do aviso, a consulta abre como hoje.
 
 **Fica para a fatia F2 da Central no motor** (Central de Vendas e Central de Compras, nenhum arquivo delas mudou aqui):
 o "Salvar e confirmar" quando a TOP é automática — até lá, "Confirmar venda" na criação de uma venda automática salva, o
 `POST` já confirma, e a consulta abre a venda confirmada, sem o diálogo de confirmação, sem prévia e sem segundo
-`/confirm` (o diálogo só abre para venda que chega aberta, como quando a automática não confirma) —; os itens vazios
-quando a TOP permite; a situação da aprovação e o Aprovar/Reprovar na consulta. **Fatias próprias:** alteração após
-confirmar, notificação para quem aprova, aprovação de pedido, financeiro "Previsão", devolução de venda e de compra,
-campos por TOP no estoque.
+`/confirm` (o diálogo só abre para venda que chega aberta, como quando a automática não confirma); e "Confirmar compra"
+na criação de uma compra automática salva e o `POST` já confirma, mas a consulta abre o diálogo de confirmação só pelo
+pedido do clique, sem olhar a situação (`apps/web/src/features/compras/central/estado.ts`, o estado inicial de
+`confirmando`; a venda olha `open`/`approved`): o diálogo aparece sobre a compra já confirmada, a prévia dele recusa
+("Compra já confirmada", `ALREADY_CONFIRMED`) e o Confirmar fica desabilitado; a compra fica confirmada, sem efeito
+duplicado. Até a F2, com TOP de compra Automática, "Salvar" na criação —; o aviso do Salvar pelo resultado da
+confirmação automática — hoje as duas dizem o "Salvo com sucesso" de sempre também quando ela não aconteceu:
+`recusada` → o documento aparece Aberto, e o motivo surge na prévia ou no `/confirm`; `sem_permissao` → aparece Aberto,
+sem o Confirmar para quem salvou —; os itens vazios quando a TOP permite (e, junto, a ajuda da Geral do §17.7 e os dois
+E2E que a conferem letra por letra, W-1 e K-1); a situação da aprovação e o Aprovar/Reprovar na consulta. **Fatias
+próprias:** alteração após confirmar, notificação para quem aprova, aprovação de pedido, financeiro "Previsão",
+devolução de venda e de compra, campos por TOP no estoque.

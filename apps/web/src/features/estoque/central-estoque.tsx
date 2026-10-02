@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { LIMITE_CUSTO_ESTOQUE, LIMITE_QUANTIDADE_ESTOQUE, type EspecieEstoque } from "@agro/domain";
+import { LIMITE_CUSTO_ESTOQUE, LIMITE_QUANTIDADE_ESTOQUE, MENSAGEM_APROVACAO_PENDENTE, type EspecieEstoque } from "@agro/domain";
 import { api, newIdem } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
@@ -13,6 +13,7 @@ import { Button, Card, CardBody, CardHeader, Confirm, Dialog, Field, Input, Load
 import { RefSelect } from "@/components/ui/ref-select";
 import { KV, LoadingOr, SimpleTable, useDoc, useEmpresaPadrao, type Row } from "@/features/docs/shared";
 import { MensagemTop, podeLancar, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
+import { mensagemDoServidorNoMolde, type ResultadoConfirmacaoAutomatica } from "@/features/aprovacoes/areas-de-aprovacao";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
 import { useTopsDaEspecieEstoque, type VarianteDeEstoque } from "./movimentacoes-variantes";
 import { descreverCaminhoDeItem, errosDoServidor, numeroDoCampo } from "./central-estoque-campos";
@@ -35,7 +36,9 @@ import { chaveDaPreviaEstoque, rotuloDoMovimentoPrevisto, usePreviaDaConfirmacao
  * DOIS MODOS NA MESMA CENTRAL (`data-modo`):
  *   · criação — `/estoque/movimentacoes/<segmento>/new?tipo_operacao_id=…`: cabeçalho (TOP travada, empresa,
  *     armazém — e destino na transferência —, data, observação) e itens por espécie. Salvar grava o documento
- *     ABERTO: NADA de estoque se move ao salvar. Depois de salvo, a Central abre o documento em consulta.
+ *     ABERTO: NADA de estoque se move ao salvar. Depois de salvo, a Central abre o documento em consulta. A exceção é
+ *     do SERVIDOR, não da tela: com a TOP no formato 4 e Confirmação Automática ele tenta confirmar no fim do POST, e a
+ *     Central só lê o resultado para escolher o aviso (`avisarSalvo`).
  *   · consulta — `/estoque/movimentacoes/<segmento>/<id>`: o documento como o servidor o leu (situação, código, TOP
  *     e versão congeladas, itens, movimentos), com Confirmar (depois da PRÉVIA, em diálogo) e Cancelar (com motivo).
  *     É só leitura: editar o documento aberto está fora desta fatia.
@@ -102,6 +105,36 @@ function CriacaoEstoque({ variante }: { variante: VarianteDeEstoque }) {
 }
 
 interface Cabecalho { empresa_id: string; armazem_id: string; armazem_destino_id: string; data_documento: string; observacao: string }
+
+/**
+ * O 201 do POST. `confirmacaoAutomatica` só vem quando a versão da TOP é formato 4 com Confirmação Automática: o
+ * servidor tentou confirmar no fim do POST, por quem salvou (TOP-CONFIG-08, decisão 277). Formato 1 a 3, ou Manual:
+ * o corpo de hoje, sem a chave.
+ */
+interface RespostaDoSalvar { id: string; situacao?: string; confirmacaoAutomatica?: ResultadoConfirmacaoAutomatica }
+
+/**
+ * O AVISO DO SALVAR, lido da resposta — nunca suposto pela TOP da tela:
+ *   · sem `confirmacaoAutomatica` → "Salvo com sucesso" (o de hoje, byte a byte);
+ *   · `{ confirmado: true }` → "Salvo e confirmado.";
+ *   · `aguardando_aprovacao` → "Salvo. <a mensagem da aprovação pendente do domínio>";
+ *   · `sem_permissao` → "Salvo, mas não confirmado: você não tem permissão para confirmar este documento.";
+ *   · `recusada` → "Salvo, mas não confirmado: <mensagem do servidor>." — a MESMA mensagem que o Confirmar daria.
+ * Resultado fora do contrato cai no aviso de hoje: o 201 já prova que o documento foi gravado, e a consulta que abre
+ * em seguida mostra a situação que o servidor leu. Nenhum texto é inventado para ele.
+ */
+function avisarSalvo(r: RespostaDoSalvar): void {
+  const a = r.confirmacaoAutomatica;
+  if (a?.confirmado === true) { toast.success("Salvo e confirmado."); return; }
+  if (a?.confirmado === false) {
+    if (a.motivo === "aguardando_aprovacao") { toast.info(`Salvo. ${MENSAGEM_APROVACAO_PENDENTE}`); return; }
+    if (a.motivo === "sem_permissao") { toast.warning("Salvo, mas não confirmado: você não tem permissão para confirmar este documento."); return; }
+    if (a.motivo === "recusada" && typeof a.erro?.message === "string" && a.erro.message.trim()) {
+      toast.warning(mensagemDoServidorNoMolde("Salvo, mas não confirmado: ", a.erro.message)); return;
+    }
+  }
+  toast.success("Salvo com sucesso");
+}
 
 function FormularioEstoque({ variante, estado, top, escritaTopConfirmada }: {
   variante: VarianteDeEstoque;
@@ -177,8 +210,8 @@ function FormularioEstoque({ variante, estado, top, escritaTopConfirmada }: {
   // Uma chave de idempotência por TENTATIVA de lançamento; renovada só depois de uma recusa.
   const chave = React.useRef(newIdem());
   const salvar = useMutation({
-    mutationFn: (corpo: Record<string, unknown>) => api<{ id: string }>(`/api/estoque/${variante.segmento}`, { method: "POST", body: corpo, idempotencyKey: chave.current }),
-    onSuccess: (r) => { toast.success("Salvo com sucesso"); void qc.invalidateQueries(); router.push(`/estoque/movimentacoes/${variante.segmento}/${encodeURIComponent(r.id)}`); },
+    mutationFn: (corpo: Record<string, unknown>) => api<RespostaDoSalvar>(`/api/estoque/${variante.segmento}`, { method: "POST", body: corpo, idempotencyKey: chave.current }),
+    onSuccess: (r) => { avisarSalvo(r); void qc.invalidateQueries(); router.push(`/estoque/movimentacoes/${variante.segmento}/${encodeURIComponent(r.id)}`); },
     onError: (e) => { chave.current = newIdem(); setErros(errosDoServidor(e)); toast.error((e as Error).message); }
   });
   const salvarBloqueado = !escritaTopConfirmada || !linhas.length || salvar.isPending;

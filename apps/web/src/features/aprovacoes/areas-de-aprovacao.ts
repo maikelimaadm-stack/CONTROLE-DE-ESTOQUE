@@ -49,7 +49,10 @@ export type LinhaDaFila = {
  */
 export type PaginaDaFila = { items: LinhaDaFila[]; total: number; page: number; pageSize: number; idGlobal?: { tipoEntidade: string; rotulo: string } };
 
-/** O resultado da confirmação automática que a aprovação pode disparar (TOP no formato 4 com Confirmação Automática). */
+/**
+ * O resultado da confirmação automática (TOP no formato 4 com Confirmação Automática) — o mesmo corpo na decisão de
+ * aprovar e no POST que grava o documento (a Central de Estoque o lê ao salvar).
+ */
 export type ResultadoConfirmacaoAutomatica =
   | { confirmado: true }
   | { confirmado: false; motivo: "aguardando_aprovacao" }
@@ -72,12 +75,18 @@ export const MSG_DOCUMENTO_MUDOU_NA_FILA = "O documento mudou depois que a lista
 export const MSG_APROVADO = "Aprovado.";
 export const MSG_APROVADO_E_CONFIRMADO = "Aprovado e confirmado.";
 /**
+ * A mensagem do servidor dentro de um molde que já termina em ponto: o ponto final dela sai antes de entrar — "…saldo
+ * insuficiente.." seria o molde mal aplicado, não a mensagem. Um dono só para essa pontuação: a fila (aprovar) e a
+ * Central de Estoque (salvar com a TOP de Confirmação Automática) usam este.
+ */
+export const mensagemDoServidorNoMolde = (prefixo: string, mensagem: string): string =>
+  `${prefixo}${mensagem.trim().replace(/\.+$/, "")}.`;
+/**
  * A confirmação automática recusou depois da aprovação: o documento fica aprovado e aberto, e a mensagem é a do
- * servidor (o MESMO corpo que o /confirm daria). O ponto final dela sai antes de entrar no molde, que já termina
- * em ponto — "…saldo insuficiente.." seria o molde mal aplicado, não a mensagem.
+ * servidor (o MESMO corpo que o /confirm daria), no molde acima.
  */
 export const mensagemConfirmacaoAutomaticaNaoAconteceu = (mensagem: string): string =>
-  `Aprovado. A confirmação automática não aconteceu: ${mensagem.trim().replace(/\.+$/, "")}.`;
+  mensagemDoServidorNoMolde("Aprovado. A confirmação automática não aconteceu: ", mensagem);
 
 /** O tom do aviso que fica acima da lista depois de uma decisão. */
 export type TomDaMensagem = "sucesso" | "aviso" | "erro";

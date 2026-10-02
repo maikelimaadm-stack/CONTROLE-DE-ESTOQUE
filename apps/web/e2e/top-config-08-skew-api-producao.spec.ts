@@ -45,7 +45,7 @@ const TEXTOS_DE_HOJE = {
   declarativo: "Preparadas, ainda não executadas: fiscal, aprovação, confirmação automática e alteração após confirmar. Elas ficam registradas nesta versão, mas nada as executa nesta etapa do produto. As exigências da aba Geral só são cobradas no lançamento em versões gravadas com as restrições da operação."
 } as const;
 const TEXTOS_NOVOS = {
-  ajudaGeral: "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, com o motivo. Documento sem itens: o documento pode ser salvo e confirmado sem item. As exigências de preenchimento são cobradas no lançamento.",
+  ajudaGeral: "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: o servidor aceita o documento sem item, mas nas Centrais de Vendas e de Compras o lançamento ainda pede ao menos um item. As exigências de preenchimento são cobradas no lançamento.",
   ajudaAprovacao: "Com aprovação, o documento só é confirmado depois de aprovado em Aprovações, por quem tem a permissão Aprovar. Alterar a venda depois de aprovada pede uma aprovação nova.",
   avisoUltimaFrase: "O fiscal continua registrando a intenção da operação, sem executá-la.",
   declarativo: "Preparado, ainda não executado: o fiscal. Ele fica registrado nesta versão, mas nada o executa nesta etapa do produto."

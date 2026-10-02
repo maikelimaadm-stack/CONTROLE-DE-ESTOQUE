@@ -35,7 +35,7 @@ import {
  */
 const TEXTOS = {
   ajudaGeral:
-    "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, com o motivo. Documento sem itens: o documento pode ser salvo e confirmado sem item. As exigências de preenchimento são cobradas no lançamento.",
+    "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: o servidor aceita o documento sem item, mas nas Centrais de Vendas e de Compras o lançamento ainda pede ao menos um item. As exigências de preenchimento são cobradas no lançamento.",
   ajudaAprovacao:
     "Com aprovação, o documento só é confirmado depois de aprovado em Aprovações, por quem tem a permissão Aprovar. Alterar a venda depois de aprovada pede uma aprovação nova.",
   ajudaGeralEstoque: "No documento de estoque valem a confirmação automática e a observação obrigatória.",

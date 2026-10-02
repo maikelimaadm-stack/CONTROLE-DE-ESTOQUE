@@ -168,10 +168,14 @@ const AJUDA_ESTOQUE_DOCUMENTO_ESTOQUE =
  * declarado pelo servidor. No formato 4 a confirmação automática, o documento sem itens e a aprovação EXECUTAM; dizer
  * "registrado, ainda não executado" aqui seria mentir sobre a versão que o administrador está gravando. Sem o bloco
  * ficam os textos de cima, letra por letra: o servidor anterior grava o formato 3, e lá nada disso executa.
+ *
+ * A ajuda da Geral diz o que vale HOJE para quem lança, e não só o que o servidor aceita: as Centrais de Vendas e de
+ * Compras não leem o resultado da confirmação automática na gravação (o motivo da recusa só aparece ao confirmar) e
+ * ainda pedem ao menos um item no lançamento (o documento sem itens fica para a fatia da Central no motor).
  */
 const AJUDA_COM_REGRAS_GERAIS: Readonly<Record<"geral" | "aprovacao", string>> = {
   geral:
-    "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, com o motivo. Documento sem itens: o documento pode ser salvo e confirmado sem item. As exigências de preenchimento são cobradas no lançamento.",
+    "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: o servidor aceita o documento sem item, mas nas Centrais de Vendas e de Compras o lançamento ainda pede ao menos um item. As exigências de preenchimento são cobradas no lançamento.",
   aprovacao:
     "Com aprovação, o documento só é confirmado depois de aprovado em Aprovações, por quem tem a permissão Aprovar. Alterar a venda depois de aprovada pede uma aprovação nova."
 };
