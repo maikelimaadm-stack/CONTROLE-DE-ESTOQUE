@@ -8,6 +8,8 @@ import { Button, Dialog, Field, Input, NativeSelect } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { useAction } from "@/features/docs/actions";
 import { lerDecimal } from "./rateio-em-reais";
+import { useLcdpr } from "./capacidade";
+import { CampoImovelRural } from "./imovel-rural";
 
 type Direcao = "payable" | "receivable";
 type Tipo = "bank_movement" | "cross_settlement" | "advance_compensation";
@@ -56,6 +58,10 @@ function useContrapartidas(dir: Direcao, titulo: Row, ativo: boolean) {
  *   · encontro de contas: o título contrário abate valor − desconto (o desconto é deste título; juros e multa também
  *     ficam nele), e o desconto do valor inteiro não deixa nada para compensar.
  * Toda conta aqui é `decimal.js` e é PRÉVIA: quem recusa é o servidor.
+ *
+ * O IMÓVEL RURAL (OPERACOES-01 F9, decisão 286): com `capacidades.lcdpr`, a baixa BANCÁRIA mostra o imóvel do livro
+ * caixa, da empresa do título, já com o padrão dela; o corpo leva `imovel_rural_id` (o id, ou `null` = "Sem imóvel").
+ * Encontro de contas e compensação não movimentam caixa: nem o campo nem a chave. Sem a capacidade, o corpo de hoje.
  */
 export function DialogoDeBaixa({ open, onOpenChange, dir, titulo, aoConcluir }: { open: boolean; onOpenChange: (o: boolean) => void; dir: Direcao; titulo: Row; aoConcluir: () => void }) {
   const saldoTexto = String(titulo["balance"]);
@@ -63,7 +69,10 @@ export function DialogoDeBaixa({ open, onOpenChange, dir, titulo, aoConcluir }: 
   const [v, setV] = React.useState(inicial);
   const [menor, setMenor] = React.useState<"aberto" | "desconto">("aberto");
   const [excedente, setExcedente] = React.useState(false);
-  React.useEffect(() => { if (open) { setV(inicial()); setMenor("aberto"); setExcedente(false); } }, [open, inicial]);
+  const lcdpr = useLcdpr();
+  /** `undefined` = ainda não decidido (a chave não vai; o servidor aplica o padrão da empresa). */
+  const [imovel, setImovel] = React.useState<string | null | undefined>(undefined);
+  React.useEffect(() => { if (open) { setV(inicial()); setMenor("aberto"); setExcedente(false); setImovel(undefined); } }, [open, inicial]);
   const act = useAction(() => { onOpenChange(false); aoConcluir(); });
   const adiantamentos = useAdiantamentos(dir, titulo, open && v.settlement_kind === "advance_compensation");
   const contrapartidas = useContrapartidas(dir, titulo, open && v.settlement_kind === "cross_settlement");
@@ -111,7 +120,10 @@ export function DialogoDeBaixa({ open, onOpenChange, dir, titulo, aoConcluir }: 
       : {
         ...base, settlement_kind: v.settlement_kind, movement_mode: v.movement_mode,
         amount: money(amount), discount: money(discount), penalty: money(multa ?? 0), interest: money(juros ?? 0), increase: money(acrescimo ?? 0),
-        ...(bancaria ? { bank_account_id: v.bank_account_id, ...(tarifa && tarifa.gt(0) ? { tarifa: money(tarifa) } : {}), ...(acima && excedente ? { excedente: "credito" } : {}) } : { cross_title_id: v.cross_title_id })
+        ...(bancaria ? {
+          bank_account_id: v.bank_account_id, ...(tarifa && tarifa.gt(0) ? { tarifa: money(tarifa) } : {}), ...(acima && excedente ? { excedente: "credito" } : {}),
+          ...(lcdpr && imovel !== undefined ? { imovel_rural_id: imovel } : {})
+        } : { cross_title_id: v.cross_title_id })
       };
     act.mutate({ path: `/api/financial/${dir}s/${String(titulo["id"])}/settle`, idem: true, body: corpo });
   };
@@ -123,7 +135,8 @@ export function DialogoDeBaixa({ open, onOpenChange, dir, titulo, aoConcluir }: 
       <Field label="Data da baixa" required span={4}><Input type="date" value={v.settlement_date} onChange={(e) => setV({ ...v, settlement_date: e.target.value })} /></Field>
       <Field label="Tipo" span={4}><NativeSelect value={v.settlement_kind} onChange={(e) => setV({ ...v, settlement_kind: e.target.value as Tipo })}><option value="bank_movement">Movimento bancário</option><option value="cross_settlement">Encontro de contas</option><option value="advance_compensation">Compensação com adiantamento</option></NativeSelect></Field>
       {!comAdiantamento && <Field label="Movimento" span={4}><NativeSelect value={v.movement_mode} onChange={(e) => setV({ ...v, movement_mode: e.target.value })}><option value="separate">Separado (valor + juros)</option><option value="single">Único (líquido)</option></NativeSelect></Field>}
-      {bancaria && <Field label="Conta bancária" required span={12}><RefSelect resource="bank_accounts" value={v.bank_account_id} onChange={(x) => setV({ ...v, bank_account_id: x ?? "" })} /></Field>}
+      {bancaria && <Field label="Conta bancária" required span={lcdpr ? 7 : 12}><RefSelect resource="bank_accounts" value={v.bank_account_id} onChange={(x) => setV({ ...v, bank_account_id: x ?? "" })} /></Field>}
+      {bancaria && lcdpr && <CampoImovelRural empresaId={String(titulo["empresa_id"] ?? "") || null} valor={imovel} onChange={setImovel} testId="fin-baixa-imovel" span={5} />}
       {v.settlement_kind === "cross_settlement" && <Field label={dir === "payable" ? "Título a receber (contrapartida)" : "Título a pagar (contrapartida)"} required span={12} error={erroContrapartida ?? undefined}>
         <NativeSelect value={v.cross_title_id} onChange={(e) => setV({ ...v, cross_title_id: e.target.value })}><option value="">Selecione</option>{contrapartidas.data?.items.map((t) => <option key={t.id} value={t.id}>{t.numero} ({t.codigo}) — {t.pessoa_nome ?? ""} — vence {dateBR(t.vencimento)} — saldo {brl(t.saldo)}</option>)}</NativeSelect>
       </Field>}

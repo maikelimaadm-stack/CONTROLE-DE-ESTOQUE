@@ -10,6 +10,7 @@ import { useIdGlobalDoRegistro } from "@/lib/id-global";
 import { brl, dateBR } from "@/lib/utils";
 import { Button, Dialog, Field, StatusBadge, Textarea } from "@/components/ui";
 import { SimpleTable, type Row } from "@/features/docs/shared";
+import { useLcdpr } from "./capacidade";
 
 /**
  * O QUE O DETALHE DO TÍTULO GANHA NA CENTRAL FINANCEIRA (OPERACOES-01 F8, decisão 285) — só no modo `central`; no
@@ -18,18 +19,31 @@ import { SimpleTable, type Row } from "@/features/docs/shared";
  */
 
 /**
- * A ORIGEM do título: o rótulo do tipo (nunca o valor técnico) e, quando é documento, "Abrir origem" pela rota que o
- * SERVIDOR resolve a partir do registro (ID Global) — com a capacidade e o escopo do registro de origem. Sem rota (não
- * visível, entidade sem número), o link simplesmente não aparece: a tela nunca monta URL por conta própria.
+ * A ORIGEM do título: o NOME que o servidor dá (F9, decisão 286: "Pedido de venda 0003", "Compra 12", "Avulso") ou,
+ * sem ele (a API da F8), a MESMA regra do servidor sem o código do documento: sem origem ou "manual" → "Avulso"; senão
+ * o rótulo do tipo (documento, movimento, baixa, solicitação…) — nunca o valor técnico. Quando é documento, "Abrir
+ * origem" pela rota que o SERVIDOR resolve a partir do registro (ID Global) — com a capacidade e o escopo do registro
+ * de origem. Sem rota (não visível, entidade sem número), o link simplesmente não aparece: a tela nunca monta URL por
+ * conta própria.
  */
-export function OrigemDoTitulo({ sourceType, sourceId }: { sourceType: string | null; sourceId: string | null }) {
+export function OrigemDoTitulo({ sourceType, sourceId, nome }: { sourceType: string | null; sourceId: string | null; nome?: string | null }) {
   const documento = tituloDeDocumento(sourceType);
   const registro = useIdGlobalDoRegistro(documento ? sourceType : null, documento ? sourceId : null);
   const rota = registro.data?.rota;
   return <span className="inline-flex flex-wrap items-center gap-2" data-testid="fin-origem">
-    <span>{sourceType ? enumLabel("source_type", sourceType) : "Manual"}</span>
+    <span>{nome || (!sourceType || sourceType === "manual" ? "Avulso" : enumLabel("source_type", sourceType))}</span>
     {rota && <Link href={rota} className="text-brand-700 underline" data-testid="fin-abrir-origem">Abrir origem</Link>}
   </span>;
+}
+
+/**
+ * O aviso do TÍTULO PREVISTO (F9, decisão 286): a provisão de um documento pela TOP — promessa de caixa, não lançamento.
+ * O detalhe não oferece Baixar, Editar, Cancelar nem Duplicar (o servidor recusa os quatro com 409).
+ */
+export function AvisoDoPrevisto() {
+  return <p className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-[12.5px] text-sky-900" data-testid="fin-aviso-previsto">
+    Título previsto: ele dá lugar ao título de verdade quando o documento é faturado e é cancelado se o saldo for encerrado ou o documento cancelado. Não recebe baixa.
+  </p>;
 }
 
 /** O aviso do título gerado por documento: valor, parceiro e rateio mudam pela ORIGEM (o servidor recusa com 409). */
@@ -75,9 +89,11 @@ function ReciboDoLote({ loteId, onOpenChange }: { loteId: string | null; onOpenC
 /**
  * A aba BAIXAS na Central: as colunas de hoje mais Tarifa, Lote e Componentes; as ações "Cancelar baixa" (a de hoje,
  * uma baixa) e, para baixa feita em lote, "Estornar lote" e "Recibo do lote". A baixa de lote com movimento único só
- * sai inteira: cancelar uma baixa dela o servidor recusa — o caminho é estornar o lote.
+ * sai inteira: cancelar uma baixa dela o servidor recusa — o caminho é estornar o lote. Com `capacidades.lcdpr` (F9),
+ * a coluna "Imóvel rural" mostra o imóvel do livro caixa gravado na baixa.
  */
 export function BaixasDoTitulo({ baixas, podeEstornar, podeRecibo, onCancelarBaixa }: { baixas: Row[]; podeEstornar: boolean; podeRecibo: boolean; onCancelarBaixa: (id: string) => void }) {
+  const lcdpr = useLcdpr();
   const [estornarLote, setEstornarLote] = React.useState<string | null>(null);
   const [recibo, setRecibo] = React.useState<string | null>(null);
   return <>
@@ -85,6 +101,7 @@ export function BaixasDoTitulo({ baixas, podeEstornar, podeRecibo, onCancelarBai
       { key: "settlement_date", label: "Data", render: (r) => dateBR(r["settlement_date"] as string) },
       { key: "settlement_kind", label: "Tipo", render: (r) => enumLabel("settlement_kind", r["settlement_kind"]) },
       { key: "bank_account_name", label: "Conta" },
+      ...(lcdpr ? [{ key: "imovel_rural_nome", label: "Imóvel rural", render: (r: Row) => <span data-testid="fin-baixa-imovel-rural">{String(r["imovel_rural_nome"] ?? "—")}</span> }] : []),
       { key: "amount", label: "Valor", align: "right", render: (r) => brl(r["amount"] as string) },
       { key: "discount", label: "Desconto", align: "right", render: (r) => brl(r["discount"] as string) },
       { key: "interest", label: "Juros", align: "right", render: (r) => brl(r["interest"] as string) },

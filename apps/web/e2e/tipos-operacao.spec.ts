@@ -128,17 +128,17 @@ test("exclui pela tela — e a tela ENVIA a revisão da linha", async ({ page })
 
 test("os tipos de movimento oferecidos no passo 1 vêm do catálogo publicado pelo servidor (só os que têm tela), não de uma lista da tela", async ({ page }) => {
   await login(page);
-  // AS PREMISSAS, LIDAS NO SERVIDOR: o catálogo publicado tem 9 tipos com tela, e o registry (`/familias`, que continua
-  // devolvendo TODAS as famílias) tem 23 — 14 delas sem tela no passo 1 (as telas antigas, os módulos e o financeiro).
-  // Sem as famílias sem tela, "nenhuma delas aparece" seria verdade de graça.
+  // AS PREMISSAS, LIDAS NO SERVIDOR: o catálogo publicado tem 12 tipos com tela (os 9 com documento e os 3 do Financeiro,
+  // F9), e o registry (`/familias`, que continua devolvendo TODAS as famílias) tem 24 — 12 delas sem tela no passo 1 (as
+  // telas antigas e os módulos). Sem as famílias sem tela, "nenhuma delas aparece" seria verdade de graça.
   const catalogo = await catalogoPublicadoE2E(page);
   const comTela = catalogo.tipos.filter((t) => t.temTela).map((t) => t.familia);
-  expect(comTela, "premissa: o catálogo publicado tem 9 tipos com tela").toHaveLength(9);
+  expect(comTela, "premissa: o catálogo publicado tem 12 tipos com tela").toHaveLength(12);
   expect(comTela.every((f) => typeof f === "string"), "premissa: todo tipo com tela tem família").toBe(true);
   const doServidor = await api<{ items: { codigo: string }[] }>(page, "GET", "/api/admin/tipos-operacao/familias");
-  expect(doServidor.items, "premissa: o registry inteiro tem 23 famílias").toHaveLength(23);
+  expect(doServidor.items, "premissa: o registry inteiro tem 24 famílias").toHaveLength(24);
   const semTela = doServidor.items.map((f) => f.codigo).filter((f) => !comTela.includes(f));
-  expect(semTela, "premissa: 14 famílias do registry não têm tela no passo 1").toHaveLength(14);
+  expect(semTela, "premissa: 12 famílias do registry não têm tela no passo 1").toHaveLength(12);
 
   await abrirTela(page);
   await page.getByRole("button", { name: "Novo tipo de operação" }).click();

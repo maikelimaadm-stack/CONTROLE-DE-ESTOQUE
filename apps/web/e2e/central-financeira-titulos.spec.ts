@@ -94,8 +94,12 @@ test("Central Financeira · títulos → cartão A vencer, baixa em lote com mov
   await expect(central).toHaveAttribute("data-direcao", "payable");
   const cartao = page.getByTestId("fin-cartao-a_vencer");
   await expect(cartao.getByTestId("fin-cartao-quantidade"), "o cartão conta pelo MESMO recorte da lista").toHaveText("2");
-  await expect(page.getByTestId("fin-cartao-previstos"), "Previstos existe e é declarado indisponível (F9)").toBeDisabled();
-  await expect(page.getByTestId("fin-cartao-previstos")).toHaveAttribute("title", "Os previstos chegam com a provisão pela TOP");
+  // OPERACOES-01 F9 (decisão 286): com o financeiro pela TOP declarado, o cartão Previstos está LIGADO (conta e filtra os
+  // previstos da provisão; aqui, nenhum no recorte) — e sem o aviso de indisponível da F8.
+  expect(antes.cartoes["previstos"], "premissa: a API declara o cartão disponível, sem previsto no recorte").toEqual({ quantidade: 0, valor: "0.00", disponivel: true });
+  await expect(page.getByTestId("fin-cartao-previstos"), "Previstos existe e está ligado (F9)").toBeEnabled();
+  await expect(page.getByTestId("fin-cartao-previstos")).not.toHaveAttribute("title", /.+/);
+  await expect(page.getByTestId("fin-cartao-previstos").getByTestId("fin-cartao-quantidade")).toHaveText("0");
   // O cartão também FILTRA (no servidor): ligado, a lista são os dois a vencer; desligado, volta.
   await cartao.click();
   await expect(cartao).toHaveAttribute("aria-pressed", "true");

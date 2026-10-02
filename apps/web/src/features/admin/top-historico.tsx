@@ -11,8 +11,8 @@ import {
   type ConfiguracaoTipoOperacao, type DefinicaoSecaoV5, type PoliticaClienteEmAtraso, type SecaoConfiguracaoTopV5
 } from "@agro/domain";
 import {
-  ROTULOS_SECAO_TOP, ROTULOS_TOP, lerConfiguracaoDoServidor, podeConfigurarRegrasGerais, useCapacidadesTop,
-  type ConfiguracaoDoServidor
+  ROTULOS_SECAO_TOP, ROTULOS_TOP, lerConfiguracaoDoServidor, lerPadroesFinanceirosDoServidor, podeConfigurarRegrasGerais, useCapacidadesTop,
+  type CampoDosPadroesEmEdicao, type ConfiguracaoDoServidor, type PadroesFinanceirosEmEdicao
 } from "./top-contrato";
 import { ROTULOS_FINALIDADE_DOCUMENTO, ROTULOS_MODELO_DOCUMENTO } from "./top-fiscal-formato3";
 
@@ -72,6 +72,12 @@ interface VersaoTop {
   condicoesPermitidas: CondicaoDaVersao[] | null;
   /** TOP-CONFIG-07 — aquela versão reservava estoque? `null` = o servidor não informou (a linha não aparece). */
   reservaEstoque: boolean | null;
+  /**
+   * OPERACOES-01 F9 (decisão 286) — os PADRÕES FINANCEIROS daquela versão (a tabela da versão). `null` = a versão não
+   * tinha padrão, OU o servidor não informou (API anterior), OU veio ilegível — nos três a linha não aparece: afirmar
+   * "sem padrão" sobre o que não se leu seria inventar registro.
+   */
+  padroesFinanceiros: PadroesFinanceirosEmEdicao | null;
 }
 
 const ehObjeto = (v: unknown): v is Record<string, unknown> =>
@@ -115,8 +121,27 @@ function lerVersao(bruto: unknown): VersaoTop | null {
       ? [...(bruto.condicoesPermitidas as CondicaoDaVersao[])]
       : null,
     // TOLERANTE, a mesma régua: campo novo (TOP-CONFIG-07) que degrada sozinho para `null`.
-    reservaEstoque: typeof bruto.reservaEstoque === "boolean" ? bruto.reservaEstoque : null
+    reservaEstoque: typeof bruto.reservaEstoque === "boolean" ? bruto.reservaEstoque : null,
+    // TOLERANTE, a mesma régua: campo novo (OPERACOES-01 F9) que degrada sozinho para `null` (ausente ou ilegível).
+    padroesFinanceiros: lerPadroesFinanceirosDoServidor(bruto.padroesFinanceiros) ?? null
   };
+}
+
+/** O nome de cada padrão na linha do histórico, na ordem do servidor. */
+const ROTULOS_DOS_PADROES: Readonly<Record<CampoDosPadroesEmEdicao, string>> = {
+  natureza: "natureza",
+  centro: "centro",
+  tipoTitulo: "tipo de título",
+  formaPagamento: "forma",
+  conta: "conta"
+};
+
+/** "natureza 3.01 — Venda; conta BB — Banco do Brasil" — só os presentes. Vazio = a versão não tinha padrão. */
+function textoDosPadroes(p: PadroesFinanceirosEmEdicao | null): string {
+  if (p === null) return "";
+  return (Object.keys(ROTULOS_DOS_PADROES) as CampoDosPadroesEmEdicao[])
+    .flatMap((campo) => { const v = p[campo]; return v ? [`${ROTULOS_DOS_PADROES[campo]} ${v.rotulo}`] : []; })
+    .join("; ");
 }
 
 export function HistoricoDeVersoesTop({ id, codigo, comPonte, onFechar }: {
@@ -175,6 +200,7 @@ export function HistoricoDeVersoesTop({ id, codigo, comPonte, onFechar }: {
 function LinhaDeVersao({ versao, comPonte, comRegrasGerais }: { versao: VersaoTop; comPonte: boolean; comRegrasGerais: boolean }) {
   const [aberto, setAberto] = React.useState(false);
   const regras = comRegrasGerais ? regrasGeraisDaVersao(versao) : null;
+  const padroes = textoDosPadroes(versao.padroesFinanceiros);
   return <li data-testid="top-versao-linha" className="rounded border">
     <div className="flex flex-wrap items-center gap-2 px-3 py-2">
       <Badge tone="blue">Versão {versao.versao}</Badge>
@@ -201,6 +227,10 @@ function LinhaDeVersao({ versao, comPonte, comRegrasGerais }: { versao: VersaoTo
       {/* Só quando a versão DECLARA a reserva: "inativa" em toda versão de toda operação seria ruído, e `null` não afirma nada. */}
       {versao.reservaEstoque === true && <p className="mt-0.5" data-testid={`top-historico-reserva-${versao.versao}`}>
         Reserva de estoque: ativa
+      </p>}
+      {/* OPERACOES-01 F9: só quando a versão TEM algum padrão (a régua da reserva: "sem padrão" em toda versão seria ruído). */}
+      {padroes.length > 0 && <p className="mt-0.5" data-testid={`top-historico-padroes-${versao.versao}`}>
+        <span className="text-slate-400">Padrões: </span>{padroes}
       </p>}
       {regras === "executadas" && <p className="mt-0.5" data-testid="top-historico-regras-executadas">
         Regras gerais e aprovação: executadas

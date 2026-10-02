@@ -171,6 +171,12 @@ export interface CapacidadesTop {
    * `lerFormato5DasCapacidades`).
    */
   formato5: CapacidadesFormato5Top | null;
+  /**
+   * OPERACOES-01 F9 (decisão 286): o servidor grava os PADRÕES FINANCEIROS da versão (`capabilities.padroesFinanceiros
+   * === 1`, a tabela da versão). ADITIVO, na régua de `reservaEstoque`: ausente ou qualquer outro valor = servidor
+   * anterior — os campos dos padrões não aparecem e a chave `padroesFinanceiros` nunca vai no corpo (`.strict()`).
+   */
+  padroesFinanceiros: boolean;
 }
 
 /** Servidor sem restrições: nada do formato 3 aparece e nada dele é enviado. */
@@ -290,7 +296,9 @@ export function lerCapacidadesTop(bruto: unknown): CapacidadesTop | null {
     // TOP-CONFIG-08: ausente ou ilegível = `null`, sem negar o resto (régua própria, em `lerRegrasGeraisDasCapacidades`).
     regrasGerais: lerRegrasGeraisDasCapacidades(bruto.regrasGerais),
     // OPERACOES-01 F4: a mesma régua do `regrasGerais` (em `lerFormato5DasCapacidades`).
-    formato5: lerFormato5DasCapacidades(bruto.formato5)
+    formato5: lerFormato5DasCapacidades(bruto.formato5),
+    // OPERACOES-01 F9: só o valor EXATO 1 liga (a régua de `reservaEstoque`), sem negar o resto.
+    padroesFinanceiros: bruto.padroesFinanceiros === 1
   };
 }
 
@@ -435,6 +443,16 @@ export const podeConfigurarEmPartes = (e: EstadoCapacidadesTop): boolean =>
 export const podeConfigurarReservaEstoque = (e: EstadoCapacidadesTop): boolean =>
   podeConfigurar(e) && e.capacidades.reservaEstoque;
 
+/**
+ * OPERACOES-01 F9 (decisão 286) — os campos dos PADRÕES FINANCEIROS (natureza, centro, tipo de título, forma e conta, na
+ * tabela da versão) aparecem e `padroesFinanceiros` vai no corpo? Só com o editor do FORMATO 5 (os padrões só valem
+ * numa versão no 5, e o servidor recusa o resto) E a capacidade declarada. A FAMÍLIA (o perfil dos padrões) é a outra
+ * metade, decidida por quem desenha. A seção do JSON (`financeiroPadrao`: provisão, troca, sem classificação) não
+ * depende disto: ela anda com o conjunto de seções do `formato5`.
+ */
+export const podeConfigurarPadroesFinanceiros = (e: EstadoCapacidadesTop): boolean =>
+  podeConfigurarFormato5(e) && podeConfigurar(e) && e.capacidades.padroesFinanceiros;
+
 export const limiteDeDestinos = (e: EstadoCapacidadesTop): number =>
   podeConfigurar(e) ? e.capacidades.destinos.limite : 0;
 
@@ -564,10 +582,104 @@ export interface DetalheTop {
    * chave — que o servidor lê como "preserve o que está gravado".
    */
   reservaEstoque: boolean | null;
+  /**
+   * OPERACOES-01 F9 (decisão 286) — os PADRÕES FINANCEIROS da versão atual (a tabela da versão). TRÊS valores, a régua
+   * de `destinosConfigurados`:
+   *   objeto           os padrões lidos (campo `null` = sem padrão naquele campo);
+   *   `null`           o servidor informou que a versão NÃO tem padrão — o editor começa vazio;
+   *   `"nao_informado"` a chave veio AUSENTE (API anterior): NÃO é "vazio" — os campos ficam bloqueados e a chave não vai
+   *                    no corpo (ausente = o servidor preserva o que está gravado).
+   * Presente e malformado NEGA o corpo inteiro (régua das condições): mostrar vazio um padrão que o servidor declarou
+   * seria o descarte silencioso do lado de cá.
+   */
+  padroesFinanceiros: PadroesFinanceirosEmEdicao | null | "nao_informado";
 }
 
 const ehCondicaoPermitida = (v: unknown): v is CondicaoPermitidaEmEdicao =>
   ehObjeto(v) && ehTexto(v.id) && ehTexto(v.codigo) && ehTexto(v.nome);
+
+/**
+ * Um PADRÃO FINANCEIRO em edição: o id do cadastro e o texto que a tela mostra dele (o que o servidor devolveu — o
+ * seletor ainda mostra o caminho da árvore quando o cadastro tem um).
+ */
+export interface PadraoFinanceiroEmEdicao { id: string; rotulo: string }
+
+/** Os cinco padrões financeiros da versão em edição. `null` num campo = sem padrão (o documento decide). */
+export interface PadroesFinanceirosEmEdicao {
+  natureza: PadraoFinanceiroEmEdicao | null;
+  centro: PadraoFinanceiroEmEdicao | null;
+  tipoTitulo: PadraoFinanceiroEmEdicao | null;
+  formaPagamento: PadraoFinanceiroEmEdicao | null;
+  conta: PadraoFinanceiroEmEdicao | null;
+}
+export type CampoDosPadroesEmEdicao = keyof PadroesFinanceirosEmEdicao;
+
+/** Nenhum padrão: a versão sem linha, o cadastro novo. Objeto novo a cada chamada. */
+export const padroesFinanceirosVaziosEmEdicao = (): PadroesFinanceirosEmEdicao =>
+  ({ natureza: null, centro: null, tipoTitulo: null, formaPagamento: null, conta: null });
+
+/**
+ * A chave de cada campo no CORPO (`padroesFinanceiros.<chave>`, a mesma do caminho das recusas do servidor), na ordem
+ * do servidor. Um dono para a correspondência campo da tela ↔ chave do fio.
+ */
+export const CHAVE_DO_PADRAO_NO_CORPO: Readonly<Record<CampoDosPadroesEmEdicao, string>> = {
+  natureza: "naturezaId",
+  centro: "centroCustoId",
+  tipoTitulo: "tipoTituloId",
+  formaPagamento: "formaPagamentoId",
+  conta: "contaBancariaId"
+};
+
+/** "código — nome" (o formato das condições do histórico); sem código, só o nome. */
+const comCodigo = (codigo: string, nome: string) => (codigo ? `${codigo} — ${nome}` : nome);
+
+/**
+ * Lê UM padrão do detalhe: `null`, ou o objeto do cadastro com as chaves de texto daquele campo (natureza e centro: id,
+ * código e nome; tipo de título e forma: id e nome; conta: id, código e descrição). `undefined` = malformado.
+ */
+function lerUmPadrao(v: unknown, campo: CampoDosPadroesEmEdicao): PadraoFinanceiroEmEdicao | null | undefined {
+  if (v === null) return null;
+  if (!ehObjeto(v) || !ehTexto(v.id)) return undefined;
+  switch (campo) {
+    case "natureza":
+    case "centro":
+      return ehTexto(v.codigo) && ehTexto(v.nome) ? { id: v.id, rotulo: comCodigo(v.codigo, v.nome) } : undefined;
+    case "tipoTitulo":
+    case "formaPagamento":
+      return ehTexto(v.nome) ? { id: v.id, rotulo: v.nome } : undefined;
+    case "conta":
+      return ehTexto(v.codigo) && ehTexto(v.descricao) ? { id: v.id, rotulo: comCodigo(v.codigo, v.descricao) } : undefined;
+  }
+}
+
+/**
+ * Lê os padrões financeiros que o servidor devolveu (detalhe e histórico). `null` = a versão não tem padrão; objeto =
+ * os cinco campos, CADA UM presente (`null` ou o cadastro); `undefined` = malformado (quem chama decide: o detalhe nega
+ * o corpo inteiro, o histórico degrada só a linha).
+ */
+export function lerPadroesFinanceirosDoServidor(bruto: unknown): PadroesFinanceirosEmEdicao | null | undefined {
+  if (bruto === null) return null;
+  if (!ehObjeto(bruto)) return undefined;
+  const lidos = padroesFinanceirosVaziosEmEdicao();
+  for (const campo of Object.keys(CHAVE_DO_PADRAO_NO_CORPO) as CampoDosPadroesEmEdicao[]) {
+    // Campo AUSENTE é malformação (o contrato tem os cinco, `null` inclusive): ausente não é "sem padrão".
+    if (!(campo in bruto)) return undefined;
+    const um = lerUmPadrao(bruto[campo], campo);
+    if (um === undefined) return undefined;
+    lidos[campo] = um;
+  }
+  return lidos;
+}
+
+/**
+ * Os padrões do rascunho NO FORMATO DO CORPO (`{ naturezaId, centroCustoId, tipoTituloId, formaPagamentoId,
+ * contaBancariaId }`, `null` no campo vazio — as cinco chaves sempre: presença é declaração, e o servidor lê a chave
+ * ausente como `null`).
+ */
+export function padroesFinanceirosParaEnvio(p: PadroesFinanceirosEmEdicao): Record<string, string | null> {
+  return Object.fromEntries((Object.keys(CHAVE_DO_PADRAO_NO_CORPO) as CampoDosPadroesEmEdicao[])
+    .map((campo) => [CHAVE_DO_PADRAO_NO_CORPO[campo], p[campo]?.id ?? null]));
+}
 
 export function lerDetalheTop(bruto: unknown): DetalheTop | null {
   if (!ehObjeto(bruto)) return null;
@@ -583,6 +695,13 @@ export function lerDetalheTop(bruto: unknown): DetalheTop | null {
   // esconder uma condição que o servidor declarou seria descarte silencioso do lado de cá.
   if (bruto.condicoesPermitidas !== undefined
     && (!Array.isArray(bruto.condicoesPermitidas) || !bruto.condicoesPermitidas.every(ehCondicaoPermitida))) return null;
+  // OPERACOES-01 F9: a mesma régua — ausente = "nao_informado" (API anterior); presente e malformado NEGA o corpo inteiro.
+  let padroesFinanceiros: DetalheTop["padroesFinanceiros"] = "nao_informado";
+  if (bruto.padroesFinanceiros !== undefined) {
+    const lidos = lerPadroesFinanceirosDoServidor(bruto.padroesFinanceiros);
+    if (lidos === undefined) return null;
+    padroesFinanceiros = lidos;
+  }
   return {
     id: bruto.id,
     codigo: bruto.codigo,
@@ -601,7 +720,8 @@ export function lerDetalheTop(bruto: unknown): DetalheTop | null {
       : (bruto.condicoesPermitidas as CondicaoPermitidaEmEdicao[]).map((c) => ({ id: c.id, codigo: c.codigo, nome: c.nome })),
     // Degrada SOZINHO (a reserva é uma coluna da versão, não a configuração): forma estranha vira "não informado"
     // e só a caixa fica bloqueada — o resto do editor, que foi lido, continua editável.
-    reservaEstoque: typeof bruto.reservaEstoque === "boolean" ? bruto.reservaEstoque : null
+    reservaEstoque: typeof bruto.reservaEstoque === "boolean" ? bruto.reservaEstoque : null,
+    padroesFinanceiros
   };
 }
 
@@ -782,6 +902,29 @@ export interface RascunhoTop {
    * decide se ela É ENVIADA é a gravação: capacidade declarada E família do pedido — nunca só este valor.
    */
   reservaEstoque?: boolean;
+  /**
+   * OPERACOES-01 F9 (decisão 286) — os PADRÕES FINANCEIROS em edição (a tabela da versão, fora da configuração).
+   * AUSENTE quando o detalhe não os informou (`DetalheTop.padroesFinanceiros === "nao_informado"`): os campos ficam
+   * bloqueados e a chave não vai no corpo. No cadastro novo e na versão sem padrão, os cinco vazios.
+   */
+  padroesFinanceiros?: PadroesFinanceirosEmEdicao;
+  /**
+   * ESTA EDIÇÃO DECLARA OS PADRÕES? A régua das condições (`condicoesDeclaradas`): nasce `false` e vira `true` só
+   * quando o usuário MEXE num padrão. Intocados = chave ausente = o servidor preserva (e copia para a versão nova). Por
+   * que não "reenviar sempre os lidos": um cadastro inativado DEPOIS voltaria no corpo e o servidor recusaria (422)
+   * uma gravação que só trocou o nome. No cadastro novo, POST sem a chave = sem padrão, o mesmo que os cinco vazios.
+   */
+  padroesDeclarados?: boolean;
+}
+
+/**
+ * OPERACOES-01 F9 — os padrões do rascunho a partir do detalhe: os lidos; os cinco vazios na versão sem padrão e no
+ * cadastro novo (`detalhe` nulo); AUSENTES quando o servidor não os informou (API anterior — nada é reescrito).
+ */
+export function padroesFinanceirosIniciais(detalhe: DetalheTop | null): Pick<RascunhoTop, "padroesFinanceiros" | "padroesDeclarados"> {
+  const lidos = detalhe ? detalhe.padroesFinanceiros : null;
+  if (lidos === "nao_informado") return { padroesDeclarados: false };
+  return { padroesFinanceiros: lidos ?? padroesFinanceirosVaziosEmEdicao(), padroesDeclarados: false };
 }
 
 /**
@@ -988,7 +1131,10 @@ export function assinaturaRascunho(r: RascunhoTop): string {
     ...(r.condicoesPermitidas ? { condicoesPermitidas: r.condicoesPermitidas.map((c) => c.id) } : {}),
     ...(r.condicoesDeclaradas !== undefined ? { condicoesDeclaradas: r.condicoesDeclaradas } : {}),
     // TOP-CONFIG-07: marcar ou desmarcar a reserva é conteúdo (cria versão). Ausente = não lida, fora da assinatura.
-    ...(r.reservaEstoque !== undefined ? { reservaEstoque: r.reservaEstoque } : {})
+    ...(r.reservaEstoque !== undefined ? { reservaEstoque: r.reservaEstoque } : {}),
+    // OPERACOES-01 F9: dos padrões só a IDENTIDADE viaja (o rótulo é apresentação); ausentes = não lidos, fora dela.
+    ...(r.padroesFinanceiros ? { padroesFinanceiros: padroesFinanceirosParaEnvio(r.padroesFinanceiros) } : {}),
+    ...(r.padroesDeclarados !== undefined ? { padroesDeclarados: r.padroesDeclarados } : {})
   });
 }
 
