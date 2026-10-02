@@ -11,6 +11,9 @@
  * (o prefixo de testid, os textos, as portas de leitura). Os recursos novos de `ItensDaCentral` (lote e validade por
  * linha, armazém por item, armazém forçado, modo "da origem") são OPCIONAIS e desligados por padrão; o custo médio no
  * unitário e as casas da quantidade na leitura têm por padrão o comportamento da espécie que já existia.
+ * OPERACOES-01 F3b (decisão 280): o local de estoque vem antes do produto, o "Local de estoque" do cabeçalho preenche
+ * as linhas novas (estado da tela) e a pesquisa de produto mostra o saldo do local — só com a capacidade que a API
+ * declara; sem ela, a pesquisa de hoje.
  */
 import type * as React from "react";
 import type { ColunaDoLayout } from "@agro/domain";
@@ -267,13 +270,37 @@ export interface ItensDaOrigem {
   testIdDaLinha?: (item: ItemRow) => string;
 }
 
+/** OPERACOES-01 F3b: um local de estoque escolhido (o id e o rótulo que a tela mostra). */
+export interface LocalDeEstoque { id: string; rotulo: string }
+
+/**
+ * A pesquisa de produto da linha (decisão 280): na SAÍDA, "Só com saldo neste local" vem ligado; na ENTRADA aparece
+ * tudo, com o saldo. Só vale com a capacidade da pesquisa; sem ela, a pesquisa de hoje.
+ */
+export interface PesquisaDeProdutoDosItens {
+  readonly sentido: "entrada" | "saida";
+  /** Só produto que controla estoque (a Central que só aceita esses — a de estoque, F5b). Padrão `false`. */
+  readonly soControlaEstoque?: boolean;
+}
+export const PESQUISA_DE_PRODUTO_DA_SAIDA: PesquisaDeProdutoDosItens = Object.freeze({ sentido: "saida" });
+export const PESQUISA_DE_PRODUTO_DA_ENTRADA: PesquisaDeProdutoDosItens = Object.freeze({ sentido: "entrada" });
+
+/** De onde vem a pesquisa de produto: a capacidade ainda chegando, a pesquisa nova (com o saldo) ou a de hoje. */
+export type FonteDaPesquisaDeProdutos = "carregando" | "nova" | "legado";
+
 export interface PropsDosItens {
   prefixoTestid: string;
   colunas: ColunasDosItens;
   items: ItemRow[]; onChange: (i: ItemRow[]) => void;
   layout?: LayoutDosItens | null;
   erros?: Record<string, string>;
-  armazemPadrao?: { id: string; rotulo: string } | null;
+  /** O local de estoque das linhas NOVAS (só elas o recebem; cada linha troca o seu). */
+  armazemPadrao?: LocalDeEstoque | null;
+  /**
+   * A pesquisa de produto da linha (saída: só com saldo no local da linha; entrada: tudo, com o saldo). Ausente:
+   * entrada (tudo, com o saldo quando o servidor o mostra). Só vale com a capacidade; sem ela, a pesquisa de hoje.
+   */
+  pesquisaDeProduto?: PesquisaDeProdutoDosItens | null;
   reservaEstoque?: { obrigatorias: readonly string[] } | null;
   /**
    * A coluna de armazém é PERMITIDA por linha (só `false` a desliga; padrão: o comportamento de hoje). Permitir não é
@@ -281,8 +308,8 @@ export interface PropsDosItens {
    */
   armazemPorItem?: boolean;
   /**
-   * Com layout, a coluna de armazém aparece mesmo que o layout a esconda (ex.: a regra da operação exige o armazém).
-   * Padrão `false`: manda o layout.
+   * Com layout, a coluna de armazém aparece mesmo que o layout a esconda (ex.: a regra da operação exige o armazém),
+   * logo ANTES do Código/Produto (decisão 280: o local antes do produto). Padrão `false`: manda o layout.
    */
   armazemForcado?: boolean;
   /**
@@ -350,10 +377,38 @@ export interface PropsDoDialogoDescartar { aberto: boolean; onFechar: () => void
 /* ─────────────── M11 — pesquisa.tsx, duplicar-memoria.ts, salvo.ts ─────────────── */
 
 export interface OpcaoReal { id: string; label: string; code?: string | null }
+/** Uma opção da pesquisa com o saldo do local (só na fonte nova; ausente na de hoje). */
+export interface OpcaoDaPesquisa extends OpcaoReal { estoque?: string | null }
+/** O que a pesquisa de PRODUTO sabe (a de local não o recebe): a fonte, o local da LINHA e o sentido. */
+export interface ProdutoNaPesquisa {
+  fonte: FonteDaPesquisaDeProdutos;
+  /** O local da LINHA (o que vai no POST), nunca o do cabeçalho; sem ele, sem saldo e sem o filtro. */
+  armazemId?: string;
+  sentido: "entrada" | "saida";
+  soControlaEstoque?: boolean;
+}
 export interface PropsDaPesquisa {
   recurso: string; rotulo: string; filtro?: Record<string, string>; valor?: string | null;
   modo: "flutuante" | "fluxo"; ancora?: HTMLElement | null;
   onEscolher: (o: OpcaoReal) => void; onFechar: () => void; testId?: string;
+  /** OPERACOES-01 F3b: só a pesquisa de PRODUTO o recebe. Ausente (ou fonte "legado"): a pesquisa de hoje, idêntica. */
+  produto?: ProdutoNaPesquisa | null;
+}
+
+/* ─────────────── OPERACOES-01 F3b — local-padrao.tsx: o "Local de estoque" do cabeçalho ─────────────── */
+
+/** O campo do cabeçalho: os locais da empresa do documento. Estado da TELA: nunca vai no corpo. */
+export interface PropsDoLocalPadrao {
+  prefixoTestid: string;
+  empresaId: string;
+  valor: LocalDeEstoque | null;
+  onChange: (l: LocalDeEstoque | null) => void;
+}
+/** `useLocalDoCabecalho`: o local das linhas novas, a escolha (por empresa) e o descarte (volta ao padrão). */
+export interface LocalDoCabecalho {
+  local: LocalDeEstoque | null;
+  escolher: (l: LocalDeEstoque | null) => void;
+  descartar: () => void;
 }
 /** duplicar-memoria.ts: a cópia genérica que espera a criação, guardada no Map em memória pela chave do adaptador. */
 export interface CopiaEmMemoria<C> {

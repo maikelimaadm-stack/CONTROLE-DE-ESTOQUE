@@ -17,7 +17,8 @@ import type { BuscaDeOpcoes, Option } from "@/components/ui/ref-select";
 import { defaultPlan, totalDaLinhaExibido, useDoc, useEmpresaPadrao, type ColunaDoEditorDeItens, type ColunaDoLayoutNoEditor, type ItemRow, type Plan, type Row } from "@/features/docs/shared";
 import { entendeLayoutDocumento, podeLancar, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { topSelecionada } from "@/features/sales/lancador-tipo-operacao";
-import type { AdaptadorDaCentral, CopiaEmMemoria, DepoisDeSalvar, Pendencia } from "@/features/central/contrato";
+import type { AdaptadorDaCentral, CopiaEmMemoria, DepoisDeSalvar, LocalDeEstoque, Pendencia } from "@/features/central/contrato";
+import { useLocalDoCabecalho } from "@/features/central/local-padrao";
 import { descartarCopia, espiarCopia } from "@/features/central/duplicar-memoria";
 import { abreConfirmarNaChegada, confirmarPodeAbrir, consumirSalvo, descartarSalvo, entregarSalvo } from "@/features/central/salvo";
 import { avisarSalvo, type RespostaDoSalvar } from "@/features/central/salvar";
@@ -276,9 +277,22 @@ export interface EstadoDaCriacao {
   dica: (campo: ChaveDoCabecalho) => string | undefined;
   /** O campo veio do pedido com valor (no receber). */
   doPedido: (campo: string) => boolean;
-  armazemPadrao: string | null;
   colunasDoLayout: ColunaDoLayoutNoEditor[] | undefined;
   fieldsDosItens: ColunaDoEditorDeItens[];
+
+  /* o "Local de estoque" do cabeçalho (OPERACOES-01 F3b, decisão 280) */
+  /**
+   * A coluna do local está na grade da CRIAÇÃO (o layout a desenha, a regra a força, ou sem layout): só com ela o campo
+   * do cabeçalho aparece. No receber, nunca (as linhas vêm do pedido; o padrão do layout preenche as sem local).
+   */
+  localNaGrade: boolean;
+  /**
+   * O local das linhas NOVAS: começa no padrão de cadastro do layout para a empresa do documento e muda pelo campo do
+   * cabeçalho; cada linha troca o seu. Estado da TELA: nunca vai no corpo, não conta como alteração, não entra na cópia
+   * do Duplicar. `null` sem `localNaGrade`.
+   */
+  localDoCabecalho: LocalDeEstoque | null;
+  escolherLocal: (local: LocalDeEstoque | null) => void;
 
   /* erros e pendências */
   erro: (campo: string) => string | undefined;
@@ -469,6 +483,13 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
 
   const padraoArmazem = layout && layout.itens.some((c) => c.campo === "armazem_id") ? padroes.validos.get(chavePadraoDeCadastro("itens", "armazem_id")) : undefined;
   const armazemPadrao = padraoArmazem && padraoArmazem.empresaId && padraoArmazem.empresaId === h.empresa_id ? padraoArmazem.id : null;
+  /* O "Local de estoque" do cabeçalho (F3b) começa no MESMO padrão — o de cadastro do layout, só para a empresa do
+     documento — com o rótulo que o servidor mandou; trocar a empresa volta ao padrão dela. O `armazemPadrao` (o id)
+     continua sendo o que preenche as linhas sem local no receber. */
+  const padraoDoLocal = React.useMemo<LocalDeEstoque | null>(
+    () => (padraoArmazem && padraoArmazem.empresaId && padraoArmazem.empresaId === h.empresa_id ? { id: padraoArmazem.id, rotulo: padraoArmazem.rotulo } : null),
+    [padraoArmazem, h.empresa_id]);
+  const local = useLocalDoCabecalho(padraoDoLocal, h.empresa_id);
 
   /* PADRÕES DO LAYOUT: uma vez por resposta, só em campo intocado, nunca no que o pedido trouxe. */
   const padroesAplicados = React.useRef<{ resposta: unknown; preenchimento: string } | null>(null);
@@ -504,6 +525,9 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   ];
   const colunasDoLayout = layout ? colunasDoEditor(familia, layout.itens, { forcadas: colunasForcadas, obrigatoriasPelaRegra: new Set(regras?.exigeArmazem ? ["armazem_id"] : []) }) : undefined;
   const fieldsDosItens: ColunaDoEditorDeItens[] = colunasDoLayout ? colunasDoLayout.map((c) => c.coluna) : ehCompra ? COLUNAS_DE_HOJE_DA_COMPRA : COLUNAS_DE_HOJE_DO_PEDIDO;
+  /* Com o local escondido pelo layout (e não exigido pela regra) a linha nasce sem local, como antes: preencher um campo
+     que o usuário não vê nem troca seria o contrário de "o item pode trocar o local". */
+  const localNaGrade = !modoReceber && fieldsDosItens.includes("warehouse");
 
   /* OBRIGATÓRIOS: a MESMA função do domínio que a API usa. */
   const [tentouSalvar, setTentouSalvar] = React.useState(false);
@@ -568,6 +592,7 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     if (modoReceber) { router.push(rotaDoPedido); return; }
     setH({ ...inicial.current, empresa_id: inicial.current.empresa_id || empresaPadrao });
     setItensCru([]); setAjustarParcelas(false); setPlano(defaultPlan()); setErros({}); setTentouSalvar(false); setPendenciasAbertas(false);
+    local.descartar(); // o local do cabeçalho volta ao padrão
   };
 
   const rotuloDoPedido = enumLabel("especie_documento_compra", "pedido");
@@ -594,7 +619,8 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     padraoDoCampo, padraoInvalido,
     dica: (c) => { const p = padraoDoCampo(c); return p && h[c] === p.id ? p.rotulo : undefined; },
     doPedido: (c) => modoReceber && doPedido.current.has(c),
-    armazemPadrao, colunasDoLayout, fieldsDosItens,
+    colunasDoLayout, fieldsDosItens,
+    localNaGrade, localDoCabecalho: localNaGrade ? local.local : null, escolherLocal: local.escolher,
     erro, errosDaTela, errosDeItens, pendencias, pendenciasAbertas, setPendenciasAbertas,
     rotuloDoSalvar: rotuloDoSalvar(regras?.regrasGerais, can("compras.edit")),
     travaDoSalvar, salvarDesabilitado: travaDoSalvar !== null, salvando: salvarM.isPending, salvar,

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui";
 import { StockCell, totalDaLinhaExibido, type ItemRow } from "@/features/docs/shared";
 import { EstoqueDisponivelDoItem } from "@/features/stock/reserva-estoque";
 import { PainelDePesquisa } from "./pesquisa";
+import { useFonteDaPesquisaDeProdutos } from "./pesquisa-de-produtos";
 import { CampoDaCentral } from "./campo";
 import { ConfigurarColunas } from "./configurar-colunas";
 import { BotaoAmpliar } from "./moldura";
@@ -32,6 +33,11 @@ export type { ChaveCampoDoItem, ChaveColunaDoItem, ItensDaOrigem, LayoutDosItens
  * recursos novos — lote/validade por linha (`lote`), armazém permitido por item (`armazemPorItem`), armazém forçado
  * sobre o layout (`armazemForcado`) e o modo "da origem" (`daOrigem`) — são opcionais e desligados por padrão: sem eles
  * o DOM, as classes e o payload são os de antes. `custoMedioNoUnitario` é ligado por padrão (o de antes).
+ *
+ * OPERACOES-01 F3b (decisão 280): o Local vem antes do produto (sem layout e na coluna forçada; com layout, manda o
+ * layout); a linha nova nasce com o `armazemPadrao` (o "Local de estoque" do cabeçalho, estado da tela); a pesquisa de
+ * produto usa o local da LINHA e o sentido da espécie (`pesquisaDeProduto`; ausente = entrada) — com a capacidade da
+ * pesquisa nova; sem ela, a de hoje.
  */
 
 /** A linha nova: quantidade 1, unitário 0, gera estoque; com armazém padrão, só o `warehouse_id` a mais. */
@@ -55,15 +61,19 @@ const COLUNAS: Record<ChaveColunaDoItem, { rotulo: string; largura: number; nume
 };
 /** A coluna do círculo de seleção, do desenho. */
 const LARGURA_SELECAO = 34;
-/** A ordem de sempre (as nove de hoje). `saldo`, `lote` e `validade` só entram quando ligados. */
-const ORDEM_COLUNAS: readonly ChaveColunaDoItem[] = ["codigo", "produto", "armazem", "estoque", "saldo", "quantidade", "unitario", "desconto", "descontoPercentual", "total", "lote", "validade"];
+/**
+ * A ordem de sempre (as nove de hoje), com o Local antes do produto (decisão 280: é o local que decide o saldo; o
+ * Código fica junto do Produto). `saldo`, `lote` e `validade` só entram quando ligados.
+ */
+const ORDEM_COLUNAS: readonly ChaveColunaDoItem[] = ["armazem", "codigo", "produto", "estoque", "saldo", "quantidade", "unitario", "desconto", "descontoPercentual", "total", "lote", "validade"];
 const OPCIONAIS: ReadonlySet<ChaveColunaDoItem> = new Set(["saldo", "lote", "validade"]);
 
 const CAMPOS: Record<ChaveCampoDoItem, string> = {
   produto: "Produto", armazem: "Local de estoque", estoque: "Estoque", saldo: "Saldo", unidade: "Unidade", quantidade: "Quantidade",
   unitario: "Valor unitário", desconto: "Desconto", descontoPercentual: "Desconto %", total: "Total", lote: "Lote", validade: "Validade"
 };
-const ORDEM_CAMPOS: readonly ChaveCampoDoItem[] = ["produto", "armazem", "estoque", "saldo", "unidade", "quantidade", "unitario", "desconto", "descontoPercentual", "total", "lote", "validade"];
+/** O formulário na mesma ordem da grade (decisão 280: o Local antes do produto). */
+const ORDEM_CAMPOS: readonly ChaveCampoDoItem[] = ["armazem", "produto", "estoque", "saldo", "unidade", "quantidade", "unitario", "desconto", "descontoPercentual", "total", "lote", "validade"];
 
 /** Chave do ITEM (`ItemRow`) de cada coluna — usada quando o catálogo da espécie não mapeia a coluna (caminho de erro). */
 const CHAVE_DO_ITEM: Partial<Record<ChaveColunaDoItem, string>> = {
@@ -144,10 +154,12 @@ function CodigoDoProduto({ id, conhecido }: { id?: string; conhecido?: OpcaoReal
 }
 
 export function ItensDaCentral({
-  prefixoTestid, colunas: colunasDaEspecie, items, onChange, layout, erros, armazemPadrao, reservaEstoque = null,
+  prefixoTestid, colunas: colunasDaEspecie, items, onChange, layout, erros, armazemPadrao, pesquisaDeProduto = null, reservaEstoque = null,
   armazemPorItem, armazemForcado = false, custoMedioNoUnitario = true, lote = null, daOrigem = null
 }: PropsDosItens) {
   const tid = (sufixo: string) => `${prefixoTestid}-${sufixo}`;
+  // a capacidade da pesquisa nova é perguntada ao montar os itens (uma vez por sessão): ao abrir a pesquisa ela já chegou
+  const fonteDaPesquisa = useFonteDaPesquisaDeProdutos();
   const { doSistema, doCatalogo } = colunasDaEspecie;
   /** Coluna → chave do catálogo da espécie (inverso de `doCatalogo`); sem catálogo, a chave do item. */
   const chaveDoCatalogo = React.useMemo(() => {
@@ -178,10 +190,11 @@ export function ItensDaCentral({
       const depois = ORDEM_COLUNAS.slice(0, ORDEM_COLUNAS.indexOf(k)).filter((x) => lista.includes(x)).pop();
       lista.splice(depois ? lista.indexOf(depois) + 1 : 0, 0, k);
     }
-    // PERMITIR (`armazemPorItem`, em `ligada`) não é FORÇAR: só `armazemForcado` passa por cima do layout
+    // PERMITIR (`armazemPorItem`, em `ligada`) não é FORÇAR: só `armazemForcado` passa por cima do layout — e o põe
+    // logo ANTES do Código/Produto (decisão 280: o local antes do produto); sem nenhum dos dois, no início
     if (armazemForcado === true && ligada("armazem") && !lista.includes("armazem")) {
-      const i = lista.indexOf("produto");
-      lista.splice(i >= 0 ? i + 1 : lista.length, 0, "armazem");
+      const ancoras = (["codigo", "produto"] as const).map((k) => lista.indexOf(k)).filter((x) => x >= 0);
+      lista.splice(ancoras.length ? Math.min(...ancoras) : 0, 0, "armazem");
     }
     return lista;
   }, [colunasDoLayout, chavesColunas, armazemForcado, ligada, chaveDoCatalogo]);
@@ -240,7 +253,8 @@ export function ItensDaCentral({
   const atualizar = (i: number, chave: string, v: unknown) => onChange(items.map((it, j) => (j === i ? { ...it, [chave]: v } : it)));
   const adicionar = () => {
     if (!podeAdicionar) return;
-    if (armazemPadrao) {
+    // rótulo vazio não vira "conhecido": a célula lê o rótulo do cadastro
+    if (armazemPadrao && armazemPadrao.rotulo) {
       const { id, rotulo } = armazemPadrao;
       setConhecidos((c) => (c[id] ? c : { ...c, [id]: { id, label: rotulo, code: null } }));
     }
@@ -270,6 +284,16 @@ export function ItensDaCentral({
     setPesquisa(null);
   };
   const fechar = React.useCallback(() => setPesquisa(null), []);
+  /**
+   * O que a pesquisa de PRODUTO sabe: a fonte (capacidade), o local da LINHA (o que vai no POST — nunca o do cabeçalho)
+   * e o sentido (ausente = entrada). A pesquisa de local não o recebe.
+   */
+  const produtoNaPesquisa = (linha: number) => ({
+    fonte: fonteDaPesquisa,
+    armazemId: items[linha]?.warehouse_id || undefined,
+    sentido: pesquisaDeProduto?.sentido ?? "entrada",
+    soControlaEstoque: pesquisaDeProduto?.soControlaEstoque
+  });
   const marcarEFocar = (i: number) => { setSelecionado(i); requestAnimationFrame(() => circulos.current[i]?.focus()); };
 
   const tecladoDoCirculo = (e: React.KeyboardEvent<HTMLButtonElement>, i: number) => {
@@ -376,7 +400,8 @@ export function ItensDaCentral({
 
   const pesquisaEmFluxo = (campo: "product_id" | "warehouse_id") => pesquisa && pesquisa.modo === "fluxo" && pesquisa.campo === campo && pesquisa.linha === atual
     ? <PainelDePesquisa key={`fluxo-${campo}`} recurso={campo === "product_id" ? "products" : "warehouses"} rotulo={campo === "product_id" ? "Pesquisar produto" : "Pesquisar local de estoque"}
-        valor={item?.[campo] as string | undefined} modo="fluxo" ancora={pesquisa.ancora} onEscolher={escolher} onFechar={fechar} testId={tid("pesquisa")} />
+        valor={item?.[campo] as string | undefined} modo="fluxo" ancora={pesquisa.ancora} onEscolher={escolher} onFechar={fechar} testId={tid("pesquisa")}
+        produto={campo === "product_id" ? produtoNaPesquisa(pesquisa.linha) : null} />
     : null;
 
   const doCampo = (k: ChaveColunaDoItem) => ({ attrs: dataCampo(k), required: obrigatoria(k), error: erroDe(atual, k), label: rotuloColuna(k) });
@@ -495,7 +520,8 @@ export function ItensDaCentral({
     </div>
     {pesquisa?.modo === "flutuante" && <PainelDePesquisa recurso={pesquisa.campo === "product_id" ? "products" : "warehouses"}
       rotulo={pesquisa.campo === "product_id" ? "Pesquisar produto" : "Pesquisar local de estoque"} valor={items[pesquisa.linha]?.[pesquisa.campo] as string | undefined}
-      modo="flutuante" ancora={pesquisa.ancora} onEscolher={escolher} onFechar={fechar} testId={tid("pesquisa")} />}
+      modo="flutuante" ancora={pesquisa.ancora} onEscolher={escolher} onFechar={fechar} testId={tid("pesquisa")}
+      produto={pesquisa.campo === "product_id" ? produtoNaPesquisa(pesquisa.linha) : null} />}
   </>;
 }
 
