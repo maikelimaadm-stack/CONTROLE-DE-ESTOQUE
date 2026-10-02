@@ -1,15 +1,14 @@
 /**
  * MAPA-01 — paleta do cadastro de área (ficha).
- * Cores limpas (pouca mistura na exibição); contorno no mapa é sempre branco fino.
+ * No mapa o fill é sempre azul escuro; contorno branco fino; destaque = linha branca.
  */
 
 export interface CorDaPaleta { cor: string; nome: string }
 
-/** Azul celeste — padrão do cadastro. */
-export const COR_PADRAO_AREA = "#61aad9";
+/** Azul escuro — padrão do cadastro e fill uniforme no mapa. */
+export const COR_PADRAO_AREA = "#0d67ad";
 /** Contorno padrão das demarcações no mapa — sempre branco, fino. */
 export const COR_LINHA_AREA = "#ffffff";
-const CINZA_SEM_COR = "#a3b2b8";
 
 /** Paleta ampliada, sólidas e fáceis de distinguir (sem tons “misturados”). */
 export const PALETA_AREAS: readonly CorDaPaleta[] = [
@@ -31,25 +30,12 @@ export const PALETA_AREAS: readonly CorDaPaleta[] = [
   { cor: "#14b8a6", nome: "Turquesa" }
 ];
 
-function hexParaRgb(hex: string): [number, number, number] | null {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) return null;
-  const n = Number.parseInt(m[1]!, 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
-
-function rgbParaHex(r: number, g: number, b: number): string {
-  const c = (n: number) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
-  return `#${c(r)}${c(g)}${c(b)}`;
-}
-
 /**
- * Cor de preenchimento no mapa: a cadastrada quase pura (só 5% de branco para não “sujar”).
- * Sem mistura com turquesa — as opções da paleta ficam fiéis.
+ * Fill no mapa: sempre azul escuro (uniforme), independente da cor cadastrada.
+ * A paleta da ficha continua para o cadastro; a exibição do mapa fica só azul escuro.
  */
-export function corExibidaNoMapa(cor: string | null | undefined): string {
-  const base = hexParaRgb(cor && cor.trim() !== "" ? cor : CINZA_SEM_COR) ?? hexParaRgb(CINZA_SEM_COR)!;
-  return rgbParaHex(base[0] * 0.95 + 255 * 0.05, base[1] * 0.95 + 255 * 0.05, base[2] * 0.95 + 255 * 0.05);
+export function corExibidaNoMapa(_cor?: string | null | undefined): string {
+  return COR_PADRAO_AREA;
 }
 
 /** Contorno no mapa: sempre branco (a linha de demarcação). */

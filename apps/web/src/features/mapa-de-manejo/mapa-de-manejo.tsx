@@ -41,9 +41,6 @@ interface AreaApi {
 
 const COR_PADRAO = COR_PADRAO_AREA;
 const hectares = (v: AreaApi["tamanho_ha"]) => (v === null || v === undefined || v === "" ? 0 : Number(v));
-/** Hover: fill claro “brilhando”. Clique/seleção: só a linha de contorno. */
-const HOVER_FILL = "#f8fafc";
-const SELECAO_CONTORNO = "#f5a01b";
 
 type Rascunho = { geometria: Polygon; tamanho_ha: number; /** Se preenchido, o salvar faz PUT nessa área (edição de contorno). */ editandoId?: string };
 
@@ -379,20 +376,12 @@ export function MapaDeManejo() {
       m.on("load", () => {
         if (cancelado) return;
         m.addSource("areas", { type: "geojson", data: { type: "FeatureCollection", features: [] }, promoteId: "id" });
-        // Linha branca fina por cima do fill; hover = fill mais claro; clique = contorno marcado.
+        // Fill azul escuro uniforme; linha branca fina sempre; hover/clique = linha branca um pouco mais marcada.
         m.addLayer({
           id: "areas-fill", type: "fill", source: "areas",
           paint: {
-            "fill-color": [
-              "case",
-              ["boolean", ["feature-state", "hover"], false], HOVER_FILL,
-              ["coalesce", ["get", "cor_exibida"], COR_PADRAO]
-            ],
-            "fill-opacity": [
-              "case",
-              ["boolean", ["feature-state", "hover"], false], 0.78,
-              0.68
-            ]
+            "fill-color": ["coalesce", ["get", "cor_exibida"], COR_PADRAO],
+            "fill-opacity": 0.68
           }
         });
         m.addLayer({
@@ -410,22 +399,23 @@ export function MapaDeManejo() {
             ]
           }
         });
-        // Contorno do pasto clicado — por cima dos vizinhos.
+        // Destaque: hover ou seleção — só a linha branca (sem fill brilhante).
         m.addLayer({
           id: "areas-contorno-selecao", type: "line", source: "areas",
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
-            "line-color": SELECAO_CONTORNO,
+            "line-color": COR_LINHA_AREA,
             "line-opacity": [
               "case",
               ["boolean", ["feature-state", "selecionada"], false], 1,
+              ["boolean", ["feature-state", "hover"], false], 1,
               0
             ],
             "line-width": [
               "interpolate", ["linear"], ["zoom"],
-              10, 1.5,
-              14, 1.9,
-              18, 2.3
+              10, 1.4,
+              14, 1.8,
+              18, 2.2
             ]
           }
         });
