@@ -99,7 +99,8 @@ describe("F3A-D1 · nenhum texto visível do domínio diz 'armazém'", () => {
     expect(valor("enum.transfer_kind.warehouse")).toBe("Entre locais de estoque");
     expect(valor("ptBR.top.estoque.transferencia_entre_armazens")).toBe("Transferência entre locais de estoque");
     const doLayout = de("layout.").filter((t) => t.origem.endsWith(".itens.warehouse_id") || t.origem.endsWith(".itens.armazem_id"));
-    expect(doLayout.length).toBeGreaterThanOrEqual(FAMILIAS_COM_LAYOUT.length);
+    // OPERACOES-01 F6a: o orçamento de compra não tem a coluna (não mexe em estoque); toda outra família com layout tem.
+    expect(doLayout.length).toBeGreaterThanOrEqual(FAMILIAS_COM_LAYOUT.filter((f) => f !== "compras.orcamento").length);
     expect(new Set(doLayout.map((t) => t.texto))).toEqual(new Set(["Local de estoque"]));
 
     // CONCLUSÃO
@@ -130,6 +131,12 @@ describe("F3A-D2 · os identificadores técnicos não mudaram", () => {
     expect(produtos?.fields.find((f) => f.name === "default_warehouse_id")?.ref?.resource).toBe("warehouses");
     for (const familia of FAMILIAS_COM_LAYOUT) {
       const chaves = catalogoDaFamilia(familia).filter((c) => c.rotulo === "Local de estoque").map((c) => `${c.parte}.${c.chave}`);
+      // OPERACOES-01 F6a: o orçamento de compra não tem Local de estoque (premissa: o catálogo dele existe e é lido).
+      if (familia === "compras.orcamento") {
+        expect(catalogoDaFamilia(familia).length, familia).toBeGreaterThan(0);
+        expect(chaves, familia).toEqual([]);
+        continue;
+      }
       expect(chaves.length, familia).toBe(1);
       expect(["itens.warehouse_id", "itens.armazem_id"], familia).toContain(chaves[0]);
     }

@@ -6,7 +6,7 @@
  * │ a F10 (Destino, Fluxo, Divergência com o pedido, Financeiro padrão…). Cada seção é DECLARADA aqui,  │
  * │ numa `DefinicaoSecaoV5`, e o leitor do formato 5 (`lerConfiguracaoTop`), a normalização, a vista de  │
  * │ edição, a comparação, a auditoria e o catálogo por tipo a leem DA LISTA — nenhum deles muda quando  │
- * │ uma fase acrescenta a sua seção. Na F4 a lista nasceu VAZIA; a F5a pôs Destino e Fluxo.             │
+ * │ uma fase acrescenta a sua seção. Nasceu VAZIA na F4; hoje traz as da F5a e as da F6a.               │
  * │                                                                                                     │
  * │ É UM ARQUIVO FOLHA: não importa `tipo-operacao-configuracao.ts` (que o importa). Quem declara uma    │
  * │ seção importa este arquivo e nada que importe a configuração — senão vira ciclo de import.          │
@@ -40,10 +40,15 @@
  * o comportamento de hoje — nenhuma regra nova vale numa TOP até alguém ligá-la, TOP por TOP.
  */
 
-// As seções das fases. Cada arquivo de seção importa deste SÓ TIPOS (`import type`): um VALOR importado de volta faria
-// o ciclo existir em tempo de execução. OPERACOES-01 F5a (decisão 282):
+// As seções das fases. Cada arquivo de seção importa deste SÓ TIPOS (`import type`): este arquivo importa o dele
+// para montar a lista, e um VALOR importado de volta faria o ciclo existir em tempo de execução (quem fosse avaliado
+// primeiro leria o outro ainda não inicializado). Ver o cabeçalho de `tipo-operacao-secao-fluxo-compra.ts`.
+// OPERACOES-01 F5a (decisão 282):
 import { SECAO_DESTINO } from "./tipo-operacao-secao-destino.js";
 import { SECAO_FLUXO } from "./tipo-operacao-secao-fluxo.js";
+// OPERACOES-01 F6a (decisão 283):
+import { SECAO_FLUXO_COMPRA } from "./tipo-operacao-secao-fluxo-compra.js";
+import { SECAO_DIVERGENCIA_PEDIDO } from "./tipo-operacao-secao-divergencia-pedido.js";
 
 /**
  * As chaves de raiz que o formato 4 já usa. Uma seção de extensão NUNCA tem um destes nomes: colidir
@@ -114,13 +119,16 @@ export const definirSecaoV5 = <const N extends string, T extends object>(
 ): DefinicaoSecaoV5<N extends ChaveRaizReservadaTop ? never : N, T> => Object.freeze(d);
 
 /**
- * A LISTA. Nasceu VAZIA na F4 — cada fase F5 a F10 acrescenta a SUA definição aqui (uma linha + o import) e mais nada no
- * leitor. A ordem é a das abas no editor (depois de Estoque) e a da auditoria (depois de Execução).
+ * A LISTA. Nasceu VAZIA na F4 — cada fase F5 a F10 acrescenta a SUA definição aqui (uma linha + o import) e mais nada
+ * no leitor. A ordem é a das abas no editor (depois de Estoque) e a da auditoria (depois de Execução).
  */
 export const DEFINICOES_SECOES_V5 = [
   // OPERACOES-01 F5a (decisão 282): o destino (requisição, consumo e saída) e o fluxo (consumo).
   SECAO_DESTINO,
   SECAO_FLUXO,
+  // OPERACOES-01 F6a (decisão 283): o fluxo do pedido de compra e a divergência da compra com o pedido.
+  SECAO_FLUXO_COMPRA,
+  SECAO_DIVERGENCIA_PEDIDO,
 ] as const satisfies readonly DefinicaoSecaoV5[];
 export type DefinicoesSecoesV5 = typeof DEFINICOES_SECOES_V5;
 

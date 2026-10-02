@@ -21,7 +21,8 @@
  *
  * DOIS GRAFOS, UMA REGRA (COMPRAS-02, decisão 268). Vendas (`erp.sales_documents`) e compras
  * (`erp.documentos_compra`) têm cada uma o seu grafo, e as arestas nunca atravessam de uma tabela para a
- * outra. Em vendas vale o que já valia; em compras só o pedido → compra tem serviço atrás.
+ * outra. Em vendas vale o que já valia; em compras só o pedido → compra e o pedido → orçamento (OPERACOES-01
+ * F6a, decisão 283) têm serviço atrás.
  *
  * ESTE ARQUIVO NÃO EXECUTA NADA. Ele não converte documento, não cria linha, não conhece rota e não
  * conhece permissão. Habilitar uma aresta NUNCA autoriza ninguém a criar o destino: a capacidade continua
@@ -67,8 +68,10 @@ export function varianteDeDocumentoVendaDaFamilia(codigoBase: string | null | un
 export const familiaExecutavelEmVendas = (codigoBase: string | null | undefined): boolean =>
   varianteDeDocumentoVendaDaFamilia(codigoBase) !== undefined;
 
-/** As espécies que `erp.documentos_compra` persiste — o `check` da 0036, e o tipo que o domínio já declara. */
-const ehEspecieDocumentoCompra = (v: string | undefined): v is EspecieDocumentoCompra => v === "pedido" || v === "compra";
+/** As espécies que `erp.documentos_compra` persiste — o `check` da 0036 (alargado pela 0044 com o orçamento), e o
+ *  tipo que o domínio já declara. */
+const ehEspecieDocumentoCompra = (v: string | undefined): v is EspecieDocumentoCompra =>
+  v === "pedido" || v === "compra" || v === "orcamento";
 
 /**
  * COMPRAS-02 (decisão 268): a ESPÉCIE de `erp.documentos_compra` que uma família canônica de compras É — o
@@ -78,7 +81,7 @@ const ehEspecieDocumentoCompra = (v: string | undefined): v is EspecieDocumentoC
  *
  * FAIL-CLOSED: família desconhecida, de outra tabela (`compras.solicitacao` mora em `erp.purchase_requests`),
  * sem variante, ou com um valor que a coluna não persiste → `undefined`. A espécie fora da união não "passa
- * como string": o tipo de retorno promete `"pedido" | "compra"`, e quem o consome decide efeito por ele.
+ * como string": o tipo de retorno promete `"pedido" | "compra" | "orcamento"`, e quem o consome decide efeito por ele.
  */
 export function varianteDeDocumentoCompraDaFamilia(codigoBase: string | null | undefined): EspecieDocumentoCompra | undefined {
   if (!codigoBase) return undefined;
@@ -106,18 +109,31 @@ export function tabelaComercialDaFamilia(codigoBase: string | null | undefined):
   return undefined;
 }
 
+/** Uma aresta do grafo de compras, escrita em ESPÉCIES de `erp.documentos_compra`. */
+export interface ArestaExecutavelEmCompras {
+  readonly origem: EspecieDocumentoCompra;
+  readonly destino: EspecieDocumentoCompra;
+}
+
 /**
- * A ÚNICA ARESTA EXECUTÁVEL EM COMPRAS, escrita em ESPÉCIES (o dado que o banco persiste), nunca em códigos de
- * família — assim ela não é uma segunda lista de famílias, e renomear a família no registry não a desfaz.
+ * AS ARESTAS EXECUTÁVEIS EM COMPRAS, escritas em ESPÉCIES (o dado que o banco persiste), nunca em códigos de
+ * família — assim elas não são uma segunda lista de famílias, e renomear a família no registry não as desfaz.
  *
- * Por que só pedido → compra (decisão 268): a COMPRA não converte — não existe rota de conversão a partir
- * dela, e ela é o fim da cadeia (dá entrada e gera a conta a pagar); o PEDIDO não nasce de conversão — é
- * lançado direto. Aceitar "compra → pedido" na configuração seria gravar um botão sem serviço atrás
- * (§11 do contrato da TOP): a política passaria, o administrador acreditaria nela, e o primeiro clique
- * do operador falharia.
+ * Por que só estas: pedido → compra (decisão 268) — o recebimento do pedido, que copia os itens com a origem e
+ * consome o saldo; pedido → orçamento (OPERACOES-01 F6a, decisão 283) — o orçamento de compra nasce DO pedido
+ * aprovado para orçamento, com vínculo próprio (não consome saldo), e é a TOP de orçamento do leque da versão do
+ * pedido que diz qual TOP o orçamento usa. A COMPRA não converte — não existe rota de conversão a partir dela, e
+ * ela é o fim da cadeia (dá entrada e gera a conta a pagar); o ORÇAMENTO também não — o vencedor LEVA preços ao
+ * pedido, não gera documento; o PEDIDO não nasce de conversão — é lançado direto. Aceitar "compra → pedido" ou
+ * "orçamento → compra" na configuração seria gravar um botão sem serviço atrás (§11 do contrato da TOP): a
+ * política passaria, o administrador acreditaria nela, e o primeiro clique do operador falharia.
+ *
+ * Congelada (a lista e cada aresta): quem a lê não a altera.
  */
-const ARESTA_EXECUTAVEL_EM_COMPRAS: { readonly origem: EspecieDocumentoCompra; readonly destino: EspecieDocumentoCompra } =
-  Object.freeze({ origem: "pedido", destino: "compra" });
+export const ARESTAS_EXECUTAVEIS_EM_COMPRAS: readonly ArestaExecutavelEmCompras[] = Object.freeze([
+  Object.freeze({ origem: "pedido", destino: "compra" } as const),
+  Object.freeze({ origem: "pedido", destino: "orcamento" } as const),
+]);
 
 /** Por que uma aresta origem → destino foi recusada. Cada motivo vira uma recusa estável na API. */
 export type RecusaDestinoOperacao =
@@ -126,7 +142,8 @@ export type RecusaDestinoOperacao =
   | { motivo: "mesma_familia"; codigoBase: string }
   /** COMPRAS-02: as pontas são documentos comerciais de TABELAS diferentes — venda × compra, nos dois sentidos. */
   | { motivo: "tabelas_diferentes" }
-  /** COMPRAS-02: as duas pontas são de compras, mas o produto não executa esta aresta (só pedido → compra). */
+  /** COMPRAS-02: as duas pontas são de compras, mas o produto não executa esta aresta (só pedido → compra e,
+   *  desde a F6a, pedido → orçamento). */
   | { motivo: "aresta_nao_executavel"; origem: string; destino: string };
 
 /**
@@ -150,13 +167,14 @@ export type RecusaDestinoOperacao =
  *      perguntas (copia os itens? o preço? mantém o vínculo?) e que esta fatia não implementa. Recusar é
  *      honesto; aceitar seria oferecer um caminho cujo comportamento ninguém definiu.
  *
- *   4. EM COMPRAS, SÓ A ARESTA QUE TEM SERVIÇO: pedido → compra (`ARESTA_EXECUTAVEL_EM_COMPRAS`). Em VENDAS
- *      esta regra não existe e nada muda: as três regras acima são exatamente as que valiam antes.
+ *   4. EM COMPRAS, SÓ AS ARESTAS QUE TÊM SERVIÇO: pedido → compra e pedido → orçamento
+ *      (`ARESTAS_EXECUTAVEIS_EM_COMPRAS`). Em VENDAS esta regra não existe e nada muda: as três regras acima são
+ *      exatamente as que valiam antes.
  *
  * O que NÃO está aqui, deliberadamente: nenhuma ordem obrigatória entre as famílias de VENDAS. Orçamento
  * pode apontar direto para venda, pulando o pedido, porque isso é decisão da organização — e era exatamente
- * o que a cadeia fixa no código impedia. Compras tem uma aresta só porque só uma tem serviço atrás; quando
- * outra ganhar serviço (solicitação → pedido, por exemplo), ela entra na regra 4, não numa lista.
+ * o que a cadeia fixa no código impedia. Compras tem só as arestas que têm serviço atrás; quando outra ganhar
+ * serviço (solicitação → pedido, por exemplo), ela entra em `ARESTAS_EXECUTAVEIS_EM_COMPRAS` (regra 4).
  */
 export function validarDestinoOperacao(origemCodigoBase: string, destinoCodigoBase: string): RecusaDestinoOperacao[] {
   const recusas: RecusaDestinoOperacao[] = [];
@@ -176,7 +194,7 @@ export function validarDestinoOperacao(origemCodigoBase: string, destinoCodigoBa
   } else if (tabelaOrigem === TABELA_DOCUMENTO_COMPRA && tabelaDestino === TABELA_DOCUMENTO_COMPRA) {
     const origem = varianteDeDocumentoCompraDaFamilia(origemCodigoBase);
     const destino = varianteDeDocumentoCompraDaFamilia(destinoCodigoBase);
-    if (origem !== ARESTA_EXECUTAVEL_EM_COMPRAS.origem || destino !== ARESTA_EXECUTAVEL_EM_COMPRAS.destino) {
+    if (!ARESTAS_EXECUTAVEIS_EM_COMPRAS.some((a) => a.origem === origem && a.destino === destino)) {
       recusas.push({ motivo: "aresta_nao_executavel", origem: origemCodigoBase, destino: destinoCodigoBase });
     }
   }
@@ -188,8 +206,9 @@ export function validarDestinoOperacao(origemCodigoBase: string, destinoCodigoBa
  *
  * DERIVADA, e não uma segunda lista: pergunta a `validarDestinoOperacao` por cada família do registry. Hoje
  * responde sim para as três de vendas (qualquer uma aponta para outra) e para o pedido de compra (aponta para
- * a compra); não para a compra, que é o fim da cadeia, nem para família desconhecida — fail-closed, lista
- * vazia e nunca "todas". Uma família nova com serviço de conversão entra aqui sozinha, pela regra do grafo.
+ * a compra e para o orçamento); não para a compra nem para o orçamento de compra, que não convertem, nem para
+ * família desconhecida — fail-closed, lista vazia e nunca "todas". Uma família nova com serviço de conversão
+ * entra aqui sozinha, pela regra do grafo.
  *
  * É a porta de `/destinos-possiveis`: origem sem destino possível não abre consulta nenhuma.
  */

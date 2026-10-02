@@ -3,7 +3,7 @@ import { configuracaoNeutraTop, configuracaoNeutraTopV2, mensagemAprovacaoReprov
 import { fromPgError } from "../../src/lib/errors.js";
 import {
   c, iniciar, encerrar, j, erro, unico, cfg3, cfg4, top, versaoAtualNoBanco, usuario, produto, saldo,
-  itemCompra, corpoCompra, lancarCompra, compraLancada, confirmarCompra, previaCompra, receberPedido, corpoReceber,
+  itemCompra, corpoCompra, lancarCompra, compraLancada, confirmarCompra, previaCompra, receberPedido, corpoReceber, lerCompra,
   aprovar, reprovar, movimentosDe, titulosDe, situacaoNoBanco, auditoriaDe, decisoesDe,
   type Resposta, type Erro, type ItemCompra,
 } from "./top-config-08-ajuda.js";
@@ -739,23 +739,45 @@ describe("AP-8 compra: o que não passa por aprovação", () => {
     }
   });
 
-  it("AP-8c pedido de compra, id inexistente e id malformado → a MESMA 404 do GET; sem compras.approve → 403; reprovar sem motivo → 422", async () => {
+  /**
+   * OPERACOES-01 F6a (decisão 283): o PEDIDO de compra passou a ter aprovação (ao finalizar), e a decisão dele exige
+   * `compras.approve` (a porta) ∧ `pedidos_compra.approve` (a espécie). O administrador aprova as duas espécies: o
+   * pedido cuja TOP não exige aprovação dá a recusa da exigência (409 NAO_EXIGIDA), como a compra. Quem só aprova
+   * compra continua com a MESMA 404 de antes, como inexistente e malformado.
+   */
+  it("AP-8c pedido sem exigência: para quem aprova pedido → 409 NAO_EXIGIDA; para quem só aprova compra, como id inexistente e malformado → a MESMA 404 do GET; sem compras.approve → 403; reprovar sem motivo → 422", async () => {
     const topId = await topCompra(sempre());
     const p = await produto();
     const b = await compraLancada("compra", corpoCompra([itemCompra(p.id, "1", "10.00")], { tipo_operacao_id: topId }));
     const pedido = await compraLancada("pedido", corpoCompra([itemCompra(p.id)], {}, "pedido"));
     const get404 = await c.ligada.inject({ method: "GET", url: `/api/compras/compras/${pedido.id}`, headers: c.h.headers() });
     expect(get404.statusCode).toBe(404);
-    for (const id of [pedido.id, "00000000-0000-4000-8000-0000000000cc", "nao-e-uuid"]) {
+    // O administrador (dono: aprova as duas espécies): o pedido existe para ele, e a TOP neutra do pedido não exige.
+    for (const r of [await aprovar("compras", pedido.id), await reprovar("compras", pedido.id, { motivo: "Não" })]) {
+      expect(r.statusCode, r.body).toBe(409);
+      expect(erro(r)).toEqual({ code: "APROVACAO_NAO_EXIGIDA", message: MSG_NAO_EXIGIDA });
+    }
+    for (const id of ["00000000-0000-4000-8000-0000000000cc", "nao-e-uuid"]) {
       const r = await aprovar("compras", id);
       expect(r.statusCode, `${id}: ${r.body}`).toBe(404);
       expect(erro(r)).toEqual(erro(get404));
     }
+    // Quem só aprova compra (sem pedidos_compra.approve), e LÊ o pedido: a MESMA 404 de antes.
+    const soCompra = await usuario("Aprovador só de compra", ["compras.view", "compras.approve", "pedidos_compra.view"]);
+    expect((await lerCompra("pedido", pedido.id, soCompra)).statusCode, "premissa: ele vê o pedido pela porta do pedido").toBe(200);
+    for (const id of [pedido.id, "00000000-0000-4000-8000-0000000000cc", "nao-e-uuid"]) {
+      const r = await aprovar("compras", id, {}, soCompra);
+      expect(r.statusCode, `${id}: ${r.body}`).toBe(404);
+      expect(erro(r)).toEqual(erro(get404));
+    }
+    expect(await decisoesDe("aprovacoes_compra", pedido.id)).toEqual([]);
     const semApprove = await usuario("Comprador sem aprovar", ["compras.view", "compras.edit"]);
     expect((await aprovar("compras", b.id, {}, semApprove)).statusCode).toBe(403);
     const semMotivo = await reprovar("compras", b.id, {});
     expect(semMotivo.statusCode, semMotivo.body).toBe(422);
     expect(await decisoesDe("aprovacoes_compra", b.id)).toEqual([]);
+    // Premissa: a porta é dele — quem só aprova compra decide a compra.
+    expect((await aprovar("compras", b.id, {}, soCompra)).statusCode).toBe(200);
   });
 });
 

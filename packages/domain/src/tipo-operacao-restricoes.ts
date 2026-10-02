@@ -20,7 +20,7 @@ import {
   type RecusaConfiguracaoTop,
 } from "./tipo-operacao-configuracao.js";
 import { tipoOperacao } from "./tipo-operacao.js";
-import { TABELA_DOCUMENTO_COMPRA } from "./tipo-operacao-configurado.js";
+import { TABELA_DOCUMENTO_COMPRA, familiaOperacionalDeDocumentoCompra } from "./tipo-operacao-configurado.js";
 import { TABELA_DOCUMENTO_ESTOQUE } from "./estoque-documento.js";
 
 // ─────────────── capacidade e códigos ───────────────
@@ -152,9 +152,21 @@ export const EXIGENCIAS_GERAIS_ESTOQUE_TOP = [
   { chave: "exigeObservacao", caminho: "observacao", rotulo: "Observação" },
 ] as const;
 
+/**
+ * OPERACOES-01 F6a (decisão 283): o mapa do ORÇAMENTO DE COMPRA (`erp.documentos_compra`, espécie `orcamento`).
+ * Só fornecedor e observação: o orçamento não tem centro de resultado nem transportadora. Mapa PRÓPRIO pelo mesmo
+ * motivo do estoque — se caísse no mapa da compra, uma TOP de orçamento que marcasse "exige transportadora"
+ * recusaria todo orçamento por um campo que o documento nem oferece.
+ */
+export const EXIGENCIAS_GERAIS_ORCAMENTO_COMPRA_TOP = [
+  { chave: "exigeParceiro", caminho: "fornecedor_id", rotulo: "Fornecedor" },
+  { chave: "exigeObservacao", caminho: "observacao", rotulo: "Observação" },
+] as const;
+
 export type CampoExigidoTop = (typeof EXIGENCIAS_GERAIS_TOP)[number]["caminho"];
 export type CampoExigidoCompraTop = (typeof EXIGENCIAS_GERAIS_COMPRA_TOP)[number]["caminho"];
 export type CampoExigidoEstoqueTop = (typeof EXIGENCIAS_GERAIS_ESTOQUE_TOP)[number]["caminho"];
+export type CampoExigidoOrcamentoCompraTop = (typeof EXIGENCIAS_GERAIS_ORCAMENTO_COMPRA_TOP)[number]["caminho"];
 
 /** O documento como será gravado (só os campos que as exigências olham). */
 export type DocumentoParaExigencias = Partial<Record<CampoExigidoTop, unknown>>;
@@ -162,12 +174,16 @@ export type DocumentoCompraParaExigencias = Partial<Record<CampoExigidoCompraTop
 export type DocumentoEstoqueParaExigencias = Partial<Record<CampoExigidoEstoqueTop, unknown>>;
 
 /**
- * O mapa de exigências do DOCUMENTO que a família lança: famílias do documento de compra → mapa da compra;
+ * O mapa de exigências do DOCUMENTO que a família lança: o orçamento de compra → o mapa do orçamento (fornecedor e
+ * observação; perguntado ao registry pela espécie); as outras famílias do documento de compra → mapa da compra;
  * famílias do documento de estoque → mapa do estoque (só a observação); qualquer outra → o mapa da venda (o
  * comportamento de sempre, que não muda).
  */
 export function exigenciasGeraisDaFamiliaTop(familia: string): readonly ExigenciaGeralTop[] {
   const tabela = tipoOperacao(familia)?.origem.tabela;
+  if (tabela === TABELA_DOCUMENTO_COMPRA && familiaOperacionalDeDocumentoCompra("orcamento") === familia) {
+    return EXIGENCIAS_GERAIS_ORCAMENTO_COMPRA_TOP;
+  }
   if (tabela === TABELA_DOCUMENTO_COMPRA) return EXIGENCIAS_GERAIS_COMPRA_TOP;
   if (tabela === TABELA_DOCUMENTO_ESTOQUE) return EXIGENCIAS_GERAIS_ESTOQUE_TOP;
   return EXIGENCIAS_GERAIS_TOP;

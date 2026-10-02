@@ -46,8 +46,8 @@ async function catalogoPublicado(page: Page): Promise<CatalogoTop> {
   const c = await api<CapacidadesFormato5E2E>(page, "GET", "/api/admin/tipos-operacao/capabilities");
   expect(c.formato5?.suportado, "premissa: este servidor declara o formato 5").toBe(true);
   expect(c.formato5?.versaoSchema, "premissa: no formato 5").toBe(5);
-  expect(c.formato5?.secoes, "premissa: as seções de extensão do 5 são Destino e Fluxo, da F5a (decisão 282; o editor só liga com o mesmo conjunto)")
-    .toEqual(["destino", "fluxo"]);
+  expect(c.formato5?.secoes, "premissa: as seções de extensão do 5 são Destino e Fluxo, da F5a (decisão 282), e Fluxo de compra e Divergência, da F6a (decisão 283); o editor só liga com o mesmo conjunto")
+    .toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
   return c.formato5!.catalogo;
 }
 

@@ -59,8 +59,10 @@ export const ENUM_LABELS = {
   sales_kind: { budget: "Orçamento", order: "Pedido", sale: "Venda" },
   // COMPRAS-01 (decisão 267): erp.documentos_compra.especie e .situacao.
   // COMPRAS-02 (decisão 268): `convertido` — só do pedido, quando o saldo de todos os itens foi recebido ou encerrado.
-  especie_documento_compra: { pedido: "Pedido de compra", compra: "Compra" },
-  situacao_documento_compra: { aberto: "Aberto", confirmado: "Confirmado", convertido: "Convertido", cancelado: "Cancelado" },
+  // OPERACOES-01 F6a (decisão 283): a espécie `orcamento`; `finalizado` (o pedido confirmado), `escolhido` e
+  // `nao_escolhido` (o orçamento depois do vencedor).
+  especie_documento_compra: { pedido: "Pedido de compra", compra: "Compra", orcamento: "Orçamento de compra" },
+  situacao_documento_compra: { aberto: "Aberto", confirmado: "Confirmado", convertido: "Convertido", cancelado: "Cancelado", finalizado: "Finalizado", escolhido: "Escolhido", nao_escolhido: "Não escolhido" },
   // ESTOQUE-01 (decisão 274): erp.documentos_estoque.especie e .situacao. O documento de estoque não converte em
   // outro, por isso a situação não tem `convertido`.
   especie_documento_estoque: { entrada: "Entrada", saida: "Saída", transferencia: "Transferência", ajuste: "Ajuste", requisicao: "Requisição", consumo: "Consumo", devolucao_consumo: "Devolução de consumo" },

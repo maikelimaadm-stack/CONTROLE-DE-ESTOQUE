@@ -81,19 +81,29 @@ const orcamentoOuPedido = (familia: string): Linha => ({
   familia, confirmacao: so(["manual"], MOTIVO.naoConfirmado), documentoSemItens: so(["proibido"], MOTIVO.semItensOrcamentoPedido),
   alteracaoAposConfirmacao: so(["bloqueada"], MOTIVO.naoConfirmado), aprovacao: so(["nenhuma"], MOTIVO.aprovacaoSemConfirmacao),
 });
+/** OPERACOES-01 F6a (decisão 283): o pedido de compra — como o pedido, mas a aprovação vale inteira (ao finalizar). */
+const pedidoDeCompra = (familia: string): Linha => ({
+  familia, confirmacao: so(["manual"], MOTIVO.naoConfirmado), documentoSemItens: so(["proibido"], MOTIVO.semItensOrcamentoPedido),
+  alteracaoAposConfirmacao: so(["bloqueada"], MOTIVO.naoConfirmado), aprovacao: tudo("aprovacao"),
+});
 const semDocumento = (familia: string): Linha => ({
   familia, confirmacao: so(["manual"], MOTIVO.semDocumento), documentoSemItens: so(["proibido"], MOTIVO.semDocumento),
   alteracaoAposConfirmacao: so(["bloqueada"], MOTIVO.semDocumento), aprovacao: so(["nenhuma"], MOTIVO.semDocumento),
 });
 
-/** A matriz publicada, na ordem da SPEC §2: venda, compra, as 4 espécies de estoque, orçamento e os dois pedidos. */
+/**
+ * A matriz publicada, na ordem da SPEC §2: venda, compra, as 4 espécies de estoque, orçamento e os dois pedidos — e,
+ * desde a F6a (decisão 283), o pedido de compra com a aprovação inteira (ao finalizar) e o orçamento de compra no fim.
+ */
 const MATRIZ_DA_SPEC: readonly Linha[] = [
   documentoConfirmado("vendas.venda", MOTIVO.alteracaoVenda),
   documentoConfirmado("compras.compra", MOTIVO.alteracaoCompra),
   estoque("estoque.entrada"), estoque("estoque.saida"), estoque("estoque.transferencia"), estoque("estoque.ajuste"),
   // OPERACOES-01 F5a (decisão 282): as três espécies da movimentação interna, com a linha do estoque, depois do ajuste.
   estoque("estoque.requisicao_material"), estoque("estoque.consumo"), estoque("estoque.devolucao_consumo"),
-  orcamentoOuPedido("vendas.orcamento"), orcamentoOuPedido("vendas.pedido"), orcamentoOuPedido("compras.pedido"),
+  orcamentoOuPedido("vendas.orcamento"), orcamentoOuPedido("vendas.pedido"), pedidoDeCompra("compras.pedido"),
+  // OPERACOES-01 F6a (decisão 283): o orçamento de compra, por último.
+  orcamentoOuPedido("compras.orcamento"),
 ];
 /** "Qualquer outra família": uma antiga de estoque, a solicitação de compra e uma do financeiro. Não são linhas da matriz. */
 const OUTRAS_FAMILIAS: readonly Linha[] = [semDocumento("estoque.baixa"), semDocumento("compras.solicitacao"), semDocumento("financeiro.conta_a_pagar")];

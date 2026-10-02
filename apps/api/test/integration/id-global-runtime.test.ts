@@ -181,7 +181,7 @@ describe("VENDAS — três variantes, três permissões", () => {
   }
 });
 
-describe("COMPRAS — pedido de compra e compra, duas permissões", () => {
+describe("COMPRAS — pedido de compra, compra e orçamento de compra, três permissões", () => {
   for (const [especie, familia, rota] of [["pedido", "compras.pedido", "pedidos"], ["compra", "compras.compra", "compras"]] as const) {
     it(`documento de compra: ${especie}`, async () => {
       const top = await post("/api/admin/tipos-operacao", { codigo: `IDGC${especie.slice(0, 1).toUpperCase()}`, codigoBase: familia, nome: `ID Global ${especie}` });
@@ -190,6 +190,20 @@ describe("COMPRAS — pedido de compra e compra, duas permissões", () => {
       await conferir("documentos_compra", id, { empresa: I.empresa, modulo: "compras", rota: `/compras/${rota}/${id}` });
     });
   }
+  // OPERACOES-01 F6a (decisão 283): o orçamento de compra não tem lançamento avulso — nasce do pedido aprovado para
+  // orçamento, cuja TOP aponta para a TOP de orçamento (o grafo pedido → orçamento). A porta real é a do pedido.
+  it("documento de compra: orcamento (nasce do pedido aprovado para orçamento)", async () => {
+    const topOrc = await post("/api/admin/tipos-operacao", { codigo: "IDGCO", codigoBase: "compras.orcamento", nome: "ID Global orcamento" });
+    expect(topOrc.statusCode, topOrc.body).toBe(201);
+    const topPed = await post("/api/admin/tipos-operacao", { codigo: "IDGCPO", codigoBase: "compras.pedido", nome: "ID Global pedido com orcamento",
+      destinos: [{ tipoOperacaoId: String(j(topOrc).id), ordem: 0, emPartes: false }] });
+    expect(topPed.statusCode, topPed.body).toBe(201);
+    const pedido = await criar("/api/compras/pedidos", { empresa_id: I.empresa, tipo_operacao_id: String(j(topPed).id), fornecedor_id: I.provider, data_documento: "2031-01-16", itens: [{ produto_id: I.product, quantidade: "1", valor_unitario: "10" }] });
+    const aprovado = await post(`/api/compras/pedidos/${pedido}/aprovar-para-orcamento`, {});
+    expect(aprovado.statusCode, aprovado.body).toBe(200);
+    const id = await criar(`/api/compras/pedidos/${pedido}/orcamentos`, { tipo_operacao_id: String(j(topOrc).id), fornecedor_id: I.provider, data_documento: "2031-01-16" });
+    await conferir("documentos_compra", id, { empresa: I.empresa, modulo: "compras", rota: `/compras/orcamentos/${id}` });
+  });
 });
 
 describe("ESTOQUE — o documento de estoque, quatro espécies, quatro permissões (ESTOQUE-01)", () => {

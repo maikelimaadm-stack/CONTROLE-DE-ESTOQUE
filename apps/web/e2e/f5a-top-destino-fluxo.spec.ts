@@ -62,7 +62,7 @@ function familiaDe(especie: EspecieEstoque, esperada: string): string {
 /** As premissas do servidor: o formato 5 com as duas seções, e o perfil publicado do tipo com as abas esperadas. */
 async function premissasDoServidor(page: Page, familia: string, abas: readonly string[]): Promise<void> {
   const c = await api<{ formato5?: { secoes: string[] } }>(page, "GET", "/api/admin/tipos-operacao/capabilities");
-  expect(c.formato5?.secoes, "premissa: o servidor lê e grava Destino e Fluxo (o editor só liga com o mesmo conjunto)").toEqual(["destino", "fluxo"]);
+  expect(c.formato5?.secoes, "premissa: o servidor lê e grava Destino e Fluxo, com as de compras da F6a (o editor só liga com o mesmo conjunto)").toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
   const catalogo = await catalogoPublicadoE2E(page);
   expect(catalogo.perfis.find((p) => p.familia === familia)?.abas, `premissa: as abas do perfil publicado de ${familia}`).toEqual(abas);
 }

@@ -187,18 +187,26 @@ test("W-1 — venda gravada no formato 4: Confirmação, Documento sem itens e a
   }
 });
 
-test("W-1 — orçamento, pedido de venda e pedido de compra: Confirmação, Documento sem itens, Alteração e as abas Aprovação e Execução escondidos", async ({ page }) => {
+test("W-1 — orçamento, pedido de venda e pedido de compra: Confirmação, Documento sem itens, Alteração e a aba Execução escondidos; a aba Aprovação some nos dois de venda e aparece no pedido de compra, com as três políticas (decisão 283)", async ({ page }) => {
   await login(page);
   // A PREMISSA NO SERVIDOR: nenhum dos três tem execução configurada no perfil que ele publica (a aba não decidiria nada).
   const catalogo = await catalogoPublicadoE2E(page);
   /** O rótulo do parceiro no documento de cada tipo — o que o editor do 5 mostra na Geral ("Exigir cliente"…). */
   const PARCEIRO_DO_TIPO: Readonly<Record<string, string>> = { "vendas.orcamento": "Exigir cliente", "vendas.pedido": "Exigir cliente", "compras.pedido": "Exigir fornecedor" };
+  /**
+   * A aba Aprovação, por tipo. OPERACOES-01 F6a (decisão 283): o pedido de compra passa a ser aprovado ao FINALIZAR — a
+   * matriz aceita as três políticas nele, e a aba aparece. O orçamento e o pedido de venda continuam só com "Sem
+   * aprovação": a aba some.
+   */
+  const MOSTRA_APROVACAO: Readonly<Record<string, boolean>> = { "vendas.orcamento": false, "vendas.pedido": false, "compras.pedido": true };
   const tops: TopE2E[] = [];
   try {
     for (const codigoBase of ["vendas.orcamento", "vendas.pedido", "compras.pedido"]) {
       const perfil = catalogo.perfis.find((p) => p.familia === codigoBase);
       expect(perfil?.abas, `premissa: o perfil publicado de ${codigoBase} não tem a aba Execução`).not.toContain("execucao");
       expect(perfil?.abas, `premissa: e tem Próximas operações`).toContain("destinos");
+      expect(perfil?.abas.includes("aprovacao"), `premissa: o perfil publicado de ${codigoBase} ${MOSTRA_APROVACAO[codigoBase] ? "tem" : "não tem"} a aba Aprovação`)
+        .toBe(MOSTRA_APROVACAO[codigoBase]);
       tops.push(await criarTopViaApi(page, codigoBase, cfg4(), { rotulo: `W-1 ${codigoBase}` }));
     }
     await abrirTelaDeTops(page);
@@ -216,8 +224,18 @@ test("W-1 — orçamento, pedido de venda e pedido de compra: Confirmação, Doc
       for (const campo of [CAMPO.confirmacao, CAMPO.semItens, CAMPO.alteracao]) {
         await expect(forma.getByTestId(campo), `${top.codigoBase}: ${campo} some (a família só aceita o neutro)`).toHaveCount(0);
       }
-      await expect(forma.getByTestId("top-aba-aprovacao"), `${top.codigoBase}: a aba Aprovação some`).toHaveCount(0);
       await expect(forma.locator("[data-testid^='top-regra-motivo-']"), `${top.codigoBase}: campo escondido não deixa motivo solto`).toHaveCount(0);
+      if (MOSTRA_APROVACAO[top.codigoBase]) {
+        // O PEDIDO DE COMPRA MOSTRA A APROVAÇÃO: a aba inteira, no neutro do 4, com as três políticas habilitadas e
+        // nenhum motivo de opção indisponível.
+        await forma.getByTestId("top-aba-aprovacao").click();
+        const politica = forma.getByTestId(CAMPO.aprovacao);
+        await expect(politica, `${top.codigoBase}: a aba Aprovação aparece, no neutro`).toHaveValue("nenhuma");
+        expect(await opcoesDoCampo(politica), `${top.codigoBase}: as três políticas`).toEqual({ nenhuma: true, sempre: true, por_valor: true });
+        await expect(forma.locator("[data-testid^='top-regra-motivo-']"), `${top.codigoBase}: nenhuma opção indisponível, nenhum motivo`).toHaveCount(0);
+      } else {
+        await expect(forma.getByTestId("top-aba-aprovacao"), `${top.codigoBase}: a aba Aprovação some`).toHaveCount(0);
+      }
       await expect(forma.getByTestId("top-aba-execucao"), `${top.codigoBase}: a aba Execução some (o tipo não aceita execução configurada)`).toHaveCount(0);
       await expect(forma.getByTestId("top-aba-destinos"), `${top.codigoBase}: as outras abas continuam`).toBeVisible();
       await forma.getByTestId("top-cancelar").click();
