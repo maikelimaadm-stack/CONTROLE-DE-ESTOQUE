@@ -5,13 +5,18 @@ import type { Acerto, Ima, Px } from "./editor-desenho";
 
 /**
  * Camada visual do editor de desenho, por cima do canvas do mapa. Só apresenta: pointer-events none.
- * Ímã: verde, compacto, sem cruzetas. Rótulos das áreas: tipografia da ficha (sem fundo).
+ * Linha de desenho e ímã em branco; pontos do cadastro em azul. Rótulos das áreas: tipografia da ficha.
  */
 
 export const COR_DESENHO = {
-  linha: "#22d3ee",
+  /** Linha do polígono em desenho. */
+  linha: "#ffffff",
+  /** Elástico (cursor → último ponto). */
   elastico: "#ffffff",
-  ima: "#22c55e",
+  /** Ímã: marca, anéis e linha de inserção. */
+  ima: "#ffffff",
+  /** Pontos (vértices) do cadastro. */
+  ponto: "#3b82f6",
   meio: "#ffffff",
   guia: "#e0f2fe",
   contorno: "#0f172a"
@@ -45,15 +50,14 @@ interface Props {
 
 const lista = (pts: Px[]) => pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
 const AFORDANCIA: Record<Acerto["tipo"], { texto: string; cor: string }> = {
-  vertice: { texto: "Segure para arrastar · 2 cliques apagam", cor: COR_DESENHO.ima },
+  vertice: { texto: "Segure para arrastar · 2 cliques apagam", cor: COR_DESENHO.ponto },
   meio: { texto: "Segure para criar um ponto", cor: COR_DESENHO.linha },
-  poligono: { texto: "Segure para mover a área", cor: "#86efac" }
+  poligono: { texto: "Segure para mover a área", cor: "#93c5fd" }
 };
 
 export function CamadaDesenho(p: Props) {
   const { pts, fechado, cur, raw, ima, arrastando } = p;
-  const linha = COR_DESENHO.linha;
-  const fillPreview = p.corPreview && fechado ? p.corPreview : linha;
+  const fillPreview = p.corPreview && fechado ? p.corPreview : COR_DESENHO.linha;
   const ultimo = pts.length ? pts[pts.length - 1]! : null;
   const primeiro = pts.length ? pts[0]! : null;
   const hm = p.hover?.tipo === "meio" ? p.hover.i : -1;
@@ -98,7 +102,7 @@ export function CamadaDesenho(p: Props) {
           <svg className="absolute inset-0 h-full w-full" aria-hidden>
             {ima?.tipo === "aresta" && ima.aresta && (
               <g strokeLinecap="round">
-                <line x1={ima.aresta[0].x} y1={ima.aresta[0].y} x2={ima.aresta[1].x} y2={ima.aresta[1].y} stroke={COR_DESENHO.ima} strokeWidth={6} strokeOpacity={0.28} />
+                <line x1={ima.aresta[0].x} y1={ima.aresta[0].y} x2={ima.aresta[1].x} y2={ima.aresta[1].y} stroke={COR_DESENHO.contorno} strokeOpacity={0.45} strokeWidth={6} />
                 <line x1={ima.aresta[0].x} y1={ima.aresta[0].y} x2={ima.aresta[1].x} y2={ima.aresta[1].y} stroke={COR_DESENHO.ima} strokeWidth={2.2} />
               </g>
             )}
@@ -106,20 +110,20 @@ export function CamadaDesenho(p: Props) {
               <polygon
                 points={lista(pts)}
                 fill={fillPreview}
-                fillOpacity={fechado ? (p.corPreview ? 0.7 : 0.3) : 0.18}
+                fillOpacity={fechado ? (p.corPreview ? 0.7 : 0.22) : 0.12}
                 stroke="none"
               />
             )}
             {pts.length >= 2 && (
               <g fill="none" strokeLinejoin="round" strokeLinecap="round">
                 <polyline points={lista(pts)} stroke={COR_DESENHO.contorno} strokeOpacity={0.55} strokeWidth={5} />
-                <polyline points={lista(pts)} stroke={p.corPreview && fechado ? fillPreview : linha} strokeWidth={2.6} />
+                <polyline points={lista(pts)} stroke={p.corPreview && fechado ? fillPreview : COR_DESENHO.linha} strokeWidth={2.6} />
               </g>
             )}
             {fechado && ultimo && primeiro && (
               <g strokeLinecap="round">
                 <line x1={ultimo.x} y1={ultimo.y} x2={primeiro.x} y2={primeiro.y} stroke={COR_DESENHO.contorno} strokeOpacity={0.55} strokeWidth={5} />
-                <line x1={ultimo.x} y1={ultimo.y} x2={primeiro.x} y2={primeiro.y} stroke={p.corPreview ? fillPreview : linha} strokeWidth={2.6} />
+                <line x1={ultimo.x} y1={ultimo.y} x2={primeiro.x} y2={primeiro.y} stroke={p.corPreview ? fillPreview : COR_DESENHO.linha} strokeWidth={2.6} />
               </g>
             )}
             {cur && ultimo && !fechado && !arrastando && (
@@ -134,36 +138,38 @@ export function CamadaDesenho(p: Props) {
 
             {meios.map((m) => (
               <g key={m.i}>
-                {m.i === hm && <circle cx={m.px.x} cy={m.px.y} r={7} fill={COR_DESENHO.linha} fillOpacity={0.28} />}
-                <circle cx={m.px.x} cy={m.px.y} r={2.2} fill="#ffffff" fillOpacity={0.65} stroke={COR_DESENHO.contorno} strokeOpacity={0.6} strokeWidth={1} />
+                {m.i === hm && <circle cx={m.px.x} cy={m.px.y} r={7} fill={COR_DESENHO.ponto} fillOpacity={0.28} />}
+                <circle cx={m.px.x} cy={m.px.y} r={2.2} fill="#ffffff" fillOpacity={0.85} stroke={COR_DESENHO.ponto} strokeOpacity={0.9} strokeWidth={1.2} />
               </g>
             ))}
 
             {pts.map((v, i) => (
               <g key={i}>
                 {(p.grudados[i] || i === p.arrastoVertice) && (
-                  <circle cx={v.x} cy={v.y} r={5.5} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.3} strokeOpacity={0.9} />
+                  <circle cx={v.x} cy={v.y} r={5.5} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.4} strokeOpacity={0.95} />
                 )}
-                {i === hv && <circle cx={v.x} cy={v.y} r={7} fill="#ffffff" fillOpacity={0.14} />}
-                <circle cx={v.x} cy={v.y} r={2.6} fill="#ffffff" stroke={COR_DESENHO.contorno} strokeWidth={1.1} />
+                {i === hv && <circle cx={v.x} cy={v.y} r={7} fill={COR_DESENHO.ponto} fillOpacity={0.2} />}
+                <circle cx={v.x} cy={v.y} r={2.8} fill={COR_DESENHO.ponto} stroke="#ffffff" strokeWidth={1.2} />
               </g>
             ))}
 
-            {/* Ímã: anéis verdes compactos — sem cruzetas, sem rótulo de nome. */}
+            {/* Ímã: anéis/linha brancos — sem cruzetas, sem nome. */}
             {ima && raw && cur && (
               <g data-testid="mapa-ima-marca" data-tipo={ima.tipo}>
-                <line x1={raw.x} y1={raw.y} x2={cur.x} y2={cur.y} stroke={COR_DESENHO.ima} strokeWidth={1} strokeDasharray="2 3" strokeOpacity={0.7} />
-                <circle cx={raw.x} cy={raw.y} r={1.8} fill="none" stroke="#ffffff" strokeWidth={1} strokeOpacity={0.6} />
-                <circle cx={cur.x} cy={cur.y} r={9} fill={COR_DESENHO.ima} fillOpacity={0.14} />
-                <circle cx={cur.x} cy={cur.y} r={5.5} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.4} strokeOpacity={0.9} />
-                <circle cx={cur.x} cy={cur.y} r={2.4} fill={ima.tipo === "fechar" ? COR_DESENHO.linha : COR_DESENHO.ima} stroke={COR_DESENHO.contorno} strokeWidth={1} />
+                <line x1={raw.x} y1={raw.y} x2={cur.x} y2={cur.y} stroke={COR_DESENHO.contorno} strokeWidth={2.2} strokeOpacity={0.45} />
+                <line x1={raw.x} y1={raw.y} x2={cur.x} y2={cur.y} stroke={COR_DESENHO.ima} strokeWidth={1.2} strokeDasharray="2 3" strokeOpacity={0.95} />
+                <circle cx={raw.x} cy={raw.y} r={1.8} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.1} strokeOpacity={0.8} />
+                <circle cx={cur.x} cy={cur.y} r={9} fill={COR_DESENHO.ima} fillOpacity={0.16} />
+                <circle cx={cur.x} cy={cur.y} r={5.5} fill="none" stroke={COR_DESENHO.contorno} strokeWidth={2.2} strokeOpacity={0.5} />
+                <circle cx={cur.x} cy={cur.y} r={5.5} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.5} strokeOpacity={0.95} />
+                <circle cx={cur.x} cy={cur.y} r={2.4} fill={ima.tipo === "fechar" ? COR_DESENHO.ponto : COR_DESENHO.ima} stroke={COR_DESENHO.contorno} strokeWidth={1} />
               </g>
             )}
 
             {cur && !ima && !fechado && !arrastando && !p.hover && (
               <g>
-                <circle cx={cur.x} cy={cur.y} r={4} fill="none" stroke="#ffffff" strokeWidth={1.3} strokeOpacity={0.85} />
-                <circle cx={cur.x} cy={cur.y} r={1.4} fill="#ffffff" />
+                <circle cx={cur.x} cy={cur.y} r={4} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.3} strokeOpacity={0.9} />
+                <circle cx={cur.x} cy={cur.y} r={1.4} fill={COR_DESENHO.ima} />
               </g>
             )}
           </svg>
