@@ -41,9 +41,9 @@ interface AreaApi {
 
 const COR_PADRAO = COR_PADRAO_AREA;
 const hectares = (v: AreaApi["tamanho_ha"]) => (v === null || v === undefined || v === "" ? 0 : Number(v));
-/** Hover/seleção: o destaque é o FILL claro (como no exemplo), não a linha. */
+/** Hover: fill claro “brilhando”. Clique/seleção: só a linha de contorno. */
 const HOVER_FILL = "#f8fafc";
-const SELECAO_FILL = "#e2e8f0";
+const SELECAO_CONTORNO = "#f5a01b";
 
 type Rascunho = { geometria: Polygon; tamanho_ha: number; /** Se preenchido, o salvar faz PUT nessa área (edição de contorno). */ editandoId?: string };
 
@@ -379,21 +379,19 @@ export function MapaDeManejo() {
       m.on("load", () => {
         if (cancelado) return;
         m.addSource("areas", { type: "geojson", data: { type: "FeatureCollection", features: [] }, promoteId: "id" });
-        // Como o exemplo: linhas finas entre campos; hover/seleção destaca o FILL claro, não engrossa a borda.
+        // Hover = fill brilhando; clique = contorno marcado; linhas entre pastos bem finas.
         m.addLayer({
           id: "areas-fill", type: "fill", source: "areas",
           paint: {
             "fill-color": [
               "case",
               ["boolean", ["feature-state", "hover"], false], HOVER_FILL,
-              ["boolean", ["feature-state", "selecionada"], false], SELECAO_FILL,
               ["coalesce", ["get", "cor_exibida"], COR_PADRAO]
             ],
             "fill-opacity": [
               "case",
-              ["boolean", ["feature-state", "hover"], false], 0.55,
-              ["boolean", ["feature-state", "selecionada"], false], 0.42,
-              0.28
+              ["boolean", ["feature-state", "hover"], false], 0.58,
+              0.45
             ]
           }
         });
@@ -402,14 +400,33 @@ export function MapaDeManejo() {
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
             "line-color": ["coalesce", ["get", "cor_borda"], "#3d2e24"],
-            "line-opacity": 0.9,
+            "line-opacity": 0.85,
             "line-width": [
               "interpolate", ["linear"], ["zoom"],
-              10, 0.4,
-              12, 0.55,
-              14, 0.7,
-              16, 0.9,
-              18, 1.1
+              10, 0.3,
+              12, 0.4,
+              14, 0.5,
+              16, 0.65,
+              18, 0.8
+            ]
+          }
+        });
+        // Contorno do pasto clicado — por cima dos vizinhos.
+        m.addLayer({
+          id: "areas-contorno-selecao", type: "line", source: "areas",
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: {
+            "line-color": SELECAO_CONTORNO,
+            "line-opacity": [
+              "case",
+              ["boolean", ["feature-state", "selecionada"], false], 1,
+              0
+            ],
+            "line-width": [
+              "interpolate", ["linear"], ["zoom"],
+              10, 1.6,
+              14, 2.1,
+              18, 2.6
             ]
           }
         });
