@@ -1,25 +1,34 @@
 /**
- * MAPA-01 — paleta fixa de 9 cores do cadastro de área (ficha da área).
- * A cor gravada é a da tabela; a exibida no mapa é suavizada (85% da cor + 15% do turquesa).
+ * MAPA-01 — paleta do cadastro de área (ficha).
+ * Cores limpas (pouca mistura na exibição); contorno no mapa é sempre branco fino.
  */
 
 export interface CorDaPaleta { cor: string; nome: string }
 
 /** Azul celeste — padrão do cadastro. */
 export const COR_PADRAO_AREA = "#61aad9";
-const TURQUESA_EXIBICAO = "#20bfa9";
+/** Contorno padrão das demarcações no mapa — sempre branco, fino. */
+export const COR_LINHA_AREA = "#ffffff";
 const CINZA_SEM_COR = "#a3b2b8";
 
+/** Paleta ampliada, sólidas e fáceis de distinguir (sem tons “misturados”). */
 export const PALETA_AREAS: readonly CorDaPaleta[] = [
   { cor: "#f8f9fa", nome: "Branco" },
-  { cor: "#d8dee2", nome: "Cinza claro" },
-  { cor: "#2c303e", nome: "Preto" },
+  { cor: "#94a3b8", nome: "Cinza" },
+  { cor: "#1e293b", nome: "Preto" },
   { cor: "#0d67ad", nome: "Azul escuro" },
   { cor: "#61aad9", nome: "Azul celeste" },
-  { cor: "#efcb19", nome: "Amarelo" },
+  { cor: "#2563eb", nome: "Azul" },
+  { cor: "#0f766e", nome: "Verde escuro" },
+  { cor: "#16a34a", nome: "Verde" },
   { cor: "#92ca25", nome: "Verde claro" },
+  { cor: "#efcb19", nome: "Amarelo" },
   { cor: "#f5a01b", nome: "Laranja" },
-  { cor: "#966fe1", nome: "Roxo" }
+  { cor: "#dc2626", nome: "Vermelho" },
+  { cor: "#db2777", nome: "Rosa" },
+  { cor: "#966fe1", nome: "Roxo" },
+  { cor: "#92400e", nome: "Marrom" },
+  { cor: "#14b8a6", nome: "Turquesa" }
 ];
 
 function hexParaRgb(hex: string): [number, number, number] | null {
@@ -34,25 +43,18 @@ function rgbParaHex(r: number, g: number, b: number): string {
   return `#${c(r)}${c(g)}${c(b)}`;
 }
 
-/** Cor de preenchimento no mapa: 85% da cadastrada + 15% turquesa; sem cor → cinza. */
+/**
+ * Cor de preenchimento no mapa: a cadastrada quase pura (só 5% de branco para não “sujar”).
+ * Sem mistura com turquesa — as opções da paleta ficam fiéis.
+ */
 export function corExibidaNoMapa(cor: string | null | undefined): string {
   const base = hexParaRgb(cor && cor.trim() !== "" ? cor : CINZA_SEM_COR) ?? hexParaRgb(CINZA_SEM_COR)!;
-  const t = hexParaRgb(TURQUESA_EXIBICAO)!;
-  return rgbParaHex(base[0] * 0.85 + t[0] * 0.15, base[1] * 0.85 + t[1] * 0.15, base[2] * 0.85 + t[2] * 0.15);
+  return rgbParaHex(base[0] * 0.95 + 255 * 0.05, base[1] * 0.95 + 255 * 0.05, base[2] * 0.95 + 255 * 0.05);
 }
 
-/**
- * Borda no mapa: precisa contrastar com o fill (importação branca virava traço branco confuso).
- * Cores claras → contorno escuro esverdeado; cores saturadas → versão mais escura da própria cor.
- */
-export function corBordaNoMapa(corExibida: string): string {
-  const rgb = hexParaRgb(corExibida) ?? hexParaRgb(CINZA_SEM_COR)!;
-  const lum = rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114;
-  if (lum > 150) {
-    // Branco / cinza claro: traço fino marrom-escuro (como o exemplo entre campos).
-    return "#3d2e24";
-  }
-  return rgbParaHex(rgb[0] * 0.42, rgb[1] * 0.4, rgb[2] * 0.38);
+/** Contorno no mapa: sempre branco (a linha de demarcação). */
+export function corBordaNoMapa(_corExibida?: string): string {
+  return COR_LINHA_AREA;
 }
 
 /** A primeira cor da paleta que nenhuma área usa; com todas em uso, o padrão. */

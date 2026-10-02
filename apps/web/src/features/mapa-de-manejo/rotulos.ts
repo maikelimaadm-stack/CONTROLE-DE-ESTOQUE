@@ -16,11 +16,14 @@ export interface RotuloAreaVisivel extends RotuloAreaBruto {
   fonteHa: number;
 }
 
-/** Fonte compacta: sobe com o zoom, mas fica menor que antes. */
+/**
+ * Fonte estável por faixas largas de zoom — sem encolher/crescer a cada leve zoom.
+ * Três degraus só: longe / médio / perto.
+ */
 export function fontesDoZoom(zoom: number): { nome: number; ha: number } {
-  const nome = Math.max(7, Math.min(12.5, 5.5 + (zoom - 11) * 1.05));
-  const ha = Math.max(6.5, Math.min(10.5, nome - 1.2));
-  return { nome, ha };
+  if (zoom < 13) return { nome: 9, ha: 7.5 };
+  if (zoom < 16) return { nome: 10, ha: 8.5 };
+  return { nome: 11, ha: 9 };
 }
 
 function caixa(r: RotuloAreaBruto, pad: number, fonteNome: number) {
@@ -37,9 +40,7 @@ function colide(
 }
 
 /**
- * Declutter simples: prioriza pastos maiores; esconde o que colide.
- * Sem regra confusa de “tamanho mínimo” por zoom — só some se o polígono
- * na tela for menor que o próprio rótulo, ou se encostar noutro nome.
+ * Declutter: prioriza pastos maiores; esconde o que colide ou não cabe no polígono.
  */
 export function suavizarRotulos(
   rotulos: readonly RotuloAreaBruto[],
@@ -54,8 +55,7 @@ export function suavizarRotulos(
     if (r.id === destaqueId) return true;
     const w = r.larguraPx ?? 999;
     const h = r.alturaPx ?? 999;
-    // Cabe o texto no pasto? Se o pasto for menor que o rótulo, some.
-    const precisaW = Math.max(40, r.nome.length * (fonteNome * 0.55));
+    const precisaW = Math.max(36, r.nome.length * (fonteNome * 0.55));
     const precisaH = r.ha > 0 ? fonteNome * 2.1 : fonteNome * 1.2;
     return w >= precisaW && h >= precisaH;
   });

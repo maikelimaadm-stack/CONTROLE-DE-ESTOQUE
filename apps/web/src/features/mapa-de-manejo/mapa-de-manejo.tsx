@@ -18,7 +18,7 @@ import {
 } from "./editor-desenho";
 import { CamadaDesenho, type Lado, type RotuloArea } from "./camada-desenho";
 import { BarraIma } from "./barra-ima";
-import { COR_PADRAO_AREA, PALETA_AREAS, corBordaNoMapa, corExibidaNoMapa } from "./cores";
+import { COR_LINHA_AREA, COR_PADRAO_AREA, PALETA_AREAS, corBordaNoMapa, corExibidaNoMapa } from "./cores";
 import { parseImportacaoMapa, rotuloFormato, type AreaImportada } from "./importacao";
 import { suavizarRotulos } from "./rotulos";
 
@@ -379,7 +379,7 @@ export function MapaDeManejo() {
       m.on("load", () => {
         if (cancelado) return;
         m.addSource("areas", { type: "geojson", data: { type: "FeatureCollection", features: [] }, promoteId: "id" });
-        // Hover = fill brilhando; clique = contorno marcado; linhas entre pastos bem finas.
+        // Linha branca fina por cima do fill; hover = fill mais claro; clique = contorno marcado.
         m.addLayer({
           id: "areas-fill", type: "fill", source: "areas",
           paint: {
@@ -390,8 +390,8 @@ export function MapaDeManejo() {
             ],
             "fill-opacity": [
               "case",
-              ["boolean", ["feature-state", "hover"], false], 0.58,
-              0.45
+              ["boolean", ["feature-state", "hover"], false], 0.78,
+              0.68
             ]
           }
         });
@@ -399,15 +399,14 @@ export function MapaDeManejo() {
           id: "areas-contorno", type: "line", source: "areas",
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
-            "line-color": ["coalesce", ["get", "cor_borda"], "#3d2e24"],
-            "line-opacity": 0.85,
+            "line-color": COR_LINHA_AREA,
+            "line-opacity": 1,
             "line-width": [
               "interpolate", ["linear"], ["zoom"],
               10, 0.3,
-              12, 0.4,
-              14, 0.5,
-              16, 0.65,
-              18, 0.8
+              13, 0.45,
+              16, 0.55,
+              18, 0.7
             ]
           }
         });
@@ -424,9 +423,9 @@ export function MapaDeManejo() {
             ],
             "line-width": [
               "interpolate", ["linear"], ["zoom"],
-              10, 1.6,
-              14, 2.1,
-              18, 2.6
+              10, 1.5,
+              14, 1.9,
+              18, 2.3
             ]
           }
         });

@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { api, login, uniq } from "./helpers";
 
 /**
- * MAPA-01 — Mapa de Manejo (UX: ímã só ícone a 8 px, sem lateral de desenho, paleta 9 cores).
+ * MAPA-01 — Mapa de Manejo (UX: ímã só ícone a 8 px, sem lateral de desenho, paleta ampliada).
  */
 test.use({ launchOptions: { ...(process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {}), args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist"] } });
 
@@ -114,7 +114,7 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
     const primeira = uniq("Talhão E2E").toLocaleUpperCase("pt-BR");
     await confirmar.click();
     await expect(page.getByTestId("mapa-form-tamanho"), "o tamanho vem calculado do desenho").not.toHaveValue("");
-    await expect(page.getByTestId("mapa-cor-opcao")).toHaveCount(9);
+    await expect(page.getByTestId("mapa-cor-opcao")).toHaveCount(16);
     await expect(page.locator('[data-testid="mapa-cor-opcao"][aria-checked="true"]')).toHaveCount(1);
     await page.getByRole("radio", { name: "Verde claro", exact: true }).click();
     await expect(page.getByRole("radio", { name: "Verde claro", exact: true })).toHaveAttribute("aria-checked", "true");
