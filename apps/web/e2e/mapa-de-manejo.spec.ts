@@ -99,7 +99,12 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
     await expect(acao).toHaveText("Ponto 2 apagado");
     await expect(pontos).toHaveText("4");
 
+    // Mover área só com a mãozinha ligada (sob a régua)
     const dentro = em(-L / 2, L / 2);
+    await page.mouse.move(dentro.x, dentro.y); await page.mouse.down(); await page.mouse.move(dentro.x + 30, dentro.y, { steps: 4 }); await page.mouse.up();
+    await expect(acao).not.toHaveText("Área movida");
+    await page.getByTestId("mapa-mover-area-toggle").click();
+    await expect(page.getByTestId("mapa-mover-area-toggle")).toHaveAttribute("aria-pressed", "true");
     await page.mouse.move(dentro.x, dentro.y); await page.mouse.down(); await page.mouse.move(dentro.x + 30, dentro.y, { steps: 4 }); await page.mouse.up();
     await expect(acao).toHaveText("Área movida");
     await page.keyboard.press("Control+z");
@@ -166,4 +171,35 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
     const apos = await api<{ items: Area[] }>(page, "GET", "/api/resources/mapa_areas?pageSize=500");
     expect(apos.items.find((a) => a.nome === editado)?.cor).toBe("#f5a01b");
   });
+});
+
+test("importação KML mini cria áreas brancas com nomes do arquivo", async ({ page }) => {
+  await login(page);
+  await limparAreas(page);
+  await page.goto("/mapa-de-manejo");
+  await expect(page.getByTestId("mapa-importacao")).toBeEnabled({ timeout: 30_000 });
+  const arquivo = page.getByTestId("mapa-importacao-arquivo");
+  await arquivo.setInputFiles("e2e/fixtures/mapa-import-mini.kml");
+  await expect(page.getByTestId("mapa-importacao-progresso")).toContainText(/concluída/i, { timeout: 60_000 });
+  await expect(page.getByTestId("mapa-item-area").filter({ hasText: "MT - PASTO 06 A" })).toBeVisible();
+  await expect(page.getByTestId("mapa-item-area").filter({ hasText: "MT - PASTO 07 A" })).toBeVisible();
+  const lista = await api<{ items: { nome: string; cor: string | null }[] }>(page, "GET", "/api/resources/mapa_areas?pageSize=500");
+  const importadas = lista.items.filter((a) => a.nome.includes("PASTO 06 A") || a.nome.includes("PASTO 07 A"));
+  expect(importadas.length).toBeGreaterThanOrEqual(2);
+  for (const a of importadas) expect(a.cor, "importação sempre branca").toBe("#f8f9fa");
+});
+
+test("importação KML fazenda_kaiman carrega os polígonos", async ({ page }) => {
+  test.setTimeout(300_000);
+  await login(page);
+  await limparAreas(page);
+  await page.goto("/mapa-de-manejo");
+  await expect(page.getByTestId("mapa-importacao")).toBeEnabled({ timeout: 30_000 });
+  await page.getByTestId("mapa-importacao-arquivo").setInputFiles("e2e/fixtures/fazenda_kaiman_1-2025-12-11_08-10-39.kml");
+  await expect(page.getByTestId("mapa-importacao-progresso")).toContainText(/102/, { timeout: 240_000 });
+  await expect(page.getByTestId("mapa-importacao-progresso")).toContainText(/concluída/i, { timeout: 240_000 });
+  const lista = await api<{ items: { nome: string; cor: string | null }[] }>(page, "GET", "/api/resources/mapa_areas?pageSize=500");
+  expect(lista.items.length, "102 polígonos do KML").toBe(102);
+  expect(lista.items.every((a) => a.cor === "#f8f9fa"), "todas brancas").toBe(true);
+  expect(lista.items.some((a) => a.nome.includes("PASTO"))).toBe(true);
 });

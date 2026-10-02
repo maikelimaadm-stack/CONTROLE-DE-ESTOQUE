@@ -3,7 +3,7 @@ import * as React from "react";
 import { flushSync } from "react-dom";
 import type { Feature, Polygon } from "geojson";
 import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
-import { Check, Redo2, RotateCcw, Undo2 } from "lucide-react";
+import { Check, Redo2, RotateCcw, Undo2, Upload } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, qs, newIdem } from "@/lib/api";
 import { useAuth, empresasDoContexto } from "@/lib/auth";
@@ -19,6 +19,7 @@ import {
 import { CamadaDesenho, type Lado, type RotuloArea } from "./camada-desenho";
 import { BarraIma } from "./barra-ima";
 import { COR_PADRAO_AREA, PALETA_AREAS, corBordaNoMapa, corExibidaNoMapa } from "./cores";
+import { parseImportacaoMapa, rotuloFormato, type AreaImportada } from "./importacao";
 
 /**
  * MAPA-01 (decisão 289) — Mapa de Manejo: cadastro de áreas NEUTRO (lavoura e pecuária). Só nome, tamanho e
@@ -110,6 +111,13 @@ export function MapaDeManejo() {
   const [erroLocalizacao, setErroLocalizacao] = React.useState<string | null>(null);
   const [cfg, setCfg] = React.useState<ConfigIma>(IMA_PADRAO);
   const [mostrarMetragem, setMostrarMetragem] = React.useState(false);
+  /** Mãozinha: só com ela ligada o arrasto move a área fechada inteira. */
+  const [moverArea, setMoverArea] = React.useState(false);
+  const moverAreaRef = React.useRef(false);
+  React.useEffect(() => { moverAreaRef.current = moverArea; }, [moverArea]);
+  const [importando, setImportando] = React.useState(false);
+  const [progressoImport, setProgressoImport] = React.useState<string | null>(null);
+  const importInputRef = React.useRef<HTMLInputElement | null>(null);
   // Refs lidos pelos eventos do mapa (registrados uma vez só).
   const ed = React.useRef<Editor>(editorVazio());
   /** Ímã: tolerância 8 px, vértice+aresta; liga/desliga pelo ícone. */
@@ -180,7 +188,7 @@ export function MapaDeManejo() {
     const e = ed.current;
     if (e.arrasto) return;
     const pts = ptsPx();
-    const h = acertar(px, pts, e.fechado);
+    const h = acertar(px, pts, e.fechado, { moverArea: moverAreaRef.current });
     if (h?.tipo === "vertice" && h.i === 0 && !e.fechado && pts.length >= 3) {
       // o primeiro ponto, com 3+ marcados, é o alvo de fechar
       Object.assign(e, { hover: null, raw: px, cur: pts[0], ima: { px: pts[0]!, lngLat: null, dist: 0, tipo: "fechar", de: "primeiro ponto" }, travado: false });
@@ -206,7 +214,7 @@ export function MapaDeManejo() {
   function aoPressionar(px: Px): boolean {
     if (!ativo()) return false;
     const e = ed.current;
-    const h = acertar(px, ptsPx(), e.fechado);
+    const h = acertar(px, ptsPx(), e.fechado, { moverArea: moverAreaRef.current });
     if (!h) return false;
     if (h.tipo === "vertice") {
       e.arrasto = { tipo: "vertice", i: h.i, novo: false, mexeu: false }; e.acao = `Arrastando o ponto ${h.i + 1}`;
@@ -255,7 +263,7 @@ export function MapaDeManejo() {
     if (!ativo()) return;
     if (detalhe >= 2) return; // 2º clique do duplo: o dblclick decide
     const e = ed.current; const pts = ptsPx();
-    if (acertar(px, pts, e.fechado)) return; // segurar/soltar num alvo já foi tratado
+    if (acertar(px, pts, e.fechado, { moverArea: moverAreaRef.current })) return; // segurar/soltar num alvo já foi tratado
     if (e.fechado) { e.acao = "Fechada — arraste os pontos, ou toque em Recomeçar"; redesenhar(); return; }
     const s = acharIma(px, alvosPx(), cfgRef.current, { pts, fechado: false }, { soltar: alt, semFechar: false });
     if (s?.tipo === "fechar") { fechar("Fechado no primeiro ponto"); return; }
@@ -266,7 +274,7 @@ export function MapaDeManejo() {
   function aoDuploClique(px: Px) {
     if (!ativo()) return;
     const e = ed.current;
-    const h = acertar(px, ptsPx(), e.fechado);
+    const h = acertar(px, ptsPx(), e.fechado, { moverArea: moverAreaRef.current });
     const uc = e.ultimoClique;
     const mesmoGesto = !!uc && h?.tipo === "vertice" && h.i === uc.i && performance.now() - uc.t < JANELA_DUPLO_MS;
     if (h?.tipo === "vertice" && !mesmoGesto && e.pontos.length > 3) {
@@ -577,6 +585,7 @@ export function MapaDeManejo() {
   function iniciarDesenho() {
     setErro(null); setSelecionada(null); setEditandoFicha(false); setRascunho(null);
     setEditandoContornoId(null);
+    setMoverArea(false); moverAreaRef.current = false;
     if (!mapRef.current || !mapaPronto) { setErro("O mapa ainda está carregando. Aguarde a imagem abrir e tente de novo."); return; }
     ed.current = editorVazio();
     desenhandoRef.current = true;
@@ -619,6 +628,7 @@ export function MapaDeManejo() {
     ed.current = editorVazio();
     desenhandoRef.current = false;
     setEditandoContornoId(null);
+    setMoverArea(false); moverAreaRef.current = false;
     setDesenhando(false); setRascunho(null);
   }
   function confirmar() {
@@ -660,6 +670,70 @@ export function MapaDeManejo() {
       redesenhar();
       return prox;
     });
+  }
+
+  function toggleMoverArea() {
+    setMoverArea((v) => {
+      const prox = !v;
+      moverAreaRef.current = prox;
+      ed.current.acao = prox ? "Mover área ligado — segure dentro do polígono" : "Mover área desligado";
+      redesenhar();
+      return prox;
+    });
+  }
+
+  async function importarArquivo(arquivo: File) {
+    if (!empresaId) { setErro("Nenhuma empresa disponível para importar áreas."); return; }
+    setErro(null);
+    setProgressoImport(null);
+    setImportando(true);
+    try {
+      const texto = await arquivo.text();
+      const resultado = parseImportacaoMapa(arquivo.name, texto);
+      const total = resultado.areas.length;
+      setProgressoImport(`Importando ${total} área(s) (${rotuloFormato(resultado.formato)})…`);
+      let ok = 0;
+      const falhas: string[] = [];
+      for (const a of resultado.areas) {
+        try {
+          await api("/api/resources/mapa_areas", {
+            method: "POST",
+            idempotencyKey: newIdem(),
+            body: {
+              empresa_id: empresaId,
+              nome: a.nome,
+              cor: a.cor,
+              tamanho_ha: a.tamanho_ha,
+              geometria: a.geometria
+            }
+          });
+          ok += 1;
+          if (ok % 10 === 0 || ok === total) setProgressoImport(`Importadas ${ok}/${total}…`);
+        } catch (e: unknown) {
+          falhas.push(`${a.nome}: ${e instanceof Error ? e.message : "falha"}`);
+        }
+      }
+      await queryClient.invalidateQueries({ queryKey: ["mapa-areas"] });
+      const m = mapRef.current;
+      if (m && ok > 0) {
+        const bounds = limitesColecao(resultado.areas);
+        if (bounds) m.fitBounds(bounds, { padding: 60, maxZoom: 16 });
+      }
+      const avisos = [...resultado.avisos, ...falhas.slice(0, 8)];
+      if (ok === 0) {
+        setErro(`Nenhuma área importada.${falhas[0] ? ` ${falhas[0]}` : ""}`);
+        setProgressoImport(null);
+      } else {
+        setProgressoImport(`Importação concluída: ${ok}/${total} área(s) em branco. Nomes do arquivo; cor padrão branca.`);
+        if (avisos.length) setErro(`Avisos: ${avisos.slice(0, 5).join(" · ")}${avisos.length > 5 ? "…" : ""}`);
+      }
+    } catch (e: unknown) {
+      setErro(e instanceof Error ? e.message : "Não foi possível importar o arquivo.");
+      setProgressoImport(null);
+    } finally {
+      setImportando(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
   }
 
   // Troca entre satélite e ruas sem recarregar o estilo: a base de ruas entra sob demanda, sob as áreas.
@@ -724,7 +798,7 @@ export function MapaDeManejo() {
           <h1 className="text-base font-semibold text-slate-800">Mapa de Manejo</h1>
           {desenhando ? (
             <p className="text-xs text-slate-600" data-testid="mapa-instrucao">
-              Clique para marcar o ponto. Segure num ponto e arraste para mover. Dois cliques fecham.
+              Clique para marcar o ponto. Segure num ponto e arraste para mover. Mãozinha liga mover a área. Dois cliques fecham.
               <span className="ml-2 text-slate-400">Botão direito desfaz · Ctrl+Z / Ctrl+Shift+Z · Alt solta o ímã · Shift trava o ângulo</span>
             </p>
           ) : (
@@ -732,7 +806,23 @@ export function MapaDeManejo() {
           )}
         </div>
         {!desenhando && (
-          <Button type="button" onClick={iniciarDesenho} disabled={!mapaPronto || !podeCadastrar} data-testid="mapa-nova-area">Nova área</Button>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button type="button" variant="outline" onClick={() => importInputRef.current?.click()} disabled={!mapaPronto || !podeCadastrar || importando} data-testid="mapa-importacao">
+              <Upload className="h-4 w-4" aria-hidden />{importando ? "Importando…" : "Importação"}
+            </Button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".kml,.json,.geojson,application/vnd.google-earth.kml+xml,application/geo+json,application/json,text/xml"
+              className="hidden"
+              data-testid="mapa-importacao-arquivo"
+              onChange={(ev) => {
+                const f = ev.target.files?.[0];
+                if (f) void importarArquivo(f);
+              }}
+            />
+            <Button type="button" onClick={iniciarDesenho} disabled={!mapaPronto || !podeCadastrar} data-testid="mapa-nova-area">Nova área</Button>
+          </div>
         )}
         {desenhando && !rascunho && (
           <div className="flex flex-wrap items-center gap-1.5">
@@ -745,6 +835,7 @@ export function MapaDeManejo() {
       </div>
 
       {!podeCadastrar && <Card><CardBody><p className="text-sm text-amber-700">Nenhuma empresa disponível para cadastrar áreas.</p></CardBody></Card>}
+      {progressoImport && <Card><CardBody><p className="text-sm text-slate-700" data-testid="mapa-importacao-progresso">{progressoImport}</p></CardBody></Card>}
       {erro && <Card><CardBody><p className="text-sm text-red-600" data-testid="mapa-erro">{erro}</p></CardBody></Card>}
 
       <div className={cn("grid min-h-0 flex-1 gap-2", desenhando ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-[280px_1fr]")}>
@@ -758,7 +849,7 @@ export function MapaDeManejo() {
               </div>
               {listaQuery.isLoading && <Spinner />}
               {listaQuery.error && <ErrorState title="Não foi possível carregar as áreas" error={listaQuery.error} onRetry={() => void listaQuery.refetch()} />}
-              {!listaQuery.isLoading && !listaQuery.error && areas.length === 0 && <EmptyState title="Nenhuma área cadastrada" description="Use “Nova área” para desenhar a primeira no mapa." />}
+              {!listaQuery.isLoading && !listaQuery.error && areas.length === 0 && <EmptyState title="Nenhuma área cadastrada" description="Use “Nova área” ou “Importação” (KML / GeoJSON / JSON)." />}
               {areas.map((a) => (
                 <button key={a.id} type="button" data-testid="mapa-item-area" onClick={() => {
                   abrirFicha(a);
@@ -833,6 +924,8 @@ export function MapaDeManejo() {
                     onToggle={toggleIma}
                     metragem={mostrarMetragem}
                     onToggleMetragem={toggleMetragem}
+                    moverArea={moverArea}
+                    onToggleMoverArea={toggleMoverArea}
                   />
                 </div>
               )}
@@ -984,6 +1077,20 @@ function limites(g: Polygon): [[number, number], [number, number]] | null {
     if (lng > leste) leste = lng;
     if (lat < sul) sul = lat;
     if (lat > norte) norte = lat;
+  }
+  if (!Number.isFinite(oeste)) return null;
+  return [[oeste, sul], [leste, norte]];
+}
+
+function limitesColecao(areas: AreaImportada[]): [[number, number], [number, number]] | null {
+  let oeste = Infinity, sul = Infinity, leste = -Infinity, norte = -Infinity;
+  for (const a of areas) {
+    const b = limites(a.geometria);
+    if (!b) continue;
+    if (b[0][0] < oeste) oeste = b[0][0];
+    if (b[0][1] < sul) sul = b[0][1];
+    if (b[1][0] > leste) leste = b[1][0];
+    if (b[1][1] > norte) norte = b[1][1];
   }
   if (!Number.isFinite(oeste)) return null;
   return [[oeste, sul], [leste, norte]];

@@ -5,17 +5,19 @@ import type { Acerto, Ima, Px } from "./editor-desenho";
 
 /**
  * Camada visual do editor de desenho, por cima do canvas do mapa. Só apresenta: pointer-events none.
- * Linha e ímã brancos; pontos verdes de registro (sem brilho, sem borda).
+ * Linha e cruzinha laranja (estilo da foto); pontos grandes branco com borda laranja; meios só laranja.
  */
 
+/** Laranja do desenho — mesma família da foto de referência. */
 export const COR_DESENHO = {
-  linha: "#ffffff",
-  elastico: "#ffffff",
-  ima: "#ffffff",
-  /** Pontos do cadastro — verde de registro/salvar. */
-  ponto: "#40de63",
-  meio: "#ffffff",
-  guia: "#ffffff"
+  linha: "#f5a01b",
+  elastico: "#f5a01b",
+  ima: "#f5a01b",
+  pontoBorda: "#f5a01b",
+  pontoDentro: "#ffffff",
+  meio: "#f5a01b",
+  guia: "#f5a01b",
+  cruz: "#f5a01b"
 } as const;
 
 export interface RotuloArea { id: string; px: Px; nome: string; ha: number }
@@ -44,6 +46,16 @@ interface Props {
 }
 
 const lista = (pts: Px[]) => pts.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+
+function Cruzinha({ x, y, cor = COR_DESENHO.cruz }: { x: number; y: number; cor?: string }) {
+  const r = 7;
+  return (
+    <g data-testid="mapa-cruzinha" stroke={cor} strokeWidth={1.8} strokeLinecap="round">
+      <line x1={x - r} y1={y} x2={x + r} y2={y} />
+      <line x1={x} y1={y - r} x2={x} y2={y + r} />
+    </g>
+  );
+}
 
 export function CamadaDesenho(p: Props) {
   const { pts, fechado, cur, ima, arrastando } = p;
@@ -99,7 +111,7 @@ export function CamadaDesenho(p: Props) {
               <polygon
                 points={lista(pts)}
                 fill={fillPreview}
-                fillOpacity={fechado ? (p.corPreview ? 0.7 : 0.22) : 0.12}
+                fillOpacity={fechado ? (p.corPreview ? 0.7 : 0.18) : 0.1}
                 stroke="none"
               />
             )}
@@ -108,7 +120,7 @@ export function CamadaDesenho(p: Props) {
                 points={lista(pts)}
                 fill="none"
                 stroke={p.corPreview && fechado ? fillPreview : COR_DESENHO.linha}
-                strokeWidth={2.4}
+                strokeWidth={2.2}
                 strokeLinejoin="round"
                 strokeLinecap="round"
               />
@@ -117,7 +129,16 @@ export function CamadaDesenho(p: Props) {
               <line
                 x1={ultimo.x} y1={ultimo.y} x2={primeiro.x} y2={primeiro.y}
                 stroke={p.corPreview ? fillPreview : COR_DESENHO.linha}
-                strokeWidth={2.4}
+                strokeWidth={2.2}
+                strokeLinecap="round"
+              />
+            )}
+            {/* Linha até o mouse (elástico sólido laranja). */}
+            {!fechado && !arrastando && cur && ultimo && (
+              <line
+                x1={ultimo.x} y1={ultimo.y} x2={cur.x} y2={cur.y}
+                stroke={COR_DESENHO.elastico}
+                strokeWidth={2.2}
                 strokeLinecap="round"
               />
             )}
@@ -125,38 +146,48 @@ export function CamadaDesenho(p: Props) {
               <line x1={ultimo.x} y1={ultimo.y} x2={ultimo.x + (cur.x - ultimo.x) * 1.35} y2={ultimo.y + (cur.y - ultimo.y) * 1.35} stroke={COR_DESENHO.guia} strokeWidth={1.2} strokeDasharray="4 6" strokeOpacity={0.85} />
             )}
 
+            {/* Pontos do meio: só laranja, sem borda. */}
             {meios.map((m) => (
               <circle
                 key={m.i}
                 cx={m.px.x}
                 cy={m.px.y}
-                r={m.i === hm ? 3.2 : 2.6}
-                fill={COR_DESENHO.ponto}
+                r={m.i === hm ? 3.4 : 2.8}
+                fill={COR_DESENHO.meio}
               />
             ))}
 
-            {/* Pontos flat verdes de registro — um pouco maiores, sem aura/brilho. */}
-            {pts.map((v, i) => (
-              <circle
-                key={i}
-                cx={v.x}
-                cy={v.y}
-                r={i === p.arrastoVertice || i === hv ? 5.2 : 4.4}
-                fill={COR_DESENHO.ponto}
-              />
-            ))}
+            {/* Pontos grandes: branco por dentro, borda laranja. */}
+            {pts.map((v, i) => {
+              const ativo = i === p.arrastoVertice || i === hv;
+              return (
+                <circle
+                  key={i}
+                  cx={v.x}
+                  cy={v.y}
+                  r={ativo ? 5.6 : 5}
+                  fill={COR_DESENHO.pontoDentro}
+                  stroke={COR_DESENHO.pontoBorda}
+                  strokeWidth={2.4}
+                />
+              );
+            })}
 
-            {/* Ímã branco no alvo — acompanha só o snap, sem tooltip. */}
+            {/* Ímã no alvo (anel laranja). */}
             {ima && cur && (
               <g data-testid="mapa-ima-marca" data-tipo={ima.tipo}>
-                <circle cx={cur.x} cy={cur.y} r={5.5} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.5} strokeOpacity={0.9} />
-                <circle cx={cur.x} cy={cur.y} r={2.6} fill={ima.tipo === "fechar" ? COR_DESENHO.ponto : COR_DESENHO.ima} />
+                <circle cx={cur.x} cy={cur.y} r={8} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.6} strokeOpacity={0.95} />
+                {ima.tipo === "fechar" ? (
+                  <circle cx={cur.x} cy={cur.y} r={4.2} fill={COR_DESENHO.pontoDentro} stroke={COR_DESENHO.pontoBorda} strokeWidth={2} />
+                ) : (
+                  <Cruzinha x={cur.x} y={cur.y} />
+                )}
               </g>
             )}
 
-            {/* Cursor livre: exatamente sob o mouse. */}
+            {/* Cruzinha livre sob o mouse. */}
             {cur && !ima && !fechado && !arrastando && !p.hover && (
-              <circle cx={cur.x} cy={cur.y} r={2.6} fill={COR_DESENHO.ima} />
+              <Cruzinha x={cur.x} y={cur.y} />
             )}
           </svg>
 

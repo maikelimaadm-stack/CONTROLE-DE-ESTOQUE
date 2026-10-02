@@ -1,9 +1,9 @@
 "use client";
-import { Magnet, Ruler } from "lucide-react";
+import { Hand, Magnet, Ruler } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
- * Ferramentas sob Refazer: ímã (liga/desliga) e metragem dos lados (mostrar/ocultar).
+ * Ferramentas sob Refazer: ímã, metragem e mãozinha (mover área só quando ligada).
  */
 
 interface Props {
@@ -11,6 +11,8 @@ interface Props {
   onToggle: () => void;
   metragem: boolean;
   onToggleMetragem: () => void;
+  moverArea: boolean;
+  onToggleMoverArea: () => void;
 }
 
 export function BarraIma(p: Props) {
@@ -39,6 +41,18 @@ export function BarraIma(p: Props) {
         className={cn("tb-btn tb-btn-icon focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400", p.metragem && "is-active")}
       >
         <Ruler aria-hidden />
+      </button>
+      <button
+        type="button"
+        onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); p.onToggleMoverArea(); }}
+        aria-pressed={p.moverArea}
+        aria-label={p.moverArea ? "Desligar mover área" : "Ligar mover área"}
+        title={p.moverArea ? "Mover área ligado — clique para desligar" : "Mover área — clique para ligar"}
+        data-testid="mapa-mover-area-toggle"
+        data-ligado={p.moverArea ? "1" : "0"}
+        className={cn("tb-btn tb-btn-icon focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400", p.moverArea && "is-active")}
+      >
+        <Hand aria-hidden />
       </button>
     </div>
   );

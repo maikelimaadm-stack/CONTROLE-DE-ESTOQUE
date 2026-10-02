@@ -116,7 +116,7 @@ export function travarAngulo(ultimo: Px, p: Px): Px {
 export const rumoGraus = (de: Px, para: Px) => Math.round(((Math.atan2(para.y - de.y, para.x - de.x) * 180) / Math.PI + 450) % 360);
 
 /** O que está sob o cursor no desenho: um ponto, o meio de um lado, ou o interior da área fechada. */
-export function acertar(p: Px, pts: Px[], fechado: boolean): Acerto | null {
+export function acertar(p: Px, pts: Px[], fechado: boolean, opts?: { moverArea?: boolean }): Acerto | null {
   for (let i = 0; i < pts.length; i++) if (distancia(p, pts[i]!) <= RAIO_VERTICE) return { tipo: "vertice", i };
   const n = fechado ? pts.length : pts.length - 1;
   for (let j = 0; j < n; j++) {
@@ -124,7 +124,8 @@ export function acertar(p: Px, pts: Px[], fechado: boolean): Acerto | null {
     const meio = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     if (distancia(p, meio) <= RAIO_MEIO) return { tipo: "meio", i: j, px: meio };
   }
-  if (fechado && pts.length >= 3 && dentroDoPoligono(p, pts)) return { tipo: "poligono" };
+  // Mover a área inteira só com a mãozinha ligada (botão sob a régua).
+  if (opts?.moverArea && fechado && pts.length >= 3 && dentroDoPoligono(p, pts)) return { tipo: "poligono" };
   return null;
 }
 
