@@ -9,11 +9,13 @@ disponibilidade responsiva (1024–1920: sempre acessível — módulos que não
 |---|---|---|---|---|---|---|---|---|
 | Início | (módulo) | Início | `/` | dashboard.home.view | sim | sim | aba do módulo Início | barra ou **Mais** |
 | Compras | (módulo) | Compras | `/compras` | união das áreas | sim | sim | aba do módulo Compras | barra ou **Mais** |
+| Compras | Documentos | Documentos | `/compras?tab=documentos` | pedidos_compra.view \| compras.view | sim | sim | aba do módulo Compras | barra ou **Mais** |
 | Compras | Visão Geral | Visão Geral | `/compras?tab=visao-geral` | dashboard.supply.view | sim | sim | aba do módulo Compras | barra ou **Mais** |
 | Compras | Processos | Processos | `/compras?tab=processos` | purchase_requests.view \| purchase_quotations.view \| purchase_authorization.view \| purchase_buy.view \| purchase_receipts.view \| rejected_requests.view | sim | sim | aba do módulo Compras | barra ou **Mais** |
 | Compras | Ações | Nova solicitação de compra | `/suprimentos/new` | purchase_requests.create | sim | não | aba própria (/suprimentos/new) | barra ou **Mais** |
 | Estoque | (módulo) | Estoque | `/estoque` | união das áreas | sim | sim | aba do módulo Estoque | barra ou **Mais** |
 | Estoque | Visão Geral | Visão Geral | `/estoque?tab=visao-geral` | stocks.view | sim | sim | aba do módulo Estoque | barra ou **Mais** |
+| Estoque | Movimentações | Movimentações | `/estoque?tab=movimentacoes` | entradas_estoque.view \| saidas_estoque.view \| transferencias_estoque.view \| ajustes_estoque.view | sim | sim | aba do módulo Estoque | barra ou **Mais** |
 | Estoque | Estoque | Saldo | `/estoque?tab=estoque&sub=saldo` | stocks.view | sim | sim | aba do módulo Estoque | barra ou **Mais** |
 | Estoque | Estoque | Movimentações | `/estoque?tab=estoque&sub=ledger` | stocks.view | sim | sim | aba do módulo Estoque | barra ou **Mais** |
 | Estoque | Estoque | Ajustes de estoque | `/estoque?tab=estoque&sub=ajustes` | stock_corrections.view | sim | sim | aba do módulo Estoque | barra ou **Mais** |
@@ -33,7 +35,7 @@ disponibilidade responsiva (1024–1920: sempre acessível — módulos que não
 | Estoque | Ações | Novo documento fiscal / importar XML | `/estoque/documentos-fiscais/new` | invoices.create | sim | não | aba própria (/estoque/documentos-fiscais/new) | barra ou **Mais** |
 | Estoque | Ações | Nova requisição | `/estoque/requisicoes/new` | requisitions.create | sim | não | aba própria (/estoque/requisicoes/new) | barra ou **Mais** |
 | Estoque | Ações | Nova saída direta | `/estoque/baixas/new` | stock_writeoffs.create | sim | não | aba própria (/estoque/baixas/new) | barra ou **Mais** |
-| Estoque | Ações | Transferência entre armazéns | `/estoque/transferencias/new?kind=warehouse` | warehouse_transfers.create | sim | não | aba própria (/estoque/transferencias/new) | barra ou **Mais** |
+| Estoque | Ações | Transferência entre locais de estoque | `/estoque/transferencias/new?kind=warehouse` | warehouse_transfers.create | sim | não | aba própria (/estoque/transferencias/new) | barra ou **Mais** |
 | Estoque | Ações | Transferência entre empresas | `/estoque/transferencias/new?kind=farm` | farm_transfers.create | sim | não | aba própria (/estoque/transferencias/new) | barra ou **Mais** |
 | Estoque | Ações | Nova produção de ração | `/estoque/batidas/new` | feed_batches.create | sim | não | aba própria (/estoque/batidas/new) | barra ou **Mais** |
 | Financeiro | (módulo) | Financeiro | `/financeiro` | união das áreas | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
@@ -91,16 +93,16 @@ disponibilidade responsiva (1024–1920: sempre acessível — módulos que não
 | Frota e Ativos | Ações | Nova manutenção | `/frota/manutencoes/new` | maintenances.create | sim | não | aba própria (/frota/manutencoes/new) | barra ou **Mais** |
 | Frota e Ativos | Ações | Novo plano preventivo | `/cadastros/preventive_maintenances/new` | preventive_maintenances.create | sim | não | aba própria (/cadastros/preventive_maintenances/new) | barra ou **Mais** |
 | Frota e Ativos | Ações | Agendar revisão | `/cadastros/scheduled_reviews/new` | scheduled_reviews.create | sim | não | aba própria (/cadastros/scheduled_reviews/new) | barra ou **Mais** |
-| Pessoas e RH | (módulo) | Pessoas e RH | `/pessoas` | união das áreas | sim | sim | aba do módulo Pessoas e RH | barra ou **Mais** |
-| Pessoas e RH | Pessoas | Pessoas | `/pessoas?tab=pessoas` | people.view \| employees.view \| clients.view \| providers.view \| proprietaries.view | sim | sim | aba do módulo Pessoas e RH | barra ou **Mais** |
-| Pessoas e RH | Ocorrências | Faltas | `/pessoas?tab=ocorrencias&sub=faltas` | absences.view | sim | sim | aba do módulo Pessoas e RH | barra ou **Mais** |
-| Pessoas e RH | Ocorrências | Bonificações / eventos | `/pessoas?tab=ocorrencias&sub=eventos` | bonuses.view | sim | sim | aba do módulo Pessoas e RH | barra ou **Mais** |
-| Pessoas e RH | Folha | Adiantamentos | `/pessoas?tab=folha&sub=adiantamentos` | salary_advances.view | sim | sim | aba do módulo Pessoas e RH | barra ou **Mais** |
-| Pessoas e RH | Folha | Apuração Mensal | `/pessoas?tab=folha&sub=apuracao` | earnings.view | sim | sim | aba do módulo Pessoas e RH | barra ou **Mais** |
-| Pessoas e RH | Ações | Nova pessoa | `/cadastros/people/new` | people.create | sim | não | aba própria (/cadastros/people/new) | barra ou **Mais** |
-| Pessoas e RH | Ações | Novo funcionário | `/cadastros/people/new?is_employee=true` | employees.create \| people.create | sim | não | aba própria (/cadastros/people/new) | barra ou **Mais** |
-| Pessoas e RH | Ações | Registrar falta | `/cadastros/absences/new` | absences.create | sim | não | aba própria (/cadastros/absences/new) | barra ou **Mais** |
-| Pessoas e RH | Ações | Registrar bonificação / evento | `/cadastros/bonuses/new` | bonuses.create | sim | não | aba própria (/cadastros/bonuses/new) | barra ou **Mais** |
+| RH | (módulo) | RH | `/pessoas` | união das áreas | sim | sim | aba do módulo RH | barra ou **Mais** |
+| RH | Funcionários | Funcionários | `/pessoas?tab=pessoas` | people.view \| employees.view \| clients.view \| providers.view \| proprietaries.view | sim | sim | aba do módulo RH | barra ou **Mais** |
+| RH | Ocorrências | Faltas | `/pessoas?tab=ocorrencias&sub=faltas` | absences.view | sim | sim | aba do módulo RH | barra ou **Mais** |
+| RH | Ocorrências | Bonificações / eventos | `/pessoas?tab=ocorrencias&sub=eventos` | bonuses.view | sim | sim | aba do módulo RH | barra ou **Mais** |
+| RH | Folha | Adiantamentos | `/pessoas?tab=folha&sub=adiantamentos` | salary_advances.view | sim | sim | aba do módulo RH | barra ou **Mais** |
+| RH | Folha | Apuração Mensal | `/pessoas?tab=folha&sub=apuracao` | earnings.view | sim | sim | aba do módulo RH | barra ou **Mais** |
+| RH | Ações | Novo parceiro | `/cadastros/people/new` | people.create | sim | não | aba própria (/cadastros/people/new) | barra ou **Mais** |
+| RH | Ações | Novo funcionário | `/cadastros/funcionarios/new` | employees.create | sim | não | aba própria (/cadastros/funcionarios/new) | barra ou **Mais** |
+| RH | Ações | Registrar falta | `/cadastros/absences/new` | absences.create | sim | não | aba própria (/cadastros/absences/new) | barra ou **Mais** |
+| RH | Ações | Registrar bonificação / evento | `/cadastros/bonuses/new` | bonuses.create | sim | não | aba própria (/cadastros/bonuses/new) | barra ou **Mais** |
 | Ordens de Serviço | (módulo) | Ordens de Serviço | `/os` | service_orders.view | sim | sim | aba do módulo Ordens de Serviço | barra ou **Mais** |
 | Ordens de Serviço | Ordens de Serviço | Ordens de Serviço | `/os` | service_orders.view | sim | sim | aba do módulo Ordens de Serviço | barra ou **Mais** |
 | Ordens de Serviço | Ações | Nova ordem de serviço | `/os/new` | service_orders.create | sim | não | aba própria (/os/new) | barra ou **Mais** |
@@ -121,11 +123,12 @@ disponibilidade responsiva (1024–1920: sempre acessível — módulos que não
 | Configurações | Produtos e Classificações | Grupos de Produtos | `/configuracoes?tab=produtos&sub=product-groups` | products.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Produtos e Classificações | Unidades de Medida | `/configuracoes?tab=produtos&sub=measurement-units` | products.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Produtos e Classificações | Variedades / Culturas | `/configuracoes?tab=produtos&sub=cultivations` | products.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
-| Configurações | Produtos e Classificações | Armazéns | `/configuracoes?tab=produtos&sub=warehouses` | warehouses.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Configurações | Produtos e Classificações | Locais de estoque | `/configuracoes?tab=produtos&sub=warehouses` | warehouses.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Produtos e Classificações | Endereçamentos | `/configuracoes?tab=produtos&sub=addressings` | addressings.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Produtos e Classificações | Perfis de Lançamento (NF-e) | `/configuracoes?tab=produtos&sub=provider-launch-profiles` | provider_launch_profiles.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Produtos e Classificações | Categorias de Rateio | `/configuracoes?tab=produtos&sub=apportionment-categories` | apportionments.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Operações | Tipos de Operação | `/configuracoes?tab=operacoes&sub=tipos-operacao` | tipos_operacao.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Configurações | Operações | Layouts de documento | `/configuracoes?tab=operacoes&sub=layouts-documento` | tipos_operacao.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Compras | SLA por etapa | `/configuracoes?tab=compras&sub=sla` | supply_sla.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Compras | Autorizadores | `/configuracoes?tab=compras&sub=authorizers` | authorizers.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Financeiro | Naturezas | `/configuracoes?tab=financeiro&sub=financial-categories` | financial_categories.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
@@ -133,6 +136,7 @@ disponibilidade responsiva (1024–1920: sempre acessível — módulos que não
 | Configurações | Financeiro | Plano de Contas | `/configuracoes?tab=financeiro&sub=chart-accounts` | chart_accounts.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Financeiro | Tipos de Título | `/configuracoes?tab=financeiro&sub=title-types` | payables.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Financeiro | Formas de Pagamento | `/configuracoes?tab=financeiro&sub=payment-methods` | sales.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Configurações | Financeiro | Condições de Pagamento | `/configuracoes?tab=financeiro&sub=condicoes-pagamento` | sales.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Financeiro | Congelamentos | `/configuracoes?tab=financeiro&sub=financial-freezes` | financial_freezes.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Pecuária | Espécies / Categorias / Raças | `/configuracoes?tab=pecuaria&sub=animal-categories` | animals.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Pecuária | Tipos de Identificação | `/configuracoes?tab=pecuaria&sub=identification-types` | animals.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
@@ -147,6 +151,7 @@ disponibilidade responsiva (1024–1920: sempre acessível — módulos que não
 | Configurações | Pecuária | Reprodutores (touros / sêmen / embrião) | `/configuracoes?tab=pecuaria&sub=breeding-sires` | breeding_sires.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Pecuária | Protocolos reprodutivos | `/configuracoes?tab=pecuaria&sub=breeding-protocols` | breeding_protocols.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Frota | Famílias de Bens | `/configuracoes?tab=frota&sub=equipment-families` | equipments.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Configurações | Parceiros | Parceiros | `/configuracoes?tab=parceiros` | people.view \| employees.view \| clients.view \| providers.view \| proprietaries.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | RH | Tipos de Evento | `/configuracoes?tab=rh&sub=hr-events` | hr_events.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | RH | Funções | `/configuracoes?tab=rh&sub=job-functions` | job_functions.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | RH | Equipes | `/configuracoes?tab=rh&sub=teams` | teams.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
@@ -164,5 +169,9 @@ disponibilidade responsiva (1024–1920: sempre acessível — módulos que não
 | Configurações | Integrações | Configurações (NF-e / DFe / NFS-e / Domínio) | `/configuracoes?tab=integracoes&sub=integrations` | integration.dominio.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Integrações | Exportações CSV / XLSX | `/configuracoes?tab=integracoes&sub=exportacoes` | integration.csv_export.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Auditoria | Auditoria | `/configuracoes?tab=auditoria` | audit_logs.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Aprovações | (módulo) | Aprovações | `/aprovacoes` | sales.approve \| compras.approve \| entradas_estoque.approve \| saidas_estoque.approve \| transferencias_estoque.approve \| ajustes_estoque.approve | sim | sim | aba do módulo Aprovações | barra ou **Mais** |
+| Aprovações | Vendas | Vendas | `/aprovacoes?tab=vendas` | sales.approve | sim | sim | aba do módulo Aprovações | barra ou **Mais** |
+| Aprovações | Compras | Compras | `/aprovacoes?tab=compras` | compras.approve | sim | sim | aba do módulo Aprovações | barra ou **Mais** |
+| Aprovações | Estoque | Estoque | `/aprovacoes?tab=estoque` | entradas_estoque.approve \| saidas_estoque.approve \| transferencias_estoque.approve \| ajustes_estoque.approve | sim | sim | aba do módulo Aprovações | barra ou **Mais** |
 
-Total: 157 destinos · 13 módulos. Menu, mega-menu, busca (`searchNav`), favoritos e abas convergem a este mesmo universo (nenhuma árvore paralela).
+Total: 166 destinos · 14 módulos. Menu, mega-menu, busca (`searchNav`), favoritos e abas convergem a este mesmo universo (nenhuma árvore paralela).

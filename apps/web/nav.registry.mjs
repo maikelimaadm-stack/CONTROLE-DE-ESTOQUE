@@ -51,7 +51,7 @@ const cfg = (tab, sub, label, perm, extra = {}) => ({ id: `configuracoes.${tab}$
 export const MODULES = [
   m("inicio", "Início", "/", { perm: "dashboard.home.view", keywords: ["home", "painel", "dashboard"] }),
   m("compras", "Compras", "/compras", { keywords: ["suprimentos", "solicitação", "cotação", "pedido de compra"], description: "Processos de compra do início ao fim" }),
-  m("estoque", "Estoque", "/estoque", { keywords: ["almoxarifado", "insumos", "armazém", "saldo"], description: "Saldo, recebimentos, operações e fábrica de ração" }),
+  m("estoque", "Estoque", "/estoque", { keywords: ["almoxarifado", "insumos", "local de estoque", "armazém", "saldo"], description: "Saldo, recebimentos, operações e fábrica de ração" }),
   m("financeiro", "Financeiro", "/financeiro", { keywords: ["contas", "banco", "caixa", "títulos"], description: "Contas a pagar/receber, caixa e bancos, planejamento" }),
   // A descrição NÃO descreve mais uma cadeia fixa. "Orçamento → pedido → venda" era política de negócio
   // escrita na navegação: a partir da TOP-CONFIG-03 quem diz o que um documento gera é a política da
@@ -100,7 +100,7 @@ export const AREAS = [
   a("estoque", "operacoes", "Operações", ["requisitions.view", "stock_writeoffs.view", "warehouse_transfers.view", "farm_transfers.view", "devolutions.view"], { keywords: ["saída", "requisição", "baixa", "transferência", "devolução"] }),
   s("estoque", "operacoes", "requisicoes", "Requisições", "requisitions.view", { aliases: ["/estoque/requisicoes"], keywords: ["solicitar material", "requisição de estoque", "assinatura"] }),
   s("estoque", "operacoes", "diretas", "Saídas diretas", "stock_writeoffs.view", { aliases: ["/estoque/baixas"], keywords: ["baixa", "consumo", "saída direta"] }),
-  s("estoque", "operacoes", "transferencias", "Transferências", ["warehouse_transfers.view", "farm_transfers.view"], { aliases: ["/estoque/transferencias"], keywords: ["entre armazéns", "entre empresas", "transferir estoque"] }),
+  s("estoque", "operacoes", "transferencias", "Transferências", ["warehouse_transfers.view", "farm_transfers.view"], { aliases: ["/estoque/transferencias"], keywords: ["entre locais de estoque", "entre armazéns", "entre empresas", "transferir estoque"] }),
   s("estoque", "operacoes", "devolucoes", "Devoluções", "devolutions.view", { aliases: ["/estoque/devolucoes"], keywords: ["devolver itens", "retorno ao estoque"] }),
   a("estoque", "fabrica", "Fábrica de Ração", ["feed_formulas.view", "feed_batches.view"], { keywords: ["ração", "fórmula", "batida", "produção de ração", "nutrição"] }),
   s("estoque", "fabrica", "formulas", "Fórmulas", "feed_formulas.view", { aliases: ["/estoque/formulacoes"], keywords: ["formulação", "receita de ração"] }),
@@ -111,7 +111,7 @@ export const AREAS = [
   act("estoque", "documento-fiscal", "Novo documento fiscal / importar XML", "/estoque/documentos-fiscais/new", "invoices.create", { keywords: ["importar xml", "lançar nota"] }),
   act("estoque", "requisicao", "Nova requisição", "/estoque/requisicoes/new", "requisitions.create", { keywords: ["solicitar material", "pedir insumo"] }),
   act("estoque", "saida-direta", "Nova saída direta", "/estoque/baixas/new", "stock_writeoffs.create", { keywords: ["baixar estoque"] }),
-  act("estoque", "transferencia-armazens", "Transferência entre armazéns", "/estoque/transferencias/new?kind=warehouse", "warehouse_transfers.create"),
+  act("estoque", "transferencia-armazens", "Transferência entre locais de estoque", "/estoque/transferencias/new?kind=warehouse", "warehouse_transfers.create"),
   act("estoque", "transferencia-fazendas", "Transferência entre empresas", "/estoque/transferencias/new?kind=farm", "farm_transfers.create"),
   act("estoque", "producao-racao", "Nova produção de ração", "/estoque/batidas/new", "feed_batches.create", { keywords: ["batida", "misturar ração"] }),
   // ---------------- Financeiro ----------------
@@ -230,7 +230,7 @@ export const AREAS = [
   cfg("produtos", "product-groups", "Grupos de Produtos", "products.view", { keywords: ["grupo de produto", "categoria de produto", "classe de produto", "grupos / categorias / classes"] }),
   cfg("produtos", "measurement-units", "Unidades de Medida", "products.view"),
   cfg("produtos", "cultivations", "Variedades / Culturas", "products.view"),
-  cfg("produtos", "warehouses", "Armazéns", "warehouses.view", { keywords: ["depósito", "almoxarifado"] }),
+  cfg("produtos", "warehouses", "Locais de estoque", "warehouses.view", { keywords: ["depósito", "almoxarifado", "armazém"] }),
   cfg("produtos", "addressings", "Endereçamentos", "addressings.view"),
   cfg("produtos", "provider-launch-profiles", "Perfis de Lançamento (NF-e)", "provider_launch_profiles.view"),
   cfg("produtos", "apportionment-categories", "Categorias de Rateio", "apportionments.view"),

@@ -94,7 +94,7 @@ function recusa(r: Resposta, message: string, details: { path: string; message: 
   expect(j(r).error).toEqual(expect.objectContaining({ code: "VALIDATION_ERROR", message, details }));
 }
 let nomeSal: string; let nomeRacao: string; let nomeAlm: string; let nomeSilo: string;
-const linha = (produto: string, armazem: string, disponivel: string, pedido: string) => `${produto} no armazém ${armazem}: disponível ${disponivel}, pedido ${pedido}.`;
+const linha = (produto: string, armazem: string, disponivel: string, pedido: string) => `${produto} no local de estoque ${armazem}: disponível ${disponivel}, pedido ${pedido}.`;
 /** PREMISSA de cada caso: nada reservado nos pares que ele usa (o caso anterior limpou). */
 async function semReserva() {
   expect([await reservado(ALM, SAL), await reservado(SILO, SAL), await reservado(ALM, RACAO)]).toEqual(["0.0000", "0.0000", "0.0000"]);
@@ -180,12 +180,12 @@ describe("RE-4 — o armazém é obrigatório e tem de ser da empresa do documen
   it("sem armazém → 422 no campo do item; armazém de outra empresa → 422 no campo do item; nada gravado", async () => {
     await semReserva();
     const antes = await contar("order");
-    const obrigatorio = "Informe o armazém: esta operação reserva estoque.";
+    const obrigatorio = "Informe o local de estoque: esta operação reserva estoque.";
     recusa(await criar("orders", topReserva, [item("1", null)]), obrigatorio, [{ path: "items[0].warehouse_id", message: obrigatorio }]);
     recusa(await criar("orders", topReserva, [{ ...item("1"), warehouse_id: null }]), obrigatorio, [{ path: "items[0].warehouse_id", message: obrigatorio }]);
     recusa(await criar("orders", topReserva, [item("1"), item("1", null), item("1", null, RACAO)]), obrigatorio,
       [{ path: "items[1].warehouse_id", message: obrigatorio }, { path: "items[2].warehouse_id", message: obrigatorio }]);
-    const outra = "O armazém não é da empresa do documento.";
+    const outra = "O local de estoque não é da empresa do documento.";
     recusa(await criar("orders", topReserva, [item("1"), item("1", I.warehouseEmpresa2)]), outra, [{ path: "items[1].warehouse_id", message: outra }]);
     expect(await contar("order")).toBe(antes);
     // PREMISSA: o MESMO corpo sem armazém, com a TOP que não reserva, salva — a recusa acima é da reserva.
@@ -206,7 +206,7 @@ describe("PUT do pedido com reserva — o próprio pedido não conta contra si",
     expect(r10.statusCode, r10.body).toBe(200);
     expect([await quantidades(id), await reservado(ALM, SAL)]).toEqual([["10.0000"], "10.0000"]);
     recusa(await editar("orders", id, null, [item("11")]), linha(nomeSal, nomeAlm, "10", "11"), [{ path: "items", message: linha(nomeSal, nomeAlm, "10", "11") }]);
-    const obrigatorio = "Informe o armazém: esta operação reserva estoque.";
+    const obrigatorio = "Informe o local de estoque: esta operação reserva estoque.";
     recusa(await editar("orders", id, null, [item("10", null)]), obrigatorio, [{ path: "items[0].warehouse_id", message: obrigatorio }]);
     expect([await quantidades(id), await reservado(ALM, SAL)]).toEqual([["10.0000"], "10.0000"]);
     // com o pedido reservando 10, outro pedido não leva nada
@@ -244,7 +244,7 @@ describe("Conversão orçamento → pedido cuja TOP destino reserva — a mesma 
     const alto = await criado("budgets", topOrcamento, [item("11")]);
     recusa(await converter(alto), linha(nomeSal, nomeAlm, "10", "11"), [{ path: "items", message: linha(nomeSal, nomeAlm, "10", "11") }]);
     const semArmazem = await criado("budgets", topOrcamento, [item("1", null)]);
-    recusa(await converter(semArmazem), "Informe o armazém: esta operação reserva estoque.", [{ path: "items[0].warehouse_id", message: "Informe o armazém: esta operação reserva estoque." }]);
+    recusa(await converter(semArmazem), "Informe o local de estoque: esta operação reserva estoque.", [{ path: "items[0].warehouse_id", message: "Informe o local de estoque: esta operação reserva estoque." }]);
     expect(await contar("order"), "nenhuma recusa gerou pedido").toBe(pedidosAntes);
     expect([(await ler("budgets", alto)).status, (await ler("budgets", semArmazem)).status], "a origem fica aberta").toEqual(["open", "open"]);
     const cabe = await criado("budgets", topOrcamento, [item("4")]);
@@ -338,9 +338,9 @@ describe("PUT da venda aberta gerada de pedido com reserva (parte B)", () => {
     }
     expect(await reservado(ALM, SAL)).toBe("10.0000");
     recusa(await editar("sales", venda, null, [item("11")]), linha(nomeSal, nomeAlm, "10", "11"), [{ path: "items", message: linha(nomeSal, nomeAlm, "10", "11") }]);
-    const obrigatorio = "Informe o armazém: esta operação reserva estoque.";
+    const obrigatorio = "Informe o local de estoque: esta operação reserva estoque.";
     recusa(await editar("sales", venda, null, [item("10", null)]), obrigatorio, [{ path: "items[0].warehouse_id", message: obrigatorio }]);
-    const outra = "O armazém não é da empresa do documento.";
+    const outra = "O local de estoque não é da empresa do documento.";
     recusa(await editar("sales", venda, null, [item("1", I.warehouseEmpresa2)]), outra, [{ path: "items[0].warehouse_id", message: outra }]);
     // trocar de armazém só se couber no outro: o Silo tem 5
     recusa(await editar("sales", venda, null, [item("6", SILO)]), linha(nomeSal, nomeSilo, "5", "6"), [{ path: "items", message: linha(nomeSal, nomeSilo, "5", "6") }]);
@@ -358,8 +358,8 @@ describe("PUT da venda aberta gerada de pedido com reserva (parte B)", () => {
 });
 
 describe("TOP-CONFIG-07_R1 — produto sem controle de estoque fica FORA da reserva do pedido", () => {
-  const obrigatorio = "Informe o armazém: esta operação reserva estoque.";
-  const outra = "O armazém não é da empresa do documento.";
+  const obrigatorio = "Informe o local de estoque: esta operação reserva estoque.";
+  const outra = "O local de estoque não é da empresa do documento.";
 
   it("POST com o controlado + serviço SEM armazém → 201; serviço no armazém de OUTRA empresa → 201; PUT idem; só o controlado reserva; GET: 0 no serviço", async () => {
     await semReserva();
@@ -553,7 +553,7 @@ describe("TOP-CONFIG-07_R1 — produto sem controle de estoque fica FORA da rese
       expect(ok.statusCode, ok.body).toBe(200);
       expect(await itensDe(parte)).toEqual([[SAL, ALM, "4.0000"], [SERV, SILO, "1.0000"]]);
       // o controlado para o Silo (que TEM 5 — caberia): a guarda da parte continua recusando, no campo do item
-      const msg = "O armazém deste item vem do pedido de origem, que reserva estoque no armazém de cada item: não pode ser trocado. Para mudar, cancele esta venda e gere de novo.";
+      const msg = "O local de estoque deste item vem do pedido de origem, que reserva estoque no local de estoque de cada item: não pode ser trocado. Para mudar, cancele esta venda e gere de novo.";
       recusa(await put([{ ...base[0]!, warehouse_id: SILO }, { ...base[1]!, warehouse_id: SILO }]), msg, [{ path: "items[0].warehouse_id", message: msg }]);
       expect(await itensDe(parte)).toEqual([[SAL, ALM, "4.0000"], [SERV, SILO, "1.0000"]]);
       expect([await reservado(ALM, SAL), await reservado(SILO, SAL)]).toEqual(["8.0000", "0.0000"]);

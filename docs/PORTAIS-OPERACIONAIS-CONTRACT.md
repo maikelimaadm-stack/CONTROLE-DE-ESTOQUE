@@ -547,3 +547,12 @@ Na Central de Compras:
 Declarado na decisão 278, sem conserto aqui: a `Idempotency-Key` trocada a cada erro, inclusive na queda de rede (fatia
 própria), e a tela das regras gerais da #88 (decisão 277, já na main) — o aviso do resultado da confirmação automática ao
 salvar e a compra sem itens (fatia F2 própria).
+
+### O nome do local de estoque no motor (OPERACOES-01 F3a, decisão 280)
+
+A coluna e o campo do item que apontam para `warehouses` dizem "Local de estoque" (antes "Armazém"), na criação, na
+consulta, no formulário do item, no rótulo da ação ("Local de estoque: <nome>") e na pesquisa ("Pesquisar local de
+estoque"). A coluna da grade tem 122 px (antes 108): é a menor largura par em que o rótulo cabe inteiro também com o
+" *" de coluna obrigatória (`features/central/itens.tsx:45`, `itens-salvos.tsx:56`). As chaves (`armazem`,
+`armazemPorItem`, `armazemForcado`, `exigeArmazem`), os testids e a ordem das colunas não mudam — a ordem muda na F3b.
+As "colunas Armazém" das seções anteriores são esta coluna, com o nome de antes.

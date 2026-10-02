@@ -1550,6 +1550,76 @@ grant execute on function erp.situacao_atraso_cliente(uuid, int) to erp_app;
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 
+## OPERACOES-01 — correções e modelo de operações para o sistema inteiro (PR #90)
+
+Fatia F1 em fases (decisões 278 a 288), uma PR. Cada fase acrescenta a sua subseção abaixo: migration (se houver),
+ordem de deploy, compatibilidade nos dois sentidos do skew, impacto em dados reais, reversão e o roteiro do Maike em
+produção (PENDING). As migrations da fatia são numeradas na ordem em que entram na branch (0042 a 0048, travas
+(2026,76) a (2026,82)).
+
+### F3a — Local de estoque, pesquisa de pessoas e importação com o nome antigo (OPERACOES-01, sem migration)
+
+Decisão 280 (parte F3a). **Sem migration, sem variável, sem permissão nova, sem capacidade nova, sem rota nova.**
+"Armazém" passa a "Local de estoque" em todo texto que o usuário vê (telas, cadastros, permissões, relatórios, menu,
+mensagens da API); os identificadores técnicos (tabela, colunas, `warehouses`, `/cadastros/armazens`, testids, códigos de
+erro, `estoque.transferencia_entre_armazens`) não mudam. A importação de Produtos aceita também a coluna "Armazém padrão".
+O seletor de Parceiros (`GET /api/resources/people/options`) acha também pela razão social e pelo CPF/CNPJ (com
+`people.view`; sem ela, pelo nome e pelo documento completo), e todo seletor aceita `page`/`pageSize` (padrão 1 × 200, a
+página de hoje). O motivo de baixa "Pagamento com produto" ganha rótulo.
+
+**Migration:** nenhuma. Nada a aplicar no banco.
+
+**Ordem do deploy:** esta parte não impõe ordem — API e web em qualquer ordem, nas superfícies de § Superfície web. Na
+PR #90, a ordem do deploy é a das fases com migration (F5 a F10), nas seções delas.
+
+**Impacto em dados reais:** NENHUM. Nada é gravado, reescrito nem apagado; sem backfill. Layout de documento gravado
+com rótulo próprio continua com ele; o sem rótulo próprio passa a mostrar "Local de estoque" (o rótulo vem do catálogo,
+não do registro). O que muda para fora do sistema: o cabeçalho das exportações (CSV/XLSX de listas e relatórios) que
+tinham a coluna "Armazém" passa a "Local de estoque", e o modelo de importação de Produtos sai com "Local de estoque
+padrão". Produção em 02/10: zero baixas, zero transferências — a coluna Motivo não tem o que mostrar lá.
+
+**Version skew** (base `622f194`; provas em arquivos próprios, fora da suíte comum):
+- **Sentido 1 — web novo × API da base** (janela "web antes da API" e reversão só da API): o web manda os MESMOS pedidos
+  e corpos (o seletor pede `search` e nada mais). A tela diz "Local de estoque"; as mensagens que vêm da base dizem
+  "armazém" (texto misturado, nada quebra). A pesquisa por CPF/CNPJ ou razão social mostra "Nenhum resultado", sem
+  erro: a base só acha pelo nome (`operacoes-01-f3a-skew-api-producao.spec.ts`, K-1: a pergunta vai à base antes da tela
+  e decide o ramo; na execução local, "a base NÃO acha o parceiro pelo CNPJ → Nenhum resultado"). Importação: o modelo
+  vem da API que serve — a base produz e aceita "Armazém padrão". A lista de baixas mostra o rótulo (o dado é o mesmo).
+  A produção de ração do web novo escolhe os locais pelos rótulos novos (LT-K1 de `skew-api-producao.spec.ts`).
+- **Sentido 2 — web da base × API nova** (janela "API antes do web" e reversão só do web): o web da base pede
+  `/options?search=…` sem página e recebe a página 1 de 200, com a MESMA forma (array `{code, id, label}`); o seletor
+  antigo passa a achar o parceiro pelo CNPJ sem mudar nada nele, e salvar com ele funciona
+  (`operacoes-01-f3a-skew-web-anterior.spec.ts`, K-2: premissa `page=abc` → 422, a API é a nova; a equipe salva com 201).
+  As mensagens novas aparecem como vieram (o web da base não compara texto de mensagem). A planilha baixada ANTES do
+  deploy (coluna "Armazém padrão") é aceita; o modelo baixado depois sai com "Local de estoque padrão".
+  `GET /resources/:key/definition` ganha duas chaves (`pesquisaDoSeletor`, `rotulosAnteriores`), que o web da base ignora.
+
+**Reversão:** redeploy da API e/ou do web anteriores; nada a desfazer em banco ou configuração. Reverter a API = sentido
+1: a pesquisa por documento e razão volta a não achar ("Nenhum resultado"), o 422 de parâmetro repetido some, e — DECLARADO
+— a planilha de Produtos baixada da API nova (cabeçalho "Local de estoque padrão") é RECUSADA pela anterior como
+"Coluna desconhecida para Produtos. Baixe o modelo atualizado." (422, nada gravado): baixar o modelo de novo resolve.
+Reverter o web = sentido 2.
+
+**Roteiro do Maike (produção; produção é operacional — decisões 240 e 247; só leitura, nada é gravado):**
+1. Menu (depois do deploy com a troca do `nav.registry.mjs`): Configurações › Produtos e Classificações mostra "Locais
+   de estoque"; a busca do menu por "armazém" ainda acha a aba; Estoque › ações mostra "Transferência entre locais de
+   estoque".
+2. Configurações › Locais de estoque: o título "Locais de estoque"; "Novo" abre "Novo local de estoque" — fechar sem
+   salvar. A ficha de um Produto (aba Estoque): o campo "Local de estoque padrão".
+3. Perfis de usuário (permissões): "Locais de estoque" e "Transferência entre locais de estoque".
+4. Vendas › + Novo › a TOP de orçamento ou de pedido de venda que já existe (produção tem só essas duas de venda): a coluna "Local de estoque" da grade aparece inteira, sem corte; o
+   campo Cliente, com um cliente cadastrado com CNPJ: digitar o CNPJ COM máscara → o cliente aparece; digitar um pedaço
+   da razão social em minúsculas → aparece. Descartar — nada é gravado. (Com um usuário sem a leitura de Parceiros, se
+   houver: pelo nome e pelo CNPJ completo acha; pela raiz do CNPJ e pela razão, "Nenhum resultado" — de propósito.)
+5. Cadastros › Produtos › Importar planilha: baixar o modelo → a coluna "Local de estoque padrão" (e nenhuma "Armazém
+   padrão"). Enviar uma planilha com o cabeçalho "Armazém padrão" e um local da aba Listas: a PRÉVIA não acusa coluna
+   desconhecida. FECHAR NA PRÉVIA — nunca "Importar tudo" nem "Importar só as linhas certas" (gravaria produto).
+6. Estoque › Nova baixa: o "Motivo da baixa" lista 13 motivos, com "Pagamento com produto" e "Outro". Voltar sem salvar.
+7. Relatórios › Movimentação de Estoque e Estoque Consolidado: o filtro "Local de estoque"; Estoque por Lote/Fornecedor:
+   a coluna "Local de estoque".
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
 ## VISUAL-UX-04b — correções da Central de Compras (sem migration)
 
 Decisão 278. **Só web**: sem migration, sem rota, sem API, sem variável, sem permissão, sem domínio. Conserta regressões

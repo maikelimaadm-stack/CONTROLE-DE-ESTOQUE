@@ -1,7 +1,7 @@
 {
   "generatedBy": "scripts/farm-inventory.mjs",
   "baldes": {
-    "historico": 1309,
+    "historico": 1310,
     "compat": 350,
     "divida": 108
   },
@@ -28,9 +28,9 @@
     "web-nav": 7,
     "web-test": 26,
     "scripts": 87,
-    "docs": 320,
+    "docs": 321,
     "reference": 513
   },
-  "total": 1767,
+  "total": 1768,
   "companyTables": 3
 }
