@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { isISODate, money } from "@agro/shared";
 import {
-  CARTOES_TITULO, SITUACOES_TITULO, ORIGENS_DO_TITULO, grupoDaOrigem, rotuloFinanceiro, situacaoDoTitulo, tituloDeDocumento,
+  CARTOES_TITULO, SITUACOES_TITULO, SITUACOES_TITULO_DA_LISTA, ORIGENS_DO_TITULO, grupoDaOrigem, rotuloFinanceiro, situacaoDoTitulo, tituloDeDocumento,
   type CartaoTitulo, type GrupoOrigem, type SituacaoTitulo
 } from "@agro/domain";
 import { empresaScope, type ServiceCtx } from "./context.js";
@@ -65,7 +65,7 @@ const PREDICADO_DA_SITUACAO: Readonly<Record<SituacaoTitulo, string>> = {
   vencido: "(t.status='open' and t.due_date < current_date)",
   parcial: "t.status='partially_paid'",
   baixado: "t.status='paid'",
-  // A provisão (F9) ainda não existe: nenhum título está "previsto" (o CHECK do banco nem admite o valor).
+  // A provisão pela TOP (F9, decisão 286): o título previsto, fora das baixas e da lista padrão — só pedido.
   previsto: "t.status='previsto'",
   cancelado: "t.status='cancelled'"
 };
@@ -115,7 +115,9 @@ export function montarConsultaDeTitulos(ctx: ServiceCtx, q: ConsultaDeTitulos, d
   }
   if (q.tipo_operacao_id) {
     const top = add(q.tipo_operacao_id);
-    where.push(`((t.source_type='sales_documents' and exists (select 1 from erp.sales_documents sd where sd.id=t.source_id and sd.organization_id=$1 and sd.tipo_operacao_id=${top}))`
+    // F9: a TOP gravada no próprio título (avulso com TOP, provisão, documentos novos) OU a do documento de origem.
+    where.push(`(t.tipo_operacao_id=${top}`
+      + ` or (t.source_type='sales_documents' and exists (select 1 from erp.sales_documents sd where sd.id=t.source_id and sd.organization_id=$1 and sd.tipo_operacao_id=${top}))`
       + ` or (t.source_type='documentos_compra' and exists (select 1 from erp.documentos_compra dc where dc.id=t.source_id and dc.organization_id=$1 and dc.tipo_operacao_id=${top})))`);
   }
   if (q.busca) { const b = add(`%${escapeLike(q.busca)}%`); where.push(`(t.number ilike ${b} or t.code ilike ${b} or t.note ilike ${b} or p.name ilike ${b})`); }
@@ -142,7 +144,9 @@ export function montarConsultaDeTitulos(ctx: ServiceCtx, q: ConsultaDeTitulos, d
 
   const filtroDaLista: string[] = [];
   if (q.cartao) filtroDaLista.push(predicadoDoCartao(q.cartao, baixaNoPeriodo));
-  const situacoes: readonly SituacaoTitulo[] = q.situacao ?? SITUACOES_TITULO.filter((s) => s !== "cancelado");
+  // Sem situação pedida: a LISTA PADRÃO do domínio (sem o cancelado e sem o previsto, F9) — salvo o cartão "Previstos",
+  // que é o pedido do previsto (sem isto o cartão filtraria a lista para vazio).
+  const situacoes: readonly SituacaoTitulo[] = q.situacao ?? (q.cartao === "previstos" ? ["previsto"] : SITUACOES_TITULO_DA_LISTA);
   filtroDaLista.push(`(${situacoes.map((s) => PREDICADO_DA_SITUACAO[s]).join(" or ")})`);
   return { from: FROM_TITULOS, where, filtroDaLista, baixaNoPeriodo, params };
 }
@@ -154,7 +158,7 @@ export function predicadoDoCartao(cartao: CartaoTitulo, baixaNoPeriodo: string):
     case "vence_hoje": return `(${ABERTO} and t.due_date = current_date)`;
     case "a_vencer": return `(${ABERTO} and t.due_date > current_date)`;
     case "pagos_no_periodo": return `exists (select 1 from erp.title_settlements s where s.title_id=t.id and ${baixaNoPeriodo})`;
-    case "previstos": return "t.status='previsto'";
+    case "previstos": return PREDICADO_DA_SITUACAO.previsto;
   }
 }
 
@@ -162,12 +166,14 @@ interface Agregado {
   n: string; hoje: string; mes_de: string; mes_ate: string;
   p_valor: string; p_pago: string; p_saldo: string; r_valor: string; r_pago: string; r_saldo: string;
   vencidos_n: string; vencidos_v: string; vence_hoje_n: string; vence_hoje_v: string; a_vencer_n: string; a_vencer_v: string; pagos_n: string; pagos_v: string;
+  previstos_n: string; previstos_v: string;
 }
 interface LinhaDaPagina {
   id: string; direction: Direcao; code: string; number: string; empresa_id: string; empresa_nome: string; person_id: string | null; pessoa_nome: string | null;
   emission_date: string; data_competencia: string | null; due_date: string; installment_number: number; installment_count: number;
   amount: string; discount: string; net_amount: string; paid_amount: string; balance: string; status: string; source_type: string | null; source_id: string | null;
   eh_adiantamento: boolean; conta_prevista_id: string | null; tipo_titulo_nome: string | null; version: number; note: string;
+  tipo_operacao_id: string | null;
 }
 
 /** Lista da Central: UMA consulta de contagem + totais + cartões, UMA da página, UMA de enriquecimento (+ o ID Global). */
@@ -185,7 +191,9 @@ export async function listarTitulosDaCentral(ctx: ServiceCtx, q: ConsultaDeTitul
     + ` count(*) filter (where ${cartao("vencidos")})::text as vencidos_n, coalesce(sum(t.balance) filter (where ${cartao("vencidos")}),0)::text as vencidos_v,`
     + ` count(*) filter (where ${cartao("vence_hoje")})::text as vence_hoje_n, coalesce(sum(t.balance) filter (where ${cartao("vence_hoje")}),0)::text as vence_hoje_v,`
     + ` count(*) filter (where ${cartao("a_vencer")})::text as a_vencer_n, coalesce(sum(t.balance) filter (where ${cartao("a_vencer")}),0)::text as a_vencer_v,`
-    + ` count(*) filter (where ${cartao("pagos_no_periodo")})::text as pagos_n, coalesce(sum((select sum(s.amount) from erp.title_settlements s where s.title_id=t.id and ${m.baixaNoPeriodo})) filter (where ${cartao("pagos_no_periodo")}),0)::text as pagos_v`
+    + ` count(*) filter (where ${cartao("pagos_no_periodo")})::text as pagos_n, coalesce(sum((select sum(s.amount) from erp.title_settlements s where s.title_id=t.id and ${m.baixaNoPeriodo})) filter (where ${cartao("pagos_no_periodo")}),0)::text as pagos_v,`
+    // F9: os PREVISTOS do recorte base — quantidade e valor líquido (o que a provisão promete), no mesmo agregado.
+    + ` count(*) filter (where ${cartao("previstos")})::text as previstos_n, coalesce(sum(t.amount - t.discount) filter (where ${cartao("previstos")}),0)::text as previstos_v`
     + ` from ${m.from} where ${base}`, m.params);
   const a = agg.rows[0]!;
   const offset = (q.page - 1) * q.pageSize;
@@ -193,7 +201,7 @@ export async function listarTitulosDaCentral(ctx: ServiceCtx, q: ConsultaDeTitul
     `select t.id::text as id, t.direction, t.code, t.number, t.empresa_id::text as empresa_id, e.name as empresa_nome, t.person_id::text as person_id, p.name as pessoa_nome,`
     + ` t.emission_date, t.data_competencia, t.due_date, t.installment_number, t.installment_count, t.amount::text as amount, t.discount::text as discount, t.net_amount::text as net_amount,`
     + ` t.paid_amount::text as paid_amount, t.balance::text as balance, t.status, t.source_type, t.source_id::text as source_id, ${EH_ADIANTAMENTO_SQL("t")} as eh_adiantamento,`
-    + ` t.conta_prevista_id::text as conta_prevista_id, tt.name as tipo_titulo_nome, t.version, t.note`
+    + ` t.conta_prevista_id::text as conta_prevista_id, tt.name as tipo_titulo_nome, t.version, t.note, t.tipo_operacao_id::text as tipo_operacao_id`
     + ` from ${m.from} join erp.empresas e on e.id=t.empresa_id left join erp.title_types tt on tt.id=t.title_type_id`
     + ` where ${lista} order by ${ORDEM[q.sort]} ${q.dir === "desc" ? "desc" : "asc"} nulls last, t.code, t.id limit ${q.pageSize} offset ${offset}`, m.params);
   const ids = pagina.rows.map((r) => r.id);
@@ -215,8 +223,8 @@ export async function listarTitulosDaCentral(ctx: ServiceCtx, q: ConsultaDeTitul
     vence_hoje: { quantidade: Number(a.vence_hoje_n), valor: money(a.vence_hoje_v) },
     a_vencer: { quantidade: Number(a.a_vencer_n), valor: money(a.a_vencer_v) },
     pagos_no_periodo: { quantidade: Number(a.pagos_n), valor: money(a.pagos_v), de: baixa ? (q.periodo_de ?? null) : a.mes_de, ate: baixa ? (q.periodo_ate ?? null) : a.mes_ate },
-    // Provisão pela TOP (F9): o cartão existe e é declarado indisponível — nunca um zero que finge ter conferido.
-    previstos: { quantidade: 0, valor: "0.00", disponivel: false }
+    // Provisão pela TOP (F9, decisão 286): o cartão passa a contar (e filtrar) os títulos previstos do recorte.
+    previstos: { quantidade: Number(a.previstos_n), valor: money(a.previstos_v), disponivel: true }
   };
   return paginaComIdGlobal(ctx, "financial_titles", { items, total: Number(a.n), page: q.page, pageSize: q.pageSize, direcoes: [...dirs], totais, cartoes });
 }
@@ -233,7 +241,9 @@ export function linhaDoTitulo(r: LinhaDaPagina, hoje: string, extra?: { ultima_b
     origem: { tipo: r.source_type, id: r.source_id, grupo: grupoDaOrigem(r.source_type) },
     bloqueado_pela_origem: tituloDeDocumento(r.source_type), eh_adiantamento: r.eh_adiantamento,
     conta_prevista: r.conta_prevista_id ? { id: r.conta_prevista_id, descricao: extra?.conta_prevista_descricao ?? null } : null,
-    tipo_titulo_nome: r.tipo_titulo_nome, ultima_baixa: extra?.ultima_baixa ?? null, anexos: extra?.anexos ?? 0, version: r.version, observacao: r.note
+    tipo_titulo_nome: r.tipo_titulo_nome, ultima_baixa: extra?.ultima_baixa ?? null, anexos: extra?.anexos ?? 0, version: r.version, observacao: r.note,
+    // F9 (aditivo): a TOP gravada no título (nula no acervo e nos geradores que não a citam).
+    tipo_operacao_id: r.tipo_operacao_id
   };
 }
 

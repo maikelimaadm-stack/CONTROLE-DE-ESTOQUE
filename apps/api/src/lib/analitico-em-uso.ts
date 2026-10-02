@@ -63,6 +63,8 @@ export const REFERENCIAS_DE_USO: Readonly<Record<string, readonly ReferenciaDeUs
     r("products", "financial_category_id", true),
     r("provider_launch_profile_items", "financial_category_id"),
     r("sales_documents", "categoria_financeira_id", true),
+    // OPERACOES-01 F9 (0045): a natureza padrão da versão da TOP (histórico imutável da versão: toda linha conta).
+    r("tipos_operacao_versao_financeiro", "natureza_id"),
     r("title_apportionments", "financial_category_id"),
     r("title_settlements", "natureza_desconto_id")
   ],
@@ -86,6 +88,8 @@ export const REFERENCIAS_DE_USO: Readonly<Record<string, readonly ReferenciaDeUs
     r("service_orders", "cost_center_id", true),
     r("stock_movements", "cost_center_id"),
     r("stock_writeoffs", "cost_center_id", true),
+    // OPERACOES-01 F9 (0045): o centro padrão da versão da TOP (histórico imutável da versão: toda linha conta).
+    r("tipos_operacao_versao_financeiro", "centro_custo_id"),
     r("title_apportionments", "cost_center_id"),
     r("warehouse_transfer_items", "cost_center_id")
   ],

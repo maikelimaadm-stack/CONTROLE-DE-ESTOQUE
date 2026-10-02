@@ -5,6 +5,7 @@ import type { ServiceCtx } from "../lib/context.js";
 import { nextCode, assertPeriodOpen } from "../lib/service.js";
 import { validation } from "../lib/errors.js";
 import { atribuirIdGlobal } from "../lib/id-global.js";
+import { resolverImovelDoMovimento } from "../lib/imovel-rural.js";
 
 export const apportionmentSchema = z.array(z.object({
   financial_category_id: z.string().uuid(), cost_center_id: z.string().uuid(), chart_account_id: z.string().uuid().nullable().optional(),
@@ -25,6 +26,20 @@ export interface TitleInput {
   amount: string; discount?: string; emissionDate: string; dueDate: string; note: string; harvestId?: string | null;
   appropriation?: "direct" | "indirect"; appropriationType?: string | null; apportionment: ApportionmentLine[]; sourceType?: string; sourceId?: string;
   plan?: InstallmentPlan | null;
+  /**
+   * OPERACOES-01 F9 (decisão 286), todos opcionais — ausentes = o título de hoje. `tipoOperacaoId` e
+   * `tipoOperacaoVersaoId` andam em PAR (a TOP e a versão de origem; o CHECK da 0045 recusa um sem o outro) e vão em
+   * TODAS as parcelas. `contaPrevistaId` é a conta prevista do fluxo (0042), já conferida por quem chama.
+   */
+  tipoOperacaoId?: string | null;
+  tipoOperacaoVersaoId?: string | null;
+  contaPrevistaId?: string | null;
+  /**
+   * O título PREVISTO da provisão pela TOP (situação `previsto`, fora das baixas e das listas padrão; o banco o guarda
+   * pela 0045). Só a provisão de um DOCUMENTO o cria (origem obrigatória pelo CHECK). Previsão não é lançamento
+   * realizado: NÃO passa pelo congelamento do período (congelar o mês não impede salvar o pedido que provisiona).
+   */
+  previsto?: boolean;
 }
 
 /**
@@ -87,7 +102,9 @@ const linhasConferidas = (lines: readonly ApportionmentLine[]): LinhaDeRateioCon
 
 /** Cria título(s) financeiro(s) com rateio; se houver plano de parcelamento, cria uma linha por parcela (group_id comum). */
 export async function createTitles(ctx: ServiceCtx, input: TitleInput): Promise<{ ids: string[]; groupId: string | null }> {
-  await assertPeriodOpen(ctx.tx, ctx.orgId, input.empresaId, input.emissionDate);
+  if (!input.previsto) await assertPeriodOpen(ctx.tx, ctx.orgId, input.empresaId, input.emissionDate);
+  const semTop = !input.tipoOperacaoId; const semVersao = !input.tipoOperacaoVersaoId;
+  if (semTop !== semVersao) throw validation("A TOP e a versão do título andam juntas");
   const total = money(input.amount);
   if (D(total).lte(0)) throw validation("Valor do título deve ser positivo");
   await exigirRateioAnalitico(ctx, linhasConferidas(input.apportionment));
@@ -100,11 +117,12 @@ export async function createTitles(ctx: ServiceCtx, input: TitleInput): Promise<
     const code = await nextCode(ctx.tx, ctx.orgId, `title_${input.direction}`, 4);
     const discount = i === parts.length - 1 ? money(input.discount ?? 0) : "0.00";
     const r = await ctx.tx.query<{ id: string }>(
-      `insert into erp.financial_titles(organization_id,empresa_id,code,direction,number,title_type_id,proprietary_id,person_id,branch_id,payment_type,recurrence_type,classification,document_type,is_deductible,is_tax,amount,discount,emission_date,due_date,installment_number,installment_count,group_id,appropriation,appropriation_type,note,harvest_id,source_type,source_id,created_by)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29) returning id`,
+      `insert into erp.financial_titles(organization_id,empresa_id,code,direction,number,title_type_id,proprietary_id,person_id,branch_id,payment_type,recurrence_type,classification,document_type,is_deductible,is_tax,amount,discount,emission_date,due_date,installment_number,installment_count,group_id,appropriation,appropriation_type,note,harvest_id,source_type,source_id,created_by,tipo_operacao_id,tipo_operacao_versao_id,conta_prevista_id,status)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33) returning id`,
       [ctx.orgId, input.empresaId, code, input.direction, count > 1 ? `${input.number}-${p.isDownPayment ? "E" : p.number}` : input.number, input.titleTypeId ?? null, input.proprietaryId ?? null, input.personId, input.branchId ?? null,
         input.paymentType ?? (count > 1 ? "installments" : "single"), input.recurrenceType ?? null, input.classification ?? "unclassified", input.documentType ?? null, input.isDeductible ?? false, input.isTax ?? false,
-        p.amount, discount, input.emissionDate, p.dueDate, p.isDownPayment ? 0 : p.number, count, groupId, input.appropriation ?? "direct", input.appropriationType ?? null, input.note, input.harvestId ?? null, input.sourceType ?? null, input.sourceId ?? null, ctx.user.id]);
+        p.amount, discount, input.emissionDate, p.dueDate, p.isDownPayment ? 0 : p.number, count, groupId, input.appropriation ?? "direct", input.appropriationType ?? null, input.note, input.harvestId ?? null, input.sourceType ?? null, input.sourceId ?? null, ctx.user.id,
+        input.tipoOperacaoId ?? null, input.tipoOperacaoVersaoId ?? null, input.contaPrevistaId ?? null, input.previsto ? "previsto" : "open"]);
     const id = r.rows[0]!.id; ids.push(id);
     await atribuirIdGlobal(ctx, "financial_titles", id);
     // rateio proporcional por parcela
@@ -134,6 +152,16 @@ export interface BankMovementInput {
    * resgate. Só vale em `internal_transfer` (CHECK da 0042) e é gravado nas DUAS pontas. Nulo = como hoje.
    */
   tipoTransferencia?: "transferencia" | "deposito" | "saque" | "aplicacao" | "resgate" | null;
+  /**
+   * O imóvel rural do LCDPR (OPERACOES-01 F9, decisão 286; `lib/imovel-rural.ts`): ausente = o imóvel PADRÃO da empresa
+   * quando o movimento é de entrada ou saída e tem empresa (empresa sem padrão → nenhum, como antes); `null` = nenhum;
+   * um id = conferido contra a empresa do movimento. Transferência e saldo inicial recusam o informado; o PAR da
+   * transferência nunca leva imóvel.
+   */
+  imovelRuralId?: string | null;
+  /** A TOP e a versão do movimento (família do movimento bancário), em par; ausentes = sem TOP, como hoje. */
+  tipoOperacaoId?: string | null;
+  tipoOperacaoVersaoId?: string | null;
 }
 
 /**
@@ -155,10 +183,13 @@ export async function createBankMovement(ctx: ServiceCtx, i: BankMovementInput):
   }
   const tipoTransferencia = i.tipoTransferencia ?? null;
   if (tipoTransferencia && i.categoryType !== "internal_transfer") throw validation("O tipo de transferência só vale em transferência entre contas");
+  if (!i.tipoOperacaoId !== !i.tipoOperacaoVersaoId) throw validation("A TOP e a versão do movimento andam juntas");
+  const imovelRuralId = await resolverImovelDoMovimento(ctx, { pedido: i.imovelRuralId, empresaId: i.empresaId, categoria: i.categoryType ?? i.type });
   const code = await nextCode(ctx.tx, ctx.orgId, "bank_movement", 5);
   const r = await ctx.tx.query<{ id: string }>(
-    "insert into erp.bank_movements(organization_id,empresa_id,code,bank_account_id,movement_date,type,category_type,destination_account_id,amount,interest,document,generates_obligation,is_deductible,note,proprietary_id,person_id,harvest_id,source_type,source_id,created_by,tipo_transferencia) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) returning id",
-    [ctx.orgId, i.empresaId, code, i.bankAccountId, i.date, i.type, i.categoryType ?? i.type, i.destinationAccountId ?? null, money(i.amount), money(i.interest ?? 0), i.document ?? null, i.generatesObligation ?? false, i.isDeductible ?? false, i.note ?? null, i.proprietaryId ?? null, i.personId ?? null, i.harvestId ?? null, i.sourceType ?? null, i.sourceId ?? null, ctx.user.id, tipoTransferencia]);
+    "insert into erp.bank_movements(organization_id,empresa_id,code,bank_account_id,movement_date,type,category_type,destination_account_id,amount,interest,document,generates_obligation,is_deductible,note,proprietary_id,person_id,harvest_id,source_type,source_id,created_by,tipo_transferencia,imovel_rural_id,tipo_operacao_id,tipo_operacao_versao_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24) returning id",
+    [ctx.orgId, i.empresaId, code, i.bankAccountId, i.date, i.type, i.categoryType ?? i.type, i.destinationAccountId ?? null, money(i.amount), money(i.interest ?? 0), i.document ?? null, i.generatesObligation ?? false, i.isDeductible ?? false, i.note ?? null, i.proprietaryId ?? null, i.personId ?? null, i.harvestId ?? null, i.sourceType ?? null, i.sourceId ?? null, ctx.user.id, tipoTransferencia,
+      imovelRuralId, i.tipoOperacaoId ?? null, i.tipoOperacaoVersaoId ?? null]);
   const id = r.rows[0]!.id;
   await atribuirIdGlobal(ctx, "bank_movements", id);
   if (i.apportionment?.length && !i.rateioJaGravado) await exigirRateioAnalitico(ctx, linhasConferidas(i.apportionment));

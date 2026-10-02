@@ -476,7 +476,8 @@ async function capturarConfirmacao(docId: string) {
  * O QUE PODE DIFERIR entre as referências (lista fechada, a mesma da 04A-P): relógio, ids aleatórios, o
  * código do documento (e o `number`/`note` do título que o carregam), o contador do título, o `group_id` das
  * parcelas, e — POR DESENHO — a TOP citada e a execução decidida, conferidas à parte. A CLASSIFICAÇÃO NÃO está
- * na lista: ela é igual nas quatro, no documento, no rateio e na trilha.
+ * na lista: ela é igual nas quatro, no documento, no rateio e na trilha. OPERACOES-01 F9 (decisão 286): o título
+ * passa a guardar a TOP e a versão da venda (em qualquer formato) — também conferidas à parte, título a título.
  */
 function normalizar(cf: Awaited<ReturnType<typeof capturarConfirmacao>>) {
   const codigo = String(cf.documento.code);
@@ -485,7 +486,7 @@ function normalizar(cf: Awaited<ReturnType<typeof capturarConfirmacao>>) {
   return {
     documento: sem(cf.documento, ["id", "code", "created_at", "updated_at", "tipo_operacao_id", "tipo_operacao_versao_id"]),
     movimentos: cf.movimentos.map((m) => sem(m, ["id", "created_at", "source_id", "note"])),
-    titulos: cf.titulos.map((t) => ({ ...sem(t, ["id", "created_at", "updated_at", "source_id"]),
+    titulos: cf.titulos.map((t) => ({ ...sem(t, ["id", "created_at", "updated_at", "source_id", "tipo_operacao_id", "tipo_operacao_versao_id"]),
       code: Number(t.code) - Number(cf.titulos[0]!.code),
       number: String(t.number).replace(`VND-${codigo}`, "VND-<COD>"), note: String(t.note).replace(`Venda ${codigo}`, "Venda <COD>"),
       group_id: t.group_id === null ? null : t.group_id === grupo ? "<GRUPO>" : t.group_id })),
@@ -532,6 +533,11 @@ describe("A1-P1 — paridade: o documento classificado grava o MESMO nas quatro 
       expect(cf.documento.centro_custo_id, nome).toBe(ccDoc);
       expect(cf.confirmacao.classificacaoFinanceira, nome).toEqual({ categoriaFinanceiraId: catDoc, centroCustoId: ccDoc, origem: "documento" });
       expect(cf.documento.tipo_operacao_id ?? null, nome).toBe(topId);
+      // F9: cada título cita a TOP e a VERSÃO da venda (sem TOP = as duas nulas).
+      for (const t of cf.titulos) {
+        expect(t.tipo_operacao_id ?? null, `${nome}: TOP no título`).toBe(topId);
+        expect(t.tipo_operacao_versao_id ?? null, `${nome}: versão no título`).toBe(cf.documento.tipo_operacao_versao_id ?? null);
+      }
       expect(normalizar(cf), nome).toEqual(esperado);
     }
   }, 180_000);

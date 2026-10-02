@@ -9,7 +9,7 @@ import { harness, ids, TEST_URL, type Harness } from "./setup.js";
  * outro lançamento — e a primeira asserção de cada bloco PROVA isso, para o total medido ser o do cenário.
  *   • Fluxo (março/2032): realizado × previsto por dia, semana e mês; a transferência entre as contas fora das
  *     entradas/saídas e dentro de `transferencias_liquidas`; saldo acumulado; o recorte por empresa (sem saldo) e o
- *     agrupamento; `previstos=1` → 422; as portas.
+ *     agrupamento; `previstos=1` aceito (a série da provisão é da F9 — aqui, sem nenhum previsto, ela vem zerada); as portas.
  *   • DRE (jan–fev/2033): o título de competência em janeiro baixado em fevereiro aparece na competência de janeiro
  *     e no caixa de fevereiro; juros na natureza do componente; desconto obtido na natureza gravada na baixa; o grupo
  *     herdado do pai marcado (`grupo_dre`); investimentos separados; adiantamento fora da competência.
@@ -155,10 +155,11 @@ describe("fluxo de caixa: previsto × realizado", () => {
     expect(porConta).toEqual({ [FA]: ["1100.00", "-300.00", "1100.00"], [FB]: ["0.00", "300.00", "350.00"] });
   });
 
-  it("previstos=1 → 422 (a provisão pela TOP é da F9); período pela metade e query desconhecida → 422", async () => {
-    const r = await get(`/api/financeiro/fluxo?de=2032-03-01&ate=2032-03-31&previstos=1`);
-    expect(r.statusCode).toBe(422);
-    expect(j(r).error!.message).toBe("Os previstos chegam com a provisão pela TOP");
+  it("previstos=1 → 200 com a série da provisão (F9; zerada: nenhum previsto aqui); período pela metade e query desconhecida → 422", async () => {
+    const r = await get(`/api/financeiro/fluxo?de=2032-03-01&ate=2032-03-31&agrupamento=mes&contas=${FA},${FB}&previstos=1`);
+    expect(r.statusCode, r.body).toBe(200);
+    expect(j(r)).toMatchObject({ previstos_incluidos: true, provisao_em_atraso: { entradas: "0.00", saidas: "0.00" } });
+    expect((j(r) as Fluxo).periodos[0]).toMatchObject({ previsto: { entradas: "480.00", saidas: "210.00" }, saldo_projetado: "1720.00", provisao: { entradas: "0.00", saidas: "0.00" }, saldo_projetado_com_previstos: "1720.00" });
     expect((await get("/api/financeiro/fluxo?de=2032-03-01")).statusCode).toBe(422);
     expect((await get("/api/financeiro/fluxo?periodo=mensal")).statusCode).toBe(422);
     expect((await get("/api/financeiro/fluxo?contas=nao-e-uuid")).statusCode).toBe(422);

@@ -4,8 +4,11 @@ import { D, money, sum, isISODate, todayISO, MAX_PAGE_SIZE } from "@agro/shared"
 import {
   displayTitleStatus, settlementNet, assertSettlementWithinBalance, recurrenceDates, normalizeApportionment, enumLabel,
   conferirValoresDaBaixa, chaveDaNaturezaPadrao, alteracoesTravadasPelaOrigem, exigirRateioFechado, grupoDaOrigem, tituloDeDocumento,
-  ratearPorProporcao, lerOfx, sugerirConciliacao, rotuloFinanceiro, type TitleStatus, type TituloComparavel, type ComponenteBaixa
+  ratearPorProporcao, lerOfx, sugerirConciliacao, rotuloFinanceiro, camposTrocadosDosPadroes, mensagemDosPadroesTrocados,
+  familiaOperacionalDeDocumentoVenda, familiaOperacionalDeDocumentoCompra, chaveI18nDaFamiliaOperacional,
+  type TitleStatus, type TituloComparavel, type ComponenteBaixa, type CamposInformadosNoDocumento
 } from "@agro/domain";
+import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, idempotent, audit, assertPeriodOpen, nextCode, requirePermission } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
 import { empresaScope, exigirEmpresaDeLancamento, exigirEmpresaVisivel, empresaPermitida, empresaScopeSql, scopedById, type ServiceCtx } from "../lib/context.js";
@@ -14,6 +17,9 @@ import { wrapListing } from "../lib/column-filters.js";
 import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema, exigirRateioAnalitico } from "../services/financial-core.js";
 import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
 import { estornarBaixa, EH_ADIANTAMENTO_SQL } from "../lib/financeiro-estorno.js";
+import { resolverTopParaLancamento, type TopDoLancamento } from "../lib/documento-comercial.js";
+import { familiaDaDirecao, FAMILIA_DO_MOVIMENTO, padroesDaTopParaExecucao } from "../lib/financeiro-top.js";
+import { conferirImovelRural, resolverImovelDaBaixa, resolverImovelDoMovimento, MENSAGEM_IMOVEL_NA_COMPENSACAO, MENSAGEM_IMOVEL_NA_TRANSFERENCIA } from "../lib/imovel-rural.js";
 import {
   lerNaturezasPadrao, conferirNaturezasPadrao, lancarComponentesDaBaixa, lancarTarifaDoLote, gerarCreditoDoExcedente, conferirReferenciasDoTitulo, periodoAbertoNoLote,
   MENSAGEM_TARIFA_SEM_NATUREZA, MENSAGEM_TITULO_SEM_RATEIO, MENSAGEM_LOTE_SEM_RATEIO, type NaturezasPadrao, type ComponenteSeparado, type LinhaDoRateioDoTitulo, type TituloDaBaixa
@@ -33,6 +39,55 @@ const EH_ADIANTAMENTO = EH_ADIANTAMENTO_SQL("t");
 /** Ids de lote: a web anterior manda a SELEÇÃO de uma página (até MAX_PAGE_SIZE); repetido é recusado (nada de dedupe calado). */
 const idsDoLote = z.array(uuid).min(1).max(MAX_PAGE_SIZE).refine((ids) => new Set(ids.map((x) => x.toLowerCase())).size === ids.length, "Título repetido no lote");
 const MOTIVO = z.string().trim().min(1).max(500);
+const tr = criarTradutor(ptBR);
+
+/**
+ * O TÍTULO PREVISTO (OPERACOES-01 F9, decisão 286; `status = 'previsto'`, 0045) é a provisão de um documento pela TOP:
+ * promessa de caixa, não lançamento. Ele fica fora das baixas (o banco recusa também: `erp.refresh_title_status`), não
+ * se edita nem se duplica, e só sai da previsão CANCELADO pela origem (o documento faturado, encerrado ou cancelado). As
+ * listas e os totais padrão o deixam de fora; ele aparece só pedido (`status=previsto`).
+ */
+const MENSAGEM_PREVISTO_SEM_BAIXA = "Título previsto não recebe baixa: ele dá lugar ao título de verdade quando o documento é faturado.";
+const MENSAGEM_PREVISTO_SEM_EDICAO = "Título previsto muda pelo documento de origem.";
+const MENSAGEM_PREVISTO_SEM_DUPLICAR = "Título previsto não se duplica.";
+/** A TOP do título é a do lançamento (snapshot): a edição não a troca (a família decide o que ela trouxe). */
+const MENSAGEM_TOP_NAO_MUDA = "A operação do título não muda na edição.";
+const mesmoId = (a: unknown, b: string | null) => (a === null || a === undefined ? null : String(a).toLowerCase()) === (b === null ? null : b.toLowerCase());
+
+/**
+ * O DOCUMENTO NÃO TROCA OS PADRÕES (F9): a TOP no formato 5 com `documentoTroca` desligado recusa o lançamento que
+ * informa natureza, centro, tipo de título ou conta DIFERENTES dos padrões dela (vazio não é troca). Sem padrões ou
+ * com a troca liberada, nada a conferir. A recusa nomeia os campos (`details[].path`).
+ */
+async function conferirTrocaDosPadroes(ctx: ServiceCtx, top: TopDoLancamento | null, doc: CamposInformadosNoDocumento): Promise<Awaited<ReturnType<typeof padroesDaTopParaExecucao>> | null> {
+  if (!top) return null;
+  const fin = await padroesDaTopParaExecucao(ctx, top.tipoOperacaoVersaoId);
+  if (fin.padroes && !fin.secao.documentoTroca) {
+    const campos = camposTrocadosDosPadroes(fin.padroes, doc);
+    if (campos.length) { const m = mensagemDosPadroesTrocados(campos); throw validation(m, campos.map((c) => ({ path: [c], message: m }))); }
+  }
+  return fin;
+}
+
+/**
+ * O NOME DA ORIGEM do título (F9): "Pedido de venda 0003", "Compra 12"… — o rótulo da família do documento (o mesmo
+ * da TOP, `pt-BR`) e o código dele; avulso → "Avulso"; outra origem (ou documento que a RLS não mostra) → o rótulo do
+ * `source_type`. Nunca o valor técnico cru. UMA consulta, estática por tipo (nenhum identificador vem da entrada).
+ */
+async function nomeDaOrigem(ctx: ServiceCtx, sourceType: string | null, sourceId: string | null): Promise<string> {
+  if (!sourceType || sourceType === "manual") return "Avulso";
+  if (sourceId && (sourceType === "sales_documents" || sourceType === "documentos_compra")) {
+    const venda = sourceType === "sales_documents";
+    const r = await ctx.tx.query<{ especie: string; codigo: string }>(venda
+      ? "select kind as especie, code as codigo from erp.sales_documents where id=$1 and organization_id=$2"
+      : "select especie, codigo from erp.documentos_compra where id=$1 and organization_id=$2", [sourceId, ctx.orgId]);
+    const doc = r.rows[0];
+    const familia = doc ? (venda ? familiaOperacionalDeDocumentoVenda(doc.especie) : familiaOperacionalDeDocumentoCompra(doc.especie)) : undefined;
+    const chave = familia ? chaveI18nDaFamiliaOperacional(familia) : undefined;
+    if (doc && chave) return `${tr(chave)} ${doc.codigo}`;
+  }
+  return enumLabel("source_type", sourceType);
+}
 
 const titleSchema = z.object({
   empresa_id: uuid, number: z.string().min(1).max(40), title_type_id: uuid.optional().nullable(), proprietary_id: uuid.optional().nullable(), person_id: uuid.optional().nullable(), branch_id: uuid.optional().nullable(),
@@ -43,7 +98,9 @@ const titleSchema = z.object({
   apportionment: apportionmentSchema, plan: installmentPlanSchema.optional().nullable(),
   auto_settle: z.object({ bank_account_id: uuid, date: date }).optional().nullable(),
   // F8 (decisão 285): competência do DRE e conta prevista do fluxo — opcionais; a web anterior não manda.
-  data_competencia: date.optional().nullable(), conta_prevista_id: uuid.optional().nullable()
+  data_competencia: date.optional().nullable(), conta_prevista_id: uuid.optional().nullable(),
+  // F9 (decisão 286): a TOP do lançamento avulso (família da direção). Ausente = sem TOP, como hoje.
+  tipo_operacao_id: uuid.optional().nullable()
 });
 /** Edição: o `version` otimista é opcional (a web anterior não manda); quando vem, decide. */
 const tituloEdicaoSchema = titleSchema.partial().extend({ version: z.number().int().optional() });
@@ -95,6 +152,8 @@ async function listTitles(ctx: ServiceCtx, direction: "payable" | "receivable", 
   else if (st === "invoice_paid") where.push("t.payment_type='invoice_group' and t.status='paid'");
   else if (st === "cancelled") where.push("t.status='cancelled'");
   else if (!st) where.push("t.status<>'cancelled'");
+  // F9: o PREVISTO só aparece pedido; fora de `status=previsto`, nenhum recorte (nem os totais) o vê.
+  if (st === "previsto") where.push("t.status='previsto'"); else where.push("t.status<>'previsto'");
   const w = where.join(" and ");
   const sort = ["due_date", "emission_date", "amount", "number", "code", "balance"].includes(q.sort ?? "") ? q.sort : "due_date";
   const wl = wrapListing(`select t.*, ${EH_ADIANTAMENTO} as eh_adiantamento, p.name as person_name, pr.name as proprietary_name, tt.name as title_type_name, f.name as empresa_name, (select max(settlement_date) from erp.title_settlements s where s.title_id=t.id and s.status='confirmed') as last_settlement_date, (select count(*) from erp.attachments a where a.organization_id=t.organization_id and a.entity='financial_titles' and a.entity_id=t.id)::int as attachment_count from erp.financial_titles t left join erp.people p on p.id=t.person_id left join erp.people pr on pr.id=t.proprietary_id left join erp.title_types tt on tt.id=t.title_type_id join erp.empresas f on f.id=t.empresa_id where ${w} order by t.${sort} ${q.dir ?? "asc"}, t.code`, params, query, q, ", coalesce(sum(t.amount - t.discount),0)::text amount, coalesce(sum(t.balance),0)::text balance, coalesce(sum(t.paid_amount),0)::text paid");
@@ -123,13 +182,15 @@ async function listTitles(ctx: ServiceCtx, direction: "payable" | "receivable", 
 async function getTitle(ctx: ServiceCtx, id: string, expectedDirection: "payable" | "receivable") {
   const params: unknown[] = [id, ctx.orgId, expectedDirection];
   const escopo = empresaScopeSql(ctx, "t", params);
-  // F8 (aditivo): adiantamento, conta prevista e o crédito já usado vêm na MESMA consulta do título.
-  const r = await ctx.tx.query(`select t.*, ${EH_ADIANTAMENTO} as eh_adiantamento, cp.description as conta_prevista_nome, (select coalesce(sum(u.amount),0) from erp.title_settlements u where u.adiantamento_id=t.id and u.status='confirmed')::text as credito_usado, p.name as person_name, p.document as person_document, pr.name as proprietary_name, tt.name as title_type_name, f.name as empresa_name, h.description as harvest_name, u.name as created_by_name from erp.financial_titles t left join erp.people p on p.id=t.person_id left join erp.people pr on pr.id=t.proprietary_id left join erp.title_types tt on tt.id=t.title_type_id join erp.empresas f on f.id=t.empresa_id left join erp.harvests h on h.id=t.harvest_id left join erp.users u on u.id=t.created_by left join erp.bank_accounts cp on cp.id=t.conta_prevista_id where t.id=$1 and t.organization_id=$2 and t.direction=$3 and t.deleted_at is null` + escopo, params);
+  // F8 (aditivo): adiantamento, conta prevista e o crédito já usado vêm na MESMA consulta do título. F9 (aditivo): a TOP
+  // e a versão de origem (pelo par gravado no título) na mesma consulta.
+  const r = await ctx.tx.query(`select t.*, ${EH_ADIANTAMENTO} as eh_adiantamento, cp.description as conta_prevista_nome, (select coalesce(sum(u.amount),0) from erp.title_settlements u where u.adiantamento_id=t.id and u.status='confirmed')::text as credito_usado, p.name as person_name, p.document as person_document, pr.name as proprietary_name, tt.name as title_type_name, f.name as empresa_name, h.description as harvest_name, u.name as created_by_name, tpo.codigo as top_codigo, tov.nome as top_nome, tov.versao as top_versao from erp.financial_titles t left join erp.people p on p.id=t.person_id left join erp.people pr on pr.id=t.proprietary_id left join erp.title_types tt on tt.id=t.title_type_id join erp.empresas f on f.id=t.empresa_id left join erp.harvests h on h.id=t.harvest_id left join erp.users u on u.id=t.created_by left join erp.bank_accounts cp on cp.id=t.conta_prevista_id left join erp.tipos_operacao tpo on tpo.id=t.tipo_operacao_id and tpo.organization_id=t.organization_id left join erp.tipos_operacao_versoes tov on tov.id=t.tipo_operacao_versao_id and tov.organization_id=t.organization_id where t.id=$1 and t.organization_id=$2 and t.direction=$3 and t.deleted_at is null` + escopo, params);
   if (!r.rows[0]) throw notFound("Título");
-  const { credito_usado: creditoUsado, ...t } = r.rows[0] as Record<string, unknown> & { status: TitleStatus; due_date: string; payment_type: string; group_id: string | null; empresa_name: string; number: string; code: string; person_name: string | null; amount: string; net_amount: string; note: string; source_type: string | null; eh_adiantamento: boolean; paid_amount: string; credito_usado: string };
+  const { credito_usado: creditoUsado, top_codigo: topCodigo, top_nome: topNome, top_versao: topVersao, ...t } = r.rows[0] as Record<string, unknown> & { status: TitleStatus; due_date: string; payment_type: string; group_id: string | null; empresa_name: string; number: string; code: string; person_name: string | null; amount: string; net_amount: string; note: string; source_type: string | null; source_id: string | null; eh_adiantamento: boolean; paid_amount: string; credito_usado: string; tipo_operacao_id: string | null; top_codigo: string | null; top_nome: string | null; top_versao: number | null };
   const app_ = await ctx.tx.query("select a.*, fc.code as category_code, fc.name as category_name, cc.name as cost_center_name, ca.description as chart_account_name, ar.name as area_name, h.description as harvest_name from erp.title_apportionments a join erp.financial_categories fc on fc.id=a.financial_category_id join erp.cost_centers cc on cc.id=a.cost_center_id left join erp.chart_accounts ca on ca.id=a.chart_account_id left join erp.areas ar on ar.id=a.area_id left join erp.harvests h on h.id=a.harvest_id where a.title_id=$1", [id]);
   const appr = await ctx.tx.query("select * from erp.title_appropriations where title_id=$1", [id]);
-  const settlements = await ctx.tx.query<Record<string, unknown> & { id: string; settlement_date: string; net_amount: string }>("select s.*, ba.description as bank_account_name, u.name as created_by_name from erp.title_settlements s left join erp.bank_accounts ba on ba.id=s.bank_account_id left join erp.users u on u.id=s.created_by where s.title_id=$1 order by s.created_at", [id]);
+  // F9 (aditivo): o imóvel rural do LCDPR de cada baixa (o id já vem em `s.*`), com o nome.
+  const settlements = await ctx.tx.query<Record<string, unknown> & { id: string; settlement_date: string; net_amount: string }>("select s.*, ba.description as bank_account_name, u.name as created_by_name, ir.nome as imovel_rural_nome from erp.title_settlements s left join erp.bank_accounts ba on ba.id=s.bank_account_id left join erp.users u on u.id=s.created_by left join erp.imoveis_rurais ir on ir.id=s.imovel_rural_id and ir.organization_id=s.organization_id where s.title_id=$1 order by s.created_at", [id]);
   // Os componentes de TODAS as baixas numa consulta (juros, multa, acréscimo e tarifa lançados em separado).
   const sids = settlements.rows.map((s) => s.id);
   const comps = sids.length
@@ -144,6 +205,9 @@ async function getTitle(ctx: ServiceCtx, id: string, expectedDirection: "payable
     ...(t as Record<string, unknown>), ...t,
     status_label: displayTitleStatus({ status: t.status, dueDate: t.due_date, paymentType: t.eh_adiantamento ? "advance" : t.payment_type }, todayISO()),
     bloqueado_pela_origem: tituloDeDocumento(t.source_type), origem_grupo: grupoDaOrigem(t.source_type),
+    // F9 (aditivos): a origem pelo NOME e a TOP de origem com a versão.
+    origem_nome: await nomeDaOrigem(ctx, t.source_type, t.source_id),
+    tipo_operacao: t.tipo_operacao_id && topCodigo !== null && topNome !== null && topVersao !== null ? { id: t.tipo_operacao_id, codigo: topCodigo, nome: topNome, versao: topVersao } : null,
     credito_disponivel: t.eh_adiantamento ? money(D(t.paid_amount).minus(creditoUsado)) : null,
     apportionments: app_.rows, appropriations: appr.rows,
     settlements: settlements.rows.map((s) => ({ ...s, componentes: comps.filter((c) => c.baixa_id === s.id).map(({ baixa_id: _baixa, ...c }) => c) })),
@@ -162,6 +226,8 @@ interface PedidoDeBaixa {
   amount: string; discount?: string; penalty?: string; interest?: string; increase?: string; foreign_amount?: string | null; ptax_rate?: string | null;
   exchange_adjustment?: string; note?: string | null; movement_mode: "separate" | "single"; shared_movement_id?: string | null;
   tarifa?: string; excedente?: "credito" | null; adiantamento_id?: string | null;
+  /** F9: o imóvel rural do LCDPR (ausente = o padrão da empresa do título; nulo = nenhum). Só na baixa bancária. */
+  imovel_rural_id?: string | null;
   /** Internos (lote e "gera obrigação"): nunca vêm do corpo da rota individual. */
   lote_id?: string | null; naturezas?: NaturezasPadrao;
 }
@@ -174,26 +240,42 @@ export default async function financialRoutes(app: FastifyInstance) {
     app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, permOf(dir, "create"), async (ctx) => {
       const d = titleSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id);
       if (dir === "receivable" && !d.person_id) throw validation("Cliente obrigatório"); if (dir === "payable" && !d.person_id) throw validation("Fornecedor obrigatório");
-      // F8: referências do TENANT (FKs de coluna única não provam organização) e o rateio em R$ fechando no líquido.
-      await conferirReferenciasDoTitulo(ctx, { person_id: d.person_id, proprietary_id: d.proprietary_id, title_type_id: d.title_type_id, harvest_id: d.harvest_id, branch_id: d.branch_id, conta_prevista_id: d.conta_prevista_id, apportionment: d.apportionment });
+      /**
+       * F9 (decisão 286) — A TOP PRIMEIRO. Com `tipo_operacao_id`, a TOP da família da direção (a mesma 422 para a de
+       * outra família, inativa, excluída ou de outra organização), a versão CORRENTE congelada pelo servidor, e os
+       * padrões dela (só no formato 5): o tipo de título e a conta prevista entram SÓ onde o corpo não informou; com
+       * `documentoTroca` desligado, o que o corpo informar diferente dos padrões é recusado. Sem TOP: como hoje.
+       */
+      const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaDirecao(dir), d.tipo_operacao_id) : null;
+      const fin = await conferirTrocaDosPadroes(ctx, top, {
+        naturezaIds: d.apportionment.map((a) => a.financial_category_id), centroCustoIds: d.apportionment.map((a) => a.cost_center_id),
+        tipoTituloId: d.title_type_id, contaBancariaId: d.conta_prevista_id
+      });
+      const tipoTituloId = d.title_type_id ?? fin?.padroes?.tipoTituloId ?? null;
+      const contaPrevistaId = d.conta_prevista_id ?? fin?.padroes?.contaBancariaId ?? null;
+      // F8: referências do TENANT (FKs de coluna única não provam organização) e o rateio em R$ fechando no líquido. F9:
+      // o tipo de título e a conta EFETIVOS (o padrão da TOP também é conferido: o cadastro pode ter envelhecido).
+      await conferirReferenciasDoTitulo(ctx, { person_id: d.person_id, proprietary_id: d.proprietary_id, title_type_id: tipoTituloId, harvest_id: d.harvest_id, branch_id: d.branch_id, conta_prevista_id: contaPrevistaId, apportionment: d.apportionment });
       if (rateioPorValor(d.apportionment)) exigirRateioFechado(money(D(d.amount).minus(d.discount)), d.apportionment);
       if (d.data_competencia) await assertPeriodOpen(ctx.tx, ctx.orgId, d.empresa_id, d.data_competencia);
       return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
         const lines = d.apportionment.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, chartAccountId: a.chart_account_id ?? null, harvestId: a.harvest_id ?? null, areaId: a.area_id ?? null, percentage: a.percentage, amount: a.amount }));
+        // A TOP e a versão vão em TODAS as parcelas e recorrências; o tipo de título e a conta prevista são os efetivos.
+        const base = { ...mapTitle(d, dir), titleTypeId: tipoTituloId, contaPrevistaId, tipoOperacaoId: top?.tipoOperacaoId ?? null, tipoOperacaoVersaoId: top?.tipoOperacaoVersaoId ?? null };
         const ids: string[] = [];
         if (d.payment_type === "recurring" && d.recurrence_type) {
           const dates = recurrenceDates(d.due_date, d.recurrence_type, d.recurrence_count ?? 12);
           const groupId = (await ctx.tx.query<{ id: string }>("select gen_random_uuid() id")).rows[0]!.id;
-          for (const [i, due] of dates.entries()) { const c = await createTitles(ctx, { ...mapTitle(d, dir), number: `${d.number}-${i + 1}`, dueDate: due, apportionment: lines, plan: null }); ids.push(...c.ids); await ctx.tx.query("update erp.financial_titles set group_id=$2, installment_number=$3, installment_count=$4 where id=$1", [c.ids[0], groupId, i + 1, dates.length]); }
-        } else { const c = await createTitles(ctx, { ...mapTitle(d, dir), apportionment: lines, plan: d.plan ?? null }); ids.push(...c.ids); }
-        // Colunas novas da 0042 depois do `createTitles` (que é de todos os geradores e não muda): ROW COUNT = os criados.
-        if (d.data_competencia || d.conta_prevista_id) {
-          const u = await ctx.tx.query("update erp.financial_titles set data_competencia=$2, conta_prevista_id=$3 where id = any($1::uuid[]) and organization_id=$4", [ids, d.data_competencia ?? null, d.conta_prevista_id ?? null, ctx.orgId]);
+          for (const [i, due] of dates.entries()) { const c = await createTitles(ctx, { ...base, number: `${d.number}-${i + 1}`, dueDate: due, apportionment: lines, plan: null }); ids.push(...c.ids); await ctx.tx.query("update erp.financial_titles set group_id=$2, installment_number=$3, installment_count=$4 where id=$1", [c.ids[0], groupId, i + 1, dates.length]); }
+        } else { const c = await createTitles(ctx, { ...base, apportionment: lines, plan: d.plan ?? null }); ids.push(...c.ids); }
+        // A competência (0042) depois do `createTitles` (a conta prevista já entra no INSERT): ROW COUNT = os criados.
+        if (d.data_competencia) {
+          const u = await ctx.tx.query("update erp.financial_titles set data_competencia=$2 where id = any($1::uuid[]) and organization_id=$3", [ids, d.data_competencia, ctx.orgId]);
           if (u.rowCount !== ids.length) throw notFound("Título");
         }
         if (d.appropriations?.length) for (const a of d.appropriations) await ctx.tx.query("insert into erp.title_appropriations(title_id,kind,target,amount) values ($1,$2,$3,$4)", [ids[0], a.kind, JSON.stringify(a.target), money(a.amount)]);
         if (d.auto_settle) for (const id of ids) await settle(ctx, id, dir, { settlement_date: d.auto_settle.date, settlement_kind: "bank_movement", bank_account_id: d.auto_settle.bank_account_id, amount: (await ctx.tx.query<{ b: string }>("select balance b from erp.financial_titles where id=$1", [id])).rows[0]!.b, movement_mode: "separate" });
-        await audit(ctx.tx, ctx, "financial_titles", ids[0]!, "create", { count: ids.length });
+        await audit(ctx.tx, ctx, "financial_titles", ids[0]!, "create", { count: ids.length, ...(top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId } : {}) });
         return { ids, id: ids[0] };
       })).result;
     })));
@@ -211,11 +293,14 @@ export default async function financialRoutes(app: FastifyInstance) {
       const d = tituloEdicaoSchema.parse(bruto);
       const veio = (k: keyof z.infer<typeof tituloEdicaoSchema>) => Object.prototype.hasOwnProperty.call(bruto, k) && bruto[k] !== undefined;
       const params: unknown[] = [id, ctx.orgId, dir];
-      const cur = await ctx.tx.query<{ status: string; paid_amount: string; empresa_id: string; emission_date: string; data_competencia: string | null; version: number; source_type: string | null; payment_type: string; number: string; person_id: string | null; amount: string; discount: string }>(
-        "select t.status, t.paid_amount, t.empresa_id, t.emission_date, t.data_competencia, t.version, t.source_type, t.payment_type, t.number, t.person_id, t.amount, t.discount from erp.financial_titles t where t.id=$1 and t.organization_id=$2 and t.direction=$3 and t.deleted_at is null"
+      const cur = await ctx.tx.query<{ status: string; paid_amount: string; empresa_id: string; emission_date: string; data_competencia: string | null; version: number; source_type: string | null; payment_type: string; number: string; person_id: string | null; amount: string; discount: string; tipo_operacao_id: string | null }>(
+        "select t.status, t.paid_amount, t.empresa_id, t.emission_date, t.data_competencia, t.version, t.source_type, t.payment_type, t.number, t.person_id, t.amount, t.discount, t.tipo_operacao_id::text as tipo_operacao_id from erp.financial_titles t where t.id=$1 and t.organization_id=$2 and t.direction=$3 and t.deleted_at is null"
         + empresaScopeSql(ctx, "t", params, { ignoreSelected: true }) + " for update", params);
       const c = cur.rows[0];
-      if (!c) throw notFound("Título"); await exigirEmpresaVisivel(ctx, c.empresa_id, "Título"); if (c.status === "cancelled") throw err("ALREADY_CANCELLED", "Título cancelado");
+      if (!c) throw notFound("Título"); await exigirEmpresaVisivel(ctx, c.empresa_id, "Título");
+      // F9: o previsto não se edita (muda pela origem) — antes de tudo o que leria ou mexeria nele.
+      if (c.status === "previsto") throw err("CONFLICT", MENSAGEM_PREVISTO_SEM_EDICAO);
+      if (c.status === "cancelled") throw err("ALREADY_CANCELLED", "Título cancelado");
       if (d.version !== undefined && d.version !== c.version) throw err("CONCURRENCY_CONFLICT", "O título mudou desde que foi aberto. Recarregue e tente de novo.");
       if (tituloDeDocumento(c.source_type)) {
         const rateio = await ctx.tx.query<TituloComparavel["apportionment"][number]>("select financial_category_id, cost_center_id, chart_account_id, harvest_id, area_id, percentage, amount from erp.title_apportionments where title_id=$1", [id]);
@@ -223,6 +308,8 @@ export default async function financialRoutes(app: FastifyInstance) {
         if (travados.length) throw err("CONFLICT", mensagemDaOrigem(c.source_type), { campos: travados });
       }
       if ((veio("empresa_id") && String(d.empresa_id).toLowerCase() !== c.empresa_id.toLowerCase()) || (veio("payment_type") && d.payment_type !== c.payment_type)) throw validation("Empresa e forma de pagamento não mudam na edição");
+      // F9: a TOP presente e DIFERENTE da gravada (nulo contra uma TOP também) é recusada; a mesma passa e nada muda.
+      if (veio("tipo_operacao_id") && !mesmoId(d.tipo_operacao_id, c.tipo_operacao_id)) throw validation(MENSAGEM_TOP_NAO_MUDA, [{ path: ["tipo_operacao_id"], message: MENSAGEM_TOP_NAO_MUDA }]);
       const novoValor = veio("amount") && !D(d.amount!).eq(c.amount) ? d.amount! : null;
       const novoDesconto = veio("discount") && !D(d.discount!).eq(c.discount) ? d.discount! : null;
       if (D(c.paid_amount).gt(0) && (novoValor !== null || novoDesconto !== null)) throw err("CONFLICT", "Título com baixa: valor não pode ser alterado (cancele a baixa)");
@@ -293,13 +380,16 @@ export default async function financialRoutes(app: FastifyInstance) {
     }));
     app.post(`${base}/:id/duplicate`, async (req, reply) => reply.status(201).send(await runService(app, req, permOf(dir, "duplicate"), async (ctx) => {
       const { id } = req.params as { id: string }; const t = await getTitle(ctx, id, dir) as Record<string, unknown> & { apportionments: { financial_category_id: string; cost_center_id: string; chart_account_id: string | null; harvest_id: string | null; area_id: string | null; percentage: string }[] };
+      if (t.status === "previsto") throw err("CONFLICT", MENSAGEM_PREVISTO_SEM_DUPLICAR);
       const c = await createTitles(ctx, { empresaId: t.empresa_id as string, direction: dir, number: `${t.number}-C`, titleTypeId: t.title_type_id as string | null, personId: t.person_id as string | null, proprietaryId: t.proprietary_id as string | null, classification: t.classification as "unclassified", documentType: t.document_type as string | null, isDeductible: t.is_deductible as boolean, isTax: t.is_tax as boolean, amount: t.amount as string, discount: t.discount as string, emissionDate: todayISO(), dueDate: t.due_date as string, note: t.note as string, harvestId: t.harvest_id as string | null, apportionment: t.apportionments.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, chartAccountId: a.chart_account_id, harvestId: a.harvest_id, areaId: a.area_id, percentage: a.percentage })) });
       return { id: c.ids[0] };
     })));
     // Baixa (individual ou em lote: "Baixar Contas")
     const settleSchema = z.object({ settlement_date: date, settlement_kind: z.enum(["bank_movement", "cross_settlement", "advance_compensation"]).default("bank_movement"), bank_account_id: uuid.optional().nullable(), cross_title_id: uuid.optional().nullable(), amount: dec, discount: dec.default("0"), penalty: dec.default("0"), interest: dec.default("0"), increase: dec.default("0"), foreign_amount: dec.optional().nullable(), ptax_rate: dec.optional().nullable(), exchange_adjustment: dec.default("0"), note: z.string().optional().nullable(), movement_mode: z.enum(["separate", "single"]).default("separate"),
       // F8 (aditivos; a web anterior não manda): tarifa, excedente que vira crédito e uso do crédito de um adiantamento.
-      tarifa: dec.default("0"), excedente: z.enum(["credito"]).optional().nullable(), adiantamento_id: uuid.optional().nullable() });
+      tarifa: dec.default("0"), excedente: z.enum(["credito"]).optional().nullable(), adiantamento_id: uuid.optional().nullable(),
+      // F9 (aditivo): o imóvel rural do LCDPR da baixa bancária. Ausente = o padrão da empresa do título; nulo = nenhum.
+      imovel_rural_id: uuid.optional().nullable() });
     app.post(`${base}/:id/settle`, async (req, reply) => reply.status(201).send(await runService(app, req, permOf(dir, "settle"), async (ctx) => { const { id } = req.params as { id: string }; const d = settleSchema.parse(req.body); return (await idempotent(ctx.tx, ctx.orgId, idem(req), { id, ...d }, () => settle(ctx, id, dir, d))).result; })));
     /**
      * BAIXA EM LOTE (F8). O furo: `empresaPermitida` é ASSÍNCRONA e era chamada sem `await` — `!Promise` é sempre
@@ -311,7 +401,9 @@ export default async function financialRoutes(app: FastifyInstance) {
      */
     app.post(`${base}/settle-batch`, async (req, reply) => reply.status(201).send(await runService(app, req, permOf(dir, "settle"), async (ctx) => {
       const itemSchema = z.object({ id: uuid, valor: dec.optional(), desconto: dec.optional(), juros: dec.optional(), multa: dec.optional(), acrescimo: dec.optional() }).strict();
-      const d = z.object({ ids: idsDoLote.optional(), itens: z.array(itemSchema).min(1).max(200).refine((xs) => new Set(xs.map((x) => x.id.toLowerCase())).size === xs.length, "Título repetido no lote").optional(), settlement_date: date, bank_account_id: uuid, movement_mode: z.enum(["separate", "single"]).default("separate"), note: z.string().optional().nullable(), tarifa: dec.optional() }).parse(req.body);
+      const d = z.object({ ids: idsDoLote.optional(), itens: z.array(itemSchema).min(1).max(200).refine((xs) => new Set(xs.map((x) => x.id.toLowerCase())).size === xs.length, "Título repetido no lote").optional(), settlement_date: date, bank_account_id: uuid, movement_mode: z.enum(["separate", "single"]).default("separate"), note: z.string().optional().nullable(), tarifa: dec.optional(),
+        // F9 (aditivo): o imóvel rural do lote. Ausente = o padrão da empresa de cada título.
+        imovel_rural_id: uuid.optional() }).parse(req.body);
       if (d.ids && d.itens) throw validation("Informe os títulos por ids ou por itens, não pelos dois");
       const pedidos = d.itens ?? (d.ids ?? []).map((id) => ({ id, valor: undefined, desconto: undefined, juros: undefined, multa: undefined, acrescimo: undefined }));
       if (!pedidos.length) throw validation("Informe os títulos do lote");
@@ -331,6 +423,8 @@ export default async function financialRoutes(app: FastifyInstance) {
           elegiveis.push({ id: t.id, empresaId: t.empresa_id, valor: v.aplicado, desconto: v.desconto, juros: v.juros, multa: v.multa, acrescimo: v.acrescimo, liquido: v.liquidoTotal });
         }
         const empresas = [...new Set(elegiveis.map((e) => e.empresaId))];
+        // F9: o imóvel informado é de UMA empresa — conferido contra a de CADA título elegível, antes de qualquer gravação.
+        if (d.imovel_rural_id) for (const empresa of empresas) await conferirImovelRural(ctx, d.imovel_rural_id, empresa);
         const total = sum(elegiveis.map((e) => e.liquido));
         const tarifa = d.tarifa ?? "0";
         const naturezas = await lerNaturezasPadrao(ctx);
@@ -352,15 +446,15 @@ export default async function financialRoutes(app: FastifyInstance) {
         const rateios = elegiveis.length ? (await ctx.tx.query<LinhaDoRateioDoTitulo & { title_id: string }>("select title_id::text as title_id, financial_category_id, cost_center_id, chart_account_id, harvest_id, percentage from erp.title_apportionments where title_id = any($1::uuid[])", [elegiveis.map((e) => e.id)])).rows : [];
         let sharedMovement: string | null = null;
         if (d.movement_mode === "single" && total.gt(0)) {
-          sharedMovement = await createBankMovement(ctx, { empresaId: empresas[0]!, bankAccountId: d.bank_account_id, date: d.settlement_date, type: dir === "payable" ? "out" : "in", amount: money(total), note: d.note ?? `Baixa em lote de ${elegiveis.length} títulos`, sourceType: "title_settlement_batch", sourceId: elegiveis[0]!.id, apportionment: rateioDoMovimentoUnico(elegiveis, rateios), rateioJaGravado: true });
+          sharedMovement = await createBankMovement(ctx, { empresaId: empresas[0]!, bankAccountId: d.bank_account_id, date: d.settlement_date, type: dir === "payable" ? "out" : "in", amount: money(total), note: d.note ?? `Baixa em lote de ${elegiveis.length} títulos`, sourceType: "title_settlement_batch", sourceId: elegiveis[0]!.id, apportionment: rateioDoMovimentoUnico(elegiveis, rateios), rateioJaGravado: true, imovelRuralId: d.imovel_rural_id });
           const v = await ctx.tx.query("update erp.bank_movements set lote_baixa_id=$2 where id=$1 and organization_id=$3", [sharedMovement, loteId, ctx.orgId]);
           if (v.rowCount !== 1) throw notFound("Movimento");
         }
         const results: ResultadoDaBaixa[] = [];
-        for (const e of elegiveis) results.push(await settle(ctx, e.id, dir, { settlement_date: d.settlement_date, settlement_kind: "bank_movement", bank_account_id: d.bank_account_id, amount: e.valor, discount: e.desconto, interest: e.juros, penalty: e.multa, increase: e.acrescimo, note: d.note ?? null, movement_mode: d.movement_mode, shared_movement_id: sharedMovement, lote_id: loteId, naturezas }));
+        for (const e of elegiveis) results.push(await settle(ctx, e.id, dir, { settlement_date: d.settlement_date, settlement_kind: "bank_movement", bank_account_id: d.bank_account_id, amount: e.valor, discount: e.desconto, interest: e.juros, penalty: e.multa, increase: e.acrescimo, note: d.note ?? null, movement_mode: d.movement_mode, shared_movement_id: sharedMovement, lote_id: loteId, naturezas, imovel_rural_id: d.imovel_rural_id }));
         // Centros e safras da tarifa: a união dos rateios, cada título pesando o seu líquido no lote.
         const pesoDaTarifa = rateios.map((r) => ({ ...r, percentage: D(r.percentage).mul(elegiveis.find((e) => e.id.toLowerCase() === r.title_id.toLowerCase())?.liquido ?? "0").toFixed(6) })).filter((r) => !D(r.percentage).isZero());
-        const tarifaMovimento = comTarifa && loteId ? await lancarTarifaDoLote(ctx, { loteId, empresaId: empresas[0]!, contaId: d.bank_account_id, data: d.settlement_date, valor: money(tarifa), naturezaId: naturezas.tarifa_bancaria_id!, rateioBase: pesoDaTarifa.length ? pesoDaTarifa : rateios, nota: `Tarifa da baixa em lote de ${elegiveis.length} títulos` }) : null;
+        const tarifaMovimento = comTarifa && loteId ? await lancarTarifaDoLote(ctx, { loteId, empresaId: empresas[0]!, contaId: d.bank_account_id, data: d.settlement_date, valor: money(tarifa), naturezaId: naturezas.tarifa_bancaria_id!, rateioBase: pesoDaTarifa.length ? pesoDaTarifa : rateios, nota: `Tarifa da baixa em lote de ${elegiveis.length} títulos`, imovelRuralId: d.imovel_rural_id }) : null;
         return { settled: results.length, total: money(total), items: results, lote_id: loteId, pulados, tarifa_movimento_id: tarifaMovimento };
       })).result;
     })));
@@ -395,7 +489,11 @@ export default async function financialRoutes(app: FastifyInstance) {
   async function settle(ctx: ServiceCtx, titleId: string, expectedDirection: "payable" | "receivable", d: PedidoDeBaixa): Promise<ResultadoDaBaixa> {
     const t = await ctx.tx.query<{ direction: "payable" | "receivable"; balance: string; status: string; empresa_id: string; number: string; person_id: string | null; proprietary_id: string | null; harvest_id: string | null; is_deductible: boolean }>("select direction, balance, status, empresa_id, number, person_id, proprietary_id, harvest_id, is_deductible from erp.financial_titles where id=$1 and organization_id=$2 and direction=$3 and deleted_at is null for update", [titleId, ctx.orgId, expectedDirection]);
     const title = t.rows[0]; if (!title) throw notFound("Título"); await exigirEmpresaVisivel(ctx, title.empresa_id, "Título"); if (title.status === "cancelled") throw err("ALREADY_CANCELLED", "Título cancelado"); if (title.status === "paid") throw err("ALREADY_CONFIRMED", "Título já baixado");
+    // F9: o previsto não recebe baixa (o banco recusa também, pela `refresh_title_status`; aqui a recusa vem antes de gravar).
+    if (title.status === "previsto") throw err("CONFLICT", MENSAGEM_PREVISTO_SEM_BAIXA);
     await assertPeriodOpen(ctx.tx, ctx.orgId, title.empresa_id, d.settlement_date);
+    // F9: a compensação (crédito de adiantamento, cruzada) não movimenta caixa — o imóvel do LCDPR não cabe nela.
+    if ((d.adiantamento_id || d.settlement_kind !== "bank_movement") && d.imovel_rural_id) throw validation(MENSAGEM_IMOVEL_NA_COMPENSACAO, [{ path: ["imovel_rural_id"], message: MENSAGEM_IMOVEL_NA_COMPENSACAO }]);
     const tarifa = d.tarifa ?? "0";
     const depois = async () => (await ctx.tx.query<{ status: string; balance: string }>("select status, balance from erp.financial_titles where id=$1", [titleId])).rows[0]!;
 
@@ -405,7 +503,7 @@ export default async function financialRoutes(app: FastifyInstance) {
       const extras = [d.discount, d.penalty, d.interest, d.increase, d.exchange_adjustment, tarifa].some((x) => x !== undefined && x !== null && !D(x).isZero());
       if (extras || d.excedente || d.cross_title_id || d.bank_account_id) throw validation("A compensação com adiantamento usa só o valor");
       const adt = await ctx.tx.query<{ id: string; paid_amount: string; usado: string }>(
-        `select t.id::text as id, t.paid_amount, (select coalesce(sum(u.amount),0) from erp.title_settlements u where u.adiantamento_id=t.id and u.status='confirmed')::text as usado from erp.financial_titles t where t.id=$1 and t.organization_id=$2 and t.direction=$3 and t.deleted_at is null and t.status<>'cancelled' and ${EH_ADIANTAMENTO} and t.person_id is not distinct from $4 and t.empresa_id=$5 and t.id<>$6 for update`,
+        `select t.id::text as id, t.paid_amount, (select coalesce(sum(u.amount),0) from erp.title_settlements u where u.adiantamento_id=t.id and u.status='confirmed')::text as usado from erp.financial_titles t where t.id=$1 and t.organization_id=$2 and t.direction=$3 and t.deleted_at is null and t.status not in ('cancelled','previsto') and ${EH_ADIANTAMENTO} and t.person_id is not distinct from $4 and t.empresa_id=$5 and t.id<>$6 for update`,
         [d.adiantamento_id, ctx.orgId, expectedDirection, title.person_id, title.empresa_id, titleId]);
       const a = adt.rows[0]; if (!a) throw notFound("Adiantamento");
       if (D(d.amount).gt(D(a.paid_amount).minus(a.usado))) throw err("PAYMENT_EXCEEDS_BALANCE", "Crédito do adiantamento insuficiente", { disponivel: money(D(a.paid_amount).minus(a.usado)), pedido: money(d.amount) });
@@ -478,6 +576,7 @@ export default async function financialRoutes(app: FastifyInstance) {
        */
       if (ct.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Título contrário cancelado");
       if (ct.rows[0].status === "paid") throw err("ALREADY_CONFIRMED", "Título contrário já baixado");
+      if (ct.rows[0].status === "previsto") throw err("CONFLICT", MENSAGEM_PREVISTO_SEM_BAIXA);
       /**
        * PERÍODO DOS DOIS LADOS. `assertPeriodOpen` já roda para a empresa do título PRINCIPAL. O título
        * contrário pode ser de OUTRA empresa — não existe no contrato nenhuma regra que exija mesma
@@ -527,21 +626,23 @@ export default async function financialRoutes(app: FastifyInstance) {
       separados.push({ componente: "tarifa", valor: v.tarifa, naturezaId: naturezas.tarifa_bancaria_id });
     }
     await conferirNaturezasPadrao(ctx, separados);
+    // F9: o imóvel rural do LCDPR da baixa — o MESMO no principal, nos componentes, na baixa e no crédito do excedente.
+    const imovelRuralId = await resolverImovelDaBaixa(ctx, d.imovel_rural_id, title.empresa_id);
     const principalValor = money(D(v.liquidoTotal).minus(sum(separados.filter((c) => c.componente !== "tarifa").map((c) => c.valor))));
     let movementId: string | null = d.shared_movement_id ?? null;
     // Desconto de 100% (o título inteiro abatido): não há caixa, então não há movimento principal.
     if (!movementId && D(principalValor).gt(0)) {
-      movementId = await createBankMovement(ctx, { empresaId: title.empresa_id, bankAccountId: d.bank_account_id, date: d.settlement_date, type: title.direction === "payable" ? "out" : "in", amount: principalValor, interest: "0", document: title.number, note: d.note ?? `Baixa do título ${title.number}`, proprietaryId: title.proprietary_id, personId: title.person_id, harvestId: title.harvest_id, isDeductible: title.is_deductible, sourceType: "title_settlements", sourceId: titleId, apportionment: lines.rows.map((l) => ({ financialCategoryId: l.financial_category_id, costCenterId: l.cost_center_id, chartAccountId: l.chart_account_id, harvestId: l.harvest_id, percentage: l.percentage })), rateioJaGravado: true });
+      movementId = await createBankMovement(ctx, { empresaId: title.empresa_id, bankAccountId: d.bank_account_id, date: d.settlement_date, type: title.direction === "payable" ? "out" : "in", amount: principalValor, interest: "0", document: title.number, note: d.note ?? `Baixa do título ${title.number}`, proprietaryId: title.proprietary_id, personId: title.person_id, harvestId: title.harvest_id, isDeductible: title.is_deductible, sourceType: "title_settlements", sourceId: titleId, apportionment: lines.rows.map((l) => ({ financialCategoryId: l.financial_category_id, costCenterId: l.cost_center_id, chartAccountId: l.chart_account_id, harvestId: l.harvest_id, percentage: l.percentage })), rateioJaGravado: true, imovelRuralId });
     }
     const net = money(D(v.liquidoTotal).minus(v.credito));
     const naturezaDesconto = D(v.desconto).gt(0) ? naturezas[chaveDaNaturezaPadrao("desconto", expectedDirection)] : null;
-    const s = await ctx.tx.query<{ id: string }>("insert into erp.title_settlements(organization_id,title_id,settlement_date,settlement_kind,bank_account_id,bank_movement_id,cross_title_id,amount,discount,penalty,interest,increase,foreign_amount,ptax_rate,exchange_adjustment,net_amount,note,created_by,tarifa,lote_id,natureza_desconto_id) values ($1,$2,$3,'bank_movement',$4,$5,null,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) returning id",
-      [ctx.orgId, titleId, d.settlement_date, d.bank_account_id, movementId, v.aplicado, v.desconto, v.multa, v.juros, v.acrescimo, d.foreign_amount ?? null, d.ptax_rate ?? null, v.ajusteCambial, net, d.note ?? null, ctx.user.id, D(v.tarifa).gt(0) ? v.tarifa : null, d.lote_id ?? null, naturezaDesconto]);
+    const s = await ctx.tx.query<{ id: string }>("insert into erp.title_settlements(organization_id,title_id,settlement_date,settlement_kind,bank_account_id,bank_movement_id,cross_title_id,amount,discount,penalty,interest,increase,foreign_amount,ptax_rate,exchange_adjustment,net_amount,note,created_by,tarifa,lote_id,natureza_desconto_id,imovel_rural_id) values ($1,$2,$3,'bank_movement',$4,$5,null,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) returning id",
+      [ctx.orgId, titleId, d.settlement_date, d.bank_account_id, movementId, v.aplicado, v.desconto, v.multa, v.juros, v.acrescimo, d.foreign_amount ?? null, d.ptax_rate ?? null, v.ajusteCambial, net, d.note ?? null, ctx.user.id, D(v.tarifa).gt(0) ? v.tarifa : null, d.lote_id ?? null, naturezaDesconto, imovelRuralId]);
     const sid = s.rows[0]!.id;
     await audit(ctx.tx, ctx, "title_settlements", sid, "create", { title: titleId, net, ...(d.lote_id ? { lote_id: d.lote_id } : {}) });
     const tituloDaBaixa: TituloDaBaixa = { id: titleId, direction: title.direction, empresa_id: title.empresa_id, number: title.number, person_id: title.person_id, proprietary_id: title.proprietary_id, harvest_id: title.harvest_id, is_deductible: title.is_deductible };
-    const lancados = await lancarComponentesDaBaixa(ctx, { baixaId: sid, titulo: tituloDaBaixa, contaId: d.bank_account_id, data: d.settlement_date, componentes: separados, rateioDoTitulo: lines.rows });
-    const credito = D(v.credito).gt(0) ? await gerarCreditoDoExcedente(ctx, { baixaId: sid, titulo: tituloDaBaixa, data: d.settlement_date, contaId: d.bank_account_id, movimentoId: movementId!, valor: v.credito, loteId: d.lote_id ?? null, rateioDoTitulo: lines.rows }) : null;
+    const lancados = await lancarComponentesDaBaixa(ctx, { baixaId: sid, titulo: tituloDaBaixa, contaId: d.bank_account_id, data: d.settlement_date, componentes: separados, rateioDoTitulo: lines.rows, imovelRuralId });
+    const credito = D(v.credito).gt(0) ? await gerarCreditoDoExcedente(ctx, { baixaId: sid, titulo: tituloDaBaixa, data: d.settlement_date, contaId: d.bank_account_id, movimentoId: movementId!, valor: v.credito, loteId: d.lote_id ?? null, rateioDoTitulo: lines.rows, imovelRuralId }) : null;
     const af = await depois();
     return {
       settlement_id: sid, title_id: titleId, net_amount: net, status: af.status, balance: af.balance, bank_movement_id: movementId, lote_id: d.lote_id ?? null,
@@ -572,7 +673,9 @@ export default async function financialRoutes(app: FastifyInstance) {
   }
 
   // ---------- Movimentos bancários ----------
-  const bmSchema = z.object({ empresa_id: uuid.optional().nullable(), bank_account_id: uuid, movement_date: date, type: z.enum(["in", "out"]), category_type: z.enum(["in", "out", "internal_transfer", "financing", "check_return"]).default("in"), destination_account_id: uuid.optional().nullable(), amount: dec, interest: dec.default("0"), document: z.string().optional().nullable(), generates_obligation: z.boolean().default(false), is_deductible: z.boolean().default(false), note: z.string().optional().nullable(), proprietary_id: uuid.optional().nullable(), person_id: uuid.optional().nullable(), harvest_id: uuid.optional().nullable(), apportionment: apportionmentSchema.optional() });
+  const bmSchema = z.object({ empresa_id: uuid.optional().nullable(), bank_account_id: uuid, movement_date: date, type: z.enum(["in", "out"]), category_type: z.enum(["in", "out", "internal_transfer", "financing", "check_return"]).default("in"), destination_account_id: uuid.optional().nullable(), amount: dec, interest: dec.default("0"), document: z.string().optional().nullable(), generates_obligation: z.boolean().default(false), is_deductible: z.boolean().default(false), note: z.string().optional().nullable(), proprietary_id: uuid.optional().nullable(), person_id: uuid.optional().nullable(), harvest_id: uuid.optional().nullable(), apportionment: apportionmentSchema.optional(),
+    // F9 (aditivos; a web anterior não manda): a TOP do movimento e o imóvel rural do LCDPR (ausente = o padrão da empresa).
+    tipo_operacao_id: uuid.optional().nullable(), imovel_rural_id: uuid.optional().nullable() });
   app.get("/financial/bank-movements", async (req) => runService(app, req, "bank_movements.view", async (ctx) => {
     const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>;
     const where = ["m.organization_id=$1", "m.deleted_at is null"]; const params: unknown[] = [ctx.orgId];
@@ -593,7 +696,8 @@ export default async function financialRoutes(app: FastifyInstance) {
   }));
   app.get("/financial/bank-movements/:id", async (req) => runService(app, req, "bank_movements.view", async (ctx) => {
     const { id } = req.params as { id: string };
-    const r = await ctx.tx.query("select m.*, ba.description as bank_account_name, ba.bank_code, ba.agency, ba.account_number, f.name as empresa_name, p.name as person_name, p.document as person_document, pr.name as proprietary_name, da.description as destination_account_name from erp.bank_movements m join erp.bank_accounts ba on ba.id=m.bank_account_id left join erp.empresas f on f.id=m.empresa_id left join erp.people p on p.id=m.person_id left join erp.people pr on pr.id=m.proprietary_id left join erp.bank_accounts da on da.id=m.destination_account_id where m.id=$1 and m.organization_id=$2 and m.deleted_at is null" + scopedById(ctx, "m", id, { nullable: true }).sql, scopedById(ctx, "m", id, { nullable: true }).params); if (!r.rows[0]) throw notFound("Movimento");
+    // F9 (aditivos): o nome do imóvel rural do LCDPR e a TOP do movimento (as colunas já vêm em `m.*`).
+    const r = await ctx.tx.query("select m.*, ba.description as bank_account_name, ba.bank_code, ba.agency, ba.account_number, f.name as empresa_name, p.name as person_name, p.document as person_document, pr.name as proprietary_name, da.description as destination_account_name, ir.nome as imovel_rural_nome, tpo.codigo as tipo_operacao_codigo, tov.nome as tipo_operacao_nome, tov.versao as tipo_operacao_versao from erp.bank_movements m join erp.bank_accounts ba on ba.id=m.bank_account_id left join erp.empresas f on f.id=m.empresa_id left join erp.people p on p.id=m.person_id left join erp.people pr on pr.id=m.proprietary_id left join erp.bank_accounts da on da.id=m.destination_account_id left join erp.imoveis_rurais ir on ir.id=m.imovel_rural_id and ir.organization_id=m.organization_id left join erp.tipos_operacao tpo on tpo.id=m.tipo_operacao_id and tpo.organization_id=m.organization_id left join erp.tipos_operacao_versoes tov on tov.id=m.tipo_operacao_versao_id and tov.organization_id=m.organization_id where m.id=$1 and m.organization_id=$2 and m.deleted_at is null" + scopedById(ctx, "m", id, { nullable: true }).sql, scopedById(ctx, "m", id, { nullable: true }).params); if (!r.rows[0]) throw notFound("Movimento");
     const app_ = await ctx.tx.query("select a.*, fc.name as category_name, fc.code as category_code, cc.name as cost_center_name, ca.description as chart_account_name from erp.bank_movement_apportionments a join erp.financial_categories fc on fc.id=a.financial_category_id join erp.cost_centers cc on cc.id=a.cost_center_id left join erp.chart_accounts ca on ca.id=a.chart_account_id where a.movement_id=$1", [id]);
     // F8 (aditivo): `direction` de cada título, para a web ligar a baixa à rota certa da variante.
     const settlements = await ctx.tx.query("select s.id, s.title_id, t.number, t.code, t.direction, s.net_amount from erp.title_settlements s join erp.financial_titles t on t.id=s.title_id where s.bank_movement_id=$1 and s.status='confirmed'", [id]);
@@ -602,6 +706,7 @@ export default async function financialRoutes(app: FastifyInstance) {
   app.post("/financial/bank-movements", async (req, reply) => reply.status(201).send(await runService(app, req, "bank_movements.create", async (ctx) => {
     const d = bmSchema.parse(req.body);
     if (d.category_type === "internal_transfer" && !d.destination_account_id) throw validation("Conta destino obrigatória em transferência interna");
+    if (d.category_type === "internal_transfer" && d.imovel_rural_id) throw validation(MENSAGEM_IMOVEL_NA_TRANSFERENCIA, [{ path: ["imovel_rural_id"], message: MENSAGEM_IMOVEL_NA_TRANSFERENCIA }]);
     if (d.category_type !== "internal_transfer" && !d.apportionment?.length) throw validation("Rateio (natureza/centro de resultado) obrigatório");
     const geraObrigacao = d.generates_obligation && Boolean(d.person_id) && Boolean(d.apportionment?.length);
     // "Gera obrigação": o título gerado precisa de EMPRESA. Antes, sem empresa no corpo nem selecionada, ele caía na
@@ -610,15 +715,29 @@ export default async function financialRoutes(app: FastifyInstance) {
     const empresaDoMovimento = d.empresa_id ?? ctx.empresaId ?? null;
     if (geraObrigacao && !empresaDoMovimento) throw validation("Informe a empresa: o título gerado pelo movimento precisa de empresa");
     await exigirEmpresaDeLancamento(ctx, geraObrigacao ? empresaDoMovimento : d.empresa_id);
+    /**
+     * F9 (decisão 286): a TOP da família do movimento (a mesma 422 para a de outra família, inativa, excluída ou de
+     * outra organização), com a versão corrente; `documentoTroca` desligado recusa a natureza, o centro e a conta
+     * diferentes dos padrões. O imóvel rural: o informado (conferido contra a empresa do movimento), nenhum (`null`) ou,
+     * ausente, o padrão da empresa — resolvido AQUI para o movimento e a baixa do "gera obrigação" levarem o mesmo.
+     */
+    const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, FAMILIA_DO_MOVIMENTO, d.tipo_operacao_id) : null;
+    await conferirTrocaDosPadroes(ctx, top, {
+      naturezaIds: (d.apportionment ?? []).map((a) => a.financial_category_id), centroCustoIds: (d.apportionment ?? []).map((a) => a.cost_center_id), contaBancariaId: d.bank_account_id
+    });
+    const imovelRuralId = await resolverImovelDoMovimento(ctx, { pedido: d.imovel_rural_id, empresaId: empresaDoMovimento, categoria: d.category_type });
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
-      const id = await createBankMovement(ctx, { empresaId: empresaDoMovimento, bankAccountId: d.bank_account_id, date: d.movement_date, type: d.type, categoryType: d.category_type, destinationAccountId: d.destination_account_id ?? null, amount: d.amount, interest: d.interest, document: d.document, note: d.note, proprietaryId: d.proprietary_id, personId: d.person_id, harvestId: d.harvest_id, isDeductible: d.is_deductible, generatesObligation: d.generates_obligation, sourceType: "manual", sourceId: undefined, apportionment: d.apportionment?.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, chartAccountId: a.chart_account_id ?? null, harvestId: a.harvest_id ?? null, percentage: a.percentage, amount: a.amount })) });
+      const id = await createBankMovement(ctx, { empresaId: empresaDoMovimento, bankAccountId: d.bank_account_id, date: d.movement_date, type: d.type, categoryType: d.category_type, destinationAccountId: d.destination_account_id ?? null, amount: d.amount, interest: d.interest, document: d.document, note: d.note, proprietaryId: d.proprietary_id, personId: d.person_id, harvestId: d.harvest_id, isDeductible: d.is_deductible, generatesObligation: d.generates_obligation, sourceType: "manual", sourceId: undefined, apportionment: d.apportionment?.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, chartAccountId: a.chart_account_id ?? null, harvestId: a.harvest_id ?? null, percentage: a.percentage, amount: a.amount })),
+        imovelRuralId, tipoOperacaoId: top?.tipoOperacaoId ?? null, tipoOperacaoVersaoId: top?.tipoOperacaoVersaoId ?? null });
       // "Gera obrigação": cria título correspondente já baixado por este movimento (ex.: saída sem título prévio).
-      // A baixa passa pela `settle` (saldo conferido, trilha) com o movimento já criado — não mais um INSERT cru.
+      // A baixa passa pela `settle` (saldo conferido, trilha) com o movimento já criado — não mais um INSERT cru. F9: o
+      // título leva a TOP do movimento, e a baixa o mesmo imóvel do movimento.
       if (geraObrigacao && empresaDoMovimento && d.person_id && d.apportionment?.length) {
-        const c = await createTitles(ctx, { empresaId: empresaDoMovimento, direction: d.type === "out" ? "payable" : "receivable", number: d.document ?? `MOV-${id.slice(0, 8)}`, personId: d.person_id, amount: money(d.amount), emissionDate: d.movement_date, dueDate: d.movement_date, note: d.note ?? "Gerado pelo movimento bancário", isDeductible: d.is_deductible, apportionment: d.apportionment.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, percentage: a.percentage, amount: a.amount })), sourceType: "bank_movements", sourceId: id });
-        await settle(ctx, c.ids[0]!, d.type === "out" ? "payable" : "receivable", { settlement_date: d.movement_date, settlement_kind: "bank_movement", bank_account_id: d.bank_account_id, amount: money(d.amount), note: "Baixa automática pelo movimento", movement_mode: "single", shared_movement_id: id });
+        const c = await createTitles(ctx, { empresaId: empresaDoMovimento, direction: d.type === "out" ? "payable" : "receivable", number: d.document ?? `MOV-${id.slice(0, 8)}`, personId: d.person_id, amount: money(d.amount), emissionDate: d.movement_date, dueDate: d.movement_date, note: d.note ?? "Gerado pelo movimento bancário", isDeductible: d.is_deductible, apportionment: d.apportionment.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, percentage: a.percentage, amount: a.amount })), sourceType: "bank_movements", sourceId: id,
+          tipoOperacaoId: top?.tipoOperacaoId ?? null, tipoOperacaoVersaoId: top?.tipoOperacaoVersaoId ?? null });
+        await settle(ctx, c.ids[0]!, d.type === "out" ? "payable" : "receivable", { settlement_date: d.movement_date, settlement_kind: "bank_movement", bank_account_id: d.bank_account_id, amount: money(d.amount), note: "Baixa automática pelo movimento", movement_mode: "single", shared_movement_id: id, imovel_rural_id: imovelRuralId });
       }
-      await audit(ctx.tx, ctx, "bank_movements", id, "create");
+      await audit(ctx.tx, ctx, "bank_movements", id, "create", top || imovelRuralId ? { ...(top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId } : {}), ...(imovelRuralId ? { imovelRuralId } : {}) } : undefined);
       return { id };
     })).result;
   })));
@@ -634,12 +753,11 @@ export default async function financialRoutes(app: FastifyInstance) {
     const bruto = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
     const d = bmSchema.partial().parse(bruto);
     const veio = (k: string) => Object.prototype.hasOwnProperty.call(bruto, k) && bruto[k] !== undefined;
-    const cur = await ctx.tx.query<{ source_type: string | null; empresa_id: string | null; movement_date: string; status: string; bank_account_id: string; type: string; category_type: string; destination_account_id: string | null; amount: string; interest: string; person_id: string | null; proprietary_id: string | null; harvest_id: string | null; is_deductible: boolean; generates_obligation: boolean }>(
-      "select source_type, empresa_id, movement_date, status, bank_account_id, type, category_type, destination_account_id, amount, interest, person_id, proprietary_id, harvest_id, is_deductible, generates_obligation from erp.bank_movements where id=$1 and organization_id=$2 and deleted_at is null for update", [id, ctx.orgId]); if (!cur.rows[0]) throw notFound("Movimento"); await exigirEmpresaVisivel(ctx, cur.rows[0].empresa_id, "Movimento");
+    const cur = await ctx.tx.query<{ source_type: string | null; empresa_id: string | null; movement_date: string; status: string; bank_account_id: string; type: string; category_type: string; destination_account_id: string | null; amount: string; interest: string; person_id: string | null; proprietary_id: string | null; harvest_id: string | null; is_deductible: boolean; generates_obligation: boolean; imovel_rural_id: string | null; tipo_operacao_id: string | null }>(
+      "select source_type, empresa_id, movement_date, status, bank_account_id, type, category_type, destination_account_id, amount, interest, person_id, proprietary_id, harvest_id, is_deductible, generates_obligation, imovel_rural_id::text as imovel_rural_id, tipo_operacao_id::text as tipo_operacao_id from erp.bank_movements where id=$1 and organization_id=$2 and deleted_at is null for update", [id, ctx.orgId]); if (!cur.rows[0]) throw notFound("Movimento"); await exigirEmpresaVisivel(ctx, cur.rows[0].empresa_id, "Movimento");
     const c = cur.rows[0];
     if (c.status === "cancelled") throw err("ALREADY_CANCELLED", "Movimento cancelado");
     if (c.source_type && c.source_type !== "manual") throw err("CONFLICT", "Movimento gerado por outro documento: altere pela origem");
-    const mesmoId = (a: unknown, b: string | null) => (a === null || a === undefined ? null : String(a).toLowerCase()) === (b === null ? null : b.toLowerCase());
     const mudou = [
       veio("movement_date") && d.movement_date !== c.movement_date,
       veio("amount") && !D(d.amount!).eq(c.amount),
@@ -654,7 +772,10 @@ export default async function financialRoutes(app: FastifyInstance) {
       veio("harvest_id") && !mesmoId(d.harvest_id, c.harvest_id),
       veio("is_deductible") && d.is_deductible !== c.is_deductible,
       veio("generates_obligation") && d.generates_obligation !== c.generates_obligation,
-      veio("apportionment")
+      veio("apportionment"),
+      // F9: o imóvel rural e a TOP do movimento confirmado também não mudam (a correção é estorno + movimento novo).
+      veio("imovel_rural_id") && !mesmoId(d.imovel_rural_id, c.imovel_rural_id),
+      veio("tipo_operacao_id") && !mesmoId(d.tipo_operacao_id, c.tipo_operacao_id)
     ].some(Boolean);
     if (mudou) throw err("CONFLICT", "Movimento bancário confirmado não se altera: estorne e lance outro.");
     await assertPeriodOpen(ctx.tx, ctx.orgId, c.empresa_id, c.movement_date);
@@ -818,7 +939,7 @@ export default async function financialRoutes(app: FastifyInstance) {
     // PLANEJAMENTO não basta: planejamento da organização (empresa_id nulo) tornava o predicado `true` e somava
     // o realizado de todas as empresas para quem enxerga uma só. O escopo do módulo entra por cima.
     const pp: unknown[] = [ctx.orgId, p.rows[0].year - 1, p.rows[0].empresa_id];
-    const prev = await ctx.tx.query<{ financial_category_id: string; total: string }>("select a.financial_category_id, sum(a.amount) total from erp.title_apportionments a join erp.financial_titles t on t.id=a.title_id where t.organization_id=$1 and t.status<>'cancelled' and extract(year from t.due_date)=$2 and ($3::uuid is null or t.empresa_id=$3)" + empresaScopeSql(ctx, "t.empresa_id", pp) + " group by 1", pp);
+    const prev = await ctx.tx.query<{ financial_category_id: string; total: string }>("select a.financial_category_id, sum(a.amount) total from erp.title_apportionments a join erp.financial_titles t on t.id=a.title_id where t.organization_id=$1 and t.status not in ('cancelled','previsto') and extract(year from t.due_date)=$2 and ($3::uuid is null or t.empresa_id=$3)" + empresaScopeSql(ctx, "t.empresa_id", pp) + " group by 1", pp);
     const prevMap = new Map(prev.rows.map((r) => [r.financial_category_id, r.total]));
     return { year: p.rows[0].year, categories: cats.rows.map((c) => ({ ...(c as Record<string, unknown>), previous_year: prevMap.get((c as { id: string }).id) ?? "0.00", months: Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, vals.rows.find((v) => v.financial_category_id === (c as { id: string }).id && v.month === i + 1)?.amount ?? "0.00"])) })) };
   }));

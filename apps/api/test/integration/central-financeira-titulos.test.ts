@@ -45,10 +45,10 @@ const listar = (query: string, headers: Hdr = h.headers()) => h.app.inject({ met
 const lista = async (query: string, headers?: Hdr) => { const r = await listar(query, headers); expect(r.statusCode, r.body).toBe(200); return j(r) as unknown as Lista; };
 
 describe("capacidade", () => {
-  it("GET /financeiro/capacidades declara a Central na forma e versão exatas", async () => {
+  it("GET /financeiro/capacidades declara a Central na forma e versão exatas (e, desde a F9, o financeiro pela TOP)", async () => {
     const r = await h.app.inject({ method: "GET", url: "/api/financeiro/capacidades", headers: h.headers() });
     expect(r.statusCode, r.body).toBe(200);
-    expect(j(r)).toEqual({ centralFinanceira: 1 });
+    expect(j(r)).toEqual({ centralFinanceira: 1, financeiroPelaTop: 1 });
   });
 });
 
@@ -94,7 +94,8 @@ describe("cartões e totais com as datas do banco", () => {
     expect(r.cartoes.a_vencer, "o parcial que vence em 3 dias também é 'a vencer' (saldo 250)").toEqual({ quantidade: 2, valor: "550.00" });
     expect(r.cartoes.pagos_no_periodo).toMatchObject({ quantidade: 1, valor: "150.00" });
     expect(r.cartoes.pagos_no_periodo!.de! <= hoje && hoje <= r.cartoes.pagos_no_periodo!.ate!, "o período padrão é o mês corrente do banco").toBe(true);
-    expect(r.cartoes.previstos).toEqual({ quantidade: 0, valor: "0.00", disponivel: false });
+    // F9 (decisão 286): o cartão dos previstos está disponível; nenhum previsto neste recorte.
+    expect(r.cartoes.previstos).toEqual({ quantidade: 0, valor: "0.00", disponivel: true });
     expect(Object.fromEntries(r.items.map((x) => [x.numero, x.situacao]))).toEqual({ "CART-V": "vencido", "CART-H": "a_vencer", "CART-A": "a_vencer", "CART-P": "parcial" });
     // totais = soma das linhas
     expect(r.totais.payable).toEqual({ valor: money(sum(r.items.map((x) => x.liquido))), pago: money(sum(r.items.map((x) => x.pago))), saldo: money(sum(r.items.map((x) => x.saldo))) });
