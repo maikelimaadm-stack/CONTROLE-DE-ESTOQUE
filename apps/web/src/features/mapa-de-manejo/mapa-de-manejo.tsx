@@ -141,13 +141,14 @@ export function MapaDeManejo() {
     if (acao) e.acao = acao;
     redesenhar();
   }
-  function irPara(i: number) {
+  function irPara(i: number, acao?: string) {
     const e = ed.current; const r = lerPasso(e.hist, i);
     e.hist = { ...e.hist, pos: i }; e.pontos = r.pontos; e.fechado = r.fechado; e.arrasto = null; e.ima = null; e.hover = null;
+    if (acao) e.acao = acao;
     redesenhar();
   }
-  function desfazer() { const e = ed.current; if (podeDesfazer(e.hist)) irPara(e.hist.pos - 1); else { e.acao = "Nada para desfazer"; redesenhar(); } }
-  function refazer() { const e = ed.current; if (podeRefazer(e.hist)) irPara(e.hist.pos + 1); else { e.acao = "Nada para refazer"; redesenhar(); } }
+  function desfazer() { const e = ed.current; if (podeDesfazer(e.hist)) irPara(e.hist.pos - 1, "Desfeito"); else { e.acao = "Nada para desfazer"; redesenhar(); } }
+  function refazer() { const e = ed.current; if (podeRefazer(e.hist)) irPara(e.hist.pos + 1, "Refeito"); else { e.acao = "Nada para refazer"; redesenhar(); } }
   function recomecar() { irPara(0); ed.current.acao = "Recomeçado"; redesenhar(); }
   function fechar(acao: string) {
     const e = ed.current;
