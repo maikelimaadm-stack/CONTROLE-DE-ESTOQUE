@@ -64,7 +64,8 @@ test.describe("abas globais", () => {
     await openVia(page, "Estoque", "Saldo"); await openVia(page, "Financeiro", "A Pagar"); await openVia(page, "Pecuária", /Animais/);
     await expect(tabs(page)).toHaveCount(4); await expect(activeTab(page)).toHaveText("Pecuária");
     await page.getByLabel("Fechar aba Pecuária").click();
-    await expect(activeTab(page)).toHaveText("Financeiro"); await expect(page).toHaveURL(/\/financeiro\?tab=contas&sub=pagar/);
+    // OPERACOES-01 F8 (decisão 285): "A Pagar" abre a Central Financeira — a rota canônica é a aba Títulos.
+    await expect(activeTab(page)).toHaveText("Financeiro"); await expect(page).toHaveURL(/\/financeiro\?tab=titulos&sub=pagar/);
     await expect(page.getByLabel("Fechar aba Início")).toHaveCount(0);
     await activeTab(page).focus(); await page.keyboard.press("Delete"); await expect(activeTab(page)).toHaveText("Estoque"); await expect(page).toHaveURL(/\/estoque\?tab=estoque&sub=saldo/);
     await page.getByLabel("Fechar aba Estoque").click(); await expect(activeTab(page)).toHaveText("Início"); await expect(page).toHaveURL(/\/$/);
