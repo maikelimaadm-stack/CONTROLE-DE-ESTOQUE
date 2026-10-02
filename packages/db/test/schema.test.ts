@@ -89,7 +89,9 @@ describe("financeiro (triggers)", () => {
       const acc = await tx.query("select id from erp.bank_accounts where organization_id=$1 limit 1", [demo.orgId]);
       await tx.query("insert into erp.title_settlements(organization_id,title_id,settlement_date,bank_account_id,amount,net_amount) values ($1,$2,current_date,$3,40,40)", [demo.orgId, t.rows[0].id, acc.rows[0].id]);
       const s1 = await tx.query("select status, paid_amount, balance from erp.financial_titles where id=$1", [t.rows[0].id]);
-      await tx.query("insert into erp.title_settlements(organization_id,title_id,settlement_date,bank_account_id,amount,discount,net_amount) values ($1,$2,current_date,$3,50,10,50)", [demo.orgId, t.rows[0].id, acc.rows[0].id]);
+      // Semântica B (0042, decisão 285): `amount` é o valor baixado do título e JÁ inclui o desconto; o caixa é
+      // amount − discount. A 2ª baixa quita os 60 restantes (50 de caixa + 10 de desconto) — o desconto conta uma vez.
+      await tx.query("insert into erp.title_settlements(organization_id,title_id,settlement_date,bank_account_id,amount,discount,net_amount) values ($1,$2,current_date,$3,60,10,50)", [demo.orgId, t.rows[0].id, acc.rows[0].id]);
       const s2 = await tx.query("select status, paid_amount, balance from erp.financial_titles where id=$1", [t.rows[0].id]);
       return { id: t.rows[0].id, acc: acc.rows[0].id, s1: s1.rows[0], s2: s2.rows[0] };
     });

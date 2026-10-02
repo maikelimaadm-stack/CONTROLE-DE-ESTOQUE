@@ -211,7 +211,11 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     // A TOP-CONFIG-08 é a vigésima quinta: a 0041 cria `erp.aprovacoes_venda`, `erp.aprovacoes_compra` e
     // `erp.aprovacoes_estoque` (tabelas novas, vazias), a função `erp.top_exige_aprovacao` e as guardas de aprovação
     // dos três documentos — nada no recorte que a purga lê.
-    expect(noDisco.length, "41 migrations no repositório").toBe(41);
+    // A OPERACOES-01 F8 é a vigésima sexta: a 0042 acrescenta colunas anuláveis ao financeiro (contas, títulos,
+    // baixas, movimentos, naturezas), cria `erp.financeiro_naturezas_padrao` (tabela nova, vazia), dois gatilhos, a
+    // função do extrato, troca a soma de `erp.refresh_title_status` e tira DELETE do ledger — nada no recorte que a
+    // purga lê.
+    expect(noDisco.length, "42 migrations no repositório").toBe(42);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
     expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");
@@ -237,6 +241,7 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     expect(noDisco[38], "e a 39ª é a versão do documento de venda (EDITAR-01)").toBe("0039_versao_do_documento_de_venda.sql");
     expect(noDisco[39], "e a 40ª é o documento de estoque (ESTOQUE-01)").toBe("0040_documento_de_estoque.sql");
     expect(noDisco[40], "e a 41ª são as regras gerais e a aprovação da TOP (TOP-CONFIG-08)").toBe("0041_regras_gerais_e_aprovacao_da_top.sql");
+    expect(noDisco[41], "e a 42ª é a Central Financeira (OPERACOES-01 F8)").toBe("0042_central_financeira.sql");
   });
 
   it("as 16 anteriores aplicam, e a 0017 aplica sozinha em seguida", () => {

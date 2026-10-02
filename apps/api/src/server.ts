@@ -21,6 +21,8 @@ import attachmentRoutes from "./routes/attachments.js";
 import stockRoutes from "./routes/stock.js";
 import supplyRoutes from "./routes/supply.js";
 import financialRoutes from "./routes/financial.js";
+import financeiroTitulosRoutes from "./routes/financeiro-titulos.js";
+import financeiroBancosRoutes from "./routes/financeiro-bancos.js";
 import salesRoutes from "./routes/sales.js";
 import comprasRoutes from "./routes/compras.js";
 import estoqueRoutes from "./routes/estoque-documentos.js";
@@ -80,6 +82,10 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   await app.register(stockRoutes, { prefix: "/api" });
   await app.register(supplyRoutes, { prefix: "/api" });
   await app.register(financialRoutes, { prefix: "/api" });
+  // OPERACOES-01 F8 (decisão 285): a Central Financeira mora num prefixo PRÓPRIO, /api/financeiro. A API anterior
+  // responde 404 de rota a `GET /api/financeiro/capacidades` — e a web nova lê esse 404 como "tela de hoje".
+  await app.register(financeiroTitulosRoutes, { prefix: "/api" });
+  await app.register(financeiroBancosRoutes, { prefix: "/api" });
   await app.register(salesRoutes, { prefix: "/api" });
   await app.register(comprasRoutes, { prefix: "/api" });
   await app.register(estoqueRoutes, { prefix: "/api" });

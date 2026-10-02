@@ -617,25 +617,25 @@ describe("baixa cruzada: autorização composta das duas variantes", () => {
     expect(await auditoriaDe(espelhoId, "cancel") + await auditoriaDe(clone, "cancel"), "nem trilha das candidatas").toBe(0);
   });
 
-  it("M — baixa cruzada COM desconto: os lados divergem em net_amount e o cancelamento continua achando o par", async () => {
+  it("M — baixa cruzada COM desconto e juros: os lados divergem em net_amount e o cancelamento continua achando o par", async () => {
     /**
      * A OUTRA METADE DA REGRA DOS DISCRIMINADORES: o conjunto não pode conter campo que DIVERGE.
      *
-     * O espelho recebe o valor BRUTO em `net_amount`; o principal recebe o líquido (desconto, juros,
-     * multa). `note` também diverge quando o pedido não traz nota. Incluir qualquer um deles na consulta
-     * do espelho pareceria mais rigoroso e seria o contrário: toda baixa cruzada com desconto viraria
-     * "zero candidatos" e, com a cardinalidade exigida, CONFLICT — um fail-closed disparando sobre
-     * operação legítima. Este caso é o que reprova essa tentação.
+     * O espelho abate o valor COMPENSADO (`amount − desconto`, semântica B da decisão 285); o principal
+     * recebe o líquido com juros e multa. `note` também diverge quando o pedido não traz nota. Incluir
+     * qualquer um deles na consulta do espelho pareceria mais rigoroso e seria o contrário: toda baixa
+     * cruzada com juros viraria "zero candidatos" e, com a cardinalidade exigida, CONFLICT — um
+     * fail-closed disparando sobre operação legítima. Este caso é o que reprova essa tentação.
      */
     const p = await criar("payable", "CROSS-M-PAG", "400.00");
     const r = await criar("receivable", "CROSS-M-REC", "400.00");
-    const feito = await h.app.inject({ method: "POST", url: `/api/financial/payables/${p}/settle`, headers: ambos, payload: { settlement_date: "2026-09-20", settlement_kind: "cross_settlement", cross_title_id: r, amount: "100.00", discount: "20.00" } });
+    const feito = await h.app.inject({ method: "POST", url: `/api/financial/payables/${p}/settle`, headers: ambos, payload: { settlement_date: "2026-09-20", settlement_kind: "cross_settlement", cross_title_id: r, amount: "100.00", discount: "20.00", interest: "5.00" } });
     expect(feito.statusCode, feito.body).toBe(201);
     const sid = j(feito).settlement_id as string;
 
-    // Premissa do caso, nomeando QUAL lado recebeu o quê: o principal desconta, o espelho leva o bruto.
-    expect(await liquidoDe(p), "o principal recebe o líquido: 100 - 20 de desconto").toBe("80.00");
-    expect(await liquidoDe(r), "o espelho recebe o BRUTO — é essa divergência que proíbe net_amount como discriminador").toBe("100.00");
+    // Premissa do caso, nomeando QUAL lado recebeu o quê: o principal leva desconto e juros, o espelho só o compensado.
+    expect(await liquidoDe(p), "o principal recebe o líquido: 100 - 20 de desconto + 5 de juros").toBe("85.00");
+    expect(await liquidoDe(r), "o espelho abate 100 - 20 — é essa divergência que proíbe net_amount como discriminador").toBe("80.00");
 
     const res = await h.app.inject({ method: "POST", url: `/api/financial/payables/${p}/settlements/${sid}/cancel`, headers: ambos, payload: { reason: "cancelar cruzada com desconto" } });
     expect(res.statusCode, res.body).toBe(200);

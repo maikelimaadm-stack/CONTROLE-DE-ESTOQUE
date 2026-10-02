@@ -155,16 +155,18 @@ describe("financeiro: títulos, baixas, movimentos, congelamento", () => {
     expect(s1.statusCode).toBe(201); expect(j(s1).status).toBe("partially_paid"); expect(j(s1).net_amount).toBe("410.00"); settlementId = j(s1).settlement_id as string;
     const over = await h.app.inject({ method: "POST", url: `/api/financial/payables/${titleId}/settle`, headers: h.headers(), payload: { settlement_date: "2026-09-11", bank_account_id: I.bankAccount, amount: "700" } });
     expect(j(over).error!.code).toBe("PAYMENT_EXCEEDS_BALANCE");
-    const s2 = await h.app.inject({ method: "POST", url: `/api/financial/payables/${titleId}/settle`, headers: h.headers(), payload: { settlement_date: "2026-09-11", bank_account_id: I.bankAccount, amount: "550", discount: "50" } });
-    expect(j(s2).status).toBe("paid"); expect(j(s2).balance).toBe("0.00");
+    // Semântica B (OPERACOES-01 F8, decisão 285): `amount` é o valor baixado do título e JÁ INCLUI o desconto — a
+    // baixa 2 quita os 600 restantes dando 50 de desconto e movimenta 550 (antes o desconto contava duas vezes).
+    const s2 = await h.app.inject({ method: "POST", url: `/api/financial/payables/${titleId}/settle`, headers: h.headers(), payload: { settlement_date: "2026-09-11", bank_account_id: I.bankAccount, amount: "600", discount: "50" } });
+    expect(j(s2).status).toBe("paid"); expect(j(s2).balance).toBe("0.00"); expect(j(s2).net_amount).toBe("550.00");
     const banks = j(await h.app.inject({ method: "GET", url: "/api/financial/bank-accounts/balances", headers: h.headers() })) as { items: { code: string; balance: string }[] };
-    expect(banks.items.find((b) => b.code === "BB")!.balance).toBe("149090.00"); // 150000 - 410 - (550-50)
+    expect(banks.items.find((b) => b.code === "BB")!.balance).toBe("149040.00"); // 150000 - 410 - (600-50)
   });
   it("cancelar baixa reabre o título e cancela o movimento bancário", async () => {
     const c = await h.app.inject({ method: "POST", url: `/api/financial/payables/${titleId}/settlements/${settlementId}/cancel`, headers: h.headers(), payload: { reason: "lançamento errado" } });
     expect(c.statusCode).toBe(200); expect(j(c).status).toBe("partially_paid"); expect(j(c).balance).toBe("400.00");
     const banks = j(await h.app.inject({ method: "GET", url: "/api/financial/bank-accounts/balances", headers: h.headers() })) as { items: { code: string; balance: string }[] };
-    expect(banks.items.find((b) => b.code === "BB")!.balance).toBe("149500.00");
+    expect(banks.items.find((b) => b.code === "BB")!.balance).toBe("149450.00"); // 150000 - (600-50): só a baixa 2 ficou
   });
   it("baixa em lote com movimento único e baixa cruzada", async () => {
     const a = j(await h.app.inject({ method: "POST", url: "/api/financial/payables", headers: h.headers(), payload: { empresa_id: I.empresa, number: "L1", person_id: I.provider, amount: "100", emission_date: "2026-09-01", due_date: "2026-09-30", note: "lote", apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "100" }] } })).id;

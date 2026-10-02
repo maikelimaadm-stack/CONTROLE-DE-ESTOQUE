@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { buildInstallments, normalizeApportionment, type ApportionmentLine } from "@agro/domain";
-import { D, money, isISODate } from "@agro/shared";
+import { D, DomainError, money, isISODate } from "@agro/shared";
 import type { ServiceCtx } from "../lib/context.js";
 import { nextCode, assertPeriodOpen } from "../lib/service.js";
 import { validation } from "../lib/errors.js";
@@ -129,27 +129,51 @@ export interface BankMovementInput {
    * regra da classificação NOVA. Só a baixa liga isto; rateio vindo do cliente nunca.
    */
   rateioJaGravado?: boolean;
+  /**
+   * Rótulo da transferência entre contas (OPERACOES-01 F8, decisão 285): transferencia, deposito, saque, aplicacao,
+   * resgate. Só vale em `internal_transfer` (CHECK da 0042) e é gravado nas DUAS pontas. Nulo = como hoje.
+   */
+  tipoTransferencia?: "transferencia" | "deposito" | "saque" | "aplicacao" | "resgate" | null;
 }
+
+/**
+ * A CONTA DESTINO da transferência vem do corpo e é gravada numa FK de COLUNA ÚNICA (`destination_account_id`) e no
+ * movimento-par: sem esta conferência, um id de outra organização, excluído ou inativo virava a outra ponta de uma
+ * transferência (OPERACOES-01 F8, o defeito "transferência sem validar a conta destino"). Inexistente, de outra
+ * organização, excluída e inativa caem na MESMA recusa: distinguir seria um oráculo de existência sobre o vizinho.
+ */
+export const MENSAGEM_CONTA_DESTINO_INVALIDA = "Conta destino inválida";
+export const MENSAGEM_CONTAS_IGUAIS = "Conta de origem e destino iguais";
 export async function createBankMovement(ctx: ServiceCtx, i: BankMovementInput): Promise<string> {
   await assertPeriodOpen(ctx.tx, ctx.orgId, i.empresaId, i.date);
   const acc = await ctx.tx.query<{ is_active: boolean }>("select is_active from erp.bank_accounts where id=$1 and organization_id=$2 and deleted_at is null", [i.bankAccountId, ctx.orgId]);
   if (!acc.rows[0]) throw validation("Conta bancária inválida"); if (!acc.rows[0].is_active) throw validation("Conta bancária inativa");
+  if (i.destinationAccountId) {
+    if (i.destinationAccountId.toLowerCase() === i.bankAccountId.toLowerCase()) throw validation(MENSAGEM_CONTAS_IGUAIS, [{ path: ["destination_account_id"], message: MENSAGEM_CONTAS_IGUAIS }]);
+    const destino = await ctx.tx.query("select 1 from erp.bank_accounts where id=$1 and organization_id=$2 and deleted_at is null and is_active", [i.destinationAccountId, ctx.orgId]);
+    if (destino.rowCount !== 1) throw validation(MENSAGEM_CONTA_DESTINO_INVALIDA, [{ path: ["destination_account_id"], message: MENSAGEM_CONTA_DESTINO_INVALIDA }]);
+  }
+  const tipoTransferencia = i.tipoTransferencia ?? null;
+  if (tipoTransferencia && i.categoryType !== "internal_transfer") throw validation("O tipo de transferência só vale em transferência entre contas");
   const code = await nextCode(ctx.tx, ctx.orgId, "bank_movement", 5);
   const r = await ctx.tx.query<{ id: string }>(
-    "insert into erp.bank_movements(organization_id,empresa_id,code,bank_account_id,movement_date,type,category_type,destination_account_id,amount,interest,document,generates_obligation,is_deductible,note,proprietary_id,person_id,harvest_id,source_type,source_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) returning id",
-    [ctx.orgId, i.empresaId, code, i.bankAccountId, i.date, i.type, i.categoryType ?? i.type, i.destinationAccountId ?? null, money(i.amount), money(i.interest ?? 0), i.document ?? null, i.generatesObligation ?? false, i.isDeductible ?? false, i.note ?? null, i.proprietaryId ?? null, i.personId ?? null, i.harvestId ?? null, i.sourceType ?? null, i.sourceId ?? null, ctx.user.id]);
+    "insert into erp.bank_movements(organization_id,empresa_id,code,bank_account_id,movement_date,type,category_type,destination_account_id,amount,interest,document,generates_obligation,is_deductible,note,proprietary_id,person_id,harvest_id,source_type,source_id,created_by,tipo_transferencia) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) returning id",
+    [ctx.orgId, i.empresaId, code, i.bankAccountId, i.date, i.type, i.categoryType ?? i.type, i.destinationAccountId ?? null, money(i.amount), money(i.interest ?? 0), i.document ?? null, i.generatesObligation ?? false, i.isDeductible ?? false, i.note ?? null, i.proprietaryId ?? null, i.personId ?? null, i.harvestId ?? null, i.sourceType ?? null, i.sourceId ?? null, ctx.user.id, tipoTransferencia]);
   const id = r.rows[0]!.id;
   await atribuirIdGlobal(ctx, "bank_movements", id);
   if (i.apportionment?.length && !i.rateioJaGravado) await exigirRateioAnalitico(ctx, linhasConferidas(i.apportionment));
   if (i.apportionment?.length) for (const l of normalizeApportionment(money(i.amount), i.apportionment)) await ctx.tx.query("insert into erp.bank_movement_apportionments(movement_id,financial_category_id,chart_account_id,cost_center_id,harvest_id,percentage,amount) values ($1,$2,$3,$4,$5,$6,$7)", [id, l.financialCategoryId, l.chartAccountId, l.costCenterId, l.harvestId, l.percentage, l.amount]);
   // transferência interna: cria o par na conta destino
   if (i.categoryType === "internal_transfer" && i.destinationAccountId) {
-    const pair = await ctx.tx.query<{ id: string }>("insert into erp.bank_movements(organization_id,empresa_id,code,bank_account_id,movement_date,type,category_type,destination_account_id,transfer_pair_id,amount,document,note,proprietary_id,source_type,source_id,created_by) values ($1,$2,$3,$4,$5,$6,'internal_transfer',$7,$8,$9,$10,$11,$12,'bank_movement',$8,$13) returning id",
-      [ctx.orgId, i.empresaId, await nextCode(ctx.tx, ctx.orgId, "bank_movement", 5), i.destinationAccountId, i.date, i.type === "out" ? "in" : "out", i.bankAccountId, id, money(i.amount), i.document ?? null, i.note ?? null, i.proprietaryId ?? null, ctx.user.id]);
+    const pair = await ctx.tx.query<{ id: string }>("insert into erp.bank_movements(organization_id,empresa_id,code,bank_account_id,movement_date,type,category_type,destination_account_id,transfer_pair_id,amount,document,note,proprietary_id,source_type,source_id,created_by,tipo_transferencia) values ($1,$2,$3,$4,$5,$6,'internal_transfer',$7,$8,$9,$10,$11,$12,'bank_movement',$8,$13,$14) returning id",
+      [ctx.orgId, i.empresaId, await nextCode(ctx.tx, ctx.orgId, "bank_movement", 5), i.destinationAccountId, i.date, i.type === "out" ? "in" : "out", i.bankAccountId, id, money(i.amount), i.document ?? null, i.note ?? null, i.proprietaryId ?? null, ctx.user.id, tipoTransferencia]);
     // O PAR da transferência interna é outro movimento bancário com identidade própria: ele aparece no
     // extrato da conta de destino e tem tela própria. Efeito colateral também é registro, e recebe número.
     await atribuirIdGlobal(ctx, "bank_movements", pair.rows[0]!.id);
-    await ctx.tx.query("update erp.bank_movements set transfer_pair_id=$2 where id=$1", [id, pair.rows[0]!.id]);
+    // ROW COUNT SOB RLS: o movimento de origem acabou de nascer nesta transação; zero linha aqui seria um par
+    // sem volta (a origem sem `transfer_pair_id`) gravado como sucesso.
+    const ligado = await ctx.tx.query("update erp.bank_movements set transfer_pair_id=$2 where id=$1 and organization_id=$3", [id, pair.rows[0]!.id, ctx.orgId]);
+    if (ligado.rowCount !== 1) throw new DomainError("NOT_FOUND", "Movimento não encontrado");
   }
   return id;
 }

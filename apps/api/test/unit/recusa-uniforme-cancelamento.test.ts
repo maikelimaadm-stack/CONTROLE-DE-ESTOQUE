@@ -26,6 +26,12 @@ import path from "node:path";
  * valendo a pena: ela custa uma palavra e remove a armadilha antes que ela tenha consequência.
  */
 const ROTA = path.resolve(__dirname, "../../src/routes/financial.ts");
+/**
+ * Desde a OPERACOES-01 F8 (decisão 285) o corpo do estorno mora em `lib/financeiro-estorno.ts`
+ * (`estornarBaixa`), para valer igual na rota de hoje, no estorno em lote e no estorno do lote inteiro.
+ * O gate lê as DUAS pontas: o handler da rota (que tem de continuar delegando) e o corpo da função.
+ */
+const ESTORNO = path.resolve(__dirname, "../../src/lib/financeiro-estorno.ts");
 
 /** Recorta o corpo da rota de cancelamento, do registro da rota até o fechamento do handler. */
 function corpoDoCancelamento(fonte: string): string {
@@ -36,9 +42,21 @@ function corpoDoCancelamento(fonte: string): string {
   return fonte.slice(inicio, fim);
 }
 
+/** Recorta o corpo de `estornarBaixa`, da assinatura até o retorno. */
+function corpoDoEstorno(fonte: string): string {
+  const inicio = fonte.indexOf("export async function estornarBaixa(");
+  expect(inicio, "estornarBaixa sumiu da lib — não aprovo por ausência").toBeGreaterThan(-1);
+  const fim = fonte.indexOf("return { movimentosCancelados", inicio);
+  expect(fim, "não achei o retorno de estornarBaixa — recorte inválido").toBeGreaterThan(inicio);
+  return fonte.slice(inicio, fim);
+}
+
 describe("recusa uniforme no cancelamento de baixa", () => {
   it("todas as recusas da rota usam o MESMO rótulo, então produzem a mesma mensagem", () => {
-    const corpo = corpoDoCancelamento(fs.readFileSync(ROTA, "utf8"));
+    const rota = corpoDoCancelamento(fs.readFileSync(ROTA, "utf8"));
+    // A rota delega: sem a chamada, as recusas abaixo não seriam as da rota.
+    expect(rota, "a rota de cancelamento deixou de delegar a estornarBaixa — o recorte da lib não prova nada").toContain("estornarBaixa(ctx,");
+    const corpo = rota + corpoDoEstorno(fs.readFileSync(ESTORNO, "utf8"));
 
     const deNotFound = [...corpo.matchAll(/notFound\("([^"]+)"\)/g)].map((m) => m[1]!);
     const deEscopo = [...corpo.matchAll(/exigirEmpresaVisivel\([^)]*?,\s*"([^"]+)"/g)].map((m) => m[1]!);

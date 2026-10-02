@@ -27,3 +27,4 @@ export * from "./condicao-pagamento.js";
 export * from "./layout-documento.js";
 export * from "./documento.js";
 export * from "./resources/index.js";
+export * from "./financeiro-central.js";
