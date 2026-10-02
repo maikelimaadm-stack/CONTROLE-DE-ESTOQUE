@@ -20,7 +20,7 @@ export const COR_DESENHO = {
   cruz: "#f5a01b"
 } as const;
 
-export interface RotuloArea { id: string; px: Px; nome: string; ha: number }
+export interface RotuloArea { id: string; px: Px; nome: string; ha: number; opacidade?: number }
 export interface Lado { px: Px; metros: number }
 
 interface Props {
@@ -78,20 +78,21 @@ export function CamadaDesenho(p: Props) {
       {!p.ocultarRotulos && p.rotulosAreas.map((r) => (
         <div
           key={r.id}
-          className="absolute -translate-x-1/2 -translate-y-1/2 text-center"
+          className="absolute -translate-x-1/2 -translate-y-1/2 text-center transition-opacity duration-150"
           style={{
             left: r.px.x,
             top: r.px.y,
             zIndex: 100,
+            opacity: r.opacidade ?? 0.95,
             fontFamily: "Inter, Arial, sans-serif",
             lineHeight: 1.25,
-            textShadow: "0 1px 3px rgba(2,6,23,0.95), 0 0 8px rgba(2,6,23,0.85)"
+            textShadow: "0 1px 2px rgba(2,6,23,0.9), 0 0 6px rgba(2,6,23,0.75)"
           }}
           data-testid="mapa-rotulo-area"
         >
-          <div className="whitespace-nowrap font-bold text-white" style={{ fontSize: 11.5, letterSpacing: 0.3 }}>{r.nome}</div>
+          <div className="whitespace-nowrap font-bold text-white" style={{ fontSize: 11, letterSpacing: 0.2 }}>{r.nome}</div>
           {r.ha > 0 && (
-            <div className="mt-px whitespace-nowrap font-semibold tabular-nums" style={{ fontSize: 10, color: "#f1f5f9" }}>
+            <div className="mt-px whitespace-nowrap font-semibold tabular-nums" style={{ fontSize: 9.5, color: "#e2e8f0" }}>
               ha {num(r.ha, 2)}
             </div>
           )}

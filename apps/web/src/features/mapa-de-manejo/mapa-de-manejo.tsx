@@ -20,6 +20,7 @@ import { CamadaDesenho, type Lado, type RotuloArea } from "./camada-desenho";
 import { BarraIma } from "./barra-ima";
 import { COR_PADRAO_AREA, PALETA_AREAS, corBordaNoMapa, corExibidaNoMapa } from "./cores";
 import { parseImportacaoMapa, rotuloFormato, type AreaImportada } from "./importacao";
+import { suavizarRotulos } from "./rotulos";
 
 /**
  * MAPA-01 (decisão 289) — Mapa de Manejo: cadastro de áreas NEUTRO (lavoura e pecuária). Só nome, tamanho e
@@ -40,8 +41,9 @@ interface AreaApi {
 
 const COR_PADRAO = COR_PADRAO_AREA;
 const hectares = (v: AreaApi["tamanho_ha"]) => (v === null || v === undefined || v === "" ? 0 : Number(v));
-/** Hover do polígono gravado (feature-state). */
-const HOVER_BORDA = "#e5ede9";
+/** Hover/seleção: laranja nítido por cima dos vizinhos (evita traço claro “por baixo”). */
+const HOVER_BORDA = "#f5a01b";
+const SELECAO_BORDA = "#0d9488";
 
 type Rascunho = { geometria: Polygon; tamanho_ha: number; /** Se preenchido, o salvar faz PUT nessa área (edição de contorno). */ editandoId?: string };
 
@@ -111,6 +113,8 @@ export function MapaDeManejo() {
   const [erroLocalizacao, setErroLocalizacao] = React.useState<string | null>(null);
   const [cfg, setCfg] = React.useState<ConfigIma>(IMA_PADRAO);
   const [mostrarMetragem, setMostrarMetragem] = React.useState(false);
+  /** Área sob o mouse (rótulo em destaque + contorno por cima). */
+  const [hoverAreaId, setHoverAreaId] = React.useState<string | null>(null);
   /** Mãozinha: só com ela ligada o arrasto move a área fechada inteira. */
   const [moverArea, setMoverArea] = React.useState(false);
   const moverAreaRef = React.useRef(false);
@@ -145,6 +149,21 @@ export function MapaDeManejo() {
     (window as unknown as { __mapaAreasE2E?: AreaApi[] }).__mapaAreasE2E = areas;
   }, [areas]);
   React.useEffect(() => { formAbertoRef.current = rascunho !== null; }, [rascunho]);
+
+  // Contorno de seleção por cima dos vizinhos (feature-state na camada de destaque).
+  const selecaoAnteriorRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    const m = mapRef.current;
+    if (!m || !mapaPronto) return;
+    const ant = selecaoAnteriorRef.current;
+    if (ant && ant !== selecionada) {
+      try { m.setFeatureState({ source: "areas", id: ant }, { selecionada: false }); } catch { /* */ }
+    }
+    if (selecionada) {
+      try { m.setFeatureState({ source: "areas", id: selecionada }, { selecionada: true }); } catch { /* */ }
+    }
+    selecaoAnteriorRef.current = selecionada;
+  }, [selecionada, mapaPronto, areas]);
 
   // ---------- projeção ----------
   const proj = (ll: LngLat): Px => { const m = mapRef.current; if (!m) return { x: 0, y: 0 }; const p = m.project(ll); return { x: p.x, y: p.y }; };
@@ -360,20 +379,55 @@ export function MapaDeManejo() {
       m.on("load", () => {
         if (cancelado) return;
         m.addSource("areas", { type: "geojson", data: { type: "FeatureCollection", features: [] }, promoteId: "id" });
-        // Densidade um pouco mais forte: fill ~70%/78%, traço mais marcado entre áreas vizinhas.
+        // Fill suave; contorno base escuro; destaque (hover/seleção) numa camada POR CIMA para não ficar sob vizinhos.
         m.addLayer({
           id: "areas-fill", type: "fill", source: "areas",
           paint: {
             "fill-color": ["coalesce", ["get", "cor_exibida"], COR_PADRAO],
-            "fill-opacity": ["case", ["boolean", ["feature-state", "hover"], false], 0.78, 0.7]
+            "fill-opacity": [
+              "case",
+              ["boolean", ["feature-state", "hover"], false], 0.62,
+              ["boolean", ["feature-state", "selecionada"], false], 0.58,
+              0.48
+            ]
           }
         });
         m.addLayer({
           id: "areas-contorno", type: "line", source: "areas",
+          layout: { "line-join": "round", "line-cap": "round" },
           paint: {
-            "line-color": ["case", ["boolean", ["feature-state", "hover"], false], HOVER_BORDA, ["coalesce", ["get", "cor_borda"], COR_PADRAO]],
-            "line-opacity": ["case", ["boolean", ["feature-state", "hover"], false], 1, 0.92],
-            "line-width": ["case", ["boolean", ["feature-state", "hover"], false], 2.8, 2.2]
+            "line-color": ["coalesce", ["get", "cor_borda"], "#2a4248"],
+            "line-opacity": 0.88,
+            "line-width": [
+              "interpolate", ["linear"], ["zoom"],
+              10, 0.9,
+              13, 1.35,
+              16, 1.9
+            ]
+          }
+        });
+        m.addLayer({
+          id: "areas-contorno-destaque", type: "line", source: "areas",
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: {
+            "line-color": [
+              "case",
+              ["boolean", ["feature-state", "hover"], false], HOVER_BORDA,
+              SELECAO_BORDA
+            ],
+            // Camada sempre no topo: só pinta hover/selecionada (vizinhos não cobrem o traço).
+            "line-opacity": [
+              "case",
+              ["boolean", ["feature-state", "hover"], false], 1,
+              ["boolean", ["feature-state", "selecionada"], false], 1,
+              0
+            ],
+            "line-width": [
+              "interpolate", ["linear"], ["zoom"],
+              10, 2.2,
+              13, 2.8,
+              16, 3.4
+            ]
           }
         });
         m.on("click", "areas-fill", (e) => {
@@ -398,11 +452,13 @@ export function MapaDeManejo() {
           if (hoverId) try { m.setFeatureState({ source: "areas", id: hoverId }, { hover: false }); } catch { /* */ }
           hoverId = id;
           if (hoverId) try { m.setFeatureState({ source: "areas", id: hoverId }, { hover: true }); } catch { /* */ }
+          setHoverAreaId(hoverId);
         });
         m.on("mouseleave", "areas-fill", () => {
           if (!desenhandoRef.current) m.getCanvas().style.cursor = "";
           if (hoverId) try { m.setFeatureState({ source: "areas", id: hoverId }, { hover: false }); } catch { /* */ }
           hoverId = null;
+          setHoverAreaId(null);
         });
 
         // editor de desenho
@@ -764,15 +820,34 @@ export function MapaDeManejo() {
 
   // ---------- derivados para a tela ----------
   const mapa = mapaPronto ? mapRef.current : null;
-  const rotulosAreas: RotuloArea[] = mapa
-    ? areas.flatMap((a) => {
+  // Recalcula a cada redesenhar() do mapa (pan/zoom) — sem memo, senão o rótulo “gruda” na tela.
+  const rotulosAreas: RotuloArea[] = (() => {
+    if (!mapa || desenhando) return [];
+    const zoom = mapa.getZoom();
+    const brutos = areas.flatMap((a) => {
       const anel = anelAberto(a.geometria);
       if (anel.length < 3) return [];
+      const pts = anel.map(proj);
       const c = centroideLngLat(anel);
-      const px = c ? proj(c) : centroPx(anel.map(proj), anel, proj);
-      return [{ id: a.id, px, nome: a.nome, ha: hectares(a.tamanho_ha) }];
-    })
-    : [];
+      const px = c ? proj(c) : centroPx(pts, anel, proj);
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const p of pts) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+      }
+      return [{
+        id: a.id,
+        px,
+        nome: a.nome,
+        ha: hectares(a.tamanho_ha),
+        larguraPx: maxX - minX,
+        alturaPx: maxY - minY
+      }];
+    });
+    return suavizarRotulos(brutos, { destaqueId: hoverAreaId ?? selecionada, zoom });
+  })();
   const e = ed.current;
   const ptsTela = mapa && desenhando ? ptsPx() : [];
   const coords = coordsDe(e.pontos);

@@ -41,10 +41,18 @@ export function corExibidaNoMapa(cor: string | null | undefined): string {
   return rgbParaHex(base[0] * 0.85 + t[0] * 0.15, base[1] * 0.85 + t[1] * 0.15, base[2] * 0.85 + t[2] * 0.15);
 }
 
-/** Borda: cada canal × 0,85 + 8 × 0,15 sobre a cor exibida — divisão mais nítida entre áreas. */
+/**
+ * Borda no mapa: precisa contrastar com o fill (importação branca virava traço branco confuso).
+ * Cores claras → contorno escuro esverdeado; cores saturadas → versão mais escura da própria cor.
+ */
 export function corBordaNoMapa(corExibida: string): string {
   const rgb = hexParaRgb(corExibida) ?? hexParaRgb(CINZA_SEM_COR)!;
-  return rgbParaHex(rgb[0] * 0.85 + 8 * 0.15, rgb[1] * 0.85 + 8 * 0.15, rgb[2] * 0.85 + 8 * 0.15);
+  const lum = rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114;
+  if (lum > 150) {
+    // Branco / cinza claro / amarelo claro: linha escura que separa pastos vizinhos.
+    return rgbParaHex(22 + rgb[0] * 0.06, 48 + rgb[1] * 0.08, 52 + rgb[2] * 0.1);
+  }
+  return rgbParaHex(rgb[0] * 0.52, rgb[1] * 0.52, rgb[2] * 0.52);
 }
 
 /** A primeira cor da paleta que nenhuma área usa; com todas em uso, o padrão. */
