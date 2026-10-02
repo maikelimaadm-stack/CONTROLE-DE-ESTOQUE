@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import pg from "pg";
 import {
   ESPECIES_DOCUMENTO_ESTOQUE, RECURSO_DA_ESPECIE_ESTOQUE, MENSAGEM_APROVACAO_PENDENTE, MENSAGEM_APROVACAO_NAO_EXIGIDA, configuracaoNeutraTop,
-  MENSAGEM_APROVACAO_SO_DOCUMENTO_ABERTO, mensagemAprovacaoReprovada, type ConfiguracaoComRestricoesTop, type EspecieEstoque,
+  MENSAGEM_APROVACAO_SO_DOCUMENTO_ABERTO, mensagemAprovacaoReprovada, type ConfiguracaoComRestricoesTop, type EspecieEstoque, type EspecieEstoqueDaCentral,
 } from "@agro/domain";
 import { fromPgError } from "../../src/lib/errors.js";
 import {
@@ -150,7 +150,7 @@ async function confirmarDireto(id: string): Promise<{ falha: unknown; linhas: nu
  * Produto com 10 no ALM e item de 3 (no ajuste, CONTADO 3): o que cada espécie move, onde, e o saldo depois
  * (ALM, SILO). Os movimentos na ordem de `movimentosDe` (direção, depois armazém).
  */
-const ESPERADO: Readonly<Record<EspecieEstoque, { movimentos: [string, number, string, "ALM" | "SILO"][]; saldos: [string, string] }>> = {
+const ESPERADO: Readonly<Record<EspecieEstoqueDaCentral, { movimentos: [string, number, string, "ALM" | "SILO"][]; saldos: [string, string] }>> = {
   entrada: { movimentos: [["entry", 1, "3.0000", "ALM"]], saldos: ["13.0000", "0.0000"] },
   saida: { movimentos: [["writeoff", -1, "3.0000", "ALM"]], saldos: ["7.0000", "0.0000"] },
   transferencia: { movimentos: [["transfer_out", -1, "3.0000", "ALM"], ["transfer_in", 1, "3.0000", "SILO"]], saldos: ["7.0000", "3.0000"] },

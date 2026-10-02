@@ -159,17 +159,16 @@ describe("ES-1 — contrato de entrada ESTRITO por espécie, números como texto
       expect(j(r).error!.code).toBe("VALIDATION_ERROR");
       expect(JSON.stringify(j(r).error!.details)).toContain("Campo não reconhecido");
     }
-    // entrada: custo obrigatório; quantidade contada proibida
-    recusadoNoCampo(await lancar("entrada", [{ produto_id: p.id, quantidade: "1" }]), "itens.0.custo_unitario");
+    // entrada: quantidade contada proibida (o custo passou a ser OPCIONAL — OPERACOES-01 F5a, abaixo)
     recusadoNoCampo(await lancar("entrada", [item(p.id, "entrada", { quantidade_contada: "1" })]), "itens.0.quantidade_contada");
     // saída e transferência: custo e contada proibidos; quantidade obrigatória
     recusadoNoCampo(await lancar("saida", [item(p.id, "saida", { custo_unitario: "1" })]), "itens.0.custo_unitario");
+    recusadoNoCampo(await lancar("transferencia", [item(p.id, "transferencia", { custo_unitario: "1" })]), "itens.0.custo_unitario");
     recusadoNoCampo(await lancar("transferencia", [item(p.id, "transferencia", { quantidade_contada: "1" })]), "itens.0.quantidade_contada");
     recusadoNoCampo(await lancar("saida", [{ produto_id: p.id }]), "itens.0.quantidade");
-    // ajuste: contada obrigatória; quantidade e custo proibidos
+    // ajuste: contada obrigatória; quantidade proibida (o custo passou a ser OPCIONAL — OPERACOES-01 F5a, abaixo)
     recusadoNoCampo(await lancar("ajuste", [{ produto_id: p.id }]), "itens.0.quantidade_contada");
     recusadoNoCampo(await lancar("ajuste", [item(p.id, "ajuste", { quantidade: "1" })]), "itens.0.quantidade");
-    recusadoNoCampo(await lancar("ajuste", [item(p.id, "ajuste", { custo_unitario: "1" })]), "itens.0.custo_unitario");
     // destino: só na transferência, obrigatório nela
     recusadoNoCampo(await lancar("entrada", [item(p.id, "entrada")], { armazem_destino_id: c.I.warehouse2 }), "armazem_destino_id");
     recusadoNoCampo(await lancar("transferencia", [item(p.id, "transferencia")], { armazem_destino_id: null }), "armazem_destino_id");
@@ -178,6 +177,15 @@ describe("ES-1 — contrato de entrada ESTRITO por espécie, números como texto
     expect(await contarDocumentos(), "nenhuma recusa gravou").toBe(antes);
     // PREMISSA
     await lancado("entrada", [item(p.id, "entrada")]);
+    // OPERACOES-01 F5a (decisão 282): a ENTRADA SEM CUSTO e o AJUSTE COM CUSTO passaram a ser ACEITOS. Lançados, o
+    // item guarda o que veio: a entrada sem custo fica sem custo até a confirmação (que grava o custo médio do
+    // produto), e o ajuste guarda o custo informado, EXATO.
+    const semCusto = await lancado("entrada", [{ produto_id: p.id, quantidade: "1" }]);
+    expect((await itens(semCusto)).map((x) => [x.quantidade, x.custo_unitario])).toEqual([["1.0000", null]]);
+    const ajusteComCusto = await lancado("ajuste", [item(p.id, "ajuste", { custo_unitario: "1.25" })]);
+    expect((await itens(ajusteComCusto)).map((x) => [x.quantidade_contada, x.custo_unitario])).toEqual([["3.0000", "1.250000"]]);
+    expect(await movimentos(semCusto), "lançar continua sem mexer no saldo").toEqual([]);
+    expect(await movimentos(ajusteComCusto)).toEqual([]);
   });
 
   it("ES-1h números: JSON number, vírgula, sinal, expoente, casas e inteiros além da coluna, zero onde é positivo → 422 no campo; o válido grava EXATO", async () => {
