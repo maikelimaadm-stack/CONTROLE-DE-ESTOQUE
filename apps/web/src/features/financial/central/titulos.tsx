@@ -206,7 +206,7 @@ export function CentralTitulos({ direcao }: { direcao: DirecaoDaCentral }) {
       })}
     </div>
 
-    {/* A faixa de filtros não encolhe: na coluna flex (min-h-0) com a lista cheia, a `.mg-rail` (min-height fixo) deixava
+    {/* A faixa de filtros não encolhe: na coluna flex (min-h-0) com a lista cheia, a faixa de filtros (com altura mínima fixa) deixava
 
         a última linha dos filtros vazar por baixo da barra de ações em lote — o "Filtrar" ficava inalcançável. */}
 
