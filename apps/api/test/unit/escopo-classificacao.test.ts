@@ -38,6 +38,11 @@ const TABELAS_DO_RECURSO: Map<string, Set<string>> = (() => {
     for (const p of permissoes) add(p.slice(0, p.lastIndexOf(".")), e.tabela);
   }
   for (const def of RESOURCES) add(def.permission, `erp.${def.table}`);
+  // TOP-CONFIG-08 (decisão 277): a decisão da aprovação mora ao lado do documento (uma tabela por documento) e é
+  // governada pelo recurso dele — a permissão `<recurso>.approve`. Cobertura nova, não exceção na allowlist.
+  add("sales", "erp.aprovacoes_venda");
+  add("compras", "erp.aprovacoes_compra");
+  for (const r of ["entradas_estoque", "saidas_estoque", "transferencias_estoque", "ajustes_estoque"]) add(r, "erp.aprovacoes_estoque");
   return m;
 })();
 

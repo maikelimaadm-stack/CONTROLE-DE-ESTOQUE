@@ -7,10 +7,13 @@ import { COPY } from "@/lib/copy";
 import { Badge, Button, Dialog, EmptyState, ErrorState, LoadingState } from "@/components/ui";
 import {
   ENUM_LABELS, SECOES_CONFIGURACAO_TOP_V2, VERSAO_SCHEMA_CONFIGURACAO_TOP, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
-  execucaoDeclaradaTop, restricoesExecutamTop,
+  declaraRegrasGerais, execucaoDeclaradaTop, regrasGeraisExecutamTop, restricoesExecutamTop,
   type ConfiguracaoTipoOperacao, type PoliticaClienteEmAtraso, type SecaoConfiguracaoTopV2
 } from "@agro/domain";
-import { ROTULOS_SECAO_TOP, ROTULOS_TOP, lerConfiguracaoDoServidor, type ConfiguracaoDoServidor } from "./top-contrato";
+import {
+  ROTULOS_SECAO_TOP, ROTULOS_TOP, lerConfiguracaoDoServidor, podeConfigurarRegrasGerais, useCapacidadesTop,
+  type ConfiguracaoDoServidor
+} from "./top-contrato";
 import { ROTULOS_FINALIDADE_DOCUMENTO, ROTULOS_MODELO_DOCUMENTO } from "./top-fiscal-formato3";
 
 /**
@@ -128,6 +131,15 @@ export function HistoricoDeVersoesTop({ id, codigo, comPonte, onFechar }: {
     queryFn: () => api<unknown>(`/api/admin/tipos-operacao/${id}/versoes`),
     retry: false
   });
+  /**
+   * TOP-CONFIG-08 — O SERVIDOR DECLARA AS REGRAS GERAIS? A MESMA pergunta do editor (`podeConfigurarRegrasGerais`, o
+   * bloco `regrasGerais` legível no formato 4), nunca uma régua própria do histórico. Sem o bloco — API anterior à
+   * fatia, capacidades ainda carregando, ilegíveis ou negadas —, o histórico é exatamente o de hoje: nenhuma das duas
+   * linhas "Regras gerais e aprovação", em versão nenhuma. Uma API que não executa regra geral nenhuma não tem o que
+   * distinguir entre "executadas" e "registradas"; e a frase, em cada versão do formato 1 a 3 que traz as chaves,
+   * seria texto novo sobre um servidor que não mudou.
+   */
+  const comRegrasGerais = podeConfigurarRegrasGerais(useCapacidadesTop());
 
   const versoes = React.useMemo(() => {
     const d = q.data;
@@ -151,13 +163,14 @@ export function HistoricoDeVersoesTop({ id, codigo, comPonte, onFechar }: {
       : versoes === null ? <ErrorState message="Este servidor respondeu o histórico em um formato que esta tela não reconhece. Nada é exibido, para não mostrar um registro parcial como se fosse completo." />
       : versoes.length === 0 ? <EmptyState title="Nenhuma versão registrada" />
       : <ul className="space-y-2" data-testid="top-versoes-lista">
-          {versoes.map((v) => <LinhaDeVersao key={v.versao} versao={v} comPonte={comPonte} />)}
+          {versoes.map((v) => <LinhaDeVersao key={v.versao} versao={v} comPonte={comPonte} comRegrasGerais={comRegrasGerais} />)}
         </ul>}
   </Dialog>;
 }
 
-function LinhaDeVersao({ versao, comPonte }: { versao: VersaoTop; comPonte: boolean }) {
+function LinhaDeVersao({ versao, comPonte, comRegrasGerais }: { versao: VersaoTop; comPonte: boolean; comRegrasGerais: boolean }) {
   const [aberto, setAberto] = React.useState(false);
+  const regras = comRegrasGerais ? regrasGeraisDaVersao(versao) : null;
   return <li data-testid="top-versao-linha" className="rounded border">
     <div className="flex flex-wrap items-center gap-2 px-3 py-2">
       <Badge tone="blue">Versão {versao.versao}</Badge>
@@ -185,6 +198,12 @@ function LinhaDeVersao({ versao, comPonte }: { versao: VersaoTop; comPonte: bool
       {versao.reservaEstoque === true && <p className="mt-0.5" data-testid={`top-historico-reserva-${versao.versao}`}>
         Reserva de estoque: ativa
       </p>}
+      {regras === "executadas" && <p className="mt-0.5" data-testid="top-historico-regras-executadas">
+        Regras gerais e aprovação: executadas
+      </p>}
+      {regras === "registradas" && <p className="mt-0.5" data-testid="top-historico-regras-registradas">
+        Regras gerais e aprovação: registradas, sem execução
+      </p>}
     </div>
     {aberto && <div className="border-t bg-slate-50 px-3 py-2">
       <DetalheDaVersao versao={versao} comPonte={comPonte} />
@@ -193,16 +212,36 @@ function LinhaDeVersao({ versao, comPonte }: { versao: VersaoTop; comPonte: bool
 }
 
 /**
- * A linha das condições permitidas aparece quando o servidor as informou (`!== null`) E a versão é do formato 3 —
- * o único em que a restrição existe. Versões 1/2 aparecem como antes: "Todas as condições" sobre uma versão em que
- * a regra nem existia seria registro inventado. Lista NÃO vazia aparece sempre (é fato gravado, seja qual for o
- * formato que esta tela consegue ler).
+ * A linha das condições permitidas aparece quando o servidor as informou (`!== null`) E a versão é do formato 3 ou
+ * posterior — o 4 executa tudo o que o 3 executa (TOP-CONFIG-08, decisão 277), e por isso o `>=`. Versões 1/2
+ * aparecem como antes: "Todas as condições" sobre uma versão em que a regra nem existia seria registro inventado.
+ * Lista NÃO vazia aparece sempre (é fato gravado, seja qual for o formato que esta tela consegue ler).
  */
 function mostraCondicoes(versao: VersaoTop): boolean {
   const lista = versao.condicoesPermitidas;
   if (lista === null) return false;
   if (lista.length > 0) return true;
   return versao.configuracao !== null && versao.configuracao.versaoSchema >= VERSAO_SCHEMA_CONFIGURACAO_TOP_V3;
+}
+
+/**
+ * AS REGRAS GERAIS E A APROVAÇÃO DAQUELA VERSÃO EXECUTAVAM? (TOP-CONFIG-08, decisão 277)
+ *
+ * Só se pergunta com o bloco `regrasGerais` declarado pelo servidor (`comRegrasGerais`, em `HistoricoDeVersoesTop`):
+ * sem ele, nenhuma linha — o histórico de hoje. Com ele, a linha só aparece quando a versão DECLARA alguma delas fora
+ * do neutro (Manual, Proibido, Bloqueada, Sem aprovação) — "registradas" em toda versão de toda operação seria ruído,
+ * a mesma régua da reserva. E a resposta vem do PORTÃO do domínio (`regrasGeraisExecutamTop`), nunca do conteúdo
+ * das seções: uma versão do formato 3 com "Automática" gravado só declarava, e o histórico que a mostrasse como
+ * executada contaria a quem audita um documento daquela época que ele se confirmou sozinho. Configuração ausente ou
+ * ilegível não afirma nada: `null`, e a linha não aparece.
+ *
+ * A troca 3 → 4 não precisa de nada aqui: ela chega em `secoesAlteradas` como `geral`/`aprovacao`, porque o servidor
+ * deriva a lista com `secoesAlteradasTop` do domínio — o histórico não tem comparação própria.
+ */
+function regrasGeraisDaVersao(versao: VersaoTop): "executadas" | "registradas" | null {
+  const c = versao.configuracao;
+  if (c === null || !c.suportada || !declaraRegrasGerais(c.valor)) return null;
+  return regrasGeraisExecutamTop(c.valor) ? "executadas" : "registradas";
 }
 
 /**
@@ -294,8 +333,9 @@ function SecoesSomenteLeitura({ valor }: { valor: ConfiguracaoTipoOperacao }) {
   // A EXECUÇÃO DAQUELA VERSÃO, lida pela única função que a interpreta. Uma versão do formato 1 é legado
   // nos dois efeitos, seja o que for que as seções dela declarem — e a tela diz isso com todas as letras.
   const execucao = execucaoDeclaradaTop(valor);
-  // AS CHAVES DO FORMATO 3 SÓ EXISTEM NA VERSÃO GRAVADA NO FORMATO 3. Versões 1/2 aparecem como sempre
-  // apareceram: mostrar "Exigir transportadora: Não" numa versão que nem tinha a chave seria inventar registro.
+  // AS CHAVES DO FORMATO 3 SÓ EXISTEM NA VERSÃO GRAVADA NO FORMATO 3 OU 4 (o 4 tem as mesmas chaves — TOP-CONFIG-08).
+  // Versões 1/2 aparecem como sempre apareceram: mostrar "Exigir transportadora: Não" numa versão que nem tinha a
+  // chave seria inventar registro.
   const v3 = restricoesExecutamTop(valor) ? valor : null;
   const blocos: { chave: SecaoConfiguracaoTopV2; itens: [string, string][]; nota?: string }[] = [
     { chave: "geral", itens: [

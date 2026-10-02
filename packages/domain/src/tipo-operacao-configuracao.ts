@@ -26,6 +26,11 @@
  * │                                                                                                     │
  * │ Quem decide se uma combinação configurada É executável é `tipo-operacao-execucao.ts` (a matriz de  │
  * │ suporte); quem executa é o serviço dono do documento. Este arquivo continua sendo só o contrato.    │
+ * │                                                                                                     │
+ * │ CADA EFEITO NOVO GANHA O SEU PORTÃO DE FORMATO (decisão 240). O formato 3 foi o portão das          │
+ * │ restrições (decisão 263); o formato 4 é o das regras gerais e da aprovação (decisão 277). Uma       │
+ * │ versão gravada quando nada executava nunca passa a executar sozinha: quem pergunta "isto executa?" │
+ * │ pergunta a `restricoesExecutamTop` / `regrasGeraisExecutamTop`, nunca ao conteúdo das seções.      │
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ POR QUE VERSIONADA, E POR QUE IMUTÁVEL ───────────────────────────────────────────────────────────┐
@@ -65,22 +70,42 @@ export const VERSAO_SCHEMA_CONFIGURACAO_TOP_V2 = 2 as const;
 
 /**
  * O FORMATO 3 (TOP-CONFIG-05): o formato 2 mais as RESTRIÇÕES COMERCIAIS e o FISCAL declarado — chaves novas
- * em `geral`, `financeiro` e `fiscal`, nenhuma seção nova. É o ÚNICO formato cujas restrições EXECUTAM
+ * em `geral`, `financeiro` e `fiscal`, nenhuma seção nova. É o PRIMEIRO formato cujas restrições EXECUTAM
  * (exigências gerais, condição permitida, cliente em atraso): os formatos 1 e 2 são legado para sempre, e
  * ler as exigências deles como regra atribuiria a documentos antigos uma intenção que ninguém tomou
  * (decisão 263). Esta constante NÃO substitui `VERSAO_SCHEMA_CONFIGURACAO_TOP` nem a do formato 2.
  */
 export const VERSAO_SCHEMA_CONFIGURACAO_TOP_V3 = 3 as const;
 
+/**
+ * O FORMATO 4 (TOP-CONFIG-08): as MESMAS chaves do formato 3 — nenhuma chave nova, nenhuma seção nova — com
+ * `versaoSchema` 4. O que muda é o que EXECUTA: tudo o que o 3 executa vale igual no 4, e SÓ o 4 executa as
+ * regras gerais (confirmação automática, documento sem itens) e a aprovação.
+ *
+ * É O MARCADOR DE CORTE, pela mesma lógica do formato 3 (decisão 263): as versões do formato 3 foram gravadas
+ * quando "Automática" ou "Sempre aprovar" eram só declaração — produção tem uma TOP formato 3 com Confirmação
+ * Automática que ninguém espera ver confirmando sozinha. O formato 4 é o portão que a decisão 240 pede para
+ * todo efeito novo (decisão 277): só uma gravação NOVA, no editor que mostra o que passa a valer, liga a regra.
+ *
+ * O 4 NUNCA VIRA 3 NO CAMINHO: leitura, normalização e edição PRESERVAM o número. Se ele se perdesse, a API
+ * gravaria `configuracao_schema_version` 3 em silêncio e nada executaria.
+ */
+export const VERSAO_SCHEMA_CONFIGURACAO_TOP_V4 = 4 as const;
+
 /** Os formatos que este código sabe LER. Qualquer outro é recusado — nunca lido "parecido". */
-export const VERSOES_SCHEMA_CONFIGURACAO_TOP = [VERSAO_SCHEMA_CONFIGURACAO_TOP, VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3] as const;
+export const VERSOES_SCHEMA_CONFIGURACAO_TOP = [
+  VERSAO_SCHEMA_CONFIGURACAO_TOP, VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3, VERSAO_SCHEMA_CONFIGURACAO_TOP_V4,
+] as const;
 export type VersaoSchemaConfiguracaoTop = (typeof VERSOES_SCHEMA_CONFIGURACAO_TOP)[number];
 
 // ---------------------------------------------------------------------------------------------------
 // 1. OS ENUMS — fechados, em português, sem valor "outro"
 // ---------------------------------------------------------------------------------------------------
 
-/** Quem dispara a confirmação do documento. `automatica` é INTENÇÃO declarada; ninguém a executa ainda. */
+/**
+ * Quem dispara a confirmação do documento. Nos formatos 1 a 3, `automatica` é só INTENÇÃO declarada; no
+ * formato 4 ela executa (`regrasGeraisExecutamTop`, decisão 277).
+ */
 export const MODOS_CONFIRMACAO = ["manual", "automatica"] as const;
 export type ModoConfirmacao = (typeof MODOS_CONFIRMACAO)[number];
 
@@ -266,12 +291,47 @@ export interface ConfiguracaoTipoOperacaoV3 extends Omit<ConfiguracaoTipoOperaca
   fiscal: ConfiguracaoFiscalV3;
 }
 
-/** Qualquer configuração que este código sabe ler. Quem precisa distinguir pergunta às funções abaixo. */
-export type ConfiguracaoTipoOperacao = ConfiguracaoTipoOperacaoV1 | ConfiguracaoTipoOperacaoV2 | ConfiguracaoTipoOperacaoV3;
+/**
+ * O formato 4: as MESMAS chaves do formato 3, com `versaoSchema` 4. Interface que estende (e não um apelido do
+ * V3) para o número fazer parte do tipo: quem recebe um V4 não pode devolvê-lo como V3 sem o compilador ver.
+ */
+export interface ConfiguracaoTipoOperacaoV4 extends Omit<ConfiguracaoTipoOperacaoV3, "versaoSchema"> {
+  versaoSchema: typeof VERSAO_SCHEMA_CONFIGURACAO_TOP_V4;
+}
 
-/** A configuração é do formato 3 — o único cujas restrições executam (decisão 263)? */
-export const restricoesExecutamTop = (c: ConfiguracaoTipoOperacao): c is ConfiguracaoTipoOperacaoV3 =>
-  c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3;
+/** Os formatos cujas RESTRIÇÕES executam (o 3 e o 4). É o que `restricoesExecutamTop` estreita. */
+export type ConfiguracaoComRestricoesTop = ConfiguracaoTipoOperacaoV3 | ConfiguracaoTipoOperacaoV4;
+
+/** Qualquer configuração que este código sabe ler. Quem precisa distinguir pergunta às funções abaixo. */
+export type ConfiguracaoTipoOperacao = ConfiguracaoTipoOperacaoV1 | ConfiguracaoTipoOperacaoV2 | ConfiguracaoComRestricoesTop;
+
+/**
+ * As RESTRIÇÕES desta configuração executam (decisão 263)? Formato 3 e formato 4 — tudo o que o 3 executa vale
+ * igual no 4 (exigências, condições permitidas, cliente em atraso, transportadora e CFOP). 1 e 2: legado.
+ */
+export const restricoesExecutamTop = (c: ConfiguracaoTipoOperacao): c is ConfiguracaoComRestricoesTop =>
+  c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3 || c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4;
+
+/**
+ * As REGRAS GERAIS (confirmação automática, documento sem itens) e a APROVAÇÃO desta configuração executam
+ * (decisão 277)? SÓ no formato 4. O formato 3 com "Automática" gravado continua só declarando: é o corte.
+ */
+export const regrasGeraisExecutamTop = (c: ConfiguracaoTipoOperacao): c is ConfiguracaoTipoOperacaoV4 =>
+  c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4;
+
+/** Alguma das três regras de `geral` (confirmação, sem itens, alteração) está fora do neutro? */
+const declaraRegraNoGeral = (c: ConfiguracaoTipoOperacao): boolean =>
+  c.geral.confirmacao !== "manual" || c.geral.documentoSemItens !== "proibido" || c.geral.alteracaoAposConfirmacao !== "bloqueada";
+
+/** A aprovação está fora do neutro? */
+const declaraAprovacao = (c: ConfiguracaoTipoOperacao): boolean => c.aprovacao.politica !== "nenhuma";
+
+/**
+ * A configuração DECLARA alguma regra geral ou aprovação fora do neutro (Manual, Proibido, Bloqueada, Sem
+ * aprovação)? Lê as chaves, em QUALQUER formato — é a pergunta "trocar de formato muda o que executa?", e não
+ * "isto executa?" (essa é `regrasGeraisExecutamTop`).
+ */
+export const declaraRegrasGerais = (c: ConfiguracaoTipoOperacao): boolean => declaraRegraNoGeral(c) || declaraAprovacao(c);
 
 /**
  * As seções que a auditoria e o histórico comparam no formato 2. É a lista do formato 1 mais `execucao`,
@@ -359,6 +419,15 @@ export function configuracaoNeutraTopV3(): ConfiguracaoTipoOperacaoV3 {
     financeiro: { ...n.financeiro, ...NEUTRO_FINANCEIRO_V3() },
     fiscal: { ...n.fiscal, ...NEUTRO_FISCAL_V3() },
   };
+}
+
+/**
+ * O NEUTRO DO FORMATO 4 — o neutro do formato 3 com o número 4. Derivado, e não um literal: o 4 não tem chave
+ * nova, então não tem neutro próprio a declarar. As quatro regras gerais nascem no neutro (Manual, Proibido,
+ * Bloqueada, Sem aprovação) — e é por isso que 3 → 4 no neutro não é mudança.
+ */
+export function configuracaoNeutraTopV4(): ConfiguracaoTipoOperacaoV4 {
+  return { ...configuracaoNeutraTopV3(), versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V4 };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -511,15 +580,16 @@ export function versaoSchemaDaConfiguracaoTop(bruto: unknown): VersaoSchemaConfi
 }
 
 /**
- * Transforma `unknown` em configuração PROVADA (formato 1 ou 2), ou devolve as recusas.
+ * Transforma `unknown` em configuração PROVADA (formato 1 a 4), ou devolve as recusas.
  *
  * O corpo que chega do cliente — e o que volta do banco — é `unknown` até aqui. Uma asserção de tipo
  * (`as ConfiguracaoTipoOperacaoV1`) seria uma promessa do TypeScript que o runtime não cumpre: o
  * compilador já terminou o trabalho dele quando o JSON chega.
  *
- * OS DOIS FORMATOS SÃO ESTRITOS DO MESMO JEITO: chave desconhecida é recusa, formato futuro é recusa, e o
+ * TODOS OS FORMATOS SÃO ESTRITOS DO MESMO JEITO: chave desconhecida é recusa, formato futuro é recusa, e o
  * formato 2 EXIGE `execucao` — ele não é "o formato 1 com um campo opcional". Um v2 sem `execucao` seria
- * um payload cuja decisão de execução ninguém tomou, e tratá-lo como legado seria adivinhar.
+ * um payload cuja decisão de execução ninguém tomou, e tratá-lo como legado seria adivinhar. O formato 4 é
+ * lido com as MESMAS chaves e a MESMA estrictez do 3, e sai com `versaoSchema` 4 — nunca 3.
  *
  * NÃO MUTA a entrada e NÃO devolve referência a ela: o resultado é construído campo a campo, então quem
  * chamou pode continuar usando o objeto original sem descobrir que ele mudou de forma.
@@ -536,7 +606,8 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
     return { ok: false, recusas: [{ motivo: "schema_nao_suportado", caminho: "versaoSchema" }] };
   }
 
-  const v3 = versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3;
+  // Formato 3 e formato 4: as MESMAS chaves, lidas do mesmo jeito. Só o número de saída difere.
+  const comRestricoes = versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3 || versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4;
   for (const k of chavesDesconhecidas(bruto, versao === VERSAO_SCHEMA_CONFIGURACAO_TOP ? CHAVES_RAIZ : CHAVES_RAIZ_V2)) {
     recusas.push({ motivo: "campo_desconhecido", caminho: k });
   }
@@ -547,10 +618,10 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
   const fi = secao(bruto, "fiscal", recusas);
   const a = secao(bruto, "aprovacao", recusas);
 
-  conferirChaves(g, "geral", v3 ? CHAVES_GERAL_V3 : CHAVES_GERAL, recusas);
+  conferirChaves(g, "geral", comRestricoes ? CHAVES_GERAL_V3 : CHAVES_GERAL, recusas);
   conferirChaves(e, "estoque", CHAVES_ESTOQUE, recusas);
-  conferirChaves(f, "financeiro", v3 ? CHAVES_FINANCEIRO_V3 : CHAVES_FINANCEIRO, recusas);
-  conferirChaves(fi, "fiscal", v3 ? CHAVES_FISCAL_V3 : CHAVES_FISCAL, recusas);
+  conferirChaves(f, "financeiro", comRestricoes ? CHAVES_FINANCEIRO_V3 : CHAVES_FINANCEIRO, recusas);
+  conferirChaves(fi, "fiscal", comRestricoes ? CHAVES_FISCAL_V3 : CHAVES_FISCAL, recusas);
   conferirChaves(a, "aprovacao", CHAVES_APROVACAO, recusas);
 
   const politica = enumerado(a, "aprovacao", "politica", POLITICAS_APROVACAO, recusas);
@@ -618,17 +689,16 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
   };
   // Só depois de TODAS as recusas: `enumerado` devolve um valor de preenchimento quando recusa, e esse
   // valor não pode escapar daqui como se fosse a decisão do administrador.
-  if (!v3) {
+  if (!comRestricoes) {
     if (recusas.length) return { ok: false, recusas };
     return { ok: true, valor: normalizarConfiguracaoTop({ versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, ...secoes, execucao }) };
   }
 
-  // FORMATO 3: as chaves novas são OBRIGATÓRIAS (estrito como o formato 2 com `execucao`). CFOP aqui só tem a
-  // FORMA conferida; as regras de sentido (dentro/fora/exterior, mesmo sentido, sentido do movimento) moram
+  // FORMATOS 3 E 4: as chaves novas são OBRIGATÓRIAS (estrito como o formato 2 com `execucao`). CFOP aqui só tem
+  // a FORMA conferida; as regras de sentido (dentro/fora/exterior, mesmo sentido, sentido do movimento) moram
   // em `recusasFiscaisDaFamiliaTop` (`tipo-operacao-restricoes.ts`), porque dependem da família da TOP.
   const cfop = (campo: string) => texto(fi, "fiscal", campo, 4, FORMA_CFOP, recusas);
-  const valor: ConfiguracaoTipoOperacaoV3 = {
-    versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
+  const corpo: Omit<ConfiguracaoTipoOperacaoV3, "versaoSchema"> = {
     ...secoes,
     geral: { ...secoes.geral, exigeTransportadora: booleano(g, "geral", "exigeTransportadora", recusas) },
     financeiro: {
@@ -648,6 +718,11 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
     execucao,
   };
   if (recusas.length) return { ok: false, recusas };
+  // O NÚMERO QUE ENTROU É O NÚMERO QUE SAI. Montar o resultado com o 3 fixo foi o que este ponto fazia antes do
+  // formato 4 existir; hoje isso rebaixaria um 4 em silêncio, e a versão gravada a partir dele deixaria de executar.
+  const valor: ConfiguracaoComRestricoesTop = versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4
+    ? { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V4, ...corpo }
+    : { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3, ...corpo };
   return { ok: true, valor: normalizarConfiguracaoTop(valor) };
 }
 
@@ -663,16 +738,19 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
  * versões semanticamente idênticas teriam bytes diferentes, o "no-op" pararia de ser detectado e o
  * histórico ganharia versões que não mudaram nada. Normalizar aqui é o que torna a comparação confiável.
  *
- * PRESERVA O FORMATO. Um v2 sai v2, com o `execucao` intocado; um v1 sai v1. Normalizar nunca rebaixa nem
- * promove formato — rebaixar um v2 para v1 apagaria a decisão de execução em silêncio, e promover um v1
- * reescreveria o histórico. `execucao` também não é "normalizada" pela seção: `configurada` com
- * `atualizacao = "nenhuma"` é uma decisão legítima (a venda não movimenta), não um campo pendurado.
+ * PRESERVA O FORMATO. Um v2 sai v2, com o `execucao` intocado; um v1 sai v1; um v3 sai v3 e um v4 sai v4.
+ * Normalizar nunca rebaixa nem promove formato — rebaixar um v2 para v1 apagaria a decisão de execução em
+ * silêncio, rebaixar um v4 para v3 desligaria as regras gerais e a aprovação (a API grava o número a partir do
+ * normalizado), e promover um v1 reescreveria o histórico. `execucao` também não é "normalizada" pela seção:
+ * `configurada` com `atualizacao = "nenhuma"` é uma decisão legítima (a venda não movimenta), não um campo pendurado.
  *
  * IDEMPOTENTE: normalizar duas vezes dá o mesmo resultado. Não muta a entrada.
  */
 export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV1): ConfiguracaoTipoOperacaoV1;
 export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV2): ConfiguracaoTipoOperacaoV2;
 export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV3): ConfiguracaoTipoOperacaoV3;
+export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV4): ConfiguracaoTipoOperacaoV4;
+export function normalizarConfiguracaoTop(c: ConfiguracaoComRestricoesTop): ConfiguracaoComRestricoesTop;
 export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacao): ConfiguracaoTipoOperacao;
 export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacao): ConfiguracaoTipoOperacao {
   const neutro = configuracaoNeutraTop();
@@ -706,13 +784,19 @@ export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacao): Configur
 }
 
 /**
- * A normalização do formato 3 — a mesma régua do formato 2 nas chaves antigas, mais:
+ * A normalização dos formatos 3 e 4 (as mesmas chaves) — a mesma régua do formato 2 nas chaves antigas, mais:
  *   · fiscal desligado zera TAMBÉM as chaves fiscais novas (elas são parte do fiscal);
  *   · `clienteEmAtraso`/`toleranciaAtrasoDias` NÃO dependem de `financeiro.atualizacao` — um Pedido não gera
  *     título e ainda assim pode recusar cliente em atraso; só a tolerância zera quando a política é `nao_valida`;
- *   · `exigeTransportadora` é independente, como as outras exigências de `geral`.
+ *   · `exigeTransportadora` é independente, como as outras exigências de `geral`;
+ *   · as regras gerais do formato 4 (confirmação, sem itens, alteração) são independentes entre si e não zeram
+ *     nada: quem diz o que a FAMÍLIA aceita é a matriz da gravação (`tipo-operacao-regras-gerais.ts`), não esta régua.
+ * O número que entra é o que sai: 3 fica 3, 4 fica 4.
  */
-function normalizarV3(c: ConfiguracaoTipoOperacaoV3): ConfiguracaoTipoOperacaoV3 {
+function normalizarV3(c: ConfiguracaoTipoOperacaoV3): ConfiguracaoTipoOperacaoV3;
+function normalizarV3(c: ConfiguracaoTipoOperacaoV4): ConfiguracaoTipoOperacaoV4;
+function normalizarV3(c: ConfiguracaoComRestricoesTop): ConfiguracaoComRestricoesTop;
+function normalizarV3(c: ConfiguracaoComRestricoesTop): ConfiguracaoComRestricoesTop {
   const base = normalizarConfiguracaoTop({
     versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
     geral: c.geral, estoque: c.estoque, financeiro: c.financeiro, fiscal: c.fiscal, aprovacao: c.aprovacao, execucao: c.execucao,
@@ -721,8 +805,7 @@ function normalizarV3(c: ConfiguracaoTipoOperacaoV3): ConfiguracaoTipoOperacaoV3
   const valida = c.financeiro.clienteEmAtraso !== "nao_valida";
   const pick = <T extends object, K extends keyof T>(o: T, ks: readonly K[]): Pick<T, K> =>
     Object.fromEntries(ks.map((k) => [k, o[k]])) as Pick<T, K>;
-  return {
-    versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
+  const corpo: Omit<ConfiguracaoTipoOperacaoV3, "versaoSchema"> = {
     geral: { ...pick(base.geral, CHAVES_GERAL), exigeTransportadora: c.geral.exigeTransportadora },
     estoque: base.estoque,
     financeiro: {
@@ -740,6 +823,9 @@ function normalizarV3(c: ConfiguracaoTipoOperacaoV3): ConfiguracaoTipoOperacaoV3
     aprovacao: base.aprovacao,
     execucao: base.execucao,
   };
+  return c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4
+    ? { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V4, ...corpo }
+    : { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3, ...corpo };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -782,9 +868,9 @@ export const declaraExecucaoConfiguradaTop = (c: ConfiguracaoTipoOperacao): bool
 export function configuracaoTopParaEdicao(c: ConfiguracaoTipoOperacao): ConfiguracaoTipoOperacaoV2 {
   const n = normalizarConfiguracaoTop(c);
   if (n.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2) return n;
-  if (n.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3) {
-    // VISTA do formato 2 de uma versão do formato 3: as chaves novas ficam de fora. Só para exibição por quem
-    // não conhece o formato 3 — gravar isto sobre um formato 3 é recusado pelo servidor (formato não retrocede).
+  if (restricoesExecutamTop(n)) {
+    // VISTA do formato 2 de uma versão do formato 3 ou 4: as chaves novas ficam de fora. Só para exibição por quem
+    // não conhece o formato 3 — gravar isto sobre um formato 3 ou 4 é recusado pelo servidor (formato não retrocede).
     const pick = <T extends object, K extends keyof T>(o: T, ks: readonly K[]): Pick<T, K> =>
       Object.fromEntries(ks.map((k) => [k, o[k]])) as Pick<T, K>;
     return {
@@ -797,10 +883,14 @@ export function configuracaoTopParaEdicao(c: ConfiguracaoTipoOperacao): Configur
 }
 
 /**
- * A configuração no formato 3, PARA EXIBIR E EDITAR no editor que conhece as restrições. Formato 1/2 vira
- * formato 3 com as chaves novas no NEUTRO (e a execução do formato 1 em `legado`). Ler não regrava nada.
+ * A configuração com as chaves do formato 3, PARA EXIBIR E EDITAR no editor que conhece as restrições. Formato
+ * 1/2 vira formato 3 com as chaves novas no NEUTRO (e a execução do formato 1 em `legado`). Ler não regrava nada.
+ *
+ * O FORMATO 4 CONTINUA 4 (TOP-CONFIG-08). As chaves são as mesmas, e o editor de hoje — que só conhece o 3 —
+ * edita as do 4 sem saber; devolver o 4 como 3 aqui faria a próxima gravação rebaixar a versão em silêncio, e as
+ * regras gerais e a aprovação deixariam de executar. Por isso o tipo de saída é `ConfiguracaoComRestricoesTop`.
  */
-export function configuracaoTopParaEdicaoV3(c: ConfiguracaoTipoOperacao): ConfiguracaoTipoOperacaoV3 {
+export function configuracaoTopParaEdicaoV3(c: ConfiguracaoTipoOperacao): ConfiguracaoComRestricoesTop {
   const n = normalizarConfiguracaoTop(c);
   if (restricoesExecutamTop(n)) return n;
   const v2 = configuracaoTopParaEdicao(n);
@@ -813,7 +903,25 @@ export function configuracaoTopParaEdicaoV3(c: ConfiguracaoTipoOperacao): Config
   });
 }
 
-/** Exigência de `geral` que o formato 1/2 só DECLARAVA e o formato 3 EXECUTA. */
+/**
+ * A configuração do formato 3 levada ao formato 4: as MESMAS chaves e os mesmos valores, com `versaoSchema` 4,
+ * normalizada. É a promoção que o editor faz ao gravar no formato 4 — explícita, nunca a normalização.
+ * Um formato 4 entra e sai igual (idempotente). Não muta a entrada.
+ */
+export function configuracaoV4DaV3(c3: ConfiguracaoComRestricoesTop): ConfiguracaoTipoOperacaoV4 {
+  return normalizarConfiguracaoTop({ ...c3, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V4 });
+}
+
+/**
+ * A configuração no formato 4, PARA EXIBIR E EDITAR no editor que conhece as regras gerais (TOP-CONFIG-08).
+ * Formato 1/2 passa pela vista do formato 3 de hoje (chaves novas no neutro); 3 vira 4 com as mesmas chaves;
+ * 4 sai como está, normalizado. Ler não regrava nada: a versão continua no formato dela no banco.
+ */
+export function configuracaoTopParaEdicaoV4(c: ConfiguracaoTipoOperacao): ConfiguracaoTipoOperacaoV4 {
+  return configuracaoV4DaV3(configuracaoTopParaEdicaoV3(c));
+}
+
+/** Exigência de `geral` que o formato 1/2 só DECLARAVA e os formatos 3 e 4 EXECUTAM. */
 const exigeAlgoNoGeral = (c: ConfiguracaoTipoOperacao): boolean =>
   c.geral.exigeParceiro || c.geral.exigeCentroResultado || c.geral.exigeObservacao;
 
@@ -838,17 +946,25 @@ function canonico(v: unknown): string {
 }
 
 /**
- * Duas configurações significam a mesma coisa? Compara DEPOIS de normalizar as duas, e no formato 2.
+ * Duas configurações significam a mesma coisa? Compara DEPOIS de normalizar as duas, na vista do formato 4 —
+ * isto é, com as chaves de todos os formatos e SEM o número do formato (as duas vistas têm o mesmo 4).
  *
- * NO FORMATO 2 DE PROPÓSITO: um v1 e um v2 com os dois efeitos em `legado` e as mesmas seções SIGNIFICAM a
- * mesma coisa. Compará-los como diferentes faria o editor novo, ao salvar sem mexer numa TOP v1, criar a
- * versão N+1 só para trocar o formato — e "salvar sem alterar não é escrita" deixaria de valer.
+ * SEM O NÚMERO DE PROPÓSITO: um v1 e um v2 com os dois efeitos em `legado` e as mesmas seções SIGNIFICAM a
+ * mesma coisa, e um v3 e um v4 com as quatro regras gerais no neutro também. Compará-los como diferentes faria
+ * o editor novo, ao salvar sem mexer numa TOP antiga, criar a versão N+1 só para trocar o formato — e "salvar
+ * sem alterar não é escrita" deixaria de valer.
+ *
+ * O QUE O NÚMERO MUDA ENTRA PELOS TERMOS DE EXECUÇÃO, um por portão: mesmas chaves não bastam quando o formato
+ * novo passaria a EXECUTAR o que o anterior só declarava — aí a troca de formato é mudança de comportamento, e
+ * cria versão. Os termos olham só `a`: com as vistas iguais, o que `a` declara é o que `b` declara.
  */
 export const configuracoesTopIguais = (a: ConfiguracaoTipoOperacao, b: ConfiguracaoTipoOperacao): boolean =>
-  canonico(configuracaoTopParaEdicaoV3(a)) === canonico(configuracaoTopParaEdicaoV3(b))
-  // FORMATO 3 × ANTERIOR (decisão 263): mesmas chaves não bastam quando o formato 3 passaria a EXECUTAR uma
-  // exigência que o anterior só declarava — aí a troca de formato é mudança de comportamento, e cria versão.
-  && (restricoesExecutamTop(a) === restricoesExecutamTop(b) || !exigeAlgoNoGeral(a));
+  canonico(configuracaoTopParaEdicaoV4(a)) === canonico(configuracaoTopParaEdicaoV4(b))
+  // FORMATO 3 × ANTERIOR (decisão 263): as exigências gerais passam a ser cobradas.
+  && (restricoesExecutamTop(a) === restricoesExecutamTop(b) || !exigeAlgoNoGeral(a))
+  // FORMATO 4 × ANTERIOR (decisão 277): as regras gerais e a aprovação passam a executar. 3 → 4 no neutro (Manual,
+  // Proibido, Bloqueada, Sem aprovação) não é mudança; com qualquer uma fora do neutro, é a versão N+1.
+  && (regrasGeraisExecutamTop(a) === regrasGeraisExecutamTop(b) || !declaraRegrasGerais(a));
 
 /**
  * Quais seções mudaram, para a auditoria.
@@ -858,17 +974,30 @@ export const configuracoesTopIguais = (a: ConfiguracaoTipoOperacao, b: Configura
  * versão, que é a verdade. `["estoque","fiscal"]` responde a pergunta que se faz numa investigação ("o que
  * mexeram?") e manda o leitor à versão para o detalhe exato. `execucao` aparece quando um efeito trocou de
  * autoridade (legado ↔ configurada) — é a linha que identifica o cutover no histórico.
+ *
+ * "PASSA A VALER" TAMBÉM É MUDANÇA DA SEÇÃO, mesmo com os valores iguais: `geral` aparece quando a troca de
+ * formato liga as exigências (formato 3) ou as regras gerais (formato 4) que o `antes` declarava; `aprovacao`
+ * aparece quando a troca para o formato 4 liga a aprovação que o `antes` declarava. Cada uma por si: a 3 → 4 com
+ * só "Sempre" marca `aprovacao` e não `geral`.
  */
 export function secoesAlteradasTop(
   antes: ConfiguracaoTipoOperacao,
   depois: ConfiguracaoTipoOperacao,
 ): SecaoConfiguracaoTopV2[] {
-  const a = configuracaoTopParaEdicaoV3(antes);
-  const b = configuracaoTopParaEdicaoV3(depois);
+  const a = configuracaoTopParaEdicaoV4(antes);
+  const b = configuracaoTopParaEdicaoV4(depois);
   const passouAExecutar = restricoesExecutamTop(antes) !== restricoesExecutamTop(depois) && exigeAlgoNoGeral(antes);
-  return SECOES_CONFIGURACAO_TOP_V2.filter((s) => canonico(a[s]) !== canonico(b[s]) || (s === "geral" && passouAExecutar));
+  const trocouPortaoDasRegras = regrasGeraisExecutamTop(antes) !== regrasGeraisExecutamTop(depois);
+  const geralPassaAValer = trocouPortaoDasRegras && declaraRegraNoGeral(antes);
+  const aprovacaoPassaAValer = trocouPortaoDasRegras && declaraAprovacao(antes);
+  return SECOES_CONFIGURACAO_TOP_V2.filter((s) => canonico(a[s]) !== canonico(b[s])
+    || (s === "geral" && (passouAExecutar || geralPassaAValer))
+    || (s === "aprovacao" && aprovacaoPassaAValer));
 }
 
-/** A configuração está no neutro? Usado pela tela para dizer "nada configurado" sem repetir o literal. */
+/**
+ * A configuração está no neutro? Usado pela tela para dizer "nada configurado" sem repetir o literal. Vale para
+ * o neutro de qualquer formato, o 4 inclusive: as quatro regras gerais no neutro não declaram nada.
+ */
 export const configuracaoTopEhNeutra = (c: ConfiguracaoTipoOperacao): boolean =>
   configuracoesTopIguais(c, configuracaoNeutraTop());

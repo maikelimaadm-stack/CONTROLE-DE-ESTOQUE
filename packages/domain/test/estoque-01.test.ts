@@ -271,11 +271,12 @@ describe("ES-D5 conferirNumeroEstoque — texto canônico, sem arredondar", () =
 });
 
 describe("ES-D6 permissões e ID Global por espécie", () => {
-  it("quatro recursos em Operacional > Estoque, só view/create/edit, módulo de escopo estoque", () => {
+  it("quatro recursos em Operacional > Estoque, só view/create/edit/approve, módulo de escopo estoque", () => {
     for (const recurso of Object.values(RECURSO_DA_ESPECIE_ESTOQUE)) {
       const r = PERMISSION_RESOURCES.find((x) => x.key === recurso)!;
       expect(r.module, recurso).toBe("Operacional > Estoque");
-      expect(r.actions, recurso).toEqual(["view", "create", "edit"]);
+      // `approve` (TOP-CONFIG-08): a aprovação da TOP no formato 4; continua sem `delete` (a 0040 revoga DELETE).
+      expect(r.actions, recurso).toEqual(["view", "create", "edit", "approve"]);
       for (const acao of r.actions) expect(moduloDaPermissao(`${recurso}.${acao}`), `${recurso}.${acao}`).toBe("estoque");
       expect(escopoDoRecurso(recurso)).toEqual({ tipo: "empresa", modulo: "estoque" });
     }

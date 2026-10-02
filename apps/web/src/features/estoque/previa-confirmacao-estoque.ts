@@ -14,8 +14,14 @@ import { enumLabel } from "@/lib/copy";
  *
  * A prévia é apresentação; a confirmação é a autoridade (ela relê o saldo SOB a trava, e a resposta pode mudar
  * entre a prévia e o clique). Por isso o Confirmar só fica bloqueado quando a prévia de AGORA diz que falta saldo
- * (`podeConfirmar: false`). Corpo que não é o contrato, ou a porta ausente (API anterior: 404), vira "prévia
- * indisponível" e o Confirmar continua possível — o servidor recusa o que tiver de recusar.
+ * ou que o documento é recusado (`podeConfirmar: false`). Corpo que não é o contrato, ou a porta ausente (API
+ * anterior: 404), vira "prévia indisponível" e o Confirmar continua possível — o servidor recusa o que tiver de recusar.
+ *
+ * AS RECUSAS DO DOCUMENTO (TOP-CONFIG-08, decisão 277): o campo `recusas` é ADITIVO no mesmo `contractVersion` 1 —
+ * o que recusa o documento INTEIRO antes de qualquer item (a aprovação pendente ou reprovada, a versão da TOP
+ * ilegível), no formato das recusas das prévias da venda e da compra (`{ code, message, details? }`). A API anterior
+ * não o manda, e a leitura o completa com a lista vazia: o corpo de antes continua sendo o contrato, e a tela lê
+ * sempre uma lista. Presente, ele é estrito: item sem `code` ou sem `message` em texto não é deste contrato.
  */
 export const CONTRATO_PREVIA_CONFIRMACAO_ESTOQUE = 1 as const;
 
@@ -37,12 +43,20 @@ export interface ItemDaPreviaEstoque {
   movimento: MovimentoPrevistoEstoque;
 }
 
+/** Uma recusa do documento — o MESMO corpo de erro que a confirmação daria (`code`, `message`, `details`). */
+export interface RecusaDaPreviaEstoque { code: string; message: string; details?: unknown }
+
 export interface PreviaDaConfirmacaoEstoque {
   contractVersion: typeof CONTRATO_PREVIA_CONFIRMACAO_ESTOQUE;
   documento: { id: string; especie: string; situacao: string; codigo: string };
   podeConfirmar: boolean;
+  /** Sempre presente depois da leitura: ausente no corpo (API anterior) = nenhuma recusa. */
+  recusas: RecusaDaPreviaEstoque[];
   itens: ItemDaPreviaEstoque[];
 }
+
+/** O corpo como chega: o `recusas` é aditivo e pode faltar. `lerPreviaDaConfirmacaoEstoque` o completa. */
+export type CorpoDaPreviaEstoque = Omit<PreviaDaConfirmacaoEstoque, "recusas"> & { recusas?: RecusaDaPreviaEstoque[] };
 
 const ehObjeto = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const ehTexto = (v: unknown): v is string => typeof v === "string";
@@ -52,18 +66,28 @@ const MOVIMENTOS: readonly unknown[] = ["entry", "writeoff", "transfer", "correc
 const ehItem = (v: unknown): v is ItemDaPreviaEstoque => ehObjeto(v) && ehTexto(v.item_id) && typeof v.posicao === "number" && ehTexto(v.produto_id)
   && ehTexto(v.produto_nome) && ehTextoOuNulo(v.lote) && ehTexto(v.saldo_atual) && ehTexto(v.saldo_depois) && typeof v.insuficiente === "boolean"
   && ehTextoOuNulo(v.diferenca) && MOVIMENTOS.includes(v.movimento);
+const ehRecusa = (v: unknown): v is RecusaDaPreviaEstoque => ehObjeto(v) && ehTexto(v.code) && ehTexto(v.message);
 
 /**
- * O corpo é o contrato? Além da forma, a COERÊNCIA: `podeConfirmar` é exatamente "nenhum item insuficiente". Uma
- * resposta que dissesse "pode confirmar" com item faltando seria a tela liberando o botão sobre uma contradição.
+ * O corpo é o contrato? Além da forma, a COERÊNCIA: `podeConfirmar` é exatamente "nenhum item insuficiente E nenhuma
+ * recusa do documento" (TOP-CONFIG-08, decisão 277). Uma resposta que dissesse "pode confirmar" com item faltando ou
+ * com o documento recusado seria a tela liberando o botão sobre uma contradição — e o "não pode" sem nenhum dos dois,
+ * também: antes, uma recusa sem item faltando virava "prévia indisponível", e o Confirmar ficava habilitado.
  */
-export const ehPreviaDaConfirmacaoEstoque = (v: unknown): v is PreviaDaConfirmacaoEstoque => {
+export const ehPreviaDaConfirmacaoEstoque = (v: unknown): v is CorpoDaPreviaEstoque => {
   if (!ehObjeto(v) || v.contractVersion !== CONTRATO_PREVIA_CONFIRMACAO_ESTOQUE || typeof v.podeConfirmar !== "boolean") return false;
   const d = v.documento;
   if (!ehObjeto(d) || !ehTexto(d.id) || !ehTexto(d.especie) || !ehTexto(d.situacao) || !ehTexto(d.codigo)) return false;
   if (!Array.isArray(v.itens) || !v.itens.every(ehItem)) return false;
-  return v.podeConfirmar === !v.itens.some((i) => (i as ItemDaPreviaEstoque).insuficiente);
+  // Ausente é a API anterior; presente, só na forma do contrato (`null` ou item pela metade não são lista vazia).
+  const recusas = v.recusas === undefined ? [] : v.recusas;
+  if (!Array.isArray(recusas) || !recusas.every(ehRecusa)) return false;
+  return v.podeConfirmar === (!v.itens.some((i) => (i as ItemDaPreviaEstoque).insuficiente) && recusas.length === 0);
 };
+
+/** A leitura do corpo: o contrato, com `recusas` sempre presente (ausente = lista vazia); fora do contrato = `null`. */
+export const lerPreviaDaConfirmacaoEstoque = (v: unknown): PreviaDaConfirmacaoEstoque | null =>
+  ehPreviaDaConfirmacaoEstoque(v) ? { ...v, recusas: v.recusas ?? [] } : null;
 
 /**
  * O rótulo do movimento previsto — o do ledger (`stock_movement_type`). A transferência grava DOIS movimentos (saída na
@@ -97,5 +121,6 @@ export function usePreviaDaConfirmacaoEstoque(segmento: string, id: string, ativ
   // 404 é a porta ausente (API anterior) — o próprio documento foi lido pela MESMA porta há pouco; 5xx, falha do servidor.
   // O 409 (documento que deixou de estar aberto) e os demais dizem a mensagem do servidor.
   if (q.error) return q.error.status === 404 || q.error.status >= 500 ? { situacao: "indisponivel" } : { situacao: "erro", mensagem: q.error.message };
-  return ehPreviaDaConfirmacaoEstoque(q.data) ? { situacao: "pronta", previa: q.data } : { situacao: "indisponivel" };
+  const previa = lerPreviaDaConfirmacaoEstoque(q.data);
+  return previa ? { situacao: "pronta", previa } : { situacao: "indisponivel" };
 }

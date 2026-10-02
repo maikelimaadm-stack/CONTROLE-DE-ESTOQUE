@@ -27,16 +27,23 @@
  * para baixo NÃO passa pela guarda, por desenho da 0035: o inventário registra o que existe, mesmo que o físico
  * fique abaixo do prometido (o disponível pode ficar negativo — a 0035 já prevê).
  *
+ * REGRAS GERAIS DA TOP (TOP-CONFIG-08, decisão 277): só a versão congelada no FORMATO 4 executa. A confirmação ganha
+ * o passo da APROVAÇÃO logo depois da situação (`recusaDoDocumento`), e a prévia ganha a lista ADITIVA `recusas`.
+ * A confirmação é UMA função (`confirmarDocumentoEstoqueNaTransacao`), que a rota `/confirmar` e a confirmação
+ * automática chamam — a automática só acrescenta `automatica: true` à auditoria "confirm".
+ *
  * As rotas são registradas por `registrarConfirmacaoEstoque(app)`, chamada no fim do registro de
  * `estoque-documentos.ts` (prefixo `/api` vem do registro).
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, qty as fqty, DomainError } from "@agro/shared";
-import type { EspecieEstoque } from "@agro/domain";
+import { regrasGeraisDaVersaoTop, versaoSchemaDaConfiguracaoTop, VERSAO_SCHEMA_CONFIGURACAO_TOP_V4, type EspecieEstoque } from "@agro/domain";
 import { runService, idempotent, audit, assertPeriodOpen } from "../lib/service.js";
 import { notFound, validation, err, fromPgError } from "../lib/errors.js";
 import type { ServiceCtx } from "../lib/context.js";
+import { lerVersaoCongeladaTop } from "../lib/confirmacao-automatica.js";
+import { recusaDaAprovacao } from "../lib/aprovacao-documento.js";
 import { postStock, reverseStock, currentBalance, chaveDoLote, quantidadeLegivel } from "../services/stock-core.js";
 import {
   ESPECIES_ESTOQUE, lerDocumentoEstoque, cancelarSchema, MOTIVO_PADRAO_CANCELAMENTO,
@@ -143,17 +150,67 @@ async function planejarSaldos(ctx: ServiceCtx, doc: DocumentoEstoqueLido): Promi
   });
 }
 
+// ─────────────── as recusas do DOCUMENTO: a versão congelada da TOP e a aprovação ───────────────
+
+/**
+ * ═══ A RECUSA DO DOCUMENTO (TOP-CONFIG-08, decisão 277) ═══ — o que a versão congelada da TOP decide sobre ESTE
+ * documento antes de qualquer efeito. UMA função para a prévia (que ANOTA) e para a confirmação (que LANÇA): uma
+ * cópia "equivalente" na prévia divergiria na primeira fatia que mexesse numa das duas.
+ *
+ *   · a configuração é lida AQUI, numa consulta própria (`lerVersaoCongeladaTop`): a leitura do documento
+ *     (`lerDocumentoEstoque`) serve também o GET, a lista e o cancelamento, e não muda por causa da aprovação;
+ *   · versão ilegível (formato desconhecido, ou formato 4 malformado) → 409 TIPO_OPERACAO_EXECUCAO_INDISPONIVEL,
+ *     como na compra: ninguém sabe o que ela decidiu, e "então é o neutro" seria adivinhar;
+ *   · sem TOP, ou formato 1, 2 ou 3 → nenhuma recusa: o corte da 277, só o formato 4 executa a aprovação;
+ *   · formato 4 com aprovação exigida e não vigente → 409 APROVACAO_PENDENTE ou APROVACAO_REPROVADA. O valor do
+ *     documento de estoque só é conhecido na confirmação (`valorDocumento: null`), e por isso a matriz só lhe
+ *     aceita "Sempre".
+ * A guarda do banco (0041, `trg_documentos_estoque_aprovacao`) é o fundo, inclusive para o binário anterior; quem
+ * EXPLICA a recusa é este passo. Número fixo de consultas, qualquer que seja o número de itens.
+ */
+async function recusaDoDocumento(ctx: ServiceCtx, doc: DocumentoEstoqueLido): Promise<{ recusa: DomainError | null; alemDoFormato3: boolean }> {
+  const versaoTop = await lerVersaoCongeladaTop(ctx, doc.tipo_operacao_versao_id);
+  const regras = regrasGeraisDaVersaoTop(versaoTop);
+  if (!regras.ok) {
+    // O molde da compra (`politicaDaCompra`): o mesmo código, a mesma forma de details.
+    return {
+      recusa: new DomainError("TIPO_OPERACAO_EXECUCAO_INDISPONIVEL",
+        "A configuração da operação deste documento está num formato que este servidor não executa. O documento não foi confirmado.",
+        { motivo: regras.motivo, recusas: [] }),
+      alemDoFormato3: true,
+    };
+  }
+  const alemDoFormato3 = versaoTop !== null && versaoSchemaDaConfiguracaoTop(versaoTop.configuracao) === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4;
+  return { recusa: await recusaDaAprovacao(ctx, { modulo: "estoque", documentoId: doc.id, versaoDocumento: null, valorDocumento: null, versaoTop }), alemDoFormato3 };
+}
+
 // ─────────────── prévia ───────────────
 
+/**
+ * A recusa da prévia — a forma do `toJSON` do erro, a MESMA das recusas da prévia da compra e da venda (o corpo
+ * que a confirmação daria).
+ */
+interface RecusaDaPrevia { code: string; message: string; details?: unknown }
+
+/**
+ * `recusas` (TOP-CONFIG-08) é ADITIVO: as recusas do DOCUMENTO (a versão ilegível e a aprovação), lista vazia quando
+ * não há. A chave só existe quando a versão congelada está no formato 4 (ou é ilegível): sem TOP e nos formatos 1, 2
+ * e 3 a resposta é a de hoje, chave por chave — o corte da 277 vale também para o corpo. Com recusa, `podeConfirmar`
+ * é falso — a confirmação recusaria do mesmo jeito. Nenhuma outra chave muda, e `contractVersion` continua 1: a web
+ * anterior ignora a chave nova.
+ */
 async function previaDaConfirmacao(ctx: ServiceCtx, id: string, especie: EspecieEstoque) {
   const doc = await lerDocumentoEstoque(ctx, id, especie);
   if (doc.situacao !== "aberto") throw err("CONFLICT", "O documento não está aberto");
+  const { recusa, alemDoFormato3 } = await recusaDoDocumento(ctx, doc);
+  const recusas: RecusaDaPrevia[] = recusa ? [recusa.toJSON()] : [];
   const itens = await planejarSaldos(ctx, doc);
   return {
     contractVersion: CONTRATO_PREVIA_CONFIRMACAO_ESTOQUE,
     documento: { id: doc.id, especie: doc.especie, situacao: doc.situacao, codigo: doc.codigo },
-    podeConfirmar: !itens.some((i) => i.insuficiente),
+    podeConfirmar: !itens.some((i) => i.insuficiente) && recusas.length === 0,
     itens,
+    ...(alemDoFormato3 ? { recusas } : {}),
   };
 }
 
@@ -253,11 +310,27 @@ const comparar = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 /** O texto da data de hoje (data do estorno), como as outras rotas de cancelamento. */
 const hoje = () => new Date().toISOString().slice(0, 10);
 
-async function confirmarDocumento(ctx: ServiceCtx, id: string, especie: EspecieEstoque) {
+/**
+ * ═══ A CONFIRMAÇÃO DO DOCUMENTO — a ÚNICA (TOP-CONFIG-08, decisão 277) ═══
+ *
+ * Serve a rota `/confirmar` (`automatica: false`) e a CONFIRMAÇÃO AUTOMÁTICA (`automatica: true`), que o POST do
+ * documento e a aprovação chamam no fim do caminho, dentro do savepoint de `tentarConfirmacaoAutomatica`. Não
+ * existe segundo caminho de confirmação: o mesmo planejamento, as mesmas recusas, os mesmos efeitos e a mesma
+ * auditoria "confirm". A única diferença é a chave `automatica: true` no metadata da auditoria, que só a automática
+ * grava — a auditoria da confirmação manual continua idêntica, chave por chave.
+ *
+ * Roda na transação de quem chama (sem `runService` próprio): a capacidade (`<recurso>.edit`) e a visibilidade são
+ * conferidas por quem chama, antes.
+ */
+export async function confirmarDocumentoEstoqueNaTransacao(ctx: ServiceCtx, especie: EspecieEstoque, id: string, o: { automatica: boolean }) {
   // 1ª TRAVA: o cabeçalho. A segunda confirmação espera aqui e relê a situação nova (409, sem efeito).
   const doc = await lerDocumentoEstoque(ctx, id, especie, { lock: true });
   if (doc.situacao === "cancelado") throw err("ALREADY_CANCELLED", "O documento está cancelado");
   if (doc.situacao !== "aberto") throw err("CONFLICT", "O documento já está confirmado");
+  // APROVAÇÃO (TOP-CONFIG-08): logo depois da situação, antes do período, dos cadastros e de qualquer efeito. Na
+  // automática, a APROVACAO_PENDENTE vira "aguardando_aprovacao" (`tentarConfirmacaoAutomatica`).
+  const { recusa } = await recusaDoDocumento(ctx, doc);
+  if (recusa) throw recusa;
   await conferirPeriodo(ctx, doc);
   const produtos = await conferirCadastros(ctx, doc);
 
@@ -312,7 +385,9 @@ async function confirmarDocumento(ctx: ServiceCtx, id: string, especie: EspecieE
     "update erp.documentos_estoque set situacao = 'confirmado', confirmado_em = now(), confirmado_por = $3 where id = $1 and organization_id = $2 and situacao = 'aberto'",
     [doc.id, ctx.orgId, ctx.user.id]);
   if (u.rowCount !== 1) throw notFound("Documento");
-  await audit(ctx.tx, ctx, ORIGEM, doc.id, "confirm", { especie: doc.especie, movimentos, tipoOperacaoVersaoId: doc.tipo_operacao_versao_id });
+  await audit(ctx.tx, ctx, ORIGEM, doc.id, "confirm", {
+    especie: doc.especie, movimentos, tipoOperacaoVersaoId: doc.tipo_operacao_versao_id, ...(o.automatica ? { automatica: true } : {}),
+  });
   return { id: doc.id, situacao: "confirmado" as const, movimentos };
 }
 
@@ -445,7 +520,7 @@ export function registrarConfirmacaoEstoque(app: FastifyInstance): void {
       await lerDocumentoEstoque(ctx, id, especie);
       return (await idempotent(ctx.tx, ctx.orgId, chaveDeIdempotencia(req.headers["idempotency-key"]),
         { action: "confirmar_documento_estoque", especie, sourceId: id.toLowerCase(), actorId: ctx.user.id },
-        () => confirmarDocumento(ctx, id, especie))).result;
+        () => confirmarDocumentoEstoqueNaTransacao(ctx, especie, id, { automatica: false }))).result;
     }));
 
     app.post(`${base}/cancelar`, async (req) => runService(app, req, `${recurso}.edit`, async (ctx) => {

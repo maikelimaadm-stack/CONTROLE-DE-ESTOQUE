@@ -29,6 +29,11 @@ import { validarItensDaParte, itensDoSaldoInteiro, itensCanonicosDaParte, calcul
 import { itensDeOrigemComSaldo, cabecalhoJaAlocado, partesDaOrigem, saldoTotal, MSG_NAO_PERMITE_EM_PARTES, MSG_SEM_SALDO_PARA_CONVERTER, MSG_SEM_PARTES, MSG_SEM_SALDO_A_ENCERRAR, MSG_ORIGEM_COM_PARTES_ATIVAS_CANCEL, msgItensDaParte } from "./vendas-faturar-em-partes.js";
 // TOP-CONFIG-07 (decisão 266): o pedido com reserva confere o disponível ao salvar (POST/PUT) — `vendas-reserva-estoque`.
 import { versaoReservaEstoque, origemReservaEstoque, conferirReservaDoDocumento, MSG_PARTE_RESERVA_ARMAZEM } from "./vendas-reserva-estoque.js";
+// TOP-CONFIG-08 (decisão 277): as regras gerais da versão congelada no FORMATO 4 — documento sem itens, aprovação antes da
+// confirmação e confirmação automática no fim de cada caminho que grava a venda.
+import { regrasGeraisDaVersaoTop } from "@agro/domain";
+import { confirmaAutomaticamente, tentarConfirmacaoAutomatica, lerVersaoCongeladaTop, type ResultadoConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
+import { recusaDaAprovacao } from "../lib/aprovacao-documento.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -64,6 +69,19 @@ const itemDaEdicaoSchema = z.object({ id: uuid.optional(), product_id: campoItem
 const planoDaEdicaoSchema = installmentPlanSchema.extend({ down_payment_value: dinheiroDaEdicao.optional() }).strict();
 const edicaoSchema = z.object({ document_date: campoDoc.document_date.optional(), shipping_date: campoDoc.shipping_date, due_date: campoDoc.due_date, client_id: campoDoc.client_id.optional(), transporter_id: campoDoc.transporter_id, proprietary_id: campoDoc.proprietary_id, driver_name: campoDoc.driver_name, payment_method_id: campoDoc.payment_method_id, freight: dinheiroDaEdicao.optional(), freight_icms: dinheiroDaEdicao.optional(), other_values: dinheiroDaEdicao.optional(), discount: dinheiroDaEdicao.optional(), note: campoDoc.note, installment_plan: planoDaEdicaoSchema.optional().nullable(), is_deductible: campoDoc.is_deductible.unwrap().optional(), items: z.array(itemDaEdicaoSchema).min(1).optional(), categoria_financeira_id: campoDoc.categoria_financeira_id, centro_custo_id: campoDoc.centro_custo_id, condicao_pagamento_id: campoDoc.condicao_pagamento_id }).strict() satisfies z.ZodType<CamposDaEdicao>;
 const CHAVES_DA_EDICAO: ReadonlySet<string> = new Set(Object.keys(edicaoSchema.shape));
+/**
+ * TOP-CONFIG-08 (decisão 277) — DOCUMENTO SEM ITENS: os IRMÃOS do `docSchema` e do `edicaoSchema` sem o mínimo de itens.
+ *
+ * Os estritos NÃO são relaxados: continuam sendo o contrato de quem não tem a regra (orçamento, pedido, a conversão —
+ * `bodyInteiro`/`bodyDaParte` — e toda venda cuja versão congelada não está no formato 4 com "Documento sem itens:
+ * Permitido"). O irmão só tira o `min(1)` dos itens; o resto é o MESMO validador, campo a campo (`extend`).
+ *
+ * Só a variante `sale` lê pelo irmão (a matriz só deixa venda e compra permitirem). Ele falhou → o erro é o do ESTRITO
+ * (o mesmo `parse` de hoje: código, mensagem e details idênticos). Itens vazios que o irmão aceitou são decididos
+ * depois, por `exigirItensSePreciso`, e a recusa também é o erro do estrito.
+ */
+const docSchemaSemMinimoDeItens = docSchema.extend({ items: campoDoc.items.element.array() });
+const edicaoSchemaSemMinimoDeItens = edicaoSchema.extend({ items: z.array(itemDaEdicaoSchema).optional() }).strict() satisfies z.ZodType<CamposDaEdicao>;
 const permOf = (k: SalesKind) => (k === "budget" ? "budgets" : k === "order" ? "orders" : "sales");
 /**
  * O CORPO DO CANCELAMENTO — declarado, e não mais descartado.
@@ -245,6 +263,84 @@ async function cobrarLayoutAoSalvar(ctx: ServiceCtx, kind: SalesKind, documento:
   if (!faltando.length) return;
   const details = faltando.map((f) => ({ path: f.caminho, message: mensagemCampoObrigatorio(f.rotulo) }));
   throw err(ERRO_LAYOUT_CAMPO_OBRIGATORIO, details[0]!.message, details);
+}
+
+/**
+ * TOP-CONFIG-08 (decisão 277) — DOCUMENTO SEM ITENS, a leitura do corpo (POST e PUT).
+ *
+ * Orçamento e pedido: o `docSchema` estrito, como sempre (itens vazios recusados aqui). Venda: o irmão sem o mínimo de
+ * itens; se ele recusa o corpo, quem responde é o ESTRITO — o corpo que o irmão recusa o estrito também recusa, e o
+ * erro dele (com o `items: Valor mínimo: 1` junto, quando é o caso) é o de hoje, byte a byte.
+ */
+function lerCorpoDoDocumento(kind: SalesKind, corpo: unknown): z.infer<typeof docSchema> {
+  if (kind !== "sale") return docSchema.parse(corpo);
+  const r = docSchemaSemMinimoDeItens.safeParse(corpo);
+  return r.success ? r.data : docSchema.parse(corpo);
+}
+
+/** A recusa de hoje dos itens vazios: VALIDATION_ERROR "items: Valor mínimo: 1", details [{ path: "items", message: "Valor mínimo: 1" }]. */
+const recusaDosItensVazios = () => err("VALIDATION_ERROR", "items: Valor mínimo: 1", [{ path: "items", message: "Valor mínimo: 1" }]);
+/**
+ * Recusa os itens vazios com o erro do ESTRITO. `ler` é o parse estrito de quem chama (o `docSchema` no POST e no PUT, o
+ * `lerPedidoDaEdicao` com o `edicaoSchema` na PATCH): ele LANÇA, e a resposta é a de hoje — o mesmo tratador de erros,
+ * o mesmo corpo. Se o parse não lançar (a PATCH que não envia `items` sobre um documento já sem itens), a recusa é a
+ * MESMA, montada à mão com o código, a mensagem e os details que o estrito daria.
+ */
+function recusarItensVazios(ler: () => unknown): never {
+  ler();
+  throw recusaDosItensVazios();
+}
+
+/**
+ * A VERSÃO CONGELADA ACEITA VENDA SEM ITENS? Só a variante `sale`, só o formato 4, só "Documento sem itens: Permitido"
+ * (`regrasGeraisDaVersaoTop` lê a versão como ela é gravada; a matriz é o portão da gravação da TOP, não daqui).
+ * Sem versão, formato 1 a 3 ou configuração ilegível → não aceita (a recusa de hoje). UMA consulta, e só quando os itens
+ * vieram vazios — o documento com itens não pergunta nada.
+ */
+async function aceitaSemItens(ctx: ServiceCtx, kind: SalesKind, versaoId: string | null): Promise<boolean> {
+  if (kind !== "sale" || !versaoId) return false;
+  const r = regrasGeraisDaVersaoTop(await lerVersaoCongeladaTop(ctx, versaoId));
+  return r.ok && r.regras.aceitaSemItens;
+}
+
+/**
+ * A PATCH da venda lê `items` pelo irmão do `edicaoSchema` (lista vazia passa na FORMA e é decidida pela versão, no
+ * núcleo); se o irmão recusa, quem responde é o ESTRITO. Orçamento e pedido: o estrito, como sempre.
+ */
+function lerPedidoDaEdicaoDaVariante(kind: SalesKind, corpo: unknown): { versao: string; campos: CamposDaEdicao } {
+  if (kind !== "sale") return lerPedidoDaEdicao(corpo, edicaoSchema, CHAVES_DA_EDICAO);
+  try {
+    return lerPedidoDaEdicao(corpo, edicaoSchemaSemMinimoDeItens, CHAVES_DA_EDICAO);
+  } catch (e) {
+    if (!(e instanceof DomainError)) throw e;
+    return lerPedidoDaEdicao(corpo, edicaoSchema, CHAVES_DA_EDICAO);
+  }
+}
+
+/**
+ * TOP-CONFIG-08 (decisão 277) — A CONFIRMAÇÃO AUTOMÁTICA DA VENDA, o gancho no FIM de cada caminho que grava uma venda
+ * aberta: POST (dentro do `idempotent`, depois da auditoria "create"), PUT, PATCH que muda alguma coisa e a venda GERADA
+ * pela conversão (depois de a origem ser atualizada). O molde é o do COORD, igual em todos os módulos:
+ *   · só a variante `sale` (os handlers servem às três; orçamento e pedido não se confirmam);
+ *   · só a versão congelada DESTE documento no formato 4 com "Confirmação: Automática" (`confirmaAutomaticamente`; a
+ *     gerada pela conversão segue a SUA versão, a da TOP de destino, e não a da origem);
+ *   · quem confirma é quem salvou, com a capacidade da confirmação manual (`sales.edit`), num SAVEPOINT, pela MESMA
+ *     função do POST /confirm (`confirmarVendaNaTransacao`, com `automatica: true` só no metadata da auditoria);
+ *   · recusa de domínio (saldo, período, exigência, aprovação, a guarda do banco, 40P01) → savepoint desfeito, a venda
+ *     fica SALVA e ABERTA, e o porquê vai na resposta (`tentarConfirmacaoAutomatica` nunca lança DomainError).
+ * `undefined` = não é automática: a resposta é a de hoje, chave por chave (sem `confirmacaoAutomatica`).
+ */
+async function confirmacaoAutomaticaDaVenda(app: FastifyInstance, ctx: ServiceCtx, kind: SalesKind, id: string, versaoId: string | null): Promise<ResultadoConfirmacaoAutomatica | undefined> {
+  if (kind !== "sale") return undefined;
+  return (await confirmaAutomaticamente(ctx, versaoId))
+    ? await tentarConfirmacaoAutomatica(ctx, { permissao: "sales.edit", confirmar: () => confirmarVendaNaTransacao(app, ctx, id, { automatica: true }) })
+    : undefined;
+}
+
+/** O corpo de hoje, com `confirmacaoAutomatica` acrescentada SÓ quando a versão é automática (aditivo). */
+async function comConfirmacaoAutomatica<T extends object>(app: FastifyInstance, ctx: ServiceCtx, kind: SalesKind, id: string, versaoId: string | null, corpo: T): Promise<T | (T & { confirmacaoAutomatica: ResultadoConfirmacaoAutomatica })> {
+  const confirmacaoAutomatica = await confirmacaoAutomaticaDaVenda(app, ctx, kind, id, versaoId);
+  return confirmacaoAutomatica ? { ...corpo, confirmacaoAutomatica } : corpo;
 }
 
 /**
@@ -430,7 +526,7 @@ export async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKin
  * sendo o primeiro lock, e só depois vem o `for update of d` do handler. Inverter isso criaria aresta de
  * deadlock com toda rota que já reserva a chave antes de tocar o registro.
  */
-async function exigirDocumentoVisivel(ctx: ServiceCtx, id: string, expectedKind: SalesKind): Promise<void> {
+export async function exigirDocumentoVisivel(ctx: ServiceCtx, id: string, expectedKind: SalesKind): Promise<void> {
   await getDoc(ctx, id, expectedKind);
 }
 
@@ -446,7 +542,7 @@ async function exigirDocumentoVisivel(ctx: ServiceCtx, id: string, expectedKind:
  * linhas é a MESMA 404. Depois de conferir a versão, a edição lê o documento pelo `getDoc` SEM trava — a linha já está
  * travada por esta transação, e o que ele lê é o que vale até o commit.
  */
-async function travarDocumentoDaEdicao(ctx: ServiceCtx, id: string, expectedKind: SalesKind): Promise<{ id: string; version: string }> {
+export async function travarDocumentoDaEdicao(ctx: ServiceCtx, id: string, expectedKind: SalesKind): Promise<{ id: string; version: string }> {
   const sc = scopedById(ctx, "d", id); sc.params.push(expectedKind);
   const r = await ctx.tx.query<{ id: string; version: string }>("select d.id, d.version from erp.sales_documents d where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and d.kind=$" + sc.params.length + sc.sql + " for update of d", sc.params);
   if (!r.rows[0]) throw notFound("Documento");
@@ -579,6 +675,11 @@ interface EdicaoParaSalvar {
    * plano (`planoDaEdicao`). Ausente = o PUT, exatamente como antes.
    */
   parcial?: boolean;
+  /**
+   * TOP-CONFIG-08 — a recusa dos itens vazios com o erro do ESTRITO de cada porta (PUT: o `docSchema`; PATCH: o
+   * `edicaoSchema` pelo `lerPedidoDaEdicao`). Chamada pelo núcleo quando a versão não aceita venda sem itens.
+   */
+  recusarSemItens: () => never;
 }
 
 /**
@@ -594,6 +695,20 @@ interface EdicaoParaSalvar {
 async function salvarEdicao(ctx: ServiceCtx, kind: SalesKind, id: string, cur: DocumentoGravado, e: EdicaoParaSalvar) {
   // `id` é o da URL (EDITAR-01_R1, 1.2 n): o PUT devolve `r.id`, e ele volta a ser o da requisição, como antes.
   const { d, corpo } = e;
+  /*
+   * TOP-CONFIG-08 (decisão 277) — DOCUMENTO SEM ITENS, a PRIMEIRA conferência do núcleo: a versão que vale para a
+   * edição é a que o PUT de hoje decide — a congelada do documento ou, se o PUT troca a TOP, a atual da TOP nova (o
+   * MESMO `resolverTopParaLancamento` de baixo: a recusa da TOP pode vir antes; com os itens vazios ela é resolvida duas
+   * vezes, e só então). A versão no formato 4 com "Permitido" aceita itens []; qualquer outra recusa com o erro de hoje
+   * do estrito. Antes das recusas da parte gerada e da reserva de propósito: itens vazios como único defeito respondem
+   * o que respondiam. Na PATCH, a 404, o 409 da versão e o 409 da situação já vieram antes (ordem declarada).
+   */
+  if (d.items.length === 0) {
+    const versao = d.tipo_operacao_id != null && d.tipo_operacao_id !== cur.tipo_operacao_id
+      ? (await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id)).tipoOperacaoVersaoId
+      : cur.tipo_operacao_versao_id;
+    if (!(await aceitaSemItens(ctx, kind, versao))) e.recusarSemItens();
+  }
   // A venda gerada de pedido com reserva: a mesma pergunta serve à guarda do armazém da parte (abaixo) e à
   // conferência da reserva (antes de gravar). UMA consulta, e só quando a venda tem origem.
   const origemReserva = kind === "sale" && cur.origin_document_id ? await origemReservaEstoque(ctx, cur.origin_document_id) : false;
@@ -724,8 +839,11 @@ async function salvarEdicao(ctx: ServiceCtx, kind: SalesKind, id: string, cur: D
  *
  * O GATE (`execucaoConfiguradaHabilitada`) CHEGA COMO PARÂMETRO OBRIGATÓRIO de quem monta a rota, lido de
  * `app.config`. Um valor padrão aqui deixaria um chamador esquecido executar em silêncio o caminho errado.
+ *
+ * TOP-CONFIG-08 (decisão 277): devolve também a VERSÃO CONGELADA já lida (família + configuração; `null` = sem TOP) —
+ * é dela que o passo da aprovação pergunta, sem uma segunda leitura da mesma linha.
  */
-async function politicaDaVenda(ctx: ServiceCtx, versaoId: string | null, execucaoConfiguradaHabilitada: boolean): Promise<PoliticaEfetivaDaVenda> {
+async function politicaDaVenda(ctx: ServiceCtx, versaoId: string | null, execucaoConfiguradaHabilitada: boolean): Promise<{ politica: PoliticaEfetivaDaVenda; versaoCongelada: { codigoBase: string; configuracao: unknown } | null }> {
   let versaoCongelada: { codigoBase: string; configuracao: unknown } | null = null;
   if (versaoId) {
     const r = await ctx.tx.query<{ configuracao: unknown; codigo_base: string }>(
@@ -741,7 +859,7 @@ async function politicaDaVenda(ctx: ServiceCtx, versaoId: string | null, execuca
     versaoCongelada = { codigoBase: linha.codigo_base, configuracao: linha.configuracao };
   }
   const r = resolverPoliticaEfetivaDaVenda({ versaoCongelada, execucaoConfiguradaHabilitada });
-  if (r.ok) return r.politica;
+  if (r.ok) return { politica: r.politica, versaoCongelada };
   // FAIL-CLOSED, SEM EFEITO: esta recusa acontece antes do período, do estoque e do financeiro. A mensagem
   // não carrega identificador de TOP nem de versão — só o que o usuário pode fazer a respeito.
   const mensagem = r.motivo === "execucao_desligada"
@@ -782,7 +900,7 @@ async function politicaDaVenda(ctx: ServiceCtx, versaoId: string | null, execuca
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 /** A venda como a confirmação a lê (`getDoc` da variante `sale`). */
-type VendaParaConfirmar = Record<string, unknown> & { id: string; kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string; product_name: string; product_control_stock: boolean; warehouse_name: string | null }[] };
+type VendaParaConfirmar = Record<string, unknown> & { id: string; kind: SalesKind; status: string; version: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string; product_name: string; product_control_stock: boolean; warehouse_name: string | null }[] };
 /** A classificação que vai para o rateio dos títulos: a do documento, ou o recuo "padrão legado". */
 type ClassificacaoResolvida = ClassificacaoFinanceira & { origem: "documento" | "padrão legado" };
 
@@ -830,8 +948,8 @@ function tituloDaVenda(d: VendaParaConfirmar, plan: InstallmentPlan | null) {
  * O PLANEJAMENTO DA CONFIRMAÇÃO — UMA função, usada pela confirmação E pela prévia (VENDAS-A5-1).
  *
  * Decide, NESTA ORDEM, o que a confirmação conferia antes de qualquer efeito: situação → política da versão
- * congelada e gate → exigências da versão → período → classificação financeira → reserva de estoque
- * (TOP-CONFIG-07, `conferirReservaNaSaida`). Quem só MOSTRA o efeito
+ * congelada e gate → aprovação (TOP-CONFIG-08) → exigências da versão → período → classificação financeira → reserva
+ * de estoque (TOP-CONFIG-07, `conferirReservaNaSaida`). Quem só MOSTRA o efeito
  * (a prévia) não pode ter uma cópia desta regra: uma cópia "equivalente" divergiria na primeira fatia que
  * mexesse em uma das duas, e a tela prometeria o que o servidor não faz. O que muda entre as duas está
  * inteiro em `modo`.
@@ -848,8 +966,9 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: VendaParaConfirmar, execu
   if (d.status === "cancelled") { modo.recusar(err("ALREADY_CANCELLED", "Venda cancelada")); return plano; }
 
   let politica: PoliticaEfetivaDaVenda;
+  let versaoCongelada: { codigoBase: string; configuracao: unknown } | null;
   try {
-    politica = await politicaDaVenda(ctx, d.tipo_operacao_versao_id, execucaoConfiguradaHabilitada);
+    ({ politica, versaoCongelada } = await politicaDaVenda(ctx, d.tipo_operacao_versao_id, execucaoConfiguradaHabilitada));
   } catch (e) {
     if (!(e instanceof DomainError)) throw e;
     // Sem política não há o que planejar: a prévia para aqui, como a confirmação.
@@ -859,6 +978,26 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: VendaParaConfirmar, execu
   // ESTOQUE: legado e "saída" configurada baixam; "nenhum" não. FINANCEIRO: legado e "a receber" geram título.
   plano.baixaEstoque = politica.estoque.autoridade === "legado" || politica.estoque.efeito === "saida";
   plano.geraTitulos = politica.financeiro.autoridade === "legado" || politica.financeiro.efeito === "receber";
+
+  /*
+   * A APROVAÇÃO (TOP-CONFIG-08, decisão 277) — logo depois da situação e da política, ANTES das exigências e de qualquer
+   * efeito. Só a versão congelada no formato 4 com "Sempre", ou "A partir de um valor" com o total ATUAL ≥ o mínimo,
+   * exige; a decisão vigente é a última DA VERSÃO ATUAL do documento (`version`, da 0039): alterar a venda depois de
+   * aprovada pede aprovação nova. Pendente → 409 APROVACAO_PENDENTE; reprovada → 409 APROVACAO_REPROVADA. Na
+   * confirmação (manual e automática) a recusa LANÇA — e a automática a lê como "aguardando_aprovacao"; na prévia ela
+   * entra na lista, no MESMO formato das outras, e `podeConfirmar` fica false. Versão 1 a 3 ou sem TOP: nada muda. A
+   * guarda do banco (`trg_sales_documents_aprovacao`, 0041) é o fundo; quem explica é este passo.
+   * Versão no formato 4 ilegível para a aprovação → TIPO_OPERACAO_EXECUCAO_INDISPONIVEL (fail-closed), e o
+   * planejamento para aqui, como na política.
+   */
+  let recusaAprovacao: DomainError | null;
+  try {
+    recusaAprovacao = await recusaDaAprovacao(ctx, { modulo: "vendas", documentoId: d.id, versaoDocumento: d.version, valorDocumento: d.total, versaoTop: versaoCongelada });
+  } catch (e) {
+    if (!(e instanceof DomainError)) throw e;
+    modo.recusar(e); return plano;
+  }
+  if (recusaAprovacao) modo.recusar(recusaAprovacao);
 
   // AS EXIGÊNCIAS DA VERSÃO CONGELADA — todas conferidas, todas juntas, antes de qualquer efeito.
   const exigencias: { caminho: string; mensagem: string }[] = [];
@@ -961,7 +1100,19 @@ async function conferirReservaNaSaida(ctx: ServiceCtx, d: VendaParaConfirmar, mo
   if (faltas.length) modo.recusar(err("INSUFFICIENT_STOCK", faltas.map((f) => f.linha).join("\n"), faltas.map((f) => ({ ...f.detalhe, message: f.linha }))));
 }
 
-async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabilitada: boolean) {
+/**
+ * TOP-CONFIG-08 (decisão 277) — A CONFIRMAÇÃO DA VENDA, A ÚNICA. É o `confirmSale` de sempre, com o gate de
+ * `app.config` resolvido aqui (o mesmo `TOP_EFFECTS_RUNTIME_V1_ENABLED` que a rota `/confirm` lia), exportada para a
+ * confirmação automática (o gancho no fim do POST/PUT/PATCH/conversão) e para a aprovação que confirma em seguida.
+ * Não existe segundo caminho de confirmação: mesmo planejamento, mesmas recusas, mesmos efeitos, mesma auditoria.
+ * `automatica: true` acrescenta SÓ `automatica: true` ao metadata da auditoria "confirm"; a manual (`false`) grava o
+ * metadata de antes, chave por chave.
+ */
+export async function confirmarVendaNaTransacao(app: FastifyInstance, ctx: ServiceCtx, id: string, o: { automatica: boolean }): Promise<{ id: string; status: string; title_ids: string[] }> {
+  return confirmSale(ctx, id, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED, o);
+}
+
+async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabilitada: boolean, o: { automatica: boolean }) {
   const d = await getDoc(ctx, id, "sale", { lock: true }) as VendaParaConfirmar;
   // O PLANEJAMENTO é o mesmo da prévia (`planejarConfirmacao`); aqui, no modo que LANÇA a primeira recusa.
   const plano = await planejarConfirmacao(ctx, d, execucaoConfiguradaHabilitada, MODO_CONFIRMACAO);
@@ -1013,7 +1164,9 @@ async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabil
   await audit(ctx.tx, ctx, "sales_documents", id, "confirm", {
     titles: titleIds, movimentos, tipoOperacaoVersaoId: d.tipo_operacao_versao_id,
     execucao: { origem: politica.origem, ...resumoDaPoliticaDaVenda(politica) },
-    ...(titleIds.length && classificacao ? { classificacaoFinanceira: { categoriaFinanceiraId: classificacao.categoriaFinanceiraId, centroCustoId: classificacao.centroCustoId, origem: classificacao.origem } } : {})
+    ...(titleIds.length && classificacao ? { classificacaoFinanceira: { categoriaFinanceiraId: classificacao.categoriaFinanceiraId, centroCustoId: classificacao.centroCustoId, origem: classificacao.origem } } : {}),
+    // TOP-CONFIG-08: a chave só existe na confirmação automática; a manual fica idêntica à de antes.
+    ...(o.automatica ? { automatica: true } : {})
   });
   return { id, status: "confirmed", title_ids: titleIds };
 }
@@ -1278,10 +1431,21 @@ export default async function salesRoutes(app: FastifyInstance) {
      * TOP-CONFIG-07: pedido cuja versão resolvida reserva estoque confere o disponível DEPOIS de todas as recusas de
      * antes (nenhuma ordem, código ou mensagem muda) e imediatamente ANTES de gravar — a trava dos produtos vale até o
      * commit. Orçamento e venda nunca perguntam; pedido sem TOP também não.
+     *
+     * TOP-CONFIG-08 (decisão 277):
+     *   · DOCUMENTO SEM ITENS (só venda): o corpo é lido pelo irmão sem o mínimo de itens (`lerCorpoDoDocumento`). Sem
+     *     TOP, itens vazios são recusados logo depois da leitura do corpo, como hoje; com TOP, depois de resolvê-la: só
+     *     a versão no formato 4 com "Permitido" aceita, e a recusa é a de hoje. ORDEM NOVA, declarada: com TOP, a recusa
+     *     da empresa (`exigirEmpresaDeLancamento`) e a da TOP (`resolverTopParaLancamento`) podem vir antes da dos itens;
+     *   · CONFIRMAÇÃO AUTOMÁTICA: no FIM, dentro do `idempotent` e depois da auditoria "create" — a resposta gravada
+     *     pela chave já leva o resultado, e o replay nunca confirma duas vezes.
      */
-    app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = docSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id) : null; const classificacao = await classificacaoDaCriacao(ctx, d); const condicao = { linha: d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null, gravar: true }; await cobrarRegrasDaOperacao(ctx, top ? await regrasDaVersaoTop(ctx, top.tipoOperacaoVersaoId) : null, d, { conferirCondicao: true, conferirAtraso: true }); await cobrarLayoutAoSalvar(ctx, kind, d);
+    app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = lerCorpoDoDocumento(kind, req.body); if (d.items.length === 0 && !d.tipo_operacao_id) recusarItensVazios(() => docSchema.parse(req.body)); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id) : null;
+      if (d.items.length === 0 && !(await aceitaSemItens(ctx, kind, top?.tipoOperacaoVersaoId ?? null))) recusarItensVazios(() => docSchema.parse(req.body));
+      const classificacao = await classificacaoDaCriacao(ctx, d); const condicao = { linha: d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null, gravar: true }; await cobrarRegrasDaOperacao(ctx, top ? await regrasDaVersaoTop(ctx, top.tipoOperacaoVersaoId) : null, d, { conferirCondicao: true, conferirAtraso: true }); await cobrarLayoutAoSalvar(ctx, kind, d);
       if (kind === "order" && top && await versaoReservaEstoque(ctx, top.tipoOperacaoVersaoId)) { await travarContadorIdGlobal(ctx); await conferirReservaDoDocumento(ctx, { itens: d.items, empresaId: d.empresa_id, excluirDocumentoId: null }); }
-      const r = await writeDoc(ctx, kind, d, undefined, null, top, classificacao, condicao); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao } : undefined); return r; })).result; })));
+      const r = await writeDoc(ctx, kind, d, undefined, null, top, classificacao, condicao); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao } : undefined);
+      return comConfirmacaoAutomatica(app, ctx, kind, r.id!, top?.tipoOperacaoVersaoId ?? null, r); })).result; })));
     /**
      * EDIÇÃO. A regra do snapshot está toda nas três linhas de `top` abaixo:
      *
@@ -1307,12 +1471,17 @@ export default async function salesRoutes(app: FastifyInstance) {
       // aceitando documento sem TOP (legado), como sempre aceitou.
       const recusa = await recusaDaEdicao(ctx, cur, { exigirTop: false });
       if (recusa) throw err("INVALID_STATUS_TRANSITION", recusa);
-      const d = docSchema.parse(req.body);
+      // TOP-CONFIG-08: a venda lê pelo irmão sem o mínimo de itens. Documento que CONTINUA sem TOP (nem o gravado, nem
+      // o corpo traz uma): itens vazios recusados aqui, logo depois da leitura do corpo, como hoje. Com TOP, quem
+      // decide é a versão, no núcleo (`salvarEdicao`), com a mesma recusa.
+      const d = lerCorpoDoDocumento(kind, req.body);
+      const recusarSemItens = () => recusarItensVazios(() => docSchema.parse(req.body));
+      if (d.items.length === 0 && cur.tipo_operacao_id === null && d.tipo_operacao_id == null) recusarSemItens();
       const corpo = req.body !== null && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
       // O PUT é a lista inteira, casada com a gravada PELA POSIÇÃO (é como a parte gerada preserva a ligação), e os
       // itens são regravados como sempre foram (`substituir`). As regras são as do núcleo, as mesmas da PATCH.
       const { r, top } = await salvarEdicao(ctx, kind, id, cur, { d, corpo, pares: d.items.map((_, k) => cur.items[k]),
-        itens: { modo: "substituir", origemItemIds: cur.items.map((i) => i.origem_item_id) } });
+        itens: { modo: "substituir", origemItemIds: cur.items.map((i) => i.origem_item_id) }, recusarSemItens });
       await audit(ctx.tx, ctx, "sales_documents", id, "update");
       // Mudança de identidade do lançamento é evento PRÓPRIO: quem trocou a TOP de um documento não pode
       // ficar escondido dentro de um `update` genérico sem diff.
@@ -1322,7 +1491,9 @@ export default async function salesRoutes(app: FastifyInstance) {
           { before: { tipoOperacaoId: cur.tipo_operacao_id, tipoOperacaoVersaoId: cur.tipo_operacao_versao_id },
             after: { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId } });
       }
-      return r;
+      // TOP-CONFIG-08: a confirmação automática, no FIM, pela versão que vale depois do PUT (a congelada, ou a da TOP
+      // nova). O PUT não tem chave de idempotência: o reenvio depois de confirmar recebe o 409 INVALID_STATUS_TRANSITION.
+      return comConfirmacaoAutomatica(app, ctx, kind, id, top ? top.tipoOperacaoVersaoId : cur.tipo_operacao_versao_id, r);
     }));
     /**
      * EDIÇÃO PARCIAL — `PATCH <base>/:id` (EDITAR-01, decisão 272). Corpo `{ version, ...só os campos que mudam }`.
@@ -1346,7 +1517,9 @@ export default async function salesRoutes(app: FastifyInstance) {
      *   7. nada muda de fato (valores canônicos iguais ao gravado, plano inclusive) → 200 com o documento, sem escrita;
      *   8. a referência TROCADA (cliente, transportadora, proprietário, forma de pagamento) fora da organização → 422;
      *   9. o NÚCLEO do PUT (`salvarEdicao`), na ordem do PUT; os totais (e o que não cabe na coluna → 422) e o plano
-     *      são decididos lá dentro, logo antes de gravar.
+     *      são decididos lá dentro, logo antes de gravar. TOP-CONFIG-08: na venda, os itens vazios passam na forma (1) e
+     *      são decididos AQUI, pela versão congelada (formato 4 "Permitido" aceita; senão o 422 de hoje do estrito);
+     *  10. TOP-CONFIG-08: a confirmação automática (versão formato 4 "Automática"), no fim, e a resposta relida.
      * Nada muda de fato (tudo igual ao gravado) → nenhuma escrita, a versão fica, e a resposta é o documento.
      * Uma PATCH que grava faz UM update no cabeçalho (a versão sobe exatamente 1) e UM evento de histórico.
      * Resposta: o documento como o GET o devolve, com a versão nova.
@@ -1356,7 +1529,10 @@ export default async function salesRoutes(app: FastifyInstance) {
       // `.view` — por chave exata, sem implicação. Sem `.view` → 403 antes de ler qualquer coisa, inclusive o corpo.
       requirePermission(ctx, `${perm}.view`);
       const { id } = req.params as { id: string };
-      const pedido = lerPedidoDaEdicao(req.body, edicaoSchema, CHAVES_DA_EDICAO);
+      // TOP-CONFIG-08: a venda lê `items` pelo irmão do `edicaoSchema` (lista vazia passa na FORMA; quem decide é a versão,
+      // no núcleo, depois da 404, do 409 da versão e do 409 da situação — a ordem nova, declarada). Orçamento e pedido: o
+      // estrito, como sempre.
+      const pedido = lerPedidoDaEdicaoDaVariante(kind, req.body);
       // Id MALFORMADO é inexistente: a MESMA 404 do GET, e não o 500 do 22P02 que o `getDoc` daria ao passá-lo a uma
       // coluna uuid (o mesmo cuidado do `/edicao`). O GET/PUT não mudam nesta fatia.
       if (!FORMA_UUID_PADRAO.test(id)) throw notFound("Documento");
@@ -1375,12 +1551,21 @@ export default async function salesRoutes(app: FastifyInstance) {
           if (!edicao.mudou) return cur;
           // 1.2 y: a referência TROCADA existe nesta organização (a FK de coluna única não passa pela RLS).
           await conferirReferenciasDaEdicao(ctx, edicao.mudancas);
-          await salvarEdicao(ctx, kind, id, cur, { d: edicao.d, corpo: edicao.mudancas, pares: edicao.pares, itens: edicao.itens, parcial: true });
+          await salvarEdicao(ctx, kind, id, cur, { d: edicao.d, corpo: edicao.mudancas, pares: edicao.pares, itens: edicao.itens, parcial: true,
+            recusarSemItens: () => recusarItensVazios(() => lerPedidoDaEdicao(req.body, edicaoSchema, CHAVES_DA_EDICAO)) });
           const depois = await getDoc(ctx, id, kind) as DocumentoGravado;
           const enviados = [...Object.keys(edicao.mudancas), ...(pedido.campos.items !== undefined ? ["items"] : [])];
           const evento = eventoDaEdicao(cur, depois, enviados);
           await audit(ctx.tx, ctx, "sales_documents", id, "update", evento.metadados, { before: evento.before, after: evento.after });
-          return depois;
+          /*
+           * TOP-CONFIG-08 — a confirmação automática, no FIM e só na PATCH que GRAVOU (a sem mudança voltou lá em cima: não
+           * confirma e não ganha a chave). A resposta é o documento RELIDO depois da confirmação: confirmar muda a situação
+           * e a 0039 soma 1 na `version`. Sem confirmar (recusada, aguardando aprovação, sem permissão), o savepoint
+           * desfez tudo e o documento é o `depois`, lido antes dele. Com Idempotency-Key, o corpo gravado já leva o resultado.
+           */
+          const confirmacaoAutomatica = await confirmacaoAutomaticaDaVenda(app, ctx, kind, id, cur.tipo_operacao_versao_id);
+          if (!confirmacaoAutomatica) return depois;
+          return { ...(confirmacaoAutomatica.confirmado ? await getDoc(ctx, id, kind) : depois), confirmacaoAutomatica };
         })).result;
     }));
     /**
@@ -1731,7 +1916,15 @@ export default async function salesRoutes(app: FastifyInstance) {
           emPartes: true, zeraOSaldo: parte.calculo.zeraOSaldo, itens: parte.calculo.itens.map((i) => ({ origemItemId: i.origemItemId, quantidade: i.quantity })) });
       }
       if (topDestino) await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", { tipoOperacaoId: topDestino.tipoOperacaoId, tipoOperacaoVersaoId: topDestino.tipoOperacaoVersaoId, tipoOperacaoCodigo: topDestino.codigo, tipoOperacaoVersao: topDestino.versao, from: id });
-      return { id: r.id, kind: destino, from: id };
+      /*
+       * TOP-CONFIG-08 (decisão 277) — a VENDA GERADA, inteira ou em partes, confirma sozinha quando a versão congelada
+       * DELA (a da TOP de destino, que o `writeDoc` acabou de gravar; nunca a da origem) é formato 4 "Automática". No FIM:
+       * depois de a origem ficar convertida (ou de a parte ser registrada) e das auditorias "convert" e "create". A
+       * confirmação recusada desfaz só o savepoint: a gerada fica aberta e a origem convertida, como hoje. A resposta de
+       * hoje ganha só `confirmacaoAutomatica`, e só nesse caso; o replay da chave devolve o corpo gravado, com o resultado.
+       * Pedido gerado (orçamento → pedido) nunca: `confirmacaoAutomaticaDaVenda` só serve à variante `sale`.
+       */
+      return comConfirmacaoAutomatica(app, ctx, destino, r.id!, topDestino?.tipoOperacaoVersaoId ?? null, { id: r.id, kind: destino, from: id });
         })).result;
     })));
     /**
@@ -1776,7 +1969,7 @@ export default async function salesRoutes(app: FastifyInstance) {
     // PRÉVIA DA CONFIRMAÇÃO (VENDAS-A5-1): leitura, com a capacidade de LER a venda — quem pode abrir o
     // documento pode ver o que a confirmação faria; confirmar continua exigindo `sales.edit`.
     if (kind === "sale") app.get(`${base}/:id/previa-confirmacao`, async (req) => runService(app, req, "sales.view", (ctx) => previaDaConfirmacao(ctx, (req.params as { id: string }).id, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED)));
-    if (kind === "sale") app.post(`${base}/:id/confirm`, async (req) => runService(app, req, "sales.edit", async (ctx) => { const { id } = req.params as { id: string }; await exigirDocumentoVisivel(ctx, id, "sale"); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, { action: "confirm_sales_document", sourceId: id, actorId: ctx.user.id }, () => confirmSale(ctx, id, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED))).result; }));
+    if (kind === "sale") app.post(`${base}/:id/confirm`, async (req) => runService(app, req, "sales.edit", async (ctx) => { const { id } = req.params as { id: string }; await exigirDocumentoVisivel(ctx, id, "sale"); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, { action: "confirm_sales_document", sourceId: id, actorId: ctx.user.id }, () => confirmarVendaNaTransacao(app, ctx, id, { automatica: false }))).result; }));
   }
   // Curva ABC e relatórios de vendas simples
   /**

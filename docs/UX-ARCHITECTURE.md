@@ -99,7 +99,7 @@ cliente. Exemplos verificados por e2e (`apps/web/e2e/navegacao.spec.ts`, `compac
 
 ## Guardrails numéricos
 
-Menu: 13 módulos (máx. 14). Áreas principais por módulo: 2–5 (Configurações é exceção). Sub-áreas só quando a fonte de
+Menu: 14 módulos (máx. 14, no limite desde a TOP-CONFIG-08). Áreas principais por módulo: 2–5 (Configurações é exceção). Sub-áreas só quando a fonte de
 dados é outra; status/tipo/escopo sempre como chip. Profundidade cotidiana: Módulo → Área.
 
 ---

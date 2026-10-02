@@ -1018,6 +1018,8 @@ próxima operação.
 > declara execução configurada — e só nesse caso. Todo o resto continua valendo como está: fiscal,
 > aprovação, confirmação automática, alteração após confirmar e as exigências da seção `geral` seguem
 > declarados e não executados, e nenhuma outra família executa configuração.
+> Aprovação, confirmação automática, documento sem itens e alteração após confirmar: superado pela TOP-CONFIG-08
+> (§17) — na versão gravada no formato 4, as três primeiras executam e a alteração após confirmar é recusada.
 
 **CONFIGURAR ≠ EXECUTAR.** Nada nesta fatia mudou o que acontece quando um documento é confirmado.
 Declarado sem rodeio, e verificável no código:
@@ -1029,7 +1031,7 @@ Declarado sem rodeio, e verificável no código:
   `exigeFormaPagamento` e as demais são declarações sem consumidor: nenhuma validação de lançamento as
   consulta;
 - **não há workflow de aprovação.** `politica`, `valorMinimo` e `momento` são guardados e versionados; não
-  existe fila, alçada, aprovador nem trava;
+  existe fila, alçada, aprovador nem trava (superado pela TOP-CONFIG-08 (§17) para a versão no formato 4);
 - **não há motor tributário.** `calculoTributario: "preparado"` declara intenção; não existe cálculo;
 - **`momento` tem um valor só** porque o produto contempla apenas o efeito na confirmação;
 - **a configuração não guarda referência concreta** a armazém, centro de resultado ou natureza de
@@ -1229,7 +1231,8 @@ versão configurada num ambiente que não a executa. A troca de autoridade apare
 auditoria como a seção `execucao` alterada (com o antes e o depois).
 
 **Continua preparado, não executado:** fiscal, aprovação, confirmação automática, alteração após
-confirmar e as exigências da seção `geral`. Orçamento, pedido e a conversão não mudaram. Próximas fatias
+confirmar e as exigências da seção `geral` (aprovação, confirmação automática e alteração após confirmar:
+superado pela TOP-CONFIG-08 (§17)). Orçamento, pedido e a conversão não mudaram. Próximas fatias
 (Compras, Movimentações de Estoque, Financeiro) reutilizam o formato 2, a matriz e a recusa — não este
 resolvedor, que é da venda.
 
@@ -1661,3 +1664,523 @@ O documento de estoque (`erp.documentos_estoque`, 0040) e o Portal de Estoque es
 - **A TOP no documento**: obrigatória, só da família da espécie (conferido pela API e pelo gatilho do banco), versão
   congelada no lançamento, imutáveis depois. O ledger (`erp.stock_movements`) nunca recebe TOP: recebe o movimento, com
   a origem no `source_type`.
+
+## 17. Formato 4: regras gerais e aprovação (TOP-CONFIG-08)
+
+> Decisão 277 (o porquê mora lá). Esta seção é o contrato: formato, matriz, rotas, corpos, códigos e respostas.
+> Formato: `packages/domain/src/tipo-operacao-configuracao.ts` (`VERSAO_SCHEMA_CONFIGURACAO_TOP_V4`,
+> `regrasGeraisExecutamTop`, `declaraRegrasGerais`, `configuracaoV4DaV3`, `configuracaoTopParaEdicaoV4`). Matriz, execução
+> e aprovação no domínio: `packages/domain/src/tipo-operacao-regras-gerais.ts` (`MATRIZ_REGRAS_GERAIS_TOP`,
+> `validarRegrasGeraisTop`, `normalizarRegrasGeraisDaFamiliaTop`, `regrasGeraisQuePassamAValer`, `regrasGeraisDaVersaoTop`,
+> `exigeAprovacao`, `lerMatrizRegrasGeraisTop` e as mensagens da aprovação). Confirmação automática:
+> `apps/api/src/lib/confirmacao-automatica.ts`. Aprovação: `apps/api/src/lib/aprovacao-documento.ts` e
+> `apps/api/src/routes/aprovacoes-{vendas,compras,estoque}.ts`. Invariantes:
+> `supabase/migrations/0041_regras_gerais_e_aprovacao_da_top.sql`. Implantação em `docs/DEPLOYMENT.md` § TOP-CONFIG-08.
+
+As quatro regras gerais que o §11.8 e o §12.6 deixavam só declaradas — Confirmação (Manual | Automática), Documento sem
+itens (Proibido | Permitido), Alteração após confirmar (Bloqueada | Permitida) e Aprovação (Sem aprovação | Sempre | A
+partir de um valor) — ganham contrato de execução, NO SERVIDOR, e só para versão de TOP gravada no formato 4: confirmação
+automática, documento sem itens e aprovação EXECUTAM; alteração após confirmar é RECUSADA (§17.6). Para versão nos
+formatos 1, 2 e 3, as rotas, os corpos e as respostas de hoje não mudam, chave por chave: tudo o que esta seção acrescenta
+é aditivo e só aparece com versão congelada no formato 4.
+
+### 17.1 O formato 4
+
+`versaoSchema: 4` (`VERSAO_SCHEMA_CONFIGURACAO_TOP_V4`; `VERSOES_SCHEMA_CONFIGURACAO_TOP = [1, 2, 3, 4]`).
+
+- **As MESMAS chaves do formato 3** (§13.1), com a mesma leitura estrita. Nenhuma chave nova, nenhuma seção nova.
+- **Tudo o que o 3 executa vale igual no 4** (`restricoesExecutamTop` responde sim para o 3 e o 4): exigências, condições
+  permitidas, cliente em atraso, transportadora e CFOP.
+- **Só o 4 executa as regras gerais e a aprovação** (`regrasGeraisExecutamTop`, a única pergunta "executam?"). Versão
+  gravada no formato 1, 2 ou 3 é neutra para elas PARA SEMPRE, sem ler as seções — inclusive com "Automática",
+  "Permitido" ou "Sempre" gravados. `declaraRegrasGerais` é outra pergunta ("alguma das quatro está fora do neutro?", em
+  qualquer formato) e serve só à comparação e à tela.
+- **O 4 nunca vira 3 no caminho.** A leitura (`lerConfiguracaoTop`), a normalização (`normalizarConfiguracaoTop`) e as
+  vistas de edição (`configuracaoTopParaEdicaoV3` devolve 3 ou 4; `configuracaoTopParaEdicaoV4`) preservam o número, e a
+  API grava `configuracao_schema_version` a partir do valor normalizado. Um corpo no formato 4 volta do `GET` no formato 4.
+- **O neutro do formato 4** (`configuracaoNeutraTopV4`): o do formato 3 com `versaoSchema: 4` — Manual, Proibido,
+  Bloqueada e Sem aprovação, com `valorMinimo` nulo. A promoção 3 → 4 é explícita (`configuracaoV4DaV3`: mesmas chaves e
+  valores, normalizada), nunca efeito da normalização.
+- **Gravação.** `POST` e `PUT /api/admin/tipos-operacao` aceitam os formatos 1 a 4. O formato não retrocede (§13.1): corpo
+  no formato 1, 2 ou 3 sobre versão vigente no 4 → 422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`
+  `{versaoEnviada, versaoVigente}`. No formato 4 a gravação confere a matriz da família (§17.2).
+- **A guarda da 0023** pede a marca para todo formato que não seja o 1 nem o 2 em legado/legado: a venda com versão no
+  formato 4 confirma pela marca, como a do 3 (`confirmacaoExigeMarcaDaGuarda` já diz sim para formato futuro).
+
+**Versão.** A comparação (`configuracoesTopIguais`) é feita na vista do formato 4 SEM o `versaoSchema`, mais um termo por
+portão: o das exigências da seção `geral` (formato 3, §13.1) e o das regras gerais (formato 4). `configuracaoTopEhNeutra`
+vale para o neutro de qualquer formato.
+
+| Troca | Versão N+1? | `secoesAlteradasTop` |
+| --- | --- | --- |
+| 3 → 4 com as quatro regras no neutro dos dois lados (Manual, Proibido, Bloqueada, Sem aprovação) | **não** — no-op, como a troca 2 → 3 sem exigência | — |
+| 3 → 4 com a mesma regra fora do neutro dos dois lados (ex.: Automática no 3 e no 4) | **sim** — no 4 ela passa a executar | `geral` (Confirmação, Documento sem itens) e/ou `aprovacao`, cada uma por si |
+| 3 → 4 que volta uma regra ao padrão (ex.: o pedido de compra de produção, §17.7) | **sim** — o valor mudou | a seção do valor que mudou |
+| 4 → 4 | as regras do §11.4 | as seções que mudaram |
+
+"Passa a valer" é mudança da seção mesmo com os valores iguais, e `geral` e `aprovacao` contam cada uma por si: a 3 → 4
+com só "Sempre" marca `aprovacao` e não `geral`. As duas aparecem no histórico e na auditoria da versão.
+
+### 17.2 A matriz por família
+
+`MATRIZ_REGRAS_GERAIS_TOP` (domínio, fonte única): o que cada família ACEITA em cada regra e, para o que não aceita, o
+MOTIVO. As famílias são perguntadas ao registry pela variante de cada documento (venda, compra, as quatro espécies de
+estoque, orçamento, pedido de venda, pedido de compra); família fora da matriz cai no padrão "sem documento"
+(`regrasGeraisDaFamiliaTop`), que só aceita o neutro — a família nova do registry nasce fechada.
+
+| Família | Confirmação | Documento sem itens | Alteração após confirmar | Aprovação |
+| --- | --- | --- | --- | --- |
+| `vendas.venda`, `compras.compra` | Manual, Automática | Proibido, Permitido | Bloqueada | Sem aprovação, Sempre, A partir de um valor |
+| `estoque.entrada`, `estoque.saida`, `estoque.transferencia`, `estoque.ajuste` | Manual, Automática | Proibido | Bloqueada | Sem aprovação, Sempre |
+| `vendas.orcamento`, `vendas.pedido`, `compras.pedido` | Manual | Proibido | Bloqueada | Sem aprovação |
+| qualquer outra (as oito antigas de estoque, `compras.solicitacao`, `financeiro.*`) | Manual | Proibido | Bloqueada | Sem aprovação |
+
+Motivos — texto exato; o editor o mostra ao lado da opção desabilitada e a API o devolve na recusa:
+
+| Regra (`caminho`) | Família | Motivo |
+| --- | --- | --- |
+| Confirmação (`geral.confirmacao`) | orçamento e pedidos | "Este documento não é confirmado: ele é convertido ou recebido em outro." |
+| | outra família | "Esta operação ainda não tem documento no sistema." |
+| Documento sem itens (`geral.documentoSemItens`) | estoque | "Documento de estoque sem itens não movimenta nada." |
+| | orçamento e pedidos | "Orçamento e pedido sem itens não têm o que converter nem receber." |
+| | outra família | "Esta operação ainda não tem documento no sistema." |
+| Alteração após confirmar (`geral.alteracaoAposConfirmacao`) | venda | "Alterar uma venda confirmada ainda não tem execução: o estorno do estoque e os títulos não sabem refazer o documento. Cancele e lance outra." |
+| | compra | "Alterar uma compra confirmada ainda não tem execução: a compra não tem edição. Cancele e lance outra." |
+| | estoque | "Documento de estoque confirmado não se altera: cancele e lance outro." |
+| | orçamento e pedidos | "Este documento não é confirmado: ele é convertido ou recebido em outro." |
+| | outra família | "Esta operação ainda não tem documento no sistema." |
+| Aprovação (`aprovacao.politica`) | estoque, opção "A partir de um valor" | "O valor do documento de estoque só é conhecido na confirmação: use "Sempre"." |
+| | orçamento e pedidos | "A aprovação acontece antes da confirmação, e este documento não é confirmado." |
+| | outra família | "Esta operação ainda não tem documento no sistema." |
+
+- **Portão da GRAVAÇÃO.** No formato 4, o `POST` (sempre) e o `PUT` (quando o corpo traz `configuracao`) conferem as quatro
+  regras contra a matriz da família (`validarRegrasGeraisTop`, no mesmo ponto da conferência fiscal da família): valor que
+  a família não aceita → 422 `TIPO_OPERACAO_CONFIGURACAO_INVALIDA`
+  `{recusas: [{motivo: "combinacao_nao_suportada", caminho, mensagem}]}`, com o motivo da matriz como `mensagem`, as
+  recusas na ordem fixa dos caminhos e na MESMA lista das recusas fiscais e de cliente em atraso. Os formatos 1 a 3 não
+  passam pela matriz: a gravação deles continua a de hoje, valor por valor.
+- **Na EXECUÇÃO a matriz não é aplicada.** Vale o que a versão congelada diz, como foi gravada (`regrasGeraisDaVersaoTop`).
+  Por isso a matriz só cresce: tirar dela uma opção não pode desligar o que uma versão já gravada executa.
+- **Publicada, nunca copiada.** O servidor a publica nas capabilities (§17.7); o editor a lê com o leitor estrito do
+  domínio e avalia contra a matriz QUE O SERVIDOR DECLAROU.
+
+### 17.3 Confirmação automática
+
+**Quando.** No FIM de todo caminho que grava um documento ABERTO cuja versão congelada está no formato 4 com
+`geral.confirmacao = "automatica"` (`confirmaAutomaticamente`; formato 1 a 3, Manual, sem TOP ou configuração ilegível →
+nenhuma tentativa):
+
+| Documento | Caminhos | O fim |
+| --- | --- | --- |
+| venda (só `kind` `sale`: os handlers servem às três variantes, e o gancho confere) | `POST`, `PUT` e `PATCH` (§15.2); a venda GERADA pela conversão, inteira ou em partes | no `POST`, dentro do `idempotent`, depois da auditoria `create`; na conversão, depois de a origem ser atualizada e das auditorias `convert` e `create` |
+| compra (espécie `compra`) | `POST`; a compra GERADA pelo receber pedido (`/convert`, §14.1) | no `POST`, depois da auditoria `create`; no receber, depois de o pedido ficar convertido e da auditoria `convert` — nunca dentro do `lancar`, que serve aos dois |
+| documento de estoque | `POST` das quatro espécies | dentro do `idempotent`, depois da auditoria `create` |
+| qualquer um dos três | aprovar (§17.5) | depois da decisão e da auditoria `approve` |
+
+O documento gerado segue a SUA versão congelada (a da TOP de destino), nunca a da origem. A `PATCH` sem mudança não grava
+nada: não confirma e não ganha a chave nova. O `PUT` confirma pela versão que vale depois dele (a congelada, ou a atual da
+TOP nova, se ele troca a TOP).
+
+**Como.**
+
+- Na MESMA transação, num savepoint (`confirmacao_automatica`), pela MESMA função do `POST /confirm` de cada documento
+  (`confirmarVendaNaTransacao`, `confirmarCompraNaTransacao`, `confirmarDocumentoEstoqueNaTransacao`): mesmo planejamento,
+  mesmas recusas, mesmos efeitos e a mesma auditoria `confirm` — com `automatica: true` no metadata SÓ na automática; a
+  auditoria da confirmação manual fica idêntica. Não existe segundo caminho de confirmação.
+- **Quem confirma é quem salvou** (nas rotas de aprovação, quem aprovou), com a MESMA capacidade da confirmação manual:
+  `sales.edit`, `compras.edit`, `<recurso da espécie>.edit`. A capacidade é do mesmo recurso e cai no mesmo módulo de
+  escopo: `hasPermission` basta. Sem ela, nada é tentado (nem o savepoint) — `sem_permissao`. A TOP nunca dá a ninguém um
+  poder que ele não tem.
+- **Aprovação exigida e não vigente** (§17.5): o planejamento para no passo da aprovação, antes de qualquer efeito —
+  `aguardando_aprovacao`.
+- **A confirmação recusou** (situação, saldo, período, exigência, cadastro, reprovação, a guarda do banco, o 40P01 traduzido
+  em `CONCURRENCY_CONFLICT`): `rollback to savepoint` — a marca da 0023 (`set_config` local) volta junto —, o documento
+  fica SALVO e ABERTO, e a resposta diz o porquê: `recusada`, com o MESMO corpo de erro que o `/confirm` daria.
+- **Erro que não é de domínio:** `rollback to savepoint` e o erro sobe (500), como hoje; a transação inteira volta.
+- **A empresa SELECIONADA.** A confirmação automática relê o documento como o `/confirm` o leria na MESMA requisição
+  (`getDoc`, `lerDocumentoCompra`, `lerDocumentoEstoque`, pelo `scopedById`): com o escopo de empresa do módulo E com o
+  recorte da empresa selecionada (`X-Empresa-Id`). O `POST` de um documento da empresa Y com a empresa X selecionada é
+  permitido (`exigirEmpresaDeLancamento` confere o escopo do módulo, não a seleção), e o documento fica SALVO e ABERTO;
+  a releitura não o enxerga, e a resposta traz `confirmacaoAutomatica: { confirmado: false, motivo: "recusada", erro:
+  { code: "NOT_FOUND", message: "Documento não encontrado" } }` — coerente com o `/confirm` manual no mesmo contexto,
+  que responde a mesma 404. Vale para o `POST` da venda, da compra e do estoque; no `PUT`, na `PATCH`, na conversão, no
+  receber e no aprovar, o documento (ou a origem, de onde o gerado herda a empresa) já foi lido com o mesmo recorte
+  antes de gravar. Quem confirma depois, com a empresa do documento selecionada (ou sem seleção), confirma.
+
+**Resposta** — aditiva, só com versão no formato 4 Automática; para todo o resto o corpo é o de hoje, chave por chave:
+
+```
+confirmacaoAutomatica:
+    { confirmado: true }
+  | { confirmado: false, motivo: "aguardando_aprovacao" }
+  | { confirmado: false, motivo: "sem_permissao" }
+  | { confirmado: false, motivo: "recusada", erro: { code, message, details? } }   // o corpo de erro do /confirm
+```
+
+- A compra e o documento de estoque respondem hoje `situacao: "aberto"`; com `{ confirmado: true }`, a `situacao` da
+  resposta passa a `"confirmado"` (também no receber, que herda o corpo do lançamento).
+- A `PATCH` responde o documento inteiro, RELIDO depois da confirmação (a 0039 somou 1 na versão).
+- **Idempotência.** `POST`, `PATCH`, conversão e receber têm `Idempotency-Key`: o replay devolve o corpo gravado, COM o
+  resultado, e nunca confirma duas vezes. O `PUT` não tem chave: o reenvio depois da confirmação automática recebe o 409
+  `INVALID_STATUS_TRANSITION` de hoje.
+- A prévia (`GET …/previa-confirmacao`) continua igual: ela não confirma nada.
+
+**Travas.**
+
+| Documento | Ordem | Ciclo |
+| --- | --- | --- |
+| venda | a confirmação manual trava documento → saldo/produto (`postStock`) → contador do ID Global (`createTitles`); o `POST` e a conversão já têm o contador (`writeDoc`) antes de chegar ao produto | **possível**: a automática × a confirmação manual de outra venda do mesmo produto pode dar deadlock (40P01) |
+| compra | `POST`: contador do código → INSERT → contador do ID Global → itens → estoque → contador do título; o receber: pedido → contador do código → contador do ID Global → itens; a confirmação (a manual, e a automática no `POST`, no receber e no aprovar): documento → contador do ID Global → estoque | compra e estoque: **sem ciclo entre si**; **possível** com a confirmação MANUAL de VENDA do mesmo produto (40P01): a compra segura o contador e pede o produto, e a manual da venda segura o produto e pede o contador. Já existia com a confirmação manual da compra; a automática o herda |
+| estoque | `POST`: contador do código → INSERT → contador do ID Global → itens; a confirmação (manual ou automática): cabeçalho → saldo/produto, sem pegar contador | compra e estoque: **sem ciclo entre si**; **possível** entre a automática do `POST` (que segura o contador desde o lançamento e pede o produto) e a confirmação MANUAL de VENDA do mesmo produto (40P01). É NOVO nesta fatia: antes só havia a confirmação manual do estoque, que não pega contador e não fecha o ciclo |
+
+A ordem da confirmação manual NÃO muda. O `fromPgError` já traduz o 40P01 em 409 `CONCURRENCY_CONFLICT`, e o desfecho é
+o MESMO nos três documentos (o do CA-12): se a automática perde, o resultado é `recusada` com o erro
+`CONCURRENCY_CONFLICT`, e o documento (venda, compra ou estoque) fica salvo e aberto; se a manual da venda perde, ela
+recebe o 409 de hoje. Nenhuma das duas trava para sempre. A barreira prova o ciclo nas duas ordens para a venda
+(`top-config-08-vendas.test.ts`, CA-12a/b) e para o estoque (`top-config-08-estoque.test.ts`, CA-12c/d). A
+confirmação automática que o APROVAR da venda dispara não segura o contador antes (a rota de aprovação não lança nada):
+ela tem a ordem da manual da venda — documento → saldo/produto → contador — e fica do lado dela no ciclo. **Custo
+declarado:** o contador do ID Global da organização fica preso durante a confirmação automática inteira, e os
+lançamentos da organização esperam por ele até o commit.
+
+### 17.4 Documento sem itens
+
+- **Só `vendas.venda` e `compras.compra` podem permitir** (matriz). O documento de estoque não muda: o esquema dele
+  continua com o mínimo de um item.
+- **O esquema estrito não relaxa.** `docSchema` (venda) e `documentoSchema` (compra) continuam com o mínimo; um esquema
+  IRMÃO, sem o mínimo de itens, é usado SÓ no `POST`, no `PUT` e na `PATCH` da venda (variante `sale`) e no `POST` de compra
+  (espécie `compra`). Orçamento, pedido de venda e pedido de compra leem pelo estrito. Se o irmão recusa o corpo, quem
+  responde é o ESTRITO: o corpo do erro fica idêntico ao de hoje. A conversão de venda continua no `docSchema` estrito, e o
+  receber do pedido de compra continua com o mínimo de um item.
+- **Sem TOP** (`POST` sem `tipo_operacao_id`; `PUT` de documento que continua sem TOP), os itens vazios são recusados logo
+  depois da leitura do corpo, como hoje. A `PATCH` de venda sem TOP é recusada antes, pela falta de TOP (a ordem, abaixo).
+- **Com TOP**, a regra roda depois de saber a TOP (no `PUT`, a versão congelada ou a atual da TOP nova, se ele a troca ou a
+  PÕE numa venda sem TOP; na `PATCH`, a congelada):
+  - versão no formato 4 com "Permitido" → aceita `items: []` (venda) e `itens: []` (compra);
+  - formato 1 a 3, "Proibido", configuração ilegível ou pedido → 422 com a resposta de hoje: `VALIDATION_ERROR`, mensagem
+    "items: Valor mínimo: 1" (venda) ou "itens: Valor mínimo: 1" (compra), `details`
+    `[{path: "items" | "itens", message: "Valor mínimo: 1"}]`.
+- **A ORDEM NOVA das recusas, com TOP** (declarada e testada): no `POST`, a recusa da TOP (`TIPO_OPERACAO_INDISPONIVEL`) ou
+  a da empresa pode vir antes da dos itens; na `PATCH`, a 404, o 409 de versão e o 409 de situação vêm antes. Quando os
+  itens vazios são o único defeito do corpo, a resposta é a de hoje. Mais três ordens, na venda (declaradas e testadas,
+  SI-5a…SI-5d):
+  - `PATCH` numa venda SEM TOP com `items: []` → a MESMA 409 `INVALID_STATUS_TRANSITION` da `PATCH` sem TOP com itens
+    (antes, o 422 "items: Valor mínimo: 1"): a `PATCH` só edita venda com TOP, e essa recusa vem antes da dos itens;
+  - `PUT` que PÕE uma TOP numa venda sem TOP, com `items: []` → decide a versão da TOP NOVA: formato 4 "Permitido" →
+    aceita; formato 1 a 3, ou 4 "Proibido" → o MESMO 422 de hoje;
+  - `PUT` que põe ou troca a TOP por uma TOP indisponível (inexistente, ou de outra família), com `items: []` → 422
+    `TIPO_OPERACAO_INDISPONIVEL` (antes, o 422 "items: Valor mínimo: 1"): a TOP é resolvida antes da regra dos itens,
+    como no `POST`.
+- **Confirmar documento sem itens:** nenhum movimento de estoque. O título segue a regra de hoje de cada módulo: venda com
+  financeiro a receber e total 0 é recusada pela confirmação ("Valor do título deve ser positivo"; na automática,
+  `recusada`); compra só gera título com total > 0 (com frete, o título do total).
+- A Central de hoje continua exigindo um item: só o servidor muda (§17.8).
+
+### 17.5 Aprovação
+
+**Vale para** `vendas.venda` e `compras.compra` (Sempre ou A partir de um valor) e as quatro espécies de estoque (Sempre).
+"Exige aprovação" = a versão congelada está no formato 4 e a política é "Sempre", ou é "A partir de um valor" e o total
+ATUAL do documento é ≥ o valor mínimo — decimal em texto; "a partir de" inclui o igual. O documento de estoque não tem
+valor antes da confirmação: a conta recebe nulo, e "A partir de um valor" sem valor exige. A conta é UMA, em dois lugares,
+com paridade provada por teste numa tabela de casos: `exigeAprovacao` (domínio, `decimal.js`) e
+`erp.top_exige_aprovacao(jsonb, numeric)` (0041; imutável, sem ler tabela; formato 1 a 3, configuração nula ou política
+desconhecida → falso, nunca erro; limite ilegível numa "A partir de um valor" → verdadeiro, fail-closed). A fila a usa em
+SQL, e o `erp_app` a executa.
+
+**O modelo (0041).** Três tabelas, uma ao lado de cada documento — `erp.aprovacoes_venda` (`erp.sales_documents`),
+`erp.aprovacoes_compra` (`erp.documentos_compra`) e `erp.aprovacoes_estoque` (`erp.documentos_estoque`):
+
+| Coluna | Venda | Compra | Estoque |
+| --- | --- | --- | --- |
+| `id` (bigint, identidade; a maior é a mais recente) | sim | sim | sim |
+| `organization_id`, `empresa_id` (FK `(organization_id, empresa_id)` → `erp.empresas (organization_id, id)`) | sim | sim | sim |
+| `documento_id` | FK simples para `sales_documents (id)`: a venda não tem chave com a organização, e o gatilho a confere | FK composta com a organização | FK composta com a organização |
+| `tipo_operacao_id`, `tipo_operacao_versao_id` (FKs compostas com a organização; a da versão também com a TOP) | sim | sim | sim |
+| `versao_documento` (bigint) | a `version` do documento (0039) | — | — |
+| `valor_documento` (`numeric(18,2)`) | o `total` | o `valor_total` | — |
+| `decisao` (`aprovado` \| `reprovado`) | sim | sim | sim |
+| `observacao` (até 500; obrigatória na reprovação, com ao menos um caractere fora da classe `[[:space:]]` do banco, por CHECK: `observacao ~ '[^[:space:]]'` — motivo só de espaço, tab ou quebra de linha é recusado; a classe segue o ctype do banco, e a API apara o motivo antes) | sim | sim | sim |
+| `decidido_por` (FK `erp.users`), `decidido_em` | sim | sim | sim |
+
+- **Uma linha por DECISÃO, só inserção.** Gatilhos de imutabilidade — por linha (UPDATE e DELETE) e por comando (BEFORE
+  TRUNCATE: o TRUNCATE não passa pelos gatilhos de linha) —, que recusam de qualquer papel, o dono inclusive, com
+  `CONFLICT: A decisão de aprovação não aceita <operação> (uma decisão nova registra a mudança).`; um `TRUNCATE … CASCADE`
+  de `erp.sales_documents`, `erp.documentos_compra` ou `erp.documentos_estoque` também é recusado, porque o gatilho dispara
+  nas tabelas alcançadas pela cascata. O `erp_app` só com SELECT e INSERT. RLS habilitada e forçada, com a política
+  `tenant_e_empresa` (categoria A) e os módulos `vendas`, `compras` e `estoque`; `erp.audit_row` nas três; índice
+  `(organization_id, documento_id, id desc)`.
+- **O gatilho de inserção** (BEFORE INSERT, SECURITY DEFINER, `search_path` fixo, organização e usuário da GUC do servidor
+  — `erp.current_org_id()` e `erp.current_user_id()`, nunca os da linha) confere, na ordem: sem usuário na transação →
+  `PERMISSION_DENIED`; `organization_id` da linha diferente de `erp.current_org_id()`, ou transação sem organização →
+  `NOT_FOUND`, antes de ler qualquer documento (o gatilho roda antes do `with check` da RLS, e ler pela organização que
+  veio no INSERT faria da recusa um oráculo da situação do documento de outro tenant); empresa da linha fora do escopo de
+  escrita de quem decide, no módulo da transação (`erp.empresa_escrita_permitida`, o predicado do `with check` da
+  política) → `NOT_FOUND`, antes de ler o documento (pelo mesmo motivo, dentro da organização); depois lê, `for share`, SÓ
+  o documento que passa pelo filtro inteiro da `NOT_FOUND`, no próprio `where` — id, organização da GUC e empresa da
+  linha; na venda, também `kind` `sale` e não excluída; na compra, espécie `compra`: inexistente, de outra empresa,
+  excluído ou de outra espécie → `NOT_FOUND` (a mesma recusa), na hora, sem ser lido nem travado — mesmo segurado
+  `for update` por outra sessão, a recusa não espera a trava (a espera, e o `lock_timeout` dela, revelariam que ele
+  existe); venda com `versao_documento` diferente da `version` atual → `CONCURRENCY_CONFLICT`; documento que não está
+  aberto (venda `open`/`approved`, compra e estoque `aberto`) → `CONFLICT` "Só documento aberto passa por aprovação.";
+  ATRIBUI do documento a TOP, a versão congelada e o valor (não compara o que veio), `decidido_por :=
+  erp.current_user_id()` e `decidido_em := now()`; por fim, documento que não exige aprovação pelo total ATUAL →
+  `APROVACAO_NAO_EXIGIDA`.
+- **A vigente.** Venda: a última decisão (id desc) DA VERSÃO ATUAL do documento; sem decisão da versão atual = pendente.
+  Alterar a venda depois de aprovada sobe a versão (0039) e a devolve a pendente; reprovada na versão V e alterada para V+1
+  → pendente. A tabela é separada justamente para que aprovar não mexa na versão. Compra e estoque não têm edição: a vigente
+  é a última decisão, e ela vale enquanto o documento estiver aberto. Reprovado pode ser aprovado depois por uma decisão
+  nova; a história fica.
+- **Situação de um documento aberto** (`situacaoDaAprovacao`): `nao_exigida` (sem TOP, versão no formato 1 a 3, ou formato
+  4 cuja política não exige com o valor atual) | `pendente` | `aprovado` | `reprovado`.
+- O status `approved` que a venda já tem (0005) não tem nada com isso: nada o grava nem o lê como aprovação — para a
+  aprovação ele é só "aberto", como `open`.
+- **A fatia que criar edição da compra ou do documento de estoque TERÁ DE invalidar a aprovação** (uma decisão por versão,
+  como na venda, ou outra regra explícita). Sem isso, o documento aprovado mudaria depois da aprovação e confirmaria com ela.
+
+**Na confirmação (manual e automática) e na prévia.** O passo da aprovação (`recusaDaAprovacao`) entra no planejamento logo
+depois da situação e da política da versão congelada, ANTES das exigências e de qualquer efeito (no estoque, logo depois da
+situação, antes do período e dos cadastros, com uma consulta própria da configuração da versão):
+
+- pendente → 409 `APROVACAO_PENDENTE` "Este documento precisa de aprovação antes de ser confirmado.", `details`
+  `{politica, valorMinimo, valorDocumento}` (`valorMinimo` nulo na "Sempre"; `valorDocumento` nulo no estoque);
+- reprovado → 409 `APROVACAO_REPROVADA` "Este documento foi reprovado: <motivo>.", `details`
+  `{motivo, decididoPor: {id, nome}, decididoEm}` — o motivo entra como foi gravado, e o "." final só quando ele não
+  termina em ".", "!" ou "?" ("Preço alto." → "…reprovado: Preço alto."; "Preço alto" → "…reprovado: Preço alto.");
+  branco no fim do motivo só é ignorado para essa decisão, nunca tirado do texto (`mensagemAprovacaoReprovada`);
+- versão no formato 4 ilegível → 409 `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL` (fail-closed), como na compra;
+- **prévia da venda e da compra** (§12.5, §14): a recusa entra em `recusas`, no MESMO formato das outras, e `podeConfirmar`
+  fica falso; a lista segue para as exigências, o período e a classificação. A Central de Vendas de hoje já mostra as
+  recusas da prévia;
+- **prévia do estoque** (`GET /api/estoque/<segmento>/:id/previa-confirmacao`): ganha `recusas: [{code, message, details}]`
+  — aditivo e sempre presente (vazio sem recusa), com as recusas do DOCUMENTO (versão ilegível e aprovação) —, e
+  `podeConfirmar` = nenhum item insuficiente E nenhuma recusa. `contractVersion` não muda; a Central de Estoque mostra as
+  recusas acima da tabela de itens.
+
+**A guarda no banco (0041).** BEFORE UPDATE da situação, só na ENTRADA no confirmado e só com versão congelada; SECURITY
+DEFINER, `search_path` fixo, filtro explícito de organização — a da própria linha (`OLD.organization_id`), não a da GUC,
+ao contrário da inserção: não há linha "pedida" (o UPDATE só alcança o que a RLS deixa), e o UPDATE sem GUC (superusuário,
+migração) continua guardado pela decisão da linha:
+
+| Gatilho | Dispara | Decisão procurada |
+| --- | --- | --- |
+| `trg_sales_documents_aprovacao` | o MESMO WHEN da 0023: `NEW.status` em `confirmed`/`invoiced`, vindo de qualquer outro, com `tipo_operacao_versao_id` | a última da versão `OLD.version` — nunca a do NEW |
+| `trg_documentos_compra_aprovacao` | `aberto` → `confirmado` | a última |
+| `trg_documentos_estoque_aprovacao` | `aberto` → `confirmado` | a última |
+
+- Quando o documento exige aprovação — fail-closed: a versão congelada de ANTES e a de DEPOIS do UPDATE, e o MAIOR valor
+  entre o de antes e o de depois — e a vigente não é `aprovado`, a guarda levanta (P0001)
+  `CONFLICT: Este documento precisa de aprovação antes de ser confirmado.` ou
+  `CONFLICT: Este documento foi reprovado e não pode ser confirmado.`. Mensagem FIXA, de uma linha, sem motivo livre (o
+  `fromPgError` só reconhece uma linha) e sem `details`.
+- **A aprovação só cobre o valor e a versão que aprovou.** A vigente `aprovado` só vale se o `valor_documento` dela for ≥ o
+  MAIOR valor entre o de antes e o de depois do UPDATE (venda: `total`; compra: `valor_total`; `numeric(18,2)` dos dois
+  lados) E se a `tipo_operacao_versao_id` dela for a de DEPOIS do UPDATE; no estoque, que não tem valor, só a versão.
+  Senão, a MESMA `CONFLICT: Este documento precisa de aprovação antes de ser confirmado.` da falta de decisão: confirmar
+  e, no mesmo UPDATE, subir o total ou trocar a TOP não aproveita a aprovação antiga. Na compra, isso também pega o valor
+  mudado por fora depois da decisão; a TOP e a versão da compra e do estoque já não mudam depois do lançamento (0036 e
+  0040), e ali a conferência da versão é só defesa em profundidade.
+- **A TOP tirada no mesmo UPDATE (venda).** O UPDATE que confirma a venda e, no MESMO comando, deixa
+  `tipo_operacao_versao_id` nula NÃO dispara a guarda: o WHEN é o MESMO da 0023 (com versão congelada), que também não
+  dispara. A API recusa tirar a TOP de uma venda (`PUT` com `tipo_operacao_id: null` → 422 `VALIDATION_ERROR`; a `PATCH`
+  nem aceita o campo), e os UPDATEs de confirmação da API gravam só a situação. Uma guarda de banco para a TOP tirada é de
+  outra fatia.
+- `CONFLICT` é conhecido por TODO binário: o anterior responde 409, nunca 500. Na API nova quem explica é o passo do
+  planejamento (acima); a guarda é o fundo.
+- Na venda, a guarda roda ANTES da 0039 (o nome ordena antes de `trg_sales_documents_versao`), e um UPDATE pode gravar
+  qualquer valor em `version`: o NEW pode mentir, o OLD não. As BEFORE UPDATE da venda passam a ser exatamente quatro, por
+  nome: `trg_sales_documents_aprovacao`, `trg_sales_documents_classificacao_financeira`,
+  `trg_sales_documents_execucao_configurada` e `trg_sales_documents_versao` — a da aprovação primeiro, a 0039 por último.
+- Formato 1 a 3 nunca é barrado (a conta dá falso).
+
+**Permissão.** A ação `approve` ("Aprovar", já em `ACTION_LABELS`) em `sales`, `compras`, `entradas_estoque`,
+`saidas_estoque`, `transferencias_estoque` e `ajustes_estoque` — só nos documentos cuja família aceita aprovação.
+Separada de `.edit`: lançar e editar não dá poder de aprovar. O módulo de escopo é o do recurso (vendas, compras,
+estoque). O seed a sincroniza no pre-deploy e o papel Administrador do sistema a recebe sozinho; os outros papéis a
+recebem na tela de usuários.
+
+**Rotas.** Prefixo PRÓPRIO, `/api/aprovacoes`: o binário anterior não o conhece e responde 404 limpo — o sinal que a web
+nova lê como "aprovações ainda não disponíveis neste servidor".
+
+| Rota | Capacidade | Corpo |
+| --- | --- | --- |
+| `GET /api/aprovacoes/vendas` | `sales.approve` | — (`?page=&pageSize=`) |
+| `POST /api/aprovacoes/vendas/:id/aprovar` | `sales.approve` | `{ version, observacao? }` |
+| `POST /api/aprovacoes/vendas/:id/reprovar` | `sales.approve` | `{ version, motivo }` |
+| `GET /api/aprovacoes/compras` | `compras.approve` | — (`?page=&pageSize=`) |
+| `POST /api/aprovacoes/compras/:id/aprovar` | `compras.approve` | `{ observacao? }` |
+| `POST /api/aprovacoes/compras/:id/reprovar` | `compras.approve` | `{ motivo }` |
+| `GET /api/aprovacoes/estoque` | porta dinâmica: qualquer `.approve` das quatro espécies; nenhuma → 403 | — (`?page=&pageSize=`) |
+| `POST /api/aprovacoes/estoque/:segmento/:id/aprovar` | `<recurso da espécie>.approve` | `{ observacao? }` |
+| `POST /api/aprovacoes/estoque/:segmento/:id/reprovar` | `<recurso da espécie>.approve` | `{ motivo }` |
+
+`:segmento` é o do portal (`entradas`, `saidas`, `transferencias`, `ajustes`). Corpos ESTRITOS (chave desconhecida → 422):
+`version` na forma canônica da `PATCH` (§15.1); `observacao` opcional — ausente, `null` ou texto até 500 (em branco = sem
+observação); `motivo` obrigatório, de 1 a 500 caracteres depois de aparado.
+
+**Ordem**, nas três (o molde da `PATCH` da venda, §15.2):
+
+| # | Passo | Recusa |
+| --- | --- | --- |
+| 0 | capacidade (`runService`) | sem `<recurso>.approve` → 403 |
+| 1 | corpo, antes de ler registro e de reservar a chave | 422 `VALIDATION_ERROR` |
+| 2 | id fora da forma de UUID; a forma aceita maiúsculas, e dali em diante vale o id CANÔNICO, em minúsculas (o hash da idempotência e a trilha do documento falam do mesmo documento, qualquer que seja a grafia) | a MESMA 404 (sem isso, o banco daria 500) |
+| 3 | documento invisível — outra organização, fora do escopo de empresa, inexistente, excluído, espécie ou variante errada (venda: `exigirDocumentoVisivel`; compra: `lerDocumentoCompra`; estoque: `lerDocumentoEstoque`) | a MESMA 404 do GET por id |
+| 4 | `Idempotency-Key` (ação, documento, pedido e autor no hash), depois da 404: o replay não passa pelo recorte de empresa | mesma chave, outro corpo → 409 `CONFLICT` |
+| 5 | trava do documento `for update`, SEM junção (venda: `travarDocumentoDaEdicao`) | zero linhas → a MESMA 404 |
+| 6 | venda: `version` diferente da atual | 409 `CONCURRENCY_CONFLICT` "Este documento mudou desde que você o abriu. Recarregue antes de salvar." |
+| 7 | documento que não está aberto | 409 `CONFLICT` "Só documento aberto passa por aprovação." |
+| 8 | documento que não exige aprovação | 409 `APROVACAO_NAO_EXIGIDA` "Este documento não precisa de aprovação." |
+| 9 | grava a decisão (o gatilho reconfere) e a auditoria no documento | — |
+
+A 404 vem antes do 409 de versão: o 409 não pode revelar que o documento existe. A trava é que impede duas decisões e a
+confirmação de se cruzarem, e dá a ordem das decisões: duas aprovações da mesma venda — a segunda espera a primeira;
+aprovar × `PATCH` — um dos dois perde com 409. Nunca se aprova uma versão que ninguém viu.
+
+**Resposta 200:** `{ aprovacao: { decisao: "aprovado" | "reprovado", decididoEm }, confirmacaoAutomatica? }`. Aprovar com
+TOP Automática: depois de gravar a decisão, a confirmação automática (§17.3), feita pelo APROVADOR com a capacidade de
+confirmar DELE; sem ela, aprovado e aberto, `sem_permissao`. Reprovar nunca confirma. O replay da chave devolve o corpo
+gravado e nunca decide nem confirma duas vezes.
+
+**Auditoria no documento** (`sales_documents`, `documentos_compra`, `documentos_estoque`): ações `approve` e `reject`, com a
+`observacao` ou o `motivo` e, na venda, a `versao`. A linha da decisão também é auditada por `erp.audit_row`.
+
+**A fila (GET).** Documentos ABERTOS que exigem aprovação (a conta do banco sobre a versão congelada e o total atual) e não
+têm aprovação vigente — pendentes e reprovados —, no escopo de empresa de quem aprova; no estoque, só das espécies que a
+pessoa aprova.
+
+- **A empresa selecionada** (`X-Empresa-Id`) recorta as três filas como recorta a decisão (o recorte do GET por id que
+  Aprovar e Reprovar usam): o que a fila mostra é o que a decisão aceita. A seleção só diminui o escopo do módulo, nunca o
+  amplia; empresa selecionada proibida no módulo → 403, também na fila do estoque (a porta dinâmica valida a seleção
+  depois de resolver o módulo) — nunca uma fila vazia que a decisão, com a mesma seleção, recusaria com 403.
+- **Só a paginação.** As três aceitam SÓ `page` e `pageSize`: parâmetro desconhecido, filtro ou busca → 422
+  `VALIDATION_ERROR` no parâmetro (`details[].path`), nunca ignorado; parâmetro repetido → 422 no parâmetro.
+- Paginação no servidor (`pageQuerySchema`), ordem fixa: data do documento desc, criação desc, id. Número fixo de
+  consultas (a contagem, a página e o ID Global da página), nunca uma por linha.
+- **Resposta** `{ items, total, page, pageSize, idGlobal }`, o padrão das listas de hoje: cada item traz `id_global` (o ID
+  Global do documento na organização, ou nulo) e a página a marca `idGlobal: { tipoEntidade, rotulo }` (`sales_documents`,
+  `documentos_compra` ou `documentos_estoque`), que a tela lê para mostrar a coluna. A linha:
+
+```
+{ id, id_global, codigo,
+  especie,                                    // "venda" | "compra" | "entrada" | "saida" | "transferencia" | "ajuste"
+  data,
+  empresa: { id, nome },
+  parceiro: { id, nome } | null,              // cliente ou fornecedor; null no estoque
+  operacao: { id, nome },
+  valor: string | null,                       // null no estoque
+  lancadoPor: { id, nome } | null,
+  situacao: "pendente" | "reprovado",
+  ultimaDecisao: { decisao, observacao, decididoPor: { id, nome }, decididoEm } | null,
+  version? }                                  // só na venda (texto do bigint)
+```
+
+Na venda, `ultimaDecisao` é a última decisão do documento, de QUALQUER versão: a reprovação da versão anterior continua
+visível na venda alterada que voltou a pendente.
+
+**A tela.** Módulo "Aprovações" (`/aprovacoes`), o 14º e último do menu, com `perm` = as seis `.approve` e as abas Vendas
+(`sales.approve`), Compras (`compras.approve`) e Estoque (qualquer `.approve` das quatro espécies), declaradas no
+`apps/web/nav.registry.mjs`. Ela usa os componentes que já existem (listas, abas, diálogos); "Abrir" leva à consulta do
+documento pelas rotas de hoje. O menu chegou ao limite do nav-audit.
+
+**Códigos** (todos 409; `packages/shared/src/errors.ts`):
+
+| Código | Onde | Mensagem | `details` |
+| --- | --- | --- | --- |
+| `APROVACAO_PENDENTE` | confirmação manual e prévia (na automática vira `aguardando_aprovacao`) | "Este documento precisa de aprovação antes de ser confirmado." | `{politica, valorMinimo, valorDocumento}` |
+| `APROVACAO_REPROVADA` | confirmação (manual e automática) e prévia | "Este documento foi reprovado: <motivo>." — o "." final só quando o motivo não termina em ".", "!" ou "?" (o branco no fim é ignorado só para essa decisão) | `{motivo, decididoPor: {id, nome}, decididoEm}` |
+| `APROVACAO_NAO_EXIGIDA` | aprovar e reprovar; também o gatilho de inserção | "Este documento não precisa de aprovação." | — |
+
+O `fromPgError` já traduz qualquer prefixo `CODIGO:` do banco e não mudou: o nome do código no SQL é idêntico ao do mapa.
+
+### 17.6 Alteração após confirmar: recusada no formato 4
+
+- No formato 4 TODA família aceita só "Bloqueada", com o motivo da matriz (§17.2): 422 `combinacao_nao_suportada` em
+  `geral.alteracaoAposConfirmacao`.
+- Por quê (o resto na decisão 277): o estorno do estoque (`reverseStock`) não marca o movimento estornado — estornar o
+  mesmo documento duas vezes estornaria em dobro —; o código do título é único por (organização, direção, código) —
+  refazer os títulos da venda colide com os cancelados —; compra e estoque nem têm edição.
+- Versão antiga com "Permitida" (as três de produção) fica como está, e nada a executa. Ao gravá-la no formato 4, o editor
+  volta a regra ao padrão e avisa antes (§17.7).
+- Fatia própria, depois: estorno por geração e título por geração.
+
+### 17.7 Capabilities e editor
+
+`GET /api/admin/tipos-operacao/capabilities` ganha, NA RAIZ e depois de `reservaEstoque`:
+
+```
+regrasGerais: { suportado: true, versaoSchema: 4, matriz: MATRIZ_REGRAS_GERAIS_TOP }
+```
+
+- `matriz`: uma linha por família, `{ familia, confirmacao, documentoSemItens, alteracaoAposConfirmacao, aprovacao }`, e cada
+  regra `{ aceitos: [...], motivo: string | null }` (`motivo` nulo quando `aceitos` cobre o enum inteiro).
+- Os blocos de hoje NÃO mudam (`configuracao`, `destinos`, `execucao`, `restricoes`, `reservaEstoque`), nem
+  `contractVersion` e `configuracao.versaoSchema` (1). O bloco não depende do gate de execução: a matriz é do pedido, não
+  da instância.
+- Presente = este servidor grava o formato 4 e executa confirmação automática, documento sem itens e aprovação.
+
+**O editor** lê o bloco com o leitor ESTRITO do domínio (`lerMatrizRegrasGeraisTop`): ausente ou ilegível = como se não
+existisse, e isso NUNCA derruba a leitura das outras capacidades. Sem o bloco (API anterior), tudo exatamente como hoje:
+formato 3, textos e abas de hoje. Com ele:
+
+- edita e grava o formato 4, na criação e na edição; trocar a família na criação volta ao neutro do formato 4;
+- regra que a família só aceita no neutro some; opção que a família não aceita aparece desabilitada, com o motivo da matriz
+  ao lado (`top-regra-motivo-<campo>`). Por família: venda e compra — Confirmação, Documento sem itens e a aba Aprovação,
+  com Alteração escondida; estoque — Confirmação e a aba Aprovação ("A partir de um valor" desabilitada, com o motivo), com
+  Documento sem itens e Alteração escondidos; orçamento e pedidos — as quatro escondidas;
+- uma 422 em `geral.*` ou `aprovacao.*` abre a aba do campo;
+- **a ajuda da Geral** (`AJUDA_COM_REGRAS_GERAIS.geral`; aparece em toda família que não é documento de estoque,
+  orçamento e pedidos inclusive, onde Confirmação e Documento sem itens ficam escondidos; o documento de estoque tem a
+  sua, "No documento de estoque valem a confirmação automática e a observação obrigatória.") diz o que vale HOJE para
+  quem lança venda e compra, e não só o que o servidor aceita, letra por letra: "Confirmação automática: o documento é
+  confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o
+  documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: o servidor aceita o documento sem
+  item, mas nas Centrais de Vendas e de Compras o lançamento ainda pede ao menos um item. As exigências de preenchimento
+  são cobradas no lançamento." — as Centrais de Vendas e de Compras não leem `confirmacaoAutomatica` ao salvar e ainda
+  pedem um item (§17.8); a fatia que mudar isso troca este texto junto;
+- **diálogo "Estas regras passam a valer"** (`top-regras-passam-a-valer`), só na EDIÇÃO de uma TOP que já existe e, quando
+  os dois valem, depois do diálogo das exigências (§13): a lista do que passa a executar ("Confirmação automática",
+  "Documento sem itens permitido", "Aprovação sempre", "Aprovação a partir de R$ <valor>") e, quando houver, "Estas opções
+  voltam ao padrão, porque esta operação não as executa:" com cada uma ("Confirmação: Automática → Manual", …); botões
+  "Voltar e revisar" e "Salvar assim mesmo". Quem monta as listas é o domínio (`regrasGeraisQuePassamAValer`,
+  `normalizarRegrasGeraisDaFamiliaTop`); a tela não é uma segunda fonte. É o caso do pedido de compra de produção (formato
+  3 com Automática, Permitido e Permitida): salvo assim mesmo, vira formato 4 no neutro;
+- **histórico:** em cada versão que declara alguma regra geral ou aprovação fora do neutro, "Regras gerais e aprovação:
+  executadas" (formato 4) ou "Regras gerais e aprovação: registradas, sem execução" (formato 1 a 3) — SÓ com o bloco
+  `regrasGerais` nas capabilities, a MESMA pergunta do editor (`podeConfigurarRegrasGerais`). Sem ele (API anterior,
+  capacidades carregando, ilegíveis ou negadas), nenhuma das duas linhas, em versão nenhuma: o histórico de hoje.
+
+### 17.8 Version skew e o que fica para depois
+
+| Combinação | Comportamento |
+| --- | --- |
+| web nova × API anterior | sem o bloco `regrasGerais`, o editor grava o formato 3 com os textos de hoje, e o histórico da TOP não mostra nenhuma das duas linhas "Regras gerais e aprovação: …"; Aprovações recebe 404 nas rotas novas e mostra "As aprovações ainda não estão disponíveis neste servidor.", sem quebrar o resto; a Central de Estoque, sem `confirmacaoAutomatica` no `POST`, dá o "Salvo com sucesso" de hoje |
+| API nova × web anterior | o editor anterior grava o formato 3 como hoje; corpo no formato 1 a 3 sobre versão vigente no 4 → a 422 do formato que não retrocede; `POST` e confirmação com TOP de formato 1 a 3 dão o corpo de hoje; a Central de Estoque anterior mostra "prévia indisponível" diante de uma recusa de aprovação e deixa clicar — o servidor responde 409; com TOP no formato 4 Automática (o editor anterior não a grava), ela diz "Salvo com sucesso" também quando o servidor confirmou ou a automática não aconteceu, e a consulta mostra a situação que o servidor leu |
+| API anterior × versão no formato 4 (reversão) | não confirma venda nem compra: 409 `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL` (configuração ilegível), como hoje com formato desconhecido; no estoque ela não lê a configuração, e quem barra o documento que exige aprovação é a guarda do banco (409 `CONFLICT`); documento lançado nela com TOP formato 4 fica sem exigências e sem condições permitidas (`regrasDaVersaoTop` devolve nulo para formato desconhecido); não edita TOP com versão vigente no formato 4 (422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`: a escrita fecha, §11.2) |
+
+**A Central de Estoque lê o resultado ao salvar** (`apps/web/src/features/estoque/central-estoque.tsx`, `avisarSalvo`;
+W-5b, e o `sem_permissao` no W-5c). O aviso sai da resposta do `POST`, nunca da TOP da tela: `{confirmado: true}` →
+"Salvo e confirmado."; `aguardando_aprovacao` → "Salvo. Este documento precisa de aprovação antes de ser confirmado.";
+`sem_permissao` → "Salvo, mas não confirmado: você não tem permissão para confirmar este documento."; `recusada` →
+"Salvo, mas não confirmado: <`erro.message`>." — a mensagem do servidor com um ponto final só, pela mesma regra da fila
+de Aprovações (`mensagemDoServidorNoMolde`); sem a chave, ou com resultado fora do contrato (motivo desconhecido,
+`recusada` sem mensagem) → o "Salvo com sucesso" de hoje. Um Salvar dá um aviso só. Depois do aviso, a consulta abre
+como hoje.
+
+**Fica para a fatia F2 da Central no motor** (Central de Vendas e Central de Compras, nenhum arquivo delas mudou aqui):
+o "Salvar e confirmar" quando a TOP é automática — até lá, "Confirmar venda" na criação de uma venda automática salva, o
+`POST` já confirma, e a consulta abre a venda confirmada, sem o diálogo de confirmação, sem prévia e sem segundo
+`/confirm` (o diálogo só abre para venda que chega aberta, como quando a automática não confirma); e "Confirmar compra"
+na criação de uma compra automática salva e o `POST` já confirma; enquanto a VISUAL-UX-04b (decisão 278) não estiver na
+main, a consulta abre o diálogo de confirmação só pelo pedido do clique, sem olhar a situação
+(`apps/web/src/features/compras/central/estado.ts`, o estado inicial de `confirmando`; a venda olha `open`/`approved`):
+o diálogo aparece sobre a compra já confirmada, a prévia dele recusa ("Compra já confirmada", `ALREADY_CONFIRMED`) e o
+Confirmar fica desabilitado; a compra fica confirmada, sem efeito duplicado. A VISUAL-UX-04b entra antes desta e faz
+a consulta da compra conferir a situação e a permissão depois de carregar, antes de abrir o diálogo, como a da venda:
+com ela na main, a compra confirmada sozinha abre a consulta em Confirmado, sem diálogo. Se esta entrar sem a
+VISUAL-UX-04b na main, com TOP de compra Automática, use "Salvar" na criação —; o aviso do Salvar pelo resultado da
+confirmação automática — hoje as duas dizem o "Salvo com sucesso" de sempre também quando ela não aconteceu:
+`recusada` → o documento aparece Aberto, e o motivo surge na prévia ou no `/confirm`; `sem_permissao` → aparece Aberto,
+sem o Confirmar para quem salvou —; os itens vazios quando a TOP permite (e, junto, a ajuda da Geral do §17.7 e os dois
+E2E que a conferem letra por letra, W-1 e K-1); a situação da aprovação e o Aprovar/Reprovar na consulta. **Fatias
+próprias:** alteração após confirmar, notificação para quem aprova, aprovação de pedido, financeiro "Previsão",
+devolução de venda e de compra, campos por TOP no estoque.

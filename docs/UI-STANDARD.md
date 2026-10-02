@@ -164,7 +164,7 @@ entra no bundle e sua NAV demonstrativa não foi copiada: a fonte única de nave
 
 ```
 AppShell
-├ TopNavigation   marca · ModuleMenu (13 módulos + "Mais") · GlobalSearch (Ctrl K) · FarmSelector · Favoritos · Notificações · UserMenu
+├ TopNavigation   marca · ModuleMenu (14 módulos + "Mais") · GlobalSearch (Ctrl K) · FarmSelector · Favoritos · Notificações · UserMenu
 ├ WorkspaceTabs   abas globais (uma por tela) sincronizadas com a URL real
 └ ActiveWorkspace trilha (Módulo › Área › Registro) + tela ativa (só ela é montada)
 ```

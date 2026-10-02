@@ -1,8 +1,9 @@
 /**
  * TOP-CONFIG-05 — AS REGRAS DA OPERAÇÃO NO LANÇAMENTO DE VENDA (decisão 263).
  *
- * SÓ PARA VERSÃO DO FORMATO 3. Formato 1/2 é legado para sempre: `regrasDaVersaoTop` devolve `null` e nada é
- * cobrado — nenhuma recusa, mensagem ou ordem muda para documento de TOP antiga.
+ * SÓ PARA VERSÃO DO FORMATO 3 OU 4 (o 4 executa tudo o que o 3 executa, decisão 277). Formato 1/2 é legado para
+ * sempre: `regrasDaVersaoTop` devolve `null` e nada é cobrado — nenhuma recusa, mensagem ou ordem muda para
+ * documento de TOP antiga.
  *
  * ORDEM FIXA (quem chama garante o lugar: DEPOIS das recusas de hoje — TOP, classificação, condição inválida — e
  * ANTES da cobrança do layout): a) exigências gerais; b) condição não permitida; c) cliente em atraso.
@@ -12,16 +13,16 @@ import {
   lerConfiguracaoTop, restricoesExecutamTop, exigenciasGeraisFaltando, mensagemClienteEmAtraso,
   ERRO_EXIGENCIA_NAO_ATENDIDA, MENSAGEM_EXIGENCIA_NAO_ATENDIDA, ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA,
   MENSAGEM_CONDICAO_NAO_PERMITIDA, ERRO_CLIENTE_EM_ATRASO, camposExigidosTop,
-  type ConfiguracaoTipoOperacaoV3, type DocumentoParaExigencias, type RegrasDaOperacaoResposta,
+  type ConfiguracaoComRestricoesTop, type DocumentoParaExigencias, type RegrasDaOperacaoResposta,
 } from "@agro/domain";
 import type { ServiceCtx } from "../lib/context.js";
 import { situacaoAtrasoCliente } from "./vendas-atraso-cliente.js";
 
-/** As regras de uma versão do formato 3. `condicoesPermitidas` null = a versão não restringe. */
+/** As regras de uma versão do formato 3 ou 4. `condicoesPermitidas` null = a versão não restringe. */
 export interface RegrasDaVersaoTop {
   versaoId: string;
   formato: number;
-  config: ConfiguracaoTipoOperacaoV3;
+  config: ConfiguracaoComRestricoesTop;
   condicoesPermitidas: string[] | null;
 }
 
@@ -50,7 +51,7 @@ export async function regrasDaVersaoCongelada(ctx: ServiceCtx, versaoId: string)
   return (await regrasPorFiltro(ctx, "where v.id = $1 and v.organization_id = $2", versaoId)) ?? { formato: 0, regras: null };
 }
 
-/** As regras da VERSÃO dada (a versão em que o documento nasceu). `null` = versão não é formato 3. */
+/** As regras da VERSÃO dada (a versão em que o documento nasceu). `null` = versão não é formato 3 nem 4. */
 export async function regrasDaVersaoTop(ctx: ServiceCtx, versaoId: string): Promise<RegrasDaVersaoTop | null> {
   return (await regrasDaVersaoCongelada(ctx, versaoId)).regras;
 }

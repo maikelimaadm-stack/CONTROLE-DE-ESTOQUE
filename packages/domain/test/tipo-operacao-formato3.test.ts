@@ -9,6 +9,8 @@ import {
   configuracaoNeutraTop,
   configuracaoNeutraTopV2,
   configuracaoNeutraTopV3,
+  configuracaoNeutraTopV4,
+  configuracaoV4DaV3,
   configuracaoTopEhNeutra,
   configuracaoTopParaEdicao,
   configuracaoTopParaEdicaoV3,
@@ -474,20 +476,24 @@ describe("TR-D2 legado — formatos 1 e 2 lidos exatamente como antes", () => {
     expect(recusasDe(c)).toEqual([{ motivo: "campo_desconhecido", caminho: "geral.exigeTransportadora" }]);
   });
 
-  it("TR-D2 formato 4 continua recusado como schema_nao_suportado", () => {
+  // TOP-CONFIG-08 (decisão 277): o 4 virou formato conhecido; o primeiro formato futuro agora é o 5.
+  it("TR-D2 formato 5 continua recusado como schema_nao_suportado", () => {
     const c = sujar(configuracaoNeutraTopV3());
-    c.versaoSchema = 4;
+    c.versaoSchema = 5;
     expect(recusasDe(c)).toEqual([{ motivo: "schema_nao_suportado", caminho: "versaoSchema" }]);
   });
 });
 
 describe("TR-D2 restricoesExecutamTop e execucaoDeclaradaTop", () => {
-  it("TR-D2 restricoesExecutamTop só é true para o formato 3", () => {
+  // TOP-CONFIG-08: tudo o que o formato 3 executa vale igual no 4 (decisão 277).
+  it("TR-D2 restricoesExecutamTop só é true para os formatos 3 e 4", () => {
     expect(restricoesExecutamTop(configuracaoNeutraTop())).toBe(false);
     expect(restricoesExecutamTop(configuracaoNeutraTopV2())).toBe(false);
     expect(restricoesExecutamTop(v2Rico())).toBe(false);
     expect(restricoesExecutamTop(configuracaoNeutraTopV3())).toBe(true);
     expect(restricoesExecutamTop(v3Rico())).toBe(true);
+    expect(restricoesExecutamTop(configuracaoNeutraTopV4())).toBe(true);
+    expect(restricoesExecutamTop(configuracaoV4DaV3(v3Rico()))).toBe(true);
   });
 
   it("TR-D2 execucaoDeclaradaTop(v3) devolve a execução do v3 (cópia, não referência)", () => {

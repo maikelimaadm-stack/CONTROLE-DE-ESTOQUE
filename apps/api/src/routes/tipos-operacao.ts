@@ -12,10 +12,12 @@ import {
   VERSAO_SCHEMA_CONFIGURACAO_TOP,
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
+  VERSAO_SCHEMA_CONFIGURACAO_TOP_V4,
   VERSOES_SCHEMA_CONFIGURACAO_TOP,
   SECOES_CONFIGURACAO_TOP,
   SECOES_CONFIGURACAO_TOP_V2,
   MATRIZ_EXECUCAO_TOP,
+  MATRIZ_REGRAS_GERAIS_TOP,
   configuracaoNeutraTopV2,
   configuracoesTopIguais,
   efeitosAtivadosTop,
@@ -31,6 +33,8 @@ import {
   LIMITE_CONDICOES_PERMITIDAS,
   recusasFiscaisDaFamiliaTop, recusasClienteEmAtrasoDaFamiliaTop,
   restricoesExecutamTop,
+  regrasGeraisExecutamTop,
+  validarRegrasGeraisTop,
   type DestinoOperacaoV1,
   type ConfiguracaoTipoOperacao,
   type SecaoConfiguracaoTopV2
@@ -209,11 +213,24 @@ function configuracaoPedida(bruta: unknown): ConfiguracaoTipoOperacao {
  * O SENTIDO DOS CFOPs, DEPOIS DO PARSE (TOP-CONFIG-05) — a forma já foi conferida pela leitura; aqui entra o que
  * depende da FAMÍLIA da TOP (vendas = saída, compras = entrada). Mesma recusa e mesma forma do parse.
  * Formato 1/2: o domínio devolve `[]` (as chaves nem existem), então nada muda para o legado.
+ *
+ * TOP-CONFIG-08 (decisão 277) — A MATRIZ DAS REGRAS GERAIS É CONFERIDA AQUI TAMBÉM, porque é a mesma pergunta: o
+ * que a FAMÍLIA aceita, depois do parse. Roda onde a fiscal roda — sempre no POST; no PUT, quando o corpo traz
+ * `configuracao` (a versão vigente já foi gravada e não é reconferida) — e responde com o mesmo código e a mesma forma.
  */
 function conferirFiscalDaFamilia(config: ConfiguracaoTipoOperacao, codigoBase: string): void {
   // COMPRAS-01 (decisão 267): "Cliente em atraso" não vale nas famílias de compra — valor ≠ "não valida" é recusado
   // no campo, com a mesma forma das recusas fiscais. Nas outras famílias o domínio devolve `[]` (nada muda).
-  const recusas = [...recusasFiscaisDaFamiliaTop(config, codigoBase), ...recusasClienteEmAtrasoDaFamiliaTop(config, codigoBase)];
+  //
+  // TOP-CONFIG-08: no FORMATO 4, confirmação, documento sem itens, alteração após confirmar e aprovação contra a
+  // MATRIZ DA FAMÍLIA (`validarRegrasGeraisTop`) — a mesma que as capabilities publicam e que o editor usa para
+  // desabilitar a opção; a `mensagem` de cada recusa é o motivo da matriz, o texto que o editor mostra ao lado dela.
+  // NA MESMA LISTA das recusas acima, e não num 422 à parte: um corpo com CFOP no sentido errado e "Automática" num
+  // pedido recebe as duas de uma vez, cada uma no seu `caminho`, em vez de descobrir a segunda só depois de corrigir
+  // a primeira. Formatos 1 a 3 não passam pela matriz: neles as regras gerais só DECLARAM (nada as executa), e a
+  // gravação continua a de hoje, valor por valor — inclusive a TOP de pedido de compra de produção, no formato 3.
+  const regrasGerais = regrasGeraisExecutamTop(config) ? validarRegrasGeraisTop(codigoBase, config) : [];
+  const recusas = [...recusasFiscaisDaFamiliaTop(config, codigoBase), ...recusasClienteEmAtrasoDaFamiliaTop(config, codigoBase), ...regrasGerais];
   if (recusas.length) {
     throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_INVALIDA",
       "A configuração operacional enviada é inválida", { recusas });
@@ -222,7 +239,10 @@ function conferirFiscalDaFamilia(config: ConfiguracaoTipoOperacao, codigoBase: s
 
 const MENSAGEM_CONDICAO_INEXISTENTE = "Condição de pagamento inexistente ou inativa.";
 
-/** Condições permitidas presentes exigem a configuração resultante no formato 3 — a única que as executa. */
+/**
+ * Condições permitidas presentes exigem a configuração resultante no formato 3 — ou no 4 (TOP-CONFIG-08), que executa
+ * tudo o que o 3 executa (`restricoesExecutamTop`). A mensagem continua a de hoje: quem a recebe mandou o 1 ou o 2.
+ */
 function exigirFormato3ParaCondicoes(config: ConfiguracaoTipoOperacao): void {
   if (!restricoesExecutamTop(config)) {
     throw new DomainError("TIPO_OPERACAO_CONDICOES_INVALIDAS",
@@ -659,7 +679,16 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
      * corrente. `contractVersion` não muda. Ausente = servidor anterior: o editor esconde a caixa e não manda
      * a chave, que a API anterior recusaria (`.strict()`).
      */
-    reservaEstoque: 1
+    reservaEstoque: 1,
+    /**
+     * REGRAS GERAIS E APROVAÇÃO (TOP-CONFIG-08, decisão 277) — bloco OPCIONAL novo na raiz, pelo precedente de
+     * `restricoes`: `contractVersion` e `configuracao.versaoSchema` NÃO mudam, e os blocos acima ficam como estão
+     * (há `toEqual` de cada um). Presente = este servidor grava o FORMATO 4 e EXECUTA confirmação automática,
+     * documento sem itens e aprovação; `matriz` é a MESMA que a gravação confere (`conferirFiscalDaFamilia`), e o
+     * editor desabilita a opção com o motivo dela — nunca uma cópia própria. Ausente = servidor anterior: o editor
+     * grava o formato 3 como hoje. Nada aqui depende do gate de execução: a matriz é do PEDIDO, não da instância.
+     */
+    regrasGerais: { suportado: true, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V4, matriz: MATRIZ_REGRAS_GERAIS_TOP }
   })));
 
   /**
@@ -853,6 +882,10 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       // LIDA E CONFERIDA ANTES DE QUALQUER ESCRITA. A correção não depende da ordem — a rota é uma transação
       // só, e a recusa desfaz tudo —, mas conferir primeiro evita trabalho e deixa a leitura óbvia: nada do
       // que vem abaixo (posto de padrão, pai, versão) roda para um corpo que seria recusado.
+      //
+      // TOP-CONFIG-08 (decisão 277): os formatos 1 a 4 entram por aqui, e o NÚMERO GRAVADO em
+      // `configuracao_schema_version` sai DESTE valor normalizado (o `insert` da versão abaixo), nunca do corpo cru.
+      // A leitura do domínio preserva o 4; se ela o perdesse, a versão viraria 3 em silêncio e nada executaria.
       const configuracao = d.configuracao === undefined ? configuracaoNeutraTopV2() : configuracaoPedida(d.configuracao);
       conferirFiscalDaFamilia(configuracao, d.codigoBase);
       conferirExecucaoPedida(d.codigoBase, null, configuracao, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED);
@@ -990,6 +1023,12 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     //
     // TOP-CONFIG-05 GENERALIZA: qualquer formato enviado MENOR que o vigente é recusado (v2 sobre v3 desligaria as
     // restrições em silêncio). v1 sobre v2 responde exatamente o que respondia: mesmo código, mensagem e details.
+    //
+    // TOP-CONFIG-08 (decisão 277): a MESMA regra cobre o formato 4. v3 sobre v4 é recusado como v2 sobre v3 — ele
+    // desligaria em silêncio as regras gerais e a aprovação —, e v4 sobre v3 passa. Se essa promoção é MUDANÇA não
+    // é decidido aqui pelo número: é `configuracoesTopIguais` (abaixo), que compara sem o `versaoSchema` e com o termo
+    // das regras gerais. 3 → 4 com as quatro no neutro não cria versão; com alguma fora do neutro, cria a N+1, e
+    // `secoesAlteradasTop` marca `geral`/`aprovacao`, cada uma por si.
     if (configuracao.versaoSchema < atualConfig.valor.versaoSchema) {
       throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO",
         "Este tipo de operação já usa o formato atual de configuração; recarregue a tela antes de editar",

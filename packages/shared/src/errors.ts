@@ -88,7 +88,22 @@ export const ErrorCodes = {
   CLIENTE_EM_ATRASO: "CLIENTE_EM_ATRASO",
   TIPO_OPERACAO_CONDICOES_INVALIDAS: "TIPO_OPERACAO_CONDICOES_INVALIDAS",
   /** Layout do documento (VENDAS-A3-1): campo obrigatório do layout da TOP vazio ao salvar — um detalhe por campo. */
-  LAYOUT_CAMPO_OBRIGATORIO: "LAYOUT_CAMPO_OBRIGATORIO"
+  LAYOUT_CAMPO_OBRIGATORIO: "LAYOUT_CAMPO_OBRIGATORIO",
+  /**
+   * Aprovação do documento (TOP-CONFIG-08, decisão 277): a versão congelada no formato 4 exige aprovação
+   * antes da confirmação. Códigos próprios, e não `CONFLICT`, porque a tela precisa distinguir PENDENTE
+   * (falta a decisão de quem tem a permissão Aprovar) de REPROVADO (a decisão vigente recusou, e o motivo
+   * vem em `details`) sem interpretar texto — e a confirmação automática transforma a pendente em
+   * "aguardando_aprovacao", não em recusa.
+   *
+   * `APROVACAO_NAO_EXIGIDA` é também o que o gatilho de inserção da 0041 levanta em SQL: `fromPgError`
+   * converte `^[A-Z_]+:` direto em código, então o nome aqui tem de ser IDÊNTICO ao do SQL, ou a resposta
+   * sai com um código que este mapa não conhece e sem status. A guarda de transição da 0041 NÃO usa estes
+   * códigos: ela levanta `CONFLICT`, que todo binário conhece, para o anterior responder 409 e nunca 500.
+   */
+  APROVACAO_PENDENTE: "APROVACAO_PENDENTE",
+  APROVACAO_REPROVADA: "APROVACAO_REPROVADA",
+  APROVACAO_NAO_EXIGIDA: "APROVACAO_NAO_EXIGIDA"
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
@@ -141,7 +156,12 @@ export const errorHttpStatus: Record<ErrorCode, number> = {
   CLIENTE_EM_ATRASO: 422,
   TIPO_OPERACAO_CONDICOES_INVALIDAS: 422,
   // 422: falta no documento um campo que o layout da operação exige (entrada incompleta, não conflito).
-  LAYOUT_CAMPO_OBRIGATORIO: 422
+  LAYOUT_CAMPO_OBRIGATORIO: 422,
+  // 409 nos três: o pedido é válido; é o ESTADO da aprovação do documento (a decisão vigente, ou a falta
+  // dela) que não permite a ação agora — o mesmo critério de `INVALID_STATUS_TRANSITION`.
+  APROVACAO_PENDENTE: 409,
+  APROVACAO_REPROVADA: 409,
+  APROVACAO_NAO_EXIGIDA: 409
 };
 
 export class DomainError extends Error {
