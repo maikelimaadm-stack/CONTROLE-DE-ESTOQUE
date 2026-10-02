@@ -4,6 +4,9 @@ import {
   SECOES_EXTENSAO_V5, secoesExtensaoDaVersaoTop,
   type ConfiguracaoTipoOperacaoV5, type NomeSecaoExtensaoV5, type SecoesExtensaoV5
 } from "@agro/domain";
+// OPERACOES-01 F5a (decisão 282): as abas Destino e Fluxo.
+import { AbaDestino } from "./top-secao-destino";
+import { AbaFluxo } from "./top-secao-fluxo";
 
 /**
  * O REGISTRO DAS ABAS DAS SEÇÕES DE EXTENSÃO DO FORMATO 5 (OPERACOES-01 F4, decisão 281).
@@ -36,7 +39,10 @@ export interface PropsDaSecaoV5<K extends NomeSecaoExtensaoV5> {
 export type ComponenteDaSecaoV5<K extends NomeSecaoExtensaoV5> = (p: PropsDaSecaoV5<K>) => React.ReactNode;
 
 /** UMA ENTRADA POR SEÇÃO DE EXTENSÃO — as fases F5 a F10 acrescentam a sua aqui (o compilador cobra). Vazio na F4. */
-export const COMPONENTES_DAS_SECOES_V5: { readonly [K in NomeSecaoExtensaoV5]: ComponenteDaSecaoV5<K> } = {};
+export const COMPONENTES_DAS_SECOES_V5: { readonly [K in NomeSecaoExtensaoV5]: ComponenteDaSecaoV5<K> } = {
+  destino: AbaDestino,
+  fluxo: AbaFluxo,
+};
 
 /**
  * A aba é de uma seção de extensão? É a pergunta do editor para escolher entre as abas de hoje e `SecaoDoFormato5`,
