@@ -5,21 +5,19 @@ import type { Acerto, Ima, Px } from "./editor-desenho";
 
 /**
  * Camada visual do editor de desenho, por cima do canvas do mapa. Só apresenta: pointer-events none.
- * Linha de desenho e ímã em branco; pontos do cadastro em azul. Rótulos das áreas: tipografia da ficha.
+ * Linha e ímã brancos sem borda; pontos azuis brilhosos sem borda.
  */
 
 export const COR_DESENHO = {
-  /** Linha do polígono em desenho. */
   linha: "#ffffff",
-  /** Elástico (cursor → último ponto). */
   elastico: "#ffffff",
-  /** Ímã: marca, anéis e linha de inserção. */
   ima: "#ffffff",
-  /** Pontos (vértices) do cadastro. */
-  ponto: "#3b82f6",
+  /** Centro do ponto do cadastro. */
+  ponto: "#60a5fa",
+  /** Brilho externo do ponto. */
+  pontoGlow: "#93c5fd",
   meio: "#ffffff",
-  guia: "#e0f2fe",
-  contorno: "#0f172a"
+  guia: "#ffffff"
 } as const;
 
 export interface RotuloArea { id: string; px: Px; nome: string; ha: number }
@@ -100,10 +98,18 @@ export function CamadaDesenho(p: Props) {
       {p.desenhando && (
         <>
           <svg className="absolute inset-0 h-full w-full" aria-hidden>
+            <defs>
+              <radialGradient id="mapa-ponto-brilho" cx="35%" cy="30%" r="70%">
+                <stop offset="0%" stopColor="#ffffff" stopOpacity="0.95" />
+                <stop offset="45%" stopColor={COR_DESENHO.ponto} stopOpacity="1" />
+                <stop offset="100%" stopColor="#2563eb" stopOpacity="1" />
+              </radialGradient>
+            </defs>
+
             {ima?.tipo === "aresta" && ima.aresta && (
               <g strokeLinecap="round">
-                <line x1={ima.aresta[0].x} y1={ima.aresta[0].y} x2={ima.aresta[1].x} y2={ima.aresta[1].y} stroke={COR_DESENHO.contorno} strokeOpacity={0.45} strokeWidth={6} />
-                <line x1={ima.aresta[0].x} y1={ima.aresta[0].y} x2={ima.aresta[1].x} y2={ima.aresta[1].y} stroke={COR_DESENHO.ima} strokeWidth={2.2} />
+                <line x1={ima.aresta[0].x} y1={ima.aresta[0].y} x2={ima.aresta[1].x} y2={ima.aresta[1].y} stroke={COR_DESENHO.ima} strokeWidth={5} strokeOpacity={0.22} />
+                <line x1={ima.aresta[0].x} y1={ima.aresta[0].y} x2={ima.aresta[1].x} y2={ima.aresta[1].y} stroke={COR_DESENHO.ima} strokeWidth={2} />
               </g>
             )}
             {pts.length >= 3 && (
@@ -115,22 +121,31 @@ export function CamadaDesenho(p: Props) {
               />
             )}
             {pts.length >= 2 && (
-              <g fill="none" strokeLinejoin="round" strokeLinecap="round">
-                <polyline points={lista(pts)} stroke={COR_DESENHO.contorno} strokeOpacity={0.55} strokeWidth={5} />
-                <polyline points={lista(pts)} stroke={p.corPreview && fechado ? fillPreview : COR_DESENHO.linha} strokeWidth={2.6} />
-              </g>
+              <polyline
+                points={lista(pts)}
+                fill="none"
+                stroke={p.corPreview && fechado ? fillPreview : COR_DESENHO.linha}
+                strokeWidth={2.4}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
             )}
             {fechado && ultimo && primeiro && (
-              <g strokeLinecap="round">
-                <line x1={ultimo.x} y1={ultimo.y} x2={primeiro.x} y2={primeiro.y} stroke={COR_DESENHO.contorno} strokeOpacity={0.55} strokeWidth={5} />
-                <line x1={ultimo.x} y1={ultimo.y} x2={primeiro.x} y2={primeiro.y} stroke={p.corPreview ? fillPreview : COR_DESENHO.linha} strokeWidth={2.6} />
-              </g>
+              <line
+                x1={ultimo.x} y1={ultimo.y} x2={primeiro.x} y2={primeiro.y}
+                stroke={p.corPreview ? fillPreview : COR_DESENHO.linha}
+                strokeWidth={2.4}
+                strokeLinecap="round"
+              />
             )}
             {cur && ultimo && !fechado && !arrastando && (
-              <g strokeLinecap="round">
-                <line x1={ultimo.x} y1={ultimo.y} x2={cur.x} y2={cur.y} stroke={COR_DESENHO.contorno} strokeOpacity={0.5} strokeWidth={4.5} />
-                <line x1={ultimo.x} y1={ultimo.y} x2={cur.x} y2={cur.y} stroke={COR_DESENHO.elastico} strokeWidth={2} strokeDasharray="6 4" />
-              </g>
+              <line
+                x1={ultimo.x} y1={ultimo.y} x2={cur.x} y2={cur.y}
+                stroke={COR_DESENHO.elastico}
+                strokeWidth={2}
+                strokeDasharray="6 4"
+                strokeLinecap="round"
+              />
             )}
             {p.travado && cur && ultimo && !fechado && (
               <line x1={ultimo.x} y1={ultimo.y} x2={ultimo.x + (cur.x - ultimo.x) * 1.35} y2={ultimo.y + (cur.y - ultimo.y) * 1.35} stroke={COR_DESENHO.guia} strokeWidth={1.2} strokeDasharray="4 6" strokeOpacity={0.85} />
@@ -138,38 +153,39 @@ export function CamadaDesenho(p: Props) {
 
             {meios.map((m) => (
               <g key={m.i}>
-                {m.i === hm && <circle cx={m.px.x} cy={m.px.y} r={7} fill={COR_DESENHO.ponto} fillOpacity={0.28} />}
-                <circle cx={m.px.x} cy={m.px.y} r={2.2} fill="#ffffff" fillOpacity={0.85} stroke={COR_DESENHO.ponto} strokeOpacity={0.9} strokeWidth={1.2} />
+                {m.i === hm && <circle cx={m.px.x} cy={m.px.y} r={8} fill={COR_DESENHO.pontoGlow} fillOpacity={0.35} />}
+                <circle cx={m.px.x} cy={m.px.y} r={2} fill={COR_DESENHO.ponto} fillOpacity={0.85} />
               </g>
             ))}
 
             {pts.map((v, i) => (
               <g key={i}>
                 {(p.grudados[i] || i === p.arrastoVertice) && (
-                  <circle cx={v.x} cy={v.y} r={5.5} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.4} strokeOpacity={0.95} />
+                  <circle cx={v.x} cy={v.y} r={7} fill={COR_DESENHO.ima} fillOpacity={0.22} />
                 )}
-                {i === hv && <circle cx={v.x} cy={v.y} r={7} fill={COR_DESENHO.ponto} fillOpacity={0.2} />}
-                <circle cx={v.x} cy={v.y} r={2.8} fill={COR_DESENHO.ponto} stroke="#ffffff" strokeWidth={1.2} />
+                {i === hv && <circle cx={v.x} cy={v.y} r={9} fill={COR_DESENHO.pontoGlow} fillOpacity={0.35} />}
+                {/* Ponto azul brilhoso, sem borda. */}
+                <circle cx={v.x} cy={v.y} r={5.5} fill={COR_DESENHO.pontoGlow} fillOpacity={0.45} />
+                <circle cx={v.x} cy={v.y} r={3.2} fill="url(#mapa-ponto-brilho)" />
+                <circle cx={v.x - 0.7} cy={v.y - 0.9} r={0.9} fill="#ffffff" fillOpacity={0.85} />
               </g>
             ))}
 
-            {/* Ímã: anéis/linha brancos — sem cruzetas, sem nome. */}
+            {/* Ímã branco, sem borda escura. */}
             {ima && raw && cur && (
               <g data-testid="mapa-ima-marca" data-tipo={ima.tipo}>
-                <line x1={raw.x} y1={raw.y} x2={cur.x} y2={cur.y} stroke={COR_DESENHO.contorno} strokeWidth={2.2} strokeOpacity={0.45} />
-                <line x1={raw.x} y1={raw.y} x2={cur.x} y2={cur.y} stroke={COR_DESENHO.ima} strokeWidth={1.2} strokeDasharray="2 3" strokeOpacity={0.95} />
-                <circle cx={raw.x} cy={raw.y} r={1.8} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.1} strokeOpacity={0.8} />
-                <circle cx={cur.x} cy={cur.y} r={9} fill={COR_DESENHO.ima} fillOpacity={0.16} />
-                <circle cx={cur.x} cy={cur.y} r={5.5} fill="none" stroke={COR_DESENHO.contorno} strokeWidth={2.2} strokeOpacity={0.5} />
-                <circle cx={cur.x} cy={cur.y} r={5.5} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.5} strokeOpacity={0.95} />
-                <circle cx={cur.x} cy={cur.y} r={2.4} fill={ima.tipo === "fechar" ? COR_DESENHO.ponto : COR_DESENHO.ima} stroke={COR_DESENHO.contorno} strokeWidth={1} />
+                <line x1={raw.x} y1={raw.y} x2={cur.x} y2={cur.y} stroke={COR_DESENHO.ima} strokeWidth={1.2} strokeDasharray="2 3" strokeOpacity={0.9} />
+                <circle cx={raw.x} cy={raw.y} r={2} fill={COR_DESENHO.ima} fillOpacity={0.75} />
+                <circle cx={cur.x} cy={cur.y} r={10} fill={COR_DESENHO.ima} fillOpacity={0.14} />
+                <circle cx={cur.x} cy={cur.y} r={5.5} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.5} strokeOpacity={0.9} />
+                <circle cx={cur.x} cy={cur.y} r={2.5} fill={ima.tipo === "fechar" ? COR_DESENHO.ponto : COR_DESENHO.ima} />
               </g>
             )}
 
             {cur && !ima && !fechado && !arrastando && !p.hover && (
               <g>
-                <circle cx={cur.x} cy={cur.y} r={4} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.3} strokeOpacity={0.9} />
-                <circle cx={cur.x} cy={cur.y} r={1.4} fill={COR_DESENHO.ima} />
+                <circle cx={cur.x} cy={cur.y} r={4} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.3} strokeOpacity={0.85} />
+                <circle cx={cur.x} cy={cur.y} r={1.5} fill={COR_DESENHO.ima} />
               </g>
             )}
           </svg>
