@@ -150,8 +150,9 @@ test("CP-W1 — pedido → Próximos passos → Central em modo receber (em part
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "aberto");
   const ordem = (await api<PedidoLido>(page, "GET", `/api/compras/pedidos/${c.pedido.id}`)).itens.map((i) => i.id);
   const esperado = (a: string, b: string) => ordem.map((id) => (id === c.itemA.id ? a : b));
-  await expect(page.getByTestId("doc-item-faturado")).toHaveText(esperado("4,00", "0,00"));
-  await expect(page.getByTestId("doc-item-saldo")).toHaveText(esperado("6,00", "2,00"));
+  // Recebido e Saldo na escala da compra (4 casas, `numeric(18,4)`), como antes da Central nova (VISUAL-UX-04b, S1).
+  await expect(page.getByTestId("doc-item-faturado")).toHaveText(esperado("4,0000", "0,0000"));
+  await expect(page.getByTestId("doc-item-saldo")).toHaveText(esperado("6,0000", "2,0000"));
   await page.getByRole("tab", { name: /^Compras geradas/ }).click();
   await expect(page.getByTestId("compras-geradas").getByTestId("compras-gerada")).toHaveText([/\S/]);
   await expect(page.getByTestId("compras-encerrar-saldo"), "com compra e saldo, encerrar o saldo passa a valer").toBeVisible();

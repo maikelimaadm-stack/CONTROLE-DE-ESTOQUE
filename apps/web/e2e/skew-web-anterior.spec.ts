@@ -1,7 +1,8 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Request as Requisicao } from "@playwright/test";
 import { login, adicionarItemNaCentral, uniq, pickRef, preencherClassificacaoFinanceira } from "./helpers";
 import { baseTemFatiaDeCadastro, cpfValido } from "./skew-fichas-cadastro";
 import { criarEmpresaEConferirContador } from "./skew-contador-empresa";
+import { editorDaBaseGravaFormato4, pendenciaNoClique } from "./skew-fonte-da-base";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
@@ -37,10 +38,42 @@ const sessao = (page: Page) => page.evaluate(() => JSON.parse(localStorage.getIt
  * Vigia do navegador. Falha de CORS não vira exceção de JavaScript nem resposta HTTP: o Chromium aborta a
  * requisição ANTES de ela existir para a aplicação (`net::ERR_FAILED`) e escreve no console. Sem este
  * coletor, a tela renderiza vazia e o teste passa — que é exatamente o modo de falha desta janela.
+ *
+ * UMA exceção, estreita: a LEITURA (`GET` em `/api/`) que estava EM VOO quando o quadro principal trocou de documento
+ * chega aqui como `net::ERR_ABORTED` — quem desistiu dela foi o navegador, porque a página saiu (o `page.goto` do
+ * próprio caso enquanto o motor da Central ainda relê a consulta e as TOPs depois de salvar). "Em voo na troca" é
+ * medido na ordem dos eventos: há um pedido de documento do quadro principal DEPOIS do início da leitura, ou um pedido
+ * anterior cujo documento ainda não tinha carregado quando ela começou (`domcontentloaded`, que navegação na mesma
+ * página não dispara). O web não cancela leitura por conta própria (`apps/web/src` não tem `AbortController` nem
+ * `signal`): cancelamento SEM troca de documento — a página desistindo de uma leitura —, qualquer outro erro (CORS,
+ * `net::ERR_FAILED`) e QUALQUER escrita abortada continuam sendo falha.
  */
 function vigiar(page: Page) {
   const falhas: string[] = []; const respostas: { url: string; status: number }[] = [];
-  page.on("requestfailed", (r) => { if (r.url().includes(API)) falhas.push(`${r.url()} → ${r.failure()?.errorText ?? "?"}`); });
+  // Um relógio só, na ordem em que o navegador entrega os eventos.
+  let passo = 0;
+  const inicioDaLeitura = new Map<Requisicao, number>();
+  const documentosPedidos: number[] = []; const documentosCarregados: number[] = [];
+  page.on("request", (r) => {
+    passo += 1;
+    if (r.isNavigationRequest() && r.frame() === page.mainFrame()) documentosPedidos.push(passo);
+    else if (r.method() === "GET" && r.url().includes(API)) inicioDaLeitura.set(r, passo);
+  });
+  page.on("domcontentloaded", () => { passo += 1; documentosCarregados.push(passo); });
+  const emVooNaTrocaDeDocumento = (r: Requisicao) => {
+    const inicio = inicioDaLeitura.get(r);
+    return inicio !== undefined
+      && documentosPedidos.some((pedido) => !documentosCarregados.some((carregado) => pedido < carregado && carregado < inicio));
+  };
+  page.on("requestfailed", (r) => {
+    if (!r.url().includes(API)) return;
+    const erro = r.failure()?.errorText ?? "?";
+    if (erro === "net::ERR_ABORTED" && r.method() === "GET" && new URL(r.url()).pathname.startsWith("/api/") && emVooNaTrocaDeDocumento(r)) {
+      console.log(`[skew] leitura em voo cancelada pela troca de documento (não é bloqueio): ${r.url()}`);
+      return;
+    }
+    falhas.push(`${r.method()} ${r.url()} → ${erro}`);
+  });
   page.on("console", (m) => { if (m.type() === "error" && /CORS|preflight|Access-Control/i.test(m.text())) falhas.push(`console: ${m.text()}`); });
   page.on("response", (r) => { if (r.url().includes("/api/")) respostas.push({ url: r.url(), status: r.status() }); });
   return {
@@ -266,9 +299,10 @@ test("TOP-CONFIG-04A · o web da base renomeia uma TOP do formato 2 e a configur
   // O SERVIDOR é o árbitro: nome novo, versão nova, e a configuração do formato 2 INTEIRA preservada.
   const d = await (await request.get(`${API}/api/admin/tipos-operacao/${id}`, { headers: auth })).json() as
     { nome: string; versao: number; configuracaoSchema: number; configuracao: { valor: typeof configuracao } };
-  // Formato gravado depende do MUNDO da base: o web da base com a TOP-CONFIG-05 (declara as regras da operação)
-  // grava o formato 3 quando o servidor declara `restricoes` — o mesmo que W2/W3 do editor esperam. Sem ela, o 2.
-  const formatoEsperado = process.env.SKEW_BASE_TEM_REGRAS_DA_OPERACAO === "1" ? 3 : 2;
+  // Formato gravado depende do MUNDO da base: o web da base com a TOP-CONFIG-08 grava o formato 4 (o servidor deste
+  // HEAD declara o bloco `regrasGerais`); com a TOP-CONFIG-05 (declara as regras da operação), o 3 quando o servidor
+  // declara `restricoes` — o mesmo que W2/W3 do editor esperam. Sem nenhuma das duas, o 2.
+  const formatoEsperado = editorDaBaseGravaFormato4() ? 4 : process.env.SKEW_BASE_TEM_REGRAS_DA_OPERACAO === "1" ? 3 : 2;
   expect([d.nome, d.versao, d.configuracaoSchema]).toEqual([nome, 2, formatoEsperado]);
   expect(d.configuracao.valor.execucao, "o bloco de execução não foi apagado").toEqual({ estoque: "legado", financeiro: "legado" });
   expect(d.configuracao.valor.estoque.atualizacao, "nem a seção que ele não sabia ler").toBe("saida");
@@ -283,15 +317,6 @@ test("TOP-CONFIG-04A · o web da base renomeia uma TOP do formato 2 e a configur
  * API da mesma base (`.skew-classificacao-financeira.json`, gravado por `scripts/skew-classificacao-financeira.mjs`):
  * os dois lados nasceram juntos na VENDAS-A1, e divergência entre eles é o detector errado, não um terceiro mundo.
  */
-/** O web da base mostra pendência no CLIQUE do Salvar (VISUAL-UX-02, decisão 270) em vez de desabilitá-lo? Lido do fonte da base. */
-function pendenciaNoClique(): boolean {
-  const raiz = path.resolve(__dirname, "../../..");
-  const sha = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
-  try {
-    execFileSync("git", ["grep", "-q", "data-testid=\"central-vendas-pendencias\"", sha, "--", "apps/web/src"], { cwd: raiz });
-    return true;
-  } catch { return false; }
-}
 function rotulosDaClassificacaoNoWebDaBase(): { natureza: string; centro: string } | null {
   const raiz = path.resolve(__dirname, "../../..");
   const sha = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();

@@ -2340,7 +2340,11 @@ test("COMPRAS-02 · RP-K1 — sem os próximos passos do pedido de compra na bas
     await expect(aviso).toContainText("indisponível nesta versão do servidor");
     await expect(page.getByTestId("compras-proximos-passos-vazio"), "nada de 'sem próxima operação': o servidor não disse isso").toHaveCount(0);
     await expect(page.locator('[data-testid^="compras-proximo-passo-"]'), "nenhum passo para uma porta que a base não tem").toHaveCount(0);
-    // A base não declara recebido nem saldo: as colunas novas não inventam número.
+    // A base não declara recebido nem saldo: as colunas novas não inventam número. Recebido e Saldo são as colunas do
+    // motor (`doc-item-faturado`/`doc-item-saldo`, VISUAL-UX-04 — o ramo abaixo prova que esta consulta as desenha quando
+    // a base declara); `compras-item-saldo` é o nome anterior ao motor, mantido para o web que ainda o use.
+    await expect(page.getByTestId("doc-item-faturado"), "sem recebido declarado, nenhuma coluna Recebido").toHaveCount(0);
+    await expect(page.getByTestId("doc-item-saldo"), "sem saldo declarado, nenhuma coluna Saldo").toHaveCount(0);
     await expect(page.getByTestId("compras-item-saldo")).toHaveCount(0);
     await expect(page.getByTestId("compras-encerrar-saldo")).toHaveCount(0);
   } else {
@@ -2348,6 +2352,10 @@ test("COMPRAS-02 · RP-K1 — sem os próximos passos do pedido de compra na bas
     await expect(cartao).toHaveAttribute("data-situacao", "pronto");
     await expect(aviso).toHaveCount(0);
     await expect(page.getByTestId("compras-proximos-passos-vazio")).toBeVisible();
+    // A mesma porta (COMPRAS-02) declara recebido e saldo por item: a consulta desenha as duas colunas no item lançado.
+    // É a presença que dá sentido à ausência cobrada no ramo acima — sem ela, o testid de lá poderia não existir.
+    await expect(page.getByTestId("doc-item-faturado"), "a base declara o recebido: a coluna Recebido aparece").toHaveCount(1);
+    await expect(page.getByTestId("doc-item-saldo"), "a base declara o saldo: a coluna Saldo aparece").toHaveCount(1);
   }
   v.semBloqueio();
 });
@@ -2444,16 +2452,17 @@ test("COMPRAS-03 · LC-K1 — sem a capacidade declarada pela base, a Central de
     await escolherNoCampo("Natureza de despesa", natureza.label);
     await escolherNoCampo("Centro de resultado", centro.label);
     const itens = page.getByTestId("compras-itens");
-    // TOLERANTE à Central anterior ("Adicionar item", produto no 2º botão, quantidade/valor nos inputs numéricos) e à do
-    // motor (VISUAL-UX-04: "Adicionar produto", produto em `central-compras-produto`, campos com rótulo acessível).
-    await itens.getByRole("button", { name: /^Adicionar (item|produto)$/ }).first().click();
+    // O WEB deste sentido é SEMPRE o deste HEAD (só a API é a da base), e a Central de Compras dele é o motor da
+    // VISUAL-UX-04: "Adicionar produto", produto em `central-compras-produto`, campos com rótulo acessível. Nada de
+    // escolher a Central por `count()` — a contagem não espera a linha nova, e um zero momentâneo mandaria o caso para
+    // uma Central que este web não tem.
+    await itens.getByRole("button", { name: "Adicionar produto", exact: true }).first().click();
     const linha = itens.locator("tbody tr").first();
-    const doMotor = (await linha.getByTestId("central-compras-produto").count()) > 0;
-    await (doMotor ? linha.getByTestId("central-compras-produto") : linha.locator("button").nth(1)).click();
-    await page.getByPlaceholder(doMotor ? "Pesquisar pela descrição" : "Pesquisar...").fill(nomeProduto!.slice(0, 20));
+    await linha.getByTestId("central-compras-produto").click();
+    await page.getByPlaceholder("Pesquisar pela descrição").fill(nomeProduto!.slice(0, 20));
     await page.getByRole("option", { name: literalDe(nomeProduto!) }).first().click();
-    await (doMotor ? linha.getByLabel("Quantidade do item 1") : linha.locator("input[type=number]").nth(0)).fill("2");
-    await (doMotor ? linha.getByLabel("Valor unitário do item 1") : linha.locator("input[type=number]").nth(1)).fill("9");
+    await linha.getByLabel("Quantidade do item 1").fill("2");
+    await linha.getByLabel("Valor unitário do item 1").fill("9");
     await comOItem();
     const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/compras/compras");
     await page.getByTestId("compras-salvar").click();
@@ -2476,7 +2485,11 @@ test("COMPRAS-03 · LC-K1 — sem a capacidade declarada pela base, a Central de
 
   if (!declara) {
     // MUNDO LEGADO: a Central é a de hoje — sem invólucro do layout, sem linha do layout, sem data-coluna nos itens.
-    await expect(central.locator("[data-campo]"), "sem layout, nenhum data-campo na Central").toHaveCount(0);
+    // O invólucro do layout é a CHAVE do campo com `data-obrigatorio` (`criacao-dados.tsx`); `data-campo` sozinho não
+    // serve de sinal: o campo só de leitura do motor (`CampoLeitura`, ex.: "Total do documento" no painel) leva
+    // `data-campo={rótulo}` com ou sem layout. As duas ausências espelham as presenças do ramo de baixo.
+    await expect(central.locator("[data-campo][data-obrigatorio]"), "sem layout, nenhum invólucro do layout na Central").toHaveCount(0);
+    await expect(central.locator('[data-campo="fornecedor_id"]'), "nem o do Fornecedor").toHaveCount(0);
     await expect(page.getByTestId("compras-layout-efetivo"), "nenhuma linha de layout").toHaveCount(0);
     await salvarComoHoje(async () => {
       const grade = page.getByTestId("compras-itens");
@@ -2490,7 +2503,7 @@ test("COMPRAS-03 · LC-K1 — sem a capacidade declarada pela base, a Central de
 
   // MUNDO ATUAL: a base declara e serve o layout — o web pergunta, e a TOP nova (sem layout ligado) cai no do sistema.
   await expect(page.getByTestId("compras-layout-efetivo"), "a Central mostra o layout que vale").toHaveAttribute("data-origem", "sistema");
-  await expect(central.locator('[data-campo="fornecedor_id"]'), "o layout do sistema governa a Central").toHaveCount(1);
+  await expect(central.locator('[data-campo="fornecedor_id"][data-obrigatorio]'), "o layout do sistema governa a Central").toHaveCount(1);
   expect(pedidosLayout.some((u) => new URL(u).pathname === "/api/compras/compras/layout-efetivo" && new URL(u).searchParams.get("tipo_operacao_id") === topId),
     "o web perguntou o layout desta TOP à base que o declara").toBe(true);
   await salvarComoHoje(async () => {

@@ -474,7 +474,11 @@ nunca numa Central só. Duas Centrais copiadas divergem em silêncio: a que não
 | `duplicar-memoria.ts`, `salvo.ts` | a entrega EM MEMÓRIA da cópia do Duplicar e do "Salvo" (nada na URL, nada no navegador) |
 | `contrato.ts` | só tipos e constantes triviais: o contrato do adaptador e das peças |
 
-O motor não conhece espécie: dentro de `features/central/` não há rota de API, cliente nem fornecedor.
+O motor não conhece espécie: dentro de `features/central/` não há rota de ESPÉCIE (`/api/sales/*`, `/api/compras/*`),
+cliente nem fornecedor. Ele chama só portas genéricas: `/api/resources/<recurso>/options` na pesquisa (`pesquisa.tsx`),
+`/api/resources/<recurso>/<id>` no rótulo e na unidade (`itens.tsx`), e o saldo pela `StockCell` de `features/docs/shared`
+(`/api/stock/balances/<armazém>/<produto>`). A pesquisa mostra Código e Descrição, sem coluna de estoque. (Corrigido
+pela decisão 278: a 276 dizia "não há rota de API".)
 
 **O contrato do adaptador** (`AdaptadorDaCentral`, em `features/central/contrato.ts`). Cada Central entrega:
 
@@ -504,9 +508,40 @@ barra por modo (consulta: Novo documento, Duplicar, a pílula "Confirmar compra"
 saldo", e "Salvo"; criação: Descartar, Salvar, Confirmar compra e "N pendências"), o leque (Imprimir, Histórico,
 documentos abertos, Cancelar; sem Anexos), Dados principais com a TOP travada e Dados adicionais (Movimento, Versão da
 TOP, Origem), a grade do motor com Lote e Validade na compra e "Saldo do pedido" no receber, e o painel com Totais,
-Financeiro, Frete e transporte, Fiscal, Estoque (compra), Compras geradas (pedido) e Observações. O layout do documento
-ligado à TOP (COMPRAS-03, decisão 269) continua decidindo os campos e as zonas. Ficam como eram: as portas
+Financeiro, Frete e transporte, Fiscal, Estoque (compra), Compras geradas (pedido) e Observações (a aba Fiscal só quando
+o layout tira nota, série e data de entrada dos Dados; a consulta desenha as zonas do layout do SISTEMA, que os põe nos
+Dados, e por isso ela não aparece hoje — decisão 278). O layout do documento ligado à TOP (COMPRAS-03, decisão 269)
+continua decidindo os campos e as zonas da criação (a consulta usa o do sistema — decisão 278). Ficam como eram: as portas
 (`POST /api/compras/<seg>`, `/convert`, `/confirm`, `/cancel`, `/encerrar-saldo`), as chaves dos corpos, o modo
 receber, os Próximos passos e a lista do portal `/compras`. Ganham do modelo: Duplicar (em memória, sem nota, série,
 datas, lote, validade nem origem), Descartar, a guarda de pendência no clique (zero POST), Confirmar na criação, o
 "Salvo", o aviso de aba alterada e o Cancelar com `{motivo}` opcional e `Idempotency-Key`.
+
+### Correções da Central de Compras (VISUAL-UX-04b, decisão 278)
+
+> Decisão 278. Só apresentação (faixa F2): nenhuma rota, API, permissão ou regra nova. A Central de Vendas não muda.
+
+O motor ganhou três opções, todas opcionais e com o padrão que mantém a Central de Vendas como era:
+
+| Opção | Onde | Padrão (a venda) | A compra |
+|---|---|---|---|
+| `custoMedioNoUnitario` | `ItensDaCentral` (`itens.tsx`) | `true`: o unitário vazio ou "0" recebe o custo médio do armazém | `false`, no lançar e no receber: o unitário é o preço do fornecedor ("0" é bonificação); o saldo continua lido, só a escrita sai |
+| `armazemForcado` | `ItensDaCentral` (`itens.tsx`) | `false`: a coluna Armazém segue o layout | `regras.exigeArmazem === true`: só a regra da operação passa por cima do layout |
+| `casasDaQuantidade` | `ItensSalvos` (`itens-salvos.tsx`) | `2` | `4`: quantidade, Recebido e Saldo, na grade e no formulário de leitura (a coluna é `numeric(18,4)`) |
+
+`armazemPorItem` continua significando "a coluna Armazém é PERMITIDA por linha": permitir não é forçar. O custo médio
+do armazém é o que a compra FORMA ao confirmar; a Central de Compras (lançar e receber) não o escreve no unitário.
+
+Na Central de Compras:
+
+- a Origem "Recebido de pedido" lê `origem_item_id`, a coluna da 0037 que a leitura devolve; `item_origem_id` é só a
+  chave do corpo do `/convert`;
+- "Confirmar compra" na criação: o diálogo abre depois de a compra salva carregar, uma vez, e só se ela ainda pode ser
+  confirmada (situação "aberto" e `compras.edit`); compra que chega confirmada não abre o diálogo nem pede a prévia —
+  é o caso da TOP de compra no formato 4 com Confirmação Automática (decisão 277): a consulta abre em Confirmado;
+- Duplicar: a TOP do original que não abre o formulário dá o lançador e descarta a cópia em memória, e o formulário que
+  monta encerra a entrega sempre — como na venda.
+
+Declarado na decisão 278, sem conserto aqui: a `Idempotency-Key` trocada a cada erro, inclusive na queda de rede (fatia
+própria), e a tela das regras gerais da #88 (decisão 277, já na main) — o aviso do resultado da confirmação automática ao
+salvar e a compra sem itens (fatia F2 própria).

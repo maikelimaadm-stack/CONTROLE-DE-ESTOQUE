@@ -13,6 +13,11 @@ import { colunasDoEditor, estruturaComExigidos, zonasDaCentral } from "../src/fe
  * regra força, as zonas do cabeçalho e os campos que aparecem mesmo que o layout os esconda. E, sobretudo, a promessa
  * que protege as OUTRAS telas: sem a prop `colunasDoLayout`, o editor desenha a ordem de sempre em todas as
  * combinações de `fields` que o repositório usa.
+ *
+ * Desde a VISUAL-UX-04 (decisão 276) a Central de Compras NÃO usa mais o `ItemsEditor`: os itens dela são a grade do
+ * motor da Central (`features/central/itens.tsx`), e as colunas vêm de `colunasDoEditor` (testado abaixo) — não de
+ * `ordemDasColunas`. As três linhas "Central de Compras · …" da tabela descreviam chamadas que não existem mais e
+ * saíram (VISUAL-UX-04b): a tabela lista só quem chama o editor hoje.
  */
 
 const PEDIDO = "compras.pedido";
@@ -26,8 +31,8 @@ const visivelPor = (fields: readonly ColunaDoEditorDeItens[], comOrigem: boolean
   c === "product" || c === "quantity" || c === "total" || (c === "saldo" ? comOrigem : (fields as readonly string[]).includes(c));
 
 /**
- * As chamadas do editor no repositório, SEM layout — cada `fields` de cada tela (e os dois ramos da devolução), e a
- * Central de Compras sem a capacidade do layout: pedido e compra no lançamento, e a compra no receber (com origem).
+ * As chamadas do editor no repositório, SEM layout — cada `fields` de cada tela (e os dois ramos da devolução). Nenhuma
+ * passa `colunasDoLayout` (a única que passava, a Central de Compras, saiu do editor na VISUAL-UX-04).
  */
 const COMBINACOES: { onde: string; fields: ColunaDoEditorDeItens[]; comOrigem: boolean }[] = [
   { onde: "frota/manutencoes", fields: ["warehouse", "product", "stock", "quantity", "unit_value"], comOrigem: false },
@@ -39,14 +44,11 @@ const COMBINACOES: { onde: string; fields: ColunaDoEditorDeItens[]; comOrigem: b
   { onde: "estoque/transferencias", fields: ["product", "stock", "quantity", "lot", "cost_center"], comOrigem: false },
   { onde: "estoque/requisicoes", fields: ["warehouse", "product", "stock", "quantity", "lot", "cost_center"], comOrigem: false },
   { onde: "stock/feed-formulas", fields: ["product", "quantity"], comOrigem: false },
-  { onde: "Central de Compras · pedido", fields: ["warehouse", "product", "quantity", "unit_value", "discount", "discount_percent"], comOrigem: false },
-  { onde: "Central de Compras · compra", fields: ["warehouse", "product", "quantity", "unit_value", "discount", "discount_percent", "lot", "expiration"], comOrigem: false },
-  { onde: "Central de Compras · receber", fields: ["warehouse", "product", "quantity", "unit_value", "discount", "discount_percent", "lot", "expiration"], comOrigem: true },
   // Limites: o mínimo (só o que sempre aparece) e o máximo (todas as colunas, com a origem)
   { onde: "limite · mínimo", fields: ["product"], comOrigem: false },
   { onde: "limite · todas com origem", fields: ["warehouse", "product", "stock", "quantity", "unit_value", "discount", "discount_percent", "generate_stock", "lot", "expiration", "financial_category", "cost_center"], comOrigem: true }
 ];
-test("as 14 combinações estão na tabela", () => { expect(COMBINACOES).toHaveLength(14); });
+test("as 11 combinações estão na tabela", () => { expect(COMBINACOES).toHaveLength(11); });
 
 const coluna = (c: ColunaDoEditorDeItens, chave: string): ColunaDoLayoutNoEditor => ({ coluna: c, chave, obrigatorio: false });
 const SEM_REGRA = { forcadas: [] as string[], obrigatoriasPelaRegra: new Set<string>() };
@@ -71,7 +73,7 @@ test.describe("ordemDasColunas", () => {
     expect(ordemDasColunas(visivel, layout)).toEqual(["saldo", "quantity", "product", "warehouse", "unit_value", "total"]);
   });
 
-  test("o layout do sistema da compra desenha exatamente a Central de hoje", () => {
+  test("com o layout do sistema da compra, o editor desenha a mesma ordem que sem layout", () => {
     const fields: ColunaDoEditorDeItens[] = ["warehouse", "product", "quantity", "unit_value", "discount", "discount_percent", "lot", "expiration"];
     const layout = colunasDoEditor(COMPRA, LAYOUT_DO_SISTEMA(COMPRA).itens, SEM_REGRA);
     expect(ordemDasColunas(visivelPor(fields, false), layout)).toEqual(ordemDasColunas(visivelPor(fields, false), undefined));
