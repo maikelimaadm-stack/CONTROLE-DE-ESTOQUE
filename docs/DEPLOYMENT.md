@@ -1828,8 +1828,9 @@ Central de Compras, decisão 278), e não nesta PR: as duas não podem mudar o m
 esta branch tinha feito (`b1928e9`) saiu pelo commit de reversão `e1ab554`, e esta PR não muda mais esse spec (o diff
 contra a main não o lista). A VISUAL-UX-04b também traz a consulta da compra que confere a situação antes de abrir o
 diálogo (acima). Consequência declarada: até a VISUAL-UX-04b entrar e esta trazer a main, o job de Version skew desta
-PR fica vermelho no sentido 2 sem defeito desta fatia — A1-K2, CP-K2 e LD-K2, casos de outras fatias, sobre o web da
-base `1303de3`; depois de trazer a main, o CI roda de novo no HEAD novo.
+PR fica vermelho no sentido 2 sem defeito desta fatia — sobre o web da base `1303de3`, o A1-K2 (caso de outra fatia)
+falha no detector, e os 14 casos seguintes do modo serial não rodam (CP-K2 e LD-K2 entre eles, que falham também se
+rodarem sem o conserto do vigia); depois de trazer a main, o CI roda de novo no HEAD novo.
 
 **Roteiro do Maike (cria TOPs e documentos reais; produção é operacional — decisões 240 e 247, nada é apagado):**
 1. Configurações › Usuários e Permissões › Perfis e Permissões: dar "Aprovar" (Vendas, Compras e as quatro espécies de
