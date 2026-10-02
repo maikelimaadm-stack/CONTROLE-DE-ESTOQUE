@@ -430,10 +430,11 @@ export function resolverPoliticaEfetivaDaVenda(entrada: EntradaPoliticaDaVenda):
  *   · sem TOP                          → não (a guarda nem olha);
  *   · formato 1                        → não (legado para sempre);
  *   · formato 2 com legado/legado      → não (legado declarado);
- *   · qualquer outro caso              → SIM: formato 2 com algo configurado, formato 3 ou 4 com QUALQUER
+ *   · qualquer outro caso              → SIM: formato 2 com algo configurado, formato 3, 4 ou 5 com QUALQUER
  *                                         execução (inclusive o neutro legado/legado) e formato futuro.
  * Sem a marca no formato 3, a guarda recusa ("formato que este banco ainda não conhece") — e a primeira
- * TOP de venda salva no editor novo não confirmava. O formato 4 (TOP-CONFIG-08) confirma pela marca, como o 3.
+ * TOP de venda salva no editor novo não confirmava. O formato 4 (TOP-CONFIG-08) e o 5 (OPERACOES-01 F4, decisão
+ * 281) confirmam pela marca, como o 3.
  */
 export function confirmacaoExigeMarcaDaGuarda(p: Pick<PoliticaEfetivaDaVenda, "origem" | "estoque" | "financeiro">): boolean {
   if (p.origem === "sem_top" || p.origem === VERSAO_SCHEMA_CONFIGURACAO_TOP) return false;
@@ -497,7 +498,7 @@ const PADRAO_DA_COMPRA: Pick<PoliticaEfetivaDaCompra, "estoque" | "financeiro"> 
  *   1. sem versão congelada          → padrão;
  *   2. formato 1                     → padrão, sem ler as seções;
  *   3. formato desconhecido/ilegível → recusa;
- *   4. formato 2/3 sem nada configurado → padrão;
+ *   4. formato 2 a 5 sem nada configurado → padrão;
  *   5. algo configurado e gate desligado → recusa (nunca padrão);
  *   6. família que não é a da compra, ou combinação fora da matriz → recusa;
  *   7. o resto vira decisão tipada, efeito a efeito.

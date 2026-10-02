@@ -24,6 +24,7 @@ import {
   configuracaoNeutraTopV2,
   configuracaoNeutraTopV3,
   configuracaoNeutraTopV4,
+  versaoSchemaDaConfiguracaoTop,
   type ConfiguracaoTipoOperacao,
   type ConfiguracaoTipoOperacaoV4,
   type ModoConfirmacao,
@@ -401,14 +402,18 @@ describe("TOP-CONFIG-08 — regrasGeraisDaVersaoTop (o que a versão congelada m
       .toEqual({ ok: true, regras: { confirmacaoAutomatica: true, aceitaSemItens: false, aprovacao: null } });
   });
 
-  it("formato desconhecido ou formato 4 malformado → configuracao_ilegivel (nunca neutro)", () => {
+  it("formato desconhecido ou formato 4 (ou 5) malformado → configuracao_ilegivel (nunca neutro)", () => {
     const ilegivel = { ok: false, motivo: "configuracao_ilegivel" };
     const malformado = clonar(v4()) as unknown as Record<string, unknown>;
     (malformado.geral as Record<string, unknown>).confirmacao = "quase";
     const comChaveNova = { ...clonar(v4()), regraNova: true };
     const porValorSemValor = clonar(v4({ politica: "por_valor" })) as unknown as Record<string, unknown>;
     (porValorSemValor.aprovacao as Record<string, unknown>).valorMinimo = null;
-    for (const configuracao of [{ versaoSchema: 5 }, { versaoSchema: "4" }, "texto", null, [], { versaoSchema: 4 }, malformado, comChaveNova, porValorSemValor]) {
+    // OPERACOES-01 F4 (decisão 281): o 6 é o formato desconhecido; o 5 só com o número (sem seções) é um 5 MALFORMADO
+    // — ilegível como o 4 malformado, nunca o neutro do corte. As premissas: o 5 é conhecido e o 6 não.
+    expect(versaoSchemaDaConfiguracaoTop({ versaoSchema: 5 })).toBe(5);
+    expect(versaoSchemaDaConfiguracaoTop({ versaoSchema: 6 })).toBeNull();
+    for (const configuracao of [{ versaoSchema: 6 }, { versaoSchema: "4" }, "texto", null, [], { versaoSchema: 4 }, { versaoSchema: 5 }, malformado, comChaveNova, porValorSemValor]) {
       expect(regrasGeraisDaVersaoTop({ codigoBase: "vendas.venda", configuracao }), JSON.stringify(configuracao)).toEqual(ilegivel);
     }
   });

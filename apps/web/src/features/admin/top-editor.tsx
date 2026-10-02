@@ -2,6 +2,8 @@
 import { LinhaLayoutDocumentoTop } from "./tipos-operacao";
 import { CondicoesPermitidasTop } from "./top-condicoes-permitidas";
 import { FiscalFormato3 } from "./top-fiscal-formato3";
+import { AssistenteTipoDeMovimento } from "./top-assistente";
+import { SecaoDoFormato5, ehSecaoDeExtensaoV5 } from "./top-secoes-formato5";
 import * as React from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
@@ -11,20 +13,22 @@ import {
   Badge, Button, ConfirmDialog, Dialog, ErrorState, Field, Input, LoadingState, NativeSelect, Textarea
 } from "@/components/ui";
 import {
-  ATUALIZACOES_ESTOQUE, ATUALIZACOES_FINANCEIRO, CALCULOS_TRIBUTARIOS, ENUM_LABELS, MENSAGEM_FAMILIA_SEM_EXECUCAO_TOP,
+  ABAS_FIXAS_EDITOR_TOP, ATUALIZACOES_ESTOQUE, ATUALIZACOES_FINANCEIRO, CALCULOS_TRIBUTARIOS, ENUM_LABELS, MENSAGEM_FAMILIA_SEM_EXECUCAO_TOP,
   LIMITE_CONDICOES_PERMITIDAS, MODOS_CONFIRMACAO, MODOS_EXECUCAO_TOP, MODOS_FINANCEIRO, MOMENTOS_APROVACAO, MOMENTOS_EFEITO,
   POLITICAS_ALTERACAO, POLITICAS_APROVACAO, POLITICAS_CLIENTE_EM_ATRASO, POLITICAS_DOCUMENTO_SEM_ITENS, POLITICAS_SALDO_NEGATIVO,
-  TOLERANCIA_ATRASO_MAXIMA_DIAS,
-  configuracaoNeutraTopV4, configuracaoTopParaEdicao, efeitosAtivadosTop, ehFamiliaDeDocumentoEstoque, exigenciasGeraisDaFamiliaTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, familiaOperacionalDeDocumentoVenda,
-  normalizarConfiguracaoTop, normalizarRegrasGeraisDaFamiliaTop, regrasGeraisDaFamiliaTop, regrasGeraisQuePassamAValer, restricoesExecutamTop, tipoOperacao,
+  ROTULOS_SECAO_CONFIGURACAO_TOP, SECOES_EXTENSAO_V5, TOLERANCIA_ATRASO_MAXIMA_DIAS,
+  configuracaoNeutraTopV4, configuracaoTopParaEdicao, definicaoDaSecaoV5, efeitosAtivadosTop, ehFamiliaDeDocumentoEstoque, exigenciasGeraisDaFamiliaTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, familiaOperacionalDeDocumentoVenda,
+  condicoesQueVoltamPeloPerfilTop, formato5Top, normalizarConfiguracaoTop, normalizarPeloPerfilTop, normalizarRegrasGeraisDaFamiliaTop, perfilDaFamiliaTop, regrasGeraisDaFamiliaTop, regrasGeraisQuePassamAValer, restricoesExecutamTop, tipoOperacao,
   recusasFiscaisDaFamiliaTop, validarExecucaoTop,
-  type ConfiguracaoComRestricoesTop, type ConfiguracaoTipoOperacaoV2, type EfeitoExecucaoTop, type ItemMatrizRegrasGeraisTop, type ModoExecucaoTop,
-  type RecusaExecucaoTop, type RegraDaFamiliaTop, type RegraGeralQueVoltaTop
+  type AbaEditorTop, type ConfiguracaoComRegrasGeraisTop, type ConfiguracaoComRestricoesTop, type ConfiguracaoTipoOperacaoV2,
+  type ConfiguracaoTipoOperacaoV5, type EfeitoExecucaoTop,
+  type ExigenciaDoPerfilTop, type ItemMatrizRegrasGeraisTop, type ModoExecucaoTop, type RecusaExecucaoTop, type RegraDaFamiliaTop,
+  type RegraGeralQueVoltaTop, type SecaoQueVoltaTop
 } from "@agro/domain";
 import {
-  CAMINHO_ERRO_RESERVA_ESTOQUE, MensagemCapacidadesTop, ROTULOS_TOP, aplicarNoFormato3, assinaturaRascunho, capacidadesDeExecucao, configuracaoDoRascunhoParaEnvio,
-  configuracaoIlegivelNoEditor, configuracaoInicial, configuracaoInicialV3, configuracaoInicialV4, ehConflitoDeConcorrencia, errosDeCampoDoServidor, lerDetalheTop, limiteDeDestinos,
-  matrizRegrasGerais, podeConfigurar, podeConfigurarDestinos, podeConfigurarEmPartes, podeConfigurarRegrasGerais, podeConfigurarReservaEstoque,
+  CAMINHO_ERRO_RESERVA_ESTOQUE, MensagemCapacidadesTop, ROTULOS_TOP, aplicarNoFormato3, assinaturaRascunho, capacidadesDeExecucao, catalogoDoEditor, configuracaoDoRascunhoParaEnvio,
+  configuracaoIlegivelNoEditor, configuracaoInicial, configuracaoInicialV3, configuracaoInicialV4, configuracaoInicialV5, ehConflitoDeConcorrencia, errosDeCampoDoServidor, lerDetalheTop, limiteDeDestinos,
+  matrizRegrasGerais, podeConfigurar, podeConfigurarDestinos, podeConfigurarEmPartes, podeConfigurarFormato5, podeConfigurarRegrasGerais, podeConfigurarReservaEstoque,
   podeConfigurarRestricoes, useCapacidadesTop, useDestinosPossiveis, valorMinimoAceitavel,
   type CapacidadesExecucaoTop, type DestinoEmEdicao, type EstadoCapacidadesTop, type RascunhoTop
 } from "./top-contrato";
@@ -49,6 +53,16 @@ import {
  * │ intermediárias que ninguém quis declarar, e o histórico é justamente o que explica, anos depois, a  │
  * │ regra sob a qual um documento nasceu. Então: um Salvar explícito, e confirmação ao fechar com       │
  * │ alteração pendente.                                                                                 │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ DOIS EDITORES, ESCOLHIDOS PELA CAPACIDADE DO SERVIDOR (OPERACOES-01 F4, decisão 281) ──────────────┐
+ * │ Com o bloco `formato5` declarado (`podeConfigurarFormato5`), o editor é o do FORMATO 5: a criação    │
+ * │ começa pelo tipo de movimento (`top-assistente.tsx`, o passo 1), as abas e as exigências da Geral    │
+ * │ saem do PERFIL DO TIPO no catálogo que o servidor publicou (com o rótulo do tipo), as abas das seções│
+ * │ de extensão vêm do registro (`top-secoes-formato5.tsx`), e a gravação volta ao padrão, avisando      │
+ * │ antes, o que o tipo não aceita. Sem o bloco (o servidor anterior), o editor do formato 4 de hoje,    │
+ * │ byte a byte: seletor de família, textos, abas e gravação no 4. Nenhuma lista de família, grupo ou    │
+ * │ aba mora aqui: a ordem das abas fixas é a do domínio, e o resto é do catálogo publicado.             │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ CÓDIGO E FAMÍLIA SÃO IMUTÁVEIS NA EDIÇÃO ─────────────────────────────────────────────────────────┐
@@ -112,21 +126,36 @@ type CampoRegraGeral = "confirmacao" | "documentoSemItens" | "alteracaoAposConfi
  */
 type MudancaComRestricoes = <C extends ConfiguracaoComRestricoesTop>(c: C) => C;
 
+/**
+ * As oito seções FIXAS. OPERACOES-01 F4: a ORDEM é a do domínio (`ABAS_FIXAS_EDITOR_TOP`, a mesma do perfil do tipo —
+ * uma lista só); o rótulo de cada uma é daqui, e o `satisfies` cobra um rótulo por aba, nem a mais nem a menos.
+ */
+type ChaveAbaFixa = (typeof ABAS_FIXAS_EDITOR_TOP)[number];
+const ROTULO_ABA_FIXA = {
+  identificacao: "Identificação",
+  geral: "Geral",
+  destinos: "Próximas operações",
+  estoque: "Estoque",
+  financeiro: "Financeiro",
+  fiscal: "Fiscal",
+  aprovacao: "Aprovação",
+  execucao: "Execução"
+} satisfies Record<ChaveAbaFixa, string>;
+
 /** As oito seções, na ordem em que a tela as mostra. */
-const ABAS = [
-  { chave: "identificacao", rotulo: "Identificação" },
-  { chave: "geral", rotulo: "Geral" },
-  { chave: "destinos", rotulo: "Próximas operações" },
-  { chave: "estoque", rotulo: "Estoque" },
-  { chave: "financeiro", rotulo: "Financeiro" },
-  { chave: "fiscal", rotulo: "Fiscal" },
-  { chave: "aprovacao", rotulo: "Aprovação" },
-  { chave: "execucao", rotulo: "Execução" }
-] as const;
-type ChaveAba = (typeof ABAS)[number]["chave"];
+const ABAS: readonly { chave: ChaveAbaFixa; rotulo: string }[] = ABAS_FIXAS_EDITOR_TOP.map((chave) => ({ chave, rotulo: ROTULO_ABA_FIXA[chave] }));
+
+/**
+ * Uma aba do editor: uma das fixas ou, no editor do formato 5, uma SEÇÃO DE EXTENSÃO (nenhuma na F4) — o tipo do
+ * domínio, para o perfil do tipo e a tela falarem das mesmas abas.
+ */
+type ChaveAba = AbaEditorTop;
+
+/** O rótulo da aba: o daqui para as fixas, o da definição da seção (pelo domínio) para as de extensão. */
+const rotuloDaAba = (a: ChaveAba): string => (ehSecaoDeExtensaoV5(a) ? ROTULOS_SECAO_CONFIGURACAO_TOP[a] : ROTULO_ABA_FIXA[a]);
 
 /** O texto de ajuda de cada seção. Um por aba, cada um explicando o que AQUELA seção decide. */
-const AJUDA: Record<ChaveAba, string> = {
+const AJUDA: Record<ChaveAbaFixa, string> = {
   identificacao:
     "Como esta operação é reconhecida: o código que o operador digita, o nome que ele lê e o movimento do produto que define de que operação se trata. O código e o movimento são escolhidos na criação e não mudam depois.",
   geral:
@@ -183,6 +212,33 @@ const AJUDA_COM_REGRAS_GERAIS: Readonly<Record<"geral" | "aprovacao", string>> =
 /** TOP-CONFIG-08 — a ajuda da Geral no documento de estoque com o bloco: a confirmação automática também vale ali. */
 const AJUDA_GERAL_DOCUMENTO_ESTOQUE_COM_REGRAS_GERAIS =
   "No documento de estoque valem a confirmação automática e a observação obrigatória.";
+
+/**
+ * OPERACOES-01 F4 (decisão 281; item 4 do coordenador) — a ajuda da Geral no EDITOR DO FORMATO 5, fora do documento de
+ * estoque. Muda SÓ a frase do documento sem itens: quando a TOP permite, as Centrais de Vendas, de Compras e de
+ * Estoque aceitam o documento sem item (a F2 leva o comportamento às Centrais de Vendas e de Compras). Só com o editor
+ * do 5: contra um servidor que não declara o 5, a ajuda é a de `AJUDA_COM_REGRAS_GERAIS.geral`, letra por letra — lá
+ * as Centrais ainda pedem um item, e é isso que aquele servidor faz.
+ */
+const AJUDA_FORMATO5_GERAL =
+  "Confirmação automática: o documento é confirmado ao ser salvo, por quem salvou e com a mesma conferência da confirmação manual. Se a confirmação recusar, o documento fica salvo e aberto, e o motivo aparece ao confirmar. Documento sem itens: quando esta operação permite, as Centrais de Vendas, de Compras e de Estoque aceitam o documento sem item. As exigências de preenchimento são cobradas no lançamento.";
+
+/**
+ * OPERACOES-01 F4 — o `data-testid` de cada exigência da Geral (os de hoje, iguais nos dois editores). A transportadora
+ * é a caixa de hoje (`top-geral-exige-transportadora`), fora deste mapa.
+ */
+const TESTID_EXIGENCIA = {
+  exigeParceiro: "top-campo-geral-parceiro",
+  exigeCentroResultado: "top-campo-geral-centro",
+  exigeObservacao: "top-campo-geral-observacao"
+} as const;
+
+/**
+ * O rótulo da exigência no editor do 5, com o nome do campo NO DOCUMENTO DO TIPO (o perfil publicado): "Exigir
+ * cliente" na venda, "Exigir fornecedor" na compra, "Exigir parceiro" onde não há documento. "Exigir parceiro" numa
+ * conta a pagar seria genérico; "Exigir cliente" num pedido de compra seria falso.
+ */
+const rotuloDaExigencia = (e: ExigenciaDoPerfilTop): string => `Exigir ${e.rotulo.toLocaleLowerCase("pt-BR")}`;
 
 // ---------------------------------------------------------------------------------------------------
 // Campos
@@ -254,8 +310,12 @@ function CampoSimNao({ rotulo, ajuda, valor, onChange, desabilitado, testId, spa
  * Cabeçalho de seção com a ajuda própria daquela aba — nunca um texto genérico reaproveitado. `ajuda` troca o texto
  * quando a mesma aba diz coisas diferentes por movimento (hoje, só "Próximas operações": com ou sem a ponte de vendas).
  */
-const Secao = ({ chave, ajuda, children }: { chave: ChaveAba; ajuda?: string; children: React.ReactNode }) => <div>
-  <p className="mb-3 text-[12px] leading-relaxed text-slate-500">{ajuda ?? AJUDA[chave]}</p>
+const Secao = ({ chave, ajuda, children }: { chave: ChaveAbaFixa; ajuda?: string; children: React.ReactNode }) =>
+  <CorpoDaSecao ajuda={ajuda ?? AJUDA[chave]}>{children}</CorpoDaSecao>;
+
+/** O corpo de toda seção: a ajuda e a grade. As de extensão (formato 5) o usam com a ajuda da própria definição. */
+const CorpoDaSecao = ({ ajuda, children }: { ajuda: string; children: React.ReactNode }) => <div>
+  <p className="mb-3 text-[12px] leading-relaxed text-slate-500">{ajuda}</p>
   <div className="grid grid-cols-12 gap-3">{children}</div>
 </div>;
 
@@ -357,6 +417,16 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
   const matriz = matrizRegrasGerais(capacidades);
   const regrasGerais = podeConfigurarRegrasGerais(capacidades) && matriz !== null;
   /**
+   * OPERACOES-01 F4 (decisão 281) — o servidor declarou o bloco `formato5` (legível, no 5, com o MESMO conjunto de seções
+   * de extensão que esta tela escreve)? Só então o editor é o do formato 5: o rascunho carrega `configuracaoV5` (a
+   * verdade da configuração; a vigente no 1 a 4 é LIDA como 5), a criação começa pelo ASSISTENTE (o passo 1, o tipo de
+   * movimento) e as abas, as exigências e os rótulos saem do PERFIL DO TIPO no catálogo que o servidor publicou. Sem o
+   * bloco, `catalogo` é `null` e o editor é o do formato 4 de hoje, byte a byte (seletor de família, textos, gravação no
+   * 4). O 5 exige o 4 (`podeConfigurarFormato5` pergunta `podeConfigurarRegrasGerais`): `formato5` implica `regrasGerais`.
+   */
+  const catalogo = catalogoDoEditor(capacidades);
+  const formato5 = podeConfigurarFormato5(capacidades) && regrasGerais && catalogo !== null;
+  /**
    * A versão vigente já está no formato 3 ou 4 (as restrições executam) — sem restrições no servidor, a configuração
    * não tem envio honesto. TOP-CONFIG-08: perguntado ao domínio (`restricoesExecutamTop`), nunca ao número 3: uma
    * vigente no formato 4 lida como "não é 3" deixaria um servidor sem restrições receber o formato 2 por cima dela.
@@ -378,7 +448,6 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
    * editor dizem que as regras gerais não executam, e no 4 elas executam: editar ali seria gravar sobre o que não se leu.
    */
   const configuracaoIlegivel = edicao && !!detalhe && configuracaoIlegivelNoEditor(detalhe.configuracao, capacidades);
-  const liberado = configuravel && !configuracaoIlegivel;
 
   /**
    * A LISTA DE DESTINOS NÃO FOI LIDA — e por isso não pode ser reescrita.
@@ -417,13 +486,34 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
      * se a chave É ENVIADA é a gravação.
      */
     ...(detalhe ? (detalhe.reservaEstoque !== null ? { reservaEstoque: detalhe.reservaEstoque } : {}) : { reservaEstoque: false }),
-    ...camposDeRestricoes(restricoes, regrasGerais, detalhe)
-  }), [detalhe, restricoes, regrasGerais]);
+    ...camposDeRestricoes(restricoes, regrasGerais, formato5, detalhe)
+  }), [detalhe, restricoes, regrasGerais, formato5]);
 
   const [rascunho, setRascunho] = React.useState<RascunhoTop>(inicial);
   const [abaEscolhida, setAba] = React.useState<ChaveAba>("identificacao");
   /** ESTOQUE-01 — o movimento é uma das famílias do documento de estoque? Perguntado ao registry, nunca a uma lista daqui. */
   const documentoEstoque = ehFamiliaDeDocumentoEstoque(rascunho.codigoBase);
+  /**
+   * OPERACOES-01 F4 — O PASSO 1: só na CRIAÇÃO, só com o editor do 5, enquanto o tipo de movimento não foi escolhido. O
+   * corpo do diálogo é só o assistente; o rodapé é o de sempre (Salvar desabilitado: sem família, nada é válido). Na
+   * edição a família é imutável e não há passo 1.
+   */
+  const passo1 = !edicao && formato5 && rascunho.codigoBase === "";
+  /**
+   * OPERACOES-01 F4 — O PERFIL DO TIPO no catálogo publicado: as abas, as exigências da Geral (com o rótulo do tipo) e
+   * as seções que ficam no padrão. Só com o editor do 5 e o rascunho NO 5 (no instante entre as capacidades chegarem e
+   * o rascunho ganhar `configuracaoV5` — o efeito abaixo —, o editor continua o de hoje) e com a família escolhida.
+   * `null` = o editor do 4 de hoje, regras de aba inclusive.
+   */
+  const perfil = formato5 && catalogo !== null && rascunho.configuracaoV5 && rascunho.codigoBase
+    ? perfilDaFamiliaTop(rascunho.codigoBase, catalogo) : null;
+  /**
+   * A família não tem perfil no catálogo que o servidor publicou — servidor e tela divergentes (o catálogo tem um perfil
+   * por família do registry). Sem perfil não há abas nem exigências honestas: as seções de operação ficam BLOQUEADAS,
+   * com a frase de formato desconhecido, em vez de cair nas abas de outra família ou nas de hoje.
+   */
+  const semPerfil = formato5 && !!rascunho.configuracaoV5 && rascunho.codigoBase !== "" && perfil === null;
+  const liberado = configuravel && !configuracaoIlegivel && !semPerfil;
   /**
    * TOP-CONFIG-08 — o que a FAMÍLIA aceita em cada regra geral, pela matriz que o SERVIDOR declarou (nunca uma cópia
    * daqui). Família ainda não escolhida, ou fora da matriz, cai no padrão do domínio "sem documento", que só aceita o
@@ -432,7 +522,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
    * Exige também o rascunho NO FORMATO 4: a tela só diz "executa" sobre o que ela vai de fato gravar no 4. No instante
    * entre as capacidades chegarem e o rascunho ganhar `configuracaoV4` (o efeito abaixo), ela continua a de hoje.
    */
-  const regrasDaFamilia: ItemMatrizRegrasGeraisTop | null = regrasGerais && matriz && rascunho.configuracaoV4
+  const regrasDaFamilia: ItemMatrizRegrasGeraisTop | null = regrasGerais && matriz && (rascunho.configuracaoV4 || rascunho.configuracaoV5)
     ? regrasGeraisDaFamiliaTop(rascunho.codigoBase, matriz) : null;
   /** Cada regra geral aparece? Sem o bloco, sempre (como hoje); com ele, só quando a família aceita algo além do neutro. */
   const regraVisivel: Readonly<Record<CampoRegraGeral, boolean>> = {
@@ -442,10 +532,18 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
     aprovacao: !regrasDaFamilia || regraAparece(regrasDaFamilia.aprovacao, NEUTRO_V4.aprovacao.politica)
   };
   const abasForaDoEstoque = regrasDaFamilia ? ABAS_FORA_DO_DOCUMENTO_ESTOQUE_COM_REGRAS_GERAIS : ABAS_FORA_DO_DOCUMENTO_ESTOQUE;
-  const abasVisiveis = ABAS.filter((a) => (!documentoEstoque || !abasForaDoEstoque.has(a.chave))
-    // TOP-CONFIG-08: com o bloco, a aba Aprovação inteira some onde a família só aceita "Sem aprovação" (orçamento,
-    // pedidos e as famílias sem documento) — é a regra do campo que some, aplicada à aba que só tem esse campo.
-    && (a.chave !== "aprovacao" || regraVisivel.aprovacao));
+  /**
+   * OPERACOES-01 F4: no editor do 5 as abas são as DO PERFIL DO TIPO, na ordem dele (o catálogo publicado — nenhuma
+   * lista daqui): somem as que o servidor já obriga a ficar no padrão (Próximas operações sem destino possível,
+   * Aprovação de quem só aceita "Sem aprovação", Execução sem execução configurada) e, no documento de estoque,
+   * Financeiro e Fiscal; entram as seções de extensão que o tipo usa. Sem o perfil, a regra de hoje, letra por letra.
+   */
+  const abasVisiveis: readonly { chave: ChaveAba; rotulo: string }[] = perfil
+    ? perfil.abas.map((chave) => ({ chave, rotulo: rotuloDaAba(chave) }))
+    : ABAS.filter((a) => (!documentoEstoque || !abasForaDoEstoque.has(a.chave))
+      // TOP-CONFIG-08: com o bloco, a aba Aprovação inteira some onde a família só aceita "Sem aprovação" (orçamento,
+      // pedidos e as famílias sem documento) — é a regra do campo que some, aplicada à aba que só tem esse campo.
+      && (a.chave !== "aprovacao" || regraVisivel.aprovacao));
   // Uma aba escondida nunca fica ativa (um erro do servidor pode apontar para ela): cai na identificação.
   const aba: ChaveAba = abasVisiveis.some((a) => a.chave === abaEscolhida) ? abaEscolhida : "identificacao";
   const [confirmandoDescarte, setConfirmandoDescarte] = React.useState(false);
@@ -453,6 +551,16 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
   const [conflito, setConflito] = React.useState(false);
   /** Erros de campo (caminho → mensagem): do domínio antes de enviar, ou do 422 do servidor. */
   const [errosCampo, setErrosCampo] = React.useState<Record<string, string>>({});
+  /**
+   * OPERACOES-01 F4 — os erros SEM ABA NESTE TIPO: o caminho aponta uma aba que o perfil não mostra (uma 422 em
+   * `financeiro`/`fiscal` num documento de estoque, só com servidor e catálogo divergentes) ou nenhuma. O editor cai na
+   * Identificação (acima), e é lá que eles aparecem — a mensagem do campo nunca some atrás de uma aba que não existe.
+   * Só no editor do 5: o do 4 continua o de hoje.
+   */
+  const caminhosSemAba = perfil ? Object.keys(errosCampo).filter((caminho) => {
+    const destino = abaDoCaminho(caminho);
+    return destino === "identificacao" || !abasVisiveis.some((a) => a.chave === destino);
+  }) : [];
 
   /**
    * As capacidades chegam DEPOIS da montagem. Quando o servidor confirma as restrições, o rascunho ganha o
@@ -461,8 +569,8 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
    */
   React.useEffect(() => {
     if (!restricoes) return;
-    setRascunho((r) => (r.configuracaoV3 || r.configuracaoV4 ? r : { ...r, ...camposDeRestricoes(true, regrasGerais, detalhe) }));
-  }, [restricoes, regrasGerais, detalhe]);
+    setRascunho((r) => (r.configuracaoV3 || r.configuracaoV4 || r.configuracaoV5 ? r : { ...r, ...camposDeRestricoes(true, regrasGerais, formato5, detalhe) }));
+  }, [restricoes, regrasGerais, formato5, detalhe]);
 
   const assinaturaInicial = React.useMemo(() => assinaturaRascunho(inicial), [inicial]);
   const alterado = assinaturaRascunho(rascunho) !== assinaturaInicial;
@@ -477,6 +585,11 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
    */
   const mudarConfig = React.useCallback((f: (c: ConfiguracaoTipoOperacaoV2) => ConfiguracaoTipoOperacaoV2) => {
     setRascunho((r) => {
+      // OPERACOES-01 F4: com o editor do 5, o 5 é a verdade — a mesma régua do 4 (o número e as seções de extensão ficam).
+      if (r.configuracaoV5) {
+        const v5 = normalizarConfiguracaoTop(aplicarNoFormato3(r.configuracaoV5, f));
+        return { ...r, configuracaoV5: v5, configuracao: configuracaoTopParaEdicao(v5) };
+      }
       if (r.configuracaoV4) {
         const v4 = normalizarConfiguracaoTop(aplicarNoFormato3(r.configuracaoV4, f));
         return { ...r, configuracaoV4: v4, configuracao: configuracaoTopParaEdicao(v4) };
@@ -487,9 +600,13 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
       return { ...r, configuracaoV3: v3, configuracao: configuracaoTopParaEdicao(v3) };
     });
   }, []);
-  /** As chaves novas do formato 3 (iguais no 4). Sem restrições não há `configuracaoV3` nem `configuracaoV4`, e nada muda. */
+  /** As chaves novas do formato 3 (iguais no 4 e no 5). Sem restrições não há `configuracaoV3/V4/V5`, e nada muda. */
   const mudarConfigV3 = React.useCallback((f: MudancaComRestricoes) => {
     setRascunho((r) => {
+      if (r.configuracaoV5) {
+        const v5 = normalizarConfiguracaoTop(f(r.configuracaoV5));
+        return { ...r, configuracaoV5: v5, configuracao: configuracaoTopParaEdicao(v5) };
+      }
       if (r.configuracaoV4) {
         const v4 = normalizarConfiguracaoTop(f(r.configuracaoV4));
         return { ...r, configuracaoV4: v4, configuracao: configuracaoTopParaEdicao(v4) };
@@ -499,8 +616,26 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
       return { ...r, configuracaoV3: v3, configuracao: configuracaoTopParaEdicao(v3) };
     });
   }, []);
-  /** O rascunho com as chaves do formato 3 — o 4 (com o bloco) ou o 3 (só restrições). Ausente = o editor de hoje. */
-  const comRestricoes: ConfiguracaoComRestricoesTop | undefined = rascunho.configuracaoV4 ?? rascunho.configuracaoV3;
+  /**
+   * O rascunho com as chaves do formato 3 — o 5 (editor do 5), o 4 (com o bloco) ou o 3 (só restrições). Ausente = o
+   * editor de hoje.
+   */
+  const comRestricoes: ConfiguracaoComRestricoesTop | undefined = rascunho.configuracaoV5 ?? rascunho.configuracaoV4 ?? rascunho.configuracaoV3;
+  /**
+   * OPERACOES-01 F4 — escolher o tipo no passo 1 (ou voltar a ele com "Trocar", `familia` vazia) RECOMEÇA a
+   * configuração no neutro do 5: cada tipo aceita regras, exigências e seções diferentes, e o que foi marcado para o
+   * tipo anterior ficaria escondido no rascunho, indo na gravação sem ninguém ver. Destinos, reserva e condições
+   * também recomeçam (são de um tipo). Código, nome, situação e descrição ficam: não dependem do tipo.
+   */
+  const escolherTipo = (familia: string) => {
+    mudar({
+      codigoBase: familia, destinos: [], destinosDeclarados: false, reservaEstoque: false,
+      configuracao: configuracaoInicial(null), ...camposDeRestricoes(restricoes, regrasGerais, formato5, null)
+    });
+    setAba("identificacao");
+    setErrosCampo({});
+    setErro(null);
+  };
 
   /**
    * A EXECUÇÃO PEDIDA PODE SER GRAVADA? A mesma pergunta que o servidor faz, contra a matriz QUE ELE
@@ -519,10 +654,33 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
    * passam a valer" a lista antes de gravar (`voltaram`), e só "Salvar assim mesmo" segue; na criação os campos da
    * família já não oferecem o que ela não aceita, e trocar a família volta tudo ao neutro do formato 4.
    */
-  const regrasNormalizadas = liberado && rascunho.configuracaoV4 && matriz
-    ? normalizarRegrasGeraisDaFamiliaTop(rascunho.codigoBase, rascunho.configuracaoV4, matriz) : null;
+  const comRegrasGerais: ConfiguracaoComRegrasGeraisTop | undefined = rascunho.configuracaoV5 ?? rascunho.configuracaoV4;
+  const regrasNormalizadas = liberado && comRegrasGerais && matriz
+    ? normalizarRegrasGeraisDaFamiliaTop(rascunho.codigoBase, comRegrasGerais, matriz) : null;
+  /**
+   * OPERACOES-01 F4 — O FORMATO 5 VAI TAMBÉM COM O QUE O TIPO NÃO ACEITA DE VOLTA AO PADRÃO, pela régua do domínio
+   * (`normalizarPeloPerfilTop`, contra o perfil do catálogo publicado): a exigência de um campo que o documento do tipo
+   * não tem volta a "Não", e a seção que o tipo não usa (no documento de estoque: Estoque, Financeiro e Fiscal) volta
+   * ao padrão — o servidor recusaria (422) o resto. É o caso da TOP de entrada gravada no 4 com "Exigir parceiro". A
+   * volta NUNCA é silenciosa: na edição, o diálogo "Estas regras passam a valer" a lista (`secoesQueVoltam`) antes de
+   * gravar; na criação o tipo foi escolhido agora, com tudo no neutro, e as abas só mostram o que ele aceita.
+   */
+  const doPerfil = regrasNormalizadas && perfil && formato5Top(regrasNormalizadas.configuracao)
+    ? normalizarPeloPerfilTop(perfil, regrasNormalizadas.configuracao) : null;
+  /**
+   * OPERACOES-01 F4 — e as CONDIÇÕES DE PAGAMENTO permitidas, que moram fora da configuração (a tabela da versão): num
+   * tipo sem Financeiro (o documento de estoque), a lista LIDA volta ao padrão — a vazia — antes de gravar, pela régua
+   * do domínio (`condicoesQueVoltamPeloPerfilTop`). É o caso da TOP de entrada gravada no 4 com condições: no 5 o
+   * servidor recusa (422) a lista não vazia, a enviada e a preservada. A volta vai para o mesmo diálogo, depois das de
+   * `doPerfil`. Só na edição (na criação a lista nasce vazia e a aba Financeiro nem aparece) e só com a lista lida
+   * (ilegível = a tela já a bloqueia, e nada sobre ela é enviado).
+   */
+  const condicoesQueVoltam = doPerfil && perfil && edicao && restricoes && !condicoesIlegiveis && rascunho.condicoesPermitidas
+    ? condicoesQueVoltamPeloPerfilTop(perfil, rascunho.condicoesPermitidas.length) : null;
+  /** A configuração que vai no fio, já com a família e o tipo aplicados (o 5 ou o 4); `undefined` = o caminho de hoje. */
+  const configuracaoNormalizada: ConfiguracaoComRegrasGeraisTop | undefined = doPerfil?.configuracao ?? regrasNormalizadas?.configuracao;
   const envio = configuracaoDoRascunhoParaEnvio(
-    regrasNormalizadas ? { ...rascunho, configuracaoV4: regrasNormalizadas.configuracao } : rascunho,
+    comConfiguracaoNormalizada(rascunho, configuracaoNormalizada),
     execucao.suportado,
     vigenteNoFormato3
   );
@@ -573,6 +731,8 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         && rascunho.condicoesPermitidas && rascunho.condicoesDeclaradas && !condicoesIlegiveis) {
         base.condicoesPermitidas = rascunho.condicoesPermitidas.map((c) => c.id);
       }
+      // OPERACOES-01 F4: no 5, o tipo sem Financeiro não aceita condição — a lista lida vai VAZIA (o diálogo já disse).
+      if (liberado && condicoesQueVoltam && base.configuracao !== undefined) base.condicoesPermitidas = [];
       /**
        * TOP-CONFIG-07 — `reservaEstoque` só viaja com a capacidade declarada e na família do pedido (servidor anterior
        * recusaria a chave; outra família é 422). No PUT o servidor lê AUSENTE como "preserve", então valor não lido
@@ -617,8 +777,10 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
   const [perguntas, setPerguntas] = React.useState<PerguntasAntesDeGravar | null>(null);
   const tentarSalvar = () => {
     const locais: Record<string, string> = {};
-    // TOP-CONFIG-08: as chaves do formato 3 vivem no 4 também — as mesmas conferências, o mesmo envio.
-    const v3 = liberado ? comRestricoes : undefined;
+    // TOP-CONFIG-08: as chaves do formato 3 vivem no 4 também — as mesmas conferências, o mesmo envio. OPERACOES-01 F4:
+    // no 5 as conferências olham o que VAI no fio (`doPerfil`): uma seção que o tipo não usa volta ao padrão antes, e
+    // um CFOP pendurado numa aba que nem aparece não pode travar a gravação.
+    const v3 = liberado ? (doPerfil?.configuracao ?? comRestricoes) : undefined;
     if (v3) {
       if (rascunho.codigoBase) {
         for (const r of recusasFiscaisDaFamiliaTop(v3, rascunho.codigoBase)) {
@@ -646,10 +808,17 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
      * `voltaram` de `normalizarRegrasGeraisDaFamiliaTop`), nunca de uma régua desta tela. Só na EDIÇÃO de uma TOP que
      * já existe: na criação não há o que passaria a valer, e os campos já mostram o que a família aceita.
      */
-    const regras: RegrasQuePassamAValer | null = edicao && regrasNormalizadas && detalhe?.configuracao?.suportada
-      ? { passam: regrasGeraisQuePassamAValer(detalhe.configuracao.valor, regrasNormalizadas.configuracao), voltaram: regrasNormalizadas.voltaram }
+    const regras: RegrasQuePassamAValer | null = edicao && regrasNormalizadas && configuracaoNormalizada && detalhe?.configuracao?.suportada
+      ? {
+        passam: regrasGeraisQuePassamAValer(detalhe.configuracao.valor, configuracaoNormalizada),
+        voltaram: regrasNormalizadas.voltaram,
+        // OPERACOES-01 F4: o que o TIPO não aceita e volta ao padrão (só no editor do 5; no do 4, nada) — a configuração
+        // e, depois, as condições de pagamento permitidas.
+        secoesQueVoltam: [...(doPerfil?.voltaram ?? []), ...(condicoesQueVoltam ? [condicoesQueVoltam] : [])]
+      }
       : null;
-    const perguntarRegras = regras && (regras.passam.length > 0 || regras.voltaram.length > 0) ? regras : null;
+    const perguntarRegras = regras && (regras.passam.length > 0 || regras.voltaram.length > 0 || regras.secoesQueVoltam.length > 0)
+      ? regras : null;
     // Quando as duas valem, a das exigências vem primeiro e a das regras depois (`depoisDasExigencias`).
     if (aValer.length > 0 || perguntarRegras) {
       setPerguntas({ exigencias: aValer.length > 0 ? aValer : null, regras: perguntarRegras });
@@ -687,6 +856,56 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
       onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, documentoSemItens: v } }))} />}
   </>;
 
+  /** A caixa "Exigir transportadora" (TOP-CONFIG-05), a mesma nos dois editores. Só com as chaves do formato 3. */
+  const caixaTransportadora = comRestricoes && <Field label="Exigir transportadora" span={4}>
+    <label className="flex items-center gap-1 text-xs">
+      <input type="checkbox" data-testid="top-geral-exige-transportadora"
+        checked={comRestricoes.geral.exigeTransportadora}
+        onChange={(e) => {
+          const marcado = e.target.checked;
+          mudarConfigV3((c) => ({ ...c, geral: { ...c.geral, exigeTransportadora: marcado } }));
+        }} />
+      Exige transportadora
+    </label>
+  </Field>;
+
+  /**
+   * OPERACOES-01 F4 — uma exigência da Geral no editor do 5, com o rótulo DO TIPO (`rotuloDaExigencia`) e o
+   * `data-testid` de hoje. Só as que o perfil do tipo lista chegam aqui: a exigência de um campo que o documento do tipo
+   * não tem não aparece (e, marcada numa versão anterior, volta a "Não" na gravação, avisando antes).
+   */
+  const campoDaExigencia = (e: ExigenciaDoPerfilTop): React.ReactNode => {
+    const g = rascunho.configuracao.geral;
+    switch (e.chave) {
+      case "exigeParceiro":
+        return <CampoSimNao key={e.chave} rotulo={rotuloDaExigencia(e)} testId={TESTID_EXIGENCIA.exigeParceiro} valor={g.exigeParceiro}
+          onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeParceiro: v } }))} />;
+      case "exigeCentroResultado":
+        return <CampoSimNao key={e.chave} rotulo={rotuloDaExigencia(e)} testId={TESTID_EXIGENCIA.exigeCentroResultado} valor={g.exigeCentroResultado}
+          onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeCentroResultado: v } }))} />;
+      case "exigeObservacao":
+        return <CampoSimNao key={e.chave} rotulo={rotuloDaExigencia(e)} testId={TESTID_EXIGENCIA.exigeObservacao} valor={g.exigeObservacao}
+          onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeObservacao: v } }))} />;
+      case "exigeTransportadora":
+        return <React.Fragment key={e.chave}>{caixaTransportadora}</React.Fragment>;
+    }
+  };
+
+  /**
+   * OPERACOES-01 F4 — o campo "Movimento" na criação pelo editor do 5 (passo 2): o tipo escolhido no passo 1, com o
+   * rótulo e o código da família (o mesmo formato da edição), sem seletor — trocar é voltar ao passo 1.
+   */
+  const familiaEscolhida = familias.find((f) => f.codigo === rascunho.codigoBase);
+  const movimentoEscolhido = familiaEscolhida ? `${familiaEscolhida.rotulo} (${rascunho.codigoBase})` : rascunho.codigoBase;
+
+  /** OPERACOES-01 F4 — a troca vinda da aba de uma seção de extensão: a configuração do 5 inteira, normalizada. */
+  const mudarSecaoDeExtensao = (c: ConfiguracaoTipoOperacaoV5) =>
+    setRascunho((r) => {
+      if (!r.configuracaoV5) return r;
+      const v5 = normalizarConfiguracaoTop(c);
+      return { ...r, configuracaoV5: v5, configuracao: configuracaoTopParaEdicao(v5) };
+    });
+
   return <>
     <Dialog
       open
@@ -700,309 +919,334 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         <Button data-testid="top-salvar" onClick={tentarSalvar} disabled={!valido} loading={salvar.isPending}>{COPY.salvar}</Button>
       </>}
     >
-      {edicao && id && detalhe ? <div className="mb-2"><LinhaLayoutDocumentoTop tipoOperacaoId={id} familia={detalhe.familia.codigo} /></div> : null}
-      <div role="tablist" aria-label="Seções do tipo de operação" className="mb-3 flex flex-wrap gap-1 border-b">
-        {abasVisiveis.map((a) => <button
-          key={a.chave}
-          type="button"
-          role="tab"
-          aria-selected={aba === a.chave}
-          data-testid={`top-aba-${a.chave}`}
-          onClick={() => setAba(a.chave)}
-          className={cn(
-            "border-b-2 px-3 py-1.5 text-xs font-medium",
-            aba === a.chave ? "border-brand-600 text-brand-700" : "border-transparent text-slate-500 hover:text-slate-700"
-          )}
-        >{a.rotulo}</button>)}
-      </div>
-
-      {aba !== "identificacao" && !liberado
-        ? <BloqueioDeConfiguracao estado={capacidades} ilegivel={configuracaoIlegivel} />
-        : null}
-
-      {aba === "identificacao" && <Secao chave="identificacao">
-        <Field label="Código" required span={3} help="Identifica a operação para quem lança. Escolhido na criação e permanente depois dela.">
-          <Input data-testid="top-campo-codigo" value={rascunho.codigo} readOnly={edicao} disabled={edicao}
-            onChange={(e) => mudar({ codigo: e.target.value })} placeholder="2103" />
-        </Field>
-        <Field label="Nome" required span={9}>
-          <Input data-testid="top-campo-nome" value={rascunho.nome} onChange={(e) => mudar({ nome: e.target.value })} placeholder="Venda de gado a prazo" />
-        </Field>
-        <Field label="Movimento" required span={6} help="Define qual operação do produto este tipo representa. Não muda depois da criação.">
-          {edicao
-            ? <Input data-testid="top-campo-familia" value={detalhe ? `${detalhe.familia.rotulo} (${detalhe.familia.codigo})` : ""} readOnly disabled />
-            : <NativeSelect data-testid="top-campo-familia" value={rascunho.codigoBase} onChange={(e) => {
-                const codigoBase = e.target.value;
-                mudar({ codigoBase, destinos: [], reservaEstoque: false });
-                /**
-                 * TOP-CONFIG-08: com o bloco `regrasGerais`, TROCAR A FAMÍLIA VOLTA TUDO AO NEUTRO DO FORMATO 4. Cada
-                 * família aceita regras gerais diferentes (a matriz), e uma regra marcada para a família anterior que
-                 * a nova não executa ficaria escondida no rascunho, indo na gravação sem ninguém ver. O neutro do 4 já
-                 * tem "Cliente em atraso" em "não valida" e as seções do estoque no neutro: as duas regras abaixo, de
-                 * hoje, ficam cobertas.
-                 */
-                if (regrasDaFamilia) { mudar({ configuracao: configuracaoInicial(null), ...camposDeRestricoes(restricoes, true, null) }); return; }
-                // "Cliente em atraso" só existe na venda: fora dela volta para "não valida" (a API recusa outro valor).
-                if (!ehMovimentoDeVendas(codigoBase)) mudarConfigV3((c) => ({ ...c, financeiro: { ...c.financeiro, clienteEmAtraso: "nao_valida" } }));
-                // ESTOQUE-01: no documento de estoque as seções que não se aplicam somem — e o que tinha sido marcado
-                // nelas antes da escolha do movimento volta ao neutro, para nenhuma regra escondida ir na gravação.
-                if (ehFamiliaDeDocumentoEstoque(codigoBase)) mudar({ configuracao: configuracaoInicial(null), ...camposDeRestricoes(restricoes, regrasGerais, null) });
-              }}>
-                <option value="">Selecione…</option>
-                {familias.map((f) => <option key={f.codigo} value={f.codigo}>{f.rotulo} — {f.codigo}</option>)}
-              </NativeSelect>}
-        </Field>
-        <CampoSimNao rotulo={COPY.situacao} span={3} testId="top-campo-situacao" valor={rascunho.ativo}
-          ajuda="Um tipo inativo continua no histórico, mas deixa de ser oferecido em lançamentos novos."
-          onChange={(v) => mudar({ ativo: v, padrao: v ? rascunho.padrao : false })} />
-        <CampoSimNao rotulo="Padrão do movimento" span={3} testId="top-campo-padrao" valor={rascunho.padrao} desabilitado={!rascunho.ativo}
-          ajuda="No máximo um tipo padrão por movimento. Ao marcar este, o anterior deixa de ser o padrão."
-          onChange={(v) => mudar({ padrao: v })} />
-        <Field label="Descrição" span={12}>
-          <Textarea data-testid="top-campo-descricao" rows={3} value={rascunho.descricao} onChange={(e) => mudar({ descricao: e.target.value })} />
-        </Field>
-      </Secao>}
-
-      {aba === "geral" && liberado && documentoEstoque && <Secao chave="geral" ajuda={regrasDaFamilia ? AJUDA_GERAL_DOCUMENTO_ESTOQUE_COM_REGRAS_GERAIS : AJUDA_GERAL_DOCUMENTO_ESTOQUE}>
-        {/* TOP-CONFIG-08: só com o bloco — sem ele o documento de estoque continua só com a observação, como hoje. */}
-        {regrasDaFamilia && regrasDoGeral}
-        <CampoSimNao rotulo="Exigir observação" testId="top-campo-geral-observacao" valor={rascunho.configuracao.geral.exigeObservacao}
-          onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeObservacao: v } }))} />
-        <ErrosDeCampo erros={errosCampo} prefixos={["geral"]} />
-      </Secao>}
-
-      {aba === "geral" && liberado && !documentoEstoque && <Secao chave="geral" ajuda={regrasDaFamilia ? AJUDA_COM_REGRAS_GERAIS.geral : undefined}>
-        {regrasDoGeral}
-        <CampoSimNao rotulo="Exigir parceiro" testId="top-campo-geral-parceiro" valor={rascunho.configuracao.geral.exigeParceiro}
-          onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeParceiro: v } }))} />
-        <CampoSimNao rotulo="Exigir centro de resultado" testId="top-campo-geral-centro" valor={rascunho.configuracao.geral.exigeCentroResultado}
-          onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeCentroResultado: v } }))} />
-        <CampoSimNao rotulo="Exigir observação" testId="top-campo-geral-observacao" valor={rascunho.configuracao.geral.exigeObservacao}
-          onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeObservacao: v } }))} />
-        {comRestricoes && <Field label="Exigir transportadora" span={4}>
-          <label className="flex items-center gap-1 text-xs">
-            <input type="checkbox" data-testid="top-geral-exige-transportadora"
-              checked={comRestricoes.geral.exigeTransportadora}
-              onChange={(e) => {
-                const marcado = e.target.checked;
-                mudarConfigV3((c) => ({ ...c, geral: { ...c.geral, exigeTransportadora: marcado } }));
-              }} />
-            Exige transportadora
-          </label>
-        </Field>}
-        <ErrosDeCampo erros={errosCampo} prefixos={["geral"]} />
-      </Secao>}
-
-      {aba === "destinos" && liberado && <Secao chave="destinos" ajuda={ehMovimentoDeVendas(rascunho.codigoBase) ? undefined : AJUDA_DESTINOS_SEM_PONTE}>
-        <div className="col-span-12">
-          <AbaDestinos
-            codigoBase={rascunho.codigoBase}
-            destinos={rascunho.destinos}
-            limite={limite}
-            habilitado={destinosConfiguraveis}
-            emPartesConfiguravel={emPartesConfiguravel}
-            ilegivel={destinosIlegiveis}
-            declarado={rascunho.destinosDeclarados}
-            estadoNoServidor={edicao ? detalhe?.destinosConfigurados ?? null : false}
-            // MEXER NA LISTA É DECLARAR. Incluir, remover ou reordenar são a mesma decisão vista de três
-            // ângulos: a partir daí existe uma política escrita por alguém, e ela vai no corpo da gravação.
-            onChange={(d) => mudar({ destinos: d, destinosDeclarados: true })}
-            onDeclarar={() => mudar({ destinosDeclarados: true })}
-          />
-        </div>
-      </Secao>}
-
-      {aba === "estoque" && liberado && documentoEstoque && <Secao chave="estoque" ajuda={AJUDA_ESTOQUE_DOCUMENTO_ESTOQUE}>
-        <p data-testid="top-estoque-definido-pela-especie" className="col-span-12 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] leading-relaxed text-slate-700">
-          O movimento é definido pela espécie: a entrada põe a quantidade no armazém pelo custo informado, a saída a tira
-          pelo custo médio, a transferência a tira da origem e a põe no destino com o mesmo custo, e o ajuste leva o saldo
-          à quantidade contada. O saldo só muda quando o documento é confirmado. Esta operação dá ao documento o nome, a
-          operação padrão da espécie e a versão congelada; ela não decide a movimentação.
-        </p>
-      </Secao>}
-
-      {aba === "estoque" && liberado && !documentoEstoque && <Secao chave="estoque">
-        <CampoEnum rotulo="Movimentação" testId="top-campo-estoque-atualizacao" valor={rascunho.configuracao.estoque.atualizacao}
-          opcoes={ATUALIZACOES_ESTOQUE} rotulos={ROTULOS_TOP.estoqueAtualizacao}
-          ajuda="O sentido do efeito declarado. Sem movimentação, os demais campos desta seção não decidem nada."
-          onChange={(v) => mudarConfig((c) => ({ ...c, estoque: { ...c.estoque, atualizacao: v } }))} />
-        <CampoEnum rotulo="Momento do efeito" testId="top-campo-estoque-momento" valor={rascunho.configuracao.estoque.momento}
-          opcoes={MOMENTOS_EFEITO} rotulos={ROTULOS_TOP.momentoEfeito}
-          desabilitado={rascunho.configuracao.estoque.atualizacao === "nenhuma"}
-          onChange={(v) => mudarConfig((c) => ({ ...c, estoque: { ...c.estoque, momento: v } }))} />
-        <CampoSimNao rotulo="Exigir armazém" testId="top-campo-estoque-armazem" valor={rascunho.configuracao.estoque.exigeArmazem}
-          desabilitado={rascunho.configuracao.estoque.atualizacao === "nenhuma"}
-          onChange={(v) => mudarConfig((c) => ({ ...c, estoque: { ...c.estoque, exigeArmazem: v } }))} />
-        <CampoEnum rotulo="Saldo negativo" testId="top-campo-estoque-saldo" valor={rascunho.configuracao.estoque.saldoNegativo}
-          opcoes={POLITICAS_SALDO_NEGATIVO} rotulos={ROTULOS_TOP.saldoNegativo}
-          desabilitado={rascunho.configuracao.estoque.atualizacao === "nenhuma"}
-          ajuda="O que fazer quando a operação levaria o saldo abaixo de zero."
-          onChange={(v) => mudarConfig((c) => ({ ...c, estoque: { ...c.estoque, saldoNegativo: v } }))} />
-        {rascunho.configuracao.estoque.atualizacao === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem movimentação declarada, os demais campos de estoque ficam no estado neutro e não são gravados como exigência." />}
-        <AvisoDeAutoridade efeito="estoque" modo={rascunho.configuracao.execucao.estoque} bloqueio={bloqueioDaSecao("estoque")} venda={ehMovimentoDeVendas(rascunho.codigoBase)} />
-        {/* TOP-CONFIG-07: fora da configuração (coluna da versão) e fora do "desligado" da movimentação — por isso
-            nunca é desabilitada por "Não movimenta estoque". */}
-        {reservaOferecida && <div className="col-span-12 border-t border-slate-200 pt-3" data-testid="top-reserva-estoque-secao">
-          {reservaIlegivel
-            ? <p data-testid="top-reserva-estoque-ilegivel" className="text-[12px] text-amber-700">
-                Este servidor não informou se esta versão reserva estoque. A opção fica bloqueada e nada sobre ela é
-                enviado ao salvar, para não substituir um valor que não foi lido.
-              </p>
-            : <label className="flex items-start gap-2 text-[12.5px] text-slate-700">
-                <input type="checkbox" data-testid="top-reserva-estoque" className="mt-0.5" aria-describedby={idDicaReserva}
-                  checked={rascunho.reservaEstoque === true}
-                  onChange={(e) => { const marcado = e.target.checked; mudar({ reservaEstoque: marcado }); }} />
-                <span>
-                  <span className="font-medium">Reservar estoque ao salvar o pedido</span>
-                  <span id={idDicaReserva} className="mt-0.5 block text-[11.5px] leading-relaxed text-slate-500">
-                    O pedido separa as quantidades no armazém de cada item. Outro documento não usa o que está reservado, e a venda gerada do pedido consome a reserva.
-                  </span>
-                  <span className="mt-0.5 block text-[11.5px] leading-relaxed text-slate-500">
-                    Vale para os pedidos lançados a partir da versão salva e não depende da movimentação nem da aba Execução.
-                  </span>
-                </span>
-              </label>}
-          <ErrosDeCampo erros={errosCampo} prefixos={[CAMINHO_ERRO_RESERVA_ESTOQUE]} />
-        </div>}
-      </Secao>}
-
-      {aba === "financeiro" && liberado && <Secao chave="financeiro">
-        <CampoEnum rotulo="Efeito financeiro" testId="top-campo-financeiro-atualizacao" valor={rascunho.configuracao.financeiro.atualizacao}
-          opcoes={ATUALIZACOES_FINANCEIRO} rotulos={ROTULOS_TOP.financeiroAtualizacao}
-          ajuda="O sentido do efeito declarado. Sem efeito, os demais campos desta seção não decidem nada."
-          onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, atualizacao: v } }))} />
-        <CampoEnum rotulo="Forma do lançamento" testId="top-campo-financeiro-modo" valor={rascunho.configuracao.financeiro.modo}
-          opcoes={MODOS_FINANCEIRO} rotulos={ROTULOS_TOP.financeiroModo}
-          desabilitado={rascunho.configuracao.financeiro.atualizacao === "nenhuma"}
-          ajuda="Título firme compõe o saldo realizado; previsão não."
-          onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, modo: v } }))} />
-        <CampoEnum rotulo="Momento do efeito" testId="top-campo-financeiro-momento" valor={rascunho.configuracao.financeiro.momento}
-          opcoes={MOMENTOS_EFEITO} rotulos={ROTULOS_TOP.momentoEfeito}
-          desabilitado={rascunho.configuracao.financeiro.atualizacao === "nenhuma"}
-          onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, momento: v } }))} />
-        <CampoSimNao rotulo="Exigir forma de pagamento" testId="top-campo-financeiro-forma" valor={rascunho.configuracao.financeiro.exigeFormaPagamento}
-          desabilitado={rascunho.configuracao.financeiro.atualizacao === "nenhuma"}
-          onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, exigeFormaPagamento: v } }))} />
-        <CampoSimNao rotulo="Exigir vencimento" testId="top-campo-financeiro-vencimento" valor={rascunho.configuracao.financeiro.exigeVencimento}
-          desabilitado={rascunho.configuracao.financeiro.atualizacao === "nenhuma"}
-          onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, exigeVencimento: v } }))} />
-        <CampoSimNao rotulo="Exigir centro de resultado" testId="top-campo-financeiro-centro" valor={rascunho.configuracao.financeiro.exigeCentroResultado}
-          desabilitado={rascunho.configuracao.financeiro.atualizacao === "nenhuma"}
-          onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, exigeCentroResultado: v } }))} />
-        {comRestricoes && <>
-          {/* INDEPENDE do efeito financeiro (decisão 263): por isso não é desabilitado com "nenhuma".
-              COMPRAS-01: só nos movimentos de vendas — fora deles o valor fica o que está ("não valida"). */}
-          {ehMovimentoDeVendas(rascunho.codigoBase) && <><CampoEnum rotulo="Cliente em atraso" testId="top-financeiro-cliente-em-atraso" valor={comRestricoes.financeiro.clienteEmAtraso}
-            opcoes={POLITICAS_CLIENTE_EM_ATRASO} rotulos={ROTULOS_TOP.clienteEmAtraso}
-            ajuda="O que fazer quando o cliente tem título vencido ao lançar um documento desta operação."
-            onChange={(v) => mudarConfigV3((c) => ({ ...c, financeiro: { ...c.financeiro, clienteEmAtraso: v } }))} />
-          <Field label="Tolerância (dias)" span={4}
-            help="Dias de atraso tolerados antes de o título contar como vencido para esta regra.">
-            <Input data-testid="top-financeiro-tolerancia-atraso" type="number" inputMode="numeric"
-              min={0} max={TOLERANCIA_ATRASO_MAXIMA_DIAS} step={1}
-              value={String(comRestricoes.financeiro.toleranciaAtrasoDias)}
-              disabled={comRestricoes.financeiro.clienteEmAtraso === "nao_valida"}
-              onChange={(e) => {
-                // Vazio vira 0; fora do intervalo NÃO é corrigido em silêncio — a conferência antes de salvar recusa.
-                const n = e.target.value.trim() === "" ? 0 : Number(e.target.value);
-                mudarConfigV3((c) => ({ ...c, financeiro: { ...c.financeiro, toleranciaAtrasoDias: Number.isFinite(n) ? n : 0 } }));
-              }} />
-          </Field></>}
-          <div className="col-span-12">
-            <CondicoesPermitidasTop
-              valor={rascunho.condicoesPermitidas ?? []}
-              limite={LIMITE_CONDICOES_PERMITIDAS}
-              desabilitado={condicoesIlegiveis}
-              // MEXER NA LISTA É DECLARAR — a mesma régua dos destinos.
-              onChange={(v) => mudar({ condicoesPermitidas: v, condicoesDeclaradas: true })}
-            />
+      {/* OPERACOES-01 F4 — O PASSO 1 (criação, editor do 5, tipo ainda não escolhido): o corpo é SÓ o assistente — sem
+          abas e sem o aviso de versionamento, que falam de um tipo que ainda não existe. Escolhido o tipo, o editor de
+          sempre, com as abas do perfil dele. */}
+      {passo1 && catalogo !== null
+        ? <AssistenteTipoDeMovimento catalogo={catalogo} onEscolher={(t) => escolherTipo(t.familia)} />
+        : <>
+          {edicao && id && detalhe ? <div className="mb-2"><LinhaLayoutDocumentoTop tipoOperacaoId={id} familia={detalhe.familia.codigo} /></div> : null}
+          <div role="tablist" aria-label="Seções do tipo de operação" className="mb-3 flex flex-wrap gap-1 border-b">
+            {abasVisiveis.map((a) => <button
+              key={a.chave}
+              type="button"
+              role="tab"
+              aria-selected={aba === a.chave}
+              data-testid={`top-aba-${a.chave}`}
+              onClick={() => setAba(a.chave)}
+              className={cn(
+                "border-b-2 px-3 py-1.5 text-xs font-medium",
+                aba === a.chave ? "border-brand-600 text-brand-700" : "border-transparent text-slate-500 hover:text-slate-700"
+              )}
+            >{a.rotulo}</button>)}
           </div>
+
+          {aba !== "identificacao" && !liberado
+            ? <BloqueioDeConfiguracao estado={capacidades} ilegivel={configuracaoIlegivel || semPerfil} />
+            : null}
+
+          {aba === "identificacao" && <Secao chave="identificacao">
+            <Field label="Código" required span={3} help="Identifica a operação para quem lança. Escolhido na criação e permanente depois dela.">
+              <Input data-testid="top-campo-codigo" value={rascunho.codigo} readOnly={edicao} disabled={edicao}
+                onChange={(e) => mudar({ codigo: e.target.value })} placeholder="2103" />
+            </Field>
+            <Field label="Nome" required span={9}>
+              <Input data-testid="top-campo-nome" value={rascunho.nome} onChange={(e) => mudar({ nome: e.target.value })} placeholder="Venda de gado a prazo" />
+            </Field>
+            <Field label="Movimento" required span={!edicao && formato5 ? 4 : 6} help="Define qual operação do produto este tipo representa. Não muda depois da criação.">
+              {edicao
+                ? <Input data-testid="top-campo-familia" value={detalhe ? `${detalhe.familia.rotulo} (${detalhe.familia.codigo})` : ""} readOnly disabled />
+                : formato5
+                  // OPERACOES-01 F4: o tipo foi escolhido no passo 1; aqui ele só aparece (trocar é o botão ao lado).
+                  ? <Input data-testid="top-campo-familia" value={movimentoEscolhido} readOnly disabled />
+                  : <NativeSelect data-testid="top-campo-familia" value={rascunho.codigoBase} onChange={(e) => {
+                    const codigoBase = e.target.value;
+                    mudar({ codigoBase, destinos: [], reservaEstoque: false });
+                    /**
+                     * TOP-CONFIG-08: com o bloco `regrasGerais`, TROCAR A FAMÍLIA VOLTA TUDO AO NEUTRO DO FORMATO 4. Cada
+                     * família aceita regras gerais diferentes (a matriz), e uma regra marcada para a família anterior que
+                     * a nova não executa ficaria escondida no rascunho, indo na gravação sem ninguém ver. O neutro do 4 já
+                     * tem "Cliente em atraso" em "não valida" e as seções do estoque no neutro: as duas regras abaixo, de
+                     * hoje, ficam cobertas.
+                     */
+                    if (regrasDaFamilia) { mudar({ configuracao: configuracaoInicial(null), ...camposDeRestricoes(restricoes, true, formato5, null) }); return; }
+                    // "Cliente em atraso" só existe na venda: fora dela volta para "não valida" (a API recusa outro valor).
+                    if (!ehMovimentoDeVendas(codigoBase)) mudarConfigV3((c) => ({ ...c, financeiro: { ...c.financeiro, clienteEmAtraso: "nao_valida" } }));
+                    // ESTOQUE-01: no documento de estoque as seções que não se aplicam somem — e o que tinha sido marcado
+                    // nelas antes da escolha do movimento volta ao neutro, para nenhuma regra escondida ir na gravação.
+                    if (ehFamiliaDeDocumentoEstoque(codigoBase)) mudar({ configuracao: configuracaoInicial(null), ...camposDeRestricoes(restricoes, regrasGerais, formato5, null) });
+                  }}>
+                    <option value="">Selecione…</option>
+                    {familias.map((f) => <option key={f.codigo} value={f.codigo}>{f.rotulo} — {f.codigo}</option>)}
+                  </NativeSelect>}
+            </Field>
+            {!edicao && formato5 && <div className="col-span-12 flex items-end md:col-span-2">
+              <Button type="button" variant="outline" size="sm" data-testid="top-assistente-trocar" onClick={() => escolherTipo("")}>Trocar</Button>
+            </div>}
+            <CampoSimNao rotulo={COPY.situacao} span={3} testId="top-campo-situacao" valor={rascunho.ativo}
+              ajuda="Um tipo inativo continua no histórico, mas deixa de ser oferecido em lançamentos novos."
+              onChange={(v) => mudar({ ativo: v, padrao: v ? rascunho.padrao : false })} />
+            <CampoSimNao rotulo="Padrão do movimento" span={3} testId="top-campo-padrao" valor={rascunho.padrao} desabilitado={!rascunho.ativo}
+              ajuda="No máximo um tipo padrão por movimento. Ao marcar este, o anterior deixa de ser o padrão."
+              onChange={(v) => mudar({ padrao: v })} />
+            <Field label="Descrição" span={12}>
+              <Textarea data-testid="top-campo-descricao" rows={3} value={rascunho.descricao} onChange={(e) => mudar({ descricao: e.target.value })} />
+            </Field>
+            <ErrosDeCampo erros={errosCampo} prefixos={caminhosSemAba} />
+          </Secao>}
+
+          {/* OPERACOES-01 F4 — a Geral do editor do 5: as regras da matriz (como no 4) e SÓ as exigências do perfil do tipo, na
+              ordem dele, com o rótulo do tipo; a ajuda nova fora do documento de estoque. */}
+          {aba === "geral" && liberado && perfil && <Secao chave="geral" ajuda={documentoEstoque ? AJUDA_GERAL_DOCUMENTO_ESTOQUE_COM_REGRAS_GERAIS : AJUDA_FORMATO5_GERAL}>
+            {regrasDoGeral}
+            {perfil.exigencias.map(campoDaExigencia)}
+            <ErrosDeCampo erros={errosCampo} prefixos={["geral"]} />
+          </Secao>}
+
+          {aba === "geral" && liberado && !perfil && documentoEstoque && <Secao chave="geral" ajuda={regrasDaFamilia ? AJUDA_GERAL_DOCUMENTO_ESTOQUE_COM_REGRAS_GERAIS : AJUDA_GERAL_DOCUMENTO_ESTOQUE}>
+            {/* TOP-CONFIG-08: só com o bloco — sem ele o documento de estoque continua só com a observação, como hoje. */}
+            {regrasDaFamilia && regrasDoGeral}
+            <CampoSimNao rotulo="Exigir observação" testId="top-campo-geral-observacao" valor={rascunho.configuracao.geral.exigeObservacao}
+              onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeObservacao: v } }))} />
+            <ErrosDeCampo erros={errosCampo} prefixos={["geral"]} />
+          </Secao>}
+
+          {aba === "geral" && liberado && !perfil && !documentoEstoque && <Secao chave="geral" ajuda={regrasDaFamilia ? AJUDA_COM_REGRAS_GERAIS.geral : undefined}>
+            {regrasDoGeral}
+            <CampoSimNao rotulo="Exigir parceiro" testId="top-campo-geral-parceiro" valor={rascunho.configuracao.geral.exigeParceiro}
+              onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeParceiro: v } }))} />
+            <CampoSimNao rotulo="Exigir centro de resultado" testId="top-campo-geral-centro" valor={rascunho.configuracao.geral.exigeCentroResultado}
+              onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeCentroResultado: v } }))} />
+            <CampoSimNao rotulo="Exigir observação" testId="top-campo-geral-observacao" valor={rascunho.configuracao.geral.exigeObservacao}
+              onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeObservacao: v } }))} />
+            {caixaTransportadora}
+            <ErrosDeCampo erros={errosCampo} prefixos={["geral"]} />
+          </Secao>}
+
+          {aba === "destinos" && liberado && <Secao chave="destinos" ajuda={ehMovimentoDeVendas(rascunho.codigoBase) ? undefined : AJUDA_DESTINOS_SEM_PONTE}>
+            <div className="col-span-12">
+              <AbaDestinos
+                codigoBase={rascunho.codigoBase}
+                destinos={rascunho.destinos}
+                limite={limite}
+                habilitado={destinosConfiguraveis}
+                emPartesConfiguravel={emPartesConfiguravel}
+                ilegivel={destinosIlegiveis}
+                declarado={rascunho.destinosDeclarados}
+                estadoNoServidor={edicao ? detalhe?.destinosConfigurados ?? null : false}
+                // MEXER NA LISTA É DECLARAR. Incluir, remover ou reordenar são a mesma decisão vista de três
+                // ângulos: a partir daí existe uma política escrita por alguém, e ela vai no corpo da gravação.
+                onChange={(d) => mudar({ destinos: d, destinosDeclarados: true })}
+                onDeclarar={() => mudar({ destinosDeclarados: true })}
+              />
+            </div>
+          </Secao>}
+
+          {aba === "estoque" && liberado && documentoEstoque && <Secao chave="estoque" ajuda={AJUDA_ESTOQUE_DOCUMENTO_ESTOQUE}>
+            <p data-testid="top-estoque-definido-pela-especie" className="col-span-12 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] leading-relaxed text-slate-700">
+              O movimento é definido pela espécie: a entrada põe a quantidade no local de estoque pelo custo informado, a saída a tira
+              pelo custo médio, a transferência a tira da origem e a põe no destino com o mesmo custo, e o ajuste leva o saldo
+              à quantidade contada. O saldo só muda quando o documento é confirmado. Esta operação dá ao documento o nome, a
+              operação padrão da espécie e a versão congelada; ela não decide a movimentação.
+            </p>
+            <ErroDaSecao erros={errosCampo} caminho="estoque" />
+          </Secao>}
+
+          {aba === "estoque" && liberado && !documentoEstoque && <Secao chave="estoque">
+            <CampoEnum rotulo="Movimentação" testId="top-campo-estoque-atualizacao" valor={rascunho.configuracao.estoque.atualizacao}
+              opcoes={ATUALIZACOES_ESTOQUE} rotulos={ROTULOS_TOP.estoqueAtualizacao}
+              ajuda="O sentido do efeito declarado. Sem movimentação, os demais campos desta seção não decidem nada."
+              onChange={(v) => mudarConfig((c) => ({ ...c, estoque: { ...c.estoque, atualizacao: v } }))} />
+            <CampoEnum rotulo="Momento do efeito" testId="top-campo-estoque-momento" valor={rascunho.configuracao.estoque.momento}
+              opcoes={MOMENTOS_EFEITO} rotulos={ROTULOS_TOP.momentoEfeito}
+              desabilitado={rascunho.configuracao.estoque.atualizacao === "nenhuma"}
+              onChange={(v) => mudarConfig((c) => ({ ...c, estoque: { ...c.estoque, momento: v } }))} />
+            <CampoSimNao rotulo="Exigir local de estoque" testId="top-campo-estoque-armazem" valor={rascunho.configuracao.estoque.exigeArmazem}
+              desabilitado={rascunho.configuracao.estoque.atualizacao === "nenhuma"}
+              onChange={(v) => mudarConfig((c) => ({ ...c, estoque: { ...c.estoque, exigeArmazem: v } }))} />
+            <CampoEnum rotulo="Saldo negativo" testId="top-campo-estoque-saldo" valor={rascunho.configuracao.estoque.saldoNegativo}
+              opcoes={POLITICAS_SALDO_NEGATIVO} rotulos={ROTULOS_TOP.saldoNegativo}
+              desabilitado={rascunho.configuracao.estoque.atualizacao === "nenhuma"}
+              ajuda="O que fazer quando a operação levaria o saldo abaixo de zero."
+              onChange={(v) => mudarConfig((c) => ({ ...c, estoque: { ...c.estoque, saldoNegativo: v } }))} />
+            {rascunho.configuracao.estoque.atualizacao === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem movimentação declarada, os demais campos de estoque ficam no estado neutro e não são gravados como exigência." />}
+            <ErroDaSecao erros={errosCampo} caminho="estoque" />
+            <AvisoDeAutoridade efeito="estoque" modo={rascunho.configuracao.execucao.estoque} bloqueio={bloqueioDaSecao("estoque")} venda={ehMovimentoDeVendas(rascunho.codigoBase)} />
+            {/* TOP-CONFIG-07: fora da configuração (coluna da versão) e fora do "desligado" da movimentação — por isso
+                nunca é desabilitada por "Não movimenta estoque". */}
+            {reservaOferecida && <div className="col-span-12 border-t border-slate-200 pt-3" data-testid="top-reserva-estoque-secao">
+              {reservaIlegivel
+                ? <p data-testid="top-reserva-estoque-ilegivel" className="text-[12px] text-amber-700">
+                    Este servidor não informou se esta versão reserva estoque. A opção fica bloqueada e nada sobre ela é
+                    enviado ao salvar, para não substituir um valor que não foi lido.
+                  </p>
+                : <label className="flex items-start gap-2 text-[12.5px] text-slate-700">
+                    <input type="checkbox" data-testid="top-reserva-estoque" className="mt-0.5" aria-describedby={idDicaReserva}
+                      checked={rascunho.reservaEstoque === true}
+                      onChange={(e) => { const marcado = e.target.checked; mudar({ reservaEstoque: marcado }); }} />
+                    <span>
+                      <span className="font-medium">Reservar estoque ao salvar o pedido</span>
+                      <span id={idDicaReserva} className="mt-0.5 block text-[11.5px] leading-relaxed text-slate-500">
+                        O pedido separa as quantidades no local de estoque de cada item. Outro documento não usa o que está reservado, e a venda gerada do pedido consome a reserva.
+                      </span>
+                      <span className="mt-0.5 block text-[11.5px] leading-relaxed text-slate-500">
+                        Vale para os pedidos lançados a partir da versão salva e não depende da movimentação nem da aba Execução.
+                      </span>
+                    </span>
+                  </label>}
+              <ErrosDeCampo erros={errosCampo} prefixos={[CAMINHO_ERRO_RESERVA_ESTOQUE]} />
+            </div>}
+          </Secao>}
+
+          {aba === "financeiro" && liberado && <Secao chave="financeiro">
+            <CampoEnum rotulo="Efeito financeiro" testId="top-campo-financeiro-atualizacao" valor={rascunho.configuracao.financeiro.atualizacao}
+              opcoes={ATUALIZACOES_FINANCEIRO} rotulos={ROTULOS_TOP.financeiroAtualizacao}
+              ajuda="O sentido do efeito declarado. Sem efeito, os demais campos desta seção não decidem nada."
+              onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, atualizacao: v } }))} />
+            <CampoEnum rotulo="Forma do lançamento" testId="top-campo-financeiro-modo" valor={rascunho.configuracao.financeiro.modo}
+              opcoes={MODOS_FINANCEIRO} rotulos={ROTULOS_TOP.financeiroModo}
+              desabilitado={rascunho.configuracao.financeiro.atualizacao === "nenhuma"}
+              ajuda="Título firme compõe o saldo realizado; previsão não."
+              onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, modo: v } }))} />
+            <CampoEnum rotulo="Momento do efeito" testId="top-campo-financeiro-momento" valor={rascunho.configuracao.financeiro.momento}
+              opcoes={MOMENTOS_EFEITO} rotulos={ROTULOS_TOP.momentoEfeito}
+              desabilitado={rascunho.configuracao.financeiro.atualizacao === "nenhuma"}
+              onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, momento: v } }))} />
+            <CampoSimNao rotulo="Exigir forma de pagamento" testId="top-campo-financeiro-forma" valor={rascunho.configuracao.financeiro.exigeFormaPagamento}
+              desabilitado={rascunho.configuracao.financeiro.atualizacao === "nenhuma"}
+              onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, exigeFormaPagamento: v } }))} />
+            <CampoSimNao rotulo="Exigir vencimento" testId="top-campo-financeiro-vencimento" valor={rascunho.configuracao.financeiro.exigeVencimento}
+              desabilitado={rascunho.configuracao.financeiro.atualizacao === "nenhuma"}
+              onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, exigeVencimento: v } }))} />
+            <CampoSimNao rotulo="Exigir centro de resultado" testId="top-campo-financeiro-centro" valor={rascunho.configuracao.financeiro.exigeCentroResultado}
+              desabilitado={rascunho.configuracao.financeiro.atualizacao === "nenhuma"}
+              onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, exigeCentroResultado: v } }))} />
+            {comRestricoes && <>
+              {/* INDEPENDE do efeito financeiro (decisão 263): por isso não é desabilitado com "nenhuma".
+                  COMPRAS-01: só nos movimentos de vendas — fora deles o valor fica o que está ("não valida"). */}
+              {ehMovimentoDeVendas(rascunho.codigoBase) && <><CampoEnum rotulo="Cliente em atraso" testId="top-financeiro-cliente-em-atraso" valor={comRestricoes.financeiro.clienteEmAtraso}
+                opcoes={POLITICAS_CLIENTE_EM_ATRASO} rotulos={ROTULOS_TOP.clienteEmAtraso}
+                ajuda="O que fazer quando o cliente tem título vencido ao lançar um documento desta operação."
+                onChange={(v) => mudarConfigV3((c) => ({ ...c, financeiro: { ...c.financeiro, clienteEmAtraso: v } }))} />
+              <Field label="Tolerância (dias)" span={4}
+                help="Dias de atraso tolerados antes de o título contar como vencido para esta regra.">
+                <Input data-testid="top-financeiro-tolerancia-atraso" type="number" inputMode="numeric"
+                  min={0} max={TOLERANCIA_ATRASO_MAXIMA_DIAS} step={1}
+                  value={String(comRestricoes.financeiro.toleranciaAtrasoDias)}
+                  disabled={comRestricoes.financeiro.clienteEmAtraso === "nao_valida"}
+                  onChange={(e) => {
+                    // Vazio vira 0; fora do intervalo NÃO é corrigido em silêncio — a conferência antes de salvar recusa.
+                    const n = e.target.value.trim() === "" ? 0 : Number(e.target.value);
+                    mudarConfigV3((c) => ({ ...c, financeiro: { ...c.financeiro, toleranciaAtrasoDias: Number.isFinite(n) ? n : 0 } }));
+                  }} />
+              </Field></>}
+              <div className="col-span-12">
+                <CondicoesPermitidasTop
+                  valor={rascunho.condicoesPermitidas ?? []}
+                  limite={LIMITE_CONDICOES_PERMITIDAS}
+                  desabilitado={condicoesIlegiveis}
+                  // MEXER NA LISTA É DECLARAR — a mesma régua dos destinos.
+                  onChange={(v) => mudar({ condicoesPermitidas: v, condicoesDeclaradas: true })}
+                />
+              </div>
+            </>}
+            <ErrosDeCampo erros={errosCampo} prefixos={["financeiro", "condicoesPermitidas"]} />
+            {rascunho.configuracao.financeiro.atualizacao === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem efeito financeiro declarado, os demais campos desta seção ficam no estado neutro e não são gravados como exigência." />}
+            <AvisoDeAutoridade efeito="financeiro" modo={rascunho.configuracao.execucao.financeiro} bloqueio={bloqueioDaSecao("financeiro")} venda={ehMovimentoDeVendas(rascunho.codigoBase)} />
+          </Secao>}
+
+          {aba === "fiscal" && liberado && <Secao chave="fiscal">
+            <CampoSimNao rotulo="Relevante para o fiscal" testId="top-campo-fiscal-habilitado" valor={rascunho.configuracao.fiscal.habilitado}
+              ajuda="Desligado, os demais campos desta seção não decidem nada."
+              onChange={(v) => mudarConfig((c) => ({ ...c, fiscal: { ...c.fiscal, habilitado: v } }))} />
+            <CampoSimNao rotulo="Exigir documento fiscal" testId="top-campo-fiscal-documento" valor={rascunho.configuracao.fiscal.exigeDocumentoFiscal}
+              desabilitado={!rascunho.configuracao.fiscal.habilitado}
+              onChange={(v) => mudarConfig((c) => ({ ...c, fiscal: { ...c.fiscal, exigeDocumentoFiscal: v } }))} />
+            <CampoSimNao rotulo="Exigir natureza da operação" testId="top-campo-fiscal-natureza" valor={rascunho.configuracao.fiscal.exigeNaturezaOperacao}
+              desabilitado={!rascunho.configuracao.fiscal.habilitado}
+              onChange={(v) => mudarConfig((c) => ({ ...c, fiscal: { ...c.fiscal, exigeNaturezaOperacao: v } }))} />
+            <CampoSimNao rotulo="Exigir regra tributária" testId="top-campo-fiscal-regra" valor={rascunho.configuracao.fiscal.exigeRegraTributaria}
+              desabilitado={!rascunho.configuracao.fiscal.habilitado}
+              onChange={(v) => mudarConfig((c) => ({ ...c, fiscal: { ...c.fiscal, exigeRegraTributaria: v } }))} />
+            <CampoEnum rotulo="Cálculo de tributos" testId="top-campo-fiscal-calculo" valor={rascunho.configuracao.fiscal.calculoTributario}
+              opcoes={CALCULOS_TRIBUTARIOS} rotulos={ROTULOS_TOP.calculoTributario}
+              desabilitado={!rascunho.configuracao.fiscal.habilitado}
+              ajuda="Declara a intenção. Nenhum tributo é calculado por esta configuração."
+              onChange={(v) => mudarConfig((c) => ({ ...c, fiscal: { ...c.fiscal, calculoTributario: v } }))} />
+            {/* Só com o fiscal ligado: desligado, a normalização do domínio zera também as chaves novas. */}
+            {comRestricoes && comRestricoes.fiscal.habilitado && <div className="col-span-12">
+              <FiscalFormato3
+                fiscal={comRestricoes.fiscal}
+                familia={rascunho.codigoBase}
+                erros={errosCampo}
+                onChange={(f) => mudarConfigV3((c) => ({ ...c, fiscal: f }))}
+              />
+            </div>}
+            {!rascunho.configuracao.fiscal.habilitado && <AvisoDeSecaoDesligada texto="Com o fiscal desligado, os demais campos desta seção ficam no estado neutro e não são gravados como exigência." />}
+            <ErroDaSecao erros={errosCampo} caminho="fiscal" />
+          </Secao>}
+
+          {aba === "aprovacao" && liberado && <Secao chave="aprovacao" ajuda={regrasDaFamilia ? AJUDA_COM_REGRAS_GERAIS.aprovacao : undefined}>
+            <CampoEnum rotulo="Critério de aprovação" testId="top-campo-aprovacao-politica" valor={rascunho.configuracao.aprovacao.politica}
+              opcoes={POLITICAS_APROVACAO} rotulos={ROTULOS_TOP.aprovacaoPolitica}
+              ajuda="Quando o documento precisa passar por aprovação."
+              {...pelaFamilia(POLITICAS_APROVACAO, regrasDaFamilia?.aprovacao, "aprovacao")}
+              onChange={(v) => mudarConfig((c) => ({
+                ...c,
+                // Ao passar para "a partir de um valor", o campo nasce vazio e obrigatório: herdar um valor
+                // antigo faria a regra entrar em vigor com um limite que ninguém confirmou nesta edição.
+                aprovacao: { ...c.aprovacao, politica: v, valorMinimo: v === "por_valor" ? (c.aprovacao.valorMinimo ?? "") : null }
+              }))} />
+            <Field label="Valor mínimo" required={porValor} span={4}
+              help="Valor a partir do qual a aprovação passa a ser exigida. Use ponto como separador decimal."
+              error={porValor && valorMinimo.length > 0 && !valorMinimoAceitavel(valorMinimo) ? "Informe um valor maior que zero, com até duas casas decimais." : undefined}>
+              <Input data-testid="top-campo-aprovacao-valor" inputMode="decimal" placeholder="0.00"
+                value={valorMinimo} disabled={!porValor}
+                onChange={(e) => mudarConfig((c) => ({ ...c, aprovacao: { ...c.aprovacao, valorMinimo: e.target.value } }))} />
+            </Field>
+            <CampoEnum rotulo="Momento da aprovação" testId="top-campo-aprovacao-momento" valor={rascunho.configuracao.aprovacao.momento}
+              opcoes={MOMENTOS_APROVACAO} rotulos={ROTULOS_TOP.momentoAprovacao}
+              desabilitado={rascunho.configuracao.aprovacao.politica === "nenhuma"}
+              onChange={(v) => mudarConfig((c) => ({ ...c, aprovacao: { ...c.aprovacao, momento: v } }))} />
+            {rascunho.configuracao.aprovacao.politica === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem critério de aprovação, o valor mínimo fica zerado e não é gravado." />}
+            {/* TOP-CONFIG-08: o 422 em `aprovacao.*` (a matriz da família, no servidor) abre esta aba e aparece aqui. */}
+            <ErrosDeCampo erros={errosCampo} prefixos={["aprovacao"]} />
+          </Secao>}
+
+          {aba === "execucao" && liberado && <Secao chave="execucao">
+            <div className="col-span-12">
+              <AbaExecucao
+                execucao={execucao}
+                codigoBase={rascunho.codigoBase}
+                configuracao={rascunho.configuracao}
+                salva={edicao ? inicial.configuracao : null}
+                recusas={recusasExecucao}
+                ativacaoSemRuntime={ativacaoSemRuntime}
+                regrasGerais={!!regrasDaFamilia}
+                onChange={(efeito, modo) => mudarConfig((c) => ({ ...c, execucao: { ...c.execucao, [efeito]: modo } }))}
+              />
+            </div>
+          </Secao>}
+
+          {/* OPERACOES-01 F4 — a aba de uma SEÇÃO DE EXTENSÃO do formato 5 (nenhuma na F4): o componente vem do registro
+              (`top-secoes-formato5.tsx`), a ajuda da definição no domínio. O editor não muda quando uma fase acrescenta seção. */}
+          {liberado && rascunho.configuracaoV5 && ehSecaoDeExtensaoV5(aba) && <CorpoDaSecao ajuda={definicaoDaSecaoV5(aba)?.ajuda ?? ""}>
+            <div className="col-span-12">
+              <SecaoDoFormato5 nome={aba} configuracao={rascunho.configuracaoV5} familia={rascunho.codigoBase} erros={errosCampo}
+                onChange={mudarSecaoDeExtensao} />
+            </div>
+            <ErroDaSecao erros={errosCampo} caminho={aba} />
+          </CorpoDaSecao>}
+
+          {conflito && <p data-testid="top-conflito" className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+            Este tipo de operação foi alterado por outra pessoa enquanto você editava. Nada foi gravado, para
+            não apagar o trabalho de ninguém. Feche esta janela, abra o registro de novo e refaça as alterações
+            sobre a versão atual.
+          </p>}
+          {erro ? <div className="mt-3"><ErrorState error={erro} /></div> : null}
+
+          <AvisoDeVersionamento regrasGerais={!!regrasDaFamilia} />
         </>}
-        <ErrosDeCampo erros={errosCampo} prefixos={["financeiro", "condicoesPermitidas"]} />
-        {rascunho.configuracao.financeiro.atualizacao === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem efeito financeiro declarado, os demais campos desta seção ficam no estado neutro e não são gravados como exigência." />}
-        <AvisoDeAutoridade efeito="financeiro" modo={rascunho.configuracao.execucao.financeiro} bloqueio={bloqueioDaSecao("financeiro")} venda={ehMovimentoDeVendas(rascunho.codigoBase)} />
-      </Secao>}
-
-      {aba === "fiscal" && liberado && <Secao chave="fiscal">
-        <CampoSimNao rotulo="Relevante para o fiscal" testId="top-campo-fiscal-habilitado" valor={rascunho.configuracao.fiscal.habilitado}
-          ajuda="Desligado, os demais campos desta seção não decidem nada."
-          onChange={(v) => mudarConfig((c) => ({ ...c, fiscal: { ...c.fiscal, habilitado: v } }))} />
-        <CampoSimNao rotulo="Exigir documento fiscal" testId="top-campo-fiscal-documento" valor={rascunho.configuracao.fiscal.exigeDocumentoFiscal}
-          desabilitado={!rascunho.configuracao.fiscal.habilitado}
-          onChange={(v) => mudarConfig((c) => ({ ...c, fiscal: { ...c.fiscal, exigeDocumentoFiscal: v } }))} />
-        <CampoSimNao rotulo="Exigir natureza da operação" testId="top-campo-fiscal-natureza" valor={rascunho.configuracao.fiscal.exigeNaturezaOperacao}
-          desabilitado={!rascunho.configuracao.fiscal.habilitado}
-          onChange={(v) => mudarConfig((c) => ({ ...c, fiscal: { ...c.fiscal, exigeNaturezaOperacao: v } }))} />
-        <CampoSimNao rotulo="Exigir regra tributária" testId="top-campo-fiscal-regra" valor={rascunho.configuracao.fiscal.exigeRegraTributaria}
-          desabilitado={!rascunho.configuracao.fiscal.habilitado}
-          onChange={(v) => mudarConfig((c) => ({ ...c, fiscal: { ...c.fiscal, exigeRegraTributaria: v } }))} />
-        <CampoEnum rotulo="Cálculo de tributos" testId="top-campo-fiscal-calculo" valor={rascunho.configuracao.fiscal.calculoTributario}
-          opcoes={CALCULOS_TRIBUTARIOS} rotulos={ROTULOS_TOP.calculoTributario}
-          desabilitado={!rascunho.configuracao.fiscal.habilitado}
-          ajuda="Declara a intenção. Nenhum tributo é calculado por esta configuração."
-          onChange={(v) => mudarConfig((c) => ({ ...c, fiscal: { ...c.fiscal, calculoTributario: v } }))} />
-        {/* Só com o fiscal ligado: desligado, a normalização do domínio zera também as chaves novas. */}
-        {comRestricoes && comRestricoes.fiscal.habilitado && <div className="col-span-12">
-          <FiscalFormato3
-            fiscal={comRestricoes.fiscal}
-            familia={rascunho.codigoBase}
-            erros={errosCampo}
-            onChange={(f) => mudarConfigV3((c) => ({ ...c, fiscal: f }))}
-          />
-        </div>}
-        {!rascunho.configuracao.fiscal.habilitado && <AvisoDeSecaoDesligada texto="Com o fiscal desligado, os demais campos desta seção ficam no estado neutro e não são gravados como exigência." />}
-      </Secao>}
-
-      {aba === "aprovacao" && liberado && <Secao chave="aprovacao" ajuda={regrasDaFamilia ? AJUDA_COM_REGRAS_GERAIS.aprovacao : undefined}>
-        <CampoEnum rotulo="Critério de aprovação" testId="top-campo-aprovacao-politica" valor={rascunho.configuracao.aprovacao.politica}
-          opcoes={POLITICAS_APROVACAO} rotulos={ROTULOS_TOP.aprovacaoPolitica}
-          ajuda="Quando o documento precisa passar por aprovação."
-          {...pelaFamilia(POLITICAS_APROVACAO, regrasDaFamilia?.aprovacao, "aprovacao")}
-          onChange={(v) => mudarConfig((c) => ({
-            ...c,
-            // Ao passar para "a partir de um valor", o campo nasce vazio e obrigatório: herdar um valor
-            // antigo faria a regra entrar em vigor com um limite que ninguém confirmou nesta edição.
-            aprovacao: { ...c.aprovacao, politica: v, valorMinimo: v === "por_valor" ? (c.aprovacao.valorMinimo ?? "") : null }
-          }))} />
-        <Field label="Valor mínimo" required={porValor} span={4}
-          help="Valor a partir do qual a aprovação passa a ser exigida. Use ponto como separador decimal."
-          error={porValor && valorMinimo.length > 0 && !valorMinimoAceitavel(valorMinimo) ? "Informe um valor maior que zero, com até duas casas decimais." : undefined}>
-          <Input data-testid="top-campo-aprovacao-valor" inputMode="decimal" placeholder="0.00"
-            value={valorMinimo} disabled={!porValor}
-            onChange={(e) => mudarConfig((c) => ({ ...c, aprovacao: { ...c.aprovacao, valorMinimo: e.target.value } }))} />
-        </Field>
-        <CampoEnum rotulo="Momento da aprovação" testId="top-campo-aprovacao-momento" valor={rascunho.configuracao.aprovacao.momento}
-          opcoes={MOMENTOS_APROVACAO} rotulos={ROTULOS_TOP.momentoAprovacao}
-          desabilitado={rascunho.configuracao.aprovacao.politica === "nenhuma"}
-          onChange={(v) => mudarConfig((c) => ({ ...c, aprovacao: { ...c.aprovacao, momento: v } }))} />
-        {rascunho.configuracao.aprovacao.politica === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem critério de aprovação, o valor mínimo fica zerado e não é gravado." />}
-        {/* TOP-CONFIG-08: o 422 em `aprovacao.*` (a matriz da família, no servidor) abre esta aba e aparece aqui. */}
-        <ErrosDeCampo erros={errosCampo} prefixos={["aprovacao"]} />
-      </Secao>}
-
-      {aba === "execucao" && liberado && <Secao chave="execucao">
-        <div className="col-span-12">
-          <AbaExecucao
-            execucao={execucao}
-            codigoBase={rascunho.codigoBase}
-            configuracao={rascunho.configuracao}
-            salva={edicao ? inicial.configuracao : null}
-            recusas={recusasExecucao}
-            ativacaoSemRuntime={ativacaoSemRuntime}
-            regrasGerais={!!regrasDaFamilia}
-            onChange={(efeito, modo) => mudarConfig((c) => ({ ...c, execucao: { ...c.execucao, [efeito]: modo } }))}
-          />
-        </div>
-      </Secao>}
-
-      {conflito && <p data-testid="top-conflito" className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-        Este tipo de operação foi alterado por outra pessoa enquanto você editava. Nada foi gravado, para
-        não apagar o trabalho de ninguém. Feche esta janela, abra o registro de novo e refaça as alterações
-        sobre a versão atual.
-      </p>}
-      {erro ? <div className="mt-3"><ErrorState error={erro} /></div> : null}
-
-      <AvisoDeVersionamento regrasGerais={!!regrasDaFamilia} />
     </Dialog>
 
     <Dialog
@@ -1063,6 +1307,8 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
 function camposDeRestricoes(
   restricoes: boolean,
   regrasGerais: boolean,
+  /** OPERACOES-01 F4: o editor é o do formato 5 (`podeConfigurarFormato5`). */
+  formato5: boolean,
   detalhe: ReturnType<typeof lerDetalheTop>
 ): Partial<RascunhoTop> {
   if (!restricoes) return {};
@@ -1072,6 +1318,14 @@ function camposDeRestricoes(
     // Nasce NÃO declarada: lista intocada não vai no corpo (régua em `RascunhoTop.condicoesDeclaradas`).
     condicoesDeclaradas: false
   };
+  /**
+   * OPERACOES-01 F4: com o editor do 5, o rascunho carrega `configuracaoV5` NO LUGAR do 4 e do 3 (uma verdade só): a
+   * vigente no 1 a 4 é LIDA como 5 com os padrões de hoje, e a no 5 continua 5. Ler não regrava nada.
+   */
+  if (formato5) {
+    const v5 = configuracaoInicialV5(detalhe?.configuracao ?? null);
+    return { configuracaoV5: v5, configuracao: configuracaoTopParaEdicao(v5), ...condicoes };
+  }
   if (regrasGerais) {
     const v4 = configuracaoInicialV4(detalhe?.configuracao ?? null);
     return { configuracaoV4: v4, configuracao: configuracaoTopParaEdicao(v4), ...condicoes };
@@ -1081,10 +1335,27 @@ function camposDeRestricoes(
 }
 
 /**
+ * O rascunho com a configuração NORMALIZADA para o envio (pela família e, no 5, pelo tipo) no lugar da dele — no 5, o
+ * 5; no 4, o 4. `undefined` = o rascunho como está (o caminho de hoje). O formato que entra é o formato que sai.
+ */
+function comConfiguracaoNormalizada(r: RascunhoTop, c: ConfiguracaoComRegrasGeraisTop | undefined): RascunhoTop {
+  if (!c) return r;
+  return formato5Top(c) ? { ...r, configuracaoV5: c } : { ...r, configuracaoV4: c };
+}
+
+/**
  * A aba onde mora o campo de um caminho de erro. TOP-CONFIG-08: `aprovacao.*` abre a Aprovação (antes, uma 422 em
  * `aprovacao.politica` — a matriz da família — abria a Identificação, onde o campo não está).
+ *
+ * OPERACOES-01 F4: a recusa do tipo no formato 5 aponta a SEÇÃO INTEIRA (`"estoque"`, `"financeiro"`, `"fiscal"` — o
+ * caminho exato) e as seções de extensão (`<nome>` ou `<nome>.<campo>`, pela lista do domínio). Se a aba não estiver
+ * entre as do tipo, o editor cai na Identificação, como hoje — e, no editor do 5, a mensagem do campo aparece lá
+ * (`caminhosSemAba`).
  */
 function abaDoCaminho(caminho: string): ChaveAba {
+  if (caminho === "estoque" || caminho === "financeiro" || caminho === "fiscal") return caminho;
+  const extensao = SECOES_EXTENSAO_V5.find((nome) => caminho === nome || caminho.startsWith(`${nome}.`));
+  if (extensao !== undefined) return extensao;
   if (caminho === CAMINHO_ERRO_RESERVA_ESTOQUE) return "estoque";
   if (caminho.startsWith("fiscal.")) return "fiscal";
   if (caminho.startsWith("financeiro.") || caminho === "condicoesPermitidas" || caminho.startsWith("condicoesPermitidas.")) return "financeiro";
@@ -1100,8 +1371,10 @@ function abaDoCaminho(caminho: string): ChaveAba {
 /**
  * O que a gravação no formato 4 muda na EXECUÇÃO, montado pelo domínio: as regras que passam a executar
  * (`regrasGeraisQuePassamAValer`) e as que voltam ao padrão porque a família não as executa (`voltaram`).
+ * OPERACOES-01 F4: no 5, também o que voltam ao padrão porque o TIPO não as aceita (`secoesQueVoltam`, de
+ * `normalizarPeloPerfilTop`: exigências de campo que o documento não tem e seções que o tipo não usa). Vazia no 4.
  */
-interface RegrasQuePassamAValer { passam: string[]; voltaram: RegraGeralQueVoltaTop[] }
+interface RegrasQuePassamAValer { passam: string[]; voltaram: RegraGeralQueVoltaTop[]; secoesQueVoltam: SecaoQueVoltaTop[] }
 
 /**
  * AS PERGUNTAS, EM FILA: primeiro "Estas exigências passam a valer" (TOP-CONFIG-05_R1), depois "Estas regras passam
@@ -1136,13 +1409,27 @@ const ListaDasRegrasQuePassamAValer = ({ regras }: { regras: RegrasQuePassamAVal
   {regras.passam.length > 0 && <ul className="list-disc pl-5">
     {regras.passam.map((t) => <li key={t} data-testid="top-regra-passa-a-valer">{t}</li>)}
   </ul>}
-  {regras.voltaram.length > 0 && <>
+  {(regras.voltaram.length > 0 || regras.secoesQueVoltam.length > 0) && <>
     <p>Estas opções voltam ao padrão, porque esta operação não as executa:</p>
     <ul className="list-disc pl-5">
       {regras.voltaram.map((v) => <li key={v.caminho} data-testid="top-regra-volta-ao-padrao" data-caminho={v.caminho}>{rotuloDaRegraQueVolta(v)}</li>)}
+      {/* OPERACOES-01 F4: o que o tipo não aceita, DEPOIS das regras, com o texto do domínio ("Exigir parceiro: Sim → Não",
+          "Financeiro: volta ao padrão"). Os caminhos não se repetem entre as duas listas. */}
+      {regras.secoesQueVoltam.map((v) => <li key={v.caminho} data-testid="top-regra-volta-ao-padrao" data-caminho={v.caminho}>{v.texto}</li>)}
     </ul>
   </>}
 </div>;
+
+/**
+ * OPERACOES-01 F4 — o erro de uma SEÇÃO INTEIRA (a recusa do tipo no formato 5 aponta `"estoque"`, `"fiscal"` ou o
+ * nome da seção de extensão, sem campo). Só o caminho exato: os de campo (`<secao>.<campo>`) são de quem mostra o
+ * campo. Sem esse erro, nada é renderizado — o editor do 4 nunca recebe caminho de seção inteira.
+ */
+const ErroDaSecao = ({ erros, caminho }: { erros: Readonly<Record<string, string>>; caminho: string }) => {
+  const mensagem = erros[caminho];
+  return mensagem === undefined ? null
+    : <p data-testid={`top-erro-${caminho}`} className="col-span-12 text-[11.5px] text-red-700">{mensagem}</p>;
+};
 
 /** Erros de campo das seções Geral/Financeiro (o Fiscal os recebe em `FiscalFormato3`). */
 const ErrosDeCampo = ({ erros, prefixos }: { erros: Readonly<Record<string, string>>; prefixos: readonly string[] }) => <>

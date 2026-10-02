@@ -114,3 +114,18 @@ export const COMMITS_DO_EDITOR_DA_TOP = {
   /** #88 — a TOP-CONFIG-08 na main: o editor grava o formato 4. */
   formato4: "57b30e2833ee058d7099656cf0d17e811843717f"
 } as const;
+
+/**
+ * O editor de TOP do web da base grava o FORMATO 5 (OPERACOES-01 F4, decisão 281) quando o servidor declara o bloco
+ * `formato5`? Lido do fonte do commit pela marca do ASSISTENTE (`top-assistente`, o testId fixo do passo 1 da criação,
+ * que só existe no editor do 5), e não pelo comportamento: a API deste HEAD declara o bloco nos dois mundos.
+ *
+ * PROVA REVERSA: o lado FALSO é provado com `COMMITS_DO_EDITOR_DA_TOP.formato4` (a TOP-CONFIG-08 na main, o editor do 4)
+ * no K-2 do 5 (`top-formato5-skew-web-anterior.spec.ts`), ao lado da marca do 4 no MESMO commit — a prova de que o
+ * detector lê o fonte. O lado VERDADEIRO não tem commit fixo enquanto a F4 não entrar na main: até lá, nenhum commit
+ * da main tem o assistente. Quando entrar, o merge dela entra em `COMMITS_DO_EDITOR_DA_TOP` (como `formato5`), e a
+ * prova passa a ter os dois lados.
+ */
+export function editorDaBaseGravaFormato5(sha: string = shaDaBase()): boolean {
+  return fonteDoWebContem(sha, "top-assistente");
+}

@@ -2,7 +2,7 @@ import { test, expect, type Page, type Request as Requisicao } from "@playwright
 import { login, adicionarItemNaCentral, uniq, pickRef, preencherClassificacaoFinanceira } from "./helpers";
 import { baseTemFatiaDeCadastro, cpfValido } from "./skew-fichas-cadastro";
 import { criarEmpresaEConferirContador } from "./skew-contador-empresa";
-import { editorDaBaseGravaFormato4, pendenciaNoClique } from "./skew-fonte-da-base";
+import { editorDaBaseGravaFormato4, editorDaBaseGravaFormato5, pendenciaNoClique } from "./skew-fonte-da-base";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
@@ -299,10 +299,13 @@ test("TOP-CONFIG-04A · o web da base renomeia uma TOP do formato 2 e a configur
   // O SERVIDOR é o árbitro: nome novo, versão nova, e a configuração do formato 2 INTEIRA preservada.
   const d = await (await request.get(`${API}/api/admin/tipos-operacao/${id}`, { headers: auth })).json() as
     { nome: string; versao: number; configuracaoSchema: number; configuracao: { valor: typeof configuracao } };
-  // Formato gravado depende do MUNDO da base: o web da base com a TOP-CONFIG-08 grava o formato 4 (o servidor deste
-  // HEAD declara o bloco `regrasGerais`); com a TOP-CONFIG-05 (declara as regras da operação), o 3 quando o servidor
-  // declara `restricoes` — o mesmo que W2/W3 do editor esperam. Sem nenhuma das duas, o 2.
-  const formatoEsperado = editorDaBaseGravaFormato4() ? 4 : process.env.SKEW_BASE_TEM_REGRAS_DA_OPERACAO === "1" ? 3 : 2;
+  // Formato gravado depende do MUNDO da base: o web da base com a OPERACOES-01 F4 (decisão 281; a marca do assistente)
+  // grava o formato 5 (o servidor deste HEAD declara o bloco `formato5` e lê a TOP do 2 como 5); com a TOP-CONFIG-08, o 4
+  // (o servidor declara o bloco `regrasGerais`); com a TOP-CONFIG-05 (declara as regras da operação), o 3 quando o
+  // servidor declara `restricoes` — o mesmo que W2/W3 do editor esperam. Sem nenhuma, o 2. Nos mundos 4 e 5 a
+  // configuração enviada é a vista daquele formato, igual à gravada (o renomear é que cria a versão nova).
+  const formatoEsperado = editorDaBaseGravaFormato5() ? 5 : editorDaBaseGravaFormato4() ? 4
+    : process.env.SKEW_BASE_TEM_REGRAS_DA_OPERACAO === "1" ? 3 : 2;
   expect([d.nome, d.versao, d.configuracaoSchema]).toEqual([nome, 2, formatoEsperado]);
   expect(d.configuracao.valor.execucao, "o bloco de execução não foi apagado").toEqual({ estoque: "legado", financeiro: "legado" });
   expect(d.configuracao.valor.estoque.atualizacao, "nem a seção que ele não sabia ler").toBe("saida");
