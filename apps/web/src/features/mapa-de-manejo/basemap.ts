@@ -2,7 +2,7 @@
 import type { StyleSpecification, RasterSourceSpecification } from "maplibre-gl";
 
 /**
- * MAPA-01 (decisão 279): camada base do Mapa de Manejo.
+ * MAPA-01 (decisão 289): camada base do Mapa de Manejo.
  *
  * As imagens do Google entram pela Map Tiles API (sessão + tiles 2D), que é a forma PERMITIDA de exibir os
  * tiles do Google num renderizador de terceiro (MapLibre). A chave é pública (restrita por domínio no painel

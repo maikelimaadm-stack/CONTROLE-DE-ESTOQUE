@@ -6,7 +6,7 @@ import { cn, num } from "@/lib/utils";
 import { TOLERANCIAS_RAPIDAS, TOLERANCIA_MAX, TOLERANCIA_MIN, type ConfigIma, type PontoDesenho } from "./editor-desenho";
 
 /**
- * MAPA-01 (decisão 279) — painel lateral do editor: ajuste do ímã, pontos da área nova e as ações
+ * MAPA-01 (decisão 289) — painel lateral do editor: ajuste do ímã, pontos da área nova e as ações
  * (Recomeçar · Cancelar · Fechar polígono / Gravar área). As FUNÇÕES são as do protótipo aprovado; o visual é o
  * do produto (primitives de @/components/ui).
  */

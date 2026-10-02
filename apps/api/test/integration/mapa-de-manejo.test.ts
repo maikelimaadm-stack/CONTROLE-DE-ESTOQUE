@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { harness, type Harness } from "./setup.js";
 
 /**
- * MAPA-01 (decisão 279) — cadastro de áreas do Mapa de Manejo pela porta genérica /api/resources/mapa_areas.
+ * MAPA-01 (decisão 289) — cadastro de áreas do Mapa de Manejo pela porta genérica /api/resources/mapa_areas.
  * Prova: criação com polígono GeoJSON; recorte por empresa na listagem; 422 para geometria não canônica e
  * cor fora de #RRGGBB (validação no banco/contrato, nunca ignorada); soft delete que some no GET por id (404).
  */

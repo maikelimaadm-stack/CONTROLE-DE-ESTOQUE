@@ -8,7 +8,7 @@
  *  - destino de redirecionamento (sem parâmetros dinâmicos) que não é rota canônica conhecida;
  *  - página de módulo usando `tab("id")` com id que não existe no registro;
  *  - mais de 15 módulos no menu ou módulo com mais de 5 áreas (guardrails de UX). O teto subiu de 14 para 15
- *    em MAPA-01 (decisão 279), quando o Mapa de Manejo entrou como 15º módulo e a barra de módulos passou a
+ *    em MAPA-01 (decisão 289), quando o Mapa de Manejo entrou como 15º módulo e a barra de módulos passou a
  *    rolar na horizontal; o guardrail continua, só com o novo limite.
  * Uso: node scripts/nav-audit.mjs   (também roda no CI e antes do build)
  */

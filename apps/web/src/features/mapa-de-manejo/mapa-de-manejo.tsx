@@ -21,7 +21,7 @@ import { PainelDesenho } from "./painel-desenho";
 import { PALETA_AREAS, proximaCor } from "./cores";
 
 /**
- * MAPA-01 (decisão 279) — Mapa de Manejo: cadastro de áreas NEUTRO (lavoura e pecuária). Só nome, tamanho e
+ * MAPA-01 (decisão 289) — Mapa de Manejo: cadastro de áreas NEUTRO (lavoura e pecuária). Só nome, tamanho e
  * cor; o polígono é desenhado no mapa (MapLibre + editor próprio, `editor-desenho.ts`) e vale como GeoJSON. As
  * FUNÇÕES do desenho são as do protótipo aprovado (ímã em vértice/aresta, trava de ângulo, desfazer/refazer,
  * ponto do meio, mover a área, medidas ao vivo); o visual é o do produto. O tamanho sai do desenho e pode ser

@@ -620,7 +620,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     ]
   },
   {
-    // MAPA-01 (decisão 279): cadastro de áreas do Mapa de Manejo. NEUTRO (serve lavoura e pecuária): só nome,
+    // MAPA-01 (decisão 289): cadastro de áreas do Mapa de Manejo. NEUTRO (serve lavoura e pecuária): só nome,
     // tamanho e cor; a geometria é o polígono GeoJSON desenhado no mapa. Módulo de escopo empresarial "mapa".
     key: "mapa_areas", label: "Área", labelPlural: "Áreas", table: "mapa_areas", permission: "mapa_areas",
     labelField: "nome", route: "/cadastros/mapa_areas", softDelete: true, empresaScoped: true, defaultSort: "nome",

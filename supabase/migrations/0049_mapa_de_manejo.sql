@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0042 MAPA-01 — MAPA DE MANEJO: CADASTRO DE ÁREAS (neutro) — decisão 279
+-- 0049 MAPA-01 — MAPA DE MANEJO: CADASTRO DE ÁREAS (neutro) — decisão 289
 --
 -- O QUE ESTA MIGRATION FAZ, e é uma coisa só: cria o módulo NEUTRO "mapa" (Mapa de Manejo) e a tabela
 -- erp.mapa_areas, a área desenhada no mapa. Neutro de propósito: a área serve LAVOURA e PECUÁRIA, então
@@ -35,8 +35,8 @@
 -- ---------- 1) trava de concorrência ----------
 do $$
 begin
-  if not pg_try_advisory_xact_lock(2026, 76) then
-    raise exception 'MAPA-01: outra transacao ja detem a trava desta migration (2026,76). Nada foi aplicado.';
+  if not pg_try_advisory_xact_lock(2026, 83) then
+    raise exception 'MAPA-01: outra transacao ja detem a trava desta migration (2026,83). Nada foi aplicado.';
   end if;
 end $$;
 
@@ -47,13 +47,13 @@ do $$
 begin
   -- "Já aplicada" ANTES das dependências: na reaplicação, o motivo verdadeiro é este.
   if to_regclass('erp.mapa_areas') is not null then
-    raise exception 'MAPA-01: erp.mapa_areas ja existe; a 0042 ja foi aplicada ou ha schema divergente.';
+    raise exception 'MAPA-01: erp.mapa_areas ja existe; a 0049 ja foi aplicada ou ha schema divergente.';
   end if;
   if to_regprocedure('erp.mapa_areas_conferir()') is not null then
-    raise exception 'MAPA-01: funcao erp.mapa_areas_conferir() ja existe; a 0042 ja foi aplicada ou ha schema divergente.';
+    raise exception 'MAPA-01: funcao erp.mapa_areas_conferir() ja existe; a 0049 ja foi aplicada ou ha schema divergente.';
   end if;
   if exists (select 1 from erp.modulos_escopo_empresa where chave = 'mapa') then
-    raise exception 'MAPA-01: modulo de escopo empresarial mapa ja existe; a 0042 ja foi aplicada ou ha schema divergente.';
+    raise exception 'MAPA-01: modulo de escopo empresarial mapa ja existe; a 0049 ja foi aplicada ou ha schema divergente.';
   end if;
   -- O papel da aplicação é o destinatário dos privilégios.
   if not exists (select 1 from pg_roles where rolname = 'erp_app') then
@@ -142,7 +142,7 @@ create table erp.mapa_areas (
 
 create index ix_mapa_areas_empresa on erp.mapa_areas (organization_id, empresa_id) where deleted_at is null;
 
-comment on table erp.mapa_areas is 'Área do Mapa de Manejo (MAPA-01, decisão 279): polígono neutro (serve lavoura e pecuária). Módulo de escopo empresarial "mapa". Soft delete por deleted_at; o saldo/estoque não é tocado aqui.';
+comment on table erp.mapa_areas is 'Área do Mapa de Manejo (MAPA-01, decisão 289): polígono neutro (serve lavoura e pecuária). Módulo de escopo empresarial "mapa". Soft delete por deleted_at; o saldo/estoque não é tocado aqui.';
 comment on column erp.mapa_areas.id is 'Identidade técnica (UUID).';
 comment on column erp.mapa_areas.organization_id is 'Tenant (organização).';
 comment on column erp.mapa_areas.empresa_id is 'Empresa da área (FK composta com a organização). Escopo de empresa do módulo mapa.';

@@ -1,5 +1,5 @@
 /**
- * MAPA-01 (decisão 279) — paleta das áreas do Mapa de Manejo: 20 cores fixas, escolhidas para aparecer sobre o
+ * MAPA-01 (decisão 289) — paleta das áreas do Mapa de Manejo: 20 cores fixas, escolhidas para aparecer sobre o
  * satélite (verdes e marrons) e sobre o mapa de ruas (claro). A área nova recebe a primeira cor ainda não usada;
  * o usuário troca por outra da paleta, nunca por cor livre. O banco só exige `#RRGGBB` — a paleta mora aqui.
  */

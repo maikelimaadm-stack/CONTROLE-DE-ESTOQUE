@@ -2,7 +2,7 @@ import area from "@turf/area";
 import type { Polygon } from "geojson";
 
 /**
- * MAPA-01 (decisão 279) — núcleo do editor de desenho de área, SEM React e SEM MapLibre.
+ * MAPA-01 (decisão 289) — núcleo do editor de desenho de área, SEM React e SEM MapLibre.
  *
  * Toda a regra de interação (acerto em ponto/meio/polígono, ímã, trava de ângulo, histórico) roda em PIXELS DE
  * TELA, como no protótipo aprovado: a tolerância do ímã é em px e vale o que o olho vê no zoom atual. As medidas

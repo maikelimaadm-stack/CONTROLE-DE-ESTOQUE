@@ -4,7 +4,7 @@ import { num } from "@/lib/utils";
 import type { Acerto, Ima, Px } from "./editor-desenho";
 
 /**
- * MAPA-01 (decisão 279) — camada visual do editor de desenho, por cima do canvas do mapa. Só APRESENTA: recebe
+ * MAPA-01 (decisão 289) — camada visual do editor de desenho, por cima do canvas do mapa. Só APRESENTA: recebe
  * tudo já projetado em pixels e não captura evento nenhum (pointer-events: none) — quem decide é o editor.
  */
 

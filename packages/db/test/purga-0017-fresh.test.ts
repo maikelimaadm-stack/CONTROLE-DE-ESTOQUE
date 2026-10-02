@@ -211,7 +211,7 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     // A TOP-CONFIG-08 é a vigésima quinta: a 0041 cria `erp.aprovacoes_venda`, `erp.aprovacoes_compra` e
     // `erp.aprovacoes_estoque` (tabelas novas, vazias), a função `erp.top_exige_aprovacao` e as guardas de aprovação
     // dos três documentos — nada no recorte que a purga lê.
-    expect(noDisco.length, "42 migrations no repositório (a 0042 MAPA-01 vem depois)").toBe(42);
+    expect(noDisco.length, "42 migrations no repositório (a 0049 MAPA-01 vem depois)").toBe(42);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
     expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");

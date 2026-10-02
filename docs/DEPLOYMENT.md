@@ -2720,9 +2720,9 @@ Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registro
 identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.
 
 
-## MAPA-01 — Mapa de Manejo: módulo neutro e cadastro de áreas (decisão 279)
+## MAPA-01 — Mapa de Manejo: módulo neutro e cadastro de áreas (decisão 289)
 
-**Migration 0042 (`0042_mapa_de_manejo.sql`, trava `(2026,76)`).** Cria o módulo de escopo empresarial `mapa`
+**Migration 0049 (`0049_mapa_de_manejo.sql`, trava `(2026,83)`).** Cria o módulo de escopo empresarial `mapa`
 (ordem 12) e a tabela `erp.mapa_areas` (área neutra: `nome`, `tamanho_ha`, `cor`, `geometria` GeoJSON em
 `jsonb`, com RLS por empresa). Ordem de deploy **BANCO → API → WEB** (`.claude/rules/database-migrations.md`).
 A migration não preenche nem corrige dado; o soft delete usa `deleted_at`; `DELETE`/`TRUNCATE` revogados do

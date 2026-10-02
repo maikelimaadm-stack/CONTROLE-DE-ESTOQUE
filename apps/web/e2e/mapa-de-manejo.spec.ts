@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { api, login, uniq } from "./helpers";
 
 /**
- * MAPA-01 (decisão 279) — Mapa de Manejo.
+ * MAPA-01 (decisão 289) — Mapa de Manejo.
  *  1) fumaça: a página do 15º módulo abre, mostra o cabeçalho, o botão "Nova área" e a lista vazia do banco de e2e;
  *  2) editor de desenho — as FUNÇÕES do protótipo aprovado, exercidas no canvas de verdade (WebGL por SwiftShader;
  *     sem chave do Google o mapa usa o fundo liso): marcar pontos, desfazer/refazer (teclado, barra e botão direito),
