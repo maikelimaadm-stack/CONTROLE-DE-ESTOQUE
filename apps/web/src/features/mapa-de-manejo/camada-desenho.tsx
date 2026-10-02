@@ -25,7 +25,6 @@ interface Props {
   desenhando: boolean;
   rotulosAreas: RotuloArea[];
   pts: Px[];
-  grudados: boolean[];
   fechado: boolean;
   cur: Px | null;
   raw: Px | null;
@@ -127,31 +126,35 @@ export function CamadaDesenho(p: Props) {
             )}
 
             {meios.map((m) => (
-              <g key={m.i}>
-                {m.i === hm && <circle cx={m.px.x} cy={m.px.y} r={6} fill={COR_DESENHO.ponto} fillOpacity={0.22} />}
-                <circle cx={m.px.x} cy={m.px.y} r={2} fill={COR_DESENHO.ponto} />
-              </g>
+              <circle
+                key={m.i}
+                cx={m.px.x}
+                cy={m.px.y}
+                r={m.i === hm ? 2.6 : 2}
+                fill={COR_DESENHO.ponto}
+              />
             ))}
 
+            {/* Pontos flat verdes de registro — sem aura, sem brilho, sem borda. */}
             {pts.map((v, i) => (
-              <g key={i}>
-                {(p.grudados[i] || i === p.arrastoVertice || i === hv) && (
-                  <circle cx={v.x} cy={v.y} r={6} fill={COR_DESENHO.ponto} fillOpacity={0.2} />
-                )}
-                <circle cx={v.x} cy={v.y} r={3.2} fill={COR_DESENHO.ponto} />
-              </g>
+              <circle
+                key={i}
+                cx={v.x}
+                cy={v.y}
+                r={i === p.arrastoVertice || i === hv ? 3.8 : 3.2}
+                fill={COR_DESENHO.ponto}
+              />
             ))}
 
             {/* Ímã branco no alvo — acompanha só o snap, sem tooltip. */}
             {ima && cur && (
               <g data-testid="mapa-ima-marca" data-tipo={ima.tipo}>
-                <circle cx={cur.x} cy={cur.y} r={9} fill={COR_DESENHO.ima} fillOpacity={0.14} />
                 <circle cx={cur.x} cy={cur.y} r={5} fill="none" stroke={COR_DESENHO.ima} strokeWidth={1.5} strokeOpacity={0.9} />
                 <circle cx={cur.x} cy={cur.y} r={2.4} fill={ima.tipo === "fechar" ? COR_DESENHO.ponto : COR_DESENHO.ima} />
               </g>
             )}
 
-            {/* Cursor livre: só sob o mouse (sem linha até o último ponto). */}
+            {/* Cursor livre: exatamente sob o mouse (só mousemove real, nunca pan). */}
             {cur && !ima && !fechado && !arrastando && !p.hover && (
               <circle cx={cur.x} cy={cur.y} r={2.2} fill={COR_DESENHO.ima} />
             )}

@@ -410,13 +410,15 @@ export function MapaDeManejo() {
           if (agora === vista) return;
           vista = agora;
           const edAtual = ed.current;
-          if (mapaMovendoRef.current && !edAtual.arrasto) {
-            // Vista mudando por gesto: não manter cursor livre em px de tela.
+          if (edAtual.arrasto) {
+            // Arrasto de ponto/área: só redesenha com a projeção nova dos pontos.
+          } else if (mapaMovendoRef.current) {
+            // Pan/zoom: cursor de inserção some — volta só no próximo mousemove real.
             if (edAtual.cur || edAtual.raw || edAtual.ima || edAtual.hover) {
               Object.assign(edAtual, { cur: null, raw: null, ima: null, hover: null, travado: false });
             }
-          } else if (edAtual.ima?.lngLat && !edAtual.arrasto) {
-            // Ímã grudado: acompanha o vértice/aresta geográfico.
+          } else if (edAtual.ima?.lngLat) {
+            // Ímã grudado no mapa: acompanha o vértice/aresta geográfico (não o pan do mouse).
             const pxIma = { x: m.project(edAtual.ima.lngLat).x, y: m.project(edAtual.ima.lngLat).y };
             let aresta = edAtual.ima.aresta;
             if (edAtual.ima.tipo === "aresta" && aresta) {
@@ -440,6 +442,9 @@ export function MapaDeManejo() {
             edAtual.ima = { ...edAtual.ima, px: pxIma, aresta };
             edAtual.cur = pxIma;
             edAtual.raw = pxIma;
+          } else if (edAtual.cur || edAtual.raw || edAtual.hover) {
+            // Cursor livre é posição de tela do mouse — some se a vista mudou sem mousemove novo.
+            Object.assign(edAtual, { cur: null, raw: null, ima: null, hover: null, travado: false });
           }
           flushSync(() => redesenhar());
         });
@@ -769,7 +774,6 @@ export function MapaDeManejo() {
               rotulosAreas={rotulosAreas}
               ocultarRotulos={desenhando && !rascunho}
               pts={ptsTela}
-              grudados={e.pontos.map((p) => p.grudado)}
               fechado={e.fechado}
               cur={e.cur}
               raw={e.raw}
