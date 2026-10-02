@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, qs, newIdem } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Card, CardBody, Button, Spinner, EmptyState, Field, Input, ConfirmDialog } from "@/components/ui";
-import { criarSessaoGoogle, estiloSatelite, estiloFundoLiso, CENTRO_PADRAO, ZOOM_PADRAO } from "./basemap";
+import { criarSessaoGoogle, estiloSatelite, estiloFundoLiso, fonteRaster, ID_BASE, type TipoBase, CENTRO_PADRAO, ZOOM_PADRAO } from "./basemap";
 
 /**
  * MAPA-01 (decisão 279) — Mapa de Manejo: cadastro de áreas NEUTRO (lavoura e pecuária). Só nome, tamanho e
@@ -41,6 +41,7 @@ export function MapaDeManejo() {
   const drawRef = React.useRef<{ start: () => void; stop: () => void; setMode: (m: string) => void; getSnapshot: () => Feature[]; clear: () => void; on: (e: string, cb: (...a: unknown[]) => void) => void } | null>(null);
   const [mapaPronto, setMapaPronto] = React.useState(false);
   const [semImagem, setSemImagem] = React.useState(false);
+  const [base, setBase] = React.useState<TipoBase>("satelite");
   const [desenhando, setDesenhando] = React.useState(false);
   const [rascunho, setRascunho] = React.useState<Rascunho | null>(null);
   const [selecionada, setSelecionada] = React.useState<string | null>(null);
@@ -78,6 +79,8 @@ export function MapaDeManejo() {
       });
       mapaCleanup = m;
       m.addControl(new maplibre.NavigationControl({ showCompass: false }), "bottom-right");
+      // "Habilitar minha localização": o controle do MapLibre pede a permissão do navegador e centra no usuário.
+      m.addControl(new maplibre.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }), "bottom-right");
       mapRef.current = m;
 
       m.on("load", () => {
@@ -88,28 +91,30 @@ export function MapaDeManejo() {
         m.on("click", "areas-fill", (e) => { const f = e.features?.[0]; if (f && f.properties) setSelecionada(String(f.properties.id)); });
         m.on("mouseenter", "areas-fill", () => { m.getCanvas().style.cursor = "pointer"; });
         m.on("mouseleave", "areas-fill", () => { m.getCanvas().style.cursor = ""; });
+
+        // Terra Draw só inicia DEPOIS do estilo carregado: o adaptador chama addSource no primeiro render e
+        // isso lança "Style is not done loading" se rodar antes do load — foi o que deixava o desenho inerte.
+        const draw = new TerraDraw({
+          adapter: new TerraDrawMapLibreGLAdapter({ map: m }),
+          modes: [new TerraDrawPolygonMode({ styles: { fillColor: COR_PADRAO, fillOpacity: 0.3, outlineColor: COR_PADRAO, outlineWidth: 2 } })]
+        });
+        draw.start();
+        draw.on("finish", async () => {
+          const feats = draw.getSnapshot();
+          const poly = feats.find((f) => f.geometry?.type === "Polygon") as Feature<Polygon> | undefined;
+          if (!poly) return;
+          const area = (await import("@turf/area")).default;
+          const m2 = area(poly);
+          const ha = Math.round((m2 / 10000) * 10000) / 10000;
+          setRascunho({ geometria: poly.geometry, tamanho_ha: ha });
+          setForm({ nome: "", cor: COR_PADRAO, tamanho_ha: String(ha) });
+          setDesenhando(false);
+          draw.setMode("static");
+          draw.clear();
+        });
+        drawRef.current = draw as unknown as typeof drawRef.current;
         setMapaPronto(true);
       });
-
-      const draw = new TerraDraw({
-        adapter: new TerraDrawMapLibreGLAdapter({ map: m }),
-        modes: [new TerraDrawPolygonMode({ styles: { fillColor: COR_PADRAO, fillOpacity: 0.3, outlineColor: COR_PADRAO, outlineWidth: 2 } })]
-      });
-      draw.start();
-      draw.on("finish", async () => {
-        const feats = draw.getSnapshot();
-        const poly = feats.find((f) => f.geometry?.type === "Polygon") as Feature<Polygon> | undefined;
-        if (!poly) return;
-        const area = (await import("@turf/area")).default;
-        const m2 = area(poly);
-        const ha = Math.round((m2 / 10000) * 10000) / 10000;
-        setRascunho({ geometria: poly.geometry, tamanho_ha: ha });
-        setForm({ nome: "", cor: COR_PADRAO, tamanho_ha: String(ha) });
-        setDesenhando(false);
-        draw.setMode("static");
-        draw.clear();
-      });
-      drawRef.current = draw as unknown as typeof drawRef.current;
     })();
     return () => { cancelado = true; try { drawRef.current?.stop(); } catch { /* adaptador já removido */ } mapaCleanup?.remove(); mapRef.current = null; };
   }, []);
@@ -153,14 +158,38 @@ export function MapaDeManejo() {
   function iniciarDesenho() {
     setErro(null); setSelecionada(null); setRascunho(null);
     const draw = drawRef.current;
-    if (!draw) return;
-    draw.setMode("polygon");
-    setDesenhando(true);
+    if (!draw) { setErro("O mapa ainda está carregando. Aguarde a imagem abrir e tente de novo."); return; }
+    try {
+      draw.setMode("polygon");
+      setDesenhando(true);
+    } catch {
+      setErro("Não foi possível iniciar o desenho agora. Recarregue a página e tente de novo.");
+    }
   }
   function cancelarDesenho() {
     const draw = drawRef.current;
     try { draw?.clear(); draw?.setMode("static"); } catch { /* nada desenhado */ }
     setDesenhando(false); setRascunho(null);
+  }
+
+  // Troca entre satélite e ruas sem recarregar o estilo: a base de ruas entra sob demanda, sob as áreas.
+  async function trocarBase(novo: TipoBase) {
+    if (novo === base || semImagem) return;
+    const m = mapRef.current;
+    if (!m) return;
+    if (!m.getLayer(ID_BASE[novo])) {
+      const s = await criarSessaoGoogle(novo);
+      if (!mapRef.current) return;
+      if (!s) { setErro(novo === "mapa" ? "Não foi possível carregar o mapa de ruas agora." : "Não foi possível carregar o satélite agora."); return; }
+      m.addSource(ID_BASE[novo], fonteRaster(s));
+      const sob = m.getLayer("areas-fill") ? "areas-fill" : undefined;
+      m.addLayer({ id: ID_BASE[novo], type: "raster", source: ID_BASE[novo] }, sob);
+    }
+    for (const t of ["satelite", "mapa"] as const) {
+      if (m.getLayer(ID_BASE[t])) m.setLayoutProperty(ID_BASE[t], "visibility", t === novo ? "visible" : "none");
+    }
+    setErro(null);
+    setBase(novo);
   }
 
   const selecionadaObj = areas.find((a) => a.id === selecionada) ?? null;
@@ -202,6 +231,16 @@ export function MapaDeManejo() {
           <div ref={containerRef} data-testid="mapa-canvas" className="h-full min-h-[420px] w-full" />
           {!mapaPronto && <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"><Spinner /></div>}
           {semImagem && mapaPronto && <div className="absolute left-2 top-2 rounded bg-slate-800/80 px-2 py-1 text-xs text-white">Sem imagem de satélite (configure a chave do Google). Desenho disponível.</div>}
+
+          {/* Troca de base: satélite x ruas */}
+          {mapaPronto && !semImagem && (
+            <div className="absolute left-2 top-2 flex overflow-hidden rounded-md border border-slate-300 bg-white text-xs shadow-sm" role="group" aria-label="Tipo de mapa">
+              <button type="button" onClick={() => trocarBase("satelite")} aria-pressed={base === "satelite"} data-testid="mapa-base-satelite"
+                className={`px-2.5 py-1 ${base === "satelite" ? "bg-slate-800 font-medium text-white" : "text-slate-600 hover:bg-slate-100"}`}>Satélite</button>
+              <button type="button" onClick={() => trocarBase("mapa")} aria-pressed={base === "mapa"} data-testid="mapa-base-mapa"
+                className={`px-2.5 py-1 ${base === "mapa" ? "bg-slate-800 font-medium text-white" : "text-slate-600 hover:bg-slate-100"}`}>Mapa</button>
+            </div>
+          )}
           {desenhando && <div className="absolute left-1/2 top-2 -translate-x-1/2 rounded bg-slate-800/80 px-3 py-1 text-xs text-white">Clique no mapa para marcar os pontos; feche no primeiro ponto para concluir. <button type="button" className="ml-2 underline" onClick={cancelarDesenho}>Cancelar</button></div>}
 
           {/* Formulário da área recém-desenhada */}
