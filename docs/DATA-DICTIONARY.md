@@ -17,7 +17,7 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 | Entidades curadas neste dicionário | 54 |
 | Entidades com ID Global | 25 |
 | Entidades com Tipo de Operação | 15 |
-| Tipos de Operação referenciados | 23 |
+| Tipos de Operação referenciados | 24 |
 | Cobertura curada | 26.6% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
@@ -758,7 +758,7 @@ Quais campos o documento comercial de uma família mostra, em que ordem, com que
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `nome` |  | text | sim |  |  |  |  |
-| `familia` | Movimento | text | sim |  |  | `vendas.orcamento` · `vendas.pedido` · `vendas.venda` · `compras.pedido` · `compras.compra` | Família canônica do documento: as três de venda e as duas de compra (pedido de compra e compra, decisão 269). Uma TOP só se liga a layout da própria família (gatilho do banco). |
+| `familia` | Movimento | text | sim |  |  | `vendas.orcamento` · `vendas.pedido` · `vendas.venda` · `compras.pedido` · `compras.compra` · `compras.orcamento` | Família canônica do documento: as três de venda e as três de compra (pedido de compra e compra, decisão 269; orçamento de compra, decisão 283). Uma TOP só se liga a layout da própria família (gatilho do banco). |
 | `padrao` | Padrão da família | boolean | sim |  |  |  | Usado pela TOP da família que não tem layout ligado. No máximo um ativo e vivo por organização e família (índice único parcial). |
 | `estrutura` |  | jsonb | sim |  |  |  |  |
 | `is_active` |  | boolean | sim |  |  |  |  |
@@ -1219,7 +1219,7 @@ Pedido interno de compra que percorre autorização, cotação e recebimento.
 
 ### ERP-COMPRAS-DOCUMENTO — Documento de Compra
 
-Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa e a tela (pedido de compra, compra). A Compra confirmada dá entrada no estoque e gera as contas a pagar.
+Documento comercial de compra (decisões 267 e 283). A coluna `especie` decide a etapa e a tela (pedido de compra, compra, orçamento de compra). A Compra confirmada dá entrada no estoque e gera as contas a pagar; o orçamento de compra cota um pedido (um por fornecedor) e não mexe em estoque nem em financeiro.
 
 | Propriedade | Valor |
 | --- | --- |
@@ -1230,8 +1230,8 @@ Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa 
 | Exclusão lógica | não |
 | ID Global | sim |
 | Discriminador | `especie` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
-| Rotas por variante | `pedido` → `/compras/pedidos/:id` · `compra` → `/compras/compras/:id` |
-| Tipo de Operação | `compras.pedido` (Pedido de compra) · `compras.compra` (Compra) |
+| Rotas por variante | `pedido` → `/compras/pedidos/:id` · `compra` → `/compras/compras/:id` · `orcamento` → `/compras/orcamentos/:id` |
+| Tipo de Operação | `compras.pedido` (Pedido de compra) · `compras.compra` (Compra) · `compras.orcamento` (Orçamento de compra) |
 | Discriminador do Tipo de Operação | `especie` (decide qual das operações acima o registro é) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
@@ -1239,9 +1239,9 @@ Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa 
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
-| `especie` | Espécie | text | sim |  |  | `pedido` · `compra` | pedido \| compra. Valor canônico persistido; o rótulo é traduzido na apresentação. |
+| `especie` | Espécie | text | sim |  |  | `pedido` · `compra` · `orcamento` | pedido \| compra \| orcamento. Valor canônico persistido; o rótulo é traduzido na apresentação. |
 | `codigo` |  | text | sim |  |  |  |  |
-| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `convertido` · `cancelado` | aberto \| confirmado (só compra) \| convertido (só pedido: saldo recebido por inteiro ou encerrado) \| cancelado. Cancelado é final; o pedido convertido volta a aberto quando uma compra dele é cancelada, salvo com saldo encerrado (decisão 268). |
+| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `convertido` · `cancelado` · `finalizado` · `escolhido` · `nao_escolhido` | aberto \| confirmado (só compra) \| finalizado (só pedido: a confirmação do pedido, com a aprovação quando a TOP exige) \| convertido (só pedido: saldo recebido por inteiro ou encerrado) \| escolhido e nao_escolhido (só orçamento: o vencedor e os outros) \| cancelado. Cancelado é final; o pedido convertido volta à situação de antes (aberto ou finalizado) quando uma compra dele é cancelada, salvo com saldo encerrado (decisões 268 e 283). |
 | `tipo_operacao_id` |  | uuid | sim |  |  |  |  |
 | `tipo_operacao_versao_id` |  | uuid | sim |  |  |  |  |
 | `fornecedor_id` |  | uuid | sim |  |  |  |  |
@@ -1270,6 +1270,13 @@ Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa 
 | `saldo_encerrado_em` | Saldo encerrado em | timestamptz | não |  |  |  | Só pedido: quando o saldo a receber foi encerrado. Anda junto com saldo_encerrado_por e saldo_encerrado_motivo, gravados na passagem de aberto para convertido. |
 | `saldo_encerrado_por` | Saldo encerrado por | uuid | não | FK | `erp.users` |  | Só pedido: quem encerrou o saldo a receber. |
 | `saldo_encerrado_motivo` | Motivo do encerramento do saldo | text | não |  |  |  | Só pedido: por que o saldo a receber foi encerrado. |
+| `finalizado_em` | Finalizado em | timestamptz | não |  |  |  | Só pedido: quando foi finalizado (a confirmação do pedido), gravado na passagem de aberto para finalizado (decisão 283). |
+| `finalizado_por` | Finalizado por | uuid | não | FK | `erp.users` |  | Só pedido: quem finalizou. Anda junto com finalizado_em. |
+| `aprovado_orcamento_em` | Aprovado para orçamento em | timestamptz | não |  |  |  | Só pedido: quando foi aprovado para orçamento; gravado uma vez, com o pedido aberto (decisão 283). |
+| `aprovado_orcamento_por` | Aprovado para orçamento por | uuid | não | FK | `erp.users` |  | Só pedido: quem aprovou para orçamento. Anda junto com aprovado_orcamento_em. |
+| `pedido_orcado_id` | Pedido orçado | uuid | não |  |  |  | Só orçamento: o pedido de compra que ele cota (FK composta com o tenant). Não consome saldo nem prende o fornecedor do pedido; não muda depois do lançamento. |
+| `prazo_entrega_dias` | Prazo de entrega (dias) | integer | não |  |  |  | Só orçamento: prazo de entrega em dias (0 a 3650). |
+| `validade_orcamento` | Validade do orçamento | date | não |  |  |  | Só orçamento: até quando o preço vale. Não é anterior à data do documento. |
 
 ### ERP-COMPRAS-DOCUMENTO-ITEM — Item do Documento de Compra
 
@@ -1301,6 +1308,7 @@ Linha de produto do documento de compra. Identidade pertence ao documento; só m
 | `observacao` |  | text | não |  |  |  |  |
 | `posicao` |  | int | sim |  |  |  |  |
 | `origem_item_id` | Item do pedido de origem | uuid | não |  |  |  | Só na compra recebida de um pedido: o item do pedido que esta linha recebe. Mesmo produto; a soma recebida por compras não canceladas não passa da quantidade do item (gatilho, decisão 268). |
+| `item_pedido_orcado_id` | Item do pedido orçado | uuid | não |  |  |  | Só no orçamento de compra: o item do pedido que esta linha cota (mesmo produto e quantidade; FK composta com o tenant). Não consome saldo (decisão 283). |
 
 ## Financeiro
 

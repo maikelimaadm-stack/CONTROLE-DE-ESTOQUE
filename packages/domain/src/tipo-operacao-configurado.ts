@@ -134,7 +134,7 @@ export const familiaOperacionalDeDocumentoVenda = (kind: string | null | undefin
 export const TABELA_DOCUMENTO_COMPRA = "erp.documentos_compra";
 
 /** As espécies do documento de compra, como o banco as persiste (`erp.documentos_compra.especie`). */
-export type EspecieDocumentoCompra = "pedido" | "compra";
+export type EspecieDocumentoCompra = "pedido" | "compra" | "orcamento";
 
 /**
  * A família canônica que um documento de compra de determinada espécie É — perguntada ao registry

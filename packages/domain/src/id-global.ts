@@ -68,7 +68,9 @@ export const ENTIDADES_ID_GLOBAL: readonly EntidadeIdGlobal[] = [
   // Compras — COMPRAS-01 (decisão 267): pedido e compra têm permissões próprias
   E("documentos_compra", "Documento de Compra", "compras", "erp.documentos_compra", porVariante("especie", {
     pedido: { rota: "/compras/pedidos/:id", permissao: "pedidos_compra.view" },
-    compra: { rota: "/compras/compras/:id", permissao: "compras.view" }
+    compra: { rota: "/compras/compras/:id", permissao: "compras.view" },
+    // OPERACOES-01 F6a (decisão 283): o orçamento de compra, com permissão própria.
+    orcamento: { rota: "/compras/orcamentos/:id", permissao: "orcamentos_compra.view" }
   }), { exclusaoLogica: false }),
   // Estoque — ESTOQUE-01 (decisão 274): o documento de estoque, uma permissão por espécie. Sem exclusão lógica:
   // o documento não se apaga, cancela.

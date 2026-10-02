@@ -150,6 +150,10 @@ export const TIPOS_OPERACAO: readonly TipoOperacao[] = Object.freeze([
   // sendo outra coisa (suprimentos) e não muda.
   T("compras.pedido", "compras", variante("erp.documentos_compra", "especie", "pedido")),
   T("compras.compra", "compras", variante("erp.documentos_compra", "especie", "compra")),
+  // OPERACOES-01 F6a (decisão 283): o orçamento de compra — um por fornecedor, ligado ao pedido por vínculo
+  // próprio (não pela origem: não consome o saldo do pedido); preço, prazo, validade e condição; sem estoque e
+  // sem financeiro. O vencedor leva fornecedor, preços e condição ao pedido.
+  T("compras.orcamento", "compras", variante("erp.documentos_compra", "especie", "orcamento")),
 
   // ---------- Financeiro ----------
   // `direction` é o discriminador que o dicionário já declarava; a prosa "Conta a pagar / Conta a

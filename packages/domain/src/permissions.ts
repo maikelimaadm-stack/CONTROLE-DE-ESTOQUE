@@ -165,8 +165,11 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   // módulo do `.edit` que a confirmação automática do aprovador confere.
   R("sales", "Vendas", "Operacional > Vendas", [...CRUD, "approve"]),
   // COMPRAS-01 (decisão 267): o documento comercial de compra, um recurso por espécie.
-  R("pedidos_compra", "Pedidos de Compra", "Operacional > Compras"),
+  // OPERACOES-01 F6a (decisão 283): o pedido de compra passa a ser aprovado ao FINALIZAR (a aprovação da TOP vale
+  // para ele), por isso ganha `approve`; o orçamento de compra é a espécie nova, com o seu recurso (CRUD).
+  R("pedidos_compra", "Pedidos de Compra", "Operacional > Compras", [...CRUD, "approve"]),
   R("compras", "Compras", "Operacional > Compras", [...CRUD, "approve"]),
+  R("orcamentos_compra", "Orçamentos de Compra", "Operacional > Compras"),
   // ESTOQUE-01 (decisão 274): o documento de estoque, um recurso por espécie. Sem `delete`: o documento não se
   // apaga (a 0040 revoga DELETE) — confirmar e cancelar exigem `.edit`, como na compra.
   R("entradas_estoque", "Entradas de Estoque", "Operacional > Estoque", ["view", "create", "edit", "approve"]),

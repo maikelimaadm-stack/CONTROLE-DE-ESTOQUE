@@ -61,7 +61,8 @@ function naColuna(e: EstruturaLayout, campo: string): number {
 describe("C3-D1 famílias com layout: vendas primeiro, compras depois, lidas do registry", () => {
   it("as listas, na ordem", () => {
     expect(FAMILIAS_COM_LAYOUT_DE_VENDAS).toEqual(["vendas.orcamento", "vendas.pedido", "vendas.venda"]);
-    expect(FAMILIAS_COM_LAYOUT_DE_COMPRAS).toEqual([PEDIDO, COMPRA]);
+    // OPERACOES-01 F6a (decisão 283): o orçamento de compra entra sozinho, pelo registry
+    expect(FAMILIAS_COM_LAYOUT_DE_COMPRAS).toEqual([PEDIDO, COMPRA, "compras.orcamento"]);
     // o registry declara compras ANTES de vendas; a lista com layout começa por vendas (o "Novo" do configurador)
     expect(FAMILIAS_COM_LAYOUT).toEqual([...FAMILIAS_COM_LAYOUT_DE_VENDAS, ...FAMILIAS_COM_LAYOUT_DE_COMPRAS]);
     expect(at(FAMILIAS_COM_LAYOUT, 0)).toBe("vendas.orcamento");
@@ -74,7 +75,7 @@ describe("C3-D1 famílias com layout: vendas primeiro, compras depois, lidas do 
     expect([...FAMILIAS_COM_LAYOUT_DE_COMPRAS]).toEqual(da("erp.documentos_compra"));
     for (const f of FAMILIAS_COM_LAYOUT_DE_COMPRAS) expect(tipoOperacao(f)?.origem.discriminador).toBe("especie");
     // o catálogo de compras é escolhido pela ESPÉCIE da variante (sem segunda lista de famílias)
-    expect(FAMILIAS_COM_LAYOUT_DE_COMPRAS.map((f) => tipoOperacao(f)?.origem.valor)).toEqual(["pedido", "compra"]);
+    expect(FAMILIAS_COM_LAYOUT_DE_COMPRAS.map((f) => tipoOperacao(f)?.origem.valor)).toEqual(["pedido", "compra", "orcamento"]);
   });
   it("congeladas (quem importa não altera a lista do outro)", () => {
     expect(Object.isFrozen(FAMILIAS_COM_LAYOUT)).toBe(true);
@@ -84,7 +85,7 @@ describe("C3-D1 famílias com layout: vendas primeiro, compras depois, lidas do 
   it("familiaTemLayout e familiaDeCompras", () => {
     for (const f of FAMILIAS_COM_LAYOUT) expect(familiaTemLayout(f), f).toBe(true);
     for (const f of ["compras.solicitacao", "financeiro.conta_a_pagar", "", "COMPRAS.PEDIDO", "compras"]) expect(familiaTemLayout(f), f).toBe(false);
-    expect(FAMILIAS_COM_LAYOUT.filter(familiaDeCompras)).toEqual([PEDIDO, COMPRA]);
+    expect(FAMILIAS_COM_LAYOUT.filter(familiaDeCompras)).toEqual([PEDIDO, COMPRA, "compras.orcamento"]);
     for (const f of ["compras.solicitacao", "vendas.pedido", ""]) expect(familiaDeCompras(f), f).toBe(false);
   });
 });
@@ -250,6 +251,8 @@ describe("C3-D5 chave das linhas e coluna de padrão por família", () => {
   it("colunasComPadraoRegistro", () => {
     expect(colunasComPadraoRegistro(PEDIDO)).toEqual(["armazem_id"]);
     expect(colunasComPadraoRegistro(COMPRA)).toEqual(["armazem_id"]);
+    // OPERACOES-01 F6a: o orçamento de compra não tem a coluna Local de estoque — nenhuma coluna aceita padrão
+    expect(colunasComPadraoRegistro("compras.orcamento")).toEqual([]);
     expect(colunasComPadraoRegistro("compras.solicitacao")).toEqual([]);
     expect(colunasComPadraoRegistro("")).toEqual([]);
     // a coluna de padrão de cada família existe no catálogo dela, e é de referência com cadastro

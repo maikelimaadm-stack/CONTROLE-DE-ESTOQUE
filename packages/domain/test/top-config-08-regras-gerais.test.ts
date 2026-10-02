@@ -104,6 +104,9 @@ const estoque = (familia: string) => linha(familia,
   [["manual", "automatica"], null], [["proibido"], SEM_ITENS_ESTOQUE], [["bloqueada"], ALTERACAO_ESTOQUE], [["nenhuma", "sempre"], APROVACAO_VALOR_ESTOQUE]);
 const orcamentoOuPedido = (familia: string) => linha(familia,
   [["manual"], NAO_CONFIRMADO], [["proibido"], SEM_ITENS_ORCAMENTO_PEDIDO], [["bloqueada"], NAO_CONFIRMADO], [["nenhuma"], APROVACAO_SEM_CONFIRMACAO]);
+/** OPERACOES-01 F6a (decisão 283): o pedido de compra — como o pedido, mas a aprovação vale inteira (ao finalizar). */
+const pedidoDeCompra = (familia: string) => linha(familia,
+  [["manual"], NAO_CONFIRMADO], [["proibido"], SEM_ITENS_ORCAMENTO_PEDIDO], [["bloqueada"], NAO_CONFIRMADO], [["nenhuma", "sempre", "por_valor"], null]);
 const outra = (familia: string) => linha(familia,
   [["manual"], SEM_DOCUMENTO], [["proibido"], SEM_DOCUMENTO], [["bloqueada"], SEM_DOCUMENTO], [["nenhuma"], SEM_DOCUMENTO]);
 
@@ -117,7 +120,8 @@ const ESPERADA: ItemMatrizRegrasGeraisTop[] = [
   estoque("estoque.ajuste"),
   orcamentoOuPedido("vendas.orcamento"),
   orcamentoOuPedido("vendas.pedido"),
-  orcamentoOuPedido("compras.pedido"),
+  pedidoDeCompra("compras.pedido"),
+  orcamentoOuPedido("compras.orcamento"),
 ];
 
 /** "Outra família": as 8 antigas de estoque, a solicitação de compra e o financeiro. */
@@ -136,7 +140,7 @@ const OUTRAS = [
 ];
 
 describe("TOP-CONFIG-08 — a matriz por família (MATRIZ_REGRAS_GERAIS_TOP)", () => {
-  it("tem exatamente as 9 famílias, na ordem, com os aceitos e os motivos exatos", () => {
+  it("tem exatamente as 10 famílias, na ordem, com os aceitos e os motivos exatos", () => {
     expect(MATRIZ_REGRAS_GERAIS_TOP.map((m) => m.familia)).toEqual(ESPERADA.map((m) => m.familia));
     expect(clonar(MATRIZ_REGRAS_GERAIS_TOP)).toEqual(ESPERADA);
   });
@@ -200,9 +204,11 @@ describe("TOP-CONFIG-08 — validarRegrasGeraisTop (o 422 da gravação no forma
     for (const v of POLITICAS_APROVACAO) if (!m.aprovacao.aceitos.includes(v)) casos.push([m.familia, "aprovacao.politica", { politica: v }, m.aprovacao.motivo!]);
   }
 
-  it("a tabela de casos cobre as 9 famílias (nenhuma aceita tudo: a alteração é sempre Bloqueada)", () => {
-    expect(new Set(casos.map((c) => c[0])).size).toBe(9);
-    expect(casos.length).toBe(2 * 1 + 4 * 3 + 3 * 5); // venda/compra: 1 cada; estoque: 3 cada; orçamento/pedidos: 5 cada
+  it("a tabela de casos cobre as 10 famílias (nenhuma aceita tudo: a alteração é sempre Bloqueada)", () => {
+    expect(new Set(casos.map((c) => c[0])).size).toBe(10);
+    // venda/compra: 1 cada; estoque: 3 cada; orçamento e pedido de venda e orçamento de compra: 5 cada; pedido de compra: 3
+    // (a aprovação vale inteira, ao finalizar — F6a)
+    expect(casos.length).toBe(2 * 1 + 4 * 3 + 3 * 5 + 1 * 3);
   });
 
   it.each(casos)("%s — %s fora da matriz → combinacao_nao_suportada com o motivo exato", (familia, caminho, regras, mensagem) => {
