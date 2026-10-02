@@ -2,7 +2,7 @@ import { CATALOGO_VENDAS } from "@agro/domain";
 import type { Row } from "@/features/docs/shared";
 import type { WsTab } from "@/lib/workspace-tabs";
 import type {
-  AdaptadorDaCentral, ChaveColunaDoItem, ColunasDosItens, DocumentoAberto, FonteDoNovoDocumento, FonteDosDocumentosAbertos
+  ChaveColunaDoItem, ColunasDosItens, DocumentoAberto, FonteDoNovoDocumento, FonteDosDocumentosAbertos
 } from "@/features/central/contrato";
 import { chaveDaCopiaPadrao } from "@/features/central/duplicar-memoria";
 import { chaveDepoisDeSalvar as chaveDepoisDeSalvarDoMotor } from "@/features/central/salvo";
@@ -11,10 +11,13 @@ import { linhasDoGrupo, linhasDoMenuRapido, rotaDeLancamento } from "./launcher-
 import { variantesDeVenda, type VarianteDeVenda } from "./variantes";
 
 /**
- * O ADAPTADOR DA CENTRAL DE VENDAS (VISUAL-UX-04) — tudo o que o motor (`@/features/central`) precisa saber da venda e
- * não pode conhecer por nome. Os valores são EXATAMENTE os que estavam fixos no código da Central de Vendas: o prefixo
- * dos testids, as rotas e portas de `/api/sales`, os textos, o catálogo de itens de vendas, o `reason` do cancelamento
- * com "Cancelado pelo usuário", as chaves em memória do "Salvo" e da cópia. A venda continua idêntica.
+ * O ADAPTADOR DA CENTRAL DE VENDAS (VISUAL-UX-04) — as peças da venda que as partes do motor (`@/features/central`)
+ * recebem por prop e não podem conhecer por nome: o prefixo dos testids, os documentos de venda abertos nas abas (com a
+ * porta `/api/sales` de cada um), as colunas do catálogo de itens de vendas, o menu "Novo documento", o motivo padrão do
+ * `reason` do cancelamento ("Cancelado pelo usuário"), os links do título e do derivado e as chaves em memória do
+ * "Salvo" e da cópia. Os valores são EXATAMENTE os que estavam fixos no código da Central de Vendas. A venda não monta
+ * um `AdaptadorDaCentral` inteiro (quem o monta é a compra): as páginas de vendas passam estas peças, uma a uma, às
+ * partes do motor, com os textos delas mesmas. A venda continua idêntica.
  */
 
 /** Prefixo de TODOS os testids da Central de Vendas. */
@@ -80,37 +83,7 @@ export function fonteDoNovoDocumentoDeVenda(variante: VarianteDeVenda, rotulo: s
   };
 }
 
-/* ── o adaptador inteiro ── */
-
-/** O adaptador da Central de Vendas para uma variante (o rótulo humano da variante vem do tradutor, na página). */
-export function adaptadorDaCentralDeVendas(variante: VarianteDeVenda, rotulo: string): AdaptadorDaCentral {
-  return {
-    prefixoTestid: PREFIXO_CENTRAL_VENDAS,
-    segmento: variante.segmento,
-    rotas: {
-      lista: `/vendas/${variante.segmento}`,
-      nova: `/vendas/${variante.segmento}/new`,
-      registro: (id) => `/vendas/${variante.segmento}/${id}`,
-      porta: (id) => `/api/sales/${variante.segmento}/${id}`
-    },
-    textos: {
-      tituloDaCriacao: `Nova ${rotulo}`,
-      tituloDaLeituraPendente: "Documento de venda",
-      confirmar: "Confirmar venda",
-      especieMinuscula: rotulo.toLowerCase(),
-      legendaDosTitulos: "Contas a receber do documento"
-    },
-    documentosAbertos: fonteDosDocumentosDeVendas,
-    novoDocumento: fonteDoNovoDocumentoDeVenda(variante, rotulo),
-    colunasDosItens: colunasDosItensDeVendas,
-    entidadeDoHistorico: "sales_documents",
-    linkDoTitulo: linkDoTituloDeVenda,
-    linkDoDerivado: linkDoDerivadoDeVenda,
-    chaveDoSalvo: chaveDepoisDeSalvarDeVenda,
-    chaveDaCopia: chaveDaCopiaDeVenda,
-    cancelamento: { chaveDoMotivo: "reason", motivoVazio: MOTIVO_PADRAO_DO_CANCELAMENTO }
-  };
-}
+/* ── títulos, derivados e chaves em memória ── */
 
 /** O título financeiro da venda é uma conta a receber. */
 export const linkDoTituloDeVenda = (titulo: Row) => `/financeiro/contas-a-receber/${titulo["id"]}`;

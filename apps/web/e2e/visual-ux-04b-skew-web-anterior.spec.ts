@@ -26,6 +26,20 @@ test("VISUAL-UX-04b · prova reversa do detector da pendência no clique: sem a 
 });
 
 /**
+ * Mais um merge da main em cada grafia, cada um no seu caso: a premissa (só aquela grafia no fonte do commit) ao lado
+ * da conclusão (pendência no clique). Tirar o literal do detector reprova o da #84; tirar o motor reprova o da #88.
+ */
+test("OPERACOES-01 · prova reversa do detector da pendência no clique na #84 (8f95ed5): só o literal → true", () => {
+  expect(grafiasDaPendencia(COMMITS_DA_PILULA.literalNa84), "#84 (VISUAL-UX-03): só o literal, sem a grafia do motor").toStrictEqual([PILULA_LITERAL]);
+  expect(pendenciaNoClique(COMMITS_DA_PILULA.literalNa84), "#84: o web mostra a pendência no clique do Salvar").toBe(true);
+});
+
+test("OPERACOES-01 · prova reversa do detector da pendência no clique na #88 (57b30e2): só o motor → true", () => {
+  expect(grafiasDaPendencia(COMMITS_DA_PILULA.motorNa88), "#88 (TOP-CONFIG-08): só o motor, sem o literal").toStrictEqual([PILULA_DO_MOTOR]);
+  expect(pendenciaNoClique(COMMITS_DA_PILULA.motorNa88), "#88: o web mostra a pendência no clique do Salvar").toBe(true);
+});
+
+/**
  * `editorDaBaseGravaFormato4` decide o formato que o TOP-CONFIG-04A espera da TOP renomeada pelo web da base. Com a
  * #88 na main, o editor da base passou a gravar o formato 4, e o caso, que só conhecia o 2 e o 3, ficou vermelho
  * (esperava 3, recebeu 4). Os dois mundos, cada um num commit fixo: um detector que respondesse sempre o mesmo reprova.

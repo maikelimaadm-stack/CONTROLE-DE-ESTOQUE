@@ -78,16 +78,24 @@ export function pendenciaNoClique(sha: string = shaDaBase()): boolean {
 }
 
 /**
- * Três commits FIXOS da main, um por mundo da pílula. Nenhum é a base desta execução: ela muda a cada PR e só
- * exercitaria o ramo dela.
+ * Commits FIXOS da main, por mundo da pílula: um sem ela e dois em cada grafia — o merge que a trouxe e um merge
+ * posterior no mesmo mundo, para a prova não depender de UM commit por grafia. Nenhum é a base desta execução: ela
+ * muda a cada PR e só exercitaria o ramo dela.
  */
 export const COMMITS_DA_PILULA = {
   /** #77 — o pai do commit que introduziu o literal (`git log -S'data-testid="central-vendas-pendencias"' -- apps/web/src`, o mais antigo, `~1`). */
   semPilula: "93497b1f5e0b6fc4c9a036ecbe436d8d45395269",
   /** #79 — a VISUAL-UX-02 na main: só o literal. */
   literal: "4fbcdf4fd2c8cc63087bc493f4f6f218372a21de",
+  /** #84 — a VISUAL-UX-03 na main: ainda só o literal (`features/sales/central-vendas-barra.tsx:119` nesse commit). */
+  literalNa84: "8f95ed5ab4a062fc767ccc4883cf2e92c4ef26c7",
   /** #87 — a VISUAL-UX-04 na main: só o motor. */
-  motor: "1303de3384c726859a5560d04d5d6ae5241cd38e"
+  motor: "1303de3384c726859a5560d04d5d6ae5241cd38e",
+  /**
+   * #88 — a TOP-CONFIG-08 na main: ainda só o motor (`features/central/barra.tsx:99` nesse commit). Foi a base do skew
+   * da #89 (VISUAL-UX-04b); o mesmo SHA de `COMMITS_DO_EDITOR_DA_TOP.formato4`.
+   */
+  motorNa88: "57b30e2833ee058d7099656cf0d17e811843717f"
 } as const;
 
 /**
