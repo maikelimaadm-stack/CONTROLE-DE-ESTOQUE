@@ -2209,18 +2209,18 @@ gravado); o passo 10 grava, e só com a decisão dele.
    Compromissos, nesta ordem; Contas e Caixa e Bancos fora do menu; a busca do menu por "contas a pagar" leva a Títulos.
    `/financeiro?tab=contas&sub=pagar` ainda abre a lista de hoje.
 2. Títulos › A pagar, A receber e Todos: o título de produção aparece; os cartões (Vencidos, Vencem hoje, A vencer,
-   Pagos/Recebidos no período) contam e somam; "Previstos" desabilitado com "Os previstos chegam com a provisão pela
-   TOP"; o rodapé "Totais do filtro". Exportar CSV abre a planilha com o dinheiro em texto. Nenhuma ação em lote.
+   Pagos/Recebidos no período) contam e somam; "Previstos" habilitado com 0 (a provisão pela TOP é da F9a; nenhuma TOP
+   provisiona); o rodapé "Totais do filtro". Exportar CSV abre a planilha com o dinheiro em texto. Nenhuma ação em lote.
 3. Abrir o título: "Origem" com o rótulo (e "Abrir origem" quando ele vem de documento, com o aviso "Título gerado por …"
    e sem Editar nem Cancelar). "Baixar" abre o diálogo novo (Tipo, Conta bancária, Valor, Juros, Multa, Desconto,
    Acréscimo, Tarifa, Movimento). Fechar sem confirmar.
 4. "+ Novo" › Nova despesa: o lançamento avulso (Competência, Conta prevista, Rateio em R$ com "Falta R$ …", "Já pago",
-   Anexos). Voltar sem salvar.
+   Anexos); o primeiro campo é "Tipo de operação" (F9a). Voltar sem salvar.
 5. Bancos e caixa › Contas: vazia (produção sem conta), com o link "Cadastro de contas"; Extrato: "Escolha uma conta
    para ver o extrato."; Transferências: o formulário (Tipo, Conta de origem, Conta de destino…). Fechar sem lançar.
 6. Conciliação: a lista de importações vazia; "Importar OFX" pede a conta. Fechar.
-7. Fluxo e resultado › Fluxo de caixa do mês; "Incluir previstos" desabilitado. Resultado (DRE): competência e caixa do
-   mês, por grupo.
+7. Fluxo e resultado › Fluxo de caixa do mês; "Incluir previstos" habilitado (F9a; sem previsto, as colunas da provisão
+   saem zeradas). Resultado (DRE): competência e caixa do mês, por grupo.
 8. Adiantamentos: vazio.
 9. Configurações › Financeiro › "Naturezas padrão da baixa": os 9 campos vazios. Cadastros › Naturezas: o campo "Grupo do
    DRE". Não salvar.
@@ -2361,6 +2361,159 @@ compra — aprovação diferente de "Sem aprovação" ⇒ "Exigir pedido finaliz
 declarado, na ajuda da aba "Fluxo de compra".
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
+### F9a — financeiro pela TOP, título previsto e LCDPR (OPERACOES-01, migration 0045)
+
+Decisão 286, parte F9a. A F9b — a provisão do pedido de compra finalizado e a TOP na compra, sem migration — acrescenta
+a subseção dela. **Uma migration: `0045_financeiro_pela_top_e_lcdpr.sql`** (pre-deploy; trava (2026,79); `lock_timeout`
+2 s; pré-condições nomeadas `OPERACOES-01 F9: …`, a primeira é "já aplicada"; pós-condições só de catálogo; aditiva; sem
+backfill; a 0041 não foi editada; não depende da 0043 nem da 0044). Sem variável. Permissão nova sem migration:
+`imoveis_rurais.{view,create,edit,delete}` ("Imóveis rurais", "Cadastros Base > Financeiros", módulo `financeiro`) — o
+pre-deploy sincroniza o catálogo e o perfil Administrador do sistema as recebe (`packages/db/src/seed.ts:20-21`); os
+outros perfis, o Maike dá na tela de perfis. Três rotas novas (`GET /api/financeiro/tops`,
+`GET /api/financeiro/imoveis-rurais/opcoes`, `GET /api/financeiro/lcdpr/conferencia`) e três capacidades ADITIVAS:
+`financeiroPelaTop: 1` em `GET /api/financeiro/capacidades`, `capacidades.lcdpr: 1` em `GET /api/auth/context` e
+`padroesFinanceiros: 1` em `GET /api/admin/tipos-operacao/capabilities` (com `financeiroPadrao` em `formato5.secoes`, que
+fica com as cinco seções de extensão: `destino`, `fluxo`, `fluxoCompra`, `divergenciaPedido` e `financeiroPadrao`).
+Nenhum código de erro novo. O menu ganha Configurações › Financeiro › "Imóveis rurais" (`apps/web/nav.registry.mjs` e
+`apps/web/src/app/(app)/configuracoes/page.tsx`, aplicados no merge da fase, no MESMO deploy do web); a conferência do
+LCDPR entra na aba Fiscal › Livro Caixa, sem entrada nova. Os relatórios (`apps/api/src/routes/reports.ts`, arquivo da
+F5a e da F6a) passaram a excluir o previsto no merge: as 12 leituras `t.status<>'cancelled'` viraram
+`t.status not in ('cancelled','previsto')` — com a API desta PR, nenhum relatório soma o previsto. Contrato em
+`docs/OPERACOES-CONTRACT.md` §2 e §7 e `docs/TIPO-OPERACAO-CONTRACT.md` §18.10.
+
+**Migration — o que faz** (nenhuma linha existente é reescrita):
+- tabela nova `erp.imoveis_rurais` (14 colunas: nome, `cib` — 8 dígitos —, `caepf` — 14 dígitos —,
+  `inscricao_estadual`, `tipo_exploracao` — `individual`, `condominio`, `arrendado`, `parceria`, `comodato`, `outros` —,
+  `participacao` > 0 e ≤ 100, `padrao`, `is_active`, `created_at`, `updated_at`, `deleted_at`, empresa obrigatória):
+  FK COMPOSTA `(organization_id, empresa_id)` → `erp.empresas`; chaves `(id, organization_id)` e
+  `(id, empresa_id, organization_id)`; índices únicos parciais de um imóvel PADRÃO e de um CIB por empresa entre os vivos;
+  RLS habilitada e FORÇADA com a política ÚNICA `tenant_e_empresa` (o gabarito da categoria A, conferido letra por letra
+  contra o de `erp.aprovacoes_venda` da 0041); auditoria e `updated_at` por gatilho; o `erp_app` lê, insere e altera,
+  sem DELETE nem TRUNCATE (exclusão lógica); entra em `scripts/company-rls-modules.json` como `financeiro`;
+- tabela nova `erp.tipos_operacao_versao_financeiro` (11 colunas: os padrões financeiros de uma versão de TOP — natureza,
+  centro, tipo de título, forma de pagamento, conta —, uma linha por versão, ao menos um padrão): FKs compostas com a
+  organização para a versão, a natureza, o centro e a conta; FK de coluna única para tipo de título e forma (têm linhas
+  do sistema; a API confere a organização); imutável (gatilhos por linha contra UPDATE e DELETE e por comando contra
+  TRUNCATE, também para o dono); RLS `tenant_isolation` forçada; auditoria; o `erp_app` só lê e insere;
+- colunas novas, todas anuláveis e sem default: `financial_titles.tipo_operacao_id` e `.tipo_operacao_versao_id` (o par
+  inteiro ou nada; FK de três colunas para a versão daquela TOP); `title_settlements.imovel_rural_id` (FK com a
+  organização); `bank_movements.imovel_rural_id` (FK com a EMPRESA e a organização; CHECK: só com empresa, nunca em
+  transferência nem saldo inicial), `.tipo_operacao_id` e `.tipo_operacao_versao_id` (o par); `financial_categories.tipo_lcdpr`
+  (`receita`, `custeio_investimento`, `produto_adiantado`, `fora`; nulo = não classificada) — 11 FKs novas sem ação de
+  exclusão, 12 CHECKs novos e 7 índices;
+- o CHECK `financial_titles_status_check` (o MESMO nome) passa a aceitar `previsto`, e `chk_financial_titles_previsto`
+  exige do previsto nada pago e uma origem de documento;
+- `erp.refresh_title_status` com UMA linha nova: título previsto levanta `CONFLICT` (409 em todo binário) — a baixa de
+  um previsto morre no banco. Mesma assinatura, linguagem, corpo da 0042 e privilégios; não recalcula título algum;
+- gatilho `trg_ft_previsto_guarda` (BEFORE UPDATE com WHEN): o previsto só sai CANCELADO, sem mudar valor, desconto,
+  pago, parceiro, empresa, direção ou origem, e nenhum título vira previsto por UPDATE;
+- duas funções de gatilho novas, INVOKER, `search_path` fixo, EXECUTE só do dono. Nenhuma SECURITY DEFINER nova;
+  nenhuma política existente tocada.
+
+**Pré-condições (a migration recusa sem aplicar nada, com a mensagem `OPERACOES-01 F9: …` que nomeia o que falta):**
+P1 já aplicada (uma das tabelas novas, `financial_titles.tipo_operacao_id`, `financial_categories.tipo_lcdpr` ou a
+função da guarda já existe); P2 papel `erp_app` ausente; P3 quem aplica não atravessa RLS; P4 alguma das 35 colunas que a
+migration lê ausente; P5 alguma chave alvo das FKs compostas ausente (`uq_tipos_operacao_versoes_tenant`,
+`uq_financial_categories_tenant`, `uq_cost_centers_tenant`, `uq_bank_accounts_tenant` e a `(organization_id, id)` de
+`erp.empresas`); P6 alguma função chamada ausente (`tenant_visible`, `audit_row`, `set_updated_at`,
+`escopo_empresa_total`, `empresas_do_membro`, `modulo_empresa_atual`, `refresh_title_status`, `title_settlement_changed`);
+P7 o módulo de escopo `financeiro` ausente; **P8 o CHECK de situação do título não é EXATAMENTE o de hoje** (o texto de
+`pg_get_constraintdef` com `open`, `partially_paid`, `paid`, `cancelled`) — a lista com `previsto` é escrita sobre ele, e
+uma lista diferente seria trocada sem ninguém decidir; P9 os gatilhos de `erp.financial_titles` diferentes de
+`{trg_ft_audit, trg_ft_updated}`; P10 `erp.refresh_title_status` não é a da 0042. A 0043 e a 0044 (F5a e F6a) não tocam
+nenhum desses objetos. Os ALTER TABLE pedem trava curta ACCESS EXCLUSIVE em `financial_titles` (a validação do CHECK
+alargado lê a tabela), `title_settlements`, `bank_movements` e `financial_categories`, e as FKs novas pedem SHARE ROW
+EXCLUSIVE nas referenciadas: com uma transação longa segurando uma delas, a migration desiste em 2 s sem aplicar nada, e
+o deploy é refeito (seguro). O gatilho BEFORE TRUNCATE da tabela dos padrões faz qualquer `TRUNCATE … CASCADE` a partir
+das tabelas que ela referencia falhar (desejado: histórico não se trunca; para a versão da TOP, a organização e o
+usuário isso já acontecia desde a 0041). Em erro, publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0045) → API → web.** Na PR #90 o pre-deploy aplica 0042, 0043, 0044 e 0045, nessa ordem; a 0045 é a
+última, e o runner aplica cada uma na sua própria transação (se a 0045 desistir, o banco fica com a 0044 e o deploy é
+refeito). O menu vai no MESMO deploy do web desta fase. Janelas:
+1. **API anterior × banco novo:** os INSERTs dela não citam as colunas novas (anuláveis, sem default) e nunca gravam
+   `previsto`; o CHECK alargado não muda nada para ela; ela não lê nem grava as tabelas novas. Só depois que alguém LIGAR
+   a provisão numa TOP (API e web novos) existe previsto. Com previstos gravados, a API anterior os listaria como
+   "A vencer" e os somaria nos relatórios e painéis (a correção do `reports.ts` é do binário novo), mas NENHUMA baixa
+   neles passa (`refresh_title_status` → 409) e nenhuma mudança de valor (a guarda). O cancelamento pelo financeiro da
+   API anterior (que não trava título de documento) cancelaria o previsto sem motivo — a guarda deixa o previsto ir a
+   cancelado. Produção não tem previsto.
+2. **Web anterior × API nova** (janela "API antes do web" e reversão só do web): as rotas `/api/financial/*` e o cadastro
+   recebem os corpos de hoje e devolvem as chaves de hoje, só com acréscimos. Mudam, de propósito e aditivamente: a
+   baixa e o movimento de entrada ou saída de uma empresa SEM imóvel informado ganham o imóvel PADRÃO da empresa (empresa
+   sem padrão = como hoje); o título da venda com TOP guarda a TOP e a versão; a lista antiga não mostra o previsto nem o
+   soma; a natureza salva sem `tipo_lcdpr` preserva o gravado. O "padrão legado" da confirmação da venda sem
+   classificação continua idêntico para toda TOP nos formatos 1 a 4 (todas as de produção). Provado pelo K-2
+   (`f9-financeiro-skew-web-anterior.spec.ts`, 4 casos: a conta a pagar pela tela antiga sem TOP; a baixa pela tela
+   antiga com o imóvel padrão na baixa e no movimento; a lista antiga sem o previsto de um pedido e sem ele nos totais;
+   a natureza salva pela tela antiga com o tipo LCDPR preservado).
+3. **Web nova × API anterior** (janela "web antes da API" e reversão só da API): sem `financeiroPelaTop`, `lcdpr` e
+   `padroesFinanceiros`, cada tela é a de hoje — o "Novo movimento bancário" sem Tipo de operação nem Imóvel rural e com
+   o corpo de hoje (aceito, 201), o Livro Caixa só com o painel, a natureza sem "Tipo no LCDPR" — e nenhum pedido sai
+   para `/api/financeiro/tops`, `/imoveis-rurais` ou `/lcdpr` (K-1, `f9-financeiro-skew-api-producao.spec.ts`, 3 casos,
+   contando os pedidos no fio). Com a API anterior (sem `formato5`) o editor da TOP é o do 4, sem a aba nova.
+
+Os dois sentidos rodam no job `skew` do CI, contra os binários reais da base (`622f194`), e os specs escolhem o ramo pelo
+mundo medido na hora (K-1: `GET /api/financeiro/capacidades` 404/200 e `capacidades.lcdpr` no `/auth/context`, que têm de
+descrever o MESMO binário; K-2: o web da base conhece ou não `/api/financeiro/tops`, por `git grep` na árvore da base,
+com erro do `git` reprovando). O ramo "mundo novo" de cada um só roda quando a base tiver a F9.
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247): nenhuma linha muda; sem backfill. Produção (02/10): 1 título financeiro, 2 documentos de venda
+(1 orçamento convertido e 1 pedido aberto), 3 TOPs (pedido de compra, orçamento de venda e pedido de venda), zero contas
+bancárias, movimentos e baixas. As tabelas novas nascem vazias; nenhuma TOP provisiona (a provisão nasce desligada): não
+nasce previsto. Salvar o pedido aberto roda a sincronização da provisão sem efeito nem trilha (a TOP não provisiona e não
+há previsto). Uma venda confirmada a partir dele gera o título com a TOP e a versão da venda (colunas novas) e a
+classificação de hoje (a TOP não tem padrões). O título existente continua com o mesmo saldo e situação; o detalhe mostra
+a origem pelo nome. Sem conta e sem movimento, nenhum imóvel é aplicado; as naturezas não têm tipo LCDPR, e a conferência
+abre vazia. O que muda para fora do sistema: o menu Configurações › Financeiro › "Imóveis rurais", o grupo Financeiro no
+assistente da TOP, o campo "Tipo de operação" no lançamento avulso e no movimento (com "Nenhum tipo de operação ativo
+para este lançamento: ele segue sem operação." enquanto não houver TOP financeira) e a conferência no Livro Caixa.
+
+**Reversão:** API e web voltam por redeploy da versão anterior; o banco fica (aditivo; as tabelas novas nunca se apagam,
+decisão 247; os previstos ficam como linhas; desligar um gatilho só com migration nova, por decisão humana). Reverter
+só o web = janela 2; reverter só a API = janela 3 sobre o banco novo, com a janela 1. Enquanto ninguém ligar a provisão
+nem cadastrar imóvel, a reversão não deixa resto. Depois: os previstos aparecem como "A vencer" na lista e nos relatórios
+da API anterior (sem baixa possível), e os imóveis gravados ficam sem tela — a correção é voltar a API nova. Por isso:
+ligar a provisão em produção só depois de conferir o deploy (roteiro abaixo), com a API desta PR no ar (os relatórios
+dela já excluem o previsto).
+
+**Roteiro do Maike em produção** (produção é operacional — decisões 240 e 247). Os passos 0 a 9 são só leitura (nada é
+gravado); os passos 10 a 13 gravam, e só com a decisão dele, um por vez.
+0. Antes do deploy (leitura): o ledger de migrations termina na 0041 (o pre-deploy da PR aplica 0042, 0043, 0044 e 0045,
+   nessa ordem); o texto de
+   `select pg_get_constraintdef(oid) from pg_constraint where conname = 'financial_titles_status_check'` é
+   `CHECK ((status = ANY (ARRAY['open'::text, 'partially_paid'::text, 'paid'::text, 'cancelled'::text])))` (a P8 refaz a
+   pergunta na hora de aplicar e recusa se for outro). Depois do deploy (leitura): o ledger termina na 0045, depois da
+   0044.
+1. Configurações › Operações › Tipos de Operação › Novo: o passo 1 mostra o grupo Financeiro com "Conta a pagar", "Conta a
+   receber" e "Movimento bancário". Cancelar.
+2. Abrir a TOP de pedido de venda de produção: a aba "Padrões financeiros" depois de Estoque, com "Provisionar a receber
+   ao salvar o pedido" desmarcado, "O documento pode trocar os padrões" marcado e "Padrões do lançamento" vazio. Não
+   salvar. O histórico lista as versões sem linha de padrões.
+3. Financeiro › Títulos: o cartão "Previstos" habilitado com 0; o filtro Situação tem "Previsto"; o título de produção
+   aparece na lista padrão.
+4. Abrir o título: "Origem" pelo nome ("Avulso", ou o documento com o código); sem "Tipo de operação" se ele não tem TOP.
+5. "+ Novo" › Nova despesa: o primeiro campo é "Tipo de operação", com "Nenhum tipo de operação ativo para este
+   lançamento: ele segue sem operação.". Voltar sem salvar.
+6. Bancos e caixa › Novo movimento bancário: o mesmo aviso no topo; escolhendo uma empresa e Entrada ou Saída, o campo
+   "Imóvel rural (LCDPR)" com "Sem imóvel". Voltar sem salvar.
+7. Fluxo e resultado › Fluxo de caixa: "Incluir previstos" habilitado; marcado, as colunas "Provisão a receber" e
+   "Provisão a pagar" zeradas e "Saldo projetado com previstos" igual ao "Saldo projetado".
+8. Fiscal › Livro Caixa: o painel de hoje e, embaixo, "Conferência do LCDPR" vazia, com "Pendências do período: Sem
+   imóvel: 0 … · Sem tipo no LCDPR: 0 … · Sem empresa: 0 …".
+9. Configurações › Financeiro › Imóveis rurais: a lista vazia. Configurações › Financeiro › Naturezas: o campo "Tipo no
+   LCDPR" vazio. Não salvar.
+10. (Decisão do Maike; grava.) Cadastrar os imóveis rurais de cada empresa, com o padrão marcado (um por empresa).
+11. (Decisão do Maike; grava.) Classificar as naturezas no LCDPR (1, 2, 3 ou "Fora do LCDPR").
+12. (Decisão do Maike; grava.) Criar as TOPs financeiras (conta a pagar, a receber, movimento) com os padrões.
+13. (Decisão do Maike; grava; com a API desta PR no ar — os relatórios dela já excluem o previsto.) Na TOP do pedido de
+    venda, ligar "Provisionar a receber ao salvar o pedido", com os padrões, e conferir num pedido de teste: o cartão
+    "Previstos" e o detalhe do previsto (aviso, sem Baixar).
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção; a P8 depende do texto
+que o Postgres de produção devolve no passo 0.
 
 ## VISUAL-UX-04b — correções da Central de Compras (sem migration)
 

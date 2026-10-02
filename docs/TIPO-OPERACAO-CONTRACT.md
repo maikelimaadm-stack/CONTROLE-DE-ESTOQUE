@@ -2287,9 +2287,9 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 - **`definirSecaoV5`** (`:106-108`) congela a definição e infere o nome literal. Um nome de `CHAVES_RAIZ_RESERVADAS_TOP`
   (`versaoSchema`, `geral`, `estoque`, `financeiro`, `fiscal`, `aprovacao`, `execucao`) NÃO COMPILA: o tipo do nome
   vira `never`.
-- **A LISTA:** `DEFINICOES_SECOES_V5` (`:125-132`), VAZIA na F4; desde a OPERACOES-01, `[SECAO_DESTINO, SECAO_FLUXO,
-  SECAO_FLUXO_COMPRA, SECAO_DIVERGENCIA_PEDIDO]` — as duas da F5a (decisão 282) e as duas da F6a (decisão 283, §18.9),
-  nesta ordem, que é a das abas e a da auditoria. Dela saem `NomeSecaoExtensaoV5`, `SecoesExtensaoV5`,
+- **A LISTA:** `DEFINICOES_SECOES_V5` (`:127-136`), VAZIA na F4; desde a OPERACOES-01, `[SECAO_DESTINO, SECAO_FLUXO,
+  SECAO_FLUXO_COMPRA, SECAO_DIVERGENCIA_PEDIDO, SECAO_FINANCEIRO_PADRAO]` — as duas da F5a (decisão 282), as duas da F6a
+  (decisão 283, §18.9) e a da F9a (decisão 286, §18.10), nesta ordem, que é a das abas e a da auditoria. Dela saem `NomeSecaoExtensaoV5`, `SecoesExtensaoV5`,
   `SECOES_EXTENSAO_V5` e os rótulos, sem segunda declaração. A única conversão de tipo do ponto de extensão mora ali,
   documentada (`montarSecoesExtensaoV5`, `nomeDaSecaoV5`).
 - **A leitura** (`lerConfiguracaoTop`, `tipo-operacao-configuracao.ts:775`): num 5, as chaves de raiz são as do 2 + os
@@ -2337,10 +2337,11 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 `packages/domain/src/tipo-operacao-catalogo.ts`. As tabelas estão em `docs/OPERACOES-CONTRACT.md` §1 e §2.
 - `CATALOGO_TOP = {grupos, tipos, perfis}` (`:258-262`), com:
   - `GRUPOS_TIPO_MOVIMENTO_TOP` e os rótulos;
-  - `CATALOGO_TIPOS_MOVIMENTO_TOP` (22 tipos, `:139-164`; desde a OPERACOES-01, 19 com família: requisição de material,
+  - `CATALOGO_TIPOS_MOVIMENTO_TOP` (22 tipos, `:140-165`; desde a OPERACOES-01, 20 com família: requisição de material,
     consumo e devolução de consumo ganharam a família na F5a, decisão 282, e o orçamento de compra, `compras.orcamento`,
-    na F6a, decisão 283 — os quatro sem tela; sem família, só manejo, batelada e movimento bancário);
-  - `PERFIS_TIPO_TOP` (um por família do registry — 27 desde a F5a e a F6a —, `:243`).
+    na F6a, decisão 283 — os quatro sem tela —, e o movimento bancário, `financeiro.movimento_bancario`, na F9a, decisão
+    286 — com tela, como a conta a pagar e a conta a receber; 12 com tela; sem família, só manejo e batelada);
+  - `PERFIS_TIPO_TOP` (um por família do registry — 28 desde a F5a, a F6a e a F9a —, `:244`).
   Congelado. Nenhum código de família escrito: o gate `node scripts/familia-operacional-ssot-audit.mjs` passa.
 - `perfilDoTipoTop(família, definicoes?)` (`:212-237`) deriva o perfil de `familiaTemProximasOperacoes`,
   `regrasGeraisDaFamiliaTop`, `familiaAceitaExecucaoConfiguradaTop`, `ehFamiliaDeDocumentoEstoque` e
@@ -2398,7 +2399,7 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 - `contractVersion`, `configuracao` (1), `restricoes` (3) e `regrasGerais` (4) NÃO mudam: o editor anterior compara
   esses números.
 - `secoes` = as seções de extensão que ESTE servidor lê e grava (nenhuma na F4; `["destino", "fluxo", "fluxoCompra",
-  "divergenciaPedido"]` desde a F5a e a F6a, decisões 282 e 283).
+  "divergenciaPedido", "financeiroPadrao"]` desde a F5a, a F6a e a F9a, decisões 282, 283 e 286).
 - O web lê o bloco na régua do `regrasGerais` (`lerFormato5DasCapacidades`, `apps/web/src/features/admin/top-contrato.tsx:214`):
   presente e ilegível = ausente, sem negar o resto.
 - `podeConfigurarFormato5` (`:417`) exige, todos juntos:
@@ -2419,8 +2420,8 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
   - A prova reversa do lado FALSO usa `COMMITS_DO_EDITOR_DA_TOP.formato4`, com a marca do 4 no mesmo commit.
   - O lado VERDADEIRO não tem commit fixo até esta fase entrar na main. Depois, o SHA do merge entra como `formato5`.
   - Ele supõe a base e o HEAD com o MESMO conjunto de seções. A primeira fase que acrescentar uma seção mede também o
-    conjunto (§18.3). Pendente desde a F5a e a F6a, que acrescentaram seções ao mesmo tempo: medir o conjunto depois
-    de juntar as duas — ainda não medido.
+    conjunto (§18.3). Pendente desde a F5a e a F6a, que acrescentaram seções ao mesmo tempo, e a F9a, que acrescentou
+    a quinta: medir o conjunto depois de juntar as fases — ainda não medido (§18.10).
 
 ### 18.7 O editor
 
@@ -2468,12 +2469,13 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
   por dimensão, `top-campo-destino-{centro-custo,equipamento,ordem-servico,lote-animais,area,safra}`, erro de campo
   `top-erro-destino-<dimensão>`) e `AbaFluxo` (`top-secao-fluxo.tsx`; `top-secao-fluxo`,
   `top-campo-fluxo-exige-requisicao`, `top-campo-fluxo-permite-parcial` com "Não"/"Sim", `top-erro-fluxo-<campo>`), nas
-  abas `top-aba-destino` e `top-aba-fluxo`; desde a F6a, as abas de compras (§18.9).
+  abas `top-aba-destino` e `top-aba-fluxo`; desde a F6a, as abas de compras (§18.9); desde a F9a, a aba "Padrões
+  financeiros" (§18.10).
 - **Histórico** (`top-historico.tsx`):
   - `secoesAlteradas` aceita os nomes de `SECOES_CONFIGURACAO_TOP_V5`;
   - numa versão no 5, um bloco por seção de extensão, com o rótulo e as `linhas` da definição
     (`blocosDasSecoesDeExtensao`, `:341`; nenhum na F4; Destino e Fluxo desde a F5a, "Fluxo de compra" e "Divergência
-    com o pedido" desde a F6a);
+    com o pedido" desde a F6a, "Padrões financeiros" desde a F9a — os padrões da versão numa linha à parte);
   - "Formato da configuração: 5" e "Regras gerais e aprovação: executadas" saem do portão do domínio.
 - **"Local de estoque"** (os dois editores e o histórico; identificadores iguais):
   - "Exigir local de estoque" (`top-campo-estoque-armazem`; histórico `:374`);
@@ -2483,12 +2485,13 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 
 ### 18.8 O que fica para depois
 
-- As seções das F7 a F10 e as telas dos tipos "sem tela ainda", cada uma na sua fase (`docs/OPERACOES-CONTRACT.md` §1
-  e §2). As da F5 (Destino e Fluxo) entraram na F5a, e as da F6 (Fluxo de compra e Divergência com o pedido), na F6a;
+- As seções das F7 e F10 e as telas dos tipos "sem tela ainda", cada uma na sua fase (`docs/OPERACOES-CONTRACT.md` §1
+  e §2). As da F5 (Destino e Fluxo) entraram na F5a, as da F6 (Fluxo de compra e Divergência com o pedido), na F6a, e a
+  da F9 (Padrões financeiros), na F9a (§18.10);
   a tela da requisição, do consumo e da devolução de consumo é da F5b, e a do orçamento de compra, da F6b.
-- As famílias novas no registry: manejo, batelada e movimento bancário (requisição de material, consumo e devolução de
-  consumo nasceram na F5a; orçamento de compra, na F6a).
-- A prova do lado verdadeiro do detector, depois do merge, e a medição do CONJUNTO de seções (F5a e F6a).
+- As famílias novas no registry: manejo e batelada (requisição de material, consumo e devolução de consumo nasceram na
+  F5a; orçamento de compra, na F6a; o movimento bancário nasceu na F9a).
+- A prova do lado verdadeiro do detector, depois do merge, e a medição do CONJUNTO de seções (F5a, F6a e F9a).
 - Os rótulos de enum da TOP no web (`ROTULOS_TOP`): dívida anterior, fora desta fase.
 - O comportamento das Centrais com documento sem item é da F2 (decisão 279).
 
@@ -2524,3 +2527,50 @@ elas ligam, em §4. Aqui, o que é do contrato da TOP:
   do mapa e o `ErrorState` geral aparece do mesmo jeito.
 - **Skew:** sem o bloco `formato5`, o editor do 4, sem as abas (K-1 do 5, com a premissa que tira as seções de extensão
   do corpo no 5). O editor da base grava o 4 contra a API nova, sem promover (K-2 do 5).
+
+### 18.10 Os padrões financeiros (OPERACOES-01 F9a, decisão 286)
+
+O produto (chave, campos, neutro, famílias, recusas) está em `docs/OPERACOES-CONTRACT.md` §2; o que eles ligam, em §7.
+Aqui, o que é do contrato da TOP:
+- **Arquivo folha:** `packages/domain/src/tipo-operacao-secao-financeiro-padrao.ts`, com `import type` do ponto de
+  extensão (§18.3 (a)) e `financeiro-padroes.ts` (o perfil dos padrões, `perfilDosPadroesFinanceiros`, perguntado ao
+  registry: `provisao`, `semClassificacao`, `trocaPeloDocumento` — falso só na solicitação —, `campos` e `naturezas`).
+  Nome `financeiroPadrao`: `financeiro` é chave reservada. A lista, depois das da F5a e da F6a:
+  `DEFINICOES_SECOES_V5 = [SECAO_DESTINO, SECAO_FLUXO, SECAO_FLUXO_COMPRA, SECAO_DIVERGENCIA_PEDIDO,
+  SECAO_FINANCEIRO_PADRAO]` (`tipo-operacao-secoes-v5.ts:127-136`). A aba: `financeiroPadrao: AbaFinanceiroPadrao` em
+  `COMPONENTES_DAS_SECOES_V5` (`top-secoes-formato5.tsx:48-55`; `apps/web/src/features/admin/top-secao-financeiro-padrao.tsx`;
+  `top-campo-financeiroPadrao-provisao`, `-semClassificacao`, `-documentoTroca`; erros em
+  `top-erro-financeiroPadrao.<campo>`).
+- **A regra 4 cumprida por uma TABELA da versão** — `erp.tipos_operacao_versao_financeiro` (0045), no molde de
+  `erp.tipos_operacao_versao_condicoes` (0033): os UUIDs (natureza, centro, tipo de título, forma, conta) fora do JSON,
+  uma linha por versão, imutável. O corpo `padroesFinanceiros` (`.strict()`) tem a régua das condições permitidas:
+  presença = declaração; ausente no PUT = preservar e COPIAR para a N+1; mudar é conteúdo (N+1; trilha
+  `padroesFinanceiros: { antes, depois }`; `financeiroPadrao` em `secoesAlteradas` pelo `secoesComPadroes`,
+  `apps/api/src/routes/tipos-operacao.ts:789`); os mesmos = no-op. Conferência em `conferirPadroesPedidos` (`:487`) e,
+  para os preservados, `conferirPadroesPreservados` (`:506`). Detalhe (`:1023`) e histórico (`:1096`) com os padrões
+  resolvidos, em lote.
+- **Capabilities:** `padroesFinanceiros: 1` na RAIZ, depois de `formato5` (`:923`), no precedente de `reservaEstoque: 1`;
+  `contractVersion`, `configuracao`, `restricoes`, `regrasGerais` e `formato5` não mudam de forma (o `formato5.secoes`
+  ganha `financeiroPadrao` pelo domínio e fica com as cinco: `["destino", "fluxo", "fluxoCompra", "divergenciaPedido",
+  "financeiroPadrao"]`). O editor do 5 só liga com o MESMO conjunto que a tela escreve: a lista do domínio e o registro do
+  web mudaram juntos, na junção com a F5a e a F6a. O editor só mostra os campos dos padrões com o editor do 5 E a
+  capacidade (`apps/web/src/features/admin/top-contrato.tsx:454`); o detalhe sem a chave = `"nao_informado"` — os campos
+  ficam bloqueados com o aviso `top-padroes-financeiros-ilegiveis` e nada sobre eles vai no corpo; presente e malformado
+  nega o corpo inteiro (a régua das condições).
+- **Perfis derivados:** a aba "Padrões financeiros" depois de Estoque (e das seções da F5a e da F6a que a família usar)
+  em `vendas.pedido`, `vendas.venda`, `financeiro.conta_a_pagar`, `financeiro.conta_a_receber`,
+  `financeiro.movimento_bancario` e `compras.solicitacao`; toda outra família a tem no padrão (o pedido de compra e a
+  compra até a F9b). A família nova `financeiro.movimento_bancario` (a tabela `erp.bank_movements` inteira) e os tipos
+  `conta_pagar`, `conta_receber` e `movimento_bancario` com tela: o assistente passa a oferecer o grupo Financeiro. Com a
+  F5a e a F6a: 28 famílias no registry (28 perfis), 22 tipos no catálogo, 20 com família, 12 com tela e 16 famílias sem
+  tela no passo 1; a matriz das regras gerais continua com 13 (as do Financeiro não entram).
+- **No 5, fora do tipo:** a seção fora do neutro numa família que não a usa é a recusa de §18.5 ("Esta operação não usa a
+  seção Padrões financeiros."); dentro da família, `recusasDoFinanceiroPadraoDaFamilia` (a provisão fora do pedido de
+  venda, "exigir" onde não há "sem natureza e centro"), na lista única de `conferirFiscalDaFamilia` (`:288`).
+- **Execução** (`apps/api/src/lib/financeiro-top.ts:62-74`): sem versão ou versão inexistente → neutro; ilegível ou 1 a 4
+  → neutro e padrões nulos; 5 de família sem perfil → neutro; 5 → a seção e os padrões da versão CONGELADA no documento
+  (a TOP corrente no avulso e no movimento; a TOP padrão da família na solicitação). A conta padrão é reconferida por
+  quem lança (`contaPadraoUtilizavel`, `apps/api/src/lib/financeiro-padroes-top.ts:181-196`, com
+  `MENSAGEM_CONTA_PADRAO_INUTILIZAVEL`): a versão é imutável, o cadastro da conta não.
+- **Skew:** sem `padroesFinanceiros`, o editor não mostra os campos e não manda a chave (a API anterior a recusaria). O
+  detector do web da base continua o da F4 (o CONJUNTO de seções é medido na F12).

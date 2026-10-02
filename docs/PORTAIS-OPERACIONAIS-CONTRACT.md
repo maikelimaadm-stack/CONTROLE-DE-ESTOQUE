@@ -646,4 +646,23 @@ As "Movimentações Financeiras" do §3 ganham a sua Central: o menu Financeiro 
 Fluxo e resultado e Adiantamentos. O financeiro NÃO usa o motor da Central de documento (VISUAL-UX-04): cada linha é uma
 parcela de título, e a grade é a `DataTable` sobre o `Base1Grid`, com seleção para as ações em lote. Baixa, estorno,
 transferência, adiantamento e compensação continuam efeitos de um título ou de uma conta, sem TOP: a TOP financeira é da
-F9 (decisão 286). Contrato em `docs/OPERACOES-CONTRACT.md` §6.
+F9 (decisão 286; ver abaixo). Contrato em `docs/OPERACOES-CONTRACT.md` §6.
+
+### O financeiro pela TOP na Central Financeira (OPERACOES-01 F9a, decisão 286)
+
+Com `financeiroPelaTop` declarado, o lançamento avulso (só o novo) e o "Novo movimento bancário" começam pelo "Tipo de
+operação" da família (`fin-lancamento-top`, `fin-movimento-top`; a lista é do servidor, `GET /api/financeiro/tops`).
+Escolher a TOP aplica os padrões dela — tipo de título e conta prevista (no movimento, a conta) e a natureza e o centro
+da 1ª linha do rateio —, sem apagar o resto do que foi digitado; a escolha nunca é automática (nem a TOP padrão): sem
+escolha, o corpo de hoje. A TOP que não deixa o documento trocar os padrões trava esses campos (aviso
+`fin-padroes-travados` "Esta operação não deixa trocar os padrões."; "Padrão da operação: não muda neste lançamento"; no
+rateio em R$, a natureza e o centro desabilitados em todas as linhas, com safra, área e valor livres, `fin-rateio-travado`;
+no "Novo movimento bancário", que usa o editor de rateio compartilhado, a trava é por reaplicação — a prop no editor
+compartilhado é pendência registrada na decisão 286). Família sem TOP ativa: `fin-sem-top` "Nenhum tipo de operação
+ativo para este lançamento: ele segue sem operação.". O detalhe do título mostra a origem pelo nome e "Tipo de operação:
+<código> — <nome> (versão N)"; o previsto mostra o aviso `fin-aviso-previsto` e não oferece Baixar, Editar, Cancelar nem
+Duplicar. Com `capacidades.lcdpr`, a baixa bancária e o movimento de entrada ou saída de uma empresa mostram "Imóvel
+rural (LCDPR)" com o padrão da empresa já escolhido (`fin-baixa-imovel`, `fin-movimento-imovel`), e as baixas do
+detalhe, a coluna "Imóvel rural"; a baixa em lote da Central ainda não mostra o campo (o servidor aplica o padrão de
+cada empresa). Continua sem o motor da Central de documento: a Central de Vendas ainda não pré-preenche os padrões da
+TOP (F2/F3b).

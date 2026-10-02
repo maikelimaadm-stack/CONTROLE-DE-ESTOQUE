@@ -14,7 +14,7 @@
 ### O catálogo do passo 1 (decisão 281) · IMPLEMENTADO
 
 A TOP nasce pelo TIPO DE MOVIMENTO: o passo 1 do assistente do editor oferece os tipos AGRUPADOS, e só os que têm tela.
-A fonte única é `CATALOGO_TIPOS_MOVIMENTO_TOP` (`packages/domain/src/tipo-operacao-catalogo.ts:138-161`). O servidor o
+A fonte única é `CATALOGO_TIPOS_MOVIMENTO_TOP` (`packages/domain/src/tipo-operacao-catalogo.ts:140-165`). O servidor o
 publica em `GET /api/admin/tipos-operacao/capabilities` › `formato5.catalogo`, e a tela o lê com o leitor estrito
 (`lerCatalogoTop`). Nenhuma lista de tipo, grupo ou família mora no web.
 
@@ -39,26 +39,28 @@ publica em `GET /api/admin/tipos-operacao/capabilities` › `formato5.catalogo`,
 | 17 | Módulos | Manejo | `manejo` | — (a criar) | não | F10 (287) |
 | 18 | Módulos | Batelada | `batelada` | — (a criar) | não | F10 (287) |
 | 19 | Módulos | Produção de ração | `producao_racao` | `estoque.producao_de_racao` | não | F10 (287) |
-| 20 | Financeiro | Conta a pagar | `conta_pagar` | `financeiro.conta_a_pagar` | não | F9 (286) |
-| 21 | Financeiro | Conta a receber | `conta_receber` | `financeiro.conta_a_receber` | não | F9 (286) |
-| 22 | Financeiro | Movimento bancário | `movimento_bancario` | — (a criar) | não | F9 (286) |
+| 20 | Financeiro | Conta a pagar | `conta_pagar` | `financeiro.conta_a_pagar` | sim | F9 (286) |
+| 21 | Financeiro | Conta a receber | `conta_receber` | `financeiro.conta_a_receber` | sim | F9 (286) |
+| 22 | Financeiro | Movimento bancário | `movimento_bancario` | `financeiro.movimento_bancario` | sim | F9 (286) |
 
 Regras:
 - A família de cada tipo é PERGUNTADA ao registry (pela tabela e pela variante), nunca escrita no catálogo. Registry
   sem a variante = tipo sem família.
 - "Tem tela" só vale com família (fail-closed).
-- "Tem tela" = a tela que lança o documento cita a TOP. Hoje, só os 9 cujo documento cita a TOP. A F5a (decisão 282)
-  criou a família das três da movimentação interna, e a F6a (decisão 283), a do orçamento de compra, e as deixou sem
-  tela: o documento já existe na API, e a tela é da F5b e da F6b. Hoje, 19 dos 22 tipos têm família; sem família, só
-  Manejo, Batelada e Movimento bancário.
+- "Tem tela" = a tela que lança o documento cita a TOP. Hoje, os 9 cujo documento cita a TOP e os 3 do Financeiro (F9,
+  decisão 286: o lançamento avulso da Central e o "Novo movimento bancário" escolhem a TOP primeiro) — 12 com tela. A
+  F5a (decisão 282) criou a família das três da movimentação interna, e a F6a (decisão 283), a do orçamento de compra, e
+  as deixou sem tela: o documento já existe na API, e a tela é da F5b e da F6b. A F9a criou a do movimento bancário
+  (`financeiro.movimento_bancario`, a tabela `erp.bank_movements` inteira). Hoje, 20 dos 22 tipos têm família; sem
+  família, só Manejo e Batelada. O registry tem 28 famílias, e 16 delas ficam sem tela no passo 1.
 - **Ligar um tipo** é trabalho da fase que cria a tela: ela troca a linha do catálogo — `temTela`, e a família quando ela
   nascer no registry — e atualiza os testes que fixam o estado de hoje (`top-formato5-catalogo.test.ts` CT-1/CT-2,
   `top-formato5-top.test.ts` T5-1, `tipos-operacao.spec.ts`, `top-assistente.spec.ts`).
-- Grupo sem tipo com tela some do passo 1 (hoje: Módulos e Financeiro).
+- Grupo sem tipo com tela some do passo 1 (hoje: Módulos).
 - As 8 famílias do registry que ficam FORA dos tipos (`estoque.entrada_manual`, `estoque.documento_fiscal`,
   `estoque.requisicao`, `estoque.baixa`, `estoque.devolucao`, `estoque.transferencia_entre_armazens`,
   `estoque.transferencia_entre_empresas`, `compras.solicitacao`) são das telas antigas: têm perfil e continuam
-  editáveis, mas a tela não cria TOP delas. Nem das famílias de Módulos e Financeiro, enquanto não tiverem tela.
+  editáveis, mas a tela não cria TOP delas. Nem das famílias de Módulos, enquanto não tiverem tela.
 - A API continua aceitando a criação de TOP de qualquer família do registry (`POST` inalterado; `/familias` devolve o
   registry inteiro). O assistente só não as oferece.
 
@@ -68,14 +70,15 @@ Regras:
 
 **O formato 5** é o formato 4 + as SEÇÕES DE EXTENSÃO das fases F5 a F10, cada uma uma chave de raiz nova da
 configuração da TOP. Na F4 a lista de seções nasceu VAZIA; a F5a (decisão 282) acrescentou `destino` e `fluxo`, e a
-F6a (decisão 283), `fluxoCompra` e `divergenciaPedido`, nesta ordem (subseções abaixo). O contrato técnico — o leitor, a leitura dos formatos 1 a 4
+F6a (decisão 283), `fluxoCompra` e `divergenciaPedido`, e a F9a (decisão 286), `financeiroPadrao`, nesta ordem
+(subseções abaixo). O contrato técnico — o leitor, a leitura dos formatos 1 a 4
 como 5, o ponto de extensão, as recusas, a capacidade e o skew — está em `docs/TIPO-OPERACAO-CONTRACT.md` §18.
 - Toda TOP gravada nos formatos 1 a 4 é LIDA como 5, com os padrões de hoje. Nada é gravado até alguém salvar.
 - Salvar com mudança grava o 5, e o formato não volta atrás.
 - **As regras que travam nascem desligadas:** o neutro de toda seção nova é o comportamento de hoje, e quem liga uma
   regra é o Maike, TOP por TOP (decisão 281, item (4) da 240).
 
-**O perfil de cada família** (`perfilDoTipoTop`, `PERFIS_TIPO_TOP`; `packages/domain/src/tipo-operacao-catalogo.ts:199-240`)
+**O perfil de cada família** (`perfilDoTipoTop`, `PERFIS_TIPO_TOP`; `packages/domain/src/tipo-operacao-catalogo.ts:203-244`)
 diz o que o editor do 5 mostra e o que o servidor aceita no 5. Ele é DERIVADO, nunca escrito:
 - **abas:**
   - Identificação, Geral e Estoque sempre;
@@ -91,15 +94,17 @@ diz o que o editor do 5 mostra e o que o servidor aceita no 5. Ele é DERIVADO, 
 
 | famílias | abas no editor do 5 | exigências da Geral | seções no padrão |
 |---|---|---|---|
-| `vendas.venda` | Identificação, Geral, Próximas operações, Estoque, Financeiro, Fiscal, Aprovação, Execução | Exigir cliente, centro de resultado, observação, transportadora | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
-| `vendas.orcamento`, `vendas.pedido` | Identificação, Geral, Próximas operações, Estoque, Financeiro, Fiscal | idem venda | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
-| `compras.pedido` | Identificação, Geral, Próximas operações, Estoque, Fluxo de compra, Financeiro, Fiscal, Aprovação | Exigir fornecedor, centro de resultado, observação, transportadora | Destino, Fluxo, Divergência com o pedido |
-| `compras.compra` | Identificação, Geral, Estoque, Divergência com o pedido, Financeiro, Fiscal, Aprovação, Execução | idem pedido de compra | Destino, Fluxo, Fluxo de compra |
-| `compras.orcamento` (F6a; sem tela até a F6b) | Identificação, Geral, Estoque, Financeiro, Fiscal | Exigir fornecedor, observação | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
-| `estoque.entrada`, `.transferencia`, `.ajuste`, `.devolucao_consumo` | Identificação, Geral, Estoque, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
-| `estoque.saida`, `estoque.requisicao_material` | Identificação, Geral, Estoque, Destino, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Fluxo, Fluxo de compra, Divergência com o pedido |
-| `estoque.consumo` | Identificação, Geral, Estoque, Destino, Fluxo, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Fluxo de compra, Divergência com o pedido |
-| as 14 sem documento que cite a TOP (as 8 antigas, Módulos e Financeiro) | Identificação, Geral, Estoque, Financeiro, Fiscal | Exigir parceiro, centro de resultado, observação, transportadora | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
+| `vendas.venda` | Identificação, Geral, Próximas operações, Estoque, Padrões financeiros, Financeiro, Fiscal, Aprovação, Execução | Exigir cliente, centro de resultado, observação, transportadora | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
+| `vendas.pedido` | Identificação, Geral, Próximas operações, Estoque, Padrões financeiros, Financeiro, Fiscal | idem venda | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
+| `vendas.orcamento` | Identificação, Geral, Próximas operações, Estoque, Financeiro, Fiscal | idem venda | Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
+| `compras.pedido` | Identificação, Geral, Próximas operações, Estoque, Fluxo de compra, Financeiro, Fiscal, Aprovação | Exigir fornecedor, centro de resultado, observação, transportadora | Destino, Fluxo, Divergência com o pedido, Padrões financeiros (até a F9b) |
+| `compras.compra` | Identificação, Geral, Estoque, Divergência com o pedido, Financeiro, Fiscal, Aprovação, Execução | idem pedido de compra | Destino, Fluxo, Fluxo de compra, Padrões financeiros (até a F9b) |
+| `compras.orcamento` (F6a; sem tela até a F6b) | Identificação, Geral, Estoque, Financeiro, Fiscal | Exigir fornecedor, observação | Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
+| `estoque.entrada`, `.transferencia`, `.ajuste`, `.devolucao_consumo` | Identificação, Geral, Estoque, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
+| `estoque.saida`, `estoque.requisicao_material` | Identificação, Geral, Estoque, Destino, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
+| `estoque.consumo` | Identificação, Geral, Estoque, Destino, Fluxo, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
+| `compras.solicitacao` e as 3 do Financeiro (`financeiro.conta_a_pagar`, `.conta_a_receber`, `.movimento_bancario`; F9a) | Identificação, Geral, Estoque, Padrões financeiros, Financeiro, Fiscal | Exigir parceiro, centro de resultado, observação, transportadora | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
+| as outras 11 sem documento que cite a TOP (7 das 8 antigas e as 4 de Módulos com família) | Identificação, Geral, Estoque, Financeiro, Fiscal | Exigir parceiro, centro de resultado, observação, transportadora | Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
 
 Some do editor do 5 só a aba cujo valor o servidor já obriga ao padrão: Próximas operações sem destino possível,
 Aprovação só "Sem aprovação", Execução sem execução configurada — e Financeiro e Fiscal no documento de estoque
@@ -110,7 +115,7 @@ Aprovação só "Sem aprovação", Execução sem execução configurada — e F
 | o quê | código | caminho | mensagem |
 |---|---|---|---|
 | exigência que o documento do tipo não tem | `TIPO_OPERACAO_CONFIGURACAO_INVALIDA` (`combinacao_nao_suportada`) | `geral.<chave>` | O documento desta operação não tem este campo. |
-| seção que o tipo não usa, fora do padrão | idem | `estoque`, `financeiro`, `fiscal` ou o nome da seção (`destino`, `fluxo`, `fluxoCompra`, `divergenciaPedido`) | Esta operação não usa a seção <Seção>. |
+| seção que o tipo não usa, fora do padrão | idem | `estoque`, `financeiro`, `fiscal` ou o nome da seção (`destino`, `fluxo`, `fluxoCompra`, `divergenciaPedido`, `financeiroPadrao`) | Esta operação não usa a seção <Seção>. |
 | condição de pagamento num tipo sem Financeiro (a lista enviada, ou a preservada quando o PUT traz a configuração sem a lista) | `TIPO_OPERACAO_CONDICOES_INVALIDAS` | `condicoesPermitidas` | Esta operação não usa condições de pagamento. |
 
 O editor do 5 nunca chega a essas recusas: antes de gravar ele volta ao padrão o que o tipo não aceita e lista no
@@ -210,6 +215,45 @@ ordem das regras gerais: sem versão congelada → neutro; formato desconhecido 
 `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`); formatos 1 a 4 → neutro SEM LER a configuração, mesmo malformada (nunca recusa
 nova — regra 4 da decisão 277); 5 malformado → ilegível; 5 → a seção lida e normalizada.
 
+### Padrões financeiros (`financeiroPadrao`, decisão 286) · IMPLEMENTADO
+
+A seção da F9a (`packages/domain/src/tipo-operacao-secao-financeiro-padrao.ts`; a aba "Padrões financeiros", depois de
+Estoque e das seções da F5a e da F6a que a família usar). Chama `financeiroPadrao` porque `financeiro` é chave reservada
+(a seção de hoje, "gera a pagar, a receber ou nada", que continua igual). Guarda só REGRAS; os PADRÕES (UUIDs) moram na
+tabela da versão (§7).
+
+| campo | valores | neutro (o de hoje) | o que decide |
+|---|---|---|---|
+| `provisao` | booleano | `false` | o pedido de venda gera títulos PREVISTOS a receber ao ser salvo (§7) |
+| `documentoTroca` | booleano | `true` | desligado, o documento que informa natureza, centro, tipo de título, forma ou conta DIFERENTES dos padrões da TOP é recusado (vazio usa o padrão) |
+| `semClassificacao` | `padrao_legado` · `exigir` | `padrao_legado` | sem natureza e centro no documento nem na TOP: a 1ª natureza e o 1º centro por código (hoje) ou recusa |
+
+Famílias que usam a seção (o perfil dos padrões, `perfilDosPadroesFinanceiros`; a matriz em
+`packages/domain/src/financeiro-padroes.ts:113-120`; toda outra família a tem no padrão):
+
+| família | provisão | "sem natureza e centro" | o documento troca (`trocaPeloDocumento`) | padrões | natureza aceita |
+|---|---|---|---|---|---|
+| `vendas.pedido` | sim | sim | sim | natureza, centro, tipo de título, forma, conta | receita (`income` ou `both`) |
+| `vendas.venda` | não | sim | sim | natureza, centro, tipo de título, forma, conta | receita (`income` ou `both`) |
+| `financeiro.conta_a_receber` | não | não | sim | natureza, centro, tipo de título, conta | receita (`income` ou `both`) |
+| `financeiro.conta_a_pagar` | não | não | sim | natureza, centro, tipo de título, conta | despesa (`expense` ou `both`) |
+| `financeiro.movimento_bancario` | não | não | sim | natureza, centro, conta | qualquer |
+| `compras.solicitacao` | não | sim | não (o documento não informa padrão) | natureza, centro, tipo de título, conta | despesa (`expense` ou `both`) |
+
+O pedido e a compra de COMPRAS não usam a seção até a F9b (a regra de provisão do pedido de compra finalizado está
+declarada com `executa: false`, `packages/domain/src/financeiro-provisao.ts:54-57`).
+
+Recusas no 5 (422 `TIPO_OPERACAO_CONFIGURACAO_INVALIDA`, `combinacao_nao_suportada`): `financeiroPadrao.provisao` "A
+provisão vale só no pedido de venda."; `financeiroPadrao.semClassificacao` "O lançamento desta operação sempre informa
+natureza e centro: deixe "Usar a 1ª natureza e o 1º centro por código (como hoje)"."; a seção fora do neutro numa
+família que não a usa → "Esta operação não usa a seção Padrões financeiros.". Nos formatos 1 a 4 a chave é recusada
+(`campo_desconhecido`) e a execução lê o neutro.
+
+O editor mostra só o que a família usa: a caixa "Provisionar a receber ao salvar o pedido" só no pedido de venda; "Sem
+natureza e centro" na venda e na solicitação, e no pedido só com a provisão marcada; "O documento pode trocar os padrões"
+onde o documento informa algum padrão (não na solicitação). Um valor gravado fora do neutro continua visível para poder
+ser desligado; o servidor aceita as duas regras escondidas (sem efeito).
+
 ### As seções das fases seguintes · DESTINO DECLARADO (não implementado)
 
 Cada fase acrescenta a SUA seção pelo ponto de extensão (`docs/TIPO-OPERACAO-CONTRACT.md` §18.3) e escreve aqui uma
@@ -221,7 +265,7 @@ nomes são fixados pelo coordenador. A sugestão do plano da F4, não normativa:
 | F5 (282) | `destino` e `fluxo` | IMPLEMENTADAS — subseção "Destino e Fluxo" acima | — |
 | F5 (282) | `entrada` | não implementada na F5a: "sem nota" e "saldo inicial" são TOPs de entrada comuns (movimento `entry`); o saldo inicial com `opening_balance` e a recusa de duplicidade é pergunta ao Maike antes da F11 (decisão 282) | como hoje |
 | F6 (283) | `fluxoCompra` e `divergenciaPedido` | IMPLEMENTADAS — subseções acima | — |
-| F9 (286) | `financeiroPadrao` | natureza, centro, tipo de título, forma e conta padrão — em TABELA da versão, nunca UUID no JSON | sem padrão |
+| F9 (286) | `financeiroPadrao` | IMPLEMENTADA (F9a) — subseção "Padrões financeiros" acima | — |
 
 ## 3. Centrais e modos de produto
 
@@ -816,8 +860,8 @@ A preencher pela F7 (decisão 284).
 **Capacidade e version skew.** `GET /api/financeiro/capacidades` (qualquer membro autenticado) → `{ "centralFinanceira": 1 }`
 (`CAPACIDADE_CENTRAL_FINANCEIRA`, `packages/domain/src/financeiro-capacidade.ts`). O web lê com forma e versão EXATAS
 (`entendeCentralFinanceira`): 404 de rota (a API anterior), erro de rede, 5xx ou outra forma = ausência → o Financeiro de
-hoje, idêntico, e nenhum outro pedido a `/api/financeiro/*`. Nenhuma chave nova em `/auth/context` nem em outro bloco de
-capacidades. As permissões são as de hoje: estornar em lote = `{dir}.cancel_settlement`; alterar vencimento =
+hoje, idêntico, e nenhum outro pedido a `/api/financeiro/*`. Desde a F9a, a mesma resposta traz também
+`financeiroPelaTop: 1` (§7). A F8 não pôs chave nova em `/auth/context`; a F9a pôs `capacidades.lcdpr` (§7). As permissões são as de hoje: estornar em lote = `{dir}.cancel_settlement`; alterar vencimento =
 `{dir}.edit`; exportar = `{dir}.export`; conciliação = `ofx_imports.*`; DRE = `report.dre.view`; fluxo =
 `cash_flow.view`; naturezas padrão = `financial_categories.view`/`.edit`; `{dir}` = `payables` ou `receivables`.
 
@@ -832,11 +876,11 @@ mudam por dentro só com a Central declarada.
 **Situação, cartões e origem** (domínio, `packages/domain/src/financeiro-situacao.ts`, rótulos em
 `financeiro-rotulos.ts`):
 - situação calculada com o `current_date` do banco: `cancelled` → Cancelado; `paid` → Baixado; `partially_paid` → Baixa
-  parcial; `open` com vencimento < hoje → Vencido, senão A vencer; `previsto` → Previsto (F9; nenhum título o tem);
+  parcial; `open` com vencimento < hoje → Vencido, senão A vencer; `previsto` → Previsto (a provisão pela TOP, §7);
   status desconhecido → `VALIDATION_ERROR`;
 - cartões: Vencidos, Vencem hoje, A vencer (`open` e `partially_paid` pelo vencimento; valor = Σ saldo), Pagos/Recebidos
   no período (baixa confirmada no período: o de `periodo_campo=baixa`, senão o mês do banco; valor = Σ `amount` das
-  baixas), Previstos (`{ quantidade: 0, valor: "0.00", disponivel: false }` até a F9). Os cartões usam o recorte da lista
+  baixas), Previstos (os títulos previstos do recorte: quantidade e Σ valor líquido, `disponivel: true` — §7). Os cartões usam o recorte da lista
   SEM o cartão e a situação;
 - origem: avulso (`manual` ou nulo), venda, compra, nota, folha, movimento, pecuária, transferência, crédito (o
   título-crédito do excedente), outros. "Título de documento" = origem não nula e diferente de `manual`;
@@ -946,10 +990,10 @@ Query e corpo estritos; dinheiro só como TEXTO decimal (número → 422).
   movimento que o usuário não pode alterar → 409). A importação é recalculada (`reconciled` sem pendentes).
 - `GET /financeiro/fluxo` — `cash_flow.view` + `bank_movements.view` (+ `bank_accounts.view` no da organização); `de` e
   `ate` juntos (padrão: o mês do banco), `agrupamento` (dia|semana|mes), `contas`, `empresa_id`, `agrupar_por`
-  (nenhum|conta|empresa), `previstos` (1 → 422 "Os previstos chegam com a provisão pela TOP") → `{ agrupamento, de, ate,
+  (nenhum|conta|empresa), `previstos` (1 → a série da provisão, §7) → `{ agrupamento, de, ate,
   modo: organizacao|empresa, saldo_inicial (nulo por empresa), periodos: [{ inicio, fim, realizado: { entradas, saidas,
   transferencias_liquidas, saldos_iniciais }, previsto: { entradas, saidas }, saldo_realizado, saldo_projetado }],
-  previsto_em_atraso, previstos_incluidos: false, direcoes_previstas, grupos? }`.
+  previsto_em_atraso, previstos_incluidos, direcoes_previstas, grupos? }`.
 - `GET /financeiro/resultado` — `report.dre.view`; `de`, `ate`, `regime` (competencia padrão | caixa), `empresa_id` →
   `{ grupos: [{ grupo, total, naturezas }], receitaLiquida, resultadoOperacional, investimentos, resultadoFinal, regime,
   de, ate }`. Competência: títulos não cancelados e que não são adiantamento, por `coalesce(data_competencia, emissão)`,
@@ -976,15 +1020,173 @@ Query e corpo estritos; dinheiro só como TEXTO decimal (número → 422).
 | web anterior × API nova | corpos e chaves de hoje; as recusas novas (defeitos): título de documento, movimento confirmado, "gera obrigação" sem empresa, conta OFX e destino de transferência inválidos, "Único" com 2+ empresas, id repetido no lote; o lote pula o título fora do escopo; a baixa com desconto quita o `amount` | K-2 + `central-financeira-defeitos` |
 | API anterior × banco novo | a baixa com desconto quita só o `amount`; PUT de movimento com rateio → 403; PUT de valor de movimento confirmado → 409 | `operacoes-01-0042` (DB-4) |
 
-**Fora (F8):** a 1ª natureza e o 1º centro "por código" de `sales.ts`, `supply.ts` e `livestock.ts` (F9, decisão 286); a
-provisão, a situação "previsto" e a TOP financeira (F9); o saldo do painel financeiro pela view recortada e a lista
+**Fora (F8):** a 1ª natureza e o 1º centro "por código" de `sales.ts`, `supply.ts` e `livestock.ts` (F9, decisão 286 —
+feito na F9a para a venda e a solicitação; a pecuária fica no recuo, §7); a provisão, a situação "previsto" e a TOP
+financeira (F9 — feito na F9a, §7); o saldo do painel financeiro pela view recortada e a lista
 antiga de importações OFX sem paginação (F11/F12); recorrência e parcelamento de adiantamento; conciliação automática
 da Sugestão e da Soma; CNAB, boleto, PIX, Open Finance, cartões e cheques, renegociação com juros compostos, aprovação
-por alçada, contabilização e retenções, LCDPR (fora da PR).
+por alçada, contabilização e retenções, o arquivo oficial do LCDPR (fora da PR; os dados do LCDPR entraram na F9a, §7).
 
 ## 7. Financeiro pela TOP e LCDPR
 
-A preencher pela F9 (decisão 286).
+### F9a — o financeiro pela TOP, o título previsto e o LCDPR (decisão 286) · IMPLEMENTADO
+
+> Migration `0045_financeiro_pela_top_e_lcdpr.sql` (a última da PR, depois da 0044; não depende da 0043 nem da 0044).
+> Permissão nova: `imoveis_rurais.*`. Implantação em `docs/DEPLOYMENT.md` § OPERACOES-01 › F9a. A seção do formato 5:
+> §2 ("Padrões financeiros"). A F9b liga a provisão do pedido de compra finalizado e a TOP na compra.
+
+**Capacidades (todas aditivas, forma e versão exatas; ausente = a tela de hoje e nenhum pedido às rotas novas):**
+
+| onde | chave | o que libera na web |
+|---|---|---|
+| `GET /api/financeiro/capacidades` | `financeiroPelaTop: 1` (`{ centralFinanceira: 1, financeiroPelaTop: 1 }`; `entendeFinanceiroPelaTop`) | a TOP no lançamento avulso e no movimento; o cartão "Previstos" e a situação "Previsto"; "Incluir previstos" no fluxo |
+| `GET /api/auth/context` | `capacidades.lcdpr: 1` (por último; `entendeLcdpr`) | "Tipo no LCDPR" na natureza; o imóvel na baixa e no movimento; a conferência no Livro Caixa |
+| `GET /api/admin/tipos-operacao/capabilities` | `padroesFinanceiros: 1` (na raiz, depois de `formato5`) | os campos dos padrões na aba "Padrões financeiros" e a chave `padroesFinanceiros` no corpo |
+
+**Os padrões da versão da TOP** — tabela `erp.tipos_operacao_versao_financeiro` (uma linha por versão, imutável).
+Corpo de `POST` e `PUT /api/admin/tipos-operacao[/:id]`: `padroesFinanceiros: { naturezaId?, centroCustoId?, tipoTituloId?,
+formaPagamentoId?, contaBancariaId? }` (`uuid | null`, `.strict()`). Presença = declaração; ausente no PUT preserva e
+copia para a versão nova; ausente no POST = nenhum. Só no formato 5, só nas famílias do perfil e só os campos do perfil.
+Leitura: o detalhe e cada item de `/:id/versoes` têm `padroesFinanceiros: { natureza: {id,codigo,nome}|null, centro:
+{id,codigo,nome}|null, tipoTitulo: {id,nome}|null, formaPagamento: {id,nome}|null, conta: {id,codigo,descricao}|null } | null`
+(`null` = a versão não tem padrão); mudar os padrões cria a N+1 e marca `financeiroPadrao` em `secoesAlteradas`.
+
+| recusa (422 `TIPO_OPERACAO_CONFIGURACAO_INVALIDA`) | caminho | mensagem |
+|---|---|---|
+| padrões fora do formato 5 | `padroesFinanceiros` | Os padrões financeiros exigem a configuração no formato 5. |
+| família sem perfil | `padroesFinanceiros` | Esta operação não usa padrões financeiros. |
+| campo fora do perfil | `padroesFinanceiros.<campo>` | Esta operação não usa a natureza / o centro de resultado / o tipo de título / a forma de pagamento / a conta padrão. |
+| natureza inexistente, alheia, excluída, inativa, sintética ou do tipo errado | `padroesFinanceiros.naturezaId` | Natureza padrão inválida para esta operação: escolha uma natureza analítica, ativa e do tipo da operação. |
+| centro idem | `padroesFinanceiros.centroCustoId` | Centro de resultado padrão inválido: escolha um centro analítico e ativo. |
+| tipo de título de outra organização ou inexistente | `padroesFinanceiros.tipoTituloId` | Tipo de título padrão inválido. |
+| forma alheia, inexistente ou inativa | `padroesFinanceiros.formaPagamentoId` | Forma de pagamento padrão inválida: escolha uma forma ativa. |
+| conta alheia, inexistente, excluída ou inativa | `padroesFinanceiros.contaBancariaId` | Conta padrão inválida: escolha uma conta ativa da organização. |
+| PUT com configuração e padrões PRESERVADOS que não cabem | os da forma | (envelope) Os padrões financeiros da versão vigente não valem para esta configuração; envie os padrões vazios. |
+
+**A classificação do lançamento** (natureza e centro), na venda, no previsto do pedido e na solicitação: documento com
+os DOIS → o do documento; a TOP no 5 com os DOIS padrões → o padrão da TOP (revalidado como o do documento); "exigir" →
+recusa; senão o padrão LEGADO de hoje (a 1ª natureza analítica ativa do tipo e o 1º centro analítico ativo, por código),
+só no campo que a TOP não deu. TOP nos formatos 1 a 4, ou sem TOP: exatamente o caminho de hoje.
+
+| onde | recusa | código / caminho | mensagem |
+|---|---|---|---|
+| venda (prévia e confirmação), salvar do pedido que provisiona | "exigir" sem o par | 422 `TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA`, `financeiroPadrao.semClassificacao` | A operação exige natureza e centro de resultado: informe no documento ou configure os padrões da TOP. |
+| idem | `documentoTroca` desligado e o documento informou outra natureza, centro ou forma | idem, `financeiroPadrao.documentoTroca` | Esta operação não deixa trocar a natureza e o centro de resultado: use o padrão da TOP. (os campos trocados, com vírgulas e "e") |
+| idem (no pedido, só quando ele vai criar previsto novo) | a conta padrão inativada ou excluída depois de gravada a TOP | idem, `padroesFinanceiros.contaBancariaId` | A conta padrão da operação está inativa ou foi excluída: ajuste os padrões da TOP. |
+| solicitação finalizada (TOP padrão da família `compras.solicitacao`) | "exigir" sem o par | 422 `VALIDATION_ERROR`, sem título e sem transição | A operação padrão da solicitação exige natureza e centro de resultado: configure os padrões da TOP. |
+| idem | a conta padrão inutilizável | idem | A conta padrão da operação está inativa ou foi excluída: ajuste os padrões da TOP. |
+| venda e previsto, legado sem par na organização | — | 422 `VALIDATION_ERROR` (o de hoje) | Cadastre uma natureza de receita analítica e um centro de resultado analítico |
+
+A conta padrão é reconferida por quem lança (`contaPadraoUtilizavel` e `MENSAGEM_CONTA_PADRAO_INUTILIZAVEL`,
+`apps/api/src/lib/financeiro-padroes-top.ts:181-196`): a versão é imutável, o cadastro não; o tipo de título não tem
+ativo nem exclusão. Na venda, o tipo de título e a conta prevista da TOP vão para os títulos, e a TOP e a versão da venda
+vão para o título em qualquer formato. A forma padrão SÓ confere (não é aplicada; o pré-preenchimento é da Central de
+Vendas, pendente na F2/F3b). Prévia: `classificacao.origem` continua `documento` ou `padrão legado`; o padrão da TOP sai
+como `origem: "documento"` + `padraoDaTop: true`; a trilha da confirmação guarda `"padrão da TOP"`. A pecuária
+(`livestock.ts:185-191`) continua no legado: `animal_movements` não tem família nem TOP (NÃO FEITO; dono: a F10; aceite
+do Maike).
+
+**O título previsto** — `financial_titles.status = 'previsto'` (situação "Previsto", status "Prevista"):
+- nasce só pela provisão de um documento (origem obrigatória, nada pago); só sai CANCELADO (o banco guarda); nunca recebe
+  baixa (o banco recusa: `CONFLICT`);
+- `POST /financial/{dir}/:id/settle` (principal ou contrário da cruzada) → 409 "Título previsto não recebe baixa: ele dá
+  lugar ao título de verdade quando o documento é faturado."; `PUT …/:id` → 409 "Título previsto muda pelo documento de
+  origem."; `POST …/:id/duplicate` → 409 "Título previsto não se duplica."; cancelar pelo financeiro → 409 (título de
+  documento, F8); baixa em lote, cancelamento em lote e alterar vencimento → pulado (`situacao`);
+- fora de: `GET /financial/{dir}` sem `status` (lista e totais; `status=previsto` traz só eles), a lista padrão da Central
+  (`SITUACOES_TITULO_DA_LISTA`), o DRE por competência, os adiantamentos, os painéis, o orçamento anual e os relatórios de
+  `/api/reports/:key` (`apps/api/src/routes/reports.ts`: as 12 leituras "não cancelado" são
+  `t.status not in ('cancelled','previsto')` desde o merge com a F5a e a F6a);
+- dentro de: `situacao=previsto` e o cartão `previstos` da Central (`{ quantidade, valor (Σ amount − discount), disponivel:
+  true }`; o cartão sozinho filtra os previstos); o fluxo com `previstos=1`: cada período (e grupo) com `provisao: {
+  entradas, saidas }` (pelo vencimento, os mesmos filtros do previsto) e `saldo_projetado_com_previstos` (o projetado +
+  a provisão acumulada; nulo sem saldo), e a raiz com `previstos_incluidos: true` e `provisao_em_atraso`; com
+  `previstos=0`, a resposta da F8, chave por chave.
+
+**A provisão do pedido de venda** (`apps/api/src/lib/financeiro-provisao.ts`): TOP do pedido no 5 com `provisao` ligada.
+ALVO = (o total do pedido; com o saldo encerrado ou o pedido convertido, Σ das vendas geradas não canceladas) − Σ vendas
+confirmadas; zero com o pedido cancelado ou a TOP sem provisão. Recalculado ao salvar o pedido (POST, PUT, PATCH,
+conversão), ao confirmar e cancelar uma venda dele, ao encerrar o saldo e ao cancelar o pedido. Mesmas parcelas (valor
+e vencimento, como multiconjunto), empresa, cliente, versão e classificação → nada muda. Senão: os previstos atuais
+CANCELADOS (`cancel_reason`: "Pedido alterado", "Faturado na venda <código>", "Venda <código> cancelada", "Saldo do pedido
+encerrado: <motivo>", "Pedido cancelado[: <motivo>]", "A operação do pedido não provisiona mais"; `cancelled_at`,
+`cancelled_by`) e, com alvo > 0, os novos: `PED-<código>`, as parcelas do plano do pedido aplicadas ao alvo (o plano que
+não cabe vira uma parcela), vencimento do plano/do pedido/da data, emissão hoje sem conferência de congelamento, o tipo
+de título e a conta da TOP, a TOP e a versão do pedido, origem `sales_documents` = o pedido. Trilha `provisao` no pedido
+quando algo muda. O detalhe do pedido lista os previstos em `titles` (vivos e cancelados; mostrá-los à parte é pendência
+da F2/F3b). Cada mudança do total gasta um código de título e um ID Global.
+
+**A TOP financeira no lançamento** — `GET /api/financeiro/tops?direcao=pagar|receber|movimento` (permissão pela direção:
+`payables.create`, `receivables.create`, `bank_movements.create`; sem ela 403; query estrita, 422) →
+`{ capacidades: { financeiroPelaTop: 1 }, itens: [{ id, codigo, nome, versao, versaoId, padrao, secao: { provisao,
+documentoTroca, semClassificacao }, padroes: { natureza, centro, tipoTitulo, formaPagamento, conta } }] }` (as ativas da
+família, versão corrente, a padrão primeiro; padrões só de versão no 5).
+- `POST /financial/{dir}` `+ tipo_operacao_id` (opcional): TOP da família da direção (senão 422 `TIPO_OPERACAO_INDISPONIVEL`
+  "Tipo de operação indisponível para este lançamento"); `title_type_id` e `conta_prevista_id` ausentes → os da TOP;
+  `documentoTroca` desligado e natureza, centro, tipo ou conta diferentes → 422 `VALIDATION_ERROR` com
+  `details[].path` = os campos; TOP e versão em todas as parcelas e recorrências; trilha `create` com
+  `{ tipoOperacaoId, tipoOperacaoVersaoId }`. `PUT …/:id` com outra TOP (ou nula numa com TOP) → 422 "A operação do título
+  não muda na edição." (path `tipo_operacao_id`).
+- `POST /financial/bank-movements` `+ tipo_operacao_id`, `imovel_rural_id` (opcionais): a TOP da família do movimento; a
+  troca confere natureza, centro e conta; o "gera obrigação" leva a TOP ao título. `PUT` do movimento confirmado com outro
+  imóvel ou outra TOP → 409 (a imutabilidade de hoje).
+- `GET /financial/{dir}/:id` `+ origem_nome` ("Pedido de venda 0003", "Compra 12", "Avulso", ou o rótulo da origem — nunca
+  o valor cru) e `tipo_operacao: { id, codigo, nome, versao } | null`; cada baixa `+ imovel_rural_nome`.
+  `GET /financial/bank-movements/:id` `+ imovel_rural_nome`, `tipo_operacao_codigo`, `tipo_operacao_nome`,
+  `tipo_operacao_versao`. A linha da Central `+ tipo_operacao_id`; o filtro `tipo_operacao_id` casa também a TOP gravada
+  no título.
+
+**O LCDPR:**
+- cadastro `imoveis_rurais` (registry; `/cadastros/imoveis_rurais`; por empresa; menu Configurações › Financeiro ›
+  "Imóveis rurais"): Empresa, Nome do imóvel, "CIB / NIRF (ITR)" (8 dígitos: "Informe os 8 dígitos do CIB (NIRF do ITR),
+  só números."), CAEPF (14 dígitos: "Informe os 14 dígitos do CAEPF (só números)."), Inscrição estadual, Tipo de
+  exploração (1 — Exploração individual … 6 — Outros), % de participação (> 0 e ≤ 100), "Imóvel padrão da empresa" (um
+  por empresa; o segundo → 409), Ativo; exclusão lógica;
+- natureza: "Tipo no LCDPR" (`tipo_lcdpr`: 1 — Receita da atividade rural, 2 — Despesa de custeio e investimento,
+  3 — Produto entregue de adiantamento, Fora do LCDPR), só com a capacidade; os códigos moram numa lista única do domínio
+  (`TIPOS_LCDPR_NO_LIVRO` e `TIPO_LCDPR_FORA`, `packages/domain/src/financeiro-lcdpr.ts:25-34`; `TIPOS_LCDPR` deriva
+  deles), e o SQL da API não tem literal de tipo;
+- baixa (`settle`, `imovel_rural_id: uuid | null`, ausente = o padrão da empresa do título; `settle-batch`,
+  `imovel_rural_id: uuid` conferido contra a empresa de CADA título) e movimento de entrada ou saída com empresa: o imóvel
+  informado da MESMA empresa, ativo e vivo — senão 422 "Imóvel rural inválido para a empresa do lançamento." (path
+  `imovel_rural_id`); compensação (cruzada, adiantamento) com imóvel → 422 "A compensação não movimenta caixa: não leva
+  imóvel rural."; transferência → 422 "Transferência entre contas não leva imóvel rural (fica fora do LCDPR)."; o MESMO
+  imóvel no principal, nos componentes, na tarifa do lote e na baixa do crédito do excedente. Na baixa, a FK do imóvel é
+  só com a organização (`title_settlements` não tem empresa): a API confere a empresa do título; no movimento, a FK
+  inclui a empresa. O movimento de financiamento ou de devolução de cheque não recebe o imóvel padrão (risco declarado na
+  decisão 286);
+- `GET /api/financeiro/imoveis-rurais/opcoes?empresa_id=` (uma de `payables.settle`, `receivables.settle`,
+  `bank_movements.create`, senão 403; módulo financeiro; empresa fora do escopo, inexistente ou de outro tenant → a MESMA
+  404 "Empresa não encontrada"; query estrita) → `{ itens: [{ id, nome, cib, padrao }] }` (ativos e vivos, o padrão
+  primeiro);
+- `GET /api/financeiro/lcdpr/conferencia` (`report.cash_book.view`): `de`, `ate` (obrigatórios; de > até → 422 "Período
+  inválido: o início é depois do fim"; mais de 366 dias → 422 "Período maior que 366 dias: confira o livro por ano"),
+  `empresa_id?`, `imovel_rural_id?`, `tipo?` (receita | custeio_investimento | produto_adiantado), `situacao?` (conferidas
+  padrão | pendentes), `page`, `pageSize` (≤ 200) → `{ de, ate, situacao, itens: [{ id, movimento_id, id_global, data,
+  imovel: {id,nome,cib}|null, sem_empresa, conta: {id,codigo,descricao}, documento, participante: {nome,documento}|null,
+  tipo, tipo_codigo, natureza: {id,codigo,nome}|null, entrada, saida, historico }], total, page, pageSize, totais: {
+  receita, custeio_investimento, produto_adiantado: { entradas, saidas } }, pendencias: { sem_imovel, sem_tipo, sem_empresa:
+  { quantidade, valor } }, idGlobal }`. Uma linha por rateio de movimento confirmado (o movimento inteiro sem rateio), sem
+  transferência nem saldo inicial; o valor é o do caixa (os juros repartidos pelo percentual, a sobra na última linha);
+  conferidas = tipo 1/2/3 e imóvel; pendentes = sem natureza, sem tipo, sem imóvel ou sem empresa (`sem_imovel` conta só
+  os movimentos com empresa; o sem empresa vai para `sem_empresa`, e `itens[].sem_empresa` o marca — as duas chaves
+  aditivas); "fora" nunca aparece. Escopo de empresa do módulo; o movimento sem empresa continua visível. Dinheiro em
+  texto.
+
+**Compatibilidade** (base `622f194`):
+
+| Janela | O que acontece | Prova |
+|---|---|---|
+| web nova × API anterior | sem as capacidades: o lançamento, o movimento, o fluxo, a baixa, a natureza e o Livro Caixa de hoje, com os corpos de hoje; nenhum pedido às rotas novas | K-1 (`f9-financeiro-skew-api-producao`) |
+| web anterior × API nova | corpos e chaves de hoje; o imóvel padrão aplicado na baixa e no movimento sem imóvel; o previsto fora da lista antiga e dos totais; a natureza preserva o tipo LCDPR; o "padrão legado" da venda intacto nas TOPs 1 a 4 | K-2 (`f9-financeiro-skew-web-anterior`) + CP-3 |
+| API anterior × banco novo | nada muda até alguém ligar a provisão; com previstos, a lista antiga os mostra como "A vencer" e os relatórios dela os somam, sem baixa possível | `operacoes-01-0045` (DB-4c) |
+
+**Fora (F9a):** a provisão e a TOP do pedido de compra e da compra (F9b); as parcelas do XML (F7/F9b); a pecuária (F10);
+o adiantamento salarial (`fleet-hr.ts`, F10); o pré-preenchimento dos padrões e a trava com `documentoTroca` desligado na
+Central de Vendas, o "(padrão da operação)" na prévia e os previstos à parte no detalhe do pedido (F2/F3b); a trava pela
+prop no editor de rateio compartilhado do "Novo movimento bancário" e o imóvel na baixa em lote da Central (pendências
+registradas na decisão 286); o arquivo oficial do LCDPR e a exportação da conferência (fora da PR); trocar o imóvel ou a
+TOP de movimento confirmado (sem rota).
 
 ## 8. Mapa "tela antiga → central nova"
 
