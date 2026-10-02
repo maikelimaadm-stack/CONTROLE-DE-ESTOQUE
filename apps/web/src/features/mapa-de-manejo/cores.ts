@@ -41,10 +41,10 @@ export function corExibidaNoMapa(cor: string | null | undefined): string {
   return rgbParaHex(base[0] * 0.85 + t[0] * 0.15, base[1] * 0.85 + t[1] * 0.15, base[2] * 0.85 + t[2] * 0.15);
 }
 
-/** Borda: cada canal × 0,92 + 8 × 0,08 sobre a cor exibida. */
+/** Borda: cada canal × 0,85 + 8 × 0,15 sobre a cor exibida — divisão mais nítida entre áreas. */
 export function corBordaNoMapa(corExibida: string): string {
   const rgb = hexParaRgb(corExibida) ?? hexParaRgb(CINZA_SEM_COR)!;
-  return rgbParaHex(rgb[0] * 0.92 + 8 * 0.08, rgb[1] * 0.92 + 8 * 0.08, rgb[2] * 0.92 + 8 * 0.08);
+  return rgbParaHex(rgb[0] * 0.85 + 8 * 0.15, rgb[1] * 0.85 + 8 * 0.15, rgb[2] * 0.85 + 8 * 0.15);
 }
 
 /** A primeira cor da paleta que nenhuma área usa; com todas em uso, o padrão. */

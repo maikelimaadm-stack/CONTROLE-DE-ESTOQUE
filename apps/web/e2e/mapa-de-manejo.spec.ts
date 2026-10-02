@@ -146,5 +146,16 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
     const v = anel[0]!;
     const vizinhas = lista.items.filter((a) => a.nome !== segunda);
     expect(vizinhas.some((a) => (a.geometria?.coordinates[0] ?? []).some((c) => c[0] === v[0] && c[1] === v[1])), "o vértice grudado tem de ser idêntico ao da vizinha").toBe(true);
+
+    // ---------- edição da ficha ----------
+    await page.getByTestId("mapa-item-area").filter({ hasText: primeira }).click();
+    await expect(page.getByTestId("mapa-ficha-edicao")).toBeVisible();
+    const editado = uniq("Talhão Edit").toLocaleUpperCase("pt-BR");
+    await page.getByTestId("mapa-edit-nome").fill(editado);
+    await page.getByTestId("mapa-edit-cor").getByRole("radio", { name: "Laranja", exact: true }).click();
+    await page.getByTestId("mapa-edit-salvar").click();
+    await expect(page.getByTestId("mapa-item-area").filter({ hasText: editado })).toBeVisible();
+    const apos = await api<{ items: Area[] }>(page, "GET", "/api/resources/mapa_areas?pageSize=500");
+    expect(apos.items.find((a) => a.nome === editado)?.cor).toBe("#f5a01b");
   });
 });

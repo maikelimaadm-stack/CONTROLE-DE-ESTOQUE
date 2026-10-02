@@ -106,7 +106,7 @@ export function CamadaDesenho(p: Props) {
               <polygon
                 points={lista(pts)}
                 fill={fillPreview}
-                fillOpacity={fechado ? (p.corPreview ? 0.58 : 0.3) : 0.18}
+                fillOpacity={fechado ? (p.corPreview ? 0.7 : 0.3) : 0.18}
                 stroke="none"
               />
             )}
