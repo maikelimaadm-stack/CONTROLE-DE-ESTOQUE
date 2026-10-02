@@ -381,7 +381,7 @@ export function MapaDeManejo() {
           id: "areas-fill", type: "fill", source: "areas",
           paint: {
             "fill-color": ["coalesce", ["get", "cor_exibida"], COR_PADRAO],
-            "fill-opacity": 0.68
+            "fill-opacity": 0.78
           }
         });
         m.addLayer({
