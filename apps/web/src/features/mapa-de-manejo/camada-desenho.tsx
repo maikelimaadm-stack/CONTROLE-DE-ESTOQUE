@@ -20,7 +20,15 @@ export const COR_DESENHO = {
   cruz: "#f5a01b"
 } as const;
 
-export interface RotuloArea { id: string; px: Px; nome: string; ha: number; opacidade?: number }
+export interface RotuloArea {
+  id: string;
+  px: Px;
+  nome: string;
+  ha: number;
+  opacidade?: number;
+  fonteNome?: number;
+  fonteHa?: number;
+}
 export interface Lado { px: Px; metros: number }
 
 interface Props {
@@ -75,29 +83,33 @@ export function CamadaDesenho(p: Props) {
 
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden" data-testid="mapa-camada-desenho">
-      {!p.ocultarRotulos && p.rotulosAreas.map((r) => (
-        <div
-          key={r.id}
-          className="absolute -translate-x-1/2 -translate-y-1/2 text-center transition-opacity duration-150"
-          style={{
-            left: r.px.x,
-            top: r.px.y,
-            zIndex: 100,
-            opacity: r.opacidade ?? 0.95,
-            fontFamily: "Inter, Arial, sans-serif",
-            lineHeight: 1.25,
-            textShadow: "0 1px 2px rgba(2,6,23,0.9), 0 0 6px rgba(2,6,23,0.75)"
-          }}
-          data-testid="mapa-rotulo-area"
-        >
-          <div className="whitespace-nowrap font-bold text-white" style={{ fontSize: 11, letterSpacing: 0.2 }}>{r.nome}</div>
-          {r.ha > 0 && (
-            <div className="mt-px whitespace-nowrap font-semibold tabular-nums" style={{ fontSize: 9.5, color: "#e2e8f0" }}>
-              ha {num(r.ha, 2)}
-            </div>
-          )}
-        </div>
-      ))}
+      {!p.ocultarRotulos && p.rotulosAreas.map((r) => {
+        const fonteNome = r.fonteNome ?? 11;
+        const fonteHa = r.fonteHa ?? 9.5;
+        return (
+          <div
+            key={r.id}
+            className="absolute -translate-x-1/2 -translate-y-1/2 text-center transition-opacity duration-150"
+            style={{
+              left: r.px.x,
+              top: r.px.y,
+              zIndex: 100,
+              opacity: r.opacidade ?? 0.95,
+              fontFamily: "Inter, Arial, sans-serif",
+              lineHeight: 1.2,
+              textShadow: "0 1px 2px rgba(2,6,23,0.9), 0 0 5px rgba(2,6,23,0.7)"
+            }}
+            data-testid="mapa-rotulo-area"
+          >
+            <div className="whitespace-nowrap font-bold text-white" style={{ fontSize: fonteNome, letterSpacing: 0.15 }}>{r.nome}</div>
+            {r.ha > 0 && (
+              <div className="mt-px whitespace-nowrap font-semibold tabular-nums" style={{ fontSize: fonteHa, color: "#e2e8f0" }}>
+                ha {num(r.ha, 2)}
+              </div>
+            )}
+          </div>
+        );
+      })}
 
       {p.desenhando && (
         <>

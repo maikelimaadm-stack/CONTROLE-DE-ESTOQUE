@@ -14,11 +14,23 @@ export interface RotuloAreaBruto {
 export interface RotuloAreaVisivel extends RotuloAreaBruto {
   /** 0–1: suaviza rótulos “apertados” em vez de empilhar. */
   opacidade: number;
+  /** Tamanho da fonte do nome (px) — escala com o zoom. */
+  fonteNome: number;
+  /** Tamanho da fonte do ha (px). */
+  fonteHa: number;
 }
 
-function caixa(r: RotuloAreaBruto, pad: number) {
-  const w = Math.max(56, r.nome.length * 6.6) + pad * 2;
-  const h = (r.ha > 0 ? 28 : 16) + pad * 2;
+/** Fonte do nome/ha conforme o zoom do mapa. */
+export function fontesDoZoom(zoom: number): { nome: number; ha: number } {
+  // Longe: compacto; perto: legível sem “gritar”.
+  const nome = Math.max(8, Math.min(16, 7 + (zoom - 11) * 1.35));
+  const ha = Math.max(7, Math.min(13, nome - 1.5));
+  return { nome, ha };
+}
+
+function caixa(r: RotuloAreaBruto, pad: number, fonteNome: number) {
+  const w = Math.max(fonteNome * 4, r.nome.length * (fonteNome * 0.62)) + pad * 2;
+  const h = (r.ha > 0 ? fonteNome * 2.4 : fonteNome * 1.35) + pad * 2;
   return { x: r.px.x - w / 2, y: r.px.y - h / 2, w, h };
 }
 
@@ -39,9 +51,10 @@ export function suavizarRotulos(
 ): RotuloAreaVisivel[] {
   const destaqueId = opts?.destaqueId ?? null;
   const zoom = opts?.zoom ?? 14;
+  const { nome: fonteNome, ha: fonteHa } = fontesDoZoom(zoom);
   // Quanto mais longe, mais agressivo o corte (só os maiores).
   const minLado = zoom < 12 ? 90 : zoom < 13.5 ? 56 : zoom < 15 ? 36 : 22;
-  const pad = zoom < 13 ? 10 : 6;
+  const pad = zoom < 13 ? 8 : 5;
 
   const candidatos = rotulos.filter((r) => {
     if (r.id === destaqueId) return true;
@@ -58,7 +71,7 @@ export function suavizarRotulos(
 
   const aceitos: { r: RotuloAreaBruto; box: ReturnType<typeof caixa> }[] = [];
   for (const r of ordenados) {
-    const box = caixa(r, pad);
+    const box = caixa(r, pad, fonteNome);
     const bate = aceitos.some((a) => colide(box, a.box));
     if (bate && r.id !== destaqueId) continue;
     if (bate && r.id === destaqueId) {
@@ -75,7 +88,9 @@ export function suavizarRotulos(
     const apertado = lado < minLado * 1.35;
     return {
       ...r,
-      opacidade: r.id === destaqueId ? 1 : apertado ? 0.72 : 0.95
+      opacidade: r.id === destaqueId ? 1 : apertado ? 0.78 : 0.96,
+      fonteNome,
+      fonteHa
     };
   });
 }

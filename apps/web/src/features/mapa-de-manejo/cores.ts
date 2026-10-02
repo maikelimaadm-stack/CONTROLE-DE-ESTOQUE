@@ -49,10 +49,10 @@ export function corBordaNoMapa(corExibida: string): string {
   const rgb = hexParaRgb(corExibida) ?? hexParaRgb(CINZA_SEM_COR)!;
   const lum = rgb[0] * 0.299 + rgb[1] * 0.587 + rgb[2] * 0.114;
   if (lum > 150) {
-    // Branco / cinza claro / amarelo claro: linha escura que separa pastos vizinhos.
-    return rgbParaHex(22 + rgb[0] * 0.06, 48 + rgb[1] * 0.08, 52 + rgb[2] * 0.1);
+    // Branco / cinza claro: traço fino marrom-escuro (como o exemplo entre campos).
+    return "#3d2e24";
   }
-  return rgbParaHex(rgb[0] * 0.52, rgb[1] * 0.52, rgb[2] * 0.52);
+  return rgbParaHex(rgb[0] * 0.42, rgb[1] * 0.4, rgb[2] * 0.38);
 }
 
 /** A primeira cor da paleta que nenhuma área usa; com todas em uso, o padrão. */

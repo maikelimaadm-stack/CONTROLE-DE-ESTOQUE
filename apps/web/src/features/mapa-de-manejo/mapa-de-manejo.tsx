@@ -41,9 +41,9 @@ interface AreaApi {
 
 const COR_PADRAO = COR_PADRAO_AREA;
 const hectares = (v: AreaApi["tamanho_ha"]) => (v === null || v === undefined || v === "" ? 0 : Number(v));
-/** Hover/seleção: laranja nítido por cima dos vizinhos (evita traço claro “por baixo”). */
-const HOVER_BORDA = "#f5a01b";
-const SELECAO_BORDA = "#0d9488";
+/** Hover/seleção: o destaque é o FILL claro (como no exemplo), não a linha. */
+const HOVER_FILL = "#f8fafc";
+const SELECAO_FILL = "#e2e8f0";
 
 type Rascunho = { geometria: Polygon; tamanho_ha: number; /** Se preenchido, o salvar faz PUT nessa área (edição de contorno). */ editandoId?: string };
 
@@ -379,16 +379,21 @@ export function MapaDeManejo() {
       m.on("load", () => {
         if (cancelado) return;
         m.addSource("areas", { type: "geojson", data: { type: "FeatureCollection", features: [] }, promoteId: "id" });
-        // Fill suave; contorno base escuro; destaque (hover/seleção) numa camada POR CIMA para não ficar sob vizinhos.
+        // Como o exemplo: linhas finas entre campos; hover/seleção destaca o FILL claro, não engrossa a borda.
         m.addLayer({
           id: "areas-fill", type: "fill", source: "areas",
           paint: {
-            "fill-color": ["coalesce", ["get", "cor_exibida"], COR_PADRAO],
+            "fill-color": [
+              "case",
+              ["boolean", ["feature-state", "hover"], false], HOVER_FILL,
+              ["boolean", ["feature-state", "selecionada"], false], SELECAO_FILL,
+              ["coalesce", ["get", "cor_exibida"], COR_PADRAO]
+            ],
             "fill-opacity": [
               "case",
-              ["boolean", ["feature-state", "hover"], false], 0.62,
-              ["boolean", ["feature-state", "selecionada"], false], 0.58,
-              0.48
+              ["boolean", ["feature-state", "hover"], false], 0.55,
+              ["boolean", ["feature-state", "selecionada"], false], 0.42,
+              0.28
             ]
           }
         });
@@ -396,37 +401,15 @@ export function MapaDeManejo() {
           id: "areas-contorno", type: "line", source: "areas",
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
-            "line-color": ["coalesce", ["get", "cor_borda"], "#2a4248"],
-            "line-opacity": 0.88,
+            "line-color": ["coalesce", ["get", "cor_borda"], "#3d2e24"],
+            "line-opacity": 0.9,
             "line-width": [
               "interpolate", ["linear"], ["zoom"],
-              10, 0.9,
-              13, 1.35,
-              16, 1.9
-            ]
-          }
-        });
-        m.addLayer({
-          id: "areas-contorno-destaque", type: "line", source: "areas",
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: {
-            "line-color": [
-              "case",
-              ["boolean", ["feature-state", "hover"], false], HOVER_BORDA,
-              SELECAO_BORDA
-            ],
-            // Camada sempre no topo: só pinta hover/selecionada (vizinhos não cobrem o traço).
-            "line-opacity": [
-              "case",
-              ["boolean", ["feature-state", "hover"], false], 1,
-              ["boolean", ["feature-state", "selecionada"], false], 1,
-              0
-            ],
-            "line-width": [
-              "interpolate", ["linear"], ["zoom"],
-              10, 2.2,
-              13, 2.8,
-              16, 3.4
+              10, 0.4,
+              12, 0.55,
+              14, 0.7,
+              16, 0.9,
+              18, 1.1
             ]
           }
         });
