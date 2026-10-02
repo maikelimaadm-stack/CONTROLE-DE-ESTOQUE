@@ -9,7 +9,8 @@
  * Este arquivo é só TIPOS (e constantes triviais): nada de JSX, nada de chamada de API, nada de regra. A espécie que
  * já existia continua idêntica porque o adaptador dela devolve exatamente os valores que estavam fixos no código
  * (o prefixo de testid, os textos, as portas de leitura). Os recursos novos de `ItensDaCentral` (lote e validade por
- * linha, armazém por item, modo "da origem") são OPCIONAIS e desligados por padrão.
+ * linha, armazém por item, armazém forçado, modo "da origem") são OPCIONAIS e desligados por padrão; o custo médio no
+ * unitário e as casas da quantidade na leitura têm por padrão o comportamento da espécie que já existia.
  */
 import type * as React from "react";
 import type { ColunaDoLayout } from "@agro/domain";
@@ -280,8 +281,21 @@ export interface PropsDosItens {
   erros?: Record<string, string>;
   armazemPadrao?: { id: string; rotulo: string } | null;
   reservaEstoque?: { obrigatorias: readonly string[] } | null;
-  /** Mostra a coluna de armazém por item mesmo sem layout. Padrão: o comportamento de hoje. */
+  /**
+   * A coluna de armazém é PERMITIDA por linha (só `false` a desliga; padrão: o comportamento de hoje). Permitir não é
+   * forçar: com layout, ela aparece se o layout a mostra — ou se `armazemForcado`.
+   */
   armazemPorItem?: boolean;
+  /**
+   * Com layout, a coluna de armazém aparece mesmo que o layout a esconda (ex.: a regra da operação exige o armazém).
+   * Padrão `false`: manda o layout.
+   */
+  armazemForcado?: boolean;
+  /**
+   * O custo médio do armazém preenche o valor unitário VAZIO ou "0" da linha. Padrão `true` (a venda). `false`: o
+   * saldo continua sendo lido fora da vista, mas nada é escrito no unitário — o "0" digitado (ex.: bonificação) fica "0".
+   */
+  custoMedioNoUnitario?: boolean;
   /** Desligado por padrão. */
   lote?: LoteDosItens | null;
   /** Desligado por padrão. */
@@ -302,6 +316,8 @@ export interface PropsDosItensSalvos {
   mostrarLote?: boolean;
   /** Rótulo da parte já gerada no item, com `mostrarSaldo` (padrão "Faturado"; a compra diz "Recebido"). */
   rotuloDoGerado?: string;
+  /** Casas decimais da quantidade, da parte gerada e do saldo (padrão 2; a compra mostra 4). */
+  casasDaQuantidade?: number;
   avisos?: readonly AvisoDosItens[];
 }
 export interface PropsDeConfigurarColunas<K extends string> {

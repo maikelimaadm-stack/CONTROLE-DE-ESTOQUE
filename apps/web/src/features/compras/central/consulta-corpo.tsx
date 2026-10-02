@@ -60,7 +60,9 @@ export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: Zon
   const z = zonas ?? zonasPadraoDaConsulta(e.variante.familia);
   const nosDados = new Set([...z.principais, ...z.adicionais]);
   const top = e.top;
-  const recebidoPorItem = e.itens.some((it) => typeof it["item_origem_id"] === "string" && it["item_origem_id"] !== "");
+  // O detalhe devolve a coluna do item como está no banco (`origem_item_id`, 0037); `item_origem_id` é só a chave do
+  // CORPO do `/convert`, e nunca volta na leitura.
+  const recebidoPorItem = e.itens.some((it) => typeof it["origem_item_id"] === "string" && it["origem_item_id"] !== "");
   const origem = !e.origemId
     ? (recebidoPorItem ? "Recebido de pedido" : "Lançamento direto")
     : <Link data-testid="compras-origem" className="text-brand-700 underline" href={e.rotaDaOrigem}>{e.rotuloDoPedido}{d["origem_codigo"] ? ` ${String(d["origem_codigo"])}` : ""}</Link>;
@@ -88,7 +90,10 @@ export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: Zon
   </>;
 }
 
-/** Itens salvos no motor: Lote/Validade na compra; Recebido/Saldo no pedido (quando o servidor os declara). */
+/**
+ * Itens salvos no motor: Lote/Validade na compra; Recebido/Saldo no pedido (quando o servidor os declara). Quantidade,
+ * recebido e saldo em 4 casas — a escala da compra (`numeric(18,4)`; o servidor devolve o saldo com 4 casas).
+ */
 export function ItensDaConsulta({ e }: { e: EstadoDaConsulta }) {
   const d = e.documento;
   const itens = React.useMemo(() => e.itens.map(itemParaOMotor), [e.itens]);
@@ -101,7 +106,7 @@ export function ItensDaConsulta({ e }: { e: EstadoDaConsulta }) {
   return <div data-testid="compras-consulta-itens" className="contents">
     <ItensSalvos prefixoTestid={PREFIXO_CENTRAL_COMPRAS} colunas={colunas} itens={itens} subtotal={String(d["valor_itens"] ?? "0")}
       legenda={`Itens ${e.ehPedido ? "do pedido de compra" : "da compra"} ${t(d["codigo"])}`}
-      mostrarLote={e.ehCompra} mostrarSaldo={e.recebimentoDeclarado} rotuloDoGerado="Recebido" avisos={avisos} />
+      mostrarLote={e.ehCompra} mostrarSaldo={e.recebimentoDeclarado} rotuloDoGerado="Recebido" avisos={avisos} casasDaQuantidade={4} />
   </div>;
 }
 

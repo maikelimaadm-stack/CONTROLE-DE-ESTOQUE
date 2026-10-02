@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page, type Request } from "@playwright/test";
-import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
+import { login, api, uniq, empresaAtiva } from "./helpers";
 
 /**
  * CENTRAL DE COMPRAS NO MOTOR — COMPORTAMENTO (VISUAL-UX-04, decisão 276) · CC-6 a CC-10.
@@ -8,14 +8,16 @@ import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
  * o Confirmar na criação, o Cancelar com motivo, o receber pedido na grade do motor e o Encerrar saldo. As medidas
  * (CC-1) e a barra (CC-2..5) moram nos arquivos -a e -c.
  *
- * Cada caso monta os PRÓPRIOS dados pela API administrativa (TOPs, produtos, pedido): nenhuma conta depende do que
- * outro spec deixou no banco. O que vai no fio é contado no fio (`request`), nunca deduzido da tela.
+ * Cada caso monta os PRÓPRIOS dados pela API (TOPs, fornecedor, armazém, produtos, pedido) — nenhum é "o primeiro da
+ * lista": nenhuma conta depende do que outro spec deixou no banco. O que vai no fio é contado no fio (`request`), nunca
+ * deduzido da tela.
  */
 
 const P = "central-compras";
 type Opcao = { id: string; label: string };
 const literal = (t: string) => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-const codigoTop = () => `${Math.floor(Math.random() * 90000 + 10000)}`;
+/** Código de TOP único por execução (tempo + sorteio), como nos arquivos -a e -c — 5 dígitos sorteados colidiam no banco. */
+const codigoTop = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const UUID_INEXISTENTE = "00000000-0000-4000-8000-000000000000";
 
 /** Escolhe no RefSelect da Central pelo rótulo do campo (nome escapado: nomes do seed têm colchetes). */
@@ -27,13 +29,17 @@ async function escolher(page: Page, rotulo: string, nome: string) {
   await painel.getByRole("option", { name: literal(nome.slice(0, 20)) }).first().click();
 }
 
-/** Escolhe na pesquisa do motor ancorada à célula (produto ou armazém) da linha. */
+/**
+ * Escolhe na pesquisa do motor ancorada à célula (produto ou armazém) da linha — pelo NOME INTEIRO. Cortado em 20
+ * caracteres, "CC-B produto A <tempo>" de dois casos seguidos (menos de ~46 s entre eles) casava os dois, e o `.first()`
+ * levava o produto do caso ANTERIOR: o CC-7 salvava outro produto sem ninguém ver.
+ */
 async function escolherNaCelula(page: Page, celula: Locator, nome: string) {
   await celula.click();
   const pesquisa = page.getByTestId(`${P}-pesquisa`);
   await expect(pesquisa).toBeVisible();
-  await pesquisa.getByPlaceholder("Pesquisar pela descrição").fill(nome.slice(0, 20));
-  await pesquisa.getByRole("option", { name: literal(nome.slice(0, 20)) }).first().click();
+  await pesquisa.getByPlaceholder("Pesquisar pela descrição").fill(nome);
+  await pesquisa.getByRole("option", { name: literal(nome) }).first().click();
   await expect(pesquisa).toHaveCount(0);
 }
 
@@ -54,7 +60,7 @@ async function itemDoLeque(page: Page, testId: string) {
   return item;
 }
 
-/** O cadastro de base: TOP de Compra e de Pedido (Pedido → Compra, em partes), dois produtos, armazém, fornecedor, natureza, centro. */
+/** O cadastro de base: TOP de Compra e de Pedido (Pedido → Compra, em partes), dois produtos, armazém e fornecedor CRIADOS aqui, natureza, centro. */
 async function cenario(page: Page) {
   const topCompra = { codigo: `4${codigoTop()}`, id: "" };
   topCompra.id = (await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo: topCompra.codigo, codigoBase: "compras.compra", nome: uniq("Compra CC-B") })).id;
@@ -78,9 +84,11 @@ async function cenario(page: Page) {
   const a = await produto("CC-B produto A");
   const b = await produto("CC-B produto B");
   const empresa = await empresaAtiva(page);
-  const armazem = await primeiroId(page, `/api/resources/warehouses?empresa_id=${empresa}&pageSize=1`);
+  const armazem = (await api<{ id: string }>(page, "POST", "/api/resources/warehouses", {
+    empresa_id: empresa, initials: `B${Date.now().toString(36).slice(-4).toUpperCase()}`, description: uniq("CC-B arm"), type: "inputs"
+  })).id;
   const nomeArmazem = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/warehouses/${armazem}`))["description"]);
-  const fornecedor = await primeiroId(page, "/api/resources/people?is_provider=true&pageSize=1");
+  const fornecedor = (await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("CC-B forn"), person_type: "legal", is_provider: true })).id;
   const nomeFornecedor = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/people/${fornecedor}`))["name"]);
   return { topCompra, topPedido, a, b, empresa, armazem, nomeArmazem, fornecedor, nomeFornecedor, natureza: naturezas[0]!, centro: centros[0]! };
 }
@@ -135,7 +143,9 @@ test("CC-6 — pendências: compra sem itens não salva (zero POST, a pílula, a
   const semItens = lista.locator(`[data-testid="${P}-pendencia"][data-caminho="itens"]`);
   await expect(semItens, "sem itens é pendência").toHaveCount(1);
   await expect(semItens).toContainText("Itens");
-  await page.waitForTimeout(300);
+  // ZERO POST até aqui — sem espera cega: o registro do fio vale o caso inteiro, e o FIM do caso (depois de três
+  // navegações completas, que entregam todo evento de rede pendente da página anterior) confere de novo a lista vazia.
+  // Um POST que o clique com pendência tivesse disparado estaria nela.
   expect(posts.map((r) => r.url()), "ZERO POST com pendência").toEqual([]);
 
   // (2) A LISTA LEVA AO LUGAR: o foco vai à região dos itens.
@@ -166,10 +176,17 @@ test("CC-6 — pendências: compra sem itens não salva (zero POST, a pílula, a
   await expect(page.getByTestId("compras-receber-recusado")).toBeVisible();
   await expect(salvar).toBeDisabled();
   await expect(salvar).toHaveAttribute("data-dica", "O pedido não pode ser recebido");
-  expect(posts.map((r) => r.url()), "nenhum dos estados escreveu nada").toEqual([]);
+  expect(posts.map((r) => r.url()), "nem o clique com pendência, nem os estados escreveram nada").toEqual([]);
 });
 
 // ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+/**
+ * O corpo do POST de lançar que `preencherCompraPelaTela` produz — as chaves de hoje (a Central anterior montava o MESMO
+ * corpo: os opcionais vazios saem como `undefined` e não vão no JSON; frete, outras despesas e desconto nascem "0").
+ */
+const CHAVES_DO_POST_PELA_TELA = ["categoria_financeira_id", "centro_custo_id", "data_documento", "desconto", "empresa_id", "fornecedor_id", "frete", "itens", "outras_despesas", "tipo_operacao_id"];
+const CHAVES_DO_ITEM_PELA_TELA = ["armazem_id", "produto_id", "quantidade", "valor_unitario"];
+
 async function preencherCompraPelaTela(page: Page, c: Cenario) {
   await page.goto(`/compras/compras/new?tipo_operacao_id=${c.topCompra.id}`);
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
@@ -193,8 +210,16 @@ test("CC-7 — Salvo aparece e some; Confirmar compra na criação salva, abre a
   await preencherCompraPelaTela(page, c);
   const lancar = page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/compras/compras");
   await page.getByTestId("compras-salvar").click();
-  const corpo = (await lancar).postDataJSON() as Record<string, unknown>;
-  expect(Object.keys(corpo).sort(), "as MESMAS chaves do POST de hoje").toEqual(expect.arrayContaining(["empresa_id", "fornecedor_id", "tipo_operacao_id", "itens"]));
+  const corpo = (await lancar).postDataJSON() as Record<string, unknown> & { itens: Record<string, unknown>[] };
+  // AS MESMAS CHAVES DO POST DE HOJE, conjunto EXATO (não um subconjunto): o cabeçalho que a tela preencheu (os opcionais
+  // vazios não vão) e o item com produto, armazém, quantidade e valor — sem chave nova, sem chave a menos.
+  expect(Object.keys(corpo).sort(), "as MESMAS chaves do POST de hoje").toEqual(CHAVES_DO_POST_PELA_TELA);
+  expect(corpo, "os valores que a tela mostrou").toMatchObject({
+    empresa_id: c.empresa, fornecedor_id: c.fornecedor, tipo_operacao_id: c.topCompra.id, categoria_financeira_id: c.natureza.id, centro_custo_id: c.centro.id
+  });
+  expect(corpo.itens.map((i) => Object.keys(i).sort()), "as MESMAS chaves do item").toEqual([CHAVES_DO_ITEM_PELA_TELA]);
+  expect(corpo.itens[0], "o item que a tela mostrou").toMatchObject({ produto_id: c.a.id, armazem_id: c.armazem });
+  expect([Number(corpo.itens[0]!["quantidade"]), Number(corpo.itens[0]!["valor_unitario"])]).toEqual([5, 20]);
   await expect(page).toHaveURL(/\/compras\/compras\/[0-9a-f-]{36}$/);
   expect(new URL(page.url()).search, "nada do Salvo na URL").toBe("");
   const salvo = page.getByTestId(`${P}-salvo`);

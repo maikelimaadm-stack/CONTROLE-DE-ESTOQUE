@@ -16,6 +16,9 @@ import type { EstadoDaCriacao } from "./estado";
  * acompanha a quantidade na proporção do pedido (`acompanharDescontoDaOrigem`, no `setItens` do estado). Remover
  * item segue a regra de hoje: disponível em "em partes"; no recebimento inteiro a linha não sai. O POST é o
  * `/convert` do estado, com as MESMAS chaves; nada aqui chama a API.
+ *
+ * Valor unitário: o que veio do pedido, nunca o custo médio do armazém (`custoMedioNoUnitario={false}`; o saldo
+ * continua lido). Armazém por linha: permitido (`armazemPorItem`), forçado só quando a regra o exige (`armazemForcado`).
  */
 
 /** Chave sintética do catálogo para a coluna de saldo: dá o rótulo "Saldo do pedido" pelo layout do motor. */
@@ -59,7 +62,7 @@ export function origemDoRecebimento(emPartes: boolean): ItensDaOrigem {
 
 /** Os itens do recebimento. Fora do modo receber (ou sem o pedido pronto), nada. */
 export function ItensDoRecebimento({ estado }: { estado: EstadoDaCriacao }) {
-  const { variante, ehCompra, modo, recebendo, itens, setItens, colunasDoLayout, fieldsDosItens, errosDeItens, lote, emPartes } = estado;
+  const { variante, ehCompra, modo, recebendo, itens, setItens, colunasDoLayout, fieldsDosItens, errosDeItens, lote, emPartes, regras } = estado;
   const colunas = React.useMemo(() => colunasDoRecebimento(colunasDosItensDeCompras(variante)), [variante]);
 
   const layout = React.useMemo<LayoutDosItens>(() => {
@@ -82,6 +85,7 @@ export function ItensDoRecebimento({ estado }: { estado: EstadoDaCriacao }) {
   if (modo !== "receber" || !recebendo) return null;
   return <div data-testid="compras-itens" data-modo="receber" data-em-partes={String(emPartes)}>
     <ItensDoMotor prefixoTestid={PREFIXO_CENTRAL_COMPRAS} colunas={colunas} items={itens} onChange={setItens} layout={layout}
-      erros={erros} armazemPadrao={null} armazemPorItem lote={controleDeLote} daOrigem={daOrigem} />
+      erros={erros} armazemPadrao={null} armazemPorItem armazemForcado={regras?.exigeArmazem === true} custoMedioNoUnitario={false}
+      lote={controleDeLote} daOrigem={daOrigem} />
   </div>;
 }

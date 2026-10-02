@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
-import { login, api, uniq, pickRef, empresaAtiva, primeiroId } from "./helpers";
+import { execFileSync } from "node:child_process";
+import { login, api, uniq, pickRef, empresaAtiva } from "./helpers";
 /**
  * O `pickRef` do helpers monta a regex com o texto cru: um nome do seed como "[DEMO] Agropecuária" vira classe de
  * caracteres e nunca casa. A busca usa o nome sem o prefixo entre colchetes (os 12 primeiros caracteres do resto).
@@ -17,9 +18,10 @@ const buscaSemColchetes = (nome: string) => nome.replace(/^\[[^\]]*\]\s*/, "").s
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ VERDE QUE NÃO PROVA NADA É REPROVAÇÃO ───────────────────────────────────────────────────────┐
- * │ Toda fixture é criada pela API neste arquivo (TOP, produto, compra, pedido) e conferida no      │
- * │ servidor; toda escrita da TELA é contada (zero POST é um número); toda chave do navegador é     │
- * │ comparada antes × depois. Nada depende de contagem global nem do que outro spec deixou.         │
+ * │ Toda fixture é criada pela API neste arquivo (fornecedor, armazém, TOP, produto, compra, pedido)│
+ * │ e conferida no servidor — nenhuma é "a primeira da lista"; toda escrita da TELA é contada (zero │
+ * │ POST é um número); toda chave do navegador é comparada antes × depois. Nada depende de contagem │
+ * │ global nem do que outro spec deixou; "hoje" vem do banco (PROCESSO-03), nunca do relógio local. │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 
@@ -62,11 +64,16 @@ interface Base {
   natureza: Opcao; centro: Opcao; grupo: string; unidade: string;
 }
 
+/** O cadastro de base: fornecedor e armazém CRIADOS aqui (nenhum é "o primeiro da lista"), e a referência do seed. */
 async function base(page: Page): Promise<Base> {
   const empresa = await empresaAtiva(page);
-  const fornecedor = await primeiroId(page, "/api/resources/people?is_provider=true&pageSize=1");
+  // o trecho único (tempo + sorteio) vem PRIMEIRO: `pickRef` busca pelos 12 primeiros caracteres, e "CC forn <tempo>" de
+  // dois casos seguidos casaria os dois
+  const fornecedor = (await api<{ id: string }>(page, "POST", "/api/resources/people", { name: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)} CC forn`, person_type: "legal", is_provider: true })).id;
   const nomeFornecedor = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/people/${fornecedor}`))["name"]);
-  const armazem = await primeiroId(page, `/api/resources/warehouses?empresa_id=${empresa}&pageSize=1`);
+  const armazem = (await api<{ id: string }>(page, "POST", "/api/resources/warehouses", {
+    empresa_id: empresa, initials: `A${Date.now().toString(36).slice(-4).toUpperCase()}`, description: uniq("CC arm"), type: "inputs"
+  })).id;
   const naturezas = await api<Opcao[]>(page, "GET", "/api/resources/financial_categories/options?kind=analytic&nature=expense");
   const centros = await api<Opcao[]>(page, "GET", "/api/resources/cost_centers/options?kind=analytic");
   const grupos = await api<Opcao[]>(page, "GET", "/api/resources/product_groups/options?kind=analytic");
@@ -182,8 +189,19 @@ async function nomesDoLeque(page: Page) {
   });
 }
 
-const hojeIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+/**
+ * "HOJE" PELA REGRA DO PROCESSO-03 (docs/TESTING.md): a data que o resultado compara com hoje vem do BANCO
+ * (`current_date`), nunca do relógio do Node — a data local do Node, entre 21h e 24h em Brasília, é a véspera do dia UTC
+ * que a tela usa (`todayISO`), e CC-4/CC-5 reprovavam nessa janela. `current_date` é lido no fuso da tela (UTC), para o
+ * resultado não depender do fuso configurado no servidor do banco. Quem compara lê ANTES e DEPOIS do passo: se a
+ * meia-noite cair no meio, vale qualquer um dos dois dias.
+ */
+const BANCO = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
+const hojeDoBanco = () => execFileSync("psql", [BANCO, "-v", "ON_ERROR_STOP=1", "-Atc", "set time zone 'UTC'; select current_date::text"], { encoding: "utf8" }).trim().split("\n").pop()!;
 const isoParaBr = (iso: string) => iso.split("-").reverse().join("/");
+/** Os "hoje" possíveis entre duas leituras do banco, em ISO e em dd/mm/aaaa. */
+const hojes = (antes: string, depois: string) => [...new Set([antes, depois])];
+const casaHoje = (dias: readonly string[]) => new RegExp(dias.flatMap((d) => [d, isoParaBr(d)]).map((x) => x.replace(/[./]/g, "\\$&")).join("|"));
 async function valorMostrado(invólucro: Locator) {
   const entrada = invólucro.locator("input:not([type=hidden]), textarea").first();
   if (await entrada.count()) return entrada.inputValue();
@@ -398,9 +416,13 @@ test("CC-3 — Novo documento: as TOPs vêm do servidor, a padrão é marcada, e
   const a = await cadastrarTop(page);
   const c = await cadastrarTop(page);
 
-  // (1) CONTRA O SERVIDOR REAL
-  const real = await api<{ items: { id: string; code: string; isDefault: boolean }[] }>(page, "GET", "/api/compras/compras/operation-types");
-  const esperadas = real.items.length <= 8 ? real.items : real.items.filter((x) => x.isDefault);
+  // (1) CONTRA O SERVIDOR REAL. O menu é o CORTE do menu rápido sobre a lista do servidor: até 8, todas; acima, só a
+  // padrão (`defaultId`). A asserção é o CONJUNTO EXATO de TOPs do menu nos DOIS ramos — nunca um laço que, com a lista
+  // grande e sem padrão, não afirmaria nada —, e o pé "Escolher operação…" existe só quando o corte esconde alguma.
+  const real = await api<{ defaultId: string | null; items: { id: string; code: string }[] }>(page, "GET", "/api/compras/compras/operation-types");
+  expect(real.items.map((x) => x.id), "premissa: as TOPs criadas aqui estão na lista do servidor").toEqual(expect.arrayContaining([topDoDoc.id, a.id, c.id]));
+  const cortou = real.items.length > 8;
+  const esperadas = (cortou ? real.items.filter((x) => x.id === real.defaultId) : real.items).map((x) => x.id).sort();
   const perguntas: string[] = [];
   page.on("request", (r) => { if (r.method() === "GET" && new URL(r.url()).pathname === "/api/compras/compras/operation-types") perguntas.push(r.url()); });
   await abrirConsulta(page, compra);
@@ -408,8 +430,12 @@ test("CC-3 — Novo documento: as TOPs vêm do servidor, a padrão é marcada, e
   const menu = page.getByTestId(`${WORKSPACE}-novo-menu`);
   await expect(menu, "o menu diz a espécie").toContainText("Nova operação · Compra");
   await expect.poll(() => perguntas.length, { message: "a lista é a do servidor (GET operation-types)" }).toBeGreaterThan(0);
-  for (const t of esperadas) await expect(menu.getByRole("menuitem").filter({ hasText: t.code }).first(), `a TOP ${t.code} do servidor está no menu`).toBeVisible();
-  if (real.items.length > 8) await expect(menu.getByRole("menuitem", { name: /Escolher operação/ }), "acima do corte, o pé leva à janela").toBeVisible();
+  await expect(menu.getByText("Carregando os tipos de operação…"), "a lista do servidor chegou ao menu").toHaveCount(0);
+  const doMenu = menu.getByTestId(`${WORKSPACE}-novo-top`);
+  await expect(doMenu, `o menu tem EXATAMENTE as ${esperadas.length} TOP(s) do corte (${real.items.length} no servidor)`).toHaveCount(esperadas.length);
+  expect((await doMenu.evaluateAll((els) => els.map((e) => e.getAttribute("data-top-id") ?? ""))).sort(), "as MESMAS TOPs que o servidor manda mostrar").toEqual(esperadas);
+  await expect(menu.getByRole("menuitem", { name: /Escolher operação/ }), cortou ? "acima do corte, o pé leva à janela" : "abaixo do corte, sem o pé").toHaveCount(cortou ? 1 : 0);
+  if (cortou && esperadas.length === 0) await expect(menu, "sem padrão acima do corte, o menu diz o que fazer").toContainText("Nenhuma operação padrão: use Escolher operação.");
   await page.keyboard.press("Escape");
 
   // (2) RESPOSTA CONTROLADA com duas TOPs REAIS
@@ -459,10 +485,14 @@ test("CC-4 — Duplicar: copia o que deve, NÃO copia nota, série, datas nem or
   const escritas = registrarEscritas(page);
   const duplicar = page.getByTestId(`${WORKSPACE}-duplicar`);
   await expect(duplicar).toBeEnabled();
+  const hojeAntes = hojeDoBanco();
   await duplicar.click();
 
   // abre o lançamento da MESMA TOP, e a URL não leva dado nenhum além dela
   await expect(page).toHaveURL(new RegExp(`/compras/compras/new\\?tipo_operacao_id=${top.id}$`));
+  // o aviso da cópia (2.6) — conferido LOGO que a cópia abre: o aviso de informação vive 4 s, e cada asserção abaixo pode
+  // esperar até 10 s; conferido no fim, ele podia já ter saído
+  await expect(page.getByText("Cópia aberta como rascunho"), "o aviso da cópia").toBeVisible();
   expect([...new URL(page.url()).searchParams.keys()], "a URL leva só a TOP").toEqual(["tipo_operacao_id"]);
   await expect(page.getByTestId(WORKSPACE)).toBeVisible();
   await expect(page.getByTestId("compras-top-travada")).toContainText(top.codigo);
@@ -474,12 +504,11 @@ test("CC-4 — Duplicar: copia o que deve, NÃO copia nota, série, datas nem or
   await expect(page.getByTestId(`${WORKSPACE}-linha`), "os itens vieram").toHaveCount(1);
   await abrirAba(page, "Observações");
   await expect(page.getByTestId("compras-observacao")).toHaveValue("observação do original");
-  // as datas NÃO vieram: Data = hoje
-  expect(await valorMostrado(campoPeloRotulo(dados, "Data")), "Data = hoje").toMatch(new RegExp(`${hojeIso()}|${isoParaBr(hojeIso())}`));
+  // as datas NÃO vieram: Data = hoje (do banco, antes e depois do passo)
+  const diasDeHoje = hojes(hojeAntes, hojeDoBanco());
+  expect(await valorMostrado(campoPeloRotulo(dados, "Data")), "Data = hoje").toMatch(casaHoje(diasDeHoje));
   expect(await chavesDoNavegador(page), "nenhuma chave nova no navegador: a cópia foi em memória").toEqual(antes);
   expect(escritas, "duplicar não escreveu nada").toEqual([]);
-  // o aviso da cópia (2.6) — por último entre as asserções de tela: o toast pode já ter saído, mas a decisão o exige
-  await expect(page.getByText("Cópia aberta como rascunho"), "o aviso da cópia").toBeVisible();
 
   // salvar a cópia é o POST de sempre, com as MESMAS chaves
   let corpo: Record<string, unknown> | null = null;
@@ -499,7 +528,7 @@ test("CC-4 — Duplicar: copia o que deve, NÃO copia nota, série, datas nem or
   expect(enviado["centro_custo_id"]).toBe(b.centro.id);
   expect(enviado["observacao"]).toBe("observação do original");
   expect([enviado["frete"], enviado["outras_despesas"], enviado["desconto"]].map(Number), "frete, outras despesas e desconto vieram").toEqual([12, 3, 1.5]);
-  expect(enviado["data_documento"], "Data = hoje").toBe(hojeIso());
+  expect(diasDeHoje, "Data = hoje").toContain(enviado["data_documento"]);
   expect(enviado["numero_nota"], "NÃO copia a nota").toBeUndefined();
   expect(enviado["serie_nota"], "NÃO copia a série").toBeUndefined();
   expect(enviado["data_entrada"], "NÃO copia a data de entrada").not.toBe("2026-08-04");
@@ -617,12 +646,13 @@ test("CC-5 — Descartar: pergunta, Continuar editando mantém, confirmar volta 
   await login(page);
   const b = await base(page);
   const top = await cadastrarTop(page);
+  const hojeAntes = hojeDoBanco();
   await abrirCriacao(page, top.id);
   const ws = page.getByTestId(WORKSPACE);
   const dados = ws.getByRole("region", { name: "Dados principais" });
   const retrato = async () => ({ dados: (await dados.innerText()).replace(/\s+/g, " ").trim(), data: await valorMostrado(campoPeloRotulo(dados, "Data")) });
   const abertura = await retrato();
-  expect(abertura.data, "premissa: a abertura aplica os padrões (Data = hoje)").toMatch(new RegExp(`${hojeIso()}|${isoParaBr(hojeIso())}`));
+  expect(abertura.data, "premissa: a abertura aplica os padrões (Data = hoje, do banco)").toMatch(casaHoje(hojes(hojeAntes, hojeDoBanco())));
   const descartar = page.getByTestId(`${WORKSPACE}-descartar`);
   await expect(descartar, "sem alteração, nada a descartar").toBeDisabled();
   const escritas = registrarEscritas(page);

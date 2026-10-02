@@ -1542,6 +1542,142 @@ grant execute on function erp.situacao_atraso_cliente(uuid, int) to erp_app;
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 
+## VISUAL-UX-04b — correções da Central de Compras (sem migration)
+
+Decisão 278. **Só web**: sem migration, sem rota, sem API, sem variável, sem permissão, sem domínio. Conserta regressões
+da VISUAL-UX-04 (#87, `1303de3`, em produção): a Central de Compras deixa de escrever o custo médio do armazém no valor
+unitário (lançar e receber); a consulta mostra quantidade, Recebido e Saldo com 4 casas; a coluna Armazém dos itens
+volta a obedecer ao layout (só a regra da operação a força); a Origem "Recebido de pedido" lê a chave que a leitura
+devolve; o diálogo do "Confirmar compra" da criação só abre com a compra carregada e ainda confirmável; o Duplicar
+descarta a cópia que não abriu formulário. A Central de Vendas não muda. Também conserta os detectores do version skew
+(`apps/web/e2e/skew-web-anterior.spec.ts`) que erram sobre o web da base no motor da Central.
+
+**Ordem do deploy:** só o web, nas superfícies de § Superfície web. Sem migration e sem API: nada a aplicar no banco,
+nada a publicar na API.
+
+**Impacto em dados reais:** daqui para frente, nenhum — a fatia só deixa de escrever. Para trás, DECLARADO: desde o
+deploy do web da #87 (merge `1303de3` em 02/10/2026 01:22 UTC), a Central de Compras — lançar Pedido de compra e Compra,
+e Receber pedido — trocava o valor unitário vazio ou "0" de cada item pelo custo médio do armazém escolhido (M1). Um
+preço que ninguém digitou pode ter sido gravado e, numa compra confirmada, ter virado entrada no estoque (e o custo
+médio do armazém) e conta a pagar com esse valor. A sessão não tem acesso à produção: se há documento atingido, e
+quantos, é PENDING (Maike). Nada é apagado nem alterado por esta fatia (decisão 247): corrigir um documento é decisão do
+Maike, pelo cancelamento (com estorno, se confirmado) e um lançamento novo — nunca UPDATE nem DELETE.
+
+Consulta SOMENTE LEITURA (transação `read only`, desfeita no fim), para o editor SQL do Supabase com um papel que vê
+todas as organizações. Sob o papel da API, sem as GUCs da transação, a RLS devolve zero linhas — e zero ali não prova
+nada. Antes de ler a lista vazia, a premissa: `select count(*) from erp.documentos_compra where created_at >= timestamptz
+'2026-10-02 01:22:17+00';` (sem documento na janela, a lista vazia não diz nada).
+
+```sql
+begin transaction isolation level repeatable read read only;
+with itens as (            -- itens com armazém e unitário > 0 de documentos criados desde o merge da #87
+  select d.organization_id, d.id as documento_id, d.especie, d.codigo, d.situacao, d.created_at,
+         i.id as item_id, i.posicao, i.produto_id, i.armazem_id, i.quantidade, i.valor_unitario
+    from erp.documentos_compra d
+    join erp.documentos_compra_itens i on i.documento_id = d.id and i.organization_id = d.organization_id
+   where d.created_at >= timestamptz '2026-10-02 01:22:17+00'
+     and i.armazem_id is not null and i.valor_unitario > 0
+), mov as (                -- o razão dos pares (armazém, produto) desses itens, por lote, com o efeito de cada movimento no total
+  select m.organization_id, m.warehouse_id, m.product_id, coalesce(m.provider_lot, '') as lote, m.created_at, m.id,
+         m.direction * m.quantity as dq,
+         case when m.direction = 1 then round(m.quantity * m.unit_cost, 2)
+              else -round(m.quantity * m.avg_cost_after, 2) end as dv,
+         (m.direction = -1 and m.balance_after = 0) as zerou
+    from erp.stock_movements m
+   where (m.organization_id, m.warehouse_id, m.product_id) in (select organization_id, armazem_id, produto_id from itens)
+), mov_grupo as (          -- a saída que zera o lote recomeça o total (erp.apply_stock_movement, 0003)
+  select mov.*, count(*) filter (where zerou) over (partition by organization_id, warehouse_id, product_id, lote
+                order by created_at, id rows between unbounded preceding and 1 preceding) as grupo
+    from mov
+), estado as (             -- quantidade e total do lote depois de cada movimento
+  select organization_id, warehouse_id, product_id, lote, created_at, id,
+         sum(dq) over (partition by organization_id, warehouse_id, product_id, lote order by created_at, id) as qtd,
+         case when zerou then 0
+              else sum(dv) over (partition by organization_id, warehouse_id, product_id, lote, grupo order by created_at, id) end as total
+    from mov_grupo
+), na_criacao as (         -- o custo médio que o web leria na criação do documento: soma dos lotes, total ÷ quantidade
+  select it.item_id, sum(e.total) / nullif(sum(e.qtd), 0) as quociente
+    from itens it
+    cross join lateral (select distinct on (lote) lote, qtd, total from estado e
+                         where e.organization_id = it.organization_id and e.warehouse_id = it.armazem_id
+                           and e.product_id = it.produto_id and e.created_at < it.created_at
+                         order by lote, created_at desc, id desc) e
+   group by it.item_id
+), atual as (              -- o mesmo cálculo de GET /api/stock/balances/<armazém>/<produto> hoje (stock-core.ts, currentBalance)
+  select it.item_id, sum(sb.total_value) / nullif(sum(sb.quantity), 0) as quociente
+    from itens it
+    join erp.stock_balances sb on sb.organization_id = it.organization_id and sb.warehouse_id = it.armazem_id and sb.product_id = it.produto_id
+   group by it.item_id
+)
+select it.organization_id, it.especie, it.codigo, it.situacao, it.created_at, it.posicao + 1 as item,
+       p.code as produto_codigo, p.description as produto, w.initials as armazem, it.quantidade, it.valor_unitario,
+       round(nc.quociente, 6) as custo_medio_na_criacao, round(a.quociente, 6) as custo_medio_atual,
+       case when abs(it.valor_unitario - nc.quociente) <= 0.0000005 and abs(it.valor_unitario - a.quociente) <= 0.0000005 then 'os dois'
+            when abs(it.valor_unitario - nc.quociente) <= 0.0000005 then 'na criação'
+            else 'só o atual' end as bate_com
+  from itens it
+  join erp.products p on p.id = it.produto_id and p.organization_id = it.organization_id
+  join erp.warehouses w on w.id = it.armazem_id and w.organization_id = it.organization_id
+  left join na_criacao nc on nc.item_id = it.item_id
+  left join atual a on a.item_id = it.item_id
+ where (nc.quociente > 0 and abs(it.valor_unitario - nc.quociente) <= 0.0000005)
+    or (a.quociente > 0 and abs(it.valor_unitario - a.quociente) <= 0.0000005)
+ order by it.created_at, it.codigo, it.posicao;
+rollback;
+```
+
+Como ler: um item por linha, dos documentos criados desde o merge do `1303de3` (o deploy veio depois: o corte é
+conservador), com armazém e unitário > 0, cujo unitário bate — até meio milionésimo (a coluna guarda 6 casas) — com o custo
+médio que `GET /api/stock/balances/<armazém>/<produto>` devolvia: total ÷ quantidade, somando os lotes, como
+`currentBalance` faz. `custo_medio_na_criacao` é reconstruído pelo razão até a criação do documento, pelo mesmo cálculo
+do gatilho `erp.apply_stock_movement` (0003): a entrada soma quantidade × custo, a saída tira quantidade × custo médio (cada
+parcela em centavos), e a saída que zera o lote recomeça o total; `custo_medio_atual` é o de agora. `bate_com` = "na criação" ou "os dois" é o
+sinal forte; "só o atual" é candidato fraco (o custo médio mudou depois e passou a coincidir). Coincidência não é prova:
+um preço digitado igual ao custo médio também aparece — a lista é para conferir documento a documento. Provada num banco
+local migrado, com 13 documentos de cenário: listou os 7 que deviam aparecer (inclusive a compra cujo custo médio mudou
+depois dela, o pedido de compra, a média de dois lotes, o lote que zerou e reabriu, e a saída que afasta a coluna
+`average_cost` de total ÷ quantidade) e deixou fora os 6 de controle (antes do corte, preço digitado, sem armazém, média
+de um lote só, a coluna `average_cost`, a soma sem o recomeço); a mesma reconstrução levada até agora bateu com
+`erp.stock_balances` em todos os lotes; com o recomeço desligado e o corte recuado, passou a listar o que não devia.
+
+**Version skew:** web nova contra a API da base — as mesmas portas e os mesmos corpos (o unitário só deixa de ser
+preenchido; nenhuma chave nova em corpo, URL ou navegador); web anterior contra a API nova — nada muda na API. No CI, a
+prova reversa do detector busca três commits da main por SHA (o checkout do job é raso): sem rede, ela fica vermelha com
+a mensagem, nunca verde vazia.
+
+**Reversão:** redeploy do web anterior. Nada a desfazer em banco ou configuração. Declarado: reverter religa o M1 (o
+custo médio volta a ser escrito no unitário da compra) e as 2 casas da consulta — reverter é decisão do Maike.
+
+**Merge ANTES da #88 (TOP-CONFIG-08, decisão 277).** Motivo: o conserto dos detectores do
+`apps/web/e2e/skew-web-anterior.spec.ts` (M2) mora nesta fatia por decisão do Maike — as duas PRs não podem mudar o
+mesmo arquivo (PRE-PR-02) —, e o job de Version skew da #88 fica vermelho no sentido 2 até esta entrar e a #88 trazer a
+main. Esta fatia não tem migration, API nem arquivo da #88; na `docs/DECISIONS.md`, quem entrar depois mantém as duas
+linhas, a 277 antes da 278.
+
+**Roteiro do Maike (produção; produção é operacional — decisões 240 e 247, nada é apagado):**
+1. Depois do deploy (uma aba aberta com o web anterior continua com o M1 até recarregar): a premissa e a consulta
+   somente leitura acima; guardar a lista.
+2. Depois do deploy, M1: Compras › + Novo › Compra › uma TOP; escolher um produto e um armazém com saldo e custo médio
+   (Estoque › Saldo mostra o custo médio): o Valor unitário continua "0". Descartar — nada é gravado. Em Compras › um
+   Pedido de compra › "Receber…", o mesmo: o unitário é o do pedido, nunca o custo médio; Descartar.
+3. S1: abrir a consulta de qualquer compra ou pedido de compra: quantidade, Recebido e Saldo com 4 casas ("2,0000"); o
+   valor unitário e o desconto continuam com 2.
+4. S2 (se houver uma TOP de compra com layout que esconde o Armazém dos itens): a criação não mostra a coluna Armazém,
+   a não ser que a TOP exija o armazém — aí a coluna aparece mesmo com o layout escondendo.
+5. Origem: numa compra recebida de pedido, "Origem" é o link "Pedido de compra <código>"; numa compra direta,
+   "Lançamento direto" (como antes).
+6. Confirmar: Compras › + Novo › Compra › preencher › "Confirmar compra": a compra salva abre com o diálogo e a prévia;
+   fechar deixa Aberta (a compra de teste fica Aberta e, se não servir, se cancela — nada se apaga). Abrir a consulta de
+   uma compra já confirmada: nenhum diálogo. A prova de que a compra que CHEGA confirmada não abre o diálogo depende da
+   confirmação automática da #88; até lá, fica nos E2E.
+7. Duplicar: na consulta de uma compra, Duplicar abre um rascunho da mesma TOP com "Cópia aberta como rascunho";
+   Descartar.
+8. A venda não muda: Vendas › Novo › Venda, um produto com saldo: o unitário vazio é preenchido pelo custo médio, como
+   antes; Descartar.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção, nem para o roteiro nem
+para a consulta do impacto.
+
 ## VISUAL-UX-04 — Central de Compras no motor da Central (sem migration)
 
 Decisão 276. **Só web**: sem migration, sem rota, sem API, sem variável, sem permissão, sem domínio. O motor da Central

@@ -7,8 +7,10 @@ import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
  *
  * A integração (LC-1..LC-6) prova o cadastro, o layout efetivo, a cobrança no servidor e o padrão de cadastro. O que
  * só este arquivo prova é o elo da TELA: um layout de Compra ligado à TOP — um campo escondido (Transportadora), outro
- * renomeado (Número da nota → "Nº da NF"), a Observação obrigatória e um Fornecedor como padrão de cadastro — governa a
- * Central de Compras (no `data-campo`, no rótulo, no "*" e no Fornecedor já preenchido); salvar sem Observação é
+ * renomeado (Número da nota → "Nº da NF"), a Observação obrigatória, um Fornecedor como padrão de cadastro e a coluna
+ * Armazém ESCONDIDA dos itens — governa a Central de Compras (no `data-campo`, no rótulo, no "*", no Fornecedor já
+ * preenchido e nas colunas da grade: a regra desta TOP não exige armazém, então nada força a coluna de volta — a
+ * VISUAL-UX-04b, S2, desfez o "armazém sempre" que ignorava o layout); salvar sem Observação é
  * recusado NO CAMPO, sem sair nada para o servidor; e no modo RECEBER PEDIDO o MESMO layout vale, com o pedido vencendo
  * o padrão (o fornecedor é o do pedido, não o do layout).
  *
@@ -60,7 +62,6 @@ async function cenario(page: Page) {
   const nomeProduto = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/products/${produto.id}`))["description"]);
   const empresa = await empresaAtiva(page);
   const armazem = await primeiroId(page, `/api/resources/warehouses?empresa_id=${empresa}&pageSize=1`);
-  const nomeArmazem = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/warehouses/${armazem}`))["description"]);
   const doPedido = await primeiroId(page, "/api/resources/people?is_provider=true&pageSize=1");
   const nomeDoPedido = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/people/${doPedido}`))["name"]);
   const padrao = (await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("LC-W1 Fornecedor padrão"), person_type: "legal", is_provider: true })).id;
@@ -78,12 +79,19 @@ async function cenario(page: Page) {
     if (c.campo === "fornecedor_id") return { ...c, valorPadrao: { tipo: "registro" as const, id: padrao } };
     return c;
   });
+  // A coluna Armazém sai dos ITENS: não é coluna do sistema (o layout pode escondê-la) e a TOP desta execução não exige
+  // armazém — só a regra (`exigeArmazem`) a forçaria de volta.
+  const semArmazem = estrutura.itens.filter((c) => c.campo !== "armazem_id");
+  expect(semArmazem.length, "premissa: o Armazém está nos itens do layout do sistema da compra").toBe(estrutura.itens.length - 1);
+  estrutura.itens = semArmazem;
   const layout = (await api<{ id: string }>(page, "POST", LAYOUTS, { familia: FAMILIA, nome: uniq("Layout LC-W1"), estrutura })).id;
   await api(page, "PUT", `${LAYOUTS}/${layout}/tops`, { tipoOperacaoIds: [topCompra.id] });
   const efetivo = await api<{ origem: string; id: string; padroesDeCadastro?: Record<string, { id: string }> }>(page, "GET", `/api/compras/compras/layout-efetivo?tipo_operacao_id=${topCompra.id}`);
   expect(efetivo, "premissa: o layout está ligado e o padrão de cadastro vale").toMatchObject({ origem: "ligado", id: layout, padroesDeCadastro: { fornecedor_id: { id: padrao } } });
+  const regras = await api<{ exigeArmazem: boolean }>(page, "GET", `/api/compras/compras/regras-da-operacao?tipo_operacao_id=${topCompra.id}`);
+  expect(regras.exigeArmazem, "premissa: a regra desta TOP não exige armazém (nada força a coluna)").toBe(false);
 
-  return { topCompra, topPedido, layout, produto: { id: produto.id, nome: nomeProduto }, empresa, armazem, nomeArmazem,
+  return { topCompra, topPedido, layout, produto: { id: produto.id, nome: nomeProduto }, empresa, armazem,
     natureza: naturezas[0]!, centro: centros[0]!, fornecedor: { doPedido, nomeDoPedido, padrao, nomePadrao } };
 }
 
@@ -102,7 +110,12 @@ async function conferirLayoutNaCentral(page: Page, layoutId: string) {
   await expect(campo(page, "observacao").locator(`label [data-parte="req"]`), "o \"*\" da Observação").toHaveCount(1);
   await expect(campo(page, "transportadora_id"), "a Transportadora está fora do layout").toHaveCount(0);
   await expect(central.locator("label", { hasText: "Transportadora" }), "e não aparece na Central").toHaveCount(0);
-  await expect(page.getByTestId("compras-itens").locator('th[data-campo="armazem_id"]'), "as colunas dos itens também seguem o layout").toHaveCount(1);
+  // As colunas dos itens também seguem o layout. PRESENÇA antes da ausência: a grade desenhou as colunas pelo layout
+  // (`data-campo`), e o Produto está lá; o Armazém, escondido pelo layout e não exigido pela regra, NÃO.
+  const itens = page.getByTestId("compras-itens");
+  await expect(itens.locator('th[data-campo="produto_id"]'), "a grade dos itens desenhou as colunas pelo layout").toHaveCount(1);
+  await expect(itens.locator('th[data-campo="armazem_id"]'), "o Armazém escondido pelo layout não aparece nos itens").toHaveCount(0);
+  await expect(itens.getByRole("columnheader", { name: "Armazém" }), "nem pelo rótulo").toHaveCount(0);
 }
 
 test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigatória, Fornecedor padrão) governa a Central; sem Observação recusa no campo; no modo receber vale o mesmo layout e o pedido vence o padrão", async ({ page }) => {
@@ -122,7 +135,8 @@ test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigat
   await page.goto(`/compras/compras/new?tipo_operacao_id=${c.topCompra.id}`);
   await expect(central).toBeVisible();
   await expect(central).toHaveAttribute("data-modo", "lancar");
-  await expect(page.getByTestId("compras-top-travada"), "a TOP escolhida, travada").toContainText(`${c.topCompra.codigo} · `);
+  // ÂNCORA no começo do VALOR do campo travado (o rótulo "Tipo de Operação" mora fora dele): "<código> · <nome>".
+  await expect(page.getByTestId("compras-top-travada").locator('[data-parte="valor"]'), "a TOP escolhida, travada").toHaveText(new RegExp(`^${c.topCompra.codigo} · `));
   await conferirLayoutNaCentral(page, c.layout);
   await expect(campo(page, "fornecedor_id").locator("button").first(), "o Fornecedor padrão do layout, aplicado ao abrir").toContainText(c.fornecedor.nomePadrao);
 
@@ -132,7 +146,8 @@ test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigat
   const itens = page.getByTestId("compras-itens");
   await itens.getByTestId("central-compras-adicionar-item").click();
   const linha = itens.locator("tbody tr").first();
-  await escolherNaLinha(page, linha.getByTestId("central-compras-armazem"), c.nomeArmazem);
+  // sem a coluna Armazém (o layout a escondeu), a linha não tem onde escolhê-lo — e a regra não o exige
+  await expect(linha.getByTestId("central-compras-armazem"), "a linha não desenha a célula do Armazém").toHaveCount(0);
   await escolherNaLinha(page, linha.getByTestId("central-compras-produto"), c.produto.nome);
   await linha.getByLabel("Quantidade do item 1").fill("2");
   await linha.getByLabel("Valor unitário do item 1").fill("15");
@@ -158,6 +173,8 @@ test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigat
   expect(posts, "um POST, o que gravou").toEqual(["/api/compras/compras"]);
   const gravada = await api<Record<string, unknown>>(page, "GET", `/api/compras/compras/${compraId}`);
   expect(gravada, "o servidor gravou o que a tela mostrou").toMatchObject({ fornecedor_id: c.fornecedor.padrao, observacao: "Conferida na portaria", transportadora_id: null, tipo_operacao: { id: c.topCompra.id } });
+  expect((gravada["itens"] as { produto_id: string; armazem_id: string | null }[]).map((i) => [i.produto_id, i.armazem_id]),
+    "sem a coluna (e sem padrão), o item foi gravado sem armazém — a regra desta TOP não o exige").toEqual([[c.produto.id, null]]);
 
   // (4) MODO RECEBER: um pedido de OUTRO fornecedor, sem observação; Próximos passos → a Central em modo receber.
   const pedido = (await api<{ id: string }>(page, "POST", "/api/compras/pedidos", {

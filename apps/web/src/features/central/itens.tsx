@@ -26,11 +26,12 @@ export type { ChaveCampoDoItem, ChaveColunaDoItem, ItensDaOrigem, LayoutDosItens
  * Cópia fiel da grade/formulário da criação (VISUAL-UX-01 R1, VISUAL-UX-02): fonte única (`items`/`onChange` da
  * página, nenhuma cópia), marcação por círculo, item corrente de Duplicar/Remover, Configurar colunas sem persistência,
  * unidade do produto só para exibir e `efeitosDoEstoque` sempre montado (o custo médio do unitário vazio não depende da
- * coluna Estoque estar à vista).
+ * coluna Estoque estar à vista; `custoMedioNoUnitario={false}` desliga só a escrita, e a leitura continua).
  *
  * O que é da ESPÉCIE chega por props: o prefixo dos testids, as colunas do sistema e o mapa catálogo → coluna. Os
- * recursos novos — lote/validade por linha (`lote`), armazém por item (`armazemPorItem`) e o modo "da origem"
- * (`daOrigem`) — são opcionais e desligados por padrão: sem eles o DOM, as classes e o payload são os de antes.
+ * recursos novos — lote/validade por linha (`lote`), armazém permitido por item (`armazemPorItem`), armazém forçado
+ * sobre o layout (`armazemForcado`) e o modo "da origem" (`daOrigem`) — são opcionais e desligados por padrão: sem eles
+ * o DOM, as classes e o payload são os de antes. `custoMedioNoUnitario` é ligado por padrão (o de antes).
  */
 
 /** A linha nova: quantidade 1, unitário 0, gera estoque; com armazém padrão, só o `warehouse_id` a mais. */
@@ -143,7 +144,7 @@ function CodigoDoProduto({ id, conhecido }: { id?: string; conhecido?: OpcaoReal
 
 export function ItensDaCentral({
   prefixoTestid, colunas: colunasDaEspecie, items, onChange, layout, erros, armazemPadrao, reservaEstoque = null,
-  armazemPorItem, lote = null, daOrigem = null
+  armazemPorItem, armazemForcado = false, custoMedioNoUnitario = true, lote = null, daOrigem = null
 }: PropsDosItens) {
   const tid = (sufixo: string) => `${prefixoTestid}-${sufixo}`;
   const { doSistema, doCatalogo } = colunasDaEspecie;
@@ -176,12 +177,13 @@ export function ItensDaCentral({
       const depois = ORDEM_COLUNAS.slice(0, ORDEM_COLUNAS.indexOf(k)).filter((x) => lista.includes(x)).pop();
       lista.splice(depois ? lista.indexOf(depois) + 1 : 0, 0, k);
     }
-    if (armazemPorItem === true && !lista.includes("armazem")) {
+    // PERMITIR (`armazemPorItem`, em `ligada`) não é FORÇAR: só `armazemForcado` passa por cima do layout
+    if (armazemForcado === true && ligada("armazem") && !lista.includes("armazem")) {
       const i = lista.indexOf("produto");
       lista.splice(i >= 0 ? i + 1 : lista.length, 0, "armazem");
     }
     return lista;
-  }, [colunasDoLayout, chavesColunas, armazemPorItem, chaveDoCatalogo]);
+  }, [colunasDoLayout, chavesColunas, armazemForcado, ligada, chaveDoCatalogo]);
   const camposDoLayout = React.useCallback((l: LayoutDosItens): ChaveCampoDoItem[] => {
     const lista: ChaveCampoDoItem[] = chavesDoLayout(l).filter((k): k is Exclude<ChaveColunaDoItem, "codigo"> => k !== "codigo");
     const i = lista.indexOf("quantidade");
@@ -285,7 +287,7 @@ export function ItensDaCentral({
   // largura mínima DERIVADA das colunas visíveis (o círculo + cada coluna), nunca contada à mão
   const larguraMinima = LARGURA_SELECAO + colunasVisiveis.reduce((a, k) => a + COLUNAS[k].largura, 0);
 
-  /** O saldo de ESTOQUE mostrado. Só exibe — quem preenche o custo médio é `efeitosDoEstoque`. */
+  /** O saldo de ESTOQUE mostrado. Só exibe — quem preenche o custo médio (com `custoMedioNoUnitario`) é `efeitosDoEstoque`. */
   const saldoDoItem = (it: ItemRow) => (reservaEstoque
     ? <EstoqueDisponivelDoItem warehouseId={it.warehouse_id} productId={it.product_id} />
     : <StockCell warehouseId={it.warehouse_id} productId={it.product_id} onCost={() => { /* só exibe */ }} />);
@@ -436,8 +438,14 @@ export function ItensDaCentral({
     `efeitosDoEstoque`: uma `StockCell` por linha, fora da vista e SEMPRE montada — é ela quem preenche o unitário
     VAZIO com o custo médio. Se morasse na célula visível, esconder a coluna ou trocar de visão a remontaria e o
     unitário zerado de propósito voltaria a ser o custo médio (apresentação mudando o POST).
+    Com `custoMedioNoUnitario={false}` (a compra: o unitário é o preço do fornecedor, e "0" é bonificação) a célula
+    continua montada e lendo o saldo, mas não escreve nada: o "0" digitado é o que vai no POST.
   */
-  const efeitosDoEstoque = <div hidden>{items.map((it, i) => <StockCell key={i} warehouseId={it.warehouse_id} productId={it.product_id} onCost={(c) => { if (!it.unit_value || it.unit_value === "0") atualizar(i, "unit_value", c); }} />)}</div>;
+  const preencherCusto = (it: ItemRow, i: number, c: string) => {
+    if (!custoMedioNoUnitario) return;
+    if (!it.unit_value || it.unit_value === "0") atualizar(i, "unit_value", c);
+  };
+  const efeitosDoEstoque = <div hidden>{items.map((it, i) => <StockCell key={i} warehouseId={it.warehouse_id} productId={it.product_id} onCost={(c) => preencherCusto(it, i, c)} />)}</div>;
 
   const configDoFormulario = visao === "formulario";
   const mostrarFormulario = () => { if (sel < 0 && items.length) setSelecionado(0); };

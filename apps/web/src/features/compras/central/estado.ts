@@ -176,14 +176,18 @@ export function useEntradaDaCentral(variante: VarianteDeCompra): EntradaDaCentra
     if (!chave) { trava.current = null; return; }
     if (topAtual) trava.current = { chave, top: topAtual };
   });
+  const topDaSessao = chave && trava.current?.chave === chave ? trava.current.top : null;
+  const topEfetiva = topAtual ?? topDaSessao;
+  /* DUPLICAR (como na venda): a TOP do original que não abre o formulário (indisponível, inativa, servidor sem a lista)
+     dá o lançador de hoje — e a cópia em memória é DESCARTADA, para não reaparecer numa criação aberta depois. */
+  const copiaSemFormulario = !pedidoId && Boolean(pedidaNaUrl) && !topEfetiva && estado.situacao !== "carregando";
+  React.useEffect(() => { if (copiaSemFormulario) descartarCopia(chaveDaCopiaDeCompra, variante.segmento); }, [copiaSemFormulario, variante.segmento]);
   const base = { variante, adaptador, estado, podeCriar, pedidaNaUrl, rotuloDaEspecie: rotulo,
     voltarALista: () => router.push(adaptador.rotas.lista),
     escolherTop: (t: TopOperacional) => router.replace(`/compras/${variante.segmento}/new?tipo_operacao_id=${encodeURIComponent(t.id)}`) };
   if (pedidoId) {
     return { ...base, formulario: { chave: `receber:${pedidoId}:${pedidaNaUrl}`, props: { variante, adaptador, estado, podeCriar, pedidoId, topDaUrl: pedidaNaUrl, top: null, escritaTopConfirmada: false } } };
   }
-  const topDaSessao = chave && trava.current?.chave === chave ? trava.current.top : null;
-  const topEfetiva = topAtual ?? topDaSessao;
   if (topEfetiva) {
     return { ...base, formulario: { chave: `lancar:${topEfetiva.id}`, props: { variante, adaptador, estado, podeCriar, pedidoId: "", topDaUrl: pedidaNaUrl, top: topEfetiva, escritaTopConfirmada: podeLancar(estado) && topAtual !== null } } };
   }
@@ -316,14 +320,14 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const top = modoReceber ? topDoPasso : topDoLancamento?.id ?? "";
   const [movimento] = React.useState(() => (estado.situacao === "pronto" ? estado.dados.family.label : ""));
 
-  /* A CÓPIA (Duplicar) — lida UMA vez, da memória; só vale para esta espécie e esta TOP. */
+  /* A CÓPIA (Duplicar) — lida UMA vez, da memória; só vale para esta espécie e esta TOP. Como na venda, o formulário que
+     monta encerra a entrega mesmo quando ela não vale para ele: a cópia de outra TOP não fica para uma criação seguinte. */
   const [copia] = React.useState<CopiaDeCompra | null>(() =>
     (!modoReceber && topDoLancamento ? espiarCopia<Partial<Cabecalho>>(chaveDaCopiaDeCompra, variante.segmento, topDoLancamento.id) : null));
   const avisouCopia = React.useRef(false);
   React.useEffect(() => {
-    if (!copia) return;
     descartarCopia(chaveDaCopiaDeCompra, variante.segmento);
-    if (!avisouCopia.current) { avisouCopia.current = true; toast.info("Cópia aberta como rascunho"); }
+    if (copia && !avisouCopia.current) { avisouCopia.current = true; toast.info("Cópia aberta como rascunho"); }
   }, [copia, variante.segmento]);
 
   const [h, setH] = React.useState<Cabecalho>(() => ({ ...cabecalhoVazio(), ...(copia?.cabecalho ?? {}), data_documento: todayISO() }));
@@ -657,10 +661,11 @@ export function useEstadoDaConsulta({ variante, id }: { variante: VarianteDeComp
   const porta = adaptador.rotas.porta(id);
   const q = useDoc<DocumentoDeCompra>(porta);
 
-  /* O "Salvo" e o pedido de Confirmar vindos da criação: lidos uma vez, da memória. */
+  /* O "Salvo" e o pedido de Confirmar vindos da criação: lidos uma vez, da memória. O diálogo NÃO nasce aberto: o pedido
+     só é atendido depois do documento carregado (efeito abaixo), com a mesma conferência da pílula. */
   const [salvo] = React.useState(() => consumirSalvo(chaveDepoisDeSalvarDeCompra, id));
   React.useEffect(() => { if (salvo) descartarSalvo(chaveDepoisDeSalvarDeCompra, id); }, [salvo, id]);
-  const [confirmando, setConfirmando] = React.useState(Boolean(salvo?.confirmar) && variante.variante === "compra");
+  const [confirmando, setConfirmando] = React.useState(false);
   const [cancelando, setCancelando] = React.useState(false);
   const [encerrando, setEncerrando] = React.useState(false);
   const chaveConfirmar = React.useRef(newIdem());
@@ -701,6 +706,14 @@ export function useEstadoDaConsulta({ variante, id }: { variante: VarianteDeComp
   const passos = useProximosPassosDoPedido(variante.segmento, id, podeReceber);
   const podeEncerrarSaldo = ehPedido && situacao === "aberto" && recebimentoDeclarado && comCompraViva && pedidoTemSaldo(itens) && can(`${variante.perm}.edit`);
   const podeConfirmar = ehCompra && situacao === "aberto" && can("compras.edit");
+  /* CONFIRMAR PEDIDO NA CRIAÇÃO (como na venda): atendido UMA vez, com o documento carregado, e só se a compra AINDA
+     pode ser confirmada (situação "aberto" e `compras.edit`). Chegou confirmada (ou noutra situação): o diálogo não abre. */
+  const pedidoDeConfirmarTratado = React.useRef(false);
+  React.useEffect(() => {
+    if (!d || pedidoDeConfirmarTratado.current) return;
+    pedidoDeConfirmarTratado.current = true;
+    if (salvo?.confirmar && podeConfirmar) setConfirmando(true);
+  }, [d, salvo, podeConfirmar]);
   const podeCancelar = (situacao === "aberto" || situacao === "confirmado") && can(`${variante.perm}.delete`);
   const origemId = ehCompra && d && typeof d["origem_documento_id"] === "string" ? d["origem_documento_id"] : "";
   const saldoEncerradoEm = ehPedido && d && typeof d["saldo_encerrado_em"] === "string" ? d["saldo_encerrado_em"] : "";

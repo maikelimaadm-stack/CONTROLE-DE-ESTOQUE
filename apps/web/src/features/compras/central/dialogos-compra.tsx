@@ -1,62 +1,18 @@
 "use client";
-import * as React from "react";
-import { useMutation } from "@tanstack/react-query";
-import { api, newIdem } from "@/lib/api";
-import { toast } from "@/lib/toast";
 import { brl, dateBR, num } from "@/lib/utils";
 import { LoadingState } from "@/components/ui";
 import { SimpleTable, type Row } from "@/features/docs/shared";
-import { DialogoCancelarDocumento as DialogoCancelarDoMotor, DialogoConfirmar } from "@/features/central/dialogos";
-import { DialogoEncerrarSaldo } from "@/features/sales/faturar-em-partes";
+import { DialogoConfirmar } from "@/features/central/dialogos";
 import { usePreviaDaConfirmacaoCompra, type PreviaDaConfirmacaoCompra } from "../previa-confirmacao-compra";
-import { MOTIVO_VAZIO_DA_COMPRA, PREFIXO_CENTRAL_COMPRAS, corpoDoCancelamento } from "./adaptador";
 
 /**
- * OS DIÁLOGOS DA CENTRAL DE COMPRAS (VISUAL-UX-04, decisão 276).
+ * O DIÁLOGO DE CONFIRMAR COMPRA (VISUAL-UX-04, decisão 276).
  *
- * A casca é a do motor (`@/features/central/dialogos`, sobre o `Dialog` oficial). Aqui moram o texto da compra,
- * a prévia da confirmação de hoje (recusas, entrada no estoque, parcelas a pagar) e as duas escritas:
- * - Confirmar: POST /api/compras/compras/<id>/confirm, corpo vazio, Idempotency-Key.
- * - Cancelar: POST /api/compras/<seg>/<id>/cancel, `{ motivo }` aparado 1–500 ou `{}` vazio, Idempotency-Key;
- *   a recusa (409 inclusive) mostra a mensagem do servidor.
- * Encerrar saldo continua o diálogo de hoje (motivo obrigatório).
+ * A casca é a do motor (`DialogoConfirmar` de `@/features/central/dialogos`, sobre o `Dialog` oficial). Aqui moram o
+ * texto da compra e a prévia da confirmação de hoje (recusas, entrada no estoque, parcelas a pagar). A escrita
+ * (POST /api/compras/compras/<id>/confirm, corpo vazio, Idempotency-Key) e quando o diálogo abre moram no estado
+ * (`useEstadoDaConsulta`); Cancelar e Encerrar saldo são os diálogos do motor e o de hoje, montados na barra da consulta.
  */
-
-export { DialogoDescartar } from "@/features/central/dialogos";
-export { DialogoEncerrarSaldo };
-
-/** O texto de efeito de hoje, por situação do documento. */
-export function textoDoCancelamentoDeCompra(situacao: string): string {
-  return situacao === "confirmado"
-    ? "A compra confirmada é estornada: a entrada sai do estoque e as contas a pagar são canceladas. Conta com baixa precisa ter a baixa cancelada antes."
-    : "O documento passa a cancelado e não pode mais ser confirmado.";
-}
-
-/** O texto do Encerrar saldo do pedido (o de hoje). */
-export const DESCRICAO_ENCERRAR_SALDO_DO_PEDIDO =
-  "O saldo que falta receber deixa de poder ser recebido, e o pedido passa a convertido. As compras já geradas não mudam.";
-
-const mensagemDoErro = (e: unknown) => (e instanceof Error && e.message ? e.message : "Não foi possível concluir a operação.");
-
-/** CONFIRMAR COMPRA — corpo vazio; a chave de idempotência renova só depois de erro. */
-export function useConfirmarCompra(id: string, onSucesso: () => void) {
-  const chave = React.useRef(newIdem());
-  return useMutation({
-    mutationFn: () => api(`/api/compras/compras/${id}/confirm`, { method: "POST", idempotencyKey: chave.current }),
-    onSuccess: () => { chave.current = newIdem(); toast.success("Compra confirmada"); onSucesso(); },
-    onError: (e) => { chave.current = newIdem(); toast.error(mensagemDoErro(e)); }
-  });
-}
-
-/** CANCELAR — `{ motivo }` aparado 1–500, vazio sem motivo; a mensagem do servidor (409 incluso) vai ao aviso. */
-export function useCancelarCompra(segmento: string, id: string, onSucesso: () => void) {
-  const chave = React.useRef(newIdem());
-  return useMutation({
-    mutationFn: (motivo: string) => api(`/api/compras/${segmento}/${id}/cancel`, { method: "POST", body: corpoDoCancelamento(motivo), idempotencyKey: chave.current }),
-    onSuccess: () => { chave.current = newIdem(); toast.success("Documento cancelado"); onSucesso(); },
-    onError: (e) => { chave.current = newIdem(); toast.error(mensagemDoErro(e)); }
-  });
-}
 
 /** CONFIRMAR COMPRA <código>? — a prévia do servidor; carregando ou com recusa prevista, o botão trava. */
 export function DialogoConfirmarCompra({ id, aberto, onFechar, codigo, carregando, onConfirmar }: {
@@ -73,17 +29,6 @@ export function DialogoConfirmarCompra({ id, aberto, onFechar, codigo, carregand
       {estado.situacao === "pronta" && <CorpoDaPrevia previa={estado.previa} />}
     </div>
   </DialogoConfirmar>;
-}
-
-/** CANCELAR <ESPÉCIE> <código>? — motivo opcional; vazio, o corpo sai sem motivo. */
-export function DialogoCancelarCompra({ aberto, onFechar, especie, codigo, situacao, carregando, onCancelar }: {
-  aberto: boolean; onFechar: () => void;
-  /** em minúsculas ("compra", "pedido de compra") */
-  especie: string; codigo: string; situacao: string; carregando: boolean;
-  onCancelar: (motivo: string) => void;
-}) {
-  return <DialogoCancelarDoMotor prefixoTestid={PREFIXO_CENTRAL_COMPRAS} aberto={aberto} onFechar={onFechar} especie={especie} codigo={codigo}
-    texto={textoDoCancelamentoDeCompra(situacao)} carregando={carregando} motivoVazio={MOTIVO_VAZIO_DA_COMPRA} onCancelar={onCancelar} />;
 }
 
 const t = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : String(v));

@@ -49,14 +49,14 @@ function SaldoDoItem({ it }: { it: Row }) {
 /** Colunas fixas que entram por marca, não pela lista do adaptador. */
 const OPCIONAIS: ReadonlySet<ChaveColunaSalva> = new Set<ChaveColunaSalva>(["faturado", "saldo", "reservado", "lote", "validade"]);
 
-function catalogoDeColunas(prefixoTestid: string): Partial<Record<ChaveColunaSalva, ColunaDoItemSalvo>> {
+function catalogoDeColunas(prefixoTestid: string, casas: number): Partial<Record<ChaveColunaSalva, ColunaDoItemSalvo>> {
   return {
     codigo: { chave: "codigo", rotulo: "Código", largura: 70, celula: (it) => textoDoItem(it["product_code"]) },
     produto: { chave: "produto", rotulo: "Produto", largura: 170, elastica: true, celula: (it) => textoDoItem(it["product_name"]) },
     armazem: { chave: "armazem", rotulo: "Armazém", largura: 108, celula: (it) => textoDoItem(it["warehouse_name"]) },
     estoque: { chave: "estoque", rotulo: "Estoque", largura: 74, numero: true, estoque: true, celula: (it) => <SaldoDoItem it={it} /> },
     quantidade: { chave: "quantidade", rotulo: "Quantidade", largura: 104, numero: true, celula: (it) => <span className={grade.quantidade}>
-      <span data-testid={`${prefixoTestid}-quantidade`}>{num(String(it["quantity"] ?? "0"), 2)}</span>
+      <span data-testid={`${prefixoTestid}-quantidade`}>{num(String(it["quantity"] ?? "0"), casas)}</span>
       {it["unit"] ? <span className={grade.unidade} data-testid={`${prefixoTestid}-unidade`}>{String(it["unit"])}</span> : null}
     </span> },
     unitario: { chave: "unitario", rotulo: "Valor unitário", largura: 108, numero: true, celula: (it) => brl(String(it["unit_price"] ?? "0")) },
@@ -71,10 +71,10 @@ const COLUNAS_DO_LOTE: readonly ColunaDoItemSalvo[] = [
   { chave: "validade", rotulo: "Validade", largura: 96, testId: "doc-item-validade", celula: (it) => textoDoItem(it["validade"]) }
 ];
 
-/** Documento com parte gerada — a parte gerada (o rótulo é da espécie) e o Saldo, do servidor. */
-const colunasDoSaldo = (rotuloDoGerado: string): readonly ColunaDoItemSalvo[] => [
-  { chave: "faturado", rotulo: rotuloDoGerado, largura: 100, numero: true, testId: "doc-item-faturado", celula: (it) => num(String(it["faturado"] ?? "0"), 2) },
-  { chave: "saldo", rotulo: "Saldo", largura: 100, numero: true, testId: "doc-item-saldo", celula: (it) => num(String(it["saldo"] ?? it["quantity"] ?? "0"), 2) }
+/** Documento com parte gerada — a parte gerada (o rótulo é da espécie) e o Saldo, do servidor, nas casas da quantidade. */
+const colunasDoSaldo = (rotuloDoGerado: string, casas: number): readonly ColunaDoItemSalvo[] => [
+  { chave: "faturado", rotulo: rotuloDoGerado, largura: 100, numero: true, testId: "doc-item-faturado", celula: (it) => num(String(it["faturado"] ?? "0"), casas) },
+  { chave: "saldo", rotulo: "Saldo", largura: 100, numero: true, testId: "doc-item-saldo", celula: (it) => num(String(it["saldo"] ?? it["quantity"] ?? "0"), casas) }
 ];
 
 /** Documento cuja versão congelada reserva estoque — o que cada item ainda segura, do servidor. */
@@ -82,12 +82,13 @@ const COLUNAS_DA_RESERVA: readonly ColunaDoItemSalvo[] = [
   { chave: "reservado", rotulo: "Reservado", largura: 100, numero: true, testId: "doc-item-reservado", celula: (it) => (ehDecimalDaApi(it["reservado"]) ? num(it["reservado"], 2) : "—") }
 ];
 
-const CAMPOS_DO_ITEM_SALVO: readonly CampoDoItemSalvo[] = [
+/** Os campos do formulário de leitura; a quantidade nas mesmas casas da grade. */
+const camposDoItemSalvo = (casas: number): readonly CampoDoItemSalvo[] => [
   { chave: "produto", rotulo: "Produto", adorno: "pesquisa", valor: (it) => (it["product_code"] ? `${texto(it["product_code"])} · ${texto(it["product_name"])}` : texto(it["product_name"])) },
   { chave: "armazem", rotulo: "Armazém", adorno: "pesquisa", valor: (it) => texto(it["warehouse_name"]) },
   { chave: "estoque", rotulo: "Estoque", adorno: "travado", valor: (it) => <><SaldoDoItem it={it} />{it["unit"] ? ` ${texto(it["unit"])}` : ""}</> },
   { chave: "unidade", rotulo: "Unidade", adorno: "travado", valor: (it) => texto(it["unit"]) },
-  { chave: "quantidade", rotulo: "Quantidade", valor: (it) => num(String(it["quantity"] ?? "0"), 2) },
+  { chave: "quantidade", rotulo: "Quantidade", valor: (it) => num(String(it["quantity"] ?? "0"), casas) },
   { chave: "unitario", rotulo: "Valor unitário", valor: (it) => num(String(it["unit_price"] ?? "0"), 2) },
   { chave: "desconto", rotulo: "Desconto", valor: (it) => num(String(it["discount"] || "0"), 2) },
   { chave: "descontoPercentual", rotulo: "Desconto %", valor: (it) => num(String(it["discount_percent"] || "0"), 2) },
@@ -97,9 +98,9 @@ const CAMPOS_DO_LOTE: readonly CampoDoItemSalvo[] = [
   { chave: "lote", rotulo: "Lote", adorno: "travado", valor: (it) => texto(it["lote"]) },
   { chave: "validade", rotulo: "Validade", adorno: "travado", valor: (it) => texto(it["validade"]) }
 ];
-const camposDoSaldo = (rotuloDoGerado: string): readonly CampoDoItemSalvo[] => [
-  { chave: "faturado", rotulo: rotuloDoGerado, adorno: "travado", valor: (it) => num(String(it["faturado"] ?? "0"), 2) },
-  { chave: "saldo", rotulo: "Saldo", adorno: "travado", valor: (it) => num(String(it["saldo"] ?? it["quantity"] ?? "0"), 2) }
+const camposDoSaldo = (rotuloDoGerado: string, casas: number): readonly CampoDoItemSalvo[] => [
+  { chave: "faturado", rotulo: rotuloDoGerado, adorno: "travado", valor: (it) => num(String(it["faturado"] ?? "0"), casas) },
+  { chave: "saldo", rotulo: "Saldo", adorno: "travado", valor: (it) => num(String(it["saldo"] ?? it["quantity"] ?? "0"), casas) }
 ];
 const CAMPOS_DA_RESERVA: readonly CampoDoItemSalvo[] = [
   { chave: "reservado", rotulo: "Reservado", adorno: "travado", valor: (it) => (ehDecimalDaApi(it["reservado"]) ? num(it["reservado"], 2) : "") }
@@ -119,16 +120,17 @@ function aplicarPreferencia<K extends string>(prefs: readonly Preferencia<K>[] |
 /**
  * `colunas.leitura`: a ordem padrão da espécie. `mostrarLote`: Lote e Validade gravados (desligado por padrão).
  * `mostrarSaldo`: a parte gerada (`rotuloDoGerado`, padrão "Faturado") e o Saldo, do servidor. `mostrarReservado`: Reservado, do servidor.
+ * `casasDaQuantidade`: casas da quantidade, da parte gerada e do saldo, na grade e no formulário (padrão 2; a compra, 4).
  * `avisos`: avisos funcionais dos itens, entre a barra e a grade, com o testid de cada um.
  */
-export function ItensSalvos({ prefixoTestid, colunas: colunasDaEspecie, itens, subtotal, legenda, mostrarSaldo = false, mostrarReservado = false, mostrarLote = false, rotuloDoGerado = "Faturado", avisos = [] }: PropsDosItensSalvos) {
+export function ItensSalvos({ prefixoTestid, colunas: colunasDaEspecie, itens, subtotal, legenda, mostrarSaldo = false, mostrarReservado = false, mostrarLote = false, rotuloDoGerado = "Faturado", casasDaQuantidade = 2, avisos = [] }: PropsDosItensSalvos) {
   const leitura = colunasDaEspecie.leitura;
   const colunas = React.useMemo(() => {
-    const catalogo = catalogoDeColunas(prefixoTestid);
+    const catalogo = catalogoDeColunas(prefixoTestid, casasDaQuantidade);
     const base = leitura.filter((k) => !OPCIONAIS.has(k)).map((k) => catalogo[k]).filter((c): c is ColunaDoItemSalvo => c !== undefined);
-    return [...base, ...(mostrarLote ? COLUNAS_DO_LOTE : []), ...(mostrarSaldo ? colunasDoSaldo(rotuloDoGerado) : []), ...(mostrarReservado ? COLUNAS_DA_RESERVA : [])];
-  }, [prefixoTestid, leitura, mostrarLote, mostrarSaldo, mostrarReservado, rotuloDoGerado]);
-  const campos = React.useMemo(() => [...CAMPOS_DO_ITEM_SALVO, ...(mostrarLote ? CAMPOS_DO_LOTE : []), ...(mostrarSaldo ? camposDoSaldo(rotuloDoGerado) : []), ...(mostrarReservado ? CAMPOS_DA_RESERVA : [])], [mostrarLote, mostrarSaldo, mostrarReservado, rotuloDoGerado]);
+    return [...base, ...(mostrarLote ? COLUNAS_DO_LOTE : []), ...(mostrarSaldo ? colunasDoSaldo(rotuloDoGerado, casasDaQuantidade) : []), ...(mostrarReservado ? COLUNAS_DA_RESERVA : [])];
+  }, [prefixoTestid, leitura, mostrarLote, mostrarSaldo, mostrarReservado, rotuloDoGerado, casasDaQuantidade]);
+  const campos = React.useMemo(() => [...camposDoItemSalvo(casasDaQuantidade), ...(mostrarLote ? CAMPOS_DO_LOTE : []), ...(mostrarSaldo ? camposDoSaldo(rotuloDoGerado, casasDaQuantidade) : []), ...(mostrarReservado ? CAMPOS_DA_RESERVA : [])], [mostrarLote, mostrarSaldo, mostrarReservado, rotuloDoGerado, casasDaQuantidade]);
 
   const [visao, setVisao] = React.useState<Visao>("grade");
   const [ambos, setAmbos] = React.useState(false);
