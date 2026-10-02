@@ -50,7 +50,10 @@ export const MODULOS_ESCOPO_EMPRESA: readonly ModuloEscopoEmpresa[] = [
   { chave: "pessoas_rh", rotulo: "Pessoas e RH", ordem: 8 },
   { chave: "ordens_servico", rotulo: "Ordens de Serviço", ordem: 9 },
   { chave: "fiscal", rotulo: "Fiscal", ordem: 10 },
-  { chave: "documentos", rotulo: "Documentos", ordem: 11 }
+  { chave: "documentos", rotulo: "Documentos", ordem: 11 },
+  // MAPA-01 (decisão 279): módulo NEUTRO do Mapa de Manejo. A área serve lavoura e pecuária; não é nicho de
+  // gado. Espelha erp.modulos_escopo_empresa (migration 0042).
+  { chave: "mapa", rotulo: "Mapa de Manejo", ordem: 12 }
 ];
 
 export const CHAVES_MODULO_EMPRESA: readonly string[] = MODULOS_ESCOPO_EMPRESA.map((m) => m.chave);
@@ -191,7 +194,9 @@ const RECURSOS_POR_MODULO: Readonly<Record<string, readonly string[]>> = {
     "nfe", "xml_files", "mdfe", "nfse", "cash_book", "sped_fiscal", "journal_entries",
     "report.journal_entries", "report.nfe", "report.nfe_product", "report.cash_book"
   ],
-  documentos: ["documents"]
+  documentos: ["documents"],
+  // MAPA-01 (decisão 279): o cadastro de áreas do Mapa de Manejo, recurso de empresa do módulo neutro mapa.
+  mapa: ["mapa_areas"]
 };
 
 /**

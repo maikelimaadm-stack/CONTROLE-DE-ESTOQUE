@@ -70,7 +70,9 @@ export const MODULES = [
   // de propósito: é o 14º módulo — o máximo que o nav-audit aceita; o Início não conta na barra, então o
   // administrador vê 13 —, e quando a barra não cabe, quem vai para o "Mais" é ele, não um módulo de todo dia.
   // A permissão é a das SEIS capacidades Aprovar (qualquer uma mostra o módulo); cada aba exige a sua.
-  m("aprovacoes", "Aprovações", "/aprovacoes", { perm: ["sales.approve", "compras.approve", ...P.APROVACAO_ESTOQUE], keywords: ["aprovar", "reprovar", "aprovação", "aguardando aprovação", "fila de aprovação"], description: "Documentos que aguardam aprovação antes de serem confirmados" })
+  m("aprovacoes", "Aprovações", "/aprovacoes", { perm: ["sales.approve", "compras.approve", ...P.APROVACAO_ESTOQUE], keywords: ["aprovar", "reprovar", "aprovação", "aguardando aprovação", "fila de aprovação"], description: "Documentos que aguardam aprovação antes de serem confirmados" }),
+  // MAPA-01 (decisão 279): módulo de topo NEUTRO do Mapa de Manejo (15º módulo; o teto do menu foi elevado de 14 para 15 em scripts/nav-audit.mjs, como contrato de UX desta fatia). Serve lavoura e pecuária; sem gado nesta fatia.
+  m("mapa", "Mapa de Manejo", "/mapa-de-manejo", { perm: "mapa_areas.view", keywords: ["mapa", "área", "áreas", "piquete", "talhão", "polígono", "georreferenciamento", "satélite", "manejo"], description: "Mapa da propriedade e cadastro de áreas (lavoura e pecuária)" })
 ];
 
 export const AREAS = [

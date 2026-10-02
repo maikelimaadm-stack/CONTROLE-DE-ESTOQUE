@@ -7,7 +7,9 @@
  *  - alvo de LEGACY_TABS (aba/sub antiga) que não existe na estrutura atual;
  *  - destino de redirecionamento (sem parâmetros dinâmicos) que não é rota canônica conhecida;
  *  - página de módulo usando `tab("id")` com id que não existe no registro;
- *  - mais de 14 módulos no menu ou módulo com mais de 5 áreas (guardrails de UX).
+ *  - mais de 15 módulos no menu ou módulo com mais de 5 áreas (guardrails de UX). O teto subiu de 14 para 15
+ *    em MAPA-01 (decisão 279), quando o Mapa de Manejo entrou como 15º módulo e a barra de módulos passou a
+ *    rolar na horizontal; o guardrail continua, só com o novo limite.
  * Uso: node scripts/nav-audit.mjs   (também roda no CI e antes do build)
  */
 import fs from "node:fs";
@@ -90,7 +92,7 @@ for (const f of walkAll(srcDir)) {
 }
 console.log(`nav-audit: ${links} links internos estáticos verificados contra ${pageRoutes.length} páginas e ${DETAIL_ROUTES.length} padrões de detalhe`);
 // guardrails
-const menu = MODULES.filter((m) => m.menu !== false); if (menu.length > 14) errors.push(`menu principal com ${menu.length} módulos (máximo 14)`);
+const menu = MODULES.filter((m) => m.menu !== false); if (menu.length > 15) errors.push(`menu principal com ${menu.length} módulos (máximo 15)`);
 for (const m of MODULES) { const areas = AREAS.filter((a) => a.module === m.id && a.type === "area" && a.tab); if (areas.length > 5 && m.id !== "configuracoes") warn.push(`${m.id}: ${areas.length} áreas principais (ideal 3–5)`); }
 console.log(`nav-audit: ${MODULES.length} módulos · ${AREAS.filter((a) => a.type === "area").length} áreas · ${AREAS.filter((a) => a.type === "sub").length} sub-áreas · ${AREAS.filter((a) => a.type === "action").length} ações · ${AREAS.filter((a) => a.type === "config").length + AREAS.filter((a) => a.module === "configuracoes" && a.type === "sub").length} configurações · ${LEGACY_REDIRECTS.length} redirecionamentos · ${Object.values(LEGACY_TABS).reduce((n, m) => n + Object.keys(m).length, 0)} abas antigas canonicalizadas`);
 for (const w of warn) console.log("aviso:", w);
