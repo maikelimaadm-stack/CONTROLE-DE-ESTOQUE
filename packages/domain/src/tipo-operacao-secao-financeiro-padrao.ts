@@ -17,7 +17,8 @@
  * `erp.tipos_operacao_versao_financeiro` (0045), lidos e gravados pela API.
  *
  * A REGRA QUE TRAVA NASCE DESLIGADA (decisão 281, item (4) da 240): o neutro é o comportamento de hoje — nenhuma
- * provisão, o documento decide, e sem natureza e centro vale a 1ª por código. Só uma versão no formato 5 executa a
+ * provisão e o documento decide (sem natureza e centro, cada família faz o que faz hoje: a 1ª por código onde a regra
+ * vale; a compra e o pedido de compra recusam, porque não têm padrão legado). Só uma versão no formato 5 executa a
  * seção; nos formatos 1 a 4 ela é lida no neutro (`secoesExtensaoDaVersaoTop`).
  *
  * ARQUIVO FOLHA (regra 3 do ponto de extensão, `tipo-operacao-secoes-v5.ts`): importa só os TIPOS do ponto de
@@ -53,7 +54,7 @@ export const ROTULOS_SEM_CLASSIFICACAO_TOP: Readonly<Record<SemClassificacaoTop,
 
 /** O texto de ajuda da aba "Padrões financeiros" no editor da TOP. */
 export const AJUDA_FINANCEIRO_PADRAO =
-  "Provisão e padrões do lançamento financeiro desta operação. Tudo nasce desligado: sem padrão, o documento decide e, sem natureza e centro, vale a 1ª por código, como hoje.";
+  "Provisão e padrões do lançamento financeiro desta operação. Tudo nasce desligado: sem padrão, o documento decide, como hoje.";
 
 const simOuNao = (v: boolean): string => (v ? "Sim" : "Não");
 
@@ -82,8 +83,8 @@ export const SECAO_FINANCEIRO_PADRAO: DefinicaoSecaoV5<"financeiroPadrao", Secao
   ],
 });
 
-/** 422 — provisão ligada numa família que não provisiona (hoje, só o pedido de venda provisiona). */
-export const MENSAGEM_PROVISAO_FORA_DA_FAMILIA = "A provisão vale só no pedido de venda.";
+/** 422 — provisão ligada numa família que não provisiona (hoje, o pedido de venda e o de compra provisionam). */
+export const MENSAGEM_PROVISAO_FORA_DA_FAMILIA = "A provisão vale só no pedido de venda e no pedido de compra.";
 
 /** 422 — "exigir" numa família cujo lançamento sempre informa natureza e centro (o avulso, o movimento). */
 export const MENSAGEM_EXIGIR_FORA_DA_FAMILIA =

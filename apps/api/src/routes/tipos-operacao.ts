@@ -277,7 +277,7 @@ function conferirFiscalDaFamilia(config: ConfiguracaoTipoOperacao, codigoBase: s
   // gravada antes do catálogo nunca passa a ser recusada por ele, e o 4 continua conferido como hoje.
   //
   // OPERACOES-01 F9 (decisão 286): e, no FORMATO 5, o que a família não aceita DENTRO da seção "Padrões financeiros"
-  // (`recusasDoFinanceiroPadraoDaFamilia`: a provisão fora do pedido de venda, "exigir" onde o lançamento sempre informa
+  // (`recusasDoFinanceiroPadraoDaFamilia`: a provisão fora dos pedidos de venda e de compra, "exigir" onde o lançamento sempre informa
   // natureza e centro). É recusa da CONFIGURAÇÃO (a seção do JSON), por isso mora nesta lista única, depois da do perfil
   // do tipo — a seção que o tipo nem usa já é recusada por ela, e aqui a família sem perfil devolve `[]`. Os padrões em
   // si (a tabela da versão) são conferidos depois, em `conferirPadroesPedidos`.

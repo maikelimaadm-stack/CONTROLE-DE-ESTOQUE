@@ -470,10 +470,10 @@ describe("F6A-D6 o perfil, o grafo, a matriz e as exigências", () => {
   });
 
   it("perfil do pedido (Fluxo de compra e Aprovação) e da compra (Divergência com o pedido)", () => {
-    expect(perfilDaFamiliaTop(PEDIDO)?.abas).toEqual(["identificacao", "geral", "destinos", "estoque", "fluxoCompra", "financeiro", "fiscal", "aprovacao"]);
-    expect(perfilDaFamiliaTop(PEDIDO)?.secoesNeutras).toEqual(["destino", "fluxo", "divergenciaPedido", "financeiroPadrao"]);
-    expect(perfilDaFamiliaTop(COMPRA)?.abas).toEqual(["identificacao", "geral", "estoque", "divergenciaPedido", "financeiro", "fiscal", "aprovacao", "execucao"]);
-    expect(perfilDaFamiliaTop(COMPRA)?.secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "financeiroPadrao"]);
+    expect(perfilDaFamiliaTop(PEDIDO)?.abas).toEqual(["identificacao", "geral", "destinos", "estoque", "fluxoCompra", "financeiroPadrao", "financeiro", "fiscal", "aprovacao"]);
+    expect(perfilDaFamiliaTop(PEDIDO)?.secoesNeutras).toEqual(["destino", "fluxo", "divergenciaPedido"]);
+    expect(perfilDaFamiliaTop(COMPRA)?.abas).toEqual(["identificacao", "geral", "estoque", "divergenciaPedido", "financeiroPadrao", "financeiro", "fiscal", "aprovacao", "execucao"]);
+    expect(perfilDaFamiliaTop(COMPRA)?.secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra"]);
   });
 
   it("no 5, a seção que o tipo não usa fora do padrão é recusa (422); a que ele usa passa; a volta ao padrão a zera", () => {

@@ -59,6 +59,9 @@ import { exigirEmpresaDeLancamento, type ServiceCtx } from "../lib/context.js";
 import { confirmaAutomaticamente, tentarConfirmacaoAutomatica, lerVersaoCongeladaTop } from "../lib/confirmacao-automatica.js";
 import { lerDocumentoCompra, lancar, recebimentoSchema, type DocumentoCompraEntrada, type RecebimentoEntrada } from "./compras.js";
 import { confirmarCompraNaTransacao } from "./compras-confirmacao.js";
+// OPERACOES-01 F9b (decisão 286): a provisão do pedido de compra ao receber e ao encerrar o saldo.
+import { sincronizarProvisaoDoPedidoDeCompra } from "../lib/financeiro-provisao.js";
+import { MOTIVOS_DA_PROVISAO, MOTIVOS_DA_PROVISAO_COMPRA } from "@agro/domain";
 
 const t = criarTradutor(ptBR);
 
@@ -264,6 +267,9 @@ async function receberPedido(app: FastifyInstance, ctx: ServiceCtx, pedidoId: st
     { to: compra.id, tipoOperacaoDestinoId: passo.tipoOperacaoId, emPartes: passo.emPartes, zeraOSaldo: zera,
       itens: v.itens.map((i) => ({ origemItemId: i.itemOrigemId, quantidade: i.quantidade })) },
     zera ? { before: { situacao: pedido.situacao }, after: { situacao: "convertido" } } : undefined);
+  // OPERACOES-01 F9b (decisão 286): a compra que zera o saldo converte o pedido — o previsto passa a esperar só o que já
+  // foi gerado. Antes da confirmação automática (que sincroniza de novo, idempotente). O pedido já está travado (1ª trava).
+  await sincronizarProvisaoDoPedidoDeCompra(ctx, pedidoId, MOTIVOS_DA_PROVISAO_COMPRA.recebido(compra.codigo));
   // A situação REAL do pedido depois do receber: convertido, ou a de antes (aberto — o de hoje — ou finalizado).
   const corpoDeHoje = { ...compra, from: pedidoId, pedidoSituacao: zera ? "convertido" : pedido.situacao };
 
@@ -315,6 +321,8 @@ async function encerrarSaldo(ctx: ServiceCtx, pedidoId: string, motivo: string) 
   if (u.rowCount !== 1) throw notFound("Documento");
   await audit(ctx.tx, ctx, "documentos_compra", pedidoId, "encerrar_saldo", { motivo, saldo: saldo.toFixed(4) },
     { before: { situacao: pedido.situacao }, after: { situacao: "convertido" } });
+  // OPERACOES-01 F9b (decisão 286): o saldo encerrado deixa previsto só o que já virou compra e ainda não foi confirmado.
+  await sincronizarProvisaoDoPedidoDeCompra(ctx, pedidoId, MOTIVOS_DA_PROVISAO.saldoEncerrado(motivo));
   return { id: pedidoId, situacao: "convertido" };
 }
 

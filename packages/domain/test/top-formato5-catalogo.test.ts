@@ -264,21 +264,21 @@ describe("CT-4 os perfis derivados", () => {
     }
   });
 
-  it("CT-4 pedido de compra: com Próximas operações, Fluxo de compra e Aprovação (ao finalizar, F6a), sem Execução; exigências do fornecedor", () => {
+  it("CT-4 pedido de compra: com Próximas operações, Fluxo de compra, Padrões financeiros (F9b) e Aprovação (ao finalizar, F6a), sem Execução; exigências do fornecedor", () => {
     const f = "compras.pedido";
     expect(predicados(f)).toEqual({ destinos: true, estoqueDoc: false, aprovacao: true, execucao: false, comDocumento: true });
-    expect(perfil(f).abas).toEqual(["identificacao", "geral", "destinos", "estoque", "fluxoCompra", "financeiro", "fiscal", "aprovacao"]);
+    expect(perfil(f).abas).toEqual(["identificacao", "geral", "destinos", "estoque", "fluxoCompra", "financeiroPadrao", "financeiro", "fiscal", "aprovacao"]);
     expect(rotulos(perfil(f))).toEqual(COMPRAS);
-    // Os padrões financeiros e a provisão do pedido de compra finalizado são da F9b (a situação nasce na F6a).
-    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "divergenciaPedido", "financeiroPadrao"]);
+    // Os padrões financeiros e a provisão do pedido de compra finalizado (F9b).
+    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "divergenciaPedido"]);
   });
 
-  it("CT-4 compra: sem Próximas operações; com Aprovação e Execução", () => {
+  it("CT-4 compra: sem Próximas operações; com Padrões financeiros (F9b), Aprovação e Execução", () => {
     const f = "compras.compra";
     expect(predicados(f)).toEqual({ destinos: false, estoqueDoc: false, aprovacao: true, execucao: true, comDocumento: true });
-    expect(perfil(f).abas).toEqual(["identificacao", "geral", "estoque", "divergenciaPedido", "financeiro", "fiscal", "aprovacao", "execucao"]);
+    expect(perfil(f).abas).toEqual(["identificacao", "geral", "estoque", "divergenciaPedido", "financeiroPadrao", "financeiro", "fiscal", "aprovacao", "execucao"]);
     expect(rotulos(perfil(f))).toEqual(COMPRAS);
-    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "financeiroPadrao"]);
+    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra"]);
   });
 
   it("CT-4 as 4 espécies do documento de estoque: Identificação, Geral, Estoque (+ Destino na saída, F5a) e Aprovação; só Observação; Estoque, Financeiro e Fiscal no padrão", () => {

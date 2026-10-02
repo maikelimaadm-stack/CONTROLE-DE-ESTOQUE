@@ -67,6 +67,10 @@ import {
 } from "./compras-recebimento.js";
 import { CAPACIDADE_FINALIZACAO_E_ORCAMENTO_COMPRA, type EspecieDocumentoCompra } from "@agro/domain";
 import { registrarFinalizacaoCompras } from "./compras-finalizacao.js";
+// OPERACOES-01 F9b (decisão 286): os padrões financeiros da TOP no salvar e a provisão do pedido de compra.
+import { padroesDaTopNoSalvarDaCompra } from "../lib/financeiro-compra.js";
+import { sincronizarProvisaoDoPedidoDeCompra } from "../lib/financeiro-provisao.js";
+import { MOTIVOS_DA_PROVISAO, MOTIVOS_DA_PROVISAO_COMPRA } from "@agro/domain";
 
 const t = criarTradutor(ptBR);
 
@@ -468,12 +472,19 @@ type PlanoGravado = Record<string, unknown> & { first_due_date?: string };
  * condição), ou `data_vencimento` — a mesma conta da confirmação (`plano?.first_due_date ?? data_vencimento`).
  * Olhar só `plano_parcelas` do corpo recusava ao salvar a compra com condição e sem o campo Vencimento, que a
  * confirmação aceitaria: a condição já define os vencimentos, e o plano derivado dela é o que vai para o banco.
+ *
+ * OPERACOES-01 F9b (decisão 286): `o.classificacaoDaTop` — o PAR da TOP (formato 5, `padroesDaTopNoSalvarDaCompra`)
+ * classifica a compra que não trouxe natureza e centro: a exigência deles no documento é dispensada (a confirmação usa o
+ * par da TOP). Forma e vencimento: iguais. Sem o parâmetro, o de hoje.
  */
-function conferirExigenciasDoTitulo(d: DocumentoCompraEntrada, efeitos: EfeitosPrevistos, total: string, plano: PlanoGravado | null): void {
+function conferirExigenciasDoTitulo(d: DocumentoCompraEntrada, efeitos: EfeitosPrevistos, total: string, plano: PlanoGravado | null, o: { classificacaoDaTop: boolean } = { classificacaoDaTop: false }): void {
   if (!efeitos.titulo || !D(total).gt(0)) return;
   const msg = "Informe a natureza financeira e o centro de resultado: esta compra gera contas a pagar";
-  if (!d.categoria_financeira_id) throw recusa("categoria_financeira_id", msg);
-  if (!d.centro_custo_id) throw recusa("centro_custo_id", msg);
+  // OPERACOES-01 F9b: o par da TOP no formato 5 dispensa a natureza e o centro no documento; a confirmação os usa.
+  if (!o.classificacaoDaTop) {
+    if (!d.categoria_financeira_id) throw recusa("categoria_financeira_id", msg);
+    if (!d.centro_custo_id) throw recusa("centro_custo_id", msg);
+  }
   if (efeitos.exigeFormaPagamento && !d.forma_pagamento_id) throw recusa("forma_pagamento_id", "A operação desta compra exige a forma de pagamento");
   if (efeitos.exigeVencimento && !(plano?.first_due_date ?? d.data_vencimento)) throw recusa("data_vencimento", "A operação desta compra exige o vencimento");
 }
@@ -644,7 +655,16 @@ async function lancarComTop(ctx: ServiceCtx, especie: EspecieCompra, d: Document
   // vencimento confere o primeiro vencimento deste plano — o que a confirmação vai ler do banco.
   const plano: PlanoGravado | null = d.plano_parcelas ? { ...d.plano_parcelas }
     : condicao ? { ...planoDaCondicao(condicao, { dataDocumento: d.data_documento, total: totais.total }) } : null;
-  if (efeitos) conferirExigenciasDoTitulo(d, efeitos, totais.total, plano);
+  // OPERACOES-01 F9b (decisão 286): os padrões financeiros da TOP (formato 5) no SALVAR — a compra e o pedido não se editam:
+  // a troca proibida e a classificação que a provisão do pedido exige são recusadas aqui, antes do número. Sem TOP no 5 com
+  // padrões ou provisão, nada muda (sem consulta quando a compra não gera título; o pedido é conferido com qualquer total).
+  const { classificacaoDaTop } = await padroesDaTopNoSalvarDaCompra(ctx, {
+    especie, versaoId: top.tipoOperacaoVersaoId,
+    geraTitulo: especie === "compra" && Boolean(efeitos?.titulo) && D(totais.total).gt(0),
+    documento: { naturezaId: classificacao?.categoriaFinanceiraId ?? null, centroCustoId: classificacao?.centroCustoId ?? null,
+      formaPagamentoId: d.forma_pagamento_id ?? null },
+  });
+  if (efeitos) conferirExigenciasDoTitulo(d, efeitos, totais.total, plano, { classificacaoDaTop });
 
   if (especie === "compra" && d.numero_nota) await conferirNotaDuplicada(ctx, { fornecedorId: d.fornecedor_id, numero: d.numero_nota, serie: d.serie_nota, excluirDocumentoId: null });
 
@@ -851,6 +871,10 @@ export default async function comprasRoutes(app: FastifyInstance) {
           if (u.rowCount !== 1) throw notFound("Documento");
           await audit(ctx.tx, ctx, "documentos_compra", id, "cancel", motivo ? { motivo } : undefined, { before: { situacao: doc.situacao }, after: { situacao: "cancelado" } });
           await reabrirPedidoDeOrigem(ctx, pedidoDeOrigem, id);
+          // OPERACOES-01 F9b (decisão 286): o pedido cancelado cancela os previstos dele; a compra aberta cancelada pode ter
+          // reaberto o pedido convertido (o previsto volta ao que o pedido promete).
+          if (especie === "pedido") await sincronizarProvisaoDoPedidoDeCompra(ctx, id, MOTIVOS_DA_PROVISAO.pedidoCancelado(motivo));
+          else if (pedidoDeOrigem) await sincronizarProvisaoDoPedidoDeCompra(ctx, pedidoDeOrigem.id, MOTIVOS_DA_PROVISAO_COMPRA.compraCancelada(String(doc.codigo)));
           return { id, situacao: "cancelado" };
         })).result;
     }));
