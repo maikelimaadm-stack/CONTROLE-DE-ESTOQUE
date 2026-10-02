@@ -25,6 +25,13 @@
  * hoje, chave por chave.
  *
  * O que NÃO existe aqui (fora da fatia): editar documento salvo.
+ *
+ * OPERACOES-01 F6a (decisão 283): o PEDIDO ganha a situação `finalizado` (Finalizar = a confirmação do pedido, em
+ * `compras-finalizacao.ts`) e passa a ser cancelado também finalizado; a espécie nova ORÇAMENTO mora na mesma tabela,
+ * com vínculo PRÓPRIO ao pedido (`pedido_orcado_id`), e as rotas dela são de `compras-orcamento.ts`. Aqui: a leitura
+ * aceita as três espécies (o pedido traz os seus orçamentos; o orçamento traz o código do pedido), a listagem é
+ * exportada com o filtro `pedido_orcado_id`, a lista única só mostra orçamento quando o filtro `especie` o pede E o
+ * usuário tem `orcamentos_compra.view`, e `operation-types` declara `capacidades.finalizacaoEOrcamento`.
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -57,6 +64,8 @@ import {
 import {
   registrarRecebimentoCompras, conferirCancelamentoDoPedido, travarPedidoDeOrigemDaCompra, reabrirPedidoDeOrigem,
 } from "./compras-recebimento.js";
+import { CAPACIDADE_FINALIZACAO_E_ORCAMENTO_COMPRA, type EspecieDocumentoCompra } from "@agro/domain";
+import { registrarFinalizacaoCompras } from "./compras-finalizacao.js";
 
 const t = criarTradutor(ptBR);
 
@@ -224,8 +233,16 @@ const topParaTela = (l: { tipo_operacao_id: string | null; top_codigo: string | 
  * documento com `compras_geradas`; na COMPRA, `origem_codigo` (o pedido de onde veio). Os itens são lidos DEPOIS
  * da trava do cabeçalho: com `lock`, o saldo que o recebimento e o encerramento conferem já enxerga a compra que
  * a transação anterior sobre o mesmo pedido acabou de gravar. Uma consulta por pergunta, nunca por item.
+ *
+ * OPERACOES-01 F6a (decisão 283), ADITIVO: a espécie pode ser também `orcamento` (as rotas dele são de
+ * `compras-orcamento.ts`); as colunas novas vêm por `d.*`, mais `finalizado_por_nome`, `aprovado_orcamento_por_nome`
+ * e `pedido_orcado_codigo` (o pedido que o orçamento cota). No PEDIDO, `orcamentos`: os orçamentos dele, inclusive
+ * cancelados, na ordem em que nasceram (UMA consulta) — SÓ para quem tem `orcamentos_compra.view`. Sem ela a chave
+ * não existe: a leitura do pedido não é uma segunda porta para o orçamento (CAPACIDADE ∧ ESCOPO, nunca OR; a lista
+ * única, a leitura, o ID Global e os anexos do orçamento já exigem a mesma capacidade). O orçamento, como a compra,
+ * não tem recebido/saldo nem `compras_geradas`.
  */
-export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: EspecieCompra, opts: { lock?: boolean } = {}): Promise<Record<string, unknown>> {
+export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: EspecieDocumentoCompra, opts: { lock?: boolean } = {}): Promise<Record<string, unknown>> {
   // id malformado é a MESMA 404 (sem 22P02 → 500).
   if (!FORMA_UUID.test(id)) throw notFound("Documento");
   const sc = scopedById(ctx, "d", id); sc.params.push(especie);
@@ -235,7 +252,8 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
             fcat.code as categoria_financeira_codigo, fcat.name as categoria_financeira_nome,
             ccus.code as centro_custo_codigo, ccus.name as centro_custo_nome,
             cpag.code as condicao_pagamento_codigo, cpag.nome as condicao_pagamento_nome, pm.name as forma_pagamento_nome,
-            ue.name as saldo_encerrado_por_nome, dorig.codigo as origem_codigo
+            ue.name as saldo_encerrado_por_nome, dorig.codigo as origem_codigo,
+            ufin.name as finalizado_por_nome, uaor.name as aprovado_orcamento_por_nome, dped.codigo as pedido_orcado_codigo
        from erp.documentos_compra d
        join erp.people fo on fo.id = d.fornecedor_id and fo.organization_id = d.organization_id
        left join erp.people tr on tr.id = d.transportadora_id and tr.organization_id = d.organization_id
@@ -248,6 +266,9 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
        left join erp.payment_methods pm on pm.id = d.forma_pagamento_id
        left join erp.users ue on ue.id = d.saldo_encerrado_por
        left join erp.documentos_compra dorig on dorig.id = d.origem_documento_id and dorig.organization_id = d.organization_id
+       left join erp.users ufin on ufin.id = d.finalizado_por
+       left join erp.users uaor on uaor.id = d.aprovado_orcamento_por
+       left join erp.documentos_compra dped on dped.id = d.pedido_orcado_id and dped.organization_id = d.organization_id
       where d.id = $1 and d.organization_id = $2 and d.especie = $${sc.params.length}${sc.sql}${opts.lock ? " for update of d" : ""}`,
     sc.params);
   const linha = r.rows[0];
@@ -280,6 +301,18 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
         where organization_id = $1 and origem_documento_id = $2 and especie = 'compra'
         order by created_at, id`, [ctx.orgId, id])).rows
     : null;
+  // OPERACOES-01 F6a: os orçamentos deste pedido (inclusive cancelados, a história da cotação), na ordem em que
+  // nasceram — UMA consulta. Pelo vínculo próprio (`pedido_orcado_id`), nunca pela origem (que é da compra). Só com
+  // a capacidade de ver orçamento: sem ela, nem a consulta roda (a chave some da resposta).
+  const orcamentos = ehPedido && hasPermission(ctx, PERMISSAO_VER_ORCAMENTO)
+    ? (await ctx.tx.query<Record<string, unknown>>(
+      `select o.id, o.codigo, o.situacao, o.fornecedor_id, fo.name as fornecedor_nome, o.condicao_pagamento_id,
+              o.prazo_entrega_dias, o.validade_orcamento, o.valor_total
+         from erp.documentos_compra o
+         join erp.people fo on fo.id = o.fornecedor_id and fo.organization_id = o.organization_id
+        where o.organization_id = $1 and o.pedido_orcado_id = $2 and o.especie = 'orcamento'
+        order by o.created_at, o.id`, [ctx.orgId, id])).rows
+    : null;
   const titulos = await ctx.tx.query(
     `select id, code, number, installment_number, due_date, amount, balance, status
        from erp.financial_titles where organization_id = $1 and source_type = 'documentos_compra' and source_id = $2
@@ -299,6 +332,7 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
     tipo_operacao: topParaTela({ tipo_operacao_id: linha.tipo_operacao_id, top_codigo, top_codigo_base, top_nome, top_versao }),
     itens, titulos: titulos.rows, movimentos: movimentos.rows,
     ...(comprasGeradas ? { compras_geradas: comprasGeradas } : {}),
+    ...(orcamentos ? { orcamentos } : {}),
   };
 }
 
@@ -308,8 +342,12 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
  * UMA consulta de listagem para as duas portas: a lista da espécie (`especies` = [a da rota]) e a lista única
  * (`especies` = as que o usuário pode ver). A espécie entra no WHERE ANTES do LIMIT (recorte de autorização,
  * nunca filtro sobre o resultado) e o escopo de empresa do módulo compras é aplicado no SQL.
+ *
+ * OPERACOES-01 F6a: EXPORTADA (a lista dos orçamentos, em `compras-orcamento.ts`, é esta mesma, com `[orcamento]`)
+ * e com o filtro `pedido_orcado_id` (os orçamentos de um pedido), na forma de UUID como `fornecedor_id`: fora da
+ * forma, nenhuma linha (nunca "o filtro some").
  */
-async function listarDocumentos(ctx: ServiceCtx, especies: readonly EspecieCompra[], query: unknown, opts: { filtroEspecie: boolean; unica: boolean }) {
+export async function listarDocumentos(ctx: ServiceCtx, especies: readonly EspecieDocumentoCompra[], query: unknown, opts: { filtroEspecie: boolean; unica: boolean }) {
   // `limit` é apelido de `pageSize` (a sonda da tela pede `limit=1`); os dois juntos → vale `pageSize`.
   const bruta = (query ?? {}) as Record<string, unknown>;
   // Parâmetro repetido chega como lista: 422 no parâmetro, nunca 500 (e nunca "o primeiro vale").
@@ -331,6 +369,7 @@ async function listarDocumentos(ctx: ServiceCtx, especies: readonly EspecieCompr
   porUuid(f.fornecedor_id, "d.fornecedor_id");
   porUuid(f.empresa_id, "d.empresa_id");
   porUuid(f.tipo_operacao_id, "d.tipo_operacao_id");
+  porUuid(f.pedido_orcado_id, "d.pedido_orcado_id");
   if (f.situacao) { params.push(f.situacao.split(",").map((x) => x.trim())); where.push(`d.situacao = any($${params.length}::text[])`); }
   for (const [chave, op] of [["start_date", ">="], ["end_date", "<="]] as const) {
     const v = f[chave];
@@ -664,7 +703,10 @@ export default async function comprasRoutes(app: FastifyInstance) {
         contractVersion: 1,
         // COMPRAS-03: `layoutDocumento` ADITIVO (depois de condicaoPagamento, como em vendas). A web nova só pede
         // `/layout-efetivo` com esta declaração — contra a API anterior a Central de Compras continua a de hoje.
-        capacidades: { classificacaoFinanceira: 1, condicaoPagamento: CAPACIDADE_CONDICAO_PAGAMENTO, layoutDocumento: CAPACIDADE_LAYOUT_DOCUMENTO, regrasDaOperacao: CAPACIDADE_REGRAS_DA_OPERACAO },
+        // OPERACOES-01 F6a: `finalizacaoEOrcamento` ADITIVO, no FIM — a web da F6b só mostra Finalizar, Aprovado para
+        // orçamento, os orçamentos e Escolher vencedor com ela; a web da base ignora a chave a mais.
+        capacidades: { classificacaoFinanceira: 1, condicaoPagamento: CAPACIDADE_CONDICAO_PAGAMENTO, layoutDocumento: CAPACIDADE_LAYOUT_DOCUMENTO, regrasDaOperacao: CAPACIDADE_REGRAS_DA_OPERACAO,
+          finalizacaoEOrcamento: CAPACIDADE_FINALIZACAO_E_ORCAMENTO_COMPRA },
         family: { code: familia, label: t(chaveI18nDaFamiliaOperacional(familia) ?? familia) },
         defaultId: r.rows.find((x) => x.padrao)?.id ?? null,
         items: r.rows.map((x) => ({ id: x.id, code: x.codigo, name: x.nome, version: x.versao, isDefault: x.padrao })),
@@ -779,6 +821,10 @@ export default async function comprasRoutes(app: FastifyInstance) {
      * pedido, cancelada, devolve o saldo (é conta, não coluna) e REABRE o pedido que estava convertido sem saldo
      * encerrado. Trava na ordem compra → pedido; aqui não há movimento, e na confirmada o pedido é travado antes do
      * estorno (`cancelarCompraConfirmada`).
+     *
+     * OPERACOES-01 F6a: o PEDIDO FINALIZADO também cancela (sem compra viva — a mesma regra do aberto; o gatilho da
+     * transição v3 é a rede). A compra nunca é `finalizado` (o CHECK da espécie prende), então o `where` alargado não
+     * muda nada para ela. Os orçamentos abertos do pedido não mudam (sem cascata).
      */
     app.post(`${base}/:id/cancel`, async (req) => runService(app, req, `${recurso}.delete`, async (ctx) => {
       const { id } = req.params as { id: string };
@@ -792,10 +838,10 @@ export default async function comprasRoutes(app: FastifyInstance) {
           if (especie === "pedido") conferirCancelamentoDoPedido(doc);
           if (doc.situacao === "confirmado") return cancelarCompraConfirmada(ctx, doc, { motivo });
           const pedidoDeOrigem = await travarPedidoDeOrigemDaCompra(ctx, doc);
-          const u = await ctx.tx.query("update erp.documentos_compra set situacao = 'cancelado', atualizado_em = now() where id = $1 and organization_id = $2 and situacao = 'aberto'", [id, ctx.orgId]);
+          const u = await ctx.tx.query("update erp.documentos_compra set situacao = 'cancelado', atualizado_em = now() where id = $1 and organization_id = $2 and situacao in ('aberto', 'finalizado')", [id, ctx.orgId]);
           // ROW COUNT SOB RLS: zero linha sem conferência seria "cancelado" sem efeito.
           if (u.rowCount !== 1) throw notFound("Documento");
-          await audit(ctx.tx, ctx, "documentos_compra", id, "cancel", motivo ? { motivo } : undefined, { before: { situacao: "aberto" }, after: { situacao: "cancelado" } });
+          await audit(ctx.tx, ctx, "documentos_compra", id, "cancel", motivo ? { motivo } : undefined, { before: { situacao: doc.situacao }, after: { situacao: "cancelado" } });
           await reabrirPedidoDeOrigem(ctx, pedidoDeOrigem, id);
           return { id, situacao: "cancelado" };
         })).result;
@@ -808,11 +854,27 @@ export default async function comprasRoutes(app: FastifyInstance) {
    * ("lista vazia" nunca é "todas"); escopo de empresa reaplicado no SQL com o módulo EXPLÍCITO de compras.
    */
   app.get("/compras/documentos", async (req) => runService(app, req, null, async (ctx) => {
-    const permitidas = ESPECIES.filter((e) => hasPermission(ctx, `${e.recurso}.view`)).map((e) => e.especie);
+    const permitidas: EspecieDocumentoCompra[] = ESPECIES.filter((e) => hasPermission(ctx, `${e.recurso}.view`)).map((e) => e.especie);
+    // OPERACOES-01 F6a: o ORÇAMENTO entra só quando o filtro `especie` o PEDE e o usuário tem `orcamentos_compra.view`
+    // (AND). Sem o filtro, as espécies de hoje — o web da base nunca pede orçamento, e a lista dele fica igual.
+    if (pedeOrcamentoNaListaUnica(req.query) && hasPermission(ctx, PERMISSAO_VER_ORCAMENTO)) permitidas.push("orcamento");
     if (permitidas.length === 0) throw denied(`${recursoDa("compra")}.view`);
     return listarDocumentos(ctx, permitidas, req.query, { filtroEspecie: true, unica: true });
   }));
 
   registrarConfirmacaoCompras(app);
   registrarRecebimentoCompras(app);
+  registrarFinalizacaoCompras(app);
+}
+
+/** OPERACOES-01 F6a: a capacidade de ler o orçamento de compra (o recurso da espécie nova). */
+const PERMISSAO_VER_ORCAMENTO = "orcamentos_compra.view";
+
+/**
+ * O filtro `especie` da lista única pede o orçamento? Texto, separado por vírgula, como `listarDocumentos` o lê.
+ * Repetido (lista) não pede nada aqui: `listarDocumentos` o recusa com 422 logo em seguida.
+ */
+function pedeOrcamentoNaListaUnica(query: unknown): boolean {
+  const especie = ((query ?? {}) as Record<string, unknown>).especie;
+  return typeof especie === "string" && especie.split(",").map((x) => x.trim()).includes("orcamento");
 }

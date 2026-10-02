@@ -12,11 +12,20 @@
  * contador a ordem aqui seria produto → contador, o ciclo que a TOP-CONFIG-07 fechou.
  *
  * As rotas são registradas por `registrarConfirmacaoCompras(app)`, chamada pelo registro de `compras.ts`.
+ *
+ * OPERACOES-01 F6a (decisão 283) — A DIVERGÊNCIA COM O PEDIDO: a compra gerada de um pedido (com origem), cuja versão
+ * congelada da TOP traz a seção `divergenciaPedido` fora de "Nenhuma", é comparada com o pedido no planejamento —
+ * logo depois da aprovação, numa consulta só. "Avisar": a prévia mostra (`divergencia`, no fim do corpo). "Bloquear":
+ * acima da tolerância, a prévia recusa e a confirmação (manual e automática) também — DIVERGENCIA_COM_O_PEDIDO, 409,
+ * antes de qualquer efeito. Sem a seção (formatos 1 a 4, mesmo malformados, ou o neutro do 5) ou sem origem: nada muda.
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, DomainError } from "@agro/shared";
-import { resolverPoliticaEfetivaDaCompra, resumoDaPoliticaDaCompra, ratearCustoDeEntrada, type PoliticaEfetivaDaCompra } from "@agro/domain";
+import {
+  resolverPoliticaEfetivaDaCompra, resumoDaPoliticaDaCompra, ratearCustoDeEntrada, type PoliticaEfetivaDaCompra,
+  divergenciaPedidoDaVersaoTop, divergenciasDaCompra, MSG_DIVERGENCIA_COM_O_PEDIDO, type LinhaParaDivergencia, type ResultadoDivergencia,
+} from "@agro/domain";
 import { runService, idempotent, audit, assertPeriodOpen } from "../lib/service.js";
 import { notFound, validation, err, fromPgError } from "../lib/errors.js";
 import type { ServiceCtx } from "../lib/context.js";
@@ -39,6 +48,8 @@ export interface CompraParaConfirmar {
   tipo_operacao_versao_id: string; data_documento: string; data_entrada: string | null; data_vencimento: string | null;
   numero_nota: string | null; serie_nota: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null;
   forma_pagamento_id: string | null; plano_parcelas: unknown; valor_total: string;
+  /** OPERACOES-01 F6a: o pedido de onde a compra veio (nulo = compra direta). Decide se a divergência se aplica. */
+  origem_documento_id: string | null;
 }
 
 /** O item como a confirmação o lê: a linha do item e o controle de estoque do produto. */
@@ -62,6 +73,7 @@ function comoCompra(d: Record<string, unknown>): CompraParaConfirmar {
     numero_nota: (d.numero_nota as string | null) ?? null, serie_nota: (d.serie_nota as string | null) ?? null,
     categoria_financeira_id: (d.categoria_financeira_id as string | null) ?? null, centro_custo_id: (d.centro_custo_id as string | null) ?? null,
     forma_pagamento_id: (d.forma_pagamento_id as string | null) ?? null, plano_parcelas: d.plano_parcelas ?? null, valor_total: String(d.valor_total ?? "0"),
+    origem_documento_id: (d.origem_documento_id as string | null) ?? null,
   };
 }
 
@@ -100,10 +112,46 @@ async function politicaDaCompra(ctx: ServiceCtx, versaoId: string, execucaoConfi
   const mensagem = res.motivo === "execucao_desligada"
     ? "A operação desta compra usa execução configurada, que ainda não está habilitada neste ambiente. A compra não foi confirmada."
     : res.motivo === "configuracao_ilegivel"
-      ? "A configuração da operação desta compra está num formato que este servidor não executa. A compra não foi confirmada."
+      ? MSG_CONFIGURACAO_ILEGIVEL
       : "A configuração da operação desta compra pede um efeito que esta versão do produto não executa. A compra não foi confirmada.";
   throw new DomainError("TIPO_OPERACAO_EXECUCAO_INDISPONIVEL", mensagem,
     { motivo: res.motivo, recusas: res.recusas.map(({ motivo, caminho, mensagem: m }) => ({ motivo, caminho, mensagem: m })) });
+}
+
+/** A configuração da versão congelada que este servidor não lê: a política e a divergência recusam com o mesmo texto. */
+const MSG_CONFIGURACAO_ILEGIVEL = "A configuração da operação desta compra está num formato que este servidor não executa. A compra não foi confirmada.";
+
+/**
+ * OPERACOES-01 F6a — AS LINHAS DA COMPRA PARA A CONTA DA DIVERGÊNCIA, numa consulta: cada linha da compra × o item do
+ * pedido de origem (`origem_item_id`) × o produto, e o saldo do item do pedido ANTES desta compra (a quantidade do
+ * item menos o ligado nas OUTRAS compras não canceladas, por subconsulta correlata). Os números saem como texto
+ * decimal, na ordem do documento. Sob a RLS da transação: o pedido é da mesma empresa (o gatilho da origem garante).
+ */
+async function linhasParaDivergencia(ctx: ServiceCtx, compraId: string): Promise<LinhaParaDivergencia[]> {
+  const r = await ctx.tx.query<{
+    item_id: string; item_pedido_id: string; produto: string; quantidade_compra: string; valor_total_compra: string;
+    quantidade_pedido: string; valor_total_pedido: string; saldo_antes: string;
+  }>(
+    `select i.id as item_id, i.origem_item_id as item_pedido_id, p.code || ' - ' || p.description as produto,
+            i.quantidade::text as quantidade_compra, i.valor_total::text as valor_total_compra,
+            ip.quantidade::text as quantidade_pedido, ip.valor_total::text as valor_total_pedido,
+            (ip.quantidade - coalesce((
+               select sum(o.quantidade)
+                 from erp.documentos_compra_itens o
+                 join erp.documentos_compra od on od.id = o.documento_id and od.organization_id = o.organization_id
+                where o.origem_item_id = ip.id and o.organization_id = ip.organization_id
+                  and o.documento_id <> i.documento_id and od.situacao <> 'cancelado'), 0))::text as saldo_antes
+       from erp.documentos_compra_itens i
+       join erp.documentos_compra_itens ip on ip.id = i.origem_item_id and ip.organization_id = i.organization_id
+       join erp.products p on p.id = i.produto_id and p.organization_id = i.organization_id
+      where i.documento_id = $1 and i.organization_id = $2
+      order by i.posicao, i.id`, [compraId, ctx.orgId]);
+  return r.rows.map((l) => ({
+    itemId: l.item_id, itemPedidoId: l.item_pedido_id, produto: l.produto,
+    quantidadeCompra: l.quantidade_compra, valorTotalCompra: l.valor_total_compra,
+    quantidadePedido: l.quantidade_pedido, valorTotalPedido: l.valor_total_pedido,
+    saldoAntesDaCompra: l.saldo_antes,
+  }));
 }
 
 /** Como o planejamento trata cada etapa — a única diferença entre confirmar e prever. */
@@ -127,6 +175,11 @@ interface PlanoDaConfirmacao {
   classificacao: { categoriaFinanceiraId: string; centroCustoId: string } | null;
   plano: InstallmentPlan | null;
   dataEntrada: string;
+  /**
+   * OPERACOES-01 F6a: a divergência com o pedido — só quando se aplica (compra com origem e seção fora de "Nenhuma");
+   * `null` nos outros casos, e a prévia então não ganha a chave.
+   */
+  divergencia: ResultadoDivergencia | null;
 }
 
 const MSG_NATUREZA_OBRIGATORIA = "Informe a natureza financeira e o centro de resultado: a confirmação gera contas a pagar.";
@@ -147,7 +200,7 @@ function tituloDaCompra(d: CompraParaConfirmar, plano: InstallmentPlan | null) {
  */
 async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, itens: ItemDaCompra[], execucaoConfiguradaHabilitada: boolean, modo: ModoDoPlanejamento): Promise<PlanoDaConfirmacao> {
   const dataEntrada = d.data_entrada ?? d.data_documento;
-  const plano: PlanoDaConfirmacao = { politica: null, daEntrada: false, geraTitulos: false, entradas: [], itensForaDaEntrada: 0, classificacao: null, plano: null, dataEntrada };
+  const plano: PlanoDaConfirmacao = { politica: null, daEntrada: false, geraTitulos: false, entradas: [], itensForaDaEntrada: 0, classificacao: null, plano: null, dataEntrada, divergencia: null };
   if (d.situacao === "confirmado") { modo.recusar(err("ALREADY_CONFIRMED", "Compra já confirmada")); return plano; }
   if (d.situacao === "cancelado") { modo.recusar(err("ALREADY_CANCELLED", "Compra cancelada")); return plano; }
 
@@ -186,6 +239,23 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
     recusaDaAprovacaoDoDocumento = e;
   }
   if (recusaDaAprovacaoDoDocumento) modo.recusar(recusaDaAprovacaoDoDocumento);
+
+  // A DIVERGÊNCIA COM O PEDIDO (OPERACOES-01 F6a, decisão 283) — logo depois da aprovação e ANTES das exigências e de
+  // qualquer efeito, só na compra gerada de um pedido. A seção é a da versão congelada DA COMPRA; ilegível recusa
+  // (fail-closed; na prática a política já recusou antes). "Nenhuma" não consulta nada.
+  if (d.origem_documento_id) {
+    const secao = divergenciaPedidoDaVersaoTop(versaoTop);
+    if (!secao.ok) {
+      modo.recusar(new DomainError("TIPO_OPERACAO_EXECUCAO_INDISPONIVEL", MSG_CONFIGURACAO_ILEGIVEL, { motivo: secao.motivo, recusas: [] }));
+    } else if (secao.valor.modo !== "nenhuma") {
+      const divergencia = divergenciasDaCompra(secao.valor, await linhasParaDivergencia(ctx, d.id));
+      plano.divergencia = divergencia;
+      if (divergencia.bloqueia) {
+        modo.recusar(new DomainError("DIVERGENCIA_COM_O_PEDIDO", MSG_DIVERGENCIA_COM_O_PEDIDO,
+          { itens: divergencia.itens.filter((i) => i.acimaDaTolerancia) }));
+      }
+    }
+  }
 
   // AS EXIGÊNCIAS DA POLÍTICA — todas conferidas, todas juntas, antes de qualquer efeito.
   const exigencias: { caminho: string; mensagem: string }[] = [];
@@ -296,6 +366,9 @@ async function confirmarCompra(ctx: ServiceCtx, id: string, execucaoConfiguradaH
     execucao: { origem: politica.origem, ...resumoDaPoliticaDaCompra(politica) },
     custoDeEntrada: plano.entradas.map((e) => ({ itemId: e.item.id, valorEntrada: e.valorEntrada, custoUnitario: e.custoUnitario })),
     ...(titulos.length && plano.classificacao ? { classificacaoFinanceira: plano.classificacao } : {}),
+    // OPERACOES-01 F6a: a divergência que a TOP mandou AVISAR (ou que ficou dentro da tolerância do "Bloquear"), só
+    // quando houve — a auditoria de toda TOP sem a seção fica a de hoje, chave por chave.
+    ...(plano.divergencia && plano.divergencia.itens.length ? { divergencia: { modo: plano.divergencia.modo, itens: plano.divergencia.itens } } : {}),
     // TOP-CONFIG-08: a chave existe SÓ na automática — a auditoria da manual não ganha `automatica: false`.
     ...(o.automatica ? { automatica: true } : {}),
   });
@@ -367,6 +440,9 @@ async function previaDaConfirmacao(ctx: ServiceCtx, id: string, execucaoConfigur
       classificacao,
     },
     politica: plano.politica ? { origem: plano.politica.origem, ...resumoDaPoliticaDaCompra(plano.politica) } : null,
+    // OPERACOES-01 F6a: no FIM, e SÓ quando a divergência se aplica (compra com origem, seção fora de "Nenhuma"). Nos
+    // outros casos a chave não existe: o corpo é o de hoje, chave por chave (o validador da web da base tolera a mais).
+    ...(plano.divergencia ? { divergencia: plano.divergencia } : {}),
   };
 }
 

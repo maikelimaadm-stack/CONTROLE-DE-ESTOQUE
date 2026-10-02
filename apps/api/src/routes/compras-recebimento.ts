@@ -33,6 +33,15 @@
  * As rotas são registradas por `registrarRecebimentoCompras(app)`, chamada pelo registro de `compras.ts`. Nada
  * aqui é avaliado no carregamento do módulo além de constantes locais: `compras.ts` e este arquivo se importam, e
  * `compras-confirmacao.ts` também (ela trava e reabre o pedido de origem; este arquivo chama a confirmação dela).
+ *
+ * ┌─ OPERACOES-01 F6a (decisão 283) — O PEDIDO FINALIZADO ───────────────────────────────────────────────┐
+ * │ O pedido é recebido ABERTO ou FINALIZADO. Com `fluxoCompra.exigeFinalizar` na versão congelada DO      │
+ * │ PEDIDO (formato 5), só o FINALIZADO: o aberto recebe 409. Sem a seção (formatos 1 a 4, ou o neutro) é  │
+ * │ como hoje. Configuração ilegível: recusa (fail-closed). Zerado o saldo, vira convertido a partir do     │
+ * │ aberto ou do finalizado; o saldo se encerra a partir dos dois; e a compra cancelada REABRE o pedido na  │
+ * │ situação de antes de converter (finalizado, se ele tinha sido finalizado). A política de destinos é    │
+ * │ exportada com a espécie pedida (o orçamento de compra lê o MESMO leque, com "orcamento").              │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -40,13 +49,14 @@ import { D, DomainError } from "@agro/shared";
 import {
   chaveI18nDaFamiliaOperacional, validarDestinoOperacao, varianteDeDocumentoCompraDaFamilia,
   validarItensDoRecebimento, recebimentoZeraOPedido, saldoDoItemDoPedido, MSG_ITENS_DO_RECEBIMENTO,
+  fluxoCompraDaVersaoTop, MSG_PEDIDO_PRECISA_FINALIZAR_PARA_RECEBER,
   type ItemDoPedido, type ItemDoRecebimento, type RecusaItemDoRecebimento,
 } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, idempotent, audit, requirePermission } from "../lib/service.js";
 import { notFound, err } from "../lib/errors.js";
 import { exigirEmpresaDeLancamento, type ServiceCtx } from "../lib/context.js";
-import { confirmaAutomaticamente, tentarConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
+import { confirmaAutomaticamente, tentarConfirmacaoAutomatica, lerVersaoCongeladaTop } from "../lib/confirmacao-automatica.js";
 import { lerDocumentoCompra, lancar, recebimentoSchema, type DocumentoCompraEntrada, type RecebimentoEntrada } from "./compras.js";
 import { confirmarCompraNaTransacao } from "./compras-confirmacao.js";
 
@@ -62,6 +72,11 @@ export const MSG_PEDIDO_SEM_SALDO = "Este pedido não tem saldo a encerrar.";
 export const MSG_PEDIDO_COM_COMPRAS = "Este pedido tem compras: cancele-as ou encerre o saldo.";
 export const MSG_PEDIDO_CONVERTIDO_COM_COMPRAS = "Este pedido tem compras: cancele-as primeiro.";
 export const MSG_PEDIDO_CONVERTIDO_NAO_CANCELA = "Este pedido já foi convertido em compra e não é cancelado.";
+/** OPERACOES-01 F6a: a configuração da TOP do pedido que este servidor não lê — o receber e o finalizar recusam (fail-closed). */
+export const MSG_CONFIGURACAO_DO_PEDIDO_ILEGIVEL = "A configuração da operação deste pedido está num formato que este servidor não executa.";
+
+/** OPERACOES-01 F6a: as situações do pedido que recebem, encerram o saldo e viram convertido. */
+const SITUACOES_DO_PEDIDO_EM_ANDAMENTO: readonly string[] = ["aberto", "finalizado"];
 
 /** O corpo do encerramento do saldo: motivo obrigatório, até 500 caracteres. `.strict()`: chave desconhecida é 422. */
 const encerrarSaldoSchema = z.object({ motivo: z.string().trim().min(1).max(500) }).strict();
@@ -71,8 +86,10 @@ const encerrarSaldoSchema = z.object({ motivo: z.string().trim().min(1).max(500)
 /** Um próximo passo do pedido — o contrato de `/proximos-passos` de vendas, com `especie` no lugar de `variante`. */
 export interface ProximoPassoCompra {
   tipoOperacaoId: string; codigo: string; nome: string; codigoBase: string; familiaRotulo: string;
-  especie: "compra"; ordem: number; emPartes: boolean;
+  especie: EspecieDoDestinoDaCompra; ordem: number; emPartes: boolean;
 }
+/** OPERACOES-01 F6a: as espécies que o leque do pedido oferece — a compra (receber) e o orçamento de compra. */
+export type EspecieDoDestinoDaCompra = "compra" | "orcamento";
 interface PoliticaDeDestinosDaCompra { configurada: boolean; itens: ProximoPassoCompra[] }
 
 /**
@@ -83,8 +100,11 @@ interface PoliticaDeDestinosDaCompra { configurada: boolean; itens: ProximoPasso
  *
  * FAIL-CLOSED na apresentação: destino cuja aresta o grafo não executa (compra → pedido, venda, família fora do
  * registry) não é oferecido — um botão sem serviço atrás é pior do que um botão a menos.
+ *
+ * OPERACOES-01 F6a: EXPORTADA, com a ESPÉCIE pedida — `"compra"` (o receber e os próximos passos, como hoje) ou
+ * `"orcamento"` (a TOP do orçamento de compra, em `compras-orcamento.ts`). Só os destinos daquela espécie entram.
  */
-async function politicaDeDestinosDaCompra(ctx: ServiceCtx, versaoOrigemId: string): Promise<PoliticaDeDestinosDaCompra> {
+export async function politicaDeDestinosDaCompra(ctx: ServiceCtx, versaoOrigemId: string, especie: EspecieDoDestinoDaCompra = "compra"): Promise<PoliticaDeDestinosDaCompra> {
   const r = await ctx.tx.query<{
     destinos_configurados: boolean; origem_codigo_base: string; destino_id: string | null; codigo: string | null;
     nome: string | null; codigo_base: string | null; ordem: number | null; em_partes: boolean | null;
@@ -112,11 +132,11 @@ async function politicaDeDestinosDaCompra(ctx: ServiceCtx, versaoOrigemId: strin
   for (const linha of r.rows) {
     if (!linha.destino_id || linha.codigo === null || linha.nome === null || linha.codigo_base === null || linha.ordem === null) continue;
     if (validarDestinoOperacao(linha.origem_codigo_base, linha.codigo_base).length > 0) continue;
-    if (varianteDeDocumentoCompraDaFamilia(linha.codigo_base) !== "compra") continue;
+    if (varianteDeDocumentoCompraDaFamilia(linha.codigo_base) !== especie) continue;
     itens.push({
       tipoOperacaoId: linha.destino_id, codigo: linha.codigo, nome: linha.nome, codigoBase: linha.codigo_base,
       familiaRotulo: t(chaveI18nDaFamiliaOperacional(linha.codigo_base) ?? linha.codigo_base),
-      especie: "compra", ordem: linha.ordem, emPartes: linha.em_partes === true,
+      especie, ordem: linha.ordem, emPartes: linha.em_partes === true,
     });
   }
   return { configurada: primeira.destinos_configurados, itens };
@@ -154,6 +174,18 @@ function recusaDosItens(recusas: readonly RecusaItemDoRecebimento[]): DomainErro
 // ─────────────── receber ───────────────
 
 /**
+ * OPERACOES-01 F6a — "EXIGIR PEDIDO FINALIZADO PARA RECEBER" (`fluxoCompra.exigeFinalizar`), lido da versão
+ * congelada DO PEDIDO (a TOP de quem é recebido, não a da compra de destino). Formatos 1 a 4 (mesmo malformados: a
+ * versão não é lida) e o neutro do 5: não exige — o pedido aberto é recebido como hoje. Formato desconhecido, ou um 5
+ * que o leitor recusa: ninguém sabe o que ela decidiu, e o receber não adivinha (TIPO_OPERACAO_EXECUCAO_INDISPONIVEL).
+ */
+async function exigeFinalizarParaReceber(ctx: ServiceCtx, pedido: PedidoLido): Promise<boolean> {
+  const fluxo = fluxoCompraDaVersaoTop(await lerVersaoCongeladaTop(ctx, pedido.tipo_operacao_versao_id));
+  if (!fluxo.ok) throw new DomainError("TIPO_OPERACAO_EXECUCAO_INDISPONIVEL", MSG_CONFIGURACAO_DO_PEDIDO_ILEGIVEL, { motivo: fluxo.motivo });
+  return fluxo.valor.exigeFinalizar;
+}
+
+/**
  * A VERSÃO CONGELADA DA COMPRA GERADA — lida da linha que `lancar` acabou de gravar, e não da TOP do corpo: a
  * versão que vale é a que a compra cita (a TOP pode ganhar versão nova entre o lançamento e a leitura, e a compra
  * continua na dela). A linha foi inserida nesta transação; não lê-la é corrupção, nunca "sem TOP".
@@ -178,7 +210,12 @@ async function receberPedido(app: FastifyInstance, ctx: ServiceCtx, pedidoId: st
   // 1ª TRAVA: o pedido. Duas conversões sobre o mesmo saldo se enfileiram aqui, e a segunda lê (nos itens, lidos
   // depois da trava) o recebido que a primeira gravou. O gatilho da origem é a rede.
   const pedido = comoPedido(await lerDocumentoCompra(ctx, pedidoId, "pedido", { lock: true }));
-  if (pedido.situacao !== "aberto") throw err("CONFLICT", MSG_PEDIDO_NAO_ABERTO);
+  // OPERACOES-01 F6a: aberto ou finalizado recebem (a mensagem de hoje para o resto); com a TOP do pedido exigindo
+  // o pedido finalizado, o aberto não recebe.
+  if (!SITUACOES_DO_PEDIDO_EM_ANDAMENTO.includes(pedido.situacao)) throw err("CONFLICT", MSG_PEDIDO_NAO_ABERTO);
+  // A configuração é lida também no finalizado: ilegível recusa nos dois (fail-closed).
+  const exigeFinalizar = await exigeFinalizarParaReceber(ctx, pedido);
+  if (exigeFinalizar && pedido.situacao === "aberto") throw err("CONFLICT", MSG_PEDIDO_PRECISA_FINALIZAR_PARA_RECEBER);
 
   // O GRAFO RESTRINGE O CAMINHO; a capacidade do destino, cobrada logo depois, é quem autoriza percorrê-lo.
   const politica = await politicaDeDestinosDaCompra(ctx, pedido.tipo_operacao_versao_id);
@@ -218,7 +255,7 @@ async function receberPedido(app: FastifyInstance, ctx: ServiceCtx, pedidoId: st
   const zera = recebimentoZeraOPedido(itensPedido, v.itens);
   if (zera) {
     const u = await ctx.tx.query(
-      "update erp.documentos_compra set situacao = 'convertido' where id = $1 and organization_id = $2 and especie = 'pedido' and situacao = 'aberto'",
+      "update erp.documentos_compra set situacao = 'convertido' where id = $1 and organization_id = $2 and especie = 'pedido' and situacao in ('aberto', 'finalizado')",
       [pedidoId, ctx.orgId]);
     // ROW COUNT SOB RLS: zero linha sem conferência seria "convertido" sem efeito.
     if (u.rowCount !== 1) throw notFound("Documento");
@@ -226,8 +263,9 @@ async function receberPedido(app: FastifyInstance, ctx: ServiceCtx, pedidoId: st
   await audit(ctx.tx, ctx, "documentos_compra", pedidoId, "convert",
     { to: compra.id, tipoOperacaoDestinoId: passo.tipoOperacaoId, emPartes: passo.emPartes, zeraOSaldo: zera,
       itens: v.itens.map((i) => ({ origemItemId: i.itemOrigemId, quantidade: i.quantidade })) },
-    zera ? { before: { situacao: "aberto" }, after: { situacao: "convertido" } } : undefined);
-  const corpoDeHoje = { ...compra, from: pedidoId, pedidoSituacao: zera ? "convertido" : "aberto" };
+    zera ? { before: { situacao: pedido.situacao }, after: { situacao: "convertido" } } : undefined);
+  // A situação REAL do pedido depois do receber: convertido, ou a de antes (aberto — o de hoje — ou finalizado).
+  const corpoDeHoje = { ...compra, from: pedidoId, pedidoSituacao: zera ? "convertido" : pedido.situacao };
 
   // TOP-CONFIG-08 (decisão 277) — A CONFIRMAÇÃO AUTOMÁTICA DA COMPRA GERADA, no fim MESMO: o pedido já está
   // convertido (ou aberto, recebido em parte) e auditado. Quem confirma é quem recebeu, com a capacidade da
@@ -260,22 +298,23 @@ async function receberPedido(app: FastifyInstance, ctx: ServiceCtx, pedidoId: st
 
 // ─────────────── encerrar o saldo ───────────────
 
+/** OPERACOES-01 F6a: o saldo se encerra também a partir do pedido FINALIZADO (a mesma mensagem para o resto). */
 async function encerrarSaldo(ctx: ServiceCtx, pedidoId: string, motivo: string) {
   const pedido = comoPedido(await lerDocumentoCompra(ctx, pedidoId, "pedido", { lock: true }));
-  if (pedido.situacao !== "aberto") throw err("CONFLICT", MSG_PEDIDO_NAO_ABERTO);
+  if (!SITUACOES_DO_PEDIDO_EM_ANDAMENTO.includes(pedido.situacao)) throw err("CONFLICT", MSG_PEDIDO_NAO_ABERTO);
   // Sem compra nenhuma o que se quer é CANCELAR o pedido, não encerrar saldo: "encerrado" diria que parte chegou.
   if (!pedido.compras_geradas.some((c) => c.situacao !== "cancelado")) throw err("VALIDATION_ERROR", MSG_PEDIDO_SEM_COMPRA);
   const saldo = itensDoPedido(pedido).reduce((a, i) => a.plus(saldoDoItemDoPedido(i)), D(0));
   if (!saldo.gt(0)) throw err("VALIDATION_ERROR", MSG_PEDIDO_SEM_SALDO);
-  // Quem, quando e por quê na MESMA mudança aberto → convertido: o gatilho da 0037 recusa em qualquer outra.
+  // Quem, quando e por quê na MESMA mudança (aberto|finalizado) → convertido: o gatilho da 0044 recusa em qualquer outra.
   const u = await ctx.tx.query(
     `update erp.documentos_compra set situacao = 'convertido', saldo_encerrado_em = now(), saldo_encerrado_por = $3, saldo_encerrado_motivo = $4
-      where id = $1 and organization_id = $2 and especie = 'pedido' and situacao = 'aberto'`,
+      where id = $1 and organization_id = $2 and especie = 'pedido' and situacao in ('aberto', 'finalizado')`,
     [pedidoId, ctx.orgId, ctx.user.id, motivo]);
   // ROW COUNT SOB RLS: zero linha sem conferência seria "encerrado" sem efeito.
   if (u.rowCount !== 1) throw notFound("Documento");
   await audit(ctx.tx, ctx, "documentos_compra", pedidoId, "encerrar_saldo", { motivo, saldo: saldo.toFixed(4) },
-    { before: { situacao: "aberto" }, after: { situacao: "convertido" } });
+    { before: { situacao: pedido.situacao }, after: { situacao: "convertido" } });
   return { id: pedidoId, situacao: "convertido" };
 }
 
@@ -301,8 +340,11 @@ export function conferirCancelamentoDoPedido(doc: Record<string, unknown>): void
   if (convertido) throw err("CONFLICT", MSG_PEDIDO_CONVERTIDO_NAO_CANCELA);
 }
 
-/** O pedido de origem travado pelo cancelamento da compra: o estado que decide a reabertura. */
-export interface PedidoDeOrigemTravado { id: string; situacao: string; saldoEncerrado: boolean }
+/**
+ * O pedido de origem travado pelo cancelamento da compra: o estado que decide a reabertura. OPERACOES-01 F6a:
+ * `finalizado` = o pedido foi finalizado antes de converter (o carimbo da finalização nunca se apaga).
+ */
+export interface PedidoDeOrigemTravado { id: string; situacao: string; saldoEncerrado: boolean; finalizado: boolean }
 
 /**
  * TRAVA O PEDIDO DE ORIGEM DA COMPRA (`for update`) — compra → pedido, antes de qualquer movimento. Compra sem
@@ -313,29 +355,33 @@ export interface PedidoDeOrigemTravado { id: string; situacao: string; saldoEnce
 export async function travarPedidoDeOrigemDaCompra(ctx: ServiceCtx, compra: Record<string, unknown>): Promise<PedidoDeOrigemTravado | null> {
   const origem = compra.especie === "compra" ? (compra.origem_documento_id as string | null | undefined) ?? null : null;
   if (!origem) return null;
-  const r = await ctx.tx.query<{ id: string; situacao: string; saldo_encerrado: boolean }>(
-    `select id, situacao, saldo_encerrado_em is not null as saldo_encerrado from erp.documentos_compra
+  const r = await ctx.tx.query<{ id: string; situacao: string; saldo_encerrado: boolean; finalizado: boolean }>(
+    `select id, situacao, saldo_encerrado_em is not null as saldo_encerrado, finalizado_em is not null as finalizado from erp.documentos_compra
       where id = $1 and organization_id = $2 and especie = 'pedido' for update`, [origem, ctx.orgId]);
   const p = r.rows[0];
   if (!p) throw notFound("Documento");
-  return { id: p.id, situacao: p.situacao, saldoEncerrado: p.saldo_encerrado };
+  return { id: p.id, situacao: p.situacao, saldoEncerrado: p.saldo_encerrado, finalizado: p.finalizado };
 }
 
 /**
  * DEPOIS de cancelar a compra: o saldo dela voltou (é conta, não coluna). Pedido convertido porque o saldo ZEROU
  * volta a aberto; convertido porque o saldo foi ENCERRADO fica como está — alguém decidiu que o resto não vem, e
  * cancelar uma compra não desfaz essa decisão. Pedido aberto (recebido em parte) não muda.
+ *
+ * OPERACOES-01 F6a: reabre na situação de ANTES de converter — `finalizado` se o pedido tinha sido finalizado
+ * (`finalizado_em`), `aberto` se não. É a mesma conta da transição v3 da 0044, que recusa o outro destino.
  */
 export async function reabrirPedidoDeOrigem(ctx: ServiceCtx, pedido: PedidoDeOrigemTravado | null, compraId: string): Promise<void> {
   if (!pedido || pedido.situacao !== "convertido" || pedido.saldoEncerrado) return;
+  const reaberto = pedido.finalizado ? "finalizado" : "aberto";
   const u = await ctx.tx.query(
-    `update erp.documentos_compra set situacao = 'aberto'
+    `update erp.documentos_compra set situacao = $3
       where id = $1 and organization_id = $2 and especie = 'pedido' and situacao = 'convertido' and saldo_encerrado_em is null`,
-    [pedido.id, ctx.orgId]);
+    [pedido.id, ctx.orgId, reaberto]);
   // ROW COUNT SOB RLS: zero linha sem conferência seria "reaberto" sem efeito.
   if (u.rowCount !== 1) throw notFound("Documento");
   await audit(ctx.tx, ctx, "documentos_compra", pedido.id, "compra_cancelada", { compra: compraId },
-    { before: { situacao: "convertido" }, after: { situacao: "aberto" } });
+    { before: { situacao: "convertido" }, after: { situacao: reaberto } });
 }
 
 // ─────────────── rotas ───────────────
@@ -346,11 +392,16 @@ export function registrarRecebimentoCompras(app: FastifyInstance) {
    * OS PRÓXIMOS PASSOS DO PEDIDO — leitura (`pedidos_compra.view`): perguntar o que se pode gerar é ler o pedido;
    * a capacidade do destino é cobrada no recebimento. A leitura do pedido vem ANTES da política: inexistente, de
    * outro tenant, fora do escopo e compra na porta do pedido caem na MESMA 404 do GET (sem oráculo de existência).
+   *
+   * OPERACOES-01 F6a: + `exigeFinalizar` no FIM do corpo — a versão congelada DO PEDIDO exige o pedido finalizado
+   * para receber? Ilegível → `true` (fail-closed na apresentação: o receber recusaria). Os itens continuam só os de
+   * compra (o "Receber em …" da tela); o orçamento tem a sua própria porta.
    */
   app.get("/compras/pedidos/:id/proximos-passos", async (req) => runService(app, req, "pedidos_compra.view", async (ctx) => {
     const pedido = comoPedido(await lerDocumentoCompra(ctx, (req.params as { id: string }).id, "pedido"));
     const politica = await politicaDeDestinosDaCompra(ctx, pedido.tipo_operacao_versao_id);
-    return { contractVersion: 1, politicaConfigurada: politica.configurada, items: politica.itens };
+    const fluxo = fluxoCompraDaVersaoTop(await lerVersaoCongeladaTop(ctx, pedido.tipo_operacao_versao_id));
+    return { contractVersion: 1, politicaConfigurada: politica.configurada, items: politica.itens, exigeFinalizar: fluxo.ok ? fluxo.valor.exigeFinalizar : true };
   }));
 
   /**
