@@ -95,7 +95,8 @@ test("AS-1 — Novo começa pelo tipo de movimento (só os tipos com tela do cat
   await login(page);
   const catalogo = await catalogoPublicado(page);
   const comTela = catalogo.tipos.filter((t) => t.temTela);
-  expect(comTela, "premissa: o catálogo publicado tem 9 tipos com tela").toHaveLength(9);
+  // Os 9 de antes e, desde a F5b (decisão 282), a requisição, o consumo e a devolução de consumo: 12 com tela.
+  expect(comTela, "premissa: o catálogo publicado tem 12 tipos com tela").toHaveLength(12);
   const familias = await api<{ items: { codigo: string }[] }>(page, "GET", "/api/admin/tipos-operacao/familias");
   expect(familias.items.length, "premissa: o registry (/familias, inteiro) tem mais famílias do que tipos com tela").toBeGreaterThan(comTela.length);
   const semTela = catalogo.tipos.filter((t) => !t.temTela && t.familia !== null).map((t) => t.familia);
@@ -124,7 +125,8 @@ test("AS-1 — Novo começa pelo tipo de movimento (só os tipos com tela do cat
     const botoes = (g: string) => forma.getByTestId(`top-assistente-grupo-${g}`).locator("[data-testid^='top-assistente-tipo-']");
     await expect(botoes("vendas")).toHaveText(["Orçamento", "Pedido", "Venda"]);
     await expect(botoes("compras")).toHaveText(["Pedido", "Compra"]);
-    await expect(botoes("movimentacao_interna")).toHaveText(["Entrada", "Saída/baixa", "Transferência", "Ajuste"]);
+    // A movimentação interna na ordem do catálogo: as três da F5a (com tela desde a F5b) antes das quatro de antes.
+    await expect(botoes("movimentacao_interna")).toHaveText(["Requisição", "Consumo", "Devolução de consumo", "Entrada", "Saída/baixa", "Transferência", "Ajuste"]);
     const oferecidas = await forma.locator("[data-testid^='top-assistente-tipo-']").evaluateAll((bs) => bs.map((b) => b.getAttribute("data-familia")));
     expect(oferecidas, "os botões são os tipos com tela do catálogo publicado, na ordem dele").toEqual(comTela.map((t) => t.familia));
     for (const f of semTela) expect(oferecidas, `a família sem tela ${f} não é oferecida`).not.toContain(f);

@@ -129,9 +129,10 @@ const tipo = (chave: string, grupo: GrupoTipoMovimentoTop, rotulo: string, famil
 const familiaDaTabela = (tabela: string, valor?: string): string | undefined => resolverTipoOperacao(tabela, valor)?.codigo;
 
 /**
- * OS 22 TIPOS, NA ORDEM DO PEDIDO. Só os 9 cujo documento cita a TOP (venda, compra e o documento de estoque) têm
- * tela hoje. "Requisição", "Consumo" e "Devolução de consumo" são as espécies NOVAS do documento de estoque (F5a:
- * `estoque.requisicao_material`, não a `estoque.requisicao` da requisição antiga), sem tela até a F5b; os tipos de
+ * OS 22 TIPOS, NA ORDEM DO PEDIDO. Têm tela os tipos cujo documento cita a TOP numa Central (venda, compra e o
+ * documento de estoque). "Requisição", "Consumo" e "Devolução de consumo" são as espécies NOVAS do documento de estoque
+ * (F5a: `estoque.requisicao_material`, não a `estoque.requisicao` da requisição antiga), com tela desde a F5b (a
+ * Central de Estoque no motor); os tipos de
  * Módulos e do Financeiro que já têm família ficam com ela, sem tela: a F10 e a F9 os ligam. O orçamento de compra já
  * tem família (F6a, decisão 283) e fica sem tela até a F6b criar a tela que o lança. Manejo e batelada (F10) e
  * movimento bancário (F9) nascem sem família — a fase dona cria a família no registry e troca a linha.
@@ -144,10 +145,11 @@ export const CATALOGO_TIPOS_MOVIMENTO_TOP: readonly TipoDeMovimentoTop[] = Objec
   // OPERACOES-01 F6a (decisão 283): a família do orçamento de compra nasce no registry; a tela que o lança é da F6b.
   tipo("orcamento_compra", "compras", "Orçamento", familiaOperacionalDeDocumentoCompra("orcamento"), false),
   tipo("compra", "compras", "Compra", familiaOperacionalDeDocumentoCompra("compra"), true),
-  // OPERACOES-01 F5a (decisão 282): as famílias da movimentação interna nascem no registry; a tela que as lança é da F5b.
-  tipo("requisicao", "movimentacao_interna", "Requisição", familiaOperacionalDeDocumentoEstoque("requisicao"), false),
-  tipo("consumo", "movimentacao_interna", "Consumo", familiaOperacionalDeDocumentoEstoque("consumo"), false),
-  tipo("devolucao_consumo", "movimentacao_interna", "Devolução de consumo", familiaOperacionalDeDocumentoEstoque("devolucao_consumo"), false),
+  // OPERACOES-01 F5a (decisão 282): as famílias da movimentação interna nascem no registry; telas desde a F5b (a
+  // Central de Estoque no motor).
+  tipo("requisicao", "movimentacao_interna", "Requisição", familiaOperacionalDeDocumentoEstoque("requisicao"), true),
+  tipo("consumo", "movimentacao_interna", "Consumo", familiaOperacionalDeDocumentoEstoque("consumo"), true),
+  tipo("devolucao_consumo", "movimentacao_interna", "Devolução de consumo", familiaOperacionalDeDocumentoEstoque("devolucao_consumo"), true),
   tipo("entrada", "movimentacao_interna", "Entrada", familiaOperacionalDeDocumentoEstoque("entrada"), true),
   tipo("saida", "movimentacao_interna", "Saída/baixa", familiaOperacionalDeDocumentoEstoque("saida"), true),
   tipo("transferencia", "movimentacao_interna", "Transferência", familiaOperacionalDeDocumentoEstoque("transferencia"), true),

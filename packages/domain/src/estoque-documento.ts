@@ -10,8 +10,9 @@
  * OPERACOES-01 F5a (decisão 282): o documento ganha a MOVIMENTAÇÃO INTERNA — três espécies a mais (requisição de
  * material, consumo e devolução de consumo), o DESTINO (para onde vai o que sai do estoque), o MOTIVO e a
  * justificativa da saída, a ORIGEM (consumo → requisição, devolução → consumo) e o ATENDIMENTO calculado da
- * requisição. A Central de Estoque de hoje continua lançando as QUATRO de antes (`ESPECIES_DOCUMENTO_ESTOQUE`);
- * a API, o ID Global, a matriz das regras gerais e o dicionário usam as SETE (`TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE`).
+ * requisição. A API, o ID Global, a matriz das regras gerais e o dicionário usam as SETE
+ * (`TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE`). Desde a F5b, a Central de Estoque (no motor da Central) lança as SETE quando
+ * a API declara `movimentacaoInterna`, e as QUATRO de antes (`ESPECIES_DOCUMENTO_ESTOQUE`) quando não declara.
  *
  * As famílias (`estoque.entrada`, …) NÃO estão escritas aqui: moram no registry (`tipo-operacao.ts`), como
  * variantes de `erp.documentos_estoque` pela coluna `especie`, e as funções deste arquivo PERGUNTAM ao
@@ -35,8 +36,9 @@ export type EspecieMovimentacaoInterna = "requisicao" | "consumo" | "devolucao_c
 export type EspecieEstoque = EspecieEstoqueDaCentral | EspecieMovimentacaoInterna;
 
 /**
- * As quatro espécies que a Central de Estoque de hoje lança, na ordem em que a tela as oferece. A F5b passa a
- * Central para TODAS (`TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE`); até lá, esta lista continua com as quatro.
+ * As quatro espécies de antes da movimentação interna, na ordem em que a tela as oferece. Desde a F5b, a Central de
+ * Estoque usa TODAS (`TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE`) quando a API declara `movimentacaoInterna`, e só estas
+ * quatro quando não declara (a API de antes).
  */
 export const ESPECIES_DOCUMENTO_ESTOQUE: readonly EspecieEstoqueDaCentral[] = Object.freeze(["entrada", "saida", "transferencia", "ajuste"] as const);
 

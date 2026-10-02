@@ -59,9 +59,14 @@ const MSG = {
 } as const;
 const recusaDoPerfil = (caminho: string, mensagem: string) => ({ motivo: "combinacao_nao_suportada", caminho, mensagem });
 
-/** As 9 famílias cujo documento cita a TOP — as únicas com tela no passo 1 (plano F4 §1.2.4), escritas à mão. */
+/**
+ * As 12 famílias com tela, na ORDEM DO CATÁLOGO, escritas à mão: as 9 cujo documento cita a TOP no passo 1 (plano F4
+ * §1.2.4) e, desde a OPERACOES-01 F5b (a Central de Estoque no motor), as três da movimentação interna — requisição de
+ * material, consumo e devolução de consumo —, que no catálogo vêm ANTES de `estoque.entrada`.
+ */
 const FAMILIAS_COM_TELA = [
   "vendas.orcamento", "vendas.pedido", "vendas.venda", "compras.pedido", "compras.compra",
+  "estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo",
   "estoque.entrada", "estoque.saida", "estoque.transferencia", "estoque.ajuste",
 ];
 
@@ -158,7 +163,7 @@ describe("T5-1 — capacidades: o bloco formato5 na raiz, com o catálogo do dom
       expect(d.destinos).toMatchObject({ suportado: true, emPartes: 1 });
 
       // O catálogo PUBLICADO é legível pelo leitor estrito do domínio (o que o editor usa) e diz o que a SPEC diz:
-      // os 5 grupos, os 9 tipos com tela (à mão) e um perfil por família do registry.
+      // os 5 grupos, os 12 tipos com tela (à mão) e um perfil por família do registry.
       const catalogo = lerCatalogoTop((d.formato5 as { catalogo: unknown }).catalogo);
       expect(catalogo, "o leitor estrito aceita o catálogo publicado").not.toBeNull();
       expect(catalogo!.grupos.map((g) => g.chave)).toEqual(["vendas", "compras", "movimentacao_interna", "modulos", "financeiro"]);
@@ -167,7 +172,7 @@ describe("T5-1 — capacidades: o bloco formato5 na raiz, com o catálogo do dom
       expect(catalogo!.perfis.map((p) => p.familia)).toEqual([...CODIGOS_TIPO_OPERACAO]);
     }
     // /familias continua o registry INTEIRO (o catálogo não o recorta): as 27 famílias (F5a: + requisição de material,
-    // consumo e devolução de consumo; F6a: + compras.orcamento — todas ainda sem tela), com ou sem tela.
+    // consumo e devolução de consumo, com tela desde a F5b; F6a: + compras.orcamento, ainda sem tela), com ou sem tela.
     expect(CODIGOS_TIPO_OPERACAO, "premissa: o registry tem 27 famílias").toHaveLength(27);
     expect(CODIGOS_TIPO_OPERACAO, "premissa: o registry tem as três famílias da movimentação interna e o orçamento de compra")
       .toEqual(expect.arrayContaining(["estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo", "compras.orcamento"]));

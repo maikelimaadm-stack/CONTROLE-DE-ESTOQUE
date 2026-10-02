@@ -38,10 +38,19 @@ export type { ChaveCampoDoItem, ChaveColunaDoItem, ItensDaOrigem, LayoutDosItens
  * layout); a linha nova nasce com o `armazemPadrao` (o "Local de estoque" do cabeçalho, estado da tela); a pesquisa de
  * produto usa o local da LINHA e o sentido da espécie (`pesquisaDeProduto`; ausente = entrada) — com a capacidade da
  * pesquisa nova; sem ela, a de hoje.
+ *
+ * OPERACOES-01 F5b (decisão 282): `linhaNovaEmBranco` (a linha nova sem quantidade nem unitário), `subtotal={false}`
+ * (o rodapé sem "Subtotal dos itens") e `casasDaQuantidade` (a quantidade da célula não ativa) — acréscimos com o
+ * padrão de hoje: sem eles, nada muda.
  */
 
-/** A linha nova: quantidade 1, unitário 0, gera estoque; com armazém padrão, só o `warehouse_id` a mais. */
-const linhaNova = (armazem?: string): ItemRow => ({ product_id: "", quantity: "1", unit_value: "0", generate_stock: true, ...(armazem ? { warehouse_id: armazem } : {}) });
+/**
+ * A linha nova: quantidade 1, unitário 0, gera estoque; com armazém padrão, só o `warehouse_id` a mais. `emBranco`
+ * (OPERACOES-01 F5b): quantidade e unitário VAZIOS — o resto igual.
+ */
+const linhaNova = (armazem?: string, emBranco = false): ItemRow => ({
+  product_id: "", quantity: emBranco ? "" : "1", unit_value: emBranco ? "" : "0", generate_stock: true, ...(armazem ? { warehouse_id: armazem } : {})
+});
 
 /** Colunas da grade. `largura` é a do protótipo; Produto é a coluna elástica (mínimo). */
 const COLUNAS: Record<ChaveColunaDoItem, { rotulo: string; largura: number; numero?: boolean; elastica?: boolean }> = {
@@ -155,7 +164,8 @@ function CodigoDoProduto({ id, conhecido }: { id?: string; conhecido?: OpcaoReal
 
 export function ItensDaCentral({
   prefixoTestid, colunas: colunasDaEspecie, items, onChange, layout, erros, armazemPadrao, pesquisaDeProduto = null, reservaEstoque = null,
-  armazemPorItem, armazemForcado = false, custoMedioNoUnitario = true, lote = null, daOrigem = null
+  armazemPorItem, armazemForcado = false, custoMedioNoUnitario = true, lote = null, daOrigem = null,
+  linhaNovaEmBranco = false, subtotal: comSubtotal = true, casasDaQuantidade = 2
 }: PropsDosItens) {
   const tid = (sufixo: string) => `${prefixoTestid}-${sufixo}`;
   // a capacidade da pesquisa nova é perguntada ao montar os itens (uma vez por sessão): ao abrir a pesquisa ela já chegou
@@ -258,7 +268,7 @@ export function ItensDaCentral({
       const { id, rotulo } = armazemPadrao;
       setConhecidos((c) => (c[id] ? c : { ...c, [id]: { id, label: rotulo, code: null } }));
     }
-    onChange([...items, linhaNova(armazemPadrao?.id)]); setSelecionado(items.length);
+    onChange([...items, linhaNova(armazemPadrao?.id, linhaNovaEmBranco)]); setSelecionado(items.length);
   };
   const duplicar = () => {
     if (!podeAdicionar) return;
@@ -337,7 +347,7 @@ export function ItensDaCentral({
       case "quantidade": return <td key={k} className={grade.numero}><span className={grade.quantidade}>
         {ativa && !daOrigem?.quantidadeTravada
           ? <input className={grade.entrada} aria-label={`Quantidade do item ${i + 1}`} type="number" step="0.0001" min="0" max={maxDaOrigem(it)} value={it.quantity} onChange={(e) => atualizar(i, "quantity", e.target.value)} />
-          : <span data-testid={tid("quantidade")}>{num(it.quantity || "0", 2)}</span>}
+          : <span data-testid={tid("quantidade")}>{num(linhaNovaEmBranco ? it.quantity : it.quantity || "0", casasDaQuantidade)}</span>}
         <Unidade produto={it.product_id} testId={tid("unidade")} />
       </span></td>;
       case "unitario": return <td key={k} className={grade.numero}>{ativa ? <input className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(i, "unit_value", e.target.value)} /> : brl(it.unit_value ?? "0")}</td>;
@@ -516,7 +526,7 @@ export function ItensDaCentral({
     <div className={grade.rodape} data-testid={tid("itens-rodape")}>
       <span className={grade.rodapeTitulo}>Itens <span className={grade.rodapeContagem} data-testid={tid("itens-contagem")}>({items.length})</span>
         {errosDosItens.length > 0 && <span className={grade.pontoErro} data-testid={tid("itens-erro")} title="Há itens com pendência" />}</span>
-      <span>Subtotal dos itens <b className={grade.rodapeValor} data-testid={tid("subtotal")}>{brl(subtotal)}</b></span>
+      {comSubtotal && <span>Subtotal dos itens <b className={grade.rodapeValor} data-testid={tid("subtotal")}>{brl(subtotal)}</b></span>}
     </div>
     {pesquisa?.modo === "flutuante" && <PainelDePesquisa recurso={pesquisa.campo === "product_id" ? "products" : "warehouses"}
       rotulo={pesquisa.campo === "product_id" ? "Pesquisar produto" : "Pesquisar local de estoque"} valor={items[pesquisa.linha]?.[pesquisa.campo] as string | undefined}

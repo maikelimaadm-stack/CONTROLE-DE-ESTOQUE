@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { Button, ErrorState, LoadingState } from "@/components/ui";
 import { variantesDeVenda } from "@/features/sales/variantes";
 import { variantesDeCompra } from "@/features/compras/variantes";
+import { rotaDeLancamentoDeEstoque, todasAsVariantesDeEstoque } from "@/features/estoque/movimentacoes-variantes";
 import { BASE_LAYOUTS, TEXTOS, chaveDetalhe, chaveLista, invalidarLayouts, lerLinhaLayout, rotuloDaTop } from "./contrato";
 import { useTopsDoMovimento } from "./tops-do-movimento";
 
@@ -114,16 +115,21 @@ export function useUsoDoLayout(layoutId: string, familia: string): { estado: Est
 }
 
 /**
- * "ABRIR NA CENTRAL" — a Central do movimento: a de Vendas (`/vendas/<segmento>/new`) ou, na COMPRAS-03 (decisão 269), a
- * de Compras (`/compras/<segmento>/new`). O segmento da rota e a capacidade de lançar vêm do registro de variantes de
- * cada portal (`variantesDeVenda`, `variantesDeCompra` — os donos da rota e da permissão), nunca de um mapa aqui. Vendas
- * primeiro: o link de venda é o de antes, byte a byte. Movimento que nenhum portal sabe lançar não tem Central: sem link.
+ * "ABRIR NA CENTRAL" — a Central do movimento: a de Vendas (`/vendas/<segmento>/new`), na COMPRAS-03 (decisão 269) a
+ * de Compras (`/compras/<segmento>/new`) e, na OPERACOES-01 F5b (decisão 282), a de Estoque
+ * (`/estoque/movimentacoes/<segmento>/new`, as sete espécies). O segmento da rota e a capacidade de lançar vêm do
+ * registro de variantes de cada portal (`variantesDeVenda`, `variantesDeCompra`, `todasAsVariantesDeEstoque` — os donos
+ * da rota e da permissão), nunca de um mapa aqui. Vendas primeiro e compras depois: os links de venda e de compra são
+ * os de antes, byte a byte. Movimento que nenhum portal sabe lançar não tem Central: sem link.
  */
 function centralDoMovimento(familia: string): { perm: string; rota: (topId: string) => string } | undefined {
   const venda = variantesDeVenda().find((v) => v.familia === familia);
   if (venda) return { perm: venda.perm, rota: (topId) => `/vendas/${venda.segmento}/new?tipo_operacao_id=${encodeURIComponent(topId)}` };
   const compra = variantesDeCompra().find((v) => v.familia === familia);
   if (compra) return { perm: compra.perm, rota: (topId) => `/compras/${compra.segmento}/new?tipo_operacao_id=${encodeURIComponent(topId)}` };
+  // A rota de lançamento é a do portal de estoque (`rotaDeLancamentoDeEstoque`), a mesma do "+ Novo" da lista.
+  const estoque = todasAsVariantesDeEstoque().find((v) => v.familia === familia);
+  if (estoque) return { perm: estoque.perm, rota: (topId) => rotaDeLancamentoDeEstoque({ segmento: estoque.segmento, id: topId }) };
   return undefined;
 }
 
@@ -176,8 +182,8 @@ export function StatusDeUso({ layoutId, familia, rotuloMovimento, onVisualizarTo
     mutationFn: () => api(`${BASE_LAYOUTS}/${layoutId}/ativo`, { method: "POST", body: { ativo: true } }),
     onSuccess: () => { void invalidarLayouts(qc); }
   });
-  // "Abrir na Central": a rota do lançamento é a da variante do movimento (registry), de venda ou de compra. Sem
-  // variante, ou sem a capacidade de lançar nela, não há link — a Central recusaria.
+  // "Abrir na Central": a rota do lançamento é a da variante do movimento (registry), de venda, de compra ou de
+  // estoque. Sem variante, ou sem a capacidade de lançar nela, não há link — a Central recusaria.
   const central = React.useMemo(() => centralDoMovimento(familia), [familia]);
   const podeAbrir = central !== undefined && can(`${central.perm}.create`);
 

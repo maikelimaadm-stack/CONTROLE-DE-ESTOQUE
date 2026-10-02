@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { ChevronDown, LockKeyhole } from "lucide-react";
-import { camposAdicionaisDoCabecalho, familiaDeCompras } from "@agro/domain";
+import { camposAdicionaisDoCabecalho, familiaDeCompras, familiaDeEstoque } from "@agro/domain";
 import { CampoPrevia } from "./campo-previa";
 import { useConfigurador } from "./contrato";
 import { useZonaDeSoltura } from "./zona";
@@ -11,6 +11,8 @@ import { useZonaDeSoltura } from "./zona";
  * Empresa (ou depois dos dois primeiros) — a mesma regra da Central — e o grupo "Dados adicionais" aberto.
  * COMPRAS-03 (decisão 269): nos movimentos de compra a "Operação" vem PRIMEIRO — é onde a Central de Compras põe o Tipo
  * de Operação, abrindo a grade do cabeçalho. A prévia mostra a tela que o layout vai governar, não a de vendas.
+ * OPERACOES-01 F5b (decisão 282): nos movimentos de estoque também — a Central de Estoque abre os Dados principais pelo
+ * Tipo de Operação.
  */
 export function PreviaPrincipal() {
   const ctx = useConfigurador();
@@ -19,7 +21,7 @@ export function PreviaPrincipal() {
   const adicionais = camposAdicionaisDoCabecalho(ctx.estrutura);
   const principais = ctx.estrutura.cabecalho.map((x) => x.campo).filter((c) => !adicionais.includes(c));
   const posEmpresa = principais.indexOf("empresa_id");
-  const posOperacao = familiaDeCompras(ctx.familia) ? 0 : posEmpresa >= 0 ? posEmpresa + 1 : Math.min(2, principais.length);
+  const posOperacao = familiaDeCompras(ctx.familia) || familiaDeEstoque(ctx.familia) ? 0 : posEmpresa >= 0 ? posEmpresa + 1 : Math.min(2, principais.length);
 
   const operacao = (
     <div key="__operacao" className="emp-layout-config-field-slot" style={{ flex: "3 1 0" }}>

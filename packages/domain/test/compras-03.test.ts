@@ -4,6 +4,7 @@ import {
   FAMILIAS_COM_LAYOUT,
   FAMILIAS_COM_LAYOUT_DE_VENDAS,
   FAMILIAS_COM_LAYOUT_DE_COMPRAS,
+  FAMILIAS_COM_LAYOUT_DE_ESTOQUE,
   familiaTemLayout,
   familiaDeCompras,
   CATALOGO_VENDAS,
@@ -58,13 +59,16 @@ function naColuna(e: EstruturaLayout, campo: string): number {
   return i;
 }
 
-describe("C3-D1 famílias com layout: vendas primeiro, compras depois, lidas do registry", () => {
+describe("C3-D1 famílias com layout: vendas primeiro, compras depois (e o estoque por último, F5b), lidas do registry", () => {
   it("as listas, na ordem", () => {
     expect(FAMILIAS_COM_LAYOUT_DE_VENDAS).toEqual(["vendas.orcamento", "vendas.pedido", "vendas.venda"]);
     // OPERACOES-01 F6a (decisão 283): o orçamento de compra entra sozinho, pelo registry
     expect(FAMILIAS_COM_LAYOUT_DE_COMPRAS).toEqual([PEDIDO, COMPRA, "compras.orcamento"]);
-    // o registry declara compras ANTES de vendas; a lista com layout começa por vendas (o "Novo" do configurador)
-    expect(FAMILIAS_COM_LAYOUT).toEqual([...FAMILIAS_COM_LAYOUT_DE_VENDAS, ...FAMILIAS_COM_LAYOUT_DE_COMPRAS]);
+    // OPERACOES-01 F5b (decisão 282): as sete do documento de estoque, pelo registry (provadas em f5b-layout-estoque)
+    expect(FAMILIAS_COM_LAYOUT_DE_ESTOQUE).toHaveLength(7);
+    // o registry declara compras ANTES de vendas; a lista com layout começa por vendas (o "Novo" do configurador) e
+    // termina no estoque
+    expect(FAMILIAS_COM_LAYOUT).toEqual([...FAMILIAS_COM_LAYOUT_DE_VENDAS, ...FAMILIAS_COM_LAYOUT_DE_COMPRAS, ...FAMILIAS_COM_LAYOUT_DE_ESTOQUE]);
     expect(at(FAMILIAS_COM_LAYOUT, 0)).toBe("vendas.orcamento");
     const noRegistry = TIPOS_OPERACAO.map((t) => t.codigo);
     expect(noRegistry.indexOf(PEDIDO), "premissa: no registry compras vem antes").toBeLessThan(noRegistry.indexOf("vendas.orcamento"));
@@ -86,7 +90,7 @@ describe("C3-D1 famílias com layout: vendas primeiro, compras depois, lidas do 
     for (const f of FAMILIAS_COM_LAYOUT) expect(familiaTemLayout(f), f).toBe(true);
     for (const f of ["compras.solicitacao", "financeiro.conta_a_pagar", "", "COMPRAS.PEDIDO", "compras"]) expect(familiaTemLayout(f), f).toBe(false);
     expect(FAMILIAS_COM_LAYOUT.filter(familiaDeCompras)).toEqual([PEDIDO, COMPRA, "compras.orcamento"]);
-    for (const f of ["compras.solicitacao", "vendas.pedido", ""]) expect(familiaDeCompras(f), f).toBe(false);
+    for (const f of ["compras.solicitacao", "vendas.pedido", "estoque.entrada", ""]) expect(familiaDeCompras(f), f).toBe(false);
   });
 });
 
