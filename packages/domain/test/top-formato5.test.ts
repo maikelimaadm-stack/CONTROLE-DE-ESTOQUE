@@ -158,7 +158,7 @@ const secaoTeste = (ajuste: Partial<SecaoTeste> = {}): SecaoTeste => Object.assi
 const BLOQUEIA: SecaoTeste = { modo: "bloqueia", notificar: true, tolerancia: "12.50", dias: 3, nota: "Conferir" };
 
 /** Um 5 bruto (JSON) com a seção de teste presente. */
-const v5ComTeste = (teste: unknown): Saco => ({ ...sujar(configuracaoNeutraTopV5()), teste });
+const v5ComTeste = (teste: unknown): Saco => ({ ...sujar(configuracaoNeutraTopV5(DEFS)), teste });
 
 // ---------------------------------------------------------------------------------------------------
 // OS FORMATOS DE ORIGEM
@@ -262,12 +262,12 @@ describe("F5-D1 as constantes do formato 5 e o contrato das seções", () => {
     expect(SECOES_CONFIGURACAO_TOP).toEqual(["geral", "estoque", "financeiro", "fiscal", "aprovacao"]);
   });
 
-  it("F5-D1 o 5 nasce SEM seção de extensão: a lista é vazia e as seções da auditoria são as do formato 2", () => {
-    expect(DEFINICOES_SECOES_V5).toHaveLength(0);
-    expect(SECOES_EXTENSAO_V5).toEqual([]);
-    expect(ROTULOS_SECOES_EXTENSAO_V5).toEqual({});
-    expect(SECOES_CONFIGURACAO_TOP_V5).toEqual([...SECOES_CONFIGURACAO_TOP_V2]);
-    expect(secoesExtensaoNeutrasTop()).toEqual({});
+  it("F5-D1 as seções de extensão do produto (F5a: Destino e Fluxo); as seções da auditoria são as do formato 2 mais elas", () => {
+    expect(DEFINICOES_SECOES_V5.map((d: DefinicaoSecaoV5) => d.nome)).toEqual(["destino", "fluxo"]);
+    expect(SECOES_EXTENSAO_V5).toEqual(["destino", "fluxo"]);
+    expect(ROTULOS_SECOES_EXTENSAO_V5).toEqual({ destino: "Destino", fluxo: "Fluxo" });
+    expect(SECOES_CONFIGURACAO_TOP_V5).toEqual([...SECOES_CONFIGURACAO_TOP_V2, "destino", "fluxo"]);
+    expect(secoesExtensaoNeutrasTop()).toEqual({ destino: definicaoDaSecaoV5("destino")?.neutro(), fluxo: definicaoDaSecaoV5("fluxo")?.neutro() });
   });
 
   it("F5-D1 os nomes reservados são exatamente as chaves de raiz de hoje", () => {
@@ -276,7 +276,7 @@ describe("F5-D1 as constantes do formato 5 e o contrato das seções", () => {
 
   it("F5-D1 toda seção do produto cumpre o contrato — e a conferência pega a seção fictícia também", () => {
     for (const d of DEFINICOES_SECOES_V5) conferirContratoDaSecao(d);
-    // A premissa: a conferência roda de verdade sobre uma definição (a lista do produto está vazia na F4).
+    // A premissa: a conferência roda de verdade sobre uma definição (a lista do produto nasceu vazia na F4).
     conferirContratoDaSecao(SECAO_DE_TESTE);
     const nomes = DEFINICOES_SECOES_V5.map((d: DefinicaoSecaoV5) => d.nome);
     expect(new Set(nomes).size, "nenhum nome repetido na lista").toBe(nomes.length);
@@ -302,11 +302,11 @@ describe("F5-D1 as constantes do formato 5 e o contrato das seções", () => {
 // ---------------------------------------------------------------------------------------------------
 
 describe("F5-D2 o neutro do formato 5", () => {
-  it("F5-D2 é o neutro do 4 com o número 5 — as mesmas chaves, nenhuma a mais", () => {
+  it("F5-D2 é o neutro do 4 com o número 5 e as seções de extensão no neutro — nenhuma chave a mais", () => {
     const n5 = configuracaoNeutraTopV5();
     const n4 = configuracaoNeutraTopV4();
-    expect(n5).toEqual({ ...n4, versaoSchema: 5 });
-    expect(Object.keys(n5).sort()).toEqual(Object.keys(n4).sort());
+    expect(n5).toEqual({ ...n4, versaoSchema: 5, ...secoesExtensaoNeutrasTop() });
+    expect(Object.keys(n5).sort()).toEqual([...Object.keys(n4), ...SECOES_EXTENSAO_V5].sort());
   });
 
   it("F5-D2 o leitor devolve o neutro do 5 igual a ele, no 5", () => {
@@ -343,8 +343,8 @@ describe("F5-D3 a leitura estrita do formato 5", () => {
     const lido = valorDe(sujar(rico));
     expect(lido.versaoSchema).toBe(5);
     expect(lido).toEqual(normalizarConfiguracaoTop(rico));
-    // A premissa: o mesmo corpo no 4 é lido com os mesmos valores, só o número muda.
-    expect({ ...valorDe(sujar(v4ComRegras())), versaoSchema: 5 }).toEqual(lido);
+    // A premissa: o mesmo corpo no 4 é lido com os mesmos valores, só o número muda (e as seções de extensão no neutro).
+    expect({ ...valorDe(sujar(v4ComRegras())), versaoSchema: 5, ...secoesExtensaoNeutrasTop() }).toEqual(lido);
   });
 
   it("F5-D3 chave de raiz desconhecida → campo_desconhecido nela (a seção que nenhuma fase declarou)", () => {
@@ -386,7 +386,7 @@ describe("F5-D3 a leitura estrita do formato 5", () => {
 
 describe("F5-D4 a máquina das seções (seção fictícia passada como `definicoes`)", () => {
   it("F5-D4 AUSENTE num 5 → o neutro da seção (o 5 gravado antes da fase continua legível)", () => {
-    const bruto = sujar(configuracaoNeutraTopV5());
+    const bruto = sujar(configuracaoNeutraTopV5([]));
     expect(Object.hasOwn(bruto, "teste"), "a premissa: o bruto não tem a chave").toBe(false);
     const lido = valorDe(bruto, DEFS);
     expect(raiz(lido).teste).toEqual(SECAO_DE_TESTE.neutro());
@@ -476,8 +476,8 @@ describe("F5-D4 a máquina das seções (seção fictícia passada como `definic
     const lidas = raiz(secoesExtensaoDaVersaoTop(v5, DEFS));
     expect(lidas).toEqual({ teste: BLOQUEIA });
     expect(lidas.teste).not.toBe(raiz(v5).teste);
-    // A premissa do neutro: com a lista do produto (vazia), nada é acrescentado.
-    expect(secoesExtensaoDaVersaoTop(v4ComRegras())).toEqual({});
+    // A premissa do neutro: com a lista do produto, cada seção dela no neutro.
+    expect(secoesExtensaoDaVersaoTop(v4ComRegras())).toEqual(secoesExtensaoNeutrasTop());
   });
 
   it("F5-D4 a vista do 5 de um 4 tem a seção no neutro, e a comparação e a auditoria a enxergam", () => {
@@ -679,13 +679,13 @@ describe("F5-D7 a normalização preserva o 5", () => {
     expect(normalizarConfiguracaoTop(n5)).toEqual(n5);
     expect(n5.estoque.exigeArmazem).toBe(false);
     expect(n5.fiscal.cfopDentroEstado).toBe("");
-    // A premissa: é a mesma régua do 4, só o número difere.
-    expect(n5).toEqual({ ...normalizarConfiguracaoTop(v4), versaoSchema: 5 });
+    // A premissa: é a mesma régua do 4, só o número difere (e as seções de extensão, no neutro).
+    expect(n5).toEqual({ ...normalizarConfiguracaoTop(v4), versaoSchema: 5, ...secoesExtensaoNeutrasTop() });
   });
 
   it("F5-D7 a promoção explícita: 3 e 4 → 5 com o mesmo conteúdo; 5 entra e sai igual", () => {
-    expect(configuracaoV5DaV4(v4ComRegras())).toEqual({ ...normalizarConfiguracaoTop(v4ComRegras()), versaoSchema: 5 });
-    expect(configuracaoV5DaV4(v3Rico())).toEqual({ ...normalizarConfiguracaoTop(v3Rico()), versaoSchema: 5 });
+    expect(configuracaoV5DaV4(v4ComRegras())).toEqual({ ...normalizarConfiguracaoTop(v4ComRegras()), versaoSchema: 5, ...secoesExtensaoNeutrasTop() });
+    expect(configuracaoV5DaV4(v3Rico())).toEqual({ ...normalizarConfiguracaoTop(v3Rico()), versaoSchema: 5, ...secoesExtensaoNeutrasTop() });
     const v5 = configuracaoV5DaV4(v4ComRegras());
     expect(configuracaoV5DaV4(v5)).toEqual(v5);
     expect(raiz(configuracaoV5DaV4(v3Rico(), DEFS)).teste).toEqual(SECAO_DE_TESTE.neutro());

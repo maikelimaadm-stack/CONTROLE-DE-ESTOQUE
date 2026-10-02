@@ -61,7 +61,7 @@ import {
   type PoliticaDocumentoSemItens,
 } from "./tipo-operacao-configuracao.js";
 import { familiaOperacionalDeDocumentoCompra, familiaOperacionalDeDocumentoVenda } from "./tipo-operacao-configurado.js";
-import { ESPECIES_DOCUMENTO_ESTOQUE, familiaOperacionalDeDocumentoEstoque } from "./estoque-documento.js";
+import { TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE, familiaOperacionalDeDocumentoEstoque } from "./estoque-documento.js";
 import { formatarDinheiroBr } from "./tipo-operacao-restricoes.js";
 
 // ---------------------------------------------------------------------------------------------------
@@ -187,7 +187,7 @@ const linhaSe = (familia: string | undefined, montar: (f: string) => ItemMatrizR
 export const MATRIZ_REGRAS_GERAIS_TOP: readonly ItemMatrizRegrasGeraisTop[] = Object.freeze([
   ...linhaSe(familiaOperacionalDeDocumentoVenda("sale"), (f) => linhaDoDocumentoConfirmado(f, MOTIVO_ALTERACAO_VENDA)),
   ...linhaSe(familiaOperacionalDeDocumentoCompra("compra"), (f) => linhaDoDocumentoConfirmado(f, MOTIVO_ALTERACAO_COMPRA)),
-  ...ESPECIES_DOCUMENTO_ESTOQUE.flatMap((especie) => linhaSe(familiaOperacionalDeDocumentoEstoque(especie), linhaDoEstoque)),
+  ...TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE.flatMap((especie) => linhaSe(familiaOperacionalDeDocumentoEstoque(especie), linhaDoEstoque)),
   ...linhaSe(familiaOperacionalDeDocumentoVenda("budget"), linhaDoOrcamentoOuPedido),
   ...linhaSe(familiaOperacionalDeDocumentoVenda("order"), linhaDoOrcamentoOuPedido),
   ...linhaSe(familiaOperacionalDeDocumentoCompra("pedido"), linhaDoOrcamentoOuPedido),

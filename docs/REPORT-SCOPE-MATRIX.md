@@ -11,7 +11,7 @@ recortada) ou **derivado** (declarado na definição, com justificativa). Nenhum
 | stocks_consolidated | report.stocks_consolidated | estoque | warehouses (predicado) | OK |
 | stocks_lot_provider | report.stocks_lot_provider | estoque | warehouses (predicado) | OK |
 | requisitions | report.requisitions | estoque | requisitions (predicado) | OK |
-| exits_cost_center | report.exits_cost_center | estoque | stock_movements (predicado) | OK |
+| exits_cost_center | report.exits_cost_center | estoque | stock_movements (predicado), stock_movements (junção) | OK |
 | stock_writeoffs | report.stock_writeoffs | estoque | stock_writeoffs (predicado) | OK |
 | receipts | report.receipts | estoque | invoices (predicado) | OK |
 | stocks_abc | report.stocks_abc | estoque | warehouses (predicado) | OK |

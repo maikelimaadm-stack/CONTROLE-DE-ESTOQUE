@@ -252,25 +252,40 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     codigo: "ERP-ESTOQUE-DOCUMENTO", tabela: "erp.documentos_estoque", nome: "Documento de Estoque", modulo: "ESTOQUE", natureza: "entidade", idGlobal: true,
     discriminador: "especie", rotas: {
       entrada: "/estoque/movimentacoes/entradas/:id", saida: "/estoque/movimentacoes/saidas/:id",
-      transferencia: "/estoque/movimentacoes/transferencias/:id", ajuste: "/estoque/movimentacoes/ajustes/:id"
+      transferencia: "/estoque/movimentacoes/transferencias/:id", ajuste: "/estoque/movimentacoes/ajustes/:id",
+      requisicao: "/estoque/movimentacoes/requisicoes/:id", consumo: "/estoque/movimentacoes/consumos/:id",
+      devolucao_consumo: "/estoque/movimentacoes/devolucoes-consumo/:id"
     },
     discriminadorTop: "especie",
-    tops: ["estoque.entrada", "estoque.saida", "estoque.transferencia", "estoque.ajuste"],
-    descricao: "Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. A coluna `especie` decide a operação e a tela (entrada, saída, transferência, ajuste de inventário). Nasce aberto e só mexe no saldo quando é confirmado; o movimento é o da espécie, gravado no razão de estoque com origem `documentos_estoque`.",
+    tops: ["estoque.entrada", "estoque.saida", "estoque.transferencia", "estoque.ajuste", "estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo"],
+    descricao: "Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. A coluna `especie` decide a operação e a tela (entrada, saída, transferência, ajuste de inventário e, desde a decisão 282, a movimentação interna: requisição de material, consumo e devolução de consumo). Nasce aberto e só mexe no saldo quando é confirmado; o movimento é o da espécie, gravado no razão de estoque com origem `documentos_estoque`. A requisição confirmada não move o razão: reserva no local de estoque até ser atendida por consumos ou ter o saldo encerrado.",
     campos: {
-      especie: { nome: "Espécie", descricao: "entrada | saida | transferencia | ajuste. Valor canônico persistido; o rótulo é traduzido na apresentação." },
-      situacao: { nome: "Situação", descricao: "aberto | confirmado | cancelado. Aberto → confirmado, aberto → cancelado, confirmado → cancelado (com estorno). Nada volta; cancelado é final." },
+      especie: { nome: "Espécie", descricao: "entrada | saida | transferencia | ajuste | requisicao | consumo | devolucao_consumo. Valor canônico persistido; o rótulo é traduzido na apresentação. A família da requisição é `estoque.requisicao_material` (a `estoque.requisicao` é a da tabela antiga `erp.requisitions`)." },
+      situacao: { nome: "Situação", descricao: "aberto | confirmado | cancelado. Aberto → confirmado, aberto → cancelado, confirmado → cancelado (com estorno). Nada volta; cancelado é final. Na requisição, confirmado é a pendente (reservando); o atendimento (pendente, atendida em parte, atendida, saldo encerrado) é calculado, não gravado." },
       armazem_id: { nome: "Local de estoque", descricao: "Local de estoque do movimento (a origem, na transferência). Da mesma empresa do documento." },
-      armazem_destino_id: { nome: "Local de estoque de destino", descricao: "Só na transferência, e diferente da origem. Da mesma empresa do documento: transferência entre empresas continua nas telas antigas." }
+      armazem_destino_id: { nome: "Local de estoque de destino", descricao: "Só na transferência, e diferente da origem. Da mesma empresa do documento: transferência entre empresas continua nas telas antigas." },
+      origem_documento_id: { nome: "Documento de origem", descricao: "Só no consumo (a requisição que ele atende, opcional) e na devolução de consumo (o consumo de que ela volta, obrigatório). Mesma empresa e mesmo local de estoque; não muda depois do lançamento; FK composta com o tenant." },
+      centro_custo_id: { nome: "Centro de resultado (destino)", descricao: "Destino da saída, da requisição e do consumo (a devolução de consumo copia o do consumo). Centro de resultado analítico e ativo da organização; vazio nas outras espécies. FK composta com o tenant." },
+      equipamento_id: { nome: "Máquina/equipamento (destino)", descricao: "Destino da saída, da requisição e do consumo. Máquina/equipamento ativo da empresa do documento; vazio nas outras espécies. FK composta com o tenant." },
+      ordem_servico_id: { nome: "Ordem de serviço (destino)", descricao: "Destino da saída, da requisição e do consumo. Ordem de serviço aberta ou em andamento da empresa do documento; vazio nas outras espécies. FK composta com o tenant." },
+      lote_animais_id: { nome: "Lote de animais (destino)", descricao: "Destino da saída, da requisição e do consumo. Lote de animais ativo da empresa do documento; vazio nas outras espécies. FK composta com o tenant." },
+      area_id: { nome: "Área/talhão (destino)", descricao: "Destino da saída, da requisição e do consumo. Área ativa da empresa do documento; vazio nas outras espécies. FK composta com o tenant." },
+      safra_id: { nome: "Safra (destino)", descricao: "Destino da saída, da requisição e do consumo. Safra ativa da organização; vazio nas outras espécies. FK composta com o tenant." },
+      motivo_saida: { nome: "Motivo da saída", descricao: "Só na saída: um dos 13 motivos da baixa antiga. Anda em PAR com a justificativa (os dois ou nenhum)." },
+      justificativa: { nome: "Justificativa da saída", descricao: "Só na saída: o porquê da saída, não vazio, até 2000 caracteres. Anda em PAR com o motivo." },
+      saldo_encerrado_em: { nome: "Saldo encerrado em", descricao: "Só na requisição confirmada: quando o saldo pendente foi encerrado (a reserva do saldo acaba). Anda junto com saldo_encerrado_por e saldo_encerrado_motivo; acontece uma vez." },
+      saldo_encerrado_por: { nome: "Saldo encerrado por", descricao: "Só na requisição: quem encerrou o saldo pendente." },
+      saldo_encerrado_motivo: { nome: "Motivo do encerramento do saldo", descricao: "Só na requisição: por que o saldo pendente foi encerrado." }
     }
   },
   {
     codigo: "ERP-ESTOQUE-DOCUMENTO-ITEM", tabela: "erp.documentos_estoque_itens", nome: "Item do Documento de Estoque", modulo: "ESTOQUE", natureza: "linha", idGlobal: false,
     descricao: "Linha de produto do documento de estoque. Identidade pertence ao documento; só muda com o documento aberto.",
     campos: {
-      quantidade: { nome: "Quantidade", descricao: "Entrada, saída e transferência: maior que zero. Vazia no ajuste." },
+      quantidade: { nome: "Quantidade", descricao: "Entrada, saída, transferência, requisição, consumo e devolução de consumo: maior que zero. Vazia no ajuste." },
       quantidade_contada: { nome: "Quantidade contada", descricao: "Só no ajuste: a contagem do inventário (zero ou mais). A diferença para o saldo é calculada na confirmação." },
-      custo_unitario: { nome: "Custo unitário", descricao: "Informado na entrada. Nas outras espécies é preenchido na confirmação com o custo do movimento." },
+      custo_unitario: { nome: "Custo unitário", descricao: "Informado na entrada — vazio, a confirmação grava o custo médio do produto — e opcional no ajuste; nas outras espécies, o custo do movimento gravado na confirmação. Vazio na requisição (ela não move o razão)." },
+      origem_item_id: { nome: "Item de origem", descricao: "No consumo que atende uma requisição: o item da requisição que esta linha atende (o consumo pode ter linhas sem origem). Na devolução de consumo: o item do consumo que volta (obrigatório). Mesmo produto; a soma das linhas ligadas não passa do saldo do item de origem (gatilho, decisão 282)." },
       saldo_na_confirmacao: { nome: "Saldo na confirmação", descricao: "Só no ajuste: o saldo do local de estoque × produto × lote lido sob trava na confirmação." },
       diferenca: { nome: "Diferença", descricao: "Só no ajuste: contada menos o saldo na confirmação. Positiva gera correção de entrada; negativa, correção de saída; zero não move estoque." }
     }

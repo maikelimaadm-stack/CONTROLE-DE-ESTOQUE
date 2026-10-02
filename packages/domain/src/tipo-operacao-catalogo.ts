@@ -142,9 +142,10 @@ export const CATALOGO_TIPOS_MOVIMENTO_TOP: readonly TipoDeMovimentoTop[] = Objec
   tipo("pedido_compra", "compras", "Pedido", familiaOperacionalDeDocumentoCompra("pedido"), true),
   tipo("orcamento_compra", "compras", "Orçamento", null, false),
   tipo("compra", "compras", "Compra", familiaOperacionalDeDocumentoCompra("compra"), true),
-  tipo("requisicao", "movimentacao_interna", "Requisição", null, false),
-  tipo("consumo", "movimentacao_interna", "Consumo", null, false),
-  tipo("devolucao_consumo", "movimentacao_interna", "Devolução de consumo", null, false),
+  // OPERACOES-01 F5a (decisão 282): as famílias da movimentação interna nascem no registry; a tela que as lança é da F5b.
+  tipo("requisicao", "movimentacao_interna", "Requisição", familiaOperacionalDeDocumentoEstoque("requisicao"), false),
+  tipo("consumo", "movimentacao_interna", "Consumo", familiaOperacionalDeDocumentoEstoque("consumo"), false),
+  tipo("devolucao_consumo", "movimentacao_interna", "Devolução de consumo", familiaOperacionalDeDocumentoEstoque("devolucao_consumo"), false),
   tipo("entrada", "movimentacao_interna", "Entrada", familiaOperacionalDeDocumentoEstoque("entrada"), true),
   tipo("saida", "movimentacao_interna", "Saída/baixa", familiaOperacionalDeDocumentoEstoque("saida"), true),
   tipo("transferencia", "movimentacao_interna", "Transferência", familiaOperacionalDeDocumentoEstoque("transferencia"), true),

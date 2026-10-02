@@ -142,6 +142,12 @@ export const TIPOS_OPERACAO: readonly TipoOperacao[] = Object.freeze([
   T("estoque.saida", "estoque", variante("erp.documentos_estoque", "especie", "saida")),
   T("estoque.transferencia", "estoque", variante("erp.documentos_estoque", "especie", "transferencia")),
   T("estoque.ajuste", "estoque", variante("erp.documentos_estoque", "especie", "ajuste")),
+  // OPERACOES-01 F5a (decisão 282): a movimentação interna no MESMO documento. A requisição NOVA (pedido de
+  // material, espécie `requisicao`) é `estoque.requisicao_material` — a `estoque.requisicao` acima continua sendo a
+  // da tabela antiga `erp.requisitions`; renomear uma delas seria missão própria.
+  T("estoque.requisicao_material", "estoque", variante("erp.documentos_estoque", "especie", "requisicao")),
+  T("estoque.consumo", "estoque", variante("erp.documentos_estoque", "especie", "consumo")),
+  T("estoque.devolucao_consumo", "estoque", variante("erp.documentos_estoque", "especie", "devolucao_consumo")),
 
   // ---------- Compras ----------
   T("compras.solicitacao", "compras", entidade("erp.purchase_requests")),

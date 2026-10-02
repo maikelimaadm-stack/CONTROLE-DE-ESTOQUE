@@ -63,8 +63,10 @@ export const ENUM_LABELS = {
   situacao_documento_compra: { aberto: "Aberto", confirmado: "Confirmado", convertido: "Convertido", cancelado: "Cancelado" },
   // ESTOQUE-01 (decisão 274): erp.documentos_estoque.especie e .situacao. O documento de estoque não converte em
   // outro, por isso a situação não tem `convertido`.
-  especie_documento_estoque: { entrada: "Entrada", saida: "Saída", transferencia: "Transferência", ajuste: "Ajuste" },
+  especie_documento_estoque: { entrada: "Entrada", saida: "Saída", transferencia: "Transferência", ajuste: "Ajuste", requisicao: "Requisição", consumo: "Consumo", devolucao_consumo: "Devolução de consumo" },
   situacao_documento_estoque: { aberto: "Aberto", confirmado: "Confirmado", cancelado: "Cancelado" },
+  // OPERACOES-01 F5a (decisão 282): o atendimento CALCULADO da requisição de material (não é situação do banco).
+  atendimento_requisicao_estoque: { pendente: "Pendente", parcial: "Atendida em parte", atendido: "Atendida", encerrado: "Saldo encerrado" },
   animal_movement_type: { purchase: "Compra", sale: "Venda", birth: "Nascimento", death: "Morte", loss: "Perda/desaparecimento", animal_batch_transfer: "Transferência de animais → lote", batch_transfer: "Transferência de animais → lote", batch_grouping: "Agrupamento de lotes", batch_module_area_transfer: "Transferência de lote → módulo/área", module_area_transfer: "Transferência de lote → módulo/área", farm_transfer: "Transferência entre empresas", evolution: "Evolução de categoria", weaning: "Desmama", separation: "Apartação", inventory: "Inventário", processing: "Processamento" },
   handling_type: { nutrition: "Nutrição", sanitary: "Sanitário", weaning: "Desmama", separation: "Apartação", pasture: "Manejo de pastagem", locate: "Localização" },
   sex: { M: "Macho", F: "Fêmea" },

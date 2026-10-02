@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { ptBR } from "@erp/plataforma";
 import {
   ESPECIES_DOCUMENTO_ESTOQUE,
+  ESPECIES_MOVIMENTACAO_INTERNA,
   EXIGENCIAS_GERAIS_ESTOQUE_TOP,
   EXIGENCIAS_GERAIS_TOP,
   LIMITE_CUSTO_ESTOQUE,
@@ -46,7 +47,7 @@ import {
   validarRegistroIdGlobal,
   validarRegistroTipoOperacao,
   type ConfiguracaoTipoOperacaoV2,
-  type EspecieEstoque,
+  type EspecieEstoqueDaCentral,
   type ModoExecucaoTop,
 } from "../src/index.js";
 
@@ -78,7 +79,7 @@ describe("ES-D1 as quatro famílias do documento de estoque no registry", () => 
     expect(TABELA_DOCUMENTO_ESTOQUE).toBe("erp.documentos_estoque");
     expect(ESPECIES_DOCUMENTO_ESTOQUE).toEqual(["entrada", "saida", "transferencia", "ajuste"]);
     expect(FAMILIAS).toEqual(["estoque.entrada", "estoque.saida", "estoque.transferencia", "estoque.ajuste"]);
-    const rotulos: Record<EspecieEstoque, string> = {
+    const rotulos: Record<EspecieEstoqueDaCentral, string> = {
       entrada: "Entrada de estoque", saida: "Saída de estoque", transferencia: "Transferência de estoque", ajuste: "Ajuste de estoque (inventário)",
     };
     for (const especie of ESPECIES_DOCUMENTO_ESTOQUE) {
@@ -98,7 +99,8 @@ describe("ES-D1 as quatro famílias do documento de estoque no registry", () => 
       expect(t.origem.valor, codigo).toBe(valor);
       expect(ehFamiliaDeDocumentoEstoque(codigo), codigo).toBe(false);
     }
-    expect(TIPOS_OPERACAO.filter((t) => t.modulo === "estoque")).toHaveLength(FAMILIAS_ANTIGAS.length + 4);
+    // + as quatro do ESTOQUE-01 e as três da movimentação interna (OPERACOES-01 F5a, decisão 282).
+    expect(TIPOS_OPERACAO.filter((t) => t.modulo === "estoque")).toHaveLength(FAMILIAS_ANTIGAS.length + 4 + 3);
   });
 
   it("espécie desconhecida, vazia, de outra tabela ou herdada do protótipo não tem família (fail-closed)", () => {
@@ -113,17 +115,27 @@ describe("ES-D1 as quatro famílias do documento de estoque no registry", () => 
   });
 
   it("segmentos, recursos, rótulos e movimentos por espécie", () => {
-    expect(SEGMENTO_DA_ESPECIE_ESTOQUE).toEqual({ entrada: "entradas", saida: "saidas", transferencia: "transferencias", ajuste: "ajustes" });
+    expect(SEGMENTO_DA_ESPECIE_ESTOQUE).toEqual({
+      entrada: "entradas", saida: "saidas", transferencia: "transferencias", ajuste: "ajustes",
+      requisicao: "requisicoes", consumo: "consumos", devolucao_consumo: "devolucoes-consumo",
+    });
     for (const e of ESPECIES_DOCUMENTO_ESTOQUE) expect(especieDoSegmentoEstoque(SEGMENTO_DA_ESPECIE_ESTOQUE[e])).toBe(e);
     for (const s of ["", "entrada", "Entradas", "constructor", "__proto__", "documentos"]) expect(especieDoSegmentoEstoque(s), s).toBeUndefined();
-    expect(RECURSO_DA_ESPECIE_ESTOQUE).toEqual({ entrada: "entradas_estoque", saida: "saidas_estoque", transferencia: "transferencias_estoque", ajuste: "ajustes_estoque" });
-    expect(ROTULO_DA_ESPECIE_ESTOQUE).toEqual({ entrada: "Entrada", saida: "Saída", transferencia: "Transferência", ajuste: "Ajuste" });
+    expect(RECURSO_DA_ESPECIE_ESTOQUE).toEqual({
+      entrada: "entradas_estoque", saida: "saidas_estoque", transferencia: "transferencias_estoque", ajuste: "ajustes_estoque",
+      requisicao: "requisicoes_estoque", consumo: "consumos_estoque", devolucao_consumo: "devolucoes_consumo_estoque",
+    });
+    expect(ROTULO_DA_ESPECIE_ESTOQUE).toEqual({
+      entrada: "Entrada", saida: "Saída", transferencia: "Transferência", ajuste: "Ajuste",
+      requisicao: "Requisição", consumo: "Consumo", devolucao_consumo: "Devolução de consumo",
+    });
     for (const e of ESPECIES_DOCUMENTO_ESTOQUE) expect(enumLabel("especie_documento_estoque", e)).toBe(ROTULO_DA_ESPECIE_ESTOQUE[e]);
     expect(SITUACOES_DOCUMENTO_ESTOQUE).toEqual(["aberto", "confirmado", "cancelado"]);
     expect(SITUACOES_DOCUMENTO_ESTOQUE.map((s) => enumLabel("situacao_documento_estoque", s))).toEqual(["Aberto", "Confirmado", "Cancelado"]);
     expect(enumLabel("source_type", "documentos_estoque")).toBe("Documento de estoque");
     expect(MOVIMENTOS_DA_ESPECIE_ESTOQUE).toEqual({
       entrada: ["entry"], saida: ["writeoff"], transferencia: ["transfer_out", "transfer_in"], ajuste: ["correction_in", "correction_out"],
+      requisicao: [], consumo: ["requisition"], devolucao_consumo: ["devolution"],
     });
   });
 
@@ -144,7 +156,9 @@ describe("ES-D2 paridade com o CHECK de espécie da 0040", () => {
     expect(doBanco.length).toBe(4);
     expect([...doBanco].sort()).toEqual([...ESPECIES_DOCUMENTO_ESTOQUE].sort());
     const doRegistry = TIPOS_OPERACAO.filter((t) => t.origem.tabela === TABELA_DOCUMENTO_ESTOQUE).map((t) => t.origem.valor!);
-    expect([...doRegistry].sort()).toEqual([...doBanco].sort());
+    // OPERACOES-01 F5a (decisão 282): o registry tem também as três da movimentação interna, que a 0043 acrescenta ao
+    // CHECK (a paridade com a 0043 é de `f5a-movimentacao-interna.test.ts`).
+    expect([...doRegistry].sort()).toEqual([...doBanco, ...ESPECIES_MOVIMENTACAO_INTERNA].sort());
   });
 });
 

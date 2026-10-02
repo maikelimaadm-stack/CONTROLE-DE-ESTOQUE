@@ -125,7 +125,9 @@ const RECURSOS_POR_MODULO: Readonly<Record<string, readonly string[]>> = {
     "report.feed_batch_cost", "report.stocks_abc", "report.receipts", "report.stocks_consolidated",
     "report.stocks_lot_provider", "report.exits_cost_center",
     // ESTOQUE-01 (decisão 274): o documento de estoque, um recurso por espécie.
-    "entradas_estoque", "saidas_estoque", "transferencias_estoque", "ajustes_estoque"
+    "entradas_estoque", "saidas_estoque", "transferencias_estoque", "ajustes_estoque",
+    // OPERACOES-01 F5a (decisão 282): a movimentação interna no documento de estoque.
+    "requisicoes_estoque", "consumos_estoque", "devolucoes_consumo_estoque"
   ],
   financeiro: [
     "opening_movements", "payables", "receivables", "bank_movements", "cash_flow", "ofx_imports",

@@ -76,7 +76,11 @@ export const ENTIDADES_ID_GLOBAL: readonly EntidadeIdGlobal[] = [
     entrada: { rota: "/estoque/movimentacoes/entradas/:id", permissao: "entradas_estoque.view" },
     saida: { rota: "/estoque/movimentacoes/saidas/:id", permissao: "saidas_estoque.view" },
     transferencia: { rota: "/estoque/movimentacoes/transferencias/:id", permissao: "transferencias_estoque.view" },
-    ajuste: { rota: "/estoque/movimentacoes/ajustes/:id", permissao: "ajustes_estoque.view" }
+    ajuste: { rota: "/estoque/movimentacoes/ajustes/:id", permissao: "ajustes_estoque.view" },
+    // OPERACOES-01 F5a (decisão 282): a movimentação interna.
+    requisicao: { rota: "/estoque/movimentacoes/requisicoes/:id", permissao: "requisicoes_estoque.view" },
+    consumo: { rota: "/estoque/movimentacoes/consumos/:id", permissao: "consumos_estoque.view" },
+    devolucao_consumo: { rota: "/estoque/movimentacoes/devolucoes-consumo/:id", permissao: "devolucoes_consumo_estoque.view" }
   }), { exclusaoLogica: false }),
   // Pecuária — variantes derivadas da fonte única de operações de rebanho
   E("animals", "Animal", "pecuaria", "erp.animals", fixa("/pecuaria/animais/:id", "animals.view")),
