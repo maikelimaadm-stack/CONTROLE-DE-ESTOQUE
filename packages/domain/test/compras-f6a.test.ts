@@ -132,7 +132,8 @@ describe("F6A-D2 a seção fluxoCompra (Fluxo de compra)", () => {
     expect(DEFINICOES_SECOES_V5).toContain(SECAO_FLUXO_COMPRA);
     expect(SECAO_FLUXO_COMPRA.nome).toBe("fluxoCompra");
     expect(SECAO_FLUXO_COMPRA.rotulo).toBe("Fluxo de compra");
-    expect(SECAO_FLUXO_COMPRA.ajuda).toBe("Exigir pedido finalizado para receber: com Sim, o pedido só é recebido depois de finalizado (e, se esta TOP exige aprovação, aprovado). Com Não, o pedido aberto ou finalizado é recebido, como hoje — e o aberto é recebido sem passar pela aprovação desta TOP, que só vale ao finalizar.");
+    // Decisão do Maike de 03/10 (o par): a ajuda diz que a aprovação e esta regra andam juntas.
+    expect(SECAO_FLUXO_COMPRA.ajuda).toBe("Exigir pedido finalizado para receber: com Sim, o pedido só é recebido depois de finalizado e aprovado. Com Não, o pedido aberto ou finalizado é recebido, como hoje. Esta regra anda junto com a aprovação do pedido (aba Aprovação), que vale ao finalizar: com aprovação ela é Sim, sem aprovação ela é Não — ligar ou desligar a aprovação liga ou desliga esta regra.");
     expect(SECAO_FLUXO_COMPRA.chaves).toEqual(["exigeFinalizar"]);
     expect(Object.isFrozen(SECAO_FLUXO_COMPRA)).toBe(true);
   });

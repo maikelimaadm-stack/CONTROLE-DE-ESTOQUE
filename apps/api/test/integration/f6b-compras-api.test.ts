@@ -254,7 +254,8 @@ describe("SP-1 A1 — a situação do PEDIDO pela conta do finalizar (com a cobe
     expect(await situacao(neutro.id)).toEqual({ situacao: "nao_exigida", ultimaDecisao: null });
     expect(await previaDaFinalizacao(neutro.id), "premissa: a prévia diz o mesmo").toMatchObject({ podeFinalizar: true, aprovacao: { situacao: "nao_exigida" } });
 
-    const t5 = await topNoFormato("compras.pedido", cfg5(sempre));
+    // No 5, a aprovação do pedido anda junto com "Exigir pedido finalizado para receber" (decisão do Maike de 03/10).
+    const t5 = await topNoFormato("compras.pedido", cfg5((x) => { sempre(x); x.fluxoCompra.exigeFinalizar = true; }));
     const ped5 = await pedido([itemCompra(p.id, "2", "10.00")], t5);
     expect(await situacao(ped5.id)).toEqual({ situacao: "pendente", ultimaDecisao: null });
     expect(await previaDaFinalizacao(ped5.id), "premissa: a prévia diz o mesmo").toMatchObject({ aprovacao: { situacao: "pendente" } });

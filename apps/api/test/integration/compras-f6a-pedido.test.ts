@@ -291,7 +291,8 @@ describe("FP-3 a aprovação do pedido ao finalizar", () => {
   });
 
   it("FP-3b a COBERTURA: aprovado e depois o valor sobe → 409 PENDENTE e o pedido volta à fila; aprovado de novo, finaliza", async () => {
-    const topSempre = await topNoFormato("compras.pedido", cfg5((x) => { x.aprovacao.politica = "sempre"; }));
+    // No 5, a aprovação do pedido anda junto com "Exigir pedido finalizado para receber" (decisão do Maike de 03/10).
+    const topSempre = await topNoFormato("compras.pedido", cfg5((x) => { x.aprovacao.politica = "sempre"; x.fluxoCompra.exigeFinalizar = true; }));
     const p = await produto();
     const ped = await pedido([itemCompra(p.id, "3", "10.00")], topSempre);
     expect((await aprovar("compras", ped.id)).statusCode).toBe(200);
@@ -316,7 +317,7 @@ describe("FP-3 a aprovação do pedido ao finalizar", () => {
   });
 
   it("FP-3c 'A partir de 1000.00' (formato 5): 1000.00 exige (409, aprovar, finaliza); 999.99 não exige (aprovar → 409 NAO_EXIGIDA) e finaliza direto", async () => {
-    const topValor = await topNoFormato("compras.pedido", cfg5((x) => { x.aprovacao.politica = "por_valor"; x.aprovacao.valorMinimo = "1000.00"; }));
+    const topValor = await topNoFormato("compras.pedido", cfg5((x) => { x.aprovacao.politica = "por_valor"; x.aprovacao.valorMinimo = "1000.00"; x.fluxoCompra.exigeFinalizar = true; }));
     const p = await produto();
     const acima = await pedido([itemCompra(p.id, "2", "500.00")], topValor);
     const r = await finalizar(acima.id);
@@ -343,7 +344,8 @@ describe("FP-3 a aprovação do pedido ao finalizar", () => {
 describe("FP-4 receber: 'Exigir pedido finalizado para receber' só quando a TOP do pedido diz", () => {
   it("FP-4a exige: o aberto → 409 (nenhuma compra); finalizado → recebe em partes e converte; a compra cancelada reabre o pedido FINALIZADO", async () => {
     const topDestino = await topNoFormato("compras.compra", cfg4());
-    const topExige = await topPedidoPara(cfg5((x) => { x.fluxoCompra.exigeFinalizar = true; }), topDestino, true);
+    // No 5, "exigir" anda junto com a aprovação (decisão do Maike de 03/10, nos dois sentidos): a TOP pede as duas.
+    const topExige = await topPedidoPara(cfg5((x) => { x.fluxoCompra.exigeFinalizar = true; x.aprovacao.politica = "sempre"; }), topDestino, true);
     const p = await produto();
     const ped = await pedido([itemCompra(p.id, "10", "10.00")], topExige);
     expect(j(await proximosPassos(ped.id))).toMatchObject({ politicaConfigurada: true, items: [{ tipoOperacaoId: topDestino, especie: "compra" }], exigeFinalizar: true });
@@ -352,6 +354,8 @@ describe("FP-4 receber: 'Exigir pedido finalizado para receber' só quando a TOP
     expect(erro(aberto)).toEqual({ code: "CONFLICT", message: MSG_PRECISA_FINALIZAR });
     expect(await comprasGeradas(ped.id)).toEqual([]);
 
+    // A aprovação (que vale ao finalizar) e a finalização: só então o pedido é recebido.
+    expect((await aprovar("compras", ped.id)).statusCode).toBe(200);
     expect((await finalizar(ped.id)).statusCode).toBe(200);
     // Em partes: o pedido continua FINALIZADO (a situação real volta na resposta).
     const parte = await receber(ped, topDestino, ["4"]);
