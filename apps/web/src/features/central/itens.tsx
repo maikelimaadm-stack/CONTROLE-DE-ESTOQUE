@@ -9,6 +9,7 @@ import { Input } from "@/components/ui";
 import { StockCell, totalDaLinhaExibido, type ItemRow } from "@/features/docs/shared";
 import { EstoqueDisponivelDoItem } from "@/features/stock/reserva-estoque";
 import { PainelDePesquisa } from "./pesquisa";
+import { useFonteDaPesquisaDeProdutos } from "./pesquisa-de-produtos";
 import { CampoDaCentral } from "./campo";
 import { ConfigurarColunas } from "./configurar-colunas";
 import { BotaoAmpliar } from "./moldura";
@@ -32,16 +33,33 @@ export type { ChaveCampoDoItem, ChaveColunaDoItem, ItensDaOrigem, LayoutDosItens
  * recursos novos — lote/validade por linha (`lote`), armazém permitido por item (`armazemPorItem`), armazém forçado
  * sobre o layout (`armazemForcado`) e o modo "da origem" (`daOrigem`) — são opcionais e desligados por padrão: sem eles
  * o DOM, as classes e o payload são os de antes. `custoMedioNoUnitario` é ligado por padrão (o de antes).
+ *
+ * OPERACOES-01 F3b (decisão 280): o Local vem antes do produto (sem layout e na coluna forçada; com layout, manda o
+ * layout); a linha nova nasce com o `armazemPadrao` (o "Local de estoque" do cabeçalho, estado da tela); a pesquisa de
+ * produto usa o local da LINHA e o sentido da espécie (`pesquisaDeProduto`; ausente = entrada) — com a capacidade da
+ * pesquisa nova; sem ela, a de hoje.
+ *
+ * OPERACOES-01 F10 (decisão 287): `linhaUnica` (padrão `false`) deixa a grade com a linha que a página criou — sem
+ * Adicionar, Duplicar e Remover (o abastecimento); sem a prop, nada muda.
+ * OPERACOES-01 F5b (decisão 282): `linhaNovaEmBranco` (a linha nova sem quantidade nem unitário), `subtotal={false}`
+ * (o rodapé sem "Subtotal dos itens") e `casasDaQuantidade` (a quantidade da célula não ativa) — acréscimos com o
+ * padrão de hoje: sem eles, nada muda.
  */
 
-/** A linha nova: quantidade 1, unitário 0, gera estoque; com armazém padrão, só o `warehouse_id` a mais. */
-const linhaNova = (armazem?: string): ItemRow => ({ product_id: "", quantity: "1", unit_value: "0", generate_stock: true, ...(armazem ? { warehouse_id: armazem } : {}) });
+/**
+ * A linha nova: quantidade 1, unitário 0, gera estoque; com armazém padrão, só o `warehouse_id` a mais. `emBranco`
+ * (OPERACOES-01 F5b): quantidade e unitário VAZIOS — o resto igual.
+ */
+const linhaNova = (armazem?: string, emBranco = false): ItemRow => ({
+  product_id: "", quantity: emBranco ? "" : "1", unit_value: emBranco ? "" : "0", generate_stock: true, ...(armazem ? { warehouse_id: armazem } : {})
+});
 
 /** Colunas da grade. `largura` é a do protótipo; Produto é a coluna elástica (mínimo). */
 const COLUNAS: Record<ChaveColunaDoItem, { rotulo: string; largura: number; numero?: boolean; elastica?: boolean }> = {
   codigo: { rotulo: "Código", largura: 70 },
   produto: { rotulo: "Produto", largura: 170, elastica: true },
-  armazem: { rotulo: "Armazém", largura: 108 },
+  // 122, não os 108 do protótipo: "Local de estoque" (OPERACOES-01 F3a) cabe inteiro também com o "*" de coluna obrigatória
+  armazem: { rotulo: "Local de estoque", largura: 122 },
   estoque: { rotulo: "Estoque", largura: 74, numero: true },
   saldo: { rotulo: "Saldo", largura: 90, numero: true },
   quantidade: { rotulo: "Quantidade", largura: 104, numero: true },
@@ -54,15 +72,19 @@ const COLUNAS: Record<ChaveColunaDoItem, { rotulo: string; largura: number; nume
 };
 /** A coluna do círculo de seleção, do desenho. */
 const LARGURA_SELECAO = 34;
-/** A ordem de sempre (as nove de hoje). `saldo`, `lote` e `validade` só entram quando ligados. */
-const ORDEM_COLUNAS: readonly ChaveColunaDoItem[] = ["codigo", "produto", "armazem", "estoque", "saldo", "quantidade", "unitario", "desconto", "descontoPercentual", "total", "lote", "validade"];
+/**
+ * A ordem de sempre (as nove de hoje), com o Local antes do produto (decisão 280: é o local que decide o saldo; o
+ * Código fica junto do Produto). `saldo`, `lote` e `validade` só entram quando ligados.
+ */
+const ORDEM_COLUNAS: readonly ChaveColunaDoItem[] = ["armazem", "codigo", "produto", "estoque", "saldo", "quantidade", "unitario", "desconto", "descontoPercentual", "total", "lote", "validade"];
 const OPCIONAIS: ReadonlySet<ChaveColunaDoItem> = new Set(["saldo", "lote", "validade"]);
 
 const CAMPOS: Record<ChaveCampoDoItem, string> = {
-  produto: "Produto", armazem: "Armazém", estoque: "Estoque", saldo: "Saldo", unidade: "Unidade", quantidade: "Quantidade",
+  produto: "Produto", armazem: "Local de estoque", estoque: "Estoque", saldo: "Saldo", unidade: "Unidade", quantidade: "Quantidade",
   unitario: "Valor unitário", desconto: "Desconto", descontoPercentual: "Desconto %", total: "Total", lote: "Lote", validade: "Validade"
 };
-const ORDEM_CAMPOS: readonly ChaveCampoDoItem[] = ["produto", "armazem", "estoque", "saldo", "unidade", "quantidade", "unitario", "desconto", "descontoPercentual", "total", "lote", "validade"];
+/** O formulário na mesma ordem da grade (decisão 280: o Local antes do produto). */
+const ORDEM_CAMPOS: readonly ChaveCampoDoItem[] = ["armazem", "produto", "estoque", "saldo", "unidade", "quantidade", "unitario", "desconto", "descontoPercentual", "total", "lote", "validade"];
 
 /** Chave do ITEM (`ItemRow`) de cada coluna — usada quando o catálogo da espécie não mapeia a coluna (caminho de erro). */
 const CHAVE_DO_ITEM: Partial<Record<ChaveColunaDoItem, string>> = {
@@ -143,10 +165,13 @@ function CodigoDoProduto({ id, conhecido }: { id?: string; conhecido?: OpcaoReal
 }
 
 export function ItensDaCentral({
-  prefixoTestid, colunas: colunasDaEspecie, items, onChange, layout, erros, armazemPadrao, reservaEstoque = null,
-  armazemPorItem, armazemForcado = false, custoMedioNoUnitario = true, lote = null, daOrigem = null
+  prefixoTestid, colunas: colunasDaEspecie, items, onChange, layout, erros, armazemPadrao, pesquisaDeProduto = null, reservaEstoque = null,
+  armazemPorItem, armazemForcado = false, custoMedioNoUnitario = true, lote = null, daOrigem = null, linhaUnica = false,
+  linhaNovaEmBranco = false, subtotal: comSubtotal = true, casasDaQuantidade = 2
 }: PropsDosItens) {
   const tid = (sufixo: string) => `${prefixoTestid}-${sufixo}`;
+  // a capacidade da pesquisa nova é perguntada ao montar os itens (uma vez por sessão): ao abrir a pesquisa ela já chegou
+  const fonteDaPesquisa = useFonteDaPesquisaDeProdutos();
   const { doSistema, doCatalogo } = colunasDaEspecie;
   /** Coluna → chave do catálogo da espécie (inverso de `doCatalogo`); sem catálogo, a chave do item. */
   const chaveDoCatalogo = React.useMemo(() => {
@@ -177,10 +202,11 @@ export function ItensDaCentral({
       const depois = ORDEM_COLUNAS.slice(0, ORDEM_COLUNAS.indexOf(k)).filter((x) => lista.includes(x)).pop();
       lista.splice(depois ? lista.indexOf(depois) + 1 : 0, 0, k);
     }
-    // PERMITIR (`armazemPorItem`, em `ligada`) não é FORÇAR: só `armazemForcado` passa por cima do layout
+    // PERMITIR (`armazemPorItem`, em `ligada`) não é FORÇAR: só `armazemForcado` passa por cima do layout — e o põe
+    // logo ANTES do Código/Produto (decisão 280: o local antes do produto); sem nenhum dos dois, no início
     if (armazemForcado === true && ligada("armazem") && !lista.includes("armazem")) {
-      const i = lista.indexOf("produto");
-      lista.splice(i >= 0 ? i + 1 : lista.length, 0, "armazem");
+      const ancoras = (["codigo", "produto"] as const).map((k) => lista.indexOf(k)).filter((x) => x >= 0);
+      lista.splice(ancoras.length ? Math.min(...ancoras) : 0, 0, "armazem");
     }
     return lista;
   }, [colunasDoLayout, chavesColunas, armazemForcado, ligada, chaveDoCatalogo]);
@@ -233,17 +259,18 @@ export function ItensDaCentral({
   const corrente = mostraFormulario ? atual : sel;
 
   /** Modo "da origem": não se acrescenta nem duplica; com a quantidade travada, também não se remove. */
-  const podeAdicionar = !daOrigem;
-  const podeRemover = !daOrigem?.quantidadeTravada;
+  const podeAdicionar = !daOrigem && !linhaUnica;
+  const podeRemover = !daOrigem?.quantidadeTravada && !linhaUnica;
 
   const atualizar = (i: number, chave: string, v: unknown) => onChange(items.map((it, j) => (j === i ? { ...it, [chave]: v } : it)));
   const adicionar = () => {
     if (!podeAdicionar) return;
-    if (armazemPadrao) {
+    // rótulo vazio não vira "conhecido": a célula lê o rótulo do cadastro
+    if (armazemPadrao && armazemPadrao.rotulo) {
       const { id, rotulo } = armazemPadrao;
       setConhecidos((c) => (c[id] ? c : { ...c, [id]: { id, label: rotulo, code: null } }));
     }
-    onChange([...items, linhaNova(armazemPadrao?.id)]); setSelecionado(items.length);
+    onChange([...items, linhaNova(armazemPadrao?.id, linhaNovaEmBranco)]); setSelecionado(items.length);
   };
   const duplicar = () => {
     if (!podeAdicionar) return;
@@ -269,6 +296,16 @@ export function ItensDaCentral({
     setPesquisa(null);
   };
   const fechar = React.useCallback(() => setPesquisa(null), []);
+  /**
+   * O que a pesquisa de PRODUTO sabe: a fonte (capacidade), o local da LINHA (o que vai no POST — nunca o do cabeçalho)
+   * e o sentido (ausente = entrada). A pesquisa de local não o recebe.
+   */
+  const produtoNaPesquisa = (linha: number) => ({
+    fonte: fonteDaPesquisa,
+    armazemId: items[linha]?.warehouse_id || undefined,
+    sentido: pesquisaDeProduto?.sentido ?? "entrada",
+    soControlaEstoque: pesquisaDeProduto?.soControlaEstoque
+  });
   const marcarEFocar = (i: number) => { setSelecionado(i); requestAnimationFrame(() => circulos.current[i]?.focus()); };
 
   const tecladoDoCirculo = (e: React.KeyboardEvent<HTMLButtonElement>, i: number) => {
@@ -304,7 +341,7 @@ export function ItensDaCentral({
           aberto={pesquisa?.linha === i && pesquisa.campo === "product_id"} testId={tid("produto")}
           onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "product_id", ancora: el, modo: "flutuante" }); }} />}</td>;
       case "armazem": return <td key={k}><CelulaDeReferencia recurso="warehouses" id={it.warehouse_id} conhecido={it.warehouse_id ? conhecidos[it.warehouse_id] : undefined} vazio="—"
-        rotuloAcao={(o) => (o ? `Armazém: ${o.label}` : "Armazém")}
+        rotuloAcao={(o) => (o ? `Local de estoque: ${o.label}` : "Local de estoque")}
         aberto={pesquisa?.linha === i && pesquisa.campo === "warehouse_id"} testId={tid("armazem")}
         onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "warehouse_id", ancora: el, modo: "flutuante" }); }} /></td>;
       case "estoque": return <td key={k} className={cn(grade.numero, grade.estoque)}>{saldoDoItem(it)}</td>;
@@ -312,7 +349,7 @@ export function ItensDaCentral({
       case "quantidade": return <td key={k} className={grade.numero}><span className={grade.quantidade}>
         {ativa && !daOrigem?.quantidadeTravada
           ? <input className={grade.entrada} aria-label={`Quantidade do item ${i + 1}`} type="number" step="0.0001" min="0" max={maxDaOrigem(it)} value={it.quantity} onChange={(e) => atualizar(i, "quantity", e.target.value)} />
-          : <span data-testid={tid("quantidade")}>{num(it.quantity || "0", 2)}</span>}
+          : <span data-testid={tid("quantidade")}>{num(linhaNovaEmBranco ? it.quantity : it.quantity || "0", casasDaQuantidade)}</span>}
         <Unidade produto={it.product_id} testId={tid("unidade")} />
       </span></td>;
       case "unitario": return <td key={k} className={grade.numero}>{ativa ? <input className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(i, "unit_value", e.target.value)} /> : brl(it.unit_value ?? "0")}</td>;
@@ -374,8 +411,9 @@ export function ItensDaCentral({
   </div>;
 
   const pesquisaEmFluxo = (campo: "product_id" | "warehouse_id") => pesquisa && pesquisa.modo === "fluxo" && pesquisa.campo === campo && pesquisa.linha === atual
-    ? <PainelDePesquisa key={`fluxo-${campo}`} recurso={campo === "product_id" ? "products" : "warehouses"} rotulo={campo === "product_id" ? "Pesquisar produto" : "Pesquisar armazém"}
-        valor={item?.[campo] as string | undefined} modo="fluxo" ancora={pesquisa.ancora} onEscolher={escolher} onFechar={fechar} testId={tid("pesquisa")} />
+    ? <PainelDePesquisa key={`fluxo-${campo}`} recurso={campo === "product_id" ? "products" : "warehouses"} rotulo={campo === "product_id" ? "Pesquisar produto" : "Pesquisar local de estoque"}
+        valor={item?.[campo] as string | undefined} modo="fluxo" ancora={pesquisa.ancora} onEscolher={escolher} onFechar={fechar} testId={tid("pesquisa")}
+        produto={campo === "product_id" ? produtoNaPesquisa(pesquisa.linha) : null} />
     : null;
 
   const doCampo = (k: ChaveColunaDoItem) => ({ attrs: dataCampo(k), required: obrigatoria(k), error: erroDe(atual, k), label: rotuloColuna(k) });
@@ -490,11 +528,12 @@ export function ItensDaCentral({
     <div className={grade.rodape} data-testid={tid("itens-rodape")}>
       <span className={grade.rodapeTitulo}>Itens <span className={grade.rodapeContagem} data-testid={tid("itens-contagem")}>({items.length})</span>
         {errosDosItens.length > 0 && <span className={grade.pontoErro} data-testid={tid("itens-erro")} title="Há itens com pendência" />}</span>
-      <span>Subtotal dos itens <b className={grade.rodapeValor} data-testid={tid("subtotal")}>{brl(subtotal)}</b></span>
+      {comSubtotal && <span>Subtotal dos itens <b className={grade.rodapeValor} data-testid={tid("subtotal")}>{brl(subtotal)}</b></span>}
     </div>
     {pesquisa?.modo === "flutuante" && <PainelDePesquisa recurso={pesquisa.campo === "product_id" ? "products" : "warehouses"}
-      rotulo={pesquisa.campo === "product_id" ? "Pesquisar produto" : "Pesquisar armazém"} valor={items[pesquisa.linha]?.[pesquisa.campo] as string | undefined}
-      modo="flutuante" ancora={pesquisa.ancora} onEscolher={escolher} onFechar={fechar} testId={tid("pesquisa")} />}
+      rotulo={pesquisa.campo === "product_id" ? "Pesquisar produto" : "Pesquisar local de estoque"} valor={items[pesquisa.linha]?.[pesquisa.campo] as string | undefined}
+      modo="flutuante" ancora={pesquisa.ancora} onEscolher={escolher} onFechar={fechar} testId={tid("pesquisa")}
+      produto={pesquisa.campo === "product_id" ? produtoNaPesquisa(pesquisa.linha) : null} />}
   </>;
 }
 

@@ -146,7 +146,7 @@ const ehEscritaDeTop = (r: Request) =>
  * R1 — RESTRIÇÕES + FISCAL PELA TELA → VERSÃO NOVA NO FORMATO 3, COM EXATAMENTE O QUE FOI MARCADO
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
 
-test("R1 — venda: transportadora exigida, atraso bloqueia, duas condições e fiscal gravam a versão 2 no formato 4, e o histórico mostra as condições", async ({ page }) => {
+test("R1 — venda: transportadora exigida, atraso bloqueia, duas condições e fiscal gravam a versão 2 no formato 5, e o histórico mostra as condições", async ({ page }) => {
   await login(page);
   const condA = await criarCondicao(page, "Condição R1 A");
   const condB = await criarCondicao(page, "Condição R1 B");
@@ -191,11 +191,13 @@ test("R1 — venda: transportadora exigida, atraso bloqueia, duas condições e 
 
     // SALVAR — e conferir o que saiu no fio: o formato e a lista presente. TOP-CONFIG-08 (decisão 277): com o
     // servidor que declara `regrasGerais`, o editor grava o formato 4 — as MESMAS chaves do 3, e as restrições
-    // valem igual nele; por isso as asserções de cada chave abaixo não mudam, só o número do formato.
+    // valem igual nele; por isso as asserções de cada chave abaixo não mudam, só o número do formato. OPERACOES-01 F4
+    // (decisão 281): com o servidor que declara `formato5`, o editor grava o 5 — o 4 + as seções de extensão; as
+    // restrições e as condições valem igual (a venda mostra e aceita o Financeiro), e só o número muda de novo.
     const put = page.waitForRequest((r) => r.method() === "PUT" && new URL(r.url()).pathname.endsWith(`/api/admin/tipos-operacao/${top.id}`));
     await forma.getByTestId("top-salvar").click();
     const corpo = (await put).postDataJSON() as { configuracao?: { versaoSchema?: number }; condicoesPermitidas?: string[] };
-    expect(corpo.configuracao?.versaoSchema, "o corpo enviado é o formato 4").toBe(4);
+    expect(corpo.configuracao?.versaoSchema, "o corpo enviado é o formato 5").toBe(5);
     expect([...(corpo.condicoesPermitidas ?? [])].sort(), "e declara as duas condições").toEqual([condA.id, condB.id].sort());
     await expect(forma).toBeHidden();
 
@@ -205,10 +207,10 @@ test("R1 — venda: transportadora exigida, atraso bloqueia, duas condições e 
      */
     const depois = await detalheNoServidor(page, top.id);
     expect(depois.versao, "restrições são conteúdo: versão nova").toBe(2);
-    expect(depois.configuracaoSchema, "a versão nova é do formato 4 (nunca vira 3 no caminho)").toBe(4);
+    expect(depois.configuracaoSchema, "a versão nova é do formato 5 (nunca vira 3 nem 4 no caminho)").toBe(5);
     expect(depois.configuracao.suportada, "e a tela do servidor a lê").toBe(true);
     const valor = depois.configuracao.valor;
-    expect(valor.versaoSchema).toBe(4);
+    expect(valor.versaoSchema).toBe(5);
     expect(valor.geral.exigeTransportadora, "exige transportadora").toBe(true);
     expect(valor.financeiro.clienteEmAtraso, "cliente em atraso bloqueia").toBe("bloqueia");
     expect(valor.financeiro.toleranciaAtrasoDias, "tolerância 0").toBe(0);
@@ -335,8 +337,9 @@ test("TR-W3 — formato 2 com 'Exigir observação' pede confirmação antes do 
     expect(escritas, "nenhum PUT saiu ao voltar").toEqual([]);
     expect((await detalheNoServidor(page, criada.id)).versao, "a versão não mudou").toBe(antes.versao);
 
-    // 4. Salvar → "Salvar assim mesmo" → PUT 200 e versão nova no formato 4 (TOP-CONFIG-08: o editor grava o 4
-    //    quando o servidor declara `regrasGerais`; as regras gerais ficam no neutro, então o diálogo delas não abre).
+    // 4. Salvar → "Salvar assim mesmo" → PUT 200 e versão nova no formato 5 (TOP-CONFIG-08: o editor grava o 4
+    //    quando o servidor declara `regrasGerais`; OPERACOES-01 F4: o 5 quando ele declara `formato5`. As regras
+    //    gerais ficam no neutro, e a venda aceita tudo o que a TOP tinha, então o diálogo das regras não abre).
     await forma.getByTestId("top-salvar").click();
     await expect(dialogo).toBeVisible();
     const resposta = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname.endsWith(`/api/admin/tipos-operacao/${criada.id}`));
@@ -345,7 +348,7 @@ test("TR-W3 — formato 2 com 'Exigir observação' pede confirmação antes do 
     await expect(forma).toBeHidden();
     const depois = await detalheNoServidor(page, criada.id);
     expect(depois.versao, "versão nova").toBe(antes.versao + 1);
-    expect(depois.configuracaoSchema, "no formato 4").toBe(4);
+    expect(depois.configuracaoSchema, "no formato 5").toBe(5);
   } finally {
     await excluirTop(page, nova.id);
     await excluirTop(page, criada.id);

@@ -5,12 +5,30 @@ import { useQuery } from "@tanstack/react-query";
 import { api, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { brl, dateBR } from "@/lib/utils";
-import { Button, Dialog, Field, NativeSelect, Input, StatusBadge } from "@/components/ui";
+import { Button, Dialog, Field, NativeSelect, Input, LoadingState, StatusBadge } from "@/components/ui";
 import { DetailShell, KV, SimpleTable, useDoc, LoadingOr, ApportionmentEditor, toAppLines, type Row, type AppLine } from "@/features/docs/shared";
 import { useAction } from "@/features/docs/actions";
 import { COPY } from "@/lib/copy";
+import { useCentralFinanceira } from "@/features/financial/central/capacidade";
+import { ConciliacaoDetalhe } from "@/features/financial/bancos/conciliacao-detalhe";
+
+/**
+ * Detalhe da importação OFX. Com a Central Financeira declarada pela API (OPERACOES-01 F8, decisão 285), a conciliação
+ * nova (sugestões, soma de vários, vincular, criar, ignorar, desfazer); sem ela (API anterior), a tela de HOJE,
+ * idêntica — e nenhum pedido a `/api/financeiro/*` além da capacidade. Enquanto a capacidade não responde, nada da
+ * tela velha pisca.
+ */
 export default function Page({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params); const { can } = useAuth();
+  const { id } = use(params);
+  const estado = useCentralFinanceira();
+  if (estado === "carregando") return <LoadingState />;
+  if (estado === "central") return <ConciliacaoDetalhe id={id} />;
+  return <OfxDeHoje id={id} />;
+}
+
+/** A tela de hoje (antes da Central), sem mudança. */
+function OfxDeHoje({ id }: { id: string }) {
+  const { can } = useAuth();
   const q = useDoc<Row & { transactions: Row[] }>(`/api/financial/ofx-imports/${id}`); const d = q.data;
   const [tx, setTx] = React.useState<Row | null>(null); const act = useAction(() => setTx(null));
   const [mode, setMode] = React.useState<"match" | "create">("match"); const [mid, setMid] = React.useState(""); const [note, setNote] = React.useState(""); const [lines, setLines] = React.useState<AppLine[]>([{ financial_category_id: "", cost_center_id: "", percentage: "100" }]);

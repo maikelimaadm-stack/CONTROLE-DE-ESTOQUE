@@ -201,14 +201,14 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     descricao: "Fornecedores do produto (CADASTROS Fase 6): só parceiro com tipo Fornecedor, código do produto no fornecedor, unidade de compra e no máximo um preferencial."
   },
   {
-    codigo: "ERP-CADASTROS-ARMAZEM", tabela: "erp.warehouses", nome: "Armazém", modulo: "CADASTROS", natureza: "entidade", idGlobal: false,
+    codigo: "ERP-CADASTROS-ARMAZEM", tabela: "erp.warehouses", nome: "Local de estoque", modulo: "CADASTROS", natureza: "entidade", idGlobal: false,
     descricao: "Local de guarda de estoque, pertencente a uma empresa."
   },
   {
     codigo: "ERP-CADASTROS-LAYOUT-DOCUMENTO", tabela: "erp.layouts_documento", nome: "Layout do Documento", modulo: "CADASTROS", natureza: "entidade", idGlobal: false,
     descricao: "Quais campos o documento comercial de uma família mostra, em que ordem, com que rótulo, se são obrigatórios ou editáveis e com que valor padrão — configurado pela organização e ligado às TOPs (decisões 259 a 262; compras na decisão 269). Cadastro de organização, sem empresa; a conta (catálogo por família, validação, ligado → padrão → sistema) mora no domínio.",
     campos: {
-      familia: { nome: "Movimento", descricao: "Família canônica do documento: as três de venda e as duas de compra (pedido de compra e compra, decisão 269). Uma TOP só se liga a layout da própria família (gatilho do banco)." },
+      familia: { nome: "Movimento", descricao: "Família canônica do documento: as três de venda, as três de compra (pedido de compra e compra, decisão 269; orçamento de compra, decisão 283) e as sete do documento de estoque (decisões 274 e 282). Uma TOP só se liga a layout da própria família (gatilho do banco)." },
       padrao: { nome: "Padrão da família", descricao: "Usado pela TOP da família que não tem layout ligado. No máximo um ativo e vivo por organização e família (índice único parcial)." }
     }
   },
@@ -241,7 +241,7 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   {
     codigo: "ERP-ESTOQUE-TRANSFERENCIA", tabela: "erp.warehouse_transfers", nome: "Transferência", modulo: "ESTOQUE", natureza: "entidade", idGlobal: true, rota: "/estoque/transferencias/:id",
     discriminadorTop: "kind", tops: ["estoque.transferencia_entre_armazens", "estoque.transferencia_entre_empresas"],
-    descricao: "Movimentação de produtos entre armazéns ou entre empresas. A coluna `kind` decide QUAL das duas operações é: dentro da mesma empresa, ou atravessando a fronteira de empresa — a rota de detalhe é a mesma para as duas, a operação não.",
+    descricao: "Movimentação de produtos entre locais de estoque ou entre empresas. A coluna `kind` decide QUAL das duas operações é: dentro da mesma empresa, ou atravessando a fronteira de empresa — a rota de detalhe é a mesma para as duas, a operação não.",
     migracao: "Possui DUAS colunas de empresa (origem e destino): o escopo de leitura considera ambas."
   },
   {
@@ -252,26 +252,41 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     codigo: "ERP-ESTOQUE-DOCUMENTO", tabela: "erp.documentos_estoque", nome: "Documento de Estoque", modulo: "ESTOQUE", natureza: "entidade", idGlobal: true,
     discriminador: "especie", rotas: {
       entrada: "/estoque/movimentacoes/entradas/:id", saida: "/estoque/movimentacoes/saidas/:id",
-      transferencia: "/estoque/movimentacoes/transferencias/:id", ajuste: "/estoque/movimentacoes/ajustes/:id"
+      transferencia: "/estoque/movimentacoes/transferencias/:id", ajuste: "/estoque/movimentacoes/ajustes/:id",
+      requisicao: "/estoque/movimentacoes/requisicoes/:id", consumo: "/estoque/movimentacoes/consumos/:id",
+      devolucao_consumo: "/estoque/movimentacoes/devolucoes-consumo/:id"
     },
     discriminadorTop: "especie",
-    tops: ["estoque.entrada", "estoque.saida", "estoque.transferencia", "estoque.ajuste"],
-    descricao: "Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. A coluna `especie` decide a operação e a tela (entrada, saída, transferência, ajuste de inventário). Nasce aberto e só mexe no saldo quando é confirmado; o movimento é o da espécie, gravado no razão de estoque com origem `documentos_estoque`.",
+    tops: ["estoque.entrada", "estoque.saida", "estoque.transferencia", "estoque.ajuste", "estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo"],
+    descricao: "Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. A coluna `especie` decide a operação e a tela (entrada, saída, transferência, ajuste de inventário e, desde a decisão 282, a movimentação interna: requisição de material, consumo e devolução de consumo). Nasce aberto e só mexe no saldo quando é confirmado; o movimento é o da espécie, gravado no razão de estoque com origem `documentos_estoque`. A requisição confirmada não move o razão: reserva no local de estoque até ser atendida por consumos ou ter o saldo encerrado.",
     campos: {
-      especie: { nome: "Espécie", descricao: "entrada | saida | transferencia | ajuste. Valor canônico persistido; o rótulo é traduzido na apresentação." },
-      situacao: { nome: "Situação", descricao: "aberto | confirmado | cancelado. Aberto → confirmado, aberto → cancelado, confirmado → cancelado (com estorno). Nada volta; cancelado é final." },
-      armazem_id: { nome: "Armazém", descricao: "Armazém do movimento (a origem, na transferência). Da mesma empresa do documento." },
-      armazem_destino_id: { nome: "Armazém de destino", descricao: "Só na transferência, e diferente da origem. Da mesma empresa do documento: transferência entre empresas continua nas telas antigas." }
+      especie: { nome: "Espécie", descricao: "entrada | saida | transferencia | ajuste | requisicao | consumo | devolucao_consumo. Valor canônico persistido; o rótulo é traduzido na apresentação. A família da requisição é `estoque.requisicao_material` (a `estoque.requisicao` é a da tabela antiga `erp.requisitions`)." },
+      situacao: { nome: "Situação", descricao: "aberto | confirmado | cancelado. Aberto → confirmado, aberto → cancelado, confirmado → cancelado (com estorno). Nada volta; cancelado é final. Na requisição, confirmado é a pendente (reservando); o atendimento (pendente, atendida em parte, atendida, saldo encerrado) é calculado, não gravado." },
+      armazem_id: { nome: "Local de estoque", descricao: "Local de estoque do movimento (a origem, na transferência). Da mesma empresa do documento." },
+      armazem_destino_id: { nome: "Local de estoque de destino", descricao: "Só na transferência, e diferente da origem. Da mesma empresa do documento: transferência entre empresas continua nas telas antigas." },
+      origem_documento_id: { nome: "Documento de origem", descricao: "Só no consumo (a requisição que ele atende, opcional) e na devolução de consumo (o consumo de que ela volta, obrigatório). Mesma empresa e mesmo local de estoque; não muda depois do lançamento; FK composta com o tenant." },
+      centro_custo_id: { nome: "Centro de resultado (destino)", descricao: "Destino da saída, da requisição e do consumo (a devolução de consumo copia o do consumo). Centro de resultado analítico e ativo da organização; vazio nas outras espécies. FK composta com o tenant." },
+      equipamento_id: { nome: "Máquina/equipamento (destino)", descricao: "Destino da saída, da requisição e do consumo. Máquina/equipamento ativo da empresa do documento; vazio nas outras espécies. FK composta com o tenant." },
+      ordem_servico_id: { nome: "Ordem de serviço (destino)", descricao: "Destino da saída, da requisição e do consumo. Ordem de serviço aberta ou em andamento da empresa do documento; vazio nas outras espécies. FK composta com o tenant." },
+      lote_animais_id: { nome: "Lote de animais (destino)", descricao: "Destino da saída, da requisição e do consumo. Lote de animais ativo da empresa do documento; vazio nas outras espécies. FK composta com o tenant." },
+      area_id: { nome: "Área/talhão (destino)", descricao: "Destino da saída, da requisição e do consumo. Área ativa da empresa do documento; vazio nas outras espécies. FK composta com o tenant." },
+      safra_id: { nome: "Safra (destino)", descricao: "Destino da saída, da requisição e do consumo. Safra ativa da organização; vazio nas outras espécies. FK composta com o tenant." },
+      motivo_saida: { nome: "Motivo da saída", descricao: "Só na saída: um dos 13 motivos da baixa antiga. Anda em PAR com a justificativa (os dois ou nenhum)." },
+      justificativa: { nome: "Justificativa da saída", descricao: "Só na saída: o porquê da saída, não vazio, até 2000 caracteres. Anda em PAR com o motivo." },
+      saldo_encerrado_em: { nome: "Saldo encerrado em", descricao: "Só na requisição confirmada: quando o saldo pendente foi encerrado (a reserva do saldo acaba). Anda junto com saldo_encerrado_por e saldo_encerrado_motivo; acontece uma vez." },
+      saldo_encerrado_por: { nome: "Saldo encerrado por", descricao: "Só na requisição: quem encerrou o saldo pendente." },
+      saldo_encerrado_motivo: { nome: "Motivo do encerramento do saldo", descricao: "Só na requisição: por que o saldo pendente foi encerrado." }
     }
   },
   {
     codigo: "ERP-ESTOQUE-DOCUMENTO-ITEM", tabela: "erp.documentos_estoque_itens", nome: "Item do Documento de Estoque", modulo: "ESTOQUE", natureza: "linha", idGlobal: false,
     descricao: "Linha de produto do documento de estoque. Identidade pertence ao documento; só muda com o documento aberto.",
     campos: {
-      quantidade: { nome: "Quantidade", descricao: "Entrada, saída e transferência: maior que zero. Vazia no ajuste." },
+      quantidade: { nome: "Quantidade", descricao: "Entrada, saída, transferência, requisição, consumo e devolução de consumo: maior que zero. Vazia no ajuste." },
       quantidade_contada: { nome: "Quantidade contada", descricao: "Só no ajuste: a contagem do inventário (zero ou mais). A diferença para o saldo é calculada na confirmação." },
-      custo_unitario: { nome: "Custo unitário", descricao: "Informado na entrada. Nas outras espécies é preenchido na confirmação com o custo do movimento." },
-      saldo_na_confirmacao: { nome: "Saldo na confirmação", descricao: "Só no ajuste: o saldo do armazém × produto × lote lido sob trava na confirmação." },
+      custo_unitario: { nome: "Custo unitário", descricao: "Informado na entrada — vazio, a confirmação grava o custo médio do produto — e opcional no ajuste; nas outras espécies, o custo do movimento gravado na confirmação. Vazio na requisição (ela não move o razão)." },
+      origem_item_id: { nome: "Item de origem", descricao: "No consumo que atende uma requisição: o item da requisição que esta linha atende (o consumo pode ter linhas sem origem). Na devolução de consumo: o item do consumo que volta (obrigatório). Mesmo produto; a soma das linhas ligadas não passa do saldo do item de origem (gatilho, decisão 282)." },
+      saldo_na_confirmacao: { nome: "Saldo na confirmação", descricao: "Só no ajuste: o saldo do local de estoque × produto × lote lido sob trava na confirmação." },
       diferenca: { nome: "Diferença", descricao: "Só no ajuste: contada menos o saldo na confirmação. Positiva gera correção de entrada; negativa, correção de saída; zero não move estoque." }
     }
   },
@@ -287,26 +302,91 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   },
   {
     codigo: "ERP-COMPRAS-DOCUMENTO", tabela: "erp.documentos_compra", nome: "Documento de Compra", modulo: "COMPRAS", natureza: "entidade", idGlobal: true,
-    discriminador: "especie", rotas: { pedido: "/compras/pedidos/:id", compra: "/compras/compras/:id" },
+    discriminador: "especie", rotas: { pedido: "/compras/pedidos/:id", compra: "/compras/compras/:id", orcamento: "/compras/orcamentos/:id" },
     discriminadorTop: "especie",
-    tops: ["compras.pedido", "compras.compra"], descricao: "Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa e a tela (pedido de compra, compra). A Compra confirmada dá entrada no estoque e gera as contas a pagar.",
+    tops: ["compras.pedido", "compras.compra", "compras.orcamento"], descricao: "Documento comercial de compra (decisões 267 e 283). A coluna `especie` decide a etapa e a tela (pedido de compra, compra, orçamento de compra). A Compra confirmada dá entrada no estoque e gera as contas a pagar; o orçamento de compra cota um pedido (um por fornecedor) e não mexe em estoque nem em financeiro.",
     campos: {
-      especie: { nome: "Espécie", descricao: "pedido | compra. Valor canônico persistido; o rótulo é traduzido na apresentação." },
-      situacao: { nome: "Situação", descricao: "aberto | confirmado (só compra) | convertido (só pedido: saldo recebido por inteiro ou encerrado) | cancelado. Cancelado é final; o pedido convertido volta a aberto quando uma compra dele é cancelada, salvo com saldo encerrado (decisão 268)." },
+      especie: { nome: "Espécie", descricao: "pedido | compra | orcamento. Valor canônico persistido; o rótulo é traduzido na apresentação." },
+      situacao: { nome: "Situação", descricao: "aberto | confirmado (só compra) | finalizado (só pedido: a confirmação do pedido, com a aprovação quando a TOP exige) | convertido (só pedido: saldo recebido por inteiro ou encerrado) | escolhido e nao_escolhido (só orçamento: o vencedor e os outros) | cancelado. Cancelado é final; o pedido convertido volta à situação de antes (aberto ou finalizado) quando uma compra dele é cancelada, salvo com saldo encerrado (decisões 268 e 283)." },
+      finalizado_em: { nome: "Finalizado em", descricao: "Só pedido: quando foi finalizado (a confirmação do pedido), gravado na passagem de aberto para finalizado (decisão 283)." },
+      finalizado_por: { nome: "Finalizado por", descricao: "Só pedido: quem finalizou. Anda junto com finalizado_em." },
+      aprovado_orcamento_em: { nome: "Aprovado para orçamento em", descricao: "Só pedido: quando foi aprovado para orçamento; gravado uma vez, com o pedido aberto (decisão 283)." },
+      aprovado_orcamento_por: { nome: "Aprovado para orçamento por", descricao: "Só pedido: quem aprovou para orçamento. Anda junto com aprovado_orcamento_em." },
+      pedido_orcado_id: { nome: "Pedido orçado", descricao: "Só orçamento: o pedido de compra que ele cota (FK composta com o tenant). Não consome saldo nem prende o fornecedor do pedido; não muda depois do lançamento." },
+      prazo_entrega_dias: { nome: "Prazo de entrega (dias)", descricao: "Só orçamento: prazo de entrega em dias (0 a 3650)." },
+      validade_orcamento: { nome: "Validade do orçamento", descricao: "Só orçamento: até quando o preço vale. Não é anterior à data do documento." },
       origem_documento_id: { nome: "Pedido de origem", descricao: "Só compra: o pedido de compra de que ela foi recebida (decisão 268). Mesma empresa e mesmo fornecedor; não muda depois do lançamento; FK composta com o tenant." },
       saldo_encerrado_em: { nome: "Saldo encerrado em", descricao: "Só pedido: quando o saldo a receber foi encerrado. Anda junto com saldo_encerrado_por e saldo_encerrado_motivo, gravados na passagem de aberto para convertido." },
       saldo_encerrado_por: { nome: "Saldo encerrado por", descricao: "Só pedido: quem encerrou o saldo a receber." },
       saldo_encerrado_motivo: { nome: "Motivo do encerramento do saldo", descricao: "Só pedido: por que o saldo a receber foi encerrado." },
       categoria_financeira_id: { nome: "Natureza de despesa", descricao: "Categoria de DESPESA analítica e ativa dos títulos a pagar gerados pela confirmação. Anda em PAR com o centro de custo (os dois ou nenhum); FK composta com o tenant." },
-      centro_custo_id: { nome: "Centro de custo", descricao: "Centro de custo analítico dos títulos a pagar. Anda em PAR com a natureza de despesa; FK composta com o tenant." }
+      centro_custo_id: { nome: "Centro de custo", descricao: "Centro de custo analítico dos títulos a pagar. Anda em PAR com a natureza de despesa; FK composta com o tenant." },
+      valor_total: { nome: "Valor total", descricao: "Itens + frete + outras despesas − desconto + IPI + ICMS-ST + seguro (CHECK; os três últimos vazios valem zero — decisão 284)." },
+      chave_acesso: { nome: "Chave de acesso", descricao: "Só compra: chave de acesso da NF-e (44 dígitos). A nota repetida é barrada no banco: única entre compras não canceladas e cruzada com a nota antiga nos dois sentidos (DUPLICATE_DOCUMENT, decisão 284). Não muda depois do lançamento." },
+      uf_nota: { nome: "UF da nota", descricao: "Só compra: UF da nota (duas letras maiúsculas)." },
+      tipo_documento_fiscal: { nome: "Tipo de documento fiscal", descricao: "Só compra: nfe | cte | nfse | nfce | danfe | darf | dare | gru | other. Valor canônico persistido; o rótulo é traduzido na apresentação." },
+      valor_ipi: { nome: "IPI", descricao: "Só compra: IPI da nota; entra no total e no custo de entrada." },
+      valor_icms_st: { nome: "ICMS-ST", descricao: "Só compra: ICMS-ST da nota; entra no total e no custo de entrada." },
+      seguro: { nome: "Seguro", descricao: "Só compra: seguro da nota; entra no total e no custo de entrada." },
+      tipo_titulo_id: { nome: "Tipo de título", descricao: "Só compra: tipo de título dos títulos a pagar (global ou da organização, conferido por gatilho)." },
+      classificacao_gasto: { nome: "Classificação do gasto", descricao: "Só compra: capex | opex (vai ao título)." },
+      rateio_tipo: { nome: "Tipo de rateio", descricao: "Só compra: por_valor (linhas do rateio da compra) | por_produto (natureza e centro de cada item). Com rateio, o cabeçalho não tem natureza nem centro." },
+      parcelas_nota: { nome: "Parcelas da nota", descricao: "Só compra: as duplicatas da nota (de 1 a 120), conferidas com o líquido; exclusivas com o plano de parcelas da condição." },
+      dfe_id: { nome: "DF-e", descricao: "Só compra: a DF-e de onde a nota veio (FK composta), da mesma chave e sem empresa ou da mesma empresa." },
+      solicitacao_compra_id: { nome: "Solicitação de compra", descricao: "Só compra: a solicitação de compra atendida (FK composta), da mesma empresa; ao receber, a solicitação aceita a compra." }
     }
   },
   {
     codigo: "ERP-COMPRAS-DOCUMENTO-ITEM", tabela: "erp.documentos_compra_itens", nome: "Item do Documento de Compra", modulo: "COMPRAS", natureza: "linha", idGlobal: false,
     descricao: "Linha de produto do documento de compra. Identidade pertence ao documento; só muda com o documento aberto.",
     campos: {
-      origem_item_id: { nome: "Item do pedido de origem", descricao: "Só na compra recebida de um pedido: o item do pedido que esta linha recebe. Mesmo produto; a soma recebida por compras não canceladas não passa da quantidade do item (gatilho, decisão 268)." }
+      origem_item_id: { nome: "Item do pedido de origem", descricao: "Só na compra recebida de um pedido: o item do pedido que esta linha recebe. Mesmo produto; a soma recebida por compras não canceladas não passa da quantidade do item (gatilho, decisão 268)." },
+      item_pedido_orcado_id: { nome: "Item do pedido orçado", descricao: "Só no orçamento de compra: o item do pedido que esta linha cota (mesmo produto e quantidade; FK composta com o tenant). Não consome saldo (decisão 283)." },
+      gera_estoque: { nome: "Gera estoque", descricao: "Só compra: o item dá entrada no estoque na confirmação. Vazio vale sim (como antes); falso não move estoque (decisão 284)." },
+      imobilizado: { nome: "Imobilizado", descricao: "Só compra: o item é imobilizado — a confirmação cria o bem com o valor de entrada rateado." },
+      bem_id: { nome: "Bem", descricao: "O bem criado na confirmação do item imobilizado (FK composta com o tenant)." },
+      categoria_financeira_id: { nome: "Natureza de despesa do item", descricao: "Rateio por produto: natureza de despesa do item. Anda em PAR com o centro de custo do item." },
+      centro_custo_id: { nome: "Centro de custo do item", descricao: "Rateio por produto: centro de custo do item. Anda em PAR com a natureza de despesa do item." },
+      valor_ipi: { nome: "IPI do item", descricao: "IPI do item na nota; entra no custo do item." },
+      valor_icms_st: { nome: "ICMS-ST do item", descricao: "ICMS-ST do item na nota; entra no custo do item." },
+      n_item_nota: { nome: "Item na nota", descricao: "Número do item na nota (1 a 990)." },
+      codigo_produto_nota: { nome: "Código na nota", descricao: "Código do produto na nota do fornecedor." },
+      descricao_produto_nota: { nome: "Descrição na nota", descricao: "Descrição do produto na nota do fornecedor." },
+      unidade_nota: { nome: "Unidade na nota", descricao: "Unidade comercial do fornecedor na nota. Anda junto com a quantidade da nota e o fator." },
+      quantidade_nota: { nome: "Quantidade na nota", descricao: "Quantidade comercial na nota, antes da conversão." },
+      fator_conversao: { nome: "Fator de conversão", descricao: "Fator que converteu a quantidade da nota na do produto (maior que zero)." },
+      tipo_fator_conversao: { nome: "Tipo do fator", descricao: "multiply (quantidade = quantidade da nota × fator) | divide (÷ fator)." }
     }
+  },
+  // OPERACOES-01 F7 (decisão 284): a entrada de nota por XML na Central de Compras (0047).
+  {
+    codigo: "ERP-COMPRAS-NOTA-XML", tabela: "erp.notas_fiscais_xml", nome: "XML original da nota", modulo: "COMPRAS", natureza: "infraestrutura", idGlobal: false,
+    descricao: "O XML da NF-e recebida, guardado no servidor exatamente como chegou: imutável, da empresa destinatária. A importação na Central de Compras e a DF-e apontam para ele.",
+    campos: {
+      chave_acesso: { nome: "Chave de acesso", descricao: "Chave de acesso da NF-e (44 dígitos, DV conferido na leitura)." },
+      xml_sha256: { nome: "SHA-256 do XML", descricao: "Resumo do conteúdo; com a organização e a chave, identifica o XML guardado." }
+    }
+  },
+  {
+    codigo: "ERP-COMPRAS-IMPORTACAO-NFE", tabela: "erp.importacoes_nfe_compra", nome: "Importação de XML de nota", modulo: "COMPRAS", natureza: "infraestrutura", idGlobal: false,
+    descricao: "A conferência do XML de uma NF-e na Central de Compras: pendente, decidida uma vez — gerada (a compra aberta criada dela) ou descartada. Uma pendente por chave na organização; nunca se apaga.",
+    campos: {
+      situacao: { nome: "Situação", descricao: "pendente | gerada | descartada. Decidida uma vez (gatilho); gerada e descartada são finais." },
+      origem: { nome: "Origem", descricao: "arquivo (enviado na Central de Compras) | dfe (aberto pelo \"Lançar\" da DF-e)." },
+      documento_compra_id: { nome: "Compra gerada", descricao: "Só na gerada: a compra criada da nota, da mesma empresa e chave." }
+    }
+  },
+  {
+    codigo: "ERP-COMPRAS-VINCULO-PRODUTO", tabela: "erp.produto_fornecedor_vinculos", nome: "Vínculo do produto do fornecedor", modulo: "COMPRAS", natureza: "linha", idGlobal: false,
+    descricao: "Fornecedor + código + unidade do fornecedor na nota → produto + fator. Lembrado ao gerar a compra da nota e sugerido nas notas seguintes; cadastro da organização.",
+    campos: {
+      tipo_fator: { nome: "Tipo do fator", descricao: "multiply (quantidade interna = quantidade da nota × fator) | divide (÷ fator)." },
+      fator: { nome: "Fator", descricao: "Fator de conversão da unidade do fornecedor para a do produto (maior que zero)." }
+    }
+  },
+  {
+    codigo: "ERP-COMPRAS-DOCUMENTO-RATEIO", tabela: "erp.documentos_compra_rateio", nome: "Rateio por valor da compra", modulo: "COMPRAS", natureza: "linha", idGlobal: false,
+    descricao: "Linha do rateio por valor da compra (natureza, centro de custo, conta contábil e safra, com o percentual). Gravada com a compra aberta e imutável depois; o escopo de empresa vem da compra."
   },
 
   // ---------- Financeiro ----------
@@ -323,11 +403,21 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   },
   {
     codigo: "ERP-FINANCEIRO-MOVIMENTO-BANCARIO", tabela: "erp.bank_movements", nome: "Movimento Bancário", modulo: "FINANCEIRO", natureza: "entidade", idGlobal: true, rota: "/financeiro/movimentos/:id",
+    top: "financeiro.movimento_bancario",
     descricao: "Lançamento em conta bancária (transferência, tarifa, aplicação)."
   },
   {
     codigo: "ERP-FINANCEIRO-IMPORTACAO-OFX", tabela: "erp.ofx_imports", nome: "Importação OFX", modulo: "FINANCEIRO", natureza: "entidade", idGlobal: true, rota: "/financeiro/ofx/:id",
     descricao: "Importação de extrato bancário para conciliação. Pertence à conta bancária, não a uma empresa."
+  },
+  // OPERACOES-01 F9 (decisão 286): o imóvel rural do LCDPR e os padrões financeiros da versão da TOP (0045).
+  {
+    codigo: "ERP-FINANCEIRO-IMOVEL-RURAL", tabela: "erp.imoveis_rurais", nome: "Imóvel Rural", modulo: "FINANCEIRO", natureza: "entidade", idGlobal: false,
+    descricao: "Imóvel rural do LCDPR (nome, CIB/NIRF, CAEPF, IE, tipo de exploração, % de participação), por empresa; o padrão da empresa vai para a baixa e o movimento."
+  },
+  {
+    codigo: "ERP-FINANCEIRO-PADROES-TOP", tabela: "erp.tipos_operacao_versao_financeiro", nome: "Padrões Financeiros da Versão da TOP", modulo: "FINANCEIRO", natureza: "linha", idGlobal: false,
+    descricao: "Padrões financeiros de uma versão de TOP (natureza, centro, tipo de título, forma, conta). Imutável como a versão."
   },
 
   // ---------- Vendas ----------
@@ -351,16 +441,22 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   {
     codigo: "ERP-PECUARIA-MOVIMENTACAO", tabela: "erp.animal_movements", nome: "Movimentação de Rebanho", modulo: "PECUARIA", natureza: "entidade", idGlobal: true,
     discriminador: "movement_type", rotas: { purchase: "/pecuaria/movimentacoes/purchase/:id", sale: "/pecuaria/movimentacoes/sale/:id", birth: "/pecuaria/movimentacoes/birth/:id", death: "/pecuaria/movimentacoes/death/:id", loss: "/pecuaria/movimentacoes/loss/:id" },
+    discriminadorTop: "movement_type", tops: ["pecuaria.compra_de_animais", "pecuaria.venda_de_animais"],
     descricao: "Entrada, saída, venda ou morte de animais. O tipo faz parte da rota canônica."
   },
   {
     codigo: "ERP-PECUARIA-MANEJO", tabela: "erp.animal_handlings", nome: "Manejo", modulo: "PECUARIA", natureza: "entidade", idGlobal: true,
     discriminador: "handling_type", rotas: { nutrition: "/pecuaria/manejo/nutrition/:id", sanitary: "/pecuaria/manejo/sanitary/:id", weaning: "/pecuaria/manejo/weaning/:id", separation: "/pecuaria/manejo/separation/:id", pasture: "/pecuaria/manejo/pasture/:id", locate: "/pecuaria/manejo/locate/:id" },
+    top: "pecuaria.manejo",
     descricao: "Manejo sanitário, nutricional ou reprodutivo aplicado a animais/lotes."
   },
   {
     codigo: "ERP-PECUARIA-PESAGEM", tabela: "erp.weighings", nome: "Pesagem", modulo: "PECUARIA", natureza: "entidade", idGlobal: true, rota: "/pecuaria/pesagens/:id",
     descricao: "Evento de pesagem de animais, base de desempenho e ganho de peso."
+  },
+  {
+    codigo: "ERP-PECUARIA-BATELADA", tabela: "erp.diet_batches", nome: "Batelada", modulo: "PECUARIA", natureza: "entidade", idGlobal: false,
+    top: "confinamento.batelada", descricao: "Batelada de dieta do confinamento: consome os ingredientes da dieta (kg × %) do local de estoque e calcula o custo por kg."
   },
 
   // ---------- Frota e ativos ----------

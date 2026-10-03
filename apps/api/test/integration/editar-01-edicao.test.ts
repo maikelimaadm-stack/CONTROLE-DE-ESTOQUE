@@ -158,7 +158,9 @@ const MSG_PARTES_CANCELADAS = MSG_ORIGEM_COM_PARTES_CANCELADAS_PUT;
  * documento, todos com o armazém livre. `toEqual` (exato): o `armazemTravado` do DOCUMENTO saiu do contrato.
  */
 const semLimites = (itens: readonly { id: string }[]): Limites => ({ somenteArmazemEObservacao: false, itens: itens.map((i) => ({ id: i.id, armazemTravado: false })) });
-const REGRAS_NEUTRAS = { formato: 2, exigencias: [], condicoesPermitidas: null, clienteEmAtraso: { politica: "nao_valida", toleranciaDias: 0 } };
+/** OPERACOES-01 F2 (decisão 279): `regrasGerais` é a última chave do bloco; o neutro (formato 1 a 3, sem TOP, orçamento e pedido) é `{false,false}`. */
+const REGRAS_GERAIS_NEUTRAS = { confirmacaoAutomatica: false, aceitaSemItens: false };
+const REGRAS_NEUTRAS = { formato: 2, exigencias: [], condicoesPermitidas: null, clienteEmAtraso: { politica: "nao_valida", toleranciaDias: 0 }, regrasGerais: REGRAS_GERAIS_NEUTRAS };
 /** As consultas SQL que a requisição dispara (como o PQ-6 da ANEXOS-PESQUISA-01 conta): o texto de cada uma. */
 async function comConsultas<T>(f: () => Promise<T>): Promise<{ r: T; sqls: string[] }> {
   const espiao = vi.spyOn(pg.Client.prototype, "query");
@@ -367,14 +369,14 @@ describe("ED-9 — as regras da versão CONGELADA", () => {
 
     const e = await edicao("order", id);
     expect(e.podeEditar).toBe(true);
-    expect(e.regras).toEqual({ formato: 3, exigencias: ["note"], condicoesPermitidas: [c1], clienteEmAtraso: { politica: "avisa", toleranciaDias: 5 }, reservaEstoque: false });
+    expect(e.regras).toEqual({ formato: 3, exigencias: ["note"], condicoesPermitidas: [c1], clienteEmAtraso: { politica: "avisa", toleranciaDias: 5 }, reservaEstoque: false, regrasGerais: REGRAS_GERAIS_NEUTRAS });
     expect(JSON.stringify(e.condicoesPermitidas), "as condições da versão congelada").toContain(c1);
     expect(JSON.stringify(e.condicoesPermitidas)).not.toContain(c2);
     expect(e.situacaoCliente, "o cliente gravado pela política congelada").toMatchObject({ politica: "avisa", emAtraso: false, titulos: 0 });
 
     const atual = await h.app.inject({ method: "GET", url: `/api/sales/orders/regras-da-operacao?tipo_operacao_id=${top}`, headers: h.headers() });
     expect(atual.statusCode, atual.body).toBe(200);
-    expect(j(atual)).toEqual({ formato: 3, exigencias: ["transporter_id"], condicoesPermitidas: [c2], clienteEmAtraso: { politica: "nao_valida", toleranciaDias: 0 }, reservaEstoque: false });
+    expect(j(atual)).toEqual({ formato: 3, exigencias: ["transporter_id"], condicoesPermitidas: [c2], clienteEmAtraso: { politica: "nao_valida", toleranciaDias: 0 }, reservaEstoque: false, regrasGerais: REGRAS_GERAIS_NEUTRAS });
   });
 });
 

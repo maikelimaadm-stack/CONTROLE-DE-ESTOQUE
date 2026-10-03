@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { test, expect, criarCadastro } from "./central-compras-fixtures";
 import { login, adicionarItemNaCentral, api, uniq, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar } from "./helpers";
 
 /**
@@ -34,7 +35,9 @@ async function produtoCom10(page: Page, empresa: string) {
   const naturezas = await api<{ id: string }[]>(page, "GET", "/api/resources/financial_categories/options?kind=analytic&nature=expense");
   const criado = await api<{ id: string }>(page, "POST", "/api/resources/products", { description: uniq("RE-W produto com reserva"), group_id: grupos[0]!.id, measurement_id: un!.id, financial_category_id: naturezas[0]!.id });
   const nome = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/products/${criado.id}`))["description"]);
-  const armazem = await primeiroId(page, `/api/resources/warehouses?empresa_id=${empresa}&pageSize=1`);
+  // O local de estoque é DO CASO (nome único, excluído no fim): "o primeiro local da empresa" podia ser um do seed com
+  // nome repetido na outra empresa, e a pesquisa da linha oferecia o gêmeo (OPERACOES-01, decisão 291 (h)).
+  const armazem = (await criarCadastro(page, "warehouses", { empresa_id: empresa, initials: `RE${Date.now().toString(36).slice(-6).toUpperCase()}`, description: uniq("RE-W local"), type: "inputs" })).id;
   const nomeArmazem = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/warehouses/${armazem}`))["description"]);
   await api(page, "POST", "/api/stock/opening-balances", { empresa_id: empresa, warehouse_id: armazem, product_id: criado.id, quantity: "10", unit_value: "3" });
   expect((await saldoNoServidor(page, armazem, criado.id)).quantity, "premissa: 10 unidades no armazém").toBe("10.0000");

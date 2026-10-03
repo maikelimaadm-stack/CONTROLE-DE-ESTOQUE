@@ -94,7 +94,8 @@ describe("D1 — o formato 1 continua válido", () => {
     expect(configuracaoNeutraTop().versaoSchema).toBe(1);
     // TOP-CONFIG-05 (decisão 263): o formato 3 passou a ser conhecido — a lista cresce; o formato 1 não muda.
     // TOP-CONFIG-08 (decisão 277): o formato 4 também — de novo a lista cresce e o formato 1 fica onde está.
-    expect(VERSOES_SCHEMA_CONFIGURACAO_TOP).toEqual([1, 2, 3, 4]);
+    // OPERACOES-01 F4 (decisão 281): e o 5 — o formato 1 continua o do neutro e o da 0022.
+    expect(VERSOES_SCHEMA_CONFIGURACAO_TOP).toEqual([1, 2, 3, 4, 5]);
   });
 });
 
@@ -189,9 +190,11 @@ describe("D3 — o formato 2 é estrito", () => {
 
 describe("D4 — formato futuro é recusado", () => {
   it("D4 qualquer formato fora dos conhecidos é UMA recusa só, antes de ler campo", () => {
-    // TOP-CONFIG-05: o 3 virou formato conhecido (decisão 263). TOP-CONFIG-08: o 4 também (decisão 277);
-    // o "futuro" agora é o 5 — e o 4 em texto continua sendo texto, não formato.
-    for (const versao of [0, 5, Math.max(...VERSOES_SCHEMA_CONFIGURACAO_TOP) + 1, "2", "3", "4", null, 1.5]) {
+    // TOP-CONFIG-05: o 3 virou formato conhecido (decisão 263). TOP-CONFIG-08: o 4 também (decisão 277).
+    // OPERACOES-01 F4: o 5 também (decisão 281); o "futuro" agora é o 6 — e o 4 e o 5 em texto continuam sendo
+    // texto, não formato. A premissa: o 6 é mesmo o primeiro formato desconhecido.
+    expect(Math.max(...VERSOES_SCHEMA_CONFIGURACAO_TOP) + 1).toBe(6);
+    for (const versao of [0, 6, Math.max(...VERSOES_SCHEMA_CONFIGURACAO_TOP) + 1, "2", "3", "4", "5", null, 1.5]) {
       const r = lerConfiguracaoTop({ ...clonar(configuracaoNeutraTopV2()), versaoSchema: versao });
       expect(r.ok, `versaoSchema ${JSON.stringify(versao)}`).toBe(false);
       if (!r.ok) expect(r.recusas).toEqual([{ motivo: "schema_nao_suportado", caminho: "versaoSchema" }]);

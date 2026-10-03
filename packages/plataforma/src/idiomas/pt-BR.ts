@@ -85,7 +85,7 @@ export const ptBR: Catalogo = {
     "top.estoque.requisicao": "Requisição de estoque",
     "top.estoque.baixa": "Baixa de estoque",
     "top.estoque.devolucao": "Devolução ao estoque",
-    "top.estoque.transferencia_entre_armazens": "Transferência entre armazéns",
+    "top.estoque.transferencia_entre_armazens": "Transferência entre locais de estoque",
     "top.estoque.transferencia_entre_empresas": "Transferência entre empresas",
     "top.estoque.producao_de_racao": "Produção de ração",
     // ESTOQUE-01 (decisão 274): as famílias do documento de estoque (`erp.documentos_estoque`, por espécie).
@@ -93,17 +93,29 @@ export const ptBR: Catalogo = {
     "top.estoque.saida": "Saída de estoque",
     "top.estoque.transferencia": "Transferência de estoque",
     "top.estoque.ajuste": "Ajuste de estoque (inventário)",
+    // OPERACOES-01 F5a (decisão 282): a movimentação interna no documento de estoque.
+    "top.estoque.requisicao_material": "Requisição de material",
+    "top.estoque.consumo": "Consumo",
+    "top.estoque.devolucao_consumo": "Devolução de consumo",
     "top.compras.solicitacao": "Solicitação de compra",
     "top.compras.pedido": "Pedido de compra",
     "top.compras.compra": "Compra",
+    "top.compras.orcamento": "Orçamento de compra",
     "top.financeiro.conta_a_pagar": "Conta a pagar",
     "top.financeiro.conta_a_receber": "Conta a receber",
+    "top.financeiro.movimento_bancario": "Movimento bancário",
     "top.vendas.orcamento": "Orçamento de venda",
     "top.vendas.pedido": "Pedido de venda",
     "top.vendas.venda": "Venda",
     "top.frota_ativos.abastecimento": "Abastecimento",
     "top.frota_ativos.manutencao": "Manutenção",
-    "top.ordens_servico.ordem_de_servico": "Ordem de serviço"
+    "top.ordens_servico.ordem_de_servico": "Ordem de serviço",
+    // OPERACOES-01 F10 (decisão 287): as famílias do manejo e da batelada.
+    "top.pecuaria.manejo": "Manejo",
+    "top.confinamento.batelada": "Batelada",
+    // OPERACOES-01 F10r (decisão 287): as famílias da compra e da venda de animais.
+    "top.pecuaria.compra_de_animais": "Compra de animais",
+    "top.pecuaria.venda_de_animais": "Venda de animais"
   }
 };
 

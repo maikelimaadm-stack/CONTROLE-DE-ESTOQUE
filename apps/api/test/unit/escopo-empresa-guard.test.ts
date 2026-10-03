@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const routesDir = path.join(here, "../../src/routes");
 /** Tabelas de erp.* com coluna empresa_id (fonte: information_schema no banco de testes — manter em sincronia ao migrar). */
-const FARM_TABLES = ["animal_handlings", "animal_movements", "animal_retroactive_costs", "animals", "areas", "bank_movements", "batches", "breeding_seasons", "budget_plannings", "contracts", "devolutions", "dfe_documents", "diet_batches", "documents", "earnings", "equipments", "feed_batches", "feed_deliveries", "feedlot_yards", "financial_freezes", "financial_titles", "fuel_supplies", "grazing_modules", "herd_lots", "input_entries", "invoices", "journal_entries", "livestock_plannings", "maintenances", "opening_balances", "processings", "purchase_requests", "rainfalls", "requisitions", "salary_advances", "sales_documents", "service_orders", "stock_corrections", "stock_movements", "stock_writeoffs", "trough_readings", "warehouses", "weighings"];
+const FARM_TABLES = ["animal_handlings", "animal_movements", "animal_retroactive_costs", "animals", "areas", "bank_movements", "batches", "breeding_seasons", "budget_plannings", "contracts", "devolutions", "dfe_documents", "diet_batches", "documents", "earnings", "equipments", "feed_batches", "feed_deliveries", "feedlot_yards", "financial_freezes", "financial_titles", "fuel_supplies", "grazing_modules", "herd_lots", "imoveis_rurais", "importacoes_nfe_compra", "input_entries", "invoices", "journal_entries", "livestock_plannings", "maintenances", "notas_fiscais_xml", "opening_balances", "processings", "purchase_requests", "rainfalls", "requisitions", "salary_advances", "sales_documents", "service_orders", "stock_corrections", "stock_movements", "stock_writeoffs", "trough_readings", "warehouses", "weighings"];
 /** Marcadores que comprovam escopo de fazenda (helpers) ou uso de carregador compartilhado já protegido. */
 // Marcadores de ESCOPO ainda vivos no código. Os nomes anteriores (`farmScope(`, `assertFarmVisible(`,
 // `farmAllowed(`, `farms(ctx`) saíram em PRE-BASE2-05B junto com a nomenclatura de plataforma antiga — eles
@@ -29,6 +29,16 @@ const ALLOW: Record<string, string> = {
   "financial.ts:/financial/ofx-report": "agregado por conta bancária",
   "financial.ts:/financial/opening-movements": "saldo inicial de conta bancária; fazenda = selecionada (validada no contexto)",
   "financial.ts:/financial/budget-plannings/:id/values": "planejamento com empresa_id opcional — escopo aplicado via scopedById (nullable)",
+  // OPERACOES-01 F8 (decisão 285): a Central Financeira. A conta é cadastro da ORGANIZAÇÃO (MULTI-COMPANY §7); os
+  // movimentos dela saem de erp.extrato_conta_organizacao, que os recorta por dentro pelo escopo de empresa do módulo
+  // financeiro (decisão do Maike de 03/10) — o escopo está na porta do banco, não num helper do handler.
+  "financeiro-bancos.ts:/financeiro/contas": "conta da organização; movimentos via erp.extrato_conta_organizacao, recortada por dentro pelo escopo de empresa do financeiro (bank_accounts.view + bank_movements.view)",
+  "financeiro-bancos.ts:/financeiro/contas/:id/saldo-inicial": "saldo inicial é do cadastro da conta (organização); a resposta é a linha da conta via erp.extrato_conta_organizacao, recortada por dentro pelo escopo de empresa do financeiro",
+  "financeiro-bancos.ts:/financeiro/extrato": "conta da organização; movimentos via erp.extrato_conta_organizacao, recortada por dentro pelo escopo de empresa do financeiro",
+  "financeiro-bancos.ts:/financeiro/conciliacao/importacoes": "importação OFX é da conta (organização, sem empresa_id); os movimentos só mudam com ROW COUNT sob a RLS de empresa",
+  "financeiro-bancos.ts:/financeiro/conciliacao/transacoes/:tid/confirmar": "conciliação por conta (organização); os movimentos só mudam com ROW COUNT sob a RLS de empresa (lib/financeiro-conciliacao.ts)",
+  "financeiro-bancos.ts:/financeiro/conciliacao/transacoes/:tid/ignorar": "conciliação por conta (organização); só a transação OFX (sem empresa_id) muda",
+  "financeiro-bancos.ts:/financeiro/conciliacao/transacoes/:tid/desfazer": "conciliação por conta (organização); os movimentos só mudam com ROW COUNT sob a RLS de empresa (lib/financeiro-conciliacao.ts)",
   "stock.ts:/stock/feed-formulas": "formulações são da organização (sem empresa_id)",
   "stock.ts:/stock/feed-formulas/:id": "idem",
   "livestock.ts:/livestock/matings": "escopo pela empresa da matriz (subconsulta em erp.animals com escopo de empresa)",

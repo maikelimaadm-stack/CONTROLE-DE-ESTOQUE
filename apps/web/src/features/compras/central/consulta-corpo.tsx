@@ -11,10 +11,12 @@ import { CampoLeitura, ColunaDeCampos, DadosAdicionais } from "@/features/centra
 import { ItensSalvos } from "@/features/central/itens-salvos";
 import { PainelColuna, PainelLargo, PainelRepartido, PlanoEmLeitura, Relacao, Selo, TitulosDoDocumento, type ColunaDaRelacao } from "@/features/central/painel";
 import type { AbaDoPainel } from "@/features/central/contrato";
+import { AprovacaoDoDocumento } from "@/features/aprovacoes/aprovacao-do-documento";
 import { zonasDaCentral, type ZonasDaCentral } from "../layout-da-central";
 import { rotaDoDocumento } from "../documentos-compra-list";
 import { PREFIXO_CENTRAL_COMPRAS, colunasDosItensDeCompras, linkDoTituloDeCompra } from "./adaptador";
 import type { EstadoDaConsulta } from "./estado";
+import { BensDaConsulta, DadosFiscaisDaConsulta, RateioDaConsulta, temDadosFiscais } from "./dados-fiscais";
 
 /**
  * O CORPO DA CONSULTA DA COMPRA NO MOTOR (VISUAL-UX-04, decisão 276): Dados principais e adicionais em LEITURA, os
@@ -24,13 +26,23 @@ import type { EstadoDaConsulta } from "./estado";
  *
  * Fiscal (nota, série, data de entrada) só aparece como aba quando o layout NÃO os põe nos Dados — a zona vem de
  * quem chama; sem ela, a do LAYOUT_DO_SISTEMA (a consulta não carrega layout).
+ *
+ * OPERACOES-01 F7 (decisão 284): a compra com dados fiscais (chave de acesso, UF, tipo de documento, IPI, ICMS-ST,
+ * seguro, tipo de título, classificação, vínculo com a importação do XML ou com a DF-e) ganha a seção "Dados fiscais"
+ * (`compras-consulta-dados-fiscais`) na aba Fiscal — que passa a existir também por ela; IPI, ICMS-ST e seguro entram nos
+ * Totais; o rateio vai ao Financeiro (`compras-consulta-rateio`) e os bens do imobilizado ao Estoque
+ * (`compras-consulta-bem-<posicao>`). Compra sem nenhum deles (a de hoje, ou a API anterior): a consulta de hoje.
  */
 
 const t = (v: unknown) => (v === null || v === undefined || v === "" ? "" : String(v));
 const codigoNome = (codigo: unknown, nome: unknown) => (nome ? [codigo, nome].filter(Boolean).join(" — ") : "");
+const temValor = (v: unknown) => v !== null && v !== undefined && v !== "";
 const dataOuVazio = (v: unknown) => (typeof v === "string" && v ? dateBR(v) : "");
 
 const CAMPOS_FISCAIS = ["numero_nota", "serie_nota", "data_entrada"] as const;
+
+/** "02/10/2026, 14:30 por Maria" — a data e hora de quem fez, como o "Saldo encerrado em … por …" dos itens. */
+const quemEQuando = (q: { em: string; porNome: string }) => `${dateTimeBR(q.em)} por ${q.porNome || "—"}`;
 
 /** A zona padrão da consulta: a do layout do sistema da família da espécie. */
 export const zonasPadraoDaConsulta = (familia: string): ZonasDaCentral => zonasDaCentral(familia, LAYOUT_DO_SISTEMA(familia));
@@ -51,7 +63,14 @@ export function itemParaOMotor(it: Row): Row {
   };
 }
 
-/** Dados principais e Dados adicionais (Movimento, Versão da TOP, Origem). */
+/**
+ * Dados principais e Dados adicionais (Movimento, Versão da TOP, Origem). Antes dos campos, a situação da aprovação
+ * (OPERACOES-01 F2): o bloco de Aprovações, que só aparece com o documento aberto e a TOP exigindo aprovação.
+ *   · COMPRA: Aprovar/Reprovar a quem tem `compras.approve` (a aprovação vale ao confirmar).
+ *   · PEDIDO DE COMPRA (F6b, decisão 283): a aprovação vale ao FINALIZAR (a 0044 a estendeu ao pedido) — o bloco só
+ *     com a capacidade da F6 declarada pela API, e Aprovar/Reprovar a quem tem `pedidos_compra.approve` E
+ *     `compras.approve` (a porta da decisão). Nos Dados adicionais, quem finalizou e quem aprovou para orçamento.
+ */
 export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: ZonasDaCentral }) {
   const tr = useTradutor();
   const [maisDados, setMaisDados] = React.useState(false);
@@ -66,7 +85,13 @@ export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: Zon
   const origem = !e.origemId
     ? (recebidoPorItem ? "Recebido de pedido" : "Lançamento direto")
     : <Link data-testid="compras-origem" className="text-brand-700 underline" href={e.rotaDaOrigem}>{e.rotuloDoPedido}{d["origem_codigo"] ? ` ${String(d["origem_codigo"])}` : ""}</Link>;
+  // Os dois só existem com a capacidade da F6 e com a data no servidor (o estado já os zera sem ela).
+  const adicionais = (top ? 3 : 2) + (e.finalizacao ? 1 : 0) + (e.aprovadoOrcamento ? 1 : 0);
   return <>
+    {e.ehCompra && <AprovacaoDoDocumento area="compras" documentoId={String(d["id"])} documentoAberto={e.situacao === "aberto"}
+      prefixoTestid={PREFIXO_CENTRAL_COMPRAS} codigo={t(d["codigo"])} />}
+    {e.ehPedido && e.capacidade === "sim" && <AprovacaoDoDocumento area="compras" especie="pedido" documentoId={String(d["id"])}
+      documentoAberto={e.situacao === "aberto"} prefixoTestid={PREFIXO_CENTRAL_COMPRAS} codigo={t(d["codigo"])} />}
     <ColunaDeCampos>
       <CampoLeitura rotulo="Fornecedor" adorno="pesquisa" testId="compras-consulta-fornecedor" valor={t(d["fornecedor_nome"])} />
       <CampoLeitura rotulo="Empresa" adorno="pesquisa" testId="compras-consulta-empresa" valor={t(d["empresa_nome"])} />
@@ -82,10 +107,12 @@ export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: Zon
       <CampoLeitura rotulo="Centro de resultado" adorno="pesquisa" valor={codigoNome(d["centro_custo_codigo"], d["centro_custo_nome"])} />
       <div data-testid="compras-consulta-codigo-campo"><CampoLeitura rotulo="Número" adorno="travado" testId="compras-consulta-codigo" valor={t(d["codigo"])} /></div>
     </ColunaDeCampos>
-    <DadosAdicionais quantidade={top ? 3 : 2} aberto={maisDados} onAlternar={() => setMaisDados((m) => !m)} manterMontado>
+    <DadosAdicionais quantidade={adicionais} aberto={maisDados} onAlternar={() => setMaisDados((m) => !m)} manterMontado>
       <CampoLeitura rotulo="Movimento" adorno="travado" valor={tr(e.variante.chaveI18n)} />
       {top && <CampoLeitura rotulo="Versão da TOP" adorno="travado" valor={top.versao ? String(top.versao) : ""} />}
       <CampoLeitura rotulo="Origem" adorno="travado" testId="compras-consulta-origem" valor={origem} />
+      {e.aprovadoOrcamento && <CampoLeitura rotulo="Aprovado para orçamento" adorno="travado" testId="compras-consulta-aprovado-orcamento" valor={quemEQuando(e.aprovadoOrcamento)} />}
+      {e.finalizacao && <CampoLeitura rotulo="Finalizado" adorno="travado" testId="compras-consulta-finalizado" valor={quemEQuando(e.finalizacao)} />}
     </DadosAdicionais>
   </>;
 }
@@ -112,8 +139,9 @@ export function ItensDaConsulta({ e }: { e: EstadoDaConsulta }) {
 
 const COLUNAS_DOS_MOVIMENTOS: readonly ColunaDaRelacao[] = [
   { chave: "movement_date", rotulo: "Data", celula: (r) => dataOuVazio(r["movement_date"]) || "—" },
+  // o Local de estoque antes do Produto (OPERACOES-01 F3b, decisão 280)
+  { chave: "warehouse_name", rotulo: "Local de estoque", celula: (r) => t(r["warehouse_name"]) || "—" },
   { chave: "product_name", rotulo: "Produto", celula: (r) => t(r["product_name"] ?? r["product_id"]) || "—" },
-  { chave: "warehouse_name", rotulo: "Armazém", celula: (r) => t(r["warehouse_name"]) || "—" },
   { chave: "movement_type", rotulo: "Movimento", celula: (r) => enumLabel("stock_movement_type", r["movement_type"]) },
   { chave: "quantity", rotulo: "Quantidade", direita: true, celula: (r) => num(String(r["quantity"] ?? "0"), 4) },
   { chave: "unit_cost", rotulo: "Custo unitário", direita: true, celula: (r) => brl(String(r["unit_cost"] ?? "0")) },
@@ -134,7 +162,9 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
   const d = e.documento;
   const z = zonas ?? zonasPadraoDaConsulta(e.variante.familia);
   const nosDados = new Set([...z.principais, ...z.adicionais]);
-  const fiscalNaAba = e.ehCompra && CAMPOS_FISCAIS.some((c) => !nosDados.has(c));
+  const notaNaAba = e.ehCompra && CAMPOS_FISCAIS.some((c) => !nosDados.has(c));
+  const comDadosFiscais = e.ehCompra && temDadosFiscais(d);
+  const fiscalNaAba = notaNaAba || comDadosFiscais;
   if (!d) {
     return [
       { value: "totais", label: "Totais", content: null },
@@ -157,11 +187,16 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
       <CampoLeitura rotulo="Frete" valor={brl(String(d["frete"] ?? "0"))} />
       <CampoLeitura rotulo="Outras despesas" valor={brl(String(d["outras_despesas"] ?? "0"))} />
       <CampoLeitura rotulo="Desconto" valor={brl(String(d["desconto"] ?? "0"))} />
+      {/* F7: só os que a compra tem (a coluna nula é a compra de hoje — o total do servidor já os soma) */}
+      {temValor(d["valor_ipi"]) && <CampoLeitura rotulo="IPI" testId="compras-consulta-total-ipi" valor={brl(String(d["valor_ipi"]))} />}
+      {temValor(d["valor_icms_st"]) && <CampoLeitura rotulo="ICMS-ST" testId="compras-consulta-total-icms-st" valor={brl(String(d["valor_icms_st"]))} />}
+      {temValor(d["seguro"]) && <CampoLeitura rotulo="Seguro" testId="compras-consulta-total-seguro" valor={brl(String(d["seguro"]))} />}
     </PainelRepartido> },
     { value: "financeiro", label: "Financeiro", contador: titulos.length, content: <PainelRepartido lado={<div data-testid="compras-consulta-titulos">
       <TitulosDoDocumento legenda={`Contas a pagar geradas pelo documento ${codigo}`} titulos={titulos} linkDoTitulo={linkDoTituloDeCompra} />
     </div>}>
       <PlanoEmLeitura plano={d["plano_parcelas"]} />
+      {e.ehCompra && <RateioDaConsulta d={d} />}
     </PainelRepartido> },
     { value: "frete", label: "Frete e transporte", content: <PainelColuna>
       <CampoLeitura rotulo="Transportadora" adorno="pesquisa" valor={t(d["transportadora_nome"])} />
@@ -172,10 +207,11 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
     {!nosDados.has("numero_nota") && <CampoLeitura rotulo="Nota" adorno="travado" valor={t(d["numero_nota"])} />}
     {!nosDados.has("serie_nota") && <CampoLeitura rotulo="Série" adorno="travado" valor={t(d["serie_nota"])} />}
     {!nosDados.has("data_entrada") && <CampoLeitura rotulo="Data de entrada" adorno="data" valor={dataOuVazio(d["data_entrada"])} />}
+    {comDadosFiscais && <DadosFiscaisDaConsulta d={d} />}
   </PainelColuna> });
   if (e.ehCompra) abas.push({ value: "estoque", label: "Estoque", contador: movimentos.length, content: <PainelLargo><div data-testid="compras-consulta-movimentos">
     <Relacao legenda={`Entradas no estoque do documento ${codigo}`} modelo="derivados" colunas={COLUNAS_DOS_MOVIMENTOS} linhas={movimentos} vazio="Nenhuma entrada no estoque gerada." />
-  </div></PainelLargo> });
+  </div><BensDaConsulta itens={e.itens} /></PainelLargo> });
   if (e.ehPedido) abas.push({ value: "compras-geradas", label: "Compras geradas", contador: e.comprasGeradas?.length, content: <PainelLargo><div data-testid="compras-geradas">
     {e.comprasGeradas
       ? <Relacao legenda={`Compras geradas do pedido ${codigo}`} modelo="derivados" colunas={COLUNAS_DAS_COMPRAS_GERADAS} linhas={e.comprasGeradas as unknown as Row[]} vazio="Nenhuma compra gerada deste pedido." />

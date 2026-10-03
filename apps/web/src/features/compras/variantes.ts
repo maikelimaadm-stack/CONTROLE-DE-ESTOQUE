@@ -1,9 +1,11 @@
 "use client";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useTradutor } from "@/lib/i18n";
-import { chaveI18nDaFamiliaOperacional, entidadeIdGlobal, familiasOperacionaisDisponiveis, tipoOperacao } from "@agro/domain";
+import {
+  CAPACIDADE_FINALIZACAO_E_ORCAMENTO_COMPRA, chaveI18nDaFamiliaOperacional, entidadeIdGlobal, familiasOperacionaisDisponiveis, tipoOperacao
+} from "@agro/domain";
 import { estadoDeTops, podeLancar, type EstadoTop } from "@/features/sales/tipo-operacao-select";
 import type { GrupoDeTops, VarianteDeVenda } from "@/features/sales/variantes";
 
@@ -67,23 +69,68 @@ export function useTopsDaEspecie(segmento: string, habilitado = true): EstadoTop
   return estadoDeTops({ habilitado: habilitado && Boolean(segmento), carregando: q.isPending, erro: q.error, dados: q.data });
 }
 
-/** As TOPs de todas as espécies, uma pergunta por espécie que o usuário pode LANÇAR (a porta exige `.create`). */
-export function useTopsDeCompras(): GrupoDeTops[] {
-  const { can } = useAuth(); const tr = useTradutor();
+/**
+ * OPERACOES-01 F6a/F6b (decisão 283): a espécie cuja porta NASCE com a capacidade `finalizacaoEOrcamento` — a API
+ * anterior não tem `/api/compras/orcamentos/operation-types` (404 de rota). As portas de `operation-types` das espécies
+ * nascem no MESMO binário e declaram a MESMA capacidade; por isso a porta desta espécie só é perguntada quando outra
+ * porta já declarou a capacidade, ou quando o usuário não lança nenhuma outra espécie (aí ela é a única que ele pode
+ * perguntar). Web nova × API anterior (skew sentido 1): nenhuma pergunta a uma rota que a API não tem.
+ */
+const ESPECIE_DA_CAPACIDADE_F6 = "orcamento";
+
+/** O corpo de `/operation-types` declara `capacidades.finalizacaoEOrcamento === CAPACIDADE_FINALIZACAO_E_ORCAMENTO_COMPRA` (propriedade própria; contractVersion 1)? */
+export function declaraFinalizacaoEOrcamento(resposta: unknown): boolean {
+  const ehObjeto = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+  // Propriedade PRÓPRIA (nunca herdada do protótipo): um corpo que não a declara não a tem.
+  if (!ehObjeto(resposta) || !Object.hasOwn(resposta, "contractVersion") || resposta.contractVersion !== 1) return false;
+  const capacidades = Object.hasOwn(resposta, "capacidades") ? resposta.capacidades : undefined;
+  return ehObjeto(capacidades) && Object.hasOwn(capacidades, "finalizacaoEOrcamento")
+    && capacidades.finalizacaoEOrcamento === CAPACIDADE_FINALIZACAO_E_ORCAMENTO_COMPRA;
+}
+
+/** Uma porta de `operation-types` de compras: a espécie, se foi perguntada (ver `usePortasDasTopsDeCompras`) e a resposta. */
+export interface PortaDasTopsDeCompra { variante: VarianteDeCompra; perguntada: boolean; resultado: UseQueryResult<unknown> }
+
+/**
+ * As portas de `operation-types` de TODAS as espécies, na ordem de `variantesDeCompra()`, com o MESMO cache das TOPs de
+ * uma espécie (`useTopsDaEspecie`). Uma porta é perguntada quando o usuário pode LANÇAR a espécie (a porta exige
+ * `.create`); a da espécie que nasce com a capacidade da F6, só nas condições de `ESPECIE_DA_CAPACIDADE_F6`.
+ * `habilitado` falso: nenhuma porta é perguntada (a tela que não precisa delas).
+ */
+export function usePortasDasTopsDeCompras(habilitado = true): PortaDasTopsDeCompra[] {
+  const { can } = useAuth();
   const variantes = variantesDeCompra();
-  const resultados = useQueries({
-    queries: variantes.map((v) => ({
-      queryKey: chaveTops(v.segmento),
-      queryFn: () => api<unknown>(`/api/compras/${v.segmento}/operation-types`),
-      enabled: can(`${v.perm}.create`),
-      retry: false
-    }))
+  const lanca = (v: VarianteDeCompra) => habilitado && can(`${v.perm}.create`);
+  const porta = (v: VarianteDeCompra, perguntada: boolean) => ({
+    queryKey: chaveTops(v.segmento),
+    queryFn: () => api<unknown>(`/api/compras/${v.segmento}/operation-types`),
+    enabled: perguntada,
+    retry: false
   });
-  return variantes.map((v, i) => {
-    const habilitado = can(`${v.perm}.create`);
-    const r = resultados[i]!;
-    return { variante: v, rotulo: tr(v.chaveI18n), habilitado, estado: estadoDeTops({ habilitado, carregando: r.isPending, erro: (r.error as ApiError | null) ?? null, dados: r.data }) };
+  // Duas levas, cada uma com uma lista FIXA (o catálogo é constante em runtime): a regra dos hooks continua valendo.
+  const deHoje = variantes.filter((v) => v.variante !== ESPECIE_DA_CAPACIDADE_F6);
+  const daF6 = variantes.filter((v) => v.variante === ESPECIE_DA_CAPACIDADE_F6);
+  const respostasDeHoje = useQueries({ queries: deHoje.map((v) => porta(v, lanca(v))) });
+  const outraDeclarou = deHoje.some((v, i) => lanca(v) && respostasDeHoje[i]!.isSuccess && declaraFinalizacaoEOrcamento(respostasDeHoje[i]!.data));
+  const lancaOutra = deHoje.some(lanca);
+  const perguntaF6 = (v: VarianteDeCompra) => lanca(v) && (outraDeclarou || !lancaOutra);
+  const respostasDaF6 = useQueries({ queries: daF6.map((v) => porta(v, perguntaF6(v))) });
+  return variantes.map((v) => {
+    const iHoje = deHoje.indexOf(v);
+    if (iHoje >= 0) return { variante: v, perguntada: lanca(v), resultado: respostasDeHoje[iHoje]! };
+    return { variante: v, perguntada: perguntaF6(v), resultado: respostasDaF6[daF6.indexOf(v)]! };
   });
+}
+
+/**
+ * As TOPs de todas as espécies, uma pergunta por espécie que o usuário pode LANÇAR (a porta exige `.create`). A espécie
+ * da F6 cuja porta não foi perguntada (API anterior) fica desabilitada: o Portal não oferece o que o servidor não tem.
+ */
+export function useTopsDeCompras(): GrupoDeTops[] {
+  const tr = useTradutor();
+  return usePortasDasTopsDeCompras().map(({ variante: v, perguntada: habilitado, resultado: r }) => (
+    { variante: v, rotulo: tr(v.chaveI18n), habilitado, estado: estadoDeTops({ habilitado, carregando: r.isPending, erro: (r.error as ApiError | null) ?? null, dados: r.data }) }
+  ));
 }
 
 /** Opções do filtro por TOP da lista única — a mesma decisão (e a mesma pendência de UX) da lista de vendas. */

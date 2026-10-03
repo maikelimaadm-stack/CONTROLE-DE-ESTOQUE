@@ -1,7 +1,7 @@
 import { expect } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { createPool, type Db } from "@agro/db";
-import { CHAVES_MODULO_EMPRESA, SEGMENTO_DA_ESPECIE_ESTOQUE, type EspecieEstoque } from "@agro/domain";
+import { CHAVES_MODULO_EMPRESA, SEGMENTO_DA_ESPECIE_ESTOQUE, type EspecieEstoque, type EspecieEstoqueDaCentral } from "@agro/domain";
 import { appCom, harness, ids, TEST_URL, type Harness } from "./setup.js";
 
 /**
@@ -39,7 +39,7 @@ export interface Cenario {
   I: IdsConferidos;
   admin: Db;
   /** Uma TOP ativa de cada família de estoque, cadastrada pela API administrativa. */
-  tops: Record<EspecieEstoque, string>;
+  tops: Record<EspecieEstoqueDaCentral, string>;
 }
 export const c = {} as Cenario;
 
@@ -109,14 +109,14 @@ export const seg = (e: EspecieEstoque) => SEGMENTO_DA_ESPECIE_ESTOQUE[e];
 export type Item = Record<string, unknown> & { produto_id: string };
 
 /** O corpo padrão: 1ª empresa, ALM (e SILO como destino na transferência), a TOP da espécie e a data aberta. */
-export function corpo(especie: EspecieEstoque, itens: Item[], extra: Record<string, unknown> = {}): Record<string, unknown> {
+export function corpo(especie: EspecieEstoqueDaCentral, itens: Item[], extra: Record<string, unknown> = {}): Record<string, unknown> {
   return { empresa_id: c.I.empresa, tipo_operacao_id: c.tops[especie], armazem_id: c.I.warehouse,
     ...(especie === "transferencia" ? { armazem_destino_id: c.I.warehouse2 } : {}), data_documento: DATA, itens, ...extra };
 }
-export function lancar(especie: EspecieEstoque, itens: Item[], extra: Record<string, unknown> = {}, headers: Hdr = c.h.headers()): Promise<Resposta> {
+export function lancar(especie: EspecieEstoqueDaCentral, itens: Item[], extra: Record<string, unknown> = {}, headers: Hdr = c.h.headers()): Promise<Resposta> {
   return c.h.app.inject({ method: "POST", url: `/api/estoque/${seg(especie)}`, headers, payload: corpo(especie, itens, extra) });
 }
-export async function lancado(especie: EspecieEstoque, itens: Item[], extra: Record<string, unknown> = {}, headers?: Hdr): Promise<string> {
+export async function lancado(especie: EspecieEstoqueDaCentral, itens: Item[], extra: Record<string, unknown> = {}, headers?: Hdr): Promise<string> {
   const r = await lancar(especie, itens, extra, headers);
   expect(r.statusCode, `premissa: o documento é lançado — ${r.body}`).toBe(201);
   return (j(r) as { id: string }).id;

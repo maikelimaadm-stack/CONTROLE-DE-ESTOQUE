@@ -146,7 +146,7 @@ describe("RE-2 — a pré-conferência da confirmação da venda", () => {
     const pv = await previa(v3);
     const r = await confirmar(v3);
     expect(r.statusCode, r.body).toBe(409);
-    const mensagem = `${p.nome} no armazém ${nomeArmazem}: disponível 2, solicitado 3 (8 reservado para pedidos).`;
+    const mensagem = `${p.nome} no local de estoque ${nomeArmazem}: disponível 2, solicitado 3 (8 reservado para pedidos).`;
     expect(j(r).error).toEqual({
       code: "INSUFFICIENT_STOCK", message: mensagem,
       details: [{ produto_id: p.id, armazem_id: I.warehouse, fisico: "10.0000", reservado: "8.0000", disponivel: "2.0000", solicitado: "3.0000", message: mensagem }],
@@ -168,7 +168,7 @@ describe("RE-2 — a pré-conferência da confirmação da venda", () => {
     // O pedido continua reservando: a venda de 3 continua recusada, agora com disponível 0.
     const deNovo = await confirmar(v3);
     expect(deNovo.statusCode, deNovo.body).toBe(409);
-    expect(j(deNovo).error!.message).toBe(`${p.nome} no armazém ${nomeArmazem}: disponível 0, solicitado 3 (8 reservado para pedidos).`);
+    expect(j(deNovo).error!.message).toBe(`${p.nome} no local de estoque ${nomeArmazem}: disponível 0, solicitado 3 (8 reservado para pedidos).`);
     expect(await statusDe(ped)).toBe("open");
   });
 
@@ -180,7 +180,7 @@ describe("RE-2 — a pré-conferência da confirmação da venda", () => {
       items: [{ product_id: p.id, warehouse_id: I.warehouse, quantity: "1", unit_price: "20.00" }, { product_id: p.id, warehouse_id: I.warehouse, quantity: "2.5", unit_price: "20.00" }] }));
     const r = await confirmar(v);
     expect(r.statusCode, r.body).toBe(409);
-    expect(j(r).error!.message).toBe(`${p.nome} no armazém ${nomeArmazem}: disponível 2, solicitado 3,5 (8 reservado para pedidos).`);
+    expect(j(r).error!.message).toBe(`${p.nome} no local de estoque ${nomeArmazem}: disponível 2, solicitado 3,5 (8 reservado para pedidos).`);
     expect([await fisico(p.id), await saidas(v)]).toEqual(["10.0000", []]);
   });
 
@@ -231,7 +231,7 @@ describe("a venda gerada do pedido consome a PRÓPRIA reserva", () => {
     const v3 = await vendaAvulsa(p.id, "3");
     const x = await confirmar(v3);
     expect(x.statusCode, x.body).toBe(409);
-    expect(j(x).error!.message).toBe(`${p.nome} no armazém ${nomeArmazem}: disponível 2, solicitado 3 (2 reservado para pedidos).`);
+    expect(j(x).error!.message).toBe(`${p.nome} no local de estoque ${nomeArmazem}: disponível 2, solicitado 3 (2 reservado para pedidos).`);
     expect(await fisico(p.id)).toBe("4.0000");
   });
 });
@@ -323,7 +323,7 @@ describe("revisão adversarial — números de armazém alheio e o armazém da p
       unit_price: i.unit_price as string, discount: i.discount as string, discount_percent: i.discount_percent as string, note: i.note as string | null }));
     const put = (items: typeof base) => h.app.inject({ method: "PUT", url: `/api/sales/sales/${parte}`, headers: h.headers(),
       payload: { empresa_id: I.empresa, document_date: "2026-09-12", client_id: I.client, items } });
-    const msg = "O armazém deste item vem do pedido de origem, que reserva estoque no armazém de cada item: não pode ser trocado. Para mudar, cancele esta venda e gere de novo.";
+    const msg = "O local de estoque deste item vem do pedido de origem, que reserva estoque no local de estoque de cada item: não pode ser trocado. Para mudar, cancele esta venda e gere de novo.";
     const r = await put(base.map((i) => ({ ...i, warehouse_id: I.warehouse2! })));
     expect(r.statusCode, r.body).toBe(422);
     expect(j(r).error).toMatchObject({ code: "VALIDATION_ERROR", message: msg, details: [{ path: "items[0].warehouse_id", message: msg }] });

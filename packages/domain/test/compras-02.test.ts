@@ -71,14 +71,21 @@ describe("CP-D1 o grafo de compras (validarDestinoOperacao)", () => {
     expect(validarDestinoOperacao(PEDIDO, "estoque.baixa")).toEqual([{ motivo: "destino_nao_executavel", codigoBase: "estoque.baixa" }]);
   });
 
-  it("em todo o registry, a única aresta de compras aceita é pedido → compra", () => {
+  it("em todo o registry, as únicas arestas de compras aceitas são pedido → compra e (F6a) pedido → orçamento", () => {
+    const ORCAMENTO = "compras.orcamento";
+    expect(varianteDeDocumentoCompraDaFamilia(ORCAMENTO), "a premissa: o orçamento de compra é espécie do documento de compra").toBe("orcamento");
     const aceitasEmCompras: string[] = [];
     for (const o of CODIGOS_TIPO_OPERACAO) for (const d of CODIGOS_TIPO_OPERACAO) {
       if (validarDestinoOperacao(o, d).length === 0 && (tabelaComercialDaFamilia(o) === TABELA_DOCUMENTO_COMPRA || tabelaComercialDaFamilia(d) === TABELA_DOCUMENTO_COMPRA)) {
         aceitasEmCompras.push(`${o} → ${d}`);
       }
     }
-    expect(aceitasEmCompras).toEqual([`${PEDIDO} → ${COMPRA}`]);
+    expect(aceitasEmCompras).toEqual([`${PEDIDO} → ${COMPRA}`, `${PEDIDO} → ${ORCAMENTO}`]);
+    // O orçamento não converte (o vencedor leva preços ao pedido) e nada vira orçamento além do pedido.
+    expect(validarDestinoOperacao(ORCAMENTO, COMPRA)).toEqual([{ motivo: "aresta_nao_executavel", origem: ORCAMENTO, destino: COMPRA }]);
+    expect(validarDestinoOperacao(ORCAMENTO, PEDIDO)).toEqual([{ motivo: "aresta_nao_executavel", origem: ORCAMENTO, destino: PEDIDO }]);
+    expect(validarDestinoOperacao(COMPRA, ORCAMENTO)).toEqual([{ motivo: "aresta_nao_executavel", origem: COMPRA, destino: ORCAMENTO }]);
+    expect(validarDestinoOperacao(ORCAMENTO, ORCAMENTO)).toEqual([{ motivo: "mesma_familia", codigoBase: ORCAMENTO }]);
   });
 });
 
@@ -91,8 +98,9 @@ describe("CP-D2 vendas intactas", () => {
       expect(validarDestinoOperacao(o, d), `${o} → ${d}`).toEqual(regraAnteriorDeVendas(o, d));
       conferidos++;
     }
-    // Verde que não prova nada é reprovação: o laço tem de ter conferido o registry inteiro menos as compras.
-    expect(conferidos).toBe((codigos.length - 2) ** 2);
+    // Verde que não prova nada é reprovação: o laço tem de ter conferido o registry inteiro menos as três famílias do
+    // documento de compra (pedido, compra e, desde a F6a, orçamento).
+    expect(conferidos).toBe((codigos.length - 3) ** 2);
   });
 
   it("as seis arestas de vendas continuam aceitas, sem ordem obrigatória", () => {
@@ -242,6 +250,7 @@ describe("CP-D7 textos e rótulo", () => {
 
   it("situação \"convertido\" do pedido tem rótulo e entra no filtro", () => {
     expect(enumLabel("situacao_documento_compra", "convertido")).toBe("Convertido");
-    expect(enumOptions("situacao_documento_compra").map((o) => o.value)).toEqual(["aberto", "confirmado", "convertido", "cancelado"]);
+    // OPERACOES-01 F6a (decisão 283): + finalizado (pedido), escolhido e nao_escolhido (orçamento), no fim.
+    expect(enumOptions("situacao_documento_compra").map((o) => o.value)).toEqual(["aberto", "confirmado", "convertido", "cancelado", "finalizado", "escolhido", "nao_escolhido"]);
   });
 });

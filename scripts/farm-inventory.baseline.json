@@ -3,11 +3,11 @@
   "baldes": {
     "historico": 1309,
     "compat": 350,
-    "divida": 110
+    "divida": 107
   },
   "divida": {
     "schema": 0,
-    "api": 44,
+    "api": 41,
     "api-test": 51,
     "core-neutro": 0,
     "packages": 11,
@@ -20,7 +20,7 @@
   },
   "counts": {
     "schema": 476,
-    "api": 53,
+    "api": 50,
     "api-test": 101,
     "core-neutro": 4,
     "packages": 182,
@@ -31,6 +31,6 @@
     "docs": 320,
     "reference": 513
   },
-  "total": 1769,
+  "total": 1766,
   "companyTables": 3
 }

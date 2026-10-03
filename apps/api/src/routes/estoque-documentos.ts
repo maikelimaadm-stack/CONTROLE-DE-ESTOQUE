@@ -14,33 +14,57 @@
  * (só "observação obrigatória" se aplica ao estoque). O MOVIMENTO é o da ESPÉCIE: a execução configurada da TOP
  * continua recusada para estas famílias nesta fatia.
  *
- * O que NÃO existe aqui (fora da fatia): editar documento aberto, layout por TOP, transferência entre empresas
- * (os dois armazéns são da empresa do documento — entre empresas fica nas telas antigas) e centro de resultado.
+ * O que NÃO existe aqui (fora da fatia): editar documento aberto e transferência entre empresas (os dois locais de
+ * estoque são da empresa do documento — entre empresas fica nas telas antigas).
+ *
+ * MOVIMENTAÇÃO INTERNA (OPERACOES-01 F5a, decisão 282): as rotas servem as SETE espécies — as quatro de antes e a
+ * REQUISIÇÃO (pedido de material: confirmada, reserva no local de estoque), o CONSUMO (baixa; atende uma requisição ou
+ * é lançado direto) e a DEVOLUÇÃO DE CONSUMO (volta ao local de estoque, puxando do consumo). O corpo ganhou campos
+ * OPCIONAIS — a origem, o destino (seis dimensões), o motivo e a justificativa da saída, a origem do item —, a entrada
+ * pode vir sem custo (a confirmação grava o custo médio do produto) e o ajuste aceita o custo informado. O corpo de
+ * antes continua aceito do mesmo jeito, e a resposta continua com as mesmas chaves. O que a movimentação interna
+ * confere a mais mora em `estoque-movimentacao-interna.ts`; a capacidade nova é `capacidades.movimentacaoInterna`.
  *
  * CONFIRMAÇÃO AUTOMÁTICA (TOP-CONFIG-08, decisão 277): com a versão congelada no FORMATO 4 e "Confirmação:
  * Automática", o POST confirma o documento que acabou de lançar, na mesma transação, pela MESMA função do
  * `/confirmar` (`lancarEConfirmar`). Versão 1–3, ou Manual: o POST responde o que respondia, chave por chave.
  * Documento sem itens continua recusado em toda versão: no estoque ele não movimenta nada (o zod fica com `min(1)`).
+ *
+ * A CENTRAL DE ESTOQUE NO MOTOR (OPERACOES-01 F5b, decisão 282): três rotas de LEITURA, para a tela, com o contrato das
+ * Centrais de Vendas e de Compras — as REGRAS DA OPERAÇÃO da TOP escolhida (`/regras-da-operacao`: as exigências, a
+ * confirmação automática e as seções Destino e Fluxo, pela MESMA leitura do lançamento), o LAYOUT POR TOP
+ * (`/layout-efetivo`, o mesmo de vendas e compras: o layout do estoque governa colunas, rótulos, valor padrão e
+ * "editável" — o servidor do estoque não cobra layout) e as OPÇÕES DO DESTINO (`/destino/opcoes`, em
+ * `estoque-movimentacao-interna.ts`, só nas espécies cujo destino a TOP configura). Declaradas nas capacidades de
+ * `operation-types`: `layoutDocumento` e `regrasDaOperacao` (as opções do destino são parte de `movimentacaoInterna`).
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { DomainError, isISODate } from "@agro/shared";
 import {
   conferirNumeroEstoque, familiaOperacionalDeDocumentoEstoque, chaveI18nDaFamiliaOperacional, moduloDaPermissao,
-  lerConfiguracaoTop, restricoesExecutamTop, exigenciasGeraisFaltando, EXIGENCIAS_GERAIS_ESTOQUE_TOP,
-  ERRO_EXIGENCIA_NAO_ATENDIDA, MENSAGEM_EXIGENCIA_NAO_ATENDIDA, LIMITE_QUANTIDADE_ESTOQUE, LIMITE_CUSTO_ESTOQUE,
-  ROTULO_DA_ESPECIE_ESTOQUE, type EspecieEstoque,
+  lerConfiguracaoTop, restricoesExecutamTop, exigenciasGeraisFaltando, secoesExtensaoDaVersaoTop, secoesExtensaoNeutrasTop,
+  EXIGENCIAS_GERAIS_ESTOQUE_TOP, ERRO_EXIGENCIA_NAO_ATENDIDA, MENSAGEM_EXIGENCIA_NAO_ATENDIDA, LIMITE_QUANTIDADE_ESTOQUE, LIMITE_CUSTO_ESTOQUE,
+  ROTULO_DA_ESPECIE_ESTOQUE, MOTIVOS_SAIDA_ESTOQUE, LIMITE_JUSTIFICATIVA_SAIDA, ATENDIMENTOS_REQUISICAO_ESTOQUE, CAPACIDADE_MOVIMENTACAO_INTERNA,
+  CAPACIDADE_LAYOUT_DOCUMENTO, CAPACIDADE_REGRAS_DA_OPERACAO, CAPACIDADE_SALDO_INICIAL_ESTOQUE, regrasDaOperacaoDoEstoque, saldoInicialPelaTop,
+  type EspecieEstoque, type ConfiguracaoComRestricoesTop, type SecoesExtensaoV5,
 } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit } from "../lib/service.js";
-import { err, denied } from "../lib/errors.js";
+import { err, denied, notFound } from "../lib/errors.js";
 import { exigirEmpresaDeLancamento, empresaScope, hasPermission, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
 import { resolverTopParaLancamento, type TopDoLancamento } from "../lib/documento-comercial.js";
 import { confirmaAutomaticamente, tentarConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
-import { ESPECIES_ESTOQUE, FORMA_UUID, lerDocumentoEstoque, topParaTela, type ColunasDaTop, type RecursoEstoque } from "./estoque-comum.js";
+import { respostaDoLayoutEfetivo } from "../lib/layout-documento.js";
+import {
+  ESPECIES_ESTOQUE, FORMA_UUID, SQL_ATENDIMENTO_REQUISICAO, lerDocumentoEstoque, topParaTela, type ColunasDaTop, type RecursoEstoque,
+} from "./estoque-comum.js";
 import { registrarConfirmacaoEstoque, confirmarDocumentoEstoqueNaTransacao } from "./estoque-confirmacao.js";
+import {
+  registrarMovimentacaoInterna, registrarOpcoesDoDestino, recusasDaFormaDaMovimentacaoInterna, conferirOrigem, conferirDestino, conferirFluxo,
+} from "./estoque-movimentacao-interna.js";
 
 const t = criarTradutor(ptBR);
 
@@ -59,6 +83,8 @@ function familiaDaEspecie(especie: EspecieEstoque): string {
  * da idempotência: o reenvio com outra caixa é o mesmo pedido.
  */
 const uuid = z.string().uuid().transform((v) => v.toLowerCase());
+/** Um uuid opcional do corpo: ausente ou `null` é "não informado" (`null`). */
+const uuidOpcional = uuid.nullish().transform((v) => v ?? null);
 const textoOpcional = (max: number) => z.string().trim().max(max).nullish().transform((v) => (v ? v : null));
 const data = z.string().refine(isISODate, "Data inválida");
 /**
@@ -76,16 +102,33 @@ const itemSchema = z.object({
   lote: textoOpcional(60),
   validade: data.nullish().transform((v) => v ?? null),
   observacao: textoOpcional(500),
+  /** OPERACOES-01 F5a: o item da requisição que esta linha do consumo atende, ou o do consumo que esta devolução devolve. */
+  origem_item_id: uuidOpcional,
 }).strict();
 
-/** O corpo do POST. `.strict()` nos dois níveis: chave desconhecida é 422 — nunca traduzida, nunca descartada. */
+/**
+ * O corpo do POST. `.strict()` nos dois níveis: chave desconhecida é 422 — nunca traduzida, nunca descartada.
+ * Os campos da movimentação interna (OPERACOES-01 F5a) são TODOS opcionais: o corpo de antes continua valendo.
+ */
 const documentoSchema = z.object({
   empresa_id: uuid,
   tipo_operacao_id: uuid,
   armazem_id: uuid,
-  armazem_destino_id: uuid.nullish().transform((v) => v ?? null),
+  armazem_destino_id: uuidOpcional,
   data_documento: data,
   observacao: textoOpcional(2000),
+  /** A requisição que o consumo atende, ou o consumo de que a devolução de consumo puxa (obrigatório nela). */
+  origem_documento_id: uuidOpcional,
+  // O DESTINO (requisição, consumo e saída — pela seção Destino da TOP; a devolução de consumo copia o do consumo).
+  centro_custo_id: uuidOpcional,
+  equipamento_id: uuidOpcional,
+  ordem_servico_id: uuidOpcional,
+  lote_animais_id: uuidOpcional,
+  area_id: uuidOpcional,
+  safra_id: uuidOpcional,
+  /** O motivo da saída (os 13 da baixa antiga), em par com a justificativa. Só na saída; o par é opcional. */
+  motivo_saida: z.enum(MOTIVOS_SAIDA_ESTOQUE).nullish().transform((v) => v ?? null),
+  justificativa: textoOpcional(LIMITE_JUSTIFICATIVA_SAIDA),
   itens: z.array(itemSchema).min(1).max(500),
 }).strict();
 type DocumentoEstoqueEntrada = z.infer<typeof documentoSchema>;
@@ -134,6 +177,18 @@ async function listarDocumentos(ctx: ServiceCtx, especies: readonly EspecieEstoq
   };
   porUuid(f.empresa_id, (p) => `d.empresa_id = ${p}::uuid`);
   porUuid(f.tipo_operacao_id, (p) => `d.tipo_operacao_id = ${p}::uuid`);
+  // OPERACOES-01 F5a: os documentos que puxam de uma origem (os consumos de uma requisição, as devoluções de um consumo).
+  porUuid(f.origem_documento_id, (p) => `d.origem_documento_id = ${p}::uuid`);
+  // O ATENDIMENTO da requisição (calculado — `SQL_ATENDIMENTO_REQUISICAO`), no WHERE antes do LIMIT. Valor fora do
+  // domínio é 422 no parâmetro: um filtro que não filtra viraria "todas".
+  if (f.atendimento) {
+    const pedidos = f.atendimento.split(",").map((x) => x.trim()).filter(Boolean);
+    const fora = pedidos.filter((x) => !(ATENDIMENTOS_REQUISICAO_ESTOQUE as readonly string[]).includes(x));
+    if (fora.length || !pedidos.length) {
+      throw recusar([{ path: "atendimento", message: `Atendimento inválido: use ${ATENDIMENTOS_REQUISICAO_ESTOQUE.join(", ")}` }]);
+    }
+    params.push(pedidos); where.push(`${SQL_ATENDIMENTO_REQUISICAO} = any($${params.length}::text[])`);
+  }
   // O armazém casa com a ORIGEM ou com o DESTINO: a transferência aparece no filtro dos dois armazéns.
   porUuid(f.armazem_id, (p) => `(d.armazem_id = ${p}::uuid or d.armazem_destino_id = ${p}::uuid)`);
   for (const [chave, op] of [["start_date", ">="], ["end_date", "<="]] as const) {
@@ -157,7 +212,7 @@ async function listarDocumentos(ctx: ServiceCtx, especies: readonly EspecieEstoq
             d.armazem_id, wo.description as armazem_nome, d.armazem_destino_id, wd.description as armazem_destino_nome,
             d.tipo_operacao_id, toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao,
             (select count(*) from erp.documentos_estoque_itens i where i.documento_id = d.id and i.organization_id = d.organization_id)::int as quantidade_itens,
-            d.created_at as criado_em
+            d.created_at as criado_em, d.origem_documento_id, ${SQL_ATENDIMENTO_REQUISICAO} as atendimento
        ${de}
       order by d.data_documento desc, d.created_at desc, d.id
       limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
@@ -171,7 +226,10 @@ async function listarDocumentos(ctx: ServiceCtx, especies: readonly EspecieEstoq
 
 // ─────────────── lançamento ───────────────
 
-const ROTULO_LONGO: Readonly<Record<EspecieEstoque, string>> = { entrada: "a entrada", saida: "a saída", transferencia: "a transferência", ajuste: "o ajuste" };
+const ROTULO_LONGO: Readonly<Record<EspecieEstoque, string>> = {
+  entrada: "a entrada", saida: "a saída", transferencia: "a transferência", ajuste: "o ajuste",
+  requisicao: "a requisição", consumo: "o consumo", devolucao_consumo: "a devolução de consumo",
+};
 
 /** O que é proibido estar presente: `null`/ausente é "não informado"; qualquer outro valor é recusado, nunca ignorado. */
 const informado = (v: unknown) => v !== undefined && v !== null;
@@ -181,17 +239,22 @@ const informado = (v: unknown) => v !== undefined && v !== null;
  * TEXTO CANÔNICO na forma e no limite da coluna (`conferirNumeroEstoque`: fora da forma ou do limite é 422, nunca
  * 500, nunca arredondado). Campo de outra espécie é RECUSADO: aceitar e ignorar um custo na saída faria a Central
  * acreditar que o custo informado vale, quando o da saída é o custo médio da confirmação.
+ *
+ * O CUSTO (OPERACOES-01 F5a): opcional na ENTRADA (vazio, a confirmação grava o custo médio do produto — como a
+ * devolução antiga) e no AJUSTE (o custo da correção, como a correção antiga); proibido nas outras, que o calculam na
+ * confirmação (a requisição não tem custo). A requisição reserva pelo produto no local de estoque: sem lote nem
+ * validade. O que a movimentação interna acrescentou (origem, destino, motivo) entra nas MESMAS recusas, num 422 só.
  */
 function conferirFormaDaEspecie(especie: EspecieEstoque, d: DocumentoEstoqueEntrada): { quantidades: (string | null)[]; contadas: (string | null)[]; custos: (string | null)[] } {
   const recusas: Recusa[] = [];
   if (especie === "transferencia") {
-    if (!d.armazem_destino_id) recusas.push({ path: "armazem_destino_id", message: "Informe o armazém de destino da transferência" });
-    else if (d.armazem_destino_id === d.armazem_id) recusas.push({ path: "armazem_destino_id", message: "O armazém de destino tem de ser diferente do armazém de origem" });
+    if (!d.armazem_destino_id) recusas.push({ path: "armazem_destino_id", message: "Informe o local de estoque de destino da transferência" });
+    else if (d.armazem_destino_id === d.armazem_id) recusas.push({ path: "armazem_destino_id", message: "O local de estoque de destino tem de ser diferente do local de estoque de origem" });
   } else if (d.armazem_destino_id) {
-    recusas.push({ path: "armazem_destino_id", message: `O armazém de destino é só da transferência: não informe n${ROTULO_LONGO[especie]}` });
+    recusas.push({ path: "armazem_destino_id", message: `O local de estoque de destino é só da transferência: não informe n${ROTULO_LONGO[especie]}` });
   }
-  const numero = (i: number, campo: string, valor: unknown, limite: typeof LIMITE_QUANTIDADE_ESTOQUE | typeof LIMITE_CUSTO_ESTOQUE, minimo: "positivo" | "naoNegativo", faltando: string): string | null => {
-    if (!informado(valor)) { recusas.push({ path: caminhoDoItem(i, campo), message: faltando }); return null; }
+  const numero = (i: number, campo: string, valor: unknown, limite: typeof LIMITE_QUANTIDADE_ESTOQUE | typeof LIMITE_CUSTO_ESTOQUE, minimo: "positivo" | "naoNegativo", faltando: string | null): string | null => {
+    if (!informado(valor)) { if (faltando) recusas.push({ path: caminhoDoItem(i, campo), message: faltando }); return null; }
     const r = conferirNumeroEstoque(valor, { ...limite, minimo });
     if (!r.ok) { recusas.push({ path: caminhoDoItem(i, campo), message: r.mensagem }); return null; }
     return r.valor;
@@ -199,24 +262,33 @@ function conferirFormaDaEspecie(especie: EspecieEstoque, d: DocumentoEstoqueEntr
   const proibido = (i: number, campo: string, valor: unknown, message: string) => {
     if (informado(valor)) recusas.push({ path: caminhoDoItem(i, campo), message });
   };
+  /** O custo: opcional (conferido quando vem) na entrada e no ajuste; proibido nas outras. */
+  const custo = (i: number, valor: unknown): string | null => {
+    if (especie === "entrada" || especie === "ajuste") return numero(i, "custo_unitario", valor, LIMITE_CUSTO_ESTOQUE, "naoNegativo", null);
+    proibido(i, "custo_unitario", valor, especie === "requisicao"
+      ? "A requisição não tem custo: não informe o custo"
+      : `O custo d${ROTULO_LONGO[especie]} é calculado na confirmação: não informe o custo`);
+    return null;
+  };
   const quantidades: (string | null)[] = []; const contadas: (string | null)[] = []; const custos: (string | null)[] = [];
   d.itens.forEach((it: ItemEntrada, i) => {
+    custos.push(custo(i, it.custo_unitario));
     if (especie === "ajuste") {
-      quantidades.push(null); custos.push(null);
+      quantidades.push(null);
       proibido(i, "quantidade", it.quantidade, "O ajuste informa a quantidade CONTADA: use quantidade_contada");
-      proibido(i, "custo_unitario", it.custo_unitario, "O custo do ajuste é o custo médio do estoque, calculado na confirmação: não informe o custo");
       contadas.push(numero(i, "quantidade_contada", it.quantidade_contada, LIMITE_QUANTIDADE_ESTOQUE, "naoNegativo", "Informe a quantidade contada"));
       return;
     }
     contadas.push(null);
     proibido(i, "quantidade_contada", it.quantidade_contada, "A quantidade contada é só do ajuste: informe a quantidade");
     quantidades.push(numero(i, "quantidade", it.quantidade, LIMITE_QUANTIDADE_ESTOQUE, "positivo", "Informe a quantidade"));
-    if (especie === "entrada") custos.push(numero(i, "custo_unitario", it.custo_unitario, LIMITE_CUSTO_ESTOQUE, "naoNegativo", "Informe o custo unitário da entrada"));
-    else {
-      custos.push(null);
-      proibido(i, "custo_unitario", it.custo_unitario, `O custo d${ROTULO_LONGO[especie]} é o custo médio do estoque, calculado na confirmação: não informe o custo`);
+    if (especie === "requisicao") {
+      const message = "A requisição reserva pelo produto no local de estoque: não informe lote nem validade";
+      proibido(i, "lote", it.lote, message);
+      proibido(i, "validade", it.validade, message);
     }
   });
+  recusas.push(...recusasDaFormaDaMovimentacaoInterna(especie, d));
   if (recusas.length) throw recusar(recusas);
   return { quantidades, contadas, custos };
 }
@@ -232,7 +304,7 @@ async function conferirArmazens(ctx: ServiceCtx, d: DocumentoEstoqueEntrada): Pr
     [pedidos, ctx.orgId, d.empresa_id]);
   const validos = new Set(r.rows.map((w) => w.id));
   const recusas: Recusa[] = [];
-  const message = "Armazém inválido: escolha um armazém ativo da empresa do documento";
+  const message = "Local de estoque inválido: escolha um local de estoque ativo da empresa do documento";
   if (!validos.has(d.armazem_id)) recusas.push({ path: "armazem_id", message });
   if (d.armazem_destino_id && !validos.has(d.armazem_destino_id)) recusas.push({ path: "armazem_destino_id", message });
   if (recusas.length) throw recusar(recusas);
@@ -240,9 +312,10 @@ async function conferirArmazens(ctx: ServiceCtx, d: DocumentoEstoqueEntrada): Pr
 
 /**
  * Itens: produto da organização, não excluído, ATIVO e que CONTROLA ESTOQUE; lote só em produto que controla lote
- * e validade só em "lote e validade"; lote obrigatório na ENTRADA e no AJUSTE de produto com lote (o saldo que
- * entra ou é contado é o de UM lote); validade obrigatória na entrada de "lote e validade". Na saída e na
- * transferência o lote é opcional: sem ele, a confirmação escolhe pela validade (decisão 254).
+ * e validade só em "lote e validade"; lote obrigatório na ENTRADA, na DEVOLUÇÃO DE CONSUMO e no AJUSTE de produto com
+ * lote (o saldo que entra ou é contado é o de UM lote); validade obrigatória na entrada e na devolução de consumo de
+ * "lote e validade". Na saída, na transferência e no consumo o lote é opcional: sem ele, a confirmação escolhe pela
+ * validade (decisão 254). A requisição não tem lote (a forma já recusou): reserva pelo produto.
  *
  * No AJUSTE, o mesmo saldo (produto × lote) contado duas vezes é recusado: a contagem é UMA por saldo, e a
  * segunda linha calcularia a diferença sobre a primeira. Uma consulta, para todos os produtos.
@@ -264,8 +337,9 @@ async function conferirItens(ctx: ServiceCtx, especie: EspecieEstoque, d: Docume
     if (!p.control_stock) return no("produto_id", "Este produto não controla estoque");
     if (it.lote && p.controle === "nenhum") no("lote", "Este produto não controla lote: não informe o lote");
     if (it.validade && p.controle !== "lote_validade") no("validade", "Este produto não controla validade: não informe a validade");
-    if ((especie === "entrada" || especie === "ajuste") && p.controle !== "nenhum" && !it.lote) no("lote", "Este produto controla lote: informe o lote");
-    if (especie === "entrada" && p.controle === "lote_validade" && !it.validade) no("validade", "Este produto controla lote e validade: informe a validade");
+    const entra = especie === "entrada" || especie === "devolucao_consumo";
+    if ((entra || especie === "ajuste") && p.controle !== "nenhum" && !it.lote) no("lote", "Este produto controla lote: informe o lote");
+    if (entra && p.controle === "lote_validade" && !it.validade) no("validade", "Este produto controla lote e validade: informe a validade");
     if (especie === "ajuste") {
       const saldo = `${it.produto_id}\u0000${it.lote ?? ""}`;
       if (saldosContados.has(saldo)) no("produto_id", "Este produto e lote já foram contados neste ajuste: informe cada saldo uma vez só");
@@ -276,18 +350,29 @@ async function conferirItens(ctx: ServiceCtx, especie: EspecieEstoque, d: Docume
 }
 
 /**
- * EXIGÊNCIAS GERAIS DA VERSÃO CONGELADA — só "observação obrigatória" se aplica ao estoque, pelo mapa PRÓPRIO
- * do estoque (`EXIGENCIAS_GERAIS_ESTOQUE_TOP`): cair no mapa da venda cobraria um parceiro que o documento nem tem.
- * Lida aqui, com uma consulta própria, e não pelas regras de vendas: o documento de estoque não tem condição de
- * pagamento nem cliente, e a porta de vendas muda em outra frente. Versão de formato 1/2 não executa restrições;
- * a de formato 4 executa as mesmas do 3 (`restricoesExecutamTop` aceita os dois — TOP-CONFIG-08, decisão 277).
+ * A CONFIGURAÇÃO DA VERSÃO CONGELADA, lida UMA vez no lançamento (uma consulta) e usada por tudo o que o lançamento
+ * cobra dela:
+ *   · as EXIGÊNCIAS GERAIS — só "observação obrigatória" se aplica ao estoque, pelo mapa PRÓPRIO do estoque
+ *     (`EXIGENCIAS_GERAIS_ESTOQUE_TOP`): cair no mapa da venda cobraria um parceiro que o documento nem tem. Versão de
+ *     formato 1/2 não executa restrições; a de formato 3, 4 e 5 executa (`restricoesExecutamTop`);
+ *   · as SEÇÕES DE EXTENSÃO do formato 5 (OPERACOES-01 F5a: Destino e Fluxo), pela pergunta do ponto de extensão
+ *     (`secoesExtensaoDaVersaoTop`) — formatos 1 a 4 respondem o NEUTRO de cada seção (nada novo é exigido).
+ * Versão ilegível: nenhuma exigência e as seções no neutro, como as exigências de hoje — quem recusa a versão que
+ * ninguém sabe ler é a confirmação (`TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`).
+ * Lida aqui, e não pelas regras de vendas: o documento de estoque não tem condição de pagamento nem cliente.
  */
-async function cobrarExigenciasDaTop(ctx: ServiceCtx, top: TopDoLancamento, d: DocumentoEstoqueEntrada): Promise<void> {
+async function lerConfiguracaoDoLancamento(ctx: ServiceCtx, top: TopDoLancamento): Promise<{ restricoes: ConfiguracaoComRestricoesTop | null; secoes: SecoesExtensaoV5 }> {
   const v = await ctx.tx.query<{ configuracao: unknown }>(
     "select configuracao from erp.tipos_operacao_versoes where id = $1 and organization_id = $2", [top.tipoOperacaoVersaoId, ctx.orgId]);
   const lida = lerConfiguracaoTop(v.rows[0]?.configuracao ?? null);
-  if (!lida.ok || !restricoesExecutamTop(lida.valor)) return;
-  const faltando = exigenciasGeraisFaltando(lida.valor, { observacao: d.observacao }, EXIGENCIAS_GERAIS_ESTOQUE_TOP);
+  if (!lida.ok) return { restricoes: null, secoes: secoesExtensaoNeutrasTop() };
+  return { restricoes: restricoesExecutamTop(lida.valor) ? lida.valor : null, secoes: secoesExtensaoDaVersaoTop(lida.valor) };
+}
+
+/** EXIGÊNCIAS GERAIS DA VERSÃO CONGELADA (ver `lerConfiguracaoDoLancamento`): faltou → 422 com cada exigência. */
+function cobrarExigenciasDaTop(restricoes: ConfiguracaoComRestricoesTop | null, d: DocumentoEstoqueEntrada): void {
+  if (!restricoes) return;
+  const faltando = exigenciasGeraisFaltando(restricoes, { observacao: d.observacao }, EXIGENCIAS_GERAIS_ESTOQUE_TOP);
   if (!faltando.length) return;
   throw new DomainError(ERRO_EXIGENCIA_NAO_ATENDIDA, MENSAGEM_EXIGENCIA_NAO_ATENDIDA,
     { exigencias: faltando.map((x) => ({ caminho: x.caminho, mensagem: `${x.rotulo} é obrigatório nesta operação.` })) });
@@ -295,36 +380,49 @@ async function cobrarExigenciasDaTop(ctx: ServiceCtx, top: TopDoLancamento, d: D
 
 /**
  * LANÇAR — o documento nasce ABERTO, com a TOP e a versão CONGELADAS pelo servidor (o cliente manda só
- * `tipo_operacao_id`). Recusas, nesta ordem: forma da espécie → TOP → armazéns → itens → exigências da TOP; só
- * então o número (recusa não queima código). NADA de estoque se move aqui — nem com a TOP automática: quem
- * confirma é `lancarEConfirmar`, depois daqui. Devolve o corpo da resposta e, à parte, a versão congelada.
+ * `tipo_operacao_id`). Recusas, nesta ordem: forma da espécie → TOP → (a configuração da versão, lida uma vez) →
+ * locais de estoque → itens → ORIGEM → DESTINO → FLUXO → exigências da TOP; só então o número (recusa não queima
+ * código). NADA de estoque se move aqui — nem com a TOP automática, nem na requisição (que só reserva ao ser
+ * CONFIRMADA): quem confirma é `lancarEConfirmar`, depois daqui. Devolve o corpo da resposta e, à parte, a versão
+ * congelada.
+ *
+ * O cabeçalho grava o DESTINO FINAL (o informado, o herdado da requisição ou o copiado do consumo) e a origem; cada
+ * item grava a origem dele. O gatilho do cabeçalho e o dos itens (0043) repetem as invariantes no banco.
  */
 async function lancar(ctx: ServiceCtx, especie: EspecieEstoque, d: DocumentoEstoqueEntrada) {
   const { quantidades, contadas, custos } = conferirFormaDaEspecie(especie, d);
   const top = await resolverTopParaLancamento(ctx, familiaDaEspecie(especie), d.tipo_operacao_id);
+  const configuracao = await lerConfiguracaoDoLancamento(ctx, top);
   await conferirArmazens(ctx, d);
   await conferirItens(ctx, especie, d);
-  await cobrarExigenciasDaTop(ctx, top, d);
+  const origem = await conferirOrigem(ctx, especie, d, quantidades);
+  const destino = await conferirDestino(ctx, especie, d, origem, configuracao.secoes.destino);
+  conferirFluxo(especie, d, origem, configuracao.secoes.fluxo, quantidades);
+  cobrarExigenciasDaTop(configuracao.restricoes, d);
 
   const codigo = await nextCode(ctx.tx, ctx.orgId, `estoque_${especie}`);
   const id = (await ctx.tx.query<{ id: string }>(
-    `insert into erp.documentos_estoque (organization_id, empresa_id, especie, codigo, situacao, tipo_operacao_id, tipo_operacao_versao_id, armazem_id, armazem_destino_id, data_documento, observacao, criado_por)
-     values ($1,$2,$3,$4,'aberto',$5,$6,$7,$8,$9,$10,$11) returning id`,
+    `insert into erp.documentos_estoque (organization_id, empresa_id, especie, codigo, situacao, tipo_operacao_id, tipo_operacao_versao_id, armazem_id, armazem_destino_id, data_documento, observacao, criado_por,
+                                         origem_documento_id, centro_custo_id, equipamento_id, ordem_servico_id, lote_animais_id, area_id, safra_id, motivo_saida, justificativa)
+     values ($1,$2,$3,$4,'aberto',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) returning id`,
     [ctx.orgId, d.empresa_id, especie, codigo, top.tipoOperacaoId, top.tipoOperacaoVersaoId, d.armazem_id, d.armazem_destino_id,
-      d.data_documento, d.observacao, ctx.user.id])).rows[0]!.id;
+      d.data_documento, d.observacao, ctx.user.id,
+      origem?.id ?? null, destino.centro_custo_id, destino.equipamento_id, destino.ordem_servico_id, destino.lote_animais_id, destino.area_id, destino.safra_id,
+      d.motivo_saida, d.justificativa])).rows[0]!.id;
   await atribuirIdGlobal(ctx, "documentos_estoque", id);
   // Os itens num INSERT só (unnest), na ordem do corpo: `posicao` é o índice. A espécie vai em cada item — é o que
   // deixa o CHECK por espécie no banco (a FK composta garante que é a do cabeçalho).
   await ctx.tx.query(
-    `insert into erp.documentos_estoque_itens (organization_id, documento_id, especie, posicao, produto_id, lote, validade, quantidade, quantidade_contada, custo_unitario, observacao)
-     select $1, $2, $3, u.posicao, u.produto_id, u.lote, u.validade, u.quantidade, u.quantidade_contada, u.custo_unitario, u.observacao
-       from unnest($4::int[], $5::uuid[], $6::text[], $7::date[], $8::numeric[], $9::numeric[], $10::numeric[], $11::text[])
-            as u(posicao, produto_id, lote, validade, quantidade, quantidade_contada, custo_unitario, observacao)
+    `insert into erp.documentos_estoque_itens (organization_id, documento_id, especie, posicao, produto_id, lote, validade, quantidade, quantidade_contada, custo_unitario, observacao, origem_item_id)
+     select $1, $2, $3, u.posicao, u.produto_id, u.lote, u.validade, u.quantidade, u.quantidade_contada, u.custo_unitario, u.observacao, u.origem_item_id
+       from unnest($4::int[], $5::uuid[], $6::text[], $7::date[], $8::numeric[], $9::numeric[], $10::numeric[], $11::text[], $12::uuid[])
+            as u(posicao, produto_id, lote, validade, quantidade, quantidade_contada, custo_unitario, observacao, origem_item_id)
       order by u.posicao`,
     [ctx.orgId, id, especie, d.itens.map((_, i) => i), d.itens.map((x) => x.produto_id), d.itens.map((x) => x.lote), d.itens.map((x) => x.validade),
-      quantidades, contadas, custos, d.itens.map((x) => x.observacao)]);
+      quantidades, contadas, custos, d.itens.map((x) => x.observacao), d.itens.map((x) => x.origem_item_id)]);
   await audit(ctx.tx, ctx, "documentos_estoque", id, "create",
-    { especie, codigo, tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao });
+    { especie, codigo, tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao,
+      ...(origem ? { origemDocumentoId: origem.id } : {}) });
   return { corpo: { id, codigo, especie, situacao: "aberto" as const }, versaoTopId: top.tipoOperacaoVersaoId };
 }
 
@@ -369,6 +467,35 @@ async function lancarEConfirmar(ctx: ServiceCtx, especie: EspecieEstoque, recurs
   return { ...corpo, situacao, confirmacaoAutomatica };
 }
 
+// ─────────────── a TOP das rotas de leitura da Central (F5b) ───────────────
+
+/** A TOP da query, conferida: a identidade, a família e a configuração da versão ATUAL. */
+interface TopDaCentral { id: string; codigoBase: string; configuracao: unknown }
+
+/**
+ * A TOP pedida em `?tipo_operacao_id=` pelas rotas de LEITURA da Central de Estoque (`/regras-da-operacao` e
+ * `/layout-efetivo`), com a configuração da versão ATUAL — UMA consulta. Ausente, repetida, malformada (`FORMA_UUID`,
+ * conferida antes de qualquer consulta: um `::uuid` estourado seria 500), de outra família, inativa, excluída ou de
+ * outra organização → a MESMA 404 (o molde de compras): uma resposta por motivo seria oráculo de existência. Outro
+ * parâmetro qualquer é 422 no parâmetro — recusado, nunca ignorado.
+ */
+async function topDaCentral(ctx: ServiceCtx, familia: string, query: unknown): Promise<TopDaCentral> {
+  const bruta = (query ?? {}) as Record<string, unknown>;
+  const estranhos = Object.keys(bruta).filter((chave) => chave !== "tipo_operacao_id");
+  if (estranhos.length) throw recusar(estranhos.map((path) => ({ path, message: "Parâmetro não reconhecido" })));
+  const pedido = bruta["tipo_operacao_id"];
+  if (typeof pedido !== "string" || !FORMA_UUID.test(pedido)) throw notFound("Tipo de operação");
+  const r = await ctx.tx.query<{ id: string; codigo_base: string; configuracao: unknown }>(
+    `select t.id, t.codigo_base, v.configuracao
+       from erp.tipos_operacao t
+       join erp.tipos_operacao_versoes v on v.tipo_operacao_id = t.id and v.organization_id = t.organization_id and v.versao = t.versao_atual
+      where t.id = $1 and t.organization_id = $2 and t.codigo_base = $3 and t.ativo and t.excluido_em is null`,
+    [pedido.toLowerCase(), ctx.orgId, familia]);
+  const linha = r.rows[0];
+  if (!linha) throw notFound("Tipo de operação");
+  return { id: linha.id, codigoBase: linha.codigo_base, configuracao: linha.configuracao };
+}
+
 // ─────────────── rotas ───────────────
 
 export default async function estoqueRoutes(app: FastifyInstance) {
@@ -378,21 +505,63 @@ export default async function estoqueRoutes(app: FastifyInstance) {
     /** As TOPs que esta espécie pode lançar — porta OPERACIONAL (`<recurso>.create`), não administrativa. */
     app.get(`${base}/operation-types`, async (req) => runService(app, req, `${recurso}.create`, async (ctx) => {
       const familia = familiaDaEspecie(especie);
-      const r = await ctx.tx.query<{ id: string; codigo: string; nome: string; versao: number; padrao: boolean }>(
-        `select t.id, t.codigo, v.nome, v.versao, t.padrao
+      const r = await ctx.tx.query<{ id: string; codigo: string; nome: string; versao: number; padrao: boolean; configuracao: unknown }>(
+        `select t.id, t.codigo, v.nome, v.versao, t.padrao, v.configuracao
            from erp.tipos_operacao t
            join erp.tipos_operacao_versoes v on v.tipo_operacao_id = t.id and v.organization_id = t.organization_id and v.versao = t.versao_atual
           where t.organization_id = $1 and t.codigo_base = $2 and t.ativo and t.excluido_em is null
           order by t.padrao desc, t.codigo, v.nome`, [ctx.orgId, familia]);
+      // `saldoInicial` (OPERACOES-01 F11, decisão 288, ADITIVA, só na entrada): a TOP de entrada pode lançar o saldo
+      // inicial (seção `implantacao`); o item diz qual. Leitor: `entendeSaldoInicialEstoque`. A Implantação só aponta
+      // para a Central com ela declarada. As outras seis espécies respondem o corpo de antes, chave por chave.
+      const declaraSaldoInicial = especie === "entrada";
       return {
         contractVersion: 1,
         // `documentoEstoque` declara a capacidade: a web nova só oferece o "+ Novo" do portal contra uma API que a tem.
-        capacidades: { documentoEstoque: 1 },
+        // `movimentacaoInterna` (OPERACOES-01 F5a, aditiva): as três espécies novas, o destino, o motivo e a
+        // justificativa da saída, a entrada sem custo, o custo no ajuste, a origem, o encerramento do saldo, o
+        // atendimento/vinculados/`baseDoSaldo`, o `empresa_id` do saldo e (F5b) as opções do destino
+        // (`/destino/opcoes`). Leitor: `entendeMovimentacaoInterna`.
+        // `layoutDocumento` e `regrasDaOperacao` (OPERACOES-01 F5b, aditivas, no FIM, os valores de vendas e compras):
+        // `/layout-efetivo` (o layout por TOP) e `/regras-da-operacao` (exigências, confirmação automática, Destino e
+        // Fluxo) existem no estoque. A Central só pede as duas rotas com a chave declarada: contra a API anterior, o
+        // layout do sistema local e o neutro de cada seção (o comportamento de hoje).
+        capacidades: { documentoEstoque: 1, movimentacaoInterna: CAPACIDADE_MOVIMENTACAO_INTERNA, layoutDocumento: CAPACIDADE_LAYOUT_DOCUMENTO,
+          regrasDaOperacao: CAPACIDADE_REGRAS_DA_OPERACAO,
+          ...(declaraSaldoInicial ? { saldoInicial: CAPACIDADE_SALDO_INICIAL_ESTOQUE } : {}) },
         family: { code: familia, label: t(chaveI18nDaFamiliaOperacional(familia) ?? familia) },
         defaultId: r.rows.find((x) => x.padrao)?.id ?? null,
-        items: r.rows.map((x) => ({ id: x.id, code: x.codigo, name: x.nome, version: x.versao, isDefault: x.padrao })),
+        items: r.rows.map((x) => ({ id: x.id, code: x.codigo, name: x.nome, version: x.versao, isDefault: x.padrao,
+          ...(declaraSaldoInicial ? { saldoInicial: saldoInicialPelaTop(familia, x.configuracao) } : {}) })),
       };
     }));
+
+    /**
+     * REGRAS DA OPERAÇÃO da TOP escolhida (versão ATUAL) — o que o lançamento vai cobrar dela, para a Central pedir o
+     * mesmo antes do POST: `regrasDaOperacaoDoEstoque` (domínio), com a MESMA leitura do lançamento (as exigências pelo
+     * mapa do estoque, a confirmação automática, as seções Destino e Fluxo — formatos 1 a 4 no neutro; `null` na
+     * família que não usa a seção). Porta OPERACIONAL `<recurso>.create`; a mesma 404 de `topDaCentral`. Uma consulta.
+     * O servidor continua a autoridade: o POST cobra tudo de novo, pela versão que ele mesmo congela.
+     */
+    app.get(`${base}/regras-da-operacao`, async (req) => runService(app, req, `${recurso}.create`, async (ctx) => {
+      const top = await topDaCentral(ctx, familiaDaEspecie(especie), req.query);
+      return regrasDaOperacaoDoEstoque(top.codigoBase, top.configuracao);
+    }));
+
+    /**
+     * LAYOUT EFETIVO da TOP escolhida — o MESMO contrato de vendas e compras (`respostaDoLayoutEfetivo`: ligado à TOP →
+     * padrão ativo da família → layout do sistema; `padroesDeCadastro`/`padroesInvalidos` só com padrão de cadastro,
+     * como o Local de estoque padrão). TOP obrigatória (todo documento de estoque tem TOP); a mesma 404 de
+     * `topDaCentral`. Porta OPERACIONAL `<recurso>.create`.
+     */
+    app.get(`${base}/layout-efetivo`, async (req) => runService(app, req, `${recurso}.create`, async (ctx) => {
+      const familia = familiaDaEspecie(especie);
+      const top = await topDaCentral(ctx, familia, req.query);
+      return respostaDoLayoutEfetivo(ctx, familia, top.id);
+    }));
+
+    // As opções do destino (só saída, requisição e consumo; nas outras espécies a rota não existe).
+    registrarOpcoesDoDestino(app, { especie, segmento, recurso });
 
     app.get(`${base}/:id`, async (req) => runService(app, req, `${recurso}.view`, (ctx) => lerDocumentoEstoque(ctx, (req.params as { id: string }).id, especie)));
 
@@ -422,4 +591,5 @@ export default async function estoqueRoutes(app: FastifyInstance) {
   }));
 
   registrarConfirmacaoEstoque(app);
+  registrarMovimentacaoInterna(app);
 }

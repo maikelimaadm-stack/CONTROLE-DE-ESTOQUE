@@ -1,5 +1,6 @@
-import { test, expect, type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
+import { test, expect, criarCadastro } from "./central-compras-fixtures";
 
 /**
  * DOCUMENTO DE COMPRA — o caminho do operador (COMPRAS-01, decisão 267).
@@ -9,8 +10,11 @@ import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
  * consulta → Confirmar com a prévia → a entrada no estoque e as contas a pagar aparecem NO DOCUMENTO, e o
  * servidor diz o mesmo (saldo e custo lidos pela API, não pela tela).
  *
- * Cada execução cria a PRÓPRIA TOP e o PRÓPRIO produto (pela API): a conta nunca depende do que outro spec
- * deixou no banco.
+ * Cada execução cria a PRÓPRIA TOP, o PRÓPRIO produto e o PRÓPRIO local de estoque (pela API): a conta nunca depende
+ * do que outro spec deixou no banco. O local é escolhido na pesquisa da linha PELO NOME, e ela lista os locais de todas
+ * as empresas visíveis: o "primeiro local da empresa" do seed pode ter o nome repetido na outra empresa ("Silo de
+ * Grãos", "Fábrica de Ração") e a pesquisa entregaria o gêmeo — que o servidor recusa (422, local de outra empresa).
+ * O local nasce com nome único por `criarCadastro`, que registra a exclusão lógica no fim do caso.
  */
 type Opcao = { id: string; label: string };
 const literal = (t: string) => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
@@ -40,7 +44,9 @@ async function cadastroDaCompra(page: Page) {
   const produto = await api<{ id: string }>(page, "POST", "/api/resources/products", { description: uniq("CO-W produto"), group_id: grupos[0]!.id, measurement_id: un!.id, financial_category_id: naturezas[0]!.id });
   const nomeProduto = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/products/${produto.id}`))["description"]);
   const empresa = await empresaAtiva(page);
-  const armazem = await primeiroId(page, `/api/resources/warehouses?empresa_id=${empresa}&pageSize=1`);
+  const armazem = (await criarCadastro(page, "warehouses", {
+    empresa_id: empresa, initials: `CO${Date.now().toString(36).slice(-6).toUpperCase()}`, description: uniq("CO-W local"), type: "inputs"
+  })).id;
   const nomeArmazem = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/warehouses/${armazem}`))["description"]);
   const fornecedor = await primeiroId(page, "/api/resources/people?is_provider=true&pageSize=1");
   const nomeFornecedor = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/people/${fornecedor}`))["name"]);

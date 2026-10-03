@@ -46,8 +46,9 @@ async function criarTop(org: string, codigoBase: string): Promise<Top> {
   });
 }
 
-type Doc = Partial<{ org: string; empresa: string; especie: "pedido" | "compra"; situacao: string; top: Top; fornecedor: string; transportadora: string | null;
-  numero: string | null; serie: string | null; dataEntrada: string | null; categoria: string | null; centro: string | null; frete: string; forma: string | null }>;
+type Doc = Partial<{ org: string; empresa: string; especie: "pedido" | "compra" | "orcamento"; situacao: string; top: Top; fornecedor: string; transportadora: string | null;
+  numero: string | null; serie: string | null; dataEntrada: string | null; categoria: string | null; centro: string | null; frete: string; forma: string | null;
+  pedidoOrcado: string | null }>;
 
 /** INSERT do cabeçalho (via `q`: superusuário ou tx da aplicação). */
 async function inserirDoc(q: { query: Db["query"] } | Tx, o: Doc = {}): Promise<string> {
@@ -56,10 +57,12 @@ async function inserirDoc(q: { query: Db["query"] } | Tx, o: Doc = {}): Promise<
   const top = o.top ?? (especie === "compra" ? topCompra : topPedido);
   const r = await (q as Tx).query<{ id: string }>(
     `insert into erp.documentos_compra (organization_id, empresa_id, especie, codigo, situacao, tipo_operacao_id, tipo_operacao_versao_id,
-       fornecedor_id, transportadora_id, data_documento, data_entrada, numero_nota, serie_nota, categoria_financeira_id, centro_custo_id, frete, forma_pagamento_id)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'2026-09-01',$10,$11,$12,$13,$14,$15,$16) returning id`,
+       fornecedor_id, transportadora_id, data_documento, data_entrada, numero_nota, serie_nota, categoria_financeira_id, centro_custo_id, frete, forma_pagamento_id,
+       pedido_orcado_id)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'2026-09-01',$10,$11,$12,$13,$14,$15,$16,$17) returning id`,
     [o.org ?? demo.orgId, o.empresa ?? A, especie, `C${seq}`, o.situacao ?? "aberto", top.top, top.versao, o.fornecedor ?? fornecedor,
-     o.transportadora ?? null, o.dataEntrada ?? null, o.numero ?? null, o.serie ?? null, o.categoria ?? null, o.centro ?? null, o.frete ?? "0", o.forma ?? null]);
+     o.transportadora ?? null, o.dataEntrada ?? null, o.numero ?? null, o.serie ?? null, o.categoria ?? null, o.centro ?? null, o.frete ?? "0", o.forma ?? null,
+     o.pedidoOrcado ?? null]);
   return r.rows[0]!.id;
 }
 const doc = (o: Doc = {}) => inserirDoc(db, o);
@@ -146,13 +149,18 @@ describe("premissas do cenário", () => {
     expect(rls).toEqual([{ relname: "documentos_compra", r: true, f: true }, { relname: "documentos_compra_itens", r: true, f: true }]);
     const pol = (await db.query<{ tablename: string; policyname: string; cmd: string }>(
       "select tablename, policyname, cmd from pg_policies where schemaname='erp' and tablename like 'documentos_compra%' order by tablename")).rows;
-    expect(pol).toEqual([{ tablename: "documentos_compra", policyname: "tenant_e_empresa", cmd: "ALL" }, { tablename: "documentos_compra_itens", policyname: "api_child", cmd: "ALL" }]);
+    // A 0047 (OPERACOES-01 F7) acrescenta o rateio por valor da compra, filho do cabeçalho como os itens (api_child).
+    expect(pol).toEqual([{ tablename: "documentos_compra", policyname: "tenant_e_empresa", cmd: "ALL" }, { tablename: "documentos_compra_itens", policyname: "api_child", cmd: "ALL" },
+      { tablename: "documentos_compra_rateio", policyname: "api_child", cmd: "ALL" }]);
     const trg = (await db.query<{ tgname: string }>(
       "select tgname from pg_trigger where tgrelid in ('erp.documentos_compra'::regclass, 'erp.documentos_compra_itens'::regclass) and not tgisinternal and tgenabled='O' order by tgname")).rows.map((x) => x.tgname);
     // A 0037 (COMPRAS-02) acrescenta o gatilho da origem nos itens; a 0041 (TOP-CONFIG-08), a guarda da aprovação no
-    // cabeçalho. Os quatro da 0036 continuam, com os mesmos nomes.
+    // cabeçalho; a 0044 (OPERACOES-01 F6a), a guarda da finalização do pedido no cabeçalho e a dos itens do orçamento;
+    // a 0047 (OPERACOES-01 F7), a guarda dos dados fiscais no cabeçalho (chave de acesso cruzada com a nota antiga).
+    // Os quatro da 0036 continuam, com os mesmos nomes.
     expect(trg).toEqual(["trg_documentos_compra_aprovacao", "trg_documentos_compra_audit", "trg_documentos_compra_conferir",
-      "trg_documentos_compra_itens_documento_aberto", "trg_documentos_compra_itens_origem_guarda", "trg_documentos_compra_transicao"]);
+      "trg_documentos_compra_finalizacao", "trg_documentos_compra_itens_documento_aberto", "trg_documentos_compra_itens_orcamento_guarda",
+      "trg_documentos_compra_itens_origem_guarda", "trg_documentos_compra_nota", "trg_documentos_compra_transicao"]);
     expect((await db.query("select 1 from pg_constraint where conname='uq_warehouses_tenant' and contype='u'")).rowCount).toBe(1);
   });
 });
@@ -168,6 +176,13 @@ describe("CHECKs por espécie (gatilhos desligados: o CHECK sozinho)", () => {
   it("espécie e situação fora do domínio", async () => {
     expect(await check({ especie: "venda" as "compra" })).toBe("chk_documentos_compra_especie");
     expect(await check({ situacao: "aprovado" })).toBe("chk_documentos_compra_situacao");
+  });
+  it("orçamento (0044) nunca é confirmado; com o pedido orçado, o CHECK que responde é o da situação por espécie", async () => {
+    // O orçamento precisa do pedido que cota (chk_documentos_compra_orcamento_do_pedido): com ele, a contraprova passa e
+    // só a situação errada é recusada — pelo MESMO CHECK de situação por espécie do pedido confirmado.
+    const pedidoOrcado = await doc({ especie: "pedido" });
+    await expect(semGatilhos((q) => inserirDoc(q, { especie: "orcamento", top: topPedido, pedidoOrcado }))).resolves.toBeTruthy();
+    expect(await check({ especie: "orcamento", situacao: "confirmado", top: topPedido, pedidoOrcado })).toBe("chk_documentos_compra_situacao_especie");
   });
   it("pedido não tem nota, série nem data de entrada", async () => {
     expect(await check({ especie: "pedido", numero: "10" })).toBe("chk_documentos_compra_campos_da_compra");

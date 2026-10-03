@@ -1,12 +1,22 @@
 /**
- * ═══ APROVAÇÕES DE VENDA — A FILA E A DECISÃO (TOP-CONFIG-08, decisão 277) ═══
+ * ═══ APROVAÇÕES DE VENDA — A FILA, A DECISÃO E A SITUAÇÃO (TOP-CONFIG-08, decisão 277; OPERACOES-01 F2, 279) ═══
  *
  * A versão congelada da TOP no FORMATO 4 pode exigir aprovação antes da confirmação ("Sempre", ou "A partir de um
- * valor", com o total ATUAL do documento). Este arquivo serve três rotas, todas sob `sales.approve`:
+ * valor", com o total ATUAL do documento). Este arquivo serve quatro rotas — três sob `sales.approve` e a leitura da
+ * situação sob `sales.view`:
  *
  *   GET  /api/aprovacoes/vendas                 a fila: vendas abertas que exigem aprovação e não estão aprovadas;
  *   POST /api/aprovacoes/vendas/:id/aprovar     { version, observacao? }
  *   POST /api/aprovacoes/vendas/:id/reprovar    { version, motivo }
+ *   GET  /api/aprovacoes/vendas/:id             a situação da aprovação DE UMA venda (F2, decisão 279):
+ *                                               { situacao, ultimaDecisao } — o contrato em `aprovacoes-situacao.ts`.
+ *
+ * POR QUE A LEITURA FICA EM `sales.view`: quem vê o documento vê a situação dele (a consulta da Central de Vendas
+ * mostra "Aguardando aprovação", e a prévia do Confirmar já dizia o mesmo sob `sales.view`); quem DECIDE continua
+ * sendo `sales.approve` (a fila e os dois POST). Ordem das recusas da leitura: 403 sem `sales.view` (o `runService`,
+ * antes de qualquer leitura) → 422 parâmetro de consulta (qualquer um) → a MESMA 404 do GET por id (id fora da
+ * forma; documento inexistente, de outra organização, fora do escopo de empresa do módulo vendas, excluído ou de
+ * outra variante). Só leitura, consultas fixas.
  *
  * A decisão é uma linha de `erp.aprovacoes_venda` (0041), só de inserção, e vale para a VERSÃO do documento
  * (`sales_documents.version`, 0039): a vigente é a última decisão DA VERSÃO ATUAL. Alterar a venda sobe a versão, e
@@ -64,7 +74,8 @@ import { empresaScope, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { situacaoDaAprovacao, registrarDecisao } from "../lib/aprovacao-documento.js";
 import { lerVersaoCongeladaTop, confirmaAutomaticamente, tentarConfirmacaoAutomatica, type ResultadoConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
-import { exigirDocumentoVisivel, travarDocumentoDaEdicao, confirmarVendaNaTransacao } from "./sales.js";
+import { exigirDocumentoVisivel, travarDocumentoDaEdicao, confirmarVendaNaTransacao, getDoc } from "./sales.js";
+import { recusarParametrosDaSituacao, respostaDaSituacaoDaAprovacao, type RespostaDaSituacaoDaAprovacao } from "./aprovacoes-situacao.js";
 import { MSG_DOCUMENTO_MUDOU, MSG_EDICAO_VERSAO_AUSENTE, MSG_EDICAO_VERSAO_INVALIDA } from "./vendas-edicao-patch.js";
 import { paginaComIdGlobal } from "../lib/id-global.js";
 
@@ -270,8 +281,38 @@ async function decidir(app: FastifyInstance, ctx: ServiceCtx, id: string, versao
   return confirmacaoAutomatica ? { ...corpo, confirmacaoAutomatica } : corpo;
 }
 
+// ─────────────── a situação de UMA venda (F2, decisão 279) ───────────────
+
+/**
+ * A SITUAÇÃO DA APROVAÇÃO DE UMA VENDA, para a consulta da Central de Vendas. Quem chama já passou pelo `sales.view`.
+ * O documento é achado pela MESMA leitura do GET por id (`getDoc`, variante `sale`): é ela que aplica organização,
+ * escopo de empresa, `deleted_at` e variante — e é por isso que a 404 é a mesma, com o mesmo corpo.
+ */
+async function situacaoDaVenda(ctx: ServiceCtx, params: unknown, query: unknown): Promise<RespostaDaSituacaoDaAprovacao> {
+  // 1. Parâmetro de consulta: 422, antes de qualquer leitura (nunca ignorado).
+  recusarParametrosDaSituacao(query);
+  // 2. Id malformado é inexistente: a MESMA 404 do GET, e não o 500 do 22P02.
+  const bruto = (params as { id: string }).id;
+  if (!FORMA_UUID_PADRAO.test(bruto)) throw notFound("Documento");
+  const id = bruto.toLowerCase();
+  // 3. Visível neste contexto — a leitura do GET por id; invisível é a MESMA 404.
+  const doc = await getDoc(ctx, id, "sale");
+  // 4. A conta (o contrato em `aprovacoes-situacao.ts`). "approved" (0005) é aberto, como na decisão.
+  return respostaDaSituacaoDaAprovacao(ctx, {
+    modulo: "vendas",
+    documentoId: String(doc["id"]),
+    aberto: doc["status"] === "open" || doc["status"] === "approved",
+    versaoDocumento: String(doc["version"]),
+    valorDocumento: String(doc["total"]),
+    tipoOperacaoVersaoId: typeof doc["tipo_operacao_versao_id"] === "string" ? doc["tipo_operacao_versao_id"] : null,
+  });
+}
+
 export default async function aprovacoesVendasRoutes(app: FastifyInstance) {
   app.get("/aprovacoes/vendas", async (req) => runService(app, req, "sales.approve", (ctx) => listarFila(ctx, req.query)));
+
+  // A situação da aprovação de UMA venda: leitura sob `sales.view` (quem vê o documento vê a situação).
+  app.get("/aprovacoes/vendas/:id", async (req) => runService(app, req, "sales.view", (ctx) => situacaoDaVenda(ctx, req.params, req.query)));
 
   for (const acao of ["aprovar", "reprovar"] as const satisfies readonly Acao[]) {
     const decisao: Decisao = acao === "aprovar" ? "aprovado" : "reprovado";

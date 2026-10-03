@@ -1,6 +1,7 @@
-import { test, expect, type Page, type Locator } from "@playwright/test";
-import { execFileSync } from "node:child_process";
+import type { Page, Locator } from "@playwright/test";
+import { todayISO } from "../src/lib/utils";
 import { login, api, uniq, pickRef, empresaAtiva } from "./helpers";
+import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed, type Opcao } from "./central-compras-fixtures";
 /**
  * O `pickRef` do helpers monta a regex com o texto cru: um nome do seed como "[DEMO] Agropecuária" vira classe de
  * caracteres e nunca casa. A busca usa o nome sem o prefixo entre colchetes (os 12 primeiros caracteres do resto).
@@ -19,9 +20,11 @@ const buscaSemColchetes = (nome: string) => nome.replace(/^\[[^\]]*\]\s*/, "").s
  *
  * ┌─ VERDE QUE NÃO PROVA NADA É REPROVAÇÃO ───────────────────────────────────────────────────────┐
  * │ Toda fixture é criada pela API neste arquivo (fornecedor, armazém, TOP, produto, compra, pedido)│
- * │ e conferida no servidor — nenhuma é "a primeira da lista"; toda escrita da TELA é contada (zero │
- * │ POST é um número); toda chave do navegador é comparada antes × depois. Nada depende de contagem │
- * │ global nem do que outro spec deixou; "hoje" vem do banco (PROCESSO-03), nunca do relógio local. │
+ * │ e conferida no servidor — nenhuma é "a primeira da lista"; a referência do seed (unidade, grupo, │
+ * │ natureza, centro) vem pelo NOME; toda escrita da TELA é contada (zero POST é um número); toda   │
+ * │ chave do navegador é comparada antes × depois. Nada depende de contagem global nem do que outro │
+ * │ spec deixou; "hoje" é o `todayISO` da tela (UTC), nunca a data local do Node. Os cadastros que o │
+ * │ caso cria saem no fim, passou ou falhou (`central-compras-fixtures.ts`); os documentos ficam.    │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 
@@ -49,13 +52,10 @@ const MEDIDAS = {
 
 /* ═════════════════════════════════════════════ fixtures ═════════════════════════════════════════════ */
 
-type Opcao = { id: string; label: string };
-const codigoTop = (p: string) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-
 async function cadastrarTop(page: Page, codigoBase: "compras.compra" | "compras.pedido" = "compras.compra", extra: Record<string, unknown> = {}) {
   const codigo = codigoTop(codigoBase === "compras.compra" ? "7" : "5");
   const nome = uniq(codigoBase === "compras.compra" ? "Compra Desenho" : "Pedido Desenho");
-  const criado = await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo, codigoBase, nome, ...extra });
+  const criado = await criarTop(page, { codigo, codigoBase, nome, ...extra });
   return { id: criado.id, codigo, nome };
 }
 
@@ -64,26 +64,22 @@ interface Base {
   natureza: Opcao; centro: Opcao; grupo: string; unidade: string;
 }
 
-/** O cadastro de base: fornecedor e armazém CRIADOS aqui (nenhum é "o primeiro da lista"), e a referência do seed. */
+/** O cadastro de base: fornecedor e armazém CRIADOS aqui (nenhum é "o primeiro da lista"), e a referência do seed pelo nome. */
 async function base(page: Page): Promise<Base> {
   const empresa = await empresaAtiva(page);
   // o trecho único (tempo + sorteio) vem PRIMEIRO: `pickRef` busca pelos 12 primeiros caracteres, e "CC forn <tempo>" de
   // dois casos seguidos casaria os dois
-  const fornecedor = (await api<{ id: string }>(page, "POST", "/api/resources/people", { name: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)} CC forn`, person_type: "legal", is_provider: true })).id;
+  const fornecedor = (await criarCadastro(page, "people", { name: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)} CC forn`, person_type: "legal", is_provider: true })).id;
   const nomeFornecedor = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/people/${fornecedor}`))["name"]);
-  const armazem = (await api<{ id: string }>(page, "POST", "/api/resources/warehouses", {
+  const armazem = (await criarCadastro(page, "warehouses", {
     empresa_id: empresa, initials: `A${Date.now().toString(36).slice(-4).toUpperCase()}`, description: uniq("CC arm"), type: "inputs"
   })).id;
-  const naturezas = await api<Opcao[]>(page, "GET", "/api/resources/financial_categories/options?kind=analytic&nature=expense");
-  const centros = await api<Opcao[]>(page, "GET", "/api/resources/cost_centers/options?kind=analytic");
-  const grupos = await api<Opcao[]>(page, "GET", "/api/resources/product_groups/options?kind=analytic");
-  const un = (await api<Opcao[]>(page, "GET", "/api/resources/measurement_units/options")).find((u) => u.label.toUpperCase() === "UN");
-  expect(naturezas.length && centros.length && grupos.length && un, "premissa: natureza, centro, grupo e unidade UN no seed").toBeTruthy();
-  return { empresa, fornecedor: { id: fornecedor, nome: nomeFornecedor }, armazem, natureza: naturezas[0]!, centro: centros[0]!, grupo: grupos[0]!.id, unidade: un!.id };
+  const ref = await referenciasDoSeed(page);
+  return { empresa, fornecedor: { id: fornecedor, nome: nomeFornecedor }, armazem, natureza: ref.natureza, centro: ref.centro, grupo: ref.grupo.id, unidade: ref.unidade.id };
 }
 
 async function produtoNovo(page: Page, b: Base, controleLote: "nenhum" | "lote_validade" = "nenhum") {
-  const p = await api<{ id: string }>(page, "POST", "/api/resources/products", {
+  const p = await criarCadastro(page, "products", {
     description: uniq("CC produto"), group_id: b.grupo, measurement_id: b.unidade, financial_category_id: b.natureza.id, controle_lote: controleLote
   });
   const lido = await api<Record<string, unknown>>(page, "GET", `/api/resources/products/${p.id}`);
@@ -190,16 +186,15 @@ async function nomesDoLeque(page: Page) {
 }
 
 /**
- * "HOJE" PELA REGRA DO PROCESSO-03 (docs/TESTING.md): a data que o resultado compara com hoje vem do BANCO
- * (`current_date`), nunca do relógio do Node — a data local do Node, entre 21h e 24h em Brasília, é a véspera do dia UTC
- * que a tela usa (`todayISO`), e CC-4/CC-5 reprovavam nessa janela. `current_date` é lido no fuso da tela (UTC), para o
- * resultado não depender do fuso configurado no servidor do banco. Quem compara lê ANTES e DEPOIS do passo: se a
- * meia-noite cair no meio, vale qualquer um dos dois dias.
+ * "HOJE" É O DA TELA: a MESMA função que a criação e o Duplicar usam para a Data (`todayISO`, de
+ * `apps/web/src/lib/utils.ts`; `compras/central/estado.ts` e `consulta-barra.tsx`) — o dia UTC do relógio da máquina,
+ * que é a do navegador. Nunca a data LOCAL do Node: entre 21h e 24h em Brasília ela é a véspera do dia UTC, e CC-4/CC-5
+ * reprovavam nessa janela. (Antes era o `current_date` do banco lido em UTC: o mesmo dia quando o banco e o navegador
+ * estão na mesma máquina, como aqui e no CI — mas a régua é a da tela, sem `psql` no meio.) Quem compara lê ANTES e
+ * DEPOIS do passo: se a meia-noite UTC cair no meio, vale qualquer um dos dois dias.
  */
-const BANCO = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
-const hojeDoBanco = () => execFileSync("psql", [BANCO, "-v", "ON_ERROR_STOP=1", "-Atc", "set time zone 'UTC'; select current_date::text"], { encoding: "utf8" }).trim().split("\n").pop()!;
 const isoParaBr = (iso: string) => iso.split("-").reverse().join("/");
-/** Os "hoje" possíveis entre duas leituras do banco, em ISO e em dd/mm/aaaa. */
+/** Os "hoje" possíveis entre duas leituras (antes e depois do passo), em ISO e em dd/mm/aaaa. */
 const hojes = (antes: string, depois: string) => [...new Set([antes, depois])];
 const casaHoje = (dias: readonly string[]) => new RegExp(dias.flatMap((d) => [d, isoParaBr(d)]).map((x) => x.replace(/[./]/g, "\\$&")).join("|"));
 async function valorMostrado(invólucro: Locator) {
@@ -485,7 +480,7 @@ test("CC-4 — Duplicar: copia o que deve, NÃO copia nota, série, datas nem or
   const escritas = registrarEscritas(page);
   const duplicar = page.getByTestId(`${WORKSPACE}-duplicar`);
   await expect(duplicar).toBeEnabled();
-  const hojeAntes = hojeDoBanco();
+  const hojeAntes = todayISO();
   await duplicar.click();
 
   // abre o lançamento da MESMA TOP, e a URL não leva dado nenhum além dela
@@ -504,8 +499,8 @@ test("CC-4 — Duplicar: copia o que deve, NÃO copia nota, série, datas nem or
   await expect(page.getByTestId(`${WORKSPACE}-linha`), "os itens vieram").toHaveCount(1);
   await abrirAba(page, "Observações");
   await expect(page.getByTestId("compras-observacao")).toHaveValue("observação do original");
-  // as datas NÃO vieram: Data = hoje (do banco, antes e depois do passo)
-  const diasDeHoje = hojes(hojeAntes, hojeDoBanco());
+  // as datas NÃO vieram: Data = hoje (o da tela, antes e depois do passo)
+  const diasDeHoje = hojes(hojeAntes, todayISO());
   expect(await valorMostrado(campoPeloRotulo(dados, "Data")), "Data = hoje").toMatch(casaHoje(diasDeHoje));
   expect(await chavesDoNavegador(page), "nenhuma chave nova no navegador: a cópia foi em memória").toEqual(antes);
   expect(escritas, "duplicar não escreveu nada").toEqual([]);
@@ -644,13 +639,13 @@ test("CC-5 — Descartar: pergunta, Continuar editando mantém, confirmar volta 
   await login(page);
   const b = await base(page);
   const top = await cadastrarTop(page);
-  const hojeAntes = hojeDoBanco();
+  const hojeAntes = todayISO();
   await abrirCriacao(page, top.id);
   const ws = page.getByTestId(WORKSPACE);
   const dados = ws.getByRole("region", { name: "Dados principais" });
   const retrato = async () => ({ dados: (await dados.innerText()).replace(/\s+/g, " ").trim(), data: await valorMostrado(campoPeloRotulo(dados, "Data")) });
   const abertura = await retrato();
-  expect(abertura.data, "premissa: a abertura aplica os padrões (Data = hoje, do banco)").toMatch(casaHoje(hojes(hojeAntes, hojeDoBanco())));
+  expect(abertura.data, "premissa: a abertura aplica os padrões (Data = hoje, o da tela)").toMatch(casaHoje(hojes(hojeAntes, todayISO())));
   const descartar = page.getByTestId(`${WORKSPACE}-descartar`);
   await expect(descartar, "sem alteração, nada a descartar").toBeDisabled();
   const escritas = registrarEscritas(page);

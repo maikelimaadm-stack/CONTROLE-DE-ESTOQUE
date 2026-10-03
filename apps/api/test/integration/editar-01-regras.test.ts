@@ -384,7 +384,7 @@ describe("ED-4 — as regras do PUT valem na PATCH, com a mensagem de hoje", () 
     const pedido = await criar("order", { tipo_operacao_id: topPedidoComReserva, items: [ITEM({ product_id: produto, quantity: "8", unit_price: "5.00" })] });
     expect(await reservado(), "premissa: o pedido reserva 8").toBe("8.0000");
     const [item] = (await ler("order", pedido)).items;
-    const linhaDaRecusa = `${nomeGravado} no armazém ${nomeArmazem}: disponível 10, pedido 11.`;
+    const linhaDaRecusa = `${nomeGravado} no local de estoque ${nomeArmazem}: disponível 10, pedido 11.`;
     const r = await recusada("order", pedido, { version: await versaoGravada(pedido), items: [{ id: item!.id, quantity: "11" }] }, 422, { code: "VALIDATION_ERROR", message: linhaDaRecusa }, "acima do disponível");
     expect(detalhes(r)).toEqual([{ path: "items", message: linhaDaRecusa }]);
     const exato = await patch("order", pedido, { version: await versaoGravada(pedido), items: [{ id: item!.id, quantity: "10" }] });
@@ -395,7 +395,7 @@ describe("ED-4 — as regras do PUT valem na PATCH, com a mensagem de hoje", () 
     const outro = await h.app.inject({ method: "POST", url: "/api/sales/orders", headers: h.headers(),
       payload: { empresa_id: I.empresa, document_date: "2026-09-10", client_id: clientePadrao, tipo_operacao_id: topPedidoComReserva, items: [ITEM({ product_id: produto, quantity: "0.5", unit_price: "5.00" })] } });
     expect(outro.statusCode, outro.body).toBe(422);
-    expect(j(outro).error!.message).toBe(`${nomeGravado} no armazém ${nomeArmazem}: disponível 0, pedido 0,5.`);
+    expect(j(outro).error!.message).toBe(`${nomeGravado} no local de estoque ${nomeArmazem}: disponível 0, pedido 0,5.`);
 
     // (b) a parte gerada do pedido com reserva: o armazém não troca; a observação do item, sim.
     const menor = await patch("order", pedido, { version: await versaoGravada(pedido), items: [{ id: item!.id, quantity: "8" }] });
@@ -432,7 +432,7 @@ describe("ED-4 — as regras do PUT valem na PATCH, com a mensagem de hoje", () 
     expect([vi!.origem_item_id, vi!.quantity, (await linha(pedido)).status]).toEqual([null, "8.0000", "converted"]);
     await criar("order", { tipo_operacao_id: topInteiro, items: [ITEM({ product_id: produto, quantity: "1", unit_price: "5.00" })] });
     expect(await reservado()).toBe("9.0000");
-    const linhaDaRecusa = `${nomeGravado} no armazém ${nomeArmazem}: disponível 9, pedido 10.`;
+    const linhaDaRecusa = `${nomeGravado} no local de estoque ${nomeArmazem}: disponível 9, pedido 10.`;
     const r = await recusada("sale", venda, { version: await versaoGravada(venda), items: [{ id: vi!.id, quantity: "10" }] }, 422,
       { code: "VALIDATION_ERROR", message: linhaDaRecusa }, "venda inteira acima do disponível");
     expect(detalhes(r)).toEqual([{ path: "items", message: linhaDaRecusa }]);

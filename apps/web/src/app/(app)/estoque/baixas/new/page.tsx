@@ -5,7 +5,7 @@ import { todayISO } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { ItemsEditor, useCreate, useEmpresaPadrao, type ItemRow } from "@/features/docs/shared";
-const REASONS: [string, string][] = [["loss", "Perda"], ["deterioration", "Deterioração"], ["theft", "Roubo"], ["damage", "Avaria"], ["inventory", "Inventário"], ["accounting", "Contabilização"], ["burglary", "Furto"], ["expiration", "Prazo de validade"], ["gift", "Brinde"], ["donation", "Doação"], ["consumption", "Consumo"], ["payment_with_product", "Pagamento com Produto"], ["other", "Outros"]];
+import { enumOptions } from "@/lib/copy";
 export default function Page() {
   const router = useRouter(); const empresa = useEmpresaPadrao();
   const [h, setH] = React.useState({ empresa_id: "", writeoff_date: todayISO(), reason: "loss", reason_note: "", cost_center_id: "", warehouse_id: "", justification: "" });
@@ -16,8 +16,8 @@ export default function Page() {
     <div className="grid grid-cols-12 gap-3">
       <Field label="Empresa" required span={3}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "", warehouse_id: "" })} /></Field>
       <Field label="Data de criação" required span={2}><Input type="date" value={h.writeoff_date} onChange={(e) => setH({ ...h, writeoff_date: e.target.value })} /></Field>
-      <Field label="Motivo da baixa" required span={3}><NativeSelect value={h.reason} onChange={(e) => setH({ ...h, reason: e.target.value })}>{REASONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</NativeSelect></Field>
-      <Field label="Armazém" required span={4}><RefSelect resource="warehouses" value={h.warehouse_id} onChange={(v) => setH({ ...h, warehouse_id: v ?? "" })} filter={{ empresa_id: h.empresa_id }} /></Field>
+      <Field label="Motivo da baixa" required span={3}><NativeSelect value={h.reason} onChange={(e) => setH({ ...h, reason: e.target.value })}>{enumOptions("writeoff_reason").map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect></Field>
+      <Field label="Local de estoque" required span={4}><RefSelect resource="warehouses" value={h.warehouse_id} onChange={(v) => setH({ ...h, warehouse_id: v ?? "" })} filter={{ empresa_id: h.empresa_id }} /></Field>
       <Field label="Centro de Resultado" span={4}><RefSelect resource="cost_centers" value={h.cost_center_id} onChange={(v) => setH({ ...h, cost_center_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>
       <Field label="Motivo/Observação da Baixa" span={8}><Input value={h.reason_note} onChange={(e) => setH({ ...h, reason_note: e.target.value })} /></Field>
       <Field label="Justificativa" required span={12}><Textarea value={h.justification} onChange={(e) => setH({ ...h, justification: e.target.value })} /></Field>

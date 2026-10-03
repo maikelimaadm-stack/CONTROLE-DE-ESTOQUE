@@ -1,8 +1,9 @@
-import { test, expect, type Page, type Locator } from "@playwright/test";
+import type { Page, Locator } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { LAYOUT_DO_SISTEMA } from "@agro/domain";
 import { login, api, uniq, empresaAtiva } from "./helpers";
+import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 
 /**
  * CENTRAL DE COMPRAS NO MOTOR DA CENTRAL (VISUAL-UX-04, docs/DECISIONS.md 276) — parte C: CC-11 a CC-14 (e CC-14a).
@@ -21,7 +22,9 @@ import { login, api, uniq, empresaAtiva } from "./helpers";
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * Toda fixture é criada pela API neste arquivo (fornecedor, cliente, armazém, TOP, produto, compra, pedido, venda) e
- * conferida no servidor — nenhuma é "a primeira da lista". Nada depende de contagem global nem do que outro spec deixou.
+ * conferida no servidor — nenhuma é "a primeira da lista"; a referência do seed (unidade, grupo, natureza, centro) vem
+ * pelo NOME. Nada depende de contagem global nem do que outro spec deixou. Os cadastros que o caso cria saem no fim,
+ * passou ou falhou (`central-compras-fixtures.ts`); os documentos ficam.
  */
 
 const P = "central-compras";
@@ -30,34 +33,27 @@ const ESQUELETO = { barra: 34, quantas: 5 } as const;
 
 /* ═════════════════════════════════════════════ fixtures ═════════════════════════════════════════════ */
 
-type Opcao = { id: string; label: string };
-const codigoTop = (p: string) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-
 async function cadastrarTop(page: Page, codigoBase: "compras.compra" | "compras.pedido" | "vendas.venda", extra: Record<string, unknown> = {}) {
   const prefixo = { "compras.compra": "7", "compras.pedido": "5", "vendas.venda": "8" }[codigoBase];
   const codigo = codigoTop(prefixo);
   const nome = uniq({ "compras.compra": "Compra CC-C", "compras.pedido": "Pedido CC-C", "vendas.venda": "Venda CC-C" }[codigoBase]);
-  const criado = await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo, codigoBase, nome, ...extra });
+  const criado = await criarTop(page, { codigo, codigoBase, nome, ...extra });
   return { id: criado.id, codigo, nome };
 }
 
 async function cenario(page: Page) {
   const empresa = await empresaAtiva(page);
-  const fornecedor = (await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("CC-C forn"), person_type: "legal", is_provider: true })).id;
-  const armazem = (await api<{ id: string }>(page, "POST", "/api/resources/warehouses", {
+  const fornecedor = (await criarCadastro(page, "people", { name: uniq("CC-C forn"), person_type: "legal", is_provider: true })).id;
+  const armazem = (await criarCadastro(page, "warehouses", {
     empresa_id: empresa, initials: `C${Date.now().toString(36).slice(-4).toUpperCase()}`, description: uniq("CC-C arm"), type: "inputs"
   })).id;
-  const naturezas = await api<Opcao[]>(page, "GET", "/api/resources/financial_categories/options?kind=analytic&nature=expense");
-  const centros = await api<Opcao[]>(page, "GET", "/api/resources/cost_centers/options?kind=analytic");
-  const grupos = await api<Opcao[]>(page, "GET", "/api/resources/product_groups/options?kind=analytic");
-  const un = (await api<Opcao[]>(page, "GET", "/api/resources/measurement_units/options")).find((u) => u.label.toUpperCase() === "UN");
-  expect(naturezas.length && centros.length && grupos.length && un, "premissa: natureza, centro, grupo e unidade UN no seed").toBeTruthy();
-  const produto = await api<{ id: string }>(page, "POST", "/api/resources/products", {
-    description: uniq("CC-C produto"), group_id: grupos[0]!.id, measurement_id: un!.id, financial_category_id: naturezas[0]!.id
+  const ref = await referenciasDoSeed(page);
+  const produto = await criarCadastro(page, "products", {
+    description: uniq("CC-C produto"), group_id: ref.grupo.id, measurement_id: ref.unidade.id, financial_category_id: ref.natureza.id
   });
   const topCompra = await cadastrarTop(page, "compras.compra");
   const topPedido = await cadastrarTop(page, "compras.pedido", { destinos: [{ tipoOperacaoId: topCompra.id, ordem: 0, emPartes: true }] });
-  return { empresa, fornecedor, armazem, natureza: naturezas[0]!, centro: centros[0]!, grupo: grupos[0]!.id, unidade: un!.id, produto: produto.id, topCompra, topPedido };
+  return { empresa, fornecedor, armazem, natureza: ref.natureza, centro: ref.centro, grupo: ref.grupo.id, unidade: ref.unidade.id, produto: produto.id, topCompra, topPedido };
 }
 type Cenario = Awaited<ReturnType<typeof cenario>>;
 
@@ -85,8 +81,8 @@ async function pedidoPelaApi(page: Page, c: Cenario) {
 
 /** O lado da VENDA do CC-14: cliente e produto (sem controle de estoque, item sem armazém) CRIADOS aqui. */
 async function ladoDaVenda(page: Page, c: Cenario) {
-  const cliente = (await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("CC-C cliente"), person_type: "legal", is_client: true })).id;
-  const produto = (await api<{ id: string }>(page, "POST", "/api/resources/products", {
+  const cliente = (await criarCadastro(page, "people", { name: uniq("CC-C cliente"), person_type: "legal", is_client: true })).id;
+  const produto = (await criarCadastro(page, "products", {
     description: uniq("CC-C produto venda"), group_id: c.grupo, measurement_id: c.unidade, financial_category_id: c.natureza.id, control_stock: false
   })).id;
   return { cliente, produto };
@@ -426,6 +422,18 @@ test("CC-14a — sem rolagem horizontal: a Central de Compras em todos os estado
 });
 
 /**
+ * A TELA PARADA PARA A FOTO — uma espera de ESTADO, não de relógio: o ponteiro sai de cima de tudo (canto inferior
+ * esquerdo) e a foto só sai quando nenhuma animação FINITA está em curso — a transição de saída do hover (170 ms na
+ * barra), a entrada de uma dica (`::after`). `document.getAnimations()` atualiza o estilo antes de responder, então a
+ * transição que o `mouse.move` dispara já está na lista na primeira leitura. As INFINITAS (o brilho do esqueleto, no
+ * "carregando") não terminam por definição e não contam.
+ */
+async function telaParada(page: Page, alturaDaJanela: number) {
+  await page.mouse.move(5, alturaDaJanela - 5);
+  await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running" || a.effect?.getComputedTiming().iterations === Infinity));
+}
+
+/**
  * PARES VENDA × COMPRA por estado, em 1440×900 e 1280×720: `<cena>__venda__<w>x<h>.png` ao lado de
  * `<cena>__compra__<w>x<h>.png`, na pasta EVIDENCIA_DIR (fora do commit). O MOLDE DO VD-13 (central-vendas-desenho):
  * sem EVIDENCIA_DIR o caso é pulado, com anotação — 52 fotos em até 300 s não são prova de regra e não rodam na suíte
@@ -458,7 +466,7 @@ test("CC-14 — evidência: pares Venda × Compra por estado em 1440×900 e 1280
     for (const l of lados) {
       await percorrerEstados(page, l, async (cena) => {
         await semRolagemHorizontal(page, l, `${cena} (${l.lado}, ${w}×${h})`);
-        await page.mouse.move(5, h - 5); await page.waitForTimeout(450);
+        await telaParada(page, h);
         const arquivo = path.join(pasta!, `${cena}__${l.lado}__${w}x${h}.png`);
         await page.screenshot({ path: arquivo });
         fotos.push(arquivo);

@@ -537,7 +537,7 @@ describe("LC-3 — obrigatório do layout vazio → 422 LAYOUT_CAMPO_OBRIGATORIO
     expect(j(r).error!.code).toBe(ERRO_LAYOUT_CAMPO_OBRIGATORIO);
     expect(detalhes(r)).toEqual([
       { path: "numero_nota", message: mensagemCampoObrigatorio("Nº da NF") },
-      { path: "itens[1].armazem_id", message: mensagemCampoObrigatorio("Armazém") },
+      { path: "itens[1].armazem_id", message: mensagemCampoObrigatorio("Local de estoque") },
     ]);
     expect([await documentosDaOrg(), await situacao(p.id), (await comprasDoPedido(p.id)).length], "nada gravado, pedido aberto e sem compra").toEqual([antes, "aberto", 0]);
 

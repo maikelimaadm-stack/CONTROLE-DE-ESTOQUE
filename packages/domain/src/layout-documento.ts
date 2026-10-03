@@ -10,26 +10,43 @@
  * COMPRAS-03 (decisão 269): o MESMO mecanismo vale para o Pedido de compra e a Compra. O que era "de venda" e passa a
  * ser POR FAMÍLIA: o catálogo (`catalogoDaFamilia`), a chave das linhas no corpo (`chaveDosItensDaFamilia`) e a coluna
  * que aceita padrão de cadastro (`colunasComPadraoRegistro`). Vendas não muda um byte.
+ *
+ * OPERACOES-01 F5b (decisão 282): o MESMO mecanismo vale para as sete espécies do documento de estoque (a Central de
+ * Estoque no motor). O catálogo é o do CORPO de `/api/estoque/<segmento>`, por espécie; o layout do estoque decide
+ * colunas, rótulos, valor padrão e "editável", mas tudo fica nos Dados principais (`motivoZonaProibida`), o cabeçalho
+ * tem a ordem e os campos que a Central de Estoque desenha, e nenhum obrigatório novo nasce dele
+ * (`conferirRegrasDeEstoque`): o servidor do estoque não cobra layout. Destino, origem,
+ * motivo e justificativa NÃO estão no catálogo: os donos são a seção Destino/Fluxo da TOP e a espécie. Vendas e
+ * compras não mudam um byte.
  */
 
 import { TIPOS_OPERACAO, tipoOperacao } from "./tipo-operacao.js";
+import { TABELA_DOCUMENTO_ESTOQUE, TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE, type EspecieEstoque } from "./estoque-documento.js";
 
 /** As variantes de uma tabela, LIDAS do registry (dono único da lista), na ordem do registry. */
 const variantesDaTabela = (tabela: string): string[] => TIPOS_OPERACAO.filter((t) => t.origem.tabela === tabela).map((t) => t.codigo);
 /** As famílias da Central de Vendas: as variantes de `erp.sales_documents` (orçamento, pedido, venda). */
 export const FAMILIAS_COM_LAYOUT_DE_VENDAS: readonly string[] = Object.freeze(variantesDaTabela("erp.sales_documents"));
-/** COMPRAS-03: as famílias da Central de Compras: as variantes de `erp.documentos_compra` (pedido, compra). */
+/** COMPRAS-03: as famílias da Central de Compras: as variantes de `erp.documentos_compra` (pedido, compra e, desde a
+ *  F6a, orçamento). */
 export const FAMILIAS_COM_LAYOUT_DE_COMPRAS: readonly string[] = Object.freeze(variantesDaTabela("erp.documentos_compra"));
+/**
+ * OPERACOES-01 F5b (decisão 282): as famílias da Central de Estoque: as variantes de `erp.documentos_estoque` (entrada,
+ * saída, transferência, ajuste, requisição de material, consumo e devolução de consumo), na ordem do registry.
+ */
+export const FAMILIAS_COM_LAYOUT_DE_ESTOQUE: readonly string[] = Object.freeze(variantesDaTabela(TABELA_DOCUMENTO_ESTOQUE));
 /**
  * Todas as famílias com layout. VENDAS PRIMEIRO, de propósito: no registry as de compras vêm antes das de vendas, e o
  * "Novo" do configurador (e toda lista que pega a primeira família) tem de continuar começando por vendas. Esta é a
- * ordem das listas de Movimento na tela.
+ * ordem das listas de Movimento na tela. O estoque (F5b) entra POR ÚLTIMO, pelo mesmo motivo.
  */
-export const FAMILIAS_COM_LAYOUT: readonly string[] = Object.freeze([...FAMILIAS_COM_LAYOUT_DE_VENDAS, ...FAMILIAS_COM_LAYOUT_DE_COMPRAS]);
+export const FAMILIAS_COM_LAYOUT: readonly string[] = Object.freeze([...FAMILIAS_COM_LAYOUT_DE_VENDAS, ...FAMILIAS_COM_LAYOUT_DE_COMPRAS, ...FAMILIAS_COM_LAYOUT_DE_ESTOQUE]);
 export type FamiliaComLayout = string;
 export function familiaTemLayout(f: string): f is FamiliaComLayout { return FAMILIAS_COM_LAYOUT.includes(f); }
 /** COMPRAS-03: a família é do documento de compra (pedido ou compra)? */
 export function familiaDeCompras(f: string): boolean { return FAMILIAS_COM_LAYOUT_DE_COMPRAS.includes(f); }
+/** OPERACOES-01 F5b: a família é do documento de estoque (uma das sete espécies)? */
+export function familiaDeEstoque(f: string): boolean { return FAMILIAS_COM_LAYOUT_DE_ESTOQUE.includes(f); }
 const familiaDeVendas = (f: string): boolean => FAMILIAS_COM_LAYOUT_DE_VENDAS.includes(f);
 
 export type ParteDoLayout = "cabecalho" | "rodape" | "itens";
@@ -74,7 +91,7 @@ const C = (chave: string, rotulo: string, tipo: TipoDoCampoLayout, extra: Partia
 const R = (aba: string, chave: string, rotulo: string, tipo: TipoDoCampoLayout, extra: Partial<CampoDoCatalogo> = {}): CampoDoCatalogo => ({ chave, rotulo, parte: "rodape", aba, tipo, ...extra });
 const I = (chave: string, rotulo: string, tipo: TipoDoCampoLayout, extra: Partial<CampoDoCatalogo> = {}): CampoDoCatalogo => ({ chave, rotulo, parte: "itens", tipo, ...extra });
 
-/** O catálogo das vendas (orçamento, pedido, venda): exatamente os campos da Central de hoje, na ordem de hoje. */
+/** O catálogo das vendas (orçamento, pedido, venda): exatamente os campos da Central de hoje; nos itens, o Local de estoque antes do produto (decisão 280). */
 export const CATALOGO_VENDAS: readonly CampoDoCatalogo[] = [
   C("client_id", "Cliente", "referencia", { sistema: "sempre", referencia: { recurso: "people", filtro: { is_client: "true" } } }),
   C("empresa_id", "Empresa", "empresa", { sistema: "sempre" }),
@@ -95,9 +112,10 @@ export const CATALOGO_VENDAS: readonly CampoDoCatalogo[] = [
   R("Frete e transporte", "freight_icms", "ICMS frete", "numero", { sempreTemValor: true }),
   R("Fiscal", "is_deductible", "Dedutível", "booleano", { sempreTemValor: true }),
   R("Observações", "note", "Observação", "texto_longo"),
+  // OPERACOES-01 F3b (decisão 280): o Local de estoque vem antes do produto; o Código fica junto do Produto
+  I("warehouse_id", "Local de estoque", "referencia", { referencia: { recurso: "warehouses" } }),
   I("codigo", "Código", "texto", { somenteLeitura: true }),
   I("product_id", "Produto", "referencia", { sistema: "sempre" }),
-  I("warehouse_id", "Armazém", "referencia", { referencia: { recurso: "warehouses" } }),
   I("estoque", "Estoque", "numero", { somenteLeitura: true }),
   I("quantity", "Quantidade", "numero", { sistema: "sempre" }),
   I("unit_price", "Valor unitário", "numero", { sistema: "sempre" }),
@@ -137,8 +155,8 @@ function catalogoDeCompras(daCompra: boolean): readonly CampoDoCatalogo[] {
     C("desconto", "Desconto", "numero", { sempreTemValor: true }),
     C("plano_parcelas", "Parcelas", "plano", { sempreTemValor: true }),
     C("observacao", "Observação", "texto_longo"),
-    // a ordem das colunas é a do ItemsEditor de hoje (os E2E de compras localizam armazém e produto pela posição)
-    I("armazem_id", "Armazém", "referencia", { referencia: { recurso: "warehouses" } }),
+    // o Local de estoque antes do Produto (decisão 280); a ordem é a do ItemsEditor de hoje
+    I("armazem_id", "Local de estoque", "referencia", { referencia: { recurso: "warehouses" } }),
     I("produto_id", "Produto", "referencia", { sistema: "sempre" }),
     I("quantidade", "Quantidade", "numero", { sistema: "sempre" }),
     I("valor_unitario", "Valor unitário", "numero", { sistema: "sempre" }),
@@ -149,27 +167,89 @@ function catalogoDeCompras(daCompra: boolean): readonly CampoDoCatalogo[] {
   ]);
 }
 /**
+ * OPERACOES-01 F6a (decisão 283): o catálogo do ORÇAMENTO DE COMPRA — as chaves do corpo do orçamento (criar e editar).
+ * O orçamento nasce do pedido: empresa e itens (produto e quantidade) vêm dele; o que se digita é o preço de cada item,
+ * a condição, o prazo de entrega (dias), a validade e a observação. Sem frete, outras despesas, desconto, natureza,
+ * centro, transportadora, forma de pagamento, parcelas, Local de estoque, lote e validade de item: o orçamento não mexe
+ * em estoque nem em financeiro, e o layout dele não pode citar o que o corpo não tem.
+ */
+function catalogoDoOrcamento(): readonly CampoDoCatalogo[] {
+  return Object.freeze([
+    C("empresa_id", "Empresa", "empresa", { sistema: "sempre" }),
+    C("fornecedor_id", "Fornecedor", "referencia", { sistema: "sempre", referencia: { recurso: "people", filtro: { is_provider: "true" } } }),
+    C("data_documento", "Data do documento", "data", { sistema: "sempre" }),
+    C("condicao_pagamento_id", "Condição de pagamento", "referencia", { referencia: { recurso: "condicoes_pagamento" } }),
+    C("prazo_entrega_dias", "Prazo de entrega (dias)", "numero"),
+    C("validade_orcamento", "Validade do orçamento", "data"),
+    C("observacao", "Observação", "texto_longo"),
+    I("produto_id", "Produto", "referencia", { sistema: "sempre" }),
+    I("quantidade", "Quantidade", "numero", { sistema: "sempre" }),
+    I("valor_unitario", "Valor unitário", "numero", { sistema: "sempre" })
+  ]);
+}
+/**
  * Pela ESPÉCIE do documento (`erp.documentos_compra.especie`, o valor que o banco persiste), lida do registry pela
  * variante da família — nunca pelo código da família, para o registry continuar sendo o único dono da lista de famílias.
  * Espécie nova no registry sem catálogo aqui: nenhum campo (fail-closed), nunca o catálogo da vizinha.
  */
 const CATALOGO_DE_COMPRAS_POR_ESPECIE: ReadonlyMap<string, readonly CampoDoCatalogo[]> = new Map([
   ["pedido", catalogoDeCompras(false)],
-  ["compra", catalogoDeCompras(true)]
+  ["compra", catalogoDeCompras(true)],
+  ["orcamento", catalogoDoOrcamento()]
 ]);
 
-/** O catálogo da família: vendas → CATALOGO_VENDAS; compras → o da espécie; outra → nenhum (fail-closed). */
+/**
+ * OPERACOES-01 F5b (decisão 282): o catálogo do DOCUMENTO DE ESTOQUE, por espécie — as chaves do corpo de
+ * `POST /api/estoque/<segmento>` (o que a Central de Estoque envia), com a régua da forma da espécie na API
+ * (`conferirFormaDaEspecie`): o ajuste informa a quantidade CONTADA; o custo só na entrada e no ajuste (opcional nos
+ * dois); a requisição reserva pelo produto (sem lote nem validade, e a coluna Estoque mostra o DISPONÍVEL); a validade
+ * só onde o saldo ENTRA (entrada, ajuste e devolução de consumo). O Local de estoque é do CABEÇALHO (o documento de
+ * estoque tem um local só; na transferência, o de origem e o de destino) — é lá que aceita o padrão de cadastro.
+ *
+ * Custo, lote, validade e observação NÃO são "do sistema" e o layout não os torna obrigatórios
+ * (`conferirRegrasDeEstoque`): quem os exige é a regra do produto (lote e validade), a TOP (Exigir observação) ou
+ * ninguém (o custo vazio da entrada é o custo médio). Destino, origem, motivo e justificativa ficam FORA do catálogo:
+ * os donos são a seção Destino/Fluxo da TOP e a espécie.
+ */
+function catalogoDeEstoque(especie: EspecieEstoque): readonly CampoDoCatalogo[] {
+  const se = (condicao: boolean, c: CampoDoCatalogo): CampoDoCatalogo[] => (condicao ? [c] : []);
+  const transferencia = especie === "transferencia";
+  const ajuste = especie === "ajuste";
+  const requisicao = especie === "requisicao";
+  return Object.freeze([
+    C("empresa_id", "Empresa", "empresa", { sistema: "sempre" }),
+    C("data_documento", "Data do documento", "data", { sistema: "sempre" }),
+    C("armazem_id", transferencia ? "Local de estoque de origem" : "Local de estoque", "referencia", { sistema: "sempre", referencia: { recurso: "warehouses" } }),
+    ...se(transferencia, C("armazem_destino_id", "Local de estoque de destino", "referencia", { sistema: "sempre", referencia: { recurso: "warehouses" } })),
+    C("observacao", "Observação", "texto_longo"),
+    I("codigo", "Código", "texto", { somenteLeitura: true }),
+    I("produto_id", "Produto", "referencia", { sistema: "sempre" }),
+    I("estoque", requisicao ? "Disponível" : "Estoque", "numero", { somenteLeitura: true }),
+    ajuste ? I("quantidade_contada", "Quantidade contada", "numero", { sistema: "sempre" }) : I("quantidade", "Quantidade", "numero", { sistema: "sempre" }),
+    ...se(especie === "entrada" || ajuste, I("custo_unitario", "Custo unitário", "numero")),
+    ...se(!requisicao, I("lote", "Lote", "texto")),
+    ...se(especie === "entrada" || ajuste || especie === "devolucao_consumo", I("validade", "Validade", "data"))
+  ]);
+}
+/** Pela ESPÉCIE persistida (`erp.documentos_estoque.especie`), perguntada ao registry pela família — como nas compras. */
+const CATALOGO_DE_ESTOQUE_POR_ESPECIE: ReadonlyMap<string, readonly CampoDoCatalogo[]> = new Map(
+  TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE.map((e) => [e, catalogoDeEstoque(e)] as const)
+);
+
+/** O catálogo da família: vendas → CATALOGO_VENDAS; compras e estoque → o da espécie; outra → nenhum (fail-closed). */
 export function catalogoDaFamilia(familia: string): readonly CampoDoCatalogo[] {
   if (familiaDeVendas(familia)) return CATALOGO_VENDAS;
   if (familiaDeCompras(familia)) return CATALOGO_DE_COMPRAS_POR_ESPECIE.get(tipoOperacao(familia)?.origem.valor ?? "") ?? [];
+  if (familiaDeEstoque(familia)) return CATALOGO_DE_ESTOQUE_POR_ESPECIE.get(tipoOperacao(familia)?.origem.valor ?? "") ?? [];
   return [];
 }
 
 /**
- * COMPRAS-03: a chave das LINHAS no corpo do documento — "items" em vendas (o corpo de sales), "itens" em compras. É
- * também a dona do caminho do erro do item (`items[i].x` × `itens[i].x`), que a tela usa para apontar o 422 no campo.
+ * COMPRAS-03: a chave das LINHAS no corpo do documento — "items" em vendas (o corpo de sales), "itens" em compras e
+ * (F5b) no estoque. É também a dona do caminho do erro do item (`items[i].x` × `itens[i].x`), que a tela usa para
+ * apontar o 422 no campo.
  */
-export function chaveDosItensDaFamilia(familia: string): "items" | "itens" { return familiaDeCompras(familia) ? "itens" : "items"; }
+export function chaveDosItensDaFamilia(familia: string): "items" | "itens" { return familiaDeCompras(familia) || familiaDeEstoque(familia) ? "itens" : "items"; }
 
 /* ─────────────── ESTRUTURA (versaoSchema 1) ─────────────── */
 /**
@@ -234,7 +314,10 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
   const conferirCampo = (x: CampoDoLayout, caminho: string, zona: ZonaDoLayout) => {
     const c = doDocumento.get(x.campo);
     if (!c) { e.push({ caminho: `${caminho}.campo`, mensagem: `Campo "${x.campo}" não existe nesta parte do documento.` }); return; }
-    if (motivoZonaProibida(familia, x.campo, zona) !== null) { e.push({ caminho: `${caminho}.campo`, mensagem: mensagemSoNoRodape(c.rotulo) }); return; }
+    // A mensagem é a de `motivoZonaProibida` (dono único da regra de zona): em vendas e compras, a de sempre
+    // (`mensagemSoNoRodape`); no estoque (F5b), `mensagemSoNosDadosPrincipais` (a Observação, a mensagem própria dela).
+    const motivoDaZona = motivoZonaProibida(familia, x.campo, zona);
+    if (motivoDaZona !== null) { e.push({ caminho: `${caminho}.campo`, mensagem: motivoDaZona }); return; }
     if (zona.tipo === "aba" && x.grupo !== undefined) e.push({ caminho: `${caminho}.grupo`, mensagem: MENSAGEM_GRUPO_SO_NO_CABECALHO });
     if (vistosDoc.has(x.campo)) { e.push({ caminho: `${caminho}.campo`, mensagem: `Campo "${c.rotulo}" repetido no layout.` }); return; }
     vistosDoc.add(x.campo);
@@ -258,8 +341,9 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
     if (c.somenteLeitura && x.obrigatorio) e.push({ caminho, mensagem: `"${c.rotulo}" é só leitura: não pode ser obrigatória.` });
     if (c.sempreTemValor && x.obrigatorio) e.push({ caminho: `${caminho}.obrigatorio`, mensagem: mensagemSempreTemValor(c.rotulo) });
     // VENDAS-A3-1b: valor padrão de coluna só na coluna Armazém e só do tipo registro (UUID); COMPRAS-03: a da família
-    // COMPRAS-03_R1: em compras, lote e validade têm a recusa própria (mais clara) — uma mensagem só por campo
-    const temRecusaPropria = familiaDeCompras(familia) && (x.campo === "lote" || x.campo === "validade");
+    // COMPRAS-03_R1: em compras (e, desde a F5b, no estoque), lote e validade têm a recusa própria (mais clara) — uma
+    // mensagem só por campo
+    const temRecusaPropria = (familiaDeCompras(familia) || familiaDeEstoque(familia)) && (x.campo === "lote" || x.campo === "validade");
     if (x.valorPadrao && !temRecusaPropria && !(colunasComPadrao.includes(x.campo) && x.valorPadrao.tipo === "registro" && padraoCompativel(c, x.valorPadrao)))
       e.push({ caminho: `${caminho}.valorPadrao`, mensagem: `Valor padrão incompatível com "${c.rotulo}".` });
   });
@@ -283,7 +367,73 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
     else if (!x.obrigatorio) e.push({ caminho: caminhoDe(x.campo) + ".obrigatorio", mensagem: `"${c.rotulo}" é obrigatório do sistema: não pode ficar opcional.` });
   }
   if (familiaDeCompras(familia)) conferirRegrasDeCompras(estrutura, noLayout, caminhoDe, e);
+  if (familiaDeEstoque(familia)) conferirRegrasDeEstoque(familia, estrutura, e);
   return e;
+}
+
+/**
+ * Lote e Validade nos itens (compras e estoque): o layout só decide se aparecem, rótulo e ordem; quem os exige é a
+ * regra do produto, item a item — nem obrigatório pelo layout, nem valor padrão. As MESMAS mensagens nas duas.
+ */
+function conferirLoteEValidadeDosItens(estrutura: EstruturaLayout, e: ErroDoLayout[]): void {
+  estrutura.itens.forEach((x, i) => {
+    if (x.campo !== "lote" && x.campo !== "validade") return;
+    const rotulo = x.campo === "lote" ? "Lote" : "Validade";
+    if (x.obrigatorio) e.push({ caminho: `itens[${i}].obrigatorio`, mensagem: `"${rotulo}" é exigido pela regra do produto: o layout não o torna obrigatório.` });
+    if (x.valorPadrao) e.push({ caminho: `itens[${i}].valorPadrao`, mensagem: `"${rotulo}" é informado item a item: não aceita valor padrão.` });
+  });
+}
+
+/** OPERACOES-01 F5b: o custo do documento de estoque nunca é obrigatório pelo layout (vazio na entrada = custo médio). */
+const MENSAGEM_CUSTO_OPCIONAL_NO_ESTOQUE = "\"Custo unitário\" é opcional no documento de estoque: o layout não o torna obrigatório.";
+/** OPERACOES-01 F5b: a observação obrigatória do estoque é da TOP (Exigir observação), nunca do layout. */
+const MENSAGEM_OBSERVACAO_E_DA_TOP_NO_ESTOQUE = "\"Observação\" obrigatória é regra da operação (Exigir observação, na aba Geral da TOP): o layout não a torna obrigatória.";
+/**
+ * OPERACOES-01 F5b (I-2 da revisão da fase): a Central de Estoque SEMPRE mostra a Observação (na aba Observações), e
+ * quem a exige é a TOP. Tirá-la do layout seria uma escolha que a tela não cumpre: recusada.
+ */
+export const MENSAGEM_OBSERVACAO_NAO_SAI_DO_ESTOQUE = "\"Observação\" não sai do layout neste movimento: a Central de Estoque sempre a mostra (quem a exige é a operação, em Exigir observação, na aba Geral da TOP).";
+/**
+ * OPERACOES-01 F5b (I-2 da revisão da fase): a Central de Estoque desenha o cabeçalho numa ordem FIXA — a do catálogo da
+ * espécie (Empresa, Data do documento, o Local de estoque — na transferência, o de origem e o de destino — e a
+ * Observação). Reordenar no layout seria uma escolha que a tela não cumpre: recusada, com a ordem que vale.
+ */
+export const mensagemOrdemDoCabecalhoDoEstoque = (rotulos: readonly string[]) =>
+  `A ordem do cabeçalho é fixa neste movimento (a da Central de Estoque): ${rotulos.join(", ")}.`;
+
+/**
+ * OPERACOES-01 F5b (decisão 282): o layout do ESTOQUE não cria obrigatório — o servidor do estoque não cobra layout, e
+ * uma exigência só da tela seria contornável. Só nas famílias de estoque (vendas e compras não passam por aqui). Cada
+ * recusa aponta o campo:
+ *  - Lote e Validade: as mesmas recusas das compras (`conferirLoteEValidadeDosItens`);
+ *  - Custo unitário obrigatório: é opcional nas duas espécies que o têm (entrada e ajuste; vazio na entrada, a
+ *    confirmação grava o custo médio);
+ *  - Observação obrigatória: quem a exige é a TOP (Exigir observação, na aba Geral), que o servidor cobra.
+ * (O campo do documento fora dos Dados principais já caiu na regra de zona, `motivoZonaProibida`.)
+ *
+ * E o que a Central de Estoque NÃO cumpriria (I-2 da revisão da fase — gravar o que a tela ignora é descarte
+ * silencioso): o layout do estoque decide rótulo, valor padrão e "editável" do cabeçalho, nunca a ORDEM nem a PRESENÇA.
+ *  - Observação fora do layout (em parte nenhuma dele): recusada — a Central sempre a mostra;
+ *  - a ordem dos campos do cabeçalho diferente da do catálogo: recusada, uma vez, com a ordem que vale. Campo
+ *    repetido ou desconhecido não conta aqui (já tem a recusa própria).
+ */
+function conferirRegrasDeEstoque(familia: string, estrutura: EstruturaLayout, e: ErroDoLayout[]): void {
+  conferirLoteEValidadeDosItens(estrutura, e);
+  estrutura.itens.forEach((x, i) => {
+    if (x.campo === "custo_unitario" && x.obrigatorio) e.push({ caminho: `itens[${i}].obrigatorio`, mensagem: MENSAGEM_CUSTO_OPCIONAL_NO_ESTOQUE });
+  });
+  estrutura.cabecalho.forEach((x, i) => {
+    if (x.campo === "observacao" && x.obrigatorio) e.push({ caminho: `cabecalho[${i}].obrigatorio`, mensagem: MENSAGEM_OBSERVACAO_E_DA_TOP_NO_ESTOQUE });
+  });
+  const doCabecalho = catalogoDaFamilia(familia).filter((c) => c.parte === "cabecalho");
+  const emAlgumLugar = [...estrutura.cabecalho, ...estrutura.rodape.flatMap((a) => a.campos)].some((x) => x.campo === "observacao");
+  if (doCabecalho.some((c) => c.chave === "observacao") && !emAlgumLugar) e.push({ caminho: "cabecalho", mensagem: MENSAGEM_OBSERVACAO_NAO_SAI_DO_ESTOQUE });
+  const doCatalogo = new Set(doCabecalho.map((c) => c.chave));
+  const naEstrutura = estrutura.cabecalho.map((x) => x.campo).filter((c, i, todos) => doCatalogo.has(c) && todos.indexOf(c) === i);
+  const naOrdemDoCatalogo = doCabecalho.map((c) => c.chave).filter((c) => naEstrutura.includes(c));
+  if (naEstrutura.some((c, i) => c !== naOrdemDoCatalogo[i])) {
+    e.push({ caminho: "cabecalho", mensagem: mensagemOrdemDoCabecalhoDoEstoque(doCabecalho.map((c) => c.rotulo)) });
+  }
 }
 
 /**
@@ -295,12 +445,7 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
  *    (padrão e não editável) só com Natureza no layout e editável.
  */
 function conferirRegrasDeCompras(estrutura: EstruturaLayout, noLayout: ReadonlyMap<string, CampoDoLayout>, caminhoDe: (campo: string) => string, e: ErroDoLayout[]): void {
-  estrutura.itens.forEach((x, i) => {
-    if (x.campo !== "lote" && x.campo !== "validade") return;
-    const rotulo = x.campo === "lote" ? "Lote" : "Validade";
-    if (x.obrigatorio) e.push({ caminho: `itens[${i}].obrigatorio`, mensagem: `"${rotulo}" é exigido pela regra do produto: o layout não o torna obrigatório.` });
-    if (x.valorPadrao) e.push({ caminho: `itens[${i}].valorPadrao`, mensagem: `"${rotulo}" é informado item a item: não aceita valor padrão.` });
-  });
+  conferirLoteEValidadeDosItens(estrutura, e);
   const fixo = (x: CampoDoLayout) => Boolean(x.valorPadrao) && !x.editavel;
   const serie = noLayout.get("serie_nota"); const numero = noLayout.get("numero_nota");
   if (serie && !numero) e.push({ caminho: `${caminhoDe("serie_nota")}.campo`, mensagem: `"Série" só entra no layout com "Número da nota".` });
@@ -332,9 +477,9 @@ const ehLinha = (v: unknown): v is Readonly<Record<string, unknown>> => typeof v
 /**
  * Obrigatórios do layout que o documento deixa vazios → [{ caminho, rotulo }]. `documento` tem as chaves do corpo
  * da API (o valor que o documento TERÁ depois de gravar) e as linhas em `documento[chaveDosItensDaFamilia(familia)]`
- * ("items" em vendas, "itens" em compras). Caminho do item: `<chave>[i].<campo>` — em vendas `items[i].<campo>`, como
- * sempre foi. Campo com `exige` que a API não declara (`capacidades`) não é cobrado. Linha que não é objeto conta como
- * linha vazia (cobra tudo): falhar fechado, nunca pular a linha.
+ * ("items" em vendas, "itens" em compras e no estoque). Caminho do item: `<chave>[i].<campo>` — em vendas
+ * `items[i].<campo>`, como sempre foi. Campo com `exige` que a API não declara (`capacidades`) não é cobrado. Linha que
+ * não é objeto conta como linha vazia (cobra tudo): falhar fechado, nunca pular a linha.
  */
 export function camposObrigatoriosFaltando(familia: string, estrutura: EstruturaLayout, documento: Record<string, unknown>, capacidades: { classificacao?: boolean; condicao?: boolean } = {}): { caminho: string; rotulo: string }[] {
   // VENDAS-A3-1c: campo do documento achado pela CHAVE em qualquer zona (cabeçalho ou aba); coluna só nos itens
@@ -377,10 +522,17 @@ export const mensagemCampoObrigatorio = (rotulo: string) => `O campo '${rotulo}'
 export const COLUNAS_COM_PADRAO_REGISTRO: readonly string[] = Object.freeze(["warehouse_id"]);
 const COLUNAS_COM_PADRAO_REGISTRO_DE_COMPRAS: readonly string[] = Object.freeze(["armazem_id"]);
 const NENHUMA_COLUNA: readonly string[] = Object.freeze([]);
-/** COMPRAS-03: as colunas de item que aceitam padrão registro NA FAMÍLIA — o Armazém de cada corpo; outra família, nenhuma. */
+/** OPERACOES-01 F6a: todas as `colunas` existem nos itens do catálogo da família? */
+const colunasDoCatalogo = (familia: string, colunas: readonly string[]): boolean =>
+  colunas.every((col) => catalogoDaFamilia(familia).some((c) => c.parte === "itens" && c.chave === col));
+/**
+ * COMPRAS-03: as colunas de item que aceitam padrão registro NA FAMÍLIA — o Armazém de cada corpo; outra família, nenhuma.
+ * OPERACOES-01 F5b: no estoque, nenhuma — o Local de estoque é do CABEÇALHO, que aceita o padrão por ser `referencia`.
+ */
 export function colunasComPadraoRegistro(familia: string): readonly string[] {
   if (familiaDeVendas(familia)) return COLUNAS_COM_PADRAO_REGISTRO;
-  if (familiaDeCompras(familia)) return COLUNAS_COM_PADRAO_REGISTRO_DE_COMPRAS;
+  // OPERACOES-01 F6a: só a espécie cujo catálogo TEM a coluna (o orçamento de compra não tem Local de estoque: nenhuma).
+  if (familiaDeCompras(familia)) return colunasDoCatalogo(familia, COLUNAS_COM_PADRAO_REGISTRO_DE_COMPRAS) ? COLUNAS_COM_PADRAO_REGISTRO_DE_COMPRAS : NENHUMA_COLUNA;
   return NENHUMA_COLUNA;
 }
 /** Chave do padrão de cadastro nos mapas da API: o campo (cabeçalho/rodapé) ou "itens.<coluna>". */
@@ -458,6 +610,15 @@ export const CAMPOS_SO_NO_RODAPE: readonly string[] = Object.freeze(["installmen
 /** Onde o layout do sistema põe em "Dados adicionais" (a Central de antes da fatia: o Proprietário). */
 export const CAMPOS_ADICIONAIS_DO_SISTEMA: readonly string[] = Object.freeze(["proprietary_id"]);
 export const mensagemSoNoRodape = (rotulo: string) => `"${rotulo}" só pode ficar numa aba do rodapé.`;
+/** OPERACOES-01 F5b: no documento de estoque, todo campo do documento fica nos Dados principais. */
+export const mensagemSoNosDadosPrincipais = (rotulo: string) => `"${rotulo}" fica nos Dados principais neste movimento.`;
+/**
+ * OPERACOES-01 F5b (I-2 da revisão da fase): a Observação do estoque fica nos Dados principais DO LAYOUT, e a Central de
+ * Estoque a mostra na aba Observações do painel (como a Central de Compras faz com a dela). A recusa de zona diz as duas
+ * coisas, para a mensagem não contradizer a tela.
+ */
+export const MENSAGEM_OBSERVACAO_NOS_DADOS_PRINCIPAIS_DO_ESTOQUE =
+  "\"Observação\" fica nos Dados principais do layout neste movimento: a Central de Estoque a mostra na aba Observações.";
 export const MENSAGEM_GRUPO_SO_NO_CABECALHO = "Grupo só vale nos campos do cabeçalho.";
 export const MENSAGEM_OBRIGATORIO_NAO_SAI = "Campo obrigatório do sistema não pode sair do layout.";
 /** Zona do documento onde um campo pode ser solto. */
@@ -472,6 +633,11 @@ export function motivoZonaProibida(familia: string, chave: string, zona: ZonaDoL
   const col = cat.find((c) => c.chave === chave && c.parte === "itens");
   if (zona.tipo === "itens") return col ? null : "Só colunas dos itens podem ficar na grade de itens.";
   if (!doc) return "Colunas dos itens só podem ficar na grade de itens.";
+  // OPERACOES-01 F5b: no estoque, todo campo do documento fica nos Dados principais (sem Dados adicionais nem abas); a
+  // Observação, com a mensagem que diz onde a Central a mostra.
+  if (familiaDeEstoque(familia) && (zona.tipo === "adicionais" || zona.tipo === "aba")) {
+    return chave === "observacao" ? MENSAGEM_OBSERVACAO_NOS_DADOS_PRINCIPAIS_DO_ESTOQUE : mensagemSoNosDadosPrincipais(doc.rotulo);
+  }
   if ((zona.tipo === "principal" || zona.tipo === "adicionais") && CAMPOS_SO_NO_RODAPE.includes(chave)) return mensagemSoNoRodape(doc.rotulo);
   return null;
 }

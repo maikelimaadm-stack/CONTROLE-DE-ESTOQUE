@@ -6,6 +6,7 @@ import {
   VERSAO_SCHEMA_CONFIGURACAO_TOP,
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
+  VERSOES_SCHEMA_CONFIGURACAO_TOP,
   configuracaoNeutraTop,
   configuracaoNeutraTopV2,
   configuracaoNeutraTopV3,
@@ -476,10 +477,13 @@ describe("TR-D2 legado — formatos 1 e 2 lidos exatamente como antes", () => {
     expect(recusasDe(c)).toEqual([{ motivo: "campo_desconhecido", caminho: "geral.exigeTransportadora" }]);
   });
 
-  // TOP-CONFIG-08 (decisão 277): o 4 virou formato conhecido; o primeiro formato futuro agora é o 5.
-  it("TR-D2 formato 5 continua recusado como schema_nao_suportado", () => {
+  // TOP-CONFIG-08 (decisão 277): o 4 virou formato conhecido. OPERACOES-01 F4 (decisão 281): o 5 também; o primeiro
+  // formato futuro agora é o 6 — recusado do mesmo jeito, antes de ler campo.
+  it("TR-D2 formato 6 (o futuro) continua recusado como schema_nao_suportado", () => {
+    // A premissa: o 6 é mesmo o primeiro formato que este código não conhece.
+    expect(Math.max(...VERSOES_SCHEMA_CONFIGURACAO_TOP) + 1).toBe(6);
     const c = sujar(configuracaoNeutraTopV3());
-    c.versaoSchema = 5;
+    c.versaoSchema = 6;
     expect(recusasDe(c)).toEqual([{ motivo: "schema_nao_suportado", caminho: "versaoSchema" }]);
   });
 });

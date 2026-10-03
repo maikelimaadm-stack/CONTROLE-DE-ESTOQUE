@@ -13,7 +13,9 @@ const COLUMN_DOMAIN: Record<string, EnumDomain> = {
   settlement_kind: "settlement_kind", category_type: "bank_category_type", document_type: "document_type", origin: "origin",
   manifest_status: "manifest_status", launch_status: "launch_status", request_type: "request_type", priority: "priority", decision: "decision",
   movement_type: "animal_movement_type", handling_type: "handling_type", reproductive_status: "reproductive_status", reproductive_stage: "reproductive_stage",
-  result: "diagnosis_result", mating_type: "mating_type", trigger_type: "trigger_type", equipment_type: "equipment_type", recurrence_type: "recurrence_type"
+  result: "diagnosis_result", mating_type: "mating_type", trigger_type: "trigger_type", equipment_type: "equipment_type", recurrence_type: "recurrence_type",
+  // OPERACOES-01 F3a: só erp.stock_writeoffs.reason (0003) tem CHECK com esse nome — os 13 motivos passam a ser conferidos
+  reason: "writeoff_reason"
 };
 
 describe("rótulos PT-BR de enums (docs/UI-STANDARD.md)", () => {

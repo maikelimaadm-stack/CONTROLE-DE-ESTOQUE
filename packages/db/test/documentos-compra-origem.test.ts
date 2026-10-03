@@ -15,6 +15,11 @@ import type { DemoOrg } from "../src/seed.js";
  *   · o gatilho da origem nos itens (mesmo pedido, mesmo produto, soma ligada em compras NÃO canceladas ≤
  *     quantidade do item do pedido; compra com origem liga TODO item; compra sem origem não liga nenhum).
  *
+ * Desde a 0044 (OPERACOES-01 F6a, decisão 283) as funções são outras — a conferência e a transição v3, a guarda da
+ * origem v2 —, e as promessas da 0037 continuam valendo: este arquivo as prova sobre elas, num banco com TODAS as
+ * migrations. O que a 0044 acrescenta (pedido finalizado, aprovação para orçamento, orçamento de compra) está em
+ * compras-f6a-0044.test.ts.
+ *
  * Duas conexões: `db` (superusuário, monta o cenário e lê o catálogo) e `app` (papel da aplicação, SEM bypass de
  * RLS, com as GUCs da transação — o caminho que a API percorre). As ligações são gravadas pelo `app`: é a rede
  * que pega o caminho que tenha pulado a conferência da API.
@@ -168,14 +173,21 @@ describe("premissas e catálogo", () => {
     expect(t.map((x) => x.codigo_base)).toEqual(["compras.compra", "compras.pedido"]);
   });
 
-  it("a 0037 é a 37ª migration do ledger; depois dela, a 0038 (COMPRAS-03), a 0039 (EDITAR-01), a 0040 (ESTOQUE-01) e a 0041 (TOP-CONFIG-08)", async () => {
+  it("a 0037 é a 37ª migration do ledger; depois dela, a 0038 (COMPRAS-03), a 0039 (EDITAR-01), a 0040 (ESTOQUE-01), a 0041 (TOP-CONFIG-08), a 0042 (OPERACOES-01 F8), a 0043 (OPERACOES-01 F5a), a 0044 (OPERACOES-01 F6a), a 0045 (OPERACOES-01 F9), a 0046 (OPERACOES-01 F10), a 0047 (OPERACOES-01 F7) e a 0049 (MAPA-01)", async () => {
     // A posição da 0037 continua sendo a 37ª; a contagem total acompanha a ordem do repositório (a 0038 alarga
     // o CHECK de família dos layouts e fixa o search_path destas funções — layouts-documento-compras.test.ts; a 0039
     // dá versão ao documento de venda — editar-01-versao.test.ts; a 0040 cria o documento de estoque —
-    // estoque-01-0040.test.ts; a 0041 cria as aprovações e a guarda de aprovação da compra — top-config-08-0041.test.ts).
+    // estoque-01-0040.test.ts; a 0041 cria as aprovações e a guarda de aprovação da compra — top-config-08-0041.test.ts;
+    // a 0042 cria a Central Financeira — operacoes-01-0042.test.ts; a 0043 dá a movimentação interna ao documento de
+    // estoque e troca uma mensagem do item de compra — operacoes-01-0043.test.ts; a 0044 troca as funções da 0037 pelas
+    // v3/v2 — pedido finalizado e orçamento de compra — compras-f6a-0044.test.ts; a 0045 liga o financeiro à TOP e cria o
+    // imóvel rural do LCDPR — operacoes-01-0045.test.ts; a 0046 dá a TOP aos módulos com produto —
+    // operacoes-01-f10-modulos-top.test.ts; a 0047 dá à compra a entrada
+    // de nota por XML e a guarda dos dados fiscais — operacoes-01-0047.test.ts; a 0049 cria o Mapa de
+    // Manejo — MAPA-01, #91; a maior por NOME, embora em produção tenha sido aplicada antes das 0042–0047).
     const r = (await db.query<{ ate: number; n: number; ultima: string }>(
       "select count(*) filter (where name <= '0037_receber_pedido_de_compra.sql')::int ate, count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
-    expect(r).toEqual({ ate: 37, n: 41, ultima: "0041_regras_gerais_e_aprovacao_da_top.sql" });
+    expect(r).toEqual({ ate: 37, n: 49, ultima: "0049_mapa_de_manejo.sql" });
   });
 
   it("colunas novas: tipo e nulidade", async () => {
@@ -206,33 +218,42 @@ describe("premissas e catálogo", () => {
     ]);
   });
 
-  it("gatilhos: os da 0036 com os MESMOS nomes, agora nas funções v2; o da origem sem WHEN; as funções da 0036 foram removidas", async () => {
+  it("gatilhos: os da 0036 com os MESMOS nomes, nas funções da 0044 (v3); o da origem sem WHEN (v2); as funções da 0036 e da 0037 foram removidas", async () => {
     const t = (await db.query<{ tgname: string; def: string }>(
       `select tgname, pg_get_triggerdef(oid) def from pg_trigger
         where tgrelid in ('erp.documentos_compra'::regclass, 'erp.documentos_compra_itens'::regclass) and not tgisinternal and tgenabled='O' order by tgname`)).rows;
-    // A 0041 (TOP-CONFIG-08) acrescenta a guarda da aprovação, só na entrada em confirmado; os outros não mudam.
+    // A 0041 (TOP-CONFIG-08) acrescenta a guarda da aprovação, só na entrada em confirmado. A 0044 (OPERACOES-01 F6a)
+    // troca a conferência, a transição e a guarda da origem pelas funções novas (MESMOS nomes de gatilho, mesma ordem de
+    // disparo) e acrescenta a guarda da finalização do pedido e a dos itens do orçamento. A 0047 (OPERACOES-01 F7)
+    // acrescenta a guarda dos dados fiscais (chave de acesso cruzada com a nota antiga).
     expect(t).toEqual([
       { tgname: "trg_documentos_compra_aprovacao", def: "CREATE TRIGGER trg_documentos_compra_aprovacao BEFORE UPDATE OF situacao ON erp.documentos_compra FOR EACH ROW WHEN (((old.situacao = 'aberto'::text) AND (new.situacao = 'confirmado'::text))) EXECUTE FUNCTION erp.documentos_compra_aprovacao_guarda()" },
       { tgname: "trg_documentos_compra_audit", def: "CREATE TRIGGER trg_documentos_compra_audit AFTER INSERT OR DELETE OR UPDATE ON erp.documentos_compra FOR EACH ROW EXECUTE FUNCTION erp.audit_row()" },
-      { tgname: "trg_documentos_compra_conferir", def: "CREATE TRIGGER trg_documentos_compra_conferir BEFORE INSERT OR UPDATE ON erp.documentos_compra FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_conferir_v2()" },
+      { tgname: "trg_documentos_compra_conferir", def: "CREATE TRIGGER trg_documentos_compra_conferir BEFORE INSERT OR UPDATE ON erp.documentos_compra FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_conferir_v3()" },
+      { tgname: "trg_documentos_compra_finalizacao", def: "CREATE TRIGGER trg_documentos_compra_finalizacao BEFORE UPDATE OF situacao ON erp.documentos_compra FOR EACH ROW WHEN (((old.situacao = 'aberto'::text) AND (new.situacao = 'finalizado'::text) AND (new.especie = 'pedido'::text))) EXECUTE FUNCTION erp.documentos_compra_finalizacao_guarda()" },
       { tgname: "trg_documentos_compra_itens_documento_aberto", def: "CREATE TRIGGER trg_documentos_compra_itens_documento_aberto BEFORE INSERT OR DELETE OR UPDATE ON erp.documentos_compra_itens FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_itens_documento_aberto()" },
-      { tgname: "trg_documentos_compra_itens_origem_guarda", def: "CREATE TRIGGER trg_documentos_compra_itens_origem_guarda BEFORE INSERT OR UPDATE OF origem_item_id, quantidade, produto_id ON erp.documentos_compra_itens FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_item_origem_guarda()" },
-      { tgname: "trg_documentos_compra_transicao", def: "CREATE TRIGGER trg_documentos_compra_transicao BEFORE UPDATE OF situacao ON erp.documentos_compra FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_transicao_v2()" }
+      { tgname: "trg_documentos_compra_itens_orcamento_guarda", def: "CREATE TRIGGER trg_documentos_compra_itens_orcamento_guarda BEFORE INSERT OR UPDATE OF item_pedido_orcado_id, quantidade, produto_id, lote, validade ON erp.documentos_compra_itens FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_item_orcamento_guarda()" },
+      { tgname: "trg_documentos_compra_itens_origem_guarda", def: "CREATE TRIGGER trg_documentos_compra_itens_origem_guarda BEFORE INSERT OR UPDATE OF origem_item_id, quantidade, produto_id ON erp.documentos_compra_itens FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_item_origem_guarda_v2()" },
+      { tgname: "trg_documentos_compra_nota", def: "CREATE TRIGGER trg_documentos_compra_nota BEFORE INSERT OR UPDATE OF chave_acesso, uf_nota, tipo_documento_fiscal, valor_ipi, valor_icms_st, seguro, tipo_titulo_id, classificacao_gasto, rateio_tipo, parcelas_nota, dfe_id, solicitacao_compra_id ON erp.documentos_compra FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_nota_guarda()" },
+      { tgname: "trg_documentos_compra_transicao", def: "CREATE TRIGGER trg_documentos_compra_transicao BEFORE UPDATE OF situacao ON erp.documentos_compra FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_transicao_v3()" }
     ]);
-    const velhas = (await db.query("select to_regprocedure('erp.documentos_compra_conferir()') a, to_regprocedure('erp.documentos_compra_transicao()') b")).rows[0];
-    expect(velhas).toEqual({ a: null, b: null });
+    const velhas = (await db.query(
+      `select to_regprocedure('erp.documentos_compra_conferir()') a, to_regprocedure('erp.documentos_compra_transicao()') b,
+              to_regprocedure('erp.documentos_compra_conferir_v2()') c, to_regprocedure('erp.documentos_compra_transicao_v2()') d,
+              to_regprocedure('erp.documentos_compra_item_origem_guarda()') e`)).rows[0];
+    expect(velhas).toEqual({ a: null, b: null, c: null, d: null, e: null });
   });
 
-  it("funções novas: SECURITY DEFINER com search_path fixo, voláteis, e EXECUTE só do dono (o erp_app não chama)", async () => {
+  it("funções do recebimento (as da 0044, que substituíram as da 0037): SECURITY DEFINER com search_path fixo, voláteis, e EXECUTE só do dono (o erp_app não chama)", async () => {
     const f = (await db.query<{ proname: string; prosecdef: boolean; provolatile: string; sp: boolean; app: boolean }>(
       `select proname, prosecdef, provolatile, exists (select 1 from unnest(coalesce(proconfig,'{}'::text[])) c where c like 'search_path=%') sp,
               has_function_privilege('erp_app', oid, 'execute') app
-         from pg_proc where oid in ('erp.documentos_compra_conferir_v2()'::regprocedure, 'erp.documentos_compra_transicao_v2()'::regprocedure,
-                                    'erp.documentos_compra_item_origem_guarda()'::regprocedure) order by proname`)).rows;
+         from pg_proc where oid in ('erp.documentos_compra_conferir_v3()'::regprocedure, 'erp.documentos_compra_transicao_v3()'::regprocedure,
+                                    'erp.documentos_compra_item_origem_guarda_v2()'::regprocedure) order by proname`)).rows;
     expect(f).toEqual([
-      { proname: "documentos_compra_conferir_v2", prosecdef: true, provolatile: "v", sp: true, app: false },
-      { proname: "documentos_compra_item_origem_guarda", prosecdef: true, provolatile: "v", sp: true, app: false },
-      { proname: "documentos_compra_transicao_v2", prosecdef: true, provolatile: "v", sp: true, app: false }
+      { proname: "documentos_compra_conferir_v3", prosecdef: true, provolatile: "v", sp: true, app: false },
+      { proname: "documentos_compra_item_origem_guarda_v2", prosecdef: true, provolatile: "v", sp: true, app: false },
+      { proname: "documentos_compra_transicao_v3", prosecdef: true, provolatile: "v", sp: true, app: false }
     ]);
   });
 });
@@ -481,7 +502,7 @@ describe("encerramento do saldo: só na passagem aberto → convertido", () => {
     expect(l).toEqual({ situacao: "convertido", por: demo.adminUserId, motivo: "Saldo cancelado", em: true });
   });
   it("gravar o encerramento sem a transição, ou mexer nele depois, é recusado", async () => {
-    const SO_NA_PASSAGEM = "CONFLICT: O saldo do pedido de compra só se encerra na passagem de aberto para convertido.";
+    const SO_NA_PASSAGEM = "CONFLICT: O saldo do pedido de compra só se encerra na passagem de aberto ou finalizado para convertido.";
     const set = (id: string, sql: string, p: unknown[] = []) => db.query(`update erp.documentos_compra set ${sql} where id=$1`, [id, ...p]);
     const TODOS = "saldo_encerrado_em=now(), saldo_encerrado_por=$2, saldo_encerrado_motivo='x'";
     const aberto = await pedido([{ qtd: "1" }]);

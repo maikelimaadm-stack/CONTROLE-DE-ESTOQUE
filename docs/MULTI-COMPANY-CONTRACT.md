@@ -144,6 +144,10 @@ await exigirEmpresaDeLancamento(ctx, body.empresa_id);   // fora do escopo do m�
 await exigirEmpresaVisivel(ctx, registro.empresa_id);    // registro carregado fora do escopo → NOT_FOUND
 ```
 
+A coluna de empresa vai sempre amarrada à tabela (o alias, `t`, ou `t.empresa_id`): solta (`empresa_id`), dentro do
+`exists` do escopo ela seria a coluna de `erp.membro_empresas`, e o predicado viraria "o membro tem alguma empresa no
+módulo". Os helpers e os marcadores recusam a coluna solta com erro, em qualquer contexto (decisão 288, parte F12).
+
 Quando a porta não tem permissão fixa (a permissão depende do registro: tipo de movimentação, direção do
 título, entidade do ID Global), o módulo é resolvido a partir da permissão REAL, e só então o escopo é
 aplicado:
@@ -291,6 +295,24 @@ cliente), `bank_accounts.view` **e** `bank_movements.view` reconferidas dentro d
 explícito nas duas tabelas, sem SQL dinâmico e com `execute` revogado de `public`. Ela devolve movimento da
 ORGANIZAÇÃO — e só dela. A listagem normal de movimentos (`/financial/bank-movements`) continua recortada por
 empresa: o que mudou é o AGREGADO DE CONTA, não a leitura de lançamento.
+
+A Central Financeira (OPERACOES-01 F8, migration 0042, decisão 285) acrescenta a porta do EXTRATO com saldo real ×
+saldo conciliado: `erp.extrato_conta_organizacao(contas, de, até)`, com as mesmas cinco propriedades (organização da
+GUC do servidor, `bank_accounts.view` **e** `bank_movements.view` reconferidas dentro, predicado de tenant nas duas
+tabelas, `search_path` fixo, sem SQL dinâmico, `execute` revogado de `public` e concedido só a `erp_app`) e as colunas
+de conciliação (`reconciled_at`, `ofx_transaction_id`) e de transferência (`tipo_transferencia`). Diferente da porta
+da 0015, ela é **recortada pelo escopo de empresa de quem pergunta no módulo financeiro** (decisão do Maike de 03/10):
+a capacidade de organização abre a CONTA, não os lançamentos das empresas fora do escopo (CAPACIDADE ∧ ESCOPO). O
+recorte usa as funções da RLS de `erp.bank_movements` (`erp.escopo_empresa_total`, `erp.empresas_do_membro`) com o
+módulo `financeiro` FIXO dentro da função. Escopo total (proprietário ou `todas` no financeiro): todos os movimentos
+da conta, inclusive os sem empresa, e o saldo da conta inteira. Parcial: só os movimentos das empresas nomeadas — o
+sem empresa fica de fora —, e o saldo é a soma deles, SEM o saldo inicial, que não tem empresa e não se rateia; as
+respostas dizem qual dos dois (`escopo_saldo`). Nada de outra empresa sai da função: nem linha, texto, documento,
+empresa ou valor, nem dentro de total, contagem, acumulado ou página. As rotas `/api/financeiro/contas`,
+`/api/financeiro/extrato` e o fluxo de caixa da conta leem por ela; o fluxo **por empresa** lê `erp.bank_movements`
+sob a RLS e não tem saldo. A porta da 0015 e as rotas `/api/financial/*` que a usam continuam com o contrato anterior
+até decisão própria. As transações OFX da Conciliação também: `erp.ofx_transactions` é da CONTA, sem empresa, e a
+importação aparece inteira a quem tem `ofx_imports.view`; os movimentos ligados a ela seguem o escopo.
 
 Não existe rateio inventado do saldo inicial: seria trocar um vazamento por um número financeiramente falso.
 No painel financeiro, quem não tem a capacidade de organização recebe o bloco de bancos vazio e sinalizado

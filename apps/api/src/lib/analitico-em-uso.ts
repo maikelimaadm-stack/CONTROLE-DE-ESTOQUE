@@ -47,19 +47,40 @@ export const REFERENCIAS_DE_USO: Readonly<Record<string, readonly ReferenciaDeUs
     r("bank_movement_apportionments", "financial_category_id"),
     r("budget_planning_values", "financial_category_id"),
     r("documentos_compra", "categoria_financeira_id"),
+    // OPERACOES-01 F7 (0047): a natureza do item (rateio por produto) e a da linha do rateio por valor.
+    r("documentos_compra_itens", "categoria_financeira_id"),
+    r("documentos_compra_rateio", "categoria_financeira_id"),
+    // OPERACOES-01 F8 (0042): as naturezas padrão da baixa e a natureza do desconto gravada em cada baixa.
+    r("financeiro_naturezas_padrao", "acrescimo_pago_id"),
+    r("financeiro_naturezas_padrao", "acrescimo_recebido_id"),
+    r("financeiro_naturezas_padrao", "desconto_concedido_id"),
+    r("financeiro_naturezas_padrao", "desconto_obtido_id"),
+    r("financeiro_naturezas_padrao", "juros_pagos_id"),
+    r("financeiro_naturezas_padrao", "juros_recebidos_id"),
+    r("financeiro_naturezas_padrao", "multa_paga_id"),
+    r("financeiro_naturezas_padrao", "multa_recebida_id"),
+    r("financeiro_naturezas_padrao", "tarifa_bancaria_id"),
     r("input_entry_items", "financial_category_id"),
     r("invoice_apportionments", "financial_category_id"),
     r("invoice_items", "financial_category_id"),
     r("products", "financial_category_id", true),
     r("provider_launch_profile_items", "financial_category_id"),
     r("sales_documents", "categoria_financeira_id", true),
-    r("title_apportionments", "financial_category_id")
+    // OPERACOES-01 F9 (0045): a natureza padrão da versão da TOP (histórico imutável da versão: toda linha conta).
+    r("tipos_operacao_versao_financeiro", "natureza_id"),
+    r("title_apportionments", "financial_category_id"),
+    r("title_settlements", "natureza_desconto_id")
   ],
   cost_centers: [
     r("apportionment_category_items", "cost_center_id"),
     r("bank_movement_apportionments", "cost_center_id"),
     r("devolution_items", "cost_center_id"),
     r("documentos_compra", "centro_custo_id"),
+    // OPERACOES-01 F7 (0047): o centro do item (rateio por produto) e o da linha do rateio por valor.
+    r("documentos_compra_itens", "centro_custo_id"),
+    r("documentos_compra_rateio", "centro_custo_id"),
+    // OPERACOES-01 F5a (0043): o destino gravado no cabeçalho do documento de estoque.
+    r("documentos_estoque", "centro_custo_id"),
     r("empresa_cost_centers", "cost_center_id"),
     r("employee_profiles", "cost_center_id"),
     r("equipment_cost_centers", "cost_center_id"),
@@ -75,11 +96,15 @@ export const REFERENCIAS_DE_USO: Readonly<Record<string, readonly ReferenciaDeUs
     r("service_orders", "cost_center_id", true),
     r("stock_movements", "cost_center_id"),
     r("stock_writeoffs", "cost_center_id", true),
+    // OPERACOES-01 F9 (0045): o centro padrão da versão da TOP (histórico imutável da versão: toda linha conta).
+    r("tipos_operacao_versao_financeiro", "centro_custo_id"),
     r("title_apportionments", "cost_center_id"),
     r("warehouse_transfer_items", "cost_center_id")
   ],
   chart_accounts: [
     r("bank_movement_apportionments", "chart_account_id"),
+    // OPERACOES-01 F7 (0047): a conta contábil da linha do rateio por valor da compra.
+    r("documentos_compra_rateio", "conta_contabil_id"),
     r("invoice_apportionments", "chart_account_id"),
     r("journal_entries", "credit_account_id"),
     r("journal_entries", "debit_account_id"),

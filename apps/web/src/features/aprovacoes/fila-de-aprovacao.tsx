@@ -7,21 +7,23 @@ import { api, ApiError, newIdem, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { COPY, enumLabel } from "@/lib/copy";
 import { brl, cn, dateBR } from "@/lib/utils";
-import { Button, Card, Dialog, EmptyState, ErrorState, Field, LoadingState, StatusBadge, Textarea, safeErrorMessage } from "@/components/ui";
+import { Button, Card, EmptyState, ErrorState, LoadingState, StatusBadge, safeErrorMessage } from "@/components/ui";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { colunaIdGlobalTabela } from "@/features/listing/id-global-coluna";
 import {
-  CONFIGURACAO_DAS_AREAS, LIMITE_DO_TEXTO_DA_DECISAO, MSG_APROVACOES_INDISPONIVEIS, MSG_DOCUMENTO_MUDOU_NA_FILA, MSG_FILA_VAZIA,
-  chaveDaFila, corpoDaDecisao, filaAusente, mensagemDaAprovacao, portaDaDecisaoAusente, valorDaSituacaoNaFila,
-  type AreaDeAprovacao, type Decisao, type LinhaDaFila, type MensagemDaFila, type PaginaDaFila, type RespostaDaDecisao, type TomDaMensagem
+  CONFIGURACAO_DAS_AREAS, MSG_APROVACOES_INDISPONIVEIS, MSG_DOCUMENTO_MUDOU_NA_FILA, MSG_FILA_VAZIA,
+  chaveAoAbrirDecisao, chaveDaFila, chaveDepoisDaDecisao, corpoDaDecisao, filaAusente, mensagemDaAprovacao, portaDaDecisaoAusente, valorDaSituacaoNaFila,
+  type AreaDeAprovacao, type ChaveDaDecisao, type Decisao, type LinhaDaFila, type MensagemDaFila, type PaginaDaFila, type RespostaDaDecisao, type TomDaMensagem
 } from "./areas-de-aprovacao";
+import { DialogoDaDecisao } from "./decisao-de-aprovacao";
 
 /**
  * UMA ABA DO MÓDULO APROVAÇÕES — A FILA DE UMA ÁREA (TOP-CONFIG-08, decisão 277). SEM DESENHO NOVO.
  *
  * O que está aqui é montagem de peças que já existem: a grade do modelo base (`DataTable`, paginação do SERVIDOR,
  * como a lista de Animais), o `Dialog` oficial com `Field`/`Textarea` (o mesmo do "Cancelar documento" da Central de
- * Estoque) e o `StatusBadge` central. Nenhum estilo novo: os avisos usam as mesmas classes dos avisos de hoje.
+ * Estoque; desde a OPERACOES-01 F2 ele mora em `decisao-de-aprovacao.tsx`, que a consulta do documento também usa) e
+ * o `StatusBadge` central. Nenhum estilo novo: os avisos usam as mesmas classes dos avisos de hoje.
  *
  * O SERVIDOR É A AUTORIDADE DE PONTA A PONTA:
  *   · a fila (`GET /api/aprovacoes/<área>`) já vem recortada — documentos abertos que exigem aprovação e não têm
@@ -53,21 +55,24 @@ export function FilaDeAprovacao({ area }: { area: AreaDeAprovacao }) {
   const [texto, setTexto] = React.useState("");
   const [erroDoDialogo, setErroDoDialogo] = React.useState<string | null>(null);
   const [mensagem, setMensagem] = React.useState<MensagemDaFila | null>(null);
-  // Uma chave por decisão aberta: o reenvio do MESMO clique devolve o corpo gravado e nunca decide duas vezes; uma
-  // decisão nova (ou a mesma, depois de um erro) leva chave nova.
-  const chave = React.useRef(newIdem());
+  // A chave da decisão (`chaveAoAbrirDecisao`/`chaveDepoisDaDecisao`, em areas-de-aprovacao): a MESMA numa nova
+  // tentativa depois de erro de rede ou 5xx (pode ter gravado: o servidor devolve o que gravou, nunca decide duas vezes);
+  // renovada depois do sucesso e de uma recusa 4xx. Reaberta para a mesma linha e a mesma decisão, é a guardada.
+  const chave = React.useRef<ChaveDaDecisao | null>(null);
+  const chaveDaTentativa = (linha: LinhaDaFila, d: Decisao) => (chave.current = chaveAoAbrirDecisao(chave.current, linha.id, d, newIdem));
 
   const abrirDecisao = (linha: LinhaDaFila, d: Decisao) => {
-    chave.current = newIdem(); setTexto(""); setErroDoDialogo(null); setDecisao({ linha, decisao: d }); setAberto(true);
+    chaveDaTentativa(linha, d); setTexto(""); setErroDoDialogo(null); setDecisao({ linha, decisao: d }); setAberto(true);
   };
   const decidir = useMutation<RespostaDaDecisao, Error, { linha: LinhaDaFila; decisao: Decisao; texto: string }>({
     mutationFn: async ({ linha, decisao: d, texto: t }) => {
-      const doc = cfg.documento(linha);
+      const doc = cfg.documento(linha.especie);
       // Sem documento endereçável não há botão; isto só protege contra a linha que mudou de espécie entre cliques.
       if (!doc) throw new Error(COPY.erroGenerico);
-      return api<RespostaDaDecisao>(cfg.portaDaDecisao(linha, doc, d), { method: "POST", body: corpoDaDecisao(area, linha, d, t), idempotencyKey: chave.current });
+      return api<RespostaDaDecisao>(cfg.portaDaDecisao(linha, doc, d), { method: "POST", body: corpoDaDecisao(area, linha.version, d, t), idempotencyKey: chaveDaTentativa(linha, d).chave });
     },
     onSuccess: (resposta, { decisao: d }) => {
+      if (chave.current) chave.current = chaveDepoisDaDecisao(chave.current, null, newIdem);
       setAberto(false);
       // Reprovar não tem mensagem própria: a linha volta da fila como "Reprovado", e isso é a resposta.
       setMensagem(d === "aprovar" ? mensagemDaAprovacao(resposta) : null);
@@ -76,7 +81,7 @@ export function FilaDeAprovacao({ area }: { area: AreaDeAprovacao }) {
       void qc.invalidateQueries();
     },
     onError: (e) => {
-      chave.current = newIdem();
+      if (chave.current) chave.current = chaveDepoisDaDecisao(chave.current, e, newIdem);
       // Corpo recusado (motivo vazio, texto longo demais): o diálogo continua aberto, com o motivo do servidor.
       if (e instanceof ApiError && e.status === 422) { setErroDoDialogo(e.message); return; }
       setAberto(false);
@@ -104,7 +109,7 @@ export function FilaDeAprovacao({ area }: { area: AreaDeAprovacao }) {
   if (q.error && !q.data) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
 
   const acoes = (l: LinhaDaFila) => {
-    const doc = cfg.documento(l);
+    const doc = cfg.documento(l.especie);
     if (!doc) return null;
     const podeAbrir = can(`${doc.perm}.view`);
     const podeDecidir = can(`${doc.perm}.approve`);
@@ -144,8 +149,6 @@ export function FilaDeAprovacao({ area }: { area: AreaDeAprovacao }) {
   ];
 
   const linhas = q.data?.items ?? [];
-  const reprovar = decisao?.decisao === "reprovar";
-  const podeEnviar = !reprovar || texto.trim().length > 0;
   return <div data-testid="aprovacoes-lista" data-area={area} data-total={total} className="flex min-h-0 flex-1 flex-col gap-2">
     {mensagem && <p data-testid="aprovacao-mensagem" data-tom={mensagem.tom} role="status" className={cn("rounded border px-3 py-2 text-[12.5px]", CLASSES_DO_AVISO[mensagem.tom])}>{mensagem.texto}</p>}
     {total === 0 && linhas.length === 0
@@ -153,21 +156,9 @@ export function FilaDeAprovacao({ area }: { area: AreaDeAprovacao }) {
       : <DataTable<LinhaDaFila> columns={colunas} rows={linhas} total={total} page={page} pageSize={pageSize} loading={q.isFetching}
         onPage={setPage} onPageSize={(n) => { setPageSize(n); setPage(1); }} rowKey={(l) => l.id} emptyText={MSG_FILA_VAZIA} />}
 
-    <Dialog open={aberto} onOpenChange={(o) => { if (!o) setAberto(false); }} size="sm" testId="aprovacao-dialogo" preventClose={decidir.isPending}
-      title={decisao ? `${reprovar ? "Reprovar" : "Aprovar"} o documento ${decisao.linha.codigo}?` : ""}
-      footer={<>
-        <Button variant="outline" onClick={() => setAberto(false)} disabled={decidir.isPending}>{COPY.fechar}</Button>
-        <Button variant={reprovar ? "danger" : "default"} data-testid="aprovacao-confirmar" loading={decidir.isPending} disabled={decidir.isPending || !podeEnviar}
-          onClick={() => { if (decisao) decidir.mutate({ linha: decisao.linha, decisao: decisao.decisao, texto }); }}>{reprovar ? "Reprovar" : "Aprovar"}</Button>
-      </>}>
-      {reprovar
-        ? <Field label="Motivo" required span={12} error={erroDoDialogo ?? undefined}>
-          <Textarea data-testid="aprovacao-motivo" maxLength={LIMITE_DO_TEXTO_DA_DECISAO} value={texto} onChange={(e) => setTexto(e.target.value)} />
-        </Field>
-        : <Field label="Observação (opcional)" span={12} error={erroDoDialogo ?? undefined}>
-          <Textarea data-testid="aprovacao-observacao" maxLength={LIMITE_DO_TEXTO_DA_DECISAO} value={texto} onChange={(e) => setTexto(e.target.value)} />
-        </Field>}
-    </Dialog>
+    <DialogoDaDecisao aberto={aberto} onFechar={() => setAberto(false)} decisao={decisao?.decisao ?? null} codigo={decisao?.linha.codigo ?? ""}
+      texto={texto} onTexto={setTexto} erro={erroDoDialogo} ocupado={decidir.isPending}
+      onEnviar={() => { if (decisao) decidir.mutate({ linha: decisao.linha, decisao: decisao.decisao, texto }); }} />
   </div>;
 }
 

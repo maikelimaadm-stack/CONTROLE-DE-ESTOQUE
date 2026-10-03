@@ -103,7 +103,14 @@ export const ErrorCodes = {
    */
   APROVACAO_PENDENTE: "APROVACAO_PENDENTE",
   APROVACAO_REPROVADA: "APROVACAO_REPROVADA",
-  APROVACAO_NAO_EXIGIDA: "APROVACAO_NAO_EXIGIDA"
+  APROVACAO_NAO_EXIGIDA: "APROVACAO_NAO_EXIGIDA",
+  /**
+   * OPERACOES-01 F6a (decisão 283): a compra recebida de um pedido diverge dele (preço unitário líquido ou quantidade
+   * contra o saldo) além da tolerância da seção "Divergência com o pedido" da TOP da compra, no modo "Bloquear". Os
+   * itens acima da tolerância vêm em `details.itens`. Só a API levanta (a regra é configurável na TOP; o banco não a
+   * conhece).
+   */
+  DIVERGENCIA_COM_O_PEDIDO: "DIVERGENCIA_COM_O_PEDIDO"
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
@@ -161,7 +168,10 @@ export const errorHttpStatus: Record<ErrorCode, number> = {
   // dela) que não permite a ação agora — o mesmo critério de `INVALID_STATUS_TRANSITION`.
   APROVACAO_PENDENTE: 409,
   APROVACAO_REPROVADA: 409,
-  APROVACAO_NAO_EXIGIDA: 409
+  APROVACAO_NAO_EXIGIDA: 409,
+  // 409: o pedido é válido; é o ESTADO dos documentos (a compra diverge do pedido) que conflita com a regra da TOP —
+  // o mesmo critério de `APROVACAO_PENDENTE`.
+  DIVERGENCIA_COM_O_PEDIDO: 409
 };
 
 export class DomainError extends Error {

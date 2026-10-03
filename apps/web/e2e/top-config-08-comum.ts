@@ -1,8 +1,9 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import {
-  configuracaoNeutraTopV3, configuracaoNeutraTopV4,
-  type ConfiguracaoTipoOperacao, type ConfiguracaoTipoOperacaoV3, type ConfiguracaoTipoOperacaoV4,
-  type ModoConfirmacao, type PoliticaAlteracao, type PoliticaAprovacao, type PoliticaDocumentoSemItens
+  configuracaoNeutraTopV3, configuracaoNeutraTopV4, configuracaoNeutraTopV5,
+  type CatalogoTop, type ConfiguracaoTipoOperacao, type ConfiguracaoTipoOperacaoV3, type ConfiguracaoTipoOperacaoV4,
+  type ConfiguracaoTipoOperacaoV5, type ModoConfirmacao, type PoliticaAlteracao, type PoliticaAprovacao,
+  type PoliticaDocumentoSemItens
 } from "@agro/domain";
 import { api, uniq } from "./helpers";
 
@@ -15,10 +16,10 @@ import { api, uniq } from "./helpers";
  * aberta: aqui só se IMPORTA dele.
  *
  * ┌─ A CONFIGURAÇÃO NASCE DO DOMÍNIO, NUNCA DE UM LITERAL DAQUI ────────────────────────────────────────┐
- * │ `cfg4`/`cfg3` partem do NEUTRO do domínio (`configuracaoNeutraTopV4`/`V3`, um dono só) e mexem SÓ nas │
- * │ quatro regras gerais. Um literal copiado aqui ficaria velho na primeira chave nova do formato, e o   │
- * │ POST estrito recusaria (422) uma fixture que ninguém lembraria de atualizar — ou, pior, aceitaria    │
- * │ uma forma que a tela nunca grava.                                                                    │
+ * │ `cfg5`/`cfg4`/`cfg3` partem do NEUTRO do domínio (`configuracaoNeutraTopV5`/`V4`/`V3`, um dono só) e │
+ * │ mexem SÓ nas quatro regras gerais. Um literal copiado aqui ficaria velho na primeira chave nova do   │
+ * │ formato (o 5 cresce uma seção por fase), e o POST estrito recusaria (422) uma fixture que ninguém    │
+ * │ lembraria de atualizar — ou, pior, aceitaria uma forma que a tela nunca grava.                       │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * Tudo nasce pela API administrativa, no próprio teste: a produção não tem TOP no formato 4 (nenhuma), e o seed
@@ -37,8 +38,8 @@ export interface RegrasGeraisE2E {
   valorMinimo?: string;
 }
 
-/** As regras gerais aplicadas sobre uma configuração com as chaves do formato 3 (o 3 sai 3, o 4 sai 4). */
-function comRegras<C extends ConfiguracaoTipoOperacaoV3 | ConfiguracaoTipoOperacaoV4>(c: C, r: RegrasGeraisE2E): C {
+/** As regras gerais aplicadas sobre uma configuração com as chaves do formato 3 (o 3 sai 3, o 4 sai 4, o 5 sai 5). */
+function comRegras<C extends ConfiguracaoTipoOperacaoV3 | ConfiguracaoTipoOperacaoV4 | ConfiguracaoTipoOperacaoV5>(c: C, r: RegrasGeraisE2E): C {
   const politica = r.aprovacao ?? c.aprovacao.politica;
   return {
     ...c,
@@ -51,6 +52,16 @@ function comRegras<C extends ConfiguracaoTipoOperacaoV3 | ConfiguracaoTipoOperac
     // O mesmo acoplamento do domínio: `valorMinimo` só existe na política por valor (o leitor estrito recusa o resto).
     aprovacao: { ...c.aprovacao, politica, valorMinimo: politica === "por_valor" ? (r.valorMinimo ?? null) : null }
   };
+}
+
+/**
+ * Configuração no FORMATO 5 (OPERACOES-01 F4, decisão 281) — o formato 4 mais as seções de extensão das fases
+ * seguintes, cada uma no neutro dela (nenhuma na F4). É o que o editor grava contra um servidor que declara o bloco
+ * `formato5`. Mesmo molde de `cfg4`: o neutro do domínio, as quatro regras e o `ajustar` para o resto.
+ */
+export function cfg5(r: RegrasGeraisE2E = {}, ajustar?: (c: ConfiguracaoTipoOperacaoV5) => ConfiguracaoTipoOperacaoV5): ConfiguracaoTipoOperacaoV5 {
+  const c = comRegras(configuracaoNeutraTopV5(), r);
+  return ajustar ? ajustar(c) : c;
 }
 
 /**
@@ -199,4 +210,50 @@ export async function abrirHistoricoDaTop(page: Page, codigo: string): Promise<L
   const versoes = page.getByTestId("versoes-tipo-operacao");
   await expect(versoes).toBeVisible();
   return versoes;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// O formato 5 e o assistente (OPERACOES-01 F4, decisão 281)
+// ---------------------------------------------------------------------------------------------------
+
+/** O bloco `formato5` das capacidades, só no que os E2E conferem. Ausente = servidor anterior à F4. */
+export interface CapacidadesFormato5E2E {
+  formato5?: { suportado: boolean; versaoSchema: number; secoes: string[]; leituraDoDetalhe: string; catalogo: CatalogoTop };
+}
+
+/**
+ * O catálogo por tipo QUE O SERVIDOR PUBLICOU (`GET /api/admin/tipos-operacao/capabilities`, bloco `formato5`) — a
+ * premissa de todo teste do editor do 5: sem o bloco, a tela é o editor do 4, e nada do que o teste afirmar sobre o
+ * assistente ou sobre as abas do tipo valeria. Lido, nunca importado do domínio: é contra o publicado que a tela se mede.
+ */
+export async function catalogoPublicadoE2E(page: Page): Promise<CatalogoTop> {
+  const c = await api<CapacidadesFormato5E2E>(page, "GET", "/api/admin/tipos-operacao/capabilities");
+  expect(c.formato5?.suportado, "premissa: este servidor declara o formato 5").toBe(true);
+  expect(c.formato5?.versaoSchema, "premissa: no formato 5").toBe(5);
+  return c.formato5!.catalogo;
+}
+
+/** `vendas.venda` → `vendas\.venda`, para a família entrar numa expressão regular sem o ponto virar curinga. */
+const literalNaRegex = (texto: string) => texto.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * O PASSO 1 DA CRIAÇÃO (o assistente): escolhe o tipo de movimento da família `familia` e espera o passo 2.
+ *
+ * A criação pela tela começa pelo TIPO DE MOVIMENTO quando o servidor declara o formato 5: o diálogo só tem o
+ * assistente (sem código, sem abas), e o tipo é escolhido pelo botão cujo `data-familia` é a família — o atributo que o
+ * catálogo publicado dá a cada tipo, e não o texto do botão (dois tipos têm o rótulo "Pedido": o de venda e o de compra).
+ * O botão tem de ser EXATAMENTE um: zero quer dizer que o tipo não tem tela no catálogo (ou a família está errada), e o
+ * clique mediria outra coisa. Escolhido, o passo 2 abre na Identificação com o movimento mostrado, não escolhível.
+ *
+ * As capacidades chegam depois de o diálogo montar; até lá a criação mostra o editor de hoje. O `toBeVisible` do
+ * assistente espera por elas — e é a premissa de que o editor é o do 5.
+ */
+export async function escolherTipoNoAssistente(forma: Locator, familia: string): Promise<void> {
+  await expect(forma.getByTestId("top-assistente"), "a criação começa pelo passo 1 (o tipo de movimento)").toBeVisible();
+  const tipo = forma.locator(`[data-testid^="top-assistente-tipo-"][data-familia="${familia}"]`);
+  await expect(tipo, `o passo 1 oferece exatamente um tipo de movimento da família ${familia}`).toHaveCount(1);
+  await tipo.click();
+  await expect(forma.getByTestId("top-assistente"), "escolhido o tipo, o passo 1 sai de cena").toHaveCount(0);
+  await expect(forma.getByTestId("top-campo-familia"), "e o passo 2 mostra o movimento escolhido")
+    .toHaveValue(new RegExp(`\\(${literalNaRegex(familia)}\\)$`));
 }

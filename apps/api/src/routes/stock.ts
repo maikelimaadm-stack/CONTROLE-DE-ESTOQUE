@@ -1,19 +1,22 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, qty, isISODate } from "@agro/shared";
-import { batchCost, tipoEntidadeDaTabela } from "@agro/domain";
+import { batchCost, tipoEntidadeDaTabela, itensDaProducaoDeRacao, SEGMENTO_DO_MODULO_COM_TOP, lerNotaFiscalEletronica, type NotaFiscalLida } from "@agro/domain";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
-import { consultaEscopada, empresaScope, empresaScopePar, exigirEmpresaDeLancamento, exigirEmpresaVisivel, empresaPermitida, empresaScopeSql, scopedById, type ServiceCtx } from "../lib/context.js";
-import { empresasDisponiveis } from "../lib/empresa.js";
+import { consultaEscopada, empresaScope, empresaScopePar, exigirEmpresaDeLancamento, exigirEmpresaVisivel, empresaPermitida, empresaScopeSql, scopedById, moduloAtivo, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock, currentBalance, lineTotal, chaveDoLote, controleDeLote } from "../services/stock-core.js";
 import { saldoComReservaEmLote, reservadoEmLote, chaveDoPar } from "../services/reserva-estoque.js";
+import { MENSAGEM_SALDO_INICIAL_DUPLICADO, existeSaldoInicialVivo, travarChaveDoSaldoInicial } from "../lib/estoque-saldo-inicial.js";
 import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema } from "../services/financial-core.js";
 import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
 import { SEQUENCIA_WAREHOUSE_TRANSFER } from "../lib/sequencia-warehouse-transfer.js";
-import { compraComANota } from "./compras-confirmacao.js";
+import { compraComANota, conferirChaveDeAcessoLivre } from "./compras-confirmacao.js";
+import { resolverDestinatario, guardarXmlDaNota, documentoNormalizado, SQL_DOCUMENTO_NORMALIZADO, LIMITE_XML_GUARDADO_BYTES } from "../lib/nota-fiscal-xml.js";
+import { joinDaTopDoModulo, tiposDeOperacaoDoModulo, topDoLancamentoDoModulo } from "../lib/top-do-modulo.js";
+import { formaCanonica } from "../lib/referencias-do-modulo.js";
 
 const dec = z.union([z.number(), z.string()]).transform((v) => String(v));
 const date = z.string().refine(isISODate, "Data inválida");
@@ -69,6 +72,38 @@ async function getDoc(ctx: ServiceCtx, table: string, id: string, itemsTable: st
   return { ...(d.rows[0] as Record<string, unknown>), items: items.rows, movements: movements.rows };
 }
 
+// ─────────────── OPERACOES-01 F7 (decisão 284): a DF-e com o XML ───────────────
+
+const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MSG_DFE_EM_OUTRA_EMPRESA = "Esta DF-e já está registrada em outra empresa.";
+const MSG_DFE_SEM_EMPRESA = "A DF-e não tem empresa: registre-a de novo na fila de DF-e, com a empresa ou com o XML, antes de aprovar.";
+const recusaNoCampo = (path: string, message: string) => validation(message, [{ path, message }]);
+const semZerosAEsquerda = (v: string) => v.trim().replace(/^0+(?=\d)/, "");
+const espacosUnicos = (v: string) => v.trim().replace(/\s+/g, " ");
+const mesmoValor = (a: string, b: string) => { try { return D(a).eq(D(b)); } catch { return false; } };
+
+/**
+ * A NOTA DO XML DA DF-e: lida pelo servidor (as recusas da leitura em 422 no `xml`, uma por detalhe) e conferida contra
+ * o que o corpo ENVIOU — o que não veio é o da nota. Tipo de documento: só NF-e.
+ */
+function notaDoXmlDaDfe(xml: string, d: { document_type: string; access_key?: string | null; number?: string | null; series?: string | null; issuer_document?: string | null;
+  issuer_name?: string | null; emission_date?: string | null; total?: string | null }): NotaFiscalLida {
+  const leitura = lerNotaFiscalEletronica(xml);
+  if (!leitura.ok) {
+    throw validation(leitura.recusas[0]!.mensagem, leitura.recusas.map((r) => ({ path: "xml", message: r.mensagem, motivo: r.motivo, caminho: r.caminho })));
+  }
+  const nota = leitura.nota;
+  if (d.document_type !== "nfe") throw recusaNoCampo("document_type", "O XML é de uma NF-e: o tipo do documento é nfe.");
+  if (d.access_key && d.access_key !== nota.chave) throw recusaNoCampo("access_key", "A chave de acesso não é a da nota do XML.");
+  if (d.number && semZerosAEsquerda(d.number) !== semZerosAEsquerda(nota.numero)) throw recusaNoCampo("number", "O número não é o da nota do XML.");
+  if (d.series && semZerosAEsquerda(d.series) !== semZerosAEsquerda(nota.serie)) throw recusaNoCampo("series", "A série não é a da nota do XML.");
+  if (d.issuer_document && documentoNormalizado(d.issuer_document) !== documentoNormalizado(nota.emitente.documento)) throw recusaNoCampo("issuer_document", "O CNPJ/CPF do emitente não é o da nota do XML.");
+  if (d.issuer_name && espacosUnicos(d.issuer_name) !== espacosUnicos(nota.emitente.nome)) throw recusaNoCampo("issuer_name", "O nome do emitente não é o da nota do XML.");
+  if (d.emission_date && d.emission_date !== nota.dataEmissao) throw recusaNoCampo("emission_date", "A data de emissão não é a da nota do XML.");
+  if (d.total && !mesmoValor(d.total, nota.totais.nota)) throw recusaNoCampo("total", "O total não é o da nota do XML.");
+  return nota;
+}
+
 export default async function stockRoutes(app: FastifyInstance) {
   // ---------- Saldo de estoque ----------
   app.get("/stock/balances", async (req) => runService(app, req, "stocks.view", async (ctx) => {
@@ -82,7 +117,9 @@ export default async function stockRoutes(app: FastifyInstance) {
     if (f.expiring_days) { params.push(Number(f.expiring_days)); where.push(`sb.expiration_date <= current_date + ($${params.length}::int)`); }
     const total = await ctx.tx.query<{ n: string; qty: string; value: string }>(`select count(*) n, coalesce(sum(sb.quantity),0) qty, coalesce(sum(sb.total_value),0) value from erp.stock_balances sb join erp.products p on p.id=sb.product_id join erp.warehouses w on w.id=sb.warehouse_id where ${where.join(" and ")}`, params);
     const sort = ["product_name", "quantity", "total_value", "warehouse_name", "expiration_date"].includes(q.sort ?? "") ? q.sort : "product_name";
-    const r = await ctx.tx.query<Record<string, unknown> & { warehouse_id: string; product_id: string }>(`select sb.warehouse_id, sb.product_id, sb.provider_lot, sb.quantity, sb.average_cost, sb.total_value, sb.expiration_date, sb.updated_at, p.code as product_code, p.description as product_name, p.ncm_code, p.min_stock, mu.symbol as unit, w.description as warehouse_name, w.initials as warehouse_initials, f.name as empresa_name from erp.stock_balances sb join erp.products p on p.id=sb.product_id left join erp.measurement_units mu on mu.id=p.measurement_id join erp.warehouses w on w.id=sb.warehouse_id join erp.empresas f on f.id=w.empresa_id where ${where.join(" and ")} order by ${sort} ${q.dir ?? "asc"} limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
+    // `empresa_id` (OPERACOES-01 F5a, aditivo): a empresa do local de estoque da linha — o ajuste aberto a partir do
+    // saldo nasce na empresa certa, em vez de cair na empresa padrão.
+    const r = await ctx.tx.query<Record<string, unknown> & { warehouse_id: string; product_id: string }>(`select sb.warehouse_id, sb.product_id, sb.provider_lot, sb.quantity, sb.average_cost, sb.total_value, sb.expiration_date, sb.updated_at, p.code as product_code, p.description as product_name, p.ncm_code, p.min_stock, mu.symbol as unit, w.description as warehouse_name, w.initials as warehouse_initials, w.empresa_id, f.name as empresa_name from erp.stock_balances sb join erp.products p on p.id=sb.product_id left join erp.measurement_units mu on mu.id=p.measurement_id join erp.warehouses w on w.id=sb.warehouse_id join erp.empresas f on f.id=w.empresa_id where ${where.join(" and ")} order by ${sort} ${q.dir ?? "asc"} limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
     // RESERVA DE ESTOQUE (TOP-CONFIG-07, decisão 266): `reservado` e `disponivel` são do PAR (armazém, produto), não
     // do lote — disponível = físico de TODOS os lotes do par − reservado; num produto com lote, as linhas dele
     // repetem o mesmo valor. Os pares distintos da PÁGINA vão numa chamada só (`saldoComReservaEmLote`: duas
@@ -114,8 +151,8 @@ export default async function stockRoutes(app: FastifyInstance) {
   app.get("/stock/balances/:warehouseId/:productId", async (req) => runService(app, req, "stocks.view", async (ctx) => {
     const { warehouseId, productId } = req.params as { warehouseId: string; productId: string };
     const wh = await ctx.tx.query<{ empresa_id: string }>("select empresa_id from erp.warehouses where id=$1 and organization_id=$2", [warehouseId, ctx.orgId]);
-    if (!wh.rows[0]) throw notFound("Armazém");
-    await exigirEmpresaVisivel(ctx, wh.rows[0].empresa_id, "Armazém");
+    if (!wh.rows[0]) throw notFound("Local de estoque");
+    await exigirEmpresaVisivel(ctx, wh.rows[0].empresa_id, "Local de estoque");
     const b = await currentBalance(ctx, warehouseId, productId);
     const lots = await ctx.tx.query("select provider_lot, quantity, average_cost, total_value, expiration_date from erp.stock_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and quantity<>0 order by expiration_date nulls last", [ctx.orgId, warehouseId, productId]);
     // RESERVA DE ESTOQUE (TOP-CONFIG-07): `quantity` continua o físico (todos os lotes); `reservado` vem da porta
@@ -140,9 +177,13 @@ export default async function stockRoutes(app: FastifyInstance) {
   app.post("/stock/opening-balances", async (req, reply) => reply.status(201).send(await runService(app, req, "opening_balances.create", async (ctx) => {
     const d = openingSchema.parse(req.body); await exigirEmpresa(ctx, d.empresa_id);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
-      // o lote já vem aparado; o gravado antes do R1-1 pode ter espaços — a conferência apara os dois lados
-      const exists = await ctx.tx.query("select 1 from erp.opening_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and nullif(btrim(provider_lot),'') is not distinct from $4::text and status='confirmed'", [ctx.orgId, d.warehouse_id, d.product_id, d.provider_lot]);
-      if (exists.rowCount) throw err("DUPLICATE_DOCUMENT", "Já existe estoque inicial confirmado para este produto/armazém/lote");
+      // OPERACOES-01 F11 (decisão 288): a duplicidade é a regra ÚNICA das duas portas (`lib/estoque-saldo-inicial.ts`):
+      // o saldo inicial vivo no RAZÃO, venha desta tela ou de uma entrada da Central com a TOP que lança o saldo inicial,
+      // somado à conferência de antes (o documento antigo confirmado). Trava a chave antes de conferir (a outra porta
+      // trava a mesma). O lote é comparado aparado nos dois lados (o gravado antes do R1-1 pode ter espaços). Mesmo
+      // código e mesma mensagem de antes.
+      await travarChaveDoSaldoInicial(ctx, d.warehouse_id, d.product_id, d.provider_lot ?? null);
+      if (await existeSaldoInicialVivo(ctx, d.warehouse_id, d.product_id, d.provider_lot ?? null)) throw err("DUPLICATE_DOCUMENT", MENSAGEM_SALDO_INICIAL_DUPLICADO);
       const total = lineTotal(d.quantity, d.unit_value);
       const r = await ctx.tx.query<{ id: string }>("insert into erp.opening_balances(organization_id,empresa_id,warehouse_id,product_id,quantity,unit_value,total_value,provider_lot,expiration_date,cultivation_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id", [ctx.orgId, d.empresa_id, d.warehouse_id, d.product_id, d.quantity, d.unit_value, total, d.provider_lot ?? null, d.expiration_date ?? null, d.cultivation_id ?? null, ctx.user.id]);
       await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: d.product_id, movementType: "opening_balance", direction: 1, quantity: d.quantity, unitCost: d.unit_value, providerLot: d.provider_lot, expirationDate: d.expiration_date, cultivationId: d.cultivation_id, sourceType: "opening_balances", sourceId: r.rows[0]!.id, date: new Date().toISOString().slice(0, 10) });
@@ -174,7 +215,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       const id = r.rows[0]!.id;
       await atribuirIdGlobal(ctx, "input_entries", id);
       for (const [i, it] of d.items.entries()) {
-        if (it.generate_stock && !it.warehouse_id) throw validation(`Item ${i + 1}: armazém obrigatório quando gera estoque`);
+        if (it.generate_stock && !it.warehouse_id) throw validation(`Item ${i + 1}: local de estoque obrigatório quando gera estoque`);
         await ctx.tx.query("insert into erp.input_entry_items(entry_id,product_id,measurement_id,quantity,unit_value,total_value,generate_stock,warehouse_id,appropriation_type,provider_lot,expiration_date,cultivation_id,financial_category_id,cost_center_id,position) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)", [id, it.product_id, it.measurement_id ?? null, it.quantity, it.unit_value, lineTotal(it.quantity, it.unit_value), it.generate_stock, it.warehouse_id ?? null, it.appropriation_type ?? null, it.provider_lot ?? null, it.expiration_date ?? null, it.cultivation_id ?? null, it.financial_category_id ?? null, it.cost_center_id ?? null, i]);
         if (it.generate_stock) { await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id!, productId: it.product_id, movementType: "entry", direction: 1, quantity: it.quantity, unitCost: it.unit_value, providerLot: it.provider_lot, expirationDate: it.expiration_date, costCenterId: it.cost_center_id, harvestId: d.harvest_id, cultivationId: it.cultivation_id, sourceType: "input_entries", sourceId: id, date: d.entry_date }); await ctx.tx.query("update erp.products set last_purchase_date=$2 where id=$1", [it.product_id, d.entry_date]); }
       }
@@ -230,6 +271,9 @@ export default async function stockRoutes(app: FastifyInstance) {
       // COMPRAS-01 (decisão 267): a nota que já está numa Compra não cancelada não entra de novo por aqui.
       const compra = await compraComANota(ctx, { fornecedorId: d.provider_id, numero: d.number, serie: d.series });
       if (compra) throw err("DUPLICATE_DOCUMENT", `A nota ${d.number.trim()}/${d.series.trim() || "1"} deste fornecedor já está na Compra ${compra}.`, { onde: "compra", codigo: compra });
+      // OPERACOES-01 F7 (decisão 284): a CHAVE que já está numa Compra não cancelada também não entra (409 dizendo a
+      // Compra); a nota × nota segue com o índice de hoje (ux_invoices_key). O gatilho da 0047 é a rede.
+      if (d.access_key) await conferirChaveDeAcessoLivre(ctx, d.access_key, { notaAntiga: false });
       const code = await nextCode(ctx.tx, ctx.orgId, "invoice");
       let products = D(0), disc = D(0), ipi = D(0), icms = D(0);
       for (const it of d.items) { products = products.plus(D(it.quantity).mul(it.unit_value)); disc = disc.plus(it.discount); ipi = ipi.plus(it.ipi); icms = icms.plus(it.icms); }
@@ -253,7 +297,7 @@ export default async function stockRoutes(app: FastifyInstance) {
         await ctx.tx.query("insert into erp.invoice_items(invoice_id,product_id,xml_product_description,measurement_id,quantity,unit_value,discount,ipi,icms,total,generate_stock,warehouse_id,appropriation_type,provider_lot,expiration_date,cultivation_id,financial_category_id,cost_center_id,is_equipment,equipment_id,grain_quality,position) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)",
           [id, it.product_id, it.xml_product_description ?? null, it.measurement_id ?? null, it.quantity, it.unit_value, it.discount, it.ipi, it.icms, itemTotal, it.generate_stock, it.warehouse_id ?? null, it.appropriation_type ?? null, it.provider_lot ?? null, it.expiration_date ?? null, it.cultivation_id ?? null, it.financial_category_id ?? null, it.cost_center_id ?? null, it.is_equipment, equipmentId, JSON.stringify(it.grain_quality ?? {}), i]);
         if (it.generate_stock) {
-          if (!it.warehouse_id) throw validation(`Item ${i + 1}: armazém obrigatório quando gera estoque`);
+          if (!it.warehouse_id) throw validation(`Item ${i + 1}: local de estoque obrigatório quando gera estoque`);
           // custo unitário de entrada inclui IPI e rateio do frete por valor
           const share = products.isZero() ? D(0) : D(it.quantity).mul(it.unit_value).div(products);
           const cost = D(itemTotal).plus(share.mul(d.freight)).plus(share.mul(d.other_expenses)).div(it.quantity);
@@ -342,7 +386,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       return { id, code, total_amount: money(total) };
     })).result;
   })));
-  app.post("/stock/requisitions/:id/sign", async (req) => runService(app, req, "requisitions.edit", async (ctx) => { const { id } = req.params as { id: string }; const d = z.object({ signed_document_path: z.string().optional().nullable() }).parse(req.body ?? {}); const sp: unknown[] = [id, ctx.orgId, d.signed_document_path ?? null]; const u = await ctx.tx.query("update erp.requisitions set signature_status='signed', signed_document_path=coalesce($3,signed_document_path), updated_at=now() where id=$1 and organization_id=$2 and status='confirmed'" + empresaScopeSql(ctx, "empresa_id", sp) + " returning id", sp); if (!u.rowCount) throw notFound(); await audit(ctx.tx, ctx, "requisitions", id, "sign"); return { id, signature_status: "signed" }; }));
+  app.post("/stock/requisitions/:id/sign", async (req) => runService(app, req, "requisitions.edit", async (ctx) => { const { id } = req.params as { id: string }; const d = z.object({ signed_document_path: z.string().optional().nullable() }).parse(req.body ?? {}); const sp: unknown[] = [id, ctx.orgId, d.signed_document_path ?? null]; /* escopo com ALIAS: sem ele, o `empresa_id` do `exists` do escopo seria a coluna de erp.membro_empresas e o predicado não amarraria esta linha */ const u = await ctx.tx.query("update erp.requisitions r set signature_status='signed', signed_document_path=coalesce($3,r.signed_document_path), updated_at=now() where r.id=$1 and r.organization_id=$2 and r.status='confirmed'" + empresaScopeSql(ctx, "r", sp) + " returning r.id", sp); if (!u.rowCount) throw notFound(); await audit(ctx.tx, ctx, "requisitions", id, "sign"); return { id, signature_status: "signed" }; }));
   app.post("/stock/requisitions/:id/cancel", async (req) => runService(app, req, "requisitions.delete", async (ctx) => { const { id } = req.params as { id: string }; const w_ = await loadForWrite(ctx, "requisitions", id, "Requisição"); const w = { rows: [w_] as [typeof w_] }; if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "requisitions", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.requisitions set status='cancelled', updated_at=now() where id=$1", [id]); await audit(ctx.tx, ctx, "requisitions", id, "cancel"); return { id, status: "cancelled" }; }));
 
   // ---------- Devolução/Entrada ----------
@@ -427,7 +471,7 @@ export default async function stockRoutes(app: FastifyInstance) {
     const destFarm = d.kind === "farm" ? d.empresa_destino_id : d.empresa_origem_id;
     if (!destFarm) throw validation("Fazenda destino obrigatória"); await exigirEmpresa(ctx, destFarm);
     if (d.kind === "farm" && destFarm === d.empresa_origem_id) throw validation("Transferência entre fazendas exige fazendas distintas");
-    if (d.origin_warehouse_id === d.destination_warehouse_id) throw err("SAME_WAREHOUSE_TRANSFER", "Armazém de origem e destino iguais");
+    if (d.origin_warehouse_id === d.destination_warehouse_id) throw err("SAME_WAREHOUSE_TRANSFER", "Local de estoque de origem e de destino iguais");
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
       // HOTFIX 0019: UM contador por namespace de unicidade. `erp.warehouse_transfers` tem
       // `unique (organization_id, code)` — sem `kind` —, então as duas variantes compartilham o
@@ -500,13 +544,22 @@ export default async function stockRoutes(app: FastifyInstance) {
   app.delete("/stock/feed-formulas/:id", async (req) => runService(app, req, "feed_formulas.delete", async (ctx) => { await ctx.tx.query("update erp.feed_formulas set deleted_at=now() where id=$1 and organization_id=$2", [(req.params as { id: string }).id, ctx.orgId]); return { deleted: true }; }));
   // `validade`: do produto PRODUZIDO (R1-1 c) — opcional, exigida quando ele controla "lote + validade". O lote do
   // produzido com controle é o CÓDIGO da produção.
-  const feedBatchSchema = z.object({ empresa_id: uuid, batch_date: date, formula_id: uuid, origin_warehouse_id: uuid, destination_warehouse_id: uuid, quantity_produced: dec, multiplier: dec.default("1"), validade: date.optional().nullable() });
+  // OPERACOES-01 F10 (decisão 287): + `tipo_operacao_id` (opcional; ausente = a produção de hoje).
+  const feedBatchSchema = z.object({ empresa_id: uuid, batch_date: date, formula_id: uuid, origin_warehouse_id: uuid, destination_warehouse_id: uuid, quantity_produced: dec, multiplier: dec.default("1"), validade: date.optional().nullable(), tipo_operacao_id: uuid.optional().nullable() });
+  /**
+   * OPERACOES-01 F10 (decisão 287): as TOPs que a produção de ração pode lançar (a família do registry pela tabela) — a
+   * porta do POST (`feed_batches.create`). Declara a capacidade `topNoModulo`: a Central só mostra o campo "Tipo de
+   * operação" e só envia `tipo_operacao_id` contra uma API que responde aqui.
+   */
+  app.get(`/modulos/${SEGMENTO_DO_MODULO_COM_TOP.producao_racao}/operation-types`, async (req) => runService(app, req, "feed_batches.create", (ctx) => tiposDeOperacaoDoModulo(ctx, "producao_racao")));
   app.get("/stock/feed-batches", async (req) => runService(app, req, "feed_batches.view", (ctx) => listDocs(ctx, "feed_batches", "batch_date", req.query as Record<string, unknown>, ", ff.name as formula_name", "left join erp.feed_formulas ff on ff.id=d.formula_id", { softDelete: false })));
   // detalhe da produção de ração (UI-STAB-01: /estoque/batidas/:id não tinha GET by id) — escopo de organização + fazenda, permissão feed_batches.view, id inválido/inexistente → 404
   app.get("/stock/feed-batches/:id", async (req) => runService(app, req, "feed_batches.view", async (ctx) => {
     const id = (req.params as { id: string }).id; if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw notFound("Documento");
     const sc = scopedById(ctx, "d", id);
-    const d = await ctx.tx.query(`select d.*, f.name as empresa_name, u.name as created_by_name, ff.name as formula_name, wo.description as origin_warehouse_name, wd.description as destination_warehouse_name from erp.feed_batches d left join erp.empresas f on f.id=d.empresa_id left join erp.users u on u.id=d.created_by left join erp.feed_formulas ff on ff.id=d.formula_id left join erp.warehouses wo on wo.id=d.origin_warehouse_id left join erp.warehouses wd on wd.id=d.destination_warehouse_id where d.id=$1 and d.organization_id=$2` + sc.sql, sc.params);
+    // OPERACOES-01 F10 (decisão 287): + o nome e a versão da TOP congelada (`tipo_operacao_nome`, `tipo_operacao_versao`; nulos sem TOP)
+    const top = joinDaTopDoModulo("d");
+    const d = await ctx.tx.query(`select d.*, f.name as empresa_name, u.name as created_by_name, ff.name as formula_name, wo.description as origin_warehouse_name, wd.description as destination_warehouse_name, ${top.colunas} from erp.feed_batches d left join erp.empresas f on f.id=d.empresa_id left join erp.users u on u.id=d.created_by left join erp.feed_formulas ff on ff.id=d.formula_id left join erp.warehouses wo on wo.id=d.origin_warehouse_id left join erp.warehouses wd on wd.id=d.destination_warehouse_id ${top.join} where d.id=$1 and d.organization_id=$2` + sc.sql, sc.params);
     if (!d.rows[0]) throw notFound("Documento");
     const items = await ctx.tx.query("select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit from erp.feed_batch_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id where i.batch_id=$1 order by i.id", [id]);
     const movements = await ctx.tx.query("select id, movement_type, direction, quantity, unit_cost, total_cost, balance_after, movement_date from erp.stock_movements where organization_id=$1 and source_type=$2 and source_id=$3 order by created_at", [ctx.orgId, "feed_batches", id]);
@@ -515,6 +568,12 @@ export default async function stockRoutes(app: FastifyInstance) {
   app.post("/stock/feed-batches", async (req, reply) => reply.status(201).send(await runService(app, req, "feed_batches.create", async (ctx) => {
     const d = feedBatchSchema.parse(req.body); await exigirEmpresa(ctx, d.empresa_id);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
+      // OPERACOES-01 F10 (decisão 287): o multiplicador na forma canônica do decimal, a única que a conta do domínio lê
+      // (".5" → "0.5"); o que não é número finito (texto, NaN, ±Infinity — que `D` aceita e a conta trocaria pelo padrão
+      // "1") é recusado no campo. E a TOP (versão corrente congelada; a produção de ração não tem exigência geral no
+      // registro). Os dois ANTES do código — a recusa não queima número.
+      const multiplicador = formaCanonica(d.multiplier, "multiplier");
+      const top = await topDoLancamentoDoModulo(ctx, "producao_racao", d.tipo_operacao_id, {});
       const f = await ctx.tx.query<{ product_id: string | null; name: string }>("select product_id, name from erp.feed_formulas where id=$1 and organization_id=$2", [d.formula_id, ctx.orgId]); if (!f.rows[0]) throw notFound("Formulação");
       if (!f.rows[0].product_id) throw validation("Formulação sem produto acabado vinculado");
       const acabado = await ctx.tx.query<{ controle_lote: string | null; has_lot: boolean }>("select to_jsonb(p)->>'controle_lote' as controle_lote, has_lot from erp.products p where id=$1 and organization_id=$2", [f.rows[0].product_id, ctx.orgId]);
@@ -523,11 +582,13 @@ export default async function stockRoutes(app: FastifyInstance) {
       if (controleDoAcabado === "lote_validade" && !d.validade) throw validation("O produto produzido controla lote e validade: informe a validade da produção.", [{ path: "validade", message: "Informe a validade" }]);
       const items = await ctx.tx.query<{ product_id: string; quantity: string }>("select product_id, quantity from erp.feed_formula_items where formula_id=$1", [d.formula_id]);
       const code = await nextCode(ctx.tx, ctx.orgId, "feed_batch");
-      const r = await ctx.tx.query<{ id: string }>("insert into erp.feed_batches(organization_id,empresa_id,code,batch_date,formula_id,origin_warehouse_id,destination_warehouse_id,quantity_produced,validade,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id", [ctx.orgId, d.empresa_id, code, d.batch_date, d.formula_id, d.origin_warehouse_id, d.destination_warehouse_id, d.quantity_produced, d.validade ?? null, ctx.user.id]);
+      const r = await ctx.tx.query<{ id: string }>("insert into erp.feed_batches(organization_id,empresa_id,code,batch_date,formula_id,origin_warehouse_id,destination_warehouse_id,quantity_produced,validade,created_by,tipo_operacao_id,tipo_operacao_versao_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id", [ctx.orgId, d.empresa_id, code, d.batch_date, d.formula_id, d.origin_warehouse_id, d.destination_warehouse_id, d.quantity_produced, d.validade ?? null, ctx.user.id, top?.tipoOperacaoId ?? null, top?.tipoOperacaoVersaoId ?? null]);
       const id = r.rows[0]!.id; const consumed: { quantity: string; unitCost: string }[] = [];
       await atribuirIdGlobal(ctx, "feed_batches", id);
-      for (const it of items.rows) {
-        const q = D(it.quantity).mul(d.multiplier).toFixed(4);
+      // OPERACOES-01 F10 (decisão 287): os itens pela conta do domínio (quantidade da fórmula × multiplicador, 4 casas), a
+      // MESMA que a Central mostra, sobre o multiplicador na forma canônica (conferido acima, antes do código).
+      for (const it of itensDaProducaoDeRacao(multiplicador, items.rows)) {
+        const q = it.quantidade;
         const m = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.origin_warehouse_id, productId: it.product_id, movementType: "production_out", direction: -1, quantity: q, sourceType: "feed_batches", sourceId: id, date: d.batch_date, note: `Batida ${code}` });
         // uma parte por lote consumido: a média ponderada arredondada não entra no custo da produção
         for (const x of m.partes) consumed.push({ quantity: x.quantidade, unitCost: x.unitCost });
@@ -535,53 +596,127 @@ export default async function stockRoutes(app: FastifyInstance) {
       }
       const cost = batchCost(consumed, d.quantity_produced);
       await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.destination_warehouse_id, productId: f.rows[0].product_id, movementType: "production_in", direction: 1, quantity: d.quantity_produced, unitCost: cost.unit, providerLot: controleDoAcabado === "nenhum" ? null : code, expirationDate: d.validade ?? null, sourceType: "feed_batches", sourceId: id, date: d.batch_date, note: `Batida ${code} (${f.rows[0].name})` });
-      await ctx.tx.query("update erp.feed_batches set production_cost=$2 where id=$1", [id, cost.total]);
+      // OPERACOES-01 F10 (decisão 287): ROW COUNT conferido (a produção nasceu nesta transação; zero linha não é sucesso).
+      const tot = await ctx.tx.query("update erp.feed_batches set production_cost=$2 where id=$1 and organization_id=$3", [id, cost.total, ctx.orgId]);
+      if (tot.rowCount !== 1) throw err("CONFLICT", "O custo da produção de ração não foi gravado.");
       await audit(ctx.tx, ctx, "feed_batches", id, "create", { code, cost: cost.total });
       return { id, code, production_cost: cost.total, unit_cost: cost.unit };
     })).result;
   })));
-  app.post("/stock/feed-batches/:id/cancel", async (req) => runService(app, req, "feed_batches.delete", async (ctx) => { const { id } = req.params as { id: string }; const w_ = await loadForWrite(ctx, "feed_batches", id, "Batida"); const w = { rows: [w_] as [typeof w_] }; if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "feed_batches", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.feed_batches set status='cancelled' where id=$1", [id]); return { id, status: "cancelled" }; }));
+  app.post("/stock/feed-batches/:id/cancel", async (req) => runService(app, req, "feed_batches.delete", async (ctx) => { const { id } = req.params as { id: string }; const w_ = await loadForWrite(ctx, "feed_batches", id, "Batida"); const w = { rows: [w_] as [typeof w_] }; if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "feed_batches", id, new Date().toISOString().slice(0, 10)); /* OPERACOES-01 F10 (decisão 287): ROW COUNT conferido */ const u = await ctx.tx.query("update erp.feed_batches set status='cancelled' where id=$1 and organization_id=$2", [id, ctx.orgId]); if (u.rowCount !== 1) throw err("CONFLICT", "A produção de ração não foi cancelada."); return { id, status: "cancelled" }; }));
 
   // ---------- DFe recebidas e rascunhos de aprovação ----------
   app.get("/stock/dfe", async (req) => runService(app, req, "dfe.view", async (ctx) => {
     const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>;
-    const where = ["organization_id=$1"]; const params: unknown[] = [ctx.orgId]; where.push(...empresaScope(ctx, "empresa_id", params, { nullable: true }));
-    if (f.launch_status) { params.push(f.launch_status); where.push(`launch_status=$${params.length}`); }
-    if (f.manifest_status) { params.push(f.manifest_status); where.push(`manifest_status=$${params.length}`); }
-    if (f.search) { params.push(`%${f.search}%`); where.push(`(access_key ilike $${params.length} or issuer_name ilike $${params.length} or number ilike $${params.length})`); }
-    const total = await ctx.tx.query<{ n: string }>(`select count(*) n from erp.dfe_documents where ${where.join(" and ")}`, params);
-    const r = await ctx.tx.query(`select * from erp.dfe_documents where ${where.join(" and ")} order by emission_date desc nulls last, created_at desc limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
+    // Escopo com ALIAS (d): sem ele, o `empresa_id` do `exists` do escopo seria a coluna de erp.membro_empresas.
+    const where = ["d.organization_id=$1"]; const params: unknown[] = [ctx.orgId]; where.push(...empresaScope(ctx, "d", params, { nullable: true }));
+    if (f.launch_status) { params.push(f.launch_status); where.push(`d.launch_status=$${params.length}`); }
+    if (f.manifest_status) { params.push(f.manifest_status); where.push(`d.manifest_status=$${params.length}`); }
+    if (f.search) { params.push(`%${f.search}%`); where.push(`(d.access_key ilike $${params.length} or d.issuer_name ilike $${params.length} or d.number ilike $${params.length})`); }
+    const total = await ctx.tx.query<{ n: string }>(`select count(*) n from erp.dfe_documents d where ${where.join(" and ")}`, params);
+    const r = await ctx.tx.query(`select d.* from erp.dfe_documents d where ${where.join(" and ")} order by d.emission_date desc nulls last, d.created_at desc limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
     return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
   }));
-  /** Registro manual/importação de DFe (a captura automática na SEFAZ depende de integração de certificado — ver GAP-ANALYSIS). */
+  /**
+   * Registro manual/importação de DFe (a captura automática na SEFAZ depende de integração de certificado — ver GAP-ANALYSIS).
+   *
+   * OPERACOES-01 F7 (decisão 284) — COM O XML (`xml`, aditivo): o servidor lê a nota (`lerNotaFiscalEletronica`; recusas
+   * em 422 no `xml`), confere que o que veio no corpo é o da nota (chave, número, série, emitente, emissão, total — 422 no
+   * campo; ausentes = os da nota), resolve a empresa DESTINATÁRIA no escopo de escrita do módulo (a do corpo é pedido) e
+   * guarda o ORIGINAL (`notas_fiscais_xml`), ligado pela `xml_id`. O upsert pela chave não troca a empresa (preenche a
+   * vazia) nem o XML já ligado; DF-e da chave em OUTRA empresa → 409. Sem `xml`: exatamente o de hoje.
+   * O perfil de lançamento compara o documento NORMALIZADO (a expressão do índice dos cadastros, que mantém as letras do
+   * CNPJ alfanumérico) — o cadastro com máscara passa a ser achado —, e a DF-e vira rascunho com ROW COUNT.
+   */
+  const dfeSchema = z.object({ empresa_id: uuid.optional().nullable(), access_key: z.string().length(44), document_type: z.enum(["nfe", "cte", "nfse"]).default("nfe"), number: z.string().optional().nullable(), series: z.string().optional().nullable(), issuer_document: z.string().optional().nullable(), issuer_name: z.string().optional().nullable(), emission_date: date.optional().nullable(), total: dec.optional().nullable(), raw: z.record(z.string(), z.unknown()).optional().nullable(),
+    xml: z.string().min(1).max(LIMITE_XML_GUARDADO_BYTES).nullish() });
+  const dfeComXmlSchema = dfeSchema.extend({ access_key: z.string().length(44).optional().nullable() });
   app.post("/stock/dfe", async (req, reply) => reply.status(201).send(await runService(app, req, "dfe.create", async (ctx) => {
-    const d = z.object({ empresa_id: uuid.optional().nullable(), access_key: z.string().length(44), document_type: z.enum(["nfe", "cte", "nfse"]).default("nfe"), number: z.string().optional().nullable(), series: z.string().optional().nullable(), issuer_document: z.string().optional().nullable(), issuer_name: z.string().optional().nullable(), emission_date: date.optional().nullable(), total: dec.optional().nullable(), raw: z.record(z.string(), z.unknown()).optional().nullable() }).parse(req.body); if (d.empresa_id) await exigirEmpresa(ctx, d.empresa_id);
-    const r = await ctx.tx.query<{ id: string }>("insert into erp.dfe_documents(organization_id,empresa_id,access_key,document_type,number,series,issuer_document,issuer_name,emission_date,total,raw) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) on conflict (organization_id,access_key) do update set issuer_name=coalesce(excluded.issuer_name,erp.dfe_documents.issuer_name) returning id", [ctx.orgId, d.empresa_id ?? null, d.access_key, d.document_type, d.number ?? null, d.series ?? null, d.issuer_document ?? null, d.issuer_name ?? null, d.emission_date ?? null, d.total ?? null, d.raw ? JSON.stringify(d.raw) : null]);
-    const id = r.rows[0]!.id;
+    const comXml = typeof (req.body as { xml?: unknown } | null | undefined)?.xml === "string";
+    const d = (comXml ? dfeComXmlSchema : dfeSchema).parse(req.body);
+    if (d.empresa_id && !comXml) await exigirEmpresa(ctx, d.empresa_id);
+    let dados = { empresa_id: d.empresa_id ?? null, access_key: d.access_key ?? "", number: d.number ?? null, series: d.series ?? null, issuer_document: d.issuer_document ?? null,
+      issuer_name: d.issuer_name ?? null, emission_date: d.emission_date ?? null, total: d.total ?? null };
+    let xmlId: string | null = null;
+    let id: string;
+    if (comXml && d.xml) {
+      const nota = notaDoXmlDaDfe(d.xml, d);
+      const empresa = await resolverDestinatario(ctx, nota, d.empresa_id ?? null, moduloAtivo(ctx), { oQue: "registrar a DF-e" });
+      xmlId = (await guardarXmlDaNota(ctx, { empresaId: empresa.id, chave: nota.chave, texto: d.xml, nomeArquivo: null, campo: "xml" })).id;
+      dados = { empresa_id: empresa.id, access_key: nota.chave, number: nota.numero, series: nota.serie, issuer_document: nota.emitente.documento,
+        issuer_name: nota.emitente.nome, emission_date: nota.dataEmissao, total: nota.totais.nota };
+      const r = await ctx.tx.query<{ id: string }>(
+        `insert into erp.dfe_documents(organization_id,empresa_id,access_key,document_type,number,series,issuer_document,issuer_name,emission_date,total,raw,xml_id)
+         values ($1,$2,$3,'nfe',$4,$5,$6,$7,$8,$9,$10,$11)
+         on conflict (organization_id,access_key) do update set issuer_name=coalesce(excluded.issuer_name,erp.dfe_documents.issuer_name),
+           empresa_id=coalesce(erp.dfe_documents.empresa_id, excluded.empresa_id), xml_id=coalesce(erp.dfe_documents.xml_id, excluded.xml_id)
+         where erp.dfe_documents.empresa_id is null or erp.dfe_documents.empresa_id = excluded.empresa_id
+         returning id`,
+        [ctx.orgId, dados.empresa_id, dados.access_key, dados.number, dados.series, dados.issuer_document, dados.issuer_name, dados.emission_date, dados.total,
+          d.raw ? JSON.stringify(d.raw) : null, xmlId]).catch((e: unknown) => {
+        // A DF-e da chave numa empresa que o escopo não alcança: a RLS recusa o UPDATE do upsert — a mesma 409.
+        if ((e as { code?: string }).code === "42501") throw err("CONFLICT", MSG_DFE_EM_OUTRA_EMPRESA);
+        throw e;
+      });
+      if (!r.rows[0]) throw err("CONFLICT", MSG_DFE_EM_OUTRA_EMPRESA);
+      id = r.rows[0].id;
+      await audit(ctx.tx, ctx, "dfe_documents", id, "registrar_xml", { xmlId, empresaId: empresa.id, chave: nota.chave });
+    } else {
+      // F7: registrar de novo com a empresa PREENCHE a DF-e sem empresa (a porta para aprovar a que nasceu sem ela); a
+      // empresa já gravada nunca muda (a do corpo foi conferida no escopo por `exigirEmpresa`).
+      const r = await ctx.tx.query<{ id: string }>("insert into erp.dfe_documents(organization_id,empresa_id,access_key,document_type,number,series,issuer_document,issuer_name,emission_date,total,raw) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) on conflict (organization_id,access_key) do update set issuer_name=coalesce(excluded.issuer_name,erp.dfe_documents.issuer_name), empresa_id=coalesce(erp.dfe_documents.empresa_id, excluded.empresa_id) returning id", [ctx.orgId, d.empresa_id ?? null, d.access_key, d.document_type, d.number ?? null, d.series ?? null, d.issuer_document ?? null, d.issuer_name ?? null, d.emission_date ?? null, d.total ?? null, d.raw ? JSON.stringify(d.raw) : null]);
+      id = r.rows[0]!.id;
+    }
     // Perfil de lançamento do fornecedor → gera rascunho automaticamente
-    if (d.issuer_document) {
-      const prof = await ctx.tx.query<{ id: string; provider_id: string; default_destination: string; default_title_type_id: string | null }>("select lp.id, lp.provider_id, lp.default_destination, lp.default_title_type_id from erp.provider_launch_profiles lp join erp.people p on p.id=lp.provider_id where lp.organization_id=$1 and lp.deleted_at is null and p.document=$2", [ctx.orgId, d.issuer_document.replace(/\D/g, "")]);
-      if (prof.rows[0]) {
+    const documentoDoEmitente = documentoNormalizado(dados.issuer_document);
+    if (documentoDoEmitente) {
+      const prof = await ctx.tx.query<{ id: string; provider_id: string; default_destination: string; default_title_type_id: string | null }>(
+        `select lp.id, lp.provider_id, lp.default_destination, lp.default_title_type_id from erp.provider_launch_profiles lp
+           join erp.people p on p.id=lp.provider_id and p.organization_id=lp.organization_id
+          where lp.organization_id=$1 and lp.deleted_at is null and ${SQL_DOCUMENTO_NORMALIZADO("p.document")}=$2`, [ctx.orgId, documentoDoEmitente]);
+      // F7: só a DF-e PENDENTE ganha rascunho — registrar de novo a mesma chave não duplica o rascunho pendente nem
+      // devolve a "rascunho" a DF-e já lançada ou ignorada.
+      const pendente = prof.rows[0] ? (await ctx.tx.query(
+        `select 1 from erp.dfe_documents d where d.id=$1 and d.organization_id=$2 and d.launch_status='pending'
+            and not exists (select 1 from erp.dfe_drafts dr where dr.dfe_id=d.id and dr.organization_id=d.organization_id and dr.status='pending')`, [id, ctx.orgId])).rowCount === 1 : false;
+      if (prof.rows[0] && pendente) {
         const items = await ctx.tx.query("select financial_category_id, cost_center_id, percentage from erp.provider_launch_profile_items where profile_id=$1", [prof.rows[0].id]);
-        await ctx.tx.query("insert into erp.dfe_drafts(organization_id,dfe_id,proposed) values ($1,$2,$3)", [ctx.orgId, id, JSON.stringify({ provider_id: prof.rows[0].provider_id, destination: prof.rows[0].default_destination, title_type_id: prof.rows[0].default_title_type_id, apportionment: items.rows, total: d.total, number: d.number, series: d.series, emission_date: d.emission_date })]);
-        await ctx.tx.query("update erp.dfe_documents set launch_status='draft' where id=$1", [id]);
+        await ctx.tx.query("insert into erp.dfe_drafts(organization_id,dfe_id,proposed) values ($1,$2,$3)", [ctx.orgId, id, JSON.stringify({ provider_id: prof.rows[0].provider_id, destination: prof.rows[0].default_destination, title_type_id: prof.rows[0].default_title_type_id, apportionment: items.rows, total: dados.total, number: dados.number, series: dados.series, emission_date: dados.emission_date })]);
+        // ROW COUNT SOB RLS: a DF-e que acabou de ser gravada tem de virar rascunho (zero linha seria um rascunho órfão).
+        const u = await ctx.tx.query("update erp.dfe_documents set launch_status='draft' where id=$1 and organization_id=$2 and launch_status='pending'", [id, ctx.orgId]);
+        if (u.rowCount !== 1) throw notFound("DF-e");
       }
     }
-    return { id };
+    return xmlId ? { id, xml_id: xmlId } : { id };
   })));
-  app.post("/stock/dfe/:id/manifest", async (req) => runService(app, req, "dfe.manifest", async (ctx) => { const { id } = req.params as { id: string }; const d = z.object({ status: z.enum(["awareness", "confirmed", "unknown", "not_performed"]) }).parse(req.body); const mp: unknown[] = [id, ctx.orgId, d.status]; const u = await ctx.tx.query("update erp.dfe_documents set manifest_status=$3, updated_at=now() where id=$1 and organization_id=$2" + empresaScopeSql(ctx, "empresa_id", mp, { nullable: true }) + " returning id", mp); if (!u.rowCount) throw notFound(); await audit(ctx.tx, ctx, "dfe_documents", id, "manifest", d); return { id, manifest_status: d.status }; }));
-  app.post("/stock/dfe/:id/ignore", async (req) => runService(app, req, "dfe_drafts.ignore", async (ctx) => { const { id } = req.params as { id: string }; const ip: unknown[] = [id, ctx.orgId]; const ig = await ctx.tx.query("update erp.dfe_documents set launch_status='ignored' where id=$1 and organization_id=$2" + empresaScopeSql(ctx, "empresa_id", ip, { nullable: true }) + " returning id", ip); if (!ig.rowCount) throw notFound(); await ctx.tx.query("update erp.dfe_drafts set status='ignored', reviewed_by=$3, reviewed_at=now() where dfe_id=$1 and organization_id=$2 and status='pending'", [id, ctx.orgId, ctx.user.id]); return { id, launch_status: "ignored" }; }));
+  app.post("/stock/dfe/:id/manifest", async (req) => runService(app, req, "dfe.manifest", async (ctx) => { const { id } = req.params as { id: string }; const d = z.object({ status: z.enum(["awareness", "confirmed", "unknown", "not_performed"]) }).parse(req.body); const mp: unknown[] = [id, ctx.orgId, d.status]; const u = await ctx.tx.query("update erp.dfe_documents d set manifest_status=$3, updated_at=now() where d.id=$1 and d.organization_id=$2" + empresaScopeSql(ctx, "d", mp, { nullable: true }) + " returning d.id", mp); if (!u.rowCount) throw notFound(); await audit(ctx.tx, ctx, "dfe_documents", id, "manifest", d); return { id, manifest_status: d.status }; }));
+  app.post("/stock/dfe/:id/ignore", async (req) => runService(app, req, "dfe_drafts.ignore", async (ctx) => { const { id } = req.params as { id: string }; const ip: unknown[] = [id, ctx.orgId]; const ig = await ctx.tx.query("update erp.dfe_documents d set launch_status='ignored' where d.id=$1 and d.organization_id=$2" + empresaScopeSql(ctx, "d", ip, { nullable: true }) + " returning d.id", ip); if (!ig.rowCount) throw notFound(); await ctx.tx.query("update erp.dfe_drafts set status='ignored', reviewed_by=$3, reviewed_at=now() where dfe_id=$1 and organization_id=$2 and status='pending'", [id, ctx.orgId, ctx.user.id]); return { id, launch_status: "ignored" }; }));
   app.get("/stock/dfe-drafts", async (req) => runService(app, req, "dfe_drafts.view", async (ctx) => { const r = await consultaEscopada(ctx, "select dr.*, d.access_key, d.number, d.issuer_name, d.total, d.emission_date from erp.dfe_drafts dr join erp.dfe_documents d on d.id=dr.dfe_id where dr.organization_id=$1 and dr.status='pending' and {{escopo_nulo:d.empresa_id}} order by dr.created_at desc", [ctx.orgId]); return { items: r.rows, total: r.rowCount }; }));
+  /**
+   * OPERACOES-01 F7 (decisão 284): o rascunho é lido JUNTO da DF-e, no escopo (DF-e sem empresa é da organização) — o
+   * de fora é a mesma 404; a empresa do título é a DA DF-e (nunca a da sessão nem "a primeira disponível"), no escopo de
+   * escrita; DF-e sem empresa → 422. Os dois UPDATEs conferem o ROW COUNT.
+   */
   app.post("/stock/dfe-drafts/:id/approve", async (req) => runService(app, req, "dfe_drafts.approve", async (ctx) => {
     const { id } = req.params as { id: string };
-    const dr = await ctx.tx.query<{ dfe_id: string; proposed: Record<string, unknown>; status: string }>("select dfe_id, proposed, status from erp.dfe_drafts where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!dr.rows[0]) throw notFound(); if (dr.rows[0].status !== "pending") throw err("ALREADY_CONFIRMED", "Rascunho já processado");
-    const p = dr.rows[0].proposed; const empresaId = ctx.empresaId ?? (await empresasDisponiveis(ctx))[0]; if (!empresaId) throw validation("Nenhuma empresa disponível para lançar o rascunho"); await exigirEmpresa(ctx, empresaId);
+    if (!FORMA_UUID.test(id)) throw notFound();
+    const dr = await consultaEscopada<{ dfe_id: string; proposed: Record<string, unknown>; status: string; empresa_id: string | null }>(ctx,
+      `select dr.dfe_id, dr.proposed, dr.status, d.empresa_id::text as empresa_id
+         from erp.dfe_drafts dr join erp.dfe_documents d on d.id=dr.dfe_id and d.organization_id=dr.organization_id
+        where dr.id=$1 and dr.organization_id=$2 and {{escopo_nulo:d.empresa_id}} for update of dr`, [id, ctx.orgId]);
+    if (!dr.rows[0]) throw notFound(); if (dr.rows[0].status !== "pending") throw err("ALREADY_CONFIRMED", "Rascunho já processado");
+    const p = dr.rows[0].proposed; const empresaId = dr.rows[0].empresa_id;
+    if (!empresaId) throw validation(MSG_DFE_SEM_EMPRESA, [{ path: "empresa_id", message: MSG_DFE_SEM_EMPRESA }]);
+    await exigirEmpresa(ctx, empresaId);
     // Nota de despesa: gera conta a pagar diretamente com rateio do perfil
     const app_ = (p["apportionment"] as { financial_category_id: string; cost_center_id: string; percentage: string }[]) ?? [];
     if (!app_.length || !p["total"]) throw validation("Rascunho sem rateio/total: lance manualmente pela tela de Documento Fiscal");
     const t = await createTitles(ctx, { empresaId, direction: "payable", number: String(p["number"] ?? "DFE"), titleTypeId: (p["title_type_id"] as string) ?? null, personId: p["provider_id"] as string, amount: money(String(p["total"])), emissionDate: (p["emission_date"] as string) ?? new Date().toISOString().slice(0, 10), dueDate: (p["emission_date"] as string) ?? new Date().toISOString().slice(0, 10), note: `DFe aprovada automaticamente (${p["destination"]})`, isDeductible: true, documentType: "nfe", apportionment: app_.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, percentage: a.percentage })), sourceType: "dfe_documents", sourceId: dr.rows[0].dfe_id });
-    await ctx.tx.query("update erp.dfe_drafts set status='approved', reviewed_by=$3, reviewed_at=now() where id=$1 and organization_id=$2", [id, ctx.orgId, ctx.user.id]);
-    await ctx.tx.query("update erp.dfe_documents set launch_status='launched' where id=$1", [dr.rows[0].dfe_id]);
+    // ROW COUNT SOB RLS nos dois: zero linha seria "aprovado" sem efeito (com o título já gravado).
+    const ur = await ctx.tx.query("update erp.dfe_drafts set status='approved', reviewed_by=$3, reviewed_at=now() where id=$1 and organization_id=$2 and status='pending'", [id, ctx.orgId, ctx.user.id]);
+    if (ur.rowCount !== 1) throw notFound();
+    const ud = await ctx.tx.query("update erp.dfe_documents set launch_status='launched' where id=$1 and organization_id=$2", [dr.rows[0].dfe_id, ctx.orgId]);
+    if (ud.rowCount !== 1) throw notFound();
     await audit(ctx.tx, ctx, "dfe_drafts", id, "approve", { titles: t.ids });
     return { id, title_ids: t.ids };
   }));

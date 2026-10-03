@@ -57,8 +57,10 @@ describe("financeiro", () => {
   });
   it("calcula líquido da baixa e valida saldo", () => {
     expect(settlementNet({ amount: "100", discount: "10", penalty: "2", interest: "3", increase: "1" })).toBe("96.00");
-    expect(() => assertSettlementWithinBalance("50.00", { amount: "40", discount: "20" })).toThrow(/excede/);
-    expect(() => assertSettlementWithinBalance("50.00", { amount: "40", discount: "10" })).not.toThrow();
+    // Semântica B (decisão 285): o desconto está DENTRO do valor baixado — 40 com 20 de desconto baixa 40 do saldo 50.
+    expect(() => assertSettlementWithinBalance("50.00", { amount: "40", discount: "20" })).not.toThrow();
+    expect(() => assertSettlementWithinBalance("50.00", { amount: "60" })).toThrow(/excede/);
+    expect(() => assertSettlementWithinBalance("50.00", { amount: "40", discount: "41" })).toThrow(/desconto/);
   });
   it("status exibido", () => {
     expect(displayTitleStatus({ status: "open", dueDate: "2026-01-01" }, "2026-02-01")).toBe("Vencida");

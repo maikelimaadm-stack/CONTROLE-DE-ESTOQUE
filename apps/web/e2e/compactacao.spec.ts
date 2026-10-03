@@ -8,12 +8,24 @@ test("busca global encontra funções fora do menu, respeita permissão e abre a
   await expect(res.getByRole("option", { name: /Manejos/ }).first()).toBeVisible();
   await box.fill("plano de contas"); await res.getByRole("option", { name: /Plano de Contas/ }).first().click();
   await expect(page).toHaveURL(/\/configuracoes\?tab=financeiro&sub=chart-accounts/);
-  await box.fill("dfe"); await expect(res.getByRole("option", { name: /DFe/ }).first()).toBeVisible(); await page.keyboard.press("Escape");
+  await box.fill("dfe"); await expect(res.getByRole("option", { name: /DFe/ }).first()).toBeVisible();
+  // OPERACOES-01 F11 (decisão 288): quem procura o lançamento antigo cai na Central (a área Movimentações do Estoque);
+  // a lista antiga não aparece mais na busca
+  await box.fill("saída direta");
+  const central = res.getByRole("option", { name: /Movimentações/ }).filter({ hasText: "Estoque › Movimentações" });
+  await expect(central, "premissa: a busca devolveu a área Movimentações do Estoque").toHaveCount(1);
+  await expect(res.getByRole("option", { name: /Saídas diretas/ }), "a lista antiga não está na busca").toHaveCount(0);
+  await central.click(); await expect(page).toHaveURL(/\/estoque\?tab=movimentacoes(&|$)/);
   // operador de estoque: funções financeiras não aparecem na busca
   await logout(page);
   await login(page, { email: "operador@demo.local", password: "Demo@12345" });
   await page.getByLabel("Buscar funcionalidade").fill("plano de contas"); await expect(page.getByTestId("nav-search-results")).toHaveCount(0);
-  await page.getByLabel("Buscar funcionalidade").fill("requisi"); await expect(page.getByTestId("nav-search-results").getByRole("option", { name: /Requisições/ }).first()).toBeVisible();
+  // F11 (288): o operador (com `requisitions.create`) acha a requisição antiga só para o que a Central não cobre
+  // (capex/opex); a lista antiga "(tela antiga)" saiu da busca
+  await page.getByLabel("Buscar funcionalidade").fill("requisi");
+  const doOperador = page.getByTestId("nav-search-results");
+  await expect(doOperador.getByRole("option", { name: /Requisição com classificação capex\/opex/ })).toBeVisible();
+  await expect(doOperador.getByRole("option", { name: /Requisições \(tela antiga\)/ })).toHaveCount(0);
 });
 test("favoritos guardam tab + sub e favoritos antigos continuam abrindo o local certo", async ({ page }) => {
   await login(page);

@@ -55,12 +55,19 @@ const ehProximoPasso = (v: unknown): v is ProximoPassoDoPedido =>
   && typeof v.ordem === "number" && Number.isFinite(v.ordem) && typeof v.emPartes === "boolean";
 
 /**
- * `politicaConfigurada` é OBRIGATÓRIO aqui (diferente de vendas): a rota de compras nasceu com ele, e não há
- * servidor anterior que a sirva sem o campo. Ausente = corpo que não é o contrato.
+ * `exigeFinalizar` (OPERACOES-01 F6a/F6b, decisão 283): a TOP do pedido exige o pedido FINALIZADO para receber. A API
+ * anterior não o manda — ausente é `false` (o receber de hoje); presente e não booleano, o corpo não é o contrato.
  */
-export const ehRespostaDeProximosPassosDoPedido = (v: unknown): v is { contractVersion: typeof CONTRATO_PROXIMOS_PASSOS_PEDIDO; politicaConfigurada: boolean; items: ProximoPassoDoPedido[] } =>
+const exigeFinalizarNaForma = (v: Record<string, unknown>): boolean => !Object.hasOwn(v, "exigeFinalizar") || typeof v.exigeFinalizar === "boolean";
+
+/**
+ * `politicaConfigurada` é OBRIGATÓRIO aqui (diferente de vendas): a rota de compras nasceu com ele, e não há
+ * servidor anterior que a sirva sem o campo. Ausente = corpo que não é o contrato. As chaves a mais que esta tela
+ * não lê (`orcamentos`, o leque de orçamento — dono: `pedido-e-orcamento.ts`) são toleradas.
+ */
+export const ehRespostaDeProximosPassosDoPedido = (v: unknown): v is { contractVersion: typeof CONTRATO_PROXIMOS_PASSOS_PEDIDO; politicaConfigurada: boolean; items: ProximoPassoDoPedido[]; exigeFinalizar?: boolean } =>
   ehObjeto(v) && v.contractVersion === CONTRATO_PROXIMOS_PASSOS_PEDIDO && typeof v.politicaConfigurada === "boolean"
-  && Array.isArray(v.items) && v.items.every(ehProximoPasso);
+  && Array.isArray(v.items) && v.items.every(ehProximoPasso) && exigeFinalizarNaForma(v);
 
 export type EstadoProximosPassosDoPedido =
   /** Ainda perguntando — nenhum botão de receber é oferecido enquanto não se sabe. */
@@ -72,8 +79,10 @@ export type EstadoProximosPassosDoPedido =
   /**
    * O leque chegou. SÓ os passos que a tela sabe endereçar (espécie com rota no catálogo): um passo de espécie
    * desconhecida não vira botão para lugar nenhum. Política não configurada = leque vazio — sem ponte.
+   * `exigeFinalizar`: a TOP do pedido só deixa receber o pedido FINALIZADO (o aberto é recusado pelo `/convert`);
+   * `false` quando o servidor não o declara (a API anterior).
    */
-  | { situacao: "pronto"; itens: ProximoPassoDoPedido[] };
+  | { situacao: "pronto"; itens: ProximoPassoDoPedido[]; exigeFinalizar: boolean };
 
 /**
  * Pergunta ao servidor o que este pedido pode gerar. `retry: false`: 404 e 405 aqui são RESPOSTA (a API não
@@ -92,7 +101,7 @@ export function useProximosPassosDoPedido(segmentoDoPedido: string, id: string, 
   if (q.error) return q.error.status === 404 || q.error.status === 405 ? { situacao: "indisponivel" } : { situacao: "erro", mensagem: q.error.message };
   if (!ehRespostaDeProximosPassosDoPedido(q.data)) return { situacao: "indisponivel" };
   const itens = q.data.politicaConfigurada ? q.data.items.filter((x) => Boolean(varianteDeCompra(x.especie))) : [];
-  return { situacao: "pronto", itens: [...itens].sort((a, b) => a.ordem - b.ordem) };
+  return { situacao: "pronto", itens: [...itens].sort((a, b) => a.ordem - b.ordem), exigeFinalizar: q.data.exigeFinalizar === true };
 }
 
 /**

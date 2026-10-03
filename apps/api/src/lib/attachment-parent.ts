@@ -62,8 +62,9 @@ const EXPLICIT: Record<string, ParentRule> = {
   // → 404 (fail-closed). A situação do documento (cancelado, confirmado) não entra: anexo é registro documental,
   // não efeito contábil, e o modelo de permissões não tem "anexo exige edição do pai".
   sales_documents: { kind: "farm", viewPerm: (row) => (row["kind"] === "budget" ? "budgets.view" : row["kind"] === "order" ? "orders.view" : row["kind"] === "sale" ? "sales.view" : null), load: byId("sales_documents", { softDelete: true }), origin: "explicit" },
-  // documento de compra não tem exclusão lógica (o fim de vida é a situação `cancelado`, que continua anexável)
-  documentos_compra: { kind: "farm", viewPerm: (row) => (row["especie"] === "pedido" ? "pedidos_compra.view" : row["especie"] === "compra" ? "compras.view" : null), load: byId("documentos_compra", {}), origin: "explicit" },
+  // documento de compra não tem exclusão lógica (o fim de vida é a situação `cancelado`, que continua anexável).
+  // OPERACOES-01 F6a (decisão 283): o orçamento de compra é a terceira espécie, com a porta própria (`orcamentos_compra`).
+  documentos_compra: { kind: "farm", viewPerm: (row) => (row["especie"] === "pedido" ? "pedidos_compra.view" : row["especie"] === "compra" ? "compras.view" : row["especie"] === "orcamento" ? "orcamentos_compra.view" : null), load: byId("documentos_compra", {}), origin: "explicit" },
   // filhas: fazenda herdada do pátio (feedlot_yards.empresa_id)
   feedlot_sectors: { kind: "child", viewPerm: "feedlot_sectors.view", origin: "explicit", load: async (ctx, id) => {
     const r = await ctx.tx.query<{ empresa_id: string }>("select s.id, y.empresa_id from erp.feedlot_sectors s join erp.feedlot_yards y on y.id=s.yard_id where s.id=$1 and s.organization_id=$2 and s.deleted_at is null", [id, ctx.orgId]);

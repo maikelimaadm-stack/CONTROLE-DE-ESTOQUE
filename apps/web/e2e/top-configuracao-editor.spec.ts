@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { login, logout, api, uniq, empresaAtiva, primeiroId, acaoDaCentral } from "./helpers";
+import { catalogoPublicadoE2E, escolherTipoNoAssistente } from "./top-config-08-comum";
 
 /**
  * CONFIGURAÇÕES › OPERAÇÕES › TIPOS DE OPERAÇÃO — O EDITOR (TOP-CONFIG-03), E1 a E9 e E20; e a área de
@@ -81,9 +82,10 @@ test("E1 — cria uma TOP com configuração completa, e reabrir mostra EXATAMEN
   await page.getByRole("button", { name: "Novo tipo de operação" }).click();
   const forma = page.getByTestId("form-tipo-operacao");
   await expect(forma).toBeVisible();
+  // OPERACOES-01 F4 (decisão 281): o tipo de movimento vem primeiro (o passo 1); código e nome, no passo 2.
+  await escolherTipoNoAssistente(forma, "vendas.venda");
   await forma.getByTestId("top-campo-codigo").fill(codigo);
   await forma.getByTestId("top-campo-nome").fill(nome);
-  await forma.getByTestId("top-campo-familia").selectOption("vendas.venda");
 
   // O aviso de versionamento é dito UMA vez, em toda abertura: configurar não é ligar o efeito.
   await expect(forma.getByTestId("top-aviso-versionamento")).toBeVisible();
@@ -703,15 +705,16 @@ test("W1 — uma TOP do FORMATO 1 aparece como Legado/Legado, e o histórico diz
   await expect(versoes.getByTestId("top-versao-nota-execucao"), "o formato 1 é legado, e a tela diz isso").toBeVisible();
 });
 
-test("W2 — uma TOP NOVA nasce sem efeito configurado (Legado/Legado; formato 4 com o servidor da TOP-CONFIG-08)", async ({ page }) => {
+test("W2 — uma TOP NOVA nasce sem efeito configurado (Legado/Legado; formato 5 com o servidor da F4)", async ({ page }) => {
   await login(page);
   await abrirTela(page);
   const codigo = codigoNovo();
   await page.getByRole("button", { name: "Novo tipo de operação" }).click();
   const forma = page.getByTestId("form-tipo-operacao");
+  // OPERACOES-01 F4: a criação passa pelo assistente (o tipo de movimento primeiro).
+  await escolherTipoNoAssistente(forma, "vendas.venda");
   await forma.getByTestId("top-campo-codigo").fill(codigo);
   await forma.getByTestId("top-campo-nome").fill(uniq("Nova W2"));
-  await forma.getByTestId("top-campo-familia").selectOption("vendas.venda");
   await forma.getByTestId("top-aba-execucao").click();
   await expect(forma.getByTestId("top-campo-execucao-estoque")).toHaveValue("legado");
   await expect(forma.getByTestId("top-campo-execucao-financeiro")).toHaveValue("legado");
@@ -720,9 +723,10 @@ test("W2 — uma TOP NOVA nasce sem efeito configurado (Legado/Legado; formato 4
   const d = await detalheNoServidor(page, await idDoCodigo(page, codigo));
   // TOP-CONFIG-05 (decisão 263): com o servidor que declara `restricoes`, o editor grava o formato 3 (o formato 2 +
   // as restrições no neutro). TOP-CONFIG-08 (decisão 277): com o servidor que declara `regrasGerais`, grava o
-  // formato 4 (as mesmas chaves, regras gerais no neutro). O que este teste protege continua igual: nenhum
-  // efeito nasce configurado.
-  expect(d.configuracaoSchema, "a TOP nova grava o formato 4 (restrições e regras gerais no neutro)").toBe(4);
+  // formato 4 (as mesmas chaves, regras gerais no neutro). OPERACOES-01 F4 (decisão 281): com o servidor que declara
+  // `formato5`, grava o 5 (o 4 + as seções de extensão, cada uma no neutro). O que este teste protege continua igual:
+  // nenhum efeito nasce configurado.
+  expect(d.configuracaoSchema, "a TOP nova grava o formato 5 (restrições, regras gerais e seções novas no neutro)").toBe(5);
   expect(d.configuracao.valor.execucao, "e nenhum efeito começa configurado").toEqual({ estoque: "legado", financeiro: "legado" });
 });
 
@@ -745,8 +749,10 @@ test("W3 — abrir e salvar uma TOP do formato 1 sem mudar nada NÃO cria versã
   // TOP-CONFIG-05 (decisão 263): o editor novo envia o formato 3; o neutro v3 é IGUAL ao v1 neutro, então a
   // garantia do teste (nenhuma versão só para trocar o formato) segue provada logo abaixo. TOP-CONFIG-08
   // (decisão 277): com `regrasGerais` declarado, o editor envia o formato 4; com as quatro regras gerais no
-  // neutro ele também é IGUAL ao v1, e o [1, 1] abaixo continua sendo a prova.
-  expect(corpo.configuracao?.versaoSchema, "o corpo enviado é o formato 4").toBe(4);
+  // neutro ele também é IGUAL ao v1, e o [1, 1] abaixo continua sendo a prova. OPERACOES-01 F4 (decisão 281): com
+  // `formato5` declarado, o editor LÊ o 1 como 5 e envia o 5 — e o servidor compara na vista do 5: salvar sem mexer
+  // continua não sendo escrita, e a TOP continua no formato GRAVADO (o 1).
+  expect(corpo.configuracao?.versaoSchema, "o corpo enviado é o formato 5").toBe(5);
   expect(corpo.configuracao?.execucao).toEqual({ estoque: "legado", financeiro: "legado" });
   const d = await detalheNoServidor(page, top.id);
   expect([d.versao, d.configuracaoSchema], "nenhuma versão só para trocar o formato").toEqual([1, 1]);
@@ -852,16 +858,35 @@ test("W4c — a 409 do gate desligado mostra o motivo do servidor, e não o avis
   await expect(outra.getByTestId("top-conflito")).toBeVisible();
 });
 
-test("W5 — família sem consumidor: a execução configurada não está disponível, com a mensagem objetiva", async ({ page }) => {
+test("W5 — família sem consumidor da execução configurada: no editor do formato 5 a aba Execução não aparece no pedido (o tipo não aceita execução configurada), e na venda aparece", async ({ page }) => {
   await login(page);
-  const top = await topSimples(page, "vendas.pedido");
+  // A PREMISSA NO SERVIDOR: o perfil que ele publica para cada tipo diz que a venda tem a aba Execução e o pedido não.
+  const catalogo = await catalogoPublicadoE2E(page);
+  const abasDe = (familia: string) => catalogo.perfis.find((p) => p.familia === familia)?.abas ?? [];
+  expect(abasDe("vendas.venda"), "premissa: o perfil publicado da venda tem a aba Execução").toContain("execucao");
+  expect(abasDe("vendas.pedido"), "premissa: e o do pedido não (o pedido só aceita o legado)").not.toContain("execucao");
+  expect(abasDe("vendas.pedido"), "premissa: o perfil do pedido existe e tem as outras abas").toContain("estoque");
+
+  const venda = await topSimples(page);
+  const pedido = await topSimples(page, "vendas.pedido");
   await abrirTela(page);
-  const forma = await abrirExecucao(page, top.codigo);
-  await expect(forma.getByTestId("top-execucao-familia-nao-suportada")).toContainText("Execução configurada ainda não disponível para este movimento."); // decisão 261: "família" → "movimento" na tela
-  for (const efeito of ["estoque", "financeiro"]) {
-    await expect(forma.getByTestId(`top-campo-execucao-${efeito}`), `${efeito}: fica no legado`).toHaveValue("legado");
-    await expect(forma.getByTestId(`top-campo-execucao-${efeito}`)).toBeDisabled();
-  }
+
+  // PRESENÇA ANTES DA AUSÊNCIA: o MESMO editor, na venda, mostra a aba e a área monta com os dois efeitos.
+  const formaVenda = await abrirExecucao(page, venda.codigo);
+  await expect(formaVenda.getByTestId("top-campo-execucao-estoque")).toHaveValue("legado");
+  await expect(formaVenda.getByTestId("top-campo-execucao-financeiro")).toHaveValue("legado");
+  await formaVenda.getByTestId("top-cancelar").click();
+  await expect(formaVenda).toBeHidden();
+
+  // NO PEDIDO a aba some: ela não tinha o que decidir (o servidor só aceita "legado" ali). A premissa de que o editor é
+  // o do 5 fica ao lado — o rótulo do tipo na Geral ("Exigir cliente"), que o editor do 4 não tem.
+  const forma = await abrirEdicao(page, pedido.codigo);
+  await forma.getByTestId("top-aba-geral").click();
+  await expect(forma.getByLabel("Exigir cliente", { exact: true }), "premissa: o editor do 5 (o parceiro do pedido de venda é o cliente)")
+    .toHaveAttribute("data-testid", "top-campo-geral-parceiro");
+  await expect(forma.getByTestId("top-aba-estoque"), "as abas do tipo continuam").toBeVisible();
+  await expect(forma.getByTestId("top-aba-execucao"), "a aba Execução não aparece no pedido").toHaveCount(0);
+  await expect(forma.locator("[data-testid^='top-execucao']"), "nenhuma peça da área de execução").toHaveCount(0);
 });
 
 test("W6/W7 — na venda, só a combinação executável salva; a incompatível explica o motivo, em português", async ({ page }) => {

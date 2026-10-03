@@ -24,18 +24,21 @@ async function apiPost<T>(page: Page, path: string, body: unknown): Promise<T> {
   }, { path, body, api });
 }
 const first = async <T,>(page: Page, path: string): Promise<T> => { const d = await apiGet<{ items?: T[] } | T[]>(page, path); const items = Array.isArray(d) ? d : (d.items ?? []); if (!items[0]) throw new Error(`fixture: sem registro em ${path}`); return items[0]; };
-type Refs = { empresa: string; animal: string; batch: string; wh: string; prod: string; supplier: string; client: string; cat: string; cc: string; eq: string };
+type Refs = { empresa: string; animal: string; batch: string; wh: string; prod: string; supplier: string; client: string; catDespesa: string; catReceita: string; cc: string; eq: string };
 /** Referências do seed (cadastros) usadas pelas fixtures — resolvidas uma vez por teste. */
 async function refs(page: Page): Promise<Refs> {
   const a = await first<{ id: string; empresa_id: string; batch_id: string }>(page, "/api/livestock/animals?pageSize=1");
-  const [wh, prod, supplier, client, cat, cc, eq] = await Promise.all([
+  // Natureza e centro ANALÍTICOS (e a natureza no sentido do título): o servidor recusa lançamento em natureza sintética
+  // (422), e o 1º cadastro do seed, sem filtro, é sintético — a fixture só "passava" quando outro spec já tinha criado o título.
+  const [wh, prod, supplier, client, catDespesa, catReceita, cc, eq] = await Promise.all([
     first<{ id: string }>(page, `/api/resources/warehouses?empresa_id=${a.empresa_id}&pageSize=1`), first<{ id: string }>(page, "/api/resources/products?pageSize=1"),
     first<{ id: string }>(page, "/api/resources/people?is_supplier=true&pageSize=1"), first<{ id: string }>(page, "/api/resources/people?is_client=true&pageSize=1"),
-    first<{ id: string }>(page, "/api/resources/financial_categories?pageSize=1"), first<{ id: string }>(page, "/api/resources/cost_centers?pageSize=1"), first<{ id: string }>(page, "/api/resources/equipments?pageSize=1")
+    first<{ id: string }>(page, "/api/resources/financial_categories?kind=analytic&nature=expense&pageSize=1"),
+    first<{ id: string }>(page, "/api/resources/financial_categories?kind=analytic&nature=income&pageSize=1"), first<{ id: string }>(page, "/api/resources/cost_centers?kind=analytic&pageSize=1"), first<{ id: string }>(page, "/api/resources/equipments?pageSize=1")
   ]);
-  return { empresa: a.empresa_id, animal: a.id, batch: a.batch_id, wh: wh.id, prod: prod.id, supplier: supplier.id, client: client.id, cat: cat.id, cc: cc.id, eq: eq.id };
+  return { empresa: a.empresa_id, animal: a.id, batch: a.batch_id, wh: wh.id, prod: prod.id, supplier: supplier.id, client: client.id, catDespesa: catDespesa.id, catReceita: catReceita.id, cc: cc.id, eq: eq.id };
 }
-const title = (r: Refs, dir: "payable" | "receivable") => ({ empresa_id: r.empresa, number: `${dir === "payable" ? "PO" : "RO"}-${Date.now().toString(36)}`, person_id: dir === "payable" ? r.supplier : r.client, amount: "10.00", emission_date: "2026-09-10", due_date: "2026-10-10", note: "record-open", apportionment: [{ financial_category_id: r.cat, cost_center_id: r.cc, percentage: "100" }] });
+const title = (r: Refs, dir: "payable" | "receivable") => ({ empresa_id: r.empresa, number: `${dir === "payable" ? "PO" : "RO"}-${Date.now().toString(36)}`, person_id: dir === "payable" ? r.supplier : r.client, amount: "10.00", emission_date: "2026-09-10", due_date: "2026-10-10", note: "record-open", apportionment: [{ financial_category_id: dir === "payable" ? r.catDespesa : r.catReceita, cost_center_id: r.cc, percentage: "100" }] });
 const inputEntry = (r: Refs) => ({ empresa_id: r.empresa, entry_date: "2026-09-10", note: "record-open", items: [{ product_id: r.prod, quantity: "100", unit_value: "2", generate_stock: true, warehouse_id: r.wh }] });
 /** Fixtures mínimas pela API para famílias que o seed de demonstração não cobre (o seed traz só cadastros + animais). */
 const fixtures: Record<string, (page: Page, r: Refs) => Promise<void>> = {

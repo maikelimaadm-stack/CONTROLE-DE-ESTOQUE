@@ -13,6 +13,12 @@
  *     Aprovar e o Reprovar, com a mesma seleção, aceitam.
  *   · POST /aprovacoes/estoque/<segmento>/:id/aprovar  {observacao?} e /reprovar {motivo} → uma rota por espécie,
  *     com `<recurso da espécie>.approve`; o segmento na URL é a porta, e o documento de OUTRA espécie é a mesma 404.
+ *   · GET  /aprovacoes/estoque/<segmento>/:id  (OPERACOES-01 F12, decisão 282) → `{ situacao, ultimaDecisao }`, a
+ *     SITUAÇÃO DA APROVAÇÃO de um documento, para a consulta da Central de Estoque — o contrato da venda e da compra
+ *     (`aprovacoes-situacao.ts`, decisão 279). Uma rota por espécie, como as decisões, com `<recurso da espécie>.view`:
+ *     a capacidade é conferida pelo `runService` ANTES de qualquer leitura (a porta é a espécie da URL, nunca a linha —
+ *     nada do documento é lido para escolher a permissão), e o documento é achado pelo MESMO recorte do GET por id
+ *     (organização, espécie e escopo de empresa do módulo estoque): a MESMA 404. Só leitura, consultas fixas.
  *
  * A ORDEM DAS RECUSAS é a do PATCH da venda (EDITAR-01), e é contrato:
  *   1. o corpo → 422, antes de ler qualquer registro e de reservar a chave de idempotência;
@@ -45,6 +51,7 @@ import {
   confirmaAutomaticamente, lerVersaoCongeladaTop, tentarConfirmacaoAutomatica, type ResultadoConfirmacaoAutomatica,
 } from "../lib/confirmacao-automatica.js";
 import { ESPECIES_ESTOQUE, FORMA_UUID, lerDocumentoEstoque } from "./estoque-comum.js";
+import { recusarParametrosDaSituacao, respostaDaSituacaoDaAprovacao, type RespostaDaSituacaoDaAprovacao } from "./aprovacoes-situacao.js";
 import { confirmarDocumentoEstoqueNaTransacao } from "./estoque-confirmacao.js";
 import { paginaComIdGlobal } from "../lib/id-global.js";
 
@@ -175,20 +182,22 @@ async function listarFila(ctx: ServiceCtx, especies: readonly EspecieEstoque[], 
 // ─────────────── as decisões ───────────────
 
 /**
- * A TRAVA DA DECISÃO, SEM JUNÇÃO: só `erp.documentos_estoque`, só o que a decisão lê. O RECORTE é o MESMO do
- * `lerDocumentoEstoque` (organização, espécie e escopo de empresa do módulo da rota, pelo `scopedById`): zero linhas
- * é a MESMA 404. A confirmação automática, depois, trava o mesmo cabeçalho — já é desta transação, não espera.
+ * O CABEÇALHO DA APROVAÇÃO, SEM JUNÇÃO: só `erp.documentos_estoque`, só o que a decisão e a situação leem. O RECORTE é
+ * o MESMO do `lerDocumentoEstoque` (organização, espécie e escopo de empresa do módulo da rota, pelo `scopedById`):
+ * zero linhas é a MESMA 404. `travar`: a TRAVA DA DECISÃO (`for update`) — a confirmação automática, depois, trava o
+ * mesmo cabeçalho, já desta transação, e não espera. A situação (F12) lê sem travar.
  */
-async function travarDocumento(ctx: ServiceCtx, id: string, especie: EspecieEstoque) {
+async function cabecalhoDaAprovacao(ctx: ServiceCtx, id: string, especie: EspecieEstoque, travar: boolean) {
   const sc = scopedById(ctx, "d", id); sc.params.push(especie);
   const r = await ctx.tx.query<{ id: string; situacao: string; empresa_id: string; tipo_operacao_versao_id: string }>(
     `select d.id, d.situacao, d.empresa_id, d.tipo_operacao_versao_id
        from erp.documentos_estoque d
-      where d.id = $1 and d.organization_id = $2 and d.especie = $${sc.params.length}${sc.sql}
-        for update of d`, sc.params);
+      where d.id = $1 and d.organization_id = $2 and d.especie = $${sc.params.length}${sc.sql}${travar ? `
+        for update of d` : ""}`, sc.params);
   if (!r.rows[0]) throw notFound("Documento");
   return r.rows[0];
 }
+const travarDocumento = (ctx: ServiceCtx, id: string, especie: EspecieEstoque) => cabecalhoDaAprovacao(ctx, id, especie, true);
 
 /**
  * DECIDIR — passos 5 a 9 do cabeçalho, dentro da idempotência. Aprovar com TOP automática tenta a confirmação no
@@ -216,6 +225,34 @@ async function decidir(ctx: ServiceCtx, especie: EspecieEstoque, recurso: string
   return confirmacaoAutomatica ? { ...corpo, confirmacaoAutomatica } : corpo;
 }
 
+// ─────────────── a situação de UM documento (OPERACOES-01 F12, decisão 282) ───────────────
+
+/**
+ * A SITUAÇÃO DA APROVAÇÃO DE UM DOCUMENTO DE ESTOQUE, para a consulta da Central de Estoque. Quem chama já passou pela
+ * `<recurso da espécie>.view` (o `runService`, antes de ler qualquer registro). Ordem, a da venda e da compra (279):
+ *   1. parâmetro de consulta → 422, antes de qualquer leitura (nunca ignorado);
+ *   2. id fora da forma de UUID → a MESMA 404 (o id nunca vai ao SQL: 22P02 seria 500);
+ *   3. o cabeçalho pelo recorte do GET por id — outra organização, fora do escopo de empresa do módulo estoque,
+ *      inexistente ou de OUTRA espécie: a MESMA 404, com o mesmo corpo;
+ *   4. a conta (`respostaDaSituacaoDaAprovacao`): não aberto → `nao_aberto`, sem ler a TOP; aberto → a versão
+ *      CONGELADA e a conta das decisões, SEM valor (a política do estoque é só "Sempre"); e a última decisão.
+ * Consultas fixas: o cabeçalho + no máximo 1 da versão da TOP + 1 da vigente + 1 da última decisão. Nada é gravado.
+ */
+async function situacaoDoDocumentoDeEstoque(ctx: ServiceCtx, especie: EspecieEstoque, params: unknown, query: unknown): Promise<RespostaDaSituacaoDaAprovacao> {
+  recusarParametrosDaSituacao(query);
+  const { id } = params as { id: string };
+  if (!FORMA_UUID.test(id)) throw notFound("Documento");
+  const doc = await cabecalhoDaAprovacao(ctx, id, especie, false);
+  return respostaDaSituacaoDaAprovacao(ctx, {
+    modulo: "estoque",
+    documentoId: doc.id,
+    aberto: doc.situacao === "aberto",
+    versaoDocumento: null,
+    valorDocumento: null,
+    tipoOperacaoVersaoId: doc.tipo_operacao_versao_id,
+  });
+}
+
 // ─────────────── rotas ───────────────
 
 export default async function aprovacoesEstoqueRoutes(app: FastifyInstance) {
@@ -240,6 +277,9 @@ export default async function aprovacoesEstoqueRoutes(app: FastifyInstance) {
 
   for (const { especie, segmento, recurso } of ESPECIES_ESTOQUE) {
     const base = `/aprovacoes/estoque/${segmento}/:id`;
+
+    // A SITUAÇÃO (F12): quem VÊ o documento vê a situação dele; quem DECIDE continua sendo `<recurso>.approve`.
+    app.get(base, async (req) => runService(app, req, `${recurso}.view`, (ctx) => situacaoDoDocumentoDeEstoque(ctx, especie, req.params, req.query)));
 
     app.post(`${base}/aprovar`, async (req) => runService(app, req, `${recurso}.approve`, async (ctx) => {
       const corpo = aprovarSchema.parse(req.body ?? {});

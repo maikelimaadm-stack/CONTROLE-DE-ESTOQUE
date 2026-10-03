@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import pg from "pg";
 import { seedDemo } from "@agro/db";
 import {
-  configuracaoNeutraTop, configuracaoNeutraTopV2, exigeAprovacao, regrasGeraisDaVersaoTop,
+  configuracaoNeutraTop, configuracaoNeutraTopV2, exigeAprovacao, mensagemAprovacaoReprovada, regrasGeraisDaVersaoTop,
   type ConfiguracaoTipoOperacaoV3, type ConfiguracaoTipoOperacaoV4, type EspecieEstoque,
 } from "@agro/domain";
 import { fromPgError } from "../../src/lib/errors.js";
@@ -30,7 +30,7 @@ import {
  *   · AP-4  a versão: aprovar com a velha → 409; alterar depois de aprovada → pendente de novo; reprovada em V e
  *           alterada para V+1 → pendente; o total que desce abaixo do limite deixa de exigir;
  *   · AP-5  reprovar exige motivo (422); confirmar reprovada → 409 APROVACAO_REPROVADA com o motivo e quem decidiu;
- *           aprovada depois → passa, e a história fica;
+ *           aprovada depois → passa, e a história fica; o motivo que já fecha a frase não ganha um 2º ponto (AP-5b);
  *   · AP-6  Automática + aprovação: salvar → aberto, "aguardando_aprovacao"; aprovar → confirma no MESMO pedido;
  *           o aprovador sem `sales.edit` → aprovado e aberto, "sem_permissao";
  *   · AP-8  documento que não exige → 409 APROVACAO_NAO_EXIGIDA; confirmado ou cancelado → 409 CONFLICT;
@@ -46,7 +46,9 @@ import {
  * O QUE CONTA COMO PROVA (o molde do ajudante): a situação do documento, os movimentos, os títulos, as DECISÕES
  * (`erp.aprovacoes_*`) e a trilha são LIDOS NO BANCO por conexão de superusuário, sem RLS. Toda asserção de "zero
  * efeito" tem a PREMISSA ao lado: o mesmo documento, aprovado (ou o mesmo pedido, por quem pode), produz o efeito.
- * As mensagens são as da SPEC, ESCRITAS AQUI — uma constante errada no domínio não se aprova sozinha.
+ * As mensagens são as da SPEC, ESCRITAS AQUI — uma constante errada no domínio não se aprova sozinha. A da
+ * REPROVAÇÃO também: cada caso escreve a frase inteira com o seu motivo; a função do domínio
+ * (`mensagemAprovacaoReprovada`) só aparece no AP-5b, conferida CONTRA o texto à mão, nunca no lugar dele.
  */
 beforeAll(iniciar, 240_000);
 afterAll(encerrar);
@@ -55,7 +57,6 @@ afterAll(encerrar);
 
 const MSG = {
   pendente: "Este documento precisa de aprovação antes de ser confirmado.",
-  reprovado: (motivo: string) => `Este documento foi reprovado: ${motivo}.`,
   naoExigida: "Este documento não precisa de aprovação.",
   soAberto: "Só documento aberto passa por aprovação.",
   /** O 409 de versão do PATCH (EDITAR-01), o mesmo das decisões da venda. */
@@ -399,7 +400,7 @@ describe("AP-5 — reprovar: o motivo é obrigatório, a recusa o explica, e a a
 
     const r = await confirmarVenda(v.id);
     expect(r.statusCode, r.body).toBe(409);
-    expect(erro(r)).toEqual({ code: "APROVACAO_REPROVADA", message: MSG.reprovado(motivo),
+    expect(erro(r)).toEqual({ code: "APROVACAO_REPROVADA", message: "Este documento foi reprovado: Preço abaixo da tabela.",
       details: { motivo, decididoPor: { id: quem.id, nome: quem.nome }, decididoEm } });
     expect(await efeitosDaVenda(v.id)).toEqual(SEM_EFEITO);
     expect(j(await previaVenda(v.id))).toMatchObject({ podeConfirmar: false, recusas: [erro(r)] });
@@ -412,6 +413,25 @@ describe("AP-5 — reprovar: o motivo é obrigatório, a recusa o explica, e a a
     expect((await efeitosDaVenda(v.id)).status).toBe("confirmed");
     expect((await decisoesDe("aprovacoes_venda", v.id)).map((d) => [d.decisao, d.observacao, d.versao_documento, d.decidido_por]),
       "só inserção: a reprovação continua na história").toEqual([["reprovado", motivo, versao, quem.id], ["aprovado", null, versao, quem.id]]);
+  });
+
+  it("AP-5b o motivo que JÁ fecha a frase (\"Preço alto.\") → o 409 diz \"…reprovado: Preço alto.\", com UM ponto final só; a prévia diz o mesmo", async () => {
+    const v = await venda(await topVendaSempre());
+    const versao = await versaoVista(v.id);
+    const motivo = "Preço alto.";
+    const rep = await reprovar("vendas", v.id, { version: versao, motivo });
+    expect(rep.statusCode, rep.body).toBe(200);
+    expect((await decisoesDe("aprovacoes_venda", v.id)).map((d) => [d.decisao, d.observacao]),
+      "premissa: o motivo gravado já termina em ponto").toEqual([["reprovado", motivo]]);
+
+    const r = await confirmarVenda(v.id);
+    expect(r.statusCode, r.body).toBe(409);
+    expect(erro(r)).toEqual({ code: "APROVACAO_REPROVADA", message: "Este documento foi reprovado: Preço alto.",
+      details: { motivo, decididoPor: { id: c.h.demo.adminUserId, nome: await nomeDoAdmin() }, decididoEm: (j(rep).aprovacao as { decididoEm: string }).decididoEm } });
+    expect(erro(r).message.match(/\.+$/u)?.[0], "UM ponto final só, nunca \"..\"").toBe(".");
+    expect(erro(r).message, "o texto à mão e a função do domínio dizem o mesmo").toBe(mensagemAprovacaoReprovada(motivo));
+    expect(j(await previaVenda(v.id))).toMatchObject({ podeConfirmar: false, recusas: [erro(r)] });
+    expect(await efeitosDaVenda(v.id)).toEqual(SEM_EFEITO);
   });
 });
 
@@ -944,7 +964,7 @@ describe("AP-10 — concorrência com barreira: a trava do documento ordena deci
       expect(r.statusCode, `a última é a aprovação: confirma — ${r.body}`).toBe(200);
     } else {
       expect(r.statusCode, r.body).toBe(409);
-      expect(erro(r)).toMatchObject({ code: "APROVACAO_REPROVADA", message: MSG.reprovado(motivo) });
+      expect(erro(r)).toMatchObject({ code: "APROVACAO_REPROVADA", message: "Este documento foi reprovado: Reprovada na corrida." });
       expect(await efeitosDaVenda(v.id)).toEqual(SEM_EFEITO);
     }
   });

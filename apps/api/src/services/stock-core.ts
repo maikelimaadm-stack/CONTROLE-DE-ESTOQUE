@@ -2,9 +2,17 @@ import type { ServiceCtx } from "../lib/context.js";
 import { validation, err } from "../lib/errors.js";
 import { money, qty as fqty, D } from "@agro/shared";
 
+/**
+ * O pedido de um movimento no razão. O DESTINO do movimento (para onde vai o que sai — OPERACOES-01 F5a, decisão
+ * 282) são as colunas anuláveis `costCenterId` (centro de resultado), `harvestId` (safra), `equipamentoId`
+ * (máquina/equipamento), `ordemServicoId` (ordem de serviço), `loteAnimaisId` (lote de animais) e `areaId`
+ * (área/talhão), mais a cultura (`cultivationId`). As quatro da 0043 têm FK composta com a organização: um alvo de
+ * outra organização é recusado pelo banco (23503), nunca gravado. Ausente = nulo — o comportamento de antes.
+ */
 export interface StockPost {
   empresaId: string; warehouseId: string; productId: string; movementType: string; direction: 1 | -1; quantity: string; unitCost?: string | null;
   providerLot?: string | null; expirationDate?: string | null; costCenterId?: string | null; harvestId?: string | null; cultivationId?: string | null;
+  equipamentoId?: string | null; ordemServicoId?: string | null; loteAnimaisId?: string | null; areaId?: string | null;
   sourceType: string; sourceId: string; date: string; note?: string | null;
 }
 
@@ -152,7 +160,7 @@ export async function chaveDoLote(ctx: ServiceCtx, warehouseId: string, productI
     "select provider_lot from erp.stock_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and btrim(provider_lot) = $4 and quantity <> 0 order by provider_lot",
     [ctx.orgId, warehouseId, productId, loteAparado]);
   if (r.rows.length > 1) {
-    throw validation(`O lote "${loteAparado}" tem ${r.rows.length} saldos neste armazém que só diferem por espaços nas pontas (gravados antes de o lote ser aparado). Não é possível escolher entre eles pelo lote informado: movimente sem informar o lote (a escolha automática por validade usa cada saldo) ou peça ao administrador o acerto desses saldos.`,
+    throw validation(`O lote "${loteAparado}" tem ${r.rows.length} saldos neste local de estoque que só diferem por espaços nas pontas (gravados antes de o lote ser aparado). Não é possível escolher entre eles pelo lote informado: movimente sem informar o lote (a escolha automática por validade usa cada saldo) ou peça ao administrador o acerto desses saldos.`,
       [{ path: "provider_lot", message: "Lote com saldos duplicados por espaços" }]);
   }
   return r.rows[0]?.provider_lot ?? loteAparado;
@@ -160,8 +168,9 @@ export async function chaveDoLote(ctx: ServiceCtx, warehouseId: string, productI
 
 async function gravarMovimento(ctx: ServiceCtx, p: StockPost, lote: string | null, validade: string | null, quantidade: string): Promise<ParteDoMovimento> {
   const r = await ctx.tx.query<{ id: string; balance_after: string; avg_cost_after: string; unit_cost: string }>(
-    "insert into erp.stock_movements(organization_id,empresa_id,warehouse_id,product_id,movement_type,direction,quantity,unit_cost,provider_lot,expiration_date,cost_center_id,harvest_id,cultivation_id,source_type,source_id,movement_date,note,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) returning id, balance_after, avg_cost_after, unit_cost",
-    [ctx.orgId, p.empresaId, p.warehouseId, p.productId, p.movementType, p.direction, fqty(quantidade), p.unitCost ? D(p.unitCost).toFixed(6) : "0", lote, validade, p.costCenterId ?? null, p.harvestId ?? null, p.cultivationId ?? null, p.sourceType, p.sourceId, p.date, p.note ?? null, ctx.user.id]);
+    "insert into erp.stock_movements(organization_id,empresa_id,warehouse_id,product_id,movement_type,direction,quantity,unit_cost,provider_lot,expiration_date,cost_center_id,harvest_id,cultivation_id,equipamento_id,ordem_servico_id,lote_animais_id,area_id,source_type,source_id,movement_date,note,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) returning id, balance_after, avg_cost_after, unit_cost",
+    [ctx.orgId, p.empresaId, p.warehouseId, p.productId, p.movementType, p.direction, fqty(quantidade), p.unitCost ? D(p.unitCost).toFixed(6) : "0", lote, validade, p.costCenterId ?? null, p.harvestId ?? null, p.cultivationId ?? null,
+      p.equipamentoId ?? null, p.ordemServicoId ?? null, p.loteAnimaisId ?? null, p.areaId ?? null, p.sourceType, p.sourceId, p.date, p.note ?? null, ctx.user.id]);
   const row = r.rows[0]!;
   // `quantidade` como veio de quem chama (a parte da divisão, ou a quantidade do pedido): a conta de antes do R1
   return { id: row.id, lote, validade, quantidade: fqty(quantidade), unitCost: row.unit_cost, total: lineTotal(quantidade, row.unit_cost), balanceAfter: row.balance_after, avgCostAfter: row.avg_cost_after };
@@ -188,8 +197,8 @@ export async function postStock(ctx: ServiceCtx, p: StockPost): Promise<Resultad
   if (!prod.rows[0]) throw validation("Produto inválido");
   if (!prod.rows[0].control_stock) throw err("PRODUCT_NOT_STOCK_CONTROLLED", "Produto não controla estoque");
   const wh = await ctx.tx.query<{ empresa_id: string; is_active: boolean }>("select empresa_id, is_active from erp.warehouses where id=$1 and organization_id=$2 and deleted_at is null", [p.warehouseId, ctx.orgId]);
-  if (!wh.rows[0]) throw validation("Armazém inválido");
-  if (wh.rows[0].empresa_id !== p.empresaId) throw err("WAREHOUSE_FARM_MISMATCH", "Armazém não pertence à fazenda informada");
+  if (!wh.rows[0]) throw validation("Local de estoque inválido");
+  if (wh.rows[0].empresa_id !== p.empresaId) throw err("WAREHOUSE_FARM_MISMATCH", "Local de estoque não pertence à empresa informada");
   // A quantidade é conferida na escala do ledger (4 casas): "0.00004" vira 0 no INSERT, e a divisão por lotes
   // receberia zero para dividir (revisão do R1: respondia 500). Quantidade que arredonda a zero não é positiva.
   if (D(fqty(p.quantity)).lte(0)) throw validation("Quantidade deve ser positiva");
@@ -240,10 +249,18 @@ async function validadeDoLote(ctx: ServiceCtx, p: StockPost, lote: string): Prom
  * olha lotes preenchidos; o lote informado vazio é "sem lote") e que ainda impede a troca de controle — o saldo que
  * a pré-condição 2.1 da 0029 recusa no deploy renasceria depois dele. A entrada estornada tiraria do balde vazio,
  * que está zerado (o gatilho de saldo recusaria com um 409 que não explica nada). A recusa diz o porquê e o caminho.
+ *
+ * O ESTORNO LEVA O DESTINO DO ORIGINAL (OPERACOES-01 F5a, decisão 282): centro de resultado, safra, cultura,
+ * máquina/equipamento, ordem de serviço, lote de animais e área/talhão — o líquido por destino (saída − estorno)
+ * fecha em qualquer recorte. Antes da F5a o estorno não copiava a cultura: a saída estornada continuava com a cultura
+ * e o estorno ficava sem — conserto declarado, no mesmo lugar do destino.
  */
 export async function reverseStock(ctx: ServiceCtx, sourceType: string, sourceId: string, date: string): Promise<number> {
-  const ms = await ctx.tx.query<{ id: string; empresa_id: string; warehouse_id: string; product_id: string; direction: number; quantity: string; unit_cost: string; provider_lot: string | null; cost_center_id: string | null; harvest_id: string | null; preso_sem_lote: boolean; produto: string }>(
-    `select m.id, m.empresa_id, m.warehouse_id, m.product_id, m.direction, m.quantity, m.unit_cost, m.provider_lot, m.cost_center_id, m.harvest_id,
+  const ms = await ctx.tx.query<{ id: string; empresa_id: string; warehouse_id: string; product_id: string; direction: number; quantity: string; unit_cost: string; provider_lot: string | null;
+    cost_center_id: string | null; harvest_id: string | null; cultivation_id: string | null; equipamento_id: string | null; ordem_servico_id: string | null; lote_animais_id: string | null; area_id: string | null;
+    preso_sem_lote: boolean; produto: string }>(
+    `select m.id, m.empresa_id, m.warehouse_id, m.product_id, m.direction, m.quantity, m.unit_cost, m.provider_lot,
+            m.cost_center_id, m.harvest_id, m.cultivation_id, m.equipamento_id, m.ordem_servico_id, m.lote_animais_id, m.area_id,
             (coalesce(to_jsonb(p)->>'controle_lote', case when p.has_lot then 'lote' else 'nenhum' end) <> 'nenhum'
               and coalesce(btrim(m.provider_lot), '') = '') as preso_sem_lote,
             p.code || ' - ' || p.description as produto
@@ -255,8 +272,10 @@ export async function reverseStock(ctx: ServiceCtx, sourceType: string, sourceId
       [{ path: "provider_lot", message: "Estorno de movimento sem lote de produto com controle de lote" }]);
   }
   for (const m of ms.rows) {
-    const rev = await ctx.tx.query<{ id: string }>("insert into erp.stock_movements(organization_id,empresa_id,warehouse_id,product_id,movement_type,direction,quantity,unit_cost,provider_lot,cost_center_id,harvest_id,source_type,source_id,movement_date,note,created_by) values ($1,$2,$3,$4,'reversal',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) returning id",
-      [ctx.orgId, m.empresa_id, m.warehouse_id, m.product_id, -m.direction, m.quantity, m.unit_cost, m.provider_lot, m.cost_center_id, m.harvest_id, sourceType, sourceId, date, `estorno de ${m.id}`, ctx.user.id]);
+    const rev = await ctx.tx.query<{ id: string }>("insert into erp.stock_movements(organization_id,empresa_id,warehouse_id,product_id,movement_type,direction,quantity,unit_cost,provider_lot,cost_center_id,harvest_id,cultivation_id,equipamento_id,ordem_servico_id,lote_animais_id,area_id,source_type,source_id,movement_date,note,created_by) values ($1,$2,$3,$4,'reversal',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) returning id",
+      [ctx.orgId, m.empresa_id, m.warehouse_id, m.product_id, -m.direction, m.quantity, m.unit_cost, m.provider_lot,
+        m.cost_center_id, m.harvest_id, m.cultivation_id, m.equipamento_id, m.ordem_servico_id, m.lote_animais_id, m.area_id,
+        sourceType, sourceId, date, `estorno de ${m.id}`, ctx.user.id]);
     // marca o original como estornado via coluna (ledger imutável => usamos tabela de vínculo pela coluna reversed_by no estorno através de update permitido? não: ledger é imutável)
     void rev;
   }

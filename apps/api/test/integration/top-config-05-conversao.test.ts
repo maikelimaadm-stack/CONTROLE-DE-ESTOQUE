@@ -169,7 +169,8 @@ describe("TR-A6 — GET /regras-da-operacao e a capacidade nova", () => {
     const r = await regras("sales", `?tipo_operacao_id=${t}`);
     expect(r.statusCode, r.body).toBe(200);
     // TOP-CONFIG-07: `reservaEstoque` é aditivo e só o pedido pode ter true — na venda, sempre false.
-    expect(r.json()).toEqual({ formato: 3, exigencias: ["transporter_id"], condicoesPermitidas: [cond], clienteEmAtraso: { politica: "avisa", toleranciaDias: 5 }, reservaEstoque: false });
+    // OPERACOES-01 F2 (decisão 279): `regrasGerais` é aditivo e por último — formato 3 é o corte, sempre neutro.
+    expect(r.json()).toEqual({ formato: 3, exigencias: ["transporter_id"], condicoesPermitidas: [cond], clienteEmAtraso: { politica: "avisa", toleranciaDias: 5 }, reservaEstoque: false, regrasGerais: { confirmacaoAutomatica: false, aceitaSemItens: false } });
   });
 
   it("TR-A6 formato 2: resposta NEUTRA (mesmo com exigência v2 ligada)", async () => {
@@ -179,7 +180,7 @@ describe("TR-A6 — GET /regras-da-operacao e a capacidade nova", () => {
     await versaoNova(t, cfg2, 2);
     const r = await regras("sales", `?tipo_operacao_id=${t}`);
     expect(r.statusCode, r.body).toBe(200);
-    expect(r.json()).toEqual({ formato: 2, exigencias: [], condicoesPermitidas: null, clienteEmAtraso: { politica: "nao_valida", toleranciaDias: 0 }, reservaEstoque: false });
+    expect(r.json()).toEqual({ formato: 2, exigencias: [], condicoesPermitidas: null, clienteEmAtraso: { politica: "nao_valida", toleranciaDias: 0 }, reservaEstoque: false, regrasGerais: { confirmacaoAutomatica: false, aceitaSemItens: false } });
   });
 
   it("TR-A6 404 idênticas: inexistente, id malformado, família errada, ausente, inativa", async () => {

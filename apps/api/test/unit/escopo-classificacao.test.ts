@@ -101,7 +101,11 @@ describe("classificação de escopo × schema real", () => {
       // motivo e proteção executável em packages/domain/empresa-rls.mjs (EXCECOES_RLS_EMPRESA.employee_profiles)
       "employee_profiles",
       // arquivo morto de erp.member_farms (PRE-BASE2-03): não é recurso, não tem tela e não tem módulo
-      "legado_escopo_empresa_v0"
+      "legado_escopo_empresa_v0",
+      // OPERACOES-01 F7 (decisão 284): o XML guardado e a importação não são recurso nem têm permissão
+      // própria — as rotas da importação (compras.create) e da DF-e (dfe.create) os gravam sob a RLS
+      // tenant_e_empresa do módulo da rota; o módulo de cada uma está em scripts/company-rls-modules.json
+      "notas_fiscais_xml", "importacoes_nfe_compra"
     ]);
     const cobertas = new Set<string>();
     for (const [recurso, tabelas] of TABELAS_DO_RECURSO) {

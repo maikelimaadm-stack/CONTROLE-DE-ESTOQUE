@@ -2,11 +2,12 @@
 import * as React from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
+import { ATENDIMENTOS_REQUISICAO_ESTOQUE } from "@agro/domain";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useTradutor } from "@/lib/i18n";
 import { COPY, enumLabel, enumOptions } from "@/lib/copy";
-import { LoadingState, StatusBadge, statusTone } from "@/components/ui";
+import { LoadingState, StatusBadge } from "@/components/ui";
 import { type Column } from "@/components/ui/data-table";
 import { FilterChips, useUrlParam } from "@/components/workspace";
 import { DocList, colDate, type Row } from "@/features/docs/shared";
@@ -14,16 +15,25 @@ import { colTipoOperacao } from "@/features/sales/tipo-operacao-select";
 import { NovoDocumentoPorTop } from "@/features/sales/lancador-unificado";
 import { TODOS_OS_TIPOS } from "@/features/sales/seletor-tipo-documento";
 import {
-  opcoesDeTopDeEstoque, rotaDeLancamentoDeEstoque, rotaDoDocumentoEstoque, useTopsDeEstoque, variantesDeEstoque
+  opcoesDeTopDeEstoque, rotaDeLancamentoDeEstoque, rotaDoDocumentoEstoque, useMovimentacaoInternaNoEstoque, useTopsDeEstoque,
+  variantesDeEstoque
 } from "./movimentacoes-variantes";
 
 /**
  * A ABA "MOVIMENTAÇÕES" DO PORTAL DE ESTOQUE — A LISTA ÚNICA DO DOCUMENTO DE ESTOQUE (ESTOQUE-01, decisão 274).
  *
- * O mesmo desenho das listas únicas de Vendas e de Compras: uma lista das quatro espécies (entrada, saída,
- * transferência e ajuste), filtros e o `Novo` que pergunta a OPERAÇÃO (a TOP) e abre a Central de Estoque em
+ * O mesmo desenho das listas únicas de Vendas e de Compras: uma lista das espécies do documento de estoque, filtros e
+ * o `Novo` que pergunta a OPERAÇÃO (a TOP) e abre a Central de Estoque em
  * `/estoque/movimentacoes/<segmento>/new?tipo_operacao_id=…`. As abas antigas do /estoque e o `+ Novo` do topo
  * continuam como estão: esta aba não substitui nenhuma tela antiga, ela é a porta do documento novo.
+ *
+ * AS ESPÉCIES (OPERACOES-01 F5b, decisão 282): as SETE (entrada, saída, transferência, ajuste, requisição, consumo e
+ * devolução de consumo) quando a API declara `capacidades.movimentacaoInterna` no `operation-types`
+ * (`useMovimentacaoInternaNoEstoque`); as QUATRO de antes quando não declara (a API anterior, no skew). A lista vem do
+ * domínio e do registry (`variantesDeEstoque`), nunca escrita aqui. Com a capacidade, a lista ganha a coluna e o
+ * filtro "Atendimento" da requisição (pendente, atendida em parte, atendida, saldo encerrado: o valor é CALCULADO pelo
+ * servidor, e o filtro entra no WHERE antes do LIMIT). Sem a capacidade, nem a coluna nem o filtro: a API anterior não
+ * conhece o parâmetro e o recusaria.
  *
  * Porta: `/api/estoque/documentos`. Quem recorta linha é o servidor (a capacidade de LEITURA de cada espécie no
  * WHERE e o escopo de empresa do módulo estoque); a espécie e a situação escolhidas aqui são PEDIDO de recorte,
@@ -31,10 +41,10 @@ import {
  *
  * Toda coluna é `filterable: false` pelo mesmo motivo das listas de vendas e de compras: a porta unificada não lê
  * o filtro avançado por coluna, e chip que aparenta recortar e não recorta é pior que chip ausente. Os filtros de
- * verdade são os declarados abaixo (espécie e situação na faixa de cima; período, armazém, empresa, TOP e busca
- * na barra da lista).
+ * verdade são os declarados abaixo (espécie e situação na faixa de cima; período, Local de estoque, empresa, TOP,
+ * busca e, com a capacidade, atendimento na barra da lista).
  *
- * SKEW (web nova, API anterior): a API anterior não tem a porta e responde 404. A aba então diz que as
+ * SKEW (web nova, API anterior à ESTOQUE-01): essa API não tem a porta e responde 404. A aba então diz que as
  * movimentações estão indisponíveis nesta versão do servidor — e não mostra uma lista vazia, que afirmaria
  * "não há documentos". O resto do /estoque não depende desta aba e continua funcionando.
  */
@@ -43,11 +53,13 @@ export function MovimentacoesEstoque() {
   const [especieUrl, setEspecie] = useUrlParam("especie", "");
   const [situacaoUrl, setSituacao] = useUrlParam("situacao", "");
   const disponivel = usePortaDisponivel();
+  const movimentacaoInterna = useMovimentacaoInternaNoEstoque();
+  const comMovimentacaoInterna = movimentacaoInterna === true;
   const grupos = useTopsDeEstoque();
 
-  // Só as espécies que o usuário pode LER são oferecidas; um `?especie=` fora delas (link antigo, colado) vale
-  // "todas" — e o servidor recortaria do mesmo jeito.
-  const visiveis = variantesDeEstoque().filter((v) => can(`${v.perm}.view`));
+  // Só as espécies OFERECIDAS (as sete com a capacidade, as quatro sem) que o usuário pode LER aparecem; um
+  // `?especie=` fora delas (link antigo, colado) vale "todas" — e o servidor recortaria do mesmo jeito.
+  const visiveis = variantesDeEstoque(comMovimentacaoInterna).filter((v) => can(`${v.perm}.view`));
   const especie = visiveis.some((v) => v.variante === especieUrl) ? especieUrl : "";
   const situacoes = enumOptions("situacao_documento_estoque");
   const situacao = situacoes.some((o) => o.value === situacaoUrl) ? situacaoUrl : "";
@@ -71,14 +83,21 @@ export function MovimentacoesEstoque() {
     </div>;
   }
 
+  // A capacidade decide as espécies, a coluna e o filtro: a lista só monta depois dela, para não montar com quatro
+  // espécies e remontar com sete (nem pedir a página duas vezes).
+  if (movimentacaoInterna === "carregando") return <div data-testid="estoque-movimentacoes" className="flex min-h-0 flex-1 flex-col"><LoadingState /></div>;
+
   return <div data-testid="estoque-movimentacoes" data-especie={especie} data-situacao={situacao} className="flex min-h-0 flex-1 flex-col gap-2">
     {faixa}
-    <ListaDeDocumentosDeEstoque key={`${especie}|${situacao}`} especie={especie} situacao={situacao} barra={novo} opcoesTop={opcoesDeTopDeEstoque(grupos)} />
+    <ListaDeDocumentosDeEstoque key={`${especie}|${situacao}|${comMovimentacaoInterna}`} especie={especie} situacao={situacao} barra={novo}
+      opcoesTop={opcoesDeTopDeEstoque(grupos)} comMovimentacaoInterna={comMovimentacaoInterna} />
   </div>;
 }
 
-function ListaDeDocumentosDeEstoque({ especie, situacao, barra, opcoesTop }: {
+function ListaDeDocumentosDeEstoque({ especie, situacao, barra, opcoesTop, comMovimentacaoInterna }: {
   especie: string; situacao: string; barra: React.ReactNode; opcoesTop: { value: string; label: string }[];
+  /** a API declara a movimentação interna: a coluna e o filtro "Atendimento" da requisição */
+  comMovimentacaoInterna: boolean;
 }) {
   const colunas: Column<Row>[] = [
     {
@@ -86,24 +105,29 @@ function ListaDeDocumentosDeEstoque({ especie, situacao, barra, opcoesTop }: {
       // A linha leva o contrato do teste (código, espécie e situação que o SERVIDOR devolveu) e o clique no código
       // abre a Central de consulta — o duplo clique e o "Visualizar" da linha levam ao mesmo lugar.
       render: (r) => <Link href={rotaDoDocumentoEstoque(r)} className="text-brand-700 hover:underline" data-testid="estoque-doc-linha"
-        data-codigo={String(r["codigo"] ?? "")} data-especie={String(r["especie"] ?? "")} data-situacao={String(r["situacao"] ?? "")}>{String(r["codigo"] ?? "")}</Link>,
+        data-codigo={String(r["codigo"] ?? "")} data-especie={String(r["especie"] ?? "")} data-situacao={String(r["situacao"] ?? "")}
+        data-atendimento={typeof r["atendimento"] === "string" ? r["atendimento"] : undefined}>{String(r["codigo"] ?? "")}</Link>,
       text: (r) => String(r["codigo"] ?? "")
     },
     { ...colDate("data_documento", "Data"), filterable: false },
     { key: "especie", label: "Espécie", render: (r) => rotuloDaEspecie(r["especie"]), text: (r) => rotuloDaEspecie(r["especie"]), filterable: false },
     colTipoOperacao(),
-    { key: "armazem_nome", label: "Armazém", filterable: false },
+    { key: "armazem_nome", label: "Local de estoque", filterable: false },
     // Só a transferência tem destino; nas outras espécies a célula fica com o traço de "não se aplica".
-    { key: "armazem_destino_nome", label: "Armazém de destino", render: (r) => textoOuTraco(r["armazem_destino_nome"]), text: (r) => textoOuTraco(r["armazem_destino_nome"]), filterable: false },
+    { key: "armazem_destino_nome", label: "Local de estoque de destino", render: (r) => textoOuTraco(r["armazem_destino_nome"]), text: (r) => textoOuTraco(r["armazem_destino_nome"]), filterable: false },
     { key: "empresa_nome", label: "Empresa", filterable: false },
     { key: "quantidade_itens", label: "Itens", kind: "number", align: "right", filterable: false },
     {
       key: "situacao", label: COPY.situacao, filterable: false,
-      // A cor é a da situação do documento de compra — os mesmos três valores, com o mesmo significado
-      // (aberto = pendente, confirmado = concluído, cancelado = negativo); o rótulo é o do domínio do estoque.
-      render: (r) => <StatusBadge domain="situacao_documento_estoque" value={r["situacao"]} tone={statusTone(r["situacao"], "situacao_documento_compra")} />,
+      // Rótulo e cor do domínio do PRÓPRIO estoque (OPERACOES-01 F12, status-badge.tsx): aberto = pendente,
+      // confirmado = concluído, cancelado = negativo — as cores da venda e da compra para os mesmos significados.
+      render: (r) => <StatusBadge domain="situacao_documento_estoque" value={r["situacao"]} />,
       text: (r) => enumLabel("situacao_documento_estoque", r["situacao"])
-    }
+    },
+    // Só a requisição confirmada tem atendimento (calculado pelo servidor); nas outras linhas, o traço.
+    ...(comMovimentacaoInterna
+      ? [{ key: "atendimento", label: "Atendimento", render: (r: Row) => rotuloDoAtendimento(r["atendimento"]), text: (r: Row) => rotuloDoAtendimento(r["atendimento"]), filterable: false }]
+      : [])
   ];
 
   const recorte: Record<string, string> = {};
@@ -121,16 +145,21 @@ function ListaDeDocumentosDeEstoque({ especie, situacao, barra, opcoesTop }: {
     filters={[
       { name: "start_date", label: "Data inicial", type: "date" },
       { name: "end_date", label: "Data final", type: "date" },
-      { name: "armazem_id", label: "Armazém", type: "ref", resource: "warehouses" },
+      { name: "armazem_id", label: "Local de estoque", type: "ref", resource: "warehouses" },
       { name: "empresa_id", label: "Empresa", type: "ref", resource: "empresas" },
       { name: "search", label: "Código", type: "text" },
-      ...(opcoesTop.length ? [{ name: "tipo_operacao_id", label: "Tipo de Operação", type: "select" as const, options: opcoesTop }] : [])
+      ...(opcoesTop.length ? [{ name: "tipo_operacao_id", label: "Tipo de Operação", type: "select" as const, options: opcoesTop }] : []),
+      // Os quatro valores e a ordem são do domínio; os rótulos, do dono dos rótulos de enum.
+      ...(comMovimentacaoInterna
+        ? [{ name: "atendimento", label: "Atendimento", type: "select" as const, options: enumOptions("atendimento_requisicao_estoque", ATENDIMENTOS_REQUISICAO_ESTOQUE) }]
+        : [])
     ]}
     columns={colunas} />;
 }
 
 const rotuloDaEspecie = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : enumLabel("especie_documento_estoque", v));
 const textoOuTraco = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : String(v));
+const rotuloDoAtendimento = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : enumLabel("atendimento_requisicao_estoque", v));
 
 /**
  * A porta da lista existe neste servidor? Uma pergunta de uma linha, só para distinguir a API anterior (404) do

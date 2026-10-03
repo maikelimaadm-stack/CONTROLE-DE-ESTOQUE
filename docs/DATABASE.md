@@ -22,7 +22,9 @@ Schema `erp` em PostgreSQL 16 / Supabase. Migrations em `supabase/migrations/000
 
 ## Invariantes garantidas por trigger
 - `apply_stock_movement`: recalcula saldo e custo médio ponderado; saída maior que o saldo → `INSUFFICIENT_STOCK`.
-- `refresh_title_status`: soma baixas confirmadas, atualiza `paid_amount/balance/status`; baixa acima do saldo → `PAYMENT_EXCEEDS_BALANCE`.
+- `refresh_title_status`: soma baixas confirmadas, atualiza `paid_amount/balance/status`; baixa acima do saldo → `PAYMENT_EXCEEDS_BALANCE`. Desde a 0042 (decisão 285) soma `amount` — o valor baixado do título, que JÁ inclui o desconto (o caixa é `amount − discount + juros + multa + acréscimo`); antes somava `amount + discount` e o desconto era abatido duas vezes.
+- `trg_bm_confirmado_imutavel` (0042): movimento bancário CONFIRMADO não muda data, valor, juros, conta, tipo, categoria, destino, empresa nem tipo de transferência (`CONFLICT`); a correção é estorno + movimento novo. Cancelar e conciliar continuam permitidos.
+- `trg_ts_credito_conferir` (0042): o uso do crédito de um adiantamento (`title_settlements.adiantamento_id`) exige adiantamento da mesma organização, direção, parceiro e empresa, não cancelado (`NOT_FOUND`), e crédito disponível (`PAYMENT_EXCEEDS_BALANCE`).
 - `assert_period_open(org, empresa, data)`: bloqueia lançamentos em períodos congelados (`PERIOD_FROZEN`), escopo organização ou empresa.
 - `trg_sync_<coluna>` (0014): mantém coluna canônica e coluna legada iguais. No INSERT, um lado preenche o outro; no UPDATE, o lado que MUDOU manda. Os dois com valores divergentes → `VALIDATION_ERROR` (422), nunca escolha silenciosa.
 - `audit_row`: grava antes/depois em `audit_logs` para tabelas auditadas.

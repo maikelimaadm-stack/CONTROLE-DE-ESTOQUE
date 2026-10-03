@@ -17,7 +17,7 @@ import { chavesOcultas, detalheDoErro } from "./ficha-em-abas.js";
 import type { ServiceCtx } from "./context.js";
 
 type Linha = Record<string, unknown>;
-export const MSG_CONTROLE_COM_SALDO = "O produto tem saldo em estoque: zere o saldo em todos os armazéns antes de mudar o controle de lote.";
+export const MSG_CONTROLE_COM_SALDO = "O produto tem saldo em estoque: zere o saldo em todos os locais de estoque antes de mudar o controle de lote.";
 export const MSG_CEST = "CEST tem 7 dígitos.";
 export const MSG_UNIDADE_PADRAO = "A unidade alternativa não pode repetir a unidade padrão do produto.";
 export const MSG_FORNECEDOR = "O fornecedor do produto precisa ser um parceiro do tipo Fornecedor.";

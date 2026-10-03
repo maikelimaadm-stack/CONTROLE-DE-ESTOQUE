@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 204 |
-| Tabelas com `organization_id` (escopo de organização) | 147 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 60 |
-| Entidades curadas neste dicionário | 54 |
+| Tabelas no schema `erp` | 211 |
+| Tabelas com `organization_id` (escopo de organização) | 154 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 63 |
+| Entidades curadas neste dicionário | 61 |
 | Entidades com ID Global | 25 |
-| Entidades com Tipo de Operação | 15 |
-| Tipos de Operação referenciados | 23 |
-| Cobertura curada | 26.5% |
+| Entidades com Tipo de Operação | 19 |
+| Tipos de Operação referenciados | 32 |
+| Cobertura curada | 28.9% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -713,7 +713,7 @@ Fornecedores do produto (CADASTROS Fase 6): só parceiro com tipo Fornecedor, c�
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### ERP-CADASTROS-ARMAZEM — Armazém
+### ERP-CADASTROS-ARMAZEM — Local de estoque
 
 Local de guarda de estoque, pertencente a uma empresa.
 
@@ -758,7 +758,7 @@ Quais campos o documento comercial de uma família mostra, em que ordem, com que
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `nome` |  | text | sim |  |  |  |  |
-| `familia` | Movimento | text | sim |  |  | `vendas.orcamento` · `vendas.pedido` · `vendas.venda` · `compras.pedido` · `compras.compra` | Família canônica do documento: as três de venda e as duas de compra (pedido de compra e compra, decisão 269). Uma TOP só se liga a layout da própria família (gatilho do banco). |
+| `familia` | Movimento | text | sim |  |  | `vendas.orcamento` · `vendas.pedido` · `vendas.venda` · `compras.pedido` · `compras.compra` · `estoque.entrada` · `estoque.saida` · `estoque.transferencia` · `estoque.ajuste` · `estoque.requisicao_material` · `estoque.consumo` · `estoque.devolucao_consumo` · `compras.orcamento` | Família canônica do documento: as três de venda, as três de compra (pedido de compra e compra, decisão 269; orçamento de compra, decisão 283) e as sete do documento de estoque (decisões 274 e 282). Uma TOP só se liga a layout da própria família (gatilho do banco). |
 | `padrao` | Padrão da família | boolean | sim |  |  |  | Usado pela TOP da família que não tem layout ligado. No máximo um ativo e vivo por organização e família (índice único parcial). |
 | `estrutura` |  | jsonb | sim |  |  |  |  |
 | `is_active` |  | boolean | sim |  |  |  |  |
@@ -989,7 +989,7 @@ Retorno de produtos ao estoque a partir de uma requisição.
 
 ### ERP-ESTOQUE-TRANSFERENCIA — Transferência
 
-Movimentação de produtos entre armazéns ou entre empresas. A coluna `kind` decide QUAL das duas operações é: dentro da mesma empresa, ou atravessando a fronteira de empresa — a rota de detalhe é a mesma para as duas, a operação não.
+Movimentação de produtos entre locais de estoque ou entre empresas. A coluna `kind` decide QUAL das duas operações é: dentro da mesma empresa, ou atravessando a fronteira de empresa — a rota de detalhe é a mesma para as duas, a operação não.
 
 | Propriedade | Valor |
 | --- | --- |
@@ -1000,7 +1000,7 @@ Movimentação de produtos entre armazéns ou entre empresas. A coluna `kind` de
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/transferencias/:id` |
-| Tipo de Operação | `estoque.transferencia_entre_armazens` (Transferência entre armazéns) · `estoque.transferencia_entre_empresas` (Transferência entre empresas) |
+| Tipo de Operação | `estoque.transferencia_entre_armazens` (Transferência entre locais de estoque) · `estoque.transferencia_entre_empresas` (Transferência entre empresas) |
 | Discriminador do Tipo de Operação | `kind` (decide qual das operações acima o registro é) |
 | Migração | Possui DUAS colunas de empresa (origem e destino): o escopo de leitura considera ambas. |
 
@@ -1057,10 +1057,12 @@ Produção de ração a partir de uma fórmula: consome insumos e gera produto a
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
 | `validade` |  | date | não |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-ESTOQUE-DOCUMENTO — Documento de Estoque
 
-Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. A coluna `especie` decide a operação e a tela (entrada, saída, transferência, ajuste de inventário). Nasce aberto e só mexe no saldo quando é confirmado; o movimento é o da espécie, gravado no razão de estoque com origem `documentos_estoque`.
+Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. A coluna `especie` decide a operação e a tela (entrada, saída, transferência, ajuste de inventário e, desde a decisão 282, a movimentação interna: requisição de material, consumo e devolução de consumo). Nasce aberto e só mexe no saldo quando é confirmado; o movimento é o da espécie, gravado no razão de estoque com origem `documentos_estoque`. A requisição confirmada não move o razão: reserva no local de estoque até ser atendida por consumos ou ter o saldo encerrado.
 
 | Propriedade | Valor |
 | --- | --- |
@@ -1071,8 +1073,8 @@ Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. 
 | Exclusão lógica | não |
 | ID Global | sim |
 | Discriminador | `especie` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
-| Rotas por variante | `entrada` → `/estoque/movimentacoes/entradas/:id` · `saida` → `/estoque/movimentacoes/saidas/:id` · `transferencia` → `/estoque/movimentacoes/transferencias/:id` · `ajuste` → `/estoque/movimentacoes/ajustes/:id` |
-| Tipo de Operação | `estoque.entrada` (Entrada de estoque) · `estoque.saida` (Saída de estoque) · `estoque.transferencia` (Transferência de estoque) · `estoque.ajuste` (Ajuste de estoque (inventário)) |
+| Rotas por variante | `entrada` → `/estoque/movimentacoes/entradas/:id` · `saida` → `/estoque/movimentacoes/saidas/:id` · `transferencia` → `/estoque/movimentacoes/transferencias/:id` · `ajuste` → `/estoque/movimentacoes/ajustes/:id` · `requisicao` → `/estoque/movimentacoes/requisicoes/:id` · `consumo` → `/estoque/movimentacoes/consumos/:id` · `devolucao_consumo` → `/estoque/movimentacoes/devolucoes-consumo/:id` |
+| Tipo de Operação | `estoque.entrada` (Entrada de estoque) · `estoque.saida` (Saída de estoque) · `estoque.transferencia` (Transferência de estoque) · `estoque.ajuste` (Ajuste de estoque (inventário)) · `estoque.requisicao_material` (Requisição de material) · `estoque.consumo` (Consumo) · `estoque.devolucao_consumo` (Devolução de consumo) |
 | Discriminador do Tipo de Operação | `especie` (decide qual das operações acima o registro é) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
@@ -1080,13 +1082,13 @@ Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. 
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
-| `especie` | Espécie | text | sim |  |  | `entrada` · `saida` · `transferencia` · `ajuste` | entrada \| saida \| transferencia \| ajuste. Valor canônico persistido; o rótulo é traduzido na apresentação. |
+| `especie` | Espécie | text | sim |  |  | `entrada` · `saida` · `transferencia` · `ajuste` · `requisicao` · `consumo` · `devolucao_consumo` | entrada \| saida \| transferencia \| ajuste \| requisicao \| consumo \| devolucao_consumo. Valor canônico persistido; o rótulo é traduzido na apresentação. A família da requisição é `estoque.requisicao_material` (a `estoque.requisicao` é a da tabela antiga `erp.requisitions`). |
 | `codigo` |  | text | sim |  |  |  |  |
-| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `cancelado` | aberto \| confirmado \| cancelado. Aberto → confirmado, aberto → cancelado, confirmado → cancelado (com estorno). Nada volta; cancelado é final. |
+| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `cancelado` | aberto \| confirmado \| cancelado. Aberto → confirmado, aberto → cancelado, confirmado → cancelado (com estorno). Nada volta; cancelado é final. Na requisição, confirmado é a pendente (reservando); o atendimento (pendente, atendida em parte, atendida, saldo encerrado) é calculado, não gravado. |
 | `tipo_operacao_id` |  | uuid | sim |  |  |  |  |
 | `tipo_operacao_versao_id` |  | uuid | sim |  |  |  |  |
-| `armazem_id` | Armazém | uuid | sim |  |  |  | Armazém do movimento (a origem, na transferência). Da mesma empresa do documento. |
-| `armazem_destino_id` | Armazém de destino | uuid | não |  |  |  | Só na transferência, e diferente da origem. Da mesma empresa do documento: transferência entre empresas continua nas telas antigas. |
+| `armazem_id` | Local de estoque | uuid | sim |  |  |  | Local de estoque do movimento (a origem, na transferência). Da mesma empresa do documento. |
+| `armazem_destino_id` | Local de estoque de destino | uuid | não |  |  |  | Só na transferência, e diferente da origem. Da mesma empresa do documento: transferência entre empresas continua nas telas antigas. |
 | `data_documento` |  | date | sim |  |  |  |  |
 | `observacao` |  | text | não |  |  |  |  |
 | `criado_por` |  | uuid | não | FK | `erp.users` |  |  |
@@ -1097,6 +1099,18 @@ Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. 
 | `motivo_cancelamento` |  | text | não |  |  |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `atualizado_em` |  | timestamptz | sim |  |  |  |  |
+| `origem_documento_id` | Documento de origem | uuid | não |  |  |  | Só no consumo (a requisição que ele atende, opcional) e na devolução de consumo (o consumo de que ela volta, obrigatório). Mesma empresa e mesmo local de estoque; não muda depois do lançamento; FK composta com o tenant. |
+| `centro_custo_id` | Centro de resultado (destino) | uuid | não |  |  |  | Destino da saída, da requisição e do consumo (a devolução de consumo copia o do consumo). Centro de resultado analítico e ativo da organização; vazio nas outras espécies. FK composta com o tenant. |
+| `equipamento_id` | Máquina/equipamento (destino) | uuid | não |  |  |  | Destino da saída, da requisição e do consumo. Máquina/equipamento ativo da empresa do documento; vazio nas outras espécies. FK composta com o tenant. |
+| `ordem_servico_id` | Ordem de serviço (destino) | uuid | não |  |  |  | Destino da saída, da requisição e do consumo. Ordem de serviço aberta ou em andamento da empresa do documento; vazio nas outras espécies. FK composta com o tenant. |
+| `lote_animais_id` | Lote de animais (destino) | uuid | não |  |  |  | Destino da saída, da requisição e do consumo. Lote de animais ativo da empresa do documento; vazio nas outras espécies. FK composta com o tenant. |
+| `area_id` | Área/talhão (destino) | uuid | não |  |  |  | Destino da saída, da requisição e do consumo. Área ativa da empresa do documento; vazio nas outras espécies. FK composta com o tenant. |
+| `safra_id` | Safra (destino) | uuid | não |  |  |  | Destino da saída, da requisição e do consumo. Safra ativa da organização; vazio nas outras espécies. FK composta com o tenant. |
+| `motivo_saida` | Motivo da saída | text | não |  |  |  | Só na saída: um dos 13 motivos da baixa antiga. Anda em PAR com a justificativa (os dois ou nenhum). |
+| `justificativa` | Justificativa da saída | text | não |  |  |  | Só na saída: o porquê da saída, não vazio, até 2000 caracteres. Anda em PAR com o motivo. |
+| `saldo_encerrado_em` | Saldo encerrado em | timestamptz | não |  |  |  | Só na requisição confirmada: quando o saldo pendente foi encerrado (a reserva do saldo acaba). Anda junto com saldo_encerrado_por e saldo_encerrado_motivo; acontece uma vez. |
+| `saldo_encerrado_por` | Saldo encerrado por | uuid | não | FK | `erp.users` |  | Só na requisição: quem encerrou o saldo pendente. |
+| `saldo_encerrado_motivo` | Motivo do encerramento do saldo | text | não |  |  |  | Só na requisição: por que o saldo pendente foi encerrado. |
 
 ### ERP-ESTOQUE-DOCUMENTO-ITEM — Item do Documento de Estoque
 
@@ -1116,18 +1130,19 @@ Linha de produto do documento de estoque. Identidade pertence ao documento; só 
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
 | `documento_id` |  | uuid | sim |  |  |  |  |
-| `especie` |  | text | sim |  |  | `entrada` · `saida` · `transferencia` · `ajuste` |  |
+| `especie` |  | text | sim |  |  | `entrada` · `saida` · `transferencia` · `ajuste` · `requisicao` · `consumo` · `devolucao_consumo` |  |
 | `posicao` |  | integer | sim |  |  |  |  |
 | `produto_id` |  | uuid | sim |  |  |  |  |
 | `lote` |  | text | não |  |  |  |  |
 | `validade` |  | date | não |  |  |  |  |
-| `quantidade` | Quantidade | numeric(18,4) | não |  |  |  | Entrada, saída e transferência: maior que zero. Vazia no ajuste. |
+| `quantidade` | Quantidade | numeric(18,4) | não |  |  |  | Entrada, saída, transferência, requisição, consumo e devolução de consumo: maior que zero. Vazia no ajuste. |
 | `quantidade_contada` | Quantidade contada | numeric(18,4) | não |  |  |  | Só no ajuste: a contagem do inventário (zero ou mais). A diferença para o saldo é calculada na confirmação. |
-| `custo_unitario` | Custo unitário | numeric(18,6) | não |  |  |  | Informado na entrada. Nas outras espécies é preenchido na confirmação com o custo do movimento. |
-| `saldo_na_confirmacao` | Saldo na confirmação | numeric(18,4) | não |  |  |  | Só no ajuste: o saldo do armazém × produto × lote lido sob trava na confirmação. |
+| `custo_unitario` | Custo unitário | numeric(18,6) | não |  |  |  | Informado na entrada — vazio, a confirmação grava o custo médio do produto — e opcional no ajuste; nas outras espécies, o custo do movimento gravado na confirmação. Vazio na requisição (ela não move o razão). |
+| `saldo_na_confirmacao` | Saldo na confirmação | numeric(18,4) | não |  |  |  | Só no ajuste: o saldo do local de estoque × produto × lote lido sob trava na confirmação. |
 | `diferenca` | Diferença | numeric(18,4) | não |  |  |  | Só no ajuste: contada menos o saldo na confirmação. Positiva gera correção de entrada; negativa, correção de saída; zero não move estoque. |
 | `observacao` |  | text | não |  |  |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
+| `origem_item_id` | Item de origem | uuid | não |  |  |  | No consumo que atende uma requisição: o item da requisição que esta linha atende (o consumo pode ter linhas sem origem). Na devolução de consumo: o item do consumo que volta (obrigatório). Mesmo produto; a soma das linhas ligadas não passa do saldo do item de origem (gatilho, decisão 282). |
 
 ### ERP-ESTOQUE-MOVIMENTO — Movimento de Estoque
 
@@ -1168,6 +1183,10 @@ Razão imutável de estoque (custo médio e saldo). Não é lançamento: é cons
 | `created_by` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `equipamento_id` |  | uuid | não |  |  |  |  |
+| `ordem_servico_id` |  | uuid | não |  |  |  |  |
+| `lote_animais_id` |  | uuid | não |  |  |  |  |
+| `area_id` |  | uuid | não |  |  |  |  |
 
 ## Compras
 
@@ -1219,7 +1238,7 @@ Pedido interno de compra que percorre autorização, cotação e recebimento.
 
 ### ERP-COMPRAS-DOCUMENTO — Documento de Compra
 
-Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa e a tela (pedido de compra, compra). A Compra confirmada dá entrada no estoque e gera as contas a pagar.
+Documento comercial de compra (decisões 267 e 283). A coluna `especie` decide a etapa e a tela (pedido de compra, compra, orçamento de compra). A Compra confirmada dá entrada no estoque e gera as contas a pagar; o orçamento de compra cota um pedido (um por fornecedor) e não mexe em estoque nem em financeiro.
 
 | Propriedade | Valor |
 | --- | --- |
@@ -1230,8 +1249,8 @@ Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa 
 | Exclusão lógica | não |
 | ID Global | sim |
 | Discriminador | `especie` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
-| Rotas por variante | `pedido` → `/compras/pedidos/:id` · `compra` → `/compras/compras/:id` |
-| Tipo de Operação | `compras.pedido` (Pedido de compra) · `compras.compra` (Compra) |
+| Rotas por variante | `pedido` → `/compras/pedidos/:id` · `compra` → `/compras/compras/:id` · `orcamento` → `/compras/orcamentos/:id` |
+| Tipo de Operação | `compras.pedido` (Pedido de compra) · `compras.compra` (Compra) · `compras.orcamento` (Orçamento de compra) |
 | Discriminador do Tipo de Operação | `especie` (decide qual das operações acima o registro é) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
@@ -1239,9 +1258,9 @@ Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa 
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
-| `especie` | Espécie | text | sim |  |  | `pedido` · `compra` | pedido \| compra. Valor canônico persistido; o rótulo é traduzido na apresentação. |
+| `especie` | Espécie | text | sim |  |  | `pedido` · `compra` · `orcamento` | pedido \| compra \| orcamento. Valor canônico persistido; o rótulo é traduzido na apresentação. |
 | `codigo` |  | text | sim |  |  |  |  |
-| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `convertido` · `cancelado` | aberto \| confirmado (só compra) \| convertido (só pedido: saldo recebido por inteiro ou encerrado) \| cancelado. Cancelado é final; o pedido convertido volta a aberto quando uma compra dele é cancelada, salvo com saldo encerrado (decisão 268). |
+| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `convertido` · `cancelado` · `finalizado` · `escolhido` · `nao_escolhido` | aberto \| confirmado (só compra) \| finalizado (só pedido: a confirmação do pedido, com a aprovação quando a TOP exige) \| convertido (só pedido: saldo recebido por inteiro ou encerrado) \| escolhido e nao_escolhido (só orçamento: o vencedor e os outros) \| cancelado. Cancelado é final; o pedido convertido volta à situação de antes (aberto ou finalizado) quando uma compra dele é cancelada, salvo com saldo encerrado (decisões 268 e 283). |
 | `tipo_operacao_id` |  | uuid | sim |  |  |  |  |
 | `tipo_operacao_versao_id` |  | uuid | sim |  |  |  |  |
 | `fornecedor_id` |  | uuid | sim |  |  |  |  |
@@ -1261,7 +1280,7 @@ Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa 
 | `frete` |  | numeric(18,2) | sim |  |  |  |  |
 | `outras_despesas` |  | numeric(18,2) | sim |  |  |  |  |
 | `desconto` |  | numeric(18,2) | sim |  |  |  |  |
-| `valor_total` |  | numeric(18,2) | sim |  |  |  |  |
+| `valor_total` | Valor total | numeric(18,2) | sim |  |  |  | Itens + frete + outras despesas − desconto + IPI + ICMS-ST + seguro (CHECK; os três últimos vazios valem zero — decisão 284). |
 | `observacao` |  | text | não |  |  |  |  |
 | `criado_por` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
@@ -1270,6 +1289,25 @@ Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa 
 | `saldo_encerrado_em` | Saldo encerrado em | timestamptz | não |  |  |  | Só pedido: quando o saldo a receber foi encerrado. Anda junto com saldo_encerrado_por e saldo_encerrado_motivo, gravados na passagem de aberto para convertido. |
 | `saldo_encerrado_por` | Saldo encerrado por | uuid | não | FK | `erp.users` |  | Só pedido: quem encerrou o saldo a receber. |
 | `saldo_encerrado_motivo` | Motivo do encerramento do saldo | text | não |  |  |  | Só pedido: por que o saldo a receber foi encerrado. |
+| `finalizado_em` | Finalizado em | timestamptz | não |  |  |  | Só pedido: quando foi finalizado (a confirmação do pedido), gravado na passagem de aberto para finalizado (decisão 283). |
+| `finalizado_por` | Finalizado por | uuid | não | FK | `erp.users` |  | Só pedido: quem finalizou. Anda junto com finalizado_em. |
+| `aprovado_orcamento_em` | Aprovado para orçamento em | timestamptz | não |  |  |  | Só pedido: quando foi aprovado para orçamento; gravado uma vez, com o pedido aberto (decisão 283). |
+| `aprovado_orcamento_por` | Aprovado para orçamento por | uuid | não | FK | `erp.users` |  | Só pedido: quem aprovou para orçamento. Anda junto com aprovado_orcamento_em. |
+| `pedido_orcado_id` | Pedido orçado | uuid | não |  |  |  | Só orçamento: o pedido de compra que ele cota (FK composta com o tenant). Não consome saldo nem prende o fornecedor do pedido; não muda depois do lançamento. |
+| `prazo_entrega_dias` | Prazo de entrega (dias) | integer | não |  |  |  | Só orçamento: prazo de entrega em dias (0 a 3650). |
+| `validade_orcamento` | Validade do orçamento | date | não |  |  |  | Só orçamento: até quando o preço vale. Não é anterior à data do documento. |
+| `chave_acesso` | Chave de acesso | text | não |  |  |  | Só compra: chave de acesso da NF-e (44 dígitos). A nota repetida é barrada no banco: única entre compras não canceladas e cruzada com a nota antiga nos dois sentidos (DUPLICATE_DOCUMENT, decisão 284). Não muda depois do lançamento. |
+| `uf_nota` | UF da nota | text | não |  |  |  | Só compra: UF da nota (duas letras maiúsculas). |
+| `tipo_documento_fiscal` | Tipo de documento fiscal | text | não |  |  |  | Só compra: nfe \| cte \| nfse \| nfce \| danfe \| darf \| dare \| gru \| other. Valor canônico persistido; o rótulo é traduzido na apresentação. |
+| `valor_ipi` | IPI | numeric(18,2) | não |  |  |  | Só compra: IPI da nota; entra no total e no custo de entrada. |
+| `valor_icms_st` | ICMS-ST | numeric(18,2) | não |  |  |  | Só compra: ICMS-ST da nota; entra no total e no custo de entrada. |
+| `seguro` | Seguro | numeric(18,2) | não |  |  |  | Só compra: seguro da nota; entra no total e no custo de entrada. |
+| `tipo_titulo_id` | Tipo de título | uuid | não | FK | `erp.title_types` |  | Só compra: tipo de título dos títulos a pagar (global ou da organização, conferido por gatilho). |
+| `classificacao_gasto` | Classificação do gasto | text | não |  |  |  | Só compra: capex \| opex (vai ao título). |
+| `rateio_tipo` | Tipo de rateio | text | não |  |  |  | Só compra: por_valor (linhas do rateio da compra) \| por_produto (natureza e centro de cada item). Com rateio, o cabeçalho não tem natureza nem centro. |
+| `parcelas_nota` | Parcelas da nota | jsonb | não |  |  |  | Só compra: as duplicatas da nota (de 1 a 120), conferidas com o líquido; exclusivas com o plano de parcelas da condição. |
+| `dfe_id` | DF-e | uuid | não |  |  |  | Só compra: a DF-e de onde a nota veio (FK composta), da mesma chave e sem empresa ou da mesma empresa. |
+| `solicitacao_compra_id` | Solicitação de compra | uuid | não |  |  |  | Só compra: a solicitação de compra atendida (FK composta), da mesma empresa; ao receber, a solicitação aceita a compra. |
 
 ### ERP-COMPRAS-DOCUMENTO-ITEM — Item do Documento de Compra
 
@@ -1301,6 +1339,135 @@ Linha de produto do documento de compra. Identidade pertence ao documento; só m
 | `observacao` |  | text | não |  |  |  |  |
 | `posicao` |  | int | sim |  |  |  |  |
 | `origem_item_id` | Item do pedido de origem | uuid | não |  |  |  | Só na compra recebida de um pedido: o item do pedido que esta linha recebe. Mesmo produto; a soma recebida por compras não canceladas não passa da quantidade do item (gatilho, decisão 268). |
+| `item_pedido_orcado_id` | Item do pedido orçado | uuid | não |  |  |  | Só no orçamento de compra: o item do pedido que esta linha cota (mesmo produto e quantidade; FK composta com o tenant). Não consome saldo (decisão 283). |
+| `gera_estoque` | Gera estoque | boolean | não |  |  |  | Só compra: o item dá entrada no estoque na confirmação. Vazio vale sim (como antes); falso não move estoque (decisão 284). |
+| `imobilizado` | Imobilizado | boolean | não |  |  |  | Só compra: o item é imobilizado — a confirmação cria o bem com o valor de entrada rateado. |
+| `bem_id` | Bem | uuid | não |  |  |  | O bem criado na confirmação do item imobilizado (FK composta com o tenant). |
+| `categoria_financeira_id` | Natureza de despesa do item | uuid | não |  |  |  | Rateio por produto: natureza de despesa do item. Anda em PAR com o centro de custo do item. |
+| `centro_custo_id` | Centro de custo do item | uuid | não |  |  |  | Rateio por produto: centro de custo do item. Anda em PAR com a natureza de despesa do item. |
+| `valor_ipi` | IPI do item | numeric(18,2) | não |  |  |  | IPI do item na nota; entra no custo do item. |
+| `valor_icms_st` | ICMS-ST do item | numeric(18,2) | não |  |  |  | ICMS-ST do item na nota; entra no custo do item. |
+| `n_item_nota` | Item na nota | integer | não |  |  |  | Número do item na nota (1 a 990). |
+| `codigo_produto_nota` | Código na nota | text | não |  |  |  | Código do produto na nota do fornecedor. |
+| `descricao_produto_nota` | Descrição na nota | text | não |  |  |  | Descrição do produto na nota do fornecedor. |
+| `unidade_nota` | Unidade na nota | text | não |  |  |  | Unidade comercial do fornecedor na nota. Anda junto com a quantidade da nota e o fator. |
+| `quantidade_nota` | Quantidade na nota | numeric(18,4) | não |  |  |  | Quantidade comercial na nota, antes da conversão. |
+| `fator_conversao` | Fator de conversão | numeric(18,6) | não |  |  |  | Fator que converteu a quantidade da nota na do produto (maior que zero). |
+| `tipo_fator_conversao` | Tipo do fator | text | não |  |  |  | multiply (quantidade = quantidade da nota × fator) \| divide (÷ fator). |
+
+### ERP-COMPRAS-NOTA-XML — XML original da nota
+
+O XML da NF-e recebida, guardado no servidor exatamente como chegou: imutável, da empresa destinatária. A importação na Central de Compras e a DF-e apontam para ele.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.notas_fiscais_xml` |
+| Natureza | infraestrutura |
+| Escopo de organização | sim |
+| Escopo de empresa | `empresa_id` |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `empresa_id` |  | uuid | sim |  |  |  |  |
+| `chave_acesso` | Chave de acesso | text | sim |  |  |  | Chave de acesso da NF-e (44 dígitos, DV conferido na leitura). |
+| `xml_original` |  | text | sim |  |  |  |  |
+| `xml_sha256` | SHA-256 do XML | text | sim |  |  |  | Resumo do conteúdo; com a organização e a chave, identifica o XML guardado. |
+| `tamanho_bytes` |  | integer | sim |  |  |  |  |
+| `nome_arquivo` |  | text | não |  |  |  |  |
+| `recebido_por` |  | uuid | sim | FK | `erp.users` |  |  |
+| `recebido_em` |  | timestamptz | sim |  |  |  |  |
+
+### ERP-COMPRAS-IMPORTACAO-NFE — Importação de XML de nota
+
+A conferência do XML de uma NF-e na Central de Compras: pendente, decidida uma vez — gerada (a compra aberta criada dela) ou descartada. Uma pendente por chave na organização; nunca se apaga.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.importacoes_nfe_compra` |
+| Natureza | infraestrutura |
+| Escopo de organização | sim |
+| Escopo de empresa | `empresa_id` |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `empresa_id` |  | uuid | sim |  |  |  |  |
+| `xml_id` |  | uuid | sim |  |  |  |  |
+| `chave_acesso` |  | text | sim |  |  |  |  |
+| `numero` |  | text | sim |  |  |  |  |
+| `serie` |  | text | sim |  |  |  |  |
+| `data_emissao` |  | date | sim |  |  |  |  |
+| `emitente_documento` |  | text | sim |  |  |  |  |
+| `emitente_nome` |  | text | sim |  |  |  |  |
+| `valor_total` |  | numeric(18,2) | sim |  |  |  |  |
+| `origem` | Origem | text | sim |  |  |  | arquivo (enviado na Central de Compras) \| dfe (aberto pelo "Lançar" da DF-e). |
+| `dfe_id` |  | uuid | não |  |  |  |  |
+| `situacao` | Situação | text | sim |  |  |  | pendente \| gerada \| descartada. Decidida uma vez (gatilho); gerada e descartada são finais. |
+| `documento_compra_id` | Compra gerada | uuid | não |  |  |  | Só na gerada: a compra criada da nota, da mesma empresa e chave. |
+| `criado_por` |  | uuid | sim | FK | `erp.users` |  |  |
+| `criado_em` |  | timestamptz | sim |  |  |  |  |
+| `decidido_por` |  | uuid | não | FK | `erp.users` |  |  |
+| `decidido_em` |  | timestamptz | não |  |  |  |  |
+
+### ERP-COMPRAS-VINCULO-PRODUTO — Vínculo do produto do fornecedor
+
+Fornecedor + código + unidade do fornecedor na nota → produto + fator. Lembrado ao gerar a compra da nota e sugerido nas notas seguintes; cadastro da organização.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.produto_fornecedor_vinculos` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `fornecedor_id` |  | uuid | sim |  |  |  |  |
+| `codigo_fornecedor` |  | text | sim |  |  |  |  |
+| `unidade_fornecedor` |  | text | sim |  |  |  |  |
+| `produto_id` |  | uuid | sim |  |  |  |  |
+| `tipo_fator` | Tipo do fator | text | sim |  |  |  | multiply (quantidade interna = quantidade da nota × fator) \| divide (÷ fator). |
+| `fator` | Fator | numeric(18,6) | sim |  |  |  | Fator de conversão da unidade do fornecedor para a do produto (maior que zero). |
+| `criado_por` |  | uuid | sim | FK | `erp.users` |  |  |
+| `criado_em` |  | timestamptz | sim |  |  |  |  |
+| `atualizado_por` |  | uuid | não | FK | `erp.users` |  |  |
+| `atualizado_em` |  | timestamptz | não |  |  |  |  |
+
+### ERP-COMPRAS-DOCUMENTO-RATEIO — Rateio por valor da compra
+
+Linha do rateio por valor da compra (natureza, centro de custo, conta contábil e safra, com o percentual). Gravada com a compra aberta e imutável depois; o escopo de empresa vem da compra.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.documentos_compra_rateio` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | bigint | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `documento_id` |  | uuid | sim |  |  |  |  |
+| `posicao` |  | integer | sim |  |  |  |  |
+| `categoria_financeira_id` |  | uuid | sim |  |  |  |  |
+| `centro_custo_id` |  | uuid | sim |  |  |  |  |
+| `conta_contabil_id` |  | uuid | não |  |  |  |  |
+| `safra_id` |  | uuid | não |  |  |  |  |
+| `percentual` |  | numeric(9,4) | sim |  |  |  |  |
 
 ## Financeiro
 
@@ -1352,7 +1519,7 @@ Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/rec
 | `harvest_id` |  | uuid | não | FK | `erp.harvests` |  |  |
 | `paid_amount` |  | numeric(18,2) | sim |  |  |  |  |
 | `balance` |  | numeric(18,2) | não |  |  |  |  |
-| `status` |  | text | sim |  |  | `open` · `partially_paid` · `paid` · `cancelled` |  |
+| `status` |  | text | sim |  |  | `open` · `partially_paid` · `paid` · `cancelled` · `previsto` |  |
 | `source_type` |  | text | não |  |  |  |  |
 | `source_id` |  | uuid | não |  |  |  |  |
 | `version` |  | int | sim |  |  |  |  |
@@ -1361,6 +1528,13 @@ Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/rec
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `data_competencia` |  | date | não |  |  |  |  |
+| `conta_prevista_id` |  | uuid | não |  |  |  |  |
+| `cancel_reason` |  | text | não |  |  |  |  |
+| `cancelled_at` |  | timestamptz | não |  |  |  |  |
+| `cancelled_by` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-FINANCEIRO-BAIXA — Baixa de Título
 
@@ -1401,6 +1575,11 @@ Pagamento/recebimento parcial ou total de um título. Identidade pertence ao tí
 | `cancel_reason` |  | text | não |  |  |  |  |
 | `created_by` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
+| `lote_id` |  | uuid | não |  |  |  |  |
+| `tarifa` |  | numeric(18,2) | não |  |  |  |  |
+| `adiantamento_id` |  | uuid | não |  |  |  |  |
+| `natureza_desconto_id` |  | uuid | não |  |  |  |  |
+| `imovel_rural_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-FINANCEIRO-MOVIMENTO-BANCARIO — Movimento Bancário
 
@@ -1415,6 +1594,7 @@ Lançamento em conta bancária (transferência, tarifa, aplicação).
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/financeiro/movimentos/:id` |
+| Tipo de Operação | `financeiro.movimento_bancario` (Movimento bancário) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1447,6 +1627,16 @@ Lançamento em conta bancária (transferência, tarifa, aplicação).
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | não |  |  |  |  |
+| `tipo_transferencia` |  | text | não |  |  |  |  |
+| `title_settlement_id` |  | uuid | não |  |  |  |  |
+| `componente_baixa` |  | text | não |  |  |  |  |
+| `lote_baixa_id` |  | uuid | não |  |  |  |  |
+| `cancel_reason` |  | text | não |  |  |  |  |
+| `cancelled_at` |  | timestamptz | não |  |  |  |  |
+| `cancelled_by` |  | uuid | não |  |  |  |  |
+| `imovel_rural_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-FINANCEIRO-IMPORTACAO-OFX — Importação OFX
 
@@ -1476,6 +1666,63 @@ Importação de extrato bancário para conciliação. Pertence à conta bancári
 | `created_by` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
+
+### ERP-FINANCEIRO-IMOVEL-RURAL — Imóvel Rural
+
+Imóvel rural do LCDPR (nome, CIB/NIRF, CAEPF, IE, tipo de exploração, % de participação), por empresa; o padrão da empresa vai para a baixa e o movimento.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.imoveis_rurais` |
+| Natureza | entidade |
+| Escopo de organização | sim |
+| Escopo de empresa | `empresa_id` |
+| Exclusão lógica | sim |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `empresa_id` |  | uuid | sim |  |  |  |  |
+| `nome` |  | text | sim |  |  |  |  |
+| `cib` |  | text | não |  |  |  |  |
+| `caepf` |  | text | não |  |  |  |  |
+| `inscricao_estadual` |  | text | não |  |  |  |  |
+| `tipo_exploracao` |  | text | sim |  |  | `individual` · `condominio` · `arrendado` · `parceria` · `comodato` · `outros` |  |
+| `participacao` |  | numeric(5,2) | sim |  |  |  |  |
+| `padrao` |  | boolean | sim |  |  |  |  |
+| `is_active` |  | boolean | sim |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `updated_at` |  | timestamptz | sim |  |  |  |  |
+| `deleted_at` |  | timestamptz | não |  |  |  |  |
+
+### ERP-FINANCEIRO-PADROES-TOP — Padrões Financeiros da Versão da TOP
+
+Padrões financeiros de uma versão de TOP (natureza, centro, tipo de título, forma, conta). Imutável como a versão.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.tipos_operacao_versao_financeiro` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `origem_versao_id` |  | uuid | sim |  |  |  |  |
+| `origem_tipo_operacao_id` |  | uuid | sim |  |  |  |  |
+| `natureza_id` |  | uuid | não |  |  |  |  |
+| `centro_custo_id` |  | uuid | não |  |  |  |  |
+| `tipo_titulo_id` |  | uuid | não |  |  |  |  |
+| `forma_pagamento_id` |  | uuid | não |  |  |  |  |
+| `conta_bancaria_id` |  | uuid | não |  |  |  |  |
+| `criado_por` |  | uuid | não | FK | `erp.users` |  |  |
+| `criado_em` |  | timestamptz | sim |  |  |  |  |
 
 ## Vendas
 
@@ -1607,6 +1854,8 @@ Entrada, saída, venda ou morte de animais. O tipo faz parte da rota canônica.
 | ID Global | sim |
 | Discriminador | `movement_type` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
 | Rotas por variante | `purchase` → `/pecuaria/movimentacoes/purchase/:id` · `sale` → `/pecuaria/movimentacoes/sale/:id` · `birth` → `/pecuaria/movimentacoes/birth/:id` · `death` → `/pecuaria/movimentacoes/death/:id` · `loss` → `/pecuaria/movimentacoes/loss/:id` |
+| Tipo de Operação | `pecuaria.compra_de_animais` (Compra de animais) · `pecuaria.venda_de_animais` (Venda de animais) |
+| Discriminador do Tipo de Operação | `movement_type` (decide qual das operações acima o registro é) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1649,6 +1898,7 @@ Manejo sanitário, nutricional ou reprodutivo aplicado a animais/lotes.
 | ID Global | sim |
 | Discriminador | `handling_type` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
 | Rotas por variante | `nutrition` → `/pecuaria/manejo/nutrition/:id` · `sanitary` → `/pecuaria/manejo/sanitary/:id` · `weaning` → `/pecuaria/manejo/weaning/:id` · `separation` → `/pecuaria/manejo/separation/:id` · `pasture` → `/pecuaria/manejo/pasture/:id` · `locate` → `/pecuaria/manejo/locate/:id` |
+| Tipo de Operação | `pecuaria.manejo` (Manejo) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1671,6 +1921,8 @@ Manejo sanitário, nutricional ou reprodutivo aplicado a animais/lotes.
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-PECUARIA-PESAGEM — Pesagem
 
@@ -1701,6 +1953,38 @@ Evento de pesagem de animais, base de desempenho e ganho de peso.
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+
+### ERP-PECUARIA-BATELADA — Batelada
+
+Batelada de dieta do confinamento: consome os ingredientes da dieta (kg × %) do local de estoque e calcula o custo por kg.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.diet_batches` |
+| Natureza | entidade |
+| Escopo de organização | sim |
+| Escopo de empresa | `empresa_id` |
+| Exclusão lógica | não |
+| ID Global | não |
+| Tipo de Operação | `confinamento.batelada` (Batelada) |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `code` |  | text | sim |  |  |  |  |
+| `batch_date` |  | date | sim |  |  |  |  |
+| `diet_id` |  | uuid | sim | FK | `erp.diets` |  |  |
+| `warehouse_id` |  | uuid | não | FK | `erp.warehouses` |  |  |
+| `equipment_id` |  | uuid | não | FK | `erp.equipments` |  |  |
+| `quantity_kg` |  | numeric(18,4) | sim |  |  |  |  |
+| `total_cost` |  | numeric(18,2) | sim |  |  |  |  |
+| `status` |  | text | sim |  |  | `confirmed` · `cancelled` |  |
+| `created_by` |  | uuid | não | FK | `erp.users` |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `empresa_id` |  | uuid | sim |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
 
 ## Frota e Ativos
 
@@ -1800,6 +2084,8 @@ Consumo de combustível por equipamento, com baixa de estoque.
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-FROTA-MANUTENCAO — Manutenção
 
@@ -1832,6 +2118,9 @@ Serviço e peças aplicados a um ou mais equipamentos.
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
+| `note` |  | text | não |  |  |  |  |
 
 ## Ordens de Serviço
 
@@ -1879,6 +2168,8 @@ Serviço planejado/executado com apontamento de recursos.
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
 
 ## Apêndice — tabelas ainda não curadas
 
@@ -1910,7 +2201,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.authorizers` | 13 | sim | — | sim |
 | `erp.bank_account_empresas` | 2 | não | `empresa_id` | não |
 | `erp.bank_account_proprietaries` | 2 | não | — | não |
-| `erp.bank_accounts` | 20 | sim | — | sim |
+| `erp.bank_accounts` | 21 | sim | — | sim |
 | `erp.bank_movement_apportionments` | 8 | não | — | não |
 | `erp.batch_categories` | 2 | não | — | não |
 | `erp.batches` | 21 | sim | `empresa_id` | sim |
@@ -1931,10 +2222,9 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.cultivations` | 5 | sim | — | não |
 | `erp.depreciations` | 9 | sim | — | não |
 | `erp.devolution_items` | 8 | não | — | não |
-| `erp.dfe_documents` | 18 | sim | `empresa_id` | não |
+| `erp.dfe_documents` | 19 | sim | `empresa_id` | não |
 | `erp.dfe_drafts` | 8 | sim | — | não |
 | `erp.diet_batch_items` | 6 | não | — | não |
-| `erp.diet_batches` | 13 | sim | `empresa_id` | não |
 | `erp.diet_items` | 5 | não | — | não |
 | `erp.diets` | 11 | sim | — | sim |
 | `erp.document_types` | 9 | sim | — | sim |
@@ -1956,7 +2246,8 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.feedlot_corrals` | 10 | sim | — | sim |
 | `erp.feedlot_sectors` | 8 | sim | — | sim |
 | `erp.feedlot_yards` | 8 | sim | `empresa_id` | sim |
-| `erp.financial_categories` | 13 | sim | — | sim |
+| `erp.financeiro_naturezas_padrao` | 13 | sim | — | não |
+| `erp.financial_categories` | 15 | sim | — | sim |
 | `erp.financial_freezes` | 9 | sim | `empresa_id` | não |
 | `erp.fodders` | 7 | sim | — | sim |
 | `erp.grazing_modules` | 13 | sim | `empresa_id` | sim |

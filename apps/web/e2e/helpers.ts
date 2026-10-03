@@ -9,6 +9,8 @@ export async function logout(page: Page) {
   await page.getByLabel("Usuário").click(); await page.getByRole("menuitem", { name: "Sair" }).click();
   await expect(page).toHaveURL(/\/login/);
 }
+/** Texto literal dentro de um RegExp: "[DEMO] Agropecuária" casa como texto, não como classe de caracteres. */
+const escaparRegex = (texto: string) => texto.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /**
  * Seleciona uma opção em um RefSelect (popover com busca).
  *
@@ -16,13 +18,16 @@ export async function logout(page: Page) {
  * diz "Pesquisar <campo>". O campo de busca é procurado DENTRO do painel aberto (o último popover/diálogo, o
  * mesmo recorte da escolha da opção), por isso o prefixo não esbarra em outra busca da página ("Pesquisar por…"
  * da listagem atrás de uma gaveta). Este helper roda também no skew contra o web da base.
+ *
+ * A opção é casada pelos 12 primeiros caracteres da busca, ESCAPADOS (`escaparRegex`): um nome com colchetes ou
+ * parênteses ("[DEMO] Agropecuária") é texto, não sintaxe de RegExp.
  */
 export async function pickRef(page: Page, fieldLabel: string, search: string) {
   const field = page.locator("label", { hasText: fieldLabel }).first().locator("..");
   await field.locator("button").first().click();
   const painel = page.locator("div[role='dialog'], [data-radix-popper-content-wrapper]").last();
   const input = painel.getByPlaceholder(/^Pesquisar/).first(); await input.fill(search);
-  await painel.getByRole("option", { name: new RegExp(search.slice(0, 12), "i") }).first().click();
+  await painel.getByRole("option", { name: new RegExp(escaparRegex(search.slice(0, 12)), "i") }).first().click();
 }
 export const uniq = (p: string) => `${p} ${Date.now().toString(36)}`;
 

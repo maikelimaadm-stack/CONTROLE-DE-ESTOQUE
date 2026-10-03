@@ -11,6 +11,16 @@
  * (o prefixo de testid, os textos, as portas de leitura). Os recursos novos de `ItensDaCentral` (lote e validade por
  * linha, armazém por item, armazém forçado, modo "da origem") são OPCIONAIS e desligados por padrão; o custo médio no
  * unitário e as casas da quantidade na leitura têm por padrão o comportamento da espécie que já existia.
+ * OPERACOES-01 F3b (decisão 280): o local de estoque vem antes do produto, o "Local de estoque" do cabeçalho preenche
+ * as linhas novas (estado da tela) e a pesquisa de produto mostra o saldo do local — só com a capacidade que a API
+ * declara; sem ela, a pesquisa de hoje.
+ * OPERACOES-01 F5b (decisão 282): o documento de estoque não tem valor e não inventa quantidade. A criação ganha
+ * `linhaNovaEmBranco` (quantidade e valor unitário da linha nova VAZIOS), `subtotal` (`false` tira o "Subtotal dos
+ * itens" do rodapé) e `casasDaQuantidade` (as casas da quantidade na célula não ativa da grade); a consulta ganha
+ * `subtotal: null` (sem a linha do subtotal), `rotulos` (o rótulo da espécie no lugar do fixo) e `colunasExtras` (as
+ * colunas da espécie, depois de todas as outras) e `formularioPelasColunas` (o formulário de leitura só com os campos
+ * das colunas da espécie). Todas são OPCIONAIS e o padrão é o de hoje: sem elas, as Centrais de Vendas e de Compras não
+ * mudam nada (DOM, classes, payload, testids e textos).
  */
 import type * as React from "react";
 import type { ColunaDoLayout } from "@agro/domain";
@@ -146,12 +156,6 @@ export interface AdaptadorDaCentral {
   chaveDoSalvo: (id: string) => string;
   /** Chave da cópia que espera a criação desta espécie. */
   chaveDaCopia: (segmento: string) => string;
-  cancelamento: {
-    /** Chave i18n/do corpo onde vai o motivo (ex.: `reason`, `motivo`). */
-    chaveDoMotivo: string;
-    /** O motivo quando ninguém escreveu outro. */
-    motivoVazio: string;
-  };
 }
 
 /* ─────────────── M1 — moldura.tsx (+ moldura.module.css) ─────────────── */
@@ -273,13 +277,37 @@ export interface ItensDaOrigem {
   testIdDaLinha?: (item: ItemRow) => string;
 }
 
+/** OPERACOES-01 F3b: um local de estoque escolhido (o id e o rótulo que a tela mostra). */
+export interface LocalDeEstoque { id: string; rotulo: string }
+
+/**
+ * A pesquisa de produto da linha (decisão 280): na SAÍDA, "Só com saldo neste local" vem ligado; na ENTRADA aparece
+ * tudo, com o saldo. Só vale com a capacidade da pesquisa; sem ela, a pesquisa de hoje.
+ */
+export interface PesquisaDeProdutoDosItens {
+  readonly sentido: "entrada" | "saida";
+  /** Só produto que controla estoque (a Central que só aceita esses — a de estoque, F5b). Padrão `false`. */
+  readonly soControlaEstoque?: boolean;
+}
+export const PESQUISA_DE_PRODUTO_DA_SAIDA: PesquisaDeProdutoDosItens = Object.freeze({ sentido: "saida" });
+export const PESQUISA_DE_PRODUTO_DA_ENTRADA: PesquisaDeProdutoDosItens = Object.freeze({ sentido: "entrada" });
+
+/** De onde vem a pesquisa de produto: a capacidade ainda chegando, a pesquisa nova (com o saldo) ou a de hoje. */
+export type FonteDaPesquisaDeProdutos = "carregando" | "nova" | "legado";
+
 export interface PropsDosItens {
   prefixoTestid: string;
   colunas: ColunasDosItens;
   items: ItemRow[]; onChange: (i: ItemRow[]) => void;
   layout?: LayoutDosItens | null;
   erros?: Record<string, string>;
-  armazemPadrao?: { id: string; rotulo: string } | null;
+  /** O local de estoque das linhas NOVAS (só elas o recebem; cada linha troca o seu). */
+  armazemPadrao?: LocalDeEstoque | null;
+  /**
+   * A pesquisa de produto da linha (saída: só com saldo no local da linha; entrada: tudo, com o saldo). Ausente:
+   * entrada (tudo, com o saldo quando o servidor o mostra). Só vale com a capacidade; sem ela, a pesquisa de hoje.
+   */
+  pesquisaDeProduto?: PesquisaDeProdutoDosItens | null;
   reservaEstoque?: { obrigatorias: readonly string[] } | null;
   /**
    * A coluna de armazém é PERMITIDA por linha (só `false` a desliga; padrão: o comportamento de hoje). Permitir não é
@@ -287,8 +315,8 @@ export interface PropsDosItens {
    */
   armazemPorItem?: boolean;
   /**
-   * Com layout, a coluna de armazém aparece mesmo que o layout a esconda (ex.: a regra da operação exige o armazém).
-   * Padrão `false`: manda o layout.
+   * Com layout, a coluna de armazém aparece mesmo que o layout a esconda (ex.: a regra da operação exige o armazém),
+   * logo ANTES do Código/Produto (decisão 280: o local antes do produto). Padrão `false`: manda o layout.
    */
   armazemForcado?: boolean;
   /**
@@ -300,6 +328,21 @@ export interface PropsDosItens {
   lote?: LoteDosItens | null;
   /** Desligado por padrão. */
   daOrigem?: ItensDaOrigem | null;
+  /**
+   * OPERACOES-01 F10 (decisão 287): UMA linha só (o abastecimento) — sem Adicionar, Duplicar e Remover; a linha nasce
+   * com a página. Padrão `false` (o de hoje).
+   */
+  linhaUnica?: boolean;
+  /**
+   * OPERACOES-01 F5b (decisão 282): a linha nova nasce com a quantidade e o valor unitário VAZIOS — nada inventado (a
+   * contagem do ajuste nunca nasce "1"; o custo vazio da entrada é "use o custo médio"); a quantidade vazia da célula
+   * não ativa aparece "—", nunca "0". Padrão `false`: a linha de hoje ("1" e "0").
+   */
+  linhaNovaEmBranco?: boolean;
+  /** OPERACOES-01 F5b: `false` tira do rodapé o "Subtotal dos itens" (documento sem valor); "Itens (N)" fica. Padrão `true`. */
+  subtotal?: boolean;
+  /** OPERACOES-01 F5b: casas da quantidade na célula NÃO ativa da grade. Padrão 2 (o de hoje). */
+  casasDaQuantidade?: number;
 }
 
 /* ─────────────── M8 — itens-salvos.tsx e configurar-colunas.tsx ─────────────── */
@@ -307,10 +350,29 @@ export interface PropsDosItens {
 export type ChaveColunaSalva = ChaveColunaDoItem | "faturado" | "reservado";
 export type ChaveCampoSalvo = Exclude<ChaveColunaSalva, "codigo"> | "unidade";
 export interface AvisoDosItens { testId: string; conteudo: React.ReactNode }
+/**
+ * OPERACOES-01 F5b (decisão 282): uma coluna que só a ESPÉCIE conhece (ex.: o saldo na confirmação e a diferença do
+ * ajuste). Entra DEPOIS de todas as outras, na grade e no formulário de leitura (campo travado). O motor não interpreta
+ * o valor: só o desenha. `chave` é única entre as extras.
+ */
+export interface ColunaExtraDoItemSalvo {
+  chave: string;
+  rotulo: string;
+  /** Largura na grade (padrão 100). */
+  largura?: number;
+  /** Alinhada à direita, como os números. */
+  numero?: boolean;
+  /** `data-testid` da célula da grade. */
+  testId?: string;
+  valor: (it: Row) => React.ReactNode;
+}
+/** A chave de uma coluna extra nas preferências do "Configurar colunas" — nunca colide com as do motor. */
+export type ChaveDaColunaExtra = `extra:${string}`;
 export interface PropsDosItensSalvos {
   prefixoTestid: string;
   colunas: ColunasDosItens;
-  itens: Row[]; subtotal: string; legenda: string;
+  /** `subtotal`: o DO SERVIDOR; `null` (OPERACOES-01 F5b: documento sem valor) tira a linha do rodapé. */
+  itens: Row[]; subtotal: string | null; legenda: string;
   mostrarSaldo?: boolean; mostrarReservado?: boolean;
   /** Lote e validade gravados no item (só a espécie que os grava liga). */
   mostrarLote?: boolean;
@@ -319,6 +381,17 @@ export interface PropsDosItensSalvos {
   /** Casas decimais da quantidade, da parte gerada e do saldo (padrão 2; a compra mostra 4). */
   casasDaQuantidade?: number;
   avisos?: readonly AvisoDosItens[];
+  /** OPERACOES-01 F5b: o rótulo da espécie no lugar do fixo, na grade, no formulário e no "Configurar colunas". */
+  rotulos?: Partial<Record<ChaveColunaSalva, string>>;
+  /** OPERACOES-01 F5b: as colunas da espécie, depois de todas as outras. Padrão: nenhuma. */
+  colunasExtras?: readonly ColunaExtraDoItemSalvo[];
+  /**
+   * OPERACOES-01 F5b (I-1 da revisão da fase): o formulário de leitura RECORTADO pelas colunas da espécie
+   * (`colunas.leitura`) — só os campos cujas colunas ela tem (a Unidade, junto da quantidade, fica), e nada que ela não
+   * tenha (o documento de estoque não mostra desconto, desconto % nem total, nem um Local de estoque por item: o local
+   * é do cabeçalho). Padrão `false`: a lista fixa de hoje (as Centrais de Vendas e de Compras não mudam).
+   */
+  formularioPelasColunas?: boolean;
 }
 export interface PropsDeConfigurarColunas<K extends string> {
   prefixoTestid: string;
@@ -356,10 +429,38 @@ export interface PropsDoDialogoDescartar { aberto: boolean; onFechar: () => void
 /* ─────────────── M11 — pesquisa.tsx, duplicar-memoria.ts, salvo.ts ─────────────── */
 
 export interface OpcaoReal { id: string; label: string; code?: string | null }
+/** Uma opção da pesquisa com o saldo do local (só na fonte nova; ausente na de hoje). */
+export interface OpcaoDaPesquisa extends OpcaoReal { estoque?: string | null }
+/** O que a pesquisa de PRODUTO sabe (a de local não o recebe): a fonte, o local da LINHA e o sentido. */
+export interface ProdutoNaPesquisa {
+  fonte: FonteDaPesquisaDeProdutos;
+  /** O local da LINHA (o que vai no POST), nunca o do cabeçalho; sem ele, sem saldo e sem o filtro. */
+  armazemId?: string;
+  sentido: "entrada" | "saida";
+  soControlaEstoque?: boolean;
+}
 export interface PropsDaPesquisa {
   recurso: string; rotulo: string; filtro?: Record<string, string>; valor?: string | null;
   modo: "flutuante" | "fluxo"; ancora?: HTMLElement | null;
   onEscolher: (o: OpcaoReal) => void; onFechar: () => void; testId?: string;
+  /** OPERACOES-01 F3b: só a pesquisa de PRODUTO o recebe. Ausente (ou fonte "legado"): a pesquisa de hoje, idêntica. */
+  produto?: ProdutoNaPesquisa | null;
+}
+
+/* ─────────────── OPERACOES-01 F3b — local-padrao.tsx: o "Local de estoque" do cabeçalho ─────────────── */
+
+/** O campo do cabeçalho: os locais da empresa do documento. Estado da TELA: nunca vai no corpo. */
+export interface PropsDoLocalPadrao {
+  prefixoTestid: string;
+  empresaId: string;
+  valor: LocalDeEstoque | null;
+  onChange: (l: LocalDeEstoque | null) => void;
+}
+/** `useLocalDoCabecalho`: o local das linhas novas, a escolha (por empresa) e o descarte (volta ao padrão). */
+export interface LocalDoCabecalho {
+  local: LocalDeEstoque | null;
+  escolher: (l: LocalDeEstoque | null) => void;
+  descartar: () => void;
 }
 /** duplicar-memoria.ts: a cópia genérica que espera a criação, guardada no Map em memória pela chave do adaptador. */
 export interface CopiaEmMemoria<C> {
@@ -370,3 +471,31 @@ export type CopiaValePara = <C>(copia: CopiaEmMemoria<C> | null, segmento: strin
 /** salvo.ts: entrega/consumo do "Salvo" pela chave do adaptador. */
 export type EntregarSalvo = (chave: (id: string) => string, id: string, depois: DepoisDeSalvar) => void;
 export type ConsumirSalvo = (chave: (id: string) => string, id: string) => DepoisDeSalvar | null;
+
+/* ─────────────── F2 (decisão 279) — o Salvar da Central e as regras gerais da TOP ─────────────── */
+
+/**
+ * O resultado da confirmação automática (TOP no formato 4 com Confirmação Automática), como o servidor o devolve no
+ * 201 do POST que grava o documento, no `/convert` do pedido de compra e no 200 da decisão de aprovar. Sem a chave: a
+ * TOP não confirma sozinha (formato 1 a 3, ou Manual) — o corpo de antes.
+ */
+export type ResultadoConfirmacaoAutomatica =
+  | { confirmado: true }
+  | { confirmado: false; motivo: "aguardando_aprovacao" }
+  | { confirmado: false; motivo: "sem_permissao" }
+  | { confirmado: false; motivo: "recusada"; erro: { code: string; message: string; details?: unknown } };
+
+/** O 201 do Salvar: o id do documento gravado e, só com a TOP de Confirmação Automática, o que a confirmação fez. */
+export interface RespostaDoSalvar { id: string; confirmacaoAutomatica?: ResultadoConfirmacaoAutomatica }
+
+/** O tom do aviso do Salvar — o nome da função do `toast` que o mostra. */
+export type TipoDoAviso = "success" | "info" | "warning";
+/** O aviso do Salvar: UM por Salvar, com o tom e o texto exato. */
+export interface AvisoDoSalvar { tipo: TipoDoAviso; texto: string }
+
+/**
+ * As regras gerais da TOP que a Central precisa ANTES de salvar (`regrasGerais` de `/regras-da-operacao`): se o Salvar
+ * também confirma e se o documento pode ser salvo sem itens. Quem decide o valor é o servidor, pela MESMA régua da
+ * gravação; a Central só lê.
+ */
+export interface RegrasGeraisDaCentral { confirmacaoAutomatica: boolean; aceitaSemItens: boolean }

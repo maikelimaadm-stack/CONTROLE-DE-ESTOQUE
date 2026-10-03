@@ -23,14 +23,9 @@ import estilos from "./dialogos.module.css";
  * O motivo que vai no corpo: o digitado aparado (1–500) ou, vazio, o `motivoVazio` da espécie
  * (o padrão de hoje numa; "" na espécie que manda o corpo sem motivo).
  */
-export function motivoDoCancelamento(digitado: string, motivoVazio: string): string {
+function motivoDoCancelamento(digitado: string, motivoVazio: string): string {
   const aparado = digitado.trim().slice(0, LIMITE_DO_MOTIVO).trim();
   return aparado || motivoVazio;
-}
-
-/** O corpo do cancelamento: `{ [chaveDoMotivo]: motivo }`, ou `{}` quando o motivo resultou vazio. */
-export function corpoDoCancelamento(cancelamento: { chaveDoMotivo: string }, motivo: string): Record<string, string> {
-  return motivo ? { [cancelamento.chaveDoMotivo]: motivo } : {};
 }
 
 const Icone = ({ tamanho, children }: { tamanho: number; children: React.ReactNode }) =>

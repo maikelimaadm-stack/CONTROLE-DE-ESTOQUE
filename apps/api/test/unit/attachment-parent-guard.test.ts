@@ -30,7 +30,7 @@ describe("guardrail: anexos × registro-pai", () => {
       const vp = rule.viewPerm;
       if (typeof vp === "string") expect(perms.has(vp), `${entity}: ${vp}`).toBe(true);
       else {
-        const validos = ["nutrition", "sanitary", "purchase", "sale", "payable", "receivable", "budget", "order", "pedido", "compra"].map((k) => vp({ handling_type: k, movement_type: k, direction: k, kind: k, especie: k })).filter((p): p is string => p !== null);
+        const validos = ["nutrition", "sanitary", "purchase", "sale", "payable", "receivable", "budget", "order", "pedido", "compra", "orcamento"].map((k) => vp({ handling_type: k, movement_type: k, direction: k, kind: k, especie: k })).filter((p): p is string => p !== null);
         expect(validos.length, `${entity}: nenhuma variante resolvida`).toBeGreaterThan(0);
         for (const p of validos) expect(perms.has(p), `${entity}: ${p}`).toBe(true);
         // fail-closed: tipo desconhecido ou interno não cai numa permissão vizinha
@@ -41,7 +41,8 @@ describe("guardrail: anexos × registro-pai", () => {
           for (const k of ["", "invoice", "outra"]) expect(vp({ kind: k }), `${entity}[${k}]`).toBeNull();
         }
         if (entity === "documentos_compra") {
-          expect([vp({ especie: "pedido" }), vp({ especie: "compra" })], entity).toEqual(["pedidos_compra.view", "compras.view"]);
+          // OPERACOES-01 F6a: o orçamento de compra tem a porta dele — nunca a do pedido que ele cota.
+          expect([vp({ especie: "pedido" }), vp({ especie: "compra" }), vp({ especie: "orcamento" })], entity).toEqual(["pedidos_compra.view", "compras.view", "orcamentos_compra.view"]);
           for (const k of ["", "devolucao", "outra"]) expect(vp({ especie: k }), `${entity}[${k}]`).toBeNull();
         }
         if (entity === "animal_handlings" || entity === "animal_movements") {

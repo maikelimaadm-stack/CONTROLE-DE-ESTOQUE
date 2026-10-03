@@ -110,6 +110,13 @@ export interface FieldDef {
    * A pergunta é `campoVisivel` (a mesma na API e na tela).
    */
   sigilo?: string;
+  /**
+   * Rótulos que o campo JÁ TEVE (OPERACOES-01 F3a, decisão 280). A importação de planilha aceita a coluna com o nome
+   * antigo — o modelo baixado antes da troca — além do atual; o modelo novo sai com o rótulo atual e as mensagens
+   * citam o nome atual. Só leitura de cabeçalho: nada mais muda. Ex.: "Armazém padrão" do Produto, hoje "Local de
+   * estoque padrão".
+   */
+  rotulosAnteriores?: string[];
 }
 
 export interface ResourceDef {
@@ -188,6 +195,16 @@ export interface ResourceDef {
    * `rota` (ex.: novo funcionário pelo CPF). A tela de "novo" pergunta `campos` e chama a rota.
    */
   criacao?: { rota: string; mensagem: string; campos: string[] };
+  /**
+   * PESQUISA DO SELETOR (OPERACOES-01 F3a, decisão 280): além do `labelField`, `GET /resources/:key/options?search=`
+   * procura nas colunas `texto` (contém, sem diferenciar maiúsculas) e na coluna `documento` (CPF/CNPJ comparado
+   * NORMALIZADO — só [0-9A-Z], maiúsculas, a mesma expressão do índice ux_people_documento_normalizado; o CNPJ
+   * alfanumérico mantém as letras —, por prefixo; ver `documentoParaPesquisa`). Campo sigiloso que o usuário não vê
+   * fica fora. Sem a marca, o seletor busca só pelo rótulo, como sempre. Os nomes são de `fields` (colunas `text`).
+   * CAPACIDADE: os termos novos valem para quem tem `<permission>.view` (a leitura da listagem do cadastro); sem ela,
+   * só o rótulo, como sempre, e o documento por IGUALDADE com o normalizado completo (nunca prefixo: enumeraria o CPF).
+   */
+  pesquisaDoSeletor?: { texto?: string[]; documento?: string };
 }
 
 /**

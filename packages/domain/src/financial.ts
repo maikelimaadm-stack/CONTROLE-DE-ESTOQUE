@@ -1,10 +1,15 @@
 import { D, DomainError, addDays, addMonths, money, splitEvenly, sum, type DecimalString, type ISODate } from "@agro/shared";
 
-export type TitleStatus = "open" | "partially_paid" | "paid" | "cancelled";
-export const TITLE_STATUS_LABELS: Record<TitleStatus, string> = { open: "A vencer", partially_paid: "Baixa parcial", paid: "Baixada", cancelled: "Cancelada" };
+/**
+ * O `status` gravado do título. `previsto` (OPERACOES-01 F9, decisão 286; 0045) é o título da PROVISÃO pela TOP: fora
+ * das baixas (o banco recusa), sai só cancelado, e dá lugar ao título de verdade quando o documento é faturado.
+ */
+export type TitleStatus = "open" | "partially_paid" | "paid" | "cancelled" | "previsto";
+export const TITLE_STATUS_LABELS: Record<TitleStatus, string> = { open: "A vencer", partially_paid: "Baixa parcial", paid: "Baixada", cancelled: "Cancelada", previsto: "Prevista" };
 
-/** Status exibido na listagem (à vencer / vencida derivam da data). */
+/** Status exibido na listagem (à vencer / vencida derivam da data; a prevista nunca vence: é previsão). */
 export function displayTitleStatus(t: { status: TitleStatus; dueDate: ISODate; paymentType?: string }, today: ISODate): string {
+  if (t.status === "previsto") return TITLE_STATUS_LABELS.previsto;
   if (t.status === "paid") return t.paymentType === "advance" ? "Adiantamento/Baixado" : t.paymentType === "invoice_group" ? "Fatura/Baixado" : "Baixada";
   if (t.status === "cancelled") return "Cancelada";
   if (t.status === "partially_paid") return "Baixa parcial";
@@ -89,11 +94,18 @@ export interface SettlementInput { amount: DecimalString; discount?: DecimalStri
 export function settlementNet(i: SettlementInput): DecimalString {
   return money(D(i.amount).minus(D(i.discount ?? 0)).plus(D(i.penalty ?? 0)).plus(D(i.interest ?? 0)).plus(D(i.increase ?? 0)).plus(D(i.exchangeAdjustment ?? 0)));
 }
-/** Regra: baixa não pode exceder o saldo do título. */
+/**
+ * Regra (semântica B, decisão 285): `amount` é o valor baixado do título e JÁ INCLUI o desconto — o saldo cai
+ * `amount` e o caixa é `settlementNet` (amount − desconto + …). Antes esta regra conferia `amount + discount`
+ * contra o saldo, como o banco (`erp.refresh_title_status`) contava a baixa, enquanto o caixa saía por
+ * `amount − discount`: o desconto era abatido DUAS vezes (título 1000, baixa 550 com desconto 50 quitava 600 e
+ * movimentava 500 — 50 sumiam). Por isso o desconto passa a ser parte do valor e nunca maior que ele.
+ */
 export function assertSettlementWithinBalance(balance: DecimalString, i: SettlementInput) {
-  const applied = D(i.amount).plus(D(i.discount ?? 0));
-  if (applied.gt(D(balance))) throw new DomainError("PAYMENT_EXCEEDS_BALANCE", "Valor baixado + desconto excede o saldo do título", { balance, applied: applied.toFixed(2) });
-  if (D(i.amount).lte(0)) throw new DomainError("VALIDATION_ERROR", "Valor baixado deve ser positivo");
+  const amount = D(i.amount);
+  if (amount.lte(0)) throw new DomainError("VALIDATION_ERROR", "Valor baixado deve ser positivo");
+  if (D(i.discount ?? 0).gt(amount)) throw new DomainError("VALIDATION_ERROR", "O desconto não pode ser maior que o valor baixado");
+  if (amount.gt(D(balance))) throw new DomainError("PAYMENT_EXCEEDS_BALANCE", "Valor baixado excede o saldo do título", { balance, applied: money(amount) });
 }
 
 /** Recorrência (semanal/mensal/trimestral/anual): gera as próximas N ocorrências a partir da 1ª data. */

@@ -41,6 +41,14 @@ async function criarTop(page: Page, familia: string, nome: string): Promise<stri
   const codigo = `3c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
   return (await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo, codigoBase: familia, nome: uniq(nome) })).id;
 }
+/**
+ * Exclusão lógica da TOP criada pelo caso (com a revisão corrente, como a porta exige; o corpo `{}` porque o helper
+ * manda `content-type: application/json` e a API recusa o JSON vazio com 400); falha na limpeza não mascara o caso.
+ */
+async function excluirTop(page: Page, id: string) {
+  const caminho = `/api/admin/tipos-operacao/${id}`;
+  await api<{ revisao: number }>(page, "GET", caminho).then(({ revisao }) => api(page, "DELETE", `${caminho}?revisao=${revisao}`, {})).catch(() => undefined);
+}
 
 /**
  * Abre o layout pela rota dele. A3-1d (decisão 262): a rota abre a TELA ÚNICA com a linha já selecionada na grade e a
@@ -85,7 +93,7 @@ const todosDoDocumento = (e: Estrutura) => [...e.cabecalho, ...e.rodape.flatMap(
 
 test.describe.configure({ mode: "serial" });
 
-test("LC-W1 — arrastando: ICMS frete sai, Vencimento vai ao Financeiro, Proprietário ao principal, Armazém antes de Produto, aba renomeada, Desfazer/Refazer, Salvar", async ({ page }) => {
+test("LC-W1 — arrastando: ICMS frete sai, Vencimento vai ao Financeiro, Proprietário ao principal, Local depois de Produto, aba renomeada, Desfazer/Refazer, Salvar", async ({ page }) => {
   await login(page);
   const id = await criarLayoutPorApi(page, "vendas.pedido", uniq("LC-W1 Pedido"));
   try {
@@ -120,12 +128,16 @@ test("LC-W1 — arrastando: ICMS frete sai, Vencimento vai ao Financeiro, Propri
     await expect(tid(page, "config-zona-principal").getByTestId("config-campo-proprietary_id")).toBeVisible();
     await expect(tid(page, "config-zona-adicionais").getByTestId("config-campo-proprietary_id")).toHaveCount(0);
 
-    // 4) Armazém solto ANTES de Produto nos itens
+    // 4) Local de estoque solto logo DEPOIS de Produto nos itens. OPERACOES-01 F3b (decisão 280): o layout do sistema
+    //    agora abre com o Local antes do Produto, e o Estoque segue o Produto; soltar o Local "antes de" Estoque o leva
+    //    para logo depois do Produto — o arrasto continua mudando a ordem, e o servidor tem de gravar a nova.
     const zonaItens = tid(page, "config-zona-itens");
     const ordem0 = await ordemNaZona(zonaItens);
-    expect(ordem0.indexOf("itens.product_id"), "premissa: Produto antes de Armazém").toBeLessThan(ordem0.indexOf("itens.warehouse_id"));
-    await arrastar(campoPrevia(page, "itens.warehouse_id"), campoPrevia(page, "itens.product_id"), true);
-    await expect.poll(async () => { const o = await ordemNaZona(zonaItens); return o.indexOf("itens.warehouse_id") === o.indexOf("itens.product_id") - 1; }, { message: "Armazém imediatamente antes de Produto" }).toBe(true);
+    expect(ordem0.indexOf("itens.warehouse_id"), "premissa: o Local está na prévia").toBeGreaterThanOrEqual(0);
+    expect(ordem0.indexOf("itens.warehouse_id"), "premissa: Local antes de Produto").toBeLessThan(ordem0.indexOf("itens.product_id"));
+    expect(ordem0.indexOf("itens.estoque"), "premissa: Estoque logo depois de Produto").toBe(ordem0.indexOf("itens.product_id") + 1);
+    await arrastar(campoPrevia(page, "itens.warehouse_id"), campoPrevia(page, "itens.estoque"), true);
+    await expect.poll(async () => { const o = await ordemNaZona(zonaItens); return o.indexOf("itens.warehouse_id") === o.indexOf("itens.product_id") + 1; }, { message: "Local imediatamente depois de Produto" }).toBe(true);
 
     // 5) Renomear a aba Financeiro com duplo clique
     await tid(page, `config-aba-${iFin}`).dblclick();
@@ -154,7 +166,7 @@ test("LC-W1 — arrastando: ICMS frete sai, Vencimento vai ao Financeiro, Propri
     expect(prop, "Proprietário continua no cabeçalho").toBeTruthy();
     expect(prop!.grupo ?? "principal").toBe("principal");
     const itens = d.estrutura.itens.map((c) => c.campo);
-    expect(itens.indexOf("warehouse_id")).toBe(itens.indexOf("product_id") - 1);
+    expect(itens.indexOf("warehouse_id"), "o servidor gravou o Local logo depois de Produto").toBe(itens.indexOf("product_id") + 1);
   } finally {
     await inativar(page, [id]);
   }
@@ -320,31 +332,38 @@ async function semFamilia(page: Page, tela: string) {
 
 test("LC-W5 — \"Movimento\" no lugar de \"família\": TOPs, editor da TOP, layouts, Novo layout e lançador", async ({ page }) => {
   await login(page);
+  // Premissa: uma TOP ATIVA de pedido de venda, criada pelo próprio caso — o banco recém-semeado não tem nenhuma, e o
+  // caso não pode depender de outro spec ter deixado uma para trás (OPERACOES-01 F3b: rodado sozinho, ele achava o
+  // lançador vazio). Ela sai no fim, passou ou falhou.
+  const topPedido = await criarTop(page, "vendas.pedido", "LC-W5 Pedido");
+  try {
+    // Lista de Tipos de Operação
+    await page.goto(ROTA_TOPS);
+    await expect(page.getByLabel("Buscar tipo de operação")).toBeVisible();
+    await expect(page.getByRole("row").nth(1)).toBeVisible();
+    await semFamilia(page, "lista de TOPs");
 
-  // Lista de Tipos de Operação
-  await page.goto(ROTA_TOPS);
-  await expect(page.getByLabel("Buscar tipo de operação")).toBeVisible();
-  await expect(page.getByRole("row").nth(1)).toBeVisible();
-  await semFamilia(page, "lista de TOPs");
+    // Editor da TOP
+    await page.getByRole("row").nth(1).getByRole("button", { name: "Mais opções" }).click();
+    await page.getByRole("menuitem", { name: "Editar" }).click();
+    await expect(tid(page, "form-tipo-operacao")).toBeVisible();
+    await semFamilia(page, "editor da TOP");
 
-  // Editor da TOP
-  await page.getByRole("row").nth(1).getByRole("button", { name: "Mais opções" }).click();
-  await page.getByRole("menuitem", { name: "Editar" }).click();
-  await expect(tid(page, "form-tipo-operacao")).toBeVisible();
-  await semFamilia(page, "editor da TOP");
+    // Lista de layouts e o Novo layout
+    await page.goto(ROTA_LAYOUTS);
+    await expect(tid(page, "layouts-documento")).toBeVisible();
+    await semFamilia(page, "lista de layouts");
+    // A3-1d (decisão 262): "Novo" está na barra da grade (antes: botão "Novo layout") e abre o assistente no passo 1
+    await tid(page, "layouts-barra").getByTestId("layouts-novo").click();
+    await expect(tid(page, "layout-novo")).toBeVisible();
+    await semFamilia(page, "Novo layout");
 
-  // Lista de layouts e o Novo layout
-  await page.goto(ROTA_LAYOUTS);
-  await expect(tid(page, "layouts-documento")).toBeVisible();
-  await semFamilia(page, "lista de layouts");
-  // A3-1d (decisão 262): "Novo" está na barra da grade (antes: botão "Novo layout") e abre o assistente no passo 1
-  await tid(page, "layouts-barra").getByTestId("layouts-novo").click();
-  await expect(tid(page, "layout-novo")).toBeVisible();
-  await semFamilia(page, "Novo layout");
-
-  // Lançador de vendas
-  await page.goto("/vendas/orders/new");
-  await expect(tid(page, "top-lancador")).toBeVisible();
-  await expect(page.locator('[data-testid="top-opcao"]').first()).toBeVisible();
-  await semFamilia(page, "lançador de vendas");
+    // Lançador de vendas (presença: a TOP do caso está na lista)
+    await page.goto("/vendas/orders/new");
+    await expect(tid(page, "top-lancador")).toBeVisible();
+    await expect(page.locator(`[data-testid="top-opcao"][data-top-id="${topPedido}"]`), "premissa: o lançador lista a TOP do caso").toBeVisible();
+    await semFamilia(page, "lançador de vendas");
+  } finally {
+    await excluirTop(page, topPedido);
+  }
 });

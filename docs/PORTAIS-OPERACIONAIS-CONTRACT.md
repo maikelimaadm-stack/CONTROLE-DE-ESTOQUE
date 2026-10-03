@@ -57,11 +57,13 @@ As famílias citadas aqui são as declaradas no registry — este documento as r
 
 ### Portal de Compras
 Processos de compra, da solicitação ao recebimento. Famílias hoje declaradas no escopo: `compras.solicitacao`,
-`compras.pedido` e `compras.compra` (COMPRAS-01, decisão 267). O lançamento de Pedido de compra e de Compra escolhe
-uma TOP configurada da família (obrigatória); a solicitação continua sem TOP. O Pedido de compra tem próximos passos
-(COMPRAS-02, decisão 268): recebê-lo, inteiro ou em partes, gera uma Compra ligada a ele — a única aresta executável
-do grafo de compras. Os campos da Central de Compras seguem o layout do documento ligado à TOP (COMPRAS-03, decisão
-269), o mesmo mecanismo de Vendas.
+`compras.pedido`, `compras.compra` (COMPRAS-01, decisão 267) e `compras.orcamento` (OPERACOES-01 F6a, decisão 283; com
+tela desde a F6b: nasce do pedido aprovado para orçamento, nunca do "Novo"). O lançamento de Pedido de compra e de
+Compra escolhe uma TOP configurada da família (obrigatória); a solicitação continua sem TOP. O Pedido de compra tem
+próximos passos (COMPRAS-02, decisão 268): recebê-lo, inteiro ou
+em partes, gera uma Compra ligada a ele — e, desde a decisão 283, o pedido aprovado para orçamento recebe orçamentos de
+compra (a segunda aresta, pedido → orçamento). Os campos da Central de Compras seguem o layout do documento ligado à
+TOP (COMPRAS-03, decisão 269), o mesmo mecanismo de Vendas.
 
 ### Portal de Vendas
 Orçamento, pedido e venda — as três variantes de `erp.sales_documents`, que a BASE2-03C já unificou na
@@ -329,9 +331,10 @@ aba "Processos"). Não mudaram, e não viram documento de compra.
 **O que EXISTE (COMPRAS-02, decisão 268) — o pedido vira compra:**
 
 - **o grafo de compras**: a TOP de Pedido de compra declara, na aba "Próximas operações" (a mesma de Vendas), as TOPs
-  de Compra para onde o pedido pode ir, com ou sem "Em partes". É a ÚNICA aresta executável em compras — a compra não
-  converte e o pedido não nasce de conversão —, e nenhuma aresta cruza Vendas e Compras, em nenhum sentido. Sem ponte
-  legada: pedido sem política declarada não tem próximo passo;
+  de Compra para onde o pedido pode ir, com ou sem "Em partes". Com o pedido → orçamento (decisão 283), são as únicas
+  arestas executáveis em compras — a compra e o orçamento não convertem e o pedido não nasce de conversão —, e nenhuma
+  aresta cruza Vendas e Compras, em nenhum sentido. Sem ponte legada: pedido sem política declarada não tem próximo
+  passo;
 - **os próximos passos do pedido** (`GET /api/compras/pedidos/:id/proximos-passos`, o contrato do de Vendas): o leque
   da versão congelada do pedido, com a disponibilidade de cada destino avaliada agora;
 - **receber = lançar uma Compra com origem**: escolher a TOP de Compra abre a Central de Compras em modo receber pedido
@@ -366,6 +369,36 @@ aba "Processos"). Não mudaram, e não viram documento de compra.
 - **sem padrão de cadastro na Natureza de despesa** nesta fatia (o filtro de despesa ou "ambas" não cabe na
   conferência do padrão).
 
+**O que EXISTE (OPERACOES-01 F6a, decisão 283) — pedido finalizado, aprovação do pedido e orçamento de compra, só na
+API e no editor da TOP (as telas da Central de Compras são da F6b):**
+
+- o pedido de compra ganha a situação **Finalizado** (Finalizar = a confirmação do pedido), com a aprovação da TOP ao
+  finalizar; a fila Aprovações › Compras lista o pedido para quem aprova pedido (`pedidos_compra.approve`);
+- "Aprovado para orçamento" no pedido, e o **orçamento de compra** — espécie `orcamento` do documento de compra, um por
+  fornecedor, ligado ao pedido por vínculo próprio (não consome o saldo), com preço, prazo, validade e condição, sem
+  estoque nem financeiro; "Escolher vencedor" leva fornecedor, preços e condição ao pedido;
+- na TOP (formato 5): "Exigir pedido finalizado para receber" no pedido e "Divergência com o pedido" na compra, as duas
+  desligadas por padrão.
+
+As telas vieram na F6b (bloco seguinte). Contrato em `docs/OPERACOES-CONTRACT.md` §4.
+
+**O que EXISTE (OPERACOES-01 F6b, decisão 283) — as telas, na Central de Compras, só com a capacidade
+`finalizacaoEOrcamento` declarada pela API (sem ela, a Central de hoje):**
+
+- no pedido: "Finalizar" (com a prévia do servidor), "Aprovar para orçamento", "Novo orçamento" (pelo leque de TOPs de
+  orçamento do pedido), o bloco da Aprovação (Aprovar/Reprovar a quem tem `pedidos_compra.approve` e `compras.approve`) e
+  a aba "Orçamentos" (a comparação por total e por preço de item, "Escolher" o vencedor e "Cancelar"; sem cascata: os
+  abertos de um pedido que não está mais aberto são avisados e cancelados um a um);
+- o orçamento de compra: nasce SÓ do pedido aprovado para orçamento (o "Novo" do Portal e o da barra não o oferecem),
+  com os itens do pedido travados e o preço digitado; a consulta edita no lugar e cancela;
+- na compra: a divergência com o pedido na prévia da confirmação;
+- no Portal: o Tipo "Orçamento de compra" (com `orcamentos_compra.view`; quem só tem essa capacidade abre a lista já
+  nele), que segue a capacidade lida — contra a API anterior ele some, porque a lista dela viria vazia; o menu Compras ›
+  Documentos e o detalhe do documento de compra aceitam `orcamentos_compra.view`.
+
+O pedido finalizado recebe, encerra o saldo e se cancela pela tela. Com "Exigir pedido finalizado para receber" = Sim,
+o "Receber…" do pedido aberto fica desabilitado até ele ser finalizado. Contrato em `docs/OPERACOES-CONTRACT.md` §4 (F6b).
+
 **O que FALTA (e não deve ser simulado):**
 
 - o desenho visual da Central de Compras alinhado ao da Central de Vendas, com as zonas "de verdade" (faixa F2);
@@ -382,22 +415,29 @@ Cancelar. As quatro espécies entram juntas. O documento nasce ABERTO e só mexe
 
 **Documento único, em tabela própria.** `erp.documentos_estoque` (cabeçalho) e `erp.documentos_estoque_itens` (itens),
 0040, com quatro variantes pela coluna `especie`. Não é TOP pendurada nas tabelas antigas de estoque: aquelas
-continuam com os fluxos, as regras e as telas delas, e uma fatia própria decide quando trocá-las. Tela unificada não é
+continuam com os fluxos, as regras e as telas delas, e uma fatia própria decide quando trocá-las (a OPERACOES-01 F11,
+decisão 288: "O que fica nas telas antigas", abaixo). Tela unificada não é
 regra unificada — o documento de estoque não funde serviço, permissão nem efeito com as telas antigas.
 
 | Espécie | Segmento (URL e API) | Família da TOP | Recurso de permissão | Movimento na confirmação |
 | --- | --- | --- | --- | --- |
-| Entrada | `entradas` | `estoque.entrada` | `entradas_estoque` | `entry`, pelo custo INFORMADO no item, com lote e validade |
+| Entrada | `entradas` | `estoque.entrada` | `entradas_estoque` | `entry`, pelo custo informado no item ou, vazio, o custo médio do produto (OPERACOES-01 F5a), com lote e validade; `opening_balance` ("Estoque inicial") quando a TOP lança o saldo inicial (seção Implantação, OPERACOES-01 F11, decisão 288), com a recusa de duplicidade |
 | Saída | `saidas` | `estoque.saida` | `saidas_estoque` | `writeoff`, pelo custo médio; lote informado ou escolhido pela validade (vencido só sai informado, decisão 254) |
 | Transferência | `transferencias` | `estoque.transferencia` | `transferencias_estoque` | `transfer_out` na origem e `transfer_in` no destino, parte por parte, com o MESMO custo, lote e validade |
-| Ajuste (inventário) | `ajustes` | `estoque.ajuste` | `ajustes_estoque` | pela diferença contado − saldo: `correction_in` (> 0, pelo custo médio atual), `correction_out` (< 0), nenhum (zero) |
+| Ajuste (inventário) | `ajustes` | `estoque.ajuste` | `ajustes_estoque` | pela diferença contado − saldo: `correction_in` (> 0, pelo custo informado ou o médio atual), `correction_out` (< 0), nenhum (zero) |
+| Requisição (de material) | `requisicoes` | `estoque.requisicao_material` | `requisicoes_estoque` | nenhum: a confirmada é a PENDENTE e reserva o pedido no local de estoque (OPERACOES-01 F5a) |
+| Consumo | `consumos` | `estoque.consumo` | `consumos_estoque` | `requisition` (baixa), pelo custo médio; pode atender uma requisição (OPERACOES-01 F5a) |
+| Devolução de consumo | `devolucoes-consumo` | `estoque.devolucao_consumo` | `devolucoes_consumo_estoque` | `devolution` (volta), pelo custo do item do consumo de origem (OPERACOES-01 F5a) |
 
 **Rotas.** API: `GET /api/estoque/documentos` (a lista única: espécie, situação, período, armazém de origem ou destino,
 TOP, empresa e busca por código, com paginação, ordem e busca no servidor e número fixo de consultas);
 `GET /api/estoque/<segmento>/operation-types`; `POST /api/estoque/<segmento>` (lança aberto, com Idempotency-Key; o
 cliente manda só `tipo_operacao_id` e o servidor congela a versão e confere a família); `GET /api/estoque/<segmento>/:id`;
-`GET .../previa-confirmacao`; `POST .../confirmar`; `POST .../cancelar`. Tela: a aba **Movimentações** do `/estoque`,
-logo depois de "Visão geral" (as abas e o "+ Novo" antigos continuam), e a Central de Estoque em
+`GET .../previa-confirmacao`; `POST .../confirmar`; `POST .../cancelar`; desde a OPERACOES-01 F5b, as LEITURAS da
+Central: `GET /api/estoque/<segmento>/regras-da-operacao`, `/layout-efetivo` e, na saída, na requisição e no consumo,
+`/destino/opcoes`. Tela: a aba **Movimentações** do `/estoque`,
+logo depois de "Visão geral" (desde a OPERACOES-01 F11, decisão 288, o "+ Novo" antigo saiu e as abas antigas ficam
+como histórico, sem Novo), e a Central de Estoque em
 `/estoque/movimentacoes/<segmento>/new?tipo_operacao_id=…` (criação) e `/estoque/movimentacoes/<segmento>/<id>`
 (consulta), declaradas no `apps/web/nav.registry.mjs`.
 
@@ -431,18 +471,65 @@ documento, depois de conferir que o que ele deu de entrada (`entry`, `transfer_i
 balde; já consumido → 422 no item, dizendo produto, armazém e lote, e nada gravado. Cancelar de novo → 409
 `ALREADY_CANCELLED`. Sem motivo, grava-se "Cancelado sem motivo informado".
 
-**O que fica nas telas antigas** (`/estoque/entradas`, baixas, requisições, transferências, devoluções, batidas, o
-ajuste a partir do Saldo e as rotas `/stock/*`): tudo continua como está, inclusive a transferência entre empresas,
-o Documento fiscal de Estoque e a produção de ração. O documento de estoque não as substitui nesta fatia.
+**O que fica nas telas antigas** (decisão 288; o mapa completo em `docs/OPERACOES-CONTRACT.md` §8). O "+ Novo" antigo
+do Estoque saiu; lançar é pela aba Movimentações. As listas antigas de requisição, saída direta, devolução, entrada
+manual e ajuste ficam como histórico "(tela antiga)", sem o Novo e fora do mega-menu e da busca; as rotas de detalhe e
+de criação, as rotas `/stock/*` e os aliases continuam. Ficam no menu, como AÇÃO e SÓ para o que a Central não cobre: a
+"Requisição com classificação capex/opex" e a "Entrada sem nota com pagamento ou natureza e centro por item". Ficam
+inteiros: a transferência entre empresas (ação, chip e Novo da lista), a fila de DF-e e a produção de ração. O Documento
+fiscal de Estoque (a nota de entrada antiga) fica, desde o merge da F7 (decisão 284), SÓ para o que a compra não cobre,
+pela ação "Nota de entrada antiga (qualidade de grão, proprietário, cultura ou apropriação)"; a nota de entrada é a
+COMPRA, pela importação do XML na Central de Compras, e o "Lançar" da DF-e com o XML guardado abre essa importação. O "Ajustar estoque" do Saldo abre a Central de ajuste desde a F5b,
+com `ajustes_estoque.create`, uma TOP de ajuste e a capacidade — senão, o diálogo de sempre. O saldo inicial: a
+Implantação aponta para a Central ("Lançar saldo inicial") quando há TOP de entrada marcada; senão, o "Adicionar novo" de
+hoje.
 
-**O que FALTA (e não deve ser simulado):** editar documento aberto (cancela-se e lança-se outro), layout do documento
-por TOP, transferência entre empresas no documento, centro de resultado no documento, anexos no documento de estoque,
-a execução configurada das famílias novas (TOP-CONFIG-04C) e a troca das telas antigas.
+**O que FALTA (e não deve ser simulado):** editar documento aberto (cancela-se e lança-se outro), transferência entre
+empresas no documento, anexos no documento de estoque, a execução configurada das famílias novas (TOP-CONFIG-04C), a
+e o que só as telas antigas têm (capex/opex, centro por item, pagamento e natureza por item na entrada — exigem
+migration; decisão 288; e o que só a nota de entrada antiga tem — a lista da decisão 284). O destino — o centro de resultado e as outras cinco dimensões — está
+no documento desde a OPERACOES-01 F5a, pela API.
+
+### A movimentação interna no documento (OPERACOES-01 F5a, decisão 282)
+
+O documento de estoque passa a ter SETE espécies: a requisição de material, o consumo e a devolução de consumo, ao lado
+das quatro de cima. Elas trazem:
+- o DESTINO no cabeçalho (centro de resultado, máquina/equipamento, ordem de serviço, lote de animais, área/talhão e
+  safra), que vai para o razão;
+- a ORIGEM (consumo → requisição, devolução → consumo);
+- o atendimento calculado da requisição e o encerramento do saldo;
+- a reserva da requisição no disponível.
+
+A saída ganha motivo e justificativa. Na F5a, tudo isso entrou no banco e na API (aditiva; capacidade
+`movimentacaoInterna: 1`); a tela é da F5b (abaixo). Contrato em `docs/OPERACOES-CONTRACT.md` §3 (F5a), e as seções
+Destino e Fluxo da TOP no §2.
+
+### A Central de Estoque no motor (OPERACOES-01 F5b, decisão 282)
+
+A Central de Estoque passa ao MOTOR DA CENTRAL, com o desenho das Centrais de Vendas e de Compras: barra, leque,
+pílulas, painel com abas, documentos abertos, Novo documento por TOP, Duplicar, Histórico e Imprimir, e os itens em Grade,
+Formulário e Ambos, com Configurar colunas e layout por TOP. Ela lança as SETE espécies quando a API declara
+`movimentacaoInterna` (as quatro de antes, com o corpo de antes, quando não declara):
+- a requisição, o consumo e a devolução de consumo ganham tela. O consumo nasce da requisição ("Atender requisição": os
+  itens dela, até o saldo, e o destino herdado, travado) ou direto, quando a TOP não exige requisição. A requisição
+  atendida em parte encerra o saldo com motivo. A devolução de consumo nasce do consumo ("Devolver itens");
+- o destino segue a seção Destino da TOP (não usada / opcional / obrigatória; o padrão, desde a decisão 288, é opcional), com as opções de
+  `GET /api/estoque/<segmento>/destino/opcoes` — a mesma régua do POST;
+- a saída pede Motivo e Justificativa;
+- a entrada aceita o custo vazio (vale o custo médio), e o ajuste aceita o custo;
+- o "Ajustar estoque" do Saldo abre a Central de ajuste preenchida pela linha;
+- a lista "Movimentações" tem as sete espécies, com a coluna e o filtro "Atendimento", e a fila Aprovações › Estoque tem
+  as ações das sete.
+
+O documento de estoque não tem valor: a linha nova nasce em branco, o rodapé não tem subtotal, e a consulta não mostra
+desconto nem total. O prefixo dos testids do motor é `central-estoque`; os `estoque-*` de antes continuam no elemento
+equivalente. Contrato em `docs/OPERACOES-CONTRACT.md` §3 (F5b).
 
 ### Famílias de TOP de estoque
 
-As famílias de TOP do documento de estoque (as quatro novas, as oito antigas, o movimento pela espécie, as exigências
-gerais, o editor e a TOP no documento) estão em `docs/TIPO-OPERACAO-CONTRACT.md` §16 (decisão 274).
+As famílias de TOP do documento de estoque (as quatro novas e, desde a OPERACOES-01 F5a, as três da movimentação
+interna; as oito antigas; o movimento pela espécie, as exigências gerais, o editor e a TOP no documento) estão em
+`docs/TIPO-OPERACAO-CONTRACT.md` §16 (decisões 274 e 282).
 
 ### Situação no programa
 
@@ -453,8 +540,8 @@ sem execução configurada é esta fatia; a execução configurada do estoque (0
 
 > Decisão 276. Só apresentação (faixa F2): nenhuma rota, API, permissão ou regra nova.
 
-**A regra.** Toda Central de documento (Vendas, Compras e as que vierem, a começar pela de Estoque) usa o MOTOR DA
-CENTRAL. Comportamento novo de tela — um botão da barra, uma pílula, um diálogo, uma guarda do Salvar — entra no motor,
+**A regra.** Toda Central de documento (Vendas, Compras e, desde a OPERACOES-01 F5b, Estoque; e as que vierem) usa o
+MOTOR DA CENTRAL. Comportamento novo de tela — um botão da barra, uma pílula, um diálogo, uma guarda do Salvar — entra no motor,
 nunca numa Central só. Duas Centrais copiadas divergem em silêncio: a que não recebeu a cópia simplesmente fica sem.
 
 **O que mora no motor** (`apps/web/src/features/central/`, um componente por arquivo, nome neutro):
@@ -467,18 +554,25 @@ nunca numa Central só. Duas Centrais copiadas divergem em silêncio: a que não
 | `acoes-rapidas.tsx` | o leque de Ações rápidas (a espécie entrega os itens) |
 | `documentos-abertos.tsx` | a lista dos documentos abertos, sobre as abas do workspace e o `closeTab` |
 | `novo-documento.tsx` | o menu "Nova operação · <espécie>" com as TOPs que o servidor listou |
-| `itens.tsx`, `itens-salvos.tsx`, `configurar-colunas.tsx` | a grade da criação (seleção pelo círculo, Grade \| Formulário, rodapé; lote/validade, armazém por item e o modo "da origem" opcionais), os itens salvos e Configurar colunas |
+| `itens.tsx`, `itens-salvos.tsx`, `configurar-colunas.tsx` | a grade da criação (seleção pelo círculo, Grade \| Formulário, rodapé; lote/validade, armazém por item e o modo "da origem" opcionais), os itens salvos e Configurar colunas; e, desde a F5b, as opções do documento sem valor (`linhaNovaEmBranco`, `subtotal`, `casasDaQuantidade`; na consulta, `rotulos`, `colunasExtras` e `formularioPelasColunas`) |
 | `painel.tsx` | painel repartido, coluna, largo, o plano de parcelas (editável e em leitura), títulos e derivados |
 | `dialogos.tsx` | Confirmar (com a prévia que a espécie põe dentro), Cancelar (motivo opcional, 1–500) e Descartar |
-| `pesquisa.tsx` | a pesquisa (lookup) da Central |
-| `duplicar-memoria.ts`, `salvo.ts` | a entrega EM MEMÓRIA da cópia do Duplicar e do "Salvo" (nada na URL, nada no navegador) |
+| `pesquisa.tsx` | a pesquisa (lookup) da Central, sobre duas fontes: `/api/resources/<recurso>/options` (o local, sempre; o produto sem a capacidade) e, para o PRODUTO com a capacidade `pesquisaDeProdutos`, `/api/produtos/pesquisa` (o saldo do local da linha, "Só com saldo neste local" nas saídas, "Mostrar mais") |
+| `pesquisa-de-produtos.ts` | a pesquisa de produto nova (OPERACOES-01 F3b, decisão 280): a capacidade (`useFonteDaPesquisaDeProdutos`, forma e versão exatas, uma vez por carregamento), o leitor estrito da página, a query e a página no servidor (`usePesquisaDeProdutos`, chave de cache própria) |
+| `local-padrao.tsx` | o "Local de estoque" do cabeçalho (OPERACOES-01 F3b): `useLocalDoCabecalho` (o padrão do layout, a escolha por empresa, o descarte) e `CampoDoLocalPadrao` (os locais da empresa do documento); estado da tela, nunca no corpo |
+| `duplicar-memoria.ts`, `salvo.ts` | a entrega EM MEMÓRIA da cópia do Duplicar e do "Salvo" (nada na URL, nada no navegador); em `salvo.ts`, a regra ÚNICA do diálogo de Confirmar (OPERACOES-01 F2): `confirmarPodeAbrir` (só em documento aberto e para quem pode confirmar) e `abreConfirmarNaChegada` (a chegada da criação) |
+| `salvar.ts` | o Salvar da Central (OPERACOES-01 F2, decisão 279): `avisoDoSalvar`/`avisarSalvo` (o aviso lido de `confirmacaoAutomatica` na resposta, UM por Salvar), `mensagemDoServidorNoMolde` (a pontuação da mensagem do servidor; as Aprovações a reexportam) e `useCriarDocumento` (o POST de criar pela porta que a Central passa, com a `Idempotency-Key` por tentativa) |
+| `regras-gerais.ts` | as regras gerais da TOP na tela (OPERACOES-01 F2): `lerRegrasGerais` (o bloco `regrasGerais` de `/regras-da-operacao`; ausente ou fora da forma → o neutro inteiro), `rotuloDoSalvar(regras, podeConfirmar)` e `exigeAoMenosUmItem` |
 | `contrato.ts` | só tipos e constantes triviais: o contrato do adaptador e das peças |
 
 O motor não conhece espécie: dentro de `features/central/` não há rota de ESPÉCIE (`/api/sales/*`, `/api/compras/*`),
-cliente nem fornecedor. Ele chama só portas genéricas: `/api/resources/<recurso>/options` na pesquisa (`pesquisa.tsx`),
-`/api/resources/<recurso>/<id>` no rótulo e na unidade (`itens.tsx`), e o saldo pela `StockCell` de `features/docs/shared`
-(`/api/stock/balances/<armazém>/<produto>`). A pesquisa mostra Código e Descrição, sem coluna de estoque. (Corrigido
-pela decisão 278: a 276 dizia "não há rota de API".)
+cliente nem fornecedor. Ele chama só portas genéricas: `/api/resources/<recurso>/options` na pesquisa (`pesquisa.tsx`)
+e, para o PRODUTO com a capacidade `pesquisaDeProdutos` (`GET /api/produtos/pesquisa/capacidades`),
+`/api/produtos/pesquisa` (o saldo do local da linha, "Só com saldo neste local" nas saídas, página no servidor —
+OPERACOES-01 F3b, decisão 280); `/api/resources/<recurso>/<id>` no rótulo e na unidade (`itens.tsx`); e o saldo pela
+`StockCell` de `features/docs/shared` (`/api/stock/balances/<armazém>/<produto>`). A pesquisa de produto mostra Código,
+Descrição e, para quem vê o saldo do local, Estoque. O POST de criar
+(`useCriarDocumento`, `salvar.ts`) vai à porta que a Central passa; o motor não a conhece. (Corrigido pela decisão 278: a 276 dizia "não há rota de API".)
 
 **O contrato do adaptador** (`AdaptadorDaCentral`, em `features/central/contrato.ts`). Cada Central entrega:
 
@@ -493,8 +587,10 @@ pela decisão 278: a 276 dizia "não há rota de API".)
 - `colunasDosItens` — colunas do sistema, mapa catálogo → coluna do motor e as colunas da leitura;
 - `acoes` — o que a espécie põe na barra e no leque (o motor só dispõe);
 - `entidadeDoHistorico` (ou null), `linkDoTitulo`, `linkDoDerivado`;
-- `chaveDoSalvo` e `chaveDaCopia` — chaves do Map em memória, nunca do armazenamento do navegador;
-- `cancelamento` — a chave do motivo no corpo (`reason` na venda, `motivo` na compra) e o vazio.
+- `chaveDoSalvo` e `chaveDaCopia` — chaves do Map em memória, nunca do armazenamento do navegador.
+
+O corpo do cancelamento é da espécie (`reason` na venda, `motivo` na compra, com o motivo vazio pelo `motivoVazio` do
+diálogo): o campo `cancelamento` do contrato saiu na OPERACOES-01 (decisão 291), porque nenhuma leitura o usava.
 
 O que é regra continua na espécie: a venda (`features/sales/`) mantém o lançamento, os derivados, o cliente em atraso,
 a reserva e o faturar em partes; a compra (`features/compras/central/`) mantém o estado do documento, o receber pedido,
@@ -526,7 +622,7 @@ O motor ganhou três opções, todas opcionais e com o padrão que mantém a Cen
 | Opção | Onde | Padrão (a venda) | A compra |
 |---|---|---|---|
 | `custoMedioNoUnitario` | `ItensDaCentral` (`itens.tsx`) | `true`: o unitário vazio ou "0" recebe o custo médio do armazém | `false`, no lançar e no receber: o unitário é o preço do fornecedor ("0" é bonificação); o saldo continua lido, só a escrita sai |
-| `armazemForcado` | `ItensDaCentral` (`itens.tsx`) | `false`: a coluna Armazém segue o layout | `regras.exigeArmazem === true`: só a regra da operação passa por cima do layout |
+| `armazemForcado` | `ItensDaCentral` (`itens.tsx`) | `false`: a coluna Armazém segue o layout | `regras.exigeArmazem === true`: só a regra da operação passa por cima do layout; a coluna forçada entra logo antes do Código/Produto (OPERACOES-01 F3b) |
 | `casasDaQuantidade` | `ItensSalvos` (`itens-salvos.tsx`) | `2` | `4`: quantidade, Recebido e Saldo, na grade e no formulário de leitura (a coluna é `numeric(18,4)`) |
 
 `armazemPorItem` continua significando "a coluna Armazém é PERMITIDA por linha": permitir não é forçar. O custo médio
@@ -544,4 +640,139 @@ Na Central de Compras:
 
 Declarado na decisão 278, sem conserto aqui: a `Idempotency-Key` trocada a cada erro, inclusive na queda de rede (fatia
 própria), e a tela das regras gerais da #88 (decisão 277, já na main) — o aviso do resultado da confirmação automática ao
-salvar e a compra sem itens (fatia F2 própria).
+salvar e a compra sem itens (fatia F2 própria). O aviso e a compra sem itens foram feitos na OPERACOES-01 F2 (decisão
+279, abaixo); a chave de idempotência continua com a F6.
+
+### O nome do local de estoque no motor (OPERACOES-01 F3a, decisão 280)
+
+A coluna e o campo do item que apontam para `warehouses` dizem "Local de estoque" (antes "Armazém"), na criação, na
+consulta, no formulário do item, no rótulo da ação ("Local de estoque: <nome>") e na pesquisa ("Pesquisar local de
+estoque"). A coluna da grade tem 122 px (antes 108): é a menor largura par em que o rótulo cabe inteiro também com o
+" *" de coluna obrigatória (`features/central/itens.tsx:45`, `itens-salvos.tsx:56`). As chaves (`armazem`,
+`armazemPorItem`, `armazemForcado`, `exigeArmazem`) e os testids não mudam; a ordem das colunas mudou na F3b (abaixo).
+As "colunas Armazém" das seções anteriores são esta coluna, com o nome de antes.
+
+### O local antes do produto e a pesquisa com o saldo no motor (OPERACOES-01 F3b, decisão 280)
+
+- **Ordem.** Sem layout, a grade é Local de estoque → Código → Produto → Estoque → … e o formulário do item, Local →
+  Produto → Estoque → … (`itens.tsx:68`, `:76`); a coluna forçada (`armazemForcado`) entra logo antes do
+  Código/Produto. Com layout, manda o layout. A consulta segue `colunas.leitura` de cada espécie (as duas com o Local
+  primeiro), e o formulário de leitura traz o Local antes do Produto (`itens-salvos.tsx:85-88`).
+- **Local do cabeçalho.** `armazemPadrao` (agora `LocalDeEstoque`) é o local das linhas NOVAS. A espécie o tira de
+  `useLocalDoCabecalho` (`local-padrao.tsx`) e desenha `CampoDoLocalPadrao` nos Dados principais. Rótulo vazio não vira
+  "conhecido": a célula lê o rótulo do cadastro (`itens.tsx:257`).
+- **Pesquisa de produto.** Opção nova `pesquisaDeProduto` (`PESQUISA_DE_PRODUTO_DA_SAIDA` | `…_DA_ENTRADA`; ausente =
+  entrada). O painel recebe `produto = { fonte, armazemId (o da LINHA), sentido, soControlaEstoque }` só no campo
+  `product_id`; a pesquisa de local continua sem ele, idêntica. Sem a capacidade, o painel é o de antes, com dois
+  atributos a mais (`data-fonte`, `data-coluna`). As chamadas e o que cada uma liga estão na tabela
+  `COMBINACOES_DO_MOTOR` de `apps/web/e2e/compras-03-central-unitario.spec.ts`: Vendas `…_DA_SAIDA`, Compras · lançar
+  `…_DA_ENTRADA`, Compras · receber ausente.
+- **Desvio da 276 fechado.** A 276 deixou as duas Centrais em `/api/resources/<recurso>/options` ("a troca, para as
+  duas, é outra fatia"); a F3b fez a troca nas duas, com a de antes como padrão sem a capacidade.
+
+### As regras gerais da TOP e a aprovação nas Centrais de Vendas e de Compras (OPERACOES-01 F2, decisão 279)
+
+As duas Centrais leem `regrasGerais` de `/regras-da-operacao` (venda: `features/sales/regras-da-operacao.ts`; compra:
+`features/compras/layout-da-central.ts`), sempre pelo leitor do motor (`lerRegrasGerais`), e mostram o que a
+gravação vai fazer: "Salvar e confirmar" (`rotuloDoSalvar`) e a pendência de item só quando ela vale
+(`exigeAoMenosUmItem`; na compra, nunca dispensada no receber). O aviso do Salvar é o do motor (`avisarSalvo`), na
+venda pelo `useCriarDocumento` e na compra pelo `salvarM` do estado (lançar e receber). O Confirmar segue a regra do
+motor (`confirmarPodeAbrir`/`abreConfirmarNaChegada`), na pílula e na chegada.
+
+Na consulta da venda (variante `sale`) e da compra, antes dos campos, as duas montam o bloco da aprovação de
+`features/aprovacoes/aprovacao-do-documento.tsx` (`AprovacaoDoDocumento`), com o prefixo de testid da Central. O
+bloco pergunta `GET /api/aprovacoes/<área>/<id>` só com o documento aberto, decide pelas rotas da fila e usa o
+diálogo dela (`features/aprovacoes/decisao-de-aprovacao.tsx`, extraído de `fila-de-aprovacao.tsx`). Portas, textos e
+o leitor da resposta moram em `features/aprovacoes/areas-de-aprovacao.ts`. O motor não importa `features/aprovacoes`:
+quem monta o bloco é a Central.
+
+O que não mudou: os corpos do POST, do `/convert` e da decisão; os testids; a pílula "Confirmar venda"/"Confirmar
+compra" da criação; a conversão pedido → venda. A Central de Estoque só passou a usar o aviso do motor; a F5b a levou ao
+motor inteiro (abaixo).
+
+### O documento sem valor no motor (OPERACOES-01 F5b, decisão 282)
+
+A Central de Estoque entrou no motor com acréscimos OPCIONAIS, com o padrão de hoje: sem a prop, nada muda nas outras
+Centrais (DOM, classes, payload, testids e textos; F5B-M1 e F5B-M2 em `apps/web/e2e/f5b-motor-centrais.spec.ts`).
+
+| onde | prop | o que faz | padrão |
+|---|---|---|---|
+| criação (`itens.tsx`) | `linhaNovaEmBranco` | a linha nova nasce com a quantidade e o unitário vazios; a célula não ativa mostra "—" | `false` ("1" e "0") |
+| criação | `subtotal` | `false` tira o "Subtotal dos itens" do rodapé; "Itens (N)" fica | `true` |
+| criação | `casasDaQuantidade` | as casas da quantidade na célula não ativa | 2 |
+| consulta (`itens-salvos.tsx`) | `subtotal: string \| null` | `null` tira a linha do subtotal | o subtotal do servidor |
+| consulta | `rotulos` | o rótulo da espécie no lugar do fixo, na grade, no formulário e no "Configurar colunas" | nenhum |
+| consulta | `colunasExtras` | as colunas da espécie, depois de todas as outras (no formulário, campo travado), com a chave `extra:<chave>` nas preferências | nenhuma |
+| consulta | `formularioPelasColunas` | o formulário de leitura só com os campos das colunas da espécie (`colunas.leitura`), mais a Unidade, na ordem fixa | `false` (a lista fixa) |
+
+O motor continua sem conhecer espécie. A tabela `COMBINACOES_DO_MOTOR` (`apps/web/e2e/compras-03-central-unitario.spec.ts`)
+tem a linha da Central de Estoque (`features/estoque/central/criacao-itens.tsx`: `armazemPorItem={false}`,
+`custoMedioNoUnitario={false}`, `lote`, `daOrigem`, `pesquisaDeProduto`, `linhaNovaEmBranco`, `subtotal={false}`) e cobra
+as duas chaves novas em toda chamada.
+
+### As Centrais dos módulos com produto (OPERACOES-01 F10, decisão 287)
+
+Abastecimento, manutenção, ordem de serviço, manejo (nutrição e sanitário), batelada e produção de ração lançam na
+moldura do motor. Elas moram FORA do motor, em `apps/web/src/features/modulos/` (uma pasta por módulo), com três peças
+comuns:
+- `central-do-modulo.tsx` — a casca: `MolduraDaCentral`, a barra com Salvar e Descartar, as pendências e o painel
+  "Resumo"; o Salvar é o `useCriarDocumento` do motor (o aviso "Salvo com sucesso" e a mesma Idempotency-Key por
+  tentativa); `errosDoServidor` leva as recusas do servidor (`details[].path` e `details.exigencias[].caminho`) ao campo;
+- `itens-do-modulo.tsx` — o ÚNICO arquivo dos módulos que importa `ItensDaCentral`: colunas Local de estoque, Código,
+  Produto, Estoque, (a da origem), Quantidade, Valor unitário e Total; a pesquisa de produto da saída ("Só com saldo neste
+  local"); está na tabela `COMBINACOES_DO_MOTOR` de `apps/web/e2e/compras-03-central-unitario.spec.ts`;
+- `top-do-modulo.tsx` — a capacidade `topNoModulo` (`GET /api/modulos/<segmento>/operation-types`, react-query sem nova
+  tentativa) e o campo "Tipo de operação"; `itens-derivados.ts` — os itens da batelada e da ração no modo "da origem".
+
+O motor mudou só por ACRÉSCIMO: `linhaUnica` (`features/central/contrato.ts`, padrão `false`) deixa a grade com a linha
+que a página criou, sem Adicionar, Duplicar e Remover (o abastecimento). Sem a prop, DOM, classes e comportamento
+idênticos. Ela fica ao lado das props opcionais da F5b (tabela acima); na tabela `COMBINACOES_DO_MOTOR` é a única chave
+que a linha pode omitir (omitida = ausente), e a linha dos módulos é a 6ª. A manutenção não usou agrupamento no motor:
+cada máquina é um bloco da página com a SUA grade do motor.
+A OS ganhou a edição (`/os/<id>/editar`, a mesma Central, pelo PUT de sempre, sem a TOP). A batelada ganhou rota própria
+(`/confinamento/bateladas/new`) e saiu do formulário embutido da aba Hoje › Produção (botão `confinamento-nova-batelada`).
+Manejo, batelada e ração usam o motor só no que cabe: o manejo tem os ANIMAIS como itens (grade própria) e o produto no
+cabeçalho; batelada e ração usam o modo "da origem", com o local no cabeçalho. Contrato em `docs/OPERACOES-CONTRACT.md`
+§3 (F10).
+
+### Os dados fiscais e a importação do XML na Central de Compras (OPERACOES-01 F7, decisão 284)
+
+O motor (`features/central/*`) não mudou. Tudo é da Central de Compras e só aparece com a capacidade `importacaoXml`
+"sim" (`features/compras/importacao/capacidade.ts`); sem ela, a Central é a de antes, e o corpo do POST é o de hoje.
+- Criação da COMPRA (não do pedido): o bloco "Dados fiscais" (`compras-dados-fiscais`, `features/compras/central/dados-fiscais.tsx`)
+  no FIM dos Dados adicionais, fora do layout (sem `data-campo`, sem "*", fora das pendências). Ele tem a chave, a UF, o
+  tipo de documento, IPI, ICMS-ST, seguro, tipo de título, classificação e o rateio do documento. A classificação do item
+  ("Gera estoque", "Imobilizado", natureza e centro com rateio por produto) mora na LINHA da grade, em chaves que o motor
+  preserva sem desenhar. Desmarcar "Gera estoque" limpa o Local de estoque da linha. O bloco mora nos Dados do documento e
+  nunca no campo único que o painel desenha pelo mesmo componente.
+- Consulta: a aba Fiscal passa a existir também pelos dados fiscais; IPI, ST e seguro nos Totais; o rateio no Financeiro;
+  os bens no Estoque. Prévia: o rateio das contas a pagar.
+- A importação do XML é página própria, fora do motor (`/compras/importacoes/<id>`, `features/compras/importacao/*`), com
+  abas; ela termina numa compra ABERTA, que a Central de Compras abre na consulta. Contrato em `docs/OPERACOES-CONTRACT.md` §5.
+
+## Central Financeira (OPERACOES-01 F8, decisão 285)
+
+As "Movimentações Financeiras" do §3 ganham a sua Central: o menu Financeiro com Títulos, Bancos e caixa, Conciliação,
+Fluxo e resultado e Adiantamentos. O financeiro NÃO usa o motor da Central de documento (VISUAL-UX-04): cada linha é uma
+parcela de título, e a grade é a `DataTable` sobre o `Base1Grid`, com seleção para as ações em lote. Baixa, estorno,
+transferência, adiantamento e compensação continuam efeitos de um título ou de uma conta, sem TOP: a TOP financeira é da
+F9 (decisão 286; ver abaixo). Contrato em `docs/OPERACOES-CONTRACT.md` §6.
+
+### O financeiro pela TOP na Central Financeira (OPERACOES-01 F9a, decisão 286)
+
+Com `financeiroPelaTop` declarado, o lançamento avulso (só o novo) e o "Novo movimento bancário" começam pelo "Tipo de
+operação" da família (`fin-lancamento-top`, `fin-movimento-top`; a lista é do servidor, `GET /api/financeiro/tops`).
+Escolher a TOP aplica os padrões dela — tipo de título e conta prevista (no movimento, a conta) e a natureza e o centro
+da 1ª linha do rateio —, sem apagar o resto do que foi digitado; a escolha nunca é automática (nem a TOP padrão): sem
+escolha, o corpo de hoje. A TOP que não deixa o documento trocar os padrões trava esses campos (aviso
+`fin-padroes-travados` "Esta operação não deixa trocar os padrões."; "Padrão da operação: não muda neste lançamento"; no
+rateio em R$, a natureza e o centro desabilitados em todas as linhas, com safra, área e valor livres, `fin-rateio-travado`;
+no "Novo movimento bancário", que usa o editor de rateio compartilhado, a trava é por reaplicação — a prop no editor
+compartilhado é pendência registrada na decisão 286). Família sem TOP ativa: `fin-sem-top` "Nenhum tipo de operação
+ativo para este lançamento: ele segue sem operação.". O detalhe do título mostra a origem pelo nome e "Tipo de operação:
+<código> — <nome> (versão N)"; o previsto mostra o aviso `fin-aviso-previsto` e não oferece Baixar, Editar, Cancelar nem
+Duplicar. Com `capacidades.lcdpr`, a baixa bancária e o movimento de entrada ou saída de uma empresa mostram "Imóvel
+rural (LCDPR)" com o padrão da empresa já escolhido (`fin-baixa-imovel`, `fin-movimento-imovel`), e as baixas do
+detalhe, a coluna "Imóvel rural"; a baixa em lote da Central ainda não mostra o campo (o servidor aplica o padrão de
+cada empresa). Continua sem o motor da Central de documento: a Central de Vendas ainda não pré-preenche os padrões da
+TOP (F2/F3b).

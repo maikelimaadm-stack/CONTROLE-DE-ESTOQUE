@@ -13,9 +13,12 @@ import {
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V4,
+  VERSAO_SCHEMA_CONFIGURACAO_TOP_V5,
   VERSOES_SCHEMA_CONFIGURACAO_TOP,
   SECOES_CONFIGURACAO_TOP,
-  SECOES_CONFIGURACAO_TOP_V2,
+  SECOES_CONFIGURACAO_TOP_V5,
+  SECOES_EXTENSAO_V5,
+  CATALOGO_TOP,
   MATRIZ_EXECUCAO_TOP,
   MATRIZ_REGRAS_GERAIS_TOP,
   configuracaoNeutraTopV2,
@@ -35,9 +38,19 @@ import {
   restricoesExecutamTop,
   regrasGeraisExecutamTop,
   validarRegrasGeraisTop,
+  recusasDoPerfilTop,
+  recusaDasCondicoesDoPerfilTop,
+  formato5Top,
+  secoesExtensaoDaVersaoTop,
+  perfilDosPadroesFinanceiros,
+  recusasDoFinanceiroPadraoDaFamilia,
+  recusasDoFluxoCompraDaFamilia,
+  ROTULOS_CAMPO_PADRAO_FINANCEIRO,
+  SECAO_FINANCEIRO_PADRAO,
+  type CampoPadraoFinanceiro,
   type DestinoOperacaoV1,
   type ConfiguracaoTipoOperacao,
-  type SecaoConfiguracaoTopV2
+  type SecaoConfiguracaoTopV5
 } from "@agro/domain";
 import { DomainError } from "@agro/shared";
 import { criarTradutor, ptBR } from "@erp/plataforma";
@@ -45,6 +58,14 @@ import { runService, audit } from "../lib/service.js";
 import { notFound, validation } from "../lib/errors.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import type { ServiceCtx } from "../lib/context.js";
+import {
+  conferirPadroesFinanceiros,
+  gravarPadroesFinanceiros,
+  padroesFinanceirosDasVersoes,
+  padroesVazios,
+  type PadroesFinanceirosIds,
+  type PadroesFinanceirosResolvidos
+} from "../lib/financeiro-padroes-top.js";
 
 /**
  * ADMINISTRAÇÃO DAS TOPs CONFIGURADAS (TOP-CONFIG-01).
@@ -86,6 +107,22 @@ const descricaoSchema = z.string().trim().max(LIMITE_DESCRICAO_TIPO_OPERACAO).op
  * consulta (`conferirCondicoes`), com a mesma recusa para inexistente, de outra organização, inativa e excluída.
  */
 const condicoesPermitidasSchema = z.array(z.string().uuid()).max(LIMITE_CONDICOES_PERMITIDAS).optional();
+/**
+ * OS PADRÕES FINANCEIROS DA VERSÃO (OPERACOES-01 F9, decisão 286) — no MESMO molde das condições permitidas: a
+ * PRESENÇA da chave é a declaração (ausente no PUT = preservar e copiar para a versão nova; ausente no POST = nenhum
+ * padrão), e os ids moram numa TABELA da versão (`erp.tipos_operacao_versao_financeiro`, 0045), nunca no JSON da
+ * configuração (regra 4 do ponto de extensão). A forma (uuid ou `null`, as cinco chaves e nenhuma outra) é da borda;
+ * o formato, a família, o perfil e a existência são conferidos em `conferirPadroesPedidos`, antes de qualquer escrita.
+ * `.strict()` pelo mesmo motivo das entradas de escrita: uma chave digitada errado ("natureza") viraria 200 sem padrão.
+ */
+const idDoPadraoSchema = z.string().uuid().nullable().optional();
+const padroesFinanceirosSchema = z.object({
+  naturezaId: idDoPadraoSchema,
+  centroCustoId: idDoPadraoSchema,
+  tipoTituloId: idDoPadraoSchema,
+  formaPagamentoId: idDoPadraoSchema,
+  contaBancariaId: idDoPadraoSchema
+}).strict().optional();
 
 /**
  * `.strict()` NAS TRÊS ENTRADAS DE ESCRITA — porque `z.object` descarta chave desconhecida EM SILÊNCIO.
@@ -119,7 +156,9 @@ const criarSchema = z.object({
   /** TOP-CONFIG-05: condições de pagamento permitidas (formato 3). Ausente = sem lista. Ver `conferirCondicoes`. */
   condicoesPermitidas: condicoesPermitidasSchema,
   /** TOP-CONFIG-07: "Reservar estoque" da versão 1. Ausente = `false` (a web anterior não o manda). Só a família do pedido. */
-  reservaEstoque: z.boolean().optional()
+  reservaEstoque: z.boolean().optional(),
+  /** OPERACOES-01 F9: os padrões financeiros da versão 1 (formato 5). Ausente = nenhum padrão. Ver `conferirPadroesPedidos`. */
+  padroesFinanceiros: padroesFinanceirosSchema
 }).strict();
 
 /**
@@ -143,7 +182,9 @@ const editarSchema = z.object({
   /** Ausente = PRESERVAR as condições permitidas da versão corrente (copiadas para a versão nova). */
   condicoesPermitidas: condicoesPermitidasSchema,
   /** TOP-CONFIG-07: ausente = PRESERVAR o "Reservar estoque" da versão corrente; presente = declara. */
-  reservaEstoque: z.boolean().optional()
+  reservaEstoque: z.boolean().optional(),
+  /** OPERACOES-01 F9: ausente = PRESERVAR os padrões financeiros da versão corrente (copiados para a versão nova). */
+  padroesFinanceiros: padroesFinanceirosSchema
 }).strict();
 
 /**
@@ -229,8 +270,32 @@ function conferirFiscalDaFamilia(config: ConfiguracaoTipoOperacao, codigoBase: s
   // pedido recebe as duas de uma vez, cada uma no seu `caminho`, em vez de descobrir a segunda só depois de corrigir
   // a primeira. Formatos 1 a 3 não passam pela matriz: neles as regras gerais só DECLARAM (nada as executa), e a
   // gravação continua a de hoje, valor por valor — inclusive a TOP de pedido de compra de produção, no formato 3.
+  //
+  // OPERACOES-01 F4 (decisão 281): no FORMATO 5, o que o TIPO não aceita (o perfil do catálogo do domínio,
+  // `recusasDoPerfilTop`) — a exigência de um campo que o documento do tipo não tem e a seção que o tipo não usa fora
+  // do padrão (no documento de estoque: Estoque, Financeiro e Fiscal). NO FIM DA MESMA LISTA, pelo mesmo motivo das
+  // regras gerais: um 422 só, cada recusa no seu `caminho`. Formatos 1 a 4: o domínio devolve `[]` — uma versão
+  // gravada antes do catálogo nunca passa a ser recusada por ele, e o 4 continua conferido como hoje.
+  //
+  // OPERACOES-01 F9 (decisão 286): e, no FORMATO 5, o que a família não aceita DENTRO da seção "Padrões financeiros"
+  // (`recusasDoFinanceiroPadraoDaFamilia`: a provisão fora dos pedidos de venda e de compra, "exigir" onde o lançamento sempre informa
+  // natureza e centro). É recusa da CONFIGURAÇÃO (a seção do JSON), por isso mora nesta lista única, depois da do perfil
+  // do tipo — a seção que o tipo nem usa já é recusada por ela, e aqui a família sem perfil devolve `[]`. Os padrões em
+  // si (a tabela da versão) são conferidos depois, em `conferirPadroesPedidos`.
+  //
+  // OPERACOES-01 F6a, decisão do Maike de 03/10 (decisão 283): e, no FORMATO 5, O PAR do pedido de compra — a aprovação
+  // (que vale ao finalizar) e "Exigir pedido finalizado para receber" andam juntas, nos dois sentidos
+  // (`recusasDoFluxoCompraDaFamilia`: a que falta, em `fluxoCompra.exigeFinalizar` ou em `aprovacao.politica`; o editor
+  // confere o mesmo antes de enviar). Só na gravação: a versão já gravada nunca é reconferida, e os formatos 1 a 4 não
+  // passam por aqui.
   const regrasGerais = regrasGeraisExecutamTop(config) ? validarRegrasGeraisTop(codigoBase, config) : [];
-  const recusas = [...recusasFiscaisDaFamiliaTop(config, codigoBase), ...recusasClienteEmAtrasoDaFamiliaTop(config, codigoBase), ...regrasGerais];
+  const secoes5 = formato5Top(config) ? secoesExtensaoDaVersaoTop(config) : null;
+  const recusas = [
+    ...recusasFiscaisDaFamiliaTop(config, codigoBase), ...recusasClienteEmAtrasoDaFamiliaTop(config, codigoBase), ...regrasGerais,
+    ...recusasDoPerfilTop(codigoBase, config),
+    ...(secoes5 ? recusasDoFinanceiroPadraoDaFamilia(codigoBase, secoes5.financeiroPadrao) : []),
+    ...(secoes5 ? recusasDoFluxoCompraDaFamilia(codigoBase, config.aprovacao.politica, secoes5.fluxoCompra) : []),
+  ];
   if (recusas.length) {
     throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_INVALIDA",
       "A configuração operacional enviada é inválida", { recusas });
@@ -240,14 +305,40 @@ function conferirFiscalDaFamilia(config: ConfiguracaoTipoOperacao, codigoBase: s
 const MENSAGEM_CONDICAO_INEXISTENTE = "Condição de pagamento inexistente ou inativa.";
 
 /**
- * Condições permitidas presentes exigem a configuração resultante no formato 3 — ou no 4 (TOP-CONFIG-08), que executa
- * tudo o que o 3 executa (`restricoesExecutamTop`). A mensagem continua a de hoje: quem a recebe mandou o 1 ou o 2.
+ * Condições permitidas presentes exigem a configuração resultante no formato 3 — ou no 4 (TOP-CONFIG-08) ou no 5 (F4,
+ * decisão 281), que executam tudo o que o 3 executa (`restricoesExecutamTop`). A mensagem continua a de hoje: quem a
+ * recebe mandou o 1 ou o 2.
  */
 function exigirFormato3ParaCondicoes(config: ConfiguracaoTipoOperacao): void {
   if (!restricoesExecutamTop(config)) {
     throw new DomainError("TIPO_OPERACAO_CONDICOES_INVALIDAS",
       "As condições de pagamento permitidas enviadas são inválidas",
       { recusas: [{ caminho: "condicoesPermitidas", mensagem: "Condições permitidas exigem a configuração no formato 3." }] });
+  }
+}
+
+/**
+ * OPERACOES-01 F4 (decisão 281) — CONDIÇÕES PERMITIDAS NUM TIPO SEM FINANCEIRO, no formato 5.
+ *
+ * A pergunta é do perfil do tipo no catálogo do domínio (`recusaDasCondicoesDoPerfilTop`): só no 5, só com alguma
+ * condição, e só quando o tipo não tem a aba Financeiro (o documento de estoque). A lista conferida é a que a versão
+ * nova vai carregar:
+ *   · `"enviadas"` — a lista veio no corpo. Roda onde `exigirFormato3ParaCondicoes` roda e ANTES de
+ *     `conferirCondicoes`: a resposta é sobre o TIPO, e vale qualquer que seja a condição (nem a consulta acontece);
+ *   · `"preservadas"` — o PUT trouxe a configuração (no 5) SEM a lista: a da vigente seria copiada para a versão nova
+ *     (ausente = preservar). Uma TOP de documento de estoque gravada no 4 com condições não vira um 5 com condições:
+ *     o editor do 5 manda a lista vazia (`condicoesQueVoltamPeloPerfilTop`, no diálogo) e o servidor recusa o resto.
+ *     Renomear (PUT sem `configuracao`) não passa por aqui, como não passa pelo resto do perfil.
+ * Mesmo código e mesma forma da recusa das condições de hoje. Formatos 1 a 4: o domínio devolve `null` (nada muda).
+ */
+function conferirCondicoesDoPerfil(codigoBase: string, config: ConfiguracaoTipoOperacao, quantidade: number, origem: "enviadas" | "preservadas"): void {
+  const recusa = recusaDasCondicoesDoPerfilTop(codigoBase, config, quantidade);
+  if (recusa) {
+    throw new DomainError("TIPO_OPERACAO_CONDICOES_INVALIDAS",
+      origem === "enviadas"
+        ? "As condições de pagamento permitidas enviadas são inválidas"
+        : "As condições de pagamento permitidas da versão vigente são inválidas para esta operação; envie a lista vazia",
+      { recusas: [{ caminho: recusa.caminho, mensagem: recusa.mensagem }] });
   }
 }
 
@@ -326,6 +417,114 @@ const mesmoConjunto = (a: readonly string[], b: readonly string[]): boolean => {
   const sb = [...b].sort();
   return sa.every((x, i) => x === sb[i]);
 };
+
+// ---------------------------------------------------------------------------------------------------
+// OS PADRÕES FINANCEIROS DA VERSÃO (OPERACOES-01 F9, decisão 286)
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * As cinco chaves do corpo, na ORDEM das recusas e da gravação, cada uma com o campo do domínio que ela é (o perfil
+ * da família fala em campos: `natureza`, `centro`…; o corpo e a tabela, em ids). Um dono para a correspondência.
+ */
+const CAMPO_DO_PADRAO: readonly (readonly [keyof PadroesFinanceirosIds, CampoPadraoFinanceiro])[] = [
+  ["naturezaId", "natureza"],
+  ["centroCustoId", "centro"],
+  ["tipoTituloId", "tipoTitulo"],
+  ["formaPagamentoId", "formaPagamento"],
+  ["contaBancariaId", "conta"]
+];
+
+/** Nenhum padrão — a versão sem linha na tabela. Objeto novo a cada chamada. */
+const semPadroes = (): PadroesFinanceirosIds =>
+  ({ naturezaId: null, centroCustoId: null, tipoTituloId: null, formaPagamentoId: null, contaBancariaId: null });
+
+/** Os padrões do CORPO, com as cinco chaves e os ids em minúsculas (ausente e `null` = sem padrão naquele campo). */
+function padroesDoCorpo(p: Partial<Record<keyof PadroesFinanceirosIds, string | null | undefined>>): PadroesFinanceirosIds {
+  const ids = semPadroes();
+  for (const [chave] of CAMPO_DO_PADRAO) {
+    const v = p[chave];
+    ids[chave] = typeof v === "string" ? v.toLowerCase() : null;
+  }
+  return ids;
+}
+
+/** Os ids de uma versão como a tabela os guarda (`null` = versão sem linha = sem padrão nenhum). */
+function padroesDaLinha(r: PadroesFinanceirosResolvidos | null | undefined): PadroesFinanceirosIds {
+  if (!r) return semPadroes();
+  return padroesDoCorpo({ naturezaId: r.naturezaId, centroCustoId: r.centroCustoId, tipoTituloId: r.tipoTituloId,
+    formaPagamentoId: r.formaPagamentoId, contaBancariaId: r.contaBancariaId });
+}
+
+/** Campo a campo, nulos iguais e ids comparados em minúsculas. Os MESMOS padrões não criam versão (no-op). */
+const mesmosPadroes = (a: PadroesFinanceirosIds, b: PadroesFinanceirosIds): boolean =>
+  CAMPO_DO_PADRAO.every(([chave]) => (a[chave]?.toLowerCase() ?? null) === (b[chave]?.toLowerCase() ?? null));
+
+const MENSAGEM_PADROES_EXIGEM_FORMATO5 = "Os padrões financeiros exigem a configuração no formato 5.";
+const MENSAGEM_PADROES_FORA_DA_FAMILIA = "Esta operação não usa padrões financeiros.";
+const mensagemDoCampoForaDoPerfil = (campo: CampoPadraoFinanceiro): string =>
+  `Esta operação não usa ${ROTULOS_CAMPO_PADRAO_FINANCEIRO[campo]} padrão.`;
+const MENSAGEM_PADROES_PRESERVADOS =
+  "Os padrões financeiros da versão vigente não valem para esta configuração; envie os padrões vazios.";
+
+interface RecusaDosPadroes { caminho: string; motivo: "combinacao_nao_suportada" | "valor_invalido"; mensagem: string }
+
+/**
+ * AS CONFERÊNCIAS SEM BANCO, NA ORDEM (a)–(c) — só os campos INFORMADOS contam (padrão vazio nunca é recusado):
+ *   (a) a configuração resultante não é do formato 5 → `padroesFinanceiros` (só o 5 executa a tabela da versão);
+ *   (b) a família não usa padrões (`perfilDosPadroesFinanceiros` nulo, fail-closed) → `padroesFinanceiros`;
+ *   (c) o campo não está no perfil da família (a forma num movimento bancário) → `padroesFinanceiros.<chave>`.
+ * (a) e (b) respondem pelo conjunto e param ali: o campo a campo de uma família que nem usa padrões não diz nada.
+ * A recusa da SEÇÃO (d, a provisão fora do pedido de venda) é da configuração — `conferirFiscalDaFamilia`.
+ */
+function recusasDaFormaDosPadroes(codigoBase: string, config: ConfiguracaoTipoOperacao, p: PadroesFinanceirosIds): RecusaDosPadroes[] {
+  const informados = CAMPO_DO_PADRAO.filter(([chave]) => p[chave] !== null);
+  if (informados.length === 0) return [];
+  if (!formato5Top(config)) return [{ caminho: "padroesFinanceiros", motivo: "combinacao_nao_suportada", mensagem: MENSAGEM_PADROES_EXIGEM_FORMATO5 }];
+  const perfil = perfilDosPadroesFinanceiros(codigoBase);
+  if (!perfil) return [{ caminho: "padroesFinanceiros", motivo: "combinacao_nao_suportada", mensagem: MENSAGEM_PADROES_FORA_DA_FAMILIA }];
+  return informados
+    .filter(([, campo]) => !perfil.campos.includes(campo))
+    .map(([chave, campo]) => ({ caminho: `padroesFinanceiros.${chave}`, motivo: "combinacao_nao_suportada", mensagem: mensagemDoCampoForaDoPerfil(campo) }));
+}
+
+/**
+ * OS PADRÕES ENVIADOS PODEM SER GRAVADOS? — (a)–(c) e, só se passarem, (e): a existência e o estado de cada cadastro
+ * informado, contra o banco (`conferirPadroesFinanceiros`, UMA consulta `for share` por campo, a MESMA mensagem para
+ * inexistente, de outra organização, excluído, inativo, sintético e natureza de tipo não aceito pela família). Mesmo
+ * código e mesmo envelope da configuração: o editor mostra cada recusa no campo dela. Antes de qualquer escrita.
+ */
+async function conferirPadroesPedidos(ctx: ServiceCtx, codigoBase: string, config: ConfiguracaoTipoOperacao, p: PadroesFinanceirosIds): Promise<void> {
+  const daForma = recusasDaFormaDosPadroes(codigoBase, config, p);
+  if (daForma.length) {
+    throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_INVALIDA", "A configuração operacional enviada é inválida", { recusas: daForma });
+  }
+  const perfil = perfilDosPadroesFinanceiros(codigoBase);
+  if (!perfil || padroesVazios(p)) return;
+  const doBanco = await conferirPadroesFinanceiros(ctx, p, perfil.naturezas);
+  if (doBanco.length) {
+    throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_INVALIDA", "A configuração operacional enviada é inválida", { recusas: doBanco });
+  }
+}
+
+/**
+ * OS PADRÕES PRESERVADOS (o PUT trouxe a configuração SEM `padroesFinanceiros`): os da vigente seriam copiados para a
+ * versão nova, e têm de caber nela — (a)–(c), no molde das condições "preservadas" (`conferirCondicoesDoPerfil`), com o
+ * envelope que diz o que fazer. NÃO passam por (e): um cadastro inativado depois não pode travar uma gravação que não
+ * mexeu nos padrões (a execução confere de novo ao usar). Renomear (PUT sem `configuracao`) não passa por aqui.
+ */
+function conferirPadroesPreservados(codigoBase: string, config: ConfiguracaoTipoOperacao, p: PadroesFinanceirosIds): void {
+  const recusas = recusasDaFormaDosPadroes(codigoBase, config, p);
+  if (recusas.length) throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_INVALIDA", MENSAGEM_PADROES_PRESERVADOS, { recusas });
+}
+
+/**
+ * Os padrões COMO A TELA OS LÊ (detalhe e histórico): o cadastro de cada campo — natureza e centro com código e nome,
+ * tipo de título e forma com o nome, a conta com código e descrição — ou `null` no campo vazio. A chave inteira `null`
+ * = a versão não tem padrão nenhum. Os nomes saem mesmo de cadastro hoje inativo (é o registro da versão).
+ */
+type PadroesNaTela = Pick<PadroesFinanceirosResolvidos, "natureza" | "centro" | "tipoTitulo" | "formaPagamento" | "conta">;
+const padroesParaTela = (r: PadroesFinanceirosResolvidos | null | undefined): PadroesNaTela | null =>
+  r ? { natureza: r.natureza, centro: r.centro, tipoTitulo: r.tipoTitulo, formaPagamento: r.formaPagamento, conta: r.conta } : null;
 
 /**
  * A EXECUÇÃO PEDIDA PODE SER GRAVADA? — a porta de ativação da TOP-CONFIG-04A, ANTES de qualquer escrita.
@@ -584,10 +783,20 @@ function conferirReservaDaFamilia(codigoBase: string, reservaEstoque: boolean | 
  *
  * A reserva mora numa COLUNA da versão, não no payload da configuração, então `secoesAlteradasTop` não a vê.
  * Na tela ela está na aba Estoque; a trilha e o histórico precisam dizer "mexeram no estoque" pelo mesmo
- * motivo que dizem das outras seções. A ordem continua a do domínio (`SECOES_CONFIGURACAO_TOP_V2`).
+ * motivo que dizem das outras seções. A ordem continua a do domínio (`SECOES_CONFIGURACAO_TOP_V5`: as seis de hoje e,
+ * depois delas, as seções de extensão do formato 5 — nenhuma na F4; a de cada fase seguinte entra aqui sozinha).
  */
-const secoesComReserva = (secoes: readonly SecaoConfiguracaoTopV2[], mudouReserva: boolean): SecaoConfiguracaoTopV2[] =>
-  SECOES_CONFIGURACAO_TOP_V2.filter((s) => secoes.includes(s) || (mudouReserva && s === "estoque"));
+const secoesComReserva = (secoes: readonly SecaoConfiguracaoTopV5[], mudouReserva: boolean): SecaoConfiguracaoTopV5[] =>
+  SECOES_CONFIGURACAO_TOP_V5.filter((s) => secoes.includes(s) || (mudouReserva && s === "estoque"));
+
+/**
+ * AS SEÇÕES ALTERADAS, COM OS PADRÕES FINANCEIROS (OPERACOES-01 F9) — `financeiroPadrao` entra quando só os padrões
+ * mudaram, no molde de `secoesComReserva`: os padrões moram na TABELA da versão, fora do payload, então
+ * `secoesAlteradasTop` não os vê; na tela eles estão na aba "Padrões financeiros", e a trilha e o histórico precisam
+ * dizer "mexeram nos padrões financeiros". O nome da seção sai da definição do domínio, nunca de um literal daqui.
+ */
+const secoesComPadroes = (secoes: readonly SecaoConfiguracaoTopV5[], mudouPadroes: boolean): SecaoConfiguracaoTopV5[] =>
+  SECOES_CONFIGURACAO_TOP_V5.filter((s) => secoes.includes(s) || (mudouPadroes && s === SECAO_FINANCEIRO_PADRAO.nome));
 
 /** O DETALHE — aí sim com a configuração, porque é a tela que vai editá-la. */
 const paraTelaDetalhe = (r: LinhaTipoOperacao) => ({
@@ -688,7 +897,39 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
      * editor desabilita a opção com o motivo dela — nunca uma cópia própria. Ausente = servidor anterior: o editor
      * grava o formato 3 como hoje. Nada aqui depende do gate de execução: a matriz é do PEDIDO, não da instância.
      */
-    regrasGerais: { suportado: true, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V4, matriz: MATRIZ_REGRAS_GERAIS_TOP }
+    regrasGerais: { suportado: true, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V4, matriz: MATRIZ_REGRAS_GERAIS_TOP },
+    /**
+     * O FORMATO 5 E O CATÁLOGO POR TIPO (OPERACOES-01 F4, decisão 281) — bloco OPCIONAL novo na raiz, pelo precedente
+     * de `regrasGerais`: `contractVersion`, `configuracao` (1), `restricoes` (3) e `regrasGerais` (4) NÃO mudam, e os
+     * blocos acima ficam como estão — o editor anterior compara esses números e travaria a edição de toda TOP se
+     * mudassem. Presente = este servidor LÊ e GRAVA o formato 5 (o 4 + as seções de extensão), EXECUTA o 5 como o 4,
+     * e recusa no 5 o que o tipo não aceita (`conferirFiscalDaFamilia`, `conferirCondicoesDoPerfil`):
+     *   · `secoes` — as seções de extensão que ESTE servidor lê e grava (nenhuma na F4; cada fase acrescenta a sua). O
+     *     editor só grava o 5 quando o conjunto é igual ao que ele escreve: gravar um 5 sem uma seção que o servidor
+     *     tem a zeraria em silêncio;
+     *   · `leituraDoDetalhe: "formato_gravado"` — o detalhe e o histórico devolvem a versão COMO GRAVADA (uma TOP no 1
+     *     a 4 continua 1 a 4 no GET; o editor anterior continua lendo o que lê hoje). A vista do 5 é do domínio
+     *     (`configuracaoTopParaEdicaoV5`), e nada é gravado até alguém salvar com mudança;
+     *   · `catalogo` — os grupos, os tipos de movimento (com `temTela`) e o perfil de cada família: o MESMO catálogo do
+     *     domínio que a gravação confere, nunca uma cópia própria da tela.
+     * Ausente = servidor anterior: o editor é o do formato 4 e grava o 4.
+     */
+    formato5: {
+      suportado: true,
+      versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V5,
+      secoes: [...SECOES_EXTENSAO_V5],
+      leituraDoDetalhe: "formato_gravado",
+      catalogo: CATALOGO_TOP
+    },
+    /**
+     * OS PADRÕES FINANCEIROS DA VERSÃO (OPERACOES-01 F9, decisão 286) — marcador ADITIVO na raiz, pelo precedente de
+     * `reservaEstoque: 1`: a versão aceita e devolve `padroesFinanceiros` (natureza, centro, tipo de título, forma e
+     * conta, na tabela da versão; só no formato 5 e só nas famílias do perfil); ausente na edição PRESERVA os da versão
+     * corrente. `contractVersion`, `configuracao`, `restricoes`, `regrasGerais` e `formato5` NÃO mudam (o `formato5.secoes`
+     * cresce sozinho pelo domínio, com `financeiroPadrao`). Ausente = servidor anterior: o editor não mostra os campos
+     * dos padrões e não manda a chave, que a API anterior recusaria (`.strict()`).
+     */
+    padroesFinanceiros: 1
   })));
 
   /**
@@ -786,7 +1027,10 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     const destinos = (await destinosDaVersao(ctx, [linha.versao_id])).get(linha.versao_id) ?? [];
     // Vazio = sem restrição de condição. UMA consulta, a mesma função do histórico.
     const condicoesPermitidas = (await condicoesDaVersao(ctx, [linha.versao_id])).get(linha.versao_id) ?? [];
-    return { ...paraTelaDetalhe(linha), destinos, condicoesPermitidas };
+    // OPERACOES-01 F9: os padrões financeiros da versão corrente, com o cadastro de cada um (`null` = sem padrão). UMA
+    // consulta, a mesma função do histórico.
+    const padroesFinanceiros = padroesParaTela((await padroesFinanceirosDasVersoes(ctx, [linha.versao_id])).get(linha.versao_id));
+    return { ...paraTelaDetalhe(linha), destinos, condicoesPermitidas, padroesFinanceiros };
   }));
 
   // ---------- Histórico de versões ----------
@@ -822,6 +1066,8 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     // nenhuma asserção funcional notaria — a tela ficaria idêntica, só mais lenta a cada edição.
     const destinosPorVersao = await destinosDaVersao(ctx, linhas.map((v) => v.id));
     const condicoesPorVersao = await condicoesDaVersao(ctx, linhas.map((v) => v.id));
+    // OPERACOES-01 F9: os padrões financeiros do histórico INTEIRO em UMA consulta (a mesma razão dos destinos).
+    const padroesPorVersao = await padroesFinanceirosDasVersoes(ctx, linhas.map((v) => v.id));
     return {
       items: linhas.map((v, i) => {
         const atual = cfg[i]!;
@@ -830,6 +1076,10 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
         const comparavel = atual.suportada && anterior?.suportada === true;
         // A reserva é coluna da versão, fora do payload: a mudança dela marca `estoque` (ver `secoesComReserva`).
         const mudouReserva = linhas[i + 1] !== undefined && linhas[i + 1]!.reserva_estoque !== v.reserva_estoque;
+        // Os padrões são tabela da versão, fora do payload: a mudança deles marca `financeiroPadrao` (`secoesComPadroes`).
+        const vizinha = linhas[i + 1];
+        const mudouPadroes = vizinha !== undefined
+          && !mesmosPadroes(padroesDaLinha(padroesPorVersao.get(vizinha.id)), padroesDaLinha(padroesPorVersao.get(v.id)));
         return {
           versao: v.versao,
           nome: v.nome,
@@ -851,9 +1101,13 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
           destinosConfigurados: v.destinos_configurados,
           // TOP-CONFIG-07: o "Reservar estoque" DAQUELA versão, da própria linha — nunca o de hoje.
           reservaEstoque: v.reserva_estoque,
+          // OPERACOES-01 F9: os padrões financeiros DAQUELA versão (`null` = ela não tinha padrão), pela mesma razão.
+          padroesFinanceiros: padroesParaTela(padroesPorVersao.get(v.id)),
           // Sem versão anterior legível não há comparação possível — e `[]` afirmaria "nada mudou", que é
           // diferente de "não dá para saber". `null` diz a segunda coisa.
-          secoesAlteradas: comparavel ? secoesComReserva(secoesAlteradasTop(anterior.valor, atual.valor), mudouReserva) : null
+          secoesAlteradas: comparavel
+            ? secoesComPadroes(secoesComReserva(secoesAlteradasTop(anterior.valor, atual.valor), mudouReserva), mudouPadroes)
+            : null
         };
       })
     };
@@ -886,12 +1140,21 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       // TOP-CONFIG-08 (decisão 277): os formatos 1 a 4 entram por aqui, e o NÚMERO GRAVADO em
       // `configuracao_schema_version` sai DESTE valor normalizado (o `insert` da versão abaixo), nunca do corpo cru.
       // A leitura do domínio preserva o 4; se ela o perdesse, a versão viraria 3 em silêncio e nada executaria.
+      // OPERACOES-01 F4 (decisão 281): o formato 5 entra pela MESMA porta, e a leitura também preserva o 5.
       const configuracao = d.configuracao === undefined ? configuracaoNeutraTopV2() : configuracaoPedida(d.configuracao);
       conferirFiscalDaFamilia(configuracao, d.codigoBase);
       conferirExecucaoPedida(d.codigoBase, null, configuracao, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED);
       // CONDIÇÕES PERMITIDAS: ausente no POST = sem lista. Presente exige formato 3 e é conferida em UMA consulta.
-      if (d.condicoesPermitidas !== undefined) exigirFormato3ParaCondicoes(configuracao);
+      // No formato 5, o tipo sem Financeiro não aceita condição nenhuma (antes da consulta; F4, decisão 281).
+      if (d.condicoesPermitidas !== undefined) {
+        exigirFormato3ParaCondicoes(configuracao);
+        conferirCondicoesDoPerfil(d.codigoBase, configuracao, d.condicoesPermitidas.length, "enviadas");
+      }
       const condicoes = d.condicoesPermitidas === undefined ? [] : await conferirCondicoes(ctx, d.condicoesPermitidas);
+      // OPERACOES-01 F9 (decisão 286): os PADRÕES FINANCEIROS da versão 1. Ausente = nenhum padrão; presente = conferido
+      // ((a)–(c) e o banco) ANTES de qualquer escrita — a seção do JSON já passou por `conferirFiscalDaFamilia`.
+      const padroes = d.padroesFinanceiros === undefined ? semPadroes() : padroesDoCorpo(d.padroesFinanceiros);
+      if (d.padroesFinanceiros !== undefined) await conferirPadroesPedidos(ctx, d.codigoBase, configuracao, padroes);
 
       const nasceuPadrao = d.padrao && d.ativo;
       // Se nasce como padrão, o posto tem de estar livre — e a troca é atômica (mesma transação).
@@ -928,6 +1191,8 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       const destinos = resolverEmPartes(await conferirDestinos(ctx, d.codigoBase, destinosPedidos(d.destinos)), []);
       await gravarDestinos(ctx, versaoNova.rows[0]!.id, id, destinos);
       await gravarCondicoes(ctx, versaoNova.rows[0]!.id, id, condicoes);
+      // Padrões vazios = nenhuma linha (a versão sem padrão); a gravação confere o ROW COUNT.
+      await gravarPadroesFinanceiros(ctx, versaoNova.rows[0]!.id, id, padroes);
 
       await audit(ctx.tx, ctx, "tipos_operacao", id, "create",
         { codigo: d.codigo, codigoBase: d.codigoBase, ativo: d.ativo, padrao: nasceuPadrao, versao: 1,
@@ -936,7 +1201,9 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
           // `destinosConfigurados: true` é "não gera nada, por decisão", e com `false` é "ninguém decidiu".
           // Sem o booleano, a trilha registra o mesmo zero para as duas e a investigação fica sem resposta.
           destinosConfigurados: declarouDestinos, destinos: destinos.length, reservaEstoque,
-          ...(d.condicoesPermitidas !== undefined ? { condicoesPermitidas: condicoes } : {}) });
+          ...(d.condicoesPermitidas !== undefined ? { condicoesPermitidas: condicoes } : {}),
+          // OPERACOES-01 F9: os ids dos padrões financeiros, só quando a versão 1 nasce com algum.
+          ...(padroesVazios(padroes) ? {} : { padroesFinanceiros: padroes }) });
       // A TOP anterior perdeu o padrão nesta mesma transação: quem perdeu tem evento próprio, com autor.
       await auditarPadraoLiberado(ctx, liberados, id);
       // E quem ASSUMIU também. Sem isto, "esta TOP virou padrão ao nascer" só existiria dentro do payload
@@ -1029,6 +1296,10 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     // é decidido aqui pelo número: é `configuracoesTopIguais` (abaixo), que compara sem o `versaoSchema` e com o termo
     // das regras gerais. 3 → 4 com as quatro no neutro não cria versão; com alguma fora do neutro, cria a N+1, e
     // `secoesAlteradasTop` marca `geral`/`aprovacao`, cada uma por si.
+    //
+    // OPERACOES-01 F4 (decisão 281): e o formato 5. v4 sobre v5 é recusado (o 5 nunca volta a 4 — perderia as seções de
+    // extensão em silêncio); 1 a 4 sobre um vigente 1 a 4 seguem como acima, e o 5 sobre eles passa. Mudança, ou não,
+    // é `configuracoesTopIguais`, que compara na VISTA DO 5 (domínio): o 4 salvo no 5 sem mexer não cria versão.
     if (configuracao.versaoSchema < atualConfig.valor.versaoSchema) {
       throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO",
         "Este tipo de operação já usa o formato atual de configuração; recarregue a tela antes de editar",
@@ -1087,9 +1358,31 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
      * Mudança do CONJUNTO é conteúdo (versão nova); o mesmo conjunto é no-op.
      */
     const condicoesAtuais = ((await condicoesDaVersao(ctx, [antes.versao_id])).get(antes.versao_id) ?? []).map((c) => c.id);
-    if (d.condicoesPermitidas !== undefined) exigirFormato3ParaCondicoes(configuracao);
+    if (d.condicoesPermitidas !== undefined) {
+      exigirFormato3ParaCondicoes(configuracao);
+      // F4 (decisão 281): no formato 5, o tipo sem Financeiro não aceita condição nenhuma — antes da consulta.
+      conferirCondicoesDoPerfil(antes.codigo_base, configuracao, d.condicoesPermitidas.length, "enviadas");
+    } else if (d.configuracao !== undefined) {
+      // F4 (decisão 281): a configuração veio sem a lista — a PRESERVADA também tem de caber no tipo, no 5.
+      conferirCondicoesDoPerfil(antes.codigo_base, configuracao, condicoesAtuais.length, "preservadas");
+    }
     const condicoes = d.condicoesPermitidas === undefined ? condicoesAtuais : await conferirCondicoes(ctx, d.condicoesPermitidas);
     const mudouCondicoes = !mesmoConjunto(condicoesAtuais, condicoes);
+
+    /**
+     * OS PADRÕES FINANCEIROS (OPERACOES-01 F9, decisão 286) — o molde das condições. AUSENTE = preservar (e COPIAR para
+     * a versão nova: a N+1 declara tudo dela); PRESENTE = os padrões declarados, vazios inclusive, conferidos (a)–(e)
+     * contra a configuração RESULTANTE. Com a configuração no corpo e sem a chave, os preservados também têm de caber
+     * nela ((a)–(c)). Mudança campo a campo é conteúdo (versão nova); os mesmos padrões são no-op.
+     */
+    const padroesAtuais = padroesDaLinha((await padroesFinanceirosDasVersoes(ctx, [antes.versao_id])).get(antes.versao_id));
+    if (d.padroesFinanceiros !== undefined) {
+      await conferirPadroesPedidos(ctx, antes.codigo_base, configuracao, padroesDoCorpo(d.padroesFinanceiros));
+    } else if (d.configuracao !== undefined) {
+      conferirPadroesPreservados(antes.codigo_base, configuracao, padroesAtuais);
+    }
+    const padroes = d.padroesFinanceiros === undefined ? padroesAtuais : padroesDoCorpo(d.padroesFinanceiros);
+    const mudouPadroes = !mesmosPadroes(padroesAtuais, padroes);
 
     // CONTEÚDO gera versão; ESTADO não. O nome de uma TOP é o que um documento vai citar — mudou o nome,
     // nasce uma versão nova, e a anterior continua legível. Ativar/desativar não muda o que a TOP É.
@@ -1099,8 +1392,10 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     // N+1, não três. Versão por aba faria o histórico contar uma sequência de eventos que nunca existiu.
     // A RESERVA TAMBÉM É CONTEÚDO: ela decide o que o pedido criado sob a versão faz com o estoque, e o
     // pedido congela a versão. Mudar só a caixa cria a N+1; mandar o mesmo valor não cria nada.
+    // OPERACOES-01 F9: OS PADRÕES FINANCEIROS TAMBÉM SÃO CONTEÚDO — eles decidem a natureza, o centro, o tipo, a forma e
+    // a conta do lançamento feito sob a versão, e o documento congela a versão. Mudar só um padrão cria a N+1.
     const mudouConteudo = nome !== antes.nome || (descricao ?? null) !== (antes.descricao ?? null)
-      || mudouConfiguracao || mudouDestinos || mudouCondicoes || mudouReserva;
+      || mudouConfiguracao || mudouDestinos || mudouCondicoes || mudouReserva || mudouPadroes;
     const versao = mudouConteudo ? antes.versao_atual + 1 : antes.versao_atual;
 
     /**
@@ -1131,6 +1426,8 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       await gravarDestinos(ctx, versaoNova.rows[0]!.id, id, destinos);
       // As condições também são COPIADAS: a versão N+1 declara a política inteira dela.
       await gravarCondicoes(ctx, versaoNova.rows[0]!.id, id, condicoes);
+      // OPERACOES-01 F9: e os padrões financeiros, pelo mesmo motivo (vazios = a versão nova sem linha).
+      await gravarPadroesFinanceiros(ctx, versaoNova.rows[0]!.id, id, padroes);
     }
 
     const u = await ctx.tx.query(
@@ -1151,8 +1448,8 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
        * pergunta que se faz numa investigação ("o que mexeram?") e manda o leitor à versão para o detalhe
        * exato, que está lá, imutável, por construção.
        */
-      const secoesAlteradas = secoesComReserva(
-        mudouConfiguracao ? secoesAlteradasTop(atualConfig.valor, configuracao) : [], mudouReserva);
+      const secoesAlteradas = secoesComPadroes(secoesComReserva(
+        mudouConfiguracao ? secoesAlteradasTop(atualConfig.valor, configuracao) : [], mudouReserva), mudouPadroes);
       await audit(ctx.tx, ctx, "tipos_operacao", id, "update",
         { versaoAnterior: antes.versao_atual, versao,
           secoesAlteradas,
@@ -1167,6 +1464,8 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
           ...(mudouCondicoes ? { condicoesPermitidas: condicoes } : {}),
           // TOP-CONFIG-07: de onde saiu e para onde foi, só quando a caixa mudou.
           ...(mudouReserva ? { reservaEstoque: { antes: antes.reserva_estoque, depois: reservaEstoque } } : {}),
+          // OPERACOES-01 F9: os ids dos padrões financeiros de antes e de depois, só quando algum mudou.
+          ...(mudouPadroes ? { padroesFinanceiros: { antes: padroesAtuais, depois: padroes } } : {}),
           configuracaoSchema: configuracao.versaoSchema },
         { before: { nome: antes.nome, descricao: antes.descricao }, after: { nome, descricao } });
     }

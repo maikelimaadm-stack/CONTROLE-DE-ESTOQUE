@@ -50,10 +50,10 @@ import { err } from "../lib/errors.js";
 import { quantidadeLegivel } from "../services/stock-core.js";
 import { chaveDoPar, saldoComReservaEmLote, MAX_PARES_POR_CHAMADA, type ParDeEstoque, type SaldoDoPar } from "../services/reserva-estoque.js";
 
-export const MSG_RESERVA_ARMAZEM_OBRIGATORIO = "Informe o armazém: esta operação reserva estoque.";
-export const MSG_RESERVA_ARMAZEM_DE_OUTRA_EMPRESA = "O armazém não é da empresa do documento.";
+export const MSG_RESERVA_ARMAZEM_OBRIGATORIO = "Informe o local de estoque: esta operação reserva estoque.";
+export const MSG_RESERVA_ARMAZEM_DE_OUTRA_EMPRESA = "O local de estoque não é da empresa do documento.";
 /** A parte gerada de pedido com reserva mantém o armazém do item de origem (ver o PUT da venda em sales.ts). */
-export const MSG_PARTE_RESERVA_ARMAZEM = "O armazém deste item vem do pedido de origem, que reserva estoque no armazém de cada item: não pode ser trocado. Para mudar, cancele esta venda e gere de novo.";
+export const MSG_PARTE_RESERVA_ARMAZEM = "O local de estoque deste item vem do pedido de origem, que reserva estoque no local de estoque de cada item: não pode ser trocado. Para mudar, cancele esta venda e gere de novo.";
 
 /** A trava (a): exportada para a suíte provar o modo contra o gatilho de saldo e contra a FK (ver o cabeçalho). */
 export const SQL_TRAVA_PRODUTOS = "select id, description, control_stock from erp.products where organization_id = $1 and id = any($2::uuid[]) order by id for no key update";
@@ -148,7 +148,7 @@ export async function conferirReservaDoDocumento(ctx: ServiceCtx, entrada: { ite
     // Par sem saldo lido não existe (o físico devolve uma linha por par pedido); se existisse, valeria 0 — fail closed.
     const disponivel = saldo.get(chave)?.disponivel ?? "0";
     if (quantidade.lte(disponivel)) continue;
-    linhas.push(`${nomeDoProduto.get(par.productId) ?? "Produto"} no armazém ${nomeDoArmazem.get(par.warehouseId) ?? ""}: disponível ${numeroLegivel(disponivel)}, pedido ${numeroLegivel(quantidade)}.`);
+    linhas.push(`${nomeDoProduto.get(par.productId) ?? "Produto"} no local de estoque ${nomeDoArmazem.get(par.warehouseId) ?? ""}: disponível ${numeroLegivel(disponivel)}, pedido ${numeroLegivel(quantidade)}.`);
   }
   if (linhas.length) throw err("VALIDATION_ERROR", linhas.join("\n"), linhas.map((message) => ({ path: "items", message })));
 }

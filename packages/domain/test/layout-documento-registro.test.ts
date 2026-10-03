@@ -79,7 +79,8 @@ describe("LB-D1 padrão registro: aceito em cada campo de referência e na colun
     // "referencia" sem cadastro declarado. Se o catálogo passar a declarar cadastro em outra coluna, este teste cai.
     const itens = catalogoDaFamilia(F).filter((c) => c.parte === "itens");
     expect(itens.filter((c) => c.referencia).map((c) => c.chave)).toEqual(["warehouse_id"]);
-    expect(itens.filter((c) => c.tipo === "referencia").map((c) => [c.chave, Boolean(c.referencia)])).toEqual([["product_id", false], ["warehouse_id", true]]);
+    // decisão 280 (F3b): no catálogo de vendas o Local de estoque vem antes do Produto (a ordem do layout do sistema)
+    expect(itens.filter((c) => c.tipo === "referencia").map((c) => [c.chave, Boolean(c.referencia)])).toEqual([["warehouse_id", true], ["product_id", false]]);
   });
 
   it.each(REFERENCIAS_DO_TOPO)("%s aceita registro com UUID", (campo) => {
@@ -121,7 +122,7 @@ describe("LB-D1 padrão registro: aceito em cada campo de referência e na colun
   it("coluna Armazém com id que não é UUID → erro em itens[i].valorPadrao", () => {
     for (const [nome, id] of IDS_INVALIDOS) {
       const l = sis(); const { x, caminho } = naColuna(l, "warehouse_id"); x.valorPadrao = { tipo: "registro", id } as ValorPadraoLayout;
-      expect(validarEstruturaLayout(F, l), nome).toEqual([{ caminho: `${caminho}.valorPadrao`, mensagem: incompativel("Armazém") }]);
+      expect(validarEstruturaLayout(F, l), nome).toEqual([{ caminho: `${caminho}.valorPadrao`, mensagem: incompativel("Local de estoque") }]);
     }
   });
 
@@ -132,7 +133,7 @@ describe("LB-D1 padrão registro: aceito em cada campo de referência e na colun
     ];
     for (const v of padroes) {
       const l = sis(); const { x, caminho } = naColuna(l, "warehouse_id"); x.valorPadrao = v;
-      expect(validarEstruturaLayout(F, l), JSON.stringify(v)).toEqual([{ caminho: `${caminho}.valorPadrao`, mensagem: incompativel("Armazém") }]);
+      expect(validarEstruturaLayout(F, l), JSON.stringify(v)).toEqual([{ caminho: `${caminho}.valorPadrao`, mensagem: incompativel("Local de estoque") }]);
     }
   });
 
@@ -200,12 +201,13 @@ describe("padroesRegistroDaEstrutura", () => {
         referencia: { recurso: "people", filtro: { is_client: "true" } } },
       { chave: "transporter_id", caminho: `${tra.caminho}.valorPadrao`, parte: "rodape", campo: "transporter_id", id: UUID2, rotulo: "Transp.",
         referencia: { recurso: "people", filtro: { is_transporter: "true" } } },
-      { chave: "itens.warehouse_id", caminho: `${arm.caminho}.valorPadrao`, parte: "itens", campo: "warehouse_id", id: UUID3, rotulo: "Armazém",
+      { chave: "itens.warehouse_id", caminho: `${arm.caminho}.valorPadrao`, parte: "itens", campo: "warehouse_id", id: UUID3, rotulo: "Local de estoque",
         referencia: { recurso: "warehouses" } }
     ]);
     expect(cli.caminho).toBe("cabecalho[0]");
     expect(tra.caminho).toBe("rodape[2].campos[0]");
-    expect(arm.caminho).toBe("itens[2]");
+    // decisão 280 (F3b): o Local de estoque é a primeira coluna do layout do sistema de vendas
+    expect(arm.caminho).toBe("itens[0]");
   });
 
   it("campo sem referência no catálogo (a validação recusa) sai SEM a chave referencia", () => {

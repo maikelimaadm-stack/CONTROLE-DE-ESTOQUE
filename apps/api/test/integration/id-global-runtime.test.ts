@@ -181,7 +181,7 @@ describe("VENDAS — três variantes, três permissões", () => {
   }
 });
 
-describe("COMPRAS — pedido de compra e compra, duas permissões", () => {
+describe("COMPRAS — pedido de compra, compra e orçamento de compra, três permissões", () => {
   for (const [especie, familia, rota] of [["pedido", "compras.pedido", "pedidos"], ["compra", "compras.compra", "compras"]] as const) {
     it(`documento de compra: ${especie}`, async () => {
       const top = await post("/api/admin/tipos-operacao", { codigo: `IDGC${especie.slice(0, 1).toUpperCase()}`, codigoBase: familia, nome: `ID Global ${especie}` });
@@ -190,6 +190,20 @@ describe("COMPRAS — pedido de compra e compra, duas permissões", () => {
       await conferir("documentos_compra", id, { empresa: I.empresa, modulo: "compras", rota: `/compras/${rota}/${id}` });
     });
   }
+  // OPERACOES-01 F6a (decisão 283): o orçamento de compra não tem lançamento avulso — nasce do pedido aprovado para
+  // orçamento, cuja TOP aponta para a TOP de orçamento (o grafo pedido → orçamento). A porta real é a do pedido.
+  it("documento de compra: orcamento (nasce do pedido aprovado para orçamento)", async () => {
+    const topOrc = await post("/api/admin/tipos-operacao", { codigo: "IDGCO", codigoBase: "compras.orcamento", nome: "ID Global orcamento" });
+    expect(topOrc.statusCode, topOrc.body).toBe(201);
+    const topPed = await post("/api/admin/tipos-operacao", { codigo: "IDGCPO", codigoBase: "compras.pedido", nome: "ID Global pedido com orcamento",
+      destinos: [{ tipoOperacaoId: String(j(topOrc).id), ordem: 0, emPartes: false }] });
+    expect(topPed.statusCode, topPed.body).toBe(201);
+    const pedido = await criar("/api/compras/pedidos", { empresa_id: I.empresa, tipo_operacao_id: String(j(topPed).id), fornecedor_id: I.provider, data_documento: "2031-01-16", itens: [{ produto_id: I.product, quantidade: "1", valor_unitario: "10" }] });
+    const aprovado = await post(`/api/compras/pedidos/${pedido}/aprovar-para-orcamento`, {});
+    expect(aprovado.statusCode, aprovado.body).toBe(200);
+    const id = await criar(`/api/compras/pedidos/${pedido}/orcamentos`, { tipo_operacao_id: String(j(topOrc).id), fornecedor_id: I.provider, data_documento: "2031-01-16" });
+    await conferir("documentos_compra", id, { empresa: I.empresa, modulo: "compras", rota: `/compras/orcamentos/${id}` });
+  });
 });
 
 describe("ESTOQUE — o documento de estoque, quatro espécies, quatro permissões (ESTOQUE-01)", () => {
@@ -206,6 +220,42 @@ describe("ESTOQUE — o documento de estoque, quatro espécies, quatro permissõ
       await conferir("documentos_estoque", id, { empresa: I.empresa, modulo: "estoque", rota: `/estoque/movimentacoes/${rota}/${id}` });
     });
   }
+});
+
+describe("ESTOQUE — a movimentação interna: requisição, consumo e devolução de consumo (OPERACOES-01 F5a)", () => {
+  it("documento de estoque: requisicao, consumo e devolucao_consumo — cada um numerado pela porta real, na cadeia de origem", async () => {
+    const top = async (familia: string, codigo: string): Promise<string> => {
+      const r = await post("/api/admin/tipos-operacao", { codigo, codigoBase: familia, nome: `ID Global ${familia}` });
+      expect(r.statusCode, r.body).toBe(201);
+      return String(j(r).id);
+    };
+    const confirmar = async (rota: string, id: string) => {
+      const r = await post(`/api/estoque/${rota}/${id}/confirmar`, {});
+      expect(r.statusCode, `premissa: ${rota} ${id} confirmado — ${r.body}`).toBe(200);
+    };
+    const itemDe = async (documento: string) => (await admin.query<{ id: string }>(
+      "select id from erp.documentos_estoque_itens where documento_id = $1 order by posicao", [documento])).rows[0]!.id;
+    const base = { empresa_id: I.empresa, armazem_id: I.warehouse, data_documento: "2031-01-16" };
+    // A premissa da cadeia: saldo no local (uma entrada confirmada), porque a requisição confirmada reserva e o consumo
+    // confirmado baixa — o consumo só nasce de requisição pendente, e a devolução só de consumo confirmado.
+    const entrada = await criar("/api/estoque/entradas", { ...base, tipo_operacao_id: await top("estoque.entrada", "IDGMEN"),
+      itens: [{ produto_id: I.product, quantidade: "5", custo_unitario: "10" }] });
+    await confirmar("entradas", entrada);
+
+    const requisicao = await criar("/api/estoque/requisicoes", { ...base, tipo_operacao_id: await top("estoque.requisicao_material", "IDGMRQ"),
+      itens: [{ produto_id: I.product, quantidade: "2" }] });
+    await conferir("documentos_estoque", requisicao, { empresa: I.empresa, modulo: "estoque", rota: `/estoque/movimentacoes/requisicoes/${requisicao}` });
+    await confirmar("requisicoes", requisicao);
+
+    const consumo = await criar("/api/estoque/consumos", { ...base, tipo_operacao_id: await top("estoque.consumo", "IDGMCO"), origem_documento_id: requisicao,
+      itens: [{ produto_id: I.product, quantidade: "2", origem_item_id: await itemDe(requisicao) }] });
+    await conferir("documentos_estoque", consumo, { empresa: I.empresa, modulo: "estoque", rota: `/estoque/movimentacoes/consumos/${consumo}` });
+    await confirmar("consumos", consumo);
+
+    const devolucao = await criar("/api/estoque/devolucoes-consumo", { ...base, tipo_operacao_id: await top("estoque.devolucao_consumo", "IDGMDC"),
+      origem_documento_id: consumo, itens: [{ produto_id: I.product, quantidade: "1", origem_item_id: await itemDe(consumo) }] });
+    await conferir("documentos_estoque", devolucao, { empresa: I.empresa, modulo: "estoque", rota: `/estoque/movimentacoes/devolucoes-consumo/${devolucao}` });
+  });
 });
 
 describe("PECUÁRIA — cada variante user-facing recebe; as INTERNAS não", () => {

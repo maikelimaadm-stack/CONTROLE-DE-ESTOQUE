@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { FAMILIAS_COM_LAYOUT, FAMILIAS_COM_LAYOUT_DE_COMPRAS, FAMILIAS_COM_LAYOUT_DE_VENDAS } from "@agro/domain";
+import { FAMILIAS_COM_LAYOUT, FAMILIAS_COM_LAYOUT_DE_COMPRAS, FAMILIAS_COM_LAYOUT_DE_ESTOQUE, FAMILIAS_COM_LAYOUT_DE_VENDAS, TIPOS_OPERACAO } from "@agro/domain";
 import { createPool, withTx, type Db, type Queryable, type Tx, type TenantContext } from "../src/pool.js";
 import { listMigrations, resetSchema } from "../src/migrate.js";
 import { seedReference, seedDemo, type DemoOrg } from "../src/seed.js";
@@ -28,7 +28,8 @@ import { TEST_URL } from "./setup.js";
  * RLS, com as GUCs da transação — o caminho que a API percorre).
  *
  * No fim, o leitor de schema dos gates (`scripts/lib/schema.mjs`, item 0 g): o CHECK refeito por `alter table` é o
- * que o dicionário de dados publica como "Valores" — a situação do pedido com 'convertido' e as cinco famílias.
+ * que o dicionário de dados publica como "Valores" — a situação e a família como o ÚLTIMO `alter table` as deixou
+ * (hoje a 0044, OPERACOES-01 F6a: a situação com 'finalizado', 'escolhido' e 'nao_escolhido', e as seis famílias).
  */
 let db: Db; let app: Db; let demo: DemoOrg;
 let empresa: string; let fornecedor: string; let produto: string;
@@ -247,7 +248,7 @@ describe("0038 — sobre o acervo de layouts de venda, como o runner aplica", ()
     expect((await db.query("select 1 from pg_roles where rolname like 'c03r\\_%'")).rowCount).toBe(0);
   });
 
-  it("LB5 aplica: ledger com 38 (a 0038 por último NESTE banco), 41 no repositório (a 0039 logo depois dela), layouts e ligações idênticos, CHECK com as cinco famílias do domínio, gatilho intacto", async () => {
+  it("LB5 aplica: ledger com 38 (a 0038 por último NESTE banco), 47 no repositório (a 0039 logo depois dela), layouts e ligações idênticos, CHECK com as cinco famílias da 0038 (o domínio menos as sete de estoque da 0043 e compras.orcamento, da 0044), gatilho intacto", async () => {
     await aplicar();
     // Este arquivo sobe o banco só até a 0038: o ledger dele termina nela. O repositório já tem a 0039 (EDITAR-01),
     // provada em editar-01-versao.test.ts.
@@ -255,16 +256,27 @@ describe("0038 — sobre o acervo de layouts de venda, como o runner aplica", ()
     expect(ledger).toEqual({ n: 38, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
     // No disco há mais do que o ledger deste arquivo (ele sobe só até a 0038): a 0039 (EDITAR-01), a 0040
-    // (ESTOQUE-01) e a 0041 (TOP-CONFIG-08) vêm depois.
-    expect(noDisco.length, "42 migrations no repositório (a 0049 MAPA-01 vem depois)").toBe(42);
+    // (ESTOQUE-01), a 0041 (TOP-CONFIG-08), da 0042 à 0048 (OPERACOES-01 F8, F5a, F6a, F9, F10, F7 e F12) e a 0049 (MAPA-01)
+    // vêm depois.
+    expect(noDisco.length, "49 migrations no repositório").toBe(49);
     expect(noDisco[37]).toBe(ALVO);
     expect(noDisco[38], "a 0039 logo depois da 0038 no repositório").toBe("0039_versao_do_documento_de_venda.sql");
     expect(await retrato(), "nenhuma linha de layout ou de ligação muda").toEqual(antes);
     expect(await familiasDoCheck()).toEqual(CINCO);
-    // Uma lista só: o CHECK do banco é o conjunto do domínio — três de venda, duas de compra.
-    expect([...FAMILIAS_COM_LAYOUT].sort()).toEqual(CINCO);
+    // Uma lista só: o CHECK da 0038 é o conjunto do domínio de HOJE menos compras.orcamento — a família que a 0044
+    // (OPERACOES-01 F6a) acrescenta ao CHECK (provado em compras-f6a-0044.test.ts; este banco para na 0038) — e menos
+    // as sete do documento de estoque, que a 0043 (F5a) acrescenta ao CHECK e que o domínio põe no layout desde a F5b
+    // (OPERACOES-01, decisão 282). O domínio tem as três de venda, as três de compra e as sete de estoque, na ordem do
+    // registry; as de estoque são as variantes de erp.documentos_estoque (o mesmo conjunto que o G1 lê no CHECK da 0044).
+    const DE_ESTOQUE = ["estoque.entrada", "estoque.saida", "estoque.transferencia", "estoque.ajuste", "estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo"];
+    expect([...FAMILIAS_COM_LAYOUT_DE_ESTOQUE]).toEqual(DE_ESTOQUE);
+    expect([...FAMILIAS_COM_LAYOUT_DE_ESTOQUE], "as variantes de erp.documentos_estoque no registry")
+      .toEqual(TIPOS_OPERACAO.filter((t) => t.origem.tabela === "erp.documentos_estoque").map((t) => t.codigo));
+    expect([...FAMILIAS_COM_LAYOUT].filter((f) => f !== "compras.orcamento" && !DE_ESTOQUE.includes(f)).sort()).toEqual(CINCO);
+    expect([...FAMILIAS_COM_LAYOUT].sort(), "o domínio = as cinco da 0038 + compras.orcamento (0044) + as sete de estoque (0043)")
+      .toEqual([...CINCO, "compras.orcamento", ...DE_ESTOQUE].sort());
     expect([...FAMILIAS_COM_LAYOUT_DE_VENDAS].sort()).toEqual(["vendas.orcamento", "vendas.pedido", "vendas.venda"]);
-    expect([...FAMILIAS_COM_LAYOUT_DE_COMPRAS].sort()).toEqual(["compras.compra", "compras.pedido"]);
+    expect([...FAMILIAS_COM_LAYOUT_DE_COMPRAS]).toEqual(["compras.pedido", "compras.compra", "compras.orcamento"]);
     const chk = (await db.query<{ convalidated: boolean; coluna: string }>(
       `select c.convalidated, a.attname coluna from pg_constraint c join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any (c.conkey)
         where c.conrelid='erp.layouts_documento'::regclass and c.conname='chk_layouts_documento_familia'`)).rows;
@@ -410,16 +422,24 @@ describe("leitor de schema dos gates: CHECK refeito por ALTER TABLE (item 0 g)",
   beforeAll(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "leitor-checks-")); });
   afterAll(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
-  it("G1 as migrations reais: a situação do documento de compra com 'convertido' (0037) e a família do layout com as cinco (0038)", async () => {
+  it("G1 as migrations reais: a situação e a espécie do documento de compra e a família do layout como a 0044 as deixou (refeitas por alter table): as cinco da 0038, as sete de estoque da 0043 e o orçamento de compra", async () => {
     const real = await lerSchema();
+    // A 0037 acrescentou 'convertido'; a 0044 (OPERACOES-01 F6a), 'finalizado', 'escolhido' e 'nao_escolhido' — e a
+    // espécie 'orcamento', e a família compras.orcamento ao layout. É o ÚLTIMO alter que vale.
     expect(real.get("erp.documentos_compra")!.columns.get("situacao")).toMatchObject({
-      check: "situacao in ('aberto','confirmado','convertido','cancelado')", checkNome: "chk_documentos_compra_situacao" });
+      check: "situacao in ('aberto','confirmado','convertido','cancelado','finalizado','escolhido','nao_escolhido')", checkNome: "chk_documentos_compra_situacao" });
+    expect(real.get("erp.documentos_compra")!.columns.get("especie")).toMatchObject({
+      check: "especie in ('pedido','compra','orcamento')", checkNome: "chk_documentos_compra_especie" });
     expect(real.get("erp.layouts_documento")!.columns.get("familia")).toMatchObject({
-      check: "familia in ('vendas.orcamento', 'vendas.pedido', 'vendas.venda', 'compras.pedido', 'compras.compra')", checkNome: "chk_layouts_documento_familia" });
+      check: "familia in ('vendas.orcamento', 'vendas.pedido', 'vendas.venda', 'compras.pedido', 'compras.compra', 'estoque.entrada', 'estoque.saida', "
+        + "'estoque.transferencia', 'estoque.ajuste', 'estoque.requisicao_material', 'estoque.consumo', 'estoque.devolucao_consumo', 'compras.orcamento')",
+      checkNome: "chk_layouts_documento_familia" });
     // E o documento gerado publica isso na coluna "Valores" (o gate `data-dictionary --check` confere o resto).
     const documento = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../docs/DATA-DICTIONARY.md"), "utf8");
-    expect(documento).toContain("| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `convertido` · `cancelado` |");
-    expect(documento).toContain("| `familia` | Movimento | text | sim |  |  | `vendas.orcamento` · `vendas.pedido` · `vendas.venda` · `compras.pedido` · `compras.compra` |");
+    expect(documento).toContain("| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `convertido` · `cancelado` · `finalizado` · `escolhido` · `nao_escolhido` |");
+    expect(documento).toContain("| `familia` | Movimento | text | sim |  |  | `vendas.orcamento` · `vendas.pedido` · `vendas.venda` · `compras.pedido` · `compras.compra` · "
+      + "`estoque.entrada` · `estoque.saida` · `estoque.transferencia` · `estoque.ajuste` · `estoque.requisicao_material` · `estoque.consumo` · `estoque.devolucao_consumo` · "
+      + "`compras.orcamento` |");
   });
 
   it("G2 drop e add na MESMA instrução, com o mesmo nome: vale o CHECK novo", async () => {

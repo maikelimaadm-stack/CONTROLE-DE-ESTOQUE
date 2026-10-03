@@ -21,6 +21,19 @@ const SENT_A_ESTOQUE = "77"; const SENT_B_ESTOQUE = "88";
 // sentinelas do registro CRUZADO: linha da empresa A pendurada num lote da empresa B
 const SENT_A_TRATO = "5555.55"; const SENT_A_PESO = "666.6";
 let loteB = ""; let categoriaSoDeA = "";
+/**
+ * HOJE no relógio do BANCO (`current_date`), em ISO, e o ano dele. Toda data dos sentinelas sai daqui: painel com
+ * janela (o padrão é 1º de janeiro do ano corrente até hoje) e relatório por ano só provam o recorte se o sentinela
+ * estiver DENTRO da janela — com data fixa, na virada do ano o sentinela sai dela e o "não vazou" passa sem medir
+ * nada. Por isso a janela que cada painel respondeu é conferida ao lado (`janelaContemHoje`).
+ *
+ * A exceção é o VENCIMENTO do título sentinela: ONTEM no mesmo relógio (`current_date - 1`), para o título nascer
+ * VENCIDO e entrar no bloco "vencidos" do painel financeiro (`overdue`, sem janela: `due_date < current_date`) —
+ * conferido no próprio caso. A emissão continua HOJE: é ela que põe o título na janela dos blocos por emissão. Só a
+ * previsão do painel inicial, que recorta pelo vencimento, perde o sentinela num dia do ano (1º de janeiro, quando
+ * ontem é do ano anterior); os outros blocos daquele painel continuam dentro.
+ */
+let HOJE = ""; let ONTEM = ""; let ANO = "";
 
 const get = (url: string, headers: Hdr) => h.app.inject({ method: "GET", url, headers });
 const criar = async (url: string, payload: Record<string, unknown>) => {
@@ -36,30 +49,38 @@ const textoDoRelatorio = async (key: string, headers: Hdr, query = "") => {
 
 beforeAll(async () => {
   h = await harness(); I = await ids(h); A = I.empresa; B = I.empresa2;
+  {
+    const raiz = createPool(TEST_URL, { max: 1 });
+    try {
+      ({ hoje: HOJE, ontem: ONTEM } = (await raiz.query<{ hoje: string; ontem: string }>(
+        "select to_char(current_date, 'YYYY-MM-DD') as hoje, to_char(current_date - 1, 'YYYY-MM-DD') as ontem")).rows[0]!);
+    } finally { await raiz.end(); }
+    ANO = HOJE.slice(0, 4);
+  }
 
   const titulo = (farm: string, valor: string, numero: string) => ({
-    empresa_id: farm, number: numero, person_id: I.provider, amount: valor, emission_date: "2026-09-01", due_date: "2026-04-10", note: "Sentinela",
+    empresa_id: farm, number: numero, person_id: I.provider, amount: valor, emission_date: HOJE, due_date: ONTEM, note: "Sentinela",
     apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "100" }]
   });
   await criar("/api/financial/payables", titulo(A, SENT_A, "SENT-A"));
   await criar("/api/financial/payables", titulo(B, SENT_B, "SENT-B"));
 
   const movimento = (farm: string, valor: string) => ({
-    empresa_id: farm, bank_account_id: I.bankAccount, movement_date: "2026-09-02", type: "in", category_type: "in", amount: valor, note: "Sentinela",
+    empresa_id: farm, bank_account_id: I.bankAccount, movement_date: HOJE, type: "in", category_type: "in", amount: valor, note: "Sentinela",
     apportionment: [{ financial_category_id: I.incomeCategory, cost_center_id: I.costCenter, percentage: "100" }]
   });
   await criar("/api/financial/bank-movements", movimento(A, SENT_A_BANCO));
   await criar("/api/financial/bank-movements", movimento(B, SENT_B_BANCO));
 
   const entrada = (farm: string, wh: string, valor: string) => ({
-    empresa_id: farm, entry_date: "2026-09-01",
+    empresa_id: farm, entry_date: HOJE,
     items: [{ product_id: I.product, quantity: "1", unit_value: valor, warehouse_id: wh, financial_category_id: I.category, cost_center_id: I.costCenter }]
   });
   await criar("/api/stock/input-entries", entrada(A, I.warehouse!, SENT_A_ESTOQUE));
   await criar("/api/stock/input-entries", entrada(B, I.warehouseEmpresa2!, SENT_B_ESTOQUE));
 
   const solicitacao = (farm: string, marca: string, valor: string) => ({
-    empresa_id: farm, request_date: "2026-09-01", request_type: "product", description: marca, justification: marca,
+    empresa_id: farm, request_date: HOJE, request_type: "product", description: marca, justification: marca,
     items: [{ product_id: I.product, description: marca, quantity: "1", estimated_value: valor }]
   });
   await criar("/api/supply/requests", solicitacao(A, "Sentinela A", SENT_A));
@@ -71,14 +92,14 @@ beforeAll(async () => {
   // dinheiro e contaria cabeça da empresa A. É a prova direta do §17: cada fonte responde pela PRÓPRIA empresa.
   {
     const raiz = createPool(TEST_URL, { max: 1 });
-    loteB = (await raiz.query<{ id: string }>("insert into erp.batches (organization_id, empresa_id, code, batch_date, description, batch_type, status, entry_date) values ($1,$2,'SENT-B-LOTE','2026-09-01','Lote sentinela B','feedlot','active','2026-09-01') returning id", [h.demo.orgId, B])).rows[0]!.id;
-    await raiz.query("insert into erp.feed_deliveries (organization_id, empresa_id, delivery_date, batch_id, quantity_kg, cost) values ($1,$2,'2026-09-03',$3,1,$4)", [h.demo.orgId, A, loteB, SENT_A_TRATO]);
-    await raiz.query("insert into erp.animals (organization_id, empresa_id, species_id, category_id, batch_id, sex, entry_date, status, current_weight) values ($1,$2,(select species_id from erp.animal_categories where id=$3),$3,$4,'M','2026-09-01','active',$5)", [h.demo.orgId, A, I.speciesCategory, loteB, SENT_A_PESO]);
+    loteB = (await raiz.query<{ id: string }>("insert into erp.batches (organization_id, empresa_id, code, batch_date, description, batch_type, status, entry_date) values ($1,$2,'SENT-B-LOTE',$3,'Lote sentinela B','feedlot','active',$3) returning id", [h.demo.orgId, B, HOJE])).rows[0]!.id;
+    await raiz.query("insert into erp.feed_deliveries (organization_id, empresa_id, delivery_date, batch_id, quantity_kg, cost) values ($1,$2,$5,$3,1,$4)", [h.demo.orgId, A, loteB, SENT_A_TRATO, HOJE]);
+    await raiz.query("insert into erp.animals (organization_id, empresa_id, species_id, category_id, batch_id, sex, entry_date, status, current_weight) values ($1,$2,(select species_id from erp.animal_categories where id=$3),$3,$4,'M',$6,'active',$5)", [h.demo.orgId, A, I.speciesCategory, loteB, SENT_A_PESO, HOJE]);
     // Categoria em que SÓ a empresa A tem rebanho (um lote sem identificação). O painel de rebanho decidia a
     // existência da linha por um `exists` sobre erp.herd_lots SEM recorte: a empresa B via a categoria
     // aparecer — composição de rebanho da empresa que ela não enxerga, exposta como catálogo em uso.
     categoriaSoDeA = (await raiz.query<{ id: string }>("insert into erp.animal_categories (organization_id, species_id, name, ua_factor) values ($1,(select species_id from erp.animal_categories where id=$2),'Sentinela categoria só de A',1) returning id", [h.demo.orgId, I.speciesCategory])).rows[0]!.id;
-    await raiz.query("insert into erp.herd_lots (organization_id, empresa_id, species_id, category_id, quantity, entry_date) values ($1,$2,(select species_id from erp.animal_categories where id=$3),$3,7,'2026-09-01')", [h.demo.orgId, A, categoriaSoDeA]);
+    await raiz.query("insert into erp.herd_lots (organization_id, empresa_id, species_id, category_id, quantity, entry_date) values ($1,$2,(select species_id from erp.animal_categories where id=$3),$3,7,$4)", [h.demo.orgId, A, categoriaSoDeA, HOJE]);
     await raiz.end();
   }
 
@@ -111,7 +132,7 @@ afterAll(async () => { await h.app.close(); await h.db.end(); });
 describe("relatórios financeiros não mostram valor da empresa não autorizada", () => {
   const financeiros = ["ledger", "cash_flow_category", "account_reconciliation", "cost_centers_unified", "payables", "financial_movement", "cost_calculation", "accumulated_income_statement"];
   it.each(financeiros)("%s: nenhum valor exclusivo da empresa A", async (key) => {
-    const texto = await textoDoRelatorio(key, USUARIO, key === "accumulated_income_statement" ? "?year=2026" : "");
+    const texto = await textoDoRelatorio(key, USUARIO, key === "accumulated_income_statement" ? `?year=${ANO}` : "");
     for (const sentinela of [SENT_A, SENT_A_BANCO]) {
       expect(texto.includes(sentinela), `${key} vazou o valor ${sentinela} da empresa A`).toBe(false);
     }
@@ -200,10 +221,37 @@ describe("painel de rebanho: existência de linha também é informação da out
 });
 
 describe("painéis não somam empresa não autorizada", () => {
+  /** Premissa de todo "não vazou" de painel: a janela que ele respondeu contém o dia dos sentinelas. */
+  const janelaContemHoje = (url: string, corpo: Record<string, unknown>) => {
+    const { start, end } = corpo["period"] as { start: string; end: string };
+    expect([start <= HOJE, HOJE <= end], `premissa: a janela de ${url} (${start} a ${end}) contém o dia dos sentinelas (${HOJE})`).toEqual([true, true]);
+  };
+  /**
+   * O bloco "vencidos" lido no BANCO, sem RLS: os títulos sentinela que estão vencidos e em aberto (a premissa) e o
+   * total vencido a pagar da empresa B (o que o usuário pode ver), com a MESMA regra do painel (`dashboards.ts`).
+   */
+  const vencidosNoBanco = async () => {
+    const raiz = createPool(TEST_URL, { max: 1 });
+    try {
+      const vivo = "organization_id=$1 and direction='payable' and status in ('open','partially_paid') and due_date<current_date and deleted_at is null";
+      const sentinelas = (await raiz.query<{ number: string; empresa_id: string; balance: string }>(
+        `select number, empresa_id, balance from erp.financial_titles where ${vivo} and number in ('SENT-A','SENT-B') order by number`, [h.demo.orgId])).rows;
+      const daEmpresaB = (await raiz.query<{ n: number; balance: string }>(
+        `select count(*)::int n, coalesce(sum(balance),0) balance from erp.financial_titles where ${vivo} and empresa_id=$2`, [h.demo.orgId, B])).rows[0]!;
+      return { sentinelas: sentinelas.map((t) => [t.number, t.empresa_id, t.balance]), daEmpresaB };
+    } finally { await raiz.end(); }
+  };
   it("painel financeiro: nenhum valor da empresa A e bloco de bancos restrito", async () => {
     const r = await get("/api/dashboards/financial", USUARIO);
     expect(r.statusCode, r.body).toBe(200);
+    janelaContemHoje("/api/dashboards/financial", j(r));
     expect(r.body.includes(SENT_A), "painel financeiro vazou valor da empresa A").toBe(false);
+    const vencidos = await vencidosNoBanco();
+    expect(vencidos.sentinelas, `premissa: os dois sentinelas venceram ontem (${ONTEM}) e estão em aberto — o bloco "vencidos" os alcança`)
+      .toEqual([["SENT-A", A, SENT_A], ["SENT-B", B, SENT_B]]);
+    expect((j(r) as { overdue: { direction: string; n: number; balance: string }[] }).overdue.find((x) => x.direction === "payable"),
+      "o bloco \"vencidos\" do usuário é o da empresa B, inteiro — o sentinela vencido de A fica de fora")
+      .toEqual({ direction: "payable", n: vencidos.daEmpresaB.n, balance: vencidos.daEmpresaB.balance });
     const corpo = j(r) as { bank_balances: unknown[]; banks_escopo: string };
     expect(corpo.bank_balances, "saldo bancário é da organização: sem a capacidade, o bloco não vem").toEqual([]);
     expect(corpo.banks_escopo).toBe("restrito");
@@ -211,12 +259,14 @@ describe("painéis não somam empresa não autorizada", () => {
   it("painel inicial: os blocos aplicam o módulo da própria fonte", async () => {
     const r = await get("/api/dashboards/home", USUARIO);
     expect(r.statusCode, r.body).toBe(200);
+    janelaContemHoje("/api/dashboards/home", j(r));
     expect(r.body.includes(SENT_A), "painel inicial vazou valor da empresa A").toBe(false);
   });
   it.each(["/api/dashboards/financial", "/api/dashboards/home", "/api/dashboards/supply", "/api/dashboards/cash-book"])(
     "%s: varredura — nenhum valor sentinela da empresa A em bloco algum", async (url) => {
       const r = await get(url, USUARIO);
       expect(r.statusCode, `${url}: ${r.body}`).toBe(200);
+      janelaContemHoje(url, j(r));
       for (const sentinela of [SENT_A, SENT_A_BANCO, "Sentinela A"]) {
         expect(r.body.includes(sentinela), `${url} vazou ${sentinela}`).toBe(false);
       }
