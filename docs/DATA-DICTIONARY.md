@@ -16,8 +16,8 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 | Tabelas com coluna de empresa (hoje `farm_id`) | 60 |
 | Entidades curadas neste dicionário | 57 |
 | Entidades com ID Global | 25 |
-| Entidades com Tipo de Operação | 18 |
-| Tipos de Operação referenciados | 30 |
+| Entidades com Tipo de Operação | 19 |
+| Tipos de Operação referenciados | 32 |
 | Cobertura curada | 27.7% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
@@ -1714,6 +1714,8 @@ Entrada, saída, venda ou morte de animais. O tipo faz parte da rota canônica.
 | ID Global | sim |
 | Discriminador | `movement_type` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
 | Rotas por variante | `purchase` → `/pecuaria/movimentacoes/purchase/:id` · `sale` → `/pecuaria/movimentacoes/sale/:id` · `birth` → `/pecuaria/movimentacoes/birth/:id` · `death` → `/pecuaria/movimentacoes/death/:id` · `loss` → `/pecuaria/movimentacoes/loss/:id` |
+| Tipo de Operação | `pecuaria.compra_de_animais` (Compra de animais) · `pecuaria.venda_de_animais` (Venda de animais) |
+| Discriminador do Tipo de Operação | `movement_type` (decide qual das operações acima o registro é) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
