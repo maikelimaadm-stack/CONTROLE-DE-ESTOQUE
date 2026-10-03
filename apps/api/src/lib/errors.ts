@@ -19,6 +19,8 @@ export function fromPgError(e: unknown): DomainError | null {
   if (pe.code === "23502") return new DomainError("VALIDATION_ERROR", `Campo obrigatório ausente${pe.column ? `: ${pe.column}` : ""}`, { column: pe.column, detail: pe.detail });
   if (pe.code === "42501") return new DomainError("PERMISSION_DENIED", "Acesso negado pela política de segurança (RLS)");
   if (pe.code === "42703") return new DomainError("VALIDATION_ERROR", "Coluna de filtro desconhecida", { column: pe.column, detail: pe.message });
+  // 40P01 inclui, de propósito, o deadlock do razão de estoque (duas baixas do mesmo produto ao mesmo tempo): o cliente
+  // recebe 409 CONCURRENCY_CONFLICT, porque a transação perdedora foi desfeita por inteiro e "tente de novo" é a resposta certa.
   if (pe.code === "40001" || pe.code === "40P01") return new DomainError("CONCURRENCY_CONFLICT", "Conflito de concorrência, tente novamente");
   return null;
 }

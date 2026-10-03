@@ -9,6 +9,8 @@ import { brl, todayISO } from "@/lib/utils";
 import { Button, Dialog, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { lerDecimal } from "./rateio-em-reais";
+import { useLcdpr } from "./capacidade";
+import { CampoImovelRural } from "./imovel-rural";
 
 /**
  * AÇÕES EM LOTE DOS TÍTULOS (OPERACOES-01 F8, decisão 285): baixar, estornar a baixa e alterar o vencimento, cada uma
@@ -48,17 +50,27 @@ interface ItemDaBaixa { valor: string; juros: string; multa: string; desconto: s
  * padrão), Juros, Multa e Desconto; os títulos que não estão em aberto não entram na grade e vão no pedido só pelo id,
  * para o SERVIDOR dizer por que ficaram de fora. Movimento "Um por título" ou "Único (agrupado)" (este exige uma
  * empresa só), e uma tarifa do lote — lançamento separado de saída.
+ *
+ * O IMÓVEL RURAL (LCDPR, decisão 286): o MESMO campo da baixa de um título (`CampoImovelRural`), com o mesmo valor de três
+ * estados — sem decidir, a chave não vai e o servidor aplica o padrão da empresa de cada título; "Sem imóvel" manda
+ * `null`; um imóvel manda o id (o servidor o confere contra a empresa de CADA título: outra → 422). Só com
+ * `capacidades.lcdpr` e só com os títulos em aberto de UMA empresa — as opções são as da empresa; com mais de uma,
+ * nenhum campo e nenhuma chave: cada baixa leva o padrão da sua empresa, como hoje.
  */
 export function DialogoBaixaEmLote({ open, onOpenChange, direcao, titulos, aoConcluir }: { open: boolean; onOpenChange: (o: boolean) => void; direcao: "payable" | "receivable"; titulos: TituloDoLote[]; aoConcluir: (r: ResultadoLote) => void }) {
   const baixaveis = React.useMemo(() => titulos.filter((t) => t.status === "open" || t.status === "partially_paid"), [titulos]);
   const fora = titulos.length - baixaveis.length;
   const [cab, setCab] = React.useState({ settlement_date: todayISO(), bank_account_id: "", movement_mode: "separate", tarifa: "", note: "" });
   const [itens, setItens] = React.useState<Record<string, ItemDaBaixa>>({});
+  const lcdpr = useLcdpr();
+  /** `undefined` = ainda não decidido (a chave não vai; o servidor aplica o padrão da empresa). */
+  const [imovel, setImovel] = React.useState<string | null | undefined>(undefined);
   // Recomeça SÓ ao abrir (a seleção que abriu o diálogo); um novo render da lista atrás não apaga o que foi digitado.
   React.useEffect(() => {
     if (!open) return;
     setCab({ settlement_date: todayISO(), bank_account_id: "", movement_mode: "separate", tarifa: "", note: "" });
     setItens(Object.fromEntries(baixaveis.map((t) => [t.id, { valor: t.saldo, juros: "0", multa: "0", desconto: "0" }])));
+    setImovel(undefined);
   }, [open]);
   const pedido = usePedidoDeLote<{ settled: number; total: string; lote_id: string | null; pulados: { id: string; motivo: string }[] }>((r) => {
     onOpenChange(false);
@@ -75,6 +87,8 @@ export function DialogoBaixaEmLote({ open, onOpenChange, direcao, titulos, aoCon
   });
   const tarifa = lerDecimal(cab.tarifa || "0");
   const empresas = new Set(baixaveis.map((t) => t.empresa_id));
+  // O imóvel é de UMA empresa: o campo só existe com os títulos em aberto de uma empresa só.
+  const empresaDoImovel = lcdpr && empresas.size === 1 ? [...empresas][0]! : null;
   const total = linhas.every((l) => l.liquido) ? sum(linhas.map((l) => l.liquido!)) : null;
   const erroGeral = !baixaveis.length ? "Nenhum título selecionado está em aberto."
     : !cab.bank_account_id ? "Escolha a conta bancária."
@@ -91,7 +105,8 @@ export function DialogoBaixaEmLote({ open, onOpenChange, direcao, titulos, aoCon
         ...titulos.filter((t) => !baixaveis.includes(t)).map((t) => ({ id: t.id }))
       ],
       settlement_date: cab.settlement_date, bank_account_id: cab.bank_account_id, movement_mode: cab.movement_mode,
-      note: cab.note || null, ...(tarifa && tarifa.gt(0) ? { tarifa: money(tarifa) } : {})
+      note: cab.note || null, ...(tarifa && tarifa.gt(0) ? { tarifa: money(tarifa) } : {}),
+      ...(empresaDoImovel && imovel !== undefined ? { imovel_rural_id: imovel } : {})
     };
     pedido.mutate({ path: `/api/financial/${direcao}s/settle-batch`, body: corpo });
   };
@@ -121,7 +136,9 @@ export function DialogoBaixaEmLote({ open, onOpenChange, direcao, titulos, aoCon
       <Field label="Movimento" span={4}><NativeSelect value={cab.movement_mode} onChange={(e) => setCab({ ...cab, movement_mode: e.target.value })}><option value="separate">Um por título</option><option value="single">Único (agrupado)</option></NativeSelect></Field>
       <Field label="Tarifa do lote" span={3} help="Um lançamento separado de saída, com a natureza padrão da tarifa bancária"><Input type="number" step="0.01" min="0" value={cab.tarifa} onChange={(e) => setCab({ ...cab, tarifa: e.target.value })} /></Field>
       <Field label="Observação" span={9}><Input value={cab.note} onChange={(e) => setCab({ ...cab, note: e.target.value })} /></Field>
+      {empresaDoImovel && <CampoImovelRural empresaId={empresaDoImovel} valor={imovel} onChange={setImovel} testId="fin-baixa-lote-imovel" span={12} />}
     </div>
+    {lcdpr && empresas.size > 1 && <p className="mt-2 text-[12px] text-slate-500" data-testid="fin-baixa-lote-imovel-padrao">Títulos de mais de uma empresa: cada baixa leva o imóvel rural padrão da sua empresa.</p>}
     <p className="mt-2 text-sm">Total do movimento: <b data-testid="fin-baixa-lote-total">{total ? brl(total.toFixed(2)) : "—"}</b>{tarifa && tarifa.gt(0) && <> · Tarifa do lote (lançamento separado): <b>{brl(tarifa.toFixed(2))}</b></>}</p>
     {erroGeral && <p className="mt-1 text-sm text-red-600">{erroGeral}</p>}
   </Dialog>;

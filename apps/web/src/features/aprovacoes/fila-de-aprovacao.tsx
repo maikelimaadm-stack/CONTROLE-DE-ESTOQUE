@@ -12,8 +12,8 @@ import { DataTable, type Column } from "@/components/ui/data-table";
 import { colunaIdGlobalTabela } from "@/features/listing/id-global-coluna";
 import {
   CONFIGURACAO_DAS_AREAS, MSG_APROVACOES_INDISPONIVEIS, MSG_DOCUMENTO_MUDOU_NA_FILA, MSG_FILA_VAZIA,
-  chaveDaFila, corpoDaDecisao, filaAusente, mensagemDaAprovacao, portaDaDecisaoAusente, valorDaSituacaoNaFila,
-  type AreaDeAprovacao, type Decisao, type LinhaDaFila, type MensagemDaFila, type PaginaDaFila, type RespostaDaDecisao, type TomDaMensagem
+  chaveAoAbrirDecisao, chaveDaFila, chaveDepoisDaDecisao, corpoDaDecisao, filaAusente, mensagemDaAprovacao, portaDaDecisaoAusente, valorDaSituacaoNaFila,
+  type AreaDeAprovacao, type ChaveDaDecisao, type Decisao, type LinhaDaFila, type MensagemDaFila, type PaginaDaFila, type RespostaDaDecisao, type TomDaMensagem
 } from "./areas-de-aprovacao";
 import { DialogoDaDecisao } from "./decisao-de-aprovacao";
 
@@ -55,21 +55,24 @@ export function FilaDeAprovacao({ area }: { area: AreaDeAprovacao }) {
   const [texto, setTexto] = React.useState("");
   const [erroDoDialogo, setErroDoDialogo] = React.useState<string | null>(null);
   const [mensagem, setMensagem] = React.useState<MensagemDaFila | null>(null);
-  // Uma chave por decisão aberta: o reenvio do MESMO clique devolve o corpo gravado e nunca decide duas vezes; uma
-  // decisão nova (ou a mesma, depois de um erro) leva chave nova.
-  const chave = React.useRef(newIdem());
+  // A chave da decisão (`chaveAoAbrirDecisao`/`chaveDepoisDaDecisao`, em areas-de-aprovacao): a MESMA numa nova
+  // tentativa depois de erro de rede ou 5xx (pode ter gravado: o servidor devolve o que gravou, nunca decide duas vezes);
+  // renovada depois do sucesso e de uma recusa 4xx. Reaberta para a mesma linha e a mesma decisão, é a guardada.
+  const chave = React.useRef<ChaveDaDecisao | null>(null);
+  const chaveDaTentativa = (linha: LinhaDaFila, d: Decisao) => (chave.current = chaveAoAbrirDecisao(chave.current, linha.id, d, newIdem));
 
   const abrirDecisao = (linha: LinhaDaFila, d: Decisao) => {
-    chave.current = newIdem(); setTexto(""); setErroDoDialogo(null); setDecisao({ linha, decisao: d }); setAberto(true);
+    chaveDaTentativa(linha, d); setTexto(""); setErroDoDialogo(null); setDecisao({ linha, decisao: d }); setAberto(true);
   };
   const decidir = useMutation<RespostaDaDecisao, Error, { linha: LinhaDaFila; decisao: Decisao; texto: string }>({
     mutationFn: async ({ linha, decisao: d, texto: t }) => {
       const doc = cfg.documento(linha.especie);
       // Sem documento endereçável não há botão; isto só protege contra a linha que mudou de espécie entre cliques.
       if (!doc) throw new Error(COPY.erroGenerico);
-      return api<RespostaDaDecisao>(cfg.portaDaDecisao(linha, doc, d), { method: "POST", body: corpoDaDecisao(area, linha.version, d, t), idempotencyKey: chave.current });
+      return api<RespostaDaDecisao>(cfg.portaDaDecisao(linha, doc, d), { method: "POST", body: corpoDaDecisao(area, linha.version, d, t), idempotencyKey: chaveDaTentativa(linha, d).chave });
     },
     onSuccess: (resposta, { decisao: d }) => {
+      if (chave.current) chave.current = chaveDepoisDaDecisao(chave.current, null, newIdem);
       setAberto(false);
       // Reprovar não tem mensagem própria: a linha volta da fila como "Reprovado", e isso é a resposta.
       setMensagem(d === "aprovar" ? mensagemDaAprovacao(resposta) : null);
@@ -78,7 +81,7 @@ export function FilaDeAprovacao({ area }: { area: AreaDeAprovacao }) {
       void qc.invalidateQueries();
     },
     onError: (e) => {
-      chave.current = newIdem();
+      if (chave.current) chave.current = chaveDepoisDaDecisao(chave.current, e, newIdem);
       // Corpo recusado (motivo vazio, texto longo demais): o diálogo continua aberto, com o motivo do servidor.
       if (e instanceof ApiError && e.status === 422) { setErroDoDialogo(e.message); return; }
       setAberto(false);

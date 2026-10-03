@@ -42,8 +42,11 @@ export function garantirCommit(sha: string): void {
   }
 }
 
-/** O fonte do web (`apps/web/src`) no commit `sha` contém `trecho`? Erro de leitura REPROVA — nunca vira "não contém". */
-function fonteDoWebContem(sha: string, trecho: string): boolean {
+/**
+ * O fonte do web (`apps/web/src`) no commit `sha` contém `trecho`? Erro de leitura REPROVA — nunca vira "não contém".
+ * Exportado para os specs de skew que perguntam por uma marca própria (sem cópia local do leitor).
+ */
+export function fonteDoWebContem(sha: string, trecho: string): boolean {
   garantirCommit(sha);
   try {
     execFileSync("git", ["grep", "-qF", trecho, sha, "--", "apps/web/src"], { cwd: RAIZ, stdio: "pipe" });
@@ -130,3 +133,77 @@ export const COMMITS_DO_EDITOR_DA_TOP = {
 export function editorDaBaseGravaFormato5(sha: string = shaDaBase()): boolean {
   return fonteDoWebContem(sha, "top-assistente");
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * AS SEÇÕES DO FORMATO 5 QUE A BASE CONHECE — pelo CONJUNTO declarado no domínio do commit, não por um trecho solto
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+const LISTA_DAS_SECOES_V5 = "packages/domain/src/tipo-operacao-secoes-v5.ts";
+
+/** O arquivo `caminho` no commit `sha`, ou `null` se ele não existe lá. Qualquer outro erro de leitura REPROVA. */
+function arquivoNoCommit(sha: string, caminho: string): string | null {
+  garantirCommit(sha);
+  try {
+    execFileSync("git", ["cat-file", "-e", `${sha}:${caminho}`], { cwd: RAIZ, stdio: "pipe" });
+  } catch {
+    return null;   // o commit está no clone (garantido acima): o que falta é o arquivo
+  }
+  return execFileSync("git", ["show", `${sha}:${caminho}`], { cwd: RAIZ, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+/**
+ * As seções de EXTENSÃO do formato 5 que o domínio do commit `sha` declara (o web embute o domínio: é o que o editor
+ * daquele web sabe ler numa TOP do 5), em ordem alfabética. Por padrão, a base desta execução.
+ *
+ * COMO SE LÊ, DO JEITO QUE O PRÓPRIO DOMÍNIO MONTA A LISTA: (1) os itens de `DEFINICOES_SECOES_V5` em
+ * `tipo-operacao-secoes-v5.ts` (as constantes `SECAO_*`, sem os comentários); (2) para cada uma, o arquivo de onde ela
+ * é importada; (3) nesse arquivo, o `nome: "<seção>"` da definição — exatamente um. Um arquivo de seção que existe mas
+ * não está na lista NÃO conta (a seção não vale naquele web).
+ *
+ * FAIL CLOSED: sem `tipo-operacao-secoes-v5.ts` no commit, a base não tem o ponto de extensão — nenhuma seção (lista
+ * vazia; o formato 5 em si é `editorDaBaseGravaFormato5`). Com o arquivo, qualquer forma que o leitor não reconhece
+ * (lista não encontrada, item que não é `SECAO_*`, constante sem import, arquivo sem nome ou com dois) REPROVA — nunca
+ * vira "não conhece".
+ */
+export function secoesDoFormato5DaBase(sha: string = shaDaBase()): string[] {
+  const lista = arquivoNoCommit(sha, LISTA_DAS_SECOES_V5);
+  if (lista === null) return [];
+  const bloco = /export const DEFINICOES_SECOES_V5 = \[([\s\S]*?)\] as const/.exec(lista);
+  if (!bloco) throw new Error(`${sha.slice(0, 7)}: \`${LISTA_DAS_SECOES_V5}\` existe, mas sem \`DEFINICOES_SECOES_V5 = [...] as const\` — o leitor não decide sobre uma forma que não reconhece.`);
+  const itens = bloco[1]!.split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("").split(",").map((i) => i.trim()).filter(Boolean);
+  const nomes = itens.map((item) => {
+    if (!/^SECAO_[A-Z0-9_]+$/.test(item)) throw new Error(`${sha.slice(0, 7)}: item \`${item}\` da lista de seções não é uma constante SECAO_*.`);
+    const imp = new RegExp(`import \\{ ${item} \\} from "\\./(tipo-operacao-secao-[a-z0-9-]+)\\.js";`).exec(lista);
+    if (!imp) throw new Error(`${sha.slice(0, 7)}: \`${item}\` está na lista de seções sem o import do arquivo dela.`);
+    const caminho = `packages/domain/src/${imp[1]}.ts`;
+    const fonte = arquivoNoCommit(sha, caminho);
+    if (fonte === null) throw new Error(`${sha.slice(0, 7)}: \`${caminho}\` é importado pela lista de seções e não existe no commit.`);
+    const declarados = [...fonte.matchAll(/^\s*nome: "([A-Za-z0-9]+)",/gm)].map((m) => m[1]!);
+    if (declarados.length !== 1) throw new Error(`${sha.slice(0, 7)}: \`${caminho}\` declara ${declarados.length} nomes de seção (\`nome: "…"\`); o leitor exige exatamente um.`);
+    return declarados[0]!;
+  });
+  return [...new Set(nomes)].sort();
+}
+
+/** O web do commit `sha` (por padrão, a base) conhece a seção `secao` do formato 5? Pelo CONJUNTO, nunca por trecho solto. */
+export function baseConheceSecaoV5(secao: string, sha: string = shaDaBase()): boolean {
+  return secoesDoFormato5DaBase(sha).includes(secao);
+}
+
+/**
+ * Commits FIXOS da branch da PR #90 (alcançáveis por SHA depois do merge), um por CONJUNTO de seções — a prova reversa
+ * do detector (`f5-estoque-skew-web-anterior.spec.ts`, caso K2-0). As fases correram em paralelo a partir da F4, então
+ * o conjunto de cada commit de fase é SÓ o da fase: é o que prova que o detector lê o commit, e não a árvore de agora.
+ */
+export const COMMITS_DAS_SECOES_V5 = {
+  /** A main antes da OPERACOES-01 (#89, a base da PR #90): sem o ponto de extensão — nenhuma seção. */
+  semFormato5: "622f1949ed868fd6cc6da886040ae3dde57c067e",
+  /** F4: o formato 5 com a lista VAZIA (o mesmo SHA de `COMMITS_DO_EDITOR_DA_TOP.formato5`). */
+  formato5Vazio: "0d1c882dbb71338c242a987b4fb8a9f1ff68bc55",
+  /** F5a (domínio): Destino e Fluxo. */
+  f5a: "9cdf249cac2a3286b857637f31e7254975fcb717",
+  /** F6a (domínio): Fluxo de compra e Divergência com o pedido — sem as da F5a (fase paralela). */
+  f6a: "8af5f48aaa34cd7b4966f7ed4cbeb944aaf45af9",
+  /** F9b (documentos), depois dos merges das fases: as cinco. */
+  todas: "55670e53bdda9b761ece1dd13efb12bca1d2fa5d"
+} as const;

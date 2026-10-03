@@ -246,6 +246,36 @@ export function corpoDaDecisao(area: AreaDeAprovacao, versao: string | undefined
   return corpo;
 }
 
+/**
+ * A CHAVE DA DECISÃO (o `Idempotency-Key` do Aprovar/Reprovar) — a mesma regra na fila e na consulta, venda e compra.
+ *
+ * O servidor guarda a resposta da decisão pela chave (`idempotent`, em `apps/api/src/lib/service.ts`): o reenvio com a
+ * MESMA chave e o mesmo corpo devolve a decisão já gravada e nunca decide duas vezes. Por isso a chave só muda quando a
+ * tentativa anterior TERMINOU de verdade:
+ *   · SUCESSO → renova (a próxima decisão é outra operação);
+ *   · RECUSA DEFINITIVA (resposta 4xx: corpo recusado, documento que mudou, sem permissão, rota ausente…) → renova; a
+ *     tentativa seguinte é um pedido novo, julgado de novo;
+ *   · ERRO DE REDE, 5xx ou SEM RESPOSTA → MANTÉM: o cliente não sabe se o servidor gravou, e a nova tentativa é a MESMA
+ *     operação — se a primeira gravou, o servidor devolve o que gravou (ou, com o texto mudado, recusa o corpo diferente
+ *     com 409, e só então a chave renova); se não gravou, decide agora, uma vez.
+ * A chave guardada vale para o MESMO documento e a MESMA decisão: abrir Reprovar depois de um Aprovar sem resposta (ou
+ * outro documento) é outra operação, com chave nova — nunca a resposta gravada de uma decisão servindo a outra.
+ */
+export interface ChaveDaDecisao { readonly documentoId: string; readonly decisao: Decisao; readonly chave: string }
+
+/** A resposta foi uma recusa definitiva do servidor (4xx)? Rede, 5xx e erro sem resposta NÃO são. */
+export const recusaDefinitiva = (e: unknown): boolean => e instanceof ApiError && e.status >= 400 && e.status < 500;
+
+/** A chave ao ABRIR a decisão: a guardada, se é do mesmo documento e da mesma decisão; senão, uma nova. */
+export function chaveAoAbrirDecisao(guardada: ChaveDaDecisao | null, documentoId: string, decisao: Decisao, nova: () => string): ChaveDaDecisao {
+  return guardada && guardada.documentoId === documentoId && guardada.decisao === decisao ? guardada : { documentoId, decisao, chave: nova() };
+}
+
+/** A chave DEPOIS da resposta: `null` (sucesso) ou erro 4xx → uma nova para a próxima tentativa; rede/5xx → a mesma. */
+export function chaveDepoisDaDecisao(atual: ChaveDaDecisao, erro: unknown | null, nova: () => string): ChaveDaDecisao {
+  return erro === null || recusaDefinitiva(erro) ? { ...atual, chave: nova() } : atual;
+}
+
 /** O limite da observação e do motivo (o mesmo das rotas e da coluna `observacao` da 0041). */
 export const LIMITE_DO_TEXTO_DA_DECISAO = 500;
 
