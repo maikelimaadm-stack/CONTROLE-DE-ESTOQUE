@@ -8,13 +8,13 @@ PRE-BASE2-03, um total único mentiria: `farm_id` numa migration aplicada é his
 cliente HTTP é ponte com prazo, e "fazenda" no comentário de uma rota é o produto ainda falando o
 nicho. Por isso cada ocorrência é classificada em um dos três baldes abaixo — e a catraca trava só o terceiro.
 
-Total medido: **1767** ocorrências · 3 tabelas com coluna de empresa.
+Total medido: **1766** ocorrências · 3 tabelas com coluna de empresa.
 
 ## Classificação (o número que importa é o balde 3)
 
 | # | Balde | Ocorrências | Catraca | O que é |
 | --- | --- | ---: | --- | --- |
-| 1 | **LEGADO HISTÓRICO** | 1310 | não | Migrations aplicadas e documentação. O nome legado aqui é registro do que aconteceu; reescrever é falsificar história. |
+| 1 | **LEGADO HISTÓRICO** | 1309 | não | Migrations aplicadas e documentação. O nome legado aqui é registro do que aconteceu; reescrever é falsificar história. |
 | 2 | **COMPATIBILIDADE TRANSITÓRIA PERMITIDA** | 350 | não | Arquivos declarados em scripts/lib/empresa-compat-surface.mjs, cada um com motivo. Removidos em PRE-BASE2-05C-1 (purga física: colunas legadas, as cinco views de nome antigo e os gatilhos de espelho) — apenas a categoria PONTE_FISICA; ver CATEGORIAS_COMPAT. |
 | 3 | **DÍVIDA DE PRODUTO PROIBIDA** | 107 | **sim — só diminui** | O produto ainda fala o nicho onde não precisa. Alvo: zero. A catraca só deixa diminuir. |
 
@@ -34,9 +34,9 @@ exige declarar o arquivo com motivo em `scripts/lib/empresa-compat-surface.mjs` 
 | Web — navegação/rotas | 0 | 7 | 0 | 7 |
 | Web — testes ponta a ponta | 0 | 26 | 0 | 26 |
 | Scripts e gates | 0 | 83 | **4** | 87 |
-| Documentação ativa | 321 | 0 | 0 | 321 |
+| Documentação ativa | 320 | 0 | 0 | 320 |
 | Documentação histórica (referência externa) | 513 | 0 | 0 | 513 |
-| **Total** | **1310** | **350** | **107** | **1767** |
+| **Total** | **1309** | **350** | **107** | **1766** |
 
 ## Balde 2 — a ponte declarada
 
@@ -138,7 +138,7 @@ Onde o produto ainda fala o nicho sem precisar. Ordem de ataque: quem concentra 
 | `farmScope` | contrato | 3 | 2 | `escopoEmpresa` |
 | `allowedFarms` | contrato | 6 | 3 | `escopoEmpresa (@erp/plataforma)` |
 | `farms` | contrato | 89 | 6 | `/empresas` |
-| `fazenda` | texto | 654 | 74 | `Empresa (i18n: termos.empresa)` |
+| `fazenda` | texto | 653 | 74 | `Empresa (i18n: termos.empresa)` |
 
 `dado` = exige migration e backfill · `contrato` = quebra clientes se mudar sem compatibilidade · `texto` = rótulo, resolvido por i18n.
 

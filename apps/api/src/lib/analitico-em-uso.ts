@@ -47,6 +47,9 @@ export const REFERENCIAS_DE_USO: Readonly<Record<string, readonly ReferenciaDeUs
     r("bank_movement_apportionments", "financial_category_id"),
     r("budget_planning_values", "financial_category_id"),
     r("documentos_compra", "categoria_financeira_id"),
+    // OPERACOES-01 F7 (0047): a natureza do item (rateio por produto) e a da linha do rateio por valor.
+    r("documentos_compra_itens", "categoria_financeira_id"),
+    r("documentos_compra_rateio", "categoria_financeira_id"),
     // OPERACOES-01 F8 (0042): as naturezas padrão da baixa e a natureza do desconto gravada em cada baixa.
     r("financeiro_naturezas_padrao", "acrescimo_pago_id"),
     r("financeiro_naturezas_padrao", "acrescimo_recebido_id"),
@@ -73,6 +76,9 @@ export const REFERENCIAS_DE_USO: Readonly<Record<string, readonly ReferenciaDeUs
     r("bank_movement_apportionments", "cost_center_id"),
     r("devolution_items", "cost_center_id"),
     r("documentos_compra", "centro_custo_id"),
+    // OPERACOES-01 F7 (0047): o centro do item (rateio por produto) e o da linha do rateio por valor.
+    r("documentos_compra_itens", "centro_custo_id"),
+    r("documentos_compra_rateio", "centro_custo_id"),
     // OPERACOES-01 F5a (0043): o destino gravado no cabeçalho do documento de estoque.
     r("documentos_estoque", "centro_custo_id"),
     r("empresa_cost_centers", "cost_center_id"),
@@ -97,6 +103,8 @@ export const REFERENCIAS_DE_USO: Readonly<Record<string, readonly ReferenciaDeUs
   ],
   chart_accounts: [
     r("bank_movement_apportionments", "chart_account_id"),
+    // OPERACOES-01 F7 (0047): a conta contábil da linha do rateio por valor da compra.
+    r("documentos_compra_rateio", "conta_contabil_id"),
     r("invoice_apportionments", "chart_account_id"),
     r("journal_entries", "credit_account_id"),
     r("journal_entries", "debit_account_id"),

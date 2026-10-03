@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 206 |
-| Tabelas com `organization_id` (escopo de organização) | 149 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 60 |
-| Entidades curadas neste dicionário | 57 |
+| Tabelas no schema `erp` | 210 |
+| Tabelas com `organization_id` (escopo de organização) | 153 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 62 |
+| Entidades curadas neste dicionário | 61 |
 | Entidades com ID Global | 25 |
 | Entidades com Tipo de Operação | 19 |
 | Tipos de Operação referenciados | 32 |
-| Cobertura curada | 27.7% |
+| Cobertura curada | 29.0% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -1280,7 +1280,7 @@ Documento comercial de compra (decisões 267 e 283). A coluna `especie` decide a
 | `frete` |  | numeric(18,2) | sim |  |  |  |  |
 | `outras_despesas` |  | numeric(18,2) | sim |  |  |  |  |
 | `desconto` |  | numeric(18,2) | sim |  |  |  |  |
-| `valor_total` |  | numeric(18,2) | sim |  |  |  |  |
+| `valor_total` | Valor total | numeric(18,2) | sim |  |  |  | Itens + frete + outras despesas − desconto + IPI + ICMS-ST + seguro (CHECK; os três últimos vazios valem zero — decisão 284). |
 | `observacao` |  | text | não |  |  |  |  |
 | `criado_por` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
@@ -1296,6 +1296,18 @@ Documento comercial de compra (decisões 267 e 283). A coluna `especie` decide a
 | `pedido_orcado_id` | Pedido orçado | uuid | não |  |  |  | Só orçamento: o pedido de compra que ele cota (FK composta com o tenant). Não consome saldo nem prende o fornecedor do pedido; não muda depois do lançamento. |
 | `prazo_entrega_dias` | Prazo de entrega (dias) | integer | não |  |  |  | Só orçamento: prazo de entrega em dias (0 a 3650). |
 | `validade_orcamento` | Validade do orçamento | date | não |  |  |  | Só orçamento: até quando o preço vale. Não é anterior à data do documento. |
+| `chave_acesso` | Chave de acesso | text | não |  |  |  | Só compra: chave de acesso da NF-e (44 dígitos). A nota repetida é barrada no banco: única entre compras não canceladas e cruzada com a nota antiga nos dois sentidos (DUPLICATE_DOCUMENT, decisão 284). Não muda depois do lançamento. |
+| `uf_nota` | UF da nota | text | não |  |  |  | Só compra: UF da nota (duas letras maiúsculas). |
+| `tipo_documento_fiscal` | Tipo de documento fiscal | text | não |  |  |  | Só compra: nfe \| cte \| nfse \| nfce \| danfe \| darf \| dare \| gru \| other. Valor canônico persistido; o rótulo é traduzido na apresentação. |
+| `valor_ipi` | IPI | numeric(18,2) | não |  |  |  | Só compra: IPI da nota; entra no total e no custo de entrada. |
+| `valor_icms_st` | ICMS-ST | numeric(18,2) | não |  |  |  | Só compra: ICMS-ST da nota; entra no total e no custo de entrada. |
+| `seguro` | Seguro | numeric(18,2) | não |  |  |  | Só compra: seguro da nota; entra no total e no custo de entrada. |
+| `tipo_titulo_id` | Tipo de título | uuid | não | FK | `erp.title_types` |  | Só compra: tipo de título dos títulos a pagar (global ou da organização, conferido por gatilho). |
+| `classificacao_gasto` | Classificação do gasto | text | não |  |  |  | Só compra: capex \| opex (vai ao título). |
+| `rateio_tipo` | Tipo de rateio | text | não |  |  |  | Só compra: por_valor (linhas do rateio da compra) \| por_produto (natureza e centro de cada item). Com rateio, o cabeçalho não tem natureza nem centro. |
+| `parcelas_nota` | Parcelas da nota | jsonb | não |  |  |  | Só compra: as duplicatas da nota (de 1 a 120), conferidas com o líquido; exclusivas com o plano de parcelas da condição. |
+| `dfe_id` | DF-e | uuid | não |  |  |  | Só compra: a DF-e de onde a nota veio (FK composta), da mesma chave e sem empresa ou da mesma empresa. |
+| `solicitacao_compra_id` | Solicitação de compra | uuid | não |  |  |  | Só compra: a solicitação de compra atendida (FK composta), da mesma empresa; ao receber, a solicitação aceita a compra. |
 
 ### ERP-COMPRAS-DOCUMENTO-ITEM — Item do Documento de Compra
 
@@ -1328,6 +1340,134 @@ Linha de produto do documento de compra. Identidade pertence ao documento; só m
 | `posicao` |  | int | sim |  |  |  |  |
 | `origem_item_id` | Item do pedido de origem | uuid | não |  |  |  | Só na compra recebida de um pedido: o item do pedido que esta linha recebe. Mesmo produto; a soma recebida por compras não canceladas não passa da quantidade do item (gatilho, decisão 268). |
 | `item_pedido_orcado_id` | Item do pedido orçado | uuid | não |  |  |  | Só no orçamento de compra: o item do pedido que esta linha cota (mesmo produto e quantidade; FK composta com o tenant). Não consome saldo (decisão 283). |
+| `gera_estoque` | Gera estoque | boolean | não |  |  |  | Só compra: o item dá entrada no estoque na confirmação. Vazio vale sim (como antes); falso não move estoque (decisão 284). |
+| `imobilizado` | Imobilizado | boolean | não |  |  |  | Só compra: o item é imobilizado — a confirmação cria o bem com o valor de entrada rateado. |
+| `bem_id` | Bem | uuid | não |  |  |  | O bem criado na confirmação do item imobilizado (FK composta com o tenant). |
+| `categoria_financeira_id` | Natureza de despesa do item | uuid | não |  |  |  | Rateio por produto: natureza de despesa do item. Anda em PAR com o centro de custo do item. |
+| `centro_custo_id` | Centro de custo do item | uuid | não |  |  |  | Rateio por produto: centro de custo do item. Anda em PAR com a natureza de despesa do item. |
+| `valor_ipi` | IPI do item | numeric(18,2) | não |  |  |  | IPI do item na nota; entra no custo do item. |
+| `valor_icms_st` | ICMS-ST do item | numeric(18,2) | não |  |  |  | ICMS-ST do item na nota; entra no custo do item. |
+| `n_item_nota` | Item na nota | integer | não |  |  |  | Número do item na nota (1 a 990). |
+| `codigo_produto_nota` | Código na nota | text | não |  |  |  | Código do produto na nota do fornecedor. |
+| `descricao_produto_nota` | Descrição na nota | text | não |  |  |  | Descrição do produto na nota do fornecedor. |
+| `unidade_nota` | Unidade na nota | text | não |  |  |  | Unidade comercial do fornecedor na nota. Anda junto com a quantidade da nota e o fator. |
+| `quantidade_nota` | Quantidade na nota | numeric(18,4) | não |  |  |  | Quantidade comercial na nota, antes da conversão. |
+| `fator_conversao` | Fator de conversão | numeric(18,6) | não |  |  |  | Fator que converteu a quantidade da nota na do produto (maior que zero). |
+| `tipo_fator_conversao` | Tipo do fator | text | não |  |  |  | multiply (quantidade = quantidade da nota × fator) \| divide (÷ fator). |
+
+### ERP-COMPRAS-NOTA-XML — XML original da nota
+
+O XML da NF-e recebida, guardado no servidor exatamente como chegou: imutável, da empresa destinatária. A importação na Central de Compras e a DF-e apontam para ele.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.notas_fiscais_xml` |
+| Natureza | infraestrutura |
+| Escopo de organização | sim |
+| Escopo de empresa | `empresa_id` |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `empresa_id` |  | uuid | sim |  |  |  |  |
+| `chave_acesso` | Chave de acesso | text | sim |  |  |  | Chave de acesso da NF-e (44 dígitos, DV conferido na leitura). |
+| `xml_original` |  | text | sim |  |  |  |  |
+| `xml_sha256` | SHA-256 do XML | text | sim |  |  |  | Resumo do conteúdo; com a organização e a chave, identifica o XML guardado. |
+| `tamanho_bytes` |  | integer | sim |  |  |  |  |
+| `nome_arquivo` |  | text | não |  |  |  |  |
+| `recebido_por` |  | uuid | sim | FK | `erp.users` |  |  |
+| `recebido_em` |  | timestamptz | sim |  |  |  |  |
+
+### ERP-COMPRAS-IMPORTACAO-NFE — Importação de XML de nota
+
+A conferência do XML de uma NF-e na Central de Compras: pendente, decidida uma vez — gerada (a compra aberta criada dela) ou descartada. Uma pendente por chave na organização; nunca se apaga.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.importacoes_nfe_compra` |
+| Natureza | infraestrutura |
+| Escopo de organização | sim |
+| Escopo de empresa | `empresa_id` |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `empresa_id` |  | uuid | sim |  |  |  |  |
+| `xml_id` |  | uuid | sim |  |  |  |  |
+| `chave_acesso` |  | text | sim |  |  |  |  |
+| `numero` |  | text | sim |  |  |  |  |
+| `serie` |  | text | sim |  |  |  |  |
+| `data_emissao` |  | date | sim |  |  |  |  |
+| `emitente_documento` |  | text | sim |  |  |  |  |
+| `emitente_nome` |  | text | sim |  |  |  |  |
+| `valor_total` |  | numeric(18,2) | sim |  |  |  |  |
+| `origem` | Origem | text | sim |  |  |  | arquivo (enviado na Central de Compras) \| dfe (aberto pelo "Lançar" da DF-e). |
+| `dfe_id` |  | uuid | não |  |  |  |  |
+| `situacao` | Situação | text | sim |  |  |  | pendente \| gerada \| descartada. Decidida uma vez (gatilho); gerada e descartada são finais. |
+| `documento_compra_id` | Compra gerada | uuid | não |  |  |  | Só na gerada: a compra criada da nota, da mesma empresa e chave. |
+| `criado_por` |  | uuid | sim | FK | `erp.users` |  |  |
+| `criado_em` |  | timestamptz | sim |  |  |  |  |
+| `decidido_por` |  | uuid | não | FK | `erp.users` |  |  |
+| `decidido_em` |  | timestamptz | não |  |  |  |  |
+
+### ERP-COMPRAS-VINCULO-PRODUTO — Vínculo do produto do fornecedor
+
+Fornecedor + código + unidade do fornecedor na nota → produto + fator. Lembrado ao gerar a compra da nota e sugerido nas notas seguintes; cadastro da organização.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.produto_fornecedor_vinculos` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `fornecedor_id` |  | uuid | sim |  |  |  |  |
+| `codigo_fornecedor` |  | text | sim |  |  |  |  |
+| `unidade_fornecedor` |  | text | sim |  |  |  |  |
+| `produto_id` |  | uuid | sim |  |  |  |  |
+| `tipo_fator` | Tipo do fator | text | sim |  |  |  | multiply (quantidade interna = quantidade da nota × fator) \| divide (÷ fator). |
+| `fator` | Fator | numeric(18,6) | sim |  |  |  | Fator de conversão da unidade do fornecedor para a do produto (maior que zero). |
+| `criado_por` |  | uuid | sim | FK | `erp.users` |  |  |
+| `criado_em` |  | timestamptz | sim |  |  |  |  |
+| `atualizado_por` |  | uuid | não | FK | `erp.users` |  |  |
+| `atualizado_em` |  | timestamptz | não |  |  |  |  |
+
+### ERP-COMPRAS-DOCUMENTO-RATEIO — Rateio por valor da compra
+
+Linha do rateio por valor da compra (natureza, centro de custo, conta contábil e safra, com o percentual). Gravada com a compra aberta e imutável depois; o escopo de empresa vem da compra.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.documentos_compra_rateio` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | bigint | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `documento_id` |  | uuid | sim |  |  |  |  |
+| `posicao` |  | integer | sim |  |  |  |  |
+| `categoria_financeira_id` |  | uuid | sim |  |  |  |  |
+| `centro_custo_id` |  | uuid | sim |  |  |  |  |
+| `conta_contabil_id` |  | uuid | não |  |  |  |  |
+| `safra_id` |  | uuid | não |  |  |  |  |
+| `percentual` |  | numeric(9,4) | sim |  |  |  |  |
 
 ## Financeiro
 
@@ -2082,7 +2222,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.cultivations` | 5 | sim | — | não |
 | `erp.depreciations` | 9 | sim | — | não |
 | `erp.devolution_items` | 8 | não | — | não |
-| `erp.dfe_documents` | 18 | sim | `empresa_id` | não |
+| `erp.dfe_documents` | 19 | sim | `empresa_id` | não |
 | `erp.dfe_drafts` | 8 | sim | — | não |
 | `erp.diet_batch_items` | 6 | não | — | não |
 | `erp.diet_items` | 5 | não | — | não |
