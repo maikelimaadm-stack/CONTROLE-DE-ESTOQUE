@@ -74,7 +74,7 @@ const buscarExterno: BuscarFn = async (url, init) => {
 
 let A = ""; let B = "";
 const area: Record<string, string> = {};
-let outraOrg = ""; let soB: Record<string, string> = {};
+let outraOrg = ""; let soB: Record<string, string> = {}; let soMapa: Record<string, string> = {};
 
 const url = (id: string, sufixo = "/ndvi") => `/api/mapa/areas/${id}/analises-satelitais${sufixo}`;
 const pedir = (app: FastifyInstance, id: string, headers = h.headers(), payload?: unknown) =>
@@ -116,11 +116,11 @@ async function analiseAntiga(areaId: string, empresa: string, janelaInicio: stri
   return r.rows[0]!.id;
 }
 
-async function membroSoB(): Promise<Record<string, string>> {
-  const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: "Perfil SAT-01 só B", permissions: ["analises_satelitais.view", "analises_satelitais.create"] } });
+/** Membro com as duas capacidades da análise e o escopo de empresa pedido (por módulo). */
+async function membro(nome: string, email: string, escopos: { modulo: string; modo: "todas" | "selecionadas"; empresas: string[] }[]): Promise<Record<string, string>> {
+  const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `Perfil ${nome}`, permissions: ["analises_satelitais.view", "analises_satelitais.create"] } });
   expect(papel.statusCode, papel.body).toBe(201);
-  const email = "sat01-so-b@demo.local";
-  const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: "SAT-01 só B", email, password: "Sat01@12345", role_id: j(papel).id, escopos_empresas: [{ modulo: "pecuaria", modo: "selecionadas", empresas: [B] }] } });
+  const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Sat01@12345", role_id: j(papel).id, escopos_empresas: escopos } });
   expect(vinculo.statusCode, vinculo.body).toBe(201);
   const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Sat01@12345" } });
   expect(login.statusCode, login.body).toBe(200);
@@ -143,7 +143,8 @@ beforeAll(async () => {
   outraOrg = (await admin.query<{ id: string }>("insert into erp.organizations (name, slug) values ('[TEST] Outra SAT-01','outra-sat01') returning id")).rows[0]!.id;
   const empresaOutra = (await admin.query<{ id: string }>("insert into erp.empresas (organization_id, code, name) values ($1, 97, '[TEST] Empresa outra org SAT-01') returning id", [outraOrg])).rows[0]!.id;
   area["outraOrg"] = await novaArea(empresaOutra, "SAT01-X", POLIGONO, outraOrg);
-  soB = await membroSoB();
+  soB = await membro("SAT-01 só B", "sat01-so-b@demo.local", [{ modulo: "pecuaria", modo: "selecionadas", empresas: [B] }]);
+  soMapa = await membro("SAT-01 só mapa", "sat01-so-mapa@demo.local", [{ modulo: "mapa", modo: "todas", empresas: [] }]);
 }, 180_000);
 
 afterAll(async () => {
@@ -354,6 +355,17 @@ describe("SAT-01 autorização — capacidade × escopo, a mesma 404", () => {
     const [linha] = await linhas(area["B"]!);
     expect(linha).toMatchObject({ empresa_id: B, organization_id: h.demo.orgId });
     expect((await ler(ligada, url(area["B"]!, "/ultima"), soB)).statusCode).toBe(200);
+  });
+  it("capacidade sem escopo no módulo da área (escopo só no módulo `mapa`, nada em pecuária) → a MESMA 404: o módulo vem da permissão", async () => {
+    chamadas.length = 0;
+    for (const alvo of [area["A"]!, area["B"]!]) {
+      for (const [metodo, caminho] of CAMINHOS(alvo)) {
+        const r = await chamar(ligada, metodo, caminho, soMapa);
+        expect(r.statusCode, `${metodo} ${caminho}`).toBe(404);
+        expect(j(r).error).toEqual({ code: "NOT_FOUND", message: MSG_AREA_NAO_ENCONTRADA });
+      }
+    }
+    expect(chamadas).toHaveLength(0);
   });
   it("empresa selecionada (X-Empresa-Id) proibida para o usuário → 403; selecionar outra empresa não amplia o escopo (404)", async () => {
     const r = await pedir(ligada, area["B"]!, { ...soB, "x-empresa-id": A });

@@ -4763,10 +4763,17 @@ identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca
 ## SAT-01 — análise por satélite da área: Copernicus Sentinel-2 L2A e NDVI (0052)
 
 Decisão 293. **Uma migration: `0052_analises_satelitais.sql`** (pre-deploy; trava (2026,86), `lock_timeout` 2 s, pré/pós-condições
-nomeadas `SAT-01: …`). Cria `erp.analises_satelitais` (histórico imutável, RLS por empresa no módulo pecuária, FK composta para
-`erp.areas`), o gatilho `trg_analises_satelitais_conferir` (área viva, com polígono, mesmo polígono pelo hash; UPDATE recusado), a
-auditoria por `erp.audit_row()` e a restrição `areas_org_empresa_key unique (organization_id, empresa_id, id)` em `erp.areas` (alvo
-da FK composta; `id` já é chave, então nenhuma linha existente pode violá-la). A permissão `analises_satelitais.view`/`.create`
+nomeadas `SAT-01: …`). Cria `erp.analises_satelitais` (RLS por empresa no módulo pecuária, FK composta para `erp.areas`), o gatilho
+`trg_analises_satelitais_conferir` (na inserção: área viva, com polígono, mesmo polígono pelo hash), os gatilhos de imutabilidade
+`trg_analises_satelitais_imutavel` (UPDATE/DELETE, por linha) e `trg_analises_satelitais_imutavel_truncate` (TRUNCATE, por comando) —
+**nem o dono do schema apaga ou altera uma análise** —, a auditoria por `erp.audit_row()` e a restrição
+`areas_org_empresa_key unique (organization_id, empresa_id, id)` em `erp.areas` (alvo da FK composta; `id` já é chave, então nenhuma
+linha existente pode violá-la).
+
+**Travas.** A tabela nova pede SHARE ROW EXCLUSIVE em `erp.organizations`, `erp.empresas` e `erp.users`. A chave única pega ACCESS
+EXCLUSIVE em `erp.areas` (constrói o índice) e fica por ÚLTIMO no arquivo, junto da FK da área: a janela em que leitura e escrita de
+áreas esperam é só a da construção do índice. Qualquer trava que não venha em 2 s aborta a migration inteira e para o deploy, sem nada
+aplicado. O volume de `erp.areas` em produção (custo do índice) não foi medido daqui: PENDING, esperado pequeno (cadastro de piquetes). A permissão `analises_satelitais.view`/`.create`
 entra pelo `seedPermissions` do pre-deploy: o papel de sistema **Administrador** recebe as duas; os demais papéis só depois que um
 administrador conceder (e o membro precisa de escopo no módulo **pecuária**, o mesmo da área).
 
@@ -4798,13 +4805,24 @@ controlado numa área real (gate externo — PENDING até a credencial existir).
 
 **Impacto em dados reais:** nenhum na fase 1 (tabela nova vazia; a restrição única em `erp.areas` não altera linha). Na fase 2, cada
 pedido grava uma linha nova por área/polígono/dia; nada é editado nem apagado (decisões 240/247). Falha do provedor não grava nada.
+**Mudança de comportamento no cadastro de áreas (a partir da primeira análise de uma área):** a área deixa de poder mudar de empresa —
+a edição (`PUT /api/resources/areas/:id` trocando `empresa_id`) responde 409 CONFLICT, porque a FK composta recusa (23503). O histórico
+pertence à empresa em que a área estava. Área cadastrada na empresa errada, depois de analisada, se corrige com área nova (e exclusão
+lógica da antiga, que mantém o histórico). Área sem análise continua mudando de empresa como antes.
 
 **Limites conhecidos.** Limite do ERP de 10 chamadas ao provedor por minuto por organização **por instância** da API, e reaproveitamento
 de chamadas simultâneas também por instância (com várias réplicas, multiplica — a restrição única no banco continua impedindo linha
 duplicada). Uma análise por área e polígono por dia UTC: pedir de novo no mesmo dia devolve a mesma, inclusive uma `sem_observacao_util`;
 imagem adquirida mais tarde no mesmo dia só entra no dia seguinte. Área com menos de 10 pixels de 10 m ou caixa com mais de 2.500 pixels
 num lado é recusada (422) antes de chamar o provedor. `sem_aquisicao` × `cobertura_insuficiente` dependem de o provedor omitir dias sem
-imagem (comportamento a confirmar no smoke). Tempo máximo: 10 s (token) e 30 s (estatística), no máximo 2 tentativas. **Sem scheduler,
+imagem (comportamento a confirmar no smoke). **A cota da conta Copernicus é UMA para o ERP inteiro** (uma credencial): uma organização
+que pede análises de muitas áreas diferentes pode esgotá-la, e as outras passam a receber 503/429 até a cota renovar — o limite por
+organização e por instância atenua, não isola; orçamento diário por organização (contado no banco) fica para fatia própria. O hash do
+polígono é do TEXTO do `jsonb`: uma ida e volta pelo formulário que só reescreva a representação de um número (ex.: `-56.10` → `-56.1`)
+muda o hash sem mudar o polígono — as análises antigas passam a `do_poligono_atual = false` e uma chamada nova fica liberada no mesmo
+dia (no máximo uma vez por área; o hash continua provando exatamente o que foi analisado). O `409` da edição de área citada acima traz o
+`detail` do Postgres (padrão de `fromPgError` para 23503), que revela a quem edita a área que ela tem histórico satelital (só a
+existência; nenhum valor). Tempo máximo: 10 s (token) e 30 s (estatística), no máximo 2 tentativas. **Sem scheduler,
 sem processamento em massa e sem varredura de áreas, de propósito.**
 
 **Caminho de volta.** API: `COPERNICUS_ENABLED=0` (efeito imediato no próximo deploy/restart) ou redeploy da versão anterior — a tabela

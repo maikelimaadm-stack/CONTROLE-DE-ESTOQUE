@@ -13,8 +13,9 @@
 --
 -- NDVI NÃO É BIOMASSA. Nenhuma coluna aqui é kg de capim, matéria seca, oferta de forragem ou lotação.
 --
--- HISTÓRICO IMUTÁVEL. A análise registrada não se altera nem se apaga: UPDATE é recusado pelo gatilho (mesmo para
--- o dono do schema) e UPDATE/DELETE/TRUNCATE são revogados do erp_app. Uma análise nova nunca destrói a anterior.
+-- HISTÓRICO IMUTÁVEL. A análise registrada não se altera nem se apaga: UPDATE e DELETE são recusados por gatilho de
+-- linha e TRUNCATE por gatilho de comando, mesmo para o dono do schema (gabarito da 0047), e UPDATE/DELETE/TRUNCATE
+-- são revogados do erp_app. Uma análise nova nunca destrói a anterior (decisão 247).
 --
 -- ESCOPO. A análise é DA ÁREA e responde pelo escopo dela: módulo de escopo empresarial "pecuaria", o mesmo de
 -- erp.areas (scripts/company-rls-modules.json). Um módulo próprio abriria um segundo caminho até a área, com
@@ -23,10 +24,17 @@
 -- FK COMPOSTA DA ÁREA. (organization_id, empresa_id, area_id) → erp.areas(organization_id, empresa_id, id): a
 -- análise é sempre da MESMA organização e da MESMA empresa da área — coluna única não prova tenant. Para isso a
 -- migration acrescenta a chave única areas_org_empresa_key em erp.areas (não altera nenhum dado). Consequência
--- declarada: área com histórico satelital não muda de empresa (a FK recusa) — o histórico pertence à empresa.
+-- declarada (decisão 293): área com histórico satelital não muda de empresa (a FK recusa, 23503) — o histórico
+-- pertence à empresa em que a área estava, e a análise não se apaga.
 --
 -- PRODUÇÃO (decisões 240/247). Tabela nova e vazia; nenhum dado existente é escrito, corrigido ou apagado. O
 -- efeito novo nasce DESLIGADO: sem COPERNICUS_ENABLED=1 e as credenciais na API, nenhuma análise é pedida.
+--
+-- TRAVAS DE TABELA. A tabela nova pede SHARE ROW EXCLUSIVE em erp.organizations, erp.empresas e erp.users (alvos
+-- das FKs). A chave única nova pega ACCESS EXCLUSIVE em erp.areas (constrói o índice) — e por isso é a ÚLTIMA coisa
+-- do arquivo, junto da FK da área: a janela em que leitura e escrita de áreas esperam é só a da construção do índice
+-- (tabela pequena), nunca a espera pelas outras travas. Cada pedido de trava espera no máximo lock_timeout = 2 s; se
+-- não conseguir, a migration aborta inteira e o deploy para, sem nada aplicado.
 --
 -- Trava (2026,86). lock_timeout 2s. O runner aplica o arquivo em UMA transação.
 -- =====================================================================
@@ -47,8 +55,9 @@ begin
   -- "Já aplicada" ANTES das dependências: na reaplicação, o motivo verdadeiro é este.
   if to_regclass('erp.analises_satelitais') is not null
      or to_regprocedure('erp.analises_satelitais_conferir()') is not null
-     or exists (select 1 from pg_constraint where conname = 'areas_org_empresa_key' and conrelid = 'erp.areas'::regclass) then
-    raise exception 'SAT-01: a 0052 ja foi aplicada ou ha schema divergente (analises_satelitais/analises_satelitais_conferir/areas_org_empresa_key ja existe).';
+     or to_regprocedure('erp.analises_satelitais_imutavel()') is not null
+     or exists (select 1 from pg_constraint where conname = 'areas_org_empresa_key' and conrelid = to_regclass('erp.areas')) then
+    raise exception 'SAT-01: a 0052 ja foi aplicada ou ha schema divergente (analises_satelitais/analises_satelitais_conferir/analises_satelitais_imutavel/areas_org_empresa_key ja existe).';
   end if;
   if not exists (select 1 from pg_roles where rolname = 'erp_app') then
     raise exception 'SAT-01: papel erp_app ausente (0007); os privilegios da tabela nova nao teriam destinatario.';
@@ -72,14 +81,17 @@ begin
     raise exception 'SAT-01: erp.areas.empresa_id e anulavel; a FK composta da analise exige empresa obrigatoria na area.';
   end if;
   -- A FK de empresa é composta (organização, empresa): o alvo é a chave (organization_id, id) de erp.empresas.
-  if not exists (
+  if to_regclass('erp.empresas') is null or not exists (
     select 1 from pg_constraint c
-     where c.conrelid = 'erp.empresas'::regclass and c.contype in ('p', 'u')
+     where c.conrelid = to_regclass('erp.empresas') and c.contype in ('p', 'u')
        and (select array_agg(a.attname::text order by a.attnum)
               from unnest(c.conkey) k join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k)
            @> array['organization_id', 'id']
   ) then
     raise exception 'SAT-01: erp.empresas sem chave (organization_id, id) para a FK composta (0014).';
+  end if;
+  if to_regclass('erp.modulos_escopo_empresa') is null then
+    raise exception 'SAT-01: erp.modulos_escopo_empresa ausente (0011); a analise nao teria o escopo da area.';
   end if;
   if not exists (select 1 from erp.modulos_escopo_empresa where chave = 'pecuaria') then
     raise exception 'SAT-01: modulo de escopo empresarial pecuaria ausente (0011); a analise nao teria o escopo da area.';
@@ -89,11 +101,7 @@ begin
   end if;
 end $$;
 
--- ---------- 3) chave única da área para a FK composta ----------
--- Só uma chave nova sobre colunas que já existem (id já é único): não muda linha nenhuma, não recusa acervo.
-alter table erp.areas add constraint areas_org_empresa_key unique (organization_id, empresa_id, id);
-
--- ---------- 4) tabela ----------
+-- ---------- 3) tabela (a FK da área entra no fim, junto da chave única que ela exige) ----------
 create table erp.analises_satelitais (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references erp.organizations(id),
@@ -133,7 +141,6 @@ create table erp.analises_satelitais (
   criado_por uuid not null references erp.users(id),
   created_at timestamptz not null default now(),
   constraint fk_analises_satelitais_empresa foreign key (organization_id, empresa_id) references erp.empresas (organization_id, id),
-  constraint fk_analises_satelitais_area foreign key (organization_id, empresa_id, area_id) references erp.areas (organization_id, empresa_id, id),
   constraint chk_analises_satelitais_janela check (janela_fim > janela_inicio),
   -- Concluída: a observação escolhida (dentro da janela) e a estatística inteira; nenhum motivo de falta.
   -- Sem observação útil: o motivo, e NENHUM número — baixa qualidade nunca vira NDVI fictício.
@@ -207,19 +214,16 @@ comment on column erp.analises_satelitais.metadados_provedor is 'Metadados SANIT
 comment on column erp.analises_satelitais.criado_por is 'Usuário que pediu a análise.';
 comment on column erp.analises_satelitais.created_at is 'Registro da análise (nunca é a data da imagem).';
 
--- ---------- 5) gatilho de conferência ----------
--- INSERT: a área existe, está viva, tem geometria, e o polígono analisado é o polígono de AGORA (hash). UPDATE:
--- recusado — o histórico não se reescreve. Lê erp.areas como o papel que insere (invoker): a RLS da área vale aqui
--- também, e área fora do escopo responde a mesma recusa de área inexistente.
+-- ---------- 4) gatilhos: conferência (INSERT) e imutabilidade (UPDATE, DELETE, TRUNCATE) ----------
+-- INSERT: a área existe, está viva, tem geometria, e o polígono analisado é o polígono de AGORA (hash). Lê erp.areas
+-- como o papel que insere (invoker): a RLS da área vale aqui também, e área fora do escopo responde a mesma recusa
+-- de área inexistente.
 create function erp.analises_satelitais_conferir() returns trigger
 language plpgsql set search_path = erp, pg_temp as $$
 declare
   v_geometria jsonb;
   v_achou boolean := false;
 begin
-  if tg_op = 'UPDATE' then
-    raise exception 'CONFLICT: A análise satelital registrada não se altera: uma análise nova é registrada ao lado da anterior.' using errcode = 'P0001';
-  end if;
   select true, a.geometria into v_achou, v_geometria
     from erp.areas a
    where a.id = new.area_id and a.organization_id = new.organization_id and a.empresa_id = new.empresa_id
@@ -236,18 +240,36 @@ begin
   return new;
 end $$;
 
-comment on function erp.analises_satelitais_conferir() is 'SAT-01: confere a área (viva, com geometria, mesmo polígono pelo hash) na inserção e recusa qualquer UPDATE (histórico imutável).';
+comment on function erp.analises_satelitais_conferir() is 'SAT-01: na inserção, confere a área (viva, com geometria, mesmo polígono pelo hash). A imutabilidade é de analises_satelitais_imutavel().';
 revoke execute on function erp.analises_satelitais_conferir() from public;
 
+-- O histórico não se reescreve nem se apaga, nem pelo dono do schema: não lê OLD nem NEW (gabarito da 0047).
+create function erp.analises_satelitais_imutavel() returns trigger
+language plpgsql set search_path = erp, pg_temp as $$
+begin
+  raise exception 'CONFLICT: A análise satelital registrada não se altera nem se apaga: uma análise nova é registrada ao lado da anterior.' using errcode = 'P0001';
+end $$;
+
+comment on function erp.analises_satelitais_imutavel() is 'SAT-01: histórico imutável — recusa UPDATE e DELETE (gatilho por linha) e TRUNCATE (gatilho por comando) com CONFLICT, inclusive para o dono do schema.';
+revoke execute on function erp.analises_satelitais_imutavel() from public;
+
 create trigger trg_analises_satelitais_conferir
-  before insert or update on erp.analises_satelitais
+  before insert on erp.analises_satelitais
   for each row execute function erp.analises_satelitais_conferir();
+
+create trigger trg_analises_satelitais_imutavel
+  before update or delete on erp.analises_satelitais
+  for each row execute function erp.analises_satelitais_imutavel();
+
+create trigger trg_analises_satelitais_imutavel_truncate
+  before truncate on erp.analises_satelitais
+  for each statement execute function erp.analises_satelitais_imutavel();
 
 create trigger trg_analises_satelitais_audit
   after insert on erp.analises_satelitais
   for each row execute function erp.audit_row();
 
--- ---------- 6) RLS e privilégios (categoria A da 0015; gabarito inline de 0040/0049) ----------
+-- ---------- 5) RLS e privilégios (categoria A da 0015; gabarito inline de 0040/0049) ----------
 alter table erp.analises_satelitais enable row level security;
 alter table erp.analises_satelitais force row level security;
 create policy tenant_e_empresa on erp.analises_satelitais for all to erp_app, authenticated
@@ -260,6 +282,14 @@ create policy tenant_e_empresa on erp.analises_satelitais for all to erp_app, au
 
 grant select, insert on erp.analises_satelitais to erp_app;
 revoke update, delete, truncate on erp.analises_satelitais from erp_app;
+
+-- ---------- 6) POR ÚLTIMO: a chave única da área e a FK composta que a usa ----------
+-- Só uma chave nova sobre colunas que já existem (id já é único, organization_id e empresa_id são obrigatórios): não
+-- muda linha nenhuma e não tem como recusar acervo. É aqui que erp.areas fica em ACCESS EXCLUSIVE, até o commit —
+-- por isso no fim do arquivo, depois de todas as outras travas já obtidas.
+alter table erp.areas add constraint areas_org_empresa_key unique (organization_id, empresa_id, id);
+alter table erp.analises_satelitais add constraint fk_analises_satelitais_area
+  foreign key (organization_id, empresa_id, area_id) references erp.areas (organization_id, empresa_id, id);
 
 -- ---------- 7) pós-condições nomeadas (objetos, nunca contagem de tabela viva) ----------
 do $$
@@ -276,9 +306,16 @@ begin
      is distinct from array['tenant_e_empresa'] then
     raise exception 'SAT-01: politica de erp.analises_satelitais diferente de tenant_e_empresa.';
   end if;
-  if not exists (select 1 from pg_constraint where conname = 'fk_analises_satelitais_area' and contype = 'f'
-                   and confdeltype = 'a' and confupdtype = 'a' and array_length(conkey, 1) = 3) then
-    raise exception 'SAT-01: FK composta da area (organizacao, empresa, area; sem cascata) ausente.';
+  if not exists (
+    select 1 from pg_constraint c
+     where c.conname = 'fk_analises_satelitais_area' and c.contype = 'f' and c.conrelid = 'erp.analises_satelitais'::regclass
+       and c.confrelid = 'erp.areas'::regclass and c.confdeltype = 'a' and c.confupdtype = 'a'
+       and (select array_agg(a.attname::text order by k.ord) from unnest(c.conkey) with ordinality k(attnum, ord)
+              join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum) = array['organization_id', 'empresa_id', 'area_id']
+       and (select array_agg(a.attname::text order by k.ord) from unnest(c.confkey) with ordinality k(attnum, ord)
+              join pg_attribute a on a.attrelid = c.confrelid and a.attnum = k.attnum) = array['organization_id', 'empresa_id', 'id']
+  ) then
+    raise exception 'SAT-01: FK composta da area (organizacao, empresa, area -> erp.areas(organizacao, empresa, id); sem cascata) ausente.';
   end if;
   if not exists (select 1 from pg_constraint where conname = 'fk_analises_satelitais_empresa' and contype = 'f'
                    and confdeltype = 'a' and confupdtype = 'a' and array_length(conkey, 1) = 2) then
@@ -288,8 +325,22 @@ begin
     raise exception 'SAT-01: chave unica areas_org_empresa_key ausente em erp.areas.';
   end if;
   if (select count(*) from pg_trigger t where not t.tgisinternal and t.tgrelid = 'erp.analises_satelitais'::regclass
-        and t.tgname in ('trg_analises_satelitais_conferir', 'trg_analises_satelitais_audit')) <> 2 then
-    raise exception 'SAT-01: gatilhos de erp.analises_satelitais ausentes (conferencia e auditoria).';
+        and t.tgname in ('trg_analises_satelitais_conferir', 'trg_analises_satelitais_imutavel',
+                         'trg_analises_satelitais_imutavel_truncate', 'trg_analises_satelitais_audit')) <> 4 then
+    raise exception 'SAT-01: gatilhos de erp.analises_satelitais ausentes (conferencia, imutabilidade por linha e por comando, auditoria).';
+  end if;
+  -- As duas funções de gatilho: INVOKER (a RLS da área vale na conferência) e search_path fixo.
+  if (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'erp' and p.proname in ('analises_satelitais_conferir', 'analises_satelitais_imutavel')
+         and not p.prosecdef and p.proconfig @> array['search_path=erp, pg_temp']) <> 2 then
+    raise exception 'SAT-01: funcoes de gatilho da analise fora do contrato (devem ser SECURITY INVOKER com search_path = erp, pg_temp).';
+  end if;
+  if (select count(*) from pg_constraint where conrelid = 'erp.analises_satelitais'::regclass and contype = 'c') <> 15 then
+    raise exception 'SAT-01: erp.analises_satelitais sem as 15 restricoes CHECK declaradas.';
+  end if;
+  if not (has_table_privilege('erp_app', 'erp.analises_satelitais', 'SELECT')
+          and has_table_privilege('erp_app', 'erp.analises_satelitais', 'INSERT')) then
+    raise exception 'SAT-01: erp_app sem SELECT/INSERT em erp.analises_satelitais; a API nao leria nem gravaria o historico.';
   end if;
   if has_table_privilege('erp_app', 'erp.analises_satelitais', 'UPDATE')
      or has_table_privilege('erp_app', 'erp.analises_satelitais', 'DELETE')

@@ -16,9 +16,10 @@ import { TEST_URL } from "./setup.js";
  * DB-2 aplica; reaplicar é recusado ("já aplicada") · DB-3 as listas dos CHECKs são as do domínio (um dono só) ·
  * DB-4 o que ela promete: coerência concluída × sem observação útil, FK composta da área (outra empresa e outra
  * organização recusadas), conferência da área no gatilho (inexistente/excluída → NOT_FOUND, sem polígono →
- * VALIDATION_ERROR, polígono que mudou → CONCURRENCY_CONFLICT), histórico imutável (UPDATE recusado até para o dono;
- * UPDATE/DELETE/TRUNCATE revogados do erp_app), unicidade por área/método/polígono/janela, RLS por empresa no módulo
- * da área (quem só vê B não vê nem grava em A) e auditoria.
+ * VALIDATION_ERROR, polígono que mudou → CONCURRENCY_CONFLICT), histórico imutável (UPDATE, DELETE e TRUNCATE
+ * recusados até para o dono; UPDATE/DELETE/TRUNCATE revogados do erp_app), unicidade por área/método/polígono/janela,
+ * RLS por empresa no módulo da área (quem só vê B não vê nem grava em A), auditoria e a consequência declarada da FK
+ * composta (área com análise não muda de empresa).
  *
  * Duas conexões: `db` (superusuário: monta o cenário e lê o catálogo) e `app` (papel da aplicação, SEM bypass de RLS,
  * com as GUCs da transação — o caminho que a API percorre).
@@ -33,7 +34,8 @@ const ALVO = "0052_analises_satelitais.sql";
 const ANTERIORES = listMigrations().filter((x) => x.name < ALVO);
 const SQL_ALVO = listMigrations().find((x) => x.name === ALVO)!.sql;
 const TRAVA = "SAT-01: outra transacao ja detem a trava desta migration (2026,86). Nada foi aplicado.";
-const JA = "SAT-01: a 0052 ja foi aplicada ou ha schema divergente (analises_satelitais/analises_satelitais_conferir/areas_org_empresa_key ja existe).";
+const JA = "SAT-01: a 0052 ja foi aplicada ou ha schema divergente (analises_satelitais/analises_satelitais_conferir/analises_satelitais_imutavel/areas_org_empresa_key ja existe).";
+const IMUTAVEL = "CONFLICT: A análise satelital registrada não se altera nem se apaga: uma análise nova é registrada ao lado da anterior.";
 
 const POLIGONO = { type: "Polygon", coordinates: [[[-56.1, -15.6], [-56.1, -15.59], [-56.09, -15.59], [-56.09, -15.6], [-56.1, -15.6]]] };
 const OUTRO_POLIGONO = { type: "Polygon", coordinates: [[[-56.2, -15.6], [-56.2, -15.59], [-56.19, -15.59], [-56.19, -15.6], [-56.2, -15.6]]] };
@@ -211,16 +213,31 @@ describe("DB-4 — o que a 0052 promete", () => {
     expect(await hashDe(areaA)).toBe(antigo);
   });
 
-  it("(e) histórico imutável: UPDATE recusado até para o dono do schema; erp_app sem UPDATE/DELETE/TRUNCATE", async () => {
+  it("(e) histórico imutável: UPDATE, DELETE e TRUNCATE recusados até para o dono do schema; erp_app sem UPDATE/DELETE/TRUNCATE", async () => {
     const id = (await db.query<{ id: string }>("select id from erp.analises_satelitais where area_id=$1 and situacao='concluida' limit 1", [areaA])).rows[0]!.id;
-    expect((await erroDe(db.query("update erp.analises_satelitais set valor_medio = 0.5 where id=$1", [id]))).message)
-      .toBe("CONFLICT: A análise satelital registrada não se altera: uma análise nova é registrada ao lado da anterior.");
+    const antes = (await db.query("select count(*)::int n from erp.analises_satelitais")).rows[0];
+    expect((await erroDe(db.query("update erp.analises_satelitais set valor_medio = 0.5 where id=$1", [id]))).message).toBe(IMUTAVEL);
+    expect((await erroDe(db.query("delete from erp.analises_satelitais where id=$1", [id]))).message).toBe(IMUTAVEL);
+    expect((await erroDe(db.query("truncate erp.analises_satelitais"))).message).toBe(IMUTAVEL);
+    expect((await db.query("select count(*)::int n from erp.analises_satelitais")).rows[0]).toEqual(antes);
+    expect((await db.query<{ v: string }>("select valor_medio::text v from erp.analises_satelitais where id=$1", [id])).rows[0]!.v).toBe("0.7200");
     const priv = (await db.query<{ u: boolean; d: boolean; t: boolean; s: boolean; i: boolean }>(
       `select has_table_privilege('erp_app','erp.analises_satelitais','UPDATE') u, has_table_privilege('erp_app','erp.analises_satelitais','DELETE') d,
               has_table_privilege('erp_app','erp.analises_satelitais','TRUNCATE') t, has_table_privilege('erp_app','erp.analises_satelitais','SELECT') s,
               has_table_privilege('erp_app','erp.analises_satelitais','INSERT') i`)).rows[0];
     expect(priv).toEqual({ u: false, d: false, t: false, s: true, i: true });
     expect((await erroDe(withTx(app, ctxPec(demo.adminUserId), (tx) => tx.query("delete from erp.analises_satelitais where id=$1", [id])))).code).toBe("42501");
+  });
+
+  it("(e2) funções de gatilho INVOKER com search_path fixo; a FK da área aponta para erp.areas na ordem (organização, empresa, área)", async () => {
+    const funcoes = (await db.query<{ proname: string; prosecdef: boolean; proconfig: string[] }>(
+      "select p.proname, p.prosecdef, p.proconfig from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='erp' and p.proname like 'analises_satelitais_%' order by p.proname")).rows;
+    expect(funcoes).toEqual([
+      { proname: "analises_satelitais_conferir", prosecdef: false, proconfig: ["search_path=erp, pg_temp"] },
+      { proname: "analises_satelitais_imutavel", prosecdef: false, proconfig: ["search_path=erp, pg_temp"] }
+    ]);
+    const fk = (await db.query<{ alvo: string; def: string }>("select confrelid::regclass::text alvo, pg_get_constraintdef(oid) def from pg_constraint where conname='fk_analises_satelitais_area'")).rows[0];
+    expect(fk).toEqual({ alvo: "erp.areas", def: "FOREIGN KEY (organization_id, empresa_id, area_id) REFERENCES erp.areas(organization_id, empresa_id, id)" });
   });
 
   it("(f) uma execução por área, método, polígono e janela: a repetição esbarra na unicidade (23505)", async () => {
@@ -246,5 +263,14 @@ describe("DB-4 — o que a 0052 promete", () => {
     expect((await withTx(app, { orgId: demo.orgId, userId: usuarioSoB, modulo: "financeiro" }, (tx) => tx.query("select id from erp.analises_satelitais where id = any($1::uuid[])", [[deA, deB]]))).rowCount).toBe(0);
     // Outra organização: o tenant não enxerga nada da demo.
     expect((await withTx(app, ctxPec(demo.adminUserId, outraOrg), (tx) => tx.query("select id from erp.analises_satelitais where id = any($1::uuid[])", [[deA, deB]]))).rowCount).toBe(0);
+  });
+
+  it("(h) consequência declarada da FK composta: área COM análise não muda de empresa (23503); área SEM análise continua mudando", async () => {
+    const r = await erroDe(db.query("update erp.areas set empresa_id=$2 where id=$1", [areaA, B]));
+    expect([r.code, r.constraint]).toEqual(["23503", "fk_analises_satelitais_area"]);
+    expect((await db.query<{ e: string }>("select empresa_id::text e from erp.areas where id=$1", [areaA])).rows[0]!.e).toBe(A);
+    const livre = await id1(`insert into erp.areas (organization_id, empresa_id, code, name, area_ha, usable_area_ha, land_use, status, tenure, geometria)
+         values ($1,$2,'SAT-LIVRE','[TEST] SAT livre',12,12,'pastagem','ativa','propria',$3) returning id`, [demo.orgId, A, JSON.stringify(POLIGONO)]);
+    expect((await db.query("update erp.areas set empresa_id=$2 where id=$1", [livre, B])).rowCount).toBe(1);
   });
 });
