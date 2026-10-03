@@ -1,9 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
-import { execFileSync } from "node:child_process";
-import path from "node:path";
 import { api, login } from "./helpers";
 import { cadastroDeEstoque, criarTopDeEstoque, escolherNaReferencia, incluirItemNaCentralDeEstoque, saldoNoServidor } from "./estoque-01-comum";
-import { garantirCommit, shaDaBase } from "./skew-fonte-da-base";
+import { fonteDoWebContem, shaDaBase } from "./skew-fonte-da-base";
 
 /**
  * OPERACOES-01 · F5b · K-2, SENTIDO 2 — O WEB DA BASE CONTRA A API DESTE HEAD (decisão 282, parte F5b; a janela "API
@@ -30,7 +28,6 @@ import { garantirCommit, shaDaBase } from "./skew-fonte-da-base";
  * Exatamente uma das duas marcas existe; nenhuma ou as duas é defeito (o detector reprova, nunca escolhe um mundo).
  */
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333";
-const RAIZ = path.resolve(__dirname, "../../..");
 
 /** A marca única de cada Central no fonte do web da base. */
 const MARCA_DA_CENTRAL_DE_ANTES = 'data-testid="estoque-item-adicionar"';
@@ -39,21 +36,8 @@ const MARCA_DA_CENTRAL_NO_MOTOR = 'PREFIXO_CENTRAL_ESTOQUE = "central-estoque"';
 /** As chaves do CORPO DE HOJE (o da Central da base, ESTOQUE-01), por extenso. */
 const CABECALHO_DE_HOJE = ["armazem_id", "data_documento", "empresa_id", "itens", "tipo_operacao_id"];
 
-/**
- * O fonte do web (`apps/web/src`) no commit da BASE contém `trecho`? Erro de leitura REPROVA — nunca vira "não contém"
- * (o mesmo contrato de `skew-fonte-da-base.ts`, cujo leitor não é exportado).
- */
-function fonteDaBaseContem(trecho: string): boolean {
-  const sha = shaDaBase();
-  garantirCommit(sha);
-  try {
-    execFileSync("git", ["grep", "-qF", trecho, sha, "--", "apps/web/src"], { cwd: RAIZ, stdio: "pipe" });
-    return true;
-  } catch (erro) {
-    if ((erro as { status?: number | null }).status === 1) return false;
-    throw erro;
-  }
-}
+/** O fonte do web da BASE contém `trecho`? O leitor único (`fonteDoWebContem`): erro de leitura REPROVA. */
+const fonteDaBaseContem = (trecho: string): boolean => fonteDoWebContem(shaDaBase(), trecho);
 
 /** O mundo do web da base: exatamente uma das duas Centrais. */
 function mundoDoWebDaBase(): "antes" | "motor" {
