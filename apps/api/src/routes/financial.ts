@@ -933,7 +933,7 @@ export default async function financialRoutes(app: FastifyInstance) {
 
   // ---------- Previsão orçamentária (valores por categoria × mês) ----------
   app.get("/financial/budget-plannings/:id/values", async (req) => runService(app, req, "budget_plannings.view", async (ctx) => {
-    const { id } = req.params as { id: string }; const p = await ctx.tx.query<{ year: number; empresa_id: string | null }>("select year, empresa_id from erp.budget_plannings where id=$1 and organization_id=$2" + scopedById(ctx, "empresa_id", id, { nullable: true }).sql, scopedById(ctx, "empresa_id", id, { nullable: true }).params); if (!p.rows[0]) throw notFound();
+    const { id } = req.params as { id: string }; const p = await ctx.tx.query<{ year: number; empresa_id: string | null }>("select bp.year, bp.empresa_id from erp.budget_plannings bp where bp.id=$1 and bp.organization_id=$2" + scopedById(ctx, "bp", id, { nullable: true }).sql, scopedById(ctx, "bp", id, { nullable: true }).params); if (!p.rows[0]) throw notFound();
     const cats = await ctx.tx.query("select id, code, name, nature, kind, parent_id from erp.financial_categories where organization_id=$1 and deleted_at is null and is_active order by code", [ctx.orgId]);
     const vals = await ctx.tx.query<{ financial_category_id: string; month: number; amount: string }>("select financial_category_id, month, amount from erp.budget_planning_values where planning_id=$1", [id]);
     // O realizado do ano anterior é agregado de TÍTULOS, que têm empresa própria. O filtro pela empresa do
@@ -946,7 +946,7 @@ export default async function financialRoutes(app: FastifyInstance) {
   }));
   app.put("/financial/budget-plannings/:id/values", async (req) => runService(app, req, "budget_plannings.edit", async (ctx) => {
     const { id } = req.params as { id: string }; const d = z.array(z.object({ financial_category_id: uuid, month: z.number().int().min(1).max(12), amount: dec })).parse(req.body);
-    const p = await ctx.tx.query("select 1 from erp.budget_plannings where id=$1 and organization_id=$2" + scopedById(ctx, "empresa_id", id, { nullable: true }).sql, scopedById(ctx, "empresa_id", id, { nullable: true }).params); if (!p.rowCount) throw notFound();
+    const p = await ctx.tx.query("select 1 from erp.budget_plannings bp where bp.id=$1 and bp.organization_id=$2" + scopedById(ctx, "bp", id, { nullable: true }).sql, scopedById(ctx, "bp", id, { nullable: true }).params); if (!p.rowCount) throw notFound();
     for (const v of d) await ctx.tx.query("insert into erp.budget_planning_values(planning_id,financial_category_id,month,amount) values ($1,$2,$3,$4) on conflict (planning_id,financial_category_id,month) do update set amount=excluded.amount", [id, v.financial_category_id, v.month, money(v.amount)]);
     return { saved: d.length };
   }));
