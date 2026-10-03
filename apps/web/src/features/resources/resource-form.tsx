@@ -23,6 +23,8 @@ import { FichaEmAbas, ConsultaCnpj, CriacaoPorOutraPorta, camposApagadosNaTroca,
 import { JanelaConsultaCnpj, esquecerImportacaoPendente, lerImportacaoPendente, useConsultaCnpjJanela, type RespostaCnpj } from "./consulta-cnpj-janela";
 import { AttachmentsDialog } from "@/features/base1/attachments-dialog";
 import { B1Field } from "./campo-b1";
+import { CampoMapaArea } from "@/features/areas/campo-mapa-area";
+import type { Polygon } from "geojson";
 export { B1Field };
 
 type Values = Record<string, unknown>;
@@ -38,11 +40,11 @@ const iguala = (x: unknown, esperado: unknown) => x === esperado || String(x) ==
  * `anulaQuandoEsvaziado` e que o usuário ESVAZIOU (`original`, o registro como veio da API, tinha valor) vai null: é
  * assim que latitude/longitude do Parceiro se limpam (R1, W-8), sem mudar o numérico das outras fichas.
  */
-function toApi(fields: FieldDef[], v: Values, locked: string[] = [], original?: Values | null): Values { const o: Values = {}; for (const f of fields) { if (f.readOnly || locked.includes(f.name)) continue; /* campos travados pelo layout não vão no payload (mantêm o valor atual) */ let x = v[f.name]; /* AJUSTES 01: campo que o tipo esconde vai null (a API recusa o campo do outro tipo) */ if (f.limpaQuandoOculto && f.visibleWhen && !iguala(v[f.visibleWhen.field], f.visibleWhen.equals)) x = null; if (x === "" || x === undefined) x = null; if (f.type === "json" && typeof x === "string") { try { x = JSON.parse(x); } catch { throw new Error(`JSON inválido em ${f.label}`); } } if (f.type === "integer" && x !== null) x = Number(x); if (f.type === "boolean") x = Boolean(x); if (f.type === "date" && typeof x === "string") x = x.slice(0, 10); if (x === null && !f.required && f.type === "boolean") x = false; if (x === null && ["money", "quantity", "number", "percent", "integer"].includes(f.type) && !(f.anulaQuandoEsvaziado && original && original[f.name] !== "" && original[f.name] !== null && original[f.name] !== undefined)) continue; /* numérico vazio: deixa o default do banco (0) valer */ o[f.name] = x; } return o; }
+function toApi(fields: FieldDef[], v: Values, locked: string[] = [], original?: Values | null): Values { const o: Values = {}; for (const f of fields) { if (f.readOnly || locked.includes(f.name)) continue; /* campos travados pelo layout não vão no payload (mantêm o valor atual) */ let x = v[f.name]; /* AJUSTES 01: campo que o tipo esconde vai null (a API recusa o campo do outro tipo) */ if (f.limpaQuandoOculto && f.visibleWhen && !iguala(v[f.visibleWhen.field], f.visibleWhen.equals)) x = null; if (x === "" || x === undefined) x = null; if (f.type === "json" && typeof x === "string") { try { x = JSON.parse(x); } catch { throw new Error(`JSON inválido em ${f.label}`); } } /* geometria ausente: default `{}` do json e stringify de null não podem ir ao banco (gatilho exige Polygon ou null) */ if (f.name === "geometria" && x !== null && typeof x === "object" && !Array.isArray(x) && (x as { type?: string }).type !== "Polygon") x = null; if (f.type === "integer" && x !== null) x = Number(x); if (f.type === "boolean") x = Boolean(x); if (f.type === "date" && typeof x === "string") x = x.slice(0, 10); if (x === null && !f.required && f.type === "boolean") x = false; if (x === null && ["money", "quantity", "number", "percent", "integer"].includes(f.type) && !(f.anulaQuandoEsvaziado && original && original[f.name] !== "" && original[f.name] !== null && original[f.name] !== undefined)) continue; /* numérico vazio: deixa o default do banco (0) valer */ o[f.name] = x; } return o; }
 
 const ctl = "h-5 w-full rounded-none border-0 bg-transparent px-0 text-[13px] font-medium text-[var(--mg-text-1)] shadow-none focus:ring-0 focus:outline-none read-only:bg-transparent disabled:bg-transparent disabled:text-[var(--mg-text-1)]";
 /** Controle de um campo declarativo (mesmo componente para todos os tipos), estilo "rótulo flutuante" do modelo base. */
-function FieldControl({ f, form, dis, required, isNew, values, id, record, onOpenChange, extra, envolver }: { f: FieldDef; form: UseFormReturn<Values>; dis: boolean; required: boolean; isNew: boolean; values: Values; id?: string; record?: Values | null; onOpenChange?: (o: boolean) => void; /** ajuste de uma tela (ficha): interceptar a troca do seletor, ligar o rótulo, recortar a referência */ extra?: ExtraDoCampo; /** busca oficial: moldura de cada PARTE (AJUSTES 02, 2.1) */ envolver?: EnvolverParte }) {
+function FieldControl({ f, form, dis, required, isNew, values, id, record, onOpenChange, extra, envolver, resourceKey }: { f: FieldDef; form: UseFormReturn<Values>; dis: boolean; required: boolean; isNew: boolean; values: Values; id?: string; record?: Values | null; onOpenChange?: (o: boolean) => void; /** ajuste de uma tela (ficha): interceptar a troca do seletor, ligar o rótulo, recortar a referência */ extra?: ExtraDoCampo; /** busca oficial: moldura de cada PARTE (AJUSTES 02, 2.1) */ envolver?: EnvolverParte; resourceKey?: string }) {
   const rules = { required: required ? "Obrigatório" : false };
   // referência oficial (município, banco, NCM): busca no servidor, grava o mesmo código de sempre
   // referência oficial (município, banco, NCM, CBO): cada PARTE é um campo (AJUSTES 02, 2.1) — só a busca é editável; grava o mesmo código de sempre
@@ -52,6 +54,23 @@ function FieldControl({ f, form, dis, required, isNew, values, id, record, onOpe
   if (f.type === "select") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <MgSelect id={id} value={String(field.value ?? "")} onChange={extra?.aoMudar ?? field.onChange} options={f.options ?? []} disabled={dis} allowEmpty={extra?.permiteVazio ?? !required} onOpenChange={onOpenChange} />} />;
   if (f.type === "boolean") return <MgSelect id={id} value={values[f.name] === true || values[f.name] === "true" ? "true" : "false"} onChange={(v) => form.setValue(f.name, v === "true", { shouldDirty: true })} options={[{ value: "true", label: "Sim" }, { value: "false", label: "Não" }]} disabled={dis} onOpenChange={onOpenChange} />;
   if (f.type === "date") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <MgDatePicker id={id} value={String(field.value ?? "")} onChange={field.onChange} disabled={dis} onOpenChange={onOpenChange} />} />;
+  // Cadastro de Área/Piquete: geometria é o mapa (não textarea JSON).
+  if (resourceKey === "areas" && f.name === "geometria") {
+    return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => (
+      <CampoMapaArea
+        value={field.value}
+        disabled={dis}
+        cor={typeof values["color"] === "string" && values["color"] ? String(values["color"]) : undefined}
+        onChange={(g: Polygon | null) => field.onChange(g ? JSON.stringify(g) : "")}
+        onAreaHa={(ha) => {
+          const haStr = ha.toFixed(2);
+          form.setValue("area_ha", haStr, { shouldDirty: true });
+          const util = values["usable_area_ha"];
+          if (util === "" || util === null || util === undefined) form.setValue("usable_area_ha", haStr, { shouldDirty: true });
+        }}
+      />
+    )} />;
+  }
   if (f.type === "textarea" || f.type === "json") return <Textarea id={id} readOnly={dis} tabIndex={dis ? -1 : undefined} className={cn(ctl, "h-auto min-h-[56px] py-0.5", f.type === "json" && "font-mono text-xs")} {...form.register(f.name, rules)} />;
   if (f.type === "tags") return <div className="flex flex-wrap gap-2 pt-1">{f.options?.map((o) => <label key={o.value} className="flex items-center gap-1 text-[12.5px]"><input type="checkbox" disabled={dis} className="accent-brand-500" checked={(values[f.name] as string[] | undefined)?.includes(o.value) ?? false} onChange={(e) => { const cur = new Set((values[f.name] as string[]) ?? []); if (e.target.checked) cur.add(o.value); else cur.delete(o.value); form.setValue(f.name, [...cur], { shouldDirty: true }); }} />{o.label}</label>)}</div>;
   return <Input id={id} readOnly={dis} tabIndex={dis ? -1 : undefined} className={ctl} type={f.type === "email" ? "email" : ["money", "quantity", "number", "percent", "integer"].includes(f.type) ? "number" : "text"} step={f.type === "integer" ? 1 : f.type === "money" ? "0.01" : "0.0001"} maxLength={f.maxLength} {...form.register(f.name, rules)} />;
@@ -193,9 +212,17 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
     // busca oficial (AJUSTES 02, 2.1): UM B1Field POR PARTE, lado a lado na linha; a busca leva rótulo, obrigatório e erro;
     // as partes só leitura têm a cara de travadas em edição
     const envolver: EnvolverParte | undefined = f.busca ? (p) => <B1Field key={p.parte} flex idDoControle={p.id} label={p.parte === "busca" ? l.fieldLabels[f.name] ?? p.rotulo : p.rotulo} required={p.parte === "busca" && required} error={p.parte === "busca" ? err : undefined} help={p.parte === "busca" ? f.help : undefined} disabled={readOnly} locked={locked || p.somenteLeitura} hasValue={p.hasValue} open={p.parte === "busca" && openField === f.name} abaixo={p.abaixo} className={p.parte === "busca" ? undefined : p.parte === "codigo" ? "min-w-[110px] max-w-[160px]" : "min-w-[64px] max-w-[80px]"}>{p.node}</B1Field> : undefined;
-    const padrao = (extra?: ExtraDoCampo) => { if (extra) soAjuste = true; return <FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} record={q.data ?? null} onOpenChange={aoAbrir} extra={extra} envolver={envolver} />; };
+    const padrao = (extra?: ExtraDoCampo) => { if (extra) soAjuste = true; return <FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} record={q.data ?? null} onOpenChange={aoAbrir} extra={extra} envolver={envolver} resourceKey={resourceKey} />; };
     const el = controle ? controle({ dis, required, onOpenChange: aoAbrir, padrao }) : padrao();
     if (envolver && (!controle || soAjuste)) return <React.Fragment key={f.name}>{el}</React.Fragment>;
+    // Mapa da área: campo largo (sem rótulo flutuante estreito) — o próprio widget traz a orientação.
+    if (resourceKey === "areas" && f.name === "geometria") {
+      return <div key={f.name} className="w-full min-w-0" data-testid="campo-geometria-area">
+        <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{rotulo}{required ? " *" : ""}</div>
+        {err && <p className="mb-1 text-[12px] text-red-600">{err}</p>}
+        {el}
+      </div>;
+    }
     return <B1Field key={f.name} flex label={rotulo} required={required} error={controle && f.name === "document" ? undefined : err} help={f.help} disabled={readOnly} locked={locked} hasValue={hasValue || (Boolean(controle) && !soAjuste)} multiline={f.type === "textarea" || f.type === "json" || f.type === "tags"} open={openField === f.name}>{el}</B1Field>;
   };
   const panels = l.panels.filter((p) => !p.hidden);

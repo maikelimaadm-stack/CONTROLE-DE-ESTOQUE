@@ -420,6 +420,8 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
   {
     key: "areas", codeEntity: "area", codigoAutomatico: "sequencial", label: "Área (Piquete)", labelPlural: "Áreas", table: "areas", permission: "batch_area", labelField: "name", route: "/pecuaria/areas", softDelete: true, empresaScoped: true, defaultSort: "code",
     fields: [
+      // CADASTRO-AREAS-02: mapa primeiro, depois a ficha — mesmo SSOT (erp.areas) do Mapa de Manejo.
+      { name: "geometria", label: "Mapa", type: "json", section: "Mapa", span: 12, help: "Desenhe o perímetro da área no mapa; a área total (ha) é calculada pelo polígono." },
       REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, section: "Identificação", span: 4 }),
       T("code", "Código", { required: true, list: true, search: true, section: "Identificação", span: 2 }),
       T("name", "Nome", { required: true, list: true, search: true, section: "Identificação", span: 4 }),
@@ -442,8 +444,6 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       S("relief", "Relevo", RELEVO_DA_AREA, { section: "Solo", span: 3 }),
       S("tenure", "Posse", POSSE_DA_AREA, { required: true, filter: true, default: "propria", section: "Outros", span: 3 }),
       { name: "notes", label: "Observações", type: "textarea", section: "Outros", span: 12 },
-      // CADASTRO-AREAS-02: polígono do Mapa de Manejo — SSOT em erp.areas (não em mapa_areas).
-      { name: "geometria", label: "Geometria (mapa)", type: "json", section: "Mapa", span: 12 },
       active()
     ]
   },

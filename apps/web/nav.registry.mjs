@@ -385,9 +385,8 @@ export const EXTRA_REDIRECTS = [
   // uma segunda página a manter em paralelo.
   { source: "/cadastros/farms", destination: "/cadastros/empresas" },
   { source: "/cadastros/farms/:id", destination: "/cadastros/empresas/:id" },
-  // CADASTRO-AREAS-02: cadastro novo de área abre o mapa (SSOT erp.areas); a lista em /pecuaria/areas fica o relatório.
-  { source: "/pecuaria/areas/new", destination: "/mapa-de-manejo?nova=1" },
-  { source: "/cadastros/areas/new", destination: "/mapa-de-manejo?nova=1" },
+  // CADASTRO-AREAS-02: cadastro de área fica em Áreas/Piquetes (mapa + ficha no ResourceForm).
+  // Legado mapa_areas (skew) continua redirecionando para o módulo Mapa de Manejo.
   { source: "/cadastros/mapa_areas", destination: "/mapa-de-manejo" },
   { source: "/cadastros/mapa_areas/new", destination: "/mapa-de-manejo?nova=1" },
   { source: "/cadastros/mapa_areas/:id", destination: "/mapa-de-manejo" }
