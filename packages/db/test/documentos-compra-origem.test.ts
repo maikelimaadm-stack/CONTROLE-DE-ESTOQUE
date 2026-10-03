@@ -187,7 +187,7 @@ describe("premissas e catálogo", () => {
     // Manejo — MAPA-01, #91; a maior por NOME, embora em produção tenha sido aplicada antes das 0042–0047).
     const r = (await db.query<{ ate: number; n: number; ultima: string }>(
       "select count(*) filter (where name <= '0037_receber_pedido_de_compra.sql')::int ate, count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
-    expect(r).toEqual({ ate: 37, n: 48, ultima: "0049_mapa_de_manejo.sql" });
+    expect(r).toEqual({ ate: 37, n: 49, ultima: "0049_mapa_de_manejo.sql" });
   });
 
   it("colunas novas: tipo e nulidade", async () => {

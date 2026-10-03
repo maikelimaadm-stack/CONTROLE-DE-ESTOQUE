@@ -33,8 +33,8 @@
     `documentos_compra_conferir_v3`, `documentos_compra_finalizacao_guarda`, `documentos_compra_item_orcamento_guarda`,
     `documentos_compra_item_origem_guarda_v2` e `documentos_compra_transicao_v3` (0044, que apagou as versões
     anteriores); e as da nota repetida, `documentos_compra_nota_guarda` e `invoices_chave_nota_guarda` (0047, com a trava
-    da chave). Todas no schema `erp`, com `search_path` fixo — exceto `erp.audit_row`, da 0001, que não fixa
-    `search_path` (dívida declarada; corrigi-la exige migration própria).
+    da chave). Todas no schema `erp`, com `search_path` fixo — inclusive `erp.audit_row` (0001), fixada em
+    `erp, pg_temp` pela 0048 (OPERACOES-01 F12, decisão 288) sem reescrever o corpo.
   - **Como contar** (para o revisor refazer): no banco migrado até a última migration,
     `select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'erp' and p.prosecdef order by 1;`
     (37 linhas, conferido em 03/10 num banco de teste local com a 0047); pelo repositório,

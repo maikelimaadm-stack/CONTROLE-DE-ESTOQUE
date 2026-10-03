@@ -318,14 +318,14 @@ describe("DB-1/DB-2 — a 0042 sobre o banco até a 0041: trava, lock_timeout e 
 });
 
 describe("DB-3 — a 0042 aplica; reaplicar e as pós-condições", () => {
-  it("DB-3.1 aplica: ledger com 42 (a 0042 por último NESTE banco), 48 no repositório, objetos criados e trava liberada", async () => {
+  it("DB-3.1 aplica: ledger com 42 (a 0042 por último NESTE banco), 49 no repositório, objetos criados e trava liberada", async () => {
     await aplicar();
     const ledger = (await db.query<{ n: number; ultima: string }>("select count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
     expect(ledger).toEqual({ n: 42, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
     // O ledger DESTE banco termina na 0042 (ele sobe só até ela); no repositório a 0043 (F5a), a 0044 (F6a), a 0045 (F9), a
-    // 0046 (F10), a 0047 (F7) e a 0049 (MAPA-01) vêm depois.
-    expect(noDisco.length, "48 migrations no repositório (0001..0047 e a 0049)").toBe(48);
+    // 0046 (F10), a 0047 (F7), a 0048 (F12) e a 0049 (MAPA-01) vêm depois.
+    expect(noDisco.length, "49 migrations no repositório (0001..0049)").toBe(49);
     expect(noDisco[41]).toBe(ALVO);
     expect(await objetos()).toEqual({
       tabela: "erp.financeiro_naturezas_padrao", lote: true, tipo: true, extrato: "erp.extrato_conta_organizacao(uuid[],date,date)",

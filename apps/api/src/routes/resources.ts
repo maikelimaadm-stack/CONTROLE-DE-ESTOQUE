@@ -177,7 +177,9 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
   for (const [k, v] of Object.entries(def.filtroFixo ?? {})) where.push(`${ident(k)} = ${b.add(v)}`);
   const escL = escopoDoRecurso(def);
   if (escL.ativo && ctx.empresaId && existing.has("empresa_id") && !filters["empresa_id"]) where.push(escL.nullable ? `(empresa_id is null or empresa_id = ${b.add(ctx.empresaId)})` : `empresa_id = ${b.add(ctx.empresaId)}`);
-  if (escL.ativo && existing.has("empresa_id")) where.push(...empresaScopeBuilder(ctx, "empresa_id", b, { nullable: escL.nullable }));
+  // A coluna QUALIFICADA pela tabela: sem isso, o `empresa_id` do `exists` do escopo seria a coluna de
+  // erp.membro_empresas (a subconsulta resolve o nome mais perto) e o predicado não amarraria a linha.
+  if (escL.ativo && existing.has("empresa_id")) where.push(...empresaScopeBuilder(ctx, `${ident(def.table)}.empresa_id`, b, { nullable: escL.nullable }));
   if (q.search) {
     // campo sigiloso não entra na busca textual de quem não o vê (R1-2): a busca é uma pergunta sobre o valor
     const sf = def.fields.filter((f) => f.search && podeVerCampo(ctx, f)).map((f) => f.name);
@@ -292,7 +294,8 @@ export async function getOne(ctx: ServiceCtx, def: ResourceDef, id: string) {
   const gp: unknown[] = orgCond ? [id, ctx.orgId] : [id];
   // fazenda: registro fora do escopo do membro não é visível (mesma regra da listagem)
   const escG = escopoDoRecurso(def);
-  const farmCond = escG.ativo && existing.has("empresa_id") ? empresaScopeSql(ctx, "empresa_id", gp, { ignoreSelected: true, nullable: escG.nullable }) : "";
+  // (a coluna qualificada pela tabela, pelo mesmo motivo da listagem)
+  const farmCond = escG.ativo && existing.has("empresa_id") ? empresaScopeSql(ctx, `${ident(def.table)}.empresa_id`, gp, { ignoreSelected: true, nullable: escG.nullable }) : "";
   // recorte FIXO: linha fora dele é a MESMA 404 de inexistente
   const fixoCond = Object.entries(def.filtroFixo ?? {}).map(([k, v]) => ` and ${ident(k)} = $${gp.push(v)}`).join("");
   const r = await ctx.tx.query(`select ${cols.map(ident).join(",")} from erp.${ident(def.table)} where id=$1 ${orgCond} ${def.softDelete ? "and deleted_at is null" : ""}${farmCond}${fixoCond}`, gp);
