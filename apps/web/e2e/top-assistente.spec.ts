@@ -95,9 +95,9 @@ test("AS-1 — Novo começa pelo tipo de movimento (só os tipos com tela do cat
   await login(page);
   const catalogo = await catalogoPublicado(page);
   const comTela = catalogo.tipos.filter((t) => t.temTela);
-  // Os 22: os 9 com documento, o orçamento de compra (F6b), os 3 da movimentação interna (F5b), os 6 de Módulos (F10) e
-  // os 3 do Financeiro (F9).
-  expect(comTela, "premissa: o catálogo publicado tem 22 tipos com tela").toHaveLength(22);
+  // Os 24: os 9 com documento, o orçamento de compra (F6b), os 3 da movimentação interna (F5b), os 8 de Módulos (os 6
+  // da F10 e a compra e a venda de animais da F10r) e os 3 do Financeiro (F9).
+  expect(comTela, "premissa: o catálogo publicado tem 24 tipos com tela").toHaveLength(24);
   const familias = await api<{ items: { codigo: string }[] }>(page, "GET", "/api/admin/tipos-operacao/familias");
   expect(familias.items.length, "premissa: o registry (/familias, inteiro) tem mais famílias do que tipos com tela").toBeGreaterThan(comTela.length);
   // Todo tipo do catálogo tem tela desde a F10: as famílias que o passo 1 NÃO oferece são as do registry fora do
@@ -119,7 +119,8 @@ test("AS-1 — Novo começa pelo tipo de movimento (só os tipos com tela do cat
     await expect(page.getByTestId("top-salvar"), "sem tipo, nada a salvar").toBeDisabled();
 
     // OS GRUPOS E OS TIPOS: os de hoje, por extenso, e exatamente os com tela do catálogo publicado. Desde a F10
-    // (decisão 287) os 6 de Módulos têm tela; o Financeiro continua fora (nenhum tipo dele tem tela).
+    // (decisão 287) os 6 de Módulos têm tela, e desde a F10r a compra e a venda de animais também (o Maike cria a TOP
+    // padrão da pecuária pelo assistente); o Financeiro tem tela desde a F9.
     const grupos = forma.locator("[data-testid^='top-assistente-grupo-']");
     await expect(grupos, "os 5 grupos: todo grupo tem tipo com tela").toHaveCount(5);
     expect(await grupos.evaluateAll((gs) => gs.map((g) => g.getAttribute("data-testid"))))
@@ -132,7 +133,8 @@ test("AS-1 — Novo começa pelo tipo de movimento (só os tipos com tela do cat
     // A movimentação interna na ordem do catálogo: as três da F5a (com tela desde a F5b) antes das quatro de antes.
     await expect(botoes("movimentacao_interna")).toHaveText(["Requisição", "Consumo", "Devolução de consumo", "Entrada", "Saída/baixa", "Transferência", "Ajuste"]);
     await expect(forma.getByTestId("top-assistente-grupo-modulos").getByRole("heading")).toHaveText("Módulos");
-    await expect(botoes("modulos")).toHaveText(["Abastecimento", "Manutenção", "Ordem de serviço", "Manejo", "Batelada", "Produção de ração"]);
+    await expect(botoes("modulos")).toHaveText(["Abastecimento", "Manutenção", "Ordem de serviço", "Manejo", "Batelada", "Produção de ração",
+      "Compra de animais", "Venda de animais"]);
     // OPERACOES-01 F9 (decisão 286): o Financeiro ganhou tela (o lançamento avulso e o movimento escolhem a TOP primeiro).
     await expect(forma.getByTestId("top-assistente-grupo-financeiro").getByRole("heading")).toHaveText("Financeiro");
     await expect(botoes("financeiro")).toHaveText(["Conta a pagar", "Conta a receber", "Movimento bancário"]);

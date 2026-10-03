@@ -112,7 +112,10 @@ export const ptBR: Catalogo = {
     "top.ordens_servico.ordem_de_servico": "Ordem de serviço",
     // OPERACOES-01 F10 (decisão 287): as famílias do manejo e da batelada.
     "top.pecuaria.manejo": "Manejo",
-    "top.confinamento.batelada": "Batelada"
+    "top.confinamento.batelada": "Batelada",
+    // OPERACOES-01 F10r (decisão 287): as famílias da compra e da venda de animais.
+    "top.pecuaria.compra_de_animais": "Compra de animais",
+    "top.pecuaria.venda_de_animais": "Venda de animais"
   }
 };
 

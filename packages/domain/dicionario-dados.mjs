@@ -384,6 +384,7 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   {
     codigo: "ERP-PECUARIA-MOVIMENTACAO", tabela: "erp.animal_movements", nome: "Movimentação de Rebanho", modulo: "PECUARIA", natureza: "entidade", idGlobal: true,
     discriminador: "movement_type", rotas: { purchase: "/pecuaria/movimentacoes/purchase/:id", sale: "/pecuaria/movimentacoes/sale/:id", birth: "/pecuaria/movimentacoes/birth/:id", death: "/pecuaria/movimentacoes/death/:id", loss: "/pecuaria/movimentacoes/loss/:id" },
+    discriminadorTop: "movement_type", tops: ["pecuaria.compra_de_animais", "pecuaria.venda_de_animais"],
     descricao: "Entrada, saída, venda ou morte de animais. O tipo faz parte da rota canônica."
   },
   {

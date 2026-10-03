@@ -62,8 +62,9 @@ export interface PerfilDosPadroesFinanceiros {
   readonly provisao: boolean;
   /**
    * A regra "sem natureza e centro" vale nela? Só onde o documento pode chegar SEM natureza e centro e hoje recai na
-   * 1ª por código (a venda, o pedido de venda, a solicitação). O lançamento avulso e o movimento sempre os informam (o
-   * rateio é obrigatório); a compra e o pedido de compra não têm padrão legado (sem o par, a recusa de hoje).
+   * 1ª por código (a venda, o pedido de venda, a solicitação e, desde a F10r, a compra e a venda de animais). O
+   * lançamento avulso e o movimento bancário sempre os informam (o rateio é obrigatório); a compra e o pedido de compra
+   * não têm padrão legado (sem o par, a recusa de hoje).
    */
   readonly semClassificacao: boolean;
   /**
@@ -109,11 +110,15 @@ interface LinhaDoPerfil {
  *   solicitação de compra   | sim                   | não               | natureza, centro, tipo de título, conta   | despesa
  *   pedido de compra        | não                   | sim               | os cinco                                  | despesa
  *   compra                  | não                   | sim               | os cinco                                  | despesa
+ *   compra de animais       | sim                   | sim               | natureza, centro, tipo de título, conta   | despesa
+ *   venda de animais        | sim                   | sim               | natureza, centro, tipo de título, conta   | receita
  *
  * ("receita" e "despesa" aceitam também a natureza "Receita e despesa".) O pedido de compra e a compra (F9b) não têm
  * "sem natureza e centro": a compra não tem padrão legado — sem o par no documento nem na TOP, ela é recusada como hoje,
- * e a API a classifica sempre com "exigir". As outras famílias não usam a seção (o orçamento de venda e o de compra, o
- * estoque, os módulos…).
+ * e a API a classifica sempre com "exigir". A compra e a venda de animais (F10r) têm padrão legado (a 1ª natureza "de
+ * animais" e o 1º centro por código, o código de hoje do movimento de animais) e o documento informa a natureza e o
+ * centro; o movimento não tem forma de pagamento. As outras famílias não usam a seção (o orçamento de venda e o de
+ * compra, o estoque, os módulos…).
  */
 const MATRIZ: readonly LinhaDoPerfil[] = [
   { familia: familiaOperacionalDeDocumentoVenda("order"), semClassificacao: true, trocaPeloDocumento: true, campos: TODOS, naturezas: RECEITA },
@@ -126,6 +131,11 @@ const MATRIZ: readonly LinhaDoPerfil[] = [
   // sem natureza e centro no documento nem na TOP, ela é recusada como hoje — "sem natureza e centro" não vale aqui.
   { familia: familiaOperacionalDeDocumentoCompra("pedido"), semClassificacao: false, trocaPeloDocumento: true, campos: TODOS, naturezas: DESPESA },
   { familia: familiaOperacionalDeDocumentoCompra("compra"), semClassificacao: false, trocaPeloDocumento: true, campos: TODOS, naturezas: DESPESA },
+  // OPERACOES-01 F10r (decisão 287): a compra e a venda de animais (o título do movimento de animais). Têm padrão legado
+  // (a 1ª natureza "de animais" e o 1º centro por código) → "sem natureza e centro" vale; o documento informa natureza e
+  // centro → a troca vale; sem forma de pagamento (o movimento não tem forma).
+  { familia: resolverTipoOperacao("erp.animal_movements", "purchase")?.codigo, semClassificacao: true, trocaPeloDocumento: true, campos: DO_TITULO, naturezas: DESPESA },
+  { familia: resolverTipoOperacao("erp.animal_movements", "sale")?.codigo, semClassificacao: true, trocaPeloDocumento: true, campos: DO_TITULO, naturezas: RECEITA },
 ];
 
 const PERFIS: ReadonlyMap<string, PerfilDosPadroesFinanceiros> = new Map(
@@ -254,4 +264,23 @@ export function planoDaClassificacao(p: {
     return { tipo: "exigir", faltam };
   }
   return { tipo: "legado", naturezaId: topNatureza, centroCustoId: topCentro };
+}
+
+/**
+ * A CLASSIFICAÇÃO POR CAMPO (OPERACOES-01 F10r, o movimento de animais): o documento que informa os DOIS é o do
+ * documento; senão cada campo é o do documento ou, sem ele, o padrão da TOP — e o par assim montado segue a ordem de
+ * `planoDaClassificacao` (par completo → pronta; "exigir" → recusa com o que falta; senão o legado só no campo vazio).
+ * O campo informado no documento NUNCA é descartado: o movimento de animais de hoje usa a natureza OU o centro
+ * informados sozinhos (descartá-los em silêncio seria ampliar escopo). Com o documento vazio ou completo, é
+ * exatamente `planoDaClassificacao`.
+ */
+export function planoDaClassificacaoPorCampo(p: Parameters<typeof planoDaClassificacao>[0]): PlanoDaClassificacao {
+  const docNatureza = idNormal(p.documento.naturezaId);
+  const docCentro = idNormal(p.documento.centroCustoId);
+  if (docNatureza !== null && docCentro !== null) return planoDaClassificacao(p);
+  return planoDaClassificacao({
+    documento: { naturezaId: null, centroCustoId: null },
+    padrao: { naturezaId: docNatureza ?? idNormal(p.padrao?.naturezaId), centroCustoId: docCentro ?? idNormal(p.padrao?.centroCustoId) },
+    semClassificacao: p.semClassificacao,
+  });
 }

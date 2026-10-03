@@ -188,7 +188,13 @@ export const TIPOS_OPERACAO: readonly TipoOperacao[] = Object.freeze([
   // OPERACOES-01 F10 (decisão 287): o manejo e a batelada recebem a TOP no próprio registro. UMA família por tabela:
   // o manejo inteiro (não por `handling_type` — a permissão continua por tipo de manejo) e a batelada de dieta.
   T("pecuaria.manejo", "pecuaria", entidade("erp.animal_handlings")),
-  T("confinamento.batelada", "confinamento", entidade("erp.diet_batches"))
+  T("confinamento.batelada", "confinamento", entidade("erp.diet_batches")),
+  // OPERACOES-01 F10r (decisão 287): a compra e a venda de animais — DUAS famílias por `movement_type` (o molde de
+  // `erp.financial_titles`/`direction`): o título da compra é despesa e o da venda é receita, e o perfil financeiro é
+  // por família. Nascimento, morte, perda e as movimentações internas NÃO ganham família: não geram título.
+  // No FIM do registry para não reordenar nada do que já existe.
+  T("pecuaria.compra_de_animais", "pecuaria", variante("erp.animal_movements", "movement_type", "purchase")),
+  T("pecuaria.venda_de_animais", "pecuaria", variante("erp.animal_movements", "movement_type", "sale"))
 ]);
 
 const POR_CODIGO = new Map(TIPOS_OPERACAO.map((t) => [t.codigo, t]));

@@ -431,13 +431,13 @@ describe("TF-4 — as recusas, exatas, e nada gravado", () => {
 // TF-5
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
 describe("TF-5 — a família do movimento bancário e os tipos do Financeiro com tela", () => {
-  it("TF-5 /familias tem financeiro.movimento_bancario (28 famílias, com as da F5a e da F6a); o catálogo publicado tem tela nas três do Financeiro, com as famílias do registry", async () => {
+  it("TF-5 /familias tem financeiro.movimento_bancario (32 famílias, com as da F5a, da F6a, da F10 e da F10r); o catálogo publicado tem tela nas três do Financeiro, com as famílias do registry", async () => {
     const f = await c.ligada.inject({ method: "GET", url: "/api/admin/tipos-operacao/familias", headers: c.h.headers() });
     expect(f.statusCode, f.body).toBe(200);
     const codigos = (j(f).items as { codigo: string }[]).map((x) => x.codigo);
     expect(codigos).toContain("financeiro.movimento_bancario");
     expect(codigos, "o registry inteiro").toEqual([...CODIGOS_TIPO_OPERACAO]);
-    expect(codigos).toHaveLength(28);
+    expect(codigos).toHaveLength(32);
 
     const r = await c.ligada.inject({ method: "GET", url: "/api/admin/tipos-operacao/capabilities", headers: c.h.headers() });
     const catalogo = lerCatalogoTop((j(r).formato5 as { catalogo: unknown }).catalogo);
