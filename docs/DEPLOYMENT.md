@@ -3013,15 +3013,111 @@ leitura (nada é gravado); os passos 9 e 10 gravam, e só com a decisão dele.
    locais de estoque, "Quantidade produzida"). Descartar.
 9. (Grava; decisão do Maike) Uma transferência de rebanho entre empresas real, se houver uma a fazer: ela cria o movimento
    pendente que a empresa de destino processa.
-10. (Grava; decisão do Maike) Criar TOP de módulo só depois da Parte F10r da 287 (o destino dos módulos pela TOP, em
-    execução); uma TOP marcada como padrão vem escolhida na Central e pode exigir campos.
+10. (Grava; decisão do Maike) Criar TOP de módulo: ela classifica e pode exigir campos do registro; o destino dos módulos
+    pela TOP NÃO foi ligado (Parte F10r da 287, decisão pendente). Uma TOP marcada como padrão vem escolhida na Central.
 
-**Em execução e pendente** (registrado na 287): o destino dos módulos pela TOP e a pecuária pela TOP (o título da compra e
-da venda de animais, o item 5 da 286) entram na Parte F10r, por ordem do Maike de 03/10 — a implantação dela entra aqui
-quando ela entrar. Continuam decisão pendente do Maike: o cadastro dos ingredientes da dieta; a lista e o processamento
-da transferência entre empresas na web.
+**Decisão pendente do Maike** (registrada na 287): o destino dos módulos pela TOP (NÃO FEITO na Parte F10r, com o desenho
+pronto); o cadastro dos ingredientes da dieta; a lista e o processamento da transferência entre empresas na web. A
+pecuária pela TOP entrou na Parte F10r (§ F10r, abaixo).
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
+### F10r — a pecuária pela TOP: o título da compra e da venda de animais (OPERACOES-01, sem migration)
+
+Decisão 287, Parte F10r. **Sem migration, sem variável, sem permissão nova, sem rota nova, sem capacidade nova, sem
+código de erro novo, sem texto novo na tela.** As migrations continuam 46, a última a 0046. Usa o que a 0045 (F9a: a TOP
+e a versão no título, o tipo de título e a conta prevista, os padrões da versão) e a 0020 (a TOP padrão por família) já
+criaram. O que entra:
+- domínio: as famílias `pecuaria.compra_de_animais` e `pecuaria.venda_de_animais` (`erp.animal_movements` por
+  `movement_type`); o perfil dos padrões financeiros das duas; os tipos "Compra de animais" e "Venda de animais" no grupo
+  Módulos do passo 1 (24 tipos, Módulos 8, 32 famílias); o perfil sem exigências gerais; `planoDaClassificacaoPorCampo`.
+  O catálogo publicado (`formato5.catalogo`) muda junto (dado, sem chave nova);
+- API: o título do `POST /api/livestock/movements` (compra e venda com "Gerar financeiro") pela TOP PADRÃO da família
+  (`apps/api/src/lib/financeiro-pecuaria.ts`, novo); ROW COUNT nos dois UPDATEs do movimento; `financeiro` na trilha
+  quando a TOP agiu;
+- web: nada (`apps/web/src` não muda). O editor da TOP oferece os dois tipos pelo catálogo que o servidor publica.
+
+**Migration:** nenhuma. Nada a aplicar no banco.
+
+**Ordem do deploy:** a F10r não tem exigência própria. Na PR #90 vale a ordem das fases com migration (0042 → … →
+0046, depois a API, depois o web), descrita nas seções delas.
+
+**Version skew** (base `622f194`):
+- **Sentido 2 — web da base × API nova** (a janela "API antes do web"): o corpo e a resposta do POST são os de hoje.
+  - Sem TOP padrão das famílias novas (o estado de produção no deploy: as famílias nem existiam), o título é EXATAMENTE
+    o de hoje: o rateio é o par legado, sem TOP, versão, tipo de título nem conta; a trilha sem `financeiro` (K2-1).
+  - Com uma TOP padrão "exigir" (só depois que o Maike a criar): o web da base mostra a recusa do servidor no aviso, com
+    o texto exato, nada é gravado e a tela continua no formulário; com Natureza e Centro de resultado preenchidos, grava,
+    e o título leva a TOP e a versão (K2-2).
+  - Provado por `apps/web/e2e/f10r-pecuaria-skew-web-anterior.spec.ts` (2 casos), no job `skew`.
+- **Sentido 1 — web novo × API da base:** sem spec próprio. O bundle do web carrega o domínio novo, mas o assistente lê
+  o catálogo DO SERVIDOR (`apps/web/src/features/admin/top-contrato.tsx:224`), e a API `622f194` não publica catálogo:
+  o editor é o do 4 (o K-1 do formato 5, da F4). A tela de movimentação de animais é o mesmo arquivo, com o mesmo
+  corpo.
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247): nenhuma linha existente é reescrita nem apagada; sem backfill. Produção (leitura de 02/10,
+decisão 281): 3 TOPs (pedido de compra, orçamento de venda e pedido de venda), NENHUMA das famílias novas; 1 título
+financeiro. Os movimentos de animais e os títulos de origem `animal_movements` de produção NÃO foram contados (PENDING,
+passo 1 do roteiro). O efeito novo só existe depois que o Maike criar, pelo assistente, uma TOP "Compra de animais" (ou
+"Venda de animais") no formato 5, marcá-la como padrão e configurar os padrões financeiros. Até lá, a compra e a venda
+de animais com "Gerar financeiro" geram o título de hoje. O que muda sem ninguém configurar nada:
+- no editor da TOP, o passo 1 ganha "Compra de animais" e "Venda de animais" no grupo Módulos;
+- a compra e a venda com "Gerar financeiro" fazem uma leitura a mais (a TOP padrão da família, `for share`) antes do
+  código; sem "Gerar financeiro", e no nascimento, na morte e na perda, nada muda.
+
+**Reversão:** redeploy da API anterior; nada no banco. A TOP padrão da pecuária passa a ser ignorada (volta o legado).
+Ficam (decisão 247):
+- os títulos gravados com a TOP, o tipo de título e a conta prevista (colunas da 0045, que a API anterior não lê);
+- a TOP da pecuária gravada no 5: a API anterior a mostra com o código cru da família
+  (`622f194:apps/api/src/routes/tipos-operacao.ts:74-78`) e não a altera (a reversão da F4, item (a)).
+Reverter só o web não muda nada desta parte (o web não mudou).
+
+**Roteiro do Maike em produção** (depois do deploy; produção é operacional — decisões 240 e 247). Os passos 1 a 3 são só
+leitura (nada é gravado). Os passos 4 e 5 gravam, só com a decisão dele.
+1. (Leitura, SQL do Maike) Quantos movimentos de compra e de venda de animais existem, quantos com título, e se há TOP
+   das famílias `pecuaria.compra_de_animais` ou `pecuaria.venda_de_animais` (o esperado: nenhuma).
+2. Configurações › Operações › Tipos de Operação › "Novo": o grupo Módulos mostra Abastecimento, Manutenção, Ordem de
+   serviço, Manejo, Batelada, Produção de ração, Compra de animais e Venda de animais. Escolher "Compra de animais":
+   - as abas Identificação, Geral, Estoque, Padrões financeiros, Financeiro e Fiscal;
+   - a Geral sem nenhuma caixa "Exigir …";
+   - em "Padrões financeiros": sem a caixa da provisão; "Sem natureza e centro" com "Usar a 1ª natureza e o 1º centro
+     por código (como hoje)"; "O documento pode trocar os padrões" marcada; os padrões natureza, centro de resultado,
+     tipo de título e conta, sem forma de pagamento.
+   Fechar sem salvar.
+3. Pecuária › Movimentações › "Nova compra de animais": o formulário de sempre (Fornecedor, Nota fiscal, os itens,
+   "Gerar financeiro", e com ele Vencimento, Natureza e Centro de resultado). Descartar.
+4. (Grava; decisão do Maike) Criar a TOP "Compra de animais" pelo assistente, marcar "Padrão" e preencher os padrões
+   financeiros (natureza de despesa, centro, e, se quiser, tipo de título e conta). A partir daí, a compra com "Gerar
+   financeiro" e sem Natureza e Centro usa os padrões da TOP; com os dois preenchidos, vale o documento. Para exigir a
+   classificação, escolher "Exigir natureza e centro (do documento ou desta TOP)". O mesmo para "Venda de animais", com
+   natureza de receita.
+5. (Grava; decisão do Maike) Uma compra de animais de teste com "Gerar financeiro" e sem Natureza e Centro. Conferir o
+   título em Financeiro › Títulos › A pagar: a natureza e o centro da TOP e "Tipo de operação: <código> — <nome>
+   (versão N)". Nada se apaga (decisão 247): para desfazer, cancelar o movimento (o cancelamento de hoje cancela os
+   títulos da origem).
+
+**Decisão pendente do Maike** (registrada na 287): o destino dos módulos pela TOP (NÃO FEITO, com o desenho pronto na
+287); o cadastro dos ingredientes da dieta; a lista e o processamento da transferência entre empresas na web.
+
+**Riscos** (declarados na 287):
+- com a TOP agindo, a recusa dela vem ANTES de "Fornecedor/cliente obrigatório para gerar financeiro", "Categoria
+  obrigatória para entrada de animais" e "Animal não está ativo no rebanho" (inverter exigiria ler a TOP depois do laço,
+  que grava); sem TOP, a ordem é a de hoje;
+- com "Gerar financeiro" e um valor unitário que não é número, o erro do decimal sai antes do laço (antes, no item); a
+  transação volta inteira nos dois casos;
+- os arquivos de integração antigos que fazem o POST do movimento (`api.test.ts`, `rebanho-autorizacao`,
+  `notificacao-geracao`) não rodaram localmente: ficam para o CI; o caminho sem TOP está provado pelo PF-1 e pelo K2-1;
+- a TOP padrão vale por ORGANIZAÇÃO, não por empresa (como a da solicitação);
+- uma TOP com só o tipo de título (sem natureza e centro) age: o par sai do legado do movimento, e a TOP e o tipo de
+  título vão no título (a trilha diz "padrão legado" nos dois campos);
+- marcar uma exigência geral numa TOP da pecuária pela API dá a recusa genérica "O documento desta operação não tem este
+  campo." (o editor não mostra as caixas);
+- conflito textual provável com a F7 nas listas e contagens do registry, do catálogo, dos rótulos e dos padrões
+  financeiros: se ela acrescentar família ou tipo, os números se somam.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção, e os passos 4 e 5
+gravam (só com a decisão dele).
 
 ## VISUAL-UX-04b — correções da Central de Compras (sem migration)
 

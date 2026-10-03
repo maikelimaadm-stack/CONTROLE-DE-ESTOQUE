@@ -2361,21 +2361,25 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 ### 18.4 O catálogo por tipo e o perfil
 
 `packages/domain/src/tipo-operacao-catalogo.ts`. As tabelas estão em `docs/OPERACOES-CONTRACT.md` §1 e §2.
-- `CATALOGO_TOP = {grupos, tipos, perfis}` (`:258-262`), com:
+- `CATALOGO_TOP = {grupos, tipos, perfis}` (`:282-286`), com:
   - `GRUPOS_TIPO_MOVIMENTO_TOP` e os rótulos;
-  - `CATALOGO_TIPOS_MOVIMENTO_TOP` (22 tipos, `:140-167`; desde a OPERACOES-01, todos com família: requisição de
+  - `CATALOGO_TIPOS_MOVIMENTO_TOP` (24 tipos, `:141-172`; desde a OPERACOES-01, todos com família: requisição de
     material, consumo e devolução de consumo ganharam a família na F5a, decisão 282 — com tela desde a F5b —, o orçamento
     de compra, `compras.orcamento`, na F6a, decisão 283 — com tela desde a F6b —, o movimento bancário,
-    `financeiro.movimento_bancario`, na F9a, decisão 286 — com tela, como a conta a pagar e a conta a receber —, e o
-    manejo, `pecuaria.manejo`, e a batelada, `confinamento.batelada`, na F10, decisão 287; os 22 com tela desde a F10,
-    que ligou os 6 de Módulos);
-  - `PERFIS_TIPO_TOP` (um por família do registry — 30 desde a F5a, a F6a, a F9a e a F10 —, `:245`).
+    `financeiro.movimento_bancario`, na F9a, decisão 286 — com tela, como a conta a pagar e a conta a receber —, o
+    manejo, `pecuaria.manejo`, e a batelada, `confinamento.batelada`, na F10, decisão 287, e a compra e a venda de
+    animais, `pecuaria.compra_de_animais` e `pecuaria.venda_de_animais`, na F10r, a mesma decisão; os 22 com tela desde
+    a F10, que ligou os 6 de Módulos, e os 24 desde a F10r);
+  - `PERFIS_TIPO_TOP` (um por família do registry — 32 desde a F5a, a F6a, a F9a, a F10 e a F10r —, `:264`).
   Congelado. Nenhum código de família escrito: o gate `node scripts/familia-operacional-ssot-audit.mjs` passa.
-- `perfilDoTipoTop(família, definicoes?)` (`:212-237`) deriva o perfil de `familiaTemProximasOperacoes`,
+- `perfilDoTipoTop(família, definicoes?)` (`:236-261`) deriva o perfil de `familiaTemProximasOperacoes`,
   `regrasGeraisDaFamiliaTop`, `familiaAceitaExecucaoConfiguradaTop`, `ehFamiliaDeDocumentoEstoque` e
   `exigenciasGeraisDaFamiliaTop`. Mudou uma delas, o perfil muda junto. `perfilDaFamiliaTop` devolve `null` para
-  família sem perfil — quem chama NEGA, nunca usa um vizinho.
-- `lerCatalogoTop(bruto)` (`:372-380`) é ESTRITO: qualquer desvio devolve `null`, e devolve objetos novos (molde:
+  família sem perfil — quem chama NEGA, nunca usa um vizinho. Exigências: `exigencias: []` nas famílias de
+  `FAMILIAS_SEM_EXIGENCIAS_GERAIS_TOP` (`:206-209`, aplicada em `:253`; a compra e a venda de animais, F10r: as duas
+  famílias da pecuária têm perfil sem exigências gerais — o movimento não cobra nenhuma —, e o formato 5 recusa a
+  marca pela recusa de §18.5).
+- `lerCatalogoTop(bruto)` (`:396-404`) é ESTRITO: qualquer desvio devolve `null`, e devolve objetos novos (molde:
   `lerMatrizRegrasGeraisTop`). Desvio:
   - chaves a mais ou a menos em qualquer nível;
   - grupo fora do domínio ou repetido;
@@ -2385,7 +2389,7 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
   - aba ou seção neutra desconhecida ou repetida;
   - exigência fora das quatro;
   - rótulo vazio.
-- `tiposParaEscolhaTop` (`:389-393`): o passo 1 — só `temTela`, agrupado na ordem do catálogo; grupo vazio some.
+- `tiposParaEscolhaTop` (`:413-417`): o passo 1 — só `temTela`, agrupado na ordem do catálogo; grupo vazio some.
 
 ### 18.5 As recusas do formato 5 (API)
 
@@ -2609,12 +2613,13 @@ Aqui, o que é do contrato da TOP:
 - **Perfis derivados:** a aba "Padrões financeiros" depois de Estoque (e das seções da F5a e da F6a que a família usar)
   em `vendas.pedido`, `vendas.venda`, `financeiro.conta_a_pagar`, `financeiro.conta_a_receber`,
   `financeiro.movimento_bancario`, `compras.solicitacao` e, desde a F9b, `compras.pedido` (depois de "Fluxo de compra")
-  e `compras.compra` (depois de "Divergência com o pedido"); toda outra família a tem no padrão. A família nova
+  e `compras.compra` (depois de "Divergência com o pedido"), e desde a F10r `pecuaria.compra_de_animais` e
+  `pecuaria.venda_de_animais` (depois de Estoque); toda outra família a tem no padrão. A família nova
   `financeiro.movimento_bancario` (a tabela `erp.bank_movements` inteira) e os tipos `conta_pagar`, `conta_receber` e
   `movimento_bancario` com tela: o assistente passa a oferecer o grupo Financeiro. Com a F5a e a F6a: 28 famílias no
   registry (28 perfis), 22 tipos no catálogo, 20 com família, 12 com tela e 16 famílias sem tela no passo 1 (desde a
   F6b e a F5b, 16 com tela e 12 sem tela; desde a F10, 30 famílias e 30 perfis, os 22 tipos com família e com tela e 8
-  famílias sem tela no passo 1); a matriz das regras gerais continua com 13 — 19 desde a F10, com os seis módulos (as do
+  famílias sem tela no passo 1; desde a F10r, 32 famílias, 32 perfis e 24 tipos, e as mesmas 8); a matriz das regras gerais continua com 13 — 19 desde a F10, com os seis módulos (as do
   Financeiro não entram).
 - **No 5, fora do tipo:** a seção fora do neutro numa família que não a usa é a recusa de §18.5 ("Esta operação não usa a
   seção Padrões financeiros."); dentro da família, `recusasDoFinanceiroPadraoDaFamilia` (a provisão fora do pedido de
@@ -2622,7 +2627,8 @@ Aqui, o que é do contrato da TOP:
   compra e a compra), na lista única de `conferirFiscalDaFamilia` (`:296`).
 - **Execução** (`apps/api/src/lib/financeiro-top.ts:62-74`): sem versão ou versão inexistente → neutro; ilegível ou 1 a 4
   → neutro e padrões nulos; 5 de família sem perfil → neutro; 5 → a seção e os padrões da versão CONGELADA no documento
-  (a TOP corrente no avulso e no movimento; a TOP padrão da família na solicitação). A conta padrão é reconferida por
+  (a TOP corrente no avulso e no movimento; a TOP padrão da família na solicitação e, desde a F10r, no movimento de
+  animais). A conta padrão é reconferida por
   quem lança (`contaPadraoUtilizavel`, `apps/api/src/lib/financeiro-padroes-top.ts:181-196`, com
   `MENSAGEM_CONTA_PADRAO_INUTILIZAVEL`): a versão é imutável, o cadastro da conta não.
 - **Compras (F9b):** o perfil de `compras.pedido` (com a provisão, a pagar, momento `ao_finalizar_o_pedido`) e o de
@@ -2637,6 +2643,12 @@ Aqui, o que é do contrato da TOP:
 - **Skew:** sem `padroesFinanceiros`, o editor não mostra os campos e não manda a chave (a API anterior a recusaria). O
   detector do web da base continua o da F4 (o detector pelo CONJUNTO de seções existe desde 03/10 —
   `baseConheceSecaoV5`, decisão 286 —, e este skew ainda não o usa).
+- **Pecuária (F10r):** o perfil de `pecuaria.compra_de_animais` e de `pecuaria.venda_de_animais` tem
+  `semClassificacao: true` e `trocaPeloDocumento: true`, sem provisão nem forma. Como o documento do movimento informa
+  natureza e centro SOZINHOS, a classificação é `planoDaClassificacaoPorCampo` (`financeiro-padroes.ts:277-286`): o par
+  montado campo a campo (documento, senão padrão da TOP) segue a ordem de `planoDaClassificacao`; com o documento vazio
+  ou completo, é exatamente ela. TOP padrão sem padrões e sem "exigir" não age, mesmo com natureza e centro no
+  documento (`apps/api/src/lib/financeiro-pecuaria.ts:81`). O produto está em `docs/OPERACOES-CONTRACT.md` §7 (F10r).
 
 ### 18.11 A TOP nos módulos com produto (OPERACOES-01 F10, decisão 287)
 
@@ -2646,6 +2658,13 @@ que é do contrato da TOP:
   manejo) e `confinamento.batelada` (`entidade("erp.diet_batches")`) (`packages/domain/src/tipo-operacao.ts:190-191`;
   rótulos `top.pecuaria.manejo` "Manejo" e `top.confinamento.batelada` "Batelada"). Os seis tipos de Módulos com
   `temTela: true` e a família perguntada ao registry pela tabela (`tipo-operacao-catalogo.ts`, linhas do grupo `modulos`).
+- **A compra e a venda de animais (Parte F10r):** `pecuaria.compra_de_animais` e `pecuaria.venda_de_animais`
+  (`variante("erp.animal_movements", "movement_type", "purchase" | "sale")`, `packages/domain/src/tipo-operacao.ts:196-197`;
+  rótulos `top.pecuaria.compra_de_animais` "Compra de animais" e `top.pecuaria.venda_de_animais` "Venda de animais",
+  `packages/plataforma/src/idiomas/pt-BR.ts:117-118`), no fim do registry. Tipos `compra_animais` e `venda_animais` no
+  grupo Módulos, com tela (`tipo-operacao-catalogo.ts:167-168`): o registro NÃO cita a TOP e vale a TOP PADRÃO da
+  família. Fora da matriz das regras gerais; perfil com `exigencias: []` (§18.4); só a seção Padrões financeiros
+  executa (§18.10). Nenhum código de família escrito na API (`familia-operacional-ssot-audit`: 32 famílias).
 - **Fonte única dos módulos:** `packages/domain/src/centrais-dos-modulos.ts` — `MODULOS_COM_TOP`,
   `TABELA_DO_MODULO_COM_TOP`, `SEGMENTO_DO_MODULO_COM_TOP`, `familiaDoModuloComTop` / `moduloComTopDaFamilia` (registry sem
   a tabela = módulo sem TOP, fail-closed), `EXIGENCIAS_GERAIS_DOS_MODULOS_TOP`, `CAPACIDADE_TOP_NO_MODULO`,
@@ -2655,7 +2674,10 @@ que é do contrato da TOP:
   REGISTRO (`exigenciasGeraisDaFamiliaTop` → `exigenciasGeraisDoModuloTop`, `tipo-operacao-restricoes.ts:191-192`). No 5,
   a exigência que o registro não tem é a recusa de §18.5. A seção Destino (F5a) NÃO vale para os módulos (`usadaPor` não
   mudou) e o `financeiroPadrao` (F9) também não: Estoque, Financeiro e Fiscal da TOP de módulo são declaração, sem execução
-  (decisão 287; o destino dos módulos pela TOP é da Parte F10r, em execução).
+  (decisão 287; o destino dos módulos pela TOP ficou NÃO FEITO na Parte F10r: o neutro do ponto de extensão não recebe
+  família, e ligar a seção Destino nos módulos nasceria travando o que eles aceitam hoje; uma seção nova mudaria as
+  `secoesNeutras` das 32 famílias e as asserções das famílias de estoque — decisão do Maike, com o desenho na 287;
+  nenhum módulo gera título, então os padrões financeiros não se aplicam a eles).
 - **No registro (0046):** o par `tipo_operacao_id` + `tipo_operacao_versao_id` nas seis tabelas, com as FKs compostas e o
   gatilho `erp.modulo_top_conferir()` (a família da tabela; a TOP gravada não muda). NULL = sem TOP, o lançamento de antes.
 - **No lançamento (API):** `apps/api/src/lib/top-do-modulo.ts` — `tiposDeOperacaoDoModulo` (a capacidade),

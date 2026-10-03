@@ -14,7 +14,7 @@
 ### O catálogo do passo 1 (decisão 281) · IMPLEMENTADO
 
 A TOP nasce pelo TIPO DE MOVIMENTO: o passo 1 do assistente do editor oferece os tipos AGRUPADOS, e só os que têm tela.
-A fonte única é `CATALOGO_TIPOS_MOVIMENTO_TOP` (`packages/domain/src/tipo-operacao-catalogo.ts:140-167`). O servidor o
+A fonte única é `CATALOGO_TIPOS_MOVIMENTO_TOP` (`packages/domain/src/tipo-operacao-catalogo.ts:141-172`). O servidor o
 publica em `GET /api/admin/tipos-operacao/capabilities` › `formato5.catalogo`, e a tela o lê com o leitor estrito
 (`lerCatalogoTop`). Nenhuma lista de tipo, grupo ou família mora no web.
 
@@ -39,9 +39,11 @@ publica em `GET /api/admin/tipos-operacao/capabilities` › `formato5.catalogo`,
 | 17 | Módulos | Manejo | `manejo` | `pecuaria.manejo` (F10: a tabela `erp.animal_handlings` inteira) | sim | F10 (287) |
 | 18 | Módulos | Batelada | `batelada` | `confinamento.batelada` (F10: `erp.diet_batches`) | sim | F10 (287) |
 | 19 | Módulos | Produção de ração | `producao_racao` | `estoque.producao_de_racao` | sim | F10 (287) |
-| 20 | Financeiro | Conta a pagar | `conta_pagar` | `financeiro.conta_a_pagar` | sim | F9 (286) |
-| 21 | Financeiro | Conta a receber | `conta_receber` | `financeiro.conta_a_receber` | sim | F9 (286) |
-| 22 | Financeiro | Movimento bancário | `movimento_bancario` | `financeiro.movimento_bancario` | sim | F9 (286) |
+| 20 | Módulos | Compra de animais | `compra_animais` | `pecuaria.compra_de_animais` (F10r: `erp.animal_movements` com `movement_type` = `purchase`; a tela de movimentação não escolhe TOP — vale a TOP PADRÃO da família) | sim | F10r (287) |
+| 21 | Módulos | Venda de animais | `venda_animais` | `pecuaria.venda_de_animais` (F10r: `movement_type` = `sale`) | sim | F10r (287) |
+| 22 | Financeiro | Conta a pagar | `conta_pagar` | `financeiro.conta_a_pagar` | sim | F9 (286) |
+| 23 | Financeiro | Conta a receber | `conta_receber` | `financeiro.conta_a_receber` | sim | F9 (286) |
+| 24 | Financeiro | Movimento bancário | `movimento_bancario` | `financeiro.movimento_bancario` | sim | F9 (286) |
 
 Regras:
 - A família de cada tipo é PERGUNTADA ao registry (pela tabela e pela variante), nunca escrita no catálogo. Registry
@@ -50,12 +52,13 @@ Regras:
 - "Tem tela" = a tela que lança o documento cita a TOP. Hoje, os 9 cujo documento cita a TOP, os 3 do Financeiro (F9,
   decisão 286: o lançamento avulso da Central e o "Novo movimento bancário" escolhem a TOP primeiro), o orçamento de
   compra (F6b, decisão 283: nasce do pedido aprovado para orçamento, pela TOP do leque do pedido), as três da
-  movimentação interna (F5b, decisão 282: a Central de Estoque no motor) e os 6 de Módulos (F10, decisão 287: a Central
-  de cada módulo cita a TOP no próprio registro) — os 22 com tela. A F5a (decisão 282) criou a
+  movimentação interna (F5b, decisão 282: a Central de Estoque no motor), os 6 de Módulos (F10, decisão 287: a Central
+  de cada módulo cita a TOP no próprio registro) e a compra e a venda de animais (F10r, decisão 287: a tela de
+  movimentação não cita a TOP — vale a TOP PADRÃO da família) — os 24 com tela. A F5a (decisão 282) criou a
   família das três da movimentação interna, e a F5b, a tela. A F6a (decisão 283) criou a do orçamento de compra, e a F6b,
   a tela. A F9a criou a do movimento bancário (`financeiro.movimento_bancario`, a tabela `erp.bank_movements` inteira).
-  Desde a F10, os 22 tipos têm família (a F10 criou `pecuaria.manejo` e `confinamento.batelada`). O registry tem 30
-  famílias, e 8 delas ficam sem tela no passo 1 (as 8 de fora dos tipos, abaixo).
+  Desde a F10, todos os tipos têm família (a F10 criou `pecuaria.manejo` e `confinamento.batelada`; a F10r,
+  `pecuaria.compra_de_animais` e `pecuaria.venda_de_animais`). O registry tem 32 famílias, e 8 delas ficam sem tela no passo 1 (as 8 de fora dos tipos, abaixo).
 - **Ligar um tipo** é trabalho da fase que cria a tela: ela troca a linha do catálogo — `temTela`, e a família quando ela
   nascer no registry — e atualiza os testes que fixam o estado de hoje (`top-formato5-catalogo.test.ts` CT-1/CT-2,
   `top-formato5-top.test.ts` T5-1, `tipos-operacao.spec.ts`, `top-assistente.spec.ts`).
@@ -108,11 +111,13 @@ diz o que o editor do 5 mostra e o que o servidor aceita no 5. Ele é DERIVADO, 
 | `estoque.consumo` | Identificação, Geral, Estoque, Destino, Fluxo, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
 | `compras.solicitacao` e as 3 do Financeiro (`financeiro.conta_a_pagar`, `.conta_a_receber`, `.movimento_bancario`; F9a) | Identificação, Geral, Estoque, Padrões financeiros, Financeiro, Fiscal | Exigir parceiro, centro de resultado, observação, transportadora | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
 | os 6 de Módulos (`frota_ativos.abastecimento`, `frota_ativos.manutencao`, `ordens_servico.ordem_de_servico`, `pecuaria.manejo`, `confinamento.batelada`, `estoque.producao_de_racao`; F10) | Identificação, Geral, Estoque, Financeiro, Fiscal | as do REGISTRO de cada um: abastecimento, Exigir centro de resultado e observação; manutenção e manejo, Exigir observação; OS, Exigir centro de resultado e "Descrição"; batelada e ração, nenhuma | Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
+| a compra e a venda de animais (`pecuaria.compra_de_animais`, `pecuaria.venda_de_animais`; F10r) | Identificação, Geral, Estoque, Padrões financeiros, Financeiro, Fiscal | nenhuma: as duas famílias da pecuária têm perfil sem exigências gerais (o movimento não cobra nenhuma); o formato 5 recusa a marca | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
 | as outras 7 sem documento que cite a TOP (as 7 antigas de estoque fora dos tipos) | Identificação, Geral, Estoque, Financeiro, Fiscal | Exigir parceiro, centro de resultado, observação, transportadora | Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
 
 Nos módulos, Estoque, Financeiro e Fiscal são declaração de intenção, sem execução: o lançamento move o estoque pela
-regra do módulo, não gera título, e a seção Destino não vale para eles (decisão 287; o destino dos módulos pela TOP é da
-Parte F10r, em execução).
+regra do módulo, não gera título, e a seção Destino não vale para eles (decisão 287; o destino dos módulos pela TOP ficou
+NÃO FEITO na Parte F10r — decisão do Maike, com o desenho pronto na 287). Na compra e na venda de animais (F10r),
+Estoque, Financeiro e Fiscal também são declaração; só os Padrões financeiros executam, no título do movimento (§7).
 
 Some do editor do 5 só a aba cujo valor o servidor já obriga ao padrão: Próximas operações sem destino possível,
 Aprovação só "Sem aprovação", Execução sem execução configurada — e Financeiro e Fiscal no documento de estoque
@@ -246,7 +251,7 @@ tabela da versão (§7).
 | `semClassificacao` | `padrao_legado` · `exigir` | `padrao_legado` | sem natureza e centro no documento nem na TOP: a 1ª natureza e o 1º centro por código (hoje) ou recusa; não vale no pedido de compra nem na compra, que não têm padrão legado (F9b) |
 
 Famílias que usam a seção (o perfil dos padrões, `perfilDosPadroesFinanceiros`; a matriz em
-`packages/domain/src/financeiro-padroes.ts:118-129`; toda outra família a tem no padrão):
+`packages/domain/src/financeiro-padroes.ts:123-139`; toda outra família a tem no padrão):
 
 | família | provisão | "sem natureza e centro" | o documento troca (`trocaPeloDocumento`) | padrões | natureza aceita |
 |---|---|---|---|---|---|
@@ -258,6 +263,8 @@ Famílias que usam a seção (o perfil dos padrões, `perfilDosPadroesFinanceiro
 | `compras.solicitacao` | não | sim | não (o documento não informa padrão) | natureza, centro, tipo de título, conta | despesa (`expense` ou `both`) |
 | `compras.pedido` (F9b) | sim — a pagar, ao FINALIZAR | não (a compra não tem padrão legado) | sim | natureza, centro, tipo de título, forma, conta | despesa (`expense` ou `both`) |
 | `compras.compra` (F9b) | não | não (a compra não tem padrão legado) | sim | natureza, centro, tipo de título, forma, conta | despesa (`expense` ou `both`) |
+| `pecuaria.compra_de_animais` (F10r) | não | sim (o padrão legado do movimento) | sim | natureza, centro, tipo de título, conta | despesa (`expense` ou `both`) |
+| `pecuaria.venda_de_animais` (F10r) | não | sim (o padrão legado do movimento) | sim | natureza, centro, tipo de título, conta | receita (`income` ou `both`) |
 
 O pedido de compra e a compra (F9b) não têm "sem natureza e centro": sem o par no documento nem na TOP, a compra é
 recusada como hoje, e o pedido cuja TOP provisiona também (§7). As duas regras de provisão executam
@@ -272,8 +279,8 @@ chave é recusada (`campo_desconhecido`) e a execução lê o neutro.
 O editor mostra só o que a família usa: a caixa da provisão só nos dois pedidos, com o rótulo e a ajuda da REGRA da
 família — "Provisionar a receber ao salvar o pedido" no de venda e "Provisionar a pagar ao finalizar o pedido" no de
 compra, com a ajuda "O pedido finalizado gera títulos previstos a pagar, fora das baixas. A compra confirmada os troca
-pelos títulos de verdade; encerrar o saldo ou cancelar o pedido os cancela."; "Sem natureza e centro" na venda e na
-solicitação, e no pedido de venda só com a provisão marcada (nunca no pedido de compra nem na compra); "O documento pode
+pelos títulos de verdade; encerrar o saldo ou cancelar o pedido os cancela."; "Sem natureza e centro" na venda, na
+solicitação e na compra e na venda de animais, e no pedido de venda só com a provisão marcada (nunca no pedido de compra nem na compra); "O documento pode
 trocar os padrões" onde o documento informa algum padrão (não na solicitação). Um valor gravado fora do neutro continua
 visível para poder ser desligado; o servidor aceita as duas regras escondidas (sem efeito).
 
@@ -928,8 +935,8 @@ desenha). O registro de cada módulo cita a TOP (`tipo_operacao_id` + `tipo_oper
 lançamento de hoje). A fonte única do que os seis têm em comum é `packages/domain/src/centrais-dos-modulos.ts`.
 
 **A TOP no módulo = classificação + versão congelada + exigências gerais do registro.** Não muda o efeito de estoque de
-nenhum módulo, não gera título e não liga a seção Destino (decisão 287; o destino dos módulos pela TOP é da Parte F10r,
-em execução). As exigências são as que o registro tem (`EXIGENCIAS_GERAIS_DOS_MODULOS_TOP`):
+nenhum módulo, não gera título e não liga a seção Destino (decisão 287; o destino dos módulos pela TOP ficou NÃO FEITO na
+Parte F10r — decisão do Maike; nenhum módulo gera título, então os padrões financeiros não se aplicam a eles). As exigências são as que o registro tem (`EXIGENCIAS_GERAIS_DOS_MODULOS_TOP`):
 
 | módulo | tabela | família | segmento da rota | exigências que a TOP pode ligar (caminho no corpo) |
 |---|---|---|---|---|
@@ -1024,8 +1031,8 @@ API anterior não vê a capacidade e manda os corpos de hoje. Provas: K-1 e K-2 
 
 **O razão:** ver "O razão e quem grava nele" na subseção da F5a.
 
-**Fora (decisão 287):** o Destino e o financeiro da TOP nos módulos (o destino pela TOP e a pecuária pela TOP são da
-Parte F10r, em execução); a consulta dos registros na
+**Fora (decisão 287):** o Destino e o financeiro da TOP nos módulos (o destino pela TOP: NÃO FEITO na
+Parte F10r, decisão do Maike; a pecuária pela TOP: FEITO na F10r (decisão 287), §7); a consulta dos registros na
 Central (os detalhes continuam); o nome da TOP no detalhe da ração; layout por TOP nos módulos; cancelamento de manejo e
 de batelada; cadastro dos ingredientes da dieta; a lista e o processamento da transferência entre empresas na web; a
 conferência de organização para animal, rebanho, pessoa, produtos das linhas da OS, centro e safra; índice e filtro por
@@ -1446,7 +1453,7 @@ Query e corpo estritos; dinheiro só como TEXTO decimal (número → 422).
 | API anterior × banco novo | a baixa com desconto quita só o `amount`; PUT de movimento com rateio → 403; PUT de valor de movimento confirmado → 409 | `operacoes-01-0042` (DB-4) |
 
 **Fora (F8):** a 1ª natureza e o 1º centro "por código" de `sales.ts`, `supply.ts` e `livestock.ts` (F9, decisão 286 —
-feito na F9a para a venda e a solicitação; a pecuária fica no recuo, §7); a provisão, a situação "previsto" e a TOP
+feito na F9a para a venda e a solicitação e na F10r para a pecuária, §7); a provisão, a situação "previsto" e a TOP
 financeira (F9 — feito na F9a, §7); o saldo do painel financeiro pela view recortada e a lista
 antiga de importações OFX sem paginação (F11/F12); recorrência e parcelamento de adiantamento; conciliação automática
 da Sugestão e da Soma; CNAB, boleto, PIX, Open Finance, cartões e cheques, renegociação com juros compostos, aprovação
@@ -1508,9 +1515,9 @@ A conta padrão é reconferida por quem lança (`contaPadraoUtilizavel` e `MENSA
 ativo nem exclusão. Na venda, o tipo de título e a conta prevista da TOP vão para os títulos, e a TOP e a versão da venda
 vão para o título em qualquer formato. A forma padrão SÓ confere (não é aplicada; o pré-preenchimento é da Central de
 Vendas, pendente na F2/F3b). Prévia: `classificacao.origem` continua `documento` ou `padrão legado`; o padrão da TOP sai
-como `origem: "documento"` + `padraoDaTop: true`; a trilha da confirmação guarda `"padrão da TOP"`. A pecuária
-(`livestock.ts:185-191`) continua no legado: `animal_movements` não tem família nem TOP (NÃO FEITO; dono: a F10; aceite
-do Maike).
+como `origem: "documento"` + `padraoDaTop: true`; a trilha da confirmação guarda `"padrão da TOP"`. A pecuária:
+FEITO na F10r (decisão 287) — na F9a ficou no legado (`livestock.ts:185-191`; `animal_movements` não tinha família nem
+TOP), e a F10r a tirou dele (subseção F10r, abaixo).
 
 **O título previsto** — `financial_titles.status = 'previsto'` (situação "Previsto", status "Prevista"):
 - nasce só pela provisão de um documento (origem obrigatória, nada pago); só sai CANCELADO (o banco guarda); nunca recebe
@@ -1610,7 +1617,7 @@ família, versão corrente, a padrão primeiro; padrões só de versão no 5).
 | API anterior × banco novo | nada muda até alguém ligar a provisão; com previstos, a lista antiga os mostra como "A vencer" e os relatórios dela os somam, sem baixa possível | `operacoes-01-0045` (DB-4c) |
 
 **Fora (F9a):** a provisão e a TOP do pedido de compra e da compra (feitas na F9b, abaixo); as parcelas do XML (F7); a
-pecuária (F10); o adiantamento salarial (`fleet-hr.ts`, F10); o pré-preenchimento dos padrões e a trava com
+pecuária (FEITO na F10r, decisão 287); o adiantamento salarial (`fleet-hr.ts`, F10); o pré-preenchimento dos padrões e a trava com
 `documentoTroca` desligado na Central de Vendas, o "(padrão da operação)" na prévia e os previstos à parte no detalhe do
 pedido (F2/F3b); a trava pela prop no editor de rateio compartilhado do "Novo movimento bancário" e o imóvel na baixa em
 lote da Central (pendências registradas na decisão 286); o arquivo oficial do LCDPR e a exportação da conferência (fora
@@ -1711,6 +1718,77 @@ reversão) estão na decisão 286, parte F9b.
   `GET /compras/*/regras-da-operacao`: o contrato novo (`padraoDaTop` e a compra sem natureza e centro no POST) não tem
   capacidade. Hoje a Central os marca como obrigatórios na compra que gera título; o web de produção não é afetado (o
   validador da prévia da base tolera a chave a mais).
+
+### F10r — o título da compra e da venda de animais pela TOP padrão (decisão 287) · IMPLEMENTADO
+
+O movimento de animais (`POST /api/livestock/movements`, compra e venda com "Gerar financeiro") não grava TOP no
+registro (`erp.animal_movements` não tem a coluna): vale a TOP PADRÃO da família na organização, na versão corrente — o
+molde da solicitação de compra (F9a). A regra mora em `apps/api/src/lib/financeiro-pecuaria.ts:73-106`
+(`financeiroDoMovimentoDeAnimais`); a rota só a chama (`apps/api/src/routes/livestock.ts:207-213`, `:248-268`).
+
+| família | `movement_type` | título | natureza aceita |
+|---|---|---|---|
+| `pecuaria.compra_de_animais` | `purchase` | a pagar | despesa (`expense` ou `both`) |
+| `pecuaria.venda_de_animais` | `sale` | a receber | receita (`income` ou `both`) |
+
+Nascimento, morte, perda e as movimentações internas não têm família (não geram título).
+
+**Quando:** só quando haverá título — `generate_financial`, compra ou venda, e o valor dos itens maior que zero (a MESMA
+conta do laço, feita antes só nesse caso) — e ANTES do código do movimento e de qualquer gravação. Sem título, a TOP
+nem é lida.
+
+**A ordem:**
+1. Sem TOP padrão da família → o código de hoje, INTACTO. TOP padrão sem padrões e sem "exigir" (formatos 1 a 4, ou 5
+   neutro) não age, mesmo com natureza e centro no documento (`financeiro-pecuaria.ts:81`) → o mesmo código de hoje,
+   INTACTO: a natureza do documento, senão a 1ª analítica e
+   ativa de despesa (receita) com "animais", "boi" ou "bezerro" no nome, senão a 1ª por código; o centro do documento,
+   senão o 1º analítico e ativo por código (`classificacaoLegadaDoMovimento`, `livestock.ts:74-82`, as consultas de
+   antes, texto idêntico). Sem TOP no título, sem `financeiro` na trilha.
+2. Com a TOP agindo, CAMPO A CAMPO (`planoDaClassificacaoPorCampo`, `packages/domain/src/financeiro-padroes.ts:277-286`):
+   o documento com natureza E centro ganha; senão cada campo é o do documento ou, sem ele, o padrão da TOP. O campo
+   informado no documento nunca é descartado (diferente da venda, onde o documento parcial vale como vazio).
+3. `documentoTroca` desligado e o documento informou valor diferente do padrão → recusa.
+4. "exigir" e o par incompleto → recusa, com os campos que faltam.
+5. A conta padrão inativada ou excluída depois de gravada a TOP → recusa.
+6. O campo que nem o documento nem a TOP deram sai das consultas legadas do movimento (passo 1).
+Com a TOP: o tipo de título, a conta prevista, a TOP e a versão vão no título. A natureza e o centro passam pela
+conferência do rateio de `createTitles`; a conta por `contaPadraoUtilizavel` com trava; o tipo de título não tem ativo
+nem exclusão (a porta da solicitação).
+
+**Recusas** (422 `VALIDATION_ERROR`, nada gravado, nenhum número queimado; o MESMO texto no servidor e no aviso da tela):
+
+| caso | mensagem | `details` |
+|---|---|---|
+| a troca proibida | Esta operação não deixa trocar a natureza: use o padrão da TOP. (os campos trocados, com "e") | `financial_category_id` e/ou `cost_center_id` |
+| "exigir" sem o par | A operação exige natureza e centro de resultado: informe no documento ou configure os padrões da TOP. | um por campo que falta |
+| a conta padrão inutilizável | A conta padrão da operação está inativa ou foi excluída: ajuste os padrões da TOP. | — |
+
+As recusas de hoje continuam com o mesmo texto ("Fornecedor/cliente obrigatório para gerar financeiro", "Cadastre uma
+natureza e um centro de resultado", as do laço). Com a TOP agindo, a recusa dela vem antes das do laço e da do
+fornecedor; sem TOP, a ordem é a de hoje.
+
+**ROW COUNT** nos dois UPDATEs de `erp.animal_movements` do POST (os totais e o vínculo do título): zero linha → 409
+`CONFLICT` "Movimentação não atualizada.".
+
+**Trilha:** o `create` do movimento ganha `financeiro: { origem: { natureza, centro }, tipoOperacaoId,
+tipoOperacaoVersaoId }` (cada origem "documento", "padrão da TOP" ou "padrão legado") só quando a TOP agiu.
+
+**Contrato:** método, caminho, permissão (a do tipo), corpo, resposta (`{ id, code, quantity, total_value, title_ids }`),
+Idempotency-Key e escopo de empresa iguais. Sem capacidade nova: nada novo no corpo, na resposta ou na tela. O catálogo
+publicado (`formato5.catalogo`) ganha os dois tipos e os dois perfis — dado, lido pelo leitor estrito genérico.
+
+**Compatibilidade** (base `622f194`): web anterior × API nova — sem TOP padrão, o título de hoje; com TOP padrão
+"exigir", o aviso mostra a recusa, nada grava, e com natureza e centro grava com a TOP (K-2 da F10r). Web novo × API
+anterior — o assistente lê o catálogo do servidor, e a API anterior não o publica (o editor do 4).
+
+**Perfil no editor:** as duas famílias da pecuária têm perfil sem exigências gerais (o movimento não cobra nenhuma); o
+formato 5 recusa a marca (422 em `geral.<chave>`, "O documento desta operação não tem este campo."). Estoque, Financeiro
+e Fiscal aparecem (o perfil genérico, o mesmo da solicitação) e não executam no movimento; ligar a execução já é
+recusado.
+
+**Fora (decisão 287):** a coluna de TOP em `erp.animal_movements` e a escolha da TOP na tela; a tela de movimentação no
+motor da Central; as exigências gerais cobradas no movimento; tirar Estoque, Financeiro e Fiscal do editor das duas
+famílias; o nome da TOP no detalhe do movimento; família para nascimento, morte e perda.
 
 ## 8. Mapa "tela antiga → central nova"
 
