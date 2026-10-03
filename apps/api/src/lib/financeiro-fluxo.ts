@@ -7,9 +7,11 @@ import { EH_ADIANTAMENTO_SQL } from "./financeiro-estorno.js";
  * FLUXO DE CAIXA E RESULTADO DA CENTRAL FINANCEIRA (OPERACOES-01 F8, decisão 285).
  *
  * REALIZADO tem duas portas, e a escolha é do PEDIDO, não do cliente adivinhar:
- *   • da ORGANIZAÇÃO (sem empresa pedida e sem agrupar por empresa): os movimentos de TODAS as empresas das contas,
- *     pela função estreita `erp.extrato_conta_organizacao` (a conta e o saldo dela são da organização —
- *     MULTI-COMPANY §7), com saldo inicial e saldo acumulado;
+ *   • da CONTA (sem empresa pedida e sem agrupar por empresa): os movimentos das contas pela função estreita
+ *     `erp.extrato_conta_organizacao`, que os RECORTA pelo escopo de empresa de quem pergunta no módulo financeiro
+ *     (decisão do Maike de 03/10), com saldo e saldo acumulado — o saldo inicial do cadastro (que não tem empresa,
+ *     MULTI-COMPANY §7) só entra com escopo TOTAL (`escopoTotalDosMovimentos`); no parcial, o saldo é o dos movimentos
+ *     das empresas dele;
  *   • por EMPRESA (empresa pedida ou agrupar por empresa): `erp.bank_movements` sob a RLS e o escopo do módulo, SEM
  *     saldo — saldo de conta não se decompõe por empresa sem inventar rateio.
  * Transferência entre contas (e depósito, saque, aplicação, resgate) NÃO é entrada nem saída: fica em
@@ -28,6 +30,30 @@ import { EH_ADIANTAMENTO_SQL } from "./financeiro-estorno.js";
  * domínio (`periodosDoIntervalo`), alinhados como o `date_trunc` (semana = segunda-feira).
  */
 const TRUNC: Readonly<Record<Agrupamento, "day" | "week" | "month">> = { dia: "day", semana: "week", mes: "month" };
+
+/**
+ * Módulo de escopo dos MOVIMENTOS bancários (`scripts/company-rls-modules.json`: `bank_movements` → financeiro). É o
+ * MESMO literal que `erp.extrato_conta_organizacao` (0042) fixa por dentro: os dois precisam responder a mesma
+ * pergunta, senão o saldo inicial entraria (ou sairia) sem os movimentos que o acompanham.
+ */
+const MODULO_DOS_MOVIMENTOS = "financeiro";
+
+/** Saldo de conta TOTAL (o da conta inteira) ou PARCIAL (só os movimentos das empresas de quem pergunta). */
+export type EscopoSaldo = "total" | "parcial";
+
+/**
+ * O escopo de empresa de quem pergunta, no módulo dos movimentos, é TOTAL (proprietário ou modo "todas")? A MESMA
+ * pergunta, pela MESMA função do banco (`erp.escopo_empresa_total`), que a porta `erp.extrato_conta_organizacao` faz
+ * por dentro (decisão do Maike de 03/10). Só com escopo total a porta entrega todos os movimentos da conta — e só então
+ * o saldo inicial do cadastro, que não tem empresa (MULTI-COMPANY §7), entra no saldo. No parcial, o saldo é o dos
+ * movimentos das empresas dele, sem o saldo inicial: somar o número da organização a parte dos movimentos daria um
+ * saldo que não é de ninguém. A pergunta é do SERVIDOR (organização e usuário da transação), nunca do cliente.
+ */
+export async function escopoTotalDosMovimentos(ctx: ServiceCtx): Promise<boolean> {
+  const r = await ctx.tx.query<{ total: boolean }>("select erp.escopo_empresa_total($1::text) as total", [MODULO_DOS_MOVIMENTOS]);
+  return r.rows[0]?.total === true;
+}
+
 type Direcao = "payable" | "receivable";
 
 export interface PedidoFluxo {
@@ -139,15 +165,17 @@ export async function montarFluxo(ctx: ServiceCtx, p: PedidoFluxo): Promise<Resp
   if (porOrganizacao) {
     // As contas da organização (vivas; ativas ou não — o dinheiro de uma conta inativa ainda é da organização), já
     // recortadas pelo pedido. A MESMA lista vai para a função: o saldo inicial e os movimentos falam das mesmas contas.
+    // A função já recorta os movimentos pelo escopo de empresa; o saldo inicial do cadastro só entra com escopo TOTAL.
+    const total = await escopoTotalDosMovimentos(ctx);
     const contas = await ctx.tx.query<{ id: string; rotulo: string; saldo: string }>(
       `with antes as (select x.bank_account_id, sum(${SOMA_COM_SINAL("x")}) as v
                         from erp.extrato_conta_organizacao(
                                (select coalesce(array_agg(c.id), '{}'::uuid[]) from erp.bank_accounts c where c.organization_id=$1 and c.deleted_at is null and ($2::uuid[] is null or c.id = any($2::uuid[]))),
                                null, ($3::date - 1)) x group by 1)
-       select a.id, a.code || ' — ' || a.description as rotulo, (a.opening_balance + coalesce(antes.v,0))::text as saldo
+       select a.id, a.code || ' — ' || a.description as rotulo, ((case when $4::boolean then a.opening_balance else 0 end)::numeric(18,2) + coalesce(antes.v,0))::text as saldo
          from erp.bank_accounts a left join antes on antes.bank_account_id=a.id
         where a.organization_id=$1 and a.deleted_at is null and ($2::uuid[] is null or a.id = any($2::uuid[]))
-        order by a.code, a.id`, [ctx.orgId, p.contas, p.de]);
+        order by a.code, a.id`, [ctx.orgId, p.contas, p.de, total]);
     for (const c of contas.rows) { saldoPorConta.set(c.id, c.saldo); rotuloDaConta.set(c.id, c.rotulo); }
     saldoInicial = money(contas.rows.reduce((s, c) => s.plus(c.saldo), D(0)));
     const ids = contas.rows.map((c) => c.id);

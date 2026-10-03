@@ -29,10 +29,12 @@ const ALLOW: Record<string, string> = {
   "financial.ts:/financial/ofx-report": "agregado por conta bancária",
   "financial.ts:/financial/opening-movements": "saldo inicial de conta bancária; fazenda = selecionada (validada no contexto)",
   "financial.ts:/financial/budget-plannings/:id/values": "planejamento com empresa_id opcional — escopo aplicado via scopedById (nullable)",
-  // OPERACOES-01 F8 (decisão 285): a Central Financeira. Conta, saldo e extrato são da ORGANIZAÇÃO (MULTI-COMPANY §7).
-  "financeiro-bancos.ts:/financeiro/contas": "agregado de conta da organização via erp.extrato_conta_organizacao — MULTI-COMPANY §7 (bank_accounts.view + bank_movements.view)",
-  "financeiro-bancos.ts:/financeiro/contas/:id/saldo-inicial": "saldo inicial é do cadastro da conta (organização); a resposta é o agregado de conta via erp.extrato_conta_organizacao — MULTI-COMPANY §7",
-  "financeiro-bancos.ts:/financeiro/extrato": "agregado de conta da organização via erp.extrato_conta_organizacao — MULTI-COMPANY §7",
+  // OPERACOES-01 F8 (decisão 285): a Central Financeira. A conta é cadastro da ORGANIZAÇÃO (MULTI-COMPANY §7); os
+  // movimentos dela saem de erp.extrato_conta_organizacao, que os recorta por dentro pelo escopo de empresa do módulo
+  // financeiro (decisão do Maike de 03/10) — o escopo está na porta do banco, não num helper do handler.
+  "financeiro-bancos.ts:/financeiro/contas": "conta da organização; movimentos via erp.extrato_conta_organizacao, recortada por dentro pelo escopo de empresa do financeiro (bank_accounts.view + bank_movements.view)",
+  "financeiro-bancos.ts:/financeiro/contas/:id/saldo-inicial": "saldo inicial é do cadastro da conta (organização); a resposta é a linha da conta via erp.extrato_conta_organizacao, recortada por dentro pelo escopo de empresa do financeiro",
+  "financeiro-bancos.ts:/financeiro/extrato": "conta da organização; movimentos via erp.extrato_conta_organizacao, recortada por dentro pelo escopo de empresa do financeiro",
   "financeiro-bancos.ts:/financeiro/conciliacao/importacoes": "importação OFX é da conta (organização, sem empresa_id); os movimentos só mudam com ROW COUNT sob a RLS de empresa",
   "financeiro-bancos.ts:/financeiro/conciliacao/transacoes/:tid/confirmar": "conciliação por conta (organização); os movimentos só mudam com ROW COUNT sob a RLS de empresa (lib/financeiro-conciliacao.ts)",
   "financeiro-bancos.ts:/financeiro/conciliacao/transacoes/:tid/ignorar": "conciliação por conta (organização); só a transação OFX (sem empresa_id) muda",

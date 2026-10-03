@@ -11,7 +11,7 @@ import {
   VALOR_COM_SINAL, MENSAGEM_CONTA_INVALIDA, MENSAGEM_TRANSACAO_RESOLVIDA,
   lerTransacao, vincularMovimentos, ignorarTransacao, desfazerConciliacao, importarOfx, naoEncontrada
 } from "../lib/financeiro-conciliacao.js";
-import { montarFluxo, montarResultado } from "../lib/financeiro-fluxo.js";
+import { montarFluxo, montarResultado, escopoTotalDosMovimentos, type EscopoSaldo } from "../lib/financeiro-fluxo.js";
 
 /**
  * CENTRAL FINANCEIRA — BANCOS E CAIXA, CONCILIAÇÃO, FLUXO E RESULTADO, ADIANTAMENTOS E NATUREZAS PADRÃO
@@ -24,10 +24,14 @@ import { montarFluxo, montarResultado } from "../lib/financeiro-fluxo.js";
  * servidor, sem N+1; `Idempotency-Key` nas escritas (a chave leva a ação, os ids em minúsculas e o autor); ROW COUNT
  * conferido em toda gravação sob RLS; trilha (`audit`) em toda escrita.
  *
- * SALDO DE CONTA É DA ORGANIZAÇÃO (MULTI-COMPANY §7): contas, extrato e o fluxo da organização exigem a capacidade
- * de organização `bank_accounts.view` E a financeira `bank_movements.view`, e leem os movimentos pela função estreita
- * `erp.extrato_conta_organizacao` (0042) — uma permissão de empresa não devolve em silêncio um agregado que soma
- * empresas que o usuário não vê, e o recorte de empresa não deixa o saldo de conta errado.
+ * CONTA, SALDO E EXTRATO (MULTI-COMPANY §7): contas, extrato e o fluxo da conta exigem a capacidade de organização
+ * `bank_accounts.view` E a financeira `bank_movements.view`, e leem os movimentos pela função estreita
+ * `erp.extrato_conta_organizacao` (0042), que os RECORTA pelo escopo de empresa de quem pergunta no módulo financeiro
+ * (decisão do Maike de 03/10): numa conta compartilhada, quem vê só a empresa A não recebe linha, texto, documento,
+ * empresa nem valor da empresa B — nem dentro de total, contagem, saldo ou página, que já nascem do conjunto recortado.
+ * O saldo inicial do cadastro não tem empresa: só entra no saldo com escopo TOTAL no financeiro (`escopo_saldo:
+ * "total"`); no parcial (`"parcial"`), o saldo é o dos movimentos das empresas do usuário. A conta em si é cadastro da
+ * organização: inexistente, excluída, de outra organização e id malformado continuam a MESMA 404.
  */
 
 const UUID = z.string().uuid();
@@ -75,11 +79,14 @@ interface LinhaConta {
 const SINAL_X = VALOR_COM_SINAL.replace(/m\./g, "x.");
 
 /**
- * As contas com saldo REAL (saldo inicial do cadastro + todos os movimentos confirmados) e saldo CONCILIADO (saldo
- * inicial + só os movimentos com a marca de conciliado), numa consulta: a função organizacional é varrida UMA vez,
- * agregada por conta, e a página e os totais saem do mesmo conjunto.
+ * As contas com saldo REAL (saldo inicial do cadastro + os movimentos confirmados que o usuário vê) e saldo CONCILIADO
+ * (saldo inicial + só os movimentos com a marca de conciliado), numa consulta: a função da conta é varrida UMA vez,
+ * já recortada pelo escopo de empresa, agregada por conta, e a página e os totais saem do mesmo conjunto. O saldo
+ * inicial (o cadastro da conta, sem empresa) só entra com escopo TOTAL; `saldo_inicial` continua sendo o do cadastro.
  */
-async function contasComSaldo(ctx: ServiceCtx, f: { ids?: string[]; ativas: boolean; page: number; pageSize: number }): Promise<{ itens: LinhaConta[]; total: number; totais: { saldo_real: string; saldo_conciliado: string } }> {
+async function contasComSaldo(ctx: ServiceCtx, f: { ids?: string[]; ativas: boolean; page: number; pageSize: number }): Promise<{ itens: LinhaConta[]; total: number; totais: { saldo_real: string; saldo_conciliado: string }; escopo_saldo: EscopoSaldo }> {
+  // Os movimentos já chegam recortados pela função; o saldo inicial do cadastro só entra com escopo TOTAL.
+  const escopoTotal = await escopoTotalDosMovimentos(ctx);
   const r = await ctx.tx.query<{ total: number; saldo_real: string; saldo_conciliado: string; itens: LinhaConta[] }>(
     `with s as (
        select x.bank_account_id,
@@ -89,8 +96,9 @@ async function contasComSaldo(ctx: ServiceCtx, f: { ids?: string[]; ativas: bool
          from erp.extrato_conta_organizacao($2::uuid[], null, null) x group by 1),
      l as (
        select a.id, a.code, a.description, a.type, a.bank_code, a.agency, a.account_number, a.is_active, a.opening_balance, a.data_saldo_inicial,
-              a.opening_balance + coalesce(s.real,0) as saldo_real, a.opening_balance + coalesce(s.conciliado,0) as saldo_conciliado, s.conciliado_ate
+              b.inicial + coalesce(s.real,0) as saldo_real, b.inicial + coalesce(s.conciliado,0) as saldo_conciliado, s.conciliado_ate
          from erp.bank_accounts a left join s on s.bank_account_id=a.id
+        cross join lateral (select (case when $6::boolean then a.opening_balance else 0 end)::numeric(18,2) as inicial) b
         where a.organization_id=$1 and a.deleted_at is null and ($2::uuid[] is null or a.id = any($2::uuid[])) and ($3::boolean = false or a.is_active))
      select (select count(*) from l)::int as total,
             (select coalesce(sum(saldo_real),0) from l)::text as saldo_real,
@@ -100,9 +108,9 @@ async function contasComSaldo(ctx: ServiceCtx, f: { ids?: string[]; ativas: bool
                       l.is_active as ativa, l.opening_balance::text as saldo_inicial, to_char(l.data_saldo_inicial,'YYYY-MM-DD') as data_saldo_inicial,
                       l.saldo_real::text as saldo_real, l.saldo_conciliado::text as saldo_conciliado, to_char(l.conciliado_ate,'YYYY-MM-DD') as conciliado_ate
                  from l order by l.code, l.id limit $4 offset $5) p), '[]'::json) as itens`,
-    [ctx.orgId, f.ids ?? null, f.ativas, f.pageSize, offset(f)]);
+    [ctx.orgId, f.ids ?? null, f.ativas, f.pageSize, offset(f), escopoTotal]);
   const x = r.rows[0]!;
-  return { itens: x.itens, total: x.total, totais: { saldo_real: money(x.saldo_real), saldo_conciliado: money(x.saldo_conciliado) } };
+  return { itens: x.itens, total: x.total, totais: { saldo_real: money(x.saldo_real), saldo_conciliado: money(x.saldo_conciliado) }, escopo_saldo: escopoTotal ? "total" : "parcial" };
 }
 
 /** A conta pela organização, viva. Malformado, inexistente, de outra organização e excluída: a MESMA 404. */
@@ -119,12 +127,16 @@ const SITUACAO_DO_EXTRATO = { todos: "true", conciliados: "x.reconciled_at is no
 
 /**
  * Extrato de UMA conta com saldo real × conciliado ACUMULADOS. O acumulado é uma janela sobre TODOS os movimentos do
- * período (o filtro de situação recorta as linhas mostradas, não o saldo), e a paginação vem DEPOIS da janela: a
- * página 2 começa do acumulado certo. Saldo anterior = saldo inicial do cadastro + movimentos antes do início; sem
- * início pedido, o início é a data do saldo inicial da conta (quando declarada).
+ * período que o usuário VÊ (a função já os recortou pelo escopo de empresa; o filtro de situação recorta as linhas
+ * mostradas, não o saldo), e a paginação vem DEPOIS da janela: a página 2 começa do acumulado certo. Saldo anterior =
+ * saldo inicial do cadastro (só com escopo TOTAL) + movimentos antes do início; sem início pedido, o início é a data do
+ * saldo inicial da conta (quando declarada).
  */
 async function extratoDaConta(ctx: ServiceCtx, q: { conta_id: string; de?: string; ate?: string; situacao: keyof typeof SITUACAO_DO_EXTRATO; page: number; pageSize: number }) {
   const conta = await lerConta(ctx, q.conta_id);
+  const escopoTotal = await escopoTotalDosMovimentos(ctx);
+  const escopoSaldo: EscopoSaldo = escopoTotal ? "total" : "parcial";
+  const inicial = escopoTotal ? conta.saldo_inicial : "0";
   const de = q.de ?? conta.data_saldo_inicial ?? null;
   const ate = q.ate ?? null;
   if (de && ate && de > ate) throw validation("Período inválido: o início é depois do fim", [{ path: ["de"], message: "Período inválido" }]);
@@ -133,7 +145,7 @@ async function extratoDaConta(ctx: ServiceCtx, q: { conta_id: string; de?: strin
         `select coalesce(sum(${SINAL_X}),0)::text as real, coalesce(sum(${SINAL_X}) filter (where x.reconciled_at is not null),0)::text as conciliado
            from erp.extrato_conta_organizacao(array[$1]::uuid[], null, ($2::date - 1)) x`, [conta.id, de])).rows[0]!
     : { real: "0", conciliado: "0" };
-  const saldoAnterior = { real: money(D(conta.saldo_inicial).plus(antes.real)), conciliado: money(D(conta.saldo_inicial).plus(antes.conciliado)) };
+  const saldoAnterior = { real: money(D(inicial).plus(antes.real)), conciliado: money(D(inicial).plus(antes.conciliado)) };
   const filtro = SITUACAO_DO_EXTRATO[q.situacao];
   const periodo = await ctx.tx.query<{ n: number; real: string; conciliado: string }>(
     `select (count(*) filter (where ${filtro}))::int as n, coalesce(sum(${SINAL_X}),0)::text as real, coalesce(sum(${SINAL_X}) filter (where x.reconciled_at is not null),0)::text as conciliado
@@ -153,7 +165,7 @@ async function extratoDaConta(ctx: ServiceCtx, q: { conta_id: string; de?: strin
     [conta.id, de, ate, saldoAnterior.real, saldoAnterior.conciliado, q.pageSize, offset(q)]);
   const p = periodo.rows[0]!;
   return {
-    conta, de, ate, situacao: q.situacao, saldo_anterior: saldoAnterior,
+    conta, de, ate, situacao: q.situacao, escopo_saldo: escopoSaldo, saldo_anterior: saldoAnterior,
     itens: await anexarIdsGlobais(ctx, "bank_movements", linhas.rows), total: p.n, page: q.page, pageSize: q.pageSize,
     saldo_final: { real: money(D(saldoAnterior.real).plus(p.real)), conciliado: money(D(saldoAnterior.conciliado).plus(p.conciliado)) }
   };
@@ -270,7 +282,7 @@ export default async function financeiroBancosRoutes(app: FastifyInstance) {
     requirePermission(ctx, "bank_movements.view");
     const q = contasQuery.parse(req.query);
     const r = await contasComSaldo(ctx, { ativas: q.ativas === "1", page: q.page, pageSize: q.pageSize });
-    return { itens: r.itens, total: r.total, page: q.page, pageSize: q.pageSize, totais: r.totais };
+    return { itens: r.itens, total: r.total, page: q.page, pageSize: q.pageSize, totais: r.totais, escopo_saldo: r.escopo_saldo };
   }));
 
   app.put("/financeiro/contas/:id/saldo-inicial", async (req) => runService(app, req, "bank_accounts.edit", async (ctx) => {

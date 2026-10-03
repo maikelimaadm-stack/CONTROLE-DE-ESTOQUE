@@ -23,7 +23,11 @@ import { TEST_URL } from "./setup.js";
  *       movimento (42501);
  *   (e) a tabela nova: uma linha por organização, RLS por tenant, FK composta para a natureza, auditoria;
  *   (f) os CHECKs do rótulo da transferência e do componente da baixa;
- *   (g) a porta do extrato: sem as duas capacidades, 42501; com elas, o agregado da organização com reconciled_at;
+ *   (g) a porta do extrato: sem as duas capacidades, 42501; com elas, os confirmados com reconciled_at RECORTADOS pelo
+ *       escopo de empresa no módulo financeiro (decisão do Maike de 03/10) — sem escopo, nada;
+ *   (i) a conta COMPARTILHADA por A e B (e um movimento sem empresa): o escopo [A] recebe só as linhas de A (nenhum id,
+ *       texto, documento ou valor de B, nem o sem empresa) e a soma de A; o escopo total, tudo e a soma total; o
+ *       módulo é o FINANCEIRO fixo — "todas" em outro módulo e a GUC de outro módulo (ou nenhuma) não alargam nada;
  *   (h) as FKs compostas recusam referência de outra organização (23503).
  *
  * Duas conexões: `db` (superusuário: monta o cenário e lê o catálogo) e `app` (papel da aplicação, SEM bypass de RLS,
@@ -37,6 +41,7 @@ let natDespesa: string; let natReceita: string; let centro: string;
 let tipoBoleto: string; let tipoAdFornecedor: string;
 let outraOrg: string; let empresaOutraOrg: string; let natOutraOrg: string; let contaOutraOrg: string; let pessoaOutraOrg: string;
 let usuarioSoContas: string; let usuarioContasEMovimentos: string;
+let usuarioEscopoA: string; let usuarioEscopoTotal: string;
 
 const ALVO = "0042_central_financeira.sql";
 const M = "OPERACOES-01 F8: ";
@@ -48,7 +53,7 @@ const PAPEL = `${M}papel erp_app ausente (0007); os privilegios da tabela nova e
 const BYPASS = `${M}o papel que aplica a migration (dono da funcao SECURITY DEFINER do extrato) nao atravessa RLS; o acervo e o extrato seriam lidos pelo recorte dele.`;
 const COLUNA = `${M}coluna lida pela migration ausente (financial_titles: id/organization_id/empresa_id/direction/person_id/title_type_id/payment_type/amount/discount/paid_amount/status/deleted_at/source_type/source_id/version; title_settlements: id/organization_id/title_id/settlement_kind/cross_title_id/bank_movement_id/amount/discount/status; bank_movements: id/organization_id/bank_account_id/movement_date/type/category_type/destination_account_id/amount/interest/empresa_id/status/reconciled_at/ofx_transaction_id/note/document/source_type/created_at/deleted_at/code; bank_accounts: id/organization_id/code/opening_balance/deleted_at; title_types: id/is_advance; financial_categories: id/organization_id/parent_id/nature/classification); a cadeia de migrations esta fora de ordem.`;
 const CHAVE = `${M}chave alvo das FKs compostas ausente (uq_financial_categories_tenant de erp.financial_categories).`;
-const FUNCOES = `${M}funcoes de RLS/auditoria/usuario/baixa ausentes (tenant_visible, audit_row, current_org_id, effective_user_id, has_permission, refresh_title_status, title_settlement_changed, set_updated_at).`;
+const FUNCOES = `${M}funcoes de RLS/auditoria/usuario/baixa/escopo ausentes (tenant_visible, audit_row, current_org_id, effective_user_id, has_permission, refresh_title_status, title_settlement_changed, set_updated_at, escopo_empresa_total, empresas_do_membro).`;
 const gatilhos = (ts: string, bm: string, ft: string) =>
   `${M}gatilhos do ledger diferentes dos esperados (title_settlements: trg_settlement_changed; bank_movements: trg_bm_audit; financial_titles: trg_ft_audit, trg_ft_updated): title_settlements=${ts} bank_movements=${bm} financial_titles=${ft}`;
 const ACERVO = `${M}ha baixa confirmada com desconto (a contagem do desconto muda nesta migration): `;
@@ -160,6 +165,18 @@ async function pagar(tituloId: string, valor: string, direcao: Direcao = "payabl
 const estado = async (id: string) => (await db.query<{ status: string; paid_amount: string; balance: string }>(
   "select status, paid_amount, balance from erp.financial_titles where id=$1", [id])).rows[0]!;
 
+/**
+ * O escopo de empresa do membro NUM módulo (superusuário: o cenário): "todas" ou as empresas nomeadas — a mesma forma
+ * que a borda de administração grava (erp.membro_escopos_empresa + erp.membro_empresas). Sem chamar: nenhuma empresa.
+ */
+async function escopo(usuario: string, modulo: string, empresas: "todas" | string[], org = demo.orgId): Promise<void> {
+  const m = await id1(db, "select id from erp.organization_members where organization_id=$1 and user_id=$2", [org, usuario]);
+  await db.query("insert into erp.membro_escopos_empresa (organization_id, membro_id, modulo, modo) values ($1,$2,$3,$4)", [org, m, modulo, empresas === "todas" ? "todas" : "selecionadas"]);
+  if (empresas !== "todas") {
+    for (const e of empresas) await db.query("insert into erp.membro_empresas (organization_id, membro_id, modulo, modo, empresa_id) values ($1,$2,$3,'selecionadas',$4)", [org, m, modulo, e]);
+  }
+}
+
 async function membro(org: string, rotulo: string, permissoes: string[]): Promise<string> {
   const usuario = await id1(db, "insert into erp.users (email, name, password_hash) values ($1,$2,'x') returning id", [`${rotulo}@demo.local`, `F8 ${rotulo}`]);
   const papel = await id1(db, "insert into erp.roles (organization_id, name) values ($1,$2) returning id", [org, `F8 ${rotulo}`]);
@@ -202,6 +219,13 @@ beforeAll(async () => {
   // Sem escopo de empresa nenhum no financeiro (fail-closed): pela RLS, não vê movimento com empresa.
   usuarioSoContas = await membro(demo.orgId, "f8-contas", ["bank_accounts.view"]);
   usuarioContasEMovimentos = await membro(demo.orgId, "f8-contas-movimentos", ["bank_accounts.view", "bank_movements.view"]);
+  // As duas capacidades e o financeiro só na empresa A — com "todas" no ESTOQUE (outro módulo não pode alargar o extrato).
+  usuarioEscopoA = await membro(demo.orgId, "f8-escopo-a", ["bank_accounts.view", "bank_movements.view"]);
+  await escopo(usuarioEscopoA, "financeiro", [A]);
+  await escopo(usuarioEscopoA, "estoque", "todas");
+  // As duas capacidades e o financeiro em "todas": o escopo TOTAL sem ser proprietário.
+  usuarioEscopoTotal = await membro(demo.orgId, "f8-escopo-total", ["bank_accounts.view", "bank_movements.view"]);
+  await escopo(usuarioEscopoTotal, "financeiro", "todas");
 }, 300_000);
 afterAll(async () => { await app?.end(); await db?.end(); });
 
@@ -288,7 +312,7 @@ describe("DB-1/DB-2 — a 0042 sobre o banco até a 0041: trava, lock_timeout e 
     expect(await recusaDa0042((c) => c.query("alter table erp.financial_categories rename constraint uq_financial_categories_tenant to uq_f8"))).toBe(CHAVE);
     // P6 cada função chamada.
     for (const fn of ["tenant_visible(uuid)", "audit_row()", "current_org_id()", "effective_user_id()", "has_permission(uuid, uuid, text)",
-      "refresh_title_status(uuid)", "title_settlement_changed()", "set_updated_at()"]) {
+      "refresh_title_status(uuid)", "title_settlement_changed()", "set_updated_at()", "escopo_empresa_total(text)", "empresas_do_membro(text)"]) {
       expect([fn, await recusaDa0042((c) => c.query(`alter function erp.${fn} rename to f8_renomeada`))]).toEqual([fn, FUNCOES]);
     }
     // P7 o conjunto EXATO dos gatilhos do ledger: um a menos em cada tabela, um a mais.
@@ -391,11 +415,22 @@ describe("DB-3 — a 0042 aplica; reaplicar e as pós-condições", () => {
     const GATILHOS = `${M}gatilhos de title_settlements/bank_movements/financeiro_naturezas_padrao ausentes, a mais, desligados, de outro tipo, sem WHEN ou na funcao errada (esperados exatamente 6).`;
     const FN_GATILHO = `${M}funcoes de gatilho novas fora da forma (sem SECURITY DEFINER, search_path "erp, pg_temp", EXECUTE so do dono).`;
     const EXTRATO = `${M}erp.extrato_conta_organizacao fora da forma (SECURITY DEFINER estavel, search_path "erp, pg_catalog", EXECUTE do erp_app e nao de PUBLIC).`;
+    const EXTRATO_ESCOPO = `${M}erp.extrato_conta_organizacao sem o recorte pelo escopo de empresa do modulo financeiro (escopo_empresa_total e empresas_do_membro no WHERE).`;
     const REFRESH = `${M}erp.refresh_title_status fora da semantica B (sum(amount), sem amount + discount) ou sem EXECUTE do erp_app.`;
     const PRIVILEGIOS = `${M}privilegios do erp_app errados (sem delete/truncate no ledger e na tabela nova, sem update no rateio do movimento, select/insert/update na tabela nova).`;
     // O corpo da 0004, como está no repositório: a soma que conta o desconto de novo.
     const refresh0004 = /create or replace function erp\.refresh_title_status[\s\S]*?end \$\$;/.exec(listMigrations().find((x) => x.name.startsWith("0004_"))!.sql)?.[0];
     expect(refresh0004, "o corpo da 0004 foi encontrado").toContain("sum(amount + discount)");
+    // A porta do extrato COMO ESTÁ na 0042, e duas versões dela que entregam outra empresa: sem o predicado no WHERE (o
+    // corpo de antes do conserto de 03/10) e com o módulo da GUC no lugar do financeiro fixo (a rota de conta abre a
+    // transação sem módulo: a união das empresas do membro em qualquer módulo).
+    const extrato0042 = /create function erp\.extrato_conta_organizacao[\s\S]*?end \$\$;/.exec(sql)?.[0];
+    const PREDICADO = "       and (v_total or m.empresa_id in (select erp.empresas_do_membro('financeiro')))\n";
+    expect(extrato0042, "o corpo da porta foi encontrado, com o predicado").toContain(PREDICADO);
+    const extratoSemRecorte = extrato0042!.replace("create function", "create or replace function").replace(PREDICADO, "");
+    const extratoPeloModuloDaGuc = extrato0042!.replace("create function", "create or replace function").replaceAll("'financeiro'", "erp.modulo_empresa_atual()");
+    expect(extratoSemRecorte).not.toContain("empresas_do_membro('financeiro')");
+    expect(extratoPeloModuloDaGuc).not.toContain("'financeiro'");
 
     const casos: [string, string, string][] = [
       ["coluna nova com default", "alter table erp.bank_accounts alter column data_saldo_inicial set default current_date", COLUNAS],
@@ -425,6 +460,8 @@ describe("DB-3 — a 0042 aplica; reaplicar e as pós-condições", () => {
       ["extrato executável por PUBLIC", "grant execute on function erp.extrato_conta_organizacao(uuid[], date, date) to public", EXTRATO],
       ["extrato invoker", "alter function erp.extrato_conta_organizacao(uuid[], date, date) security invoker", EXTRATO],
       ["extrato com search_path aberto", "alter function erp.extrato_conta_organizacao(uuid[], date, date) set search_path = erp, public", EXTRATO],
+      ["extrato sem o recorte de empresa (o corpo de antes do conserto)", extratoSemRecorte, EXTRATO_ESCOPO],
+      ["extrato pelo módulo da GUC (e não pelo financeiro)", extratoPeloModuloDaGuc, EXTRATO_ESCOPO],
       ["refresh contando o desconto de novo (o corpo da 0004)", refresh0004!, REFRESH],
       ["refresh sem EXECUTE do erp_app", "revoke execute on function erp.refresh_title_status(uuid) from public, erp_app", REFRESH],
       ["DELETE de volta no ledger", "grant delete on erp.title_settlements to erp_app", PRIVILEGIOS],
@@ -632,7 +669,7 @@ describe("DB-4 — o comportamento da 0042", () => {
     expect((await db.query("update erp.financial_categories set grupo_dre='despesas' where id=$1", [natDespesa])).rowCount).toBe(1);
   });
 
-  it("DB-4g extrato organizacional: sem bank_movements.view → 42501; com as duas capacidades, os confirmados da organização com reconciled_at — mesmo sem escopo de empresa", async () => {
+  it("DB-4g a porta do extrato: sem bank_movements.view → 42501; com as duas capacidades, os confirmados com reconciled_at RECORTADOS pelo escopo de empresa — sem escopo no financeiro, nada", async () => {
     const conciliado = await movimento(db, { valor: "11.00", tipo: "in" });
     await db.query("update erp.bank_movements set reconciled_at='2026-10-06T10:00:00Z' where id=$1", [conciliado]);
     const pendente = await movimento(db, { valor: "12.00", tipo: "out", empresa: B });
@@ -646,12 +683,17 @@ describe("DB-4 — o comportamento da 0042", () => {
     expect([semMov.code, semMov.message]).toEqual(["42501", "SEM_CAPACIDADE: extrato organizacional de conta exige bank_accounts.view e bank_movements.view"]);
     const semUsuario = await erroDe(extrato(null));
     expect([semUsuario.code, semUsuario.message]).toEqual(["42501", "CONTEXTO_AUSENTE: extrato de conta exige organizacao e usuario na transacao"]);
-    // Premissa: pela RLS, quem tem as duas capacidades mas nenhum escopo de empresa no financeiro não vê os movimentos.
+    // Premissa: os dois confirmados existem (um em cada empresa) — e, pela RLS, quem tem as duas capacidades mas nenhum
+    // escopo de empresa no financeiro não os vê.
+    expect((await db.query<{ empresa_id: string }>("select empresa_id from erp.bank_movements where id = any($1::uuid[]) and status='confirmed' order by amount", [[conciliado, pendente]])).rows)
+      .toEqual([{ empresa_id: A }, { empresa_id: B }]);
     expect((await withTx(app, ctxFin(usuarioContasEMovimentos), (tx) => tx.query("select 1 from erp.bank_movements where id = any($1::uuid[])", [[conciliado, pendente]]))).rowCount).toBe(0);
-    // A porta: o agregado da ORGANIZAÇÃO — confirmados das duas empresas, com a conciliação; nem o cancelado nem o de outra organização.
+    // A porta também não: módulo financeiro sem configuração é NENHUMA empresa (fail-closed), não "a organização".
+    expect((await extrato(usuarioContasEMovimentos)).rows).toEqual([]);
+    // O proprietário (escopo total): os confirmados das duas empresas, com a conciliação; nem o cancelado nem o de outra organização.
     const codigos = (await db.query<{ id: string; code: string }>("select id, code from erp.bank_movements where id = any($1::uuid[])", [[conciliado, pendente]])).rows;
     const codigo = (id: string) => codigos.find((x) => x.id === id)!.code;
-    expect((await extrato(usuarioContasEMovimentos)).rows).toEqual([
+    expect((await extrato(demo.adminUserId)).rows).toEqual([
       { id: conciliado, account_code: "BB", code: codigo(conciliado), amount: "11.00", type: "in", category_type: "in", reconciled: true, empresa_id: A },
       { id: pendente, account_code: "BB", code: codigo(pendente), amount: "12.00", type: "out", category_type: "out", reconciled: false, empresa_id: B }
     ]);
@@ -659,6 +701,63 @@ describe("DB-4 — o comportamento da 0042", () => {
     expect((await withTx(app, ctxFin(), (tx) => tx.query("select 1 from erp.extrato_conta_organizacao(array[$1]::uuid[], '2026-10-01', '2026-10-31') where id = any($2::uuid[])", [contaCaixa, [conciliado, pendente]]))).rowCount).toBe(0);
     expect((await withTx(app, ctxFin(), (tx) => tx.query("select 1 from erp.extrato_conta_organizacao(null, '2026-11-01', null) where id = any($1::uuid[])", [[conciliado, pendente]]))).rowCount).toBe(0);
     expect((await db.query<{ p: boolean }>("select has_function_privilege('public', 'erp.extrato_conta_organizacao(uuid[],date,date)', 'execute') p")).rows[0]!.p).toBe(false);
+  });
+
+  it("DB-4i conta COMPARTILHADA por A e B (e um sem empresa): o escopo [A] recebe só as linhas e a soma de A; o total, tudo e a soma total; o módulo é o financeiro FIXO", async () => {
+    const conta = await id1(db, "insert into erp.bank_accounts (organization_id, code, description, type, opening_balance) values ($1,'F8CMP','[TEST] Conta compartilhada F8','checking',1000) returning id", [demo.orgId]);
+    await db.query("insert into erp.bank_account_empresas (bank_account_id, empresa_id) values ($1,$2),($1,$3)", [conta, A, B]);
+    const mov = (empresa: string | null, tipo: "in" | "out", valor: string, rotulo: string, status = "confirmed") => id1(db,
+      `insert into erp.bank_movements (organization_id, code, bank_account_id, movement_date, type, category_type, amount, empresa_id, status, note, document)
+       values ($1,$2,$3,'2026-10-07',$4,$4,$5,$6,$7,$8,$9) returning id`,
+      [demo.orgId, `F8C-${rotulo}`, conta, tipo, valor, empresa, status, `[TEST] Lançamento ${rotulo}`, `DOC-${rotulo}`]);
+    const a1 = await mov(A, "in", "100.00", "A1"); const a2 = await mov(A, "out", "30.00", "A2");
+    const b1 = await mov(B, "in", "500.00", "B1"); const b2 = await mov(B, "out", "45.00", "B2");
+    const n1 = await mov(null, "in", "9.00", "N1");
+    await mov(A, "in", "1000.00", "AX", "cancelled");
+
+    // PREMISSA: as linhas de B e a sem empresa EXISTEM na conta, com texto, documento e valor (o superusuário as lê).
+    expect((await db.query<{ id: string; empresa_id: string | null; note: string; document: string; amount: string }>(
+      "select id, empresa_id, note, document, amount from erp.bank_movements where bank_account_id=$1 and status='confirmed' order by code", [conta])).rows).toEqual([
+      { id: a1, empresa_id: A, note: "[TEST] Lançamento A1", document: "DOC-A1", amount: "100.00" },
+      { id: a2, empresa_id: A, note: "[TEST] Lançamento A2", document: "DOC-A2", amount: "30.00" },
+      { id: b1, empresa_id: B, note: "[TEST] Lançamento B1", document: "DOC-B1", amount: "500.00" },
+      { id: b2, empresa_id: B, note: "[TEST] Lançamento B2", document: "DOC-B2", amount: "45.00" },
+      { id: n1, empresa_id: null, note: "[TEST] Lançamento N1", document: "DOC-N1", amount: "9.00" }
+    ]);
+    // PREMISSA do módulo fixo: sem módulo na transação (como a rota de conta abre), a RLS vale a UNIÃO dos módulos — o
+    // "todas" do estoque abre B ao membro [A]; no financeiro, a RLS de leitura dá A e o sem empresa.
+    const rls = (modulo: string | null) => withTx(app, { orgId: demo.orgId, userId: usuarioEscopoA, modulo }, (tx) =>
+      tx.query<{ id: string }>("select id from erp.bank_movements where bank_account_id=$1 and status='confirmed' order by code", [conta]));
+    expect((await rls(null)).rows.map((x) => x.id), "sem módulo: a união abre a conta inteira").toEqual([a1, a2, b1, b2, n1]);
+    expect((await rls("financeiro")).rows.map((x) => x.id), "no financeiro: A e o sem empresa").toEqual([a1, a2, n1]);
+
+    type Linha = { id: string; empresa_id: string | null; note: string; document: string; amount: string; type: string };
+    const pela = (userId: string, modulo: string | null) => withTx(app, { orgId: demo.orgId, userId, modulo }, async (tx) => ({
+      linhas: (await tx.query<Linha>("select id, empresa_id, note, document, amount, type from erp.extrato_conta_organizacao(array[$1]::uuid[], null, null) order by code", [conta])).rows,
+      agregado: (await tx.query<{ n: number; saldo: string }>(
+        "select count(*)::int n, coalesce(sum(case when type='in' then amount + interest else -(amount + interest) end),0)::text saldo from erp.extrato_conta_organizacao(array[$1]::uuid[], null, null)", [conta])).rows[0]!
+    }));
+    const linhaA = [
+      { id: a1, empresa_id: A, note: "[TEST] Lançamento A1", document: "DOC-A1", amount: "100.00", type: "in" },
+      { id: a2, empresa_id: A, note: "[TEST] Lançamento A2", document: "DOC-A2", amount: "30.00", type: "out" }
+    ];
+    // ESCOPO [A]: só as linhas de A e a soma de A (100 − 30 = 70) — sem módulo (a rota), no financeiro e com a GUC de
+    // OUTRO módulo (o estoque, em que ele tem "todas"): o módulo da porta é o financeiro, fixo.
+    for (const modulo of [null, "financeiro", "estoque"]) {
+      const r = await pela(usuarioEscopoA, modulo);
+      expect([modulo, r.linhas, r.agregado]).toEqual([modulo, linhaA, { n: 2, saldo: "70.00" }]);
+      // Nada de B nem do sem empresa: nem id, nem texto, nem documento, nem valor.
+      const tudo = JSON.stringify(r);
+      for (const proibido of [b1, b2, n1, B, "B1", "B2", "N1", "500.00", "45.00", "9.00"]) expect([modulo, proibido, tudo.includes(proibido)]).toEqual([modulo, proibido, false]);
+    }
+    // ESCOPO TOTAL (modo "todas" no financeiro, sem ser proprietário) e o PROPRIETÁRIO: tudo, inclusive o sem empresa; a
+    // soma total (70 + 455 + 9 = 534). O cancelado nunca.
+    for (const [quem, usuario] of [["todas no financeiro", usuarioEscopoTotal], ["proprietário", demo.adminUserId]] as const) {
+      const r = await pela(usuario, null);
+      expect([quem, r.linhas.map((x) => x.id), r.agregado]).toEqual([quem, [a1, a2, b1, b2, n1], { n: 5, saldo: "534.00" }]);
+    }
+    // SEM ESCOPO no financeiro (só as capacidades): nada, e a soma zero — não "a organização".
+    expect(await pela(usuarioContasEMovimentos, null)).toEqual({ linhas: [], agregado: { n: 0, saldo: "0" } });
   });
 
   it("DB-4h FKs compostas: conta prevista, natureza do desconto e baixa do componente de OUTRA organização são recusadas (23503); as da própria passam", async () => {
