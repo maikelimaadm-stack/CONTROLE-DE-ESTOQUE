@@ -140,7 +140,8 @@ consultas de `/api/dashboards/*`). O Início continua com os indicadores executi
 | Meus Processos, Solicitação, Rejeitados/Cancelados, Cotações, Autorização, Compras, Recebimentos (7 telas, mesmo componente) | **Processos de Compra** com sub-abas Todos · Meus · Solicitações · Cotação · Aprovação · Compra · Recebimento · Finalizados · Cancelados (uma lista, filtro por etapa; API ganhou `stage=finished`) |
 | Dashboard Suprimentos | aba **Visão Geral** |
 | Parâmetros SLA (menu) | Configurações › Compras › SLA (Autorizadores idem) |
-| Nova Solicitação (botão na lista) | **+ Novo** da área |
+| Nova Solicitação (botão na lista) | **+ Novo** da área até a decisão 288; desde o merge da F7 (decisões 284 e 288) a barra de Compras não tem "+ Novo" — a solicitação abre pela rota `/suprimentos/new`, e o pedido e o orçamento de compra cobrem o pedir |
+| Nota de entrada (Estoque › Documento fiscal / importar XML) | **Importar XML** em Compras › Documentos e a ação "Importar XML de nota de compra" (a conferência em `/compras/importacoes/<id>` gera a COMPRA aberta; decisão 284); a nota antiga fica no Estoque SÓ para o que a compra não cobre |
 Preservado: máquina de estados, SLA, responsáveis, aprovações, cotações, `version` otimista, histórico, regras de recebimento.
 
 ### Estoque (`/estoque`)
@@ -154,7 +155,7 @@ Preservado: máquina de estados, SLA, responsáveis, aprovações, cotações, `
 | Formulação, Batida | **Fábrica de Ração**: Fórmulas · Produções · Consumo · Custos ("batida" apresentada como produção) |
 | Estoques Iniciais (Cadastros Base) | Configurações › Implantação › Saldos iniciais de estoque — desde a decisão 288, "Lançar saldo inicial" leva à Central quando há TOP de entrada marcada |
 | Perfis de Lançamento (menu Estoque) | Configurações › Produtos e Classificações |
-| — | **+ Novo** antigo: removido na decisão 288. Lançar é pela aba **Movimentações** (Central de Estoque, Novo por TOP). Ficam como ação no menu: Entrada sem nota com pagamento ou natureza e centro por item · Documento fiscal/XML · Requisição com classificação capex/opex · Transferência entre empresas · Produção de ração |
+| — | **+ Novo** antigo: removido na decisão 288. Lançar é pela aba **Movimentações** (Central de Estoque, Novo por TOP). Ficam como ação no menu: Entrada sem nota com pagamento ou natureza e centro por item · Nota de entrada antiga (qualidade de grão, proprietário, cultura ou apropriação; desde o merge da F7, decisão 284) · Requisição com classificação capex/opex · Transferência entre empresas · Produção de ração |
 
 ### Financeiro (`/financeiro`)
 | Antes | Depois |

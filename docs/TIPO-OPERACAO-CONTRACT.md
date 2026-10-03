@@ -2524,7 +2524,7 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 
 ### 18.8 O que fica para depois
 
-- A seção da F7, na sua fase (`docs/OPERACOES-CONTRACT.md` §1 e §2). As da F5 (Destino e Fluxo) entraram na F5a, as da
+- A F7 (decisão 284) não criou seção (`docs/OPERACOES-CONTRACT.md` §2 e §5). As da F5 (Destino e Fluxo) entraram na F5a, as da
   F6 (Fluxo de compra e Divergência com o pedido), na F6a, a da F9 (Padrões financeiros), na F9a (§18.10), e a da F11
   (Implantação), na F11 (§18.12); a F10 não criou seção: a TOP nos módulos é §18.11. Nenhum tipo fica "sem tela ainda": as telas da requisição, do consumo e da
   devolução de consumo entraram na F5b (a Central de Estoque no motor, decisão 282), a do orçamento de compra, na F6b

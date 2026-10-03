@@ -1556,7 +1556,7 @@ Fatia F1 em fases (decisões 278 a 288), uma PR. Cada fase acrescenta a sua subs
 ordem de deploy, compatibilidade nos dois sentidos do skew, impacto em dados reais, reversão e o roteiro do Maike em
 produção (PENDING). As migrations da fatia são numeradas na ordem em que entram na branch (0042 a 0048, travas
 (2026,76) a (2026,82)): 0042 a F8, 0043 a F5a, 0044 a F6a e 0045 a F9a (entraram); 0046, trava (2026,80), a F10
-(entrou); 0047, trava (2026,81), a F7; 0048, trava (2026,82), sobra.
+(entrou); 0047, trava (2026,81), a F7 (entrou); 0048, trava (2026,82), sobra.
 
 ### F2 — as Centrais de Vendas e de Compras usam as regras gerais da TOP (OPERACOES-01, sem migration)
 
@@ -3226,8 +3226,9 @@ só leitura (nada é gravado). Os passos 7 e 8 gravam, só com a decisão dele.
    Recebimentos › "Entradas manuais (tela antiga)": listas sem o botão Novo. Operações › Transferências, chip "Entre
    empresas": o Novo continua.
 3. Mega-menu do Estoque (passar o mouse em "Estoque"): o grupo Ações tem exatamente Entrada sem nota com pagamento ou
-   natureza e centro por item · Novo documento fiscal / importar XML · Requisição com classificação capex/opex ·
-   Transferência entre empresas · Nova produção de ração; nenhum item "(tela antiga)".
+   natureza e centro por item · Nota de entrada antiga (qualidade de grão, proprietário, cultura ou apropriação) ·
+   Requisição com classificação capex/opex · Transferência entre empresas · Nova produção de ração; nenhum item "(tela
+   antiga)". (O rótulo da nota antiga é o do merge da F7; antes, "Novo documento fiscal / importar XML".)
 4. Busca (Buscar funcionalidade): "saída direta" → "Estoque › Movimentações"; "requisi" → "Requisição com classificação
    capex/opex" e nenhuma "Requisições (tela antiga)". A URL antiga `/estoque/baixas/new` ainda abre "Nova baixa de
    estoque" (compatibilidade). Descartar.
@@ -3247,8 +3248,10 @@ só leitura (nada é gravado). Os passos 7 e 8 gravam, só com a decisão dele.
    chave). Desligar a TOP volta a Implantação à tela de hoje.
 8. (Grava; decisão do Maike) Conceder as permissões novas (`*_estoque.create`) aos perfis do passo 1, se quiser que eles
    lancem pela Central.
-9. Depois da F7 (pedido ao coordenador): Compras sem "+ Novo › Nova solicitação de compra"; a lista Processos e o
-   detalhe `/suprimentos/view/:id` continuam.
+9. Compras (feito no merge da F7): a barra de Compras sem "+ Novo" (o "Nova solicitação de compra" saiu); a lista
+   Processos e o detalhe `/suprimentos/view/:id` continuam; no mega-menu de Compras, a ação "Importar XML de nota de
+   compra". Estoque › Recebimentos › DFe / XML recebidos: a fila continua; o "Lançar" da DF-e com o XML guardado abre a
+   importação na Central de Compras (o roteiro da F7, abaixo).
 
 **Riscos** (declarados na 288): perfil só com permissões antigas sem caminho visível de lançar (passo 1); o mega-menu
 mostra a área inteira quando todas as subs saem ("Operações" → Requisições (tela antiga); "Recebimentos" → Entradas
@@ -3260,11 +3263,224 @@ recusar também o saldo inicial vindo do documento novo (e, na reversão, a API 
 abate a devolução de consumo do consumo e não mostra a requisição nova (reserva, sem razão); testes enxutos — a
 integração e o E2E inteiros ficam para o CI, e o K2-0 está PENDING (acima).
 
-**FICA FORA DESTA RODADA:** a nota de entrada antiga e o "Lançar" da DF-e (decididos depois que a F7 entrar) e o "Nova
-solicitação de compra" de `apps/web/src/app/(app)/compras/page.tsx` (arquivo da F7, sai depois dela).
+**O que ficou fora desta rodada foi feito no merge da F7** (commit `cd02ba8`; decisões 284 e 288, risco (g)):
+- (a) a nota de entrada antiga fica no menu SÓ para o que a compra não cobre: a ação `estoque.acao.documento-fiscal`
+  (`apps/web/nav.registry.mjs`) passa a "Nota de entrada antiga (qualidade de grão, proprietário, cultura ou
+  apropriação)" — qualidade de grão por item; proprietário; cultura por item e safra no movimento e no título; tipo de
+  apropriação por item; filial do fornecedor; centro no movimento de estoque; unidade própria por item; "gerar
+  financeiro" por documento; bem com dados digitados; título dedutível. A lista "Documentos fiscais", o detalhe e a API
+  ficam;
+- (b) a ação nova "Importar XML de nota de compra" (`/compras?tab=documentos&importar=xml`, `compras.create`) e a rota de
+  detalhe `compras.documentos.importacao` (`/compras/importacoes/:id`);
+- (c) a fila de DF-e fica, e o "Lançar" da DF-e com o XML guardado abre a importação na Central de Compras (com
+  `dfe.launch` ∧ `compras.create` ∧ a capacidade `importacaoXml`); sem o XML, o "Lançar" de hoje (a nota antiga);
+- (d) o "Nova solicitação de compra" saiu do "+ Novo" de Compras (`apps/web/src/app/(app)/compras/page.tsx`).
+
+Implantação, skew e roteiro dessas mudanças: § F7, abaixo.
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção; os passos 7 e 8 gravam
 (só com a decisão dele).
+
+### F7 — entrada de nota por XML na Central de Compras (OPERACOES-01, migration 0047)
+
+Decisão 284. **Uma migration: `0047_entrada_de_nota_por_xml.sql`** (pre-deploy; trava (2026,81); `lock_timeout` 2 s;
+pré-condições nomeadas `OPERACOES-01 F7: …`, a primeira é "já aplicada"; pós-condições só de objetos; sem backfill;
+aditiva). As migrations do repositório passam a 47, a última a 0047. Sem variável. Sem permissão nova. Uma capacidade
+nova: `importacaoXml: 1`, no fim do bloco `capacidades` de `GET /api/compras/{pedidos,compras,orcamentos}/operation-types`.
+Sem dependência nova (`pnpm-lock.yaml` não muda). O que entra:
+- API:
+  - rotas novas `POST /api/compras/importacoes`, `POST /api/compras/importacoes/da-dfe/:dfeId`,
+    `GET /api/compras/importacoes/:id`, `POST /api/compras/importacoes/:id/gerar-compra` e
+    `POST /api/compras/importacoes/:id/descartar`;
+  - campos novos opcionais no `POST /api/compras/compras` e no receber (dados fiscais, rateio, "gera estoque",
+    imobilizado, natureza e centro por item);
+  - na confirmação da compra: o item que não gera estoque, o bem do imobilizado, o tipo de título, a classificação, as
+    duplicatas e o rateio; no estorno, a baixa do bem;
+  - `xml` opcional no `POST /api/stock/dfe`; a aprovação da DF-e na empresa DA DF-e; a chave de acesso conferida no
+    `POST /api/stock/invoices`; a solicitação de compra aceita a compra no recebimento;
+- domínio: o leitor de XML, a leitura da NF-e e a conta da compra pela nota (`xml-leitor.ts`, `nfe-leitura.ts`,
+  `nfe-compra.ts`); os rótulos novos;
+- web:
+  - "Importar XML" em Compras › Documentos e a página nova `/compras/importacoes/<id>` (a conferência);
+  - o bloco "Dados fiscais" na criação da compra; a consulta e a prévia com os dados fiscais, o rateio e os bens;
+  - a fila de DF-e com o XML guardado e o "Lançar" pela importação;
+  - a ação "Importar XML na Central de Compras" na solicitação;
+- menu (`apps/web/nav.registry.mjs`, no MESMO commit das telas; o fecho do menu da F11, decisão 288, item (g)):
+  - a rota de detalhe `compras.documentos.importacao` (`/compras/importacoes/:id`), ANTES de
+    `compras.documentos.detalhe` (cujo padrão `/compras/:especie/:id` também a casaria);
+  - a ação nova "Importar XML de nota de compra" (`/compras?tab=documentos&importar=xml`, `compras.create`);
+  - a ação da nota antiga passa a "Nota de entrada antiga (qualidade de grão, proprietário, cultura ou apropriação)",
+    SÓ para o que a compra não cobre (a lista da decisão 284);
+  - o "+ Novo › Nova solicitação de compra" sai da barra de Compras (`apps/web/src/app/(app)/compras/page.tsx`).
+
+**Migration — o que faz** (nenhuma linha existente é reescrita):
+- chaves `unique (id, organization_id)` novas em `erp.chart_accounts`, `erp.dfe_documents` e `erp.purchase_requests`:
+  o alvo das FKs compostas novas;
+- `erp.notas_fiscais_xml` — o XML original: sem UPDATE, DELETE nem TRUNCATE (privilégio e gatilho); RLS
+  `tenant_e_empresa`; `audit_row` (uma cópia do XML no `audit_logs`, no INSERT);
+- `erp.importacoes_nfe_compra` — a importação (pendente → gerada | descartada, decidida uma vez pelo gatilho
+  `importacoes_nfe_compra_guarda`; sem DELETE); índices únicos parciais: uma pendente por chave; uma importação por
+  compra. RLS `tenant_e_empresa`;
+- `erp.produto_fornecedor_vinculos` — o vínculo lembrado (organização, sem empresa; RLS `tenant_isolation`; sem DELETE);
+- `erp.documentos_compra`: 12 colunas anuláveis (chave de acesso, UF, tipo de documento fiscal, IPI, ICMS-ST, seguro,
+  tipo de título, classificação, tipo de rateio, parcelas da nota, DF-e e solicitação), 10 CHECKs novos (20 → 30, conferido pela pós-condição 13.4), e o
+  CHECK do total refeito na MESMA instrução (`… + coalesce(valor_ipi,0) + coalesce(valor_icms_st,0) + coalesce(seguro,0)`);
+  índice único parcial `ux_documentos_compra_chave` (compras não canceladas);
+- `erp.documentos_compra_itens`: 14 colunas anuláveis (gera estoque, imobilizado, bem, natureza e centro do item, IPI e
+  ST do item, e os dados do item na nota: número, código, descrição, unidade, quantidade e o fator) e os CHECKs delas;
+- `erp.documentos_compra_rateio` — o rateio por valor (RLS `api_child` pelo cabeçalho; só da compra aberta com rateio
+  por valor; sem UPDATE nem DELETE);
+- `erp.dfe_documents.xml_id` (FK composta; gatilho `trg_dfe_documents_xml`: gravado uma vez, da mesma chave e empresa);
+- a nota repetida no banco: `trg_documentos_compra_nota` (BEFORE INSERT OR UPDATE OF as 12 colunas fiscais) e
+  `trg_invoices_chave_nota` (BEFORE INSERT OR UPDATE OF `access_key, status, deleted_at`), as duas SECURITY DEFINER
+  estreitas (`search_path = erp, pg_temp`, EXECUTE só do dono), com a trava
+  `pg_advisory_xact_lock(hashtextextended('nfe-chave:'||org||':'||chave, 284))`;
+- os códigos levantados pelos gatilhos são só `VALIDATION_ERROR`, `CONFLICT` e `DUPLICATE_DOCUMENT`, que o binário
+  anterior conhece (422/409, nunca 500).
+
+**Pré-condições (recusa sem aplicar nada, com a mensagem que nomeia o que falta):**
+- já aplicada: qualquer tabela, função, coluna, gatilho ou índice da 0047 já existe — a primeira pergunta;
+- `erp_app` ausente, ou quem aplica não atravessa RLS (é o dono das duas SECURITY DEFINER);
+- tabela ausente;
+- as chaves alvo das FKs compostas ausentes ou em outras colunas, ou já existe uma `(id, organization_id)` em
+  `chart_accounts`, `dfe_documents` ou `purchase_requests`;
+- os CHECKs de `erp.documentos_compra` não são os vinte de depois da 0044, ou o do total não é EXATAMENTE o da 0036;
+- os gatilhos do documento de compra não são EXATAMENTE os oito da 0044, ligados;
+- as SECURITY DEFINER de compras não são as oito da 0044;
+- função chamada ausente;
+- quem aplica não é dono das seis tabelas alteradas;
+- coluna lida pelas guardas ausente ou com outro tipo.
+A 0047 depende da 0036, da 0037 e da 0044 (de nenhuma de número maior). Locks curtos (ACCESS EXCLUSIVE só de catálogo,
+mais a leitura de validação dos CHECKs e das chaves novas) em `documentos_compra`, `documentos_compra_itens`, `invoices`,
+`dfe_documents`, `purchase_requests` e `chart_accounts`: com uma transação longa segurando uma delas, a migration desiste
+em 2 s sem aplicar nada, e o deploy é refeito (seguro). Em erro, publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0047) → API → web**, com o menu no MESMO deploy do web. Na PR #90 o pre-deploy aplica as migrations na
+ordem do nome (0042 → 0047), cada uma na sua transação. Janelas:
+1. **API anterior × banco novo:**
+   - a API anterior não lê nem grava nada novo, e o que ela grava continua passando: a compra sem chave nem dispara a
+     guarda nova no UPDATE de situação, porque ela é `UPDATE OF` as colunas fiscais; o CHECK do total é o mesmo com as
+     colunas novas nulas;
+   - diferença visível: a nota antiga com a chave de uma compra viva recebe 409 `DUPLICATE_DOCUMENT` (código que ela
+     conhece). Só acontece depois que alguém gravar uma compra com chave, o que exige a API nova.
+2. **API nova × web anterior** (sentido 2): os corpos da web de produção são aceitos sem mudança (todo campo novo é
+   opcional, sem default); as respostas mantêm cada chave de hoje (chaves novas a mais, ignoradas pela web da base).
+   Provado pelo K-2 (`compras-f7-skew-web-anterior.spec.ts`: K2-1 compra da base 201 com as colunas novas nulas; K2-2
+   DF-e da base, sem `xml`, 201). Mudanças visíveis, todas no servidor:
+   - (a) a nota antiga (`POST /stock/invoices`) com a chave de uma compra viva → 409 `DUPLICATE_DOCUMENT` "A nota de
+     chave … já está na Compra <código>.";
+   - (b) a aprovação do rascunho de DF-e lança o título na empresa DA DF-e (antes: a da sessão, ou a primeira
+     disponível); DF-e sem empresa → 422 "A DF-e não tem empresa: registre-a de novo na fila de DF-e, com a empresa ou
+     com o XML, antes de aprovar."; rascunho de DF-e fora do escopo → 404;
+   - (c) registrar de novo uma DF-e sem empresa, com a empresa, PREENCHE a empresa (a já gravada nunca muda); registrar
+     de novo não duplica o rascunho pendente nem volta a "rascunho" a DF-e lançada ou ignorada;
+   - (d) o perfil de lançamento acha o fornecedor com o CNPJ/CPF gravado COM MÁSCARA: a DF-e desse emitente vira
+     rascunho ao ser registrada (antes ficava pendente);
+   - (e) a mensagem nova do "Confirmar recebimento" da solicitação: "Lance o documento fiscal de entrada ou gere a compra
+     pela importação do XML antes de confirmar o recebimento";
+   - (f) `operation-types` traz `importacaoXml` no fim; a DF-e traz `xml_id`; a leitura da compra traz as colunas novas
+     (nulas).
+3. **Web novo × API anterior** (sentido 1, reversão só da API): sem `importacaoXml`, o web fica como hoje:
+   - sem "Importar XML" (e `?importar=xml` não abre nada); sem o bloco "Dados fiscais"; sem a ação na solicitação;
+   - a DF-e registrada pela tela vai SEM `xml` (o XML só pré-preenche, como hoje), e o "Lançar" é o link de hoje;
+   - nenhum pedido a `/api/compras/importacoes*` no fio.
+   Provado pelo K-1 (`compras-f7-skew-api-producao.spec.ts`: K1-1 e K1-2; a base de hoje é o mundo legado — o ramo
+   "mundo novo" não rodou).
+4. **Web novo × API nova:** além do acima, mudanças que a pessoa vê:
+   - (g) a linha importada da nota tem o unitário arredondado PARA CIMA (6 casas), e a sobra (no máximo quantidade ×
+     0,000001) fica no desconto da linha — a linha fecha o vProd;
+   - (h) o diálogo da DF-e manda o XML só com a capacidade; quando o servidor recusa a leitura (devolução, sem
+     protocolo, homologação, destinatário fora do escopo…), o diálogo mostra a recusa e oferece "Registrar sem guardar
+     o XML";
+   - (i) nas DF-e, `xml_id`, a chave e a empresa não mudam depois que o XML está ligado; a DF-e da mesma chave registrada
+     em OUTRA empresa → 409 "Esta DF-e já está registrada em outra empresa.";
+   - (j) a DF-e registrada com o XML numa organização com duas empresas do mesmo CNPJ (sem a IE para desempatar) pede a
+     empresa: 422 em `empresa_id` com os `candidatos` do escopo;
+   - (k) o menu: em Compras, a ação "Importar XML de nota de compra" e a barra sem "+ Novo"; em Estoque, a ação da nota
+     antiga com o rótulo novo (acima).
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247):
+- nenhum valor muda; as colunas novas nascem nulas; os CHECKs novos só restringem as colunas novas, e o do total
+  refeito vale para as linhas de hoje sem mudança (as colunas a mais são nulas);
+- as chaves `(id, organization_id)` novas leem as três tabelas uma vez (o `id` já é único);
+- produção, pela leitura de 02/10 (decisão 281): 1 nota de entrada antiga, 1 DF-e e nenhum documento de compra listado.
+  - A guarda nova da nota antiga só age se existir compra viva com a mesma chave: nenhuma, porque a coluna nasce nula.
+  - A DF-e de produção: se ela não tiver empresa, a aprovação do rascunho dela passa a 422, e a saída é registrá-la de
+    novo com a empresa (ou com o XML). Não conferido: PENDING, passo 1 do roteiro.
+- O que muda para quem usa, sem ninguém configurar nada: "Importar XML" em Compras › Documentos; o bloco "Dados
+  fiscais" na criação da compra; a fila de DF-e guarda o XML e o "Lançar" da DF-e com XML abre a conferência; a
+  solicitação aceita a compra no recebimento.
+- Custo declarado: cada XML guardado gera UMA cópia no `audit_logs` (até 2 MB).
+
+**Reversão:**
+- API e web voltam por redeploy da versão anterior e convivem com a 0047. Tabelas, colunas, índices, gatilhos e
+  funções ficam (decisão 247); desfazer qualquer um só com migration nova, por decisão humana.
+- A reversão só do web = o sentido 2 acima; só da API = o sentido 1.
+- Depois de alguém gravar com a API nova:
+  - a API anterior que CONFIRMAR uma compra gravada pela nova soma IPI, ICMS-ST e seguro ao custo (estão no
+    `valor_total`), mas IGNORA `gera_estoque = false`, o imobilizado (não cria o bem), as duplicatas (título único no
+    `data_vencimento`, que é o da 1ª duplicata), o tipo de título, a classificação e o rateio;
+  - com rateio, o cabeçalho não tem natureza nem centro, e a confirmação dela recusa "Informe a natureza…", sem efeito
+    parcial;
+  - a importação pendente fica pendente (a API anterior não tem a rota), e o XML guardado fica;
+  - a correção é voltar a API nova.
+
+**Roteiro do Maike em produção** (depois do deploy; produção é operacional — decisões 240 e 247). Os passos 1 a 6 são
+só leitura (nada é gravado; o passo 6 é uma recusa e a transação volta inteira); os passos 7 e 8 gravam, e só com a
+decisão dele.
+1. (Leitura, SQL do Maike) A DF-e e a nota antiga de produção:
+   `select launch_status, empresa_id is null as sem_empresa, xml_id is null as sem_xml from erp.dfe_documents;` e
+   `select count(*) from erp.documentos_compra where especie = 'compra';` — a DF-e sem empresa não aprova o rascunho
+   (passa a 422) até ser registrada de novo com a empresa.
+2. Compras › Documentos: o botão "Importar XML" ao lado do Novo. Abrir e fechar o diálogo, sem enviar (o texto "Envie o
+   arquivo XML da NF-e (ou um ZIP com um único XML)…"). O mesmo diálogo pela busca ("importar xml") e pela ação
+   "Importar XML de nota de compra" do mega-menu de Compras; a barra de Compras sem "+ Novo".
+3. Compras › Nova compra: nos Dados adicionais, o bloco "Dados fiscais" (Chave de acesso, UF, Tipo de documento, IPI,
+   ICMS-ST, Seguro, Tipo de título, Classificação, o Rateio e, por item, "Gera estoque" e "Imobilizado"). Descartar.
+   No pedido de compra, o bloco não aparece.
+4. Estoque › Recebimentos › DFe / XML recebidos › Registrar: ao escolher um XML, o diálogo diz "o XML vai junto e fica
+   guardado". Cancelar sem salvar.
+5. Configurações › Operações › Tipos de Operação: nenhuma aba nova (a F7 não criou seção da TOP).
+6. (Recusa, nada gravado) Se o Maike tiver o XML da nota de entrada que já está em produção como nota antiga:
+   importá-lo em Compras › Documentos › Importar XML → o diálogo recusa com "A nota de chave … já está no Documento
+   fiscal de Estoque <código>." (409; a transação volta, nada é guardado).
+7. (Grava; decisão do Maike) Importar o XML de uma nota real de compra que ainda não foi lançada → conferência →
+   escolher a TOP, o fornecedor (ou cadastrá-lo pela tela), o produto e o fator de cada item → "Gerar compra" → a
+   compra aberta, com a chave. Conferir a prévia antes de confirmar. A compra só confirma pela consulta.
+8. (Grava; decisão do Maike) A DF-e de produção sem empresa (passo 1): registrá-la de novo na fila com a empresa, para o
+   rascunho poder ser aprovado.
+
+**Riscos** (declarados na 284):
+- a API anterior que confirmar uma compra gravada pela nova ignora "gera estoque", imobilizado, duplicatas, tipo de
+  título, classificação e rateio; com rateio, ela recusa a confirmação, sem efeito parcial (Reversão, acima);
+- o ramo "mundo novo" do K-1 não rodou (a base `622f194` é legado); a ação "Importar XML" da solicitação e o "Lançar" da
+  DF-e pela importação só têm prova de API (`compras-f7-importacao`, caso (6));
+- quem tem `dfe.create` sem `compras.create` registra a DF-e sem guardar o XML: a pergunta da capacidade exige
+  `compras.create` (I-3 da revisão). A recusa da leitura nunca vira recuo silencioso: a pessoa escolhe "Registrar sem
+  guardar o XML";
+- o "Gerar compra" de importação de ARQUIVO marca a DF-e da mesma chave como lançada sem exigir `dfe.launch` (M-2 da
+  revisão; o precedente da nota antiga com `dfe_id`); a rota `/compras/importacoes/da-dfe/:dfeId` continua exigindo
+  `dfe.launch`;
+- registrar de novo a DF-e que já tem XML, com um XML DIFERENTE da mesma chave, guarda o novo XML sem ligá-lo (o
+  `coalesce` mantém o primeiro), e a resposta devolve o `xml_id` do novo;
+- a mensagem do destinatário ambíguo diz "escolha a empresa da compra" também no registro da DF-e;
+- o unitário importado sobe até 0,000001 e a sobra vai ao desconto da linha, que pode passar o vDesc da nota em até
+  quantidade × 0,000001; as linhas de lote do mesmo item podem ter unitários diferentes;
+- a DF-e continua `launched` se a compra gerada for cancelada (como com a nota antiga);
+- o total exibido na Central manual soma em ponto flutuante (padrão anterior); o servidor recalcula em decimal;
+- o escopo de empresa sem alias (a coluna não qualificada resolve para `erp.membro_empresas` dentro da subconsulta) foi
+  consertado no descartar da importação e continua, fora da F7, em `stock.ts` (fila de DF-e: manifestar, ignorar,
+  listar), `fleet-hr.ts:263` e `:334` e `resources.ts:295` — fatia própria;
+- os testes sem mudança do código que a F7 mudou (`api.test.ts`, `f9a-classificacao-padrao`, `compras-02-cp`,
+  `compras-01-a2-confirmacao`, `f9b-compra-padroes-top`, `f9b-provisao-compra`; no E2E, `compras-03-central-unitario` e
+  `central-compras-correcoes`) não têm execução local nos relatórios da fase: ficam para o CI;
+- custo: cada XML guardado gera UMA cópia no `audit_logs` (até 2 MB); um UPDATE por vínculo lembrado e um INSERT por
+  bem, limitados pelo número de itens;
+- produção: a DF-e sem empresa deixa de aprovar o rascunho até ser registrada de novo (passo 1, PENDING).
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção, e os passos 7 e 8
+gravam (só com a decisão dele).
 
 ## VISUAL-UX-04b — correções da Central de Compras (sem migration)
 

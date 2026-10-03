@@ -476,16 +476,18 @@ do Estoque saiu; lançar é pela aba Movimentações. As listas antigas de requi
 manual e ajuste ficam como histórico "(tela antiga)", sem o Novo e fora do mega-menu e da busca; as rotas de detalhe e
 de criação, as rotas `/stock/*` e os aliases continuam. Ficam no menu, como AÇÃO e SÓ para o que a Central não cobre: a
 "Requisição com classificação capex/opex" e a "Entrada sem nota com pagamento ou natureza e centro por item". Ficam
-inteiros: a transferência entre empresas (ação, chip e Novo da lista), o Documento fiscal de Estoque e a fila de DF-e
-(até a decisão sobre a F7), e a produção de ração. O "Ajustar estoque" do Saldo abre a Central de ajuste desde a F5b,
+inteiros: a transferência entre empresas (ação, chip e Novo da lista), a fila de DF-e e a produção de ração. O Documento
+fiscal de Estoque (a nota de entrada antiga) fica, desde o merge da F7 (decisão 284), SÓ para o que a compra não cobre,
+pela ação "Nota de entrada antiga (qualidade de grão, proprietário, cultura ou apropriação)"; a nota de entrada é a
+COMPRA, pela importação do XML na Central de Compras, e o "Lançar" da DF-e com o XML guardado abre essa importação. O "Ajustar estoque" do Saldo abre a Central de ajuste desde a F5b,
 com `ajustes_estoque.create`, uma TOP de ajuste e a capacidade — senão, o diálogo de sempre. O saldo inicial: a
 Implantação aponta para a Central ("Lançar saldo inicial") quando há TOP de entrada marcada; senão, o "Adicionar novo" de
 hoje.
 
 **O que FALTA (e não deve ser simulado):** editar documento aberto (cancela-se e lança-se outro), transferência entre
 empresas no documento, anexos no documento de estoque, a execução configurada das famílias novas (TOP-CONFIG-04C), a
-troca da nota de entrada antiga e do "Lançar" da DF-e (depois da F7), e o que só as telas antigas têm (capex/opex,
-centro por item, pagamento e natureza por item na entrada — exigem migration; decisão 288). O destino — o centro de resultado e as outras cinco dimensões — está
+e o que só as telas antigas têm (capex/opex, centro por item, pagamento e natureza por item na entrada — exigem
+migration; decisão 288; e o que só a nota de entrada antiga tem — a lista da decisão 284). O destino — o centro de resultado e as outras cinco dimensões — está
 no documento desde a OPERACOES-01 F5a, pela API.
 
 ### A movimentação interna no documento (OPERACOES-01 F5a, decisão 282)
@@ -732,6 +734,21 @@ A OS ganhou a edição (`/os/<id>/editar`, a mesma Central, pelo PUT de sempre, 
 Manejo, batelada e ração usam o motor só no que cabe: o manejo tem os ANIMAIS como itens (grade própria) e o produto no
 cabeçalho; batelada e ração usam o modo "da origem", com o local no cabeçalho. Contrato em `docs/OPERACOES-CONTRACT.md`
 §3 (F10).
+
+### Os dados fiscais e a importação do XML na Central de Compras (OPERACOES-01 F7, decisão 284)
+
+O motor (`features/central/*`) não mudou. Tudo é da Central de Compras e só aparece com a capacidade `importacaoXml`
+"sim" (`features/compras/importacao/capacidade.ts`); sem ela, a Central é a de antes, e o corpo do POST é o de hoje.
+- Criação da COMPRA (não do pedido): o bloco "Dados fiscais" (`compras-dados-fiscais`, `features/compras/central/dados-fiscais.tsx`)
+  no FIM dos Dados adicionais, fora do layout (sem `data-campo`, sem "*", fora das pendências). Ele tem a chave, a UF, o
+  tipo de documento, IPI, ICMS-ST, seguro, tipo de título, classificação e o rateio do documento. A classificação do item
+  ("Gera estoque", "Imobilizado", natureza e centro com rateio por produto) mora na LINHA da grade, em chaves que o motor
+  preserva sem desenhar. Desmarcar "Gera estoque" limpa o Local de estoque da linha. O bloco mora nos Dados do documento e
+  nunca no campo único que o painel desenha pelo mesmo componente.
+- Consulta: a aba Fiscal passa a existir também pelos dados fiscais; IPI, ST e seguro nos Totais; o rateio no Financeiro;
+  os bens no Estoque. Prévia: o rateio das contas a pagar.
+- A importação do XML é página própria, fora do motor (`/compras/importacoes/<id>`, `features/compras/importacao/*`), com
+  abas; ela termina numa compra ABERTA, que a Central de Compras abre na consulta. Contrato em `docs/OPERACOES-CONTRACT.md` §5.
 
 ## Central Financeira (OPERACOES-01 F8, decisão 285)
 
