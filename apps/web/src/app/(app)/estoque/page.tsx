@@ -3,7 +3,7 @@ import * as React from "react";
 import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { Workspace, ViewSegment, NewChooser, FilterChips, useUrlParam, tab } from "@/components/workspace";
+import { Workspace, ViewSegment, FilterChips, useUrlParam, tab } from "@/components/workspace";
 import { StockOverview } from "@/features/stock/overview";
 import { BalancesPanel } from "@/features/stock/balances";
 import { MovementsPanel } from "@/features/stock/movements";
@@ -24,14 +24,16 @@ import { rotaDoAjusteAPartirDoSaldo, useAjusteDoSaldoNaCentral } from "@/feature
 
 /**
  * Estoque (Compactação V2): Visão Geral · Estoque (saldo / movimentações / ajustes) · Recebimentos · Operações ·
- * Fábrica de Ração. Fontes de dados diferentes ficam num seletor compacto (`?sub=`); "+ Novo" tem dois níveis
- * (Entrada / Saída / Transferência / Produção). Ajuste de estoque nasce do saldo (ação por linha, permissão própria)
- * e devolução nasce da requisição/saída original — nenhum dos dois é opção cotidiana do "+ Novo".
+ * Fábrica de Ração. Fontes de dados diferentes ficam num seletor compacto (`?sub=`). Ajuste de estoque nasce do saldo
+ * (ação por linha, permissão própria) e devolução nasce da requisição/saída original.
  * Cada operação continua usando seu próprio endpoint/regra.
  *
  * ESTOQUE-01 (decisão 274): "Movimentações", logo depois de Visão Geral, é a lista única do DOCUMENTO de estoque,
- * com o `Novo` que pergunta a TOP e abre a Central de Estoque. As abas e o "+ Novo" acima continuam como estão — as
- * telas antigas não mudam até uma fatia própria trocá-las.
+ * com o `Novo` que pergunta a TOP e abre a Central de Estoque.
+ *
+ * OPERACOES-01 F11 (decisão 288): o "+ Novo" antigo saiu; lançar é pela aba Movimentações (o Novo que pergunta a TOP).
+ * As abas antigas ficam como histórico, sem Novo. A transferência entre empresas e a produção de ração seguem pelas
+ * ações do menu e pelo Novo das listas delas.
  *
  * OPERACOES-01 F5b (decisão 282): a aba Movimentações tem as SETE espécies (entrada, saída, transferência, ajuste,
  * requisição, consumo e devolução de consumo) quando a API declara a movimentação interna, e as quatro de antes quando
@@ -67,12 +69,7 @@ function Inner() {
   const [adjust, setAdjust] = React.useState<{ open: boolean; prefill?: CorrectionPrefill }>({ open: sp.get("new") === "ajuste" });
   const openAdjust = (prefill?: CorrectionPrefill) => setAdjust({ open: true, prefill });
   return <>
-    <Workspace title="Estoque" defaultTab="estoque" actions={<NewChooser items={[
-      { label: "Entrada", children: [{ label: "Entrada manual (insumos)", href: "/estoque/entradas/new", perm: "input_entries.create" }, { label: "Documento fiscal / importar XML", href: "/estoque/documentos-fiscais/new", perm: "invoices.create" }] },
-      { label: "Saída", children: [{ label: "Requisição", href: "/estoque/requisicoes/new", perm: "requisitions.create" }, { label: "Saída direta (baixa)", href: "/estoque/baixas/new", perm: "stock_writeoffs.create" }] },
-      { label: "Transferência", children: [{ label: "Entre locais de estoque", href: "/estoque/transferencias/new?kind=warehouse", perm: "warehouse_transfers.create" }, { label: "Entre empresas", href: "/estoque/transferencias/new?kind=farm", perm: "farm_transfers.create" }] },
-      { label: "Produção", children: [{ label: "Produção de ração", href: "/estoque/batidas/new", perm: "feed_batches.create" }] }
-    ]} />} tabs={[
+    <Workspace title="Estoque" defaultTab="estoque" tabs={[
       tab("estoque.visao-geral", <StockOverview />),
       tab("estoque.movimentacoes", <MovimentacoesEstoque />),
       tab("estoque.estoque", <ViewSegment tabs={[

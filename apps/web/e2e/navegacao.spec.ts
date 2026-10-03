@@ -21,7 +21,7 @@ test("rotas antigas redirecionam para a rota canônica preservando parâmetros (
   await page.goto("/frota?tab=maquinas&sub=familias"); await has(/\/configuracoes\?/, /tab=frota/, /sub=equipment-families/);
   await page.goto("/fiscal?tab=situacao"); await has(/\/configuracoes\?/, /tab=fiscal/, /sub=capacidades/);
 });
-test("área de estoque: abas, seletor interno, '+ Novo' em dois níveis e ajuste contextual a partir do saldo", async ({ page }) => {
+test("área de estoque: abas, seletor interno, sem o '+ Novo' antigo, menu novo e ajuste contextual a partir do saldo", async ({ page }) => {
   await login(page);
   // OPERACOES-01 F5b (decisão 282): o "Ajustar estoque" da linha do Saldo abre a CENTRAL de ajuste (preenchida pela
   // linha) quando a lista de TOPs de ajuste tem TOP e a API declara `movimentacaoInterna`; senão, o diálogo de sempre. O
@@ -48,14 +48,32 @@ test("área de estoque: abas, seletor interno, '+ Novo' em dois níveis e ajuste
       await expect(page.getByRole("dialog").getByRole("heading", { name: "Ajustar estoque" })).toBeVisible(); await page.keyboard.press("Escape"); await expect(page.getByRole("dialog")).toBeHidden();
     }
   }
-  // "+ Novo": primeiro nível só com grupos; Ajuste e Devolução não são opções cotidianas
-  await page.getByTestId("ws-new").click();
-  const menu = page.getByRole("menu");
-  await expect(menu.getByRole("menuitem", { name: "Saída" })).toBeVisible(); await expect(menu.getByRole("menuitem", { name: /Ajuste/ })).toHaveCount(0); await expect(menu.getByRole("menuitem", { name: /Devolução/ })).toHaveCount(0);
-  await menu.getByRole("menuitem", { name: "Saída" }).click(); await expect(menu.getByRole("menuitem", { name: "Requisição" })).toBeVisible(); await page.keyboard.press("Escape");
+  // OPERACOES-01 F11 (decisão 288): o "+ Novo" antigo do Estoque saiu — lançar é pela aba Movimentações (o Novo que
+  // pergunta a TOP). PREMISSA: a página carregou com a aba Movimentações na barra de abas do Estoque.
+  const abasDoEstoque = page.getByRole("tablist", { name: "Estoque", exact: true });
+  await expect(abasDoEstoque.getByRole("tab", { name: "Movimentações", exact: true }), "premissa: a aba Movimentações (o documento novo) está na página").toBeVisible();
+  await expect(page.getByTestId("ws-new"), "o '+ Novo' antigo do Estoque saiu").toHaveCount(0);
+  // o mega-menu do Estoque: as ações que a Central cobre saíram; ficam só as que ela não cobre
+  await page.getByRole("navigation", { name: "Menu principal" }).getByTestId("nav-module").filter({ hasText: "Estoque" }).hover();
+  const mega = page.getByTestId("mega-menu");
+  await expect(mega.getByText("Ações", { exact: true }), "premissa: o mega-menu do Estoque abriu com o grupo Ações").toBeVisible();
+  const itemDoMenu = (rotulo: string) => mega.getByTestId("mega-item").filter({ has: page.getByText(rotulo, { exact: true }) });
+  for (const fica of ["Transferência entre empresas", "Requisição com classificação capex/opex", "Entrada sem nota com pagamento ou natureza e centro por item"]) await expect(itemDoMenu(fica), `a ação "${fica}" fica no menu`).toHaveCount(1);
+  for (const sai of ["Nova saída direta", "Transferência entre locais de estoque"]) await expect(itemDoMenu(sai), `a ação "${sai}" saiu do menu`).toHaveCount(0);
+  await expect(mega.getByTestId("mega-item").filter({ hasText: /\(tela antiga\)/ }), "as listas antigas não aparecem no mega-menu").toHaveCount(0);
+  await page.keyboard.press("Escape"); await page.mouse.move(0, 400); await expect(mega).toBeHidden();
+  // as abas antigas ficam como histórico, sem o Novo da lista
   await page.getByRole("tab", { name: "Operações" }).click(); await expect(page).toHaveURL(/tab=operacoes/);
   await page.getByRole("tab", { name: /Saídas diretas/ }).click(); await expect(page).toHaveURL(/sub=diretas/);
+  const lista = page.getByTestId("b1-list");
+  await expect(lista.getByRole("columnheader", { name: "Motivo" }), "premissa: a lista de saídas diretas carregou").toBeVisible();
+  await expect(lista.getByRole("button", { name: "Novo", exact: true }), "a lista antiga não lança mais").toHaveCount(0);
   await page.getByRole("tab", { name: "Transferências" }).click(); await page.getByTestId("stock-transfer-kind").getByRole("radio", { name: "Entre empresas" }).click(); await expect(page).toHaveURL(/kind=farm/);
+  // a transferência entre empresas FICA (a Central não tem empresa destino nem financeiro): o Novo da lista dela continua
+  await expect(page.getByTestId("b1-list").getByRole("button", { name: "Novo", exact: true }), "entre empresas: o Novo da lista fica").toBeVisible();
+  // compatibilidade: a rota de criação antiga continua abrindo
+  await page.goto("/estoque/baixas/new");
+  await expect(page.getByText("Nova baixa de estoque", { exact: true })).toBeVisible();
 });
 test("menu principal: só módulos (≤ 14), sem abas repetidas; breadcrumbs derivados da navegação", async ({ page }) => {
   await login(page);

@@ -118,6 +118,14 @@ const raiz = (c: object): Readonly<Record<string, unknown>> => c as Readonly<Rec
 
 /** A seção Destino no neutro com um ajuste. */
 const destino = (ajuste: Partial<SecaoDestinoTop> = {}): SecaoDestinoTop => ({ ...SECAO_DESTINO.neutro(), ...ajuste });
+/**
+ * A seção Destino com as seis em "não usada" e um ajuste. Desde a OPERACOES-01 F11 (decisão 288) o neutro é
+ * "opcional": quem precisa da recusa "não usa" grava "não usada" EXPLÍCITO — este é o molde.
+ */
+const destinoNaoUsado = (ajuste: Partial<SecaoDestinoTop> = {}): SecaoDestinoTop => ({
+  centroCusto: "nao_usada", equipamento: "nao_usada", ordemServico: "nao_usada", loteAnimais: "nao_usada", area: "nao_usada", safra: "nao_usada",
+  ...ajuste,
+});
 /** A seção Fluxo no neutro com um ajuste. */
 const fluxo = (ajuste: Partial<SecaoFluxoTop> = {}): SecaoFluxoTop => ({ ...SECAO_FLUXO.neutro(), ...ajuste });
 
@@ -279,21 +287,22 @@ describe("MI-4 o vocabulário da saída, do destino e do atendimento", () => {
 // ---------------------------------------------------------------------------------------------------
 
 describe("MI-5 a seção Destino do formato 5", () => {
-  it("MI-5 a definição: nome, rótulo, ajuda, as seis chaves e o neutro 'não usada' em todas", () => {
+  it("MI-5 a definição: nome, rótulo, ajuda, as seis chaves e o neutro 'opcional' em todas (F11, decisão 288)", () => {
     expect(SECAO_DESTINO.nome).toBe("destino");
     expect(SECAO_DESTINO.rotulo).toBe("Destino");
     expect(SECAO_DESTINO.ajuda).toBe(
-      "O destino diz para onde vai o que sai do estoque: centro de resultado, máquina/equipamento, ordem de serviço, lote de animais, área/talhão e safra. Cada um pode ser não usado, opcional ou obrigatório nesta operação. Vale para a requisição, o consumo e a saída; o consumo que atende uma requisição leva o destino dela, e a devolução de consumo leva o do consumo.",
+      "O destino diz para onde vai o que sai do estoque: centro de resultado, máquina/equipamento, ordem de serviço, lote de animais, área/talhão e safra. Cada um pode ser não usado, opcional ou obrigatório nesta operação; o padrão é opcional (aceita o destino, nada é exigido). Vale para a requisição, o consumo e a saída; o consumo que atende uma requisição leva o destino dela, e a devolução de consumo leva o do consumo.",
     );
     expect(SECAO_DESTINO.chaves).toEqual(CAMPOS_DESTINO_ESTOQUE.map((c) => c.chave));
-    expect(SECAO_DESTINO.neutro()).toEqual({ centroCusto: "nao_usada", equipamento: "nao_usada", ordemServico: "nao_usada", loteAnimais: "nao_usada", area: "nao_usada", safra: "nao_usada" });
+    // O neutro é "opcional" nas seis (F11, decisão 288: era "não usada" na F5a) — aceita o destino, nada é exigido.
+    expect(SECAO_DESTINO.neutro()).toEqual({ centroCusto: "opcional", equipamento: "opcional", ordemServico: "opcional", loteAnimais: "opcional", area: "opcional", safra: "opcional" });
     expect(EXIGENCIAS_DESTINO_TOP).toEqual(["nao_usada", "opcional", "obrigatoria"]);
     expect(ROTULOS_EXIGENCIA_DESTINO_TOP).toEqual({ nao_usada: "Não usada", opcional: "Opcional", obrigatoria: "Obrigatória" });
     expect(Object.isFrozen(SECAO_DESTINO)).toBe(true);
   });
 
   it("MI-5 as linhas do histórico: rótulo da dimensão e da exigência, na ordem", () => {
-    expect(SECAO_DESTINO.linhas(destino({ centroCusto: "obrigatoria", area: "opcional" }))).toEqual([
+    expect(SECAO_DESTINO.linhas(destinoNaoUsado({ centroCusto: "obrigatoria", area: "opcional" }))).toEqual([
       ["Centro de resultado", "Obrigatória"],
       ["Máquina/equipamento", "Não usada"],
       ["Ordem de serviço", "Não usada"],
@@ -360,8 +369,16 @@ describe("MI-5 recusasDoDestinoPelaTop", () => {
     expect(recusasDoDestinoPelaTop(SECAO_DESTINO.neutro(), valores(), new Set())).toEqual([]);
   });
 
+  it("MI-5 no neutro (Opcional, F11/288), as seis INFORMADAS → nenhuma recusa (como a baixa e a requisição antigas)", () => {
+    const seis = valores({ centroCusto: "c1", equipamento: "e1", ordemServico: "o1", loteAnimais: "l1", area: "a1", safra: "s1" });
+    const informadas = new Set(CAMPOS_DESTINO_ESTOQUE.map((c) => c.chave));
+    // A premissa: com as seis "não usada" explícitas, as mesmas seis informadas são recusadas.
+    expect(recusasDoDestinoPelaTop(destinoNaoUsado(), seis, informadas)).toHaveLength(6);
+    expect(recusasDoDestinoPelaTop(SECAO_DESTINO.neutro(), seis, informadas)).toEqual([]);
+  });
+
   it("MI-5 informada com a TOP dizendo 'não usada' → recusa na coluna, com a mensagem exata", () => {
-    expect(recusasDoDestinoPelaTop(destino(), valores({ equipamento: "e1" }), new Set(["equipamento"]))).toEqual([
+    expect(recusasDoDestinoPelaTop(destinoNaoUsado(), valores({ equipamento: "e1" }), new Set(["equipamento"]))).toEqual([
       { chave: "equipamento", coluna: "equipamento_id", mensagem: "Esta operação não usa máquina/equipamento." },
     ]);
   });
@@ -387,9 +404,9 @@ describe("MI-5 recusasDoDestinoPelaTop", () => {
   });
 
   it("MI-5 a herdada que a TOP do consumo não usa NÃO é recusada (quem a escolheu foi a requisição)", () => {
-    expect(recusasDoDestinoPelaTop(destino(), valores({ area: "a1" }), new Set())).toEqual([]);
+    expect(recusasDoDestinoPelaTop(destinoNaoUsado(), valores({ area: "a1" }), new Set())).toEqual([]);
     // A premissa: a mesma dimensão INFORMADA é recusada.
-    expect(recusasDoDestinoPelaTop(destino(), valores({ area: "a1" }), new Set(["area"]))).toHaveLength(1);
+    expect(recusasDoDestinoPelaTop(destinoNaoUsado(), valores({ area: "a1" }), new Set(["area"]))).toHaveLength(1);
   });
 
   it("MI-5 opcional passa informada ou vazia", () => {
@@ -399,7 +416,7 @@ describe("MI-5 recusasDoDestinoPelaTop", () => {
   });
 
   it("MI-5 as recusas saem na ordem das dimensões, misturando 'não usa' e 'exige'", () => {
-    const secao = destino({ area: "obrigatoria" });
+    const secao = destinoNaoUsado({ area: "obrigatoria" });
     expect(recusasDoDestinoPelaTop(secao, valores({ centroCusto: "c1" }), new Set(["centroCusto"])).map((r) => r.mensagem)).toEqual([
       "Esta operação não usa centro de resultado.",
       "Esta operação exige área/talhão.",
@@ -494,20 +511,24 @@ describe("MI-6 recusasDoFluxoDoConsumo", () => {
 
 describe("MI-7 os perfis, a recusa do formato 5 e o catálogo", () => {
   it("MI-7 os perfis das três novas e da saída", () => {
+    // A seção Implantação (F11, decisão 288) é só da entrada: nas outras ela fica entre as neutras, no fim.
     expect(perfil(REQUISICAO).abas).toEqual(["identificacao", "geral", "estoque", "destino", "aprovacao"]);
-    expect(perfil(REQUISICAO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+    expect(perfil(REQUISICAO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", "implantacao"]);
     expect(perfil(CONSUMO).abas).toEqual(["identificacao", "geral", "estoque", "destino", "fluxo", "aprovacao"]);
-    expect(perfil(CONSUMO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+    expect(perfil(CONSUMO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", "implantacao"]);
     expect(perfil(DEVOLUCAO).abas).toEqual(["identificacao", "geral", "estoque", "aprovacao"]);
-    expect(perfil(DEVOLUCAO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+    expect(perfil(DEVOLUCAO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", "implantacao"]);
     expect(perfil(SAIDA).abas).toEqual(["identificacao", "geral", "estoque", "destino", "aprovacao"]);
     for (const f of [REQUISICAO, CONSUMO, DEVOLUCAO]) expect(perfil(f).exigencias.map((e) => e.rotulo), f).toEqual(["Observação"]);
   });
 
-  it("MI-7 entrada, transferência e ajuste: sem Destino e sem Fluxo (as duas no padrão)", () => {
-    for (const f of [ENTRADA, "estoque.transferencia", "estoque.ajuste"]) {
+  it("MI-7 entrada, transferência e ajuste: sem Destino e sem Fluxo (as duas no padrão); só a entrada com Implantação (F11)", () => {
+    // A entrada mostra a aba Implantação (F11, decisão 288: o saldo inicial), depois de Estoque.
+    expect(perfil(ENTRADA).abas).toEqual(["identificacao", "geral", "estoque", "implantacao", "aprovacao"]);
+    expect(perfil(ENTRADA).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+    for (const f of ["estoque.transferencia", "estoque.ajuste"]) {
       expect(perfil(f).abas, f).toEqual(["identificacao", "geral", "estoque", "aprovacao"]);
-      expect(perfil(f).secoesNeutras, f).toEqual(["estoque", "financeiro", "fiscal", "destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+      expect(perfil(f).secoesNeutras, f).toEqual(["estoque", "financeiro", "fiscal", "destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", "implantacao"]);
     }
   });
 
@@ -519,7 +540,8 @@ describe("MI-7 os perfis, a recusa do formato 5 e o catálogo", () => {
   });
 
   it("MI-7 a entrada no 5 com Destino fora do neutro → 'Esta operação não usa a seção Destino.'; o editor volta ao padrão antes de gravar", () => {
-    const c = valorDe(v5Com({ destino: destino({ safra: "opcional" }) }));
+    // Fora do neutro: "obrigatória" (o neutro é "opcional" desde a F11, decisão 288).
+    const c = valorDe(v5Com({ destino: destino({ safra: "obrigatoria" }) }));
     expect(recusasDoPerfilTop(ENTRADA, c)).toEqual([{ motivo: "combinacao_nao_suportada", caminho: "destino", mensagem: "Esta operação não usa a seção Destino." }]);
     if (!formato5Top(c)) throw new Error("premissa: o lido é um 5");
     const { configuracao, voltaram } = normalizarPeloPerfilTop(perfil(ENTRADA), c);

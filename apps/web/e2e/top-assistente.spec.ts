@@ -46,8 +46,8 @@ async function catalogoPublicado(page: Page): Promise<CatalogoTop> {
   const c = await api<CapacidadesFormato5E2E>(page, "GET", "/api/admin/tipos-operacao/capabilities");
   expect(c.formato5?.suportado, "premissa: este servidor declara o formato 5").toBe(true);
   expect(c.formato5?.versaoSchema, "premissa: no formato 5").toBe(5);
-  expect(c.formato5?.secoes, "premissa: as seções de extensão do 5 são Destino e Fluxo, da F5a (decisão 282), Fluxo de compra e Divergência, da F6a (decisão 283), e Padrões financeiros, da F9 (decisão 286); o editor só liga com o mesmo conjunto")
-    .toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+  expect(c.formato5?.secoes, "premissa: as seções de extensão do 5 são Destino e Fluxo, da F5a (decisão 282), Fluxo de compra e Divergência, da F6a (decisão 283), Padrões financeiros, da F9 (decisão 286), e Implantação, da F11 (decisão 288); o editor só liga com o mesmo conjunto")
+    .toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", "implantacao"]);
   return c.formato5!.catalogo;
 }
 
@@ -153,8 +153,9 @@ test("AS-1 — Novo começa pelo tipo de movimento (só os tipos com tela do cat
     await expect(movimento).toHaveValue(new RegExp(`\\(${familiaEntrada.replace(".", "\\.")}\\)$`));
     await expect(forma.getByTestId("top-assistente-trocar")).toHaveText("Trocar");
 
-    // AS ABAS DA ENTRADA: Identificação, Geral, Estoque e Aprovação — sem Próximas operações, Financeiro, Fiscal e Execução.
-    await expect(abasDaTela(forma)).toHaveText(["Identificação", "Geral", "Estoque", "Aprovação"]);
+    // AS ABAS DA ENTRADA: Identificação, Geral, Estoque, Implantação (OPERACOES-01 F11, decisão 288: o saldo inicial) e
+    // Aprovação — sem Próximas operações, Financeiro, Fiscal e Execução.
+    await expect(abasDaTela(forma)).toHaveText(["Identificação", "Geral", "Estoque", "Implantação", "Aprovação"]);
     for (const fora of ["destinos", "financeiro", "fiscal", "execucao"]) {
       await expect(forma.getByTestId(`top-aba-${fora}`), `a aba ${fora} não vale para a Entrada`).toHaveCount(0);
     }
@@ -293,8 +294,9 @@ test("AS-3 — Entrada gravada no 4 com 'Exigir parceiro' e uma condição de pa
 
     await abrirTelaDeTops(page);
     const forma = await abrirEditorDaTop(page, top.codigo);
-    // O editor do 5: as abas da Entrada; a exigência de parceiro nem aparece — por isso a volta precisa ser DITA.
-    await expect(abasDaTela(forma)).toHaveText(["Identificação", "Geral", "Estoque", "Aprovação"]);
+    // O editor do 5: as abas da Entrada (com a Implantação da F11); a exigência de parceiro nem aparece — por isso a volta
+    // precisa ser DITA.
+    await expect(abasDaTela(forma)).toHaveText(["Identificação", "Geral", "Estoque", "Implantação", "Aprovação"]);
     await forma.getByTestId("top-aba-geral").click();
     await expect(forma.getByTestId("top-campo-geral-observacao")).toBeVisible();
     await expect(forma.getByTestId("top-campo-geral-parceiro")).toHaveCount(0);

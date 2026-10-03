@@ -25,6 +25,10 @@ import {
  *          sem mexer é no-op; mexer só no Destino grava a N+1 no 5;
  *   · FS-6 um 5 gravado SEM as chaves (antes desta fase) é lido com as duas no neutro, e salvar a vista é no-op.
  *
+ * OPERACOES-01 F11 (decisão 288): o NEUTRO do Destino passou a "opcional" nas seis dimensões (aceita o destino, nada é
+ * exigido); "fora do neutro" no Destino agora é "obrigatória" ou "não usada". E a seção `implantacao` (só a entrada)
+ * entra na lista publicada e na matriz (FS-2b).
+ *
  * O QUE CONTA COMO PROVA (o molde de `top-formato5-top.test.ts`): versão corrente, formato, revisão e trilha LIDOS NO
  * BANCO pela testemunha (`c.admin`, superusuário sem RLS); "nada gravado" = o pai, as versões e a trilha idênticos
  * antes e depois. As FAMÍLIAS, o NEUTRO das duas seções e as MENSAGENS esperadas estão escritos AQUI, à mão — o
@@ -47,18 +51,21 @@ const FAMILIA: Readonly<Record<EspecieEstoque, string>> = {
 };
 const ESPECIES = Object.keys(FAMILIA) as EspecieEstoque[];
 
+/** O neutro do Destino: as seis em "opcional" (F11, decisão 288 — era "não usada" na F5a). */
 const NEUTRO_DESTINO = {
-  centroCusto: "nao_usada", equipamento: "nao_usada", ordemServico: "nao_usada", loteAnimais: "nao_usada", area: "nao_usada", safra: "nao_usada",
+  centroCusto: "opcional", equipamento: "opcional", ordemServico: "opcional", loteAnimais: "opcional", area: "opcional", safra: "opcional",
 } as const;
 const NEUTRO_FLUXO = { exigeRequisicao: "nao", permiteParcial: true } as const;
 
 const MSG = {
   destinoForaDoTipo: "Esta operação não usa a seção Destino.",
   fluxoForaDoTipo: "Esta operação não usa a seção Fluxo.",
+  implantacaoForaDoTipo: "Esta operação não usa a seção Implantação.",
 } as const;
 const recusaDoPerfil = (caminho: string, mensagem: string) => ({ motivo: "combinacao_nao_suportada", caminho, mensagem });
 const RECUSA_DESTINO = recusaDoPerfil("destino", MSG.destinoForaDoTipo);
 const RECUSA_FLUXO = recusaDoPerfil("fluxo", MSG.fluxoForaDoTipo);
+const RECUSA_IMPLANTACAO = recusaDoPerfil("implantacao", MSG.implantacaoForaDoTipo);
 
 /** O neutro do FORMATO 5 (o do domínio), com o ajuste do caso. Cada chamada devolve um objeto novo. */
 function cfg5(ajuste: (x: ConfiguracaoTipoOperacaoV5) => void = () => {}): ConfiguracaoTipoOperacaoV5 {
@@ -66,8 +73,8 @@ function cfg5(ajuste: (x: ConfiguracaoTipoOperacaoV5) => void = () => {}): Confi
   ajuste(x);
   return x;
 }
-/** Destino e Fluxo fora do neutro (as regras que travam LIGADAS). */
-const destinoLigado = (x: ConfiguracaoTipoOperacaoV5): void => { x.destino.centroCusto = "obrigatoria"; x.destino.safra = "opcional"; };
+/** Destino e Fluxo fora do neutro (as regras que travam LIGADAS). No Destino, "fora do neutro" é "obrigatória" ou "não usada" (F11). */
+const destinoLigado = (x: ConfiguracaoTipoOperacaoV5): void => { x.destino.centroCusto = "obrigatoria"; x.destino.safra = "nao_usada"; };
 const fluxoLigado = (x: ConfiguracaoTipoOperacaoV5): void => { x.fluxo.exigeRequisicao = "todos"; x.fluxo.permiteParcial = false; };
 
 // ─────────────── testemunhas ───────────────
@@ -114,14 +121,15 @@ function recusadaConfiguracao(r: Resposta, recusas: unknown[]) {
 // Premissas
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
 describe("FS-0 — premissas: as famílias do registry, o neutro do domínio e o que o servidor publica", () => {
-  it("FS-0 cada espécie tem a família esperada; o neutro do 5 traz Destino e Fluxo desligados; as capacidades publicam as duas seções", async () => {
+  it("FS-0 cada espécie tem a família esperada; o neutro do 5 traz Destino e Fluxo desligados (Destino Opcional, F11) e a Implantação desligada; as capacidades publicam as seções", async () => {
     for (const e of ESPECIES) expect(familiaOperacionalDeDocumentoEstoque(e), `a família da espécie ${e}`).toBe(FAMILIA[e]);
     const neutro = configuracaoNeutraTopV5();
-    expect(neutro.destino, "Destino: as seis dimensões não usadas").toEqual(NEUTRO_DESTINO);
+    expect(neutro.destino, "Destino: as seis dimensões opcionais (aceita, nada exige — F11, decisão 288)").toEqual(NEUTRO_DESTINO);
     expect(neutro.fluxo, "Fluxo: consumo direto, atende em parte").toEqual(NEUTRO_FLUXO);
+    expect(neutro.implantacao, "Implantação: a entrada é comum (F11)").toEqual({ saldoInicial: false });
     const r = await c.ligada.inject({ method: "GET", url: "/api/admin/tipos-operacao/capabilities", headers: c.h.headers() });
     expect(r.statusCode, r.body).toBe(200);
-    expect((j(r).formato5 as { secoes: unknown }).secoes, "o servidor lê e grava as duas (e as de compras da F6a e a da F9)").toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+    expect((j(r).formato5 as { secoes: unknown }).secoes, "o servidor lê e grava as duas (e as de compras da F6a, a da F9 e a da F11)").toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", "implantacao"]);
   });
 });
 
@@ -136,7 +144,7 @@ describe("FS-1 — consumo no 5 com Destino e Fluxo", () => {
     const id = await top(FAMILIA.consumo, { configuracao: corpo });
     const v1 = await versaoAtualNoBanco(id);
     expect([v1.versao, v1.configuracao_schema_version]).toEqual([1, 5]);
-    expect(v1.configuracao.destino, "o banco guarda o Destino enviado").toEqual({ ...NEUTRO_DESTINO, centroCusto: "obrigatoria", safra: "opcional" });
+    expect(v1.configuracao.destino, "o banco guarda o Destino enviado").toEqual({ ...NEUTRO_DESTINO, centroCusto: "obrigatoria", safra: "nao_usada" });
     expect(v1.configuracao.fluxo, "e o Fluxo enviado").toEqual({ exigeRequisicao: "todos", permiteParcial: false });
     expect(v1.configuracao).toEqual(corpo);
     const d = j(await detalheTop(id));
@@ -202,11 +210,28 @@ describe("FS-2 — a matriz: as 7 espécies × Destino e Fluxo", () => {
       const id = await top(FAMILIA[e], { configuracao: cfg5(destinoLigado) });
       const v = await versaoAtualNoBanco(id);
       expect([v.configuracao_schema_version, v.configuracao.destino], `${e}: o Destino gravado`)
-        .toEqual([5, { ...NEUTRO_DESTINO, centroCusto: "obrigatoria", safra: "opcional" }]);
+        .toEqual([5, { ...NEUTRO_DESTINO, centroCusto: "obrigatoria", safra: "nao_usada" }]);
       expect(v.configuracao.fluxo, `${e}: o Fluxo no neutro`).toEqual(NEUTRO_FLUXO);
     }
     // PREMISSA (só a seção fora do neutro é recusada): as 7 no NEUTRO do 5 são aceitas.
     for (const e of ESPECIES) expect((await criarTop(FAMILIA[e], { configuracao: cfg5() })).statusCode, `${e} no neutro do 5`).toBe(201);
+  });
+
+  it("FS-2b (F11) a Implantação ligada: só a entrada aceita e grava; as outras 6 → o 422 da seção, nada nasce", async () => {
+    const corpo = cfg5((x) => { x.implantacao.saldoInicial = true; });
+    expect(corpo.implantacao, "premissa: o corpo liga a Implantação").toEqual({ saldoInicial: true });
+    for (const e of ESPECIES) {
+      const antes = await contarTops();
+      const r = await criarTop(FAMILIA[e], { configuracao: corpo });
+      if (e === "entrada") {
+        expect(r.statusCode, `entrada: aceita — ${r.body}`).toBe(201);
+        const v = await versaoAtualNoBanco(j(r).id as string);
+        expect([v.configuracao_schema_version, v.configuracao.implantacao], "o banco guarda a Implantação ligada").toEqual([5, { saldoInicial: true }]);
+        continue;
+      }
+      recusadaConfiguracao(r, [RECUSA_IMPLANTACAO]);
+      expect(await contarTops(), `${e}: nenhuma TOP nasce`).toBe(antes);
+    }
   });
 });
 

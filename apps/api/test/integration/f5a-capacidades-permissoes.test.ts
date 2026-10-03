@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE, ESPECIES_MOVIMENTACAO_INTERNA, RECURSO_DA_ESPECIE_ESTOQUE, CAPACIDADE_MOVIMENTACAO_INTERNA,
-  CAPACIDADE_LAYOUT_DOCUMENTO, CAPACIDADE_REGRAS_DA_OPERACAO, entendeMovimentacaoInterna, familiaOperacionalDeDocumentoEstoque,
+  CAPACIDADE_LAYOUT_DOCUMENTO, CAPACIDADE_REGRAS_DA_OPERACAO, CAPACIDADE_SALDO_INICIAL_ESTOQUE, entendeMovimentacaoInterna,
+  entendeSaldoInicialEstoque, familiaOperacionalDeDocumentoEstoque,
 } from "@agro/domain";
 import {
   c, iniciar, encerrar, produto, saldoInicial, membro, escopos, j, familia, segmento, lancarDoc, lancadoDoc, lerDoc, previaDoc, confirmarDoc,
@@ -13,7 +14,8 @@ import {
  *
  *   · `GET /api/estoque/<segmento>/operation-types` (as SETE): `capacidades` = `{ documentoEstoque: 1,
  *     movimentacaoInterna: 1 }`, nessa ordem — a chave nova é ADITIVA, e o leitor do domínio a entende. Desde a F5b
- *     (a Central de Estoque no motor), + `layoutDocumento: 1` e `regrasDaOperacao: 1`, no FIM;
+ *     (a Central de Estoque no motor), + `layoutDocumento: 1` e `regrasDaOperacao: 1`, no FIM; desde a F11 (decisão
+ *     288), SÓ a entrada declara ainda `saldoInicial: 1`, no fim (o saldo inicial pela TOP de entrada);
  *   · cada espécie nova tem o SEU recurso (`requisicoes_estoque`, `consumos_estoque`, `devolucoes_consumo_estoque`):
  *     sem a capacidade → 403; com ela e fora do escopo de empresa do estoque → a MESMA 404 do inexistente, do id
  *     malformado e da outra espécie (CAPACIDADE × ESCOPO, com AND);
@@ -30,19 +32,25 @@ const item = (produtoId: string, quantidade: string) => ({ produto_id: produtoId
 const perms = (especie: (typeof TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE)[number], acoes: string[]) => acoes.map((a) => `${RECURSO_DA_ESPECIE_ESTOQUE[especie]}.${a}`);
 
 describe("CP-1 — a capacidade declarada nas sete rotas de operações", () => {
-  it("CP-1 as sete declaram `{ documentoEstoque: 1, movimentacaoInterna: 1, layoutDocumento: 1, regrasDaOperacao: 1 }` (a primeira continua `documentoEstoque`; as da F5b no fim), contrato 1, a família do registry", async () => {
+  it("CP-1 as sete declaram `{ documentoEstoque: 1, movimentacaoInterna: 1, layoutDocumento: 1, regrasDaOperacao: 1 }` (a primeira continua `documentoEstoque`; as da F5b no fim) e a entrada, só ela, + `saldoInicial: 1` no fim (F11), contrato 1, a família do registry", async () => {
     expect(TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE, "premissa: as sete espécies").toHaveLength(7);
+    expect(TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE, "premissa: a entrada é uma das sete").toContain("entrada");
     // Os valores à mão: uma constante do domínio errada não se aprova sozinha.
-    expect([CAPACIDADE_MOVIMENTACAO_INTERNA, CAPACIDADE_LAYOUT_DOCUMENTO, CAPACIDADE_REGRAS_DA_OPERACAO], "premissa: as três constantes valem 1").toEqual([1, 1, 1]);
+    expect([CAPACIDADE_MOVIMENTACAO_INTERNA, CAPACIDADE_LAYOUT_DOCUMENTO, CAPACIDADE_REGRAS_DA_OPERACAO, CAPACIDADE_SALDO_INICIAL_ESTOQUE],
+      "premissa: as quatro constantes valem 1").toEqual([1, 1, 1, 1]);
     for (const especie of TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE) {
       const r = await operacoes(especie);
       expect(r.statusCode, `${especie}: ${r.body}`).toBe(200);
       const corpo = j(r) as { contractVersion: number; capacidades: Record<string, unknown>; family: { code: string; label: string }; items: unknown[] };
       expect(corpo.contractVersion, especie).toBe(1);
+      // A entrada declara cinco (o saldo inicial pela TOP, F11); as outras seis, as quatro de antes, byte a byte.
+      const daEntrada = especie === "entrada";
       expect(Object.entries(corpo.capacidades), `${especie}: chave a chave, na ordem`).toEqual([
         ["documentoEstoque", 1], ["movimentacaoInterna", 1], ["layoutDocumento", 1], ["regrasDaOperacao", 1],
+        ...(daEntrada ? [["saldoInicial", 1]] : []),
       ]);
       expect(entendeMovimentacaoInterna(corpo.capacidades), especie).toBe(true);
+      expect(entendeSaldoInicialEstoque(corpo.capacidades), `${especie}: só a entrada declara o saldo inicial`).toBe(daEntrada);
       expect(corpo.family.code, especie).toBe(familia(especie));
       expect(corpo.items.length, `premissa: a TOP da espécie ${especie} está na lista`).toBeGreaterThan(0);
     }

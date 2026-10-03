@@ -6,7 +6,7 @@
  * │ a F10 (Destino, Fluxo, Divergência com o pedido, Financeiro padrão…). Cada seção é DECLARADA aqui,  │
  * │ numa `DefinicaoSecaoV5`, e o leitor do formato 5 (`lerConfiguracaoTop`), a normalização, a vista de  │
  * │ edição, a comparação, a auditoria e o catálogo por tipo a leem DA LISTA — nenhum deles muda quando  │
- * │ uma fase acrescenta a sua seção. Nasceu VAZIA na F4; hoje traz as da F5a, da F6a e da F9.           │
+ * │ uma fase acrescenta a sua seção. Nasceu VAZIA na F4; hoje traz as da F5a, da F6a, da F9 e da F11.   │
  * │                                                                                                     │
  * │ É UM ARQUIVO FOLHA: não importa `tipo-operacao-configuracao.ts` (que o importa). Quem declara uma    │
  * │ seção importa este arquivo e nada que importe a configuração — senão vira ciclo de import.          │
@@ -51,6 +51,8 @@ import { SECAO_FLUXO_COMPRA } from "./tipo-operacao-secao-fluxo-compra.js";
 import { SECAO_DIVERGENCIA_PEDIDO } from "./tipo-operacao-secao-divergencia-pedido.js";
 // OPERACOES-01 F9 (decisão 286):
 import { SECAO_FINANCEIRO_PADRAO } from "./tipo-operacao-secao-financeiro-padrao.js";
+// OPERACOES-01 F11 (decisão 288):
+import { SECAO_IMPLANTACAO } from "./tipo-operacao-secao-implantacao.js";
 
 /**
  * As chaves de raiz que o formato 4 já usa. Uma seção de extensão NUNCA tem um destes nomes: colidir
@@ -133,6 +135,8 @@ export const DEFINICOES_SECOES_V5 = [
   SECAO_DIVERGENCIA_PEDIDO,
   // OPERACOES-01 F9 (decisão 286): os padrões financeiros e a provisão (venda, pedido, financeiro, solicitação).
   SECAO_FINANCEIRO_PADRAO,
+  // OPERACOES-01 F11 (decisão 288): o saldo inicial na TOP de entrada (I-2 da F5a).
+  SECAO_IMPLANTACAO,
 ] as const satisfies readonly DefinicaoSecaoV5[];
 export type DefinicoesSecoesV5 = typeof DEFINICOES_SECOES_V5;
 

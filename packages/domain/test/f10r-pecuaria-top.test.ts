@@ -205,7 +205,8 @@ describe("PT-3 o catálogo: os dois tipos em Módulos, com tela", () => {
       // O movimento lê da TOP padrão só os padrões financeiros: as 4 genéricas das famílias sem documento seriam
       // configuração que mente na tela (o servidor nunca as cobraria).
       expect(p.exigencias, f).toEqual([]);
-      expect(p.secoesNeutras, f).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+      // A Implantação (F11, decisão 288) é só da entrada de estoque: aqui fica entre as neutras.
+      expect(p.secoesNeutras, f).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "implantacao"]);
     }
     // PREMISSA: as outras famílias sem documento (a conta a pagar) continuam com as 4 genéricas.
     expect(perfilDaFamiliaTop("financeiro.conta_a_pagar")?.exigencias).toEqual(EXIGENCIAS_GERAIS_SEM_DOCUMENTO_TOP);

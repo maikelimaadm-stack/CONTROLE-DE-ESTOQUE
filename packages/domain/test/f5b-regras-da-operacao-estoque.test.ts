@@ -39,11 +39,15 @@ const COM_DESTINO = [SAIDA, REQUISICAO, CONSUMO];
 
 const clonar = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
-/** O formato 5 do RO-D2: centro obrigatório, OS opcional; exige requisição em todos, sem parcial; observação; automática. */
+/**
+ * O formato 5 do RO-D2: centro obrigatório, OS opcional, máquina "não usada" EXPLÍCITA (o neutro é "opcional" desde a
+ * F11, decisão 288 — as três exigências aparecem); exige requisição em todos, sem parcial; observação; automática.
+ */
 function v5Completo(): ConfiguracaoTipoOperacaoV5 {
   const c = configuracaoNeutraTopV5();
   c.destino.centroCusto = "obrigatoria";
   c.destino.ordemServico = "opcional";
+  c.destino.equipamento = "nao_usada";
   c.fluxo = { exigeRequisicao: "todos", permiteParcial: false };
   c.geral.exigeObservacao = true;
   c.geral.confirmacao = "automatica";
@@ -51,7 +55,7 @@ function v5Completo(): ConfiguracaoTipoOperacaoV5 {
 }
 
 const DESTINO_DO_RO_D2 = {
-  centroCusto: "obrigatoria", equipamento: "nao_usada", ordemServico: "opcional", loteAnimais: "nao_usada", area: "nao_usada", safra: "nao_usada"
+  centroCusto: "obrigatoria", equipamento: "nao_usada", ordemServico: "opcional", loteAnimais: "opcional", area: "opcional", safra: "opcional"
 };
 
 /** O neutro esperado para a família. */
@@ -71,8 +75,8 @@ describe("RO-D1 o neutro (o comportamento de hoje)", () => {
   it("RO-D1 as famílias que usam Destino e Fluxo são as que a seção diz (premissa do resto do arquivo)", () => {
     expect(SETE.filter((f) => SECAO_DESTINO.usadaPor(f))).toEqual(COM_DESTINO);
     expect(SETE.filter((f) => SECAO_FLUXO.usadaPor(f))).toEqual([CONSUMO]);
-    expect(SECAO_DESTINO.neutro(), "a premissa: o neutro do Destino é 'não usada' em todas").toEqual({
-      centroCusto: "nao_usada", equipamento: "nao_usada", ordemServico: "nao_usada", loteAnimais: "nao_usada", area: "nao_usada", safra: "nao_usada"
+    expect(SECAO_DESTINO.neutro(), "a premissa: o neutro do Destino é 'opcional' em todas (F11, decisão 288)").toEqual({
+      centroCusto: "opcional", equipamento: "opcional", ordemServico: "opcional", loteAnimais: "opcional", area: "opcional", safra: "opcional"
     });
     expect(SECAO_FLUXO.neutro(), "a premissa: o neutro do Fluxo é o consumo direto que atende em parte").toEqual({ exigeRequisicao: "nao", permiteParcial: true });
     expect(CONTRATO_REGRAS_DA_OPERACAO_ESTOQUE).toBe(1);
@@ -174,7 +178,7 @@ describe("RO-D2 a versão diz o que vale", () => {
     expect(a.fluxo).not.toBe(c.fluxo);
     c.destino.safra = "obrigatoria";
     c.fluxo.permiteParcial = true;
-    expect(a.destino?.safra, "mudar a configuração depois não muda a resposta").toBe("nao_usada");
+    expect(a.destino?.safra, "mudar a configuração depois não muda a resposta").toBe("opcional");
     expect(a.fluxo?.permiteParcial).toBe(false);
   });
 });

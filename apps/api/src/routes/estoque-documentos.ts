@@ -46,7 +46,7 @@ import {
   lerConfiguracaoTop, restricoesExecutamTop, exigenciasGeraisFaltando, secoesExtensaoDaVersaoTop, secoesExtensaoNeutrasTop,
   EXIGENCIAS_GERAIS_ESTOQUE_TOP, ERRO_EXIGENCIA_NAO_ATENDIDA, MENSAGEM_EXIGENCIA_NAO_ATENDIDA, LIMITE_QUANTIDADE_ESTOQUE, LIMITE_CUSTO_ESTOQUE,
   ROTULO_DA_ESPECIE_ESTOQUE, MOTIVOS_SAIDA_ESTOQUE, LIMITE_JUSTIFICATIVA_SAIDA, ATENDIMENTOS_REQUISICAO_ESTOQUE, CAPACIDADE_MOVIMENTACAO_INTERNA,
-  CAPACIDADE_LAYOUT_DOCUMENTO, CAPACIDADE_REGRAS_DA_OPERACAO, regrasDaOperacaoDoEstoque,
+  CAPACIDADE_LAYOUT_DOCUMENTO, CAPACIDADE_REGRAS_DA_OPERACAO, CAPACIDADE_SALDO_INICIAL_ESTOQUE, regrasDaOperacaoDoEstoque, saldoInicialPelaTop,
   type EspecieEstoque, type ConfiguracaoComRestricoesTop, type SecoesExtensaoV5,
 } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
@@ -505,12 +505,16 @@ export default async function estoqueRoutes(app: FastifyInstance) {
     /** As TOPs que esta espécie pode lançar — porta OPERACIONAL (`<recurso>.create`), não administrativa. */
     app.get(`${base}/operation-types`, async (req) => runService(app, req, `${recurso}.create`, async (ctx) => {
       const familia = familiaDaEspecie(especie);
-      const r = await ctx.tx.query<{ id: string; codigo: string; nome: string; versao: number; padrao: boolean }>(
-        `select t.id, t.codigo, v.nome, v.versao, t.padrao
+      const r = await ctx.tx.query<{ id: string; codigo: string; nome: string; versao: number; padrao: boolean; configuracao: unknown }>(
+        `select t.id, t.codigo, v.nome, v.versao, t.padrao, v.configuracao
            from erp.tipos_operacao t
            join erp.tipos_operacao_versoes v on v.tipo_operacao_id = t.id and v.organization_id = t.organization_id and v.versao = t.versao_atual
           where t.organization_id = $1 and t.codigo_base = $2 and t.ativo and t.excluido_em is null
           order by t.padrao desc, t.codigo, v.nome`, [ctx.orgId, familia]);
+      // `saldoInicial` (OPERACOES-01 F11, decisão 288, ADITIVA, só na entrada): a TOP de entrada pode lançar o saldo
+      // inicial (seção `implantacao`); o item diz qual. Leitor: `entendeSaldoInicialEstoque`. A Implantação só aponta
+      // para a Central com ela declarada. As outras seis espécies respondem o corpo de antes, chave por chave.
+      const declaraSaldoInicial = especie === "entrada";
       return {
         contractVersion: 1,
         // `documentoEstoque` declara a capacidade: a web nova só oferece o "+ Novo" do portal contra uma API que a tem.
@@ -523,10 +527,12 @@ export default async function estoqueRoutes(app: FastifyInstance) {
         // Fluxo) existem no estoque. A Central só pede as duas rotas com a chave declarada: contra a API anterior, o
         // layout do sistema local e o neutro de cada seção (o comportamento de hoje).
         capacidades: { documentoEstoque: 1, movimentacaoInterna: CAPACIDADE_MOVIMENTACAO_INTERNA, layoutDocumento: CAPACIDADE_LAYOUT_DOCUMENTO,
-          regrasDaOperacao: CAPACIDADE_REGRAS_DA_OPERACAO },
+          regrasDaOperacao: CAPACIDADE_REGRAS_DA_OPERACAO,
+          ...(declaraSaldoInicial ? { saldoInicial: CAPACIDADE_SALDO_INICIAL_ESTOQUE } : {}) },
         family: { code: familia, label: t(chaveI18nDaFamiliaOperacional(familia) ?? familia) },
         defaultId: r.rows.find((x) => x.padrao)?.id ?? null,
-        items: r.rows.map((x) => ({ id: x.id, code: x.codigo, name: x.nome, version: x.versao, isDefault: x.padrao })),
+        items: r.rows.map((x) => ({ id: x.id, code: x.codigo, name: x.nome, version: x.versao, isDefault: x.padrao,
+          ...(declaraSaldoInicial ? { saldoInicial: saldoInicialPelaTop(familia, x.configuracao) } : {}) })),
       };
     }));
 

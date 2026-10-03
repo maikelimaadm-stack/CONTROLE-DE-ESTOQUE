@@ -271,7 +271,8 @@ describe("CT-4 os perfis derivados", () => {
     const p = perfil(VENDA);
     expect(p.abas).toEqual(["identificacao", "geral", "destinos", "estoque", "financeiroPadrao", "financeiro", "fiscal", "aprovacao", "execucao"]);
     expect(rotulos(p)).toEqual(VENDAS);
-    expect(p.secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+    // A Implantação (F11) é só da entrada de estoque: na venda fica entre as neutras.
+    expect(p.secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "implantacao"]);
   });
 
   it("CT-4 orçamento e pedido de venda: sem Aprovação e sem Execução (o servidor já obriga o padrão); Padrões financeiros só no pedido (F9)", () => {
@@ -281,7 +282,7 @@ describe("CT-4 os perfis derivados", () => {
       const pedido = f === "vendas.pedido";
       expect(p.abas, f).toEqual(["identificacao", "geral", "destinos", "estoque", ...(pedido ? ["financeiroPadrao"] : []), "financeiro", "fiscal"]);
       expect(rotulos(p), f).toEqual(VENDAS);
-      expect(p.secoesNeutras, f).toEqual(pedido ? ["destino", "fluxo", "fluxoCompra", "divergenciaPedido"] : ["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+      expect(p.secoesNeutras, f).toEqual(pedido ? ["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "implantacao"] : ["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", "implantacao"]);
     }
   });
 
@@ -291,7 +292,7 @@ describe("CT-4 os perfis derivados", () => {
     expect(perfil(f).abas).toEqual(["identificacao", "geral", "destinos", "estoque", "fluxoCompra", "financeiroPadrao", "financeiro", "fiscal", "aprovacao"]);
     expect(rotulos(perfil(f))).toEqual(COMPRAS);
     // Os padrões financeiros e a provisão do pedido de compra finalizado (F9b).
-    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "divergenciaPedido"]);
+    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "divergenciaPedido", "implantacao"]);
   });
 
   it("CT-4 compra: sem Próximas operações; com Padrões financeiros (F9b), Aprovação e Execução", () => {
@@ -299,17 +300,18 @@ describe("CT-4 os perfis derivados", () => {
     expect(predicados(f)).toEqual({ destinos: false, estoqueDoc: false, aprovacao: true, execucao: true, comDocumento: true });
     expect(perfil(f).abas).toEqual(["identificacao", "geral", "estoque", "divergenciaPedido", "financeiroPadrao", "financeiro", "fiscal", "aprovacao", "execucao"]);
     expect(rotulos(perfil(f))).toEqual(COMPRAS);
-    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra"]);
+    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "implantacao"]);
   });
 
-  it("CT-4 as 4 espécies do documento de estoque: Identificação, Geral, Estoque (+ Destino na saída, F5a) e Aprovação; só Observação; Estoque, Financeiro e Fiscal no padrão", () => {
+  it("CT-4 as 4 espécies do documento de estoque: Identificação, Geral, Estoque (+ Destino na saída, F5a; + Implantação na entrada, F11) e Aprovação; só Observação; Estoque, Financeiro e Fiscal no padrão", () => {
     for (const f of ["estoque.entrada", "estoque.saida", "estoque.transferencia", "estoque.ajuste"]) {
       expect(predicados(f), f).toEqual({ destinos: false, estoqueDoc: true, aprovacao: true, execucao: false, comDocumento: true });
       const p = perfil(f);
       const saida = f === "estoque.saida";
-      expect(p.abas, f).toEqual(["identificacao", "geral", "estoque", ...(saida ? ["destino"] : []), "aprovacao"]);
+      const entrada = f === "estoque.entrada";
+      expect(p.abas, f).toEqual(["identificacao", "geral", "estoque", ...(saida ? ["destino"] : []), ...(entrada ? ["implantacao"] : []), "aprovacao"]);
       expect(rotulos(p), f).toEqual(["Observação"]);
-      expect(p.secoesNeutras, f).toEqual(["estoque", "financeiro", "fiscal", ...(saida ? [] : ["destino"]), "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+      expect(p.secoesNeutras, f).toEqual(["estoque", "financeiro", "fiscal", ...(saida ? [] : ["destino"]), "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", ...(entrada ? [] : ["implantacao"])]);
     }
   });
 
@@ -321,7 +323,7 @@ describe("CT-4 os perfis derivados", () => {
       { chave: "exigeCentroResultado", rotulo: "Centro de resultado" },
       { chave: "exigeObservacao", rotulo: "Observação" },
     ]);
-    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+    expect(perfil(f).secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", "implantacao"]);
   });
 
   it("CT-4 os 6 módulos (F10): as abas sem Aprovação nem Execução e as exigências que o registro de cada um tem", () => {
@@ -361,7 +363,8 @@ describe("CT-4 os perfis derivados", () => {
       // F10r: o movimento de animais não cobra nenhuma exigência geral da TOP — o perfil não mostra nenhuma.
       const pecuaria = p.familia === "pecuaria.compra_de_animais" || p.familia === "pecuaria.venda_de_animais";
       expect(p.exigencias, p.familia).toEqual(pecuaria ? [] : EXIGENCIAS_GERAIS_SEM_DOCUMENTO_TOP);
-      expect(p.secoesNeutras, p.familia).toEqual(usa ? ["destino", "fluxo", "fluxoCompra", "divergenciaPedido"] : ["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+      // A família antiga da entrada manual (`estoque.entrada_manual`) não é a da espécie `entrada`: Implantação neutra (F11).
+      expect(p.secoesNeutras, p.familia).toEqual(usa ? ["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "implantacao"] : ["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", "implantacao"]);
     }
     // A premissa: as seis estão mesmo entre as sem documento; só as 2 da pecuária ficam sem exigências.
     expect(semDocumento.filter((p) => comPadroes.includes(p.familia))).toHaveLength(6);
@@ -524,11 +527,11 @@ describe("CT-5 o servidor recusa no 5 o que o tipo não aceita", () => {
     expect(recusaDasCondicoesDoPerfilTop(VENDA, c, 1, semFinanceiroNaVenda)).not.toBeNull();
   });
 
-  it("CT-5 os rótulos das seções: os seis de hoje e os das seções de extensão (F5a, F6a e F9), um por seção comparada", () => {
+  it("CT-5 os rótulos das seções: os seis de hoje e os das seções de extensão (F5a, F6a, F9 e F11), um por seção comparada", () => {
     expect(ROTULOS_SECAO_CONFIGURACAO_TOP).toEqual({
       geral: "Geral", estoque: "Estoque", financeiro: "Financeiro", fiscal: "Fiscal", aprovacao: "Aprovação", execucao: "Execução",
       destino: "Destino", fluxo: "Fluxo", fluxoCompra: "Fluxo de compra", divergenciaPedido: "Divergência com o pedido",
-      financeiroPadrao: "Padrões financeiros",
+      financeiroPadrao: "Padrões financeiros", implantacao: "Implantação",
     });
     expect(Object.keys(ROTULOS_SECAO_CONFIGURACAO_TOP)).toEqual([...SECOES_CONFIGURACAO_TOP_V5]);
   });

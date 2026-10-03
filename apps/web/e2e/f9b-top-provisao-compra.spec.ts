@@ -70,11 +70,11 @@ const PADROES = ["natureza", "centro", "tipo-titulo", "forma", "conta"] as const
 
 const ehPostDeTop = (r: Request) => r.method() === "POST" && new URL(r.url()).pathname === "/api/admin/tipos-operacao";
 
-/** As premissas do servidor: o editor do 5 com as cinco seções de hoje, a capacidade dos padrões e o catálogo publicado. */
+/** As premissas do servidor: o editor do 5 com as seis seções de hoje, a capacidade dos padrões e o catálogo publicado. */
 async function premissasDoServidor(page: Page): Promise<CatalogoTop> {
   const catalogo = await catalogoPublicadoE2E(page);
   const c = await api<CapacidadesF9b>(page, "GET", "/api/admin/tipos-operacao/capabilities");
-  expect(c.formato5?.secoes, "premissa: as cinco seções de hoje (a F9b não acrescenta seção)").toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+  expect(c.formato5?.secoes, "premissa: as seis seções de hoje (a F9b não acrescenta seção; a Implantação é da F11)").toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", "implantacao"]);
   expect(c.padroesFinanceiros, "premissa: o servidor grava os padrões financeiros da versão").toBe(1);
   return catalogo;
 }

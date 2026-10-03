@@ -42,3 +42,5 @@ export * from "./compras-finalizacao-orcamento.js";
 // OPERACOES-01 F9 (decisão 286): a seção "Padrões financeiros" do formato 5 (a provisão, os padrões e o LCDPR saem
 // pelo barril da Central Financeira).
 export * from "./tipo-operacao-secao-financeiro-padrao.js";
+// OPERACOES-01 F11 (decisão 288): a seção "Implantação" do formato 5 (o saldo inicial na TOP de entrada).
+export * from "./tipo-operacao-secao-implantacao.js";

@@ -105,7 +105,8 @@ async function casosDaMesma404(): Promise<{ casos: [string, string][]; valida: s
 
 // ─────────────── o que se espera, escrito à mão ───────────────
 
-const DESTINO_NEUTRO = { centroCusto: "nao_usada", equipamento: "nao_usada", ordemServico: "nao_usada", loteAnimais: "nao_usada", area: "nao_usada", safra: "nao_usada" };
+/** O neutro do Destino: as seis em "opcional" (OPERACOES-01 F11, decisão 288 — aceita o destino, nada é exigido). */
+const DESTINO_NEUTRO = { centroCusto: "opcional", equipamento: "opcional", ordemServico: "opcional", loteAnimais: "opcional", area: "opcional", safra: "opcional" };
 const FLUXO_NEUTRO = { exigeRequisicao: "nao", permiteParcial: true };
 /** O neutro de cada espécie: o Destino só onde a TOP o configura (saída, requisição e consumo); o Fluxo, só no consumo. */
 const NEUTRO_DA_ESPECIE: Readonly<Record<EspecieEstoque, { destino: unknown; fluxo: unknown }>> = {

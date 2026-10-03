@@ -161,9 +161,10 @@ describe("F9B-D3 as recusas da seção financeiroPadrao nas famílias de compras
 
 describe("F9B-D4 as abas e as seções neutras das duas famílias de compras", () => {
   const PEDIDO_ABAS = ["identificacao", "geral", "destinos", "estoque", "fluxoCompra", "financeiroPadrao", "financeiro", "fiscal", "aprovacao"];
-  const PEDIDO_NEUTRAS = ["destino", "fluxo", "divergenciaPedido"];
+  // Premissa (288): a seção Implantação (F11) só vale na entrada; nas compras ela é neutra, no fim.
+  const PEDIDO_NEUTRAS = ["destino", "fluxo", "divergenciaPedido", "implantacao"];
   const COMPRA_ABAS = ["identificacao", "geral", "estoque", "divergenciaPedido", "financeiroPadrao", "financeiro", "fiscal", "aprovacao", "execucao"];
-  const COMPRA_NEUTRAS = ["destino", "fluxo", "fluxoCompra"];
+  const COMPRA_NEUTRAS = ["destino", "fluxo", "fluxoCompra", "implantacao"];
 
   it("o perfil derivado: Padrões financeiros depois das seções de compras e antes do Financeiro; fora das neutras", () => {
     expect(perfilDoTipoTop(PEDIDO_COMPRA).abas).toEqual(PEDIDO_ABAS);

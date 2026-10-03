@@ -26,11 +26,14 @@ import {
  * FIXTURE PRÓPRIA: toda TOP nasce no teste (pela API, no neutro do 5) e é excluída no `finally`. As famílias novas
  * (requisição de material, consumo e devolução de consumo) têm tela no passo 1 desde a F5b; a TOP de consumo nasce pela
  * API por economia (o passo 1 já é provado em `top-assistente.spec.ts`), e o editor a abre na EDIÇÃO.
+ *
+ * OPERACOES-01 F11 (decisão 288): o NEUTRO do Destino é "Opcional" nas seis (aceita o destino, nada é exigido) — "fora
+ * do neutro" é "Não usada" ou "Obrigatória"; e a ENTRADA ganhou a aba Implantação (o saldo inicial), sem Destino e Fluxo.
  */
 
 const AJUDA = {
   destino:
-    "O destino diz para onde vai o que sai do estoque: centro de resultado, máquina/equipamento, ordem de serviço, lote de animais, área/talhão e safra. Cada um pode ser não usado, opcional ou obrigatório nesta operação. Vale para a requisição, o consumo e a saída; o consumo que atende uma requisição leva o destino dela, e a devolução de consumo leva o do consumo.",
+    "O destino diz para onde vai o que sai do estoque: centro de resultado, máquina/equipamento, ordem de serviço, lote de animais, área/talhão e safra. Cada um pode ser não usado, opcional ou obrigatório nesta operação; o padrão é opcional (aceita o destino, nada é exigido). Vale para a requisição, o consumo e a saída; o consumo que atende uma requisição leva o destino dela, e a devolução de consumo leva o do consumo.",
   fluxo:
     "O fluxo diz se o consumo precisa vir de uma requisição de material e se pode atender a requisição em parte. No padrão, o consumo pode ser lançado direto e atende em parte."
 } as const;
@@ -47,8 +50,9 @@ const DIMENSOES = [
 const OPCOES_DESTINO = ["Não usada", "Opcional", "Obrigatória"];
 const OPCOES_EXIGE_REQUISICAO = ["Não", "Em algum item", "Em todos os itens"];
 
+/** O neutro do Destino: as seis em "opcional" (F11, decisão 288). */
 const NEUTRO_DESTINO = {
-  centroCusto: "nao_usada", equipamento: "nao_usada", ordemServico: "nao_usada", loteAnimais: "nao_usada", area: "nao_usada", safra: "nao_usada"
+  centroCusto: "opcional", equipamento: "opcional", ordemServico: "opcional", loteAnimais: "opcional", area: "opcional", safra: "opcional"
 } as const;
 const NEUTRO_FLUXO = { exigeRequisicao: "nao", permiteParcial: true } as const;
 
@@ -62,7 +66,7 @@ function familiaDe(especie: EspecieEstoque, esperada: string): string {
 /** As premissas do servidor: o formato 5 com as duas seções, e o perfil publicado do tipo com as abas esperadas. */
 async function premissasDoServidor(page: Page, familia: string, abas: readonly string[]): Promise<void> {
   const c = await api<{ formato5?: { secoes: string[] } }>(page, "GET", "/api/admin/tipos-operacao/capabilities");
-  expect(c.formato5?.secoes, "premissa: o servidor lê e grava Destino e Fluxo, com as de compras da F6a e a da F9 (o editor só liga com o mesmo conjunto)").toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+  expect(c.formato5?.secoes, "premissa: o servidor lê e grava Destino e Fluxo, com as de compras da F6a, a da F9 e a da F11 (o editor só liga com o mesmo conjunto)").toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", "implantacao"]);
   const catalogo = await catalogoPublicadoE2E(page);
   expect(catalogo.perfis.find((p) => p.familia === familia)?.abas, `premissa: as abas do perfil publicado de ${familia}`).toEqual(abas);
 }
@@ -94,7 +98,7 @@ test("E5A-1 — Consumo: abas Destino e Fluxo com os rótulos e as opções do d
     const forma = await abrirEditorDaTop(page, top.codigo);
     await expect(abasDaTela(forma), "Destino e Fluxo depois de Estoque").toHaveText(["Identificação", "Geral", "Estoque", "Destino", "Fluxo", "Aprovação"]);
 
-    // DESTINO: a ajuda da definição, as seis dimensões na ordem, "Não usada" em todas, as três opções.
+    // DESTINO: a ajuda da definição, as seis dimensões na ordem, "Opcional" em todas (o neutro, F11), as três opções.
     await forma.getByTestId("top-aba-destino").click();
     const destino = forma.getByTestId("top-secao-destino");
     await expect(destino).toBeVisible();
@@ -103,7 +107,7 @@ test("E5A-1 — Consumo: abas Destino e Fluxo com os rótulos e as opções do d
     for (const d of DIMENSOES) {
       const campo = destino.getByTestId(`top-campo-destino-${d.testid}`);
       await expect(destino.getByLabel(d.rotulo, { exact: true }), `o rótulo "${d.rotulo}" é o do campo`).toHaveAttribute("data-testid", `top-campo-destino-${d.testid}`);
-      await expect(campo).toHaveValue("nao_usada");
+      await expect(campo).toHaveValue("opcional");
       expect(await textosDasOpcoes(campo)).toEqual(OPCOES_DESTINO);
     }
     await destino.getByTestId("top-campo-destino-centro-custo").selectOption({ label: "Obrigatória" });
@@ -175,12 +179,12 @@ test("E5A-1 — Consumo: abas Destino e Fluxo com os rótulos e as opções do d
  * E5A-2 — SAÍDA SÓ COM DESTINO; ENTRADA SEM AS DUAS
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
 
-test("E5A-2 — Saída: aba Destino sem Fluxo, e 'Máquina/equipamento: Opcional' grava com o Fluxo no neutro; Entrada: nenhuma das duas", async ({ page }) => {
+test("E5A-2 — Saída: aba Destino sem Fluxo, no neutro 'Opcional', e 'Máquina/equipamento: Não usada' grava com o Fluxo no neutro; Entrada: nenhuma das duas, com a aba Implantação (F11)", async ({ page }) => {
   await login(page);
   const familiaSaida = familiaDe("saida", "estoque.saida");
   const familiaEntrada = familiaDe("entrada", "estoque.entrada");
   await premissasDoServidor(page, familiaSaida, ["identificacao", "geral", "estoque", "destino", "aprovacao"]);
-  await premissasDoServidor(page, familiaEntrada, ["identificacao", "geral", "estoque", "aprovacao"]);
+  await premissasDoServidor(page, familiaEntrada, ["identificacao", "geral", "estoque", "implantacao", "aprovacao"]);
   const tops: TopE2E[] = [];
   try {
     const saida = await criarTopViaApi(page, familiaSaida, cfg5(), { rotulo: "Saída E5A-2" });
@@ -196,23 +200,24 @@ test("E5A-2 — Saída: aba Destino sem Fluxo, e 'Máquina/equipamento: Opcional
     await forma.getByTestId("top-aba-destino").click();
     const destino = forma.getByTestId("top-secao-destino");
     await expect(forma.getByText(AJUDA.destino, { exact: true })).toBeVisible();
-    for (const d of DIMENSOES) await expect(destino.getByTestId(`top-campo-destino-${d.testid}`)).toHaveValue("nao_usada");
-    await destino.getByTestId("top-campo-destino-equipamento").selectOption({ label: "Opcional" });
+    for (const d of DIMENSOES) await expect(destino.getByTestId(`top-campo-destino-${d.testid}`)).toHaveValue("opcional");
+    await destino.getByTestId("top-campo-destino-equipamento").selectOption({ label: "Não usada" });
     const put = page.waitForRequest(ehPutDaTop(saida.id));
     const resposta = page.waitForResponse((r) => ehPutDaTop(saida.id)(r.request()));
     await page.getByTestId("top-salvar").click();
     const corpo = (await put).postDataJSON() as CorpoGravado;
     expect((await resposta).status(), "PUT 200").toBe(200);
     expect(corpo.configuracao, "o Destino escolhido; o Fluxo, que a saída não mostra, vai no neutro")
-      .toEqual(cfg5({}, (c) => ({ ...c, destino: { ...c.destino, equipamento: "opcional" } })));
+      .toEqual(cfg5({}, (c) => ({ ...c, destino: { ...c.destino, equipamento: "nao_usada" } })));
     await expect(forma).toBeHidden();
     const d = await detalheTopNoServidor(page, saida.id);
     expect([d.versao, d.configuracaoSchema]).toEqual([2, 5]);
-    expect((d.configuracao.valor as ConfiguracaoTipoOperacaoV5).destino).toEqual({ ...NEUTRO_DESTINO, equipamento: "opcional" });
+    expect((d.configuracao.valor as ConfiguracaoTipoOperacaoV5).destino).toEqual({ ...NEUTRO_DESTINO, equipamento: "nao_usada" });
 
-    // ENTRADA: nenhuma das duas.
+    // ENTRADA: nenhuma das duas; a aba Implantação (F11, o saldo inicial) depois de Estoque.
     const formaEntrada = await abrirEditorDaTop(page, entrada.codigo);
-    await expect(abasDaTela(formaEntrada)).toHaveText(["Identificação", "Geral", "Estoque", "Aprovação"]);
+    await expect(abasDaTela(formaEntrada)).toHaveText(["Identificação", "Geral", "Estoque", "Implantação", "Aprovação"]);
+    await expect(formaEntrada.getByTestId("top-aba-implantacao")).toHaveCount(1);
     await expect(formaEntrada.getByTestId("top-aba-destino")).toHaveCount(0);
     await expect(formaEntrada.getByTestId("top-aba-fluxo")).toHaveCount(0);
     await expect(formaEntrada.getByTestId("top-secao-destino")).toHaveCount(0);
@@ -235,7 +240,7 @@ test("E5A-3 — o histórico do consumo mostra 'Seções alteradas: Destino, Flu
     const v1 = await detalheTopNoServidor(page, top.id);
     await api(page, "PUT", `/api/admin/tipos-operacao/${top.id}`, {
       revisao: v1.revisao,
-      configuracao: cfg5({}, (c) => ({ ...c, destino: { ...c.destino, centroCusto: "obrigatoria" }, fluxo: { exigeRequisicao: "todos", permiteParcial: false } }))
+      configuracao: cfg5({}, (c) => ({ ...c, destino: { ...c.destino, centroCusto: "obrigatoria", equipamento: "nao_usada" }, fluxo: { exigeRequisicao: "todos", permiteParcial: false } }))
     });
     const v2 = await detalheTopNoServidor(page, top.id);
     expect([v2.versao, v2.configuracaoSchema], "premissa: a versão 2 no formato 5").toEqual([2, 5]);
@@ -253,7 +258,8 @@ test("E5A-3 — o histórico do consumo mostra 'Seções alteradas: Destino, Flu
     const blocoDestino = linha2.getByTestId("top-versao-secao-destino");
     await expect(blocoDestino).toContainText("Destino");
     await expect(blocoDestino.locator("dt")).toHaveText(DIMENSOES.map((d) => d.rotulo));
-    await expect(blocoDestino.locator("dd")).toHaveText(["Obrigatória", "Não usada", "Não usada", "Não usada", "Não usada", "Não usada"]);
+    // A máquina "Não usada" (gravada); as outras quatro no neutro, "Opcional" (F11).
+    await expect(blocoDestino.locator("dd")).toHaveText(["Obrigatória", "Não usada", "Opcional", "Opcional", "Opcional", "Opcional"]);
     const blocoFluxo = linha2.getByTestId("top-versao-secao-fluxo");
     await expect(blocoFluxo).toContainText("Fluxo");
     await expect(blocoFluxo.locator("dt")).toHaveText(["Exigir requisição", "Atender requisição em parte"]);

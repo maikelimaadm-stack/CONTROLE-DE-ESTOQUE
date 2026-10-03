@@ -43,7 +43,7 @@ const ehPostDeTop = (r: Request) => r.method() === "POST" && new URL(r.url()).pa
 async function premissasDoServidor(page: Page): Promise<void> {
   await catalogoPublicadoE2E(page);
   const c = await api<CapacidadesF9a>(page, "GET", "/api/admin/tipos-operacao/capabilities");
-  expect(c.formato5?.secoes, "premissa: o servidor lê e grava a seção financeiroPadrao, depois das da F5a e da F6a").toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+  expect(c.formato5?.secoes, "premissa: o servidor lê e grava a seção financeiroPadrao, depois das da F5a e da F6a (e antes da Implantação, da F11)").toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", "implantacao"]);
   expect(c.padroesFinanceiros, "premissa: o servidor grava os padrões financeiros da versão").toBe(1);
 }
 

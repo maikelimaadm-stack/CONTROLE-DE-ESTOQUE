@@ -467,14 +467,15 @@ describe("F6A-D6 o perfil, o grafo, a matriz e as exigências", () => {
     expect(p).not.toBeNull();
     expect(p!.abas).toEqual(["identificacao", "geral", "estoque", "financeiro", "fiscal"]);
     expect(p!.exigencias).toEqual([{ chave: "exigeParceiro", rotulo: "Fornecedor" }, { chave: "exigeObservacao", rotulo: "Observação" }]);
-    expect(p!.secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+    // A Implantação (F11, decisão 288) é só da entrada de estoque: nas famílias de compras fica entre as neutras.
+    expect(p!.secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", "implantacao"]);
   });
 
   it("perfil do pedido (Fluxo de compra e Aprovação) e da compra (Divergência com o pedido)", () => {
     expect(perfilDaFamiliaTop(PEDIDO)?.abas).toEqual(["identificacao", "geral", "destinos", "estoque", "fluxoCompra", "financeiroPadrao", "financeiro", "fiscal", "aprovacao"]);
-    expect(perfilDaFamiliaTop(PEDIDO)?.secoesNeutras).toEqual(["destino", "fluxo", "divergenciaPedido"]);
+    expect(perfilDaFamiliaTop(PEDIDO)?.secoesNeutras).toEqual(["destino", "fluxo", "divergenciaPedido", "implantacao"]);
     expect(perfilDaFamiliaTop(COMPRA)?.abas).toEqual(["identificacao", "geral", "estoque", "divergenciaPedido", "financeiroPadrao", "financeiro", "fiscal", "aprovacao", "execucao"]);
-    expect(perfilDaFamiliaTop(COMPRA)?.secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra"]);
+    expect(perfilDaFamiliaTop(COMPRA)?.secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "implantacao"]);
   });
 
   it("no 5, a seção que o tipo não usa fora do padrão é recusa (422); a que ele usa passa; a volta ao padrão a zera", () => {

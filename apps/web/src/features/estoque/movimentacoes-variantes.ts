@@ -5,11 +5,11 @@ import { useAuth } from "@/lib/auth";
 import { useTradutor } from "@/lib/i18n";
 import {
   ESPECIES_DOCUMENTO_ESTOQUE, RECURSO_DA_ESPECIE_ESTOQUE, SEGMENTO_DA_ESPECIE_ESTOQUE, TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE,
-  chaveI18nDaFamiliaOperacional, entendeMovimentacaoInterna, especieDoSegmentoEstoque, familiaOperacionalDeDocumentoEstoque,
-  type EspecieEstoque
+  chaveI18nDaFamiliaOperacional, entendeMovimentacaoInterna, entendeSaldoInicialEstoque, especieDoSegmentoEstoque,
+  familiaOperacionalDeDocumentoEstoque, type EspecieEstoque
 } from "@agro/domain";
 import type { Row } from "@/features/docs/shared";
-import { estadoDeTops, podeLancar, type EstadoTop } from "@/features/sales/tipo-operacao-select";
+import { ehTopsDaVariante, estadoDeTops, podeLancar, type EstadoTop } from "@/features/sales/tipo-operacao-select";
 import type { GrupoDeTops, VarianteDeVenda } from "@/features/sales/variantes";
 
 /**
@@ -270,6 +270,58 @@ export function useAjusteDoSaldoNaCentral(): "carregando" | boolean {
   const estado = estadoDeTops({ habilitado, carregando: q.isPending, erro: q.error, dados: q.data });
   if (estado.situacao === "carregando") return "carregando";
   return podeLancar(estado) && declaraMovimentacaoInterna(q.data);
+}
+
+/** A espécie que lança o SALDO INICIAL pela Central (F11): a entrada. */
+const ESPECIE_DO_SALDO_INICIAL: EspecieEstoque = "entrada";
+
+/** Uma TOP de entrada que lança o saldo inicial, como a Implantação a oferece. */
+export interface TopDeSaldoInicial { id: string; nome: string }
+
+/** O que a Implantação decide (F11): a API declara o saldo inicial pela TOP? E quais TOPs o lançam. */
+export interface SaldoInicialNaCentral { declarada: boolean; tops: TopDeSaldoInicial[] }
+
+/** A resposta de antes (sem a declaração): a Implantação de hoje. */
+const semSaldoInicialNaCentral = (): SaldoInicialNaCentral => ({ declarada: false, tops: [] });
+
+/**
+ * As TOPs de ENTRADA marcadas com "Lança o saldo inicial", tiradas de UMA resposta CRUA do `operation-types` da entrada.
+ * Função pura (a Implantação e o teste chegam ao mesmo veredito): `declarada` só com o contrato das TOPs conferido
+ * (`ehTopsDaVariante`) E a capacidade declarada na forma e versão exatas (`entendeSaldoInicialEstoque`); `tops` = os
+ * itens com `saldoInicial === true` (booleano PRÓPRIO do item; qualquer outra forma = não marcado). Sem a declaração,
+ * nenhuma TOP: a marca de um item não vale sem a capacidade que diz o que ela significa.
+ */
+export function saldoInicialDaResposta(dados: unknown): SaldoInicialNaCentral {
+  if (!ehTopsDaVariante(dados) || !entendeSaldoInicialEstoque(capacidadesDaResposta(dados))) return semSaldoInicialNaCentral();
+  const tops: TopDeSaldoInicial[] = [];
+  for (const item of dados.items) {
+    if (Object.getOwnPropertyDescriptor(item, "saldoInicial")?.value === true) tops.push({ id: item.id, nome: item.name });
+  }
+  return { declarada: true, tops };
+}
+
+/**
+ * As TOPs de ENTRADA que lançam o saldo inicial, se a API declara `saldoInicial` (OPERACOES-01 F11, decisão 288). Mesma
+ * chave de cache do lançador e da Central (`chaveTops("entradas")`): a Implantação não pergunta duas vezes o que o
+ * portal já perguntou. Só pergunta com `entradas_estoque.create` (a porta exige; sem ela, a resposta é a de antes na
+ * hora). `"carregando"` enquanto a pergunta não volta — a Implantação não oferece porta nenhuma, para não oferecer uma
+ * e trocá-la logo depois. Erro (403, 404 da API anterior, 5xx) ou corpo que não é o contrato → `{ declarada: false }`:
+ * a Implantação de hoje.
+ */
+export function useTopsDeSaldoInicial(): "carregando" | SaldoInicialNaCentral {
+  const { can } = useAuth();
+  const segmento = SEGMENTO_DA_ESPECIE_ESTOQUE[ESPECIE_DO_SALDO_INICIAL];
+  const habilitado = can(`${RECURSO_DA_ESPECIE_ESTOQUE[ESPECIE_DO_SALDO_INICIAL]}.create`);
+  const q = useQuery<unknown, ApiError>({
+    queryKey: chaveTops(segmento),
+    queryFn: () => perguntarTops(segmento),
+    enabled: habilitado,
+    retry: false
+  });
+  if (!habilitado) return semSaldoInicialNaCentral();
+  if (q.isPending) return "carregando";
+  if (q.error || q.data === undefined) return semSaldoInicialNaCentral();
+  return saldoInicialDaResposta(q.data);
 }
 
 /**
