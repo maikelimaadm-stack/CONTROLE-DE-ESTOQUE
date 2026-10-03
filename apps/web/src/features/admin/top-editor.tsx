@@ -19,11 +19,11 @@ import {
   POLITICAS_ALTERACAO, POLITICAS_APROVACAO, POLITICAS_CLIENTE_EM_ATRASO, POLITICAS_DOCUMENTO_SEM_ITENS, POLITICAS_SALDO_NEGATIVO,
   ROTULOS_SECAO_CONFIGURACAO_TOP, SECAO_FINANCEIRO_PADRAO, SECOES_EXTENSAO_V5, TOLERANCIA_ATRASO_MAXIMA_DIAS,
   configuracaoNeutraTopV4, configuracaoTopParaEdicao, definicaoDaSecaoV5, efeitosAtivadosTop, ehFamiliaDeDocumentoEstoque, exigenciasGeraisDaFamiliaTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, familiaOperacionalDeDocumentoVenda,
-  condicoesQueVoltamPeloPerfilTop, formato5Top, normalizarConfiguracaoTop, normalizarPeloPerfilTop, normalizarRegrasGeraisDaFamiliaTop, perfilDaFamiliaTop, perfilDosPadroesFinanceiros, regrasGeraisDaFamiliaTop, regrasGeraisQuePassamAValer, restricoesExecutamTop, tipoOperacao,
-  recusasFiscaisDaFamiliaTop, validarExecucaoTop,
+  condicoesQueVoltamPeloPerfilTop, fluxoCompraComAAprovacao, formato5Top, normalizarConfiguracaoTop, normalizarPeloPerfilTop, normalizarRegrasGeraisDaFamiliaTop, perfilDaFamiliaTop, perfilDosPadroesFinanceiros, regrasGeraisDaFamiliaTop, regrasGeraisQuePassamAValer, restricoesExecutamTop, tipoOperacao,
+  recusasDoFluxoCompraDaFamilia, recusasFiscaisDaFamiliaTop, secoesExtensaoDaVersaoTop, validarExecucaoTop,
   type AbaEditorTop, type ConfiguracaoComRegrasGeraisTop, type ConfiguracaoComRestricoesTop, type ConfiguracaoTipoOperacaoV2,
   type ConfiguracaoTipoOperacaoV5, type EfeitoExecucaoTop,
-  type ExigenciaDoPerfilTop, type ItemMatrizRegrasGeraisTop, type ModoExecucaoTop, type RecusaExecucaoTop, type RegraDaFamiliaTop,
+  type ExigenciaDoPerfilTop, type ItemMatrizRegrasGeraisTop, type ModoExecucaoTop, type PoliticaAprovacao, type RecusaExecucaoTop, type RegraDaFamiliaTop,
   type RegraGeralQueVoltaTop, type SecaoQueVoltaTop
 } from "@agro/domain";
 import {
@@ -826,6 +826,17 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         locais["financeiro.toleranciaAtrasoDias"] = `Informe de 0 a ${TOLERANCIA_ATRASO_MAXIMA_DIAS} dias.`;
       }
     }
+    // OPERACOES-01 F6a, decisão do Maike de 03/10: no 5, O PAR do pedido de compra — a aprovação e "Exigir pedido
+    // finalizado para receber" andam juntas, nos dois sentidos. A mesma pergunta e o mesmo texto do servidor
+    // (`recusasDoFluxoCompraDaFamilia`), sobre o que VAI no fio; o erro aparece no campo que falta ligar e a aba dele abre
+    // ("Fluxo de compra" ou "Aprovação"). Mexer na aprovação já acompanha a regra (`acompanharAprovacao`): esta recusa só
+    // aparece se alguém mexeu na REGRA sozinha (Não com aprovação, ou Sim sem aprovação).
+    if (liberado && configuracaoNormalizada && formato5Top(configuracaoNormalizada) && rascunho.codigoBase) {
+      const fluxo = secoesExtensaoDaVersaoTop(configuracaoNormalizada).fluxoCompra;
+      for (const r of recusasDoFluxoCompraDaFamilia(rascunho.codigoBase, configuracaoNormalizada.aprovacao.politica, fluxo)) {
+        if (!(r.caminho in locais)) locais[r.caminho] = r.mensagem;
+      }
+    }
     setErrosCampo(locais);
     const primeiro = Object.keys(locais)[0];
     if (primeiro) { setAba(abaDoCaminho(primeiro)); return; }
@@ -937,6 +948,22 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
     setRascunho((r) => {
       if (!r.configuracaoV5) return r;
       const v5 = normalizarConfiguracaoTop(c);
+      return { ...r, configuracaoV5: v5, configuracao: configuracaoTopParaEdicao(v5) };
+    });
+  /**
+   * OPERACOES-01 F6a, decisão do Maike de 03/10 — O EDITOR LIGA AS DUAS JUNTAS: no 5, ligar a aprovação do pedido de
+   * compra liga "Exigir pedido finalizado para receber", e desligá-la a desliga (a regra é do domínio,
+   * `fluxoCompraComAAprovacao`; outra família ou outro formato: nada muda). Mexer só na REGRA não mexe na aprovação — o
+   * critério (Sempre ou A partir de um valor, e o valor) é decisão de quem configura —: a regra sem a aprovação, ou a
+   * aprovação sem a regra, é recusada antes de enviar (`tentarSalvar`), no campo que falta, com o texto do servidor.
+   */
+  const acompanharAprovacao = (politica: PoliticaAprovacao) =>
+    setRascunho((r) => {
+      if (!r.configuracaoV5) return r;
+      const atual = secoesExtensaoDaVersaoTop(r.configuracaoV5).fluxoCompra;
+      const fluxo = fluxoCompraComAAprovacao(r.codigoBase, politica, atual);
+      if (fluxo.exigeFinalizar === atual.exigeFinalizar) return r;
+      const v5 = normalizarConfiguracaoTop({ ...r.configuracaoV5, fluxoCompra: fluxo });
       return { ...r, configuracaoV5: v5, configuracao: configuracaoTopParaEdicao(v5) };
     });
 
@@ -1220,17 +1247,20 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
             <ErroDaSecao erros={errosCampo} caminho="fiscal" />
           </Secao>}
 
-          {aba === "aprovacao" && liberado && <Secao chave="aprovacao" ajuda={regrasDaFamilia ? (tipoOperacao(rascunho.codigoBase)?.modulo === "compras" && tipoOperacao(rascunho.codigoBase)?.origem.valor === "pedido" ? "No pedido de compra, a aprovação vale ao finalizar: com aprovação, o pedido só é finalizado depois de aprovado em Aprovações, por quem tem as permissões Aprovar de Pedidos de Compra e Aprovar de Compras. Se o valor do pedido subir depois da aprovação (o orçamento vencedor muda os preços), ela precisa ser feita de novo. O pedido aberto é recebido sem passar pela aprovação, a não ser que a aba Fluxo de compra exija o pedido finalizado para receber." : AJUDA_COM_REGRAS_GERAIS.aprovacao) : undefined}>
+          {aba === "aprovacao" && liberado && <Secao chave="aprovacao" ajuda={regrasDaFamilia ? (tipoOperacao(rascunho.codigoBase)?.modulo === "compras" && tipoOperacao(rascunho.codigoBase)?.origem.valor === "pedido" ? "No pedido de compra, a aprovação vale ao finalizar: com aprovação, o pedido só é finalizado depois de aprovado em Aprovações, por quem tem as permissões Aprovar de Pedidos de Compra e Aprovar de Compras. Se o valor do pedido subir depois da aprovação (o orçamento vencedor muda os preços), ela precisa ser feita de novo. A aprovação anda junto com \"Exigir pedido finalizado para receber\" (aba Fluxo de compra): ligar a aprovação liga essa regra e desligá-la a desliga; com aprovação, o pedido só é recebido depois de finalizado." : AJUDA_COM_REGRAS_GERAIS.aprovacao) : undefined}>
             <CampoEnum rotulo="Critério de aprovação" testId="top-campo-aprovacao-politica" valor={rascunho.configuracao.aprovacao.politica}
               opcoes={POLITICAS_APROVACAO} rotulos={ROTULOS_TOP.aprovacaoPolitica}
               ajuda="Quando o documento precisa passar por aprovação."
               {...pelaFamilia(POLITICAS_APROVACAO, regrasDaFamilia?.aprovacao, "aprovacao")}
-              onChange={(v) => mudarConfig((c) => ({
-                ...c,
-                // Ao passar para "a partir de um valor", o campo nasce vazio e obrigatório: herdar um valor
-                // antigo faria a regra entrar em vigor com um limite que ninguém confirmou nesta edição.
-                aprovacao: { ...c.aprovacao, politica: v, valorMinimo: v === "por_valor" ? (c.aprovacao.valorMinimo ?? "") : null }
-              }))} />
+              onChange={(v) => {
+                mudarConfig((c) => ({
+                  ...c,
+                  // Ao passar para "a partir de um valor", o campo nasce vazio e obrigatório: herdar um valor
+                  // antigo faria a regra entrar em vigor com um limite que ninguém confirmou nesta edição.
+                  aprovacao: { ...c.aprovacao, politica: v, valorMinimo: v === "por_valor" ? (c.aprovacao.valorMinimo ?? "") : null }
+                }));
+                acompanharAprovacao(v);
+              }} />
             <Field label="Valor mínimo" required={porValor} span={4}
               help="Valor a partir do qual a aprovação passa a ser exigida. Use ponto como separador decimal."
               error={porValor && valorMinimo.length > 0 && !valorMinimoAceitavel(valorMinimo) ? "Informe um valor maior que zero, com até duas casas decimais." : undefined}>

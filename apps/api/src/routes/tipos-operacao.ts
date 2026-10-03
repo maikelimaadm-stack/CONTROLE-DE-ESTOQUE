@@ -44,6 +44,7 @@ import {
   secoesExtensaoDaVersaoTop,
   perfilDosPadroesFinanceiros,
   recusasDoFinanceiroPadraoDaFamilia,
+  recusasDoFluxoCompraDaFamilia,
   ROTULOS_CAMPO_PADRAO_FINANCEIRO,
   SECAO_FINANCEIRO_PADRAO,
   type CampoPadraoFinanceiro,
@@ -281,11 +282,19 @@ function conferirFiscalDaFamilia(config: ConfiguracaoTipoOperacao, codigoBase: s
   // natureza e centro). É recusa da CONFIGURAÇÃO (a seção do JSON), por isso mora nesta lista única, depois da do perfil
   // do tipo — a seção que o tipo nem usa já é recusada por ela, e aqui a família sem perfil devolve `[]`. Os padrões em
   // si (a tabela da versão) são conferidos depois, em `conferirPadroesPedidos`.
+  //
+  // OPERACOES-01 F6a, decisão do Maike de 03/10 (decisão 283): e, no FORMATO 5, O PAR do pedido de compra — a aprovação
+  // (que vale ao finalizar) e "Exigir pedido finalizado para receber" andam juntas, nos dois sentidos
+  // (`recusasDoFluxoCompraDaFamilia`: a que falta, em `fluxoCompra.exigeFinalizar` ou em `aprovacao.politica`; o editor
+  // confere o mesmo antes de enviar). Só na gravação: a versão já gravada nunca é reconferida, e os formatos 1 a 4 não
+  // passam por aqui.
   const regrasGerais = regrasGeraisExecutamTop(config) ? validarRegrasGeraisTop(codigoBase, config) : [];
+  const secoes5 = formato5Top(config) ? secoesExtensaoDaVersaoTop(config) : null;
   const recusas = [
     ...recusasFiscaisDaFamiliaTop(config, codigoBase), ...recusasClienteEmAtrasoDaFamiliaTop(config, codigoBase), ...regrasGerais,
     ...recusasDoPerfilTop(codigoBase, config),
-    ...(formato5Top(config) ? recusasDoFinanceiroPadraoDaFamilia(codigoBase, secoesExtensaoDaVersaoTop(config).financeiroPadrao) : []),
+    ...(secoes5 ? recusasDoFinanceiroPadraoDaFamilia(codigoBase, secoes5.financeiroPadrao) : []),
+    ...(secoes5 ? recusasDoFluxoCompraDaFamilia(codigoBase, config.aprovacao.politica, secoes5.fluxoCompra) : []),
   ];
   if (recusas.length) {
     throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_INVALIDA",

@@ -47,13 +47,14 @@ const ROTULO_DA_ABA: Readonly<Record<string, string>> = {
 };
 
 const TEXTOS = {
+  /** Decisão do Maike de 03/10 (o par): a ajuda diz que a aprovação e esta regra andam juntas. */
   ajudaFluxoCompra:
-    "Exigir pedido finalizado para receber: com Sim, o pedido só é recebido depois de finalizado (e, se esta TOP exige aprovação, aprovado). Com Não, o pedido aberto ou finalizado é recebido, como hoje — e o aberto é recebido sem passar pela aprovação desta TOP, que só vale ao finalizar.",
+    "Exigir pedido finalizado para receber: com Sim, o pedido só é recebido depois de finalizado e aprovado. Com Não, o pedido aberto ou finalizado é recebido, como hoje. Esta regra anda junto com a aprovação do pedido (aba Aprovação), que vale ao finalizar: com aprovação ela é Sim, sem aprovação ela é Não — ligar ou desligar a aprovação liga ou desliga esta regra.",
   ajudaDivergencia:
     "Na compra recebida de um pedido, compara cada item com o pedido: o preço unitário líquido e a quantidade (contra o saldo do pedido). Nenhuma: não compara, como hoje. Avisar: a prévia da confirmação mostra a divergência. Bloquear: a compra com divergência acima da tolerância não é confirmada. Tolerância em %, de 0 a 100, com ponto como separador decimal.",
   /** OPERACOES-01 F6b: a ajuda da aba Aprovação no PEDIDO de compra — a aprovação vale ao finalizar. */
   ajudaAprovacaoPedido:
-    "No pedido de compra, a aprovação vale ao finalizar: com aprovação, o pedido só é finalizado depois de aprovado em Aprovações, por quem tem as permissões Aprovar de Pedidos de Compra e Aprovar de Compras. Se o valor do pedido subir depois da aprovação (o orçamento vencedor muda os preços), ela precisa ser feita de novo. O pedido aberto é recebido sem passar pela aprovação, a não ser que a aba Fluxo de compra exija o pedido finalizado para receber.",
+    "No pedido de compra, a aprovação vale ao finalizar: com aprovação, o pedido só é finalizado depois de aprovado em Aprovações, por quem tem as permissões Aprovar de Pedidos de Compra e Aprovar de Compras. Se o valor do pedido subir depois da aprovação (o orçamento vencedor muda os preços), ela precisa ser feita de novo. A aprovação anda junto com \"Exigir pedido finalizado para receber\" (aba Fluxo de compra): ligar a aprovação liga essa regra e desligá-la a desliga; com aprovação, o pedido só é recebido depois de finalizado.",
   /** A ajuda da aba Aprovação de HOJE, que os outros documentos (a compra inclusive) mantêm. */
   ajudaAprovacaoGeral:
     "Com aprovação, o documento só é confirmado depois de aprovado em Aprovações, por quem tem a permissão Aprovar. Alterar a venda depois de aprovada pede uma aprovação nova.",
@@ -61,6 +62,10 @@ const TEXTOS = {
   avisoPercentual: "Informe um percentual de 0 a 100, com até duas casas decimais.",
   /** A mensagem do 422 de configuração (`TIPO_OPERACAO_CONFIGURACAO_INVALIDA`), a que o editor mostra no erro geral. */
   configuracaoInvalida: "A configuração operacional enviada é inválida",
+  /** A recusa do PAR (decisão do Maike de 03/10): o mesmo texto no editor (antes de enviar) e no servidor (422). */
+  recusaPar: "Com aprovação, o pedido de compra só é recebido depois de finalizado: \"Exigir pedido finalizado para receber\" tem de ser Sim. As duas andam juntas.",
+  /** O lado inverso do par: "exigir" sem aprovação, recusado no campo da aprovação. */
+  recusaParInversa: "\"Exigir pedido finalizado para receber\" só vale com aprovação do pedido: escolha o critério de aprovação ou deixe a regra em Não. As duas andam juntas.",
   /** O texto do campo apontado por uma recusa `valor_invalido` do parse (que vem sem mensagem) — escrito à mão. */
   recusaValorInvalido: "Valor inválido: confira o que foi informado neste campo."
 } as const;
@@ -350,6 +355,77 @@ test("S-3 — compra com tolerância de preço '150': o aviso ao lado do campo; 
     const gravada = await configuracaoGravadaV5(page, id);
     expect(gravada.versao, "a recusa não gastou versão").toBe(1);
     expect(gravada.valor.divergenciaPedido).toEqual({ modo: "bloqueia", toleranciaPrecoPercentual: "15", toleranciaQuantidadePercentual: "0" });
+  } finally {
+    if (id) await excluirTopE2E(page, id);
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * S-4 — O PAR (decisão do Maike de 03/10): A APROVAÇÃO E "EXIGIR PEDIDO FINALIZADO PARA RECEBER" ANDAM JUNTAS
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+test("S-4 — pedido de compra: marcar a aprovação 'Sempre' marca 'Exigir pedido finalizado para receber' e desmarcá-la o desmarca; uma sem a outra é recusada no campo que falta antes de enviar (nenhum POST); com as duas, o POST grava as duas", async ({ page }) => {
+  await login(page);
+  const catalogo = await premissaDasSecoes(page);
+  expect(perfilPublicado(catalogo, "compras.pedido").abas, "premissa: o pedido tem o fluxo e a aprovação").toEqual(expect.arrayContaining(["fluxoCompra", "aprovacao"]));
+
+  let id: string | null = null;
+  const posts: Request[] = [];
+  page.on("request", (r) => { if (ehPostDeTop(r)) posts.push(r); });
+  try {
+    const { forma, codigo } = await criarPelaTela(page, "compras.pedido", "Pedido de compra S-4");
+    const exige = forma.getByTestId(CAMPO.exigeFinalizar);
+
+    // PREMISSA: as duas nascem desligadas.
+    await forma.getByTestId("top-aba-fluxoCompra").click();
+    await expect(exige, "premissa: nasce Não").toHaveValue("false");
+
+    // MARCAR A APROVAÇÃO → o "exigir" vem junto.
+    await forma.getByTestId("top-aba-aprovacao").click();
+    await forma.getByTestId(CAMPO.aprovacao).selectOption("sempre");
+    await forma.getByTestId("top-aba-fluxoCompra").click();
+    await expect(exige, "ligar a aprovação ligou o 'exigir'").toHaveValue("true");
+
+    // VOLTAR O "EXIGIR" A NÃO com a aprovação ligada → salvar recusa no campo, com o texto do servidor, e nada é enviado.
+    await exige.selectOption("false");
+    await forma.getByTestId("top-aba-identificacao").click();
+    await page.getByTestId("top-salvar").click();
+    await expect(forma.getByTestId("top-aba-fluxoCompra"), "a aba do campo abre").toHaveAttribute("aria-selected", "true");
+    await expect(forma.getByTestId("top-erro-fluxoCompra.exigeFinalizar"), "a recusa no campo, por extenso").toHaveText(TEXTOS.recusaPar);
+    expect(posts, "nada foi enviado").toHaveLength(0);
+    expect(await topsComCodigo(page, codigo), "nada foi criado").toEqual([]);
+
+    // DESMARCAR A APROVAÇÃO → o "exigir" vai junto (para Não).
+    await exige.selectOption("true");
+    await forma.getByTestId("top-aba-aprovacao").click();
+    await forma.getByTestId(CAMPO.aprovacao).selectOption("nenhuma");
+    await forma.getByTestId("top-aba-fluxoCompra").click();
+    await expect(exige, "desligar a aprovação desligou o 'exigir'").toHaveValue("false");
+
+    // "EXIGIR" SEM APROVAÇÃO → salvar recusa no campo da aprovação (o que falta), com o texto do servidor; nada é enviado.
+    await exige.selectOption("true");
+    await page.getByTestId("top-salvar").click();
+    await expect(forma.getByTestId("top-aba-aprovacao"), "a aba da aprovação abre").toHaveAttribute("aria-selected", "true");
+    await expect(forma.getByTestId("top-erro-aprovacao.politica"), "a recusa no campo da aprovação, por extenso").toHaveText(TEXTOS.recusaParInversa);
+    expect(posts, "nada foi enviado").toHaveLength(0);
+    await forma.getByTestId(CAMPO.aprovacao).selectOption("sempre");
+    await forma.getByTestId("top-aba-fluxoCompra").click();
+    await expect(exige, "com a aprovação, o 'exigir' continua Sim").toHaveValue("true");
+
+    // A PREMISSA AO LADO DA RECUSA: o MESMO rascunho com as duas ligadas → o POST leva as duas e o servidor guarda.
+    const post = page.waitForRequest(ehPostDeTop);
+    const resposta = page.waitForResponse((r) => ehPostDeTop(r.request()));
+    await page.getByTestId("top-salvar").click();
+    const corpo = (await post).postDataJSON() as CorpoGravado;
+    expect((await resposta).status(), "POST 201").toBe(201);
+    expect(corpo.configuracao, "o neutro do 5 com as duas ligadas — nada a mais")
+      .toEqual(cfg5({ aprovacao: "sempre" }, (c) => ({ ...c, fluxoCompra: { exigeFinalizar: true } })));
+    await expect(forma).toBeHidden();
+    const criadas = await topsComCodigo(page, codigo);
+    expect(criadas, "a TOP criada pela tela existe no servidor").toHaveLength(1);
+    id = criadas[0]!.id;
+    const gravada = await configuracaoGravadaV5(page, id);
+    expect([gravada.versao, gravada.valor.aprovacao.politica, gravada.valor.fluxoCompra], "versão 1, com as duas").toEqual([1, "sempre", { exigeFinalizar: true }]);
   } finally {
     if (id) await excluirTopE2E(page, id);
   }
