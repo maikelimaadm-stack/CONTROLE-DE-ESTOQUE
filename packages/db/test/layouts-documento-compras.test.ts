@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { FAMILIAS_COM_LAYOUT, FAMILIAS_COM_LAYOUT_DE_COMPRAS, FAMILIAS_COM_LAYOUT_DE_VENDAS } from "@agro/domain";
+import { FAMILIAS_COM_LAYOUT, FAMILIAS_COM_LAYOUT_DE_COMPRAS, FAMILIAS_COM_LAYOUT_DE_ESTOQUE, FAMILIAS_COM_LAYOUT_DE_VENDAS, TIPOS_OPERACAO } from "@agro/domain";
 import { createPool, withTx, type Db, type Queryable, type Tx, type TenantContext } from "../src/pool.js";
 import { listMigrations, resetSchema } from "../src/migrate.js";
 import { seedReference, seedDemo, type DemoOrg } from "../src/seed.js";
@@ -248,7 +248,7 @@ describe("0038 — sobre o acervo de layouts de venda, como o runner aplica", ()
     expect((await db.query("select 1 from pg_roles where rolname like 'c03r\\_%'")).rowCount).toBe(0);
   });
 
-  it("LB5 aplica: ledger com 38 (a 0038 por último NESTE banco), 44 no repositório (a 0039 logo depois dela), layouts e ligações idênticos, CHECK com as cinco famílias da 0038 (o domínio menos as sete de estoque da 0043 e compras.orcamento, da 0044), gatilho intacto", async () => {
+  it("LB5 aplica: ledger com 38 (a 0038 por último NESTE banco), 46 no repositório (a 0039 logo depois dela), layouts e ligações idênticos, CHECK com as cinco famílias da 0038 (o domínio menos as sete de estoque da 0043 e compras.orcamento, da 0044), gatilho intacto", async () => {
     await aplicar();
     // Este arquivo sobe o banco só até a 0038: o ledger dele termina nela. O repositório já tem a 0039 (EDITAR-01),
     // provada em editar-01-versao.test.ts.
@@ -256,18 +256,24 @@ describe("0038 — sobre o acervo de layouts de venda, como o runner aplica", ()
     expect(ledger).toEqual({ n: 38, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
     // No disco há mais do que o ledger deste arquivo (ele sobe só até a 0038): a 0039 (EDITAR-01), a 0040
-    // (ESTOQUE-01), a 0041 (TOP-CONFIG-08), a 0042 (OPERACOES-01 F8), a 0043 (OPERACOES-01 F5a) e a 0044 (OPERACOES-01 F6a)
-    // vêm depois.
-    expect(noDisco.length, "44 migrations no repositório").toBe(44);
+    // (ESTOQUE-01), a 0041 (TOP-CONFIG-08) e da 0042 à 0046 (OPERACOES-01 F8, F5a, F6a, F9 e F10) vêm depois.
+    expect(noDisco.length, "46 migrations no repositório").toBe(46);
     expect(noDisco[37]).toBe(ALVO);
     expect(noDisco[38], "a 0039 logo depois da 0038 no repositório").toBe("0039_versao_do_documento_de_venda.sql");
     expect(await retrato(), "nenhuma linha de layout ou de ligação muda").toEqual(antes);
     expect(await familiasDoCheck()).toEqual(CINCO);
     // Uma lista só: o CHECK da 0038 é o conjunto do domínio de HOJE menos compras.orcamento — a família que a 0044
-    // (OPERACOES-01 F6a) acrescenta ao CHECK (provado em compras-f6a-0044.test.ts; este banco para na 0038). O
-    // domínio tem as três de venda e as três de compra, na ordem do registry.
-    expect([...FAMILIAS_COM_LAYOUT].filter((f) => f !== "compras.orcamento").sort()).toEqual(CINCO);
-    expect([...FAMILIAS_COM_LAYOUT].sort(), "o domínio tem exatamente uma família a mais que a 0038").toEqual([...CINCO, "compras.orcamento"].sort());
+    // (OPERACOES-01 F6a) acrescenta ao CHECK (provado em compras-f6a-0044.test.ts; este banco para na 0038) — e menos
+    // as sete do documento de estoque, que a 0043 (F5a) acrescenta ao CHECK e que o domínio põe no layout desde a F5b
+    // (OPERACOES-01, decisão 282). O domínio tem as três de venda, as três de compra e as sete de estoque, na ordem do
+    // registry; as de estoque são as variantes de erp.documentos_estoque (o mesmo conjunto que o G1 lê no CHECK da 0044).
+    const DE_ESTOQUE = ["estoque.entrada", "estoque.saida", "estoque.transferencia", "estoque.ajuste", "estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo"];
+    expect([...FAMILIAS_COM_LAYOUT_DE_ESTOQUE]).toEqual(DE_ESTOQUE);
+    expect([...FAMILIAS_COM_LAYOUT_DE_ESTOQUE], "as variantes de erp.documentos_estoque no registry")
+      .toEqual(TIPOS_OPERACAO.filter((t) => t.origem.tabela === "erp.documentos_estoque").map((t) => t.codigo));
+    expect([...FAMILIAS_COM_LAYOUT].filter((f) => f !== "compras.orcamento" && !DE_ESTOQUE.includes(f)).sort()).toEqual(CINCO);
+    expect([...FAMILIAS_COM_LAYOUT].sort(), "o domínio = as cinco da 0038 + compras.orcamento (0044) + as sete de estoque (0043)")
+      .toEqual([...CINCO, "compras.orcamento", ...DE_ESTOQUE].sort());
     expect([...FAMILIAS_COM_LAYOUT_DE_VENDAS].sort()).toEqual(["vendas.orcamento", "vendas.pedido", "vendas.venda"]);
     expect([...FAMILIAS_COM_LAYOUT_DE_COMPRAS]).toEqual(["compras.pedido", "compras.compra", "compras.orcamento"]);
     const chk = (await db.query<{ convalidated: boolean; coluna: string }>(

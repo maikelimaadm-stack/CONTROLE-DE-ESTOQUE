@@ -8,8 +8,8 @@ import { Button, StatusBadge, safeErrorMessage } from "@/components/ui";
 import estilosCentral from "@/features/central/moldura.module.css";
 import {
   MSG_APROVACOES_INDISPONIVEIS, MSG_DOCUMENTO_MUDOU_NA_CONSULTA,
-  chaveDaSituacaoDoDocumento, corpoDaDecisao, documentoDaConsulta, lerSituacaoDoDocumento, mensagemDaAprovacao, portaDaDecisaoAusente,
-  portaDaDecisaoDoDocumento, portaDaSituacaoDoDocumento, textoDaUltimaDecisao, valorDaSituacaoNaFila,
+  PERMISSAO_DA_PORTA_DA_DECISAO, chaveDaSituacaoDoDocumento, corpoDaDecisao, documentoDaConsulta, lerSituacaoDoDocumento, mensagemDaAprovacao,
+  portaDaDecisaoAusente, portaDaDecisaoDoDocumento, portaDaSituacaoDoDocumento, textoDaUltimaDecisao, valorDaSituacaoNaFila,
   type AreaDaConsulta, type Decisao, type RespostaDaDecisao, type TomDaMensagem
 } from "./areas-de-aprovacao";
 import { DialogoDaDecisao } from "./decisao-de-aprovacao";
@@ -25,13 +25,20 @@ export interface PropsDaAprovacaoDoDocumento {
   prefixoTestid: string;
   /** O código do documento, para o título do diálogo. */
   codigo: string;
+  /**
+   * A espécie do documento, quando NÃO é a da consulta da área (OPERACOES-01 F6b, decisão 283: o pedido de compra, que
+   * se aprova ao finalizar). Com ela, Aprovar/Reprovar exigem também a capacidade da porta da rota de decisão
+   * (`compras.approve`) — a rota cobra as duas, AND. Ausente: a espécie da área (a venda, a compra), como antes.
+   */
+  especie?: string;
 }
 
 /** O tom da mensagem da aprovação → a função do `toast` que a mostra. */
 const TOAST_DO_TOM: Readonly<Record<TomDaMensagem, "success" | "warning" | "error">> = Object.freeze({ sucesso: "success", aviso: "warning", erro: "error" });
 
 /**
- * A APROVAÇÃO NA CONSULTA DO DOCUMENTO (OPERACOES-01 F2, decisão 279) — a venda e a compra.
+ * A APROVAÇÃO NA CONSULTA DO DOCUMENTO (OPERACOES-01 F2, decisão 279) — a venda e a compra; desde a F6b (decisão 283),
+ * também o pedido de compra (`especie="pedido"`), cuja aprovação vale ao finalizar.
  *
  * O SERVIDOR É A AUTORIDADE: a situação vem de `GET /api/aprovacoes/<área>/<id>` (a mesma régua da fila e do Confirmar),
  * e a decisão vai pelas MESMAS rotas e pelo MESMO diálogo da fila de Aprovações. Nenhuma regra nasce aqui:
@@ -46,7 +53,7 @@ const TOAST_DO_TOM: Readonly<Record<TomDaMensagem, "success" | "warning" | "erro
  * A situação e a última decisão saem do vocabulário central (`StatusBadge`/`enumLabel`) e dos textos de
  * `areas-de-aprovacao` — nenhum rótulo, tom ou estilo novo.
  */
-export function AprovacaoDoDocumento({ area, documentoId, documentoAberto, versao, prefixoTestid, codigo }: PropsDaAprovacaoDoDocumento) {
+export function AprovacaoDoDocumento({ area, documentoId, documentoAberto, versao, prefixoTestid, codigo, especie }: PropsDaAprovacaoDoDocumento) {
   const { can } = useAuth(); const qc = useQueryClient();
   const q = useQuery({
     queryKey: chaveDaSituacaoDoDocumento(area, documentoId),
@@ -99,8 +106,10 @@ export function AprovacaoDoDocumento({ area, documentoId, documentoAberto, versa
   const leitura = documentoAberto && !q.isError ? lerSituacaoDoDocumento(q.data) : null;
   if (!leitura || leitura.situacao === "nao_aberto" || leitura.situacao === "nao_exigida") return null;
 
-  const doc = documentoDaConsulta(area);
-  const podeDecidir = doc !== undefined && can(`${doc.perm}.approve`) && (leitura.situacao === "pendente" || leitura.situacao === "reprovado");
+  const doc = documentoDaConsulta(area, especie);
+  // Outra espécie da área (o pedido de compra): a capacidade da espécie E a da porta da rota de decisão.
+  const pelaPorta = especie === undefined || can(PERMISSAO_DA_PORTA_DA_DECISAO[area]);
+  const podeDecidir = doc !== undefined && can(`${doc.perm}.approve`) && pelaPorta && (leitura.situacao === "pendente" || leitura.situacao === "reprovado");
   const u = leitura.ultimaDecisao;
   return <div data-testid={`${prefixoTestid}-aprovacao`} data-situacao={leitura.situacao} role="group" aria-label="Aprovação" className="flex min-w-0 flex-col gap-1.5">
     <div className="flex flex-wrap items-center gap-2">

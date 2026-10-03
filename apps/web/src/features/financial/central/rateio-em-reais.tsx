@@ -55,8 +55,12 @@ export const rateioParaApi = (linhas: readonly LinhaRateio[]) => linhas.map((l) 
  * reais, fechando EXATAMENTE no valor líquido do título. Com uma linha só, ela acompanha o líquido (não há o que
  * ratear); com duas ou mais, o usuário distribui e a tela mostra quanto falta, quanto sobra ou que fechou — o Salvar só
  * libera com o rateio fechado. A conta é apresentação: quem recusa o rateio que não fecha é o servidor.
+ *
+ * `travados` (OPERACOES-01 F9, decisão 286): a natureza e/ou o centro que a TOP do lançamento FIXA (a troca dos padrões
+ * desligada) ficam desabilitados em TODAS as linhas — quem os preenche é o formulário; safra, área e valor continuam
+ * livres, para dividir o lançamento. Sem `travados`, o rateio de sempre.
  */
-export function RateioEmReais({ total, linhas, onChange, desabilitado }: { total: string | null; linhas: LinhaRateio[]; onChange: (l: LinhaRateio[]) => void; desabilitado?: boolean }) {
+export function RateioEmReais({ total, linhas, onChange, desabilitado, travados }: { total: string | null; linhas: LinhaRateio[]; onChange: (l: LinhaRateio[]) => void; desabilitado?: boolean; travados?: { natureza?: boolean; centro?: boolean } }) {
   const unica = linhas.length === 1;
   // Linha única acompanha o líquido. A guarda (valor diferente) impede o laço: o efeito só escreve quando há o que mudar.
   React.useEffect(() => {
@@ -76,8 +80,8 @@ export function RateioEmReais({ total, linhas, onChange, desabilitado }: { total
       <thead><tr><th className="min-w-[220px]">Natureza</th><th className="min-w-[200px]">Centro de resultado</th><th className="min-w-[160px]">Safra</th><th className="min-w-[160px]">Área</th><th className="w-36 text-right">Valor</th><th className="w-8" /></tr></thead>
       <tbody>
         {linhas.map((l, i) => <tr key={i}>
-          <td><RefSelect resource="financial_categories" value={l.financial_category_id || null} onChange={(v) => upd(i, "financial_category_id", v ?? "")} filter={{ kind: "analytic" }} disabled={desabilitado} /></td>
-          <td><RefSelect resource="cost_centers" value={l.cost_center_id || null} onChange={(v) => upd(i, "cost_center_id", v ?? "")} filter={{ kind: "analytic" }} disabled={desabilitado} /></td>
+          <td><RefSelect resource="financial_categories" value={l.financial_category_id || null} onChange={(v) => upd(i, "financial_category_id", v ?? "")} filter={{ kind: "analytic" }} disabled={desabilitado || Boolean(travados?.natureza)} /></td>
+          <td><RefSelect resource="cost_centers" value={l.cost_center_id || null} onChange={(v) => upd(i, "cost_center_id", v ?? "")} filter={{ kind: "analytic" }} disabled={desabilitado || Boolean(travados?.centro)} /></td>
           <td><RefSelect resource="harvests" value={l.harvest_id || null} onChange={(v) => upd(i, "harvest_id", v ?? "")} disabled={desabilitado} /></td>
           <td><RefSelect resource="areas" value={l.area_id || null} onChange={(v) => upd(i, "area_id", v ?? "")} disabled={desabilitado} /></td>
           <td><Input type="number" step="0.01" min="0" className="text-right" aria-label={`Valor da linha ${i + 1} do rateio`} value={l.amount} disabled={desabilitado || unica} title={unica ? "Com uma linha só, o rateio acompanha o valor líquido do título" : undefined} onChange={(e) => upd(i, "amount", e.target.value)} /></td>

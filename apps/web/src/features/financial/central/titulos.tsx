@@ -13,6 +13,7 @@ import { DataTable, colSpanAteColuna, colSpanAposColuna, type Column } from "@/c
 import { colunaIdGlobalTabela } from "@/features/listing/id-global-coluna";
 import { FilterBar, useFilters, type Filter } from "@/features/docs/shared";
 import { DialogoBaixaEmLote, DialogoEstorno, DialogoVencimento, ResultadoDoLote, type ResultadoLote, type TituloDoLote } from "./titulos-lote";
+import { useFinanceiroPelaTop } from "./capacidade";
 
 export type DirecaoTitulo = "payable" | "receivable";
 export type DirecaoDaCentral = DirecaoTitulo | "todos";
@@ -36,18 +37,26 @@ interface RespostaTitulos {
 const PERM: Record<DirecaoTitulo, string> = { payable: "payables", receivable: "receivables" };
 const ROTA: Record<DirecaoTitulo, string> = { payable: "/financeiro/contas-a-pagar", receivable: "/financeiro/contas-a-receber" };
 const ROTULO_DIRECAO: Record<DirecaoTitulo, string> = { payable: "A pagar", receivable: "A receber" };
+/** Sem `financeiroPelaTop` (a API da F8): o cartão existe e se declara indisponível, como na F8. */
 const PREVISTOS_INDISPONIVEIS = "Os previstos chegam com a provisão pela TOP";
+/** O previsto é promessa de caixa: não recebe baixa (o servidor recusa com 409; o lote o pula). */
+const PREVISTO_SEM_BAIXA = "Título previsto não recebe baixa";
 /** O limite das rotas de lote (e da lista por página): o servidor recusa mais que isso. */
 const LIMITE_DO_LOTE = 200;
 /** Ordenação: coluna da grade → chave da whitelist do servidor (o resto da grade não ordena). */
 const ORDEM: Record<string, string> = { codigo: "codigo", numero: "numero", pessoa_nome: "parceiro", emissao: "emissao", vencimento: "vencimento", liquido: "valor", saldo: "saldo" };
 
-/** Situação: os conjuntos que fazem sentido para quem filtra (o padrão, sem filtro, é tudo menos cancelado). */
-const SITUACOES: { value: string; label: string }[] = [
-  { value: "a_vencer,vencido,parcial", label: "Em aberto (a vencer, vencido e parcial)" },
-  ...(["a_vencer", "vencido", "parcial", "baixado", "cancelado"] as const).map((s) => ({ value: s, label: ROTULOS_FINANCEIRO.situacao_titulo[s] })),
-  { value: "a_vencer,vencido,parcial,baixado,cancelado", label: "Todas, inclusive canceladas" }
-];
+/**
+ * Situação: os conjuntos que fazem sentido para quem filtra (o padrão, sem filtro, é tudo menos cancelado e previsto).
+ * "Previsto" (F9, decisão 286) só existe com o financeiro pela TOP declarado: a API da F8 recusaria a situação.
+ */
+function situacoesDoFiltro(comPrevisto: boolean): { value: string; label: string }[] {
+  return [
+    { value: "a_vencer,vencido,parcial", label: "Em aberto (a vencer, vencido e parcial)" },
+    ...(["a_vencer", "vencido", "parcial", "baixado", ...(comPrevisto ? ["previsto" as const] : []), "cancelado"] as const).map((s) => ({ value: s, label: ROTULOS_FINANCEIRO.situacao_titulo[s] })),
+    { value: "a_vencer,vencido,parcial,baixado,cancelado", label: "Todas, inclusive canceladas" }
+  ];
+}
 const ORIGENS: { value: string; label: string }[] = (Object.keys(ROTULOS_FINANCEIRO.origem_titulo) as GrupoOrigem[]).map((g) => ({ value: g, label: ROTULOS_FINANCEIRO.origem_titulo[g] }));
 const CAMPOS_DE_PERIODO = (Object.keys(ROTULOS_FINANCEIRO.campo_periodo) as (keyof typeof ROTULOS_FINANCEIRO.campo_periodo)[]).map((c) => ({ value: c, label: ROTULOS_FINANCEIRO.campo_periodo[c] }));
 
@@ -92,6 +101,8 @@ function useOpcoesDeTop(): { value: string; label: string }[] {
  */
 export function CentralTitulos({ direcao }: { direcao: DirecaoDaCentral }) {
   const { can } = useAuth(); const router = useRouter();
+  // F9 (decisão 286): o previsto da provisão pela TOP — o cartão "Previstos" ligado e a situação "Previsto" no filtro.
+  const pelaTop = useFinanceiroPelaTop();
   const tops = useOpcoesDeTop();
   const { f, set, reset } = useFilters({});
   const [aplicados, setAplicados] = React.useState<Record<string, string>>({});
@@ -116,7 +127,7 @@ export function CentralTitulos({ direcao }: { direcao: DirecaoDaCentral }) {
 
   const rotuloParceiro = direcao === "payable" ? "Fornecedor" : direcao === "receivable" ? "Cliente" : "Parceiro";
   const filtros: Filter[] = [
-    { name: "situacao", label: COPY.situacao, type: "select", options: SITUACOES },
+    { name: "situacao", label: COPY.situacao, type: "select", options: situacoesDoFiltro(pelaTop) },
     { name: "periodo_campo", label: "Período por", type: "select", options: CAMPOS_DE_PERIODO },
     { name: "periodo_de", label: "De", type: "date" },
     { name: "periodo_ate", label: "Até", type: "date" },
@@ -163,7 +174,7 @@ export function CentralTitulos({ direcao }: { direcao: DirecaoDaCentral }) {
   const pode = (acao: string) => dirsSel.length > 0 && dirsSel.every((d) => can(`${PERM[d]}.${acao}`));
   const podeAlguma = (acao: string) => (direcao === "todos" ? (["payable", "receivable"] as const).some((d) => can(`${PERM[d]}.${acao}`)) : can(`${PERM[direcao]}.${acao}`));
   const excesso = sel.size > LIMITE_DO_LOTE ? `Selecione até ${LIMITE_DO_LOTE} títulos` : null;
-  const motivoBaixar = excesso ?? (dirsSel.length > 1 ? "Selecione títulos de uma só direção" : !pode("settle") ? "Sem permissão para baixar estes títulos" : null);
+  const motivoBaixar = excesso ?? (dirsSel.length > 1 ? "Selecione títulos de uma só direção" : selecionados.some((t) => t.status === "previsto") ? PREVISTO_SEM_BAIXA : !pode("settle") ? "Sem permissão para baixar estes títulos" : null);
   const doLote = React.useMemo<TituloDoLote[]>(() => selecionados.map(paraOLote), [selecionados]);
   const aoConcluir = (r: ResultadoLote) => { limparSelecao(); setResultado(r); };
 
@@ -179,7 +190,8 @@ export function CentralTitulos({ direcao }: { direcao: DirecaoDaCentral }) {
     <div className="grid grid-cols-2 gap-2 md:grid-cols-5" role="group" aria-label="Cartões dos títulos">
       {CARTOES_TITULO.map((chave) => {
         const c = dados?.cartoes[chave];
-        const indisponivel = chave === "previstos";
+        // Com o financeiro pela TOP, o cartão conta e filtra os previstos (a API diz `disponivel`); sem ele, o da F8.
+        const indisponivel = chave === "previstos" && (!pelaTop || c?.disponivel === false);
         const rotulo = chave === "pagos_no_periodo" ? rotuloDoCartaoBaixados(direcao) : ROTULOS_FINANCEIRO.cartao_titulo[chave];
         return <button key={chave} type="button" data-testid={`fin-cartao-${chave}`} aria-pressed={cartao === chave} disabled={indisponivel} title={indisponivel ? PREVISTOS_INDISPONIVEIS : undefined}
           onClick={() => { setCartao(cartao === chave ? null : chave); setPage(1); limparSelecao(); }}
@@ -194,7 +206,11 @@ export function CentralTitulos({ direcao }: { direcao: DirecaoDaCentral }) {
       })}
     </div>
 
-    <FilterBar f={f} set={set} reset={() => { reset(); aplicar({}); }} onApply={() => aplicar({ ...f })} filters={filtros} />
+    {/* A faixa de filtros não encolhe: na coluna flex (min-h-0) com a lista cheia, a faixa de filtros (com altura mínima fixa) deixava
+
+        a última linha dos filtros vazar por baixo da barra de ações em lote — o "Filtrar" ficava inalcançável. */}
+
+    <div className="shrink-0"><FilterBar f={f} set={set} reset={() => { reset(); aplicar({}); }} onApply={() => aplicar({ ...f })} filters={filtros} /></div>
 
     <div className="flex flex-wrap items-center gap-1.5" role="toolbar" aria-label="Ações em lote">
       <span className="mr-1 text-[12px] text-slate-500" data-testid="fin-lote-contagem">{sel.size ? `${sel.size} selecionado(s)` : "Selecione títulos para agir em lote"}</span>

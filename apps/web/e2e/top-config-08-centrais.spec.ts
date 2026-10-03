@@ -2,7 +2,7 @@ import { test, expect, type Page, type Request, type Response } from "@playwrigh
 import { MENSAGEM_APROVACAO_PENDENTE } from "@agro/domain";
 import { login, logout, api, uniq, empresaAtiva, pickRef, adicionarItemNaCentral, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
 import { criarParceiro } from "./aj02-comum";
-import { cadastroDeEstoque, criarTopDeEstoque, entradaConfirmadaPelaApi, escolherNaReferencia, hojeISO, saldoNoServidor } from "./estoque-01-comum";
+import { cadastroDeEstoque, criarTopDeEstoque, entradaConfirmadaPelaApi, escolherNaReferencia, hojeISO, incluirItemNaCentralDeEstoque, saldoNoServidor } from "./estoque-01-comum";
 import { cfg3, cfg4, criarTopViaApi, detalheTopNoServidor, excluirTopE2E } from "./top-config-08-comum";
 
 /**
@@ -261,6 +261,11 @@ type DocSalvoEstoque = { id: string; codigo: string; situacao: string; confirmac
  * Lança PELA CENTRAL DE ESTOQUE um documento de um item (o produto e o armazém do cadastro do caso) com a TOP dada, e
  * Salva. Devolve o CORPO do 201 que a própria tela recebeu, no instante do aviso: quem chama confere o aviso, e só
  * depois a consulta que a Central abre.
+ *
+ * OPERACOES-01 F5b (decisão 282): a Central de Estoque está no MOTOR. Os passos de TELA são os dele (o item pela grade
+ * e pela pesquisa de produto do motor); a saída, com a movimentação interna declarada pela API, pede o motivo e a
+ * justificativa (a tela os exige; o servidor ainda não — I-1 da F5a), preenchidos na aba "Motivo da saída". O que este
+ * helper devolve e o que os casos conferem (o corpo do 201, o aviso, a consulta, o saldo) não mudou.
  */
 async function salvarNaCentralEstoque(
   page: Page,
@@ -273,11 +278,12 @@ async function salvarNaCentralEstoque(
   await expect(central).toHaveAttribute("data-modo", "criacao");
   await expect(page.getByTestId("estoque-central-top"), "a TOP do caso vem travada").toHaveAttribute("data-tipo-operacao-id", o.top);
   await escolherNaReferencia(page, page.getByTestId("estoque-central-armazem"), o.c.nomeArmazem);
-  await page.getByTestId("estoque-item-adicionar").click();
-  const linha = page.getByTestId("estoque-item").first();
-  await escolherNaReferencia(page, linha.getByTestId("estoque-item-produto"), o.c.nomeProduto);
-  await linha.getByTestId("estoque-item-quantidade").fill(o.quantidade);
-  if (o.custo !== undefined) await linha.getByTestId("estoque-item-custo").fill(o.custo);
+  await incluirItemNaCentralDeEstoque(page, { nomeProduto: o.c.nomeProduto, quantidade: o.quantidade, ...(o.custo !== undefined ? { custo: o.custo } : {}) });
+  if (o.especie === "saida") {
+    await page.getByRole("tab", { name: /^Motivo da saída/ }).click();
+    await page.getByTestId("estoque-central-motivo-saida-campo").selectOption("inventory");
+    await page.getByTestId("estoque-central-justificativa").fill("W-5 saída do caso");
+  }
   const salvou = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === `/api/estoque/${o.segmento}`);
   await page.getByTestId("estoque-salvar").click();
   const criado = await salvou;

@@ -45,10 +45,13 @@ function mundoDoWebDaBase(): Mundo {
   return mundo;
 }
 
-/** A PREMISSA: a API no ar é a desta fase — declara a Central Financeira, na forma e versão exatas. */
+/**
+ * A PREMISSA: a API no ar é a desta fase — declara a Central Financeira, na forma e versão exatas. OPERACOES-01 F9
+ * (decisão 286): a mesma resposta ganhou `financeiroPelaTop: 1` (aditiva); a API julgada declara as duas.
+ */
 async function premissaDaApi(page: Page) {
   const cap = await api<Record<string, unknown>>(page, "GET", "/api/financeiro/capacidades");
-  expect(cap, "premissa: a API julgada é a desta fase (declara a Central Financeira)").toEqual({ centralFinanceira: 1 });
+  expect(cap, "premissa: a API julgada é a desta fase (declara a Central Financeira e o financeiro pela TOP)").toEqual({ centralFinanceira: 1, financeiroPelaTop: 1 });
 }
 
 /** Vigia do navegador: CORS morto e erro de contrato não passam calados. */

@@ -495,11 +495,11 @@ describe("MI-6 recusasDoFluxoDoConsumo", () => {
 describe("MI-7 os perfis, a recusa do formato 5 e o catálogo", () => {
   it("MI-7 os perfis das três novas e da saída", () => {
     expect(perfil(REQUISICAO).abas).toEqual(["identificacao", "geral", "estoque", "destino", "aprovacao"]);
-    expect(perfil(REQUISICAO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+    expect(perfil(REQUISICAO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
     expect(perfil(CONSUMO).abas).toEqual(["identificacao", "geral", "estoque", "destino", "fluxo", "aprovacao"]);
-    expect(perfil(CONSUMO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "fluxoCompra", "divergenciaPedido"]);
+    expect(perfil(CONSUMO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
     expect(perfil(DEVOLUCAO).abas).toEqual(["identificacao", "geral", "estoque", "aprovacao"]);
-    expect(perfil(DEVOLUCAO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+    expect(perfil(DEVOLUCAO).secoesNeutras).toEqual(["estoque", "financeiro", "fiscal", "destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
     expect(perfil(SAIDA).abas).toEqual(["identificacao", "geral", "estoque", "destino", "aprovacao"]);
     for (const f of [REQUISICAO, CONSUMO, DEVOLUCAO]) expect(perfil(f).exigencias.map((e) => e.rotulo), f).toEqual(["Observação"]);
   });
@@ -507,7 +507,7 @@ describe("MI-7 os perfis, a recusa do formato 5 e o catálogo", () => {
   it("MI-7 entrada, transferência e ajuste: sem Destino e sem Fluxo (as duas no padrão)", () => {
     for (const f of [ENTRADA, "estoque.transferencia", "estoque.ajuste"]) {
       expect(perfil(f).abas, f).toEqual(["identificacao", "geral", "estoque", "aprovacao"]);
-      expect(perfil(f).secoesNeutras, f).toEqual(["estoque", "financeiro", "fiscal", "destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+      expect(perfil(f).secoesNeutras, f).toEqual(["estoque", "financeiro", "fiscal", "destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
     }
   });
 
@@ -528,12 +528,14 @@ describe("MI-7 os perfis, a recusa do formato 5 e o catálogo", () => {
     expect(recusasDoPerfilTop(ENTRADA, configuracao)).toEqual([]);
   });
 
-  it("MI-7 o catálogo: requisição, consumo e devolução de consumo com a família LIGADA e ainda SEM tela (a F5b liga)", () => {
+  it("MI-7 o catálogo: requisição, consumo e devolução de consumo com a família LIGADA e COM tela (a F5b ligou: a Central de Estoque no motor)", () => {
     const tipos = CATALOGO_TIPOS_MOVIMENTO_TOP.filter((t) => ["requisicao", "consumo", "devolucao_consumo"].includes(t.chave));
+    // A premissa: as três famílias existem no registry (`temTela` só vale com família).
+    for (const f of [REQUISICAO, CONSUMO, DEVOLUCAO]) expect(tipoOperacao(f)?.origem.tabela, f).toBe("erp.documentos_estoque");
     expect(tipos.map((t) => [t.chave, t.grupo, t.rotulo, t.familia, t.temTela])).toEqual([
-      ["requisicao", "movimentacao_interna", "Requisição", REQUISICAO, false],
-      ["consumo", "movimentacao_interna", "Consumo", CONSUMO, false],
-      ["devolucao_consumo", "movimentacao_interna", "Devolução de consumo", DEVOLUCAO, false],
+      ["requisicao", "movimentacao_interna", "Requisição", REQUISICAO, true],
+      ["consumo", "movimentacao_interna", "Consumo", CONSUMO, true],
+      ["devolucao_consumo", "movimentacao_interna", "Devolução de consumo", DEVOLUCAO, true],
     ]);
   });
 });

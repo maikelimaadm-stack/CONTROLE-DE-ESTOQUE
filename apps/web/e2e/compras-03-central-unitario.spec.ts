@@ -215,7 +215,7 @@ test.describe("colunasDoEditor", () => {
  * expressão EXATA entre chaves (`custoMedioNoUnitario={false}` → "false").
  */
 type ChaveDaChamada = "ausente" | "ligada" | string;
-const CHAVES_DO_MOTOR = ["armazemPorItem", "armazemForcado", "custoMedioNoUnitario", "lote", "daOrigem", "pesquisaDeProduto", "linhaUnica"] as const;
+const CHAVES_DO_MOTOR = ["armazemPorItem", "armazemForcado", "custoMedioNoUnitario", "lote", "daOrigem", "pesquisaDeProduto", "linhaNovaEmBranco", "subtotal", "linhaUnica"] as const;
 
 /**
  * AS CHAMADAS DO MOTOR (`ItensDaCentral` de `features/central/itens.tsx`) no repositório e o que cada uma liga. O que
@@ -234,6 +234,9 @@ const CHAVES_DO_MOTOR = ["armazemPorItem", "armazemForcado", "custoMedioNoUnitar
  *   (`com_saldo=true`) e `PESQUISA_DE_PRODUTO_DA_ENTRADA` mostra tudo, com o saldo. Sem a capacidade (a API anterior),
  *   a pesquisa de hoje, `/api/resources/products/options`, idêntica. Ausente = entrada (o receber pedido não pesquisa
  *   produto: ele vem travado do pedido);
+ * - `linhaNovaEmBranco` (padrão `false`) — a linha nova nasce com a quantidade e o unitário VAZIOS (OPERACOES-01 F5b,
+ *   decisão 282: o documento de estoque não inventa quantidade); ausente, a linha de sempre ("1" e "0");
+ * - `subtotal` (padrão `true`) — `false` tira o "Subtotal dos itens" do rodapé (o documento de estoque não tem valor);
  * - `linhaUnica` (padrão `false`) — uma linha só, sem Adicionar, Duplicar e Remover (o abastecimento, OPERACOES-01
  *   F10). É a ÚNICA chave que a linha da tabela pode omitir: omitida = "ausente" (o padrão do motor), e a prova é a
  *   mesma — a chamada não pode trazê-la. Assim as Centrais que não a usam (as de antes da F10 e as que entram junto com
@@ -244,17 +247,28 @@ const COMBINACOES_DO_MOTOR: ({ onde: string; arquivo: string; prova: string } & 
   {
     onde: "Central de Vendas", arquivo: "src/features/sales/central-vendas-itens.tsx", prova: "CX-3 (o unitário vazio vira o custo médio), F3B-V2 (a saída só com saldo)",
     armazemPorItem: "ausente", armazemForcado: "ausente", custoMedioNoUnitario: "ausente", lote: "ausente", daOrigem: "ausente",
-    pesquisaDeProduto: "PESQUISA_DE_PRODUTO_DA_SAIDA"
+    pesquisaDeProduto: "PESQUISA_DE_PRODUTO_DA_SAIDA", linhaNovaEmBranco: "ausente", subtotal: "ausente"
   },
   {
     onde: "Central de Compras · lançar", arquivo: "src/features/compras/central/criacao-itens.tsx", prova: "CX-1 (o 0 continua 0), LC-W1 (o layout esconde o Armazém), F3B-C1 (a entrada com tudo e o saldo)",
     armazemPorItem: "ligada", armazemForcado: "regras?.exigeArmazem === true", custoMedioNoUnitario: "false", lote: "controleDeLote", daOrigem: "ausente",
-    pesquisaDeProduto: "PESQUISA_DE_PRODUTO_DA_ENTRADA"
+    pesquisaDeProduto: "PESQUISA_DE_PRODUTO_DA_ENTRADA", linhaNovaEmBranco: "ausente", subtotal: "ausente"
   },
   {
     onde: "Central de Compras · receber pedido", arquivo: "src/features/compras/central/receber.tsx", prova: "CX-2 (o /convert leva 0), CC-9 (a coluna do saldo)",
     armazemPorItem: "ligada", armazemForcado: "regras?.exigeArmazem === true", custoMedioNoUnitario: "false", lote: "controleDeLote", daOrigem: "daOrigem",
-    pesquisaDeProduto: "ausente"
+    pesquisaDeProduto: "ausente", linhaNovaEmBranco: "ausente", subtotal: "ausente"
+  },
+  {
+    onde: "Central de Compras · orçamento", arquivo: "src/features/compras/orcamento/central-orcamento.tsx", prova: "F6B-O2 (o preço digitado, sem custo médio; produto e quantidade do pedido, travados)",
+    armazemPorItem: "false", armazemForcado: "ausente", custoMedioNoUnitario: "false", lote: "ausente", daOrigem: "daOrigem",
+    pesquisaDeProduto: "ausente", linhaNovaEmBranco: "ausente", subtotal: "ausente"
+  },
+  {
+    onde: "Central de Estoque", arquivo: "src/features/estoque/central/criacao-itens.tsx",
+    prova: "MI-W1 (o consumo da requisição: Saldo e produto travado), ES-W1 (a linha nova em branco e sem subtotal), F5B-M1 (vendas e compras com a linha de sempre)",
+    armazemPorItem: "false", armazemForcado: "ausente", custoMedioNoUnitario: "false", lote: "controleDeLote", daOrigem: "daOrigem",
+    pesquisaDeProduto: "pesquisaDeProduto", linhaNovaEmBranco: "ligada", subtotal: "false"
   },
   {
     // OPERACOES-01 F10 (decisão 287): o ÚNICO arquivo dos módulos que importa o motor — cada Central de módulo desenha a
@@ -262,10 +276,10 @@ const COMBINACOES_DO_MOTOR: ({ onde: string; arquivo: string; prova: string } & 
     onde: "Centrais dos módulos (abastecimento, manutenção, OS, batelada, produção de ração)", arquivo: "src/features/modulos/itens-do-modulo.tsx",
     prova: "F10-A1 (uma linha), F10-M1 (uma grade por máquina), F10-B1 e F10-R1 (itens da dieta e da fórmula)",
     armazemPorItem: "armazemPorItem", armazemForcado: "ausente", custoMedioNoUnitario: "ausente", lote: "ausente", daOrigem: "daOrigem",
-    pesquisaDeProduto: "PESQUISA_DE_PRODUTO_DA_SAIDA", linhaUnica: "linhaUnica"
+    pesquisaDeProduto: "PESQUISA_DE_PRODUTO_DA_SAIDA", linhaNovaEmBranco: "ausente", subtotal: "ausente", linhaUnica: "linhaUnica"
   }
 ];
-test("as 4 chamadas do motor estão na tabela", () => { expect(COMBINACOES_DO_MOTOR).toHaveLength(4); });
+test("as 6 chamadas do motor estão na tabela", () => { expect(COMBINACOES_DO_MOTOR).toHaveLength(6); });
 
 /** O nome com que o arquivo importa o motor (`ItensDaCentral`, ou o apelido do `as`), ou `null` se não o importa. */
 function nomeDoMotorNoArquivo(arquivo: string, texto: string): string | null {

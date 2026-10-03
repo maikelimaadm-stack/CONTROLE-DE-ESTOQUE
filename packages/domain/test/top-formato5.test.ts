@@ -265,15 +265,17 @@ describe("F5-D1 as constantes do formato 5 e o contrato das seções", () => {
     expect(SECOES_CONFIGURACAO_TOP).toEqual(["geral", "estoque", "financeiro", "fiscal", "aprovacao"]);
   });
 
-  it("F5-D1 as seções de extensão do produto (F5a: Destino e Fluxo; F6a: Fluxo de compra e Divergência com o pedido); as seções da auditoria são as do formato 2 mais elas", () => {
-    expect(DEFINICOES_SECOES_V5.map((d: DefinicaoSecaoV5) => d.nome)).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
-    expect(SECOES_EXTENSAO_V5).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
-    expect(ROTULOS_SECOES_EXTENSAO_V5).toEqual({ destino: "Destino", fluxo: "Fluxo", fluxoCompra: "Fluxo de compra", divergenciaPedido: "Divergência com o pedido" });
-    expect(SECOES_CONFIGURACAO_TOP_V5).toEqual([...SECOES_CONFIGURACAO_TOP_V2, "destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+  it("F5-D1 as seções de extensão do produto (F5a: Destino e Fluxo; F6a: Fluxo de compra e Divergência com o pedido; F9: Padrões financeiros); as seções da auditoria são as do formato 2 mais elas", () => {
+    expect(DEFINICOES_SECOES_V5.map((d: DefinicaoSecaoV5) => d.nome)).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+    expect(SECOES_EXTENSAO_V5).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+    expect(ROTULOS_SECOES_EXTENSAO_V5).toEqual({ destino: "Destino", fluxo: "Fluxo", fluxoCompra: "Fluxo de compra", divergenciaPedido: "Divergência com o pedido", financeiroPadrao: "Padrões financeiros" });
+    expect(SECOES_CONFIGURACAO_TOP_V5).toEqual([...SECOES_CONFIGURACAO_TOP_V2, "destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+    // O neutro é o comportamento de hoje: nenhuma provisão, o documento decide, e sem natureza e centro vale a 1ª por código.
     expect(secoesExtensaoNeutrasTop()).toEqual({
       destino: definicaoDaSecaoV5("destino")?.neutro(), fluxo: definicaoDaSecaoV5("fluxo")?.neutro(),
       fluxoCompra: { exigeFinalizar: false },
       divergenciaPedido: { modo: "nenhuma", toleranciaPrecoPercentual: "0", toleranciaQuantidadePercentual: "0" },
+      financeiroPadrao: { provisao: false, documentoTroca: true, semClassificacao: "padrao_legado" },
     });
   });
 

@@ -3,10 +3,11 @@ import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import {
-  ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA, ERRO_EXIGENCIA_NAO_ATENDIDA, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando, catalogoDaFamilia,
-  chavePadraoDeCadastro, mensagemCampoObrigatorio, type CampoDoLayout, type EstruturaLayout
+  ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA, ERRO_EXIGENCIA_NAO_ATENDIDA, LAYOUT_DO_SISTEMA, MSG_FINALIZAR_SO_PEDIDO_ABERTO, MSG_PEDIDO_JA_TEM_VENCEDOR,
+  MSG_PEDIDO_SEM_TOP_DE_ORCAMENTO, camposObrigatoriosFaltando, catalogoDaFamilia, chavePadraoDeCadastro, mensagemCampoObrigatorio,
+  type CampoDoLayout, type EstruturaLayout
 } from "@agro/domain";
-import { api, ApiError, newIdem } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
 import { useTradutor } from "@/lib/i18n";
@@ -29,6 +30,11 @@ import { acompanharDescontoDaOrigem, cabecalhoDoPedido, linhasDoRecebimento, tem
 import { rotaDoDocumento } from "../documentos-compra-list";
 import { comprasGeradasDoPedido, pedidoTemSaldo, useProximosPassosDoPedido, type CompraGerada, type EstadoProximosPassosDoPedido } from "../proximos-passos-pedido";
 import {
+  SITUACOES_DO_PEDIDO_EM_ANDAMENTO, aprovadoParaOrcamento, finalizacaoDoPedido, invalidarLeiturasDeCompras, orcamentosDoPedido, rotaDoNovoOrcamento,
+  useChaveDeIdempotencia, useFinalizacaoEOrcamento, useLequeDeOrcamentosDoPedido, type EstadoDaCapacidade, type EstadoDoLequeDeOrcamentos,
+  type TopDoLequeDeOrcamento
+} from "../pedido-e-orcamento";
+import {
   SEM_PADROES, camposExigidosPelaRegra, colunasDoEditor, estruturaComExigidos, estruturaDaResposta, layoutQueVale, lerRegras, padroesDaResposta,
   valorDoPadrao, zonasDaCentral, type LayoutQueVale, type PadraoDeCadastro, type PadroesDaResposta, type RegrasDaCompra, type ZonasDaCentral
 } from "../layout-da-central";
@@ -42,7 +48,13 @@ import { adaptadorDaCentralDeCompras, chaveDaCopiaDeCompra, chaveDepoisDeSalvarD
  *
  *   useEntradaDaCentral  — criação: lançador × formulário × receber (a TOP da URL é PEDIDO; a trava da sessão).
  *   useEstadoDaCriacao   — o formulário (lançar ou receber): cabeçalho, itens, layout, regras, pendências, salvar.
- *   useEstadoDaConsulta  — o documento salvo: capacidades, confirmar, cancelar (motivo opcional), encerrar saldo.
+ *   useEstadoDaConsulta  — o documento salvo: capacidades, confirmar, cancelar (motivo opcional), encerrar saldo; no
+ *                          pedido, com a capacidade da F6 (decisão 283), finalizar, aprovar para orçamento e o novo orçamento.
+ *
+ * A CHAVE DE IDEMPOTÊNCIA de cada escrita (Salvar, Confirmar, Cancelar, Encerrar saldo, Finalizar, Aprovar para orçamento)
+ * só é trocada quando o servidor RESPONDEU com recusa (`trocaAChaveDeIdempotencia`): na queda de rede, no 5xx ou na
+ * resposta perdida o reenvio leva a MESMA chave e recebe a resposta gravada — nunca um segundo documento. A chave mora
+ * em `useChaveDeIdempotencia`, que também troca o texto técnico do reenvio com outros dados pelo aviso em português.
  */
 
 /* ═════════════════════════════════════ Tipos ═════════════════════════════════════ */
@@ -424,10 +436,12 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const segmentoDoPedido = varianteDeCompra("pedido")?.segmento ?? "";
   const porta = modoReceber ? `/api/compras/${segmentoDoPedido}/${pedidoId}/convert` : `/api/compras/${variante.segmento}`;
 
-  const chave = React.useRef(newIdem());
+  // A chave do Salvar: a MESMA até o servidor RECUSAR (4xx). Rede, 5xx ou resposta perdida: o reenvio repete a chave e
+  // recebe a resposta gravada (o documento que a 1ª tentativa já criou), nunca um segundo documento.
+  const chave = useChaveDeIdempotencia();
   const depoisDeSalvar = React.useRef<DepoisDeSalvar>({ confirmar: false });
   const salvarM = useMutation({
-    mutationFn: () => api<RespostaDoSalvar>(porta, { method: "POST", body: corpo(), idempotencyKey: chave.current }),
+    mutationFn: () => { const c = corpo(); return api<RespostaDoSalvar>(porta, { method: "POST", body: c, idempotencyKey: chave.doEnvio(c) }); },
     onSuccess: (r) => {
       // O aviso sai da RESPOSTA (`confirmacaoAutomatica`), pelo motor — um por Salvar, lançar ou receber; sem a chave,
       // o "Salvo com sucesso" de antes.
@@ -437,7 +451,7 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
       entregarSalvo(chaveDepoisDeSalvarDeCompra, r.id, depoisDeSalvar.current);
       router.push(adaptador.rotas.registro(r.id));
     },
-    onError: (e) => { chave.current = newIdem(); setErros(errosDoServidor(e)); toast.error((e as Error).message); }
+    onError: (e) => { const aviso = chave.depoisDoErro(e); setErros(errosDoServidor(e)); toast.error(aviso); }
   });
 
   const { regras, pendente: regrasPendente, falhou: regrasFalharam } = useRegrasDaCompra(variante.segmento, top, modoReceber ? Boolean(recebendo) && !!top : podeLancar(estado) && !!top);
@@ -636,6 +650,31 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
 
 export type DocumentoDeCompra = Row & { itens?: Row[]; titulos?: Row[]; movimentos?: Row[] };
 
+/** Quem fez e quando (a data como o servidor a manda; o nome vazio quando ele não o declara). */
+export interface QuemEQuando { em: string; porNome: string }
+
+/**
+ * Uma ação do PEDIDO com diálogo (OPERACOES-01 F6b, decisão 283): Finalizar e Aprovar para orçamento. `can()` e a
+ * situação só decidem o que a tela OFERECE; quem recusa é o servidor (a porta, a guarda da 0044).
+ */
+export interface AcaoDoPedido {
+  /** A pílula aparece (a capacidade "sim", a espécie, a permissão e, conforme a ação, a situação). */
+  visivel: boolean;
+  /** null = habilitada; texto = a dica da pílula desabilitada. */
+  dicaDesabilitada: string | null;
+  /** O diálogo está aberto. */
+  aberto: boolean;
+  /** Abre o diálogo — só com a pílula habilitada (a MESMA regra do `disabled`, conferida no handler). */
+  abrir: () => void;
+  fechar: () => void;
+  /** O POST (corpo vazio, Idempotency-Key). */
+  executar: () => void;
+  ocupado: boolean;
+}
+
+/** Uma TOP do leque de orçamento do pedido, com a rota da criação do orçamento (só as que a tela sabe endereçar). */
+export interface OpcaoDeNovoOrcamento { top: TopDoLequeDeOrcamento; rota: string }
+
 export interface EstadoDaConsulta {
   modo: "consulta";
   variante: VarianteDeCompra;
@@ -689,14 +728,60 @@ export interface EstadoDaConsulta {
   /* "Salvo ✓" entregue pela criação */
   salvoAgora: boolean;
   recarregar: () => void;
+
+  /*
+   * OPERACOES-01 F6b (decisão 283) — o pedido finalizado, o aprovado para orçamento e o orçamento. Tudo o que é novo
+   * depende da capacidade "sim" (a API declara `finalizacaoEOrcamento`); "carregando" e "nao" mostram a consulta de
+   * hoje, e nenhuma rota nova é perguntada. Aceitar o pedido `finalizado` (receber, encerrar o saldo, cancelar) e ler
+   * `exigeFinalizar` valem sempre: a API anterior nunca os manda.
+   */
+  /** A capacidade `finalizacaoEOrcamento` declarada pela API de compras. */
+  capacidade: EstadoDaCapacidade;
+  /** O pedido está aberto ou finalizado: recebe, encerra o saldo e se cancela. */
+  pedidoEmAndamento: boolean;
+  /** A TOP do pedido só deixa receber o pedido finalizado (`exigeFinalizar` dos próximos passos; ausente = false). */
+  exigeFinalizar: boolean;
+  /** Quem finalizou o pedido e quando — null sem a data ou sem a capacidade. */
+  finalizacao: QuemEQuando | null;
+  /** Quem aprovou o pedido para orçamento e quando — null sem a data ou sem a capacidade. */
+  aprovadoOrcamento: QuemEQuando | null;
+  /** FINALIZAR: com `pedidos_compra.edit`; habilitado só no pedido aberto. O diálogo mostra a prévia do servidor. */
+  finalizar: AcaoDoPedido;
+  /** APROVAR PARA ORÇAMENTO: com `compras.edit` e a leitura do pedido, no pedido aberto ainda não aprovado. */
+  aprovarParaOrcamento: AcaoDoPedido;
+  /**
+   * NOVO ORÇAMENTO: com `orcamentos_compra.create`, no pedido aberto e aprovado para orçamento. Habilitado com o leque
+   * de TOPs de orçamento pronto e sem orçamento vencedor; `opcoes` são as TOPs do leque com a rota da criação.
+   */
+  novoOrcamento: { visivel: boolean; dicaDesabilitada: string | null; opcoes: OpcaoDeNovoOrcamento[] };
 }
 
 const DICA_PEDIDO_COM_COMPRA = "O pedido tem compra não cancelada: cancele a compra antes de cancelar o pedido.";
 const DICA_DUPLICAR_COM_ORIGEM = "Compra gerada de um pedido não se duplica: receba o pedido de novo pelos Próximos passos.";
 const DICA_DUPLICAR_SEM_TOP = "Documento sem Tipo de Operação não se duplica.";
 
+/** Os textos do Novo orçamento desabilitado enquanto o leque não está pronto. */
+const DICA_LEQUE_CARREGANDO = "Carregando as operações de orçamento…";
+const DICA_LEQUE_INDISPONIVEL = "As operações de orçamento estão indisponíveis nesta versão do servidor.";
+
+/**
+ * A dica do Novo orçamento desabilitado (null = habilitado). O vencedor primeiro (o pedido já foi decidido, qualquer
+ * que seja o leque); depois o leque, na ordem em que ele chega.
+ */
+function dicaDoNovoOrcamento(temVencedor: boolean, leque: EstadoDoLequeDeOrcamentos, opcoes: OpcaoDeNovoOrcamento[]): string | null {
+  if (temVencedor) return MSG_PEDIDO_JA_TEM_VENCEDOR;
+  switch (leque.situacao) {
+    case "carregando": return DICA_LEQUE_CARREGANDO;
+    case "indisponivel": return DICA_LEQUE_INDISPONIVEL;
+    case "erro": return leque.mensagem;
+    case "pronto": return opcoes.length ? null : MSG_PEDIDO_SEM_TOP_DE_ORCAMENTO;
+  }
+}
+
 export function useEstadoDaConsulta({ variante, id }: { variante: VarianteDeCompra; id: string }): EstadoDaConsulta {
   const { can } = useAuth(); const tr = useTradutor(); const qc = useQueryClient();
+  // Só o PEDIDO usa a capacidade da F6: a consulta da compra não pergunta as portas por ela.
+  const capacidade = useFinalizacaoEOrcamento(variante.variante === "pedido");
   const rotulo = tr(variante.chaveI18n);
   const adaptador = React.useMemo(() => adaptadorDaCentralDeCompras(variante, rotulo), [variante, rotulo]);
   const porta = adaptador.rotas.porta(id);
@@ -709,9 +794,15 @@ export function useEstadoDaConsulta({ variante, id }: { variante: VarianteDeComp
   const [confirmando, setConfirmando] = React.useState(false);
   const [cancelando, setCancelando] = React.useState(false);
   const [encerrando, setEncerrando] = React.useState(false);
-  const chaveConfirmar = React.useRef(newIdem());
-  const chaveCancelar = React.useRef(newIdem());
-  const chaveEncerrar = React.useRef(newIdem());
+  const [finalizando, setFinalizando] = React.useState(false);
+  const [aprovandoParaOrcamento, setAprovandoParaOrcamento] = React.useState(false);
+  // Uma chave por ação, a MESMA até o servidor RECUSAR (`trocaAChaveDeIdempotencia`): na queda de rede o reenvio repete
+  // a chave e recebe a resposta gravada — a ação nunca acontece duas vezes.
+  const chaveConfirmar = useChaveDeIdempotencia();
+  const chaveCancelar = useChaveDeIdempotencia();
+  const chaveEncerrar = useChaveDeIdempotencia();
+  const chaveFinalizar = useChaveDeIdempotencia();
+  const chaveAprovarParaOrcamento = useChaveDeIdempotencia();
   const recarregar = () => {
     void qc.invalidateQueries({ queryKey: ["docone", porta] });
     void qc.invalidateQueries({ queryKey: ["compras-previa-confirmacao", id] });
@@ -719,19 +810,32 @@ export function useEstadoDaConsulta({ variante, id }: { variante: VarianteDeComp
   };
 
   const confirmarM = useMutation({
-    mutationFn: () => api(`/api/compras/compras/${id}/confirm`, { method: "POST", idempotencyKey: chaveConfirmar.current }),
+    mutationFn: () => api(`/api/compras/compras/${id}/confirm`, { method: "POST", idempotencyKey: chaveConfirmar.doEnvio(undefined) }),
     onSuccess: () => { toast.success("Compra confirmada"); setConfirmando(false); recarregar(); },
-    onError: (e) => { chaveConfirmar.current = newIdem(); toast.error((e as Error).message); recarregar(); }
+    onError: (e) => { toast.error(chaveConfirmar.depoisDoErro(e)); recarregar(); }
   });
   const cancelarM = useMutation({
-    mutationFn: (motivo: string) => api(`/api/compras/${variante.segmento}/${id}/cancel`, { method: "POST", body: corpoDoCancelamento(motivo), idempotencyKey: chaveCancelar.current }),
+    mutationFn: (motivo: string) => { const c = corpoDoCancelamento(motivo); return api(`/api/compras/${variante.segmento}/${id}/cancel`, { method: "POST", body: c, idempotencyKey: chaveCancelar.doEnvio(c) }); },
     onSuccess: () => { toast.success("Documento cancelado"); setCancelando(false); recarregar(); },
-    onError: (e) => { chaveCancelar.current = newIdem(); toast.error((e as Error).message); }
+    onError: (e) => { toast.error(chaveCancelar.depoisDoErro(e)); }
   });
   const encerrarM = useMutation({
-    mutationFn: (motivo: string) => api(`/api/compras/${variante.segmento}/${id}/encerrar-saldo`, { method: "POST", body: { motivo }, idempotencyKey: chaveEncerrar.current }),
+    mutationFn: (motivo: string) => { const c = { motivo }; return api(`/api/compras/${variante.segmento}/${id}/encerrar-saldo`, { method: "POST", body: c, idempotencyKey: chaveEncerrar.doEnvio(c) }); },
     onSuccess: () => { toast.success("Saldo encerrado"); setEncerrando(false); recarregar(); },
-    onError: (e) => { chaveEncerrar.current = newIdem(); toast.error((e as Error).message); }
+    onError: (e) => { toast.error(chaveEncerrar.depoisDoErro(e)); }
+  });
+  /* FINALIZAR e APROVAR PARA ORÇAMENTO (F6b): corpo vazio, a chave da ação, e o que é de documento de compra perguntado
+     de novo depois (`invalidarLeiturasDeCompras`) — a situação, a aprovação, a prévia, os próximos passos e o leque
+     mudam juntos. No erro o diálogo de Finalizar fica aberto, e a prévia recarregada diz o porquê. */
+  const finalizarM = useMutation({
+    mutationFn: () => api(`/api/compras/pedidos/${id}/finalizar`, { method: "POST", body: {}, idempotencyKey: chaveFinalizar.doEnvio({}) }),
+    onSuccess: () => { toast.success("Pedido finalizado"); setFinalizando(false); void invalidarLeiturasDeCompras(qc); },
+    onError: (e) => { toast.error(chaveFinalizar.depoisDoErro(e)); void invalidarLeiturasDeCompras(qc); }
+  });
+  const aprovarParaOrcamentoM = useMutation({
+    mutationFn: () => api(`/api/compras/pedidos/${id}/aprovar-para-orcamento`, { method: "POST", body: {}, idempotencyKey: chaveAprovarParaOrcamento.doEnvio({}) }),
+    onSuccess: () => { toast.success("Pedido aprovado para orçamento"); setAprovandoParaOrcamento(false); void invalidarLeiturasDeCompras(qc); },
+    onError: (e) => { toast.error(chaveAprovarParaOrcamento.depoisDoErro(e)); void invalidarLeiturasDeCompras(qc); }
   });
 
   const d = q.data;
@@ -743,9 +847,12 @@ export function useEstadoDaConsulta({ variante, id }: { variante: VarianteDeComp
   const comCompraViva = (comprasGeradas ?? []).some((c) => c.situacao !== "cancelado");
   const recebimentoDeclarado = ehPedido && temRecebimentoDeclarado(itens);
   const varianteDaCompra = varianteDeCompra("compra");
-  const podeReceber = ehPedido && situacao === "aberto" && can(`${variante.perm}.edit`) && Boolean(varianteDaCompra) && can(`${varianteDaCompra?.perm ?? ""}.create`);
+  // O pedido ABERTO ou FINALIZADO (F6a) recebe, encerra o saldo e se cancela; a API anterior nunca manda o finalizado.
+  const pedidoEmAndamento = ehPedido && SITUACOES_DO_PEDIDO_EM_ANDAMENTO.includes(situacao);
+  const podeReceber = pedidoEmAndamento && can(`${variante.perm}.edit`) && Boolean(varianteDaCompra) && can(`${varianteDaCompra?.perm ?? ""}.create`);
   const passos = useProximosPassosDoPedido(variante.segmento, id, podeReceber);
-  const podeEncerrarSaldo = ehPedido && situacao === "aberto" && recebimentoDeclarado && comCompraViva && pedidoTemSaldo(itens) && can(`${variante.perm}.edit`);
+  const exigeFinalizar = passos.situacao === "pronto" && passos.exigeFinalizar;
+  const podeEncerrarSaldo = pedidoEmAndamento && recebimentoDeclarado && comCompraViva && pedidoTemSaldo(itens) && can(`${variante.perm}.edit`);
   /* O DIÁLOGO DE CONFIRMAR só abre em documento ABERTO e para quem pode confirmar — a regra ÚNICA do motor
      (`confirmarPodeAbrir`), para a pílula e para a chegada da criação. */
   const documentoAberto = situacao === "aberto";
@@ -760,12 +867,43 @@ export function useEstadoDaConsulta({ variante, id }: { variante: VarianteDeComp
     pedidoDeConfirmarTratado.current = true;
     if (abreConfirmarNaChegada(salvo, documentoAberto, confirmaPelaCapacidade)) setConfirmando(true);
   }, [d, salvo, documentoAberto, confirmaPelaCapacidade]);
-  const podeCancelar = (situacao === "aberto" || situacao === "confirmado") && can(`${variante.perm}.delete`);
+  const podeCancelar = (situacao === "aberto" || situacao === "confirmado" || (ehPedido && situacao === "finalizado")) && can(`${variante.perm}.delete`);
   const origemId = ehCompra && d && typeof d["origem_documento_id"] === "string" ? d["origem_documento_id"] : "";
   const saldoEncerradoEm = ehPedido && d && typeof d["saldo_encerrado_em"] === "string" ? d["saldo_encerrado_em"] : "";
   const top = (d?.["tipo_operacao"] as { codigo?: string; nome?: string; versao?: number; id?: string } | null | undefined) ?? null;
   const tipoOperacaoId = d ? String(d["tipo_operacao_id"] ?? top?.id ?? "") : "";
   const dicaDuplicarDesabilitado = origemId ? DICA_DUPLICAR_COM_ORIGEM : d && !tipoOperacaoId ? DICA_DUPLICAR_SEM_TOP : null;
+
+  /* ── O PEDIDO COM A CAPACIDADE DA F6 (decisão 283): nada disto existe sem "sim". ── */
+  const comCapacidade = ehPedido && capacidade === "sim";
+  const finalizacao = comCapacidade ? finalizacaoDoPedido(d) : null;
+  const aprovadoOrcamento = comCapacidade ? aprovadoParaOrcamento(d) : null;
+  const pedidoAberto = situacao === "aberto";
+  const finalizarVisivel = comCapacidade && can(`${variante.perm}.edit`);
+  const dicaFinalizar = pedidoAberto ? null : MSG_FINALIZAR_SO_PEDIDO_ABERTO;
+  const aprovarParaOrcamentoVisivel = comCapacidade && can("compras.edit") && can(`${variante.perm}.view`) && pedidoAberto && aprovadoOrcamento === null;
+  const varianteDoOrcamento = varianteDeCompra("orcamento");
+  const novoOrcamentoVisivel = comCapacidade && Boolean(varianteDoOrcamento) && can(`${varianteDoOrcamento?.perm ?? ""}.create`) && pedidoAberto && aprovadoOrcamento !== null;
+  const leque = useLequeDeOrcamentosDoPedido(id, novoOrcamentoVisivel);
+  const opcoesDeOrcamento: OpcaoDeNovoOrcamento[] = leque.situacao === "pronto"
+    ? leque.tops.flatMap((t) => { const rota = rotaDoNovoOrcamento(id, t.tipoOperacaoId); return rota ? [{ top: t, rota }] : []; })
+    : [];
+  // Sem a lista de orçamentos na leitura (sem `orcamentos_compra.view`) a tela não sabe do vencedor: o servidor recusa.
+  const temVencedor = (orcamentosDoPedido(d) ?? []).some((o) => o.situacao === "escolhido");
+  const finalizar: AcaoDoPedido = {
+    visivel: finalizarVisivel, dicaDesabilitada: dicaFinalizar, aberto: finalizando,
+    abrir: () => { if (finalizarVisivel && dicaFinalizar === null && !finalizarM.isPending) setFinalizando(true); },
+    fechar: () => setFinalizando(false),
+    executar: () => { if (finalizarVisivel && dicaFinalizar === null) finalizarM.mutate(); },
+    ocupado: finalizarM.isPending
+  };
+  const aprovarParaOrcamento: AcaoDoPedido = {
+    visivel: aprovarParaOrcamentoVisivel, dicaDesabilitada: null, aberto: aprovandoParaOrcamento,
+    abrir: () => { if (aprovarParaOrcamentoVisivel && !aprovarParaOrcamentoM.isPending) setAprovandoParaOrcamento(true); },
+    fechar: () => setAprovandoParaOrcamento(false),
+    executar: () => { if (aprovarParaOrcamentoVisivel) aprovarParaOrcamentoM.mutate(); },
+    ocupado: aprovarParaOrcamentoM.isPending
+  };
 
   return {
     modo: "consulta", variante, adaptador, id, porta, q, documento: d, situacao, ehCompra, ehPedido,
@@ -784,8 +922,13 @@ export function useEstadoDaConsulta({ variante, id }: { variante: VarianteDeComp
     encerrar: (motivo) => encerrarM.mutate(motivo), encerrarOcupado: encerrarM.isPending,
     textoDoCancelamento: situacao === "confirmado"
       ? "A compra confirmada é estornada: a entrada sai do estoque e as contas a pagar são canceladas. Conta com baixa precisa ter a baixa cancelada antes."
-      : "O documento passa a cancelado e não pode mais ser confirmado.",
+      // O pedido FINALIZADO (F6a) já foi confirmado: cancelá-lo impede o recebimento.
+      : ehPedido && situacao === "finalizado"
+        ? "O pedido finalizado passa a cancelado e não pode mais ser recebido."
+        : "O documento passa a cancelado e não pode mais ser confirmado.",
     salvoAgora: salvo !== null,
-    recarregar
+    recarregar,
+    capacidade, pedidoEmAndamento, exigeFinalizar, finalizacao, aprovadoOrcamento, finalizar, aprovarParaOrcamento,
+    novoOrcamento: { visivel: novoOrcamentoVisivel, dicaDesabilitada: dicaDoNovoOrcamento(temVencedor, leque, opcoesDeOrcamento), opcoes: opcoesDeOrcamento }
   };
 }

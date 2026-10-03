@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import ExcelJS from "exceljs";
 import { D, isISODate, money, sum } from "@agro/shared";
-import { CAPACIDADE_CENTRAL_FINANCEIRA, FORMA_UUID_PADRAO } from "@agro/domain";
+import { CAPACIDADE_CENTRAL_FINANCEIRA, CAPACIDADE_FINANCEIRO_PELA_TOP, FORMA_UUID_PADRAO } from "@agro/domain";
 import { runService, idempotent, audit, requirePermission, comPermissaoResolvida } from "../lib/service.js";
 import { hasPermission, empresaScopeSql, exigirEmpresaVisivel, type ServiceCtx } from "../lib/context.js";
 import { denied, err, notFound, validation } from "../lib/errors.js";
@@ -11,6 +11,8 @@ import {
 } from "../lib/financeiro-titulos-consulta.js";
 import { estornarBaixa, EH_ADIANTAMENTO_SQL } from "../lib/financeiro-estorno.js";
 import { periodoAbertoNoLote } from "../lib/financeiro-baixa.js";
+import financeiroTopsRoutes from "./financeiro-tops.js";
+import financeiroLcdprRoutes from "./financeiro-lcdpr.js";
 
 /**
  * CENTRAL FINANCEIRA — TÍTULOS (OPERACOES-01 F8, decisão 285). Prefixo PRÓPRIO (`/api/financeiro/*`): a API anterior
@@ -97,8 +99,19 @@ async function cancelarLiberados(ctx: ServiceCtx, liberados: ReadonlySet<string>
 }
 
 export default async function financeiroTitulosRoutes(app: FastifyInstance) {
-  /** A CAPACIDADE da Central (forma e versão exatas, `entendeCentralFinanceira`). Qualquer membro autenticado. */
-  app.get("/financeiro/capacidades", async (req) => runService(app, req, null, async () => ({ centralFinanceira: CAPACIDADE_CENTRAL_FINANCEIRA })));
+  /**
+   * OPERACOES-01 F9 (decisão 286): as rotas do financeiro pela TOP (`/financeiro/tops`) e do LCDPR (opções de imóvel
+   * e conferência) entram como plugins DESTA porta — herdam o prefixo `/api`, e o `server.ts` não muda.
+   */
+  await app.register(financeiroTopsRoutes);
+  await app.register(financeiroLcdprRoutes);
+
+  /**
+   * A CAPACIDADE da Central (forma e versão exatas, `entendeCentralFinanceira`). Qualquer membro autenticado. F9
+   * (ADITIVA, a mesma resposta): `financeiroPelaTop` — a TOP no lançamento avulso e no movimento, o previsto no cartão,
+   * na situação e no fluxo (`entendeFinanceiroPelaTop`). A web da F8 ignora a chave nova.
+   */
+  app.get("/financeiro/capacidades", async (req) => runService(app, req, null, async () => ({ centralFinanceira: CAPACIDADE_CENTRAL_FINANCEIRA, financeiroPelaTop: CAPACIDADE_FINANCEIRO_PELA_TOP })));
 
   /** Títulos: cartões, totais, filtros e página no servidor; "Todos" vê só as direções que o usuário vê. */
   app.get("/financeiro/titulos", async (req) => runService(app, req, null, async (ctx0) => {

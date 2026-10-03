@@ -103,6 +103,7 @@ export const ptBR: Catalogo = {
     "top.compras.orcamento": "Orçamento de compra",
     "top.financeiro.conta_a_pagar": "Conta a pagar",
     "top.financeiro.conta_a_receber": "Conta a receber",
+    "top.financeiro.movimento_bancario": "Movimento bancário",
     "top.vendas.orcamento": "Orçamento de venda",
     "top.vendas.pedido": "Pedido de venda",
     "top.vendas.venda": "Venda",

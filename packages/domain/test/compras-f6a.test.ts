@@ -466,13 +466,13 @@ describe("F6A-D6 o perfil, o grafo, a matriz e as exigências", () => {
     expect(p).not.toBeNull();
     expect(p!.abas).toEqual(["identificacao", "geral", "estoque", "financeiro", "fiscal"]);
     expect(p!.exigencias).toEqual([{ chave: "exigeParceiro", rotulo: "Fornecedor" }, { chave: "exigeObservacao", rotulo: "Observação" }]);
-    expect(p!.secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido"]);
+    expect(p!.secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
   });
 
   it("perfil do pedido (Fluxo de compra e Aprovação) e da compra (Divergência com o pedido)", () => {
-    expect(perfilDaFamiliaTop(PEDIDO)?.abas).toEqual(["identificacao", "geral", "destinos", "estoque", "fluxoCompra", "financeiro", "fiscal", "aprovacao"]);
+    expect(perfilDaFamiliaTop(PEDIDO)?.abas).toEqual(["identificacao", "geral", "destinos", "estoque", "fluxoCompra", "financeiroPadrao", "financeiro", "fiscal", "aprovacao"]);
     expect(perfilDaFamiliaTop(PEDIDO)?.secoesNeutras).toEqual(["destino", "fluxo", "divergenciaPedido"]);
-    expect(perfilDaFamiliaTop(COMPRA)?.abas).toEqual(["identificacao", "geral", "estoque", "divergenciaPedido", "financeiro", "fiscal", "aprovacao", "execucao"]);
+    expect(perfilDaFamiliaTop(COMPRA)?.abas).toEqual(["identificacao", "geral", "estoque", "divergenciaPedido", "financeiroPadrao", "financeiro", "fiscal", "aprovacao", "execucao"]);
     expect(perfilDaFamiliaTop(COMPRA)?.secoesNeutras).toEqual(["destino", "fluxo", "fluxoCompra"]);
   });
 
@@ -495,11 +495,11 @@ describe("F6A-D6 o perfil, o grafo, a matriz e as exigências", () => {
     expect(r.voltaram.map((v) => v.caminho)).toEqual(["divergenciaPedido"]);
   });
 
-  it("o tipo orcamento_compra tem a família, sem tela: o passo 1 do assistente não o oferece (F6b liga)", () => {
+  it("o tipo orcamento_compra tem a família, com a tela (F6b): o passo 1 do assistente o oferece", () => {
     const tipo = CATALOGO_TOP.tipos.find((t) => t.chave === "orcamento_compra");
-    expect(tipo).toEqual({ chave: "orcamento_compra", grupo: "compras", rotulo: "Orçamento", familia: ORCAMENTO, temTela: false });
+    expect(tipo).toEqual({ chave: "orcamento_compra", grupo: "compras", rotulo: "Orçamento", familia: ORCAMENTO, temTela: true });
     const compras = tiposParaEscolhaTop(CATALOGO_TOP).find((g) => g.grupo.chave === "compras");
-    expect(compras?.tipos.map((t) => t.chave)).toEqual(["pedido_compra", "compra"]);
+    expect(compras?.tipos.map((t) => t.chave)).toEqual(["pedido_compra", "orcamento_compra", "compra"]);
   });
 
   it("o grafo de compras é a lista congelada pedido → compra e pedido → orçamento, em espécies", () => {

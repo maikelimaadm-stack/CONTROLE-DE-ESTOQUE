@@ -14,6 +14,13 @@
  * OPERACOES-01 F3b (decisão 280): o local de estoque vem antes do produto, o "Local de estoque" do cabeçalho preenche
  * as linhas novas (estado da tela) e a pesquisa de produto mostra o saldo do local — só com a capacidade que a API
  * declara; sem ela, a pesquisa de hoje.
+ * OPERACOES-01 F5b (decisão 282): o documento de estoque não tem valor e não inventa quantidade. A criação ganha
+ * `linhaNovaEmBranco` (quantidade e valor unitário da linha nova VAZIOS), `subtotal` (`false` tira o "Subtotal dos
+ * itens" do rodapé) e `casasDaQuantidade` (as casas da quantidade na célula não ativa da grade); a consulta ganha
+ * `subtotal: null` (sem a linha do subtotal), `rotulos` (o rótulo da espécie no lugar do fixo) e `colunasExtras` (as
+ * colunas da espécie, depois de todas as outras) e `formularioPelasColunas` (o formulário de leitura só com os campos
+ * das colunas da espécie). Todas são OPCIONAIS e o padrão é o de hoje: sem elas, as Centrais de Vendas e de Compras não
+ * mudam nada (DOM, classes, payload, testids e textos).
  */
 import type * as React from "react";
 import type { ColunaDoLayout } from "@agro/domain";
@@ -326,6 +333,16 @@ export interface PropsDosItens {
    * com a página. Padrão `false` (o de hoje).
    */
   linhaUnica?: boolean;
+  /**
+   * OPERACOES-01 F5b (decisão 282): a linha nova nasce com a quantidade e o valor unitário VAZIOS — nada inventado (a
+   * contagem do ajuste nunca nasce "1"; o custo vazio da entrada é "use o custo médio"); a quantidade vazia da célula
+   * não ativa aparece "—", nunca "0". Padrão `false`: a linha de hoje ("1" e "0").
+   */
+  linhaNovaEmBranco?: boolean;
+  /** OPERACOES-01 F5b: `false` tira do rodapé o "Subtotal dos itens" (documento sem valor); "Itens (N)" fica. Padrão `true`. */
+  subtotal?: boolean;
+  /** OPERACOES-01 F5b: casas da quantidade na célula NÃO ativa da grade. Padrão 2 (o de hoje). */
+  casasDaQuantidade?: number;
 }
 
 /* ─────────────── M8 — itens-salvos.tsx e configurar-colunas.tsx ─────────────── */
@@ -333,10 +350,29 @@ export interface PropsDosItens {
 export type ChaveColunaSalva = ChaveColunaDoItem | "faturado" | "reservado";
 export type ChaveCampoSalvo = Exclude<ChaveColunaSalva, "codigo"> | "unidade";
 export interface AvisoDosItens { testId: string; conteudo: React.ReactNode }
+/**
+ * OPERACOES-01 F5b (decisão 282): uma coluna que só a ESPÉCIE conhece (ex.: o saldo na confirmação e a diferença do
+ * ajuste). Entra DEPOIS de todas as outras, na grade e no formulário de leitura (campo travado). O motor não interpreta
+ * o valor: só o desenha. `chave` é única entre as extras.
+ */
+export interface ColunaExtraDoItemSalvo {
+  chave: string;
+  rotulo: string;
+  /** Largura na grade (padrão 100). */
+  largura?: number;
+  /** Alinhada à direita, como os números. */
+  numero?: boolean;
+  /** `data-testid` da célula da grade. */
+  testId?: string;
+  valor: (it: Row) => React.ReactNode;
+}
+/** A chave de uma coluna extra nas preferências do "Configurar colunas" — nunca colide com as do motor. */
+export type ChaveDaColunaExtra = `extra:${string}`;
 export interface PropsDosItensSalvos {
   prefixoTestid: string;
   colunas: ColunasDosItens;
-  itens: Row[]; subtotal: string; legenda: string;
+  /** `subtotal`: o DO SERVIDOR; `null` (OPERACOES-01 F5b: documento sem valor) tira a linha do rodapé. */
+  itens: Row[]; subtotal: string | null; legenda: string;
   mostrarSaldo?: boolean; mostrarReservado?: boolean;
   /** Lote e validade gravados no item (só a espécie que os grava liga). */
   mostrarLote?: boolean;
@@ -345,6 +381,17 @@ export interface PropsDosItensSalvos {
   /** Casas decimais da quantidade, da parte gerada e do saldo (padrão 2; a compra mostra 4). */
   casasDaQuantidade?: number;
   avisos?: readonly AvisoDosItens[];
+  /** OPERACOES-01 F5b: o rótulo da espécie no lugar do fixo, na grade, no formulário e no "Configurar colunas". */
+  rotulos?: Partial<Record<ChaveColunaSalva, string>>;
+  /** OPERACOES-01 F5b: as colunas da espécie, depois de todas as outras. Padrão: nenhuma. */
+  colunasExtras?: readonly ColunaExtraDoItemSalvo[];
+  /**
+   * OPERACOES-01 F5b (I-1 da revisão da fase): o formulário de leitura RECORTADO pelas colunas da espécie
+   * (`colunas.leitura`) — só os campos cujas colunas ela tem (a Unidade, junto da quantidade, fica), e nada que ela não
+   * tenha (o documento de estoque não mostra desconto, desconto % nem total, nem um Local de estoque por item: o local
+   * é do cabeçalho). Padrão `false`: a lista fixa de hoje (as Centrais de Vendas e de Compras não mudam).
+   */
+  formularioPelasColunas?: boolean;
 }
 export interface PropsDeConfigurarColunas<K extends string> {
   prefixoTestid: string;

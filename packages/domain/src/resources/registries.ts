@@ -1,4 +1,5 @@
 import type { ResourceDef, FieldDef } from "./types.js";
+import { CAPACIDADE_LCDPR, OPCOES_TIPO_EXPLORACAO, OPCOES_TIPO_LCDPR } from "../financeiro-lcdpr.js";
 
 const active = (name = "is_active"): FieldDef => ({ name, label: "Ativo", type: "boolean", default: true, list: true, filter: true, span: 2 });
 const B = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "boolean", default: false, ...extra });
@@ -10,6 +11,10 @@ const D = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef
 const P = (name: string, label: string): FieldDef => ({ name, label, type: "percent" });
 /** Campos novos do Parceiro (AJUSTES 01, 0030): só com a API que declara `consultaCnpjJanela` 1 (seção 7 da missão). */
 const CAP_AJ01 = { nome: "consultaCnpjJanela", versao: 1 };
+/** OPERACOES-01 F9 (decisão 286): os campos do LCDPR só com a API que declara `lcdpr` 1 (`GET /api/auth/context`). */
+const CAP_LCDPR = { nome: "lcdpr", versao: CAPACIDADE_LCDPR };
+/** As opções de um domínio declarado fora daqui (`[valor, rótulo]`, somente leitura) na forma que `S` recebe. */
+const opcoes = (o: readonly (readonly [string, string])[]): [string, string][] => o.map(([valor, rotulo]): [string, string] => [valor, rotulo]);
 
 /** Tipo do item do SPED (registro 0200, campo TIPO_ITEM) — CADASTROS Fase 6. */
 const TIPOS_DE_ITEM: [string, string][] = [
@@ -195,6 +200,8 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       S("kind", "Analítica", [["analytic", "Sim"], ["synthetic", "Não"]], { default: "analytic", list: true, help: "Sim: recebe lançamentos. Não: sintética, só agrupa outras.", span: 2 }),
       S("classification", "Classificação", [["unclassified", "Não Classificado"], ["capex", "CAPEX"], ["opex", "OPEX"]], { span: 3 }),
       S("grupo_dre", "Grupo do DRE", [["receitas", "Receitas"], ["deducoes", "Deduções"], ["custos", "Custos"], ["despesas", "Despesas"], ["investimentos", "Investimentos"]], { help: "Vazio: herda da natureza superior; sem superior marcada, sai do Tipo (Receita → Receitas; Despesa CAPEX → Investimentos; Despesa → Despesas).", span: 3 }),
+      // OPERACOES-01 F9 (decisão 286): o tipo da natureza no LCDPR. Só com a API que declara a capacidade `lcdpr`.
+      S("tipo_lcdpr", "Tipo no LCDPR", opcoes(OPCOES_TIPO_LCDPR), { exigeCapacidade: CAP_LCDPR, help: "1 receita, 2 custeio e investimento, 3 produto entregue de adiantamento; \"Fora do LCDPR\" tira a natureza do livro. Vazio: aparece como pendência na conferência.", span: 3 }),
       B("is_tax", "É tributo?", { span: 2 }), REF("parent_id", "Natureza superior", "financial_categories", { span: 5 }), active()
     ]
   },
@@ -287,6 +294,23 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       T("boleto_wallet", "Carteira", { visibleWhen: { field: "issues_boleto", equals: true }, span: 2 }), T("boleto_agreement", "Convênio/Cod. Beneficiário", { visibleWhen: { field: "issues_boleto", equals: true }, span: 3 }),
       S("cnab_type", "Tipo do boleto", [["240", "CNAB 240"], ["400", "CNAB 400"]], { visibleWhen: { field: "issues_boleto", equals: true }, span: 2 }),
       REF("investment_account_id", "Conta de investimento vinculada", "bank_accounts", { span: 4 }), active()
+    ]
+  },
+  {
+    // OPERACOES-01 F9 (decisão 286): o IMÓVEL RURAL do LCDPR, cadastro DE EMPRESA (`erp.imoveis_rurais`, 0045: RLS por
+    // empresa, FK composta). O imóvel marcado como padrão é o que a baixa e o movimento bancário da empresa usam quando
+    // nenhum é informado — um por empresa (índice único parcial; o segundo é recusado). Excluir é lógico (dado real).
+    key: "imoveis_rurais", label: "Imóvel rural", labelPlural: "Imóveis rurais", table: "imoveis_rurais", permission: "imoveis_rurais", labelField: "nome", route: "/cadastros/imoveis_rurais", softDelete: true, empresaScoped: true, defaultSort: "nome",
+    fields: [
+      REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }),
+      T("nome", "Nome do imóvel", { required: true, list: true, search: true, maxLength: 120, span: 5 }),
+      T("cib", "CIB / NIRF (ITR)", { list: true, search: true, maxLength: 8, padrao: { regex: "^\\d{8}$", mensagem: "Informe os 8 dígitos do CIB (NIRF do ITR), só números." }, help: "Código do imóvel na Receita Federal (ITR), 8 dígitos", span: 3 }),
+      T("caepf", "CAEPF", { maxLength: 14, padrao: { regex: "^\\d{14}$", mensagem: "Informe os 14 dígitos do CAEPF (só números)." }, help: "14 dígitos", span: 3 }),
+      T("inscricao_estadual", "Inscrição estadual", { maxLength: 20, span: 3 }),
+      S("tipo_exploracao", "Tipo de exploração", opcoes(OPCOES_TIPO_EXPLORACAO), { required: true, default: "individual", list: true, filter: true, span: 3 }),
+      { name: "participacao", label: "% de participação", type: "percent", required: true, default: 100, help: "Maior que 0 e até 100.", span: 2 },
+      B("padrao", "Imóvel padrão da empresa", { list: true, help: "A baixa e o movimento da empresa usam este imóvel quando nenhum é informado. Só um por empresa: desmarque o atual antes.", span: 3 }),
+      active()
     ]
   },
   {

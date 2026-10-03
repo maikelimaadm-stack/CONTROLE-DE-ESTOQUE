@@ -13,7 +13,7 @@ import { RefSelect } from "@/components/ui/ref-select";
 import { FilterBar, useFilters, ApportionmentEditor, toAppLines, PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, SimpleTable, useDoc, LoadingOr, type Row, type AppLine, type Plan } from "@/features/docs/shared";
 import { Base2Shell, Base2Section, Base2Fields, Base2Items, type Base2Field, type Base2ItemColumn } from "@/features/base2";
 import { useTradutor } from "@/lib/i18n";
-import { tipoOperacaoDoRegistro, rotuloFinanceiro } from "@agro/domain";
+import { tipoOperacaoDoRegistro, rotuloFinanceiro, TOM_DA_SITUACAO_TITULO } from "@agro/domain";
 import { ActionDialog, useAction } from "@/features/docs/actions";
 import { MoreVertical, Plus } from "lucide-react";
 import { COPY, enumLabel } from "@/lib/copy";
@@ -21,7 +21,7 @@ import { useCentralFinanceira } from "./central/capacidade";
 import { LancamentoAvulso } from "./central/lancamento";
 import { DialogoDeBaixa } from "./central/baixa";
 import { DialogoVencimento, type ResultadoLote } from "./central/titulos-lote";
-import { OrigemDoTitulo, AvisoDaOrigem, BaixasDoTitulo } from "./central/detalhe-extras";
+import { OrigemDoTitulo, AvisoDaOrigem, AvisoDoPrevisto, BaixasDoTitulo } from "./central/detalhe-extras";
 import { toast } from "@/lib/toast";
 
 export type Dir = "payable" | "receivable";
@@ -138,6 +138,15 @@ function TitleFormDeHoje({ dir, id }: { dir: Dir; id?: string }) {
 /** Entidade como o servidor a nomeia — vale para o histórico oficial e para `ATTACHMENT_PARENTS`. */
 const ENTIDADE_TITULO = "financial_titles";
 
+/** A TOP de origem do título como a API a devolve (F9, aditivo: `tipo_operacao`); ausente na API anterior. */
+type TopDoTitulo = { codigo: string; nome: string; versao: number } | null | undefined;
+
+/**
+ * A ORIGEM sem a Central (a API anterior não manda `origem_nome`): o rótulo do tipo de origem — nunca o valor técnico
+ * cru (`sales_documents`) —, e "Avulso" para o lançamento manual ou sem origem.
+ */
+const origemSemCentral = (sourceType: unknown) => (sourceType && sourceType !== "manual" ? enumLabel("source_type", sourceType) : "Avulso");
+
 /** Colunas do RATEIO. Fora do componente porque não dependem de nada dele — e assim não renascem a cada render. */
 const COLUNAS_RATEIO: Base2ItemColumn<Row>[] = [
   { key: "category_code", label: "Código" },
@@ -182,6 +191,9 @@ export function TitleDetail({ dir, id }: { dir: Dir; id: string }) {
   const esteTitulo = React.useMemo(() => (d ? [{ id, direcao: dir, codigo: String(d["code"]), numero: String(d["number"]), pessoa_nome: (d["person_name"] as string | null) ?? null, empresa_id: String(d["empresa_id"]), status: String(d["status"]), saldo: String(d["balance"]) }] : []), [d, id, dir]);
   if (!d || modo === "carregando") return <LoadingOr q={{ isLoading: q.isLoading || modo === "carregando", error: q.error, refetch: q.refetch }}>{null}</LoadingOr>;
   const open = ["open", "partially_paid"].includes(String(d["status"]));
+  // F9 (decisão 286): o PREVISTO da provisão pela TOP não recebe baixa, não se edita, não se cancela nem se duplica
+  // pelo título — muda só pelo documento de origem (o servidor recusa os quatro com 409).
+  const previsto = d["status"] === "previsto";
   /** Título gerado por documento (venda, compra, nota…): valor, parceiro e rateio só mudam pela origem. */
   const pelaOrigem = central && Boolean(d["bloqueado_pela_origem"]);
   const aposAlterarVencimento = (r: ResultadoLote) => {
@@ -196,6 +208,8 @@ export function TitleDetail({ dir, id }: { dir: Dir; id: string }) {
   // pode fazer. Não saber o que o registro é não autoriza chutar: dizer "Conta a pagar" de um registro
   // que o servidor não classificou seria afirmar pela rota o que só o registro pode dizer.
   const top = tipoOperacaoDoRegistro(`erp.${ENTIDADE_TITULO}`, d);
+  // F9: a TOP de ORIGEM gravada no título (código, nome e versão), quando a API a devolve; senão, a família, como hoje.
+  const topDeOrigem = d["tipo_operacao"] as TopDoTitulo;
   const titulo = d["direction"] === "payable" ? "Conta a pagar" : d["direction"] === "receivable" ? "Conta a receber" : "Título financeiro";
   const rotuloPessoa = d["direction"] === "payable" ? "Fornecedor" : d["direction"] === "receivable" ? "Cliente" : "Pessoa";
 
@@ -203,11 +217,11 @@ export function TitleDetail({ dir, id }: { dir: Dir; id: string }) {
   // porque respondem a perguntas diferentes: o rótulo diz ao usuário que o título está VENCIDO, e o
   // `data-status` diz à máquina que ele continua `open` — que é o que a API de fato guarda. Achatar um
   // no outro perderia informação em qualquer direção que se escolhesse.
-  const situacao = <StatusBadge domain="title_status" value={String(d["status"])} label={String(d["status_label"])} tone={tomDaSituacao(String(d["status_label"]))} />;
+  const situacao = <StatusBadge domain="title_status" value={String(d["status"])} label={String(d["status_label"])} tone={previsto ? TOM_DA_SITUACAO_TITULO.previsto : tomDaSituacao(String(d["status_label"]))} />;
 
   const campos: Base2Field[] = [
     { label: "Código", valor: String(d["code"]) },
-    { label: tr("termos.tipo_operacao"), valor: top ? tr(top.chaveI18n) : "", ocultarSeVazio: true },
+    { label: tr("termos.tipo_operacao"), valor: topDeOrigem ? `${topDeOrigem.codigo} — ${topDeOrigem.nome} (versão ${topDeOrigem.versao})` : top ? tr(top.chaveI18n) : "", ocultarSeVazio: true },
     { label: "Nº do documento", valor: String(d["number"] ?? "—") },
     { label: rotuloPessoa, valor: String(d["person_name"] ?? "—") },
     { label: "Proprietário", valor: String(d["proprietary_name"] ?? "—") },
@@ -228,7 +242,7 @@ export function TitleDetail({ dir, id }: { dir: Dir; id: string }) {
     { label: "Safra", valor: String(d["harvest_name"] ?? "—") },
     { label: "Dedutível", valor: d["is_deductible"] ? "Sim" : "Não", span: 2 },
     { label: "Tributo", valor: d["is_tax"] ? "Sim" : "Não", span: 2 },
-    { label: "Origem", valor: central ? <OrigemDoTitulo sourceType={(d["source_type"] as string | null) ?? null} sourceId={(d["source_id"] as string | null) ?? null} /> : d["source_type"] ? String(d["source_type"]) : "Manual" },
+    { label: "Origem", valor: central ? <OrigemDoTitulo sourceType={(d["source_type"] as string | null) ?? null} sourceId={(d["source_id"] as string | null) ?? null} nome={(d["origem_nome"] as string | null | undefined) ?? null} /> : origemSemCentral(d["source_type"]) },
     { label: "Criado por", valor: String(d["created_by_name"] ?? "") },
     { label: "Versão", valor: String(d["version"]), span: 2 },
     { label: "Observação", valor: String(d["note"] ?? ""), span: 12, ocultarSeVazio: true }
@@ -247,11 +261,11 @@ export function TitleDetail({ dir, id }: { dir: Dir; id: string }) {
       {d["status"] === "open" && can(`${c.perm}.edit`) && !pelaOrigem && <Link href={`${c.base}/${id}/edit`}><Button size="sm" variant="outline">Editar</Button></Link>}
       {central && open && can(`${c.perm}.edit`) && <Button size="sm" variant="outline" data-testid="fin-alterar-vencimento" onClick={() => setVencimento(true)}>Alterar vencimento</Button>}
       {can(`${c.perm}.receipt`) && <Button size="sm" variant="outline" onClick={() => setReceipt(true)}>Recibo</Button>}
-      {can(`${c.perm}.duplicate`) && <Button size="sm" variant="outline" onClick={() => act.mutate({ path: `${c.endpoint}/${id}/duplicate` })}>Duplicar</Button>}
-      {d["status"] !== "cancelled" && can(`${c.perm}.delete`) && !pelaOrigem && <Button size="sm" variant="danger" onClick={() => setCancel(true)}>Cancelar</Button>}
+      {!previsto && can(`${c.perm}.duplicate`) && <Button size="sm" variant="outline" onClick={() => act.mutate({ path: `${c.endpoint}/${id}/duplicate` })}>Duplicar</Button>}
+      {!previsto && d["status"] !== "cancelled" && can(`${c.perm}.delete`) && !pelaOrigem && <Button size="sm" variant="danger" onClick={() => setCancel(true)}>Cancelar</Button>}
     </>}
   >
-    {pelaOrigem && <AvisoDaOrigem sourceType={(d["source_type"] as string | null) ?? null} />}
+    {previsto ? <AvisoDoPrevisto /> : pelaOrigem && <AvisoDaOrigem sourceType={(d["source_type"] as string | null) ?? null} />}
     <Base2Fields campos={campos} />
 
     {/* O RATEIO é a linha do lançamento, e sai das abas pelo mesmo motivo que os itens saíram na

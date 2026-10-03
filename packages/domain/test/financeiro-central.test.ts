@@ -554,7 +554,9 @@ describe("rótulos do financeiro", () => {
     expect(Object.keys(ROTULOS_FINANCEIRO.sugestao_conciliacao)).toEqual(["encontrado", "sugestao", "soma", "nenhuma"]);
     expect(Object.keys(ROTULOS_FINANCEIRO)).toEqual([
       "situacao_titulo", "cartao_titulo", "origem_titulo", "componente_baixa", "tipo_transferencia", "sugestao_conciliacao",
-      "situacao_conciliacao", "grupo_dre", "campo_periodo", "motivo_lote", "regime_dre"
+      "situacao_conciliacao", "grupo_dre", "campo_periodo", "motivo_lote", "regime_dre",
+      // OPERACOES-01 F9 (decisão 286): os domínios do LCDPR.
+      "tipo_lcdpr", "tipo_exploracao", "situacao_conferencia_lcdpr"
     ]);
   });
 });

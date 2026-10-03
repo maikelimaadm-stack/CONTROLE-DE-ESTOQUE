@@ -7,12 +7,16 @@
  * (`compras-confirmacao.ts`); quem BARRA no fundo é a guarda de transição da 0041 (`trg_documentos_compra_aprovacao`).
  *
  * E a quarta rota, de LEITURA (F2, decisão 279): `GET /api/aprovacoes/compras/:id` → `{ situacao, ultimaDecisao }` de
- * UMA compra, para a consulta da Central de Compras (o contrato em `aprovacoes-situacao.ts`). Fica em `compras.view`:
- * quem vê o documento vê a situação dele (a prévia do Confirmar já a dizia sob a mesma capacidade); quem DECIDE
- * continua sendo `compras.approve`. Ordem das recusas: 403 sem `compras.view` (o `runService`, antes de qualquer
- * leitura) → 422 parâmetro de consulta (qualquer um) → a MESMA 404 do `GET /api/compras/compras/:id` (a mesma
- * leitura, `lerDocumentoCompra`: id fora da forma, inexistente, outra organização, fora do escopo do módulo compras,
- * pedido de compra). Só leitura, consultas fixas.
+ * UMA compra ou (OPERACOES-01 F6b, decisão 283) de UM pedido de compra, para a consulta da Central de Compras (o
+ * contrato em `aprovacoes-situacao.ts`). Fica em `compras.view`: quem vê o documento vê a situação dele (a prévia do
+ * Confirmar já a dizia sob a mesma capacidade); quem DECIDE continua sendo `compras.approve`. A ESPÉCIE pedido exige
+ * também `pedidos_compra.view` (AND) — o molde da fila (`compras.approve` ∧ `pedidos_compra.approve`). Ordem das
+ * recusas: 403 sem `compras.view` (o `runService`, antes de qualquer leitura) → 422 parâmetro de consulta (qualquer
+ * um) → id fora da forma → a MESMA 404 (nunca vai ao SQL) → a espécie, procurada SÓ entre as que o usuário lê aqui
+ * (a compra; o pedido com `pedidos_compra.view`), com o recorte do GET por id → a MESMA 404 do `GET /api/compras/
+ * {compras,pedidos}/:id` (a mesma leitura, `lerDocumentoCompra`: inexistente, outra organização, fora do escopo do
+ * módulo compras, pedido sem `pedidos_compra.view`, orçamento de compra). A compra: a conta de hoje. O pedido: a
+ * conta do FINALIZAR, com a cobertura do valor (`situacaoDaAprovacaoDoPedido`). Só leitura, consultas fixas.
  *
  * PREFIXO PRÓPRIO (`/api/aprovacoes/...`): o binário anterior não conhece a rota e responde o 404 limpo de rota
  * inexistente — a tela nova lê esse 404 como "aprovações indisponíveis neste servidor", sem quebrar o resto.
@@ -82,16 +86,19 @@ import { confirmaAutomaticamente, tentarConfirmacaoAutomatica, lerVersaoCongelad
 import { lerDocumentoCompra } from "./compras.js";
 import { recusarParametrosDaSituacao, respostaDaSituacaoDaAprovacao, type RespostaDaSituacaoDaAprovacao } from "./aprovacoes-situacao.js";
 import { confirmarCompraNaTransacao } from "./compras-confirmacao.js";
+import { situacaoDaAprovacaoDoPedido } from "./compras-finalizacao.js";
 import { paginaComIdGlobal } from "../lib/id-global.js";
 
 /** A capacidade da porta: decidir a aprovação da compra. A confirmação automática pede a DELA (`compras.edit`). */
 const PERMISSAO_APROVAR = "compras.approve";
 const PERMISSAO_CONFIRMAR = "compras.edit";
-/** A capacidade da leitura da situação (F2): a MESMA do GET da compra por id. */
+/** A capacidade da leitura da situação (F2): a MESMA do GET da compra por id (a porta da rota, também para o pedido). */
 const PERMISSAO_VER = "compras.view";
 
 /** OPERACOES-01 F6a: a capacidade da ESPÉCIE pedido, somada (AND) à da porta. */
 const PERMISSAO_APROVAR_PEDIDO = "pedidos_compra.approve";
+/** OPERACOES-01 F6b: a capacidade de LER o pedido, somada (AND) à da porta da situação (`compras.view`). */
+const PERMISSAO_VER_PEDIDO = "pedidos_compra.view";
 
 /** As espécies de documento de compra que passam por aprovação. O orçamento de compra não passa. */
 type EspecieAprovavel = "compra" | "pedido";
@@ -102,6 +109,10 @@ type EspecieAprovavel = "compra" | "pedido";
  */
 const especiesQueAprova = (ctx: ServiceCtx): EspecieAprovavel[] =>
   hasPermission(ctx, PERMISSAO_APROVAR_PEDIDO) ? ["compra", "pedido"] : ["compra"];
+
+/** As espécies cuja SITUAÇÃO este usuário lê aqui: a compra (pela porta) e, com `pedidos_compra.view`, o pedido. */
+const especiesQueLeSituacao = (ctx: ServiceCtx): EspecieAprovavel[] =>
+  hasPermission(ctx, PERMISSAO_VER_PEDIDO) ? ["compra", "pedido"] : ["compra"];
 
 // ─────────────── contrato de entrada (estrito) ───────────────
 
@@ -217,7 +228,7 @@ async function listarFila(ctx: ServiceCtx, query: unknown) {
  * documento que só mudou. O RECORTE é o mesmo do GET por id (organização, espécie e escopo de empresa): zero
  * linhas é a MESMA 404.
  *
- * OPERACOES-01 F6a: a espécie é a que `especieDaDecisao` achou (compra ou pedido), no WHERE como antes.
+ * OPERACOES-01 F6a: a espécie é a que `especieVisivel` achou entre as que ele aprova (compra ou pedido), no WHERE como antes.
  */
 async function travarCompraDaDecisao(ctx: ServiceCtx, id: string, especie: EspecieAprovavel) {
   const sc = scopedById(ctx, "d", id); sc.params.push(especie);
@@ -232,13 +243,14 @@ async function travarCompraDaDecisao(ctx: ServiceCtx, id: string, especie: Espec
 }
 
 /**
- * OPERACOES-01 F6a — A ESPÉCIE DO DOCUMENTO DA DECISÃO, procurada SÓ entre as que o usuário aprova
- * (`especiesQueAprova`), com o recorte do GET por id (organização e escopo de empresa). Fora delas (o pedido para
- * quem não tem `pedidos_compra.approve`, o orçamento para todos), inexistente, de outro tenant ou fora do escopo: a
- * MESMA 404 — dizer "é um pedido, e você não o aprova" seria oráculo de existência.
+ * OPERACOES-01 F6a — A ESPÉCIE DO DOCUMENTO, procurada SÓ entre as que o usuário pode alcançar nesta rota (na
+ * decisão, `especiesQueAprova`; na situação, desde a F6b, `especiesQueLeSituacao`), com o recorte do GET por id
+ * (organização e escopo de empresa). Fora delas (o pedido para quem não tem a capacidade da espécie, o orçamento para
+ * todos), inexistente, de outro tenant ou fora do escopo: a MESMA 404 — dizer "é um pedido, e você não o aprova"
+ * seria oráculo de existência. O id já passou pela forma de UUID (quem chama confere antes: 22P02 seria 500).
  */
-async function especieDaDecisao(ctx: ServiceCtx, id: string): Promise<EspecieAprovavel> {
-  const sc = scopedById(ctx, "d", id); sc.params.push(especiesQueAprova(ctx));
+async function especieVisivel(ctx: ServiceCtx, id: string, especies: readonly EspecieAprovavel[]): Promise<EspecieAprovavel> {
+  const sc = scopedById(ctx, "d", id); sc.params.push(especies);
   const r = await ctx.tx.query<{ especie: EspecieAprovavel }>(
     `select d.especie from erp.documentos_compra d
       where d.id = $1 and d.organization_id = $2 and d.especie = any($${sc.params.length}::text[])${sc.sql}`, sc.params);
@@ -267,7 +279,7 @@ async function decidir(app: FastifyInstance, req: FastifyRequest, decisao: Decis
     // 3. invisível (outra organização, fora do escopo, inexistente, espécie que o usuário não aprova — o pedido sem
     // `pedidos_compra.approve`, o orçamento): a MESMA 404 do GET por id. OPERACOES-01 F6a: a espécie é procurada só
     // entre as que ele aprova, e a leitura de visibilidade é a da espécie achada.
-    const especie = await especieDaDecisao(ctx, id);
+    const especie = await especieVisivel(ctx, id, especiesQueAprova(ctx));
     await lerDocumentoCompra(ctx, id, especie);
     // 4. a idempotência — com o AUTOR no hash: chave alheia nunca devolve a resposta de outro. A espécie entra no
     // hash SÓ no pedido: o da compra fica idêntico ao de antes (a chave de um reenvio do cliente da base continua valendo).
@@ -302,20 +314,28 @@ async function decidir(app: FastifyInstance, req: FastifyRequest, decisao: Decis
   });
 }
 
-// ─────────────── a situação de UMA compra (F2, decisão 279) ───────────────
+// ─────────────── a situação de UMA compra ou de UM pedido (F2, decisão 279; F6b, decisão 283) ───────────────
 
 /**
- * A SITUAÇÃO DA APROVAÇÃO DE UMA COMPRA, para a consulta da Central de Compras. Quem chama já passou pelo
- * `compras.view`. O documento é achado pela MESMA leitura do GET por id (`lerDocumentoCompra`, espécie `compra`), que
- * já recusa o id fora da forma e aplica organização, escopo de empresa e espécie: a 404 é a mesma, com o mesmo corpo.
- * A compra não tem versão do documento: a decisão vigente é a última (a régua de `situacaoDaAprovacao`).
+ * A SITUAÇÃO DA APROVAÇÃO DE UMA COMPRA OU DE UM PEDIDO DE COMPRA (`pedidos_compra.view`, AND), para a consulta da
+ * Central de Compras. Quem chama já passou pelo `compras.view`. A espécie é procurada só entre as que o usuário lê
+ * aqui (`especiesQueLeSituacao`) e o documento é achado pela MESMA leitura do GET por id (`lerDocumentoCompra`, com a
+ * espécie achada), que aplica organização, escopo de empresa e espécie: a 404 é a mesma, com o mesmo corpo. O
+ * documento de compra não tem versão: a decisão vigente é a última (a régua de `situacaoDaAprovacao`). A compra: a
+ * conta da `lib`, como na F2. O pedido ABERTO: a conta do finalizar, com a cobertura do valor (OPERACOES-01 F6b).
  */
-async function situacaoDaCompra(ctx: ServiceCtx, params: unknown, query: unknown): Promise<RespostaDaSituacaoDaAprovacao> {
+async function situacaoDoDocumentoDeCompra(ctx: ServiceCtx, params: unknown, query: unknown): Promise<RespostaDaSituacaoDaAprovacao> {
   // 1. Parâmetro de consulta: 422, antes de qualquer leitura (nunca ignorado).
   recusarParametrosDaSituacao(query);
-  // 2 e 3. Forma do id e visibilidade — a leitura do GET por id, com o id como ele o recebe.
-  const doc = await lerDocumentoCompra(ctx, (params as { id: string }).id, "compra");
-  // 4. A conta (o contrato em `aprovacoes-situacao.ts`).
+  // 2. Forma do id: fora dela é inexistente — a MESMA 404, e o id nunca vai ao SQL (22P02 seria 500).
+  const id = (params as { id: string }).id;
+  if (!FORMA_UUID_PADRAO.test(id)) throw notFound("Documento");
+  // 3. A espécie, só entre as visíveis aqui (o pedido sem `pedidos_compra.view`, o orçamento: a MESMA 404), e a
+  // visibilidade pela leitura do GET por id dessa espécie.
+  const especie = await especieVisivel(ctx, id, especiesQueLeSituacao(ctx));
+  // A conta não usa os orçamentos do pedido: a leitura não os pede (nem os preços de cada um).
+  const doc = await lerDocumentoCompra(ctx, id, especie, { semOrcamentos: true });
+  // 4. A conta (o contrato em `aprovacoes-situacao.ts`). O pedido entrega a do finalizar, que só roda no aberto.
   return respostaDaSituacaoDaAprovacao(ctx, {
     modulo: "compras",
     documentoId: String(doc["id"]),
@@ -323,7 +343,7 @@ async function situacaoDaCompra(ctx: ServiceCtx, params: unknown, query: unknown
     versaoDocumento: null,
     valorDocumento: String(doc["valor_total"]),
     tipoOperacaoVersaoId: typeof doc["tipo_operacao_versao_id"] === "string" ? doc["tipo_operacao_versao_id"] : null,
-  });
+  }, especie === "pedido" ? () => situacaoDaAprovacaoDoPedido(ctx, doc) : undefined);
 }
 
 // ─────────────── rotas ───────────────
@@ -341,6 +361,9 @@ export default async function aprovacoesComprasRoutes(app: FastifyInstance) {
   /** REPROVAR `{ motivo }` — a compra fica aberta; uma aprovação nova, depois, a libera. */
   app.post("/aprovacoes/compras/:id/reprovar", async (req) => decidir(app, req, "reprovado"));
 
-  /** A SITUAÇÃO da aprovação de UMA compra: leitura sob `compras.view` (quem vê o documento vê a situação). */
-  app.get("/aprovacoes/compras/:id", async (req) => runService(app, req, PERMISSAO_VER, (ctx) => situacaoDaCompra(ctx, req.params, req.query)));
+  /**
+   * A SITUAÇÃO da aprovação de UMA compra ou de UM pedido de compra: leitura sob `compras.view` (quem vê o documento
+   * vê a situação); o pedido, com `pedidos_compra.view` também (AND).
+   */
+  app.get("/aprovacoes/compras/:id", async (req) => runService(app, req, PERMISSAO_VER, (ctx) => situacaoDoDocumentoDeCompra(ctx, req.params, req.query)));
 }

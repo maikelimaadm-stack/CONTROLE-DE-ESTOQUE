@@ -67,6 +67,10 @@ import {
 } from "./compras-recebimento.js";
 import { CAPACIDADE_FINALIZACAO_E_ORCAMENTO_COMPRA, type EspecieDocumentoCompra } from "@agro/domain";
 import { registrarFinalizacaoCompras } from "./compras-finalizacao.js";
+// OPERACOES-01 F9b (decisão 286): os padrões financeiros da TOP no salvar e a provisão do pedido de compra.
+import { padroesDaTopNoSalvarDaCompra } from "../lib/financeiro-compra.js";
+import { sincronizarProvisaoDoPedidoDeCompra } from "../lib/financeiro-provisao.js";
+import { MOTIVOS_DA_PROVISAO, MOTIVOS_DA_PROVISAO_COMPRA } from "@agro/domain";
 
 const t = criarTradutor(ptBR);
 
@@ -224,6 +228,30 @@ const topParaTela = (l: { tipo_operacao_id: string | null; top_codigo: string | 
         familiaRotulo: l.top_codigo_base ? t(chaveI18nDaFamiliaOperacional(l.top_codigo_base) ?? l.top_codigo_base) : null }
     : null;
 
+/** O preço de um item do pedido num orçamento (OPERACOES-01 F6b): decimais em texto, como o banco os guarda. */
+interface PrecoDoItemNoOrcamento { item_pedido_orcado_id: string; valor_unitario: string; valor_total: string }
+
+/**
+ * OPERACOES-01 F6b — OS PREÇOS POR ITEM DOS ORÇAMENTOS DO PEDIDO, em UMA consulta (nunca uma por orçamento),
+ * agrupados por orçamento e na ordem da posição; cada orçamento ganha `itens` no FIM (`[]` sem item). Sem orçamento
+ * nenhum, a consulta não roda. Quem chama já conferiu a espécie pedido e `orcamentos_compra.view`.
+ */
+async function itensDosOrcamentos(ctx: ServiceCtx, pedidoId: string, orcamentos: (Record<string, unknown> & { id: string })[]) {
+  if (orcamentos.length === 0) return orcamentos;
+  const r = await ctx.tx.query<PrecoDoItemNoOrcamento & { documento_id: string }>(
+    `select i.documento_id, i.item_pedido_orcado_id, i.valor_unitario::text as valor_unitario, i.valor_total::text as valor_total
+       from erp.documentos_compra_itens i
+       join erp.documentos_compra o on o.id = i.documento_id and o.organization_id = i.organization_id
+      where i.organization_id = $1 and o.pedido_orcado_id = $2 and o.especie = 'orcamento'
+      order by i.posicao, i.id`, [ctx.orgId, pedidoId]);
+  const porOrcamento = new Map<string, PrecoDoItemNoOrcamento[]>();
+  for (const { documento_id, ...preco } of r.rows) {
+    const lista = porOrcamento.get(documento_id);
+    if (lista) lista.push(preco); else porOrcamento.set(documento_id, [preco]);
+  }
+  return orcamentos.map((o) => ({ ...o, itens: porOrcamento.get(o.id) ?? [] }));
+}
+
 /**
  * CARREGA O DOCUMENTO JÁ AMARRADO À ESPÉCIE DA PORTA. Espécie errada, inexistente, de outro tenant e fora do
  * escopo de empresa (módulo compras) caem na MESMA 404. `lock` trava SÓ o cabeçalho (`for update of d`) — é o
@@ -242,8 +270,16 @@ const topParaTela = (l: { tipo_operacao_id: string | null; top_codigo: string | 
  * não existe: a leitura do pedido não é uma segunda porta para o orçamento (CAPACIDADE ∧ ESCOPO, nunca OR; a lista
  * única, a leitura, o ID Global e os anexos do orçamento já exigem a mesma capacidade). O orçamento, como a compra,
  * não tem recebido/saldo nem `compras_geradas`.
+ *
+ * OPERACOES-01 F6b (decisão 283), ADITIVO e no mesmo ramo (pedido ∧ `orcamentos_compra.view`): cada orçamento ganha,
+ * no FIM, a condição de pagamento (`condicao_pagamento_codigo`, `condicao_pagamento_nome`; `null` sem condição) e
+ * `itens` — o preço de cada item do pedido no orçamento (`item_pedido_orcado_id`, `valor_unitario`, `valor_total`), na
+ * ordem da posição — para a comparação da tela. UMA consulta a mais para os itens de TODOS os orçamentos do pedido
+ * (agrupada aqui), só quando há orçamento: nunca uma por orçamento. `semOrcamentos` (ADITIVO, padrão `false`): quem
+ * só confere a visibilidade e a conta da aprovação (a situação de `aprovacoes-compras.ts`) não lê os orçamentos nem
+ * os preços — a chave `orcamentos` não vem, como sem a capacidade.
  */
-export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: EspecieDocumentoCompra, opts: { lock?: boolean } = {}): Promise<Record<string, unknown>> {
+export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: EspecieDocumentoCompra, opts: { lock?: boolean; semOrcamentos?: boolean } = {}): Promise<Record<string, unknown>> {
   // id malformado é a MESMA 404 (sem 22P02 → 500).
   if (!FORMA_UUID.test(id)) throw notFound("Documento");
   const sc = scopedById(ctx, "d", id); sc.params.push(especie);
@@ -305,14 +341,17 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
   // OPERACOES-01 F6a: os orçamentos deste pedido (inclusive cancelados, a história da cotação), na ordem em que
   // nasceram — UMA consulta. Pelo vínculo próprio (`pedido_orcado_id`), nunca pela origem (que é da compra). Só com
   // a capacidade de ver orçamento: sem ela, nem a consulta roda (a chave some da resposta).
-  const orcamentos = ehPedido && hasPermission(ctx, PERMISSAO_VER_ORCAMENTO)
-    ? (await ctx.tx.query<Record<string, unknown>>(
+  // OPERACOES-01 F6b: + a condição de pagamento (código e nome, no fim) e os preços por item (`itensDosOrcamentos`).
+  const orcamentos = ehPedido && !opts.semOrcamentos && hasPermission(ctx, PERMISSAO_VER_ORCAMENTO)
+    ? await itensDosOrcamentos(ctx, id, (await ctx.tx.query<Record<string, unknown> & { id: string }>(
       `select o.id, o.codigo, o.situacao, o.fornecedor_id, fo.name as fornecedor_nome, o.condicao_pagamento_id,
-              o.prazo_entrega_dias, o.validade_orcamento, o.valor_total
+              o.prazo_entrega_dias, o.validade_orcamento, o.valor_total,
+              cp.code as condicao_pagamento_codigo, cp.nome as condicao_pagamento_nome
          from erp.documentos_compra o
          join erp.people fo on fo.id = o.fornecedor_id and fo.organization_id = o.organization_id
+         left join erp.condicoes_pagamento cp on cp.id = o.condicao_pagamento_id and cp.organization_id = o.organization_id
         where o.organization_id = $1 and o.pedido_orcado_id = $2 and o.especie = 'orcamento'
-        order by o.created_at, o.id`, [ctx.orgId, id])).rows
+        order by o.created_at, o.id`, [ctx.orgId, id])).rows)
     : null;
   const titulos = await ctx.tx.query(
     `select id, code, number, installment_number, due_date, amount, balance, status
@@ -468,12 +507,19 @@ type PlanoGravado = Record<string, unknown> & { first_due_date?: string };
  * condição), ou `data_vencimento` — a mesma conta da confirmação (`plano?.first_due_date ?? data_vencimento`).
  * Olhar só `plano_parcelas` do corpo recusava ao salvar a compra com condição e sem o campo Vencimento, que a
  * confirmação aceitaria: a condição já define os vencimentos, e o plano derivado dela é o que vai para o banco.
+ *
+ * OPERACOES-01 F9b (decisão 286): `o.classificacaoDaTop` — o PAR da TOP (formato 5, `padroesDaTopNoSalvarDaCompra`)
+ * classifica a compra que não trouxe natureza e centro: a exigência deles no documento é dispensada (a confirmação usa o
+ * par da TOP). Forma e vencimento: iguais. Sem o parâmetro, o de hoje.
  */
-function conferirExigenciasDoTitulo(d: DocumentoCompraEntrada, efeitos: EfeitosPrevistos, total: string, plano: PlanoGravado | null): void {
+function conferirExigenciasDoTitulo(d: DocumentoCompraEntrada, efeitos: EfeitosPrevistos, total: string, plano: PlanoGravado | null, o: { classificacaoDaTop: boolean } = { classificacaoDaTop: false }): void {
   if (!efeitos.titulo || !D(total).gt(0)) return;
   const msg = "Informe a natureza financeira e o centro de resultado: esta compra gera contas a pagar";
-  if (!d.categoria_financeira_id) throw recusa("categoria_financeira_id", msg);
-  if (!d.centro_custo_id) throw recusa("centro_custo_id", msg);
+  // OPERACOES-01 F9b: o par da TOP no formato 5 dispensa a natureza e o centro no documento; a confirmação os usa.
+  if (!o.classificacaoDaTop) {
+    if (!d.categoria_financeira_id) throw recusa("categoria_financeira_id", msg);
+    if (!d.centro_custo_id) throw recusa("centro_custo_id", msg);
+  }
   if (efeitos.exigeFormaPagamento && !d.forma_pagamento_id) throw recusa("forma_pagamento_id", "A operação desta compra exige a forma de pagamento");
   if (efeitos.exigeVencimento && !(plano?.first_due_date ?? d.data_vencimento)) throw recusa("data_vencimento", "A operação desta compra exige o vencimento");
 }
@@ -644,7 +690,16 @@ async function lancarComTop(ctx: ServiceCtx, especie: EspecieCompra, d: Document
   // vencimento confere o primeiro vencimento deste plano — o que a confirmação vai ler do banco.
   const plano: PlanoGravado | null = d.plano_parcelas ? { ...d.plano_parcelas }
     : condicao ? { ...planoDaCondicao(condicao, { dataDocumento: d.data_documento, total: totais.total }) } : null;
-  if (efeitos) conferirExigenciasDoTitulo(d, efeitos, totais.total, plano);
+  // OPERACOES-01 F9b (decisão 286): os padrões financeiros da TOP (formato 5) no SALVAR — a compra e o pedido não se editam:
+  // a troca proibida e a classificação que a provisão do pedido exige são recusadas aqui, antes do número. Sem TOP no 5 com
+  // padrões ou provisão, nada muda (sem consulta quando a compra não gera título; o pedido é conferido com qualquer total).
+  const { classificacaoDaTop } = await padroesDaTopNoSalvarDaCompra(ctx, {
+    especie, versaoId: top.tipoOperacaoVersaoId,
+    geraTitulo: especie === "compra" && Boolean(efeitos?.titulo) && D(totais.total).gt(0),
+    documento: { naturezaId: classificacao?.categoriaFinanceiraId ?? null, centroCustoId: classificacao?.centroCustoId ?? null,
+      formaPagamentoId: d.forma_pagamento_id ?? null },
+  });
+  if (efeitos) conferirExigenciasDoTitulo(d, efeitos, totais.total, plano, { classificacaoDaTop });
 
   if (especie === "compra" && d.numero_nota) await conferirNotaDuplicada(ctx, { fornecedorId: d.fornecedor_id, numero: d.numero_nota, serie: d.serie_nota, excluirDocumentoId: null });
 
@@ -851,6 +906,10 @@ export default async function comprasRoutes(app: FastifyInstance) {
           if (u.rowCount !== 1) throw notFound("Documento");
           await audit(ctx.tx, ctx, "documentos_compra", id, "cancel", motivo ? { motivo } : undefined, { before: { situacao: doc.situacao }, after: { situacao: "cancelado" } });
           await reabrirPedidoDeOrigem(ctx, pedidoDeOrigem, id);
+          // OPERACOES-01 F9b (decisão 286): o pedido cancelado cancela os previstos dele; a compra aberta cancelada pode ter
+          // reaberto o pedido convertido (o previsto volta ao que o pedido promete).
+          if (especie === "pedido") await sincronizarProvisaoDoPedidoDeCompra(ctx, id, MOTIVOS_DA_PROVISAO.pedidoCancelado(motivo));
+          else if (pedidoDeOrigem) await sincronizarProvisaoDoPedidoDeCompra(ctx, pedidoDeOrigem.id, MOTIVOS_DA_PROVISAO_COMPRA.compraCancelada(String(doc.codigo)));
           return { id, situacao: "cancelado" };
         })).result;
     }));

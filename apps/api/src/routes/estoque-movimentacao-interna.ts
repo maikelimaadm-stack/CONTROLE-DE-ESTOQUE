@@ -21,20 +21,26 @@
  * As regras que TRAVAM (destino obrigatório, exigir requisição) nascem DESLIGADAS: no neutro da TOP nada muda. O banco
  * (0043) repete as invariantes em gatilho; a API confere antes, com a mensagem no campo.
  *
- * As rotas deste arquivo são registradas por `registrarMovimentacaoInterna(app)`, chamada do registro de
- * `estoque-documentos.ts` (prefixo `/api` vem do registro).
+ * AS OPÇÕES DO DESTINO (OPERACOES-01 F5b, decisão 282): a Central de Estoque escolhe cada dimensão do destino numa
+ * lista do servidor (`GET /api/estoque/<segmento>/destino/opcoes`, só nas espécies cujo destino a TOP configura). A
+ * lista e a conferência do lançamento (`referenciasValidas`) são montadas da MESMA tabela estática (`ALVO_DO_DESTINO`):
+ * uma régua só — o que a lista oferece o POST aceita, e o que o POST recusa a lista não oferece.
+ *
+ * As rotas deste arquivo são registradas por `registrarMovimentacaoInterna(app)` e `registrarOpcoesDoDestino(app, …)`,
+ * chamadas do registro de `estoque-documentos.ts` (prefixo `/api` vem do registro).
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, type Decimal } from "@agro/shared";
 import {
-  CAMPOS_DESTINO_ESTOQUE, ESPECIES_COM_DESTINO_ESTOQUE, especieDeOrigemEstoque, recusasDoDestinoPelaTop, recusasDoFluxoDoConsumo,
+  CAMPOS_DESTINO_ESTOQUE, ESPECIES_COM_DESTINO_ESTOQUE, ESPECIES_COM_DESTINO_PELA_TOP, especieDeOrigemEstoque, recusasDoDestinoPelaTop,
+  recusasDoFluxoDoConsumo,
   type ColunaDestinoEstoque, type DimensaoDestinoEstoque, type EspecieEstoque, type MotivoSaidaEstoque,
   type SecaoDestinoTop, type SecaoFluxoTop,
 } from "@agro/domain";
 import { runService, idempotent, audit } from "../lib/service.js";
 import { err, notFound } from "../lib/errors.js";
-import { scopedById, type ServiceCtx } from "../lib/context.js";
+import { exigirEmpresaDeLancamento, scopedById, type ServiceCtx } from "../lib/context.js";
 import { quantidadeLegivel } from "../services/stock-core.js";
 import { lerDocumentoEstoque, sqlAtendidoDoItem, sqlDevolvidoDoItem } from "./estoque-comum.js";
 
@@ -209,28 +215,58 @@ const REFERENCIA_INVALIDA: Readonly<Record<DimensaoDestinoEstoque, string>> = Ob
 });
 
 /**
- * As referências INFORMADAS do destino, numa consulta só (uma parte por alvo, `union all`), qualquer que seja o
- * número de dimensões. Cada parte devolve a chave da dimensão quando a referência existe, não está excluída, está
- * ATIVA e é da organização (centro de resultado ANALÍTICO, safra) ou da EMPRESA DO DOCUMENTO (máquina/equipamento,
- * ordem de serviço aberta ou em andamento, lote de animais, área/talhão). A leitura passa pela RLS do módulo da
- * transação (estoque): o que a pessoa não enxerga no estoque também não existe aqui.
+ * ONDE MORA CADA DIMENSÃO DO DESTINO E O QUE A TORNA VÁLIDA — a régua ÚNICA (OPERACOES-01 F5b). A conferência do
+ * lançamento (`referenciasValidas`) e as opções da tela (`opcoesDoDestino`) são MONTADAS desta tabela: o que a lista
+ * oferece é o que o POST aceita. Tudo aqui é texto FIXO deste arquivo (whitelist): a dimensão pedida só ESCOLHE uma
+ * entrada, e nenhum identificador de tabela ou coluna vem da entrada.
+ *   · `tabela`: o cadastro;
+ *   · `porEmpresa`: da EMPRESA do documento (máquina/equipamento, ordem de serviço, lote de animais, área/talhão) ou da
+ *     organização (centro de resultado, safra);
+ *   · `valida`: não excluída e ATIVA (o centro de resultado, ANALÍTICO; a ordem de serviço, aberta ou em andamento);
+ *   · `codigo` e `rotulo`: o que a lista mostra e onde a busca procura (a safra não tem código).
+ */
+interface AlvoDoDestino {
+  readonly tabela: string;
+  readonly porEmpresa: boolean;
+  readonly valida: string;
+  readonly codigo: string | null;
+  readonly rotulo: string;
+}
+const ALVO_DO_DESTINO: Readonly<Record<DimensaoDestinoEstoque, AlvoDoDestino>> = Object.freeze({
+  centroCusto: Object.freeze({ tabela: "erp.cost_centers", porEmpresa: false, valida: "is_active and kind = 'analytic' and deleted_at is null", codigo: "code", rotulo: "name" }),
+  equipamento: Object.freeze({ tabela: "erp.equipments", porEmpresa: true, valida: "status = 'active' and deleted_at is null", codigo: "code", rotulo: "description" }),
+  ordemServico: Object.freeze({ tabela: "erp.service_orders", porEmpresa: true, valida: "status in ('open', 'in_progress') and deleted_at is null", codigo: "code", rotulo: "coalesce(nullif(description, ''), code)" }),
+  loteAnimais: Object.freeze({ tabela: "erp.batches", porEmpresa: true, valida: "status = 'active' and deleted_at is null", codigo: "code", rotulo: "description" }),
+  area: Object.freeze({ tabela: "erp.areas", porEmpresa: true, valida: "is_active and deleted_at is null", codigo: "code", rotulo: "name" }),
+  safra: Object.freeze({ tabela: "erp.harvests", porEmpresa: false, valida: "is_active and deleted_at is null", codigo: null, rotulo: "description" }),
+});
+
+/** A entrada da tabela para a dimensão. Dimensão desconhecida NEGA (erro do chamador): nunca cai noutra entrada. */
+function alvoDoDestino(dimensao: DimensaoDestinoEstoque): AlvoDoDestino {
+  if (!Object.hasOwn(ALVO_DO_DESTINO, dimensao)) throw new Error("estoque-movimentacao-interna: dimensão do destino desconhecida");
+  return ALVO_DO_DESTINO[dimensao];
+}
+
+/**
+ * A consulta das referências INFORMADAS, montada UMA vez (na carga do módulo) a partir de `ALVO_DO_DESTINO`: uma parte por
+ * dimensão (`union all`), na ordem de `CAMPOS_DESTINO_ESTOQUE`. Parâmetros: `$1` a organização, `$2` a empresa do
+ * documento e, de `$3` a `$8`, o id informado de cada dimensão, na mesma ordem.
+ */
+const SQL_REFERENCIAS_VALIDAS: string = CAMPOS_DESTINO_ESTOQUE.map((c, i) => {
+  const a = alvoDoDestino(c.chave);
+  return `select '${c.chave}'::text as chave from ${a.tabela}
+      where id = $${i + 3}::uuid and organization_id = $1${a.porEmpresa ? " and empresa_id = $2" : ""} and (${a.valida})`;
+}).join("\n     union all ");
+
+/**
+ * As referências INFORMADAS do destino, numa consulta só (`SQL_REFERENCIAS_VALIDAS`), qualquer que seja o número de
+ * dimensões. Cada parte devolve a chave da dimensão quando a referência existe, não está excluída, está ATIVA e é da
+ * organização ou da EMPRESA DO DOCUMENTO (`ALVO_DO_DESTINO`). A leitura passa pela RLS do módulo da transação
+ * (estoque): o que a pessoa não enxerga no estoque também não existe aqui.
  */
 async function referenciasValidas(ctx: ServiceCtx, empresaId: string, informados: DestinoEstoque): Promise<Set<DimensaoDestinoEstoque>> {
-  const r = await ctx.tx.query<{ chave: DimensaoDestinoEstoque }>(
-    `select 'centroCusto'::text as chave from erp.cost_centers
-      where id = $3::uuid and organization_id = $1 and is_active and kind = 'analytic' and deleted_at is null
-     union all select 'equipamento' from erp.equipments
-      where id = $4::uuid and organization_id = $1 and empresa_id = $2 and status = 'active' and deleted_at is null
-     union all select 'ordemServico' from erp.service_orders
-      where id = $5::uuid and organization_id = $1 and empresa_id = $2 and status in ('open', 'in_progress') and deleted_at is null
-     union all select 'loteAnimais' from erp.batches
-      where id = $6::uuid and organization_id = $1 and empresa_id = $2 and status = 'active' and deleted_at is null
-     union all select 'area' from erp.areas
-      where id = $7::uuid and organization_id = $1 and empresa_id = $2 and is_active and deleted_at is null
-     union all select 'safra' from erp.harvests
-      where id = $8::uuid and organization_id = $1 and is_active and deleted_at is null`,
-    [ctx.orgId, empresaId, informados.centro_custo_id, informados.equipamento_id, informados.ordem_servico_id,
-      informados.lote_animais_id, informados.area_id, informados.safra_id]);
+  const r = await ctx.tx.query<{ chave: DimensaoDestinoEstoque }>(SQL_REFERENCIAS_VALIDAS,
+    [ctx.orgId, empresaId, ...CAMPOS_DESTINO_ESTOQUE.map((c) => informados[c.coluna])]);
   return new Set(r.rows.map((x) => x.chave));
 }
 
@@ -333,6 +369,89 @@ async function encerrarSaldo(ctx: ServiceCtx, id: string, motivo: string) {
   if (u.rowCount !== 1) throw notFound("Documento");
   await audit(ctx.tx, ctx, "documentos_estoque", doc.id, "encerrar_saldo", { motivo });
   return { id: doc.id, situacao: "confirmado" as const, atendimento: "encerrado" as const };
+}
+
+// ─────────────── as opções do destino (a lista da tela) ───────────────
+
+/** Uma opção da lista: o id (o que o POST recebe), o código (a safra não tem) e o rótulo. */
+export interface OpcaoDoDestino { id: string; codigo: string | null; rotulo: string }
+
+const MENSAGEM_PARAMETRO_REPETIDO = "Parâmetro repetido: informe um valor só";
+const MENSAGEM_PARAMETRO_NAO_RECONHECIDO = "Parâmetro não reconhecido";
+
+/**
+ * Os parâmetros de `/destino/opcoes`. `.strict()`: parâmetro desconhecido é recusado, nunca ignorado. A empresa sai em
+ * MINÚSCULAS (como no corpo do POST). `limite` de 1 a 50, padrão 20.
+ */
+const opcoesDoDestinoSchema = z.object({
+  dimensao: z.enum(CAMPOS_DESTINO_ESTOQUE.map((c) => c.chave)),
+  empresa_id: z.string().uuid().transform((v) => v.toLowerCase()),
+  busca: z.string().trim().max(100).optional(),
+  limite: z.coerce.number().int().min(1).max(50).default(20),
+}).strict();
+type ParametrosDasOpcoes = z.infer<typeof opcoesDoDestinoSchema>;
+const PARAMETROS_DAS_OPCOES: readonly string[] = Object.freeze(Object.keys(opcoesDoDestinoSchema.shape));
+
+/**
+ * Lê a query: parâmetro REPETIDO (chega como lista) e parâmetro DESCONHECIDO são 422 no próprio parâmetro — nunca 500,
+ * nunca "o primeiro vale", nunca ignorado; o resto, pelo zod (422 no parâmetro).
+ */
+function lerParametrosDasOpcoes(query: unknown): ParametrosDasOpcoes {
+  const bruta = (query ?? {}) as Record<string, unknown>;
+  const recusas: Recusa[] = [];
+  for (const [chave, valor] of Object.entries(bruta)) {
+    if (Array.isArray(valor)) recusas.push({ path: chave, message: MENSAGEM_PARAMETRO_REPETIDO });
+    else if (!PARAMETROS_DAS_OPCOES.includes(chave)) recusas.push({ path: chave, message: MENSAGEM_PARAMETRO_NAO_RECONHECIDO });
+  }
+  if (recusas.length) throw recusar(recusas);
+  return opcoesDoDestinoSchema.parse(bruta);
+}
+
+/** O texto da busca como LITERAL do `ilike`: `%`, `_` e a barra não são curingas. */
+const literalDoIlike = (s: string) => s.replace(/[\\%_]/g, (x) => `\\${x}`);
+
+/**
+ * As OPÇÕES de UMA dimensão do destino — UMA consulta, montada da entrada da tabela (`ALVO_DO_DESTINO`) com os MESMOS
+ * predicados da conferência do POST: da organização e, nas dimensões da empresa, da empresa pedida; válida; a busca
+ * (opcional) no código ou no rótulo, sem curinga vindo da entrada; ordem `codigo nulls last, rotulo, id`; até `limite`.
+ * Tudo parametrizado; a leitura passa pela RLS do módulo da transação (estoque), como a conferência.
+ */
+async function opcoesDoDestino(ctx: ServiceCtx, q: ParametrosDasOpcoes): Promise<OpcaoDoDestino[]> {
+  const a = alvoDoDestino(q.dimensao);
+  const params: unknown[] = [ctx.orgId];
+  const where = ["organization_id = $1"];
+  if (a.porEmpresa) { params.push(q.empresa_id); where.push(`empresa_id = $${params.length}`); }
+  where.push(`(${a.valida})`);
+  if (q.busca) {
+    params.push(`%${literalDoIlike(q.busca)}%`);
+    const onde = [a.codigo, a.rotulo].filter((x): x is string => x !== null);
+    where.push(`(${onde.map((x) => `${x} ilike $${params.length}`).join(" or ")})`);
+  }
+  params.push(q.limite);
+  const r = await ctx.tx.query<OpcaoDoDestino>(
+    `select id, ${a.codigo ?? "null::text"} as codigo, ${a.rotulo} as rotulo
+       from ${a.tabela}
+      where ${where.join(" and ")}
+      order by codigo nulls last, rotulo, id
+      limit $${params.length}`, params);
+  return r.rows.map((x) => ({ id: x.id, codigo: x.codigo, rotulo: x.rotulo }));
+}
+
+/**
+ * `GET /api/estoque/<segmento>/destino/opcoes?dimensao=&empresa_id=&busca=&limite=` — SÓ nas espécies cujo destino a
+ * TOP configura (`ESPECIES_COM_DESTINO_PELA_TOP`: saída, requisição e consumo); nas outras a rota não existe (a
+ * devolução de consumo copia o destino do consumo, e não o informa). Porta OPERACIONAL `<recurso>.create`: quem lança a
+ * espécie é quem escolhe o destino dela. A empresa da query é PEDIDO (fora do escopo do módulo estoque → 422, como no
+ * POST). Resposta `{ itens: [{ id, codigo, rotulo }] }`. Só leitura. Registrada no laço das espécies de
+ * `estoque-documentos.ts`, antes de `/<segmento>/:id`.
+ */
+export function registrarOpcoesDoDestino(app: FastifyInstance, e: { especie: EspecieEstoque; segmento: string; recurso: string }): void {
+  if (!ESPECIES_COM_DESTINO_PELA_TOP.includes(e.especie)) return;
+  app.get(`/estoque/${e.segmento}/destino/opcoes`, async (req) => runService(app, req, `${e.recurso}.create`, async (ctx) => {
+    const q = lerParametrosDasOpcoes(req.query);
+    await exigirEmpresaDeLancamento(ctx, q.empresa_id);
+    return { itens: await opcoesDoDestino(ctx, q) };
+  }));
 }
 
 const chaveDeIdempotencia = (h: unknown) => (typeof h === "string" ? h : undefined);

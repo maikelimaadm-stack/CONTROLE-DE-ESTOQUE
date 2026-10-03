@@ -90,10 +90,12 @@ export interface TituloDaBaixa { id: string; direction: "payable" | "receivable"
  * Juros, multa e acréscimo (com natureza configurada) e a tarifa viram MOVIMENTOS PRÓPRIOS da mesma conta e data:
  * cada um com a sua natureza, e o vínculo com a baixa (`title_settlement_id`, `componente_baixa`) gravado logo
  * depois — é por ele que o estorno da baixa acha e cancela os componentes. A tarifa é sempre SAÍDA (despesa do
- * banco); os outros seguem o sentido do título.
+ * banco); os outros seguem o sentido do título. O imóvel rural do LCDPR (F9) é o MESMO da baixa — já resolvido por
+ * quem chama (`null` = nenhum): o componente é caixa do mesmo lançamento, no mesmo imóvel.
  */
 export async function lancarComponentesDaBaixa(ctx: ServiceCtx, p: {
   baixaId: string; titulo: TituloDaBaixa; contaId: string; data: string; componentes: readonly ComponenteSeparado[]; rateioDoTitulo: readonly LinhaDoRateioDoTitulo[];
+  imovelRuralId: string | null;
 }): Promise<{ componente: ComponenteBaixa; valor: string; bank_movement_id: string }[]> {
   const out: { componente: ComponenteBaixa; valor: string; bank_movement_id: string }[] = [];
   for (const c of p.componentes) {
@@ -104,7 +106,7 @@ export async function lancarComponentesDaBaixa(ctx: ServiceCtx, p: {
       document: p.titulo.number, note: `${rotulo} da baixa do título ${p.titulo.number}`, proprietaryId: p.titulo.proprietary_id,
       personId: p.titulo.person_id, harvestId: p.titulo.harvest_id, isDeductible: p.titulo.is_deductible,
       sourceType: "title_settlements", sourceId: p.titulo.id,
-      apportionment: rateioDoComponente(c.naturezaId, c.valor, p.rateioDoTitulo), rateioJaGravado: true
+      apportionment: rateioDoComponente(c.naturezaId, c.valor, p.rateioDoTitulo), rateioJaGravado: true, imovelRuralId: p.imovelRuralId
     });
     const v = await ctx.tx.query("update erp.bank_movements set title_settlement_id=$2, componente_baixa=$3 where id=$1 and organization_id=$4", [id, p.baixaId, c.componente, ctx.orgId]);
     if (v.rowCount !== 1) throw err("NOT_FOUND", "Movimento não encontrado");
@@ -115,14 +117,17 @@ export async function lancarComponentesDaBaixa(ctx: ServiceCtx, p: {
 
 /**
  * A tarifa do LOTE é um movimento só (saída, natureza da tarifa bancária), com os centros e safras da UNIÃO dos
- * rateios dos títulos do lote, e o vínculo `lote_baixa_id` — o estorno da última baixa do lote o cancela.
+ * rateios dos títulos do lote, e o vínculo `lote_baixa_id` — o estorno da última baixa do lote o cancela. O imóvel
+ * rural (F9) é o do lote: o informado, ou (ausente) o padrão da empresa do lote — a regra de `createBankMovement`.
  */
 export async function lancarTarifaDoLote(ctx: ServiceCtx, p: {
   loteId: string; empresaId: string; contaId: string; data: string; valor: string; naturezaId: string; rateioBase: readonly LinhaDoRateioDoTitulo[]; nota: string;
+  imovelRuralId?: string | null;
 }): Promise<string> {
   const id = await createBankMovement(ctx, {
     empresaId: p.empresaId, bankAccountId: p.contaId, date: p.data, type: "out", amount: p.valor, interest: "0", note: p.nota,
-    sourceType: "title_settlement_batch", sourceId: p.loteId, apportionment: rateioDoComponente(p.naturezaId, p.valor, p.rateioBase), rateioJaGravado: true
+    sourceType: "title_settlement_batch", sourceId: p.loteId, apportionment: rateioDoComponente(p.naturezaId, p.valor, p.rateioBase), rateioJaGravado: true,
+    imovelRuralId: p.imovelRuralId
   });
   const v = await ctx.tx.query("update erp.bank_movements set lote_baixa_id=$2, componente_baixa='tarifa' where id=$1 and organization_id=$3", [id, p.loteId, ctx.orgId]);
   if (v.rowCount !== 1) throw err("NOT_FOUND", "Movimento não encontrado");
@@ -133,9 +138,11 @@ export async function lancarTarifaDoLote(ctx: ServiceCtx, p: {
  * O EXCEDENTE vira crédito do parceiro: um título de ADIANTAMENTO da MESMA direção, parceiro e empresa, já baixado
  * pelo MESMO movimento da baixa (o dinheiro que saiu ou entrou a mais está nele). `source_type='title_settlements'`
  * e `source_id` = a baixa: é assim que o estorno da baixa encontra o crédito e recusa estornar se ele já foi usado.
+ * A baixa do crédito leva o MESMO imóvel rural da baixa que o gerou (F9): é o mesmo movimento de caixa.
  */
 export async function gerarCreditoDoExcedente(ctx: ServiceCtx, p: {
   baixaId: string; titulo: TituloDaBaixa; data: string; contaId: string; movimentoId: string; valor: string; loteId: string | null; rateioDoTitulo: readonly LinhaDoRateioDoTitulo[];
+  imovelRuralId: string | null;
 }): Promise<{ titulo_id: string; valor: string }> {
   const nota = `Crédito do excedente da baixa do título ${p.titulo.number}`;
   const criado = await createTitles(ctx, {
@@ -147,8 +154,8 @@ export async function gerarCreditoDoExcedente(ctx: ServiceCtx, p: {
   });
   const tituloId = criado.ids[0]!;
   const baixa = await ctx.tx.query<{ id: string }>(
-    "insert into erp.title_settlements(organization_id,title_id,settlement_date,settlement_kind,bank_account_id,bank_movement_id,amount,net_amount,lote_id,note,created_by) values ($1,$2,$3,'bank_movement',$4,$5,$6,$6,$7,$8,$9) returning id",
-    [ctx.orgId, tituloId, p.data, p.contaId, p.movimentoId, money(p.valor), p.loteId, nota, ctx.user.id]);
+    "insert into erp.title_settlements(organization_id,title_id,settlement_date,settlement_kind,bank_account_id,bank_movement_id,amount,net_amount,lote_id,note,created_by,imovel_rural_id) values ($1,$2,$3,'bank_movement',$4,$5,$6,$6,$7,$8,$9,$10) returning id",
+    [ctx.orgId, tituloId, p.data, p.contaId, p.movimentoId, money(p.valor), p.loteId, nota, ctx.user.id, p.imovelRuralId]);
   await audit(ctx.tx, ctx, "financial_titles", tituloId, "create", { count: 1, credito_da_baixa: p.baixaId });
   await audit(ctx.tx, ctx, "title_settlements", baixa.rows[0]!.id, "create", { title: tituloId, net: money(p.valor), credito_da_baixa: p.baixaId });
   return { titulo_id: tituloId, valor: money(p.valor) };

@@ -60,11 +60,11 @@
 -- =====================================================================
 
 -- ---------- 1) trava de concorrência ----------
--- Chave reservada para esta fase (2026,81).
+-- Chave reservada para esta fase (2026,80).
 do $$
 begin
-  if not pg_try_advisory_xact_lock(2026, 81) then
-    raise exception 'OPERACOES-01 F10: outra transacao ja detem a trava desta migration (2026,81). Nada foi aplicado.';
+  if not pg_try_advisory_xact_lock(2026, 80) then
+    raise exception 'OPERACOES-01 F10: outra transacao ja detem a trava desta migration (2026,80). Nada foi aplicado.';
   end if;
 end $$;
 

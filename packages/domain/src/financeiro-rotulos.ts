@@ -1,5 +1,15 @@
 import { NOT_INFORMED, UNKNOWN_VALUE } from "./labels.js";
 import type { SituacaoTitulo } from "./financeiro-situacao.js";
+import { OPCOES_TIPO_EXPLORACAO, OPCOES_TIPO_LCDPR, type TipoExploracaoImovel, type TipoLcdpr } from "./financeiro-lcdpr.js";
+
+/**
+ * Os rótulos do LCDPR (F9, decisão 286) saem das MESMAS opções do cadastro (`financeiro-lcdpr.ts`): o tipo da natureza
+ * e o tipo de exploração do imóvel têm um texto só — o da ficha é o da conferência.
+ */
+const rotulosDasOpcoes = <K extends string>(opcoes: readonly (readonly [K, string])[]): Readonly<Record<K, string>> =>
+  Object.freeze(Object.fromEntries(opcoes) as Record<K, string>);
+const ROTULOS_TIPO_LCDPR: Readonly<Record<TipoLcdpr, string>> = rotulosDasOpcoes(OPCOES_TIPO_LCDPR);
+const ROTULOS_TIPO_EXPLORACAO: Readonly<Record<TipoExploracaoImovel, string>> = rotulosDasOpcoes(OPCOES_TIPO_EXPLORACAO);
 
 /**
  * Rótulos PT-BR da Central Financeira (decisão 285). Moram aqui, e não em `labels.ts`, porque são do financeiro novo
@@ -25,9 +35,15 @@ export const ROTULOS_FINANCEIRO = {
     sem_baixa: "Sem baixa confirmada",
     movimento_compartilhado: "Baixa em lote com movimento único: estorne o lote",
     movimento_conciliado: "Movimento conciliado: desfaça a conciliação antes",
-    credito_usado: "O crédito gerado já foi usado: estorne a compensação antes"
+    credito_usado: "O crédito gerado já foi usado: estorne a compensação antes",
+    // OPERACOES-01 F9 (decisão 286): o previsto da provisão sai do lote — muda só pelo documento de origem.
+    previsto: "Título previsto: muda pelo documento de origem"
   },
-  regime_dre: { competencia: "Competência", caixa: "Caixa" }
+  regime_dre: { competencia: "Competência", caixa: "Caixa" },
+  // OPERACOES-01 F9 (decisão 286): o LCDPR — o tipo da natureza, o tipo de exploração do imóvel e a situação da conferência.
+  tipo_lcdpr: ROTULOS_TIPO_LCDPR,
+  tipo_exploracao: ROTULOS_TIPO_EXPLORACAO,
+  situacao_conferencia_lcdpr: { conferidas: "Conferidas", pendentes: "Pendentes" }
 } as const satisfies Record<string, Record<string, string>>;
 
 /** Rótulo PT-BR de um valor do financeiro. Vazio/nulo → "Não informado"; fora do domínio → "Desconhecido" (nunca o valor cru). */

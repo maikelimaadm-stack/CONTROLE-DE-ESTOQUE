@@ -57,9 +57,10 @@ As famílias citadas aqui são as declaradas no registry — este documento as r
 
 ### Portal de Compras
 Processos de compra, da solicitação ao recebimento. Famílias hoje declaradas no escopo: `compras.solicitacao`,
-`compras.pedido`, `compras.compra` (COMPRAS-01, decisão 267) e `compras.orcamento` (OPERACOES-01 F6a, decisão 283; sem
-tela até a F6b). O lançamento de Pedido de compra e de Compra escolhe uma TOP configurada da família (obrigatória); a
-solicitação continua sem TOP. O Pedido de compra tem próximos passos (COMPRAS-02, decisão 268): recebê-lo, inteiro ou
+`compras.pedido`, `compras.compra` (COMPRAS-01, decisão 267) e `compras.orcamento` (OPERACOES-01 F6a, decisão 283; com
+tela desde a F6b: nasce do pedido aprovado para orçamento, nunca do "Novo"). O lançamento de Pedido de compra e de
+Compra escolhe uma TOP configurada da família (obrigatória); a solicitação continua sem TOP. O Pedido de compra tem
+próximos passos (COMPRAS-02, decisão 268): recebê-lo, inteiro ou
 em partes, gera uma Compra ligada a ele — e, desde a decisão 283, o pedido aprovado para orçamento recebe orçamentos de
 compra (a segunda aresta, pedido → orçamento). Os campos da Central de Compras seguem o layout do documento ligado à
 TOP (COMPRAS-03, decisão 269), o mesmo mecanismo de Vendas.
@@ -379,9 +380,24 @@ API e no editor da TOP (as telas da Central de Compras são da F6b):**
 - na TOP (formato 5): "Exigir pedido finalizado para receber" no pedido e "Divergência com o pedido" na compra, as duas
   desligadas por padrão.
 
-A Central de Compras de hoje não muda, nem o menu: o orçamento só aparece no Tipo da lista e na consulta genérica para
-quem tem `orcamentos_compra.view`. Com "Exigir pedido finalizado para receber" = Sim, esta tela não recebe o pedido até a
-F6b pôr o Finalizar. Contrato em `docs/OPERACOES-CONTRACT.md` §4.
+As telas vieram na F6b (bloco seguinte). Contrato em `docs/OPERACOES-CONTRACT.md` §4.
+
+**O que EXISTE (OPERACOES-01 F6b, decisão 283) — as telas, na Central de Compras, só com a capacidade
+`finalizacaoEOrcamento` declarada pela API (sem ela, a Central de hoje):**
+
+- no pedido: "Finalizar" (com a prévia do servidor), "Aprovar para orçamento", "Novo orçamento" (pelo leque de TOPs de
+  orçamento do pedido), o bloco da Aprovação (Aprovar/Reprovar a quem tem `pedidos_compra.approve` e `compras.approve`) e
+  a aba "Orçamentos" (a comparação por total e por preço de item, "Escolher" o vencedor e "Cancelar"; sem cascata: os
+  abertos de um pedido que não está mais aberto são avisados e cancelados um a um);
+- o orçamento de compra: nasce SÓ do pedido aprovado para orçamento (o "Novo" do Portal e o da barra não o oferecem),
+  com os itens do pedido travados e o preço digitado; a consulta edita no lugar e cancela;
+- na compra: a divergência com o pedido na prévia da confirmação;
+- no Portal: o Tipo "Orçamento de compra" (com `orcamentos_compra.view`; quem só tem essa capacidade abre a lista já
+  nele), que segue a capacidade lida — contra a API anterior ele some, porque a lista dela viria vazia; o menu Compras ›
+  Documentos e o detalhe do documento de compra aceitam `orcamentos_compra.view`.
+
+O pedido finalizado recebe, encerra o saldo e se cancela pela tela. Com "Exigir pedido finalizado para receber" = Sim,
+o "Receber…" do pedido aberto fica desabilitado até ele ser finalizado. Contrato em `docs/OPERACOES-CONTRACT.md` §4 (F6b).
 
 **O que FALTA (e não deve ser simulado):**
 
@@ -507,16 +523,21 @@ nunca numa Central só. Duas Centrais copiadas divergem em silêncio: a que não
 | `itens.tsx`, `itens-salvos.tsx`, `configurar-colunas.tsx` | a grade da criação (seleção pelo círculo, Grade \| Formulário, rodapé; lote/validade, armazém por item e o modo "da origem" opcionais), os itens salvos e Configurar colunas |
 | `painel.tsx` | painel repartido, coluna, largo, o plano de parcelas (editável e em leitura), títulos e derivados |
 | `dialogos.tsx` | Confirmar (com a prévia que a espécie põe dentro), Cancelar (motivo opcional, 1–500) e Descartar |
-| `pesquisa.tsx` | a pesquisa (lookup) da Central |
+| `pesquisa.tsx` | a pesquisa (lookup) da Central, sobre duas fontes: `/api/resources/<recurso>/options` (o local, sempre; o produto sem a capacidade) e, para o PRODUTO com a capacidade `pesquisaDeProdutos`, `/api/produtos/pesquisa` (o saldo do local da linha, "Só com saldo neste local" nas saídas, "Mostrar mais") |
+| `pesquisa-de-produtos.ts` | a pesquisa de produto nova (OPERACOES-01 F3b, decisão 280): a capacidade (`useFonteDaPesquisaDeProdutos`, forma e versão exatas, uma vez por carregamento), o leitor estrito da página, a query e a página no servidor (`usePesquisaDeProdutos`, chave de cache própria) |
+| `local-padrao.tsx` | o "Local de estoque" do cabeçalho (OPERACOES-01 F3b): `useLocalDoCabecalho` (o padrão do layout, a escolha por empresa, o descarte) e `CampoDoLocalPadrao` (os locais da empresa do documento); estado da tela, nunca no corpo |
 | `duplicar-memoria.ts`, `salvo.ts` | a entrega EM MEMÓRIA da cópia do Duplicar e do "Salvo" (nada na URL, nada no navegador); em `salvo.ts`, a regra ÚNICA do diálogo de Confirmar (OPERACOES-01 F2): `confirmarPodeAbrir` (só em documento aberto e para quem pode confirmar) e `abreConfirmarNaChegada` (a chegada da criação) |
 | `salvar.ts` | o Salvar da Central (OPERACOES-01 F2, decisão 279): `avisoDoSalvar`/`avisarSalvo` (o aviso lido de `confirmacaoAutomatica` na resposta, UM por Salvar), `mensagemDoServidorNoMolde` (a pontuação da mensagem do servidor; as Aprovações a reexportam) e `useCriarDocumento` (o POST de criar pela porta que a Central passa, com a `Idempotency-Key` por tentativa) |
 | `regras-gerais.ts` | as regras gerais da TOP na tela (OPERACOES-01 F2): `lerRegrasGerais` (o bloco `regrasGerais` de `/regras-da-operacao`; ausente ou fora da forma → o neutro inteiro), `rotuloDoSalvar(regras, podeConfirmar)` e `exigeAoMenosUmItem` |
 | `contrato.ts` | só tipos e constantes triviais: o contrato do adaptador e das peças |
 
 O motor não conhece espécie: dentro de `features/central/` não há rota de ESPÉCIE (`/api/sales/*`, `/api/compras/*`),
-cliente nem fornecedor. Ele chama só portas genéricas: `/api/resources/<recurso>/options` na pesquisa (`pesquisa.tsx`),
-`/api/resources/<recurso>/<id>` no rótulo e na unidade (`itens.tsx`), e o saldo pela `StockCell` de `features/docs/shared`
-(`/api/stock/balances/<armazém>/<produto>`). A pesquisa mostra Código e Descrição, sem coluna de estoque. O POST de criar
+cliente nem fornecedor. Ele chama só portas genéricas: `/api/resources/<recurso>/options` na pesquisa (`pesquisa.tsx`)
+e, para o PRODUTO com a capacidade `pesquisaDeProdutos` (`GET /api/produtos/pesquisa/capacidades`),
+`/api/produtos/pesquisa` (o saldo do local da linha, "Só com saldo neste local" nas saídas, página no servidor —
+OPERACOES-01 F3b, decisão 280); `/api/resources/<recurso>/<id>` no rótulo e na unidade (`itens.tsx`); e o saldo pela
+`StockCell` de `features/docs/shared` (`/api/stock/balances/<armazém>/<produto>`). A pesquisa de produto mostra Código,
+Descrição e, para quem vê o saldo do local, Estoque. O POST de criar
 (`useCriarDocumento`, `salvar.ts`) vai à porta que a Central passa; o motor não a conhece. (Corrigido pela decisão 278: a 276 dizia "não há rota de API".)
 
 **O contrato do adaptador** (`AdaptadorDaCentral`, em `features/central/contrato.ts`). Cada Central entrega:
@@ -567,7 +588,7 @@ O motor ganhou três opções, todas opcionais e com o padrão que mantém a Cen
 | Opção | Onde | Padrão (a venda) | A compra |
 |---|---|---|---|
 | `custoMedioNoUnitario` | `ItensDaCentral` (`itens.tsx`) | `true`: o unitário vazio ou "0" recebe o custo médio do armazém | `false`, no lançar e no receber: o unitário é o preço do fornecedor ("0" é bonificação); o saldo continua lido, só a escrita sai |
-| `armazemForcado` | `ItensDaCentral` (`itens.tsx`) | `false`: a coluna Armazém segue o layout | `regras.exigeArmazem === true`: só a regra da operação passa por cima do layout |
+| `armazemForcado` | `ItensDaCentral` (`itens.tsx`) | `false`: a coluna Armazém segue o layout | `regras.exigeArmazem === true`: só a regra da operação passa por cima do layout; a coluna forçada entra logo antes do Código/Produto (OPERACOES-01 F3b) |
 | `casasDaQuantidade` | `ItensSalvos` (`itens-salvos.tsx`) | `2` | `4`: quantidade, Recebido e Saldo, na grade e no formulário de leitura (a coluna é `numeric(18,4)`) |
 
 `armazemPorItem` continua significando "a coluna Armazém é PERMITIDA por linha": permitir não é forçar. O custo médio
@@ -594,8 +615,26 @@ A coluna e o campo do item que apontam para `warehouses` dizem "Local de estoque
 consulta, no formulário do item, no rótulo da ação ("Local de estoque: <nome>") e na pesquisa ("Pesquisar local de
 estoque"). A coluna da grade tem 122 px (antes 108): é a menor largura par em que o rótulo cabe inteiro também com o
 " *" de coluna obrigatória (`features/central/itens.tsx:45`, `itens-salvos.tsx:56`). As chaves (`armazem`,
-`armazemPorItem`, `armazemForcado`, `exigeArmazem`), os testids e a ordem das colunas não mudam — a ordem muda na F3b.
+`armazemPorItem`, `armazemForcado`, `exigeArmazem`) e os testids não mudam; a ordem das colunas mudou na F3b (abaixo).
 As "colunas Armazém" das seções anteriores são esta coluna, com o nome de antes.
+
+### O local antes do produto e a pesquisa com o saldo no motor (OPERACOES-01 F3b, decisão 280)
+
+- **Ordem.** Sem layout, a grade é Local de estoque → Código → Produto → Estoque → … e o formulário do item, Local →
+  Produto → Estoque → … (`itens.tsx:68`, `:76`); a coluna forçada (`armazemForcado`) entra logo antes do
+  Código/Produto. Com layout, manda o layout. A consulta segue `colunas.leitura` de cada espécie (as duas com o Local
+  primeiro), e o formulário de leitura traz o Local antes do Produto (`itens-salvos.tsx:85-88`).
+- **Local do cabeçalho.** `armazemPadrao` (agora `LocalDeEstoque`) é o local das linhas NOVAS. A espécie o tira de
+  `useLocalDoCabecalho` (`local-padrao.tsx`) e desenha `CampoDoLocalPadrao` nos Dados principais. Rótulo vazio não vira
+  "conhecido": a célula lê o rótulo do cadastro (`itens.tsx:257`).
+- **Pesquisa de produto.** Opção nova `pesquisaDeProduto` (`PESQUISA_DE_PRODUTO_DA_SAIDA` | `…_DA_ENTRADA`; ausente =
+  entrada). O painel recebe `produto = { fonte, armazemId (o da LINHA), sentido, soControlaEstoque }` só no campo
+  `product_id`; a pesquisa de local continua sem ele, idêntica. Sem a capacidade, o painel é o de antes, com dois
+  atributos a mais (`data-fonte`, `data-coluna`). As chamadas e o que cada uma liga estão na tabela
+  `COMBINACOES_DO_MOTOR` de `apps/web/e2e/compras-03-central-unitario.spec.ts`: Vendas `…_DA_SAIDA`, Compras · lançar
+  `…_DA_ENTRADA`, Compras · receber ausente.
+- **Desvio da 276 fechado.** A 276 deixou as duas Centrais em `/api/resources/<recurso>/options` ("a troca, para as
+  duas, é outra fatia"); a F3b fez a troca nas duas, com a de antes como padrão sem a capacidade.
 
 ### As regras gerais da TOP e a aprovação nas Centrais de Vendas e de Compras (OPERACOES-01 F2, decisão 279)
 
@@ -623,4 +662,23 @@ As "Movimentações Financeiras" do §3 ganham a sua Central: o menu Financeiro 
 Fluxo e resultado e Adiantamentos. O financeiro NÃO usa o motor da Central de documento (VISUAL-UX-04): cada linha é uma
 parcela de título, e a grade é a `DataTable` sobre o `Base1Grid`, com seleção para as ações em lote. Baixa, estorno,
 transferência, adiantamento e compensação continuam efeitos de um título ou de uma conta, sem TOP: a TOP financeira é da
-F9 (decisão 286). Contrato em `docs/OPERACOES-CONTRACT.md` §6.
+F9 (decisão 286; ver abaixo). Contrato em `docs/OPERACOES-CONTRACT.md` §6.
+
+### O financeiro pela TOP na Central Financeira (OPERACOES-01 F9a, decisão 286)
+
+Com `financeiroPelaTop` declarado, o lançamento avulso (só o novo) e o "Novo movimento bancário" começam pelo "Tipo de
+operação" da família (`fin-lancamento-top`, `fin-movimento-top`; a lista é do servidor, `GET /api/financeiro/tops`).
+Escolher a TOP aplica os padrões dela — tipo de título e conta prevista (no movimento, a conta) e a natureza e o centro
+da 1ª linha do rateio —, sem apagar o resto do que foi digitado; a escolha nunca é automática (nem a TOP padrão): sem
+escolha, o corpo de hoje. A TOP que não deixa o documento trocar os padrões trava esses campos (aviso
+`fin-padroes-travados` "Esta operação não deixa trocar os padrões."; "Padrão da operação: não muda neste lançamento"; no
+rateio em R$, a natureza e o centro desabilitados em todas as linhas, com safra, área e valor livres, `fin-rateio-travado`;
+no "Novo movimento bancário", que usa o editor de rateio compartilhado, a trava é por reaplicação — a prop no editor
+compartilhado é pendência registrada na decisão 286). Família sem TOP ativa: `fin-sem-top` "Nenhum tipo de operação
+ativo para este lançamento: ele segue sem operação.". O detalhe do título mostra a origem pelo nome e "Tipo de operação:
+<código> — <nome> (versão N)"; o previsto mostra o aviso `fin-aviso-previsto` e não oferece Baixar, Editar, Cancelar nem
+Duplicar. Com `capacidades.lcdpr`, a baixa bancária e o movimento de entrada ou saída de uma empresa mostram "Imóvel
+rural (LCDPR)" com o padrão da empresa já escolhido (`fin-baixa-imovel`, `fin-movimento-imovel`), e as baixas do
+detalhe, a coluna "Imóvel rural"; a baixa em lote da Central ainda não mostra o campo (o servidor aplica o padrão de
+cada empresa). Continua sem o motor da Central de documento: a Central de Vendas ainda não pré-preenche os padrões da
+TOP (F2/F3b).

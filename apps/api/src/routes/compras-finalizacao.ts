@@ -4,6 +4,8 @@
  * "Finalizar" é a CONFIRMAÇÃO do pedido: aberto → finalizado, com quem e quando (`finalizado_em`, `finalizado_por`),
  * na MESMA mudança — o gatilho de conferência da 0044 recusa o carimbo fora dela. Finalizar não mexe em estoque nem
  * em financeiro, não exige orçamento vencedor e não muda os orçamentos abertos (sem cascata).
+ * OPERACOES-01 F9b (decisão 286): com a provisão ligada na TOP do pedido (formato 5), finalizar faz nascer os títulos
+ * PREVISTOS a pagar (lib/financeiro-provisao.ts).
  *
  * ┌─ A APROVAÇÃO DO PEDIDO ──────────────────────────────────────────────────────────────────────────────────┐
  * │ A aprovação da TOP (formato 4 ou 5, "Sempre" ou "A partir de um valor" com o total ATUAL) vale para o      │
@@ -41,6 +43,9 @@ import { lerVersaoCongeladaTop } from "../lib/confirmacao-automatica.js";
 import { recusaDaAprovacao, type SituacaoAprovacao } from "../lib/aprovacao-documento.js";
 import { lerDocumentoCompra } from "./compras.js";
 import { MSG_CONFIGURACAO_DO_PEDIDO_ILEGIVEL } from "./compras-recebimento.js";
+// OPERACOES-01 F9b (decisão 286): a provisão do pedido de compra finalizado.
+import { sincronizarProvisaoDoPedidoDeCompra } from "../lib/financeiro-provisao.js";
+import { MOTIVOS_DA_PROVISAO_COMPRA } from "@agro/domain";
 
 /** Versão do contrato da prévia da finalização. A web confere forma E versão antes de usar o corpo. */
 export const CONTRATO_PREVIA_FINALIZACAO_PEDIDO_COMPRA = 1;
@@ -113,6 +118,23 @@ async function aprovacaoDoPedido(ctx: ServiceCtx, pedido: PedidoParaFinalizar, v
   return { situacao: "pendente", recusa: recusaPendenteDoPedido(detalhesDaPendente(politica, pedido.valor_total)) };
 }
 
+/**
+ * OPERACOES-01 F6b (decisão 283) — A SITUAÇÃO DA APROVAÇÃO DO PEDIDO ABERTO, pela conta do finalizar (com a
+ * cobertura do valor): é o que `GET /api/aprovacoes/compras/:id` responde para o pedido (`aprovacoes-compras.ts`),
+ * para a consulta não dizer "Aprovado" de um pedido que o Finalizar recusaria. Quem chama já leu o pedido VISÍVEL
+ * (`lerDocumentoCompra`, espécie pedido) e só chama no ABERTO. Configuração ilegível: lança a recusa (fail-closed),
+ * como o finalizar. Só leitura: a versão congelada, a decisão vigente e, quando aprovada, a cobertura.
+ */
+export async function situacaoDaAprovacaoDoPedido(ctx: ServiceCtx, d: Record<string, unknown>): Promise<SituacaoAprovacao> {
+  const pedido = comoPedido(d);
+  const versaoTop = await lerVersaoCongeladaTop(ctx, pedido.tipo_operacao_versao_id);
+  const aprovacao = await aprovacaoDoPedido(ctx, pedido, versaoTop);
+  if (aprovacao.situacao === null) {
+    throw aprovacao.recusa ?? new DomainError("TIPO_OPERACAO_EXECUCAO_INDISPONIVEL", MSG_CONFIGURACAO_DO_PEDIDO_ILEGIVEL);
+  }
+  return aprovacao.situacao;
+}
+
 /** Como o planejamento trata cada recusa — a única diferença entre finalizar e prever. */
 interface ModoDoPlanejamento { recusar(e: DomainError): void }
 const MODO_FINALIZACAO: ModoDoPlanejamento = { recusar: (e) => { throw e; } };
@@ -156,6 +178,9 @@ async function finalizarPedido(ctx: ServiceCtx, id: string) {
   if (u.rowCount !== 1 || !linha) throw notFound("Documento");
   await audit(ctx.tx, ctx, "documentos_compra", pedido.id, "finalize", { aprovacao: plano.aprovacao?.situacao ?? null },
     { before: { situacao: "aberto" }, after: { situacao: "finalizado" } });
+  // OPERACOES-01 F9b: o pedido finalizado provisiona (a TOP no 5 com a provisão ligada; senão nada). A recusa (troca,
+  // classificação, conta padrão) desfaz o finalizar inteiro (422) — o salvar do pedido já recusou as duas primeiras.
+  await sincronizarProvisaoDoPedidoDeCompra(ctx, pedido.id, MOTIVOS_DA_PROVISAO_COMPRA.pedidoFinalizado);
   return { id: pedido.id, situacao: "finalizado", finalizado_em: emIso(linha.finalizado_em), finalizado_por: linha.finalizado_por };
 }
 

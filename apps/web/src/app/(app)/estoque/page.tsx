@@ -19,6 +19,8 @@ import { TransfersList } from "@/features/stock/transfers-list";
 import { FeedFormulasPanel } from "@/features/stock/feed-formulas";
 import { FeedBatchesList } from "@/features/stock/feed-batches-list";
 import { MovimentacoesEstoque } from "@/features/estoque/movimentacoes-lista";
+import type { Row } from "@/features/docs/shared";
+import { rotaDoAjusteAPartirDoSaldo, useAjusteDoSaldoNaCentral } from "@/features/estoque/movimentacoes-variantes";
 
 /**
  * Estoque (Compactação V2): Visão Geral · Estoque (saldo / movimentações / ajustes) · Recebimentos · Operações ·
@@ -27,9 +29,17 @@ import { MovimentacoesEstoque } from "@/features/estoque/movimentacoes-lista";
  * e devolução nasce da requisição/saída original — nenhum dos dois é opção cotidiana do "+ Novo".
  * Cada operação continua usando seu próprio endpoint/regra.
  *
- * ESTOQUE-01 (decisão 274): "Movimentações", logo depois de Visão Geral, é a lista única do DOCUMENTO de estoque
- * (entrada, saída, transferência e ajuste), com o `Novo` que pergunta a TOP e abre a Central de Estoque. As abas
- * e o "+ Novo" acima continuam como estão — as telas antigas não mudam até uma fatia própria trocá-las.
+ * ESTOQUE-01 (decisão 274): "Movimentações", logo depois de Visão Geral, é a lista única do DOCUMENTO de estoque,
+ * com o `Novo` que pergunta a TOP e abre a Central de Estoque. As abas e o "+ Novo" acima continuam como estão — as
+ * telas antigas não mudam até uma fatia própria trocá-las.
+ *
+ * OPERACOES-01 F5b (decisão 282): a aba Movimentações tem as SETE espécies (entrada, saída, transferência, ajuste,
+ * requisição, consumo e devolução de consumo) quando a API declara a movimentação interna, e as quatro de antes quando
+ * não declara. O "Ajustar estoque" da linha do Saldo abre a CENTRAL de ajuste já preenchida (empresa, Local de estoque,
+ * produto e lote da linha; custo informável) quando o usuário pode lançar ajuste (`ajustes_estoque.create`) e a API
+ * declara a capacidade numa lista de TOPs de ajuste pronta; senão, o diálogo de correção de sempre
+ * (`stock_corrections.create`). Enquanto a capacidade é perguntada, a ação não aparece. A aba Ajustes e o
+ * `?new=ajuste` continuam no diálogo antigo.
  */
 const scroll = (c: React.ReactNode) => <div className="ws-scroll">{c}</div>;
 function Transfers() {
@@ -38,6 +48,19 @@ function Transfers() {
     <div className="mg-card ws-filters no-print"><FilterChips label="Tipo" testId="stock-transfer-kind" value={kind} onChange={setKind} options={[{ value: "warehouse", label: "Entre locais de estoque", perm: "warehouse_transfers.view" }, { value: "farm", label: "Entre empresas", perm: "farm_transfers.view" }]} /></div>
     <TransfersList kind={kind} />
   </div>;
+}
+/**
+ * O Saldo com o "Ajustar estoque" por linha (F5b). A pergunta da capacidade só sai com o Saldo na tela: a Central de
+ * ajuste (preenchida pela linha) com `ajustes_estoque.create` e a capacidade; nada enquanto a pergunta não volta; o
+ * diálogo de sempre (`ajustarNoDialogo`, só com `stock_corrections.create`) no resto.
+ */
+function Saldo({ ajustarNoDialogo }: { ajustarNoDialogo?: (r: Row) => void }) {
+  const router = useRouter();
+  const ajusteNaCentral = useAjusteDoSaldoNaCentral();
+  const onAdjust = ajusteNaCentral === true
+    ? (r: Row) => router.push(rotaDoAjusteAPartirDoSaldo(r))
+    : ajusteNaCentral === "carregando" ? undefined : ajustarNoDialogo;
+  return <BalancesPanel onAdjust={onAdjust} />;
 }
 function Inner() {
   const router = useRouter(); const sp = useSearchParams(); const { can } = useAuth();
@@ -53,7 +76,7 @@ function Inner() {
       tab("estoque.visao-geral", <StockOverview />),
       tab("estoque.movimentacoes", <MovimentacoesEstoque />),
       tab("estoque.estoque", <ViewSegment tabs={[
-        tab("estoque.estoque.saldo", <BalancesPanel onAdjust={can("stock_corrections.create") ? (r) => openAdjust({ empresa_id: String(r["empresa_id"] ?? ""), warehouse_id: String(r["warehouse_id"] ?? ""), product_id: String(r["product_id"] ?? ""), provider_lot: String(r["provider_lot"] ?? "") }) : undefined} />),
+        tab("estoque.estoque.saldo", <Saldo ajustarNoDialogo={can("stock_corrections.create") ? (r) => openAdjust({ empresa_id: String(r["empresa_id"] ?? ""), warehouse_id: String(r["warehouse_id"] ?? ""), product_id: String(r["product_id"] ?? ""), provider_lot: String(r["provider_lot"] ?? "") }) : undefined} />),
         tab("estoque.estoque.ledger", <MovementsPanel />),
         tab("estoque.estoque.ajustes", <CorrectionsPanel />)
       ]} />),

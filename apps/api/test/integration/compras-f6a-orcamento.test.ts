@@ -382,8 +382,12 @@ describe("OR-2 criar o orçamento a partir do pedido", () => {
     expect(await itensDe(k.ped.id)).toEqual(itensDoPedidoAntes);
     const lidoPedido = j(await lerCompra("pedido", k.ped.id));
     expect((lidoPedido.itens as { recebido: string; saldo: string }[]).map((i) => [i.recebido, i.saldo])).toEqual([["0.0000", "3.0000"], ["0.0000", "2.0000"]]);
+    // OPERACOES-01 F6b: + a condição (código e nome) e o preço de cada item, no fim — os valores do banco.
+    const condNoBanco = (await c.admin.query<{ code: string; nome: string }>("select code, nome from erp.condicoes_pagamento where id = $1", [cond])).rows[0]!;
     expect(lidoPedido.orcamentos).toEqual([{ id, codigo: b.codigo, situacao: "aberto", fornecedor_id: f.id, fornecedor_nome: f.nome,
-      condicao_pagamento_id: cond, prazo_entrega_dias: 15, validade_orcamento: "2026-10-31", valor_total: "8.25" }]);
+      condicao_pagamento_id: cond, prazo_entrega_dias: 15, validade_orcamento: "2026-10-31", valor_total: "8.25",
+      condicao_pagamento_codigo: condNoBanco.code, condicao_pagamento_nome: condNoBanco.nome,
+      itens: [{ item_pedido_orcado_id: i0!.id, valor_unitario: "0.000000", valor_total: "0.00" }, { item_pedido_orcado_id: i1!.id, valor_unitario: "4.123456", valor_total: "8.25" }] }]);
     // A LEITURA do orçamento pela porta dele.
     const lido = await lerOrcamento(id);
     expect(lido.statusCode, lido.body).toBe(200);

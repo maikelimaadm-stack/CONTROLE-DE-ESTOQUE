@@ -129,26 +129,27 @@ const tipo = (chave: string, grupo: GrupoTipoMovimentoTop, rotulo: string, famil
 const familiaDaTabela = (tabela: string, valor?: string): string | undefined => resolverTipoOperacao(tabela, valor)?.codigo;
 
 /**
- * OS 22 TIPOS, NA ORDEM DO PEDIDO. Têm tela os 9 cujo documento cita a TOP (venda, compra e o documento de estoque)
- * e, desde a F10 (decisão 287), os 6 de Módulos: a Central de cada módulo cita a TOP no próprio registro (manejo e
- * batelada ganharam a família no registry nessa fase). "Requisição", "Consumo" e "Devolução de consumo" são as espécies
- * NOVAS do documento de estoque (F5a: `estoque.requisicao_material`, não a `estoque.requisicao` da requisição antiga),
- * sem tela até a F5b; os tipos do Financeiro que já têm família ficam com ela, sem tela: a F9 os liga. O orçamento de
- * compra já tem família (F6a, decisão 283) e fica sem tela até a F6b criar a tela que o lança. Movimento bancário (F9)
- * nasce sem família — a fase dona cria a família no registry e troca a linha.
+ * OS 22 TIPOS, NA ORDEM DO PEDIDO, TODOS COM TELA E COM FAMÍLIA. Os 9 cujo documento cita a TOP (venda, compra e o
+ * documento de estoque); o orçamento de compra (F6b, decisão 283: nasce do pedido); "Requisição", "Consumo" e
+ * "Devolução de consumo", as espécies NOVAS do documento de estoque (F5a: `estoque.requisicao_material`, não a
+ * `estoque.requisicao` da requisição antiga), com tela desde a F5b (a Central de Estoque no motor, decisão 282); os 6
+ * de Módulos desde a F10 (decisão 287: a Central de cada módulo cita a TOP no próprio registro; manejo e batelada
+ * ganharam a família no registry nessa fase); e os 3 do Financeiro (F9, decisão 286: o lançamento avulso da Central e o
+ * "Novo movimento bancário" escolhem a TOP primeiro).
  */
 export const CATALOGO_TIPOS_MOVIMENTO_TOP: readonly TipoDeMovimentoTop[] = Object.freeze([
   tipo("orcamento_venda", "vendas", "Orçamento", familiaOperacionalDeDocumentoVenda("budget"), true),
   tipo("pedido_venda", "vendas", "Pedido", familiaOperacionalDeDocumentoVenda("order"), true),
   tipo("venda", "vendas", "Venda", familiaOperacionalDeDocumentoVenda("sale"), true),
   tipo("pedido_compra", "compras", "Pedido", familiaOperacionalDeDocumentoCompra("pedido"), true),
-  // OPERACOES-01 F6a (decisão 283): a família do orçamento de compra nasce no registry; a tela que o lança é da F6b.
-  tipo("orcamento_compra", "compras", "Orçamento", familiaOperacionalDeDocumentoCompra("orcamento"), false),
+  // OPERACOES-01 F6a (decisão 283): a família do orçamento de compra nasce no registry; F6b: a tela (a Central de Compras).
+  tipo("orcamento_compra", "compras", "Orçamento", familiaOperacionalDeDocumentoCompra("orcamento"), true),
   tipo("compra", "compras", "Compra", familiaOperacionalDeDocumentoCompra("compra"), true),
-  // OPERACOES-01 F5a (decisão 282): as famílias da movimentação interna nascem no registry; a tela que as lança é da F5b.
-  tipo("requisicao", "movimentacao_interna", "Requisição", familiaOperacionalDeDocumentoEstoque("requisicao"), false),
-  tipo("consumo", "movimentacao_interna", "Consumo", familiaOperacionalDeDocumentoEstoque("consumo"), false),
-  tipo("devolucao_consumo", "movimentacao_interna", "Devolução de consumo", familiaOperacionalDeDocumentoEstoque("devolucao_consumo"), false),
+  // OPERACOES-01 F5a (decisão 282): as famílias da movimentação interna nascem no registry; telas desde a F5b (a
+  // Central de Estoque no motor).
+  tipo("requisicao", "movimentacao_interna", "Requisição", familiaOperacionalDeDocumentoEstoque("requisicao"), true),
+  tipo("consumo", "movimentacao_interna", "Consumo", familiaOperacionalDeDocumentoEstoque("consumo"), true),
+  tipo("devolucao_consumo", "movimentacao_interna", "Devolução de consumo", familiaOperacionalDeDocumentoEstoque("devolucao_consumo"), true),
   tipo("entrada", "movimentacao_interna", "Entrada", familiaOperacionalDeDocumentoEstoque("entrada"), true),
   tipo("saida", "movimentacao_interna", "Saída/baixa", familiaOperacionalDeDocumentoEstoque("saida"), true),
   tipo("transferencia", "movimentacao_interna", "Transferência", familiaOperacionalDeDocumentoEstoque("transferencia"), true),
@@ -160,9 +161,9 @@ export const CATALOGO_TIPOS_MOVIMENTO_TOP: readonly TipoDeMovimentoTop[] = Objec
   tipo("manejo", "modulos", "Manejo", familiaDaTabela("erp.animal_handlings"), true),
   tipo("batelada", "modulos", "Batelada", familiaDaTabela("erp.diet_batches"), true),
   tipo("producao_racao", "modulos", "Produção de ração", familiaDaTabela("erp.feed_batches"), true),
-  tipo("conta_pagar", "financeiro", "Conta a pagar", familiaDaTabela("erp.financial_titles", "payable"), false),
-  tipo("conta_receber", "financeiro", "Conta a receber", familiaDaTabela("erp.financial_titles", "receivable"), false),
-  tipo("movimento_bancario", "financeiro", "Movimento bancário", null, false),
+  tipo("conta_pagar", "financeiro", "Conta a pagar", familiaDaTabela("erp.financial_titles", "payable"), true),
+  tipo("conta_receber", "financeiro", "Conta a receber", familiaDaTabela("erp.financial_titles", "receivable"), true),
+  tipo("movimento_bancario", "financeiro", "Movimento bancário", familiaDaTabela("erp.bank_movements"), true),
 ]);
 
 // ---------------------------------------------------------------------------------------------------

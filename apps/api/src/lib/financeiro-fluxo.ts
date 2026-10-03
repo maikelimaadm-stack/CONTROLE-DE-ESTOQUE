@@ -16,8 +16,13 @@ import { EH_ADIANTAMENTO_SQL } from "./financeiro-estorno.js";
  * `transferencias_liquidas`. O movimento de saldo inicial também não: fica em `saldos_iniciais` e só entra no saldo.
  *
  * PREVISTO = saldo dos títulos abertos (aberto e baixa parcial) por VENCIMENTO, só das direções que o usuário VÊ,
- * sob o escopo de empresa; vencidos antes do início vão para `previsto_em_atraso`. A situação "previsto" (provisão
- * pela TOP) é da F9.
+ * sob o escopo de empresa; vencidos antes do início vão para `previsto_em_atraso`.
+ *
+ * PROVISÃO (F9, decisão 286) = os títulos de situação `previsto` (a provisão de um documento pela TOP), numa série
+ * SEPARADA e só quando pedida (`previstos=1`): `provisao` por período (e grupo), o valor líquido (`amount − discount`)
+ * pelo vencimento, com os MESMOS filtros do previsto (empresa, conta prevista, escopo, direções vistas);
+ * `saldo_projetado_com_previstos` = o projetado + a provisão acumulada; `provisao_em_atraso` = a de antes do início.
+ * Sem o pedido, a resposta é IDÊNTICA à da F8 (nenhuma chave nova) — e o previsto nunca entra no `previsto`.
  *
  * A agregação é no SQL, por `date_trunc` de uma lista FECHADA (nunca texto do cliente); os períodos são os do
  * domínio (`periodosDoIntervalo`), alinhados como o `date_trunc` (semana = segunda-feira).
@@ -34,11 +39,17 @@ export interface PedidoFluxo {
   agruparPor: "nenhum" | "conta" | "empresa";
   /** Direções cujo previsto o usuário pode ver (`{dir}.view`). */
   direcoes: Direcao[];
+  /** F9: incluir a série da provisão (os títulos previstos). Falso = a resposta da F8, chave por chave. */
+  previstos: boolean;
 }
 
 interface Realizado { entradas: string; saidas: string; transferencias_liquidas: string; saldos_iniciais: string }
 interface Previsto { entradas: string; saidas: string }
-export interface PeriodoFluxo { inicio: string; fim: string; realizado: Realizado; previsto: Previsto; saldo_realizado: string | null; saldo_projetado: string | null }
+export interface PeriodoFluxo {
+  inicio: string; fim: string; realizado: Realizado; previsto: Previsto; saldo_realizado: string | null; saldo_projetado: string | null;
+  /** Só com `previstos=1` (F9). */
+  provisao?: Previsto; saldo_projetado_com_previstos?: string | null;
+}
 export interface RespostaFluxo {
   agrupamento: Agrupamento;
   de: string;
@@ -47,7 +58,9 @@ export interface RespostaFluxo {
   saldo_inicial: string | null;
   periodos: PeriodoFluxo[];
   previsto_em_atraso: Previsto;
-  previstos_incluidos: false;
+  previstos_incluidos: boolean;
+  /** Só com `previstos=1` (F9). */
+  provisao_em_atraso?: Previsto;
   direcoes_previstas: Direcao[];
   grupos?: { chave: string | null; rotulo: string; saldo_inicial: string | null; periodos: PeriodoFluxo[] }[];
 }
@@ -64,8 +77,11 @@ const COLUNAS_REALIZADO = (a: string) => `
 
 const ZERO_REALIZADO = (): { entradas: Decimal; saidas: Decimal; transf: Decimal; aberturas: Decimal } => ({ entradas: D(0), saidas: D(0), transf: D(0), aberturas: D(0) });
 
-/** Monta os períodos de um grupo (ou do total) a partir das linhas agregadas, com o saldo acumulado quando há saldo. */
-function montarPeriodos(periodos: { inicio: string; fim: string }[], realizado: readonly LinhaRealizado[], previsto: readonly LinhaPrevisto[], saldoInicial: string | null): PeriodoFluxo[] {
+/**
+ * Monta os períodos de um grupo (ou do total) a partir das linhas agregadas, com o saldo acumulado quando há saldo.
+ * `provisao` nulo = a série da F9 não foi pedida: nenhuma chave dela sai (a resposta da F8).
+ */
+function montarPeriodos(periodos: { inicio: string; fim: string }[], realizado: readonly LinhaRealizado[], previsto: readonly LinhaPrevisto[], saldoInicial: string | null, provisao: readonly LinhaPrevisto[] | null = null): PeriodoFluxo[] {
   const r = new Map<string, ReturnType<typeof ZERO_REALIZADO>>();
   for (const l of realizado) {
     const v = r.get(l.inicio) ?? ZERO_REALIZADO();
@@ -79,8 +95,15 @@ function montarPeriodos(periodos: { inicio: string; fim: string }[], realizado: 
     v.entradas = v.entradas.plus(l.entradas); v.saidas = v.saidas.plus(l.saidas);
     p.set(l.inicio, v);
   }
+  const pv = new Map<string, { entradas: Decimal; saidas: Decimal }>();
+  for (const l of provisao ?? []) {
+    const v = pv.get(l.inicio) ?? { entradas: D(0), saidas: D(0) };
+    v.entradas = v.entradas.plus(l.entradas); v.saidas = v.saidas.plus(l.saidas);
+    pv.set(l.inicio, v);
+  }
   let saldo = saldoInicial === null ? null : D(saldoInicial);
   let projetado = saldo;
+  let provisaoAcumulada = D(0);
   return periodos.map((per) => {
     const re = r.get(per.inicio) ?? ZERO_REALIZADO();
     const pr = p.get(per.inicio) ?? { entradas: D(0), saidas: D(0) };
@@ -89,13 +112,17 @@ function montarPeriodos(periodos: { inicio: string; fim: string }[], realizado: 
       saldo = saldo.plus(deltaReal);
       projetado = projetado.plus(deltaReal).plus(pr.entradas).minus(pr.saidas);
     }
-    return {
+    const periodo: PeriodoFluxo = {
       inicio: per.inicio, fim: per.fim,
       realizado: { entradas: money(re.entradas), saidas: money(re.saidas), transferencias_liquidas: money(re.transf), saldos_iniciais: money(re.aberturas) },
       previsto: { entradas: money(pr.entradas), saidas: money(pr.saidas) },
       saldo_realizado: saldo === null ? null : money(saldo),
       saldo_projetado: projetado === null ? null : money(projetado)
     };
+    if (provisao === null) return periodo;
+    const pp = pv.get(per.inicio) ?? { entradas: D(0), saidas: D(0) };
+    provisaoAcumulada = provisaoAcumulada.plus(pp.entradas).minus(pp.saidas);
+    return { ...periodo, provisao: { entradas: money(pp.entradas), saidas: money(pp.saidas) }, saldo_projetado_com_previstos: projetado === null ? null : money(projetado.plus(provisaoAcumulada)) };
   });
 }
 
@@ -142,10 +169,13 @@ export async function montarFluxo(ctx: ServiceCtx, p: PedidoFluxo): Promise<Resp
 
   // ---------- previsto ----------
   const chavePrevisto = p.agruparPor === "conta" ? "t.conta_prevista_id::text" : p.agruparPor === "empresa" ? "t.empresa_id::text" : "null::text";
-  /** O recorte dos títulos (organização, situação, direções vistas, empresa, conta prevista e escopo), com placeholders próprios. */
-  const filtrosTitulo = (params: unknown[]): string[] => {
+  /**
+   * O recorte dos títulos (organização, situação, direções vistas, empresa, conta prevista e escopo), com placeholders
+   * próprios. `situacao`: o previsto da F8 (aberto e baixa parcial) ou a provisão da F9 (os títulos previstos).
+   */
+  const filtrosTitulo = (params: unknown[], situacao: "aberto" | "provisao" = "aberto"): string[] => {
     const add = (v: unknown) => { params.push(v); return `$${params.length}`; };
-    const w = [`t.organization_id=${add(ctx.orgId)}`, "t.deleted_at is null", "t.status in ('open','partially_paid')", `t.direction = any(${add(p.direcoes)}::text[])`];
+    const w = [`t.organization_id=${add(ctx.orgId)}`, "t.deleted_at is null", situacao === "aberto" ? "t.status in ('open','partially_paid')" : "t.status='previsto'", `t.direction = any(${add(p.direcoes)}::text[])`];
     if (p.empresaId) w.push(`t.empresa_id=${add(p.empresaId)}`);
     if (p.contas) w.push(`t.conta_prevista_id = any(${add(p.contas)}::uuid[])`);
     w.push(...empresaScope(ctx, "t", params, { ignoreSelected: true }));
@@ -173,15 +203,42 @@ export async function montarFluxo(ctx: ServiceCtx, p: PedidoFluxo): Promise<Resp
     emAtraso = { entradas: money(atraso.rows[0]!.entradas), saidas: money(atraso.rows[0]!.saidas) };
   }
 
+  // ---------- provisão (F9): os títulos previstos, só com o pedido; o valor é o líquido (nada foi pago num previsto) ----------
+  let provisao: LinhaPrevisto[] | null = null;
+  let provisaoEmAtraso: Previsto = { entradas: "0.00", saidas: "0.00" };
+  if (p.previstos) {
+    provisao = [];
+    if (p.direcoes.length) {
+      const pp: unknown[] = [];
+      const w = filtrosTitulo(pp, "provisao");
+      pp.push(trunc, p.de, p.ate);
+      const [iTrunc, iDe, iAte] = [pp.length - 2, pp.length - 1, pp.length];
+      provisao = (await ctx.tx.query<LinhaPrevisto>(
+        `select to_char(date_trunc($${iTrunc}, t.due_date::timestamp),'YYYY-MM-DD') as inicio, ${chavePrevisto} as chave,
+                coalesce(sum(t.amount - t.discount) filter (where t.direction='receivable'),0)::text as entradas,
+                coalesce(sum(t.amount - t.discount) filter (where t.direction='payable'),0)::text as saidas
+           from erp.financial_titles t where ${w.join(" and ")} and t.due_date between $${iDe}::date and $${iAte}::date group by 1, 2`, pp)).rows;
+      const pa: unknown[] = [];
+      const wa = filtrosTitulo(pa, "provisao");
+      pa.push(p.de);
+      const atraso = await ctx.tx.query<Previsto>(
+        `select coalesce(sum(t.amount - t.discount) filter (where t.direction='receivable'),0)::text as entradas,
+                coalesce(sum(t.amount - t.discount) filter (where t.direction='payable'),0)::text as saidas
+           from erp.financial_titles t where ${wa.join(" and ")} and t.due_date < $${pa.length}::date`, pa);
+      provisaoEmAtraso = { entradas: money(atraso.rows[0]!.entradas), saidas: money(atraso.rows[0]!.saidas) };
+    }
+  }
+
   const resposta: RespostaFluxo = {
     agrupamento: p.agrupamento, de: p.de, ate: p.ate, modo: porOrganizacao ? "organizacao" : "empresa",
-    saldo_inicial: saldoInicial, periodos: montarPeriodos(periodos, realizado, previsto, saldoInicial),
-    previsto_em_atraso: emAtraso, previstos_incluidos: false, direcoes_previstas: p.direcoes
+    saldo_inicial: saldoInicial, periodos: montarPeriodos(periodos, realizado, previsto, saldoInicial, provisao),
+    previsto_em_atraso: emAtraso, previstos_incluidos: p.previstos, direcoes_previstas: p.direcoes,
+    ...(p.previstos ? { provisao_em_atraso: provisaoEmAtraso } : {})
   };
   if (p.agruparPor === "nenhum") return resposta;
 
   // ---------- grupos (por conta ou por empresa) ----------
-  const chaves = new Set<string | null>([...realizado.map((l) => l.chave), ...previsto.map((l) => l.chave)]);
+  const chaves = new Set<string | null>([...realizado.map((l) => l.chave), ...previsto.map((l) => l.chave), ...(provisao ?? []).map((l) => l.chave)]);
   if (p.agruparPor === "conta") for (const id of saldoPorConta.keys()) chaves.add(id);
   const rotulos = new Map<string, string>(rotuloDaConta);
   if (p.agruparPor === "empresa") {
@@ -203,7 +260,7 @@ export async function montarFluxo(ctx: ServiceCtx, p: PedidoFluxo): Promise<Resp
       return {
         chave, rotulo: chave === null ? semChave : rotulos.get(chave) ?? "Não encontrado",
         saldo_inicial: saldo,
-        periodos: montarPeriodos(periodos, realizado.filter((l) => l.chave === chave), previsto.filter((l) => l.chave === chave), saldo)
+        periodos: montarPeriodos(periodos, realizado.filter((l) => l.chave === chave), previsto.filter((l) => l.chave === chave), saldo, provisao && provisao.filter((l) => l.chave === chave))
       };
     })
     .sort((a, b) => (a.chave === null ? 1 : b.chave === null ? -1 : a.rotulo.localeCompare(b.rotulo, "pt-BR") || a.chave.localeCompare(b.chave)));
@@ -221,7 +278,7 @@ export async function montarFluxo(ctx: ServiceCtx, p: PedidoFluxo): Promise<Resp
  *     data da baixa, no rateio do título liquidado (escalado ao líquido da baixa; o título-adiantamento nunca).
  *     Sem isso, o excedente de 50 de uma conta de energia de 100 paga com 150 saía como 150 de energia, e a conta
  *     de outra natureza quitada depois com esse crédito nunca aparecia no caixa.
- *   • COMPETÊNCIA: o rateio dos títulos não cancelados e que NÃO são adiantamento (adiantamento é financeiro, não
+ *   • COMPETÊNCIA: o rateio dos títulos não cancelados, não PREVISTOS (F9: a provisão não é resultado) e que NÃO são adiantamento (adiantamento é financeiro, não
  *     resultado) pela competência (ou a emissão), + o rateio dos movimentos avulsos (manual/OFX, sem "gera
  *     obrigação" — esse já virou título) e dos componentes separados da baixa (juros, multa, acréscimo, tarifa) pela
  *     data do movimento, + o desconto das baixas confirmadas na natureza gravada nelas (a pagar: desconto obtido, +;
@@ -268,7 +325,7 @@ export async function montarResultado(ctx: ServiceCtx, p: { de: string; ate: str
     blocos.push(`
       select a.financial_category_id as natureza_id, (case when t.direction='receivable' then a.amount else -a.amount end) as valor
         from erp.title_apportionments a join erp.financial_titles t on t.id=a.title_id
-       where t.organization_id=$1 and t.deleted_at is null and t.status<>'cancelled'
+       where t.organization_id=$1 and t.deleted_at is null and t.status not in ('cancelled','previsto')
          and not (t.payment_type='advance' or exists (select 1 from erp.title_types tt where tt.id=t.title_type_id and tt.is_advance))
          and coalesce(t.data_competencia, t.emission_date) between $2::date and $3::date${empresaDe("t", false)}`);
     blocos.push(movimentos("m.source_type in ('manual','ofx') and not m.generates_obligation and m.category_type in ('in','out') and m.componente_baixa is null"));

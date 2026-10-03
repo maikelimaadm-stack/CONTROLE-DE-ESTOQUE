@@ -46,7 +46,7 @@ export const ROTULOS_EXIGENCIA_DESTINO_TOP: Readonly<Record<ExigenciaDestinoTop,
 export type SecaoDestinoTop = { [D in DimensaoDestinoEstoque]: ExigenciaDestinoTop };
 
 /** As espécies cujas TOPs CONFIGURAM o destino. A devolução de consumo leva o destino copiado do consumo. */
-const ESPECIES_COM_DESTINO_PELA_TOP: readonly EspecieEstoque[] = Object.freeze(["requisicao", "consumo", "saida"] as const);
+export const ESPECIES_COM_DESTINO_PELA_TOP: readonly EspecieEstoque[] = Object.freeze(["requisicao", "consumo", "saida"] as const);
 
 /**
  * A seção com o valor de cada dimensão dado por `valor`, perguntado NA ORDEM de `CAMPOS_DESTINO_ESTOQUE` (é a ordem

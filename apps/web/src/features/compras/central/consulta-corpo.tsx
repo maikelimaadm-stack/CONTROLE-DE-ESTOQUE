@@ -33,6 +33,9 @@ const dataOuVazio = (v: unknown) => (typeof v === "string" && v ? dateBR(v) : ""
 
 const CAMPOS_FISCAIS = ["numero_nota", "serie_nota", "data_entrada"] as const;
 
+/** "02/10/2026, 14:30 por Maria" — a data e hora de quem fez, como o "Saldo encerrado em … por …" dos itens. */
+const quemEQuando = (q: { em: string; porNome: string }) => `${dateTimeBR(q.em)} por ${q.porNome || "—"}`;
+
 /** A zona padrão da consulta: a do layout do sistema da família da espécie. */
 export const zonasPadraoDaConsulta = (familia: string): ZonasDaCentral => zonasDaCentral(familia, LAYOUT_DO_SISTEMA(familia));
 
@@ -53,10 +56,12 @@ export function itemParaOMotor(it: Row): Row {
 }
 
 /**
- * Dados principais e Dados adicionais (Movimento, Versão da TOP, Origem). Na COMPRA, antes dos campos, a situação da
- * aprovação (OPERACOES-01 F2): o bloco de Aprovações, que só aparece com a compra aberta e a TOP exigindo aprovação, e
- * oferece Aprovar/Reprovar a quem tem `compras.approve`. O pedido de compra não passa por aprovação (a 0041 só aceita
- * a compra).
+ * Dados principais e Dados adicionais (Movimento, Versão da TOP, Origem). Antes dos campos, a situação da aprovação
+ * (OPERACOES-01 F2): o bloco de Aprovações, que só aparece com o documento aberto e a TOP exigindo aprovação.
+ *   · COMPRA: Aprovar/Reprovar a quem tem `compras.approve` (a aprovação vale ao confirmar).
+ *   · PEDIDO DE COMPRA (F6b, decisão 283): a aprovação vale ao FINALIZAR (a 0044 a estendeu ao pedido) — o bloco só
+ *     com a capacidade da F6 declarada pela API, e Aprovar/Reprovar a quem tem `pedidos_compra.approve` E
+ *     `compras.approve` (a porta da decisão). Nos Dados adicionais, quem finalizou e quem aprovou para orçamento.
  */
 export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: ZonasDaCentral }) {
   const tr = useTradutor();
@@ -72,9 +77,13 @@ export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: Zon
   const origem = !e.origemId
     ? (recebidoPorItem ? "Recebido de pedido" : "Lançamento direto")
     : <Link data-testid="compras-origem" className="text-brand-700 underline" href={e.rotaDaOrigem}>{e.rotuloDoPedido}{d["origem_codigo"] ? ` ${String(d["origem_codigo"])}` : ""}</Link>;
+  // Os dois só existem com a capacidade da F6 e com a data no servidor (o estado já os zera sem ela).
+  const adicionais = (top ? 3 : 2) + (e.finalizacao ? 1 : 0) + (e.aprovadoOrcamento ? 1 : 0);
   return <>
     {e.ehCompra && <AprovacaoDoDocumento area="compras" documentoId={String(d["id"])} documentoAberto={e.situacao === "aberto"}
       prefixoTestid={PREFIXO_CENTRAL_COMPRAS} codigo={t(d["codigo"])} />}
+    {e.ehPedido && e.capacidade === "sim" && <AprovacaoDoDocumento area="compras" especie="pedido" documentoId={String(d["id"])}
+      documentoAberto={e.situacao === "aberto"} prefixoTestid={PREFIXO_CENTRAL_COMPRAS} codigo={t(d["codigo"])} />}
     <ColunaDeCampos>
       <CampoLeitura rotulo="Fornecedor" adorno="pesquisa" testId="compras-consulta-fornecedor" valor={t(d["fornecedor_nome"])} />
       <CampoLeitura rotulo="Empresa" adorno="pesquisa" testId="compras-consulta-empresa" valor={t(d["empresa_nome"])} />
@@ -90,10 +99,12 @@ export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: Zon
       <CampoLeitura rotulo="Centro de resultado" adorno="pesquisa" valor={codigoNome(d["centro_custo_codigo"], d["centro_custo_nome"])} />
       <div data-testid="compras-consulta-codigo-campo"><CampoLeitura rotulo="Número" adorno="travado" testId="compras-consulta-codigo" valor={t(d["codigo"])} /></div>
     </ColunaDeCampos>
-    <DadosAdicionais quantidade={top ? 3 : 2} aberto={maisDados} onAlternar={() => setMaisDados((m) => !m)} manterMontado>
+    <DadosAdicionais quantidade={adicionais} aberto={maisDados} onAlternar={() => setMaisDados((m) => !m)} manterMontado>
       <CampoLeitura rotulo="Movimento" adorno="travado" valor={tr(e.variante.chaveI18n)} />
       {top && <CampoLeitura rotulo="Versão da TOP" adorno="travado" valor={top.versao ? String(top.versao) : ""} />}
       <CampoLeitura rotulo="Origem" adorno="travado" testId="compras-consulta-origem" valor={origem} />
+      {e.aprovadoOrcamento && <CampoLeitura rotulo="Aprovado para orçamento" adorno="travado" testId="compras-consulta-aprovado-orcamento" valor={quemEQuando(e.aprovadoOrcamento)} />}
+      {e.finalizacao && <CampoLeitura rotulo="Finalizado" adorno="travado" testId="compras-consulta-finalizado" valor={quemEQuando(e.finalizacao)} />}
     </DadosAdicionais>
   </>;
 }

@@ -28,7 +28,8 @@ import {
  *   · SA-5 a MESMA 404 — corpo idêntico ao do GET por id — para fora do escopo, inexistente, outra organização,
  *          excluída, orçamento, pedido e id malformado; 403 sem `sales.view`, antes de ler qualquer coisa;
  *   · SA-6 422 em qualquer parâmetro de consulta (e no repetido), antes da 404;
- *   · SA-7 compras: o espelho de SA-1, SA-3, SA-4 e SA-5 (pedido de compra, escopo, 403);
+ *   · SA-7 compras: o espelho de SA-1, SA-3, SA-4 e SA-5 (orçamento de compra, escopo, 403; o PEDIDO de compra é
+ *          legível desde a OPERACOES-01 F6b — a conta dele é provada em `f6b-compras-api.test.ts`);
  *   · SA-8 só leitura (nada gravado: decisões, trilha e versão do documento iguais) e número FIXO de consultas (venda
  *          de 1 e de 5 itens; a TOP não é lida no documento que não está aberto).
  *   · SA-9 FORMATO 5 (OPERACOES-01 F4, decisão 281 — o que o editor grava desde a F4): a mesma conta — "Sempre" →
@@ -442,11 +443,23 @@ describe("SA-7 — compras: o espelho", () => {
     expect(await situacao("compras", id)).toEqual({ situacao: "nao_aberto", ultimaDecisao: aprovacao });
   });
 
-  it("SA-7c pedido de compra, fora do escopo, inexistente e id malformado → a MESMA 404 do GET da compra por id; sem compras.view → 403 antes de ler", async () => {
+  it("SA-7c orçamento de compra, fora do escopo, inexistente e id malformado → a MESMA 404 do GET da compra por id; o pedido de compra é legível (F6b); sem compras.view → 403 antes de ler", async () => {
     const topId = await topCompraSempre();
     const id = await compra(topId);
     const doEscopo2 = await usuario("Vê compras da empresa 2", ["compras.view"], escopos({ compras: [c.I.empresa2] }));
     const pedido = (await compraLancada("pedido", corpoCompra([itemCompra((await produto()).id, "1", "10.00")], {}, "pedido"))).id;
+    // O ORÇAMENTO DE COMPRA (OPERACOES-01 F6a), criado pela API: o pedido aprovado para orçamento e a TOP do leque dele.
+    // OPERACOES-01 F6b: é ele a "outra espécie" desta rota — o pedido passou a ser legível pela porta (com
+    // `pedidos_compra.view`), e o orçamento continua sendo, para todos, a MESMA 404.
+    const topOrc = await top("compras.orcamento", { configuracao: cfg4() });
+    const topPedido = await top("compras.pedido", { configuracao: cfg4(), destinos: [{ tipoOperacaoId: topOrc, ordem: 0, emPartes: false }] });
+    const pedidoCotado = (await compraLancada("pedido", corpoCompra([itemCompra((await produto()).id, "1", "10.00")], { tipo_operacao_id: topPedido }, "pedido"))).id;
+    const aprovado = await c.ligada.inject({ method: "POST", url: `/api/compras/pedidos/${pedidoCotado}/aprovar-para-orcamento`, headers: c.h.headers(), payload: {} });
+    expect(aprovado.statusCode, `premissa: o pedido é aprovado para orçamento — ${aprovado.body}`).toBe(200);
+    const criado = await c.ligada.inject({ method: "POST", url: `/api/compras/pedidos/${pedidoCotado}/orcamentos`, headers: c.h.headers(),
+      payload: { tipo_operacao_id: topOrc, fornecedor_id: c.I.provider, data_documento: DATA } });
+    expect(criado.statusCode, `premissa: o orçamento é criado — ${criado.body}`).toBe(201);
+    const orcamento = j(criado).id as string;
 
     const naoExiste = randomUUID();
     const referencia = await lerCompra("compra", naoExiste);
@@ -454,7 +467,7 @@ describe("SA-7 — compras: o espelho", () => {
     expect(erro(referencia)).toEqual({ code: "NOT_FOUND", message: "Documento não encontrado" });
 
     const casos: { nome: string; id: string; headers?: Hdr }[] = [
-      { nome: "pedido de compra (outra espécie)", id: pedido },
+      { nome: "orçamento de compra (outra espécie)", id: orcamento },
       { nome: "fora do escopo de empresa", id, headers: doEscopo2 },
       { nome: "inexistente", id: naoExiste },
       { nome: "id malformado", id: "nao-e-uuid" },
@@ -468,7 +481,7 @@ describe("SA-7 — compras: o espelho", () => {
     }
 
     const semVer = await usuario("Só pedidos de compra", ["pedidos_compra.view", "pedidos_compra.create"]);
-    for (const alvo of [id, "nao-e-uuid"]) {
+    for (const alvo of [id, pedido, "nao-e-uuid"]) {
       const { r, sqls } = await comConsultas(() => lerSituacao("compras", alvo, semVer, "foo=1"));
       expect([alvo, r.statusCode], r.body).toEqual([alvo, 403]);
       expect(erro(r).code).toBe("PERMISSION_DENIED");
@@ -479,8 +492,11 @@ describe("SA-7 — compras: o espelho", () => {
     expect(await situacao("compras", id)).toEqual({ situacao: "pendente", ultimaDecisao: null });
     expect(await situacao("compras", await compra(topId, c.I.empresa2, c.I.warehouseEmpresa2), doEscopo2), "premissa: a pessoa da empresa 2 lê a compra da empresa 2")
       .toEqual({ situacao: "pendente", ultimaDecisao: null });
-    const gp = await lerCompra("pedido", pedido);
-    expect(gp.statusCode, `premissa: o pedido existe e é legível pela porta dele — ${gp.body}`).toBe(200);
+    const go = await c.ligada.inject({ method: "GET", url: `/api/compras/orcamentos/${orcamento}`, headers: c.h.headers() });
+    expect(go.statusCode, `premissa: o orçamento existe e é legível pela porta dele — ${go.body}`).toBe(200);
+    // F6b: o PEDIDO não é mais "outra espécie" aqui — quem tem `compras.view` ∧ `pedidos_compra.view` lê a situação dele
+    // (a TOP neutra não exige aprovação). A conta do pedido e as recusas dele: `f6b-compras-api.test.ts`.
+    expect(await situacao("compras", pedido), "o pedido de compra é legível pela porta (F6b)").toEqual({ situacao: "nao_exigida", ultimaDecisao: null });
   });
 });
 

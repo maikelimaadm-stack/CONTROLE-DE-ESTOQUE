@@ -128,28 +128,29 @@ test("exclui pela tela — e a tela ENVIA a revisão da linha", async ({ page })
 
 test("os tipos de movimento oferecidos no passo 1 vêm do catálogo publicado pelo servidor (só os que têm tela), não de uma lista da tela", async ({ page }) => {
   await login(page);
-  // AS PREMISSAS, LIDAS NO SERVIDOR: o catálogo publicado tem 15 tipos com tela — os 9 dos documentos (venda, compra e
-  // estoque) e, desde a F10 (decisão 287), os 6 de Módulos —, e o registry (`/familias`, que continua devolvendo TODAS as
-  // famílias) tem 29 (a F10 acrescentou o manejo e a batelada) — 14 delas sem tela no passo 1 (as telas antigas, o
-  // financeiro e, desde a F5a, a requisição de material, o consumo e a devolução de consumo, cuja tela é da F5b; desde a
-  // F6a, o orçamento de compra, cuja tela é da F6b).
+  // AS PREMISSAS, LIDAS NO SERVIDOR: o catálogo publicado tem os 22 tipos COM tela (os 9 com documento, o orçamento de
+  // compra — F6b —, a requisição de material, o consumo e a devolução de consumo — F5b —, os 6 de Módulos — F10 — e os 3
+  // do Financeiro — F9), e o registry (`/familias`, que continua devolvendo TODAS as famílias) tem 30 — 8 delas sem tela
+  // no passo 1 (as telas antigas de estoque e a solicitação de compra).
   // Sem as famílias sem tela, "nenhuma delas aparece" seria verdade de graça.
   const catalogo = await catalogoPublicadoE2E(page);
   const comTela = catalogo.tipos.filter((t) => t.temTela).map((t) => t.familia);
-  expect(comTela, "premissa: o catálogo publicado tem 15 tipos com tela").toHaveLength(15);
+  expect(comTela, "premissa: o catálogo publicado tem 22 tipos com tela").toHaveLength(22);
   expect(comTela.every((f) => typeof f === "string"), "premissa: todo tipo com tela tem família").toBe(true);
   const modulos = catalogo.tipos.filter((t) => t.grupo === "modulos");
   expect(modulos.map((t) => [t.chave, t.temTela]), "premissa: os 6 de Módulos têm tela desde a F10, na ordem do catálogo")
     .toEqual([["abastecimento", true], ["manutencao", true], ["ordem_servico", true], ["manejo", true], ["batelada", true], ["producao_racao", true]]);
   const doServidor = await api<{ items: { codigo: string }[] }>(page, "GET", "/api/admin/tipos-operacao/familias");
-  expect(doServidor.items, "premissa: o registry inteiro tem 29 famílias (27 + o manejo e a batelada da F10)").toHaveLength(29);
+  expect(doServidor.items, "premissa: o registry inteiro tem 30 famílias (28 + o manejo e a batelada da F10)").toHaveLength(30);
   for (const t of modulos) expect(doServidor.items.map((f) => f.codigo), `premissa: a família de ${t.chave} está no registry`).toContain(t.familia);
   const semTela = doServidor.items.map((f) => f.codigo).filter((f) => !comTela.includes(f));
-  expect(semTela, "premissa: 14 famílias do registry não têm tela no passo 1").toHaveLength(14);
+  expect(semTela, "premissa: 8 famílias do registry não têm tela no passo 1").toHaveLength(8);
   for (const f of ["estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo"]) {
-    expect(semTela, `premissa: a família ${f} (F5a) existe e ainda não tem tela`).toContain(f);
+    expect(doServidor.items.map((x) => x.codigo), `premissa: a família ${f} (F5a) existe no registry`).toContain(f);
+    expect(comTela, `a família ${f} tem tela desde a F5b`).toContain(f);
+    expect(semTela, `e por isso não está entre as sem tela: ${f}`).not.toContain(f);
   }
-  expect(semTela, "premissa: a família compras.orcamento (F6a) existe e ainda não tem tela").toContain("compras.orcamento");
+  expect(comTela, "premissa: compras.orcamento (F6b) tem tela").toContain("compras.orcamento");
 
   await abrirTela(page);
   await page.getByRole("button", { name: "Novo tipo de operação" }).click();
