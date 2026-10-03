@@ -174,7 +174,8 @@ describe("L-4 — o estorno leva o destino do original", () => {
 
   it("L-4b o estorno leva também máquina/equipamento, OS, lote de animais e área/talhão do original", async () => {
     // PREMISSA DO CENÁRIO: nenhuma rota antiga grava essas colunas E cancela (a OS e o manejo não estornam; o
-    // documento de estoque com destino é do pacote `api-documento`). O movimento com as quatro é gravado por SQL na
+    // abastecimento e a manutenção gravam o equipamento e estornam desde a F10 — `f10-frota` FA-5/FM-3 —, mas não gravam
+    // OS, lote nem área; o documento de estoque com destino é do pacote `api-documento`). O movimento com as quatro é gravado por SQL na
     // origem de uma entrada manual, e o cancelamento é o da rota antiga — o `reverseStock` de sempre.
     const p = await produto();
     const centro = c.I.costCenter; const s = await safra(); const a = await area(); const cultura = await culturaNova();
