@@ -31,7 +31,11 @@ test("o módulo Mapa de Manejo abre e lista as áreas", async ({ page }) => {
   await page.goto("/mapa-de-manejo");
   await expect(page.getByRole("heading", { name: "Mapa de Manejo" })).toBeVisible();
   await expect(page.getByTestId("mapa-nova-area")).toBeVisible();
-  await expect(page.getByText("Nenhuma área cadastrada")).toBeVisible();
+  // Painel de áreas: vazio (banco limpo) ou com itens (acervo/seed que a limpeza não remove por FK).
+  await expect(page.getByText(/Áreas/i).first()).toBeVisible();
+  const vazia = page.getByText("Nenhuma área cadastrada");
+  const item = page.getByTestId("mapa-item-area").first();
+  await expect(vazia.or(item)).toBeVisible();
 });
 
 test.describe("editor de desenho do Mapa de Manejo", () => {
