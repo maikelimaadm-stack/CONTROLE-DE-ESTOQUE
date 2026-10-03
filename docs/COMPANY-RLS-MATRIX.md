@@ -61,14 +61,14 @@ títulos, 10 empresas no seletor) — muda o PLANO, não a autorização. Só a 
 
 ## Categorias
 
-- **A** — EMPRESA ÚNICA OBRIGATÓRIA (42 tabelas)
+- **A** — EMPRESA ÚNICA OBRIGATÓRIA (43 tabelas)
 - **B** — EMPRESA ÚNICA ANULÁVEL (6 tabelas)
 - **C** — ORIGEM + DESTINO (três contratos por domínio) (3 tabelas)
 - **D** — TABELA EMPRESAS (1 tabela)
 - **E** — PORTA DINÂMICA / ESPECIAL (8 tabelas)
 - **F** — ORGANIZAÇÃO — SEM RLS EMPRESARIAL (1 tabela)
 
-## Tabelas (61)
+## Tabelas (62)
 
 | Tabela | Coluna(s) canônica(s) | Módulo | Cat. | Nulo? | Leitura | Escrita | Semântica POR COMANDO |
 | --- | --- | --- | :---: | :---: | --- | --- | --- |
