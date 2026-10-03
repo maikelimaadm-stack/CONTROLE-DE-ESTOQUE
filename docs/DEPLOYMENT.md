@@ -4661,3 +4661,41 @@ fora do escopo do usuário responde a mesma coisa que um número inexistente.
 registros novos param de receber número — rodar o backfill de novo depois resolve, sem renumerar nada.
 Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registros_globais` destruiria
 identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.
+
+
+## MAPA-01 — Mapa de Manejo: módulo neutro e cadastro de áreas (decisão 289)
+
+**Migration 0049 (`0049_mapa_de_manejo.sql`, trava `(2026,83)`).** Cria o módulo de escopo empresarial `mapa`
+(ordem 12) e a tabela `erp.mapa_areas` (área neutra: `nome`, `tamanho_ha`, `cor`, `geometria` GeoJSON em
+`jsonb`, com RLS por empresa). Ordem de deploy **BANCO → API → WEB** (`.claude/rules/database-migrations.md`).
+A migration não preenche nem corrige dado; o soft delete usa `deleted_at`; `DELETE`/`TRUNCATE` revogados do
+`erp_app`. **Impacto em dados reais: nenhum** (tabela nova, nada escrito, nada apagado; decisões 240/247).
+
+**Escopo fail-closed.** O módulo `mapa` nasce SEM escopo configurado para não-proprietários: o proprietário
+(`is_owner`) já enxerga todas as empresas; os demais só veem/criam áreas depois que um administrador
+configurar o escopo de empresa do módulo `mapa` por membro (mesma tela dos outros módulos). A migration NÃO
+faz backfill de escopo — conceder em silêncio ampliaria autorização.
+
+**Variável de ambiente (web, Vercel): `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.** Chave PÚBLICA do navegador,
+restrita por domínio (HTTP referrer) no painel do Google; exige a **Map Tiles API** ativada no projeto do
+Google Cloud (além da Maps JavaScript API, que não é usada). Sem a chave ou sem sessão de tiles, o mapa cai
+num fundo liso e o desenho/cadastro de áreas continua funcionando. A chave nunca é commitada nem lida pelo
+código do servidor.
+
+**Gate externo (PENDING).** A prova visual do satélite do Google depende da chave real em produção e não é
+substituível por mock/preview — fica `PENDING` até a validação autenticada em produção. O desenho do
+polígono, o cálculo de área (cliente) e o CRUD por empresa são provados sem a chave (integração + e2e).
+
+**Bases e localização.** A tela alterna SATÉLITE e MAPA de ruas — as duas pela mesma Map Tiles API
+(`mapType` `satellite` e `roadmap`; a de ruas abre sob demanda na primeira troca). "Minha localização" é o
+controle de geolocalização do MapLibre: pede a permissão do navegador e só funciona em HTTPS (produção e
+preview da Vercel já são).
+
+**Editor de desenho próprio (sem Terra Draw) e `maplibre-gl` 5.** As funções do protótipo aprovado (ímã em
+vértice/aresta com tolerância em px, Alt solta, Shift trava 45°, desfazer/refazer, ponto do meio, mover a
+área, medidas ao vivo) rodam num editor próprio sobre o MapLibre (`apps/web/src/features/mapa-de-manejo/
+editor-desenho.ts`), sem dependência nova. O `maplibre-gl` fica na linha **5** (UMD com o worker embutido):
+a linha 6 é só ESM e procura o worker num arquivo à parte, que o `next build` não publica — sem worker, as
+fontes GeoJSON (as áreas gravadas) não desenham. Subir para a 6 exige servir `maplibre-gl-worker.mjs` +
+`maplibre-gl-shared.mjs` pela própria origem e chamar `setWorkerUrl`. O e2e do editor desenha no canvas de
+verdade (WebGL por SwiftShader no Chromium do CI).
