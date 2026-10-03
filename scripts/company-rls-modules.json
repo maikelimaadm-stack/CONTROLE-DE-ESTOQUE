@@ -35,6 +35,7 @@
   "journal_entries": "fiscal",
   "livestock_plannings": "pecuaria",
   "maintenances": "frota_ativos",
+  "mapa_areas": "mapa",
   "opening_balances": "estoque",
   "processings": "pecuaria",
   "purchase_requests": "compras",

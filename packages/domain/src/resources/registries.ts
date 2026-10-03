@@ -618,5 +618,18 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       ] },
       { key: "rh_usuario", label: "Usuário do sistema", table: "employee_profiles", chavePai: "person_id", fields: [REF("user_id", "Usuário", "users")] }
     ]
+  },
+  {
+    // MAPA-01 (decisão 289): cadastro de áreas do Mapa de Manejo. NEUTRO (serve lavoura e pecuária): só nome,
+    // tamanho e cor; a geometria é o polígono GeoJSON desenhado no mapa. Módulo de escopo empresarial "mapa".
+    key: "mapa_areas", label: "Área", labelPlural: "Áreas", table: "mapa_areas", permission: "mapa_areas",
+    labelField: "nome", route: "/cadastros/mapa_areas", softDelete: true, empresaScoped: true, defaultSort: "nome",
+    fields: [
+      REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }),
+      T("nome", "Nome", { required: true, list: true, search: true, span: 4 }),
+      { name: "tamanho_ha", label: "Tamanho (ha)", type: "quantity", list: true, span: 2 },
+      T("cor", "Cor", { span: 2, padrao: { regex: "^#[0-9A-Fa-f]{6}$", mensagem: "Informe uma cor no formato #RRGGBB." } }),
+      { name: "geometria", label: "Geometria", type: "json", span: 12 }
+    ]
   }
 ];
