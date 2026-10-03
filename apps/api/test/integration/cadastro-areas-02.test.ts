@@ -1,11 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { CORES_DA_AREA } from "@agro/domain";
 import { harness, type Harness } from "./setup.js";
 
 /**
  * CADASTRO-AREAS-02 (decisão 292) — Mapa grava em /api/resources/areas (geometria).
  * Prova: Polygon válido; geometria inválida 422; cor fora de #RRGGBB 422.
+ * A cor é a lista fechada CORES_DA_AREA (decisão 292): o teste usa um valor DA LISTA (antes usava #22c55e, que
+ * não está nela, e a API recusava com 422 "Opção inválida" — o teste vermelho que a #92 deixou na main).
  */
 
+/** "Verde" da paleta fechada — o valor gravado é o hex da lista. */
+const VERDE = CORES_DA_AREA.find(([, rotulo]) => rotulo === "Verde")![0];
 const POLIGONO = { type: "Polygon", coordinates: [[[-55, -15], [-55, -15.01], [-54.99, -15.01], [-54.99, -15], [-55, -15]]] };
 
 describe("CADASTRO-AREAS-02 — geometria em areas", () => {
@@ -29,7 +34,7 @@ describe("CADASTRO-AREAS-02 — geometria em areas", () => {
       land_use: "pastagem",
       status: "ativa",
       tenure: "propria",
-      color: "#22c55e",
+      color: VERDE,
       geometria: POLIGONO
     });
     expect(r.statusCode, r.body).toBe(201);
@@ -38,7 +43,7 @@ describe("CADASTRO-AREAS-02 — geometria em areas", () => {
     expect(got.statusCode).toBe(200);
     const area = got.json() as { name: string; color: string; geometria: { type: string } | null };
     expect(area.name).toBe("AREA MAPA 02");
-    expect(area.color).toBe("#22c55e");
+    expect(area.color).toBe(VERDE);
     expect(area.geometria?.type).toBe("Polygon");
   });
 
