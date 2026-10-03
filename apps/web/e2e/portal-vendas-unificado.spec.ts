@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { login, api, uniq, empresaAtiva, primeiroId, acaoDaCentral } from "./helpers";
+import { codigoTop } from "./central-compras-fixtures";
 
 /**
  * PORTAL DE VENDAS UNIFICADO E PRÓXIMOS PASSOS PELO GRAFO (TOP-CONFIG-03) — E11 a E19 e E21.
@@ -32,7 +33,9 @@ interface Top { id: string; codigo: string; nome: string }
  * cliques de configuração que poderiam ter falhado no caminho.
  */
 async function cadastrarTop(page: Page, codigoBase: string, rotulo: string, destinos: Top[] = []): Promise<Top> {
-  const codigo = `8${Math.floor(Math.random() * 90000 + 10000)}`;
+  // tempo + sorteio (`codigoTop`): "8" + cinco dígitos sorteados são 90 000 códigos, e as ~30 TOPs desta suíte colidiam
+  // entre si de vez em quando (409 `ux_tipos_operacao_codigo` no cadastro, antes de qualquer asserção)
+  const codigo = codigoTop("8");
   const nome = uniq(rotulo);
   const criado = await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", {
     codigo, codigoBase, nome,

@@ -6,7 +6,9 @@ import { cabecalhosDaSessao } from "./top-config-08-comum";
  * AS FIXTURES DOS SPECS DA CENTRAL DE COMPRAS (OPERACOES-01, resíduos da decisão 278): a LIMPEZA do que o caso cria e
  * os dados de referência do seed pelo NOME. Usadas por `central-compras-desenho-a/-b/-c` e `central-compras-correcoes`
  * (limpeza, seed e `codigoTop`), por `base2-vendas-documentos` (a limpeza do par produto × armazém próprio do caso que
- * confirma a venda, e o seed) e por `compras-02-receber-pedido` e `compras-03-layout` (só o `codigoTop`).
+ * confirma a venda, e o seed), por `compras-03-layout` (só o `codigoTop`), por `central-vendas-workspace` (W29),
+ * `compras-01-documento-de-compra`, `compras-02-receber-pedido` e `top-config-07-reserva-de-estoque` (o local de estoque
+ * próprio por `criarCadastro`) e por `portal-vendas-unificado` (só o `codigoTop`).
  *
  * ┌─ A LIMPEZA ────────────────────────────────────────────────────────────────────────────────────────┐
  * │ Cada caso monta os PRÓPRIOS cadastros pela API (fornecedor, cliente, armazém, produto, TOP) — nenhum │

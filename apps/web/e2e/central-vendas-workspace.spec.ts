@@ -1,7 +1,10 @@
-import { test, expect, type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, acaoDaCentral, CLASSIFICACAO_DO_SEED, ROTULOS_CLASSIFICACAO } from "./helpers";
+// o `test` com a limpeza do caso (W29 cria o próprio par produto × local e o exclui no fim); os demais casos não criam
+// cadastro por ela e não mudam
+import { test, expect, criarCadastro, referenciasDoSeed } from "./central-compras-fixtures";
 
 /**
  * CENTRAL DE VENDAS — WORKSPACE FOUNDATION (VISUAL-UX-01).
@@ -1271,12 +1274,26 @@ test("W28 — unidade do produto: sufixo da quantidade e campo travado, pela lei
 test("W29 — esconder a coluna Estoque ou trocar de visão NÃO reaplica o custo médio: o unitário zerado de propósito chega zerado no POST", async ({ page }) => {
   await login(page);
   const empresa = await empresaAtiva(page);
-  const produtoId = await primeiroId(page, "/api/resources/products?pageSize=1");
-  const armazemId = await primeiroId(page, `/api/resources/warehouses?empresa_id=${empresa}&pageSize=1`);
+  /*
+   * O PAR É DO CASO: produto e local de estoque NOVOS, com nome único, por `criarCadastro` (a exclusão lógica fica
+   * registrada e roda no fim do caso). O local é escolhido na pesquisa da linha PELO NOME, e ela lista os locais de
+   * todas as empresas visíveis. "O primeiro local da empresa" do seed não serve: as três do seed nascem na mesma
+   * transação (mesmo `created_at`, o desempate é o id sorteado) e duas têm nome repetido na outra empresa ("Silo de
+   * Grãos", "Fábrica de Ração") — a pesquisa podia entregar o gêmeo da outra empresa, sem saldo, e o unitário ficava
+   * "0" pelo sorteio do seed, não pelo editor.
+   */
+  const seed = await referenciasDoSeed(page);
+  const produtoId = (await criarCadastro(page, "products", {
+    description: uniq("W29 produto"), group_id: seed.grupo.id, measurement_id: seed.unidade.id, financial_category_id: seed.natureza.id
+  })).id;
+  const armazemId = (await criarCadastro(page, "warehouses", {
+    empresa_id: empresa, initials: `W29${Date.now().toString(36).slice(-5).toUpperCase()}`, description: uniq("W29 local"), type: "inputs"
+  })).id;
   // a premissa: o par produto × armazém tem saldo com custo médio — é ele que preenche o unitário vazio
   await api(page, "POST", "/api/stock/input-entries", { empresa_id: empresa, entry_date: "2026-09-10", note: "W29", items: [{ product_id: produtoId, quantity: "100", unit_value: "2", generate_stock: true, warehouse_id: armazemId }] });
-  const saldo = await api<{ averageCost: string }>(page, "GET", `/api/stock/balances/${armazemId}/${produtoId}`);
+  const saldo = await api<{ quantity: string; averageCost: string }>(page, "GET", `/api/stock/balances/${armazemId}/${produtoId}`);
   expect(Number(saldo.averageCost), "premissa: o par tem custo médio positivo").toBeGreaterThan(0);
+  expect([saldo.quantity, Number(saldo.averageCost)], "premissa: o par novo tem só a entrada deste caso (100 × 2,00)").toEqual(["100.0000", 2]);
   const nomeDoProduto = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/products/${produtoId}`))["description"]);
   const nomeDoArmazem = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/warehouses/${armazemId}`))["description"]);
 
