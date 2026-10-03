@@ -1668,10 +1668,16 @@ O documento de estoque (`erp.documentos_estoque`, 0040) e o Portal de Estoque es
 - **Editor da TOP** para as famílias de estoque: aparece só o que se aplica — Geral com a observação; na seção Estoque, o
   texto "O movimento é definido pela espécie"; Financeiro, Fiscal, Aprovação e Próximas operações escondidos. No editor
   do formato 5 (decisão 281), a saída, a requisição e o consumo mostram a aba Destino, e o consumo, a aba Fluxo
-  (decisão 282); as três da movimentação interna ainda não aparecem no passo 1 (sem tela até a F5b).
+  (decisão 282); desde a F5b (decisão 282), as três da movimentação interna aparecem no passo 1, antes de Entrada.
 - **A TOP no documento**: obrigatória, só da família da espécie (conferido pela API e pelo gatilho do banco), versão
   congelada no lançamento, imutáveis depois. O ledger (`erp.stock_movements`) nunca recebe TOP: recebe o movimento, com
   a origem no `source_type`.
+- **Layout do documento por TOP** (decisão 282, F5b): as sete famílias de estoque têm layout
+  (`FAMILIAS_COM_LAYOUT_DE_ESTOQUE`), com o catálogo por espécie (as chaves do corpo de `POST /api/estoque/<segmento>`).
+  O layout decide colunas, rótulos, o valor padrão (o Local de estoque padrão no cabeçalho) e o "editável"; não decide
+  zona, ordem do cabeçalho, presença da Observação nem obrigatório — a gravação recusa, com mensagem que aponta o dono.
+  Tabelas em `docs/OPERACOES-CONTRACT.md` §3 (F5b). A TOP de estoque também responde `/regras-da-operacao` e
+  `/layout-efetivo` na API do estoque, com as chaves `layoutDocumento` e `regrasDaOperacao` no `operation-types`.
 
 ## 17. Formato 4: regras gerais e aprovação (TOP-CONFIG-08)
 
@@ -2348,9 +2354,9 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 - `CATALOGO_TOP = {grupos, tipos, perfis}` (`:258-262`), com:
   - `GRUPOS_TIPO_MOVIMENTO_TOP` e os rótulos;
   - `CATALOGO_TIPOS_MOVIMENTO_TOP` (22 tipos, `:140-165`; desde a OPERACOES-01, 20 com família: requisição de material,
-    consumo e devolução de consumo ganharam a família na F5a, decisão 282 — os três sem tela —, o orçamento de compra,
+    consumo e devolução de consumo ganharam a família na F5a, decisão 282 — com tela desde a F5b —, o orçamento de compra,
     `compras.orcamento`, na F6a, decisão 283 — com tela desde a F6b —, e o movimento bancário,
-    `financeiro.movimento_bancario`, na F9a, decisão 286 — com tela, como a conta a pagar e a conta a receber; 13 com tela;
+    `financeiro.movimento_bancario`, na F9a, decisão 286 — com tela, como a conta a pagar e a conta a receber; 16 com tela;
     sem família, só manejo e batelada);
   - `PERFIS_TIPO_TOP` (um por família do registry — 28 desde a F5a, a F6a e a F9a —, `:244`).
   Congelado. Nenhum código de família escrito: o gate `node scripts/familia-operacional-ssot-audit.mjs` passa.
@@ -2499,7 +2505,8 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 - As seções das F7 e F10 e as telas dos tipos "sem tela ainda", cada uma na sua fase (`docs/OPERACOES-CONTRACT.md` §1
   e §2). As da F5 (Destino e Fluxo) entraram na F5a, as da F6 (Fluxo de compra e Divergência com o pedido), na F6a, e a
   da F9 (Padrões financeiros), na F9a (§18.10);
-  a tela da requisição, do consumo e da devolução de consumo é da F5b; a do orçamento de compra entrou na F6b (§18.9).
+  as telas da requisição, do consumo e da devolução de consumo entraram na F5b (a Central de Estoque no motor, decisão
+  282), e a do orçamento de compra, na F6b (§18.9).
 - As famílias novas no registry: manejo e batelada (requisição de material, consumo e devolução de consumo nasceram na
   F5a; orçamento de compra, na F6a; o movimento bancário nasceu na F9a).
 - A prova do lado verdadeiro do detector, depois do merge, e a medição do CONJUNTO de seções (F5a, F6a e F9a).
@@ -2578,8 +2585,8 @@ Aqui, o que é do contrato da TOP:
   e `compras.compra` (depois de "Divergência com o pedido"); toda outra família a tem no padrão. A família nova
   `financeiro.movimento_bancario` (a tabela `erp.bank_movements` inteira) e os tipos `conta_pagar`, `conta_receber` e
   `movimento_bancario` com tela: o assistente passa a oferecer o grupo Financeiro. Com a F5a e a F6a: 28 famílias no
-  registry (28 perfis), 22 tipos no catálogo, 20 com família, 12 com tela e 16 famílias sem tela no passo 1; a matriz
-  das regras gerais continua com 13 (as do Financeiro não entram).
+  registry (28 perfis), 22 tipos no catálogo, 20 com família, 12 com tela e 16 famílias sem tela no passo 1 (desde a
+  F6b e a F5b, 16 com tela e 12 sem tela); a matriz das regras gerais continua com 13 (as do Financeiro não entram).
 - **No 5, fora do tipo:** a seção fora do neutro numa família que não a usa é a recusa de §18.5 ("Esta operação não usa a
   seção Padrões financeiros."); dentro da família, `recusasDoFinanceiroPadraoDaFamilia` (a provisão fora do pedido de
   venda e do pedido de compra — F9b —, "exigir" onde não há "sem natureza e centro": o avulso, o movimento, o pedido de

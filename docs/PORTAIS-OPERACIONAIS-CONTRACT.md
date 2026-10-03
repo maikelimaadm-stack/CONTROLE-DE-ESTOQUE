@@ -432,7 +432,9 @@ regra unificada — o documento de estoque não funde serviço, permissão nem e
 TOP, empresa e busca por código, com paginação, ordem e busca no servidor e número fixo de consultas);
 `GET /api/estoque/<segmento>/operation-types`; `POST /api/estoque/<segmento>` (lança aberto, com Idempotency-Key; o
 cliente manda só `tipo_operacao_id` e o servidor congela a versão e confere a família); `GET /api/estoque/<segmento>/:id`;
-`GET .../previa-confirmacao`; `POST .../confirmar`; `POST .../cancelar`. Tela: a aba **Movimentações** do `/estoque`,
+`GET .../previa-confirmacao`; `POST .../confirmar`; `POST .../cancelar`; desde a OPERACOES-01 F5b, as LEITURAS da
+Central: `GET /api/estoque/<segmento>/regras-da-operacao`, `/layout-efetivo` e, na saída, na requisição e no consumo,
+`/destino/opcoes`. Tela: a aba **Movimentações** do `/estoque`,
 logo depois de "Visão geral" (as abas e o "+ Novo" antigos continuam), e a Central de Estoque em
 `/estoque/movimentacoes/<segmento>/new?tipo_operacao_id=…` (criação) e `/estoque/movimentacoes/<segmento>/<id>`
 (consulta), declaradas no `apps/web/nav.registry.mjs`.
@@ -467,13 +469,14 @@ documento, depois de conferir que o que ele deu de entrada (`entry`, `transfer_i
 balde; já consumido → 422 no item, dizendo produto, armazém e lote, e nada gravado. Cancelar de novo → 409
 `ALREADY_CANCELLED`. Sem motivo, grava-se "Cancelado sem motivo informado".
 
-**O que fica nas telas antigas** (`/estoque/entradas`, baixas, requisições, transferências, devoluções, batidas, o
-ajuste a partir do Saldo e as rotas `/stock/*`): tudo continua como está, inclusive a transferência entre empresas,
-o Documento fiscal de Estoque e a produção de ração. O documento de estoque não as substitui nesta fatia.
+**O que fica nas telas antigas** (`/estoque/entradas`, baixas, requisições, transferências, devoluções, batidas e as
+rotas `/stock/*`; o "Ajustar estoque" do Saldo abre a Central de ajuste desde a F5b, com `ajustes_estoque.create`, uma
+TOP de ajuste e a capacidade — senão, o diálogo de sempre): tudo continua como está, inclusive a transferência entre
+empresas, o Documento fiscal de Estoque e a produção de ração. O documento de estoque não as substitui nesta fatia.
 
-**O que FALTA (e não deve ser simulado):** editar documento aberto (cancela-se e lança-se outro), layout do documento
-por TOP, transferência entre empresas no documento, anexos no documento de estoque, a execução configurada das famílias
-novas (TOP-CONFIG-04C) e a troca das telas antigas. O destino — o centro de resultado e as outras cinco dimensões — está
+**O que FALTA (e não deve ser simulado):** editar documento aberto (cancela-se e lança-se outro), transferência entre
+empresas no documento, anexos no documento de estoque, a execução configurada das famílias novas (TOP-CONFIG-04C) e a
+troca das telas antigas. O destino — o centro de resultado e as outras cinco dimensões — está
 no documento desde a OPERACOES-01 F5a, pela API.
 
 ### A movimentação interna no documento (OPERACOES-01 F5a, decisão 282)
@@ -486,10 +489,30 @@ das quatro de cima. Elas trazem:
 - o atendimento calculado da requisição e o encerramento do saldo;
 - a reserva da requisição no disponível.
 
-A saída ganha motivo e justificativa. Tudo isso está só no banco e na API (aditiva; capacidade `movimentacaoInterna:
-1`): a Central de Estoque deste web continua lançando as quatro de antes, igual, e passa ao motor da Central na F5b; o
-menu também não muda até a F5b. Contrato em `docs/OPERACOES-CONTRACT.md` §3 (F5a), e as seções Destino e Fluxo da TOP
-no §2.
+A saída ganha motivo e justificativa. Na F5a, tudo isso entrou no banco e na API (aditiva; capacidade
+`movimentacaoInterna: 1`); a tela é da F5b (abaixo). Contrato em `docs/OPERACOES-CONTRACT.md` §3 (F5a), e as seções
+Destino e Fluxo da TOP no §2.
+
+### A Central de Estoque no motor (OPERACOES-01 F5b, decisão 282)
+
+A Central de Estoque passa ao MOTOR DA CENTRAL, com o desenho das Centrais de Vendas e de Compras: barra, leque,
+pílulas, painel com abas, documentos abertos, Novo documento por TOP, Duplicar, Histórico e Imprimir, e os itens em Grade,
+Formulário e Ambos, com Configurar colunas e layout por TOP. Ela lança as SETE espécies quando a API declara
+`movimentacaoInterna` (as quatro de antes, com o corpo de antes, quando não declara):
+- a requisição, o consumo e a devolução de consumo ganham tela. O consumo nasce da requisição ("Atender requisição": os
+  itens dela, até o saldo, e o destino herdado, travado) ou direto, quando a TOP não exige requisição. A requisição
+  atendida em parte encerra o saldo com motivo. A devolução de consumo nasce do consumo ("Devolver itens");
+- o destino segue a seção Destino da TOP (não usada / opcional / obrigatória), com as opções de
+  `GET /api/estoque/<segmento>/destino/opcoes` — a mesma régua do POST;
+- a saída pede Motivo e Justificativa;
+- a entrada aceita o custo vazio (vale o custo médio), e o ajuste aceita o custo;
+- o "Ajustar estoque" do Saldo abre a Central de ajuste preenchida pela linha;
+- a lista "Movimentações" tem as sete espécies, com a coluna e o filtro "Atendimento", e a fila Aprovações › Estoque tem
+  as ações das sete.
+
+O documento de estoque não tem valor: a linha nova nasce em branco, o rodapé não tem subtotal, e a consulta não mostra
+desconto nem total. O prefixo dos testids do motor é `central-estoque`; os `estoque-*` de antes continuam no elemento
+equivalente. Contrato em `docs/OPERACOES-CONTRACT.md` §3 (F5b).
 
 ### Famílias de TOP de estoque
 
@@ -506,8 +529,8 @@ sem execução configurada é esta fatia; a execução configurada do estoque (0
 
 > Decisão 276. Só apresentação (faixa F2): nenhuma rota, API, permissão ou regra nova.
 
-**A regra.** Toda Central de documento (Vendas, Compras e as que vierem, a começar pela de Estoque) usa o MOTOR DA
-CENTRAL. Comportamento novo de tela — um botão da barra, uma pílula, um diálogo, uma guarda do Salvar — entra no motor,
+**A regra.** Toda Central de documento (Vendas, Compras e, desde a OPERACOES-01 F5b, Estoque; e as que vierem) usa o
+MOTOR DA CENTRAL. Comportamento novo de tela — um botão da barra, uma pílula, um diálogo, uma guarda do Salvar — entra no motor,
 nunca numa Central só. Duas Centrais copiadas divergem em silêncio: a que não recebeu a cópia simplesmente fica sem.
 
 **O que mora no motor** (`apps/web/src/features/central/`, um componente por arquivo, nome neutro):
@@ -520,7 +543,7 @@ nunca numa Central só. Duas Centrais copiadas divergem em silêncio: a que não
 | `acoes-rapidas.tsx` | o leque de Ações rápidas (a espécie entrega os itens) |
 | `documentos-abertos.tsx` | a lista dos documentos abertos, sobre as abas do workspace e o `closeTab` |
 | `novo-documento.tsx` | o menu "Nova operação · <espécie>" com as TOPs que o servidor listou |
-| `itens.tsx`, `itens-salvos.tsx`, `configurar-colunas.tsx` | a grade da criação (seleção pelo círculo, Grade \| Formulário, rodapé; lote/validade, armazém por item e o modo "da origem" opcionais), os itens salvos e Configurar colunas |
+| `itens.tsx`, `itens-salvos.tsx`, `configurar-colunas.tsx` | a grade da criação (seleção pelo círculo, Grade \| Formulário, rodapé; lote/validade, armazém por item e o modo "da origem" opcionais), os itens salvos e Configurar colunas; e, desde a F5b, as opções do documento sem valor (`linhaNovaEmBranco`, `subtotal`, `casasDaQuantidade`; na consulta, `rotulos`, `colunasExtras` e `formularioPelasColunas`) |
 | `painel.tsx` | painel repartido, coluna, largo, o plano de parcelas (editável e em leitura), títulos e derivados |
 | `dialogos.tsx` | Confirmar (com a prévia que a espécie põe dentro), Cancelar (motivo opcional, 1–500) e Descartar |
 | `pesquisa.tsx` | a pesquisa (lookup) da Central, sobre duas fontes: `/api/resources/<recurso>/options` (o local, sempre; o produto sem a capacidade) e, para o PRODUTO com a capacidade `pesquisaDeProdutos`, `/api/produtos/pesquisa` (o saldo do local da linha, "Só com saldo neste local" nas saídas, "Mostrar mais") |
@@ -653,8 +676,28 @@ o leitor da resposta moram em `features/aprovacoes/areas-de-aprovacao.ts`. O mot
 quem monta o bloco é a Central.
 
 O que não mudou: os corpos do POST, do `/convert` e da decisão; os testids; a pílula "Confirmar venda"/"Confirmar
-compra" da criação; a conversão pedido → venda. A Central de Estoque só passou a usar o aviso do motor (a F5 a leva ao
-resto).
+compra" da criação; a conversão pedido → venda. A Central de Estoque só passou a usar o aviso do motor; a F5b a levou ao
+motor inteiro (abaixo).
+
+### O documento sem valor no motor (OPERACOES-01 F5b, decisão 282)
+
+A Central de Estoque entrou no motor com acréscimos OPCIONAIS, com o padrão de hoje: sem a prop, nada muda nas outras
+Centrais (DOM, classes, payload, testids e textos; F5B-M1 e F5B-M2 em `apps/web/e2e/f5b-motor-centrais.spec.ts`).
+
+| onde | prop | o que faz | padrão |
+|---|---|---|---|
+| criação (`itens.tsx`) | `linhaNovaEmBranco` | a linha nova nasce com a quantidade e o unitário vazios; a célula não ativa mostra "—" | `false` ("1" e "0") |
+| criação | `subtotal` | `false` tira o "Subtotal dos itens" do rodapé; "Itens (N)" fica | `true` |
+| criação | `casasDaQuantidade` | as casas da quantidade na célula não ativa | 2 |
+| consulta (`itens-salvos.tsx`) | `subtotal: string \| null` | `null` tira a linha do subtotal | o subtotal do servidor |
+| consulta | `rotulos` | o rótulo da espécie no lugar do fixo, na grade, no formulário e no "Configurar colunas" | nenhum |
+| consulta | `colunasExtras` | as colunas da espécie, depois de todas as outras (no formulário, campo travado), com a chave `extra:<chave>` nas preferências | nenhuma |
+| consulta | `formularioPelasColunas` | o formulário de leitura só com os campos das colunas da espécie (`colunas.leitura`), mais a Unidade, na ordem fixa | `false` (a lista fixa) |
+
+O motor continua sem conhecer espécie. A tabela `COMBINACOES_DO_MOTOR` (`apps/web/e2e/compras-03-central-unitario.spec.ts`)
+tem a linha da Central de Estoque (`features/estoque/central/criacao-itens.tsx`: `armazemPorItem={false}`,
+`custoMedioNoUnitario={false}`, `lote`, `daOrigem`, `pesquisaDeProduto`, `linhaNovaEmBranco`, `subtotal={false}`) e cobra
+as duas chaves novas em toda chamada.
 
 ## Central Financeira (OPERACOES-01 F8, decisão 285)
 

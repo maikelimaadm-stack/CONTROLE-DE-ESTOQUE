@@ -26,9 +26,9 @@ publica em `GET /api/admin/tipos-operacao/capabilities` › `formato5.catalogo`,
 | 4 | Compras | Pedido | `pedido_compra` | `compras.pedido` | sim | — |
 | 5 | Compras | Orçamento | `orcamento_compra` | `compras.orcamento` | sim | F6b (283) |
 | 6 | Compras | Compra | `compra` | `compras.compra` | sim | — |
-| 7 | Movimentação interna | Requisição | `requisicao` | `estoque.requisicao_material` (a espécie NOVA; a `estoque.requisicao` antiga continua a de `erp.requisitions`) | não | F5b (282) |
-| 8 | Movimentação interna | Consumo | `consumo` | `estoque.consumo` | não | F5b (282) |
-| 9 | Movimentação interna | Devolução de consumo | `devolucao_consumo` | `estoque.devolucao_consumo` | não | F5b (282) |
+| 7 | Movimentação interna | Requisição | `requisicao` | `estoque.requisicao_material` (a espécie NOVA; a `estoque.requisicao` antiga continua a de `erp.requisitions`) | sim | F5b (282) |
+| 8 | Movimentação interna | Consumo | `consumo` | `estoque.consumo` | sim | F5b (282) |
+| 9 | Movimentação interna | Devolução de consumo | `devolucao_consumo` | `estoque.devolucao_consumo` | sim | F5b (282) |
 | 10 | Movimentação interna | Entrada | `entrada` | `estoque.entrada` | sim | — |
 | 11 | Movimentação interna | Saída/baixa | `saida` | `estoque.saida` | sim | — |
 | 12 | Movimentação interna | Transferência | `transferencia` | `estoque.transferencia` | sim | — |
@@ -48,12 +48,13 @@ Regras:
   sem a variante = tipo sem família.
 - "Tem tela" só vale com família (fail-closed).
 - "Tem tela" = a tela que lança o documento cita a TOP. Hoje, os 9 cujo documento cita a TOP, os 3 do Financeiro (F9,
-  decisão 286: o lançamento avulso da Central e o "Novo movimento bancário" escolhem a TOP primeiro) e o orçamento de
-  compra (F6b, decisão 283: nasce do pedido aprovado para orçamento, pela TOP do leque do pedido) — 13 com tela. A F5a
-  (decisão 282) criou a família das três da movimentação interna e as deixou sem tela: o documento já existe na API, e a
-  tela é da F5b. A F6a (decisão 283) criou a do orçamento de compra, e a F6b, a tela. A F9a criou a do movimento bancário
-  (`financeiro.movimento_bancario`, a tabela `erp.bank_movements` inteira). Hoje, 20 dos 22 tipos têm família; sem
-  família, só Manejo e Batelada. O registry tem 28 famílias, e 15 delas ficam sem tela no passo 1.
+  decisão 286: o lançamento avulso da Central e o "Novo movimento bancário" escolhem a TOP primeiro), o orçamento de
+  compra (F6b, decisão 283: nasce do pedido aprovado para orçamento, pela TOP do leque do pedido) e as três da
+  movimentação interna (F5b, decisão 282: a Central de Estoque no motor) — 16 com tela. A F5a (decisão 282) criou a
+  família das três da movimentação interna, e a F5b, a tela. A F6a (decisão 283) criou a do orçamento de compra, e a F6b,
+  a tela. A F9a criou a do movimento bancário (`financeiro.movimento_bancario`, a tabela `erp.bank_movements` inteira).
+  Hoje, 20 dos 22 tipos têm família; sem família, só Manejo e Batelada. O registry tem 28 famílias, e 12 delas ficam sem
+  tela no passo 1 (as 8 antigas e as 4 dos módulos).
 - **Ligar um tipo** é trabalho da fase que cria a tela: ela troca a linha do catálogo — `temTela`, e a família quando ela
   nascer no registry — e atualiza os testes que fixam o estado de hoje (`top-formato5-catalogo.test.ts` CT-1/CT-2,
   `top-formato5-top.test.ts` T5-1, `tipos-operacao.spec.ts`, `top-assistente.spec.ts`).
@@ -276,7 +277,7 @@ nomes são fixados pelo coordenador. A sugestão do plano da F4, não normativa:
 
 ## 3. Centrais e modos de produto
 
-A preencher pelas F5 e F10 (decisões 282 e 287).
+A preencher pela F10 (decisão 287); a F5 (decisão 282) já preencheu a sua (F5a e F5b, abaixo).
 
 ### F2 — as Centrais de Vendas e de Compras usam as regras gerais da TOP (decisão 279) · IMPLEMENTADO
 
@@ -538,22 +539,23 @@ trigram (precisa de migration); a pesquisa do seletor de Funcionários.
   `/options`, grava (201). A rota, com os parâmetros de hoje, mantém as chaves e o significado.
 
 **Fora (F3b):**
-- Central de Estoque: F5b; herda a pesquisa com `soControlaEstoque: true`, e o local do cabeçalho de lá É o
-  `armazem_id` gravado.
+- Central de Estoque: feita na F5b, que herda a pesquisa com `soControlaEstoque: true` (o local do cabeçalho de lá É o
+  `armazem_id` gravado).
 - Telas que continuam Produto → Local:
   - o lançamento de manejo da pecuária: tela de módulo, da F10;
   - as listagens de correções e de saldos iniciais: telas antigas, cujo destino a F11 decide;
-  - o detalhe do documento de estoque e a relação de movimentos da Central de Estoque (F5b).
+  - a relação de movimentos da consulta da Central de Estoque (a coluna Local de estoque vem depois do Produto; F5b).
 - Na pesquisa: o saldo disponível (com reserva), o total, a ordem por saldo e o debounce.
 - No item e no documento: o filtro de empresa na célula do local do item; a coluna Estoque na compra; gravar o local do
   cabeçalho; reordenar layouts salvos.
 
-### F5a — a movimentação interna no documento de estoque (decisão 282) · IMPLEMENTADO no banco e na API (a tela é da F5b)
+### F5a — a movimentação interna no documento de estoque (decisão 282) · IMPLEMENTADO (o banco e a API; a tela, na F5b, abaixo)
 
 > Parte F5a da decisão 282. Migration 0043. Sem variável. Uma rota nova; as das três espécies saem do laço de hoje.
 > Capacidade aditiva `movimentacaoInterna: 1`. A Central de Estoque NÃO muda até a F5b: o web desta fase lança só as
 > quatro espécies de hoje, e o menu (`apps/web/nav.registry.mjs`) não muda — as entradas das espécies novas vêm com a
-> F5b. A PR #90 não vai à produção sem a F5b. Implantação em `docs/DEPLOYMENT.md` § OPERACOES-01 › F5a.
+> F5b. A PR #90 não vai à produção sem a F5b. A F5b está na mesma PR (subseção abaixo). Implantação em
+> `docs/DEPLOYMENT.md` § OPERACOES-01 › F5a.
 
 **As sete espécies do documento de estoque** (`erp.documentos_estoque`; domínio: `TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE`).
 
@@ -712,8 +714,8 @@ disponível … < solicitado … (… reservado para pedidos)`.
 - as três espécies, o destino, o motivo e a justificativa, a entrada sem custo, o custo no ajuste e a origem;
 - o encerramento do saldo, `atendimento`, `vinculados` e `baseDoSaldo`;
 - o `empresa_id` do Saldo.
-O leitor é `entendeMovimentacaoInterna`: só `=== 1`; qualquer outra forma é "não declarada". A web desta fase não lê a
-chave; a F5b lê.
+O leitor é `entendeMovimentacaoInterna`: só `=== 1`; qualquer outra forma é "não declarada". A web da F5a não lia a
+chave; a da F5b lê (subseção abaixo).
 
 **O razão e quem grava nele:**
 - a OS finalizada grava o centro de resultado, a safra e a própria OS;
@@ -721,7 +723,8 @@ chave; a F5b lê.
 - o estorno copia o destino e a cultura do original;
 - "Saídas x Centro de Resultado" não soma a saída estornada.
 
-**Fora (F5a) e para a F5b:**
+**Fora (F5a), feito na F5b** (subseção abaixo; o menu, no merge dela), menos a devolução pré-preenchida pela saída — ela
+nasce do CONSUMO (decisão 282, parte F5b, escolha (f)):
 - a Central de Estoque no motor, com as sete espécies (`TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE`), lendo
   `movimentacaoInterna`;
 - `temTela: true` no catálogo e o menu (`apps/web/nav.registry.mjs`, que esta parte não muda);
@@ -734,7 +737,170 @@ chave; a F5b lê.
 
 As decisões pendentes do Maike — o par motivo/justificativa obrigatório no servidor depois que o web anterior sair de
 produção (I-1) e as perguntas antes da F11 (saldo inicial, entrada sem NF, requisição antiga, o neutro do Destino, a
-devolução antiga, `reason_note` e os relatórios que só leem as tabelas antigas; I-2 e I-3) — estão na decisão 282.
+devolução antiga, `reason_note` e os relatórios que só leem as tabelas antigas; I-2 e I-3) — estão na decisão 282. Em
+03/10 o Maike decidiu: I-1 fica para a 1ª PR depois desta em produção, e I-2/I-3 são da F11 (decisão 288) — subseção
+F5b, abaixo.
+
+### F5b — a Central de Estoque no motor da Central (decisão 282) · IMPLEMENTADO
+
+> Parte F5b da decisão 282. Sem migration, sem variável, sem permissão nova. Três rotas novas de LEITURA e duas chaves
+> aditivas no `operation-types` do estoque. A Central de Estoque passa ao motor da Central (decisão 276) e lança as SETE
+> espécies quando a API declara `movimentacaoInterna`; sem a chave, as quatro de antes, com o corpo de antes. Implantação
+> em `docs/DEPLOYMENT.md` § OPERACOES-01 › F5b.
+
+**Capacidades** (as sete `GET /api/estoque/<segmento>/operation-types`):
+
+| chave | valor | o web lê com | sem ela (a API anterior) |
+|---|---|---|---|
+| `documentoEstoque` (ESTOQUE-01) | 1 | — | a lista diz que as movimentações estão indisponíveis |
+| `movimentacaoInterna` (F5a) | 1 | `entendeMovimentacaoInterna` (domínio) | as quatro espécies; o corpo de antes (custo obrigatório na entrada, ajuste sem custo, nada de destino, motivo ou origem); o Saldo no diálogo antigo |
+| `layoutDocumento` (F5b) | 1 (`CAPACIDADE_LAYOUT_DOCUMENTO`) | `entendeLayoutDocumento` (`features/sales/tipo-operacao-select`) | o layout do sistema, do domínio; nenhum pedido a `/layout-efetivo` |
+| `regrasDaOperacao` (F5b) | 1 (`CAPACIDADE_REGRAS_DA_OPERACAO`) | `entendeRegrasDaOperacao` (`features/sales/regras-da-operacao`) | o neutro de cada seção (sem Destino, consumo direto, "Salvar"); nenhum pedido a `/regras-da-operacao` |
+
+A ordem do bloco é esta, e `contractVersion` continua 1 (`apps/api/src/routes/estoque-documentos.ts:525-526`). A Central
+lê as capacidades UMA vez, ao montar o formulário. As opções do destino são parte do `movimentacaoInterna: 1`.
+
+**Rotas novas** (prefixo `/api`; todas de LEITURA, sem Idempotency-Key, sem escrita, número fixo de consultas):
+
+| Método e caminho | Espécies | Permissão | Resposta |
+|---|---|---|---|
+| GET `/estoque/<segmento>/regras-da-operacao?tipo_operacao_id=` | as sete | `<recurso>.create` | `{ contractVersion: 1, exigencias, regrasGerais: { confirmacaoAutomatica, aceitaSemItens: false }, destino, fluxo }` |
+| GET `/estoque/<segmento>/layout-efetivo?tipo_operacao_id=` | as sete | `<recurso>.create` | o contrato de vendas e compras: `{ estrutura, origem, nome, id }` e, com padrão de cadastro, `padroesDeCadastro`/`padroesInvalidos` |
+| GET `/estoque/<segmento>/destino/opcoes?dimensao=&empresa_id=&busca=&limite=` | saída, requisição e consumo (nas outras, 404 de rota) | `<recurso>.create` | `{ itens: [{ id, codigo, rotulo }] }` (lista vazia é `[]`) |
+
+- **A TOP das duas primeiras** (`topDaCentral`, `estoque-documentos.ts:482-497`): uma consulta (a TOP com a configuração da
+  versão ATUAL). A MESMA 404 `Tipo de operação` para a TOP ausente, repetida, malformada (conferida antes da consulta),
+  de outra família, inativa, excluída ou de outra organização. Outro parâmetro → 422 no parâmetro ("Parâmetro não
+  reconhecido").
+- **`/regras-da-operacao`** = `regrasDaOperacaoDoEstoque(família, configuração)` (`packages/domain/src/estoque-regras-da-operacao.ts:59`),
+  com a MESMA leitura do lançamento:
+  - `exigencias`: as exigências gerais pelo mapa do estoque (só `observacao`); formatos 1 e 2 → `[]`;
+  - `regrasGerais.confirmacaoAutomatica`: a régua do POST (`regrasGeraisDaVersaoTop`); `aceitaSemItens` é sempre `false`;
+  - `destino`: a seção Destino nas famílias que a usam (saída, requisição, consumo), `null` nas outras; `fluxo`: a seção
+    Fluxo só no consumo, `null` nas outras. Formatos 1 a 4 e versão ilegível → o neutro.
+  O leitor da tela, `lerRegrasDaOperacaoDoEstoque` (`:118`), é ESTRITO: qualquer forma errada → `null`, e a Central trava o
+  Salvar ("As regras da operação não carregaram"); chave a mais é ignorada.
+- **`/destino/opcoes`** (`apps/api/src/routes/estoque-movimentacao-interna.ts:386-455`):
+  - query `.strict()`: `dimensao` (uma de `CAMPOS_DESTINO_ESTOQUE`), `empresa_id` (uuid, em minúsculas), `busca` (até
+    100, aparada), `limite` (1 a 50, padrão 20). Parâmetro desconhecido ou repetido → 422 no parâmetro;
+  - a empresa é PEDIDO: fora do escopo de estoque do membro → 422 (`exigirEmpresaDeLancamento`, como no POST);
+  - uma consulta, montada da tabela estática `ALVO_DO_DESTINO` (`:235-243`), com os MESMOS predicados da conferência do
+    POST — a consulta do POST (`SQL_REFERENCIAS_VALIDAS`, `:255-259`) é montada da MESMA tabela:
+
+| dimensão | tabela | da empresa? | válida | `codigo` | `rotulo` |
+|---|---|---|---|---|---|
+| `centroCusto` | `erp.cost_centers` | não (organização) | ativo, analítico, não excluído | `code` | `name` |
+| `equipamento` | `erp.equipments` | sim | `active`, não excluído | `code` | `description` |
+| `ordemServico` | `erp.service_orders` | sim | `open` ou `in_progress`, não excluída | `code` | a descrição ou, vazia, o código |
+| `loteAnimais` | `erp.batches` | sim | `active`, não excluído | `code` | `description` |
+| `area` | `erp.areas` | sim | ativa, não excluída | `code` | `name` |
+| `safra` | `erp.harvests` | não (organização) | ativa, não excluída | — (`null`) | `description` |
+
+  - a busca procura no código e no rótulo, com `%`, `_` e `\` como LITERAIS; a ordem é `codigo nulls last, rotulo, id`;
+  - nenhum identificador vem da entrada: a dimensão só escolhe uma linha da tabela; os valores são parametrizados. A
+    leitura passa pela RLS do módulo da transação (estoque).
+  Uma régua só: toda opção que a lista devolve é aceita pelo POST, e todo alvo inválido é recusado com a mensagem da F5a
+  (DO-3).
+
+**Layout por TOP no estoque** (domínio, `packages/domain/src/layout-documento.ts`):
+- as sete famílias são `FAMILIAS_COM_LAYOUT_DE_ESTOQUE` (`:37`, as variantes de `erp.documentos_estoque` no registry) e
+  entram POR ÚLTIMO em `FAMILIAS_COM_LAYOUT` (`:43`): o "Novo" do configurador continua em `vendas.orcamento`;
+- o catálogo é por ESPÉCIE (`:214-237`), com as chaves do corpo do POST:
+
+| parte | chave | rótulo | do sistema | espécies |
+|---|---|---|---|---|
+| cabeçalho | `empresa_id` | Empresa | sim | todas |
+| cabeçalho | `data_documento` | Data do documento | sim | todas |
+| cabeçalho | `armazem_id` | Local de estoque (transferência: Local de estoque de origem) | sim | todas |
+| cabeçalho | `armazem_destino_id` | Local de estoque de destino | sim | transferência |
+| cabeçalho | `observacao` | Observação | — | todas |
+| itens | `codigo` | Código | só leitura | todas |
+| itens | `produto_id` | Produto | sim | todas |
+| itens | `estoque` | Estoque (requisição: Disponível) | só leitura | todas |
+| itens | `quantidade` / `quantidade_contada` | Quantidade / Quantidade contada (ajuste) | sim | todas |
+| itens | `custo_unitario` | Custo unitário | — | entrada, ajuste |
+| itens | `lote` | Lote | — | todas menos a requisição |
+| itens | `validade` | Validade | — | entrada, ajuste, devolução de consumo |
+
+- o layout do estoque decide as COLUNAS (ordem, rótulo e visibilidade) e, no cabeçalho, o rótulo, o valor padrão (o Local
+  de estoque padrão por registro, da empresa do documento) e o "editável". Nenhuma coluna aceita padrão
+  (`colunasComPadraoRegistro` = []);
+- a gravação RECUSA, com mensagem que aponta o dono:
+
+| o que | caminho | mensagem |
+|---|---|---|
+| campo do documento em Dados adicionais ou numa aba | o campo | `"<rótulo>" fica nos Dados principais neste movimento.` (a Observação: `"Observação" fica nos Dados principais do layout neste movimento: a Central de Estoque a mostra na aba Observações.`) |
+| ordem do cabeçalho diferente da do catálogo (uma recusa só) | `cabecalho` | `A ordem do cabeçalho é fixa neste movimento (a da Central de Estoque): Empresa, Data do documento, Local de estoque, Observação.` (a transferência com os dois locais) |
+| Observação fora do layout | `cabecalho` | `"Observação" não sai do layout neste movimento: a Central de Estoque sempre a mostra (quem a exige é a operação, em Exigir observação, na aba Geral da TOP).` |
+| Custo unitário obrigatório | `itens[i].obrigatorio` | `"Custo unitário" é opcional no documento de estoque: o layout não o torna obrigatório.` |
+| Observação obrigatória | `cabecalho[i].obrigatorio` | `"Observação" obrigatória é regra da operação (Exigir observação, na aba Geral da TOP): o layout não a torna obrigatória.` |
+| Lote ou Validade obrigatórios, ou com valor padrão | `itens[i].obrigatorio` / `.valorPadrao` | as MESMAS das compras |
+
+  Vendas e compras não passam por estas regras: lá, reordenar o cabeçalho e tirar a Observação continuam aceitos.
+- Destino, origem, motivo e justificativa NÃO estão no catálogo: os donos são a seção Destino/Fluxo da TOP e a espécie.
+- `/layout-efetivo` e o admin de layouts (`/api/admin/layouts-documento`) servem as sete famílias pelo domínio; o
+  gatilho da 0032 continua prendendo a TOP e o layout à mesma família.
+
+**A Central de Estoque** (`apps/web/src/features/estoque/central-estoque.tsx` + `features/estoque/central/`):
+- a forma de cada espécie (`central/forma.ts:76`) é a régua da API vista pela tela:
+
+| espécie | quantidade | custo (com / sem a capacidade) | lote | validade | Local de destino | origem | destino informado | motivo e justificativa |
+|---|---|---|---|---|---|---|---|---|
+| entrada | `quantidade` | opcional / obrigatório | sim | sim | — | — | — | — |
+| saída | `quantidade` | — | sim | — | — | — | sim (com a capacidade) | sim (com a capacidade) |
+| transferência | `quantidade` | — | sim | — | sim | — | — | — |
+| ajuste | `quantidade_contada` | opcional / — | sim | sim | — | — | — | — |
+| requisição | `quantidade` | — | — | — | — | — | sim | — |
+| consumo | `quantidade` | — | sim | — | — | requisição (o Fluxo pode exigir) | herdado da requisição | — |
+| devolução de consumo | `quantidade` | — | sim | sim | — | consumo (obrigatória) | copiado do consumo | — |
+
+  A pesquisa de produto é a do motor, sempre só produto que controla estoque (`soControlaEstoque: true`): na saída, na
+  transferência, na requisição e no consumo, com "Só com saldo neste local"; nas outras, tudo, com o saldo. A coluna
+  Estoque mostra o DISPONÍVEL na requisição e o físico nas outras.
+- **Pendências (zero POST)**, as mesmas regras do servidor: itens, empresa, Local(is) de estoque (o de destino diferente
+  do de origem), data, produto, quantidade e custo por item (`numeroDoCampo`); a origem (a devolução sempre; o consumo
+  quando o Fluxo exige — `recusasDoFluxoDoConsumo`); o destino (`recusasDoDestinoPelaTop`); motivo e justificativa da
+  saída (com a capacidade; o servidor ainda não exige — I-1); a observação que a TOP exige ("Observação é obrigatório
+  nesta operação."). O 422 do servidor cai no campo que ele apontou.
+- **Corpo do POST** (`central/estado-criacao.ts:122-220`): campo vazio não viaja; números no texto canônico; o destino
+  HERDADO e o local de estoque das linhas nunca viajam. Sem a capacidade, exatamente as chaves de antes.
+- **Travas do Salvar:** salvando; operação não confirmada pelo servidor; layout carregando ou não carregado; regras
+  carregando ou que não carregaram; origem carregando.
+- **Origem:** pela URL (`?origem=<id>`, de "Atender requisição" e "Devolver itens") ou pelo campo "Requisição de origem" /
+  "Consumo de origem". A lista são os documentos CONFIRMADOS da empresa e do Local de estoque
+  (`GET /api/estoque/documentos?especie=…&situacao=confirmado[&atendimento=pendente,parcial]&empresa_id=…&armazem_id=…`).
+  Origem que não se lê, requisição não pendente ou consumo não confirmado → aviso, e nada é aplicado. Com a origem: a
+  empresa e o local travam; os itens vêm no modo "da origem" do motor (produto travado, coluna Saldo, sem Adicionar nem
+  Duplicar; a quantidade trava com "Atender requisição em parte: Não"); o destino herdado aparece travado.
+- **Consulta:** só leitura (editar documento aberto continua fora). Barra: Novo documento, Duplicar (desabilitado com
+  origem e na devolução), Confirmar `<espécie>` (pela prévia), Atender requisição, Devolver itens, Encerrar saldo
+  (requisição atendida em parte, `requisicoes_estoque.edit`, motivo obrigatório, `POST …/encerrar-saldo` com
+  Idempotency-Key). Leque: Imprimir, Histórico (`documentos_estoque`), documentos abertos, Cancelar. Itens: sem subtotal,
+  quantidade em 4 casas, "Custo unitário" (no ajuste também "Quantidade contada", "Saldo na confirmação" e "Diferença";
+  no consumo, "Devolvido"; na requisição, "Atendido" e Saldo, sem custo, lote nem validade); o formulário de leitura só
+  com os campos das colunas da espécie. Painel: Movimentos; Destino (na saída, só com destino gravado); Motivo da saída;
+  Atendimento (a origem, os vinculados e o saldo encerrado); Observações.
+- **Prévia:** `baseDoSaldo` aditivo (`"disponivel"` só na requisição; ausente = o físico); a requisição mostra
+  "Disponível agora/depois" e o movimento "Nenhum: a requisição reserva no local de estoque"; o consumo, "Consumo (saída
+  do local de estoque)"; a devolução de consumo, "Devolução".
+
+**O portal:**
+- a lista "Movimentações" oferece as sete espécies com a capacidade (as quatro sem ela), com a coluna e o filtro
+  "Atendimento" (`pendente`, `parcial`, `atendido`, `encerrado`; filtro no servidor), e só monta depois de saber a
+  capacidade;
+- o "Ajustar estoque" do Saldo abre a Central de ajuste preenchida (`/estoque/movimentacoes/ajustes/new?empresa_id=…&armazem_id=…&produto_id=…&lote=…`;
+  o lançador pergunta a TOP e preserva o preenchimento) com `ajustes_estoque.create`, uma TOP de ajuste e a capacidade; senão
+  o diálogo de sempre;
+- o link do ID Global das três espécies abre a consulta; a fila Aprovações › Estoque tem Abrir, Aprovar e Reprovar nas
+  sete;
+- "Abrir na Central" do configurador de layouts leva à Central de Estoque.
+
+**Escolhas, fora e declarado:** na decisão 282 (parte F5b). O menu (`apps/web/nav.registry.mjs`) recebe, no merge da fase,
+as permissões das três espécies novas em Movimentações, na criação, na consulta e na fila Aprovações › Estoque. Fora: a
+transferência entre empresas (tela antiga); a saída das telas antigas do menu (F11; I-2 e I-3, ver 288); o bloco de
+aprovação na consulta do estoque (F11/F12); e o par motivo/justificativa obrigatório no servidor (I-1) — decisão do
+Maike de 03/10: fora desta PR, com dono, a 1ª PR depois desta em produção (o web anterior precisa sair de produção antes:
+com ele no ar, o servidor recusaria a saída que ele manda sem o par).
 
 ## 4. Compras: pedido, orçamento e finalização com aprovação
 
