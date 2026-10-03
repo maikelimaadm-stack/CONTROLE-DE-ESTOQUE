@@ -1,6 +1,7 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import type { EspecieEstoque } from "@agro/domain";
 import { enumLabel } from "@/lib/copy";
 
 /**
@@ -22,6 +23,11 @@ import { enumLabel } from "@/lib/copy";
  * ilegível), no formato das recusas das prévias da venda e da compra (`{ code, message, details? }`). A API anterior
  * não o manda, e a leitura o completa com a lista vazia: o corpo de antes continua sendo o contrato, e a tela lê
  * sempre uma lista. Presente, ele é estrito: item sem `code` ou sem `message` em texto não é deste contrato.
+ *
+ * A BASE DO SALDO (OPERACOES-01 F5a/F5b, decisão 282): `baseDoSaldo` é ADITIVO no mesmo `contractVersion` 1 e só vem na
+ * REQUISIÇÃO (`"disponivel"`: o saldo da prévia é o DISPONÍVEL do local de estoque — o físico menos o que os outros
+ * documentos reservam —, a régua da confirmação dela). Ausente = o físico, como sempre. Presente com outro valor não é
+ * deste contrato.
  */
 export const CONTRATO_PREVIA_CONFIRMACAO_ESTOQUE = 1 as const;
 
@@ -46,17 +52,22 @@ export interface ItemDaPreviaEstoque {
 /** Uma recusa do documento — o MESMO corpo de erro que a confirmação daria (`code`, `message`, `details`). */
 export interface RecusaDaPreviaEstoque { code: string; message: string; details?: unknown }
 
+/** Sobre que saldo a prévia fala: o físico (ausente no corpo) ou o disponível (a requisição). */
+export type BaseDoSaldoDaPrevia = "fisico" | "disponivel";
+
 export interface PreviaDaConfirmacaoEstoque {
   contractVersion: typeof CONTRATO_PREVIA_CONFIRMACAO_ESTOQUE;
   documento: { id: string; especie: string; situacao: string; codigo: string };
   podeConfirmar: boolean;
   /** Sempre presente depois da leitura: ausente no corpo (API anterior) = nenhuma recusa. */
   recusas: RecusaDaPreviaEstoque[];
+  /** Sempre presente depois da leitura: ausente no corpo = o físico. */
+  baseDoSaldo: BaseDoSaldoDaPrevia;
   itens: ItemDaPreviaEstoque[];
 }
 
-/** O corpo como chega: o `recusas` é aditivo e pode faltar. `lerPreviaDaConfirmacaoEstoque` o completa. */
-export type CorpoDaPreviaEstoque = Omit<PreviaDaConfirmacaoEstoque, "recusas"> & { recusas?: RecusaDaPreviaEstoque[] };
+/** O corpo como chega: `recusas` e `baseDoSaldo` são aditivos e podem faltar. `lerPreviaDaConfirmacaoEstoque` os completa. */
+export type CorpoDaPreviaEstoque = Omit<PreviaDaConfirmacaoEstoque, "recusas" | "baseDoSaldo"> & { recusas?: RecusaDaPreviaEstoque[]; baseDoSaldo?: "disponivel" };
 
 const ehObjeto = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const ehTexto = (v: unknown): v is string => typeof v === "string";
@@ -82,18 +93,31 @@ export const ehPreviaDaConfirmacaoEstoque = (v: unknown): v is CorpoDaPreviaEsto
   // Ausente é a API anterior; presente, só na forma do contrato (`null` ou item pela metade não são lista vazia).
   const recusas = v.recusas === undefined ? [] : v.recusas;
   if (!Array.isArray(recusas) || !recusas.every(ehRecusa)) return false;
+  // `baseDoSaldo` (F5a): ausente é o físico; presente, só "disponivel" é deste contrato.
+  if (v.baseDoSaldo !== undefined && v.baseDoSaldo !== "disponivel") return false;
   return v.podeConfirmar === (!v.itens.some((i) => (i as ItemDaPreviaEstoque).insuficiente) && recusas.length === 0);
 };
 
-/** A leitura do corpo: o contrato, com `recusas` sempre presente (ausente = lista vazia); fora do contrato = `null`. */
+/**
+ * A leitura do corpo: o contrato, com `recusas` (ausente = lista vazia) e `baseDoSaldo` (ausente = o físico) sempre
+ * presentes; fora do contrato = `null`.
+ */
 export const lerPreviaDaConfirmacaoEstoque = (v: unknown): PreviaDaConfirmacaoEstoque | null =>
-  ehPreviaDaConfirmacaoEstoque(v) ? { ...v, recusas: v.recusas ?? [] } : null;
+  ehPreviaDaConfirmacaoEstoque(v) ? { ...v, recusas: v.recusas ?? [], baseDoSaldo: v.baseDoSaldo ?? "fisico" } : null;
 
 /**
  * O rótulo do movimento previsto — o do ledger (`stock_movement_type`). A transferência grava DOIS movimentos (saída na
  * origem, entrada no destino) e a prévia a resume em um: o rótulo diz os dois.
+ *
+ * A MOVIMENTAÇÃO INTERNA (OPERACOES-01 F5b): a prévia da API fala a lista fechada de movimentos que o web anterior lê, e
+ * a espécie diz o resto — a requisição não move o razão (`null`: ela reserva); o consumo se mostra como a saída
+ * (`writeoff`), e o razão grava `requisition`; a devolução de consumo se mostra como a entrada (`entry`), e o razão grava
+ * `devolution`. Sem a espécie (ou nas quatro de antes), o rótulo de sempre.
  */
-export function rotuloDoMovimentoPrevisto(m: MovimentoPrevistoEstoque): string {
+export function rotuloDoMovimentoPrevisto(m: MovimentoPrevistoEstoque, especie?: EspecieEstoque): string {
+  if (especie === "requisicao" && m === null) return "Nenhum: a requisição reserva no local de estoque";
+  if (especie === "consumo" && m === "writeoff") return "Consumo (saída do local de estoque)";
+  if (especie === "devolucao_consumo" && m === "entry") return enumLabel("stock_movement_type", "devolution");
   if (m === null) return "Nenhum (sem diferença)";
   if (m === "transfer") return `${enumLabel("stock_movement_type", "transfer_out")} e ${enumLabel("stock_movement_type", "transfer_in").toLowerCase()}`;
   return enumLabel("stock_movement_type", m);

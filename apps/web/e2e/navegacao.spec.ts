@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { login } from "./helpers";
+import { api, login } from "./helpers";
 /** Compactação V2: menu só com módulos, rotas antigas (V1 e anteriores) canonicalizadas, abas montadas por permissão. */
 test("rotas antigas redirecionam para a rota canônica preservando parâmetros (aliases importantes)", async ({ page }) => {
   await login(page);
@@ -23,11 +23,31 @@ test("rotas antigas redirecionam para a rota canônica preservando parâmetros (
 });
 test("área de estoque: abas, seletor interno, '+ Novo' em dois níveis e ajuste contextual a partir do saldo", async ({ page }) => {
   await login(page);
+  // OPERACOES-01 F5b (decisão 282): o "Ajustar estoque" da linha do Saldo abre a CENTRAL de ajuste (preenchida pela
+  // linha) quando a lista de TOPs de ajuste tem TOP e a API declara `movimentacaoInterna`; senão, o diálogo de sempre. O
+  // banco do E2E é compartilhado (outro spec pode ter deixado uma TOP de ajuste ativa): o ramo sai da MESMA resposta que a
+  // tela leu, e cada ramo afirma o seu destino.
+  const respostaDosAjustes = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/estoque/ajustes/operation-types" && r.request().method() === "GET");
   await page.goto("/estoque?tab=estoque&sub=saldo");
   await expect(page.locator("main").getByRole("tab", { name: "Estoque", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("table")).toBeVisible();
+  const ajustes = (await (await respostaDosAjustes).json()) as { items?: unknown[]; capacidades?: Record<string, unknown> };
+  const naCentral = Array.isArray(ajustes.items) && ajustes.items.length > 0 && ajustes.capacidades?.["movimentacaoInterna"] === 1;
+  const saldo = await api<{ items: unknown[] }>(page, "GET", "/api/stock/balances?page=1&pageSize=1");
   const rowAction = page.getByRole("button", { name: "Ajustar estoque" }).first();
-  if (await rowAction.count()) { await rowAction.click(); await expect(page.getByRole("dialog").getByRole("heading", { name: "Ajustar estoque" })).toBeVisible(); await page.keyboard.press("Escape"); await expect(page.getByRole("dialog")).toBeHidden(); }
+  console.log(`[navegacao] Saldo com ${saldo.items.length ? "linha" : "nenhuma linha"}; "Ajustar estoque" → ${naCentral ? "Central de ajuste" : "diálogo"}`);
+  if (saldo.items.length) {
+    await expect(rowAction, "premissa: o Saldo tem linha, e a ação aparece depois da pergunta das TOPs de ajuste").toBeVisible();
+    await rowAction.click();
+    if (naCentral) {
+      await expect(page, "TOP de ajuste e a capacidade: a Central de ajuste, preenchida pela linha").toHaveURL(/\/estoque\/movimentacoes\/ajustes\/new\?.*empresa_id=.*armazem_id=.*produto_id=/);
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await page.goto("/estoque?tab=estoque&sub=saldo");
+      await expect(page.locator("table")).toBeVisible();
+    } else {
+      await expect(page.getByRole("dialog").getByRole("heading", { name: "Ajustar estoque" })).toBeVisible(); await page.keyboard.press("Escape"); await expect(page.getByRole("dialog")).toBeHidden();
+    }
+  }
   // "+ Novo": primeiro nível só com grupos; Ajuste e Devolução não são opções cotidianas
   await page.getByTestId("ws-new").click();
   const menu = page.getByRole("menu");

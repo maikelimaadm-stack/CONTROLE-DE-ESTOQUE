@@ -37,9 +37,9 @@ const P = {
   LIVESTOCK_CFG: ["animals.view", "weight_parameters.view", "fodders.view", "grazing_modules.view", "batch_area.view", "troughs.view", "livestock_plannings.view", "operations.view", "activities.view", "breeding_sires.view", "breeding_protocols.view"],
   FISCAL_CFG: ["tax_rules.view", "nature_operations.view", "additional_infos.view", "document_types.view", "documents.view", "nfe.view"],
   HR_CFG: ["hr_events.view", "job_functions.view", "teams.view"],
-  // TOP-CONFIG-08 (decisão 277): a permissão Aprovar das quatro espécies do documento de estoque — qualquer uma
-  // abre a fila de Estoque; quem recorta LINHA por espécie é o servidor.
-  APROVACAO_ESTOQUE: ["entradas_estoque.approve", "saidas_estoque.approve", "transferencias_estoque.approve", "ajustes_estoque.approve"]
+  // TOP-CONFIG-08 (decisão 277) e OPERACOES-01 F5b (decisão 282): a permissão Aprovar das sete espécies do documento de
+  // estoque — qualquer uma abre a fila de Estoque; quem recorta LINHA por espécie é o servidor.
+  APROVACAO_ESTOQUE: ["entradas_estoque.approve", "saidas_estoque.approve", "transferencias_estoque.approve", "ajustes_estoque.approve", "requisicoes_estoque.approve", "consumos_estoque.approve", "devolucoes_consumo_estoque.approve"]
 };
 
 const m = (id, label, path, extra = {}) => ({ id, type: "module", module: id, label, path, menu: true, ...extra });
@@ -84,10 +84,10 @@ export const AREAS = [
   act("compras", "solicitacao", "Nova solicitação de compra", "/suprimentos/new", "purchase_requests.create", { keywords: ["comprar", "pedir", "requisitar compra"] }),
   // ---------------- Estoque ----------------
   a("estoque", "visao-geral", "Visão Geral", "stocks.view", { keywords: ["indicadores de estoque"] }),
-  // ESTOQUE-01 (decisão 274): a lista única do DOCUMENTO de estoque (entrada, saída, transferência e ajuste), com o
-  // `Novo` que pergunta a TOP. Qualquer leitura de uma das quatro espécies libera a aba; quem recorta linha é o
-  // servidor. As áreas abaixo (as telas antigas) não mudam.
-  a("estoque", "movimentacoes", "Movimentações", ["entradas_estoque.view", "saidas_estoque.view", "transferencias_estoque.view", "ajustes_estoque.view"], { keywords: ["documento de estoque", "entrada de estoque", "saída de estoque", "transferência de estoque", "ajuste de estoque", "inventário", "tipo de operação"], description: "Uma lista dos documentos de estoque, com filtro por espécie e situação" }),
+  // ESTOQUE-01 (decisão 274) e OPERACOES-01 F5b (decisão 282): a lista única do DOCUMENTO de estoque (entrada, saída,
+  // transferência, ajuste, requisição, consumo e devolução de consumo), com o `Novo` que pergunta a TOP. Qualquer leitura
+  // de uma das sete espécies libera a aba; quem recorta linha é o servidor. As áreas abaixo (as telas antigas) não mudam.
+  a("estoque", "movimentacoes", "Movimentações", ["entradas_estoque.view", "saidas_estoque.view", "transferencias_estoque.view", "ajustes_estoque.view", "requisicoes_estoque.view", "consumos_estoque.view", "devolucoes_consumo_estoque.view"], { keywords: ["documento de estoque", "entrada de estoque", "saída de estoque", "transferência de estoque", "ajuste de estoque", "inventário", "tipo de operação", "requisição de material", "consumo", "devolução de consumo"], description: "Uma lista dos documentos de estoque (entrada, saída, transferência, ajuste, requisição, consumo e devolução de consumo), com filtro por espécie e situação" }),
   a("estoque", "estoque", "Estoque", ["stocks.view", "stock_corrections.view"], { keywords: ["saldo", "lote", "validade", "estoque mínimo", "custo"], description: "Saldo, movimentações (ledger) e ajustes" }),
   s("estoque", "estoque", "saldo", "Saldo", "stocks.view", { aliases: ["/estoque/saldo"], keywords: ["consultar estoque", "quantidade", "produto"] }),
   s("estoque", "estoque", "ledger", "Movimentações", "stocks.view", { aliases: ["/estoque/movimentos"], keywords: ["histórico", "ledger", "extrato de estoque"] }),
@@ -314,7 +314,7 @@ export const AREAS = [
   // de detalhe que já existem (DETAIL_ROUTES de vendas, compras e estoque): a fila não ganha rota de registro.
   a("aprovacoes", "vendas", "Vendas", "sales.approve", { keywords: ["venda aguardando aprovação", "aprovar venda", "reprovar venda"], description: "Vendas abertas que aguardam aprovação" }),
   a("aprovacoes", "compras", "Compras", "compras.approve", { keywords: ["compra aguardando aprovação", "aprovar compra", "reprovar compra"], description: "Compras e pedidos de compra que aguardam aprovação" }),
-  a("aprovacoes", "estoque", "Estoque", P.APROVACAO_ESTOQUE, { keywords: ["documento de estoque aguardando aprovação", "aprovar entrada", "aprovar saída", "aprovar transferência", "aprovar ajuste"], description: "Documentos de estoque abertos que aguardam aprovação" })
+  a("aprovacoes", "estoque", "Estoque", P.APROVACAO_ESTOQUE, { keywords: ["documento de estoque aguardando aprovação", "aprovar entrada", "aprovar saída", "aprovar transferência", "aprovar ajuste", "aprovar requisição", "aprovar consumo", "aprovar devolução de consumo"], description: "Documentos de estoque abertos que aguardam aprovação" })
 ];
 
 /**
@@ -410,10 +410,11 @@ export const DETAIL_ROUTES = [
   { id: "compras.documentos.detalhe", module: "compras", area: "documentos", label: "Documento de compra", pattern: "/compras/:especie/:id", perm: ["pedidos_compra.view", "compras.view", "orcamentos_compra.view"] },
   { id: "compras.processos.detalhe", module: "compras", area: "processos", label: "Processo de compra", pattern: "/suprimentos/view/:id", perm: "purchase_requests.view" },
   // ESTOQUE-01 (decisão 274): a Central de Estoque. `[especie]` é o SEGMENTO (entradas | saidas | transferencias |
-  // ajustes). A criação vem antes porque o padrão de consulta (`:id`) também casaria com `new`, e ela exige `.create`.
+  // ajustes e, desde a OPERACOES-01 F5b, requisicoes | consumos | devolucoes-consumo). A criação vem antes porque o
+  // padrão de consulta (`:id`) também casaria com `new`, e ela exige `.create`.
   // O rótulo é o mesmo nas duas: a aba de trabalho da criação já se chama "Novo · <rótulo>" (`lib/workspace-tabs`).
-  { id: "estoque.movimentacoes.novo", module: "estoque", area: "movimentacoes", label: "Documento de estoque", pattern: "/estoque/movimentacoes/:especie/new", perm: ["entradas_estoque.create", "saidas_estoque.create", "transferencias_estoque.create", "ajustes_estoque.create"] },
-  { id: "estoque.movimentacoes.detalhe", module: "estoque", area: "movimentacoes", label: "Documento de estoque", pattern: "/estoque/movimentacoes/:especie/:id", perm: ["entradas_estoque.view", "saidas_estoque.view", "transferencias_estoque.view", "ajustes_estoque.view"] },
+  { id: "estoque.movimentacoes.novo", module: "estoque", area: "movimentacoes", label: "Documento de estoque", pattern: "/estoque/movimentacoes/:especie/new", perm: ["entradas_estoque.create", "saidas_estoque.create", "transferencias_estoque.create", "ajustes_estoque.create", "requisicoes_estoque.create", "consumos_estoque.create", "devolucoes_consumo_estoque.create"] },
+  { id: "estoque.movimentacoes.detalhe", module: "estoque", area: "movimentacoes", label: "Documento de estoque", pattern: "/estoque/movimentacoes/:especie/:id", perm: ["entradas_estoque.view", "saidas_estoque.view", "transferencias_estoque.view", "ajustes_estoque.view", "requisicoes_estoque.view", "consumos_estoque.view", "devolucoes_consumo_estoque.view"] },
   { id: "estoque.recebimentos.manuais.detalhe", module: "estoque", area: "recebimentos", label: "Entrada manual", pattern: "/estoque/entradas/:id", perm: "input_entries.view" },
   { id: "estoque.recebimentos.fiscais.detalhe", module: "estoque", area: "recebimentos", label: "Documento fiscal", pattern: "/estoque/documentos-fiscais/:id", perm: "invoices.view" },
   { id: "estoque.operacoes.requisicoes.detalhe", module: "estoque", area: "operacoes", label: "Requisição", pattern: "/estoque/requisicoes/:id", perm: "requisitions.view" },

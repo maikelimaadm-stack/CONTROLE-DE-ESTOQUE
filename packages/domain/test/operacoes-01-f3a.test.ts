@@ -14,6 +14,7 @@ import {
   ACTION_LABELS,
   ENUM_LABELS,
   FAMILIAS_COM_LAYOUT,
+  FAMILIAS_COM_LAYOUT_DE_ESTOQUE,
   MINIMO_DOCUMENTO_PESQUISA,
   PERMISSION_RESOURCES,
   RESOURCES,
@@ -21,6 +22,7 @@ import {
   documentoParaPesquisa,
   enumLabel,
   enumOptions,
+  familiaDeEstoque,
   getResource,
   type FieldDef
 } from "../src/index.js";
@@ -98,10 +100,29 @@ describe("F3A-D1 · nenhum texto visível do domínio diz 'armazém'", () => {
     expect(valor("enum.source_type.warehouse_transfers")).toBe("Transferência entre locais de estoque");
     expect(valor("enum.transfer_kind.warehouse")).toBe("Entre locais de estoque");
     expect(valor("ptBR.top.estoque.transferencia_entre_armazens")).toBe("Transferência entre locais de estoque");
-    const doLayout = de("layout.").filter((t) => t.origem.endsWith(".itens.warehouse_id") || t.origem.endsWith(".itens.armazem_id"));
-    // OPERACOES-01 F6a: o orçamento de compra não tem a coluna (não mexe em estoque); toda outra família com layout tem.
-    expect(doLayout.length).toBeGreaterThanOrEqual(FAMILIAS_COM_LAYOUT.filter((f) => f !== "compras.orcamento").length);
-    expect(new Set(doLayout.map((t) => t.texto))).toEqual(new Set(["Local de estoque"]));
+    // Vendas e compras: o Local de estoque é a COLUNA do item. OPERACOES-01 F6a: o orçamento de compra não tem a coluna
+    // (não mexe em estoque).
+    const doItem = de("layout.").filter((t) => t.origem.endsWith(".itens.warehouse_id") || t.origem.endsWith(".itens.armazem_id"));
+    expect(doItem.map((t) => t.origem)).toEqual([
+      "layout.vendas.orcamento.itens.warehouse_id", "layout.vendas.pedido.itens.warehouse_id", "layout.vendas.venda.itens.warehouse_id",
+      "layout.compras.pedido.itens.armazem_id", "layout.compras.compra.itens.armazem_id"
+    ]);
+    expect(new Set(doItem.map((t) => t.texto))).toEqual(new Set(["Local de estoque"]));
+    // OPERACOES-01 F5b (decisão 282): no documento de estoque o Local de estoque é do CABEÇALHO (um por documento; na
+    // transferência, o de origem e o de destino). Premissa: a varredura leu o catálogo das sete famílias de estoque.
+    expect(FAMILIAS_COM_LAYOUT.filter(familiaDeEstoque)).toEqual([...FAMILIAS_COM_LAYOUT_DE_ESTOQUE]);
+    expect(FAMILIAS_COM_LAYOUT_DE_ESTOQUE).toHaveLength(7);
+    const doCabecalho = de("layout.estoque.").filter((t) => t.origem.endsWith(".cabecalho.armazem_id") || t.origem.endsWith(".cabecalho.armazem_destino_id"));
+    expect(doCabecalho.map((t) => `${t.origem} = ${t.texto}`)).toEqual([
+      "layout.estoque.entrada.cabecalho.armazem_id = Local de estoque",
+      "layout.estoque.saida.cabecalho.armazem_id = Local de estoque",
+      "layout.estoque.transferencia.cabecalho.armazem_id = Local de estoque de origem",
+      "layout.estoque.transferencia.cabecalho.armazem_destino_id = Local de estoque de destino",
+      "layout.estoque.ajuste.cabecalho.armazem_id = Local de estoque",
+      "layout.estoque.requisicao_material.cabecalho.armazem_id = Local de estoque",
+      "layout.estoque.consumo.cabecalho.armazem_id = Local de estoque",
+      "layout.estoque.devolucao_consumo.cabecalho.armazem_id = Local de estoque"
+    ]);
 
     // CONCLUSÃO
     const comArmazem = textos.filter((t) => ARMAZEM.test(t.texto)).map((t) => `${t.origem} = ${t.texto}`);
@@ -129,6 +150,7 @@ describe("F3A-D2 · os identificadores técnicos não mudaram", () => {
     expect(Object.keys(ENUM_LABELS.source_type)).toContain("warehouse_transfers");
     const produtos = getResource("products");
     expect(produtos?.fields.find((f) => f.name === "default_warehouse_id")?.ref?.resource).toBe("warehouses");
+    let doEstoque = 0;
     for (const familia of FAMILIAS_COM_LAYOUT) {
       const chaves = catalogoDaFamilia(familia).filter((c) => c.rotulo === "Local de estoque").map((c) => `${c.parte}.${c.chave}`);
       // OPERACOES-01 F6a: o orçamento de compra não tem Local de estoque (premissa: o catálogo dele existe e é lido).
@@ -137,9 +159,20 @@ describe("F3A-D2 · os identificadores técnicos não mudaram", () => {
         expect(chaves, familia).toEqual([]);
         continue;
       }
+      // OPERACOES-01 F5b: no documento de estoque o Local de estoque é do CABEÇALHO, com a chave do corpo de sempre
+      // (`armazem_id`; na transferência também `armazem_destino_id`) e o recurso de sempre (`warehouses`).
+      if (familiaDeEstoque(familia)) {
+        doEstoque += 1;
+        const locais = catalogoDaFamilia(familia).filter((c) => c.referencia?.recurso === "warehouses").map((c) => [`${c.parte}.${c.chave}`, c.rotulo]);
+        expect(locais, familia).toEqual(familia === "estoque.transferencia"
+          ? [["cabecalho.armazem_id", "Local de estoque de origem"], ["cabecalho.armazem_destino_id", "Local de estoque de destino"]]
+          : [["cabecalho.armazem_id", "Local de estoque"]]);
+        continue;
+      }
       expect(chaves.length, familia).toBe(1);
       expect(["itens.warehouse_id", "itens.armazem_id"], familia).toContain(chaves[0]);
     }
+    expect(doEstoque, "a premissa: o laço passou pelas sete famílias de estoque").toBe(7);
   });
 });
 

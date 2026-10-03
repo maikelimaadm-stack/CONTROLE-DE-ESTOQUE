@@ -24,8 +24,8 @@ import {
  * o domínio não se aprova sozinho.
  *
  * FIXTURE PRÓPRIA: toda TOP nasce no teste (pela API, no neutro do 5) e é excluída no `finally`. As famílias novas
- * (requisição de material, consumo e devolução de consumo) ainda não têm tela no passo 1 (a F5b liga): por isso a TOP
- * de consumo nasce pela API, e o editor a abre na EDIÇÃO.
+ * (requisição de material, consumo e devolução de consumo) têm tela no passo 1 desde a F5b; a TOP de consumo nasce pela
+ * API por economia (o passo 1 já é provado em `top-assistente.spec.ts`), e o editor a abre na EDIÇÃO.
  */
 
 const AJUDA = {

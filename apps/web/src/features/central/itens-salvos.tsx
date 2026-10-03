@@ -9,9 +9,11 @@ import grade from "./grade.module.css";
 import { CampoLeitura } from "./campo";
 import { BotaoAmpliar } from "./moldura";
 import { ConfigurarColunas } from "./configurar-colunas";
-import type { AdornoDoCampo, ChaveCampoSalvo, ChaveColunaSalva, Preferencia, PropsDosItensSalvos, Visao } from "./contrato";
+import type {
+  AdornoDoCampo, ChaveCampoSalvo, ChaveColunaSalva, ChaveDaColunaExtra, ColunaExtraDoItemSalvo, Preferencia, PropsDosItensSalvos, Visao
+} from "./contrato";
 
-export type { AvisoDosItens, ChaveCampoSalvo, ChaveColunaSalva, PropsDosItensSalvos } from "./contrato";
+export type { AvisoDosItens, ChaveCampoSalvo, ChaveColunaSalva, ChaveDaColunaExtra, ColunaExtraDoItemSalvo, PropsDosItensSalvos } from "./contrato";
 
 /**
  * ITENS DO DOCUMENTO SALVO — a grade e o formulário de LEITURA do motor da Central.
@@ -22,9 +24,20 @@ export type { AvisoDosItens, ChaveCampoSalvo, ChaveColunaSalva, PropsDosItensSal
  *
  * As colunas são UMA lista só: `colgroup`, cabeçalho, linhas, largura mínima e o `colSpan` da linha vazia leem a
  * MESMA lista. A ordem padrão vem do adaptador (`colunas.leitura`); as opcionais entram pela sua marca.
+ *
+ * OPERACOES-01 F5b (decisão 282), acréscimos com o padrão de hoje: `subtotal={null}` tira a linha do subtotal (o
+ * documento sem valor); `rotulos` troca o rótulo fixo pelo da espécie na grade, no formulário e no "Configurar
+ * colunas"; `colunasExtras` entram depois de todas as outras (no formulário, como campo travado), com a chave
+ * `extra:<chave>` nas preferências; `formularioPelasColunas` recorta o formulário de leitura pelas colunas da espécie
+ * (`colunas.leitura`, mais a Unidade), na ordem fixa de sempre.
  */
+/** A chave de uma coluna da grade: as do motor e as extras da espécie. */
+type ChaveDaGrade = ChaveColunaSalva | ChaveDaColunaExtra;
+/** A chave de um campo do formulário de leitura: os do motor e as extras da espécie. */
+type ChaveDoFormulario = ChaveCampoSalvo | ChaveDaColunaExtra;
+
 interface ColunaDoItemSalvo {
-  chave: ChaveColunaSalva;
+  chave: ChaveDaGrade;
   rotulo: string;
   /** largura do desenho; a coluna ELÁSTICA (Produto) usa o valor como mínimo e fica com o que sobrar */
   largura: number;
@@ -36,7 +49,7 @@ interface ColunaDoItemSalvo {
   celula: (it: Row) => React.ReactNode;
 }
 
-interface CampoDoItemSalvo { chave: ChaveCampoSalvo; rotulo: string; adorno?: AdornoDoCampo; valor: (it: Row) => React.ReactNode }
+interface CampoDoItemSalvo { chave: ChaveDoFormulario; rotulo: string; adorno?: AdornoDoCampo; valor: (it: Row) => React.ReactNode }
 
 const textoDoItem = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : String(v));
 const texto = (v: unknown) => (v === null || v === undefined ? "" : String(v));
@@ -106,6 +119,27 @@ const CAMPOS_DA_RESERVA: readonly CampoDoItemSalvo[] = [
   { chave: "reservado", rotulo: "Reservado", adorno: "travado", valor: (it) => (ehDecimalDaApi(it["reservado"]) ? num(it["reservado"], 2) : "") }
 ];
 
+/** OPERACOES-01 F5b: os padrões estáveis das props novas (a mesma referência a cada render: o `useMemo` não recalcula). */
+const SEM_ROTULOS: Partial<Record<ChaveColunaSalva, string>> = {};
+const SEM_COLUNAS_EXTRAS: readonly ColunaExtraDoItemSalvo[] = [];
+/** A largura de uma coluna extra que não diz a sua. */
+const LARGURA_DA_COLUNA_EXTRA = 100;
+const chaveDaExtra = (x: ColunaExtraDoItemSalvo): ChaveDaColunaExtra => `extra:${x.chave}`;
+const colunasDasExtras = (extras: readonly ColunaExtraDoItemSalvo[]): readonly ColunaDoItemSalvo[] => extras.map((x) => ({
+  chave: chaveDaExtra(x), rotulo: x.rotulo, largura: x.largura ?? LARGURA_DA_COLUNA_EXTRA, numero: x.numero, testId: x.testId, celula: x.valor
+}));
+const camposDasExtras = (extras: readonly ColunaExtraDoItemSalvo[]): readonly CampoDoItemSalvo[] => extras.map((x) => ({
+  chave: chaveDaExtra(x), rotulo: x.rotulo, adorno: "travado", valor: x.valor
+}));
+/**
+ * O rótulo da espécie, quando ela o dá (não vazio), no lugar do fixo. `rotulos` só tem chaves do motor: a "unidade"
+ * (só do formulário) e as extras (que já trazem o seu) ficam com o próprio.
+ */
+const comRotulo = (rotulos: Readonly<Partial<Record<string, string>>>) => <T extends { chave: string; rotulo: string }>(c: T): T => {
+  const daEspecie = rotulos[c.chave];
+  return daEspecie ? { ...c, rotulo: daEspecie } : c;
+};
+
 /**
  * A preferência sobre o que existe AGORA: sem preferência (null) vale a ordem padrão; com ela, o que sumiu sai e o que
  * apareceu entra no fim, à vista.
@@ -122,20 +156,38 @@ function aplicarPreferencia<K extends string>(prefs: readonly Preferencia<K>[] |
  * `mostrarSaldo`: a parte gerada (`rotuloDoGerado`, padrão "Faturado") e o Saldo, do servidor. `mostrarReservado`: Reservado, do servidor.
  * `casasDaQuantidade`: casas da quantidade, da parte gerada e do saldo, na grade e no formulário (padrão 2; a compra, 4).
  * `avisos`: avisos funcionais dos itens, entre a barra e a grade, com o testid de cada um.
+ * OPERACOES-01 F5b: `subtotal` null = sem a linha do subtotal; `rotulos` = o rótulo da espécie; `colunasExtras` = as
+ * colunas da espécie, por último; `formularioPelasColunas` = o formulário só com os campos das colunas da espécie.
  */
-export function ItensSalvos({ prefixoTestid, colunas: colunasDaEspecie, itens, subtotal, legenda, mostrarSaldo = false, mostrarReservado = false, mostrarLote = false, rotuloDoGerado = "Faturado", casasDaQuantidade = 2, avisos = [] }: PropsDosItensSalvos) {
+export function ItensSalvos({
+  prefixoTestid, colunas: colunasDaEspecie, itens, subtotal, legenda, mostrarSaldo = false, mostrarReservado = false, mostrarLote = false,
+  rotuloDoGerado = "Faturado", casasDaQuantidade = 2, avisos = [], rotulos = SEM_ROTULOS, colunasExtras = SEM_COLUNAS_EXTRAS,
+  formularioPelasColunas = false
+}: PropsDosItensSalvos) {
   const leitura = colunasDaEspecie.leitura;
   const colunas = React.useMemo(() => {
     const catalogo = catalogoDeColunas(prefixoTestid, casasDaQuantidade);
     const base = leitura.filter((k) => !OPCIONAIS.has(k)).map((k) => catalogo[k]).filter((c): c is ColunaDoItemSalvo => c !== undefined);
-    return [...base, ...(mostrarLote ? COLUNAS_DO_LOTE : []), ...(mostrarSaldo ? colunasDoSaldo(rotuloDoGerado, casasDaQuantidade) : []), ...(mostrarReservado ? COLUNAS_DA_RESERVA : [])];
-  }, [prefixoTestid, leitura, mostrarLote, mostrarSaldo, mostrarReservado, rotuloDoGerado, casasDaQuantidade]);
-  const campos = React.useMemo(() => [...camposDoItemSalvo(casasDaQuantidade), ...(mostrarLote ? CAMPOS_DO_LOTE : []), ...(mostrarSaldo ? camposDoSaldo(rotuloDoGerado, casasDaQuantidade) : []), ...(mostrarReservado ? CAMPOS_DA_RESERVA : [])], [mostrarLote, mostrarSaldo, mostrarReservado, rotuloDoGerado, casasDaQuantidade]);
+    return [
+      ...[...base, ...(mostrarLote ? COLUNAS_DO_LOTE : []), ...(mostrarSaldo ? colunasDoSaldo(rotuloDoGerado, casasDaQuantidade) : []), ...(mostrarReservado ? COLUNAS_DA_RESERVA : [])].map(comRotulo(rotulos)),
+      ...colunasDasExtras(colunasExtras)
+    ];
+  }, [prefixoTestid, leitura, mostrarLote, mostrarSaldo, mostrarReservado, rotuloDoGerado, casasDaQuantidade, rotulos, colunasExtras]);
+  const campos = React.useMemo(() => {
+    // F5b: recortado pelas colunas da espécie quando ela pede (a Unidade acompanha a quantidade); sem o pedido, a lista fixa
+    const doItem = formularioPelasColunas
+      ? camposDoItemSalvo(casasDaQuantidade).filter((c) => c.chave === "unidade" || leitura.some((k) => k === c.chave))
+      : camposDoItemSalvo(casasDaQuantidade);
+    return [
+      ...[...doItem, ...(mostrarLote ? CAMPOS_DO_LOTE : []), ...(mostrarSaldo ? camposDoSaldo(rotuloDoGerado, casasDaQuantidade) : []), ...(mostrarReservado ? CAMPOS_DA_RESERVA : [])].map(comRotulo(rotulos)),
+      ...camposDasExtras(colunasExtras)
+    ];
+  }, [leitura, formularioPelasColunas, mostrarLote, mostrarSaldo, mostrarReservado, rotuloDoGerado, casasDaQuantidade, rotulos, colunasExtras]);
 
   const [visao, setVisao] = React.useState<Visao>("grade");
   const [ambos, setAmbos] = React.useState(false);
-  const [prefColunas, setPrefColunas] = React.useState<Preferencia<ChaveColunaSalva>[] | null>(null);
-  const [prefCampos, setPrefCampos] = React.useState<Preferencia<ChaveCampoSalvo>[] | null>(null);
+  const [prefColunas, setPrefColunas] = React.useState<Preferencia<ChaveDaGrade>[] | null>(null);
+  const [prefCampos, setPrefCampos] = React.useState<Preferencia<ChaveDoFormulario>[] | null>(null);
   const [atual, setAtual] = React.useState(0);
 
   const listaColunas = aplicarPreferencia(prefColunas, colunas.map((c) => c.chave));
@@ -190,11 +242,11 @@ export function ItensSalvos({ prefixoTestid, colunas: colunasDaEspecie, itens, s
         <button type="button" aria-pressed={visao === "formulario"} aria-label="Formulário" data-dica="Formulário" data-visao="formulario" onClick={() => escolherVisao("formulario")}><FileText aria-hidden /></button>
       </div>
       {configDoFormulario
-        ? <ConfigurarColunas<ChaveCampoSalvo> prefixoTestid={prefixoTestid} titulo="Visualização do formulário" subtitulo="Campos visíveis e ordem"
-            rotulos={Object.fromEntries(campos.map((c) => [c.chave, c.rotulo])) as Record<ChaveCampoSalvo, string>}
+        ? <ConfigurarColunas<ChaveDoFormulario> prefixoTestid={prefixoTestid} titulo="Visualização do formulário" subtitulo="Campos visíveis e ordem"
+            rotulos={Object.fromEntries(campos.map((c) => [c.chave, c.rotulo])) as Record<ChaveDoFormulario, string>}
             lista={listaCampos} onLista={setPrefCampos} onRestaurar={() => setPrefCampos(null)} ambos={ambos} onAmbos={alternarAmbos} />
-        : <ConfigurarColunas<ChaveColunaSalva> prefixoTestid={prefixoTestid} titulo="Colunas da grade" subtitulo="Colunas visíveis e ordem"
-            rotulos={Object.fromEntries(colunas.map((c) => [c.chave, c.rotulo])) as Record<ChaveColunaSalva, string>}
+        : <ConfigurarColunas<ChaveDaGrade> prefixoTestid={prefixoTestid} titulo="Colunas da grade" subtitulo="Colunas visíveis e ordem"
+            rotulos={Object.fromEntries(colunas.map((c) => [c.chave, c.rotulo])) as Record<ChaveDaGrade, string>}
             lista={listaColunas} onLista={setPrefColunas} onRestaurar={() => setPrefColunas(null)} ambos={ambos} onAmbos={alternarAmbos} />}
     </div>
     {avisos.map((a) => <p key={a.testId} className={grade.aviso} data-testid={a.testId}>{a.conteudo}</p>)}
@@ -204,8 +256,8 @@ export function ItensSalvos({ prefixoTestid, colunas: colunasDaEspecie, itens, s
     </div>
     <div className={grade.rodape} data-testid={`${prefixoTestid}-itens-rodape`}>
       <span className={grade.rodapeTitulo}>Itens <span className={grade.rodapeContagem} data-testid={`${prefixoTestid}-itens-contagem`}>({itens.length})</span></span>
-      {/* subtotal DO SERVIDOR: em consulta nada é somado no navegador */}
-      <span>Subtotal dos itens <b className={grade.rodapeValor} data-testid={`${prefixoTestid}-subtotal`}>{brl(subtotal)}</b></span>
+      {/* subtotal DO SERVIDOR: em consulta nada é somado no navegador; null (F5b) = documento sem valor, sem a linha */}
+      {subtotal !== null && <span>Subtotal dos itens <b className={grade.rodapeValor} data-testid={`${prefixoTestid}-subtotal`}>{brl(subtotal)}</b></span>}
     </div>
   </>;
 }

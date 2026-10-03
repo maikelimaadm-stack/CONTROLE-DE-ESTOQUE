@@ -525,12 +525,14 @@ describe("MI-7 os perfis, a recusa do formato 5 e o catálogo", () => {
     expect(recusasDoPerfilTop(ENTRADA, configuracao)).toEqual([]);
   });
 
-  it("MI-7 o catálogo: requisição, consumo e devolução de consumo com a família LIGADA e ainda SEM tela (a F5b liga)", () => {
+  it("MI-7 o catálogo: requisição, consumo e devolução de consumo com a família LIGADA e COM tela (a F5b ligou: a Central de Estoque no motor)", () => {
     const tipos = CATALOGO_TIPOS_MOVIMENTO_TOP.filter((t) => ["requisicao", "consumo", "devolucao_consumo"].includes(t.chave));
+    // A premissa: as três famílias existem no registry (`temTela` só vale com família).
+    for (const f of [REQUISICAO, CONSUMO, DEVOLUCAO]) expect(tipoOperacao(f)?.origem.tabela, f).toBe("erp.documentos_estoque");
     expect(tipos.map((t) => [t.chave, t.grupo, t.rotulo, t.familia, t.temTela])).toEqual([
-      ["requisicao", "movimentacao_interna", "Requisição", REQUISICAO, false],
-      ["consumo", "movimentacao_interna", "Consumo", CONSUMO, false],
-      ["devolucao_consumo", "movimentacao_interna", "Devolução de consumo", DEVOLUCAO, false],
+      ["requisicao", "movimentacao_interna", "Requisição", REQUISICAO, true],
+      ["consumo", "movimentacao_interna", "Consumo", CONSUMO, true],
+      ["devolucao_consumo", "movimentacao_interna", "Devolução de consumo", DEVOLUCAO, true],
     ]);
   });
 });

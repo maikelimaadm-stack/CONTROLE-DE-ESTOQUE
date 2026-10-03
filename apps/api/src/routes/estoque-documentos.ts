@@ -14,8 +14,8 @@
  * (só "observação obrigatória" se aplica ao estoque). O MOVIMENTO é o da ESPÉCIE: a execução configurada da TOP
  * continua recusada para estas famílias nesta fatia.
  *
- * O que NÃO existe aqui (fora da fatia): editar documento aberto, layout por TOP e transferência entre empresas
- * (os dois locais de estoque são da empresa do documento — entre empresas fica nas telas antigas).
+ * O que NÃO existe aqui (fora da fatia): editar documento aberto e transferência entre empresas (os dois locais de
+ * estoque são da empresa do documento — entre empresas fica nas telas antigas).
  *
  * MOVIMENTAÇÃO INTERNA (OPERACOES-01 F5a, decisão 282): as rotas servem as SETE espécies — as quatro de antes e a
  * REQUISIÇÃO (pedido de material: confirmada, reserva no local de estoque), o CONSUMO (baixa; atende uma requisição ou
@@ -29,6 +29,14 @@
  * Automática", o POST confirma o documento que acabou de lançar, na mesma transação, pela MESMA função do
  * `/confirmar` (`lancarEConfirmar`). Versão 1–3, ou Manual: o POST responde o que respondia, chave por chave.
  * Documento sem itens continua recusado em toda versão: no estoque ele não movimenta nada (o zod fica com `min(1)`).
+ *
+ * A CENTRAL DE ESTOQUE NO MOTOR (OPERACOES-01 F5b, decisão 282): três rotas de LEITURA, para a tela, com o contrato das
+ * Centrais de Vendas e de Compras — as REGRAS DA OPERAÇÃO da TOP escolhida (`/regras-da-operacao`: as exigências, a
+ * confirmação automática e as seções Destino e Fluxo, pela MESMA leitura do lançamento), o LAYOUT POR TOP
+ * (`/layout-efetivo`, o mesmo de vendas e compras: o layout do estoque governa colunas, rótulos, valor padrão e
+ * "editável" — o servidor do estoque não cobra layout) e as OPÇÕES DO DESTINO (`/destino/opcoes`, em
+ * `estoque-movimentacao-interna.ts`, só nas espécies cujo destino a TOP configura). Declaradas nas capacidades de
+ * `operation-types`: `layoutDocumento` e `regrasDaOperacao` (as opções do destino são parte de `movimentacaoInterna`).
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -38,22 +46,24 @@ import {
   lerConfiguracaoTop, restricoesExecutamTop, exigenciasGeraisFaltando, secoesExtensaoDaVersaoTop, secoesExtensaoNeutrasTop,
   EXIGENCIAS_GERAIS_ESTOQUE_TOP, ERRO_EXIGENCIA_NAO_ATENDIDA, MENSAGEM_EXIGENCIA_NAO_ATENDIDA, LIMITE_QUANTIDADE_ESTOQUE, LIMITE_CUSTO_ESTOQUE,
   ROTULO_DA_ESPECIE_ESTOQUE, MOTIVOS_SAIDA_ESTOQUE, LIMITE_JUSTIFICATIVA_SAIDA, ATENDIMENTOS_REQUISICAO_ESTOQUE, CAPACIDADE_MOVIMENTACAO_INTERNA,
+  CAPACIDADE_LAYOUT_DOCUMENTO, CAPACIDADE_REGRAS_DA_OPERACAO, regrasDaOperacaoDoEstoque,
   type EspecieEstoque, type ConfiguracaoComRestricoesTop, type SecoesExtensaoV5,
 } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit } from "../lib/service.js";
-import { err, denied } from "../lib/errors.js";
+import { err, denied, notFound } from "../lib/errors.js";
 import { exigirEmpresaDeLancamento, empresaScope, hasPermission, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
 import { resolverTopParaLancamento, type TopDoLancamento } from "../lib/documento-comercial.js";
 import { confirmaAutomaticamente, tentarConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
+import { respostaDoLayoutEfetivo } from "../lib/layout-documento.js";
 import {
   ESPECIES_ESTOQUE, FORMA_UUID, SQL_ATENDIMENTO_REQUISICAO, lerDocumentoEstoque, topParaTela, type ColunasDaTop, type RecursoEstoque,
 } from "./estoque-comum.js";
 import { registrarConfirmacaoEstoque, confirmarDocumentoEstoqueNaTransacao } from "./estoque-confirmacao.js";
 import {
-  registrarMovimentacaoInterna, recusasDaFormaDaMovimentacaoInterna, conferirOrigem, conferirDestino, conferirFluxo,
+  registrarMovimentacaoInterna, registrarOpcoesDoDestino, recusasDaFormaDaMovimentacaoInterna, conferirOrigem, conferirDestino, conferirFluxo,
 } from "./estoque-movimentacao-interna.js";
 
 const t = criarTradutor(ptBR);
@@ -457,6 +467,35 @@ async function lancarEConfirmar(ctx: ServiceCtx, especie: EspecieEstoque, recurs
   return { ...corpo, situacao, confirmacaoAutomatica };
 }
 
+// ─────────────── a TOP das rotas de leitura da Central (F5b) ───────────────
+
+/** A TOP da query, conferida: a identidade, a família e a configuração da versão ATUAL. */
+interface TopDaCentral { id: string; codigoBase: string; configuracao: unknown }
+
+/**
+ * A TOP pedida em `?tipo_operacao_id=` pelas rotas de LEITURA da Central de Estoque (`/regras-da-operacao` e
+ * `/layout-efetivo`), com a configuração da versão ATUAL — UMA consulta. Ausente, repetida, malformada (`FORMA_UUID`,
+ * conferida antes de qualquer consulta: um `::uuid` estourado seria 500), de outra família, inativa, excluída ou de
+ * outra organização → a MESMA 404 (o molde de compras): uma resposta por motivo seria oráculo de existência. Outro
+ * parâmetro qualquer é 422 no parâmetro — recusado, nunca ignorado.
+ */
+async function topDaCentral(ctx: ServiceCtx, familia: string, query: unknown): Promise<TopDaCentral> {
+  const bruta = (query ?? {}) as Record<string, unknown>;
+  const estranhos = Object.keys(bruta).filter((chave) => chave !== "tipo_operacao_id");
+  if (estranhos.length) throw recusar(estranhos.map((path) => ({ path, message: "Parâmetro não reconhecido" })));
+  const pedido = bruta["tipo_operacao_id"];
+  if (typeof pedido !== "string" || !FORMA_UUID.test(pedido)) throw notFound("Tipo de operação");
+  const r = await ctx.tx.query<{ id: string; codigo_base: string; configuracao: unknown }>(
+    `select t.id, t.codigo_base, v.configuracao
+       from erp.tipos_operacao t
+       join erp.tipos_operacao_versoes v on v.tipo_operacao_id = t.id and v.organization_id = t.organization_id and v.versao = t.versao_atual
+      where t.id = $1 and t.organization_id = $2 and t.codigo_base = $3 and t.ativo and t.excluido_em is null`,
+    [pedido.toLowerCase(), ctx.orgId, familia]);
+  const linha = r.rows[0];
+  if (!linha) throw notFound("Tipo de operação");
+  return { id: linha.id, codigoBase: linha.codigo_base, configuracao: linha.configuracao };
+}
+
 // ─────────────── rotas ───────────────
 
 export default async function estoqueRoutes(app: FastifyInstance) {
@@ -477,13 +516,46 @@ export default async function estoqueRoutes(app: FastifyInstance) {
         // `documentoEstoque` declara a capacidade: a web nova só oferece o "+ Novo" do portal contra uma API que a tem.
         // `movimentacaoInterna` (OPERACOES-01 F5a, aditiva): as três espécies novas, o destino, o motivo e a
         // justificativa da saída, a entrada sem custo, o custo no ajuste, a origem, o encerramento do saldo, o
-        // atendimento/vinculados/`baseDoSaldo` e o `empresa_id` do saldo. Leitor: `entendeMovimentacaoInterna`.
-        capacidades: { documentoEstoque: 1, movimentacaoInterna: CAPACIDADE_MOVIMENTACAO_INTERNA },
+        // atendimento/vinculados/`baseDoSaldo`, o `empresa_id` do saldo e (F5b) as opções do destino
+        // (`/destino/opcoes`). Leitor: `entendeMovimentacaoInterna`.
+        // `layoutDocumento` e `regrasDaOperacao` (OPERACOES-01 F5b, aditivas, no FIM, os valores de vendas e compras):
+        // `/layout-efetivo` (o layout por TOP) e `/regras-da-operacao` (exigências, confirmação automática, Destino e
+        // Fluxo) existem no estoque. A Central só pede as duas rotas com a chave declarada: contra a API anterior, o
+        // layout do sistema local e o neutro de cada seção (o comportamento de hoje).
+        capacidades: { documentoEstoque: 1, movimentacaoInterna: CAPACIDADE_MOVIMENTACAO_INTERNA, layoutDocumento: CAPACIDADE_LAYOUT_DOCUMENTO,
+          regrasDaOperacao: CAPACIDADE_REGRAS_DA_OPERACAO },
         family: { code: familia, label: t(chaveI18nDaFamiliaOperacional(familia) ?? familia) },
         defaultId: r.rows.find((x) => x.padrao)?.id ?? null,
         items: r.rows.map((x) => ({ id: x.id, code: x.codigo, name: x.nome, version: x.versao, isDefault: x.padrao })),
       };
     }));
+
+    /**
+     * REGRAS DA OPERAÇÃO da TOP escolhida (versão ATUAL) — o que o lançamento vai cobrar dela, para a Central pedir o
+     * mesmo antes do POST: `regrasDaOperacaoDoEstoque` (domínio), com a MESMA leitura do lançamento (as exigências pelo
+     * mapa do estoque, a confirmação automática, as seções Destino e Fluxo — formatos 1 a 4 no neutro; `null` na
+     * família que não usa a seção). Porta OPERACIONAL `<recurso>.create`; a mesma 404 de `topDaCentral`. Uma consulta.
+     * O servidor continua a autoridade: o POST cobra tudo de novo, pela versão que ele mesmo congela.
+     */
+    app.get(`${base}/regras-da-operacao`, async (req) => runService(app, req, `${recurso}.create`, async (ctx) => {
+      const top = await topDaCentral(ctx, familiaDaEspecie(especie), req.query);
+      return regrasDaOperacaoDoEstoque(top.codigoBase, top.configuracao);
+    }));
+
+    /**
+     * LAYOUT EFETIVO da TOP escolhida — o MESMO contrato de vendas e compras (`respostaDoLayoutEfetivo`: ligado à TOP →
+     * padrão ativo da família → layout do sistema; `padroesDeCadastro`/`padroesInvalidos` só com padrão de cadastro,
+     * como o Local de estoque padrão). TOP obrigatória (todo documento de estoque tem TOP); a mesma 404 de
+     * `topDaCentral`. Porta OPERACIONAL `<recurso>.create`.
+     */
+    app.get(`${base}/layout-efetivo`, async (req) => runService(app, req, `${recurso}.create`, async (ctx) => {
+      const familia = familiaDaEspecie(especie);
+      const top = await topDaCentral(ctx, familia, req.query);
+      return respostaDoLayoutEfetivo(ctx, familia, top.id);
+    }));
+
+    // As opções do destino (só saída, requisição e consumo; nas outras espécies a rota não existe).
+    registrarOpcoesDoDestino(app, { especie, segmento, recurso });
 
     app.get(`${base}/:id`, async (req) => runService(app, req, `${recurso}.view`, (ctx) => lerDocumentoEstoque(ctx, (req.params as { id: string }).id, especie)));
 
