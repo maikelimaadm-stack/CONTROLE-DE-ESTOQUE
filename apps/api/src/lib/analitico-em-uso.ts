@@ -71,6 +71,7 @@ export const REFERENCIAS_DE_USO: Readonly<Record<string, readonly ReferenciaDeUs
     r("provider_launch_profile_items", "cost_center_id"),
     r("provider_profiles", "default_cost_center_id"),
     r("requisition_items", "cost_center_id"),
+    r("retiros", "cost_center_id", true),
     r("sales_documents", "centro_custo_id", true),
     r("service_orders", "cost_center_id", true),
     r("stock_movements", "cost_center_id"),
