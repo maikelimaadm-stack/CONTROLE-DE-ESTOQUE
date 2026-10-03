@@ -415,12 +415,13 @@ Cancelar. As quatro espécies entram juntas. O documento nasce ABERTO e só mexe
 
 **Documento único, em tabela própria.** `erp.documentos_estoque` (cabeçalho) e `erp.documentos_estoque_itens` (itens),
 0040, com quatro variantes pela coluna `especie`. Não é TOP pendurada nas tabelas antigas de estoque: aquelas
-continuam com os fluxos, as regras e as telas delas, e uma fatia própria decide quando trocá-las. Tela unificada não é
+continuam com os fluxos, as regras e as telas delas, e uma fatia própria decide quando trocá-las (a OPERACOES-01 F11,
+decisão 288: "O que fica nas telas antigas", abaixo). Tela unificada não é
 regra unificada — o documento de estoque não funde serviço, permissão nem efeito com as telas antigas.
 
 | Espécie | Segmento (URL e API) | Família da TOP | Recurso de permissão | Movimento na confirmação |
 | --- | --- | --- | --- | --- |
-| Entrada | `entradas` | `estoque.entrada` | `entradas_estoque` | `entry`, pelo custo informado no item ou, vazio, o custo médio do produto (OPERACOES-01 F5a), com lote e validade |
+| Entrada | `entradas` | `estoque.entrada` | `entradas_estoque` | `entry`, pelo custo informado no item ou, vazio, o custo médio do produto (OPERACOES-01 F5a), com lote e validade; `opening_balance` ("Estoque inicial") quando a TOP lança o saldo inicial (seção Implantação, OPERACOES-01 F11, decisão 288), com a recusa de duplicidade |
 | Saída | `saidas` | `estoque.saida` | `saidas_estoque` | `writeoff`, pelo custo médio; lote informado ou escolhido pela validade (vencido só sai informado, decisão 254) |
 | Transferência | `transferencias` | `estoque.transferencia` | `transferencias_estoque` | `transfer_out` na origem e `transfer_in` no destino, parte por parte, com o MESMO custo, lote e validade |
 | Ajuste (inventário) | `ajustes` | `estoque.ajuste` | `ajustes_estoque` | pela diferença contado − saldo: `correction_in` (> 0, pelo custo informado ou o médio atual), `correction_out` (< 0), nenhum (zero) |
@@ -435,7 +436,8 @@ cliente manda só `tipo_operacao_id` e o servidor congela a versão e confere a 
 `GET .../previa-confirmacao`; `POST .../confirmar`; `POST .../cancelar`; desde a OPERACOES-01 F5b, as LEITURAS da
 Central: `GET /api/estoque/<segmento>/regras-da-operacao`, `/layout-efetivo` e, na saída, na requisição e no consumo,
 `/destino/opcoes`. Tela: a aba **Movimentações** do `/estoque`,
-logo depois de "Visão geral" (as abas e o "+ Novo" antigos continuam), e a Central de Estoque em
+logo depois de "Visão geral" (desde a OPERACOES-01 F11, decisão 288, o "+ Novo" antigo saiu e as abas antigas ficam
+como histórico, sem Novo), e a Central de Estoque em
 `/estoque/movimentacoes/<segmento>/new?tipo_operacao_id=…` (criação) e `/estoque/movimentacoes/<segmento>/<id>`
 (consulta), declaradas no `apps/web/nav.registry.mjs`.
 
@@ -469,14 +471,21 @@ documento, depois de conferir que o que ele deu de entrada (`entry`, `transfer_i
 balde; já consumido → 422 no item, dizendo produto, armazém e lote, e nada gravado. Cancelar de novo → 409
 `ALREADY_CANCELLED`. Sem motivo, grava-se "Cancelado sem motivo informado".
 
-**O que fica nas telas antigas** (`/estoque/entradas`, baixas, requisições, transferências, devoluções, batidas e as
-rotas `/stock/*`; o "Ajustar estoque" do Saldo abre a Central de ajuste desde a F5b, com `ajustes_estoque.create`, uma
-TOP de ajuste e a capacidade — senão, o diálogo de sempre): tudo continua como está, inclusive a transferência entre
-empresas, o Documento fiscal de Estoque e a produção de ração. O documento de estoque não as substitui nesta fatia.
+**O que fica nas telas antigas** (decisão 288; o mapa completo em `docs/OPERACOES-CONTRACT.md` §8). O "+ Novo" antigo
+do Estoque saiu; lançar é pela aba Movimentações. As listas antigas de requisição, saída direta, devolução, entrada
+manual e ajuste ficam como histórico "(tela antiga)", sem o Novo e fora do mega-menu e da busca; as rotas de detalhe e
+de criação, as rotas `/stock/*` e os aliases continuam. Ficam no menu, como AÇÃO e SÓ para o que a Central não cobre: a
+"Requisição com classificação capex/opex" e a "Entrada sem nota com pagamento ou natureza e centro por item". Ficam
+inteiros: a transferência entre empresas (ação, chip e Novo da lista), o Documento fiscal de Estoque e a fila de DF-e
+(até a decisão sobre a F7), e a produção de ração. O "Ajustar estoque" do Saldo abre a Central de ajuste desde a F5b,
+com `ajustes_estoque.create`, uma TOP de ajuste e a capacidade — senão, o diálogo de sempre. O saldo inicial: a
+Implantação aponta para a Central ("Lançar saldo inicial") quando há TOP de entrada marcada; senão, o "Adicionar novo" de
+hoje.
 
 **O que FALTA (e não deve ser simulado):** editar documento aberto (cancela-se e lança-se outro), transferência entre
-empresas no documento, anexos no documento de estoque, a execução configurada das famílias novas (TOP-CONFIG-04C) e a
-troca das telas antigas. O destino — o centro de resultado e as outras cinco dimensões — está
+empresas no documento, anexos no documento de estoque, a execução configurada das famílias novas (TOP-CONFIG-04C), a
+troca da nota de entrada antiga e do "Lançar" da DF-e (depois da F7), e o que só as telas antigas têm (capex/opex,
+centro por item, pagamento e natureza por item na entrada — exigem migration; decisão 288). O destino — o centro de resultado e as outras cinco dimensões — está
 no documento desde a OPERACOES-01 F5a, pela API.
 
 ### A movimentação interna no documento (OPERACOES-01 F5a, decisão 282)
@@ -502,7 +511,7 @@ Formulário e Ambos, com Configurar colunas e layout por TOP. Ela lança as SETE
 - a requisição, o consumo e a devolução de consumo ganham tela. O consumo nasce da requisição ("Atender requisição": os
   itens dela, até o saldo, e o destino herdado, travado) ou direto, quando a TOP não exige requisição. A requisição
   atendida em parte encerra o saldo com motivo. A devolução de consumo nasce do consumo ("Devolver itens");
-- o destino segue a seção Destino da TOP (não usada / opcional / obrigatória), com as opções de
+- o destino segue a seção Destino da TOP (não usada / opcional / obrigatória; o padrão, desde a decisão 288, é opcional), com as opções de
   `GET /api/estoque/<segmento>/destino/opcoes` — a mesma régua do POST;
 - a saída pede Motivo e Justificativa;
 - a entrada aceita o custo vazio (vale o custo médio), e o ajuste aceita o custo;

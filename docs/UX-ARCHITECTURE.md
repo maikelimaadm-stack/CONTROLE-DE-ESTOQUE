@@ -49,7 +49,7 @@ com parâmetros dinâmicos.
 | Módulo | V1 | V2 |
 |---|---|---|
 | **Compras** | Visão Geral · Processos com 9 sub-abas (Todos, Meus, Solicitações, Cotações, Autorização, Compras, Recebimentos, Finalizados, Rejeitados) | Visão Geral · **Processos**: uma lista, **Escopo** [Todos \| Meus] e **Etapa** como chips com contadores (`GET /api/supply/requests/counts`, uma consulta agregada); `?scope=`/`?stage=` |
-| **Estoque** | Visão Geral · Saldo · Movimentações (ledger/ajustes) · Entradas e Recebimentos (4) · Saídas (3) · Transferências (2) · Fábrica (4); "+ Novo" com 9 opções | Visão Geral · **Estoque** (saldo / movimentações / ajustes) · **Recebimentos** (fiscais / manuais / DFe / conferência) · **Operações** (requisições / saídas diretas / transferências com chip armazéns–fazendas / devoluções) · **Fábrica de Ração**; "+ Novo" em dois níveis (Entrada, Saída, Transferência, Produção); ajuste só a partir do saldo; devolução só a partir da requisição |
+| **Estoque** | Visão Geral · Saldo · Movimentações (ledger/ajustes) · Entradas e Recebimentos (4) · Saídas (3) · Transferências (2) · Fábrica (4); "+ Novo" com 9 opções | Visão Geral · **Estoque** (saldo / movimentações / ajustes) · **Recebimentos** (fiscais / manuais / DFe / conferência) · **Operações** (requisições / saídas diretas / transferências com chip armazéns–fazendas / devoluções) · **Fábrica de Ração**; **Movimentações** (o documento de estoque; o Novo pergunta a TOP); desde a decisão 288 sem o "+ Novo" antigo e com as sub-abas antigas como histórico "(tela antiga)"; ajuste a partir do saldo ou da Central; devolução a partir da requisição antiga ou do consumo |
 | **Financeiro** | Visão Geral · Contas (2) · Tesouraria (3) · Conciliação (3) · Planejamento · Contratos | Visão Geral · **Contas** (A Pagar / A Receber / Compromissos-contratos) · **Caixa e Bancos** (extrato / fluxo / conciliação com chip "somente pendências" / meses conciliados / contas bancárias) · **Planejamento** (único lugar; removido de Configurações) |
 | **Vendas** | Orçamentos · Pedidos · Vendas | mantido (documentos conceitualmente distintos) |
 | **Pecuária** | Visão Geral · Rebanho (Animais, Buscar animal, Pendentes de processamento, Lotes) · Movimentações (5 sub-abas por tipo) · Manejos (7 sub-abas) · Movimentar Rebanho (4 sub-abas) | Visão Geral · **Rebanho** (Animais com pesquisa por identificação, "Localizar animal" e chip "Processamento pendente: N" que abre o painel; Lotes; Reclassificações [evolução de categoria]; Transferências [histórico]) · **Movimentações** (uma lista, tipo como chip) · **Manejos** (Registro: Manejos | Pesagens; em Manejos, "Todos os manejos" + tipo como chip — pesagens **não** entram em "todos": têm endpoint e semântica próprios [GMD por animal]; detalhe real em `/pecuaria/manejo/:tipo/:id` e `/pecuaria/pesagens/:id`) · "Movimentar rebanho" virou ação contextual (animal → mover para lote / transferir; lote → mover de local / transferir de fazenda / agrupar) em diálogo |
@@ -149,12 +149,12 @@ Preservado: máquina de estados, SLA, responsáveis, aprovações, cotações, `
 | — | **Visão Geral** (valor em estoque, abaixo do mínimo, vencimentos, últimas movimentações — composta das consultas existentes) |
 | Saldo Estoque; Movimentos (ledger); Correção de Estoque | **Saldo** (ação por linha **Ajustar estoque**) · **Movimentações** (Ledger · Ajustes de estoque) |
 | Doc. Fiscal/Entrada, Entrada/Insumos, DFe Recebidas, Aprovação de Notas | **Entradas e Recebimentos**: Lançadas · Entradas manuais · DFe/XML · Em conferência |
-| Baixa de Estoque, Requisição/Saída, Devolução/Entrada | **Saídas**: Requisições · Saídas diretas · Devoluções; requisição confirmada → **Devolver itens** (devolução pré-preenchida) |
+| Baixa de Estoque, Requisição/Saída, Devolução/Entrada | **Saídas**: Requisições · Saídas diretas · Devoluções; requisição confirmada → **Devolver itens** (devolução pré-preenchida) — desde a decisão 288, histórico "(tela antiga)"; lançar pela aba Movimentações |
 | Trans. Armazém, Trans. Fazendas | **Transferências**: Entre armazéns · Entre fazendas |
 | Formulação, Batida | **Fábrica de Ração**: Fórmulas · Produções · Consumo · Custos ("batida" apresentada como produção) |
-| Estoques Iniciais (Cadastros Base) | Configurações › Implantação › Saldos iniciais de estoque |
+| Estoques Iniciais (Cadastros Base) | Configurações › Implantação › Saldos iniciais de estoque — desde a decisão 288, "Lançar saldo inicial" leva à Central quando há TOP de entrada marcada |
 | Perfis de Lançamento (menu Estoque) | Configurações › Produtos e Classificações |
-| — | **+ Novo**: Entrada manual · Documento fiscal/XML · Requisição · Saída direta · Transferência (armazéns/fazendas) · Devolução · Ajuste · Produção de ração (cada um na sua rota/regra) |
+| — | **+ Novo** antigo: removido na decisão 288. Lançar é pela aba **Movimentações** (Central de Estoque, Novo por TOP). Ficam como ação no menu: Entrada sem nota com pagamento ou natureza e centro por item · Documento fiscal/XML · Requisição com classificação capex/opex · Transferência entre empresas · Produção de ração |
 
 ### Financeiro (`/financeiro`)
 | Antes | Depois |
@@ -247,9 +247,9 @@ Favoritos e notificações guardam rotas: as antigas continuam abrindo (redirect
 
 ## Permissões
 
-Unificar tela não unificou permissões: cada aba, sub-aba, opção do **+ Novo** e ação contextual declara a(s) chave(s) que exige
+Unificar tela não unificou permissões: cada aba, sub-aba, opção do **+ Novo** (onde ele ainda existe) e ação contextual declara a(s) chave(s) que exige
 (`perm` em `WsTab`/`NewChooser`); um item do menu aparece se o usuário tiver **qualquer** permissão das abas da área. A autorização
-real continua no servidor (`runService` → 403). Exemplo: o perfil "Operador de Estoque" vê Estoque › Saídas › Requisições, mas não
+real continua no servidor (`runService` → 403). Exemplo: o perfil "Operador de Estoque" vê Estoque › Operações (as Requisições como histórico "(tela antiga)") e a ação "Requisição com classificação capex/opex", mas não
 vê Fábrica de Ração nem o módulo Financeiro (coberto por `apps/web/e2e/navegacao.spec.ts`).
 
 ## Preparação para mobile/offline

@@ -2525,8 +2525,8 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 ### 18.8 O que fica para depois
 
 - A seção da F7, na sua fase (`docs/OPERACOES-CONTRACT.md` §1 e §2). As da F5 (Destino e Fluxo) entraram na F5a, as da
-  F6 (Fluxo de compra e Divergência com o pedido), na F6a, e a da F9 (Padrões financeiros), na F9a (§18.10); a F10 não
-  criou seção: a TOP nos módulos é §18.11. Nenhum tipo fica "sem tela ainda": as telas da requisição, do consumo e da
+  F6 (Fluxo de compra e Divergência com o pedido), na F6a, a da F9 (Padrões financeiros), na F9a (§18.10), e a da F11
+  (Implantação), na F11 (§18.12); a F10 não criou seção: a TOP nos módulos é §18.11. Nenhum tipo fica "sem tela ainda": as telas da requisição, do consumo e da
   devolução de consumo entraram na F5b (a Central de Estoque no motor, decisão 282), a do orçamento de compra, na F6b
   (§18.9), e as dos 6 de Módulos, na F10 (§18.11).
 - As famílias novas no registry: nenhuma pendente (manejo e batelada nasceram na F10; requisição de material, consumo e
@@ -2605,7 +2605,7 @@ Aqui, o que é do contrato da TOP:
 - **Capabilities:** `padroesFinanceiros: 1` na RAIZ, depois de `formato5` (`:923`), no precedente de `reservaEstoque: 1`;
   `contractVersion`, `configuracao`, `restricoes`, `regrasGerais` e `formato5` não mudam de forma (o `formato5.secoes`
   ganha `financeiroPadrao` pelo domínio e fica com as cinco: `["destino", "fluxo", "fluxoCompra", "divergenciaPedido",
-  "financeiroPadrao"]`). O editor do 5 só liga com o MESMO conjunto que a tela escreve: a lista do domínio e o registro do
+  "financeiroPadrao"]`; seis desde a F11, com `implantacao` por último, §18.12). O editor do 5 só liga com o MESMO conjunto que a tela escreve: a lista do domínio e o registro do
   web mudaram juntos, na junção com a F5a e a F6a. O editor só mostra os campos dos padrões com o editor do 5 E a
   capacidade (`apps/web/src/features/admin/top-contrato.tsx:454`); o detalhe sem a chave = `"nao_informado"` — os campos
   ficam bloqueados com o aviso `top-padroes-financeiros-ilegiveis` e nada sobre eles vai no corpo; presente e malformado
@@ -2688,3 +2688,40 @@ que é do contrato da TOP:
   `/admin/tipos-operacao/capabilities` (o catálogo e a matriz publicados mudam pelo domínio).
 - **Skew:** a API anterior responde 404 de rota à capacidade, e a Central é a de hoje (K-1 da F10); o web anterior grava
   contra a API nova sem TOP (K-2 da F10).
+
+### 18.12 A Implantação e o neutro do Destino (OPERACOES-01 F11, decisão 288)
+
+O produto (a Implantação, a confirmação, a tela antiga e a compatibilidade) está em `docs/OPERACOES-CONTRACT.md` §2
+(Implantação) e §8. Aqui, o que é do contrato da TOP:
+- **Seção `implantacao`** (`packages/domain/src/tipo-operacao-secao-implantacao.ts`), declarada pelo ponto de extensão
+  (§18.3), a ÚLTIMA de `DEFINICOES_SECOES_V5` (`tipo-operacao-secoes-v5.ts:139`): forma `{ saldoInicial: boolean }`,
+  rótulo "Implantação", campo "Lança o saldo inicial", neutro `{ saldoInicial: false }` (a regra que trava nasce
+  desligada — 281, item (4) da 240), `usadaPor` só a família da espécie `entrada` (perguntada ao registry,
+  `familiaOperacionalDeDocumentoEstoque("entrada")`), leitura estrita (`booleano`), `linhas` "Lança o saldo inicial:
+  Sim/Não". Arquivo FOLHA (só `import type` do ponto de extensão).
+- **Efeito:** a entrada confirmada com a versão congelada marcada (`saldoInicialPelaTop`,
+  `estoque-regras-da-operacao.ts:81-86`) grava `opening_balance`, e o mesmo produto/local de estoque/lote não recebe dois
+  saldos iniciais VIVOS — no razão sem o `reversal` da mesma origem, ou no saldo inicial antigo `confirmed`, com o lote
+  aparado nos dois lados. Recusa: 409 `DUPLICATE_DOCUMENT` com a mensagem da tela antiga ("Já existe estoque inicial
+  confirmado para este produto/local de estoque/lote"), `details` por item (`itens.<i>.produto_id`). A MESMA regra vale
+  na tela antiga (`POST /api/stock/opening-balances`) — um ajudante só, `apps/api/src/lib/estoque-saldo-inicial.ts`, com a
+  mesma trava consultiva (organização, local, produto, lote; uuid em minúsculas; ordem fixa). Na confirmação automática,
+  o documento fica salvo e ABERTO, `confirmacaoAutomatica.motivo = "recusada"`, com o mesmo `erro` do `/confirmar`.
+- **Capacidades:** `formato5.secoes` ganha `implantacao` (por último; o editor só grava o 5 contra servidor com o MESMO
+  conjunto, §18.6); `GET /api/estoque/entradas/operation-types` declara `capacidades.saldoInicial: 1` e
+  `items[].saldoInicial` (só a entrada; `entendeSaldoInicialEstoque`). `regras-da-operacao` NÃO ganha a seção: a Central
+  não precisa saber, a confirmação é a autoridade.
+- **Editor:** a aba "Implantação" (`apps/web/src/features/admin/top-secao-implantacao.tsx`; `top-secao-implantacao`,
+  `top-campo-implantacao-saldo-inicial`, valores "false"/"true") aparece SÓ na entrada; as abas da entrada passam a
+  Identificação, Geral, Estoque, Implantação, Aprovação. Ligada numa TOP de outra família → 422
+  `combinacao_nao_suportada` "Esta operação não usa a seção Implantação." e, no editor, "Implantação: volta ao padrão".
+- **O neutro do Destino passa a "opcional"** nas seis dimensões (`tipo-operacao-secao-destino.ts:80`; era "nao_usada" na
+  F5a). Motivo: a baixa e a requisição antigas aceitavam o destino (`stock.ts:299`, `:322` da base) e nada exigiam; com
+  "Não usada", a TOP sem a seção recusaria o que a tela antiga aceitava, e a tela antiga não poderia sair do menu.
+  "Opcional" nunca recusa, então nada passa a ser exigido; "Não usada" e "Obrigatória" são escolhas gravadas TOP por TOP.
+  Tudo deriva de `neutro()` (`secoesExtensaoNeutrasTop`, `configuracaoNeutraTopV5`, `regrasDaOperacaoDoEstoque`, o "volta
+  ao padrão"). Uma TOP gravada no 5 ANTES da F11 tem "nao_usada" explícito e continua com ele (nas famílias que não usam
+  a seção, editar mostra "Destino: volta ao padrão"); produção não tem formato 5.
+- **Skew:** o detector `secoesDoFormato5DaBase` acompanha sozinho (o HEAD tem seis seções); o K2-0 de
+  `f5-estoque-skew-web-anterior.spec.ts:131` compara o COMMIT HEAD com o domínio e só vale
+  rodado sobre o commit da F11: feito em 03/10 sobre `dbfac4e` (que contém `f451020`), 6/6.

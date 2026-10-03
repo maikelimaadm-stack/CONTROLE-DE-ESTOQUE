@@ -3119,6 +3119,153 @@ leitura (nada é gravado). Os passos 4 e 5 gravam, só com a decisão dele.
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção, e os passos 4 e 5
 gravam (só com a decisão dele).
 
+### F11 — o menu e as telas antigas, o saldo inicial pela TOP e o neutro do Destino (OPERACOES-01, sem migration)
+
+Decisão 288. **Sem migration, sem variável, sem permissão nova, sem rota nova, sem código de erro novo.** As migrations
+continuam as da fatia; nenhum objeto de banco muda (`erp.stock_movements.movement_type` já aceita `opening_balance`,
+CHECK da 0003). O que entra:
+- domínio: o neutro do Destino passa a "opcional" nas seis dimensões; a seção nova do formato 5 `implantacao`
+  (`{ saldoInicial }`, neutro `false`, só a entrada); `saldoInicialPelaTop`; `CAPACIDADE_SALDO_INICIAL_ESTOQUE` e o leitor
+  estrito `entendeSaldoInicialEstoque`. As capacidades da TOP publicam a seção nova (`formato5.secoes` ganha
+  `implantacao`, por último);
+- API: a confirmação da entrada com a TOP marcada grava `opening_balance` e recusa a duplicidade (409
+  `DUPLICATE_DOCUMENT`, a mensagem de sempre); `POST /api/stock/opening-balances` passa pela mesma regra
+  (`apps/api/src/lib/estoque-saldo-inicial.ts`); `GET /api/estoque/entradas/operation-types` declara `saldoInicial: 1`
+  (no fim) e `items[].saldoInicial` — só a entrada; os relatórios `requisitions` e `stock_writeoffs` incluem o consumo e a
+  saída confirmados do documento novo, com a coluna `documento` no fim;
+- web: o menu (registro), o "+ Novo" antigo do Estoque fora, o Novo das listas antigas fora, a aba Implantação no editor
+  da TOP, e a Implantação (Saldos iniciais de estoque) apontando para a Central quando há TOP marcada.
+
+**Migration:** nenhuma. Nada a aplicar no banco.
+
+**Ordem do deploy:** a F11 não tem exigência própria (os dois sentidos do skew estão provados, abaixo). Na PR #90 vale a
+ordem das fases com migration (0042 → … → 0047, depois a API, depois o web), descrita nas seções delas.
+
+**Version skew** (base `622f194`):
+- **Sentido 1 — web novo × API da base:** a API base não responde `saldoInicial` no `operation-types` da entrada (nem
+  tem documento de movimentação interna): a Implantação deste web mostra o "Adicionar novo" de hoje, não pergunta nada a
+  `/estoque/movimentacoes/`, e o diálogo antigo grava (201) e a linha aparece. Provado por
+  `apps/web/e2e/f11-saldo-inicial-skew-api-producao.spec.ts` (K-1, 1 caso), no job `skew`. O menu é só web; o "Ajustar
+  estoque" do Saldo cai no diálogo antigo contra a API base (LT-K1 de `skew-api-producao.spec.ts`, inalterado). O neutro do
+  Destino e a aba Implantação: a API base não publica `formato5` → o editor é o do formato 4 (o K-1 da F4).
+- **Sentido 2 — web da base × API nova** (a janela "API antes do web"): a chave e o campo novos são ADITIVOS (o leitor
+  das TOPs não é estrito em chave a mais). O diálogo do web base grava pela rota antiga (201); com um saldo inicial vivo
+  criado pelo DOCUMENTO NOVO (TOP marcada) na mesma chave, o mesmo diálogo recebe o 409 com a mesma mensagem (toast) e o
+  razão não ganha linha. Provado por `apps/web/e2e/f11-saldo-inicial-skew-web-anterior.spec.ts` (K-2, 1 caso) e pela
+  premissa ajustada de `f5b-estoque-skew-web-anterior.spec.ts` (1 caso: a entrada declara as quatro chaves da F5b e, no
+  fim, `saldoInicial`), no job `skew`. O web base não manda destino: a API nova aceita igual ("Opcional" nunca exige).
+  Os relatórios: o web desenha as colunas que a API devolve → o web base mostra a coluna nova e as linhas novas (sem spec
+  dedicado; a forma é a de hoje + 1 coluna).
+- **Feito (03/10):** `skew-run.sh 2 e2e/f5-estoque-skew-web-anterior.spec.ts` sobre o merge da F11 (`dbfac4e`, que
+  contém `f451020`): 6/6 — o K2-0 (`:131`) compara a lista de seções do COMMIT HEAD (seis) com a do domínio (seis).
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247): nenhuma linha existente é reescrita nem apagada; sem backfill. Produção (leitura de 02/10,
+decisão 281): 3 TOPs (pedido de compra, orçamento de venda e pedido de venda) — NENHUMA de estoque, nenhuma no formato
+5; ZERO requisições, baixas, transferências, ajustes, saldos iniciais e solicitações de compra; 2 movimentos de estoque
+(origem não conferida — passo 1 do roteiro). Por isso: o neutro do Destino não muda a leitura de nada gravado; a seção
+`implantacao` só age depois que o Maike marcar uma TOP de entrada; os relatórios só ganham linhas quando houver consumo
+ou saída confirmados do documento novo. O que muda sem ninguém configurar nada:
+- o menu: o Estoque sem o "+ Novo" antigo; as ações "Nova saída direta", "Transferência entre locais de estoque" e
+  "Nova solicitação de compra" fora do mega-menu e da busca; as subs antigas "(tela antiga)", sem Novo; a busca de
+  "saída direta", "requisição", "devolução"… leva a Estoque › Movimentações;
+- PERFIS SÓ COM PERMISSÕES ANTIGAS de criação (`stock_writeoffs`, `warehouse_transfers`, `stock_corrections`,
+  `devolutions`) perdem os caminhos visíveis de lançar saída, transferência entre locais de estoque, ajuste e devolução
+  (sobra a URL `/new`); a Central exige `saidas_estoque`/`transferencias_estoque`/`ajustes_estoque`/
+  `devolucoes_consumo_estoque` `.create`. A requisição capex/opex e a entrada sem nota continuam como ação no menu.
+  Conceder as permissões novas é decisão do Maike (efeito novo, 240) — o passo 1 do roteiro conta quem perde;
+- a Central de Estoque, com TOP neutra, passa a mostrar os seis campos de destino como opcionais na saída, na requisição
+  e no consumo;
+- a Implantação, para quem tem `entradas_estoque.create` (o administrador proprietário tem), mostra a dica de como
+  marcar a TOP (nenhuma está marcada no deploy) ao lado do "Adicionar novo" de hoje;
+- os relatórios "Requisições/Saídas" e "Baixas de Estoque" ganham a coluna "Documento".
+
+**Reversão:** redeploy da API e do web anteriores; nada no banco. O menu e o "+ Novo" antigos voltam com o web
+anterior. Ficam (decisão 247): os documentos de entrada confirmados com `opening_balance` (no razão, "Estoque inicial";
+a API anterior os trata como entrada comum) e as TOPs gravadas no 5 com `implantacao` (a reversão da F4, item (a)). Risco
+declarado: a rota antiga da API anterior confere só `erp.opening_balances`, e volta a aceitar um saldo inicial antigo
+numa chave cujo saldo inicial veio de um documento novo. Reverter só o web: a API nova continua aceitando o web
+anterior (sentido 2).
+
+**Roteiro do Maike em produção** (depois do deploy; produção é operacional — decisões 240 e 247). Os passos 1 a 6 são
+só leitura (nada é gravado). Os passos 7 e 8 gravam, só com a decisão dele.
+1. (Leitura, SQL do Maike — **PENDING**: a sessão não tem acesso a produção; nenhum segredo vai aqui, a conexão é a do
+   Maike) Quem perde o caminho de lançar — perfis vivos com a permissão antiga de criação e SEM
+   nenhuma das novas correspondentes (membro com `is_owner` tem todas e não entra):
+   ```sql
+   with mapa(antiga, novas) as (values
+     ('stock_writeoffs.create',     array['saidas_estoque.create']),
+     ('warehouse_transfers.create', array['transferencias_estoque.create']),
+     ('stock_corrections.create',   array['ajustes_estoque.create']),
+     ('devolutions.create',         array['devolucoes_consumo_estoque.create', 'entradas_estoque.create']),
+     ('requisitions.create',        array['requisicoes_estoque.create', 'consumos_estoque.create']),
+     ('input_entries.create',       array['entradas_estoque.create']),
+     ('opening_balances.create',    array['entradas_estoque.create']))
+   select r.organization_id, r.name as perfil,
+          array_agg(m.antiga order by m.antiga) as antigas_sem_a_nova,
+          (select count(*) from erp.organization_members om
+            where om.role_id = r.id and om.is_active and not om.is_owner) as membros_afetados
+     from erp.roles r
+     join erp.role_permissions rp on rp.role_id = r.id
+     join mapa m on m.antiga = rp.permission_key
+    where r.deleted_at is null
+      and not exists (select 1 from erp.role_permissions n where n.role_id = r.id and n.permission_key = any (m.novas))
+    group by r.organization_id, r.id, r.name
+    order by 1, 2;
+   ```
+   E a origem dos movimentos e dos documentos de estoque (o esperado: nenhum documento novo de consumo/saída, nenhuma
+   TOP de estoque, nenhum saldo inicial):
+   ```sql
+   select source_type, movement_type, count(*) from erp.stock_movements group by 1, 2 order by 1, 2;
+   select especie, situacao, count(*) from erp.documentos_estoque group by 1, 2 order by 1, 2;
+   select codigo_base, count(*) from erp.tipos_operacao where excluido_em is null and codigo_base like 'estoque.%' group by 1;
+   select status, count(*) from erp.opening_balances group by 1;
+   ```
+2. Estoque: a barra do Estoque NÃO tem "+ Novo"; a aba Movimentações está logo depois de Visão geral, com o Novo que
+   pergunta a TOP. Operações › "Saídas diretas (tela antiga)", "Requisições (tela antiga)", "Devoluções (tela antiga)" e
+   Recebimentos › "Entradas manuais (tela antiga)": listas sem o botão Novo. Operações › Transferências, chip "Entre
+   empresas": o Novo continua.
+3. Mega-menu do Estoque (passar o mouse em "Estoque"): o grupo Ações tem exatamente Entrada sem nota com pagamento ou
+   natureza e centro por item · Novo documento fiscal / importar XML · Requisição com classificação capex/opex ·
+   Transferência entre empresas · Nova produção de ração; nenhum item "(tela antiga)".
+4. Busca (Buscar funcionalidade): "saída direta" → "Estoque › Movimentações"; "requisi" → "Requisição com classificação
+   capex/opex" e nenhuma "Requisições (tela antiga)". A URL antiga `/estoque/baixas/new` ainda abre "Nova baixa de
+   estoque" (compatibilidade). Descartar.
+5. Configurações › Implantação › Saldos iniciais de estoque: sem TOP marcada, o "Adicionar novo" de hoje e a dica
+   "Para lançar o saldo inicial pela Central de Estoque, marque "Lança o saldo inicial" na aba Implantação de um tipo de
+   operação de entrada (Configurações › Operações › Tipos de operação)."; o histórico com "Estornar" igual.
+6. Relatórios › Estoque › "Requisições/Saídas" e "Baixas de Estoque": a coluna "Documento" no fim; as linhas antigas (se
+   houver) com "Requisição (tela antiga)"/"Baixa (tela antiga)"; os totais iguais aos de antes do deploy para o mesmo
+   período.
+7. (Grava; decisão do Maike) Configurações › Operações › Tipos de operação › Novo › Entrada: a aba "Implantação" com
+   "Lança o saldo inicial" = Sim; salvar a TOP "Saldo inicial". A Implantação passa a mostrar "Lançar saldo inicial" no
+   lugar do "Adicionar novo"; ele abre a Central de entrada com a TOP. Lançar um saldo inicial REAL (sem dado de teste em
+   produção — decisão 240) e confirmar: no Saldo › Movimentações (ledger), o movimento "Estoque inicial". Um segundo saldo
+   inicial do MESMO produto/local de estoque/lote (pela Central ou pelo "Adicionar novo" antigo) é recusado com "Já existe
+   estoque inicial confirmado para este produto/local de estoque/lote" (pela Central, o documento recusado fica aberto, sem
+   movimento, e se cancela sem efeito no saldo). Nada se apaga (decisão 247): para desfazer, cancelar o documento (estorna e libera a
+   chave). Desligar a TOP volta a Implantação à tela de hoje.
+8. (Grava; decisão do Maike) Conceder as permissões novas (`*_estoque.create`) aos perfis do passo 1, se quiser que eles
+   lancem pela Central.
+9. Depois da F7 (pedido ao coordenador): Compras sem "+ Novo › Nova solicitação de compra"; a lista Processos e o
+   detalhe `/suprimentos/view/:id` continuam.
+
+**Riscos** (declarados na 288): perfil só com permissões antigas sem caminho visível de lançar (passo 1); o mega-menu
+mostra a área inteira quando todas as subs saem ("Operações" → Requisições (tela antiga); "Recebimentos" → Entradas
+manuais (tela antiga)) para esse perfil; TOP no 5 gravada antes da F11 com "não usada" explícito no Destino (nenhuma em
+produção); a prévia não anuncia a duplicidade do saldo inicial (a recusa vem na confirmação); a rota antiga passa a
+recusar também o saldo inicial vindo do documento novo (e, na reversão, a API anterior volta a conferir só
+`erp.opening_balances`); o saldo inicial pela Central exige `entradas_estoque.create`/`.edit`, não
+`opening_balances.create`; com TOP neutra, a Central mostra os seis campos de destino como opcionais; o relatório não
+abate a devolução de consumo do consumo e não mostra a requisição nova (reserva, sem razão); testes enxutos — a
+integração e o E2E inteiros ficam para o CI, e o K2-0 está PENDING (acima).
+
+**FICA FORA DESTA RODADA:** a nota de entrada antiga e o "Lançar" da DF-e (decididos depois que a F7 entrar) e o "Nova
+solicitação de compra" de `apps/web/src/app/(app)/compras/page.tsx` (arquivo da F7, sai depois dela).
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção; os passos 7 e 8 gravam
+(só com a decisão dele).
+
 ## VISUAL-UX-04b — correções da Central de Compras (sem migration)
 
 Decisão 278. **Só web**: sem migration, sem rota, sem API, sem variável, sem permissão, sem domínio. Conserta regressões

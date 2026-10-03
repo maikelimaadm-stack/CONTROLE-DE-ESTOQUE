@@ -140,18 +140,20 @@ pagamento: voltam ao padrão").
 Duas seções de extensão do formato 5, declaradas pelo ponto de extensão (`docs/TIPO-OPERACAO-CONTRACT.md` §18.3):
 `packages/domain/src/tipo-operacao-secao-destino.ts` e `tipo-operacao-secao-fluxo.ts`, as duas primeiras de
 `DEFINICOES_SECOES_V5` (a ordem das abas, depois de Estoque; as da F6a vêm depois delas). **As regras que travam nascem
-DESLIGADAS:** no neutro, nada é exigido nem aceito de novo, e quem liga é o Maike, TOP por TOP.
+DESLIGADAS:** no neutro, nada é exigido, e quem liga é o Maike, TOP por TOP. O neutro do Destino é "Opcional" desde a
+F11 (decisão 288; era "Não usada" na F5a): a TOP sem a seção aceita o destino como a baixa e a requisição antigas
+aceitavam, e nada é exigido.
 
 **Destino** (`destino`, aba "Destino"): para onde vai o que sai do estoque.
 
 | chave | rótulo | coluna no documento | alvo | valores | neutro |
 |---|---|---|---|---|---|
-| `centroCusto` | Centro de resultado | `centro_custo_id` | `erp.cost_centers` (organização; analítico) | `nao_usada` "Não usada" · `opcional` "Opcional" · `obrigatoria` "Obrigatória" | `nao_usada` |
-| `equipamento` | Máquina/equipamento | `equipamento_id` | `erp.equipments` (empresa do documento) | idem | `nao_usada` |
-| `ordemServico` | Ordem de serviço | `ordem_servico_id` | `erp.service_orders` (empresa; aberta ou em andamento) | idem | `nao_usada` |
-| `loteAnimais` | Lote de animais | `lote_animais_id` | `erp.batches` (empresa) | idem | `nao_usada` |
-| `area` | Área/talhão | `area_id` | `erp.areas` (empresa) | idem | `nao_usada` |
-| `safra` | Safra | `safra_id` | `erp.harvests` (organização) | idem | `nao_usada` |
+| `centroCusto` | Centro de resultado | `centro_custo_id` | `erp.cost_centers` (organização; analítico) | `nao_usada` "Não usada" · `opcional` "Opcional" · `obrigatoria` "Obrigatória" | `opcional` |
+| `equipamento` | Máquina/equipamento | `equipamento_id` | `erp.equipments` (empresa do documento) | idem | `opcional` |
+| `ordemServico` | Ordem de serviço | `ordem_servico_id` | `erp.service_orders` (empresa; aberta ou em andamento) | idem | `opcional` |
+| `loteAnimais` | Lote de animais | `lote_animais_id` | `erp.batches` (empresa) | idem | `opcional` |
+| `area` | Área/talhão | `area_id` | `erp.areas` (empresa) | idem | `opcional` |
+| `safra` | Safra | `safra_id` | `erp.harvests` (organização) | idem | `opcional` |
 
 A lista das dimensões tem UM dono: `CAMPOS_DESTINO_ESTOQUE` (`packages/domain/src/estoque-documento.ts:191`). A seção
 Destino, a API e o web leem dali. Usam a seção a requisição, o consumo e a saída (`usadaPor`, perguntado ao registry).
@@ -184,6 +186,10 @@ o neutro, e quem recusa é a confirmação). Cada recusa é 422 `VALIDATION_ERRO
 | "algum_item", com a requisição e nenhum item ligado | `itens` | Esta operação exige ao menos um item da requisição. |
 | "todos", item não ligado | `itens.<i>.origem_item_id` | Esta operação exige que todo item venha da requisição. |
 | `permiteParcial` falso, consumo que não leva o saldo inteiro de todos os itens pendentes | `itens` | Esta operação não atende requisição em parte: leve o saldo inteiro de todos os itens pendentes da requisição. |
+
+No neutro ("Opcional"), nenhuma dessas duas primeiras recusas acontece. "Esta operação não usa …" só vem de uma TOP
+gravada com a dimensão "Não usada" — inclusive a TOP gravada no 5 antes da F11, que tem "não usada" explícito (decisão
+288, risco (c)).
 
 As duas funções que dão essas recusas moram no domínio (`recusasDoDestinoPelaTop`, `recusasDoFluxoDoConsumo`); a API só
 as aplica.
@@ -284,6 +290,47 @@ solicitação e na compra e na venda de animais, e no pedido de venda só com a 
 trocar os padrões" onde o documento informa algum padrão (não na solicitação). Um valor gravado fora do neutro continua
 visível para poder ser desligado; o servidor aceita as duas regras escondidas (sem efeito).
 
+### Implantação (`implantacao`, decisão 288) · IMPLEMENTADO
+
+Seção de extensão do formato 5, a última de `DEFINICOES_SECOES_V5`
+(`packages/domain/src/tipo-operacao-secao-implantacao.ts`). Diz se a ENTRADA de estoque desta TOP lança o SALDO
+INICIAL. **A regra que trava nasce DESLIGADA:** no neutro, a entrada é comum (`entry`), como hoje.
+
+| chave | rótulo | valores | neutro | usada por |
+|---|---|---|---|---|
+| `saldoInicial` | Lança o saldo inicial | `true` "Sim" · `false` "Não" | `false` | só a família da espécie `entrada` (perguntada ao registry) |
+
+**Na TOP (API da TOP, só no 5).** Ausente → o neutro. Presente, lida estrita: não booleano → `tipo_invalido` em
+`implantacao.saldoInicial`; chave a mais → `campo_desconhecido`. Nos formatos 1 a 4 a chave é recusada
+(`campo_desconhecido` em `implantacao`). Ligada numa família que não a usa → 422 `combinacao_nao_suportada`: "Esta
+operação não usa a seção Implantação.". O histórico mostra "Lança o saldo inicial: Sim/Não".
+
+**Na confirmação da entrada** (a versão CONGELADA da TOP; `saldoInicialPelaTop`; formatos 1 a 4, 5 sem a seção, versão
+ilegível → `false`):
+- o movimento é `opening_balance` ("Estoque inicial"), não `entry`; custo, lote, validade, aprovação e auditoria como na
+  entrada comum;
+- ANTES de qualquer movimento, o servidor trava as chaves (organização, local de estoque, produto, lote) do documento em
+  ordem fixa e confere, numa consulta, quais já têm saldo inicial VIVO: o movimento `opening_balance` sem o `reversal` da
+  mesma origem, de qualquer porta, ou o saldo inicial antigo `confirmed` em `erp.opening_balances`. Lote aparado; sem
+  lote, nulo e vazio são a mesma chave;
+- chave viva, ou repetida no mesmo documento → 409 `DUPLICATE_DOCUMENT`, mensagem "Já existe estoque inicial confirmado
+  para este produto/local de estoque/lote", um `details` por item recusado em `itens.<i>.produto_id`; nada é gravado e o
+  documento continua `aberto`;
+- "Salvar e confirmar" (confirmação automática): o documento é salvo e fica ABERTO com
+  `confirmacaoAutomatica: { confirmado: false, motivo: "recusada", erro }` (o mesmo corpo do `/confirmar`);
+- cancelar o documento estorna por origem e libera a chave;
+- a prévia (`previa-confirmacao`) NÃO conhece o saldo inicial: mostra `movimento: "entry"` e não anuncia a duplicidade.
+
+**A mesma regra na tela antiga.** `POST /api/stock/opening-balances` trava a mesma chave (o mesmo texto de trava) e faz
+a mesma conferência: passa a recusar também o saldo inicial vindo de um documento novo, com o mesmo código e a mesma
+mensagem de sempre. O `DELETE` (estorno) libera a chave para as duas portas.
+
+**Capacidade.** `GET /api/estoque/entradas/operation-types` declara `capacidades.saldoInicial: 1` (última chave) e cada
+item `saldoInicial: boolean`; as outras seis espécies não mudam. Leitor estrito: `entendeSaldoInicialEstoque`.
+
+**Permissão.** O saldo inicial pela Central exige a do documento de entrada (`entradas_estoque.create` para lançar,
+`.edit` para confirmar), não `opening_balances.create`: quem decide se a entrada é saldo inicial é a TOP.
+
 ### As seções das fases seguintes · DESTINO DECLARADO (não implementado)
 
 Cada fase acrescenta a SUA seção pelo ponto de extensão (`docs/TIPO-OPERACAO-CONTRACT.md` §18.3) e escreve aqui uma
@@ -293,9 +340,9 @@ nomes são fixados pelo coordenador. A sugestão do plano da F4, não normativa:
 | fase | seção sugerida | o que decide | neutro (o padrão de hoje) |
 |---|---|---|---|
 | F5 (282) | `destino` e `fluxo` | IMPLEMENTADAS — subseção "Destino e Fluxo" acima | — |
-| F5 (282) | `entrada` | não implementada na F5a: "sem nota" e "saldo inicial" são TOPs de entrada comuns (movimento `entry`); o saldo inicial com `opening_balance` e a recusa de duplicidade é pergunta ao Maike antes da F11 (decisão 282) | como hoje |
 | F6 (283) | `fluxoCompra` e `divergenciaPedido` | IMPLEMENTADAS — subseções acima | — |
 | F9 (286) | `financeiroPadrao` | IMPLEMENTADA (F9a; as famílias de compras na F9b) — subseção "Padrões financeiros" acima | — |
+| F11 (288) | `implantacao` | IMPLEMENTADA — subseção "Implantação" acima: o saldo inicial (`opening_balance` e a recusa de duplicidade) pela TOP de entrada; a entrada sem nota com pagamento e natureza/centro por item continua na tela antiga (decisão 288) | `saldoInicial: false` (como hoje) |
 
 ## 3. Centrais e modos de produto
 
@@ -566,7 +613,8 @@ trigram (precisa de migration); a pesquisa do seletor de Funcionários.
 - Telas que continuam Produto → Local:
   - o lançamento de manejo da pecuária: feito na F10 (decisão 287: a Central do manejo, com o Local de estoque antes do
     Produto);
-  - as listagens de correções e de saldos iniciais: telas antigas, cujo destino a F11 decide;
+  - as listagens de correções e de saldos iniciais: telas antigas, cujo destino a F11 decidiu (decisão 288, §8: os
+    ajustes como histórico "(tela antiga)"; os saldos iniciais pela TOP de entrada, a Implantação apontando para a Central);
   - a relação de movimentos da consulta da Central de Estoque (a coluna Local de estoque vem depois do Produto; F5b).
 - Na pesquisa: o saldo disponível (com reserva), o total, a ordem por saldo e o debounce.
 - No item e no documento: o filtro de empresa na célula do local do item; a coluna Estoque na compra; gravar o local do
@@ -763,8 +811,8 @@ nasce do CONSUMO (decisão 282, parte F5b, escolha (f)):
 As decisões pendentes do Maike — o par motivo/justificativa obrigatório no servidor depois que o web anterior sair de
 produção (I-1) e as perguntas antes da F11 (saldo inicial, entrada sem NF, requisição antiga, o neutro do Destino, a
 devolução antiga, `reason_note` e os relatórios que só leem as tabelas antigas; I-2 e I-3) — estão na decisão 282. Em
-03/10 o Maike decidiu: I-1 fica para a 1ª PR depois desta em produção, e I-2/I-3 são da F11 (decisão 288) — subseção
-F5b, abaixo.
+03/10 o Maike decidiu: I-1 fica para a 1ª PR depois desta em produção, e I-2/I-3 foram decididas e cumpridas na F11
+(decisão 288): §2 (Implantação; o neutro do Destino) e §8 (o mapa).
 
 ### F5b — a Central de Estoque no motor da Central (decisão 282) · IMPLEMENTADO
 
@@ -1792,7 +1840,32 @@ famílias; o nome da TOP no detalhe do movimento; família para nascimento, mort
 
 ## 8. Mapa "tela antiga → central nova"
 
-A preencher pela F11 (decisão 288).
+Decisão 288 (F11). "Sai do menu" = fora do mega-menu, da busca e dos atalhos (`search: false` no
+`apps/web/nav.registry.mjs`), fora do "+ Novo" e sem o Novo da lista. As rotas de detalhe e de criação antigas, os
+aliases, os redirecionamentos, as abas antigas e as APIs FICAM: os registros antigos continuam legíveis, a lista antiga
+vira histórico "(tela antiga)". Decisão do Maike (03/10): o que a Central não cobre mantém a tela antiga no menu SÓ para
+aquilo.
+
+| Tela antiga | Coberta por | Sai do menu? | O que fica e por quê |
+|---|---|---|---|
+| Requisição (`/estoque/requisicoes`) | Central de Estoque › Requisição + Consumo (destino "Opcional" no neutro: centro, área, safra…) | Sai do "+ Novo", da sub do menu e do Novo da lista | A AÇÃO "Requisição com classificação capex/opex" fica SÓ para capex/opex (sem coluna no documento novo; fase sem migration); a lista "(tela antiga)"; centro de resultado POR ITEM, requisitante, assinatura e endereçamento também só nela; o "Devolver itens" do detalhe fica |
+| Saída direta / baixa (`/estoque/baixas`) | Central › Saída (motivo, justificativa, destino "Opcional") | Sai | lista "(tela antiga)", detalhe e API; `reason_note` só na antiga (sobra a observação) |
+| Transferência entre locais de estoque | Central › Transferência | Sai | o chip "Entre locais de estoque" da lista, como histórico |
+| Transferência entre empresas | — (a nova não tem empresa destino nem financeiro) | FICA | ação, chip e Novo da lista |
+| Devolução (`/estoque/devolucoes`) | Central › Devolução de consumo (a avulsa = entrada) | Sai | lista "(tela antiga)"; o "Devolver itens" da requisição antiga (a única devolução de documento antigo); centro por item só na antiga |
+| Ajuste / correção | Central › Ajuste (o "Ajustar estoque" do Saldo abre a Central desde a F5b) | Sai (sub e botão do histórico) | lista "(tela antiga)"; o diálogo antigo como recuo do Saldo contra API sem a capacidade (skew) e em `?new=ajuste` |
+| Entrada manual (sem nota) | Central › Entrada (TOP de entrada) | Sai do "+ Novo", da sub e do Novo da lista | A AÇÃO "Entrada sem nota com pagamento ou natureza e centro por item" fica SÓ para pagamento/movimento bancário, natureza e centro por item, proprietário, safra/cultura por item e "não gera estoque" |
+| Saldo inicial (Configurações › Implantação) | TOP de entrada com "Lança o saldo inicial" (§2, Implantação): `opening_balance` + recusa de duplicidade | A Implantação aponta para a Central ("Lançar saldo inicial") quando há TOP marcada | sem TOP marcada (ou API anterior), o "Adicionar novo" de hoje, com a dica; o histórico antigo com "Estornar"; a cultura só na antiga |
+| Solicitação de compra | Pedido de compra + orçamento de compra (F6) | Sai a ação do menu; o "+ Novo › Nova solicitação de compra" de Compras sai depois da F7 | lista Processos, detalhe `/suprimentos/view/:id`, rota `/suprimentos/new` |
+| Nota de entrada antiga + "Lançar" da DF-e | Compra com importação de XML (F7) | Fora desta rodada (o coordenador, depois da F7) | — |
+| Fila de DF-e e conferência | — | FICA | — |
+| Relatórios "Requisições/Saídas" e "Baixas de Estoque" | passam a incluir o consumo e a saída confirmados do documento novo (coluna "Documento") | — | a requisição nova (reserva) não entra: não move o razão; a devolução de consumo não abate |
+
+O "+ Novo" antigo do Estoque (Entrada/Saída/Transferência/Produção) saiu inteiro; lançar é pela aba Movimentações. As
+ações do Estoque que ficam no mega-menu: Entrada sem nota com pagamento ou natureza e centro por item · Novo documento
+fiscal / importar XML · Requisição com classificação capex/opex · Transferência entre empresas · Nova produção de ração.
+Perfil só com as permissões antigas de criação perde os caminhos visíveis de lançar o que saiu (sobra a URL `/new`);
+conceder as permissões novas é decisão do Maike (DEPLOYMENT § F11, passo 1).
 
 Já trocadas no lugar (mesma rota, mesmo item de menu), pela F10 (decisão 287):
 
