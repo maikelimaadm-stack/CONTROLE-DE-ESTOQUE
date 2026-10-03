@@ -154,6 +154,8 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   R("trough_readings", "Leitura de Cocho", "Operacional > Confinamento > Nutrição"),
   R("feedlot_map", "Mapa do Confinamento", "Operacional > Confinamento", ["view"]),
   R("rainfalls", "Pluviometria", "Operacional"),
+  // MAPA-01 (decisão 289): cadastro de áreas do Mapa de Manejo (módulo neutro mapa; serve lavoura e pecuária).
+  R("mapa_areas", "Áreas", "Mapa de Manejo"),
   R("budgets", "Orçamentos", "Operacional > Vendas"),
   R("orders", "Pedidos", "Operacional > Vendas"),
   // TOP-CONFIG-08 (decisão 277): `approve` é a aprovação da TOP no formato 4 — decidir se o documento aberto pode

@@ -1975,6 +1975,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.livestock_plannings` | 12 | sim | `empresa_id` | sim |
 | `erp.maintenance_items` | 9 | não | — | não |
 | `erp.maintenance_machines` | 10 | não | — | não |
+| `erp.mapa_areas` | 10 | sim | `empresa_id` | sim |
 | `erp.matings` | 15 | sim | — | não |
 | `erp.measurement_units` | 5 | sim | — | não |
 | `erp.membro_escopos_empresa` | 7 | sim | — | não |

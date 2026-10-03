@@ -6,13 +6,14 @@ import { TEST_URL } from "./setup.js";
 import { VALORES_TIPO_DE_USO_DA_AREA } from "@agro/domain";
 
 /**
- * CADASTRO-AREAS-01 (0042, decisão 279) — invariantes de banco.
+ * CADASTRO-AREAS-01 (0050, decisão 290) — invariantes de banco.
  * T1 usable > total recusado · T2 módulo em área ambiental · T3 FK composta
- * retiro/módulo de outra empresa · T4 CHECK = domínio · T6 backfill · T7 reversas.
+ * retiro/módulo de outra empresa · T4 CHECK = domínio · T6 backfill · T7 reversas
+ * · T9/T10 gatilho NULL→area_ha · T11 CHECK no UPDATE.
  */
 let db: Db;
 let demo: DemoOrg;
-const ALVO = "0042_cadastro_de_areas.sql";
+const ALVO = "0050_cadastro_de_areas.sql";
 
 async function id1(sql: string, p: unknown[] = []) {
   return (await db.query<{ id: string }>(sql, p)).rows[0]!.id;
@@ -48,7 +49,7 @@ async function recusaDa0042(antes?: (c: Tx) => Promise<unknown>): Promise<string
     await c.query("rollback").catch(() => {});
     c.release();
   }
-  throw new Error("esperava a 0042 recusar, e ela aplicou");
+  throw new Error("esperava a 0050 recusar, e ela aplicou");
 }
 
 async function erroDe(p: Promise<unknown>): Promise<{ code?: string; constraint?: string; message: string }> {
@@ -64,7 +65,7 @@ beforeAll(async () => {
   db = createPool(TEST_URL, { max: 4 });
   await resetSchema(db);
   await db.query("create table if not exists public.erp_migrations (name text primary key, applied_at timestamptz not null default now())");
-  // Aplica tudo até a 0041 (sem a 0042).
+  // Aplica tudo até a 0041 (sem a 0050).
   for (const m of listMigrations().filter((x) => x.name < ALVO)) {
     await db.query(m.sql);
     await db.query("insert into public.erp_migrations(name) values ($1)", [m.name]);
@@ -77,8 +78,8 @@ afterAll(async () => {
   await db.end();
 });
 
-describe("CADASTRO-AREAS-01 — 0042", () => {
-  it("T6+premissa: com área existente antes da 0042, backfill preenche usable/land_use/status/tenure", async () => {
+describe("CADASTRO-AREAS-01 — 0050", () => {
+  it("T6+premissa: com área existente antes da 0050, backfill preenche usable/land_use/status/tenure", async () => {
     const empresa = demo.empresaIds[0]!;
     const areaAntes = await id1(
       `insert into erp.areas (organization_id, empresa_id, code, name, area_ha, is_active)
@@ -170,7 +171,7 @@ describe("CADASTRO-AREAS-01 — 0042", () => {
   });
 
   it("T7 reversa: trava ocupada e pré-condição 'já aplicada' recusam sem efeito", async () => {
-    // Banco já tem a 0042 no ledger deste describe — reaplicar na tx desfeita.
+    // Banco já tem a 0050 no ledger deste describe — reaplicar na tx desfeita.
     const msgJa = await recusaDa0042();
     expect(msgJa).toMatch(/CADASTRO-AREAS-01: erp\.retiros ja existe/);
 
@@ -185,5 +186,44 @@ describe("CADASTRO-AREAS-01 — 0042", () => {
     } finally {
       holder.release();
     }
+  });
+
+  it("T9: insert sem usable_area_ha grava usable_area_ha = area_ha", async () => {
+    const id = await id1(
+      `insert into erp.areas (organization_id, empresa_id, code, name, area_ha, land_use, status, tenure)
+       values ($1,$2,'T9','Area T9',18.25,'pastagem','ativa','propria') returning id`,
+      [demo.orgId, demo.empresaIds[0]!]
+    );
+    const row = (await db.query<{ usable_area_ha: string; area_ha: string }>(
+      "select usable_area_ha::text, area_ha::text from erp.areas where id=$1", [id]
+    )).rows[0]!;
+    expect(row.usable_area_ha).toBe(row.area_ha);
+    expect(row.usable_area_ha).toBe("18.2500");
+    expect(row.usable_area_ha).not.toBe("0");
+    expect(row.usable_area_ha).not.toBeNull();
+  });
+
+  it("T10: UPDATE usable_area_ha = NULL volta a area_ha", async () => {
+    const id = await id1(
+      `insert into erp.areas (organization_id, empresa_id, code, name, area_ha, usable_area_ha, land_use, status, tenure)
+       values ($1,$2,'T10','Area T10',20,15,'pastagem','ativa','propria') returning id`,
+      [demo.orgId, demo.empresaIds[0]!]
+    );
+    await db.query("update erp.areas set usable_area_ha = null where id=$1", [id]);
+    const row = (await db.query<{ usable_area_ha: string; area_ha: string }>(
+      "select usable_area_ha::text, area_ha::text from erp.areas where id=$1", [id]
+    )).rows[0]!;
+    expect(row.usable_area_ha).toBe(row.area_ha);
+    expect(row.usable_area_ha).toBe("20.0000");
+  });
+
+  it("T11: UPDATE usable_area_ha > area_ha continua recusado pela CHECK", async () => {
+    const id = await id1(
+      `insert into erp.areas (organization_id, empresa_id, code, name, area_ha, usable_area_ha, land_use, status, tenure)
+       values ($1,$2,'T11','Area T11',10,8,'pastagem','ativa','propria') returning id`,
+      [demo.orgId, demo.empresaIds[0]!]
+    );
+    const e = await erroDe(db.query("update erp.areas set usable_area_ha = 10.0001 where id=$1", [id]));
+    expect(e.constraint).toBe("chk_areas_usable_area");
   });
 });

@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2" xmlns:atom="http://www.w3.org/2005/Atom">
+<Document>
+	<name>fazenda_kaiman_1-2025-12-11_08-10-39.json</name>
+	<atom:link rel="app" href="https://www.google.com/earth/about/versions/#earth-pro" title="Google Earth Pro 7.3.6.10441"></atom:link>
+	<Schema name="fazenda_kaiman_1_2025_12_11_08_10_39" id="J_fazenda_kaiman_1_2025_12_11_08_10_39_DSSDSSSS">
+		<SimpleField type="double" name="area_hectares"><displayName>area_hectares</displayName>
+</SimpleField>
+		<SimpleField type="string" name="cropType"><displayName>cropType</displayName>
+</SimpleField>
+		<SimpleField type="string" name="fillColour"><displayName>fillColour</displayName>
+</SimpleField>
+		<SimpleField type="double" name="grazableArea_hectares"><displayName>grazableArea_hectares</displayName>
+</SimpleField>
+		<SimpleField type="string" name="pastureState"><displayName>pastureState</displayName>
+</SimpleField>
+		<SimpleField type="string" name="title"><displayName>title</displayName>
+</SimpleField>
+		<SimpleField type="string" name="type"><displayName>type</displayName>
+</SimpleField>
+		<SimpleField type="string" name="vegetation"><displayName>vegetation</displayName>
+</SimpleField>
+	</Schema>
+	<Style id="fazenda_kaiman_1_2025_12_11_08_10_39_style">
+		<BalloonStyle>
+			<text><![CDATA[<table border="0">
+  <tr><td><b>$[fazenda_kaiman_1_2025_12_11_08_10_39/area_hectares/displayName]</b></td><td>$[fazenda_kaiman_1_2025_12_11_08_10_39/area_hectares]</td></tr>
+  <tr><td><b>$[fazenda_kaiman_1_2025_12_11_08_10_39/cropType/displayName]</b></td><td>$[fazenda_kaiman_1_2025_12_11_08_10_39/cropType]</td></tr>
+  <tr><td><b>$[fazenda_kaiman_1_2025_12_11_08_10_39/fillColour/displayName]</b></td><td>$[fazenda_kaiman_1_2025_12_11_08_10_39/fillColour]</td></tr>
+  <tr><td><b>$[fazenda_kaiman_1_2025_12_11_08_10_39/grazableArea_hectares/displayName]</b></td><td>$[fazenda_kaiman_1_2025_12_11_08_10_39/grazableArea_hectares]</td></tr>
+  <tr><td><b>$[fazenda_kaiman_1_2025_12_11_08_10_39/pastureState/displayName]</b></td><td>$[fazenda_kaiman_1_2025_12_11_08_10_39/pastureState]</td></tr>
+  <tr><td><b>$[fazenda_kaiman_1_2025_12_11_08_10_39/title/displayName]</b></td><td>$[fazenda_kaiman_1_2025_12_11_08_10_39/title]</td></tr>
+  <tr><td><b>$[fazenda_kaiman_1_2025_12_11_08_10_39/type/displayName]</b></td><td>$[fazenda_kaiman_1_2025_12_11_08_10_39/type]</td></tr>
+  <tr><td><b>$[fazenda_kaiman_1_2025_12_11_08_10_39/vegetation/displayName]</b></td><td>$[fazenda_kaiman_1_2025_12_11_08_10_39/vegetation]</td></tr>
+</table>
+$[description]]]></text>
+		</BalloonStyle>
+	</Style>
+	<Placemark>
+		<name>00137439-8494-4d86-9d26-362d13a9d969</name>
+		<styleUrl>#fazenda_kaiman_1_2025_12_11_08_10_39_style</styleUrl>
+		<Region>
+			<LatLonAltBox>
+				<north>-14.524427</north>
+				<south>-14.532213</south>
+				<east>-60.180793</east>
+				<west>-60.18711</west>
+				<minAltitude>0</minAltitude>
+				<maxAltitude>0</maxAltitude>
+			</LatLonAltBox>
+		</Region>
+		<ExtendedData>
+			<SchemaData schemaUrl="#J_fazenda_kaiman_1_2025_12_11_08_10_39_DSSDSSSS">
+				<SimpleData name="area_hectares">30.31</SimpleData>
+				<SimpleData name="cropType">Braquiária</SimpleData>
+				<SimpleData name="fillColour">#31a6c5</SimpleData>
+				<SimpleData name="grazableArea_hectares">30.31</SimpleData>
+				<SimpleData name="pastureState">Grazing</SimpleData>
+				<SimpleData name="title">MT - Pasto 06 A</SimpleData>
+				<SimpleData name="type">paddock</SimpleData>
+				<SimpleData name="vegetation"></SimpleData>
+			</SchemaData>
+		</ExtendedData>
+		<Polygon>
+			<tessellate>1</tessellate>
+			<outerBoundaryIs>
+				<LinearRing>
+					<coordinates>
+						-60.18414600000001,-14.532213,0 -60.180793,-14.531371,0 -60.182459,-14.525,0 -60.182582,-14.524668,0 -60.18266799999999,-14.524494,0 -60.182716,-14.524427,0 -60.185287,-14.525133,0 -60.18610999999999,-14.525351,0 -60.186938,-14.525561,0 -60.18711,-14.525602,0 -60.18705799999999,-14.525638,0 -60.18671999999999,-14.525853,0 -60.186618,-14.525843,0 -60.185865,-14.525761,0 -60.185826,-14.525906,0 -60.18414600000001,-14.532213,0 
+					</coordinates>
+				</LinearRing>
+			</outerBoundaryIs>
+		</Polygon>
+	</Placemark>
+<Placemark>
+		<name>021f85d3-0091-4df3-956d-60f2b3b6e1cd</name>
+		<styleUrl>#fazenda_kaiman_1_2025_12_11_08_10_39_style</styleUrl>
+		<Region>
+			<LatLonAltBox>
+				<north>-14.534609</north>
+				<south>-14.540415</south>
+				<east>-60.179159</east>
+				<west>-60.189434</west>
+				<minAltitude>0</minAltitude>
+				<maxAltitude>0</maxAltitude>
+			</LatLonAltBox>
+		</Region>
+		<ExtendedData>
+			<SchemaData schemaUrl="#J_fazenda_kaiman_1_2025_12_11_08_10_39_DSSDSSSS">
+				<SimpleData name="area_hectares">37.24</SimpleData>
+				<SimpleData name="cropType">Braquiária</SimpleData>
+				<SimpleData name="fillColour">#31a6c5</SimpleData>
+				<SimpleData name="grazableArea_hectares">37.24</SimpleData>
+				<SimpleData name="pastureState">Grazing</SimpleData>
+				<SimpleData name="title">MT - Pasto 07 A</SimpleData>
+				<SimpleData name="type">paddock</SimpleData>
+				<SimpleData name="vegetation"></SimpleData>
+			</SchemaData>
+		</ExtendedData>
+		<Polygon>
+			<tessellate>1</tessellate>
+			<outerBoundaryIs>
+				<LinearRing>
+					<coordinates>
+						-60.179928,-14.534609,0 -60.179159,-14.537551,0 -60.17925,-14.537601,0 -60.17972900000001,-14.537749,0 -60.188097,-14.540415,0 -60.18816199999999,-14.540218,0 -60.188226,-14.539979,0 -60.188194,-14.539797,0 -60.188001,-14.539283,0 -60.18813999999999,-14.539102,0 -60.18841500000001,-14.538985,0 -60.188748,-14.538767,0 -60.188973,-14.5387,0 -60.18909599999999,-14.538559,0 -60.18907500000001,-14.538185,0 -60.189198,-14.538004,0 -60.189348,-14.537858,0 -60.189418,-14.53764,0 -60.18943399999999,-14.537375,0 -60.18943,-14.537218,0 -60.182065,-14.535196,0 -60.179928,-14.534609,0 
+					</coordinates>
+				</LinearRing>
+			</outerBoundaryIs>
+		</Polygon>
+	</Placemark>
+</Document>
+</kml>

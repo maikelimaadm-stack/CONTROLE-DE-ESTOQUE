@@ -113,6 +113,7 @@ títulos, 10 empresas no seletor) — muda o PLANO, não a autorização. Só a 
 | `erp.legado_escopo_empresa_v0` | `empresa_id` | — | F | não | regra própria (ver justificativa) | regra própria (ver justificativa) | — (a proteção é outra; ver justificativa) |
 | `erp.livestock_plannings` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.maintenances` | `empresa_id` | frota_ativos | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.mapa_areas` | `empresa_id` | mapa | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.membro_empresas` | `empresa_id` | — | E | não | regra própria (ver justificativa) | regra própria (ver justificativa) | — (a proteção é outra; ver justificativa) |
 | `erp.notifications` | `empresa_id` | — | E | sim | regra própria (ver justificativa) | regra própria (ver justificativa) | — (a proteção é outra; ver justificativa) |
 | `erp.opening_balances` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |

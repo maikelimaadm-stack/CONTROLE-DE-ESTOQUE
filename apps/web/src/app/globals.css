@@ -465,7 +465,13 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .mg-topnav__brand { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-right: 6px; color: #fff; text-decoration: none; }
 .mg-topnav__logo { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 7px; background: rgba(255,255,255,.2); color: #fff; }
 .mg-topnav__brand-name { font-size: 12.5px; font-weight: 700; letter-spacing: .01em; white-space: nowrap; }
-.mg-topnav__modules { position: relative; display: flex; align-items: center; gap: 1px; min-width: 0; flex: 1 1 auto; overflow: hidden; }
+/* MAPA-01 (decisão 289): a barra rola na horizontal em vez de cortar. O excedente continua indo para "Mais"
+   (medido por useFitCount); esta rolagem é a rede de segurança para quando os módulos não couberem e antes
+   iam cortados por overflow:hidden. scrollbar fina e discreta; o toque/rodada do mouse rolam de lado. */
+.mg-topnav__modules { position: relative; display: flex; align-items: center; gap: 1px; min-width: 0; flex: 1 1 auto; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.5) transparent; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+.mg-topnav__modules::-webkit-scrollbar { height: 4px; }
+.mg-topnav__modules::-webkit-scrollbar-thumb { background: rgba(255,255,255,.5); border-radius: 4px; }
+.mg-topnav__modules::-webkit-scrollbar-track { background: transparent; }
 .mg-topnav__module { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 11px; border: 0; border-radius: 999px; background: transparent; color: #fff; font-size: 12.5px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background .14s ease, color .14s ease; }
 .mg-topnav__module:hover { background: rgba(255,255,255,.22); }
 .mg-topnav__module.is-current { font-weight: 700; background: rgba(255,255,255,.22); }

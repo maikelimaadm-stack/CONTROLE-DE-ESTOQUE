@@ -30,6 +30,11 @@ export function buildSchema(def: ResourceDef, partial = false) {
     // para a recusa ser legível (422 "O código é gerado pelo sistema."), e não um "campo desconhecido".
     if (def.codigoAutomatico && f.name === "code") { shape[f.name] = t.nullable().optional(); continue; }
     if (f.type === "boolean") { shape[f.name] = partial ? t.optional() : t.optional().default(Boolean(f.default ?? false)); continue; }
+    // CADASTRO-AREAS-01 (decisão 290): usable_area_ha continua required no registry (formulário), mas o corpo
+    // pode omitir — o gatilho do banco preenche com area_ha (binário/seed anterior sem a coluna).
+    if (!partial && def.key === "areas" && f.name === "usable_area_ha") { shape[f.name] = t.nullable().optional(); continue; }
+    // Campo com default no registry: ausente no corpo → default (web anterior / defaults de coluna).
+    if (!partial && f.required && f.default !== undefined && f.default !== null) { shape[f.name] = t.optional().default(f.default as never); continue; }
     shape[f.name] = f.required && !partial ? t : t.nullable().optional();
   }
   // FICHA EM ABAS: grades e perfis entram no MESMO objeto estrito (ausente = não mexe)

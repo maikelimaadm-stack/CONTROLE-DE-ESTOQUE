@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0042 CADASTRO-AREAS-01 — RETIRO, TIPO DE USO, ÁREA ÚTIL E CLASSIFICADORES
+-- 0050 CADASTRO-AREAS-01 — RETIRO, TIPO DE USO, ÁREA ÚTIL E CLASSIFICADORES
 --
 -- Estrutura cadastral de área: retiro (agrupador gerencial opcional), tipo de uso
 -- fechado (land_use), área útil, situação, posse e classificados de pastagem/solo.
@@ -14,14 +14,14 @@
 --   tenure = 'propria'. Depois NOT NULL + defaults.
 --
 -- SEM PostGIS, SEM mexer em kml_geometry, SEM seed de forrageiras, SEM tela do mapa.
--- Trava (2026,76). lock_timeout 2s. Runner aplica o arquivo em UMA transação.
+-- Trava (2026,84). lock_timeout 2s. Runner aplica o arquivo em UMA transação.
 -- =====================================================================
 
 -- ---------- 1) trava de concorrência ----------
 do $$
 begin
-  if not pg_try_advisory_xact_lock(2026, 76) then
-    raise exception 'CADASTRO-AREAS-01: outra transacao ja detem a trava desta migration (2026,76). Nada foi aplicado.';
+  if not pg_try_advisory_xact_lock(2026, 84) then
+    raise exception 'CADASTRO-AREAS-01: outra transacao ja detem a trava desta migration (2026,84). Nada foi aplicado.';
   end if;
 end $$;
 
@@ -34,10 +34,10 @@ begin
     raise exception 'CADASTRO-AREAS-01: erp.areas/grazing_modules/fodders ausentes; cadeia de migrations fora de ordem.';
   end if;
   if to_regclass('erp.retiros') is not null then
-    raise exception 'CADASTRO-AREAS-01: erp.retiros ja existe; a 0042 ja foi aplicada ou ha schema divergente.';
+    raise exception 'CADASTRO-AREAS-01: erp.retiros ja existe; a 0050 ja foi aplicada ou ha schema divergente.';
   end if;
   if exists (select 1 from information_schema.columns where table_schema = 'erp' and table_name = 'areas' and column_name = 'land_use') then
-    raise exception 'CADASTRO-AREAS-01: erp.areas.land_use ja existe; a 0042 ja foi aplicada ou ha schema divergente.';
+    raise exception 'CADASTRO-AREAS-01: erp.areas.land_use ja existe; a 0050 ja foi aplicada ou ha schema divergente.';
   end if;
   if not exists (select 1 from information_schema.columns where table_schema = 'erp' and table_name = 'areas' and column_name = 'empresa_id') then
     raise exception 'CADASTRO-AREAS-01: erp.areas.empresa_id ausente; aplique a cadeia PRE-BASE2 antes.';
@@ -232,6 +232,24 @@ comment on column erp.areas.tenure is 'Posse da área.';
 comment on column erp.areas.retiro_id is 'Retiro opcional (mesma empresa da área).';
 comment on column erp.areas.area_ha is 'Área total do polígono (não confundir com usable_area_ha nem declared_area_ha).';
 
+
+-- ---------- 6b) gatilho: usable_area_ha NULL → area_ha (INSERT/UPDATE) ----------
+-- O seed e o binário anterior inserem área sem citar usable_area_ha. Default de coluna não serve
+-- (o padrão é OUTRA coluna da linha). BEFORE roda antes do NOT NULL / CHECK.
+create or replace function erp.areas_usable_area_ha_padrao() returns trigger
+language plpgsql security definer set search_path = erp, pg_catalog as $$
+begin
+  if new.usable_area_ha is null then
+    new.usable_area_ha := new.area_ha;
+  end if;
+  return new;
+end $$;
+revoke execute on function erp.areas_usable_area_ha_padrao() from public;
+drop trigger if exists trg_areas_usable_area_ha_padrao on erp.areas;
+create trigger trg_areas_usable_area_ha_padrao
+  before insert or update on erp.areas
+  for each row execute function erp.areas_usable_area_ha_padrao();
+
 -- ---------- 7) pós-condições ----------
 do $$
 begin
@@ -246,5 +264,8 @@ begin
   end if;
   if not exists (select 1 from pg_constraint where conname = 'grazing_modules_org_empresa_key' and contype = 'u') then
     raise exception 'CADASTRO-AREAS-01: pos-condicao falhou — grazing_modules_org_empresa_key ausente.';
+  end if;
+  if not exists (select 1 from pg_trigger where tgname = 'trg_areas_usable_area_ha_padrao') then
+    raise exception 'CADASTRO-AREAS-01: pos-condicao falhou — trg_areas_usable_area_ha_padrao ausente.';
   end if;
 end $$;

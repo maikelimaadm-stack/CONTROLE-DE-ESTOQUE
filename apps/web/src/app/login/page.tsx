@@ -13,7 +13,14 @@ export default function LoginPage() {
   const router = useRouter();
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setLoading(true); setError(null);
-    try { const r = await api<{ token: string; user: { id: string; email: string; name: string } }>("/api/auth/login", { method: "POST", body: { email, password } }); setSession({ token: r.token, orgId: null, empresaId: null, user: r.user }); router.replace("/"); }
+    try {
+      // Sem isso, um agro.session antigo manda Authorization + X-Org-Id no POST de login;
+      // a API valida o vínculo antes do handler e devolve "Usuário não é membro desta organização".
+      setSession(null);
+      const r = await api<{ token: string; user: { id: string; email: string; name: string } }>("/api/auth/login", { method: "POST", body: { email, password } });
+      setSession({ token: r.token, orgId: null, empresaId: null, user: r.user });
+      router.replace("/");
+    }
     catch (err) { setError((err as Error).message); } finally { setLoading(false); }
   };
   return (

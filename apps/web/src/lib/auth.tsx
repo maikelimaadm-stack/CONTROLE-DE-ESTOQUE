@@ -1,7 +1,7 @@
 "use client";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { api, getSession, setSession, writeSession, type Session } from "./api";
+import { api, ApiError, getSession, setSession, writeSession, type Session } from "./api";
 import { esquecerEntregas } from "./entrega-em-memoria";
 
 export interface AppContext {
@@ -36,17 +36,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [ctx, setCtx] = useState<AppContext | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter(); const pathname = usePathname();
+  /** Ignora resposta de um refresh antigo (ex.: 403 de orgId stale que termina depois do login novo). */
+  const refreshGeracao = useRef(0);
   const refresh = useCallback(async () => {
+    const geracao = ++refreshGeracao.current;
     const s = getSession(); setS(s);
     if (!s?.token) { setCtx(null); setLoading(false); return; }
     // Bloqueia a renderização das telas até a organização e as permissões estarem carregadas,
     // evitando chamadas à API sem X-Org-Id logo após o login.
     setLoading(true);
+    const aindaVale = () => geracao === refreshGeracao.current;
+    const escolherOrg = async (base: Session): Promise<Session | null> => {
+      const me = await api<{ organizations: { id: string }[] }>("/api/auth/me");
+      if (!aindaVale()) return null;
+      const first = me.organizations[0];
+      if (!first) return null;
+      // writeSession: não dispara agro:session (evita refresh reentrante no meio do fluxo).
+      const n = { ...base, orgId: first.id, empresaId: null as string | null };
+      writeSession(n); setS(n); return n;
+    };
     try {
-      if (!s.orgId) { const me = await api<{ organizations: { id: string }[] }>("/api/auth/me"); const first = me.organizations[0]; if (first) { setSession({ ...s, orgId: first.id }); setS({ ...s, orgId: first.id }); } else { setCtx(null); setLoading(false); return; } }
-      const c = await api<AppContext>("/api/auth/context"); setCtx(c);
-    } catch { setCtx(null); }
-    setLoading(false);
+      let sess = s;
+      if (!sess.orgId) {
+        const n = await escolherOrg(sess);
+        if (!aindaVale()) return;
+        if (!n) { setCtx(null); setLoading(false); return; }
+        sess = n;
+      }
+      try {
+        const c = await api<AppContext>("/api/auth/context");
+        if (!aindaVale()) return;
+        setCtx(c);
+      } catch (err) {
+        // Banco local regenerado / orgId antigo no localStorage: reescolhe a organização uma vez.
+        if (!aindaVale()) return;
+        if (sess.orgId && err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+          const n = await escolherOrg({ ...sess, orgId: null });
+          if (!aindaVale()) return;
+          if (!n) { setCtx(null); setLoading(false); return; }
+          const c = await api<AppContext>("/api/auth/context");
+          if (!aindaVale()) return;
+          setCtx(c);
+        } else {
+          setCtx(null);
+        }
+      }
+    } catch { if (aindaVale()) setCtx(null); }
+    if (aindaVale()) setLoading(false);
   }, []);
   // toda troca de sessão (login, logout, troca de organização, sessão expirada) apaga as entregas em memória entre
   // telas (ex.: dados da Receita do "Novo pelo CNPJ", AJUSTES 01 R1 W-5) antes de recarregar o contexto
