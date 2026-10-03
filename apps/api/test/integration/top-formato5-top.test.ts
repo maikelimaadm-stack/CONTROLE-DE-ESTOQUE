@@ -60,18 +60,19 @@ const MSG = {
 const recusaDoPerfil = (caminho: string, mensagem: string) => ({ motivo: "combinacao_nao_suportada", caminho, mensagem });
 
 /**
- * As 22 famílias com tela, na ORDEM DO CATÁLOGO, escritas à mão: as 9 cujo documento cita a TOP no passo 1 (plano F4
+ * As 24 famílias com tela, na ORDEM DO CATÁLOGO, escritas à mão: as 9 cujo documento cita a TOP no passo 1 (plano F4
  * §1.2.4), o orçamento de compra (F6b, decisão 283), as três da movimentação interna — requisição de material, consumo e
- * devolução de consumo, com tela desde a F5b (decisão 282), que no catálogo vêm ANTES de `estoque.entrada` —, as 6 de
- * Módulos (F10, decisão 287: a Central de cada módulo cita a TOP no próprio registro) e as 3 do Financeiro (F9, decisão
- * 286: o lançamento avulso e o movimento bancário escolhem a TOP primeiro).
+ * devolução de consumo, com tela desde a F5b (decisão 282), que no catálogo vêm ANTES de `estoque.entrada` —, as 8 de
+ * Módulos (F10, decisão 287: a Central de cada módulo cita a TOP no próprio registro; F10r, a mesma decisão: a compra e
+ * a venda de animais, cuja tela de movimentação não cita a TOP — vale a TOP padrão da família) e as 3 do Financeiro (F9,
+ * decisão 286: o lançamento avulso e o movimento bancário escolhem a TOP primeiro).
  */
 const FAMILIAS_COM_TELA = [
   "vendas.orcamento", "vendas.pedido", "vendas.venda", "compras.pedido", "compras.orcamento", "compras.compra",
   "estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo",
   "estoque.entrada", "estoque.saida", "estoque.transferencia", "estoque.ajuste",
   "frota_ativos.abastecimento", "frota_ativos.manutencao", "ordens_servico.ordem_de_servico",
-  "pecuaria.manejo", "confinamento.batelada", "estoque.producao_de_racao",
+  "pecuaria.manejo", "confinamento.batelada", "estoque.producao_de_racao", "pecuaria.compra_de_animais", "pecuaria.venda_de_animais",
   "financeiro.conta_a_pagar", "financeiro.conta_a_receber", "financeiro.movimento_bancario",
 ];
 
@@ -168,20 +169,21 @@ describe("T5-1 — capacidades: o bloco formato5 na raiz, com o catálogo do dom
       expect(d.destinos).toMatchObject({ suportado: true, emPartes: 1 });
 
       // O catálogo PUBLICADO é legível pelo leitor estrito do domínio (o que o editor usa) e diz o que a SPEC diz:
-      // os 5 grupos, os 22 tipos com tela (à mão) e um perfil por família do registry.
+      // os 5 grupos, os 24 tipos com tela (à mão) e um perfil por família do registry.
       const catalogo = lerCatalogoTop((d.formato5 as { catalogo: unknown }).catalogo);
       expect(catalogo, "o leitor estrito aceita o catálogo publicado").not.toBeNull();
       expect(catalogo!.grupos.map((g) => g.chave)).toEqual(["vendas", "compras", "movimentacao_interna", "modulos", "financeiro"]);
       expect(catalogo!.tipos.filter((t) => t.temTela).map((t) => t.familia)).toEqual(FAMILIAS_COM_TELA);
-      expect(catalogo!.tipos, "premissa: há tipos declarados SEM tela (a fase que cria a tela os liga)").toHaveLength(22);
+      expect(catalogo!.tipos, "premissa: há tipos declarados SEM tela (a fase que cria a tela os liga)").toHaveLength(24);
       expect(catalogo!.perfis.map((p) => p.familia)).toEqual([...CODIGOS_TIPO_OPERACAO]);
     }
-    // /familias continua o registry INTEIRO (o catálogo não o recorta): as 30 famílias (F5a: + requisição de material,
+    // /familias continua o registry INTEIRO (o catálogo não o recorta): as 32 famílias (F5a: + requisição de material,
     // consumo e devolução de consumo, com tela desde a F5b; F6a: + compras.orcamento, com tela desde a F6b; F9:
-    // + financeiro.movimento_bancario, com tela; F10: + pecuaria.manejo e confinamento.batelada, com tela), com ou sem tela.
-    expect(CODIGOS_TIPO_OPERACAO, "premissa: o registry tem 30 famílias").toHaveLength(30);
-    expect(CODIGOS_TIPO_OPERACAO, "premissa: o registry tem as três famílias da movimentação interna, o orçamento de compra, o movimento bancário e as duas da F10 (manejo e batelada)")
-      .toEqual(expect.arrayContaining(["estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo", "compras.orcamento", "financeiro.movimento_bancario", "pecuaria.manejo", "confinamento.batelada"]));
+    // + financeiro.movimento_bancario, com tela; F10: + pecuaria.manejo e confinamento.batelada, com tela; F10r:
+    // + pecuaria.compra_de_animais e pecuaria.venda_de_animais, com tela), com ou sem tela.
+    expect(CODIGOS_TIPO_OPERACAO, "premissa: o registry tem 32 famílias").toHaveLength(32);
+    expect(CODIGOS_TIPO_OPERACAO, "premissa: o registry tem as três famílias da movimentação interna, o orçamento de compra, o movimento bancário, as duas da F10 (manejo e batelada) e as duas da F10r (compra e venda de animais)")
+      .toEqual(expect.arrayContaining(["estoque.requisicao_material", "estoque.consumo", "estoque.devolucao_consumo", "compras.orcamento", "financeiro.movimento_bancario", "pecuaria.manejo", "confinamento.batelada", "pecuaria.compra_de_animais", "pecuaria.venda_de_animais"]));
     const f = await c.ligada.inject({ method: "GET", url: "/api/admin/tipos-operacao/familias", headers: c.h.headers() });
     expect(f.statusCode, f.body).toBe(200);
     expect((j(f).items as { codigo: string }[]).map((x) => x.codigo)).toEqual([...CODIGOS_TIPO_OPERACAO]);

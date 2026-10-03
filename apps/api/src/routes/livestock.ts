@@ -9,10 +9,11 @@ import { criarNotificacao } from "../lib/notificacao.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing, hasColumnFilters } from "../lib/column-filters.js";
 import { postStock } from "../services/stock-core.js";
-import { createTitles } from "../services/financial-core.js";
+import { createTitles, type TitleInput } from "../services/financial-core.js";
 import { atribuirIdGlobal, atribuirIdGlobalSeAplicavel, paginaComIdGlobal } from "../lib/id-global.js";
 import { joinDaTopDoModulo, tiposDeOperacaoDoModulo, topDoLancamentoDoModulo } from "../lib/top-do-modulo.js";
 import { exigirEquipamentos, formaCanonica } from "../lib/referencias-do-modulo.js";
+import { financeiroDoMovimentoDeAnimais } from "../lib/financeiro-pecuaria.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -62,6 +63,23 @@ const FORMA_DE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 // OPERACOES-01 F10 (decisão 287): a forma canônica do decimal (`formaCanonica`, `lib/referencias-do-modulo`) — ".5" →
 // "0.5", "1e-7" → "0.0000001", o mesmo número que a conta de antes usava; o que não é número finito (texto, vazio, NaN,
 // ±Infinity) é recusado NO CAMPO (422 "Valor inválido"), antes do código: a entrada não canônica nunca é traduzida.
+
+/**
+ * OPERACOES-01 F10r (decisão 287) — O PADRÃO LEGADO DO MOVIMENTO DE ANIMAIS: a natureza do tipo (despesa na compra,
+ * receita na venda) analítica e ativa "de animais" (nome com animais, boi ou bezerro), senão a 1ª por código; o 1º centro
+ * de resultado analítico e ativo por código. As consultas são as de antes da F10r, TEXTO IDÊNTICO e na mesma ordem
+ * (o contrato do skew, sentido 2) — só o campo pedido é consultado; o não pedido volta `null` sem consulta. Não lança:
+ * a recusa "Cadastre uma natureza e um centro de resultado" é de quem chama.
+ */
+async function classificacaoLegadaDoMovimento(ctx: ServiceCtx, natureza: "expense" | "income", campos: { natureza: boolean; centro: boolean }): Promise<{ naturezaId: string | null; centroCustoId: string | null }> {
+  const naturezaId = campos.natureza
+    ? (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature=$2 and kind='analytic' and is_active and deleted_at is null and (name ilike '%animais%' or name ilike '%boi%' or name ilike '%bezerro%') order by code limit 1", [ctx.orgId, natureza])).rows[0]?.id ?? (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature=$2 and kind='analytic' and is_active and deleted_at is null order by code limit 1", [ctx.orgId, natureza])).rows[0]?.id
+    : undefined;
+  const centroCustoId = campos.centro
+    ? (await ctx.tx.query<{ id: string }>("select id from erp.cost_centers where organization_id=$1 and kind='analytic' and is_active and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0]?.id
+    : undefined;
+  return { naturezaId: naturezaId ?? null, centroCustoId: centroCustoId ?? null };
+}
 
 export default async function livestockRoutes(app: FastifyInstance) {
   // ---------- Animais ----------
@@ -177,6 +195,22 @@ export default async function livestockRoutes(app: FastifyInstance) {
     await exigirEmpresaDeLancamento(ctx, d.empresa_id, moduloDaPermissao(permissao));
     requirePermission(ctx, permissao);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
+      /*
+       * OPERACOES-01 F10r (decisão 287) — O TÍTULO PELA TOP PADRÃO DA FAMÍLIA (a compra ou a venda de animais), lida SÓ
+       * quando haverá título (a MESMA condição do bloco do título; o valor é a MESMA conta do laço, pura) e ANTES do
+       * código e de qualquer gravação: a recusa (troca proibida, "exigir" sem o par, conta inutilizável) é 422 sem nada
+       * gravado e sem queimar número. Sem TOP padrão, fora do 5 ou sem padrões → `sem_top`: o padrão legado de hoje,
+       * INTACTO, sem TOP no título.
+       */
+      // A conta antecipada só existe quando pode haver título: sem "Gerar financeiro" (e no nascimento, na morte e na
+      // perda) nada roda antes do código — o caminho de hoje, sem nenhuma conta a mais.
+      const tipoComTitulo = d.movement_type === "purchase" || d.movement_type === "sale" ? d.movement_type : null;
+      const valorDosItens = d.generate_financial && tipoComTitulo !== null
+        ? d.items.reduce((soma, it) => soma.plus(money(D(it.unit_value ?? 0).mul(it.quantity))), D(0)) : null;
+      const geraTitulo = valorDosItens !== null && valorDosItens.gt(0);
+      const pelaTop = geraTitulo && tipoComTitulo
+        ? await financeiroDoMovimentoDeAnimais(ctx, tipoComTitulo, { naturezaId: d.financial_category_id ?? null, centroCustoId: d.cost_center_id ?? null })
+        : { tipo: "sem_top" as const };
       const code = await animalCode(ctx, `animal_${d.movement_type}`);
       const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,person_id,batch_id,cause,note,invoice_number,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id", [ctx.orgId, d.empresa_id, code, d.movement_type, d.movement_date, d.person_id ?? null, d.batch_id ?? null, d.cause ?? null, d.note ?? null, d.invoice_number ?? null, ctx.user.id]);
       const id = r.rows[0]!.id; let qty = 0, weight = D(0), value = D(0);
@@ -205,18 +239,38 @@ export default async function livestockRoutes(app: FastifyInstance) {
         }
         await ctx.tx.query("insert into erp.animal_movement_items(movement_id,animal_id,herd_lot_id,category_id,quantity,weight,unit_value,total) values ($1,$2,$3,$4,$5,$6,$7,$8)", [id, animalId, it.herd_lot_id ?? null, it.category_id ?? null, it.quantity, it.weight ?? null, it.unit_value ?? null, total]);
       }
-      await ctx.tx.query("update erp.animal_movements set quantity=$2, total_weight=$3, total_value=$4 where id=$1", [id, qty, weight.toFixed(2), money(value)]);
+      const totais = await ctx.tx.query("update erp.animal_movements set quantity=$2, total_weight=$3, total_value=$4 where id=$1", [id, qty, weight.toFixed(2), money(value)]);
+      if (totais.rowCount !== 1) throw err("CONFLICT", "Movimentação não atualizada.");
+      // A conta antecipada (`valorDosItens`, que decidiu se a TOP seria lida) e a do laço são a MESMA: divergência é erro
+      // de programação, nunca um título de outro valor em silêncio.
+      if (valorDosItens !== null && !valorDosItens.eq(value)) throw new Error("O valor dos itens do movimento divergiu da conta do laço");
       let titleIds: string[] = [];
-      if (d.generate_financial && (d.movement_type === "purchase" || d.movement_type === "sale") && value.gt(0)) {
+      if (geraTitulo) {
         if (!d.person_id) throw validation("Fornecedor/cliente obrigatório para gerar financeiro");
-        const cat = d.financial_category_id ?? (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature=$2 and kind='analytic' and is_active and deleted_at is null and (name ilike '%animais%' or name ilike '%boi%' or name ilike '%bezerro%') order by code limit 1", [ctx.orgId, d.movement_type === "purchase" ? "expense" : "income"])).rows[0]?.id ?? (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature=$2 and kind='analytic' and is_active and deleted_at is null order by code limit 1", [ctx.orgId, d.movement_type === "purchase" ? "expense" : "income"])).rows[0]?.id;
-        const cc = d.cost_center_id ?? (await ctx.tx.query<{ id: string }>("select id from erp.cost_centers where organization_id=$1 and kind='analytic' and is_active and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0]?.id;
+        const natureza = d.movement_type === "purchase" ? "expense" : "income";
+        let cat: string | null | undefined; let cc: string | null | undefined;
+        let daTop: Pick<TitleInput, "titleTypeId" | "contaPrevistaId" | "tipoOperacaoId" | "tipoOperacaoVersaoId"> = {};
+        if (pelaTop.tipo === "top") {
+          // A TOP agiu: o campo que nem o documento nem a TOP deram sai das MESMAS consultas legadas do movimento.
+          const legado = await classificacaoLegadaDoMovimento(ctx, natureza, { natureza: pelaTop.naturezaId === null, centro: pelaTop.centroCustoId === null });
+          cat = pelaTop.naturezaId ?? legado.naturezaId; cc = pelaTop.centroCustoId ?? legado.centroCustoId;
+          daTop = { titleTypeId: pelaTop.tipoTituloId, contaPrevistaId: pelaTop.contaBancariaId, tipoOperacaoId: pelaTop.top.tipoOperacaoId, tipoOperacaoVersaoId: pelaTop.top.tipoOperacaoVersaoId };
+        } else {
+          // Sem TOP padrão (ou sem padrões): o código de hoje — o documento, senão o legado do movimento, campo a campo.
+          cat = d.financial_category_id ?? (await classificacaoLegadaDoMovimento(ctx, natureza, { natureza: true, centro: false })).naturezaId;
+          cc = d.cost_center_id ?? (await classificacaoLegadaDoMovimento(ctx, natureza, { natureza: false, centro: true })).centroCustoId;
+        }
         if (!cat || !cc) throw validation("Cadastre uma natureza e um centro de resultado");
-        const t = await createTitles(ctx, { empresaId: d.empresa_id, direction: d.movement_type === "purchase" ? "payable" : "receivable", number: d.invoice_number ?? `ANI-${code}`, personId: d.person_id, amount: money(value), emissionDate: d.movement_date, dueDate: d.due_date ?? d.movement_date, note: `${d.movement_type === "purchase" ? "Compra" : "Venda"} de animais ${code} (${qty} cab.)`, apportionment: [{ financialCategoryId: cat, costCenterId: cc, percentage: "100" }], sourceType: "animal_movements", sourceId: id });
-        titleIds = t.ids; await ctx.tx.query("update erp.animal_movements set financial_title_id=$2 where id=$1", [id, t.ids[0]]);
+        const t = await createTitles(ctx, { empresaId: d.empresa_id, direction: d.movement_type === "purchase" ? "payable" : "receivable", number: d.invoice_number ?? `ANI-${code}`, personId: d.person_id, amount: money(value), emissionDate: d.movement_date, dueDate: d.due_date ?? d.movement_date, note: `${d.movement_type === "purchase" ? "Compra" : "Venda"} de animais ${code} (${qty} cab.)`, apportionment: [{ financialCategoryId: cat, costCenterId: cc, percentage: "100" }], sourceType: "animal_movements", sourceId: id, ...daTop });
+        titleIds = t.ids;
+        const vinculo = await ctx.tx.query("update erp.animal_movements set financial_title_id=$2 where id=$1", [id, t.ids[0]]);
+        if (vinculo.rowCount !== 1) throw err("CONFLICT", "Movimentação não atualizada.");
       }
       if (d.movement_type === "purchase" && qty > 0) { const pcode = await animalCode(ctx, "processing"); const proc = await ctx.tx.query<{ id: string }>("insert into erp.processings(organization_id,empresa_id,code,processing_date,purchase_movement_id,pre_batch_id,expected_quantity,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id", [ctx.orgId, d.empresa_id, pcode, d.movement_date, id, d.batch_id ?? null, qty, ctx.user.id]); await criarNotificacao(ctx, { kind: "processing_pending", title: `Você tem animais a serem processados no processamento nº ${pcode}`, route: "/pecuaria/processamentos", empresaId: d.empresa_id, dedupe: proc.rows[0]!.id, entidadeOrigem: "processings", idOrigem: proc.rows[0]!.id }); }
-      await audit(ctx.tx, ctx, "animal_movements", id, "create", { code, type: d.movement_type, qty });
+      // A trilha ganha `financeiro` SÓ quando a TOP agiu no título (sem TOP, a trilha de hoje, byte a byte).
+      const financeiro = pelaTop.tipo === "top"
+        ? { financeiro: { origem: pelaTop.origem, tipoOperacaoId: pelaTop.top.tipoOperacaoId, tipoOperacaoVersaoId: pelaTop.top.tipoOperacaoVersaoId } } : {};
+      await audit(ctx.tx, ctx, "animal_movements", id, "create", { code, type: d.movement_type, qty, ...financeiro });
       return { id, code, quantity: qty, total_value: money(value), title_ids: titleIds };
     })).result;
   })));

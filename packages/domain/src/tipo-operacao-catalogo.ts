@@ -129,13 +129,14 @@ const tipo = (chave: string, grupo: GrupoTipoMovimentoTop, rotulo: string, famil
 const familiaDaTabela = (tabela: string, valor?: string): string | undefined => resolverTipoOperacao(tabela, valor)?.codigo;
 
 /**
- * OS 22 TIPOS, NA ORDEM DO PEDIDO, TODOS COM TELA E COM FAMÍLIA. Os 9 cujo documento cita a TOP (venda, compra e o
+ * OS 24 TIPOS, NA ORDEM DO PEDIDO, TODOS COM TELA E COM FAMÍLIA. Os 9 cujo documento cita a TOP (venda, compra e o
  * documento de estoque); o orçamento de compra (F6b, decisão 283: nasce do pedido); "Requisição", "Consumo" e
  * "Devolução de consumo", as espécies NOVAS do documento de estoque (F5a: `estoque.requisicao_material`, não a
  * `estoque.requisicao` da requisição antiga), com tela desde a F5b (a Central de Estoque no motor, decisão 282); os 6
  * de Módulos desde a F10 (decisão 287: a Central de cada módulo cita a TOP no próprio registro; manejo e batelada
- * ganharam a família no registry nessa fase); e os 3 do Financeiro (F9, decisão 286: o lançamento avulso da Central e o
- * "Novo movimento bancário" escolhem a TOP primeiro).
+ * ganharam a família no registry nessa fase); os 2 da pecuária em Módulos desde a F10r (decisão 287: a compra e a
+ * venda de animais — a tela de movimentação de animais não escolhe TOP, vale a TOP PADRÃO da família); e os 3 do
+ * Financeiro (F9, decisão 286: o lançamento avulso da Central e o "Novo movimento bancário" escolhem a TOP primeiro).
  */
 export const CATALOGO_TIPOS_MOVIMENTO_TOP: readonly TipoDeMovimentoTop[] = Object.freeze([
   tipo("orcamento_venda", "vendas", "Orçamento", familiaOperacionalDeDocumentoVenda("budget"), true),
@@ -161,6 +162,10 @@ export const CATALOGO_TIPOS_MOVIMENTO_TOP: readonly TipoDeMovimentoTop[] = Objec
   tipo("manejo", "modulos", "Manejo", familiaDaTabela("erp.animal_handlings"), true),
   tipo("batelada", "modulos", "Batelada", familiaDaTabela("erp.diet_batches"), true),
   tipo("producao_racao", "modulos", "Produção de ração", familiaDaTabela("erp.feed_batches"), true),
+  // OPERACOES-01 F10r (decisão 287): a compra e a venda de animais. A "tela" é a de movimentação de animais de hoje: ela
+  // não escolhe TOP — vale a TOP PADRÃO da família na organização (o molde da solicitação de compra).
+  tipo("compra_animais", "modulos", "Compra de animais", familiaDaTabela("erp.animal_movements", "purchase"), true),
+  tipo("venda_animais", "modulos", "Venda de animais", familiaDaTabela("erp.animal_movements", "sale"), true),
   tipo("conta_pagar", "financeiro", "Conta a pagar", familiaDaTabela("erp.financial_titles", "payable"), true),
   tipo("conta_receber", "financeiro", "Conta a receber", familiaDaTabela("erp.financial_titles", "receivable"), true),
   tipo("movimento_bancario", "financeiro", "Movimento bancário", familiaDaTabela("erp.bank_movements"), true),
@@ -191,6 +196,18 @@ export const EXIGENCIAS_GERAIS_SEM_DOCUMENTO_TOP: readonly ExigenciaDoPerfilTop[
   Object.freeze({ chave: "exigeTransportadora", rotulo: "Transportadora" }),
 ]);
 
+/**
+ * As famílias SEM documento cujo lançamento não cobra NENHUMA exigência geral da TOP (OPERACOES-01 F10r, decisão 287):
+ * a compra e a venda de animais. O movimento lê da TOP padrão só os padrões financeiros do título; mostrar "Exigir
+ * parceiro" que o servidor nunca cobra seria configuração que mente na tela — o mesmo critério dos módulos da F10
+ * (só o que o registro executa). Perfil sem exigências: o editor não as mostra e a gravação do formato 5 recusa a marca
+ * (`recusasDoPerfilTop`). Perguntadas ao registry; família que ele não declara não entra.
+ */
+const FAMILIAS_SEM_EXIGENCIAS_GERAIS_TOP: ReadonlySet<string> = new Set(
+  [familiaDaTabela("erp.animal_movements", "purchase"), familiaDaTabela("erp.animal_movements", "sale")]
+    .filter((f): f is string => f !== undefined),
+);
+
 /** O que a família mostra e aceita no editor do formato 5. */
 export interface PerfilDoTipoTop {
   readonly familia: string;
@@ -212,7 +229,8 @@ export interface PerfilDoTipoTop {
  *   6. `aprovacao` — só se a matriz das regras gerais aceita, para a família, algo além de "Sem aprovação";
  *   7. `execucao` — só se a família tem execução configurada (`familiaAceitaExecucaoConfiguradaTop`).
  * Exigências: família COM documento (uma linha da matriz das regras gerais) → o mapa do documento dela; SEM
- * documento → as quatro genéricas. Seções neutras: no documento de estoque, Estoque, Financeiro e Fiscal; e toda
+ * documento → as quatro genéricas, menos as famílias cujo lançamento não cobra nenhuma (a compra e a venda de animais,
+ * F10r) → nenhuma. Seções neutras: no documento de estoque, Estoque, Financeiro e Fiscal; e toda
  * seção de extensão que a família não usa. `definicoes` é parâmetro só para teste.
  */
 export function perfilDoTipoTop(familia: string, definicoes: readonly DefinicaoSecaoV5[] = DEFINICOES_SECOES_V5): PerfilDoTipoTop {
@@ -232,7 +250,7 @@ export function perfilDoTipoTop(familia: string, definicoes: readonly DefinicaoS
   const comDocumento = MATRIZ_REGRAS_GERAIS_TOP.some((m) => m.familia === familia);
   const exigencias = comDocumento
     ? exigenciasGeraisDaFamiliaTop(familia).map((e) => Object.freeze({ chave: e.chave, rotulo: e.rotulo }))
-    : EXIGENCIAS_GERAIS_SEM_DOCUMENTO_TOP;
+    : FAMILIAS_SEM_EXIGENCIAS_GERAIS_TOP.has(familia) ? [] : EXIGENCIAS_GERAIS_SEM_DOCUMENTO_TOP;
   const secoesNeutras: SecaoNeutraTop[] = [...(documentoEstoque ? SECOES_NEUTRAS_FIXAS_TOP : []), ...naoUsadas];
   return Object.freeze({
     familia,
