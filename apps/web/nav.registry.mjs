@@ -196,6 +196,8 @@ export const AREAS = [
   s("confinamento", "hoje", "producao", "Produção (bateladas)", "diet_batches.view", { aliases: ["/confinamento/bateladas"], keywords: ["batelada", "misturar dieta"] }),
   s("confinamento", "hoje", "trato", "Trato", "feed_deliveries.view", { aliases: ["/confinamento/trato"], keywords: ["fornecimento", "tratar currais"] }),
   s("confinamento", "hoje", "cocho", "Leitura de Cocho", "trough_readings.view", { aliases: ["/confinamento/leitura-cocho"], keywords: ["escore de cocho", "sobra"] }),
+  // OPERACOES-01 F10 (decisão 287): a batelada sai do formulário embutido da aba Hoje › Produção para a Central própria.
+  act("confinamento", "batelada", "Nova batelada", "/confinamento/bateladas/new", "diet_batches.create", { keywords: ["misturar dieta", "produzir batelada"] }),
   a("confinamento", "currais", "Currais", ["feedlot_yards.view", "feedlot_sectors.view", "feedlot_corrals.view", "feedlot_map.view", "dashboard.feedlot.view"], { keywords: ["pátio", "setor", "curral", "mapa", "lotação", "estrutura"] }),
   a("confinamento", "dietas", "Dietas", ["diets.view", "feeding_phases.view"], { keywords: ["dieta", "fases", "regras de troca"] }),
   a("confinamento", "desempenho", "Desempenho", ["dashboard.feedlot_performance.view", "dashboard.feedlot_cost.view", "dashboard.feed_consumption.view", "dashboard.nutrition_stock.view"], { aliases: ["/dashboards/confinamento-desempenho", "/dashboards/confinamento-custos", "/dashboards/consumo-racao"], keywords: ["ganho de peso", "gmd", "custos do confinamento", "consumo de ração", "estoque de nutrição"] }),
@@ -433,6 +435,8 @@ export const DETAIL_ROUTES = [
   { id: "pecuaria.manejos.pesagem.detalhe", module: "pecuaria", area: "manejos", label: "Pesagem", pattern: "/pecuaria/pesagens/:id", perm: "weighings.view" },
   { id: "frota.abastecimentos.detalhe", module: "frota", area: "abastecimentos", label: "Abastecimento", pattern: "/frota/abastecimentos/:id", perm: "fuel_supplies.view" },
   { id: "frota.manutencoes.detalhe", module: "frota", area: "manutencoes", label: "Manutenção", pattern: "/frota/manutencoes/:id", perm: "maintenances.view" },
+  // OPERACOES-01 F10 (decisão 287): a edição da OS na Central (aberta ou em andamento); antes do detalhe, que também casaria.
+  { id: "os.editar", module: "os", area: null, label: "Ordem de serviço", pattern: "/os/:id/editar", perm: "service_orders.edit" },
   { id: "os.detalhe", module: "os", area: null, label: "Ordem de serviço", pattern: "/os/:id", perm: "service_orders.view" },
   { id: "configuracoes.operacoes.layouts-documento.detalhe", module: "configuracoes", area: null, label: "Layout do documento", pattern: "/configuracoes/layouts-documento/:id", perm: "tipos_operacao.view" },
   { id: "cadastros.detalhe", module: "configuracoes", area: null, label: "Registro", pattern: "/cadastros/:resource/:id", perm: null }

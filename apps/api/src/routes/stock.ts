@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, qty, isISODate } from "@agro/shared";
-import { batchCost, tipoEntidadeDaTabela } from "@agro/domain";
+import { batchCost, tipoEntidadeDaTabela, itensDaProducaoDeRacao, SEGMENTO_DO_MODULO_COM_TOP } from "@agro/domain";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
 import { consultaEscopada, empresaScope, empresaScopePar, exigirEmpresaDeLancamento, exigirEmpresaVisivel, empresaPermitida, empresaScopeSql, scopedById, type ServiceCtx } from "../lib/context.js";
@@ -14,6 +14,8 @@ import { createTitles, createBankMovement, apportionmentSchema, installmentPlanS
 import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
 import { SEQUENCIA_WAREHOUSE_TRANSFER } from "../lib/sequencia-warehouse-transfer.js";
 import { compraComANota } from "./compras-confirmacao.js";
+import { joinDaTopDoModulo, tiposDeOperacaoDoModulo, topDoLancamentoDoModulo } from "../lib/top-do-modulo.js";
+import { formaCanonica } from "../lib/referencias-do-modulo.js";
 
 const dec = z.union([z.number(), z.string()]).transform((v) => String(v));
 const date = z.string().refine(isISODate, "Data inválida");
@@ -502,13 +504,22 @@ export default async function stockRoutes(app: FastifyInstance) {
   app.delete("/stock/feed-formulas/:id", async (req) => runService(app, req, "feed_formulas.delete", async (ctx) => { await ctx.tx.query("update erp.feed_formulas set deleted_at=now() where id=$1 and organization_id=$2", [(req.params as { id: string }).id, ctx.orgId]); return { deleted: true }; }));
   // `validade`: do produto PRODUZIDO (R1-1 c) — opcional, exigida quando ele controla "lote + validade". O lote do
   // produzido com controle é o CÓDIGO da produção.
-  const feedBatchSchema = z.object({ empresa_id: uuid, batch_date: date, formula_id: uuid, origin_warehouse_id: uuid, destination_warehouse_id: uuid, quantity_produced: dec, multiplier: dec.default("1"), validade: date.optional().nullable() });
+  // OPERACOES-01 F10 (decisão 287): + `tipo_operacao_id` (opcional; ausente = a produção de hoje).
+  const feedBatchSchema = z.object({ empresa_id: uuid, batch_date: date, formula_id: uuid, origin_warehouse_id: uuid, destination_warehouse_id: uuid, quantity_produced: dec, multiplier: dec.default("1"), validade: date.optional().nullable(), tipo_operacao_id: uuid.optional().nullable() });
+  /**
+   * OPERACOES-01 F10 (decisão 287): as TOPs que a produção de ração pode lançar (a família do registry pela tabela) — a
+   * porta do POST (`feed_batches.create`). Declara a capacidade `topNoModulo`: a Central só mostra o campo "Tipo de
+   * operação" e só envia `tipo_operacao_id` contra uma API que responde aqui.
+   */
+  app.get(`/modulos/${SEGMENTO_DO_MODULO_COM_TOP.producao_racao}/operation-types`, async (req) => runService(app, req, "feed_batches.create", (ctx) => tiposDeOperacaoDoModulo(ctx, "producao_racao")));
   app.get("/stock/feed-batches", async (req) => runService(app, req, "feed_batches.view", (ctx) => listDocs(ctx, "feed_batches", "batch_date", req.query as Record<string, unknown>, ", ff.name as formula_name", "left join erp.feed_formulas ff on ff.id=d.formula_id", { softDelete: false })));
   // detalhe da produção de ração (UI-STAB-01: /estoque/batidas/:id não tinha GET by id) — escopo de organização + fazenda, permissão feed_batches.view, id inválido/inexistente → 404
   app.get("/stock/feed-batches/:id", async (req) => runService(app, req, "feed_batches.view", async (ctx) => {
     const id = (req.params as { id: string }).id; if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw notFound("Documento");
     const sc = scopedById(ctx, "d", id);
-    const d = await ctx.tx.query(`select d.*, f.name as empresa_name, u.name as created_by_name, ff.name as formula_name, wo.description as origin_warehouse_name, wd.description as destination_warehouse_name from erp.feed_batches d left join erp.empresas f on f.id=d.empresa_id left join erp.users u on u.id=d.created_by left join erp.feed_formulas ff on ff.id=d.formula_id left join erp.warehouses wo on wo.id=d.origin_warehouse_id left join erp.warehouses wd on wd.id=d.destination_warehouse_id where d.id=$1 and d.organization_id=$2` + sc.sql, sc.params);
+    // OPERACOES-01 F10 (decisão 287): + o nome e a versão da TOP congelada (`tipo_operacao_nome`, `tipo_operacao_versao`; nulos sem TOP)
+    const top = joinDaTopDoModulo("d");
+    const d = await ctx.tx.query(`select d.*, f.name as empresa_name, u.name as created_by_name, ff.name as formula_name, wo.description as origin_warehouse_name, wd.description as destination_warehouse_name, ${top.colunas} from erp.feed_batches d left join erp.empresas f on f.id=d.empresa_id left join erp.users u on u.id=d.created_by left join erp.feed_formulas ff on ff.id=d.formula_id left join erp.warehouses wo on wo.id=d.origin_warehouse_id left join erp.warehouses wd on wd.id=d.destination_warehouse_id ${top.join} where d.id=$1 and d.organization_id=$2` + sc.sql, sc.params);
     if (!d.rows[0]) throw notFound("Documento");
     const items = await ctx.tx.query("select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit from erp.feed_batch_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id where i.batch_id=$1 order by i.id", [id]);
     const movements = await ctx.tx.query("select id, movement_type, direction, quantity, unit_cost, total_cost, balance_after, movement_date from erp.stock_movements where organization_id=$1 and source_type=$2 and source_id=$3 order by created_at", [ctx.orgId, "feed_batches", id]);
@@ -517,6 +528,12 @@ export default async function stockRoutes(app: FastifyInstance) {
   app.post("/stock/feed-batches", async (req, reply) => reply.status(201).send(await runService(app, req, "feed_batches.create", async (ctx) => {
     const d = feedBatchSchema.parse(req.body); await exigirEmpresa(ctx, d.empresa_id);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
+      // OPERACOES-01 F10 (decisão 287): o multiplicador na forma canônica do decimal, a única que a conta do domínio lê
+      // (".5" → "0.5"); o que não é número finito (texto, NaN, ±Infinity — que `D` aceita e a conta trocaria pelo padrão
+      // "1") é recusado no campo. E a TOP (versão corrente congelada; a produção de ração não tem exigência geral no
+      // registro). Os dois ANTES do código — a recusa não queima número.
+      const multiplicador = formaCanonica(d.multiplier, "multiplier");
+      const top = await topDoLancamentoDoModulo(ctx, "producao_racao", d.tipo_operacao_id, {});
       const f = await ctx.tx.query<{ product_id: string | null; name: string }>("select product_id, name from erp.feed_formulas where id=$1 and organization_id=$2", [d.formula_id, ctx.orgId]); if (!f.rows[0]) throw notFound("Formulação");
       if (!f.rows[0].product_id) throw validation("Formulação sem produto acabado vinculado");
       const acabado = await ctx.tx.query<{ controle_lote: string | null; has_lot: boolean }>("select to_jsonb(p)->>'controle_lote' as controle_lote, has_lot from erp.products p where id=$1 and organization_id=$2", [f.rows[0].product_id, ctx.orgId]);
@@ -525,11 +542,13 @@ export default async function stockRoutes(app: FastifyInstance) {
       if (controleDoAcabado === "lote_validade" && !d.validade) throw validation("O produto produzido controla lote e validade: informe a validade da produção.", [{ path: "validade", message: "Informe a validade" }]);
       const items = await ctx.tx.query<{ product_id: string; quantity: string }>("select product_id, quantity from erp.feed_formula_items where formula_id=$1", [d.formula_id]);
       const code = await nextCode(ctx.tx, ctx.orgId, "feed_batch");
-      const r = await ctx.tx.query<{ id: string }>("insert into erp.feed_batches(organization_id,empresa_id,code,batch_date,formula_id,origin_warehouse_id,destination_warehouse_id,quantity_produced,validade,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id", [ctx.orgId, d.empresa_id, code, d.batch_date, d.formula_id, d.origin_warehouse_id, d.destination_warehouse_id, d.quantity_produced, d.validade ?? null, ctx.user.id]);
+      const r = await ctx.tx.query<{ id: string }>("insert into erp.feed_batches(organization_id,empresa_id,code,batch_date,formula_id,origin_warehouse_id,destination_warehouse_id,quantity_produced,validade,created_by,tipo_operacao_id,tipo_operacao_versao_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id", [ctx.orgId, d.empresa_id, code, d.batch_date, d.formula_id, d.origin_warehouse_id, d.destination_warehouse_id, d.quantity_produced, d.validade ?? null, ctx.user.id, top?.tipoOperacaoId ?? null, top?.tipoOperacaoVersaoId ?? null]);
       const id = r.rows[0]!.id; const consumed: { quantity: string; unitCost: string }[] = [];
       await atribuirIdGlobal(ctx, "feed_batches", id);
-      for (const it of items.rows) {
-        const q = D(it.quantity).mul(d.multiplier).toFixed(4);
+      // OPERACOES-01 F10 (decisão 287): os itens pela conta do domínio (quantidade da fórmula × multiplicador, 4 casas), a
+      // MESMA que a Central mostra, sobre o multiplicador na forma canônica (conferido acima, antes do código).
+      for (const it of itensDaProducaoDeRacao(multiplicador, items.rows)) {
+        const q = it.quantidade;
         const m = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.origin_warehouse_id, productId: it.product_id, movementType: "production_out", direction: -1, quantity: q, sourceType: "feed_batches", sourceId: id, date: d.batch_date, note: `Batida ${code}` });
         // uma parte por lote consumido: a média ponderada arredondada não entra no custo da produção
         for (const x of m.partes) consumed.push({ quantity: x.quantidade, unitCost: x.unitCost });
@@ -537,12 +556,14 @@ export default async function stockRoutes(app: FastifyInstance) {
       }
       const cost = batchCost(consumed, d.quantity_produced);
       await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.destination_warehouse_id, productId: f.rows[0].product_id, movementType: "production_in", direction: 1, quantity: d.quantity_produced, unitCost: cost.unit, providerLot: controleDoAcabado === "nenhum" ? null : code, expirationDate: d.validade ?? null, sourceType: "feed_batches", sourceId: id, date: d.batch_date, note: `Batida ${code} (${f.rows[0].name})` });
-      await ctx.tx.query("update erp.feed_batches set production_cost=$2 where id=$1", [id, cost.total]);
+      // OPERACOES-01 F10 (decisão 287): ROW COUNT conferido (a produção nasceu nesta transação; zero linha não é sucesso).
+      const tot = await ctx.tx.query("update erp.feed_batches set production_cost=$2 where id=$1 and organization_id=$3", [id, cost.total, ctx.orgId]);
+      if (tot.rowCount !== 1) throw err("CONFLICT", "O custo da produção de ração não foi gravado.");
       await audit(ctx.tx, ctx, "feed_batches", id, "create", { code, cost: cost.total });
       return { id, code, production_cost: cost.total, unit_cost: cost.unit };
     })).result;
   })));
-  app.post("/stock/feed-batches/:id/cancel", async (req) => runService(app, req, "feed_batches.delete", async (ctx) => { const { id } = req.params as { id: string }; const w_ = await loadForWrite(ctx, "feed_batches", id, "Batida"); const w = { rows: [w_] as [typeof w_] }; if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "feed_batches", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.feed_batches set status='cancelled' where id=$1", [id]); return { id, status: "cancelled" }; }));
+  app.post("/stock/feed-batches/:id/cancel", async (req) => runService(app, req, "feed_batches.delete", async (ctx) => { const { id } = req.params as { id: string }; const w_ = await loadForWrite(ctx, "feed_batches", id, "Batida"); const w = { rows: [w_] as [typeof w_] }; if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "feed_batches", id, new Date().toISOString().slice(0, 10)); /* OPERACOES-01 F10 (decisão 287): ROW COUNT conferido */ const u = await ctx.tx.query("update erp.feed_batches set status='cancelled' where id=$1 and organization_id=$2", [id, ctx.orgId]); if (u.rowCount !== 1) throw err("CONFLICT", "A produção de ração não foi cancelada."); return { id, status: "cancelled" }; }));
 
   // ---------- DFe recebidas e rascunhos de aprovação ----------
   app.get("/stock/dfe", async (req) => runService(app, req, "dfe.view", async (ctx) => {

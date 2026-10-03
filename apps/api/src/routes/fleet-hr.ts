@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, todayISO } from "@agro/shared";
-import { monthlyDepreciation, depreciationForecast } from "@agro/domain";
+import { monthlyDepreciation, depreciationForecast, leituraDoContadorDoBem, MENSAGEM_TOP_DA_OS_NAO_MUDA, SEGMENTO_DO_MODULO_COM_TOP } from "@agro/domain";
 import { runService, nextCode, idempotent, audit } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
 import { consultaEscopada, exigirEmpresaDeLancamento, exigirEmpresaVisivel, empresaPermitida, empresaScope, empresaScopeSql, scopedById, type ServiceCtx } from "../lib/context.js";
@@ -10,11 +10,60 @@ import { wrapListing, hasColumnFilters } from "../lib/column-filters.js";
 import { postStock, reverseStock } from "../services/stock-core.js";
 import { createTitles } from "../services/financial-core.js";
 import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
+import { cobrarExigenciasDaVersaoDoModulo, joinDaTopDoModulo, tiposDeOperacaoDoModulo, topDoLancamentoDoModulo } from "../lib/top-do-modulo.js";
+import { exigirEquipamentos, formaCanonica } from "../lib/referencias-do-modulo.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
 const uuid = z.string().uuid();
 const idem = (req: { headers: Record<string, unknown> }) => req.headers["idempotency-key"] as string | undefined;
+
+// ---------------------------------------------------------------------------------------------------
+// OPERACOES-01 F10 (decisão 287) — o que o abastecimento, a manutenção e a OS perguntam igual
+// ---------------------------------------------------------------------------------------------------
+
+// O equipamento citado é conferido por `exigirEquipamentos` (`lib/referencias-do-modulo`, a peça comum com o manejo e a
+// batelada: da organização, não excluído e visível pela RLS do módulo da porta; a MESMA recusa para todos).
+
+/**
+ * OPERACOES-01 F10 (decisão 287): A LEITURA DO HORÍMETRO OU DO KM NA FORMA CANÔNICA, antes do número do registro. A
+ * mesma leitura vai à linha do registro e ao contador do bem: ".5", "1e3" e "+5" valem como o banco os gravaria (antes
+ * do conserto, o registro gravava 1000 e o contador do bem não subia); o que não é número finito (NaN, ±Infinity,
+ * texto) é recusado no campo (422), nunca gravado. Espaços nas pontas são aparados, como o banco já aparava.
+ */
+function leituraCanonica(valor: string | null | undefined, caminho: string): string | null {
+  return valor === null || valor === undefined ? null : formaCanonica(valor.trim(), caminho);
+}
+
+/**
+ * OPERACOES-01 F10 (decisão 287): A LEITURA SOBE O CONTADOR "Horímetro/Km" DO BEM — o horímetro; sem ele, o km
+ * (`leituraDoContadorDoBem`, a mesma conta da tela); sem os dois, nada. O bem tem UM contador (`hour_meter`) e ele
+ * nunca desce (`greatest`); o cancelamento não o volta (como antes). `updated_at` só muda quando o valor muda. ROW
+ * COUNT conferido: o bem já foi conferido visível neste lançamento, e zero linha aqui seria sucesso sem efeito.
+ */
+async function subirContadorDoBem(ctx: ServiceCtx, equipamentoId: string, horimetro: string | null | undefined, km: string | null | undefined): Promise<void> {
+  const leitura = leituraDoContadorDoBem(horimetro, km);
+  if (leitura === null) return;
+  const u = await ctx.tx.query(
+    `update erp.equipments
+        set hour_meter = greatest(coalesce(hour_meter, 0), $2::numeric),
+            updated_at = case when hour_meter is distinct from greatest(coalesce(hour_meter, 0), $2::numeric) then now() else updated_at end
+      where id = $1 and organization_id = $3`,
+    [equipamentoId, leitura, ctx.orgId]);
+  if (u.rowCount !== 1) throw err("CONFLICT", "O horímetro/km do equipamento não foi atualizado.");
+}
+
+/** OPERACOES-01 F10 (decisão 287): o corpo do PUT da OS traz a chave PRÓPRIA `tipo_operacao_id` (qualquer valor, nulo inclusive)? */
+const corpoTrazTipoOperacao = (corpo: unknown): boolean =>
+  typeof corpo === "object" && corpo !== null && !Array.isArray(corpo) && Object.hasOwn(corpo, "tipo_operacao_id");
+
+/** OPERACOES-01 F10 (decisão 287): o JOIN do nome e da versão da TOP congelada, um por detalhe (alias da consulta). */
+const TOP_DA_MANUTENCAO = joinDaTopDoModulo("m");
+const TOP_DO_ABASTECIMENTO = joinDaTopDoModulo("s");
+const TOP_DA_OS = joinDaTopDoModulo("o");
+
+/** OPERACOES-01 F10 (decisão 287): o caminho da capacidade `topNoModulo` do módulo (o segmento é do domínio). */
+const rotaDosTiposDoModulo = (segmento: string) => `/modulos/${segmento}/operation-types`;
 
 /**
  * Listagem paginada; `query` habilita filtros genéricos por coluna (`coluna__operador`, ver lib/column-filters).
@@ -33,64 +82,103 @@ async function list(ctx: ServiceCtx, sql: string, countSql: string, params: unkn
 
 export default async function fleetHrRoutes(app: FastifyInstance) {
   // ---------- Manutenções ----------
-  const maintSchema = z.object({ empresa_id: uuid, maintenance_date: date, harvest_id: uuid.optional().nullable(), machines: z.array(z.object({ equipment_id: uuid, hour_meter: dec.optional().nullable(), mileage: dec.optional().nullable(), maintenance_type: z.enum(["employee", "provider"]).optional().nullable(), executor_person_id: uuid.optional().nullable(), hours: dec.optional().nullable(), service_total: dec.default("0"), service_description: z.string().optional().nullable(), items: z.array(z.object({ warehouse_id: uuid.optional().nullable(), product_id: uuid, quantity: dec, unit_value: dec.optional().nullable(), note: z.string().optional().nullable() })).default([]) })).min(1) });
+  // OPERACOES-01 F10 (decisão 287): `note` (a observação que o web já mandava e o corpo descartava — a coluna nasceu na
+  // migration dos módulos com TOP; até 2000) e `tipo_operacao_id` (opcional; sem ele, o lançamento de hoje).
+  const maintSchema = z.object({ empresa_id: uuid, maintenance_date: date, harvest_id: uuid.optional().nullable(), note: z.string().max(2000).optional().nullable(), tipo_operacao_id: uuid.optional().nullable(), machines: z.array(z.object({ equipment_id: uuid, hour_meter: dec.optional().nullable(), mileage: dec.optional().nullable(), maintenance_type: z.enum(["employee", "provider"]).optional().nullable(), executor_person_id: uuid.optional().nullable(), hours: dec.optional().nullable(), service_total: dec.default("0"), service_description: z.string().optional().nullable(), items: z.array(z.object({ warehouse_id: uuid.optional().nullable(), product_id: uuid, quantity: dec, unit_value: dec.optional().nullable(), note: z.string().optional().nullable() })).default([]) })).min(1) });
+  // OPERACOES-01 F10 (decisão 287): a capacidade `topNoModulo` da manutenção — as TOPs que ela pode citar (uma consulta).
+  app.get(rotaDosTiposDoModulo(SEGMENTO_DO_MODULO_COM_TOP.manutencao), async (req) => runService(app, req, "maintenances.create", (ctx) => tiposDeOperacaoDoModulo(ctx, "manutencao")));
   app.get("/fleet/maintenances", async (req) => runService(app, req, "maintenances.view", async (ctx) => { const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>; const where = ["m.organization_id=$1", "m.deleted_at is null"]; const params: unknown[] = [ctx.orgId]; where.push(...empresaScope(ctx, "m", params)); if (f.equipment_id) { params.push(f.equipment_id); where.push(`exists (select 1 from erp.maintenance_machines mm where mm.maintenance_id=m.id and mm.equipment_id=$${params.length})`); } if (f.start_date) { params.push(f.start_date); where.push(`m.maintenance_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`m.maintenance_date<=$${params.length}`); } const w = where.join(" and "); return list(ctx, `select m.*, u.name as responsible_name, (select string_agg(e.description, ', ') from erp.maintenance_machines mm join erp.equipments e on e.id=mm.equipment_id where mm.maintenance_id=m.id) as machines from erp.maintenances m left join erp.users u on u.id=m.responsible_user_id where ${w} order by m.maintenance_date desc`, `select count(*) n from erp.maintenances m where ${w}`, params, q, req.query as Record<string, unknown>, "maintenances"); }));
-  app.get("/fleet/maintenances/:id", async (req) => runService(app, req, "maintenances.view", async (ctx) => { const { id } = req.params as { id: string }; const m = await ctx.tx.query("select m.*, u.name as responsible_name from erp.maintenances m left join erp.users u on u.id=m.responsible_user_id where m.id=$1 and m.organization_id=$2 and m.deleted_at is null" + scopedById(ctx, "m", id).sql, scopedById(ctx, "m", id).params); if (!m.rows[0]) throw notFound(); const machines = await ctx.tx.query("select mm.*, e.description as equipment_name, e.code as equipment_code, p.name as executor_name, (select json_agg(json_build_object('product_id',i.product_id,'product_name',pr.description,'quantity',i.quantity,'unit_value',i.unit_value,'total',i.total,'note',i.note,'warehouse_id',i.warehouse_id)) from erp.maintenance_items i join erp.products pr on pr.id=i.product_id where i.machine_id=mm.id) as items from erp.maintenance_machines mm join erp.equipments e on e.id=mm.equipment_id left join erp.people p on p.id=mm.executor_person_id where mm.maintenance_id=$1", [id]); return { ...m.rows[0], machines: machines.rows }; }));
+  // OPERACOES-01 F10 (decisão 287): o detalhe devolve o nome e a versão da TOP congelada (`note` e a TOP já saem pelo `m.*`).
+  app.get("/fleet/maintenances/:id", async (req) => runService(app, req, "maintenances.view", async (ctx) => { const { id } = req.params as { id: string }; const m = await ctx.tx.query(`select m.*, u.name as responsible_name, ${TOP_DA_MANUTENCAO.colunas} from erp.maintenances m left join erp.users u on u.id=m.responsible_user_id ${TOP_DA_MANUTENCAO.join} where m.id=$1 and m.organization_id=$2 and m.deleted_at is null` + scopedById(ctx, "m", id).sql, scopedById(ctx, "m", id).params); if (!m.rows[0]) throw notFound(); const machines = await ctx.tx.query("select mm.*, e.description as equipment_name, e.code as equipment_code, p.name as executor_name, (select json_agg(json_build_object('product_id',i.product_id,'product_name',pr.description,'quantity',i.quantity,'unit_value',i.unit_value,'total',i.total,'note',i.note,'warehouse_id',i.warehouse_id)) from erp.maintenance_items i join erp.products pr on pr.id=i.product_id where i.machine_id=mm.id) as items from erp.maintenance_machines mm join erp.equipments e on e.id=mm.equipment_id left join erp.people p on p.id=mm.executor_person_id where mm.maintenance_id=$1", [id]); return { ...m.rows[0], machines: machines.rows }; }));
   app.post("/fleet/maintenances", async (req, reply) => reply.status(201).send(await runService(app, req, "maintenances.create", async (ctx) => {
     const d = maintSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
+      // OPERACOES-01 F10 (decisão 287): a TOP (versão corrente congelada + as exigências que o registro tem: a
+      // observação) e as máquinas (UMA consulta para todas) são conferidas ANTES do número — nenhuma recusa queima código.
+      const top = await topDoLancamentoDoModulo(ctx, "manutencao", d.tipo_operacao_id, { note: d.note });
+      await exigirEquipamentos(ctx, d.machines.map((m, i) => ({ caminho: `machines.${i}.equipment_id`, id: m.equipment_id })));
+      // OPERACOES-01 F10 (decisão 287): horímetro e km de cada máquina na forma canônica (a linha da máquina, o contador
+      // do bem e a preventiva leem o MESMO número), conferidos antes do número.
+      const maquinas = d.machines.map((m, i) => ({ ...m, hour_meter: leituraCanonica(m.hour_meter, `machines.${i}.hour_meter`), mileage: leituraCanonica(m.mileage, `machines.${i}.mileage`) }));
       const code = await nextCode(ctx.tx, ctx.orgId, "maintenance");
-      const r = await ctx.tx.query<{ id: string }>("insert into erp.maintenances(organization_id,empresa_id,code,maintenance_date,responsible_user_id,harvest_id,created_by) values ($1,$2,$3,$4,$5,$6,$5) returning id", [ctx.orgId, d.empresa_id, code, d.maintenance_date, ctx.user.id, d.harvest_id ?? null]);
+      const r = await ctx.tx.query<{ id: string }>("insert into erp.maintenances(organization_id,empresa_id,code,maintenance_date,responsible_user_id,harvest_id,created_by,note,tipo_operacao_id,tipo_operacao_versao_id) values ($1,$2,$3,$4,$5,$6,$5,$7,$8,$9) returning id", [ctx.orgId, d.empresa_id, code, d.maintenance_date, ctx.user.id, d.harvest_id ?? null, d.note ?? null, top?.tipoOperacaoId ?? null, top?.tipoOperacaoVersaoId ?? null]);
       const id = r.rows[0]!.id; let parts = D(0), services = D(0);
       await atribuirIdGlobal(ctx, "maintenances", id);
-      for (const m of d.machines) {
+      for (const m of maquinas) {
         const mm = await ctx.tx.query<{ id: string }>("insert into erp.maintenance_machines(maintenance_id,equipment_id,hour_meter,mileage,maintenance_type,executor_person_id,hours,service_total,service_description) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id", [id, m.equipment_id, m.hour_meter ?? null, m.mileage ?? null, m.maintenance_type ?? null, m.executor_person_id ?? null, m.hours ?? null, money(m.service_total), m.service_description ?? null]);
         services = services.plus(m.service_total);
-        if (m.hour_meter) await ctx.tx.query("update erp.equipments set hour_meter=greatest(coalesce(hour_meter,0),$2) where id=$1", [m.equipment_id, m.hour_meter]);
+        // OPERACOES-01 F10 (decisão 287): o horímetro — ou, sem ele, o km — sobe o contador da máquina (ROW COUNT conferido).
+        await subirContadorDoBem(ctx, m.equipment_id, m.hour_meter, m.mileage);
         for (const it of m.items) {
           let cost = it.unit_value ?? "0"; let doRazao: string | null = null;
-          // com armazém, o valor da peça é a soma das partes (Σ lineTotal de cada uma, revisão do R1), não quantidade × custo médio
-          if (it.warehouse_id) { const s = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "maintenance", direction: -1, quantity: it.quantity, sourceType: "maintenances", sourceId: id, date: d.maintenance_date, note: `Manutenção ${code}` }); cost = s.unitCost; doRazao = s.total; }
+          // com local de estoque, o valor da peça é a soma das partes (Σ lineTotal de cada uma, revisão do R1), não
+          // quantidade × custo médio. OPERACOES-01 F10 (decisão 287): o DESTINO vai ao razão — a máquina do item e a
+          // safra do cabeçalho (o estorno do cancelamento os copia). Item SEM local grava com o unitário informado e
+          // não baixa (a política nova de maintenance_items o aceita: antes a RLS o recusava).
+          if (it.warehouse_id) { const s = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "maintenance", direction: -1, quantity: it.quantity, equipamentoId: m.equipment_id, harvestId: d.harvest_id ?? null, sourceType: "maintenances", sourceId: id, date: d.maintenance_date, note: `Manutenção ${code}` }); cost = s.unitCost; doRazao = s.total; }
           const t = doRazao ?? money(D(it.quantity).mul(cost)); parts = parts.plus(t);
           await ctx.tx.query("insert into erp.maintenance_items(machine_id,warehouse_id,product_id,quantity,unit_value,total,note) values ($1,$2,$3,$4,$5,$6,$7)", [mm.rows[0]!.id, it.warehouse_id ?? null, it.product_id, it.quantity, cost, t, it.note ?? null]);
         }
         // preventivas: atualiza última execução
         await ctx.tx.query("update erp.preventive_maintenances set last_done_date=$2, last_done_value=case trigger_type when 'hours' then coalesce($3::numeric,last_done_value) when 'km' then coalesce($4::numeric,last_done_value) else last_done_value end where equipment_id=$1 and is_active", [m.equipment_id, d.maintenance_date, m.hour_meter ?? null, m.mileage ?? null]);
       }
-      await ctx.tx.query("update erp.maintenances set total_parts=$2, total_services=$3 where id=$1", [id, money(parts), money(services)]);
+      // OPERACOES-01 F10 (decisão 287): ROW COUNT conferido (a linha nasceu nesta transação; zero linha não é sucesso).
+      const tot = await ctx.tx.query("update erp.maintenances set total_parts=$2, total_services=$3 where id=$1 and organization_id=$4", [id, money(parts), money(services), ctx.orgId]);
+      if (tot.rowCount !== 1) throw err("CONFLICT", "Os totais da manutenção não foram gravados.");
       await audit(ctx.tx, ctx, "maintenances", id, "create", { code });
       return { id, code, total_parts: money(parts), total_services: money(services) };
     })).result;
   })));
-  app.post("/fleet/maintenances/:id/cancel", async (req) => runService(app, req, "maintenances.delete", async (ctx) => { const { id } = req.params as { id: string }; const m = await ctx.tx.query<{ status: string; empresa_id: string }>("select status, empresa_id from erp.maintenances where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!m.rows[0]) throw notFound(); await exigirEmpresaVisivel(ctx, m.rows[0].empresa_id, "Manutenção"); if (m.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "maintenances", id, todayISO()); await ctx.tx.query("update erp.maintenances set status='cancelled', updated_at=now() where id=$1", [id]); await audit(ctx.tx, ctx, "maintenances", id, "cancel"); return { id, status: "cancelled" }; }));
+  // OPERACOES-01 F10 (decisão 287): o estorno (`reverseStock`) já copia o destino do original — a máquina e a safra; a
+  // gravação da situação passa a conferir ROW COUNT.
+  app.post("/fleet/maintenances/:id/cancel", async (req) => runService(app, req, "maintenances.delete", async (ctx) => { const { id } = req.params as { id: string }; const m = await ctx.tx.query<{ status: string; empresa_id: string }>("select status, empresa_id from erp.maintenances where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!m.rows[0]) throw notFound(); await exigirEmpresaVisivel(ctx, m.rows[0].empresa_id, "Manutenção"); if (m.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "maintenances", id, todayISO()); const u = await ctx.tx.query("update erp.maintenances set status='cancelled', updated_at=now() where id=$1 and organization_id=$2", [id, ctx.orgId]); if (u.rowCount !== 1) throw err("CONFLICT", "A manutenção não foi cancelada."); await audit(ctx.tx, ctx, "maintenances", id, "cancel"); return { id, status: "cancelled" }; }));
 
   // ---------- Abastecimentos ----------
-  const supplySchema = z.object({ empresa_id: uuid, supply_date: date, equipment_id: uuid, operator_person_id: uuid.optional().nullable(), warehouse_id: uuid.optional().nullable(), product_id: uuid, quantity: dec, unit_value: dec.optional().nullable(), hour_meter: dec.optional().nullable(), mileage: dec.optional().nullable(), cost_center_id: uuid.optional().nullable(), harvest_id: uuid.optional().nullable(), note: z.string().optional().nullable(), origin: z.enum(["manual", "cta_smart", "import"]).default("manual") });
+  // OPERACOES-01 F10 (decisão 287): `tipo_operacao_id` (opcional; sem ele, o lançamento de hoje).
+  const supplySchema = z.object({ empresa_id: uuid, supply_date: date, equipment_id: uuid, operator_person_id: uuid.optional().nullable(), warehouse_id: uuid.optional().nullable(), product_id: uuid, quantity: dec, unit_value: dec.optional().nullable(), hour_meter: dec.optional().nullable(), mileage: dec.optional().nullable(), cost_center_id: uuid.optional().nullable(), harvest_id: uuid.optional().nullable(), note: z.string().optional().nullable(), origin: z.enum(["manual", "cta_smart", "import"]).default("manual"), tipo_operacao_id: uuid.optional().nullable() });
+  // OPERACOES-01 F10 (decisão 287): a capacidade `topNoModulo` do abastecimento — as TOPs que ele pode citar (uma consulta).
+  app.get(rotaDosTiposDoModulo(SEGMENTO_DO_MODULO_COM_TOP.abastecimento), async (req) => runService(app, req, "fuel_supplies.create", (ctx) => tiposDeOperacaoDoModulo(ctx, "abastecimento")));
   app.get("/fleet/fuel-supplies", async (req) => runService(app, req, "fuel_supplies.view", async (ctx) => { const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>; const where = ["s.organization_id=$1", "s.deleted_at is null"]; const params: unknown[] = [ctx.orgId]; where.push(...empresaScope(ctx, "s", params)); if (f.equipment_id) { params.push(f.equipment_id); where.push(`s.equipment_id=$${params.length}`); } if (f.product_id) { params.push(f.product_id); where.push(`s.product_id=$${params.length}`); } if (f.start_date) { params.push(f.start_date); where.push(`s.supply_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`s.supply_date<=$${params.length}`); } if (f.origin) { params.push(f.origin); where.push(`s.origin=$${params.length}`); } const w = where.join(" and "); const res = await list(ctx, `select s.*, e.description as equipment_name, e.code as equipment_code, p.description as product_name, op.name as operator_name, w.description as warehouse_name from erp.fuel_supplies s join erp.equipments e on e.id=s.equipment_id join erp.products p on p.id=s.product_id left join erp.people op on op.id=s.operator_person_id left join erp.warehouses w on w.id=s.warehouse_id where ${w} order by s.supply_date desc, s.created_at desc`, `select count(*) n from erp.fuel_supplies s where ${w}`, params, q, undefined, "fuel_supplies"); const tot = await ctx.tx.query<{ q: string; t: string }>(`select coalesce(sum(s.quantity),0) q, coalesce(sum(s.total),0) t from erp.fuel_supplies s where ${w} and s.status='confirmed'`, params); return { ...res, totals: { quantity: tot.rows[0]!.q, total: tot.rows[0]!.t } }; }));
-  // Detalhe de um abastecimento — usado por /frota/abastecimentos/:id
+  // Detalhe de um abastecimento — usado por /frota/abastecimentos/:id. OPERACOES-01 F10 (decisão 287): + o nome e a
+  // versão da TOP congelada (as colunas da TOP já saem pelo `s.*`).
   app.get("/fleet/fuel-supplies/:id", async (req) => runService(app, req, "fuel_supplies.view", async (ctx) => {
     const { id } = req.params as { id: string };
-    const r = await ctx.tx.query("select s.*, e.description as equipment_name, e.code as equipment_code, p.description as product_name, op.name as operator_name, w.description as warehouse_name, f.name as empresa_name, cc.name as cost_center_name, hv.description as harvest_name from erp.fuel_supplies s join erp.equipments e on e.id=s.equipment_id join erp.products p on p.id=s.product_id left join erp.people op on op.id=s.operator_person_id left join erp.warehouses w on w.id=s.warehouse_id join erp.empresas f on f.id=s.empresa_id left join erp.cost_centers cc on cc.id=s.cost_center_id left join erp.harvests hv on hv.id=s.harvest_id where s.id=$1 and s.organization_id=$2 and s.deleted_at is null" + scopedById(ctx, "s", id).sql, scopedById(ctx, "s", id).params);
+    const r = await ctx.tx.query(`select s.*, e.description as equipment_name, e.code as equipment_code, p.description as product_name, op.name as operator_name, w.description as warehouse_name, f.name as empresa_name, cc.name as cost_center_name, hv.description as harvest_name, ${TOP_DO_ABASTECIMENTO.colunas} from erp.fuel_supplies s join erp.equipments e on e.id=s.equipment_id join erp.products p on p.id=s.product_id left join erp.people op on op.id=s.operator_person_id left join erp.warehouses w on w.id=s.warehouse_id join erp.empresas f on f.id=s.empresa_id left join erp.cost_centers cc on cc.id=s.cost_center_id left join erp.harvests hv on hv.id=s.harvest_id ${TOP_DO_ABASTECIMENTO.join} where s.id=$1 and s.organization_id=$2 and s.deleted_at is null` + scopedById(ctx, "s", id).sql, scopedById(ctx, "s", id).params);
     if (!r.rows[0]) throw notFound("Abastecimento");
     return r.rows[0];
   }));
   app.post("/fleet/fuel-supplies", async (req, reply) => reply.status(201).send(await runService(app, req, "fuel_supplies.create", async (ctx) => {
     const d = supplySchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
+      // OPERACOES-01 F10 (decisão 287): a TOP (versão corrente congelada + as exigências que o registro tem: centro de
+      // resultado e observação) e o equipamento são conferidos ANTES do número — nenhuma recusa queima código.
+      const top = await topDoLancamentoDoModulo(ctx, "abastecimento", d.tipo_operacao_id, { cost_center_id: d.cost_center_id, note: d.note });
+      await exigirEquipamentos(ctx, [{ caminho: "equipment_id", id: d.equipment_id }]);
+      // OPERACOES-01 F10 (decisão 287): horímetro e km na forma canônica (o registro e o contador do bem leem o MESMO
+      // número), conferidos antes do número.
+      const horimetro = leituraCanonica(d.hour_meter, "hour_meter"); const km = leituraCanonica(d.mileage, "mileage");
       const code = await nextCode(ctx.tx, ctx.orgId, "fuel_supply", 5);
-      const r = await ctx.tx.query<{ id: string }>("insert into erp.fuel_supplies(organization_id,empresa_id,code,supply_date,equipment_id,operator_person_id,warehouse_id,product_id,quantity,hour_meter,mileage,cost_center_id,harvest_id,origin,note,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) returning id", [ctx.orgId, d.empresa_id, code, d.supply_date, d.equipment_id, d.operator_person_id ?? null, d.warehouse_id ?? null, d.product_id, d.quantity, d.hour_meter ?? null, d.mileage ?? null, d.cost_center_id ?? null, d.harvest_id ?? null, d.origin, d.note ?? null, ctx.user.id]);
-      await atribuirIdGlobal(ctx, "fuel_supplies", r.rows[0]!.id);
+      const r = await ctx.tx.query<{ id: string }>("insert into erp.fuel_supplies(organization_id,empresa_id,code,supply_date,equipment_id,operator_person_id,warehouse_id,product_id,quantity,hour_meter,mileage,cost_center_id,harvest_id,origin,note,created_by,tipo_operacao_id,tipo_operacao_versao_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) returning id", [ctx.orgId, d.empresa_id, code, d.supply_date, d.equipment_id, d.operator_person_id ?? null, d.warehouse_id ?? null, d.product_id, d.quantity, horimetro, km, d.cost_center_id ?? null, d.harvest_id ?? null, d.origin, d.note ?? null, ctx.user.id, top?.tipoOperacaoId ?? null, top?.tipoOperacaoVersaoId ?? null]);
+      const id = r.rows[0]!.id;
+      await atribuirIdGlobal(ctx, "fuel_supplies", id);
       let cost = d.unit_value ?? "0"; let doRazao: string | null = null;
-      // com armazém, o total é a soma das partes (Σ lineTotal de cada uma, revisão do R1), não quantidade × custo médio
-      if (d.warehouse_id) { const s = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: d.product_id, movementType: "fuel_supply", direction: -1, quantity: d.quantity, costCenterId: d.cost_center_id, harvestId: d.harvest_id, sourceType: "fuel_supplies", sourceId: r.rows[0]!.id, date: d.supply_date, note: `Abastecimento ${code}` }); cost = s.unitCost; doRazao = s.total; }
+      // com local de estoque, o total é a soma das partes (Σ lineTotal de cada uma, revisão do R1), não quantidade × custo
+      // médio. OPERACOES-01 F10 (decisão 287): o DESTINO vai ao razão — o equipamento, o centro e a safra (o estorno os
+      // copia). Sem local: não baixa, e o unitário é o informado (como antes).
+      if (d.warehouse_id) { const s = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: d.product_id, movementType: "fuel_supply", direction: -1, quantity: d.quantity, costCenterId: d.cost_center_id, harvestId: d.harvest_id, equipamentoId: d.equipment_id, sourceType: "fuel_supplies", sourceId: id, date: d.supply_date, note: `Abastecimento ${code}` }); cost = s.unitCost; doRazao = s.total; }
       const total = doRazao ?? money(D(d.quantity).mul(cost));
-      await ctx.tx.query("update erp.fuel_supplies set unit_value=$2, total=$3 where id=$1", [r.rows[0]!.id, cost, total]);
-      if (d.hour_meter) await ctx.tx.query("update erp.equipments set hour_meter=greatest(coalesce(hour_meter,0),$2) where id=$1", [d.equipment_id, d.hour_meter]);
-      await audit(ctx.tx, ctx, "fuel_supplies", r.rows[0]!.id, "create", { code });
-      return { id: r.rows[0]!.id, code, total };
+      // OPERACOES-01 F10 (decisão 287): ROW COUNT conferido (a linha nasceu nesta transação; zero linha não é sucesso).
+      const u = await ctx.tx.query("update erp.fuel_supplies set unit_value=$2, total=$3 where id=$1 and organization_id=$4", [id, cost, total, ctx.orgId]);
+      if (u.rowCount !== 1) throw err("CONFLICT", "O valor do abastecimento não foi gravado.");
+      // OPERACOES-01 F10 (decisão 287): o horímetro — ou, sem ele, o km — sobe o contador do bem (ROW COUNT conferido).
+      await subirContadorDoBem(ctx, d.equipment_id, horimetro, km);
+      await audit(ctx.tx, ctx, "fuel_supplies", id, "create", { code });
+      return { id, code, total };
     })).result;
   })));
-  app.post("/fleet/fuel-supplies/:id/cancel", async (req) => runService(app, req, "fuel_supplies.delete", async (ctx) => { const { id } = req.params as { id: string }; const s = await ctx.tx.query<{ status: string; empresa_id: string }>("select status, empresa_id from erp.fuel_supplies where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!s.rows[0]) throw notFound(); await exigirEmpresaVisivel(ctx, s.rows[0].empresa_id, "Abastecimento"); if (s.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelado"); await reverseStock(ctx, "fuel_supplies", id, todayISO()); await ctx.tx.query("update erp.fuel_supplies set status='cancelled' where id=$1", [id]); return { id, status: "cancelled" }; }));
+  // OPERACOES-01 F10 (decisão 287): o cancelamento passa a ser AUDITADO e a gravação da situação confere ROW COUNT; o
+  // estorno (`reverseStock`) já copia o destino do original — o equipamento, o centro e a safra.
+  app.post("/fleet/fuel-supplies/:id/cancel", async (req) => runService(app, req, "fuel_supplies.delete", async (ctx) => { const { id } = req.params as { id: string }; const s = await ctx.tx.query<{ status: string; empresa_id: string }>("select status, empresa_id from erp.fuel_supplies where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!s.rows[0]) throw notFound(); await exigirEmpresaVisivel(ctx, s.rows[0].empresa_id, "Abastecimento"); if (s.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelado"); await reverseStock(ctx, "fuel_supplies", id, todayISO()); const u = await ctx.tx.query("update erp.fuel_supplies set status='cancelled' where id=$1 and organization_id=$2", [id, ctx.orgId]); if (u.rowCount !== 1) throw err("CONFLICT", "O abastecimento não foi cancelado."); await audit(ctx.tx, ctx, "fuel_supplies", id, "cancel"); return { id, status: "cancelled" }; }));
   // Transferência de máquinas entre fazendas
   app.get("/fleet/equipment-transfers", async (req) => runService(app, req, "equipment_transfers.view", async (ctx) => { const r = await consultaEscopada(ctx, "select t.*, e.description as equipment_name, fo.name as empresa_origem_name, fd.name as empresa_destino_name, u.name as created_by_name from erp.equipment_transfers t join erp.equipments e on e.id=t.equipment_id left join erp.empresas fo on fo.id=t.empresa_origem_id left join erp.empresas fd on fd.id=t.empresa_destino_id left join erp.users u on u.id=t.created_by where t.organization_id=$1 and {{escopo_par:t.empresa_origem_id,t.empresa_destino_id}} order by t.transfer_date desc limit 200", [ctx.orgId]); return { items: r.rows, total: r.rowCount }; }));
   app.post("/fleet/equipment-transfers", async (req, reply) => reply.status(201).send(await runService(app, req, "equipment_transfers.create", async (ctx) => { const d = z.object({ equipment_id: uuid, empresa_destino_id: uuid, transfer_date: date, note: z.string().optional().nullable() }).parse(req.body); const e = await ctx.tx.query<{ empresa_id: string }>("select empresa_id from erp.equipments where id=$1 and organization_id=$2 for update", [d.equipment_id, ctx.orgId]); if (!e.rows[0]) throw notFound("Bem"); await exigirEmpresaVisivel(ctx, e.rows[0].empresa_id, "Bem"); if (!empresaPermitida(ctx, d.empresa_destino_id)) throw validation("Sem acesso à fazenda destino"); if (e.rows[0].empresa_id === d.empresa_destino_id) throw validation("Bem já está na fazenda destino"); const code = await nextCode(ctx.tx, ctx.orgId, "equipment_transfer"); const r = await ctx.tx.query<{ id: string }>("insert into erp.equipment_transfers(organization_id,code,transfer_date,equipment_id,empresa_origem_id,empresa_destino_id,note,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id", [ctx.orgId, code, d.transfer_date, d.equipment_id, e.rows[0].empresa_id, d.empresa_destino_id, d.note ?? null, ctx.user.id]); await ctx.tx.query("update erp.equipments set empresa_id=$2, updated_at=now() where id=$1", [d.equipment_id, d.empresa_destino_id]); await audit(ctx.tx, ctx, "equipments", d.equipment_id, "transfer", d); return { id: r.rows[0]!.id, code }; })));
@@ -176,16 +264,57 @@ export default async function fleetHrRoutes(app: FastifyInstance) {
 
   // ---------- Ordens de serviço ----------
   const osSchema = z.object({ empresa_id: uuid, order_date: date, harvest_id: uuid.optional().nullable(), activity_id: uuid.optional().nullable(), operation_id: uuid.optional().nullable(), cost_center_id: uuid.optional().nullable(), responsible_person_id: uuid.optional().nullable(), team_id: uuid.optional().nullable(), description: z.string().optional().nullable(), planned_start: date.optional().nullable(), planned_end: date.optional().nullable(), lines: z.array(z.object({ section: z.enum(["labor", "machine", "input", "production", "ppe"]), person_id: uuid.optional().nullable(), equipment_id: uuid.optional().nullable(), product_id: uuid.optional().nullable(), warehouse_id: uuid.optional().nullable(), quantity: dec.default("0"), unit_value: dec.default("0"), hours: dec.optional().nullable(), note: z.string().optional().nullable() })).default([]) });
+  // OPERACOES-01 F10 (decisão 287): o POST aceita `tipo_operacao_id` (opcional; sem ele, a OS de hoje). O PUT continua com
+  // `osSchema`: a TOP da OS não muda depois do lançamento (o PUT que a traz é recusado).
+  const osSchemaNovo = osSchema.extend({ tipo_operacao_id: uuid.optional().nullable() });
+  // OPERACOES-01 F10 (decisão 287): a capacidade `topNoModulo` da OS — as TOPs que ela pode citar (uma consulta).
+  app.get(rotaDosTiposDoModulo(SEGMENTO_DO_MODULO_COM_TOP.ordem_servico), async (req) => runService(app, req, "service_orders.create", (ctx) => tiposDeOperacaoDoModulo(ctx, "ordem_servico")));
   app.get("/service-orders", async (req) => runService(app, req, "service_orders.view", async (ctx) => { const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>; const where = ["o.organization_id=$1", "o.deleted_at is null"]; const params: unknown[] = [ctx.orgId]; where.push(...empresaScope(ctx, "o", params)); if (f.status) { params.push(f.status); where.push(`o.status=$${params.length}`); } if (f.mine === "1") { params.push(ctx.user.id); where.push(`o.created_by=$${params.length}`); } if (f.late === "1") where.push("o.planned_end < current_date and o.status in ('open','in_progress')"); if (f.start_date) { params.push(f.start_date); where.push(`o.order_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`o.order_date<=$${params.length}`); } const w = where.join(" and "); return list(ctx, `select o.*, a.name as activity_name, op.name as operation_name, p.name as responsible_name, t.name as team_name from erp.service_orders o left join erp.activities a on a.id=o.activity_id left join erp.operations op on op.id=o.operation_id left join erp.people p on p.id=o.responsible_person_id left join erp.teams t on t.id=o.team_id where ${w} order by o.order_date desc`, `select count(*) n from erp.service_orders o where ${w}`, params, q, req.query as Record<string, unknown>, "service_orders"); }));
-  app.get("/service-orders/:id", async (req) => runService(app, req, "service_orders.view", async (ctx) => { const { id } = req.params as { id: string }; const o = await ctx.tx.query("select o.*, a.name as activity_name, op.name as operation_name, p.name as responsible_name, t.name as team_name, cc.name as cost_center_name from erp.service_orders o left join erp.activities a on a.id=o.activity_id left join erp.operations op on op.id=o.operation_id left join erp.people p on p.id=o.responsible_person_id left join erp.teams t on t.id=o.team_id left join erp.cost_centers cc on cc.id=o.cost_center_id where o.id=$1 and o.organization_id=$2 and o.deleted_at is null" + scopedById(ctx, "o", id).sql, scopedById(ctx, "o", id).params); if (!o.rows[0]) throw notFound(); const lines = await ctx.tx.query("select l.*, p.name as person_name, e.description as equipment_name, pr.description as product_name from erp.service_order_lines l left join erp.people p on p.id=l.person_id left join erp.equipments e on e.id=l.equipment_id left join erp.products pr on pr.id=l.product_id where l.order_id=$1 order by l.section", [id]); return { ...o.rows[0], lines: lines.rows }; }));
-  app.post("/service-orders", async (req, reply) => reply.status(201).send(await runService(app, req, "service_orders.create", async (ctx) => { const d = osSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); const code = await nextCode(ctx.tx, ctx.orgId, "service_order"); const r = await ctx.tx.query<{ id: string }>("insert into erp.service_orders(organization_id,empresa_id,code,order_date,harvest_id,activity_id,operation_id,cost_center_id,responsible_person_id,team_id,description,planned_start,planned_end,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning id", [ctx.orgId, d.empresa_id, code, d.order_date, d.harvest_id ?? null, d.activity_id ?? null, d.operation_id ?? null, d.cost_center_id ?? null, d.responsible_person_id ?? null, d.team_id ?? null, d.description ?? null, d.planned_start ?? null, d.planned_end ?? null, ctx.user.id]); await atribuirIdGlobal(ctx, "service_orders", r.rows[0]!.id); await saveLines(ctx, r.rows[0]!.id, d.lines); return { id: r.rows[0]!.id, code }; })));
-  app.put("/service-orders/:id", async (req) => runService(app, req, "service_orders.edit", async (ctx) => { const { id } = req.params as { id: string }; const d = osSchema.parse(req.body); const cur = await ctx.tx.query<{ status: string; empresa_id: string }>("select status, empresa_id from erp.service_orders where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!cur.rows[0]) throw notFound(); await exigirEmpresaVisivel(ctx, cur.rows[0].empresa_id, "OS"); if (["finished", "evaluated", "cancelled"].includes(cur.rows[0].status)) throw err("INVALID_STATUS_TRANSITION", "OS encerrada"); await ctx.tx.query("update erp.service_orders set order_date=$3, harvest_id=$4, activity_id=$5, operation_id=$6, cost_center_id=$7, responsible_person_id=$8, team_id=$9, description=$10, planned_start=$11, planned_end=$12, updated_at=now() where id=$1 and organization_id=$2", [id, ctx.orgId, d.order_date, d.harvest_id ?? null, d.activity_id ?? null, d.operation_id ?? null, d.cost_center_id ?? null, d.responsible_person_id ?? null, d.team_id ?? null, d.description ?? null, d.planned_start ?? null, d.planned_end ?? null]); await saveLines(ctx, id, d.lines); return { id }; }));
+  // OPERACOES-01 F10 (decisão 287): o detalhe devolve o nome e a versão da TOP congelada (a TOP já sai pelo `o.*`).
+  app.get("/service-orders/:id", async (req) => runService(app, req, "service_orders.view", async (ctx) => { const { id } = req.params as { id: string }; const o = await ctx.tx.query(`select o.*, a.name as activity_name, op.name as operation_name, p.name as responsible_name, t.name as team_name, cc.name as cost_center_name, ${TOP_DA_OS.colunas} from erp.service_orders o left join erp.activities a on a.id=o.activity_id left join erp.operations op on op.id=o.operation_id left join erp.people p on p.id=o.responsible_person_id left join erp.teams t on t.id=o.team_id left join erp.cost_centers cc on cc.id=o.cost_center_id ${TOP_DA_OS.join} where o.id=$1 and o.organization_id=$2 and o.deleted_at is null` + scopedById(ctx, "o", id).sql, scopedById(ctx, "o", id).params); if (!o.rows[0]) throw notFound(); const lines = await ctx.tx.query("select l.*, p.name as person_name, e.description as equipment_name, pr.description as product_name from erp.service_order_lines l left join erp.people p on p.id=l.person_id left join erp.equipments e on e.id=l.equipment_id left join erp.products pr on pr.id=l.product_id where l.order_id=$1 order by l.section", [id]); return { ...o.rows[0], lines: lines.rows }; }));
+  app.post("/service-orders", async (req, reply) => reply.status(201).send(await runService(app, req, "service_orders.create", async (ctx) => {
+    const d = osSchemaNovo.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id);
+    // OPERACOES-01 F10 (decisão 287): Idempotency-Key (o web novo a manda; sem a chave, executa como antes) e auditoria
+    // da criação. A TOP (versão corrente congelada + as exigências que o registro tem: centro de resultado e descrição)
+    // é conferida ANTES do número — a recusa não queima código.
+    return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
+      const top = await topDoLancamentoDoModulo(ctx, "ordem_servico", d.tipo_operacao_id, { cost_center_id: d.cost_center_id, description: d.description });
+      const code = await nextCode(ctx.tx, ctx.orgId, "service_order");
+      const r = await ctx.tx.query<{ id: string }>("insert into erp.service_orders(organization_id,empresa_id,code,order_date,harvest_id,activity_id,operation_id,cost_center_id,responsible_person_id,team_id,description,planned_start,planned_end,created_by,tipo_operacao_id,tipo_operacao_versao_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) returning id", [ctx.orgId, d.empresa_id, code, d.order_date, d.harvest_id ?? null, d.activity_id ?? null, d.operation_id ?? null, d.cost_center_id ?? null, d.responsible_person_id ?? null, d.team_id ?? null, d.description ?? null, d.planned_start ?? null, d.planned_end ?? null, ctx.user.id, top?.tipoOperacaoId ?? null, top?.tipoOperacaoVersaoId ?? null]);
+      const id = r.rows[0]!.id;
+      await atribuirIdGlobal(ctx, "service_orders", id);
+      await saveLines(ctx, id, d.lines);
+      await audit(ctx.tx, ctx, "service_orders", id, "create", { code });
+      return { id, code };
+    })).result;
+  })));
+  app.put("/service-orders/:id", async (req) => runService(app, req, "service_orders.edit", async (ctx) => {
+    const { id } = req.params as { id: string };
+    // OPERACOES-01 F10 (decisão 287): a TOP da OS não muda depois do lançamento — o corpo com a chave é recusado ANTES de
+    // ler a OS (a recusa não revela nada sobre ela).
+    if (corpoTrazTipoOperacao(req.body)) throw validation(MENSAGEM_TOP_DA_OS_NAO_MUDA, [{ path: "tipo_operacao_id", message: MENSAGEM_TOP_DA_OS_NAO_MUDA }]);
+    const d = osSchema.parse(req.body);
+    const cur = await ctx.tx.query<{ status: string; empresa_id: string; tipo_operacao_versao_id: string | null }>("select status, empresa_id, tipo_operacao_versao_id from erp.service_orders where id=$1 and organization_id=$2 for update", [id, ctx.orgId]);
+    if (!cur.rows[0]) throw notFound(); await exigirEmpresaVisivel(ctx, cur.rows[0].empresa_id, "OS");
+    // editável em aberta E em andamento (como antes)
+    if (["finished", "evaluated", "cancelled"].includes(cur.rows[0].status)) throw err("INVALID_STATUS_TRANSITION", "OS encerrada");
+    // OPERACOES-01 F10 (decisão 287): a edição cobra as exigências da versão CONGELADA na OS (sem TOP, nada — como antes).
+    await cobrarExigenciasDaVersaoDoModulo(ctx, "ordem_servico", cur.rows[0].tipo_operacao_versao_id, { cost_center_id: d.cost_center_id, description: d.description });
+    const u = await ctx.tx.query("update erp.service_orders set order_date=$3, harvest_id=$4, activity_id=$5, operation_id=$6, cost_center_id=$7, responsible_person_id=$8, team_id=$9, description=$10, planned_start=$11, planned_end=$12, updated_at=now() where id=$1 and organization_id=$2", [id, ctx.orgId, d.order_date, d.harvest_id ?? null, d.activity_id ?? null, d.operation_id ?? null, d.cost_center_id ?? null, d.responsible_person_id ?? null, d.team_id ?? null, d.description ?? null, d.planned_start ?? null, d.planned_end ?? null]);
+    // OPERACOES-01 F10 (decisão 287): ROW COUNT conferido e a edição AUDITADA.
+    if (u.rowCount !== 1) throw err("CONFLICT", "A OS não foi atualizada.");
+    await saveLines(ctx, id, d.lines);
+    await audit(ctx.tx, ctx, "service_orders", id, "edit");
+    return { id };
+  }));
   async function saveLines(ctx: ServiceCtx, id: string, lines: z.infer<typeof osSchema>["lines"]) {
     await ctx.tx.query("delete from erp.service_order_lines where order_id=$1", [id]);
     const tot: Record<string, ReturnType<typeof D>> = { labor: D(0), machine: D(0), input: D(0), production: D(0), ppe: D(0) };
     for (const l of lines) { const t = D(l.quantity).mul(l.unit_value); tot[l.section] = tot[l.section]!.plus(t); await ctx.tx.query("insert into erp.service_order_lines(order_id,section,person_id,equipment_id,product_id,warehouse_id,quantity,unit_value,total,hours,note) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)", [id, l.section, l.person_id ?? null, l.equipment_id ?? null, l.product_id ?? null, l.warehouse_id ?? null, l.quantity, l.unit_value, money(t), l.hours ?? null, l.note ?? null]); }
     const inputs = tot.input!.plus(tot.ppe!);
-    await ctx.tx.query("update erp.service_orders set labor_total=$2, machines_total=$3, inputs_total=$4, total=$5 where id=$1", [id, money(tot.labor!), money(tot.machine!), money(inputs), money(tot.labor!.plus(tot.machine!).plus(inputs))]);
+    // OPERACOES-01 F10 (decisão 287): ROW COUNT conferido (zero linha não é sucesso).
+    const u = await ctx.tx.query("update erp.service_orders set labor_total=$2, machines_total=$3, inputs_total=$4, total=$5 where id=$1", [id, money(tot.labor!), money(tot.machine!), money(inputs), money(tot.labor!.plus(tot.machine!).plus(inputs))]);
+    if (u.rowCount !== 1) throw err("CONFLICT", "Os totais da OS não foram gravados.");
   }
   app.post("/service-orders/:id/status", async (req) => runService(app, req, "service_orders.edit", async (ctx) => {
     const { id } = req.params as { id: string }; const d = z.object({ status: z.enum(["in_progress", "finished", "cancelled"]) }).parse(req.body);

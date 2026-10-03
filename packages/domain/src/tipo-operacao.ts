@@ -137,7 +137,8 @@ export const TIPOS_OPERACAO: readonly TipoOperacao[] = Object.freeze([
   // ESTOQUE-01 (decisão 274): o documento de estoque do Portal de Estoque. Uma tabela, quatro espécies, a
   // mesma forma de `erp.documentos_compra`. As oito famílias acima continuam presas às telas antigas e não
   // ganham consumidor: a TOP entra no documento NOVO, e não nas tabelas antigas, porque cada tabela antiga
-  // tem a sua regra e a sua tela, e pôr TOP nelas seria fundir regras pela classificação.
+  // tem a sua regra e a sua tela, e pôr TOP nelas seria fundir regras pela classificação. A produção de ração é a
+  // exceção desde a OPERACOES-01 F10 (decisão 287): ela ganha a TOP no próprio registro, como os outros módulos.
   T("estoque.entrada", "estoque", variante("erp.documentos_estoque", "especie", "entrada")),
   T("estoque.saida", "estoque", variante("erp.documentos_estoque", "especie", "saida")),
   T("estoque.transferencia", "estoque", variante("erp.documentos_estoque", "especie", "transferencia")),
@@ -181,7 +182,13 @@ export const TIPOS_OPERACAO: readonly TipoOperacao[] = Object.freeze([
   T("frota_ativos.manutencao", "frota_ativos", entidade("erp.maintenances")),
 
   // ---------- Ordens de Serviço ----------
-  T("ordens_servico.ordem_de_servico", "ordens_servico", entidade("erp.service_orders"))
+  T("ordens_servico.ordem_de_servico", "ordens_servico", entidade("erp.service_orders")),
+
+  // ---------- Pecuária e Confinamento ----------
+  // OPERACOES-01 F10 (decisão 287): o manejo e a batelada recebem a TOP no próprio registro. UMA família por tabela:
+  // o manejo inteiro (não por `handling_type` — a permissão continua por tipo de manejo) e a batelada de dieta.
+  T("pecuaria.manejo", "pecuaria", entidade("erp.animal_handlings")),
+  T("confinamento.batelada", "confinamento", entidade("erp.diet_batches"))
 ]);
 
 const POR_CODIGO = new Map(TIPOS_OPERACAO.map((t) => [t.codigo, t]));

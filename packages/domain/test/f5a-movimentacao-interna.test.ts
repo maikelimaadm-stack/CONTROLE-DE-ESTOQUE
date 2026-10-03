@@ -47,6 +47,7 @@ import {
   familiaOperacionalDeDocumentoEstoque,
   formato5Top,
   lerConfiguracaoTop,
+  moduloComTopDaFamilia,
   moduloDaPermissao,
   normalizarPeloPerfilTop,
   perfilDaFamiliaTop,
@@ -211,8 +212,10 @@ describe("MI-3 as famílias da movimentação interna no registry", () => {
     }
   });
 
-  it("MI-3 a matriz das regras gerais tem as 13 famílias (com o orçamento de compra da F6a), e as três novas com a linha do estoque (Manual|Automática; Sem aprovação|Sempre)", () => {
-    expect(MATRIZ_REGRAS_GERAIS_TOP).toHaveLength(13);
+  it("MI-3 a matriz das regras gerais tem as 19 famílias (13 com o orçamento de compra da F6a + os 6 módulos da F10), e as três novas com a linha do estoque (Manual|Automática; Sem aprovação|Sempre)", () => {
+    // OPERACOES-01 F10 (decisão 287): os 6 módulos com TOP ganharam a linha própria (só o neutro) — a premissa ao lado.
+    expect(MATRIZ_REGRAS_GERAIS_TOP.filter((m) => moduloComTopDaFamilia(m.familia) !== undefined), "a premissa: as 6 linhas dos módulos (F10)").toHaveLength(6);
+    expect(MATRIZ_REGRAS_GERAIS_TOP).toHaveLength(19);
     const linhaDaEntrada = regrasGeraisDaFamiliaTop(ENTRADA);
     expect(linhaDaEntrada.confirmacao.aceitos, "a premissa: a linha do estoque").toEqual(["manual", "automatica"]);
     expect(linhaDaEntrada.aprovacao.aceitos, "a premissa: a linha do estoque").toEqual(["nenhuma", "sempre"]);

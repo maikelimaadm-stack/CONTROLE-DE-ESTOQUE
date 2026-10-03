@@ -39,6 +39,8 @@ export type { ChaveCampoDoItem, ChaveColunaDoItem, ItensDaOrigem, LayoutDosItens
  * produto usa o local da LINHA e o sentido da espécie (`pesquisaDeProduto`; ausente = entrada) — com a capacidade da
  * pesquisa nova; sem ela, a de hoje.
  *
+ * OPERACOES-01 F10 (decisão 287): `linhaUnica` (padrão `false`) deixa a grade com a linha que a página criou — sem
+ * Adicionar, Duplicar e Remover (o abastecimento); sem a prop, nada muda.
  * OPERACOES-01 F5b (decisão 282): `linhaNovaEmBranco` (a linha nova sem quantidade nem unitário), `subtotal={false}`
  * (o rodapé sem "Subtotal dos itens") e `casasDaQuantidade` (a quantidade da célula não ativa) — acréscimos com o
  * padrão de hoje: sem eles, nada muda.
@@ -164,7 +166,7 @@ function CodigoDoProduto({ id, conhecido }: { id?: string; conhecido?: OpcaoReal
 
 export function ItensDaCentral({
   prefixoTestid, colunas: colunasDaEspecie, items, onChange, layout, erros, armazemPadrao, pesquisaDeProduto = null, reservaEstoque = null,
-  armazemPorItem, armazemForcado = false, custoMedioNoUnitario = true, lote = null, daOrigem = null,
+  armazemPorItem, armazemForcado = false, custoMedioNoUnitario = true, lote = null, daOrigem = null, linhaUnica = false,
   linhaNovaEmBranco = false, subtotal: comSubtotal = true, casasDaQuantidade = 2
 }: PropsDosItens) {
   const tid = (sufixo: string) => `${prefixoTestid}-${sufixo}`;
@@ -257,8 +259,8 @@ export function ItensDaCentral({
   const corrente = mostraFormulario ? atual : sel;
 
   /** Modo "da origem": não se acrescenta nem duplica; com a quantidade travada, também não se remove. */
-  const podeAdicionar = !daOrigem;
-  const podeRemover = !daOrigem?.quantidadeTravada;
+  const podeAdicionar = !daOrigem && !linhaUnica;
+  const podeRemover = !daOrigem?.quantidadeTravada && !linhaUnica;
 
   const atualizar = (i: number, chave: string, v: unknown) => onChange(items.map((it, j) => (j === i ? { ...it, [chave]: v } : it)));
   const adicionar = () => {

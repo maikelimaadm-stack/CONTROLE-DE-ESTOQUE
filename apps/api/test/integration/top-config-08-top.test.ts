@@ -49,6 +49,8 @@ const MOTIVO = {
   alteracaoEstoque: "Documento de estoque confirmado não se altera: cancele e lance outro.",
   aprovacaoPorValorEstoque: "O valor do documento de estoque só é conhecido na confirmação: use \"Sempre\".",
   aprovacaoSemConfirmacao: "A aprovação acontece antes da confirmação, e este documento não é confirmado.",
+  // OPERACOES-01 F10 (decisão 287): os módulos com TOP — só o neutro, com o motivo próprio.
+  modulo: "O lançamento deste módulo não executa esta regra: ele move o estoque ao gravar (a ordem de serviço, ao finalizar).",
 } as const;
 
 const OPCOES = {
@@ -86,6 +88,11 @@ const pedidoDeCompra = (familia: string): Linha => ({
   familia, confirmacao: so(["manual"], MOTIVO.naoConfirmado), documentoSemItens: so(["proibido"], MOTIVO.semItensOrcamentoPedido),
   alteracaoAposConfirmacao: so(["bloqueada"], MOTIVO.naoConfirmado), aprovacao: tudo("aprovacao"),
 });
+/** OPERACOES-01 F10 (decisão 287): o registro do módulo (abastecimento, manutenção, OS, manejo, batelada, ração) — só o neutro. */
+const modulo = (familia: string): Linha => ({
+  familia, confirmacao: so(["manual"], MOTIVO.modulo), documentoSemItens: so(["proibido"], MOTIVO.modulo),
+  alteracaoAposConfirmacao: so(["bloqueada"], MOTIVO.modulo), aprovacao: so(["nenhuma"], MOTIVO.modulo),
+});
 const semDocumento = (familia: string): Linha => ({
   familia, confirmacao: so(["manual"], MOTIVO.semDocumento), documentoSemItens: so(["proibido"], MOTIVO.semDocumento),
   alteracaoAposConfirmacao: so(["bloqueada"], MOTIVO.semDocumento), aprovacao: so(["nenhuma"], MOTIVO.semDocumento),
@@ -101,6 +108,9 @@ const MATRIZ_DA_SPEC: readonly Linha[] = [
   estoque("estoque.entrada"), estoque("estoque.saida"), estoque("estoque.transferencia"), estoque("estoque.ajuste"),
   // OPERACOES-01 F5a (decisão 282): as três espécies da movimentação interna, com a linha do estoque, depois do ajuste.
   estoque("estoque.requisicao_material"), estoque("estoque.consumo"), estoque("estoque.devolucao_consumo"),
+  // OPERACOES-01 F10 (decisão 287): os seis módulos com TOP, só o neutro, depois das sete do estoque e antes do orçamento.
+  modulo("frota_ativos.abastecimento"), modulo("frota_ativos.manutencao"), modulo("ordens_servico.ordem_de_servico"),
+  modulo("pecuaria.manejo"), modulo("confinamento.batelada"), modulo("estoque.producao_de_racao"),
   orcamentoOuPedido("vendas.orcamento"), orcamentoOuPedido("vendas.pedido"), pedidoDeCompra("compras.pedido"),
   // OPERACOES-01 F6a (decisão 283): o orçamento de compra, por último.
   orcamentoOuPedido("compras.orcamento"),

@@ -14,11 +14,11 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 | Tabelas no schema `erp` | 206 |
 | Tabelas com `organization_id` (escopo de organização) | 149 |
 | Tabelas com coluna de empresa (hoje `farm_id`) | 60 |
-| Entidades curadas neste dicionário | 56 |
+| Entidades curadas neste dicionário | 57 |
 | Entidades com ID Global | 25 |
-| Entidades com Tipo de Operação | 16 |
-| Tipos de Operação referenciados | 28 |
-| Cobertura curada | 27.2% |
+| Entidades com Tipo de Operação | 18 |
+| Tipos de Operação referenciados | 30 |
+| Cobertura curada | 27.7% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -1057,6 +1057,8 @@ Produção de ração a partir de uma fórmula: consome insumos e gera produto a
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
 | `validade` |  | date | não |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-ESTOQUE-DOCUMENTO — Documento de Estoque
 
@@ -1754,6 +1756,7 @@ Manejo sanitário, nutricional ou reprodutivo aplicado a animais/lotes.
 | ID Global | sim |
 | Discriminador | `handling_type` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
 | Rotas por variante | `nutrition` → `/pecuaria/manejo/nutrition/:id` · `sanitary` → `/pecuaria/manejo/sanitary/:id` · `weaning` → `/pecuaria/manejo/weaning/:id` · `separation` → `/pecuaria/manejo/separation/:id` · `pasture` → `/pecuaria/manejo/pasture/:id` · `locate` → `/pecuaria/manejo/locate/:id` |
+| Tipo de Operação | `pecuaria.manejo` (Manejo) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1776,6 +1779,8 @@ Manejo sanitário, nutricional ou reprodutivo aplicado a animais/lotes.
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-PECUARIA-PESAGEM — Pesagem
 
@@ -1806,6 +1811,38 @@ Evento de pesagem de animais, base de desempenho e ganho de peso.
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+
+### ERP-PECUARIA-BATELADA — Batelada
+
+Batelada de dieta do confinamento: consome os ingredientes da dieta (kg × %) do local de estoque e calcula o custo por kg.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.diet_batches` |
+| Natureza | entidade |
+| Escopo de organização | sim |
+| Escopo de empresa | `empresa_id` |
+| Exclusão lógica | não |
+| ID Global | não |
+| Tipo de Operação | `confinamento.batelada` (Batelada) |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `code` |  | text | sim |  |  |  |  |
+| `batch_date` |  | date | sim |  |  |  |  |
+| `diet_id` |  | uuid | sim | FK | `erp.diets` |  |  |
+| `warehouse_id` |  | uuid | não | FK | `erp.warehouses` |  |  |
+| `equipment_id` |  | uuid | não | FK | `erp.equipments` |  |  |
+| `quantity_kg` |  | numeric(18,4) | sim |  |  |  |  |
+| `total_cost` |  | numeric(18,2) | sim |  |  |  |  |
+| `status` |  | text | sim |  |  | `confirmed` · `cancelled` |  |
+| `created_by` |  | uuid | não | FK | `erp.users` |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `empresa_id` |  | uuid | sim |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
 
 ## Frota e Ativos
 
@@ -1905,6 +1942,8 @@ Consumo de combustível por equipamento, com baixa de estoque.
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-FROTA-MANUTENCAO — Manutenção
 
@@ -1937,6 +1976,9 @@ Serviço e peças aplicados a um ou mais equipamentos.
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
+| `note` |  | text | não |  |  |  |  |
 
 ## Ordens de Serviço
 
@@ -1984,6 +2026,8 @@ Serviço planejado/executado com apontamento de recursos.
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `tipo_operacao_id` |  | uuid | não |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
 
 ## Apêndice — tabelas ainda não curadas
 
@@ -2039,7 +2083,6 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.dfe_documents` | 18 | sim | `empresa_id` | não |
 | `erp.dfe_drafts` | 8 | sim | — | não |
 | `erp.diet_batch_items` | 6 | não | — | não |
-| `erp.diet_batches` | 13 | sim | `empresa_id` | não |
 | `erp.diet_items` | 5 | não | — | não |
 | `erp.diets` | 11 | sim | — | sim |
 | `erp.document_types` | 9 | sim | — | sim |

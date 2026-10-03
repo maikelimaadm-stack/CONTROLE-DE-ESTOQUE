@@ -95,12 +95,15 @@ test("AS-1 — Novo começa pelo tipo de movimento (só os tipos com tela do cat
   await login(page);
   const catalogo = await catalogoPublicado(page);
   const comTela = catalogo.tipos.filter((t) => t.temTela);
-  // Os 9 com documento, o orçamento de compra (F6b), os 3 da movimentação interna (F5b) e os 3 do Financeiro (F9).
-  expect(comTela, "premissa: o catálogo publicado tem 16 tipos com tela").toHaveLength(16);
+  // Os 22: os 9 com documento, o orçamento de compra (F6b), os 3 da movimentação interna (F5b), os 6 de Módulos (F10) e
+  // os 3 do Financeiro (F9).
+  expect(comTela, "premissa: o catálogo publicado tem 22 tipos com tela").toHaveLength(22);
   const familias = await api<{ items: { codigo: string }[] }>(page, "GET", "/api/admin/tipos-operacao/familias");
   expect(familias.items.length, "premissa: o registry (/familias, inteiro) tem mais famílias do que tipos com tela").toBeGreaterThan(comTela.length);
-  const semTela = catalogo.tipos.filter((t) => !t.temTela && t.familia !== null).map((t) => t.familia);
-  expect(semTela.length, "premissa: há tipos COM família e SEM tela (os módulos)").toBeGreaterThan(0);
+  // Todo tipo do catálogo tem tela desde a F10: as famílias que o passo 1 NÃO oferece são as do registry fora do
+  // catálogo (as telas antigas de estoque e a solicitação de compra).
+  const semTela = familias.items.map((f) => f.codigo).filter((f) => !comTela.some((t) => t.familia === f));
+  expect(semTela.length, "premissa: há famílias do registry SEM tela no passo 1 (as telas antigas)").toBeGreaterThan(0);
 
   await abrirTelaDeTops(page);
   const codigo = codigoTopE2E();
@@ -115,11 +118,12 @@ test("AS-1 — Novo começa pelo tipo de movimento (só os tipos com tela do cat
     await expect(forma.getByTestId("top-aviso-versionamento")).toHaveCount(0);
     await expect(page.getByTestId("top-salvar"), "sem tipo, nada a salvar").toBeDisabled();
 
-    // OS GRUPOS E OS TIPOS: os de hoje, por extenso, e exatamente os com tela do catálogo publicado.
+    // OS GRUPOS E OS TIPOS: os de hoje, por extenso, e exatamente os com tela do catálogo publicado. Desde a F10
+    // (decisão 287) os 6 de Módulos têm tela; o Financeiro continua fora (nenhum tipo dele tem tela).
     const grupos = forma.locator("[data-testid^='top-assistente-grupo-']");
-    await expect(grupos, "Módulos não aparece: nenhum tipo dele tem tela").toHaveCount(4);
+    await expect(grupos, "os 5 grupos: todo grupo tem tipo com tela").toHaveCount(5);
     expect(await grupos.evaluateAll((gs) => gs.map((g) => g.getAttribute("data-testid"))))
-      .toEqual(["top-assistente-grupo-vendas", "top-assistente-grupo-compras", "top-assistente-grupo-movimentacao_interna", "top-assistente-grupo-financeiro"]);
+      .toEqual(["top-assistente-grupo-vendas", "top-assistente-grupo-compras", "top-assistente-grupo-movimentacao_interna", "top-assistente-grupo-modulos", "top-assistente-grupo-financeiro"]);
     await expect(forma.getByTestId("top-assistente-grupo-vendas").getByRole("heading")).toHaveText("Vendas");
     await expect(forma.getByTestId("top-assistente-grupo-movimentacao_interna").getByRole("heading")).toHaveText("Movimentação interna");
     const botoes = (g: string) => forma.getByTestId(`top-assistente-grupo-${g}`).locator("[data-testid^='top-assistente-tipo-']");
@@ -127,6 +131,8 @@ test("AS-1 — Novo começa pelo tipo de movimento (só os tipos com tela do cat
     await expect(botoes("compras")).toHaveText(["Pedido", "Orçamento", "Compra"]);
     // A movimentação interna na ordem do catálogo: as três da F5a (com tela desde a F5b) antes das quatro de antes.
     await expect(botoes("movimentacao_interna")).toHaveText(["Requisição", "Consumo", "Devolução de consumo", "Entrada", "Saída/baixa", "Transferência", "Ajuste"]);
+    await expect(forma.getByTestId("top-assistente-grupo-modulos").getByRole("heading")).toHaveText("Módulos");
+    await expect(botoes("modulos")).toHaveText(["Abastecimento", "Manutenção", "Ordem de serviço", "Manejo", "Batelada", "Produção de ração"]);
     // OPERACOES-01 F9 (decisão 286): o Financeiro ganhou tela (o lançamento avulso e o movimento escolhem a TOP primeiro).
     await expect(forma.getByTestId("top-assistente-grupo-financeiro").getByRole("heading")).toHaveText("Financeiro");
     await expect(botoes("financeiro")).toHaveText(["Conta a pagar", "Conta a receber", "Movimento bancário"]);

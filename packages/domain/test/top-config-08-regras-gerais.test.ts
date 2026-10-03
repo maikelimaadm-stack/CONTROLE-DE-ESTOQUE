@@ -85,6 +85,7 @@ const ALTERACAO_COMPRA = "Alterar uma compra confirmada ainda não tem execuçã
 const ALTERACAO_ESTOQUE = "Documento de estoque confirmado não se altera: cancele e lance outro.";
 const APROVACAO_VALOR_ESTOQUE = "O valor do documento de estoque só é conhecido na confirmação: use \"Sempre\".";
 const APROVACAO_SEM_CONFIRMACAO = "A aprovação acontece antes da confirmação, e este documento não é confirmado.";
+const MODULO = "O lançamento deste módulo não executa esta regra: ele move o estoque ao gravar (a ordem de serviço, ao finalizar).";
 
 const linha = (
   familia: string,
@@ -107,6 +108,9 @@ const orcamentoOuPedido = (familia: string) => linha(familia,
 /** OPERACOES-01 F6a (decisão 283): o pedido de compra — como o pedido, mas a aprovação vale inteira (ao finalizar). */
 const pedidoDeCompra = (familia: string) => linha(familia,
   [["manual"], NAO_CONFIRMADO], [["proibido"], SEM_ITENS_ORCAMENTO_PEDIDO], [["bloqueada"], NAO_CONFIRMADO], [["nenhuma", "sempre", "por_valor"], null]);
+/** OPERACOES-01 F10 (decisão 287): os módulos com TOP — só o neutro, com o motivo do módulo. */
+const modulo = (familia: string) => linha(familia,
+  [["manual"], MODULO], [["proibido"], MODULO], [["bloqueada"], MODULO], [["nenhuma"], MODULO]);
 const outra = (familia: string) => linha(familia,
   [["manual"], SEM_DOCUMENTO], [["proibido"], SEM_DOCUMENTO], [["bloqueada"], SEM_DOCUMENTO], [["nenhuma"], SEM_DOCUMENTO]);
 
@@ -122,13 +126,20 @@ const ESPERADA: ItemMatrizRegrasGeraisTop[] = [
   estoque("estoque.requisicao_material"),
   estoque("estoque.consumo"),
   estoque("estoque.devolucao_consumo"),
+  // OPERACOES-01 F10 (decisão 287): os seis módulos com TOP, depois das sete do estoque e antes do orçamento de venda.
+  modulo("frota_ativos.abastecimento"),
+  modulo("frota_ativos.manutencao"),
+  modulo("ordens_servico.ordem_de_servico"),
+  modulo("pecuaria.manejo"),
+  modulo("confinamento.batelada"),
+  modulo("estoque.producao_de_racao"),
   orcamentoOuPedido("vendas.orcamento"),
   orcamentoOuPedido("vendas.pedido"),
   pedidoDeCompra("compras.pedido"),
   orcamentoOuPedido("compras.orcamento"),
 ];
 
-/** "Outra família": as 8 antigas de estoque, a solicitação de compra e o financeiro. */
+/** "Outra família": as 7 antigas de estoque (a produção de ração é módulo desde a F10), a solicitação de compra e o financeiro. */
 const OUTRAS = [
   "estoque.entrada_manual",
   "estoque.documento_fiscal",
@@ -137,14 +148,13 @@ const OUTRAS = [
   "estoque.devolucao",
   "estoque.transferencia_entre_armazens",
   "estoque.transferencia_entre_empresas",
-  "estoque.producao_de_racao",
   "compras.solicitacao",
   "financeiro.conta_a_pagar",
   "financeiro.conta_a_receber",
 ];
 
 describe("TOP-CONFIG-08 — a matriz por família (MATRIZ_REGRAS_GERAIS_TOP)", () => {
-  it("tem exatamente as 13 famílias, na ordem, com os aceitos e os motivos exatos", () => {
+  it("tem exatamente as 19 famílias (13 + os 6 módulos da F10), na ordem, com os aceitos e os motivos exatos", () => {
     expect(MATRIZ_REGRAS_GERAIS_TOP.map((m) => m.familia)).toEqual(ESPERADA.map((m) => m.familia));
     expect(clonar(MATRIZ_REGRAS_GERAIS_TOP)).toEqual(ESPERADA);
   });
@@ -158,7 +168,7 @@ describe("TOP-CONFIG-08 — a matriz por família (MATRIZ_REGRAS_GERAIS_TOP)", (
     expect(clonar(regrasGeraisDaFamiliaTop(familia))).toEqual(outra(familia));
   });
 
-  it("toda família do registry fora da matriz cai no padrão, e as 11 'outras' são famílias declaradas", () => {
+  it("toda família do registry fora da matriz cai no padrão, e as 10 'outras' são famílias declaradas", () => {
     for (const f of OUTRAS) expect(CODIGOS_TIPO_OPERACAO).toContain(f);
     for (const m of ESPERADA) expect(CODIGOS_TIPO_OPERACAO).toContain(m.familia);
     const fora = CODIGOS_TIPO_OPERACAO.filter((c) => !ESPERADA.some((m) => m.familia === c));
@@ -208,11 +218,11 @@ describe("TOP-CONFIG-08 — validarRegrasGeraisTop (o 422 da gravação no forma
     for (const v of POLITICAS_APROVACAO) if (!m.aprovacao.aceitos.includes(v)) casos.push([m.familia, "aprovacao.politica", { politica: v }, m.aprovacao.motivo!]);
   }
 
-  it("a tabela de casos cobre as 13 famílias (nenhuma aceita tudo: a alteração é sempre Bloqueada)", () => {
-    expect(new Set(casos.map((c) => c[0])).size).toBe(13);
-    // venda/compra: 1 cada; estoque (7 espécies, F5a): 3 cada; orçamento e pedido de venda e orçamento de compra: 5
-    // cada; pedido de compra: 3 (a aprovação vale inteira, ao finalizar — F6a)
-    expect(casos.length).toBe(2 * 1 + 7 * 3 + 3 * 5 + 1 * 3);
+  it("a tabela de casos cobre as 19 famílias (nenhuma aceita tudo: a alteração é sempre Bloqueada)", () => {
+    expect(new Set(casos.map((c) => c[0])).size).toBe(19);
+    // venda/compra: 1 cada; estoque (7 espécies, F5a): 3 cada; os 6 módulos (F10): 5 cada (só o neutro); orçamento e
+    // pedido de venda e orçamento de compra: 5 cada; pedido de compra: 3 (a aprovação vale inteira, ao finalizar — F6a)
+    expect(casos.length).toBe(2 * 1 + 7 * 3 + 6 * 5 + 3 * 5 + 1 * 3);
   });
 
   it.each(casos)("%s — %s fora da matriz → combinacao_nao_suportada com o motivo exato", (familia, caminho, regras, mensagem) => {

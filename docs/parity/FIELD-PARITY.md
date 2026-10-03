@@ -1,6 +1,6 @@
 # Paridade de Campos
 
-_Gerado por `node scripts/parity.mjs` em 2026-10-02 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação) · UNIFICADO (tela absorvida como aba/filtro/ação de uma área unificada — ver docs/UX-ARCHITECTURE.md; a rota antiga redireciona)._
+_Gerado por `node scripts/parity.mjs` em 2026-10-03 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação) · UNIFICADO (tela absorvida como aba/filtro/ação de uma área unificada — ver docs/UX-ARCHITECTURE.md; a rota antiga redireciona)._
 
 Comparação quantitativa por tela: campos de formulário / filtros / colunas observados na referência × campos declarados no nosso código (registro declarativo de cadastros em packages/domain/src/resources ou `<Field>` nas páginas). A comparação nome-a-nome está em docs/reference/screens/*.md (referência) e nos próprios registries (nosso). Diferenças intencionais: campos de marketing/licença omitidos; campos calculados exibidos no detalhe e não no formulário.
 
@@ -354,7 +354,7 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-378 | Devolução do Estoque | `/estoque/devolucoes/new` | 12 | 0 | 0 | 4 | TESTADO |
 | SCR-379 | Transferência de Armazém | `/estoque/transferencias/new?kind=warehouse` | 14 | 0 | 8 | 10 | TESTADO |
 | SCR-380 | Transferência de Armazém entre Fazendas | `/estoque/transferencias/new?kind=farm` | 30 | 0 | 18 | 10 | TESTADO |
-| SCR-382 | Batida | `/estoque/batidas/new` | 14 | 0 | 0 | 8 | IMPLEMENTADO |
+| SCR-382 | Batida | `/estoque/batidas/new` | 14 | 0 | 0 | 0 | IMPLEMENTADO |
 | SCR-383 | Eventos | `/cadastros/hr_events/new` | 7 | 0 | 0 | 7 | IMPLEMENTADO |
 | SCR-385 | Eventos | `/cadastros/hr_events/[id]` | 7 | 0 | 0 | 7 | IMPLEMENTADO |
 | SCR-386 | Funções | `/cadastros/job_functions/new` | 7 | 0 | 0 | 7 | IMPLEMENTADO |
@@ -397,19 +397,19 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-427 | Curral | `/cadastros/feedlot_corrals/new` | 38 | 0 | 0 | 6 | IMPLEMENTADO |
 | SCR-428 | Dieta | `/cadastros/diets/new` | 18 | 0 | 7 | 6 | IMPLEMENTADO |
 | SCR-429 | Fases/Regras de Troca | `/cadastros/feeding_phases/new` | 10 | 0 | 0 | 6 | IMPLEMENTADO |
-| SCR-430 | Novo Batelada | `/confinamento/bateladas/new` | 6 | 0 | 0 | — | IMPLEMENTADO |
+| SCR-430 | Novo Batelada | `/confinamento/bateladas/new` | 6 | 0 | 0 | 0 | IMPLEMENTADO |
 | SCR-431 | Fornecimento de Trato | `/confinamento/trato/new` | 2 | 0 | 0 | — | IMPLEMENTADO |
 | SCR-432 | Nova Leitura de Cocho | `/confinamento/leitura-cocho/new` | 2 | 0 | 0 | — | IMPLEMENTADO |
 | SCR-433 | Pluviometria | `/cadastros/rainfalls/new` | 4 | 0 | 0 | 4 | IMPLEMENTADO |
 | SCR-434 | Orçamentos | `/vendas/budgets/new` | 67 | 0 | 3 | 1 | TESTADO |
 | SCR-435 | Pedidos | `/vendas/orders/new` | 63 | 0 | 3 | 1 | TESTADO |
 | SCR-436 | Vendas | `/vendas/sales/new` | 26 | 0 | 0 | 1 | TESTADO |
-| SCR-437 | Identificação da OS | `/os/new` | 41 | 0 | 0 | 11 | IMPLEMENTADO |
+| SCR-437 | Identificação da OS | `/os/new` | 41 | 0 | 0 | 0 | IMPLEMENTADO |
 | SCR-438 | Gestão de Contrato | `/cadastros/contracts/new` | 13 | 0 | 0 | 12 | IMPLEMENTADO |
 | SCR-439 | Categorias | `/financeiro/previsao-orcamentaria/new` | 2956 | 0 | 15 | — | IMPLEMENTADO |
 | SCR-440 | Congelamento Financeiro | `/cadastros/financial_freezes/new` | 4 | 0 | 0 | 4 | TESTADO |
-| SCR-441 | Manutenções | `/frota/manutencoes/new` | 23 | 0 | 0 | 12 | IMPLEMENTADO |
-| SCR-442 | Abastecimentos | `/frota/abastecimentos/new` | 18 | 0 | 0 | 14 | TESTADO |
+| SCR-441 | Manutenções | `/frota/manutencoes/new` | 23 | 0 | 0 | 0 | IMPLEMENTADO |
+| SCR-442 | Abastecimentos | `/frota/abastecimentos/new` | 18 | 0 | 0 | 0 | TESTADO |
 | SCR-443 | Manutenções Preventivas | `/cadastros/preventive_maintenances/new` | 8 | 0 | 0 | 7 | IMPLEMENTADO |
 | SCR-444 | Transferência de Máquinas | `/frota/transferencias/new` | 8 | 0 | 0 | — | IMPLEMENTADO |
 | SCR-445 | LCDPR - Livro Caixa Digital do Produtor Rural | `/dashboards/livro-caixa/new` | 8 | 0 | 0 | — | EM IMPLEMENTAÇÃO |

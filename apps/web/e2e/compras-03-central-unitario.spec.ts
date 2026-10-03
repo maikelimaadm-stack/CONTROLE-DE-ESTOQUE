@@ -26,7 +26,7 @@ import { colunasDoEditor, estruturaComExigidos, zonasDaCentral } from "../src/fe
  * linha (`chamada`, a posição no arquivo), e o `fields` literal de cada linha tem de estar DENTRO daquela chamada —
  * uma segunda chamada num arquivo que já está na tabela reprova. A do MOTOR (`COMBINACOES_DO_MOTOR`) cobra o mesmo de
  * quem desenha a grade do motor (`features/central/itens.tsx`), com as chaves que mudam o que ele faz —
- * `armazemPorItem`, `armazemForcado`, `custoMedioNoUnitario`, `lote`, `daOrigem`, `pesquisaDeProduto` — lidas na
+ * `armazemPorItem`, `armazemForcado`, `custoMedioNoUnitario`, `lote`, `daOrigem`, `pesquisaDeProduto`, `linhaUnica` — lidas na
  * chamada INTEIRA (a leitura equilibra as chaves `{…}`: um `/>` dentro de uma prop não a corta). E
  * `COMBINACOES_DA_COMPRA` mede as colunas que a compra ENTREGA ao motor em cada combinação de layout × regra × lote: `colunasDoEditor` é a função REAL (importada),
  * mas as colunas FORÇADAS que a compra lhe passa são uma RÉPLICA escrita à mão (`forcadasDaCompra`, abaixo), porque a
@@ -53,7 +53,6 @@ const visivelPor = (fields: readonly ColunaDoEditorDeItens[], comOrigem: boolean
  * nenhuma tela usa.
  */
 const COMBINACOES: { onde: string; arquivo: string | null; chamada: number | null; fields: ColunaDoEditorDeItens[]; comOrigem: boolean }[] = [
-  { onde: "frota/manutencoes", arquivo: "src/app/(app)/frota/manutencoes/new/page.tsx", chamada: 1, fields: ["warehouse", "product", "stock", "quantity", "unit_value"], comOrigem: false },
   { onde: "estoque/devolucoes (com lote)", arquivo: "src/app/(app)/estoque/devolucoes/new/page.tsx", chamada: 1, fields: ["warehouse", "product", "quantity", "unit_value", "lot", "expiration", "cost_center"], comOrigem: false },
   { onde: "estoque/devolucoes (sem lote)", arquivo: "src/app/(app)/estoque/devolucoes/new/page.tsx", chamada: 1, fields: ["warehouse", "product", "quantity", "unit_value", "cost_center"], comOrigem: false },
   { onde: "estoque/baixas", arquivo: "src/app/(app)/estoque/baixas/new/page.tsx", chamada: 1, fields: ["product", "stock", "quantity", "lot"], comOrigem: false },
@@ -66,7 +65,9 @@ const COMBINACOES: { onde: string; arquivo: string | null; chamada: number | nul
   { onde: "limite · mínimo", arquivo: null, chamada: null, fields: ["product"], comOrigem: false },
   { onde: "limite · todas com origem", arquivo: null, chamada: null, fields: ["warehouse", "product", "stock", "quantity", "unit_value", "discount", "discount_percent", "generate_stock", "lot", "expiration", "financial_category", "cost_center"], comOrigem: true }
 ];
-test("as 11 combinações estão na tabela", () => { expect(COMBINACOES).toHaveLength(11); });
+// OPERACOES-01 F10 (decisão 287): a manutenção deixou o editor (a página é a Central do módulo, com a grade do motor por
+// máquina) — a linha "frota/manutencoes" saiu daqui e a chamada entrou na tabela do motor (`itens-do-modulo.tsx`).
+test("as 10 combinações estão na tabela", () => { expect(COMBINACOES).toHaveLength(10); });
 
 /* ─────────────── a contagem conferida contra o repositório ─────────────── */
 
@@ -214,7 +215,7 @@ test.describe("colunasDoEditor", () => {
  * expressão EXATA entre chaves (`custoMedioNoUnitario={false}` → "false").
  */
 type ChaveDaChamada = "ausente" | "ligada" | string;
-const CHAVES_DO_MOTOR = ["armazemPorItem", "armazemForcado", "custoMedioNoUnitario", "lote", "daOrigem", "pesquisaDeProduto", "linhaNovaEmBranco", "subtotal"] as const;
+const CHAVES_DO_MOTOR = ["armazemPorItem", "armazemForcado", "custoMedioNoUnitario", "lote", "daOrigem", "pesquisaDeProduto", "linhaNovaEmBranco", "subtotal", "linhaUnica"] as const;
 
 /**
  * AS CHAMADAS DO MOTOR (`ItensDaCentral` de `features/central/itens.tsx`) no repositório e o que cada uma liga. O que
@@ -232,12 +233,17 @@ const CHAVES_DO_MOTOR = ["armazemPorItem", "armazemForcado", "custoMedioNoUnitar
  *   coluna Estoque para quem vê o saldo daquele local; `PESQUISA_DE_PRODUTO_DA_SAIDA` liga "Só com saldo neste local"
  *   (`com_saldo=true`) e `PESQUISA_DE_PRODUTO_DA_ENTRADA` mostra tudo, com o saldo. Sem a capacidade (a API anterior),
  *   a pesquisa de hoje, `/api/resources/products/options`, idêntica. Ausente = entrada (o receber pedido não pesquisa
- *   produto: ele vem travado do pedido).
+ *   produto: ele vem travado do pedido);
  * - `linhaNovaEmBranco` (padrão `false`) — a linha nova nasce com a quantidade e o unitário VAZIOS (OPERACOES-01 F5b,
  *   decisão 282: o documento de estoque não inventa quantidade); ausente, a linha de sempre ("1" e "0");
- * - `subtotal` (padrão `true`) — `false` tira o "Subtotal dos itens" do rodapé (o documento de estoque não tem valor).
+ * - `subtotal` (padrão `true`) — `false` tira o "Subtotal dos itens" do rodapé (o documento de estoque não tem valor);
+ * - `linhaUnica` (padrão `false`) — uma linha só, sem Adicionar, Duplicar e Remover (o abastecimento, OPERACOES-01
+ *   F10). É a ÚNICA chave que a linha da tabela pode omitir: omitida = "ausente" (o padrão do motor), e a prova é a
+ *   mesma — a chamada não pode trazê-la. Assim as Centrais que não a usam (as de antes da F10 e as que entram junto com
+ *   ela) não precisam declará-la; quem a liga (os módulos) a declara.
  */
-const COMBINACOES_DO_MOTOR: ({ onde: string; arquivo: string; prova: string } & Record<(typeof CHAVES_DO_MOTOR)[number], ChaveDaChamada>)[] = [
+type ChaveDoMotor = (typeof CHAVES_DO_MOTOR)[number];
+const COMBINACOES_DO_MOTOR: ({ onde: string; arquivo: string; prova: string } & Record<Exclude<ChaveDoMotor, "linhaUnica">, ChaveDaChamada> & { linhaUnica?: ChaveDaChamada })[] = [
   {
     onde: "Central de Vendas", arquivo: "src/features/sales/central-vendas-itens.tsx", prova: "CX-3 (o unitário vazio vira o custo médio), F3B-V2 (a saída só com saldo)",
     armazemPorItem: "ausente", armazemForcado: "ausente", custoMedioNoUnitario: "ausente", lote: "ausente", daOrigem: "ausente",
@@ -263,9 +269,17 @@ const COMBINACOES_DO_MOTOR: ({ onde: string; arquivo: string; prova: string } & 
     prova: "MI-W1 (o consumo da requisição: Saldo e produto travado), ES-W1 (a linha nova em branco e sem subtotal), F5B-M1 (vendas e compras com a linha de sempre)",
     armazemPorItem: "false", armazemForcado: "ausente", custoMedioNoUnitario: "false", lote: "controleDeLote", daOrigem: "daOrigem",
     pesquisaDeProduto: "pesquisaDeProduto", linhaNovaEmBranco: "ligada", subtotal: "false"
+  },
+  {
+    // OPERACOES-01 F10 (decisão 287): o ÚNICO arquivo dos módulos que importa o motor — cada Central de módulo desenha a
+    // grade por ele (a manutenção, uma por máquina; a OS, Insumos e EPIs), com as chaves vindas das props
+    onde: "Centrais dos módulos (abastecimento, manutenção, OS, batelada, produção de ração)", arquivo: "src/features/modulos/itens-do-modulo.tsx",
+    prova: "F10-A1 (uma linha), F10-M1 (uma grade por máquina), F10-B1 e F10-R1 (itens da dieta e da fórmula)",
+    armazemPorItem: "armazemPorItem", armazemForcado: "ausente", custoMedioNoUnitario: "ausente", lote: "ausente", daOrigem: "daOrigem",
+    pesquisaDeProduto: "PESQUISA_DE_PRODUTO_DA_SAIDA", linhaNovaEmBranco: "ausente", subtotal: "ausente", linhaUnica: "linhaUnica"
   }
 ];
-test("as 5 chamadas do motor estão na tabela", () => { expect(COMBINACOES_DO_MOTOR).toHaveLength(5); });
+test("as 6 chamadas do motor estão na tabela", () => { expect(COMBINACOES_DO_MOTOR).toHaveLength(6); });
 
 /** O nome com que o arquivo importa o motor (`ItensDaCentral`, ou o apelido do `as`), ou `null` se não o importa. */
 function nomeDoMotorNoArquivo(arquivo: string, texto: string): string | null {
@@ -301,7 +315,7 @@ test.describe("o motor da Central", () => {
       const chamada = chamadaDoMotor(x.arquivo);
       expect(chamada, "premissa: a chamada lida é a do motor, com o prefixo dos testids").toMatch(/\bprefixoTestid=\{/);
       for (const chave of CHAVES_DO_MOTOR) {
-        const esperado = x[chave];
+        const esperado = x[chave] ?? "ausente";
         const presente = new RegExp(`\\s${chave}(?=[\\s=/])`).test(chamada);
         if (esperado === "ausente") expect(presente, `${chave} ausente: vale o padrão do motor`).toBe(false);
         else if (esperado === "ligada") expect(new RegExp(`\\s${chave}(?=[\\s/])`).test(chamada), `${chave} na forma curta (true)`).toBe(true);

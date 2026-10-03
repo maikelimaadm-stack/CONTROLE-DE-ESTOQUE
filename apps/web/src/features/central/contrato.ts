@@ -329,6 +329,11 @@ export interface PropsDosItens {
   /** Desligado por padrão. */
   daOrigem?: ItensDaOrigem | null;
   /**
+   * OPERACOES-01 F10 (decisão 287): UMA linha só (o abastecimento) — sem Adicionar, Duplicar e Remover; a linha nasce
+   * com a página. Padrão `false` (o de hoje).
+   */
+  linhaUnica?: boolean;
+  /**
    * OPERACOES-01 F5b (decisão 282): a linha nova nasce com a quantidade e o valor unitário VAZIOS — nada inventado (a
    * contagem do ajuste nunca nasce "1"; o custo vazio da entrada é "use o custo médio"); a quantidade vazia da célula
    * não ativa aparece "—", nunca "0". Padrão `false`: a linha de hoje ("1" e "0").
