@@ -2720,6 +2720,16 @@ Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registro
 identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.
 
 
+## CADASTRO-AREAS-02 — unificação mapa × áreas (0051)
+
+Decisão 291. **Uma migration: `0051_areas_mapa_unificado.sql`** (pre-deploy; trava (2026,85), `lock_timeout` 2 s, pré/pós-condições nomeadas `CADASTRO-AREAS-02: …`).
+
+**Efeito:** `erp.areas.geometria` (GeoJSON Polygon); acervo vivo de `erp.mapa_areas` migra para `erp.areas` e é soft-deleted. A tabela `mapa_areas` NÃO é dropada (skew do binário MAPA-01). A UI nova grava só em `areas`.
+
+**Impacto em dados reais:** linhas de `mapa_areas` passam a existir também como `areas` (novo código sequencial); as originais ficam com `deleted_at` preenchido — nada é apagado (decisão 247). Efeito novo desligado no sentido de que o binário antigo ainda pode criar `mapa_areas` órfãs durante o skew; a UI nova não as lista.
+
+**Ordem:** BANCO → API → WEB. Merge depois da 0050 (CADASTRO-AREAS-01).
+
 ## CADASTRO-AREAS-01 — retiro, tipo de uso e área útil (0050)
 
 Decisão 290. **Uma migration: `0050_cadastro_de_areas.sql`** (pre-deploy; trava (2026,84), `lock_timeout` 2 s, pré/pós-condições nomeadas `CADASTRO-AREAS-01: …`, não destrutiva no sentido de apagar dado).

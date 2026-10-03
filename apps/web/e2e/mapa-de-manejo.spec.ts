@@ -7,12 +7,12 @@ import { api, login, uniq } from "./helpers";
 test.use({ launchOptions: { ...(process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {}), args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist"] } });
 
 async function limparAreas(page: Page) {
-  const lista = await api<{ items: { id: string }[] }>(page, "GET", "/api/resources/mapa_areas?pageSize=500");
+  const lista = await api<{ items: { id: string }[] }>(page, "GET", "/api/resources/areas?pageSize=500");
   const base = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333";
   for (const a of lista.items ?? []) {
     await page.evaluate(async ({ id, base }) => {
       const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string | null; empresaId: string | null };
-      const res = await fetch(`${base}/api/resources/mapa_areas/${id}`, {
+      const res = await fetch(`${base}/api/resources/areas/${id}`, {
         method: "DELETE",
         headers: {
           authorization: `Bearer ${s.token}`,
@@ -20,7 +20,7 @@ async function limparAreas(page: Page) {
           ...(s.empresaId ? { "x-empresa-id": s.empresaId } : {})
         }
       });
-      if (!res.ok) throw new Error(`DELETE mapa_areas ${id}: ${res.status}`);
+      if (!res.ok) throw new Error(`DELETE areas ${id}: ${res.status}`);
     }, { id: a.id, base });
   }
 }
@@ -36,7 +36,7 @@ test("o módulo Mapa de Manejo abre e lista as áreas", async ({ page }) => {
 
 test.describe("editor de desenho do Mapa de Manejo", () => {
   const L = 100;
-  type Area = { nome: string; cor: string | null; geometria: { type: string; coordinates: number[][][] } | null };
+  type Area = { name: string; color: string | null; geometria: { type: string; coordinates: number[][][] } | null };
 
   async function abrirEditor(page: Page) {
     const nova = page.getByTestId("mapa-nova-area");
@@ -139,11 +139,11 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
             unproject: (p: [number, number]) => { lng: number; lat: number };
             fire: (type: string, ev: Record<string, unknown>) => void;
           };
-          __mapaAreasE2E?: { nome: string; geometria: { coordinates: number[][][] } | null }[];
+          __mapaAreasE2E?: { name: string; geometria: { coordinates: number[][][] } | null }[];
         };
         const m = w.__mapaManejoE2E;
         if (!m) throw new Error("mapa e2e não exposto");
-        const area = (w.__mapaAreasE2E ?? []).find((a) => a.nome === nome) ?? (w.__mapaAreasE2E ?? [])[0];
+        const area = (w.__mapaAreasE2E ?? []).find((a) => a.name === nome) ?? (w.__mapaAreasE2E ?? [])[0];
         const anel = area?.geometria?.coordinates?.[0] ?? [];
         if (anel.length < 3) throw new Error("área vizinha sem anel");
         const v0 = anel[0]!, v1 = anel[1]!;
@@ -187,13 +187,13 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
     await page.getByTestId("mapa-form-salvar").click();
     await expect(page.getByTestId("mapa-item-area").filter({ hasText: segunda })).toBeVisible();
 
-    const lista = await api<{ items: Area[] }>(page, "GET", "/api/resources/mapa_areas?pageSize=500");
-    expect(lista.items.find((a) => a.nome === primeira)?.cor, "a cor escolhida na paleta é a gravada").toBe("#92ca25");
-    const gravada = lista.items.find((a) => a.nome === segunda);
+    const lista = await api<{ items: Area[] }>(page, "GET", "/api/resources/areas?pageSize=500");
+    expect(lista.items.find((a) => a.name === primeira)?.color, "a cor escolhida na paleta é a gravada").toBe("#92ca25");
+    const gravada = lista.items.find((a) => a.name === segunda);
     const anel = gravada?.geometria?.coordinates[0] ?? [];
     expect(anel.length, "polígono canônico: 3 pontos + o de fechamento").toBe(4);
     const v = anel[0]!;
-    const vizinhas = lista.items.filter((a) => a.nome !== segunda);
+    const vizinhas = lista.items.filter((a) => a.name !== segunda);
     expect(vizinhas.some((a) => (a.geometria?.coordinates[0] ?? []).some((c) => c[0] === v[0] && c[1] === v[1])), "o vértice grudado tem de ser idêntico ao da vizinha").toBe(true);
 
     // ---------- edição da ficha ----------
@@ -204,8 +204,8 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
     await page.getByTestId("mapa-edit-cor").getByRole("radio", { name: "Laranja", exact: true }).click();
     await page.getByTestId("mapa-edit-salvar").click();
     await expect(page.getByTestId("mapa-item-area").filter({ hasText: editado })).toBeVisible();
-    const apos = await api<{ items: Area[] }>(page, "GET", "/api/resources/mapa_areas?pageSize=500");
-    expect(apos.items.find((a) => a.nome === editado)?.cor).toBe("#f5a01b");
+    const apos = await api<{ items: Area[] }>(page, "GET", "/api/resources/areas?pageSize=500");
+    expect(apos.items.find((a) => a.name === editado)?.color).toBe("#f5a01b");
   });
 });
 
@@ -219,10 +219,10 @@ test("importação KML mini cria áreas brancas com nomes do arquivo", async ({ 
   await expect(page.getByTestId("mapa-importacao-progresso")).toContainText(/concluída/i, { timeout: 60_000 });
   await expect(page.getByTestId("mapa-item-area").filter({ hasText: "MT - PASTO 06 A" })).toBeVisible();
   await expect(page.getByTestId("mapa-item-area").filter({ hasText: "MT - PASTO 07 A" })).toBeVisible();
-  const lista = await api<{ items: { nome: string; cor: string | null }[] }>(page, "GET", "/api/resources/mapa_areas?pageSize=500");
-  const importadas = lista.items.filter((a) => a.nome.includes("PASTO 06 A") || a.nome.includes("PASTO 07 A"));
+  const lista = await api<{ items: { name: string; color: string | null }[] }>(page, "GET", "/api/resources/areas?pageSize=500");
+  const importadas = lista.items.filter((a) => a.name.includes("PASTO 06 A") || a.name.includes("PASTO 07 A"));
   expect(importadas.length).toBeGreaterThanOrEqual(2);
-  for (const a of importadas) expect(a.cor, "importação sempre branca").toBe("#f8f9fa");
+  for (const a of importadas) expect(a.color, "importação sempre branca").toBe("#f8f9fa");
 });
 
 test("importação KML fazenda_kaiman carrega os polígonos", async ({ page }) => {
@@ -234,8 +234,8 @@ test("importação KML fazenda_kaiman carrega os polígonos", async ({ page }) =
   await page.getByTestId("mapa-importacao-arquivo").setInputFiles("e2e/fixtures/fazenda_kaiman_1-2025-12-11_08-10-39.kml");
   await expect(page.getByTestId("mapa-importacao-progresso")).toContainText(/102/, { timeout: 240_000 });
   await expect(page.getByTestId("mapa-importacao-progresso")).toContainText(/concluída/i, { timeout: 240_000 });
-  const lista = await api<{ items: { nome: string; cor: string | null }[] }>(page, "GET", "/api/resources/mapa_areas?pageSize=500");
+  const lista = await api<{ items: { name: string; color: string | null }[] }>(page, "GET", "/api/resources/areas?pageSize=500");
   expect(lista.items.length, "102 polígonos do KML").toBe(102);
-  expect(lista.items.every((a) => a.cor === "#f8f9fa"), "todas brancas").toBe(true);
-  expect(lista.items.some((a) => a.nome.includes("PASTO"))).toBe(true);
+  expect(lista.items.every((a) => a.color === "#f8f9fa"), "todas brancas").toBe(true);
+  expect(lista.items.some((a) => a.name.includes("PASTO"))).toBe(true);
 });

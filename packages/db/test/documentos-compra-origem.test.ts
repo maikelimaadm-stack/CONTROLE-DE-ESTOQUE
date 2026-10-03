@@ -168,7 +168,7 @@ describe("premissas e catálogo", () => {
     expect(t.map((x) => x.codigo_base)).toEqual(["compras.compra", "compras.pedido"]);
   });
 
-  it("a 0037 é a 37ª migration do ledger; depois dela, a 0038 (COMPRAS-03), a 0039 (EDITAR-01), a 0040 (ESTOQUE-01), a 0041 (TOP-CONFIG-08), a 0049 (MAPA-01) e a 0050 (CADASTRO-AREAS-01)", async () => {
+  it("a 0037 é a 37ª migration do ledger; depois dela, a 0038 (COMPRAS-03), a 0039 (EDITAR-01), a 0040 (ESTOQUE-01), a 0041 (TOP-CONFIG-08), a 0049 (MAPA-01), a 0050 (CADASTRO-AREAS-01) e a 0051 (unificação mapa)", async () => {
     // A posição da 0037 continua sendo a 37ª; a contagem total acompanha a ordem do repositório (a 0038 alarga
     // o CHECK de família dos layouts e fixa o search_path destas funções — layouts-documento-compras.test.ts; a 0039
     // dá versão ao documento de venda — editar-01-versao.test.ts; a 0040 cria o documento de estoque —
@@ -176,7 +176,7 @@ describe("premissas e catálogo", () => {
     // a 0049 cria o mapa de manejo; a 0050 o cadastro de áreas).
     const r = (await db.query<{ ate: number; n: number; ultima: string }>(
       "select count(*) filter (where name <= '0037_receber_pedido_de_compra.sql')::int ate, count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
-    expect(r).toEqual({ ate: 37, n: 43, ultima: "0050_cadastro_de_areas.sql" });
+    expect(r).toEqual({ ate: 37, n: 44, ultima: "0051_areas_mapa_unificado.sql" });
   });
 
   it("colunas novas: tipo e nulidade", async () => {

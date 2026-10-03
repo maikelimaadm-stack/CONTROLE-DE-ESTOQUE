@@ -427,7 +427,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       S("status", "Situação", STATUS_DA_AREA, { required: true, list: true, filter: true, default: "ativa", section: "Identificação", span: 3 }),
       REF("retiro_id", "Retiro", "retiros", { list: true, filter: true, section: "Identificação", span: 4 }),
       REF("grazing_module_id", "Módulo de pastejo", "grazing_modules", { list: true, filter: true, section: "Identificação", span: 4 }),
-      T("color", "Cor", { section: "Identificação", span: 2 }),
+      T("color", "Cor", { section: "Identificação", span: 2, padrao: { regex: "^#[0-9A-Fa-f]{6}$", mensagem: "Informe uma cor no formato #RRGGBB." } }),
       Q("area_ha", "Área total (ha)", { required: true, list: true, section: "Medidas", span: 3 }),
       Q("usable_area_ha", "Área útil (ha)", { required: true, list: true, section: "Medidas", span: 3 }),
       Q("declared_area_ha", "Área declarada (ha)", { section: "Medidas", span: 3 }),
@@ -442,6 +442,8 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       S("relief", "Relevo", RELEVO_DA_AREA, { section: "Solo", span: 3 }),
       S("tenure", "Posse", POSSE_DA_AREA, { required: true, filter: true, default: "propria", section: "Outros", span: 3 }),
       { name: "notes", label: "Observações", type: "textarea", section: "Outros", span: 12 },
+      // CADASTRO-AREAS-02: polígono do Mapa de Manejo — SSOT em erp.areas (não em mapa_areas).
+      { name: "geometria", label: "Geometria (mapa)", type: "json", section: "Mapa", span: 12 },
       active()
     ]
   },
@@ -698,9 +700,9 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     ]
   },
   {
-    // MAPA-01 (decisão 289): cadastro de áreas do Mapa de Manejo. NEUTRO (serve lavoura e pecuária): só nome,
-    // tamanho e cor; a geometria é o polígono GeoJSON desenhado no mapa. Módulo de escopo empresarial "mapa".
-    key: "mapa_areas", label: "Área", labelPlural: "Áreas", table: "mapa_areas", permission: "mapa_areas",
+    // DEPRECATED (CADASTRO-AREAS-02 / decisão 291): mantido só para version skew do binário MAPA-01.
+    // A UI nova grava em `areas`. Acervo migrado e soft-deleted pela 0051.
+    key: "mapa_areas", label: "Área (legado mapa)", labelPlural: "Áreas (legado mapa)", table: "mapa_areas", permission: "mapa_areas",
     labelField: "nome", route: "/cadastros/mapa_areas", softDelete: true, empresaScoped: true, defaultSort: "nome",
     fields: [
       REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }),

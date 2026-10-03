@@ -70,7 +70,7 @@ describe("inventário go-live", () => {
         expect(Number(volume![0]!.animais)).toBe(20);
         // EDITAR-01, ESTOQUE-01, TOP-CONFIG-08, MAPA-01 e CADASTRO-AREAS-01: a contagem e a última
         // migration acompanham a ordem do repositório.
-        expect(ledger![0]).toMatchObject({ migrations: "43", ultima: "0050_cadastro_de_areas.sql" });
+        expect(ledger![0]).toMatchObject({ migrations: "44", ultima: "0051_areas_mapa_unificado.sql" });
         expect(gatilho).toEqual([{ tgname: "trg_sales_documents_execucao_configurada", clausula_r1: true }]);
         expect(versoes).toEqual([{ versoes_com_execucao_configurada: "0" }]);
       } finally { await cli.query("rollback").catch(() => {}); cli.release(); }
