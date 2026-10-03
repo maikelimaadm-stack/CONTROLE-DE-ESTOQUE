@@ -131,7 +131,13 @@ begin
   -- 2.3 A DEFINIÇÃO VIGENTE de cada uma das nove funções substituídas é a da migration que a criou (md5 do corpo,
   -- calculado num banco migrado até a 0041). Um corpo diferente — um hotfix fora do repositório, uma migration
   -- fora de ordem — seria apagado em silêncio pelo CREATE OR REPLACE abaixo: a decisão volta para um humano.
-  if (select md5(p.prosrc) from pg_proc p where p.oid = 'erp.apply_stock_movement()'::regprocedure) is distinct from '4ae47891e483c1ccbdcdc1030959a79c' then
+  -- PROD-FIX-0043 (decisão do Maike, 03/10/2026): a apply_stock_movement de PRODUÇÃO é o corpo da 0003 SEM duas linhas
+  -- de comentário ("-- saída sempre a custo médio corrente…" e "-- cache no produto: custo médio consolidado"), código
+  -- idêntico linha a linha (md5 9bc3083dd02d4a0429b59f7a59f5719f, lido do catálogo de produção). Comparar o texto com
+  -- comentários parou todo deploy desde a #90. Só ESTA variante é aceita além da 0003; qualquer outro corpo continua
+  -- sendo schema divergente — e o CREATE OR REPLACE abaixo substitui as duas pela versão desta migration.
+  if (select md5(p.prosrc) from pg_proc p where p.oid = 'erp.apply_stock_movement()'::regprocedure) is distinct from '4ae47891e483c1ccbdcdc1030959a79c'
+     and (select md5(p.prosrc) from pg_proc p where p.oid = 'erp.apply_stock_movement()'::regprocedure) <> '9bc3083dd02d4a0429b59f7a59f5719f' then
     raise exception 'OPERACOES-01 F5: a definicao vigente de erp.apply_stock_movement nao e a da 0003; schema divergente.';
   end if;
   if (select md5(p.prosrc) from pg_proc p where p.oid = 'erp.products_controle_lote()'::regprocedure) is distinct from 'd44d4d23fc3b0a626ef310ae6fb0b7e5' then

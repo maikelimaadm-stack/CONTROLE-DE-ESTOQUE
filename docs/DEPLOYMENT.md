@@ -4782,6 +4782,37 @@ Decisão 290. **Uma migration: `0050_cadastro_de_areas.sql`** (pre-deploy; trava
 
 **Caminho de volta:** forward-only para as colunas NOT NULL após backfill; reverter exigiria migration nova que afrouxasse as restrições (não faz parte desta fatia).
 
+## PROD-FIX-0043 — deploy da API travado na 0043 desde a #90 (sem migration nova)
+
+**O incidente (03/10/2026, lido nos logs do Railway e no catálogo de produção).** Desde o merge da #90 (15:39 UTC)
+todo deploy da API parou no pre-deploy com `migration 0043_movimentacao_interna_estoque.sql failed: OPERACOES-01 F5:
+a definicao vigente de erp.apply_stock_movement nao e a da 0003; schema divergente.` A 0042 entrou (15:40); a 0043 e
+tudo depois dela, não. A API ficou servindo o código da #91, enquanto o web subiu com a #92 — o par web novo × API
+antiga recusava o cadastro de áreas (422 em `POST /api/resources/areas`).
+
+**A causa.** A pré-condição 2.3 da 0043 compara o md5 do TEXTO da função. Em produção, `erp.apply_stock_movement` é o
+corpo da 0003 SEM duas linhas de comentário (`-- saída sempre a custo médio corrente…` e `-- cache no produto…`) —
+código idêntico linha a linha, md5 `9bc3083dd02d4a0429b59f7a59f5719f` (o repositório esperava `4ae47891…`). As
+outras oito funções conferidas pela 0043 e a `audit_row()` conferida pela 0048 batem EXATAMENTE em produção.
+
+**A correção (decisão do Maike).** A 0043 — mesclada, mas nunca aplicada em ambiente real — passa a aceitar também
+ESSA variante (e só ela); qualquer outro corpo continua schema divergente. O `CREATE OR REPLACE` da própria 0043 troca
+as duas pela versão dela, então o resultado é o mesmo pelos dois caminhos (provado em
+`packages/db/test/prod-fix-0043-variante-producao.test.ts`, com a prova reversa de que sem a correção a variante é
+recusada). Junto, o teste `cadastro-areas-02` da #92 passa a usar uma cor da lista fechada `CORES_DA_AREA`.
+
+**Ordem: merge ANTES da #93** (a 0052 depende da cadeia 0043–0051 aplicada). BANCO → API → WEB: o próximo deploy da
+API aplica no pre-deploy, em ordem de nome, 0043, 0044, 0045, 0046, 0047, 0048, 0050 e 0051 (a 0049 já está lá desde
+a #91). Conferir no log do deploy: `applied 0043…` até `applied 0051…` e o serviço `api` em SUCCESS; depois, um
+cadastro de área pela tela.
+
+**Impacto em dados reais:** o desta correção é nenhum — ela só muda uma pré-condição. O das migrations que ela destrava
+é o declarado nas seções delas (OPERACOES-01, MAPA-01, CADASTRO-AREAS-01/02). Acervo lido em produção hoje: 0 linhas
+em `erp.areas` e em `erp.mapa_areas`, então as cargas da 0050/0051 não têm o que recusar.
+
+**Caminho de volta:** antes do deploy, reverter este commit (nada foi aplicado). Depois do deploy, as migrations
+destravadas seguem o caminho de volta de cada uma (forward-only); a API volta por redeploy da versão anterior.
+
 ## MAPA-01 — Mapa de Manejo: módulo neutro e cadastro de áreas (decisão 289)
 
 **Migration 0049 (`0049_mapa_de_manejo.sql`, trava `(2026,83)`).** Cria o módulo de escopo empresarial `mapa`
