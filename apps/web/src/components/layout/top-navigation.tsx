@@ -136,7 +136,7 @@ export function TopNavigation({ onFocusSearch }: { onFocusSearch?: React.Mutable
   return <>
     <header ref={headerRef} className="mg-topnav no-print" onMouseLeave={scheduleClose} onMouseEnter={cancelClose}>
       <Link href="/" className="mg-topnav__brand" onClick={(e) => { e.preventDefault(); go("/"); }} aria-label="Início"><span className="mg-topnav__logo"><Hexagon className="h-3.5 w-3.5" strokeWidth={2.4} /></span><span className="mg-topnav__brand-name">Agro ERP</span></Link>
-      <nav ref={navRef} className="mg-topnav__modules" aria-label="Menu principal" data-testid="nav-barra">
+      <nav ref={navRef} className="barra-modulos" aria-label="Menu principal" data-testid="nav-barra">
         {shown.map(moduleButton)}
         {overflow.length > 0 && <div className="relative flex">
           <button type="button" className={cn("mg-topnav__module", (moreOpen || overflow.some((m) => m.id === open)) && "is-open")} aria-haspopup="true" aria-expanded={moreOpen} aria-label={`Mais módulos (${overflow.length})`} data-testid="nav-more" onClick={() => { setMoreOpen((o) => !o); setOpen(null); }}><MoreHorizontal className="h-3.5 w-3.5" /><span>Mais</span></button>

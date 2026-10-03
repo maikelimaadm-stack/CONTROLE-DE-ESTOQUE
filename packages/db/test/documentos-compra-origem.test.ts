@@ -173,7 +173,7 @@ describe("premissas e catálogo", () => {
     expect(t.map((x) => x.codigo_base)).toEqual(["compras.compra", "compras.pedido"]);
   });
 
-  it("a 0037 é a 37ª migration do ledger; depois dela, a 0038 (COMPRAS-03), a 0039 (EDITAR-01), a 0040 (ESTOQUE-01), a 0041 (TOP-CONFIG-08), a 0042 (OPERACOES-01 F8), a 0043 (OPERACOES-01 F5a), a 0044 (OPERACOES-01 F6a), a 0045 (OPERACOES-01 F9), a 0046 (OPERACOES-01 F10) e a 0047 (OPERACOES-01 F7)", async () => {
+  it("a 0037 é a 37ª migration do ledger; depois dela, a 0038 (COMPRAS-03), a 0039 (EDITAR-01), a 0040 (ESTOQUE-01), a 0041 (TOP-CONFIG-08), a 0042 (OPERACOES-01 F8), a 0043 (OPERACOES-01 F5a), a 0044 (OPERACOES-01 F6a), a 0045 (OPERACOES-01 F9), a 0046 (OPERACOES-01 F10), a 0047 (OPERACOES-01 F7) e a 0049 (MAPA-01)", async () => {
     // A posição da 0037 continua sendo a 37ª; a contagem total acompanha a ordem do repositório (a 0038 alarga
     // o CHECK de família dos layouts e fixa o search_path destas funções — layouts-documento-compras.test.ts; a 0039
     // dá versão ao documento de venda — editar-01-versao.test.ts; a 0040 cria o documento de estoque —
@@ -183,10 +183,11 @@ describe("premissas e catálogo", () => {
     // v3/v2 — pedido finalizado e orçamento de compra — compras-f6a-0044.test.ts; a 0045 liga o financeiro à TOP e cria o
     // imóvel rural do LCDPR — operacoes-01-0045.test.ts; a 0046 dá a TOP aos módulos com produto —
     // operacoes-01-f10-modulos-top.test.ts; a 0047 dá à compra a entrada
-    // de nota por XML e a guarda dos dados fiscais — operacoes-01-0047.test.ts).
+    // de nota por XML e a guarda dos dados fiscais — operacoes-01-0047.test.ts; a 0049 cria o Mapa de
+    // Manejo — MAPA-01, #91; a maior por NOME, embora em produção tenha sido aplicada antes das 0042–0047).
     const r = (await db.query<{ ate: number; n: number; ultima: string }>(
       "select count(*) filter (where name <= '0037_receber_pedido_de_compra.sql')::int ate, count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
-    expect(r).toEqual({ ate: 37, n: 47, ultima: "0047_entrada_de_nota_por_xml.sql" });
+    expect(r).toEqual({ ate: 37, n: 48, ultima: "0049_mapa_de_manejo.sql" });
   });
 
   it("colunas novas: tipo e nulidade", async () => {

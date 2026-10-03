@@ -228,7 +228,10 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     // observação da manutenção e troca a política de `erp.maintenance_items` — nada no recorte que a purga lê.
     // A OPERACOES-01 F7 é a trigésima primeira: a 0047 cria as tabelas da entrada de nota por XML, acrescenta colunas
     // anuláveis à compra e as guardas da chave de acesso — nada no recorte que a purga lê.
-    expect(noDisco.length, "47 migrations no repositório").toBe(47);
+    // A MAPA-01 (#91, já na main e em produção) é a 0049: cria `erp.mapa_areas` (tabela nova) e o módulo `mapa` — nada
+    // no recorte que a purga lê. No disco ela vem depois da 0047 (ordem por nome); em produção foi aplicada ANTES das
+    // 0042–0047 (a prova da ordem real está em operacoes-01-ordem-real.test.ts).
+    expect(noDisco.length, "48 migrations no repositório").toBe(48);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
     expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");
@@ -260,6 +263,7 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     expect(noDisco[44], "e a 45ª é o financeiro pela TOP e o LCDPR (OPERACOES-01 F9)").toBe("0045_financeiro_pela_top_e_lcdpr.sql");
     expect(noDisco[45], "e a 46ª são os módulos com TOP (OPERACOES-01 F10)").toBe("0046_modulos_com_top.sql");
     expect(noDisco[46], "e a 47ª é a entrada de nota por XML (OPERACOES-01 F7)").toBe("0047_entrada_de_nota_por_xml.sql");
+    expect(noDisco[47], "e a 48ª é o Mapa de Manejo (MAPA-01, #91)").toBe("0049_mapa_de_manejo.sql");
   });
 
   it("as 16 anteriores aplicam, e a 0017 aplica sozinha em seguida", () => {
