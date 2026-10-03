@@ -2468,9 +2468,10 @@ leitura (nada é gravado); o passo 7 grava, e só com a decisão dele.
    Operacional › Compras; o Administrador tem todas. Fechar sem salvar.
 2. Configurações › Operações › Tipos de Operação › a TOP de pedido de compra: as abas Identificação, Geral, Próximas
    operações, Estoque, Fluxo de compra, Padrões financeiros (F9b), Financeiro, Fiscal e Aprovação (sem Execução). Na
-   "Fluxo de compra", "Exigir pedido finalizado para receber" = Não, com a ajuda que termina em "… como hoje — e o
-   aberto é recebido sem passar pela aprovação desta TOP, que só vale ao finalizar."; na "Aprovação", "Sem aprovação",
-   com "Sempre" e "A partir de um valor" habilitados. Fechar sem salvar.
+   "Fluxo de compra", "Exigir pedido finalizado para receber" = Não, com a ajuda que termina em "… ligar ou desligar a
+   aprovação liga ou desliga esta regra."; na "Aprovação", "Sem aprovação", com "Sempre" e "A partir de um valor"
+   habilitados — escolher "Sempre" põe "Exigir pedido finalizado para receber" em Sim, e voltar a "Sem aprovação" o põe
+   em Não (o par). Fechar sem salvar.
 3. "Novo" › Compras › Compra (desde a F6b, o passo 1 também oferece "Orçamento" em Compras): a aba "Divergência com o
    pedido" com "Divergência" = Nenhuma e as duas tolerâncias em "0", desabilitadas; "Avisar" as habilita; digitar
    "150" mostra "Informe um percentual de 0 a 100, com até duas casas decimais."; voltar a "Nenhuma" põe "0" de novo.
@@ -2482,12 +2483,19 @@ leitura (nada é gravado); o passo 7 grava, e só com a decisão dele.
    documento, Condição de pagamento, Prazo de entrega (dias), Validade do orçamento, Observação e, nos itens, Produto,
    Quantidade e Valor unitário. Não salvar.
 7. (Decisão do Maike; grava; só com as telas da F6b no ar — sem elas não há Finalizar na tela.) Ligar, TOP por TOP,
-   "Exigir pedido finalizado para receber" e a Aprovação no pedido de compra (as duas juntas, para o pedido não ser
-   recebido sem aprovação), e a Divergência na compra. O roteiro com gravação de pedido, orçamento e vencedor é o da F6b.
+   "Exigir pedido finalizado para receber" e a Aprovação no pedido de compra (as duas andam juntas: ligar a Aprovação
+   liga a outra, e a gravação recusa uma sem a outra), e a Divergência na compra. O roteiro com gravação de pedido,
+   orçamento e vencedor é o da F6b.
 
-**Decisão pendente do Maike** (registrada na decisão 283, não tomada aqui): exigir o par na gravação da TOP de pedido de
-compra — aprovação diferente de "Sem aprovação" ⇒ "Exigir pedido finalizado para receber" = Sim (E12). Hoje é só
-declarado, na ajuda da aba "Fluxo de compra".
+**O par (decisão do Maike de 03/10, registrada na decisão 283):** no formato 5, a aprovação do pedido de compra e
+"Exigir pedido finalizado para receber" andam juntas, nos dois sentidos. A gravação da TOP de pedido de compra (POST, e
+PUT com `configuracao`) recusa uma sem a outra com 422 `TIPO_OPERACAO_CONFIGURACAO_INVALIDA`, no campo que falta ligar
+(`fluxoCompra.exigeFinalizar` ou `aprovacao.politica`), e nada é gravado; o editor liga e desliga "exigir" junto com a
+aprovação, e as ajudas das abas "Fluxo de compra" e "Aprovação" dizem que as duas andam juntas. Sem migration, sem
+variável, sem código de erro novo. Só na gravação do 5: uma versão já gravada nunca passa a ser recusada, e os formatos
+1 a 4 (lidos no neutro) continuam válidos — a TOP de pedido de compra de produção (formato 3, sem aprovação) não é
+afetada. Skew: o web da base grava 4 e não é afetado; o web novo contra a API da base é o editor do 4, que não manda a
+seção. Risco: no formato 4, a TOP de pedido com aprovação continua gravável e recebe o pedido aberto sem aprovação.
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 
@@ -2601,9 +2609,8 @@ leitura (nada é gravado). Os passos 6 a 8 gravam, só com a decisão dele, um p
    "Finalizar" recusado na prévia até a aprovação. Com a provisão da F9b ligada, finalizar cria os previstos — o roteiro
    da § F9b, passos 6 a 8, passa a ter o botão Finalizar.
 
-**Decisão pendente do Maike** (registrada na decisão 283, não tomada aqui): exigir o par na gravação da TOP de pedido de
-compra — aprovação diferente de "Sem aprovação" ⇒ "Exigir pedido finalizado para receber" = Sim. A F6b só o declara, na
-ajuda da aba "Aprovação".
+**O par:** decidido pelo Maike em 03/10 e feito na F6a (§ F6a, acima): no formato 5, a aprovação do pedido de compra e
+"Exigir pedido finalizado para receber" andam juntas, e a ajuda da aba "Aprovação" diz isso.
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 

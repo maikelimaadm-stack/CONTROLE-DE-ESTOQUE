@@ -2134,19 +2134,20 @@ depois. O pedido TEM edição de valor (o vencedor do orçamento leva preços a 
 vale, e a API a trata como pendente — no finalizar (409 `APROVACAO_PENDENTE` "Este pedido precisa de aprovação antes de
 ser finalizado."), na prévia da finalização e na fila (a linha volta). A fila de compras lista o pedido só para quem tem
 `compras.approve` ∧ `pedidos_compra.approve`; quem não aprova pedido recebe a MESMA 404 de inexistente ao decidir.
-Aprovar o pedido não o finaliza. **Declarado:** com "Exigir pedido finalizado para receber" = Não (o neutro da seção
-`fluxoCompra`, §18.9), o pedido ABERTO é recebido sem passar pela aprovação — quem quer o pedido controlado liga as duas
-regras; exigir o par na gravação é decisão PENDENTE do Maike (decisão 283).
+Aprovar o pedido não o finaliza. **O par (decisão do Maike de 03/10):** no formato 5, a aprovação do pedido de compra e
+"Exigir pedido finalizado para receber" (§18.9) andam juntas, nos dois sentidos: o pedido aberto nunca é recebido sem
+passar pela aprovação, e "exigir" sem aprovação não é gravado. No 4, que não tem a seção, o pedido aberto ainda é
+recebido sem a aprovação.
 
 **Na tela (F6b).** A consulta do pedido aberto mostra o bloco da Aprovação (a situação de `GET /api/aprovacoes/compras/:id`,
 que desde a F6b lê o pedido com `compras.view` ∧ `pedidos_compra.view`, pela conta do finalizar com a cobertura), com
 Aprovar e Reprovar a quem tem `pedidos_compra.approve` ∧ `compras.approve`; a prévia do "Finalizar" diz a mesma situação.
-A ajuda da aba Aprovação no editor do pedido de compra (`apps/web/src/features/admin/top-editor.tsx:1223`) é: "No pedido
+A ajuda da aba Aprovação no editor do pedido de compra (`apps/web/src/features/admin/top-editor.tsx:1250`) é: "No pedido
 de compra, a aprovação vale ao finalizar: com aprovação, o pedido só é finalizado depois de aprovado em Aprovações, por
 quem tem as permissões Aprovar de Pedidos de Compra e Aprovar de Compras. Se o valor do pedido subir depois da aprovação
-(o orçamento vencedor muda os preços), ela precisa ser feita de novo. O pedido aberto é recebido sem passar pela
-aprovação, a não ser que a aba Fluxo de compra exija o pedido finalizado para receber." As outras famílias mantêm a ajuda
-de hoje.
+(o orçamento vencedor muda os preços), ela precisa ser feita de novo. A aprovação anda junto com "Exigir pedido
+finalizado para receber" (aba Fluxo de compra): ligar a aprovação liga essa regra e desligá-la a desliga; com aprovação,
+o pedido só é recebido depois de finalizado." As outras famílias mantêm a ajuda de hoje.
 
 ### 17.6 Alteração após confirmar: recusada no formato 4
 
@@ -2352,7 +2353,9 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
   - faz o detector do skew medir o CONJUNTO de seções da base, além da marca do assistente (§18.6).
   A F5a e a F6a atualizaram as premissas (F5-D1, T5-1, `top-assistente.spec.ts`, CT-*) com o conjunto juntado. As duas
   acrescentaram seções AO MESMO TEMPO, e a base `622f194` nem tem o editor do 5 (o detector dá falso nos dois casos): a
-  medição do CONJUNTO pelo detector é feita uma vez, depois que as duas entrarem na main — PENDENTE (coordenador).
+  medição do CONJUNTO pelo detector é feita uma vez, depois que as duas entrarem na main — FEITA em 03/10
+  (`secoesDoFormato5DaBase` e `baseConheceSecaoV5`, `apps/web/e2e/skew-fonte-da-base.ts`, com a prova reversa K2-0 em
+  commits fixos; decisão 286).
 - O nome `secaoInexistente` é o sentinela dos testes (F5-D3, T5-5) e nenhuma fase o declara.
 
 ### 18.4 O catálogo por tipo e o perfil
@@ -2395,6 +2398,13 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
   - seção de `secoesNeutras` fora do neutro do 5, comparada depois de normalizar → `<secao>`, "Esta operação não usa a
     seção <Rótulo>.".
   Ordem fixa: exigências (parceiro, centro, observação, transportadora) e depois as seções.
+- **O par do pedido de compra** (F6a, decisão do Maike de 03/10): no 5, no fim da mesma lista,
+  `recusasDoFluxoCompraDaFamilia(codigoBase, aprovacao.politica, fluxoCompra)` (`:297`), uma sem a outra, no campo que
+  falta: aprovação (Sempre ou A partir de um valor) sem "exigir" → `fluxoCompra.exigeFinalizar`, "Com aprovação, o
+  pedido de compra só é recebido depois de finalizado: "Exigir pedido finalizado para receber" tem de ser Sim. As
+  duas andam juntas."; "exigir" sem aprovação → `aprovacao.politica`, ""Exigir pedido finalizado para receber" só vale
+  com aprovação do pedido: escolha o critério de aprovação ou deixe a regra em Não. As duas andam juntas." Só na
+  gravação; a versão vigente não é reconferida; outra família, nada.
 - **Condições** (`conferirCondicoesDoPerfil`, `:283-292`; régua `recusaDasCondicoesDoPerfilTop`, catálogo `:457-467`):
   - só no 5, só com alguma condição e só quando o tipo não tem a aba Financeiro → 422
     `TIPO_OPERACAO_CONDICOES_INVALIDAS` `{recusas: [{caminho: "condicoesPermitidas", mensagem: "Esta operação não usa
@@ -2517,7 +2527,8 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
   (§18.9), e as dos 6 de Módulos, na F10 (§18.11).
 - As famílias novas no registry: nenhuma pendente (manejo e batelada nasceram na F10; requisição de material, consumo e
   devolução de consumo, na F5a; orçamento de compra, na F6a; o movimento bancário, na F9a).
-- A prova do lado verdadeiro do detector, depois do merge, e a medição do CONJUNTO de seções (F5a, F6a e F9a).
+- A prova do lado verdadeiro do detector e a medição do CONJUNTO de seções (F5a, F6a e F9a): FEITAS em 03/10 (K2-0,
+  decisão 286).
 - Os rótulos de enum da TOP no web (`ROTULOS_TOP`): dívida anterior, fora desta fase.
 - O comportamento das Centrais com documento sem item é da F2 (decisão 279).
 
@@ -2557,6 +2568,14 @@ elas ligam, em §4. Aqui, o que é do contrato da TOP:
 - **Telas (F6b):** o passo 1 do assistente oferece "Orçamento" em Compras (`temTela: true`,
   `packages/domain/src/tipo-operacao-catalogo.ts:146`); a ajuda da aba Aprovação no pedido de compra é a do §17.5; o
   editor não ganha aba nem campo.
+- **O par (decisão do Maike de 03/10):** a ajuda da seção passa a `AJUDA_FLUXO_COMPRA`
+  (`packages/domain/src/tipo-operacao-secao-fluxo-compra.ts:44`: "Exigir pedido finalizado para receber: com Sim, o
+  pedido só é recebido depois de finalizado e aprovado. Com Não, o pedido aberto ou finalizado é recebido, como hoje.
+  Esta regra anda junto com a aprovação do pedido (aba Aprovação), que vale ao finalizar: com aprovação ela é Sim, sem
+  aprovação ela é Não — ligar ou desligar a aprovação liga ou desliga esta regra."). O editor acompanha a aprovação
+  (`fluxoCompraComAAprovacao`, `:100`; `apps/web/src/features/admin/top-editor.tsx:960`); a combinação inválida é
+  recusada antes de enviar, no campo que falta (`top-erro-fluxoCompra.exigeFinalizar` ou `top-erro-aprovacao.politica`),
+  com o texto do servidor (`top-editor.tsx:829-839`; a recusa da API é a de §18.5).
 
 ### 18.10 Os padrões financeiros (OPERACOES-01 F9a, decisão 286)
 
@@ -2600,7 +2619,7 @@ Aqui, o que é do contrato da TOP:
 - **No 5, fora do tipo:** a seção fora do neutro numa família que não a usa é a recusa de §18.5 ("Esta operação não usa a
   seção Padrões financeiros."); dentro da família, `recusasDoFinanceiroPadraoDaFamilia` (a provisão fora do pedido de
   venda e do pedido de compra — F9b —, "exigir" onde não há "sem natureza e centro": o avulso, o movimento, o pedido de
-  compra e a compra), na lista única de `conferirFiscalDaFamilia` (`:288`).
+  compra e a compra), na lista única de `conferirFiscalDaFamilia` (`:296`).
 - **Execução** (`apps/api/src/lib/financeiro-top.ts:62-74`): sem versão ou versão inexistente → neutro; ilegível ou 1 a 4
   → neutro e padrões nulos; 5 de família sem perfil → neutro; 5 → a seção e os padrões da versão CONGELADA no documento
   (a TOP corrente no avulso e no movimento; a TOP padrão da família na solicitação). A conta padrão é reconferida por
@@ -2616,7 +2635,8 @@ Aqui, o que é do contrato da TOP:
   - na provisão, a fonte `documentos_compra` do núcleo (`apps/api/src/lib/financeiro-provisao.ts:191-218`).
   O produto (eventos, recusas, compatibilidade) está em `docs/OPERACOES-CONTRACT.md` §7 (F9b).
 - **Skew:** sem `padroesFinanceiros`, o editor não mostra os campos e não manda a chave (a API anterior a recusaria). O
-  detector do web da base continua o da F4 (o CONJUNTO de seções é medido na F12).
+  detector do web da base continua o da F4 (o detector pelo CONJUNTO de seções existe desde 03/10 —
+  `baseConheceSecaoV5`, decisão 286 —, e este skew ainda não o usa).
 
 ### 18.11 A TOP nos módulos com produto (OPERACOES-01 F10, decisão 287)
 

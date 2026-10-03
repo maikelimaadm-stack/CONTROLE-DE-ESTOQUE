@@ -195,9 +195,18 @@ as aplica.
 | quem executa | a API, no receber, lendo a versão congelada DO PEDIDO; o banco aceita receber de aberto e de finalizado |
 | recusas próprias | leitura estrita: `tipo_invalido` e `campo_desconhecido` em `fluxoCompra.<campo>`; fora do pedido e fora do padrão → "Esta operação não usa a seção Fluxo de compra." |
 
-Ajuda (texto exato): "Exigir pedido finalizado para receber: com Sim, o pedido só é recebido depois de finalizado (e, se
-esta TOP exige aprovação, aprovado). Com Não, o pedido aberto ou finalizado é recebido, como hoje — e o aberto é
-recebido sem passar pela aprovação desta TOP, que só vale ao finalizar."
+Ajuda (texto exato, `AJUDA_FLUXO_COMPRA`): "Exigir pedido finalizado para receber: com Sim, o pedido só é recebido
+depois de finalizado e aprovado. Com Não, o pedido aberto ou finalizado é recebido, como hoje. Esta regra anda junto
+com a aprovação do pedido (aba Aprovação), que vale ao finalizar: com aprovação ela é Sim, sem aprovação ela é Não —
+ligar ou desligar a aprovação liga ou desliga esta regra."
+
+**O par (decisão do Maike de 03/10, decisão 283):** no formato 5, a aprovação do pedido de compra e "Exigir pedido
+finalizado para receber" andam juntas, nos dois sentidos. A gravação da TOP de pedido de compra (POST, e PUT com
+`configuracao`) recusa uma sem a outra com 422 `TIPO_OPERACAO_CONFIGURACAO_INVALIDA`, no campo que falta ligar:
+aprovação sem "exigir" → `fluxoCompra.exigeFinalizar`; "exigir" sem aprovação → `aprovacao.politica` (os textos em
+`docs/TIPO-OPERACAO-CONTRACT.md` §18.5). O editor liga e desliga "exigir" junto com a aprovação. Só na gravação do 5: a
+versão já gravada não é reconferida, e os formatos 1 a 4 (lidos no neutro: sem aprovação e sem exigir) continuam
+válidos.
 
 ### Divergência com o pedido (`divergenciaPedido`, decisão 283) · IMPLEMENTADO
 
@@ -1086,10 +1095,11 @@ Anexo do orçamento: `orcamentos_compra.view`.
   5; "Sempre", ou "A partir de um valor" com o total ATUAL): sem decisão, ou aprovada que não cobre (valor aprovado <
   total atual, ou outra versão da TOP) → 409 `APROVACAO_PENDENTE` "Este pedido precisa de aprovação antes de ser
   finalizado."; reprovada → 409 `APROVACAO_REPROVADA`. A guarda da 0044 faz a mesma conta no banco.
-- **A aprovação do pedido vale ao FINALIZAR.** Com "Exigir pedido finalizado para receber" = Não (o neutro), o pedido
-  ABERTO é recebido sem passar por ela; quem quer o pedido controlado liga as duas regras. O pedido aberto que exige
-  aprovação fica na fila enquanto estiver aberto. Exigir o par na gravação (aprovação diferente de "Sem aprovação" ⇒
-  "Exigir pedido finalizado para receber" = Sim) é decisão PENDENTE do Maike (decisão 283).
+- **A aprovação do pedido vale ao FINALIZAR.** O pedido aberto que exige aprovação fica na fila enquanto estiver
+  aberto. **O par (decisão do Maike de 03/10):** no formato 5, a aprovação e "Exigir pedido finalizado para receber"
+  andam juntas, nos dois sentidos (§2, Fluxo de compra): o pedido aberto nunca é recebido sem passar pela aprovação, e
+  "exigir" sem aprovação não é gravado. No formato 4, que não tem a seção, o pedido aberto ainda é recebido sem a
+  aprovação.
 - **Receber** com `fluxoCompra.exigeFinalizar` e o pedido aberto → 409 "Este pedido precisa ser finalizado antes de ser
   recebido.".
 - **Aprovado para orçamento** uma vez, com o pedido aberto ("Só pedido aberto é aprovado para orçamento." / "Este pedido
@@ -1257,10 +1267,9 @@ gravado agora: confira o documento antes de tentar de novo." — decidido pelo q
 corpo mudado e o 409 `CONFLICT`), nunca pelo texto do servidor. Depois de cada ação, só as leituras de documento de
 compra, a lista única, as prévias, os próximos passos e a aprovação de compras são perguntados de novo.
 
-**Fora:** cascata e cancelamento em lote dos orçamentos; reescolher o vencedor; desfazer a finalização; exigir o par
-aprovação ⇒ "Exigir pedido finalizado para receber" na gravação (decisão PENDENTE do Maike); esconder Estoque e Fiscal do
-perfil do orçamento; a prévia da finalização mostrar a provisão (F9b); as pendências da F9b para as telas de Compras além
-do botão Finalizar (F11).
+**Fora:** cascata e cancelamento em lote dos orçamentos; reescolher o vencedor; desfazer a finalização; esconder
+Estoque e Fiscal do perfil do orçamento; a prévia da finalização mostrar a provisão (F9b); as pendências da F9b para as
+telas de Compras além do botão Finalizar (F11).
 
 ## 5. Entrada de nota por XML
 
@@ -1564,14 +1573,16 @@ família, versão corrente, a padrão primeiro; padrões só de versão no 5).
   (`TIPOS_LCDPR_NO_LIVRO` e `TIPO_LCDPR_FORA`, `packages/domain/src/financeiro-lcdpr.ts:25-34`; `TIPOS_LCDPR` deriva
   deles), e o SQL da API não tem literal de tipo;
 - baixa (`settle`, `imovel_rural_id: uuid | null`, ausente = o padrão da empresa do título; `settle-batch`,
-  `imovel_rural_id: uuid` conferido contra a empresa de CADA título) e movimento de entrada ou saída com empresa: o imóvel
-  informado da MESMA empresa, ativo e vivo — senão 422 "Imóvel rural inválido para a empresa do lançamento." (path
-  `imovel_rural_id`); compensação (cruzada, adiantamento) com imóvel → 422 "A compensação não movimenta caixa: não leva
-  imóvel rural."; transferência → 422 "Transferência entre contas não leva imóvel rural (fica fora do LCDPR)."; o MESMO
-  imóvel no principal, nos componentes, na tarifa do lote e na baixa do crédito do excedente. Na baixa, a FK do imóvel é
-  só com a organização (`title_settlements` não tem empresa): a API confere a empresa do título; no movimento, a FK
-  inclui a empresa. O movimento de financiamento ou de devolução de cheque não recebe o imóvel padrão (risco declarado na
-  decisão 286);
+  `imovel_rural_id` opcional, uuid ou null: ausente = imóvel padrão da empresa de cada título; null = nenhum imóvel;
+  id = imóvel ativo da empresa de CADA título elegível — senão 422 VALIDATION_ERROR "Imóvel rural inválido para a empresa
+  do lançamento." no campo `imovel_rural_id`, antes de qualquer gravação) e movimento de entrada ou saída com empresa: o
+  imóvel informado da MESMA empresa, ativo e vivo — senão 422 "Imóvel rural inválido para a empresa do lançamento."
+  (path `imovel_rural_id`); compensação (cruzada, adiantamento) com imóvel → 422 "A compensação não movimenta caixa: não
+  leva imóvel rural."; transferência → 422 "Transferência entre contas não leva imóvel rural (fica fora do LCDPR)."; o
+  MESMO imóvel no principal, nos componentes, na tarifa do lote e na baixa do crédito do excedente. Na baixa, a FK do
+  imóvel é só com a organização (`title_settlements` não tem empresa): a API confere a empresa do título; no movimento,
+  a FK inclui a empresa. O movimento de financiamento ou de devolução de cheque não recebe o imóvel padrão (risco
+  declarado na decisão 286);
 - `GET /api/financeiro/imoveis-rurais/opcoes?empresa_id=` (uma de `payables.settle`, `receivables.settle`,
   `bank_movements.create`, senão 403; módulo financeiro; empresa fora do escopo, inexistente ou de outro tenant → a MESMA
   404 "Empresa não encontrada"; query estrita) → `{ itens: [{ id, nome, cib, padrao }] }` (ativos e vivos, o padrão
