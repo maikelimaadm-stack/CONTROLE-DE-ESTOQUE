@@ -402,8 +402,9 @@ export default async function financialRoutes(app: FastifyInstance) {
     app.post(`${base}/settle-batch`, async (req, reply) => reply.status(201).send(await runService(app, req, permOf(dir, "settle"), async (ctx) => {
       const itemSchema = z.object({ id: uuid, valor: dec.optional(), desconto: dec.optional(), juros: dec.optional(), multa: dec.optional(), acrescimo: dec.optional() }).strict();
       const d = z.object({ ids: idsDoLote.optional(), itens: z.array(itemSchema).min(1).max(200).refine((xs) => new Set(xs.map((x) => x.id.toLowerCase())).size === xs.length, "Título repetido no lote").optional(), settlement_date: date, bank_account_id: uuid, movement_mode: z.enum(["separate", "single"]).default("separate"), note: z.string().optional().nullable(), tarifa: dec.optional(),
-        // F9 (aditivo): o imóvel rural do lote. Ausente = o padrão da empresa de cada título.
-        imovel_rural_id: uuid.optional() }).parse(req.body);
+        // F9 (aditivo): o imóvel rural do lote, com a regra da baixa de um título (`resolverImovelDaBaixa`): ausente = o
+        // padrão da empresa de cada título; `null` = nenhum ("Sem imóvel"); um id = conferido contra a empresa de cada um.
+        imovel_rural_id: uuid.optional().nullable() }).parse(req.body);
       if (d.ids && d.itens) throw validation("Informe os títulos por ids ou por itens, não pelos dois");
       const pedidos = d.itens ?? (d.ids ?? []).map((id) => ({ id, valor: undefined, desconto: undefined, juros: undefined, multa: undefined, acrescimo: undefined }));
       if (!pedidos.length) throw validation("Informe os títulos do lote");

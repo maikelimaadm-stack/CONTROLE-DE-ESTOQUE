@@ -8,9 +8,9 @@ import { Button, StatusBadge, safeErrorMessage } from "@/components/ui";
 import estilosCentral from "@/features/central/moldura.module.css";
 import {
   MSG_APROVACOES_INDISPONIVEIS, MSG_DOCUMENTO_MUDOU_NA_CONSULTA,
-  PERMISSAO_DA_PORTA_DA_DECISAO, chaveDaSituacaoDoDocumento, corpoDaDecisao, documentoDaConsulta, lerSituacaoDoDocumento, mensagemDaAprovacao,
+  PERMISSAO_DA_PORTA_DA_DECISAO, chaveAoAbrirDecisao, chaveDaSituacaoDoDocumento, chaveDepoisDaDecisao, corpoDaDecisao, documentoDaConsulta, lerSituacaoDoDocumento, mensagemDaAprovacao,
   portaDaDecisaoAusente, portaDaDecisaoDoDocumento, portaDaSituacaoDoDocumento, textoDaUltimaDecisao, valorDaSituacaoNaFila,
-  type AreaDaConsulta, type Decisao, type RespostaDaDecisao, type TomDaMensagem
+  type AreaDaConsulta, type ChaveDaDecisao, type Decisao, type RespostaDaDecisao, type TomDaMensagem
 } from "./areas-de-aprovacao";
 import { DialogoDaDecisao } from "./decisao-de-aprovacao";
 
@@ -67,25 +67,29 @@ export function AprovacaoDoDocumento({ area, documentoId, documentoAberto, versa
   const [aberto, setAberto] = React.useState(false);
   const [texto, setTexto] = React.useState("");
   const [erroDoDialogo, setErroDoDialogo] = React.useState<string | null>(null);
-  // Uma chave por abertura do diálogo: o reenvio do MESMO clique devolve o corpo gravado e nunca decide duas vezes; uma
-  // abertura nova (ou o envio depois de um erro) leva chave nova.
-  const chave = React.useRef(newIdem());
+  // A chave da decisão (`chaveAoAbrirDecisao`/`chaveDepoisDaDecisao`, em areas-de-aprovacao): a MESMA numa nova
+  // tentativa depois de erro de rede ou 5xx (pode ter gravado: o servidor devolve o que gravou, nunca decide duas vezes);
+  // renovada depois do sucesso e de uma recusa 4xx. Reaberta para o mesmo documento e a mesma decisão, é a guardada.
+  const chave = React.useRef<ChaveDaDecisao | null>(null);
 
   const abrirDecisao = (d: Decisao) => {
-    chave.current = newIdem(); setTexto(""); setErroDoDialogo(null); setDecisao(d); setAberto(true);
+    chave.current = chaveAoAbrirDecisao(chave.current, documentoId, d, newIdem);
+    setTexto(""); setErroDoDialogo(null); setDecisao(d); setAberto(true);
   };
+  const chaveDaTentativa = (d: Decisao) => (chave.current = chaveAoAbrirDecisao(chave.current, documentoId, d, newIdem));
   const decidir = useMutation<RespostaDaDecisao, Error, { decisao: Decisao; texto: string }>({
     mutationFn: ({ decisao: d, texto: t }) => api<RespostaDaDecisao>(portaDaDecisaoDoDocumento(area, documentoId, d), {
-      method: "POST", body: corpoDaDecisao(area, versao, d, t), idempotencyKey: chave.current
+      method: "POST", body: corpoDaDecisao(area, versao, d, t), idempotencyKey: chaveDaTentativa(d).chave
     }),
     onSuccess: (resposta, { decisao: d }) => {
+      if (chave.current) chave.current = chaveDepoisDaDecisao(chave.current, null, newIdem);
       setAberto(false);
       // Reprovar não tem aviso próprio: o bloco passa a "Reprovado" com o motivo, e isso é a resposta.
       if (d === "aprovar") { const m = mensagemDaAprovacao(resposta); toast[TOAST_DO_TOM[m.tom]](m.texto); }
       void qc.invalidateQueries();
     },
     onError: (e) => {
-      chave.current = newIdem();
+      if (chave.current) chave.current = chaveDepoisDaDecisao(chave.current, e, newIdem);
       // Corpo recusado (motivo vazio, texto longo demais): o diálogo continua aberto, com o motivo do servidor.
       if (e instanceof ApiError && e.status === 422) setErroDoDialogo(e.message);
       else {

@@ -1,10 +1,8 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
-import { execFileSync } from "node:child_process";
-import path from "node:path";
-import { configuracaoNeutraTopV4, entendeMovimentacaoInterna, familiaOperacionalDeDocumentoEstoque } from "@agro/domain";
+import { SECOES_EXTENSAO_V5, configuracaoNeutraTopV4, entendeMovimentacaoInterna, familiaOperacionalDeDocumentoEstoque } from "@agro/domain";
 import { login, api, uniq, empresaAtiva } from "./helpers";
 import { cadastroDeEstoque, criarTopDeEstoque, entradaConfirmadaPelaApi, escolherNaReferencia, hojeISO, saldoNoServidor } from "./estoque-01-comum";
-import { garantirCommit, shaDaBase } from "./skew-fonte-da-base";
+import { COMMITS_DAS_SECOES_V5, baseConheceSecaoV5, fonteDoWebContem, secoesDoFormato5DaBase, shaDaBase } from "./skew-fonte-da-base";
 
 /**
  * OPERACOES-01 · F5a · K-2, SENTIDO 2 — O WEB DA BASE CONTRA A API DESTE HEAD (decisão 282, parte F5a; a janela "API
@@ -36,23 +34,9 @@ import { garantirCommit, shaDaBase } from "./skew-fonte-da-base";
  *     conhece, então a linha aparece SEM ações (transitório até a F5b, que liga a tela delas).
  */
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333";
-const RAIZ = path.resolve(__dirname, "../../..");
 
-/**
- * O fonte do web (`apps/web/src`) no commit da BASE contém `trecho`? Erro de leitura REPROVA — nunca vira "não contém"
- * (o mesmo contrato de `skew-fonte-da-base.ts`, cujo leitor não é exportado).
- */
-function fonteDaBaseContem(trecho: string): boolean {
-  const sha = shaDaBase();
-  garantirCommit(sha);
-  try {
-    execFileSync("git", ["grep", "-qF", trecho, sha, "--", "apps/web/src"], { cwd: RAIZ, stdio: "pipe" });
-    return true;
-  } catch (erro) {
-    if ((erro as { status?: number | null }).status === 1) return false;
-    throw erro;
-  }
-}
+/** O fonte do web no commit da BASE contém `trecho`? O leitor de `skew-fonte-da-base.ts` (erro de leitura REPROVA). */
+const fonteDaBaseContem = (trecho: string): boolean => fonteDoWebContem(shaDaBase(), trecho);
 
 /** Vigia do navegador (o desenho de `skew-web-anterior.spec.ts`): CORS morto e erro de contrato não passam calados. */
 function vigiar(page: Page) {
@@ -72,6 +56,7 @@ function vigiar(page: Page) {
 /** As premissas do mundo: a Central de Estoque existe no web da base, e a API julgada é a desta fase. */
 async function premissas(page: Page) {
   expect(fonteDaBaseContem("estoque-central-armazem"), "premissa: o web da base tem a Central de Estoque (ESTOQUE-01)").toBe(true);
+  console.log(`[skew] OP01-F5a · K-2 · o web da base conhece as seções do formato 5: [${secoesDoFormato5DaBase().join(", ")}]`);
   const ops = await api<{ capacidades?: unknown }>(page, "GET", "/api/estoque/entradas/operation-types");
   expect(entendeMovimentacaoInterna(ops.capacidades), "premissa: a API no ar é a desta fase (declara `movimentacaoInterna`)").toBe(true);
 }
@@ -117,6 +102,39 @@ async function salvarEConfirmarNaCentral(page: Page, especie: EspecieDaBase, c: 
   await expect(central).toHaveAttribute("data-situacao", "confirmado");
   return { corpo, id: String(corpo["id"]) };
 }
+
+/**
+ * K2-0 · O DETECTOR DAS SEÇÕES DO FORMATO 5 (PROVA REVERSA, SEM NAVEGADOR). `secoesDoFormato5DaBase` lê o CONJUNTO de
+ * seções que o domínio do commit declara (`DEFINICOES_SECOES_V5` → o arquivo de cada `SECAO_*` → o `nome`), e os specs
+ * perguntam "a base conhece a seção X?" por ele (`baseConheceSecaoV5`), não por um trecho solto do fonte. Commits FIXOS
+ * (`COMMITS_DAS_SECOES_V5`): as fases F5a e F6a correram em paralelo desde a F4, então cada uma tem SÓ as suas — se o
+ * detector lesse a árvore de agora, as duas dariam as cinco. A base desta execução entra por último, com a premissa de
+ * que ela foi lida (o conjunto dela é um dos conjuntos possíveis, nunca um erro engolido).
+ */
+test("OP01-F5a · K2-0 (sentido 2) — o detector das seções do formato 5 lê o CONJUNTO do commit: nenhuma antes da OPERACOES-01 e na F4, Destino e Fluxo na F5a, as da compra na F6a, as cinco depois dos merges", () => {
+  // PREMISSA: o commit da F4 é lido — ele tem o formato 5 (a lista existe), só que vazia; o da main antes da OPERACOES-01
+  // não tem a lista. Os dois dão "nenhuma", por motivos diferentes, e o primeiro prova que o vazio não é falha de leitura.
+  expect(fonteDoWebContem(COMMITS_DAS_SECOES_V5.formato5Vazio, "top-assistente"), "premissa: o commit da F4 tem o editor do formato 5").toBe(true);
+  expect(secoesDoFormato5DaBase(COMMITS_DAS_SECOES_V5.formato5Vazio), "F4: o formato 5 nasceu com a lista vazia").toEqual([]);
+  expect(secoesDoFormato5DaBase(COMMITS_DAS_SECOES_V5.semFormato5), "antes da OPERACOES-01: sem o ponto de extensão").toEqual([]);
+  // CONCLUSÃO, um conjunto por commit — e a pergunta por seção concorda com ele, nos dois lados.
+  expect(secoesDoFormato5DaBase(COMMITS_DAS_SECOES_V5.f5a), "F5a: Destino e Fluxo").toEqual(["destino", "fluxo"]);
+  expect(secoesDoFormato5DaBase(COMMITS_DAS_SECOES_V5.f6a), "F6a: as da compra, sem as da F5a (fase paralela)").toEqual(["divergenciaPedido", "fluxoCompra"]);
+  expect(secoesDoFormato5DaBase(COMMITS_DAS_SECOES_V5.todas), "depois dos merges: as cinco")
+    .toEqual(["destino", "divergenciaPedido", "financeiroPadrao", "fluxo", "fluxoCompra"]);
+  expect([baseConheceSecaoV5("destino", COMMITS_DAS_SECOES_V5.f5a), baseConheceSecaoV5("destino", COMMITS_DAS_SECOES_V5.f6a)],
+    "a F5a conhece o Destino e a F6a não").toEqual([true, false]);
+  expect([baseConheceSecaoV5("fluxoCompra", COMMITS_DAS_SECOES_V5.f6a), baseConheceSecaoV5("fluxoCompra", COMMITS_DAS_SECOES_V5.f5a)],
+    "a F6a conhece o Fluxo de compra e a F5a não").toEqual([true, false]);
+  // O LEITOR CONCORDA COM O DOMÍNIO: no commit deste HEAD, o conjunto lido do fonte é a lista que o domínio monta em
+  // tempo de execução (`SECOES_EXTENSAO_V5`) — uma seção nova na lista entra no detector sem mexer nele.
+  expect(secoesDoFormato5DaBase("HEAD"), "o fonte deste HEAD dá a lista do domínio").toEqual([...SECOES_EXTENSAO_V5].sort());
+  // A BASE DESTA EXECUÇÃO: lida sem erro, e só com seções que este HEAD conhece (a base é anterior a ele).
+  const daBase = secoesDoFormato5DaBase();
+  console.log(`[skew] OP01-F5a · K2-0 · a base ${shaDaBase().slice(0, 7)} conhece as seções: [${daBase.join(", ")}]`);
+  const doHead: readonly string[] = SECOES_EXTENSAO_V5;
+  expect(daBase.filter((n) => !doHead.includes(n)), "a base só declara seções que este HEAD também declara").toEqual([]);
+});
 
 test.describe("OP01-F5a · K-2 (sentido 2) — a Central de Estoque do web da base contra a API deste HEAD", () => {
   test("K2-a entrada (com custo) e saída lançadas e confirmadas pela Central da base: corpo de sempre, saldo certo no servidor", async ({ page }) => {
