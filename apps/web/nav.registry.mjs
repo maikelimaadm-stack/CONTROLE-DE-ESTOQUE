@@ -34,7 +34,7 @@ const P = {
   COMPANY_CFG: ["farms.view", "harvests.view", "rainfalls.view", "tenant_parameters.edit", "dashboard.rainfall.view"],
   PRODUCT_CFG: ["products.view", "warehouses.view", "addressings.view", "provider_launch_profiles.view", "apportionments.view"],
   FIN_CFG: ["financial_categories.view", "cost_centers.view", "title_types.view", "payables.view", "sales.view", "financial_freezes.view", "chart_accounts.view"],
-  LIVESTOCK_CFG: ["animals.view", "weight_parameters.view", "fodders.view", "grazing_modules.view", "batch_area.view", "troughs.view", "livestock_plannings.view", "operations.view", "activities.view", "breeding_sires.view", "breeding_protocols.view"],
+  LIVESTOCK_CFG: ["animals.view", "weight_parameters.view", "fodders.view", "retiros.view", "grazing_modules.view", "batch_area.view", "troughs.view", "livestock_plannings.view", "operations.view", "activities.view", "breeding_sires.view", "breeding_protocols.view"],
   FISCAL_CFG: ["tax_rules.view", "nature_operations.view", "additional_infos.view", "document_types.view", "documents.view", "nfe.view"],
   HR_CFG: ["hr_events.view", "job_functions.view", "teams.view"],
   // TOP-CONFIG-08 (decisão 277): a permissão Aprovar das quatro espécies do documento de estoque — qualquer uma
@@ -257,6 +257,7 @@ export const AREAS = [
   cfg("pecuaria", "identification-types", "Tipos de Identificação", "animals.view", { keywords: ["brinco", "sisbov", "chip"] }),
   cfg("pecuaria", "weight-parameters", "Parâmetros de Peso", "weight_parameters.view"),
   cfg("pecuaria", "fodders", "Forragens", "fodders.view"),
+  cfg("pecuaria", "retiros", "Retiros", "retiros.view"),
   cfg("pecuaria", "grazing-modules", "Módulos de Pastejo", "grazing_modules.view"),
   cfg("pecuaria", "areas", "Áreas / Piquetes", "batch_area.view"),
   cfg("pecuaria", "troughs", "Cochos", "troughs.view"),

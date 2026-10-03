@@ -61,14 +61,14 @@ títulos, 10 empresas no seletor) — muda o PLANO, não a autorização. Só a 
 
 ## Categorias
 
-- **A** — EMPRESA ÚNICA OBRIGATÓRIA (41 tabelas)
+- **A** — EMPRESA ÚNICA OBRIGATÓRIA (42 tabelas)
 - **B** — EMPRESA ÚNICA ANULÁVEL (6 tabelas)
 - **C** — ORIGEM + DESTINO (três contratos por domínio) (3 tabelas)
 - **D** — TABELA EMPRESAS (1 tabela)
 - **E** — PORTA DINÂMICA / ESPECIAL (8 tabelas)
 - **F** — ORGANIZAÇÃO — SEM RLS EMPRESARIAL (1 tabela)
 
-## Tabelas (60)
+## Tabelas (61)
 
 | Tabela | Coluna(s) canônica(s) | Módulo | Cat. | Nulo? | Leitura | Escrita | Semântica POR COMANDO |
 | --- | --- | --- | :---: | :---: | --- | --- | --- |
@@ -122,6 +122,7 @@ títulos, 10 empresas no seletor) — muda o PLANO, não a autorização. Só a 
 | `erp.rainfalls` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.registros_globais` | `empresa_id` | — | E | sim | regra própria (ver justificativa) | regra própria (ver justificativa) | — (a proteção é outra; ver justificativa) |
 | `erp.requisitions` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.retiros` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.salary_advances` | `empresa_id` | pessoas_rh | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.sales_documents` | `empresa_id` | vendas | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.service_orders` | `empresa_id` | ordens_servico | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |

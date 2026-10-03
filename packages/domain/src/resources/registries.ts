@@ -1,13 +1,26 @@
 import type { ResourceDef, FieldDef } from "./types.js";
+import {
+  ATIVIDADE_PRINCIPAL_DO_RETIRO,
+  CATEGORIA_ALVO_DO_MODULO,
+  METODO_DE_PASTEJO,
+  POSSE_DA_AREA,
+  RELEVO_DA_AREA,
+  STATUS_DA_AREA,
+  TEXTURA_DO_SOLO,
+  TIPOS_DE_USO_DA_AREA,
+  TIPO_DE_PASTAGEM
+} from "../tipos-de-uso-da-area.js";
 
 const active = (name = "is_active"): FieldDef => ({ name, label: "Ativo", type: "boolean", default: true, list: true, filter: true, span: 2 });
 const B = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "boolean", default: false, ...extra });
 const T = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "text", ...extra });
 const M = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "money", ...extra });
-const S = (name: string, label: string, options: [string, string][], extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "select", options: options.map(([value, label]) => ({ value, label })), ...extra });
+const S = (name: string, label: string, options: readonly [string, string][], extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "select", options: options.map(([value, label]) => ({ value, label })), ...extra });
 const REF = (name: string, label: string, resource: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "ref", ref: { resource }, ...extra });
 const D = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "date", ...extra });
 const P = (name: string, label: string): FieldDef => ({ name, label, type: "percent" });
+const Q = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "quantity", ...extra });
+const I = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "integer", ...extra });
 /** Campos novos do Parceiro (AJUSTES 01, 0030): só com a API que declara `consultaCnpjJanela` 1 (seção 7 da missão). */
 const CAP_AJ01 = { nome: "consultaCnpjJanela", versao: 1 };
 
@@ -337,7 +350,14 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
   },
   {
     key: "fodders", label: "Forragem", labelPlural: "Forragens", table: "fodders", permission: "fodders", labelField: "description", route: "/pecuaria/forragens", softDelete: true,
-    fields: [T("description", "Descrição", { required: true, list: true, search: true, span: 6 }), active()]
+    fields: [
+      T("description", "Descrição", { required: true, list: true, search: true, span: 6 }),
+      T("species", "Espécie", { list: true, search: true, span: 4 }),
+      T("cultivar", "Cultivar", { list: true, search: true, span: 4 }),
+      I("rest_days_min", "Descanso mín. (dias)", { span: 2 }),
+      I("rest_days_max", "Descanso máx. (dias)", { span: 2 }),
+      active()
+    ]
   },
   {
     key: "weight_parameters", label: "Parâmetro de Peso", labelPlural: "Parâmetros/Peso", table: "weight_parameters", permission: "weight_parameters", labelField: "description", route: "/pecuaria/parametros-peso", softDelete: true, codeEntity: "weight_parameter",
@@ -360,12 +380,70 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 6 })]
   },
   {
-    key: "grazing_modules", label: "Módulo de Pastejo", labelPlural: "Módulos de Pastejo", table: "grazing_modules", permission: "grazing_modules", labelField: "description", route: "/pecuaria/modulos-pastejo", softDelete: true, empresaScoped: true, codeEntity: "grazing_module",
-    fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }), D("module_date", "Data de cadastro", { required: true, span: 2 }), T("responsible", "Responsável", { span: 4 }), T("description", "Descrição", { required: true, list: true, search: true, span: 6 }), REF("fodder_id", "Forragem", "fodders", { required: true, list: true, span: 3 }), T("color", "Cor do módulo", { span: 2 }), B("control_productivity", "Controla produtividade", { span: 3 })]
+    key: "retiros", codeEntity: "retiro", codigoAutomatico: "sequencial", label: "Retiro", labelPlural: "Retiros", table: "retiros", permission: "retiros",
+    labelField: "name", route: "/pecuaria/retiros", softDelete: true, empresaScoped: true, defaultSort: "code",
+    fields: [
+      REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }),
+      T("code", "Código", { readOnly: true, list: true, search: true, span: 2 }),
+      T("name", "Nome", { required: true, list: true, search: true, span: 4 }),
+      REF("responsible_person_id", "Responsável", "people", { list: true, span: 4 }),
+      S("main_activity", "Atividade principal", ATIVIDADE_PRINCIPAL_DO_RETIRO, { required: true, list: true, filter: true, default: "cria", span: 3 }),
+      REF("cost_center_id", "Centro de resultado", "cost_centers", { span: 4 }),
+      T("color", "Cor", { span: 2 }),
+      { name: "description", label: "Descrição", type: "textarea", span: 12 },
+      active()
+    ]
   },
   {
-    key: "areas", codeEntity: "area", codigoAutomatico: "sequencial", label: "Área (Piquete)", labelPlural: "Áreas", table: "areas", permission: "batch_area", labelField: "name", route: "/pecuaria/areas", softDelete: true, empresaScoped: true,
-    fields: [REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }), T("code", "Código", { required: true, list: true, search: true, span: 2 }), T("name", "Nome", { required: true, list: true, search: true, span: 4 }), { name: "area_ha", label: "Área (ha)", type: "quantity", required: true, list: true, span: 2 }, REF("grazing_module_id", "Módulo de pastejo", "grazing_modules", { list: true, filter: true, span: 4 }), REF("fodder_id", "Forragem", "fodders", { span: 4 }), active()]
+    key: "grazing_modules", label: "Módulo de Pastejo", labelPlural: "Módulos de Pastejo", table: "grazing_modules", permission: "grazing_modules", labelField: "description", route: "/pecuaria/modulos-pastejo", softDelete: true, empresaScoped: true, codeEntity: "grazing_module",
+    fields: [
+      T("code", "Código", { readOnly: true, list: true, span: 2 }),
+      REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }),
+      REF("retiro_id", "Retiro", "retiros", { list: true, filter: true, span: 4 }),
+      D("module_date", "Data de cadastro", { required: true, span: 2 }),
+      T("responsible", "Responsável", { span: 4 }),
+      T("description", "Descrição", { required: true, list: true, search: true, span: 6 }),
+      REF("fodder_id", "Forragem", "fodders", { required: true, list: true, span: 3 }),
+      S("grazing_method", "Método de pastejo", METODO_DE_PASTEJO, { required: true, list: true, filter: true, default: "rotacionado", span: 3 }),
+      I("rest_days", "Descanso (dias)", { span: 2 }),
+      I("occupation_days", "Ocupação (dias)", { span: 2 }),
+      I("planned_paddocks", "Piquetes planejados", { span: 2 }),
+      Q("reserve_area_ha", "Área de reserva (ha)", { span: 2 }),
+      Q("support_capacity_rainy_ua_ha", "Cap. suporte águas (UA/ha)", { span: 3 }),
+      Q("support_capacity_dry_ua_ha", "Cap. suporte seca (UA/ha)", { span: 3 }),
+      S("target_category", "Categoria alvo", CATEGORIA_ALVO_DO_MODULO, { span: 3 }),
+      T("color", "Cor do módulo", { span: 2 }),
+      B("control_productivity", "Controla produtividade", { span: 3 }),
+      active()
+    ]
+  },
+  {
+    key: "areas", codeEntity: "area", codigoAutomatico: "sequencial", label: "Área (Piquete)", labelPlural: "Áreas", table: "areas", permission: "batch_area", labelField: "name", route: "/pecuaria/areas", softDelete: true, empresaScoped: true, defaultSort: "code",
+    fields: [
+      REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, section: "Identificação", span: 4 }),
+      T("code", "Código", { readOnly: true, list: true, search: true, section: "Identificação", span: 2 }),
+      T("name", "Nome", { required: true, list: true, search: true, section: "Identificação", span: 4 }),
+      S("land_use", "Tipo de uso", TIPOS_DE_USO_DA_AREA, { required: true, list: true, filter: true, default: "pastagem", section: "Identificação", span: 4 }),
+      S("status", "Situação", STATUS_DA_AREA, { required: true, list: true, filter: true, default: "ativa", section: "Identificação", span: 3 }),
+      REF("retiro_id", "Retiro", "retiros", { list: true, filter: true, section: "Identificação", span: 4 }),
+      REF("grazing_module_id", "Módulo de pastejo", "grazing_modules", { list: true, filter: true, section: "Identificação", span: 4 }),
+      T("color", "Cor", { section: "Identificação", span: 2 }),
+      Q("area_ha", "Área total (ha)", { required: true, list: true, section: "Medidas", span: 3 }),
+      Q("usable_area_ha", "Área útil (ha)", { required: true, list: true, section: "Medidas", span: 3 }),
+      Q("declared_area_ha", "Área declarada (ha)", { section: "Medidas", span: 3 }),
+      REF("fodder_id", "Forragem", "fodders", { list: true, filter: true, section: "Pastagem", span: 4 }),
+      S("pasture_type", "Tipo de pastagem", TIPO_DE_PASTAGEM, { filter: true, section: "Pastagem", span: 3 }),
+      I("formation_year", "Ano de formação", { section: "Pastagem", span: 2 }),
+      Q("support_capacity_rainy_ua_ha", "Cap. suporte águas (UA/ha)", { section: "Pastagem", span: 3 }),
+      Q("support_capacity_dry_ua_ha", "Cap. suporte seca (UA/ha)", { section: "Pastagem", span: 3 }),
+      Q("max_stocking_ua", "Lotação máxima (UA)", { section: "Pastagem", span: 3 }),
+      T("soil_class", "Classe de solo", { section: "Solo", span: 4 }),
+      S("soil_texture", "Textura", TEXTURA_DO_SOLO, { section: "Solo", span: 3 }),
+      S("relief", "Relevo", RELEVO_DA_AREA, { section: "Solo", span: 3 }),
+      S("tenure", "Posse", POSSE_DA_AREA, { required: true, filter: true, default: "propria", section: "Outros", span: 3 }),
+      { name: "notes", label: "Observações", type: "textarea", section: "Outros", span: 12 },
+      active()
+    ]
   },
   {
     key: "troughs", label: "Cocho", labelPlural: "Cochos", table: "troughs", permission: "troughs", labelField: "description", route: "/pecuaria/cochos", softDelete: true, codeEntity: "trough",

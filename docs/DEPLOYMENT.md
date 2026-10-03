@@ -2718,3 +2718,16 @@ fora do escopo do usuário responde a mesma coisa que um número inexistente.
 registros novos param de receber número — rodar o backfill de novo depois resolve, sem renumerar nada.
 Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registros_globais` destruiria
 identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.
+
+
+## CADASTRO-AREAS-01 — retiro, tipo de uso e área útil (0042)
+
+Decisão 279. **Uma migration: `0042_cadastro_de_areas.sql`** (pre-deploy; trava (2026,76), `lock_timeout` 2 s, pré/pós-condições nomeadas `CADASTRO-AREAS-01: …`, não destrutiva no sentido de apagar dado).
+
+**Ordem:** BANCO → API → WEB. Merge depois de #90 se ainda aberta e a ordem de review assim exigir — esta fatia não colide em arquivo com #90; a migration 0042 é a próxima livre após `0041` em `origin/main`.
+
+**Backfill:** linhas existentes de `erp.areas` recebem `usable_area_ha = area_ha`, `land_use = pastagem`, `status` coerente com `is_active`, `tenure = propria`. Acervo com `usable_area_ha > area_ha` (impossível antes desta coluna) faria a migration recusar.
+
+**Impacto em dados reais:** não apaga linhas; só acrescenta colunas e preenche defaults. `kml_geometry` intacto. Sem seed de forrageiras.
+
+**Caminho de volta:** forward-only para as colunas NOT NULL após backfill; reverter exigiria migration nova que afrouxasse as restrições (não faz parte desta fatia).

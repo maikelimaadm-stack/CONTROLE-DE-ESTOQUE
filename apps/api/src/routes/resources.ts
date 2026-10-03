@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { getResource, getReferencia, nomeDoMunicipio, partesDaReferencia, RESOURCES, tipoEntidadeDaTabela, type ChaveReferencia, type FieldDef, type ResourceDef } from "@agro/domain";
+import { getResource, getReferencia, nomeDoMunicipio, partesDaReferencia, RESOURCES, tipoEntidadeDaTabela, filtroUsoSelecaoArea, type ChaveReferencia, type FieldDef, type ResourceDef } from "@agro/domain";
 import { isISODate, parseFilterKey, filterKindOf, isValidOperator, decodeRange, decodeList, relativeDateRange } from "@agro/shared";
 import { ident, SqlBuilder } from "../lib/sql.js";
 import { pageQuerySchema, extractFilters } from "../lib/pagination.js";
@@ -167,6 +167,9 @@ const escopoDoRecurso = (def: ResourceDef) => ({ ativo: Boolean(def.empresaScope
 export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Record<string, unknown>) {
   const q = pageQuerySchema.parse(query);
   const filters = extractFilters(q as Record<string, unknown>);
+  // CADASTRO-AREAS-01: `uso` não é coluna — é conjunto de land_use + status para seleção por outros módulos.
+  const usoSelecao = def.key === "areas" && typeof filters.uso === "string" ? filters.uso : null;
+  if (usoSelecao) delete filters.uso;
   const existing = await checkColumns(ctx, def);
   const cols = listColumns(def).filter((c) => existing.has(c));
   const b = new SqlBuilder();
@@ -178,6 +181,13 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
   const escL = escopoDoRecurso(def);
   if (escL.ativo && ctx.empresaId && existing.has("empresa_id") && !filters["empresa_id"]) where.push(escL.nullable ? `(empresa_id is null or empresa_id = ${b.add(ctx.empresaId)})` : `empresa_id = ${b.add(ctx.empresaId)}`);
   if (escL.ativo && existing.has("empresa_id")) where.push(...empresaScopeBuilder(ctx, "empresa_id", b, { nullable: escL.nullable }));
+  if (usoSelecao) {
+    const fuso = filtroUsoSelecaoArea(usoSelecao);
+    if (!fuso) throw validation("Parâmetro uso inválido. Use receber_animal, safra ou produtiva.");
+    if (!existing.has("land_use") || !existing.has("status")) throw validation("Filtro de uso indisponível: colunas land_use/status ausentes.");
+    where.push(`${ident("land_use")} = any(${b.add([...fuso.landUses])})`);
+    where.push(`${ident("status")} = any(${b.add([...fuso.statuses])})`);
+  }
   if (q.search) {
     // campo sigiloso não entra na busca textual de quem não o vê (R1-2): a busca é uma pergunta sobre o valor
     const sf = def.fields.filter((f) => f.search && podeVerCampo(ctx, f)).map((f) => f.name);
@@ -230,7 +240,21 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
   if (!rows.rows.length && q.page > 1) { const c = await ctx.tx.query<{ n: string }>(`select count(*) as n from erp.${ident(def.table)} ${wsql}`, b.params); total = Number(c.rows[0]!.n); }
   const labelRows = await refLabels(ctx, def, rows.rows as Record<string, unknown>[]);
   const items = rows.rows.map((r, i) => { const o = { ...(r as Record<string, unknown>), ...labelRows[i] } as Record<string, unknown>; delete o["__total"]; return semSigilo(ctx, def, o); });
-  const pagina = { items, page: q.page, pageSize: q.pageSize, total };
+  const pagina: {
+    items: Record<string, unknown>[];
+    page: number;
+    pageSize: number;
+    total: number;
+    totals?: { area_ha: string; usable_area_ha: string };
+  } = { items, page: q.page, pageSize: q.pageSize, total };
+  // CADASTRO-AREAS-01: rodapé do resultado filtrado — somas server-side no mesmo WHERE da página.
+  if (def.key === "areas" && existing.has("area_ha") && existing.has("usable_area_ha")) {
+    const somas = await ctx.tx.query<{ area_ha: string; usable_area_ha: string }>(
+      `select coalesce(sum(area_ha),0)::text as area_ha, coalesce(sum(usable_area_ha),0)::text as usable_area_ha from erp.${ident(def.table)} ${wsql}`,
+      b.params
+    );
+    pagina.totals = { area_ha: somas.rows[0]!.area_ha, usable_area_ha: somas.rows[0]!.usable_area_ha };
+  }
   /**
    * ID Global na listagem genérica: o tipo vem da TABELA do recurso, pelo índice do catálogo — o Resource
    * Registry grava em dezenas de tabelas e só três delas são elegíveis hoje. Sem catálogo (a grande maioria)

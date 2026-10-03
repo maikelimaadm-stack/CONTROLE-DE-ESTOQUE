@@ -147,7 +147,7 @@ const RECURSOS_POR_MODULO: Readonly<Record<string, readonly string[]>> = {
     "report.sales_abc"
   ],
   pecuaria: [
-    "animals", "animal_retroactive_costs", "grazing_modules", "batches", "batch_grazing", "batch_area",
+    "animals", "animal_retroactive_costs", "retiros", "grazing_modules", "batches", "batch_grazing", "batch_area",
     "animals_management", "inventoried_animals", "livestock_plannings", "herd_evolution",
     "animal_batch_transfer", "batch_grouping", "batch_module_area_transfer", "batch_farm_transfer",
     "animal_farm_transfer", "animal_sales", "animal_purchases", "animal_births", "animal_deaths",

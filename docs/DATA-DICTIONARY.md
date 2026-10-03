@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 203 |
-| Tabelas com `organization_id` (escopo de organização) | 146 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 59 |
+| Tabelas no schema `erp` | 204 |
+| Tabelas com `organization_id` (escopo de organização) | 147 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 60 |
 | Entidades curadas neste dicionário | 54 |
 | Entidades com ID Global | 25 |
 | Entidades com Tipo de Operação | 15 |
 | Tipos de Operação referenciados | 23 |
-| Cobertura curada | 26.6% |
+| Cobertura curada | 26.5% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -1903,7 +1903,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.aprovacoes_compra` | 11 | sim | `empresa_id` | não |
 | `erp.aprovacoes_estoque` | 10 | sim | `empresa_id` | não |
 | `erp.aprovacoes_venda` | 12 | sim | `empresa_id` | não |
-| `erp.areas` | 13 | sim | `empresa_id` | sim |
+| `erp.areas` | 29 | sim | `empresa_id` | sim |
 | `erp.attachment_blobs` | 3 | sim | — | não |
 | `erp.attachments` | 12 | sim | — | não |
 | `erp.authorizer_empresas` | 2 | não | `empresa_id` | não |
@@ -1958,8 +1958,8 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.feedlot_yards` | 8 | sim | `empresa_id` | sim |
 | `erp.financial_categories` | 13 | sim | — | sim |
 | `erp.financial_freezes` | 9 | sim | `empresa_id` | não |
-| `erp.fodders` | 7 | sim | — | sim |
-| `erp.grazing_modules` | 13 | sim | `empresa_id` | sim |
+| `erp.fodders` | 11 | sim | — | sim |
+| `erp.grazing_modules` | 23 | sim | `empresa_id` | sim |
 | `erp.harvests` | 14 | sim | — | sim |
 | `erp.herd_lots` | 13 | sim | `empresa_id` | não |
 | `erp.hr_events` | 12 | sim | — | sim |
@@ -2008,6 +2008,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.purchase_request_items` | 10 | não | — | não |
 | `erp.rainfalls` | 8 | sim | `empresa_id` | não |
 | `erp.requisition_items` | 10 | não | — | não |
+| `erp.retiros` | 14 | sim | `empresa_id` | sim |
 | `erp.salary_advances` | 14 | sim | `empresa_id` | sim |
 | `erp.sales_document_items` | 12 | não | — | não |
 | `erp.saved_reports` | 11 | sim | — | sim |
