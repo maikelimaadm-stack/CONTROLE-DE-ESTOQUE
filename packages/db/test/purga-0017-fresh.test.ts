@@ -233,8 +233,8 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     // no recorte que a purga lê. No disco ela vem depois da 0047 (ordem por nome); em produção foi aplicada ANTES das
     // 0042–0047 (a prova da ordem real está em operacoes-01-ordem-real.test.ts).
     // A CADASTRO-AREAS-01 (0050) cria `erp.retiros` e colunas em `areas`; a CADASTRO-AREAS-02 (0051) unifica
-    // `geometria` em `erp.areas` — nada no recorte que a purga lê.
-    expect(noDisco.length, "51 migrations no repositório").toBe(51);
+    // `geometria` em `erp.areas`; a SAT-01 (0052) cria `erp.analises_satelitais` — nada no recorte que a purga lê.
+    expect(noDisco.length, "52 migrations no repositório").toBe(52);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
     expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");
