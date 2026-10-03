@@ -1,6 +1,6 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
-import { codigoTop } from "./central-compras-fixtures";
+import { test, expect, codigoTop, criarCadastro } from "./central-compras-fixtures";
 
 /**
  * RECEBER O PEDIDO DE COMPRA — o caminho do operador (COMPRAS-02, decisão 268).
@@ -12,8 +12,11 @@ import { codigoTop } from "./central-compras-fixtures";
  * confirmar dá a entrada; e o pedido passa a mostrar Recebido e Saldo — conferidos também no SERVIDOR.
  *
  * O GRAFO É MONTADO PELA API ADMINISTRATIVA dentro do teste (a TOP de Pedido de compra nasce com a Próxima operação
- * = a TOP de Compra, "Em partes"): cada execução cria as PRÓPRIAS TOPs, produtos e pedido, e nenhuma conta depende
- * do que outro spec deixou no banco.
+ * = a TOP de Compra, "Em partes"): cada execução cria as PRÓPRIAS TOPs, produtos, local de estoque e pedido, e nenhuma
+ * conta depende do que outro spec deixou no banco. O local é escolhido na pesquisa da linha PELO NOME, e ela lista os
+ * locais de todas as empresas visíveis: o "primeiro local da empresa" do seed pode ter o nome repetido na outra empresa
+ * ("Silo de Grãos", "Fábrica de Ração") e a pesquisa entregaria o gêmeo — que o servidor recusa (422, local de outra
+ * empresa). O local nasce com nome único por `criarCadastro`, que registra a exclusão lógica no fim do caso.
  *
  * O VALOR UNITÁRIO DO RECEBER NÃO É O CUSTO MÉDIO DO ARMAZÉM: com custo médio > 0 no armazém, o "0" digitado continua
  * "0" no Receber e vai 0 no `/convert` (CX-2), e o mesmo numa compra nova (CX-1) — provados, com a premissa do custo
@@ -57,7 +60,9 @@ async function cenario(page: Page) {
   };
   const a = await produto("CP-W1 produto A"); const b = await produto("CP-W1 produto B");
   const empresa = await empresaAtiva(page);
-  const armazem = await primeiroId(page, `/api/resources/warehouses?empresa_id=${empresa}&pageSize=1`);
+  const armazem = (await criarCadastro(page, "warehouses", {
+    empresa_id: empresa, initials: `CP${Date.now().toString(36).slice(-6).toUpperCase()}`, description: uniq("CP-W1 local"), type: "inputs"
+  })).id;
   const nomeArmazem = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/warehouses/${armazem}`))["description"]);
   const fornecedor = await primeiroId(page, "/api/resources/people?is_provider=true&pageSize=1");
 
