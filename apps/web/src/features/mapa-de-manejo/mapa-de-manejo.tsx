@@ -1,1082 +1,182 @@
 "use client";
 import * as React from "react";
-import { flushSync } from "react-dom";
-import { useSearchParams } from "next/navigation";
-import type { Feature, Polygon } from "geojson";
-import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
-import { Check, Redo2, RotateCcw, Undo2, Upload } from "lucide-react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, qs, newIdem } from "@/lib/api";
+import Link from "next/link";
+import type { Map as MapLibreMap } from "maplibre-gl";
+import { X } from "lucide-react";
+import { qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { canonicalHref, entryById } from "@/lib/nav";
 import { useEmpresaPadrao } from "@/features/docs/shared";
-import { Card, CardBody, Button, Spinner, EmptyState, ErrorState, ConfirmDialog } from "@/components/ui";
-import { cn, num } from "@/lib/utils";
-import { criarSessaoGoogle, estiloSatelite, estiloFundoLiso, fonteRaster, ID_BASE, type TipoBase, CENTRO_PADRAO, ZOOM_PADRAO } from "./basemap";
-import {
-  IMA_PADRAO, acertar, acharIma, anelAberto, areaHa, centroPx, centroideLngLat, coordsDe, distanciaM, lerPasso, novoHistorico, perimetroM, podeDesfazer,
-  podeRefazer, poligonoGeoJSON, registrar, rumoGraus, travarAngulo,
-  type Acerto, type AlvoPx, type ConfigIma, type Historico, type Ima, type LngLat, type PontoDesenho, type Px, type Retrato
-} from "./editor-desenho";
-import { CamadaDesenho, type Lado, type RotuloArea } from "./camada-desenho";
-import { BarraIma } from "./barra-ima";
-import { COR_LINHA_AREA, COR_PADRAO_AREA, corBordaNoMapa, corExibidaNoMapa } from "./cores";
-import { parseImportacaoMapa, rotuloFormato, type AreaImportada } from "./importacao";
-import { suavizarRotulos } from "./rotulos";
-import { FichaAreaNoMapa } from "@/features/areas/ficha-area-no-mapa";
+import { Card, CardBody, Button, Spinner, EmptyState, ErrorState, buttonVariants } from "@/components/ui";
+import { num } from "@/lib/utils";
+import { CamadaDesenho } from "./camada-desenho";
+import { COR_PADRAO_AREA } from "./cores";
+import { AvisoDeLocalizacao, SeletorDeBase, desenharAreas, hectares, limites, marcarSelecao, rotulosDasAreas, useAreasDoMapa, useMapaBase } from "./mapa-base";
 
 /**
- * Unificação mapa × áreas: o Mapa de Manejo e Áreas/Piquetes são o mesmo cadastro (erp.areas).
- * O mapa desenha/importa o contorno (opcional); a ficha é o ResourceForm de areas (mesmas informações).
+ * Mapa de Manejo — SÓ VISUALIZAÇÃO das áreas (erp.areas). O cadastro de área existe num lugar só: a ficha de
+ * Áreas/Piquetes, onde o contorno é desenhado com o editor completo. Daqui se abre o cadastro (da área clicada ou um
+ * novo); o mapa não grava, não exclui e não importa nada.
  */
 
-interface AreaApi {
-  id: string;
-  empresa_id: string;
-  name: string;
-  code?: string;
-  area_ha: string | number | null;
-  usable_area_ha?: string | number | null;
-  color: string | null;
-  geometria: Polygon | null;
-  land_use?: string | null;
-  status?: string | null;
-  retiro_id?: string | null;
-  tenure?: string | null;
-}
-
-const COR_PADRAO = COR_PADRAO_AREA;
-const hectares = (v: AreaApi["area_ha"]) => (v === null || v === undefined || v === "" ? 0 : Number(v));
-
-type Rascunho = { geometria: Polygon; area_ha: number; /** Se preenchido, o salvar faz PUT nessa área (edição de contorno). */ editandoId?: string };
-
-type Arrasto =
-  | { tipo: "vertice"; i: number; novo: boolean; mexeu: boolean }
-  | { tipo: "poligono"; origem: Px; orig: LngLat[]; mexeu: boolean };
-
-/** Estado do editor. Vive num ref (os eventos do mapa leem sempre o atual) e a tela redesenha por contador. */
-interface Editor {
-  pontos: PontoDesenho[];
-  fechado: boolean;
-  hist: Historico;
-  cur: Px | null;
-  raw: Px | null;
-  ima: Ima | null;
-  travado: boolean;
-  arrasto: Arrasto | null;
-  hover: Acerto | null;
-  acao: string;
-  ultimoClique: { i: number; t: number } | null;
-}
-const editorVazio = (): Editor => ({
-  pontos: [], fechado: false, hist: novoHistorico(), cur: null, raw: null, ima: null, travado: false,
-  arrasto: null, hover: null, acao: "Clique no mapa para marcar os pontos", ultimoClique: null
-});
-const livre = (ll: LngLat): PontoDesenho => ({ lng: ll[0], lat: ll[1], grudado: false, tipo: null, de: null });
-/** Textos dos controles do MapLibre (dicas dos botões) em PT-BR — o padrão do pacote é inglês. */
-const TEXTOS_DO_MAPA: Record<string, string> = {
-  "AttributionControl.ToggleAttribution": "Mostrar ou ocultar os créditos do mapa",
-  "AttributionControl.MapFeedback": "Enviar comentário sobre o mapa",
-  "GeolocateControl.FindMyLocation": "Minha localização",
-  "GeolocateControl.LocationNotAvailable": "Localização indisponível",
-  "NavigationControl.ResetBearing": "Voltar o norte para cima",
-  "NavigationControl.ZoomIn": "Aproximar",
-  "NavigationControl.ZoomOut": "Afastar"
-};
-/** Acima disto (em metros) a localização é avisada como aproximada — GPS de celular fica bem abaixo. */
-const PRECISAO_BOA_M = 50;
-/** Janela do duplo clique: o ponto criado pelo 1º clique do gesto não é apagado pelo dblclick do mesmo gesto. */
-const JANELA_DUPLO_MS = 600;
+const NOVA_AREA = "/cadastros/areas/new";
+const fichaDaArea = (id: string) => `/cadastros/areas/${id}`;
 
 export function MapaDeManejo() {
-  const { session } = useAuth();
-  const searchParams = useSearchParams();
-  const empresaSessao = session?.empresaId ?? null;
-  // Empresa da área nova: a da sessão, ou a primeira do contexto (mesma regra das telas de lançamento). É PEDIDO —
-  // o servidor confere o escopo.
+  const { can } = useAuth();
+  // A ficha nova já vem com a empresa da sessão (ou a primeira do contexto) — é PEDIDO; o servidor confere o escopo.
   const empresaId = useEmpresaPadrao();
-  const queryClient = useQueryClient();
-
-  const containerRef = React.useRef<HTMLDivElement | null>(null);
-  const mapRef = React.useRef<MapLibreMap | null>(null);
-  const [mapaPronto, setMapaPronto] = React.useState(false);
-  const [semImagem, setSemImagem] = React.useState(false);
-  const [base, setBase] = React.useState<TipoBase>("satelite");
-  const [desenhando, setDesenhando] = React.useState(false);
-  const [rascunho, setRascunho] = React.useState<Rascunho | null>(null);
+  const lista = useAreasDoMapa();
+  const areas = React.useMemo(() => lista.data?.items ?? [], [lista.data]);
   const [selecionada, setSelecionada] = React.useState<string | null>(null);
-  /** Edição da ficha completa (ResourceForm) sem redesenhar o polígono. */
-  const [editandoFicha, setEditandoFicha] = React.useState(false);
-  /** Cadastro pela ficha sem desenhar contorno (geometria opcional). */
-  const [fichaSemContorno, setFichaSemContorno] = React.useState(false);
-  const [excluir, setExcluir] = React.useState<AreaApi | null>(null);
-  const [erro, setErro] = React.useState<string | null>(null);
-  const [localizacao, setLocalizacao] = React.useState<{ precisao: number } | null>(null);
-  const [erroLocalizacao, setErroLocalizacao] = React.useState<string | null>(null);
-  const [cfg, setCfg] = React.useState<ConfigIma>(IMA_PADRAO);
-  const [mostrarMetragem, setMostrarMetragem] = React.useState(false);
   /** Área sob o mouse (rótulo em destaque + contorno por cima). */
   const [hoverAreaId, setHoverAreaId] = React.useState<string | null>(null);
-  /** Mãozinha: só com ela ligada o arrasto move a área fechada inteira. */
-  const [moverArea, setMoverArea] = React.useState(false);
-  const moverAreaRef = React.useRef(false);
-  React.useEffect(() => { moverAreaRef.current = moverArea; }, [moverArea]);
-  const [importando, setImportando] = React.useState(false);
-  const [progressoImport, setProgressoImport] = React.useState<string | null>(null);
-  const importInputRef = React.useRef<HTMLInputElement | null>(null);
-  // Refs lidos pelos eventos do mapa (registrados uma vez só).
-  const ed = React.useRef<Editor>(editorVazio());
-  /** Ímã: tolerância 8 px, vértice+aresta; liga/desliga pelo ícone. */
-  const cfgRef = React.useRef<ConfigIma>(IMA_PADRAO);
-  React.useEffect(() => { cfgRef.current = cfg; }, [cfg]);
-  const desenhandoRef = React.useRef(false);
-  const formAbertoRef = React.useRef(false);
-  const areasRef = React.useRef<AreaApi[]>([]);
-  /** Área cujo contorno está em edição — some do mapa e dos alvos do ímã enquanto redesenha. */
-  const [editandoContornoId, setEditandoContornoId] = React.useState<string | null>(null);
-  const editandoContornoIdRef = React.useRef<string | null>(null);
-  React.useEffect(() => { editandoContornoIdRef.current = editandoContornoId; }, [editandoContornoId]);
-  const soltarArrastoRef = React.useRef<(() => void) | null>(null);
-  /** True enquanto o usuário pan/zoom o mapa — bloqueia o cursor de inserção. */
-  const mapaMovendoRef = React.useRef(false);
-  const [, redesenhar] = React.useReducer((n: number) => n + 1, 0);
-
-  const listaQuery = useQuery({
-    queryKey: ["areas-mapa", empresaSessao],
-    queryFn: () => api<{ items: AreaApi[] }>(`/api/resources/areas${qs({ pageSize: 500 })}`)
-  });
-  const areas = React.useMemo(() => listaQuery.data?.items ?? [], [listaQuery.data]);
+  const areasRef = React.useRef(areas);
   React.useEffect(() => { areasRef.current = areas; }, [areas]);
   React.useEffect(() => {
-    (window as unknown as { __mapaAreasE2E?: AreaApi[] }).__mapaAreasE2E = areas;
+    (window as unknown as { __mapaAreasE2E?: typeof areas }).__mapaAreasE2E = areas;
   }, [areas]);
-  React.useEffect(() => { formAbertoRef.current = rascunho !== null; }, [rascunho]);
 
+  const mapa = useMapaBase({ ganchoE2E: "__mapaManejoE2E", aoCarregar: registrarEventos });
+  const { mapRef } = mapa;
+
+  /** Clique na área seleciona; passar o mouse destaca o contorno. */
+  function registrarEventos(m: MapLibreMap) {
+    m.on("click", "areas-fill", (e) => {
+      const id = e.features?.[0]?.properties?.id != null ? String(e.features[0].properties.id) : null;
+      if (id && areasRef.current.some((a) => a.id === id)) setSelecionada(id);
+    });
+    let hoverId: string | null = null;
+    m.on("mousemove", "areas-fill", (e) => {
+      m.getCanvas().style.cursor = "pointer";
+      const id = e.features?.[0]?.properties?.id != null ? String(e.features[0].properties.id) : null;
+      if (id === hoverId) return;
+      if (hoverId) try { m.setFeatureState({ source: "areas", id: hoverId }, { hover: false }); } catch { /* */ }
+      hoverId = id;
+      if (hoverId) try { m.setFeatureState({ source: "areas", id: hoverId }, { hover: true }); } catch { /* */ }
+      setHoverAreaId(hoverId);
+    });
+    m.on("mouseleave", "areas-fill", () => {
+      m.getCanvas().style.cursor = "";
+      if (hoverId) try { m.setFeatureState({ source: "areas", id: hoverId }, { hover: false }); } catch { /* */ }
+      hoverId = null;
+      setHoverAreaId(null);
+    });
+  }
+
+  // ---------- áreas no mapa ----------
+  React.useEffect(() => {
+    const m = mapRef.current;
+    if (!m || !mapa.pronto) return;
+    desenharAreas(m, areas);
+  }, [areas, mapa.pronto, mapRef]);
   // Contorno de seleção por cima dos vizinhos (feature-state na camada de destaque).
   const selecaoAnteriorRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     const m = mapRef.current;
-    if (!m || !mapaPronto) return;
+    if (!m || !mapa.pronto) return;
     const ant = selecaoAnteriorRef.current;
-    if (ant && ant !== selecionada) {
-      try { m.setFeatureState({ source: "areas", id: ant }, { selecionada: false }); } catch { /* */ }
-    }
-    if (selecionada) {
-      try { m.setFeatureState({ source: "areas", id: selecionada }, { selecionada: true }); } catch { /* */ }
-    }
+    if (ant && ant !== selecionada) marcarSelecao(m, ant, false);
+    if (selecionada) marcarSelecao(m, selecionada, true);
     selecaoAnteriorRef.current = selecionada;
-  }, [selecionada, mapaPronto, areas]);
-
-  // ---------- projeção ----------
-  const proj = (ll: LngLat): Px => { const m = mapRef.current; if (!m) return { x: 0, y: 0 }; const p = m.project(ll); return { x: p.x, y: p.y }; };
-  const desproj = (p: Px): LngLat => { const m = mapRef.current; if (!m) return [0, 0]; const ll = m.unproject([p.x, p.y]); return [ll.lng, ll.lat]; };
-  const ptsPx = () => ed.current.pontos.map((pt) => proj([pt.lng, pt.lat]));
-  const alvosPx = (): AlvoPx[] => areasRef.current.flatMap((a) => {
-    if (a.id === editandoContornoIdRef.current) return [];
-    const coords = anelAberto(a.geometria);
-    return coords.length >= 2 ? [{ nome: a.name, coords, pts: coords.map(proj) }] : [];
-  });
-  const ativo = () => desenhandoRef.current && !formAbertoRef.current;
-  const doIma = (s: Ima): PontoDesenho => { const ll = s.lngLat ?? desproj(s.px); return { lng: ll[0], lat: ll[1], grudado: true, tipo: s.tipo === "aresta" ? "aresta" : "vertice", de: s.de }; };
-
-  // ---------- histórico ----------
-  function aplicar(r: Retrato, acao?: string) {
-    const e = ed.current;
-    e.hist = registrar(e.hist, r);
-    e.pontos = r.pontos; e.fechado = r.fechado; e.arrasto = null;
-    if (acao) e.acao = acao;
-    redesenhar();
-  }
-  function irPara(i: number, acao?: string) {
-    const e = ed.current; const r = lerPasso(e.hist, i);
-    e.hist = { ...e.hist, pos: i }; e.pontos = r.pontos; e.fechado = r.fechado; e.arrasto = null; e.ima = null; e.hover = null;
-    if (acao) e.acao = acao;
-    redesenhar();
-  }
-  function desfazer() { const e = ed.current; if (podeDesfazer(e.hist)) irPara(e.hist.pos - 1, "Desfeito"); else { e.acao = "Nada para desfazer"; redesenhar(); } }
-  function refazer() { const e = ed.current; if (podeRefazer(e.hist)) irPara(e.hist.pos + 1, "Refeito"); else { e.acao = "Nada para refazer"; redesenhar(); } }
-  function recomecar() { irPara(0); ed.current.acao = "Recomeçado"; redesenhar(); }
-  function fechar(acao: string) {
-    const e = ed.current;
-    if (e.fechado || e.pontos.length < 3) return;
-    aplicar({ pontos: e.pontos, fechado: true }, acao);
-    e.cur = null; e.ima = null; e.ultimoClique = { i: 0, t: performance.now() };
-  }
-
-  // ---------- eventos do desenho (px relativos ao mapa) ----------
-  function aoMover(px: Px, alt: boolean, shift: boolean) {
-    if (!ativo()) return;
-    // Só acompanha o mouse de verdade — durante pan/zoom do mapa o mousemove do MapLibre
-    // não deve reposicionar o cursor (senão parece “puxar” o desenho).
-    if (mapaMovendoRef.current) return;
-    const e = ed.current;
-    if (e.arrasto) return;
-    const pts = ptsPx();
-    const h = acertar(px, pts, e.fechado, { moverArea: moverAreaRef.current });
-    if (h?.tipo === "vertice" && h.i === 0 && !e.fechado && pts.length >= 3) {
-      // o primeiro ponto, com 3+ marcados, é o alvo de fechar
-      Object.assign(e, { hover: null, raw: px, cur: pts[0], ima: { px: pts[0]!, lngLat: null, dist: 0, tipo: "fechar", de: "primeiro ponto" }, travado: false });
-    } else if (h) {
-      Object.assign(e, { hover: h, cur: px, raw: px, ima: null, travado: false });
-    } else if (e.fechado) {
-      Object.assign(e, { hover: null, cur: px, raw: null, ima: null, travado: false });
-    } else {
-      const s0 = acharIma(px, alvosPx(), cfgRef.current, { pts, fechado: false }, { soltar: alt, semFechar: false });
-      // Guarda lngLat também na aresta: no pan do mapa o px é reprojetado a partir disso (não “arrasta” o ponto cadastrado).
-      const s = s0 && !s0.lngLat ? { ...s0, lngLat: desproj(s0.px) } : s0;
-      const travar = shift && !s && pts.length > 0;
-      Object.assign(e, { hover: null, raw: px, cur: s ? s.px : travar ? travarAngulo(pts[pts.length - 1]!, px) : px, ima: s, travado: travar });
-    }
-    redesenhar();
-  }
-  function aoSair() {
-    if (!ativo() || ed.current.arrasto) return;
-    Object.assign(ed.current, { cur: null, raw: null, ima: null, hover: null, travado: false });
-    redesenhar();
-  }
-  /** Segurar: num ponto (arrasta), no meio de um lado (cria ponto e arrasta) ou dentro da área fechada (move tudo). */
-  function aoPressionar(px: Px): boolean {
-    if (!ativo()) return false;
-    const e = ed.current;
-    const h = acertar(px, ptsPx(), e.fechado, { moverArea: moverAreaRef.current });
-    if (!h) return false;
-    if (h.tipo === "vertice") {
-      e.arrasto = { tipo: "vertice", i: h.i, novo: false, mexeu: false }; e.acao = `Arrastando o ponto ${h.i + 1}`;
-    } else if (h.tipo === "meio") {
-      const np = e.pontos.slice(); np.splice(h.i + 1, 0, livre(desproj(h.px))); e.pontos = np;
-      e.arrasto = { tipo: "vertice", i: h.i + 1, novo: true, mexeu: false }; e.acao = "Ponto novo criado no meio";
-    } else {
-      e.arrasto = { tipo: "poligono", origem: px, orig: coordsDe(e.pontos), mexeu: false }; e.acao = "Movendo a área";
-    }
-    e.hover = null;
-    redesenhar();
-    return true;
-  }
-  function aoArrastar(px: Px, alt: boolean) {
-    const e = ed.current; const d = e.arrasto;
-    if (!d) return;
-    if (d.tipo === "vertice") {
-      const s0 = acharIma(px, alvosPx(), cfgRef.current, { pts: ptsPx(), fechado: e.fechado }, { soltar: alt, semFechar: true });
-      const s = s0 && !s0.lngLat ? { ...s0, lngLat: desproj(s0.px) } : s0;
-      const np = e.pontos.slice(); np[d.i] = s ? doIma(s) : livre(desproj(px)); e.pontos = np;
-      Object.assign(e, { raw: px, cur: s ? s.px : px, ima: s });
-    } else {
-      const dx = px.x - d.origem.x, dy = px.y - d.origem.y;
-      e.pontos = d.orig.map((ll) => { const p = proj(ll); return livre(desproj({ x: p.x + dx, y: p.y + dy })); });
-      Object.assign(e, { cur: px, raw: px, ima: null });
-    }
-    d.mexeu = true;
-    redesenhar();
-  }
-  function aoSoltar() {
-    const e = ed.current; const d = e.arrasto;
-    if (!d) return;
-    if (d.tipo === "vertice") {
-      if (d.novo || d.mexeu) aplicar({ pontos: e.pontos, fechado: e.fechado }, d.novo ? "Ponto do meio virou vértice" : "Ponto solto");
-      else if (d.i === 0 && !e.fechado && e.pontos.length >= 3) { e.arrasto = null; fechar("Fechado no primeiro ponto"); }
-      else { e.arrasto = null; e.acao = "Ponto solto"; }
-    } else if (d.mexeu) {
-      aplicar({ pontos: e.pontos, fechado: e.fechado }, "Área movida");
-    } else {
-      e.arrasto = null;
-    }
-    e.ima = null;
-    redesenhar();
-  }
-  function aoClicar(px: Px, alt: boolean, shift: boolean, detalhe: number) {
-    if (!ativo()) return;
-    if (detalhe >= 2) return; // 2º clique do duplo: o dblclick decide
-    const e = ed.current; const pts = ptsPx();
-    if (acertar(px, pts, e.fechado, { moverArea: moverAreaRef.current })) return; // segurar/soltar num alvo já foi tratado
-    if (e.fechado) { e.acao = "Fechada — arraste os pontos, ou toque em Recomeçar"; redesenhar(); return; }
-    const s = acharIma(px, alvosPx(), cfgRef.current, { pts, fechado: false }, { soltar: alt, semFechar: false });
-    if (s?.tipo === "fechar") { fechar("Fechado no primeiro ponto"); return; }
-    const novo = s ? doIma(s) : livre(desproj(shift && pts.length ? travarAngulo(pts[pts.length - 1]!, px) : px));
-    aplicar({ pontos: [...e.pontos, novo], fechado: false }, s ? `Ponto grudou ${s.tipo === "aresta" ? "na aresta" : "no vértice"} de ${s.de}` : "Ponto marcado");
-    e.ultimoClique = { i: e.pontos.length - 1, t: performance.now() };
-  }
-  function aoDuploClique(px: Px) {
-    if (!ativo()) return;
-    const e = ed.current;
-    const h = acertar(px, ptsPx(), e.fechado, { moverArea: moverAreaRef.current });
-    const uc = e.ultimoClique;
-    const mesmoGesto = !!uc && h?.tipo === "vertice" && h.i === uc.i && performance.now() - uc.t < JANELA_DUPLO_MS;
-    if (h?.tipo === "vertice" && !mesmoGesto && e.pontos.length > 3) {
-      const np = e.pontos.slice(); np.splice(h.i, 1);
-      aplicar({ pontos: np, fechado: e.fechado }, `Ponto ${h.i + 1} apagado`);
-      e.hover = null;
-      return;
-    }
-    fechar("Fechado com dois cliques");
-  }
-  function iniciarArrasto() {
-    const m = mapRef.current;
-    if (!m) return;
-    // Trava o pan do mapa enquanto o ponto/área acompanha o mouse — senão o mapa
-    // “puxa” e o pontinho parece bugado.
-    m.dragPan.disable();
-    const caixa = m.getCanvasContainer();
-    const mover = (ev: PointerEvent) => {
-      const r = caixa.getBoundingClientRect();
-      aoArrastar({ x: ev.clientX - r.left, y: ev.clientY - r.top }, ev.altKey);
-    };
-    const soltar = () => {
-      window.removeEventListener("pointermove", mover);
-      window.removeEventListener("pointerup", soltar);
-      window.removeEventListener("pointercancel", soltar);
-      soltarArrastoRef.current = null;
-      m.dragPan.enable();
-      aoSoltar();
-    };
-    window.addEventListener("pointermove", mover);
-    window.addEventListener("pointerup", soltar);
-    window.addEventListener("pointercancel", soltar);
-    soltarArrastoRef.current = soltar;
-  }
-
-  // ---------- mapa (inicialização única) ----------
-  React.useEffect(() => {
-    let cancelado = false;
-    let mapaCleanup: MapLibreMap | null = null;
-    (async () => {
-      const container = containerRef.current;
-      if (!container) return;
-      // maplibre-gl 5 é UMD (worker embutido no próprio pacote — funciona em qualquer bundler sem servir arquivo à
-      // parte); conforme a interop do bundler, a API vem no namespace ou em `default`.
-      const mod = await import("maplibre-gl");
-      const maplibre = mod.default ?? mod;
-      if (cancelado) return;
-      const sessao = await criarSessaoGoogle();
-      if (cancelado) return;
-      setSemImagem(!sessao);
-      const m = new maplibre.Map({
-        container,
-        style: sessao ? estiloSatelite(sessao) : estiloFundoLiso(),
-        center: CENTRO_PADRAO,
-        zoom: ZOOM_PADRAO,
-        attributionControl: { compact: true },
-        // mapa sempre norte para cima: o botão direito é "desfazer" no desenho e o rumo do Shift é de bússola
-        dragRotate: false,
-        pitchWithRotate: false,
-        touchPitch: false,
-        locale: TEXTOS_DO_MAPA
-      });
-      m.touchZoomRotate.disableRotation();
-      mapaCleanup = m;
-      m.addControl(new maplibre.NavigationControl({ showCompass: false }), "bottom-right");
-      // "Habilitar minha localização": o controle do MapLibre pede a permissão do navegador e segue o usuário.
-      // Sempre a posição NOVA (maximumAge 0) e tempo para o GPS fixar; a precisão vai para a tela, porque no
-      // computador a posição vem da rede e pode errar centenas de metros — quem olha o ponto precisa saber disso.
-      const geo = new maplibre.GeolocateControl({ positionOptions: { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }, fitBoundsOptions: { maxZoom: 18 }, trackUserLocation: true });
-      geo.on("geolocate", (ev: { coords?: GeolocationCoordinates }) => {
-        const precisao = ev.coords?.accuracy;
-        if (typeof precisao === "number") { setLocalizacao({ precisao }); setErroLocalizacao(null); }
-      });
-      geo.on("error", (ev: { code?: number }) => {
-        setErroLocalizacao(ev.code === 1 ? "Localização bloqueada: libere a permissão de localização no navegador." : ev.code === 3 ? "A localização demorou demais. Toque de novo no botão de localização." : "Localização indisponível agora.");
-      });
-      m.addControl(geo, "bottom-right");
-      mapRef.current = m;
-
-      m.on("load", () => {
-        if (cancelado) return;
-        m.addSource("areas", { type: "geojson", data: { type: "FeatureCollection", features: [] }, promoteId: "id" });
-        // Fill azul escuro uniforme; linha branca fina sempre; hover/clique = linha branca um pouco mais marcada.
-        m.addLayer({
-          id: "areas-fill", type: "fill", source: "areas",
-          paint: {
-            "fill-color": ["coalesce", ["get", "cor_exibida"], COR_PADRAO],
-            "fill-opacity": 0.78
-          }
-        });
-        m.addLayer({
-          id: "areas-contorno", type: "line", source: "areas",
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: {
-            "line-color": COR_LINHA_AREA,
-            "line-opacity": 1,
-            "line-width": [
-              "interpolate", ["linear"], ["zoom"],
-              10, 0.3,
-              13, 0.45,
-              16, 0.55,
-              18, 0.7
-            ]
-          }
-        });
-        // Destaque: hover ou seleção — só a linha branca (sem fill brilhante).
-        m.addLayer({
-          id: "areas-contorno-selecao", type: "line", source: "areas",
-          layout: { "line-join": "round", "line-cap": "round" },
-          paint: {
-            "line-color": COR_LINHA_AREA,
-            "line-opacity": [
-              "case",
-              ["boolean", ["feature-state", "selecionada"], false], 1,
-              ["boolean", ["feature-state", "hover"], false], 1,
-              0
-            ],
-            "line-width": [
-              "interpolate", ["linear"], ["zoom"],
-              10, 1.4,
-              14, 1.8,
-              18, 2.2
-            ]
-          }
-        });
-        m.on("click", "areas-fill", (e) => {
-          if (desenhandoRef.current) return;
-          const id = e.features?.[0]?.properties?.id != null ? String(e.features[0].properties.id) : null;
-          if (!id) return;
-          const area = areasRef.current.find((x) => x.id === id);
-          if (!area) return;
-          setSelecionada(area.id);
-          setEditandoFicha(true);
-          setFichaSemContorno(false);
-          setRascunho(null);
-          setErro(null);
-        });
-        let hoverId: string | null = null;
-        m.on("mousemove", "areas-fill", (e) => {
-          if (desenhandoRef.current) return;
-          m.getCanvas().style.cursor = "pointer";
-          const id = e.features?.[0]?.properties?.id != null ? String(e.features[0].properties.id) : null;
-          if (id === hoverId) return;
-          if (hoverId) try { m.setFeatureState({ source: "areas", id: hoverId }, { hover: false }); } catch { /* */ }
-          hoverId = id;
-          if (hoverId) try { m.setFeatureState({ source: "areas", id: hoverId }, { hover: true }); } catch { /* */ }
-          setHoverAreaId(hoverId);
-        });
-        m.on("mouseleave", "areas-fill", () => {
-          if (!desenhandoRef.current) m.getCanvas().style.cursor = "";
-          if (hoverId) try { m.setFeatureState({ source: "areas", id: hoverId }, { hover: false }); } catch { /* */ }
-          hoverId = null;
-          setHoverAreaId(null);
-        });
-
-        // editor de desenho
-        const px = (ev: { point: { x: number; y: number } }): Px => ({ x: ev.point.x, y: ev.point.y });
-        m.on("mousemove", (ev) => aoMover(px(ev), ev.originalEvent.altKey, ev.originalEvent.shiftKey));
-        m.on("mouseout", () => aoSair());
-        m.on("mousedown", (ev) => { if (ev.originalEvent.button === 0 && aoPressionar(px(ev))) { ev.preventDefault(); iniciarArrasto(); } });
-        m.on("touchstart", (ev) => { if (ev.points.length === 1 && aoPressionar(px(ev))) { ev.preventDefault(); iniciarArrasto(); } });
-        m.on("click", (ev) => aoClicar(px(ev), ev.originalEvent.altKey, ev.originalEvent.shiftKey, ev.originalEvent.detail));
-        m.on("dblclick", (ev) => { if (!ativo()) return; ev.preventDefault(); aoDuploClique(px(ev)); });
-        m.on("contextmenu", (ev) => { if (!ativo()) return; ev.originalEvent.preventDefault(); desfazer(); });
-        // Ao pan/zoom: some o cursor de inserção e ignore mousemove até soltar.
-        m.on("movestart", () => {
-          if (!desenhandoRef.current || ed.current.arrasto) return;
-          mapaMovendoRef.current = true;
-          Object.assign(ed.current, { cur: null, raw: null, ima: null, hover: null, travado: false });
-          flushSync(() => redesenhar());
-        });
-        m.on("moveend", () => { mapaMovendoRef.current = false; });
-        // A camada do desenho e os nomes são DOM por cima do canvas. Redesenhá-los num quadro DEPOIS do mapa os
-        // fazia "tremer" ao arrastar; agora acompanham o MESMO quadro: no fim de cada render do mapa (dentro do
-        // requestAnimationFrame dele) a tela é atualizada de forma síncrona — só quando a vista mudou de fato.
-        let vista = "";
-        m.on("render", () => {
-          const c = m.getCenter(), tela = m.getCanvas();
-          const agora = `${c.lng},${c.lat},${m.getZoom()},${m.getBearing()},${tela.width}x${tela.height}`;
-          if (agora === vista) return;
-          vista = agora;
-          const edAtual = ed.current;
-          if (edAtual.arrasto) {
-            // Arrasto: pontos já vêm do pointermove; só redesenha na projeção nova.
-          } else if (mapaMovendoRef.current) {
-            // Pan/zoom: some o cursor de inserção — volta no próximo mousemove do mouse.
-            if (edAtual.cur || edAtual.raw || edAtual.ima || edAtual.hover) {
-              Object.assign(edAtual, { cur: null, raw: null, ima: null, hover: null, travado: false });
-            }
-          } else if (edAtual.ima?.lngLat) {
-            // Ímã grudado no mapa: acompanha o vértice/aresta geográfico.
-            const pxIma = { x: m.project(edAtual.ima.lngLat).x, y: m.project(edAtual.ima.lngLat).y };
-            let aresta = edAtual.ima.aresta;
-            if (edAtual.ima.tipo === "aresta" && aresta) {
-              const alvos = areasRef.current.flatMap((a) => {
-                const coords = anelAberto(a.geometria);
-                return coords.length >= 2 ? [{ pts: coords.map((ll) => ({ x: m.project(ll).x, y: m.project(ll).y })) }] : [];
-              });
-              let melhor: { d: number; a: Px; b: Px } | null = null;
-              for (const alvo of alvos) {
-                for (let i = 0; i < alvo.pts.length; i++) {
-                  const a = alvo.pts[i]!, b = alvo.pts[(i + 1) % alvo.pts.length]!;
-                  const vx = b.x - a.x, vy = b.y - a.y, l2 = vx * vx + vy * vy;
-                  const t = l2 === 0 ? 0 : Math.max(0, Math.min(1, ((pxIma.x - a.x) * vx + (pxIma.y - a.y) * vy) / l2));
-                  const qx = a.x + t * vx, qy = a.y + t * vy;
-                  const d = Math.hypot(pxIma.x - qx, pxIma.y - qy);
-                  if (!melhor || d < melhor.d) melhor = { d, a, b };
-                }
-              }
-              if (melhor) aresta = [melhor.a, melhor.b];
-            }
-            edAtual.ima = { ...edAtual.ima, px: pxIma, aresta };
-            edAtual.cur = pxIma;
-            edAtual.raw = pxIma;
-          }
-          // Cursor livre (sem ímã): fica onde o mouse deixou — não some só porque a vista redesenhou.
-          flushSync(() => redesenhar());
-        });
-        // Gancho só para e2e: projetar vértices reais da área vizinha no ímã.
-        (window as unknown as { __mapaManejoE2E?: MapLibreMap }).__mapaManejoE2E = m;
-        setMapaPronto(true);
-      });
-    })();
-    return () => {
-      cancelado = true;
-      soltarArrastoRef.current?.();
-      delete (window as unknown as { __mapaManejoE2E?: MapLibreMap }).__mapaManejoE2E;
-      mapaCleanup?.remove(); mapRef.current = null;
-    };
-  }, []);
-
-  // ---------- modo desenho: atalhos de teclado e gestos do mapa ----------
+  }, [selecionada, mapa.pronto, areas, mapRef]);
+  // Enquadra a propriedade uma vez, quando as áreas chegam.
+  const enquadrouRef = React.useRef(false);
   React.useEffect(() => {
     const m = mapRef.current;
-    if (!m || !mapaPronto) return;
-    if (desenhando) { m.doubleClickZoom.disable(); m.boxZoom.disable(); } else { m.doubleClickZoom.enable(); m.boxZoom.enable(); m.getCanvas().style.cursor = ""; }
-  }, [desenhando, mapaPronto]);
-  React.useEffect(() => {
-    const m = mapRef.current;
-    if (m && desenhando) m.getCanvas().style.cursor = ed.current.arrasto ? "grabbing" : "crosshair";
-  });
-  React.useEffect(() => {
-    if (!desenhando) return;
-    const aoTeclar = (ev: KeyboardEvent) => {
-      if (formAbertoRef.current) return;
-      const alvo = ev.target instanceof HTMLElement ? ev.target : null;
-      if (alvo?.closest("input, textarea, select, [contenteditable='true']")) return;
-      const k = ev.key, mod = ev.ctrlKey || ev.metaKey;
-      if (mod && (k === "z" || k === "Z")) { ev.preventDefault(); if (ev.shiftKey) refazer(); else desfazer(); return; }
-      if (mod && (k === "y" || k === "Y")) { ev.preventDefault(); refazer(); return; }
-      if (k === "Backspace" || k === "Delete") { ev.preventDefault(); desfazer(); return; }
-      if (k === "Enter" && !ed.current.fechado && ed.current.pontos.length >= 3) { ev.preventDefault(); fechar("Fechado com Enter"); }
-    };
-    window.addEventListener("keydown", aoTeclar);
-    return () => window.removeEventListener("keydown", aoTeclar);
-  }, [desenhando]);
+    if (!m || !mapa.pronto || enquadrouRef.current) return;
+    const caixa = limites(areas.map((a) => a.geometria));
+    if (!caixa) return;
+    enquadrouRef.current = true;
+    m.fitBounds(caixa, { padding: 60, maxZoom: 16, duration: 0 });
+  }, [areas, mapa.pronto, mapRef]);
 
-  // ---------- desenhar as áreas salvas no mapa ----------
-  React.useEffect(() => {
-    const mapa = mapRef.current;
-    if (!mapa || !mapaPronto) return;
-    const src = mapa.getSource("areas") as GeoJSONSource | undefined;
-    if (!src) return;
-    const ocultarId = editandoContornoId;
-    const features: Feature<Polygon>[] = areas
-      .filter((a) => a.geometria && a.geometria.type === "Polygon" && a.id !== ocultarId)
-      .map((a) => {
-        const corCadastro = a.color;
-        const exibida = corExibidaNoMapa(corCadastro);
-        return {
-          type: "Feature" as const,
-          id: a.id,
-          properties: { id: a.id, nome: a.name, cor: corCadastro ?? COR_PADRAO, cor_exibida: exibida, cor_borda: corBordaNoMapa(exibida) },
-          geometry: a.geometria as Polygon
-        };
-      });
-    src.setData({ type: "FeatureCollection", features });
-  }, [areas, mapaPronto, editandoContornoId]);
-
-  const remover = useMutation({
-    mutationFn: async (id: string) => { await api(`/api/resources/areas/${id}`, { method: "DELETE" }); },
-    onSuccess: () => { setExcluir(null); setSelecionada(null); setEditandoFicha(false); void queryClient.invalidateQueries({ queryKey: ["areas-mapa"] }); },
-    onError: (e: unknown) => setErro(e instanceof Error ? e.message : "Não foi possível excluir a área.")
-  });
-
-  function fecharFicha() {
-    setEditandoFicha(false);
-    setFichaSemContorno(false);
-    setSelecionada(null);
-    setErro(null);
-  }
-
-  function aposSalvarFicha() {
-    sairDoDesenho();
-    fecharFicha();
-    void queryClient.invalidateQueries({ queryKey: ["areas-mapa"] });
-  }
-
-  function abrirFicha(a: AreaApi) {
-    setSelecionada(a.id);
-    setEditandoFicha(true);
-    setFichaSemContorno(false);
-    setRascunho(null);
-    setErro(null);
-  }
-
-  function iniciarDesenho() {
-    setErro(null); setSelecionada(null); setEditandoFicha(false); setFichaSemContorno(false); setRascunho(null);
-    setEditandoContornoId(null);
-    setMoverArea(false); moverAreaRef.current = false;
-    if (!mapRef.current || !mapaPronto) { setErro("O mapa ainda está carregando. Aguarde a imagem abrir e tente de novo."); return; }
-    ed.current = editorVazio();
-    desenhandoRef.current = true;
-    setDesenhando(true);
-  }
-
-  function abrirCadastroSemContorno() {
-    if (!empresaId) { setErro("Nenhuma empresa disponível para cadastrar áreas."); return; }
-    setErro(null);
-    setSelecionada(null);
-    setEditandoFicha(false);
-    setRascunho(null);
-    setFichaSemContorno(true);
-  }
-  // Cadastro a partir da lista de áreas: /mapa-de-manejo?nova=1 abre o desenho.
-  const iniciouNovaRef = React.useRef(false);
-  React.useEffect(() => {
-    if (iniciouNovaRef.current) return;
-    if (searchParams.get("nova") !== "1") return;
-    if (!mapaPronto || !empresaId) return;
-    iniciouNovaRef.current = true;
-    iniciarDesenho();
-  }, [mapaPronto, empresaId, searchParams]);
-
-  function iniciarEdicaoContorno(a: AreaApi) {
-    const anel = anelAberto(a.geometria);
-    if (anel.length < 3) { setErro("Esta área não tem contorno válido para editar."); return; }
-    if (!mapRef.current || !mapaPronto) { setErro("O mapa ainda está carregando. Aguarde a imagem abrir e tente de novo."); return; }
-    setErro(null);
-    setEditandoFicha(false);
-    setFichaSemContorno(false);
-    setRascunho(null);
-    setEditandoContornoId(a.id);
-    const pontos = anel.map(livre);
-    const hist = novoHistorico();
-    const passo = registrar(hist, { pontos, fechado: true });
-    ed.current = {
-      ...editorVazio(),
-      pontos,
-      fechado: true,
-      hist: passo,
-      acao: "Arraste os pontos ou o polígono · Fechar grava o contorno"
-    };
-    desenhandoRef.current = true;
-    setDesenhando(true);
-    setSelecionada(a.id);
-    redesenhar();
-  }
-
-  function sairDoDesenho() {
-    soltarArrastoRef.current?.();
-    ed.current = editorVazio();
-    desenhandoRef.current = false;
-    setEditandoContornoId(null);
-    setMoverArea(false); moverAreaRef.current = false;
-    setDesenhando(false); setRascunho(null);
-  }
-  function confirmar() {
-    const e = ed.current;
-    if (e.fechado && e.pontos.length >= 3) {
-      const ha = Math.round(areaHa(coordsDe(e.pontos)) * 10000) / 10000;
-      const editandoId = editandoContornoIdRef.current ?? undefined;
-      setRascunho({ geometria: poligonoGeoJSON(e.pontos), area_ha: ha, editandoId });
-      return;
-    }
-    if (e.pontos.length >= 3) { fechar("Fechado"); return; }
-    e.acao = "Marque pelo menos 3 pontos"; redesenhar();
-  }
-
-  function toggleIma() {
-    setCfg((c) => {
-      const ligado = !c.ligado;
-      const novo = { ...c, ligado };
-      cfgRef.current = novo;
-      const e = ed.current;
-      e.ima = null;
-      e.acao = ligado ? "Ímã ligado" : "Ímã desligado";
-      redesenhar();
-      return novo;
-    });
-  }
-
-  function toggleMetragem() {
-    setMostrarMetragem((v) => {
-      const prox = !v;
-      ed.current.acao = prox ? "Metragem visível" : "Metragem oculta";
-      redesenhar();
-      return prox;
-    });
-  }
-
-  function toggleMoverArea() {
-    setMoverArea((v) => {
-      const prox = !v;
-      moverAreaRef.current = prox;
-      ed.current.acao = prox ? "Mover área ligado — segure dentro do polígono" : "Mover área desligado";
-      redesenhar();
-      return prox;
-    });
-  }
-
-  async function importarArquivo(arquivo: File) {
-    if (!empresaId) { setErro("Nenhuma empresa disponível para importar áreas."); return; }
-    setErro(null);
-    setProgressoImport(null);
-    setImportando(true);
-    try {
-      const texto = await arquivo.text();
-      const resultado = parseImportacaoMapa(arquivo.name, texto);
-      const total = resultado.areas.length;
-      setProgressoImport(`Importando ${total} área(s) (${rotuloFormato(resultado.formato)})…`);
-      let ok = 0;
-      const falhas: string[] = [];
-      for (const a of resultado.areas) {
-        try {
-          await api("/api/resources/areas", {
-            method: "POST",
-            idempotencyKey: newIdem(),
-            body: {
-              empresa_id: empresaId,
-              name: a.nome,
-              color: a.cor,
-              area_ha: a.tamanho_ha,
-              usable_area_ha: a.tamanho_ha,
-              land_use: "pastagem",
-              status: "ativa",
-              tenure: "propria",
-              geometria: a.geometria
-            }
-          });
-          ok += 1;
-          if (ok % 10 === 0 || ok === total) setProgressoImport(`Importadas ${ok}/${total}…`);
-        } catch (e: unknown) {
-          falhas.push(`${a.nome}: ${e instanceof Error ? e.message : "falha"}`);
-        }
-      }
-      await queryClient.invalidateQueries({ queryKey: ["areas-mapa"] });
-      const m = mapRef.current;
-      if (m && ok > 0) {
-        const bounds = limitesColecao(resultado.areas);
-        if (bounds) m.fitBounds(bounds, { padding: 60, maxZoom: 16 });
-      }
-      const avisos = [...resultado.avisos, ...falhas.slice(0, 8)];
-      if (ok === 0) {
-        setErro(`Nenhuma área importada.${falhas[0] ? ` ${falhas[0]}` : ""}`);
-        setProgressoImport(null);
-      } else {
-        setProgressoImport(`Importação concluída: ${ok}/${total} área(s) em branco. Nomes do arquivo; cor padrão branca.`);
-        if (avisos.length) setErro(`Avisos: ${avisos.slice(0, 5).join(" · ")}${avisos.length > 5 ? "…" : ""}`);
-      }
-    } catch (e: unknown) {
-      setErro(e instanceof Error ? e.message : "Não foi possível importar o arquivo.");
-      setProgressoImport(null);
-    } finally {
-      setImportando(false);
-      if (importInputRef.current) importInputRef.current.value = "";
-    }
-  }
-
-  // Troca entre satélite e ruas sem recarregar o estilo: a base de ruas entra sob demanda, sob as áreas.
-  async function trocarBase(novo: TipoBase) {
-    if (novo === base || semImagem) return;
-    const m = mapRef.current;
-    if (!m) return;
-    if (!m.getLayer(ID_BASE[novo])) {
-      const s = await criarSessaoGoogle(novo);
-      if (!mapRef.current) return;
-      if (!s) { setErro(novo === "mapa" ? "Não foi possível carregar o mapa de ruas agora." : "Não foi possível carregar o satélite agora."); return; }
-      m.addSource(ID_BASE[novo], fonteRaster(s));
-      const sob = m.getLayer("areas-fill") ? "areas-fill" : undefined;
-      m.addLayer({ id: ID_BASE[novo], type: "raster", source: ID_BASE[novo] }, sob);
-    }
-    for (const t of ["satelite", "mapa"] as const) {
-      if (m.getLayer(ID_BASE[t])) m.setLayoutProperty(ID_BASE[t], "visibility", t === novo ? "visible" : "none");
-    }
-    setErro(null);
-    setBase(novo);
+  function selecionarNaLista(id: string) {
+    setSelecionada(id);
+    const a = areas.find((x) => x.id === id);
+    const caixa = a ? limites([a.geometria]) : null;
+    if (caixa) mapRef.current?.fitBounds(caixa, { padding: 60, maxZoom: 16 });
   }
 
   // ---------- derivados para a tela ----------
-  const mapa = mapaPronto ? mapRef.current : null;
-  // Recalcula a cada redesenhar() do mapa (pan/zoom) — sem memo, senão o rótulo “gruda” na tela.
-  const rotulosAreas: RotuloArea[] = (() => {
-    if (!mapa || desenhando) return [];
-    const zoom = mapa.getZoom();
-    const brutos = areas.flatMap((a) => {
-      const anel = anelAberto(a.geometria);
-      if (anel.length < 3) return [];
-      const pts = anel.map(proj);
-      const c = centroideLngLat(anel);
-      const px = c ? proj(c) : centroPx(pts, anel, proj);
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-      for (const p of pts) {
-        if (p.x < minX) minX = p.x;
-        if (p.x > maxX) maxX = p.x;
-        if (p.y < minY) minY = p.y;
-        if (p.y > maxY) maxY = p.y;
-      }
-      return [{
-        id: a.id,
-        px,
-        nome: a.name,
-        ha: hectares(a.area_ha),
-        larguraPx: maxX - minX,
-        alturaPx: maxY - minY
-      }];
-    });
-    return suavizarRotulos(brutos, { destaqueId: hoverAreaId ?? selecionada, zoom });
-  })();
-  const e = ed.current;
-  const ptsTela = mapa && desenhando ? ptsPx() : [];
-  const coords = coordsDe(e.pontos);
-  const comCursor = mapa && !e.fechado && e.cur && e.pontos.length >= 2 && !e.arrasto ? [...coords, desproj(e.cur)] : coords;
-  const haAtual = areaHa(comCursor);
-  const perimetro = perimetroM(comCursor, e.fechado || comCursor.length >= 3);
-  const lados: Lado[] = [];
-  const nLados = e.fechado ? ptsTela.length : ptsTela.length - 1;
-  for (let i = 0; i < nLados; i++) {
-    const a = ptsTela[i]!, b = ptsTela[(i + 1) % ptsTela.length]!;
-    lados.push({ px: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, metros: distanciaM(coords[i]!, coords[(i + 1) % coords.length]!) });
-  }
-  const ultimoTela = ptsTela.length ? ptsTela[ptsTela.length - 1]! : null;
-  const arrastoVertice = e.arrasto?.tipo === "vertice" ? e.arrasto.i : -1;
-
+  const m = mapa.pronto ? mapRef.current : null;
+  // Recalcula a cada redesenho do mapa (pan/zoom) — sem memo, senão o rótulo "gruda" na tela.
+  const rotulos = m ? rotulosDasAreas(m, areas, hoverAreaId ?? selecionada) : [];
   const selecionadaObj = areas.find((a) => a.id === selecionada) ?? null;
-  const podeCadastrar = Boolean(empresaId);
   const totalHa = areas.reduce((s, a) => s + hectares(a.area_ha), 0);
-  const confirmandoEdicao = Boolean(rascunho?.editandoId || editandoContornoId);
-  const confirmarRotulo = e.fechado
-    ? (confirmandoEdicao ? "Gravar contorno" : "Gravar área")
-    : e.pontos.length >= 3 ? "Fechar polígono" : "Marque 3 pontos";
+  const podeCadastrar = can("batch_area.create");
+  const entradaAreas = entryById("configuracoes.pecuaria.areas");
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <h1 className="text-base font-semibold text-slate-800">Mapa de Manejo</h1>
-          {desenhando ? (
-            <p className="text-xs text-slate-600" data-testid="mapa-instrucao">
-              Clique para marcar o ponto. Segure num ponto e arraste para mover. Mãozinha liga mover a área. Dois cliques fecham.
-              <span className="ml-2 text-slate-400">Botão direito desfaz · Ctrl+Z / Ctrl+Shift+Z · Alt solta o ímã · Shift trava o ângulo</span>
-            </p>
-          ) : (
-            <p className="text-xs text-slate-500">Áreas da propriedade desenhadas no mapa (lavoura e pecuária).</p>
-          )}
+          <p className="text-xs text-slate-500">Áreas da propriedade no mapa (lavoura e pecuária). O cadastro e o contorno de cada área ficam em Áreas/Piquetes.</p>
         </div>
-        {!desenhando && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Button type="button" variant="outline" onClick={() => importInputRef.current?.click()} disabled={!mapaPronto || !podeCadastrar || importando} data-testid="mapa-importacao">
-              <Upload className="h-4 w-4" aria-hidden />{importando ? "Importando…" : "Importação"}
-            </Button>
-            <input
-              ref={importInputRef}
-              type="file"
-              accept=".kml,.json,.geojson,application/vnd.google-earth.kml+xml,application/geo+json,application/json,text/xml"
-              className="hidden"
-              data-testid="mapa-importacao-arquivo"
-              onChange={(ev) => {
-                const f = ev.target.files?.[0];
-                if (f) void importarArquivo(f);
-              }}
-            />
-            <Button type="button" variant="outline" onClick={abrirCadastroSemContorno} disabled={!podeCadastrar} data-testid="mapa-cadastro-sem-contorno">Sem contorno</Button>
-            <Button type="button" onClick={iniciarDesenho} disabled={!mapaPronto || !podeCadastrar} data-testid="mapa-nova-area">Nova área</Button>
-          </div>
-        )}
-        {desenhando && !rascunho && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Button type="button" onClick={confirmar} disabled={!e.fechado && e.pontos.length < 3} data-testid="mapa-confirmar">
-              <Check className="h-4 w-4" aria-hidden />{confirmarRotulo}
-            </Button>
-            <Button type="button" variant="ghost" onClick={sairDoDesenho} data-testid="mapa-cancelar-desenho">Cancelar</Button>
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {entradaAreas && <Link href={canonicalHref(entradaAreas)} className={buttonVariants({ variant: "outline" })} data-testid="mapa-ir-areas">Áreas / Piquetes</Link>}
+          {podeCadastrar && <Link href={`${NOVA_AREA}${qs({ empresa_id: empresaId || undefined })}`} className={buttonVariants()} data-testid="mapa-cadastrar-area">Cadastrar área</Link>}
+        </div>
       </div>
 
-      {!podeCadastrar && <Card><CardBody><p className="text-sm text-amber-700">Nenhuma empresa disponível para cadastrar áreas.</p></CardBody></Card>}
-      {progressoImport && <Card><CardBody><p className="text-sm text-slate-700" data-testid="mapa-importacao-progresso">{progressoImport}</p></CardBody></Card>}
-      {erro && <Card><CardBody><p className="text-sm text-red-600" data-testid="mapa-erro">{erro}</p></CardBody></Card>}
+      {mapa.erroBase && <Card><CardBody><p className="text-sm text-red-600" data-testid="mapa-erro">{mapa.erroBase}</p></CardBody></Card>}
 
-      <div className={cn("grid min-h-0 flex-1 gap-2", desenhando ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-[280px_1fr]")}>
-        {/* Lista de áreas — só fora do desenho (lateral do desenho removida). */}
-        {!desenhando && (
-          <Card className="min-h-0 overflow-hidden">
-            <CardBody className="flex h-full min-h-0 flex-col gap-1 overflow-auto">
-              <div className="mb-1 flex items-baseline justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
-                <span>Áreas</span>
-                {areas.length > 0 && <span className="font-normal normal-case tabular-nums text-slate-400">{areas.length} · {num(totalHa, 2)} ha</span>}
-              </div>
-              {listaQuery.isLoading && <Spinner />}
-              {listaQuery.error && <ErrorState title="Não foi possível carregar as áreas" error={listaQuery.error} onRetry={() => void listaQuery.refetch()} />}
-              {!listaQuery.isLoading && !listaQuery.error && areas.length === 0 && <EmptyState title="Nenhuma área cadastrada" description="Use “Nova área” ou “Importação” (KML / GeoJSON / JSON)." />}
-              {areas.map((a) => (
-                <button key={a.id} type="button" data-testid="mapa-item-area" onClick={() => {
-                  abrirFicha(a);
-                  const g = a.geometria; const m = mapRef.current;
-                  if (g && m) { const b = limites(g); if (b) m.fitBounds(b, { padding: 60, maxZoom: 16 }); }
-                }}
-                  className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-100 ${a.id === selecionada ? "bg-slate-100 ring-1 ring-slate-300" : ""}`}>
-                  <span className="h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: a.color ?? COR_PADRAO }} aria-hidden />
-                  <span className="min-w-0 flex-1 truncate font-medium text-slate-700">{a.name}</span>
-                  <span className="shrink-0 text-xs tabular-nums text-slate-500">{num(hectares(a.area_ha), 2)} ha</span>
-                </button>
-              ))}
-            </CardBody>
-          </Card>
-        )}
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 lg:grid-cols-[280px_1fr]">
+        <Card className="min-h-0 overflow-hidden">
+          <CardBody className="flex h-full min-h-0 flex-col gap-1 overflow-auto">
+            <div className="mb-1 flex items-baseline justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <span>Áreas</span>
+              {areas.length > 0 && <span className="font-normal normal-case tabular-nums text-slate-400">{areas.length} · {num(totalHa, 2)} ha</span>}
+            </div>
+            {lista.isLoading && <Spinner />}
+            {lista.error && <ErrorState title="Não foi possível carregar as áreas" error={lista.error} onRetry={() => void lista.refetch()} />}
+            {!lista.isLoading && !lista.error && areas.length === 0 && <EmptyState title="Nenhuma área cadastrada" description="Cadastre as áreas em Áreas/Piquetes: o contorno desenhado na ficha aparece aqui." />}
+            {areas.map((a) => (
+              <button key={a.id} type="button" data-testid="mapa-item-area" onClick={() => selecionarNaLista(a.id)}
+                className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-100 ${a.id === selecionada ? "bg-slate-100 ring-1 ring-slate-300" : ""}`}>
+                <span className="h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: a.color ?? COR_PADRAO_AREA }} aria-hidden />
+                <span className="min-w-0 flex-1 truncate font-medium text-slate-700">{a.name}</span>
+                <span className="shrink-0 text-xs tabular-nums text-slate-500">{num(hectares(a.area_ha), 2)} ha</span>
+              </button>
+            ))}
+          </CardBody>
+        </Card>
 
         <Card className="relative min-h-0 overflow-hidden">
-          <div ref={containerRef} data-testid="mapa-canvas" className="h-full min-h-[420px] w-full" />
-          {mapaPronto && (
-            <CamadaDesenho
-              desenhando={desenhando}
-              rotulosAreas={rotulosAreas}
-              ocultarRotulos={desenhando && !rascunho}
-              pts={ptsTela}
-              fechado={e.fechado}
-              cur={e.cur}
-              raw={e.raw}
-              ima={e.ima}
-              travado={e.travado}
-              rumo={e.travado && e.cur && ultimoTela ? rumoGraus(ultimoTela, e.cur) : null}
-              arrastando={e.arrasto !== null}
-              arrastoVertice={arrastoVertice}
-              hover={e.hover}
-              lados={lados}
-              mostrarMetragem={mostrarMetragem}
-              corPreview={rascunho ? corExibidaNoMapa(COR_PADRAO) : null}
-            />
+          <div ref={mapa.containerRef} data-testid="mapa-canvas" className="h-full min-h-[420px] w-full" />
+          {mapa.pronto && (
+            <CamadaDesenho desenhando={false} rotulosAreas={rotulos} pts={[]} fechado={false} cur={null} raw={null} ima={null} travado={false}
+              rumo={null} arrastando={false} arrastoVertice={-1} hover={null} lados={[]} />
           )}
-          {!mapaPronto && <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"><Spinner /></div>}
+          {!mapa.pronto && <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"><Spinner /></div>}
+          {mapa.pronto && (
+            <div className="pointer-events-none absolute left-2 top-2 flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-2">
+              <SeletorDeBase mapa={mapa} aviso="Sem imagem de satélite (configure a chave do Google)." />
+            </div>
+          )}
+          <AvisoDeLocalizacao mapa={mapa} />
 
-          {mapaPronto && (
-            <div className="pointer-events-none absolute left-2 top-2 flex max-w-[calc(100%-1rem)] flex-col items-start gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                {semImagem ? (
-                  <div className="rounded bg-slate-800/80 px-2 py-1 text-xs text-white">Sem imagem de satélite (configure a chave do Google). Desenho disponível.</div>
-                ) : (
-                  <div className="pointer-events-auto flex overflow-hidden rounded-md border border-slate-300 bg-white text-xs shadow-sm" role="group" aria-label="Tipo de mapa">
-                    <button type="button" onClick={() => trocarBase("satelite")} aria-pressed={base === "satelite"} data-testid="mapa-base-satelite"
-                      className={`px-2.5 py-1 ${base === "satelite" ? "bg-slate-800 font-medium text-white" : "text-slate-600 hover:bg-slate-100"}`}>Satélite</button>
-                    <button type="button" onClick={() => trocarBase("mapa")} aria-pressed={base === "mapa"} data-testid="mapa-base-mapa"
-                      className={`px-2.5 py-1 ${base === "mapa" ? "bg-slate-800 font-medium text-white" : "text-slate-600 hover:bg-slate-100"}`}>Mapa</button>
+          {/* Resumo da área clicada — só leitura; o cadastro abre na ficha de Áreas/Piquetes. */}
+          {selecionadaObj && (
+            <div className="absolute right-2 top-2 z-10 w-[min(18rem,calc(100%-1rem))] rounded-md border border-slate-200 bg-white p-3 shadow-lg" data-testid="mapa-area-selecionada">
+              <div className="flex items-start gap-2">
+                <span className="mt-1 h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: selecionadaObj.color ?? COR_PADRAO_AREA }} aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold text-slate-800">{selecionadaObj.name}</div>
+                  <div className="text-xs tabular-nums text-slate-500">
+                    {selecionadaObj.code ? <>{selecionadaObj.code} · </> : null}{num(hectares(selecionadaObj.area_ha), 2)} ha
+                    {!selecionadaObj.geometria && <> · sem contorno</>}
                   </div>
-                )}
-                {desenhando && (
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs" data-testid="mapa-medidas">
-                    <span className="rounded-full border border-slate-200 bg-white/95 px-2.5 py-1 shadow-sm">Área <b className="tabular-nums text-emerald-700" data-testid="mapa-medida-area">{num(haAtual, 2)}</b> ha</span>
-                    <span className="rounded-full border border-slate-200 bg-white/95 px-2.5 py-1 shadow-sm">Perímetro <b className="tabular-nums">{num(Math.round(perimetro), 0)}</b> m</span>
-                    <span className="rounded-full border border-slate-200 bg-white/95 px-2.5 py-1 shadow-sm">Pontos <b className="tabular-nums" data-testid="mapa-medida-pontos">{e.pontos.length}</b></span>
-                    <span className="rounded-full border border-emerald-300 bg-emerald-50/95 px-2.5 py-1 shadow-sm">Grudados <b className="tabular-nums text-emerald-700" data-testid="mapa-medida-grudados">{e.pontos.filter((p) => p.grudado).length}</b></span>
-                  </div>
-                )}
-              </div>
-              {desenhando && !rascunho && (
-                <div className="pointer-events-auto flex flex-col items-start gap-1" role="toolbar" aria-label="Ferramentas do desenho">
-                  <div className="flex flex-col gap-1 rounded-md bg-white/95 p-1 shadow-sm">
-                    <Button type="button" size="icon" variant="ghost" onClick={desfazer} disabled={!podeDesfazer(e.hist)} aria-label="Desfazer" title="Desfazer (Ctrl+Z, botão direito)" data-testid="mapa-desfazer"><Undo2 className="h-4 w-4" aria-hidden /></Button>
-                    <Button type="button" size="icon" variant="ghost" onClick={refazer} disabled={!podeRefazer(e.hist)} aria-label="Refazer" title="Refazer (Ctrl+Shift+Z)" data-testid="mapa-refazer"><Redo2 className="h-4 w-4" aria-hidden /></Button>
-                    <Button type="button" size="icon" variant="ghost" onClick={recomecar} aria-label="Recomeçar" title="Recomeçar" data-testid="mapa-recomecar"><RotateCcw className="h-4 w-4" aria-hidden /></Button>
-                  </div>
-                  <BarraIma
-                    ligado={cfg.ligado}
-                    onToggle={toggleIma}
-                    metragem={mostrarMetragem}
-                    onToggleMetragem={toggleMetragem}
-                    moverArea={moverArea}
-                    onToggleMoverArea={toggleMoverArea}
-                  />
                 </div>
-              )}
-            </div>
-          )}
-
-          {desenhando && (
-            <div className="pointer-events-none absolute bottom-2 left-2 flex max-w-[calc(100%-7rem)] items-center gap-2 rounded-full border border-slate-200 bg-white/95 px-3 py-1 text-xs shadow-sm">
-              <span className={cn("h-2 w-2 shrink-0 rounded-full", e.arrasto ? "bg-emerald-400" : "bg-green-500")} aria-hidden />
-              <span className="truncate text-slate-700" data-testid="mapa-acao">{e.acao}</span>
-            </div>
-          )}
-
-          {(localizacao || erroLocalizacao) && (
-            <div className="pointer-events-none absolute bottom-[7.5rem] right-2 max-w-xs rounded-md border border-slate-200 bg-white/95 px-3 py-1.5 text-xs shadow-sm" data-testid="mapa-localizacao">
-              {erroLocalizacao ? (
-                <span className="text-red-600">{erroLocalizacao}</span>
-              ) : localizacao && (
-                <>
-                  <span className="font-medium tabular-nums text-slate-700">Sua localização: precisão de ± {num(Math.round(localizacao.precisao), 0)} m</span>
-                  {localizacao.precisao > PRECISAO_BOA_M && (
-                    <span className="mt-0.5 block text-amber-700" data-testid="mapa-localizacao-aproximada">Posição aproximada: no computador ela vem da rede (Wi-Fi). No celular com GPS ligado fica precisa.</span>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Mesma ficha de Áreas/Piquetes (ResourceForm): medidas, uso, cor em lista, etc. Contorno opcional. */}
-          {rascunho && empresaId && (
-            <div className="absolute right-2 top-2 z-10">
-              <FichaAreaNoMapa
-                mode={rascunho.editandoId ? "edit" : "new"}
-                areaId={rascunho.editandoId}
-                empresaId={empresaId}
-                geometria={rascunho.geometria}
-                areaHa={rascunho.area_ha}
-                onSaved={aposSalvarFicha}
-                onCancel={() => setRascunho(null)}
-              />
-            </div>
-          )}
-
-          {fichaSemContorno && empresaId && !desenhando && (
-            <div className="absolute right-2 top-2 z-10">
-              <FichaAreaNoMapa
-                mode="new"
-                empresaId={empresaId}
-                onSaved={aposSalvarFicha}
-                onCancel={fecharFicha}
-              />
-            </div>
-          )}
-
-          {selecionadaObj && !desenhando && editandoFicha && empresaId && (
-            <div className="absolute right-2 top-2 z-10" data-testid="mapa-ficha-edicao">
-              <FichaAreaNoMapa
-                mode="edit"
-                areaId={selecionadaObj.id}
-                empresaId={empresaId}
-                onSaved={aposSalvarFicha}
-                onCancel={fecharFicha}
-                onEditarContorno={() => iniciarEdicaoContorno(selecionadaObj)}
-                onExcluir={() => setExcluir(selecionadaObj)}
-              />
+                <Button type="button" size="icon" variant="ghost" onClick={() => setSelecionada(null)} aria-label="Fechar resumo" title="Fechar"><X className="h-4 w-4" aria-hidden /></Button>
+              </div>
+              <div className="mt-2 flex justify-end">
+                <Link href={fichaDaArea(selecionadaObj.id)} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="mapa-abrir-cadastro">Abrir cadastro</Link>
+              </div>
             </div>
           )}
         </Card>
       </div>
-
-      <ConfirmDialog open={excluir !== null} onOpenChange={(o) => { if (!o) setExcluir(null); }} title="Excluir área" description={excluir ? `Excluir a área “${excluir.name}”? Esta ação não pode ser desfeita.` : ""} confirmLabel="Excluir" danger loading={remover.isPending} onConfirm={() => { if (excluir) remover.mutate(excluir.id); }} />
     </div>
   );
-}
-
-/** Caixa envolvente [[oeste, sul],[leste, norte]] de um polígono GeoJSON, para enquadrar no mapa. */
-function limites(g: Polygon): [[number, number], [number, number]] | null {
-  const anel = g.coordinates?.[0];
-  if (!anel || anel.length === 0) return null;
-  let oeste = Infinity, sul = Infinity, leste = -Infinity, norte = -Infinity;
-  for (const pos of anel) {
-    const lng = pos[0], lat = pos[1];
-    if (lng === undefined || lat === undefined) continue;
-    if (lng < oeste) oeste = lng;
-    if (lng > leste) leste = lng;
-    if (lat < sul) sul = lat;
-    if (lat > norte) norte = lat;
-  }
-  if (!Number.isFinite(oeste)) return null;
-  return [[oeste, sul], [leste, norte]];
-}
-
-function limitesColecao(areas: AreaImportada[]): [[number, number], [number, number]] | null {
-  let oeste = Infinity, sul = Infinity, leste = -Infinity, norte = -Infinity;
-  for (const a of areas) {
-    const b = limites(a.geometria);
-    if (!b) continue;
-    if (b[0][0] < oeste) oeste = b[0][0];
-    if (b[0][1] < sul) sul = b[0][1];
-    if (b[1][0] > leste) leste = b[1][0];
-    if (b[1][1] > norte) norte = b[1][1];
-  }
-  if (!Number.isFinite(oeste)) return null;
-  return [[oeste, sul], [leste, norte]];
 }
