@@ -1630,15 +1630,23 @@ inexistente. Escritas com `Idempotency-Key` e trilha com motivo.
 Query e corpo estritos; dinheiro só como TEXTO decimal (número → 422).
 - `GET /financeiro/contas` — `bank_accounts.view` + `bank_movements.view`; `page`, `pageSize` (50), `ativas` (1 padrão |
   0) → `{ itens: [{ id, codigo, descricao, tipo, banco, agencia, conta, ativa, saldo_inicial, data_saldo_inicial,
-  saldo_real, saldo_conciliado, conciliado_ate }], total, page, pageSize, totais: { saldo_real, saldo_conciliado } }`.
-  Saldo real = saldo inicial + todos os confirmados; saldo conciliado = saldo inicial + só os conciliados.
+  saldo_real, saldo_conciliado, conciliado_ate }], total, page, pageSize, totais: { saldo_real, saldo_conciliado },
+  escopo_saldo: total|parcial }`. Saldo real = saldo inicial + os confirmados; saldo conciliado = saldo inicial + só os
+  conciliados. Os movimentos são os que a porta devolve, RECORTADOS pelo escopo de empresa de quem pergunta no módulo
+  financeiro (decisão 285, item 12): escopo total (proprietário ou "todas" no financeiro) → todos, inclusive os sem
+  empresa, e o saldo inicial entra; parcial → só os das empresas nomeadas, SEM o saldo inicial (que não tem empresa).
+  `saldo_inicial` da linha continua o do cadastro.
 - `PUT /financeiro/contas/:id/saldo-inicial` — `bank_accounts.edit` + as duas de leitura; `{ valor (pode ser negativo),
-  data }` → a linha da conta; outra organização, inexistente ou malformada → 404.
+  data }` → a linha da conta (com o mesmo recorte do `GET /financeiro/contas`); outra organização, inexistente ou
+  malformada → 404.
 - `GET /financeiro/extrato` — as duas capacidades; `conta_id`, `de`, `ate` (sem `de`: a data do saldo inicial),
   `situacao` (todos|conciliados|pendentes, recorta as linhas, não o saldo), `page`, `pageSize` (100) → `{ conta, de,
-  ate, situacao, saldo_anterior: { real, conciliado }, itens: [{ id, codigo, data, descricao, documento, tipo,
-  categoria, tipo_transferencia, valor (com sinal), conciliado, conciliado_em, origem, empresa_id, saldo_real,
-  saldo_conciliado, id_global? }], total, page, pageSize, saldo_final }`.
+  ate, situacao, escopo_saldo: total|parcial, saldo_anterior: { real, conciliado }, itens: [{ id, codigo, data,
+  descricao, documento, tipo, categoria, tipo_transferencia, valor (com sinal), conciliado, conciliado_em, origem,
+  empresa_id, saldo_real, saldo_conciliado, id_global? }], total, page, pageSize, saldo_final }`. O mesmo recorte do
+  `GET /financeiro/contas`: com escopo parcial, linhas, total, acumulados, saldo anterior (que parte de zero) e página
+  só dos movimentos das empresas do usuário; a conta continua cadastro da organização (outra organização, inexistente,
+  excluída ou id malformado → a MESMA 404; a conta só com movimentos de outra empresa abre vazia).
 - `POST /financeiro/transferencias` — `bank_movements.create`; `{ tipo: transferencia|deposito|saque|aplicacao|resgate,
   conta_origem_id, conta_destino_id, data, valor (> 0), empresa_id, documento?, observacao? }`; contas vivas, ativas, da
   organização e diferentes; depósito = do caixa para não caixa; saque = de não caixa para o caixa; aplicação = para conta
@@ -1666,7 +1674,9 @@ Query e corpo estritos; dinheiro só como TEXTO decimal (número → 422).
   (nenhum|conta|empresa), `previstos` (1 → a série da provisão, §7) → `{ agrupamento, de, ate,
   modo: organizacao|empresa, saldo_inicial (nulo por empresa), periodos: [{ inicio, fim, realizado: { entradas, saidas,
   transferencias_liquidas, saldos_iniciais }, previsto: { entradas, saidas }, saldo_realizado, saldo_projetado }],
-  previsto_em_atraso, previstos_incluidos, direcoes_previstas, grupos? }`.
+  previsto_em_atraso, previstos_incluidos, direcoes_previstas, grupos? }`. No modo da conta (sem `empresa_id`), os
+  movimentos vêm da mesma porta recortada e, com escopo parcial, o `saldo_inicial` e o `saldo_realizado` são os dos
+  movimentos das empresas do usuário (sem o saldo inicial do cadastro); o conjunto de chaves não muda (contrato da F9).
 - `GET /financeiro/resultado` — `report.dre.view`; `de`, `ate`, `regime` (competencia padrão | caixa), `empresa_id` →
   `{ grupos: [{ grupo, total, naturezas }], receitaLiquida, resultadoOperacional, investimentos, resultadoFinal, regime,
   de, ate }`. Competência: títulos não cancelados e que não são adiantamento, por `coalesce(data_competencia, emissão)`,
@@ -1682,7 +1692,8 @@ Query e corpo estritos; dinheiro só como TEXTO decimal (número → 422).
 
 **Banco (0042).** Colunas novas anuláveis, tabela `erp.financeiro_naturezas_padrao`, `erp.refresh_title_status` com
 `sum(amount)`, gatilhos `trg_bm_confirmado_imutavel` e `trg_ts_credito_conferir`, a porta
-`erp.extrato_conta_organizacao` e o ledger sem DELETE para o `erp_app` (`docs/DATABASE.md`, `docs/MULTI-COMPANY-CONTRACT.md`
+`erp.extrato_conta_organizacao` (recortada pelo escopo de empresa do módulo financeiro — conserto de 03/10, decisão 285,
+item 12) e o ledger sem DELETE para o `erp_app` (`docs/DATABASE.md`, `docs/MULTI-COMPANY-CONTRACT.md`
 §7, `docs/DATA-DICTIONARY.md`).
 
 **Compatibilidade** (base `622f194`):
@@ -1699,6 +1710,11 @@ financeira (F9 — feito na F9a, §7); o saldo do painel financeiro pela view re
 antiga de importações OFX sem paginação (F11/F12); recorrência e parcelamento de adiantamento; conciliação automática
 da Sugestão e da Soma; CNAB, boleto, PIX, Open Finance, cartões e cheques, renegociação com juros compostos, aprovação
 por alçada, contabilização e retenções, o arquivo oficial do LCDPR (fora da PR; os dados do LCDPR entraram na F9a, §7).
+E, do conserto do extrato (decisão 285, item 12): a porta da 0015 (`erp.movimentos_conta_organizacao`, em produção) e as
+rotas `/api/financial/bank-accounts/balances`, `/api/financial/cash-flow` (inclusive o modo analítico, com texto e
+documento) e o relatório `bank_statement` continuam somando as empresas da conta para quem tem as duas capacidades (o
+contrato vigente, `apps/api/test/integration/banco-organizacional.test.ts`); mudá-las exige migration nova, sem número
+reservado, e é decisão do Maike.
 
 ## 7. Financeiro pela TOP e LCDPR
 

@@ -7,7 +7,8 @@
   - **3 da própria RLS** (0001/0007), que as políticas chamam: `erp.has_permission`, `erp.is_member` e
     `erp.effective_user_id`.
   - **8 PORTAS** (sete que a API chama e uma só por dentro de outra), estreitas por construção — `erp.movimentos_conta_organizacao` (agregado de conta
-    bancária, 0015), `erp.extrato_conta_organizacao` (o extrato da conta da organização na Central Financeira, 0042),
+    bancária, 0015), `erp.extrato_conta_organizacao` (o extrato da conta na Central Financeira, 0042, recortado por
+    dentro pelo escopo de empresa do módulo financeiro — decisão do Maike de 03/10),
     `erp.processar_transferencia_pecuaria_destino` (aceite da transferência de rebanho pelo destino, 0015),
     `erp.situacao_atraso_cliente` (só AGREGADOS do atraso do cliente, 0033/0039), `erp.reserva_estoque` (o saldo
     reservado, 0035/0043) e, só por dentro dela (EXECUTE só do dono), `erp.reserva_estoque_nucleo`; e duas que só

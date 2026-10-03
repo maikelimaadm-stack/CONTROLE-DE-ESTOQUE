@@ -1556,10 +1556,10 @@ Fatia F1 em fases (decisões 279 a 288 e 291 — a 291 é a F1, as correções d
 #89), uma PR. Cada fase acrescenta a sua subseção abaixo: migration (se houver), ordem de deploy, compatibilidade nos
 dois sentidos do skew, impacto em dados reais, reversão e o roteiro do Maike em produção (PENDING). As migrations da
 fatia são numeradas na ordem em que entram na branch (0042 a 0048, travas (2026,76) a (2026,82)): 0042 a F8, 0043 a
-F5a, 0044 a F6a e 0045 a F9a; 0046, trava (2026,80), a F10; 0047, trava (2026,81), a F7 — as 0042 a 0047 entraram;
-0048, trava (2026,82): as dívidas de segurança, em execução. Fora da fatia: a 0049, trava (2026,83), é da #91
-(MAPA-01, decisão 289), mesclada em 03/10 e já em produção; a 0050 é da #92, que espera a #90 (decisão do Maike de
-03/10).
+F5a, 0044 a F6a e 0045 a F9a; 0046, trava (2026,80), a F10; 0047, trava (2026,81), a F7; 0048, trava (2026,82): a
+F12 — o search_path de `erp.audit_row` (entrou) — as 0042 a 0048 entraram. Fora da fatia: a 0049, trava (2026,83), é
+da #91 (MAPA-01, decisão 289), mesclada em 03/10 e já em produção; a 0050 é da #92, que espera a #90 (decisão do Maike
+de 03/10).
 
 **A ordem real em produção (03/10).** A #91 foi mesclada em 03/10, e a main com ela foi trazida para esta branch
 (`b2035ca`). Em produção, o ledger de migrations (`public.erp_migrations`) tem 42 migrations: 0001 a 0041 e a 0049 da
@@ -2271,7 +2271,10 @@ sem ela (404 de rota, erro ou outra forma), é o Financeiro de hoje, idêntico. 
 - gatilho `trg_ts_credito_conferir`: o uso do crédito de um adiantamento confere adiantamento, parceiro, empresa,
   direção e crédito;
 - porta `erp.extrato_conta_organizacao(uuid[], date, date)`, SECURITY DEFINER estreita no molde da
-  `erp.movimentos_conta_organizacao` (0015) — EXECUTE só do `erp_app`;
+  `erp.movimentos_conta_organizacao` (0015) — EXECUTE só do `erp_app` —, RECORTADA pelo escopo de empresa de quem
+  pergunta no módulo financeiro (decisão do Maike de 03/10): escopo total (proprietário ou "todas" no financeiro) lê
+  todos os movimentos da conta, inclusive os sem empresa; parcial, só os das suas empresas; sem escopo no financeiro,
+  nenhum. O módulo é fixo na função (as rotas de conta abrem a transação sem módulo);
 - o `erp_app` perde DELETE e TRUNCATE em `financial_titles`, `title_settlements`, `bank_movements` e
   `bank_movement_apportionments`, e UPDATE em `bank_movement_apportionments`.
 
@@ -2281,8 +2284,9 @@ P1 já aplicada (a tabela nova, `title_settlements.lote_id` ou `bank_movements.t
 SECURITY DEFINER e lê o acervo); P4 alguma das 55 colunas que a migration lê ausente; P5 a chave
 `uq_financial_categories_tenant` ausente; P6 alguma função chamada ausente (`tenant_visible`, `audit_row`,
 `current_org_id`, `effective_user_id`, `has_permission`, `refresh_title_status`, `title_settlement_changed`,
-`set_updated_at`); P7 os gatilhos do ledger diferentes dos de hoje (`title_settlements`: `trg_settlement_changed`;
-`bank_movements`: `trg_bm_audit`; `financial_titles`: `trg_ft_audit`, `trg_ft_updated`); **P8 há baixa confirmada com
+`set_updated_at`, `escopo_empresa_total`, `empresas_do_membro`); P7 os gatilhos do ledger diferentes dos de hoje
+(`title_settlements`: `trg_settlement_changed`; `bank_movements`: `trg_bm_audit`; `financial_titles`: `trg_ft_audit`,
+`trg_ft_updated`); **P8 há baixa confirmada com
 desconto** (até 20 ids no diagnóstico) — a soma muda de sentido e uma baixa assim passaria a quitar menos; um humano
 decide. Os ALTER TABLE pedem trava curta em `bank_accounts`, `financial_titles`, `title_settlements`, `bank_movements`,
 `financial_categories` e `users`: com uma transação longa segurando uma delas, a migration desiste em 2 s sem aplicar
@@ -2346,6 +2350,22 @@ só o web = janela 2; reverter só a API = janela 3 sobre o banco novo, com a ja
 - a API anterior deixa estornar direto um movimento de componente (ela não conhece `title_settlement_id`).
 A correção, nos três, é voltar a API nova e estornar por ela. Por isso: use os recursos novos de baixa em produção só
 depois de conferir o deploy (roteiro abaixo).
+
+**Conserto do extrato (revisão final, decisão do Maike de 03/10).** Impacto em dados reais: nenhum — a 0042 ainda não
+está em produção, a função só lê e nenhuma linha muda. O que muda para o usuário: quem tem escopo financeiro PARCIAL
+passa a ver, em Bancos e caixa (Contas, Extrato) e no fluxo da conta, só os movimentos das suas empresas, sem o saldo
+inicial do cadastro (o saldo é a soma dos movimentos dele; as respostas trazem `escopo_saldo: "parcial"`); proprietário
+e "todas" no financeiro: nada muda. Janelas: a API anterior não chama a função; o web anterior não chama
+`/api/financeiro/*` (K-2 rodado de novo: 3 passaram); web nova × API anterior: a capacidade dá 404 (K-1, sem mudança).
+Pós-condição nova: "OPERACOES-01 F8: erp.extrato_conta_organizacao sem o recorte pelo escopo de empresa do modulo
+financeiro (escopo_empresa_total e empresas_do_membro no WHERE)." Conferência em produção (uma conta compartilhada real,
+lida por um usuário de escopo parcial): PENDING — exige acesso autenticado de produção. **Risco declarado (NÃO FEITO):**
+a porta da 0015 (`erp.movimentos_conta_organizacao`, JÁ em produção) e as rotas antigas que a usam —
+`/api/financial/bank-accounts/balances`, `/api/financial/cash-flow` (inclusive o modo analítico, com texto e documento)
+e o relatório `bank_statement` — continuam somando as empresas da conta para quem tem `bank_accounts.view` ∧
+`bank_movements.view` (o contrato vigente da PRE-BASE2-03, `apps/api/test/integration/banco-organizacional.test.ts`):
+numa conta compartilhada, quem vê só a empresa A ainda lê por elas os movimentos da empresa B. Este deploy não muda
+isso; mudar exige migration nova (sem número reservado: a 0048 foi usada pela F12) e é decisão do Maike.
 
 **Roteiro do Maike em produção** (produção é operacional — decisões 240 e 247). Os passos 0 a 9 são só leitura (nada é
 gravado); o passo 10 grava, e só com a decisão dele.
@@ -3493,8 +3513,9 @@ decisão dele.
 - a DF-e continua `launched` se a compra gerada for cancelada (como com a nota antiga);
 - o total exibido na Central manual soma em ponto flutuante (padrão anterior); o servidor recalcula em decimal;
 - o escopo de empresa sem alias (a coluna não qualificada resolve para `erp.membro_empresas` dentro da subconsulta) foi
-  consertado no descartar da importação e continua, fora da F7, em `stock.ts` (fila de DF-e: manifestar, ignorar,
-  listar), `fleet-hr.ts:263` e `:334` e `resources.ts:295` — fatia própria;
+  consertado no descartar da importação e continuava, fora da F7, em `stock.ts` (fila de DF-e: manifestar, ignorar,
+  listar), `fleet-hr.ts:263` e `:334` e `resources.ts:295` — consertados depois, na F12 (seção F12 — dívidas de
+  segurança, abaixo; decisão 288);
 - os testes sem mudança do código que a F7 mudou (`api.test.ts`, `f9a-classificacao-padrao`, `compras-02-cp`,
   `compras-01-a2-confirmacao`, `f9b-compra-padroes-top`, `f9b-provisao-compra`; no E2E, `compras-03-central-unitario` e
   `central-compras-correcoes`) não têm execução local nos relatórios da fase: ficam para o CI;
@@ -3504,6 +3525,49 @@ decisão dele.
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção, e os passos 7 e 8
 gravam (só com a decisão dele).
+
+### F12 — dívidas de segurança: o caminho da auditoria e o escopo amarrado à linha (OPERACOES-01, migration 0048)
+
+Decisão 288 (parte F12). **Uma migration: `0048_search_path_da_auditoria.sql`** (pre-deploy; trava (2026,82);
+`lock_timeout` 2 s; pré-condições nomeadas `OPERACOES-01 F12: …`, a primeira é "já aplicada"; pós-condições só de
+catálogo; nenhuma linha tocada). Faz uma coisa: `alter function erp.audit_row() set search_path = erp, pg_temp` (corpo,
+dono, privilégios e gatilhos intactos). As migrations do repositório são 49 (0001 a 0049); em produção, 42 hoje (0001 a
+0041 e a 0049). Sem variável, sem permissão, sem capacidade, sem rota, sem dependência nova. API: só o SQL muda — as
+consultas com o escopo de empresa ganham alias na tabela (`stock.ts`, `fleet-hr.ts`, `resources.ts`; na segunda rodada,
+`dashboards.ts`, `reports.ts` e `financial.ts`), e os helpers de escopo (`apps/api/src/lib/context.ts`) passam a
+recusar a coluna solta `empresa_id`; os corpos e as chaves das respostas são os de antes.
+- **Ordem: banco → API → web.** A 0048 é independente da 0049 (MAPA-01, #91): nenhuma lê ou cria objeto da outra.
+- **Ordem real em produção:** a 0049 já está aplicada, e o runner aplica a 0048 DEPOIS dela, por último entre as 0042 a
+  0048 (a ordem do nome, pulando o que o ledger já tem; cabeçalho de OPERACOES-01, acima). A prova
+  `packages/db/test/operacoes-01-ordem-real.test.ts` cobre a 0048: rodada em 03/10 com a 0048 no disco, 6/6 — a ordem
+  real (0001..0041 → 0049 → 0042..0048) e a ordem por número dão o mesmo catálogo, inclusive o `search_path` das funções.
+- **Skew:** API anterior × banco com a 0048 — o gatilho grava a mesma linha de auditoria; API nova × banco sem a 0048 —
+  nada da API depende dela.
+- **O que muda para o usuário:** o painel inicial (`GET /api/dashboards/home`) deixa de somar e contar títulos,
+  solicitações de compra e processamentos de empresas fora do escopo do MÓDULO de cada bloco (financeiro, compras,
+  pecuária). Antes, quem tinha escopos diferentes por módulo (por exemplo, financeiro=[A] e estoque=[A,B]) via no bloco
+  financeiro os títulos de B; agora vê só os de A. Para quem tem o mesmo escopo em todos os módulos, e para o
+  proprietário, nada muda. Os outros painéis, os relatórios DF-e e atividades do confinamento, a previsão orçamentária e
+  as rotas de estoque, frota, RH e cadastros genéricos já eram barrados pela RLS do mesmo módulo: a resposta não muda.
+  A recusa da coluna solta é erro de programação, que nunca chega ao usuário: nenhum chamador a usa (conferido).
+- **Impacto em dados reais:** nenhum dado lido, gravado ou apagado pela migration; o ALTER não pega lock de tabela (só a
+  linha da função no catálogo).
+- **Volta:** API e web por redeploy, convivendo com a 0048; desfazer o caminho só por migration nova (decisão humana;
+  reabre a dívida). Voltar a API reabre o vazamento do painel inicial.
+- **Se parar:** "já aplicada" = nada a fazer; "corpo não é o da 0001" = alguém redefiniu a função em produção — parar e
+  decidir; "dono/papel" = aplicar com o papel dono. Em erro, publique o nome do papel, nunca a conexão.
+- **Roteiro do Maike em produção (PENDING — leitura):**
+  `select proconfig, prosecdef, md5(prosrc) from pg_proc where oid = 'erp.audit_row()'::regprocedure` →
+  `{"search_path=erp, pg_temp"}`, `t`, `d2f094910e177fca30a3d9fab6f6672e`; uma edição qualquer pela tela gera a linha em
+  `erp.audit_logs` como antes. O painel inicial de um usuário com escopos diferentes por módulo (se houver) mostra, no
+  bloco financeiro, só os títulos das empresas do financeiro dele: PENDING.
+- **Riscos e o que NÃO foi feito** (declarados na 288, parte F12): o fechamento da apuração (`fleet-hr.ts:263`) responde
+  o mesmo 200 sem efeito para inexistente e fora do escopo (sem conferência de ROW COUNT); a avaliação de OS
+  (`fleet-hr.ts:334`) responde o mesmo 409 para os dois, não 404 — mudar os dois muda contrato; o UPDATE de
+  `erp.equipments` na depreciação (`fleet-hr.ts:201`) não confere ROW COUNT (dívida anterior); o gate
+  `report-scope.test.ts` ainda aceita o predicado solto, ramo que a recusa tornou código morto.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 
 ## VISUAL-UX-04b — correções da Central de Compras (sem migration)
 
