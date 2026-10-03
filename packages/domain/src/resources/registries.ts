@@ -354,8 +354,8 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       T("description", "Descrição", { required: true, list: true, search: true, span: 6 }),
       T("species", "Espécie", { list: true, search: true, span: 4 }),
       T("cultivar", "Cultivar", { list: true, search: true, span: 4 }),
-      I("rest_days_min", "Descanso mín. (dias)", { span: 2 }),
-      I("rest_days_max", "Descanso máx. (dias)", { span: 2 }),
+      I("rest_days_min", "Descanso mínimo (dias)", { span: 2 }),
+      I("rest_days_max", "Descanso máximo (dias)", { span: 2 }),
       active()
     ]
   },
