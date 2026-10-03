@@ -4,7 +4,10 @@ import { chaveDaCopiaDeVenda } from "./central-vendas-adaptador";
 
 /**
  * DUPLICAR DOCUMENTO DE VENDA (VISUAL-UX-02, decisão 270, item 4.1; entrega genérica no motor desde VISUAL-UX-04) —
- * funções PURAS: nada de React, de rede ou de navegador.
+ * os CAMPOS DA VENDA na cópia: o que o GET do detalhe leva para a criação e por que um documento não se duplica. As
+ * funções daqui só leem o que recebem e devolvem um valor novo — sem rede, sem navegador, sem estado guardado (a data
+ * de hoje entra por parâmetro) —, mas o MÓDULO não é isolado: a chave da cópia vem do adaptador da venda
+ * (`./central-vendas-adaptador`), que importa o seletor de TOP, com os hooks de React e a consulta ao servidor dele.
  *
  * ┌─ O QUE A CÓPIA LEVA E O QUE ELA NÃO LEVA ──────────────────────────────────────────────────────┐
  * │ Leva, a partir do GET do detalhe (o que o servidor devolveu, nunca o que a tela mostrou): a MESMA │

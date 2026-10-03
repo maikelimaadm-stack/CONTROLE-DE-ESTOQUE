@@ -1,7 +1,7 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, todayISO } from "@agro/shared";
-import { gmd, withdrawalUntil, expectedBirth, ageMonths, evolveCategory, moduloDaPermissao, moduloUnicoDasPermissoes, permissaoManejo, permissaoMovimentacao, tiposMovimentacaoVisiveis } from "@agro/domain";
+import { gmd, withdrawalUntil, expectedBirth, ageMonths, evolveCategory, moduloDaPermissao, moduloUnicoDasPermissoes, permissaoManejo, permissaoMovimentacao, tiposMovimentacaoVisiveis, quantidadeDoProdutoNoManejo, itensDaBatelada, SEGMENTO_DO_MODULO_COM_TOP } from "@agro/domain";
 import { comPermissaoResolvida, validarEmpresaSelecionada, runService, nextCode, idempotent, audit, requirePermission } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
 import { consultaEscopada, empresaScope, empresaScopeSql, exigirEmpresaDaOrganizacao, exigirEmpresaDeLancamento, exigirEmpresaVisivel, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
@@ -9,8 +9,11 @@ import { criarNotificacao } from "../lib/notificacao.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing, hasColumnFilters } from "../lib/column-filters.js";
 import { postStock } from "../services/stock-core.js";
-import { createTitles } from "../services/financial-core.js";
+import { createTitles, type TitleInput } from "../services/financial-core.js";
 import { atribuirIdGlobal, atribuirIdGlobalSeAplicavel, paginaComIdGlobal } from "../lib/id-global.js";
+import { joinDaTopDoModulo, tiposDeOperacaoDoModulo, topDoLancamentoDoModulo } from "../lib/top-do-modulo.js";
+import { exigirEquipamentos, formaCanonica } from "../lib/referencias-do-modulo.js";
+import { financeiroDoMovimentoDeAnimais } from "../lib/financeiro-pecuaria.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -36,6 +39,46 @@ async function animalCode(ctx: ServiceCtx, entity: string) { return nextCode(ctx
 async function uniqueCode(ctx: ServiceCtx, table: "animal_handlings", entity: string) {
   for (let i = 0; i < 10000; i++) { const code = await animalCode(ctx, entity); const ex = await ctx.tx.query(`select 1 from erp.${table} where organization_id=$1 and code=$2`, [ctx.orgId, code]); if (!ex.rowCount) return code; }
   throw new Error("Não foi possível gerar código único");
+}
+
+/**
+ * OPERACOES-01 F10 (decisão 287) — AS REFERÊNCIAS DO MANEJO E DA BATELADA SÃO CONFERIDAS NA ORGANIZAÇÃO E NO ESCOPO.
+ *
+ * As FKs que recebem o lote de animais (`animal_handlings.batch_id`) e o vagão (`diet_batches.equipment_id`) são de
+ * coluna ÚNICA: provam que o UUID existe, não que ele é DESTA organização. Antes, um UUID de outra organização (ou um
+ * lote excluído) entrava no lançamento; agora o lote vai ao razão (F5a), e a recusa vem antes, no campo, com a MESMA
+ * superfície para inexistente, de outra organização, excluído e fora do escopo do módulo da porta (a leitura passa
+ * pela RLS `tenant_e_empresa` com o módulo da transação). Quem chama confere ANTES do código: a recusa não queima
+ * número. Não confere a empresa do lançamento (o lote/vagão de outra empresa do escopo continua aceito, como hoje).
+ * O vagão é conferido pela peça comum dos módulos (`exigirEquipamentos`, `lib/referencias-do-modulo`): a mesma
+ * consulta e a mesma mensagem do abastecimento e da manutenção.
+ */
+const MSG_LOTE_DE_ANIMAIS_INVALIDO = "Lote de animais inválido: escolha um lote da organização.";
+async function exigirLoteDeAnimaisDaOrganizacao(ctx: ServiceCtx, loteId: string) {
+  const r = await ctx.tx.query("select 1 from erp.batches where id=$1 and organization_id=$2 and deleted_at is null", [loteId, ctx.orgId]);
+  if (r.rowCount !== 1) throw validation(MSG_LOTE_DE_ANIMAIS_INVALIDO, [{ path: "batch_id", message: MSG_LOTE_DE_ANIMAIS_INVALIDO }]);
+}
+/** A forma do UUID (8-4-4-4-12 hexadecimal): id fora dela nem chega à consulta — a mesma 404 do inexistente. */
+const FORMA_DE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// OPERACOES-01 F10 (decisão 287): a forma canônica do decimal (`formaCanonica`, `lib/referencias-do-modulo`) — ".5" →
+// "0.5", "1e-7" → "0.0000001", o mesmo número que a conta de antes usava; o que não é número finito (texto, vazio, NaN,
+// ±Infinity) é recusado NO CAMPO (422 "Valor inválido"), antes do código: a entrada não canônica nunca é traduzida.
+
+/**
+ * OPERACOES-01 F10r (decisão 287) — O PADRÃO LEGADO DO MOVIMENTO DE ANIMAIS: a natureza do tipo (despesa na compra,
+ * receita na venda) analítica e ativa "de animais" (nome com animais, boi ou bezerro), senão a 1ª por código; o 1º centro
+ * de resultado analítico e ativo por código. As consultas são as de antes da F10r, TEXTO IDÊNTICO e na mesma ordem
+ * (o contrato do skew, sentido 2) — só o campo pedido é consultado; o não pedido volta `null` sem consulta. Não lança:
+ * a recusa "Cadastre uma natureza e um centro de resultado" é de quem chama.
+ */
+async function classificacaoLegadaDoMovimento(ctx: ServiceCtx, natureza: "expense" | "income", campos: { natureza: boolean; centro: boolean }): Promise<{ naturezaId: string | null; centroCustoId: string | null }> {
+  const naturezaId = campos.natureza
+    ? (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature=$2 and kind='analytic' and is_active and deleted_at is null and (name ilike '%animais%' or name ilike '%boi%' or name ilike '%bezerro%') order by code limit 1", [ctx.orgId, natureza])).rows[0]?.id ?? (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature=$2 and kind='analytic' and is_active and deleted_at is null order by code limit 1", [ctx.orgId, natureza])).rows[0]?.id
+    : undefined;
+  const centroCustoId = campos.centro
+    ? (await ctx.tx.query<{ id: string }>("select id from erp.cost_centers where organization_id=$1 and kind='analytic' and is_active and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0]?.id
+    : undefined;
+  return { naturezaId: naturezaId ?? null, centroCustoId: centroCustoId ?? null };
 }
 
 export default async function livestockRoutes(app: FastifyInstance) {
@@ -152,6 +195,22 @@ export default async function livestockRoutes(app: FastifyInstance) {
     await exigirEmpresaDeLancamento(ctx, d.empresa_id, moduloDaPermissao(permissao));
     requirePermission(ctx, permissao);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
+      /*
+       * OPERACOES-01 F10r (decisão 287) — O TÍTULO PELA TOP PADRÃO DA FAMÍLIA (a compra ou a venda de animais), lida SÓ
+       * quando haverá título (a MESMA condição do bloco do título; o valor é a MESMA conta do laço, pura) e ANTES do
+       * código e de qualquer gravação: a recusa (troca proibida, "exigir" sem o par, conta inutilizável) é 422 sem nada
+       * gravado e sem queimar número. Sem TOP padrão, fora do 5 ou sem padrões → `sem_top`: o padrão legado de hoje,
+       * INTACTO, sem TOP no título.
+       */
+      // A conta antecipada só existe quando pode haver título: sem "Gerar financeiro" (e no nascimento, na morte e na
+      // perda) nada roda antes do código — o caminho de hoje, sem nenhuma conta a mais.
+      const tipoComTitulo = d.movement_type === "purchase" || d.movement_type === "sale" ? d.movement_type : null;
+      const valorDosItens = d.generate_financial && tipoComTitulo !== null
+        ? d.items.reduce((soma, it) => soma.plus(money(D(it.unit_value ?? 0).mul(it.quantity))), D(0)) : null;
+      const geraTitulo = valorDosItens !== null && valorDosItens.gt(0);
+      const pelaTop = geraTitulo && tipoComTitulo
+        ? await financeiroDoMovimentoDeAnimais(ctx, tipoComTitulo, { naturezaId: d.financial_category_id ?? null, centroCustoId: d.cost_center_id ?? null })
+        : { tipo: "sem_top" as const };
       const code = await animalCode(ctx, `animal_${d.movement_type}`);
       const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,person_id,batch_id,cause,note,invoice_number,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id", [ctx.orgId, d.empresa_id, code, d.movement_type, d.movement_date, d.person_id ?? null, d.batch_id ?? null, d.cause ?? null, d.note ?? null, d.invoice_number ?? null, ctx.user.id]);
       const id = r.rows[0]!.id; let qty = 0, weight = D(0), value = D(0);
@@ -180,18 +239,38 @@ export default async function livestockRoutes(app: FastifyInstance) {
         }
         await ctx.tx.query("insert into erp.animal_movement_items(movement_id,animal_id,herd_lot_id,category_id,quantity,weight,unit_value,total) values ($1,$2,$3,$4,$5,$6,$7,$8)", [id, animalId, it.herd_lot_id ?? null, it.category_id ?? null, it.quantity, it.weight ?? null, it.unit_value ?? null, total]);
       }
-      await ctx.tx.query("update erp.animal_movements set quantity=$2, total_weight=$3, total_value=$4 where id=$1", [id, qty, weight.toFixed(2), money(value)]);
+      const totais = await ctx.tx.query("update erp.animal_movements set quantity=$2, total_weight=$3, total_value=$4 where id=$1", [id, qty, weight.toFixed(2), money(value)]);
+      if (totais.rowCount !== 1) throw err("CONFLICT", "Movimentação não atualizada.");
+      // A conta antecipada (`valorDosItens`, que decidiu se a TOP seria lida) e a do laço são a MESMA: divergência é erro
+      // de programação, nunca um título de outro valor em silêncio.
+      if (valorDosItens !== null && !valorDosItens.eq(value)) throw new Error("O valor dos itens do movimento divergiu da conta do laço");
       let titleIds: string[] = [];
-      if (d.generate_financial && (d.movement_type === "purchase" || d.movement_type === "sale") && value.gt(0)) {
+      if (geraTitulo) {
         if (!d.person_id) throw validation("Fornecedor/cliente obrigatório para gerar financeiro");
-        const cat = d.financial_category_id ?? (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature=$2 and kind='analytic' and is_active and deleted_at is null and (name ilike '%animais%' or name ilike '%boi%' or name ilike '%bezerro%') order by code limit 1", [ctx.orgId, d.movement_type === "purchase" ? "expense" : "income"])).rows[0]?.id ?? (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature=$2 and kind='analytic' and is_active and deleted_at is null order by code limit 1", [ctx.orgId, d.movement_type === "purchase" ? "expense" : "income"])).rows[0]?.id;
-        const cc = d.cost_center_id ?? (await ctx.tx.query<{ id: string }>("select id from erp.cost_centers where organization_id=$1 and kind='analytic' and is_active and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0]?.id;
+        const natureza = d.movement_type === "purchase" ? "expense" : "income";
+        let cat: string | null | undefined; let cc: string | null | undefined;
+        let daTop: Pick<TitleInput, "titleTypeId" | "contaPrevistaId" | "tipoOperacaoId" | "tipoOperacaoVersaoId"> = {};
+        if (pelaTop.tipo === "top") {
+          // A TOP agiu: o campo que nem o documento nem a TOP deram sai das MESMAS consultas legadas do movimento.
+          const legado = await classificacaoLegadaDoMovimento(ctx, natureza, { natureza: pelaTop.naturezaId === null, centro: pelaTop.centroCustoId === null });
+          cat = pelaTop.naturezaId ?? legado.naturezaId; cc = pelaTop.centroCustoId ?? legado.centroCustoId;
+          daTop = { titleTypeId: pelaTop.tipoTituloId, contaPrevistaId: pelaTop.contaBancariaId, tipoOperacaoId: pelaTop.top.tipoOperacaoId, tipoOperacaoVersaoId: pelaTop.top.tipoOperacaoVersaoId };
+        } else {
+          // Sem TOP padrão (ou sem padrões): o código de hoje — o documento, senão o legado do movimento, campo a campo.
+          cat = d.financial_category_id ?? (await classificacaoLegadaDoMovimento(ctx, natureza, { natureza: true, centro: false })).naturezaId;
+          cc = d.cost_center_id ?? (await classificacaoLegadaDoMovimento(ctx, natureza, { natureza: false, centro: true })).centroCustoId;
+        }
         if (!cat || !cc) throw validation("Cadastre uma natureza e um centro de resultado");
-        const t = await createTitles(ctx, { empresaId: d.empresa_id, direction: d.movement_type === "purchase" ? "payable" : "receivable", number: d.invoice_number ?? `ANI-${code}`, personId: d.person_id, amount: money(value), emissionDate: d.movement_date, dueDate: d.due_date ?? d.movement_date, note: `${d.movement_type === "purchase" ? "Compra" : "Venda"} de animais ${code} (${qty} cab.)`, apportionment: [{ financialCategoryId: cat, costCenterId: cc, percentage: "100" }], sourceType: "animal_movements", sourceId: id });
-        titleIds = t.ids; await ctx.tx.query("update erp.animal_movements set financial_title_id=$2 where id=$1", [id, t.ids[0]]);
+        const t = await createTitles(ctx, { empresaId: d.empresa_id, direction: d.movement_type === "purchase" ? "payable" : "receivable", number: d.invoice_number ?? `ANI-${code}`, personId: d.person_id, amount: money(value), emissionDate: d.movement_date, dueDate: d.due_date ?? d.movement_date, note: `${d.movement_type === "purchase" ? "Compra" : "Venda"} de animais ${code} (${qty} cab.)`, apportionment: [{ financialCategoryId: cat, costCenterId: cc, percentage: "100" }], sourceType: "animal_movements", sourceId: id, ...daTop });
+        titleIds = t.ids;
+        const vinculo = await ctx.tx.query("update erp.animal_movements set financial_title_id=$2 where id=$1", [id, t.ids[0]]);
+        if (vinculo.rowCount !== 1) throw err("CONFLICT", "Movimentação não atualizada.");
       }
       if (d.movement_type === "purchase" && qty > 0) { const pcode = await animalCode(ctx, "processing"); const proc = await ctx.tx.query<{ id: string }>("insert into erp.processings(organization_id,empresa_id,code,processing_date,purchase_movement_id,pre_batch_id,expected_quantity,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id", [ctx.orgId, d.empresa_id, pcode, d.movement_date, id, d.batch_id ?? null, qty, ctx.user.id]); await criarNotificacao(ctx, { kind: "processing_pending", title: `Você tem animais a serem processados no processamento nº ${pcode}`, route: "/pecuaria/processamentos", empresaId: d.empresa_id, dedupe: proc.rows[0]!.id, entidadeOrigem: "processings", idOrigem: proc.rows[0]!.id }); }
-      await audit(ctx.tx, ctx, "animal_movements", id, "create", { code, type: d.movement_type, qty });
+      // A trilha ganha `financeiro` SÓ quando a TOP agiu no título (sem TOP, a trilha de hoje, byte a byte).
+      const financeiro = pelaTop.tipo === "top"
+        ? { financeiro: { origem: pelaTop.origem, tipoOperacaoId: pelaTop.top.tipoOperacaoId, tipoOperacaoVersaoId: pelaTop.top.tipoOperacaoVersaoId } } : {};
+      await audit(ctx.tx, ctx, "animal_movements", id, "create", { code, type: d.movement_type, qty, ...financeiro });
       return { id, code, quantity: qty, total_value: money(value), title_ids: titleIds };
     })).result;
   })));
@@ -239,7 +318,17 @@ export default async function livestockRoutes(app: FastifyInstance) {
     await atribuirIdGlobalSeAplicavel(ctx, "animal_movements", r.rows[0]!.id);
     return { id: r.rows[0]!.id, code };
   })));
-  app.post("/livestock/transfers/to-farm", async (req, reply) => reply.status(201).send(await runService(app, req, "batch_farm_transfer.create", async (ctx) => {
+  /**
+   * TRANSFERÊNCIA DE REBANHO ENTRE EMPRESAS — UM handler, DUAS rotas (OPERACOES-01 F10, decisão 287).
+   *
+   * A web chama `/livestock/transfers/to-empresa` desde a PRE-BASE2-03 (o nome canônico da empresa, que trocou o termo
+   * antigo do nicho), mas a troca foi só no cliente: a API continuou registrando só `/to-farm`, e a tela respondia 404. O
+   * conserto é na API, do lado que não quebra ninguém: a rota que a web (a deste HEAD e a da base) já chama passa a
+   * existir, e `/to-farm` FICA (os clientes, testes e integrações que a usam continuam valendo). Mesma permissão,
+   * mesmo corpo, mesmas recusas, mesma notificação, mesma chave do `nextCode` e mesma resposta — a regra abaixo é a de
+   * antes, linha por linha; só passou a ter nome.
+   */
+  const transferirEntreEmpresas = async (req: FastifyRequest, reply: FastifyReply) => reply.status(201).send(await runService(app, req, "batch_farm_transfer.create", async (ctx) => {
     const d = z.object({ empresa_id: uuid, empresa_destino_id: uuid, movement_date: date, batch_id: uuid.optional().nullable(), animal_ids: z.array(uuid).optional(), destination_batch_id: uuid.optional().nullable(), note: z.string().optional().nullable() }).parse(req.body);
     await exigirEmpresaDeLancamento(ctx, d.empresa_id); if (d.empresa_id === d.empresa_destino_id) throw validation("Fazenda destino deve ser diferente");
     // O DESTINO vem do corpo da requisição. Quem envia não precisa enxergar quem recebe (é o destino que
@@ -331,7 +420,9 @@ export default async function livestockRoutes(app: FastifyInstance) {
       // do dia para a mesma empresa seria engolida em silêncio e ninguém no destino seria avisado
       dedupe: r.rows[0]!.id, entidadeOrigem: "animal_movements", idOrigem: r.rows[0]!.id });
     return { id: r.rows[0]!.id, code, animals: ids.length, herd_lots: rebanhos.length, heads: cabecas, status: "pending" };
-  })));
+  }));
+  app.post("/livestock/transfers/to-farm", transferirEntreEmpresas);
+  app.post("/livestock/transfers/to-empresa", transferirEntreEmpresas);
   // Processar transferência na fazenda destino (aceite)
   app.post("/livestock/transfers/:id/process", async (req) => runService(app, req, "batch_farm_transfer.process", async (ctx) => {
     const { id } = req.params as { id: string }; const d = z.object({ destination_batch_id: uuid.optional().nullable() }).parse(req.body ?? {});
@@ -393,12 +484,20 @@ export default async function livestockRoutes(app: FastifyInstance) {
       return { id: r.rows[0]!.id, code, animals: d.items.length, total_weight: total.toFixed(2), average: total.div(d.items.length).toFixed(2) };
     })).result;
   })));
-  const handlingSchema = z.object({ empresa_id: uuid, handling_type: z.enum(["nutrition", "sanitary", "weaning", "separation", "pasture"]), handling_date: date, batch_id: uuid.optional().nullable(), product_id: uuid.optional().nullable(), warehouse_id: uuid.optional().nullable(), provider_lot: z.string().trim().max(60).optional().nullable() /* CADASTROS Fase 6: lote do produto com controle de lote */, dose: dec.optional().nullable(), responsible: z.string().optional().nullable(), note: z.string().optional().nullable(), items: z.array(z.object({ animal_id: uuid.optional().nullable(), herd_lot_id: uuid.optional().nullable(), quantity: dec.default("1"), new_batch_id: uuid.optional().nullable(), new_category_id: uuid.optional().nullable() })).min(1) });
+  const handlingSchema = z.object({ empresa_id: uuid, handling_type: z.enum(["nutrition", "sanitary", "weaning", "separation", "pasture"]), handling_date: date, batch_id: uuid.optional().nullable(), product_id: uuid.optional().nullable(), warehouse_id: uuid.optional().nullable(), provider_lot: z.string().trim().max(60).optional().nullable() /* CADASTROS Fase 6: lote do produto com controle de lote */, dose: dec.optional().nullable(), responsible: z.string().optional().nullable(), note: z.string().optional().nullable(), items: z.array(z.object({ animal_id: uuid.optional().nullable(), herd_lot_id: uuid.optional().nullable(), quantity: dec.default("1"), new_batch_id: uuid.optional().nullable(), new_category_id: uuid.optional().nullable() })).min(1), tipo_operacao_id: uuid.optional().nullable() /* OPERACOES-01 F10 (decisão 287): a TOP do manejo; ausente = o manejo de hoje */ });
+  /**
+   * OPERACOES-01 F10 (decisão 287): as TOPs que o manejo pode lançar (família do registry pela tabela) — a porta do
+   * POST (`nutritions.create`, a mesma de `/livestock/handlings`). Declara a capacidade `topNoModulo`: a Central só
+   * mostra o campo "Tipo de operação" e só envia `tipo_operacao_id` contra uma API que responde aqui.
+   */
+  app.get(`/modulos/${SEGMENTO_DO_MODULO_COM_TOP.manejo}/operation-types`, async (req) => runService(app, req, "nutritions.create", (ctx) => tiposDeOperacaoDoModulo(ctx, "manejo")));
   app.get("/livestock/handlings", async (req) => runService(app, req, "nutritions.view", async (ctx) => { const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>; const where = ["h.organization_id=$1", "h.deleted_at is null"]; const params: unknown[] = [ctx.orgId]; if (f.handling_type) { params.push(f.handling_type); where.push(`h.handling_type=$${params.length}`); } where.push(...empresaScope(ctx, "h", params)); if (f.batch_id) { params.push(f.batch_id); where.push(`h.batch_id=$${params.length}`); } if (f.start_date) { params.push(f.start_date); where.push(`h.handling_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`h.handling_date<=$${params.length}`); } const w = where.join(" and "); return paged(ctx, `select h.*, b.description as batch_name, p.description as product_name from erp.animal_handlings h left join erp.batches b on b.id=h.batch_id left join erp.products p on p.id=h.product_id where ${w} order by h.handling_date desc`, `select count(*) n from erp.animal_handlings h where ${w}`, params, q, req.query as Record<string, unknown>, "animal_handlings"); }));
   // Detalhe de um manejo (nutrição, sanitário, desmama, apartação, pastagem) — permissão de visualização do próprio tipo
   app.get("/livestock/handlings/:id", async (req) => runService(app, req, null, async (ctx) => {
     const { id } = req.params as { id: string };
-    const h = await ctx.tx.query<{ handling_type: string }>("select h.*, b.description as batch_name, p.description as product_name, w.description as warehouse_name, f.name as empresa_name, u.name as created_by_name from erp.animal_handlings h left join erp.batches b on b.id=h.batch_id left join erp.products p on p.id=h.product_id left join erp.warehouses w on w.id=h.warehouse_id join erp.empresas f on f.id=h.empresa_id left join erp.users u on u.id=h.created_by where h.id=$1 and h.organization_id=$2 and h.deleted_at is null", [id, ctx.orgId]);
+    // OPERACOES-01 F10 (decisão 287): + o nome e a versão da TOP congelada (`tipo_operacao_nome`, `tipo_operacao_versao`; nulos sem TOP)
+    const top = joinDaTopDoModulo("h");
+    const h = await ctx.tx.query<{ handling_type: string }>(`select h.*, b.description as batch_name, p.description as product_name, w.description as warehouse_name, f.name as empresa_name, u.name as created_by_name, ${top.colunas} from erp.animal_handlings h left join erp.batches b on b.id=h.batch_id left join erp.products p on p.id=h.product_id left join erp.warehouses w on w.id=h.warehouse_id join erp.empresas f on f.id=h.empresa_id left join erp.users u on u.id=h.created_by ${top.join} where h.id=$1 and h.organization_id=$2 and h.deleted_at is null`, [id, ctx.orgId]);
     if (!h.rows[0]) throw notFound("Manejo");
     // permissão do PRÓPRIO tipo de manejo (fonte única de operações); tipo desconhecido não vira permissão vizinha
     const permissao = permissaoManejo(h.rows[0].handling_type, "view");
@@ -413,19 +512,34 @@ export default async function livestockRoutes(app: FastifyInstance) {
     const d = handlingSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id);
     const permMap = { nutrition: "nutritions.create", sanitary: "sanitaries.create", weaning: "weanings.create", separation: "separations.create", pasture: "pastures.create" } as const; const { requirePermission } = await import("../lib/service.js"); requirePermission(ctx, permMap[d.handling_type]);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
+      // OPERACOES-01 F10 (decisão 287): a TOP (versão corrente congelada + as exigências gerais que o registro do manejo
+      // tem: a observação) e o lote de animais conferidos ANTES do código — a recusa não queima número.
+      const top = await topDoLancamentoDoModulo(ctx, "manejo", d.tipo_operacao_id, { note: d.note });
+      if (d.batch_id) await exigirLoteDeAnimaisDaOrganizacao(ctx, d.batch_id);
+      // OPERACOES-01 F10 (decisão 287): a quantidade do PRODUTO é a conta do domínio — Σ (dose × cabeças); sem dose, Σ
+      // cabeças —, a MESMA que a Central mostra no Resumo. Os itens são CABEÇAS (1 por animal, N por rebanho de
+      // contagem); o resultado é o de antes (a soma dos `q` do laço abaixo, com 4 casas). Sem produto, nada a contar.
+      const qty = d.product_id
+        ? D(quantidadeDoProdutoNoManejo(d.dose ? formaCanonica(d.dose, "dose") : null, d.items.map((it, i) => formaCanonica(it.quantity, `items.${i}.quantity`))))
+        : D(0);
       const code = await uniqueCode(ctx, "animal_handlings", "animal_handling");
-      const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_handlings(organization_id,empresa_id,code,handling_type,handling_date,batch_id,product_id,warehouse_id,responsible,note,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id", [ctx.orgId, d.empresa_id, code, d.handling_type, d.handling_date, d.batch_id ?? null, d.product_id ?? null, d.warehouse_id ?? null, d.responsible ?? null, d.note ?? null, ctx.user.id]);
-      const id = r.rows[0]!.id; let qty = D(0); let count = 0;
+      const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_handlings(organization_id,empresa_id,code,handling_type,handling_date,batch_id,product_id,warehouse_id,responsible,note,created_by,tipo_operacao_id,tipo_operacao_versao_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning id", [ctx.orgId, d.empresa_id, code, d.handling_type, d.handling_date, d.batch_id ?? null, d.product_id ?? null, d.warehouse_id ?? null, d.responsible ?? null, d.note ?? null, ctx.user.id, top?.tipoOperacaoId ?? null, top?.tipoOperacaoVersaoId ?? null]);
+      const id = r.rows[0]!.id; let count = 0;
       await atribuirIdGlobal(ctx, "animal_handlings", id);
       for (const it of d.items) {
-        const q = d.dose ? D(d.dose).mul(it.quantity) : D(it.quantity); qty = qty.plus(d.product_id ? q : 0); count += Number(it.quantity);
+        const q = d.dose ? D(d.dose).mul(it.quantity) : D(it.quantity); count += Number(it.quantity);
         await ctx.tx.query("insert into erp.animal_handling_items(handling_id,animal_id,herd_lot_id,quantity,dose,new_batch_id,new_category_id) values ($1,$2,$3,$4,$5,$6,$7)", [id, it.animal_id ?? null, it.herd_lot_id ?? null, q.toFixed(4), d.dose ?? null, it.new_batch_id ?? null, it.new_category_id ?? null]);
         if ((d.handling_type === "weaning" || d.handling_type === "separation") && it.animal_id) await ctx.tx.query("update erp.animals set batch_id=coalesce($2,batch_id), category_id=coalesce($3,category_id), updated_at=now() where id=$1", [it.animal_id, it.new_batch_id ?? null, it.new_category_id ?? null]);
       }
       let total = "0.00"; let unit = "0";
-      if (d.product_id && d.warehouse_id && qty.gt(0)) { const s = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: d.product_id, movementType: "nutrition", direction: -1, quantity: qty.toFixed(4), providerLot: d.provider_lot ?? null, sourceType: "animal_handlings", sourceId: id, date: d.handling_date, note: `${d.handling_type} ${code}` }); unit = s.unitCost; total = s.total; } // Σ das partes (lineTotal de cada uma)
+      // O movimento leva o DESTINO que o manejo tem (OPERACOES-01 F5a, decisão 282): o lote de animais. O manejo não
+      // tem centro de resultado (0006). Lote de outra organização é recusado pela FK composta da 0043 (fail-closed) — e, desde
+      // a F10, antes, no campo `batch_id` (`exigirLoteDeAnimaisDaOrganizacao`).
+      if (d.product_id && d.warehouse_id && qty.gt(0)) { const s = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: d.product_id, movementType: "nutrition", direction: -1, quantity: qty.toFixed(4), providerLot: d.provider_lot ?? null, loteAnimaisId: d.batch_id ?? null, sourceType: "animal_handlings", sourceId: id, date: d.handling_date, note: `${d.handling_type} ${code}` }); unit = s.unitCost; total = s.total; } // Σ das partes (lineTotal de cada uma)
       const wd = d.product_id && d.handling_type === "sanitary" ? (await ctx.tx.query<{ withdrawal_period_days: number | null }>("select withdrawal_period_days from erp.products where id=$1", [d.product_id])).rows[0]?.withdrawal_period_days ?? null : null;
-      await ctx.tx.query("update erp.animal_handlings set quantity=$2, unit_value=$3, total=$4, animals_count=$5, withdrawal_until=$6 where id=$1", [id, qty.toFixed(4), unit, total, count, withdrawalUntil(d.handling_date, wd)]);
+      // OPERACOES-01 F10 (decisão 287): ROW COUNT conferido (o manejo nasceu nesta transação; zero linha não é sucesso).
+      const tot = await ctx.tx.query("update erp.animal_handlings set quantity=$2, unit_value=$3, total=$4, animals_count=$5, withdrawal_until=$6 where id=$1 and organization_id=$7", [id, qty.toFixed(4), unit, total, count, withdrawalUntil(d.handling_date, wd), ctx.orgId]);
+      if (tot.rowCount !== 1) throw err("CONFLICT", "Os totais do manejo não foram gravados.");
       await audit(ctx.tx, ctx, "animal_handlings", id, "create", { code, type: d.handling_type });
       return { id, code, animals: count, total, withdrawal_until: withdrawalUntil(d.handling_date, wd) };
     })).result;
@@ -463,20 +577,60 @@ export default async function livestockRoutes(app: FastifyInstance) {
   app.get("/livestock/reproduction/overview", async (req) => runService(app, req, "advanced_reproductive.view", async (ctx) => { const r = await consultaEscopada(ctx, "select s.id, s.name, s.start_date, s.end_date, s.status, count(m.id)::int as matings, count(*) filter (where m.result='pregnant')::int as pregnant, count(*) filter (where m.result='empty')::int as empty, count(*) filter (where m.result='pending')::int as pending from erp.breeding_seasons s left join erp.matings m on m.season_id=s.id where s.organization_id=$1 and s.deleted_at is null and {{escopo:s.empresa_id}} group by s.id order by s.start_date desc", [ctx.orgId]); return { seasons: r.rows.map((x) => ({ ...(x as Record<string, unknown>), pregnancy_rate: (x as { matings: number; pregnant: number }).matings ? ((x as { pregnant: number }).pregnant / (x as { matings: number }).matings * 100).toFixed(1) : null })) }; }));
 
   // ---------- Confinamento: batelada, trato, leitura de cocho, mapa ----------
+  /**
+   * OPERACOES-01 F10 (decisão 287): as TOPs que a batelada pode lançar — a porta do POST (`diet_batches.create`).
+   * Declara a capacidade `topNoModulo`, que também anuncia a rota dos ingredientes da dieta (abaixo).
+   */
+  app.get(`/modulos/${SEGMENTO_DO_MODULO_COM_TOP.batelada}/operation-types`, async (req) => runService(app, req, "diet_batches.create", (ctx) => tiposDeOperacaoDoModulo(ctx, "batelada")));
+  /**
+   * OPERACOES-01 F10 (decisão 287): OS INGREDIENTES DA DIETA, para a Central da batelada derivar os itens (kg × %) antes
+   * de salvar. Porta do lançamento (`diet_batches.create`): é leitura para lançar, não o cadastro da dieta. A dieta é
+   * da ORGANIZAÇÃO (sem empresa). Id fora da forma de UUID, inexistente, de outra organização e excluída: a MESMA 404,
+   * com o mesmo corpo. Itens numa consulta só (dieta × produto × unidade), percentual em texto decimal.
+   */
+  app.get(`/modulos/${SEGMENTO_DO_MODULO_COM_TOP.batelada}/dietas/:id/ingredientes`, async (req) => runService(app, req, "diet_batches.create", async (ctx) => {
+    const { id } = req.params as { id: string };
+    const naoEncontrada = () => err("NOT_FOUND", "Dieta não encontrada");
+    if (!FORMA_DE_UUID.test(id)) throw naoEncontrada();
+    const dieta = await ctx.tx.query<{ id: string; code: string; name: string }>("select d.id, d.code, d.name from erp.diets d where d.id=$1 and d.organization_id=$2 and d.deleted_at is null", [id, ctx.orgId]);
+    if (!dieta.rows[0]) throw naoEncontrada();
+    const itens = await ctx.tx.query<{ product_id: string; product_code: string; product_name: string; unit: string | null; percentage: string }>(
+      "select i.product_id, p.code as product_code, p.description as product_name, mu.symbol as unit, i.percentage::text as percentage from erp.diet_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id where i.diet_id=$1 order by p.description, i.id", [id]);
+    return { id: dieta.rows[0].id, code: dieta.rows[0].code, name: dieta.rows[0].name, items: itens.rows };
+  }));
+  // OPERACOES-01 F10 (decisão 287): + `tipo_operacao_id` (opcional; ausente = a batelada de hoje).
+  const dietBatchSchema = z.object({ empresa_id: uuid, batch_date: date, diet_id: uuid, warehouse_id: uuid, equipment_id: uuid.optional().nullable(), quantity_kg: dec, tipo_operacao_id: uuid.optional().nullable() });
   app.post("/feedlot/diet-batches", async (req, reply) => reply.status(201).send(await runService(app, req, "diet_batches.create", async (ctx) => {
-    const d = z.object({ empresa_id: uuid, batch_date: date, diet_id: uuid, warehouse_id: uuid, equipment_id: uuid.optional().nullable(), quantity_kg: dec }).parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id);
+    const d = dietBatchSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
+      // OPERACOES-01 F10 (decisão 287): a TOP (versão congelada; a batelada não tem exigência geral no registro) e o
+      // vagão conferidos ANTES do código — a recusa não queima número.
+      // Os quilos na forma canônica ANTES de tudo (antes do INSERT e do código): "Infinity" estourava o numeric no INSERT
+      // (500) e NaN chegava à conta; agora os dois, e o texto que não é número, são 422 no campo `quantity_kg`.
+      const kg = formaCanonica(d.quantity_kg, "quantity_kg");
+      const top = await topDoLancamentoDoModulo(ctx, "batelada", d.tipo_operacao_id, {});
+      if (d.equipment_id) await exigirEquipamentos(ctx, [{ caminho: "equipment_id", id: d.equipment_id }]);
       const items = await ctx.tx.query<{ product_id: string; percentage: string }>("select product_id, percentage from erp.diet_items where diet_id=$1", [d.diet_id]); if (!items.rowCount) throw validation("Dieta sem ingredientes");
       const code = await animalCode(ctx, "diet_batch");
-      const r = await ctx.tx.query<{ id: string }>("insert into erp.diet_batches(organization_id,empresa_id,code,batch_date,diet_id,warehouse_id,equipment_id,quantity_kg,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id", [ctx.orgId, d.empresa_id, code, d.batch_date, d.diet_id, d.warehouse_id, d.equipment_id ?? null, d.quantity_kg, ctx.user.id]);
+      const r = await ctx.tx.query<{ id: string }>("insert into erp.diet_batches(organization_id,empresa_id,code,batch_date,diet_id,warehouse_id,equipment_id,quantity_kg,created_by,tipo_operacao_id,tipo_operacao_versao_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id", [ctx.orgId, d.empresa_id, code, d.batch_date, d.diet_id, d.warehouse_id, d.equipment_id ?? null, kg, ctx.user.id, top?.tipoOperacaoId ?? null, top?.tipoOperacaoVersaoId ?? null]);
+      const id = r.rows[0]!.id;
       let total = D(0);
-      for (const it of items.rows) { const q = D(d.quantity_kg).mul(it.percentage).div(100).toFixed(4); const s = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: it.product_id, movementType: "nutrition", direction: -1, quantity: q, sourceType: "diet_batches", sourceId: r.rows[0]!.id, date: d.batch_date, note: `Batelada ${code}` }); const t = s.total; total = total.plus(t); await ctx.tx.query("insert into erp.diet_batch_items(diet_batch_id,product_id,quantity_kg,unit_cost,total_cost) values ($1,$2,$3,$4,$5)", [r.rows[0]!.id, it.product_id, q, s.unitCost, t]); }
-      await ctx.tx.query("update erp.diet_batches set total_cost=$2 where id=$1", [r.rows[0]!.id, money(total)]);
-      await ctx.tx.query("update erp.diets set cost_per_kg=$2 where id=$1", [d.diet_id, total.div(d.quantity_kg).toFixed(6)]);
-      return { id: r.rows[0]!.id, code, total_cost: money(total), cost_per_kg: total.div(d.quantity_kg).toFixed(6) };
+      // OPERACOES-01 F10: os itens pela conta do domínio (kg × % / 100, 4 casas), a MESMA que a Central mostra, sobre os
+      // quilos na forma canônica (conferidos acima, antes do INSERT).
+      for (const it of itensDaBatelada(kg, items.rows)) { const s = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: it.product_id, movementType: "nutrition", direction: -1, quantity: it.quantidade, sourceType: "diet_batches", sourceId: id, date: d.batch_date, note: `Batelada ${code}` }); const t = s.total; total = total.plus(t); await ctx.tx.query("insert into erp.diet_batch_items(diet_batch_id,product_id,quantity_kg,unit_cost,total_cost) values ($1,$2,$3,$4,$5)", [id, it.product_id, it.quantidade, s.unitCost, t]); }
+      // OPERACOES-01 F10 (decisão 287): ROW COUNT conferido nas duas gravações (a batelada nasceu nesta transação e a dieta
+      // já respondeu os ingredientes pela RLS; zero linha aqui seria sucesso sem efeito).
+      const tot = await ctx.tx.query("update erp.diet_batches set total_cost=$2 where id=$1 and organization_id=$3", [id, money(total), ctx.orgId]);
+      if (tot.rowCount !== 1) throw err("CONFLICT", "O custo da batelada não foi gravado.");
+      const dieta = await ctx.tx.query("update erp.diets set cost_per_kg=$2 where id=$1 and organization_id=$3", [d.diet_id, total.div(kg).toFixed(6), ctx.orgId]);
+      if (dieta.rowCount !== 1) throw err("CONFLICT", "O custo por kg da dieta não foi gravado.");
+      // OPERACOES-01 F10: a batelada passa a ser auditada na criação, como os outros lançamentos dos módulos
+      await audit(ctx.tx, ctx, "diet_batches", id, "create", { code });
+      return { id, code, total_cost: money(total), cost_per_kg: total.div(kg).toFixed(6) };
     })).result;
   })));
-  app.get("/feedlot/diet-batches", async (req) => runService(app, req, "diet_batches.view", async (ctx) => { const r = await consultaEscopada(ctx, "select b.*, d.name as diet_name from erp.diet_batches b join erp.diets d on d.id=b.diet_id where b.organization_id=$1 and {{escopo:b.empresa_id}} order by b.batch_date desc limit 200", [ctx.orgId]); return { items: r.rows }; }));
+  // OPERACOES-01 F10 (decisão 287): + o nome e a versão da TOP congelada de cada batelada (nulos sem TOP); o resto como antes
+  app.get("/feedlot/diet-batches", async (req) => runService(app, req, "diet_batches.view", async (ctx) => { const top = joinDaTopDoModulo("b"); const r = await consultaEscopada(ctx, `select b.*, d.name as diet_name, ${top.colunas} from erp.diet_batches b join erp.diets d on d.id=b.diet_id ${top.join} where b.organization_id=$1 and {{escopo:b.empresa_id}} order by b.batch_date desc limit 200`, [ctx.orgId]); return { items: r.rows }; }));
   app.post("/feedlot/deliveries", async (req, reply) => reply.status(201).send(await runService(app, req, "feed_deliveries.create", async (ctx) => { const d = z.object({ empresa_id: uuid, delivery_date: date, delivery_time: z.string().optional().nullable(), diet_batch_id: uuid.optional().nullable(), diet_id: uuid.optional().nullable(), corral_id: uuid.optional().nullable(), batch_id: uuid.optional().nullable(), quantity_kg: dec }).parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); const cost = d.diet_batch_id ? (await ctx.tx.query<{ c: string }>("select total_cost/nullif(quantity_kg,0) c from erp.diet_batches where id=$1", [d.diet_batch_id])).rows[0]?.c : d.diet_id ? (await ctx.tx.query<{ c: string }>("select cost_per_kg c from erp.diets where id=$1", [d.diet_id])).rows[0]?.c : "0"; const r = await ctx.tx.query<{ id: string }>("insert into erp.feed_deliveries(organization_id,empresa_id,delivery_date,delivery_time,diet_batch_id,diet_id,corral_id,batch_id,quantity_kg,cost,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id", [ctx.orgId, d.empresa_id, d.delivery_date, d.delivery_time ?? null, d.diet_batch_id ?? null, d.diet_id ?? null, d.corral_id ?? null, d.batch_id ?? null, d.quantity_kg, money(D(d.quantity_kg).mul(cost ?? 0)), ctx.user.id]); return { id: r.rows[0]!.id }; })));
   app.get("/feedlot/deliveries", async (req) => runService(app, req, "feed_deliveries.view", async (ctx) => { const f = req.query as Record<string, string>; const r = await consultaEscopada(ctx, "select d.*, c.name as corral_name, b.description as batch_name, di.name as diet_name from erp.feed_deliveries d left join erp.feedlot_corrals c on c.id=d.corral_id left join erp.batches b on b.id=d.batch_id left join erp.diets di on di.id=d.diet_id where d.organization_id=$1 and ($2::date is null or d.delivery_date>=$2) and ($3::date is null or d.delivery_date<=$3) and {{escopo:d.empresa_id}} order by d.delivery_date desc, d.delivery_time desc limit 500", [ctx.orgId, f.start_date ?? null, f.end_date ?? null]); return { items: r.rows }; }));
   app.post("/feedlot/trough-readings", async (req, reply) => reply.status(201).send(await runService(app, req, "trough_readings.create", async (ctx) => { const d = z.object({ empresa_id: uuid, reading_date: date, corral_id: uuid, score: z.number().int().min(-1).max(4), leftover_kg: dec.optional().nullable(), note: z.string().optional().nullable() }).parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); const r = await ctx.tx.query<{ id: string }>("insert into erp.trough_readings(organization_id,empresa_id,reading_date,corral_id,score,leftover_kg,note,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8) on conflict (corral_id,reading_date) do update set score=excluded.score, leftover_kg=excluded.leftover_kg, note=excluded.note returning id", [ctx.orgId, d.empresa_id, d.reading_date, d.corral_id, d.score, d.leftover_kg ?? null, d.note ?? null, ctx.user.id]); return { id: r.rows[0]!.id }; })));

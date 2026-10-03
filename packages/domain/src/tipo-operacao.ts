@@ -137,11 +137,18 @@ export const TIPOS_OPERACAO: readonly TipoOperacao[] = Object.freeze([
   // ESTOQUE-01 (decisão 274): o documento de estoque do Portal de Estoque. Uma tabela, quatro espécies, a
   // mesma forma de `erp.documentos_compra`. As oito famílias acima continuam presas às telas antigas e não
   // ganham consumidor: a TOP entra no documento NOVO, e não nas tabelas antigas, porque cada tabela antiga
-  // tem a sua regra e a sua tela, e pôr TOP nelas seria fundir regras pela classificação.
+  // tem a sua regra e a sua tela, e pôr TOP nelas seria fundir regras pela classificação. A produção de ração é a
+  // exceção desde a OPERACOES-01 F10 (decisão 287): ela ganha a TOP no próprio registro, como os outros módulos.
   T("estoque.entrada", "estoque", variante("erp.documentos_estoque", "especie", "entrada")),
   T("estoque.saida", "estoque", variante("erp.documentos_estoque", "especie", "saida")),
   T("estoque.transferencia", "estoque", variante("erp.documentos_estoque", "especie", "transferencia")),
   T("estoque.ajuste", "estoque", variante("erp.documentos_estoque", "especie", "ajuste")),
+  // OPERACOES-01 F5a (decisão 282): a movimentação interna no MESMO documento. A requisição NOVA (pedido de
+  // material, espécie `requisicao`) é `estoque.requisicao_material` — a `estoque.requisicao` acima continua sendo a
+  // da tabela antiga `erp.requisitions`; renomear uma delas seria missão própria.
+  T("estoque.requisicao_material", "estoque", variante("erp.documentos_estoque", "especie", "requisicao")),
+  T("estoque.consumo", "estoque", variante("erp.documentos_estoque", "especie", "consumo")),
+  T("estoque.devolucao_consumo", "estoque", variante("erp.documentos_estoque", "especie", "devolucao_consumo")),
 
   // ---------- Compras ----------
   T("compras.solicitacao", "compras", entidade("erp.purchase_requests")),
@@ -150,12 +157,19 @@ export const TIPOS_OPERACAO: readonly TipoOperacao[] = Object.freeze([
   // sendo outra coisa (suprimentos) e não muda.
   T("compras.pedido", "compras", variante("erp.documentos_compra", "especie", "pedido")),
   T("compras.compra", "compras", variante("erp.documentos_compra", "especie", "compra")),
+  // OPERACOES-01 F6a (decisão 283): o orçamento de compra — um por fornecedor, ligado ao pedido por vínculo
+  // próprio (não pela origem: não consome o saldo do pedido); preço, prazo, validade e condição; sem estoque e
+  // sem financeiro. O vencedor leva fornecedor, preços e condição ao pedido.
+  T("compras.orcamento", "compras", variante("erp.documentos_compra", "especie", "orcamento")),
 
   // ---------- Financeiro ----------
   // `direction` é o discriminador que o dicionário já declarava; a prosa "Conta a pagar / Conta a
   // receber" era UMA string para DUAS operações com efeito financeiro oposto.
   T("financeiro.conta_a_pagar", "financeiro", variante("erp.financial_titles", "direction", "payable")),
   T("financeiro.conta_a_receber", "financeiro", variante("erp.financial_titles", "direction", "receivable")),
+  // OPERACOES-01 F9 (decisão 286): o movimento bancário é uma operação só (a tabela inteira). O "Novo movimento
+  // bancário" cita a TOP desde a F9 (o lançamento escolhe a TOP primeiro, e ela preenche os padrões).
+  T("financeiro.movimento_bancario", "financeiro", entidade("erp.bank_movements")),
 
   // ---------- Vendas ----------
   // Mesma tabela, três etapas comerciais distintas (`kind`). Também vinham numa string só.
@@ -168,7 +182,19 @@ export const TIPOS_OPERACAO: readonly TipoOperacao[] = Object.freeze([
   T("frota_ativos.manutencao", "frota_ativos", entidade("erp.maintenances")),
 
   // ---------- Ordens de Serviço ----------
-  T("ordens_servico.ordem_de_servico", "ordens_servico", entidade("erp.service_orders"))
+  T("ordens_servico.ordem_de_servico", "ordens_servico", entidade("erp.service_orders")),
+
+  // ---------- Pecuária e Confinamento ----------
+  // OPERACOES-01 F10 (decisão 287): o manejo e a batelada recebem a TOP no próprio registro. UMA família por tabela:
+  // o manejo inteiro (não por `handling_type` — a permissão continua por tipo de manejo) e a batelada de dieta.
+  T("pecuaria.manejo", "pecuaria", entidade("erp.animal_handlings")),
+  T("confinamento.batelada", "confinamento", entidade("erp.diet_batches")),
+  // OPERACOES-01 F10r (decisão 287): a compra e a venda de animais — DUAS famílias por `movement_type` (o molde de
+  // `erp.financial_titles`/`direction`): o título da compra é despesa e o da venda é receita, e o perfil financeiro é
+  // por família. Nascimento, morte, perda e as movimentações internas NÃO ganham família: não geram título.
+  // No FIM do registry para não reordenar nada do que já existe.
+  T("pecuaria.compra_de_animais", "pecuaria", variante("erp.animal_movements", "movement_type", "purchase")),
+  T("pecuaria.venda_de_animais", "pecuaria", variante("erp.animal_movements", "movement_type", "sale"))
 ]);
 
 const POR_CODIGO = new Map(TIPOS_OPERACAO.map((t) => [t.codigo, t]));

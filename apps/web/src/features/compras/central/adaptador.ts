@@ -62,12 +62,15 @@ const DO_CATALOGO: Readonly<Record<string, ChaveColunaDoItem>> = {
   desconto: "desconto", desconto_percentual: "descontoPercentual", lote: "lote", validade: "validade", total: "total"
 };
 
-/** Colunas dos itens da espécie: `doSistema` pelo catálogo da família (COMPRAS-03). */
+/**
+ * Colunas dos itens da espécie: `doSistema` pelo catálogo da família (COMPRAS-03). Na consulta (`leitura`) o Local de
+ * estoque vem antes do Código e do Produto (OPERACOES-01 F3b, decisão 280) — a ordem da criação e do formulário de leitura.
+ */
 export function colunasDosItensDeCompras(variante: VarianteDeCompra): ColunasDosItens {
   return {
     doSistema: new Set(catalogoDaFamilia(variante.familia).filter((c) => c.parte === "itens" && c.sistema).map((c) => c.chave)),
     doCatalogo: DO_CATALOGO,
-    leitura: ["codigo", "produto", "armazem", "quantidade", "unitario", "desconto", "descontoPercentual", "total"]
+    leitura: ["armazem", "codigo", "produto", "quantidade", "unitario", "desconto", "descontoPercentual", "total"]
   };
 }
 
@@ -127,7 +130,6 @@ export function adaptadorDaCentralDeCompras(variante: VarianteDeCompra, rotulo: 
     linkDoTitulo: linkDoTituloDeCompra,
     linkDoDerivado: (d) => rotaDoDocumento({ id: d["id"], especie: "compra" }),
     chaveDoSalvo: chaveDepoisDeSalvarDeCompra,
-    chaveDaCopia: chaveDaCopiaDeCompra,
-    cancelamento: { chaveDoMotivo: "motivo", motivoVazio: MOTIVO_VAZIO_DA_COMPRA }
+    chaveDaCopia: chaveDaCopiaDeCompra
   };
 }

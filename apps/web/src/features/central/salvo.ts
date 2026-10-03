@@ -18,3 +18,17 @@ export const entregarSalvo: EntregarSalvo = (chave, id, depois) => { entregarEmM
 export const consumirSalvo: ConsumirSalvo = (chave, id) => espiarEntrega<DepoisDeSalvar>(chave(id));
 
 export function descartarSalvo(chave: (id: string) => string, id: string): void { descartarEntrega(chave(id)); }
+
+/**
+ * O DIÁLOGO DE CONFIRMAR (OPERACOES-01 F2, decisão 279) — UMA regra para todas as Centrais: ele só abre em documento
+ * ABERTO e para quem pode confirmar. Vale para a pílula da consulta e para a chegada da criação. "Aguardando
+ * aprovação" é aberto: o diálogo abre e a prévia explica a recusa, como antes.
+ */
+export const confirmarPodeAbrir = (documentoAberto: boolean, podeConfirmar: boolean): boolean => documentoAberto && podeConfirmar;
+
+/**
+ * A chegada da criação: o diálogo abre só quando o clique foi "Confirmar …" (`depois.confirmar`) E `confirmarPodeAbrir`.
+ * Senão, a consulta mostra só o "Salvo" — inclusive quando o Salvar já confirmou (TOP de Confirmação Automática).
+ */
+export const abreConfirmarNaChegada = (depois: DepoisDeSalvar | null, documentoAberto: boolean, podeConfirmar: boolean): boolean =>
+  depois?.confirmar === true && confirmarPodeAbrir(documentoAberto, podeConfirmar);

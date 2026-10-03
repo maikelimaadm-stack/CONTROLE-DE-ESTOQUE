@@ -461,7 +461,7 @@ function SaldoPorLote({ id }: { id: string | null }) {
   React.useEffect(() => { if (!id) return; let vivo = true; api<{ items: Linha[] }>(`/api/stock/balances?product_id=${encodeURIComponent(id)}&pageSize=100&sort=warehouse_name`).then((x) => { if (vivo) setR(x); }).catch((e: Error) => { if (vivo) setErro(e.message); }); return () => { vivo = false; }; }, [id]);
   return <Card className="col-span-12 p-3 text-[12.5px]" data-testid="saldo-por-lote"><h3 className={cn(TITULO, "mb-2")}>Saldo por lote</h3>
     {!id ? "Salve o produto para ver o saldo." : erro ? `Saldo indisponível: ${erro}` : !r ? "Carregando…" : r.items.length === 0 ? "Sem saldo nas empresas que você enxerga." :
-      <table className="w-full"><thead><tr className="text-left text-slate-600"><th>Empresa</th><th>Armazém</th><th>Lote</th><th>Validade</th><th className="text-right">Quantidade</th></tr></thead>
+      <table className="w-full"><thead><tr className="text-left text-slate-600"><th>Empresa</th><th>Local de estoque</th><th>Lote</th><th>Validade</th><th className="text-right">Quantidade</th></tr></thead>
         <tbody>{r.items.map((l, i) => <tr key={i}><td>{l.empresa_name}</td><td>{l.warehouse_name}</td><td>{l.provider_lot || "—"}</td><td>{l.expiration_date ? String(l.expiration_date).slice(0, 10) : "—"}</td><td className="text-right">{l.quantity} {l.unit ?? ""}</td></tr>)}</tbody></table>}
   </Card>;
 }

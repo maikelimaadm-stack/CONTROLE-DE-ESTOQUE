@@ -37,7 +37,7 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   R("harvests", "Safras", "Cadastros Base > Estrutura"),
   R("addressings", "Endereçamentos", "Cadastros Base > Estrutura > Produtos"),
   R("products", "Produtos", "Cadastros Base > Estrutura > Produtos", [...CRUD, "import", "export", "merge"]),
-  R("warehouses", "Armazéns", "Cadastros Base > Estrutura > Produtos"),
+  R("warehouses", "Locais de estoque", "Cadastros Base > Estrutura > Produtos"),
   R("opening_balances", "Estoques Iniciais", "Cadastros Base > Estrutura > Produtos"),
   R("apportionments", "Categorias de Rateio", "Cadastros Base > Estrutura > Rateios"),
   R("roles", "Perfis de Usuário", "Cadastros Base > Pessoas"),
@@ -51,6 +51,8 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   R("bank_accounts", "Contas Bancárias", "Cadastros Base > Financeiros"),
   R("opening_movements", "Saldo Inicial", "Cadastros Base > Financeiros"),
   R("financial_categories", "Naturezas", "Cadastros Base > Financeiros"),
+  // OPERACOES-01 F9 (decisão 286): o imóvel rural do LCDPR, cadastro DE EMPRESA (o escopo é o do financeiro).
+  R("imoveis_rurais", "Imóveis rurais", "Cadastros Base > Financeiros"),
   R("nfe_issuers", "Emissores NFe", "Cadastros Base > Fiscais"),
   R("dfe_sync", "Sinc. DFe", "Cadastros Base > Fiscais"),
   R("nfse_sync", "Sinc. NFS-e", "Cadastros Base > Fiscais"),
@@ -97,7 +99,7 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   R("requisitions", "Requisição/Saída", "Administrativo > Estoque"),
   R("devolutions", "Devolução/Entrada", "Administrativo > Estoque"),
   R("stock_corrections", "Correção de Estoque", "Administrativo > Estoque", ["view", "create", "delete"]),
-  R("warehouse_transfers", "Transferência de Armazém", "Administrativo > Estoque"),
+  R("warehouse_transfers", "Transferência entre locais de estoque", "Administrativo > Estoque"),
   R("farm_transfers", "Transferência entre Empresas", "Administrativo > Estoque", ["view", "create", "delete"]),
   R("stocks", "Saldo de Estoque", "Administrativo > Estoque", ["view", "export"]),
   R("feed_formulas", "Formulação", "Administrativo > Estoque > Fábrica"),
@@ -168,14 +170,22 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   // módulo do `.edit` que a confirmação automática do aprovador confere.
   R("sales", "Vendas", "Operacional > Vendas", [...CRUD, "approve"]),
   // COMPRAS-01 (decisão 267): o documento comercial de compra, um recurso por espécie.
-  R("pedidos_compra", "Pedidos de Compra", "Operacional > Compras"),
+  // OPERACOES-01 F6a (decisão 283): o pedido de compra passa a ser aprovado ao FINALIZAR (a aprovação da TOP vale
+  // para ele), por isso ganha `approve`; o orçamento de compra é a espécie nova, com o seu recurso (CRUD).
+  R("pedidos_compra", "Pedidos de Compra", "Operacional > Compras", [...CRUD, "approve"]),
   R("compras", "Compras", "Operacional > Compras", [...CRUD, "approve"]),
+  R("orcamentos_compra", "Orçamentos de Compra", "Operacional > Compras"),
   // ESTOQUE-01 (decisão 274): o documento de estoque, um recurso por espécie. Sem `delete`: o documento não se
   // apaga (a 0040 revoga DELETE) — confirmar e cancelar exigem `.edit`, como na compra.
   R("entradas_estoque", "Entradas de Estoque", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
   R("saidas_estoque", "Saídas de Estoque", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
   R("transferencias_estoque", "Transferências de Estoque", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
   R("ajustes_estoque", "Ajustes de Estoque", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
+  // OPERACOES-01 F5a (decisão 282): a movimentação interna no documento de estoque, um recurso por espécie, sem
+  // `delete` (o documento cancela). Encerrar o saldo da requisição exige `requisicoes_estoque.edit`.
+  R("requisicoes_estoque", "Requisições de Material", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
+  R("consumos_estoque", "Consumos de Estoque", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
+  R("devolucoes_consumo_estoque", "Devoluções de Consumo", "Operacional > Estoque", ["view", "create", "edit", "approve"]),
   R("service_orders", "Ordens de Serviço", "Operacional > Ordens de Serviço", [...CRUD, "monitor", "rate"]),
   // Financeiro
   R("payables", "Contas a Pagar", "Financeiro", [...CRUD, "settle", "cancel_settlement", "import", "export", "receipt", "boleto", "duplicate"]),

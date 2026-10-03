@@ -62,6 +62,29 @@ export function cabecalhos(def: ResourceDef): { campo: FieldDef; titulo: string;
 type Cabecalho = ReturnType<typeof cabecalhos>[number];
 
 /**
+ * Cabeçalhos com o NOME DE ANTES (OPERACOES-01 F3a, decisão 280): a planilha baixada antes de um rótulo mudar
+ * (ex.: "Armazém padrão" do Produto, hoje "Local de estoque padrão") continua importável. A declaração é do campo
+ * (`FieldDef.rotulosAnteriores`, domínio), nunca uma lista solta aqui. Chave = o rótulo anterior normalizado como o
+ * cabeçalho lido (sem o `*` final, `normal()`); valor = a coluna ATUAL — os erros e a planilha de erros citam o nome
+ * atual, e o modelo nunca sai com o antigo. Rótulo anterior que colida com um cabeçalho atual, com o anterior de
+ * OUTRA coluna ou com a coluna "Erros" é IGNORADO: o nome antigo nunca decide entre duas colunas.
+ */
+export function cabecalhosAnteriores(def: ResourceDef, cols: Cabecalho[] = cabecalhos(def)): Map<string, Cabecalho> {
+  const atuais = new Set(cols.map((c) => normal(c.chave)));
+  const candidatos = new Map<string, Set<Cabecalho>>();
+  for (const c of cols) {
+    for (const rotulo of c.campo.rotulosAnteriores ?? []) {
+      const chave = normal(rotulo.replace(/\s*\*$/, ""));
+      if (!chave || atuais.has(chave) || chave === normal(COLUNA_ERROS)) continue;
+      candidatos.set(chave, (candidatos.get(chave) ?? new Set<Cabecalho>()).add(c));
+    }
+  }
+  const anteriores = new Map<string, Cabecalho>();
+  for (const [chave, colunas] of candidatos) if (colunas.size === 1) anteriores.set(chave, [...colunas][0]!);
+  return anteriores;
+}
+
+/**
  * Tira o que o XML 1.0 proíbe (controles, U+FFFE/U+FFFF, surrogate solto). Um nome de cadastro com um desses
  * caracteres corromperia o modelo da organização inteira; o mesmo corte vale para o texto lido, para a lista
  * e a importação continuarem falando do mesmo valor.
@@ -437,7 +460,8 @@ export async function lerPlanilha(def: ResourceDef, arquivo: Buffer): Promise<Pl
   const ws = wb.getWorksheet(ABA_DADOS) ?? wb.worksheets[0];
   // zip bem formado sem nenhuma aba não é planilha
   if (!ws) return falha("Arquivo inválido: envie o modelo em XLSX.");
-  const porChave = new Map(cols.map((c) => [normal(c.chave), c]));
+  // o nome de antes primeiro e o atual por cima (decisão 280): o anterior nunca toma o lugar de um cabeçalho atual
+  const porChave = new Map<string, Cabecalho>([...cabecalhosAnteriores(def, cols), ...cols.map((c): [string, Cabecalho] => [normal(c.chave), c])]);
   // cabeçalho: identifica cada coluna pelo rótulo; coluna desconhecida ou repetida é RECUSADA (não descartada em silêncio)
   const mapa = new Map<number, Cabecalho>();
   const erros: ErroImportacao[] = [];

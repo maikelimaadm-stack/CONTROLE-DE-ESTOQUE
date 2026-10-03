@@ -3,17 +3,24 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import {
+  ROTULOS_SECAO_CONFIGURACAO_TOP,
+  SECOES_EXTENSAO_V5,
   VERSAO_SCHEMA_CONFIGURACAO_TOP,
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V4,
+  VERSAO_SCHEMA_CONFIGURACAO_TOP_V5,
   configuracaoNeutraTopV2,
   configuracaoNeutraTopV3,
   configuracaoNeutraTopV4,
+  configuracaoNeutraTopV5,
   configuracaoTopParaEdicao,
   configuracaoTopParaEdicaoV3,
   configuracaoTopParaEdicaoV4,
+  configuracaoTopParaEdicaoV5,
   execucaoDeclaradaTop,
+  formato5Top,
+  lerCatalogoTop,
   lerConfiguracaoTop,
   lerMatrizExecucaoTop,
   lerMatrizRegrasGeraisTop,
@@ -21,12 +28,14 @@ import {
   type AtualizacaoEstoque,
   type AtualizacaoFinanceiro,
   type CalculoTributario,
+  type CatalogoTop,
   type ConfiguracaoComRestricoesTop,
   type ConfiguracaoTipoOperacao,
   type ConfiguracaoTipoOperacaoV1,
   type ConfiguracaoTipoOperacaoV2,
   type ConfiguracaoTipoOperacaoV3,
   type ConfiguracaoTipoOperacaoV4,
+  type ConfiguracaoTipoOperacaoV5,
   type ItemMatrizRegrasGeraisTop,
   type ModoConfirmacao,
   type ModoFinanceiro,
@@ -37,7 +46,7 @@ import {
   type PoliticaClienteEmAtraso,
   type PoliticaDocumentoSemItens,
   type PoliticaSaldoNegativo,
-  type SecaoConfiguracaoTopV2,
+  type SecaoConfiguracaoTopV5,
   type SuporteExecucaoFamiliaTop
 } from "@agro/domain";
 import type { CondicaoPermitidaEmEdicao } from "./top-condicoes-permitidas";
@@ -126,6 +135,20 @@ export interface CapacidadesRegrasGeraisTop {
   matriz: readonly ItemMatrizRegrasGeraisTop[];
 }
 
+/**
+ * O que o servidor declara sobre o FORMATO 5 (OPERACOES-01 F4, decisão 281): o formato que ele grava (`versaoSchema`,
+ * hoje 5), as SEÇÕES DE EXTENSÃO que ele lê e grava (`secoes`, vazia na F4 — cada fase F5 a F10 acrescenta a sua) e o
+ * CATÁLOGO POR TIPO (os tipos de movimento do passo 1, agrupados, e o perfil de cada família: as abas, as exigências
+ * com o rótulo do tipo e as seções que ficam no padrão). A tela lê o catálogo QUE O SERVIDOR PUBLICOU, pelo leitor
+ * estrito do domínio (`lerCatalogoTop`) — nunca `CATALOGO_TOP` importado direto: o catálogo cresce por fase, e uma
+ * cópia da tela ofereceria um tipo que o servidor ainda não aceita (ou esconderia um que ele já aceita).
+ */
+export interface CapacidadesFormato5Top {
+  versaoSchema: number;
+  secoes: string[];
+  catalogo: CatalogoTop;
+}
+
 export interface CapacidadesTop {
   contractVersion: typeof CONTRATO_CAPACIDADES_TOP;
   configuracao: { versaoSchema: number; secoes: string[] };
@@ -142,6 +165,18 @@ export interface CapacidadesTop {
    * dão o mesmo editor, o de hoje, no formato 3, sem nenhuma chave nova no fio (ver `lerRegrasGeraisDasCapacidades`).
    */
   regrasGerais: CapacidadesRegrasGeraisTop | null;
+  /**
+   * OPERACOES-01 F4: o bloco `formato5` da raiz, lido. `null` = AUSENTE (servidor anterior) OU ILEGÍVEL — os dois dão
+   * o mesmo editor, o do formato 4 de hoje, sem assistente e sem nenhuma chave do 5 no fio (ver
+   * `lerFormato5DasCapacidades`).
+   */
+  formato5: CapacidadesFormato5Top | null;
+  /**
+   * OPERACOES-01 F9 (decisão 286): o servidor grava os PADRÕES FINANCEIROS da versão (`capabilities.padroesFinanceiros
+   * === 1`, a tabela da versão). ADITIVO, na régua de `reservaEstoque`: ausente ou qualquer outro valor = servidor
+   * anterior — os campos dos padrões não aparecem e a chave `padroesFinanceiros` nunca vai no corpo (`.strict()`).
+   */
+  padroesFinanceiros: boolean;
 }
 
 /** Servidor sem restrições: nada do formato 3 aparece e nada dele é enviado. */
@@ -168,6 +203,26 @@ function lerRegrasGeraisDasCapacidades(bruto: unknown): CapacidadesRegrasGeraisT
   if (!ehObjeto(bruto) || bruto.suportado !== true || !ehInteiroPositivo(bruto.versaoSchema)) return null;
   const matriz = lerMatrizRegrasGeraisTop(bruto.matriz);
   return matriz === null ? null : { versaoSchema: bruto.versaoSchema, matriz };
+}
+
+/**
+ * Lê o bloco `formato5` das capacidades (OPERACOES-01 F4), ou `null` — NA RÉGUA DO `regrasGerais`, e pelo mesmo
+ * motivo: presente e malformado vira "como se não existisse", sem negar o resto. Sem o bloco o editor é o do formato
+ * 4, que o servidor continua aceitando (e mantém no 4); o pior desfecho é não oferecer o assistente nem as seções
+ * novas. Negar o corpo inteiro bloquearia também a configuração que a tela sabe escrever.
+ *
+ * Legível exige: objeto, `suportado === true`, `versaoSchema` inteiro positivo, `secoes` lista de textos e o catálogo
+ * aceito por `lerCatalogoTop` (estrito: qualquer desvio é `null`, nunca um pedaço do catálogo adivinhado). Um
+ * `versaoSchema` ou um conjunto de seções que esta tela não escreve não é malformação: o bloco é lido e
+ * `podeConfigurarFormato5` o recusa. `leituraDoDetalhe` não é lido: o leitor do domínio lê qualquer formato que
+ * conhece, e o detalhe chega como foi gravado.
+ */
+function lerFormato5DasCapacidades(bruto: unknown): CapacidadesFormato5Top | null {
+  if (!ehObjeto(bruto) || bruto.suportado !== true || !ehInteiroPositivo(bruto.versaoSchema)) return null;
+  const { secoes } = bruto;
+  if (!Array.isArray(secoes) || !secoes.every(ehTexto)) return null;
+  const catalogo = lerCatalogoTop(bruto.catalogo);
+  return catalogo === null ? null : { versaoSchema: bruto.versaoSchema, secoes: [...secoes], catalogo };
 }
 
 /** Servidor sem execução configurada: nada é executável e nada do bloco é enviado. */
@@ -239,7 +294,11 @@ export function lerCapacidadesTop(bruto: unknown): CapacidadesTop | null {
     // um contrato que esta tela não leu — nos dois casos a reserva fica fora do editor, sem negar o resto.
     reservaEstoque: bruto.reservaEstoque === 1,
     // TOP-CONFIG-08: ausente ou ilegível = `null`, sem negar o resto (régua própria, em `lerRegrasGeraisDasCapacidades`).
-    regrasGerais: lerRegrasGeraisDasCapacidades(bruto.regrasGerais)
+    regrasGerais: lerRegrasGeraisDasCapacidades(bruto.regrasGerais),
+    // OPERACOES-01 F4: a mesma régua do `regrasGerais` (em `lerFormato5DasCapacidades`).
+    formato5: lerFormato5DasCapacidades(bruto.formato5),
+    // OPERACOES-01 F9: só o valor EXATO 1 liga (a régua de `reservaEstoque`), sem negar o resto.
+    padroesFinanceiros: bruto.padroesFinanceiros === 1
   };
 }
 
@@ -333,6 +392,45 @@ export const podeConfigurarRegrasGerais = (e: EstadoCapacidadesTop): boolean => 
 export const matrizRegrasGerais = (e: EstadoCapacidadesTop): readonly ItemMatrizRegrasGeraisTop[] | null =>
   regrasGeraisDoEditor(e)?.matriz ?? null;
 
+/**
+ * OPERACOES-01 F4 — o bloco `formato5` que o editor do formato 5 usa, ou `null`. Uma pergunta só, para as duas
+ * funções abaixo nunca discordarem: exige tudo o que as regras gerais exigem (o 5 é o 4 + as seções de extensão, e o
+ * servidor que não grava o 4 não grava o 5), o bloco legível no formato que esta tela escreve (5) E o MESMO CONJUNTO
+ * de seções de extensão que ela escreve (`SECOES_EXTENSAO_V5`).
+ *
+ * ┌─ POR QUE O CONJUNTO DE SEÇÕES TEM DE SER IGUAL, E NÃO SÓ CONTER ───────────────────────────────────┐
+ * │ Servidor com uma seção que esta tela não conhece (mais novo): gravar o 5 sem ela faria o servidor     │
+ * │ lê-la AUSENTE — o neutro — e a regra que alguém ligou noutra tela voltaria ao padrão em silêncio.     │
+ * │ Servidor sem uma seção que esta tela escreve (mais velho): ele recusaria a chave (422) ou, pior, a   │
+ * │ trataria como outra coisa. Nos dois casos a resposta honesta é a do formato desconhecido: o editor   │
+ * │ do 4 de hoje, e a TOP já gravada no 5 BLOQUEADA (`configuracaoIlegivelNoEditor`). Repetição na lista │
+ * │ declarada também não é este conjunto — contrato que a tela não leu.                                  │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ */
+const formato5DoEditor = (e: EstadoCapacidadesTop): CapacidadesFormato5Top | null => {
+  if (!podeConfigurar(e) || !podeConfigurarRegrasGerais(e)) return null;
+  const f = e.capacidades.formato5;
+  if (f === null || f.versaoSchema !== VERSAO_SCHEMA_CONFIGURACAO_TOP_V5) return null;
+  const conhecidas: readonly string[] = SECOES_EXTENSAO_V5;
+  const mesmoConjunto = f.secoes.length === conhecidas.length && new Set(f.secoes).size === f.secoes.length
+    && f.secoes.every((s) => conhecidas.includes(s));
+  return mesmoConjunto ? f : null;
+};
+
+/**
+ * O editor é o do FORMATO 5 — o assistente na criação, as abas pelo perfil do tipo, e o rascunho no 5
+ * (`RascunhoTop.configuracaoV5`)? Qualquer resposta que não seja o bloco legível no 5, com o mesmo conjunto de seções,
+ * = o editor do formato 4 de hoje, textos e gravação inclusive — que é exatamente o que uma API anterior recebe.
+ */
+export const podeConfigurarFormato5 = (e: EstadoCapacidadesTop): boolean => formato5DoEditor(e) !== null;
+
+/**
+ * O catálogo por tipo que o servidor publicou — `null` fora de `podeConfigurarFormato5` (fail-closed: sem o editor do
+ * 5 não há passo 1 nem perfil, e um catálogo sem uso seria convite a uma segunda decisão). É o que se passa a
+ * `tiposParaEscolhaTop` (o assistente) e a `perfilDaFamiliaTop` (as abas e as exigências do tipo).
+ */
+export const catalogoDoEditor = (e: EstadoCapacidadesTop): CatalogoTop | null => formato5DoEditor(e)?.catalogo ?? null;
+
 /** Quantos destinos esta API aceita. Zero quando ela não os suporta — e zero bloqueia a inclusão. */
 /** A caixa "Em partes" aparece e `emPartes` vai no corpo? Só quando a API declara `destinos.emPartes === 1`. */
 export const podeConfigurarEmPartes = (e: EstadoCapacidadesTop): boolean =>
@@ -344,6 +442,16 @@ export const podeConfigurarEmPartes = (e: EstadoCapacidadesTop): boolean =>
  */
 export const podeConfigurarReservaEstoque = (e: EstadoCapacidadesTop): boolean =>
   podeConfigurar(e) && e.capacidades.reservaEstoque;
+
+/**
+ * OPERACOES-01 F9 (decisão 286) — os campos dos PADRÕES FINANCEIROS (natureza, centro, tipo de título, forma e conta, na
+ * tabela da versão) aparecem e `padroesFinanceiros` vai no corpo? Só com o editor do FORMATO 5 (os padrões só valem
+ * numa versão no 5, e o servidor recusa o resto) E a capacidade declarada. A FAMÍLIA (o perfil dos padrões) é a outra
+ * metade, decidida por quem desenha. A seção do JSON (`financeiroPadrao`: provisão, troca, sem classificação) não
+ * depende disto: ela anda com o conjunto de seções do `formato5`.
+ */
+export const podeConfigurarPadroesFinanceiros = (e: EstadoCapacidadesTop): boolean =>
+  podeConfigurarFormato5(e) && podeConfigurar(e) && e.capacidades.padroesFinanceiros;
 
 export const limiteDeDestinos = (e: EstadoCapacidadesTop): number =>
   podeConfigurar(e) ? e.capacidades.destinos.limite : 0;
@@ -474,10 +582,104 @@ export interface DetalheTop {
    * chave — que o servidor lê como "preserve o que está gravado".
    */
   reservaEstoque: boolean | null;
+  /**
+   * OPERACOES-01 F9 (decisão 286) — os PADRÕES FINANCEIROS da versão atual (a tabela da versão). TRÊS valores, a régua
+   * de `destinosConfigurados`:
+   *   objeto           os padrões lidos (campo `null` = sem padrão naquele campo);
+   *   `null`           o servidor informou que a versão NÃO tem padrão — o editor começa vazio;
+   *   `"nao_informado"` a chave veio AUSENTE (API anterior): NÃO é "vazio" — os campos ficam bloqueados e a chave não vai
+   *                    no corpo (ausente = o servidor preserva o que está gravado).
+   * Presente e malformado NEGA o corpo inteiro (régua das condições): mostrar vazio um padrão que o servidor declarou
+   * seria o descarte silencioso do lado de cá.
+   */
+  padroesFinanceiros: PadroesFinanceirosEmEdicao | null | "nao_informado";
 }
 
 const ehCondicaoPermitida = (v: unknown): v is CondicaoPermitidaEmEdicao =>
   ehObjeto(v) && ehTexto(v.id) && ehTexto(v.codigo) && ehTexto(v.nome);
+
+/**
+ * Um PADRÃO FINANCEIRO em edição: o id do cadastro e o texto que a tela mostra dele (o que o servidor devolveu — o
+ * seletor ainda mostra o caminho da árvore quando o cadastro tem um).
+ */
+export interface PadraoFinanceiroEmEdicao { id: string; rotulo: string }
+
+/** Os cinco padrões financeiros da versão em edição. `null` num campo = sem padrão (o documento decide). */
+export interface PadroesFinanceirosEmEdicao {
+  natureza: PadraoFinanceiroEmEdicao | null;
+  centro: PadraoFinanceiroEmEdicao | null;
+  tipoTitulo: PadraoFinanceiroEmEdicao | null;
+  formaPagamento: PadraoFinanceiroEmEdicao | null;
+  conta: PadraoFinanceiroEmEdicao | null;
+}
+export type CampoDosPadroesEmEdicao = keyof PadroesFinanceirosEmEdicao;
+
+/** Nenhum padrão: a versão sem linha, o cadastro novo. Objeto novo a cada chamada. */
+export const padroesFinanceirosVaziosEmEdicao = (): PadroesFinanceirosEmEdicao =>
+  ({ natureza: null, centro: null, tipoTitulo: null, formaPagamento: null, conta: null });
+
+/**
+ * A chave de cada campo no CORPO (`padroesFinanceiros.<chave>`, a mesma do caminho das recusas do servidor), na ordem
+ * do servidor. Um dono para a correspondência campo da tela ↔ chave do fio.
+ */
+export const CHAVE_DO_PADRAO_NO_CORPO: Readonly<Record<CampoDosPadroesEmEdicao, string>> = {
+  natureza: "naturezaId",
+  centro: "centroCustoId",
+  tipoTitulo: "tipoTituloId",
+  formaPagamento: "formaPagamentoId",
+  conta: "contaBancariaId"
+};
+
+/** "código — nome" (o formato das condições do histórico); sem código, só o nome. */
+const comCodigo = (codigo: string, nome: string) => (codigo ? `${codigo} — ${nome}` : nome);
+
+/**
+ * Lê UM padrão do detalhe: `null`, ou o objeto do cadastro com as chaves de texto daquele campo (natureza e centro: id,
+ * código e nome; tipo de título e forma: id e nome; conta: id, código e descrição). `undefined` = malformado.
+ */
+function lerUmPadrao(v: unknown, campo: CampoDosPadroesEmEdicao): PadraoFinanceiroEmEdicao | null | undefined {
+  if (v === null) return null;
+  if (!ehObjeto(v) || !ehTexto(v.id)) return undefined;
+  switch (campo) {
+    case "natureza":
+    case "centro":
+      return ehTexto(v.codigo) && ehTexto(v.nome) ? { id: v.id, rotulo: comCodigo(v.codigo, v.nome) } : undefined;
+    case "tipoTitulo":
+    case "formaPagamento":
+      return ehTexto(v.nome) ? { id: v.id, rotulo: v.nome } : undefined;
+    case "conta":
+      return ehTexto(v.codigo) && ehTexto(v.descricao) ? { id: v.id, rotulo: comCodigo(v.codigo, v.descricao) } : undefined;
+  }
+}
+
+/**
+ * Lê os padrões financeiros que o servidor devolveu (detalhe e histórico). `null` = a versão não tem padrão; objeto =
+ * os cinco campos, CADA UM presente (`null` ou o cadastro); `undefined` = malformado (quem chama decide: o detalhe nega
+ * o corpo inteiro, o histórico degrada só a linha).
+ */
+export function lerPadroesFinanceirosDoServidor(bruto: unknown): PadroesFinanceirosEmEdicao | null | undefined {
+  if (bruto === null) return null;
+  if (!ehObjeto(bruto)) return undefined;
+  const lidos = padroesFinanceirosVaziosEmEdicao();
+  for (const campo of Object.keys(CHAVE_DO_PADRAO_NO_CORPO) as CampoDosPadroesEmEdicao[]) {
+    // Campo AUSENTE é malformação (o contrato tem os cinco, `null` inclusive): ausente não é "sem padrão".
+    if (!(campo in bruto)) return undefined;
+    const um = lerUmPadrao(bruto[campo], campo);
+    if (um === undefined) return undefined;
+    lidos[campo] = um;
+  }
+  return lidos;
+}
+
+/**
+ * Os padrões do rascunho NO FORMATO DO CORPO (`{ naturezaId, centroCustoId, tipoTituloId, formaPagamentoId,
+ * contaBancariaId }`, `null` no campo vazio — as cinco chaves sempre: presença é declaração, e o servidor lê a chave
+ * ausente como `null`).
+ */
+export function padroesFinanceirosParaEnvio(p: PadroesFinanceirosEmEdicao): Record<string, string | null> {
+  return Object.fromEntries((Object.keys(CHAVE_DO_PADRAO_NO_CORPO) as CampoDosPadroesEmEdicao[])
+    .map((campo) => [CHAVE_DO_PADRAO_NO_CORPO[campo], p[campo]?.id ?? null]));
+}
 
 export function lerDetalheTop(bruto: unknown): DetalheTop | null {
   if (!ehObjeto(bruto)) return null;
@@ -493,6 +695,13 @@ export function lerDetalheTop(bruto: unknown): DetalheTop | null {
   // esconder uma condição que o servidor declarou seria descarte silencioso do lado de cá.
   if (bruto.condicoesPermitidas !== undefined
     && (!Array.isArray(bruto.condicoesPermitidas) || !bruto.condicoesPermitidas.every(ehCondicaoPermitida))) return null;
+  // OPERACOES-01 F9: a mesma régua — ausente = "nao_informado" (API anterior); presente e malformado NEGA o corpo inteiro.
+  let padroesFinanceiros: DetalheTop["padroesFinanceiros"] = "nao_informado";
+  if (bruto.padroesFinanceiros !== undefined) {
+    const lidos = lerPadroesFinanceirosDoServidor(bruto.padroesFinanceiros);
+    if (lidos === undefined) return null;
+    padroesFinanceiros = lidos;
+  }
   return {
     id: bruto.id,
     codigo: bruto.codigo,
@@ -511,7 +720,8 @@ export function lerDetalheTop(bruto: unknown): DetalheTop | null {
       : (bruto.condicoesPermitidas as CondicaoPermitidaEmEdicao[]).map((c) => ({ id: c.id, codigo: c.codigo, nome: c.nome })),
     // Degrada SOZINHO (a reserva é uma coluna da versão, não a configuração): forma estranha vira "não informado"
     // e só a caixa fica bloqueada — o resto do editor, que foi lido, continua editável.
-    reservaEstoque: typeof bruto.reservaEstoque === "boolean" ? bruto.reservaEstoque : null
+    reservaEstoque: typeof bruto.reservaEstoque === "boolean" ? bruto.reservaEstoque : null,
+    padroesFinanceiros
   };
 }
 
@@ -597,15 +807,12 @@ export const ROTULOS_TOP = {
   clienteEmAtraso: { nao_valida: "Não valida", avisa: "Avisa", bloqueia: "Bloqueia" } satisfies Record<PoliticaClienteEmAtraso, string>
 } as const;
 
-/** Rótulo de seção para o resumo do histórico. Mesma dívida, mesmo destino. */
-export const ROTULOS_SECAO_TOP: Record<SecaoConfiguracaoTopV2, string> = {
-  geral: "Geral",
-  estoque: "Estoque",
-  financeiro: "Financeiro",
-  fiscal: "Fiscal",
-  aprovacao: "Aprovação",
-  execucao: "Execução"
-};
+/**
+ * Rótulo de seção para o resumo do histórico. OPERACOES-01 F4: a dívida desta linha está paga — o dono é o domínio
+ * (`ROTULOS_SECAO_CONFIGURACAO_TOP`, com as seções de extensão do formato 5, cada uma com o rótulo da sua definição).
+ * O nome exportado fica, para quem já o lê.
+ */
+export const ROTULOS_SECAO_TOP: Readonly<Record<SecaoConfiguracaoTopV5, string>> = ROTULOS_SECAO_CONFIGURACAO_TOP;
 
 // ---------------------------------------------------------------------------------------------------
 // 4. O RASCUNHO EM EDIÇÃO
@@ -652,6 +859,14 @@ export interface RascunhoTop {
    * com ou sem o formato 3: nenhuma regra geral executada na tela nem no fio.
    */
   configuracaoV4?: ConfiguracaoTipoOperacaoV4;
+  /**
+   * OPERACOES-01 F4 — o rascunho no FORMATO 5, presente SÓ com o editor do 5 (`podeConfigurarFormato5`). Presente, ele
+   * é A verdade da configuração: `configuracaoV4` e `configuracaoV3` ficam AUSENTES (uma verdade só) e `configuracao`
+   * (formato 2) é só a vista derivada dele, para os campos de hoje (`aplicarNoFormato3` preserva o 5 e as seções de
+   * extensão). A versão vigente no 1 a 4 é LIDA como 5 com os padrões de hoje (`configuracaoInicialV5`); ler não
+   * regrava — só uma gravação que mude algo cria a versão nova no 5.
+   */
+  configuracaoV5?: ConfiguracaoTipoOperacaoV5;
   /** As condições permitidas em edição (só com restrições). Vazia = todas as condições. */
   condicoesPermitidas?: CondicaoPermitidaEmEdicao[];
   /**
@@ -687,6 +902,29 @@ export interface RascunhoTop {
    * decide se ela É ENVIADA é a gravação: capacidade declarada E família do pedido — nunca só este valor.
    */
   reservaEstoque?: boolean;
+  /**
+   * OPERACOES-01 F9 (decisão 286) — os PADRÕES FINANCEIROS em edição (a tabela da versão, fora da configuração).
+   * AUSENTE quando o detalhe não os informou (`DetalheTop.padroesFinanceiros === "nao_informado"`): os campos ficam
+   * bloqueados e a chave não vai no corpo. No cadastro novo e na versão sem padrão, os cinco vazios.
+   */
+  padroesFinanceiros?: PadroesFinanceirosEmEdicao;
+  /**
+   * ESTA EDIÇÃO DECLARA OS PADRÕES? A régua das condições (`condicoesDeclaradas`): nasce `false` e vira `true` só
+   * quando o usuário MEXE num padrão. Intocados = chave ausente = o servidor preserva (e copia para a versão nova). Por
+   * que não "reenviar sempre os lidos": um cadastro inativado DEPOIS voltaria no corpo e o servidor recusaria (422)
+   * uma gravação que só trocou o nome. No cadastro novo, POST sem a chave = sem padrão, o mesmo que os cinco vazios.
+   */
+  padroesDeclarados?: boolean;
+}
+
+/**
+ * OPERACOES-01 F9 — os padrões do rascunho a partir do detalhe: os lidos; os cinco vazios na versão sem padrão e no
+ * cadastro novo (`detalhe` nulo); AUSENTES quando o servidor não os informou (API anterior — nada é reescrito).
+ */
+export function padroesFinanceirosIniciais(detalhe: DetalheTop | null): Pick<RascunhoTop, "padroesFinanceiros" | "padroesDeclarados"> {
+  const lidos = detalhe ? detalhe.padroesFinanceiros : null;
+  if (lidos === "nao_informado") return { padroesDeclarados: false };
+  return { padroesFinanceiros: lidos ?? padroesFinanceirosVaziosEmEdicao(), padroesDeclarados: false };
 }
 
 /**
@@ -729,22 +967,44 @@ export function configuracaoInicialV3(c: ConfiguracaoDoServidor | null): Configu
  * pedido de compra de produção, formato 3 com Automática) chega ao editor como foi gravada, e quem a volta ao padrão,
  * avisando antes, é a gravação (`normalizarRegrasGeraisDaFamiliaTop` + o diálogo "Estas regras passam a valer").
  * Neutro do formato 4 sem configuração legível — a mesma régua de `configuracaoInicial`.
+ *
+ * OPERACOES-01 F4: UM FORMATO 5 AQUI É FORMATO DESCONHECIDO PARA ESTE EDITOR — a mesma régua do 4 diante do editor do
+ * 3 (quadro de `configuracaoInicialV3`). Este editor só existe sem o editor do 5 (`podeConfigurarFormato5` falso); a
+ * vista do 4 de um 5 (`configuracaoTopParaEdicaoV4`) perderia as seções de extensão, e a gravação seguinte as levaria
+ * ao padrão em silêncio (o servidor recusa o 4 sobre o 5, mas a tela teria oferecido a edição). Então: o neutro do 4
+ * aqui, NUNCA o 5 rebaixado, e as seções de operação BLOQUEADAS por quem chama (`configuracaoIlegivelNoEditor`).
  */
 export function configuracaoInicialV4(c: ConfiguracaoDoServidor | null): ConfiguracaoTipoOperacaoV4 {
-  return c && c.suportada ? configuracaoTopParaEdicaoV4(c.valor) : configuracaoNeutraTopV4();
+  if (!c || !c.suportada || formato5Top(c.valor)) return configuracaoNeutraTopV4();
+  return configuracaoTopParaEdicaoV4(c.valor);
+}
+
+/**
+ * OPERACOES-01 F4 — a configuração inicial do editor do FORMATO 5. As TOPs gravadas nos formatos 1 a 4 são LIDAS como
+ * 5 com os padrões de hoje, pelo domínio (`configuracaoTopParaEdicaoV5`: a vista do 4 de hoje e daí ao 5, com as
+ * seções de extensão no neutro); o 5 sai como está, normalizado. NÃO aplica a matriz da família nem o perfil do tipo:
+ * o que o tipo não aceita chega ao editor como foi gravado, e quem o volta ao padrão, avisando antes, é a gravação
+ * (`normalizarRegrasGeraisDaFamiliaTop` + `normalizarPeloPerfilTop` + o diálogo "Estas regras passam a valer").
+ * Neutro do formato 5 sem configuração legível — a mesma régua de `configuracaoInicial`. Ler não regrava nada.
+ */
+export function configuracaoInicialV5(c: ConfiguracaoDoServidor | null): ConfiguracaoTipoOperacaoV5 {
+  return c && c.suportada ? configuracaoTopParaEdicaoV5(c.valor) : configuracaoNeutraTopV5();
 }
 
 /**
  * A VERSÃO VIGENTE PODE SER EDITADA POR ESTE EDITOR, COM ESTAS CAPACIDADES? `true` = não pode, e as seções de
- * operação ficam bloqueadas com a frase de formato desconhecido (`top-config-ilegivel`). Duas causas, a mesma régua:
+ * operação ficam bloqueadas com a frase de formato desconhecido (`top-config-ilegivel`). Três causas, a mesma régua:
  *   · o servidor declarou que não sabe ler a versão (`suportada: false`) — o caso de hoje, intocado;
- *   · TOP-CONFIG-08: a versão está no formato 4 e o editor não é o do formato 4 (`podeConfigurarRegrasGerais`
- *     falso). Ver o quadro de `configuracaoInicialV3`.
+ *   · TOP-CONFIG-08: a versão está no formato 4 (ou 5) e o editor não é o do formato 4 (`podeConfigurarRegrasGerais`
+ *     falso). Ver o quadro de `configuracaoInicialV3`;
+ *   · OPERACOES-01 F4: a versão está no formato 5 e o editor não é o do formato 5 (`podeConfigurarFormato5` falso).
+ *     Ver `configuracaoInicialV4`.
  * Sem configuração (`null`, API anterior à configuração) não há o que bloquear. Com uma API anterior a esta fatia
- * nenhuma versão chega legível no formato 4, então a resposta é exatamente a de hoje.
+ * nenhuma versão chega legível no formato 5, então a resposta é exatamente a de hoje.
  */
 export const configuracaoIlegivelNoEditor = (c: ConfiguracaoDoServidor | null, e: EstadoCapacidadesTop): boolean =>
-  c !== null && (!c.suportada || (regrasGeraisExecutamTop(c.valor) && !podeConfigurarRegrasGerais(e)));
+  c !== null && (!c.suportada || (regrasGeraisExecutamTop(c.valor) && !podeConfigurarRegrasGerais(e))
+    || (formato5Top(c.valor) && !podeConfigurarFormato5(e)));
 
 /**
  * A configuração no formato que ESTE servidor grava — ou `null` quando não há como enviá-la sem mudar o
@@ -766,7 +1026,7 @@ export function configuracaoParaEnvio(c: ConfiguracaoTipoOperacaoV2, execucaoSup
 }
 
 /**
- * Aplica uma mudança escrita para o FORMATO 2 (as seções de hoje) sobre o rascunho no FORMATO 3 ou 4, sem perder
+ * Aplica uma mudança escrita para o FORMATO 2 (as seções de hoje) sobre o rascunho no FORMATO 3, 4 ou 5, sem perder
  * as chaves novas. É o que deixa os campos de hoje funcionarem iguais nos três editores: eles continuam
  * mexendo na vista formato 2, e as chaves novas do formato 3 são reaplicadas por cima. A normalização do
  * domínio vem depois, em quem chama.
@@ -775,6 +1035,8 @@ export function configuracaoParaEnvio(c: ConfiguracaoTipoOperacaoV2, execucaoSup
  * chaves do 3, que o 4 também tem), mas o número não é mais fixado aqui: fixar o 3 rebaixaria o rascunho do formato
  * 4 a cada edição de campo, e a gravação sairia no 3 — que nunca executa as regras gerais. Por isso `versaoSchema` é
  * a ÚNICA chave que vem de `c` por inteiro; todas as seções vêm da vista editada, com as chaves do 3 reaplicadas.
+ * OPERACOES-01 F4: 5 → 5, e as SEÇÕES DE EXTENSÃO do 5 também vêm de `c` como estão (`...c`): a vista do 2 não as tem,
+ * e nenhuma mudança escrita para o 2 mexe nelas — quem as edita é a aba da seção (`SecaoDoFormato5`).
  */
 export function aplicarNoFormato3<C extends ConfiguracaoComRestricoesTop>(
   c: C,
@@ -794,8 +1056,11 @@ export function aplicarNoFormato3<C extends ConfiguracaoComRestricoesTop>(
 }
 
 /**
- * A configuração que a gravação ENVIA, decidida pelo rascunho (TOP-CONFIG-05; formato 4 na TOP-CONFIG-08).
+ * A configuração que a gravação ENVIA, decidida pelo rascunho (TOP-CONFIG-05; formato 4 na TOP-CONFIG-08; formato 5 na
+ * OPERACOES-01 F4).
  *
+ *   · Com o editor do 5 (`configuracaoV5` presente): o formato 5, como está — ele é a verdade, e um `configuracaoV4`
+ *     ou `configuracaoV3` que sobrasse ao lado dele é ignorado.
  *   · Com as regras gerais (`configuracaoV4` presente): o formato 4, como está — ele é a verdade, e um
  *     `configuracaoV3` que sobrasse ao lado dele é ignorado.
  *   · Com restrições (`configuracaoV3` presente): o formato 3, como está.
@@ -805,7 +1070,8 @@ export function aplicarNoFormato3<C extends ConfiguracaoComRestricoesTop>(
  *
  * O formato 4 vai COMO ESTÁ também em relação à família: as regras que ela não aceita são voltadas ao padrão ANTES,
  * na gravação do editor (`normalizarRegrasGeraisDaFamiliaTop` com `matrizRegrasGerais`, depois do diálogo "Estas
- * regras passam a valer"). Esta função não as volta em silêncio — e o servidor recusa com 422 o que sobrar.
+ * regras passam a valer"). Esta função não as volta em silêncio — e o servidor recusa com 422 o que sobrar. O 5 vai
+ * também como está em relação ao TIPO: o que ele não aceita volta ao padrão antes (`normalizarPeloPerfilTop`).
  */
 export function configuracaoDoRascunhoParaEnvio(
   r: RascunhoTop,
@@ -813,7 +1079,7 @@ export function configuracaoDoRascunhoParaEnvio(
   /** A versão VIGENTE está no formato 3 ou maior (o 4 inclusive). O nome é o da TOP-CONFIG-05; o sentido cresceu. */
   vigenteNoFormato3: boolean
 ): ConfiguracaoTipoOperacao | null {
-  const comRestricoes: ConfiguracaoComRestricoesTop | undefined = r.configuracaoV4 ?? r.configuracaoV3;
+  const comRestricoes: ConfiguracaoComRestricoesTop | undefined = r.configuracaoV5 ?? r.configuracaoV4 ?? r.configuracaoV3;
   if (comRestricoes) {
     // Mesma régua de `configuracaoParaEnvio`: sem execução no servidor, efeito configurado não tem envio honesto.
     const e = execucaoDeclaradaTop(comRestricoes);
@@ -860,10 +1126,15 @@ export function assinaturaRascunho(r: RascunhoTop): string {
     ...(r.configuracaoV3 ? { configuracaoV3: r.configuracaoV3 } : {}),
     // TOP-CONFIG-08: a mesma régua — só com as regras gerais; sem elas a chave fica AUSENTE e a assinatura é a de hoje.
     ...(r.configuracaoV4 ? { configuracaoV4: r.configuracaoV4 } : {}),
+    // OPERACOES-01 F4: a mesma régua — só com o editor do 5; sem ele a chave fica AUSENTE e a assinatura é a de hoje.
+    ...(r.configuracaoV5 ? { configuracaoV5: r.configuracaoV5 } : {}),
     ...(r.condicoesPermitidas ? { condicoesPermitidas: r.condicoesPermitidas.map((c) => c.id) } : {}),
     ...(r.condicoesDeclaradas !== undefined ? { condicoesDeclaradas: r.condicoesDeclaradas } : {}),
     // TOP-CONFIG-07: marcar ou desmarcar a reserva é conteúdo (cria versão). Ausente = não lida, fora da assinatura.
-    ...(r.reservaEstoque !== undefined ? { reservaEstoque: r.reservaEstoque } : {})
+    ...(r.reservaEstoque !== undefined ? { reservaEstoque: r.reservaEstoque } : {}),
+    // OPERACOES-01 F9: dos padrões só a IDENTIDADE viaja (o rótulo é apresentação); ausentes = não lidos, fora dela.
+    ...(r.padroesFinanceiros ? { padroesFinanceiros: padroesFinanceirosParaEnvio(r.padroesFinanceiros) } : {}),
+    ...(r.padroesDeclarados !== undefined ? { padroesDeclarados: r.padroesDeclarados } : {})
   });
 }
 
@@ -873,8 +1144,22 @@ export function assinaturaRascunho(r: RascunhoTop): string {
  * `TIPO_OPERACAO_CONFIGURACAO_INVALIDA` e `TIPO_OPERACAO_CONDICOES_INVALIDAS` trazem `details.recusas`
  * `[{caminho, mensagem}]`. Qualquer outra forma devolve `{}` e o erro segue para o `ErrorState` geral —
  * item malformado é ignorado só neste mapa, nunca o erro inteiro.
+ *
+ * OPERACOES-01 F6a: as recusas do PARSE (o leitor estrito do domínio) chegam só com `{motivo, caminho}`, sem
+ * `mensagem` — e um campo das seções do formato 5 que o editor não confere antes de enviar (a tolerância "150" da
+ * divergência) ficava sem o erro ao lado. Sem a mensagem, o texto vem de `MENSAGEM_DA_RECUSA_SEM_TEXTO`, pelo motivo
+ * (só apresentação); motivo desconhecido continua fora do mapa. O `ErrorState` geral aparece do mesmo jeito.
  */
 export const CODIGOS_ERRO_DE_CAMPO_TOP = ["TIPO_OPERACAO_CONFIGURACAO_INVALIDA", "TIPO_OPERACAO_CONDICOES_INVALIDAS"] as const;
+export const MENSAGEM_DA_RECUSA_SEM_TEXTO: Readonly<Record<string, string>> = Object.freeze({
+  valor_invalido: "Valor inválido: confira o que foi informado neste campo.",
+  tipo_invalido: "Valor em formato inválido neste campo.",
+  campo_desconhecido: "Este campo não é aceito por este servidor."
+});
+const mensagemDaRecusa = (r: Record<string, unknown>): string | null => {
+  if (ehTexto(r.mensagem)) return r.mensagem;
+  return ehTexto(r.motivo) && Object.hasOwn(MENSAGEM_DA_RECUSA_SEM_TEXTO, r.motivo) ? MENSAGEM_DA_RECUSA_SEM_TEXTO[r.motivo]! : null;
+};
 /** TOP-CONFIG-07: o 422 `VALIDATION_ERROR` da reserva fora da família do pedido (`details [{path, message}]`). */
 export const CAMINHO_ERRO_RESERVA_ESTOQUE = "reservaEstoque";
 export function errosDeCampoDoServidor(e: unknown): Record<string, string> {
@@ -888,7 +1173,8 @@ export function errosDeCampoDoServidor(e: unknown): Record<string, string> {
   if (!ehObjeto(d) || !Array.isArray(d.recusas)) return {};
   const mapa: Record<string, string> = {};
   for (const r of d.recusas) {
-    if (ehObjeto(r) && ehTexto(r.caminho) && ehTexto(r.mensagem) && !(r.caminho in mapa)) mapa[r.caminho] = r.mensagem;
+    const mensagem = ehObjeto(r) ? mensagemDaRecusa(r) : null;
+    if (ehObjeto(r) && ehTexto(r.caminho) && mensagem !== null && !(r.caminho in mapa)) mapa[r.caminho] = mensagem;
   }
   return mapa;
 }

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { harness, type Harness } from "./setup.js";
 
 /**
- * CADASTRO-AREAS-02 (decisão 291) — Mapa grava em /api/resources/areas (geometria).
+ * CADASTRO-AREAS-02 (decisão 292) — Mapa grava em /api/resources/areas (geometria).
  * Prova: Polygon válido; geometria inválida 422; cor fora de #RRGGBB 422.
  */
 

@@ -18,7 +18,7 @@ import { harness, TEST_URL, type Harness } from "./setup.js";
 let h: Harness; let admin: Db;
 type Hdr = Record<string, string>;
 interface Erro { linha: number; coluna: string | null; mensagem: string }
-interface Resultado { linhas: number; gravadas: number; erros: Erro[]; simulacao: boolean }
+interface Resultado { linhas: number; gravadas: number; erros: Erro[]; simulacao: boolean; planilha_erros_base64?: string | null }
 const j = (r: { body: string }) => JSON.parse(r.body) as Resultado;
 
 const ambiguo = (valor: string, plural: string) => `"${valor}" corresponde a mais de um registro de ${plural}. Use o valor exatamente como está na aba Listas.`;
@@ -29,8 +29,8 @@ const modelo = async (key: string, headers: Hdr = h.headers()) => {
   expect(r.statusCode, r.body.slice(0, 300)).toBe(200);
   const wb = new ExcelJS.Workbook(); await wb.xlsx.load(r.rawPayload as unknown as ArrayBuffer); return wb;
 };
-const importar = async (wb: ExcelJS.Workbook, key: string, opts: { simular?: boolean; headers?: Hdr } = {}) =>
-  h.app.inject({ method: "POST", url: `/api/imports/${key}?simular=${opts.simular ? 1 : 0}`, headers: { ...(opts.headers ?? h.headers()), "content-type": "application/json" }, payload: { arquivo_base64: Buffer.from(await wb.xlsx.writeBuffer() as ArrayBuffer).toString("base64") } });
+const importar = async (wb: ExcelJS.Workbook, key: string, opts: { simular?: boolean; headers?: Hdr; modo?: "parcial" } = {}) =>
+  h.app.inject({ method: "POST", url: `/api/imports/${key}?simular=${opts.simular ? 1 : 0}${opts.modo ? `&modo=${opts.modo}` : ""}`, headers: { ...(opts.headers ?? h.headers()), "content-type": "application/json" }, payload: { arquivo_base64: Buffer.from(await wb.xlsx.writeBuffer() as ArrayBuffer).toString("base64") } });
 const cabecalho = (wb: ExcelJS.Workbook) => { const r: string[] = []; wb.getWorksheet("Dados")!.getRow(1).eachCell((c) => r.push(String(c.value))); return r; };
 /** Coluna da aba Dados pelo rótulo (com ou sem o " *" do obrigatório). Coluna ausente reprova — nunca escreve na coluna 0. */
 const col = (wb: ExcelJS.Workbook, rotulo: string) => {
@@ -95,7 +95,7 @@ describe("armazéns homônimos em duas empresas", () => {
   it("R1: a lista traz 'SIGLA - Descrição (Empresa)' — um item distinto por armazém ativo, igual ao que o banco tem", async () => {
     const fabA = await fabDe(A); const fabB = await fabDe(B);
     expect(fabA).not.toBe(fabB);
-    const lista = listaDe(await modelo("products"), "Armazém padrão");
+    const lista = listaDe(await modelo("products"), "Local de estoque padrão");
     const esperado = await textosDeArmazens(null);
     expect(esperado.length, "semente: ALM, FAB e SILO em cada empresa").toBeGreaterThanOrEqual(6);
     expect([...lista].sort()).toEqual(esperado);
@@ -108,18 +108,18 @@ describe("armazéns homônimos em duas empresas", () => {
   it("R2: o valor da lista grava o armazém da empresa CERTA (também sem diferenciar maiúsculas); 'Fábrica de Ração' nu é recusado como ambíguo e nada é gravado", async () => {
     const fabA = await fabDe(A); const fabB = await fabDe(B);
     const wb = await modelo("products");
-    produto(wb, 2, "Ref Armazém B", { "Armazém padrão": `FAB - Fábrica de Ração (${nomeB})` });
-    produto(wb, 3, "Ref Armazém A", { "Armazém padrão": `FAB - Fábrica de Ração (${nomeA})` });
-    produto(wb, 4, "Ref Armazém B minúsculo", { "Armazém padrão": `fab - fábrica de ração (${nomeB.toLocaleLowerCase("pt-BR")})` });
+    produto(wb, 2, "Ref Armazém B", { "Local de estoque padrão": `FAB - Fábrica de Ração (${nomeB})` });
+    produto(wb, 3, "Ref Armazém A", { "Local de estoque padrão": `FAB - Fábrica de Ração (${nomeA})` });
+    produto(wb, 4, "Ref Armazém B minúsculo", { "Local de estoque padrão": `fab - fábrica de ração (${nomeB.toLocaleLowerCase("pt-BR")})` });
     aceitou(await importar(wb, "products"), 3);
     expect((await gravado("Ref Armazém B")).default_warehouse_id).toBe(fabB);
     expect((await gravado("Ref Armazém A")).default_warehouse_id).toBe(fabA);
     expect((await gravado("Ref Armazém B minúsculo")).default_warehouse_id).toBe(fabB);
 
     const wb2 = await modelo("products");
-    produto(wb2, 2, "Ref Armazém Ambíguo", { "Armazém padrão": "Fábrica de Ração" });
+    produto(wb2, 2, "Ref Armazém Ambíguo", { "Local de estoque padrão": "Fábrica de Ração" });
     const antes = await contarProdutos();
-    recusou(await importar(wb2, "products"), [{ linha: 2, coluna: "Armazém padrão", mensagem: ambiguo("Fábrica de Ração", "Armazéns") }]);
+    recusou(await importar(wb2, "products"), [{ linha: 2, coluna: "Local de estoque padrão", mensagem: ambiguo("Fábrica de Ração", "Locais de estoque") }]);
     expect(await contarProdutos()).toBe(antes);
     expect((await admin.query("select 1 from erp.products where description='Ref Armazém Ambíguo'")).rowCount).toBe(0);
   });
@@ -312,11 +312,11 @@ describe("escopo: membro com estoque só na empresa A", () => {
     expect(deA.rows.length).toBeGreaterThanOrEqual(3);
     expect([...idsOpcoes].sort(), "options do membro = armazéns ativos da empresa A").toEqual(deA.rows.map((x) => x.id).sort());
 
-    const doMembro = listaDe(await modelo("products", M), "Armazém padrão");
+    const doMembro = listaDe(await modelo("products", M), "Local de estoque padrão");
     expect([...doMembro].sort()).toEqual(await textosDeArmazens(idsOpcoes));
     expect(doMembro.some((x) => x.endsWith(`(${nomeB})`)), "nenhum armazém da empresa B").toBe(false);
     // premissa: a empresa B TEM armazéns, e quem enxerga as duas os recebe na lista
-    const doAdmin = listaDe(await modelo("products"), "Armazém padrão");
+    const doAdmin = listaDe(await modelo("products"), "Local de estoque padrão");
     expect(doAdmin.filter((x) => x.endsWith(`(${nomeB})`)).length).toBeGreaterThanOrEqual(3);
     expect(doAdmin.length).toBeGreaterThan(doMembro.length);
   });
@@ -325,22 +325,22 @@ describe("escopo: membro com estoque só na empresa A", () => {
     const fabA = await fabDe(A);
     const textoB = `FAB - Fábrica de Ração (${nomeB})`;
     const wb = await modelo("products", M);
-    produto(wb, 2, "Ref Escopo B", { "Armazém padrão": textoB });
-    produto(wb, 3, "Ref Escopo Inexistente", { "Armazém padrão": "Armazém Que Nunca Existiu" });
+    produto(wb, 2, "Ref Escopo B", { "Local de estoque padrão": textoB });
+    produto(wb, 3, "Ref Escopo Inexistente", { "Local de estoque padrão": "Armazém Que Nunca Existiu" });
     const antes = await contarProdutos();
     recusou(await importar(wb, "products", { headers: M }), [
-      { linha: 2, coluna: "Armazém padrão", mensagem: naoEncontrado(textoB, "Armazéns") },
-      { linha: 3, coluna: "Armazém padrão", mensagem: naoEncontrado("Armazém Que Nunca Existiu", "Armazéns") },
+      { linha: 2, coluna: "Local de estoque padrão", mensagem: naoEncontrado(textoB, "Locais de estoque") },
+      { linha: 3, coluna: "Local de estoque padrão", mensagem: naoEncontrado("Armazém Que Nunca Existiu", "Locais de estoque") },
     ]);
     expect(await contarProdutos()).toBe(antes);
 
     // o MESMO arquivo, para quem enxerga as duas empresas, é ambíguo (prévia: nada é gravado)
     const wbAdmin = await modelo("products");
-    produto(wbAdmin, 2, "Ref Escopo Nu Admin", { "Armazém padrão": "Fábrica de Ração" });
-    recusou(await importar(wbAdmin, "products", { simular: true }), [{ linha: 2, coluna: "Armazém padrão", mensagem: ambiguo("Fábrica de Ração", "Armazéns") }]);
+    produto(wbAdmin, 2, "Ref Escopo Nu Admin", { "Local de estoque padrão": "Fábrica de Ração" });
+    recusou(await importar(wbAdmin, "products", { simular: true }), [{ linha: 2, coluna: "Local de estoque padrão", mensagem: ambiguo("Fábrica de Ração", "Locais de estoque") }]);
 
     const wb2 = await modelo("products", M);
-    produto(wb2, 2, "Ref Escopo Nu Membro", { "Armazém padrão": "Fábrica de Ração" });
+    produto(wb2, 2, "Ref Escopo Nu Membro", { "Local de estoque padrão": "Fábrica de Ração" });
     aceitou(await importar(wb2, "products", { headers: M }), 1);
     expect((await gravado("Ref Escopo Nu Membro")).default_warehouse_id).toBe(fabA);
   });
@@ -355,8 +355,8 @@ describe("inexistente, inativo e excluído", () => {
     const textoIna = `INA - Armazém Inativo Ref (${nomeA})`; const textoExc = `EXC - Armazém Excluído Ref (${nomeA})`;
     // premissa: enquanto ativos e vivos, os quatro estão na lista com exatamente estes textos
     const antesWb = await modelo("products");
-    expect(vezes(listaDe(antesWb, "Armazém padrão"), textoIna)).toBe(1);
-    expect(vezes(listaDe(antesWb, "Armazém padrão"), textoExc)).toBe(1);
+    expect(vezes(listaDe(antesWb, "Local de estoque padrão"), textoIna)).toBe(1);
+    expect(vezes(listaDe(antesWb, "Local de estoque padrão"), textoExc)).toBe(1);
     expect(vezes(listaDe(antesWb, "Grupo"), "4 - Grupo Inativo Ref")).toBe(1);
     expect(vezes(listaDe(antesWb, "Endereçamento"), "Endereço Excluído Ref")).toBe(1);
 
@@ -371,17 +371,17 @@ describe("inexistente, inativo e excluído", () => {
     expect((await admin.query("select 1 from erp.addressings where id=$1 and deleted_at is not null", [endereco])).rowCount).toBe(1);
 
     const wb = await modelo("products");
-    const armazens = listaDe(wb, "Armazém padrão");
+    const armazens = listaDe(wb, "Local de estoque padrão");
     expect(armazens.some((x) => x.includes("Armazém Inativo Ref") || x.includes("Armazém Excluído Ref"))).toBe(false);
     expect(listaDe(wb, "Grupo")).not.toContain("4 - Grupo Inativo Ref");
     expect(listaDe(wb, "Endereçamento").some((x) => x.includes("Endereço Excluído Ref"))).toBe(false);
 
     const casos: [string, string, string][] = [
-      ["Armazém padrão", `ZZZ - Armazém Que Não Existe (${nomeA})`, "Armazéns"],
-      ["Armazém padrão", textoIna, "Armazéns"],
-      ["Armazém padrão", textoExc, "Armazéns"],
-      ["Armazém padrão", "Armazém Inativo Ref", "Armazéns"],
-      ["Armazém padrão", "Armazém Excluído Ref", "Armazéns"],
+      ["Local de estoque padrão", `ZZZ - Armazém Que Não Existe (${nomeA})`, "Locais de estoque"],
+      ["Local de estoque padrão", textoIna, "Locais de estoque"],
+      ["Local de estoque padrão", textoExc, "Locais de estoque"],
+      ["Local de estoque padrão", "Armazém Inativo Ref", "Locais de estoque"],
+      ["Local de estoque padrão", "Armazém Excluído Ref", "Locais de estoque"],
       ["Grupo", "Grupo Inativo Ref", "Grupos de Produtos"],
       ["Endereçamento", "Endereço Excluído Ref", "Endereçamentos"],
     ];
@@ -438,5 +438,101 @@ describe("árvore: antecessor numa linha anterior do mesmo arquivo", () => {
     expect(r.rows.find((x) => x.description === "Gaveta Imp")!.pai_id).toBe(prat);
     const rua = await admin.query<{ pai: string | null }>("select p.description pai from erp.addressings a join erp.addressings p on p.id=a.parent_id where a.organization_id=$1 and a.description='Rua Imp'", [h.demo.orgId]);
     expect(rua.rows).toEqual([{ pai: "Depósito Imp" }]);
+  });
+});
+
+// OPERACOES-01 F3a (decisão 280): "Armazém padrão" passou a "Local de estoque padrão". A planilha baixada ANTES da
+// troca continua importável — o nome antigo é declarado no CAMPO (`rotulosAnteriores`, domínio) —, o modelo novo sai
+// só com o nome atual, os erros citam o atual e as duas colunas juntas são a mesma coluna repetida.
+describe("R13 — a coluna com o nome de antes (OPERACOES-01 F3a, decisão 280)", () => {
+  const ATUAL = "Local de estoque padrão"; const ANTIGO = "Armazém padrão";
+  const semAsterisco = (t: string) => t.replace(/\s*\*$/, "").toLocaleLowerCase("pt-BR");
+  /** Troca o TEXTO do cabeçalho da coluna `de` por `para`: a planilha baixada antes da troca do rótulo. */
+  const renomear = (wb: ExcelJS.Workbook, de: string, para: string) => {
+    const n = col(wb, de); const row = wb.getWorksheet("Dados")!.getRow(1);
+    row.getCell(n).value = para; row.commit();
+    expect(cabecalho(wb)[n - 1], `cabeçalho da coluna ${n}`).toBe(para);
+  };
+  /** Acrescenta, depois da última, uma coluna com o cabeçalho `titulo` e o `valor` na linha 2. */
+  const acrescentarColuna = (wb: ExcelJS.Workbook, titulo: string, valor: string) => {
+    const n = cabecalho(wb).length + 1; const ws = wb.getWorksheet("Dados")!;
+    ws.getRow(1).getCell(n).value = titulo; ws.getRow(1).commit();
+    ws.getRow(2).getCell(n).value = valor; ws.getRow(2).commit();
+  };
+  const semProduto = async (descricao: string) =>
+    expect((await admin.query("select 1 from erp.products where organization_id=$1 and description=$2", [h.demo.orgId, descricao])).rowCount, `"${descricao}" não gravado`).toBe(0);
+
+  it("R13a: o modelo de agora só tem o nome atual; o arquivo com 'Armazém padrão' (também em MAIÚSCULAS) grava o local de estoque certo", async () => {
+    const fabA = await fabDe(A); const fabB = await fabDe(B);
+    expect(fabA).not.toBe(fabB);
+    // PREMISSA: o modelo baixado agora tem a coluna (e a lista) com o nome atual e NENHUMA com o de antes
+    const wb = await modelo("products");
+    expect(cabecalho(wb), "o modelo tem a coluna com o nome atual").toContain(ATUAL);
+    expect(cabecalho(wb).filter((t) => semAsterisco(t) === semAsterisco(ANTIGO)), "o nome de antes não está no modelo").toEqual([]);
+    expect(listaDe(wb, ATUAL)).toContain(`FAB - Fábrica de Ração (${nomeA})`);
+    const listas: string[] = []; wb.getWorksheet("Listas")!.getRow(1).eachCell((c) => listas.push(String(c.value)));
+    expect(listas.filter((t) => semAsterisco(t) === semAsterisco(ANTIGO)), "nem na aba Listas").toEqual([]);
+
+    renomear(wb, ATUAL, ANTIGO);
+    produto(wb, 2, "Ref Nome Antigo A", { [ANTIGO]: `FAB - Fábrica de Ração (${nomeA})` });
+    aceitou(await importar(wb, "products"), 1);
+    expect((await gravado("Ref Nome Antigo A")).default_warehouse_id).toBe(fabA);
+
+    // outro arquivo, o cabeçalho de antes em MAIÚSCULAS: a mesma normalização do nome atual
+    const MAIUSCULAS = ANTIGO.toLocaleUpperCase("pt-BR");
+    expect(MAIUSCULAS).toBe("ARMAZÉM PADRÃO");
+    const wb2 = await modelo("products");
+    renomear(wb2, ATUAL, MAIUSCULAS);
+    produto(wb2, 2, "Ref Nome Antigo Maiúsculas B", { [MAIUSCULAS]: `FAB - Fábrica de Ração (${nomeB})` });
+    aceitou(await importar(wb2, "products"), 1);
+    expect((await gravado("Ref Nome Antigo Maiúsculas B")).default_warehouse_id).toBe(fabB);
+  });
+
+  it("R13b: as DUAS colunas no mesmo arquivo (em qualquer ordem) → 'Coluna repetida no arquivo.' na 2ª, e nada é gravado", async () => {
+    // o nome atual primeiro (o do modelo) e o de antes acrescentado no fim
+    const wb = await modelo("products");
+    produto(wb, 2, "Ref Duas Colunas Atual Primeiro", { [ATUAL]: `FAB - Fábrica de Ração (${nomeA})` });
+    acrescentarColuna(wb, ANTIGO, `FAB - Fábrica de Ração (${nomeB})`);
+    expect(cabecalho(wb).filter((t) => t === ATUAL || t === ANTIGO), "premissa: as duas colunas, nesta ordem").toEqual([ATUAL, ANTIGO]);
+    // o nome de antes primeiro (no lugar do atual) e o atual acrescentado no fim
+    const wb2 = await modelo("products");
+    renomear(wb2, ATUAL, ANTIGO);
+    produto(wb2, 2, "Ref Duas Colunas Antigo Primeiro", { [ANTIGO]: `FAB - Fábrica de Ração (${nomeA})` });
+    acrescentarColuna(wb2, ATUAL, `FAB - Fábrica de Ração (${nomeB})`);
+    expect(cabecalho(wb2).filter((t) => t === ATUAL || t === ANTIGO), "premissa: as duas colunas, nesta ordem").toEqual([ANTIGO, ATUAL]);
+
+    const antes = await contarProdutos();
+    recusou(await importar(wb, "products"), [{ linha: 1, coluna: ANTIGO, mensagem: "Coluna repetida no arquivo." }]);
+    recusou(await importar(wb2, "products"), [{ linha: 1, coluna: ATUAL, mensagem: "Coluna repetida no arquivo." }]);
+    expect(await contarProdutos()).toBe(antes);
+    await semProduto("Ref Duas Colunas Atual Primeiro"); await semProduto("Ref Duas Colunas Antigo Primeiro");
+  });
+
+  it("R13c: o erro de valor na coluna com o nome de antes cita o nome ATUAL (e a planilha de erros sai com ele); nada é gravado", async () => {
+    const valor = "ZZZ - Local Que Nunca Existiu R13";
+    const wb = await modelo("products");
+    renomear(wb, ATUAL, ANTIGO);
+    produto(wb, 2, "Ref Nome Antigo Inexistente", { [ANTIGO]: valor });
+    const antes = await contarProdutos();
+    recusou(await importar(wb, "products"), [{ linha: 2, coluna: ATUAL, mensagem: naoEncontrado(valor, "Locais de estoque") }]);
+    expect(await contarProdutos()).toBe(antes);
+    await semProduto("Ref Nome Antigo Inexistente");
+
+    // prévia PARCIAL do mesmo arquivo com uma linha certa: a planilha de erros traz o cabeçalho ATUAL (reimportável
+    // pelo modelo de agora) e o erro com o nome atual; a prévia não grava
+    produto(wb, 3, "Ref Nome Antigo Certa", { [ANTIGO]: `FAB - Fábrica de Ração (${nomeA})` });
+    const previa = await importar(wb, "products", { simular: true, modo: "parcial" });
+    expect(previa.statusCode, previa.body).toBe(200);
+    expect(j(previa).erros).toEqual([{ linha: 2, coluna: ATUAL, mensagem: naoEncontrado(valor, "Locais de estoque") }]);
+    const base64 = j(previa).planilha_erros_base64;
+    expect(typeof base64, "a prévia parcial devolve a planilha de erros").toBe("string");
+    const erros = new ExcelJS.Workbook(); await erros.xlsx.load(Buffer.from(base64!, "base64") as unknown as ArrayBuffer);
+    expect(cabecalho(erros), "a planilha de erros sai com o nome atual").toContain(ATUAL);
+    expect(cabecalho(erros).filter((t) => semAsterisco(t) === semAsterisco(ANTIGO)), "e sem o de antes").toEqual([]);
+    const ws = erros.getWorksheet("Dados")!;
+    expect(ws.getRow(2).getCell(col(erros, ATUAL)).value, "o valor como veio, na coluna do nome atual").toBe(valor);
+    expect(ws.getRow(2).getCell(col(erros, "Erros")).value).toBe(`${ATUAL}: ${naoEncontrado(valor, "Locais de estoque")}`);
+    expect(await contarProdutos()).toBe(antes);
+    await semProduto("Ref Nome Antigo Certa");
   });
 });

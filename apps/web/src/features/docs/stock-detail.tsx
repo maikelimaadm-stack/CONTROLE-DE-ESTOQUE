@@ -74,7 +74,7 @@ export function StockDocDetail({ id, endpoint, base, title, perm, entidade, acei
     { label: "Responsável", valor: String(d["created_by_name"] ?? ""), ocultarSeVazio: true },
     { label: "Documento", valor: d["number"] ? `${d["number"]}/${d["series"] ?? ""}` : "", ocultarSeVazio: true },
     { label: "Fornecedor", valor: d["provider"] ? String((d["provider"] as Row)["name"]) : "", ocultarSeVazio: true },
-    { label: "Armazém", valor: String(d["warehouse_name"] ?? ""), ocultarSeVazio: true },
+    { label: "Local de estoque", valor: String(d["warehouse_name"] ?? ""), ocultarSeVazio: true },
     { label: "Motivo", valor: d["reason"] ? enumLabel("writeoff_reason", d["reason"]) : "", ocultarSeVazio: true },
     { label: "Justificativa", valor: String(d["justification"] ?? ""), span: 6, ocultarSeVazio: true },
     { label: "Observação", valor: String(d["note"] ?? ""), span: 6, ocultarSeVazio: true },
@@ -89,7 +89,7 @@ export function StockDocDetail({ id, endpoint, base, title, perm, entidade, acei
   const colunasItens: Base2ItemColumn<Row>[] = [
     { key: "product_code", label: "Código" },
     { key: "product_name", label: "Produto" },
-    { key: "warehouse_name", label: "Armazém" },
+    { key: "warehouse_name", label: "Local de estoque" },
     { key: "quantity", label: "Quantidade", align: "right", render: (r) => `${num(r["quantity"] as string, 4)} ${r["unit"] ?? ""}` },
     { key: "unit_value", label: "Valor unitário", align: "right", render: (r) => brl((r["unit_value"] ?? r["unit_cost"]) as string) },
     { key: "total_value", label: "Total", align: "right", render: (r) => brl((r["total_value"] ?? r["total"] ?? r["total_cost"]) as string) },

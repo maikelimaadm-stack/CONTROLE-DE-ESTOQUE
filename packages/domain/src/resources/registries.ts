@@ -12,6 +12,7 @@ import {
   CORES_DA_AREA,
   COR_PADRAO_DA_AREA
 } from "../tipos-de-uso-da-area.js";
+import { CAPACIDADE_LCDPR, OPCOES_TIPO_EXPLORACAO, OPCOES_TIPO_LCDPR } from "../financeiro-lcdpr.js";
 
 const active = (name = "is_active"): FieldDef => ({ name, label: "Ativo", type: "boolean", default: true, list: true, filter: true, span: 2 });
 const B = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "boolean", default: false, ...extra });
@@ -25,6 +26,10 @@ const Q = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef
 const I = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "integer", ...extra });
 /** Campos novos do Parceiro (AJUSTES 01, 0030): só com a API que declara `consultaCnpjJanela` 1 (seção 7 da missão). */
 const CAP_AJ01 = { nome: "consultaCnpjJanela", versao: 1 };
+/** OPERACOES-01 F9 (decisão 286): os campos do LCDPR só com a API que declara `lcdpr` 1 (`GET /api/auth/context`). */
+const CAP_LCDPR = { nome: "lcdpr", versao: CAPACIDADE_LCDPR };
+/** As opções de um domínio declarado fora daqui (`[valor, rótulo]`, somente leitura) na forma que `S` recebe. */
+const opcoes = (o: readonly (readonly [string, string])[]): [string, string][] => o.map(([valor, rotulo]): [string, string] => [valor, rotulo]);
 
 /** Tipo do item do SPED (registro 0200, campo TIPO_ITEM) — CADASTROS Fase 6. */
 const TIPOS_DE_ITEM: [string, string][] = [
@@ -115,7 +120,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("description", "Descrição", { required: true, list: true, search: true, span: 6 }), REF("parent_id", "Endereçamento pai", "addressings", { list: true, span: 6 })]
   },
   {
-    key: "warehouses", importacao: true, label: "Armazém", labelPlural: "Armazéns", table: "warehouses", permission: "warehouses", labelField: "description", route: "/cadastros/armazens", softDelete: true, empresaScoped: true,
+    key: "warehouses", importacao: true, label: "Local de estoque", labelPlural: "Locais de estoque", table: "warehouses", permission: "warehouses", labelField: "description", route: "/cadastros/armazens", softDelete: true, empresaScoped: true,
     fields: [
       REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }),
       T("initials", "Sigla", { required: true, list: true, search: true, span: 2 }), T("description", "Descrição", { required: true, list: true, search: true, span: 4 }),
@@ -140,8 +145,8 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       B("control_stock", "Controla estoque", { default: true, section: "Estoque", help: "Gerencia o produto no estoque e calcula custo médio automaticamente", span: 3 }),
       { name: "min_stock", label: "Estoque mínimo", type: "quantity", section: "Estoque", list: true, help: "Alerta quando o estoque atingir ou ficar abaixo", span: 3 },
       { name: "estoque_maximo", label: "Estoque máximo", type: "quantity", section: "Estoque", span: 3 },
-      REF("default_warehouse_id", "Armazém padrão", "warehouses", { section: "Estoque", span: 4 }), REF("addressing_id", "Endereçamento", "addressings", { section: "Estoque", span: 4 }),
-      S("controle_lote", "Controle de lote", [["nenhum", "Nenhum"], ["lote", "Lote"], ["lote_validade", "Lote + validade"]], { default: "nenhum", filter: true, section: "Estoque", help: "Lote: exige o lote na entrada; na saída sem lote informado, o sistema escolhe pela validade mais próxima (lote vencido só sai informado). Lote + validade: também exige a validade na entrada. Mudar com saldo exige zerar o saldo em todos os armazéns.", span: 4 }),
+      REF("default_warehouse_id", "Local de estoque padrão", "warehouses", { section: "Estoque", span: 4, rotulosAnteriores: ["Armazém padrão"] }), REF("addressing_id", "Endereçamento", "addressings", { section: "Estoque", span: 4 }),
+      S("controle_lote", "Controle de lote", [["nenhum", "Nenhum"], ["lote", "Lote"], ["lote_validade", "Lote + validade"]], { default: "nenhum", filter: true, section: "Estoque", help: "Lote: exige o lote na entrada; na saída sem lote informado, o sistema escolhe pela validade mais próxima (lote vencido só sai informado). Lote + validade: também exige a validade na entrada. Mudar com saldo exige zerar o saldo em todos os locais de estoque.", span: 4 }),
       { name: "withdrawal_period_days", label: "Período de Carência (dias)", type: "integer", section: "Estoque", help: "Dias de espera após aplicação antes de vender/abater o animal", span: 3 },
       // legado derivado do controle: continua na leitura (relatórios, web anterior); gravado pela API a partir do controle
       B("has_lot", "Controla lote (derivado)", { readOnly: true, section: "Estoque", help: "Derivado do Controle de lote", span: 3 }),
@@ -209,6 +214,9 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       S("nature", "Tipo", [["income", "Receita"], ["expense", "Despesa"], ["both", "Receita e despesa"]], { required: true, herdaDoSuperior: true, help: "Natureza filha segue o Tipo da superior (salvo superior Receita e despesa).", list: true, filter: true, span: 2 }),
       S("kind", "Analítica", [["analytic", "Sim"], ["synthetic", "Não"]], { default: "analytic", list: true, help: "Sim: recebe lançamentos. Não: sintética, só agrupa outras.", span: 2 }),
       S("classification", "Classificação", [["unclassified", "Não Classificado"], ["capex", "CAPEX"], ["opex", "OPEX"]], { span: 3 }),
+      S("grupo_dre", "Grupo do DRE", [["receitas", "Receitas"], ["deducoes", "Deduções"], ["custos", "Custos"], ["despesas", "Despesas"], ["investimentos", "Investimentos"]], { help: "Vazio: herda da natureza superior; sem superior marcada, sai do Tipo (Receita → Receitas; Despesa CAPEX → Investimentos; Despesa → Despesas).", span: 3 }),
+      // OPERACOES-01 F9 (decisão 286): o tipo da natureza no LCDPR. Só com a API que declara a capacidade `lcdpr`.
+      S("tipo_lcdpr", "Tipo no LCDPR", opcoes(OPCOES_TIPO_LCDPR), { exigeCapacidade: CAP_LCDPR, help: "1 receita, 2 custeio e investimento, 3 produto entregue de adiantamento; \"Fora do LCDPR\" tira a natureza do livro. Vazio: aparece como pendência na conferência.", span: 3 }),
       B("is_tax", "É tributo?", { span: 2 }), REF("parent_id", "Natureza superior", "financial_categories", { span: 5 }), active()
     ]
   },
@@ -301,6 +309,23 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       T("boleto_wallet", "Carteira", { visibleWhen: { field: "issues_boleto", equals: true }, span: 2 }), T("boleto_agreement", "Convênio/Cod. Beneficiário", { visibleWhen: { field: "issues_boleto", equals: true }, span: 3 }),
       S("cnab_type", "Tipo do boleto", [["240", "CNAB 240"], ["400", "CNAB 400"]], { visibleWhen: { field: "issues_boleto", equals: true }, span: 2 }),
       REF("investment_account_id", "Conta de investimento vinculada", "bank_accounts", { span: 4 }), active()
+    ]
+  },
+  {
+    // OPERACOES-01 F9 (decisão 286): o IMÓVEL RURAL do LCDPR, cadastro DE EMPRESA (`erp.imoveis_rurais`, 0045: RLS por
+    // empresa, FK composta). O imóvel marcado como padrão é o que a baixa e o movimento bancário da empresa usam quando
+    // nenhum é informado — um por empresa (índice único parcial; o segundo é recusado). Excluir é lógico (dado real).
+    key: "imoveis_rurais", label: "Imóvel rural", labelPlural: "Imóveis rurais", table: "imoveis_rurais", permission: "imoveis_rurais", labelField: "nome", route: "/cadastros/imoveis_rurais", softDelete: true, empresaScoped: true, defaultSort: "nome",
+    fields: [
+      REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }),
+      T("nome", "Nome do imóvel", { required: true, list: true, search: true, maxLength: 120, span: 5 }),
+      T("cib", "CIB / NIRF (ITR)", { list: true, search: true, maxLength: 8, padrao: { regex: "^\\d{8}$", mensagem: "Informe os 8 dígitos do CIB (NIRF do ITR), só números." }, help: "Código do imóvel na Receita Federal (ITR), 8 dígitos", span: 3 }),
+      T("caepf", "CAEPF", { maxLength: 14, padrao: { regex: "^\\d{14}$", mensagem: "Informe os 14 dígitos do CAEPF (só números)." }, help: "14 dígitos", span: 3 }),
+      T("inscricao_estadual", "Inscrição estadual", { maxLength: 20, span: 3 }),
+      S("tipo_exploracao", "Tipo de exploração", opcoes(OPCOES_TIPO_EXPLORACAO), { required: true, default: "individual", list: true, filter: true, span: 3 }),
+      { name: "participacao", label: "% de participação", type: "percent", required: true, default: 100, help: "Maior que 0 e até 100.", span: 2 },
+      B("padrao", "Imóvel padrão da empresa", { list: true, help: "A baixa e o movimento da empresa usam este imóvel quando nenhum é informado. Só um por empresa: desmarque o atual antes.", span: 3 }),
+      active()
     ]
   },
   {
@@ -560,6 +585,8 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     // PARCEIRO (CADASTROS Fase 4, decisão 253): a tabela, a chave, a permissão e a rota continuam `people`;
     // a tela é a FICHA EM ABAS declarada em `abas`/`detalhes`/`perfis` abaixo.
     key: "people", importacao: true, label: "Parceiro", labelPlural: "Parceiros", table: "people", permission: "people", labelField: "name", route: "/cadastros/pessoas", softDelete: true, codeEntity: "person", importExport: true, defaultSort: "name",
+    // OPERACOES-01 F3a (decisão 280): o seletor de Parceiros acha também pela razão social/nome completo e pelo CPF/CNPJ normalizado
+    pesquisaDoSeletor: { texto: ["legal_name"], documento: "document" },
     fields: [
       // AJUSTES 01 (decisão 257, C-3/C-4): Código (travado) fica no cabeçalho fixo (e só leitura no topo da 1ª aba); Identificação na ordem do padrão
       // de tela; campos de Física só aparecem em Física e os de Jurídica só em Jurídica (a API recusa o do outro tipo)
@@ -702,7 +729,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     ]
   },
   {
-    // DEPRECATED (CADASTRO-AREAS-02 / decisão 291): mantido só para version skew do binário MAPA-01.
+    // DEPRECATED (CADASTRO-AREAS-02 / decisão 292): mantido só para version skew do binário MAPA-01.
     // A UI nova grava em `areas`. Acervo migrado e soft-deleted pela 0051.
     key: "mapa_areas", label: "Área (legado mapa)", labelPlural: "Áreas (legado mapa)", table: "mapa_areas", permission: "mapa_areas",
     labelField: "nome", route: "/cadastros/mapa_areas", softDelete: true, empresaScoped: true, defaultSort: "nome",

@@ -58,12 +58,13 @@ test("LC-W3 — Vencimento na aba Financeiro, Proprietário em Dados principais 
   expect(iFin, "premissa: há a aba Financeiro").toBeGreaterThanOrEqual(0);
   const iProd = e.itens.findIndex((c) => c.campo === "product_id");
   const iArm = e.itens.findIndex((c) => c.campo === "warehouse_id");
-  expect(iProd >= 0 && iArm > iProd, "premissa: no sistema, Produto vem antes de Armazém").toBe(true);
+  // OPERACOES-01 F3b (decisão 280): o layout do sistema abre os itens com o Local de estoque, antes do Produto
+  expect(iArm >= 0 && iProd > iArm, "premissa: no sistema, Local de estoque vem antes de Produto").toBe(true);
 
-  // A estrutura nova: Vencimento → aba Financeiro; Proprietário → "principal"; Armazém antes de Produto.
+  // A estrutura nova: Vencimento → aba Financeiro; Proprietário → "principal"; Local de estoque logo depois de Produto.
   const arm = e.itens[iArm]!;
   const itens = e.itens.filter((c) => c.campo !== "warehouse_id");
-  itens.splice(itens.findIndex((c) => c.campo === "product_id"), 0, arm);
+  itens.splice(itens.findIndex((c) => c.campo === "product_id") + 1, 0, arm);
   const estrutura: Estrutura = {
     ...e,
     cabecalho: e.cabecalho.filter((c) => c.campo !== "due_date").map((c) => (c.campo === "proprietary_id" ? { ...c, grupo: "principal" as const } : c)),
@@ -96,11 +97,11 @@ test("LC-W3 — Vencimento na aba Financeiro, Proprietário em Dados principais 
   await expect(dados.locator('[data-campo="due_date"]')).toHaveCount(0);
   await expect(page.locator('[data-campo="due_date"]'), "um só Vencimento na tela").toHaveCount(1);
 
-  // Colunas dos itens na ordem do layout: Armazém antes de Produto
+  // Colunas dos itens na ordem do layout (não na do sistema): Local de estoque logo depois de Produto
   const grade = page.getByTestId("central-vendas-itens");
   await expect(grade.locator('th[data-campo="product_id"]')).toBeVisible();
   await expect(grade.locator('th[data-campo="warehouse_id"]')).toBeVisible();
   const ordem = await grade.locator("th[data-campo]").evaluateAll((ths) => ths.map((t) => t.getAttribute("data-campo")));
-  expect(ordem.indexOf("warehouse_id"), "Armazém antes de Produto").toBeLessThan(ordem.indexOf("product_id"));
-  expect(ordem.indexOf("warehouse_id")).toBeGreaterThanOrEqual(0);
+  expect(ordem.indexOf("product_id")).toBeGreaterThanOrEqual(0);
+  expect(ordem.indexOf("warehouse_id"), "Local de estoque logo depois de Produto").toBe(ordem.indexOf("product_id") + 1);
 });

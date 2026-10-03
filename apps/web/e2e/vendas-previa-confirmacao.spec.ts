@@ -165,7 +165,7 @@ test("A5-W1 — venda classificada: a prévia é pedida AO ABRIR, o botão esper
 
   // A TELA — as duas linhas, com "código · nome" dos dois cadastros.
   await expect(dialogo(page).getByTestId("previa-confirmacao")).toBeVisible();
-  await expect(dialogo(page).getByTestId("previa-confirmacao-estoque")).toHaveText("Baixa o estoque de 1 item. 1 item sem armazém fica de fora.");
+  await expect(dialogo(page).getByTestId("previa-confirmacao-estoque")).toHaveText("Baixa o estoque de 1 item. 1 item sem local de estoque fica de fora.");
   const financeiro = dialogo(page).getByTestId("previa-confirmacao-financeiro");
   await expect(financeiro).toContainText(/^Gera contas a receber de R\$\s*100,00/);
   await expect(financeiro).toContainText(`primeiro vencimento ${dataBR(previa.financeiro.primeiroVencimento!)}`);

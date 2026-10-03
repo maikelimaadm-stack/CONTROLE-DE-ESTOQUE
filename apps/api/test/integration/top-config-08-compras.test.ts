@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { configuracaoNeutraTop, configuracaoNeutraTopV2 } from "@agro/domain";
+import { configuracaoNeutraTop, configuracaoNeutraTopV2, mensagemAprovacaoReprovada } from "@agro/domain";
 import { fromPgError } from "../../src/lib/errors.js";
 import {
   c, iniciar, encerrar, j, erro, unico, cfg3, cfg4, top, versaoAtualNoBanco, usuario, produto, saldo,
-  itemCompra, corpoCompra, lancarCompra, compraLancada, confirmarCompra, previaCompra, receberPedido, corpoReceber,
+  itemCompra, corpoCompra, lancarCompra, compraLancada, confirmarCompra, previaCompra, receberPedido, corpoReceber, lerCompra,
   aprovar, reprovar, movimentosDe, titulosDe, situacaoNoBanco, auditoriaDe, decisoesDe,
   type Resposta, type Erro, type ItemCompra,
 } from "./top-config-08-ajuda.js";
@@ -553,7 +553,7 @@ describe("AP-7 compra: o ciclo da aprovação (Sempre e A partir de um valor)", 
     expect((await auditoriaDe("documentos_compra", b.id, "reject")).map((a) => a.metadata)).toEqual([{ motivo }]);
     const recusada = await confirmarCompra(b.id);
     expect(recusada.statusCode, recusada.body).toBe(409);
-    expect(erro(recusada)).toEqual({ code: "APROVACAO_REPROVADA", message: `Este documento foi reprovado: ${motivo}.`,
+    expect(erro(recusada)).toEqual({ code: "APROVACAO_REPROVADA", message: "Este documento foi reprovado: Preço acima do combinado.",
       details: { motivo, decididoPor: { id: c.h.demo.adminUserId, nome: expect.any(String) }, decididoEm: (j(rr).aprovacao as { decididoEm: string }).decididoEm } });
     expect(j(await previaCompra(b.id)).recusas).toEqual([erro(recusada)]);
     expect(await semEfeito(b.id)).toEqual(["aberto", 0, 0, 0]);
@@ -568,6 +568,26 @@ describe("AP-7 compra: o ciclo da aprovação (Sempre e A partir de um valor)", 
     expect([j(pvOk).podeConfirmar, j(pvOk).recusas]).toEqual([true, []]);
     expect((await confirmarCompra(b.id)).statusCode).toBe(200);
     await esperarConfirmada(b.id, { produtoId: p.id, quantidade: "3", total: "30.00" });
+  });
+
+  it("AP-7a2 o motivo que JÁ fecha a frase (\"Preço alto.\") → o 409 diz \"…reprovado: Preço alto.\", com UM ponto final só; a prévia diz o mesmo", async () => {
+    const topId = await topCompra(sempre());
+    const p = await produto();
+    const b = await compraLancada("compra", corpoCompra([itemCompra(p.id, "1", "10.00")], { tipo_operacao_id: topId }));
+    const motivo = "Preço alto.";
+    const rr = await reprovar("compras", b.id, { motivo });
+    expect(rr.statusCode, rr.body).toBe(200);
+    expect((await decisoesDe("aprovacoes_compra", b.id)).map((d) => [d.decisao, d.observacao]),
+      "premissa: o motivo gravado já termina em ponto").toEqual([["reprovado", motivo]]);
+
+    const recusada = await confirmarCompra(b.id);
+    expect(recusada.statusCode, recusada.body).toBe(409);
+    expect(erro(recusada)).toEqual({ code: "APROVACAO_REPROVADA", message: "Este documento foi reprovado: Preço alto.",
+      details: { motivo, decididoPor: { id: c.h.demo.adminUserId, nome: expect.any(String) }, decididoEm: (j(rr).aprovacao as { decididoEm: string }).decididoEm } });
+    expect(erro(recusada).message.match(/\.+$/u)?.[0], "UM ponto final só, nunca \"..\"").toBe(".");
+    expect(erro(recusada).message, "o texto à mão e a função do domínio dizem o mesmo").toBe(mensagemAprovacaoReprovada(motivo));
+    expect(j(await previaCompra(b.id)).recusas).toEqual([erro(recusada)]);
+    expect(await semEfeito(b.id)).toEqual(["aberto", 0, 0, 0]);
   });
 
   it("AP-7b A partir de 1500.00: total 1500.00 (com frete) exige e, aprovada, confirma; 1499.99 não exige (aprovar → 409 NAO_EXIGIDA) e confirma direto", async () => {
@@ -719,23 +739,45 @@ describe("AP-8 compra: o que não passa por aprovação", () => {
     }
   });
 
-  it("AP-8c pedido de compra, id inexistente e id malformado → a MESMA 404 do GET; sem compras.approve → 403; reprovar sem motivo → 422", async () => {
+  /**
+   * OPERACOES-01 F6a (decisão 283): o PEDIDO de compra passou a ter aprovação (ao finalizar), e a decisão dele exige
+   * `compras.approve` (a porta) ∧ `pedidos_compra.approve` (a espécie). O administrador aprova as duas espécies: o
+   * pedido cuja TOP não exige aprovação dá a recusa da exigência (409 NAO_EXIGIDA), como a compra. Quem só aprova
+   * compra continua com a MESMA 404 de antes, como inexistente e malformado.
+   */
+  it("AP-8c pedido sem exigência: para quem aprova pedido → 409 NAO_EXIGIDA; para quem só aprova compra, como id inexistente e malformado → a MESMA 404 do GET; sem compras.approve → 403; reprovar sem motivo → 422", async () => {
     const topId = await topCompra(sempre());
     const p = await produto();
     const b = await compraLancada("compra", corpoCompra([itemCompra(p.id, "1", "10.00")], { tipo_operacao_id: topId }));
     const pedido = await compraLancada("pedido", corpoCompra([itemCompra(p.id)], {}, "pedido"));
     const get404 = await c.ligada.inject({ method: "GET", url: `/api/compras/compras/${pedido.id}`, headers: c.h.headers() });
     expect(get404.statusCode).toBe(404);
-    for (const id of [pedido.id, "00000000-0000-4000-8000-0000000000cc", "nao-e-uuid"]) {
+    // O administrador (dono: aprova as duas espécies): o pedido existe para ele, e a TOP neutra do pedido não exige.
+    for (const r of [await aprovar("compras", pedido.id), await reprovar("compras", pedido.id, { motivo: "Não" })]) {
+      expect(r.statusCode, r.body).toBe(409);
+      expect(erro(r)).toEqual({ code: "APROVACAO_NAO_EXIGIDA", message: MSG_NAO_EXIGIDA });
+    }
+    for (const id of ["00000000-0000-4000-8000-0000000000cc", "nao-e-uuid"]) {
       const r = await aprovar("compras", id);
       expect(r.statusCode, `${id}: ${r.body}`).toBe(404);
       expect(erro(r)).toEqual(erro(get404));
     }
+    // Quem só aprova compra (sem pedidos_compra.approve), e LÊ o pedido: a MESMA 404 de antes.
+    const soCompra = await usuario("Aprovador só de compra", ["compras.view", "compras.approve", "pedidos_compra.view"]);
+    expect((await lerCompra("pedido", pedido.id, soCompra)).statusCode, "premissa: ele vê o pedido pela porta do pedido").toBe(200);
+    for (const id of [pedido.id, "00000000-0000-4000-8000-0000000000cc", "nao-e-uuid"]) {
+      const r = await aprovar("compras", id, {}, soCompra);
+      expect(r.statusCode, `${id}: ${r.body}`).toBe(404);
+      expect(erro(r)).toEqual(erro(get404));
+    }
+    expect(await decisoesDe("aprovacoes_compra", pedido.id)).toEqual([]);
     const semApprove = await usuario("Comprador sem aprovar", ["compras.view", "compras.edit"]);
     expect((await aprovar("compras", b.id, {}, semApprove)).statusCode).toBe(403);
     const semMotivo = await reprovar("compras", b.id, {});
     expect(semMotivo.statusCode, semMotivo.body).toBe(422);
     expect(await decisoesDe("aprovacoes_compra", b.id)).toEqual([]);
+    // Premissa: a porta é dele — quem só aprova compra decide a compra.
+    expect((await aprovar("compras", b.id, {}, soCompra)).statusCode).toBe(200);
   });
 });
 

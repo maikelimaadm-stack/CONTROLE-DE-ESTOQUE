@@ -8,7 +8,7 @@ import { todayISO } from "@/lib/utils";
 import { useDirtyTab, useTabTitle } from "@/lib/workspace-tabs";
 import { Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
-import { defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
+import { defaultPlan, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
 import { useQuery } from "@tanstack/react-query";
 import { AVISO_PADRAO_INVALIDO_CENTRAL, CAMPOS_SO_NO_RODAPE, camposAdicionaisDoCabecalho, ERRO_EXIGENCIA_NAO_ATENDIDA, ERRO_LAYOUT_CAMPO_OBRIGATORIO, exigenciasFaltandoPorCampos, FORMA_UUID_PADRAO, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando, chavePadraoDeCadastro, catalogoDaFamilia, documentTotals, mensagemCampoObrigatorio, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CampoDoLayout, type CondicaoPagamento, type EstruturaLayout, type OrigemDoLayout, type ValorPadraoLayout } from "@agro/domain";
 import { api, ApiError } from "@/lib/api";
@@ -28,6 +28,9 @@ import { descartarEntrega, entregarEmMemoria, espiarEntrega } from "@/lib/entreg
 import { toast } from "@/lib/toast";
 /* TOP-CONFIG-05 exigências: as regras da operação (só com `capacidades.regrasDaOperacao` exata). */
 import { entendeRegrasDaOperacao, useRegrasDaOperacao, useSituacaoCliente } from "@/features/sales/regras-da-operacao";
+/* OPERACOES-01 F2 (decisão 279): o Salvar do motor (aviso pela resposta) e as regras gerais da TOP (rótulo, sem itens). */
+import { useCriarDocumento, type RespostaDoSalvar } from "@/features/central/salvar";
+import { REGRAS_GERAIS_NEUTRAS, exigeAoMenosUmItem, rotuloDoSalvar } from "@/features/central/regras-gerais";
 import estilosCv from "@/features/central/moldura.module.css";
 /* TOP-CONFIG-05 atraso — faixa do cliente em atraso (só com `capacidades.regrasDaOperacao` exata). */
 import { ERRO_CLIENTE_EM_ATRASO } from "@agro/domain";
@@ -35,6 +38,10 @@ import { FaixaAtrasoCliente, bloqueiaSalvar } from "@/features/sales/faixa-atras
 /* TOP-CONFIG-07 — reserva de estoque (só com `regras.reservaEstoque === true`, na família do pedido). */
 import { familiaOperacionalDeDocumentoVenda, type ColunaDoLayout } from "@agro/domain";
 import { CAMPOS_DO_ITEM_EXIGIDOS_PELA_RESERVA, ehCaminhoDeItemDaReserva } from "@/features/sales/regras-da-operacao";
+/* OPERACOES-01 F3b (decisão 280): o "Local de estoque" do cabeçalho, para as linhas novas (estado da tela). */
+import { CampoDoLocalPadrao, useLocalDoCabecalho } from "@/features/central/local-padrao";
+import type { LocalDeEstoque } from "@/features/central/contrato";
+import { PREFIXO_CENTRAL_VENDAS } from "@/features/sales/central-vendas-adaptador";
 
 const T: Record<string, string> = { budgets: "Novo Orçamento", orders: "Novo Pedido de Venda", sales: "Nova Venda" };
 /** VISUAL-UX-02 Fase B: as mensagens das pendências de natureza e centro (no campo e na lista "N pendências"). */
@@ -118,15 +125,17 @@ const hrefDoConfigurador = (l: LayoutQueVale) => (l.origem !== "sistema" && l.id
 
 /**
  * TOP-CONFIG-07 — A RESERVA VENCE O LAYOUT NOS ITENS (a mesma régua de "a exigência da TOP vence o layout" no
- * cabeçalho): a coluna que a reserva exige e o layout não desenha entra mesmo assim, logo depois do Produto (onde o
- * layout do sistema a põe) — sem ela o operador não teria onde escolher o armazém que o servidor cobra. Só o DESENHO:
- * a cobrança do layout continua lendo `layout`, e o "*" vem da reserva (`ItensDaCentral`), não daqui.
+ * cabeçalho): a coluna que a reserva exige e o layout não desenha entra mesmo assim, logo antes do Código/Produto (onde
+ * o layout do sistema a põe — OPERACOES-01 F3b, decisão 280: o local antes do produto; a mesma régua do `armazemForcado`
+ * do motor; sem nenhum dos dois, no início) — sem ela o operador não teria onde escolher o local que o servidor cobra.
+ * Só o DESENHO: a cobrança do layout continua lendo `layout`, e o "*" vem da reserva (`ItensDaCentral`), não daqui.
  */
 function comColunasDaReserva(itens: readonly ColunaDoLayout[]): readonly ColunaDoLayout[] {
   const faltam = CAMPOS_DO_ITEM_EXIGIDOS_PELA_RESERVA.filter((c) => !itens.some((x) => x.campo === c));
   if (!faltam.length) return itens;
   const lista = [...itens];
-  lista.splice(lista.findIndex((x) => x.campo === "product_id") + 1, 0, ...faltam.map((campo): ColunaDoLayout => ({ campo, obrigatorio: false })));
+  const ancoras = lista.map((x, i) => (x.campo === "codigo" || x.campo === "product_id" ? i : -1)).filter((i) => i >= 0);
+  lista.splice(ancoras.length ? Math.min(...ancoras) : 0, 0, ...faltam.map((campo): ColunaDoLayout => ({ campo, obrigatorio: false })));
   return lista;
 }
 
@@ -317,6 +326,9 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
    */
   const regrasAtivo = entendeRegrasDaOperacao(estadoTop);
   const { regras, pendente: regrasPendente } = useRegrasDaOperacao(kind, top.id, regrasAtivo);
+  /* OPERACOES-01 F2 (decisão 279): as regras gerais da versão atual da TOP, como o servidor as declarou. Sem a
+     capacidade, sem resposta ainda, ou API anterior (bloco ausente): o neutro — "Salvar" e "ao menos um item", os de antes. */
+  const regrasGerais = regras?.regrasGerais ?? REGRAS_GERAIS_NEUTRAS;
   /* TOP-CONFIG-05 condição: a lista permitida da versão atual (null = sem restrição). Declarada aqui, antes de qualquer
      leitura de padrão de cadastro, para `padraoNaoPermitido` nunca ler antes da inicialização. */
   const condicoesPermitidas = regras?.condicoesPermitidas ?? null;
@@ -422,9 +434,12 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
   }, [layout, empresa, copia]);
 
   /* VISUAL-UX-02 W1: depois do POST abre o documento salvo, como sempre, deixando em memória o "Salvo" e — quando o
-     clique foi "Confirmar venda" — o pedido de abrir o diálogo de Confirmar venda (com a prévia do servidor). */
+     clique foi "Confirmar venda" — o pedido de abrir o diálogo de Confirmar venda (com a prévia do servidor).
+     OPERACOES-01 F2 (decisão 279): o POST é o do motor (`useCriarDocumento`) — a mesma chave de idempotência e o mesmo
+     erro de antes, e o aviso lido da RESPOSTA (`confirmacaoAutomatica`): "Salvo e confirmado.", aguardando aprovação,
+     sem permissão, recusada — ou, sem a chave, o "Salvo com sucesso" de antes. Um aviso por Salvar. */
   const confirmarDepois = React.useRef(false);
-  const create = useCreate<{ id: string }>(`/api/sales/${kind}`, (r) => { const depois: DepoisDeSalvar = { confirmar: confirmarDepois.current }; entregarEmMemoria(chaveDepoisDeSalvar(r.id), depois); router.push(`/vendas/${kind}/${r.id}`); });
+  const create = useCriarDocumento<RespostaDoSalvar>(`/api/sales/${kind}`, (r) => { const depois: DepoisDeSalvar = { confirmar: confirmarDepois.current }; entregarEmMemoria(chaveDepoisDeSalvar(r.id), depois); router.push(`/vendas/${kind}/${r.id}`); });
   /**
    * CLASSIFICAÇÃO FINANCEIRA (VENDAS-A1): só existe na tela quando a API DECLARA que a entende. Obrigatória
    * nas TRÊS variantes: documento salvo não tem edição aqui e a conversão só copia — pedido sem
@@ -568,7 +583,9 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
     if (!h.client_id) anotar("client_id", cfg.get("client_id")?.rotulo || "Cliente", "Selecione um cliente.");
     if (semNatureza) anotar("categoria_financeira_id", cfg.get("categoria_financeira_id")?.rotulo || "Natureza", PENDENCIA_NATUREZA);
     if (semCentro) anotar("centro_custo_id", cfg.get("centro_custo_id")?.rotulo || "Centro de resultado", PENDENCIA_CENTRO);
-    if (!items.length) anotar("items", "Itens", "Adicione ao menos um item.");
+    /* OPERACOES-01 F2: "ao menos um item" só não vale quando o servidor declarou que esta TOP aceita documento sem
+       itens; o produto vazio numa linha que existe continua pendência (abaixo). */
+    if (!items.length && exigeAoMenosUmItem(regrasGerais)) anotar("items", "Itens", "Adicione ao menos um item.");
     items.forEach((it, i) => { if (!it.product_id) anotar(`items[${i}].product_id`, `Item ${i + 1}`, "Selecione o produto."); });
     for (const f of exigenciasFaltando()) anotar(f.caminho, f.rotulo, `${f.rotulo} é obrigatório nesta operação.`);
     for (const f of faltando()) anotar(f.caminho, f.rotulo, mensagemCampoObrigatorio(f.rotulo));
@@ -856,15 +873,24 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
   /* TOP-CONFIG-07: com a reserva, a coluna do armazém entra mesmo que o layout não a desenhe (`comColunasDaReserva`). */
   const layoutDosItens = React.useMemo(() => (layout ? { colunas: reservaAtiva ? comColunasDaReserva(layout.itens) : layout.itens } : null), [layout, reservaAtiva]);
   /**
-   * ARMAZÉM PADRÃO (VENDAS-A3-1b): o padrão da coluna Armazém vale SÓ para a empresa do documento de AGORA
-   * (`empresaId` da resposta === `h.empresa_id`); de outra empresa, ou sem empresa na resposta, nenhum. Só a linha NOVA o
-   * recebe — trocar a empresa não mexe nas linhas que já existem.
+   * O PADRÃO DO LOCAL (VENDAS-A3-1b): o padrão de cadastro da coluna do local vale SÓ para a empresa do documento de
+   * AGORA (`empresaId` da resposta === `h.empresa_id`); de outra empresa, ou sem empresa na resposta, nenhum.
    */
   const padraoArmazem = layout && layout.itens.some((c) => c.campo === "warehouse_id") ? padroes.validos.get(chavePadraoDeCadastro("itens", "warehouse_id")) : undefined;
-  const armazemPadrao = React.useMemo(
-    () => (padraoArmazem && padraoArmazem.empresaId && padraoArmazem.empresaId === h.empresa_id ? { id: padraoArmazem.id, rotulo: padraoArmazem.rotulo } : null),
+  const padraoDoLocal = React.useMemo(
+    (): LocalDeEstoque | null => (padraoArmazem && padraoArmazem.empresaId && padraoArmazem.empresaId === h.empresa_id ? { id: padraoArmazem.id, rotulo: padraoArmazem.rotulo } : null),
     [padraoArmazem, h.empresa_id]
   );
+  /**
+   * O "LOCAL DE ESTOQUE" DO CABEÇALHO (OPERACOES-01 F3b, decisão 280): começa no padrão do local e o usuário o troca nos
+   * Dados principais; cada linha NOVA nasce com ele, e a linha troca o seu na própria célula. É estado da TELA: fora de
+   * `h`, então fora do corpo do POST, do `sujo`, da cópia do Duplicar e das pendências do Salvar (o W4 confere o corpo
+   * exato). Trocar a empresa volta ao padrão da empresa nova; o Descartar remonta o formulário e volta ao padrão.
+   * Só existe quando a coluna do local está na grade (sem layout, o motor a desenha; com layout, ele a desenha ou a
+   * reserva a força): com o local escondido pelo layout, a linha nasce sem local, como antes.
+   */
+  const local = useLocalDoCabecalho(padraoDoLocal, h.empresa_id);
+  const localNaGrade = !layoutDosItens || layoutDosItens.colunas.some((c) => c.campo === "warehouse_id");
 
   /* ── VISUAL-UX-02 W1 — a barra da criação ── */
   const [perguntaDescartar, setPerguntaDescartar] = React.useState(false);
@@ -891,7 +917,9 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
             navegar é a barra de abas. Salvar e Confirmar venda desabilitam só por ESTADO (TOP, layout/regras, atraso)
             ou sem alteração; pendência de campo (natureza e centro inclusive, Fase B) é o clique que não envia nada. */}
         <BotaoDaBarra rotulo="Descartar alterações" disabled={!sujo || create.isPending} data-testid="central-vendas-descartar" onClick={() => setPerguntaDescartar(true)}><IconeDescartar /></BotaoDaBarra>
-        <BotaoDaBarra rotulo="Salvar" dica={create.isPending ? "Salvando…" : "Salvar"} ocupado={create.isPending} disabled={salvarDesabilitado} data-testid="central-vendas-salvar"
+        {/* OPERACOES-01 F2: com a Confirmação Automática declarada pelo servidor, o Salvar se chama "Salvar e confirmar" —
+            para quem pode confirmar a venda (`sales.edit`, a capacidade que a confirmação automática confere). */}
+        <BotaoDaBarra rotulo={rotuloDoSalvar(regrasGerais, can("sales.edit"))} dica={create.isPending ? "Salvando…" : rotuloDoSalvar(regrasGerais, can("sales.edit"))} ocupado={create.isPending} disabled={salvarDesabilitado} data-testid="central-vendas-salvar"
           onClick={() => { confirmarDepois.current = false; submit(); }}><IconeSalvar /></BotaoDaBarra>
         {ehVenda && can("sales.edit") && <PilulaDaBarra icone={<IconeConfirmar />} dica="Confirmar venda" disabled={salvarDesabilitado || create.isPending} data-testid="central-vendas-confirmar"
           onClick={() => { confirmarDepois.current = true; submit(); }}>Confirmar venda</PilulaDaBarra>}
@@ -909,6 +937,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
         <ColunaDeCampos>
           {principais.slice(0, posTop).map(render)}
           {contextoOperacional}
+          {localNaGrade && <CampoDoLocalPadrao prefixoTestid={PREFIXO_CENTRAL_VENDAS} empresaId={h.empresa_id} valor={local.local} onChange={local.escolher} />}
           {principais.slice(posTop, posResponsavel).map(render)}
           {responsavel}
           {principais.slice(posResponsavel).map(render)}
@@ -917,7 +946,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
           {adicionais.map(render)}
         </DadosAdicionais>
       </>}
-      itens={<ItensDaCentral items={items} onChange={setItems} layout={layoutDosItens} erros={layout || regras ? erros : undefined} armazemPadrao={armazemPadrao} reservaEstoque={reservaDosItens} />}
+      itens={<ItensDaCentral items={items} onChange={setItems} layout={layoutDosItens} erros={layout || regras ? erros : undefined} armazemPadrao={localNaGrade ? local.local : null} reservaEstoque={reservaDosItens} />}
       abas={abas}
     />
 

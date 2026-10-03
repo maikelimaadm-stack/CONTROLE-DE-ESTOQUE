@@ -24,7 +24,7 @@ export const ehDecimalDaApi = (v: unknown): v is string => typeof v === "string"
 export const disponivelNegativo = (v: string): boolean => D(v).lt(0);
 
 /** Explicação do destaque, para `title` e leitor de tela — a cor sozinha não diz nada a quem não a vê. */
-export const EXPLICACAO_DISPONIVEL_NEGATIVO = "Disponível negativo: o estoque físico do armazém é menor do que o reservado para pedidos.";
+export const EXPLICACAO_DISPONIVEL_NEGATIVO = "Disponível negativo: o estoque físico do local de estoque é menor do que o reservado para pedidos.";
 
 export interface SaldoComReserva { fisico: string; reservado: string; disponivel: string }
 

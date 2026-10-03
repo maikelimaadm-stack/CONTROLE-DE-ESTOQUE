@@ -28,9 +28,10 @@ export class OrganizacaoLimpaRecusada extends Error {
  * de fixture que não esteja nesta lista, para ela não envelhecer em silêncio.
  */
 export const SENHAS_DO_REPOSITORIO: readonly string[] = [
-  "Acesso@12345", "Anexo@12345", "Borda@12345", "Busca@12345", "Conversao@12345", "Cruzado@12345", "Demo@12345",
-  "Empresa@12345", "Escopo@12345", "Hotfix@12345", "Leitor@12345", "Matriz@12345", "Modulo@12345", "Notif@12345",
-  "Rebanho@12345", "Resp@12345", "Restrito@12345", "Selecao@12345", "Sent@12345", "Variante@12345", "Vendedor@12345",
+  "Acesso@12345", "Anexo@12345", "Borda@12345", "Busca@12345", "Central@12345", "Conversao@12345", "Cruzado@12345",
+  "Defeito@12345", "Demo@12345", "Empresa@12345", "Escopo@12345", "Hotfix@12345", "Leitor@12345", "Matriz@12345",
+  "Modulo@12345", "Notif@12345", "Orcamento@12345", "Rebanho@12345", "Resp@12345", "Restrito@12345", "Selecao@12345",
+  "Sent@12345", "Variante@12345", "Vendedor@12345",
 ];
 export const SENHA_TAMANHO_MINIMO = 12;
 

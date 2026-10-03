@@ -711,6 +711,14 @@ desenvolvimento a partir daqui é a decisão 240 com a 247.
 | 20:12:27 | Railway `api`: `ORGANIZACAO_LIMPA_ON_DEPLOY=0` e `ADMIN_PASSWORD` substituída por um texto não secreto (sem deploy) |
 | depois | o Maike entrou pela interface com sucesso |
 
+**Desde a 0041 (TOP-CONFIG-08, decisão 277), o comando de 20:03:21 FALHA** (OPERACOES-01, decisão 291). As três
+tabelas de aprovação (`erp.aprovacoes_venda`, `aprovacoes_compra`, `aprovacoes_estoque`) têm gatilho `BEFORE TRUNCATE`
+de imutabilidade, e um `TRUNCATE … CASCADE` alcança essas tabelas a partir de qualquer tabela de que elas dependem por
+chave estrangeira, direta ou indiretamente: `organizations`, `users`, `empresas`, `tipos_operacao`,
+`tipos_operacao_versoes`, `sales_documents`, `documentos_compra`, `documentos_estoque` e as que estas referenciam (por
+exemplo, `people`). O comando inteiro é recusado e nada é truncado. A linha acima é histórico e fica como está; a regra
+permanente continua a da decisão 247: dado de produção não se apaga.
+
 Estados: `PENDING` = não feito ou não comprovado. `OK` = feito, com evidência datada. Nenhum item vira `OK`
 por declaração, preview, `localhost`, CI ou "deploy verde". **Bloqueia** = sem ele, a primeira transação real
 não acontece.
@@ -1542,6 +1550,2035 @@ grant execute on function erp.situacao_atraso_cliente(uuid, int) to erp_app;
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 
+## OPERACOES-01 — correções e modelo de operações para o sistema inteiro (PR #90)
+
+Fatia F1 em fases (decisões 279 a 288 e 291 — a 291 é a F1, as correções do que já entrou; a 278 é da VISUAL-UX-04b,
+#89), uma PR. Cada fase acrescenta a sua subseção abaixo: migration (se houver), ordem de deploy, compatibilidade nos
+dois sentidos do skew, impacto em dados reais, reversão e o roteiro do Maike em produção (PENDING). As migrations da
+fatia são numeradas na ordem em que entram na branch (0042 a 0048, travas (2026,76) a (2026,82)): 0042 a F8, 0043 a
+F5a, 0044 a F6a e 0045 a F9a; 0046, trava (2026,80), a F10; 0047, trava (2026,81), a F7; 0048, trava (2026,82): a
+F12 — o search_path de `erp.audit_row` (entrou) — as 0042 a 0048 entraram. Fora da fatia: a 0049, trava (2026,83), é
+da #91 (MAPA-01, decisão 289), mesclada em 03/10 e já em produção; a 0050 é da #92, que espera a #90 (decisão do Maike
+de 03/10).
+
+**A ordem real em produção (03/10).** A #91 foi mesclada em 03/10, e a main com ela foi trazida para esta branch
+(`b2035ca`). Em produção, o ledger de migrations (`public.erp_migrations`) tem 42 migrations: 0001 a 0041 e a 0049 da
+#91 (MAPA-01). As 0042 a 0048 desta PR rodam DEPOIS da 0049, embora numeradas antes: o runner
+(`packages/db/src/migrate.ts`) aplica pela ordem do nome e pula as já aplicadas, então o pre-deploy da #90 aplica as
+0042 a 0048, nessa ordem, com a 0049 já no ledger. Nenhuma das 0042 a 0048 depende da 0049 nem da ausência dela: as
+pré-condições da 0043 e da 0045 sobre `erp.modulos_escopo_empresa` só conferem a EXISTÊNCIA das chaves `'estoque'` e
+`'financeiro'` (a 0049 só acrescenta `'mapa'`). **A prova** (`packages/db/test/operacoes-01-ordem-real.test.ts`, 6 casos,
+verde em 03/10): o banco A reproduz produção — 0001..0041 e a 0049 como o runner aplica, depois o `migrate()` de verdade
+(que aplica as 0042..0048 do disco, na ordem do nome); o banco B é a ordem por número (o `migrate()` num banco novo). Em
+A, cada migration da PR aplica sem erro, com as pré e as pós-condições do próprio arquivo, e o ledger final é igual ao
+disco. O retrato do catálogo de A é idêntico ao de B: tabelas, colunas, restrições, índices, funções (corpo, SECURITY
+DEFINER, search_path), gatilhos, políticas, RLS, privilégios, comentários e o conteúdo das tabelas semeadas
+(`modulos_escopo_empresa` com o `'mapa'` na ordem 12) — 8480 linhas comparadas, nenhuma diferença. **O alcance da
+prova:** bancos NOVOS, sem o acervo de produção, migrados como superusuário local; ela prova a ORDEM (nenhuma migration
+da PR depende da 0049 nem da ausência dela, e o esquema final é o mesmo), não os dados nem o papel de produção. As
+pré-condições que leem dados reais (a P8 da 0042, por exemplo) e o dono das funções rodam de novo no pre-deploy, sobre
+produção; a conferência lá é o passo 0 do roteiro do Maike: PENDING. Prova reversa local
+(ledger falso da 0046, uma linha da 0049 mudada, pós-condição da 0049, pré-condição da 0044, catálogo mudado em A):
+cada uma reprova com o diff por seção e chave. Nada muda no procedimento do deploy: o pre-deploy é o mesmo `migrate`; a
+ordem fora do número não exige passo manual.
+
+### F2 — as Centrais de Vendas e de Compras usam as regras gerais da TOP (OPERACOES-01, sem migration)
+
+Decisão 279. **Sem migration, sem variável, sem permissão nova, sem capacidade nova.** Duas rotas novas, só de
+LEITURA, em prefixo próprio: `GET /api/aprovacoes/vendas/:id` (`sales.view`) e `GET /api/aprovacoes/compras/:id`
+(`compras.view`) — a situação da aprovação de UM documento. Uma chave nova, aditiva e por último, em
+`GET /api/sales/<seg>/regras-da-operacao`, `GET /api/compras/<seg>/regras-da-operacao` e no `regras` de
+`GET /api/sales/<seg>/:id/edicao`: `regrasGerais: { confirmacaoAutomatica, aceitaSemItens }`. Os corpos de entrada e
+as respostas do POST, do PUT/PATCH e do `/convert` não mudam. Na tela: "Salvar e confirmar" com a TOP de Confirmação
+Automática, o aviso do Salvar pelo resultado da confirmação, a venda e a compra sem itens quando a TOP permite, e o
+bloco "Aprovação" na consulta da venda e da compra abertas.
+
+**Migration:** nenhuma. Nada a aplicar no banco. As tabelas lidas (`erp.aprovacoes_venda`, `erp.aprovacoes_compra`,
+0041) já estão em produção.
+
+**Ordem do deploy:** esta fase não impõe ordem entre API e web — os dois sentidos do skew estão provados (abaixo). Duas
+condições da PR #90:
+- a F4 (decisão 281) vai no MESMO deploy: a ajuda nova da Geral do editor fala do documento sem itens nas Centrais de
+  Vendas e de Compras, e isso só é verdade com esta fase;
+- a ordem do deploy da PR é a das fases com migration (F5 a F10), nas seções delas.
+
+**Impacto em dados reais:** NENHUM. Nada é gravado, reescrito nem apagado; sem backfill. As rotas novas só leem.
+- As 3 TOPs de produção (leitura de 02/10) são de pedido de compra (formato 3, com Automática e Permitido declarados),
+  orçamento e pedido de venda (formato 2). São variantes que nunca executam regra geral: `regrasGerais` sai
+  `{ "confirmacaoAutomatica": false, "aceitaSemItens": false }`, e as Centrais continuam com "Salvar" e pedindo item.
+- O bloco "Aprovação" só é montado na consulta da VENDA e da COMPRA. Produção não tem nenhuma das duas (só 1 orçamento
+  convertido e 1 pedido de venda aberto); nenhuma consulta de lá faz o GET novo.
+- O efeito novo só aparece quando o Maike gravar uma TOP de VENDA ou de COMPRA com Confirmação Automática, Documento sem
+  itens Permitido ou aprovação — efeito que o servidor já executa desde a decisão 277. Ligar é decisão dele, TOP por TOP
+  (decisão 281; item 4 da 240).
+
+**Version skew** (base `622f194`; os specs entram nos configs de skew pelo nome e ficam fora da suíte comum):
+- **Sentido 1 — web novo × API da base** (janela "web antes da API" e reversão só da API): sem `regrasGerais`, o web
+  novo é a Central de hoje — "Salvar" exato com a TOP Automática; "Adicione ao menos um item." / "Inclua ao menos um
+  item." com ZERO POST mesmo com a TOP que permitiria. O aviso do Salvar lê o `confirmacaoAutomatica` que a base JÁ
+  devolve: com a TOP Automática a base confirma, e o aviso é "Salvo e confirmado." — a afirmação verdadeira. Na
+  consulta, a pergunta da situação recebe o 404 "Rota não encontrada" (resposta, não falha de rede), o bloco não
+  aparece, e a prévia do Confirmar explica a aprovação pendente como hoje. Nenhuma requisição morre no navegador.
+  `operacoes-01-f2-skew-api-producao.spec.ts` (K-1a vendas, K-1b compras, K-1c consulta). O mundo é perguntado à base
+  na hora, pelas duas portas da F2, que têm de concordar: o bloco em `/regras-da-operacao` e a resposta ao id
+  inexistente em `/api/aprovacoes/<área>/<id>` (404 de rota = legado; 404 do documento = novo). Uma sem a outra
+  reprova. O `skew-api-producao.spec.ts` compartilhado passa inteiro (34 casos) com o web desta fase.
+- **Sentido 2 — web da base × API nova** (janela "API antes do web" e reversão só do web): a API manda a chave a mais,
+  que o web da base ignora. O POST sai com as chaves de hoje e recebe 201 com a confirmação. A rota nova não é chamada.
+  DECLARADO, como já é hoje com a base: o web da base diz "Salvo com sucesso" depois do POST que confirmou (ele não lê
+  `confirmacaoAutomatica`), a consulta mostra o documento confirmado, e com a TOP Permitido ele ainda pede item (a API
+  aceitaria). Nenhum 404, 422 ou 5xx no navegador. `operacoes-01-f2-skew-web-anterior.spec.ts` (K-2a vendas, K-2b
+  compras). O mundo sai do fonte do web da base: `git grep -c -F "Salvar e confirmar" HEAD -- apps/web/src` → 0 em
+  `622f194`.
+- Os ramos "mundo novo" dos dois specs ("Salvar e confirmar", sem itens salva, bloco pendente) só rodam quando a base
+  tiver esta fase.
+
+**Reversão:** API e web voltam por redeploy da versão anterior; nada a desfazer em banco ou configuração.
+- Reverter só a API = sentido 1: o rótulo e a pendência de hoje, o bloco da aprovação some, e o aviso continua lendo a
+  resposta.
+- Reverter só o web = sentido 2: a Central de hoje ("Salvar", item exigido, "Salvo com sucesso").
+- TOP gravada no formato 5 segue a reversão da F4 (§ F4).
+
+**Roteiro do Maike em produção (depois do deploy; produção é operacional — decisões 240 e 247; só leitura, nada é
+gravado):**
+1. Vendas › Novo › a TOP de pedido de venda que já existe:
+   - o botão Salvar tem a dica "Salvar" (não "Salvar e confirmar");
+   - clicar Salvar sem item → a pendência "Adicione ao menos um item." e nada é enviado;
+   - no DevTools › Rede, a resposta de `…/api/sales/orders/regras-da-operacao?tipo_operacao_id=…` termina em
+     `"regrasGerais":{"confirmacaoAutomatica":false,"aceitaSemItens":false}` (prova de que a API nova está no ar).
+   Descartar.
+2. Compras › Novo › a TOP de pedido de compra que já existe:
+   - "Salvar"; sem item → "Inclua ao menos um item." e nada é enviado;
+   - a resposta de `…/api/compras/pedidos/regras-da-operacao?tipo_operacao_id=…` termina no mesmo `regrasGerais` neutro
+     (a TOP é formato 3 com Automática e Permitido declarados: o corte da 277, e o pedido nunca executa).
+   Descartar.
+3. Abrir o pedido de venda aberto: nenhum bloco "Aprovação", e a Rede não mostra pedido a `/api/aprovacoes/vendas/…`
+   (só a consulta da venda pergunta). A pílula da conversão e o resto da consulta, como antes.
+4. Aprovações: a fila abre como antes ("Nenhum documento aguardando aprovação.").
+
+A prova com gravação ("Salvar e confirmar" → "Salvo e confirmado.") NÃO faz parte deste roteiro: ela grava um documento
+confirmado, com estoque e financeiro, em produção. Ela acontece quando o Maike decidir ligar a Confirmação Automática
+numa TOP de venda ou de compra real, e o primeiro Salvar dela é a prova.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
+### F3a — Local de estoque, pesquisa de pessoas e importação com o nome antigo (OPERACOES-01, sem migration)
+
+Decisão 280 (parte F3a). **Sem migration, sem variável, sem permissão nova, sem capacidade nova, sem rota nova.**
+"Armazém" passa a "Local de estoque" em todo texto que o usuário vê (telas, cadastros, permissões, relatórios, menu,
+mensagens da API); os identificadores técnicos (tabela, colunas, `warehouses`, `/cadastros/armazens`, testids, códigos de
+erro, `estoque.transferencia_entre_armazens`) não mudam. A importação de Produtos aceita também a coluna "Armazém padrão".
+O seletor de Parceiros (`GET /api/resources/people/options`) acha também pela razão social e pelo CPF/CNPJ (com
+`people.view`; sem ela, pelo nome e pelo documento completo), e todo seletor aceita `page`/`pageSize` (padrão 1 × 200, a
+página de hoje). O motivo de baixa "Pagamento com produto" ganha rótulo.
+
+**Migration:** nenhuma. Nada a aplicar no banco.
+
+**Ordem do deploy:** esta parte não impõe ordem — API e web em qualquer ordem, nas superfícies de § Superfície web. Na
+PR #90, a ordem do deploy é a das fases com migration (F5 a F10), nas seções delas.
+
+**Impacto em dados reais:** NENHUM. Nada é gravado, reescrito nem apagado; sem backfill. Layout de documento gravado
+com rótulo próprio continua com ele; o sem rótulo próprio passa a mostrar "Local de estoque" (o rótulo vem do catálogo,
+não do registro). O que muda para fora do sistema: o cabeçalho das exportações (CSV/XLSX de listas e relatórios) que
+tinham a coluna "Armazém" passa a "Local de estoque", e o modelo de importação de Produtos sai com "Local de estoque
+padrão". Produção em 02/10: zero baixas, zero transferências — a coluna Motivo não tem o que mostrar lá.
+
+**Version skew** (base `622f194`; provas em arquivos próprios, fora da suíte comum):
+- **Sentido 1 — web novo × API da base** (janela "web antes da API" e reversão só da API): o web manda os MESMOS pedidos
+  e corpos (o seletor pede `search` e nada mais). A tela diz "Local de estoque"; as mensagens que vêm da base dizem
+  "armazém" (texto misturado, nada quebra). A pesquisa por CPF/CNPJ ou razão social mostra "Nenhum resultado", sem
+  erro: a base só acha pelo nome (`operacoes-01-f3a-skew-api-producao.spec.ts`, K-1: a pergunta vai à base antes da tela
+  e decide o ramo; na execução local, "a base NÃO acha o parceiro pelo CNPJ → Nenhum resultado"). Importação: o modelo
+  vem da API que serve — a base produz e aceita "Armazém padrão". A lista de baixas mostra o rótulo (o dado é o mesmo).
+  A produção de ração do web novo escolhe os locais pelos rótulos novos (LT-K1 de `skew-api-producao.spec.ts`).
+- **Sentido 2 — web da base × API nova** (janela "API antes do web" e reversão só do web): o web da base pede
+  `/options?search=…` sem página e recebe a página 1 de 200, com a MESMA forma (array `{code, id, label}`); o seletor
+  antigo passa a achar o parceiro pelo CNPJ sem mudar nada nele, e salvar com ele funciona
+  (`operacoes-01-f3a-skew-web-anterior.spec.ts`, K-2: premissa `page=abc` → 422, a API é a nova; a equipe salva com 201).
+  As mensagens novas aparecem como vieram (o web da base não compara texto de mensagem). A planilha baixada ANTES do
+  deploy (coluna "Armazém padrão") é aceita; o modelo baixado depois sai com "Local de estoque padrão".
+  `GET /resources/:key/definition` ganha duas chaves (`pesquisaDoSeletor`, `rotulosAnteriores`), que o web da base ignora.
+
+**Reversão:** redeploy da API e/ou do web anteriores; nada a desfazer em banco ou configuração. Reverter a API = sentido
+1: a pesquisa por documento e razão volta a não achar ("Nenhum resultado"), o 422 de parâmetro repetido some, e — DECLARADO
+— a planilha de Produtos baixada da API nova (cabeçalho "Local de estoque padrão") é RECUSADA pela anterior como
+"Coluna desconhecida para Produtos. Baixe o modelo atualizado." (422, nada gravado): baixar o modelo de novo resolve.
+Reverter o web = sentido 2.
+
+**Roteiro do Maike (produção; produção é operacional — decisões 240 e 247; só leitura, nada é gravado):**
+1. Menu (depois do deploy com a troca do `nav.registry.mjs`): Configurações › Produtos e Classificações mostra "Locais
+   de estoque"; a busca do menu por "armazém" ainda acha a aba; Estoque › ações mostra "Transferência entre locais de
+   estoque".
+2. Configurações › Locais de estoque: o título "Locais de estoque"; "Novo" abre "Novo local de estoque" — fechar sem
+   salvar. A ficha de um Produto (aba Estoque): o campo "Local de estoque padrão".
+3. Perfis de usuário (permissões): "Locais de estoque" e "Transferência entre locais de estoque".
+4. Vendas › + Novo › a TOP de orçamento ou de pedido de venda que já existe (produção tem só essas duas de venda): a coluna "Local de estoque" da grade aparece inteira, sem corte; o
+   campo Cliente, com um cliente cadastrado com CNPJ: digitar o CNPJ COM máscara → o cliente aparece; digitar um pedaço
+   da razão social em minúsculas → aparece. Descartar — nada é gravado. (Com um usuário sem a leitura de Parceiros, se
+   houver: pelo nome e pelo CNPJ completo acha; pela raiz do CNPJ e pela razão, "Nenhum resultado" — de propósito.)
+5. Cadastros › Produtos › Importar planilha: baixar o modelo → a coluna "Local de estoque padrão" (e nenhuma "Armazém
+   padrão"). Enviar uma planilha com o cabeçalho "Armazém padrão" e um local da aba Listas: a PRÉVIA não acusa coluna
+   desconhecida. FECHAR NA PRÉVIA — nunca "Importar tudo" nem "Importar só as linhas certas" (gravaria produto).
+6. Estoque › Nova baixa: o "Motivo da baixa" lista 13 motivos, com "Pagamento com produto" e "Outro". Voltar sem salvar.
+7. Relatórios › Movimentação de Estoque e Estoque Consolidado: o filtro "Local de estoque"; Estoque por Lote/Fornecedor:
+   a coluna "Local de estoque".
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
+### F3b — o local antes do produto e a pesquisa de produto com o saldo do local (OPERACOES-01, sem migration)
+
+Decisão 280 (parte F3b). **Sem migration, sem variável, sem permissão nova, sem flag.** O que entra:
+- uma rota nova de LEITURA, `GET /api/produtos/pesquisa/capacidades` → `{"capacidades":{"pesquisaDeProdutos":1}}`;
+- três parâmetros ADITIVOS em `GET /api/produtos/pesquisa` (`pagina`, `com_saldo`, `controla_estoque`) e três chaves
+  novas no fim da resposta (`pagina`, `temMais`, `filtradoPorSaldo`);
+- no catálogo de itens de venda (domínio), o Local de estoque antes do produto. É esse catálogo que gera o layout do
+  sistema, devolvido em `layout-efetivo` para a TOP de venda sem layout ligado;
+- nas Centrais de Vendas e de Compras, o "Local de estoque" do cabeçalho (estado da tela, fora do corpo) e a pesquisa
+  de produto na rota nova, com o saldo do local da linha (só com saldo nas saídas).
+
+Nenhum corpo de POST/PUT/PATCH muda.
+
+**Migration:** nenhuma. Nada a aplicar no banco.
+
+**Ordem do deploy:** API e web em QUALQUER ordem (provado nos dois sentidos, abaixo). A F3b entrou na branch depois da
+F8 (0042), da F5a (0043) e da F6a (0044) e não acrescenta migration: na PR #90, a ordem do deploy é a das fases com
+migration, nas seções delas.
+
+**Impacto em dados reais:** nada é gravado, reescrito nem apagado; sem backfill; nenhum layout salvo é reordenado. O
+que muda na TELA de produção (02/10: 3 TOPs — pedido de compra, orçamento de venda e pedido de venda —; 2 movimentos de
+estoque):
+- depois do deploy da API, a TOP de venda sem layout ligado abre a grade com Local de estoque → Código → Produto →
+  Estoque. A TOP 1 Orçamento, com o layout 0001 ligado (§ VENDAS-A3-1d_R1), continua na ordem do layout salvo. As duas
+  TOPs de venda podem ficar com ordens diferentes até alguém reordenar o 0001 (o "Restaurar padrão" do configurador
+  aplica a ordem nova; salvar grava no layout);
+- depois do deploy do web, a criação da venda e da compra ganha o campo "Local de estoque" (na venda, logo depois do
+  Tipo de Operação; na compra, logo depois da Empresa, na zona onde ela estiver), só quando a coluna do local está na
+  grade. Ele vem vazio quando o layout não tem padrão de cadastro do local;
+- depois do deploy dos DOIS (a pesquisa nova só entra com a capacidade da API nova), na venda, com local na linha e
+  `stocks.view`, a pesquisa de produto vem com "Só com saldo neste local" marcado. Com 2 movimentos de estoque, aparece quase só produto que não controla estoque; desmarcar mostra
+  tudo. É efeito novo LIGADO: exceção ao item (4) da decisão 240, pelo pedido de 02/10 (decisões 280 e 281). Sem
+  `stocks.view`, a pesquisa mostra tudo, sem saldo, como hoje.
+
+**Version skew** (base `622f194`; provas em arquivos próprios, fora da suíte comum):
+- **Sentido 1 — web novo × API da base** (janela "web antes da API" e reversão só da API):
+  - a tela pergunta `GET /api/produtos/pesquisa/capacidades`, recebe 404 de rota e usa a pesquisa de HOJE
+    (`/api/resources/products/options`, Código | Descrição, `data-fonte="opcoes"`, sem coluna Estoque e sem o
+    controle);
+  - zero pedido a `/api/produtos/pesquisa` e nenhum parâmetro novo (a base os recusaria com 422);
+  - a grade segue o layout que a base manda (Produto antes do Local);
+  - o "Local de estoque" do cabeçalho existe (a base serve os locais da empresa) e preenche a linha nova; o POST leva as
+    chaves de hoje e a base grava (201).
+
+  Prova: `operacoes-01-f3b-skew-api-producao.spec.ts`, K-1a (venda) e K-1b (compra). O mundo é perguntado à base na
+  hora: capacidade 404 ⇔ `pagina` 422.
+- **Sentido 2 — web da base × API nova** (janela "API antes do web" e reversão só do web):
+  - o web da base nunca chama a rota nova nem manda parâmetro novo, e pesquisa em `/options`;
+  - o `layout-efetivo` da TOP de venda sem layout ligado chega com o Local primeiro, e o web da base desenha nessa ordem
+    (o layout manda desde a A3-1);
+  - o POST de hoje é aceito (201), e nenhuma resposta 404/422/5xx chega ao web da base (K-2a de
+    `operacoes-01-f3b-skew-web-anterior.spec.ts`);
+  - a rota, com os parâmetros de hoje, responde `itens` e `estoqueDoArmazem` primeiro, as seis chaves do item e o mesmo
+    significado (sem filtro, o produto sem saldo aparece), com as três chaves novas no fim (K-2b).
+
+**Reversão:** redeploy da API e/ou do web anteriores; nada a desfazer em banco ou configuração.
+- Reverter a API = sentido 1. A ordem volta à de antes (o layout do sistema é da API), e a pesquisa volta à de hoje.
+- DECLARADO: a aba aberta com o web novo leu a capacidade UMA vez, da API nova, e continua pedindo a pesquisa nova. A
+  API anterior recusa (422, `pagina` desconhecido), e o painel de pesquisa de produto diz "Não foi possível carregar a
+  lista." até a página ser RECARREGADA. Nada é gravado.
+- Reverter o web = sentido 2.
+
+**Roteiro do Maike** (produção; produção é operacional — decisões 240 e 247. Só leitura: nada é gravado; sempre
+DESCARTAR, nunca Salvar):
+1. Vendas › + Novo › a TOP de pedido de venda. Com as ferramentas do navegador abertas na aba Rede, o pedido
+   `produtos/pesquisa/capacidades` responde 200 com `{"capacidades":{"pesquisaDeProdutos":1}}`.
+2. Na mesma criação:
+   - a grade começa por "Local de estoque" e depois "Código", "Produto", "Estoque" (se essa TOP tiver layout ligado,
+     vale a ordem dele);
+   - o campo "Local de estoque" vem logo depois do Tipo de Operação; o mouse sobre ele mostra a dica;
+   - escolher um local → "Adicionar produto" → a linha nasce com ele;
+   - clicar no Produto da linha: o painel mostra "Código | Descrição | Estoque" e "Só com saldo neste local" marcado;
+   - desmarcar → aparecem também os produtos sem saldo, com "0,0000";
+   - Esc fecha; Descartar.
+3. Vendas › + Novo › a TOP 1 Orçamento (layout 0001 ligado): a grade fica na ordem do layout 0001, sem reordenar. O
+   campo do cabeçalho só aparece se o 0001 mostra a coluna do local. Descartar.
+4. Compras › + Novo › a TOP de pedido de compra:
+   - "Local de estoque" vem logo depois da Empresa; escolher um local → "Adicionar produto" → a linha nasce com ele;
+   - a pesquisa de produto mostra tudo, com a coluna Estoque e sem "Só com saldo neste local";
+   - Descartar.
+5. Vendas › o pedido de venda aberto (consulta): a grade dos itens começa por "Local de estoque", e no formulário do
+   item "Local de estoque" vem antes de "Produto".
+6. (Se houver usuário sem a permissão de ver estoque) a pesquisa de produto da venda mostra todos os produtos, sem
+   coluna Estoque e sem o controle.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
+### F4 — a TOP pelo tipo de movimento e o formato 5 (OPERACOES-01, sem migration)
+
+Decisão 281. **Sem migration, sem variável, sem permissão nova, sem rota nova.** Uma chave nova, aditiva, nas
+capabilities da TOP: `formato5`, na raiz, depois de `regrasGerais`. `contractVersion`, `configuracao` (1), `restricoes`
+(3) e `regrasGerais` (4) não mudam. A criação da TOP começa pelo tipo de movimento (o assistente: só os 9 tipos com
+tela). As abas mostram só o que vale para o tipo. Toda TOP é LIDA no formato 5 — o 4 mais as seções de extensão das
+fases seguintes, nenhuma nesta —, e salvar com mudança grava o 5. No 5 o servidor recusa (422) o que o tipo não aceita.
+O editor e o histórico da TOP dizem "local de estoque".
+
+**Migration:** nenhuma. O 5 entra sem DDL:
+- o CHECK de schema da 0022 não tem teto;
+- `erp.top_exige_aprovacao` (0041) trata `versaoSchema` ≥ 4 — provado sobre uma versão gravada no 5
+  (`packages/db/test/top-formato5-0041.test.ts`, B5-1 e B5-2);
+- a venda no 5 confirma com a marca da guarda da 0023.
+A 0041 não foi editada.
+
+**Ordem do deploy:** esta fase não impõe ordem entre API e web — os dois sentidos do skew estão provados (abaixo). Duas
+condições da PR #90:
+- a F2 (decisão 279) vai no MESMO deploy: a ajuda nova da Geral diz que as Centrais de Vendas e de Compras aceitam o
+  documento sem item quando a TOP permite, e isso só é verdade com a F2;
+- a ordem do deploy da PR é a das fases com migration (F5 a F10), nas seções delas.
+
+**Impacto em dados reais:** nenhum registro é reescrito; sem backfill.
+- As TOPs de produção continuam no formato em que foram gravadas e são LIDAS como 5 (no editor, na API e na execução,
+  pelo número GRAVADO: um formato 3 nunca passa a executar regra geral por ser lido como 5). Nada é gravado até alguém
+  salvar.
+- Salvar uma TOP cuja configuração já cabe no tipo, sem mexer, não grava (nenhuma versão, nenhuma trilha).
+- Salvar com mudança cria a versão N+1 no formato 5.
+- As 3 TOPs de produção NÃO estão nesse caso (leitura de 01/10, decisão 277):
+  - o pedido de compra, no formato 3, com Confirmação Automática, Documento sem itens Permitido e Alteração Permitida;
+  - o orçamento e o pedido de venda, no formato 2, com Alteração Permitida.
+
+  O tipo delas só aceita o neutro. O primeiro Salvar, mesmo sem mexer, abre o diálogo "Estas regras passam a valer" com
+  o que volta ao padrão: "Confirmação: Automática → Manual", "Documento sem itens: Permitido → Proibido", "Alteração
+  após confirmar: Permitida → Bloqueada". "Voltar e revisar" não grava nada. "Salvar assim mesmo" grava a N+1 no 5, no
+  neutro, e nada passa a executar. É o comportamento do editor do 4 de hoje.
+- Numa TOP de documento de estoque com condições de pagamento permitidas, o diálogo lista também "Condições de
+  pagamento: voltam ao padrão", e a versão nova sai sem elas. Não há caso em produção.
+- A tela passa a CRIAR TOP só dos 9 tipos com tela. As TOPs de outras famílias que já existam continuam editáveis.
+  Produção não tem nenhuma.
+
+**Version skew** (base `622f194`; os specs novos entram nos configs de skew pelo nome e ficam fora da suíte comum):
+- **Sentido 1 — web novo × API da base** (janela "web antes da API" e reversão só da API): sem o bloco `formato5`, o web
+  é o editor do 4 de hoje — seletor de família, ajuda antiga da Geral, Execução indisponível no pedido, gravação no 4
+  (`top-formato5-skew-api-producao.spec.ts`, K-1 do 5, 2 casos). O web nunca manda o 5 a quem não o declarou. A base
+  recusa um corpo no 5 com 422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`, e nada é criado. O K-1 da TOP-CONFIG-08
+  escolhe o mundo pela capacidade: legado → formato 3; novo → formato 4 e ajuda antiga; formato5 → formato 5 e ajuda nova.
+- **Sentido 2 — web da base × API nova** (janela "API antes do web" e reversão só do web): a API declara o bloco a mais,
+  que o web da base ignora. O editor da base grava o 4, e a API guarda a N+1 no 4, sem promover. Uma TOP já gravada no 5
+  abre com as seções de operação BLOQUEADAS (`top-config-ilegivel`). Renomear manda o PUT sem `configuracao`, e a versão
+  nova guarda o 5 inteiro. O histórico da base lista as versões; nenhum 404, 422 ou 5xx no navegador
+  (`top-formato5-skew-web-anterior.spec.ts`, K-2 do 5, 3 casos). As Centrais da base leem `/regras-da-operacao` com
+  `formato` 5, e o leitor delas só exige um número.
+- O detector `editorDaBaseGravaFormato5` (marca `top-assistente` no fonte do commit da base) tem prova reversa do lado
+  falso. O lado verdadeiro só ganha commit fixo depois que esta fase entrar na main.
+
+**Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. Enquanto nenhuma TOP for gravada no
+5, nada muda. Depois que uma TOP for gravada no 5, o binário anterior não a lê:
+- (a) **Escrita.** A API anterior recusa QUALQUER PUT numa TOP cuja versão vigente está no 5 — renomear, ativar,
+  desativar e marcar como padrão inclusive — com 422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`
+  (`622f194:apps/api/src/routes/tipos-operacao.ts:1009`). O editor anterior abre a configuração bloqueada. A TOP no 5
+  fica congelada até o binário novo voltar. Só na janela de skew com a API NOVA (web anterior × API desta versão) o
+  renomear funciona e preserva o 5.
+- (b) **Confirmação.** O binário anterior não confirma venda, compra NEM documento de estoque cuja versão congelada está
+  no 5: 409 `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`, a "configuração ilegível", fail-closed, como com formato desconhecido.
+  No estoque, a mensagem termina com "O documento não foi confirmado.", e a prévia traz a recusa em `recusas`, com
+  `podeConfirmar` falso (`622f194:apps/api/src/routes/estoque-confirmacao.ts:171-180`). Nada confirma sozinho
+  (`confirmaAutomaticamente` → falso). A guarda da 0041 continua o fundo.
+- (c) **Aprovações.** A fila anterior conta pela SQL (`erp.top_exige_aprovacao`, que trata ≥ 4) e LISTA o documento com
+  TOP no 5 que exige aprovação. Aprovar e Reprovar, que perguntam ao domínio anterior, respondem 409
+  `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`. É o risco "formato futuro" que a decisão 277 declarou, agora com o 5.
+- (d) **Lançamento.** O documento LANÇADO no binário anterior com TOP no 5 fica sem as regras dela:
+  - venda e compra: sem exigências, sem condições permitidas e sem a conferência de cliente em atraso
+    (`regrasDaVersaoTop` devolve nulo para formato desconhecido, `622f194:apps/api/src/routes/vendas-regras-operacao.ts:41`,
+    e `cobrarRegrasDaOperacao` não cobra nada, `:106`);
+  - orçamento e pedido de venda e pedido de compra, que não se confirmam: passam sem restrição nenhuma;
+  - documento de estoque: "Exigir observação" deixa de ser cobrada
+    (`622f194:apps/api/src/routes/estoque-documentos.ts:289`);
+  - itens vazios: recebem o 422 de hoje, mesmo com a TOP permitindo.
+  É o risco que a TOP-CONFIG-08 declarou para o 4, agora para toda TOP salva no 5.
+- Documento confirmado antes da reversão continua confirmado, com os efeitos que deu.
+- **Por isso:** gravar a primeira TOP no 5 em produção é o que torna a reversão cara. Faça-o só depois de conferir o
+  deploy (roteiro abaixo), e é decisão do Maike.
+
+**Roteiro do Maike em produção (depois do deploy; produção é operacional — decisões 240 e 247):** os passos 1 a 4 são só
+leitura (nada é gravado). O passo 5 grava, e só com a decisão dele.
+1. Configurações › Operações › Tipos de Operação › Novo — o passo 1, "Passo 1 de 2: escolha o tipo de movimento.
+   Depois, as abas mostram só o que vale para ele.":
+   - Vendas (Orçamento, Pedido, Venda), Compras (Pedido, Compra), Movimentação interna (Entrada, Saída/baixa,
+     Transferência, Ajuste);
+   - Módulos (Abastecimento, Manutenção, Ordem de serviço, Manejo, Batelada, Produção de ração) aparece desde a F10
+     (decisão 287); Financeiro (Conta a pagar, Conta a receber, Movimento bancário) aparece desde a F9a (decisão 286).
+2. Escolher Entrada:
+   - "Movimento" só leitura, com "Trocar";
+   - as abas Identificação, Geral, Estoque e Aprovação;
+   - na Geral, só "Exigir observação".
+   "Trocar" → Venda:
+   - as abas Identificação, Geral, Próximas operações, Estoque, Padrões financeiros (desde a F9a), Financeiro, Fiscal,
+     Aprovação e Execução;
+   - na Geral, "Exigir cliente", e a ajuda termina em "Documento sem itens: quando esta operação permite, a venda e a
+     compra podem ser salvas sem item nas Centrais de Vendas e de Compras (o recebimento de um pedido sempre pede
+     item). As exigências de preenchimento são cobradas no lançamento.".
+   Fechar sem salvar.
+3. Abrir a TOP de pedido de compra:
+   - as abas Identificação, Geral, Próximas operações, Estoque, Fluxo de compra, Padrões financeiros, Financeiro,
+     Fiscal e Aprovação, sem Execução (Fluxo de compra e Aprovação desde a F6a, decisão 283; Padrões financeiros desde
+     a F9b, decisão 286);
+   - na Geral, "Exigir fornecedor";
+   - na Estoque, "Exigir local de estoque".
+   Clicar Salvar SEM mexer → o diálogo "Estas regras passam a valer" lista o que volta ao padrão (se ela ainda estiver
+   como em 01/10). Clicar "Voltar e revisar" e fechar sem salvar. Fazer o mesmo no orçamento e no pedido de venda
+   ("Alteração após confirmar: Permitida → Bloqueada", se ainda Permitida).
+4. Em cada TOP, Histórico: as versões continuam com o formato em que foram gravadas ("Formato da configuração: 2" ou
+   "3").
+5. (Decisão do Maike; grava; ver Reversão.) "Salvar assim mesmo" numa delas:
+   - versão nova no formato 5, no neutro, e o histórico diz "Formato da configuração: 5";
+   - nada passa a executar: orçamento e pedidos só aceitam o neutro.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
+### F5a — movimentação interna no documento de estoque (OPERACOES-01, migration 0043)
+
+Decisão 282, parte F5a. A F5b — a Central de Estoque no motor — tem a subseção dela (§ F5b, abaixo), no mesmo deploy.
+- **Migration:** uma, `0043_movimentacao_interna_estoque.sql` — pre-deploy; trava (2026,77); `lock_timeout` 2 s;
+  pré-condições nomeadas `OPERACOES-01 F5: …`, a primeira é "já aplicada"; pós-condições só de catálogo; aditiva; sem
+  backfill.
+- **Sem variável.** Três recursos de permissão novos (12 chaves).
+- **Rotas:** uma nova, `POST /api/estoque/requisicoes/:id/encerrar-saldo`; as das três espécies novas saem do laço de
+  hoje.
+- **Capacidade:** uma chave nova e aditiva em `capacidades` das sete `GET /api/estoque/<segmento>/operation-types`:
+  `movimentacaoInterna: 1`.
+- **A tela de estoque NÃO muda nesta parte**, nem o menu: as entradas das espécies novas em `apps/web/nav.registry.mjs`
+  vêm com a F5b. A F5b muda as duas (§ F5b).
+- **Condição da PR #90:** ela não vai à produção sem a F5b (decisão 282, M-4) — cumprida: a F5b está na mesma PR.
+
+Contrato em `docs/OPERACOES-CONTRACT.md` §2 (Destino e Fluxo) e §3 (F5a).
+
+**Migration — o que faz** (nenhuma linha existente é reescrita):
+- `erp.documentos_estoque`:
+  - 12 colunas anuláveis:
+    - `origem_documento_id`;
+    - o destino: `centro_custo_id`, `equipamento_id`, `ordem_servico_id`, `lote_animais_id`, `area_id`, `safra_id`;
+    - `motivo_saida`, `justificativa`;
+    - `saldo_encerrado_em`, `saldo_encerrado_por`, `saldo_encerrado_motivo`;
+  - 7 FKs compostas `(coluna, organization_id) → (id, organization_id)`, sem cascata, e a FK de trilha para `erp.users`;
+  - o CHECK de espécie com as sete;
+  - os CHECKs novos:
+    - de origem;
+    - de apropriação (o destino só na requisição, no consumo, na saída e na devolução de consumo);
+    - de motivo e justificativa (os 13, em par, só na saída);
+    - de saldo encerrado;
+  - 2 índices parciais;
+- `erp.documentos_estoque_itens`:
+  - `origem_item_id`, com FK composta para o próprio item;
+  - o CHECK de espécie com as sete, um CHECK de origem e o do item da requisição (sem lote, validade e custo);
+  - o CHECK `chk_documentos_estoque_itens_custo_entrada` SAI: a entrada pode vir sem custo;
+  - 1 índice parcial;
+- `erp.stock_movements`: `equipamento_id`, `ordem_servico_id`, `lote_animais_id` e `area_id`, com FK composta;
+- chaves `(id, organization_id)` novas, alvo das FKs, em `erp.harvests`, `erp.equipments`, `erp.service_orders`,
+  `erp.batches`, `erp.areas` e `erp.documentos_estoque_itens`;
+- funções por `create or replace`, com a mesma assinatura, o mesmo dono, a mesma ACL e os mesmos atributos (a
+  transição passa a SECURITY DEFINER):
+  - `documentos_estoque_conferir`: família por espécie, origem, destino herdado, referências do destino e encerramento
+    do saldo;
+  - `documentos_estoque_transicao`: a requisição com consumo vivo e o consumo com devolução viva não se cancelam;
+  - a reserva da 0035 — núcleo, porta, guarda e flag `control_stock` —, com a parte C;
+  - só o TEXTO de `apply_stock_movement` (0003), `products_controle_lote` (0029) e
+    `documentos_compra_itens_documento_aberto` (0036);
+- função e gatilho novos: `erp.documentos_estoque_item_origem_guarda()` e `trg_documentos_estoque_itens_origem_guarda`
+  (EXECUTE só do dono);
+- `erp.layouts_documento`: o CHECK de família aceita as cinco de hoje e as sete de estoque (preparação da F5b; é deste
+  CHECK que a 0044 parte).
+
+**Pré-condições.** A migration recusa sem aplicar nada, com uma mensagem `OPERACOES-01 F5: …` que nomeia o que falta:
+- 2.0 já aplicada (`erp.documentos_estoque.origem_documento_id` ou a função nova já existe);
+- 2.1 quem aplica não atravessa RLS (precisa ser superusuário ou `BYPASSRLS`), ou o `erp_app` não existe;
+- 2.2 a 0040, a 0041 ou a 0035 não estão aplicadas (tabelas e funções);
+- **2.3 a definição VIGENTE de uma das nove funções substituídas não é a da migration que a criou.** A conferência é
+  pelo md5 do corpo: um hotfix feito fora do repositório seria apagado em silêncio pelo `create or replace`, e por isso
+  um humano decide;
+- 2.4 os CHECKs refeitos são diferentes dos esperados: as quatro espécies da 0040 no cabeçalho e no item, o CHECK de
+  custo da entrada, as cinco famílias da 0038 no layout;
+- 2.5 os gatilhos das duas tabelas são diferentes dos de hoje;
+- 2.6 as chaves alvo não existem, ou as novas já existem;
+- 2.7 as colunas lidas não existem, ou as novas já existem;
+- 2.8 o módulo de escopo `estoque` não existe. **Conferido em produção em 02/10** (leitura do Maike): os módulos de
+  escopo de empresa em produção são 11 (`compras`, `confinamento`, `documentos`, `estoque`, `financeiro`, `fiscal`,
+  `frota_ativos`, `ordens_servico`, `pecuaria`, `pessoas_rh`, `vendas`) — `estoque` entre eles: a 2.8 passa.
+Em erro, publique o nome do papel, nunca a conexão.
+
+**Travas:**
+- `ADD COLUMN` e `ADD CONSTRAINT … UNIQUE` pegam ACCESS EXCLUSIVE em `erp.harvests`, `erp.equipments`,
+  `erp.service_orders`, `erp.batches`, `erp.areas`, `erp.documentos_estoque`, `erp.documentos_estoque_itens`,
+  `erp.stock_movements` e `erp.layouts_documento`. A trava é curta: só catálogo, sem regravar a tabela; o índice único
+  lê a tabela uma vez.
+- As FKs pegam SHARE ROW EXCLUSIVE nas tabelas referenciadas: `erp.cost_centers`, `erp.users` e as acima.
+- `erp.stock_movements` recebe escrita de toda confirmação de venda, compra, OS e estoque. Se uma transação longa
+  segurar uma dessas tabelas, a 0043 desiste em 2 s sem aplicar nada, e o deploy é refeito (seguro).
+- O runner aplica cada migration na sua própria transação (`packages/db/src/migrate.ts:22-25`). Se a 0043 desistir
+  depois de a 0042 entrar, o banco fica com a 0042 e a API anterior continua no ar (a janela 1 da F8).
+
+**Ordem: banco (0043) → API → web.** Na PR #90, as migrations entram na ordem do número: 0042 (F8) → 0043 → 0044 (F6a).
+- **A 0044 depende da 0043:** a pré-condição 2.9 dela exige que o CHECK de família do layout já aceite as cinco famílias
+  da 0038 e as sete de estoque desta, e recusa sem aplicar nada se a 0043 não estiver aplicada (§ F6a, abaixo).
+- **A API desta fase EXIGE a 0043.** O razão grava as quatro colunas novas em TODO movimento
+  (`apps/api/src/services/stock-core.ts:169-176`). Sem elas, toda confirmação que move estoque — venda, compra, OS,
+  manejo, documento de estoque — e toda leitura de documento de estoque dariam 500 (42703). O pre-deploy garante a
+  ordem.
+- O menu (`apps/web/nav.registry.mjs`) não muda nesta parte.
+
+Janelas:
+1. **API anterior × banco novo** (entre o pre-deploy e a API nova; também a reversão só da API):
+   - o corpo dela continua aceito: entrada com custo, saída sem motivo, nenhuma origem, nenhum destino;
+   - os INSERTs dela deixam as colunas novas nulas;
+   - a lista dela filtra as quatro espécies de hoje;
+   - as mensagens dos gatilhos mudam só o texto ("local de estoque"); os códigos não mudam, nem os status HTTP;
+   - sem requisição confirmada, a reserva é a de hoje.
+2. **Web anterior × API nova** (janela "API antes do web"; também a reversão só do web). Prova:
+   `apps/web/e2e/f5-estoque-skew-web-anterior.spec.ts`, 5 casos, só no sentido 2 (a medida é o web da base):
+   - o web da base lança e confirma entrada (com custo), saída, transferência e ajuste pela Central de Estoque dele,
+     exatamente como hoje (K2-a, K2-b): corpo de sempre, respostas com as mesmas chaves, saldo certo no servidor,
+     nenhuma resposta 404, 422 ou 5xx;
+   - com uma requisição confirmada no local de estoque, a lista de Movimentações e o Saldo da base abrem, e o Saldo
+     mostra o reservado (K2-c);
+   - o "Ajustar estoque" do Saldo da base — a correção antiga — passa a nascer na empresa da linha, pelo `empresa_id`
+     novo (antes ia vazio, e caía na empresa padrão), e a correção vale (K2-d);
+   - a fila de Aprovações de estoque da base lista uma requisição pendente SEM ações; a entrada pendente continua com
+     as dela (K2-e).
+3. **Web novo × API anterior** (janela "web antes da API"; também a reversão só da API). Tudo como hoje:
+   - a Central de Estoque desta parte era a de antes; com a F5b ela lê `movimentacaoInterna` e, sem a chave, oferece as
+     quatro espécies com o corpo de hoje (§ F5b, sentido 1);
+   - o editor da TOP sem o bloco `formato5` é o do 4, sem as abas de extensão;
+   - o Saldo sem `empresa_id` cai na empresa padrão, como hoje.
+
+   Não há spec novo. A evidência está em `estoque-01-skew-api-producao.spec.ts` (1/1) e em
+   `top-formato5-skew-api-producao.spec.ts` (2/2): a premissa do K-1 do 5 passou a ser "o que o 5 tem a mais que o 4
+   são exatamente as `SECOES_EXTENSAO_V5`". A tela nova e o sentido 1 dela estão na § F5b
+   (`f5b-estoque-skew-api-producao.spec.ts`).
+
+Os dois sentidos rodam no job `skew` do CI, contra os binários reais da base (`622f194`).
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247): nenhuma linha muda; sem backfill.
+- As colunas novas nascem nulas. Os CHECKs refeitos só ACEITAM mais. Os novos valem para toda linha existente: as
+  colunas deles estão nulas, e as espécies de hoje passam.
+- Seis índices únicos `(id, organization_id)` sobre ids que já são únicos. As FKs são validadas sobre colunas todas
+  nulas (leitura).
+- O pre-deploy (`seedPermissions`, `apps/api/src/migrate.ts:17`) insere 12 chaves novas no catálogo de permissões:
+  `requisicoes_estoque`, `consumos_estoque` e `devolucoes_consumo_estoque`, cada uma com view, create, edit e approve. Ele
+  as concede aos perfis "Administrador" de sistema; os outros perfis não ganham nada.
+- Produção (02/10): zero requisições, baixas, OS e manejos; 2 movimentos de estoque; 3 TOPs, nenhuma de estoque. Por
+  isso:
+  - a reserva não muda (não há requisição);
+  - a OS e o manejo gravam o destino só nos movimentos novos;
+  - "Saídas x Centro de Resultado" só muda se um dos 2 movimentos for uma saída estornada (leitura no passo 5).
+- As 3 TOPs de produção são lidas como antes. Se alguém salvar uma delas no formato 5 depois desta fase, o JSON da
+  versão nova leva as seções de extensão no neutro (`destino` e `fluxo` desta parte; `fluxoCompra` e
+  `divergenciaPedido` da F6a), e nada passa a valer.
+- O que muda para fora do sistema:
+  - o editor da TOP de saída ganha a aba Destino;
+  - Perfis e Permissões ganha os três recursos;
+  - "Saídas x Centro de Resultado" deixa de somar a saída cancelada;
+  - a mensagem de saldo insuficiente do razão diz "local de estoque".
+
+**Reversão:** API e web voltam por redeploy da versão anterior, e o banco fica (decisão 247: coluna não se apaga;
+desligar um gatilho ou voltar um CHECK só com migration nova, por decisão humana).
+- Reverter só o web é a janela 2; reverter só a API é a janela 1.
+- Enquanto ninguém lançar requisição, consumo, devolução de consumo ou destino, a reversão não deixa resto. As 12
+  chaves de permissão ficam no catálogo.
+- Depois disso:
+  - **requisição CONFIRMADA (e consumo aberto ligado):** a reserva CONTINUA valendo no banco, porque a guarda é do
+    banco. A API anterior não lista, não atende, não encerra e não cancela essas espécies (as rotas dela não as
+    conhecem). Uma saída que invada a reserva recebe 409 `INSUFFICIENT_STOCK … reservado para pedidos`. A correção é
+    voltar a API nova e encerrar o saldo ou cancelar;
+  - **saída com destino cancelada pela API anterior:** o estorno sai sem o destino e sem a cultura, porque o
+    `reverseStock` anterior não os copia. O líquido por destino deixa de fechar só naquele documento;
+  - **TOP gravada no 5 com as seções:** vale o que a F4 declarou para o 5 (a TOP congela na API anterior).
+- Por isso: só lance espécie nova e só ligue Destino ou Fluxo em produção depois de conferir o deploy (roteiro abaixo),
+  e com a F5b no ar.
+
+**Roteiro do Maike em produção** (produção é operacional — decisões 240 e 247). Os passos 0 a 6 são só leitura: nada
+é gravado. A F5b entra no mesmo deploy: a Central nova tem o roteiro da § F5b, e estes passos conferem o que é da
+F5a.
+0. Antes do deploy (SQL só de leitura): confira que as nove funções têm a definição esperada, comparando
+   `select p.oid::regprocedure, md5(p.prosrc) from pg_proc p where p.oid = any (array['erp.apply_stock_movement()'::regprocedure, …])`
+   com os hashes literais da 0043 (`supabase/migrations/0043_movimentacao_interna_estoque.sql:131-157`). A
+   pré-condição 2.3 refaz a pergunta na hora de aplicar e recusa com o nome da função.
+1. Depois do deploy (leitura): o ledger de migrations tem a 0043 depois da 0042 (e a 0044 depois dela).
+2. Configurações › Usuários › Perfis e Permissões › Administrador: em "Operacional > Estoque" aparecem "Requisições de
+   Material", "Consumos de Estoque" e "Devoluções de Consumo", com Ver, Criar, Editar e Aprovar marcados. Feche sem
+   salvar.
+3. Configurações › Operações › Tipos de Operação › Novo:
+   - em "Movimentação interna" aparecem Requisição, Consumo, Devolução de consumo, Entrada, Saída/baixa, Transferência e
+     Ajuste (as três primeiras com tela desde a F5b, no mesmo deploy);
+   - escolha Saída/baixa:
+     - abas Identificação, Geral, Estoque, Destino e Aprovação;
+     - na aba Destino: Centro de resultado, Máquina/equipamento, Ordem de serviço, Lote de animais, Área/talhão e Safra,
+       todos "Não usada", com a ajuda "O destino diz para onde vai o que sai do estoque: …";
+   - clique em "Trocar" e escolha Entrada: sem Destino e sem Fluxo;
+   - feche sem salvar.
+4. Abra a TOP de pedido de venda:
+   - as abas são as de antes, sem Destino e sem Fluxo;
+   - no Histórico, as versões estão no formato em que foram gravadas, sem os blocos Destino e Fluxo;
+   - feche.
+5. Relatórios › "Saídas x Centro de Resultado", no período dos 2 movimentos: o relatório abre; se um deles for uma
+   saída cancelada, ela não aparece.
+6. Estoque › Saldo:
+   - Reservado e Disponível estão como antes (não há requisição);
+   - em "Ajustar estoque" numa linha, o diálogo abre na empresa do local de estoque da linha;
+   - feche sem salvar.
+7. (Decisão do Maike; grava.) Ligar dimensões do Destino ou o Fluxo numa TOP. Com a F5b, a Central de Estoque mostra a
+   aba Destino e pede a dimensão "Obrigatória" antes de salvar.
+
+**Decisões do Maike (03/10; registradas na decisão 282):** o par motivo/justificativa da saída obrigatório no servidor
+(I-1) fica para a 1ª PR depois desta em produção — o web anterior manda a saída sem o par, e precisa sair de produção e
+da janela de reversão antes; as perguntas antes da F11 — saldo inicial, entrada sem NF, requisição antiga, o neutro do
+Destino, a devolução antiga, `reason_note` e os relatórios que só leem as tabelas antigas (I-2 e I-3) — a F11 decidiu e
+declarou (decisão 288). Detalhe: § F5b, "Decisões do Maike".
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
+### F5b — a Central de Estoque no motor da Central (OPERACOES-01, sem migration)
+
+Decisão 282, parte F5b. **Sem migration, sem variável, sem permissão nova, sem flag.** O que entra:
+- três rotas novas de LEITURA no estoque, com a porta `<recurso>.create`:
+  - `GET /api/estoque/<segmento>/regras-da-operacao?tipo_operacao_id=` (as sete espécies);
+  - `GET /api/estoque/<segmento>/layout-efetivo?tipo_operacao_id=` (as sete);
+  - `GET /api/estoque/<segmento>/destino/opcoes?dimensao=&empresa_id=&busca=&limite=` (só saída, requisição e consumo);
+- duas chaves aditivas no fim das `capacidades` das sete `GET /api/estoque/<segmento>/operation-types`:
+  `layoutDocumento: 1` e `regrasDaOperacao: 1`. O bloco fica `{ documentoEstoque: 1, movimentacaoInterna: 1,
+  layoutDocumento: 1, regrasDaOperacao: 1 }`, e `contractVersion` continua 1;
+- o admin de layouts (`/api/admin/layouts-documento`) passa a aceitar as sete famílias de estoque, pelo domínio;
+- no web: a Central de Estoque no motor, as sete espécies com a capacidade, o destino, a origem, o layout por TOP no
+  estoque, o "Ajustar estoque" do Saldo na Central de ajuste e os botões das três espécies novas na fila de Aprovações;
+- no catálogo da TOP (domínio), a requisição, o consumo e a devolução de consumo com tela.
+
+Nenhum corpo de POST/PUT/PATCH muda. Contrato em `docs/OPERACOES-CONTRACT.md` §3 (F5b).
+
+**Migration:** nenhuma. A F5b usa o banco da 0043 (F5a) e o CHECK de família do layout com as sete de estoque (0043, refeito
+pela 0044).
+
+**Ordem do deploy:** a da PR #90 (as fases com migration, nas seções delas). A F5b vai no MESMO deploy da F5a. Ela cumpre a
+condição da § F5a: a #90 não vai à produção sem a F5b. A API desta fase exige a 0043, e o pre-deploy garante isso. Entre si,
+API e web vão em QUALQUER ordem: os dois sentidos estão provados abaixo.
+
+**Menu:** `apps/web/nav.registry.mjs` recebe, no merge da fase e no MESMO deploy do web, as permissões das três espécies
+novas na aba Movimentações, na criação, na consulta e na fila de Aprovações › Estoque (decisão 282): quem só tem as
+permissões delas abre a Central pelo menu e pelo link. As telas antigas continuam no menu (a F11 decide; decisão 288).
+
+**Impacto em dados reais:** nada é gravado no deploy; nenhuma linha é reescrita; sem backfill; nenhuma permissão nova
+(o `seedPermissions` não muda). O que muda na TELA de produção (02/10: 3 TOPs — pedido de compra, orçamento de venda e
+pedido de venda —, NENHUMA de estoque; 2 movimentos de estoque; nenhuma requisição):
+- Configurações › Tipos de Operação › Novo: "Movimentação interna" oferece também Requisição, Consumo e Devolução de
+  consumo, antes de Entrada.
+- Configurações › Layouts de documento: o "Novo" oferece os sete movimentos de estoque, depois de vendas e compras.
+- Estoque › Movimentações: os chips das sete espécies, mais a coluna e o filtro "Atendimento". Sem TOP de estoque, o
+  "+ Novo" não tem operação de estoque para lançar.
+- Estoque › Saldo: o "Ajustar estoque" continua no diálogo de sempre. Ele só passa à Central de ajuste quando existir
+  uma TOP de ajuste ativa.
+- A Central de Estoque (quando houver TOP de estoque) tem o desenho novo. Efeito novo LIGADO, pelo pedido de 02/10
+  (exceção declarada ao item (4) da decisão 240): toda saída exige Motivo e Justificativa na tela; o servidor não
+  exige (I-1, fora desta PR; abaixo). Também mudam: a entrada aceita o custo vazio (vale o custo médio, com o aviso na
+  tela); a linha nova nasce em branco; o número se digita com ponto (a vírgula deixa de valer).
+- Aprovações › Estoque: Aprovar e Reprovar também na requisição, no consumo e na devolução de consumo (produção: nenhum).
+
+**Version skew** (base `622f194`; provas em arquivos próprios, fora da suíte comum; o mundo é perguntado à base na hora):
+- **Sentido 1 — web novo × API da base** (janela "web antes da API" e reversão só da API). Sem `movimentacaoInterna`,
+  `layoutDocumento` e `regrasDaOperacao`:
+  - a lista oferece as QUATRO espécies de hoje, e a Central aberta pelo "+ Novo" não pede nenhuma rota nova (K1-a);
+  - a entrada exige o custo (pendência, zero POST); com o custo, 201. O corpo de cada POST tem EXATAMENTE as chaves de
+    hoje, no cabeçalho e no item, porque a base é `.strict()` e recusaria chave nova com 422. A saída não tem aba
+    Destino nem Motivo, na criação e na consulta. A prévia da base é lida como hoje, e a confirmação vale (K1-b);
+  - o "Ajustar estoque" do Saldo abre o diálogo de sempre, e a correção vale (K1-c);
+  - rodados de novo, sem mudança: `estoque-01-skew-api-producao.spec.ts` (1/1) e
+    `top-config-08-skew-api-producao.spec.ts -g "K-1"` (4/4).
+  Prova: `apps/web/e2e/f5b-estoque-skew-api-producao.spec.ts`. Declarado: o configurador de layouts lista as famílias de
+  estoque, e a base recusa gravar o layout delas (422) — admin, transitório, nada gravado.
+- **Sentido 2 — web da base × API nova** (janela "API antes do web" e reversão só do web):
+  - o `operation-types` declara as quatro chaves, as duas da F5b no fim, e o web da base as ignora;
+  - nenhuma rota que a base usa muda;
+  - a Central da base (a grade própria, com os testids `estoque-item-*`) lança uma entrada com o corpo de hoje (201) e
+    confirma pela prévia de hoje, e o saldo muda no servidor;
+  - nenhuma requisição morre no navegador, e nenhuma resposta 404, 422 ou 5xx chega ao web (K-2).
+  Prova: `apps/web/e2e/f5b-estoque-skew-web-anterior.spec.ts`. O resto do sentido 2 é o da F5a
+  (`f5-estoque-skew-web-anterior.spec.ts`, 5/5, rodado de novo); `estoque-01-skew-web-anterior.spec.ts` 1/1.
+
+**Reversão:** redeploy do web e/ou da API anteriores; nada a desfazer em banco ou configuração.
+- Reverter só o web = sentido 2. Reverter só a API = sentido 1. A volta da API inteira da #90 segue a § F5a.
+- Os layouts de estoque criados ficam no cadastro: a API e o web anteriores não os usam. A base lista todos os layouts
+  sem filtro de família, então eles podem aparecer na lista do configurador anterior, sem uso (não provado).
+- DECLARADO: a aba aberta com o web novo leu as capacidades UMA vez, ao montar o formulário, da API nova. Depois de
+  reverter só a API, essa aba pode pedir rota que a API anterior não tem (o Salvar trava, com "As regras da operação
+  não carregaram") ou mandar chave que ela recusa (422). Nada é gravado; a página precisa ser RECARREGADA.
+
+**Roteiro do Maike em produção** (produção é operacional — decisões 240 e 247). Os passos 1 a 6 são só leitura: nada é
+gravado; sempre feche sem salvar ou Descarte.
+1. Configurações › Operações › Tipos de Operação › Novo:
+   - "Movimentação interna" oferece Requisição, Consumo, Devolução de consumo, Entrada, Saída/baixa, Transferência e
+     Ajuste, nesta ordem;
+   - escolha Consumo: abas Identificação, Geral, Estoque, Destino, Fluxo e Aprovação;
+   - feche sem salvar.
+2. Configurações › Operações › Layouts de documento › Novo:
+   - no passo 1, o Movimento oferece, depois de vendas e compras, os sete de estoque, de "Entrada de estoque" a
+     "Devolução de consumo";
+   - cancele no passo 1: concluir o assistente CRIA o layout (a prévia de um layout de estoque — a Operação primeiro,
+     depois Empresa, Data do documento, Local de estoque e Observação — fica para quando o Maike criar um, no passo 7).
+3. Com as ferramentas do navegador abertas na aba Rede, Estoque › Movimentações:
+   - o pedido `estoque/entradas/operation-types` responde 200 com `capacidades` `{"documentoEstoque":1,
+     "movimentacaoInterna":1,"layoutDocumento":1,"regrasDaOperacao":1}`;
+   - os chips vão de Entrada a Devolução de consumo, e há a coluna "Atendimento";
+   - o "+ Novo" não tem operação de estoque para lançar (não há TOP de estoque);
+   - feche.
+4. Estoque › Saldo: o "Ajustar estoque" de uma linha abre o diálogo de sempre (não há TOP de ajuste). Feche sem salvar.
+5. Aprovações › Estoque: a fila abre (vazia).
+6. Vendas: abra o pedido de venda aberto (consulta). A grade, o formulário do item e o rodapé com o subtotal estão como
+   antes (o motor mudou só por acréscimo). Feche.
+7. (Decisão do Maike; GRAVA. Dado de produção nunca se apaga — decisão 247: o que for lançado só se cancela.) Para usar
+   a movimentação interna:
+   - criar as TOPs no formato 5 (requisição, consumo e, se quiser destino na baixa, a saída), ligando o Destino e o Fluxo
+     que quiser;
+   - lançar e confirmar uma requisição: o Saldo mostra o reservado;
+   - "Atender requisição" em parte → confirmar → "Encerrar saldo" com motivo;
+   - "Devolver itens" no consumo → confirmar;
+   - conferir o Saldo e o relatório "Saídas x Centro de Resultado".
+
+**Decisões do Maike (03/10; registradas na 282):**
+- a F5 está FECHADA: a F5a e a F5b estão na PR #90 e vão no mesmo deploy;
+- I-1 — o par motivo/justificativa da saída obrigatório no SERVIDOR — NÃO entra nesta PR. Fica fora, com dono: a 1ª PR
+  depois desta em produção. O web anterior precisa sair de produção antes: com ele no ar (no deploy e na reversão só do
+  web), o servidor recusaria a saída que o web anterior manda sem o par;
+- I-2 e I-3 — o que a F11 precisa para tirar a tela antiga de estoque do menu — a F11 decide e declara (decisão 288).
+
+Item novo da F5b, feito na F12 (decisão 282, parte F12): a aprovação na CONSULTA do estoque
+(`GET /api/aprovacoes/estoque/<segmento>/:id` + `AprovacaoDoDocumento`), só leitura e sem capacidade nova — contra a API
+anterior, o 404 de rota esconde o bloco e a consulta é a de hoje (`f12-estoque-skew-api-producao.spec.ts`).
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
+### F8 — Central Financeira (OPERACOES-01, migration 0042)
+
+Decisão 285. **Uma migration: `0042_central_financeira.sql`** (pre-deploy; trava (2026,76); `lock_timeout` 2 s;
+pré-condições nomeadas `OPERACOES-01 F8: …`, a primeira é "já aplicada"; pós-condições só de catálogo; aditiva; sem
+backfill). Sem variável, sem permissão nova. Rotas novas no prefixo próprio `/api/financeiro/*` e a capacidade
+`GET /api/financeiro/capacidades` → `{ "centralFinanceira": 1 }`: o web novo só mostra a Central quando a API a declara;
+sem ela (404 de rota, erro ou outra forma), é o Financeiro de hoje, idêntico. Contrato em `docs/OPERACOES-CONTRACT.md` §6.
+
+**Migration — o que faz** (nenhuma linha existente é reescrita):
+- colunas novas, todas anuláveis e sem default: `bank_accounts.data_saldo_inicial`; `financial_titles.data_competencia`,
+  `.conta_prevista_id`, `.cancel_reason`, `.cancelled_at`, `.cancelled_by`; `title_settlements.lote_id`, `.tarifa`,
+  `.adiantamento_id`, `.natureza_desconto_id`; `bank_movements.tipo_transferencia`, `.title_settlement_id`,
+  `.componente_baixa`, `.lote_baixa_id`, `.cancel_reason`, `.cancelled_at`, `.cancelled_by`;
+  `financial_categories.grupo_dre` — com as chaves `(id, organization_id)` que as FKs compostas pedem, 13 FKs compostas
+  sem ação de exclusão, 2 FKs de trilha para `erp.users`, 5 CHECKs e 6 índices parciais;
+- tabela nova `erp.financeiro_naturezas_padrao` (configuração da organização, vazia, sem empresa: RLS forçada com
+  `tenant_isolation`, auditoria, `updated_at` por gatilho; o `erp_app` lê, insere e altera, sem DELETE nem TRUNCATE; não
+  entra em `scripts/company-rls-modules.json`);
+- `erp.refresh_title_status` com a soma `sum(amount)` (era `sum(amount + discount)`): o desconto da baixa passa a contar
+  UMA vez. Mesma assinatura, linguagem e privilégios; não recalcula título algum — só vale na próxima baixa ou estorno;
+- gatilho `trg_bm_confirmado_imutavel`: movimento bancário confirmado não muda data, valor, juros, conta, tipo,
+  categoria, destino, empresa nem rótulo da transferência (`CONFLICT`, 409 em todo binário);
+- gatilho `trg_ts_credito_conferir`: o uso do crédito de um adiantamento confere adiantamento, parceiro, empresa,
+  direção e crédito;
+- porta `erp.extrato_conta_organizacao(uuid[], date, date)`, SECURITY DEFINER estreita no molde da
+  `erp.movimentos_conta_organizacao` (0015) — EXECUTE só do `erp_app` —, RECORTADA pelo escopo de empresa de quem
+  pergunta no módulo financeiro (decisão do Maike de 03/10): escopo total (proprietário ou "todas" no financeiro) lê
+  todos os movimentos da conta, inclusive os sem empresa; parcial, só os das suas empresas; sem escopo no financeiro,
+  nenhum. O módulo é fixo na função (as rotas de conta abrem a transação sem módulo);
+- o `erp_app` perde DELETE e TRUNCATE em `financial_titles`, `title_settlements`, `bank_movements` e
+  `bank_movement_apportionments`, e UPDATE em `bank_movement_apportionments`.
+
+**Pré-condições (a migration recusa sem aplicar nada, com a mensagem `OPERACOES-01 F8: …` que nomeia o que falta):**
+P1 já aplicada (a tabela nova, `title_settlements.lote_id` ou `bank_movements.tipo_transferencia` já existe); P2 papel
+`erp_app` ausente; P3 quem aplica não atravessa RLS (precisa ser superusuário ou `BYPASSRLS`: é o dono da função
+SECURITY DEFINER e lê o acervo); P4 alguma das 55 colunas que a migration lê ausente; P5 a chave
+`uq_financial_categories_tenant` ausente; P6 alguma função chamada ausente (`tenant_visible`, `audit_row`,
+`current_org_id`, `effective_user_id`, `has_permission`, `refresh_title_status`, `title_settlement_changed`,
+`set_updated_at`, `escopo_empresa_total`, `empresas_do_membro`); P7 os gatilhos do ledger diferentes dos de hoje
+(`title_settlements`: `trg_settlement_changed`; `bank_movements`: `trg_bm_audit`; `financial_titles`: `trg_ft_audit`,
+`trg_ft_updated`); **P8 há baixa confirmada com
+desconto** (até 20 ids no diagnóstico) — a soma muda de sentido e uma baixa assim passaria a quitar menos; um humano
+decide. Os ALTER TABLE pedem trava curta em `bank_accounts`, `financial_titles`, `title_settlements`, `bank_movements`,
+`financial_categories` e `users`: com uma transação longa segurando uma delas, a migration desiste em 2 s sem aplicar
+nada, e o deploy é refeito (seguro). Em erro, publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0042) → API → web.** Na PR #90, a ordem do deploy é a das fases com migration (0042 a 0048, nas seções
+delas); a 0042 é a primeira. O menu (`apps/web/nav.registry.mjs`) vai no MESMO deploy do web desta fase. Janelas:
+1. **API anterior × banco novo:** os INSERTs dela ignoram as colunas novas e nunca gravam `adiantamento_id` (o gatilho
+   do crédito não dispara para ela); ela não apaga o ledger nem chama a função do extrato. Declarado: (a) a baixa COM
+   desconto feita por ela quita o título só pelo `amount` e deixa o valor do desconto em aberto (ela confere
+   `amount + discount ≤ saldo`, mais estrita: nunca estoura); (b) o PUT de movimento que troca o rateio recebe 403 (ela
+   apaga `bank_movement_apportionments`, e o `erp_app` não apaga mais); (c) o PUT que muda valor, data ou conta de
+   movimento confirmado recebe 409 do gatilho. A web anterior não tem tela de PUT de movimento. Produção não tem baixa
+   nem movimento (02/10).
+2. **Web anterior × API nova** (janela "API antes do web" e reversão só do web): as rotas `/api/financial/*` recebem os
+   corpos de hoje e devolvem as chaves de hoje, só com acréscimos. Mudam, de propósito (os defeitos): título gerado por
+   documento não se edita (valor, parceiro, rateio…) nem se cancela pelo financeiro (409); movimento confirmado não
+   muda valor nem data (409); "gera obrigação" sem empresa → 422; conta OFX inválida → 422; transferência com destino
+   inválido → 422; a baixa com desconto quita o `amount` e movimenta valor − desconto — o "Valor líquido do movimento"
+   que a tela antiga mostra; adiantamento pelo tipo de título aparece como "Adiantamento/Pendente"; a contagem de anexos
+   passa a contar; baixa em lote "Único" com títulos de 2 ou mais empresas → 422, título fora do escopo no lote é pulado
+   (antes, 404 do lote inteiro), id repetido → 422; baixa cruzada com desconto: o contrário abate valor − desconto.
+   Provado pelo K-2 (`central-financeira-skew-web-anterior.spec.ts`, 3 casos: a lista antiga com as chaves e os tipos
+   de hoje; a baixa antiga com Desconto 10 → "Baixada" e o movimento de saldo − 10; lote, cancelamento em lote e OFX
+   antigos com os corpos e as chaves de hoje).
+3. **Web nova × API anterior** (janela "web antes da API" e reversão só da API): a capacidade dá 404, e a página é o
+   Financeiro de hoje — mesmas abas, formulário com rateio por %, diálogo de baixa sem Tarifa, corpo do `/settle` sem
+   `tarifa`, `excedente` nem `adiantamento_id` — e nenhum outro pedido sai para `/api/financeiro/*` (K-1,
+   `central-financeira-skew-api-producao.spec.ts`, 3 casos, contando os pedidos no fio). Diferenças inócuas: o
+   cancelamento de movimento manda o motivo digitado (a API anterior o descarta, como descartava o fixo), e o link da
+   baixa no detalhe do movimento segue o de hoje (a API anterior não manda `direction`). Declarado: o menu do web novo
+   mostra as áreas novas (Títulos, Bancos e caixa…), que a tela de hoje não tem — o link cai na aba padrão (Contas) —,
+   e não mostra Contas nem Caixa e Bancos, que a tela de hoje continua mostrando como abas.
+
+Os dois sentidos rodam no job `skew` do CI, contra os binários reais da base (`622f194`), e os specs escolhem o ramo pelo
+mundo medido na hora (K-1: a base responde 404 ou 200 a `GET /api/financeiro/capacidades`; K-2: o web da base conhece ou
+não a rota da capacidade, por `git grep` na árvore da base).
+
+**Impacto em dados reais:** nenhuma linha muda; sem backfill. Produção (02/10): 1 título financeiro, zero baixas, zero
+contas bancárias, zero movimentos bancários e zero OFX — a P8 passa (zero baixas confirmadas com desconto, conferido em
+produção em 02/10), e as telas de Bancos e caixa, Conciliação e
+Adiantamentos abrem vazias. O título de produção continua com o mesmo saldo e situação: a soma nova só vale na próxima
+baixa. Se ele foi gerado por documento (Origem diferente de "Avulso"), passa a mudar pelo financeiro só no vencimento,
+na conta prevista e na observação. Sem natureza padrão configurada (a tabela nasce vazia), juros, multa e acréscimo
+ficam no movimento principal, como hoje, e a baixa com tarifa é recusada até alguém configurar a natureza da tarifa.
+Nenhuma natureza tem `grupo_dre`: o DRE sai pelos padrões derivados (receita → Receitas; despesa CAPEX →
+Investimentos; despesa → Despesas); Deduções e Custos só aparecem com a marcação no cadastro. O que muda para fora do
+sistema: o menu Financeiro (as áreas novas; Contas e Caixa e Bancos saem do menu e da busca, e continuam pela URL e
+pelos favoritos).
+
+**Reversão:** API e web voltam por redeploy da versão anterior; o banco fica (aditivo; a tabela nova nunca se apaga,
+decisão 247; devolver DELETE ao `erp_app` ou desligar um gatilho só com migration nova, por decisão humana). Reverter
+só o web = janela 2; reverter só a API = janela 3 sobre o banco novo, com a janela 1. Enquanto ninguém usar a Central
+(baixa com componente, tarifa, excedente, lote ou encontro de contas com desconto), a reversão não deixa resto. Depois:
+- a API anterior não estorna a baixa CRUZADA com desconto feita pela nova: o espelho abate valor − desconto e ela acha o
+  par só pelo `amount` igual → 409 "Par da baixa cruzada não identificado com exatidão: cancelamento bloqueado"
+  (fail-closed; nada corrompe);
+- o estorno pela API anterior de uma baixa com componentes, tarifa ou excedente cancela a baixa e o principal (se nenhuma
+  outra baixa o usa), e deixa CONFIRMADOS os movimentos de componente, a tarifa do lote e o título-crédito do excedente
+  (com excedente, o principal também fica: a baixa do crédito o compartilha);
+- a API anterior deixa estornar direto um movimento de componente (ela não conhece `title_settlement_id`).
+A correção, nos três, é voltar a API nova e estornar por ela. Por isso: use os recursos novos de baixa em produção só
+depois de conferir o deploy (roteiro abaixo).
+
+**Conserto do extrato (revisão final, decisão do Maike de 03/10).** Impacto em dados reais: nenhum — a 0042 ainda não
+está em produção, a função só lê e nenhuma linha muda. O que muda para o usuário: quem tem escopo financeiro PARCIAL
+passa a ver, em Bancos e caixa (Contas, Extrato) e no fluxo da conta, só os movimentos das suas empresas, sem o saldo
+inicial do cadastro (o saldo é a soma dos movimentos dele; as respostas trazem `escopo_saldo: "parcial"`, e a tela
+mostra o aviso "Saldo das suas empresas … Não é o saldo da conta inteira." em Contas e Extrato — E2E
+`apps/web/e2e/f8-bancos-escopo-empresa.spec.ts`, BC-1 e BC-2); proprietário e "todas" no financeiro: nada muda, nenhum
+aviso. Janelas: a API anterior não chama a função; o web anterior não chama
+`/api/financeiro/*` (K-2 rodado de novo: 3 passaram); web nova × API anterior: a capacidade dá 404 (K-1, sem mudança).
+Pós-condição nova: "OPERACOES-01 F8: erp.extrato_conta_organizacao sem o recorte pelo escopo de empresa do modulo
+financeiro (escopo_empresa_total e empresas_do_membro no WHERE)." Conferência em produção (uma conta compartilhada real,
+lida por um usuário de escopo parcial): PENDING — exige acesso autenticado de produção. **Risco declarado (NÃO FEITO):**
+a porta da 0015 (`erp.movimentos_conta_organizacao`, JÁ em produção) e as rotas antigas que a usam —
+`/api/financial/bank-accounts/balances`, `/api/financial/cash-flow` (inclusive o modo analítico, com texto e documento)
+e o relatório `bank_statement` — continuam somando as empresas da conta para quem tem `bank_accounts.view` ∧
+`bank_movements.view` (o contrato vigente da PRE-BASE2-03, `apps/api/test/integration/banco-organizacional.test.ts`):
+numa conta compartilhada, quem vê só a empresa A ainda lê por elas os movimentos da empresa B. Este deploy não muda
+isso; mudar exige migration nova (sem número reservado: a 0048 foi usada pela F12) e é decisão do Maike. **Também
+NÃO FEITO (declarado):** a Conciliação mostra as transações OFX da importação inteira (data, valor, memo) a quem tem
+`ofx_imports.view`, mesmo com escopo parcial: `erp.ofx_transactions` é da CONTA, sem empresa — o mesmo contrato das rotas
+antigas `/api/financial/ofx-imports*`; os movimentos vinculados e sugeridos ao lado já são recortados pelo escopo.
+Recortar o arquivo do banco por empresa é contrato novo e decisão do Maike.
+
+**Roteiro do Maike em produção** (produção é operacional — decisões 240 e 247). Os passos 0 a 9 são só leitura (nada é
+gravado); o passo 10 grava, e só com a decisão dele.
+0. Antes do deploy (leitura): o ledger de migrations tem 42 migrations, 0001 a 0041 e a 0049 da #91 (o fato de 03/10;
+   a ordem real está no cabeçalho desta seção), e nenhuma das 0042 a 0048; nenhuma baixa confirmada com desconto (a P8
+   refaz a pergunta na hora de aplicar). **Conferido em produção em 02/10** (leitura do Maike, por volta das 23h UTC,
+   com a `main` `622f194` no ar): o ledger de migrations na 0041 e ZERO baixas confirmadas com desconto — a parada da
+   P8 não dispara. Os gatilhos de `erp.financial_titles` (a parte deles na P7) são exatamente `trg_ft_audit` e
+   `trg_ft_updated` (o mesmo fato da P9 da F9a).
+1. Menu Financeiro: Títulos, Bancos e caixa, Conciliação, Fluxo e resultado, Adiantamentos, Visão Geral, Planejamento,
+   Compromissos, nesta ordem; Contas e Caixa e Bancos fora do menu; a busca do menu por "contas a pagar" leva a Títulos.
+   `/financeiro?tab=contas&sub=pagar` ainda abre a lista de hoje.
+2. Títulos › A pagar, A receber e Todos: o título de produção aparece; os cartões (Vencidos, Vencem hoje, A vencer,
+   Pagos/Recebidos no período) contam e somam; "Previstos" habilitado com 0 (a provisão pela TOP é da F9a; nenhuma TOP
+   provisiona); o rodapé "Totais do filtro". Exportar CSV abre a planilha com o dinheiro em texto. Nenhuma ação em lote.
+3. Abrir o título: "Origem" com o rótulo (e "Abrir origem" quando ele vem de documento, com o aviso "Título gerado por …"
+   e sem Editar nem Cancelar). "Baixar" abre o diálogo novo (Tipo, Conta bancária, Valor, Juros, Multa, Desconto,
+   Acréscimo, Tarifa, Movimento). Fechar sem confirmar.
+4. "+ Novo" › Nova despesa: o lançamento avulso (Competência, Conta prevista, Rateio em R$ com "Falta R$ …", "Já pago",
+   Anexos); o primeiro campo é "Tipo de operação" (F9a). Voltar sem salvar.
+5. Bancos e caixa › Contas: vazia (produção sem conta), com o link "Cadastro de contas"; Extrato: "Escolha uma conta
+   para ver o extrato."; Transferências: o formulário (Tipo, Conta de origem, Conta de destino…). Fechar sem lançar.
+6. Conciliação: a lista de importações vazia; "Importar OFX" pede a conta. Fechar.
+7. Fluxo e resultado › Fluxo de caixa do mês; "Incluir previstos" habilitado (F9a; sem previsto, as colunas da provisão
+   saem zeradas). Resultado (DRE): competência e caixa do mês, por grupo.
+8. Adiantamentos: vazio.
+9. Configurações › Financeiro › "Naturezas padrão da baixa": os 9 campos vazios. Cadastros › Naturezas: o campo "Grupo do
+   DRE". Não salvar.
+10. (Decisão do Maike; grava.) Configurar as naturezas padrão (juros, multa, acréscimo, desconto e tarifa) e, se quiser,
+    o "Grupo do DRE" das naturezas de dedução e de custo.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
+### F6a — pedido de compra finalizado com aprovação, aprovado para orçamento e orçamento de compra (OPERACOES-01, migration 0044)
+
+Decisão 283, parte F6a. A F6b — as telas da Central de Compras — acrescenta a subseção dela. **Uma migration:
+`0044_pedido_finalizado_e_orcamento_de_compra.sql`** (pre-deploy; trava (2026,78); `lock_timeout` 2 s; pré-condições
+nomeadas `OPERACOES-01 F6a: …`, a primeira é "já aplicada"; pós-condições só de catálogo; aditiva; sem backfill; a 0041
+não foi editada). Sem variável. Permissões novas sem migration: `pedidos_compra.approve` e
+`orcamentos_compra.{view,create,edit,delete}` — o pre-deploy sincroniza o catálogo e o perfil Administrador do sistema
+as recebe (`packages/db/src/seed.ts:20-21`); os outros perfis, o Maike dá na tela de perfis. Doze rotas novas
+(`/api/compras/pedidos/:id/{previa-finalizacao,finalizar,aprovar-para-orcamento,orcamentos}`,
+`/api/compras/pedidos/:id/orcamentos/:orcamentoId/escolher` e `/api/compras/orcamentos/*`), a capacidade
+`finalizacaoEOrcamento: 1` (no FIM de `capacidades`, em `GET /api/compras/{pedidos,compras,orcamentos}/operation-types`),
+as seções `fluxoCompra` e `divergenciaPedido` em `formato5.secoes` (depois de `destino` e `fluxo` da F5a) e o código de
+erro `DIVERGENCIA_COM_O_PEDIDO` (409). Nenhuma tela da Central de Compras muda, nem o menu (a entrada do orçamento de
+compra em `apps/web/nav.registry.mjs` vem com a F6b); o editor da TOP ganha as abas "Fluxo de compra" (pedido) e
+"Divergência com o pedido" (compra). Contrato em `docs/OPERACOES-CONTRACT.md` §2 e §4 e
+`docs/TIPO-OPERACAO-CONTRACT.md` §18.9.
+
+**Migration — o que faz** (nenhuma linha existente é reescrita):
+- `erp.documentos_compra`: colunas novas, anuláveis, sem default — `finalizado_em`, `finalizado_por` (FK `erp.users`),
+  `aprovado_orcamento_em`, `aprovado_orcamento_por` (FK `erp.users`), `pedido_orcado_id` (FK COMPOSTA
+  `(pedido_orcado_id, organization_id)` → a própria tabela), `prazo_entrega_dias`, `validade_orcamento`; cinco CHECKs
+  novos (os pares de finalização e de aprovação para orçamento andam juntos e são só do pedido; `pedido_orcado_id` só e
+  sempre no orçamento; prazo e validade só no orçamento; prazo de 0 a 3650) — 20 CHECKs no total; os CHECKs de
+  espécie e de situação refeitos na MESMA instrução (drop e add), só ACRESCENTANDO `orcamento`, `finalizado`,
+  `escolhido` e `nao_escolhido`; índices novos: `ix_documentos_compra_pedido_orcado` e os únicos parciais
+  `ux_documentos_compra_orcamento_fornecedor` (um orçamento vivo por fornecedor no pedido) e
+  `ux_documentos_compra_orcamento_escolhido` (um vencedor por pedido);
+- `erp.documentos_compra_itens`: `item_pedido_orcado_id` (FK composta → a própria tabela) e os índices
+  `ux_documentos_compra_itens_pedido_orcado` e `ix_documentos_compra_itens_pedido_orcado`;
+- seis funções de gatilho novas, todas SECURITY DEFINER estreitas (`search_path = erp, pg_temp`, EXECUTE só do dono):
+  `documentos_compra_conferir_v3`, `documentos_compra_transicao_v3`, `documentos_compra_item_origem_guarda_v2`,
+  `documentos_compra_item_orcamento_guarda` (nova), `aprovacoes_compra_conferir_v2` e `documentos_compra_finalizacao_guarda`
+  (nova); os gatilhos de MESMO nome trocados para elas (a ordem de disparo não muda), dois gatilhos novos
+  (`trg_documentos_compra_finalizacao`, só na passagem aberto → finalizado do pedido; `trg_documentos_compra_itens_orcamento_guarda`)
+  e as quatro funções substituídas removidas SEM cascata; `erp.documentos_compra_itens_documento_aberto` não muda (a
+  0043 trocou só o texto dela, e a 0044 confere só o nome);
+- `erp.layouts_documento`: o CHECK da família refeito por lista ESTÁTICA com as TREZE — as cinco da 0038, as sete de
+  estoque da 0043 (`estoque.entrada`, `estoque.saida`, `estoque.transferencia`, `estoque.ajuste`,
+  `estoque.requisicao_material`, `estoque.consumo`, `estoque.devolucao_consumo`) e `compras.orcamento` —, e o
+  comentário da coluna cita as treze.
+
+**Pré-condições (a migration recusa sem aplicar nada, com a mensagem `OPERACOES-01 F6a: …` que nomeia o que falta):**
+já aplicada (funções novas, colunas novas ou os dois gatilhos novos já existem — a primeira pergunta); papel `erp_app`
+ausente; quem aplica não atravessa RLS (precisa ser superusuário ou `BYPASSRLS`: é o dono das funções SECURITY DEFINER);
+tabelas e chaves `(id, organization_id)` alvo das FKs compostas ausentes; funções que ela troca ou chama ausentes; os
+gatilhos a trocar desligados ou fora das funções esperadas; as funções SECURITY DEFINER de compras, enumeradas PELO NOME,
+diferentes das seis esperadas; quem aplica não é dono delas e das quatro tabelas; os 15 CHECKs de hoje diferentes; e
+**2.9, o CHECK de família do layout**: ausente; sem as cinco famílias da 0038 e as sete de estoque da 0043 (a 0043 não
+aplicada); já aceitando `compras.orcamento`; ou aceitando alguma família que a lista estática da 0044 não carrega (a
+rede para a junção das fases). A pós-condição 12.8 confere o CHECK validado com exatamente as treze.
+Os ALTER TABLE e as trocas de gatilho pedem travas curtas em `erp.documentos_compra`, `erp.documentos_compra_itens`,
+`erp.aprovacoes_compra` e `erp.layouts_documento`: com uma transação longa segurando uma delas, a migration desiste em
+2 s sem aplicar nada, e o deploy é refeito (seguro). Em erro, publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0044) → API → web.** Na PR #90, as migrations entram na ordem do número (0042 → 0043 → 0044). A 0044
+DEPENDE da 0043 (F5a): a pré-condição 2.9 recusa enquanto o CHECK de layouts não aceitar as sete famílias de estoque
+dela. O runner aplica cada migration na sua própria transação: se a 0044 desistir depois de a 0043 entrar, o banco fica
+com a 0043, e o deploy é refeito.
+
+**Version skew** (base `622f194`; provas em arquivos próprios, fora da suíte comum):
+- **Sentido 2 — web da base × API nova** (janela "API antes do web" e reversão só do web): igual a hoje. A lista única
+  sem filtro de espécie não traz orçamento; a leitura do pedido ganha chaves (ignoradas); o pedido aberto cuja TOP não
+  exige finalizar é recebido e a compra confirmada pela tela da base; a fila Aprovações › Compras da base lista o pedido
+  cuja TOP (formato 4) exige aprovação e o Aprovar da base decide (com `pedidos_compra.approve`); a prévia da compra só
+  ganha `divergencia` quando a TOP da compra tem a seção. Provado pelo K-2 (`f6a-compras-skew-web-anterior.spec.ts`,
+  3 casos: K2-1 receber e confirmar; K2-2 a fila aprova o pedido, depois o finalizar da API nova dá 200 e a consulta da
+  base abre o pedido finalizado com o Receber desabilitado; K2-3 a lista da base sem o orçamento e a consulta do pedido
+  com orçamento abrindo), com o vigia: nenhum 404, 422 ou 5xx e nenhuma requisição morta. Declarado: no web da base, o
+  pedido FINALIZADO aparece como "Desconhecido" (o rótulo da base não conhece a situação), sem Receber, Cancelar nem
+  Encerrar saldo — o servidor aceitaria; o pedido cuja ÚNICA próxima operação é o orçamento mostra "A TOP deste pedido
+  não tem próxima operação configurada.".
+- **Sentido 1 — web novo × API da base** (janela "web antes da API" e reversão só da API): sem o bloco `formato5`, o
+  editor da TOP é o do 4, sem as abas de extensão (K-1 do 5 da F4, `top-formato5-skew-api-producao.spec.ts`, 2 casos; a
+  premissa passou a tirar as seções de extensão do corpo no 5). A Central de Compras desta parte não pede nada novo: o
+  Tipo "Orçamento de compra" só aparece com `orcamentos_compra.view`, que a API anterior não conhece. O K-1 de compras
+  (`finalizacaoEOrcamento`) é da F6b, que consome a chave.
+- **Com "Exigir pedido finalizado para receber" = Sim, o web só com a F6a não recebe o pedido**: o Receber da Central
+  continua habilitado no pedido aberto, o servidor responde 409 "Este pedido precisa ser finalizado antes de ser
+  recebido.", e não há botão Finalizar até a F6b. Desde a F6b (§ F6b, na mesma PR), o "Receber…" do pedido aberto fica
+  desabilitado com essa mensagem e o Finalizar está na tela. Ligue as regras só com as telas da F6b no ar (passo 7).
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247): nenhuma linha muda; sem backfill. Colunas novas nulas; CHECKs só alargados; os novos só
+restringem colunas novas. Produção (leitura de 02/10, decisão 281): nenhum documento de compra listado; 3 TOPs — a de
+pedido de compra no formato 3 lê "Exigir pedido finalizado para receber" e a divergência no neutro sem ler a
+configuração e não exige aprovação: o receber e a confirmação seguem os de hoje. O que muda para quem usa (Administrador,
+que recebe as permissões novas): nos perfis, "Pedidos de Compra" com "Aprovar" e o recurso "Orçamentos de Compra"; no
+editor da TOP, as abas "Fluxo de compra" e "Aprovação" no pedido de compra e "Divergência com o pedido" na compra; em
+Compras › Documentos, o Tipo "Orçamento de compra" (lista vazia) e as situações Finalizado, Escolhido e Não escolhido no
+filtro; em Layouts de documento, o movimento "Orçamento de compra". A Central de Compras e a fila de Aprovações não
+mudam.
+
+**Reversão:** API e web voltam por redeploy da versão anterior e convivem com a 0044; colunas, linhas e decisões nunca
+se apagam (decisão 247); desligar a guarda ou estreitar um CHECK só com migration nova, por decisão humana. Enquanto
+ninguém finalizar pedido nem lançar orçamento, a reversão não deixa resto. Depois:
+- a API anterior não lê as colunas novas; orçamentos ficam invisíveis (espécie fora das portas e da lista única dela) e a
+  fila dela não lista pedido (espécie compra fixa); as decisões de pedido já gravadas ficam;
+- o pedido FINALIZADO: receber e encerrar o saldo → 409 "Este pedido não está aberto."; cancelar → 404 (o UPDATE dela só
+  alcança o aberto);
+- a compra gerada de um pedido que foi finalizado e ficou convertido NÃO se cancela pela API anterior (aberta ou
+  confirmada): ela reabre o pedido como aberto, e a transição da 0044 recusa — 409 "O pedido de compra reabre na situação
+  de antes de ser convertido (finalizado).", e nada é gravado;
+- "Exigir pedido finalizado para receber" não é cobrado: o pedido aberto é recebido.
+A correção, nos casos acima, é voltar a API nova. Reverter só o web = o sentido 2 acima.
+
+**Roteiro do Maike em produção** (depois do deploy; produção é operacional — decisões 240 e 247). Os passos 1 a 6 são só
+leitura (nada é gravado); o passo 7 grava, e só com a decisão dele.
+1. Perfis de usuário: "Pedidos de Compra" tem "Aprovar"; "Orçamentos de Compra" (Ver, Criar, Editar, Excluir) aparece em
+   Operacional › Compras; o Administrador tem todas. Fechar sem salvar.
+2. Configurações › Operações › Tipos de Operação › a TOP de pedido de compra: as abas Identificação, Geral, Próximas
+   operações, Estoque, Fluxo de compra, Padrões financeiros (F9b), Financeiro, Fiscal e Aprovação (sem Execução). Na
+   "Fluxo de compra", "Exigir pedido finalizado para receber" = Não, com a ajuda que termina em "… ligar ou desligar a
+   aprovação liga ou desliga esta regra."; na "Aprovação", "Sem aprovação", com "Sempre" e "A partir de um valor"
+   habilitados — escolher "Sempre" põe "Exigir pedido finalizado para receber" em Sim, e voltar a "Sem aprovação" o põe
+   em Não (o par). Fechar sem salvar.
+3. "Novo" › Compras › Compra (desde a F6b, o passo 1 também oferece "Orçamento" em Compras): a aba "Divergência com o
+   pedido" com "Divergência" = Nenhuma e as duas tolerâncias em "0", desabilitadas; "Avisar" as habilita; digitar
+   "150" mostra "Informe um percentual de 0 a 100, com até duas casas decimais."; voltar a "Nenhuma" põe "0" de novo.
+   Fechar sem salvar.
+4. Aprovações › Compras: a lista de hoje (nenhuma TOP de pedido de produção exige aprovação).
+5. Compras › Documentos: o Tipo oferece "Orçamento de compra" — escolhido, a lista vem vazia; o filtro Situação lista
+   também Finalizado, Escolhido e Não escolhido.
+6. Configurações › Operações › Layouts de documento: o movimento "Orçamento de compra", com Empresa, Fornecedor, Data do
+   documento, Condição de pagamento, Prazo de entrega (dias), Validade do orçamento, Observação e, nos itens, Produto,
+   Quantidade e Valor unitário. Não salvar.
+7. (Decisão do Maike; grava; só com as telas da F6b no ar — sem elas não há Finalizar na tela.) Ligar, TOP por TOP,
+   "Exigir pedido finalizado para receber" e a Aprovação no pedido de compra (as duas andam juntas: ligar a Aprovação
+   liga a outra, e a gravação recusa uma sem a outra), e a Divergência na compra. O roteiro com gravação de pedido,
+   orçamento e vencedor é o da F6b.
+
+**O par (decisão do Maike de 03/10, registrada na decisão 283):** no formato 5, a aprovação do pedido de compra e
+"Exigir pedido finalizado para receber" andam juntas, nos dois sentidos. A gravação da TOP de pedido de compra (POST, e
+PUT com `configuracao`) recusa uma sem a outra com 422 `TIPO_OPERACAO_CONFIGURACAO_INVALIDA`, no campo que falta ligar
+(`fluxoCompra.exigeFinalizar` ou `aprovacao.politica`), e nada é gravado; o editor liga e desliga "exigir" junto com a
+aprovação, e as ajudas das abas "Fluxo de compra" e "Aprovação" dizem que as duas andam juntas. Sem migration, sem
+variável, sem código de erro novo. Só na gravação do 5: uma versão já gravada nunca passa a ser recusada, e os formatos
+1 a 4 (lidos no neutro) continuam válidos — a TOP de pedido de compra de produção (formato 3, sem aprovação) não é
+afetada. Skew: o web da base grava 4 e não é afetado; o web novo contra a API da base é o editor do 4, que não manda a
+seção. Risco: no formato 4, a TOP de pedido com aprovação continua gravável e recebe o pedido aberto sem aprovação.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
+### F6b — as telas de Compras: finalizar, aprovar para orçamento, o orçamento de compra e o vencedor (OPERACOES-01, sem migration)
+
+Decisão 283, parte F6b. **Sem migration, sem variável, sem permissão nova, sem rota nova, sem capacidade nova, sem
+código de erro novo.** As migrations continuam 45, a última a 0045. Usa o que a 0044 e as rotas da F6a já criaram. O
+que entra:
+- web, na Central de Compras (sobre o motor, sem mudá-lo), tudo atrás da capacidade `finalizacaoEOrcamento` que a F6a
+  declara em `GET /api/compras/{pedidos,compras,orcamentos}/operation-types`:
+  - no pedido: "Finalizar" (com a prévia), "Aprovar para orçamento", "Novo orçamento", o bloco da Aprovação, a aba
+    "Orçamentos" (comparar, "Escolher", "Cancelar") e "Finalizado"/"Aprovado para orçamento" nos Dados adicionais;
+  - o orçamento de compra: a criação a partir do pedido, a consulta, editar no lugar e cancelar;
+  - na compra: a divergência com o pedido na prévia da confirmação;
+  - no Portal: o "Novo" sem orçamento avulso e o Tipo "Orçamento de compra" pela capacidade;
+  - sem a capacidade: o pedido FINALIZADO recebe, encerra o saldo e se cancela na tela; a chave de idempotência da Central
+    de Compras só troca quando o servidor recusa;
+- API, ADITIVA e só de leitura:
+  - `GET /api/aprovacoes/compras/:id` lê também o pedido (`compras.view` ∧ `pedidos_compra.view`);
+  - `GET /api/compras/pedidos/:id/proximos-passos` ganha `orcamentos` no fim (com `orcamentos_compra.create`);
+  - a leitura do pedido traz, em cada orçamento, a condição e o preço de cada item (com `orcamentos_compra.view`);
+- domínio: o tipo `orcamento_compra` ganha tela (o passo 1 do assistente oferece "Orçamento" em Compras; 13 tipos com
+  tela, 15 das 28 famílias sem tela no passo 1);
+- editor da TOP: só a ajuda da aba Aprovação no pedido de compra;
+- menu (`apps/web/nav.registry.mjs`, aplicado pelo coordenador no merge da fase, no mesmo commit das telas):
+  `orcamentos_compra.view` em Compras › Documentos e no detalhe do documento de compra, com as palavras-chave "orçamento
+  de compra" e "cotação"; a descrição de Aprovações › Compras passa a "Compras e pedidos de compra que aguardam
+  aprovação" (a porta `compras.approve` não muda).
+
+**Migration:** nenhuma. Nada a aplicar no banco.
+
+**Ordem do deploy:** a F6b não tem exigência própria. Na PR #90 vale a ordem das fases com migration (0042 → 0043 → 0044
+→ 0045, depois a API, depois o web). As regras de compras que travam — a aprovação no pedido, "Exigir pedido finalizado
+para receber" e a divergência em "Bloquear" — só se ligam, TOP por TOP, DEPOIS deste web no ar.
+
+**Version skew** (base `622f194`; provas em arquivos próprios, fora da suíte comum):
+- **Sentido 1 — web novo × API da base** (janela "web antes da API" e reversão só da API): a base não declara
+  `finalizacaoEOrcamento`, e a consulta do pedido é a de HOJE — sem Finalizar, Aprovar para orçamento, Novo orçamento, aba
+  "Orçamentos" nem bloco da aprovação; as abas de hoje, exatas; o "Receber…" de hoje — e NENHUMA pergunta a
+  `/previa-finalizacao`, a `/api/aprovacoes/compras/<pedido>` ou a caminho com `/orcamentos`; no Portal, o Tipo
+  "Orçamento de compra" não existe e nada de orçamento é perguntado (K1-1). A prévia da compra da base, sem
+  `divergencia`, é lida como "pronta" e confirma (200) (K1-2). `f6b-compras-skew-api-producao.spec.ts`, 2 casos, com o
+  vigia (nenhum 404, 422 ou 5xx). O ramo "mundo novo" do mesmo arquivo só roda quando a base de skew tiver a F6.
+  **Não coberto:** o pedido FINALIZADO gravado antes de reverter a API (ver Reversão); e o papel que só lança orçamento
+  (só `orcamentos_compra.create` entre as de compras), que pergunta a porta do orçamento que a base não tem — 404 de
+  rota no fio, e a tela é a de hoje.
+- **Sentido 2 — web da base × API nova** (janela "API antes do web" e reversão só do web): igual a hoje. O web da base não
+  pergunta a situação do pedido, ignora `orcamentos` nos próximos passos e as chaves a mais da leitura, e recebe e confirma
+  o pedido cujo leque tem orçamento como hoje (K2-1, `f6b-compras-skew-web-anterior.spec.ts`, 1 caso, com o vigia). O resto
+  é o K-2 da F6a (o pedido finalizado aparece "Desconhecido" no web da base, sem Receber).
+- O web F6b sobre a API F6a sem F6b não existe em produção (a mesma PR). Mesmo assim, o web tolera: sem `orcamentos` nos
+  próximos passos, o "Novo orçamento" fica indisponível; sem os preços, a aba compara só os totais; a situação do pedido
+  em 404 esconde o bloco.
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247): o deploy não grava nada; nenhuma linha muda; sem backfill. Produção (leitura de 02/10, decisão
+281): nenhum documento de compra listado; 3 TOPs — a de pedido de compra no formato 3, sem destino de orçamento e sem
+aprovação. O que muda para quem usa (o Administrador, o único com as permissões da F6a):
+- Compras › Documentos: o Tipo oferece "Orçamento de compra" (lista vazia: não há orçamento) e o "Novo" não o oferece;
+- num pedido de compra ABERTO (nenhum hoje): "Finalizar" e "Aprovar para orçamento" na barra;
+- o passo 1 do assistente da TOP: "Orçamento" em Compras;
+- a TOP de pedido de compra, aba "Aprovação": a ajuda nova;
+- no menu, a descrição de Aprovações › Compras: "Compras e pedidos de compra que aguardam aprovação" (a fila não muda);
+- para todos, sem a capacidade inclusive: depois de uma queda de rede, o reenvio do Salvar, Confirmar, Cancelar ou
+  Encerrar saldo de compras leva a mesma chave (nunca um segundo documento); o reenvio com outros dados mostra o aviso
+  "A tentativa anterior ficou sem resposta do servidor e pode ter sido gravada. …".
+Finalizar, aprovar para orçamento e escolher o vencedor gravam e não se desfazem: só com a decisão do Maike.
+
+**Reversão:** redeploy do web e/ou da API anteriores; nada no banco. Os pedidos finalizados, os orçamentos e as decisões
+gravados ficam (decisão 247). Enquanto ninguém finalizar pedido nem lançar orçamento, a reversão não deixa resto.
+Depois:
+- reverter só o web = o sentido 2 acima (e o K-2 da F6a);
+- reverter só a API = o sentido 1 acima, com UMA diferença: o pedido FINALIZADO já gravado continua com "Receber…",
+  "Encerrar saldo" e "Cancelar pedido de compra…" na tela (o web aceita o finalizado sem a capacidade), e a API anterior
+  recusa — 409 "Este pedido não está aberto." no receber e no encerrar, 404 no cancelar (§ F6a, Reversão). Um papel com
+  `orcamentos_compra.view` que não lança nada de compras vê o Tipo "Orçamento de compra" com a lista vazia. A correção é
+  voltar a API nova;
+- reverter os dois = a reversão da F6a.
+
+**Roteiro do Maike em produção** (depois do deploy; produção é operacional — decisões 240 e 247). Os passos 1 a 5 são só
+leitura (nada é gravado). Os passos 6 a 8 gravam, só com a decisão dele, um por vez.
+1. Compras › Documentos: o Tipo oferece "Orçamento de compra" — escolhido, a lista vem vazia e o "Novo" não existe; no
+   Tipo "Todos", o "Novo" lista só as TOPs de pedido de compra e de compra (nenhuma de orçamento).
+2. Configurações › Operações › Tipos de Operação › "Novo": o passo 1, grupo Compras, oferece "Pedido", "Orçamento" e
+   "Compra". Fechar sem salvar.
+3. A TOP de pedido de compra, aba "Aprovação": a ajuda "No pedido de compra, a aprovação vale ao finalizar: com
+   aprovação, o pedido só é finalizado depois de aprovado em Aprovações, por quem tem as permissões Aprovar de Pedidos
+   de Compra e Aprovar de Compras. …". Fechar sem salvar.
+4. Abrir `/compras/orcamentos/new` (sem pedido): "O orçamento de compra nasce do pedido: abra um pedido aprovado para
+   orçamento e use “Novo orçamento”." e o link "Ir para Documentos de compra". Nada é gravado.
+5. Aprovações › Compras: a lista de hoje.
+6. (Decisão do Maike; grava.) Criar a TOP de orçamento de compra pelo assistente (Compras › Orçamento) e incluí-la nas
+   "Próximas operações" da TOP de pedido de compra. Salvar a TOP de pedido grava uma versão nova, no formato 5 (o editor
+   mostra antes o que volta ao padrão). O leque vale só para os pedidos salvos DEPOIS.
+7. (Decisão do Maike; grava.) Um pedido de compra de teste nessa TOP, com dois itens. Conferir, nesta ordem:
+   - "Aprovar para orçamento" → confirmar → "Aprovado para orçamento" nos Dados adicionais; a pílula some;
+   - "Novo orçamento" → a Central do orçamento com a faixa do pedido, as linhas do pedido travadas e sem Local de estoque
+     → fornecedor A, preços → Salvar → a consulta do orçamento (Aberto);
+   - de novo, com o fornecedor B, mais barato; o mesmo fornecedor A de novo é recusado ("Este pedido já tem orçamento
+     deste fornecedor.");
+   - a aba "Orçamentos" do pedido: "Menor total" no B e "menor" nos preços dele → "Escolher" o B → B "Escolhido", A "Não
+     escolhido"; o pedido com o fornecedor e os preços do B;
+   - "Finalizar" → o diálogo com o texto "Finalizar confirma o pedido de compra: ele não volta a aberto. Não mexe em
+     estoque, e os orçamentos abertos continuam abertos. Se esta operação provisiona contas a pagar, os títulos previstos
+     nascem agora." e a prévia "Esta operação não exige aprovação para finalizar." → confirmar → "Finalizado", com
+     "Receber…" habilitado.
+   Nada se apaga (decisão 247): o pedido e os orçamentos de teste ficam (cancele o pedido, se quiser).
+8. (Decisão do Maike; grava; TOP por TOP.) Ligar a Aprovação no pedido de compra JUNTO com "Exigir pedido finalizado
+   para receber" (para o pedido não ser recebido sem aprovação), e a Divergência na compra. Num pedido novo: o bloco
+   "Aguardando aprovação"; "Receber…" desabilitado com "Este pedido precisa ser finalizado antes de ser recebido.";
+   "Finalizar" recusado na prévia até a aprovação. Com a provisão da F9b ligada, finalizar cria os previstos — o roteiro
+   da § F9b, passos 6 a 8, passa a ter o botão Finalizar.
+
+**O par:** decidido pelo Maike em 03/10 e feito na F6a (§ F6a, acima): no formato 5, a aprovação do pedido de compra e
+"Exigir pedido finalizado para receber" andam juntas, e a ajuda da aba "Aprovação" diz isso.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
+### F9a — financeiro pela TOP, título previsto e LCDPR (OPERACOES-01, migration 0045)
+
+Decisão 286, parte F9a. A F9b — a provisão do pedido de compra finalizado e a TOP na compra, sem migration — acrescenta
+a subseção dela. **Uma migration: `0045_financeiro_pela_top_e_lcdpr.sql`** (pre-deploy; trava (2026,79); `lock_timeout`
+2 s; pré-condições nomeadas `OPERACOES-01 F9: …`, a primeira é "já aplicada"; pós-condições só de catálogo; aditiva; sem
+backfill; a 0041 não foi editada; não depende da 0043 nem da 0044). Sem variável. Permissão nova sem migration:
+`imoveis_rurais.{view,create,edit,delete}` ("Imóveis rurais", "Cadastros Base > Financeiros", módulo `financeiro`) — o
+pre-deploy sincroniza o catálogo e o perfil Administrador do sistema as recebe (`packages/db/src/seed.ts:20-21`); os
+outros perfis, o Maike dá na tela de perfis. Três rotas novas (`GET /api/financeiro/tops`,
+`GET /api/financeiro/imoveis-rurais/opcoes`, `GET /api/financeiro/lcdpr/conferencia`) e três capacidades ADITIVAS:
+`financeiroPelaTop: 1` em `GET /api/financeiro/capacidades`, `capacidades.lcdpr: 1` em `GET /api/auth/context` e
+`padroesFinanceiros: 1` em `GET /api/admin/tipos-operacao/capabilities` (com `financeiroPadrao` em `formato5.secoes`, que
+fica com as cinco seções de extensão: `destino`, `fluxo`, `fluxoCompra`, `divergenciaPedido` e `financeiroPadrao`).
+Nenhum código de erro novo. O menu ganha Configurações › Financeiro › "Imóveis rurais" (`apps/web/nav.registry.mjs` e
+`apps/web/src/app/(app)/configuracoes/page.tsx`, aplicados no merge da fase, no MESMO deploy do web); a conferência do
+LCDPR entra na aba Fiscal › Livro Caixa, sem entrada nova. Os relatórios (`apps/api/src/routes/reports.ts`, arquivo da
+F5a e da F6a) passaram a excluir o previsto no merge: as 12 leituras `t.status<>'cancelled'` viraram
+`t.status not in ('cancelled','previsto')` — com a API desta PR, nenhum relatório soma o previsto. Contrato em
+`docs/OPERACOES-CONTRACT.md` §2 e §7 e `docs/TIPO-OPERACAO-CONTRACT.md` §18.10.
+
+**Migration — o que faz** (nenhuma linha existente é reescrita):
+- tabela nova `erp.imoveis_rurais` (14 colunas: nome, `cib` — 8 dígitos —, `caepf` — 14 dígitos —,
+  `inscricao_estadual`, `tipo_exploracao` — `individual`, `condominio`, `arrendado`, `parceria`, `comodato`, `outros` —,
+  `participacao` > 0 e ≤ 100, `padrao`, `is_active`, `created_at`, `updated_at`, `deleted_at`, empresa obrigatória):
+  FK COMPOSTA `(organization_id, empresa_id)` → `erp.empresas`; chaves `(id, organization_id)` e
+  `(id, empresa_id, organization_id)`; índices únicos parciais de um imóvel PADRÃO e de um CIB por empresa entre os vivos;
+  RLS habilitada e FORÇADA com a política ÚNICA `tenant_e_empresa` (o gabarito da categoria A, conferido letra por letra
+  contra o de `erp.aprovacoes_venda` da 0041); auditoria e `updated_at` por gatilho; o `erp_app` lê, insere e altera,
+  sem DELETE nem TRUNCATE (exclusão lógica); entra em `scripts/company-rls-modules.json` como `financeiro`;
+- tabela nova `erp.tipos_operacao_versao_financeiro` (11 colunas: os padrões financeiros de uma versão de TOP — natureza,
+  centro, tipo de título, forma de pagamento, conta —, uma linha por versão, ao menos um padrão): FKs compostas com a
+  organização para a versão, a natureza, o centro e a conta; FK de coluna única para tipo de título e forma (têm linhas
+  do sistema; a API confere a organização); imutável (gatilhos por linha contra UPDATE e DELETE e por comando contra
+  TRUNCATE, também para o dono); RLS `tenant_isolation` forçada; auditoria; o `erp_app` só lê e insere;
+- colunas novas, todas anuláveis e sem default: `financial_titles.tipo_operacao_id` e `.tipo_operacao_versao_id` (o par
+  inteiro ou nada; FK de três colunas para a versão daquela TOP); `title_settlements.imovel_rural_id` (FK com a
+  organização); `bank_movements.imovel_rural_id` (FK com a EMPRESA e a organização; CHECK: só com empresa, nunca em
+  transferência nem saldo inicial), `.tipo_operacao_id` e `.tipo_operacao_versao_id` (o par); `financial_categories.tipo_lcdpr`
+  (`receita`, `custeio_investimento`, `produto_adiantado`, `fora`; nulo = não classificada) — 11 FKs novas sem ação de
+  exclusão, 12 CHECKs novos e 7 índices;
+- o CHECK `financial_titles_status_check` (o MESMO nome) passa a aceitar `previsto`, e `chk_financial_titles_previsto`
+  exige do previsto nada pago e uma origem de documento;
+- `erp.refresh_title_status` com UMA linha nova: título previsto levanta `CONFLICT` (409 em todo binário) — a baixa de
+  um previsto morre no banco. Mesma assinatura, linguagem, corpo da 0042 e privilégios; não recalcula título algum;
+- gatilho `trg_ft_previsto_guarda` (BEFORE UPDATE com WHEN): o previsto só sai CANCELADO, sem mudar valor, desconto,
+  pago, parceiro, empresa, direção ou origem, e nenhum título vira previsto por UPDATE;
+- duas funções de gatilho novas, INVOKER, `search_path` fixo, EXECUTE só do dono. Nenhuma SECURITY DEFINER nova;
+  nenhuma política existente tocada.
+
+**Pré-condições (a migration recusa sem aplicar nada, com a mensagem `OPERACOES-01 F9: …` que nomeia o que falta):**
+P1 já aplicada (uma das tabelas novas, `financial_titles.tipo_operacao_id`, `financial_categories.tipo_lcdpr` ou a
+função da guarda já existe); P2 papel `erp_app` ausente; P3 quem aplica não atravessa RLS; P4 alguma das 35 colunas que a
+migration lê ausente; P5 alguma chave alvo das FKs compostas ausente (`uq_tipos_operacao_versoes_tenant`,
+`uq_financial_categories_tenant`, `uq_cost_centers_tenant`, `uq_bank_accounts_tenant` e a `(organization_id, id)` de
+`erp.empresas`); P6 alguma função chamada ausente (`tenant_visible`, `audit_row`, `set_updated_at`,
+`escopo_empresa_total`, `empresas_do_membro`, `modulo_empresa_atual`, `refresh_title_status`, `title_settlement_changed`);
+P7 o módulo de escopo `financeiro` ausente (conferido em produção em 02/10: os 11 módulos de escopo de empresa incluem
+`financeiro` — passa); **P8 o CHECK de situação do título não é EXATAMENTE o de hoje** (o texto de
+`pg_get_constraintdef` com `open`, `partially_paid`, `paid`, `cancelled`) — a lista com `previsto` é escrita sobre ele, e
+uma lista diferente seria trocada sem ninguém decidir (conferido em produção em 02/10: passa, passo 0 do roteiro); P9 os
+gatilhos de `erp.financial_titles` diferentes de `{trg_ft_audit, trg_ft_updated}` (conferido em produção em 02/10:
+passa, passo 0 do roteiro); P10 `erp.refresh_title_status` não é a da 0042. A 0043 e a 0044 (F5a e F6a) não tocam
+nenhum desses objetos. Os ALTER TABLE pedem trava curta ACCESS EXCLUSIVE em `financial_titles` (a validação do CHECK
+alargado lê a tabela), `title_settlements`, `bank_movements` e `financial_categories`, e as FKs novas pedem SHARE ROW
+EXCLUSIVE nas referenciadas: com uma transação longa segurando uma delas, a migration desiste em 2 s sem aplicar nada, e
+o deploy é refeito (seguro). O gatilho BEFORE TRUNCATE da tabela dos padrões faz qualquer `TRUNCATE … CASCADE` a partir
+das tabelas que ela referencia falhar (desejado: histórico não se trunca; para a versão da TOP, a organização e o
+usuário isso já acontecia desde a 0041). Em erro, publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0045) → API → web.** Na PR #90 o pre-deploy aplica as 0042 a 0048 pela ordem do nome (a 0045 depois da
+0044), todas depois da 0049 da #91, que já está em produção (cabeçalho desta seção), e o runner aplica cada uma na sua
+própria transação (se a 0045 desistir, o banco fica com a 0044 e o deploy é refeito). O menu vai no MESMO deploy do web
+desta fase. Janelas:
+1. **API anterior × banco novo:** os INSERTs dela não citam as colunas novas (anuláveis, sem default) e nunca gravam
+   `previsto`; o CHECK alargado não muda nada para ela; ela não lê nem grava as tabelas novas. Só depois que alguém LIGAR
+   a provisão numa TOP (API e web novos) existe previsto. Com previstos gravados, a API anterior os listaria como
+   "A vencer" e os somaria nos relatórios e painéis (a correção do `reports.ts` é do binário novo), mas NENHUMA baixa
+   neles passa (`refresh_title_status` → 409) e nenhuma mudança de valor (a guarda). O cancelamento pelo financeiro da
+   API anterior (que não trava título de documento) cancelaria o previsto sem motivo — a guarda deixa o previsto ir a
+   cancelado. Produção não tem previsto.
+2. **Web anterior × API nova** (janela "API antes do web" e reversão só do web): as rotas `/api/financial/*` e o cadastro
+   recebem os corpos de hoje e devolvem as chaves de hoje, só com acréscimos. Mudam, de propósito e aditivamente: a
+   baixa e o movimento de entrada ou saída de uma empresa SEM imóvel informado ganham o imóvel PADRÃO da empresa (empresa
+   sem padrão = como hoje); o título da venda com TOP guarda a TOP e a versão; a lista antiga não mostra o previsto nem o
+   soma; a natureza salva sem `tipo_lcdpr` preserva o gravado. O "padrão legado" da confirmação da venda sem
+   classificação continua idêntico para toda TOP nos formatos 1 a 4 (todas as de produção). Provado pelo K-2
+   (`f9-financeiro-skew-web-anterior.spec.ts`, 4 casos: a conta a pagar pela tela antiga sem TOP; a baixa pela tela
+   antiga com o imóvel padrão na baixa e no movimento; a lista antiga sem o previsto de um pedido e sem ele nos totais;
+   a natureza salva pela tela antiga com o tipo LCDPR preservado).
+3. **Web nova × API anterior** (janela "web antes da API" e reversão só da API): sem `financeiroPelaTop`, `lcdpr` e
+   `padroesFinanceiros`, cada tela é a de hoje — o "Novo movimento bancário" sem Tipo de operação nem Imóvel rural e com
+   o corpo de hoje (aceito, 201), o Livro Caixa só com o painel, a natureza sem "Tipo no LCDPR" — e nenhum pedido sai
+   para `/api/financeiro/tops`, `/imoveis-rurais` ou `/lcdpr` (K-1, `f9-financeiro-skew-api-producao.spec.ts`, 3 casos,
+   contando os pedidos no fio). Com a API anterior (sem `formato5`) o editor da TOP é o do 4, sem a aba nova.
+
+Os dois sentidos rodam no job `skew` do CI, contra os binários reais da base (`622f194`), e os specs escolhem o ramo pelo
+mundo medido na hora (K-1: `GET /api/financeiro/capacidades` 404/200 e `capacidades.lcdpr` no `/auth/context`, que têm de
+descrever o MESMO binário; K-2: o web da base conhece ou não `/api/financeiro/tops`, por `git grep` na árvore da base,
+com erro do `git` reprovando). O ramo "mundo novo" de cada um só roda quando a base tiver a F9.
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247): nenhuma linha muda; sem backfill. Produção (02/10): 1 título financeiro, 2 documentos de venda
+(1 orçamento convertido e 1 pedido aberto), 3 TOPs (pedido de compra, orçamento de venda e pedido de venda), zero contas
+bancárias, movimentos e baixas. As tabelas novas nascem vazias; nenhuma TOP provisiona (a provisão nasce desligada): não
+nasce previsto. Salvar o pedido aberto roda a sincronização da provisão sem efeito nem trilha (a TOP não provisiona e não
+há previsto). Uma venda confirmada a partir dele gera o título com a TOP e a versão da venda (colunas novas) e a
+classificação de hoje (a TOP não tem padrões). O título existente continua com o mesmo saldo e situação; o detalhe mostra
+a origem pelo nome. Sem conta e sem movimento, nenhum imóvel é aplicado; as naturezas não têm tipo LCDPR, e a conferência
+abre vazia. O que muda para fora do sistema: o menu Configurações › Financeiro › "Imóveis rurais", o grupo Financeiro no
+assistente da TOP, o campo "Tipo de operação" no lançamento avulso e no movimento (com "Nenhum tipo de operação ativo
+para este lançamento: ele segue sem operação." enquanto não houver TOP financeira) e a conferência no Livro Caixa.
+
+**Reversão:** API e web voltam por redeploy da versão anterior; o banco fica (aditivo; as tabelas novas nunca se apagam,
+decisão 247; os previstos ficam como linhas; desligar um gatilho só com migration nova, por decisão humana). Reverter
+só o web = janela 2; reverter só a API = janela 3 sobre o banco novo, com a janela 1. Enquanto ninguém ligar a provisão
+nem cadastrar imóvel, a reversão não deixa resto. Depois: os previstos aparecem como "A vencer" na lista e nos relatórios
+da API anterior (sem baixa possível), e os imóveis gravados ficam sem tela — a correção é voltar a API nova. Por isso:
+ligar a provisão em produção só depois de conferir o deploy (roteiro abaixo), com a API desta PR no ar (os relatórios
+dela já excluem o previsto).
+
+**Roteiro do Maike em produção** (produção é operacional — decisões 240 e 247). Os passos 0 a 9 são só leitura (nada é
+gravado); os passos 10 a 13 gravam, e só com a decisão dele, um por vez.
+0. Antes do deploy (leitura): o ledger de migrations tem 42 migrations, 0001 a 0041 e a 0049 da #91 (o fato de 03/10;
+   o pre-deploy da PR aplica as 0042 a 0048 pela ordem do nome, depois da 0049 — cabeçalho desta seção); o texto de
+   `select pg_get_constraintdef(oid) from pg_constraint where conname = 'financial_titles_status_check'` é
+   `CHECK ((status = ANY (ARRAY['open'::text, 'partially_paid'::text, 'paid'::text, 'cancelled'::text])))` (a P8 refaz a
+   pergunta na hora de aplicar e recusa se for outro). Depois do deploy (leitura): o ledger tem a 0045 depois da 0044 (as
+   duas aplicadas depois da 0049).
+   **Conferido em produção em 02/10** (leitura do Maike, por volta das 23h UTC, com a `main` `622f194` no ar e o ledger
+   de migrations na 0041):
+   - P8: o texto do CHECK é exatamente
+     `CHECK ((status = ANY (ARRAY['open'::text, 'partially_paid'::text, 'paid'::text, 'cancelled'::text])))` — passa;
+   - P9: os gatilhos de `erp.financial_titles` são exatamente `trg_ft_audit` e `trg_ft_updated` — passa;
+   - P7: o módulo de escopo `financeiro` existe (os 11 módulos de escopo de empresa de produção) — passa.
+1. Configurações › Operações › Tipos de Operação › Novo: o passo 1 mostra o grupo Financeiro com "Conta a pagar", "Conta a
+   receber" e "Movimento bancário". Cancelar.
+2. Abrir a TOP de pedido de venda de produção: a aba "Padrões financeiros" depois de Estoque, com "Provisionar a receber
+   ao salvar o pedido" desmarcado, "O documento pode trocar os padrões" marcado e "Padrões do lançamento" vazio. Não
+   salvar. O histórico lista as versões sem linha de padrões.
+3. Financeiro › Títulos: o cartão "Previstos" habilitado com 0; o filtro Situação tem "Previsto"; o título de produção
+   aparece na lista padrão.
+4. Abrir o título: "Origem" pelo nome ("Avulso", ou o documento com o código); sem "Tipo de operação" se ele não tem TOP.
+5. "+ Novo" › Nova despesa: o primeiro campo é "Tipo de operação", com "Nenhum tipo de operação ativo para este
+   lançamento: ele segue sem operação.". Voltar sem salvar.
+6. Bancos e caixa › Novo movimento bancário: o mesmo aviso no topo; escolhendo uma empresa e Entrada ou Saída, o campo
+   "Imóvel rural (LCDPR)" com "Sem imóvel". Voltar sem salvar.
+7. Fluxo e resultado › Fluxo de caixa: "Incluir previstos" habilitado; marcado, as colunas "Provisão a receber" e
+   "Provisão a pagar" zeradas e "Saldo projetado com previstos" igual ao "Saldo projetado".
+8. Fiscal › Livro Caixa: o painel de hoje e, embaixo, "Conferência do LCDPR" vazia, com "Pendências do período: Sem
+   imóvel: 0 … · Sem tipo no LCDPR: 0 … · Sem empresa: 0 …".
+9. Configurações › Financeiro › Imóveis rurais: a lista vazia. Configurações › Financeiro › Naturezas: o campo "Tipo no
+   LCDPR" vazio. Não salvar.
+10. (Decisão do Maike; grava.) Cadastrar os imóveis rurais de cada empresa, com o padrão marcado (um por empresa).
+11. (Decisão do Maike; grava.) Classificar as naturezas no LCDPR (1, 2, 3 ou "Fora do LCDPR").
+12. (Decisão do Maike; grava.) Criar as TOPs financeiras (conta a pagar, a receber, movimento) com os padrões.
+13. (Decisão do Maike; grava; com a API desta PR no ar — os relatórios dela já excluem o previsto.) Na TOP do pedido de
+    venda, ligar "Provisionar a receber ao salvar o pedido", com os padrões, e conferir num pedido de teste: o cartão
+    "Previstos" e o detalhe do previsto (aviso, sem Baixar).
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção. A P8 e a P9, antes
+PENDING, foram conferidas em produção em 02/10 (passo 0): passam. O resto do roteiro (depois do deploy) continua PENDING.
+
+### F9b — a provisão do pedido de compra finalizado e os padrões da TOP na compra (OPERACOES-01, sem migration)
+
+Decisão 286, parte F9b. **Sem migration, sem variável, sem permissão nova, sem rota nova, sem capacidade nova, sem
+código de erro novo.** As migrations continuam 45, a última a 0045. Usa o que a 0044 (F6a:
+`documentos_compra.finalizado_em`) e a 0045 (F9a: o título `previsto`, a TOP e a versão no título, os padrões da versão)
+já criaram. O que entra:
+- domínio:
+  - a regra de provisão do pedido de compra passa a EXECUTAR (a pagar, ao finalizar);
+  - `compras.pedido` e `compras.compra` ganham o perfil dos padrões financeiros, e com ele a aba "Padrões financeiros"
+    no editor das duas. O catálogo publicado (`formato5.catalogo.perfis`) muda junto;
+- API:
+  - a provisão do pedido de compra (`apps/api/src/lib/financeiro-provisao.ts`: um núcleo com duas fontes; a venda não
+    muda);
+  - os padrões da TOP no salvar da compra e do pedido (`apps/api/src/lib/financeiro-compra.ts`, novo) e na confirmação
+    da compra;
+  - a TOP e a versão no título da compra, em qualquer formato;
+- web: só a ajuda da caixa da provisão no editor da TOP, que passa a vir do momento da regra. A Central de Compras não
+  muda nesta fase.
+
+**Migration:** nenhuma. Nada a aplicar no banco.
+
+**Ordem do deploy:** a F9b não tem exigência própria nem acrescenta migration. Na PR #90 vale a ordem das fases com
+migration (0042 → 0043 → 0044 → 0045, depois a API, depois o web), descrita nas seções delas.
+
+**Version skew** (base `622f194`): nenhum K-1 ou K-2 novo, porque nenhum corpo, resposta ou capacidade que um web de
+produção usa muda.
+- **Sentido 1 — web novo × API da base:** sem o bloco `formato5`, o editor da TOP é o do 4, sem a aba (o K-1 do formato
+  5, da F4). A Central de Compras desta fase não pede nada novo (as telas da F6b, na mesma PR, têm o K-1 próprio —
+  § F6b).
+- **Sentido 2 — web da base × API nova:** toda TOP de produção está nos formatos 1 a 4.
+  - O salvar, a prévia, a confirmação e a auditoria da compra são os de hoje, chave por chave (CC-5).
+  - Finalizar, receber, encerrar e cancelar não deixam previsto nem trilha `provisao` (PC-9). A premissa do PC-1 prova
+    o mesmo: o mesmo pedido numa TOP no 4, finalizado, não provisiona.
+  - Muda, de forma aditiva: o título da compra confirmada guarda a TOP e a versão. Nenhuma resposta antiga lê essas
+    colunas (`GET /compras/compras/:id` lista `id, code, number, installment_number, due_date, amount, balance,
+    status`).
+- Os skews que já existem e passam pela TOP e por compras não mudaram e rodam no job `skew` do CI:
+  `top-formato5-skew-*`, `f6a-compras-skew-web-anterior` e `f9-financeiro-skew-*`.
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247): nenhuma linha existente é reescrita nem apagada; sem backfill. Produção (leitura de 02/10,
+decisão 281): 3 TOPs, a de pedido de compra no formato 3 (`apps/api/src/routes/tipos-operacao.ts:271`); nenhum documento
+de compra listado; 1 título financeiro. A provisão do pedido de compra finalizado nasce DESLIGADA (o neutro = hoje:
+nenhum título previsto). Nenhum previsto nasce até alguém fazer as duas coisas: ligar a provisão numa TOP de pedido de
+compra (o que a grava no formato 5) e finalizar um pedido salvo nessa versão. **Um efeito aditivo nos dados, mesmo sem
+nada ligado:** a compra confirmada depois do deploy grava a TOP e a versão no título (`tipo_operacao_id` e
+`tipo_operacao_versao_id`, colunas da 0045; os títulos que já existem continuam com elas nulas). O detalhe desse título
+passa a mostrar, em "Tipo de operação", o código, o nome e a versão da TOP da compra. Fora dos dados, com as TOPs de
+hoje:
+- a confirmação de uma compra gerada de pedido trava o pedido antes do contador do ID Global;
+- o salvar do pedido, e o da compra que gera título, leem a versão da TOP uma vez a mais;
+- cada evento do pedido (finalizar, receber, confirmar ou cancelar a compra gerada, encerrar o saldo, cancelar) faz de
+  uma a três leituras a mais, sem efeito nem trilha;
+- no editor da TOP, o pedido de compra e a compra mostram a aba "Padrões financeiros", no neutro. Em todas as famílias,
+  a ajuda da aba deixa de dizer "e, sem natureza e centro, vale a 1ª por código".
+
+**Reversão:** redeploy da API e/ou do web anteriores; nada no banco. Não deixa resto enquanto ninguém fizer uma destas
+duas coisas: ligar a provisão numa TOP de pedido de compra, ou salvar uma compra sem natureza e centro pelo par da TOP.
+Os títulos de compra com a TOP e a versão ficam (colunas da 0045, que a API anterior não lê). Depois:
+- os previstos a pagar gravados deixam de ser sincronizados pela API anterior. Confirmar ou cancelar a compra, encerrar
+  o saldo ou cancelar o pedido os deixam como estavam.
+  - A lista antiga os mostra como "A vencer", e os relatórios da API anterior os somam (como na F9a).
+  - Nenhuma baixa passa: o banco recusa.
+  - A correção é voltar a API nova: o próximo evento do pedido os acerta.
+- a compra e o pedido cuja versão congelada está no 5 seguem a reversão da F4 (§ F4, "Reversão", item (b): o binário
+  anterior não confirma documento com a versão no 5).
+
+Reverter só o web = o sentido 2 acima.
+
+**Roteiro do Maike em produção** (depois do deploy; produção é operacional — decisões 240 e 247). Os passos 1 a 5 são só
+leitura (nada é gravado). Os passos 6 a 8 gravam, só com a decisão dele, um por vez, e só com o botão Finalizar da F6b
+no ar (§ F6b, na mesma PR).
+1. Configurações › Operações › Tipos de Operação › a TOP de pedido de compra.
+   - As abas: Identificação, Geral, Próximas operações, Estoque, Fluxo de compra, Padrões financeiros, Financeiro,
+     Fiscal e Aprovação.
+   - Na "Padrões financeiros":
+     - a ajuda da aba: "Provisão e padrões do lançamento financeiro desta operação. Tudo nasce desligado: sem padrão, o
+       documento decide, como hoje.";
+     - "Provisionar a pagar ao finalizar o pedido" desmarcada, com a ajuda "O pedido finalizado gera títulos previstos a
+       pagar, fora das baixas. A compra confirmada os troca pelos títulos de verdade; encerrar o saldo ou cancelar o
+       pedido os cancela.";
+     - "O documento pode trocar os padrões" marcada;
+     - nenhum "Sem natureza e centro";
+     - em "Padrões do lançamento", os cinco campos com "Sem padrão".
+   - Fechar sem salvar.
+2. "Novo" › Compras › Compra: a aba "Padrões financeiros" logo depois de "Divergência com o pedido". Ela vem sem a caixa
+   da provisão e sem "Sem natureza e centro"; a ajuda da "Natureza padrão" diz "Uma natureza analítica e ativa de
+   despesa (ou de receita e despesa).". Fechar sem salvar.
+3. A TOP de pedido de venda, aba "Padrões financeiros": "Provisionar a receber ao salvar o pedido" com a ajuda de antes
+   ("O pedido gera títulos previstos, fora das baixas. A venda os troca pelos títulos de verdade; …"). Fechar sem
+   salvar.
+4. Financeiro › Títulos › A pagar: o cartão "Previstos" com 0.
+5. (Se alguma compra for confirmada depois do deploy) o detalhe do título dela mostra a origem "Compra <código>" e
+   "Tipo de operação: <código> — <nome> (versão N)".
+6. (Decisão do Maike; grava.) Na TOP de pedido de compra:
+   - escolher a natureza de despesa e o centro de resultado padrão — ou decidir que todo pedido os informe;
+   - marcar "Provisionar a pagar ao finalizar o pedido";
+   - salvar: nasce uma versão nova, no formato 5.
+   A provisão vale só para os pedidos salvos DEPOIS.
+7. (Decisão do Maike; grava.) Um pedido de compra de teste nessa TOP, com duas parcelas; Finalizar.
+   Conferir:
+   - Financeiro › Títulos › A pagar › "Previstos" mostra as duas parcelas, com a origem "Pedido de compra <código>", o
+     aviso do previsto e sem Baixar;
+   - a consulta do pedido, aba Financeiro, mostra a situação "Prevista".
+8. (Decisão do Maike; grava.) Receber uma parte e confirmar a compra:
+   - os previstos passam ao que falta;
+   - os anteriores ficam "Cancelada", com o motivo "Compra <código> confirmada";
+   - cancelar o pedido de teste, ou encerrar o saldo, cancela os previstos com o motivo.
+   Nada se apaga (decisão 247): o pedido de teste fica cancelado na história.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção, e os passos 6 a 8
+gravam (só com a decisão dele).
+
+### F10 — as Centrais dos módulos com produto e a TOP nos módulos (OPERACOES-01, migration 0046)
+
+Decisão 287. **Uma migration: `0046_modulos_com_top.sql`** (pre-deploy; trava (2026,80); `lock_timeout` 2 s; pré-condições
+nomeadas `OPERACOES-01 F10: …`, a primeira é "já aplicada"; pós-condições só de catálogo; sem backfill; aditiva nas
+colunas — a única parte não aditiva é a troca da política de `erp.maintenance_items`; a 0041 não foi editada). As
+mensagens da migration não citam o número dela, e o teste de banco acha a migration pelo sufixo `_modulos_com_top.sql` e
+lê a trava do SQL (a F10 entrou antes da F7 e ficou com a 0046 e a trava (2026,80) da reserva; a F7 fica com a 0047). As
+migrations do repositório passam a 46, a última a 0046. Sem variável. Sem permissão nova. O que entra:
+- API: seis rotas novas `GET /api/modulos/{abastecimento,manutencao,ordem-servico,manejo,batelada,producao-racao}/operation-types`
+  (a capacidade `topNoModulo: 1`, cada uma com a porta de lançar do módulo); `GET /api/modulos/batelada/dietas/:id/ingredientes`
+  (`diet_batches.create`); `POST /api/livestock/transfers/to-empresa` (o mesmo handler de `/to-farm`, que fica);
+  `tipo_operacao_id` opcional nos POST de abastecimento, manutenção, OS, manejo, batelada e ração; `note` na manutenção;
+  o nome e a versão da TOP nos detalhes; as conferências e os consertos da decisão 287 (itens 5, 6, 9 e 12);
+- domínio: as famílias `pecuaria.manejo` e `confinamento.batelada`; os seis tipos de Módulos com tela no passo 1; a linha
+  dos módulos (só o neutro) na matriz das regras gerais; `centrais-dos-modulos.ts`; o rótulo `os_status`;
+- web: as seis Centrais (`/frota/abastecimentos/new`, `/frota/manutencoes/new`, `/os/new`, `/pecuaria/manejo/{nutrition,sanitary}/new`,
+  `/estoque/batidas/new` e a rota NOVA `/confinamento/bateladas/new`), a edição da OS (`/os/<id>/editar`, NOVA), o botão
+  "Nova batelada" na aba Hoje › Produção (o formulário embutido sai), a linha "Tipo de operação" nos detalhes e os totais
+  do detalhe da manutenção (a tela lia chaves que a resposta não tem e mostrava vazio); o motor só ganha a prop
+  aditiva `linhaUnica` (ao lado das da F5b, no mesmo deploy);
+- menu (`apps/web/nav.registry.mjs`, aplicado no merge da fase, no MESMO commit das telas): a ação "Nova batelada"
+  (`diet_batches.create`) e a rota de detalhe `os.editar` (`service_orders.edit`).
+
+**Migration — o que faz** (nenhuma linha existente é reescrita):
+- `erp.fuel_supplies`, `erp.maintenances`, `erp.service_orders`, `erp.animal_handlings`, `erp.diet_batches`,
+  `erp.feed_batches`: `tipo_operacao_id uuid` e `tipo_operacao_versao_id uuid` (anuláveis, sem default, comentadas); o
+  CHECK `chk_<tabela>_tipo_operacao_par`; as FKs compostas `fk_<tabela>_tipo_operacao` →
+  `erp.tipos_operacao (id, organization_id)` e `fk_<tabela>_tipo_operacao_versao` →
+  `erp.tipos_operacao_versoes (id, tipo_operacao_id, organization_id)`, NO ACTION nas duas pontas; sem índice;
+- `erp.maintenances.note text` (anulável, sem CHECK; a API limita a 2000);
+- a função `erp.modulo_top_conferir()` (plpgsql, SECURITY INVOKER, `search_path = erp, pg_temp`, EXECUTE revogado de
+  todos menos o dono) e seis gatilhos `trg_<tabela>_top_conferir`, BEFORE INSERT OR UPDATE OF as duas colunas da TOP, FOR
+  EACH ROW, com a família da tabela no argumento: com TOP, a família tem de ser a da tabela (senão
+  `VALIDATION_ERROR: Tipo de operação indisponível para este lançamento.`); a TOP gravada não muda
+  (`CONFLICT: O tipo de operação do lançamento não muda depois de gravado.`);
+- `erp.maintenance_items`: a política `api_child` (0007, `for all`, pelo local de estoque) dá lugar a `api_child_select`,
+  `_insert`, `_update` e `_delete` — ler, alterar e apagar pela máquina → manutenção; gravar com a manutenção E o local
+  nulo ou visível no tenant e no escopo. DROP e CREATE na mesma transação: não há instante sem política; a RLS continua
+  habilitada e forçada.
+
+**Pré-condições (recusa sem aplicar nada, com a mensagem que nomeia o que falta):** já aplicada (qualquer coluna, função,
+gatilho ou constraint desta migration já existe — a primeira pergunta); papel `erp_app` ou `erp.tenant_visible(uuid)`
+ausente; as seis tabelas sem `organization_id uuid not null`; as chaves alvo das FKs (`uq_tipos_operacao_tenant`,
+`uq_tipos_operacao_versoes_tenant`, na ordem das colunas) ou `erp.tipos_operacao.codigo_base` ausentes; e **2.4 — a política
+de `erp.maintenance_items` não é EXATAMENTE a da 0007** (uma só, `api_child`, ALL, para `erp_app`, PERMISSIVE, pelo local
+de estoque) ou faltam as colunas das correlações novas: alguém tomou outra decisão sobre essa política, e trocá-la em
+silêncio apagaria essa decisão — a decisão volta a um humano.
+As instruções pedem ACCESS EXCLUSIVE curto nas seis tabelas (só catálogo; o CHECK e as FKs leem a tabela uma vez), SHARE
+ROW EXCLUSIVE em `erp.tipos_operacao` e `erp.tipos_operacao_versoes`, e ACCESS EXCLUSIVE em `erp.maintenance_items`: com
+uma transação longa segurando uma delas, a migration desiste em 2 s sem aplicar nada, e o deploy é refeito (seguro). Em
+erro, publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0046) → API → web.** Na PR #90 o pre-deploy aplica as migrations na ordem do nome; a 0046 depende só da
+0007, da 0020 e da 0021 (de nenhuma das 0042 a 0045), e o runner aplica cada uma na sua própria transação (se a 0046
+desistir, o banco fica com a anterior e o deploy é refeito). O menu vai no MESMO deploy do web. Janelas:
+1. **API anterior × banco novo:** o INSERT dela não cita as colunas novas (nulas: passam pelo CHECK de par e o gatilho
+   não age sem TOP); ela não faz UPDATE dessas colunas; o `select *` dela traz `tipo_operacao_id`,
+   `tipo_operacao_versao_id` e `note` a mais, que o web ignora. O item de manutenção SEM local, que a tela de hoje já
+   manda, passa a gravar (antes a RLS o recusava); o item com local continua exigindo o local visível.
+2. **API nova × web anterior** (sentido 2): igual a hoje, com estas diferenças, todas no servidor:
+   - a transferência de rebanho entre empresas do web de produção PASSA A FUNCIONAR (`/to-empresa` existe; antes, 404);
+   - a Observação da manutenção, que o web de produção já manda, passa a ser GRAVADA (antes, descartada);
+   - equipamento, máquina, vagão e lote de animais de outra organização, EXCLUÍDOS OU FORA DO ESCOPO DO MÓDULO de quem
+     lança → 422 "Equipamento inválido: escolha um equipamento da organização." / "Lote de animais inválido: escolha um
+     lote da organização." (antes: 201). Exemplo: batelada com vagão de uma empresa fora do escopo de CONFINAMENTO;
+   - horímetro e km: "6e3" e "+6100" viram o número; NaN, ±Infinity e texto → 422 no campo (antes NaN gravava e punha o
+     contador do bem em NaN; texto dava 500); o KM sobe o contador do bem quando o horímetro não vem (antes, só o
+     horímetro);
+   - `quantity_kg` da batelada, a dose e as cabeças do manejo com produto e o multiplicador da ração: texto, NaN e
+     ±Infinity → 422 "Valor inválido" no campo (antes, 500 ou NaN gravado);
+   - o manejo do web de produção continua mandando a DOSE no lugar da cabeça (o dose² é do web anterior; some com o web
+     novo).
+   Provado pelo K-2 (`f10-frota-skew-web-anterior.spec.ts`, 3 casos: abastecimento, manutenção com peça SEM local, OS;
+   `f10-pecuaria-skew-web-anterior.spec.ts`, 3 casos: a transferência entre empresas → 201 com o movimento pendente, a
+   batelada do formulário embutido e o manejo antigo — todos com as chaves de antes).
+3. **Web novo × API anterior** (sentido 1, reversão só da API): `GET /api/modulos/*/operation-types` → 404 de rota → as
+   Centrais sem o campo "Tipo de operação" e sem `tipo_operacao_id`; a manutenção sem "Observação" e sem `note`; a batelada
+   sem a rota dos ingredientes ("Os ingredientes da dieta são calculados ao salvar."); os corpos são os de hoje e a base
+   responde 201 com as chaves de hoje; o manejo manda CABEÇAS e a base calcula dose × cabeças certo; a OS edita pelo PUT
+   que a base já tem; a ração continua verde no LT-K1; a transferência entre empresas volta ao 404 de hoje. Provado pelo
+   K-1 (`f10-frota-skew-api-producao.spec.ts`, 3 casos; `f10-pecuaria-skew-api-producao.spec.ts`, 3 casos; o LT-K1 de
+   `skew-api-producao.spec.ts`).
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247): nenhum valor muda; colunas novas nulas; o CHECK de par vale para as linhas existentes (as duas
+nulas); as FKs são validadas sobre colunas todas nulas (leitura). Produção (leitura de 02/10, decisão 281): zero
+abastecimentos, manutenções e OS; 3 TOPs, nenhuma de família de módulo — o campo "Tipo de operação" aparece só com "Sem
+tipo de operação" e nada é exigido. Os manejos, as bateladas e as produções de ração de produção NÃO foram contados
+(PENDING, passo 1 do roteiro). O que muda para quem usa, sem ninguém configurar nada: as seis telas de lançamento passam
+à Central (mesmas rotas, mesmos destinos depois de salvar); a OS ganha "Editar"; a batelada sai do formulário embutido
+para a Central; a transferência de rebanho entre empresas, quebrada em produção, passa a funcionar; o manejo novo grava
+a quantidade certa (cabeças × dose, não dose² × animais); a peça de manutenção sem local grava; no editor da TOP, o
+passo 1 ganha o grupo Módulos. A leitura de `erp.maintenance_items` passa a seguir o escopo da MANUTENÇÃO (antes, o do
+local): os relatórios "Máquinas e Veículos" e "Manutenções por Máquina" passam a somar a peça com local fora do escopo
+de quem consulta (produção: zero manutenções).
+
+**Reversão:** API e web voltam por redeploy da versão anterior e convivem com a 0046. Colunas, função, gatilhos e as
+quatro políticas ficam (decisão 247); desfazer qualquer um só com migration nova, por decisão humana. Depois de alguém
+lançar com TOP: a API anterior não lê a TOP (o detalhe sem a linha "Tipo de operação") e não consegue mudá-la (ela não
+faz UPDATE dessas colunas); cancelar pela API anterior funciona (o gatilho só olha as colunas da TOP). A reversão só do
+web = o sentido 2 acima; só da API = o sentido 1.
+
+**Roteiro do Maike em produção** (depois do deploy; produção é operacional — decisões 240 e 247). Os passos 1 a 8 são só
+leitura (nada é gravado); os passos 9 e 10 gravam, e só com a decisão dele.
+1. (Leitura, SQL do Maike) Quantos manejos, bateladas e produções de ração existem, e se algum cita lote de animais ou
+   vagão de empresa fora do escopo de quem lança (o 422 novo valeria para um relançamento igual).
+2. Configurações › Operações › Tipos de Operação › "Novo": o passo 1 mostra o grupo Módulos (Abastecimento, Manutenção,
+   Ordem de serviço, Manejo, Batelada, Produção de ração). Escolher Abastecimento: abas Identificação, Geral, Estoque,
+   Financeiro e Fiscal (sem Aprovação nem Execução); na Geral, "Exigir centro de resultado" e "Exigir observação". Fechar
+   sem salvar.
+3. Frota › Abastecimentos › Novo: a Central com o campo "Tipo de operação" ("Sem tipo de operação" só), UMA linha, sem
+   "Adicionar produto", a coluna "Local de estoque" antes de Produto e o painel Resumo com o Total. Descartar.
+4. Frota › Manutenções › Nova: um bloco "Máquina 1" com a sua grade de peças, "Adicionar máquina", o "Local de estoque" e
+   a "Observação" nos Dados principais. Descartar.
+5. Ordens de serviço › Nova: os blocos Mão de obra, Equipamentos, Insumos, EPIs e Produção. Descartar. (Não há OS em
+   produção para ver o "Editar".)
+6. Pecuária › Manejos › Novo manejo sanitário (e de nutrição): o Local de estoque antes do Produto, o Modo (Animais
+   identificados / Por contagem) e o Resumo com Cabeças e Quantidade do produto. Descartar. Desmama, apartação e pastagem
+   abrem o formulário de sempre.
+7. Confinamento › Hoje › Produção: sem o formulário embutido, com o botão "Nova batelada", que abre a Central da
+   batelada. Descartar.
+8. Estoque › Fábrica › Produções › Nova: a Central da produção de ração ("Formulação", "Multiplicador da receita", os dois
+   locais de estoque, "Quantidade produzida"). Descartar.
+9. (Grava; decisão do Maike) Uma transferência de rebanho entre empresas real, se houver uma a fazer: ela cria o movimento
+   pendente que a empresa de destino processa.
+10. (Grava; decisão do Maike) Criar TOP de módulo: ela classifica e pode exigir campos do registro; o destino dos módulos
+    pela TOP NÃO foi ligado (Parte F10r da 287, decisão pendente). Uma TOP marcada como padrão vem escolhida na Central.
+
+**Decisão pendente do Maike** (registrada na 287): o destino dos módulos pela TOP (NÃO FEITO na Parte F10r, com o desenho
+pronto); o cadastro dos ingredientes da dieta; a lista e o processamento da transferência entre empresas na web. A
+pecuária pela TOP entrou na Parte F10r (§ F10r, abaixo).
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
+### F10r — a pecuária pela TOP: o título da compra e da venda de animais (OPERACOES-01, sem migration)
+
+Decisão 287, Parte F10r. **Sem migration, sem variável, sem permissão nova, sem rota nova, sem capacidade nova, sem
+código de erro novo, sem texto novo na tela.** As migrations continuam 46, a última a 0046. Usa o que a 0045 (F9a: a TOP
+e a versão no título, o tipo de título e a conta prevista, os padrões da versão) e a 0020 (a TOP padrão por família) já
+criaram. O que entra:
+- domínio: as famílias `pecuaria.compra_de_animais` e `pecuaria.venda_de_animais` (`erp.animal_movements` por
+  `movement_type`); o perfil dos padrões financeiros das duas; os tipos "Compra de animais" e "Venda de animais" no grupo
+  Módulos do passo 1 (24 tipos, Módulos 8, 32 famílias); o perfil sem exigências gerais; `planoDaClassificacaoPorCampo`.
+  O catálogo publicado (`formato5.catalogo`) muda junto (dado, sem chave nova);
+- API: o título do `POST /api/livestock/movements` (compra e venda com "Gerar financeiro") pela TOP PADRÃO da família
+  (`apps/api/src/lib/financeiro-pecuaria.ts`, novo); ROW COUNT nos dois UPDATEs do movimento; `financeiro` na trilha
+  quando a TOP agiu;
+- web: nada (`apps/web/src` não muda). O editor da TOP oferece os dois tipos pelo catálogo que o servidor publica.
+
+**Migration:** nenhuma. Nada a aplicar no banco.
+
+**Ordem do deploy:** a F10r não tem exigência própria. Na PR #90 vale a ordem das fases com migration (0042 → … →
+0046, depois a API, depois o web), descrita nas seções delas.
+
+**Version skew** (base `622f194`):
+- **Sentido 2 — web da base × API nova** (a janela "API antes do web"): o corpo e a resposta do POST são os de hoje.
+  - Sem TOP padrão das famílias novas (o estado de produção no deploy: as famílias nem existiam), o título é EXATAMENTE
+    o de hoje: o rateio é o par legado, sem TOP, versão, tipo de título nem conta; a trilha sem `financeiro` (K2-1).
+  - Com uma TOP padrão "exigir" (só depois que o Maike a criar): o web da base mostra a recusa do servidor no aviso, com
+    o texto exato, nada é gravado e a tela continua no formulário; com Natureza e Centro de resultado preenchidos, grava,
+    e o título leva a TOP e a versão (K2-2).
+  - Provado por `apps/web/e2e/f10r-pecuaria-skew-web-anterior.spec.ts` (2 casos), no job `skew`.
+- **Sentido 1 — web novo × API da base:** sem spec próprio. O bundle do web carrega o domínio novo, mas o assistente lê
+  o catálogo DO SERVIDOR (`apps/web/src/features/admin/top-contrato.tsx:224`), e a API `622f194` não publica catálogo:
+  o editor é o do 4 (o K-1 do formato 5, da F4). A tela de movimentação de animais é o mesmo arquivo, com o mesmo
+  corpo.
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247): nenhuma linha existente é reescrita nem apagada; sem backfill. Produção (leitura de 02/10,
+decisão 281): 3 TOPs (pedido de compra, orçamento de venda e pedido de venda), NENHUMA das famílias novas; 1 título
+financeiro. Os movimentos de animais e os títulos de origem `animal_movements` de produção NÃO foram contados (PENDING,
+passo 1 do roteiro). O efeito novo só existe depois que o Maike criar, pelo assistente, uma TOP "Compra de animais" (ou
+"Venda de animais") no formato 5, marcá-la como padrão e configurar os padrões financeiros. Até lá, a compra e a venda
+de animais com "Gerar financeiro" geram o título de hoje. O que muda sem ninguém configurar nada:
+- no editor da TOP, o passo 1 ganha "Compra de animais" e "Venda de animais" no grupo Módulos;
+- a compra e a venda com "Gerar financeiro" fazem uma leitura a mais (a TOP padrão da família, `for share`) antes do
+  código; sem "Gerar financeiro", e no nascimento, na morte e na perda, nada muda.
+
+**Reversão:** redeploy da API anterior; nada no banco. A TOP padrão da pecuária passa a ser ignorada (volta o legado).
+Ficam (decisão 247):
+- os títulos gravados com a TOP, o tipo de título e a conta prevista (colunas da 0045, que a API anterior não lê);
+- a TOP da pecuária gravada no 5: a API anterior a mostra com o código cru da família
+  (`622f194:apps/api/src/routes/tipos-operacao.ts:74-78`) e não a altera (a reversão da F4, item (a)).
+Reverter só o web não muda nada desta parte (o web não mudou).
+
+**Roteiro do Maike em produção** (depois do deploy; produção é operacional — decisões 240 e 247). Os passos 1 a 3 são só
+leitura (nada é gravado). Os passos 4 e 5 gravam, só com a decisão dele.
+1. (Leitura, SQL do Maike) Quantos movimentos de compra e de venda de animais existem, quantos com título, e se há TOP
+   das famílias `pecuaria.compra_de_animais` ou `pecuaria.venda_de_animais` (o esperado: nenhuma).
+2. Configurações › Operações › Tipos de Operação › "Novo": o grupo Módulos mostra Abastecimento, Manutenção, Ordem de
+   serviço, Manejo, Batelada, Produção de ração, Compra de animais e Venda de animais. Escolher "Compra de animais":
+   - as abas Identificação, Geral, Estoque, Padrões financeiros, Financeiro e Fiscal;
+   - a Geral sem nenhuma caixa "Exigir …";
+   - em "Padrões financeiros": sem a caixa da provisão; "Sem natureza e centro" com "Usar a 1ª natureza e o 1º centro
+     por código (como hoje)"; "O documento pode trocar os padrões" marcada; os padrões natureza, centro de resultado,
+     tipo de título e conta, sem forma de pagamento.
+   Fechar sem salvar.
+3. Pecuária › Movimentações › "Nova compra de animais": o formulário de sempre (Fornecedor, Nota fiscal, os itens,
+   "Gerar financeiro", e com ele Vencimento, Natureza e Centro de resultado). Descartar.
+4. (Grava; decisão do Maike) Criar a TOP "Compra de animais" pelo assistente, marcar "Padrão" e preencher os padrões
+   financeiros (natureza de despesa, centro, e, se quiser, tipo de título e conta). A partir daí, a compra com "Gerar
+   financeiro" e sem Natureza e Centro usa os padrões da TOP; com os dois preenchidos, vale o documento. Para exigir a
+   classificação, escolher "Exigir natureza e centro (do documento ou desta TOP)". O mesmo para "Venda de animais", com
+   natureza de receita.
+5. (Grava; decisão do Maike) Uma compra de animais de teste com "Gerar financeiro" e sem Natureza e Centro. Conferir o
+   título em Financeiro › Títulos › A pagar: a natureza e o centro da TOP e "Tipo de operação: <código> — <nome>
+   (versão N)". Nada se apaga (decisão 247): para desfazer, cancelar o movimento (o cancelamento de hoje cancela os
+   títulos da origem).
+
+**Decisão pendente do Maike** (registrada na 287): o destino dos módulos pela TOP (NÃO FEITO, com o desenho pronto na
+287); o cadastro dos ingredientes da dieta; a lista e o processamento da transferência entre empresas na web.
+
+**Riscos** (declarados na 287):
+- com a TOP agindo, a recusa dela vem ANTES de "Fornecedor/cliente obrigatório para gerar financeiro", "Categoria
+  obrigatória para entrada de animais" e "Animal não está ativo no rebanho" (inverter exigiria ler a TOP depois do laço,
+  que grava); sem TOP, a ordem é a de hoje;
+- com "Gerar financeiro" e um valor unitário que não é número, o erro do decimal sai antes do laço (antes, no item); a
+  transação volta inteira nos dois casos;
+- os arquivos de integração antigos que fazem o POST do movimento (`api.test.ts`, `rebanho-autorizacao`,
+  `notificacao-geracao`) não rodaram localmente: ficam para o CI; o caminho sem TOP está provado pelo PF-1 e pelo K2-1;
+- a TOP padrão vale por ORGANIZAÇÃO, não por empresa (como a da solicitação);
+- uma TOP com só o tipo de título (sem natureza e centro) age: o par sai do legado do movimento, e a TOP e o tipo de
+  título vão no título (a trilha diz "padrão legado" nos dois campos);
+- marcar uma exigência geral numa TOP da pecuária pela API dá a recusa genérica "O documento desta operação não tem este
+  campo." (o editor não mostra as caixas);
+- conflito textual provável com a F7 nas listas e contagens do registry, do catálogo, dos rótulos e dos padrões
+  financeiros: se ela acrescentar família ou tipo, os números se somam.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção, e os passos 4 e 5
+gravam (só com a decisão dele).
+
+### F11 — o menu e as telas antigas, o saldo inicial pela TOP e o neutro do Destino (OPERACOES-01, sem migration)
+
+Decisão 288. **Sem migration, sem variável, sem permissão nova, sem rota nova, sem código de erro novo.** As migrations
+continuam as da fatia; nenhum objeto de banco muda (`erp.stock_movements.movement_type` já aceita `opening_balance`,
+CHECK da 0003). O que entra:
+- domínio: o neutro do Destino passa a "opcional" nas seis dimensões; a seção nova do formato 5 `implantacao`
+  (`{ saldoInicial }`, neutro `false`, só a entrada); `saldoInicialPelaTop`; `CAPACIDADE_SALDO_INICIAL_ESTOQUE` e o leitor
+  estrito `entendeSaldoInicialEstoque`. As capacidades da TOP publicam a seção nova (`formato5.secoes` ganha
+  `implantacao`, por último);
+- API: a confirmação da entrada com a TOP marcada grava `opening_balance` e recusa a duplicidade (409
+  `DUPLICATE_DOCUMENT`, a mensagem de sempre); `POST /api/stock/opening-balances` passa pela mesma regra
+  (`apps/api/src/lib/estoque-saldo-inicial.ts`); `GET /api/estoque/entradas/operation-types` declara `saldoInicial: 1`
+  (no fim) e `items[].saldoInicial` — só a entrada; os relatórios `requisitions` e `stock_writeoffs` incluem o consumo e a
+  saída confirmados do documento novo, com a coluna `documento` no fim;
+- web: o menu (registro), o "+ Novo" antigo do Estoque fora, o Novo das listas antigas fora, a aba Implantação no editor
+  da TOP, e a Implantação (Saldos iniciais de estoque) apontando para a Central quando há TOP marcada.
+
+**Migration:** nenhuma. Nada a aplicar no banco.
+
+**Ordem do deploy:** a F11 não tem exigência própria (os dois sentidos do skew estão provados, abaixo). Na PR #90 vale a
+ordem das fases com migration (0042 → … → 0047, depois a API, depois o web), descrita nas seções delas.
+
+**Version skew** (base `622f194`):
+- **Sentido 1 — web novo × API da base:** a API base não responde `saldoInicial` no `operation-types` da entrada (nem
+  tem documento de movimentação interna): a Implantação deste web mostra o "Adicionar novo" de hoje, não pergunta nada a
+  `/estoque/movimentacoes/`, e o diálogo antigo grava (201) e a linha aparece. Provado por
+  `apps/web/e2e/f11-saldo-inicial-skew-api-producao.spec.ts` (K-1, 1 caso), no job `skew`. O menu é só web; o "Ajustar
+  estoque" do Saldo cai no diálogo antigo contra a API base (LT-K1 de `skew-api-producao.spec.ts`, inalterado). O neutro do
+  Destino e a aba Implantação: a API base não publica `formato5` → o editor é o do formato 4 (o K-1 da F4).
+- **Sentido 2 — web da base × API nova** (a janela "API antes do web"): a chave e o campo novos são ADITIVOS (o leitor
+  das TOPs não é estrito em chave a mais). O diálogo do web base grava pela rota antiga (201); com um saldo inicial vivo
+  criado pelo DOCUMENTO NOVO (TOP marcada) na mesma chave, o mesmo diálogo recebe o 409 com a mesma mensagem (toast) e o
+  razão não ganha linha. Provado por `apps/web/e2e/f11-saldo-inicial-skew-web-anterior.spec.ts` (K-2, 1 caso) e pela
+  premissa ajustada de `f5b-estoque-skew-web-anterior.spec.ts` (1 caso: a entrada declara as quatro chaves da F5b e, no
+  fim, `saldoInicial`), no job `skew`. O web base não manda destino: a API nova aceita igual ("Opcional" nunca exige).
+  Os relatórios: o web desenha as colunas que a API devolve → o web base mostra a coluna nova e as linhas novas (sem spec
+  dedicado; a forma é a de hoje + 1 coluna).
+- **Feito (03/10):** `skew-run.sh 2 e2e/f5-estoque-skew-web-anterior.spec.ts` sobre o merge da F11 (`dbfac4e`, que
+  contém `f451020`): 6/6 — o K2-0 (`:131`) compara a lista de seções do COMMIT HEAD (seis) com a do domínio (seis).
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247): nenhuma linha existente é reescrita nem apagada; sem backfill. Produção (leitura de 02/10,
+decisão 281): 3 TOPs (pedido de compra, orçamento de venda e pedido de venda) — NENHUMA de estoque, nenhuma no formato
+5; ZERO requisições, baixas, transferências, ajustes, saldos iniciais e solicitações de compra; 2 movimentos de estoque
+(origem não conferida — passo 1 do roteiro). Por isso: o neutro do Destino não muda a leitura de nada gravado; a seção
+`implantacao` só age depois que o Maike marcar uma TOP de entrada; os relatórios só ganham linhas quando houver consumo
+ou saída confirmados do documento novo. O que muda sem ninguém configurar nada:
+- o menu: o Estoque sem o "+ Novo" antigo; as ações "Nova saída direta", "Transferência entre locais de estoque" e
+  "Nova solicitação de compra" fora do mega-menu e da busca; as subs antigas "(tela antiga)", sem Novo; a busca de
+  "saída direta", "requisição", "devolução"… leva a Estoque › Movimentações;
+- PERFIS SÓ COM PERMISSÕES ANTIGAS de criação (`stock_writeoffs`, `warehouse_transfers`, `stock_corrections`,
+  `devolutions`) perdem os caminhos visíveis de lançar saída, transferência entre locais de estoque, ajuste e devolução
+  (sobra a URL `/new`); a Central exige `saidas_estoque`/`transferencias_estoque`/`ajustes_estoque`/
+  `devolucoes_consumo_estoque` `.create`. A requisição capex/opex e a entrada sem nota continuam como ação no menu.
+  Conceder as permissões novas é decisão do Maike (efeito novo, 240) — o passo 1 do roteiro conta quem perde;
+- a Central de Estoque, com TOP neutra, passa a mostrar os seis campos de destino como opcionais na saída, na requisição
+  e no consumo;
+- a Implantação, para quem tem `entradas_estoque.create` (o administrador proprietário tem), mostra a dica de como
+  marcar a TOP (nenhuma está marcada no deploy) ao lado do "Adicionar novo" de hoje;
+- os relatórios "Requisições/Saídas" e "Baixas de Estoque" ganham a coluna "Documento".
+
+**Reversão:** redeploy da API e do web anteriores; nada no banco. O menu e o "+ Novo" antigos voltam com o web
+anterior. Ficam (decisão 247): os documentos de entrada confirmados com `opening_balance` (no razão, "Estoque inicial";
+a API anterior os trata como entrada comum) e as TOPs gravadas no 5 com `implantacao` (a reversão da F4, item (a)). Risco
+declarado: a rota antiga da API anterior confere só `erp.opening_balances`, e volta a aceitar um saldo inicial antigo
+numa chave cujo saldo inicial veio de um documento novo. Reverter só o web: a API nova continua aceitando o web
+anterior (sentido 2).
+
+**Roteiro do Maike em produção** (depois do deploy; produção é operacional — decisões 240 e 247). Os passos 1 a 6 são
+só leitura (nada é gravado). Os passos 7 e 8 gravam, só com a decisão dele.
+1. (Leitura, SQL do Maike — **PENDING**: a sessão não tem acesso a produção; nenhum segredo vai aqui, a conexão é a do
+   Maike) Quem perde o caminho de lançar — perfis vivos com a permissão antiga de criação e SEM
+   nenhuma das novas correspondentes (membro com `is_owner` tem todas e não entra):
+   ```sql
+   with mapa(antiga, novas) as (values
+     ('stock_writeoffs.create',     array['saidas_estoque.create']),
+     ('warehouse_transfers.create', array['transferencias_estoque.create']),
+     ('stock_corrections.create',   array['ajustes_estoque.create']),
+     ('devolutions.create',         array['devolucoes_consumo_estoque.create', 'entradas_estoque.create']),
+     ('requisitions.create',        array['requisicoes_estoque.create', 'consumos_estoque.create']),
+     ('input_entries.create',       array['entradas_estoque.create']),
+     ('opening_balances.create',    array['entradas_estoque.create']))
+   select r.organization_id, r.name as perfil,
+          array_agg(m.antiga order by m.antiga) as antigas_sem_a_nova,
+          (select count(*) from erp.organization_members om
+            where om.role_id = r.id and om.is_active and not om.is_owner) as membros_afetados
+     from erp.roles r
+     join erp.role_permissions rp on rp.role_id = r.id
+     join mapa m on m.antiga = rp.permission_key
+    where r.deleted_at is null
+      and not exists (select 1 from erp.role_permissions n where n.role_id = r.id and n.permission_key = any (m.novas))
+    group by r.organization_id, r.id, r.name
+    order by 1, 2;
+   ```
+   E a origem dos movimentos e dos documentos de estoque (o esperado: nenhum documento novo de consumo/saída, nenhuma
+   TOP de estoque, nenhum saldo inicial):
+   ```sql
+   select source_type, movement_type, count(*) from erp.stock_movements group by 1, 2 order by 1, 2;
+   select especie, situacao, count(*) from erp.documentos_estoque group by 1, 2 order by 1, 2;
+   select codigo_base, count(*) from erp.tipos_operacao where excluido_em is null and codigo_base like 'estoque.%' group by 1;
+   select status, count(*) from erp.opening_balances group by 1;
+   ```
+2. Estoque: a barra do Estoque NÃO tem "+ Novo"; a aba Movimentações está logo depois de Visão geral, com o Novo que
+   pergunta a TOP. Operações › "Saídas diretas (tela antiga)", "Requisições (tela antiga)", "Devoluções (tela antiga)" e
+   Recebimentos › "Entradas manuais (tela antiga)": listas sem o botão Novo. Operações › Transferências, chip "Entre
+   empresas": o Novo continua.
+3. Mega-menu do Estoque (passar o mouse em "Estoque"): o grupo Ações tem exatamente Entrada sem nota com pagamento ou
+   natureza e centro por item · Nota de entrada antiga (qualidade de grão, proprietário, cultura ou apropriação) ·
+   Requisição com classificação capex/opex · Transferência entre empresas · Nova produção de ração; nenhum item "(tela
+   antiga)". (O rótulo da nota antiga é o do merge da F7; antes, "Novo documento fiscal / importar XML".)
+4. Busca (Buscar funcionalidade): "saída direta" → "Estoque › Movimentações"; "requisi" → "Requisição com classificação
+   capex/opex" e nenhuma "Requisições (tela antiga)". A URL antiga `/estoque/baixas/new` ainda abre "Nova baixa de
+   estoque" (compatibilidade). Descartar.
+5. Configurações › Implantação › Saldos iniciais de estoque: sem TOP marcada, o "Adicionar novo" de hoje e a dica
+   "Para lançar o saldo inicial pela Central de Estoque, marque "Lança o saldo inicial" na aba Implantação de um tipo de
+   operação de entrada (Configurações › Operações › Tipos de operação)."; o histórico com "Estornar" igual.
+6. Relatórios › Estoque › "Requisições/Saídas" e "Baixas de Estoque": a coluna "Documento" no fim; as linhas antigas (se
+   houver) com "Requisição (tela antiga)"/"Baixa (tela antiga)"; os totais iguais aos de antes do deploy para o mesmo
+   período.
+7. (Grava; decisão do Maike) Configurações › Operações › Tipos de operação › Novo › Entrada: a aba "Implantação" com
+   "Lança o saldo inicial" = Sim; salvar a TOP "Saldo inicial". A Implantação passa a mostrar "Lançar saldo inicial" no
+   lugar do "Adicionar novo"; ele abre a Central de entrada com a TOP. Lançar um saldo inicial REAL (sem dado de teste em
+   produção — decisão 240) e confirmar: no Saldo › Movimentações (ledger), o movimento "Estoque inicial". Um segundo saldo
+   inicial do MESMO produto/local de estoque/lote (pela Central ou pelo "Adicionar novo" antigo) é recusado com "Já existe
+   estoque inicial confirmado para este produto/local de estoque/lote" (pela Central, o documento recusado fica aberto, sem
+   movimento, e se cancela sem efeito no saldo). Nada se apaga (decisão 247): para desfazer, cancelar o documento (estorna e libera a
+   chave). Desligar a TOP volta a Implantação à tela de hoje.
+8. (Grava; decisão do Maike) Conceder as permissões novas (`*_estoque.create`) aos perfis do passo 1, se quiser que eles
+   lancem pela Central.
+9. Compras (feito no merge da F7): a barra de Compras sem "+ Novo" (o "Nova solicitação de compra" saiu); a lista
+   Processos e o detalhe `/suprimentos/view/:id` continuam; no mega-menu de Compras, a ação "Importar XML de nota de
+   compra". Estoque › Recebimentos › DFe / XML recebidos: a fila continua; o "Lançar" da DF-e com o XML guardado abre a
+   importação na Central de Compras (o roteiro da F7, abaixo).
+
+**Riscos** (declarados na 288): perfil só com permissões antigas sem caminho visível de lançar (passo 1); o mega-menu
+mostra a área inteira quando todas as subs saem ("Operações" → Requisições (tela antiga); "Recebimentos" → Entradas
+manuais (tela antiga)) para esse perfil; TOP no 5 gravada antes da F11 com "não usada" explícito no Destino (nenhuma em
+produção); a prévia não anuncia a duplicidade do saldo inicial (a recusa vem na confirmação); a rota antiga passa a
+recusar também o saldo inicial vindo do documento novo (e, na reversão, a API anterior volta a conferir só
+`erp.opening_balances`); o saldo inicial pela Central exige `entradas_estoque.create`/`.edit`, não
+`opening_balances.create`; com TOP neutra, a Central mostra os seis campos de destino como opcionais; o relatório não
+abate a devolução de consumo do consumo e não mostra a requisição nova (reserva, sem razão); testes enxutos — a
+integração e o E2E inteiros ficam para o CI, e o K2-0 está PENDING (acima).
+
+**O que ficou fora desta rodada foi feito no merge da F7** (commit `cd02ba8`; decisões 284 e 288, risco (g)):
+- (a) a nota de entrada antiga fica no menu SÓ para o que a compra não cobre: a ação `estoque.acao.documento-fiscal`
+  (`apps/web/nav.registry.mjs`) passa a "Nota de entrada antiga (qualidade de grão, proprietário, cultura ou
+  apropriação)" — qualidade de grão por item; proprietário; cultura por item e safra no movimento e no título; tipo de
+  apropriação por item; filial do fornecedor; centro no movimento de estoque; unidade própria por item; "gerar
+  financeiro" por documento; bem com dados digitados; título dedutível. A lista "Documentos fiscais", o detalhe e a API
+  ficam;
+- (b) a ação nova "Importar XML de nota de compra" (`/compras?tab=documentos&importar=xml`, `compras.create`) e a rota de
+  detalhe `compras.documentos.importacao` (`/compras/importacoes/:id`);
+- (c) a fila de DF-e fica, e o "Lançar" da DF-e com o XML guardado abre a importação na Central de Compras (com
+  `dfe.launch` ∧ `compras.create` ∧ a capacidade `importacaoXml`); sem o XML, o "Lançar" de hoje (a nota antiga);
+- (d) o "Nova solicitação de compra" saiu do "+ Novo" de Compras (`apps/web/src/app/(app)/compras/page.tsx`).
+
+Implantação, skew e roteiro dessas mudanças: § F7, abaixo.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção; os passos 7 e 8 gravam
+(só com a decisão dele).
+
+### F7 — entrada de nota por XML na Central de Compras (OPERACOES-01, migration 0047)
+
+Decisão 284. **Uma migration: `0047_entrada_de_nota_por_xml.sql`** (pre-deploy; trava (2026,81); `lock_timeout` 2 s;
+pré-condições nomeadas `OPERACOES-01 F7: …`, a primeira é "já aplicada"; pós-condições só de objetos; sem backfill;
+aditiva). As migrations do repositório passam a 47, a última a 0047. Sem variável. Sem permissão nova. Uma capacidade
+nova: `importacaoXml: 1`, no fim do bloco `capacidades` de `GET /api/compras/{pedidos,compras,orcamentos}/operation-types`.
+Sem dependência nova (`pnpm-lock.yaml` não muda). O que entra:
+- API:
+  - rotas novas `POST /api/compras/importacoes`, `POST /api/compras/importacoes/da-dfe/:dfeId`,
+    `GET /api/compras/importacoes/:id`, `POST /api/compras/importacoes/:id/gerar-compra` e
+    `POST /api/compras/importacoes/:id/descartar`;
+  - campos novos opcionais no `POST /api/compras/compras` e no receber (dados fiscais, rateio, "gera estoque",
+    imobilizado, natureza e centro por item);
+  - na confirmação da compra: o item que não gera estoque, o bem do imobilizado, o tipo de título, a classificação, as
+    duplicatas e o rateio; no estorno, a baixa do bem;
+  - `xml` opcional no `POST /api/stock/dfe`; a aprovação da DF-e na empresa DA DF-e; a chave de acesso conferida no
+    `POST /api/stock/invoices`; a solicitação de compra aceita a compra no recebimento;
+- domínio: o leitor de XML, a leitura da NF-e e a conta da compra pela nota (`xml-leitor.ts`, `nfe-leitura.ts`,
+  `nfe-compra.ts`); os rótulos novos;
+- web:
+  - "Importar XML" em Compras › Documentos e a página nova `/compras/importacoes/<id>` (a conferência);
+  - o bloco "Dados fiscais" na criação da compra; a consulta e a prévia com os dados fiscais, o rateio e os bens;
+  - a fila de DF-e com o XML guardado e o "Lançar" pela importação;
+  - a ação "Importar XML na Central de Compras" na solicitação;
+- menu (`apps/web/nav.registry.mjs`, no MESMO commit das telas; o fecho do menu da F11, decisão 288, item (g)):
+  - a rota de detalhe `compras.documentos.importacao` (`/compras/importacoes/:id`), ANTES de
+    `compras.documentos.detalhe` (cujo padrão `/compras/:especie/:id` também a casaria);
+  - a ação nova "Importar XML de nota de compra" (`/compras?tab=documentos&importar=xml`, `compras.create`);
+  - a ação da nota antiga passa a "Nota de entrada antiga (qualidade de grão, proprietário, cultura ou apropriação)",
+    SÓ para o que a compra não cobre (a lista da decisão 284);
+  - o "+ Novo › Nova solicitação de compra" sai da barra de Compras (`apps/web/src/app/(app)/compras/page.tsx`).
+
+**Migration — o que faz** (nenhuma linha existente é reescrita):
+- chaves `unique (id, organization_id)` novas em `erp.chart_accounts`, `erp.dfe_documents` e `erp.purchase_requests`:
+  o alvo das FKs compostas novas;
+- `erp.notas_fiscais_xml` — o XML original: sem UPDATE, DELETE nem TRUNCATE (privilégio e gatilho); RLS
+  `tenant_e_empresa`; `audit_row` (uma cópia do XML no `audit_logs`, no INSERT);
+- `erp.importacoes_nfe_compra` — a importação (pendente → gerada | descartada, decidida uma vez pelo gatilho
+  `importacoes_nfe_compra_guarda`; sem DELETE); índices únicos parciais: uma pendente por chave; uma importação por
+  compra. RLS `tenant_e_empresa`;
+- `erp.produto_fornecedor_vinculos` — o vínculo lembrado (organização, sem empresa; RLS `tenant_isolation`; sem DELETE);
+- `erp.documentos_compra`: 12 colunas anuláveis (chave de acesso, UF, tipo de documento fiscal, IPI, ICMS-ST, seguro,
+  tipo de título, classificação, tipo de rateio, parcelas da nota, DF-e e solicitação), 10 CHECKs novos (20 → 30, conferido pela pós-condição 13.4), e o
+  CHECK do total refeito na MESMA instrução (`… + coalesce(valor_ipi,0) + coalesce(valor_icms_st,0) + coalesce(seguro,0)`);
+  índice único parcial `ux_documentos_compra_chave` (compras não canceladas);
+- `erp.documentos_compra_itens`: 14 colunas anuláveis (gera estoque, imobilizado, bem, natureza e centro do item, IPI e
+  ST do item, e os dados do item na nota: número, código, descrição, unidade, quantidade e o fator) e os CHECKs delas;
+- `erp.documentos_compra_rateio` — o rateio por valor (RLS `api_child` pelo cabeçalho; só da compra aberta com rateio
+  por valor; sem UPDATE nem DELETE);
+- `erp.dfe_documents.xml_id` (FK composta; gatilho `trg_dfe_documents_xml`: gravado uma vez, da mesma chave e empresa);
+- a nota repetida no banco: `trg_documentos_compra_nota` (BEFORE INSERT OR UPDATE OF as 12 colunas fiscais) e
+  `trg_invoices_chave_nota` (BEFORE INSERT OR UPDATE OF `access_key, status, deleted_at`), as duas SECURITY DEFINER
+  estreitas (`search_path = erp, pg_temp`, EXECUTE só do dono), com a trava
+  `pg_advisory_xact_lock(hashtextextended('nfe-chave:'||org||':'||chave, 284))`;
+- os códigos levantados pelos gatilhos são só `VALIDATION_ERROR`, `CONFLICT` e `DUPLICATE_DOCUMENT`, que o binário
+  anterior conhece (422/409, nunca 500).
+
+**Pré-condições (recusa sem aplicar nada, com a mensagem que nomeia o que falta):**
+- já aplicada: qualquer tabela, função, coluna, gatilho ou índice da 0047 já existe — a primeira pergunta;
+- `erp_app` ausente, ou quem aplica não atravessa RLS (é o dono das duas SECURITY DEFINER);
+- tabela ausente;
+- as chaves alvo das FKs compostas ausentes ou em outras colunas, ou já existe uma `(id, organization_id)` em
+  `chart_accounts`, `dfe_documents` ou `purchase_requests`;
+- os CHECKs de `erp.documentos_compra` não são os vinte de depois da 0044, ou o do total não é EXATAMENTE o da 0036;
+- os gatilhos do documento de compra não são EXATAMENTE os oito da 0044, ligados;
+- as SECURITY DEFINER de compras não são as oito da 0044;
+- função chamada ausente;
+- quem aplica não é dono das seis tabelas alteradas;
+- coluna lida pelas guardas ausente ou com outro tipo.
+A 0047 depende da 0036, da 0037 e da 0044 (de nenhuma de número maior). Locks curtos (ACCESS EXCLUSIVE só de catálogo,
+mais a leitura de validação dos CHECKs e das chaves novas) em `documentos_compra`, `documentos_compra_itens`, `invoices`,
+`dfe_documents`, `purchase_requests` e `chart_accounts`: com uma transação longa segurando uma delas, a migration desiste
+em 2 s sem aplicar nada, e o deploy é refeito (seguro). Em erro, publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0047) → API → web**, com o menu no MESMO deploy do web. Na PR #90 o pre-deploy aplica as migrations na
+ordem do nome (0042 → 0047), cada uma na sua transação. Janelas:
+1. **API anterior × banco novo:**
+   - a API anterior não lê nem grava nada novo, e o que ela grava continua passando: a compra sem chave nem dispara a
+     guarda nova no UPDATE de situação, porque ela é `UPDATE OF` as colunas fiscais; o CHECK do total é o mesmo com as
+     colunas novas nulas;
+   - diferença visível: a nota antiga com a chave de uma compra viva recebe 409 `DUPLICATE_DOCUMENT` (código que ela
+     conhece). Só acontece depois que alguém gravar uma compra com chave, o que exige a API nova.
+2. **API nova × web anterior** (sentido 2): os corpos da web de produção são aceitos sem mudança (todo campo novo é
+   opcional, sem default); as respostas mantêm cada chave de hoje (chaves novas a mais, ignoradas pela web da base).
+   Provado pelo K-2 (`compras-f7-skew-web-anterior.spec.ts`: K2-1 compra da base 201 com as colunas novas nulas; K2-2
+   DF-e da base, sem `xml`, 201). Mudanças visíveis, todas no servidor:
+   - (a) a nota antiga (`POST /stock/invoices`) com a chave de uma compra viva → 409 `DUPLICATE_DOCUMENT` "A nota de
+     chave … já está na Compra <código>.";
+   - (b) a aprovação do rascunho de DF-e lança o título na empresa DA DF-e (antes: a da sessão, ou a primeira
+     disponível); DF-e sem empresa → 422 "A DF-e não tem empresa: registre-a de novo na fila de DF-e, com a empresa ou
+     com o XML, antes de aprovar."; rascunho de DF-e fora do escopo → 404;
+   - (c) registrar de novo uma DF-e sem empresa, com a empresa, PREENCHE a empresa (a já gravada nunca muda); registrar
+     de novo não duplica o rascunho pendente nem volta a "rascunho" a DF-e lançada ou ignorada;
+   - (d) o perfil de lançamento acha o fornecedor com o CNPJ/CPF gravado COM MÁSCARA: a DF-e desse emitente vira
+     rascunho ao ser registrada (antes ficava pendente);
+   - (e) a mensagem nova do "Confirmar recebimento" da solicitação: "Lance o documento fiscal de entrada ou gere a compra
+     pela importação do XML antes de confirmar o recebimento";
+   - (f) `operation-types` traz `importacaoXml` no fim; a DF-e traz `xml_id`; a leitura da compra traz as colunas novas
+     (nulas).
+3. **Web novo × API anterior** (sentido 1, reversão só da API): sem `importacaoXml`, o web fica como hoje:
+   - sem "Importar XML" (e `?importar=xml` não abre nada); sem o bloco "Dados fiscais"; sem a ação na solicitação;
+   - a DF-e registrada pela tela vai SEM `xml` (o XML só pré-preenche, como hoje), e o "Lançar" é o link de hoje;
+   - nenhum pedido a `/api/compras/importacoes*` no fio.
+   Provado pelo K-1 (`compras-f7-skew-api-producao.spec.ts`: K1-1 e K1-2; a base de hoje é o mundo legado — o ramo
+   "mundo novo" não rodou).
+4. **Web novo × API nova:** além do acima, mudanças que a pessoa vê:
+   - (g) a linha importada da nota tem o unitário arredondado PARA CIMA (6 casas), e a sobra (no máximo quantidade ×
+     0,000001) fica no desconto da linha — a linha fecha o vProd;
+   - (h) o diálogo da DF-e manda o XML só com a capacidade; quando o servidor recusa a leitura (devolução, sem
+     protocolo, homologação, destinatário fora do escopo…), o diálogo mostra a recusa e oferece "Registrar sem guardar
+     o XML";
+   - (i) nas DF-e, `xml_id`, a chave e a empresa não mudam depois que o XML está ligado; a DF-e da mesma chave registrada
+     em OUTRA empresa → 409 "Esta DF-e já está registrada em outra empresa.";
+   - (j) a DF-e registrada com o XML numa organização com duas empresas do mesmo CNPJ (sem a IE para desempatar) pede a
+     empresa: 422 em `empresa_id` com os `candidatos` do escopo;
+   - (k) o menu: em Compras, a ação "Importar XML de nota de compra" e a barra sem "+ Novo"; em Estoque, a ação da nota
+     antiga com o rótulo novo (acima).
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247):
+- nenhum valor muda; as colunas novas nascem nulas; os CHECKs novos só restringem as colunas novas, e o do total
+  refeito vale para as linhas de hoje sem mudança (as colunas a mais são nulas);
+- as chaves `(id, organization_id)` novas leem as três tabelas uma vez (o `id` já é único);
+- produção, pela leitura de 02/10 (decisão 281): 1 nota de entrada antiga, 1 DF-e e nenhum documento de compra listado.
+  - A guarda nova da nota antiga só age se existir compra viva com a mesma chave: nenhuma, porque a coluna nasce nula.
+  - A DF-e de produção: se ela não tiver empresa, a aprovação do rascunho dela passa a 422, e a saída é registrá-la de
+    novo com a empresa (ou com o XML). Não conferido: PENDING, passo 1 do roteiro.
+- O que muda para quem usa, sem ninguém configurar nada: "Importar XML" em Compras › Documentos; o bloco "Dados
+  fiscais" na criação da compra; a fila de DF-e guarda o XML e o "Lançar" da DF-e com XML abre a conferência; a
+  solicitação aceita a compra no recebimento.
+- Custo declarado: cada XML guardado gera UMA cópia no `audit_logs` (até 2 MB).
+
+**Reversão:**
+- API e web voltam por redeploy da versão anterior e convivem com a 0047. Tabelas, colunas, índices, gatilhos e
+  funções ficam (decisão 247); desfazer qualquer um só com migration nova, por decisão humana.
+- A reversão só do web = o sentido 2 acima; só da API = o sentido 1.
+- Depois de alguém gravar com a API nova:
+  - a API anterior que CONFIRMAR uma compra gravada pela nova soma IPI, ICMS-ST e seguro ao custo (estão no
+    `valor_total`), mas IGNORA `gera_estoque = false`, o imobilizado (não cria o bem), as duplicatas (título único no
+    `data_vencimento`, que é o da 1ª duplicata), o tipo de título, a classificação e o rateio;
+  - com rateio, o cabeçalho não tem natureza nem centro, e a confirmação dela recusa "Informe a natureza…", sem efeito
+    parcial;
+  - a importação pendente fica pendente (a API anterior não tem a rota), e o XML guardado fica;
+  - a correção é voltar a API nova.
+
+**Roteiro do Maike em produção** (depois do deploy; produção é operacional — decisões 240 e 247). Os passos 1 a 6 são
+só leitura (nada é gravado; o passo 6 é uma recusa e a transação volta inteira); os passos 7 e 8 gravam, e só com a
+decisão dele.
+1. (Leitura, SQL do Maike) A DF-e e a nota antiga de produção:
+   `select launch_status, empresa_id is null as sem_empresa, xml_id is null as sem_xml from erp.dfe_documents;` e
+   `select count(*) from erp.documentos_compra where especie = 'compra';` — a DF-e sem empresa não aprova o rascunho
+   (passa a 422) até ser registrada de novo com a empresa.
+2. Compras › Documentos: o botão "Importar XML" ao lado do Novo. Abrir e fechar o diálogo, sem enviar (o texto "Envie o
+   arquivo XML da NF-e (ou um ZIP com um único XML)…"). O mesmo diálogo pela busca ("importar xml") e pela ação
+   "Importar XML de nota de compra" do mega-menu de Compras; a barra de Compras sem "+ Novo".
+3. Compras › Nova compra: nos Dados adicionais, o bloco "Dados fiscais" (Chave de acesso, UF, Tipo de documento, IPI,
+   ICMS-ST, Seguro, Tipo de título, Classificação, o Rateio e, por item, "Gera estoque" e "Imobilizado"). Descartar.
+   No pedido de compra, o bloco não aparece.
+4. Estoque › Recebimentos › DFe / XML recebidos › Registrar: ao escolher um XML, o diálogo diz "o XML vai junto e fica
+   guardado". Cancelar sem salvar.
+5. Configurações › Operações › Tipos de Operação: nenhuma aba nova (a F7 não criou seção da TOP).
+6. (Recusa, nada gravado) Se o Maike tiver o XML da nota de entrada que já está em produção como nota antiga:
+   importá-lo em Compras › Documentos › Importar XML → o diálogo recusa com "A nota de chave … já está no Documento
+   fiscal de Estoque <código>." (409; a transação volta, nada é guardado).
+7. (Grava; decisão do Maike) Importar o XML de uma nota real de compra que ainda não foi lançada → conferência →
+   escolher a TOP, o fornecedor (ou cadastrá-lo pela tela), o produto e o fator de cada item → "Gerar compra" → a
+   compra aberta, com a chave. Conferir a prévia antes de confirmar. A compra só confirma pela consulta.
+8. (Grava; decisão do Maike) A DF-e de produção sem empresa (passo 1): registrá-la de novo na fila com a empresa, para o
+   rascunho poder ser aprovado.
+
+**Riscos** (declarados na 284):
+- a API anterior que confirmar uma compra gravada pela nova ignora "gera estoque", imobilizado, duplicatas, tipo de
+  título, classificação e rateio; com rateio, ela recusa a confirmação, sem efeito parcial (Reversão, acima);
+- o ramo "mundo novo" do K-1 não rodou (a base `622f194` é legado); a ação "Importar XML" da solicitação e o "Lançar" da
+  DF-e pela importação só têm prova de API (`compras-f7-importacao`, caso (6));
+- quem tem `dfe.create` sem `compras.create` registra a DF-e sem guardar o XML: a pergunta da capacidade exige
+  `compras.create` (I-3 da revisão). A recusa da leitura nunca vira recuo silencioso: a pessoa escolhe "Registrar sem
+  guardar o XML";
+- o "Gerar compra" de importação de ARQUIVO marca a DF-e da mesma chave como lançada sem exigir `dfe.launch` (M-2 da
+  revisão; o precedente da nota antiga com `dfe_id`); a rota `/compras/importacoes/da-dfe/:dfeId` continua exigindo
+  `dfe.launch`;
+- registrar de novo a DF-e que já tem XML, com um XML DIFERENTE da mesma chave, guarda o novo XML sem ligá-lo (o
+  `coalesce` mantém o primeiro), e a resposta devolve o `xml_id` do novo;
+- a mensagem do destinatário ambíguo diz "escolha a empresa da compra" também no registro da DF-e;
+- o unitário importado sobe até 0,000001 e a sobra vai ao desconto da linha, que pode passar o vDesc da nota em até
+  quantidade × 0,000001; as linhas de lote do mesmo item podem ter unitários diferentes;
+- a DF-e continua `launched` se a compra gerada for cancelada (como com a nota antiga);
+- o total exibido na Central manual soma em ponto flutuante (padrão anterior); o servidor recalcula em decimal;
+- o escopo de empresa sem alias (a coluna não qualificada resolve para `erp.membro_empresas` dentro da subconsulta) foi
+  consertado no descartar da importação e continuava, fora da F7, em `stock.ts` (fila de DF-e: manifestar, ignorar,
+  listar), `fleet-hr.ts:263` e `:334` e `resources.ts:295` — consertados depois, na F12 (seção F12 — dívidas de
+  segurança, abaixo; decisão 288);
+- os testes sem mudança do código que a F7 mudou (`api.test.ts`, `f9a-classificacao-padrao`, `compras-02-cp`,
+  `compras-01-a2-confirmacao`, `f9b-compra-padroes-top`, `f9b-provisao-compra`; no E2E, `compras-03-central-unitario` e
+  `central-compras-correcoes`) não têm execução local nos relatórios da fase: ficam para o CI;
+- custo: cada XML guardado gera UMA cópia no `audit_logs` (até 2 MB); um UPDATE por vínculo lembrado e um INSERT por
+  bem, limitados pelo número de itens;
+- produção: a DF-e sem empresa deixa de aprovar o rascunho até ser registrada de novo (passo 1, PENDING).
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção, e os passos 7 e 8
+gravam (só com a decisão dele).
+
+### F12 — dívidas de segurança: o caminho da auditoria e o escopo amarrado à linha (OPERACOES-01, migration 0048)
+
+Decisão 288 (parte F12). **Uma migration: `0048_search_path_da_auditoria.sql`** (pre-deploy; trava (2026,82);
+`lock_timeout` 2 s; pré-condições nomeadas `OPERACOES-01 F12: …`, a primeira é "já aplicada"; pós-condições só de
+catálogo; nenhuma linha tocada). Faz uma coisa: `alter function erp.audit_row() set search_path = erp, pg_temp` (corpo,
+dono, privilégios e gatilhos intactos). As migrations do repositório são 49 (0001 a 0049); em produção, 42 hoje (0001 a
+0041 e a 0049). Sem variável, sem permissão, sem capacidade, sem rota, sem dependência nova. API: só o SQL muda — as
+consultas com o escopo de empresa ganham alias na tabela (`stock.ts`, `fleet-hr.ts`, `resources.ts`; na segunda rodada,
+`dashboards.ts`, `reports.ts` e `financial.ts`), e os helpers de escopo (`apps/api/src/lib/context.ts`) passam a
+recusar a coluna solta `empresa_id`; os corpos e as chaves das respostas são os de antes.
+- **Ordem: banco → API → web.** A 0048 é independente da 0049 (MAPA-01, #91): nenhuma lê ou cria objeto da outra.
+- **Ordem real em produção:** a 0049 já está aplicada, e o runner aplica a 0048 DEPOIS dela, por último entre as 0042 a
+  0048 (a ordem do nome, pulando o que o ledger já tem; cabeçalho de OPERACOES-01, acima). A prova
+  `packages/db/test/operacoes-01-ordem-real.test.ts` cobre a 0048: rodada em 03/10 com a 0048 no disco, 6/6 — a ordem
+  real (0001..0041 → 0049 → 0042..0048) e a ordem por número dão o mesmo catálogo, inclusive o `search_path` das funções.
+- **Skew:** API anterior × banco com a 0048 — o gatilho grava a mesma linha de auditoria; API nova × banco sem a 0048 —
+  nada da API depende dela.
+- **O que muda para o usuário:** o painel inicial (`GET /api/dashboards/home`) deixa de somar e contar títulos,
+  solicitações de compra e processamentos de empresas fora do escopo do MÓDULO de cada bloco (financeiro, compras,
+  pecuária). Antes, quem tinha escopos diferentes por módulo (por exemplo, financeiro=[A] e estoque=[A,B]) via no bloco
+  financeiro os títulos de B; agora vê só os de A. Para quem tem o mesmo escopo em todos os módulos, e para o
+  proprietário, nada muda. Os outros painéis, os relatórios DF-e e atividades do confinamento, a previsão orçamentária e
+  as rotas de estoque, frota, RH e cadastros genéricos já eram barrados pela RLS do mesmo módulo: a resposta não muda.
+  A recusa da coluna solta é erro de programação, que nunca chega ao usuário: nenhum chamador a usa (conferido).
+- **Impacto em dados reais:** nenhum dado lido, gravado ou apagado pela migration; o ALTER não pega lock de tabela (só a
+  linha da função no catálogo).
+- **Volta:** API e web por redeploy, convivendo com a 0048; desfazer o caminho só por migration nova (decisão humana;
+  reabre a dívida). Voltar a API reabre o vazamento do painel inicial.
+- **Se parar:** "já aplicada" = nada a fazer; "corpo não é o da 0001" = alguém redefiniu a função em produção — parar e
+  decidir; "dono/papel" = aplicar com o papel dono. Em erro, publique o nome do papel, nunca a conexão.
+- **Roteiro do Maike em produção (PENDING — leitura):**
+  `select proconfig, prosecdef, md5(prosrc) from pg_proc where oid = 'erp.audit_row()'::regprocedure` →
+  `{"search_path=erp, pg_temp"}`, `t`, `d2f094910e177fca30a3d9fab6f6672e`; uma edição qualquer pela tela gera a linha em
+  `erp.audit_logs` como antes. O painel inicial de um usuário com escopos diferentes por módulo (se houver) mostra, no
+  bloco financeiro, só os títulos das empresas do financeiro dele: PENDING.
+- **Riscos e o que NÃO foi feito** (declarados na 288, parte F12): o fechamento da apuração (`fleet-hr.ts:263`) responde
+  o mesmo 200 sem efeito para inexistente e fora do escopo (sem conferência de ROW COUNT); a avaliação de OS
+  (`fleet-hr.ts:334`) responde o mesmo 409 para os dois, não 404 — mudar os dois muda contrato; o UPDATE de
+  `erp.equipments` na depreciação (`fleet-hr.ts:201`) não confere ROW COUNT (dívida anterior); o gate
+  `report-scope.test.ts` ainda aceita o predicado solto, ramo que a recusa tornou código morto.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
 ## VISUAL-UX-04b — correções da Central de Compras (sem migration)
 
 Decisão 278. **Só web**: sem migration, sem rota, sem API, sem variável, sem permissão, sem domínio. Conserta regressões
@@ -1940,10 +3977,12 @@ confirmada sozinha abre a consulta em Confirmado, sem diálogo. Se esta entrar s
 compra Automática, use "Salvar" na criação. Nas duas Centrais, ao salvar, o aviso continua o "Salvo com sucesso" de hoje também quando a confirmação automática não
 aconteceu: `recusada` → o documento aparece Aberto, e o motivo surge na prévia ou no `/confirm`; `sem_permissao` →
 aparece Aberto, sem o Confirmar para quem salvou. O rótulo "Salvar e confirmar", o aviso do Salvar pelo resultado da
-confirmação automática, os itens vazios que a TOP permite — e, junto, a ajuda da Geral do editor no formato 4, que hoje
+confirmação automática, os itens vazios que a TOP permite — e, junto, a ajuda da Geral do editor no formato 4, que
 diz "nas Centrais de Vendas e de Compras o lançamento ainda pede ao menos um item", com os dois E2E que a conferem letra
-por letra (W-1 e K-1) — e a situação da aprovação e o Aprovar/Reprovar na consulta ficam para essa fatia. O servidor é
-a regra: a aprovação se dá em Aprovações.
+por letra (W-1 e K-1) (desde a OPERACOES-01 F4, decisão 281, o editor do formato 5 diz o texto novo, e o do formato 4,
+que só roda contra a API anterior, mantém este) — e a situação da aprovação e o Aprovar/Reprovar na consulta ficam para essa fatia. O servidor é
+a regra: a aprovação se dá em Aprovações. Feito na OPERACOES-01 F2 (decisão 279), § OPERACOES-01 › F2; a ajuda da
+Geral é da F4 (decisão 281).
 
 **Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0041 fica e convive com a API
 anterior (janela 1). Código: o binário anterior não confirma venda nem compra com TOP formato 4 — 409 "configuração
@@ -1995,7 +4034,8 @@ rodarem sem o conserto do vigia); depois de trazer a main, o CI roda de novo no 
    diálogo de confirmação sobre a compra já confirmada (a prévia recusa com "Compra já confirmada"; nada é duplicado).
 4. Salvar um documento com a TOP Automática, sem aprovação → ele volta confirmado (estoque e financeiro como na
    confirmação manual; a Central de Estoque avisa "Salvo e confirmado.", e as de Vendas e de Compras, o "Salvo com
-   sucesso" de hoje, com a consulta em Confirmado). Com aprovação → fica aberto e aparece em Aprovações (aba Vendas,
+   sucesso" de hoje, com a consulta em Confirmado) (desde a OPERACOES-01 F2, decisão 279, as três avisam "Salvo e
+   confirmado."). Com aprovação → fica aberto e aparece em Aprovações (aba Vendas,
    Compras ou Estoque; com a TOP Automática, a Central de Estoque avisa "Salvo. Este documento precisa de aprovação
    antes de ser confirmado."); Aprovar → com a TOP Automática, confirma no mesmo clique ("Aprovado e confirmado."); com
    a Manual, "Aprovado." e o Confirmar da consulta passa.
@@ -2722,7 +4762,7 @@ identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca
 
 ## CADASTRO-AREAS-02 — unificação mapa × áreas (0051)
 
-Decisão 291. **Uma migration: `0051_areas_mapa_unificado.sql`** (pre-deploy; trava (2026,85), `lock_timeout` 2 s, pré/pós-condições nomeadas `CADASTRO-AREAS-02: …`).
+Decisão 292. **Uma migration: `0051_areas_mapa_unificado.sql`** (pre-deploy; trava (2026,85), `lock_timeout` 2 s, pré/pós-condições nomeadas `CADASTRO-AREAS-02: …`).
 
 **Efeito:** `erp.areas.geometria` (GeoJSON Polygon); acervo vivo de `erp.mapa_areas` migra para `erp.areas` e é soft-deleted. A tabela `mapa_areas` NÃO é dropada (skew do binário MAPA-01). A UI nova grava só em `areas`.
 

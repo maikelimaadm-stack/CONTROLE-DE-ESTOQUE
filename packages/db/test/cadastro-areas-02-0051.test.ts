@@ -5,7 +5,7 @@ import { seedReference, seedDemo, type DemoOrg } from "../src/seed.js";
 import { TEST_URL } from "./setup.js";
 
 /**
- * CADASTRO-AREAS-02 (0051, decisão 291) — unificação mapa × areas.
+ * CADASTRO-AREAS-02 (0051, decisão 292) — unificação mapa × areas.
  * T1 insert em areas sem geometria ok · T2 geometria inválida recusada ·
  * T3 migração mapa_areas → areas + soft-delete · T4 insert sem usable usa gatilho da 0050.
  */

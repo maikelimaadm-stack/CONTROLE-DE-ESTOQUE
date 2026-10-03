@@ -12,14 +12,24 @@ import { AvisosDaCriacao, DadosDaCriacao, identidadeDaCriacao } from "./central/
 import { ItensDaCriacaoDeCompra } from "./central/criacao-itens";
 import { ItensDoRecebimento } from "./central/receber";
 import { CAMPOS_DO_PAINEL_DA_CRIACAO, abaDoCampoNoPainel, abasDoPainelDaCriacao } from "./central/criacao-painel";
+import { CentralDoOrcamento } from "./orcamento/central-orcamento";
 
 /**
  * A CENTRAL DE COMPRAS — criação de Pedido de compra e de Compra (COMPRAS-01..03; sobre o motor na VISUAL-UX-04,
  * decisão 276). Só COMPOSIÇÃO: a lógica (TOP da URL como pedido, trava da sessão, layout por TOP, regras, receber
  * pedido, corpo do POST, pendências, alterado/useDirtyTab) mora em `central/estado.ts`; as peças só desenham.
  * Sem TOP efetiva a página é o lançador (tela normal, com a trilha); com ela, a moldura do motor.
+ *
+ * OPERACOES-01 F6b (decisão 283): um DESPACHANTE, sem hook — o orçamento de compra (`/compras/orcamentos/new`, que
+ * nasce do pedido) é a Central do orçamento (`orcamento/central-orcamento.tsx`); o pedido e a compra, a de hoje.
  */
 export function CentralDeCompras({ variante }: { variante: VarianteDeCompra }) {
+  if (variante.variante === "orcamento") return <CentralDoOrcamento variante={variante} />;
+  return <CentralDoPedidoEDaCompra variante={variante} />;
+}
+
+/** A Central de Compras do pedido e da compra (o corpo de antes da F6b, sem mudança). */
+function CentralDoPedidoEDaCompra({ variante }: { variante: VarianteDeCompra }) {
   const entrada = useEntradaDaCentral(variante);
   if (entrada.formulario) return <FormularioDeCompra key={entrada.formulario.chave} {...entrada.formulario.props} />;
   return <LancadorDeTipoOperacao

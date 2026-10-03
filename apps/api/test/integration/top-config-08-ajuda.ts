@@ -4,7 +4,7 @@ import { createPool, type Db } from "@agro/db";
 import {
   CHAVES_MODULO_EMPRESA, SEGMENTO_DA_ESPECIE_ESTOQUE,
   configuracaoNeutraTopV3, configuracaoNeutraTopV4,
-  type ConfiguracaoTipoOperacaoV3, type ConfiguracaoTipoOperacaoV4, type EspecieEstoque,
+  type ConfiguracaoTipoOperacaoV3, type ConfiguracaoTipoOperacaoV4, type EspecieEstoque, type EspecieEstoqueDaCentral,
 } from "@agro/domain";
 import { appCom, harness, ids, TEST_URL, type Harness } from "./setup.js";
 
@@ -50,7 +50,7 @@ type Ids = Awaited<ReturnType<typeof ids>>;
 export type IdsConferidos = { [K in keyof Ids]-?: string };
 
 /** As TOPs NEUTRAS do formato 4 que os corpos usam quando o caso não diz qual (compra e estoque exigem TOP). */
-export type TopsPadrao = Record<"venda" | "compra" | "pedidoCompra" | EspecieEstoque, string>;
+export type TopsPadrao = Record<"venda" | "compra" | "pedidoCompra" | EspecieEstoqueDaCentral, string>;
 
 export interface Cenario {
   h: Harness;
@@ -314,13 +314,13 @@ export type ItemEstoque = Record<string, unknown> & { produto_id: string };
  * O corpo do documento de estoque: 1ª empresa, ALM (e SILO como destino na transferência), a TOP neutra do formato 4
  * da espécie (troque por `extra.tipo_operacao_id`) e a data aberta.
  */
-export function corpoEstoque(especie: EspecieEstoque, itens: ItemEstoque[], extra: Record<string, unknown> = {}): Record<string, unknown> {
+export function corpoEstoque(especie: EspecieEstoqueDaCentral, itens: ItemEstoque[], extra: Record<string, unknown> = {}): Record<string, unknown> {
   return { empresa_id: c.I.empresa, tipo_operacao_id: c.tops[especie], armazem_id: c.I.warehouse,
     ...(especie === "transferencia" ? { armazem_destino_id: c.I.warehouse2 } : {}), data_documento: DATA, itens, ...extra };
 }
-export const lancarEstoque = (especie: EspecieEstoque, itens: ItemEstoque[], extra: Record<string, unknown> = {}, headers: Hdr = c.h.headers(), chave?: string): Promise<Resposta> =>
+export const lancarEstoque = (especie: EspecieEstoqueDaCentral, itens: ItemEstoque[], extra: Record<string, unknown> = {}, headers: Hdr = c.h.headers(), chave?: string): Promise<Resposta> =>
   c.ligada.inject({ method: "POST", url: `/api/estoque/${seg(especie)}`, headers: comChave(headers, chave), payload: corpoEstoque(especie, itens, extra) });
-export async function estoqueLancado(especie: EspecieEstoque, itens: ItemEstoque[], extra: Record<string, unknown> = {}, headers?: Hdr): Promise<Record<string, unknown> & { id: string }> {
+export async function estoqueLancado(especie: EspecieEstoqueDaCentral, itens: ItemEstoque[], extra: Record<string, unknown> = {}, headers?: Hdr): Promise<Record<string, unknown> & { id: string }> {
   const r = await lancarEstoque(especie, itens, extra, headers);
   expect(r.statusCode, `premissa: o documento de estoque é lançado — ${r.body}`).toBe(201);
   return j(r) as Record<string, unknown> & { id: string };

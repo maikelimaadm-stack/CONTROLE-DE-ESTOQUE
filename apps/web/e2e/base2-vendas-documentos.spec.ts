@@ -1,5 +1,7 @@
-import { test, expect, type Page } from "@playwright/test";
-import { login, api, empresaAtiva, acaoDaCentral, abrirDadosAdicionais } from "./helpers";
+import type { Page } from "@playwright/test";
+import { login, api, uniq, empresaAtiva, acaoDaCentral, abrirDadosAdicionais } from "./helpers";
+import { saldoNoServidor } from "./estoque-01-comum";
+import { test, expect, criarCadastro, referenciasDoSeed } from "./central-compras-fixtures";
 import { ptBR } from "@erp/plataforma";
 
 /**
@@ -46,17 +48,51 @@ async function umId(page: Page, path: string, oQue: string): Promise<string> {
   return id!;
 }
 
+/** O par produto × armazém em que o documento lança o item. */
+interface Par { produto: string; armazem: string }
+
+/**
+ * ESTOQUE PRÓPRIO do caso que CONFIRMA: produto NOVO e armazém NOVO da empresa ativa, com o saldo inicial lançado
+ * aqui, pela porta de estoque inicial. A confirmação da venda baixa estoque; no par do seed (o primeiro produto e
+ * o primeiro armazém) o saldo é o que outro spec deixou — ou consumiu —, e o caso passaria ou cairia pela ordem
+ * dos specs, não pelo comportamento. A premissa vai ao lado: o par novo nasce SEM saldo e fica com o lançado.
+ *
+ * O par é criado por `criarCadastro` (central-compras-fixtures), que registra a EXCLUSÃO LÓGICA na mesma chamada; ela
+ * roda no fim do caso, na teardown da fixture automática — com o caso verde, com o que falhou e no estouro de tempo.
+ * Sem isso o armazém novo, o mais recente, viraria "o primeiro armazém da empresa ativa" (a lista sai por `created_at`
+ * decrescente) dos specs que rodam depois e pegam `warehouses?empresa_id=…&pageSize=1`. Ficam a venda, o estoque
+ * inicial e a baixa: documento e ledger não se apagam, e apontam o par excluído.
+ */
+async function estoqueProprio(page: Page): Promise<Par> {
+  const empresa = await empresaAtiva(page);
+  const seed = await referenciasDoSeed(page);
+  const produto = (await criarCadastro(page, "products", {
+    description: uniq("BASE2-03C produto"), group_id: seed.grupo.id, measurement_id: seed.unidade.id, financial_category_id: seed.natureza.id
+  })).id;
+  expect((await api<Record<string, unknown>>(page, "GET", `/api/resources/products/${produto}`))["control_stock"],
+    "premissa: o produto novo controla estoque (padrão do cadastro)").toBe(true);
+  const armazem = (await criarCadastro(page, "warehouses", {
+    empresa_id: empresa, initials: `B3${Date.now().toString(36).slice(-6).toUpperCase()}`, description: uniq("BASE2-03C armazém"), type: "inputs"
+  })).id;
+  expect((await saldoNoServidor(page, armazem, produto)).quantity, "premissa: o par novo nasce sem saldo").toBe("0.0000");
+  await api(page, "POST", "/api/stock/opening-balances", { empresa_id: empresa, warehouse_id: armazem, product_id: produto, quantity: "10", unit_value: "5.00" });
+  expect((await saldoNoServidor(page, armazem, produto)).quantity, "premissa: o par tem só o saldo lançado por este caso").toBe("10.0000");
+  return { produto, armazem };
+}
+
 /**
  * Cria um documento da variante pedida pela API REAL, com FRETE — de propósito.
  *
  * O frete é o que separa o TOTAL do documento da soma dos itens. Sem ele a asserção do total passaria
  * mesmo que a tela somasse a coluna de itens no cliente, que é justamente o que a moldura não faz.
+ *
+ * Sem `par`, o item usa o primeiro produto e o primeiro armazém do seed — serve a quem não mexe em estoque.
  */
-async function criar(page: Page, variante: Variante): Promise<Doc> {
+async function criar(page: Page, variante: Variante, par?: Par): Promise<Doc> {
   const empresa = await empresaAtiva(page);
   const cliente = await umId(page, "/api/resources/people?is_client=true&pageSize=1", "um cliente");
-  const produto = await umId(page, "/api/resources/products?pageSize=1", "um produto");
-  const armazem = await umId(page, `/api/resources/warehouses?empresa_id=${empresa}&pageSize=1`, "um armazém da empresa ativa");
+  const produto = par?.produto ?? await umId(page, "/api/resources/products?pageSize=1", "um produto");
+  const armazem = par?.armazem ?? await umId(page, `/api/resources/warehouses?empresa_id=${empresa}&pageSize=1`, "um armazém da empresa ativa");
 
   const criado = await api<{ id: string }>(page, "POST", `/api/sales/${V[variante].rota}`, {
     empresa_id: empresa, document_date: "2026-09-01", client_id: cliente, freight: "30.00",
@@ -148,7 +184,7 @@ for (const variante of ["budget", "order", "sale"] as Variante[]) {
     await expect(page.getByTestId("central-vendas-itens-contagem")).toHaveText(`(${d.itens})`);
     await expect(page.getByTestId("central-vendas-linha")).toHaveCount(d.itens);
     const grade = page.getByTestId("central-vendas-grade");
-    for (const coluna of ["Código", "Produto", "Armazém", "Quantidade", "Valor unitário", "Desconto", "Total"]) {
+    for (const coluna of ["Código", "Produto", "Local de estoque", "Quantidade", "Valor unitário", "Desconto", "Total"]) {
       await expect(grade.locator("thead th", { hasText: coluna }).first()).toBeVisible();
     }
     await expect(grade.locator("input"), "consulta: nada editável na grade").toHaveCount(0);
@@ -223,10 +259,12 @@ test("BASE2-03C: a conversão liga origem e derivado, e cada lado abre na SUA ro
 
 test("BASE2-03C: venda confirmada mostra as contas a receber geradas, com link para o título", async ({ page }) => {
   await login(page);
-  const venda = await criar(page, "sale");
+  const par = await estoqueProprio(page);
+  const venda = await criar(page, "sale", par);
 
   const confirmada = await api<{ title_ids: string[] }>(page, "POST", `/api/sales/sales/${venda.id}/confirm`, {});
   expect(confirmada.title_ids.length, "a confirmação precisa gerar título, senão a seção passaria vazia").toBeGreaterThan(0);
+  expect((await saldoNoServidor(page, par.armazem, par.produto)).quantity, "a confirmação baixou as 2 unidades do estoque PRÓPRIO do caso").toBe("8.0000");
 
   await abrir(page, venda);
   const contas = await aba(page, "Financeiro");

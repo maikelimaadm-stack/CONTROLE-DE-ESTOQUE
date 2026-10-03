@@ -17,7 +17,8 @@ import { appCom, harness, ids, TEST_URL, type Harness } from "./setup.js";
  *   A1-3  cobrança ao lançar: pedido, compra e RECEBER → 422 LAYOUT_CAMPO_OBRIGATORIO no campo (itens[i].campo
  *         inclusive); nada gravado; layout do sistema = nada muda; a nota duplicada vem antes; confirmar e cancelar
  *         não cobram;
- *   A1-4  regras-da-operacao ganha exigeFormaPagamento, exigeVencimento e exigeArmazem (e nada mais muda);
+ *   A1-4  regras-da-operacao ganha exigeFormaPagamento, exigeVencimento e exigeArmazem (e nada mais muda — depois,
+ *         a OPERACOES-01 F2, decisão 279, acrescentou `regrasGerais`, e só ela);
  *   A1-5  padrão de cadastro do Fornecedor (`is_provider`) vale; o de vendas não muda;
  *   A1-6  item 0 a) pedido convertido com compra viva → "tem compras"; c) receber com UUID em maiúsculas;
  *         d) compra de valor zero confirma sem forma/vencimento.
@@ -141,7 +142,9 @@ describe("A1-1 — operation-types declara o layout do documento", () => {
       expect(r.statusCode, r.body).toBe(200);
       const capacidades = j(r).capacidades as Record<string, unknown>;
       expect(capacidades.layoutDocumento, segmento).toBe(CAPACIDADE_LAYOUT_DOCUMENTO);
-      expect(Object.keys(capacidades), segmento).toEqual(["classificacaoFinanceira", "condicaoPagamento", "layoutDocumento", "regrasDaOperacao"]);
+      // OPERACOES-01 F6a (decisão 283): `finalizacaoEOrcamento` acrescentada no FIM; as de hoje na mesma ordem.
+      // OPERACOES-01 F7 (decisão 284): `importacaoXml` no FIM, depois dela.
+      expect(Object.keys(capacidades), segmento).toEqual(["classificacaoFinanceira", "condicaoPagamento", "layoutDocumento", "regrasDaOperacao", "finalizacaoEOrcamento", "importacaoXml"]);
     }
   });
 });
@@ -235,7 +238,7 @@ describe("A1-3 — cobrança do layout ao lançar", () => {
     expect(j(r).error).toMatchObject({ code: "LAYOUT_CAMPO_OBRIGATORIO", message: mensagemCampoObrigatorio("Obs. da nota") });
     expect(detalhes(r)).toEqual([
       { path: "observacao", message: mensagemCampoObrigatorio("Obs. da nota") },
-      { path: "itens[1].armazem_id", message: mensagemCampoObrigatorio("Armazém") },
+      { path: "itens[1].armazem_id", message: mensagemCampoObrigatorio("Local de estoque") },
     ]);
     expect(await documentosNoBanco()).toBe(antes);
     // Observação só com espaços é vazia (a mesma regra da tela).
@@ -322,12 +325,14 @@ describe("A1-3 — cobrança do layout ao lançar", () => {
 // ---------------------------------------------------------------------------------------------------------
 // A1-4 regras da operação
 // ---------------------------------------------------------------------------------------------------------
-describe("A1-4 — regras-da-operacao: exigeFormaPagamento, exigeVencimento e exigeArmazem", () => {
-  const CHAVES = ["condicoesPermitidas", "contractVersion", "exigeArmazem", "exigeFormaPagamento", "exigeVencimento", "exigencias", "formato", "geraTitulos"];
+describe("A1-4 — regras-da-operacao: exigeFormaPagamento, exigeVencimento e exigeArmazem (e, desde a OPERACOES-01 F2, regrasGerais)", () => {
+  // OPERACOES-01 F2 (decisão 279) acrescentou `regrasGerais` — e nenhuma outra chave. O valor é provado em
+  // `operacoes-01-f2-regras-gerais.test.ts`; aqui, só a lista exata das chaves.
+  const CHAVES = ["condicoesPermitidas", "contractVersion", "exigeArmazem", "exigeFormaPagamento", "exigeVencimento", "exigencias", "formato", "geraTitulos", "regrasGerais"];
   const regras = (segmento: "pedidos" | "compras", t: string, app: FastifyInstance = h.app) =>
     app.inject({ method: "GET", url: `/api/compras/${segmento}/regras-da-operacao?tipo_operacao_id=${t}`, headers: h.headers() });
 
-  it("os mesmos do lançamento (versão atual); padrão e pedido → false; nenhuma outra chave nova", async () => {
+  it("os mesmos do lançamento (versão atual); padrão e pedido → false; nenhuma outra chave nova além de regrasGerais (F2)", async () => {
     const cfg = configuracaoNeutraTopV2();
     cfg.execucao = { estoque: "configurada", financeiro: "configurada" };
     (cfg.estoque as { atualizacao: string }).atualizacao = "entrada";

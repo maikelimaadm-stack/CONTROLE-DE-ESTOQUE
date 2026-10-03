@@ -1,8 +1,6 @@
 "use client";
 import * as React from "react";
-import {
-  DialogoCancelarDocumento as DialogoCancelarDoMotor, DialogoConfirmar, motivoDoCancelamento as motivoDoCancelamentoDoMotor
-} from "@/features/central/dialogos";
+import { DialogoCancelarDocumento as DialogoCancelarDoMotor, DialogoConfirmar } from "@/features/central/dialogos";
 import { MOTIVO_PADRAO_DO_CANCELAMENTO, PREFIXO_CENTRAL_VENDAS } from "./central-vendas-adaptador";
 
 /**
@@ -13,13 +11,7 @@ import { MOTIVO_PADRAO_DO_CANCELAMENTO, PREFIXO_CENTRAL_VENDAS } from "./central
  * "Cancelado pelo usuário". Quem confirma, cancela ou descarta continua sendo a PÁGINA.
  */
 
-export { MOTIVO_PADRAO_DO_CANCELAMENTO } from "./central-vendas-adaptador";
 export { DialogoDescartar } from "@/features/central/dialogos";
-
-/** O `reason` que vai no corpo: o motivo aparado (1–500) ou, vazio, o texto padrão de hoje. */
-export function motivoDoCancelamento(digitado: string): string {
-  return motivoDoCancelamentoDoMotor(digitado, MOTIVO_PADRAO_DO_CANCELAMENTO);
-}
 
 /** CONFIRMAR VENDA — o corpo é a PRÉVIA do servidor, montada pela página. */
 export function DialogoConfirmarVenda({ aberto, onFechar, codigo, carregando, confirmarDesabilitado, onConfirmar, children }: {

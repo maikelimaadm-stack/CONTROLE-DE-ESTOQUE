@@ -1,6 +1,7 @@
-import { test, expect, type Locator, type Page, type Response } from "@playwright/test";
+import type { Locator, Page, Response } from "@playwright/test";
 import { login, api, uniq, empresaAtiva, abrirLancamentoDeVendas, escolherTopEContinuar } from "./helpers";
 import { cfg4, criarTopViaApi, detalheTopNoServidor, excluirTopE2E } from "./top-config-08-comum";
+import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 
 /**
  * CENTRAL DE COMPRAS — AS CORREÇÕES DA VISUAL-UX-04b (regressões da VISUAL-UX-04, já em produção) · CX-1 a CX-7.
@@ -24,47 +25,33 @@ import { cfg4, criarTopViaApi, detalheTopNoServidor, excluirTopE2E } from "./top
  * volta a PREMISSA que torna a asserção capaz de falhar — sem ela, "o 0 continua 0" seria verde por vacuidade (sem
  * custo médio no armazém, nada teria o que escrever). Os dados de referência do seed (unidade, grupo, natureza e centro)
  * são escolhidos pelo NOME, nunca pela posição na lista. O que vai no fio é lido no fio (`waitForResponse` +
- * `postDataJSON`), e o servidor confere o que gravou.
+ * `postDataJSON`), e o servidor confere o que gravou. Os cadastros que o caso cria (fornecedor, armazém, produto, TOPs)
+ * saem no fim, passou ou falhou (`central-compras-fixtures.ts`); os documentos e a entrada de estoque ficam (ledger).
  */
 
 const P = "central-compras";
-type Opcao = { id: string; label: string };
 const literal = (t: string) => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-/** Código de TOP único por execução (tempo + sorteio), como nos specs do desenho: nada de 5 dígitos que colidem. */
-const codigoTop = (p: string) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 const caminho = (r: Response) => new URL(r.url()).pathname;
 
 /* ═════════════════════════════════════════════ fixtures ═════════════════════════════════════════════ */
 
-/** Um item de referência do seed pelo NOME (a premissa diz qual faltou). */
-async function doSeed(page: Page, rota: string, nome: string): Promise<Opcao> {
-  const opcoes = await api<Opcao[]>(page, "GET", rota);
-  const achada = opcoes.find((o) => o.label.includes(nome));
-  expect(achada, `premissa: o seed tem "${nome}" em ${rota}`).toBeTruthy();
-  return achada!;
-}
-
 async function cenario(page: Page) {
   const empresa = await empresaAtiva(page);
-  const un = (await api<Opcao[]>(page, "GET", "/api/resources/measurement_units/options")).find((u) => u.label.toUpperCase() === "UN");
-  expect(un, "premissa: o seed tem a unidade UN").toBeTruthy();
-  const grupo = await doSeed(page, "/api/resources/product_groups/options?kind=analytic", "Fertilizantes");
-  const natureza = await doSeed(page, "/api/resources/financial_categories/options?kind=analytic&nature=expense", "Nutrição Animal");
-  const centro = await doSeed(page, "/api/resources/cost_centers/options?kind=analytic", "Adm Geral");
+  const { unidade: un, grupo, natureza, centro } = await referenciasDoSeed(page);
 
-  const forn = await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("CX forn"), person_type: "legal", is_provider: true });
+  const forn = await criarCadastro(page, "people", { name: uniq("CX forn"), person_type: "legal", is_provider: true });
   const fornecedor = { id: forn.id, nome: String((await api<Record<string, unknown>>(page, "GET", `/api/resources/people/${forn.id}`))["name"]) };
-  const arm = await api<{ id: string }>(page, "POST", "/api/resources/warehouses", {
+  const arm = await criarCadastro(page, "warehouses", {
     empresa_id: empresa, initials: `X${Date.now().toString(36).slice(-4).toUpperCase()}`, description: uniq("CX arm"), type: "inputs"
   });
   const armazem = { id: arm.id, nome: String((await api<Record<string, unknown>>(page, "GET", `/api/resources/warehouses/${arm.id}`))["description"]) };
-  const prod = await api<{ id: string }>(page, "POST", "/api/resources/products", { description: uniq("CX prod"), group_id: grupo.id, measurement_id: un!.id, financial_category_id: natureza.id });
+  const prod = await criarCadastro(page, "products", { description: uniq("CX prod"), group_id: grupo.id, measurement_id: un.id, financial_category_id: natureza.id });
   const produto = { id: prod.id, nome: String((await api<Record<string, unknown>>(page, "GET", `/api/resources/products/${prod.id}`))["description"]) };
 
   const topCompra = { codigo: codigoTop("7"), id: "" };
-  topCompra.id = (await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo: topCompra.codigo, codigoBase: "compras.compra", nome: uniq("Compra CX") })).id;
+  topCompra.id = (await criarTop(page, { codigo: topCompra.codigo, codigoBase: "compras.compra", nome: uniq("Compra CX") })).id;
   const topPedido = { codigo: codigoTop("5"), id: "" };
-  topPedido.id = (await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", {
+  topPedido.id = (await criarTop(page, {
     codigo: topPedido.codigo, codigoBase: "compras.pedido", nome: uniq("Pedido CX"), destinos: [{ tipoOperacaoId: topCompra.id, ordem: 0, emPartes: true }]
   })).id;
   const regras = await api<{ exigeArmazem: boolean }>(page, "GET", `/api/compras/compras/regras-da-operacao?tipo_operacao_id=${topCompra.id}`);
@@ -242,7 +229,7 @@ test("CX-3 — a VENDA não muda: na Central de Vendas o unitário vazio continu
   await login(page);
   const c = await cenario(page);
   const custo = await custoMedioNoArmazem(page, c);
-  const topVenda = await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo: codigoTop("8"), codigoBase: "vendas.venda", nome: uniq("Venda CX") });
+  const topVenda = await criarTop(page, { codigo: codigoTop("8"), codigoBase: "vendas.venda", nome: uniq("Venda CX") });
 
   await abrirLancamentoDeVendas(page, "sales");
   await escolherTopEContinuar(page, topVenda.id);

@@ -183,6 +183,12 @@ const LISTAGENS_CUSTOM_SEM_ID_GLOBAL = {
   // para `layout-configurador/grade.tsx`. Só o CAMINHO mudou — mesma entidade, mesmo motivo, nenhuma declaração a mais.
   "apps/web/src/features/admin/layout-configurador/grade.tsx": "layout de documento (configuração da digitação da Central): o `code` do próprio cadastro já é o localizador humano; um segundo número competiria com ele",
   "apps/web/src/features/admin/tipos-operacao.tsx":"tipo de operação configurado: o `codigo` do próprio cadastro já é o localizador humano; um segundo número competiria com ele",
+  // OPERACOES-01 F8 (decisão 285): a Central Financeira. Contas com saldo é o cadastro de contas bancárias (fora do
+  // catálogo; o `código` do cadastro é o localizador); fluxo e resultado são agregados por período e por natureza.
+  // Extrato, transferências, importações OFX, candidatos da conciliação e títulos do adiantamento EXIBEM o número.
+  "apps/web/src/features/financial/bancos/contas.tsx": "contas bancárias com saldo: cadastro fora do catálogo do ID Global (o `código` da conta é o localizador)",
+  "apps/web/src/features/financial/bancos/fluxo.tsx": "fluxo de caixa: linhas agregadas por período, não registros de uma entidade",
+  "apps/web/src/features/financial/bancos/resultado.tsx": "DRE gerencial: linhas agregadas por grupo e natureza, não registros de uma entidade",
   "apps/web/src/features/fleet/depreciations.tsx": "cálculo de depreciação por equipamento, não uma entidade própria",
   "apps/web/src/features/hr/advances.tsx": "adiantamentos salariais: entidade fora do catálogo",
   "apps/web/src/features/livestock/matings.tsx": "coberturas: entidade fora do catálogo",

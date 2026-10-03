@@ -1,5 +1,5 @@
 -- =====================================================================
--- 0051 CADASTRO-AREAS-02 — UNIFICA MAPA × CADASTRO DE ÁREAS (decisão 291)
+-- 0051 CADASTRO-AREAS-02 — UNIFICA MAPA × CADASTRO DE ÁREAS (decisão 292)
 --
 -- SSOT da área passa a ser erp.areas. O mapa desenha/grava nessa tabela.
 -- erp.mapa_areas permanece no schema (version skew / binário antigo ainda a
@@ -50,7 +50,7 @@ end $$;
 alter table erp.areas
   add column geometria jsonb;
 
-comment on column erp.areas.geometria is 'Polígono GeoJSON Polygon canônico (CADASTRO-AREAS-02 / decisão 291). Validado por gatilho; nulo = área sem desenho no mapa.';
+comment on column erp.areas.geometria is 'Polígono GeoJSON Polygon canônico (CADASTRO-AREAS-02 / decisão 292). Validado por gatilho; nulo = área sem desenho no mapa.';
 
 -- cor do mapa (#RRGGBB) — só quando informada
 do $$
@@ -139,7 +139,7 @@ update erp.mapa_areas
 set deleted_at = coalesce(deleted_at, now())
 where deleted_at is null;
 
-comment on table erp.mapa_areas is 'DEPRECATED (CADASTRO-AREAS-02 / decisão 291): acervo migrado para erp.areas. Mantida só para version skew do binário MAPA-01; a UI nova não grava aqui. Soft delete do legado; sem DROP nesta fatia.';
+comment on table erp.mapa_areas is 'DEPRECATED (CADASTRO-AREAS-02 / decisão 292): acervo migrado para erp.areas. Mantida só para version skew do binário MAPA-01; a UI nova não grava aqui. Soft delete do legado; sem DROP nesta fatia.';
 
 -- ---------- 7) pós-condições ----------
 do $$

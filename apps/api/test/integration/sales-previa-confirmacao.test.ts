@@ -380,9 +380,9 @@ describe("a primeira recusa da prévia é a recusa da confirmação — código,
     expect(p.recusas, "exigência não PARA a prévia: o resto (período, classificação) passou").toHaveLength(1);
     expect(p.recusas[0]).toEqual({
       code: "TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA",
-      message: "A operação desta venda exige dados que o documento não tem: informe o armazém de todos os itens; informe a forma de pagamento; informe o vencimento.",
+      message: "A operação desta venda exige dados que o documento não tem: informe o local de estoque de todos os itens; informe a forma de pagamento; informe o vencimento.",
       details: { exigencias: [
-        { caminho: "estoque.exigeArmazem", mensagem: "Informe o armazém de todos os itens" },
+        { caminho: "estoque.exigeArmazem", mensagem: "Informe o local de estoque de todos os itens" },
         { caminho: "financeiro.exigeFormaPagamento", mensagem: "Informe a forma de pagamento" },
         { caminho: "financeiro.exigeVencimento", mensagem: "Informe o vencimento" },
       ] },

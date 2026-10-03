@@ -1,6 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { LAYOUT_DO_SISTEMA, mensagemCampoObrigatorio, type EstruturaLayout } from "@agro/domain";
 import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
+import { codigoTop } from "./central-compras-fixtures";
 
 /**
  * LAYOUT DO DOCUMENTO DE COMPRA — o caminho do operador (COMPRAS-03, decisão 269).
@@ -23,7 +24,6 @@ const FAMILIA = "compras.compra";
 const LAYOUTS = "/api/admin/layouts-documento";
 const ROTULO_NOTA = "Nº da NF";
 const literal = (t: string) => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-const codigoTop = () => `${Math.floor(Math.random() * 90000 + 10000)}`;
 const campo = (page: Page, chave: string) => page.getByTestId("compras-central").locator(`[data-campo="${chave}"]`);
 
 /** Escolhe no RefSelect pelo rótulo do campo — o nome vai escapado (nomes do seed têm colchetes). */
@@ -41,10 +41,10 @@ async function escolherNaLinha(page: Page, botao: Locator, nome: string) {
 
 async function cenario(page: Page) {
   // TOPs: Compra (padrão: entrada + conta a pagar) e Pedido de compra → Compra, recebido de uma vez (sem "Em partes").
-  const topCompra = { codigo: `8${codigoTop()}`, id: "" };
+  const topCompra = { codigo: codigoTop("8"), id: "" };
   topCompra.id = (await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo: topCompra.codigo, codigoBase: FAMILIA, nome: uniq("Compra LC-W1") })).id;
   const topPedido = (await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", {
-    codigo: `7${codigoTop()}`, codigoBase: "compras.pedido", nome: uniq("Pedido LC-W1"),
+    codigo: codigoTop("7"), codigoBase: "compras.pedido", nome: uniq("Pedido LC-W1"),
     destinos: [{ tipoOperacaoId: topCompra.id, ordem: 0, emPartes: false }]
   })).id;
 
@@ -115,7 +115,7 @@ async function conferirLayoutNaCentral(page: Page, layoutId: string) {
   const itens = page.getByTestId("compras-itens");
   await expect(itens.locator('th[data-campo="produto_id"]'), "a grade dos itens desenhou as colunas pelo layout").toHaveCount(1);
   await expect(itens.locator('th[data-campo="armazem_id"]'), "o Armazém escondido pelo layout não aparece nos itens").toHaveCount(0);
-  await expect(itens.getByRole("columnheader", { name: "Armazém" }), "nem pelo rótulo").toHaveCount(0);
+  await expect(itens.getByRole("columnheader", { name: "Local de estoque" }), "nem pelo rótulo").toHaveCount(0);
 }
 
 test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigatória, Fornecedor padrão) governa a Central; sem Observação recusa no campo; no modo receber vale o mesmo layout e o pedido vence o padrão", async ({ page }) => {

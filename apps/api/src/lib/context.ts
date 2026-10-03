@@ -63,16 +63,36 @@ export const moduloAtivo = (ctx: RequestContext): string | null => ctx.moduloEmp
  *                      e sem `WHERE IN` gigante montado pelo Node (lista vazia ⇒ nenhuma linha, natural);
  *   • `nenhuma`      → `false`: módulo sem configuração é fail-closed, não "tudo".
  *
- * `col` é um alias de tabela (→ `alias.empresa_id`) ou uma expressão terminada em `empresa_id`.
+ * `col` é um alias de tabela (→ `alias.empresa_id`) ou uma expressão QUALIFICADA (`t.empresa_id`); a coluna solta
+ * `empresa_id` é recusada (ver `colunaDeEmpresa`).
  * `nullable`: registro sem empresa (null) é da organização inteira e continua visível.
  * `ignoreSelected`: o chamador já filtrou explicitamente por empresa — só a autorização é acrescentada.
  * Registro fora do escopo simplesmente não é visível (404 em GET por id, ausente em listas).
  */
 /**
  * Coluna de empresa do chamador: um ALIAS de tabela vira `alias.empresa_id`; qualquer expressão já qualificada
- * (`f.id`, `y.empresa_id`, `me.empresa_id`) é usada como está — o escopo compara com a empresa, não com um nome.
+ * (`f.id`, `y.empresa_id`, `"warehouses".empresa_id`) é usada como está — o escopo compara com a empresa, não com um
+ * nome.
+ *
+ * A coluna SOLTA (`empresa_id`, sem tabela) é RECUSADA. Dentro do `exists (select 1 from erp.membro_empresas me …
+ * and me.empresa_id=<coluna>)` um nome solto é resolvido pela tabela MAIS PERTO — a própria membro_empresas —, e o
+ * predicado vira "o membro tem alguma empresa no módulo" (constante), não "a empresa DESTA linha está no escopo"
+ * (OPERACOES-01 F12, decisão 288). Lança para TODO contexto (inclusive o proprietário, que não emite o `exists`): a
+ * chamada errada morre no primeiro teste que passar por ela, não só no de quem tem escopo restrito.
+ *
+ * O alias `me` também é RECUSADO (`me`, `me.empresa_id`, `"me".empresa_id`): é o alias da membro_empresas dentro do
+ * `exists`, e uma tabela da consulta chamada `me` seria encoberta por ela — o mesmo predicado constante por outra porta.
  */
-const colunaDeEmpresa = (col: string): string => (col.includes(".") || col.endsWith("empresa_id") ? col : `${col}.empresa_id`);
+const colunaDeEmpresa = (col: string): string => {
+  if (/^"?me"?(\.|$)/.test(col)) {
+    throw new Error(`escopo de empresa com o alias "me": é o alias de erp.membro_empresas dentro do exists — dê outro alias à tabela da consulta`);
+  }
+  if (col.includes(".")) return col;
+  if (col.endsWith("empresa_id")) {
+    throw new Error(`escopo de empresa com a coluna solta "${col}": qualifique pela tabela (alias.${col}) — solta, dentro do exists ela seria a coluna de erp.membro_empresas`);
+  }
+  return `${col}.empresa_id`;
+};
 
 export function empresaScope(ctx: RequestContext, col: string, params: unknown[], opts: { nullable?: boolean; ignoreSelected?: boolean; modulo?: string | null } = {}): string[] {
   const c = colunaDeEmpresa(col);

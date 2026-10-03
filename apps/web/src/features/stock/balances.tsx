@@ -22,12 +22,12 @@ interface TotaisDoSaldo { quantity: string; value: string }
  */
 const COLUNAS_DA_RESERVA: Column<Row>[] = [
   {
-    key: "reservado", label: "Reservado no armazém", align: "right",
+    key: "reservado", label: "Reservado no local de estoque", align: "right",
     text: (r) => (ehDecimalDaApi(r["reservado"]) ? num(r["reservado"], 4) : ""),
     render: (r) => (ehDecimalDaApi(r["reservado"]) ? <span data-testid="saldo-reservado">{num(r["reservado"], 4)}</span> : "—")
   },
   {
-    key: "disponivel", label: "Disponível no armazém", align: "right",
+    key: "disponivel", label: "Disponível no local de estoque", align: "right",
     text: (r) => (ehDecimalDaApi(r["disponivel"]) ? num(r["disponivel"], 4) : ""),
     render: (r) => {
       const v = r["disponivel"];
@@ -62,7 +62,7 @@ export function BalancesPanel({ onAdjust }: { onAdjust?: (row: Row) => void } = 
     { key: "product_code", label: "Código" },
     { key: "product_name", label: "Produto", sortable: true, render: (r) => <span>{String(r["product_name"])}{Number(r["min_stock"]) > 0 && Number(r["quantity"]) <= Number(r["min_stock"]) && <Badge tone="amber" className="ml-1">mínimo</Badge>}</span> },
     { key: "ncm_code", label: "NCM" },
-    { key: "warehouse_name", label: "Armazém", sortable: true, render: (r) => `${r["warehouse_initials"]}-${r["warehouse_name"]}` },
+    { key: "warehouse_name", label: "Local de estoque", sortable: true, render: (r) => `${r["warehouse_initials"]}-${r["warehouse_name"]}` },
     { key: "provider_lot", label: "Lote" },
     { key: "expiration_date", label: "Validade", sortable: true, render: (r) => dateBR(r["expiration_date"] as string) },
     { key: "quantity", label: "Quantidade total", align: "right", sortable: true, render: (r) => `${num(r["quantity"] as string, 4)} ${r["unit"] ?? ""}` },
@@ -73,7 +73,7 @@ export function BalancesPanel({ onAdjust }: { onAdjust?: (row: Row) => void } = 
   ], [comReserva]);
   const aPartirDoTotal = colunas.slice(colunas.findIndex((c) => c.key === "quantity"));
   return <Card className="flex min-h-0 flex-1 flex-col"><PageHeader inCard title="Saldo de Estoque" actions={<><Button size="sm" variant="outline" onClick={() => download(`/api/reports/stocks_consolidated?format=xlsx`, "estoque.xlsx")}>Exportar</Button></>} /><CardBody>
-    <FilterBar filters={[{ name: "search", label: "Pesquisar por produto/lote/princípio ativo", type: "text" }, { name: "product_id", label: "Produto", type: "ref", resource: "products" }, { name: "warehouse_id", label: "Armazém", type: "ref", resource: "warehouses" }, { name: "below_min", label: "Abaixo do mínimo", type: "select", options: [{ value: "true", label: "Sim" }] }, { name: "expiring_days", label: "Vence em (dias)", type: "text" }]} f={f} set={set} reset={() => { reset(); setApplied({}); }} onApply={() => { setApplied({ ...f }); setPage(1); }} />
+    <FilterBar filters={[{ name: "search", label: "Pesquisar por produto/lote/princípio ativo", type: "text" }, { name: "product_id", label: "Produto", type: "ref", resource: "products" }, { name: "warehouse_id", label: "Local de estoque", type: "ref", resource: "warehouses" }, { name: "below_min", label: "Abaixo do mínimo", type: "select", options: [{ value: "true", label: "Sim" }] }, { name: "expiring_days", label: "Vence em (dias)", type: "text" }]} f={f} set={set} reset={() => { reset(); setApplied({}); }} onApply={() => { setApplied({ ...f }); setPage(1); }} />
     <DataTable rows={linhas} total={q.data?.total} page={page} pageSize={pageSize} onPage={setPage} onPageSize={setPageSize} loading={q.isLoading} sort={sort} onSort={(k) => setSort((s) => ({ key: k, dir: s?.key === k && s.dir === "asc" ? "desc" : "asc" }))}
       rowKey={(r) => `${r["warehouse_id"]}-${r["product_id"]}-${r["provider_lot"]}`}
       actions={onAdjust ? (r) => <Button size="sm" variant="ghost" onClick={() => onAdjust(r)}>Ajustar estoque</Button> : undefined}

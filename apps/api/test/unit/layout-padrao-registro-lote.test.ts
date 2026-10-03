@@ -94,7 +94,8 @@ describe("conferirPadroesRegistro — lote e whitelist", () => {
     expect(consultas.map((c) => c.tabela)).toEqual(["people"]);
     expect(consultas[0]!.params[0]).toEqual([u(2)]);
     expect(r.invalidos.map((x) => x.chave)).toEqual(["client_id", "proprietary_id", "itens.warehouse_id"]);
-    expect(r.invalidos.map((x) => x.caminho)).toEqual(["cabecalho[0].valorPadrao", "cabecalho[8].valorPadrao", "itens[2].valorPadrao"]);
+    // decisão 280 (F3b): o Local de estoque é a primeira coluna do layout do sistema de vendas (era a terceira)
+    expect(r.invalidos.map((x) => x.caminho)).toEqual(["cabecalho[0].valorPadrao", "cabecalho[8].valorPadrao", "itens[0].valorPadrao"]);
   });
 
   it("UUID em maiúsculas é consultado na forma canônica e devolve o id do cadastro", async () => {

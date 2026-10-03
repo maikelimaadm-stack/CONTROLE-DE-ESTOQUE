@@ -68,7 +68,9 @@ export const ENTIDADES_ID_GLOBAL: readonly EntidadeIdGlobal[] = [
   // Compras — COMPRAS-01 (decisão 267): pedido e compra têm permissões próprias
   E("documentos_compra", "Documento de Compra", "compras", "erp.documentos_compra", porVariante("especie", {
     pedido: { rota: "/compras/pedidos/:id", permissao: "pedidos_compra.view" },
-    compra: { rota: "/compras/compras/:id", permissao: "compras.view" }
+    compra: { rota: "/compras/compras/:id", permissao: "compras.view" },
+    // OPERACOES-01 F6a (decisão 283): o orçamento de compra, com permissão própria.
+    orcamento: { rota: "/compras/orcamentos/:id", permissao: "orcamentos_compra.view" }
   }), { exclusaoLogica: false }),
   // Estoque — ESTOQUE-01 (decisão 274): o documento de estoque, uma permissão por espécie. Sem exclusão lógica:
   // o documento não se apaga, cancela.
@@ -76,7 +78,11 @@ export const ENTIDADES_ID_GLOBAL: readonly EntidadeIdGlobal[] = [
     entrada: { rota: "/estoque/movimentacoes/entradas/:id", permissao: "entradas_estoque.view" },
     saida: { rota: "/estoque/movimentacoes/saidas/:id", permissao: "saidas_estoque.view" },
     transferencia: { rota: "/estoque/movimentacoes/transferencias/:id", permissao: "transferencias_estoque.view" },
-    ajuste: { rota: "/estoque/movimentacoes/ajustes/:id", permissao: "ajustes_estoque.view" }
+    ajuste: { rota: "/estoque/movimentacoes/ajustes/:id", permissao: "ajustes_estoque.view" },
+    // OPERACOES-01 F5a (decisão 282): a movimentação interna.
+    requisicao: { rota: "/estoque/movimentacoes/requisicoes/:id", permissao: "requisicoes_estoque.view" },
+    consumo: { rota: "/estoque/movimentacoes/consumos/:id", permissao: "consumos_estoque.view" },
+    devolucao_consumo: { rota: "/estoque/movimentacoes/devolucoes-consumo/:id", permissao: "devolucoes_consumo_estoque.view" }
   }), { exclusaoLogica: false }),
   // Pecuária — variantes derivadas da fonte única de operações de rebanho
   E("animals", "Animal", "pecuaria", "erp.animals", fixa("/pecuaria/animais/:id", "animals.view")),

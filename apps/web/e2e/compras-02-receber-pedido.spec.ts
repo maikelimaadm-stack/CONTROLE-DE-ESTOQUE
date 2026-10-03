@@ -1,5 +1,6 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
+import { test, expect, codigoTop, criarCadastro } from "./central-compras-fixtures";
 
 /**
  * RECEBER O PEDIDO DE COMPRA — o caminho do operador (COMPRAS-02, decisão 268).
@@ -11,8 +12,16 @@ import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
  * confirmar dá a entrada; e o pedido passa a mostrar Recebido e Saldo — conferidos também no SERVIDOR.
  *
  * O GRAFO É MONTADO PELA API ADMINISTRATIVA dentro do teste (a TOP de Pedido de compra nasce com a Próxima operação
- * = a TOP de Compra, "Em partes"): cada execução cria as PRÓPRIAS TOPs, produtos e pedido, e nenhuma conta depende
- * do que outro spec deixou no banco.
+ * = a TOP de Compra, "Em partes"): cada execução cria as PRÓPRIAS TOPs, produtos, local de estoque e pedido, e nenhuma
+ * conta depende do que outro spec deixou no banco. O local é escolhido na pesquisa da linha PELO NOME, e ela lista os
+ * locais de todas as empresas visíveis: o "primeiro local da empresa" do seed pode ter o nome repetido na outra empresa
+ * ("Silo de Grãos", "Fábrica de Ração") e a pesquisa entregaria o gêmeo — que o servidor recusa (422, local de outra
+ * empresa). O local nasce com nome único por `criarCadastro`, que registra a exclusão lógica no fim do caso.
+ *
+ * O VALOR UNITÁRIO DO RECEBER NÃO É O CUSTO MÉDIO DO ARMAZÉM: com custo médio > 0 no armazém, o "0" digitado continua
+ * "0" no Receber e vai 0 no `/convert` (CX-2), e o mesmo numa compra nova (CX-1) — provados, com a premissa do custo
+ * médio lida no servidor, em `central-compras-correcoes.spec.ts`. Não se repetem aqui: o armazém deste caso não tem a
+ * premissa do custo médio, e a mesma asserção aqui seria verde sem prova.
  */
 type Opcao = { id: string; label: string };
 const literal = (t: string) => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
@@ -21,17 +30,16 @@ async function escolherNaLinha(page: Page, botao: Locator, nome: string) {
   await page.getByPlaceholder("Pesquisar pela descrição").fill(nome.slice(0, 20));
   await page.getByRole("option", { name: literal(nome.slice(0, 20)) }).first().click();
 }
-const codigoTop = () => `${Math.floor(Math.random() * 90000 + 10000)}`;
 
 type ItemDoPedido = { id: string; produto_id: string; recebido?: string; saldo?: string };
 type PedidoLido = { situacao: string; codigo: string; itens: ItemDoPedido[]; compras_geradas?: { id: string; codigo: string; situacao: string }[] };
 
 async function cenario(page: Page) {
   // O GRAFO, pela API administrativa: Compra (padrão: entrada + conta a pagar) e Pedido de compra → Compra, "Em partes".
-  const topCompra = { codigo: `4${codigoTop()}`, id: "" };
+  const topCompra = { codigo: codigoTop("4"), id: "" };
   topCompra.id = (await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo: topCompra.codigo, codigoBase: "compras.compra", nome: uniq("Compra CP-W1") })).id;
   const topPedido = await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", {
-    codigo: `3${codigoTop()}`, codigoBase: "compras.pedido", nome: uniq("Pedido CP-W1"),
+    codigo: codigoTop("3"), codigoBase: "compras.pedido", nome: uniq("Pedido CP-W1"),
     destinos: [{ tipoOperacaoId: topCompra.id, ordem: 0, emPartes: true }]
   });
   const declarado = await api<{ destinos: { tipoOperacaoId: string; emPartes?: boolean }[] }>(page, "GET", `/api/admin/tipos-operacao/${topPedido.id}`);
@@ -52,7 +60,9 @@ async function cenario(page: Page) {
   };
   const a = await produto("CP-W1 produto A"); const b = await produto("CP-W1 produto B");
   const empresa = await empresaAtiva(page);
-  const armazem = await primeiroId(page, `/api/resources/warehouses?empresa_id=${empresa}&pageSize=1`);
+  const armazem = (await criarCadastro(page, "warehouses", {
+    empresa_id: empresa, initials: `CP${Date.now().toString(36).slice(-6).toUpperCase()}`, description: uniq("CP-W1 local"), type: "inputs"
+  })).id;
   const nomeArmazem = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/warehouses/${armazem}`))["description"]);
   const fornecedor = await primeiroId(page, "/api/resources/people?is_provider=true&pageSize=1");
 

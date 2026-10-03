@@ -1519,8 +1519,8 @@ test("CADASTROS FASE 6 · LT-K1 — sem `capacidades.loteNaEntrada` da base, cor
     const nomeDoArmazem = sql(`select description from erp.warehouses where id = '${armazem}'`);
     await page.reload();
     await page.getByLabel("Formulação").selectOption(formulaId);
-    await pickRef(page, "Armazém de matérias-primas", nomeDoArmazem);
-    await pickRef(page, "Armazém do produto acabado", nomeDoArmazem);
+    await pickRef(page, "Local de estoque das matérias-primas", nomeDoArmazem);
+    await pickRef(page, "Local de estoque do produto acabado", nomeDoArmazem);
     await page.getByLabel("Quantidade produzida").fill("1");
     await page.getByLabel("Validade do produto acabado").fill("20/04/2099");
     await page.getByLabel("Validade do produto acabado").press("Enter");

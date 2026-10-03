@@ -5,7 +5,7 @@ import { verifyLocalPassword } from "../plugins/auth.js";
 import { hasPermission } from "../lib/context.js";
 import { contarNaoLidas } from "../lib/notificacao.js";
 import { empresasVisiveisNaOrganizacao } from "../lib/empresa.js";
-import { allPermissionKeys } from "@agro/domain";
+import { allPermissionKeys, CAPACIDADE_LCDPR } from "@agro/domain";
 import { resolverIdioma } from "@erp/plataforma";
 import { withTx } from "@agro/db";
 import { runService } from "../lib/service.js";
@@ -41,6 +41,14 @@ export const CAPACIDADE_MOVER_COM_FILHOS = 1;
  * (schema estrito, 422 no corpo inteiro): sem a declaração a web não mostra nem envia os campos e usa a consulta antiga.
  */
 export const CAPACIDADE_CONSULTA_CNPJ_JANELA = 1;
+
+/*
+ * `lcdpr` (OPERACOES-01 F9, decisão 286; a constante mora no domínio, `CAPACIDADE_LCDPR`, porque a web também a lê):
+ * esta API entende o LCDPR — o "Tipo no LCDPR" da natureza, o imóvel rural na baixa e no movimento bancário
+ * (`imovel_rural_id`) e a conferência do livro (`GET /financeiro/lcdpr/conferencia`). A API anterior DESCARTARIA o
+ * imóvel em silêncio (os schemas da baixa e do movimento não são estritos): sem a declaração, a web não mostra nem
+ * envia nenhum campo do LCDPR.
+ */
 
 export default async function authRoutes(app: FastifyInstance) {
   app.post("/auth/login", { config: { rateLimit: { max: app.config.LOGIN_RATE_LIMIT_MAX, timeWindow: "1 minute" } } }, async (req) => {
@@ -78,6 +86,6 @@ export default async function authRoutes(app: FastifyInstance) {
     // `empresas` é o campo CANÔNICO e, desde PRE-BASE2-05B, o ÚNICO. O apelido saiu junto com o aliasador
     // de resposta: o cliente em produção já lê só este campo, e mantê-lo duplicado deixaria a resposta com
     // duas verdades que ninguém garante que continuariam iguais.
-    return { user: ctx.user, organization: { id: ctx.orgId, name: org.rows[0]?.name, parameters: org.rows[0]?.parameters ?? {} }, isOwner: ctx.membership.isOwner, empresas, permissions: perms, favorites: fav.rows, unreadNotifications: unread.total, canViewUsers: hasPermission(ctx, "users.view"), idioma, capacidades: { loteNaEntrada: CAPACIDADE_LOTE_NA_ENTRADA, codigoAutomatico: CAPACIDADE_CODIGO_AUTOMATICO, moverComFilhos: CAPACIDADE_MOVER_COM_FILHOS, consultaCnpjJanela: CAPACIDADE_CONSULTA_CNPJ_JANELA } };
+    return { user: ctx.user, organization: { id: ctx.orgId, name: org.rows[0]?.name, parameters: org.rows[0]?.parameters ?? {} }, isOwner: ctx.membership.isOwner, empresas, permissions: perms, favorites: fav.rows, unreadNotifications: unread.total, canViewUsers: hasPermission(ctx, "users.view"), idioma, capacidades: { loteNaEntrada: CAPACIDADE_LOTE_NA_ENTRADA, codigoAutomatico: CAPACIDADE_CODIGO_AUTOMATICO, moverComFilhos: CAPACIDADE_MOVER_COM_FILHOS, consultaCnpjJanela: CAPACIDADE_CONSULTA_CNPJ_JANELA, lcdpr: CAPACIDADE_LCDPR } };
   }));
 }

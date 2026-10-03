@@ -279,7 +279,7 @@ describe("exigências da versão congelada — conferidas TODAS antes do primeir
     const r = await confirmar(ligada, id);
     expect(r.statusCode, r.body).toBe(422);
     expect(j(r).error!.code).toBe("TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA");
-    expect(j(r).error!.details).toEqual({ exigencias: [{ caminho: "estoque.exigeArmazem", mensagem: "Informe o armazém de todos os itens" }] });
+    expect(j(r).error!.details).toEqual({ exigencias: [{ caminho: "estoque.exigeArmazem", mensagem: "Informe o local de estoque de todos os itens" }] });
     expect(await efeitos(id)).toMatchObject({ status: "open", saidas: 0, titulos: 0, auditorias: 0 });
     // A premissa: a mesma TOP, com todos os itens no armazém, confirma e baixa os dois.
     const certa = await venda(topId, {}, [
@@ -666,6 +666,8 @@ type Cancelamento = Awaited<ReturnType<typeof capturarCancelamento>>;
  *   identidade do doc   source_id; number `VND-<código>`; note `Venda <código>` / `estorno de <movimento>`
  *   contador da org.    financial_titles.code, registros_globais.id_global → DESLOCAMENTO dentro do documento
  *   aleatório do doc    group_id → "<GRUPO>", o MESMO em todas as parcelas
+ *   POR DESENHO (F9)    tipo_operacao_id/tipo_operacao_versao_id do TÍTULO (a TOP e a versão da venda, decisão 286),
+ *                       conferidos à parte, referência a referência — como os do documento
  * TRILHA (`audit_logs`): comparada por PROJEÇÃO, não linha inteira — organização, entidade, ação, id (apelido),
  * usuário, ip; em `update`, os nomes das colunas alteradas; em `confirm`, a metadata inteira salvo as duas chaves
  * que diferem por desenho. Produto: só `average_cost` (o estado do estoque que a venda toca).
@@ -686,7 +688,7 @@ function normalizar(cf: Confirmacao, cc: Cancelamento) {
   const grupo = cf.titulos[0]?.group_id ?? null;
   const movimento = (m: Linha) => ({ ...sem(m, ["id", "created_at"]), source_id: ap(m.source_id), reversed_by: ap(m.reversed_by), note: nota(m.note),
     movement_date: m.movement_type === "reversal" ? "<DATA DO CANCELAMENTO>" : m.movement_date });
-  const titulo = (t: Linha) => ({ ...sem(t, ["id", "created_at", "updated_at"]), code: desloc(cf.titulos, "code", t),
+  const titulo = (t: Linha) => ({ ...sem(t, ["id", "created_at", "updated_at", "tipo_operacao_id", "tipo_operacao_versao_id"]), code: desloc(cf.titulos, "code", t),
     number: numero(t.number), note: nota(t.note), source_id: ap(t.source_id),
     group_id: t.group_id === null ? null : t.group_id === grupo ? "<GRUPO>" : t.group_id });
   const trilha = (a: Linha) => {
@@ -805,6 +807,12 @@ describe("04A-P — paridade campo a campo: 'saída + a receber' configurados gr
         if (ref.topId) expect(doc.tipo_operacao_versao_id, ref.nome).toEqual(expect.any(String));
         expect(meta.tipoOperacaoVersaoId, ref.nome).toBe(doc.tipo_operacao_versao_id ?? null);
         expect(meta.execucao, ref.nome).toEqual(ref.execucao);
+        // F9 (decisão 286): cada título — o da confirmação e o mesmo título depois do cancelamento — cita a TOP e a
+        // VERSÃO da venda (sem TOP = as duas nulas).
+        for (const t of [...x.confirmacao.titulos, ...x.cancelamento.titulos]) {
+          expect(t.tipo_operacao_id ?? null, `${ref.nome}: TOP no título`).toBe(ref.topId);
+          expect(t.tipo_operacao_versao_id ?? null, `${ref.nome}: versão no título`).toBe(doc.tipo_operacao_versao_id ?? null);
+        }
         for (const e of x.cancelamento.estornos) expect(x.dias, ref.nome).toContain(e.movement_date);
       }
       for (const { ref, x } of execs.slice(1)) {

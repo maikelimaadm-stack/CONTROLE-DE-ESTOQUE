@@ -41,7 +41,7 @@ export const ENUM_LABELS = {
   bank_movement_type: { in: "Entrada", out: "Saída" },
   bank_account_type: { checking: "Corrente", savings: "Poupança", investment: "Investimento", cash: "Caixa" },
   /** Origem de um lançamento gerado por outro módulo (bank_movements.source_type, stock_movements.source_type). */
-  source_type: { manual: "Manual", ofx: "Conciliação OFX", opening_movement: "Saldo inicial", opening_balances: "Estoque inicial", title_settlements: "Baixa de título", title_settlement_batch: "Baixa de títulos em lote", bank_movements: "Movimento bancário", invoices: "Documento fiscal", dfe_documents: "DFe recebida", sales_documents: "Venda", documentos_compra: "Compra", documentos_estoque: "Documento de estoque", purchase_requests: "Solicitação de compra", animal_movements: "Movimentação do rebanho", animal_handlings: "Manejo", warehouse_transfers: "Transferência de armazém", input_entries: "Entrada de insumos", requisitions: "Requisição", devolutions: "Devolução", stock_writeoffs: "Baixa de estoque", stock_corrections: "Ajuste de estoque", feed_batches: "Produção de ração", diet_batches: "Dieta", fuel_supplies: "Abastecimento", maintenances: "Manutenção", service_orders: "Ordem de serviço", earnings: "Folha de pagamento", salary_advances: "Adiantamento salarial" },
+  source_type: { manual: "Manual", ofx: "Conciliação OFX", opening_movement: "Saldo inicial", opening_balances: "Estoque inicial", title_settlements: "Baixa de título", title_settlement_batch: "Baixa de títulos em lote", bank_movements: "Movimento bancário", invoices: "Documento fiscal", dfe_documents: "DFe recebida", sales_documents: "Venda", documentos_compra: "Compra", documentos_estoque: "Documento de estoque", purchase_requests: "Solicitação de compra", animal_movements: "Movimentação do rebanho", animal_handlings: "Manejo", warehouse_transfers: "Transferência entre locais de estoque", input_entries: "Entrada de insumos", requisitions: "Requisição", devolutions: "Devolução", stock_writeoffs: "Baixa de estoque", stock_corrections: "Ajuste de estoque", feed_batches: "Produção de ração", diet_batches: "Dieta", fuel_supplies: "Abastecimento", maintenances: "Manutenção", service_orders: "Ordem de serviço", earnings: "Folha de pagamento", salary_advances: "Adiantamento salarial" },
   document_type: { nfe: "NF-e", cte: "CT-e", nfse: "NFS-e", nfce: "NFC-e", danfe: "DANFE", darf: "DARF", dare: "DARE", gru: "GRU", other: "Outro" },
   /** Origem do registro (documentos fiscais, abastecimentos). */
   origin: { manual: "Manual", xml: "XML importado", dfe: "DFe recebida", purchase_request: "Solicitação de compra", cta_smart: "CTA Smart", import: "Importação" },
@@ -51,20 +51,32 @@ export const ENUM_LABELS = {
   apportionment_type: { by_product: "Por produto", by_value: "Por valor" },
   stock_movement_type: { opening_balance: "Estoque inicial", entry: "Entrada/insumos", invoice_entry: "Documento fiscal", receipt: "Recebimento", devolution: "Devolução", requisition: "Requisição", writeoff: "Baixa", correction_in: "Correção (+)", correction_out: "Correção (−)", transfer_out: "Transferência (saída)", transfer_in: "Transferência (entrada)", farm_transfer_out: "Transferência entre empresas (saída)", farm_transfer_in: "Transferência entre empresas (entrada)", sale: "Venda", production_in: "Produção (entrada)", production_out: "Produção (consumo)", maintenance: "Manutenção", fuel_supply: "Abastecimento", nutrition: "Nutrição/Sanitário", reversal: "Estorno" },
   stock_direction: { "1": "Entrada", "-1": "Saída" },
-  transfer_kind: { warehouse: "Entre armazéns", farm: "Entre empresas" },
-  writeoff_reason: { loss: "Perda", deterioration: "Deterioração", theft: "Roubo", damage: "Avaria", inventory: "Inventário", accounting: "Contabilização", burglary: "Furto", expiration: "Prazo de validade", gift: "Brinde", donation: "Doação", consumption: "Consumo", other: "Outro" },
+  transfer_kind: { warehouse: "Entre locais de estoque", farm: "Entre empresas" },
+  writeoff_reason: { loss: "Perda", deterioration: "Deterioração", theft: "Roubo", damage: "Avaria", inventory: "Inventário", accounting: "Contabilização", burglary: "Furto", expiration: "Prazo de validade", gift: "Brinde", donation: "Doação", consumption: "Consumo", payment_with_product: "Pagamento com produto", other: "Outro" },
   request_type: { product: "Produto", service: "Serviço", advance: "Adiantamento", refund: "Reembolso", daily: "Diária", contract: "Contrato", finished_product: "Produto acabado" },
   priority: { low: "Baixa", medium: "Média", high: "Alta" },
   decision: { approved: "Aprovada", rejected: "Reprovada", awareness: "Ciência" },
   sales_kind: { budget: "Orçamento", order: "Pedido", sale: "Venda" },
   // COMPRAS-01 (decisão 267): erp.documentos_compra.especie e .situacao.
   // COMPRAS-02 (decisão 268): `convertido` — só do pedido, quando o saldo de todos os itens foi recebido ou encerrado.
-  especie_documento_compra: { pedido: "Pedido de compra", compra: "Compra" },
-  situacao_documento_compra: { aberto: "Aberto", confirmado: "Confirmado", convertido: "Convertido", cancelado: "Cancelado" },
+  // OPERACOES-01 F6a (decisão 283): a espécie `orcamento`; `finalizado` (o pedido confirmado), `escolhido` e
+  // `nao_escolhido` (o orçamento depois do vencedor).
+  especie_documento_compra: { pedido: "Pedido de compra", compra: "Compra", orcamento: "Orçamento de compra" },
+  situacao_documento_compra: { aberto: "Aberto", confirmado: "Confirmado", convertido: "Convertido", cancelado: "Cancelado", finalizado: "Finalizado", escolhido: "Escolhido", nao_escolhido: "Não escolhido" },
   // ESTOQUE-01 (decisão 274): erp.documentos_estoque.especie e .situacao. O documento de estoque não converte em
   // outro, por isso a situação não tem `convertido`.
-  especie_documento_estoque: { entrada: "Entrada", saida: "Saída", transferencia: "Transferência", ajuste: "Ajuste" },
+  especie_documento_estoque: { entrada: "Entrada", saida: "Saída", transferencia: "Transferência", ajuste: "Ajuste", requisicao: "Requisição", consumo: "Consumo", devolucao_consumo: "Devolução de consumo" },
   situacao_documento_estoque: { aberto: "Aberto", confirmado: "Confirmado", cancelado: "Cancelado" },
+  // OPERACOES-01 F7 (decisão 284): a importação do XML da NF-e na Central de Compras (erp.importacoes_nfe_compra), o
+  // vínculo do item da nota com o produto, a classificação do gasto da compra, o rateio da compra e o tipo de fator.
+  situacao_importacao_nfe: { pendente: "Pendente", gerada: "Compra gerada", descartada: "Descartada" },
+  origem_importacao_nfe: { arquivo: "Arquivo XML", dfe: "DF-e recebida" },
+  vinculo_item_nfe: { lembrado: "Vínculo lembrado", sugerido: "Sugerido", ambiguo: "Mais de um produto corresponde", nenhum: "Sem vínculo" },
+  classificacao_gasto: { capex: "CAPEX", opex: "OPEX" },
+  rateio_compra: { documento: "Natureza e centro do documento", por_valor: "Por valor", por_produto: "Por produto" },
+  tipo_fator_conversao: { multiply: "Multiplica", divide: "Divide" },
+  // OPERACOES-01 F5a (decisão 282): o atendimento CALCULADO da requisição de material (não é situação do banco).
+  atendimento_requisicao_estoque: { pendente: "Pendente", parcial: "Atendida em parte", atendido: "Atendida", encerrado: "Saldo encerrado" },
   animal_movement_type: { purchase: "Compra", sale: "Venda", birth: "Nascimento", death: "Morte", loss: "Perda/desaparecimento", animal_batch_transfer: "Transferência de animais → lote", batch_transfer: "Transferência de animais → lote", batch_grouping: "Agrupamento de lotes", batch_module_area_transfer: "Transferência de lote → módulo/área", module_area_transfer: "Transferência de lote → módulo/área", farm_transfer: "Transferência entre empresas", evolution: "Evolução de categoria", weaning: "Desmama", separation: "Apartação", inventory: "Inventário", processing: "Processamento" },
   handling_type: { nutrition: "Nutrição", sanitary: "Sanitário", weaning: "Desmama", separation: "Apartação", pasture: "Manejo de pastagem", locate: "Localização" },
   sex: { M: "Macho", F: "Fêmea" },
@@ -76,6 +88,8 @@ export const ENUM_LABELS = {
   trigger_type: { hours: "Horas", km: "Km", days: "Dias" },
   equipment_type: { own: "Próprio", outsourced: "Terceirizado" },
   os_section: { labor: "Mão de obra", machine: "Equipamentos", input: "Insumos", ppe: "EPIs", production: "Produção" },
+  /** OPERACOES-01 F10 (decisão 287): a situação da ORDEM DE SERVIÇO na frase (feminino: "ela está finalizada"); o selo continua `status`. */
+  os_status: { open: "Aberta", in_progress: "Em andamento", finished: "Finalizada", evaluated: "Avaliada", cancelled: "Cancelada" },
   hr_event_kind: { absence: "Falta", justified: "Falta justificada", half_day: "Meio período", delay: "Atraso" },
   notification_kind: { purchase_pending: "Compras pendentes", stock_min: "Estoque mínimo", title_due: "Títulos a vencer", birthday: "Aniversário", document_expiring: "Documento vencendo" },
   /** Ações registradas na auditoria: as ações de permissão (Visualizar, Criar, …) mais as operações internas. */

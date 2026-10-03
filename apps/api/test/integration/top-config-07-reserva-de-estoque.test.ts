@@ -179,9 +179,9 @@ const reservaDoDocumento = async (id: string) => (await admin.query<{ reserva_es
 const itensNoBanco = async (id: string) => (await admin.query<{ product_id: string; warehouse_id: string | null; quantity: string }>(
   "select product_id, warehouse_id, quantity::text quantity from erp.sales_document_items where document_id=$1 order by position, id", [id])).rows;
 /** A mensagem amigável da confirmação (contrato A2). */
-const msgConfirmacao = (p: Produto, d: string, q: string, r: string) => `${p.nome} no armazém ${nomeArmazemA}: disponível ${d}, solicitado ${q} (${r} reservado para pedidos).`;
+const msgConfirmacao = (p: Produto, d: string, q: string, r: string) => `${p.nome} no local de estoque ${nomeArmazemA}: disponível ${d}, solicitado ${q} (${r} reservado para pedidos).`;
 /** A linha da recusa do pedido (contrato A1). */
-const msgPedido = (p: Produto, d: string, m: string) => `${p.nome} no armazém ${nomeArmazemA}: disponível ${d}, pedido ${m}.`;
+const msgPedido = (p: Produto, d: string, m: string) => `${p.nome} no local de estoque ${nomeArmazemA}: disponível ${d}, pedido ${m}.`;
 
 describe("RE-1 — TOP sem reserva", () => {
   it("RE-1 pedido de 8 não reserva; outra venda de 10 sai inteira", async () => {
@@ -268,7 +268,7 @@ describe("RE-4 — armazém obrigatório e da empresa do documento", () => {
     const sem = await postPedido(topPedidoEmPartes, [ITEM(p.id, "1", null)]);
     expect(sem.statusCode, sem.body).toBe(422);
     expect(j(sem).error?.code).toBe("VALIDATION_ERROR");
-    expect(j(sem).error?.details).toEqual(expect.arrayContaining([{ path: "items[0].warehouse_id", message: "Informe o armazém: esta operação reserva estoque." }]));
+    expect(j(sem).error?.details).toEqual(expect.arrayContaining([{ path: "items[0].warehouse_id", message: "Informe o local de estoque: esta operação reserva estoque." }]));
     // O índice é o do item que falta: o primeiro tem armazém, o segundo não.
     const segundo = await postPedido(topPedidoEmPartes, [ITEM(p.id, "1"), ITEM(p.id, "1", null)]);
     expect(segundo.statusCode, segundo.body).toBe(422);
@@ -279,7 +279,7 @@ describe("RE-4 — armazém obrigatório e da empresa do documento", () => {
     expect(empresaDoArmazem).not.toBe(I.empresa);
     const outra = await postPedido(topPedidoEmPartes, [ITEM(p.id, "1", armazemOutraEmpresa)]);
     expect(outra.statusCode, outra.body).toBe(422);
-    expect(j(outra).error?.details).toEqual(expect.arrayContaining([{ path: "items[0].warehouse_id", message: "O armazém não é da empresa do documento." }]));
+    expect(j(outra).error?.details).toEqual(expect.arrayContaining([{ path: "items[0].warehouse_id", message: "O local de estoque não é da empresa do documento." }]));
     expect(await pedidosDoProduto(p.id), "nenhuma recusa gravou pedido").toBe(0);
 
     // A exigência vem da reserva: a TOP sem reserva aceita o item sem armazém.

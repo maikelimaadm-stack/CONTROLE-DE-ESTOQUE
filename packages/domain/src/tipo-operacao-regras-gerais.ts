@@ -1,5 +1,5 @@
 /**
- * TOP-CONFIG-08 — AS REGRAS GERAIS E A APROVAÇÃO DA TOP, EXECUTADAS NO FORMATO 4 (decisão 277).
+ * TOP-CONFIG-08 — AS REGRAS GERAIS E A APROVAÇÃO DA TOP, EXECUTADAS NO FORMATO 4 (decisão 277) E NO 5 (decisão 281).
  *
  * ┌─ O QUE ESTE ARQUIVO É ─────────────────────────────────────────────────────────────────────────────┐
  * │ Um dono só para as três perguntas que a API, o editor e as rotas de aprovação fazem sobre as      │
@@ -14,12 +14,13 @@
  * │    `erp.top_exige_aprovacao` do banco (0041), em decimal.                                           │
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
- * ┌─ POR QUE SÓ O FORMATO 4 EXECUTA (o corte, como o 3 foi para as restrições) ────────────────────────┐
+ * ┌─ POR QUE SÓ O FORMATO 4 (E O 5) EXECUTA (o corte, como o 3 foi para as restrições) ────────────────┐
  * │ As versões dos formatos 1, 2 e 3 foram gravadas quando NADA executava estas regras. Em produção há │
  * │ um pedido de compra no formato 3 com Confirmação Automática, Documento sem itens Permitido e       │
  * │ Alteração Permitida: ler isso como decisão faria a TOP passar a confirmar sozinha um documento que │
  * │ ninguém pediu para confirmar. Então formato 1 a 3 = tudo neutro, SEM LER AS SEÇÕES, para sempre; o │
- * │ formato 4 é o portão explícito que a decisão 240 pede para todo efeito novo.                       │
+ * │ formato 4 é o portão explícito que a decisão 240 pede para todo efeito novo. O formato 5 (decisão   │
+ * │ 281) é o 4 + as seções de extensão: executa estas regras exatamente como o 4.                       │
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ POR QUE A MATRIZ RECUSA O QUE RECUSA ─────────────────────────────────────────────────────────────┐
@@ -29,6 +30,9 @@
  * │ estoque sem itens          o documento de estoque sem itens não movimenta nada.                     │
  * │ estoque "a partir de valor" o valor do documento de estoque só se conhece na confirmação.          │
  * │ orçamento e pedidos        não são confirmados: são convertidos ou recebidos em outro documento.    │
+ * │                            O pedido de compra aceita a aprovação: ela acontece ao finalizar (F6a).  │
+ * │ os módulos (F10)           têm documento — o registro do módulo — e aceitam só o neutro: o          │
+ * │                            lançamento move o estoque ao gravar (a OS, ao finalizar).                │
  * │ qualquer outra família     não tem documento no sistema que execute a regra.                        │
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
@@ -45,21 +49,24 @@ import {
   POLITICAS_ALTERACAO,
   POLITICAS_APROVACAO,
   POLITICAS_DOCUMENTO_SEM_ITENS,
-  VERSAO_SCHEMA_CONFIGURACAO_TOP_V4,
   configuracaoNeutraTopV4,
+  formato5Top,
   lerConfiguracaoTop,
   regrasGeraisExecutamTop,
+  secoesExtensaoDaVersaoTop,
   versaoSchemaDaConfiguracaoTop,
+  versaoSchemaExecutaRegrasGeraisTop,
+  type ConfiguracaoComRegrasGeraisTop,
   type ConfiguracaoTipoOperacao,
-  type ConfiguracaoTipoOperacaoV4,
   type ModoConfirmacao,
   type PoliticaAlteracao,
   type PoliticaAprovacao,
   type PoliticaDocumentoSemItens,
 } from "./tipo-operacao-configuracao.js";
 import { familiaOperacionalDeDocumentoCompra, familiaOperacionalDeDocumentoVenda } from "./tipo-operacao-configurado.js";
-import { ESPECIES_DOCUMENTO_ESTOQUE, familiaOperacionalDeDocumentoEstoque } from "./estoque-documento.js";
+import { TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE, familiaOperacionalDeDocumentoEstoque } from "./estoque-documento.js";
 import { formatarDinheiroBr } from "./tipo-operacao-restricoes.js";
+import { MODULOS_COM_TOP, familiaDoModuloComTop } from "./centrais-dos-modulos.js";
 
 // ---------------------------------------------------------------------------------------------------
 // 1. AS MENSAGENS DA APROVAÇÃO — ditas igual na confirmação, nas rotas de aprovação e na tela
@@ -124,6 +131,7 @@ const MOTIVO_ALTERACAO_COMPRA = "Alterar uma compra confirmada ainda não tem ex
 const MOTIVO_ALTERACAO_ESTOQUE = "Documento de estoque confirmado não se altera: cancele e lance outro.";
 const MOTIVO_APROVACAO_POR_VALOR_ESTOQUE = "O valor do documento de estoque só é conhecido na confirmação: use \"Sempre\".";
 const MOTIVO_APROVACAO_SEM_CONFIRMACAO = "A aprovação acontece antes da confirmação, e este documento não é confirmado.";
+const MOTIVO_MODULO = "O lançamento deste módulo não executa esta regra: ele move o estoque ao gravar (a ordem de serviço, ao finalizar).";
 
 /** Regra congelada, com a lista copiada: quem lê a matriz nunca altera o que outro consumidor vê. */
 const regra = <T>(aceitos: readonly T[], motivo: string | null): RegraDaFamiliaTop<T> =>
@@ -141,7 +149,7 @@ const linhaDoDocumentoConfirmado = (familia: string, motivoAlteracao: string): I
   aprovacao: regra(POLITICAS_APROVACAO, null),
 });
 
-/** As quatro espécies de estoque: confirmação inteira; aprovação só Sempre (o valor só existe na confirmação). */
+/** As sete espécies de estoque: confirmação inteira; aprovação só Sempre (o valor só existe na confirmação). */
 const linhaDoEstoque = (familia: string): ItemMatrizRegrasGeraisTop => Object.freeze({
   familia,
   confirmacao: regra(MODOS_CONFIRMACAO, null),
@@ -160,7 +168,35 @@ const linhaDoOrcamentoOuPedido = (familia: string): ItemMatrizRegrasGeraisTop =>
 });
 
 /**
- * Qualquer família fora da matriz (as oito antigas de estoque, a solicitação de compra, o financeiro…): só
+ * OPERACOES-01 F6a (decisão 283): o PEDIDO DE COMPRA. Como o orçamento e o pedido de venda, ele não é confirmado
+ * — confirmação Manual, sem itens Proibido e alteração Bloqueada continuam, com os motivos de hoje —, mas a
+ * APROVAÇÃO vale por inteiro: ela acontece ao FINALIZAR o pedido (o "antes da confirmação" do pedido é "antes de
+ * finalizar"), com a mesma conta da compra (`exigeAprovacao`, `erp.top_exige_aprovacao`).
+ */
+const linhaDoPedidoDeCompra = (familia: string): ItemMatrizRegrasGeraisTop => Object.freeze({
+  familia,
+  confirmacao: regra<ModoConfirmacao>(["manual"], MOTIVO_NAO_CONFIRMADO),
+  documentoSemItens: regra<PoliticaDocumentoSemItens>(["proibido"], MOTIVO_SEM_ITENS_ORCAMENTO_PEDIDO),
+  alteracaoAposConfirmacao: regra<PoliticaAlteracao>(["bloqueada"], MOTIVO_NAO_CONFIRMADO),
+  aprovacao: regra(POLITICAS_APROVACAO, null),
+});
+
+/**
+ * OPERACOES-01 F10 (decisão 287): os MÓDULOS com TOP (abastecimento, manutenção, OS, manejo, batelada, produção de
+ * ração). Eles têm documento — o registro do módulo, que cita a TOP —, então o perfil do editor usa o mapa de
+ * exigências do registro (e não as quatro genéricas); mas o lançamento não é confirmado nem aprovado: move o estoque
+ * ao gravar (a OS, ao finalizar). Só o neutro, com o motivo próprio.
+ */
+const linhaDoModulo = (familia: string): ItemMatrizRegrasGeraisTop => Object.freeze({
+  familia,
+  confirmacao: regra<ModoConfirmacao>(["manual"], MOTIVO_MODULO),
+  documentoSemItens: regra<PoliticaDocumentoSemItens>(["proibido"], MOTIVO_MODULO),
+  alteracaoAposConfirmacao: regra<PoliticaAlteracao>(["bloqueada"], MOTIVO_MODULO),
+  aprovacao: regra<PoliticaAprovacao>(["nenhuma"], MOTIVO_MODULO),
+});
+
+/**
+ * Qualquer família fora da matriz (as sete antigas de estoque, a solicitação de compra, o financeiro…): só
  * o neutro. NÃO é linha da matriz — é o padrão de `regrasGeraisDaFamiliaTop`, para que a família nova do
  * registry nasça fechada, e não aberta por esquecimento.
  */
@@ -177,17 +213,21 @@ const linhaSe = (familia: string | undefined, montar: (f: string) => ItemMatrizR
   familia ? [montar(familia)] : [];
 
 /**
- * A MATRIZ. Venda, compra, as quatro espécies de estoque, orçamento, pedido de venda e pedido de compra —
- * nesta ordem. A API confere a gravação do formato 4 contra ela; o servidor a publica no bloco
- * `regrasGerais` das capabilities; o editor lê a publicada (`lerMatrizRegrasGeraisTop`).
+ * A MATRIZ. Venda, compra, as sete espécies de estoque, os seis módulos com TOP (F10, decisão 287: só o neutro),
+ * orçamento, pedido de venda, pedido de compra e (desde a F6a, decisão 283) orçamento de compra — nesta ordem. O pedido
+ * de compra aceita a aprovação (ao finalizar); o orçamento de compra é como o orçamento de venda. A API confere a
+ * gravação do formato 4 (e do 5) contra ela; o servidor a publica no bloco `regrasGerais` das capabilities; o editor
+ * lê a publicada (`lerMatrizRegrasGeraisTop`).
  */
 export const MATRIZ_REGRAS_GERAIS_TOP: readonly ItemMatrizRegrasGeraisTop[] = Object.freeze([
   ...linhaSe(familiaOperacionalDeDocumentoVenda("sale"), (f) => linhaDoDocumentoConfirmado(f, MOTIVO_ALTERACAO_VENDA)),
   ...linhaSe(familiaOperacionalDeDocumentoCompra("compra"), (f) => linhaDoDocumentoConfirmado(f, MOTIVO_ALTERACAO_COMPRA)),
-  ...ESPECIES_DOCUMENTO_ESTOQUE.flatMap((especie) => linhaSe(familiaOperacionalDeDocumentoEstoque(especie), linhaDoEstoque)),
+  ...TODAS_AS_ESPECIES_DOCUMENTO_ESTOQUE.flatMap((especie) => linhaSe(familiaOperacionalDeDocumentoEstoque(especie), linhaDoEstoque)),
+  ...MODULOS_COM_TOP.flatMap((m) => linhaSe(familiaDoModuloComTop(m), linhaDoModulo)),
   ...linhaSe(familiaOperacionalDeDocumentoVenda("budget"), linhaDoOrcamentoOuPedido),
   ...linhaSe(familiaOperacionalDeDocumentoVenda("order"), linhaDoOrcamentoOuPedido),
-  ...linhaSe(familiaOperacionalDeDocumentoCompra("pedido"), linhaDoOrcamentoOuPedido),
+  ...linhaSe(familiaOperacionalDeDocumentoCompra("pedido"), linhaDoPedidoDeCompra),
+  ...linhaSe(familiaOperacionalDeDocumentoCompra("orcamento"), linhaDoOrcamentoOuPedido),
 ]);
 
 /**
@@ -214,7 +254,7 @@ export const CAMINHOS_REGRAS_GERAIS_TOP = [
 ] as const;
 export type CaminhoRegraGeralTop = (typeof CAMINHOS_REGRAS_GERAIS_TOP)[number];
 
-/** A recusa da gravação no formato 4: o caminho do campo e o motivo da matriz. Compatível com `RecusaExecucaoTop`. */
+/** A recusa da gravação no formato 4 ou 5: o caminho do campo e o motivo da matriz. Compatível com `RecusaExecucaoTop`. */
 export interface RecusaRegraGeralTop {
   motivo: "combinacao_nao_suportada";
   caminho: CaminhoRegraGeralTop;
@@ -228,12 +268,12 @@ export interface RecusaRegraGeralTop {
 const MENSAGEM_REGRA_SEM_MOTIVO = "Esta operação não aceita esta opção.";
 
 /**
- * A configuração do formato 4 cabe na família? Devolve TODAS as recusas, na ordem fixa dos caminhos, ou `[]`.
+ * A configuração do formato 4 (ou 5) cabe na família? Devolve TODAS as recusas, na ordem fixa dos caminhos, ou `[]`.
  * A mensagem é o motivo da matriz — o mesmo texto que o editor mostra ao lado da opção desabilitada.
  */
 export function validarRegrasGeraisTop(
   codigoBase: string,
-  c: ConfiguracaoTipoOperacaoV4,
+  c: ConfiguracaoComRegrasGeraisTop,
   matriz: readonly ItemMatrizRegrasGeraisTop[] = MATRIZ_REGRAS_GERAIS_TOP,
 ): RecusaRegraGeralTop[] {
   const f = regrasGeraisDaFamiliaTop(codigoBase, matriz);
@@ -256,19 +296,21 @@ export type RegraGeralQueVoltaTop =
   | { caminho: "aprovacao.politica"; de: PoliticaAprovacao; para: PoliticaAprovacao };
 
 /**
- * Volta ao neutro TODA regra que a família não aceita — o que o editor faz ao gravar no formato 4 uma TOP
+ * Volta ao neutro TODA regra que a família não aceita — o que o editor faz ao gravar no formato 4 (ou 5) uma TOP
  * cuja versão anterior declarava o que a família não executa (o pedido de compra de produção: Automática,
  * Permitido e Permitida voltam os três). `voltaram` é a lista que o diálogo "Estas regras passam a valer"
  * mostra, na ordem fixa dos caminhos.
  *
  * O neutro vem de `configuracaoNeutraTopV4` (um dono só): Manual, Proibido, Bloqueada e Sem aprovação com
- * `valorMinimo` nulo. Não muta a entrada e não devolve referência a ela: cada seção é copiada.
+ * `valorMinimo` nulo — as quatro regras são as mesmas no 4 e no 5. O FORMATO QUE ENTRA É O QUE SAI (4 → 4, 5 → 5),
+ * com as seções de extensão do 5 intactas. Não muta a entrada e não devolve referência a ela: cada seção é copiada,
+ * as de extensão inclusive.
  */
-export function normalizarRegrasGeraisDaFamiliaTop(
+export function normalizarRegrasGeraisDaFamiliaTop<C extends ConfiguracaoComRegrasGeraisTop>(
   codigoBase: string,
-  c: ConfiguracaoTipoOperacaoV4,
+  c: C,
   matriz: readonly ItemMatrizRegrasGeraisTop[] = MATRIZ_REGRAS_GERAIS_TOP,
-): { configuracao: ConfiguracaoTipoOperacaoV4; voltaram: RegraGeralQueVoltaTop[] } {
+): { configuracao: C; voltaram: RegraGeralQueVoltaTop[] } {
   const f = regrasGeraisDaFamiliaTop(codigoBase, matriz);
   const n = configuracaoNeutraTopV4();
   const voltaram: RegraGeralQueVoltaTop[] = [];
@@ -292,18 +334,19 @@ export function normalizarRegrasGeraisDaFamiliaTop(
     aprovacao = { ...n.aprovacao };
   }
 
-  return {
-    configuracao: {
-      ...c,
-      geral,
-      estoque: { ...c.estoque },
-      financeiro: { ...c.financeiro },
-      fiscal: { ...c.fiscal },
-      aprovacao,
-      execucao: { ...c.execucao },
-    },
-    voltaram,
+  const configuracao: C = {
+    ...c,
+    geral,
+    estoque: { ...c.estoque },
+    financeiro: { ...c.financeiro },
+    fiscal: { ...c.fiscal },
+    aprovacao,
+    execucao: { ...c.execucao },
+    // As seções de extensão do 5, COPIADAS (`secoesExtensaoDaVersaoTop` devolve cópias): sem isto o `...c` acima as
+    // levaria por referência. Nos formatos 1 a 4 nada é acrescentado — o 4 nunca carrega seção nova.
+    ...(formato5Top(c) ? secoesExtensaoDaVersaoTop(c) : null),
   };
+  return { configuracao, voltaram };
 }
 
 /** Forma do valor mínimo que vira texto em reais — a mesma do leitor da configuração. */
@@ -312,16 +355,16 @@ const FORMA_VALOR_DECIMAL = /^\d{1,13}(\.\d{1,2})?$/;
 /**
  * O que PASSA A EXECUTAR com esta gravação — a lista do diálogo "Estas regras passam a valer".
  *
- * Vazio quando `antes` já é formato 4: lá as regras já executavam, e a mudança é uma edição comum. Senão
+ * Vazio quando `antes` já é formato 4 ou 5: lá as regras já executavam, e a mudança é uma edição comum. Senão
  * (formato 1 a 3, ou criação), a lista do que `depois` declara fora do neutro, nesta ordem: "Confirmação
  * automática", "Documento sem itens permitido", "Aprovação sempre", "Aprovação a partir de R$ <valor>".
  * `depois` é a configuração que vai ser gravada, já com as regras da família no padrão
  * (`normalizarRegrasGeraisDaFamiliaTop`): o que voltou ao padrão não passa a valer.
  *
- * Alteração após confirmar nunca entra: no formato 4 ela só aceita Bloqueada, o neutro.
+ * Alteração após confirmar nunca entra: no formato 4 (e no 5) ela só aceita Bloqueada, o neutro.
  * O valor sai em reais sem ponto flutuante (decimal → "1.500,00").
  */
-export function regrasGeraisQuePassamAValer(antes: ConfiguracaoTipoOperacao | null, depois: ConfiguracaoTipoOperacaoV4): string[] {
+export function regrasGeraisQuePassamAValer(antes: ConfiguracaoTipoOperacao | null, depois: ConfiguracaoComRegrasGeraisTop): string[] {
   if (antes !== null && regrasGeraisExecutamTop(antes)) return [];
   const lista: string[] = [];
   if (depois.geral.confirmacao === "automatica") lista.push("Confirmação automática");
@@ -360,14 +403,15 @@ const REGRAS_NEUTRAS = (): RegrasGeraisDaVersao => ({ confirmacaoAutomatica: fal
  * corrente da TOP. A ordem das perguntas é a regra:
  *   1. sem versão congelada              → neutro (documento sem TOP);
  *   2. formato desconhecido              → `configuracao_ilegivel` (ninguém sabe o que ela decidiu);
- *   3. formato 4 malformado              → `configuracao_ilegivel`;
+ *   3. formato 4 ou 5 malformado         → `configuracao_ilegivel`;
  *   4. formato 1, 2 ou 3                 → neutro (o corte da decisão 277); malformada também é neutro, porque a
  *                                          leitura das seções de uma versão que nunca executou não pode virar
  *                                          recusa nova;
- *   5. formato 4                         → o que ela diz, COMO ELA DIZ.
+ *   5. formato 4 ou 5                    → o que ela diz, COMO ELA DIZ.
  * O PORTÃO É UM SÓ: executa a versão que `regrasGeraisExecutamTop` aceita, o mesmo predicado da gravação, para que
- * "só o formato 4 executa" tenha um dono só. O número do formato decide apenas o destino de quem NÃO executa: a que
- * se declarou 4 e não saiu da leitura como 4 é ilegível (nunca neutro); a de 1 a 3 é o corte, neutro.
+ * "só o formato 4 ou 5 executa" tenha um dono só. O número do formato decide apenas o destino de quem NÃO executa: a
+ * que se declarou 4 ou 5 (`versaoSchemaExecutaRegrasGeraisTop`) e não saiu da leitura como tal é ilegível (nunca
+ * neutro); a de 1 a 3 é o corte, neutro.
  * A matriz NÃO é aplicada aqui: ela é o portão da gravação, e a versão já gravada vale como foi gravada.
  * `codigoBase` viaja junto por ser a mesma entrada das políticas da venda e da compra; a execução não o lê.
  */
@@ -378,7 +422,7 @@ export function regrasGeraisDaVersaoTop(versao: { codigoBase: string; configurac
 
   const lida = lerConfiguracaoTop(versao.configuracao);
   if (!lida.ok || !regrasGeraisExecutamTop(lida.valor)) {
-    return formato === VERSAO_SCHEMA_CONFIGURACAO_TOP_V4 ? { ok: false, motivo: "configuracao_ilegivel" } : { ok: true, regras: REGRAS_NEUTRAS() };
+    return versaoSchemaExecutaRegrasGeraisTop(formato) ? { ok: false, motivo: "configuracao_ilegivel" } : { ok: true, regras: REGRAS_NEUTRAS() };
   }
   const c = lida.valor;
 

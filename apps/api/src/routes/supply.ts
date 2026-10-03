@@ -1,13 +1,15 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate } from "@agro/shared";
-import { nextPurchaseStatus, allowedPurchaseActions, authorizerCanApprove, PURCHASE_STATUS_LABELS, slaStatus, type PurchaseRequestStatus, type PurchaseAction } from "@agro/domain";
+import { nextPurchaseStatus, allowedPurchaseActions, authorizerCanApprove, PURCHASE_STATUS_LABELS, slaStatus, resolverTipoOperacao, type PurchaseRequestStatus, type PurchaseAction } from "@agro/domain";
 import { runService, nextCode, idempotent, audit } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
 import { empresaScope, exigirEmpresaDeLancamento, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
-import { createTitles } from "../services/financial-core.js";
+import { createTitles, type TitleInput } from "../services/financial-core.js";
+import { classificacaoLegada, financeiroDaTopPadrao, MENSAGEM_SOLICITACAO_EXIGE_CLASSIFICACAO } from "../lib/financeiro-classificacao.js";
+import { contaPadraoUtilizavel, MENSAGEM_CONTA_PADRAO_INUTILIZAVEL } from "../lib/financeiro-padroes-top.js";
 import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
@@ -92,6 +94,17 @@ async function transition(ctx: ServiceCtx, id: string, action: PurchaseAction, j
   return next;
 }
 
+/**
+ * OPERACOES-01 F7 (decisão 284): a solicitação tem uma COMPRA não cancelada ligada (`documentos_compra.solicitacao_compra_id`,
+ * mesma organização e — pelo gatilho da 0047 — mesma empresa)? É o "lançado" da solicitação ao lado da nota antiga.
+ */
+async function temCompraViva(ctx: ServiceCtx, solicitacaoId: string): Promise<boolean> {
+  const r = await ctx.tx.query(
+    "select 1 from erp.documentos_compra where organization_id = $1 and solicitacao_compra_id = $2 and especie = 'compra' and situacao <> 'cancelado' limit 1",
+    [ctx.orgId, solicitacaoId]);
+  return (r.rowCount ?? 0) > 0;
+}
+
 export default async function supplyRoutes(app: FastifyInstance) {
   // Contadores por etapa (uma consulta agregada por status; alimenta os chips de etapa da área Compras)
   app.get("/supply/requests/counts", async (req) => runService(app, req, "purchase_requests.view", async (ctx) => {
@@ -125,7 +138,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
     if (f.responsible_user_id) { params.push(f.responsible_user_id); where.push(`r.current_responsible_user_id=$${params.length}`); }
     if (f.start_date) { params.push(f.start_date); where.push(`r.request_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`r.request_date<=$${params.length}`); }
     if (f.search) { params.push(`%${f.search}%`); where.push(`(r.code ilike $${params.length} or r.description ilike $${params.length})`); }
-    const wl = wrapListing(`select r.id, r.code, r.request_date, r.created_at, r.description, r.priority, r.request_type, r.status, r.status_changed_at, r.estimated_total, r.approved_total, r.invoice_number, r.updated_at, r.version, f.name as empresa_name, u.name as requester_name, cu.name as current_responsible_name, extract(epoch from now()-r.status_changed_at)/3600 as hours_in_status, (select count(*) from erp.purchase_quotations q where q.request_id=r.id)::int as quotation_count, (select max_hours from erp.supply_status_sla s where s.organization_id=r.organization_id and s.status=r.status) as sla_hours, r.invoice_id is not null as launched from erp.purchase_requests r join erp.empresas f on f.id=r.empresa_id left join erp.users u on u.id=r.requester_user_id left join erp.users cu on cu.id=r.current_responsible_user_id where ${where.join(" and ")} order by r.request_date desc, r.created_at desc`, params, req.query as Record<string, unknown>, q);
+    const wl = wrapListing(`select r.id, r.code, r.request_date, r.created_at, r.description, r.priority, r.request_type, r.status, r.status_changed_at, r.estimated_total, r.approved_total, r.invoice_number, r.updated_at, r.version, f.name as empresa_name, u.name as requester_name, cu.name as current_responsible_name, extract(epoch from now()-r.status_changed_at)/3600 as hours_in_status, (select count(*) from erp.purchase_quotations q where q.request_id=r.id)::int as quotation_count, (select max_hours from erp.supply_status_sla s where s.organization_id=r.organization_id and s.status=r.status) as sla_hours, (r.invoice_id is not null or exists (select 1 from erp.documentos_compra dc where dc.organization_id = r.organization_id and dc.solicitacao_compra_id = r.id and dc.especie = 'compra' and dc.situacao <> 'cancelado')) as launched from erp.purchase_requests r join erp.empresas f on f.id=r.empresa_id left join erp.users u on u.id=r.requester_user_id left join erp.users cu on cu.id=r.current_responsible_user_id where ${where.join(" and ")} order by r.request_date desc, r.created_at desc`, params, req.query as Record<string, unknown>, q);
     const total = await ctx.tx.query<{ n: string }>(wl.countSql, wl.params);
     const r = await ctx.tx.query(wl.pageSql, wl.params);
     return paginaComIdGlobal(ctx, "purchase_requests", { items: r.rows.map((x) => ({ ...(x as Record<string, unknown>), status_label: PURCHASE_STATUS_LABELS[(x as { status: PurchaseRequestStatus }).status], sla: slaStatus(new Date((x as { status_changed_at: string }).status_changed_at), new Date(), Number((x as { sla_hours: number | null }).sla_hours ?? 0)) })), total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize });
@@ -225,18 +238,43 @@ export default async function supplyRoutes(app: FastifyInstance) {
         const next = await transition(ctx, id, action, d.justification, { expectedVersion: d.version, responsible: authUser ?? null }); return { id, status: next };
       }
       if (action === "mark_received") {
-        // Regra: recebimento de produto exige documento fiscal lançado (invoice_id) — "Lançado" na tela de Recebimentos
-        if (r.request_type === "product" && !(r as { invoice_id?: string | null }).invoice_id) throw validation("Lance o documento fiscal de entrada (estoque) antes de confirmar o recebimento");
+        // Regra: recebimento de produto exige documento fiscal lançado (invoice_id) — "Lançado" na tela de Recebimentos.
+        // OPERACOES-01 F7 (decisão 284): OU a COMPRA não cancelada ligada a esta solicitação (gerada pela importação do XML).
+        if (r.request_type === "product" && !(r as { invoice_id?: string | null }).invoice_id && !(await temCompraViva(ctx, id))) {
+          throw validation("Lance o documento fiscal de entrada ou gere a compra pela importação do XML antes de confirmar o recebimento");
+        }
       }
       if (action === "finish" && ["advance", "refund", "daily", "contract", "service"].includes(r.request_type) && !(r as { financial_generated?: boolean }).financial_generated) {
         // Gera conta a pagar para tipos não-produto ao finalizar (fluxo "Financeiro" da solicitação)
         const items = await ctx.tx.query<{ amount: string | null; reference_value: string | null; quantity: string; description: string }>("select amount, reference_value, quantity, description from erp.purchase_request_items where request_id=$1", [id]);
         const total = items.rows.reduce((a, i) => a.plus(D(i.amount ?? D(i.reference_value ?? 0).mul(i.quantity))), D(0));
-        const cat = (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature='expense' and kind='analytic' and is_active and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
-        const cc = (await ctx.tx.query<{ id: string }>("select id from erp.cost_centers where organization_id=$1 and kind='analytic' and is_active and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
-        if (total.gt(0) && cat && cc && hasPermission(ctx, "purchase_requests.financial")) {
-          const t = await createTitles(ctx, { empresaId: r.empresa_id, direction: "payable", number: `SOL-${r.code}`, personId: null, amount: money(total), emissionDate: new Date().toISOString().slice(0, 10), dueDate: ((r as { financial_due_date?: string | null }).financial_due_date) ?? new Date().toISOString().slice(0, 10), note: `Solicitação ${r.code}: ${items.rows.map((i) => i.description).join("; ")}`, apportionment: [{ financialCategoryId: cat.id, costCenterId: cc.id, percentage: "100" }], sourceType: "purchase_requests", sourceId: id });
+        const gerarTitulo = async (cat: string, cc: string, pelaTop: Pick<TitleInput, "titleTypeId" | "contaPrevistaId" | "tipoOperacaoId" | "tipoOperacaoVersaoId"> = {}) => {
+          const t = await createTitles(ctx, { empresaId: r.empresa_id, direction: "payable", number: `SOL-${r.code}`, personId: null, amount: money(total), emissionDate: new Date().toISOString().slice(0, 10), dueDate: ((r as { financial_due_date?: string | null }).financial_due_date) ?? new Date().toISOString().slice(0, 10), note: `Solicitação ${r.code}: ${items.rows.map((i) => i.description).join("; ")}`, apportionment: [{ financialCategoryId: cat, costCenterId: cc, percentage: "100" }], sourceType: "purchase_requests", sourceId: id, ...pelaTop });
           await addEvent(ctx, id, r.status, r.status, "financial", `Títulos gerados: ${t.ids.length}`);
+        };
+        /*
+         * OPERACOES-01 F9 (decisão 286) — A TOP PADRÃO DA SOLICITAÇÃO, só quando haverá título (total > 0 e a permissão
+         * do financeiro) e ANTES de qualquer gravação. O registro não cita TOP: vale a TOP marcada como padrão da família
+         * na organização, na versão corrente. Com padrões (formato 5): a natureza e o centro dela (o que faltar sai do
+         * padrão legado), o tipo de título e a conta, e a TOP e a versão no título. "Exigir" sem natureza e centro na TOP
+         * → 422, sem título e sem transição. Sem TOP padrão, fora do 5 ou sem padrões → o código de antes, intacto (a 1ª
+         * natureza de despesa e o 1º centro por código; sem os dois, o título não nasce).
+         */
+        const pelaTop = total.gt(0) && hasPermission(ctx, "purchase_requests.financial")
+          ? await financeiroDaTopPadrao(ctx, resolverTipoOperacao("erp.purchase_requests")?.codigo) : { tipo: "sem_top" as const };
+        if (pelaTop.tipo === "exigir") throw validation(MENSAGEM_SOLICITACAO_EXIGE_CLASSIFICACAO);
+        if (pelaTop.tipo === "top") {
+          const legado = await classificacaoLegada(ctx, "expense", { natureza: pelaTop.naturezaId === null, centro: pelaTop.centroCustoId === null });
+          const cat = pelaTop.naturezaId ?? legado.naturezaId;
+          const cc = pelaTop.centroCustoId ?? legado.centroCustoId;
+          if (cat && cc) {
+            // A conta padrão inativada ou excluída depois de gravada a TOP → 422 antes do título (e sem transição).
+            if (pelaTop.contaBancariaId && !(await contaPadraoUtilizavel(ctx, pelaTop.contaBancariaId, { trava: true }))) throw validation(MENSAGEM_CONTA_PADRAO_INUTILIZAVEL);
+            await gerarTitulo(cat, cc, { titleTypeId: pelaTop.tipoTituloId, contaPrevistaId: pelaTop.contaBancariaId, tipoOperacaoId: pelaTop.top.tipoOperacaoId, tipoOperacaoVersaoId: pelaTop.top.tipoOperacaoVersaoId });
+          }
+        } else {
+          const { naturezaId: cat, centroCustoId: cc } = await classificacaoLegada(ctx, "expense");
+          if (total.gt(0) && cat && cc && hasPermission(ctx, "purchase_requests.financial")) await gerarTitulo(cat, cc);
         }
       }
       const next = await transition(ctx, id, action, d.justification, { expectedVersion: d.version, responsible: d.responsible_user_id ?? undefined });

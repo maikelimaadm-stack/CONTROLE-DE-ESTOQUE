@@ -1,7 +1,10 @@
-import { test, expect, type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, acaoDaCentral, CLASSIFICACAO_DO_SEED, ROTULOS_CLASSIFICACAO } from "./helpers";
+// o `test` com a limpeza do caso (W29 cria o próprio par produto × local e o exclui no fim); os demais casos não criam
+// cadastro por ela e não mudam
+import { test, expect, criarCadastro, referenciasDoSeed } from "./central-compras-fixtures";
 
 /**
  * CENTRAL DE VENDAS — WORKSPACE FOUNDATION (VISUAL-UX-01).
@@ -549,7 +552,9 @@ async function adicionarItemComProduto(page: Page, n = 0) {
   await linhaDaGrade(page, antes).getByTestId("central-vendas-produto").click();
   const opcoes = painelDePesquisa(page).getByRole("option");
   await expect(opcoes.first(), "a pesquisa traz produtos reais do seed").toBeVisible();
-  const rotulo = (await opcoes.nth(n).locator("span").last().innerText()).trim();
+  // OPERACOES-01 F3b: a descrição pela coluna (`data-coluna`), não pelo último `span` — com o saldo à vista a última
+  // célula da opção é a do Estoque
+  const rotulo = (await opcoes.nth(n).locator('[data-coluna="descricao"]').innerText()).trim();
   await opcoes.nth(n).click();
   await expect(painelDePesquisa(page)).toHaveCount(0);
   await expect(linhaDaGrade(page, antes).getByTestId("central-vendas-produto")).toContainText(rotulo);
@@ -627,8 +632,16 @@ test("W14 — seleção de linha: círculo, teclado (↑ ↓) e nenhuma seleçã
 test("W15 — pesquisa de produto: ancorada à célula, fonte real, teclado ↑ ↓ Enter Esc", async ({ page }) => {
   await login(page);
   await abrirWorkspace(page);
+  /* OPERACOES-01 F3b (decisão 280): com a capacidade declarada pela API desta fase, a fonte REAL da pesquisa de produto é
+     `GET /api/produtos/pesquisa` (o parâmetro `busca`), e a de antes (`/api/resources/products/options`) não sai mais —
+     as duas são contadas no fio, pelo caminho exato. A fonte de antes, contra a API anterior, é o skew (K-1a). */
   const buscas: string[] = [];
-  page.on("request", (r) => { const u = new URL(r.url()); if (u.pathname === "/api/resources/products/options") buscas.push(u.searchParams.get("search") ?? ""); });
+  const dasOpcoesDeAntes: string[] = [];
+  page.on("request", (r) => {
+    const u = new URL(r.url());
+    if (u.pathname === "/api/produtos/pesquisa") buscas.push(u.searchParams.get("busca") ?? "");
+    if (u.pathname === "/api/resources/products/options") dasOpcoesDeAntes.push(u.search);
+  });
 
   await adicionarProduto(page).click();
   const celula = linhaDaGrade(page, 0).getByTestId("central-vendas-produto");
@@ -636,6 +649,7 @@ test("W15 — pesquisa de produto: ancorada à célula, fonte real, teclado ↑ 
   const painel = painelDePesquisa(page);
   await expect(painel).toBeVisible();
   await expect(painel).toHaveAttribute("data-modo", "flutuante");
+  await expect(painel, "a fonte é a pesquisa nova (a API declarou a capacidade)").toHaveAttribute("data-fonte", "pesquisa");
 
   // o painel entra subindo 7px e crescendo de 98,5% (movimento do design): mede-se DEPOIS da entrada,
   // porque a geometria que o contrato fixa é a do painel assentado, não a de um quadro da animação
@@ -654,10 +668,12 @@ test("W15 — pesquisa de produto: ancorada à célula, fonte real, teclado ↑ 
   await expect(opcoes.first()).toBeVisible();
   const total = await opcoes.count();
   expect(total, "a premissa: há mais de uma opção para o teclado andar").toBeGreaterThan(1);
-  const alvo = (await opcoes.nth(1).locator("span").last().innerText()).trim();
+  // a descrição pela coluna (`data-coluna`), não pelo último `span`: com o saldo à vista a última célula é a do Estoque
+  const alvo = (await opcoes.nth(1).locator('[data-coluna="descricao"]').innerText()).trim();
   const termo = alvo.slice(0, 4);
   await page.keyboard.type(termo);
-  await expect.poll(() => buscas.includes(termo), { message: "a digitação virou busca no endpoint REAL de opções" }).toBe(true);
+  // a busca vai aparada (o contrato da rota: texto aparado, até 100)
+  await expect.poll(() => buscas.includes(termo.trim()), { message: "a digitação virou busca no endpoint REAL da pesquisa de produtos" }).toBe(true);
   await page.keyboard.press("Backspace"); await page.keyboard.press("Backspace"); await page.keyboard.press("Backspace"); await page.keyboard.press("Backspace");
   await expect(opcoes).toHaveCount(total);
 
@@ -675,6 +691,8 @@ test("W15 — pesquisa de produto: ancorada à célula, fonte real, teclado ↑ 
   await page.keyboard.press("Enter");
   await expect(painel).toHaveCount(0);
   await expect(celula).toContainText(alvo);
+  expect(buscas.length, "premissa: a pesquisa nova foi de fato chamada").toBeGreaterThan(0);
+  expect(dasOpcoesDeAntes, "nenhum pedido à fonte de antes durante o caso").toEqual([]);
 });
 
 test("W16 — no formulário do item a pesquisa abre EM FLUXO e empurra os campos seguintes", async ({ page }) => {
@@ -683,12 +701,19 @@ test("W16 — no formulário do item a pesquisa abre EM FLUXO e empurra os campo
   await adicionarItemComProduto(page, 0);
   await page.getByRole("button", { name: "Formulário", exact: true }).click();
   const form = page.getByTestId("central-vendas-item-form");
-  const armazem = form.getByLabel("Armazém");
-  const antes = (await armazem.boundingBox())!.y;
-  await form.getByLabel("Produto").click();
+  /* OPERACOES-01 F3b (decisão 280): o Local de estoque vem ANTES do Produto — o campo que o painel empurra é um que vem
+     DEPOIS dele (a Quantidade); o Local, acima, fica onde está. */
+  const local = form.getByLabel("Local de estoque");
+  const produto = form.getByLabel("Produto");
+  const quantidade = form.getByLabel("Quantidade");
+  const y = async (l: typeof local) => (await l.boundingBox())!.y;
+  const [localAntes, produtoAntes, quantidadeAntes] = [await y(local), await y(produto), await y(quantidade)];
+  expect(localAntes, "premissa: o Local de estoque está acima do Produto").toBeLessThan(produtoAntes);
+  expect(quantidadeAntes, "premissa: a Quantidade está abaixo do Produto").toBeGreaterThan(produtoAntes);
+  await produto.click();
   await expect(painelDePesquisa(page)).toHaveAttribute("data-modo", "fluxo");
-  const depois = (await armazem.boundingBox())!.y;
-  expect(depois - antes, "o campo seguinte desceu: o painel está no fluxo, não por cima").toBeGreaterThan(100);
+  expect(await y(quantidade) - quantidadeAntes, "o campo seguinte desceu: o painel está no fluxo, não por cima").toBeGreaterThan(100);
+  expect(Math.abs(await y(local) - localAntes), "o Local, acima do painel, não se moveu").toBeLessThanOrEqual(1);
   await page.keyboard.press("Escape");
   await expect(painelDePesquisa(page)).toHaveCount(0);
 });
@@ -807,7 +832,8 @@ test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visõe
 
 /* ════════════════════════════════ R2 — fechamento de fidelidade ════════════════════════════════ */
 
-const ROTULOS_DA_GRADE = ["Código", "Produto", "Armazém", "Estoque", "Quantidade", "Valor unitário", "Desconto", "Desconto %", "Total"];
+/** OPERACOES-01 F3b (decisão 280): o Local de estoque antes do produto (o layout do sistema de vendas começa por ele). */
+const ROTULOS_DA_GRADE = ["Local de estoque", "Código", "Produto", "Estoque", "Quantidade", "Valor unitário", "Desconto", "Desconto %", "Total"];
 /** Os títulos das colunas da grade, sem a coluna do círculo de seleção (Fase B; antes a da lixeira), que não tem texto. */
 const cabecalhos = async (page: Page) => (await page.getByTestId("central-vendas-grade").locator("thead th").allInnerTexts()).map((t) => t.trim()).filter(Boolean);
 const aba = (page: Page, chave: string) => page.locator(`[data-testid="workspace-tab"][data-tab-key="${chave}"]`);
@@ -882,6 +908,34 @@ test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos 
   await expect(configurar).toHaveAttribute("data-dica", "Configurar colunas");
   await expect(configurar).toHaveAttribute("aria-expanded", "false");
   expect(await cabecalhos(page), "padrão do design: nove colunas, nesta ordem").toEqual(ROTULOS_DA_GRADE);
+  // "Local de estoque" (OPERACOES-01 F3a, decisão 280) é mais comprido que o rótulo de antes: o cabeçalho cabe INTEIRO
+  // na largura da coluna — a reticência do `th` esconderia o corte da asserção acima, que lê o texto do DOM. A medida é
+  // a do TEXTO (um Range dá a largura inteira mesmo sob a reticência) contra a CAIXA de conteúdo (sem o padding), em
+  // frações de pixel: `scrollWidth`/`clientWidth` são arredondados e deixam passar um corte de até meio pixel. E vale
+  // também com o " *" que a grade acrescenta quando a coluna é obrigatória (layout, regra da TOP, reserva de estoque):
+  // o MESMO elemento de `itens.tsx`, posto no MESMO `th` só para a medida e tirado em seguida.
+  const cabecalhoDoLocal = page.getByTestId("central-vendas-grade").getByRole("columnheader", { name: "Local de estoque", exact: true });
+  await expect(cabecalhoDoLocal, "premissa: o cabeçalho do local de estoque está na grade").toHaveCount(1);
+  const medida = await cabecalhoDoLocal.evaluate((th) => {
+    const larguraDoTexto = () => { const r = document.createRange(); r.selectNodeContents(th); return r.getBoundingClientRect().width; };
+    const estilo = getComputedStyle(th);
+    const caixa = th.clientWidth - parseFloat(estilo.paddingLeft) - parseFloat(estilo.paddingRight);
+    const rotulo = larguraDoTexto();
+    const filhos = th.childNodes.length;
+    const req = document.createElement("span");
+    req.className = "req text-red-500";
+    req.textContent = " *";
+    th.append(req);
+    const comAsterisco = larguraDoTexto();
+    req.remove();
+    return { caixa, rotulo, comAsterisco, filhos, rolagem: th.scrollWidth, cliente: th.clientWidth };
+  });
+  expect(medida.filhos, "premissa: o cabeçalho é só o rótulo (coluna não obrigatória nesta TOP)").toBe(1);
+  expect(medida.caixa, "premissa: a caixa do cabeçalho tem largura medida").toBeGreaterThan(0);
+  expect(medida.comAsterisco, "premissa: o \" *\" acrescenta largura à medida").toBeGreaterThan(medida.rotulo);
+  expect(medida.rotulo, `o cabeçalho "Local de estoque" não está cortado (${medida.rotulo}px de texto em ${medida.caixa}px)`).toBeLessThanOrEqual(medida.caixa);
+  expect(medida.rolagem, "nem pela medida arredondada do navegador").toBeLessThanOrEqual(medida.cliente);
+  expect(medida.comAsterisco, `"Local de estoque *" (coluna obrigatória) também cabe (${medida.comAsterisco}px de texto em ${medida.caixa}px)`).toBeLessThanOrEqual(medida.caixa);
   await configurar.click();
   await expect(configurar).toHaveAttribute("aria-expanded", "true");
   const cfg = page.getByTestId("central-vendas-configuracao");
@@ -901,7 +955,9 @@ test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos 
   // reordenar: Total sobe uma posição
   await cfg.getByRole("button", { name: "Subir Total" }).click();
   await expect.poll(async () => (await cabecalhos(page)).slice(-2)).toEqual(["Total", "Desconto %"]);
-  await expect(cfg.getByRole("button", { name: "Subir Código" }), "a primeira não sobe").toBeDisabled();
+  // a primeira coluna (o Local de estoque, decisão 280) não sobe; a segunda sobe
+  await expect(cfg.getByRole("button", { name: `Subir ${ROTULOS_DA_GRADE[0]}`, exact: true }), "a primeira não sobe").toBeDisabled();
+  await expect(cfg.getByRole("button", { name: `Subir ${ROTULOS_DA_GRADE[1]}`, exact: true }), "premissa: a segunda sobe").toBeEnabled();
   // restaurar padrão devolve as nove, na ordem do design — e a quantidade é a MESMA de antes
   await cfg.getByRole("button", { name: "Restaurar padrão" }).click();
   await expect.poll(() => cabecalhos(page)).toEqual(ROTULOS_DA_GRADE);
@@ -1218,12 +1274,26 @@ test("W28 — unidade do produto: sufixo da quantidade e campo travado, pela lei
 test("W29 — esconder a coluna Estoque ou trocar de visão NÃO reaplica o custo médio: o unitário zerado de propósito chega zerado no POST", async ({ page }) => {
   await login(page);
   const empresa = await empresaAtiva(page);
-  const produtoId = await primeiroId(page, "/api/resources/products?pageSize=1");
-  const armazemId = await primeiroId(page, `/api/resources/warehouses?empresa_id=${empresa}&pageSize=1`);
+  /*
+   * O PAR É DO CASO: produto e local de estoque NOVOS, com nome único, por `criarCadastro` (a exclusão lógica fica
+   * registrada e roda no fim do caso). O local é escolhido na pesquisa da linha PELO NOME, e ela lista os locais de
+   * todas as empresas visíveis. "O primeiro local da empresa" do seed não serve: as três do seed nascem na mesma
+   * transação (mesmo `created_at`, o desempate é o id sorteado) e duas têm nome repetido na outra empresa ("Silo de
+   * Grãos", "Fábrica de Ração") — a pesquisa podia entregar o gêmeo da outra empresa, sem saldo, e o unitário ficava
+   * "0" pelo sorteio do seed, não pelo editor.
+   */
+  const seed = await referenciasDoSeed(page);
+  const produtoId = (await criarCadastro(page, "products", {
+    description: uniq("W29 produto"), group_id: seed.grupo.id, measurement_id: seed.unidade.id, financial_category_id: seed.natureza.id
+  })).id;
+  const armazemId = (await criarCadastro(page, "warehouses", {
+    empresa_id: empresa, initials: `W29${Date.now().toString(36).slice(-5).toUpperCase()}`, description: uniq("W29 local"), type: "inputs"
+  })).id;
   // a premissa: o par produto × armazém tem saldo com custo médio — é ele que preenche o unitário vazio
   await api(page, "POST", "/api/stock/input-entries", { empresa_id: empresa, entry_date: "2026-09-10", note: "W29", items: [{ product_id: produtoId, quantity: "100", unit_value: "2", generate_stock: true, warehouse_id: armazemId }] });
-  const saldo = await api<{ averageCost: string }>(page, "GET", `/api/stock/balances/${armazemId}/${produtoId}`);
+  const saldo = await api<{ quantity: string; averageCost: string }>(page, "GET", `/api/stock/balances/${armazemId}/${produtoId}`);
   expect(Number(saldo.averageCost), "premissa: o par tem custo médio positivo").toBeGreaterThan(0);
+  expect([saldo.quantity, Number(saldo.averageCost)], "premissa: o par novo tem só a entrada deste caso (100 × 2,00)").toEqual(["100.0000", 2]);
   const nomeDoProduto = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/products/${produtoId}`))["description"]);
   const nomeDoArmazem = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/warehouses/${armazemId}`))["description"]);
 
