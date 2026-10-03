@@ -13,7 +13,8 @@ import type { IdentidadeDoDocumento } from "@/features/central/contrato";
 import estilosCv from "@/features/central/moldura.module.css";
 import { hrefDoConfigurador, textoDoLayoutQueVale } from "../layout-da-central";
 import { PREFIXO_CENTRAL_COMPRAS } from "./adaptador";
-import { opcoesDeNaturezaDeDespesa, type ChaveDoCabecalho, type EstadoDaCriacao } from "./estado";
+import { CAMPOS_DOS_DADOS_FISCAIS, opcoesDeNaturezaDeDespesa, type ChaveDoCabecalho, type EstadoDaCriacao } from "./estado";
+import { DadosFiscaisDaCriacao, QUANTIDADE_DE_DADOS_FISCAIS } from "./dados-fiscais";
 
 /**
  * CENTRAL DE COMPRAS — DADOS PRINCIPAIS DA CRIAÇÃO (VISUAL-UX-04, decisão 276).
@@ -27,7 +28,14 @@ import { opcoesDeNaturezaDeDespesa, type ChaveDoCabecalho, type EstadoDaCriacao 
  * OPERACOES-01 F3b (decisão 280): na criação, com a coluna do local na grade, o "Local de estoque" das linhas novas
  * (`CampoDoLocalPadrao`, `central-compras-local-padrao`) logo depois da Empresa, onde ela estiver — estado da tela,
  * fora do corpo; no receber não aparece.
+ *
+ * OPERACOES-01 F7 (decisão 284): na criação da COMPRA, com a capacidade `importacaoXml` "sim", o bloco "Dados fiscais"
+ * (`compras-dados-fiscais`) no FIM dos Dados adicionais — fora do layout (não é campo dele: sem `data-campo`, sem "*",
+ * fora das pendências). Sem a capacidade, nada muda.
  */
+
+/** O caminho da recusa da classificação de um item (F7), nos dois formatos do servidor: `itens[0].x` e `itens.0.x`. */
+const CAMINHO_DA_CLASSIFICACAO_DO_ITEM = /^itens(?:\[\d+\]|\.\d+)\.(?:gera_estoque|imobilizado|categoria_financeira_id|centro_custo_id)$/;
 
 /** "Novo pedido de compra" / "Nova compra" — o nome do documento ainda sem número; o ponto acende com alteração. */
 export function identidadeDaCriacao(e: EstadoDaCriacao): IdentidadeDoDocumento {
@@ -165,10 +173,16 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
     ? [render(c), <CampoDoLocalPadrao key="local-padrao" prefixoTestid={PREFIXO_CENTRAL_COMPRAS} empresaId={h.empresa_id} valor={e.localDoCabecalho} onChange={e.escolherLocal} />]
     : [render(c)]));
   const recolhidos = [...adicionais, ...abas.flatMap((a) => a.campos)];
-  // o Local de estoque conta como campo de Dados adicionais quando a Empresa mora lá
-  const quantidade = recolhidos.length + (e.localNaGrade && recolhidos.includes("empresa_id") ? 1 : 0);
+  /* Os DADOS FISCAIS (F7) moram nos Dados do documento — o desenho que traz a TOP travada —, nunca no campo único que o
+     painel desenha por este mesmo componente (`estadoDeUmCampo`, em `central-compras.tsx`, zera a TOP): lá o bloco
+     repetiria os campos (e o botão "Dados adicionais") em cada campo do painel. */
+  const comDadosFiscais = e.dadosFiscaisAtivos && e.top !== null;
+  // o Local de estoque conta como campo de Dados adicionais quando a Empresa mora lá; os dados fiscais, quando existem
+  const quantidade = recolhidos.length + (e.localNaGrade && recolhidos.includes("empresa_id") ? 1 : 0)
+    + (comDadosFiscais ? QUANTIDADE_DE_DADOS_FISCAIS : 0);
   /* Campo com erro numa zona recolhida não ficaria à vista: com erro lá dentro, Dados adicionais abre. */
-  const erroEscondido = recolhidos.some((c) => Boolean(e.erro(c)));
+  const erroEscondido = recolhidos.some((c) => Boolean(e.erro(c))) || (comDadosFiscais && (CAMPOS_DOS_DADOS_FISCAIS.some((c) => Boolean(e.erro(c)))
+    || Object.keys(e.errosDaTela).some((c) => c.startsWith("rateio") || CAMINHO_DA_CLASSIFICACAO_DO_ITEM.test(c))));
   const aberto = maisDados || erroEscondido;
 
   return <>
@@ -185,6 +199,7 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
         <p className="text-[11px] font-semibold uppercase text-slate-500">{a.aba}</p>
         <ColunaDeCampos>{comOLocal(a.campos)}</ColunaDeCampos>
       </div>)}
+      {comDadosFiscais && <DadosFiscaisDaCriacao e={e} />}
     </DadosAdicionais>
   </>;
 }

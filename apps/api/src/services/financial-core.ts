@@ -27,6 +27,12 @@ export interface TitleInput {
   appropriation?: "direct" | "indirect"; appropriationType?: string | null; apportionment: ApportionmentLine[]; sourceType?: string; sourceId?: string;
   plan?: InstallmentPlan | null;
   /**
+   * OPERACOES-01 F7 (decisão 284): as parcelas EXPLÍCITAS (as duplicatas da nota guardadas na compra), na ordem —
+   * vencimento e valor de cada uma. A soma é EXATAMENTE `amount` (senão 422); não anda com `plan` (quem chama manda
+   * um ou outro — os dois juntos é erro de programação). Ausente ou vazia = a conta de hoje (`plan` ou parcela única).
+   */
+  parcelas?: readonly { dueDate: string; amount: string }[] | null;
+  /**
    * OPERACOES-01 F9 (decisão 286), todos opcionais — ausentes = o título de hoje. `tipoOperacaoId` e
    * `tipoOperacaoVersaoId` andam em PAR (a TOP e a versão de origem; o CHECK da 0045 recusa um sem o outro) e vão em
    * TODAS as parcelas. `contaPrevistaId` é a conta prevista do fluxo (0042), já conferida por quem chama.
@@ -47,8 +53,14 @@ export interface TitleInput {
  * confirmação de venda (VENDAS-A5-1) lê daqui o PRIMEIRO vencimento em vez de repetir a regra do parcelamento
  * (entrada, intervalo, dia fixo), que envelheceria em silêncio na primeira mudança dela.
  */
-export function parcelasDoTitulo(input: Pick<TitleInput, "amount" | "dueDate" | "plan">) {
+export function parcelasDoTitulo(input: Pick<TitleInput, "amount" | "dueDate" | "plan" | "parcelas">) {
   const total = money(input.amount);
+  if (input.parcelas?.length) {
+    if (input.plan) throw new Error("parcelasDoTitulo: parcelas explícitas e plano de parcelamento juntos");
+    const soma = input.parcelas.reduce((a, p) => a.plus(D(p.amount)), D(0));
+    if (!soma.eq(D(total))) throw validation("As parcelas não fecham o valor do título", [{ path: "parcelas", message: "As parcelas não fecham o valor do título" }]);
+    return input.parcelas.map((p, i) => ({ number: i + 1, dueDate: p.dueDate, amount: money(p.amount), isDownPayment: false }));
+  }
   return input.plan && (input.plan.installments > 1 || input.plan.has_down_payment)
     ? buildInstallments({ totalAmount: total, installments: input.plan.installments, firstDueDate: input.plan.first_due_date, mode: input.plan.mode, intervalDays: input.plan.interval_days, dueDay: input.plan.due_day, hasDownPayment: input.plan.has_down_payment, downPaymentValue: input.plan.down_payment_value !== undefined ? String(input.plan.down_payment_value) : undefined, downPaymentDate: input.plan.down_payment_date })
     : [{ number: 1, dueDate: input.dueDate, amount: total, isDownPayment: false }];

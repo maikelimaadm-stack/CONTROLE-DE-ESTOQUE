@@ -172,7 +172,7 @@ function politicaDaEspecie(linhas: readonly LinhaDaPolitica[], especie: EspecieD
 // ─────────────── o pedido como o recebimento o lê ───────────────
 
 /** O pedido lido por `lerDocumentoCompra` (espécie pedido): as colunas que o recebimento e o encerramento usam. */
-interface PedidoLido {
+export interface PedidoLido {
   id: string; situacao: string; empresa_id: string; fornecedor_id: string; tipo_operacao_versao_id: string;
   itens: { id: string; produto_id: string; quantidade: string; recebido: string; saldo: string }[];
   compras_geradas: { id: string; codigo: string; situacao: string }[];
@@ -227,15 +227,20 @@ async function versaoCongeladaDaCompraGerada(ctx: ServiceCtx, compraId: string):
 }
 
 /**
- * RECEBER O PEDIDO — dentro da transação da rota, sob a chave de idempotência. Nada é gravado antes de TODAS as
- * conferências; um throw desfaz a transação inteira (pedido aberto, zero compra, zero auditoria).
+ * OPERACOES-01 F7 (decisão 284) — O RECEBER EM DUAS METADES, exportadas: `prepararRecebimentoDoPedido` (tudo o que vem
+ * ANTES de lançar a compra) e `concluirRecebimentoDoPedido` (tudo o que vem DEPOIS). O receber de hoje é as duas em
+ * volta de `lancar`, com o mesmo comportamento, e a importação do XML ("Gerar compra" com pedido) usa as MESMAS duas
+ * em volta do `lancar` dela — nenhuma regra do receber é copiada. A confirmação automática fica só no receber (a compra
+ * gerada pela importação nunca se confirma sozinha).
  *
- * TOP-CONFIG-08: o `app` entra para a confirmação automática da compra gerada — o gate da execução configurada
- * sai dele aqui dentro (o mesmo de `confirmarCompraNaTransacao`), para o lançamento e a confirmação lerem o MESMO.
+ * PREPARAR: 1ª TRAVA, o pedido (duas conversões sobre o mesmo saldo se enfileiram aqui, e a segunda lê — nos itens,
+ * lidos depois da trava — o recebido que a primeira gravou; o gatilho da origem é a rede) → situação (aberto ou
+ * finalizado; "exige finalizar" da TOP do pedido) → o leque da TOP de destino → `compras.create` → o saldo dos itens
+ * (`validarItensDoRecebimento`) → a empresa do pedido no escopo de escrita. Devolve o pedido lido, o passo do leque e
+ * os itens validados (na ordem do corpo, quantidades normalizadas).
  */
-async function receberPedido(app: FastifyInstance, ctx: ServiceCtx, pedidoId: string, corpo: RecebimentoEntrada) {
-  // 1ª TRAVA: o pedido. Duas conversões sobre o mesmo saldo se enfileiram aqui, e a segunda lê (nos itens, lidos
-  // depois da trava) o recebido que a primeira gravou. O gatilho da origem é a rede.
+export async function prepararRecebimentoDoPedido(ctx: ServiceCtx, pedidoId: string, tipoOperacaoId: string, itens: readonly ItemDoRecebimento[]):
+  Promise<{ pedido: PedidoLido; passo: ProximoPassoCompra; validados: ItemDoRecebimento[] }> {
   const pedido = comoPedido(await lerDocumentoCompra(ctx, pedidoId, "pedido", { lock: true }));
   // OPERACOES-01 F6a: aberto ou finalizado recebem (a mensagem de hoje para o resto); com a TOP do pedido exigindo
   // o pedido finalizado, o aberto não recebe.
@@ -246,40 +251,28 @@ async function receberPedido(app: FastifyInstance, ctx: ServiceCtx, pedidoId: st
 
   // O GRAFO RESTRINGE O CAMINHO; a capacidade do destino, cobrada logo depois, é quem autoriza percorrê-lo.
   const politica = await politicaDeDestinosDaCompra(ctx, pedido.tipo_operacao_versao_id);
-  const passo = politica.configurada ? politica.itens.find((x) => x.tipoOperacaoId === corpo.tipo_operacao_id) : undefined;
+  const passo = politica.configurada ? politica.itens.find((x) => x.tipoOperacaoId === tipoOperacaoId) : undefined;
   if (!passo) throw new DomainError("TIPO_OPERACAO_INDISPONIVEL", MSG_PEDIDO_SEM_PROXIMA_OPERACAO);
   requirePermission(ctx, "compras.create");
 
   // O SALDO É SÓ DE QUANTIDADE. Sem "Em partes": todos os itens com saldo, cada um com o saldo inteiro; com: um
   // subconjunto, cada quantidade > 0 e ≤ saldo. Item repetido ou de outro pedido: 422 no item.
-  const itensPedido = itensDoPedido(pedido);
-  const pedidos: ItemDoRecebimento[] = corpo.itens.map((i) => ({ itemOrigemId: i.item_origem_id, quantidade: i.quantidade }));
-  const v = validarItensDoRecebimento(itensPedido, pedidos, { emPartes: passo.emPartes });
+  const v = validarItensDoRecebimento(itensDoPedido(pedido), itens, { emPartes: passo.emPartes });
   if (!v.ok) throw recusaDosItens(v.recusas);
 
   // A empresa do lançamento é a do pedido — a MESMA conferência do POST de compra (escopo de escrita do módulo).
   await exigirEmpresaDeLancamento(ctx, pedido.empresa_id);
+  return { pedido, passo, validados: v.itens };
+}
 
-  // O corpo de LANÇAR COMPRA: empresa, fornecedor e produto do pedido; o resto (preço e descontos da nota, nota,
-  // série, datas, armazém, lote, validade, classificação, condição) do corpo. `v.itens[i]` é a linha i do corpo.
-  const produtoDoItem = new Map(itensPedido.map((i) => [i.id, i.produtoId]));
-  const { itens: itensDoCorpo, ...cabecalho } = corpo;
-  const d: DocumentoCompraEntrada = {
-    ...cabecalho,
-    empresa_id: pedido.empresa_id,
-    fornecedor_id: pedido.fornecedor_id,
-    itens: itensDoCorpo.map(({ item_origem_id, ...item }, i) => ({ ...item, produto_id: produtoDoItem.get(item_origem_id)!, quantidade: v.itens[i]!.quantidade })),
-  };
-
-  // AS TRAVAS SEGUINTES SÃO AS DE `lancar`, na ordem dele: contador do código da compra → contador do ID Global
-  // (`atribuirIdGlobal`, antes das linhas) → itens de origem (gatilho, no INSERT de cada linha). NÃO se trava o
-  // contador do ID Global antes de `lancar`: o POST de compra comum pega código → ID Global, e a ordem invertida
-  // aqui fecharia um ciclo (ABBA) entre um recebimento e um lançamento simultâneos na mesma organização.
-  const compra = await lancar(ctx, "compra", d, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED,
-    { documentoId: pedidoId, itemOrigemIds: v.itens.map((i) => i.itemOrigemId) });
-
-  // O pedido só vira convertido quando esta compra zera o saldo de TODOS os itens.
-  const zera = recebimentoZeraOPedido(itensPedido, v.itens);
+/**
+ * CONCLUIR — depois de `lancar` (com a origem): o pedido só vira convertido quando esta compra zera o saldo de TODOS
+ * os itens (ROW COUNT sob RLS), a auditoria "convert" no pedido e a provisão dele (F9b). Devolve se zerou e a situação
+ * REAL do pedido depois do receber (convertido, ou a de antes).
+ */
+export async function concluirRecebimentoDoPedido(ctx: ServiceCtx, pedidoId: string, pedido: PedidoLido, passo: ProximoPassoCompra,
+  validados: readonly ItemDoRecebimento[], compra: { id: string; codigo: string }): Promise<{ zera: boolean; pedidoSituacao: string }> {
+  const zera = recebimentoZeraOPedido(itensDoPedido(pedido), validados);
   if (zera) {
     const u = await ctx.tx.query(
       "update erp.documentos_compra set situacao = 'convertido' where id = $1 and organization_id = $2 and especie = 'pedido' and situacao in ('aberto', 'finalizado')",
@@ -289,13 +282,49 @@ async function receberPedido(app: FastifyInstance, ctx: ServiceCtx, pedidoId: st
   }
   await audit(ctx.tx, ctx, "documentos_compra", pedidoId, "convert",
     { to: compra.id, tipoOperacaoDestinoId: passo.tipoOperacaoId, emPartes: passo.emPartes, zeraOSaldo: zera,
-      itens: v.itens.map((i) => ({ origemItemId: i.itemOrigemId, quantidade: i.quantidade })) },
+      itens: validados.map((i) => ({ origemItemId: i.itemOrigemId, quantidade: i.quantidade })) },
     zera ? { before: { situacao: pedido.situacao }, after: { situacao: "convertido" } } : undefined);
   // OPERACOES-01 F9b (decisão 286): a compra que zera o saldo converte o pedido — o previsto passa a esperar só o que já
   // foi gerado. Antes da confirmação automática (que sincroniza de novo, idempotente). O pedido já está travado (1ª trava).
   await sincronizarProvisaoDoPedidoDeCompra(ctx, pedidoId, MOTIVOS_DA_PROVISAO_COMPRA.recebido(compra.codigo));
+  return { zera, pedidoSituacao: zera ? "convertido" : pedido.situacao };
+}
+
+/**
+ * RECEBER O PEDIDO — dentro da transação da rota, sob a chave de idempotência. Nada é gravado antes de TODAS as
+ * conferências; um throw desfaz a transação inteira (pedido aberto, zero compra, zero auditoria). É
+ * `prepararRecebimentoDoPedido` → `lancar` (com a origem) → `concluirRecebimentoDoPedido` → a confirmação automática.
+ *
+ * TOP-CONFIG-08: o `app` entra para a confirmação automática da compra gerada — o gate da execução configurada
+ * sai dele aqui dentro (o mesmo de `confirmarCompraNaTransacao`), para o lançamento e a confirmação lerem o MESMO.
+ */
+async function receberPedido(app: FastifyInstance, ctx: ServiceCtx, pedidoId: string, corpo: RecebimentoEntrada) {
+  const pedidos: ItemDoRecebimento[] = corpo.itens.map((i) => ({ itemOrigemId: i.item_origem_id, quantidade: i.quantidade }));
+  const { pedido, passo, validados } = await prepararRecebimentoDoPedido(ctx, pedidoId, corpo.tipo_operacao_id, pedidos);
+  const itensPedido = itensDoPedido(pedido);
+
+  // O corpo de LANÇAR COMPRA: empresa, fornecedor e produto do pedido; o resto (preço e descontos da nota, nota,
+  // série, datas, armazém, lote, validade, classificação, condição) do corpo. `validados[i]` é a linha i do corpo.
+  const produtoDoItem = new Map(itensPedido.map((i) => [i.id, i.produtoId]));
+  const { itens: itensDoCorpo, ...cabecalho } = corpo;
+  const d: DocumentoCompraEntrada = {
+    ...cabecalho,
+    empresa_id: pedido.empresa_id,
+    fornecedor_id: pedido.fornecedor_id,
+    itens: itensDoCorpo.map(({ item_origem_id, ...item }, i) => ({ ...item, produto_id: produtoDoItem.get(item_origem_id)!, quantidade: validados[i]!.quantidade })),
+  };
+
+  // AS TRAVAS SEGUINTES SÃO AS DE `lancar`, na ordem dele: contador do código da compra → contador do ID Global
+  // (`atribuirIdGlobal`, antes das linhas) → itens de origem (gatilho, no INSERT de cada linha). NÃO se trava o
+  // contador do ID Global antes de `lancar`: o POST de compra comum pega código → ID Global, e a ordem invertida
+  // aqui fecharia um ciclo (ABBA) entre um recebimento e um lançamento simultâneos na mesma organização.
+  const compra = await lancar(ctx, "compra", d, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED,
+    { documentoId: pedidoId, itemOrigemIds: validados.map((i) => i.itemOrigemId) });
+
+  // O pedido só vira convertido quando esta compra zera o saldo de TODOS os itens; a auditoria e a provisão.
+  const { pedidoSituacao } = await concluirRecebimentoDoPedido(ctx, pedidoId, pedido, passo, validados, compra);
   // A situação REAL do pedido depois do receber: convertido, ou a de antes (aberto — o de hoje — ou finalizado).
-  const corpoDeHoje = { ...compra, from: pedidoId, pedidoSituacao: zera ? "convertido" : pedido.situacao };
+  const corpoDeHoje = { ...compra, from: pedidoId, pedidoSituacao };
 
   // TOP-CONFIG-08 (decisão 277) — A CONFIRMAÇÃO AUTOMÁTICA DA COMPRA GERADA, no fim MESMO: o pedido já está
   // convertido (ou aberto, recebido em parte) e auditado. Quem confirma é quem recebeu, com a capacidade da

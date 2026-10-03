@@ -149,15 +149,18 @@ describe("premissas do cenário", () => {
     expect(rls).toEqual([{ relname: "documentos_compra", r: true, f: true }, { relname: "documentos_compra_itens", r: true, f: true }]);
     const pol = (await db.query<{ tablename: string; policyname: string; cmd: string }>(
       "select tablename, policyname, cmd from pg_policies where schemaname='erp' and tablename like 'documentos_compra%' order by tablename")).rows;
-    expect(pol).toEqual([{ tablename: "documentos_compra", policyname: "tenant_e_empresa", cmd: "ALL" }, { tablename: "documentos_compra_itens", policyname: "api_child", cmd: "ALL" }]);
+    // A 0047 (OPERACOES-01 F7) acrescenta o rateio por valor da compra, filho do cabeçalho como os itens (api_child).
+    expect(pol).toEqual([{ tablename: "documentos_compra", policyname: "tenant_e_empresa", cmd: "ALL" }, { tablename: "documentos_compra_itens", policyname: "api_child", cmd: "ALL" },
+      { tablename: "documentos_compra_rateio", policyname: "api_child", cmd: "ALL" }]);
     const trg = (await db.query<{ tgname: string }>(
       "select tgname from pg_trigger where tgrelid in ('erp.documentos_compra'::regclass, 'erp.documentos_compra_itens'::regclass) and not tgisinternal and tgenabled='O' order by tgname")).rows.map((x) => x.tgname);
     // A 0037 (COMPRAS-02) acrescenta o gatilho da origem nos itens; a 0041 (TOP-CONFIG-08), a guarda da aprovação no
-    // cabeçalho; a 0044 (OPERACOES-01 F6a), a guarda da finalização do pedido no cabeçalho e a dos itens do orçamento.
+    // cabeçalho; a 0044 (OPERACOES-01 F6a), a guarda da finalização do pedido no cabeçalho e a dos itens do orçamento;
+    // a 0047 (OPERACOES-01 F7), a guarda dos dados fiscais no cabeçalho (chave de acesso cruzada com a nota antiga).
     // Os quatro da 0036 continuam, com os mesmos nomes.
     expect(trg).toEqual(["trg_documentos_compra_aprovacao", "trg_documentos_compra_audit", "trg_documentos_compra_conferir",
       "trg_documentos_compra_finalizacao", "trg_documentos_compra_itens_documento_aberto", "trg_documentos_compra_itens_orcamento_guarda",
-      "trg_documentos_compra_itens_origem_guarda", "trg_documentos_compra_transicao"]);
+      "trg_documentos_compra_itens_origem_guarda", "trg_documentos_compra_nota", "trg_documentos_compra_transicao"]);
     expect((await db.query("select 1 from pg_constraint where conname='uq_warehouses_tenant' and contype='u'")).rowCount).toBe(1);
   });
 });

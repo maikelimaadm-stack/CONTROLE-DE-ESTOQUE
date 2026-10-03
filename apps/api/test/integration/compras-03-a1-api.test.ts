@@ -143,7 +143,8 @@ describe("A1-1 — operation-types declara o layout do documento", () => {
       const capacidades = j(r).capacidades as Record<string, unknown>;
       expect(capacidades.layoutDocumento, segmento).toBe(CAPACIDADE_LAYOUT_DOCUMENTO);
       // OPERACOES-01 F6a (decisão 283): `finalizacaoEOrcamento` acrescentada no FIM; as de hoje na mesma ordem.
-      expect(Object.keys(capacidades), segmento).toEqual(["classificacaoFinanceira", "condicaoPagamento", "layoutDocumento", "regrasDaOperacao", "finalizacaoEOrcamento"]);
+      // OPERACOES-01 F7 (decisão 284): `importacaoXml` no FIM, depois dela.
+      expect(Object.keys(capacidades), segmento).toEqual(["classificacaoFinanceira", "condicaoPagamento", "layoutDocumento", "regrasDaOperacao", "finalizacaoEOrcamento", "importacaoXml"]);
     }
   });
 });

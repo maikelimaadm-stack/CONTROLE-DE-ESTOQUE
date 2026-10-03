@@ -26,6 +26,7 @@ import financeiroBancosRoutes from "./routes/financeiro-bancos.js";
 import salesRoutes from "./routes/sales.js";
 import comprasRoutes from "./routes/compras.js";
 import comprasOrcamentoRoutes from "./routes/compras-orcamento.js";
+import comprasImportacaoRoutes from "./routes/compras-importacao.js";
 import estoqueRoutes from "./routes/estoque-documentos.js";
 import aprovacoesVendasRoutes from "./routes/aprovacoes-vendas.js";
 import aprovacoesComprasRoutes from "./routes/aprovacoes-compras.js";
@@ -90,6 +91,9 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   await app.register(salesRoutes, { prefix: "/api" });
   await app.register(comprasRoutes, { prefix: "/api" });
   await app.register(comprasOrcamentoRoutes, { prefix: "/api" });
+  // OPERACOES-01 F7 (decisão 284): a importação do XML da NF-e na Central de Compras (/api/compras/importacoes). A API
+  // anterior responde 404 de rota — e a web nova só chama estas rotas com `capacidades.importacaoXml`.
+  await app.register(comprasImportacaoRoutes, { prefix: "/api" });
   await app.register(estoqueRoutes, { prefix: "/api" });
   // TOP-CONFIG-08 (decisão 277): as aprovações moram num prefixo PRÓPRIO, /api/aprovacoes, e não dentro de
   // /api/sales, /api/compras ou /api/estoque. Assim o binário anterior, que não conhece estas rotas,

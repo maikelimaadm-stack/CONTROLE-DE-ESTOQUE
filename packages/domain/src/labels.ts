@@ -67,6 +67,14 @@ export const ENUM_LABELS = {
   // outro, por isso a situação não tem `convertido`.
   especie_documento_estoque: { entrada: "Entrada", saida: "Saída", transferencia: "Transferência", ajuste: "Ajuste", requisicao: "Requisição", consumo: "Consumo", devolucao_consumo: "Devolução de consumo" },
   situacao_documento_estoque: { aberto: "Aberto", confirmado: "Confirmado", cancelado: "Cancelado" },
+  // OPERACOES-01 F7 (decisão 284): a importação do XML da NF-e na Central de Compras (erp.importacoes_nfe_compra), o
+  // vínculo do item da nota com o produto, a classificação do gasto da compra, o rateio da compra e o tipo de fator.
+  situacao_importacao_nfe: { pendente: "Pendente", gerada: "Compra gerada", descartada: "Descartada" },
+  origem_importacao_nfe: { arquivo: "Arquivo XML", dfe: "DF-e recebida" },
+  vinculo_item_nfe: { lembrado: "Vínculo lembrado", sugerido: "Sugerido", ambiguo: "Mais de um produto corresponde", nenhum: "Sem vínculo" },
+  classificacao_gasto: { capex: "CAPEX", opex: "OPEX" },
+  rateio_compra: { documento: "Natureza e centro do documento", por_valor: "Por valor", por_produto: "Por produto" },
+  tipo_fator_conversao: { multiply: "Multiplica", divide: "Divide" },
   // OPERACOES-01 F5a (decisão 282): o atendimento CALCULADO da requisição de material (não é situação do banco).
   atendimento_requisicao_estoque: { pendente: "Pendente", parcial: "Atendida em parte", atendido: "Atendida", encerrado: "Saldo encerrado" },
   animal_movement_type: { purchase: "Compra", sale: "Venda", birth: "Nascimento", death: "Morte", loss: "Perda/desaparecimento", animal_batch_transfer: "Transferência de animais → lote", batch_transfer: "Transferência de animais → lote", batch_grouping: "Agrupamento de lotes", batch_module_area_transfer: "Transferência de lote → módulo/área", module_area_transfer: "Transferência de lote → módulo/área", farm_transfer: "Transferência entre empresas", evolution: "Evolução de categoria", weaning: "Desmama", separation: "Apartação", inventory: "Inventário", processing: "Processamento" },

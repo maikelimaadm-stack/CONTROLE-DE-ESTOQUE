@@ -320,7 +320,20 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
       saldo_encerrado_por: { nome: "Saldo encerrado por", descricao: "Só pedido: quem encerrou o saldo a receber." },
       saldo_encerrado_motivo: { nome: "Motivo do encerramento do saldo", descricao: "Só pedido: por que o saldo a receber foi encerrado." },
       categoria_financeira_id: { nome: "Natureza de despesa", descricao: "Categoria de DESPESA analítica e ativa dos títulos a pagar gerados pela confirmação. Anda em PAR com o centro de custo (os dois ou nenhum); FK composta com o tenant." },
-      centro_custo_id: { nome: "Centro de custo", descricao: "Centro de custo analítico dos títulos a pagar. Anda em PAR com a natureza de despesa; FK composta com o tenant." }
+      centro_custo_id: { nome: "Centro de custo", descricao: "Centro de custo analítico dos títulos a pagar. Anda em PAR com a natureza de despesa; FK composta com o tenant." },
+      valor_total: { nome: "Valor total", descricao: "Itens + frete + outras despesas − desconto + IPI + ICMS-ST + seguro (CHECK; os três últimos vazios valem zero — decisão 284)." },
+      chave_acesso: { nome: "Chave de acesso", descricao: "Só compra: chave de acesso da NF-e (44 dígitos). A nota repetida é barrada no banco: única entre compras não canceladas e cruzada com a nota antiga nos dois sentidos (DUPLICATE_DOCUMENT, decisão 284). Não muda depois do lançamento." },
+      uf_nota: { nome: "UF da nota", descricao: "Só compra: UF da nota (duas letras maiúsculas)." },
+      tipo_documento_fiscal: { nome: "Tipo de documento fiscal", descricao: "Só compra: nfe | cte | nfse | nfce | danfe | darf | dare | gru | other. Valor canônico persistido; o rótulo é traduzido na apresentação." },
+      valor_ipi: { nome: "IPI", descricao: "Só compra: IPI da nota; entra no total e no custo de entrada." },
+      valor_icms_st: { nome: "ICMS-ST", descricao: "Só compra: ICMS-ST da nota; entra no total e no custo de entrada." },
+      seguro: { nome: "Seguro", descricao: "Só compra: seguro da nota; entra no total e no custo de entrada." },
+      tipo_titulo_id: { nome: "Tipo de título", descricao: "Só compra: tipo de título dos títulos a pagar (global ou da organização, conferido por gatilho)." },
+      classificacao_gasto: { nome: "Classificação do gasto", descricao: "Só compra: capex | opex (vai ao título)." },
+      rateio_tipo: { nome: "Tipo de rateio", descricao: "Só compra: por_valor (linhas do rateio da compra) | por_produto (natureza e centro de cada item). Com rateio, o cabeçalho não tem natureza nem centro." },
+      parcelas_nota: { nome: "Parcelas da nota", descricao: "Só compra: as duplicatas da nota (de 1 a 120), conferidas com o líquido; exclusivas com o plano de parcelas da condição." },
+      dfe_id: { nome: "DF-e", descricao: "Só compra: a DF-e de onde a nota veio (FK composta), da mesma chave e sem empresa ou da mesma empresa." },
+      solicitacao_compra_id: { nome: "Solicitação de compra", descricao: "Só compra: a solicitação de compra atendida (FK composta), da mesma empresa; ao receber, a solicitação aceita a compra." }
     }
   },
   {
@@ -328,8 +341,52 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     descricao: "Linha de produto do documento de compra. Identidade pertence ao documento; só muda com o documento aberto.",
     campos: {
       origem_item_id: { nome: "Item do pedido de origem", descricao: "Só na compra recebida de um pedido: o item do pedido que esta linha recebe. Mesmo produto; a soma recebida por compras não canceladas não passa da quantidade do item (gatilho, decisão 268)." },
-      item_pedido_orcado_id: { nome: "Item do pedido orçado", descricao: "Só no orçamento de compra: o item do pedido que esta linha cota (mesmo produto e quantidade; FK composta com o tenant). Não consome saldo (decisão 283)." }
+      item_pedido_orcado_id: { nome: "Item do pedido orçado", descricao: "Só no orçamento de compra: o item do pedido que esta linha cota (mesmo produto e quantidade; FK composta com o tenant). Não consome saldo (decisão 283)." },
+      gera_estoque: { nome: "Gera estoque", descricao: "Só compra: o item dá entrada no estoque na confirmação. Vazio vale sim (como antes); falso não move estoque (decisão 284)." },
+      imobilizado: { nome: "Imobilizado", descricao: "Só compra: o item é imobilizado — a confirmação cria o bem com o valor de entrada rateado." },
+      bem_id: { nome: "Bem", descricao: "O bem criado na confirmação do item imobilizado (FK composta com o tenant)." },
+      categoria_financeira_id: { nome: "Natureza de despesa do item", descricao: "Rateio por produto: natureza de despesa do item. Anda em PAR com o centro de custo do item." },
+      centro_custo_id: { nome: "Centro de custo do item", descricao: "Rateio por produto: centro de custo do item. Anda em PAR com a natureza de despesa do item." },
+      valor_ipi: { nome: "IPI do item", descricao: "IPI do item na nota; entra no custo do item." },
+      valor_icms_st: { nome: "ICMS-ST do item", descricao: "ICMS-ST do item na nota; entra no custo do item." },
+      n_item_nota: { nome: "Item na nota", descricao: "Número do item na nota (1 a 990)." },
+      codigo_produto_nota: { nome: "Código na nota", descricao: "Código do produto na nota do fornecedor." },
+      descricao_produto_nota: { nome: "Descrição na nota", descricao: "Descrição do produto na nota do fornecedor." },
+      unidade_nota: { nome: "Unidade na nota", descricao: "Unidade comercial do fornecedor na nota. Anda junto com a quantidade da nota e o fator." },
+      quantidade_nota: { nome: "Quantidade na nota", descricao: "Quantidade comercial na nota, antes da conversão." },
+      fator_conversao: { nome: "Fator de conversão", descricao: "Fator que converteu a quantidade da nota na do produto (maior que zero)." },
+      tipo_fator_conversao: { nome: "Tipo do fator", descricao: "multiply (quantidade = quantidade da nota × fator) | divide (÷ fator)." }
     }
+  },
+  // OPERACOES-01 F7 (decisão 284): a entrada de nota por XML na Central de Compras (0047).
+  {
+    codigo: "ERP-COMPRAS-NOTA-XML", tabela: "erp.notas_fiscais_xml", nome: "XML original da nota", modulo: "COMPRAS", natureza: "infraestrutura", idGlobal: false,
+    descricao: "O XML da NF-e recebida, guardado no servidor exatamente como chegou: imutável, da empresa destinatária. A importação na Central de Compras e a DF-e apontam para ele.",
+    campos: {
+      chave_acesso: { nome: "Chave de acesso", descricao: "Chave de acesso da NF-e (44 dígitos, DV conferido na leitura)." },
+      xml_sha256: { nome: "SHA-256 do XML", descricao: "Resumo do conteúdo; com a organização e a chave, identifica o XML guardado." }
+    }
+  },
+  {
+    codigo: "ERP-COMPRAS-IMPORTACAO-NFE", tabela: "erp.importacoes_nfe_compra", nome: "Importação de XML de nota", modulo: "COMPRAS", natureza: "infraestrutura", idGlobal: false,
+    descricao: "A conferência do XML de uma NF-e na Central de Compras: pendente, decidida uma vez — gerada (a compra aberta criada dela) ou descartada. Uma pendente por chave na organização; nunca se apaga.",
+    campos: {
+      situacao: { nome: "Situação", descricao: "pendente | gerada | descartada. Decidida uma vez (gatilho); gerada e descartada são finais." },
+      origem: { nome: "Origem", descricao: "arquivo (enviado na Central de Compras) | dfe (aberto pelo \"Lançar\" da DF-e)." },
+      documento_compra_id: { nome: "Compra gerada", descricao: "Só na gerada: a compra criada da nota, da mesma empresa e chave." }
+    }
+  },
+  {
+    codigo: "ERP-COMPRAS-VINCULO-PRODUTO", tabela: "erp.produto_fornecedor_vinculos", nome: "Vínculo do produto do fornecedor", modulo: "COMPRAS", natureza: "linha", idGlobal: false,
+    descricao: "Fornecedor + código + unidade do fornecedor na nota → produto + fator. Lembrado ao gerar a compra da nota e sugerido nas notas seguintes; cadastro da organização.",
+    campos: {
+      tipo_fator: { nome: "Tipo do fator", descricao: "multiply (quantidade interna = quantidade da nota × fator) | divide (÷ fator)." },
+      fator: { nome: "Fator", descricao: "Fator de conversão da unidade do fornecedor para a do produto (maior que zero)." }
+    }
+  },
+  {
+    codigo: "ERP-COMPRAS-DOCUMENTO-RATEIO", tabela: "erp.documentos_compra_rateio", nome: "Rateio por valor da compra", modulo: "COMPRAS", natureza: "linha", idGlobal: false,
+    descricao: "Linha do rateio por valor da compra (natureza, centro de custo, conta contábil e safra, com o percentual). Gravada com a compra aberta e imutável depois; o escopo de empresa vem da compra."
   },
 
   // ---------- Financeiro ----------
