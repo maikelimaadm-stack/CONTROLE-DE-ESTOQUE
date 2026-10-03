@@ -1000,7 +1000,7 @@ Movimentação de produtos entre locais de estoque ou entre empresas. A coluna `
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/transferencias/:id` |
-| Tipo de Operação | `estoque.transferencia_entre_armazens` (Transferência entre armazéns) · `estoque.transferencia_entre_empresas` (Transferência entre empresas) |
+| Tipo de Operação | `estoque.transferencia_entre_armazens` (Transferência entre locais de estoque) · `estoque.transferencia_entre_empresas` (Transferência entre empresas) |
 | Discriminador do Tipo de Operação | `kind` (decide qual das operações acima o registro é) |
 | Migração | Possui DUAS colunas de empresa (origem e destino): o escopo de leitura considera ambas. |
 
@@ -1074,7 +1074,7 @@ Documento de estoque do Portal de Estoque (decisão 274), com TOP obrigatória. 
 | ID Global | sim |
 | Discriminador | `especie` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
 | Rotas por variante | `entrada` → `/estoque/movimentacoes/entradas/:id` · `saida` → `/estoque/movimentacoes/saidas/:id` · `transferencia` → `/estoque/movimentacoes/transferencias/:id` · `ajuste` → `/estoque/movimentacoes/ajustes/:id` · `requisicao` → `/estoque/movimentacoes/requisicoes/:id` · `consumo` → `/estoque/movimentacoes/consumos/:id` · `devolucao_consumo` → `/estoque/movimentacoes/devolucoes-consumo/:id` |
-| Tipo de Operação | `estoque.entrada` (Entrada de estoque) · `estoque.saida` (Saída de estoque) · `estoque.transferencia` (Transferência de estoque) · `estoque.ajuste` (Ajuste de estoque (inventário)) · `estoque.requisicao_material` (sem rótulo no catálogo) · `estoque.consumo` (sem rótulo no catálogo) · `estoque.devolucao_consumo` (sem rótulo no catálogo) |
+| Tipo de Operação | `estoque.entrada` (Entrada de estoque) · `estoque.saida` (Saída de estoque) · `estoque.transferencia` (Transferência de estoque) · `estoque.ajuste` (Ajuste de estoque (inventário)) · `estoque.requisicao_material` (Requisição de material) · `estoque.consumo` (Consumo) · `estoque.devolucao_consumo` (Devolução de consumo) |
 | Discriminador do Tipo de Operação | `especie` (decide qual das operações acima o registro é) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
@@ -1250,7 +1250,7 @@ Documento comercial de compra (decisões 267 e 283). A coluna `especie` decide a
 | ID Global | sim |
 | Discriminador | `especie` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
 | Rotas por variante | `pedido` → `/compras/pedidos/:id` · `compra` → `/compras/compras/:id` · `orcamento` → `/compras/orcamentos/:id` |
-| Tipo de Operação | `compras.pedido` (Pedido de compra) · `compras.compra` (Compra) · `compras.orcamento` (sem rótulo no catálogo) |
+| Tipo de Operação | `compras.pedido` (Pedido de compra) · `compras.compra` (Compra) · `compras.orcamento` (Orçamento de compra) |
 | Discriminador do Tipo de Operação | `especie` (decide qual das operações acima o registro é) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
@@ -1594,7 +1594,7 @@ Lançamento em conta bancária (transferência, tarifa, aplicação).
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/financeiro/movimentos/:id` |
-| Tipo de Operação | `financeiro.movimento_bancario` (sem rótulo no catálogo) |
+| Tipo de Operação | `financeiro.movimento_bancario` (Movimento bancário) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1854,7 +1854,7 @@ Entrada, saída, venda ou morte de animais. O tipo faz parte da rota canônica.
 | ID Global | sim |
 | Discriminador | `movement_type` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
 | Rotas por variante | `purchase` → `/pecuaria/movimentacoes/purchase/:id` · `sale` → `/pecuaria/movimentacoes/sale/:id` · `birth` → `/pecuaria/movimentacoes/birth/:id` · `death` → `/pecuaria/movimentacoes/death/:id` · `loss` → `/pecuaria/movimentacoes/loss/:id` |
-| Tipo de Operação | `pecuaria.compra_de_animais` (sem rótulo no catálogo) · `pecuaria.venda_de_animais` (sem rótulo no catálogo) |
+| Tipo de Operação | `pecuaria.compra_de_animais` (Compra de animais) · `pecuaria.venda_de_animais` (Venda de animais) |
 | Discriminador do Tipo de Operação | `movement_type` (decide qual das operações acima o registro é) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
@@ -1898,7 +1898,7 @@ Manejo sanitário, nutricional ou reprodutivo aplicado a animais/lotes.
 | ID Global | sim |
 | Discriminador | `handling_type` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
 | Rotas por variante | `nutrition` → `/pecuaria/manejo/nutrition/:id` · `sanitary` → `/pecuaria/manejo/sanitary/:id` · `weaning` → `/pecuaria/manejo/weaning/:id` · `separation` → `/pecuaria/manejo/separation/:id` · `pasture` → `/pecuaria/manejo/pasture/:id` · `locate` → `/pecuaria/manejo/locate/:id` |
-| Tipo de Operação | `pecuaria.manejo` (sem rótulo no catálogo) |
+| Tipo de Operação | `pecuaria.manejo` (Manejo) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1966,7 +1966,7 @@ Batelada de dieta do confinamento: consome os ingredientes da dieta (kg × %) do
 | Escopo de empresa | `empresa_id` |
 | Exclusão lógica | não |
 | ID Global | não |
-| Tipo de Operação | `confinamento.batelada` (sem rótulo no catálogo) |
+| Tipo de Operação | `confinamento.batelada` (Batelada) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
