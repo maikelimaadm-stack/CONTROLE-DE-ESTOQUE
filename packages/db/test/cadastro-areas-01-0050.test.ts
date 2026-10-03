@@ -36,7 +36,7 @@ async function aplicar(): Promise<void> {
   }
 }
 
-async function recusaDa0042(antes?: (c: Tx) => Promise<unknown>): Promise<string> {
+async function recusaDa0050(antes?: (c: Tx) => Promise<unknown>): Promise<string> {
   const m = listMigrations().find((x) => x.name === ALVO)!;
   const c = await db.connect();
   try {
@@ -83,7 +83,7 @@ describe("CADASTRO-AREAS-01 — 0050", () => {
     const empresa = demo.empresaIds[0]!;
     const areaAntes = await id1(
       `insert into erp.areas (organization_id, empresa_id, code, name, area_ha, is_active)
-       values ($1,$2,'PRE42','Pasto pré-0042',12.5,true) returning id`,
+       values ($1,$2,'PRE50','Pasto pré-0050',12.5,true) returning id`,
       [demo.orgId, empresa]
     );
     const areaInativa = await id1(
@@ -172,16 +172,16 @@ describe("CADASTRO-AREAS-01 — 0050", () => {
 
   it("T7 reversa: trava ocupada e pré-condição 'já aplicada' recusam sem efeito", async () => {
     // Banco já tem a 0050 no ledger deste describe — reaplicar na tx desfeita.
-    const msgJa = await recusaDa0042();
+    const msgJa = await recusaDa0050();
     expect(msgJa).toMatch(/CADASTRO-AREAS-01: erp\.retiros ja existe/);
 
-    // Trava (2026,76) ocupada por outra sessão.
+    // Trava (2026,84) ocupada por outra sessão.
     const holder = await db.connect();
     try {
       await holder.query("begin");
-      await holder.query("select pg_advisory_xact_lock(2026, 76)");
-      const msgTrava = await recusaDa0042();
-      expect(msgTrava).toMatch(/trava desta migration \(2026,76\)/);
+      await holder.query("select pg_advisory_xact_lock(2026, 84)");
+      const msgTrava = await recusaDa0050();
+      expect(msgTrava).toMatch(/trava desta migration \(2026,84\)/);
       await holder.query("rollback");
     } finally {
       holder.release();
