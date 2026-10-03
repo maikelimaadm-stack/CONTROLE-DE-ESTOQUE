@@ -21,13 +21,17 @@ import { configDeTeste, escoposDeTodosOsModulos, harness, ids, TEST_URL, type Ha
  *   • "com RLS" — a API de sempre, pelo papel da aplicação (o caminho real: RLS e API juntas);
  *   • "só a API" — a MESMA API sobre um papel de banco que ATRAVESSA a RLS (premissa provada abaixo). Aqui a única
  *     barreira é o SQL da rota: é o que reprova sem o conserto (a linha de B seria gravada/lida) e passa com ele.
+ *
+ * E o PAINEL INICIAL (`/dashboards/home`), onde a dívida era vazamento de verdade, não só defesa em profundidade: a
+ * rota não tem módulo (a RLS deixa ver a UNIÃO das empresas visíveis em todos os módulos), e cada bloco fixa o módulo
+ * no marcador (`{{escopo:…|financeiro}}`). Sem o alias, quem tem financeiro=[A] e estoque=[A,B] somava os títulos de B.
  */
 let h: Harness; let I: Awaited<ReturnType<typeof ids>>;
 let admin: Db; let poolSemRls: Db; let apiSemRls: FastifyInstance;
 let A = ""; let B = ""; let WH_A = ""; let WH_B = ""; let SO_A: Record<string, string> = {};
 const PAPEL_SEM_RLS = "erp_app_sem_rls_test";
 const PERMS = ["requisitions.edit", "dfe.view", "dfe.manifest", "dfe_drafts.ignore", "depreciations.create", "depreciation_forecast.view",
-  "earnings.view", "earnings.edit", "service_orders.rate", "service_orders.monitor", "warehouses.view"];
+  "earnings.view", "earnings.edit", "service_orders.rate", "service_orders.monitor", "warehouses.view", "report.dfe.view", "budget_plannings.view"];
 
 type Api = () => FastifyInstance;
 const APIS: [string, Api][] = [["com RLS", () => h.app], ["só a API", () => apiSemRls]];
@@ -246,5 +250,82 @@ describe("OPERACOES-01 F12 — escopo de empresa amarrado à linha (alias)", () 
     expect((await comoInexistente(api, "GET", (id) => `/api/resources/warehouses/${id}`, WH_B)).status).toBe(404);
     const ok = await chamar(api, "GET", `/api/resources/warehouses/${WH_A}`);
     expect([ok.statusCode, j(ok).id]).toEqual([200, WH_A]);
+  });
+
+  it.each(APIS)("GET /reports/dfe (%s): a de A e a sem empresa no relatório, nunca a de B", async (_n, api) => {
+    const d = await dfes();
+    await deB("dfe_documents", d.b);
+    const chaves = (await admin.query<{ id: string; access_key: string }>("select id, access_key from erp.dfe_documents where id = any($1::uuid[])", [[d.a, d.b, d.semEmpresa]])).rows;
+    const chave = (id: string) => chaves.find((x) => x.id === id)!.access_key;
+    const r = await chamar(api, "GET", "/api/reports/dfe");
+    expect(r.statusCode, r.body).toBe(200);
+    const noRelatorio = new Set((j(r).rows as { access_key: string }[]).map((x) => x.access_key));
+    expect([noRelatorio.has(chave(d.a)), noRelatorio.has(chave(d.semEmpresa)), noRelatorio.has(chave(d.b))]).toEqual([true, true, false]);
+  });
+
+  it.each(APIS)("GET /financial/budget-plannings/:id/values (%s): a previsão de B como inexistente; a de A é lida", async (_n, api) => {
+    seq += 1; const n = seq;
+    const bp = await porEmpresa((empresa, s) => inserir("budget_plannings", { organization_id: h.demo.orgId, empresa_id: empresa, code: `F12-BP${n}${s}`, planning_date: "2026-10-01", year: 2040 + n }));
+    await deB("budget_plannings", bp.b);
+    expect((await comoInexistente(api, "GET", (id) => `/api/financial/budget-plannings/${id}/values`, bp.b)).status).toBe(404);
+    const ok = await chamar(api, "GET", `/api/financial/budget-plannings/${bp.a}/values`);
+    expect([ok.statusCode, j(ok).year]).toEqual([200, 2040 + n]);
+  });
+});
+
+describe("OPERACOES-01 F12 — o painel inicial (rota sem módulo) respeita o módulo de cada bloco", () => {
+  type Hdr = Record<string, string>;
+  let RESTRITO: Hdr = {}; let TOTAL: Hdr = {};
+  const MES = { inicio: "2031-03-01", fim: "2031-03-31", vencimento: "2031-03-15" };
+  /** Membro só com o painel inicial: o financeiro como pedido, o estoque com A e B (a união da RLS inclui B). */
+  async function membro(nome: string, email: string, financeiro: { modo: "todas" | "selecionadas"; empresas: string[] }): Promise<Hdr> {
+    const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `Perfil ${nome}`, permissions: ["dashboard.home.view"] } });
+    expect(papel.statusCode, papel.body).toBe(201);
+    const m = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Escopo@12345", role_id: j(papel).id,
+      escopos_empresas: [{ modulo: "financeiro", ...financeiro }, { modulo: "estoque", modo: "selecionadas", empresas: [A, B] }] } });
+    expect(m.statusCode, m.body).toBe(201);
+    const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Escopo@12345" } });
+    expect(login.statusCode, login.body).toBe(200);
+    return { authorization: `Bearer ${j(login).token as string}`, "x-org-id": h.demo.orgId };
+  }
+  /** Título a pagar aberto (superusuário: o cenário). */
+  const titulo = (empresa: string, codigo: string, valor: string, vencimento: string) => inserir("financial_titles", {
+    organization_id: h.demo.orgId, empresa_id: empresa, code: codigo, direction: "payable", number: codigo, person_id: I.provider, amount: valor,
+    emission_date: vencimento < MES.inicio ? "2020-01-01" : MES.inicio, due_date: vencimento });
+  let tituloB = ""; let vencidoB = "";
+  /** O que o banco tem, por empresa: a previsão de despesa do mês e os títulos a pagar vencidos. */
+  async function noBanco(empresas: string[]) {
+    const previsto = await um<{ v: string | null }>(
+      `select sum(amount - discount)::text v from erp.financial_titles where organization_id = $1 and empresa_id = any($2::uuid[]) and direction = 'payable'
+          and status not in ('cancelled', 'previsto') and deleted_at is null and due_date between $3 and $4`, [h.demo.orgId, empresas, MES.inicio, MES.fim]);
+    const vencidos = await um<{ n: string }>(
+      `select count(*)::text n from erp.financial_titles where organization_id = $1 and empresa_id = any($2::uuid[]) and direction = 'payable'
+          and status in ('open', 'partially_paid') and due_date < current_date`, [h.demo.orgId, empresas]);
+    return { previsto: previsto.v, vencidos: vencidos.n };
+  }
+  const painel = async (api: Api, headers: Hdr) => {
+    const r = await api().inject({ method: "GET", url: `/api/dashboards/home?start_date=${MES.inicio}&end_date=${MES.fim}`, headers });
+    expect(r.statusCode, r.body).toBe(200);
+    const corpo = j(r) as { forecast_vs_actual: { month: string; expense_forecast: string }[]; alerts: { overdue_payables: string } };
+    return { previsto: corpo.forecast_vs_actual.find((x) => x.month === MES.inicio.slice(0, 7))?.expense_forecast ?? null, vencidos: corpo.alerts.overdue_payables };
+  };
+
+  beforeAll(async () => {
+    RESTRITO = await membro("F12 financeiro só A", "f12-fin-a@demo.local", { modo: "selecionadas", empresas: [A] });
+    TOTAL = await membro("F12 financeiro todas", "f12-fin-todas@demo.local", { modo: "todas", empresas: [] });
+    await titulo(A, "F12-H-A", "100.00", MES.vencimento);
+    tituloB = await titulo(B, "F12-H-B", "7777.77", MES.vencimento);
+    await titulo(A, "F12-HV-A", "10.00", "2020-01-10");
+    vencidoB = await titulo(B, "F12-HV-B", "20.00", "2020-01-10");
+  });
+
+  it.each(APIS)("o painel inicial (%s): financeiro só de A não soma nem conta o título de B; financeiro todas, sim", async (_n, api) => {
+    // PREMISSA: os títulos de B existem e são de B; B pesa nos dois números (a soma de A é diferente da de A+B).
+    await deB("financial_titles", tituloB); await deB("financial_titles", vencidoB);
+    const soA = await noBanco([A]); const aEB = await noBanco([A, B]);
+    expect(soA.previsto).not.toBe(aEB.previsto);
+    expect(Number(aEB.vencidos)).toBeGreaterThan(Number(soA.vencidos));
+    expect(await painel(api, RESTRITO)).toEqual(soA);
+    expect(await painel(api, TOTAL)).toEqual(aEB);
   });
 });
