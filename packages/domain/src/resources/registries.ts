@@ -8,7 +8,9 @@ import {
   STATUS_DA_AREA,
   TEXTURA_DO_SOLO,
   TIPOS_DE_USO_DA_AREA,
-  TIPO_DE_PASTAGEM
+  TIPO_DE_PASTAGEM,
+  CORES_DA_AREA,
+  COR_PADRAO_DA_AREA
 } from "../tipos-de-uso-da-area.js";
 
 const active = (name = "is_active"): FieldDef => ({ name, label: "Ativo", type: "boolean", default: true, list: true, filter: true, span: 2 });
@@ -429,7 +431,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       S("status", "Situação", STATUS_DA_AREA, { required: true, list: true, filter: true, default: "ativa", section: "Identificação", span: 3 }),
       REF("retiro_id", "Retiro", "retiros", { list: true, filter: true, section: "Identificação", span: 4 }),
       REF("grazing_module_id", "Módulo de pastejo", "grazing_modules", { list: true, filter: true, section: "Identificação", span: 4 }),
-      T("color", "Cor", { section: "Identificação", span: 2, padrao: { regex: "^#[0-9A-Fa-f]{6}$", mensagem: "Informe uma cor no formato #RRGGBB." } }),
+      S("color", "Cor", CORES_DA_AREA, { list: true, filter: true, default: COR_PADRAO_DA_AREA, section: "Identificação", span: 3 }),
       Q("area_ha", "Área total (ha)", { required: true, list: true, section: "Medidas", span: 3 }),
       Q("usable_area_ha", "Área útil (ha)", { required: true, list: true, section: "Medidas", span: 3 }),
       Q("declared_area_ha", "Área declarada (ha)", { section: "Medidas", span: 3 }),

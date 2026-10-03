@@ -90,7 +90,7 @@ function LayoutCardView({ label, collapsible, colSpan, children }: { label: stri
  * Renderiza o layout configurável (painéis → cards → linhas → campos) com campos ocultos/travados/obrigatórios,
  * rótulos e valores padrão definidos pelo usuário ou pela organização.
  */
-export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, onCancel, rapido, presetExtra }: { resourceKey: string; id: string; basePath?: string; afterSave?: (row: Values) => void; embedded?: EmbeddedForm; /** modo diálogo: cancelar fecha o diálogo em vez de navegar */ onCancel?: () => void; /** CADASTRO RÁPIDO: só `camposRapidos` do registry, mesma API */ rapido?: boolean; /** valores iniciais vindos de quem abriu (ex.: tipo pré-marcado no cadastro rápido) */ presetExtra?: Record<string, string> }) {
+export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, onCancel, rapido, presetExtra, camposOcultos, sobrescrever }: { resourceKey: string; id: string; basePath?: string; afterSave?: (row: Values) => void; embedded?: EmbeddedForm; /** modo diálogo: cancelar fecha o diálogo em vez de navegar */ onCancel?: () => void; /** CADASTRO RÁPIDO: só `camposRapidos` do registry, mesma API */ rapido?: boolean; /** valores iniciais vindos de quem abriu (ex.: tipo pré-marcado no cadastro rápido) */ presetExtra?: Record<string, string>; /** campos do registry omitidos na UI (continuam no corpo se estiverem nos valores — ex.: geometria já desenhada no Mapa de Manejo) */ camposOcultos?: string[]; /** sobrescreve valores depois de carregar o registro (ex.: novo contorno vindo do mapa) */ sobrescrever?: Record<string, unknown> }) {
   const def = getResource(resourceKey); const router = useRouter(); const sp = useSearchParams(); const qc = useQueryClient(); const { can, ctx } = useAuth();
   // AJUSTES 01 (C-1/C-2, seção 7): a API declara a janela de consulta de CNPJ e os campos novos do Parceiro
   const consultaJanela = useConsultaCnpjJanela();
@@ -134,7 +134,19 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const appliedDefaults = React.useRef(false);
   // valores padrão do layout entram só em campos ainda não editados pelo usuário (não descarta o que já foi digitado)
   React.useEffect(() => { if (isNew && layout.loaded && !appliedDefaults.current && Object.keys(l.fieldDefaultValues).length) { appliedDefaults.current = true; const d = defaults(fields, preset, l.fieldDefaultValues); for (const f of fields) { if (!(f.name in l.fieldDefaultValues) || preset[f.name] !== undefined) continue; if (form.getFieldState(f.name).isDirty) continue; form.setValue(f.name, d[f.name]); } } }, [isNew, layout.loaded, l.fieldDefaultValues, fields, preset, form]);
-  React.useEffect(() => { if (q.data && def && !isNew) form.reset({ ...fromRecord(def.fields, q.data), ...(ficha ? fichaDoRegistro(def, q.data) : {}) }); }, [q.data, def, form, isNew]);
+  React.useEffect(() => {
+    if (q.data && def && !isNew) {
+      const v: Values = { ...fromRecord(def.fields, q.data), ...(ficha ? fichaDoRegistro(def, q.data) : {}) };
+      if (sobrescrever) {
+        for (const [k, x] of Object.entries(sobrescrever)) {
+          const f = def.fields.find((d) => d.name === k);
+          if (!f) continue;
+          v[k] = f.type === "json" ? (typeof x === "string" ? x : JSON.stringify(x ?? null)) : x === null || x === undefined ? "" : x;
+        }
+      }
+      form.reset(v);
+    }
+  }, [q.data, def, form, isNew, ficha, sobrescrever]);
   // duplicar: novo registro pré-preenchido com os valores do registro de origem (exceto código/identificadores)
   const copySrc = embedded?.copyFrom ?? copyQ.data ?? null;
   React.useEffect(() => { if (isNew && def) { if (copySrc) { const v = fromRecord(def.fields, copySrc); for (const f of def.fields) if (f.name === "code" || f.readOnly) v[f.name] = f.type === "boolean" ? false : f.type === "tags" ? [] : ""; form.reset(v); } else form.reset(defaults(fields, preset, l.fieldDefaultValues)); } }, [isNew, copySrc, def]);
@@ -191,7 +203,8 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   if (!isNew && q.isLoading && !q.data) return <div className="p-6"><Spinner /></div>;
   if (q.error) return <ErrorBox error={q.error} />;
   const values = form.watch();
-  const visible = (f: FieldDef) => campoVisivel(f, can) && capacidadeDoCampo(f, ctx?.capacidades) && (!rapido || !def.camposRapidos || def.camposRapidos.includes(f.name)) && !l.hiddenFieldIds.includes(f.name) && (!f.visibleWhen || iguala(values[f.visibleWhen.field], f.visibleWhen.equals)) && !(isNew && f.readOnly && f.name === "code" && !codigoTravado);
+  const ocultos = React.useMemo(() => new Set(camposOcultos ?? []), [camposOcultos]);
+  const visible = (f: FieldDef) => campoVisivel(f, can) && capacidadeDoCampo(f, ctx?.capacidades) && (!rapido || !def.camposRapidos || def.camposRapidos.includes(f.name)) && !l.hiddenFieldIds.includes(f.name) && !ocultos.has(f.name) && (!f.visibleWhen || iguala(values[f.visibleWhen.field], f.visibleWhen.equals)) && !(isNew && f.readOnly && f.name === "code" && !codigoTravado);
   const back = basePath ?? `/cadastros/${resourceKey}`;
   const byId = new Map(fields.map((f) => [f.name, f]));
   // obrigatório do registry, do layout ou CONDICIONAL (`requiredWhen`): campo de condição vazio vale o `default` dele (ex.: Controla estoque = Sim)

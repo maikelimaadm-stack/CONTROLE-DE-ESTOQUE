@@ -117,13 +117,14 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
 
     const primeira = uniq("Talhão E2E").toLocaleUpperCase("pt-BR");
     await confirmar.click();
-    await expect(page.getByTestId("mapa-form-tamanho"), "o tamanho vem calculado do desenho").not.toHaveValue("");
-    await expect(page.getByTestId("mapa-cor-opcao")).toHaveCount(16);
-    await expect(page.locator('[data-testid="mapa-cor-opcao"][aria-checked="true"]')).toHaveCount(1);
-    await page.getByRole("radio", { name: "Verde claro", exact: true }).click();
-    await expect(page.getByRole("radio", { name: "Verde claro", exact: true })).toHaveAttribute("aria-checked", "true");
-    await page.getByTestId("mapa-form-nome").fill(primeira);
-    await page.getByTestId("mapa-form-salvar").click();
+    const ficha = page.getByTestId("mapa-ficha-cadastro");
+    await expect(ficha, "após fechar o polígono abre a mesma ficha de Áreas/Piquetes").toBeVisible();
+    await expect(ficha.locator('input[name="area_ha"]'), "o tamanho vem calculado do desenho").not.toHaveValue("");
+    // Cor: lista fechada (MgSelect), não campo aberto
+    await ficha.getByRole("combobox").filter({ hasText: /Azul escuro|Selecione|Branco|Verde/ }).first().click();
+    await page.getByRole("option", { name: "Verde claro", exact: true }).click();
+    await ficha.locator('input[name="name"]').fill(primeira);
+    await ficha.getByRole("button", { name: "Salvar" }).click();
     await expect(page.getByTestId("mapa-instrucao")).toBeHidden();
     await expect(page.getByTestId("mapa-item-area").filter({ hasText: primeira })).toBeVisible();
 
@@ -187,12 +188,14 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
     await expect(acao).toHaveText("Fechado com Enter");
     const segunda = uniq("Divisa E2E").toLocaleUpperCase("pt-BR");
     await confirmar.click();
-    await page.getByTestId("mapa-form-nome").fill(segunda);
-    await page.getByTestId("mapa-form-salvar").click();
+    const ficha2 = page.getByTestId("mapa-ficha-cadastro");
+    await expect(ficha2).toBeVisible();
+    await ficha2.locator('input[name="name"]').fill(segunda);
+    await ficha2.getByRole("button", { name: "Salvar" }).click();
     await expect(page.getByTestId("mapa-item-area").filter({ hasText: segunda })).toBeVisible();
 
     const lista = await api<{ items: Area[] }>(page, "GET", "/api/resources/areas?pageSize=500");
-    expect(lista.items.find((a) => a.name === primeira)?.color, "a cor escolhida na paleta é a gravada").toBe("#92ca25");
+    expect(lista.items.find((a) => a.name === primeira)?.color, "a cor escolhida na lista é a gravada").toBe("#92ca25");
     const gravada = lista.items.find((a) => a.name === segunda);
     const anel = gravada?.geometria?.coordinates[0] ?? [];
     expect(anel.length, "polígono canônico: 3 pontos + o de fechamento").toBe(4);
@@ -202,11 +205,13 @@ test.describe("editor de desenho do Mapa de Manejo", () => {
 
     // ---------- edição da ficha ----------
     await page.getByTestId("mapa-item-area").filter({ hasText: primeira }).click();
-    await expect(page.getByTestId("mapa-ficha-edicao")).toBeVisible();
+    const fichaEdit = page.getByTestId("mapa-ficha-edicao").getByTestId("mapa-ficha-cadastro");
+    await expect(fichaEdit).toBeVisible();
     const editado = uniq("Talhão Edit").toLocaleUpperCase("pt-BR");
-    await page.getByTestId("mapa-edit-nome").fill(editado);
-    await page.getByTestId("mapa-edit-cor").getByRole("radio", { name: "Laranja", exact: true }).click();
-    await page.getByTestId("mapa-edit-salvar").click();
+    await fichaEdit.locator('input[name="name"]').fill(editado);
+    await fichaEdit.getByRole("combobox").filter({ hasText: /Verde claro|Azul|Laranja|Cor/ }).first().click();
+    await page.getByRole("option", { name: "Laranja", exact: true }).click();
+    await fichaEdit.getByRole("button", { name: "Salvar" }).click();
     await expect(page.getByTestId("mapa-item-area").filter({ hasText: editado })).toBeVisible();
     const apos = await api<{ items: Area[] }>(page, "GET", "/api/resources/areas?pageSize=500");
     expect(apos.items.find((a) => a.name === editado)?.color).toBe("#f5a01b");

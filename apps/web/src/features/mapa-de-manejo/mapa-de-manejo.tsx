@@ -7,9 +7,9 @@ import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
 import { Check, Redo2, RotateCcw, Undo2, Upload } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, qs, newIdem } from "@/lib/api";
-import { useAuth, empresasDoContexto } from "@/lib/auth";
+import { useAuth } from "@/lib/auth";
 import { useEmpresaPadrao } from "@/features/docs/shared";
-import { Card, CardBody, Button, Spinner, EmptyState, ErrorState, Field, Input, ConfirmDialog } from "@/components/ui";
+import { Card, CardBody, Button, Spinner, EmptyState, ErrorState, ConfirmDialog } from "@/components/ui";
 import { cn, num } from "@/lib/utils";
 import { criarSessaoGoogle, estiloSatelite, estiloFundoLiso, fonteRaster, ID_BASE, type TipoBase, CENTRO_PADRAO, ZOOM_PADRAO } from "./basemap";
 import {
@@ -19,14 +19,14 @@ import {
 } from "./editor-desenho";
 import { CamadaDesenho, type Lado, type RotuloArea } from "./camada-desenho";
 import { BarraIma } from "./barra-ima";
-import { COR_LINHA_AREA, COR_PADRAO_AREA, PALETA_AREAS, corBordaNoMapa, corExibidaNoMapa } from "./cores";
+import { COR_LINHA_AREA, COR_PADRAO_AREA, corBordaNoMapa, corExibidaNoMapa } from "./cores";
 import { parseImportacaoMapa, rotuloFormato, type AreaImportada } from "./importacao";
 import { suavizarRotulos } from "./rotulos";
+import { FichaAreaNoMapa } from "@/features/areas/ficha-area-no-mapa";
 
 /**
- * Unificação mapa × áreas: o Mapa de Manejo grava o cadastro único erp.areas (retiro, uso, área útil,
- * geometria). O polígono é desenhado no mapa (MapLibre + editor próprio). CRUD em /api/resources/areas
- * (permissão batch_area). O recurso mapa_areas ficou legado de skew.
+ * Unificação mapa × áreas: o Mapa de Manejo e Áreas/Piquetes são o mesmo cadastro (erp.areas).
+ * O mapa desenha/importa o contorno (opcional); a ficha é o ResourceForm de areas (mesmas informações).
  */
 
 interface AreaApi {
@@ -88,13 +88,12 @@ const PRECISAO_BOA_M = 50;
 const JANELA_DUPLO_MS = 600;
 
 export function MapaDeManejo() {
-  const { session, ctx } = useAuth();
+  const { session } = useAuth();
   const searchParams = useSearchParams();
   const empresaSessao = session?.empresaId ?? null;
   // Empresa da área nova: a da sessão, ou a primeira do contexto (mesma regra das telas de lançamento). É PEDIDO —
   // o servidor confere o escopo.
   const empresaId = useEmpresaPadrao();
-  const empresaNome = empresasDoContexto(ctx).find((e) => e.id === empresaId)?.name ?? "";
   const queryClient = useQueryClient();
 
   const containerRef = React.useRef<HTMLDivElement | null>(null);
@@ -105,13 +104,10 @@ export function MapaDeManejo() {
   const [desenhando, setDesenhando] = React.useState(false);
   const [rascunho, setRascunho] = React.useState<Rascunho | null>(null);
   const [selecionada, setSelecionada] = React.useState<string | null>(null);
-  /** Edição da ficha (nome/cor/ha) sem redesenhar o polígono. */
+  /** Edição da ficha completa (ResourceForm) sem redesenhar o polígono. */
   const [editandoFicha, setEditandoFicha] = React.useState(false);
-  const [form, setForm] = React.useState<{
-    name: string; color: string; area_ha: string; usable_area_ha: string; land_use: string; status: string; retiro_id: string; tenure: string;
-  }>({
-    name: "", color: COR_PADRAO, area_ha: "", usable_area_ha: "", land_use: "pastagem", status: "ativa", retiro_id: "", tenure: "propria"
-  });
+  /** Cadastro pela ficha sem desenhar contorno (geometria opcional). */
+  const [fichaSemContorno, setFichaSemContorno] = React.useState(false);
   const [excluir, setExcluir] = React.useState<AreaApi | null>(null);
   const [erro, setErro] = React.useState<string | null>(null);
   const [localizacao, setLocalizacao] = React.useState<{ precisao: number } | null>(null);
@@ -435,13 +431,8 @@ export function MapaDeManejo() {
           if (!area) return;
           setSelecionada(area.id);
           setEditandoFicha(true);
-          const ha = area.area_ha === null || area.area_ha === undefined || area.area_ha === "" ? 0 : Number(area.area_ha);
-          const haStr = (Math.round(ha * 100) / 100).toFixed(2);
-          setForm({
-            name: area.name, color: area.color ?? COR_PADRAO, area_ha: haStr, usable_area_ha: haStr,
-            land_use: area.land_use || "pastagem", status: area.status || "ativa",
-            retiro_id: area.retiro_id || "", tenure: area.tenure || "propria"
-          });
+          setFichaSemContorno(false);
+          setRascunho(null);
           setErro(null);
         });
         let hoverId: string | null = null;
@@ -574,8 +565,7 @@ export function MapaDeManejo() {
     const features: Feature<Polygon>[] = areas
       .filter((a) => a.geometria && a.geometria.type === "Polygon" && a.id !== ocultarId)
       .map((a) => {
-        // Preview ao vivo da cor na ficha em edição.
-        const corCadastro = editandoFicha && a.id === selecionada ? form.color : a.color;
+        const corCadastro = a.color;
         const exibida = corExibidaNoMapa(corCadastro);
         return {
           type: "Feature" as const,
@@ -585,67 +575,7 @@ export function MapaDeManejo() {
         };
       });
     src.setData({ type: "FeatureCollection", features });
-  }, [areas, mapaPronto, editandoFicha, selecionada, form.color, editandoContornoId]);
-
-  const salvar = useMutation({
-    mutationFn: async () => {
-      if (!rascunho) return;
-      const tamanho = form.area_ha.trim() === "" ? rascunho.area_ha : Number(form.area_ha.replace(",", "."));
-      const nome = form.name.trim().toLocaleUpperCase("pt-BR");
-      if (rascunho.editandoId) {
-        await api(`/api/resources/areas/${rascunho.editandoId}`, {
-          method: "PUT",
-          body: {
-            name: nome, color: form.color, area_ha: tamanho,
-            usable_area_ha: form.usable_area_ha.trim() === "" ? tamanho : Number(form.usable_area_ha.replace(",", ".")),
-            land_use: form.land_use, status: form.status, tenure: form.tenure,
-            retiro_id: form.retiro_id || null,
-            geometria: rascunho.geometria
-          }
-        });
-        return;
-      }
-      if (!empresaId) throw new Error("Nenhuma empresa disponível para cadastrar a área.");
-      await api("/api/resources/areas", {
-        method: "POST",
-        idempotencyKey: newIdem(),
-        body: {
-          empresa_id: empresaId, name: nome, color: form.color, area_ha: tamanho,
-          usable_area_ha: form.usable_area_ha.trim() === "" ? tamanho : Number(form.usable_area_ha.replace(",", ".")),
-          land_use: form.land_use, status: form.status, tenure: form.tenure,
-          retiro_id: form.retiro_id || null,
-          geometria: rascunho.geometria
-        }
-      });
-    },
-    onSuccess: () => { sairDoDesenho(); setErro(null); void queryClient.invalidateQueries({ queryKey: ["areas-mapa"] }); },
-    onError: (e: unknown) => setErro(e instanceof Error ? e.message : "Não foi possível salvar a área.")
-  });
-
-  const salvarFicha = useMutation({
-    mutationFn: async () => {
-      if (!selecionada) return;
-      const tamanho = Number(form.area_ha.replace(",", "."));
-      if (!Number.isFinite(tamanho) || tamanho < 0) throw new Error("Informe um tamanho válido em hectares.");
-      const nome = form.name.trim().toLocaleUpperCase("pt-BR");
-      if (nome === "") throw new Error("Informe o nome da área.");
-      await api(`/api/resources/areas/${selecionada}`, {
-        method: "PUT",
-        body: {
-          name: nome, color: form.color, area_ha: tamanho,
-          usable_area_ha: form.usable_area_ha.trim() === "" ? tamanho : Number(form.usable_area_ha.replace(",", ".")),
-          land_use: form.land_use, status: form.status, tenure: form.tenure,
-          retiro_id: form.retiro_id || null
-        }
-      });
-    },
-    onSuccess: () => {
-      setEditandoFicha(false);
-      setErro(null);
-      void queryClient.invalidateQueries({ queryKey: ["areas-mapa"] });
-    },
-    onError: (e: unknown) => setErro(e instanceof Error ? e.message : "Não foi possível salvar a área.")
-  });
+  }, [areas, mapaPronto, editandoContornoId]);
 
   const remover = useMutation({
     mutationFn: async (id: string) => { await api(`/api/resources/areas/${id}`, { method: "DELETE" }); },
@@ -653,28 +583,44 @@ export function MapaDeManejo() {
     onError: (e: unknown) => setErro(e instanceof Error ? e.message : "Não foi possível excluir a área.")
   });
 
+  function fecharFicha() {
+    setEditandoFicha(false);
+    setFichaSemContorno(false);
+    setSelecionada(null);
+    setErro(null);
+  }
+
+  function aposSalvarFicha() {
+    sairDoDesenho();
+    fecharFicha();
+    void queryClient.invalidateQueries({ queryKey: ["areas-mapa"] });
+  }
+
   function abrirFicha(a: AreaApi) {
     setSelecionada(a.id);
     setEditandoFicha(true);
-    const ha = hectares(a.area_ha);
-    const haStr = (Math.round(ha * 100) / 100).toFixed(2);
-    setForm({
-      name: a.name, color: a.color ?? COR_PADRAO, area_ha: haStr,
-      usable_area_ha: a.usable_area_ha != null && a.usable_area_ha !== "" ? (Math.round(Number(a.usable_area_ha) * 100) / 100).toFixed(2) : haStr,
-      land_use: a.land_use || "pastagem", status: a.status || "ativa",
-      retiro_id: a.retiro_id || "", tenure: a.tenure || "propria"
-    });
+    setFichaSemContorno(false);
+    setRascunho(null);
     setErro(null);
   }
 
   function iniciarDesenho() {
-    setErro(null); setSelecionada(null); setEditandoFicha(false); setRascunho(null);
+    setErro(null); setSelecionada(null); setEditandoFicha(false); setFichaSemContorno(false); setRascunho(null);
     setEditandoContornoId(null);
     setMoverArea(false); moverAreaRef.current = false;
     if (!mapRef.current || !mapaPronto) { setErro("O mapa ainda está carregando. Aguarde a imagem abrir e tente de novo."); return; }
     ed.current = editorVazio();
     desenhandoRef.current = true;
     setDesenhando(true);
+  }
+
+  function abrirCadastroSemContorno() {
+    if (!empresaId) { setErro("Nenhuma empresa disponível para cadastrar áreas."); return; }
+    setErro(null);
+    setSelecionada(null);
+    setEditandoFicha(false);
+    setRascunho(null);
+    setFichaSemContorno(true);
   }
   // Cadastro a partir da lista de áreas: /mapa-de-manejo?nova=1 abre o desenho.
   const iniciouNovaRef = React.useRef(false);
@@ -692,6 +638,7 @@ export function MapaDeManejo() {
     if (!mapRef.current || !mapaPronto) { setErro("O mapa ainda está carregando. Aguarde a imagem abrir e tente de novo."); return; }
     setErro(null);
     setEditandoFicha(false);
+    setFichaSemContorno(false);
     setRascunho(null);
     setEditandoContornoId(a.id);
     const pontos = anel.map(livre);
@@ -707,13 +654,6 @@ export function MapaDeManejo() {
     desenhandoRef.current = true;
     setDesenhando(true);
     setSelecionada(a.id);
-    const ha = Math.round(areaHa(anel) * 100) / 100;
-    setForm({
-      name: a.name, color: a.color ?? COR_PADRAO, area_ha: ha.toFixed(2),
-      usable_area_ha: a.usable_area_ha != null && a.usable_area_ha !== "" ? (Math.round(Number(a.usable_area_ha) * 100) / 100).toFixed(2) : ha.toFixed(2),
-      land_use: a.land_use || "pastagem", status: a.status || "ativa",
-      retiro_id: a.retiro_id || "", tenure: a.tenure || "propria"
-    });
     redesenhar();
   }
 
@@ -729,19 +669,8 @@ export function MapaDeManejo() {
     const e = ed.current;
     if (e.fechado && e.pontos.length >= 3) {
       const ha = Math.round(areaHa(coordsDe(e.pontos)) * 10000) / 10000;
-      const haStr = (Math.round(ha * 100) / 100).toFixed(2);
       const editandoId = editandoContornoIdRef.current ?? undefined;
       setRascunho({ geometria: poligonoGeoJSON(e.pontos), area_ha: ha, editandoId });
-      setForm((f) => ({
-        name: editandoId ? f.name : "",
-        color: editandoId ? f.color : COR_PADRAO,
-        area_ha: haStr,
-        usable_area_ha: editandoId && f.usable_area_ha ? f.usable_area_ha : haStr,
-        land_use: editandoId ? f.land_use : "pastagem",
-        status: editandoId ? f.status : "ativa",
-        retiro_id: editandoId ? f.retiro_id : "",
-        tenure: editandoId ? f.tenure : "propria"
-      }));
       return;
     }
     if (e.pontos.length >= 3) { fechar("Fechado"); return; }
@@ -910,8 +839,6 @@ export function MapaDeManejo() {
   const confirmarRotulo = e.fechado
     ? (confirmandoEdicao ? "Gravar contorno" : "Gravar área")
     : e.pontos.length >= 3 ? "Fechar polígono" : "Marque 3 pontos";
-  const formTitulo = rascunho?.editandoId ? "Editar área" : "Nova área";
-
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
@@ -942,6 +869,7 @@ export function MapaDeManejo() {
                 if (f) void importarArquivo(f);
               }}
             />
+            <Button type="button" variant="outline" onClick={abrirCadastroSemContorno} disabled={!podeCadastrar} data-testid="mapa-cadastro-sem-contorno">Sem contorno</Button>
             <Button type="button" onClick={iniciarDesenho} disabled={!mapaPronto || !podeCadastrar} data-testid="mapa-nova-area">Nova área</Button>
           </div>
         )}
@@ -1006,7 +934,7 @@ export function MapaDeManejo() {
               hover={e.hover}
               lados={lados}
               mostrarMetragem={mostrarMetragem}
-              corPreview={rascunho ? corExibidaNoMapa(form.color) : null}
+              corPreview={rascunho ? corExibidaNoMapa(COR_PADRAO) : null}
             />
           )}
           {!mapaPronto && <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"><Spinner /></div>}
@@ -1075,155 +1003,44 @@ export function MapaDeManejo() {
             </div>
           )}
 
-          {/* Ficha ao fechar o polígono (nova ou contorno editado): cores em listagem; preview imediato. */}
-          {rascunho && (
-            <Card className="absolute right-2 top-2 max-h-[calc(100%-1rem)] w-80 overflow-auto shadow-lg">
-              <CardBody className="flex flex-col gap-2.5">
-                <div className="text-sm font-semibold text-slate-800" data-testid="mapa-form-titulo">{formTitulo}</div>
-                {empresaNome && <div className="text-xs text-slate-500">Empresa: <span className="font-medium text-slate-700">{empresaNome}</span></div>}
-                <Field label="Área total (ha)">
-                  <Input value={form.area_ha} readOnly data-testid="mapa-form-area-total" className="bg-slate-50 tabular-nums" />
-                </Field>
-                <Field label="Área útil (ha)" required>
-                  <Input type="number" step="0.01" value={form.usable_area_ha} onChange={(ev) => setForm((f) => ({ ...f, usable_area_ha: ev.target.value }))} data-testid="mapa-form-tamanho" className="tabular-nums" />
-                </Field>
-                <Field label="Nome" required>
-                  <Input
-                    value={form.name}
-                    onChange={(ev) => setForm((f) => ({ ...f, name: ev.target.value.toLocaleUpperCase("pt-BR") }))}
-                    data-testid="mapa-form-nome"
-                    placeholder="NOME DA ÁREA"
-                  />
-                </Field>
-                <Field label="Tipo de uso" required>
-                  <select className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm" value={form.land_use} onChange={(ev) => setForm((f) => ({ ...f, land_use: ev.target.value }))} data-testid="mapa-form-land-use">
-                    <option value="pastagem">Pastagem</option>
-                    <option value="lavoura">Lavoura</option>
-                    <option value="ilp">ILP</option>
-                    <option value="ilpf">ILPF</option>
-                    <option value="silvipastoril">Silvipastoril</option>
-                    <option value="floresta">Floresta plantada</option>
-                    <option value="confinamento">Confinamento</option>
-                    <option value="reserva_legal">Reserva legal</option>
-                    <option value="app">APP</option>
-                    <option value="benfeitoria">Benfeitoria</option>
-                    <option value="curral">Curral</option>
-                    <option value="estrada">Estrada</option>
-                    <option value="aguada">Aguada</option>
-                    <option value="degradada">Degradada</option>
-                    <option value="nao_produtiva">Não produtiva</option>
-                  </select>
-                </Field>
-                <Field label="Situação" required>
-                  <select className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm" value={form.status} onChange={(ev) => setForm((f) => ({ ...f, status: ev.target.value }))} data-testid="mapa-form-status">
-                    <option value="ativa">Ativa</option>
-                    <option value="em_formacao">Em formação</option>
-                    <option value="em_reforma">Em reforma</option>
-                    <option value="vedada">Vedada</option>
-                    <option value="inativa">Inativa</option>
-                  </select>
-                </Field>
-                <div>
-                  <div className="mb-1.5 text-xs font-medium text-slate-600">Cor no mapa</div>
-                  <div className="flex flex-col gap-1" role="radiogroup" aria-label="Cor da área" data-testid="mapa-form-cor">
-                    {PALETA_AREAS.map((p) => (
-                      <button
-                        key={p.cor}
-                        type="button"
-                        role="radio"
-                        aria-checked={form.color === p.cor}
-                        aria-label={p.nome}
-                        data-testid="mapa-cor-opcao"
-                        onClick={() => setForm((f) => ({ ...f, color: p.cor }))}
-                        className={cn(
-                          "flex items-center gap-2.5 rounded-md border px-2 py-1.5 text-left text-sm transition",
-                          form.color === p.cor ? "border-emerald-600 bg-emerald-50 ring-1 ring-emerald-600" : "border-slate-200 bg-white hover:bg-slate-50"
-                        )}
-                      >
-                        <span className="h-5 w-5 shrink-0 rounded border border-slate-300" style={{ backgroundColor: p.cor }} aria-hidden />
-                        <span className="min-w-0 flex-1 font-medium text-slate-700">{p.nome}</span>
-                        <span className="text-[10px] tabular-nums text-slate-400">{p.cor}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex justify-end gap-2 pt-1">
-                  <Button type="button" variant="ghost" onClick={() => setRascunho(null)}>Voltar ao desenho</Button>
-                  <Button type="button" onClick={() => salvar.mutate()} loading={salvar.isPending} disabled={form.name.trim() === ""} data-testid="mapa-form-salvar">Salvar</Button>
-                </div>
-              </CardBody>
-            </Card>
+          {/* Mesma ficha de Áreas/Piquetes (ResourceForm): medidas, uso, cor em lista, etc. Contorno opcional. */}
+          {rascunho && empresaId && (
+            <div className="absolute right-2 top-2 z-10">
+              <FichaAreaNoMapa
+                mode={rascunho.editandoId ? "edit" : "new"}
+                areaId={rascunho.editandoId}
+                empresaId={empresaId}
+                geometria={rascunho.geometria}
+                areaHa={rascunho.area_ha}
+                onSaved={aposSalvarFicha}
+                onCancel={() => setRascunho(null)}
+              />
+            </div>
           )}
 
-          {/* Ficha de edição (clique na área / lista) — nome, cor, ha + contorno. */}
-          {selecionadaObj && !desenhando && editandoFicha && (
-            <Card className="absolute right-2 top-2 max-h-[calc(100%-1rem)] w-80 overflow-auto shadow-lg" data-testid="mapa-ficha-edicao">
-              <CardBody className="flex flex-col gap-2.5">
-                <div className="text-sm font-semibold text-slate-800">Editar área</div>
-                <Field label="Área total (ha)">
-                  <Input value={form.area_ha} readOnly data-testid="mapa-edit-area-total" className="bg-slate-50 tabular-nums" />
-                </Field>
-                <Field label="Área útil (ha)" required>
-                  <Input type="number" step="0.01" value={form.usable_area_ha} onChange={(ev) => setForm((f) => ({ ...f, usable_area_ha: ev.target.value }))} data-testid="mapa-edit-tamanho" className="tabular-nums" />
-                </Field>
-                <Field label="Nome" required>
-                  <Input
-                    value={form.name}
-                    onChange={(ev) => setForm((f) => ({ ...f, name: ev.target.value.toLocaleUpperCase("pt-BR") }))}
-                    data-testid="mapa-edit-nome"
-                    placeholder="NOME DA ÁREA"
-                  />
-                </Field>
-                <Field label="Tipo de uso" required>
-                  <select className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm" value={form.land_use} onChange={(ev) => setForm((f) => ({ ...f, land_use: ev.target.value }))} data-testid="mapa-edit-land-use">
-                    <option value="pastagem">Pastagem</option>
-                    <option value="lavoura">Lavoura</option>
-                    <option value="ilp">ILP</option>
-                    <option value="ilpf">ILPF</option>
-                    <option value="silvipastoril">Silvipastoril</option>
-                    <option value="floresta">Floresta plantada</option>
-                    <option value="confinamento">Confinamento</option>
-                    <option value="reserva_legal">Reserva legal</option>
-                    <option value="app">APP</option>
-                    <option value="benfeitoria">Benfeitoria</option>
-                    <option value="curral">Curral</option>
-                    <option value="estrada">Estrada</option>
-                    <option value="aguada">Aguada</option>
-                    <option value="degradada">Degradada</option>
-                    <option value="nao_produtiva">Não produtiva</option>
-                  </select>
-                </Field>
-                <div>
-                  <div className="mb-1.5 text-xs font-medium text-slate-600">Cor no mapa</div>
-                  <div className="flex flex-col gap-1" role="radiogroup" aria-label="Cor da área" data-testid="mapa-edit-cor">
-                    {PALETA_AREAS.map((p) => (
-                      <button
-                        key={p.cor}
-                        type="button"
-                        role="radio"
-                        aria-checked={form.color === p.cor}
-                        aria-label={p.nome}
-                        data-testid="mapa-edit-cor-opcao"
-                        onClick={() => setForm((f) => ({ ...f, color: p.cor }))}
-                        className={cn(
-                          "flex items-center gap-2.5 rounded-md border px-2 py-1.5 text-left text-sm transition",
-                          form.color === p.cor ? "border-emerald-600 bg-emerald-50 ring-1 ring-emerald-600" : "border-slate-200 bg-white hover:bg-slate-50"
-                        )}
-                      >
-                        <span className="h-5 w-5 shrink-0 rounded border border-slate-300" style={{ backgroundColor: p.cor }} aria-hidden />
-                        <span className="min-w-0 flex-1 font-medium text-slate-700">{p.nome}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-wrap justify-end gap-2 pt-1">
-                  <Button type="button" variant="ghost" onClick={() => { setSelecionada(null); setEditandoFicha(false); }}>Fechar</Button>
-                  <Button type="button" variant="outline" onClick={() => iniciarEdicaoContorno(selecionadaObj)} data-testid="mapa-editar-contorno">Editar contorno</Button>
-                  <Button type="button" variant="danger" onClick={() => setExcluir(selecionadaObj)} data-testid="mapa-excluir">Excluir</Button>
-                  <Button type="button" onClick={() => salvarFicha.mutate()} loading={salvarFicha.isPending} disabled={form.name.trim() === ""} data-testid="mapa-edit-salvar">Salvar</Button>
-                </div>
-              </CardBody>
-            </Card>
+          {fichaSemContorno && empresaId && !desenhando && (
+            <div className="absolute right-2 top-2 z-10">
+              <FichaAreaNoMapa
+                mode="new"
+                empresaId={empresaId}
+                onSaved={aposSalvarFicha}
+                onCancel={fecharFicha}
+              />
+            </div>
+          )}
+
+          {selecionadaObj && !desenhando && editandoFicha && empresaId && (
+            <div className="absolute right-2 top-2 z-10" data-testid="mapa-ficha-edicao">
+              <FichaAreaNoMapa
+                mode="edit"
+                areaId={selecionadaObj.id}
+                empresaId={empresaId}
+                onSaved={aposSalvarFicha}
+                onCancel={fecharFicha}
+                onEditarContorno={() => iniciarEdicaoContorno(selecionadaObj)}
+                onExcluir={() => setExcluir(selecionadaObj)}
+              />
+            </div>
           )}
         </Card>
       </div>

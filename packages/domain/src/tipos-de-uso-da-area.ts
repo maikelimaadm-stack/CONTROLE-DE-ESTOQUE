@@ -120,6 +120,32 @@ export const CATEGORIA_ALVO_DO_MODULO: readonly [string, string][] = [
 ] as const;
 
 /**
+ * Paleta fechada da cor no mapa / cadastro de área (CADASTRO-AREAS-02).
+ * Valor = hex #RRGGBB; rótulo = nome na lista. Sem digitação livre na UI.
+ */
+export const CORES_DA_AREA: readonly [string, string][] = [
+  ["#f8f9fa", "Branco"],
+  ["#94a3b8", "Cinza"],
+  ["#1e293b", "Preto"],
+  ["#0d67ad", "Azul escuro"],
+  ["#61aad9", "Azul celeste"],
+  ["#2563eb", "Azul"],
+  ["#0f766e", "Verde escuro"],
+  ["#16a34a", "Verde"],
+  ["#92ca25", "Verde claro"],
+  ["#efcb19", "Amarelo"],
+  ["#f5a01b", "Laranja"],
+  ["#dc2626", "Vermelho"],
+  ["#db2777", "Rosa"],
+  ["#966fe1", "Roxo"],
+  ["#92400e", "Marrom"],
+  ["#14b8a6", "Turquesa"]
+] as const;
+
+/** Azul escuro — padrão do cadastro (mesma cor da paleta). */
+export const COR_PADRAO_DA_AREA = "#0d67ad";
+
+/**
  * Parâmetro `uso` da listagem de áreas (seleção por outros módulos).
  * Área em USO_BLOQUEADO nunca entra em nenhum dos três.
  */
