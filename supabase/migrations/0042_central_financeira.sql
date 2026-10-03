@@ -46,10 +46,18 @@
 --        baixado — senão 'NOT_FOUND: …' (a mesma resposta para inexistente, de outro tenant ou de outro parceiro);
 --        e que o crédito (paid_amount − usos confirmados) cobre o valor — senão 'PAYMENT_EXCEEDS_BALANCE: …'.
 --        INVOKER de propósito: lê sob a RLS de quem grava (o título e o adiantamento são da mesma empresa).
---    5.4 erp.extrato_conta_organizacao(uuid[], date, date) — o agregado ORGANIZACIONAL do extrato, no molde de
+--    5.4 erp.extrato_conta_organizacao(uuid[], date, date) — a porta do extrato de CONTA, no molde de
 --        erp.movimentos_conta_organizacao (0015): SECURITY DEFINER ESTREITA (organização e usuário da GUC do
 --        servidor; bank_accounts.view E bank_movements.view reconferidas dentro; organization_id explícito nas
 --        duas tabelas; search_path fixo; sem SQL dinâmico; EXECUTE revogado de PUBLIC e concedido ao erp_app).
+--        RECORTADA PELO ESCOPO DE EMPRESA de quem pergunta no módulo FINANCEIRO (decisão do Maike de 03/10, conserto
+--        da revisão final): as MESMAS funções da RLS de erp.bank_movements (erp.escopo_empresa_total e
+--        erp.empresas_do_membro, 0015), com o módulo FIXO aqui dentro — nunca da GUC (as rotas de conta abrem a
+--        transação sem módulo, e sem módulo a RLS valeria a união das empresas do membro em QUALQUER módulo) nem de
+--        parâmetro. Escopo total (proprietário ou modo "todas" no financeiro): todos os movimentos, inclusive os sem
+--        empresa. Parcial: só os das empresas dele — o sem empresa é da organização inteira e fica de fora. O recorte
+--        é no WHERE da própria função: nada de outra empresa sai dela (linha, texto, documento, valor), e todo total,
+--        contagem, saldo e página que a API monta por cima já nasce recortado.
 --        Devolve, além das colunas da 0015, o tipo de categoria, o rótulo da transferência, a origem, a
 --        conciliação (reconciled_at, ofx_transaction_id), a empresa e o código do movimento.
 -- 6) Histórico sem DELETE: o erp_app perde DELETE e TRUNCATE em erp.financial_titles, erp.title_settlements,
@@ -61,8 +69,9 @@
 -- 8) Pós-condições só de CATÁLOGO (nunca contagem de tabela viva), sob o marcador literal abaixo.
 --
 -- RLS: as tabelas existentes mantêm as políticas de hoje (nenhuma é tocada). A tabela nova tem RLS habilitada e
--- FORÇADA com tenant_isolation. A função 5.4 é a única porta que atravessa a RLS de empresa, e só para o agregado
--- de conta da organização, com as cinco propriedades acima.
+-- FORÇADA com tenant_isolation. A função 5.4 é a única porta que atravessa a RLS de empresa — e só para trocar o
+-- módulo INDEFINIDO da rota de conta pelo FINANCEIRO, aplicando por dentro o mesmo escopo que a RLS aplicaria nele
+-- (com o movimento sem empresa só no escopo total) —, com as cinco propriedades acima.
 -- PRIVILÉGIOS: erp_app — financeiro_naturezas_padrao: select, insert, update (sem delete/truncate); o ledger: item 6;
 -- erp.extrato_conta_organizacao: execute; funções de gatilho novas: nenhum.
 --
@@ -149,8 +158,9 @@ begin
   if to_regprocedure('erp.tenant_visible(uuid)') is null or to_regprocedure('erp.audit_row()') is null
      or to_regprocedure('erp.current_org_id()') is null or to_regprocedure('erp.effective_user_id()') is null
      or to_regprocedure('erp.has_permission(uuid,uuid,text)') is null or to_regprocedure('erp.refresh_title_status(uuid)') is null
-     or to_regprocedure('erp.title_settlement_changed()') is null or to_regprocedure('erp.set_updated_at()') is null then
-    raise exception 'OPERACOES-01 F8: funcoes de RLS/auditoria/usuario/baixa ausentes (tenant_visible, audit_row, current_org_id, effective_user_id, has_permission, refresh_title_status, title_settlement_changed, set_updated_at).';
+     or to_regprocedure('erp.title_settlement_changed()') is null or to_regprocedure('erp.set_updated_at()') is null
+     or to_regprocedure('erp.escopo_empresa_total(text)') is null or to_regprocedure('erp.empresas_do_membro(text)') is null then
+    raise exception 'OPERACOES-01 F8: funcoes de RLS/auditoria/usuario/baixa/escopo ausentes (tenant_visible, audit_row, current_org_id, effective_user_id, has_permission, refresh_title_status, title_settlement_changed, set_updated_at, escopo_empresa_total, empresas_do_membro).';
   end if;
   -- P7 O conjunto EXATO dos gatilhos de hoje nas três tabelas do ledger: é sobre ele que a pós-condição afirma "os
   -- de hoje e os novos, nenhum outro". Um a mais ou a menos invalida a afirmação, e a decisão volta para um humano.
@@ -373,8 +383,10 @@ end $$;
 create trigger trg_ts_credito_conferir before insert on erp.title_settlements for each row
   when (new.adiantamento_id is not null) execute function erp.baixa_credito_conferir();
 
--- 5.4 O agregado ORGANIZACIONAL do extrato (MULTI-COMPANY §7), no molde de erp.movimentos_conta_organizacao (0015):
--- a mesma porta estreita, com as colunas que o extrato com saldo real × conciliado precisa.
+-- 5.4 A porta do extrato de CONTA, no molde de erp.movimentos_conta_organizacao (0015): a mesma porta estreita, com as
+-- colunas que o extrato com saldo real × conciliado precisa — e RECORTADA pelo escopo de empresa de quem pergunta no
+-- módulo financeiro (decisão do Maike de 03/10): conta compartilhada por empresas não entrega a quem vê só a empresa A
+-- o texto, o documento, a empresa ou o valor dos lançamentos da empresa B.
 create function erp.extrato_conta_organizacao(p_contas uuid[] default null, p_de date default null, p_ate date default null)
 returns table (
   id uuid, bank_account_id uuid, account_code text, movement_date date, type text, category_type text,
@@ -384,6 +396,7 @@ language plpgsql stable security definer set search_path = erp, pg_catalog as $$
 declare
   v_org uuid := erp.current_org_id();
   v_user uuid := erp.effective_user_id();
+  v_total boolean;
 begin
   if v_org is null or v_user is null then
     raise exception 'CONTEXTO_AUSENTE: extrato de conta exige organizacao e usuario na transacao' using errcode = '42501';
@@ -394,6 +407,15 @@ begin
      or not erp.has_permission(v_org, v_user, 'bank_movements.view') then
     raise exception 'SEM_CAPACIDADE: extrato organizacional de conta exige bank_accounts.view e bank_movements.view' using errcode = '42501';
   end if;
+  -- O ESCOPO DE EMPRESA de quem pergunta, no módulo dos MOVIMENTOS (financeiro, scripts/company-rls-modules.json),
+  -- pelas MESMAS funções que a RLS de erp.bank_movements usa (0015), lidas da GUC do servidor (organização e usuário).
+  -- O módulo é FIXO aqui: as rotas de conta abrem a transação SEM módulo (bank_accounts.view é capacidade de
+  -- organização), e sem módulo o recorte valeria a união das empresas do membro em qualquer módulo. Total
+  -- (proprietário ou modo "todas" no financeiro): todos os movimentos, inclusive os sem empresa. Parcial: só os das
+  -- empresas nomeadas no financeiro; o movimento sem empresa vale para a organização inteira e fica de fora (a mesma
+  -- regra da escrita). Módulo sem configuração: nenhuma empresa (fail-closed). O recorte está no WHERE: o que não
+  -- passa não sai desta função de jeito nenhum — nem linha, nem soma, nem contagem.
+  v_total := erp.escopo_empresa_total('financeiro') is true;
   return query
     select m.id, m.bank_account_id, a.code, m.movement_date, m.type, m.category_type, m.tipo_transferencia,
            m.amount, m.interest, m.note, m.document, m.source_type, m.reconciled_at, m.ofx_transaction_id,
@@ -402,12 +424,13 @@ begin
       join erp.bank_accounts a on a.id = m.bank_account_id
      where m.organization_id = v_org and a.organization_id = v_org
        and m.status = 'confirmed' and m.deleted_at is null
+       and (v_total or m.empresa_id in (select erp.empresas_do_membro('financeiro')))
        and (p_contas is null or m.bank_account_id = any(p_contas))
        and (p_de is null or m.movement_date >= p_de)
        and (p_ate is null or m.movement_date <= p_ate);
 end $$;
 comment on function erp.extrato_conta_organizacao(uuid[], date, date) is
-  'Movimentos CONFIRMADOS das contas bancarias da organizacao atual para o extrato ORGANIZACIONAL (saldo real x conciliado, fluxo realizado), com tipo de categoria, rotulo da transferencia, origem, conciliacao, empresa e codigo (OPERACOES-01 F8). SECURITY DEFINER estreita no molde de erp.movimentos_conta_organizacao: organizacao da GUC do servidor, capacidades conferidas aqui dentro, tenant por predicado explicito. Nao substitui a RLS de erp.bank_movements, que continua recortando por empresa em toda leitura normal.';
+  'Movimentos CONFIRMADOS das contas bancarias da organizacao atual para o extrato de conta (saldo real x conciliado, fluxo realizado), com tipo de categoria, rotulo da transferencia, origem, conciliacao, empresa e codigo (OPERACOES-01 F8). SECURITY DEFINER estreita no molde de erp.movimentos_conta_organizacao: organizacao da GUC do servidor, capacidades conferidas aqui dentro, tenant por predicado explicito. RECORTADA pelo escopo de empresa de quem pergunta no modulo financeiro (decisao do Maike de 03/10): escopo total (proprietario ou modo todas) ve todos os movimentos, inclusive os sem empresa; parcial, so os das suas empresas. Nao substitui a RLS de erp.bank_movements, que continua recortando por empresa em toda leitura normal.';
 revoke execute on function erp.extrato_conta_organizacao(uuid[], date, date) from public;
 grant execute on function erp.extrato_conta_organizacao(uuid[], date, date) to erp_app;
 
@@ -579,6 +602,12 @@ begin
      or not has_function_privilege('erp_app', 'erp.extrato_conta_organizacao(uuid[],date,date)', 'execute')
      or has_function_privilege('public', 'erp.extrato_conta_organizacao(uuid[],date,date)', 'execute') then
     raise exception 'OPERACOES-01 F8: erp.extrato_conta_organizacao fora da forma (SECURITY DEFINER estavel, search_path "erp, pg_catalog", EXECUTE do erp_app e nao de PUBLIC).';
+  end if;
+  -- E recortada pelo escopo de empresa no módulo financeiro (decisão do Maike de 03/10): o total decidido pela função da
+  -- RLS e o predicado no WHERE, exatamente — sem eles a porta volta a entregar os movimentos de todas as empresas.
+  if position($p$v_total := erp.escopo_empresa_total('financeiro') is true;$p$ in pg_get_functiondef('erp.extrato_conta_organizacao(uuid[],date,date)'::regprocedure)) = 0
+     or position($p$and (v_total or m.empresa_id in (select erp.empresas_do_membro('financeiro')))$p$ in pg_get_functiondef('erp.extrato_conta_organizacao(uuid[],date,date)'::regprocedure)) = 0 then
+    raise exception 'OPERACOES-01 F8: erp.extrato_conta_organizacao sem o recorte pelo escopo de empresa do modulo financeiro (escopo_empresa_total e empresas_do_membro no WHERE).';
   end if;
   -- A soma das baixas na semântica B, e a API continua chamando a função.
   if position('sum(amount)' in pg_get_functiondef('erp.refresh_title_status(uuid)'::regprocedure)) = 0
