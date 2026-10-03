@@ -1,6 +1,6 @@
 # Contrato do Modelo de Operações
 
-> Contrato de produto da fatia OPERACOES-01 (decisões 278 a 288). É a fonte do modelo inteiro de operações: tipos de
+> Contrato de produto da fatia OPERACOES-01 (decisões 279 a 288 e 291). É a fonte do modelo inteiro de operações: tipos de
 > movimento, seções da TOP por tipo, formato 5, centrais e modos de produto, compras com orçamento, entrada por XML,
 > Central Financeira, financeiro pela TOP, LCDPR e o mapa "tela antiga → central nova".
 > Camadas relacionadas: `docs/TIPO-OPERACAO-CONTRACT.md` (§18, formato 5), `docs/PORTAIS-OPERACIONAIS-CONTRACT.md`
@@ -809,11 +809,11 @@ nasce do CONSUMO (decisão 282, parte F5b, escolha (f)):
 - o layout por TOP do estoque (o CHECK já aceita as sete famílias; falta o catálogo de layout no domínio);
 - motivo e justificativa sempre enviados.
 
-As decisões pendentes do Maike — o par motivo/justificativa obrigatório no servidor depois que o web anterior sair de
-produção (I-1) e as perguntas antes da F11 (saldo inicial, entrada sem NF, requisição antiga, o neutro do Destino, a
-devolução antiga, `reason_note` e os relatórios que só leem as tabelas antigas; I-2 e I-3) — estão na decisão 282. Em
-03/10 o Maike decidiu: I-1 fica para a 1ª PR depois desta em produção, e I-2/I-3 foram decididas e cumpridas na F11
-(decisão 288): §2 (Implantação; o neutro do Destino) e §8 (o mapa).
+As decisões do Maike de 03/10, registradas na decisão 282: o par motivo/justificativa obrigatório no servidor (I-1) fica
+para a 1ª PR depois desta em produção — o web anterior manda a saída sem o par, e precisa sair de produção (e da janela
+de reversão) antes; as perguntas antes da F11 (saldo inicial, entrada sem NF, requisição antiga, o neutro do Destino, a
+devolução antiga, `reason_note` e os relatórios que só leem as tabelas antigas; I-2 e I-3) foram decididas e cumpridas na
+F11 (decisão 288): §2 (Implantação; o neutro do Destino) e §8 (o mapa).
 
 ### F5b — a Central de Estoque no motor da Central (decisão 282) · IMPLEMENTADO
 
@@ -972,9 +972,33 @@ lê as capacidades UMA vez, ao montar o formulário. As opções do destino são
 **Escolhas, fora e declarado:** na decisão 282 (parte F5b). O menu (`apps/web/nav.registry.mjs`) recebe, no merge da fase,
 as permissões das três espécies novas em Movimentações, na criação, na consulta e na fila Aprovações › Estoque. Fora: a
 transferência entre empresas (tela antiga); a saída das telas antigas do menu (F11; I-2 e I-3, ver 288); o bloco de
-aprovação na consulta do estoque (F11/F12); e o par motivo/justificativa obrigatório no servidor (I-1) — decisão do
-Maike de 03/10: fora desta PR, com dono, a 1ª PR depois desta em produção (o web anterior precisa sair de produção antes:
-com ele no ar, o servidor recusaria a saída que ele manda sem o par).
+aprovação na consulta do estoque (feito na F12, abaixo); e o par motivo/justificativa obrigatório no servidor (I-1) —
+decisão do Maike de 03/10: fora desta PR, com dono, a 1ª PR depois desta em produção (o web anterior precisa sair de
+produção antes: com ele no ar, o servidor recusaria a saída que ele manda sem o par).
+
+### F12 — a aprovação na consulta do estoque, a cor da situação e o gate do nome (decisões 280 e 282) · IMPLEMENTADO
+
+- **Situação da aprovação de um documento de estoque.** `GET /api/aprovacoes/estoque/<segmento>/:id`, um por espécie
+  (entradas, saidas, transferencias, ajustes, requisicoes, consumos, devolucoes-consumo), com
+  `<recurso da espécie>.view` conferido antes de qualquer leitura. Resposta:
+  `{ situacao: "nao_aberto" | "nao_exigida" | "pendente" | "aprovado" | "reprovado", ultimaDecisao: { decisao, observacao, decididoPor: { id, nome }, decididoEm } | null }`
+  — o contrato da venda e da compra (§3 F2). Recusas, nesta ordem: 403 sem a capacidade; 422 em qualquer parâmetro de
+  consulta ("Parâmetro não reconhecido na situação da aprovação"; repetido, "Parâmetro repetido: informe um valor só");
+  a MESMA 404 do `GET /api/estoque/<segmento>/:id` para id malformado, inexistente, outra organização, fora do escopo de
+  empresa do módulo estoque e documento de outra espécie. Não aberto → `nao_aberto`, sem ler a TOP; aberto → a versão
+  congelada e a conta das decisões, sem valor (no estoque a política é só "Sempre"). Só leitura, consultas fixas.
+  Decidir continua nas rotas da fila: `POST /api/aprovacoes/estoque/<segmento>/:id/aprovar` `{observacao?}` e
+  `/reprovar` `{motivo}`, com `<recurso>.approve`.
+- **A consulta da Central de Estoque** mostra o bloco "Aprovação" (o mesmo da venda e da compra) antes dos Dados
+  principais, só com o documento aberto e a TOP exigindo aprovação; Aprovar/Reprovar a quem tem
+  `<recurso da espécie>.approve`, em pendente e reprovado; depois da decisão, tudo é relido. Sem capacidade declarada: a
+  API anterior responde o 404 de rota e o bloco não aparece (a consulta de hoje).
+- **Cor da situação do documento de estoque**: domínio próprio no `StatusBadge` — aberto (pendente), confirmado
+  (concluído), cancelado (negativo) —, na lista de Movimentações e na consulta.
+- **Transferência**: os dois seletores de local se excluem (o destino nunca oferece a origem, e a origem nunca oferece o
+  destino escolhido); a API recusa destino = origem com 422 no campo.
+- **Gate do nome**: texto visível diz "Local de estoque"/"Locais de estoque", nunca "Armazém" — `copy-audit` (regra
+  `armazem`), com as exceções declaradas no próprio script.
 
 ### F10 — as Centrais dos módulos com produto (decisão 287) · IMPLEMENTADO
 

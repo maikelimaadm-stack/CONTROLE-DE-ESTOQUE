@@ -711,7 +711,7 @@ desenvolvimento a partir daqui é a decisão 240 com a 247.
 | 20:12:27 | Railway `api`: `ORGANIZACAO_LIMPA_ON_DEPLOY=0` e `ADMIN_PASSWORD` substituída por um texto não secreto (sem deploy) |
 | depois | o Maike entrou pela interface com sucesso |
 
-**Desde a 0041 (TOP-CONFIG-08, decisão 277), o comando de 20:03:21 FALHA** (OPERACOES-01, decisão 278). As três
+**Desde a 0041 (TOP-CONFIG-08, decisão 277), o comando de 20:03:21 FALHA** (OPERACOES-01, decisão 291). As três
 tabelas de aprovação (`erp.aprovacoes_venda`, `aprovacoes_compra`, `aprovacoes_estoque`) têm gatilho `BEFORE TRUNCATE`
 de imutabilidade, e um `TRUNCATE … CASCADE` alcança essas tabelas a partir de qualquer tabela de que elas dependem por
 chave estrangeira, direta ou indiretamente: `organizations`, `users`, `empresas`, `tipos_operacao`,
@@ -1552,11 +1552,31 @@ grant execute on function erp.situacao_atraso_cliente(uuid, int) to erp_app;
 
 ## OPERACOES-01 — correções e modelo de operações para o sistema inteiro (PR #90)
 
-Fatia F1 em fases (decisões 278 a 288), uma PR. Cada fase acrescenta a sua subseção abaixo: migration (se houver),
-ordem de deploy, compatibilidade nos dois sentidos do skew, impacto em dados reais, reversão e o roteiro do Maike em
-produção (PENDING). As migrations da fatia são numeradas na ordem em que entram na branch (0042 a 0048, travas
-(2026,76) a (2026,82)): 0042 a F8, 0043 a F5a, 0044 a F6a e 0045 a F9a (entraram); 0046, trava (2026,80), a F10
-(entrou); 0047, trava (2026,81), a F7 (entrou); 0048, trava (2026,82), sobra.
+Fatia F1 em fases (decisões 279 a 288 e 291 — a 291 é a F1, as correções do que já entrou; a 278 é da VISUAL-UX-04b,
+#89), uma PR. Cada fase acrescenta a sua subseção abaixo: migration (se houver), ordem de deploy, compatibilidade nos
+dois sentidos do skew, impacto em dados reais, reversão e o roteiro do Maike em produção (PENDING). As migrations da
+fatia são numeradas na ordem em que entram na branch (0042 a 0048, travas (2026,76) a (2026,82)): 0042 a F8, 0043 a
+F5a, 0044 a F6a e 0045 a F9a; 0046, trava (2026,80), a F10; 0047, trava (2026,81), a F7 — as 0042 a 0047 entraram;
+0048, trava (2026,82): as dívidas de segurança, em execução. Fora da fatia: a 0049, trava (2026,83), é da #91
+(MAPA-01, decisão 289), mesclada em 03/10 e já em produção; a 0050 é da #92, que espera a #90 (decisão do Maike de
+03/10).
+
+**A ordem real em produção (03/10).** A #91 foi mesclada em 03/10, e a main com ela foi trazida para esta branch
+(`b2035ca`). Em produção, o ledger de migrations (`public.erp_migrations`) tem 42 migrations: 0001 a 0041 e a 0049 da
+#91 (MAPA-01). As 0042 a 0048 desta PR rodam DEPOIS da 0049, embora numeradas antes: o runner
+(`packages/db/src/migrate.ts`) aplica pela ordem do nome e pula as já aplicadas, então o pre-deploy da #90 aplica as
+0042 a 0048, nessa ordem, com a 0049 já no ledger. Nenhuma das 0042 a 0048 depende da 0049 nem da ausência dela: as
+pré-condições da 0043 e da 0045 sobre `erp.modulos_escopo_empresa` só conferem a EXISTÊNCIA das chaves `'estoque'` e
+`'financeiro'` (a 0049 só acrescenta `'mapa'`). **A prova** (`packages/db/test/operacoes-01-ordem-real.test.ts`, 6 casos,
+verde em 03/10): o banco A reproduz produção — 0001..0041 e a 0049 como o runner aplica, depois o `migrate()` de verdade
+(que aplica as 0042..0048 do disco, na ordem do nome); o banco B é a ordem por número (o `migrate()` num banco novo). Em
+A, cada migration da PR aplica sem erro, com as pré e as pós-condições do próprio arquivo, e o ledger final é igual ao
+disco. O retrato do catálogo de A é idêntico ao de B: tabelas, colunas, restrições, índices, funções (corpo, SECURITY
+DEFINER, search_path), gatilhos, políticas, RLS, privilégios, comentários e o conteúdo das tabelas semeadas
+(`modulos_escopo_empresa` com o `'mapa'` na ordem 12) — 8480 linhas comparadas, nenhuma diferença. Prova reversa local
+(ledger falso da 0046, uma linha da 0049 mudada, pós-condição da 0049, pré-condição da 0044, catálogo mudado em A):
+cada uma reprova com o diff por seção e chave. Nada muda no procedimento do deploy: o pre-deploy é o mesmo `migrate`; a
+ordem fora do número não exige passo manual.
 
 ### F2 — as Centrais de Vendas e de Compras usam as regras gerais da TOP (OPERACOES-01, sem migration)
 
@@ -2101,11 +2121,11 @@ F5a.
 7. (Decisão do Maike; grava.) Ligar dimensões do Destino ou o Fluxo numa TOP. Com a F5b, a Central de Estoque mostra a
    aba Destino e pede a dimensão "Obrigatória" antes de salvar.
 
-**Decisões pendentes do Maike** (registradas na decisão 282, não tomadas aqui): o par motivo/justificativa da saída
-passa a obrigatório no servidor só na primeira PR depois que o web anterior sair de produção e da janela de reversão
-(I-1); e as perguntas antes da F11 — saldo inicial, entrada sem NF, requisição antiga, o neutro do Destino, a devolução
-antiga, `reason_note` e os relatórios que só leem as tabelas antigas (I-2 e I-3). O Maike decidiu em 03/10: § F5b,
-"Decisões do Maike".
+**Decisões do Maike (03/10; registradas na decisão 282):** o par motivo/justificativa da saída obrigatório no servidor
+(I-1) fica para a 1ª PR depois desta em produção — o web anterior manda a saída sem o par, e precisa sair de produção e
+da janela de reversão antes; as perguntas antes da F11 — saldo inicial, entrada sem NF, requisição antiga, o neutro do
+Destino, a devolução antiga, `reason_note` e os relatórios que só leem as tabelas antigas (I-2 e I-3) — a F11 decidiu e
+declarou (decisão 288). Detalhe: § F5b, "Decisões do Maike".
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 
@@ -2220,8 +2240,9 @@ gravado; sempre feche sem salvar ou Descarte.
   web), o servidor recusaria a saída que o web anterior manda sem o par;
 - I-2 e I-3 — o que a F11 precisa para tirar a tela antiga de estoque do menu — a F11 decide e declara (decisão 288).
 
-Item novo para a F11/F12: a aprovação na CONSULTA do estoque (`GET /api/aprovacoes/estoque/<segmento>/:id` +
-`AprovacaoDoDocumento`).
+Item novo da F5b, feito na F12 (decisão 282, parte F12): a aprovação na CONSULTA do estoque
+(`GET /api/aprovacoes/estoque/<segmento>/:id` + `AprovacaoDoDocumento`), só leitura e sem capacidade nova — contra a API
+anterior, o 404 de rota esconde o bloco e a consulta é a de hoje (`f12-estoque-skew-api-producao.spec.ts`).
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 
@@ -2328,10 +2349,11 @@ depois de conferir o deploy (roteiro abaixo).
 
 **Roteiro do Maike em produção** (produção é operacional — decisões 240 e 247). Os passos 0 a 9 são só leitura (nada é
 gravado); o passo 10 grava, e só com a decisão dele.
-0. Antes do deploy (leitura): o ledger de migrations termina na 0041; nenhuma baixa confirmada com desconto (a P8 refaz a
-   pergunta na hora de aplicar). **Conferido em produção em 02/10** (leitura do Maike, por volta das 23h UTC, com a `main`
-   `622f194` no ar): o ledger de migrations na 0041 e ZERO baixas confirmadas com desconto — a parada da P8 não
-   dispara. Os gatilhos de `erp.financial_titles` (a parte deles na P7) são exatamente `trg_ft_audit` e
+0. Antes do deploy (leitura): o ledger de migrations tem 42 migrations, 0001 a 0041 e a 0049 da #91 (o fato de 03/10;
+   a ordem real está no cabeçalho desta seção), e nenhuma das 0042 a 0048; nenhuma baixa confirmada com desconto (a P8
+   refaz a pergunta na hora de aplicar). **Conferido em produção em 02/10** (leitura do Maike, por volta das 23h UTC,
+   com a `main` `622f194` no ar): o ledger de migrations na 0041 e ZERO baixas confirmadas com desconto — a parada da
+   P8 não dispara. Os gatilhos de `erp.financial_titles` (a parte deles na P7) são exatamente `trg_ft_audit` e
    `trg_ft_updated` (o mesmo fato da P9 da F9a).
 1. Menu Financeiro: Títulos, Bancos e caixa, Conciliação, Fluxo e resultado, Adiantamentos, Visão Geral, Planejamento,
    Compromissos, nesta ordem; Contas e Caixa e Bancos fora do menu; a busca do menu por "contas a pagar" leva a Títulos.
@@ -2683,9 +2705,10 @@ o deploy é refeito (seguro). O gatilho BEFORE TRUNCATE da tabela dos padrões f
 das tabelas que ela referencia falhar (desejado: histórico não se trunca; para a versão da TOP, a organização e o
 usuário isso já acontecia desde a 0041). Em erro, publique o nome do papel, nunca a conexão.
 
-**Ordem: banco (0045) → API → web.** Na PR #90 o pre-deploy aplica 0042, 0043, 0044 e 0045, nessa ordem; a 0045 é a
-última, e o runner aplica cada uma na sua própria transação (se a 0045 desistir, o banco fica com a 0044 e o deploy é
-refeito). O menu vai no MESMO deploy do web desta fase. Janelas:
+**Ordem: banco (0045) → API → web.** Na PR #90 o pre-deploy aplica as 0042 a 0048 pela ordem do nome (a 0045 depois da
+0044), todas depois da 0049 da #91, que já está em produção (cabeçalho desta seção), e o runner aplica cada uma na sua
+própria transação (se a 0045 desistir, o banco fica com a 0044 e o deploy é refeito). O menu vai no MESMO deploy do web
+desta fase. Janelas:
 1. **API anterior × banco novo:** os INSERTs dela não citam as colunas novas (anuláveis, sem default) e nunca gravam
    `previsto`; o CHECK alargado não muda nada para ela; ela não lê nem grava as tabelas novas. Só depois que alguém LIGAR
    a provisão numa TOP (API e web novos) existe previsto. Com previstos gravados, a API anterior os listaria como
@@ -2735,12 +2758,12 @@ dela já excluem o previsto).
 
 **Roteiro do Maike em produção** (produção é operacional — decisões 240 e 247). Os passos 0 a 9 são só leitura (nada é
 gravado); os passos 10 a 13 gravam, e só com a decisão dele, um por vez.
-0. Antes do deploy (leitura): o ledger de migrations termina na 0041 (o pre-deploy da PR aplica 0042, 0043, 0044 e 0045,
-   nessa ordem); o texto de
+0. Antes do deploy (leitura): o ledger de migrations tem 42 migrations, 0001 a 0041 e a 0049 da #91 (o fato de 03/10;
+   o pre-deploy da PR aplica as 0042 a 0048 pela ordem do nome, depois da 0049 — cabeçalho desta seção); o texto de
    `select pg_get_constraintdef(oid) from pg_constraint where conname = 'financial_titles_status_check'` é
    `CHECK ((status = ANY (ARRAY['open'::text, 'partially_paid'::text, 'paid'::text, 'cancelled'::text])))` (a P8 refaz a
-   pergunta na hora de aplicar e recusa se for outro). Depois do deploy (leitura): o ledger termina na 0045, depois da
-   0044.
+   pergunta na hora de aplicar e recusa se for outro). Depois do deploy (leitura): o ledger tem a 0045 depois da 0044 (as
+   duas aplicadas depois da 0049).
    **Conferido em produção em 02/10** (leitura do Maike, por volta das 23h UTC, com a `main` `622f194` no ar e o ledger
    de migrations na 0041):
    - P8: o texto do CHECK é exatamente

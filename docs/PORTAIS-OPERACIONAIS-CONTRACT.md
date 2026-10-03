@@ -590,7 +590,7 @@ Descrição e, para quem vê o saldo do local, Estoque. O POST de criar
 - `chaveDoSalvo` e `chaveDaCopia` — chaves do Map em memória, nunca do armazenamento do navegador.
 
 O corpo do cancelamento é da espécie (`reason` na venda, `motivo` na compra, com o motivo vazio pelo `motivoVazio` do
-diálogo): o campo `cancelamento` do contrato saiu na OPERACOES-01 (decisão 278), porque nenhuma leitura o usava.
+diálogo): o campo `cancelamento` do contrato saiu na OPERACOES-01 (decisão 291), porque nenhuma leitura o usava.
 
 O que é regra continua na espécie: a venda (`features/sales/`) mantém o lançamento, os derivados, o cliente em atraso,
 a reserva e o faturar em partes; a compra (`features/compras/central/`) mantém o estado do documento, o receber pedido,
