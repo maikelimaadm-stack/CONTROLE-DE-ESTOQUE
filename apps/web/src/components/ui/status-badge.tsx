@@ -28,6 +28,10 @@ const BY_DOMAIN: Partial<Record<EnumDomain, Record<string, StatusTone>>> = {
   // o pedido `convertido` (saldo todo recebido ou encerrado) tem a cor do `converted` da venda. OPERACOES-01 F6b:
   // finalizado = em curso; escolhido = concluído; não escolhido = encerrado.
   situacao_documento_compra: { aberto: "warning", confirmado: "positive", convertido: "positive", cancelado: "negative", finalizado: "info", escolhido: "positive", nao_escolhido: "neutral" },
+  // Documento de estoque (OPERACOES-01 F12): mapa PRÓPRIO, com as cores da situação da venda e da compra para os três
+  // valores que ele tem (o CHECK da 0040 e SITUACOES_DOCUMENTO_ESTOQUE do domínio: aberto/confirmado/cancelado). Antes,
+  // a lista e a consulta do estoque pegavam emprestado o mapa da compra — que tem valores que o estoque não tem.
+  situacao_documento_estoque: { aberto: "warning", confirmado: "positive", cancelado: "negative" },
   purchase_status: { finished: "positive", purchase_received: "positive", cancelled: "negative", not_approved: "negative", under_review: "warning" },
   manifest_status: { confirmed: "positive", awareness: "info", unknown: "negative", not_performed: "negative", none: "neutral" },
   launch_status: { launched: "positive", ignored: "neutral", pending: "warning", draft: "warning" },

@@ -1,11 +1,13 @@
 /**
  * ═══ A SITUAÇÃO DA APROVAÇÃO DE UM DOCUMENTO (OPERACOES-01 F2, decisão 279; F6b, decisão 283) ═══
  *
- * Módulo de APOIO das duas leituras novas — não registra rota (sem `export default`):
+ * Módulo de APOIO das leituras novas — não registra rota (sem `export default`):
  *
  *   GET /api/aprovacoes/vendas/:id    (`sales.view`,   `aprovacoes-vendas.ts`)          — a venda
  *   GET /api/aprovacoes/compras/:id   (`compras.view`, `aprovacoes-compras.ts`)        — a compra e, desde a F6b, o
  *                                     pedido de compra (`compras.view` ∧ `pedidos_compra.view`)
+ *   GET /api/aprovacoes/estoque/<segmento>/:id  (`<recurso da espécie>.view`, `aprovacoes-estoque.ts`) — desde a F12,
+ *                                     o documento de estoque das sete espécies (o segmento das rotas de decisão)
  *
  * A consulta do documento (as Centrais de Vendas e de Compras) pergunta "este documento aguarda aprovação? quem
  * decidiu por último?" sem precisar de `<recurso>.approve`: quem VÊ o documento vê a situação dele; quem DECIDE
@@ -48,8 +50,8 @@ import { lerVersaoCongeladaTop } from "../lib/confirmacao-automatica.js";
 
 // ─────────────── o contrato ───────────────
 
-/** Os documentos que têm a consulta da situação: a venda e a compra — a compra e o pedido de compra (o estoque fica para a F5). */
-export type ModuloDaConsulta = "vendas" | "compras";
+/** Os documentos que têm a consulta da situação: a venda, a compra e o pedido de compra e (F12) o documento de estoque. */
+export type ModuloDaConsulta = "vendas" | "compras" | "estoque";
 
 /**
  * A situação como a consulta a mostra. Escrita por extenso (e não derivada do tipo da `lib`): se a conta ganhar um
@@ -75,12 +77,15 @@ export interface DocumentoDaSituacao {
   modulo: ModuloDaConsulta;
   /** O id que o BANCO devolveu (canônico). */
   documentoId: string;
-  /** Aberto para a aprovação: venda open | approved (o "approved" da 0005 é aberto); compra "aberto". */
+  /** Aberto para a aprovação: venda open | approved (o "approved" da 0005 é aberto); compra e estoque "aberto". */
   aberto: boolean;
-  /** A `version` ATUAL da venda (texto do bigint); a compra não tem versão (`null`). */
+  /** A `version` ATUAL da venda (texto do bigint); a compra e o estoque não têm versão (`null`). */
   versaoDocumento: string | null;
-  /** O valor ATUAL do documento (decimal em texto): `total` da venda, `valor_total` da compra. */
-  valorDocumento: string;
+  /**
+   * O valor ATUAL do documento (decimal em texto): `total` da venda, `valor_total` da compra. `null` no documento de
+   * estoque: o valor dele só existe na confirmação, e a política do estoque é só "Sempre" (a mesma conta das decisões).
+   */
+  valorDocumento: string | null;
   /** A versão CONGELADA da TOP que o documento cita; `null` no documento sem TOP. */
   tipoOperacaoVersaoId: string | null;
 }
@@ -122,6 +127,7 @@ const consultaDaUltimaDecisao = (tabela: string): string =>
 export const SQL_DA_ULTIMA_DECISAO: Readonly<Record<ModuloDaConsulta, string>> = Object.freeze({
   vendas: consultaDaUltimaDecisao(TABELA_DA_APROVACAO.vendas),
   compras: consultaDaUltimaDecisao(TABELA_DA_APROVACAO.compras),
+  estoque: consultaDaUltimaDecisao(TABELA_DA_APROVACAO.estoque),
 });
 
 /** Módulo desconhecido NEGA (erro do chamador, 500), nunca cai na tabela vizinha — o tipo fecha, isto confere. */

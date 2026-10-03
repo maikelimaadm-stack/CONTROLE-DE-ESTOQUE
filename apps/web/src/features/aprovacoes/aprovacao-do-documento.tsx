@@ -29,6 +29,8 @@ export interface PropsDaAprovacaoDoDocumento {
    * A espécie do documento, quando NÃO é a da consulta da área (OPERACOES-01 F6b, decisão 283: o pedido de compra, que
    * se aprova ao finalizar). Com ela, Aprovar/Reprovar exigem também a capacidade da porta da rota de decisão
    * (`compras.approve`) — a rota cobra as duas, AND. Ausente: a espécie da área (a venda, a compra), como antes.
+   * No ESTOQUE (F12, decisão 282) ela é OBRIGATÓRIA na prática: é dela que saem a rota (o segmento) e a capacidade
+   * (`<recurso da espécie>.view` para ler, `.approve` para decidir); sem ela, ou desconhecida, o bloco não existe.
    */
   especie?: string;
 }
@@ -38,7 +40,8 @@ const TOAST_DO_TOM: Readonly<Record<TomDaMensagem, "success" | "warning" | "erro
 
 /**
  * A APROVAÇÃO NA CONSULTA DO DOCUMENTO (OPERACOES-01 F2, decisão 279) — a venda e a compra; desde a F6b (decisão 283),
- * também o pedido de compra (`especie="pedido"`), cuja aprovação vale ao finalizar.
+ * também o pedido de compra (`especie="pedido"`), cuja aprovação vale ao finalizar; desde a F12 (decisão 282), o
+ * documento de estoque das sete espécies (`area="estoque"`, com a espécie), pelas rotas da fila de Aprovações › Estoque.
  *
  * O SERVIDOR É A AUTORIDADE: a situação vem de `GET /api/aprovacoes/<área>/<id>` (a mesma régua da fila e do Confirmar),
  * e a decisão vai pelas MESMAS rotas e pelo MESMO diálogo da fila de Aprovações. Nenhuma regra nasce aqui:
@@ -55,10 +58,12 @@ const TOAST_DO_TOM: Readonly<Record<TomDaMensagem, "success" | "warning" | "erro
  */
 export function AprovacaoDoDocumento({ area, documentoId, documentoAberto, versao, prefixoTestid, codigo, especie }: PropsDaAprovacaoDoDocumento) {
   const { can } = useAuth(); const qc = useQueryClient();
+  // Sem porta (a espécie do estoque desconhecida): nada é perguntado nem desenhado — a tela não inventa rota.
+  const porta = portaDaSituacaoDoDocumento(area, documentoId, especie);
   const q = useQuery({
     queryKey: chaveDaSituacaoDoDocumento(area, documentoId),
-    queryFn: () => api<unknown>(portaDaSituacaoDoDocumento(area, documentoId)),
-    enabled: documentoAberto,
+    queryFn: () => api<unknown>(porta ?? ""),
+    enabled: documentoAberto && porta !== undefined,
     retry: false
   });
 
@@ -78,7 +83,7 @@ export function AprovacaoDoDocumento({ area, documentoId, documentoAberto, versa
   };
   const chaveDaTentativa = (d: Decisao) => (chave.current = chaveAoAbrirDecisao(chave.current, documentoId, d, newIdem));
   const decidir = useMutation<RespostaDaDecisao, Error, { decisao: Decisao; texto: string }>({
-    mutationFn: ({ decisao: d, texto: t }) => api<RespostaDaDecisao>(portaDaDecisaoDoDocumento(area, documentoId, d), {
+    mutationFn: ({ decisao: d, texto: t }) => api<RespostaDaDecisao>(portaDaDecisaoDoDocumento(area, documentoId, d, especie) ?? "", {
       method: "POST", body: corpoDaDecisao(area, versao, d, t), idempotencyKey: chaveDaTentativa(d).chave
     }),
     onSuccess: (resposta, { decisao: d }) => {
@@ -107,12 +112,14 @@ export function AprovacaoDoDocumento({ area, documentoId, documentoAberto, versa
 
   // Documento fechado (mesmo com uma resposta antiga no cache), carregando, erro de qualquer tipo ou resposta fora da
   // forma: nada. Aprovação que não se aplica ao documento: nada também.
-  const leitura = documentoAberto && !q.isError ? lerSituacaoDoDocumento(q.data) : null;
+  const leitura = documentoAberto && porta !== undefined && !q.isError ? lerSituacaoDoDocumento(q.data) : null;
   if (!leitura || leitura.situacao === "nao_aberto" || leitura.situacao === "nao_exigida") return null;
 
   const doc = documentoDaConsulta(area, especie);
-  // Outra espécie da área (o pedido de compra): a capacidade da espécie E a da porta da rota de decisão.
-  const pelaPorta = especie === undefined || can(PERMISSAO_DA_PORTA_DA_DECISAO[area]);
+  // Outra espécie da área (o pedido de compra): a capacidade da espécie E a da porta da rota de decisão. No estoque a
+  // porta é a da própria espécie (`null`): só `<recurso da espécie>.approve`.
+  const permissaoDaPorta = PERMISSAO_DA_PORTA_DA_DECISAO[area];
+  const pelaPorta = especie === undefined || permissaoDaPorta === null || can(permissaoDaPorta);
   const podeDecidir = doc !== undefined && can(`${doc.perm}.approve`) && pelaPorta && (leitura.situacao === "pendente" || leitura.situacao === "reprovado");
   const u = leitura.ultimaDecisao;
   return <div data-testid={`${prefixoTestid}-aprovacao`} data-situacao={leitura.situacao} role="group" aria-label="Aprovação" className="flex min-w-0 flex-col gap-1.5">

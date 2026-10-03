@@ -113,7 +113,7 @@ function ConsultaDeEstoque({ variante, id }: { variante: VarianteDeEstoque; id: 
     <CentralDeDocumento
       prefixoTestid={PREFIXO_CENTRAL_ESTOQUE}
       titulo={e.titulo}
-      identidade={{ nome: d.codigo || e.rotuloDaEspecie, codigo: Boolean(d.codigo), alterado: false, tom: statusTone(e.situacao, "situacao_documento_compra"),
+      identidade={{ nome: d.codigo || e.rotuloDaEspecie, codigo: Boolean(d.codigo), alterado: false, tom: statusTone(e.situacao, "situacao_documento_estoque"),
         dica: e.rotuloDaEspecie, situacao: <StatusBadge domain="situacao_documento_estoque" value={e.situacao} /> }}
       densidade={densidade}
       acoes={barra.acoes}
