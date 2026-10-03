@@ -1,11 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, qty, isISODate } from "@agro/shared";
-import { batchCost, tipoEntidadeDaTabela, itensDaProducaoDeRacao, SEGMENTO_DO_MODULO_COM_TOP } from "@agro/domain";
+import { batchCost, tipoEntidadeDaTabela, itensDaProducaoDeRacao, SEGMENTO_DO_MODULO_COM_TOP, lerNotaFiscalEletronica, type NotaFiscalLida } from "@agro/domain";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
-import { consultaEscopada, empresaScope, empresaScopePar, exigirEmpresaDeLancamento, exigirEmpresaVisivel, empresaPermitida, empresaScopeSql, scopedById, type ServiceCtx } from "../lib/context.js";
-import { empresasDisponiveis } from "../lib/empresa.js";
+import { consultaEscopada, empresaScope, empresaScopePar, exigirEmpresaDeLancamento, exigirEmpresaVisivel, empresaPermitida, empresaScopeSql, scopedById, moduloAtivo, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock, currentBalance, lineTotal, chaveDoLote, controleDeLote } from "../services/stock-core.js";
@@ -14,7 +13,8 @@ import { MENSAGEM_SALDO_INICIAL_DUPLICADO, existeSaldoInicialVivo, travarChaveDo
 import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema } from "../services/financial-core.js";
 import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
 import { SEQUENCIA_WAREHOUSE_TRANSFER } from "../lib/sequencia-warehouse-transfer.js";
-import { compraComANota } from "./compras-confirmacao.js";
+import { compraComANota, conferirChaveDeAcessoLivre } from "./compras-confirmacao.js";
+import { resolverDestinatario, guardarXmlDaNota, documentoNormalizado, SQL_DOCUMENTO_NORMALIZADO, LIMITE_XML_GUARDADO_BYTES } from "../lib/nota-fiscal-xml.js";
 import { joinDaTopDoModulo, tiposDeOperacaoDoModulo, topDoLancamentoDoModulo } from "../lib/top-do-modulo.js";
 import { formaCanonica } from "../lib/referencias-do-modulo.js";
 
@@ -70,6 +70,38 @@ async function getDoc(ctx: ServiceCtx, table: string, id: string, itemsTable: st
   // da requisição parte daqui (revisão do R1, R1-1 c). Campos só acrescentados — a tela anterior os ignora.
   const movements = await ctx.tx.query("select id, movement_type, direction, quantity, unit_cost, total_cost, balance_after, movement_date, warehouse_id, product_id, provider_lot, expiration_date, cost_center_id from erp.stock_movements where organization_id=$1 and source_type=$2 and source_id=$3 order by created_at", [ctx.orgId, table, id]);
   return { ...(d.rows[0] as Record<string, unknown>), items: items.rows, movements: movements.rows };
+}
+
+// ─────────────── OPERACOES-01 F7 (decisão 284): a DF-e com o XML ───────────────
+
+const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MSG_DFE_EM_OUTRA_EMPRESA = "Esta DF-e já está registrada em outra empresa.";
+const MSG_DFE_SEM_EMPRESA = "A DF-e não tem empresa: registre-a de novo na fila de DF-e, com a empresa ou com o XML, antes de aprovar.";
+const recusaNoCampo = (path: string, message: string) => validation(message, [{ path, message }]);
+const semZerosAEsquerda = (v: string) => v.trim().replace(/^0+(?=\d)/, "");
+const espacosUnicos = (v: string) => v.trim().replace(/\s+/g, " ");
+const mesmoValor = (a: string, b: string) => { try { return D(a).eq(D(b)); } catch { return false; } };
+
+/**
+ * A NOTA DO XML DA DF-e: lida pelo servidor (as recusas da leitura em 422 no `xml`, uma por detalhe) e conferida contra
+ * o que o corpo ENVIOU — o que não veio é o da nota. Tipo de documento: só NF-e.
+ */
+function notaDoXmlDaDfe(xml: string, d: { document_type: string; access_key?: string | null; number?: string | null; series?: string | null; issuer_document?: string | null;
+  issuer_name?: string | null; emission_date?: string | null; total?: string | null }): NotaFiscalLida {
+  const leitura = lerNotaFiscalEletronica(xml);
+  if (!leitura.ok) {
+    throw validation(leitura.recusas[0]!.mensagem, leitura.recusas.map((r) => ({ path: "xml", message: r.mensagem, motivo: r.motivo, caminho: r.caminho })));
+  }
+  const nota = leitura.nota;
+  if (d.document_type !== "nfe") throw recusaNoCampo("document_type", "O XML é de uma NF-e: o tipo do documento é nfe.");
+  if (d.access_key && d.access_key !== nota.chave) throw recusaNoCampo("access_key", "A chave de acesso não é a da nota do XML.");
+  if (d.number && semZerosAEsquerda(d.number) !== semZerosAEsquerda(nota.numero)) throw recusaNoCampo("number", "O número não é o da nota do XML.");
+  if (d.series && semZerosAEsquerda(d.series) !== semZerosAEsquerda(nota.serie)) throw recusaNoCampo("series", "A série não é a da nota do XML.");
+  if (d.issuer_document && documentoNormalizado(d.issuer_document) !== documentoNormalizado(nota.emitente.documento)) throw recusaNoCampo("issuer_document", "O CNPJ/CPF do emitente não é o da nota do XML.");
+  if (d.issuer_name && espacosUnicos(d.issuer_name) !== espacosUnicos(nota.emitente.nome)) throw recusaNoCampo("issuer_name", "O nome do emitente não é o da nota do XML.");
+  if (d.emission_date && d.emission_date !== nota.dataEmissao) throw recusaNoCampo("emission_date", "A data de emissão não é a da nota do XML.");
+  if (d.total && !mesmoValor(d.total, nota.totais.nota)) throw recusaNoCampo("total", "O total não é o da nota do XML.");
+  return nota;
 }
 
 export default async function stockRoutes(app: FastifyInstance) {
@@ -239,6 +271,9 @@ export default async function stockRoutes(app: FastifyInstance) {
       // COMPRAS-01 (decisão 267): a nota que já está numa Compra não cancelada não entra de novo por aqui.
       const compra = await compraComANota(ctx, { fornecedorId: d.provider_id, numero: d.number, serie: d.series });
       if (compra) throw err("DUPLICATE_DOCUMENT", `A nota ${d.number.trim()}/${d.series.trim() || "1"} deste fornecedor já está na Compra ${compra}.`, { onde: "compra", codigo: compra });
+      // OPERACOES-01 F7 (decisão 284): a CHAVE que já está numa Compra não cancelada também não entra (409 dizendo a
+      // Compra); a nota × nota segue com o índice de hoje (ux_invoices_key). O gatilho da 0047 é a rede.
+      if (d.access_key) await conferirChaveDeAcessoLivre(ctx, d.access_key, { notaAntiga: false });
       const code = await nextCode(ctx.tx, ctx.orgId, "invoice");
       let products = D(0), disc = D(0), ipi = D(0), icms = D(0);
       for (const it of d.items) { products = products.plus(D(it.quantity).mul(it.unit_value)); disc = disc.plus(it.discount); ipi = ipi.plus(it.ipi); icms = icms.plus(it.icms); }
@@ -581,35 +616,106 @@ export default async function stockRoutes(app: FastifyInstance) {
     const r = await ctx.tx.query(`select * from erp.dfe_documents where ${where.join(" and ")} order by emission_date desc nulls last, created_at desc limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
     return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
   }));
-  /** Registro manual/importação de DFe (a captura automática na SEFAZ depende de integração de certificado — ver GAP-ANALYSIS). */
+  /**
+   * Registro manual/importação de DFe (a captura automática na SEFAZ depende de integração de certificado — ver GAP-ANALYSIS).
+   *
+   * OPERACOES-01 F7 (decisão 284) — COM O XML (`xml`, aditivo): o servidor lê a nota (`lerNotaFiscalEletronica`; recusas
+   * em 422 no `xml`), confere que o que veio no corpo é o da nota (chave, número, série, emitente, emissão, total — 422 no
+   * campo; ausentes = os da nota), resolve a empresa DESTINATÁRIA no escopo de escrita do módulo (a do corpo é pedido) e
+   * guarda o ORIGINAL (`notas_fiscais_xml`), ligado pela `xml_id`. O upsert pela chave não troca a empresa (preenche a
+   * vazia) nem o XML já ligado; DF-e da chave em OUTRA empresa → 409. Sem `xml`: exatamente o de hoje.
+   * O perfil de lançamento compara o documento NORMALIZADO (a expressão do índice dos cadastros, que mantém as letras do
+   * CNPJ alfanumérico) — o cadastro com máscara passa a ser achado —, e a DF-e vira rascunho com ROW COUNT.
+   */
+  const dfeSchema = z.object({ empresa_id: uuid.optional().nullable(), access_key: z.string().length(44), document_type: z.enum(["nfe", "cte", "nfse"]).default("nfe"), number: z.string().optional().nullable(), series: z.string().optional().nullable(), issuer_document: z.string().optional().nullable(), issuer_name: z.string().optional().nullable(), emission_date: date.optional().nullable(), total: dec.optional().nullable(), raw: z.record(z.string(), z.unknown()).optional().nullable(),
+    xml: z.string().min(1).max(LIMITE_XML_GUARDADO_BYTES).nullish() });
+  const dfeComXmlSchema = dfeSchema.extend({ access_key: z.string().length(44).optional().nullable() });
   app.post("/stock/dfe", async (req, reply) => reply.status(201).send(await runService(app, req, "dfe.create", async (ctx) => {
-    const d = z.object({ empresa_id: uuid.optional().nullable(), access_key: z.string().length(44), document_type: z.enum(["nfe", "cte", "nfse"]).default("nfe"), number: z.string().optional().nullable(), series: z.string().optional().nullable(), issuer_document: z.string().optional().nullable(), issuer_name: z.string().optional().nullable(), emission_date: date.optional().nullable(), total: dec.optional().nullable(), raw: z.record(z.string(), z.unknown()).optional().nullable() }).parse(req.body); if (d.empresa_id) await exigirEmpresa(ctx, d.empresa_id);
-    const r = await ctx.tx.query<{ id: string }>("insert into erp.dfe_documents(organization_id,empresa_id,access_key,document_type,number,series,issuer_document,issuer_name,emission_date,total,raw) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) on conflict (organization_id,access_key) do update set issuer_name=coalesce(excluded.issuer_name,erp.dfe_documents.issuer_name) returning id", [ctx.orgId, d.empresa_id ?? null, d.access_key, d.document_type, d.number ?? null, d.series ?? null, d.issuer_document ?? null, d.issuer_name ?? null, d.emission_date ?? null, d.total ?? null, d.raw ? JSON.stringify(d.raw) : null]);
-    const id = r.rows[0]!.id;
+    const comXml = typeof (req.body as { xml?: unknown } | null | undefined)?.xml === "string";
+    const d = (comXml ? dfeComXmlSchema : dfeSchema).parse(req.body);
+    if (d.empresa_id && !comXml) await exigirEmpresa(ctx, d.empresa_id);
+    let dados = { empresa_id: d.empresa_id ?? null, access_key: d.access_key ?? "", number: d.number ?? null, series: d.series ?? null, issuer_document: d.issuer_document ?? null,
+      issuer_name: d.issuer_name ?? null, emission_date: d.emission_date ?? null, total: d.total ?? null };
+    let xmlId: string | null = null;
+    let id: string;
+    if (comXml && d.xml) {
+      const nota = notaDoXmlDaDfe(d.xml, d);
+      const empresa = await resolverDestinatario(ctx, nota, d.empresa_id ?? null, moduloAtivo(ctx), { oQue: "registrar a DF-e" });
+      xmlId = (await guardarXmlDaNota(ctx, { empresaId: empresa.id, chave: nota.chave, texto: d.xml, nomeArquivo: null, campo: "xml" })).id;
+      dados = { empresa_id: empresa.id, access_key: nota.chave, number: nota.numero, series: nota.serie, issuer_document: nota.emitente.documento,
+        issuer_name: nota.emitente.nome, emission_date: nota.dataEmissao, total: nota.totais.nota };
+      const r = await ctx.tx.query<{ id: string }>(
+        `insert into erp.dfe_documents(organization_id,empresa_id,access_key,document_type,number,series,issuer_document,issuer_name,emission_date,total,raw,xml_id)
+         values ($1,$2,$3,'nfe',$4,$5,$6,$7,$8,$9,$10,$11)
+         on conflict (organization_id,access_key) do update set issuer_name=coalesce(excluded.issuer_name,erp.dfe_documents.issuer_name),
+           empresa_id=coalesce(erp.dfe_documents.empresa_id, excluded.empresa_id), xml_id=coalesce(erp.dfe_documents.xml_id, excluded.xml_id)
+         where erp.dfe_documents.empresa_id is null or erp.dfe_documents.empresa_id = excluded.empresa_id
+         returning id`,
+        [ctx.orgId, dados.empresa_id, dados.access_key, dados.number, dados.series, dados.issuer_document, dados.issuer_name, dados.emission_date, dados.total,
+          d.raw ? JSON.stringify(d.raw) : null, xmlId]).catch((e: unknown) => {
+        // A DF-e da chave numa empresa que o escopo não alcança: a RLS recusa o UPDATE do upsert — a mesma 409.
+        if ((e as { code?: string }).code === "42501") throw err("CONFLICT", MSG_DFE_EM_OUTRA_EMPRESA);
+        throw e;
+      });
+      if (!r.rows[0]) throw err("CONFLICT", MSG_DFE_EM_OUTRA_EMPRESA);
+      id = r.rows[0].id;
+      await audit(ctx.tx, ctx, "dfe_documents", id, "registrar_xml", { xmlId, empresaId: empresa.id, chave: nota.chave });
+    } else {
+      // F7: registrar de novo com a empresa PREENCHE a DF-e sem empresa (a porta para aprovar a que nasceu sem ela); a
+      // empresa já gravada nunca muda (a do corpo foi conferida no escopo por `exigirEmpresa`).
+      const r = await ctx.tx.query<{ id: string }>("insert into erp.dfe_documents(organization_id,empresa_id,access_key,document_type,number,series,issuer_document,issuer_name,emission_date,total,raw) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) on conflict (organization_id,access_key) do update set issuer_name=coalesce(excluded.issuer_name,erp.dfe_documents.issuer_name), empresa_id=coalesce(erp.dfe_documents.empresa_id, excluded.empresa_id) returning id", [ctx.orgId, d.empresa_id ?? null, d.access_key, d.document_type, d.number ?? null, d.series ?? null, d.issuer_document ?? null, d.issuer_name ?? null, d.emission_date ?? null, d.total ?? null, d.raw ? JSON.stringify(d.raw) : null]);
+      id = r.rows[0]!.id;
+    }
     // Perfil de lançamento do fornecedor → gera rascunho automaticamente
-    if (d.issuer_document) {
-      const prof = await ctx.tx.query<{ id: string; provider_id: string; default_destination: string; default_title_type_id: string | null }>("select lp.id, lp.provider_id, lp.default_destination, lp.default_title_type_id from erp.provider_launch_profiles lp join erp.people p on p.id=lp.provider_id where lp.organization_id=$1 and lp.deleted_at is null and p.document=$2", [ctx.orgId, d.issuer_document.replace(/\D/g, "")]);
-      if (prof.rows[0]) {
+    const documentoDoEmitente = documentoNormalizado(dados.issuer_document);
+    if (documentoDoEmitente) {
+      const prof = await ctx.tx.query<{ id: string; provider_id: string; default_destination: string; default_title_type_id: string | null }>(
+        `select lp.id, lp.provider_id, lp.default_destination, lp.default_title_type_id from erp.provider_launch_profiles lp
+           join erp.people p on p.id=lp.provider_id and p.organization_id=lp.organization_id
+          where lp.organization_id=$1 and lp.deleted_at is null and ${SQL_DOCUMENTO_NORMALIZADO("p.document")}=$2`, [ctx.orgId, documentoDoEmitente]);
+      // F7: só a DF-e PENDENTE ganha rascunho — registrar de novo a mesma chave não duplica o rascunho pendente nem
+      // devolve a "rascunho" a DF-e já lançada ou ignorada.
+      const pendente = prof.rows[0] ? (await ctx.tx.query(
+        `select 1 from erp.dfe_documents d where d.id=$1 and d.organization_id=$2 and d.launch_status='pending'
+            and not exists (select 1 from erp.dfe_drafts dr where dr.dfe_id=d.id and dr.organization_id=d.organization_id and dr.status='pending')`, [id, ctx.orgId])).rowCount === 1 : false;
+      if (prof.rows[0] && pendente) {
         const items = await ctx.tx.query("select financial_category_id, cost_center_id, percentage from erp.provider_launch_profile_items where profile_id=$1", [prof.rows[0].id]);
-        await ctx.tx.query("insert into erp.dfe_drafts(organization_id,dfe_id,proposed) values ($1,$2,$3)", [ctx.orgId, id, JSON.stringify({ provider_id: prof.rows[0].provider_id, destination: prof.rows[0].default_destination, title_type_id: prof.rows[0].default_title_type_id, apportionment: items.rows, total: d.total, number: d.number, series: d.series, emission_date: d.emission_date })]);
-        await ctx.tx.query("update erp.dfe_documents set launch_status='draft' where id=$1", [id]);
+        await ctx.tx.query("insert into erp.dfe_drafts(organization_id,dfe_id,proposed) values ($1,$2,$3)", [ctx.orgId, id, JSON.stringify({ provider_id: prof.rows[0].provider_id, destination: prof.rows[0].default_destination, title_type_id: prof.rows[0].default_title_type_id, apportionment: items.rows, total: dados.total, number: dados.number, series: dados.series, emission_date: dados.emission_date })]);
+        // ROW COUNT SOB RLS: a DF-e que acabou de ser gravada tem de virar rascunho (zero linha seria um rascunho órfão).
+        const u = await ctx.tx.query("update erp.dfe_documents set launch_status='draft' where id=$1 and organization_id=$2 and launch_status='pending'", [id, ctx.orgId]);
+        if (u.rowCount !== 1) throw notFound("DF-e");
       }
     }
-    return { id };
+    return xmlId ? { id, xml_id: xmlId } : { id };
   })));
   app.post("/stock/dfe/:id/manifest", async (req) => runService(app, req, "dfe.manifest", async (ctx) => { const { id } = req.params as { id: string }; const d = z.object({ status: z.enum(["awareness", "confirmed", "unknown", "not_performed"]) }).parse(req.body); const mp: unknown[] = [id, ctx.orgId, d.status]; const u = await ctx.tx.query("update erp.dfe_documents set manifest_status=$3, updated_at=now() where id=$1 and organization_id=$2" + empresaScopeSql(ctx, "empresa_id", mp, { nullable: true }) + " returning id", mp); if (!u.rowCount) throw notFound(); await audit(ctx.tx, ctx, "dfe_documents", id, "manifest", d); return { id, manifest_status: d.status }; }));
   app.post("/stock/dfe/:id/ignore", async (req) => runService(app, req, "dfe_drafts.ignore", async (ctx) => { const { id } = req.params as { id: string }; const ip: unknown[] = [id, ctx.orgId]; const ig = await ctx.tx.query("update erp.dfe_documents set launch_status='ignored' where id=$1 and organization_id=$2" + empresaScopeSql(ctx, "empresa_id", ip, { nullable: true }) + " returning id", ip); if (!ig.rowCount) throw notFound(); await ctx.tx.query("update erp.dfe_drafts set status='ignored', reviewed_by=$3, reviewed_at=now() where dfe_id=$1 and organization_id=$2 and status='pending'", [id, ctx.orgId, ctx.user.id]); return { id, launch_status: "ignored" }; }));
   app.get("/stock/dfe-drafts", async (req) => runService(app, req, "dfe_drafts.view", async (ctx) => { const r = await consultaEscopada(ctx, "select dr.*, d.access_key, d.number, d.issuer_name, d.total, d.emission_date from erp.dfe_drafts dr join erp.dfe_documents d on d.id=dr.dfe_id where dr.organization_id=$1 and dr.status='pending' and {{escopo_nulo:d.empresa_id}} order by dr.created_at desc", [ctx.orgId]); return { items: r.rows, total: r.rowCount }; }));
+  /**
+   * OPERACOES-01 F7 (decisão 284): o rascunho é lido JUNTO da DF-e, no escopo (DF-e sem empresa é da organização) — o
+   * de fora é a mesma 404; a empresa do título é a DA DF-e (nunca a da sessão nem "a primeira disponível"), no escopo de
+   * escrita; DF-e sem empresa → 422. Os dois UPDATEs conferem o ROW COUNT.
+   */
   app.post("/stock/dfe-drafts/:id/approve", async (req) => runService(app, req, "dfe_drafts.approve", async (ctx) => {
     const { id } = req.params as { id: string };
-    const dr = await ctx.tx.query<{ dfe_id: string; proposed: Record<string, unknown>; status: string }>("select dfe_id, proposed, status from erp.dfe_drafts where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!dr.rows[0]) throw notFound(); if (dr.rows[0].status !== "pending") throw err("ALREADY_CONFIRMED", "Rascunho já processado");
-    const p = dr.rows[0].proposed; const empresaId = ctx.empresaId ?? (await empresasDisponiveis(ctx))[0]; if (!empresaId) throw validation("Nenhuma empresa disponível para lançar o rascunho"); await exigirEmpresa(ctx, empresaId);
+    if (!FORMA_UUID.test(id)) throw notFound();
+    const dr = await consultaEscopada<{ dfe_id: string; proposed: Record<string, unknown>; status: string; empresa_id: string | null }>(ctx,
+      `select dr.dfe_id, dr.proposed, dr.status, d.empresa_id::text as empresa_id
+         from erp.dfe_drafts dr join erp.dfe_documents d on d.id=dr.dfe_id and d.organization_id=dr.organization_id
+        where dr.id=$1 and dr.organization_id=$2 and {{escopo_nulo:d.empresa_id}} for update of dr`, [id, ctx.orgId]);
+    if (!dr.rows[0]) throw notFound(); if (dr.rows[0].status !== "pending") throw err("ALREADY_CONFIRMED", "Rascunho já processado");
+    const p = dr.rows[0].proposed; const empresaId = dr.rows[0].empresa_id;
+    if (!empresaId) throw validation(MSG_DFE_SEM_EMPRESA, [{ path: "empresa_id", message: MSG_DFE_SEM_EMPRESA }]);
+    await exigirEmpresa(ctx, empresaId);
     // Nota de despesa: gera conta a pagar diretamente com rateio do perfil
     const app_ = (p["apportionment"] as { financial_category_id: string; cost_center_id: string; percentage: string }[]) ?? [];
     if (!app_.length || !p["total"]) throw validation("Rascunho sem rateio/total: lance manualmente pela tela de Documento Fiscal");
     const t = await createTitles(ctx, { empresaId, direction: "payable", number: String(p["number"] ?? "DFE"), titleTypeId: (p["title_type_id"] as string) ?? null, personId: p["provider_id"] as string, amount: money(String(p["total"])), emissionDate: (p["emission_date"] as string) ?? new Date().toISOString().slice(0, 10), dueDate: (p["emission_date"] as string) ?? new Date().toISOString().slice(0, 10), note: `DFe aprovada automaticamente (${p["destination"]})`, isDeductible: true, documentType: "nfe", apportionment: app_.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, percentage: a.percentage })), sourceType: "dfe_documents", sourceId: dr.rows[0].dfe_id });
-    await ctx.tx.query("update erp.dfe_drafts set status='approved', reviewed_by=$3, reviewed_at=now() where id=$1 and organization_id=$2", [id, ctx.orgId, ctx.user.id]);
-    await ctx.tx.query("update erp.dfe_documents set launch_status='launched' where id=$1", [dr.rows[0].dfe_id]);
+    // ROW COUNT SOB RLS nos dois: zero linha seria "aprovado" sem efeito (com o título já gravado).
+    const ur = await ctx.tx.query("update erp.dfe_drafts set status='approved', reviewed_by=$3, reviewed_at=now() where id=$1 and organization_id=$2 and status='pending'", [id, ctx.orgId, ctx.user.id]);
+    if (ur.rowCount !== 1) throw notFound();
+    const ud = await ctx.tx.query("update erp.dfe_documents set launch_status='launched' where id=$1 and organization_id=$2", [dr.rows[0].dfe_id, ctx.orgId]);
+    if (ud.rowCount !== 1) throw notFound();
     await audit(ctx.tx, ctx, "dfe_drafts", id, "approve", { titles: t.ids });
     return { id, title_ids: t.ids };
   }));

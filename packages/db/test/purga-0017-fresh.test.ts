@@ -226,7 +226,9 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     // o CHECK de situação do título com 'previsto' e acrescenta a guarda do previsto — nada no recorte que a purga lê.
     // A OPERACOES-01 F10 é a trigésima: a 0046 acrescenta a TOP (colunas anuláveis) aos seis registros de módulo, a
     // observação da manutenção e troca a política de `erp.maintenance_items` — nada no recorte que a purga lê.
-    expect(noDisco.length, "46 migrations no repositório").toBe(46);
+    // A OPERACOES-01 F7 é a trigésima primeira: a 0047 cria as tabelas da entrada de nota por XML, acrescenta colunas
+    // anuláveis à compra e as guardas da chave de acesso — nada no recorte que a purga lê.
+    expect(noDisco.length, "47 migrations no repositório").toBe(47);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
     expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");
@@ -257,6 +259,7 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     expect(noDisco[43], "e a 44ª é o pedido de compra finalizado e o orçamento de compra (OPERACOES-01 F6a)").toBe("0044_pedido_finalizado_e_orcamento_de_compra.sql");
     expect(noDisco[44], "e a 45ª é o financeiro pela TOP e o LCDPR (OPERACOES-01 F9)").toBe("0045_financeiro_pela_top_e_lcdpr.sql");
     expect(noDisco[45], "e a 46ª são os módulos com TOP (OPERACOES-01 F10)").toBe("0046_modulos_com_top.sql");
+    expect(noDisco[46], "e a 47ª é a entrada de nota por XML (OPERACOES-01 F7)").toBe("0047_entrada_de_nota_por_xml.sql");
   });
 
   it("as 16 anteriores aplicam, e a 0017 aplica sozinha em seguida", () => {

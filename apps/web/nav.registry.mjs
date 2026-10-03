@@ -84,6 +84,8 @@ export const AREAS = [
   // OPERACOES-01 F11 (decisão 288): a solicitação sai do menu (pedido + orçamento cobrem). A entrada FICA em `ALL`
   // (`search: false`) porque é a âncora de `/suprimentos/*` no `moduleForPath` (lib/nav.ts) e dá o rótulo da aba de
   // trabalho da rota `/suprimentos/new`, que continua abrindo.
+  // OPERACOES-01 F7 (decisão 284): a importação do XML da nota de compra, na Central de Compras.
+  act("compras", "importar-xml", "Importar XML de nota de compra", "/compras?tab=documentos&importar=xml", "compras.create", { keywords: ["importar xml", "nf-e", "nota fiscal", "lançar nota", "danfe"] }),
   act("compras", "solicitacao", "Nova solicitação de compra", "/suprimentos/new", "purchase_requests.create", { search: false, keywords: ["comprar", "pedir", "requisitar compra"] }),
   // ---------------- Estoque ----------------
   // OPERACOES-01 F11 (decisão 288): o lançamento antigo sai do menu quando a Central cobre; a entrada continua em `ALL`
@@ -117,7 +119,11 @@ export const AREAS = [
   s("estoque", "fabrica", "consumo", "Consumo de matéria-prima", "stocks.view", { search: false }),
   s("estoque", "fabrica", "custos", "Custos (produto acabado)", "stocks.view", { search: false }),
   act("estoque", "entrada-manual", "Entrada sem nota com pagamento ou natureza e centro por item", "/estoque/entradas/new", "input_entries.create", { keywords: ["entrada de insumos", "sem nota", "pagamento", "movimento bancário", "natureza", "centro de resultado"] }),
-  act("estoque", "documento-fiscal", "Novo documento fiscal / importar XML", "/estoque/documentos-fiscais/new", "invoices.create", { keywords: ["importar xml", "lançar nota"] }),
+  // OPERACOES-01 F7/F11 (decisões 284 e 288): a nota de entrada passa a ser a COMPRA, com a importação do XML na Central
+  // de Compras; a nota antiga fica no menu SÓ para o que a compra não cobre (qualidade de grão, proprietário, cultura e
+  // safra no movimento, apropriação, filial do fornecedor, centro no movimento, unidade própria, "gerar financeiro" por
+  // documento, bem com dados digitados e título dedutível).
+  act("estoque", "documento-fiscal", "Nota de entrada antiga (qualidade de grão, proprietário, cultura ou apropriação)", "/estoque/documentos-fiscais/new", "invoices.create", { keywords: ["lançar nota", "qualidade de grão", "proprietário", "cultura", "apropriação", "filial do fornecedor", "título dedutível"] }),
   act("estoque", "requisicao", "Requisição com classificação capex/opex", "/estoque/requisicoes/new", "requisitions.create", { keywords: ["capex", "opex", "investimento", "custeio", "classificação"] }),
   act("estoque", "saida-direta", "Nova saída direta", "/estoque/baixas/new", "stock_writeoffs.create", { search: false, keywords: ["baixar estoque"] }),
   act("estoque", "transferencia-armazens", "Transferência entre locais de estoque", "/estoque/transferencias/new?kind=warehouse", "warehouse_transfers.create", { search: false }),
@@ -418,6 +424,8 @@ export const EXTRA_REDIRECTS = [
  * precisa casar com uma página existente ou com um destes padrões).
  */
 export const DETAIL_ROUTES = [
+  // OPERACOES-01 F7 (decisão 284): a conferência do XML importado (antes do detalhe, cujo padrão também casaria).
+  { id: "compras.documentos.importacao", module: "compras", area: "documentos", label: "Conferência do XML", pattern: "/compras/importacoes/:id", perm: "compras.create" },
   { id: "compras.documentos.detalhe", module: "compras", area: "documentos", label: "Documento de compra", pattern: "/compras/:especie/:id", perm: ["pedidos_compra.view", "compras.view", "orcamentos_compra.view"] },
   { id: "compras.processos.detalhe", module: "compras", area: "processos", label: "Processo de compra", pattern: "/suprimentos/view/:id", perm: "purchase_requests.view" },
   // ESTOQUE-01 (decisão 274): a Central de Estoque. `[especie]` é o SEGMENTO (entradas | saidas | transferencias |

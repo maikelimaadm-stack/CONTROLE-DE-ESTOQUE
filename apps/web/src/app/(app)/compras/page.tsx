@@ -3,7 +3,7 @@ import * as React from "react";
 import { Suspense } from "react";
 import { useAuth } from "@/lib/auth";
 import { useTradutor } from "@/lib/i18n";
-import { Workspace, NewChooser, tab, useUrlParam } from "@/components/workspace";
+import { Workspace, tab, useUrlParam } from "@/components/workspace";
 import { Dashboard } from "@/features/dashboards/dashboard";
 import { SupplyProcesses } from "@/features/supply/processes";
 import { SeletorDeTipoDeDocumento, TODOS_OS_TIPOS } from "@/features/sales/seletor-tipo-documento";
@@ -12,6 +12,10 @@ import type { LinhaDeLancamento } from "@/features/sales/launcher-operacoes";
 import { DocumentosDeCompraList } from "@/features/compras/documentos-compra-list";
 import { useTopsDeCompras, variantesDeCompra } from "@/features/compras/variantes";
 import { useFinalizacaoEOrcamento, type EstadoDaCapacidade } from "@/features/compras/pedido-e-orcamento";
+import { useImportacaoXml } from "@/features/compras/importacao/capacidade";
+import { DialogoImportarXml } from "@/features/compras/importacao/enviar-xml";
+import { Button } from "@/components/ui";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import estilos from "@/features/sales/portal-vendas.module.css";
 
 /**
@@ -25,6 +29,11 @@ import estilos from "@/features/sales/portal-vendas.module.css";
  * O Tipo "Orçamento de compra" segue a capacidade `finalizacaoEOrcamento` das portas de compras: a API anterior não
  * conhece a espécie e responderia a lista dele VAZIA — que afirmaria "não há orçamentos". Ver `tipoDoOrcamentoVale`.
  * "Processos" (solicitação → cotação → …) é o fluxo de suprimentos, que não muda.
+ *
+ * OPERACOES-01 F7 (decisão 284): "Importar XML" na barra, depois do Novo — com `compras.create` e a capacidade
+ * `importacaoXml` "sim" (a API anterior não a declara: sem botão, e `?importar=xml` não abre nada). `?importar=xml`
+ * abre o diálogo (a solicitação de compra antiga chega assim, com `solicitacao_id`); fechar o diálogo tira os dois
+ * parâmetros da URL.
  */
 const rotaDeLancamentoDeCompra = (linha: LinhaDeLancamento) => `/compras/${linha.segmento}/new?tipo_operacao_id=${encodeURIComponent(linha.id)}`;
 
@@ -36,6 +45,26 @@ const rotaDeLancamentoDeCompra = (linha: LinhaDeLancamento) => `/compras/${linha
  */
 function tipoDoOrcamentoVale(capacidade: EstadoDaCapacidade, somenteOrcamento: boolean, capacidadeLegivel: boolean): boolean {
   return somenteOrcamento || !capacidadeLegivel || capacidade !== "nao";
+}
+
+/** O "Importar XML" da barra e o diálogo — `?importar=xml` abre; fechar tira `importar` e `solicitacao_id` da URL. */
+function ImportarXml() {
+  const { can } = useAuth();
+  const capacidade = useImportacaoXml();
+  const sp = useSearchParams(); const router = useRouter(); const pathname = usePathname();
+  const pode = can("compras.create") && capacidade === "sim";
+  const aberto = pode && sp.get("importar") === "xml";
+  const mudarUrl = (abrir: boolean) => {
+    const next = new URLSearchParams(sp.toString());
+    if (abrir) next.set("importar", "xml"); else { next.delete("importar"); next.delete("solicitacao_id"); }
+    const qs = next.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  };
+  if (!pode) return null;
+  return <>
+    <Button size="sm" variant="outline" data-testid="compras-importar-xml" onClick={() => mudarUrl(true)}>Importar XML</Button>
+    <DialogoImportarXml aberto={aberto} onFechar={() => mudarUrl(false)} solicitacaoId={aberto ? sp.get("solicitacao_id") || null : null} />
+  </>;
 }
 
 function Documentos() {
@@ -56,6 +85,7 @@ function Documentos() {
   const barra = <span className={estilos.contexto} role="group" aria-label="Contexto operacional">
     <SeletorDeTipoDeDocumento prefixo="compras" valor={atual} opcoes={opcoes} focarAoMontar={focarTipo} onChange={(v) => { focarTipo.current = true; setEspecie(v); }} />
     <NovoDocumentoPorTop variante={atual} rotuloDoTipo={rotuloDoTipo} todosOsGrupos={grupos.filter((g) => g.variante.variante !== "orcamento")} prefixo="compras" rota={rotaDeLancamentoDeCompra} />
+    <ImportarXml />
   </span>;
   return <div data-testid="compras-documentos" data-especie={atual} className="flex min-h-0 flex-1 flex-col">
     <DocumentosDeCompraList especie={atual} barra={barra} />
@@ -66,7 +96,7 @@ function Inner() {
   // Sem leitura de nenhum documento de compra, o padrão continua sendo Processos (o de antes desta fatia).
   const { can } = useAuth();
   const comDocumentos = variantesDeCompra().some((v) => can(`${v.perm}.view`));
-  return <Workspace title="Compras" actions={<NewChooser items={[{ label: "Nova solicitação de compra", href: "/suprimentos/new", perm: "purchase_requests.create" }]} />} tabs={[
+  return <Workspace title="Compras" tabs={[
     tab("compras.documentos", <Documentos />),
     tab("compras.visao-geral", <Dashboard k="suprimentos" title="Indicadores de compras" />),
     tab("compras.processos", <SupplyProcesses />)

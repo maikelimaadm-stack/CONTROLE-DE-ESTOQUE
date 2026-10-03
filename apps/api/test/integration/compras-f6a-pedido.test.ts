@@ -451,12 +451,13 @@ describe("FP-5 encerrar o saldo e cancelar o pedido finalizado", () => {
 // ─────────────── FP-6 ───────────────
 
 describe("FP-6 a capacidade e a leitura", () => {
-  it("FP-6a operation-types das duas espécies: finalizacaoEOrcamento = 1, a ÚLTIMA chave (as de hoje na mesma ordem)", async () => {
+  it("FP-6a operation-types das duas espécies: finalizacaoEOrcamento = 1, depois das de hoje (na mesma ordem); a F7 acrescenta importacaoXml no FIM", async () => {
     for (const segmento of ["pedidos", "compras"] as const) {
       const r = await c.ligada.inject({ method: "GET", url: `/api/compras/${segmento}/operation-types`, headers: c.h.headers() });
       expect(r.statusCode, r.body).toBe(200);
       const capacidades = j(r).capacidades as Record<string, unknown>;
-      expect(Object.keys(capacidades), segmento).toEqual(["classificacaoFinanceira", "condicaoPagamento", "layoutDocumento", "regrasDaOperacao", "finalizacaoEOrcamento"]);
+      // OPERACOES-01 F7 (decisão 284): `importacaoXml` no FIM.
+      expect(Object.keys(capacidades), segmento).toEqual(["classificacaoFinanceira", "condicaoPagamento", "layoutDocumento", "regrasDaOperacao", "finalizacaoEOrcamento", "importacaoXml"]);
       expect(capacidades.finalizacaoEOrcamento).toBe(1);
     }
   });

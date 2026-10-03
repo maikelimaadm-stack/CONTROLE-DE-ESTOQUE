@@ -7,6 +7,7 @@ import {
   MSG_PEDIDO_SEM_TOP_DE_ORCAMENTO, camposObrigatoriosFaltando, catalogoDaFamilia, chavePadraoDeCadastro, mensagemCampoObrigatorio,
   type CampoDoLayout, type EstruturaLayout
 } from "@agro/domain";
+import { D } from "@agro/shared";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
@@ -38,6 +39,7 @@ import {
   SEM_PADROES, camposExigidosPelaRegra, colunasDoEditor, estruturaComExigidos, estruturaDaResposta, layoutQueVale, lerRegras, padroesDaResposta,
   valorDoPadrao, zonasDaCentral, type LayoutQueVale, type PadraoDeCadastro, type PadroesDaResposta, type RegrasDaCompra, type ZonasDaCentral
 } from "../layout-da-central";
+import { useImportacaoXml } from "../importacao/capacidade";
 import { adaptadorDaCentralDeCompras, chaveDaCopiaDeCompra, chaveDepoisDeSalvarDeCompra, corpoDoCancelamento } from "./adaptador";
 
 /**
@@ -55,6 +57,11 @@ import { adaptadorDaCentralDeCompras, chaveDaCopiaDeCompra, chaveDepoisDeSalvarD
  * só é trocada quando o servidor RESPONDEU com recusa (`trocaAChaveDeIdempotencia`): na queda de rede, no 5xx ou na
  * resposta perdida o reenvio leva a MESMA chave e recebe a resposta gravada — nunca um segundo documento. A chave mora
  * em `useChaveDeIdempotencia`, que também troca o texto técnico do reenvio com outros dados pelo aviso em português.
+ *
+ * OPERACOES-01 F7 (decisão 284): na criação da COMPRA, com a capacidade `importacaoXml` "sim", os DADOS FISCAIS do
+ * cabeçalho (chave de acesso, UF, tipo de documento, IPI, ICMS-ST, seguro, tipo de título, classificação) — estado
+ * próprio (`fiscal`), no corpo SÓ quando preenchidos e no total exibido (IPI + ICMS-ST + seguro). Sem a capacidade (a API
+ * anterior), o corpo é o de hoje, byte a byte.
  */
 
 /* ═════════════════════════════════════ Tipos ═════════════════════════════════════ */
@@ -67,6 +74,105 @@ export type Cabecalho = {
 export type ChaveDoCabecalho = keyof Cabecalho;
 export type ModoDaCentral = "criacao" | "receber" | "consulta";
 export type CopiaDeCompra = CopiaEmMemoria<Partial<Cabecalho>>;
+
+/**
+ * OPERACOES-01 F7 (decisão 284) — OS DADOS FISCAIS DA COMPRA MANUAL: o que a nota antiga tinha no cabeçalho e a compra
+ * passou a ter. Só na CRIAÇÃO da espécie compra e só com a capacidade `importacaoXml` "sim" (a API que os aceita). Estado
+ * PRÓPRIO, fora do `Cabecalho`: não entram no layout, nos padrões, na cópia do Duplicar (a chave de acesso não se repete)
+ * nem no `/convert` do receber. No corpo, cada chave SÓ quando preenchida — vazio = a compra de hoje.
+ */
+export type DadosFiscais = {
+  chave_acesso: string; uf_nota: string; tipo_documento_fiscal: string; valor_ipi: string; valor_icms_st: string; seguro: string;
+  tipo_titulo_id: string; classificacao_gasto: string;
+};
+export type ChaveDosDadosFiscais = keyof DadosFiscais;
+export const CAMPOS_DOS_DADOS_FISCAIS: readonly ChaveDosDadosFiscais[] = [
+  "chave_acesso", "uf_nota", "tipo_documento_fiscal", "valor_ipi", "valor_icms_st", "seguro", "tipo_titulo_id", "classificacao_gasto"
+];
+export const dadosFiscaisVazios = (): DadosFiscais => ({
+  chave_acesso: "", uf_nota: "", tipo_documento_fiscal: "", valor_ipi: "", valor_icms_st: "", seguro: "", tipo_titulo_id: "", classificacao_gasto: ""
+});
+
+/** A chave de acesso como a pessoa a digita (com espaços, como no DANFE) vai SEM os espaços; o resto é do servidor. */
+export const chaveDeAcessoDoCorpo = (v: string) => v.replace(/\s+/g, "");
+
+/**
+ * As chaves fiscais do corpo: SÓ as preenchidas (aparadas; a UF em maiúsculas; os valores como TEXTO decimal, nunca
+ * número). "Não classificado" é a ausência da classificação.
+ */
+export function corpoDosDadosFiscais(f: DadosFiscais): Record<string, string> {
+  const out: Record<string, string> = {};
+  const chave = chaveDeAcessoDoCorpo(f.chave_acesso);
+  if (chave) out.chave_acesso = chave;
+  if (f.uf_nota.trim()) out.uf_nota = f.uf_nota.trim().toUpperCase();
+  for (const c of ["tipo_documento_fiscal", "valor_ipi", "valor_icms_st", "seguro", "tipo_titulo_id"] as const) if (f[c].trim()) out[c] = f[c].trim();
+  if (f.classificacao_gasto === "capex" || f.classificacao_gasto === "opex") out.classificacao_gasto = f.classificacao_gasto;
+  return out;
+}
+
+/** IPI + ICMS-ST + seguro digitados, para o total EXIBIDO (decimal; o que não é número conta zero — o servidor recusa). */
+export function impostosDosDadosFiscais(f: DadosFiscais): string {
+  const valor = (v: string) => { try { return v.trim() ? D(v.trim()) : D(0); } catch { return D(0); } };
+  return valor(f.valor_ipi).plus(valor(f.valor_icms_st)).plus(valor(f.seguro)).toFixed(2);
+}
+
+/**
+ * OPERACOES-01 F7 (decisão 284) — O RATEIO E A CLASSIFICAÇÃO DOS ITENS NA COMPRA MANUAL (o que a nota antiga tinha e a
+ * conferência do XML já faz): rateio do documento (o de hoje: natureza e centro do cabeçalho), por valor (linhas com
+ * natureza, centro, conta contábil, safra e percentual, somando 100%) ou por produto (natureza e centro em cada item);
+ * por item, "gera estoque" e "imobilizado". Mesmas regras da criação com dados fiscais: só na compra, só com a
+ * capacidade; no corpo, SÓ o que foge do padrão — padrão = a compra de hoje, byte a byte.
+ */
+export type TipoDoRateioDaCompra = "documento" | "por_valor" | "por_produto";
+export interface LinhaDoRateioDaCompra { categoriaId: string; centroId: string; contaId: string; safraId: string; percentual: string }
+export interface RateioDaCompraNaTela { tipo: TipoDoRateioDaCompra; linhas: LinhaDoRateioDaCompra[] }
+export const linhaDoRateioVazia = (): LinhaDoRateioDaCompra => ({ categoriaId: "", centroId: "", contaId: "", safraId: "", percentual: "" });
+export const rateioDoDocumento = (): RateioDaCompraNaTela => ({ tipo: "documento", linhas: [linhaDoRateioVazia()] });
+
+/**
+ * As chaves da LINHA da grade que guardam a classificação do item. Ficam na própria linha (o motor da grade preserva as
+ * chaves que não desenha), para andar junto quando a linha é duplicada, removida ou reordenada — nunca num índice paralelo.
+ */
+export const CLASSIFICACAO_DO_ITEM = {
+  geraEstoque: "compra_gera_estoque", imobilizado: "compra_imobilizado", natureza: "compra_natureza_id", centro: "compra_centro_id"
+} as const;
+export const itemGeraEstoque = (i: ItemRow) => i[CLASSIFICACAO_DO_ITEM.geraEstoque] !== false;
+export const itemImobilizado = (i: ItemRow) => i[CLASSIFICACAO_DO_ITEM.imobilizado] === true;
+const textoDaLinha = (i: ItemRow, k: string) => (typeof i[k] === "string" ? (i[k] as string) : "");
+export const naturezaDoItem = (i: ItemRow) => textoDaLinha(i, CLASSIFICACAO_DO_ITEM.natureza);
+export const centroDoItem = (i: ItemRow) => textoDaLinha(i, CLASSIFICACAO_DO_ITEM.centro);
+
+/** As chaves de classificação de UM item no corpo: só o que foge do padrão; natureza e centro só com rateio por produto. */
+export function corpoDaClassificacaoDoItem(i: ItemRow, tipo: TipoDoRateioDaCompra): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!itemGeraEstoque(i)) out.gera_estoque = false;
+  if (itemImobilizado(i)) out.imobilizado = true;
+  if (tipo === "por_produto") {
+    out.categoria_financeira_id = naturezaDoItem(i) || null;
+    out.centro_custo_id = centroDoItem(i) || null;
+  }
+  return out;
+}
+
+/** O `rateio` do corpo: nenhum no rateio do documento (o de hoje); os percentuais como TEXTO decimal, nunca número. */
+export function corpoDoRateio(r: RateioDaCompraNaTela): Record<string, unknown> {
+  if (r.tipo === "documento") return {};
+  if (r.tipo === "por_produto") return { rateio: { tipo: "por_produto" } };
+  return {
+    rateio: {
+      tipo: "por_valor",
+      linhas: r.linhas.map((l) => ({
+        categoria_financeira_id: l.categoriaId, centro_custo_id: l.centroId,
+        conta_contabil_id: l.contaId || null, safra_id: l.safraId || null, percentual: l.percentual.trim()
+      }))
+    }
+  };
+}
+
+/** Soma dos percentuais digitados do rateio por valor (o que não é número conta zero — o servidor recusa). */
+export function somaDoRateio(r: RateioDaCompraNaTela): string {
+  return r.linhas.reduce((a, l) => { try { return l.percentual.trim() ? a.plus(D(l.percentual.trim())) : a; } catch { return a; } }, D(0)).toFixed();
+}
 
 export const cabecalhoVazio = (): Cabecalho => ({
   empresa_id: "", fornecedor_id: "", transportadora_id: "", data_documento: todayISO(), data_entrada: "", data_vencimento: "",
@@ -260,8 +366,23 @@ export interface EstadoDaCriacao {
   plano: Plan;
   setPlano: (p: Plan) => void;
   totalItens: number;
+  /** Itens + frete + outras − desconto e, com os dados fiscais, + IPI + ICMS-ST + seguro (a conta do total da 0047). */
   totalExibido: number;
   lote: ControleDeLote;
+
+  /* os dados fiscais da compra manual (OPERACOES-01 F7, decisão 284) */
+  /** O bloco "Dados fiscais" existe: criação (não o receber) da espécie compra com a capacidade `importacaoXml` "sim". */
+  dadosFiscaisAtivos: boolean;
+  fiscal: DadosFiscais;
+  mudarFiscal: (p: Partial<DadosFiscais>) => void;
+  /** O rateio da compra manual (F7): do documento (o de hoje), por valor ou por produto. */
+  rateio: RateioDaCompraNaTela;
+  mudarTipoDoRateio: (t: TipoDoRateioDaCompra) => void;
+  mudarLinhaDoRateio: (k: number, p: Partial<LinhaDoRateioDaCompra>) => void;
+  adicionarLinhaDoRateio: () => void;
+  removerLinhaDoRateio: (k: number) => void;
+  /** A classificação de UM item (F7): gera estoque, imobilizado, natureza e centro — na própria linha da grade. */
+  mudarClassificacaoDoItem: (k: number, p: { geraEstoque?: boolean; imobilizado?: boolean; natureza?: string; centro?: string }) => void;
 
   /* layout e regras */
   layoutAtivo: boolean;
@@ -375,6 +496,29 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const setItens = (novos: ItemRow[]) => setItensCru((antes) => (modoReceber ? acompanharDescontoDaOrigem(antes, novos) : novos));
   const [ajustarParcelas, setAjustarParcelas] = React.useState(false);
   const [plano, setPlano] = React.useState<Plan>(defaultPlan());
+  /* DADOS FISCAIS (F7): só na criação da compra e com a capacidade "sim" — sem ela, nenhuma chave nova no corpo. A
+     pergunta é a das TOPs da compra (já respondida para o formulário existir): nenhum pedido a mais. */
+  const capacidadeFiscal = useImportacaoXml(ehCompra && !modoReceber);
+  const dadosFiscaisAtivos = ehCompra && !modoReceber && capacidadeFiscal === "sim";
+  const [fiscal, setFiscal] = React.useState<DadosFiscais>(dadosFiscaisVazios);
+  const mudarFiscal = React.useCallback((p: Partial<DadosFiscais>) => setFiscal((o) => ({ ...o, ...p })), []);
+  const [rateio, setRateio] = React.useState<RateioDaCompraNaTela>(rateioDoDocumento);
+  const mudarTipoDoRateio = (tipo: TipoDoRateioDaCompra) => setRateio((r) => ({ ...r, tipo }));
+  const mudarLinhaDoRateio = (k: number, p: Partial<LinhaDoRateioDaCompra>) => setRateio((r) => ({ ...r, linhas: r.linhas.map((l, i) => (i === k ? { ...l, ...p } : l)) }));
+  const adicionarLinhaDoRateio = () => setRateio((r) => (r.linhas.length >= 50 ? r : { ...r, linhas: [...r.linhas, linhaDoRateioVazia()] }));
+  const removerLinhaDoRateio = (k: number) => setRateio((r) => (r.linhas.length <= 1 ? r : { ...r, linhas: r.linhas.filter((_, i) => i !== k) }));
+  /* A classificação mora na LINHA (a mesma lista que a grade edita). Item que deixa de gerar estoque perde o local:
+     "não gera estoque" com local seria dois sinais contraditórios (o servidor recusa). */
+  const mudarClassificacaoDoItem = (k: number, p: { geraEstoque?: boolean; imobilizado?: boolean; natureza?: string; centro?: string }) =>
+    setItensCru((ls) => ls.map((l, i) => {
+      if (i !== k) return l;
+      const nova: ItemRow = { ...l };
+      if (p.geraEstoque !== undefined) { nova[CLASSIFICACAO_DO_ITEM.geraEstoque] = p.geraEstoque; if (!p.geraEstoque) nova.warehouse_id = ""; }
+      if (p.imobilizado !== undefined) nova[CLASSIFICACAO_DO_ITEM.imobilizado] = p.imobilizado;
+      if (p.natureza !== undefined) nova[CLASSIFICACAO_DO_ITEM.natureza] = p.natureza;
+      if (p.centro !== undefined) nova[CLASSIFICACAO_DO_ITEM.centro] = p.centro;
+      return nova;
+    }));
   const [erros, setErros] = React.useState<Record<string, string>>({});
   const [confirmarTroca, setConfirmarTroca] = React.useState(false);
   const [pendenciasAbertas, setPendenciasAbertas] = React.useState(false);
@@ -398,7 +542,8 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   }, [recebendo, pedidoId]);
 
   const totalItens = itens.reduce((a, it) => a + totalDaLinhaExibido(it), 0);
-  const totalExibido = totalItens + Number(h.frete || 0) + Number(h.outras_despesas || 0) - Number(h.desconto || 0);
+  const totalExibido = totalItens + Number(h.frete || 0) + Number(h.outras_despesas || 0) - Number(h.desconto || 0)
+    + (dadosFiscaisAtivos ? Number(impostosDosDadosFiscais(fiscal)) : 0);
 
   const cabecalhoDoCorpo = () => ({
     tipo_operacao_id: top,
@@ -427,7 +572,10 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   /** O corpo do POST — as MESMAS chaves de hoje (lançar e `/convert`). */
   const corpo = (): Record<string, unknown> => (modoReceber
     ? { ...cabecalhoDoCorpo(), itens: itens.map((i) => ({ item_origem_id: String(i["item_origem_id"] ?? ""), ...camposDoItem(i) })) }
-    : { empresa_id: h.empresa_id, fornecedor_id: h.fornecedor_id, ...cabecalhoDoCorpo(), itens: itens.map((i) => ({ produto_id: i.product_id, ...camposDoItem(i) })) });
+    : { empresa_id: h.empresa_id, fornecedor_id: h.fornecedor_id, ...cabecalhoDoCorpo(),
+      itens: itens.map((i) => ({ produto_id: i.product_id, ...camposDoItem(i), ...(dadosFiscaisAtivos ? corpoDaClassificacaoDoItem(i, rateio.tipo) : {}) })),
+      // F7: DEPOIS das chaves de hoje, e só as preenchidas — sem a capacidade (ou nada preenchido), o corpo de hoje.
+      ...(dadosFiscaisAtivos ? { ...corpoDosDadosFiscais(fiscal), ...corpoDoRateio(rateio) } : {}) });
   const documentoConferido = (): Record<string, unknown> => (recebendo
     ? { ...cabecalhoDoCorpo(), empresa_id: String(recebendo.pedido["empresa_id"] ?? ""), fornecedor_id: String(recebendo.pedido["fornecedor_id"] ?? ""),
       itens: itens.map((i) => ({ produto_id: i.product_id, ...camposDoItem(i) })) }
@@ -592,7 +740,8 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   /* ALTERADO: contra o estado inicial, sem a empresa (preenchida por efeito). A cópia conta como alteração. */
   const semEmpresa = ({ empresa_id: _empresa, ...resto }: Cabecalho) => resto;
   const alterado = (itens.length > 0 && (!modoReceber || JSON.stringify(itens) !== JSON.stringify(abertura.current?.itens ?? [])))
-    || ajustarParcelas || JSON.stringify(semEmpresa(h)) !== JSON.stringify(semEmpresa(inicial.current));
+    || ajustarParcelas || JSON.stringify(semEmpresa(h)) !== JSON.stringify(semEmpresa(inicial.current))
+    || (dadosFiscaisAtivos && (CAMPOS_DOS_DADOS_FISCAIS.some((c) => fiscal[c] !== "") || JSON.stringify(rateio) !== JSON.stringify(rateioDoDocumento())));
   useDirtyTab(alterado && !salvarM.isSuccess);
   React.useEffect(() => {
     if (modoReceber && preenchimento && !abertura.current) abertura.current = { h: inicial.current, itens: linhasDoRecebimento(recebendo?.pedido.itens ?? []) };
@@ -605,7 +754,7 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const descartar = () => {
     if (modoReceber) { router.push(rotaDoPedido); return; }
     setH({ ...inicial.current, empresa_id: inicial.current.empresa_id || empresaPadrao });
-    setItensCru([]); setAjustarParcelas(false); setPlano(defaultPlan()); setErros({}); setTentouSalvar(false); setPendenciasAbertas(false);
+    setItensCru([]); setAjustarParcelas(false); setPlano(defaultPlan()); setFiscal(dadosFiscaisVazios()); setRateio(rateioDoDocumento()); setErros({}); setTentouSalvar(false); setPendenciasAbertas(false);
     local.descartar(); // o local do cabeçalho volta ao padrão
   };
 
@@ -625,6 +774,8 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     pedidoId, recebimento, recebendo, emPartes: recebendo?.passo.emPartes === true, rotuloDoPedido, codigoDoPedido, rotaDoPedido,
     mostrarFormulario: !modoReceber || Boolean(recebendo),
     cabecalho: h, mudar, itens, setItens, ajustarParcelas, setAjustarParcelas, plano, setPlano, totalItens, totalExibido, lote,
+    dadosFiscaisAtivos, fiscal, mudarFiscal,
+    rateio, mudarTipoDoRateio, mudarLinhaDoRateio, adicionarLinhaDoRateio, removerLinhaDoRateio, mudarClassificacaoDoItem,
     layoutAtivo, layout, layoutQ, layoutPendente, layoutNaoCarregado, layoutVale, padroes, regras, regrasPendente, exigidosPelaRegra, condicoesPermitidas,
     zonas, forcados: desenho?.forcados ?? new Set<string>(), cfg,
     rotulo: (c, hoje) => cfg.get(c)?.rotulo || hoje,

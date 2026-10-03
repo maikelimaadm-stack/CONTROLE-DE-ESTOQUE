@@ -19,6 +19,15 @@ export interface RecusaPrevistaCompra { code: string; message: string }
 export interface EntradaPrevista { item_id: string; produto: string; armazem: string | null; quantidade: string; lote: string | null; validade: string | null; valorEntrada: string; custoUnitario: string }
 export interface ParcelaPrevista { numero: number; entrada: boolean; vencimento: string; valor: string }
 export interface ItemDaClassificacaoCompra { id: string; codigo: string; nome: string }
+/**
+ * Uma linha do RATEIO das contas a pagar (OPERACOES-01 F7, decisão 284): a compra com rateio por valor ou por produto.
+ * Normalizada pela MESMA conta do título (`percentual` com 4 casas e `valor` em dinheiro, texto); conta contábil e safra
+ * só quando a linha as tem.
+ */
+export interface LinhaDoRateioPrevista {
+  categoria: ItemDaClassificacaoCompra; centro: ItemDaClassificacaoCompra; conta: ItemDaClassificacaoCompra | null;
+  safra: { id: string; nome: string } | null; percentual: string; valor: string;
+}
 
 /**
  * Um item que diverge do pedido de origem (OPERACOES-01 F6a/F6b, decisão 283). `campo` "preco": o líquido unitário de
@@ -48,6 +57,8 @@ export interface PreviaDaConfirmacaoCompra {
     efeito: "pagar" | "nenhum" | null; valor: string | null; numero: string | null; parcelas: ParcelaPrevista[]; primeiroVencimento: string | null;
     /** Natureza e centro de resultado das contas a pagar (presente quando gera título). */
     classificacao?: { categoria: ItemDaClassificacaoCompra; centro: ItemDaClassificacaoCompra } | null;
+    /** OPERACOES-01 F7: SÓ com rateio (a classificação, então, é nula). Ausente = o corpo de hoje. */
+    rateio?: LinhaDoRateioPrevista[];
   };
   /** Ausente = o corpo de hoje (compra sem origem, TOP sem a seção ou em "Nenhuma", ou a API anterior). */
   divergencia?: DivergenciaComOPedido;
@@ -59,6 +70,9 @@ const ehTextoOuNulo = (v: unknown) => v === null || ehTexto(v);
 const ehEntrada = (v: unknown): v is EntradaPrevista => ehObjeto(v) && ehTexto(v.item_id) && ehTexto(v.produto) && ehTextoOuNulo(v.armazem)
   && ehTexto(v.quantidade) && ehTextoOuNulo(v.lote) && ehTextoOuNulo(v.validade) && ehTexto(v.valorEntrada) && ehTexto(v.custoUnitario);
 const ehItemClass = (v: unknown): v is ItemDaClassificacaoCompra => ehObjeto(v) && ehTexto(v.id) && ehTexto(v.codigo) && ehTexto(v.nome);
+const ehSafra = (v: unknown) => v === null || (ehObjeto(v) && ehTexto(v.id) && ehTexto(v.nome));
+const ehLinhaDoRateio = (v: unknown): v is LinhaDoRateioPrevista => ehObjeto(v) && ehItemClass(v.categoria) && ehItemClass(v.centro)
+  && (v.conta === null || ehItemClass(v.conta)) && ehSafra(v.safra) && ehTexto(v.percentual) && ehTexto(v.valor);
 const ehContagem = (v: unknown) => typeof v === "number" && Number.isInteger(v) && v >= 0;
 const ehParcela = (v: unknown): v is ParcelaPrevista => ehObjeto(v) && typeof v.numero === "number" && typeof v.entrada === "boolean" && ehTexto(v.vencimento) && ehTexto(v.valor);
 const ehItemDaDivergencia = (v: unknown): v is ItemDaDivergencia => ehObjeto(v) && (v.campo === "preco" || v.campo === "quantidade")
@@ -81,6 +95,9 @@ export const ehPreviaDaConfirmacaoCompra = (v: unknown): v is PreviaDaConfirmaca
   if (e.itensForaDaEntrada !== undefined && !ehContagem(e.itensForaDaEntrada)) return false;
   const c = f.classificacao;
   if (c !== undefined && c !== null && !(ehObjeto(c) && ehItemClass(c.categoria) && ehItemClass(c.centro))) return false;
+  // OPERACOES-01 F7: o rateio — ausente, o corpo de hoje; presente, uma lista não vazia na forma do contrato (fora dela, a
+  // prévia inteira é "indisponível", a mesma régua dos outros campos acrescentados).
+  if (f.rateio !== undefined && !(Array.isArray(f.rateio) && f.rateio.length > 0 && f.rateio.every(ehLinhaDoRateio))) return false;
   // OPERACOES-01 F6b: a divergência com o pedido (F6a) — ausente, o corpo de hoje; presente, só na forma do contrato
   // (fora dela, a prévia inteira é "indisponível", a mesma régua dos campos do R1).
   if (v.divergencia !== undefined && !ehDivergencia(v.divergencia)) return false;

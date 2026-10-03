@@ -44,3 +44,7 @@ export * from "./compras-finalizacao-orcamento.js";
 export * from "./tipo-operacao-secao-financeiro-padrao.js";
 // OPERACOES-01 F11 (decisão 288): a seção "Implantação" do formato 5 (o saldo inicial na TOP de entrada).
 export * from "./tipo-operacao-secao-implantacao.js";
+// OPERACOES-01 F7 (decisão 284): o leitor de XML, a leitura da NF-e e a conta/contrato da compra pela nota.
+export * from "./xml-leitor.js";
+export * from "./nfe-leitura.js";
+export * from "./nfe-compra.js";

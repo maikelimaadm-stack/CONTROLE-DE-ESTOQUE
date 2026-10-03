@@ -32,12 +32,20 @@
  * aceita as três espécies (o pedido traz os seus orçamentos; o orçamento traz o código do pedido), a listagem é
  * exportada com o filtro `pedido_orcado_id`, a lista única só mostra orçamento quando o filtro `especie` o pede E o
  * usuário tem `orcamentos_compra.view`, e `operation-types` declara `capacidades.finalizacaoEOrcamento`.
+ *
+ * OPERACOES-01 F7 (decisão 284): a COMPRA ganha o que a nota antiga tinha — chave de acesso, UF, tipo de documento
+ * fiscal, IPI, ICMS-ST, seguro (no total), tipo de título, CAPEX/OPEX, rateio por valor ou por produto e, por item,
+ * "gera estoque", imobilizado, natureza e centro, IPI e ICMS-ST. Tudo ADITIVO e só da compra (o pedido recusa com
+ * 422 no campo): o corpo de hoje sai do parse idêntico (mesmo hash de idempotência) e grava a compra de hoje. A
+ * chave repetida é barrada pela API (`conferirChaveDeAcessoLivre`, dizendo onde) e pelo banco (índice e gatilhos da
+ * 0047). `lancar` aceita, por dentro, os extras da nota importada (DF-e, solicitação, duplicatas e os dados do item
+ * na nota); `operation-types` declara `capacidades.importacaoXml`.
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, DomainError } from "@agro/shared";
 import {
-  documentTotals, itemTotal, familiaOperacionalDeDocumentoCompra, chaveI18nDaFamiliaOperacional, moduloDaPermissao,
+  itemTotal, totaisDaCompra, chaveDeAcessoValida, CAPACIDADE_IMPORTACAO_XML_COMPRA, familiaOperacionalDeDocumentoCompra, chaveI18nDaFamiliaOperacional, moduloDaPermissao,
   resolverPoliticaEfetivaDaCompra, planoDaCondicao, camposExigidosTop, exigenciasGeraisFaltando, EXIGENCIAS_GERAIS_COMPRA_TOP,
   ERRO_EXIGENCIA_NAO_ATENDIDA, MENSAGEM_EXIGENCIA_NAO_ATENDIDA, ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA, MENSAGEM_CONDICAO_NAO_PERMITIDA,
   CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_REGRAS_DA_OPERACAO, saldoDoItemDoPedido,
@@ -49,7 +57,7 @@ import { runService, nextCode, idempotent, audit } from "../lib/service.js";
 import { notFound, err, denied } from "../lib/errors.js";
 import { exigirEmpresaDeLancamento, empresaScope, scopedById, hasPermission, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
-import { installmentPlanSchema } from "../services/financial-core.js";
+import { installmentPlanSchema, exigirRateioAnalitico } from "../services/financial-core.js";
 import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
 import {
   resolverTopParaLancamento, validarClassificacaoDoDocumento, recusaDeCampoDaClassificacao, validarCondicaoDoDocumento,
@@ -60,7 +68,7 @@ import { lerVersaoCongeladaTop, confirmaAutomaticamente, tentarConfirmacaoAutoma
 import { regrasDaVersaoTop, regrasDaTopAtual } from "./vendas-regras-operacao.js";
 import { regrasGeraisDaVariante } from "./regras-gerais-da-central.js";
 import {
-  registrarConfirmacaoCompras, cancelarCompraConfirmada, conferirNotaDuplicada, confirmarCompraNaTransacao,
+  registrarConfirmacaoCompras, cancelarCompraConfirmada, conferirNotaDuplicada, confirmarCompraNaTransacao, conferirChaveDeAcessoLivre,
 } from "./compras-confirmacao.js";
 import {
   registrarRecebimentoCompras, conferirCancelamentoDoPedido, travarPedidoDeOrigemDaCompra, reabrirPedidoDeOrigem,
@@ -108,6 +116,27 @@ const uuid = z.string().uuid().transform((v) => v.toLowerCase());
 const textoOpcional = (max: number) => z.string().trim().max(max).nullish().transform((v) => (v ? v : null));
 const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * OPERACOES-01 F7 (decisão 284) — OS CAMPOS FISCAIS DA COMPRA, todos `.nullish()` e SEM `default`: o corpo de hoje
+ * sai do parse sem nenhuma chave nova (o mesmo hash da idempotência). Só a compra os aceita (`conferirCamposDaEspecie`).
+ */
+export const TIPOS_DOCUMENTO_FISCAL = ["nfe", "cte", "nfse", "nfce", "danfe", "darf", "dare", "gru", "other"] as const;
+export const MSG_CHAVE_DE_ACESSO_INVALIDA = "Chave de acesso inválida: confira os 44 dígitos";
+const chaveDeAcesso = z.string().refine((v) => chaveDeAcessoValida(v), MSG_CHAVE_DE_ACESSO_INVALIDA);
+const decPercentual = dec.refine((v) => { try { const x = D(v); return x.gt(0) && x.lte(100); } catch { return false; } }, "Informe um percentual maior que zero e até 100");
+const linhaDoRateioSchema = z.object({
+  categoria_financeira_id: uuid,
+  centro_custo_id: uuid,
+  conta_contabil_id: uuid.nullish(),
+  safra_id: uuid.nullish(),
+  percentual: decPercentual,
+}).strict();
+/** O rateio da compra: por valor (linhas com percentual, somando 100) ou por produto (natureza e centro de cada item). */
+const rateioSchema = z.discriminatedUnion("tipo", [
+  z.object({ tipo: z.literal("por_valor"), linhas: z.array(linhaDoRateioSchema).min(1).max(50) }).strict(),
+  z.object({ tipo: z.literal("por_produto") }).strict(),
+]);
+
 const itemSchema = z.object({
   produto_id: uuid,
   armazem_id: uuid.nullish(),
@@ -118,6 +147,13 @@ const itemSchema = z.object({
   lote: textoOpcional(60),
   validade: date.nullish(),
   observacao: textoOpcional(500),
+  // OPERACOES-01 F7: só da compra; ausentes = o item de hoje (gera estoque, não é imobilizado, sem impostos próprios).
+  gera_estoque: z.boolean().nullish(),
+  imobilizado: z.boolean().nullish(),
+  categoria_financeira_id: uuid.nullish(),
+  centro_custo_id: uuid.nullish(),
+  valor_ipi: decNaoNegativo.nullish(),
+  valor_icms_st: decNaoNegativo.nullish(),
 }).strict();
 
 /** O corpo do POST. `.strict()`: chave desconhecida é 422 — nunca traduzida, nunca descartada. */
@@ -141,6 +177,16 @@ const documentoSchema = z.object({
   desconto: decNaoNegativo.default("0"),
   observacao: textoOpcional(2000),
   itens: z.array(itemSchema).min(1),
+  // OPERACOES-01 F7: só da compra; ausentes = a compra de hoje.
+  chave_acesso: chaveDeAcesso.nullish(),
+  uf_nota: z.string().regex(/^[A-Z]{2}$/, "Informe a UF com duas letras maiúsculas").nullish(),
+  tipo_documento_fiscal: z.enum(TIPOS_DOCUMENTO_FISCAL).nullish(),
+  valor_ipi: decNaoNegativo.nullish(),
+  valor_icms_st: decNaoNegativo.nullish(),
+  seguro: decNaoNegativo.nullish(),
+  tipo_titulo_id: uuid.nullish(),
+  classificacao_gasto: z.enum(["capex", "opex"]).nullish(),
+  rateio: rateioSchema.nullish(),
 }).strict();
 export type DocumentoCompraEntrada = z.infer<typeof documentoSchema>;
 
@@ -278,6 +324,12 @@ async function itensDosOrcamentos(ctx: ServiceCtx, pedidoId: string, orcamentos:
  * (agrupada aqui), só quando há orçamento: nunca uma por orçamento. `semOrcamentos` (ADITIVO, padrão `false`): quem
  * só confere a visibilidade e a conta da aprovação (a situação de `aprovacoes-compras.ts`) não lê os orçamentos nem
  * os preços — a chave `orcamentos` não vem, como sem a capacidade.
+ *
+ * OPERACOES-01 F7 (decisão 284), ADITIVO: as colunas fiscais novas vêm por `d.*` e `i.*` (nulas na compra de hoje e
+ * no pedido). As chaves derivadas só existem quando há o que dizer: no item, `bem_codigo` (o bem criado na
+ * confirmação do imobilizado); no cabeçalho, `tipo_titulo_nome`, `importacao_id` (a importação do XML que gerou a
+ * compra), `dfe` (`{ id, access_key }`) e `rateio` (as linhas do rateio por valor, com códigos e nomes). Compra sem
+ * nada disso: a resposta de hoje, chave por chave, mais as colunas novas nulas. Nenhuma consulta por item.
  */
 export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: EspecieDocumentoCompra, opts: { lock?: boolean; semOrcamentos?: boolean } = {}): Promise<Record<string, unknown>> {
   // id malformado é a MESMA 404 (sem 22P02 → 500).
@@ -290,7 +342,10 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
             ccus.code as centro_custo_codigo, ccus.name as centro_custo_nome,
             cpag.code as condicao_pagamento_codigo, cpag.nome as condicao_pagamento_nome, pm.name as forma_pagamento_nome,
             ue.name as saldo_encerrado_por_nome, dorig.codigo as origem_codigo,
-            ufin.name as finalizado_por_nome, uaor.name as aprovado_orcamento_por_nome, dped.codigo as pedido_orcado_codigo
+            ufin.name as finalizado_por_nome, uaor.name as aprovado_orcamento_por_nome, dped.codigo as pedido_orcado_codigo,
+            ttit.name as f7_tipo_titulo_nome, dfe.access_key as f7_dfe_access_key,
+            (select x.id from erp.importacoes_nfe_compra x
+              where x.organization_id = d.organization_id and x.documento_compra_id = d.id) as f7_importacao_id
        from erp.documentos_compra d
        join erp.people fo on fo.id = d.fornecedor_id and fo.organization_id = d.organization_id
        left join erp.people tr on tr.id = d.transportadora_id and tr.organization_id = d.organization_id
@@ -306,6 +361,8 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
        left join erp.users ufin on ufin.id = d.finalizado_por
        left join erp.users uaor on uaor.id = d.aprovado_orcamento_por
        left join erp.documentos_compra dped on dped.id = d.pedido_orcado_id and dped.organization_id = d.organization_id
+       left join erp.title_types ttit on ttit.id = d.tipo_titulo_id
+       left join erp.dfe_documents dfe on dfe.id = d.dfe_id and dfe.organization_id = d.organization_id
       where d.id = $1 and d.organization_id = $2 and d.especie = $${sc.params.length}${sc.sql}${opts.lock ? " for update of d" : ""}`,
     sc.params);
   const linha = r.rows[0];
@@ -316,11 +373,13 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
   const itensLidos = await ctx.tx.query<Record<string, unknown> & { quantidade: string; recebido_total: string | null }>(
     `select i.*, p.description as produto_nome, p.code as produto_codigo, p.control_stock as produto_controla_estoque,
             p.controle_lote as produto_controle_lote, mu.symbol as unidade, w.description as armazem_nome,
+            eq.code as f7_bem_codigo,
             ${ehPedido ? "coalesce(rec.recebido, 0)::text" : "null::text"} as recebido_total
        from erp.documentos_compra_itens i
        join erp.products p on p.id = i.produto_id and p.organization_id = i.organization_id
        left join erp.measurement_units mu on mu.id = p.measurement_id
        left join erp.warehouses w on w.id = i.armazem_id and w.organization_id = i.organization_id
+       left join erp.equipments eq on eq.id = i.bem_id and eq.organization_id = i.organization_id
        ${ehPedido ? `left join lateral (
          select sum(ci.quantidade) as recebido
            from erp.documentos_compra_itens ci
@@ -328,9 +387,13 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
           where ci.origem_item_id = i.id and ci.organization_id = i.organization_id and cd.situacao <> 'cancelado') rec on true` : ""}
       where i.documento_id = $1 and i.organization_id = $2
       order by i.posicao, i.id`, [id, ctx.orgId]);
-  const itens = itensLidos.rows.map(({ recebido_total, ...item }) => (ehPedido
-    ? { ...item, recebido: D(recebido_total ?? "0").toFixed(4), saldo: saldoDoItemDoPedido({ quantidade: item.quantidade, recebido: recebido_total ?? "0" }) }
-    : item));
+  // OPERACOES-01 F7: `bem_codigo` só no item que tem o bem (o imobilizado confirmado).
+  const itens = itensLidos.rows.map(({ recebido_total, f7_bem_codigo, ...lido }) => {
+    const item = { ...lido, ...(f7_bem_codigo ? { bem_codigo: f7_bem_codigo } : {}) };
+    return ehPedido
+      ? { ...item, recebido: D(recebido_total ?? "0").toFixed(4), saldo: saldoDoItemDoPedido({ quantidade: item.quantidade, recebido: recebido_total ?? "0" }) }
+      : item;
+  });
   // As compras geradas deste pedido (inclusive canceladas: é a história do pedido), na ordem em que nasceram.
   const comprasGeradas = ehPedido
     ? (await ctx.tx.query<{ id: string; codigo: string; situacao: string }>(
@@ -366,14 +429,46 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
        join erp.warehouses w on w.id = m.warehouse_id
       where m.organization_id = $1 and m.source_type = 'documentos_compra' and m.source_id = $2
       order by m.created_at, m.id`, [ctx.orgId, id]);
-  const { top_codigo, top_codigo_base, top_nome, top_versao, ...cabecalho } = linha;
+  const { top_codigo, top_codigo_base, top_nome, top_versao, f7_tipo_titulo_nome, f7_dfe_access_key, f7_importacao_id, ...cabecalho } = linha;
+  // OPERACOES-01 F7: as linhas do rateio por valor (UMA consulta, só quando a compra tem rateio por valor).
+  const rateio = cabecalho.rateio_tipo === "por_valor" ? await rateioDaCompra(ctx, id) : null;
   return {
     ...cabecalho,
     tipo_operacao: topParaTela({ tipo_operacao_id: linha.tipo_operacao_id, top_codigo, top_codigo_base, top_nome, top_versao }),
     itens, titulos: titulos.rows, movimentos: movimentos.rows,
     ...(comprasGeradas ? { compras_geradas: comprasGeradas } : {}),
     ...(orcamentos ? { orcamentos } : {}),
+    ...(f7_tipo_titulo_nome ? { tipo_titulo_nome: f7_tipo_titulo_nome } : {}),
+    ...(f7_importacao_id ? { importacao_id: f7_importacao_id } : {}),
+    ...(cabecalho.dfe_id ? { dfe: { id: cabecalho.dfe_id, access_key: f7_dfe_access_key ?? null } } : {}),
+    ...(rateio ? { rateio } : {}),
   };
+}
+
+/** Uma linha do rateio por valor da compra, com os códigos e nomes para a consulta (OPERACOES-01 F7). */
+export interface LinhaDoRateioDaCompra {
+  posicao: number; percentual: string;
+  categoria_financeira_id: string; categoria_financeira_codigo: string; categoria_financeira_nome: string;
+  centro_custo_id: string; centro_custo_codigo: string; centro_custo_nome: string;
+  conta_contabil_id: string | null; conta_contabil_codigo: string | null; conta_contabil_nome: string | null;
+  safra_id: string | null; safra_nome: string | null;
+}
+
+/** OPERACOES-01 F7 — as linhas do rateio por valor da compra, na ordem, numa consulta (pelas FKs compostas). */
+export async function rateioDaCompra(ctx: ServiceCtx, compraId: string): Promise<LinhaDoRateioDaCompra[]> {
+  return (await ctx.tx.query<LinhaDoRateioDaCompra>(
+    `select r.posicao, r.percentual::text as percentual,
+            r.categoria_financeira_id::text as categoria_financeira_id, fc.code as categoria_financeira_codigo, fc.name as categoria_financeira_nome,
+            r.centro_custo_id::text as centro_custo_id, cc.code as centro_custo_codigo, cc.name as centro_custo_nome,
+            r.conta_contabil_id::text as conta_contabil_id, ca.code as conta_contabil_codigo, ca.description as conta_contabil_nome,
+            r.safra_id::text as safra_id, h.description as safra_nome
+       from erp.documentos_compra_rateio r
+       join erp.financial_categories fc on fc.id = r.categoria_financeira_id and fc.organization_id = r.organization_id
+       join erp.cost_centers cc on cc.id = r.centro_custo_id and cc.organization_id = r.organization_id
+       left join erp.chart_accounts ca on ca.id = r.conta_contabil_id and ca.organization_id = r.organization_id
+       left join erp.harvests h on h.id = r.safra_id and h.organization_id = r.organization_id
+      where r.organization_id = $1 and r.documento_id = $2
+      order by r.posicao`, [ctx.orgId, compraId])).rows;
 }
 
 // ─────────────── listagem ───────────────
@@ -449,7 +544,15 @@ export async function listarDocumentos(ctx: ServiceCtx, especies: readonly Espec
 /** Uma recusa por item, no campo do item (`itens[<i>].<campo>`). */
 const recusaDoItem = (i: number, campo: string, message: string) => recusa(`itens[${i}].${campo}`, message);
 
-/** A espécie `pedido` não aceita o que é da nota/entrada: 422 no primeiro campo presente. */
+/** OPERACOES-01 F7: os campos fiscais do cabeçalho e do item (só da compra), na ordem do contrato. */
+const CAMPOS_FISCAIS_DO_CABECALHO = ["chave_acesso", "uf_nota", "tipo_documento_fiscal", "valor_ipi", "valor_icms_st", "seguro", "tipo_titulo_id", "classificacao_gasto", "rateio"] as const;
+const CAMPOS_FISCAIS_DO_ITEM = ["gera_estoque", "imobilizado", "categoria_financeira_id", "centro_custo_id", "valor_ipi", "valor_icms_st"] as const;
+export const MSG_PEDIDO_SEM_DADOS_FISCAIS = "O pedido de compra não tem dados fiscais: este campo é da compra";
+
+/**
+ * A espécie `pedido` não aceita o que é da nota/entrada: 422 no primeiro campo presente. OPERACOES-01 F7: nem os
+ * dados fiscais (do cabeçalho e do item) — presente é qualquer valor que não seja nulo (`false` inclusive).
+ */
 function conferirCamposDaEspecie(especie: EspecieCompra, d: DocumentoCompraEntrada): void {
   if (especie !== "pedido") return;
   const msg = "O pedido de compra não tem nota nem entrada: este campo é da compra";
@@ -457,6 +560,10 @@ function conferirCamposDaEspecie(especie: EspecieCompra, d: DocumentoCompraEntra
   d.itens.forEach((it, i) => {
     if (it.lote) throw recusaDoItem(i, "lote", "O pedido de compra não aceita lote: o lote é informado na compra");
     if (it.validade) throw recusaDoItem(i, "validade", "O pedido de compra não aceita validade: a validade é informada na compra");
+  });
+  for (const campo of CAMPOS_FISCAIS_DO_CABECALHO) if (d[campo] != null) throw recusa(campo, MSG_PEDIDO_SEM_DADOS_FISCAIS);
+  d.itens.forEach((it, i) => {
+    for (const campo of CAMPOS_FISCAIS_DO_ITEM) if (it[campo] != null) throw recusaDoItem(i, campo, MSG_PEDIDO_SEM_DADOS_FISCAIS);
   });
 }
 
@@ -512,11 +619,13 @@ type PlanoGravado = Record<string, unknown> & { first_due_date?: string };
  * classifica a compra que não trouxe natureza e centro: a exigência deles no documento é dispensada (a confirmação usa o
  * par da TOP). Forma e vencimento: iguais. Sem o parâmetro, o de hoje.
  */
-function conferirExigenciasDoTitulo(d: DocumentoCompraEntrada, efeitos: EfeitosPrevistos, total: string, plano: PlanoGravado | null, o: { classificacaoDaTop: boolean } = { classificacaoDaTop: false }): void {
+function conferirExigenciasDoTitulo(d: DocumentoCompraEntrada, efeitos: EfeitosPrevistos, total: string, plano: PlanoGravado | null, o: { classificacaoDaTop: boolean; comRateio?: boolean } = { classificacaoDaTop: false }): void {
   if (!efeitos.titulo || !D(total).gt(0)) return;
   const msg = "Informe a natureza financeira e o centro de resultado: esta compra gera contas a pagar";
   // OPERACOES-01 F9b: o par da TOP no formato 5 dispensa a natureza e o centro no documento; a confirmação os usa.
-  if (!o.classificacaoDaTop) {
+  // OPERACOES-01 F7: com rateio (por valor ou por produto), quem classifica o título é o rateio — conferido em
+  // `conferirDadosFiscais` (soma, analítico, despesa) e de novo na confirmação.
+  if (!o.classificacaoDaTop && !o.comRateio) {
     if (!d.categoria_financeira_id) throw recusa("categoria_financeira_id", msg);
     if (!d.centro_custo_id) throw recusa("centro_custo_id", msg);
   }
@@ -530,7 +639,19 @@ function conferirFormaDoDocumento(d: DocumentoCompraEntrada): void {
   if (d.serie_nota && !d.numero_nota) throw recusa("serie_nota", "Série sem número de nota: informe o número da nota");
   // Valores em dinheiro do cabeçalho: 2 casas (o CHECK do total no banco confere a soma exata).
   for (const campo of ["frete", "outras_despesas", "desconto"] as const) if (casas(d[campo]) > 2) throw recusa(campo, "Informe o valor com no máximo 2 casas decimais");
+  // OPERACOES-01 F7: IPI, ICMS-ST e seguro também em 2 casas (entram no total que o CHECK confere).
+  for (const campo of ["valor_ipi", "valor_icms_st", "seguro"] as const) {
+    const v = d[campo];
+    if (v != null && casas(v) > 2) throw recusa(campo, "Informe o valor com no máximo 2 casas decimais");
+  }
+  if (d.rateio?.tipo === "por_valor") {
+    d.rateio.linhas.forEach((l, i) => { if (casas(l.percentual) > 4) throw recusa(`rateio.linhas[${i}].percentual`, "Informe o percentual com no máximo 4 casas decimais"); });
+  }
   d.itens.forEach((it, i) => {
+    for (const campo of ["valor_ipi", "valor_icms_st"] as const) {
+      const v = it[campo];
+      if (v != null && casas(v) > 2) throw recusaDoItem(i, campo, "Informe o valor com no máximo 2 casas decimais");
+    }
     if (casas(it.desconto) > 2) throw recusaDoItem(i, "desconto", "Informe o desconto com no máximo 2 casas decimais");
     if (D(it.desconto_percentual).gt(100)) throw recusaDoItem(i, "desconto_percentual", "O desconto percentual não pode passar de 100");
     if (casas(it.quantidade) > 4) throw recusaDoItem(i, "quantidade", "A quantidade aceita no máximo 4 casas decimais");
@@ -560,7 +681,8 @@ async function conferirItens(ctx: ServiceCtx, especie: EspecieCompra, d: Documen
     if (it.lote && p.controle_lote === "nenhum") throw recusaDoItem(i, "lote", "Este produto não controla lote: não informe o lote");
     if (it.validade && p.controle_lote !== "lote_validade") throw recusaDoItem(i, "validade", "Este produto não controla validade: não informe a validade");
     // Produto sem controle de estoque não entra no estoque: armazém, lote e validade não são exigidos.
-    if (especie !== "compra" || !efeitos || !p.control_stock || !efeitos.entrada) return;
+    // OPERACOES-01 F7: o item que NÃO gera estoque também não (e não tem local: `conferirDadosFiscais`).
+    if (especie !== "compra" || !efeitos || !p.control_stock || !efeitos.entrada || it.gera_estoque === false) return;
     if (!it.armazem_id) {
       if (efeitos.exigeArmazem) throw recusaDoItem(i, "armazem_id", "A operação desta compra exige o local de estoque de todos os itens");
       return;
@@ -568,6 +690,63 @@ async function conferirItens(ctx: ServiceCtx, especie: EspecieCompra, d: Documen
     if (p.controle_lote !== "nenhum" && !it.lote) throw recusaDoItem(i, "lote", "Este produto controla lote: informe o lote");
     if (p.controle_lote === "lote_validade" && !it.validade) throw recusaDoItem(i, "validade", "Este produto controla lote e validade: informe a validade");
   });
+}
+
+/**
+ * OPERACOES-01 F7 (decisão 284) — OS DADOS FISCAIS DA COMPRA, conferidos ao SALVAR (422 no campo), depois dos itens:
+ *  · item que não gera estoque não tem local de estoque (dois sinais contraditórios);
+ *  · natureza e centro do item andam juntos e só existem com rateio POR PRODUTO; com ele, todo item tem o par;
+ *  · tipo de título: do sistema ou da organização (o gatilho da 0047 é a rede);
+ *  · com rateio, o cabeçalho não tem natureza nem centro (quem classifica é o rateio); por valor: soma EXATA de 100%,
+ *    safra viva da organização; nos dois: natureza de DESPESA, natureza e centro analíticos e ativos, conta contábil da
+ *    organização (`exigirRateioAnalitico`, a porta da casa), cada recusa no seu caminho.
+ */
+async function conferirDadosFiscais(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada): Promise<void> {
+  if (especie !== "compra") return;
+  const porProduto = d.rateio?.tipo === "por_produto";
+  d.itens.forEach((it, i) => {
+    if (it.gera_estoque === false && it.armazem_id) throw recusaDoItem(i, "armazem_id", "Item que não gera estoque não tem local de estoque");
+    const cat = it.categoria_financeira_id ?? null; const cc = it.centro_custo_id ?? null;
+    if ((cat === null) !== (cc === null)) throw recusaDoItem(i, cat === null ? "categoria_financeira_id" : "centro_custo_id", "Informe a natureza e o centro de resultado do item juntos");
+    if (cat !== null && !porProduto) throw recusaDoItem(i, "categoria_financeira_id", "Natureza por item só com rateio por produto");
+    if (cat === null && porProduto) throw recusaDoItem(i, "categoria_financeira_id", "Com rateio por produto, informe a natureza e o centro de resultado de cada item");
+  });
+  if (d.tipo_titulo_id) {
+    const tt = await ctx.tx.query("select 1 from erp.title_types where id = $1 and (organization_id is null or organization_id = $2)", [d.tipo_titulo_id, ctx.orgId]);
+    if (!tt.rowCount) throw recusa("tipo_titulo_id", "Tipo de título inválido");
+  }
+  if (!d.rateio) return;
+  if (porProduto && d.itens.length === 0) throw recusa("rateio", "O rateio por produto precisa de itens: use o rateio por valor ou a natureza e o centro do documento");
+  if (d.categoria_financeira_id || d.centro_custo_id) {
+    throw recusa(d.categoria_financeira_id ? "categoria_financeira_id" : "centro_custo_id", "Com rateio, a natureza e o centro ficam nas linhas do rateio");
+  }
+  const linhas = d.rateio.tipo === "por_valor"
+    ? d.rateio.linhas.map((l) => ({ financialCategoryId: l.categoria_financeira_id, costCenterId: l.centro_custo_id, chartAccountId: l.conta_contabil_id ?? null }))
+    : d.itens.map((it) => ({ financialCategoryId: it.categoria_financeira_id!, costCenterId: it.centro_custo_id!, chartAccountId: null }));
+  const caminho = d.rateio.tipo === "por_valor" ? "rateio.linhas" : "itens";
+  if (d.rateio.tipo === "por_valor") {
+    const soma = d.rateio.linhas.reduce((a, l) => a.plus(D(l.percentual)), D(0));
+    if (!soma.eq(100)) throw recusa("rateio", `O rateio por valor precisa somar 100% (soma: ${soma.toFixed()}%)`);
+    const safras = [...new Set(d.rateio.linhas.flatMap((l) => (l.safra_id ? [l.safra_id] : [])))];
+    if (safras.length) {
+      const vivas = new Set((await ctx.tx.query<{ id: string }>(
+        "select id::text as id from erp.harvests where organization_id = $1 and id = any($2::uuid[]) and deleted_at is null", [ctx.orgId, safras])).rows.map((x) => x.id));
+      const i = d.rateio.linhas.findIndex((l) => l.safra_id && !vivas.has(l.safra_id));
+      if (i >= 0) throw recusa(`rateio.linhas[${i}].safra_id`, "Safra inválida: escolha uma safra da organização");
+    }
+  }
+  // Natureza de DESPESA (a régua da compra), numa consulta; analítico/ativo/conta pela porta da casa.
+  const naturezas = [...new Set(linhas.map((l) => l.financialCategoryId))];
+  const despesa = new Set((await ctx.tx.query<{ id: string }>(
+    "select id::text as id from erp.financial_categories where organization_id = $1 and id = any($2::uuid[]) and nature = any($3::text[])",
+    [ctx.orgId, naturezas, [...REGRA_CLASSIFICACAO_COMPRA.naturezas]])).rows.map((x) => x.id));
+  if (naturezas.some((n) => !despesa.has(n))) throw recusa(caminho, REGRA_CLASSIFICACAO_COMPRA.msgCategoria);
+  try {
+    await exigirRateioAnalitico(ctx, linhas);
+  } catch (e) {
+    if (e instanceof DomainError) throw recusa(caminho, e.message);
+    throw e;
+  }
 }
 
 /** Regras da operação (formato 3): exigências gerais com o mapa da compra e condição permitida. Sem "cliente em atraso". */
@@ -607,10 +786,38 @@ async function cobrarLayoutDaCompra(ctx: ServiceCtx, familia: string, top: TopDo
   throw err(ERRO_LAYOUT_CAMPO_OBRIGATORIO, details[0]!.message, details);
 }
 
-const COLUNAS_INSERCAO = `organization_id, empresa_id, especie, codigo, situacao, tipo_operacao_id, tipo_operacao_versao_id,
-  fornecedor_id, transportadora_id, data_documento, data_entrada, data_vencimento, numero_nota, serie_nota,
-  categoria_financeira_id, centro_custo_id, condicao_pagamento_id, parcelas_ajustadas, plano_parcelas, forma_pagamento_id,
-  valor_itens, frete, outras_despesas, desconto, valor_total, observacao, criado_por, origem_documento_id`;
+/** As colunas do INSERT do cabeçalho, na ordem dos valores; `situacao` é o literal 'aberto' (fora da lista de valores). */
+const COLUNAS_INSERCAO = ["organization_id", "empresa_id", "especie", "codigo", "tipo_operacao_id", "tipo_operacao_versao_id",
+  "fornecedor_id", "transportadora_id", "data_documento", "data_entrada", "data_vencimento", "numero_nota", "serie_nota",
+  "categoria_financeira_id", "centro_custo_id", "condicao_pagamento_id", "parcelas_ajustadas", "plano_parcelas", "forma_pagamento_id",
+  "valor_itens", "frete", "outras_despesas", "desconto", "valor_total", "observacao", "criado_por", "origem_documento_id",
+  // OPERACOES-01 F7 (decisão 284): os dados fiscais (nulos na compra de hoje e no pedido).
+  "chave_acesso", "uf_nota", "tipo_documento_fiscal", "valor_ipi", "valor_icms_st", "seguro", "tipo_titulo_id", "classificacao_gasto",
+  "rateio_tipo", "parcelas_nota", "dfe_id", "solicitacao_compra_id"] as const;
+const COLUNAS_ITEM = ["organization_id", "documento_id", "produto_id", "armazem_id", "quantidade", "valor_unitario", "desconto",
+  "desconto_percentual", "valor_total", "lote", "validade", "observacao", "posicao", "origem_item_id",
+  // OPERACOES-01 F7: o que o item da compra ganhou (nulos no item de hoje).
+  "gera_estoque", "imobilizado", "categoria_financeira_id", "centro_custo_id", "valor_ipi", "valor_icms_st",
+  "n_item_nota", "codigo_produto_nota", "descricao_produto_nota", "unidade_nota", "quantidade_nota", "fator_conversao", "tipo_fator_conversao"] as const;
+const marcadores = (n: number, desde = 1) => Array.from({ length: n }, (_, i) => `$${i + desde}`).join(",");
+
+/**
+ * OPERACOES-01 F7 (decisão 284) — O QUE A NOTA IMPORTADA TRAZ ALÉM DO CORPO, parâmetro INTERNO de `lancar` (nunca vem
+ * do cliente; só a importação do XML o monta, com os valores da nota GUARDADA):
+ *  · `dfeId` e `solicitacaoCompraId` — o vínculo com a DF-e (mesma chave, sem empresa ou da mesma) e com a solicitação
+ *    de compra (mesma empresa), conferidos pelo gatilho da 0047;
+ *  · `parcelasNota` — as duplicatas que CONFEREM (`parcelasDaNota`): gravadas em `parcelas_nota`, sem plano de
+ *    parcelas, com o vencimento do documento = o da 1ª; a soma é EXATAMENTE o total da compra;
+ *  · `itens` — um por linha de `d.itens`, na ordem: o item NA NOTA (número, código, descrição, unidade, quantidade) e o
+ *    fator que converteu a quantidade.
+ */
+export interface ExtrasDaNotaImportada {
+  dfeId: string | null;
+  solicitacaoCompraId: string | null;
+  parcelasNota: { numero: string; vencimento: string; valor: string }[] | null;
+  itens: { nItemNota: number; codigoProdutoNota: string; descricaoProdutoNota: string; unidadeNota: string; quantidadeNota: string;
+    fatorConversao: string; tipoFatorConversao: "multiply" | "divide" }[];
+}
 
 /**
  * COMPRAS-02 — A ORIGEM DE UM LANÇAMENTO: o pedido de compra recebido e, UM POR ITEM E NA ORDEM DO CORPO, o item
@@ -625,7 +832,10 @@ export interface OrigemDoLancamento { documentoId: string; itemOrigemIds: readon
  */
 function recusaDaNotaInvisivel(e: unknown): never {
   const pe = e as { code?: string; constraint?: string };
-  if (pe.code === "23505" && pe.constraint === "ux_documentos_compra_nota") throw err("DUPLICATE_DOCUMENT", "Esta nota já foi lançada nesta organização.");
+  // OPERACOES-01 F7: também a CHAVE DE ACESSO numa compra que o usuário não vê (`ux_documentos_compra_chave`, 0047).
+  if (pe.code === "23505" && (pe.constraint === "ux_documentos_compra_nota" || pe.constraint === "ux_documentos_compra_chave")) {
+    throw err("DUPLICATE_DOCUMENT", "Esta nota já foi lançada nesta organização.");
+  }
   throw e;
 }
 
@@ -660,15 +870,20 @@ async function topQueAceitaSemItens(ctx: ServiceCtx, especie: EspecieCompra, d: 
  * chama `lancarComTop`, que devolve também a TOP congelada, para decidir a confirmação automática sem reler o
  * documento. A confirmação NUNCA mora aqui dentro: ela é o fim de cada caminho que grava, e este serve aos dois.
  */
-export async function lancar(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, execucaoConfiguradaHabilitada: boolean, origem?: OrigemDoLancamento) {
-  return (await lancarComTop(ctx, especie, d, execucaoConfiguradaHabilitada, origem)).documento;
+export async function lancar(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, execucaoConfiguradaHabilitada: boolean, origem?: OrigemDoLancamento, extras?: ExtrasDaNotaImportada) {
+  return (await lancarComTop(ctx, especie, d, execucaoConfiguradaHabilitada, origem, extras)).documento;
 }
 
-async function lancarComTop(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, execucaoConfiguradaHabilitada: boolean, origem?: OrigemDoLancamento) {
+async function lancarComTop(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, execucaoConfiguradaHabilitada: boolean, origem?: OrigemDoLancamento, extras?: ExtrasDaNotaImportada) {
   // Contrato interno, não entrada do cliente: origem só na compra, e uma ligação por linha. Quebrar isto é defeito
   // de quem chama — o gatilho da 0037 recusaria depois, mas com uma mensagem que não aponta o chamador.
   if (origem && (especie !== "compra" || origem.itemOrigemIds.length !== d.itens.length)) {
     throw new Error("lancar: origem só na compra, com um item de origem por linha do corpo");
+  }
+  // OPERACOES-01 F7: os extras da nota importada, idem — só na compra, um item da nota por linha, e as duplicatas
+  // nunca junto de um plano de parcelas do corpo.
+  if (extras && (especie !== "compra" || extras.itens.length !== d.itens.length || (extras.parcelasNota?.length && d.plano_parcelas))) {
+    throw new Error("lancar: extras da nota só na compra, um item da nota por linha do corpo, e as duplicatas sem plano de parcelas");
   }
   // TOP-CONFIG-08: itens vazios → a TOP e a regra dela ANTES de qualquer outra conferência (ver `topQueAceitaSemItens`).
   const topDoSemItens = d.itens.length === 0 ? await topQueAceitaSemItens(ctx, especie, d) : null;
@@ -682,14 +897,23 @@ async function lancarComTop(ctx: ServiceCtx, especie: EspecieCompra, d: Document
   await cobrarRegrasDaCompra(ctx, top, d);
   const efeitos = especie === "compra" ? await efeitosPrevistosDaCompra(ctx, top, execucaoConfiguradaHabilitada) : null;
   await conferirItens(ctx, especie, d, efeitos);
+  await conferirDadosFiscais(ctx, especie, d);
 
-  // Totais SEMPRE no servidor: itens − descontos + frete + outras − desconto.
+  // Totais SEMPRE no servidor: itens − descontos + frete + outras − desconto (+ IPI + ICMS-ST + seguro, OPERACOES-01 F7:
+  // a conta do domínio, a MESMA do CHECK da 0047; sem os três, é o total de hoje).
   const itensCalculo = d.itens.map((i) => ({ quantity: i.quantidade, unitPrice: i.valor_unitario, discount: i.desconto, discountPercent: i.desconto_percentual }));
-  const totais = documentTotals(itensCalculo, { freight: d.frete, otherValues: d.outras_despesas, discount: d.desconto });
+  const totais = totaisDaCompra(d.itens.map((i) => ({ quantidade: i.quantidade, valorUnitario: i.valor_unitario, desconto: i.desconto, descontoPercentual: i.desconto_percentual })),
+    { frete: d.frete, outras: d.outras_despesas, desconto: d.desconto, ipi: d.valor_ipi ?? "0", icmsSt: d.valor_icms_st ?? "0", seguro: d.seguro ?? "0" });
+  // OPERACOES-01 F7: as duplicatas da nota importada substituem o plano (e a condição não gera um): a soma é o total.
+  const parcelasNota = extras?.parcelasNota?.length ? extras.parcelasNota.map((p) => ({ numero: p.numero, vencimento: p.vencimento, valor: money(p.valor) })) : null;
+  if (parcelasNota && !parcelasNota.reduce((a, p) => a.plus(D(p.valor)), D(0)).eq(D(totais.total))) {
+    throw recusa("financeiro.parcelas", "As parcelas da nota não fecham o total da compra");
+  }
   // O plano GRAVADO sai ANTES da conferência das exigências do título (item 0 da COMPRAS-02): a exigência de
   // vencimento confere o primeiro vencimento deste plano — o que a confirmação vai ler do banco.
-  const plano: PlanoGravado | null = d.plano_parcelas ? { ...d.plano_parcelas }
+  const plano: PlanoGravado | null = parcelasNota ? null : d.plano_parcelas ? { ...d.plano_parcelas }
     : condicao ? { ...planoDaCondicao(condicao, { dataDocumento: d.data_documento, total: totais.total }) } : null;
+  const dataVencimento = parcelasNota ? parcelasNota[0]!.vencimento : d.data_vencimento ?? null;
   // OPERACOES-01 F9b (decisão 286): os padrões financeiros da TOP (formato 5) no SALVAR — a compra e o pedido não se editam:
   // a troca proibida e a classificação que a provisão do pedido exige são recusadas aqui, antes do número. Sem TOP no 5 com
   // padrões ou provisão, nada muda (sem consulta quando a compra não gera título; o pedido é conferido com qualquer total).
@@ -699,9 +923,12 @@ async function lancarComTop(ctx: ServiceCtx, especie: EspecieCompra, d: Document
     documento: { naturezaId: classificacao?.categoriaFinanceiraId ?? null, centroCustoId: classificacao?.centroCustoId ?? null,
       formaPagamentoId: d.forma_pagamento_id ?? null },
   });
-  if (efeitos) conferirExigenciasDoTitulo(d, efeitos, totais.total, plano, { classificacaoDaTop });
+  if (efeitos) conferirExigenciasDoTitulo({ ...d, data_vencimento: dataVencimento }, efeitos, totais.total, plano, { classificacaoDaTop, comRateio: Boolean(d.rateio) });
 
   if (especie === "compra" && d.numero_nota) await conferirNotaDuplicada(ctx, { fornecedorId: d.fornecedor_id, numero: d.numero_nota, serie: d.serie_nota, excluirDocumentoId: null });
+  // OPERACOES-01 F7: a CHAVE, depois do número/série — trava a chave (a mesma trava dos gatilhos da 0047) e diz onde
+  // a nota está quando a pessoa a enxerga; o banco recusa o resto.
+  if (especie === "compra" && d.chave_acesso) await conferirChaveDeAcessoLivre(ctx, d.chave_acesso);
 
   // COMPRAS-03: o layout da TOP, por último entre as recusas e antes do número — vale para o POST das duas espécies
   // e para o RECEBIMENTO (que chega aqui com a TOP de destino).
@@ -712,30 +939,53 @@ async function lancarComTop(ctx: ServiceCtx, especie: EspecieCompra, d: Document
 
   const codigo = await nextCode(ctx.tx, ctx.orgId, `compras_${especie}`);
   const valores = [ctx.orgId, d.empresa_id, especie, codigo, top.tipoOperacaoId, top.tipoOperacaoVersaoId,
-    d.fornecedor_id, d.transportadora_id ?? null, d.data_documento, d.data_entrada ?? null, d.data_vencimento ?? null, d.numero_nota, d.serie_nota,
+    d.fornecedor_id, d.transportadora_id ?? null, d.data_documento, d.data_entrada ?? null, dataVencimento, d.numero_nota, d.serie_nota,
     classificacao?.categoriaFinanceiraId ?? null, classificacao?.centroCustoId ?? null, condicao?.id ?? null, parcelasAjustadas,
     plano ? JSON.stringify(plano) : null, d.forma_pagamento_id ?? null,
-    totais.subtotal, money(d.frete), money(d.outras_despesas), money(d.desconto), totais.total, d.observacao, ctx.user.id,
-    origem?.documentoId ?? null];
+    totais.valorItens, money(d.frete), money(d.outras_despesas), money(d.desconto), totais.total, d.observacao, ctx.user.id,
+    origem?.documentoId ?? null,
+    // OPERACOES-01 F7: os dados fiscais — na compra de hoje, todos nulos (o CHECK do total volta à equação de antes).
+    d.chave_acesso ?? null, d.uf_nota ?? null, d.tipo_documento_fiscal ?? null,
+    d.valor_ipi != null ? money(d.valor_ipi) : null, d.valor_icms_st != null ? money(d.valor_icms_st) : null, d.seguro != null ? money(d.seguro) : null,
+    d.tipo_titulo_id ?? null, d.classificacao_gasto ?? null, d.rateio?.tipo ?? null, parcelasNota ? JSON.stringify(parcelasNota) : null,
+    extras?.dfeId ?? null, extras?.solicitacaoCompraId ?? null];
   // Com origem, o gatilho de conferência da 0037 confere que ela é um PEDIDO ABERTO da mesma empresa e fornecedor.
+  // OPERACOES-01 F7: com a chave, a guarda da 0047 trava a chave e recusa a nota antiga viva com ela (P0001
+  // DUPLICATE_DOCUMENT); a compra viva com ela, o índice `ux_documentos_compra_chave` (23505, traduzido sem dizer onde).
   const id = (await ctx.tx.query<{ id: string }>(
-    `insert into erp.documentos_compra (${COLUNAS_INSERCAO}) values ($1,$2,$3,$4,'aberto',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27) returning id`,
+    `insert into erp.documentos_compra (situacao, ${COLUNAS_INSERCAO.join(", ")}) values ('aberto', ${marcadores(COLUNAS_INSERCAO.length)}) returning id`,
     valores).catch(recusaDaNotaInvisivel)).rows[0]!.id;
   await atribuirIdGlobal(ctx, "documentos_compra", id);
   // Com origem, cada linha liga ao item do pedido (`origem_item_id`); o gatilho da origem (0037) trava o item de
   // origem e confere pedido, produto e soma ≤ quantidade — a rede atrás da conferência amigável do recebimento.
   for (const [i, it] of d.itens.entries()) {
+    const daNota = extras?.itens[i];
     await ctx.tx.query(
-      `insert into erp.documentos_compra_itens (organization_id, documento_id, produto_id, armazem_id, quantidade, valor_unitario, desconto,
-          desconto_percentual, valor_total, lote, validade, observacao, posicao, origem_item_id)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      `insert into erp.documentos_compra_itens (${COLUNAS_ITEM.join(", ")}) values (${marcadores(COLUNAS_ITEM.length)})`,
       [ctx.orgId, id, it.produto_id, it.armazem_id ?? null, it.quantidade, it.valor_unitario, money(it.desconto), it.desconto_percentual,
-        itemTotal(itensCalculo[i]!), it.lote, it.validade ?? null, it.observacao, i, origem?.itemOrigemIds[i] ?? null]);
+        itemTotal(itensCalculo[i]!), it.lote, it.validade ?? null, it.observacao, i, origem?.itemOrigemIds[i] ?? null,
+        it.gera_estoque ?? null, it.imobilizado ?? null, it.categoria_financeira_id ?? null, it.centro_custo_id ?? null,
+        it.valor_ipi != null ? money(it.valor_ipi) : null, it.valor_icms_st != null ? money(it.valor_icms_st) : null,
+        daNota?.nItemNota ?? null, daNota?.codigoProdutoNota ?? null, daNota?.descricaoProdutoNota ?? null, daNota?.unidadeNota ?? null,
+        daNota?.quantidadeNota ?? null, daNota?.fatorConversao ?? null, daNota?.tipoFatorConversao ?? null]);
+  }
+  // OPERACOES-01 F7: as linhas do rateio por valor (a guarda da 0047 só as aceita na compra aberta com rateio por valor).
+  if (d.rateio?.tipo === "por_valor") {
+    for (const [posicao, l] of d.rateio.linhas.entries()) {
+      await ctx.tx.query(
+        `insert into erp.documentos_compra_rateio (organization_id, documento_id, posicao, categoria_financeira_id, centro_custo_id, conta_contabil_id, safra_id, percentual)
+         values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [ctx.orgId, id, posicao, l.categoria_financeira_id, l.centro_custo_id, l.conta_contabil_id ?? null, l.safra_id ?? null, D(l.percentual).toFixed(4)]);
+    }
   }
   await audit(ctx.tx, ctx, "documentos_compra", id, "create",
     { especie, codigo, tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao,
-      ...(origem ? { from: origem.documentoId } : {}) });
-  return { documento: { id, codigo, especie, situacao: "aberto", valor_itens: totais.subtotal, valor_total: totais.total }, top };
+      ...(origem ? { from: origem.documentoId } : {}),
+      // OPERACOES-01 F7: só quando há (a auditoria da compra de hoje fica a de hoje, chave por chave).
+      ...(d.chave_acesso ? { chaveAcesso: d.chave_acesso } : {}),
+      ...(extras?.dfeId ? { dfeId: extras.dfeId } : {}),
+      ...(extras?.solicitacaoCompraId ? { solicitacaoCompraId: extras.solicitacaoCompraId } : {}) });
+  return { documento: { id, codigo, especie, situacao: "aberto", valor_itens: totais.valorItens, valor_total: totais.total }, top };
 }
 
 // ─────────────── rotas ───────────────
@@ -761,8 +1011,10 @@ export default async function comprasRoutes(app: FastifyInstance) {
         // `/layout-efetivo` com esta declaração — contra a API anterior a Central de Compras continua a de hoje.
         // OPERACOES-01 F6a: `finalizacaoEOrcamento` ADITIVO, no FIM — a web da F6b só mostra Finalizar, Aprovado para
         // orçamento, os orçamentos e Escolher vencedor com ela; a web da base ignora a chave a mais.
+        // OPERACOES-01 F7 (decisão 284): `importacaoXml` ADITIVO, no FIM — a web da F7 só mostra "Importar XML", os dados
+        // fiscais da Central e o "Lançar" da DF-e pela importação com ela; a web da base ignora a chave a mais.
         capacidades: { classificacaoFinanceira: 1, condicaoPagamento: CAPACIDADE_CONDICAO_PAGAMENTO, layoutDocumento: CAPACIDADE_LAYOUT_DOCUMENTO, regrasDaOperacao: CAPACIDADE_REGRAS_DA_OPERACAO,
-          finalizacaoEOrcamento: CAPACIDADE_FINALIZACAO_E_ORCAMENTO_COMPRA },
+          finalizacaoEOrcamento: CAPACIDADE_FINALIZACAO_E_ORCAMENTO_COMPRA, importacaoXml: CAPACIDADE_IMPORTACAO_XML_COMPRA },
         family: { code: familia, label: t(chaveI18nDaFamiliaOperacional(familia) ?? familia) },
         defaultId: r.rows.find((x) => x.padrao)?.id ?? null,
         items: r.rows.map((x) => ({ id: x.id, code: x.codigo, name: x.nome, version: x.versao, isDefault: x.padrao })),

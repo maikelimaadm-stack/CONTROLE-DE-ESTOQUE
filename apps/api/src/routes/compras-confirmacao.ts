@@ -23,20 +23,30 @@
  * documento, o par da TOP (formato 5, versão congelada) classifica os títulos; o tipo de título e a conta prevista da TOP
  * e a TOP e a versão da compra vão para o título; a compra com origem trava o pedido logo depois de si (compra → pedido →
  * contador → estoque) e, confirmada ou estornada, refaz a provisão dele.
+ *
+ * OPERACOES-01 F7 (decisão 284) — O QUE A NOTA ANTIGA FAZIA, AGORA NA COMPRA: o item com "gera estoque" = não fica fora
+ * da entrada; o peso do custo de entrada é o valor do item + IPI + ICMS-ST dele (`pesoDoCustoDeEntrada`; sem eles, o
+ * de hoje); o item IMOBILIZADO cria o bem (equipamento, com ID Global) na confirmação, com o valor de entrada rateado,
+ * antes de a compra virar confirmada; o título leva o tipo de título da compra (ou o da TOP), a classificação
+ * CAPEX/OPEX, o tipo de documento fiscal, as duplicatas da nota (parcelas explícitas) e o rateio por valor ou por
+ * produto (que substitui o par natureza/centro — do documento e da TOP); a prévia mostra `financeiro.rateio`; o
+ * estorno baixa os bens. A NOTA REPETIDA pela chave: `travarChaveDeAcesso` e `conferirChaveDeAcessoLivre` moram em
+ * `lib/nota-fiscal-xml.ts` e são reexportadas daqui (um lugar só; a mesma trava dos gatilhos da 0047).
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, DomainError } from "@agro/shared";
 import {
-  resolverPoliticaEfetivaDaCompra, resumoDaPoliticaDaCompra, ratearCustoDeEntrada, type PoliticaEfetivaDaCompra,
+  resolverPoliticaEfetivaDaCompra, resumoDaPoliticaDaCompra, ratearCustoDeEntrada, pesoDoCustoDeEntrada, normalizeApportionment,
+  type PoliticaEfetivaDaCompra, type ApportionmentLine,
   divergenciaPedidoDaVersaoTop, divergenciasDaCompra, MSG_DIVERGENCIA_COM_O_PEDIDO, type LinhaParaDivergencia, type ResultadoDivergencia,
 } from "@agro/domain";
-import { runService, idempotent, audit, assertPeriodOpen } from "../lib/service.js";
+import { runService, idempotent, audit, assertPeriodOpen, nextCode } from "../lib/service.js";
 import { notFound, validation, err, fromPgError } from "../lib/errors.js";
 import type { ServiceCtx } from "../lib/context.js";
 import { postStock, reverseStock, quantidadeLegivel } from "../services/stock-core.js";
-import { createTitles, installmentPlanSchema, parcelasDoTitulo, type InstallmentPlan } from "../services/financial-core.js";
-import { travarContadorIdGlobal } from "../lib/id-global.js";
+import { createTitles, installmentPlanSchema, parcelasDoTitulo, exigirRateioAnalitico, type InstallmentPlan } from "../services/financial-core.js";
+import { travarContadorIdGlobal, atribuirIdGlobal } from "../lib/id-global.js";
 import { lerDocumentoCompra, REGRA_CLASSIFICACAO_COMPRA } from "./compras.js";
 import { validarClassificacaoDoDocumento } from "../lib/documento-comercial.js";
 import { travarPedidoDeOrigemDaCompra, reabrirPedidoDeOrigem } from "./compras-recebimento.js";
@@ -46,6 +56,8 @@ import { padroesDasVersoesParaExecucao } from "../lib/financeiro-top.js";
 import { contaPadraoUtilizavel, MENSAGEM_CONTA_PADRAO_INUTILIZAVEL, type PadroesFinanceirosResolvidos } from "../lib/financeiro-padroes-top.js";
 import { sincronizarProvisaoDoPedidoDeCompra, travarPedidoDeCompraDaProvisao } from "../lib/financeiro-provisao.js";
 import { planoDaClassificacao, camposTrocadosDosPadroes, mensagemDosPadroesTrocados, MOTIVOS_DA_PROVISAO_COMPRA } from "@agro/domain";
+// OPERACOES-01 F7 (decisão 284): a chave de acesso — UM lugar (a lib), reexportado daqui para as rotas de compras e estoque.
+export { travarChaveDeAcesso, conferirChaveDeAcessoLivre } from "../lib/nota-fiscal-xml.js";
 
 /** Versão do contrato da prévia. A web confere forma E versão antes de usar o corpo. */
 export const CONTRATO_PREVIA_CONFIRMACAO_COMPRA = 1;
@@ -62,12 +74,21 @@ export interface CompraParaConfirmar {
   origem_documento_id: string | null;
   /** OPERACOES-01 F9b: a TOP da compra (sempre presente), que vai para o título com a versão. */
   tipo_operacao_id: string;
+  /** OPERACOES-01 F7: os dados fiscais que a confirmação usa (nulos na compra de hoje). */
+  tipo_titulo_id: string | null;
+  classificacao_gasto: "capex" | "opex" | null;
+  tipo_documento_fiscal: string | null;
+  rateio_tipo: "por_valor" | "por_produto" | null;
+  parcelas_nota: unknown;
 }
 
 /** O item como a confirmação o lê: a linha do item e o controle de estoque do produto. */
 interface ItemDaCompra {
   id: string; produto_id: string; armazem_id: string | null; quantidade: string; valor_total: string; lote: string | null; validade: string | null;
   controla_estoque: boolean; produto: string; armazem: string | null;
+  /** OPERACOES-01 F7: nulos no item de hoje (gera estoque, não é imobilizado, sem impostos nem par próprios). */
+  gera_estoque: boolean | null; imobilizado: boolean | null; valor_ipi: string | null; valor_icms_st: string | null;
+  categoria_financeira_id: string | null; centro_custo_id: string | null; descricao_do_bem: string;
 }
 
 const dataIso = (v: unknown): string | null => {
@@ -88,6 +109,11 @@ function comoCompra(d: Record<string, unknown>): CompraParaConfirmar {
     origem_documento_id: (d.origem_documento_id as string | null) ?? null,
     // OPERACOES-01 F9b: a TOP da compra (NOT NULL na espécie compra).
     tipo_operacao_id: String(d.tipo_operacao_id),
+    tipo_titulo_id: (d.tipo_titulo_id as string | null) ?? null,
+    classificacao_gasto: (d.classificacao_gasto as "capex" | "opex" | null) ?? null,
+    tipo_documento_fiscal: (d.tipo_documento_fiscal as string | null) ?? null,
+    rateio_tipo: (d.rateio_tipo as "por_valor" | "por_produto" | null) ?? null,
+    parcelas_nota: d.parcelas_nota ?? null,
   };
 }
 
@@ -96,7 +122,10 @@ async function itensDaCompra(ctx: ServiceCtx, documentoId: string): Promise<Item
   const r = await ctx.tx.query<ItemDaCompra>(
     `select i.id, i.produto_id, i.armazem_id, i.quantidade::text as quantidade, i.valor_total::text as valor_total, i.lote,
             to_char(i.validade, 'YYYY-MM-DD') as validade, p.control_stock as controla_estoque,
-            p.code || ' - ' || p.description as produto, w.description as armazem
+            p.code || ' - ' || p.description as produto, w.description as armazem,
+            i.gera_estoque, i.imobilizado, i.valor_ipi::text as valor_ipi, i.valor_icms_st::text as valor_icms_st,
+            i.categoria_financeira_id::text as categoria_financeira_id, i.centro_custo_id::text as centro_custo_id,
+            coalesce(nullif(btrim(i.descricao_produto_nota), ''), p.description) as descricao_do_bem
        from erp.documentos_compra_itens i
        join erp.products p on p.id = i.produto_id and p.organization_id = i.organization_id
        left join erp.warehouses w on w.id = i.armazem_id and w.organization_id = i.organization_id
@@ -178,6 +207,8 @@ const MODO_CONFIRMACAO: ModoDoPlanejamento = { trava: true, recusar: (e) => { th
 
 /** Uma linha de entrada planejada: o item, o valor de entrada rateado e o custo unitário. */
 interface EntradaPlanejada { item: ItemDaCompra; valorEntrada: string; custoUnitario: string }
+/** OPERACOES-01 F7: um parcela explícita do título (as duplicatas da nota guardadas na compra). */
+interface ParcelaDoTitulo { dueDate: string; amount: string }
 
 interface PlanoDaConfirmacao {
   politica: PoliticaDaCompra | null;
@@ -200,6 +231,14 @@ interface PlanoDaConfirmacao {
    */
   padroes: PadroesFinanceirosResolvidos | null;
   classificacaoDaTop: boolean;
+  /**
+   * OPERACOES-01 F7: o rateio do título quando a compra tem rateio (por valor: as linhas gravadas; por produto: uma linha
+   * por par natureza/centro dos itens) — com ele, `classificacao` fica nula; as duplicatas da nota (`parcelas`, nulas
+   * sem elas) e os itens imobilizados com o valor de entrada rateado (o bem nasce com ele).
+   */
+  rateio: ApportionmentLine[] | null;
+  parcelas: ParcelaDoTitulo[] | null;
+  imobilizados: { item: ItemDaCompra; valorEntrada: string }[];
 }
 
 const MSG_NATUREZA_OBRIGATORIA = "Informe a natureza financeira e o centro de resultado: a confirmação gera contas a pagar.";
@@ -208,10 +247,62 @@ function lerPlano(bruto: unknown): InstallmentPlan | null {
   return installmentPlanSchema.parse(bruto);
 }
 
-/** Valor, vencimento e plano dos títulos a pagar — o que `createTitles` recebe e o que a prévia mostra. */
-function tituloDaCompra(d: CompraParaConfirmar, plano: InstallmentPlan | null) {
+/**
+ * As duplicatas da nota gravadas na compra (`parcelas_nota`, 0047) como parcelas do título. Sem elas, `null` (a conta de
+ * hoje). Forma fora do contrato gravado é corrupção: recusa, nunca "sem parcelas".
+ */
+function lerParcelasDaNota(bruto: unknown): ParcelaDoTitulo[] | null {
+  if (bruto === null || bruto === undefined) return null;
+  const lista = Array.isArray(bruto) ? bruto : null;
+  const parcelas = lista?.map((p) => {
+    const x = p as { vencimento?: unknown; valor?: unknown };
+    return typeof x.vencimento === "string" && (typeof x.valor === "string" || typeof x.valor === "number") ? { dueDate: x.vencimento.slice(0, 10), amount: String(x.valor) } : null;
+  });
+  if (!parcelas?.length || parcelas.some((p) => p === null)) throw validation("As parcelas da nota gravadas na compra estão num formato que este servidor não lê.");
+  return parcelas as ParcelaDoTitulo[];
+}
+
+/** Valor, vencimento e plano (ou as parcelas da nota) dos títulos a pagar — o que `createTitles` recebe e o que a prévia mostra. */
+function tituloDaCompra(d: CompraParaConfirmar, plano: InstallmentPlan | null, parcelas: ParcelaDoTitulo[] | null = null) {
+  if (parcelas?.length) return { amount: d.valor_total, dueDate: parcelas[0]!.dueDate, plan: null, parcelas };
   return { amount: d.valor_total, dueDate: plano?.first_due_date ?? d.data_vencimento ?? d.data_documento, plan: plano };
 }
+
+/**
+ * OPERACOES-01 F7 — O RATEIO DO TÍTULO da compra com rateio. POR VALOR: as linhas gravadas (natureza, centro, conta
+ * contábil, safra e percentual), numa consulta. POR PRODUTO: uma linha por par natureza/centro dos itens, na ordem em
+ * que o par aparece, com a soma dos `valor_total` dos itens do par; a diferença para o total da compra (frete, IPI,
+ * ICMS-ST, seguro, outras − desconto) vai na ÚLTIMA linha (o molde da nota antiga); linha de valor zero sai. Sem linha,
+ * item sem par ou última linha negativa: recusa (VALIDATION_ERROR), nunca título sem classificação.
+ */
+async function rateioDoTitulo(ctx: ServiceCtx, d: CompraParaConfirmar, itens: readonly ItemDaCompra[]): Promise<ApportionmentLine[]> {
+  if (d.rateio_tipo === "por_valor") {
+    const r = await ctx.tx.query<{ categoria_financeira_id: string; centro_custo_id: string; conta_contabil_id: string | null; safra_id: string | null; percentual: string }>(
+      `select categoria_financeira_id::text as categoria_financeira_id, centro_custo_id::text as centro_custo_id, conta_contabil_id::text as conta_contabil_id,
+              safra_id::text as safra_id, percentual::text as percentual
+         from erp.documentos_compra_rateio where organization_id = $1 and documento_id = $2 order by posicao`, [ctx.orgId, d.id]);
+    if (!r.rows.length) throw validation(MSG_RATEIO_SEM_LINHAS, [{ path: "rateio", message: MSG_RATEIO_SEM_LINHAS }]);
+    return r.rows.map((l) => ({ financialCategoryId: l.categoria_financeira_id, costCenterId: l.centro_custo_id, chartAccountId: l.conta_contabil_id, harvestId: l.safra_id, percentage: l.percentual }));
+  }
+  const porPar = new Map<string, { financialCategoryId: string; costCenterId: string; soma: ReturnType<typeof D> }>();
+  for (const it of itens) {
+    if (!it.categoria_financeira_id || !it.centro_custo_id) throw validation(MSG_RATEIO_POR_PRODUTO_SEM_PAR, [{ path: "itens", message: MSG_RATEIO_POR_PRODUTO_SEM_PAR }]);
+    const chave = `${it.categoria_financeira_id}|${it.centro_custo_id}`;
+    const linha = porPar.get(chave);
+    if (linha) linha.soma = linha.soma.plus(D(it.valor_total));
+    else porPar.set(chave, { financialCategoryId: it.categoria_financeira_id, costCenterId: it.centro_custo_id, soma: D(it.valor_total) });
+  }
+  const linhas = [...porPar.values()];
+  if (!linhas.length) throw validation(MSG_RATEIO_POR_PRODUTO_SEM_PAR, [{ path: "itens", message: MSG_RATEIO_POR_PRODUTO_SEM_PAR }]);
+  const somaDosItens = linhas.reduce((a, l) => a.plus(l.soma), D(0));
+  const ultima = linhas[linhas.length - 1]!;
+  ultima.soma = ultima.soma.plus(D(d.valor_total).minus(somaDosItens));
+  if (ultima.soma.isNegative()) throw validation(MSG_RATEIO_POR_PRODUTO_NAO_FECHA, [{ path: "rateio", message: MSG_RATEIO_POR_PRODUTO_NAO_FECHA }]);
+  return linhas.filter((l) => l.soma.gt(0)).map((l) => ({ financialCategoryId: l.financialCategoryId, costCenterId: l.costCenterId, amount: money(l.soma) }));
+}
+const MSG_RATEIO_SEM_LINHAS = "A compra com rateio por valor não tem as linhas do rateio.";
+const MSG_RATEIO_POR_PRODUTO_SEM_PAR = "Com rateio por produto, todo item precisa da natureza e do centro de resultado.";
+const MSG_RATEIO_POR_PRODUTO_NAO_FECHA = "O rateio por produto não fecha o total da compra: o desconto do documento passa da última natureza.";
 
 /**
  * O PLANEJAMENTO DA CONFIRMAÇÃO — UMA função, para a confirmação E para a prévia. Ordem: situação → política da
@@ -221,7 +312,7 @@ function tituloDaCompra(d: CompraParaConfirmar, plano: InstallmentPlan | null) {
 async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, itens: ItemDaCompra[], execucaoConfiguradaHabilitada: boolean, modo: ModoDoPlanejamento): Promise<PlanoDaConfirmacao> {
   const dataEntrada = d.data_entrada ?? d.data_documento;
   const plano: PlanoDaConfirmacao = { politica: null, daEntrada: false, geraTitulos: false, entradas: [], itensForaDaEntrada: 0, classificacao: null, plano: null, dataEntrada, divergencia: null,
-    padroes: null, classificacaoDaTop: false };
+    padroes: null, classificacaoDaTop: false, rateio: null, parcelas: null, imobilizados: [] };
   if (d.situacao === "confirmado") { modo.recusar(err("ALREADY_CONFIRMED", "Compra já confirmada")); return plano; }
   if (d.situacao === "cancelado") { modo.recusar(err("ALREADY_CANCELLED", "Compra cancelada")); return plano; }
 
@@ -241,6 +332,13 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
   // o frete sozinho gera o título do total; sem item não há entrada (o rateio abaixo só roda com itens).
   plano.geraTitulos = (politica.financeiro.autoridade === "padrao" || politica.financeiro.efeito === "pagar") && D(d.valor_total).gt(0);
   plano.plano = lerPlano(d.plano_parcelas);
+  // OPERACOES-01 F7: as duplicatas da nota (exclusivas com o plano, CHECK da 0047) são as parcelas do título.
+  try {
+    plano.parcelas = lerParcelasDaNota(d.parcelas_nota);
+  } catch (e) {
+    if (!(e instanceof DomainError)) throw e;
+    modo.recusar(e);
+  }
 
   // A APROVAÇÃO (TOP-CONFIG-08, decisão 277) — logo depois da política da versão e ANTES das exigências e de
   // qualquer efeito: a versão congelada no formato 4 que exige aprovação (Sempre, ou A partir de um valor com o
@@ -280,8 +378,9 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
 
   // AS EXIGÊNCIAS DA POLÍTICA — todas conferidas, todas juntas, antes de qualquer efeito.
   const exigencias: { caminho: string; mensagem: string }[] = [];
+  // OPERACOES-01 F7: o item que não gera estoque não precisa de local (nem pode ter um).
   if (politica.estoque.autoridade === "configurada" && politica.estoque.efeito === "entrada" && politica.estoque.exigeArmazem
-      && itens.some((it) => it.controla_estoque && !it.armazem_id)) {
+      && itens.some((it) => it.controla_estoque && !it.armazem_id && it.gera_estoque !== false)) {
     exigencias.push({ caminho: "estoque.exigeArmazem", mensagem: "Informe o local de estoque de todos os itens" });
   }
   // COMPRAS-03 (item 0): forma e vencimento só quando a compra GERA título (`plano.geraTitulos`: conta a pagar E
@@ -289,7 +388,7 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
   // cobrar aqui o que o salvar dispensou travaria a confirmação de um documento que o próprio sistema aceitou.
   if (plano.geraTitulos && politica.financeiro.autoridade === "configurada" && politica.financeiro.efeito === "pagar") {
     if (politica.financeiro.exigeFormaPagamento && !d.forma_pagamento_id) exigencias.push({ caminho: "financeiro.exigeFormaPagamento", mensagem: "Informe a forma de pagamento" });
-    if (politica.financeiro.exigeVencimento && !(plano.plano?.first_due_date ?? d.data_vencimento)) exigencias.push({ caminho: "financeiro.exigeVencimento", mensagem: "Informe o vencimento" });
+    if (politica.financeiro.exigeVencimento && !(plano.parcelas?.[0]?.dueDate ?? plano.plano?.first_due_date ?? d.data_vencimento)) exigencias.push({ caminho: "financeiro.exigeVencimento", mensagem: "Informe o vencimento" });
   }
   if (exigencias.length) {
     modo.recusar(new DomainError("TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA",
@@ -311,12 +410,26 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
       .get(d.tipo_operacao_versao_id.toLowerCase()) ?? null;
     plano.padroes = fp?.padroes ?? null;
     const recusaDaTop = (caminho: string, mensagem: string) => new DomainError("TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA", mensagem, { exigencias: [{ caminho, mensagem }] });
-    const pc = !d.categoria_financeira_id && !d.centro_custo_id && fp
+    // OPERACOES-01 F7: com rateio, quem classifica é o RATEIO (por valor ou por produto): o par do documento (que não
+    // existe, CHECK da 0047) e o par padrão da TOP não se aplicam — a exigência vira "o rateio existe e é analítico".
+    if (d.rateio_tipo) {
+      try {
+        plano.rateio = await rateioDoTitulo(ctx, d, itens);
+        await exigirRateioAnalitico(ctx, plano.rateio.map((l) => ({ financialCategoryId: l.financialCategoryId, costCenterId: l.costCenterId, chartAccountId: l.chartAccountId ?? null })));
+      } catch (e) {
+        if (!(e instanceof DomainError)) throw e;
+        plano.rateio = null;
+        modo.recusar(e);
+      }
+    }
+    const pc = !d.rateio_tipo && !d.categoria_financeira_id && !d.centro_custo_id && fp
       ? planoDaClassificacao({ documento: { naturezaId: null, centroCustoId: null }, padrao: fp.padroes, semClassificacao: "exigir" })
       : null;
     const par = pc?.tipo === "pronta" ? { categoriaFinanceiraId: pc.naturezaId, centroCustoId: pc.centroCustoId }
       : d.categoria_financeira_id && d.centro_custo_id ? { categoriaFinanceiraId: d.categoria_financeira_id, centroCustoId: d.centro_custo_id } : null;
-    if (!par) {
+    if (d.rateio_tipo) {
+      // O rateio já foi lido e conferido acima.
+    } else if (!par) {
       const campo = d.categoria_financeira_id ? "centro_custo_id" : "categoria_financeira_id";
       modo.recusar(validation(MSG_NATUREZA_OBRIGATORIA, [{ path: campo, message: MSG_NATUREZA_OBRIGATORIA }]));
     } else {
@@ -339,10 +452,17 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
   }
 
   // CUSTO DE ENTRADA: a parte de cada item no valor_total do documento (frete, outras e desconto entram no custo).
-  if (plano.daEntrada && itens.length) {
-    const rateio = ratearCustoDeEntrada(itens.map((it) => ({ quantidade: it.quantidade, valorTotal: it.valor_total })), d.valor_total);
+  // OPERACOES-01 F7: o peso de cada item é o valor dele + IPI + ICMS-ST dele (sem os dois, o de hoje); o item que não
+  // gera estoque fica fora da entrada; o rateio é calculado para TODOS os itens — o imobilizado nasce com a parte dele,
+  // mesmo quando a política não dá entrada.
+  const temImobilizado = itens.some((it) => it.imobilizado === true);
+  if ((plano.daEntrada || temImobilizado) && itens.length) {
+    const rateio = ratearCustoDeEntrada(itens.map((it) => ({ quantidade: it.quantidade,
+      valorTotal: pesoDoCustoDeEntrada({ valorTotal: it.valor_total, ipi: it.valor_ipi, icmsSt: it.valor_icms_st }) })), d.valor_total);
     itens.forEach((it, i) => {
-      if (it.armazem_id && it.controla_estoque) plano.entradas.push({ item: it, valorEntrada: rateio[i]!.valorEntrada, custoUnitario: rateio[i]!.custoUnitario });
+      if (it.imobilizado === true) plano.imobilizados.push({ item: it, valorEntrada: rateio[i]!.valorEntrada });
+      if (!plano.daEntrada) return;
+      if (it.armazem_id && it.controla_estoque && it.gera_estoque !== false) plano.entradas.push({ item: it, valorEntrada: rateio[i]!.valorEntrada, custoUnitario: rateio[i]!.custoUnitario });
       else plano.itensForaDaEntrada++;
     });
   }
@@ -393,16 +513,35 @@ async function confirmarCompra(ctx: ServiceCtx, id: string, execucaoConfiguradaH
   }
 
   // FINANCEIRO: contas a pagar do valor_total, para o fornecedor, natureza e centro 100%.
+  // OPERACOES-01 F7: com rateio, as linhas dele; com as duplicatas da nota, uma parcela por duplicata; o tipo de título
+  // da COMPRA vence o da TOP; a classificação CAPEX/OPEX e o tipo de documento fiscal da compra. Sem nada disso: o de hoje.
   let titulos: string[] = [];
-  if (plano.geraTitulos && plano.classificacao) {
+  const apportionment: ApportionmentLine[] | null = plano.rateio
+    ?? (plano.classificacao ? [{ financialCategoryId: plano.classificacao.categoriaFinanceiraId, costCenterId: plano.classificacao.centroCustoId, percentage: "100" }] : null);
+  if (plano.geraTitulos && apportionment) {
     const t = await createTitles(ctx, { empresaId: d.empresa_id, direction: "payable", number: d.numero_nota?.trim() ? d.numero_nota.trim() : `CMP-${d.codigo}`,
-      personId: d.fornecedor_id, ...tituloDaCompra(d, plano.plano), emissionDate: d.data_documento, note: `Compra ${d.codigo}`,
-      apportionment: [{ financialCategoryId: plano.classificacao.categoriaFinanceiraId, costCenterId: plano.classificacao.centroCustoId, percentage: "100" }],
+      personId: d.fornecedor_id, ...tituloDaCompra(d, plano.plano, plano.parcelas), emissionDate: d.data_documento, note: `Compra ${d.codigo}`,
+      apportionment,
       sourceType: "documentos_compra", sourceId: d.id,
       // OPERACOES-01 F9b: o tipo de título e a conta prevista da TOP (formato 5), e a TOP e a versão da compra (qualquer formato).
-      titleTypeId: plano.padroes?.tipoTituloId ?? null, contaPrevistaId: plano.padroes?.contaBancariaId ?? null,
-      tipoOperacaoId: d.tipo_operacao_id, tipoOperacaoVersaoId: d.tipo_operacao_versao_id });
+      titleTypeId: d.tipo_titulo_id ?? plano.padroes?.tipoTituloId ?? null, contaPrevistaId: plano.padroes?.contaBancariaId ?? null,
+      tipoOperacaoId: d.tipo_operacao_id, tipoOperacaoVersaoId: d.tipo_operacao_versao_id,
+      ...(d.classificacao_gasto ? { classification: d.classificacao_gasto } : {}),
+      ...(d.tipo_documento_fiscal ? { documentType: d.tipo_documento_fiscal } : {}) });
     titulos = t.ids;
+  }
+
+  // OPERACOES-01 F7 — O BEM DO ITEM IMOBILIZADO (molde da nota antiga): um por item, com o valor de entrada rateado, na
+  // data de entrada; ID Global (o contador já está preso); o item ganha `bem_id` (ROW COUNT) ANTES de a compra virar
+  // confirmada — a guarda da 0036 congela o item fora do aberto.
+  const bens: string[] = [];
+  for (const { item, valorEntrada } of plano.imobilizados) {
+    const bem = await inserirBemDaCompra(ctx, [d.empresa_id, item.descricao_do_bem, plano.dataEntrada.slice(0, 4), valorEntrada, plano.dataEntrada, d.fornecedor_id, item.produto_id]);
+    const ligado = await ctx.tx.query("update erp.documentos_compra_itens set bem_id = $3 where id = $1 and organization_id = $2 and documento_id = $4 and bem_id is null",
+      [item.id, ctx.orgId, bem, d.id]);
+    // ROW COUNT SOB RLS: zero linha seria um bem sem o item que o criou.
+    if (ligado.rowCount !== 1) throw notFound("Documento");
+    bens.push(bem);
   }
 
   // ROW COUNT SOB RLS, com a transição conferida no `where`.
@@ -423,8 +562,76 @@ async function confirmarCompra(ctx: ServiceCtx, id: string, execucaoConfiguradaH
     ...(plano.divergencia && plano.divergencia.itens.length ? { divergencia: { modo: plano.divergencia.modo, itens: plano.divergencia.itens } } : {}),
     // TOP-CONFIG-08: a chave existe SÓ na automática — a auditoria da manual não ganha `automatica: false`.
     ...(o.automatica ? { automatica: true } : {}),
+    // OPERACOES-01 F7: só quando há (a auditoria da compra de hoje fica a de hoje, chave por chave).
+    ...(titulos.length && plano.rateio ? { rateio: { tipo: d.rateio_tipo, linhas: plano.rateio } } : {}),
+    ...(bens.length ? { bens } : {}),
   });
   return { id: d.id, situacao: "confirmado", titulo_ids: titulos, movimento_ids: movimentos };
+}
+
+/** Uma linha do rateio na prévia: natureza, centro, conta e safra com código e nome, o percentual e o valor. */
+interface LinhaDoRateioNaPrevia {
+  categoria: { id: string; codigo: string; nome: string }; centro: { id: string; codigo: string; nome: string };
+  conta: { id: string; codigo: string; nome: string } | null; safra: { id: string; nome: string } | null;
+  percentual: string; valor: string;
+}
+
+/**
+ * OPERACOES-01 F7 — O RATEIO NA PRÉVIA: as linhas normalizadas pela MESMA conta do título (`normalizeApportionment`,
+ * a de `createTitles`) e os nomes dos cadastros numa consulta só (nunca uma por linha).
+ */
+async function rateioParaAPrevia(ctx: ServiceCtx, total: string, linhas: readonly ApportionmentLine[]): Promise<LinhaDoRateioNaPrevia[]> {
+  const normalizadas = normalizeApportionment(money(total), [...linhas]);
+  const ids = (f: (l: (typeof normalizadas)[number]) => string | null | undefined) => [...new Set(normalizadas.flatMap((l) => { const v = f(l); return v ? [v] : []; }))];
+  const r = await ctx.tx.query<{ t: string; id: string; codigo: string | null; nome: string }>(
+    `select 'cat' as t, id::text as id, code as codigo, name as nome from erp.financial_categories where organization_id = $1 and id = any($2::uuid[])
+     union all select 'cc', id::text, code, name from erp.cost_centers where organization_id = $1 and id = any($3::uuid[])
+     union all select 'ca', id::text, code, description from erp.chart_accounts where organization_id = $1 and id = any($4::uuid[])
+     union all select 'sf', id::text, null, description from erp.harvests where organization_id = $1 and id = any($5::uuid[])`,
+    [ctx.orgId, ids((l) => l.financialCategoryId), ids((l) => l.costCenterId), ids((l) => l.chartAccountId), ids((l) => l.harvestId)]);
+  const nome = new Map(r.rows.map((x) => [`${x.t}:${x.id}`, x]));
+  const cadastro = (t: string, id: string) => { const x = nome.get(`${t}:${id}`); return { id, codigo: x?.codigo ?? "", nome: x?.nome ?? "" }; };
+  return normalizadas.map((l) => ({
+    categoria: cadastro("cat", l.financialCategoryId), centro: cadastro("cc", l.costCenterId),
+    conta: l.chartAccountId ? cadastro("ca", l.chartAccountId) : null,
+    safra: l.harvestId ? { id: l.harvestId, nome: nome.get(`sf:${l.harvestId}`)?.nome ?? "" } : null,
+    percentual: l.percentage, valor: l.amount,
+  }));
+}
+
+/** Quantos números do contador de bens a confirmação pula, no máximo, antes de recusar (o acervo ocupa a faixa). */
+const PULOS_MAXIMOS_DO_CODIGO_DO_BEM = 1000;
+
+/**
+ * OPERACOES-01 F7 — O BEM DO ITEM IMOBILIZADO, com o código do contador da organização (`equipment`, o da nota antiga e
+ * do cadastro). O inventário de bens tem códigos DIGITADOS no acervo (o contador não os conhece), e a unicidade
+ * (`equipments_organization_id_code_key`) vale também para o bem de outra empresa, que a RLS não deixa ver: o número
+ * ocupado é PULADO pela própria unicidade — o INSERT (e o ID Global do bem) num savepoint, e o 23505 daquela chave tenta o
+ * próximo número.
+ * `valores` = empresa, descrição, ano do modelo, valor de aquisição, data de aquisição, fornecedor e produto.
+ */
+async function inserirBemDaCompra(ctx: ServiceCtx, valores: readonly [string, string, string, string, string, string, string]): Promise<string> {
+  for (let i = 0; i < PULOS_MAXIMOS_DO_CODIGO_DO_BEM; i++) {
+    const codigo = await nextCode(ctx.tx, ctx.orgId, "equipment");
+    await ctx.tx.query("savepoint bem_da_compra");
+    try {
+      const r = await ctx.tx.query<{ id: string }>(
+        `insert into erp.equipments (organization_id, code, empresa_id, description, year_model, acquisition_value, acquisition_date, provider_id, product_id,
+            equipment_type, hour_value, has_depreciation, status)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'own', 0, true, 'active') returning id::text as id`, [ctx.orgId, codigo, ...valores]);
+      const bem = r.rows[0]!.id;
+      // O bem é registro com identidade própria: recebe o ID Global (o contador já está preso pela confirmação).
+      await atribuirIdGlobal(ctx, "equipments", bem);
+      await ctx.tx.query("release savepoint bem_da_compra");
+      return bem;
+    } catch (e) {
+      await ctx.tx.query("rollback to savepoint bem_da_compra");
+      const pe = e as { code?: string; constraint?: string };
+      if (pe.code === "23505" && pe.constraint === "equipments_organization_id_code_key") continue;
+      throw e;
+    }
+  }
+  throw err("CONFLICT", "Não foi possível gerar o código do bem: a faixa de números seguinte do inventário já está ocupada por códigos antigos.");
 }
 
 /** PRÉVIA da confirmação: o mesmo planejamento, sem trava, sem gravar nada. */
@@ -463,11 +670,22 @@ async function previaDaConfirmacao(ctx: ServiceCtx, id: string, execucaoConfigur
       ...(plano.classificacaoDaTop ? { padraoDaTop: true as const } : {}) };
   }
 
+  // OPERACOES-01 F7: o rateio do título, com nomes, SÓ quando a compra tem rateio (chave nova; sem ela, o corpo de hoje).
+  let rateio: LinhaDoRateioNaPrevia[] | null = null;
+  if (plano.rateio) {
+    try {
+      rateio = await rateioParaAPrevia(ctx, d.valor_total, plano.rateio);
+    } catch (e) {
+      if (!(e instanceof DomainError)) throw e;
+      recusas.push(e);
+    }
+  }
+
   // As parcelas saem da MESMA conta que `createTitles` grava.
   let parcelas: { numero: number; entrada: boolean; vencimento: string; valor: string }[] = [];
   if (plano.politica && plano.geraTitulos && D(d.valor_total).gt(0)) {
     try {
-      parcelas = parcelasDoTitulo(tituloDaCompra(d, plano.plano)).map((p) => ({ numero: p.number, entrada: p.isDownPayment, vencimento: p.dueDate, valor: money(p.amount) }));
+      parcelas = parcelasDoTitulo(tituloDaCompra(d, plano.plano, plano.parcelas)).map((p) => ({ numero: p.number, entrada: p.isDownPayment, vencimento: p.dueDate, valor: money(p.amount) }));
     } catch (e) {
       if (!(e instanceof DomainError)) throw e;
       recusas.push(e);
@@ -492,6 +710,8 @@ async function previaDaConfirmacao(ctx: ServiceCtx, id: string, execucaoConfigur
       parcelas,
       primeiroVencimento: parcelas.map((p) => p.vencimento).sort()[0] ?? null,
       classificacao,
+      // OPERACOES-01 F7: no FIM do financeiro, e só com rateio (a classificação, então, é nula).
+      ...(rateio ? { rateio } : {}),
     },
     politica: plano.politica ? { origem: plano.politica.origem, ...resumoDaPoliticaDaCompra(plano.politica) } : null,
     // OPERACOES-01 F6a: no FIM, e SÓ quando a divergência se aplica (compra com origem, seção fora de "Nenhuma"). Nos
@@ -551,9 +771,21 @@ export async function cancelarCompraConfirmada(ctx: ServiceCtx, doc: Record<stri
 
   const estornos = await reverseStock(ctx, "documentos_compra", id, new Date().toISOString().slice(0, 10));
   const tc = await ctx.tx.query("update erp.financial_titles set status='cancelled', version=version+1 where organization_id=$1 and source_type='documentos_compra' and source_id=$2 and status <> 'cancelled'", [ctx.orgId, id]);
+  // OPERACOES-01 F7: os bens criados pelos itens imobilizados são BAIXADOS (como a nota antiga) — os ainda ativos,
+  // travados antes, e a baixa confere o ROW COUNT contra eles.
+  const bens = (await ctx.tx.query<{ id: string }>(
+    `select e.id::text as id from erp.equipments e
+       join erp.documentos_compra_itens i on i.bem_id = e.id and i.organization_id = e.organization_id
+      where i.organization_id = $1 and i.documento_id = $2 and e.status <> 'written_off'
+      order by e.id for update of e`, [ctx.orgId, id])).rows.map((b) => b.id);
+  if (bens.length) {
+    const baixa = await ctx.tx.query("update erp.equipments set status = 'written_off' where organization_id = $1 and id = any($2::uuid[]) and status <> 'written_off'", [ctx.orgId, bens]);
+    if (baixa.rowCount !== bens.length) throw err("CONFLICT", "Os bens desta compra não foram baixados: tente de novo.");
+  }
   const u = await ctx.tx.query("update erp.documentos_compra set situacao='cancelado', atualizado_em=now() where id=$1 and organization_id=$2 and situacao='confirmado'", [id, ctx.orgId]);
   if (u.rowCount !== 1) throw notFound("Documento");
-  await audit(ctx.tx, ctx, "documentos_compra", id, "cancel", { ...(opcoes.motivo ? { motivo: opcoes.motivo } : {}), estornos, titulosCancelados: tc.rowCount ?? 0 });
+  await audit(ctx.tx, ctx, "documentos_compra", id, "cancel", { ...(opcoes.motivo ? { motivo: opcoes.motivo } : {}), estornos, titulosCancelados: tc.rowCount ?? 0,
+    ...(bens.length ? { bensBaixados: bens } : {}) });
   await reabrirPedidoDeOrigem(ctx, pedidoDeOrigem, id);
   // OPERACOES-01 F9b: o estorno devolve ao pedido de origem o que a compra realizou (e pode tê-lo reaberto).
   if (pedidoDeOrigem) await sincronizarProvisaoDoPedidoDeCompra(ctx, pedidoDeOrigem.id, MOTIVOS_DA_PROVISAO_COMPRA.compraCancelada(String(doc.codigo)));

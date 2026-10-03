@@ -444,9 +444,9 @@ describe("DB-5/DB-6 — a 0041 sobre o banco até a 0040, como o runner aplica",
     const ledger = (await db.query<{ n: number; ultima: string }>("select count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
     expect(ledger).toEqual({ n: 41, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
-    // O ledger DESTE banco termina na 0041 (ele sobe só até ela); no repositório da 0042 à 0046 (OPERACOES-01 F8, F5a,
-    // F6a, F9 e F10) vêm depois.
-    expect(noDisco.length, "46 migrations no repositório (0001..0046)").toBe(46);
+    // O ledger DESTE banco termina na 0041 (ele sobe só até ela); no repositório da 0042 à 0047 (OPERACOES-01 F8, F5a,
+    // F6a, F9, F10 e F7) vêm depois.
+    expect(noDisco.length, "47 migrations no repositório (0001..0047)").toBe(47);
     expect(noDisco[40]).toBe(ALVO);
     expect(noDisco[41], "a 0042 logo depois da 0041 no repositório").toBe("0042_central_financeira.sql");
     expect(await tabelasExistem()).toEqual({ venda: "erp.aprovacoes_venda", compra: "erp.aprovacoes_compra", estoque: "erp.aprovacoes_estoque" });

@@ -4,7 +4,8 @@ import { brl, dateBR, num } from "@/lib/utils";
 import { LoadingState } from "@/components/ui";
 import { SimpleTable, type Row } from "@/features/docs/shared";
 import { DialogoConfirmar } from "@/features/central/dialogos";
-import { usePreviaDaConfirmacaoCompra, type DivergenciaComOPedido, type ItemDaDivergencia, type PreviaDaConfirmacaoCompra } from "../previa-confirmacao-compra";
+import { percentualDaTela } from "./dados-fiscais";
+import { usePreviaDaConfirmacaoCompra, type DivergenciaComOPedido, type ItemDaDivergencia, type LinhaDoRateioPrevista, type PreviaDaConfirmacaoCompra } from "../previa-confirmacao-compra";
 
 /**
  * O DIÁLOGO DE CONFIRMAR COMPRA (VISUAL-UX-04, decisão 276).
@@ -17,6 +18,9 @@ import { usePreviaDaConfirmacaoCompra, type DivergenciaComOPedido, type ItemDaDi
  * OPERACOES-01 F6b (decisão 283): quando o servidor declara a DIVERGÊNCIA da compra com o pedido de origem (a seção da
  * TOP em "Avisar" ou "Bloquear"), a prévia a mostra entre as recusas e o Estoque. Quem decide é o servidor: o bloqueio
  * chega como a recusa `DIVERGENCIA_COM_O_PEDIDO` em `recusas`, e o botão segue `podeConfirmar`.
+ *
+ * OPERACOES-01 F7 (decisão 284): a compra com RATEIO (por valor ou por produto) mostra as linhas das contas a pagar
+ * (`compras-previa-rateio`) no lugar da natureza e centro do documento — quando o servidor as manda.
  */
 
 /** CONFIRMAR COMPRA <código>? — a prévia do servidor; carregando ou com recusa prevista, o botão trava. */
@@ -63,7 +67,7 @@ function CorpoDaPrevia({ previa }: { previa: PreviaDaConfirmacaoCompra }) {
         </>
         : <p className="text-slate-600">{estoque.efeito === "nenhum" ? "Não movimenta o estoque." : "O efeito no estoque não pôde ser previsto."}</p>}
       {(estoque.itensForaDaEntrada ?? 0) > 0 && <p className="mt-1 text-slate-600" data-testid="compras-previa-fora-da-entrada">
-        {estoque.itensForaDaEntrada === 1 ? "1 item não entra no estoque" : `${estoque.itensForaDaEntrada} itens não entram no estoque`} (sem local de estoque ou produto sem controle de estoque).
+        {estoque.itensForaDaEntrada === 1 ? "1 item não entra no estoque" : `${estoque.itensForaDaEntrada} itens não entram no estoque`} (sem local de estoque, produto sem controle de estoque ou item que não gera estoque).
       </p>}
     </section>
     <section data-testid="compras-previa-financeiro" data-efeito={financeiro.efeito ?? ""}>
@@ -74,6 +78,7 @@ function CorpoDaPrevia({ previa }: { previa: PreviaDaConfirmacaoCompra }) {
           {financeiro.classificacao && <p className="mb-1 text-slate-600" data-testid="compras-previa-classificacao">
             Natureza {rotuloClass(financeiro.classificacao.categoria)} · centro de resultado {rotuloClass(financeiro.classificacao.centro)}
           </p>}
+          {financeiro.rateio && <RateioDaPrevia linhas={financeiro.rateio} />}
           <SimpleTable rows={financeiro.parcelas as unknown as Row[]} cols={[
             { key: "numero", label: "Parcela", render: (r) => (r["entrada"] ? "Entrada" : String(r["numero"])) },
             { key: "vencimento", label: "Vencimento", render: (r) => dateBR(r["vencimento"] as string) },
@@ -82,6 +87,20 @@ function CorpoDaPrevia({ previa }: { previa: PreviaDaConfirmacaoCompra }) {
         </>
         : <p className="text-slate-600">{financeiro.efeito === "nenhum" ? "Não gera contas a pagar." : "O efeito financeiro não pôde ser previsto."}</p>}
     </section>
+  </div>;
+}
+
+/** O rateio das contas a pagar: uma linha por natureza e centro, com conta, safra, percentual e valor do servidor. */
+function RateioDaPrevia({ linhas }: { linhas: readonly LinhaDoRateioPrevista[] }) {
+  return <div className="mb-1" data-testid="compras-previa-rateio">
+    <p className="mb-0.5 text-slate-600">Rateio das contas a pagar:</p>
+    <ul className="space-y-0.5 text-slate-700">
+      {linhas.map((l, i) => <li key={i} data-testid="compras-previa-rateio-linha">
+        {rotuloClass(l.categoria)} · {rotuloClass(l.centro)}
+        {l.conta ? ` · conta ${rotuloClass(l.conta)}` : ""}{l.safra ? ` · safra ${l.safra.nome}` : ""}
+        {" — "}{percentualDaTela(l.percentual)} · {brl(l.valor)}
+      </li>)}
+    </ul>
   </div>;
 }
 
