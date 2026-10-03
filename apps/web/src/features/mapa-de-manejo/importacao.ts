@@ -2,7 +2,7 @@ import type { Polygon } from "geojson";
 import { areaHa, type LngLat } from "./editor-desenho";
 
 /**
- * Importação de áreas do Mapa de Manejo a partir de arquivo (KML, GeoJSON / JSON).
+ * Importação de contornos de áreas a partir de arquivo (KML, GeoJSON / JSON) — na lista de Áreas/Piquetes.
  * Cor sempre branca do sistema; nomes vêm do arquivo ou da sequência 1, 2, 3…
  */
 
@@ -194,7 +194,7 @@ function parseGeoJson(texto: string): { areas: AreaImportada[]; avisos: string[]
   return { areas, avisos };
 }
 
-/** Lê o texto do arquivo e devolve as áreas prontas para POST em `mapa_areas`. */
+/** Lê o texto do arquivo e devolve as áreas prontas para POST em `areas` (importação da lista de Áreas/Piquetes). */
 export function parseImportacaoMapa(nomeArquivo: string, texto: string): ResultadoImportacao {
   const formato = detectarFormato(nomeArquivo, texto);
   const { areas, avisos } = formato === "kml" ? parseKml(texto) : parseGeoJson(texto);

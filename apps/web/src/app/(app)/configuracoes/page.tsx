@@ -21,6 +21,7 @@ import { OpeningMovementsPanel } from "@/features/financial/opening-movements";
 import { NaturezasPadraoDaBaixa } from "@/features/financial/configuracoes/naturezas-padrao";
 import { FiscalStatusPanel } from "@/features/fiscal/status";
 import { ListaDeParceiros } from "@/features/resources/parceiros-lista";
+import { ListaDeAreas } from "@/features/areas/lista-de-areas";
 
 /**
  * Configurações (área administrativa — pode ter 3 níveis): cadastros técnicos, parâmetros, usuários, integrações,
@@ -62,7 +63,7 @@ function Inner() {
     ]} />),
     tab("configuracoes.pecuaria", <ViewSegment tabs={[
       res("configuracoes.pecuaria.animal-categories", "animal_categories"), res("configuracoes.pecuaria.identification-types", "identification_types"), res("configuracoes.pecuaria.weight-parameters", "weight_parameters"), res("configuracoes.pecuaria.fodders", "fodders"),
-      res("configuracoes.pecuaria.grazing-modules", "grazing_modules"), res("configuracoes.pecuaria.areas", "areas"), res("configuracoes.pecuaria.troughs", "troughs"), res("configuracoes.pecuaria.livestock-plannings", "livestock_plannings"),
+      res("configuracoes.pecuaria.grazing-modules", "grazing_modules"), tab("configuracoes.pecuaria.areas", <ListaDeAreas />), res("configuracoes.pecuaria.troughs", "troughs"), res("configuracoes.pecuaria.livestock-plannings", "livestock_plannings"),
       res("configuracoes.pecuaria.operations", "operations"), res("configuracoes.pecuaria.activities", "activities"),
       res("configuracoes.pecuaria.breeding-sires", "breeding_sires"), res("configuracoes.pecuaria.breeding-protocols", "breeding_protocols")
     ]} />),
