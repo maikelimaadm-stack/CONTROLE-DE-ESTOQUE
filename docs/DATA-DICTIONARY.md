@@ -1903,7 +1903,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.aprovacoes_compra` | 11 | sim | `empresa_id` | não |
 | `erp.aprovacoes_estoque` | 10 | sim | `empresa_id` | não |
 | `erp.aprovacoes_venda` | 12 | sim | `empresa_id` | não |
-| `erp.areas` | 29 | sim | `empresa_id` | sim |
+| `erp.areas` | 30 | sim | `empresa_id` | sim |
 | `erp.attachment_blobs` | 3 | sim | — | não |
 | `erp.attachments` | 12 | sim | — | não |
 | `erp.authorizer_empresas` | 2 | não | `empresa_id` | não |
