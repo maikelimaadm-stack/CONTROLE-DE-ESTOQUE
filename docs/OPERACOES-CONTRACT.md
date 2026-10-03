@@ -1635,7 +1635,8 @@ Query e corpo estritos; dinheiro só como TEXTO decimal (número → 422).
   conciliados. Os movimentos são os que a porta devolve, RECORTADOS pelo escopo de empresa de quem pergunta no módulo
   financeiro (decisão 285, item 12): escopo total (proprietário ou "todas" no financeiro) → todos, inclusive os sem
   empresa, e o saldo inicial entra; parcial → só os das empresas nomeadas, SEM o saldo inicial (que não tem empresa).
-  `saldo_inicial` da linha continua o do cadastro.
+  `saldo_inicial` da linha continua o do cadastro. Na tela (Contas e Extrato), `escopo_saldo: parcial` mostra o aviso
+  "Saldo das suas empresas … Não é o saldo da conta inteira."; campo ausente (a API anterior) se lê como antes, sem aviso.
 - `PUT /financeiro/contas/:id/saldo-inicial` — `bank_accounts.edit` + as duas de leitura; `{ valor (pode ser negativo),
   data }` → a linha da conta (com o mesmo recorte do `GET /financeiro/contas`); outra organização, inexistente ou
   malformada → 404.

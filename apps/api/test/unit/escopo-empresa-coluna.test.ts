@@ -12,7 +12,8 @@ import {
  * solto é a coluna da própria membro_empresas, e o predicado vira constante ("o membro tem alguma empresa no módulo").
  * Todo helper de escopo passa por `colunaDeEmpresa`, que agora LANÇA para a coluna solta — para qualquer contexto,
  * inclusive o proprietário (que não emite o `exists`, e por isso esconderia o erro nos testes de dono). Com alias ou
- * qualificada, o predicado amarra a coluna da LINHA (`me.empresa_id=<alias>.empresa_id`).
+ * qualificada, o predicado amarra a coluna da LINHA (`me.empresa_id=<alias>.empresa_id`). O alias `me` — o da própria
+ * membro_empresas dentro do `exists` — também é recusado: com ele, a tabela da consulta seria encoberta.
  */
 const ctx = (dono: boolean): RequestContext => ({
   user: { id: "00000000-0000-4000-8000-000000000001", email: "u@x", name: "U" },
@@ -41,10 +42,21 @@ const HELPERS: [string, (c: RequestContext, col: string) => unknown][] = [
   ["{{escopo_nulo:…|modulo}}", (c, col) => sqlComEscopo(c, `select 1 from erp.financial_titles t where {{escopo_nulo:${col}|financeiro}}`, [])]
 ];
 const SOLTA = /^escopo de empresa com a coluna solta "empresa_id": qualifique pela tabela \(alias\.empresa_id\)/;
+const ALIAS_ME = /^escopo de empresa com o alias "me": é o alias de erp\.membro_empresas dentro do exists/;
 
 describe("OPERACOES-01 F12 — escopo de empresa: a coluna solta é recusada", () => {
   it.each([["selecionadas", false], ["proprietário", true]] as [string, boolean][])("a coluna SOLTA lança em todo helper (%s)", (_n, dono) => {
     for (const [nome, chamar] of HELPERS) expect(() => chamar(ctx(dono), "empresa_id"), nome).toThrow(SOLTA);
+  });
+
+  it.each([["selecionadas", false], ["proprietário", true]] as [string, boolean][])("o alias `me` (o da membro_empresas no exists) lança em todo helper (%s)", (_n, dono) => {
+    for (const col of ["me", "me.empresa_id", '"me".empresa_id', "me.empresa_destino_id"]) {
+      for (const [nome, chamar] of HELPERS) expect(() => chamar(ctx(dono), col), `${nome} · ${col}`).toThrow(ALIAS_ME);
+    }
+    // Só o alias exato: nomes que COMEÇAM com "me" continuam aceitos.
+    for (const col of ["mes", "meta.empresa_id", "mem"]) {
+      for (const [nome, chamar] of HELPERS) expect(() => chamar(ctx(false), col), `${nome} · ${col}`).not.toThrow();
+    }
   });
 
   it("com alias ou qualificada passa, e o predicado amarra a coluna da LINHA", () => {

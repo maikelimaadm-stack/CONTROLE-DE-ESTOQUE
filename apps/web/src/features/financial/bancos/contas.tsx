@@ -15,9 +15,10 @@ import { useAction } from "@/features/docs/actions";
 
 /**
  * BANCOS E CAIXA › CONTAS (OPERACOES-01 F8, decisão 285). As contas da ORGANIZAÇÃO com saldo inicial e data, saldo
- * REAL (todos os movimentos confirmados) × saldo CONCILIADO (só os que têm a marca de conciliado) — números da
- * organização inteira, pela porta organizacional da API (`bank_accounts.view` E `bank_movements.view`): sem as
- * duas, o painel não é montado, em vez de bater numa negação do servidor (MULTI-COMPANY §7).
+ * REAL (todos os movimentos confirmados) × saldo CONCILIADO (só os que têm a marca de conciliado), pela porta
+ * organizacional da API (`bank_accounts.view` E `bank_movements.view`): sem as duas, o painel não é montado, em vez
+ * de bater numa negação do servidor (MULTI-COMPANY §7). Com escopo TOTAL no financeiro, a conta inteira; com escopo
+ * parcial, só os movimentos das empresas de quem consulta, sem o saldo inicial — e a tela diz isso (`AvisoSaldoParcial`).
  *
  * Os helpers daqui (valor digitado → decimal, a lista de contas) servem às outras abas de Bancos e caixa.
  */
@@ -34,7 +35,22 @@ export interface ContaComSaldo extends Record<string, unknown> {
   id: string; codigo: string; descricao: string; tipo: string; banco: string | null; agencia: string | null; conta: string | null; ativa: boolean;
   saldo_inicial: string; data_saldo_inicial: string | null; saldo_real: string; saldo_conciliado: string; conciliado_ate: string | null;
 }
-interface RespostaContas { itens: ContaComSaldo[]; total: number; page: number; pageSize: number; totais: { saldo_real: string; saldo_conciliado: string } }
+interface RespostaContas { itens: ContaComSaldo[]; total: number; page: number; pageSize: number; totais: { saldo_real: string; saldo_conciliado: string }; escopo_saldo?: EscopoSaldo }
+
+/**
+ * O recorte do saldo que a API devolve (MULTI-COMPANY §7): "total" = a conta inteira; "parcial" = só os movimentos das
+ * empresas do escopo financeiro de quem consulta, SEM o saldo inicial do cadastro (ele não tem empresa). A API anterior
+ * não manda o campo — ausente se lê como antes, sem aviso.
+ */
+export type EscopoSaldo = "total" | "parcial";
+
+/** Aviso de que o saldo mostrado é o das empresas de quem consulta, não o da conta inteira. */
+export function AvisoSaldoParcial({ escopo }: { escopo: EscopoSaldo | undefined }) {
+  if (escopo !== "parcial") return null;
+  return <p data-testid="fin-saldo-escopo-parcial" role="note" className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+    Saldo das suas empresas: soma só os movimentos das empresas que você acessa no financeiro, sem o saldo inicial do cadastro. Não é o saldo da conta inteira.
+  </p>;
+}
 
 /**
  * Valor digitado → texto decimal com 2 casas ("1234.5" → "1234.50"), sem ponto flutuante. Aceita vírgula ou ponto
@@ -106,8 +122,9 @@ export function ContasBancarias() {
           <label className="flex items-center gap-1.5 text-xs text-slate-600"><input type="checkbox" checked={inativas} onChange={(e) => { setInativas(e.target.checked); setPage(1); }} /> Mostrar inativas</label>
           <Link href="/financeiro?tab=caixa&sub=bancos"><Button size="sm" variant="outline">Cadastro de contas</Button></Link>
         </>} />
+      {d && d.escopo_saldo === "parcial" && <CardBody className="pt-0"><AvisoSaldoParcial escopo={d.escopo_saldo} /></CardBody>}
       {d && <CardBody className="grid grid-cols-2 gap-3 pt-0 md:grid-cols-3">
-        <Stat label="Saldo real" value={brl(d.totais.saldo_real)} tone={D(d.totais.saldo_real).isNegative() ? "red" : "green"} hint="Soma das contas listadas" />
+        <Stat label="Saldo real" value={brl(d.totais.saldo_real)} tone={D(d.totais.saldo_real).isNegative() ? "red" : "green"} hint={d.escopo_saldo === "parcial" ? "Soma das contas listadas, só das suas empresas" : "Soma das contas listadas"} />
         <Stat label="Saldo conciliado" value={brl(d.totais.saldo_conciliado)} hint="Conferido com o extrato do banco" />
         <Stat label="A conciliar" value={brl(money(D(d.totais.saldo_real).minus(d.totais.saldo_conciliado)))} tone="amber" hint="Saldo real − saldo conciliado" />
       </CardBody>}
