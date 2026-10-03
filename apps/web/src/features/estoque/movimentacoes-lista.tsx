@@ -7,7 +7,7 @@ import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useTradutor } from "@/lib/i18n";
 import { COPY, enumLabel, enumOptions } from "@/lib/copy";
-import { LoadingState, StatusBadge, statusTone } from "@/components/ui";
+import { LoadingState, StatusBadge } from "@/components/ui";
 import { type Column } from "@/components/ui/data-table";
 import { FilterChips, useUrlParam } from "@/components/workspace";
 import { DocList, colDate, type Row } from "@/features/docs/shared";
@@ -119,9 +119,9 @@ function ListaDeDocumentosDeEstoque({ especie, situacao, barra, opcoesTop, comMo
     { key: "quantidade_itens", label: "Itens", kind: "number", align: "right", filterable: false },
     {
       key: "situacao", label: COPY.situacao, filterable: false,
-      // A cor é a da situação do documento de compra — os mesmos três valores, com o mesmo significado
-      // (aberto = pendente, confirmado = concluído, cancelado = negativo); o rótulo é o do domínio do estoque.
-      render: (r) => <StatusBadge domain="situacao_documento_estoque" value={r["situacao"]} tone={statusTone(r["situacao"], "situacao_documento_compra")} />,
+      // Rótulo e cor do domínio do PRÓPRIO estoque (OPERACOES-01 F12, status-badge.tsx): aberto = pendente,
+      // confirmado = concluído, cancelado = negativo — as cores da venda e da compra para os mesmos significados.
+      render: (r) => <StatusBadge domain="situacao_documento_estoque" value={r["situacao"]} />,
       text: (r) => enumLabel("situacao_documento_estoque", r["situacao"])
     },
     // Só a requisição confirmada tem atendimento (calculado pelo servidor); nas outras linhas, o traço.

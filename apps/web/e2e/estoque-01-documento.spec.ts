@@ -100,6 +100,10 @@ test("ES-W1 — Estoque › Movimentações › Novo → TOP de entrada → Cent
   const id = /\/estoque\/movimentacoes\/entradas\/([0-9a-f-]{36})$/.exec(page.url())![1]!;
   await expect(central).toHaveAttribute("data-modo", "consulta");
   await expect(central).toHaveAttribute("data-situacao", "aberto");
+  // A COR da situação vem do mapa PRÓPRIO do documento de estoque (F12): aberto = pendente.
+  const seloDaConsulta = page.getByTestId("estoque-central-situacao").locator("[data-status]");
+  await expect(seloDaConsulta, "premissa: o selo da consulta é o do aberto").toHaveAttribute("data-status", "aberto");
+  await expect(seloDaConsulta).toHaveAttribute("data-tone", "warning");
   const aberto = await api<DocLido>(page, "GET", `/api/estoque/entradas/${id}`);
   expect(aberto, "o servidor gravou o que a tela mostrou").toMatchObject({ especie: "entrada", situacao: "aberto", tipo_operacao: { id: top } });
   expect(aberto.itens.map((i) => [i.quantidade, i.custo_unitario]), "números exatos, como texto").toEqual([["5.0000", "12.500000"]]);
@@ -119,6 +123,8 @@ test("ES-W1 — Estoque › Movimentações › Novo → TOP de entrada → Cent
 
   // (5) O DOCUMENTO mostra o movimento — e o servidor diz o mesmo: entrada pelo custo informado.
   await expect(central).toHaveAttribute("data-situacao", "confirmado");
+  await expect(seloDaConsulta, "premissa: o selo da consulta mudou para o confirmado").toHaveAttribute("data-status", "confirmado");
+  await expect(seloDaConsulta).toHaveAttribute("data-tone", "positive");
   await expect(page.getByTestId("estoque-central-movimentos")).toContainText(c.nomeProduto);
   const confirmado = await api<DocLido>(page, "GET", `/api/estoque/entradas/${id}`);
   expect(confirmado.movimentos.map((m) => m.movement_type), "a entrada é o movimento 'entry' — o da espécie").toEqual(["entry"]);
@@ -148,6 +154,9 @@ test("ES-W1 — Estoque › Movimentações › Novo → TOP de entrada → Cent
   const naLista = page.locator(`[data-testid="estoque-doc-linha"][data-especie="entrada"][data-codigo="${confirmado.codigo}"]`);
   await expect(naLista, "o documento aparece na lista única").toBeVisible();
   await expect(naLista).toHaveAttribute("data-situacao", "confirmado");
+  const seloDaLista = page.getByRole("row").filter({ has: naLista }).locator("[data-status]");
+  await expect(seloDaLista, "premissa: o selo da linha é o do confirmado").toHaveAttribute("data-status", "confirmado");
+  await expect(seloDaLista, "a lista usa o mesmo mapa de cor do estoque").toHaveAttribute("data-tone", "positive");
 
   // (7) NO SALDO (a tela antiga do saldo, que não mudou): o produto no armazém, com as 5 unidades.
   await page.goto(`/estoque?tab=estoque&sub=saldo&product_id=${c.produto}`);

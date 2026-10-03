@@ -10,6 +10,7 @@ import { CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
 import { ItensSalvos, type AvisoDosItens, type ColunaExtraDoItemSalvo } from "@/features/central/itens-salvos";
 import { PainelColuna, PainelLargo, Relacao, Selo, type ColunaDaRelacao } from "@/features/central/painel";
 import type { AbaDoPainel } from "@/features/central/contrato";
+import { AprovacaoDoDocumento } from "@/features/aprovacoes/aprovacao-do-documento";
 import { rotaDoDocumentoEstoque } from "../movimentacoes-variantes";
 import { rotuloDoErro } from "../central-estoque-campos";
 import { PREFIXO_CENTRAL_ESTOQUE, colunasDosItensDeEstoque } from "./adaptador";
@@ -28,7 +29,12 @@ const t = (v: unknown) => (v === null || v === undefined || v === "" ? "" : Stri
 const traco = (v: unknown) => t(v) || "—";
 const dataOuVazio = (v: unknown) => (typeof v === "string" && v ? dateBR(v) : "");
 
-/** Os Dados principais da consulta, só leitura. */
+/**
+ * Os Dados principais da consulta, só leitura. Antes dos campos, a situação da aprovação (OPERACOES-01 F12, decisão
+ * 282) — o MESMO bloco da venda e da compra (`AprovacaoDoDocumento`), que só aparece com o documento aberto e a TOP
+ * exigindo aprovação, e oferece Aprovar/Reprovar a quem tem `<recurso da espécie>.approve`, pelas rotas da fila de
+ * Aprovações › Estoque. Contra a API anterior (sem a leitura da situação: o 404 de rota), o bloco não aparece.
+ */
 export function DadosDaConsulta({ e }: { e: EstadoDaConsultaDeEstoque }) {
   const d = e.documento;
   if (!d) return null;
@@ -36,10 +42,13 @@ export function DadosDaConsulta({ e }: { e: EstadoDaConsultaDeEstoque }) {
   const transferencia = e.especie === "transferencia";
   const origem = d.origem;
   const especieDaOrigem = especieDeOrigemEstoque(e.especie);
-  return <ColunaDeCampos>
+  return <>
+  <AprovacaoDoDocumento area="estoque" especie={e.especie} documentoId={d.id} documentoAberto={e.situacao === "aberto"}
+    prefixoTestid={PREFIXO_CENTRAL_ESTOQUE} codigo={d.codigo} />
+  <ColunaDeCampos>
     <CampoLeitura rotulo="Código" adorno="travado" valor={<span data-testid="estoque-central-codigo">{d.codigo}</span>} />
     <CampoLeitura rotulo="Situação" adorno="travado" valor={<span data-testid="estoque-central-situacao" data-situacao={e.situacao}>
-      <StatusBadge domain="situacao_documento_estoque" value={e.situacao} tone={statusTone(e.situacao, "situacao_documento_compra")} />
+      <StatusBadge domain="situacao_documento_estoque" value={e.situacao} />
     </span>} />
     {e.especie === "requisicao" && <CampoLeitura rotulo="Atendimento" adorno="travado" valor={<span data-testid="estoque-central-atendimento" data-atendimento={d.atendimento ?? ""}>
       {d.atendimento ? enumLabel("atendimento_requisicao_estoque", d.atendimento) : "—"}
@@ -60,7 +69,8 @@ export function DadosDaConsulta({ e }: { e: EstadoDaConsultaDeEstoque }) {
     <CampoLeitura rotulo="Lançado por" adorno="travado" valor={t(d.criado_por_nome)} />
     {d.confirmado_em && <CampoLeitura rotulo="Confirmado" adorno="travado" valor={`${dateTimeBR(d.confirmado_em)} por ${traco(d.confirmado_por_nome)}`} />}
     {d.cancelado_em && <CampoLeitura rotulo="Cancelado" adorno="travado" valor={`${dateTimeBR(d.cancelado_em)} por ${traco(d.cancelado_por_nome)}`} />}
-  </ColunaDeCampos>;
+  </ColunaDeCampos>
+  </>;
 }
 
 /**
@@ -142,7 +152,7 @@ const COLUNAS_DOS_VINCULADOS: readonly ColunaDaRelacao[] = [
   { chave: "codigo", rotulo: "Código", celula: (r) => <Link className="text-brand-700 underline" data-testid="estoque-vinculado" data-especie={t(r["especie"])}
     data-codigo={t(r["codigo"])} data-situacao={t(r["situacao"])} href={rotaDoDocumentoEstoque(r)}>{traco(r["codigo"])}</Link> },
   { chave: "especie", rotulo: "Espécie", celula: (r) => enumLabel("especie_documento_estoque", r["especie"]) },
-  { chave: "situacao", rotulo: "Situação", celula: (r) => <Selo tom={statusTone(r["situacao"], "situacao_documento_compra")} valor={r["situacao"]}>{enumLabel("situacao_documento_estoque", r["situacao"])}</Selo> },
+  { chave: "situacao", rotulo: "Situação", celula: (r) => <Selo tom={statusTone(r["situacao"], "situacao_documento_estoque")} valor={r["situacao"]}>{enumLabel("situacao_documento_estoque", r["situacao"])}</Selo> },
   { chave: "data_documento", rotulo: "Data", celula: (r) => dataOuVazio(r["data_documento"]) || "—" }
 ];
 

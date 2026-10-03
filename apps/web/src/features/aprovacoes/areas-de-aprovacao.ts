@@ -160,22 +160,33 @@ const PORTA_DA_FILA_DE_COMPRAS = "/api/aprovacoes/compras";
 const PORTA_DA_FILA_DO_ESTOQUE = "/api/aprovacoes/estoque";
 
 /**
- * As áreas que mostram a aprovação NA CONSULTA do documento (OPERACOES-01 F2, decisão 279): a venda e a compra. O
- * documento de estoque ainda não (a Central de Estoque é refeita depois).
+ * As áreas que mostram a aprovação NA CONSULTA do documento: a venda e a compra (OPERACOES-01 F2, decisão 279) e,
+ * desde a F12 (decisão 282), o documento de estoque — as sete espécies, na consulta da Central de Estoque.
  */
-export type AreaDaConsulta = "vendas" | "compras";
-const PORTA_DA_FILA_DA_CONSULTA: Readonly<Record<AreaDaConsulta, string>> = Object.freeze({ vendas: PORTA_DA_FILA_DE_VENDAS, compras: PORTA_DA_FILA_DE_COMPRAS });
+export type AreaDaConsulta = "vendas" | "compras" | "estoque";
+const PORTA_DA_FILA_DA_CONSULTA: Readonly<Record<AreaDaConsulta, string>> =
+  Object.freeze({ vendas: PORTA_DA_FILA_DE_VENDAS, compras: PORTA_DA_FILA_DE_COMPRAS, estoque: PORTA_DA_FILA_DO_ESTOQUE });
 
 /**
  * As portas de UM documento — um dono só, para a fila e para a consulta:
  *   · `GET <fila>/<id>` — a situação da aprovação do documento (só leitura; a API anterior não a tem e responde o 404
  *     de rota);
  *   · `POST <fila>/<id>/aprovar|reprovar` — a decisão (as rotas da fila, sem mudança).
+ * No ESTOQUE cada espécie tem a sua rota (`<fila>/<segmento>/<id>`, o segmento da variante dos portais, como nas
+ * decisões de hoje): sem a espécie, ou com uma que a variante não conhece, NÃO HÁ porta (`undefined`, fail-closed — a
+ * tela não inventa rota). Na venda e na compra a espécie não muda a porta.
  */
-export const portaDaSituacaoDoDocumento = (area: AreaDaConsulta, documentoId: string): string =>
-  `${PORTA_DA_FILA_DA_CONSULTA[area]}/${encodeURIComponent(documentoId)}`;
-export const portaDaDecisaoDoDocumento = (area: AreaDaConsulta, documentoId: string, decisao: Decisao): string =>
-  `${portaDaSituacaoDoDocumento(area, documentoId)}/${decisao}`;
+const raizDoDocumento = (fila: string, documentoId: string): string => `${fila}/${encodeURIComponent(documentoId)}`;
+const filaDaEspecieDoEstoque = (segmento: string): string => `${PORTA_DA_FILA_DO_ESTOQUE}/${encodeURIComponent(segmento)}`;
+export function portaDaSituacaoDoDocumento(area: AreaDaConsulta, documentoId: string, especie?: string): string | undefined {
+  if (area !== "estoque") return raizDoDocumento(PORTA_DA_FILA_DA_CONSULTA[area], documentoId);
+  const v = especie ? varianteDeEstoque(especie) : undefined;
+  return v ? raizDoDocumento(filaDaEspecieDoEstoque(v.segmento), documentoId) : undefined;
+}
+export function portaDaDecisaoDoDocumento(area: AreaDaConsulta, documentoId: string, decisao: Decisao, especie?: string): string | undefined {
+  const porta = portaDaSituacaoDoDocumento(area, documentoId, especie);
+  return porta === undefined ? undefined : `${porta}/${decisao}`;
+}
 
 export const CONFIGURACAO_DAS_AREAS: Readonly<Record<AreaDeAprovacao, ConfiguracaoDaArea>> = Object.freeze({
   vendas: {
@@ -184,7 +195,7 @@ export const CONFIGURACAO_DAS_AREAS: Readonly<Record<AreaDeAprovacao, Configurac
     temValor: true,
     levaVersao: true,
     documento: () => { const v = varianteDeVenda(KIND_DA_VENDA); return v ? { segmento: v.segmento, perm: v.perm } : undefined; },
-    portaDaDecisao: (l, _d, decisao) => portaDaDecisaoDoDocumento("vendas", l.id, decisao),
+    portaDaDecisao: (l, _d, decisao) => `${raizDoDocumento(PORTA_DA_FILA_DE_VENDAS, l.id)}/${decisao}`,
     rotaDaConsulta: (l, d) => `/vendas/${d.segmento}/${id(l)}`
   },
   compras: {
@@ -194,7 +205,7 @@ export const CONFIGURACAO_DAS_AREAS: Readonly<Record<AreaDeAprovacao, Configurac
     levaVersao: false,
     // A espécie é a que o SERVIDOR classificou na linha ("compra"), nunca suposta pela aba.
     documento: (especie) => { const v = varianteDeCompra(especie); return v ? { segmento: v.segmento, perm: v.perm } : undefined; },
-    portaDaDecisao: (l, _d, decisao) => portaDaDecisaoDoDocumento("compras", l.id, decisao),
+    portaDaDecisao: (l, _d, decisao) => `${raizDoDocumento(PORTA_DA_FILA_DE_COMPRAS, l.id)}/${decisao}`,
     rotaDaConsulta: (l, d) => `/compras/${d.segmento}/${id(l)}`
   },
   estoque: {
@@ -204,7 +215,7 @@ export const CONFIGURACAO_DAS_AREAS: Readonly<Record<AreaDeAprovacao, Configurac
     levaVersao: false,
     // Cada espécie tem o seu recurso de permissão (`entradas_estoque`…) e o seu segmento (`entradas`…).
     documento: (especie) => { const v = varianteDeEstoque(especie); return v ? { segmento: v.segmento, perm: v.perm } : undefined; },
-    portaDaDecisao: (l, d, decisao) => `${PORTA_DA_FILA_DO_ESTOQUE}/${encodeURIComponent(d.segmento)}/${id(l)}/${decisao}`,
+    portaDaDecisao: (l, d, decisao) => `${raizDoDocumento(filaDaEspecieDoEstoque(d.segmento), l.id)}/${decisao}`,
     // A MESMA rota que a lista de Movimentações usa para abrir o documento (pela espécie da linha).
     rotaDaConsulta: (l) => rotaDoDocumentoEstoque(l)
   }
@@ -212,9 +223,10 @@ export const CONFIGURACAO_DAS_AREAS: Readonly<Record<AreaDeAprovacao, Configurac
 
 /**
  * A espécie do documento que a CONSULTA mostra, no mesmo vocabulário que as rotas devolvem na linha da fila (a
- * `especie` da linha): a consulta da venda e a da compra só montam a aprovação para esse documento.
+ * `especie` da linha): a consulta da venda e a da compra só montam a aprovação para esse documento. O estoque não tem
+ * espécie da área — a consulta dele sempre informa a sua; vazia é desconhecida, e a variante não a conhece (sem ação).
  */
-const ESPECIE_DA_CONSULTA: Readonly<Record<AreaDaConsulta, string>> = Object.freeze({ vendas: "venda", compras: "compra" });
+const ESPECIE_DA_CONSULTA: Readonly<Record<AreaDaConsulta, string>> = Object.freeze({ vendas: "venda", compras: "compra", estoque: "" });
 
 /**
  * O documento da consulta (segmento e família de capacidade), pelas MESMAS variantes da fila. `especie` ausente = a
@@ -227,9 +239,11 @@ export const documentoDaConsulta = (area: AreaDaConsulta, especie?: string): Doc
 /**
  * A capacidade da PORTA da rota de decisão de cada área (`POST /api/aprovacoes/<área>/<id>/aprovar|reprovar`), que a
  * rota exige ANTES da capacidade da espécie. Na espécie da consulta as duas coincidem (`sales.approve`,
- * `compras.approve`); noutra espécie (o pedido de compra) a decisão exige as duas — AND, como a rota.
+ * `compras.approve`); noutra espécie (o pedido de compra) a decisão exige as duas — AND, como a rota. No estoque
+ * (`null`) a porta É a da espécie: cada espécie tem a sua rota, com `<recurso da espécie>.approve` e nada mais.
  */
-export const PERMISSAO_DA_PORTA_DA_DECISAO: Readonly<Record<AreaDaConsulta, string>> = Object.freeze({ vendas: "sales.approve", compras: "compras.approve" });
+export const PERMISSAO_DA_PORTA_DA_DECISAO: Readonly<Record<AreaDaConsulta, string | null>> =
+  Object.freeze({ vendas: "sales.approve", compras: "compras.approve", estoque: null });
 
 /**
  * O corpo da decisão — estrito, como as rotas o leem:
