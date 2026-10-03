@@ -1555,7 +1555,8 @@ grant execute on function erp.situacao_atraso_cliente(uuid, int) to erp_app;
 Fatia F1 em fases (decisões 278 a 288), uma PR. Cada fase acrescenta a sua subseção abaixo: migration (se houver),
 ordem de deploy, compatibilidade nos dois sentidos do skew, impacto em dados reais, reversão e o roteiro do Maike em
 produção (PENDING). As migrations da fatia são numeradas na ordem em que entram na branch (0042 a 0048, travas
-(2026,76) a (2026,82)).
+(2026,76) a (2026,82)): 0042 a F8, 0043 a F5a, 0044 a F6a e 0045 a F9a (entraram); 0046, trava (2026,80), a F10
+(entrou); 0047, trava (2026,81), a F7; 0048, trava (2026,82), sobra.
 
 ### F2 — as Centrais de Vendas e de Compras usam as regras gerais da TOP (OPERACOES-01, sem migration)
 
@@ -1877,8 +1878,8 @@ leitura (nada é gravado). O passo 5 grava, e só com a decisão dele.
    Depois, as abas mostram só o que vale para ele.":
    - Vendas (Orçamento, Pedido, Venda), Compras (Pedido, Compra), Movimentação interna (Entrada, Saída/baixa,
      Transferência, Ajuste);
-   - Módulos NÃO aparecem; Financeiro (Conta a pagar, Conta a receber, Movimento bancário) aparece desde a F9a
-     (decisão 286).
+   - Módulos (Abastecimento, Manutenção, Ordem de serviço, Manejo, Batelada, Produção de ração) aparece desde a F10
+     (decisão 287); Financeiro (Conta a pagar, Conta a receber, Movimento bancário) aparece desde a F9a (decisão 286).
 2. Escolher Entrada:
    - "Movimento" só leitura, com "Trocar";
    - as abas Identificação, Geral, Estoque e Aprovação;
@@ -2879,6 +2880,141 @@ no ar (§ F6b, na mesma PR).
 
 **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção, e os passos 6 a 8
 gravam (só com a decisão dele).
+
+### F10 — as Centrais dos módulos com produto e a TOP nos módulos (OPERACOES-01, migration 0046)
+
+Decisão 287. **Uma migration: `0046_modulos_com_top.sql`** (pre-deploy; trava (2026,80); `lock_timeout` 2 s; pré-condições
+nomeadas `OPERACOES-01 F10: …`, a primeira é "já aplicada"; pós-condições só de catálogo; sem backfill; aditiva nas
+colunas — a única parte não aditiva é a troca da política de `erp.maintenance_items`; a 0041 não foi editada). As
+mensagens da migration não citam o número dela, e o teste de banco acha a migration pelo sufixo `_modulos_com_top.sql` e
+lê a trava do SQL (a F10 entrou antes da F7 e ficou com a 0046 e a trava (2026,80) da reserva; a F7 fica com a 0047). As
+migrations do repositório passam a 46, a última a 0046. Sem variável. Sem permissão nova. O que entra:
+- API: seis rotas novas `GET /api/modulos/{abastecimento,manutencao,ordem-servico,manejo,batelada,producao-racao}/operation-types`
+  (a capacidade `topNoModulo: 1`, cada uma com a porta de lançar do módulo); `GET /api/modulos/batelada/dietas/:id/ingredientes`
+  (`diet_batches.create`); `POST /api/livestock/transfers/to-empresa` (o mesmo handler de `/to-farm`, que fica);
+  `tipo_operacao_id` opcional nos POST de abastecimento, manutenção, OS, manejo, batelada e ração; `note` na manutenção;
+  o nome e a versão da TOP nos detalhes; as conferências e os consertos da decisão 287 (itens 5, 6, 9 e 12);
+- domínio: as famílias `pecuaria.manejo` e `confinamento.batelada`; os seis tipos de Módulos com tela no passo 1; a linha
+  dos módulos (só o neutro) na matriz das regras gerais; `centrais-dos-modulos.ts`; o rótulo `os_status`;
+- web: as seis Centrais (`/frota/abastecimentos/new`, `/frota/manutencoes/new`, `/os/new`, `/pecuaria/manejo/{nutrition,sanitary}/new`,
+  `/estoque/batidas/new` e a rota NOVA `/confinamento/bateladas/new`), a edição da OS (`/os/<id>/editar`, NOVA), o botão
+  "Nova batelada" na aba Hoje › Produção (o formulário embutido sai), a linha "Tipo de operação" nos detalhes e os totais
+  do detalhe da manutenção (a tela lia chaves que a resposta não tem e mostrava vazio); o motor só ganha a prop
+  aditiva `linhaUnica` (ao lado das da F5b, no mesmo deploy);
+- menu (`apps/web/nav.registry.mjs`, aplicado no merge da fase, no MESMO commit das telas): a ação "Nova batelada"
+  (`diet_batches.create`) e a rota de detalhe `os.editar` (`service_orders.edit`).
+
+**Migration — o que faz** (nenhuma linha existente é reescrita):
+- `erp.fuel_supplies`, `erp.maintenances`, `erp.service_orders`, `erp.animal_handlings`, `erp.diet_batches`,
+  `erp.feed_batches`: `tipo_operacao_id uuid` e `tipo_operacao_versao_id uuid` (anuláveis, sem default, comentadas); o
+  CHECK `chk_<tabela>_tipo_operacao_par`; as FKs compostas `fk_<tabela>_tipo_operacao` →
+  `erp.tipos_operacao (id, organization_id)` e `fk_<tabela>_tipo_operacao_versao` →
+  `erp.tipos_operacao_versoes (id, tipo_operacao_id, organization_id)`, NO ACTION nas duas pontas; sem índice;
+- `erp.maintenances.note text` (anulável, sem CHECK; a API limita a 2000);
+- a função `erp.modulo_top_conferir()` (plpgsql, SECURITY INVOKER, `search_path = erp, pg_temp`, EXECUTE revogado de
+  todos menos o dono) e seis gatilhos `trg_<tabela>_top_conferir`, BEFORE INSERT OR UPDATE OF as duas colunas da TOP, FOR
+  EACH ROW, com a família da tabela no argumento: com TOP, a família tem de ser a da tabela (senão
+  `VALIDATION_ERROR: Tipo de operação indisponível para este lançamento.`); a TOP gravada não muda
+  (`CONFLICT: O tipo de operação do lançamento não muda depois de gravado.`);
+- `erp.maintenance_items`: a política `api_child` (0007, `for all`, pelo local de estoque) dá lugar a `api_child_select`,
+  `_insert`, `_update` e `_delete` — ler, alterar e apagar pela máquina → manutenção; gravar com a manutenção E o local
+  nulo ou visível no tenant e no escopo. DROP e CREATE na mesma transação: não há instante sem política; a RLS continua
+  habilitada e forçada.
+
+**Pré-condições (recusa sem aplicar nada, com a mensagem que nomeia o que falta):** já aplicada (qualquer coluna, função,
+gatilho ou constraint desta migration já existe — a primeira pergunta); papel `erp_app` ou `erp.tenant_visible(uuid)`
+ausente; as seis tabelas sem `organization_id uuid not null`; as chaves alvo das FKs (`uq_tipos_operacao_tenant`,
+`uq_tipos_operacao_versoes_tenant`, na ordem das colunas) ou `erp.tipos_operacao.codigo_base` ausentes; e **2.4 — a política
+de `erp.maintenance_items` não é EXATAMENTE a da 0007** (uma só, `api_child`, ALL, para `erp_app`, PERMISSIVE, pelo local
+de estoque) ou faltam as colunas das correlações novas: alguém tomou outra decisão sobre essa política, e trocá-la em
+silêncio apagaria essa decisão — a decisão volta a um humano.
+As instruções pedem ACCESS EXCLUSIVE curto nas seis tabelas (só catálogo; o CHECK e as FKs leem a tabela uma vez), SHARE
+ROW EXCLUSIVE em `erp.tipos_operacao` e `erp.tipos_operacao_versoes`, e ACCESS EXCLUSIVE em `erp.maintenance_items`: com
+uma transação longa segurando uma delas, a migration desiste em 2 s sem aplicar nada, e o deploy é refeito (seguro). Em
+erro, publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0046) → API → web.** Na PR #90 o pre-deploy aplica as migrations na ordem do nome; a 0046 depende só da
+0007, da 0020 e da 0021 (de nenhuma das 0042 a 0045), e o runner aplica cada uma na sua própria transação (se a 0046
+desistir, o banco fica com a anterior e o deploy é refeito). O menu vai no MESMO deploy do web. Janelas:
+1. **API anterior × banco novo:** o INSERT dela não cita as colunas novas (nulas: passam pelo CHECK de par e o gatilho
+   não age sem TOP); ela não faz UPDATE dessas colunas; o `select *` dela traz `tipo_operacao_id`,
+   `tipo_operacao_versao_id` e `note` a mais, que o web ignora. O item de manutenção SEM local, que a tela de hoje já
+   manda, passa a gravar (antes a RLS o recusava); o item com local continua exigindo o local visível.
+2. **API nova × web anterior** (sentido 2): igual a hoje, com estas diferenças, todas no servidor:
+   - a transferência de rebanho entre empresas do web de produção PASSA A FUNCIONAR (`/to-empresa` existe; antes, 404);
+   - a Observação da manutenção, que o web de produção já manda, passa a ser GRAVADA (antes, descartada);
+   - equipamento, máquina, vagão e lote de animais de outra organização, EXCLUÍDOS OU FORA DO ESCOPO DO MÓDULO de quem
+     lança → 422 "Equipamento inválido: escolha um equipamento da organização." / "Lote de animais inválido: escolha um
+     lote da organização." (antes: 201). Exemplo: batelada com vagão de uma empresa fora do escopo de CONFINAMENTO;
+   - horímetro e km: "6e3" e "+6100" viram o número; NaN, ±Infinity e texto → 422 no campo (antes NaN gravava e punha o
+     contador do bem em NaN; texto dava 500); o KM sobe o contador do bem quando o horímetro não vem (antes, só o
+     horímetro);
+   - `quantity_kg` da batelada, a dose e as cabeças do manejo com produto e o multiplicador da ração: texto, NaN e
+     ±Infinity → 422 "Valor inválido" no campo (antes, 500 ou NaN gravado);
+   - o manejo do web de produção continua mandando a DOSE no lugar da cabeça (o dose² é do web anterior; some com o web
+     novo).
+   Provado pelo K-2 (`f10-frota-skew-web-anterior.spec.ts`, 3 casos: abastecimento, manutenção com peça SEM local, OS;
+   `f10-pecuaria-skew-web-anterior.spec.ts`, 3 casos: a transferência entre empresas → 201 com o movimento pendente, a
+   batelada do formulário embutido e o manejo antigo — todos com as chaves de antes).
+3. **Web novo × API anterior** (sentido 1, reversão só da API): `GET /api/modulos/*/operation-types` → 404 de rota → as
+   Centrais sem o campo "Tipo de operação" e sem `tipo_operacao_id`; a manutenção sem "Observação" e sem `note`; a batelada
+   sem a rota dos ingredientes ("Os ingredientes da dieta são calculados ao salvar."); os corpos são os de hoje e a base
+   responde 201 com as chaves de hoje; o manejo manda CABEÇAS e a base calcula dose × cabeças certo; a OS edita pelo PUT
+   que a base já tem; a ração continua verde no LT-K1; a transferência entre empresas volta ao 404 de hoje. Provado pelo
+   K-1 (`f10-frota-skew-api-producao.spec.ts`, 3 casos; `f10-pecuaria-skew-api-producao.spec.ts`, 3 casos; o LT-K1 de
+   `skew-api-producao.spec.ts`).
+
+**Impacto em dados reais** (decisão 240: P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é
+apagado — decisão 247): nenhum valor muda; colunas novas nulas; o CHECK de par vale para as linhas existentes (as duas
+nulas); as FKs são validadas sobre colunas todas nulas (leitura). Produção (leitura de 02/10, decisão 281): zero
+abastecimentos, manutenções e OS; 3 TOPs, nenhuma de família de módulo — o campo "Tipo de operação" aparece só com "Sem
+tipo de operação" e nada é exigido. Os manejos, as bateladas e as produções de ração de produção NÃO foram contados
+(PENDING, passo 1 do roteiro). O que muda para quem usa, sem ninguém configurar nada: as seis telas de lançamento passam
+à Central (mesmas rotas, mesmos destinos depois de salvar); a OS ganha "Editar"; a batelada sai do formulário embutido
+para a Central; a transferência de rebanho entre empresas, quebrada em produção, passa a funcionar; o manejo novo grava
+a quantidade certa (cabeças × dose, não dose² × animais); a peça de manutenção sem local grava; no editor da TOP, o
+passo 1 ganha o grupo Módulos. A leitura de `erp.maintenance_items` passa a seguir o escopo da MANUTENÇÃO (antes, o do
+local): os relatórios "Máquinas e Veículos" e "Manutenções por Máquina" passam a somar a peça com local fora do escopo
+de quem consulta (produção: zero manutenções).
+
+**Reversão:** API e web voltam por redeploy da versão anterior e convivem com a 0046. Colunas, função, gatilhos e as
+quatro políticas ficam (decisão 247); desfazer qualquer um só com migration nova, por decisão humana. Depois de alguém
+lançar com TOP: a API anterior não lê a TOP (o detalhe sem a linha "Tipo de operação") e não consegue mudá-la (ela não
+faz UPDATE dessas colunas); cancelar pela API anterior funciona (o gatilho só olha as colunas da TOP). A reversão só do
+web = o sentido 2 acima; só da API = o sentido 1.
+
+**Roteiro do Maike em produção** (depois do deploy; produção é operacional — decisões 240 e 247). Os passos 1 a 8 são só
+leitura (nada é gravado); os passos 9 e 10 gravam, e só com a decisão dele.
+1. (Leitura, SQL do Maike) Quantos manejos, bateladas e produções de ração existem, e se algum cita lote de animais ou
+   vagão de empresa fora do escopo de quem lança (o 422 novo valeria para um relançamento igual).
+2. Configurações › Operações › Tipos de Operação › "Novo": o passo 1 mostra o grupo Módulos (Abastecimento, Manutenção,
+   Ordem de serviço, Manejo, Batelada, Produção de ração). Escolher Abastecimento: abas Identificação, Geral, Estoque,
+   Financeiro e Fiscal (sem Aprovação nem Execução); na Geral, "Exigir centro de resultado" e "Exigir observação". Fechar
+   sem salvar.
+3. Frota › Abastecimentos › Novo: a Central com o campo "Tipo de operação" ("Sem tipo de operação" só), UMA linha, sem
+   "Adicionar produto", a coluna "Local de estoque" antes de Produto e o painel Resumo com o Total. Descartar.
+4. Frota › Manutenções › Nova: um bloco "Máquina 1" com a sua grade de peças, "Adicionar máquina", o "Local de estoque" e
+   a "Observação" nos Dados principais. Descartar.
+5. Ordens de serviço › Nova: os blocos Mão de obra, Equipamentos, Insumos, EPIs e Produção. Descartar. (Não há OS em
+   produção para ver o "Editar".)
+6. Pecuária › Manejos › Novo manejo sanitário (e de nutrição): o Local de estoque antes do Produto, o Modo (Animais
+   identificados / Por contagem) e o Resumo com Cabeças e Quantidade do produto. Descartar. Desmama, apartação e pastagem
+   abrem o formulário de sempre.
+7. Confinamento › Hoje › Produção: sem o formulário embutido, com o botão "Nova batelada", que abre a Central da
+   batelada. Descartar.
+8. Estoque › Fábrica › Produções › Nova: a Central da produção de ração ("Formulação", "Multiplicador da receita", os dois
+   locais de estoque, "Quantidade produzida"). Descartar.
+9. (Grava; decisão do Maike) Uma transferência de rebanho entre empresas real, se houver uma a fazer: ela cria o movimento
+   pendente que a empresa de destino processa.
+10. (Grava; decisão do Maike) Criar TOP de módulo só depois da Parte F10r da 287 (o destino dos módulos pela TOP, em
+    execução); uma TOP marcada como padrão vem escolhida na Central e pode exigir campos.
+
+**Em execução e pendente** (registrado na 287): o destino dos módulos pela TOP e a pecuária pela TOP (o título da compra e
+da venda de animais, o item 5 da 286) entram na Parte F10r, por ordem do Maike de 03/10 — a implantação dela entra aqui
+quando ela entrar. Continuam decisão pendente do Maike: o cadastro dos ingredientes da dieta; a lista e o processamento
+da transferência entre empresas na web.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
 
 ## VISUAL-UX-04b — correções da Central de Compras (sem migration)
 

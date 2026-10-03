@@ -14,7 +14,7 @@
 ### O catálogo do passo 1 (decisão 281) · IMPLEMENTADO
 
 A TOP nasce pelo TIPO DE MOVIMENTO: o passo 1 do assistente do editor oferece os tipos AGRUPADOS, e só os que têm tela.
-A fonte única é `CATALOGO_TIPOS_MOVIMENTO_TOP` (`packages/domain/src/tipo-operacao-catalogo.ts:140-165`). O servidor o
+A fonte única é `CATALOGO_TIPOS_MOVIMENTO_TOP` (`packages/domain/src/tipo-operacao-catalogo.ts:140-167`). O servidor o
 publica em `GET /api/admin/tipos-operacao/capabilities` › `formato5.catalogo`, e a tela o lê com o leitor estrito
 (`lerCatalogoTop`). Nenhuma lista de tipo, grupo ou família mora no web.
 
@@ -33,12 +33,12 @@ publica em `GET /api/admin/tipos-operacao/capabilities` › `formato5.catalogo`,
 | 11 | Movimentação interna | Saída/baixa | `saida` | `estoque.saida` | sim | — |
 | 12 | Movimentação interna | Transferência | `transferencia` | `estoque.transferencia` | sim | — |
 | 13 | Movimentação interna | Ajuste | `ajuste` | `estoque.ajuste` | sim | — |
-| 14 | Módulos | Abastecimento | `abastecimento` | `frota_ativos.abastecimento` | não | F10 (287) |
-| 15 | Módulos | Manutenção | `manutencao` | `frota_ativos.manutencao` | não | F10 (287) |
-| 16 | Módulos | Ordem de serviço | `ordem_servico` | `ordens_servico.ordem_de_servico` | não | F10 (287) |
-| 17 | Módulos | Manejo | `manejo` | — (a criar) | não | F10 (287) |
-| 18 | Módulos | Batelada | `batelada` | — (a criar) | não | F10 (287) |
-| 19 | Módulos | Produção de ração | `producao_racao` | `estoque.producao_de_racao` | não | F10 (287) |
+| 14 | Módulos | Abastecimento | `abastecimento` | `frota_ativos.abastecimento` | sim | F10 (287) |
+| 15 | Módulos | Manutenção | `manutencao` | `frota_ativos.manutencao` | sim | F10 (287) |
+| 16 | Módulos | Ordem de serviço | `ordem_servico` | `ordens_servico.ordem_de_servico` | sim | F10 (287) |
+| 17 | Módulos | Manejo | `manejo` | `pecuaria.manejo` (F10: a tabela `erp.animal_handlings` inteira) | sim | F10 (287) |
+| 18 | Módulos | Batelada | `batelada` | `confinamento.batelada` (F10: `erp.diet_batches`) | sim | F10 (287) |
+| 19 | Módulos | Produção de ração | `producao_racao` | `estoque.producao_de_racao` | sim | F10 (287) |
 | 20 | Financeiro | Conta a pagar | `conta_pagar` | `financeiro.conta_a_pagar` | sim | F9 (286) |
 | 21 | Financeiro | Conta a receber | `conta_receber` | `financeiro.conta_a_receber` | sim | F9 (286) |
 | 22 | Financeiro | Movimento bancário | `movimento_bancario` | `financeiro.movimento_bancario` | sim | F9 (286) |
@@ -49,20 +49,21 @@ Regras:
 - "Tem tela" só vale com família (fail-closed).
 - "Tem tela" = a tela que lança o documento cita a TOP. Hoje, os 9 cujo documento cita a TOP, os 3 do Financeiro (F9,
   decisão 286: o lançamento avulso da Central e o "Novo movimento bancário" escolhem a TOP primeiro), o orçamento de
-  compra (F6b, decisão 283: nasce do pedido aprovado para orçamento, pela TOP do leque do pedido) e as três da
-  movimentação interna (F5b, decisão 282: a Central de Estoque no motor) — 16 com tela. A F5a (decisão 282) criou a
+  compra (F6b, decisão 283: nasce do pedido aprovado para orçamento, pela TOP do leque do pedido), as três da
+  movimentação interna (F5b, decisão 282: a Central de Estoque no motor) e os 6 de Módulos (F10, decisão 287: a Central
+  de cada módulo cita a TOP no próprio registro) — os 22 com tela. A F5a (decisão 282) criou a
   família das três da movimentação interna, e a F5b, a tela. A F6a (decisão 283) criou a do orçamento de compra, e a F6b,
   a tela. A F9a criou a do movimento bancário (`financeiro.movimento_bancario`, a tabela `erp.bank_movements` inteira).
-  Hoje, 20 dos 22 tipos têm família; sem família, só Manejo e Batelada. O registry tem 28 famílias, e 12 delas ficam sem
-  tela no passo 1 (as 8 antigas e as 4 dos módulos).
+  Desde a F10, os 22 tipos têm família (a F10 criou `pecuaria.manejo` e `confinamento.batelada`). O registry tem 30
+  famílias, e 8 delas ficam sem tela no passo 1 (as 8 de fora dos tipos, abaixo).
 - **Ligar um tipo** é trabalho da fase que cria a tela: ela troca a linha do catálogo — `temTela`, e a família quando ela
   nascer no registry — e atualiza os testes que fixam o estado de hoje (`top-formato5-catalogo.test.ts` CT-1/CT-2,
   `top-formato5-top.test.ts` T5-1, `tipos-operacao.spec.ts`, `top-assistente.spec.ts`).
-- Grupo sem tipo com tela some do passo 1 (hoje: Módulos).
+- Grupo sem tipo com tela some do passo 1 (desde a F10, nenhum: os cinco grupos aparecem).
 - As 8 famílias do registry que ficam FORA dos tipos (`estoque.entrada_manual`, `estoque.documento_fiscal`,
   `estoque.requisicao`, `estoque.baixa`, `estoque.devolucao`, `estoque.transferencia_entre_armazens`,
   `estoque.transferencia_entre_empresas`, `compras.solicitacao`) são das telas antigas: têm perfil e continuam
-  editáveis, mas a tela não cria TOP delas. Nem das famílias de Módulos, enquanto não tiverem tela.
+  editáveis, mas a tela não cria TOP delas.
 - A API continua aceitando a criação de TOP de qualquer família do registry (`POST` inalterado; `/familias` devolve o
   registry inteiro). O assistente só não as oferece.
 
@@ -106,7 +107,12 @@ diz o que o editor do 5 mostra e o que o servidor aceita no 5. Ele é DERIVADO, 
 | `estoque.saida`, `estoque.requisicao_material` | Identificação, Geral, Estoque, Destino, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
 | `estoque.consumo` | Identificação, Geral, Estoque, Destino, Fluxo, Aprovação | Exigir observação | Estoque, Financeiro, Fiscal, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
 | `compras.solicitacao` e as 3 do Financeiro (`financeiro.conta_a_pagar`, `.conta_a_receber`, `.movimento_bancario`; F9a) | Identificação, Geral, Estoque, Padrões financeiros, Financeiro, Fiscal | Exigir parceiro, centro de resultado, observação, transportadora | Destino, Fluxo, Fluxo de compra, Divergência com o pedido |
-| as outras 11 sem documento que cite a TOP (7 das 8 antigas e as 4 de Módulos com família) | Identificação, Geral, Estoque, Financeiro, Fiscal | Exigir parceiro, centro de resultado, observação, transportadora | Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
+| os 6 de Módulos (`frota_ativos.abastecimento`, `frota_ativos.manutencao`, `ordens_servico.ordem_de_servico`, `pecuaria.manejo`, `confinamento.batelada`, `estoque.producao_de_racao`; F10) | Identificação, Geral, Estoque, Financeiro, Fiscal | as do REGISTRO de cada um: abastecimento, Exigir centro de resultado e observação; manutenção e manejo, Exigir observação; OS, Exigir centro de resultado e "Descrição"; batelada e ração, nenhuma | Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
+| as outras 7 sem documento que cite a TOP (as 7 antigas de estoque fora dos tipos) | Identificação, Geral, Estoque, Financeiro, Fiscal | Exigir parceiro, centro de resultado, observação, transportadora | Destino, Fluxo, Fluxo de compra, Divergência com o pedido, Padrões financeiros |
+
+Nos módulos, Estoque, Financeiro e Fiscal são declaração de intenção, sem execução: o lançamento move o estoque pela
+regra do módulo, não gera título, e a seção Destino não vale para eles (decisão 287; o destino dos módulos pela TOP é da
+Parte F10r, em execução).
 
 Some do editor do 5 só a aba cujo valor o servidor já obriga ao padrão: Próximas operações sem destino possível,
 Aprovação só "Sem aprovação", Execução sem execução configurada — e Financeiro e Fiscal no documento de estoque
@@ -277,7 +283,7 @@ nomes são fixados pelo coordenador. A sugestão do plano da F4, não normativa:
 
 ## 3. Centrais e modos de produto
 
-A preencher pela F10 (decisão 287); a F5 (decisão 282) já preencheu a sua (F5a e F5b, abaixo).
+As Centrais das F2, F3, F5 e F10 (decisões 279, 280, 282 e 287), abaixo.
 
 ### F2 — as Centrais de Vendas e de Compras usam as regras gerais da TOP (decisão 279) · IMPLEMENTADO
 
@@ -542,7 +548,8 @@ trigram (precisa de migration); a pesquisa do seletor de Funcionários.
 - Central de Estoque: feita na F5b, que herda a pesquisa com `soControlaEstoque: true` (o local do cabeçalho de lá É o
   `armazem_id` gravado).
 - Telas que continuam Produto → Local:
-  - o lançamento de manejo da pecuária: tela de módulo, da F10;
+  - o lançamento de manejo da pecuária: feito na F10 (decisão 287: a Central do manejo, com o Local de estoque antes do
+    Produto);
   - as listagens de correções e de saldos iniciais: telas antigas, cujo destino a F11 decide;
   - a relação de movimentos da consulta da Central de Estoque (a coluna Local de estoque vem depois do Produto; F5b).
 - Na pesquisa: o saldo disponível (com reserva), o total, a ordem por saldo e o debounce.
@@ -720,6 +727,8 @@ chave; a da F5b lê (subseção abaixo).
 **O razão e quem grava nele:**
 - a OS finalizada grava o centro de resultado, a safra e a própria OS;
 - o manejo grava o lote de animais;
+- o abastecimento grava o equipamento, com o centro de resultado e a safra (F10, decisão 287);
+- a manutenção grava a máquina de cada item e a safra do cabeçalho (F10);
 - o estorno copia o destino e a cultura do original;
 - "Saídas x Centro de Resultado" não soma a saída estornada.
 
@@ -901,6 +910,117 @@ transferência entre empresas (tela antiga); a saída das telas antigas do menu 
 aprovação na consulta do estoque (F11/F12); e o par motivo/justificativa obrigatório no servidor (I-1) — decisão do
 Maike de 03/10: fora desta PR, com dono, a 1ª PR depois desta em produção (o web anterior precisa sair de produção antes:
 com ele no ar, o servidor recusaria a saída que ele manda sem o par).
+
+### F10 — as Centrais dos módulos com produto (decisão 287) · IMPLEMENTADO
+
+Abastecimento, manutenção, ordem de serviço, manejo (nutrição e sanitário), batelada e produção de ração lançam na
+moldura do motor da Central, com o Local de estoque antes do produto. Cada módulo continua dono da sua regra (o motor só
+desenha). O registro de cada módulo cita a TOP (`tipo_operacao_id` + `tipo_operacao_versao_id`, 0046; sem TOP, o
+lançamento de hoje). A fonte única do que os seis têm em comum é `packages/domain/src/centrais-dos-modulos.ts`.
+
+**A TOP no módulo = classificação + versão congelada + exigências gerais do registro.** Não muda o efeito de estoque de
+nenhum módulo, não gera título e não liga a seção Destino (decisão 287; o destino dos módulos pela TOP é da Parte F10r,
+em execução). As exigências são as que o registro tem (`EXIGENCIAS_GERAIS_DOS_MODULOS_TOP`):
+
+| módulo | tabela | família | segmento da rota | exigências que a TOP pode ligar (caminho no corpo) |
+|---|---|---|---|---|
+| Abastecimento | `erp.fuel_supplies` | `frota_ativos.abastecimento` | `abastecimento` | centro de resultado (`cost_center_id`), observação (`note`) |
+| Manutenção | `erp.maintenances` | `frota_ativos.manutencao` | `manutencao` | observação (`note`) |
+| Ordem de serviço | `erp.service_orders` | `ordens_servico.ordem_de_servico` | `ordem-servico` | centro de resultado (`cost_center_id`), descrição (`description`) |
+| Manejo | `erp.animal_handlings` | `pecuaria.manejo` | `manejo` | observação (`note`) |
+| Batelada | `erp.diet_batches` | `confinamento.batelada` | `batelada` | — |
+| Produção de ração | `erp.feed_batches` | `estoque.producao_de_racao` | `producao-racao` | — |
+
+**Rotas novas** (prefixo `/api`; prefixo próprio `/modulos/`: a API anterior responde 404 de rota):
+
+| método e caminho | porta (`runService`) | resposta |
+|---|---|---|
+| GET `/modulos/<segmento>/operation-types` (os seis) | a de lançar do módulo: `fuel_supplies.create`, `maintenances.create`, `service_orders.create`, `nutritions.create`, `diet_batches.create`, `feed_batches.create` | `{ contractVersion: 1, capacidades: { topNoModulo: 1 }, family: { code, label } \| null, defaultId, items: [{ id, code, name, version, isDefault, camposExigidos }] }` — só TOPs da família, ativas e não excluídas, a padrão primeiro; `camposExigidos` = as colunas que a versão corrente exige (formato 3+); UMA consulta |
+| GET `/modulos/batelada/dietas/:id/ingredientes` | `diet_batches.create` | `{ id, code, name, items: [{ product_id, product_code, product_name, unit, percentage }] }` (percentual em texto); id malformado, inexistente, de outra organização e excluída → a MESMA 404 "Dieta não encontrada" |
+| POST `/livestock/transfers/to-empresa` | `batch_farm_transfer.create` | a de `/to-farm` (mesmo handler; `/to-farm` fica) |
+
+**Rotas de hoje que mudaram** (as respostas dos POST e PUT com as MESMAS chaves de hoje):
+- os seis POST (`/fleet/fuel-supplies`, `/fleet/maintenances`, `/service-orders`, `/livestock/handlings`,
+  `/feedlot/diet-batches`, `/stock/feed-batches`) aceitam `tipo_operacao_id` (opcional, anulável); `/fleet/maintenances`
+  aceita `note` (até 2000);
+- os detalhes (`/fleet/fuel-supplies/:id`, `/fleet/maintenances/:id`, `/service-orders/:id`, `/livestock/handlings/:id`,
+  `/stock/feed-batches/:id`) e a lista `/feedlot/diet-batches` devolvem `tipo_operacao_nome` e `tipo_operacao_versao`
+  (nulos sem TOP);
+- `POST /service-orders` com Idempotency-Key e auditoria `create`; `PUT /service-orders/:id` com auditoria `edit`, sem a TOP
+  e com as exigências da versão congelada; `POST /fleet/fuel-supplies/:id/cancel` auditado; `POST /feedlot/diet-batches`
+  auditado.
+
+**Recusas novas** (todas antes do número do registro: nenhuma queima código):
+
+| situação | status / código | caminho | mensagem |
+|---|---|---|---|
+| TOP inexistente, de outra organização, de outra família, inativa ou excluída | 422 `TIPO_OPERACAO_INDISPONIVEL` | — | "Tipo de operação indisponível para este lançamento" |
+| exigência geral da TOP (formato 3+) sem valor | 422 `TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA` | `details.exigencias[].caminho` | "<Rótulo> é obrigatório nesta operação." |
+| equipamento / máquina / vagão de outra organização, excluído ou fora do escopo do módulo | 422 `VALIDATION_ERROR` | `equipment_id` / `machines.<i>.equipment_id` | "Equipamento inválido: escolha um equipamento da organização." |
+| lote de animais de outra organização, excluído ou fora do escopo | 422 `VALIDATION_ERROR` | `batch_id` | "Lote de animais inválido: escolha um lote da organização." |
+| horímetro, km, dose, cabeças (com produto), quilos ou multiplicador que não são número finito | 422 `VALIDATION_ERROR` | o campo (`hour_meter`, `machines.<i>.mileage`, `dose`, `items.<i>.quantity`, `quantity_kg`, `multiplier`) | "Valor inválido" |
+| PUT da OS com a chave `tipo_operacao_id` (qualquer valor, nulo inclusive) | 422 `VALIDATION_ERROR` | `tipo_operacao_id` | "O tipo de operação da OS não muda depois do lançamento." |
+| gatilho (rede): TOP de outra família gravada por fora da API | 422 `VALIDATION_ERROR` | — | "Tipo de operação indisponível para este lançamento." |
+| gatilho (rede): mudar a TOP gravada | 409 `CONFLICT` | — | "O tipo de operação do lançamento não muda depois de gravado." |
+| gravação sob RLS que alcança zero linha | 409 `CONFLICT` | — | a mensagem de cada gravação ("Os totais da manutenção não foram gravados.", …) |
+
+**A regra de cada módulo** (a mesma de antes, salvo o marcado):
+- **Abastecimento:** UMA linha; equipamento obrigatório; com local, sai do estoque pelo custo médio (total = Σ partes) e
+  grava no razão o EQUIPAMENTO (novo), o centro e a safra; sem local, não baixa e vale o unitário informado. O horímetro —
+  e, sem ele, o KM (novo) — sobe o contador do bem por `greatest` (nunca desce; o cancelamento não o volta).
+- **Manutenção:** itens POR MÁQUINA; serviço, executor e horas por máquina; cada peça com local sai do estoque e grava a
+  MÁQUINA do item e a SAFRA (novo); a peça sem local grava com o unitário informado (novo: antes a RLS a recusava); as
+  preventivas ativas do equipamento atualizadas; o contador como no abastecimento; o cancelamento estorna com o destino.
+  A observação (`note`) é gravada (novo).
+- **OS:** só insumo e EPI com local saem do estoque, e só ao FINALIZAR (com o centro, a safra e a própria OS no razão,
+  F5a); a linha sem local é pulada; editável em aberta e em andamento.
+- **Manejo (nutrição e sanitário):** produto, local de estoque e dose no cabeçalho; os itens são ANIMAIS (cabeças); a
+  quantidade do produto é dose × Σ cabeças (`quantidadeDoProdutoNoManejo`; sem dose, Σ cabeças), 4 casas; o lote de
+  animais vai ao razão (F5a); carência pelo cadastro do produto no sanitário. Desmama, apartação e pastagem não mudam.
+- **Batelada:** os itens são DERIVADOS da dieta (kg × % / 100, 4 casas, `itensDaBatelada`), do local de estoque do
+  cabeçalho; custo = Σ partes; o custo por kg (6 casas) continua gravado na DIETA.
+- **Produção de ração:** os itens são DERIVADOS da fórmula (quantidade × multiplicador, `itensDaProducaoDeRacao`); o
+  produto acabado entra pelo custo das partes; a validade só para o produto com lote e validade.
+
+**Capacidade:** `topNoModulo: 1` (`CAPACIDADE_TOP_NO_MODULO`), declarada SÓ pelas seis rotas `operation-types`. Leitor:
+`entendeTopNoModulo` (só `=== 1`, propriedade própria). Ela declara: a rota existe; o POST aceita `tipo_operacao_id`; o
+detalhe devolve o nome da TOP; na manutenção, `note`; na batelada, a rota dos ingredientes. Sem ela, a Central de cada
+módulo é a de hoje: sem o campo "Tipo de operação", sem `tipo_operacao_id` no corpo, sem a "Observação" da manutenção e
+sem chamar a rota dos ingredientes.
+
+**As Centrais** (rotas de hoje, salvo a da batelada; prefixo de testid `central-<módulo>`):
+
+| módulo | rota | itens | depois de salvar |
+|---|---|---|---|
+| Abastecimento | `/frota/abastecimentos/new` | a grade do motor com UMA linha (`linhaUnica`) | `/frota?tab=abastecimentos` |
+| Manutenção | `/frota/manutencoes/new` | um bloco por máquina (`central-manutencao-maquina-<i>`), cada um com a sua grade do motor | o detalhe da manutenção |
+| Ordem de serviço | `/os/new` e `/os/<id>/editar` (nova) | Insumos e EPIs na grade do motor; Mão de obra, Equipamentos e Produção em grades próprias | o detalhe da OS |
+| Manejo | `/pecuaria/manejo/{nutrition,sanitary}/new` | os animais (grade própria: identificados ou rebanho por contagem) | `/pecuaria?tab=manejos&type=<tipo>` |
+| Batelada | `/confinamento/bateladas/new` (nova) | derivados da dieta, travados, "Pela dieta (kg)" | `/confinamento?tab=hoje&sub=producao` |
+| Produção de ração | `/estoque/batidas/new` | derivados da fórmula, travados, "Pela fórmula" | `/estoque?tab=fabrica&sub=producoes` |
+
+Em todas: Empresa, Data e "Tipo de operação" (com a capacidade; "Sem tipo de operação" e "<código> · <nome>"; a TOP
+PADRÃO da família vem escolhida) no topo dos Dados principais; o Salvar desabilitado enquanto a capacidade carrega; as
+pendências do cliente com o MESMO texto da recusa do servidor; o painel "Resumo" com a prévia (o valor gravado é o do
+servidor). A OS na edição mostra a TOP só para leitura e, fora de aberta e em andamento, "Esta OS não pode ser editada:
+ela está <situação>." com o Salvar desabilitado; o detalhe da OS ganha "Editar" (`os-editar`). A aba Confinamento › Hoje ›
+Produção troca o formulário embutido pelo botão "Nova batelada" (`confinamento-nova-batelada`). Os detalhes ganham a
+linha "Tipo de operação" quando o registro tem TOP; o da manutenção mostra os totais que a API devolve (`total_parts`,
+`total_services`) e a Observação gravada.
+
+**Compatibilidade** (base `622f194`, em produção): o web anterior × a API nova grava como hoje (as chaves a mais são
+ignoradas), passa a transferir rebanho entre empresas (a rota que ele já chama existe), passa a gravar a Observação da
+manutenção e a peça sem local, e recebe 422 nas referências de fora do escopo e nos números não finitos. O web novo × a
+API anterior não vê a capacidade e manda os corpos de hoje. Provas: K-1 e K-2 da F10 (`docs/TESTING.md`).
+
+**O razão:** ver "O razão e quem grava nele" na subseção da F5a.
+
+**Fora (decisão 287):** o Destino e o financeiro da TOP nos módulos (o destino pela TOP e a pecuária pela TOP são da
+Parte F10r, em execução); a consulta dos registros na
+Central (os detalhes continuam); o nome da TOP no detalhe da ração; layout por TOP nos módulos; cancelamento de manejo e
+de batelada; cadastro dos ingredientes da dieta; a lista e o processamento da transferência entre empresas na web; a
+conferência de organização para animal, rebanho, pessoa, produtos das linhas da OS, centro e safra; índice e filtro por
+TOP.
 
 ## 4. Compras: pedido, orçamento e finalização com aprovação
 
@@ -1584,3 +1704,14 @@ reversão) estão na decisão 286, parte F9b.
 ## 8. Mapa "tela antiga → central nova"
 
 A preencher pela F11 (decisão 288).
+
+Já trocadas no lugar (mesma rota, mesmo item de menu), pela F10 (decisão 287):
+
+| tela antiga | central nova | rota | o menu muda? |
+|---|---|---|---|
+| Novo abastecimento (formulário) | Central do abastecimento | `/frota/abastecimentos/new` | não |
+| Nova manutenção (formulário com ItemsEditor) | Central da manutenção | `/frota/manutencoes/new` | não |
+| Nova OS (formulário) | Central da OS (criação e edição) | `/os/new`, `/os/<id>/editar` (nova) | ação nova de detalhe `os.editar` |
+| Novo manejo de nutrição e sanitário (formulário) | Central do manejo | `/pecuaria/manejo/{nutrition,sanitary}/new` | não |
+| Batelada (formulário embutido em Confinamento › Hoje › Produção) | Central da batelada | `/confinamento/bateladas/new` (nova) | ação nova "Nova batelada" |
+| Nova produção de ração (formulário) | Central da produção de ração | `/estoque/batidas/new` | não |

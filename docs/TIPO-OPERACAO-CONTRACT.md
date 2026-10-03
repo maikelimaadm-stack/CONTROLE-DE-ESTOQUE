@@ -1657,7 +1657,8 @@ O documento de estoque (`erp.documentos_estoque`, 0040) e o Portal de Estoque es
   cada espécie, e espécie que o registry não declara não tem família (fail-closed).
 - **As oito famílias antigas de estoque** (`estoque.entrada_manual`, `estoque.documento_fiscal`, `estoque.requisicao`,
   `estoque.baixa`, `estoque.devolucao`, `estoque.transferencia_entre_armazens`, `estoque.transferencia_entre_empresas`
-  e `estoque.producao_de_racao`) ficam como estão: presas às tabelas antigas, sem consumidor.
+  e `estoque.producao_de_racao`) ficam como estão: presas às tabelas antigas, sem consumidor — salvo a produção de
+  ração, que desde a OPERACOES-01 F10 (decisão 287) cita a TOP no próprio registro, como os outros módulos (§18.11).
 - **O movimento é o da espécie.** As famílias novas NÃO entram na `MATRIZ_EXECUCAO_TOP`: a execução configurada
   continua recusada para elas, com a mensagem de hoje. A TOP dá ao documento o nome da operação, a TOP padrão por
   espécie, a versão congelada e as exigências gerais.
@@ -1740,8 +1741,9 @@ com só "Sempre" marca `aprovacao` e não `geral`. As duas aparecem no históric
 `MATRIZ_REGRAS_GERAIS_TOP` (domínio, fonte única): o que cada família ACEITA em cada regra e, para o que não aceita, o
 MOTIVO. As famílias são perguntadas ao registry pela variante de cada documento (venda, compra, as sete espécies de
 estoque — as quatro da ESTOQUE-01 e as três da movimentação interna, OPERACOES-01 F5a —, orçamento, pedido de venda,
-pedido de compra e, desde a decisão 283, orçamento de compra); família fora da matriz cai no padrão "sem documento"
-(`regrasGeraisDaFamiliaTop`), que só aceita o neutro — a família nova do registry nasce fechada.
+pedido de compra, desde a decisão 283, orçamento de compra e, desde a decisão 287, os seis módulos com TOP); família
+fora da matriz cai no padrão "sem documento" (`regrasGeraisDaFamiliaTop`), que só aceita o neutro — a família nova do
+registry nasce fechada.
 
 | Família | Confirmação | Documento sem itens | Alteração após confirmar | Aprovação |
 | --- | --- | --- | --- | --- |
@@ -1749,24 +1751,29 @@ pedido de compra e, desde a decisão 283, orçamento de compra); família fora d
 | `estoque.entrada`, `estoque.saida`, `estoque.transferencia`, `estoque.ajuste`, `estoque.requisicao_material`, `estoque.consumo`, `estoque.devolucao_consumo` | Manual, Automática | Proibido | Bloqueada | Sem aprovação, Sempre |
 | `compras.pedido` (decisão 283: a aprovação acontece ao FINALIZAR o pedido) | Manual | Proibido | Bloqueada | Sem aprovação, Sempre, A partir de um valor |
 | `vendas.orcamento`, `vendas.pedido`, `compras.orcamento` | Manual | Proibido | Bloqueada | Sem aprovação |
-| qualquer outra (as oito antigas de estoque, `compras.solicitacao`, `financeiro.*`) | Manual | Proibido | Bloqueada | Sem aprovação |
+| `frota_ativos.abastecimento`, `frota_ativos.manutencao`, `ordens_servico.ordem_de_servico`, `pecuaria.manejo`, `confinamento.batelada`, `estoque.producao_de_racao` (OPERACOES-01 F10, decisão 287: o registro do módulo cita a TOP) | Manual | Proibido | Bloqueada | Sem aprovação |
+| qualquer outra (as sete antigas de estoque, `compras.solicitacao`, `financeiro.*`) | Manual | Proibido | Bloqueada | Sem aprovação |
 
 Motivos — texto exato; o editor o mostra ao lado da opção desabilitada e a API o devolve na recusa:
 
 | Regra (`caminho`) | Família | Motivo |
 | --- | --- | --- |
 | Confirmação (`geral.confirmacao`) | orçamento e pedidos | "Este documento não é confirmado: ele é convertido ou recebido em outro." |
+| | os seis módulos (F10) | "O lançamento deste módulo não executa esta regra: ele move o estoque ao gravar (a ordem de serviço, ao finalizar)." |
 | | outra família | "Esta operação ainda não tem documento no sistema." |
 | Documento sem itens (`geral.documentoSemItens`) | estoque | "Documento de estoque sem itens não movimenta nada." |
 | | orçamento e pedidos | "Orçamento e pedido sem itens não têm o que converter nem receber." |
+| | os seis módulos (F10) | "O lançamento deste módulo não executa esta regra: ele move o estoque ao gravar (a ordem de serviço, ao finalizar)." |
 | | outra família | "Esta operação ainda não tem documento no sistema." |
 | Alteração após confirmar (`geral.alteracaoAposConfirmacao`) | venda | "Alterar uma venda confirmada ainda não tem execução: o estorno do estoque e os títulos não sabem refazer o documento. Cancele e lance outra." |
 | | compra | "Alterar uma compra confirmada ainda não tem execução: a compra não tem edição. Cancele e lance outra." |
 | | estoque | "Documento de estoque confirmado não se altera: cancele e lance outro." |
 | | orçamento e pedidos | "Este documento não é confirmado: ele é convertido ou recebido em outro." |
+| | os seis módulos (F10) | "O lançamento deste módulo não executa esta regra: ele move o estoque ao gravar (a ordem de serviço, ao finalizar)." |
 | | outra família | "Esta operação ainda não tem documento no sistema." |
 | Aprovação (`aprovacao.politica`) | estoque, opção "A partir de um valor" | "O valor do documento de estoque só é conhecido na confirmação: use "Sempre"." |
 | | orçamento, pedido de venda e orçamento de compra (o pedido de compra aceita as três políticas) | "A aprovação acontece antes da confirmação, e este documento não é confirmado." |
+| | os seis módulos (F10) | "O lançamento deste módulo não executa esta regra: ele move o estoque ao gravar (a ordem de serviço, ao finalizar)." |
 | | outra família | "Esta operação ainda não tem documento no sistema." |
 
 - **Portão da GRAVAÇÃO.** No formato 4, o `POST` (sempre) e o `PUT` (quando o corpo traz `configuracao`) conferem as quatro
@@ -2353,12 +2360,13 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 `packages/domain/src/tipo-operacao-catalogo.ts`. As tabelas estão em `docs/OPERACOES-CONTRACT.md` §1 e §2.
 - `CATALOGO_TOP = {grupos, tipos, perfis}` (`:258-262`), com:
   - `GRUPOS_TIPO_MOVIMENTO_TOP` e os rótulos;
-  - `CATALOGO_TIPOS_MOVIMENTO_TOP` (22 tipos, `:140-165`; desde a OPERACOES-01, 20 com família: requisição de material,
-    consumo e devolução de consumo ganharam a família na F5a, decisão 282 — com tela desde a F5b —, o orçamento de compra,
-    `compras.orcamento`, na F6a, decisão 283 — com tela desde a F6b —, e o movimento bancário,
-    `financeiro.movimento_bancario`, na F9a, decisão 286 — com tela, como a conta a pagar e a conta a receber; 16 com tela;
-    sem família, só manejo e batelada);
-  - `PERFIS_TIPO_TOP` (um por família do registry — 28 desde a F5a, a F6a e a F9a —, `:244`).
+  - `CATALOGO_TIPOS_MOVIMENTO_TOP` (22 tipos, `:140-167`; desde a OPERACOES-01, todos com família: requisição de
+    material, consumo e devolução de consumo ganharam a família na F5a, decisão 282 — com tela desde a F5b —, o orçamento
+    de compra, `compras.orcamento`, na F6a, decisão 283 — com tela desde a F6b —, o movimento bancário,
+    `financeiro.movimento_bancario`, na F9a, decisão 286 — com tela, como a conta a pagar e a conta a receber —, e o
+    manejo, `pecuaria.manejo`, e a batelada, `confinamento.batelada`, na F10, decisão 287; os 22 com tela desde a F10,
+    que ligou os 6 de Módulos);
+  - `PERFIS_TIPO_TOP` (um por família do registry — 30 desde a F5a, a F6a, a F9a e a F10 —, `:245`).
   Congelado. Nenhum código de família escrito: o gate `node scripts/familia-operacional-ssot-audit.mjs` passa.
 - `perfilDoTipoTop(família, definicoes?)` (`:212-237`) deriva o perfil de `familiaTemProximasOperacoes`,
   `regrasGeraisDaFamiliaTop`, `familiaAceitaExecucaoConfiguradaTop`, `ehFamiliaDeDocumentoEstoque` e
@@ -2502,13 +2510,13 @@ skew e o editor. Sem migration: o CHECK de schema da 0022 não tem teto, e `erp.
 
 ### 18.8 O que fica para depois
 
-- As seções das F7 e F10 e as telas dos tipos "sem tela ainda", cada uma na sua fase (`docs/OPERACOES-CONTRACT.md` §1
-  e §2). As da F5 (Destino e Fluxo) entraram na F5a, as da F6 (Fluxo de compra e Divergência com o pedido), na F6a, e a
-  da F9 (Padrões financeiros), na F9a (§18.10);
-  as telas da requisição, do consumo e da devolução de consumo entraram na F5b (a Central de Estoque no motor, decisão
-  282), e a do orçamento de compra, na F6b (§18.9).
-- As famílias novas no registry: manejo e batelada (requisição de material, consumo e devolução de consumo nasceram na
-  F5a; orçamento de compra, na F6a; o movimento bancário nasceu na F9a).
+- A seção da F7, na sua fase (`docs/OPERACOES-CONTRACT.md` §1 e §2). As da F5 (Destino e Fluxo) entraram na F5a, as da
+  F6 (Fluxo de compra e Divergência com o pedido), na F6a, e a da F9 (Padrões financeiros), na F9a (§18.10); a F10 não
+  criou seção: a TOP nos módulos é §18.11. Nenhum tipo fica "sem tela ainda": as telas da requisição, do consumo e da
+  devolução de consumo entraram na F5b (a Central de Estoque no motor, decisão 282), a do orçamento de compra, na F6b
+  (§18.9), e as dos 6 de Módulos, na F10 (§18.11).
+- As famílias novas no registry: nenhuma pendente (manejo e batelada nasceram na F10; requisição de material, consumo e
+  devolução de consumo, na F5a; orçamento de compra, na F6a; o movimento bancário, na F9a).
 - A prova do lado verdadeiro do detector, depois do merge, e a medição do CONJUNTO de seções (F5a, F6a e F9a).
 - Os rótulos de enum da TOP no web (`ROTULOS_TOP`): dívida anterior, fora desta fase.
 - O comportamento das Centrais com documento sem item é da F2 (decisão 279).
@@ -2586,7 +2594,9 @@ Aqui, o que é do contrato da TOP:
   `financeiro.movimento_bancario` (a tabela `erp.bank_movements` inteira) e os tipos `conta_pagar`, `conta_receber` e
   `movimento_bancario` com tela: o assistente passa a oferecer o grupo Financeiro. Com a F5a e a F6a: 28 famílias no
   registry (28 perfis), 22 tipos no catálogo, 20 com família, 12 com tela e 16 famílias sem tela no passo 1 (desde a
-  F6b e a F5b, 16 com tela e 12 sem tela); a matriz das regras gerais continua com 13 (as do Financeiro não entram).
+  F6b e a F5b, 16 com tela e 12 sem tela; desde a F10, 30 famílias e 30 perfis, os 22 tipos com família e com tela e 8
+  famílias sem tela no passo 1); a matriz das regras gerais continua com 13 — 19 desde a F10, com os seis módulos (as do
+  Financeiro não entram).
 - **No 5, fora do tipo:** a seção fora do neutro numa família que não a usa é a recusa de §18.5 ("Esta operação não usa a
   seção Padrões financeiros."); dentro da família, `recusasDoFinanceiroPadraoDaFamilia` (a provisão fora do pedido de
   venda e do pedido de compra — F9b —, "exigir" onde não há "sem natureza e centro": o avulso, o movimento, o pedido de
@@ -2607,3 +2617,32 @@ Aqui, o que é do contrato da TOP:
   O produto (eventos, recusas, compatibilidade) está em `docs/OPERACOES-CONTRACT.md` §7 (F9b).
 - **Skew:** sem `padroesFinanceiros`, o editor não mostra os campos e não manda a chave (a API anterior a recusaria). O
   detector do web da base continua o da F4 (o CONJUNTO de seções é medido na F12).
+
+### 18.11 A TOP nos módulos com produto (OPERACOES-01 F10, decisão 287)
+
+O produto (as Centrais, as rotas, as recusas e a compatibilidade) está em `docs/OPERACOES-CONTRACT.md` §3 (F10). Aqui, o
+que é do contrato da TOP:
+- **Registry:** `pecuaria.manejo` (`entidade("erp.animal_handlings")`, a tabela inteira; a permissão continua por tipo de
+  manejo) e `confinamento.batelada` (`entidade("erp.diet_batches")`) (`packages/domain/src/tipo-operacao.ts:190-191`;
+  rótulos `top.pecuaria.manejo` "Manejo" e `top.confinamento.batelada` "Batelada"). Os seis tipos de Módulos com
+  `temTela: true` e a família perguntada ao registry pela tabela (`tipo-operacao-catalogo.ts`, linhas do grupo `modulos`).
+- **Fonte única dos módulos:** `packages/domain/src/centrais-dos-modulos.ts` — `MODULOS_COM_TOP`,
+  `TABELA_DO_MODULO_COM_TOP`, `SEGMENTO_DO_MODULO_COM_TOP`, `familiaDoModuloComTop` / `moduloComTopDaFamilia` (registry sem
+  a tabela = módulo sem TOP, fail-closed), `EXIGENCIAS_GERAIS_DOS_MODULOS_TOP`, `CAPACIDADE_TOP_NO_MODULO`,
+  `entendeTopNoModulo` e as contas. Nenhum código de família escrito (`familia-operacional-ssot-audit`).
+- **Matriz e perfil:** a linha dos módulos na matriz (§17.2; `tipo-operacao-regras-gerais.ts:190-196`, `:226`) faz do módulo
+  uma família "com documento": `perfilDoTipoTop` dá Identificação, Geral, Estoque, Financeiro e Fiscal, e as exigências do
+  REGISTRO (`exigenciasGeraisDaFamiliaTop` → `exigenciasGeraisDoModuloTop`, `tipo-operacao-restricoes.ts:191-192`). No 5,
+  a exigência que o registro não tem é a recusa de §18.5. A seção Destino (F5a) NÃO vale para os módulos (`usadaPor` não
+  mudou) e o `financeiroPadrao` (F9) também não: Estoque, Financeiro e Fiscal da TOP de módulo são declaração, sem execução
+  (decisão 287; o destino dos módulos pela TOP é da Parte F10r, em execução).
+- **No registro (0046):** o par `tipo_operacao_id` + `tipo_operacao_versao_id` nas seis tabelas, com as FKs compostas e o
+  gatilho `erp.modulo_top_conferir()` (a família da tabela; a TOP gravada não muda). NULL = sem TOP, o lançamento de antes.
+- **No lançamento (API):** `apps/api/src/lib/top-do-modulo.ts` — `tiposDeOperacaoDoModulo` (a capacidade),
+  `topDoLancamentoDoModulo` (a superfície única de `resolverTopParaLancamento`, a versão corrente congelada e as exigências
+  nos formatos 3 a 5; 1, 2 e ilegível → nenhuma), `cobrarExigenciasDaVersaoDoModulo` (o PUT da OS, pela versão congelada) e
+  `joinDaTopDoModulo` (o nome e a versão nos detalhes).
+- **Capacidade:** `topNoModulo: 1` nas rotas `GET /api/modulos/<segmento>/operation-types`; nenhuma chave nova em
+  `/admin/tipos-operacao/capabilities` (o catálogo e a matriz publicados mudam pelo domínio).
+- **Skew:** a API anterior responde 404 de rota à capacidade, e a Central é a de hoje (K-1 da F10); o web anterior grava
+  contra a API nova sem TOP (K-2 da F10).

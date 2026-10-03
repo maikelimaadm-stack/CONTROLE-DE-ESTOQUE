@@ -699,6 +699,31 @@ tem a linha da Central de Estoque (`features/estoque/central/criacao-itens.tsx`:
 `custoMedioNoUnitario={false}`, `lote`, `daOrigem`, `pesquisaDeProduto`, `linhaNovaEmBranco`, `subtotal={false}`) e cobra
 as duas chaves novas em toda chamada.
 
+### As Centrais dos módulos com produto (OPERACOES-01 F10, decisão 287)
+
+Abastecimento, manutenção, ordem de serviço, manejo (nutrição e sanitário), batelada e produção de ração lançam na
+moldura do motor. Elas moram FORA do motor, em `apps/web/src/features/modulos/` (uma pasta por módulo), com três peças
+comuns:
+- `central-do-modulo.tsx` — a casca: `MolduraDaCentral`, a barra com Salvar e Descartar, as pendências e o painel
+  "Resumo"; o Salvar é o `useCriarDocumento` do motor (o aviso "Salvo com sucesso" e a mesma Idempotency-Key por
+  tentativa); `errosDoServidor` leva as recusas do servidor (`details[].path` e `details.exigencias[].caminho`) ao campo;
+- `itens-do-modulo.tsx` — o ÚNICO arquivo dos módulos que importa `ItensDaCentral`: colunas Local de estoque, Código,
+  Produto, Estoque, (a da origem), Quantidade, Valor unitário e Total; a pesquisa de produto da saída ("Só com saldo neste
+  local"); está na tabela `COMBINACOES_DO_MOTOR` de `apps/web/e2e/compras-03-central-unitario.spec.ts`;
+- `top-do-modulo.tsx` — a capacidade `topNoModulo` (`GET /api/modulos/<segmento>/operation-types`, react-query sem nova
+  tentativa) e o campo "Tipo de operação"; `itens-derivados.ts` — os itens da batelada e da ração no modo "da origem".
+
+O motor mudou só por ACRÉSCIMO: `linhaUnica` (`features/central/contrato.ts`, padrão `false`) deixa a grade com a linha
+que a página criou, sem Adicionar, Duplicar e Remover (o abastecimento). Sem a prop, DOM, classes e comportamento
+idênticos. Ela fica ao lado das props opcionais da F5b (tabela acima); na tabela `COMBINACOES_DO_MOTOR` é a única chave
+que a linha pode omitir (omitida = ausente), e a linha dos módulos é a 6ª. A manutenção não usou agrupamento no motor:
+cada máquina é um bloco da página com a SUA grade do motor.
+A OS ganhou a edição (`/os/<id>/editar`, a mesma Central, pelo PUT de sempre, sem a TOP). A batelada ganhou rota própria
+(`/confinamento/bateladas/new`) e saiu do formulário embutido da aba Hoje › Produção (botão `confinamento-nova-batelada`).
+Manejo, batelada e ração usam o motor só no que cabe: o manejo tem os ANIMAIS como itens (grade própria) e o produto no
+cabeçalho; batelada e ração usam o modo "da origem", com o local no cabeçalho. Contrato em `docs/OPERACOES-CONTRACT.md`
+§3 (F10).
+
 ## Central Financeira (OPERACOES-01 F8, decisão 285)
 
 As "Movimentações Financeiras" do §3 ganham a sua Central: o menu Financeiro com Títulos, Bancos e caixa, Conciliação,
