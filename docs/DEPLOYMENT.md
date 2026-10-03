@@ -4760,6 +4760,57 @@ Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registro
 identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.
 
 
+## SAT-01 — análise por satélite da área: Copernicus Sentinel-2 L2A e NDVI (0052)
+
+Decisão 293. **Uma migration: `0052_analises_satelitais.sql`** (pre-deploy; trava (2026,86), `lock_timeout` 2 s, pré/pós-condições
+nomeadas `SAT-01: …`). Cria `erp.analises_satelitais` (histórico imutável, RLS por empresa no módulo pecuária, FK composta para
+`erp.areas`), o gatilho `trg_analises_satelitais_conferir` (área viva, com polígono, mesmo polígono pelo hash; UPDATE recusado), a
+auditoria por `erp.audit_row()` e a restrição `areas_org_empresa_key unique (organization_id, empresa_id, id)` em `erp.areas` (alvo
+da FK composta; `id` já é chave, então nenhuma linha existente pode violá-la). A permissão `analises_satelitais.view`/`.create`
+entra pelo `seedPermissions` do pre-deploy: o papel de sistema **Administrador** recebe as duas; os demais papéis só depois que um
+administrador conceder (e o membro precisa de escopo no módulo **pecuária**, o mesmo da área).
+
+**O que é.** Sentinel-2 é a constelação de satélites do programa europeu Copernicus; a coleção L2A traz reflectância de superfície e
+a camada de classificação de cena (SCL). A API pede ao Copernicus Data Space Ecosystem (Sentinel Hub, Statistical API) a estatística
+do NDVI dentro do polígono da área, dia a dia nos últimos 30 dias UTC, e grava a observação útil mais recente. **NDVI não é biomassa**
+(nem kg MS/ha, nem oferta de forragem, nem lotação). O **Google Map Tiles continua sendo o fundo visual** do Mapa de Manejo; o Sentinel
+não o substitui — e **nesta fatia não há tela nenhuma** (F1, só API).
+
+**Endpoints (API, prefixo `/api`).** `POST /mapa/areas/:areaId/analises-satelitais/ndvi` (corpo vazio; 201 nova, 200 `reutilizada`);
+`GET /mapa/areas/:areaId/analises-satelitais/ultima?indice=ndvi`; `GET /mapa/areas/:areaId/analises-satelitais?indice=ndvi&limite=&antes=`
+(observações úteis, cursor no servidor). Contrato e recusas no topo de `apps/api/src/routes/analises-satelitais.ts`.
+
+**Variáveis de ambiente — SÓ no serviço `api` do Railway** (nunca no `web`, nunca na Vercel, nunca `NEXT_PUBLIC_*`):
+
+| Variável | Valor | Ausente |
+|---|---|---|
+| `COPERNICUS_ENABLED` | `0` (desligado, o padrão) ou `1` | desligado |
+| `COPERNICUS_CLIENT_ID` | client ID do OAuth client (client credentials) do Copernicus Data Space | ligado sem ela: o POST responde 503 `configuracao` |
+| `COPERNICUS_CLIENT_SECRET` | client secret desse OAuth client | idem |
+
+`COPERNICUS_ENABLED` com valor fora de `0`/`1` **derruba o startup** (sem repetir o valor). Credencial ausente NÃO derruba: a API sobe e
+só o POST responde 503. Os endereços do provedor (`identity.dataspace.copernicus.eu`, `sh.dataspace.copernicus.eu/statistics/v1`) são
+constantes do código, não variáveis. Cadastrar o ID e o segredo antes do deploy desta fatia é inócuo (o binário anterior não os lê).
+
+**Ordem:** BANCO → API → (sem web). **Fase 1:** merge + deploy com `COPERNICUS_ENABLED` ausente/`0` — a 0052 é aplicada no pre-deploy,
+nada é chamado nem gravado. **Fase 2 (decisão do Maike):** credenciais no serviço `api` e `COPERNICUS_ENABLED=1`; smoke autenticado
+controlado numa área real (gate externo — PENDING até a credencial existir).
+
+**Impacto em dados reais:** nenhum na fase 1 (tabela nova vazia; a restrição única em `erp.areas` não altera linha). Na fase 2, cada
+pedido grava uma linha nova por área/polígono/dia; nada é editado nem apagado (decisões 240/247). Falha do provedor não grava nada.
+
+**Limites conhecidos.** Limite do ERP de 10 chamadas ao provedor por minuto por organização **por instância** da API, e reaproveitamento
+de chamadas simultâneas também por instância (com várias réplicas, multiplica — a restrição única no banco continua impedindo linha
+duplicada). Uma análise por área e polígono por dia UTC: pedir de novo no mesmo dia devolve a mesma, inclusive uma `sem_observacao_util`;
+imagem adquirida mais tarde no mesmo dia só entra no dia seguinte. Área com menos de 10 pixels de 10 m ou caixa com mais de 2.500 pixels
+num lado é recusada (422) antes de chamar o provedor. `sem_aquisicao` × `cobertura_insuficiente` dependem de o provedor omitir dias sem
+imagem (comportamento a confirmar no smoke). Tempo máximo: 10 s (token) e 30 s (estatística), no máximo 2 tentativas. **Sem scheduler,
+sem processamento em massa e sem varredura de áreas, de propósito.**
+
+**Caminho de volta.** API: `COPERNICUS_ENABLED=0` (efeito imediato no próximo deploy/restart) ou redeploy da versão anterior — a tabela
+fica, sem uso. Banco: forward-only; a 0052 não altera dado existente, então não há o que desfazer em `erp.areas` além da restrição única
+(remover exigiria migration nova e a remoção da FK). As análises gravadas são histórico e não se apagam.
+
 ## CADASTRO-AREAS-02 — unificação mapa × áreas (0051)
 
 Decisão 292. **Uma migration: `0051_areas_mapa_unificado.sql`** (pre-deploy; trava (2026,85), `lock_timeout` 2 s, pré/pós-condições nomeadas `CADASTRO-AREAS-02: …`).

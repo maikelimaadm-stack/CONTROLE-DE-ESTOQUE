@@ -66,6 +66,25 @@ const schema = z.object({
     }
     return lista as ("brasilapi" | "cnpja" | "cnpjws")[];
   }),
+  /**
+   * ANÁLISE POR SATÉLITE (SAT-01, decisão 293): Copernicus Data Space Ecosystem / Sentinel-2 L2A. `1` liga; `0` ou
+   * AUSENTE desliga — DESLIGADO é o padrão (efeito novo nasce desligado, decisão 240). Desligada, a API sobe igual,
+   * o histórico continua legível e pedir análise nova responde 503. Mesmo contrato fechado do gate da TOP: valor fora
+   * de `0`/`1` DERRUBA O STARTUP, e a mensagem não repete o valor recebido.
+   */
+  COPERNICUS_ENABLED: z.string().optional().superRefine((valor, ctx) => {
+    if (valor !== undefined && valor !== "0" && valor !== "1") {
+      ctx.addIssue({ code: "custom", message: "use 1 para ligar ou 0 (ou ausente) para desligar" });
+    }
+  }).transform((valor) => valor === "1"),
+  /**
+   * Credencial OAuth (client credentials) do Copernicus. SÓ no servidor: nunca no build da web, nunca em log, nunca
+   * na resposta. AUSENTE não derruba o startup — com a integração ligada e sem as duas, o pedido de análise responde
+   * 503 (`configuracao`). Vazio vale como ausente. Os ENDEREÇOS do provedor não são configuração: são constantes
+   * oficiais no adaptador (`lib/satelite/copernicus.ts`), para a URL nunca vir de fora (SSRF, credencial desviada).
+   */
+  COPERNICUS_CLIENT_ID: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+  COPERNICUS_CLIENT_SECRET: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   /** tentativas de login por IP por minuto (proteção contra força bruta) */
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10)
 });

@@ -1,12 +1,14 @@
 /**
- * CHAMADA HTTP DAS CONSULTAS EXTERNAS (CEP, CNPJ) — a única porta de saída da API para terceiros.
+ * CHAMADA HTTP DAS CONSULTAS EXTERNAS (CEP, CNPJ) — porta de saída da API para terceiros.
  *
  * SSRF: o host vem de uma lista FIXA do adaptador, nunca da requisição; o parâmetro (CEP/CNPJ) é validado
  * ANTES de montar a URL e só pode conter [0-9A-Z]; redirecionamento não é seguido para outro host (um
  * 3xx para o MESMO host é seguido uma vez; qualquer outro vira falha da fonte). Tempo máximo por fonte.
+ * As consultas de CEP e CNPJ não levam credencial nenhuma. O provedor satelital (SAT-01) usa a MESMA função de
+ * saída (`BuscarFn`, por isso ela aceita método e corpo), mas pela porta própria dele: `lib/satelite/http.ts`.
  */
 
-export type BuscarFn = (url: string, init: { signal: AbortSignal; redirect: "manual"; headers: Record<string, string> }) => Promise<{ status: number; headers: { get(n: string): string | null }; json(): Promise<unknown> }>;
+export type BuscarFn = (url: string, init: { signal: AbortSignal; redirect: "manual"; headers: Record<string, string>; method?: "GET" | "POST"; body?: string }) => Promise<{ status: number; headers: { get(n: string): string | null }; json(): Promise<unknown> }>;
 
 export type RespostaHttp =
   | { tipo: "ok"; status: number; corpo: unknown }
