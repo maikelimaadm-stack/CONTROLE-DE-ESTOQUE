@@ -9,9 +9,10 @@ import {
 /**
  * OPERACOES-01 F5a (decisão 282) — O DESTINO E O FLUXO PELA TOP (seções `destino` e `fluxo` do formato 5).
  *
- * As regras que TRAVAM nascem DESLIGADAS: no neutro (Destino "não usada"; Fluxo "não exige requisição, atende em
- * parte") nada novo é exigido — e o destino informado numa dimensão que a TOP não usa é RECUSADO, nunca ignorado. Com a
- * TOP ligando a dimensão, o lançamento confere: obrigatória sem valor → 422 no campo; a referência informada existe,
+ * As regras que TRAVAM nascem DESLIGADAS: no neutro (Destino "opcional" desde a OPERACOES-01 F11, decisão 288 — era
+ * "não usada" na F5a; Fluxo "não exige requisição, atende em parte") nada novo é exigido e o destino informado é
+ * ACEITO e gravado, como a baixa e a requisição antigas aceitavam. Numa dimensão que a TOP grava "não usada", o destino
+ * informado é RECUSADO, nunca ignorado. Com a TOP ligando a dimensão, o lançamento confere: obrigatória sem valor → 422 no campo; a referência informada existe,
  * está ativa e é da organização (centro de resultado, safra) ou da EMPRESA do documento (as outras quatro), com a
  * MESMA recusa para inexistente e de outra empresa. O consumo HERDA o destino da requisição; o razão grava o destino
  * do cabeçalho e o estorno o copia.
@@ -40,15 +41,26 @@ describe("DF-1 — a seção Destino da TOP no lançamento", () => {
     expect((await cabecalho(id)).centro_custo_id).toBe(centro);
   });
 
-  it("DF-1b TOP NEUTRA (formato 1 e formato 5 no neutro): a dimensão informada é recusada (\"não usa\"), nunca ignorada", async () => {
-    const p = await produto(); const eq = await equipamentoNovo();
+  it("DF-1b TOP NEUTRA (formato 1 e formato 5 no neutro, F11/288): a dimensão informada é ACEITA e gravada; com \"não usada\" explícito é recusada, nunca ignorada", async () => {
+    const p = await produto(); await saldoInicial(p.id, "10"); const eq = await equipamentoNovo();
     const neutra5 = await topV5("saida");
+    const naoUsa5 = await topV5("saida", (x) => { x.destino.equipamento = "nao_usada"; });
+    // PREMISSA: a TOP do 5 que grava "não usada" na máquina recusa a máquina informada (nada gravado).
+    const antes = await contarDocumentos();
+    const recusada = await lancarDoc("saida", [item(p.id, "1")], { tipo_operacao_id: naoUsa5, equipamento_id: eq });
+    recusadoNoCampo(recusada, "equipamento_id");
+    expect(detalhes(recusada)).toEqual([["equipamento_id", "Esta operação não usa máquina/equipamento."]]);
+    expect(await contarDocumentos(), "a recusa não grava").toBe(antes);
+    // CONCLUSÃO: a TOP neutra (a do formato 1 da requisição e a do 5 no neutro da saída) aceita e grava a MESMA máquina.
     for (const [especie, extra] of [["requisicao", {}], ["saida", { tipo_operacao_id: neutra5 }]] as const) {
-      const r = await lancarDoc(especie, [item(p.id, "1")], { ...extra, equipamento_id: eq });
-      recusadoNoCampo(r, "equipamento_id");
-      expect(detalhes(r), especie).toEqual([["equipamento_id", "Esta operação não usa máquina/equipamento."]]);
+      const id = idDe(await lancarDoc(especie, [item(p.id, "1")], { ...extra, equipamento_id: eq }));
+      expect((await cabecalho(id)).equipamento_id, `${especie}: a máquina gravada`).toBe(eq);
+      if (especie === "saida") {
+        await confirmadoDoc("saida", id);
+        expect(await razao(id), "a saída confirmada leva a máquina ao razão").toEqual([expect.objectContaining({ movement_type: "writeoff", equipamento_id: eq })]);
+      }
     }
-    // PREMISSA: sem o destino, a mesma TOP neutra salva (nada novo é exigido no neutro).
+    // E nada novo é exigido no neutro: sem o destino, a mesma TOP neutra salva.
     idDe(await lancarDoc("saida", [item(p.id, "1")], { tipo_operacao_id: neutra5 }));
   });
 
@@ -116,20 +128,23 @@ describe("DF-2 — o consumo herda o destino da requisição; o razão grava; o 
     expect(await razao(consumo)).toEqual([expect.objectContaining({ movement_type: "requisition", direction: -1, quantity: "2.0000", cost_center_id: centro, equipamento_id: eq, harvest_id: null })]);
   });
 
-  it("DF-2c REENVIAR o destino herdado = omiti-lo: com a TOP do consumo NEUTRA e a OS fechada depois da requisição, o consumo com o herdado reenviado salva igual ao sem ele; outro valor continua 422", async () => {
+  it("DF-2c REENVIAR o destino herdado = omiti-lo: com a TOP do consumo que NÃO USA centro nem OS (\"não usada\" explícito, F11) e a OS fechada depois da requisição, o consumo com o herdado reenviado salva igual ao sem ele; outro valor continua 422", async () => {
     const p = await produto(); await saldoInicial(p.id, "10");
     const tReq = await topV5("requisicao", (x) => { x.destino.centroCusto = "opcional"; x.destino.ordemServico = "opcional"; });
     const centro = await centroNovo(); const os = await osNova();
+    // A TOP do consumo grava "não usada" EXPLÍCITO no centro e na OS (desde a F11 o neutro é "opcional").
+    const tCon = await topV5("consumo", (x) => { x.destino.centroCusto = "nao_usada"; x.destino.ordemServico = "nao_usada"; });
     const req = await lancadoDoc("requisicao", [item(p.id, "5")], { tipo_operacao_id: tReq, centro_custo_id: centro, ordem_servico_id: os });
     await confirmadoDoc("requisicao", req);
     // A OS fecha DEPOIS da requisição (por SQL: a rota de status baixaria os insumos da OS).
     await c.admin.query("update erp.service_orders set status = 'finished' where id = $1", [os]);
     const itemReq = (await itensNoBanco(req))[0]!.id;
-    const consumo = (extra: Record<string, unknown>) => lancarDoc("consumo", [item(p.id, "1", { origem_item_id: itemReq })], { origem_documento_id: req, ...extra });
+    const consumo = (extra: Record<string, unknown>) =>
+      lancarDoc("consumo", [item(p.id, "1", { origem_item_id: itemReq })], { tipo_operacao_id: tCon, origem_documento_id: req, ...extra });
 
-    // PREMISSAS: a TOP do consumo (a neutra) NÃO usa centro — num consumo direto, o centro é recusado; e a OS fechada,
+    // PREMISSAS: a TOP do consumo NÃO usa centro — num consumo direto, o centro é recusado; e a OS fechada,
     // informada numa requisição nova, é uma referência inválida.
-    expect(detalhes(await lancarDoc("consumo", [item(p.id, "1")], { centro_custo_id: centro })), "premissa: a TOP do consumo não usa centro")
+    expect(detalhes(await lancarDoc("consumo", [item(p.id, "1")], { tipo_operacao_id: tCon, centro_custo_id: centro })), "premissa: a TOP do consumo não usa centro")
       .toEqual([["centro_custo_id", "Esta operação não usa centro de resultado."]]);
     expect(detalhes(await lancarDoc("requisicao", [item(p.id, "1")], { tipo_operacao_id: tReq, ordem_servico_id: os })), "premissa: a OS fechada não se informa")
       .toEqual([["ordem_servico_id", "Ordem de serviço inválida: escolha uma ordem de serviço aberta ou em andamento da empresa do documento"]]);

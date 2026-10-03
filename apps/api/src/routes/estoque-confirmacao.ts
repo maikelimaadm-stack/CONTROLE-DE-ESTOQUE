@@ -26,6 +26,11 @@
  * O cancelamento recusa (409) a requisição com consumo vivo e o consumo com devolução viva — desfaz-se de baixo para
  * cima; a requisição confirmada sem dependentes cancela SEM estorno (não tinha movimento).
  *
+ * SALDO INICIAL (OPERACOES-01 F11, decisão 288): a ENTRADA cuja versão congelada da TOP lança o saldo inicial (seção
+ * `implantacao`, `saldoInicialPelaTop`) grava `opening_balance` ("Estoque inicial") em vez de `entry`, e recusa (409
+ * DUPLICATE_DOCUMENT) o produto/local de estoque/lote que já tem saldo inicial vivo — da tela antiga ou de outro
+ * documento (`lib/estoque-saldo-inicial.ts`, a regra única das duas portas). No neutro, a entrada é a de sempre.
+ *
  * O desenho é o da confirmação da Compra (`compras-confirmacao.ts`): UMA leitura de saldos serve a prévia e a
  * conferência da confirmação — uma cópia "equivalente" para a prévia divergiria na primeira fatia que mexesse
  * numa das duas. A prévia não trava nem grava; a confirmação trava o cabeçalho (`lerDocumentoEstoque` com
@@ -53,11 +58,12 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, qty as fqty, DomainError } from "@agro/shared";
-import { regrasGeraisDaVersaoTop, versaoSchemaDaConfiguracaoTop, versaoSchemaExecutaRegrasGeraisTop, type EspecieEstoque } from "@agro/domain";
+import { regrasGeraisDaVersaoTop, saldoInicialPelaTop, versaoSchemaDaConfiguracaoTop, versaoSchemaExecutaRegrasGeraisTop, type EspecieEstoque } from "@agro/domain";
 import { runService, idempotent, audit, assertPeriodOpen } from "../lib/service.js";
 import { notFound, validation, err, fromPgError } from "../lib/errors.js";
 import type { ServiceCtx } from "../lib/context.js";
 import { lerVersaoCongeladaTop } from "../lib/confirmacao-automatica.js";
+import { MENSAGEM_SALDO_INICIAL_DUPLICADO, saldosIniciaisVivos, textoDaChaveDoSaldoInicial, travarChavesDoSaldoInicial } from "../lib/estoque-saldo-inicial.js";
 import { recusaDaAprovacao } from "../lib/aprovacao-documento.js";
 import { postStock, reverseStock, currentBalance, chaveDoLote, quantidadeLegivel, type StockPost } from "../services/stock-core.js";
 import { saldoComReservaEmLote, chaveDoPar } from "../services/reserva-estoque.js";
@@ -216,7 +222,7 @@ async function planejarDisponivel(ctx: ServiceCtx, doc: DocumentoEstoqueLido): P
  * A guarda do banco (0041, `trg_documentos_estoque_aprovacao`) é o fundo, inclusive para o binário anterior; quem
  * EXPLICA a recusa é este passo. Número fixo de consultas, qualquer que seja o número de itens.
  */
-async function recusaDoDocumento(ctx: ServiceCtx, doc: DocumentoEstoqueLido): Promise<{ recusa: DomainError | null; alemDoFormato3: boolean }> {
+async function recusaDoDocumento(ctx: ServiceCtx, doc: DocumentoEstoqueLido): Promise<{ recusa: DomainError | null; alemDoFormato3: boolean; versaoTop: VersaoCongelada }> {
   const versaoTop = await lerVersaoCongeladaTop(ctx, doc.tipo_operacao_versao_id);
   const regras = regrasGeraisDaVersaoTop(versaoTop);
   if (!regras.ok) {
@@ -226,13 +232,17 @@ async function recusaDoDocumento(ctx: ServiceCtx, doc: DocumentoEstoqueLido): Pr
         "A configuração da operação deste documento está num formato que este servidor não executa. O documento não foi confirmado.",
         { motivo: regras.motivo, recusas: [] }),
       alemDoFormato3: true,
+      versaoTop,
     };
   }
   // O PORTÃO do domínio (formato 4 ou 5), nunca a comparação com um número: o 5 executa tudo o que o 4 executa
   // (OPERACOES-01 F4, decisão 281), e a prévia de um documento com a versão no 5 continua trazendo `recusas`.
   const alemDoFormato3 = versaoTop !== null && versaoSchemaExecutaRegrasGeraisTop(versaoSchemaDaConfiguracaoTop(versaoTop.configuracao));
-  return { recusa: await recusaDaAprovacao(ctx, { modulo: "estoque", documentoId: doc.id, versaoDocumento: null, valorDocumento: null, versaoTop }), alemDoFormato3 };
+  return { recusa: await recusaDaAprovacao(ctx, { modulo: "estoque", documentoId: doc.id, versaoDocumento: null, valorDocumento: null, versaoTop }), alemDoFormato3, versaoTop };
 }
+
+/** A versão congelada que a recusa do documento já leu — a confirmação reaproveita a MESMA leitura (sem segunda consulta). */
+type VersaoCongelada = Awaited<ReturnType<typeof lerVersaoCongeladaTop>>;
 
 // ─────────────── prévia ───────────────
 
@@ -365,6 +375,34 @@ async function travarBaldeDoAjuste(ctx: ServiceCtx, armazemId: string, produtoId
 
 const comparar = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
+/**
+ * ═══ A CONFERÊNCIA DO SALDO INICIAL (OPERACOES-01 F11, decisão 288) ═══ — a entrada que lança o saldo inicial não
+ * pode dar um segundo saldo inicial vivo ao mesmo produto/local de estoque/lote.
+ *
+ *   1) TRAVA as chaves DISTINTAS do documento em ORDEM fixa (o local é o do cabeçalho, comum a todos; depois produto,
+ *      depois lote), TODAS numa consulta só — a mesma trava da tela antiga (`travarChavesDoSaldoInicial`): duas
+ *      confirmações, ou uma confirmação e o POST antigo, na mesma chave fazem fila e a segunda lê o razão novo;
+ *   2) DEPOIS das travas, UMA consulta devolve as chaves com saldo inicial vivo no razão (`saldosIniciaisVivos`); cada
+ *      item em ordem: chave já vista NESTE documento (duas linhas iguais dariam dois saldos iniciais da mesma chave) ou
+ *      viva → recusa no `produto_id` do item.
+ * Duas consultas, qualquer que seja o número de itens (a implantação é o documento de centenas de produtos).
+ * Recusa = 409 DUPLICATE_DOCUMENT com a mensagem da tela antiga, todos os itens recusados nos `details`. Nada foi
+ * gravado ainda: quem chama confere antes do primeiro movimento.
+ */
+async function conferirSaldosIniciais(ctx: ServiceCtx, doc: DocumentoEstoqueLido): Promise<void> {
+  const chaves = doc.itens.map((it) => ({ produtoId: it.produto_id, lote: it.lote }));
+  await travarChavesDoSaldoInicial(ctx, doc.armazem_id, chaves);
+  const vivas = await saldosIniciaisVivos(ctx, doc.armazem_id, chaves);
+  const vistas = new Set<string>();
+  const recusas: Recusa[] = [];
+  chaves.forEach((c, i) => {
+    const k = textoDaChaveDoSaldoInicial(c);
+    if (vistas.has(k) || vivas.has(k)) recusas.push({ path: caminhoDoItem(i, "produto_id"), message: MENSAGEM_SALDO_INICIAL_DUPLICADO });
+    vistas.add(k);
+  });
+  if (recusas.length) throw err("DUPLICATE_DOCUMENT", MENSAGEM_SALDO_INICIAL_DUPLICADO, recusas);
+}
+
 /** O texto da data de hoje (data do estorno), como as outras rotas de cancelamento. */
 const hoje = () => new Date().toISOString().slice(0, 10);
 
@@ -387,7 +425,7 @@ export async function confirmarDocumentoEstoqueNaTransacao(ctx: ServiceCtx, espe
   if (doc.situacao !== "aberto") throw err("CONFLICT", "O documento já está confirmado");
   // APROVAÇÃO (TOP-CONFIG-08): logo depois da situação, antes do período, dos cadastros e de qualquer efeito. Na
   // automática, a APROVACAO_PENDENTE vira "aguardando_aprovacao" (`tentarConfirmacaoAutomatica`).
-  const { recusa } = await recusaDoDocumento(ctx, doc);
+  const { recusa, versaoTop } = await recusaDoDocumento(ctx, doc);
   if (recusa) throw recusa;
   // A requisição não move o razão: o período (que fecha o razão) não é dela (OPERACOES-01 F5a).
   if (doc.especie !== "requisicao") await conferirPeriodo(ctx, doc);
@@ -408,11 +446,15 @@ export async function confirmarDocumentoEstoqueNaTransacao(ctx: ServiceCtx, espe
     // O custo da ENTRADA é o informado; vazio, o custo médio consolidado do produto (gravado no item). O da DEVOLUÇÃO
     // DE CONSUMO é o do item do consumo de origem (vazio por defeito: o médio do produto), sempre gravado no item.
     const doConsumo = doc.especie === "devolucao_consumo" ? await custosDosItensDeOrigem(ctx, doc) : new Map<string, string | null>();
+    // SALDO INICIAL (F11): só a ENTRADA, e só com a versão congelada que o lança. Trava e confere ANTES do primeiro
+    // `postStock` — a recusa desfaz a transação inteira: zero movimento, documento aberto.
+    const saldoInicial = doc.especie === "entrada" && versaoTop !== null && saldoInicialPelaTop(versaoTop.codigoBase, versaoTop.configuracao);
+    if (saldoInicial) await conferirSaldosIniciais(ctx, doc);
     for (const it of doc.itens) {
       const informado = doc.especie === "entrada" ? it.custo_unitario : (it.origem_item_id ? doConsumo.get(it.origem_item_id) ?? null : null);
       const custo = informado ?? produtos.get(it.produto_id)!.custo_medio;
       const r = await postStock(ctx, { ...comum, warehouseId: doc.armazem_id, productId: it.produto_id,
-        movementType: doc.especie === "entrada" ? "entry" : "devolution", direction: 1,
+        movementType: doc.especie === "entrada" ? (saldoInicial ? "opening_balance" : "entry") : "devolution", direction: 1,
         quantity: it.quantidade!, unitCost: custo, providerLot: it.lote, expirationDate: it.validade });
       movimentos += r.ids.length;
       if (doc.especie === "devolucao_consumo" || it.custo_unitario === null) await gravarItem(ctx, it, { custo: r.unitCost });

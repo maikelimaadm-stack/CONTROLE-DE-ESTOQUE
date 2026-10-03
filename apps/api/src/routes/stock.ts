@@ -10,6 +10,7 @@ import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock, currentBalance, lineTotal, chaveDoLote, controleDeLote } from "../services/stock-core.js";
 import { saldoComReservaEmLote, reservadoEmLote, chaveDoPar } from "../services/reserva-estoque.js";
+import { MENSAGEM_SALDO_INICIAL_DUPLICADO, existeSaldoInicialVivo, travarChaveDoSaldoInicial } from "../lib/estoque-saldo-inicial.js";
 import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema } from "../services/financial-core.js";
 import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
 import { SEQUENCIA_WAREHOUSE_TRANSFER } from "../lib/sequencia-warehouse-transfer.js";
@@ -144,9 +145,13 @@ export default async function stockRoutes(app: FastifyInstance) {
   app.post("/stock/opening-balances", async (req, reply) => reply.status(201).send(await runService(app, req, "opening_balances.create", async (ctx) => {
     const d = openingSchema.parse(req.body); await exigirEmpresa(ctx, d.empresa_id);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
-      // o lote já vem aparado; o gravado antes do R1-1 pode ter espaços — a conferência apara os dois lados
-      const exists = await ctx.tx.query("select 1 from erp.opening_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and nullif(btrim(provider_lot),'') is not distinct from $4::text and status='confirmed'", [ctx.orgId, d.warehouse_id, d.product_id, d.provider_lot]);
-      if (exists.rowCount) throw err("DUPLICATE_DOCUMENT", "Já existe estoque inicial confirmado para este produto/local de estoque/lote");
+      // OPERACOES-01 F11 (decisão 288): a duplicidade é a regra ÚNICA das duas portas (`lib/estoque-saldo-inicial.ts`):
+      // o saldo inicial vivo no RAZÃO, venha desta tela ou de uma entrada da Central com a TOP que lança o saldo inicial,
+      // somado à conferência de antes (o documento antigo confirmado). Trava a chave antes de conferir (a outra porta
+      // trava a mesma). O lote é comparado aparado nos dois lados (o gravado antes do R1-1 pode ter espaços). Mesmo
+      // código e mesma mensagem de antes.
+      await travarChaveDoSaldoInicial(ctx, d.warehouse_id, d.product_id, d.provider_lot ?? null);
+      if (await existeSaldoInicialVivo(ctx, d.warehouse_id, d.product_id, d.provider_lot ?? null)) throw err("DUPLICATE_DOCUMENT", MENSAGEM_SALDO_INICIAL_DUPLICADO);
       const total = lineTotal(d.quantity, d.unit_value);
       const r = await ctx.tx.query<{ id: string }>("insert into erp.opening_balances(organization_id,empresa_id,warehouse_id,product_id,quantity,unit_value,total_value,provider_lot,expiration_date,cultivation_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id", [ctx.orgId, d.empresa_id, d.warehouse_id, d.product_id, d.quantity, d.unit_value, total, d.provider_lot ?? null, d.expiration_date ?? null, d.cultivation_id ?? null, ctx.user.id]);
       await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: d.product_id, movementType: "opening_balance", direction: 1, quantity: d.quantity, unitCost: d.unit_value, providerLot: d.provider_lot, expirationDate: d.expiration_date, cultivationId: d.cultivation_id, sourceType: "opening_balances", sourceId: r.rows[0]!.id, date: new Date().toISOString().slice(0, 10) });

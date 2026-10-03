@@ -7,9 +7,11 @@
  * consumo que atende uma requisição leva o destino dela, e a devolução de consumo leva o do consumo (por isso a seção
  * não é dela: o destino da devolução nunca se informa).
  *
- * A REGRA QUE TRAVA NASCE DESLIGADA (decisão 281, item (4) da 240): o neutro é "não usada" em todas — nada novo é
- * exigido nem aceito numa TOP até o Maike ligar a dimensão, TOP por TOP. Quem executa é a API, no lançamento
- * (`recusasDoDestinoPelaTop`, com o valor FINAL de cada dimensão — o informado ou o herdado da origem).
+ * A REGRA QUE TRAVA NASCE DESLIGADA (decisão 281, item (4) da 240): o neutro é "opcional" em todas (OPERACOES-01 F11,
+ * decisão 288 — era "não usada" na F5a) — a TOP aceita o destino como a baixa e a requisição antigas aceitavam, e nada
+ * é exigido ("Opcional" nunca recusa). "Não usada" e "Obrigatória" são escolhas da TOP, gravadas pelo Maike, TOP por
+ * TOP. Quem executa é a API, no lançamento (`recusasDoDestinoPelaTop`, com o valor FINAL de cada dimensão — o
+ * informado ou o herdado da origem).
  *
  * ARQUIVO FOLHA (regra 3 do ponto de extensão, `tipo-operacao-secoes-v5.ts`): importa só os TIPOS do ponto de
  * extensão e `estoque-documento.ts` (que lê o registry e não importa a configuração). A família é PERGUNTADA ao
@@ -54,7 +56,7 @@ export const ESPECIES_COM_DESTINO_PELA_TOP: readonly EspecieEstoque[] = Object.f
  */
 function porDimensao(valor: (d: DimensaoDestinoEstoque) => ExigenciaDestinoTop): SecaoDestinoTop {
   const lidos = new Map<DimensaoDestinoEstoque, ExigenciaDestinoTop>(CAMPOS_DESTINO_ESTOQUE.map((c) => [c.chave, valor(c.chave)]));
-  const de = (d: DimensaoDestinoEstoque): ExigenciaDestinoTop => lidos.get(d) ?? "nao_usada";
+  const de = (d: DimensaoDestinoEstoque): ExigenciaDestinoTop => lidos.get(d) ?? "opcional";
   return {
     centroCusto: de("centroCusto"),
     equipamento: de("equipamento"),
@@ -67,14 +69,15 @@ function porDimensao(valor: (d: DimensaoDestinoEstoque) => ExigenciaDestinoTop):
 
 /** O texto de ajuda da aba Destino no editor da TOP. */
 const AJUDA_DESTINO =
-  "O destino diz para onde vai o que sai do estoque: centro de resultado, máquina/equipamento, ordem de serviço, lote de animais, área/talhão e safra. Cada um pode ser não usado, opcional ou obrigatório nesta operação. Vale para a requisição, o consumo e a saída; o consumo que atende uma requisição leva o destino dela, e a devolução de consumo leva o do consumo.";
+  "O destino diz para onde vai o que sai do estoque: centro de resultado, máquina/equipamento, ordem de serviço, lote de animais, área/talhão e safra. Cada um pode ser não usado, opcional ou obrigatório nesta operação; o padrão é opcional (aceita o destino, nada é exigido). Vale para a requisição, o consumo e a saída; o consumo que atende uma requisição leva o destino dela, e a devolução de consumo leva o do consumo.";
 
 export const SECAO_DESTINO: DefinicaoSecaoV5<"destino", SecaoDestinoTop> = Object.freeze({
   nome: "destino",
   rotulo: "Destino",
   ajuda: AJUDA_DESTINO,
   chaves: Object.freeze(CAMPOS_DESTINO_ESTOQUE.map((c) => c.chave)),
-  neutro: (): SecaoDestinoTop => porDimensao(() => "nao_usada"),
+  // O neutro (OPERACOES-01 F11, decisão 288): "opcional" nas seis — aceita o destino, nada é exigido.
+  neutro: (): SecaoDestinoTop => porDimensao(() => "opcional"),
   ler: (l: LeitorDeSecaoTop): SecaoDestinoTop => porDimensao((d) => l.enumerado(d, EXIGENCIAS_DESTINO_TOP)),
   // Cada dimensão decide sozinha: nada a zerar. Cópia nova, que não aponta para a entrada.
   normalizar: (v: SecaoDestinoTop): SecaoDestinoTop => porDimensao((d) => v[d]),

@@ -77,13 +77,15 @@ async function incluirItemNaCentralDaBase(page: Page, mundo: "antes" | "motor", 
   await incluirItemNaCentralDeEstoque(page, { nomeProduto, quantidade: "5", custo: "12.5" });
 }
 
-test("OP01-F5b · K-2 (sentido 2) — a API deste HEAD declara as quatro chaves do estoque (as duas da F5b no fim); a Central de Estoque do web da base lança uma entrada com o corpo de hoje, confirma pela prévia de hoje, e o saldo muda no servidor", async ({ page }) => {
+test("OP01-F5b · K-2 (sentido 2) — a API deste HEAD declara as quatro chaves do estoque (as duas da F5b no fim) e, na entrada, a da F11; a Central de Estoque do web da base lança uma entrada com o corpo de hoje, confirma pela prévia de hoje, e o saldo muda no servidor", async ({ page }) => {
   await login(page);
   const mundo = mundoDoWebDaBase();
-  // PREMISSA: a API no ar é a DESTA fase — as quatro chaves, nesta ordem (as aditivas da F5b no fim do bloco).
+  // PREMISSA: a API no ar é a DESTA fase — as quatro chaves, nesta ordem (as aditivas da F5b no fim do bloco), e, na
+  // ENTRADA, a da F11 (decisão 288) depois delas: `saldoInicial` (o saldo inicial pela TOP de entrada; aditiva, o web da
+  // base não a lê).
   const ops = await api<{ capacidades?: Record<string, unknown> }>(page, "GET", "/api/estoque/entradas/operation-types");
-  expect(Object.entries(ops.capacidades ?? {}), "premissa: a API deste HEAD declara documentoEstoque, movimentacaoInterna, layoutDocumento e regrasDaOperacao")
-    .toEqual([["documentoEstoque", 1], ["movimentacaoInterna", 1], ["layoutDocumento", 1], ["regrasDaOperacao", 1]]);
+  expect(Object.entries(ops.capacidades ?? {}), "premissa: a API deste HEAD declara documentoEstoque, movimentacaoInterna, layoutDocumento, regrasDaOperacao e (só na entrada) saldoInicial")
+    .toEqual([["documentoEstoque", 1], ["movimentacaoInterna", 1], ["layoutDocumento", 1], ["regrasDaOperacao", 1], ["saldoInicial", 1]]);
   const { id: top } = await criarTopDeEstoque(page, "entrada");
   const c = await cadastroDeEstoque(page);
   expect(Number((await saldoNoServidor(page, c.armazem, c.produto)).quantity), "premissa: produto novo, sem saldo").toBe(0);

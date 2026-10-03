@@ -167,7 +167,7 @@ describe("TF-1 — capacidades: o marcador padroesFinanceiros e a seção no for
     const chaves = Object.keys(d);
     expect(chaves.indexOf("formato5"), "premissa: o formato5 está na raiz").toBeGreaterThan(-1);
     expect(chaves.indexOf("padroesFinanceiros"), "na RAIZ, depois do formato5").toBeGreaterThan(chaves.indexOf("formato5"));
-    expect((d.formato5 as { secoes: string[] }).secoes, "a seção da F9, à mão, depois das da F5a e da F6a").toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"]);
+    expect((d.formato5 as { secoes: string[] }).secoes, "a seção da F9, à mão, depois das da F5a e da F6a (e antes da da F11)").toEqual(["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", "implantacao"]);
     expect(d.formato5).toMatchObject({ suportado: true, versaoSchema: 5, leituraDoDetalhe: "formato_gravado" });
     // OS toEqual DE HOJE, sem mudança: o editor anterior compara estes números.
     expect(d.contractVersion).toBe(1);

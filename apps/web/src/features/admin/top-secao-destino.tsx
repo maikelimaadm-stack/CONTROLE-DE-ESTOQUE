@@ -3,7 +3,8 @@
  * OPERACOES-01 F5a (decisão 282) — a aba "Destino" do editor da TOP no formato 5 (seção `destino`).
  *
  * Uma escolha por dimensão do destino — centro de resultado, máquina/equipamento, ordem de serviço, lote de animais,
- * área/talhão e safra —, cada uma "Não usada" (o neutro: o comportamento de hoje), "Opcional" ou "Obrigatória". As
+ * área/talhão e safra —, cada uma "Não usada", "Opcional" (o neutro desde a OPERACOES-01 F11, decisão 288: aceita o
+ * destino como a baixa e a requisição antigas, nada é exigido) ou "Obrigatória". As
  * dimensões, os rótulos e as opções são do DOMÍNIO (`CAMPOS_DESTINO_ESTOQUE`, o dono da lista de dimensões;
  * `EXIGENCIAS_DESTINO_TOP` e `ROTULOS_EXIGENCIA_DESTINO_TOP`, os da seção): nenhuma lista nem rótulo é escrito aqui, e
  * a dimensão que o domínio acrescentar aparece sozinha (o tipo `SecaoDestinoTop` cobra a chave).

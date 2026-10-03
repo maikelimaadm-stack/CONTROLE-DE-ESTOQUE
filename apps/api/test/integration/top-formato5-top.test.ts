@@ -146,7 +146,7 @@ async function condicoesNoBanco(topId: string): Promise<string[]> {
 // T5-1
 // ───────────────────────────────────────────────────────────────────────────────────────────────────
 describe("T5-1 — capacidades: o bloco formato5 na raiz, com o catálogo do domínio", () => {
-  it("T5-1 formato5 = {suportado, versaoSchema 5, secoes [destino, fluxo, fluxoCompra, divergenciaPedido, financeiroPadrao], leituraDoDetalhe, catalogo} depois de regrasGerais; os blocos de hoje iguais, nas duas instâncias", async () => {
+  it("T5-1 formato5 = {suportado, versaoSchema 5, secoes [destino, fluxo, fluxoCompra, divergenciaPedido, financeiroPadrao, implantacao (F11)], leituraDoDetalhe, catalogo} depois de regrasGerais; os blocos de hoje iguais, nas duas instâncias", async () => {
     for (const [app, ligado] of [[c.h.app, false], [c.ligada, true]] as const) {
       const r = await app.inject({ method: "GET", url: "/api/admin/tipos-operacao/capabilities", headers: c.h.headers() });
       expect(r.statusCode, r.body).toBe(200);
@@ -154,7 +154,7 @@ describe("T5-1 — capacidades: o bloco formato5 na raiz, com o catálogo do dom
       // O bloco novo: o catálogo é o MESMO do domínio (fonte única), serializado.
       // OPERACOES-01 F5a (decisão 282), F6a (decisão 283) e F9 (decisão 286): as seções Destino, Fluxo, Fluxo de compra,
       // Divergência e Padrões financeiros saem da lista do domínio, nesta ordem (nenhum código da rota mudou).
-      expect(d.formato5).toEqual({ suportado: true, versaoSchema: 5, secoes: ["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao"], leituraDoDetalhe: "formato_gravado", catalogo: JSON.parse(JSON.stringify(CATALOGO_TOP)) });
+      expect(d.formato5).toEqual({ suportado: true, versaoSchema: 5, secoes: ["destino", "fluxo", "fluxoCompra", "divergenciaPedido", "financeiroPadrao", "implantacao"], leituraDoDetalhe: "formato_gravado", catalogo: JSON.parse(JSON.stringify(CATALOGO_TOP)) });
       const chaves = Object.keys(d);
       expect(chaves.indexOf("formato5"), "na RAIZ, depois de regrasGerais").toBeGreaterThan(chaves.indexOf("regrasGerais"));
       expect(chaves.indexOf("regrasGerais"), "premissa: regrasGerais está na raiz").toBeGreaterThan(-1);

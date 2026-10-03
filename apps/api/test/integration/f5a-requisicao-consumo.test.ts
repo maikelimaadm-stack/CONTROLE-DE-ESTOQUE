@@ -79,7 +79,9 @@ describe("RC-1 — o caminho inteiro: requisição → reserva → consumo em pa
   });
 
   it("RC-1d o CONSUMO de 4 ligado (aberto) herda o destino; a reserva continua 10 (6 pendentes + 4 do consumo aberto); a requisição fica \"parcial\"", async () => {
-    // A TOP do consumo é a NEUTRA (destino "não usada"): o destino HERDADO não é recusado (quem o escolheu foi a requisição).
+    // A TOP do consumo é a NEUTRA (destino "opcional" desde a F11, decisão 288): o consumo HERDA o destino da requisição
+    // sem informá-lo (e o herdado nunca é recusado, nem numa TOP que grava "não usada": quem o escolheu foi a requisição —
+    // `f5a-destino-fluxo.test.ts`, DF-2c).
     const r = await lancarDoc("consumo", [item(p.id, "4", { origem_item_id: itemDaRequisicao })], { origem_documento_id: requisicao });
     expect(r.statusCode, r.body).toBe(201);
     consumo = (corpoDe(r) as { id: string }).id;

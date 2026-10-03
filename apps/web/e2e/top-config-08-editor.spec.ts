@@ -274,10 +274,12 @@ test("W-1 — as quatro espécies de estoque: Confirmação e a aba Aprovação 
       // também (as espécies de estoque não têm execução configurada: a aba não decidiria nada). As abas que ficam são
       // exatamente as do perfil — a presença ao lado da ausência.
       // OPERACOES-01 F5a (decisão 282): a saída ganha a aba Destino (a seção do 5 que ela usa); Fluxo é só do consumo.
+      // OPERACOES-01 F11 (decisão 288): a entrada ganha a aba Implantação (o saldo inicial), e só ela.
       const usaDestino = top.codigoBase === "estoque.saida";
+      const usaImplantacao = top.codigoBase === "estoque.entrada";
       await expect(forma.locator("[role='tablist'] [data-testid^='top-aba-']"), `${top.codigoBase}: as abas do documento de estoque no editor do 5`)
-        .toHaveText(usaDestino ? ["Identificação", "Geral", "Estoque", "Destino", "Aprovação"] : ["Identificação", "Geral", "Estoque", "Aprovação"]);
-      for (const fora of ["destinos", "financeiro", "fiscal", "execucao", "fluxo", ...(usaDestino ? [] : ["destino"])]) {
+        .toHaveText(["Identificação", "Geral", "Estoque", ...(usaDestino ? ["Destino"] : []), ...(usaImplantacao ? ["Implantação"] : []), "Aprovação"]);
+      for (const fora of ["destinos", "financeiro", "fiscal", "execucao", "fluxo", ...(usaDestino ? [] : ["destino"]), ...(usaImplantacao ? [] : ["implantacao"])]) {
         await expect(forma.getByTestId(`top-aba-${fora}`), `${top.codigoBase}: a aba ${fora} não se aplica`).toHaveCount(0);
       }
       await forma.getByTestId("top-aba-aprovacao").click();

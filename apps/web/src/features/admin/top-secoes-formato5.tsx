@@ -12,6 +12,8 @@ import { SecaoFluxoCompra } from "./top-secao-fluxo-compra";
 import { SecaoDivergenciaPedido } from "./top-secao-divergencia-pedido";
 // OPERACOES-01 F9 (decisão 286): a aba Padrões financeiros.
 import { AbaFinanceiroPadrao } from "./top-secao-financeiro-padrao";
+// OPERACOES-01 F11 (decisão 288): a aba Implantação (o saldo inicial na TOP de entrada).
+import { AbaImplantacao } from "./top-secao-implantacao";
 
 /**
  * O REGISTRO DAS ABAS DAS SEÇÕES DE EXTENSÃO DO FORMATO 5 (OPERACOES-01 F4, decisão 281).
@@ -25,7 +27,7 @@ import { AbaFinanceiroPadrao } from "./top-secao-financeiro-padrao";
  * │                                                                                                      │
  * │ O COMPILADOR COBRA O RESTO (regra 5 do ponto de extensão): o tipo do registro é um mapa com UMA chave│
  * │ por nome de seção. Acrescentar a definição no domínio sem a aba aqui não compila; a aba de uma seção │
- * │ que não existe também não. Hoje: as da F5a, da F6a e da F9.                                         │
+ * │ que não existe também não. Hoje: as da F5a, da F6a, da F9 e da F11.                                  │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 
@@ -44,7 +46,7 @@ export interface PropsDaSecaoV5<K extends NomeSecaoExtensaoV5> {
 export type ComponenteDaSecaoV5<K extends NomeSecaoExtensaoV5> = (p: PropsDaSecaoV5<K>) => React.ReactNode;
 
 /** UMA ENTRADA POR SEÇÃO DE EXTENSÃO — as fases F5 a F10 acrescentam a sua aqui (o compilador cobra). F5a: destino e fluxo;
- * F6a: fluxo de compra e divergência com o pedido; F9: padrões financeiros. */
+ * F6a: fluxo de compra e divergência com o pedido; F9: padrões financeiros; F11: implantação. */
 export const COMPONENTES_DAS_SECOES_V5: { readonly [K in NomeSecaoExtensaoV5]: ComponenteDaSecaoV5<K> } = {
   destino: AbaDestino,
   fluxo: AbaFluxo,
@@ -52,6 +54,8 @@ export const COMPONENTES_DAS_SECOES_V5: { readonly [K in NomeSecaoExtensaoV5]: C
   divergenciaPedido: SecaoDivergenciaPedido,
   // OPERACOES-01 F9 (decisão 286): os padrões financeiros e a provisão.
   financeiroPadrao: AbaFinanceiroPadrao,
+  // OPERACOES-01 F11 (decisão 288): o saldo inicial na TOP de entrada.
+  implantacao: AbaImplantacao,
 };
 
 /**

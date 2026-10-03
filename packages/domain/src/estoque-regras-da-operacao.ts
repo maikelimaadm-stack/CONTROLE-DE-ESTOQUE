@@ -26,6 +26,7 @@ import { camposExigidosTop, EXIGENCIAS_GERAIS_ESTOQUE_TOP } from "./tipo-operaca
 import { regrasGeraisDaVersaoTop } from "./tipo-operacao-regras-gerais.js";
 import { EXIGENCIAS_DESTINO_TOP, SECAO_DESTINO, type SecaoDestinoTop } from "./tipo-operacao-secao-destino.js";
 import { EXIGENCIAS_REQUISICAO_TOP, SECAO_FLUXO, type SecaoFluxoTop } from "./tipo-operacao-secao-fluxo.js";
+import { SECAO_IMPLANTACAO } from "./tipo-operacao-secao-implantacao.js";
 import { CAMPOS_DESTINO_ESTOQUE } from "./estoque-documento.js";
 
 /** A versão do contrato de `/api/estoque/<segmento>/regras-da-operacao`. */
@@ -68,6 +69,20 @@ export function regrasDaOperacaoDoEstoque(familia: string, configuracao: unknown
     destino: SECAO_DESTINO.usadaPor(familia) ? SECAO_DESTINO.normalizar(secoes.destino) : null,
     fluxo: SECAO_FLUXO.usadaPor(familia) ? SECAO_FLUXO.normalizar(secoes.fluxo) : null,
   };
+}
+
+/**
+ * OPERACOES-01 F11 (decisão 288): a versão da TOP lança SALDO INICIAL? Só na família da entrada (a que usa a seção
+ * `implantacao`) e só com a seção LIGADA num formato 5. Formatos 1 a 4, 5 sem a seção, configuração nula ou ilegível
+ * e família que não usa a seção respondem `false` — o neutro: a entrada é comum (decisão 281: a regra que trava nasce
+ * desligada). Quem executa é a API, na confirmação da entrada (movimento `opening_balance` e a recusa de duplicidade).
+ * `RegrasDaOperacaoDoEstoque` não muda: a Central não precisa saber, a confirmação é a autoridade.
+ */
+export function saldoInicialPelaTop(familia: string, configuracao: unknown): boolean {
+  if (!SECAO_IMPLANTACAO.usadaPor(familia)) return false;
+  const lida = lerConfiguracaoTop(configuracao);
+  if (!lida.ok) return false;
+  return secoesExtensaoDaVersaoTop(lida.valor).implantacao.saldoInicial === true;
 }
 
 // ─────────────── o leitor do fio (a tela) ───────────────

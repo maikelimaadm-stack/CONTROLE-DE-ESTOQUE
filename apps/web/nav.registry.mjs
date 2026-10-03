@@ -51,7 +51,7 @@ const cfg = (tab, sub, label, perm, extra = {}) => ({ id: `configuracoes.${tab}$
 export const MODULES = [
   m("inicio", "Início", "/", { perm: "dashboard.home.view", keywords: ["home", "painel", "dashboard"] }),
   m("compras", "Compras", "/compras", { keywords: ["suprimentos", "solicitação", "cotação", "pedido de compra"], description: "Processos de compra do início ao fim" }),
-  m("estoque", "Estoque", "/estoque", { keywords: ["almoxarifado", "insumos", "local de estoque", "armazém", "saldo"], description: "Saldo, recebimentos, operações e fábrica de ração" }),
+  m("estoque", "Estoque", "/estoque", { keywords: ["almoxarifado", "insumos", "local de estoque", "armazém", "saldo"], description: "Movimentações, saldo, recebimentos e fábrica de ração" }),
   m("financeiro", "Financeiro", "/financeiro", { keywords: ["contas", "banco", "caixa", "títulos"], description: "Contas a pagar/receber, caixa e bancos, planejamento" }),
   // A descrição NÃO descreve mais uma cadeia fixa. "Orçamento → pedido → venda" era política de negócio
   // escrita na navegação: a partir da TOP-CONFIG-03 quem diz o que um documento gera é a política da
@@ -81,37 +81,46 @@ export const AREAS = [
   a("compras", "documentos", "Documentos", ["pedidos_compra.view", "compras.view", "orcamentos_compra.view"], { keywords: ["pedido de compra", "compra", "nota de compra", "fornecedor", "entrada de mercadoria", "documento de compra", "orçamento de compra", "cotação"], description: "Uma lista com filtro por tipo de documento de compra" }),
   a("compras", "visao-geral", "Visão Geral", "dashboard.supply.view", { aliases: ["/dashboards/suprimentos"], keywords: ["indicadores de compras", "dashboard"] }),
   a("compras", "processos", "Processos", P.PURCHASE, { keywords: ["solicitação", "cotação", "aprovação", "autorização", "compra", "recebimento", "meus processos", "rejeitados"], description: "Uma lista: escopo (todos / meus) + etapa como filtro" }),
-  act("compras", "solicitacao", "Nova solicitação de compra", "/suprimentos/new", "purchase_requests.create", { keywords: ["comprar", "pedir", "requisitar compra"] }),
+  // OPERACOES-01 F11 (decisão 288): a solicitação sai do menu (pedido + orçamento cobrem). A entrada FICA em `ALL`
+  // (`search: false`) porque é a âncora de `/suprimentos/*` no `moduleForPath` (lib/nav.ts) e dá o rótulo da aba de
+  // trabalho da rota `/suprimentos/new`, que continua abrindo.
+  act("compras", "solicitacao", "Nova solicitação de compra", "/suprimentos/new", "purchase_requests.create", { search: false, keywords: ["comprar", "pedir", "requisitar compra"] }),
   // ---------------- Estoque ----------------
+  // OPERACOES-01 F11 (decisão 288): o lançamento antigo sai do menu quando a Central cobre; a entrada continua em `ALL`
+  // (`search: false`) para alias, aba antiga, rótulo da aba de trabalho e módulo da rota. As subs antigas viram histórico
+  // "(tela antiga)"; a requisição e a entrada manual ficam como AÇÃO só para o que a Central não cobre (capex/opex;
+  // pagamento com movimento bancário; natureza e centro de resultado por item). Nenhum id, alias, `LEGACY_TABS`, `EXTRA_REDIRECTS` ou `DETAIL_ROUTES` mudou.
   a("estoque", "visao-geral", "Visão Geral", "stocks.view", { keywords: ["indicadores de estoque"] }),
   // ESTOQUE-01 (decisão 274) e OPERACOES-01 F5b (decisão 282): a lista única do DOCUMENTO de estoque (entrada, saída,
   // transferência, ajuste, requisição, consumo e devolução de consumo), com o `Novo` que pergunta a TOP. Qualquer leitura
-  // de uma das sete espécies libera a aba; quem recorta linha é o servidor. As áreas abaixo (as telas antigas) não mudam.
-  a("estoque", "movimentacoes", "Movimentações", ["entradas_estoque.view", "saidas_estoque.view", "transferencias_estoque.view", "ajustes_estoque.view", "requisicoes_estoque.view", "consumos_estoque.view", "devolucoes_consumo_estoque.view"], { keywords: ["documento de estoque", "entrada de estoque", "saída de estoque", "transferência de estoque", "ajuste de estoque", "inventário", "tipo de operação", "requisição de material", "consumo", "devolução de consumo"], description: "Uma lista dos documentos de estoque (entrada, saída, transferência, ajuste, requisição, consumo e devolução de consumo), com filtro por espécie e situação" }),
+  // de uma das sete espécies libera a aba; quem recorta linha é o servidor. F11 (288): é aqui que a busca leva quem
+  // procura o lançamento antigo (requisição, saída direta, baixa, devolução, entrada sem nota, transferência entre locais
+  // de estoque, correção) — as palavras-chave abaixo dizem isso.
+  a("estoque", "movimentacoes", "Movimentações", ["entradas_estoque.view", "saidas_estoque.view", "transferencias_estoque.view", "ajustes_estoque.view", "requisicoes_estoque.view", "consumos_estoque.view", "devolucoes_consumo_estoque.view"], { keywords: ["documento de estoque", "entrada de estoque", "saída de estoque", "transferência de estoque", "ajuste de estoque", "inventário", "tipo de operação", "requisição de material", "consumo", "devolução de consumo", "requisição", "saída direta", "baixa de estoque", "devolução", "entrada sem nota", "entrada manual", "transferência entre locais de estoque", "entre armazéns", "correção de estoque"], description: "Uma lista dos documentos de estoque (entrada, saída, transferência, ajuste, requisição, consumo e devolução de consumo), com filtro por espécie e situação" }),
   a("estoque", "estoque", "Estoque", ["stocks.view", "stock_corrections.view"], { keywords: ["saldo", "lote", "validade", "estoque mínimo", "custo"], description: "Saldo, movimentações (ledger) e ajustes" }),
   s("estoque", "estoque", "saldo", "Saldo", "stocks.view", { aliases: ["/estoque/saldo"], keywords: ["consultar estoque", "quantidade", "produto"] }),
   s("estoque", "estoque", "ledger", "Movimentações", "stocks.view", { aliases: ["/estoque/movimentos"], keywords: ["histórico", "ledger", "extrato de estoque"] }),
-  s("estoque", "estoque", "ajustes", "Ajustes de estoque", "stock_corrections.view", { aliases: ["/estoque/correcoes"], keywords: ["correção", "inventário", "acerto"] }),
+  s("estoque", "estoque", "ajustes", "Ajustes de estoque (tela antiga)", "stock_corrections.view", { search: false, aliases: ["/estoque/correcoes"], keywords: ["correção", "inventário", "acerto"] }),
   a("estoque", "recebimentos", "Recebimentos", ["invoices.view", "input_entries.view", "dfe.view", "dfe_drafts.view"], { keywords: ["entrada", "nota fiscal", "xml", "receber produto"] }),
   s("estoque", "recebimentos", "fiscais", "Documentos fiscais", "invoices.view", { aliases: ["/estoque/documentos-fiscais"], keywords: ["nf-e", "nota lançada", "entrada fiscal"] }),
-  s("estoque", "recebimentos", "manuais", "Entradas manuais", "input_entries.view", { aliases: ["/estoque/entradas"], keywords: ["entrada de insumos", "sem nota"] }),
+  s("estoque", "recebimentos", "manuais", "Entradas manuais (tela antiga)", "input_entries.view", { search: false, aliases: ["/estoque/entradas"], keywords: ["entrada de insumos", "sem nota"] }),
   s("estoque", "recebimentos", "dfe", "DFe / XML recebidos", "dfe.view", { aliases: ["/estoque/dfe"], keywords: ["dfe", "xml", "manifestação", "sefaz"] }),
   s("estoque", "recebimentos", "conferencia", "Em conferência", "dfe_drafts.view", { aliases: ["/estoque/aprovacao-notas"], keywords: ["aprovação de notas", "conferir nota"] }),
-  a("estoque", "operacoes", "Operações", ["requisitions.view", "stock_writeoffs.view", "warehouse_transfers.view", "farm_transfers.view", "devolutions.view"], { keywords: ["saída", "requisição", "baixa", "transferência", "devolução"] }),
-  s("estoque", "operacoes", "requisicoes", "Requisições", "requisitions.view", { aliases: ["/estoque/requisicoes"], keywords: ["solicitar material", "requisição de estoque", "assinatura"] }),
-  s("estoque", "operacoes", "diretas", "Saídas diretas", "stock_writeoffs.view", { aliases: ["/estoque/baixas"], keywords: ["baixa", "consumo", "saída direta"] }),
-  s("estoque", "operacoes", "transferencias", "Transferências", ["warehouse_transfers.view", "farm_transfers.view"], { aliases: ["/estoque/transferencias"], keywords: ["entre locais de estoque", "entre armazéns", "entre empresas", "transferir estoque"] }),
-  s("estoque", "operacoes", "devolucoes", "Devoluções", "devolutions.view", { aliases: ["/estoque/devolucoes"], keywords: ["devolver itens", "retorno ao estoque"] }),
+  a("estoque", "operacoes", "Operações", ["requisitions.view", "stock_writeoffs.view", "warehouse_transfers.view", "farm_transfers.view", "devolutions.view"], { keywords: ["transferência entre empresas", "entre empresas"] }),
+  s("estoque", "operacoes", "requisicoes", "Requisições (tela antiga)", "requisitions.view", { search: false, aliases: ["/estoque/requisicoes"], keywords: ["solicitar material", "requisição de estoque", "assinatura"] }),
+  s("estoque", "operacoes", "diretas", "Saídas diretas (tela antiga)", "stock_writeoffs.view", { search: false, aliases: ["/estoque/baixas"], keywords: ["baixa", "consumo", "saída direta"] }),
+  s("estoque", "operacoes", "transferencias", "Transferências", ["warehouse_transfers.view", "farm_transfers.view"], { aliases: ["/estoque/transferencias"], keywords: ["entre empresas", "transferir estoque entre empresas"] }),
+  s("estoque", "operacoes", "devolucoes", "Devoluções (tela antiga)", "devolutions.view", { search: false, aliases: ["/estoque/devolucoes"], keywords: ["devolver itens", "retorno ao estoque"] }),
   a("estoque", "fabrica", "Fábrica de Ração", ["feed_formulas.view", "feed_batches.view"], { keywords: ["ração", "fórmula", "batida", "produção de ração", "nutrição"] }),
   s("estoque", "fabrica", "formulas", "Fórmulas", "feed_formulas.view", { aliases: ["/estoque/formulacoes"], keywords: ["formulação", "receita de ração"] }),
   s("estoque", "fabrica", "producoes", "Produções", "feed_batches.view", { aliases: ["/estoque/batidas"], keywords: ["batida", "produzir ração"] }),
   s("estoque", "fabrica", "consumo", "Consumo de matéria-prima", "stocks.view", { search: false }),
   s("estoque", "fabrica", "custos", "Custos (produto acabado)", "stocks.view", { search: false }),
-  act("estoque", "entrada-manual", "Nova entrada manual", "/estoque/entradas/new", "input_entries.create", { keywords: ["dar entrada", "receber insumo"] }),
+  act("estoque", "entrada-manual", "Entrada sem nota com pagamento ou natureza e centro por item", "/estoque/entradas/new", "input_entries.create", { keywords: ["entrada de insumos", "sem nota", "pagamento", "movimento bancário", "natureza", "centro de resultado"] }),
   act("estoque", "documento-fiscal", "Novo documento fiscal / importar XML", "/estoque/documentos-fiscais/new", "invoices.create", { keywords: ["importar xml", "lançar nota"] }),
-  act("estoque", "requisicao", "Nova requisição", "/estoque/requisicoes/new", "requisitions.create", { keywords: ["solicitar material", "pedir insumo"] }),
-  act("estoque", "saida-direta", "Nova saída direta", "/estoque/baixas/new", "stock_writeoffs.create", { keywords: ["baixar estoque"] }),
-  act("estoque", "transferencia-armazens", "Transferência entre locais de estoque", "/estoque/transferencias/new?kind=warehouse", "warehouse_transfers.create"),
+  act("estoque", "requisicao", "Requisição com classificação capex/opex", "/estoque/requisicoes/new", "requisitions.create", { keywords: ["capex", "opex", "investimento", "custeio", "classificação"] }),
+  act("estoque", "saida-direta", "Nova saída direta", "/estoque/baixas/new", "stock_writeoffs.create", { search: false, keywords: ["baixar estoque"] }),
+  act("estoque", "transferencia-armazens", "Transferência entre locais de estoque", "/estoque/transferencias/new?kind=warehouse", "warehouse_transfers.create", { search: false }),
   act("estoque", "transferencia-fazendas", "Transferência entre empresas", "/estoque/transferencias/new?kind=farm", "farm_transfers.create"),
   act("estoque", "producao-racao", "Nova produção de ração", "/estoque/batidas/new", "feed_batches.create", { keywords: ["batida", "misturar ração"] }),
   // ---------------- Financeiro ----------------
