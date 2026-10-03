@@ -1573,7 +1573,11 @@ verde em 03/10): o banco A reproduz produção — 0001..0041 e a 0049 como o ru
 A, cada migration da PR aplica sem erro, com as pré e as pós-condições do próprio arquivo, e o ledger final é igual ao
 disco. O retrato do catálogo de A é idêntico ao de B: tabelas, colunas, restrições, índices, funções (corpo, SECURITY
 DEFINER, search_path), gatilhos, políticas, RLS, privilégios, comentários e o conteúdo das tabelas semeadas
-(`modulos_escopo_empresa` com o `'mapa'` na ordem 12) — 8480 linhas comparadas, nenhuma diferença. Prova reversa local
+(`modulos_escopo_empresa` com o `'mapa'` na ordem 12) — 8480 linhas comparadas, nenhuma diferença. **O alcance da
+prova:** bancos NOVOS, sem o acervo de produção, migrados como superusuário local; ela prova a ORDEM (nenhuma migration
+da PR depende da 0049 nem da ausência dela, e o esquema final é o mesmo), não os dados nem o papel de produção. As
+pré-condições que leem dados reais (a P8 da 0042, por exemplo) e o dono das funções rodam de novo no pre-deploy, sobre
+produção; a conferência lá é o passo 0 do roteiro do Maike: PENDING. Prova reversa local
 (ledger falso da 0046, uma linha da 0049 mudada, pós-condição da 0049, pré-condição da 0044, catálogo mudado em A):
 cada uma reprova com o diff por seção e chave. Nada muda no procedimento do deploy: o pre-deploy é o mesmo `migrate`; a
 ordem fora do número não exige passo manual.
@@ -2354,8 +2358,10 @@ depois de conferir o deploy (roteiro abaixo).
 **Conserto do extrato (revisão final, decisão do Maike de 03/10).** Impacto em dados reais: nenhum — a 0042 ainda não
 está em produção, a função só lê e nenhuma linha muda. O que muda para o usuário: quem tem escopo financeiro PARCIAL
 passa a ver, em Bancos e caixa (Contas, Extrato) e no fluxo da conta, só os movimentos das suas empresas, sem o saldo
-inicial do cadastro (o saldo é a soma dos movimentos dele; as respostas trazem `escopo_saldo: "parcial"`); proprietário
-e "todas" no financeiro: nada muda. Janelas: a API anterior não chama a função; o web anterior não chama
+inicial do cadastro (o saldo é a soma dos movimentos dele; as respostas trazem `escopo_saldo: "parcial"`, e a tela
+mostra o aviso "Saldo das suas empresas … Não é o saldo da conta inteira." em Contas e Extrato — E2E
+`apps/web/e2e/f8-bancos-escopo-empresa.spec.ts`, BC-1 e BC-2); proprietário e "todas" no financeiro: nada muda, nenhum
+aviso. Janelas: a API anterior não chama a função; o web anterior não chama
 `/api/financeiro/*` (K-2 rodado de novo: 3 passaram); web nova × API anterior: a capacidade dá 404 (K-1, sem mudança).
 Pós-condição nova: "OPERACOES-01 F8: erp.extrato_conta_organizacao sem o recorte pelo escopo de empresa do modulo
 financeiro (escopo_empresa_total e empresas_do_membro no WHERE)." Conferência em produção (uma conta compartilhada real,
@@ -2365,7 +2371,11 @@ a porta da 0015 (`erp.movimentos_conta_organizacao`, JÁ em produção) e as rot
 e o relatório `bank_statement` — continuam somando as empresas da conta para quem tem `bank_accounts.view` ∧
 `bank_movements.view` (o contrato vigente da PRE-BASE2-03, `apps/api/test/integration/banco-organizacional.test.ts`):
 numa conta compartilhada, quem vê só a empresa A ainda lê por elas os movimentos da empresa B. Este deploy não muda
-isso; mudar exige migration nova (sem número reservado: a 0048 foi usada pela F12) e é decisão do Maike.
+isso; mudar exige migration nova (sem número reservado: a 0048 foi usada pela F12) e é decisão do Maike. **Também
+NÃO FEITO (declarado):** a Conciliação mostra as transações OFX da importação inteira (data, valor, memo) a quem tem
+`ofx_imports.view`, mesmo com escopo parcial: `erp.ofx_transactions` é da CONTA, sem empresa — o mesmo contrato das rotas
+antigas `/api/financial/ofx-imports*`; os movimentos vinculados e sugeridos ao lado já são recortados pelo escopo.
+Recortar o arquivo do banco por empresa é contrato novo e decisão do Maike.
 
 **Roteiro do Maike em produção** (produção é operacional — decisões 240 e 247). Os passos 0 a 9 são só leitura (nada é
 gravado); o passo 10 grava, e só com a decisão dele.

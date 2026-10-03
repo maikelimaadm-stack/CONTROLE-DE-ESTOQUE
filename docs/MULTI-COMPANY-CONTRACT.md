@@ -311,7 +311,8 @@ respostas dizem qual dos dois (`escopo_saldo`). Nada de outra empresa sai da fun
 empresa ou valor, nem dentro de total, contagem, acumulado ou página. As rotas `/api/financeiro/contas`,
 `/api/financeiro/extrato` e o fluxo de caixa da conta leem por ela; o fluxo **por empresa** lê `erp.bank_movements`
 sob a RLS e não tem saldo. A porta da 0015 e as rotas `/api/financial/*` que a usam continuam com o contrato anterior
-até decisão própria.
+até decisão própria. As transações OFX da Conciliação também: `erp.ofx_transactions` é da CONTA, sem empresa, e a
+importação aparece inteira a quem tem `ofx_imports.view`; os movimentos ligados a ela seguem o escopo.
 
 Não existe rateio inventado do saldo inicial: seria trocar um vazamento por um número financeiramente falso.
 No painel financeiro, quem não tem a capacidade de organização recebe o bloco de bancos vazio e sinalizado

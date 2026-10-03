@@ -79,8 +79,14 @@ export const moduloAtivo = (ctx: RequestContext): string | null => ctx.moduloEmp
  * predicado vira "o membro tem alguma empresa no módulo" (constante), não "a empresa DESTA linha está no escopo"
  * (OPERACOES-01 F12, decisão 288). Lança para TODO contexto (inclusive o proprietário, que não emite o `exists`): a
  * chamada errada morre no primeiro teste que passar por ela, não só no de quem tem escopo restrito.
+ *
+ * O alias `me` também é RECUSADO (`me`, `me.empresa_id`, `"me".empresa_id`): é o alias da membro_empresas dentro do
+ * `exists`, e uma tabela da consulta chamada `me` seria encoberta por ela — o mesmo predicado constante por outra porta.
  */
 const colunaDeEmpresa = (col: string): string => {
+  if (/^"?me"?(\.|$)/.test(col)) {
+    throw new Error(`escopo de empresa com o alias "me": é o alias de erp.membro_empresas dentro do exists — dê outro alias à tabela da consulta`);
+  }
   if (col.includes(".")) return col;
   if (col.endsWith("empresa_id")) {
     throw new Error(`escopo de empresa com a coluna solta "${col}": qualifique pela tabela (alias.${col}) — solta, dentro do exists ela seria a coluna de erp.membro_empresas`);

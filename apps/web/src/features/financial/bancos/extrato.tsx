@@ -16,7 +16,7 @@ import { useUrlParam } from "@/components/workspace";
 import { colunaIdGlobalTabela } from "@/features/listing/id-global-coluna";
 import { useAction, ActionDialog } from "@/features/docs/actions";
 import { useEmpresaPadrao } from "@/features/docs/shared";
-import { POR_PAGINA, rotuloDaConta, usePodeVerContas, useContasDaOrganizacao, valorDecimal } from "./contas";
+import { AvisoSaldoParcial, POR_PAGINA, rotuloDaConta, usePodeVerContas, useContasDaOrganizacao, valorDecimal, type EscopoSaldo } from "./contas";
 
 /**
  * BANCOS E CAIXA › EXTRATO (OPERACOES-01 F8, decisão 285). Uma conta, com o saldo REAL × CONCILIADO acumulados linha
@@ -34,7 +34,7 @@ interface RespostaExtrato {
   conta: { id: string; codigo: string; descricao: string; tipo: string; saldo_inicial: string; data_saldo_inicial: string | null };
   de: string | null; ate: string | null; situacao: string;
   saldo_anterior: { real: string; conciliado: string }; saldo_final: { real: string; conciliado: string };
-  itens: LinhaExtrato[]; total: number; page: number; pageSize: number;
+  itens: LinhaExtrato[]; total: number; page: number; pageSize: number; escopo_saldo?: EscopoSaldo;
 }
 interface NaturezaResumida { id: string; codigo: string; nome: string }
 
@@ -95,6 +95,7 @@ export function ExtratoDaConta() {
       </CardBody>
     </Card>
     {!contaEscolhida && !contas.isLoading && <Card><CardBody><EmptyState title="Escolha uma conta para ver o extrato." /></CardBody></Card>}
+    {d && <AvisoSaldoParcial escopo={d.escopo_saldo} />}
     {d && <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
       <div data-testid="fin-saldo-real" data-valor={d.saldo_final.real}><Stat label="Saldo real" value={brl(d.saldo_final.real)} tone={D(d.saldo_final.real).isNegative() ? "red" : "green"} hint={`Anterior: ${brl(d.saldo_anterior.real)}`} /></div>
       <div data-testid="fin-saldo-conciliado" data-valor={d.saldo_final.conciliado}><Stat label="Saldo conciliado" value={brl(d.saldo_final.conciliado)} hint={`Anterior: ${brl(d.saldo_anterior.conciliado)}`} /></div>
