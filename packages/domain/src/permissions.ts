@@ -67,6 +67,7 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   R("fodders", "Forragem", "Cadastros Base > Pecuários"),
   R("animals", "Rebanho", "Cadastros Base > Pecuários"),
   R("animal_retroactive_costs", "Custo Retroativo", "Cadastros Base > Pecuários", ["view", "create", "edit"]),
+  R("retiros", "Retiro", "Cadastros Base > Pecuários"),
   R("grazing_modules", "Módulo Pastejo", "Cadastros Base > Pecuários"),
   R("troughs", "Cochos", "Cadastros Base > Pecuários"),
   R("batches", "Lotes Animais", "Cadastros Base > Pecuários"),

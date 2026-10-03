@@ -43,6 +43,7 @@
   "processings": "pecuaria",
   "purchase_requests": "compras",
   "rainfalls": "pecuaria",
+  "retiros": "pecuaria",
   "requisitions": "estoque",
   "salary_advances": "pessoas_rh",
   "sales_documents": "vendas",

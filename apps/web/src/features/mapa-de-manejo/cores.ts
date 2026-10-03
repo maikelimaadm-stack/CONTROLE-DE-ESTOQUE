@@ -1,35 +1,19 @@
 /**
- * MAPA-01 — paleta do cadastro de área (ficha).
- * Fill no mapa segue a cor da ficha (preview ao vivo); contorno branco fino.
+ * MAPA-01 / CADASTRO-AREAS-02 — paleta do cadastro de área.
+ * SSOT dos pares valor/rótulo: `@agro/domain` (`CORES_DA_AREA`). Aqui só helpers de mapa.
  */
+import { CORES_DA_AREA, COR_PADRAO_DA_AREA } from "@agro/domain";
 
 export interface CorDaPaleta { cor: string; nome: string }
 
 /** Azul escuro — padrão do cadastro. */
-export const COR_PADRAO_AREA = "#0d67ad";
+export const COR_PADRAO_AREA = COR_PADRAO_DA_AREA;
 /** Contorno padrão das demarcações no mapa — sempre branco, fino. */
 export const COR_LINHA_AREA = "#ffffff";
 const CINZA_SEM_COR = "#a3b2b8";
 
-/** Paleta ampliada, sólidas e fáceis de distinguir (sem tons “misturados”). */
-export const PALETA_AREAS: readonly CorDaPaleta[] = [
-  { cor: "#f8f9fa", nome: "Branco" },
-  { cor: "#94a3b8", nome: "Cinza" },
-  { cor: "#1e293b", nome: "Preto" },
-  { cor: "#0d67ad", nome: "Azul escuro" },
-  { cor: "#61aad9", nome: "Azul celeste" },
-  { cor: "#2563eb", nome: "Azul" },
-  { cor: "#0f766e", nome: "Verde escuro" },
-  { cor: "#16a34a", nome: "Verde" },
-  { cor: "#92ca25", nome: "Verde claro" },
-  { cor: "#efcb19", nome: "Amarelo" },
-  { cor: "#f5a01b", nome: "Laranja" },
-  { cor: "#dc2626", nome: "Vermelho" },
-  { cor: "#db2777", nome: "Rosa" },
-  { cor: "#966fe1", nome: "Roxo" },
-  { cor: "#92400e", nome: "Marrom" },
-  { cor: "#14b8a6", nome: "Turquesa" }
-];
+/** Mesma paleta do select do cadastro (lista fechada). */
+export const PALETA_AREAS: readonly CorDaPaleta[] = CORES_DA_AREA.map(([cor, nome]) => ({ cor, nome }));
 
 function hexParaRgb(hex: string): [number, number, number] | null {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());

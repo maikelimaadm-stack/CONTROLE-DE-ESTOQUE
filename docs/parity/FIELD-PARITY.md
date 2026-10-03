@@ -61,7 +61,7 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-055 | Forragem | `/cadastros/fodders` | 0 | 0 | 3 | 1 | IMPLEMENTADO |
 | SCR-056 | Animais | `/pecuaria/animais` | 1 | 4 | 8 | — | TESTADO |
 | SCR-057 | Custo Retroativo | — | 11 | 1 | 4 | — | NÃO INICIADO |
-| SCR-058 | Módulos de Pastejo | `/cadastros/grazing_modules` | 0 | 0 | 7 | 1 | IMPLEMENTADO |
+| SCR-058 | Módulos de Pastejo | `/cadastros/grazing_modules` | 0 | 0 | 7 | 4 | IMPLEMENTADO |
 | SCR-059 | Cochos | `/cadastros/troughs` | 0 | 1 | 9 | 2 | IMPLEMENTADO |
 | SCR-060 | Lotes de Animais | `/cadastros/batches` | 1 | 1 | 5 | 3 | IMPLEMENTADO |
 | SCR-061 | Lote/Módulo | `/pecuaria/transferencias/lote-modulo-area` | 0 | 2 | 6 | — | UNIFICADO |
@@ -333,12 +333,12 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-355 | Atividades | `/cadastros/activities/new` | 7 | 0 | 0 | 6 | IMPLEMENTADO |
 | SCR-357 | Atividades | `/cadastros/activities/[id]` | 7 | 0 | 0 | 6 | IMPLEMENTADO |
 | SCR-358 | Parâmetro de Peso | `/cadastros/weight_parameters/new` | 6 | 0 | 0 | 6 | IMPLEMENTADO |
-| SCR-359 | Forragem | `/cadastros/fodders/new` | 2 | 0 | 0 | 2 | IMPLEMENTADO |
-| SCR-361 | Forragem | `/cadastros/fodders/[id]` | 2 | 0 | 0 | 2 | IMPLEMENTADO |
+| SCR-359 | Forragem | `/cadastros/fodders/new` | 2 | 0 | 0 | 6 | IMPLEMENTADO |
+| SCR-361 | Forragem | `/cadastros/fodders/[id]` | 2 | 0 | 0 | 6 | IMPLEMENTADO |
 | SCR-362 | Informações do Animal | `/pecuaria/animais/new` | 38 | 0 | 3 | 14 | TESTADO |
 | SCR-363 | Tipos de Identificação | `/pecuaria/animais/[id]` | 0 | 0 | 2 | 0 | TESTADO |
 | SCR-364 | Informações do Animal | `/pecuaria/animais/[id]` | 33 | 0 | 3 | 0 | TESTADO |
-| SCR-365 | Módulo Pastejo | `/cadastros/grazing_modules/new` | 8 | 0 | 4 | 8 | IMPLEMENTADO |
+| SCR-365 | Módulo Pastejo | `/cadastros/grazing_modules/new` | 8 | 0 | 4 | 18 | IMPLEMENTADO |
 | SCR-366 | Cochos | `/cadastros/troughs/new` | 8 | 0 | 0 | 8 | IMPLEMENTADO |
 | SCR-367 | Cochos | `/cadastros/troughs/[id]` | 8 | 0 | 0 | 8 | IMPLEMENTADO |
 | SCR-368 | Lote de Animais | `/cadastros/batches/new` | 8 | 0 | 0 | 16 | IMPLEMENTADO |

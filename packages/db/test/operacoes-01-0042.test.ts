@@ -349,7 +349,7 @@ describe("DB-3 — a 0042 aplica; reaplicar e as pós-condições", () => {
     const noDisco = listMigrations().map((m) => m.name);
     // O ledger DESTE banco termina na 0042 (ele sobe só até ela); no repositório a 0043 (F5a), a 0044 (F6a), a 0045 (F9), a
     // 0046 (F10), a 0047 (F7), a 0048 (F12) e a 0049 (MAPA-01) vêm depois.
-    expect(noDisco.length, "49 migrations no repositório (0001..0049)").toBe(49);
+    expect(noDisco.length, "51 migrations no repositório (0001..0051)").toBe(51);
     expect(noDisco[41]).toBe(ALVO);
     expect(await objetos()).toEqual({
       tabela: "erp.financeiro_naturezas_padrao", lote: true, tipo: true, extrato: "erp.extrato_conta_organizacao(uuid[],date,date)",

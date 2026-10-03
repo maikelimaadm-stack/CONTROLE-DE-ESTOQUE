@@ -1,14 +1,15 @@
 "use client";
 import * as React from "react";
 import { flushSync } from "react-dom";
+import { useSearchParams } from "next/navigation";
 import type { Feature, Polygon } from "geojson";
 import type { Map as MapLibreMap, GeoJSONSource } from "maplibre-gl";
 import { Check, Redo2, RotateCcw, Undo2, Upload } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, qs, newIdem } from "@/lib/api";
-import { useAuth, empresasDoContexto } from "@/lib/auth";
+import { useAuth } from "@/lib/auth";
 import { useEmpresaPadrao } from "@/features/docs/shared";
-import { Card, CardBody, Button, Spinner, EmptyState, ErrorState, Field, Input, ConfirmDialog } from "@/components/ui";
+import { Card, CardBody, Button, Spinner, EmptyState, ErrorState, ConfirmDialog } from "@/components/ui";
 import { cn, num } from "@/lib/utils";
 import { criarSessaoGoogle, estiloSatelite, estiloFundoLiso, fonteRaster, ID_BASE, type TipoBase, CENTRO_PADRAO, ZOOM_PADRAO } from "./basemap";
 import {
@@ -18,31 +19,35 @@ import {
 } from "./editor-desenho";
 import { CamadaDesenho, type Lado, type RotuloArea } from "./camada-desenho";
 import { BarraIma } from "./barra-ima";
-import { COR_LINHA_AREA, COR_PADRAO_AREA, PALETA_AREAS, corBordaNoMapa, corExibidaNoMapa } from "./cores";
+import { COR_LINHA_AREA, COR_PADRAO_AREA, corBordaNoMapa, corExibidaNoMapa } from "./cores";
 import { parseImportacaoMapa, rotuloFormato, type AreaImportada } from "./importacao";
 import { suavizarRotulos } from "./rotulos";
+import { FichaAreaNoMapa } from "@/features/areas/ficha-area-no-mapa";
 
 /**
- * MAPA-01 (decisão 289) — Mapa de Manejo: cadastro de áreas NEUTRO (lavoura e pecuária). Só nome, tamanho e
- * cor; o polígono é desenhado no mapa (MapLibre + editor próprio, `editor-desenho.ts`) e vale como GeoJSON. As
- * FUNÇÕES do desenho são as do protótipo aprovado (ímã em vértice/aresta, trava de ângulo, desfazer/refazer,
- * ponto do meio, mover a área, medidas ao vivo); o visual é o do produto. O tamanho sai do desenho e pode ser
- * ajustado à mão. CRUD pela API do recurso `mapa_areas` (escopo por empresa no servidor). Sem gado, sem base44.
+ * Unificação mapa × áreas: o Mapa de Manejo e Áreas/Piquetes são o mesmo cadastro (erp.areas).
+ * O mapa desenha/importa o contorno (opcional); a ficha é o ResourceForm de areas (mesmas informações).
  */
 
 interface AreaApi {
   id: string;
   empresa_id: string;
-  nome: string;
-  tamanho_ha: string | number | null;
-  cor: string | null;
+  name: string;
+  code?: string;
+  area_ha: string | number | null;
+  usable_area_ha?: string | number | null;
+  color: string | null;
   geometria: Polygon | null;
+  land_use?: string | null;
+  status?: string | null;
+  retiro_id?: string | null;
+  tenure?: string | null;
 }
 
 const COR_PADRAO = COR_PADRAO_AREA;
-const hectares = (v: AreaApi["tamanho_ha"]) => (v === null || v === undefined || v === "" ? 0 : Number(v));
+const hectares = (v: AreaApi["area_ha"]) => (v === null || v === undefined || v === "" ? 0 : Number(v));
 
-type Rascunho = { geometria: Polygon; tamanho_ha: number; /** Se preenchido, o salvar faz PUT nessa área (edição de contorno). */ editandoId?: string };
+type Rascunho = { geometria: Polygon; area_ha: number; /** Se preenchido, o salvar faz PUT nessa área (edição de contorno). */ editandoId?: string };
 
 type Arrasto =
   | { tipo: "vertice"; i: number; novo: boolean; mexeu: boolean }
@@ -83,12 +88,12 @@ const PRECISAO_BOA_M = 50;
 const JANELA_DUPLO_MS = 600;
 
 export function MapaDeManejo() {
-  const { session, ctx } = useAuth();
+  const { session } = useAuth();
+  const searchParams = useSearchParams();
   const empresaSessao = session?.empresaId ?? null;
   // Empresa da área nova: a da sessão, ou a primeira do contexto (mesma regra das telas de lançamento). É PEDIDO —
   // o servidor confere o escopo.
   const empresaId = useEmpresaPadrao();
-  const empresaNome = empresasDoContexto(ctx).find((e) => e.id === empresaId)?.name ?? "";
   const queryClient = useQueryClient();
 
   const containerRef = React.useRef<HTMLDivElement | null>(null);
@@ -99,11 +104,10 @@ export function MapaDeManejo() {
   const [desenhando, setDesenhando] = React.useState(false);
   const [rascunho, setRascunho] = React.useState<Rascunho | null>(null);
   const [selecionada, setSelecionada] = React.useState<string | null>(null);
-  /** Edição da ficha (nome/cor/ha) sem redesenhar o polígono. */
+  /** Edição da ficha completa (ResourceForm) sem redesenhar o polígono. */
   const [editandoFicha, setEditandoFicha] = React.useState(false);
-  const [form, setForm] = React.useState<{ nome: string; cor: string; tamanho_ha: string; area_total_ha: string }>({
-    nome: "", cor: COR_PADRAO, tamanho_ha: "", area_total_ha: ""
-  });
+  /** Cadastro pela ficha sem desenhar contorno (geometria opcional). */
+  const [fichaSemContorno, setFichaSemContorno] = React.useState(false);
   const [excluir, setExcluir] = React.useState<AreaApi | null>(null);
   const [erro, setErro] = React.useState<string | null>(null);
   const [localizacao, setLocalizacao] = React.useState<{ precisao: number } | null>(null);
@@ -137,8 +141,8 @@ export function MapaDeManejo() {
   const [, redesenhar] = React.useReducer((n: number) => n + 1, 0);
 
   const listaQuery = useQuery({
-    queryKey: ["mapa-areas", empresaSessao],
-    queryFn: () => api<{ items: AreaApi[] }>(`/api/resources/mapa_areas${qs({ pageSize: 500 })}`)
+    queryKey: ["areas-mapa", empresaSessao],
+    queryFn: () => api<{ items: AreaApi[] }>(`/api/resources/areas${qs({ pageSize: 500 })}`)
   });
   const areas = React.useMemo(() => listaQuery.data?.items ?? [], [listaQuery.data]);
   React.useEffect(() => { areasRef.current = areas; }, [areas]);
@@ -169,7 +173,7 @@ export function MapaDeManejo() {
   const alvosPx = (): AlvoPx[] => areasRef.current.flatMap((a) => {
     if (a.id === editandoContornoIdRef.current) return [];
     const coords = anelAberto(a.geometria);
-    return coords.length >= 2 ? [{ nome: a.nome, coords, pts: coords.map(proj) }] : [];
+    return coords.length >= 2 ? [{ nome: a.name, coords, pts: coords.map(proj) }] : [];
   });
   const ativo = () => desenhandoRef.current && !formAbertoRef.current;
   const doIma = (s: Ima): PontoDesenho => { const ll = s.lngLat ?? desproj(s.px); return { lng: ll[0], lat: ll[1], grudado: true, tipo: s.tipo === "aresta" ? "aresta" : "vertice", de: s.de }; };
@@ -427,9 +431,8 @@ export function MapaDeManejo() {
           if (!area) return;
           setSelecionada(area.id);
           setEditandoFicha(true);
-          const ha = area.tamanho_ha === null || area.tamanho_ha === undefined || area.tamanho_ha === "" ? 0 : Number(area.tamanho_ha);
-          const haStr = (Math.round(ha * 100) / 100).toFixed(2);
-          setForm({ nome: area.nome, cor: area.cor ?? COR_PADRAO, tamanho_ha: haStr, area_total_ha: haStr });
+          setFichaSemContorno(false);
+          setRascunho(null);
           setErro(null);
         });
         let hoverId: string | null = null;
@@ -562,79 +565,47 @@ export function MapaDeManejo() {
     const features: Feature<Polygon>[] = areas
       .filter((a) => a.geometria && a.geometria.type === "Polygon" && a.id !== ocultarId)
       .map((a) => {
-        // Preview ao vivo da cor na ficha em edição.
-        const corCadastro = editandoFicha && a.id === selecionada ? form.cor : a.cor;
+        const corCadastro = a.color;
         const exibida = corExibidaNoMapa(corCadastro);
         return {
           type: "Feature" as const,
           id: a.id,
-          properties: { id: a.id, nome: a.nome, cor: corCadastro ?? COR_PADRAO, cor_exibida: exibida, cor_borda: corBordaNoMapa(exibida) },
+          properties: { id: a.id, nome: a.name, cor: corCadastro ?? COR_PADRAO, cor_exibida: exibida, cor_borda: corBordaNoMapa(exibida) },
           geometry: a.geometria as Polygon
         };
       });
     src.setData({ type: "FeatureCollection", features });
-  }, [areas, mapaPronto, editandoFicha, selecionada, form.cor, editandoContornoId]);
-
-  const salvar = useMutation({
-    mutationFn: async () => {
-      if (!rascunho) return;
-      const tamanho = form.tamanho_ha.trim() === "" ? rascunho.tamanho_ha : Number(form.tamanho_ha.replace(",", "."));
-      const nome = form.nome.trim().toLocaleUpperCase("pt-BR");
-      if (rascunho.editandoId) {
-        await api(`/api/resources/mapa_areas/${rascunho.editandoId}`, {
-          method: "PUT",
-          body: { nome, cor: form.cor, tamanho_ha: tamanho, geometria: rascunho.geometria }
-        });
-        return;
-      }
-      if (!empresaId) throw new Error("Nenhuma empresa disponível para cadastrar a área.");
-      await api("/api/resources/mapa_areas", {
-        method: "POST",
-        idempotencyKey: newIdem(),
-        body: { empresa_id: empresaId, nome, cor: form.cor, tamanho_ha: tamanho, geometria: rascunho.geometria }
-      });
-    },
-    onSuccess: () => { sairDoDesenho(); setErro(null); void queryClient.invalidateQueries({ queryKey: ["mapa-areas"] }); },
-    onError: (e: unknown) => setErro(e instanceof Error ? e.message : "Não foi possível salvar a área.")
-  });
-
-  const salvarFicha = useMutation({
-    mutationFn: async () => {
-      if (!selecionada) return;
-      const tamanho = Number(form.tamanho_ha.replace(",", "."));
-      if (!Number.isFinite(tamanho) || tamanho < 0) throw new Error("Informe um tamanho válido em hectares.");
-      const nome = form.nome.trim().toLocaleUpperCase("pt-BR");
-      if (nome === "") throw new Error("Informe o nome da área.");
-      await api(`/api/resources/mapa_areas/${selecionada}`, {
-        method: "PUT",
-        body: { nome, cor: form.cor, tamanho_ha: tamanho }
-      });
-    },
-    onSuccess: () => {
-      setEditandoFicha(false);
-      setErro(null);
-      void queryClient.invalidateQueries({ queryKey: ["mapa-areas"] });
-    },
-    onError: (e: unknown) => setErro(e instanceof Error ? e.message : "Não foi possível salvar a área.")
-  });
+  }, [areas, mapaPronto, editandoContornoId]);
 
   const remover = useMutation({
-    mutationFn: async (id: string) => { await api(`/api/resources/mapa_areas/${id}`, { method: "DELETE" }); },
-    onSuccess: () => { setExcluir(null); setSelecionada(null); setEditandoFicha(false); void queryClient.invalidateQueries({ queryKey: ["mapa-areas"] }); },
+    mutationFn: async (id: string) => { await api(`/api/resources/areas/${id}`, { method: "DELETE" }); },
+    onSuccess: () => { setExcluir(null); setSelecionada(null); setEditandoFicha(false); void queryClient.invalidateQueries({ queryKey: ["areas-mapa"] }); },
     onError: (e: unknown) => setErro(e instanceof Error ? e.message : "Não foi possível excluir a área.")
   });
+
+  function fecharFicha() {
+    setEditandoFicha(false);
+    setFichaSemContorno(false);
+    setSelecionada(null);
+    setErro(null);
+  }
+
+  function aposSalvarFicha() {
+    sairDoDesenho();
+    fecharFicha();
+    void queryClient.invalidateQueries({ queryKey: ["areas-mapa"] });
+  }
 
   function abrirFicha(a: AreaApi) {
     setSelecionada(a.id);
     setEditandoFicha(true);
-    const ha = hectares(a.tamanho_ha);
-    const haStr = (Math.round(ha * 100) / 100).toFixed(2);
-    setForm({ nome: a.nome, cor: a.cor ?? COR_PADRAO, tamanho_ha: haStr, area_total_ha: haStr });
+    setFichaSemContorno(false);
+    setRascunho(null);
     setErro(null);
   }
 
   function iniciarDesenho() {
-    setErro(null); setSelecionada(null); setEditandoFicha(false); setRascunho(null);
+    setErro(null); setSelecionada(null); setEditandoFicha(false); setFichaSemContorno(false); setRascunho(null);
     setEditandoContornoId(null);
     setMoverArea(false); moverAreaRef.current = false;
     if (!mapRef.current || !mapaPronto) { setErro("O mapa ainda está carregando. Aguarde a imagem abrir e tente de novo."); return; }
@@ -643,12 +614,31 @@ export function MapaDeManejo() {
     setDesenhando(true);
   }
 
+  function abrirCadastroSemContorno() {
+    if (!empresaId) { setErro("Nenhuma empresa disponível para cadastrar áreas."); return; }
+    setErro(null);
+    setSelecionada(null);
+    setEditandoFicha(false);
+    setRascunho(null);
+    setFichaSemContorno(true);
+  }
+  // Cadastro a partir da lista de áreas: /mapa-de-manejo?nova=1 abre o desenho.
+  const iniciouNovaRef = React.useRef(false);
+  React.useEffect(() => {
+    if (iniciouNovaRef.current) return;
+    if (searchParams.get("nova") !== "1") return;
+    if (!mapaPronto || !empresaId) return;
+    iniciouNovaRef.current = true;
+    iniciarDesenho();
+  }, [mapaPronto, empresaId, searchParams]);
+
   function iniciarEdicaoContorno(a: AreaApi) {
     const anel = anelAberto(a.geometria);
     if (anel.length < 3) { setErro("Esta área não tem contorno válido para editar."); return; }
     if (!mapRef.current || !mapaPronto) { setErro("O mapa ainda está carregando. Aguarde a imagem abrir e tente de novo."); return; }
     setErro(null);
     setEditandoFicha(false);
+    setFichaSemContorno(false);
     setRascunho(null);
     setEditandoContornoId(a.id);
     const pontos = anel.map(livre);
@@ -664,13 +654,6 @@ export function MapaDeManejo() {
     desenhandoRef.current = true;
     setDesenhando(true);
     setSelecionada(a.id);
-    const ha = Math.round(areaHa(anel) * 100) / 100;
-    setForm({
-      nome: a.nome,
-      cor: a.cor ?? COR_PADRAO,
-      tamanho_ha: ha.toFixed(2),
-      area_total_ha: ha.toFixed(2)
-    });
     redesenhar();
   }
 
@@ -686,15 +669,8 @@ export function MapaDeManejo() {
     const e = ed.current;
     if (e.fechado && e.pontos.length >= 3) {
       const ha = Math.round(areaHa(coordsDe(e.pontos)) * 10000) / 10000;
-      const haStr = (Math.round(ha * 100) / 100).toFixed(2);
       const editandoId = editandoContornoIdRef.current ?? undefined;
-      setRascunho({ geometria: poligonoGeoJSON(e.pontos), tamanho_ha: ha, editandoId });
-      setForm((f) => ({
-        nome: editandoId ? f.nome : "",
-        cor: editandoId ? f.cor : COR_PADRAO,
-        tamanho_ha: haStr,
-        area_total_ha: haStr
-      }));
+      setRascunho({ geometria: poligonoGeoJSON(e.pontos), area_ha: ha, editandoId });
       return;
     }
     if (e.pontos.length >= 3) { fechar("Fechado"); return; }
@@ -747,14 +723,18 @@ export function MapaDeManejo() {
       const falhas: string[] = [];
       for (const a of resultado.areas) {
         try {
-          await api("/api/resources/mapa_areas", {
+          await api("/api/resources/areas", {
             method: "POST",
             idempotencyKey: newIdem(),
             body: {
               empresa_id: empresaId,
-              nome: a.nome,
-              cor: a.cor,
-              tamanho_ha: a.tamanho_ha,
+              name: a.nome,
+              color: a.cor,
+              area_ha: a.tamanho_ha,
+              usable_area_ha: a.tamanho_ha,
+              land_use: "pastagem",
+              status: "ativa",
+              tenure: "propria",
               geometria: a.geometria
             }
           });
@@ -764,7 +744,7 @@ export function MapaDeManejo() {
           falhas.push(`${a.nome}: ${e instanceof Error ? e.message : "falha"}`);
         }
       }
-      await queryClient.invalidateQueries({ queryKey: ["mapa-areas"] });
+      await queryClient.invalidateQueries({ queryKey: ["areas-mapa"] });
       const m = mapRef.current;
       if (m && ok > 0) {
         const bounds = limitesColecao(resultado.areas);
@@ -829,8 +809,8 @@ export function MapaDeManejo() {
       return [{
         id: a.id,
         px,
-        nome: a.nome,
-        ha: hectares(a.tamanho_ha),
+        nome: a.name,
+        ha: hectares(a.area_ha),
         larguraPx: maxX - minX,
         alturaPx: maxY - minY
       }];
@@ -854,13 +834,11 @@ export function MapaDeManejo() {
 
   const selecionadaObj = areas.find((a) => a.id === selecionada) ?? null;
   const podeCadastrar = Boolean(empresaId);
-  const totalHa = areas.reduce((s, a) => s + hectares(a.tamanho_ha), 0);
+  const totalHa = areas.reduce((s, a) => s + hectares(a.area_ha), 0);
   const confirmandoEdicao = Boolean(rascunho?.editandoId || editandoContornoId);
   const confirmarRotulo = e.fechado
     ? (confirmandoEdicao ? "Gravar contorno" : "Gravar área")
     : e.pontos.length >= 3 ? "Fechar polígono" : "Marque 3 pontos";
-  const formTitulo = rascunho?.editandoId ? "Editar área" : "Nova área";
-
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
@@ -891,6 +869,7 @@ export function MapaDeManejo() {
                 if (f) void importarArquivo(f);
               }}
             />
+            <Button type="button" variant="outline" onClick={abrirCadastroSemContorno} disabled={!podeCadastrar} data-testid="mapa-cadastro-sem-contorno">Sem contorno</Button>
             <Button type="button" onClick={iniciarDesenho} disabled={!mapaPronto || !podeCadastrar} data-testid="mapa-nova-area">Nova área</Button>
           </div>
         )}
@@ -927,9 +906,9 @@ export function MapaDeManejo() {
                   if (g && m) { const b = limites(g); if (b) m.fitBounds(b, { padding: 60, maxZoom: 16 }); }
                 }}
                   className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-100 ${a.id === selecionada ? "bg-slate-100 ring-1 ring-slate-300" : ""}`}>
-                  <span className="h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: a.cor ?? COR_PADRAO }} aria-hidden />
-                  <span className="min-w-0 flex-1 truncate font-medium text-slate-700">{a.nome}</span>
-                  <span className="shrink-0 text-xs tabular-nums text-slate-500">{num(hectares(a.tamanho_ha), 2)} ha</span>
+                  <span className="h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: a.color ?? COR_PADRAO }} aria-hidden />
+                  <span className="min-w-0 flex-1 truncate font-medium text-slate-700">{a.name}</span>
+                  <span className="shrink-0 text-xs tabular-nums text-slate-500">{num(hectares(a.area_ha), 2)} ha</span>
                 </button>
               ))}
             </CardBody>
@@ -955,7 +934,7 @@ export function MapaDeManejo() {
               hover={e.hover}
               lados={lados}
               mostrarMetragem={mostrarMetragem}
-              corPreview={rascunho ? corExibidaNoMapa(form.cor) : null}
+              corPreview={rascunho ? corExibidaNoMapa(COR_PADRAO) : null}
             />
           )}
           {!mapaPronto && <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"><Spinner /></div>}
@@ -1024,113 +1003,49 @@ export function MapaDeManejo() {
             </div>
           )}
 
-          {/* Ficha ao fechar o polígono (nova ou contorno editado): cores em listagem; preview imediato. */}
-          {rascunho && (
-            <Card className="absolute right-2 top-2 max-h-[calc(100%-1rem)] w-80 overflow-auto shadow-lg">
-              <CardBody className="flex flex-col gap-2.5">
-                <div className="text-sm font-semibold text-slate-800" data-testid="mapa-form-titulo">{formTitulo}</div>
-                {empresaNome && <div className="text-xs text-slate-500">Empresa: <span className="font-medium text-slate-700">{empresaNome}</span></div>}
-                <Field label="Área total (ha)">
-                  <Input value={form.area_total_ha} readOnly data-testid="mapa-form-area-total" className="bg-slate-50 tabular-nums" />
-                </Field>
-                <Field label="Área pastejada ou arável (ha)" required>
-                  <Input type="number" step="0.01" value={form.tamanho_ha} onChange={(ev) => setForm((f) => ({ ...f, tamanho_ha: ev.target.value }))} data-testid="mapa-form-tamanho" className="tabular-nums" />
-                </Field>
-                <Field label="Nome" required>
-                  <Input
-                    value={form.nome}
-                    onChange={(ev) => setForm((f) => ({ ...f, nome: ev.target.value.toLocaleUpperCase("pt-BR") }))}
-                    data-testid="mapa-form-nome"
-                    placeholder="NOME DA ÁREA"
-                  />
-                </Field>
-                <div>
-                  <div className="mb-1.5 text-xs font-medium text-slate-600">Cor no mapa</div>
-                  <div className="flex flex-col gap-1" role="radiogroup" aria-label="Cor da área" data-testid="mapa-form-cor">
-                    {PALETA_AREAS.map((p) => (
-                      <button
-                        key={p.cor}
-                        type="button"
-                        role="radio"
-                        aria-checked={form.cor === p.cor}
-                        aria-label={p.nome}
-                        data-testid="mapa-cor-opcao"
-                        onClick={() => setForm((f) => ({ ...f, cor: p.cor }))}
-                        className={cn(
-                          "flex items-center gap-2.5 rounded-md border px-2 py-1.5 text-left text-sm transition",
-                          form.cor === p.cor ? "border-emerald-600 bg-emerald-50 ring-1 ring-emerald-600" : "border-slate-200 bg-white hover:bg-slate-50"
-                        )}
-                      >
-                        <span className="h-5 w-5 shrink-0 rounded border border-slate-300" style={{ backgroundColor: p.cor }} aria-hidden />
-                        <span className="min-w-0 flex-1 font-medium text-slate-700">{p.nome}</span>
-                        <span className="text-[10px] tabular-nums text-slate-400">{p.cor}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex justify-end gap-2 pt-1">
-                  <Button type="button" variant="ghost" onClick={() => setRascunho(null)}>Voltar ao desenho</Button>
-                  <Button type="button" onClick={() => salvar.mutate()} loading={salvar.isPending} disabled={form.nome.trim() === ""} data-testid="mapa-form-salvar">Salvar</Button>
-                </div>
-              </CardBody>
-            </Card>
+          {/* Mesma ficha de Áreas/Piquetes (ResourceForm): medidas, uso, cor em lista, etc. Contorno opcional. */}
+          {rascunho && empresaId && (
+            <div className="absolute right-2 top-2 z-10">
+              <FichaAreaNoMapa
+                mode={rascunho.editandoId ? "edit" : "new"}
+                areaId={rascunho.editandoId}
+                empresaId={empresaId}
+                geometria={rascunho.geometria}
+                areaHa={rascunho.area_ha}
+                onSaved={aposSalvarFicha}
+                onCancel={() => setRascunho(null)}
+              />
+            </div>
           )}
 
-          {/* Ficha de edição (clique na área / lista) — nome, cor, ha + contorno. */}
-          {selecionadaObj && !desenhando && editandoFicha && (
-            <Card className="absolute right-2 top-2 max-h-[calc(100%-1rem)] w-80 overflow-auto shadow-lg" data-testid="mapa-ficha-edicao">
-              <CardBody className="flex flex-col gap-2.5">
-                <div className="text-sm font-semibold text-slate-800">Editar área</div>
-                <Field label="Área total (ha)">
-                  <Input value={form.area_total_ha} readOnly data-testid="mapa-edit-area-total" className="bg-slate-50 tabular-nums" />
-                </Field>
-                <Field label="Área pastejada ou arável (ha)" required>
-                  <Input type="number" step="0.01" value={form.tamanho_ha} onChange={(ev) => setForm((f) => ({ ...f, tamanho_ha: ev.target.value }))} data-testid="mapa-edit-tamanho" className="tabular-nums" />
-                </Field>
-                <Field label="Nome" required>
-                  <Input
-                    value={form.nome}
-                    onChange={(ev) => setForm((f) => ({ ...f, nome: ev.target.value.toLocaleUpperCase("pt-BR") }))}
-                    data-testid="mapa-edit-nome"
-                    placeholder="NOME DA ÁREA"
-                  />
-                </Field>
-                <div>
-                  <div className="mb-1.5 text-xs font-medium text-slate-600">Cor no mapa</div>
-                  <div className="flex flex-col gap-1" role="radiogroup" aria-label="Cor da área" data-testid="mapa-edit-cor">
-                    {PALETA_AREAS.map((p) => (
-                      <button
-                        key={p.cor}
-                        type="button"
-                        role="radio"
-                        aria-checked={form.cor === p.cor}
-                        aria-label={p.nome}
-                        data-testid="mapa-edit-cor-opcao"
-                        onClick={() => setForm((f) => ({ ...f, cor: p.cor }))}
-                        className={cn(
-                          "flex items-center gap-2.5 rounded-md border px-2 py-1.5 text-left text-sm transition",
-                          form.cor === p.cor ? "border-emerald-600 bg-emerald-50 ring-1 ring-emerald-600" : "border-slate-200 bg-white hover:bg-slate-50"
-                        )}
-                      >
-                        <span className="h-5 w-5 shrink-0 rounded border border-slate-300" style={{ backgroundColor: p.cor }} aria-hidden />
-                        <span className="min-w-0 flex-1 font-medium text-slate-700">{p.nome}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-wrap justify-end gap-2 pt-1">
-                  <Button type="button" variant="ghost" onClick={() => { setSelecionada(null); setEditandoFicha(false); }}>Fechar</Button>
-                  <Button type="button" variant="outline" onClick={() => iniciarEdicaoContorno(selecionadaObj)} data-testid="mapa-editar-contorno">Editar contorno</Button>
-                  <Button type="button" variant="danger" onClick={() => setExcluir(selecionadaObj)} data-testid="mapa-excluir">Excluir</Button>
-                  <Button type="button" onClick={() => salvarFicha.mutate()} loading={salvarFicha.isPending} disabled={form.nome.trim() === ""} data-testid="mapa-edit-salvar">Salvar</Button>
-                </div>
-              </CardBody>
-            </Card>
+          {fichaSemContorno && empresaId && !desenhando && (
+            <div className="absolute right-2 top-2 z-10">
+              <FichaAreaNoMapa
+                mode="new"
+                empresaId={empresaId}
+                onSaved={aposSalvarFicha}
+                onCancel={fecharFicha}
+              />
+            </div>
+          )}
+
+          {selecionadaObj && !desenhando && editandoFicha && empresaId && (
+            <div className="absolute right-2 top-2 z-10" data-testid="mapa-ficha-edicao">
+              <FichaAreaNoMapa
+                mode="edit"
+                areaId={selecionadaObj.id}
+                empresaId={empresaId}
+                onSaved={aposSalvarFicha}
+                onCancel={fecharFicha}
+                onEditarContorno={() => iniciarEdicaoContorno(selecionadaObj)}
+                onExcluir={() => setExcluir(selecionadaObj)}
+              />
+            </div>
           )}
         </Card>
       </div>
 
-      <ConfirmDialog open={excluir !== null} onOpenChange={(o) => { if (!o) setExcluir(null); }} title="Excluir área" description={excluir ? `Excluir a área “${excluir.nome}”? Esta ação não pode ser desfeita.` : ""} confirmLabel="Excluir" danger loading={remover.isPending} onConfirm={() => { if (excluir) remover.mutate(excluir.id); }} />
+      <ConfirmDialog open={excluir !== null} onOpenChange={(o) => { if (!o) setExcluir(null); }} title="Excluir área" description={excluir ? `Excluir a área “${excluir.name}”? Esta ação não pode ser desfeita.` : ""} confirmLabel="Excluir" danger loading={remover.isPending} onConfirm={() => { if (excluir) remover.mutate(excluir.id); }} />
     </div>
   );
 }
