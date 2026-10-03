@@ -72,8 +72,9 @@ export const MODULES = [
   // A permissão é a das SEIS capacidades Aprovar (qualquer uma mostra o módulo); cada aba exige a sua.
   m("aprovacoes", "Aprovações", "/aprovacoes", { perm: ["sales.approve", "compras.approve", ...P.APROVACAO_ESTOQUE], keywords: ["aprovar", "reprovar", "aprovação", "aguardando aprovação", "fila de aprovação"], description: "Documentos que aguardam aprovação antes de serem confirmados" }),
   // MAPA-01 (decisão 289): módulo de topo NEUTRO do Mapa de Manejo (15º módulo; o teto do menu foi elevado de 14 para 15 em scripts/nav-audit.mjs, como contrato de UX desta fatia). Serve lavoura e pecuária; sem gado nesta fatia.
-  // CADASTRO-AREAS-02: o mapa cadastra erp.areas (permissão batch_area); mapa_areas ficou legado de skew.
-  m("mapa", "Mapa de Manejo", "/mapa-de-manejo", { perm: "batch_area.view", keywords: ["mapa", "área", "áreas", "piquete", "talhão", "polígono", "georreferenciamento", "satélite", "manejo"], description: "Mapa da propriedade e cadastro de áreas (lavoura e pecuária)" })
+  // CADASTRO-AREAS-02: o mapa mostra erp.areas (permissão batch_area); mapa_areas ficou legado de skew.
+  // CADASTRO-AREAS-03: o mapa é SÓ VISUALIZAÇÃO — o cadastro e o contorno da área ficam na ficha de Áreas/Piquetes.
+  m("mapa", "Mapa de Manejo", "/mapa-de-manejo", { perm: "batch_area.view", keywords: ["mapa", "área", "áreas", "piquete", "talhão", "polígono", "georreferenciamento", "satélite", "manejo"], description: "Mapa da propriedade com as áreas (lavoura e pecuária)" })
 ];
 
 export const AREAS = [
@@ -421,9 +422,10 @@ export const EXTRA_REDIRECTS = [
   { source: "/cadastros/farms", destination: "/cadastros/empresas" },
   { source: "/cadastros/farms/:id", destination: "/cadastros/empresas/:id" },
   // CADASTRO-AREAS-02: cadastro de área fica em Áreas/Piquetes (mapa + ficha no ResourceForm).
-  // Legado mapa_areas (skew) continua redirecionando para o módulo Mapa de Manejo.
+  // Legado mapa_areas (skew) continua redirecionando para o módulo Mapa de Manejo; o "novo" vai direto para a ficha
+  // de Áreas/Piquetes (CADASTRO-AREAS-03: o mapa não cadastra mais).
   { source: "/cadastros/mapa_areas", destination: "/mapa-de-manejo" },
-  { source: "/cadastros/mapa_areas/new", destination: "/mapa-de-manejo?nova=1" },
+  { source: "/cadastros/mapa_areas/new", destination: "/cadastros/areas/new" },
   { source: "/cadastros/mapa_areas/:id", destination: "/mapa-de-manejo" }
 ];
 

@@ -4760,6 +4760,50 @@ Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registro
 identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.
 
 
+## CADASTRO-AREAS-03 — cadastro de área só em Áreas/Piquetes; Mapa de Manejo só visualização (sem migration)
+
+Faixa **F2 — Tela**. Só `apps/web` e documentação: **sem migration, sem rota nova, sem mudança de regra, API, domínio ou
+permissão**. O contrato do servidor é o mesmo da CADASTRO-AREAS-02 (`/api/resources/areas`, permissão `batch_area`).
+
+**O que muda na tela:**
+
+- **Áreas/Piquetes é o ÚNICO lugar do cadastro de área.** O campo "Mapa" da ficha passa a ser o editor de contorno
+  completo que o Mapa de Manejo tinha — ímã nos vértices e arestas das áreas vizinhas (as outras áreas visíveis
+  aparecem no mapa da ficha), arrastar ponto, ponto do meio vira vértice, dois cliques apagam ponto ou fecham, mover a
+  área pela mãozinha, desfazer/refazer, Shift trava o ângulo, Alt solta o ímã, medidas ao vivo. "Editar contorno" abre o
+  contorno já gravado no editor. Os atalhos de teclado valem só com o foco no mapa, nunca num campo da ficha.
+- **"Concluir contorno" não abre janela nenhuma**: devolve o polígono e a área total (ha) para a ficha (a área útil vazia
+  herda a total) e avisa que falta Salvar; quem grava é o **Salvar** da própria ficha, com as mesmas regras de sempre no
+  servidor. Com o desenho ainda aberto, o Salvar da ficha é recusado com aviso ("Conclua o contorno antes de salvar") —
+  a ficha nunca é gravada sem o contorno que está na tela.
+- **Mapa de Manejo vira só visualização**: lista as áreas, mostra os contornos com nome e hectares, enquadra a
+  propriedade, e a área clicada abre um resumo de leitura com **"Abrir cadastro"** (`/cadastros/areas/<id>`). O botão
+  **"Cadastrar área"** leva à ficha nova (`/cadastros/areas/new`, com a empresa da sessão já preenchida). O mapa não
+  desenha, não grava, não exclui e não importa mais — a janela da ficha sobre o mapa saiu.
+- **A importação de contornos (KML / GeoJSON / JSON)** saiu do mapa e mora na lista de Áreas/Piquetes ("Importar
+  contornos"), pela mesma rota do cadastro (`POST /api/resources/areas`, com chave de idempotência), mesmas regras de
+  antes (cor branca, Pastagem, Ativa, Própria).
+- O redirect legado `/cadastros/mapa_areas/new` passa a ir direto para `/cadastros/areas/new` (antes:
+  `/mapa-de-manejo?nova=1`, que abria o desenho no mapa).
+
+**Impacto em dados reais:** nenhum. Nada é escrito, corrigido ou apagado pelo deploy (decisões 240/247); as áreas
+gravadas continuam as mesmas, e o que o usuário salva passa pela mesma rota e pelas mesmas validações de antes.
+
+**Ordem:** WEB apenas. Depende da API com a CADASTRO-AREAS-02 no ar — em produção ela só sobe com a PROD-FIX-0043
+(o deploy da API está travado na 0043 desde a #90). **Merge depois da PROD-FIX-0043**: sem ela, a web nova grava em
+`/api/resources/areas` contra uma API que ainda não tem a coluna `geometria` (o mesmo 422 de hoje).
+
+**Version skew:** nenhum contrato novo e nenhum campo novo no corpo — a web nova grava exatamente o que a web da
+CADASTRO-AREAS-02 já grava (`areas` com `geometria`). Por isso ela pede a mesma API que a web de hoje já pede (a da 0051),
+e a web anterior continua funcionando contra essa API pela mesma rota.
+
+**Conferência pós-deploy (web):** abrir Configurações › Pecuária › Áreas/Piquetes › Novo, desenhar um contorno,
+"Concluir contorno" (nenhuma janela abre; a área total aparece), preencher nome e Salvar; abrir o Mapa de Manejo e ver a
+área listada e desenhada; clicar nela e "Abrir cadastro" volta à ficha. Prova em produção autenticada: **PENDING**
+(acesso que a sessão não tem).
+
+**Caminho de volta:** redeploy da web anterior no Vercel; nada no banco a desfazer.
+
 ## CADASTRO-AREAS-02 — unificação mapa × áreas (0051)
 
 Decisão 292. **Uma migration: `0051_areas_mapa_unificado.sql`** (pre-deploy; trava (2026,85), `lock_timeout` 2 s, pré/pós-condições nomeadas `CADASTRO-AREAS-02: …`).
