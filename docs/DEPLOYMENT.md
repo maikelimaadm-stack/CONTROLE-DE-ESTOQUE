@@ -4795,6 +4795,8 @@ mapa: cada imagem nasce de um `POST` deliberado (com `COPERNICUS_ENABLED=1` e a 
 units da conta (estimativa ≈ 0,0004 PU por hectare a 10 m, mínimo 0,01 PU e teto ≈ 23,8 PU por imagem — medição real PENDING) e
 ocupa o banco (tipicamente dezenas de KB; teto 16 MiB). Arquivo gerado nunca é apagado nem sobrescrito. **O pedido avulso não
 consulta o orçamento mensal da SAT-02** (nem a análise da SAT-01, nem a imagem): o freio é o limite global de chamadas.
+**Muda na SAT-01/SAT-03:** resposta 2xx com o corpo cortado (tempo na leitura, acima do teto) não é mais repetida — o PU
+entra no ledger e, na fila, o item falha na primeira tentativa ("Reprocessar falhas" reabre).
 
 **Ordem:** BANCO (0055, pre-deploy) → API. **API anterior × banco na 0055**: só acrescenta tabelas; nada muda. **API nova ×
 banco sem a 0055**: não acontece no pipeline; se acontecesse, só as rotas novas responderiam erro.
