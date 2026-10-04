@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
@@ -40,12 +40,16 @@ import plataformaRoutes from "./routes/plataforma.js";
 import referenciaRoutes from "./routes/referencias.js";
 import consultaRoutes from "./routes/consultas.js";
 import analisesSatelitaisRoutes from "./routes/analises-satelitais.js";
+import rastersSatelitaisRoutes from "./routes/rasters-satelitais.js";
 import sateliteConsultasRoutes from "./routes/satelite-consultas.js";
 import produtosPesquisaRoutes from "./routes/produtos-pesquisa.js";
 import type { BuscarFn } from "./lib/consultas/http.js";
 import { politicaDeOrigem } from "./lib/cors-origem.js";
 import { ClienteCopernicus } from "./lib/satelite/copernicus.js";
+import { armazenamentoRaster, type ArmazenamentoRaster } from "./lib/satelite/armazenamento-raster.js";
+import { LimiteAvulsoSatelite } from "./lib/satelite/limite-avulso.js";
 import { INTERVALO_EXECUTOR_PADRAO_S, limitesDaConfig } from "./lib/satelite/limites.js";
+import { redigirUrlAssinada } from "./lib/satelite/url-assinada.js";
 import { WorkerSatelite, motivoExecutorDesligado } from "./lib/satelite/worker.js";
 
 /**
@@ -56,14 +60,31 @@ import { WorkerSatelite, motivoExecutorDesligado } from "./lib/satelite/worker.j
  * culpado e acusa o inocente não guarda nada. Com a costura, o teste conta quantos pools nasceram
  * antes da recusa, e a resposta certa é ZERO.
  */
-export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolean; criarPool?: (dsn: string) => Db; /** porta HTTP das consultas externas (CEP/CNPJ); testes injetam mock */ buscarExterno?: BuscarFn } = {}): Promise<FastifyInstance> {
+export async function buildApp(opts: {
+  config?: Config; db?: Db; logger?: boolean; criarPool?: (dsn: string) => Db;
+  /** porta HTTP das consultas externas (CEP/CNPJ); testes injetam mock */ buscarExterno?: BuscarFn;
+  /** onde o arquivo do raster satelital é guardado (SAT-06); testes injetam um que falha */ armazenamentoRaster?: ArmazenamentoRaster;
+  /** destino do log (testes leem o que foi registrado); ausente = a saída padrão */ logStream?: NodeJS.WritableStream;
+} = {}): Promise<FastifyInstance> {
   const config = opts.config ?? loadConfig();
   // PRIMEIRA COISA, antes de existir servidor e antes de existir pool: a política de origem é montada
   // a partir do valor BRUTO da configuração e VALIDA o sufixo de preview ali dentro. Sufixo genérico
   // ou malformado lança aqui, e o processo morre sem nunca ter atendido requisição. `loadConfig` já
   // recusa o mesmo valor; esta linha fecha o caminho de quem monta um `Config` à mão (os testes).
   const politicaDeCors = politicaDeOrigem(config.WEB_ORIGIN.split(","), config.WEB_ORIGIN_PREVIEW_SUFFIX);
-  const app = Fastify({ logger: opts.logger === false ? false : { level: config.API_LOG_LEVEL }, bodyLimit: 5 * 1024 * 1024, trustProxy: true });
+  // O registro de cada requisição leva a URL: a da imagem satelital assinada (SAT-06) carrega o token na query, e o token
+  // NUNCA vai para log — o serializador troca a query dessa rota por um marcador (`redigirUrlAssinada`).
+  const registroDeRequisicao = (req: FastifyRequest) => {
+    const versao = req.headers?.["accept-version"];
+    return {
+      method: req.method, url: redigirUrlAssinada(req.url), version: typeof versao === "string" ? versao : undefined, host: req.host,
+      remoteAddress: req.ip, remotePort: req.socket ? req.socket.remotePort : undefined
+    };
+  };
+  const app = Fastify({
+    logger: opts.logger === false ? false : { level: config.API_LOG_LEVEL, serializers: { req: registroDeRequisicao }, ...(opts.logStream ? { stream: opts.logStream } : {}) },
+    bodyLimit: 5 * 1024 * 1024, trustProxy: true
+  });
   const db = opts.db ?? (opts.criarPool ?? createPool)(config.DATABASE_URL);
   app.decorate("db", db);
   app.decorate("config", config);
@@ -75,6 +96,10 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
     credenciais: config.COPERNICUS_CLIENT_ID && config.COPERNICUS_CLIENT_SECRET ? { clienteId: config.COPERNICUS_CLIENT_ID, segredo: config.COPERNICUS_CLIENT_SECRET } : null
   });
   app.decorate("clienteCopernicus", clienteCopernicus);
+  // SAT-06 (decisão 297): o estado do pedido avulso ao provedor (chamadas em voo + piso por instância) é UM objeto por
+  // processo, compartilhado pela análise da SAT-01 e pela imagem por pixel — o mesmo limite, as mesmas vagas.
+  app.decorate("limiteAvulsoSatelite", new LimiteAvulsoSatelite(limitesDaConfig(config)));
+  app.decorate("armazenamentoRaster", opts.armazenamentoRaster ?? armazenamentoRaster);
   // O EXECUTOR DA FILA SATELITAL só existe com as três condições (SATELITE_WORKER_ENABLED, COPERNICUS_ENABLED e a
   // credencial); faltando uma, UMA linha de log diz qual (sem valor nenhum) e nada é reservado — a API sobe igual.
   const motivoDesligado = motivoExecutorDesligado(config, clienteCopernicus);
@@ -138,6 +163,7 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   await app.register(referenciaRoutes, { prefix: "/api" });
   await app.register(consultaRoutes, { prefix: "/api" });
   await app.register(analisesSatelitaisRoutes, { prefix: "/api" });
+  await app.register(rastersSatelitaisRoutes, { prefix: "/api" });
   await app.register(sateliteConsultasRoutes, { prefix: "/api" });
   await app.register(produtosPesquisaRoutes, { prefix: "/api" });
   // ------------------------------------------------------------------------------------------------

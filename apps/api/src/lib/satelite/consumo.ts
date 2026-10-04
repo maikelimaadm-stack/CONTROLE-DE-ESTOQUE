@@ -46,17 +46,34 @@ export interface DadosConsumo {
   consultaItemId: string | null;
   /** O cabeçalho BRUTO da resposta 2xx (ou null se não veio): a leitura é feita aqui. */
   puCabecalho: string | null;
+  /**
+   * A API do provedor que cobrou (SAT-06, decisão 297): `statistical` (padrão — a análise da SAT-01 e o executor da fila)
+   * ou `process` (a imagem por pixel, Process API). Os valores são os do CHECK `chk_satelite_consumo_operacao` (0053).
+   */
+  operacao?: OperacaoConsumo;
 }
 
+/** As operações que o ERP grava hoje (o CHECK da 0053 aceita também `catalog`, que nenhuma rota chama). */
+export type OperacaoConsumo = "statistical" | "process";
 /**
- * Uma linha no ledger (operação `statistical`), na transação de quem chama — sob a RLS dele: fora do escopo a política
- * recusa a gravação. ROW COUNT conferido. Devolve o que o banco gravou (PU e créditos como string decimal, ou nulos).
+ * O literal SQL de cada operação — whitelist ESTÁTICA (nunca texto vindo de fora): o SQL de cada operação é fixo, e o da
+ * `statistical` continua exatamente o da SAT-03.
+ */
+const LITERAL_OPERACAO: Readonly<Record<OperacaoConsumo, string>> = { statistical: "'statistical'", process: "'process'" };
+
+/**
+ * Uma linha no ledger (operação `statistical`, ou a pedida), na transação de quem chama — sob a RLS dele: fora do escopo
+ * a política recusa a gravação. ROW COUNT conferido. Devolve o que o banco gravou (PU e créditos como string decimal, ou
+ * nulos).
  */
 export async function gravarConsumo(tx: Tx, d: DadosConsumo): Promise<{ id: string; pu_gasto: string | null; creditos: string | null }> {
   const lido = lerPuDoCabecalho(d.puCabecalho);
+  // Discriminador desconhecido NEGA (defesa além do tipo: quem chama de JS sem tipo não grava operação inventada).
+  const operacao = Object.hasOwn(LITERAL_OPERACAO, d.operacao ?? "statistical") ? LITERAL_OPERACAO[d.operacao ?? "statistical"] : null;
+  if (!operacao) throw new Error("consumo satelital: operação fora da lista");
   const g = await tx.query<{ id: string; pu_gasto: string | null; creditos: string | null }>(
     `insert into erp.satelite_consumo (organization_id, empresa_id, consulta_id, consulta_item_id, operacao, pu_gasto, creditos, origem_cabecalho)
-     values ($1, $2, $3, $4, 'statistical', $5::numeric(14,4), round($5::numeric(14,4) * 100, 2), $6)
+     values ($1, $2, $3, $4, ${operacao}, $5::numeric(14,4), round($5::numeric(14,4) * 100, 2), $6)
      returning id, pu_gasto, creditos`,
     [d.organizationId, d.empresaId, d.consultaId, d.consultaItemId, lido.pu, lido.origem]);
   if (g.rowCount !== 1) throw new Error("consumo satelital: a gravação no ledger não devolveu exatamente uma linha");
