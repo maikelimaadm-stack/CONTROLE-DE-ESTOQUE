@@ -54,9 +54,10 @@
 -- PRODUÇÃO (decisões 240/247). Quatro tabelas NOVAS e VAZIAS; quatro colunas ANULÁVEIS, sem default, em
 -- erp.analises_satelitais; uma chave única NOVA sobre colunas que já existem (id já é único: não tem como recusar
 -- acervo); a unicidade da janela refeita com data_alvo (nula em todo o acervo, e NULLS NOT DISTINCT: é a MESMA
--- unicidade que o acervo já cumpre — não tem como recusá-lo). NADA é regravado nem escrito: ADD COLUMN sem default não regrava a tabela (as linhas existentes leem NULL
--- pelo catálogo), e o gatilho de imutabilidade da 0052, que é de linha, não é acionado por DDL. NENHUM dado existente é
--- escrito, corrigido ou apagado. O efeito novo nasce DESLIGADO: nenhuma rota desta fatia chama o provedor.
+-- unicidade que o acervo já cumpre — não tem como recusá-lo). NADA é regravado nem escrito: ADD COLUMN sem default
+-- não regrava a tabela (as linhas existentes leem NULL pelo catálogo), e o gatilho de imutabilidade da 0052, que é de
+-- linha, não é acionado por DDL. NENHUM dado existente é escrito, corrigido ou apagado. O efeito novo nasce DESLIGADO:
+-- nenhuma rota desta fatia chama o provedor.
 --
 -- TRAVAS DE TABELA E JANELA.
 --   · Os CREATE TABLE com FK pegam SHARE ROW EXCLUSIVE em erp.organizations, erp.empresas, erp.users e erp.areas e a
@@ -68,14 +69,17 @@
 --     RECONSTRUÍDO) e as duas FKs que dependem da chave nova — é a ÚLTIMA coisa do arquivo, depois de todas as outras
 --     travas obtidas. NÃO é "só catálogo": o ADD COLUMN com CHECK e o CHECK da data alvo (conferir) e as duas chaves
 --     únicas (montar o índice) LEEM a tabela inteira sob ACCESS EXCLUSIVE — sem regravar —, e leitura e escrita de
---     análises esperam até o commit. O volume de erp.analises_satelitais em produção NÃO foi medido: PENDING (esperado pequeno —
---     uma linha por análise pedida desde a SAT-01). Sem a trava em 2 s, a migration aborta inteira e o deploy para, sem
---     nada aplicado.
+--     análises esperam até o commit. O volume de erp.analises_satelitais em produção NÃO foi medido: PENDING
+--     (esperado pequeno — uma linha por análise pedida desde a SAT-01). Sem a trava em 2 s, a migration aborta inteira
+--     e o deploy para, sem nada aplicado.
 --
 -- VOLTA. O repositório é forward-only (sem arquivo de descida). O caminho inverso, provado em
 -- packages/db/test/sat-02-0053.test.ts (constante SQL_REVERSO), é: soltar a FK análise → item, dropar as quatro
 -- tabelas (consumo, itens, consultas, orçamentos), a função de imutabilidade do consumo, a chave única nova, devolver
--- a uq_analises_satelitais_janela da 0052, dropar as quatro colunas de erp.analises_satelitais e tirar a 0053 do ledger. Só por decisão humana: apagaria a fila e o consumo.
+-- a uq_analises_satelitais_janela da 0052, dropar as quatro colunas de erp.analises_satelitais e tirar a 0053 do
+-- ledger. Só por decisão humana: apagaria a fila e o consumo. FAIL-CLOSED: se já houver duas análises na mesma janela
+-- com datas alvo diferentes (o que só a 0053 permite), a unicidade da 0052 não se reconstrói (23505) e a volta inteira
+-- para — análise não se apaga, e o que fazer com esse acervo é decisão humana.
 --
 -- Trava (2026,87). lock_timeout 2s. O runner aplica o arquivo em UMA transação.
 -- =====================================================================
