@@ -2304,7 +2304,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.retiros` | 14 | sim | `empresa_id` | sim |
 | `erp.salary_advances` | 14 | sim | `empresa_id` | sim |
 | `erp.sales_document_items` | 12 | não | — | não |
-| `erp.satelite_consulta_itens` | 21 | sim | `empresa_id` | não |
+| `erp.satelite_consulta_itens` | 22 | sim | `empresa_id` | não |
 | `erp.satelite_consultas` | 15 | sim | `empresa_id` | não |
 | `erp.satelite_consumo` | 10 | sim | `empresa_id` | não |
 | `erp.satelite_orcamentos` | 7 | sim | `empresa_id` | não |

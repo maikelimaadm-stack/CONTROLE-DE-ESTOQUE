@@ -6,10 +6,13 @@ import {
   VERSAO_METODO_NDVI
 } from "@agro/domain";
 import { runService } from "../lib/service.js";
-import { denied, err, validation, type DomainError } from "../lib/errors.js";
+import { DomainError, denied, err, validation } from "../lib/errors.js";
 import { empresaScopeSql, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
 import { LimitePorMinuto } from "../lib/consultas/http.js";
-import { ClienteCopernicus, FalhaCopernicus, type RegistroChamada } from "../lib/satelite/copernicus.js";
+import { FalhaCopernicus, type RegistroChamada } from "../lib/satelite/copernicus.js";
+import { gravarConsumo } from "../lib/satelite/consumo.js";
+import { classificarLimite, lerContagemChamadas } from "../lib/satelite/limite-global.js";
+import { TENTATIVAS_AVULSAS_POR_MINUTO_INSTANCIA, limitesDaConfig } from "../lib/satelite/limites.js";
 import { LADO_MAXIMO_PX, lerPoligono, planejarGrade, type GradeDaAnalise, type PoligonoGeoJson } from "../lib/satelite/geometria.js";
 import { escolherObservacao, interpretarEstatistica, janelaPadrao, montarCorpoEstatistica, type Janela, type ResultadoNdvi } from "../lib/satelite/ndvi.js";
 
@@ -31,11 +34,18 @@ import { escolherObservacao, interpretarEstatistica, janelaPadrao, montarCorpoEs
  * fora do escopo, excluída ou id malformado: a MESMA 404 "Área não encontrada" (também a do gatilho da 0052).
  *
  * TRÊS FASES, e nenhuma transação aberta esperando o provedor:
- *   A. `runService`: permissão, escopo, área viva e o hash do polígono calculado pelo banco; reaproveitamento.
- *   B. fora de transação: a chamada ao Copernicus (`ClienteCopernicus`, tempo máximo e tentativas limitadas).
+ *   A. `runService`: permissão, escopo, área viva e o hash do polígono calculado pelo banco; reaproveitamento; e a
+ *      contagem do LIMITE GLOBAL de chamadas (SAT-03, decisão 296: contado pelo banco, todas as réplicas juntas —
+ *      `limite-global.ts`), decidido no começo da FASE B com as chamadas em voo desta instância somadas.
+ *   B. fora de transação: a chamada ao Copernicus (o cliente COMPARTILHADO do processo, `app.clienteCopernicus`: um
+ *      token só para esta rota e o executor da fila; tempo máximo e tentativas limitadas).
  *   C. `runService` de novo: a área RELIDA no escopo (404 se saiu dele), o polígono conferido pelo hash (409 se mudou),
- *      a gravação com conferência de ROW COUNT.
- * Falha do provedor não grava nada: a análise anterior continua sendo a última (o histórico nunca perde linha).
+ *      a gravação com conferência de ROW COUNT e, NA MESMA TRANSAÇÃO, a linha do ledger `erp.satelite_consumo` com o PU
+ *      do cabeçalho da resposta (SAT-03): o provedor respondeu 2xx, a chamada gastou — inclusive quando a análise já
+ *      existia ou o polígono mudou no meio (o 409 sai DEPOIS do commit do consumo).
+ * Falha do provedor não grava ANÁLISE: a anterior continua sendo a última (o histórico nunca perde linha). Se a falha
+ * veio DEPOIS de um 2xx (corpo ilegível, processamento parcial, corpo fora do contrato), a chamada foi cobrada: só a
+ * linha do ledger é gravada, numa transação curta, e a resposta é o mesmo 503.
  *
  * DUPLICIDADE: uma análise por área, método, polígono (hash) e janela (dias UTC inteiros) — a restrição
  * `uq_analises_satelitais_janela`. Repetir o pedido no mesmo dia, com o mesmo polígono, devolve a análise já gravada
@@ -45,8 +55,6 @@ import { escolherObservacao, interpretarEstatistica, janelaPadrao, montarCorpoEs
  */
 export const PERMISSAO_VER_ANALISE = "analises_satelitais.view";
 export const PERMISSAO_PEDIR_ANALISE = "analises_satelitais.create";
-/** Chamadas ao provedor por organização por minuto, por instância da API (a cota da conta gratuita é pequena). */
-export const LIMITE_ANALISES_POR_MINUTO = 10;
 
 export const MSG_AREA_NAO_ENCONTRADA = "Área não encontrada";
 export const MSG_AREA_SEM_POLIGONO = "A área não tem polígono desenhado; sem geometria não há análise por satélite.";
@@ -57,6 +65,8 @@ export const MSG_ANALISE_DESLIGADA = "A análise por satélite está desligada n
 export const MSG_PROVEDOR_INDISPONIVEL = "O provedor de imagens de satélite não respondeu como esperado; nenhuma análise foi gravada e as anteriores continuam valendo. Tente de novo mais tarde.";
 export const MSG_LIMITE_ANALISES = "Limite de análises por satélite por minuto atingido; tente em instantes.";
 export const MSG_LIMITE_PROVEDOR = "O provedor de imagens de satélite limitou as requisições; tente de novo em instantes.";
+export const MSG_POLIGONO_MUDOU = "O polígono da área mudou durante a análise; peça a análise de novo.";
+export const MSG_JANELA_DISPUTADA = "A análise desta janela foi disputada por outro pedido; peça a análise de novo.";
 
 const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const corpoVazio = z.object({}).strict();
@@ -208,15 +218,29 @@ async function gravarAnalise(ctx: ServiceCtx, area: AreaLida, janela: Janela, r:
   return null; // a chave já existia: quem chama relê
 }
 
+/** O que a chamada ao provedor devolve à FASE C: o resultado interpretado e o cabeçalho de PU da resposta 2xx. */
+interface ChamadaNdvi { resultado: ResultadoNdvi; puCabecalho: string | null }
+/** O desfecho da FASE C: a análise (nova ou já gravada) ou o conflito, que só vira 409 depois do commit do consumo. */
+type DesfechoGravacao = { linha: LinhaAnalise; reutilizada: boolean } | { conflito: string };
+
 export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
-  const { COPERNICUS_ENABLED, COPERNICUS_CLIENT_ID, COPERNICUS_CLIENT_SECRET } = app.config;
-  const cliente = new ClienteCopernicus({
-    buscar: app.buscarExterno,
-    credenciais: COPERNICUS_CLIENT_ID && COPERNICUS_CLIENT_SECRET ? { clienteId: COPERNICUS_CLIENT_ID, segredo: COPERNICUS_CLIENT_SECRET } : null
-  });
-  // Estado por INSTÂNCIA (limite e chamadas em andamento), como nas consultas de CEP/CNPJ — declarado em DEPLOYMENT.
-  const limite = new LimitePorMinuto(LIMITE_ANALISES_POR_MINUTO);
-  const emAndamento = new Map<string, Promise<ResultadoNdvi>>();
+  const { COPERNICUS_ENABLED } = app.config;
+  // O cliente COMPARTILHADO do processo (server.ts): o mesmo token desta rota e do executor da fila (SAT-03).
+  const cliente = app.clienteCopernicus;
+  const limites = limitesDaConfig(app.config);
+  // Estado por INSTÂNCIA: as chamadas em andamento (o mesmo pedido simultâneo compartilha a chamada) e as chamadas EM VOO
+  // (abertas, consumo ainda não gravado: o banco não as vê, então entram na conta do limite global como 'executando').
+  // O limite é o GLOBAL, contado pelo banco (SAT-03), E um PISO por instância em TENTATIVAS por organização por minuto:
+  // o ledger só conta resposta 2xx, e recusa, 429, 5xx, tempo e rede também precisam de taxa (como na SAT-01).
+  const emAndamento = new Map<string, Promise<ChamadaNdvi>>();
+  const tentativasPorOrganizacao = new LimitePorMinuto(TENTATIVAS_AVULSAS_POR_MINUTO_INSTANCIA);
+  const emVoo = { conta: 0, porOrganizacao: new Map<string, number>() };
+  const ocuparVoo = (org: string) => { emVoo.conta++; emVoo.porOrganizacao.set(org, (emVoo.porOrganizacao.get(org) ?? 0) + 1); };
+  const liberarVoo = (org: string) => {
+    emVoo.conta--;
+    const n = (emVoo.porOrganizacao.get(org) ?? 1) - 1;
+    if (n > 0) emVoo.porOrganizacao.set(org, n); else emVoo.porOrganizacao.delete(org);
+  };
 
   app.post("/mapa/areas/:areaId/analises-satelitais/ndvi", async (req, reply) => {
     const ctxPedido = exigir(app, req, PERMISSAO_PEDIR_ANALISE);
@@ -227,50 +251,97 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
     if (!cliente.configurado) throw err("CONSULTA_INDISPONIVEL", MSG_ANALISE_DESLIGADA, { motivo: "configuracao" });
     const janela = janelaPadrao(Date.now());
 
-    // FASE A — autorizar e ler (transação curta). O escopo vem de scopedById/empresaScope dentro dos leitores.
+    // FASE A — autorizar e ler (transação curta). O escopo vem de scopedById/empresaScope dentro dos leitores. A contagem
+    // do limite global só é lida para quem PODE chamar o provedor (sem análise da janela): reaproveitar não gasta nada.
     const a = await runService(app, req, PERMISSAO_PEDIR_ANALISE, async (ctx) => {
       const area = await lerAreaNoEscopo(ctx, areaId);
       const preparo = prepararPoligono(area);
-      return { area, preparo, existente: await lerAnaliseDaJanela(ctx, area, janela) };
+      const existente = await lerAnaliseDaJanela(ctx, area, janela);
+      return { area, preparo, existente, contagem: existente ? null : await lerContagemChamadas(ctx.tx) };
     });
     if (a.existente) return reply.status(200).send({ analise: paraDto(a.existente, a.area.geometria_sha256), reutilizada: true });
 
-    // FASE B — o provedor, FORA de transação. Mesmo pedido em andamento nesta instância: a mesma chamada.
+    // FASE B — o provedor, FORA de transação. Mesmo pedido em andamento nesta instância: a mesma chamada (não é mais
+    // uma chamada, e o limite só barra quem ABRE uma). Quem abre a chamada é quem grava o consumo dela. O veredito sai
+    // da contagem do banco (FASE A) + as chamadas em voo AGORA, e a vaga é ocupada no mesmo passo síncrono: dois pedidos
+    // simultâneos desta instância nunca passam pela mesma vaga. O piso por instância só conta tentativa se o global deixou.
     const chave = [ctxPedido.orgId, a.area.id, a.area.geometria_sha256, janela.inicio.toISOString()].join("|");
     let chamada = emAndamento.get(chave);
+    const abriuChamada = !chamada;
     if (!chamada) {
-      if (!limite.permitir(ctxPedido.orgId)) throw err("RATE_LIMITED", MSG_LIMITE_ANALISES, { motivo: "limite_erp" });
+      const vooDaOrg = emVoo.porOrganizacao.get(ctxPedido.orgId) ?? 0;
+      if (!a.contagem || classificarLimite(a.contagem, limites, { conta: emVoo.conta, organizacao: vooDaOrg }) !== "livre"
+        || !tentativasPorOrganizacao.permitir(ctxPedido.orgId)) {
+        throw err("RATE_LIMITED", MSG_LIMITE_ANALISES, { motivo: "limite_erp" });
+      }
       const registrar = (c: RegistroChamada) => req.log.info({
         satelite: { provedor: PROVEDOR_COPERNICUS, endpoint: c.endpoint, status: c.status, duracao_ms: c.duracaoMs, tentativa: c.tentativa, tipo_falha: c.tipoFalha, area_id: a.area.id }
       }, "chamada ao provedor de satélite");
-      chamada = cliente.estatistica(montarCorpoEstatistica(a.preparo.poligono, janela, a.preparo.grade), registrar)
-        .then((corpo) => escolherObservacao(interpretarEstatistica(corpo, janela), a.preparo.grade.pixelsGeometria));
+      // A chamada (corpo + PU) e a LEITURA do método são passos separados: a leitura que recusa um 2xx devolve a falha
+      // com o PU da resposta (`puCabecalho` presente = cobrada), para quem abriu a chamada gravar o consumo dela.
+      chamada = cliente.estatisticaComConsumo(montarCorpoEstatistica(a.preparo.poligono, janela, a.preparo.grade), registrar)
+        .then((r) => {
+          try {
+            return { resultado: escolherObservacao(interpretarEstatistica(r.corpo, janela), a.preparo.grade.pixelsGeometria), puCabecalho: r.puCabecalho };
+          } catch (e) {
+            if (e instanceof FalhaCopernicus) throw new FalhaCopernicus(e.tipo, e.status, e.tentarAposSegundos, r.puCabecalho);
+            throw e;
+          }
+        });
       emAndamento.set(chave, chamada);
       chamada.finally(() => emAndamento.delete(chave)).catch(() => undefined);
+      ocuparVoo(ctxPedido.orgId);
     }
-    let resultado: ResultadoNdvi;
     try {
-      resultado = await chamada;
-    } catch (e) {
-      if (!(e instanceof FalhaCopernicus)) throw e;
-      req.log.warn({ satelite: { provedor: PROVEDOR_COPERNICUS, area_id: a.area.id, tipo_falha: e.tipo, status: e.status } }, "análise por satélite não concluída");
-      if (e.tentarAposSegundos !== null) reply.header("retry-after", String(e.tentarAposSegundos));
-      throw erroDoProvedor(e);
+      let feita: ChamadaNdvi;
+      try {
+        feita = await chamada;
+      } catch (e) {
+        if (!(e instanceof FalhaCopernicus)) throw e;
+        req.log.warn({ satelite: { provedor: PROVEDOR_COPERNICUS, area_id: a.area.id, tipo_falha: e.tipo, status: e.status } }, "análise por satélite não concluída");
+        // Falha DEPOIS de um 2xx: a chamada foi cobrada. Só o consumo, numa transação curta (empresa da área relida no
+        // escopo; área fora dele não grava). A resposta continua o mesmo 503.
+        if (abriuChamada && e.puCabecalho !== undefined) await gravarConsumoSemAnalise(e.puCabecalho);
+        if (e.tentarAposSegundos !== null) reply.header("retry-after", String(e.tentarAposSegundos));
+        throw erroDoProvedor(e);
+      }
+
+      // FASE C — persistir: a área RELIDA no escopo, o MESMO polígono, ROW COUNT conferido; o consumo da chamada no
+      // ledger NA MESMA TRANSAÇÃO (ou entram os dois, ou nenhum). Os dois 409 saem DEPOIS do commit: a análise não foi
+      // gravada, mas a chamada gastou e o consumo fica. Área fora do escopo (404) não grava nada.
+      const desfecho = await runService(app, req, PERMISSAO_PEDIR_ANALISE, async (ctx): Promise<DesfechoGravacao> => {
+        const area = await lerAreaNoEscopo(ctx, areaId);
+        const consumo = () => (abriuChamada
+          ? gravarConsumo(ctx.tx, { organizationId: ctx.orgId, empresaId: area.empresa_id, consultaId: null, consultaItemId: null, puCabecalho: feita.puCabecalho })
+          : Promise.resolve(null));
+        if (area.geometria_sha256 !== a.area.geometria_sha256) { await consumo(); return { conflito: MSG_POLIGONO_MUDOU }; }
+        const nova = await gravarAnalise(ctx, area, janela, feita.resultado);
+        const existente = nova ? null : await lerAnaliseDaJanela(ctx, area, janela);
+        await consumo();
+        if (nova) return { linha: nova, reutilizada: false };
+        if (!existente) return { conflito: MSG_JANELA_DISPUTADA };
+        return { linha: existente, reutilizada: true };
+      });
+      if ("conflito" in desfecho) throw err("CONCURRENCY_CONFLICT", desfecho.conflito);
+      return reply.status(desfecho.reutilizada ? 200 : 201).send({ analise: paraDto(desfecho.linha, a.area.geometria_sha256), reutilizada: desfecho.reutilizada });
+    } finally {
+      // A vaga em voo só sai depois da FASE C: aí o consumo já está no ledger (ou a chamada terminou sem 2xx).
+      if (abriuChamada) liberarVoo(ctxPedido.orgId);
     }
 
-    // FASE C — persistir: a área RELIDA no escopo, o MESMO polígono, ROW COUNT conferido.
-    const gravada = await runService(app, req, PERMISSAO_PEDIR_ANALISE, async (ctx) => {
-      const area = await lerAreaNoEscopo(ctx, areaId);
-      if (area.geometria_sha256 !== a.area.geometria_sha256) {
-        throw err("CONCURRENCY_CONFLICT", "O polígono da área mudou durante a análise; peça a análise de novo.");
-      }
-      const nova = await gravarAnalise(ctx, area, janela, resultado);
-      if (nova) return { linha: nova, reutilizada: false };
-      const existente = await lerAnaliseDaJanela(ctx, area, janela);
-      if (!existente) throw err("CONCURRENCY_CONFLICT", "A análise desta janela foi disputada por outro pedido; peça a análise de novo.");
-      return { linha: existente, reutilizada: true };
-    });
-    return reply.status(gravada.reutilizada ? 200 : 201).send({ analise: paraDto(gravada.linha, a.area.geometria_sha256), reutilizada: gravada.reutilizada });
+    async function gravarConsumoSemAnalise(puCabecalho: string | null): Promise<void> {
+      await runService(app, req, PERMISSAO_PEDIR_ANALISE, async (ctx) => {
+        let area: AreaLida;
+        try {
+          area = await lerAreaNoEscopo(ctx, areaId);
+        } catch (e) {
+          if (!(e instanceof DomainError) || e.code !== "NOT_FOUND") throw e;
+          req.log.warn({ satelite: { provedor: PROVEDOR_COPERNICUS, area_id: areaId } }, "consumo do provedor não gravado: a área saiu do escopo durante a chamada");
+          return;
+        }
+        await gravarConsumo(ctx.tx, { organizationId: ctx.orgId, empresaId: area.empresa_id, consultaId: null, consultaItemId: null, puCabecalho });
+      });
+    }
   });
 
   app.get("/mapa/areas/:areaId/analises-satelitais/ultima", async (req) => {

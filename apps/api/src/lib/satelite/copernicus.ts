@@ -45,8 +45,14 @@ export type TipoFalhaCopernicus =
   | "resposta_malformada"  // 2xx com corpo fora do contrato
   | "processamento_parcial"; // 2xx com dia(s) em erro que decidiriam a escolha (ndvi.ts): nada é gravado
 
+/**
+ * `puCabecalho` (SAT-03, decisão 296) existe SÓ na falha que veio DEPOIS de uma resposta 2xx da Statistical API (corpo
+ * ilegível, ou a leitura do método recusou o corpo): a chamada foi cobrada, e quem a abriu grava o consumo. O valor é o
+ * cabeçalho `x-processingunits-spent` bruto, ou null se ele não veio. Ausente (undefined) = o provedor não cobrou nada.
+ */
 export class FalhaCopernicus extends Error {
-  constructor(readonly tipo: TipoFalhaCopernicus, readonly status: number | null = null, readonly tentarAposSegundos: number | null = null) {
+  constructor(readonly tipo: TipoFalhaCopernicus, readonly status: number | null = null, readonly tentarAposSegundos: number | null = null,
+    readonly puCabecalho?: string | null) {
     super(`falha do provedor Copernicus: ${tipo}${status ? ` (HTTP ${status})` : ""}`);
     this.name = "FalhaCopernicus";
   }
@@ -90,6 +96,15 @@ export class ClienteCopernicus {
    * `ndvi.ts`). Lança `FalhaCopernicus` em qualquer outro desfecho.
    */
   async estatistica(corpo: unknown, registrar: (r: RegistroChamada) => void = () => {}): Promise<unknown> {
+    return (await this.estatisticaComConsumo(corpo, registrar)).corpo;
+  }
+
+  /**
+   * A mesma chamada de `estatistica` (mesmas tentativas, mesmo token), devolvendo também o cabeçalho
+   * `x-processingunits-spent` da resposta 2xx QUE VALEU (SAT-03, decisão 296): bruto, ou null se não veio. Nada mais
+   * da resposta sai daqui; quem lê o PU é `consumo.ts`.
+   */
+  async estatisticaComConsumo(corpo: unknown, registrar: (r: RegistroChamada) => void = () => {}): Promise<{ corpo: unknown; puCabecalho: string | null }> {
     const texto = JSON.stringify(corpo);
     let renovouPor401 = false;
     for (let tentativa = 1; tentativa <= TENTATIVAS_MAXIMAS; tentativa++) {
@@ -105,10 +120,11 @@ export class ClienteCopernicus {
         const tipo: TipoFalhaCopernicus = r.motivo === "tempo" ? "tempo" : r.motivo === "rede" ? "rede" : "resposta_malformada";
         anotar(r.status ?? null, tipo);
         if ((tipo === "tempo" || tipo === "rede") && !ultima) { await this.esperar(ESPERA_ENTRE_TENTATIVAS_MS); continue; }
-        throw new FalhaCopernicus(tipo, r.status ?? null);
+        // 2xx com corpo ilegível: cobrada (o PU, se veio, vai junto); qualquer outra falha de envio não cobrou.
+        throw new FalhaCopernicus(tipo, r.status ?? null, null, r.motivo === "corpo" ? r.processingUnits ?? null : undefined);
       }
       const s = r.status;
-      if (s >= 200 && s < 300) { anotar(s, null); return r.corpo; }
+      if (s >= 200 && s < 300) { anotar(s, null); return { corpo: r.corpo, puCabecalho: r.processingUnits ?? null }; }
       if (s === 401) {
         anotar(s, "autenticacao");
         this.token = null; // o token caiu antes do previsto: o próximo pedido emite outro
