@@ -32,6 +32,20 @@ export const LIMITES_SATELITE_PADRAO = {
  */
 export const RESERVA_INTERATIVA = 1;
 
+/**
+ * PISO POR INSTÂNCIA do pedido avulso da SAT-01, em TENTATIVAS (chamadas abertas ao provedor) por organização por minuto,
+ * somado (E) ao limite global. O ledger só conta chamada respondida (2xx): recusa, 429, 5xx, tempo e rede não entram nele,
+ * e sem este piso um usuário poderia martelar um provedor fora do ar sem taxa nenhuma. É o mesmo número da SAT-01.
+ */
+export const TENTATIVAS_AVULSAS_POR_MINUTO_INSTANCIA = 10;
+
+/**
+ * Pausa do executor DESTA instância quando o provedor responde como indisponível para a conta (429, 5xx, tempo, rede):
+ * a rodada seguinte não reserva nada até passar a espera (a maior entre esta e o Retry-After). Sem a pausa, um provedor
+ * que recusa na hora queimaria a fila inteira em segundos, uma tentativa por item — falha não entra no ledger nem conta.
+ */
+export const PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S = 60;
+
 /** Itens que o executor reserva por rodada (o teto real é a capacidade livre no momento). */
 export const LOTE_EXECUTOR = 5;
 
