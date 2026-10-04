@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CLASSES_NDVI_MAPA, RESUMO_ANALISE_SATELITAL_MAXIMO, classeNdvi, enumLabel } from "@agro/domain";
+import { CLASSES_NDVI_MAPA, RESUMO_ANALISE_SATELITAL_MAXIMO, classeNdvi, enumLabel, type ChaveClasseNdvi } from "@agro/domain";
 import { api, ApiError, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui";
@@ -18,7 +18,7 @@ export const PERMISSAO_VER_NDVI = "analises_satelitais.view";
 export const PERMISSAO_PEDIR_NDVI = "analises_satelitais.create";
 
 /** Cor de cada classe da escala fixa (do vermelho ao verde escuro). A classe e o limite são do domínio. */
-export const COR_CLASSE_NDVI: Readonly<Record<string, string>> = {
+export const COR_CLASSE_NDVI: Readonly<Record<ChaveClasseNdvi, string>> = {
   sem_vegetacao: "#d73027",
   baixo: "#fc8d59",
   medio: "#d9ef8b",
@@ -29,7 +29,7 @@ export const COR_SEM_NDVI = "#94a3b8";
 
 export const corDoNdvi = (valor: string | null | undefined) => {
   const c = classeNdvi(valor);
-  return c ? COR_CLASSE_NDVI[c.chave] ?? COR_SEM_NDVI : COR_SEM_NDVI;
+  return c ? COR_CLASSE_NDVI[c.chave] : COR_SEM_NDVI;
 };
 
 export interface ResumoNdviDaArea {
@@ -82,8 +82,10 @@ export function useResumoNdvi(): EstadoNdvi {
   return React.useMemo<EstadoNdvi>(() => {
     if (!pode) return { situacao: "sem_permissao" };
     if (isLoading) return { situacao: "carregando" };
-    if (error) return { situacao: "erro", erro: error, tentarDeNovo: () => void refetch() };
-    if (dados === null || dados === undefined) return { situacao: "indisponivel" };
+    // Um refetch que falha (rede caiu, aba voltou ao foco) não apaga o que já estava na tela: com dado em cache, ele
+    // continua valendo; o erro só aparece quando não há resumo nenhum.
+    if (dados === undefined) return error ? { situacao: "erro", erro: error, tentarDeNovo: () => void refetch() } : { situacao: "carregando" };
+    if (dados === null) return { situacao: "indisponivel" };
     return { situacao: "pronto", porArea: new Map(dados.itens.map((i) => [i.area_id, i])), temMais: dados.tem_mais };
   }, [pode, isLoading, error, dados, refetch]);
 }
@@ -112,13 +114,17 @@ export function anosDasImagens(datas: readonly (string | null | undefined)[]): s
   return anos.length === 1 ? String(anos[0]) : `${anos[0]}–${anos[anos.length - 1]}`;
 }
 
-export function AtribuicaoCopernicus({ anos, className }: { anos: string | null; className?: string }) {
+export function AtribuicaoCopernicus({ anos, className, testId = "mapa-atribuicao-copernicus" }: { anos: string | null; className?: string; testId?: string }) {
   if (!anos) return null;
-  return <p className={`text-[10px] leading-tight text-slate-500 ${className ?? ""}`} data-testid="mapa-atribuicao-copernicus">Contains modified Copernicus Sentinel data {anos}</p>;
+  return <p className={`text-[10px] leading-tight text-slate-500 ${className ?? ""}`} data-testid={testId}>Contains modified Copernicus Sentinel data {anos}</p>;
 }
 
-/** Legenda FIXA (a mesma em qualquer data e área) e o lembrete de que NDVI não é biomassa. */
-export function LegendaNdvi({ anos }: { anos: string | null }) {
+/**
+ * Legenda FIXA (a mesma em qualquer data e área) e o lembrete de que NDVI não é biomassa. A atribuição do Copernicus
+ * NÃO mora aqui: ela aparece sempre que um número do NDVI está na tela (também na "Cor do cadastro", em que a lista
+ * continua mostrando o NDVI de cada área).
+ */
+export function LegendaNdvi() {
   return (
     <div className="pointer-events-auto rounded-md border border-slate-200 bg-white/95 px-3 py-2 text-xs shadow-sm" data-testid="mapa-legenda-ndvi">
       <div className="mb-1 font-semibold text-slate-700">NDVI médio da última imagem útil</div>
@@ -135,7 +141,6 @@ export function LegendaNdvi({ anos }: { anos: string | null }) {
         </li>
       </ul>
       <p className="mt-1 max-w-[16rem] text-[10px] leading-tight text-slate-500">NDVI mede o vigor da vegetação vista pelo satélite. Não é biomassa, oferta de forragem nem lotação.</p>
-      <AtribuicaoCopernicus anos={anos} className="mt-1" />
     </div>
   );
 }
@@ -246,7 +251,7 @@ export function NdviDaArea({ areaId, estado, temContorno }: { areaId: string; es
               </span>
             )}
           </div>
-          <div className="text-xs tabular-nums text-slate-600">mín. {num(obs.valor_minimo, 2)} · máx. {num(obs.valor_maximo, 2)}</div>
+          <div className="text-xs tabular-nums text-slate-600" data-testid="mapa-ndvi-faixa">Mínimo {num(obs.valor_minimo, 2)} · Máximo {num(obs.valor_maximo, 2)}</div>
           <div className="text-xs tabular-nums text-slate-600" data-testid="mapa-ndvi-imagem">Imagem de {dateBR(obs.observacao_inicio)} · {pct(Number(obs.cobertura_valida) * 100, 0)} da área vista</div>
           {item?.variacao !== null && item?.variacao !== undefined && item.observacao_anterior && (
             <div className={`text-xs tabular-nums ${Number(item.variacao) > 0 ? "text-green-700" : Number(item.variacao) < 0 ? "text-red-700" : "text-slate-600"}`} data-testid="mapa-ndvi-variacao">

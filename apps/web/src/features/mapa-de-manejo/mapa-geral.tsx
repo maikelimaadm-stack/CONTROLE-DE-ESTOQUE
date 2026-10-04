@@ -12,7 +12,7 @@ import { num } from "@/lib/utils";
 import { CamadaDesenho } from "./camada-desenho";
 import { COR_PADRAO_AREA } from "./cores";
 import { AvisoDeLocalizacao, SeletorDeBase, desenharAreas, hectares, limites, marcarSelecao, rotulosDasAreas, useAreasDoMapa, useMapaBase } from "./mapa-base";
-import { LegendaNdvi, NdviDaArea, anosDasImagens, corDoNdvi, useResumoNdvi } from "./ndvi";
+import { AtribuicaoCopernicus, LegendaNdvi, NdviDaArea, anosDasImagens, corDoNdvi, useResumoNdvi } from "./ndvi";
 
 /**
  * MAPA GERAL (decisão 294; antes Mapa de Manejo, decisões 289 e 292) — SÓ VISUALIZAÇÃO das áreas (erp.areas) e dos
@@ -36,7 +36,7 @@ export function MapaGeral() {
   const comNdvi = ndvi.situacao === "pronto";
   // Sem escolha do usuário, o mapa abre no NDVI quando alguma área tem imagem útil (senão, tudo cinza não diria nada).
   const [modoEscolhido, setModoCor] = React.useState<ModoCor | null>(null);
-  const algumNdvi = ndvi.situacao === "pronto" && [...ndvi.porArea.values()].some((i) => i.ultima_observacao !== null);
+  const algumNdvi = React.useMemo(() => ndvi.situacao === "pronto" && [...ndvi.porArea.values()].some((i) => i.ultima_observacao !== null), [ndvi]);
   const modoCor: ModoCor = comNdvi ? modoEscolhido ?? (algumNdvi ? "ndvi" : "cadastro") : "cadastro";
   const [selecionada, setSelecionada] = React.useState<string | null>(null);
   /** Área sob o mouse (rótulo em destaque + contorno por cima). */
@@ -125,9 +125,10 @@ export function MapaGeral() {
   const totalHa = areas.reduce((s, a) => s + hectares(a.area_ha), 0);
   const podeCadastrar = can("batch_area.create");
   const entradaAreas = entryById("configuracoes.pecuaria.areas");
-  const anosNdvi = ndvi.situacao === "pronto"
+  // Memo: a tela re-renderiza a cada quadro de pan/zoom (a camada de rótulos acompanha o mapa).
+  const anosNdvi = React.useMemo(() => (ndvi.situacao === "pronto"
     ? anosDasImagens(areas.map((a) => ndvi.porArea.get(a.id)?.ultima_observacao?.observacao_inicio))
-    : null;
+    : null), [ndvi, areas]);
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
@@ -191,7 +192,8 @@ export function MapaGeral() {
                 </div>
               )}
               {ndvi.situacao === "pronto" && ndvi.temMais && <div className="rounded bg-white/90 px-2 py-1 text-xs text-amber-700 shadow-sm">O NDVI mostra as primeiras áreas do escopo; as demais aparecem sem cor de NDVI.</div>}
-              {modoCor === "ndvi" && comNdvi && <LegendaNdvi anos={anosNdvi} />}
+              {modoCor === "ndvi" && comNdvi && <LegendaNdvi />}
+              {anosNdvi && <div className="rounded bg-white/90 px-2 py-0.5 shadow-sm"><AtribuicaoCopernicus anos={anosNdvi} testId="mapa-atribuicao-copernicus-mapa" /></div>}
             </div>
           )}
           <AvisoDeLocalizacao mapa={mapa} />

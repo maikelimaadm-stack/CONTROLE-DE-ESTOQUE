@@ -4768,15 +4768,17 @@ Faixa **F1**. Sem migration, sem variável nova, sem permissão nova (usa `anali
 
 - **API — rota nova de leitura** `GET /api/mapa/analises-satelitais/resumo?indice=ndvi&pagina=1&tamanho=500` (query
   estrita; tamanho 1–500): o resumo de TODAS as áreas do escopo com pelo menos uma execução — última execução, última
-  observação útil, a útil anterior e a variação — numa consulta só para a página inteira, com o escopo do módulo
-  pecuária em cada tabela antes do `limit`. Só lê `erp.areas` e `erp.analises_satelitais`; **não chama o Copernicus**.
+  observação útil, a útil anterior e a variação — numa consulta só para a página inteira (a página de áreas é cortada
+  primeiro; cada área busca as suas linhas pelos índices da 0052), com o escopo do módulo pecuária em cada ocorrência de
+  tabela. Só lê `erp.areas` e `erp.analises_satelitais`; **não chama o Copernicus**.
 - **Web — "Mapa geral"** (`/mapa-geral`; `/mapa-de-manejo` redireciona, preservando parâmetros): o mapa pinta cada área
   pela classe FIXA do NDVI da última imagem útil (cinza sem imagem útil), seletor "NDVI / Cor do cadastro", legenda,
   "não é biomassa" e a atribuição "Contains modified Copernicus Sentinel data [ano]". O painel da área mostra os números,
   a variação, o histórico e o **"Analisar agora"** (o mesmo `POST` da SAT-01; desligado → a mensagem do servidor).
 - **Menu**: o módulo passa a "Mapa geral"; Configurações › Pecuária › "Áreas / Piquetes" passa a "Cadastro de Área"
-  (mesma rota `?tab=pecuaria&sub=areas`, mesma ficha). O rótulo do módulo de escopo no banco ("Mapa de Manejo", 0049)
-  não muda (exigiria migration).
+  (mesma rota `?tab=pecuaria&sub=areas`, mesma ficha); na tela de perfis, o grupo das permissões do mapa passa a
+  "Mapa geral". O rótulo do módulo de escopo no banco ("Mapa de Manejo", 0049, em Acesso por empresa) não muda
+  (exigiria migration).
 
 **Impacto em dados reais:** nenhum. O deploy não escreve, corrige nem apaga nada (decisões 240/247). Abrir o Mapa geral
 só LÊ as análises já gravadas; uma análise nova só nasce do clique em "Analisar agora", pela rota e pelas regras da

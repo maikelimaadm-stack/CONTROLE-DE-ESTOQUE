@@ -98,7 +98,9 @@ export const RESUMO_ANALISE_SATELITAL_MAXIMO = 500;
  * degradado e não viram biomassa, oferta nem lotação (decisão 293, item 7). Limite inferior INCLUSIVO; a primeira
  * classe começa em −1 (o menor NDVI possível). Mudar um limite muda a leitura de todo o histórico: é decisão nova.
  */
-export interface ClasseNdvi { chave: string; rotulo: string; minimo: number }
+/** A chave de cada classe — união fechada: quem dá cor às classes (a web) tem de cobrir todas, ou não compila. */
+export type ChaveClasseNdvi = "sem_vegetacao" | "baixo" | "medio" | "alto";
+export interface ClasseNdvi { chave: ChaveClasseNdvi; rotulo: string; minimo: number }
 export const CLASSES_NDVI_MAPA: readonly ClasseNdvi[] = [
   { chave: "sem_vegetacao", rotulo: "Pouca ou nenhuma vegetação (abaixo de 0,20)", minimo: -1 },
   { chave: "baixo", rotulo: "Vigor baixo (0,20 a 0,40)", minimo: 0.2 },

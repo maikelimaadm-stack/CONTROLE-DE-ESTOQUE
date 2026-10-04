@@ -70,10 +70,15 @@ const historicoQuery = z.object({
   antes: z.iso.datetime({ offset: true }).optional()
 }).strict();
 
+/**
+ * Inteiro positivo na forma CANÔNICA (só dígitos, sem zero à esquerda): `1e2`, `0x2`, ` 3` ou `2.0` são recusados
+ * (422), nunca traduzidos — contrato de entrada não canônico é recusado.
+ */
+const inteiroPositivo = (maximo: number) => z.string().regex(/^[1-9]\d{0,8}$/).transform(Number).pipe(z.number().int().min(1).max(maximo));
 const resumoQuery = z.object({
   indice: indiceSchema,
-  pagina: z.coerce.number().int().min(1).default(1),
-  tamanho: z.coerce.number().int().min(1).max(RESUMO_ANALISE_SATELITAL_MAXIMO).default(RESUMO_ANALISE_SATELITAL_PADRAO)
+  pagina: inteiroPositivo(1_000_000).default(1),
+  tamanho: inteiroPositivo(RESUMO_ANALISE_SATELITAL_MAXIMO).default(RESUMO_ANALISE_SATELITAL_PADRAO)
 }).strict();
 
 interface LinhaResumo {
@@ -324,8 +329,11 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
    * MAPA-GERAL (decisão 294) — o resumo de todas as áreas do escopo que têm pelo menos uma execução: a última
    * observação ÚTIL, a útil anterior a ela (outra imagem), a variação do NDVI médio entre as duas e a última execução
    * (qualquer situação, para o mapa dizer "sem observação útil" quando for o caso). UMA consulta para a página inteira:
-   * o escopo de empresa entra em CADA tabela (área e análise), antes do `limit`. Área excluída fica de fora. Mesma regra
-   * do histórico: uma linha por imagem (a análise mais recente dela). A variação é `numeric` (string), nunca float.
+   * a página de ÁREAS é cortada primeiro (escopo de empresa e `limit` na própria `erp.areas`), e só então cada área da
+   * página busca as suas linhas pelos índices da 0052 (`lateral … limit`) — o custo acompanha a página, não o histórico
+   * inteiro da organização, e o hash do polígono só é calculado para as áreas da página. O escopo de empresa entra em
+   * CADA ocorrência de tabela (área e análise). Área excluída fica de fora. Mesma regra do histórico: uma linha por
+   * imagem (a análise mais recente dela). A variação é `numeric` (string), nunca float.
    */
   app.get("/mapa/analises-satelitais/resumo", async (req) => {
     exigir(app, req, PERMISSAO_VER_ANALISE);
@@ -333,33 +341,21 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
     return runService(app, req, PERMISSAO_VER_ANALISE, async (ctx) => {
       const params: unknown[] = [ctx.orgId, q.indice];
       const escopoArea = empresaScopeSql(ctx, "a", params);
-      const escopoUteis = empresaScopeSql(ctx, "s", params);
       const escopoExecucao = empresaScopeSql(ctx, "e", params);
+      const escopoUteis = empresaScopeSql(ctx, "s", params);
       params.push(q.tamanho + 1, (q.pagina - 1) * q.tamanho);
-      const r = await ctx.tx.query<LinhaResumo>(
-        `with areas as (
-           select a.id, a.code,
-                  case when a.geometria is null then null else encode(sha256(convert_to(a.geometria::text, 'UTF8')), 'hex') end as hash_atual
-             from erp.areas a
-            where a.organization_id = $1 and a.deleted_at is null${escopoArea}
-         ),
-         uteis as (
-           select distinct on (s.area_id, s.observacao_inicio) s.area_id, s.observacao_inicio, s.observacao_fim, s.valor_medio, s.valor_minimo,
+      const limite = `$${params.length - 1}`, deslocamento = `$${params.length}`;
+      // A imagem útil de ordem `n` da área (0 = a mais recente): distinct on por imagem, a análise mais recente dela.
+      const util = (n: number) => `
+           select distinct on (s.observacao_inicio) s.observacao_inicio, s.observacao_fim, s.valor_medio, s.valor_minimo,
                   s.valor_maximo, s.desvio_padrao, s.cobertura_valida, s.pixels_validos, s.geometria_sha256, s.created_at
              from erp.analises_satelitais s
-            where s.organization_id = $1 and s.indice = $2 and s.situacao = 'concluida'${escopoUteis}
-            order by s.area_id, s.observacao_inicio desc, s.created_at desc, s.id desc
-         ),
-         ordenadas as (
-           select u.*, row_number() over (partition by u.area_id order by u.observacao_inicio desc) as n from uteis u
-         ),
-         execucoes as (
-           select distinct on (e.area_id) e.area_id, e.situacao, e.motivo_qualidade, e.created_at
-             from erp.analises_satelitais e
-            where e.organization_id = $1 and e.indice = $2${escopoExecucao}
-            order by e.area_id, e.created_at desc, e.id desc
-         )
-         select x.area_id, ar.hash_atual,
+            where s.organization_id = $1 and s.area_id = ar.id and s.indice = $2 and s.situacao = 'concluida'${escopoUteis}
+            order by s.observacao_inicio desc, s.created_at desc, s.id desc
+            offset ${n} limit 1`;
+      const r = await ctx.tx.query<LinhaResumo>(
+        `select ar.id as area_id,
+                case when ar.geometria is null then null else encode(sha256(convert_to(ar.geometria::text, 'UTF8')), 'hex') end as hash_atual,
                 x.situacao as ultima_situacao, x.motivo_qualidade as ultima_motivo, x.created_at as ultima_criado,
                 u.observacao_inicio as u_observacao_inicio, u.observacao_fim as u_observacao_fim, u.valor_medio as u_valor_medio,
                 u.valor_minimo as u_valor_minimo, u.valor_maximo as u_valor_maximo, u.desvio_padrao as u_desvio_padrao,
@@ -367,12 +363,27 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
                 u.created_at as u_criado,
                 p.observacao_inicio as a_observacao_inicio, p.valor_medio as a_valor_medio,
                 (u.valor_medio - p.valor_medio) as variacao
-           from execucoes x
-           join areas ar on ar.id = x.area_id
-           left join ordenadas u on u.area_id = x.area_id and u.n = 1
-           left join ordenadas p on p.area_id = x.area_id and p.n = 2
-          order by ar.code nulls last, x.area_id
-          limit $${params.length - 1} offset $${params.length}`, params);
+           from (
+             select a.id, a.code, a.geometria
+               from erp.areas a
+              where a.organization_id = $1 and a.deleted_at is null${escopoArea}
+                and exists (select 1 from erp.analises_satelitais e
+                             where e.organization_id = $1 and e.area_id = a.id and e.indice = $2${escopoExecucao})
+              order by a.code, a.id
+              limit ${limite} offset ${deslocamento}
+           ) ar
+           cross join lateral (
+             select e.situacao, e.motivo_qualidade, e.created_at
+               from erp.analises_satelitais e
+              where e.organization_id = $1 and e.area_id = ar.id and e.indice = $2${escopoExecucao}
+              order by e.created_at desc, e.id desc
+              limit 1
+           ) x
+           left join lateral (${util(0)}
+           ) u on true
+           left join lateral (${util(1)}
+           ) p on true
+          order by ar.code, ar.id`, params);
       const itens = r.rows.slice(0, q.tamanho).map((l) => ({
         area_id: l.area_id,
         ultima_execucao: { situacao: l.ultima_situacao, motivo_qualidade: l.ultima_motivo, criado_em: l.ultima_criado.toISOString() },

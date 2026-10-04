@@ -411,6 +411,9 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   const linhas = () => Number(sql(`select count(*) from erp.analises_satelitais where area_id in ('${verde.id}','${nublada.id}','${nunca.id}')`));
   expect(linhas(), "premissa: três execuções semeadas").toBe(3);
 
+  // Conta os pedidos de NDVI: um resumo para a tela inteira, nenhum pedido por área antes de abrir o painel.
+  const pedidosNdvi: string[] = [];
+  page.on("request", (r) => { const u = new URL(r.url()).pathname; if (u.includes("/analises-satelitais")) pedidosNdvi.push(`${r.method()} ${u}`); });
   const resumo = page.waitForResponse((r) => r.url().includes("/api/mapa/analises-satelitais/resumo") && r.request().method() === "GET");
   await page.goto("/mapa-geral");
   expect((await resumo).status(), "o mapa pede o resumo de TODAS as áreas numa chamada").toBe(200);
@@ -428,15 +431,18 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
     "Vigor alto (0,60 ou mais)", "Vigor médio (0,40 a 0,60)", "Vigor baixo (0,20 a 0,40)", "Pouca ou nenhuma vegetação (abaixo de 0,20)"
   ]);
   await expect(legenda).toContainText("Não é biomassa");
-  await expect(legenda.getByTestId("mapa-atribuicao-copernicus")).toHaveText("Contains modified Copernicus Sentinel data 2026");
+  await expect(page.getByTestId("mapa-atribuicao-copernicus-mapa")).toHaveText("Contains modified Copernicus Sentinel data 2026");
   await expect(page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).getByTestId("mapa-item-ndvi")).toHaveText("0,72");
   await expect(page.getByTestId("mapa-item-area").filter({ hasText: nunca.name }).getByTestId("mapa-item-ndvi")).toHaveCount(0);
+
+  expect(pedidosNdvi, "um resumo, nenhuma pergunta por área").toEqual(["GET /api/mapa/analises-satelitais/resumo"]);
 
   // painel da área: última imagem útil, classe, variação desde a imagem anterior, polígono atual
   await page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).click();
   const painel = page.getByTestId("mapa-area-selecionada");
   await expect(painel.getByTestId("mapa-ndvi-valor")).toHaveText("0,72");
   await expect(painel.getByTestId("mapa-ndvi-classe")).toHaveText("Vigor alto (0,60 ou mais)");
+  await expect(painel.getByTestId("mapa-ndvi-faixa")).toHaveText("Mínimo 0,52 · Máximo 0,82");
   await expect(painel.getByTestId("mapa-ndvi-imagem")).toHaveText(/^Imagem de 10\/09\/2026 · 93\s?% da área vista$/);
   await expect(painel.getByTestId("mapa-ndvi-variacao")).toHaveText("+0,17 desde a imagem de 05/08/2026");
   await expect(painel.getByTestId("mapa-ndvi-contorno-anterior")).toHaveCount(0);
@@ -464,13 +470,42 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   await page.getByTestId("mapa-item-area").filter({ hasText: nunca.name }).click();
   await expect(painel.getByTestId("mapa-ndvi-sem-analise")).toBeVisible();
 
-  // "Cor do cadastro": a cor da área volta, a legenda do NDVI sai
+  // "Cor do cadastro": a cor da área volta (a do cadastro, #2563eb, como o mapa a exibe), a legenda do NDVI sai. A área
+  // conferida é a enquadrada agora (a seleção na lista aproxima o mapa dela) — e a cor é EXATA, nunca "diferente de".
+  await page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).click();
+  await expect.poll(() => corNoMapa(page, verde.id), { timeout: 15_000 }).toBe("#1a9850");
   await page.getByTestId("mapa-cor-cadastro").click();
   await expect(legenda).toHaveCount(0);
-  await expect.poll(() => corNoMapa(page, verde.id)).not.toBe("#1a9850");
-  expect(await corNoMapa(page, nunca.id)).not.toBe("#94a3b8");
+  await expect(page.getByTestId("mapa-atribuicao-copernicus-mapa"), "a lista continua com o NDVI: a atribuição fica").toHaveText("Contains modified Copernicus Sentinel data 2026");
+  await expect.poll(() => corNoMapa(page, verde.id)).toBe("#306bec");
   await page.getByTestId("mapa-cor-ndvi").click();
   await expect.poll(() => corNoMapa(page, verde.id)).toBe("#1a9850");
 
+  // contorno redesenhado DEPOIS da análise: o número fica, com o aviso de que foi calculado sobre o contorno anterior
+  sql(`update erp.areas set geometria = '${JSON.stringify(quadrado(-55.3005, -15.2005))}'::jsonb where id = '${verde.id}'`);
+  await page.reload();
+  await page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).click();
+  await expect(painel.getByTestId("mapa-ndvi-valor")).toHaveText("0,72");
+  await expect(painel.getByTestId("mapa-ndvi-contorno-anterior")).toHaveText("Calculado sobre o contorno anterior da área. Peça uma análise nova.");
+
   await limparAreas(page);
+});
+
+test("Mapa geral: o resumo do NDVI falha (500) — as áreas continuam no mapa, o aviso aparece e 'Tentar de novo' pede outra vez", async ({ page }) => {
+  await login(page);
+  let pedidos = 0;
+  await page.route("**/api/mapa/analises-satelitais/resumo**", async (rota) => {
+    pedidos += 1;
+    await rota.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: { code: "INTERNAL", message: "Falha interna" } }) });
+  });
+  await page.goto("/mapa-geral");
+  await expect(page.getByRole("heading", { name: "Mapa geral" })).toBeVisible();
+  const aviso = page.getByTestId("mapa-ndvi-erro");
+  await expect(aviso).toContainText("Não foi possível carregar o NDVI das áreas.");
+  await expect(page.getByTestId("mapa-legenda-ndvi")).toHaveCount(0);
+  await expect(page.getByTestId("mapa-cor-ndvi"), "sem resumo, sem seletor de NDVI").toHaveCount(0);
+  const antes = pedidos;
+  expect(antes, "premissa: a tela pediu o resumo").toBeGreaterThanOrEqual(1);
+  await aviso.getByRole("button", { name: "Tentar de novo" }).click();
+  await expect.poll(() => pedidos).toBe(antes + 1);
 });

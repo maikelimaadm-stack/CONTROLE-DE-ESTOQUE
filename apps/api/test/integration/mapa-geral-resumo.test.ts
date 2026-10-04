@@ -188,7 +188,9 @@ describe("MAPA-GERAL resumo — paginação, contrato e custo", () => {
     expect(j(await resumo("?tamanho=1&pagina=4")).itens).toEqual([]);
   });
   it("contrato estrito: chave desconhecida (inclusive empresa no query), índice desconhecido e tamanho fora da faixa → 422", async () => {
-    for (const q of [`?empresa_id=${A}`, "?area_id=x", "?indice=evi", "?tamanho=0", "?tamanho=501", "?pagina=0"]) {
+    for (const q of [`?empresa_id=${A}`, "?area_id=x", "?indice=evi", "?tamanho=0", "?tamanho=501", "?pagina=0",
+      // número fora da forma canônica é RECUSADO, nunca traduzido (1e2 viraria 100; 0x2 viraria 2)
+      "?tamanho=1e2", "?pagina=0x2", "?tamanho=%203", "?tamanho=2.0", "?pagina=01", "?tamanho=-1"]) {
       const r = await resumo(q);
       expect(r.statusCode, `${q}: ${r.body}`).toBe(422);
       expect(j(r).error.code, q).toBe("VALIDATION_ERROR");
@@ -206,5 +208,22 @@ describe("MAPA-GERAL resumo — paginação, contrato e custo", () => {
     } finally { espiao.mockRestore(); }
     expect(r.statusCode, r.body).toBe(200);
     expect(j(r).itens, "premissa: a página tem mais de uma área").toHaveLength(3);
+  });
+  it("o escopo de empresa está em CADA ocorrência de tabela da consulta (usuário com escopo selecionado): 1 em áreas, 4 em análises", async () => {
+    const espiao = vi.spyOn(pg.Client.prototype, "query");
+    let sql = "";
+    let r: Awaited<ReturnType<typeof resumo>>;
+    try {
+      r = await resumo("", soB);
+      sql = espiao.mock.calls.map((c) => (typeof c[0] === "string" ? c[0] : "")).find((t) => /erp\.analises_satelitais/.test(t)) ?? "";
+    } finally { espiao.mockRestore(); }
+    expect(r.statusCode, r.body).toBe(200);
+    expect(j(r).itens.map((i) => i.area_id), "premissa: o escopo recorta").toEqual([area["deB"]]);
+    const conta = (re: RegExp) => (sql.match(re) ?? []).length;
+    expect(conta(/from erp\.areas a\b/g), "uma ocorrência de erp.areas").toBe(1);
+    expect(conta(/me\.empresa_id=a\.empresa_id/g), "escopo na área").toBe(1);
+    expect(conta(/from erp\.analises_satelitais [es]\b/g), "quatro ocorrências de erp.analises_satelitais").toBe(4);
+    expect(conta(/me\.empresa_id=e\.empresa_id/g), "escopo no exists e na última execução").toBe(2);
+    expect(conta(/me\.empresa_id=s\.empresa_id/g), "escopo nas duas imagens úteis").toBe(2);
   });
 });
