@@ -4760,6 +4760,48 @@ Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registro
 identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.
 
 
+## SAT-06 — imagem do NDVI por pixel, recortada no polígono (0055, decisão 297)
+
+Faixa **F1**. **Uma migration: `0055_satelite_rasters.sql`** (pre-deploy pelo pipeline; trava (2026,89), `lock_timeout` 2 s,
+pré e pós-condições nomeadas `SAT-06: …`). **Sem variável nova** (a URL assinada usa uma chave derivada do segredo de
+autenticação que já existe). Sem permissão nova (`analises_satelitais.view`/`.create`). **Nada visual**: nenhuma mudança em
+`apps/web` — a tela é a SAT-07.
+
+**O que a 0055 cria.** `erp.satelite_raster_arquivos` (o PNG em bytea; o banco confere o sha256 e o tamanho do conteúdo) e
+`erp.satelite_rasters` (o metadado: análise da mesma área, cantos, bbox, escala, resolução, chave de cache, PU). As duas
+imutáveis (UPDATE, DELETE e TRUNCATE recusados por gatilho), RLS `tenant_e_empresa` forçada (módulo pecuária) e FKs compostas
+— a do metadado para o arquivo inclui o caminho e o hash. **Não há bucket**: o projeto não usa o Supabase Storage, e as imagens
+ficam no banco como os anexos (decisão do Maike).
+
+**Travas — aplicar FORA DO PICO.** Tabelas novas; nenhuma tabela existente é alterada nem lida inteira. Mas as FKs seguram
+SHARE ROW EXCLUSIVE em `erp.organizations`, `erp.empresas`, `erp.users` e `erp.analises_satelitais` até o commit: a escrita
+nelas espera (a leitura não) — e todo login grava `erp.users.last_login_at`. A migration leva milissegundos; cada pedido de
+trava espera no máximo 2 s, e sem a trava ela aborta inteira, sem nada aplicado.
+
+**API — rotas novas** (prefixo `/api`):
+- `POST /mapa/analises-satelitais/:analiseId/raster` — corpo `{}` estrito. Gera a imagem da análise (uma chamada à Process
+  API, que conta no limite global e grava no ledger) ou devolve a que já existe (`reutilizada: true`, sem chamada).
+- `GET /mapa/analises-satelitais/:analiseId/raster` — a imagem da análise, com a URL assinada; 404 se ainda não foi gerada.
+- `GET /mapa/rasters?area_ids=…&indice=ndvi` — a imagem mais recente de cada área (até 200), paginado; não gera nada.
+- `GET /mapa/rasters/:rasterId/arquivo?t=…` — o PNG pela URL assinada (10 min); sem cabeçalho de autenticação.
+
+**Impacto em dados reais:** nenhum dado é corrigido ou apagado (decisões 240/247). Nada é gerado no deploy nem ao abrir o
+mapa: cada imagem nasce de um `POST` deliberado (com `COPERNICUS_ENABLED=1` e a credencial). Cada imagem gasta processing
+units da conta (estimativa ≈ 0,0004 PU por hectare a 10 m, mínimo 0,01 PU por imagem — medição real PENDING) e ocupa o banco
+(tipicamente dezenas de KB; teto 16 MiB). Arquivo gerado nunca é apagado nem sobrescrito.
+
+**Ordem:** BANCO (0055, pre-deploy) → API. **API anterior × banco na 0055**: só acrescenta tabelas; nada muda. **API nova ×
+banco sem a 0055**: não acontece no pipeline; se acontecesse, só as rotas novas responderiam erro.
+
+**Railway e Supabase, depois do merge:** nada a configurar (nenhuma variável, nenhum bucket, nenhuma permissão). Mesclar fora do
+pico; conferir `0055_satelite_rasters.sql` em `public.erp_migrations` e api/web SUCCESS. Para testar com a conta real: pedir a
+imagem de UMA análise com observação útil (`POST …/raster`) e abrir a `url_assinada` devolvida. Prova em produção autenticada e
+PU real: **PENDING**.
+
+**Caminho de volta.** API: redeploy da versão anterior (as tabelas ficam, sem uso). Banco: forward-only; o inverso está provado
+em `packages/db/test/sat-06-0055.test.ts` e é fail-closed (só com as duas tabelas vazias: imagem gerada é prova da análise e
+não se apaga).
+
 ## SAT-03 — executor da fila satelital, limite global e ledger real (0054, decisão 296)
 
 Faixa **F1**. **Uma migration: `0054_satelite_executor.sql`** (pre-deploy pelo pipeline; trava (2026,88), `lock_timeout` 2 s,
