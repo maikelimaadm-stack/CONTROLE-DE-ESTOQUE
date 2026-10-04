@@ -1,6 +1,7 @@
 import { PURCHASE_STATUS_LABELS } from "./supply-workflow.js";
 import { TITLE_STATUS_LABELS } from "./financial.js";
 import { ACTION_LABELS } from "./permissions.js";
+import { MOTIVOS_QUALIDADE_ANALISE_SATELITAL, SITUACOES_ANALISE_SATELITAL } from "./analise-satelital.js";
 
 /**
  * Rótulos PT-BR dos valores técnicos (enums) que chegam do banco/API e são exibidos ao usuário.
@@ -99,7 +100,10 @@ export const ENUM_LABELS = {
    * Quem decide um efeito da venda na TOP (TOP-CONFIG-04A, bloco `execucao` do formato 2). Os valores são os
    * de `MODOS_EXECUCAO_TOP`; o rótulo diz a consequência, não o nome técnico.
    */
-  top_execucao: { legado: "Comportamento legado", configurada: "Usar configuração da TOP" }
+  top_execucao: { legado: "Comportamento legado", configurada: "Usar configuração da TOP" },
+  /** SAT-01 / MAPA-GERAL (decisões 293 e 294): situação e motivo da análise por satélite — as listas do dono, não cópia. */
+  analise_satelital_situacao: Object.fromEntries(SITUACOES_ANALISE_SATELITAL) as Record<string, string>,
+  analise_satelital_motivo: Object.fromEntries(MOTIVOS_QUALIDADE_ANALISE_SATELITAL) as Record<string, string>
 } as const satisfies Record<string, Record<string, string>>;
 
 export type EnumDomain = keyof typeof ENUM_LABELS;

@@ -13,8 +13,8 @@ import { ResourceList } from "@/features/resources/resource-list";
 import { parseImportacaoMapa, rotuloFormato } from "@/features/mapa-de-manejo/importacao";
 
 /**
- * ÁREAS / PIQUETES: o ÚNICO lugar do cadastro de área. A lista é a de sempre; a ficha traz o mapa com o editor de
- * contorno; e a importação de contornos (KML / GeoJSON) que antes ficava no Mapa de Manejo mora aqui — o mapa só mostra.
+ * CADASTRO DE ÁREA (antes "Áreas / Piquetes"): o ÚNICO lugar do cadastro de área. A lista é a de sempre; a ficha traz o
+ * mapa com o editor de contorno; e a importação de contornos (KML / GeoJSON) mora aqui — o Mapa geral só mostra.
  */
 export function ListaDeAreas() {
   const { can } = useAuth();
@@ -23,7 +23,7 @@ export function ListaDeAreas() {
   const mapa = entryById("mapa");
   return <div className="flex min-h-0 flex-1 flex-col gap-2">
     <Card className="ws-filters no-print flex flex-wrap items-center gap-2">
-      {mapa && <Link href={canonicalHref(mapa)} data-testid="areas-ver-no-mapa"><PillBtn tone="gray"><IconeMapa className="h-3.5 w-3.5" /> Ver no Mapa de Manejo</PillBtn></Link>}
+      {mapa && <Link href={canonicalHref(mapa)} data-testid="areas-ver-no-mapa"><PillBtn tone="gray"><IconeMapa className="h-3.5 w-3.5" /> Ver no Mapa geral</PillBtn></Link>}
       {podeImportar && <PillBtn tone="gray" className="ml-auto" data-testid="areas-importar-contornos" onClick={() => setImportar(true)}><Upload className="h-3.5 w-3.5" /> Importar contornos (KML / GeoJSON)</PillBtn>}
     </Card>
     <ResourceList resourceKey="areas" />

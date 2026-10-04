@@ -157,12 +157,14 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   R("feedlot_map", "Mapa do Confinamento", "Operacional > Confinamento", ["view"]),
   R("rainfalls", "Pluviometria", "Operacional"),
   // MAPA-01 (decisão 289): cadastro de áreas do Mapa de Manejo (módulo neutro mapa; serve lavoura e pecuária).
-  R("mapa_areas", "Áreas", "Mapa de Manejo"),
+  R("mapa_areas", "Áreas", "Mapa geral"),
   // SAT-01 (decisão 293): análise por satélite (Copernicus Sentinel-2, NDVI) de uma ÁREA canônica (erp.areas).
   // `view` lê o histórico; `create` pede uma análise nova ao provedor. Capacidade separada de `batch_area`: quem
   // cadastra área não ganha, por isso, o poder de gastar a cota do provedor. O ESCOPO de empresa é o da área
   // (pecuária, o mesmo de `batch_area` — escopo-permissao.ts), nunca um segundo caminho até ela.
-  R("analises_satelitais", "Análises por satélite", "Mapa de Manejo", ["view", "create"]),
+  // MAPA-GERAL (decisão 294): o grupo das duas permissões na tela de perfis passa a "Mapa geral" (rótulo de tela; a
+  // chave e o módulo de escopo não mudam).
+  R("analises_satelitais", "Análises por satélite", "Mapa geral", ["view", "create"]),
   R("budgets", "Orçamentos", "Operacional > Vendas"),
   R("orders", "Pedidos", "Operacional > Vendas"),
   // TOP-CONFIG-08 (decisão 277): `approve` é a aprovação da TOP no formato 4 — decidir se o documento aberto pode

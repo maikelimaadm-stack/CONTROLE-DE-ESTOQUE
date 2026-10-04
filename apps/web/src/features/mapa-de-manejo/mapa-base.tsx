@@ -14,7 +14,7 @@ import { suavizarRotulos } from "./rotulos";
 import type { RotuloArea } from "./camada-desenho";
 
 /**
- * Base de mapa COMPARTILHADA pelas duas telas do mesmo cadastro (erp.areas): o Mapa de Manejo (só visualização) e o
+ * Base de mapa COMPARTILHADA pelas duas telas do mesmo cadastro (erp.areas): o Mapa geral (só visualização) e o
  * editor de contorno da ficha de Áreas/Piquetes. Aqui fica só o mecanismo do mapa — imagem, camadas das áreas,
  * localização, troca de base, rótulos. Quem desenha e quem abre o cadastro é a tela.
  */
@@ -209,12 +209,15 @@ export function useMapaBase(opts: { ganchoE2E: GanchoE2E; aoCarregar?: (m: MapLi
   return { containerRef, mapRef, pronto, semImagem, base, trocarBase, erroBase, localizacao, erroLocalizacao, redesenhar };
 }
 
-/** Põe as áreas na fonte `areas` do mapa (as sem contorno ficam de fora). `atual` é o contorno da ficha aberta. */
-export function desenharAreas(m: MapLibreMap, areas: readonly AreaNoMapa[], atual?: { geometria: Polygon; cor: string | null } | null) {
+/**
+ * Põe as áreas na fonte `areas` do mapa (as sem contorno ficam de fora). `atual` é o contorno da ficha aberta.
+ * `corPorArea` (Mapa geral, decisão 294) troca a cor exibida de cada área — o NDVI —, sem mudar a cor do cadastro.
+ */
+export function desenharAreas(m: MapLibreMap, areas: readonly AreaNoMapa[], atual?: { geometria: Polygon; cor: string | null } | null, corPorArea?: ReadonlyMap<string, string> | null) {
   const src = m.getSource("areas") as GeoJSONSource | undefined;
   if (!src) return;
   const feature = (id: string, nome: string, cor: string | null, geometria: Polygon): Feature<Polygon> => {
-    const exibida = corExibidaNoMapa(cor);
+    const exibida = corPorArea?.get(id) ?? corExibidaNoMapa(cor);
     return { type: "Feature", id, properties: { id, nome, cor: cor ?? COR_PADRAO_AREA, cor_exibida: exibida, cor_borda: corBordaNoMapa(exibida) }, geometry: geometria };
   };
   const features = areas.filter((a) => a.geometria && a.geometria.type === "Polygon").map((a) => feature(a.id, a.name, a.color, a.geometria as Polygon));

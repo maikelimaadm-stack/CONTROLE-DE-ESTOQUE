@@ -7,7 +7,7 @@ import { useAreasDoMapa } from "@/features/mapa-de-manejo/mapa-base";
 
 /**
  * Campo "Mapa" da ficha de Área/Piquete: o contorno (GeoJSON Polygon) é desenhado AQUI, com o editor completo — o
- * cadastro de área existe num lugar só (Áreas/Piquetes), e o Mapa de Manejo só mostra. As outras áreas visíveis entram
+ * cadastro de área existe num lugar só (Cadastro de Área), e o Mapa geral só mostra. As outras áreas visíveis entram
  * como vizinhas (aparecem no mapa e o ímã gruda nelas); a própria área fica de fora delas.
  */
 

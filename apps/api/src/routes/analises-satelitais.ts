@@ -2,7 +2,8 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import {
   COLECAO_SENTINEL2_L2A, CRITERIO_OBSERVACAO_UTIL, HISTORICO_ANALISE_SATELITAL_MAXIMO, HISTORICO_ANALISE_SATELITAL_PADRAO,
-  INDICES_SATELITE, INDICE_NDVI, PROVEDOR_COPERNICUS, RESOLUCAO_PADRAO_M, VERSAO_METODO_NDVI
+  INDICES_SATELITE, INDICE_NDVI, PROVEDOR_COPERNICUS, RESOLUCAO_PADRAO_M, RESUMO_ANALISE_SATELITAL_MAXIMO, RESUMO_ANALISE_SATELITAL_PADRAO,
+  VERSAO_METODO_NDVI
 } from "@agro/domain";
 import { runService } from "../lib/service.js";
 import { denied, err, validation, type DomainError } from "../lib/errors.js";
@@ -18,6 +19,8 @@ import { escolherObservacao, interpretarEstatistica, janelaPadrao, montarCorpoEs
  *   POST /api/mapa/areas/:areaId/analises-satelitais/ndvi    pede a análise da janela padrão (corpo vazio)
  *   GET  /api/mapa/areas/:areaId/analises-satelitais/ultima  última execução + última observação útil
  *   GET  /api/mapa/areas/:areaId/analises-satelitais         histórico de observações úteis (paginado no servidor)
+ *   GET  /api/mapa/analises-satelitais/resumo                 MAPA-GERAL (decisão 294): o resumo de TODAS as áreas do
+ *                                                             escopo numa consulta só (o mapa nunca pergunta área por área)
  *
  * O CLIENTE MANDA SÓ O ID DA ÁREA. Empresa, polígono, provedor, coleção, fórmula e credencial nunca vêm do pedido:
  * o corpo do POST é `{}` estrito (qualquer chave → 422, nunca descartada em silêncio). A geometria é a de
@@ -66,6 +69,27 @@ const historicoQuery = z.object({
   /** cursor: devolve as observações com início ANTES deste instante (o `proximo_cursor` da página anterior) */
   antes: z.iso.datetime({ offset: true }).optional()
 }).strict();
+
+/**
+ * Inteiro positivo na forma CANÔNICA (só dígitos, sem zero à esquerda): `1e2`, `0x2`, ` 3` ou `2.0` são recusados
+ * (422), nunca traduzidos — contrato de entrada não canônico é recusado.
+ */
+const inteiroPositivo = (maximo: number) => z.string().regex(/^[1-9]\d{0,8}$/).transform(Number).pipe(z.number().int().min(1).max(maximo));
+const resumoQuery = z.object({
+  indice: indiceSchema,
+  pagina: inteiroPositivo(1_000_000).default(1),
+  tamanho: inteiroPositivo(RESUMO_ANALISE_SATELITAL_MAXIMO).default(RESUMO_ANALISE_SATELITAL_PADRAO)
+}).strict();
+
+interface LinhaResumo {
+  area_id: string; hash_atual: string | null;
+  ultima_situacao: string; ultima_motivo: string | null; ultima_criado: Date;
+  u_observacao_inicio: Date | null; u_observacao_fim: Date | null; u_valor_medio: string | null; u_valor_minimo: string | null;
+  u_valor_maximo: string | null; u_desvio_padrao: string | null; u_cobertura_valida: string | null; u_pixels_validos: number | null;
+  u_geometria_sha256: string | null; u_criado: Date | null;
+  a_observacao_inicio: Date | null; a_valor_medio: string | null;
+  variacao: string | null;
+}
 
 interface AreaLida { id: string; empresa_id: string; geometria: unknown; geometria_sha256: string | null }
 
@@ -298,6 +322,82 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
         itens: itens.map((l) => paraDto(l, area.geometria_sha256)),
         proximo_cursor: r.rows.length > q.limite && ultima?.observacao_inicio ? ultima.observacao_inicio.toISOString() : null
       };
+    });
+  });
+
+  /**
+   * MAPA-GERAL (decisão 294) — o resumo de todas as áreas do escopo que têm pelo menos uma execução: a última
+   * observação ÚTIL, a útil anterior a ela (outra imagem), a variação do NDVI médio entre as duas e a última execução
+   * (qualquer situação, para o mapa dizer "sem observação útil" quando for o caso). UMA consulta para a página inteira:
+   * a página de ÁREAS é cortada primeiro (escopo de empresa e `limit` na própria `erp.areas`), e só então cada área da
+   * página busca as suas linhas pelos índices da 0052 (`lateral … limit`) — o custo acompanha a página, não o histórico
+   * inteiro da organização, e o hash do polígono só é calculado para as áreas da página. O escopo de empresa entra em
+   * CADA ocorrência de tabela (área e análise). Área excluída fica de fora. Mesma regra do histórico: uma linha por
+   * imagem (a análise mais recente dela). A variação é `numeric` (string), nunca float.
+   */
+  app.get("/mapa/analises-satelitais/resumo", async (req) => {
+    exigir(app, req, PERMISSAO_VER_ANALISE);
+    const q = resumoQuery.parse(req.query);
+    return runService(app, req, PERMISSAO_VER_ANALISE, async (ctx) => {
+      const params: unknown[] = [ctx.orgId, q.indice];
+      const escopoArea = empresaScopeSql(ctx, "a", params);
+      const escopoExecucao = empresaScopeSql(ctx, "e", params);
+      const escopoUteis = empresaScopeSql(ctx, "s", params);
+      params.push(q.tamanho + 1, (q.pagina - 1) * q.tamanho);
+      const limite = `$${params.length - 1}`, deslocamento = `$${params.length}`;
+      // A imagem útil de ordem `n` da área (0 = a mais recente): distinct on por imagem, a análise mais recente dela.
+      const util = (n: number) => `
+           select distinct on (s.observacao_inicio) s.observacao_inicio, s.observacao_fim, s.valor_medio, s.valor_minimo,
+                  s.valor_maximo, s.desvio_padrao, s.cobertura_valida, s.pixels_validos, s.geometria_sha256, s.created_at
+             from erp.analises_satelitais s
+            where s.organization_id = $1 and s.area_id = ar.id and s.indice = $2 and s.situacao = 'concluida'${escopoUteis}
+            order by s.observacao_inicio desc, s.created_at desc, s.id desc
+            offset ${n} limit 1`;
+      const r = await ctx.tx.query<LinhaResumo>(
+        `select ar.id as area_id,
+                case when ar.geometria is null then null else encode(sha256(convert_to(ar.geometria::text, 'UTF8')), 'hex') end as hash_atual,
+                x.situacao as ultima_situacao, x.motivo_qualidade as ultima_motivo, x.created_at as ultima_criado,
+                u.observacao_inicio as u_observacao_inicio, u.observacao_fim as u_observacao_fim, u.valor_medio as u_valor_medio,
+                u.valor_minimo as u_valor_minimo, u.valor_maximo as u_valor_maximo, u.desvio_padrao as u_desvio_padrao,
+                u.cobertura_valida as u_cobertura_valida, u.pixels_validos as u_pixels_validos, u.geometria_sha256 as u_geometria_sha256,
+                u.created_at as u_criado,
+                p.observacao_inicio as a_observacao_inicio, p.valor_medio as a_valor_medio,
+                (u.valor_medio - p.valor_medio) as variacao
+           from (
+             select a.id, a.code, a.geometria
+               from erp.areas a
+              where a.organization_id = $1 and a.deleted_at is null${escopoArea}
+                and exists (select 1 from erp.analises_satelitais e
+                             where e.organization_id = $1 and e.area_id = a.id and e.indice = $2${escopoExecucao})
+              order by a.code, a.id
+              limit ${limite} offset ${deslocamento}
+           ) ar
+           cross join lateral (
+             select e.situacao, e.motivo_qualidade, e.created_at
+               from erp.analises_satelitais e
+              where e.organization_id = $1 and e.area_id = ar.id and e.indice = $2${escopoExecucao}
+              order by e.created_at desc, e.id desc
+              limit 1
+           ) x
+           left join lateral (${util(0)}
+           ) u on true
+           left join lateral (${util(1)}
+           ) p on true
+          order by ar.code, ar.id`, params);
+      const itens = r.rows.slice(0, q.tamanho).map((l) => ({
+        area_id: l.area_id,
+        ultima_execucao: { situacao: l.ultima_situacao, motivo_qualidade: l.ultima_motivo, criado_em: l.ultima_criado.toISOString() },
+        ultima_observacao: l.u_observacao_inicio ? {
+          observacao_inicio: l.u_observacao_inicio.toISOString(), observacao_fim: l.u_observacao_fim?.toISOString() ?? null,
+          valor_medio: l.u_valor_medio, valor_minimo: l.u_valor_minimo, valor_maximo: l.u_valor_maximo, desvio_padrao: l.u_desvio_padrao,
+          cobertura_valida: l.u_cobertura_valida, pixels_validos: l.u_pixels_validos,
+          do_poligono_atual: l.hash_atual !== null && l.u_geometria_sha256 === l.hash_atual,
+          criado_em: l.u_criado?.toISOString() ?? null
+        } : null,
+        observacao_anterior: l.a_observacao_inicio ? { observacao_inicio: l.a_observacao_inicio.toISOString(), valor_medio: l.a_valor_medio } : null,
+        variacao: l.variacao
+      }));
+      return { itens, pagina: q.pagina, tamanho: q.tamanho, tem_mais: r.rows.length > q.tamanho };
     });
   });
 }
