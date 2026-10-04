@@ -9,10 +9,12 @@
  */
 
 /**
- * `arrayBuffer` (SAT-06, decisão 297) é OPCIONAL: só a Process API do provedor satelital lê corpo binário (a imagem). A
- * resposta do `fetch` real o tem; mock sem ele, lido como binário, vira corpo ilegível — nunca um corpo inventado.
+ * `arrayBuffer` e `body` (SAT-06, decisão 297) são OPCIONAIS: só a Process API do provedor satelital lê corpo binário
+ * (a imagem). A resposta do `fetch` real tem os dois; `body` (o fluxo) deixa ler em pedaços e parar no teto sem
+ * carregar o corpo inteiro. Mock sem nenhum dos dois, lido como binário, vira corpo ilegível — nunca um corpo inventado.
  */
-export type BuscarFn = (url: string, init: { signal: AbortSignal; redirect: "manual"; headers: Record<string, string>; method?: "GET" | "POST"; body?: string }) => Promise<{ status: number; headers: { get(n: string): string | null }; json(): Promise<unknown>; arrayBuffer?(): Promise<ArrayBuffer> }>;
+export interface LeitorFluxo { read(): Promise<{ done: boolean; value?: Uint8Array }>; cancel(motivo?: unknown): Promise<void> }
+export type BuscarFn = (url: string, init: { signal: AbortSignal; redirect: "manual"; headers: Record<string, string>; method?: "GET" | "POST"; body?: string }) => Promise<{ status: number; headers: { get(n: string): string | null }; json(): Promise<unknown>; arrayBuffer?(): Promise<ArrayBuffer>; body?: { getReader(): LeitorFluxo } | null }>;
 
 export type RespostaHttp =
   | { tipo: "ok"; status: number; corpo: unknown }

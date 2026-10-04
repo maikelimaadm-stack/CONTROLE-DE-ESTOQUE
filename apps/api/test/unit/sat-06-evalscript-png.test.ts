@@ -204,6 +204,26 @@ describe("SAT-06 PNG — o leitor RECUSA o que não é PNG cinza 8 bits sem entr
     recusa(Buffer.concat([ASSINATURA_PNG, ihdr(8, 9), idatComFiltros(8, 8, pixels, [0]), IEND]), /tamanho/);
     recusa(Buffer.concat([ASSINATURA_PNG, ihdr(8, 8), bloco("IDAT", Buffer.from("não é zlib")), IEND]), /ilegível/);
   });
+  it("dimensões ESPERADAS (as pedidas): iguais → lê; IHDR diferente → recusa", () => {
+    expect(lerPngCinza8(valido(), { largura: 8, altura: 8 }).pixels).toHaveLength(64);
+    for (const esperado of [{ largura: 9, altura: 8 }, { largura: 8, altura: 7 }]) {
+      let erro: unknown;
+      try { lerPngCinza8(valido(), esperado); } catch (e) { erro = e; }
+      expect((erro as ErroPng).motivo, JSON.stringify(esperado)).toBe("dimensões diferentes das pedidas");
+    }
+  });
+  it("IHDR hostil (16384 × 16384) com as dimensões esperadas: recusa ANTES de descomprimir (sem esperado, chegaria ao inflate)", () => {
+    const hostil = Buffer.concat([ASSINATURA_PNG, ihdr(16_384, 16_384), bloco("IDAT", Buffer.from("não é zlib")), IEND]);
+    // sem `esperado` o leitor só descobre o problema NO inflate (e com IDAT válido inflaria até ~268 MB)
+    let semEsperado: unknown;
+    try { lerPngCinza8(hostil); } catch (e) { semEsperado = e; }
+    expect((semEsperado as ErroPng).motivo).toBe("IDAT ilegível");
+    // com `esperado` a recusa é no cabeçalho: o motivo prova que o inflate nem começou
+    let comEsperado: unknown;
+    try { lerPngCinza8(hostil, { largura: 2500, altura: 2500 }); } catch (e) { comEsperado = e; }
+    expect(comEsperado).toBeInstanceOf(ErroPng);
+    expect((comEsperado as ErroPng).motivo).toBe("dimensões diferentes das pedidas");
+  });
   it("bomba de descompressão: dados que inflam muito além do IHDR são recusados sem alocar tudo", () => {
     const enorme = deflateSync(Buffer.alloc(50 * 1024 * 1024)); // 50 MiB de zeros, alguns KB comprimidos
     recusa(Buffer.concat([ASSINATURA_PNG, ihdr(8, 8), bloco("IDAT", enorme), IEND]), /ilegível|tamanho/);

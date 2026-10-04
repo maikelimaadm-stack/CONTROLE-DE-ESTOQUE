@@ -15,7 +15,8 @@ import type { BuscarFn } from "../consultas/http.js";
 /**
  * `processingUnits` (SAT-03, decisão 296): o valor BRUTO do cabeçalho `x-processingunits-spent` (o PU que o provedor
  * cobrou pela chamada), PRESENTE só quando o cabeçalho veio. Não é segredo; quem o lê e valida é `consumo.ts`. Vem
- * também na falha `corpo` (2xx com corpo ilegível): a resposta foi 2xx, e a chamada foi cobrada do mesmo jeito.
+ * também na falha `corpo` (2xx com corpo ilegível, acima do teto ou cortado pelo tempo máximo durante a leitura): a
+ * resposta foi 2xx, e a chamada foi cobrada do mesmo jeito.
  */
 export type RespostaEnvio =
   | { tipo: "ok"; status: number; corpo: unknown; tentarAposSegundos: number | null; processingUnits?: string }
@@ -42,14 +43,44 @@ export type LeitorCorpo = (r: Awaited<ReturnType<BuscarFn>>) => Promise<unknown>
 export const lerCorpoJson: LeitorCorpo = (r) => r.json();
 
 /**
- * Corpo BINÁRIO (SAT-06, decisão 297: a imagem da Process API), como `Buffer`. Resposta sem `arrayBuffer`, corpo
- * VAZIO ou maior que `maximoBytes` é corpo ilegível: nunca vira uma imagem vazia ou cortada.
+ * Corpo BINÁRIO (SAT-06, decisão 297: a imagem da Process API), como `Buffer`, com TETO de `maximoBytes` que não
+ * depende de confiar no provedor:
+ *  - `content-length` declarado acima do teto → recusa ANTES de ler um byte (o fluxo é cancelado);
+ *  - com fluxo (`body.getReader()`, o caso do `fetch` real): lê em pedaços, contando, e CANCELA assim que passa do
+ *    teto — o corpo inteiro nunca é carregado (o `fetch` descomprime gzip/br sozinho; a contagem é do corpo já
+ *    descomprimido, então o teto vale para o que vai à memória);
+ *  - sem fluxo: `arrayBuffer()` e a conferência depois de ler.
+ * Resposta sem fluxo e sem `arrayBuffer`, corpo VAZIO ou acima do teto é corpo ilegível: nunca vira uma imagem vazia
+ * ou cortada. Num 2xx, `enviarPost` devolve isso como falha `corpo` com o PU (cobrada, não repetida).
  */
 export function leitorCorpoBinario(maximoBytes: number): LeitorCorpo {
+  const acimaDoTeto = () => new Error("corpo binário acima do teto");
   return async (r) => {
-    if (typeof r.arrayBuffer !== "function") throw new Error("resposta sem corpo binário");
-    const corpo = Buffer.from(await r.arrayBuffer());
-    if (corpo.length === 0 || corpo.length > maximoBytes) throw new Error("corpo binário vazio ou acima do teto");
+    const fluxo = r.body && typeof r.body.getReader === "function" ? r.body.getReader() : null;
+    const declarado = r.headers.get("content-length")?.trim() ?? null;
+    if (declarado !== null && /^\d+$/.test(declarado) && Number(declarado) > maximoBytes) {
+      if (fluxo) await fluxo.cancel().catch(() => {});
+      throw acimaDoTeto();
+    }
+    let corpo: Buffer;
+    if (fluxo) {
+      const partes: Uint8Array[] = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await fluxo.read();
+        if (done) break;
+        if (!value) continue;
+        total += value.byteLength;
+        if (total > maximoBytes) { await fluxo.cancel().catch(() => {}); throw acimaDoTeto(); }
+        partes.push(value);
+      }
+      corpo = Buffer.concat(partes, total);
+    } else {
+      if (typeof r.arrayBuffer !== "function") throw new Error("resposta sem corpo binário");
+      corpo = Buffer.from(await r.arrayBuffer());
+    }
+    if (corpo.length === 0) throw new Error("corpo binário vazio");
+    if (corpo.length > maximoBytes) throw acimaDoTeto();
     return corpo;
   };
 }
@@ -76,8 +107,11 @@ export async function enviarPost(buscar: BuscarFn, host: string, caminho: string
     const pu = r.headers.get("x-processingunits-spent");
     let json: unknown = null;
     try { json = await ler(r); } catch {
-      if (controle.signal.aborted) return { tipo: "falha", motivo: "tempo", status: r.status };
+      // 2xx: o provedor JÁ respondeu e cobrou. Corpo ilegível, acima do teto ou cortado pelo tempo máximo DURANTE a
+      // leitura é falha `corpo` com o PU — nunca `tempo`, que seria repetido (segunda chamada paga, e o PU da primeira
+      // sumiria do ledger). Só um 3xx-5xx cortado pelo tempo é `tempo`.
       if (r.status < 300) return { tipo: "falha", motivo: "corpo", status: r.status, ...(pu !== null ? { processingUnits: pu } : {}) };
+      if (controle.signal.aborted) return { tipo: "falha", motivo: "tempo", status: r.status };
     }
     return { tipo: "ok", status: r.status, corpo: json, tentarAposSegundos: segundosDoRetryAfter(r.headers.get("retry-after"), agoraMs()), ...(pu !== null ? { processingUnits: pu } : {}) };
   } finally { clearTimeout(timer); }

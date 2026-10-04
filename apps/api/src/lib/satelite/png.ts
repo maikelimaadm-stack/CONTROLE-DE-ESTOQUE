@@ -9,7 +9,8 @@
  * e SEM entrelaçamento; CRC de todo bloco conferido; blocos IDAT consecutivos; IEND vazio e último (nada depois);
  * blocos auxiliares (primeira letra minúscula) ignorados; bloco crítico desconhecido ou PLTE recusados. Os dados são
  * descomprimidos com teto de saída (sem "bomba" de descompressão) e o tamanho tem de ser EXATAMENTE altura × (1 +
- * largura); os filtros 0–4 de cada linha são desfeitos. Fora disso, LANÇA `ErroPng`.
+ * largura); os filtros 0–4 de cada linha são desfeitos. Com `esperado`, as dimensões do IHDR têm de ser as pedidas
+ * (conferidas antes da descompressão). Fora disso, LANÇA `ErroPng`.
  *
  * `escreverPngCinza8` grava com filtro 0 em todas as linhas — para o emulador de teste e os testes.
  */
@@ -58,8 +59,13 @@ function paeth(a: number, b: number, c: number): number {
   return pb <= pc ? b : c;
 }
 
-export function lerPngCinza8(buf: Buffer): PngCinza8 {
-  const entrada: unknown = buf;
+/**
+ * `esperado` (as dimensões PEDIDAS ao provedor): IHDR diferente LANÇA logo ao ler o cabeçalho, ANTES de descomprimir —
+ * um PNG hostil que declara 16384 × 16384 não chega a inflar centenas de MB. Sem `esperado`, o teto é
+ * `LADO_MAXIMO_PNG_PX` por lado.
+ */
+export function lerPngCinza8(png: Buffer, esperado?: { largura: number; altura: number }): PngCinza8 {
+  const entrada: unknown = png;
   if (!(entrada instanceof Uint8Array)) throw new ErroPng("não é binário");
   const b = Buffer.isBuffer(entrada) ? entrada : Buffer.from(entrada.buffer, entrada.byteOffset, entrada.byteLength);
   if (!temAssinaturaPng(b)) throw new ErroPng("assinatura");
@@ -88,6 +94,7 @@ export function lerPngCinza8(buf: Buffer): PngCinza8 {
       if (profundidade !== 8) throw new ErroPng("profundidade diferente de 8 bits");
       if (compressao !== 0 || filtro !== 0) throw new ErroPng("método de compressão/filtro");
       if (entrelacamento !== 0) throw new ErroPng("entrelaçado");
+      if (esperado && (largura !== esperado.largura || altura !== esperado.altura)) throw new ErroPng("dimensões diferentes das pedidas");
       cabecalho = { largura, altura };
       continue;
     }
@@ -113,14 +120,14 @@ export function lerPngCinza8(buf: Buffer): PngCinza8 {
 
   const { largura, altura } = cabecalho;
   const linha = largura + 1;
-  const esperado = altura * linha;
+  const bytesEsperados = altura * linha;
   let bruto: Buffer;
   try {
-    bruto = inflateSync(Buffer.concat(idat), { maxOutputLength: esperado + 1 });
+    bruto = inflateSync(Buffer.concat(idat), { maxOutputLength: bytesEsperados + 1 });
   } catch {
     throw new ErroPng("IDAT ilegível");
   }
-  if (bruto.length !== esperado) throw new ErroPng("tamanho dos dados");
+  if (bruto.length !== bytesEsperados) throw new ErroPng("tamanho dos dados");
 
   const pixels = new Uint8Array(largura * altura);
   for (let y = 0; y < altura; y++) {
