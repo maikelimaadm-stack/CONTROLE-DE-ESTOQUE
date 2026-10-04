@@ -4769,8 +4769,8 @@ pré e pós-condições nomeadas `SAT-03: …`). **Variáveis novas** só no ser
 **Nada visual**: nenhuma mudança em `apps/web`.
 
 **O que a 0054 faz.** Duas portas estreitas SECURITY DEFINER, executáveis só pelo `erp_app`: `erp.satelite_reservar_itens(…)`
-(reserva itens da fila dentro dos tetos de chamada, com `SKIP LOCKED`, sem reservar item de criador que perdeu acesso; devolve só
-os ids) e `erp.satelite_contar_chamadas()` (só os números do limite). `erp.satelite_consumo`: PU e crédito anuláveis em par, com a
+(reserva itens da fila dentro dos tetos de chamada, com `SKIP LOCKED`; devolve só os ids; item de criador que perdeu acesso não é
+reservado — vira 'falho' `criador_sem_acesso` e a consulta dele fecha, liberando chave e orçamento) e `erp.satelite_contar_chamadas()` (só os números do limite). `erp.satelite_consumo`: PU e crédito anuláveis em par, com a
 origem obrigatória quando nulos. `erp.satelite_consulta_itens.tentativas_rodada`. Índice `ix_satelite_consumo_recente`.
 
 **Travas.** ACCESS EXCLUSIVE em `erp.satelite_consulta_itens` e depois em `erp.satelite_consumo` (nessa ordem, a mesma do POST da
@@ -4782,9 +4782,14 @@ exige janela fora do pico; fora do pico continua sendo a folga recomendada. Trav
 - Executor: com `SATELITE_WORKER_ENABLED=1` **e** `COPERNICUS_ENABLED=1` **e** credencial, roda dentro do processo da API a cada
   `SATELITE_WORKER_INTERVALO_S` (padrão 5 s). Faltando uma das três, não reserva nada e escreve UMA linha de log com a condição que
   falta. Desligado, as consultas ficam 'pendente' na fila, sem gasto.
-- `POST /api/satelite/consultas/:id/reprocessar-falhas` (nova): volta os itens 'falho' da consulta para a fila.
-- `POST /api/mapa/areas/:id/analises-satelitais/ndvi` (SAT-01): mesma resposta; o limite passa a ser o GLOBAL do banco e a
-  chamada grava o consumo no ledger na mesma transação da análise.
+- `POST /api/satelite/consultas/:id/reprocessar-falhas` (nova): volta os itens 'falho' da consulta para a fila; barrado (422) se o
+  que a consulta voltaria a reservar passa do saldo do mês.
+- `POST /api/mapa/areas/:id/analises-satelitais/ndvi` (SAT-01): mesma resposta; o limite passa a ser o GLOBAL do banco, mais um
+  piso por instância de 10 tentativas por organização por minuto, e a chamada grava o consumo no ledger na mesma transação da
+  análise.
+- Ressalvas do "global": a chamada avulsa em voo noutra réplica só entra na conta quando grava o consumo; e a falha do provedor
+  (429, 5xx, tempo, rede) não entra no ledger — por isso o piso por instância na rota e a pausa de 60 s do executor da instância
+  depois de uma falha do provedor.
 
 **Limites (CONFIRMAR NO PAINEL DA CONTA COPERNICUS).** Números em `apps/api/src/lib/satelite/limites.ts`: 2 chamadas simultâneas
 (o executor usa 1 e deixa 1 para o "Analisar agora"), 30 por minuto na conta, 10 por minuto por organização. São padrões
