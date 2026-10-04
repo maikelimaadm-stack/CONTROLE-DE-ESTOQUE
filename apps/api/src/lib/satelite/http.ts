@@ -10,8 +10,12 @@
  */
 import type { BuscarFn } from "../consultas/http.js";
 
+/**
+ * `processingUnits` (SAT-03, decisão 296): o valor BRUTO do cabeçalho `x-processingunits-spent` (o PU que o provedor
+ * cobrou pela chamada), PRESENTE só quando o cabeçalho veio. Não é segredo; quem o lê e valida é `consumo.ts`.
+ */
 export type RespostaEnvio =
-  | { tipo: "ok"; status: number; corpo: unknown; tentarAposSegundos: number | null }
+  | { tipo: "ok"; status: number; corpo: unknown; tentarAposSegundos: number | null; processingUnits?: string }
   | { tipo: "falha"; motivo: "tempo" | "rede" | "redirecionamento" | "corpo"; status?: number };
 
 /**
@@ -52,6 +56,7 @@ export async function enviarPost(buscar: BuscarFn, host: string, caminho: string
       if (controle.signal.aborted) return { tipo: "falha", motivo: "tempo", status: r.status };
       if (r.status < 300) return { tipo: "falha", motivo: "corpo", status: r.status };
     }
-    return { tipo: "ok", status: r.status, corpo: json, tentarAposSegundos: segundosDoRetryAfter(r.headers.get("retry-after"), agoraMs()) };
+    const pu = r.headers.get("x-processingunits-spent");
+    return { tipo: "ok", status: r.status, corpo: json, tentarAposSegundos: segundosDoRetryAfter(r.headers.get("retry-after"), agoraMs()), ...(pu !== null ? { processingUnits: pu } : {}) };
   } finally { clearTimeout(timer); }
 }

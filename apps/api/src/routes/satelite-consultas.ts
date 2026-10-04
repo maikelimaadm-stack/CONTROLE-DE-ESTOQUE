@@ -11,6 +11,7 @@ import { runService } from "../lib/service.js";
 import { DomainError, err, validation } from "../lib/errors.js";
 import { empresaScopeSql, scopedById, type ServiceCtx } from "../lib/context.js";
 import { chaveIdempotencia } from "../lib/satelite/chave-consulta.js";
+import { recalcularConsulta } from "../lib/satelite/fechamento.js";
 import { MSG_AREA_NAO_ENCONTRADA, PERMISSAO_PEDIR_ANALISE, PERMISSAO_VER_ANALISE, exigir, prepararPoligono, type AreaLida } from "./analises-satelitais.js";
 
 /**
@@ -21,6 +22,7 @@ import { MSG_AREA_NAO_ENCONTRADA, PERMISSAO_PEDIR_ANALISE, PERMISSAO_VER_ANALISE
  *   POST /api/satelite/consultas        prévia (confirmar=false, NADA é gravado) ou criação (confirmar=true, 201)
  *   GET  /api/satelite/consultas/:id    a consulta e os itens dela (paginados no servidor), com ETag fraco
  *   GET  /api/satelite/consultas        histórico do escopo (paginado no servidor)
+ *   POST /api/satelite/consultas/:id/reprocessar-falhas   SAT-03 (decisão 296): os itens 'falho' voltam para a fila
  *
  * AUTORIZAÇÃO = CAPACIDADE (`analises_satelitais.create` no POST, `.view` nos GETs) ∧ ESCOPO (módulo pecuária, o da
  * permissão — o mesmo da área). O escopo de empresa entra em CADA ocorrência de tabela de CADA consulta SQL, antes de
@@ -56,6 +58,7 @@ export const MSG_EXCEDE_ORCAMENTO = "A estimativa da consulta passa do saldo de 
 export const msgItensDemais = (n: number) => `A consulta teria ${n} itens; o máximo é ${MAX_ITENS_POR_CONSULTA} por consulta.`;
 /** Recusa ANTES do banco: só os slots × índices de UMA área já passam do teto (a contagem real seria maior ou igual). */
 export const msgItensDemaisPeloMenos = (n: number) => `A consulta teria pelo menos ${n} itens; o máximo é ${MAX_ITENS_POR_CONSULTA} por consulta.`;
+export const MSG_CONSULTA_CANCELADA = "A consulta foi cancelada; as falhas dela não voltam para a fila.";
 
 /** Situações de consulta que RESERVAM saldo do orçamento (ainda podem gastar). */
 const SITUACOES_QUE_RESERVAM = ["pendente", "executando"] as const;
@@ -98,6 +101,7 @@ type CorpoConsulta = z.infer<typeof corpoSchema>;
 type IndiceConsulta = CorpoConsulta["indices"][number];
 
 const semQuery = z.object({}).strict();
+const corpoVazio = z.object({}).strict();
 /**
  * Inteiro positivo na forma CANÔNICA (só dígitos, sem zero à esquerda): `1e2`, `0x2`, ` 3`, `2.0`, `01` ou `-1` são
  * recusados (422), nunca traduzidos.
@@ -164,6 +168,13 @@ function etagConfere(cabecalho: string | string[] | undefined, etag: string): bo
   const opaco = (t: string) => t.trim().replace(/^W\//, "");
   const alvo = opaco(etag);
   return (Array.isArray(cabecalho) ? cabecalho.join(",") : cabecalho).split(",").some((t) => t.trim() === "*" || opaco(t) === alvo);
+}
+
+/** id de consulta do path: forma de UUID, senão a MESMA 404 do inexistente. */
+function idDaConsulta(params: unknown): string {
+  const id = String((params as { id?: string }).id ?? "");
+  if (!FORMA_UUID.test(id)) throw err("NOT_FOUND", MSG_CONSULTA_NAO_ENCONTRADA);
+  return id;
 }
 
 /** Os dias da consulta. Período inválido (calendário, futuro, antes do Sentinel-2 L2A, faixa) → 422 com o CAMPO. */
@@ -297,6 +308,15 @@ async function inserirItens(ctx: ServiceCtx, consultaId: string, empresaId: stri
   return { rowCount: g.rowCount ?? 0, chaves: new Set(g.rows.map((l) => l.chave_idempotencia)) };
 }
 
+/**
+ * A trava das escritas que fazem um item VIVO nascer (criação da consulta, e "reprocessar falhas" desde a SAT-03), por
+ * (organização, empresa): a segunda espera a primeira e enxerga as chaves vivas dela. As chaves de um item são da área,
+ * e a área é de uma empresa só — duas escritas que disputam a mesma chave disputam esta trava.
+ */
+async function travarFilaDaEmpresa(ctx: ServiceCtx, empresaId: string): Promise<void> {
+  await ctx.tx.query("select pg_advisory_xact_lock(hashtextextended('satelite-consulta:' || $1::uuid::text || ':' || $2::uuid::text, 0))", [ctx.orgId, empresaId]);
+}
+
 /** Ajuste da consulta quando itens perderam a corrida: viram reaproveitados, a estimativa cai. ROW COUNT conferido. */
 async function ajustarConsulta(ctx: ServiceCtx, consultaId: string, estimativa: FaixaCreditos, reaproveitados: number, situacao: "pendente" | "concluida"): Promise<LinhaConsulta> {
   const params: unknown[] = [consultaId, ctx.orgId, estimativa.maximo, estimativa.minimo, reaproveitados, situacao];
@@ -338,9 +358,7 @@ async function processarConsulta(ctx: ServiceCtx, corpo: CorpoConsulta, corpoBru
 
   // A trava vem ANTES de ler as chaves e o orçamento: a segunda criação da mesma empresa espera a primeira terminar e
   // enxerga os itens e a reserva dela. A prévia não trava (não grava nada).
-  if (corpo.confirmar) {
-    await ctx.tx.query("select pg_advisory_xact_lock(hashtextextended('satelite-consulta:' || $1::uuid::text || ':' || $2::uuid::text, 0))", [ctx.orgId, empresaId]);
-  }
+  if (corpo.confirmar) await travarFilaDaEmpresa(ctx, empresaId);
   const vivas = await chavesVivas(ctx, itens.map((i) => i.chave));
   const novos = itens.filter((i) => !vivas.has(i.chave));
   const reaproveitados = itens.filter((i) => vivas.has(i.chave));
@@ -407,8 +425,7 @@ export default async function sateliteConsultasRoutes(app: FastifyInstance) {
   app.get("/satelite/consultas/:id", async (req, reply) => {
     exigir(app, req, PERMISSAO_VER_ANALISE);
     const q = itensQuery.parse(req.query);
-    const id = String((req.params as { id?: string }).id ?? "");
-    if (!FORMA_UUID.test(id)) throw err("NOT_FOUND", MSG_CONSULTA_NAO_ENCONTRADA);
+    const id = idDaConsulta(req.params);
     const corpo = await runService(app, req, PERMISSAO_VER_ANALISE, async (ctx) => {
       const sc = scopedById(ctx, "s", id);
       const c = await ctx.tx.query<LinhaConsulta>(
@@ -436,6 +453,70 @@ export default async function sateliteConsultasRoutes(app: FastifyInstance) {
     reply.header("etag", etag).header("cache-control", "private, no-cache");
     if (etagConfere(req.headers["if-none-match"], etag)) return reply.status(304).send();
     return corpo;
+  });
+
+  /**
+   * REPROCESSAR FALHAS (SAT-03, decisão 296): os itens 'falho' da consulta voltam para 'pendente' numa rodada NOVA —
+   * `proxima_tentativa_em`, `erro` e `tentativas_rodada` zerados; `tentativas` (o histórico) fica. Concluídos,
+   * reaproveitados, pendentes e em execução não são tocados. Item falho cuja chave JÁ tem item vivo noutro lugar (outra
+   * consulta pediu o mesmo depois) vira 'reaproveitado': não duplica, e o índice único parcial nunca é violado. Depois,
+   * contadores e situação da consulta recalculados a partir dos itens (`recalcularConsulta`).
+   *
+   * Mesma autorização do POST da consulta (`analises_satelitais.create` ∧ escopo); consulta inexistente, de outra
+   * organização, fora do escopo ou id malformado: a MESMA 404 do GET. Corpo `{}` estrito (ou ausente) e query vazia.
+   * Na transação: a consulta travada (`for update`, no escopo) PRIMEIRO — duas chamadas na mesma consulta se
+   * serializam, e o executor (que trava a consulta para fechar um item) espera —; depois a trava da fila da empresa (a
+   * mesma da criação: a chave viva não nasce em duas escritas ao mesmo tempo). ROW COUNT conferido.
+   */
+  app.post("/satelite/consultas/:id/reprocessar-falhas", async (req) => {
+    exigir(app, req, PERMISSAO_PEDIR_ANALISE);
+    semQuery.parse(req.query);
+    if (req.body !== undefined && req.body !== null) corpoVazio.parse(req.body);
+    const id = idDaConsulta(req.params);
+    return runService(app, req, PERMISSAO_PEDIR_ANALISE, async (ctx) => {
+      const lerConsulta = async (trava: string) => {
+        const sc = scopedById(ctx, "s", id);
+        const c = await ctx.tx.query<LinhaConsulta>(
+          `select ${colunasConsulta("s")} from erp.satelite_consultas s where s.id = $1 and s.organization_id = $2${sc.sql}${trava}`, sc.params);
+        if (!c.rows[0]) throw err("NOT_FOUND", MSG_CONSULTA_NAO_ENCONTRADA);
+        return c.rows[0];
+      };
+      const consulta = await lerConsulta(" for update of s");
+      if (consulta.situacao === "cancelada") throw validation(MSG_CONSULTA_CANCELADA, [{ path: "consulta", message: MSG_CONSULTA_CANCELADA }]);
+      await travarFilaDaEmpresa(ctx, consulta.empresa_id);
+
+      // Os falhos da consulta e, para cada um, se a chave já tem item VIVO (em qualquer consulta). Uma consulta só.
+      const params: unknown[] = [ctx.orgId, consulta.id, consulta.empresa_id];
+      const escopoItem = empresaScopeSql(ctx, "i", params);
+      const escopoViva = empresaScopeSql(ctx, "v", params);
+      const f = await ctx.tx.query<{ id: string; chave_idempotencia: string; viva: boolean }>(
+        `select i.id, i.chave_idempotencia,
+                exists (select 1 from erp.satelite_consulta_itens v
+                         where v.organization_id = $1 and v.chave_idempotencia = i.chave_idempotencia and v.situacao in (${VIVAS_SQL})${escopoViva}) as viva
+           from erp.satelite_consulta_itens i
+          where i.organization_id = $1 and i.consulta_id = $2 and i.empresa_id = $3 and i.situacao = 'falho'${escopoItem}
+          order by i.created_at, i.id`, params);
+      // Dois falhos com a mesma chave (de rodadas antigas): só o primeiro volta vivo; o outro já é reaproveitado.
+      const vivasAgora = new Set<string>();
+      const reprocessar: string[] = []; const reaproveitar: string[] = [];
+      for (const l of f.rows) {
+        if (l.viva || vivasAgora.has(l.chave_idempotencia)) { reaproveitar.push(l.id); continue; }
+        vivasAgora.add(l.chave_idempotencia); reprocessar.push(l.id);
+      }
+
+      if (f.rows.length) {
+        const up: unknown[] = [ctx.orgId, consulta.id, reprocessar, f.rows.map((l) => l.id)];
+        const escopoUp = empresaScopeSql(ctx, "u", up);
+        const g = await ctx.tx.query(
+          `update erp.satelite_consulta_itens u
+              set situacao = case when u.id = any($3::uuid[]) then 'pendente' else 'reaproveitado' end,
+                  proxima_tentativa_em = null, erro = null, tentativas_rodada = 0
+            where u.organization_id = $1 and u.consulta_id = $2 and u.id = any($4::uuid[]) and u.situacao = 'falho'${escopoUp}`, up);
+        if (g.rowCount !== f.rows.length) throw new Error("consulta satelital: o reprocessamento não alcançou exatamente os itens falhos");
+        await recalcularConsulta(ctx, consulta.id);
+      }
+      return { consulta: consultaDto(f.rows.length ? await lerConsulta("") : consulta), reprocessados: reprocessar.length, reaproveitados: reaproveitar.length };
+    });
   });
 
   app.get("/satelite/consultas", async (req) => {

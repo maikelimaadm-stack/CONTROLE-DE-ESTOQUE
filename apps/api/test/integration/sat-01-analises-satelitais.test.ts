@@ -4,7 +4,7 @@ import { createPool, type Db } from "@agro/db";
 import { buildApp } from "../../src/server.js";
 import type { BuscarFn } from "../../src/lib/consultas/http.js";
 import { ENDERECOS_COPERNICUS } from "../../src/lib/satelite/copernicus.js";
-import { MSG_AREA_NAO_ENCONTRADA, LIMITE_ANALISES_POR_MINUTO } from "../../src/routes/analises-satelitais.js";
+import { MSG_AREA_NAO_ENCONTRADA, MSG_LIMITE_ANALISES } from "../../src/routes/analises-satelitais.js";
 import { TEST_URL, configDeTeste, harness, type Harness } from "./setup.js";
 
 /**
@@ -46,11 +46,14 @@ let h: Harness;
 let admin: Db;
 let ligada: FastifyInstance; let desligada: FastifyInstance; let semCredencial: FastifyInstance;
 const instancias: FastifyInstance[] = [];
-const CREDENCIAL_FALSA = { COPERNICUS_ENABLED: "1", COPERNICUS_CLIENT_ID: ID_FALSO, COPERNICUS_CLIENT_SECRET: SEGREDO_FALSO };
 /**
- * Instância NOVA da API ligada (mesmo banco). O limite do ERP é por instância e por minuto: cada bloco de testes que
- * chama o provedor começa com o seu, para um bloco não esgotar o limite do outro (o limite tem teste próprio).
+ * Desde a SAT-03 (decisão 296) o limite de chamadas é GLOBAL, contado pelo banco (ledger do último minuto + itens em
+ * execução): instância nova não zera nada. As instâncias gerais desta suíte sobem com tetos altos, para um bloco não
+ * esgotar o limite do outro; o limite tem teste próprio, com tetos próprios (aqui e em sat-03-sat01-limite-consumo).
  */
+const TETOS_ALTOS = { SATELITE_LIMITE_MINUTO_CONTA: "100000", SATELITE_LIMITE_MINUTO_ORG: "100000", SATELITE_LIMITE_SIMULTANEAS: "1000" };
+const CREDENCIAL_FALSA = { COPERNICUS_ENABLED: "1", COPERNICUS_CLIENT_ID: ID_FALSO, COPERNICUS_CLIENT_SECRET: SEGREDO_FALSO, ...TETOS_ALTOS };
+/** Instância NOVA da API ligada (mesmo banco): estado em memória (chamadas em andamento, token) zerado por bloco. */
 async function novaInstanciaLigada() {
   ligada = await buildApp({ config: configDeTeste(CREDENCIAL_FALSA), db: h.db, logger: false, buscarExterno });
   instancias.push(ligada);
@@ -314,16 +317,22 @@ describe("SAT-01 POST — recusas antes de qualquer chamada ao provedor", () => 
     expect(ultima.statusCode).toBe(200);
     expect(j(ultima).analise.id).toBe(antiga);
   });
-  it(`limite do ERP: ${LIMITE_ANALISES_POR_MINUTO} chamadas ao provedor por minuto por organização; a seguinte → 429 sem chamar`, async () => {
-    const instancia = await buildApp({ config: configDeTeste(CREDENCIAL_FALSA), db: h.db, logger: false, buscarExterno });
+  it("limite do ERP (global desde a SAT-03, contado pelo banco): recusa do provedor não gasta cota; com o ledger da organização no teto do último minuto, a seguinte → 429 sem chamar", async () => {
+    const TETO_ORG = 50; const RECUSAS = 10;
+    const instancia = await buildApp({ config: configDeTeste({ ...CREDENCIAL_FALSA, SATELITE_LIMITE_MINUTO_ORG: String(TETO_ORG) }), db: h.db, logger: false, buscarExterno });
     try {
       chamadas.length = 0;
-      roteiro = Array.from({ length: LIMITE_ANALISES_POR_MINUTO }, () => ({ status: 400 }));
-      for (let i = 0; i < LIMITE_ANALISES_POR_MINUTO; i++) expect((await pedir(instancia, area["limite"]!)).statusCode).toBe(503);
+      roteiro = Array.from({ length: RECUSAS }, () => ({ status: 400 }));
+      for (let i = 0; i < RECUSAS; i++) expect((await pedir(instancia, area["limite"]!)).statusCode).toBe(503);
+      expect(naApi()).toHaveLength(RECUSAS);
+      // O teto da organização no ledger do último minuto (linhas recentes; o que já havia só soma).
+      await admin.query(
+        `insert into erp.satelite_consumo (organization_id, empresa_id, operacao, pu_gasto, creditos, origem_cabecalho)
+         select $1, $2, 'statistical', 0.01, 1, '0.01' from generate_series(1, $3)`, [h.demo.orgId, A, TETO_ORG]);
       const r = await pedir(instancia, area["limite"]!);
       expect(r.statusCode, r.body).toBe(429);
-      expect(j(r).error).toMatchObject({ code: "RATE_LIMITED", details: { motivo: "limite_erp" } });
-      expect(naApi()).toHaveLength(LIMITE_ANALISES_POR_MINUTO);
+      expect(j(r)).toEqual({ error: { code: "RATE_LIMITED", message: MSG_LIMITE_ANALISES, details: { motivo: "limite_erp" } } });
+      expect(naApi()).toHaveLength(RECUSAS);
     } finally { await instancia.close(); }
   });
 });

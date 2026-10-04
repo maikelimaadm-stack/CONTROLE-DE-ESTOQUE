@@ -90,6 +90,15 @@ export class ClienteCopernicus {
    * `ndvi.ts`). Lança `FalhaCopernicus` em qualquer outro desfecho.
    */
   async estatistica(corpo: unknown, registrar: (r: RegistroChamada) => void = () => {}): Promise<unknown> {
+    return (await this.estatisticaComConsumo(corpo, registrar)).corpo;
+  }
+
+  /**
+   * A mesma chamada de `estatistica` (mesmas tentativas, mesmo token), devolvendo também o cabeçalho
+   * `x-processingunits-spent` da resposta 2xx QUE VALEU (SAT-03, decisão 296): bruto, ou null se não veio. Nada mais
+   * da resposta sai daqui; quem lê o PU é `consumo.ts`.
+   */
+  async estatisticaComConsumo(corpo: unknown, registrar: (r: RegistroChamada) => void = () => {}): Promise<{ corpo: unknown; puCabecalho: string | null }> {
     const texto = JSON.stringify(corpo);
     let renovouPor401 = false;
     for (let tentativa = 1; tentativa <= TENTATIVAS_MAXIMAS; tentativa++) {
@@ -108,7 +117,7 @@ export class ClienteCopernicus {
         throw new FalhaCopernicus(tipo, r.status ?? null);
       }
       const s = r.status;
-      if (s >= 200 && s < 300) { anotar(s, null); return r.corpo; }
+      if (s >= 200 && s < 300) { anotar(s, null); return { corpo: r.corpo, puCabecalho: r.processingUnits ?? null }; }
       if (s === 401) {
         anotar(s, "autenticacao");
         this.token = null; // o token caiu antes do previsto: o próximo pedido emite outro
