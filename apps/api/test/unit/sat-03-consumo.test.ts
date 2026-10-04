@@ -51,6 +51,18 @@ describe("SAT-03 gravarConsumo — uma linha no ledger", () => {
       expect(f.chamadas[0]!.params).toEqual(["o", "e", "q", "i", null, origem]);
     }
   });
+  it("SAT-06: `operacao: process` grava o literal 'process' (os mesmos parâmetros); operação fora da lista → erro, sem SQL", async () => {
+    const f = txFalsa({ rowCount: 1, rows: [{ id: "c2", pu_gasto: "0.0123", creditos: "1.23" }] });
+    await gravarConsumo(f.tx, { ...DADOS, puCabecalho: "0.0123", operacao: "process" });
+    expect(f.chamadas[0]!.sql).toMatch(/\$4, 'process', \$5::numeric\(14,4\)/);
+    expect(f.chamadas[0]!.sql).not.toMatch(/'statistical'/);
+    expect(f.chamadas[0]!.params).toEqual(["o", "e", null, null, "0.0123", "0.0123"]);
+    const g = txFalsa({ rowCount: 1, rows: [] });
+    for (const operacao of ["catalog", "statistical'); drop table x; --", "toString"]) {
+      await expect(gravarConsumo(g.tx, { ...DADOS, puCabecalho: "1", operacao: operacao as "process" })).rejects.toThrow(/operação fora da lista/);
+    }
+    expect(g.chamadas).toHaveLength(0);
+  });
   it("ROW COUNT ≠ 1 (RLS devolveu zero linhas) → erro, nunca sucesso sem efeito", async () => {
     await expect(gravarConsumo(txFalsa({ rowCount: 0, rows: [] }).tx, { ...DADOS, puCabecalho: "1" })).rejects.toThrow(/exatamente uma linha/);
   });

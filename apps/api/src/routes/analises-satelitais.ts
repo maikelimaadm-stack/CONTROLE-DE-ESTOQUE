@@ -8,11 +8,9 @@ import {
 import { runService } from "../lib/service.js";
 import { DomainError, denied, err, validation } from "../lib/errors.js";
 import { empresaScopeSql, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
-import { LimitePorMinuto } from "../lib/consultas/http.js";
 import { FalhaCopernicus, type RegistroChamada } from "../lib/satelite/copernicus.js";
 import { gravarConsumo } from "../lib/satelite/consumo.js";
-import { classificarLimite, lerContagemChamadas } from "../lib/satelite/limite-global.js";
-import { TENTATIVAS_AVULSAS_POR_MINUTO_INSTANCIA, limitesDaConfig } from "../lib/satelite/limites.js";
+import { lerContagemChamadas } from "../lib/satelite/limite-global.js";
 import { LADO_MAXIMO_PX, lerPoligono, planejarGrade, type GradeDaAnalise, type PoligonoGeoJson } from "../lib/satelite/geometria.js";
 import { escolherObservacao, interpretarEstatistica, janelaPadrao, montarCorpoEstatistica, type Janela, type ResultadoNdvi } from "../lib/satelite/ndvi.js";
 
@@ -36,7 +34,8 @@ import { escolherObservacao, interpretarEstatistica, janelaPadrao, montarCorpoEs
  * TRÊS FASES, e nenhuma transação aberta esperando o provedor:
  *   A. `runService`: permissão, escopo, área viva e o hash do polígono calculado pelo banco; reaproveitamento; e a
  *      contagem do LIMITE GLOBAL de chamadas (SAT-03, decisão 296: contado pelo banco, todas as réplicas juntas —
- *      `limite-global.ts`), decidido no começo da FASE B com as chamadas em voo desta instância somadas.
+ *      `limite-global.ts`), decidido no começo da FASE B com as chamadas em voo desta instância somadas (o estado em
+ *      memória do pedido avulso mora em `app.limiteAvulsoSatelite` desde a SAT-06, compartilhado com a imagem por pixel).
  *   B. fora de transação: a chamada ao Copernicus (o cliente COMPARTILHADO do processo, `app.clienteCopernicus`: um
  *      token só para esta rota e o executor da fila; tempo máximo e tentativas limitadas).
  *   C. `runService` de novo: a área RELIDA no escopo (404 se saiu dele), o polígono conferido pelo hash (409 se mudou),
@@ -227,20 +226,13 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
   const { COPERNICUS_ENABLED } = app.config;
   // O cliente COMPARTILHADO do processo (server.ts): o mesmo token desta rota e do executor da fila (SAT-03).
   const cliente = app.clienteCopernicus;
-  const limites = limitesDaConfig(app.config);
-  // Estado por INSTÂNCIA: as chamadas em andamento (o mesmo pedido simultâneo compartilha a chamada) e as chamadas EM VOO
-  // (abertas, consumo ainda não gravado: o banco não as vê, então entram na conta do limite global como 'executando').
-  // O limite é o GLOBAL, contado pelo banco (SAT-03), E um PISO por instância em TENTATIVAS por organização por minuto:
-  // o ledger só conta resposta 2xx, e recusa, 429, 5xx, tempo e rede também precisam de taxa (como na SAT-01).
+  // Estado por INSTÂNCIA: as chamadas em andamento (o mesmo pedido simultâneo compartilha a chamada) e — no objeto
+  // COMPARTILHADO do processo (`app.limiteAvulsoSatelite`, SAT-06: o mesmo da imagem por pixel) — as chamadas EM VOO
+  // (abertas, consumo ainda não gravado: o banco não as vê, então entram na conta do limite global como 'executando')
+  // e o PISO por instância em TENTATIVAS por organização por minuto, somado (E) ao limite GLOBAL contado pelo banco
+  // (SAT-03): o ledger só conta resposta 2xx, e recusa, 429, 5xx, tempo e rede também precisam de taxa (como na SAT-01).
   const emAndamento = new Map<string, Promise<ChamadaNdvi>>();
-  const tentativasPorOrganizacao = new LimitePorMinuto(TENTATIVAS_AVULSAS_POR_MINUTO_INSTANCIA);
-  const emVoo = { conta: 0, porOrganizacao: new Map<string, number>() };
-  const ocuparVoo = (org: string) => { emVoo.conta++; emVoo.porOrganizacao.set(org, (emVoo.porOrganizacao.get(org) ?? 0) + 1); };
-  const liberarVoo = (org: string) => {
-    emVoo.conta--;
-    const n = (emVoo.porOrganizacao.get(org) ?? 1) - 1;
-    if (n > 0) emVoo.porOrganizacao.set(org, n); else emVoo.porOrganizacao.delete(org);
-  };
+  const limiteAvulso = app.limiteAvulsoSatelite;
 
   app.post("/mapa/areas/:areaId/analises-satelitais/ndvi", async (req, reply) => {
     const ctxPedido = exigir(app, req, PERMISSAO_PEDIR_ANALISE);
@@ -269,9 +261,7 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
     let chamada = emAndamento.get(chave);
     const abriuChamada = !chamada;
     if (!chamada) {
-      const vooDaOrg = emVoo.porOrganizacao.get(ctxPedido.orgId) ?? 0;
-      if (!a.contagem || classificarLimite(a.contagem, limites, { conta: emVoo.conta, organizacao: vooDaOrg }) !== "livre"
-        || !tentativasPorOrganizacao.permitir(ctxPedido.orgId)) {
+      if (!limiteAvulso.admitir(ctxPedido.orgId, a.contagem)) {
         throw err("RATE_LIMITED", MSG_LIMITE_ANALISES, { motivo: "limite_erp" });
       }
       const registrar = (c: RegistroChamada) => req.log.info({
@@ -290,7 +280,7 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
         });
       emAndamento.set(chave, chamada);
       chamada.finally(() => emAndamento.delete(chave)).catch(() => undefined);
-      ocuparVoo(ctxPedido.orgId);
+      limiteAvulso.ocupar(ctxPedido.orgId);
     }
     try {
       let feita: ChamadaNdvi;
@@ -326,7 +316,7 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
       return reply.status(desfecho.reutilizada ? 200 : 201).send({ analise: paraDto(desfecho.linha, a.area.geometria_sha256), reutilizada: desfecho.reutilizada });
     } finally {
       // A vaga em voo só sai depois da FASE C: aí o consumo já está no ledger (ou a chamada terminou sem 2xx).
-      if (abriuChamada) liberarVoo(ctxPedido.orgId);
+      if (abriuChamada) limiteAvulso.liberar(ctxPedido.orgId);
     }
 
     async function gravarConsumoSemAnalise(puCabecalho: string | null): Promise<void> {
