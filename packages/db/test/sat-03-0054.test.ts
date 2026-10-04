@@ -109,12 +109,17 @@ async function recusaNo(c: Tx, p: () => Promise<unknown>) {
 const limparFilaComitada = () => db.query(LIMPAR_FILA);
 
 // ---------- montagem de linhas (tempos RELATIVOS ao now() da transação que grava) ----------
-interface Consulta { org?: string; empresa: string; criadoPor?: string }
+interface Consulta {
+  org?: string; empresa: string; criadoPor?: string; totalItens?: number; situacao?: string;
+  /** segundos ANTES do now() em que a consulta terminou; omitido = nula */
+  concluidaHa?: number;
+}
 async function consulta(q: Queryable, c: Consulta) {
   return (await q.query<{ id: string }>(
-    `insert into erp.satelite_consultas (organization_id, empresa_id, criado_por, parametros, estimativa_creditos, estimativa_creditos_minima, total_itens)
-     values ($1,$2,$3,'{"alvo":{"tipo":"todas"}}','12.50','2.50',1) returning id`,
-    [c.org ?? demo.orgId, c.empresa, c.criadoPor ?? demo.adminUserId])).rows[0]!.id;
+    `insert into erp.satelite_consultas (organization_id, empresa_id, criado_por, parametros, estimativa_creditos, estimativa_creditos_minima, total_itens,
+       situacao, concluida_em)
+     values ($1,$2,$3,'{"alvo":{"tipo":"todas"}}','12.50','2.50',$4,$5, now() - make_interval(secs => $6::float8)) returning id`,
+    [c.org ?? demo.orgId, c.empresa, c.criadoPor ?? demo.adminUserId, c.totalItens ?? 1, c.situacao ?? "pendente", c.concluidaHa ?? null])).rows[0]!.id;
 }
 
 interface Item {
@@ -125,15 +130,18 @@ interface Item {
   criadoHa?: number;
   /** segundos a partir do now() (negativo = passado); nulo = sem prazo */
   proxima?: number | null;
+  /** a chave de idempotência; omitida = uma nova */
+  chave?: string;
+  erro?: string;
 }
 async function item(q: Queryable, i: Item) {
-  const chave = sha(randomUUID());
+  const chave = i.chave ?? sha(randomUUID());
   const colunas = ["consulta_id", "organization_id", "empresa_id", "area_id", "geometria_sha256", "situacao", "tentativas", "chave_idempotencia",
-    "chave_idempotencia_origem", "created_at", "proxima_tentativa_em"];
+    "chave_idempotencia_origem", "created_at", "proxima_tentativa_em", "erro"];
   const valores: unknown[] = [i.consulta, i.org ?? demo.orgId, i.empresa, i.area, sha(`geometria-${i.area}`), i.situacao ?? "pendente", i.tentativas ?? 0,
-    chave, `origem-legivel|${chave}`, i.criadoHa ?? 0, i.proxima ?? null];
-  const marcas = ["$1", "$2", "$3", "$4", "$5", "$6", "$7", "$8", "$9", "now() - make_interval(secs => $10::float8)", "now() + make_interval(secs => $11::float8)"];
-  if (i.rodada !== undefined) { colunas.push("tentativas_rodada"); valores.push(i.rodada); marcas.push("$12"); }
+    chave, `origem-legivel|${chave}`, i.criadoHa ?? 0, i.proxima ?? null, i.erro ?? null];
+  const marcas = ["$1", "$2", "$3", "$4", "$5", "$6", "$7", "$8", "$9", "now() - make_interval(secs => $10::float8)", "now() + make_interval(secs => $11::float8)", "$12"];
+  if (i.rodada !== undefined) { colunas.push("tentativas_rodada"); valores.push(i.rodada); marcas.push("$13"); }
   return (await q.query<{ id: string }>(
     `insert into erp.satelite_consulta_itens (indice_bundle, versao_metodo, janela_inicio, janela_fim, ${colunas.join(", ")})
      values ('ndvi', 'ndvi-v2', '2026-09-05', '2026-10-04', ${marcas.join(", ")}) returning id`, valores)).rows[0]!.id;
@@ -167,6 +175,32 @@ async function estado(q: Queryable, lista: string[]): Promise<Record<string, Est
        from erp.satelite_consulta_itens where id = any($1::uuid[])`, [lista]);
   return Object.fromEntries(r.rows.map(({ id, ...e }) => [id, e]));
 }
+/**
+ * A regra de recalcularConsulta (apps/api/src/lib/satelite/fechamento.ts), copiada como LEITURA: o que o TS gravaria na
+ * consulta $1 partindo da situação $2 e do concluida_em $3 de ANTES, com os itens de agora. É a régua da equivalência com
+ * o fechamento que a reserva faz em SQL (mesmos contadores, mesma situação, mesmo concluida_em).
+ */
+const FECHAMENTO_TS = `
+  with contagem as (
+    select count(*) filter (where i.situacao = 'concluido')::int as concluidos,
+           count(*) filter (where i.situacao = 'falho')::int as falhos,
+           count(*) filter (where i.situacao = 'reaproveitado')::int as reaproveitados,
+           count(*) filter (where i.situacao in ('pendente', 'executando'))::int as abertos,
+           count(*) filter (where i.tentativas > 0 or i.situacao in ('executando', 'concluido', 'falho'))::int as comecados
+      from erp.satelite_consulta_itens i where i.consulta_id = $1
+  ), s as (select $2::text as situacao, $3::timestamptz as concluida_em)
+  select c.concluidos total_concluidos, c.falhos total_falhos, c.reaproveitados total_reaproveitados,
+         case when s.situacao = 'cancelada' then s.situacao
+              when c.abertos = 0 then case when c.falhos > 0 then 'concluida_com_falhas' else 'concluida' end
+              when c.comecados > 0 then 'executando'
+              else 'pendente' end situacao,
+         case when s.situacao = 'cancelada' then s.concluida_em
+              when c.abertos = 0 then coalesce(s.concluida_em, now())
+              else null end concluida_em
+    from s, contagem c`;
+interface Fechamento { total_concluidos: number; total_falhos: number; total_reaproveitados: number; situacao: string; concluida_em: Date | null }
+const fechamentoGravado = async (q: Queryable, id: string) => (await q.query<Fechamento>(
+  "select total_concluidos, total_falhos, total_reaproveitados, situacao, concluida_em from erp.satelite_consultas where id=$1", [id])).rows[0]!;
 const GUCS = "select current_setting('app.org_id', true) org, current_setting('app.user_id', true) usuario, current_setting('app.modulo_empresa', true) modulo";
 interface Gucs { org: string | null; usuario: string | null; modulo: string | null }
 
@@ -428,12 +462,15 @@ describe("DB-0 a DB-2 — a 0054 sobre o banco na 0053 com acervo: premissa, tra
 });
 
 describe("DB-3 — o ledger com o PU DESCONHECIDO (decisão B): par nulo só com o motivo, par sempre junto, crédito derivado, imutável", () => {
-  it("par nulo SEM origem (nula ou em branco) → 23514 chk_satelite_consumo_pu_ou_origem; um nulo e o outro preenchido → 23514 chk_satelite_consumo_pu_creditos_par", async () => {
+  it("par nulo SEM um dos dois motivos (origem nula, em branco ou qualquer outro texto) → 23514 chk_satelite_consumo_pu_ou_origem; um nulo e o outro preenchido → 23514 chk_satelite_consumo_pu_creditos_par", async () => {
     await desfeita(db, async (c) => {
       const casos: [string, Consumo, string][] = [
         ["par nulo, origem nula", { empresa: A, pu: null, creditos: null, origem: null }, "chk_satelite_consumo_pu_ou_origem"],
         ["par nulo, origem vazia", { empresa: A, pu: null, creditos: null, origem: "" }, "chk_satelite_consumo_pu_ou_origem"],
         ["par nulo, origem em branco", { empresa: A, pu: null, creditos: null, origem: "   " }, "chk_satelite_consumo_pu_ou_origem"],
+        ["par nulo, origem que não é motivo", { empresa: A, pu: null, creditos: null, origem: "qualquer coisa" }, "chk_satelite_consumo_pu_ou_origem"],
+        ["par nulo, motivo em outra caixa", { empresa: A, pu: null, creditos: null, origem: "CABECALHO_AUSENTE" }, "chk_satelite_consumo_pu_ou_origem"],
+        ["par nulo, o valor bruto de um cabeçalho", { empresa: A, pu: null, creditos: null, origem: "1.2345" }, "chk_satelite_consumo_pu_ou_origem"],
         ["PU nulo, crédito preenchido", { empresa: A, pu: null, creditos: "1.00", origem: "cabecalho_ausente" }, "chk_satelite_consumo_pu_creditos_par"],
         ["PU preenchido, crédito nulo", { empresa: A, pu: "0.0100", creditos: null }, "chk_satelite_consumo_pu_creditos_par"],
         ["PU preenchido, crédito nulo, sem origem", { empresa: A, pu: "0.0100", creditos: null, origem: null }, "chk_satelite_consumo_pu_creditos_par"]
@@ -445,7 +482,7 @@ describe("DB-3 — o ledger com o PU DESCONHECIDO (decisão B): par nulo só com
     });
   });
 
-  it("par nulo COM o motivo é aceito (superusuário e erp_app sob RLS); o crédito continua derivado do PU; a linha nula é imutável como as outras", async () => {
+  it("par nulo COM um dos dois motivos (cabecalho_ausente, cabecalho_invalido) é aceito (superusuário e erp_app sob RLS); o crédito continua derivado do PU; a linha nula é imutável como as outras", async () => {
     await desfeita(db, async (c) => {
       for (const origem of ["cabecalho_ausente", "cabecalho_invalido"]) {
         expect((await inserirConsumo(c, { empresa: A, pu: null, creditos: null, origem })).rowCount, origem).toBe(1);
@@ -644,49 +681,62 @@ describe("DB-5 — a RESERVA erp.satelite_reservar_itens", () => {
     });
   });
 
-  it("R-9 ACESSO DO CRIADOR = o predicado da RLS: criador sem acesso (escopo só em B, dono INATIVO, escopo só no financeiro, fora da organização) não tem item reservado — fica pendente, não conta vaga, e o laço segue", async () => {
+  it("R-9 ACESSO DO CRIADOR = o predicado da RLS ∧ organização não excluída: criador sem acesso (escopo só em B, dono INATIVO, escopo só no financeiro, fora da organização, organização excluída) não tem item reservado nem conta vaga — a consulta dele FECHA ('falho' criador_sem_acesso), auditada sem usuário", async () => {
     await limparFilaComitada();
-    // Os sem acesso PRIMEIRO na ordem da fila; os com acesso depois.
-    const criadores: [string, string, string, boolean][] = [
-      ["só B, item em A", usuarioSoB, A, false],
-      ["dono inativo", usuarioInativo, A, false],
-      ["escopo só no financeiro", usuarioSemPecuaria, A, false],
-      ["fora da organização", donoOutraOrg, A, false],
-      ["dono ativo", demo.adminUserId, A, true],
-      ["escopo todas na pecuária", usuarioTodas, A, true],
-      ["só A, item em A", usuarioSoA, A, true],
-      ["só B, item em B", usuarioSoB, B, true]
+    // Os sem acesso PRIMEIRO na ordem da fila; os com acesso depois. "organização excluída": a RLS ainda mostra o item
+    // (ela não olha deleted_at), mas o executor não monta o contexto do criador — a reserva tem de negar também.
+    const criadores = [
+      { nome: "só B, item em A", criador: usuarioSoB, org: demo.orgId, empresa: A, area: areaA, rls: false, acesso: false },
+      { nome: "dono inativo", criador: usuarioInativo, org: demo.orgId, empresa: A, area: areaA, rls: false, acesso: false },
+      { nome: "escopo só no financeiro", criador: usuarioSemPecuaria, org: demo.orgId, empresa: A, area: areaA, rls: false, acesso: false },
+      { nome: "fora da organização", criador: donoOutraOrg, org: demo.orgId, empresa: A, area: areaA, rls: false, acesso: false },
+      { nome: "organização excluída", criador: donoQuarta, org: quartaOrg, empresa: empresaZ, area: areaZ, rls: true, acesso: false },
+      { nome: "dono ativo", criador: demo.adminUserId, org: demo.orgId, empresa: A, area: areaA, rls: true, acesso: true },
+      { nome: "escopo todas na pecuária", criador: usuarioTodas, org: demo.orgId, empresa: A, area: areaA, rls: true, acesso: true },
+      { nome: "só A, item em A", criador: usuarioSoA, org: demo.orgId, empresa: A, area: areaA, rls: true, acesso: true },
+      { nome: "só B, item em B", criador: usuarioSoB, org: demo.orgId, empresa: B, area: areaB, rls: true, acesso: true }
     ];
-    const itens: { nome: string; criador: string; item: string; acesso: boolean }[] = [];
-    for (const [k, [nome, criador, empresa, acesso]] of criadores.entries()) {
-      const cq = await consulta(db, { empresa, criadoPor: criador });
-      itens.push({ nome, criador, acesso, item: await item(db, { empresa, consulta: cq, area: empresa === A ? areaA : areaB, criadoHa: 900 - k * 10 }) });
+    const itens: ((typeof criadores)[number] & { consulta: string; item: string })[] = [];
+    for (const [k, c] of criadores.entries()) {
+      const cq = await consulta(db, { org: c.org, empresa: c.empresa, criadoPor: c.criador });
+      itens.push({ ...c, consulta: cq, item: await item(db, { org: c.org, empresa: c.empresa, consulta: cq, area: c.area, criadoHa: 900 - k * 10 }) });
     }
+    await db.query("update erp.organizations set deleted_at = now() where id = $1", [quartaOrg]);
     try {
       // A VERDADE da RLS: o erp_app, com a GUC do criador e o módulo da área, enxerga o item?
       const rls: Record<string, boolean> = {};
       for (const i of itens) {
-        rls[i.nome] = (await withTx(app, ctxPec(i.criador, demo.orgId), (tx) => tx.query("select 1 from erp.satelite_consulta_itens where id=$1", [i.item]))).rowCount === 1;
+        rls[i.nome] = (await withTx(app, ctxPec(i.criador, i.org), (tx) => tx.query("select 1 from erp.satelite_consulta_itens where id=$1", [i.item]))).rowCount === 1;
       }
-      expect(rls, "premissa: a RLS dá acesso exatamente aos quatro últimos").toEqual(Object.fromEntries(itens.map((i) => [i.nome, i.acesso])));
+      expect(rls, "premissa: a RLS dá acesso aos quatro últimos e ao da organização excluída").toEqual(Object.fromEntries(itens.map((i) => [i.nome, i.rls])));
       // Teto de 4 simultâneas: se os sem acesso contassem vaga, sobrariam menos de 4 para os com acesso.
       const r = await withTx(app, VAZIO, (tx) => reservar(tx, { simultaneas: 4 }));
       expect(ids(r)).toEqual(itens.filter((i) => i.acesso).map((i) => i.item));
-      expect(Object.fromEntries(itens.map((i) => [i.nome, ids(r).includes(i.item)])), "a decisão da reserva É a da RLS").toEqual(rls);
-      const e = await estado(db, itens.filter((i) => !i.acesso).map((i) => i.item));
-      expect(Object.values(e).map((x) => [x.situacao, x.tentativas, x.rodada, x.prazo])).toEqual(itens.filter((i) => !i.acesso).map(() => ["pendente", 0, 0, null]));
-      // Ganhou o acesso (escopo da pecuária em A para o membro do financeiro): o item dele passa a ser reservado.
-      await db.query(
-        `insert into erp.membro_escopos_empresa (organization_id, membro_id, modulo, modo)
-         select organization_id, id, 'pecuaria', 'todas' from erp.organization_members where organization_id=$1 and user_id=$2`, [demo.orgId, usuarioSemPecuaria]);
-      try {
-        expect(ids(await withTx(app, VAZIO, (tx) => reservar(tx)))).toEqual([itens[2]!.item]);
-      } finally {
-        await db.query(
-          `delete from erp.membro_escopos_empresa where modulo = 'pecuaria'
-              and membro_id = (select id from erp.organization_members where organization_id=$1 and user_id=$2)`, [demo.orgId, usuarioSemPecuaria]);
-      }
-    } finally { await limparFilaComitada(); }
+      expect(Object.fromEntries(itens.map((i) => [i.nome, ids(r).includes(i.item)])), "a decisão da reserva É a RLS com a organização não excluída")
+        .toEqual(Object.fromEntries(itens.map((i) => [i.nome, rls[i.nome]! && i.nome !== "organização excluída"])));
+      // Os itens dos sem acesso: 'falho' criador_sem_acesso, SEM tentativa (nada foi chamado), sem prazo.
+      const negados = itens.filter((i) => !i.acesso);
+      expect((await db.query<{ id: string; s: string; erro: string | null; t: number; r: number; p: string | null }>(
+        `select id, situacao s, erro, tentativas t, tentativas_rodada r, proxima_tentativa_em::text p
+           from erp.satelite_consulta_itens where id = any($1::uuid[]) order by created_at`, [negados.map((i) => i.item)])).rows)
+        .toEqual(negados.map((i) => ({ id: i.item, s: "falho", erro: "criador_sem_acesso", t: 0, r: 0, p: null })));
+      // As consultas deles FECHAM pelas regras de fechamento.ts (um item, falho → concluida_com_falhas, concluida_em);
+      // as dos com acesso a reserva não toca (a situação e os contadores são do executor, sob RLS).
+      const consultas = async (lista: string[]) => (await db.query<{ s: string; c: number; f: number; r: number; fim: boolean }>(
+        `select situacao s, total_concluidos c, total_falhos f, total_reaproveitados r, concluida_em is not null fim
+           from erp.satelite_consultas where id = any($1::uuid[]) order by created_at`, [lista])).rows;
+      expect(await consultas(negados.map((i) => i.consulta))).toEqual(negados.map(() => ({ s: "concluida_com_falhas", c: 0, f: 1, r: 0, fim: true })));
+      expect(await consultas(itens.filter((i) => i.acesso).map((i) => i.consulta))).toEqual([1, 2, 3, 4].map(() => ({ s: "pendente", c: 0, f: 0, r: 0, fim: false })));
+      // A auditoria da troca de situação (gatilho da 0053) aceita a escrita com a GUC vazia: user_id nulo.
+      expect((await db.query<{ e: string; u: string | null; antes: string; depois: string }>(
+        `select entity_id e, user_id::text u, before->>'situacao' antes, after->>'situacao' depois
+           from erp.audit_logs where entity = 'satelite_consultas' and action = 'update' and entity_id = any($1::text[]) order by created_at, id`,
+        [negados.map((i) => i.consulta)])).rows.sort((x, y) => (x.e < y.e ? -1 : 1)))
+        .toEqual(negados.map((i) => ({ e: i.consulta, u: null, antes: "pendente", depois: "concluida_com_falhas" })).sort((x, y) => (x.e < y.e ? -1 : 1)));
+    } finally {
+      await db.query("update erp.organizations set deleted_at = null where id = $1", [quartaOrg]);
+      await limparFilaComitada();
+    }
   });
 
   it("R-10 devolve as GUCs como estavam: a troca para o criador não vaza para o resto da transação (com GUC de outro tenant, vazia, e numa sessão que nunca a definiu)", async () => {
@@ -761,6 +811,67 @@ describe("DB-5 — a RESERVA erp.satelite_reservar_itens", () => {
     await cenario(async (c) => {
       expect((await reservar(c, { limite: 1, simultaneas: 1, minutoConta: 1, minutoOrg: 1, prazo: 60 })).rowCount).toBe(0);
       expect((await reservar(c, { limite: 50, prazo: 86_400 })).rowCount).toBe(0);
+    });
+  });
+
+  it("R-12 a consulta SEM QUEM A EXECUTE: TODOS os pendentes viram 'falho' criador_sem_acesso (vencido ou não, tentativas iguais); o executando, o concluído, o reaproveitado e o falho ficam; a consulta é recalculada EXATAMENTE como fechamento.ts; 'cancelada' não reabre; a chave fica livre", async () => {
+    await cenario(async (c) => {
+      const base = { empresa: A, area: areaA };
+      // K1: com um item executando (corrida com o executor) — fica aberta, 'executando'.
+      const k1 = await consulta(c, { empresa: A, criadoPor: usuarioSoB, totalItens: 6 });
+      const p1 = await item(c, { ...base, consulta: k1, tentativas: 2, rodada: 1, proxima: -5, criadoHa: 900 });
+      const p2 = await item(c, { ...base, consulta: k1, proxima: 3600, criadoHa: 890 });
+      const intocados = [
+        await item(c, { ...base, consulta: k1, situacao: "executando", tentativas: 1, rodada: 1, proxima: 3600, criadoHa: 880 }),
+        await item(c, { ...base, consulta: k1, situacao: "concluido", tentativas: 1, rodada: 1, criadoHa: 870 }),
+        await item(c, { ...base, consulta: k1, situacao: "reaproveitado", criadoHa: 860 }),
+        await item(c, { ...base, consulta: k1, situacao: "falho", tentativas: 3, rodada: 3, erro: "tempo", criadoHa: 850 })
+      ];
+      // K2: sem nada aberto depois — fecha 'concluida_com_falhas', com concluida_em.
+      const k2 = await consulta(c, { empresa: A, criadoPor: usuarioInativo, totalItens: 3 });
+      const q = [await item(c, { ...base, consulta: k2, criadoHa: 800 }), await item(c, { ...base, consulta: k2, criadoHa: 790 })];
+      await item(c, { ...base, consulta: k2, situacao: "concluido", tentativas: 1, rodada: 1, criadoHa: 780 });
+      // K3: cancelada — os pendentes saem, a situação e o concluida_em ficam.
+      const k3 = await consulta(c, { empresa: A, criadoPor: usuarioSoB, situacao: "cancelada", concluidaHa: 86_400 });
+      const z = await item(c, { ...base, consulta: k3, criadoHa: 700 });
+      // K4: criador com acesso — o único reservado.
+      const k4 = await consulta(c, { empresa: A, totalItens: 2 });
+      const w = await item(c, { ...base, consulta: k4, criadoHa: 100 });
+
+      const chaveP1 = (await c.query<{ k: string }>("select chave_idempotencia k from erp.satelite_consulta_itens where id=$1", [p1])).rows[0]!.k;
+      const viva = await recusaNo(c, () => item(c, { ...base, consulta: k4, chave: chaveP1 }));
+      expect([viva.code, viva.constraint], "premissa: com p1 pendente, a chave dele está ocupada").toEqual(["23505", "uq_satelite_consulta_itens_chave"]);
+      const antes: Record<string, Fechamento> = {};
+      for (const k of [k1, k2, k3]) antes[k] = await fechamentoGravado(c, k);
+      const intocadosAntes = await c.query("select * from erp.satelite_consulta_itens where id = any($1::uuid[]) order by id", [intocados]);
+
+      expect(ids(await reservar(c))).toEqual([w]);
+
+      expect((await c.query<{ id: string; s: string; erro: string; t: number; r: number; p: string | null }>(
+        `select id, situacao s, erro, tentativas t, tentativas_rodada r, proxima_tentativa_em::text p from erp.satelite_consulta_itens
+          where id = any($1::uuid[]) order by created_at`, [[p1, p2, ...q, z]])).rows).toEqual([
+        { id: p1, s: "falho", erro: "criador_sem_acesso", t: 2, r: 1, p: null },
+        { id: p2, s: "falho", erro: "criador_sem_acesso", t: 0, r: 0, p: null },
+        { id: q[0], s: "falho", erro: "criador_sem_acesso", t: 0, r: 0, p: null },
+        { id: q[1], s: "falho", erro: "criador_sem_acesso", t: 0, r: 0, p: null },
+        { id: z, s: "falho", erro: "criador_sem_acesso", t: 0, r: 0, p: null }
+      ]);
+      expect((await c.query("select * from erp.satelite_consulta_itens where id = any($1::uuid[]) order by id", [intocados])).rows, "o executando, o concluído, o reaproveitado e o falho não mudam")
+        .toEqual(intocadosAntes.rows);
+
+      const agora = (await c.query<{ n: Date }>("select now() n")).rows[0]!.n;
+      expect(await fechamentoGravado(c, k1)).toEqual({ total_concluidos: 1, total_falhos: 3, total_reaproveitados: 1, situacao: "executando", concluida_em: null });
+      expect(await fechamentoGravado(c, k2)).toEqual({ total_concluidos: 1, total_falhos: 2, total_reaproveitados: 0, situacao: "concluida_com_falhas", concluida_em: agora });
+      expect(await fechamentoGravado(c, k3)).toEqual({ ...antes[k3]!, total_falhos: 1 });
+      // A EQUIVALÊNCIA: a regra do fechamento.ts, aplicada ao estado de ANTES com os itens de agora, dá o que está gravado.
+      for (const k of [k1, k2, k3]) {
+        const ts = (await c.query<Fechamento>(FECHAMENTO_TS, [k, antes[k]!.situacao, antes[k]!.concluida_em])).rows[0]!;
+        expect(await fechamentoGravado(c, k), `consulta ${k}`).toEqual(ts);
+      }
+      // A chave de p1 ficou livre: um item novo 'pendente' com ela, em OUTRA consulta, passa no índice único parcial.
+      expect(await item(c, { ...base, consulta: k4, chave: chaveP1 })).toMatch(/^[0-9a-f-]{36}$/);
+      // A K4 (com acesso) a reserva não toca.
+      expect(await fechamentoGravado(c, k4)).toEqual({ total_concluidos: 0, total_falhos: 0, total_reaproveitados: 0, situacao: "pendente", concluida_em: null });
     });
   });
 });
@@ -841,6 +952,33 @@ describe("DB-6 — CONCORRÊNCIA: uma reserva por vez, nunca o mesmo item duas v
       const e = await estado(db, [lista[0]!, vencidoTravado]);
       expect(e[lista[0]!]).toMatchObject({ situacao: "pendente", tentativas: 0 });
       expect(e[vencidoTravado]).toMatchObject({ situacao: "executando", tentativas: 1 });
+    } finally {
+      await outra.query("rollback").catch(() => {}); outra.release();
+      await limparFilaComitada();
+    }
+  });
+
+  it("C-5 a consulta sem acesso TRAVADA por outra transação (o executor fechando um item dela, o reprocessar): a reserva não espera nem toca — fica para a seguinte, que fecha", async () => {
+    await limparFilaComitada();
+    const k = await consulta(db, { empresa: A, criadoPor: usuarioSoB, totalItens: 2 });
+    const lista = [await item(db, { empresa: A, consulta: k, area: areaA, criadoHa: 20 }), await item(db, { empresa: A, consulta: k, area: areaA, criadoHa: 10 })];
+    const outra = await db.connect();
+    try {
+      await outra.query("begin");
+      await outra.query("select id from erp.satelite_consultas where id = $1 for update", [k]);
+      const inicio = Date.now();
+      const r = await withTx(app, VAZIO, async (tx) => {
+        await tx.query("set local statement_timeout = '5s'");
+        return reservar(tx);
+      });
+      expect(ids(r)).toEqual([]);
+      expect(Date.now() - inicio, "não esperou a trava da consulta").toBeLessThan(5_000);
+      expect(Object.values(await estado(db, lista)).map((e) => e.situacao)).toEqual(["pendente", "pendente"]);
+      expect((await fechamentoGravado(db, k)).situacao).toBe("pendente");
+      await outra.query("rollback");
+      expect(ids(await withTx(app, VAZIO, (tx) => reservar(tx)))).toEqual([]);
+      expect(Object.values(await estado(db, lista)).map((e) => e.situacao)).toEqual(["falho", "falho"]);
+      expect(await fechamentoGravado(db, k)).toMatchObject({ situacao: "concluida_com_falhas", total_falhos: 2 });
     } finally {
       await outra.query("rollback").catch(() => {}); outra.release();
       await limparFilaComitada();

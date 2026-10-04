@@ -5,7 +5,7 @@
 --
 --   erp.satelite_consumo          o ledger passa a aceitar a chamada COBRADA cujo PU não foi lido: pu_gasto e creditos
 --                                 ficam ANULÁVEIS, sempre JUNTOS (CHECK de par), e a linha sem PU exige origem_cabecalho
---                                 preenchido — o motivo que a API grava ('cabecalho_ausente' ou 'cabecalho_invalido').
+--                                 com o motivo que a API grava — 'cabecalho_ausente' ou 'cabecalho_invalido', só eles.
 --                                 Uma chamada que o provedor respondeu (2xx) gastou mesmo sem o cabeçalho: ela entra no
 --                                 ledger (e conta no limite por minuto) com o crédito DESCONHECIDO, em vez de um zero
 --                                 inventado (decisão B do Maike). chk_satelite_consumo_creditos (crédito = round(PU × 100, 2))
@@ -15,15 +15,16 @@
 --                                 abertura de rodada — o "reprocessar falhas" zera, o executor para em 3 por rodada.
 --                                 tentativas continua o HISTÓRICO (nunca volta). CHECK 0 <= tentativas_rodada <= tentativas.
 --   erp.satelite_reservar_itens   porta estreita SECURITY DEFINER do executor (abaixo): reserva os próximos itens da fila
---                                 dentro dos três tetos de chamada, só de criador que AINDA tem acesso.
+--                                 dentro dos três tetos de chamada, só de criador que AINDA tem acesso; a consulta de
+--                                 criador SEM acesso é fechada (os pendentes dela viram 'falho' criador_sem_acesso).
 --   erp.satelite_contar_chamadas  porta estreita SECURITY DEFINER da rota avulsa da SAT-01: só os quatro números do limite.
 --   ix_satelite_consumo_recente   índice (created_at) include (organization_id) do ledger: a contagem do ÚLTIMO MINUTO, global
 --                                 e por organização, sai de uma faixa curta do índice. Sem ele, cada reserva e cada pedido
 --                                 avulso varreriam o ledger inteiro — que só cresce (ix_satelite_consumo_mes começa pela
 --                                 organização e não serve à contagem global).
 --
--- NÃO TOCA em erp.satelite_consultas (contadores e situação são do executor, sob RLS), na política de nenhuma tabela, em
--- erp.analises_satelitais nem nos gatilhos da 0053.
+-- Em erp.satelite_consultas só ESCREVE no caso do criador sem acesso (abaixo): fora dele, contadores e situação são do
+-- executor, sob RLS. Não toca na política de nenhuma tabela, em erp.analises_satelitais nem nos gatilhos da 0053.
 --
 -- A RESERVA — erp.satelite_reservar_itens(p_limite, p_max_simultaneas, p_max_minuto_conta, p_max_minuto_org, p_prazo_segundos).
 --   · UMA RESERVA POR VEZ na fila inteira: pg_try_advisory_xact_lock(2026, 88001). Não obteve (outra réplica está
@@ -42,20 +43,40 @@
 --     erp.satelite_contar_chamadas.
 --   · O LAÇO, até p_limite, enquanto executando < p_max_simultaneas e minuto da conta < p_max_minuto_conta: escolhe UM item
 --     'pendente' vencido (proxima_tentativa_em nula ou passada), na ordem (created_at, id), FOR UPDATE OF i SKIP LOCKED
---     LIMIT 1, fora das organizações já no teto e das consultas sem acesso desta chamada. Organização no teto
---     (p_max_minuto_org) → a organização sai desta chamada e o laço segue. Criador sem acesso → a CONSULTA sai desta
---     chamada, o item fica 'pendente' (não conta, não gasta) e o laço segue. Senão: 'executando', tentativas + 1,
+--     LIMIT 1, fora das organizações já no teto e das consultas sem acesso desta chamada. Criador sem acesso → a
+--     consulta é fechada (abaixo), sai desta chamada, nada dela é reservado nem conta vaga, e o laço segue. Organização
+--     no teto (p_max_minuto_org) → a organização sai desta chamada e o laço segue. Senão: 'executando', tentativas + 1,
 --     tentativas_rodada + 1, proxima_tentativa_em = now() + p_prazo_segundos (o PRAZO do executando), ROW COUNT conferido,
---     e a linha volta. Cada item candidato que não foi reservado (no máximo um por organização no teto e um por consulta
---     sem acesso) fica travado até o commit da mesma transação curta.
---   · ACESSO DO CRIADOR (fail-closed, o MESMO predicado da política tenant_e_empresa da 0053, sem segunda fonte de
---     verdade): com as GUCs trocadas para o criador — set_config LOCAL de app.org_id = organização do item,
---     app.user_id = criado_por da consulta e app.modulo_empresa = 'pecuaria' —, avalia
---       erp.tenant_visible(org) and (erp.escopo_empresa_total('pecuaria') or empresa in (select erp.empresas_do_membro('pecuaria')))
---     e devolve as três GUCs ao valor de ENTRADA logo em seguida (antes de travar ou gravar qualquer coisa). Uma GUC que
---     não existia na sessão volta como texto vazio — que erp.current_org_id, erp.current_user_id e
---     erp.modulo_empresa_atual leem como nulo, exatamente como antes. Erro no meio desfaz a (sub)transação, e a troca de
---     GUC é desfeita junto. O resultado é guardado por consulta (organização, empresa e criador são da consulta).
+--     e a linha volta. O acesso vem ANTES do teto: fechar a consulta sem acesso não chama o provedor, e não precisa
+--     esperar a organização ter vaga. O candidato de organização no teto (no máximo um por organização) fica travado até
+--     o commit da mesma transação curta.
+--   · ACESSO DO CRIADOR (fail-closed, sem segunda fonte de verdade): o MESMO predicado da política tenant_e_empresa da
+--     0053 MAIS a organização não excluída — as duas condições que o executor precisa para agir pelo criador
+--     (lib/contexto-membro.ts monta o contexto só com vínculo ativo e organização com deleted_at nulo; o vínculo ativo
+--     já está em escopo_empresa_total e empresas_do_membro, que exigem m.is_active). Sem a da organização, a reserva
+--     pegaria um item que o executor não consegue tocar: a vaga ficaria presa pelo prazo inteiro, e o item voltaria em
+--     laço. Com as GUCs trocadas para o criador — set_config LOCAL de app.org_id = organização do item, app.user_id =
+--     criado_por da consulta e app.modulo_empresa = 'pecuaria' —, avalia
+--       erp.tenant_visible(org) and exists (organização com deleted_at nulo)
+--       and (erp.escopo_empresa_total('pecuaria') or empresa in (select erp.empresas_do_membro('pecuaria')))
+--     e devolve as três GUCs ao valor de ENTRADA logo em seguida, ANTES de qualquer escrita. Uma GUC que não existia na
+--     sessão volta como texto vazio — que erp.current_org_id, erp.current_user_id e erp.modulo_empresa_atual leem como
+--     nulo, exatamente como antes. Erro no meio desfaz a (sub)transação, e a troca de GUC é desfeita junto. O resultado
+--     é guardado por consulta (organização, empresa e criador são da consulta).
+--   · A CONSULTA SEM QUEM A EXECUTE (decisão do Maike: "a reserva marca 'falho' e fecha"). Criador sem acesso → TODOS os
+--     itens 'pendente' da consulta viram 'falho' com erro = 'criador_sem_acesso' e proxima_tentativa_em nula, SEM somar
+--     tentativa (nada foi chamado); 'falho' sai do índice único parcial, e a chave fica livre para um pedido novo. Depois
+--     a consulta é recalculada pelas MESMAS regras de recalcularConsulta (lib/satelite/fechamento.ts): contadores
+--     contados dos itens; sem pendente nem executando → 'concluida' (nenhum falho) ou 'concluida_com_falhas', concluida_em
+--     = coalesce(concluida_em, now()); com algum aberto → 'executando' se algum já começou, senão 'pendente', concluida_em
+--     nula; 'cancelada' não reabre (só os contadores). O 'executando' da consulta (corrida com o executor) não é tocado:
+--     volta pelo prazo e cai nesta regra na reserva seguinte. TRAVAS sem esperar ninguém: a consulta com FOR UPDATE SKIP
+--     LOCKED (as outras escritas travam consulta → item; ocupada por outra transação → a consulta fica para a reserva
+--     seguinte, com os itens pendentes), e os pendentes também com SKIP LOCKED. A auditoria da troca de situação da
+--     consulta (gatilho da 0053) grava com o usuário da GUC — vazio no executor: user_id nulo em erp.audit_logs.
+--     CONTINUA ESTREITA: só tabelas da SAT (a fila e a consulta dela), só no caso sem acesso, só as colunas de situação,
+--     erro e prazo dos pendentes e os contadores, a situação e concluida_em daquela consulta; nada é lido além do que o
+--     predicado e a contagem precisam, e nada a mais é devolvido (a consulta fechada não aparece no retorno).
 --   · Devolve SÓ (organization_id, empresa_id, consulta_id, item_id, criado_por). Sem SQL dinâmico.
 --   · PARÂMETROS fora da faixa são erro de quem chama (configuração), nunca "nada a reservar" em silêncio: 22023 com o
 --     nome do parâmetro — p_limite 1..50; p_max_simultaneas, p_max_minuto_conta e p_max_minuto_org >= 1; p_prazo_segundos
@@ -169,17 +190,37 @@ begin
      or not exists (select 1 from information_schema.columns
                      where table_schema = 'erp' and table_name = 'satelite_consulta_itens' and column_name = 'proxima_tentativa_em'
                        and data_type = 'timestamp with time zone')
+     or not exists (select 1 from information_schema.columns
+                     where table_schema = 'erp' and table_name = 'satelite_consulta_itens' and column_name = 'erro' and data_type = 'text')
      or (select count(*) from information_schema.columns
           where table_schema = 'erp' and table_name = 'satelite_consultas' and is_nullable = 'NO'
-            and column_name in ('id', 'organization_id', 'empresa_id', 'criado_por')) <> 4 then
-    raise exception 'SAT-03: erp.satelite_consulta_itens ou erp.satelite_consultas fora da forma da 0053 (colunas da fila e criado_por da consulta); schema divergente.';
+            and column_name in ('id', 'organization_id', 'empresa_id', 'criado_por', 'situacao', 'total_concluidos', 'total_falhos', 'total_reaproveitados')) <> 8
+     or not exists (select 1 from information_schema.columns
+                     where table_schema = 'erp' and table_name = 'satelite_consultas' and column_name = 'concluida_em'
+                       and data_type = 'timestamp with time zone') then
+    raise exception 'SAT-03: erp.satelite_consulta_itens ou erp.satelite_consultas fora da forma da 0053 (colunas da fila, erro do item, criador, situacao, contadores e concluida_em da consulta); schema divergente.';
+  end if;
+  -- O fechamento da consulta sem acesso grava as situações da 0053 (fechamento.ts): elas têm de estar na lista dela.
+  if not exists (select 1 from pg_constraint c
+                  where c.conname = 'chk_satelite_consultas_situacao' and c.conrelid = 'erp.satelite_consultas'::regclass
+                    and pg_get_constraintdef(c.oid) like '%''pendente''%' and pg_get_constraintdef(c.oid) like '%''executando''%'
+                    and pg_get_constraintdef(c.oid) like '%''concluida''%' and pg_get_constraintdef(c.oid) like '%''concluida_com_falhas''%'
+                    and pg_get_constraintdef(c.oid) like '%''cancelada''%') then
+    raise exception 'SAT-03: chk_satelite_consultas_situacao sem pendente/executando/concluida/concluida_com_falhas/cancelada (0053); schema divergente.';
+  end if;
+  -- A organização excluída também nega o acesso do criador: erp.organizations.deleted_at (0001).
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'erp' and table_name = 'organizations' and column_name = 'deleted_at'
+                    and data_type = 'timestamp with time zone') then
+    raise exception 'SAT-03: erp.organizations.deleted_at ausente (0001); o acesso do criador nao saberia da organizacao excluida.';
   end if;
   if not exists (select 1 from pg_constraint c
                   where c.conname = 'chk_satelite_consulta_itens_situacao' and c.conrelid = 'erp.satelite_consulta_itens'::regclass
-                    and pg_get_constraintdef(c.oid) like '%''pendente''%' and pg_get_constraintdef(c.oid) like '%''executando''%')
+                    and pg_get_constraintdef(c.oid) like '%''pendente''%' and pg_get_constraintdef(c.oid) like '%''executando''%'
+                    and pg_get_constraintdef(c.oid) like '%''falho''%')
      or not exists (select 1 from pg_constraint c
                      where c.conname = 'chk_satelite_consulta_itens_tentativas' and c.conrelid = 'erp.satelite_consulta_itens'::regclass) then
-    raise exception 'SAT-03: CHECKs de situacao (pendente/executando) ou de tentativas de erp.satelite_consulta_itens ausentes (0053); schema divergente.';
+    raise exception 'SAT-03: CHECKs de situacao (pendente/executando/falho) ou de tentativas de erp.satelite_consulta_itens ausentes (0053); schema divergente.';
   end if;
   -- O predicado do acesso do criador é o da política tenant_e_empresa da fila: ela tem de ser a da 0053 (a MESMA texto a
   -- texto da de erp.analises_satelitais, como a pós-condição da 0053 conferiu) e chamar as funções que a reserva chama.
@@ -218,6 +259,7 @@ declare
   v_consultas_com_acesso uuid[] := '{}';
   v_acesso boolean;
   v_linhas integer;
+  v_consulta_travada uuid;
   v_c record;
 begin
   -- Parâmetro fora da faixa é erro de configuração de quem chama: nunca vira "nada a reservar" em silêncio.
@@ -282,6 +324,72 @@ begin
      for update of i skip locked;
     exit when not found;
 
+    -- Acesso do criador: o predicado da política tenant_e_empresa MAIS a organização não excluída (o que
+    -- lib/contexto-membro.ts exige para montar o contexto do executor; o vínculo ATIVO já está nas duas funções de
+    -- escopo), com as GUCs do criador. As de entrada voltam já, antes de qualquer escrita.
+    if not (v_c.consulta_id = any (v_consultas_com_acesso)) then
+      perform set_config('app.org_id', v_c.organization_id::text, true),
+              set_config('app.user_id', v_c.criado_por::text, true),
+              set_config('app.modulo_empresa', 'pecuaria', true);
+      v_acesso := coalesce(erp.tenant_visible(v_c.organization_id)
+                           and exists (select 1 from erp.organizations o where o.id = v_c.organization_id and o.deleted_at is null)
+                           and (erp.escopo_empresa_total('pecuaria')
+                                or v_c.empresa_id in (select erp.empresas_do_membro('pecuaria'))), false);
+      perform set_config('app.org_id', coalesce(v_org_entrada, ''), true),
+              set_config('app.user_id', coalesce(v_user_entrada, ''), true),
+              set_config('app.modulo_empresa', coalesce(v_modulo_entrada, ''), true);
+      if not v_acesso then
+        -- A consulta ficou sem executor possível: os 'pendente' dela viram 'falho' criador_sem_acesso (sem tentativa —
+        -- nada foi chamado) e ela fecha pelas regras de lib/satelite/fechamento.ts. Só com a consulta travada SEM
+        -- esperar (a ordem consulta → item das outras escritas; travada por outra transação → fica para a reserva
+        -- seguinte), e só os pendentes livres (o travado por outra transação também fica para a seguinte). O
+        -- 'executando' dela não é tocado: volta pelo prazo e cai aqui na reserva seguinte.
+        select s.id into v_consulta_travada from erp.satelite_consultas s
+         where s.id = v_c.consulta_id and s.organization_id = v_c.organization_id
+         for update skip locked;
+        if found then
+          update erp.satelite_consulta_itens i
+             set situacao = 'falho', erro = 'criador_sem_acesso', proxima_tentativa_em = null
+           where i.situacao = 'pendente'
+             and i.id in (select p.id from erp.satelite_consulta_itens p
+                           where p.organization_id = v_c.organization_id and p.consulta_id = v_c.consulta_id and p.situacao = 'pendente'
+                           for update skip locked);
+          -- O MESMO recálculo de recalcularConsulta (fechamento.ts): contadores contados dos itens; sem pendente nem
+          -- executando → concluida (nenhum falho) ou concluida_com_falhas, com concluida_em; com algum aberto →
+          -- executando se algum já começou, senão pendente, concluida_em nulo; 'cancelada' só acerta os contadores.
+          with contagem as (
+            select count(*) filter (where x.situacao = 'concluido')::int as concluidos,
+                   count(*) filter (where x.situacao = 'falho')::int as falhos,
+                   count(*) filter (where x.situacao = 'reaproveitado')::int as reaproveitados,
+                   count(*) filter (where x.situacao in ('pendente', 'executando'))::int as abertos,
+                   count(*) filter (where x.tentativas > 0 or x.situacao in ('executando', 'concluido', 'falho'))::int as comecados
+              from erp.satelite_consulta_itens x
+             where x.consulta_id = v_c.consulta_id and x.organization_id = v_c.organization_id
+          )
+          update erp.satelite_consultas s
+             set total_concluidos = k.concluidos, total_falhos = k.falhos, total_reaproveitados = k.reaproveitados,
+                 situacao = case
+                   when s.situacao = 'cancelada' then s.situacao
+                   when k.abertos = 0 then case when k.falhos > 0 then 'concluida_com_falhas' else 'concluida' end
+                   when k.comecados > 0 then 'executando'
+                   else 'pendente' end,
+                 concluida_em = case
+                   when s.situacao = 'cancelada' then s.concluida_em
+                   when k.abertos = 0 then coalesce(s.concluida_em, now())
+                   else null end
+            from contagem k
+           where s.id = v_c.consulta_id and s.organization_id = v_c.organization_id;
+          get diagnostics v_linhas = row_count;
+          if v_linhas <> 1 then
+            raise exception 'SAT-03: a consulta % travada pela reserva nao foi recalculada (% linhas); nada desta rodada foi gravado.', v_c.consulta_id, v_linhas;
+          end if;
+        end if;
+        v_consultas_sem_acesso := v_consultas_sem_acesso || v_c.consulta_id;
+        continue;
+      end if;
+      v_consultas_com_acesso := v_consultas_com_acesso || v_c.consulta_id;
+    end if;
+
     -- Teto por organização: a organização sai desta chamada; o laço segue com as outras.
     select ((select count(*) from erp.satelite_consumo s
               where s.organization_id = v_c.organization_id and s.created_at > now() - interval '60 seconds')
@@ -291,24 +399,6 @@ begin
     if v_minuto_org >= p_max_minuto_org then
       v_orgs_no_teto := v_orgs_no_teto || v_c.organization_id;
       continue;
-    end if;
-
-    -- Acesso do criador: o predicado da política tenant_e_empresa, com as GUCs do criador; as de entrada voltam já.
-    if not (v_c.consulta_id = any (v_consultas_com_acesso)) then
-      perform set_config('app.org_id', v_c.organization_id::text, true),
-              set_config('app.user_id', v_c.criado_por::text, true),
-              set_config('app.modulo_empresa', 'pecuaria', true);
-      v_acesso := coalesce(erp.tenant_visible(v_c.organization_id)
-                           and (erp.escopo_empresa_total('pecuaria')
-                                or v_c.empresa_id in (select erp.empresas_do_membro('pecuaria'))), false);
-      perform set_config('app.org_id', coalesce(v_org_entrada, ''), true),
-              set_config('app.user_id', coalesce(v_user_entrada, ''), true),
-              set_config('app.modulo_empresa', coalesce(v_modulo_entrada, ''), true);
-      if not v_acesso then
-        v_consultas_sem_acesso := v_consultas_sem_acesso || v_c.consulta_id;
-        continue;
-      end if;
-      v_consultas_com_acesso := v_consultas_com_acesso || v_c.consulta_id;
     end if;
 
     update erp.satelite_consulta_itens i
@@ -334,7 +424,7 @@ begin
 end $$;
 
 comment on function erp.satelite_reservar_itens(integer, integer, integer, integer, integer) is
-  'SAT-03 (decisão 296): porta estreita do executor da fila satelital. Uma reserva por vez (advisory lock de transação (2026, 88001); ocupado → vazio); devolve a "executando" o vencido (sem mudar tentativas); reserva até p_limite itens pendentes vencidos, em ordem (created_at, id), FOR UPDATE SKIP LOCKED, dentro dos tetos de simultâneas, de chamadas por minuto na conta e por organização (ledger do último minuto + executando), só de criador que ainda passa no predicado da política tenant_e_empresa (GUCs do criador, devolvidas ao valor de entrada). Marca executando, tentativas + 1, tentativas_rodada + 1 e o prazo. Devolve só organização, empresa, consulta, item e criador. Só o erp_app executa.';
+  'SAT-03 (decisão 296): porta estreita do executor da fila satelital. Uma reserva por vez (advisory lock de transação (2026, 88001); ocupado → vazio); devolve a "pendente" o executando vencido (sem mudar tentativas); reserva até p_limite itens pendentes vencidos, em ordem (created_at, id), FOR UPDATE SKIP LOCKED, dentro dos tetos de simultâneas, de chamadas por minuto na conta e por organização (ledger do último minuto + executando), só de criador que ainda passa no predicado da política tenant_e_empresa com a organização não excluída (GUCs do criador, devolvidas ao valor de entrada antes de qualquer escrita). Criador sem acesso: os pendentes da consulta viram falho criador_sem_acesso e a consulta fecha pelas regras de fechamento.ts. Marca executando, tentativas + 1, tentativas_rodada + 1 e o prazo. Devolve só organização, empresa, consulta, item e criador. Só o erp_app executa.';
 
 -- ---------- 4) erp.satelite_contar_chamadas — a porta estreita da rota avulsa da SAT-01 ----------
 create function erp.satelite_contar_chamadas()
@@ -401,9 +491,10 @@ alter table erp.satelite_consumo alter column pu_gasto drop not null;
 alter table erp.satelite_consumo alter column creditos drop not null;
 -- PU e crédito andam JUNTOS: os dois preenchidos (o crédito derivado do PU, chk_satelite_consumo_creditos) ou os dois nulos.
 alter table erp.satelite_consumo add constraint chk_satelite_consumo_pu_creditos_par check ((pu_gasto is null) = (creditos is null));
--- Sem PU, o motivo fica escrito: origem_cabecalho não nulo e não em branco.
+-- Sem PU, o motivo fica escrito, e é um dos dois do contrato. O "is not null" não é enfeite: com origem nula, o `in`
+-- daria nulo, o `or` daria nulo, e CHECK nulo PASSA — a linha sem PU e sem motivo entraria.
 alter table erp.satelite_consumo add constraint chk_satelite_consumo_pu_ou_origem
-  check (pu_gasto is not null or (origem_cabecalho is not null and length(btrim(origem_cabecalho)) > 0));
+  check (pu_gasto is not null or (origem_cabecalho is not null and origem_cabecalho in ('cabecalho_ausente', 'cabecalho_invalido')));
 
 -- O último minuto (global e por organização) numa faixa curta do índice, sem ler o heap.
 create index ix_satelite_consumo_recente on erp.satelite_consumo (created_at) include (organization_id);
