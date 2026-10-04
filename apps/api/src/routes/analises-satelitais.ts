@@ -91,7 +91,7 @@ interface LinhaResumo {
   variacao: string | null;
 }
 
-interface AreaLida { id: string; empresa_id: string; geometria: unknown; geometria_sha256: string | null }
+export interface AreaLida { id: string; empresa_id: string; geometria: unknown; geometria_sha256: string | null }
 
 interface LinhaAnalise {
   id: string; area_id: string; provedor: string; colecao: string; indice: string; versao_metodo: string; geometria_sha256: string;
@@ -126,7 +126,7 @@ function paraDto(l: LinhaAnalise, hashAtual: string | null) {
   };
 }
 
-function exigir(app: FastifyInstance, req: FastifyRequest, permissao: string) {
+export function exigir(app: FastifyInstance, req: FastifyRequest, permissao: string) {
   const ctx = app.requireCtx(req);
   if (!hasPermission(ctx, permissao)) throw denied(permissao);
   return ctx;
@@ -161,8 +161,11 @@ async function lerAnaliseDaJanela(ctx: ServiceCtx, area: AreaLida, janela: Janel
   return r.rows[0] ?? null;
 }
 
-/** Polígono pronto para o provedor, ou a recusa (422) que nenhuma imagem mudaria. */
-function prepararPoligono(area: AreaLida): { poligono: PoligonoGeoJson; grade: GradeDaAnalise } {
+/**
+ * Polígono pronto para o provedor, ou a recusa (422) que nenhuma imagem mudaria. Exportada para a consulta em lote
+ * (SAT-02, decisão 295) aplicar os MESMOS critérios ao separar as áreas ignoradas.
+ */
+export function prepararPoligono(area: AreaLida): { poligono: PoligonoGeoJson; grade: GradeDaAnalise } {
   if (area.geometria === null || area.geometria_sha256 === null) throw validation(MSG_AREA_SEM_POLIGONO, [{ path: "geometria", message: MSG_AREA_SEM_POLIGONO }]);
   const poligono = lerPoligono(area.geometria);
   if (!poligono) throw validation(MSG_POLIGONO_FORA_DO_FORMATO, [{ path: "geometria", message: MSG_POLIGONO_FORA_DO_FORMATO }]);

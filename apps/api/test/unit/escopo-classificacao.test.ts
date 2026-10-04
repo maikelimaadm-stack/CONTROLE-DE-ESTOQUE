@@ -43,6 +43,9 @@ const TABELAS_DO_RECURSO: Map<string, Set<string>> = (() => {
   add("sales", "erp.aprovacoes_venda");
   add("compras", "erp.aprovacoes_compra");
   for (const r of ["entradas_estoque", "saidas_estoque", "transferencias_estoque", "ajustes_estoque"]) add(r, "erp.aprovacoes_estoque");
+  // SAT-02 (decisão 295): a consulta em lote, a fila, o ledger de créditos e o orçamento da análise por satélite são
+  // governados pelo recurso da análise — `analises_satelitais.create`/`.view`, módulo pecuária. Cobertura, não exceção.
+  for (const t of ["erp.satelite_consultas", "erp.satelite_consulta_itens", "erp.satelite_consumo", "erp.satelite_orcamentos"]) add("analises_satelitais", t);
   return m;
 })();
 
