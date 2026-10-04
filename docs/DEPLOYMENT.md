@@ -4776,7 +4776,8 @@ ficam no banco como os anexos (decisão do Maike).
 **Travas — aplicar FORA DO PICO.** Tabelas novas; nenhuma tabela existente é alterada nem lida inteira. Mas as FKs seguram
 SHARE ROW EXCLUSIVE em `erp.organizations`, `erp.empresas`, `erp.users` e `erp.analises_satelitais` até o commit: a escrita
 nelas espera (a leitura não) — e todo login grava `erp.users.last_login_at`. A migration leva milissegundos; cada pedido de
-trava espera no máximo 2 s, e sem a trava ela aborta inteira, sem nada aplicado.
+trava espera no máximo 2 s, e sem a trava ela aborta inteira, sem nada aplicado. Antes de mesclar, conferir em `pg_stat_activity` (leitura) que não há
+transação longa aberta nessas quatro tabelas.
 
 **API — rotas novas** (prefixo `/api`):
 - `POST /mapa/analises-satelitais/:analiseId/raster` — corpo `{}` estrito. Gera a imagem da análise (uma chamada à Process
@@ -4785,10 +4786,15 @@ trava espera no máximo 2 s, e sem a trava ela aborta inteira, sem nada aplicado
 - `GET /mapa/rasters?area_ids=…&indice=ndvi` — a imagem mais recente de cada área (até 200), paginado; não gera nada.
 - `GET /mapa/rasters/:rasterId/arquivo?t=…` — o PNG pela URL assinada (10 min); sem cabeçalho de autenticação.
 
+**Log.** O serializador de requisição da API troca a query das rotas `/rasters/` por `t=[omitido]`: o token não vai para o
+log da API. O log de borda do Railway pode guardar a URL completa; o token vale 10 minutos e só abre a imagem para quem
+ainda tem acesso.
+
 **Impacto em dados reais:** nenhum dado é corrigido ou apagado (decisões 240/247). Nada é gerado no deploy nem ao abrir o
 mapa: cada imagem nasce de um `POST` deliberado (com `COPERNICUS_ENABLED=1` e a credencial). Cada imagem gasta processing
-units da conta (estimativa ≈ 0,0004 PU por hectare a 10 m, mínimo 0,01 PU por imagem — medição real PENDING) e ocupa o banco
-(tipicamente dezenas de KB; teto 16 MiB). Arquivo gerado nunca é apagado nem sobrescrito.
+units da conta (estimativa ≈ 0,0004 PU por hectare a 10 m, mínimo 0,01 PU e teto ≈ 23,8 PU por imagem — medição real PENDING) e
+ocupa o banco (tipicamente dezenas de KB; teto 16 MiB). Arquivo gerado nunca é apagado nem sobrescrito. **O pedido avulso não
+consulta o orçamento mensal da SAT-02** (nem a análise da SAT-01, nem a imagem): o freio é o limite global de chamadas.
 
 **Ordem:** BANCO (0055, pre-deploy) → API. **API anterior × banco na 0055**: só acrescenta tabelas; nada muda. **API nova ×
 banco sem a 0055**: não acontece no pipeline; se acontecesse, só as rotas novas responderiam erro.
