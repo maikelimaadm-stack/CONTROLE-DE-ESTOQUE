@@ -25,8 +25,9 @@ import {
 
 /**
  * IMAGEM DO NDVI POR PIXEL DA ANÁLISE (SAT-06, decisão 297) — Process API do Copernicus. Só API: sem tela, sem
- * paleta, sem cor, sem lote automático. O arquivo é um PNG de VALORES (1 banda, 8 bits: 0 = sem dado; 1..254 = o NDVI
- * na escala `ESCALA_NDVI_RASTER`), recortado no polígono da área, de uma análise que JÁ existe.
+ * paleta, sem cor, sem lote automático. O arquivo é um PNG de VALORES (1 banda, 8 bits: 0 = sem dado; 1..255 = o NDVI
+ * na escala `ESCALA_NDVI_RASTER`, em 254 degraus — `evalscript-raster.ts`), recortado no polígono da área, de uma análise
+ * que JÁ existe.
  *
  *   POST /api/mapa/analises-satelitais/:analiseId/raster   gera (ou reaproveita) a imagem da análise (corpo `{}` ou ausente)
  *   GET  /api/mapa/analises-satelitais/:analiseId/raster   a imagem da análise, se já gerada (404 se não)
@@ -50,14 +51,20 @@ import {
  *   B. fora de transação: o limite (o MESMO objeto da SAT-01, `app.limiteAvulsoSatelite`: o mesmo limite global, o
  *      mesmo piso, as mesmas vagas em voo; bloqueado → o MESMO 429), a Process API (`processoComConsumo`, o cliente
  *      compartilhado do processo), a leitura do PNG (dimensões = as pedidas; senão `resposta_malformada`) e o ARQUIVO no
- *      armazenamento (`gravar`, transação própria e curta) — o "upload" vem ANTES da linha.
- *   C. `runService` de novo: análise e área RELIDAS no escopo (polígono mudou no meio → consumo + 422); a linha da
+ *      armazenamento (`gravar` dentro de um `runService` PRÓPRIO e curto) — o "upload" vem ANTES da linha.
+ *   C. `runService` de novo: análise e área RELIDAS no escopo (polígono mudou no meio → consumo + 422; área excluída no
+ *      meio → consumo + a 404 da análise); a linha da
  *      imagem (`on conflict (organization_id, chave_cache) do nothing` + releitura → `reutilizada`), com o hash do
  *      ARQUIVO gravado (copiado da linha do arquivo, nunca recalculado aqui); e, NA MESMA TRANSAÇÃO, o consumo no ledger
  *      com operação `process`.
  * 2xx cobrado cuja leitura ou gravação falhou → só o consumo, numa transação curta, e o 503 (como a SAT-01). Falha do
- * provedor → o mesmo erro da SAT-01 (503, ou 429 do provedor). Dois pedidos simultâneos da mesma imagem nesta instância
- * compartilham a chamada; entre instâncias, a corrida cai no `on conflict` + releitura.
+ * provedor → o mesmo erro da SAT-01 (503, ou 429 do provedor).
+ *
+ * CHAMADA EM ANDAMENTO: NESTA instância, a chamada da mesma imagem (organização, área, chave) fica registrada desde a
+ * abertura até DEPOIS do commit da FASE C de quem a abriu — quem termina a FASE A nesse intervalo ou acha a linha já
+ * gravada, ou espera a mesma chamada (nunca abre outra). Entre instâncias não há esse registro: cada réplica pode fazer
+ * NO MÁXIMO UMA chamada a mais pela mesma imagem (cobrada e gravada no ledger), e a corrida cai no `on conflict` +
+ * releitura — uma linha só.
  *
  * LER — nenhuma rota de leitura chama o provedor. A URL do arquivo é assinada (`lib/satelite/url-assinada.ts`): vale
  * `VALIDADE_URL_RASTER_S` e delega o acesso do PRÓPRIO usuário — a rota do arquivo abre a transação com a GUC dele e lê
@@ -256,9 +263,10 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
     const abriuChamada = !geracao;
     if (!geracao) {
       if (!limiteAvulso.admitir(ctxPedido.orgId, a.contagem)) throw err("RATE_LIMITED", MSG_LIMITE_ANALISES, { motivo: "limite_erp" });
-      geracao = gerar(plano, ctxPedido.orgId, ctxPedido.user.id);
+      geracao = gerar(req, plano);
+      // Sai do registro SÓ no `finally` de quem abriu, depois da FASE C (não quando a geração termina): no intervalo
+      // entre o arquivo gravado e o commit da linha, outro pedido ainda espera esta chamada em vez de abrir outra.
       emAndamento.set(chaveVoo, geracao);
-      geracao.finally(() => emAndamento.delete(chaveVoo)).catch(() => undefined);
       limiteAvulso.ocupar(ctxPedido.orgId);
     }
     try {
@@ -288,10 +296,15 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
         desfecho = await runService(app, req, PERMISSAO_PEDIR_ANALISE, async (ctx): Promise<DesfechoGravacao> => {
           const analise = await lerAnalise(ctx, analiseId);
           const area = await lerArea(ctx, analise.area_id);
-          if (!area) throw err("NOT_FOUND", MSG_ANALISE_NAO_ENCONTRADA);
           const consumo = () => (abriuChamada
             ? gravarConsumo(ctx.tx, { organizationId: ctx.orgId, empresaId: analise.empresa_id, consultaId: null, consultaItemId: null, puCabecalho: feita.puCabecalho, operacao: "process" })
             : Promise.resolve(null));
+          // Área excluída durante a chamada (a análise continua visível): a chamada gastou — o consumo fica, e a 404 sai
+          // DEPOIS do commit. (Análise fora do escopo lança a 404 em `lerAnalise`: sem empresa no escopo, nada é gravado.)
+          if (!area) {
+            await consumo();
+            return { conflito: err("NOT_FOUND", MSG_ANALISE_NAO_ENCONTRADA) };
+          }
           if (area.geometria_sha256 !== plano.analise.geometria_sha256) {
             await consumo();
             return { conflito: validation(MSG_GEOMETRIA_ALTERADA, { motivo: "geometria_alterada" }) };
@@ -305,7 +318,8 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
         });
       } catch (e) {
         // Erro que não é recusa do ERP DEPOIS de um 2xx (banco, defeito na gravação): a transação desfez o consumo junto,
-        // e a chamada foi cobrada — o consumo vai sozinho, numa transação curta. A recusa (404) não grava nada.
+        // e a chamada foi cobrada — o consumo vai sozinho, numa transação curta. A recusa lançada (a 404 da análise fora
+        // do escopo) não grava nada.
         if (abriuChamada && !(e instanceof DomainError)) {
           req.log.error({ satelite: { analise_id: plano.analise.id, area_id: plano.area.id, etapa: "gravacao", ...resumoDoErro(e) } }, "imagem por satélite: gravação falhou");
           await gravarConsumoSemRaster(feita.puCabecalho);
@@ -316,8 +330,12 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
       return reply.status(desfecho.reutilizada ? 200 : 201)
         .send({ raster: paraDto(desfecho.linha, ctxPedido.orgId, ctxPedido.user.id), reutilizada: desfecho.reutilizada });
     } finally {
-      // A vaga em voo só sai depois da FASE C: aí o consumo já está no ledger (ou a chamada terminou sem 2xx).
-      if (abriuChamada) limiteAvulso.liberar(ctxPedido.orgId);
+      // A chamada em andamento e a vaga em voo só saem depois da FASE C: aí a linha e o consumo já estão no banco (ou a
+      // chamada terminou sem 2xx, ou a gravação falhou e o consumo foi gravado sozinho).
+      if (abriuChamada) {
+        emAndamento.delete(chaveVoo);
+        limiteAvulso.liberar(ctxPedido.orgId);
+      }
     }
 
     /** O consumo de uma chamada cobrada sem imagem registrada — transação curta, empresa da análise relida no escopo. */
@@ -337,24 +355,30 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
   });
 
   /**
-   * A chamada, o PNG e o arquivo — SEM transação aberta (o `gravar` abre a sua, curta, DEPOIS da resposta do provedor).
-   * 2xx com PNG ilegível ou de outro tamanho → `resposta_malformada` com o PU (cobrada); arquivo não guardado →
-   * `FalhaArmazenamentoRaster` com o PU. Nada do corpo da resposta vai para log ou erro.
+   * A chamada, o PNG e o arquivo — SEM transação aberta durante a chamada. O arquivo é escrito pela porta de escrita
+   * (`runService` com a permissão de PEDIR, a requisição de quem ABRIU a chamada: transação própria e curta, GUC de
+   * organização, usuário e módulo, RLS), DEPOIS da resposta do provedor e ANTES da linha. 2xx com PNG ilegível ou de
+   * outro tamanho → `resposta_malformada` com o PU (cobrada); arquivo não guardado → `FalhaArmazenamentoRaster` com o
+   * PU. Nada do corpo da resposta vai para log ou erro.
    */
-  async function gerar(plano: PlanoRaster, orgId: string, userId: string): Promise<GeracaoFeita> {
+  async function gerar(req: FastifyRequest, plano: PlanoRaster): Promise<GeracaoFeita> {
     const registrar = (c: RegistroChamada) => app.log.info({
       satelite: { provedor: PROVEDOR_COPERNICUS, endpoint: c.endpoint, status: c.status, duracao_ms: c.duracaoMs, tentativa: c.tentativa, tipo_falha: c.tipoFalha, analise_id: plano.analise.id, area_id: plano.area.id }
     }, "chamada ao provedor de satélite");
     const r = await cliente.processoComConsumo(montarCorpoProcesso(plano.grade, plano.janela), registrar);
     let img: { largura: number; altura: number };
     try {
-      img = lerPngCinza8(r.png);
+      // As dimensões PEDIDAS vão ao leitor: um IHDR de outro tamanho é recusado ANTES de descomprimir (sem inflar o que
+      // não é a imagem pedida); a conferência depois continua, como defesa.
+      img = lerPngCinza8(r.png, { largura: plano.grade.largura, altura: plano.grade.altura });
     } catch {
       throw new FalhaCopernicus("resposta_malformada", null, null, r.puCabecalho);
     }
     if (img.largura !== plano.grade.largura || img.altura !== plano.grade.altura) throw new FalhaCopernicus("resposta_malformada", null, null, r.puCabecalho);
     try {
-      await armazenamento.gravar(app.db, { orgId, userId, empresaId: plano.analise.empresa_id }, { storagePath: plano.storagePath, png: r.png, sha256: sha256Hex(r.png) });
+      const png = r.png;
+      await runService(app, req, PERMISSAO_PEDIR_ANALISE, (ctx) =>
+        armazenamento.gravar(ctx.tx, { orgId: ctx.orgId, empresaId: plano.analise.empresa_id, storagePath: plano.storagePath, png, sha256: sha256Hex(png) }));
     } catch (e) {
       throw new FalhaArmazenamentoRaster(r.puCabecalho, e);
     }

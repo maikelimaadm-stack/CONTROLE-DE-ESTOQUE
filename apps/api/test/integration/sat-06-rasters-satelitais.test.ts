@@ -135,6 +135,17 @@ async function novasNoLedger(antes: Set<string>) {
   return (await admin.query("select * from erp.satelite_consumo order by created_at, id")).rows.filter((l: { id: string }) => !antes.has(l.id)) as Record<string, unknown>[];
 }
 
+/** Espera até `n` INSERTs em `erp.satelite_rasters` estarem parados esperando lock (teto de 15 s). */
+async function esperarInsercoesBloqueadas(n: number) {
+  for (let i = 0; i < 300; i++) {
+    const r = await admin.query<{ n: number }>(
+      "select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query like '%insert into erp.satelite_rasters%'");
+    if (r.rows[0]!.n >= n) return;
+    await new Promise((resolver) => setTimeout(resolver, 50));
+  }
+  throw new Error(`premissa: ${n} gravação(ões) da linha esperando o lock não apareceram`);
+}
+
 /** Membro com as duas capacidades da análise e o escopo de empresa pedido (por módulo). */
 async function membro(nome: string, email: string, escopos: { modulo: string; modo: "todas" | "selecionadas"; empresas: string[] }[]) {
   const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `Perfil ${nome}`, permissions: ["analises_satelitais.view", "analises_satelitais.create"] } });
@@ -182,7 +193,8 @@ beforeAll(async () => {
     ["mudouNoMeio", A, POLIGONO], ["semPu", A, POLIGONO], ["falhaArm", A, POLIGONO], ["malformada", A, POLIGONO], ["dimensoes", A, POLIGONO],
     ["provedor500", A, POLIGONO], ["provedor429", A, POLIGONO], ["corrida", A, POLIGONO], ["dois", A, POLIGONO], ["desligada", A, POLIGONO],
     ["piso", A, POLIGONO], ["pisoSat01", A, POLIGONO], ["escopoA", A, POLIGONO], ["escopoB", B, POLIGONO], ["acesso", B, POLIGONO], ["logs", A, POLIGONO],
-    ["gemeaA1", A, POLIGONO], ["gemeaA2", A, POLIGONO], ["gemeaB", B, POLIGONO], ["corridaReplicas", A, POLIGONO]
+    ["gemeaA1", A, POLIGONO], ["gemeaA2", A, POLIGONO], ["gemeaB", B, POLIGONO], ["corridaReplicas", A, POLIGONO], ["janelaFaseC", A, POLIGONO],
+    ["excluidaNoMeio", A, POLIGONO]
   ] as const) area[nome] = await novaArea(h.demo.orgId, empresa, `SAT06-${nome}`, geo);
   const DIA = "2026-08-14";
   analise["base"] = await novaAnalise(area["base"]!, A, DIA, mediaDoEmulador(DIA, POLIGONO));
@@ -190,7 +202,7 @@ beforeAll(async () => {
   analise["grande"] = await novaAnalise(area["grande"]!, A, DIA, "0.5000");
   analise["semObs"] = await novaAnalise(area["semObs"]!, A, DIA, null);
   for (const nome of ["mudou", "mudouNoMeio", "semPu", "falhaArm", "malformada", "dimensoes", "provedor500", "provedor429", "corrida", "desligada", "piso", "escopoA", "escopoB", "acesso", "logs",
-    "gemeaA1", "gemeaA2", "gemeaB", "corridaReplicas"]) {
+    "gemeaA1", "gemeaA2", "gemeaB", "corridaReplicas", "janelaFaseC", "excluidaNoMeio"]) {
     analise[nome] = await novaAnalise(area[nome]!, nome === "escopoB" || nome === "acesso" || nome === "gemeaB" ? B : A, DIA, "0.5000");
   }
   // Duas análises da MESMA área em dias diferentes (a cena do emulador muda com o dia): a imagem é a DA ANÁLISE.
@@ -338,6 +350,39 @@ describe("SAT-06 (1)(2)(6)(11) — gerar, guardar, reaproveitar e servir", () =>
     expect(emu.chamadasProcesso()).toHaveLength(1);
     expect(await rastersDaArea(area["corrida"]!)).toHaveLength(1);
     expect(await novasNoLedger(antes)).toHaveLength(1);
+  });
+});
+
+describe("SAT-06 — a chamada em andamento vale até o COMMIT da FASE C (nenhuma segunda chamada paga na janela)", () => {
+  it("pedido que termina a FASE A entre o arquivo gravado e o commit da linha espera a MESMA chamada: 1 chamada, 201 + 200 `reutilizada`, 1 consumo", async () => {
+    const app = await instancia();
+    emu.limpar();
+    const antes = await idsDoLedger();
+    // A trava SHARE na tabela das linhas deixa passar a leitura da FASE A (ACCESS SHARE) e PARA a gravação da FASE C
+    // (ROW EXCLUSIVE): o primeiro pedido fica com o arquivo gravado e a linha por gravar — a janela, aberta de propósito.
+    const trava = await admin.connect();
+    let p1: ReturnType<typeof gerar> | undefined; let p2: ReturnType<typeof gerar> | undefined;
+    try {
+      await trava.query("begin");
+      await trava.query("lock table erp.satelite_rasters in share mode");
+      p1 = gerar(app, analise["janelaFaseC"]!);
+      await esperarInsercoesBloqueadas(1);
+      expect(emu.chamadasProcesso(), "premissa: o primeiro já chamou o provedor").toHaveLength(1);
+      expect(await arquivosDaArea(area["janelaFaseC"]!), "premissa: o arquivo já está gravado, a linha não").toHaveLength(1);
+      p2 = gerar(app, analise["janelaFaseC"]!);
+      await esperarInsercoesBloqueadas(2);
+    } finally {
+      await trava.query("commit");
+      trava.release();
+    }
+    const [r1, r2] = await Promise.all([p1!, p2!]);
+    expect(emu.chamadasProcesso(), "o segundo pedido esperou a chamada aberta: nenhuma segunda chamada paga").toHaveLength(1);
+    // Liberada a trava, as duas gravações correm juntas: qualquer uma pode ganhar a chave; a outra relê a linha.
+    expect([r1.statusCode, r2.statusCode].sort(), r1.body + " | " + r2.body).toEqual([200, 201]);
+    expect([j(r1).reutilizada, j(r2).reutilizada].sort()).toEqual([false, true]);
+    expect(j(r2).raster.id).toBe(j(r1).raster.id);
+    expect(await rastersDaArea(area["janelaFaseC"]!)).toHaveLength(1);
+    expect(await novasNoLedger(antes)).toEqual([expect.objectContaining({ operacao: "process", pu_gasto: "0.0123" })]);
   });
 });
 
@@ -516,6 +561,18 @@ describe("SAT-06 (8)(9)(13) — recusas e falhas: nada gerado que não devesse",
     expect(await novasNoLedger(antes)).toEqual([expect.objectContaining({ operacao: "process", pu_gasto: "0.0123", empresa_id: A })]);
   });
 
+  it("área EXCLUÍDA durante a chamada → a 404 da análise, nenhuma linha de imagem, e o consumo da chamada (cobrada) gravado", async () => {
+    emu.limpar();
+    const antes = await idsDoLedger();
+    antesDoProcesso = async () => { await admin.query("update erp.areas set deleted_at = now() where id = $1", [area["excluidaNoMeio"]]); };
+    const r = await gerar(app, analise["excluidaNoMeio"]!);
+    expect(r.statusCode, r.body).toBe(404);
+    expect(r.json()).toEqual({ error: { code: "NOT_FOUND", message: MSG_ANALISE_NAO_ENCONTRADA } });
+    expect(emu.chamadasProcesso()).toHaveLength(1);
+    expect(await rastersDaArea(area["excluidaNoMeio"]!)).toHaveLength(0);
+    expect(await novasNoLedger(antes)).toEqual([expect.objectContaining({ operacao: "process", pu_gasto: "0.0123", creditos: "1.23", empresa_id: A })]);
+  });
+
   it("(13) armazenamento falhando: 503 estável, NENHUMA linha de imagem, consumo gravado; depois, com o armazenamento de volta, gera", async () => {
     const falha: ArmazenamentoRaster = { bucket: "db", gravar: async () => { throw new Error("falha simulada do armazenamento"); }, ler: dbArmazenamentoRaster.ler };
     const quebrada = await instancia({}, { armazenamentoRaster: falha });
@@ -692,6 +749,22 @@ describe("SAT-06 (10) — a URL assinada", () => {
     expect((await baixar(app, arquivo(dto.id, h.token))).statusCode).toBe(404);
   });
 
+  it("CORS: o MapLibre busca a imagem em modo CORS — a origem da web configurada recebe `access-control-allow-origin`; outra origem não", async () => {
+    const origem = configDeTeste().WEB_ORIGIN.split(",")[0]!.trim();
+    const r = await app.inject({ method: "GET", url: dto.url_assinada, headers: { origin: origem } });
+    expect(r.statusCode).toBe(200);
+    expect(r.headers["access-control-allow-origin"]).toBe(origem);
+    expect(r.headers["access-control-allow-credentials"]).toBe("true");
+    // O helmet manda CORP same-origin: ele só barra a carga SEM CORS (`<img>` sem crossorigin); a busca em modo CORS passa.
+    expect(r.headers["cross-origin-resource-policy"]).toBe("same-origin");
+    const outra = await app.inject({ method: "GET", url: dto.url_assinada, headers: { origin: "https://outra-origem.example" } });
+    expect(outra.headers["access-control-allow-origin"]).toBeUndefined();
+    // Sem cabeçalho nenhum além do Origin, a busca é "simples": não há preflight (o MapLibre não manda Authorization).
+    const preflight = await app.inject({ method: "OPTIONS", url: dto.url_assinada, headers: { origin: origem, "access-control-request-method": "GET" } });
+    expect(preflight.statusCode).toBe(204);
+    expect(preflight.headers["access-control-allow-origin"]).toBe(origem);
+  });
+
   it("query fora do contrato na rota do arquivo → 422 (nunca descartada)", async () => {
     const r = await baixar(app, `${dto.url_assinada}&x=1`);
     expect(r.statusCode).toBe(422);
@@ -709,6 +782,9 @@ describe("SAT-06 (10) — a URL assinada", () => {
     expect((await baixar(comLog, `${url.slice(0, -2)}xx`)).statusCode).toBe(404);
     // Variação errada do caminho (barra a mais): "rota não encontrada" também é registrada — e também sem o token.
     expect((await baixar(comLog, url.replace("/arquivo?", "/arquivo/?"))).statusCode).toBe(404);
+    // Caminho CODIFICADO que o roteador decodifica e atende (`%72asters` = `rasters`): abre, e o log não leva o token.
+    const codificada = url.replace("/rasters/", "/%72asters/");
+    expect((await baixar(comLog, codificada)).statusCode, "premissa: o roteador decodifica e atende a rota").toBe(200);
     const log = linhas.join("");
     expect(log, "premissa: o log registrou a rota do arquivo").toContain(`/api/mapa/rasters/${j(g).raster.id}/arquivo?t=[omitido]`);
     expect(log, "premissa: o log registrou a chamada ao provedor").toContain("chamada ao provedor de satélite");

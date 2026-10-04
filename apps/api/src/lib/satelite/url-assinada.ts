@@ -52,12 +52,26 @@ export const MARCADOR_TOKEN_OMITIDO = "t=[omitido]";
  * A URL para LOG: em QUALQUER caminho sob `/rasters/` (a rota do arquivo e suas variações erradas — barra a mais, outro
  * prefixo —, que também chegam ao log como "rota não encontrada"), a query inteira, onde mora o token, vira um marcador;
  * qualquer outra URL passa como está. Usada pelo serializador de requisição do servidor (server.ts).
+ *
+ * O caminho é comparado DECODIFICADO (o roteador decodifica `%72asters` e casa a rota: o caminho cru não diria
+ * "rasters"), repetidamente até estabilizar (codificação dupla), com teto de voltas. Codificação inválida, ou que não
+ * estabiliza no teto, também é redigida: na dúvida, o token não vai para o log.
  */
+const VOLTAS_DE_DECODIFICACAO = 5;
 export function redigirUrlAssinada(url: string): string {
   const q = url.indexOf("?");
   if (q < 0) return url;
   const caminho = url.slice(0, q);
-  return /\/rasters\//i.test(caminho) ? `${caminho}?${MARCADOR_TOKEN_OMITIDO}` : url;
+  const redigida = `${caminho}?${MARCADOR_TOKEN_OMITIDO}`;
+  let atual = caminho;
+  for (let volta = 0; volta < VOLTAS_DE_DECODIFICACAO; volta++) {
+    if (/\/rasters\//i.test(atual)) return redigida;
+    let proximo: string;
+    try { proximo = decodeURIComponent(atual); } catch { return redigida; }
+    if (proximo === atual) return url;
+    atual = proximo;
+  }
+  return redigida;
 }
 
 /** O segredo de autenticação em vigor — o mesmo que o plugin de autenticação usa para verificar a sessão. */
