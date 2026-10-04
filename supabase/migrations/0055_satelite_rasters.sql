@@ -30,7 +30,8 @@
 --                                 perdeu a corrida), o polígono (geometria_sha256), o índice e o tipo
 --                                 ('ndvi', 'valores'), a versão do evalscript, o dia da imagem, as dimensões
 --                                 (1..2500 px), o retângulo em EPSG:3857 (quatro colunas, mínimo < máximo), os quatro
---                                 cantos em [lng, lat] (array de 4 pares de números, na ordem que a API grava), a escala
+--                                 cantos em [lng, lat] (array de 4 pares de números, na ordem que a API grava), o caminho
+--                                 COERENTE com as próprias colunas (CHECK: organização/área/índice/dia/chave.png), a escala
 --                                 de decodificação (mínimo < máximo), a resolução em metros, a chave de cache (sha256
 --                                 hex; UMA por organização — é ela que o "gerar" reaproveita: on conflict
 --                                 (organization_id, chave_cache)) e o PU gasto (anulável). Auditoria de criação
@@ -255,7 +256,20 @@ create table erp.satelite_rasters (
     jsonb_path_exists(cantos_lnglat,
       'strict $ ? (@.type() == "array" && @.size() == 4 && !exists(@[*] ? (!(@.type() == "array" && @.size() == 2 && @[0].type() == "number" && @[1].type() == "number"))))')
   ),
-  constraint chk_satelite_rasters_escala check (escala_min < escala_max)
+  constraint chk_satelite_rasters_escala check (escala_min < escala_max),
+  -- O CAMINHO É O DO PRÓPRIO METADADO (o banco é a autoridade, não só quem monta o caminho na API): os cinco segmentos
+  -- {organization_id}/{area_id}/{indice}/{AAAA-MM-DD}/{chave_cache}.png, nessa ordem, saem das colunas da linha. É a
+  -- igualdade do texto INTEIRO: segmento a segmento, sem sexto segmento e sem barra sobrando — nenhum componente contém
+  -- '/' (uuid::text; indice só 'ndvi'; o dia pela máscara; chave_cache hex64, pelos CHECKs da coluna).
+  -- O DIA independe de DateStyle e de TimeZone: data_imagem::text (date_out) segue o DateStyle da sessão ('SQL, DMY' daria
+  -- 11/08/2026), e to_char(date, …) resolveria para to_char(timestamptz, …), passando pelo TimeZone. Aqui: o cast para
+  -- timestamp SEM fuso (imutável, meia-noite do próprio dia) e a máscara explícita 'YYYY-MM-DD', só com campos numéricos —
+  -- o DateStyle não entra em to_char, e o lc_time só entra nos padrões com prefixo TM. to_char é STABLE no catálogo por causa
+  -- desses padrões TM; com esta máscara o resultado depende só do valor (o teste prova sob 'SQL, DMY' e fusos extremos).
+  constraint chk_satelite_rasters_caminho_coerente check (
+    storage_path = organization_id::text || '/' || area_id::text || '/' || indice || '/' || to_char(data_imagem::timestamp, 'YYYY-MM-DD')
+                   || '/' || chave_cache || '.png'
+  )
 );
 
 -- O raster mais recente de cada área (listagem): data da imagem e criação, do mais novo para o mais antigo.
@@ -449,12 +463,20 @@ begin
     end if;
   end loop;
 
+  -- O caminho do metadado amarrado às colunas dele: o CHECK existe, validado, e olha as seis colunas certas (o
+  -- comportamento, segmento a segmento e sob outro DateStyle, é provado no teste).
+  if (select array_agg(a.attname::text order by a.attname::text) from pg_constraint c
+        cross join lateral unnest(c.conkey) k(attnum) join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum
+       where c.conname = 'chk_satelite_rasters_caminho_coerente' and c.conrelid = 'erp.satelite_rasters'::regclass and c.contype = 'c' and c.convalidated)
+     is distinct from array['area_id', 'chave_cache', 'data_imagem', 'indice', 'organization_id', 'storage_path'] then
+    raise exception 'SAT-06: CHECK chk_satelite_rasters_caminho_coerente de erp.satelite_rasters ausente ou fora do contrato (o caminho tem de sair de organization_id, area_id, indice, data_imagem e chave_cache).';
+  end if;
   -- CHECKs pelo NOME: o conjunto é EXATAMENTE este (nenhum a mais, nenhum a menos, todos validados).
   for v_ch in
     select * from (values
       ('satelite_raster_arquivos', array['chk_satelite_raster_arquivos_sha256', 'chk_satelite_raster_arquivos_storage_path',
                                          'chk_satelite_raster_arquivos_tamanho', 'chk_satelite_raster_arquivos_tamanho_bytes']),
-      ('satelite_rasters', array['chk_satelite_rasters_altura', 'chk_satelite_rasters_bbox', 'chk_satelite_rasters_cantos', 'chk_satelite_rasters_chave_cache',
+      ('satelite_rasters', array['chk_satelite_rasters_altura', 'chk_satelite_rasters_bbox', 'chk_satelite_rasters_caminho_coerente', 'chk_satelite_rasters_cantos', 'chk_satelite_rasters_chave_cache',
                                  'chk_satelite_rasters_escala', 'chk_satelite_rasters_geometria_sha256', 'chk_satelite_rasters_indice', 'chk_satelite_rasters_largura',
                                  'chk_satelite_rasters_pu_gasto', 'chk_satelite_rasters_resolucao', 'chk_satelite_rasters_sha256_arquivo', 'chk_satelite_rasters_tipo'])
     ) as k(tabela, nomes)

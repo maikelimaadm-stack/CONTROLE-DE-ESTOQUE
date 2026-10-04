@@ -40,6 +40,7 @@ const URL_APP = process.env.TEST_DATABASE_URL_APP ?? TEST_URL.replace("postgres@
 const TRAVA = "SAT-06: outra transacao ja detem a trava desta migration (2026,89). Nada foi aplicado.";
 const JA = "SAT-06: a 0055 ja foi aplicada ou ha schema divergente (satelite_raster_arquivos/satelite_rasters/satelite_raster_imutavel ja existe).";
 const IMUTAVEL = "CONFLICT: O raster satelital registrado (arquivo e metadado) não se altera nem se apaga: um raster novo é registrado ao lado do anterior.";
+const POS_CAMINHO = "SAT-06: CHECK chk_satelite_rasters_caminho_coerente de erp.satelite_rasters ausente ou fora do contrato (o caminho tem de sair de organization_id, area_id, indice, data_imagem e chave_cache).";
 const VOLTA_COM_DADO = "SAT-06 volta: ha raster ou arquivo guardado em erp.satelite_rasters/erp.satelite_raster_arquivos; imagem guardada nao se apaga (decisao 247) e o que fazer com ela e decisao humana. Nada foi desfeito.";
 const VOLTA_SEM_BYPASS = "SAT-06 volta: quem desfaz a 0055 precisa atravessar a RLS (superusuario ou BYPASSRLS): com a RLS forcada, um papel sujeito a ela veria as tabelas vazias e apagaria imagens guardadas. Nada foi desfeito.";
 const TABELAS_NOVAS = ["satelite_raster_arquivos", "satelite_rasters"] as const;
@@ -442,7 +443,7 @@ describe("DB-0 a DB-2 — a 0055 sobre o banco na 0054 com acervo: premissa, tra
       "satelite_raster_arquivos u satelite_raster_arquivos_org_empresa_caminho_key",
       "satelite_raster_arquivos u satelite_raster_arquivos_org_empresa_caminho_sha_key",
       "satelite_raster_arquivos u uq_satelite_raster_arquivos_caminho",
-      ...["altura", "bbox", "cantos", "chave_cache", "escala", "geometria_sha256", "indice", "largura", "pu_gasto", "resolucao", "sha256_arquivo", "tipo"]
+      ...["altura", "bbox", "caminho_coerente", "cantos", "chave_cache", "escala", "geometria_sha256", "indice", "largura", "pu_gasto", "resolucao", "sha256_arquivo", "tipo"]
         .map((n) => `satelite_rasters c chk_satelite_rasters_${n}`),
       "satelite_rasters u uq_satelite_rasters_chave_cache"
     ]);
@@ -509,11 +510,29 @@ describe("DB-3 — a 0055 DESCE pelo SQL reverso (tabelas vazias) e SOBE de novo
   it("o SQL reverso volta o catálogo EXATAMENTE ao da 0054; os dados das tabelas existentes não mudam; a 0055 reaplica com o mesmo catálogo", async () => {
     expect(catalogo0055).not.toEqual(catalogo0054);
     await reverterComoHumano();
-    expect(await retratoCatalogo()).toEqual(catalogo0054);
-    expect((await db.query<{ name: string }>("select name from public.erp_migrations order by name")).rows.map((r) => r.name)).toEqual(ANTERIORES.map((m) => m.name));
-    expect(await retratoDados(colunas0054)).toEqual(dados0054);
+    // A 0055 volta no FINALLY: uma asserção que falhe aqui não deixa os testes seguintes sem as tabelas.
+    try {
+      expect(await retratoCatalogo()).toEqual(catalogo0054);
+      expect((await db.query<{ name: string }>("select name from public.erp_migrations order by name")).rows.map((r) => r.name)).toEqual(ANTERIORES.map((m) => m.name));
+      expect(await retratoDados(colunas0054)).toEqual(dados0054);
 
-    await aplicarComoORunner();
+      // Com as tabelas fora (o preflight passa), a MESMA 0055 SEM o CHECK do caminho — e com ele enfraquecido, sem olhar
+      // data_imagem — para na pós-condição nomeada, e nada fica aplicado.
+      const semCheck = SQL_ALVO.replace(/,\n(?:  --[^\n]*\n)*  constraint chk_satelite_rasters_caminho_coerente check \([\s\S]*?\n  \)\n\);/, "\n);");
+      const enfraquecido = SQL_ALVO.replace("to_char(data_imagem::timestamp, 'YYYY-MM-DD')", "split_part(storage_path, '/', 4)");
+      expect(semCheck).not.toMatch(/constraint chk_satelite_rasters_caminho_coerente check/);
+      expect(enfraquecido).not.toBe(SQL_ALVO);
+      for (const [nome, sql] of [["sem o CHECK", semCheck], ["CHECK sem data_imagem", enfraquecido]] as const) {
+        const c = await db.connect();
+        try {
+          await c.query("begin");
+          expect([nome, (await erroDe(c.query(sql))).message]).toEqual([nome, POS_CAMINHO]);
+        } finally { await c.query("rollback").catch(() => {}); c.release(); }
+      }
+      expect(await retratoCatalogo(), "nada da tentativa ficou").toEqual(catalogo0054);
+    } finally {
+      if ((await db.query("select 1 from public.erp_migrations where name = $1", [ALVO])).rowCount === 0) await aplicarComoORunner();
+    }
     expect(await retratoCatalogo()).toEqual(catalogo0055);
   });
 
@@ -824,12 +843,13 @@ describe("DB-8 — CHECKs: o banco confere o arquivo (hash, tamanho, caminho) e 
         ["largura 2501", r({ largura: 2501 }), "chk_satelite_rasters_largura"],
         ["altura 0", r({ altura: 0 }), "chk_satelite_rasters_altura"],
         ["altura 2501", r({ altura: 2501 }), "chk_satelite_rasters_altura"],
-        ["índice fora da lista", r({ indice: "evi" }), "chk_satelite_rasters_indice"],
+        // Índice e chave fora da forma com o CAMINHO acompanhando: só o CHECK da coluna reprova (o do caminho, não).
+        ["índice fora da lista", r({ indice: "evi", storage_path: (arq.storage_path as string).replace("/ndvi/", "/evi/") }), "chk_satelite_rasters_indice"],
         ["tipo fora da lista", r({ tipo: "rgb" }), "chk_satelite_rasters_tipo"],
         ["x mínimo = máximo", r({ bbox_min_x: "10", bbox_max_x: "10" }), "chk_satelite_rasters_bbox"],
         ["y mínimo > máximo", r({ bbox_min_y: "11", bbox_max_y: "10" }), "chk_satelite_rasters_bbox"],
         ["resolução 0", r({ resolucao_m: 0 }), "chk_satelite_rasters_resolucao"],
-        ["chave de cache fora da forma", r({ chave_cache: "K".repeat(64) }), "chk_satelite_rasters_chave_cache"],
+        ["chave de cache fora da forma", r({ chave_cache: "K".repeat(64), storage_path: (arq.storage_path as string).replace(/[0-9a-f]{64}\.png$/, `${"K".repeat(64)}.png`) }), "chk_satelite_rasters_chave_cache"],
         ["sha256 do arquivo fora da forma", r({ sha256_arquivo: "abc" }), "chk_satelite_rasters_sha256_arquivo"],
         ["geometria fora da forma", r({ geometria_sha256: "g".repeat(64) }), "chk_satelite_rasters_geometria_sha256"],
         ["PU negativo", r({ pu_gasto: "-0.0001" }), "chk_satelite_rasters_pu_gasto"]
@@ -847,6 +867,52 @@ describe("DB-8 — CHECKs: o banco confere o arquivo (hash, tamanho, caminho) e 
         const e = await c.query("savepoint s").then(() => inserir(c, "satelite_rasters", r(extra))).then((x) => x.rowCount, (x: Erro) => x.message);
         await c.query("rollback to savepoint s");
         expect([nome, e]).toEqual([nome, 1]);
+      }
+    });
+  });
+
+  it("metadado: o caminho é o das PRÓPRIAS colunas — organização, área, índice, dia ou chave divergentes, segmento a mais, barra sobrando ou outra extensão → 23514 chk_satelite_rasters_caminho_coerente; o coerente grava, também sob outro DateStyle e fusos extremos", async () => {
+    await desfeita(db, async (c) => {
+      const arq = linhaArquivo(A, areaA);
+      await inserir(c, "satelite_raster_arquivos", arq);
+      const base = linhaRaster(arq, areaA, analiseA);
+      const p = arq.storage_path as string;
+      const [org, area, indice, dia, nome] = p.split("/") as [string, string, string, string, string];
+      const caminho_ = (...seg: string[]) => ({ storage_path: seg.join("/") });
+      // Primeiro, os que apontam para o arquivo EXISTENTE (só a coluna diverge): sem o CHECK, a FK passaria e a linha entraria.
+      const casos: [string, Linha][] = [
+        ["área divergente na coluna (A2 com a análise de A2; o caminho diz A)", { area_id: areaA2, analise_id: analiseA2 }],
+        ["dia divergente na coluna", { data_imagem: "2026-08-12" }],
+        ["chave divergente na coluna", { chave_cache: chaveNova() }],
+        ["organização de OUTRA no caminho", caminho_(outraOrg, area, indice, dia, nome)],
+        ["área divergente no caminho (A2; a coluna diz A)", caminho_(org, areaA2, indice, dia, nome)],
+        ["índice divergente no caminho", caminho_(org, area, "evi", dia, nome)],
+        ["dia divergente no caminho", caminho_(org, area, indice, "2026-08-12", nome)],
+        ["dia no formato DMY", caminho_(org, area, indice, "11-08-2026", nome)],
+        ["dia com barras", caminho_(org, area, indice, "2026/08/11", nome)],
+        ["chave divergente no caminho", caminho_(org, area, indice, dia, `${chaveNova()}.png`)],
+        ["segmento a mais no meio", caminho_(org, area, indice, "x", dia, nome)],
+        ["sexto segmento no fim", { storage_path: `${p}/x` }],
+        ["barra sobrando no fim", { storage_path: `${p}/` }],
+        ["barra no começo", { storage_path: `/${p}` }],
+        ["extensão em maiúsculas", { storage_path: p.replace(/\.png$/, ".PNG") }],
+        ["sem extensão", { storage_path: p.replace(/\.png$/, "") }]
+      ];
+      for (const [nomeCaso, extra] of casos) {
+        const e = await recusaNo(c, () => inserir(c, "satelite_rasters", { ...base, ...extra }));
+        expect([nomeCaso, e.code, e.constraint]).toEqual([nomeCaso, "23514", "chk_satelite_rasters_caminho_coerente"]);
+      }
+      expect((await inserir(c, "satelite_rasters", base)).rowCount, "o coerente grava").toBe(1);
+      // O dia não depende da sessão: com DateStyle 'SQL, DMY' (data_imagem::text daria 11/08/2026) e fusos de +14 h e −12 h,
+      // o coerente grava e o dia divergente continua recusado.
+      for (const fuso of ["Pacific/Kiritimati", "Etc/GMT+12"]) {
+        await c.query(`set local datestyle = 'SQL, DMY'; set local timezone = '${fuso}'`);
+        expect((await c.query<{ d: string }>("select $1::date::text d", [DATA])).rows[0]!.d, "premissa: o texto da data mudou com o DateStyle").toBe("11/08/2026");
+        const outro = linhaArquivo(A, areaA);
+        await inserir(c, "satelite_raster_arquivos", outro);
+        const divergente = await recusaNo(c, () => inserir(c, "satelite_rasters", linhaRaster(outro, areaA, analiseA, { data_imagem: "2026-08-10" })));
+        expect([fuso, divergente.code, divergente.constraint]).toEqual([fuso, "23514", "chk_satelite_rasters_caminho_coerente"]);
+        expect((await inserir(c, "satelite_rasters", linhaRaster(outro, areaA, analiseA))).rowCount, fuso).toBe(1);
       }
     });
   });
