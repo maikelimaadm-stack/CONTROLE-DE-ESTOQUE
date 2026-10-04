@@ -8,7 +8,8 @@
 --                               a situação e os contadores. Muda de estado (pendente → executando → concluída…).
 --   erp.satelite_consulta_itens a FILA: um item por área × janela × índice, com a chave de idempotência (sha256 da
 --                               origem legível, calculado na API). UM item VIVO (pendente/executando/concluido) por
---                               chave: o mesmo polígono, na mesma janela e no mesmo método, não se processa duas vezes.
+--                               organização e chave: o mesmo polígono, na mesma janela e no mesmo método, não se
+--                               processa duas vezes.
 --                               'reaproveitado', 'falho' e 'cancelado' podem repetir a chave (a consulta seguinte que
 --                               reaproveitou registra o item ao lado, e o que falhou pode ser pedido de novo).
 --   erp.satelite_consumo        o LEDGER de consumo do provedor (PU = processing units; 1 crédito = 0,01 PU): só
@@ -16,9 +17,15 @@
 --                               comando, mesmo para o dono do schema (gabarito da 0052/0047).
 --   erp.satelite_orcamentos     o limite de créditos por empresa e mês. SEM LINHA = SEM LIMITE; nenhum valor padrão é
 --                               inventado aqui. Nenhuma rota escreve orçamento nesta fatia (erp_app só lê).
---   erp.analises_satelitais     ganha três colunas ANULÁVEIS (o item da fila que a produziu, a resolução nativa e o
---                               sha256 do evalscript) e a chave única (organization_id, empresa_id, id), alvo da FK
---                               composta do item → análise.
+--   erp.analises_satelitais     ganha quatro colunas ANULÁVEIS (o item da fila que a produziu, a resolução nativa, o
+--                               sha256 do evalscript e a data alvo do slot) e a chave única (organization_id,
+--                               empresa_id, area_id, id), alvo da FK composta do item → análise (a análise de um item é
+--                               sempre da área do item). A unicidade uq_analises_satelitais_janela é REFEITA com O MESMO
+--                               NOME, agora com data_alvo e NULLS NOT DISTINCT: dois slots da mesma janela com datas alvo
+--                               diferentes deixam de colidir, e a análise avulsa da SAT-01 (data_alvo nula) continua com
+--                               exatamente a mesma unicidade de antes — a rota da SAT-01, a desta versão e a da versão
+--                               ANTERIOR (job de skew), usa `on conflict on constraint uq_analises_satelitais_janela`, e
+--                               por isso o nome não muda. NULLS NOT DISTINCT exige PostgreSQL 15+ (o preflight confere).
 --
 -- NENHUMA ROTA DESTA FATIA CHAMA O PROVEDOR. A fila nasce para um executor futuro; até lá ela só é escrita pela
 -- API (pedido e itens) e lida pelo histórico.
@@ -26,11 +33,15 @@
 -- ESCOPO. Tudo aqui é DA ÁREA e responde pelo escopo dela: módulo de escopo empresarial "pecuaria", o mesmo de
 -- erp.areas e de erp.analises_satelitais (scripts/company-rls-modules.json). Categoria A da 0015 (empresa
 -- obrigatória); a política tenant_e_empresa de cada tabela nova é IDÊNTICA à da 0052 (a pós-condição compara o
--- texto das duas no catálogo). FKs de empresa COMPOSTAS em tudo: item → consulta, item → área, item → análise,
--- consumo → item/consulta, análise → item — coluna única não prova tenant nem empresa.
+-- texto das duas no catálogo). FKs de empresa COMPOSTAS em tudo — coluna única não prova tenant nem empresa — e os
+-- VÍNCULOS IMUTÁVEIS conferidos pelo BANCO, não pela aplicação: item → consulta e item → área na mesma (organização,
+-- empresa); item → análise e análise → item pela MESMA ÁREA (organização, empresa, área, id); consumo → item pela
+-- MESMA CONSULTA (organização, empresa, consulta, item), e consumo com item exige a consulta.
 --
--- AUDITORIA (erp.audit_row). Consulta e orçamento: criação, alteração e exclusão (o costume das tabelas de negócio).
--- Consumo: a criação (como a análise da 0052; o ledger não muda depois). Itens da fila: SEM auditoria por linha — são
+-- AUDITORIA (erp.audit_row). Orçamento: criação, alteração e exclusão (o costume das tabelas de negócio). Consulta:
+-- criação e exclusão sempre; alteração SÓ quando a situação muda — o executor (SAT-03) avança os contadores item a item,
+-- e cada avanço viraria uma linha de auditoria com o antes e o depois inteiros (parâmetros incluídos). Consumo: a
+-- criação (como a análise da 0052; o ledger não muda depois). Itens da fila: SEM auditoria por linha — são
 -- até 200 por consulta e mudam de situação a cada tentativa; a história deles está na consulta auditada, no próprio
 -- item e no ledger de consumo (gabarito da 0040: auditoria no cabeçalho, não no item).
 --
@@ -40,23 +51,31 @@
 -- item aponta para ela): o TRUNCATE simples dela para na FK (0A000) antes de chegar ao gatilho de comando da 0052; com
 -- CASCADE, o gatilho recusa — continua recusado nos dois caminhos.
 --
--- PRODUÇÃO (decisões 240/247). Quatro tabelas NOVAS e VAZIAS; três colunas ANULÁVEIS, sem default, em
--- erp.analises_satelitais (ADD COLUMN sem default não regrava a tabela nem escreve linha: as linhas existentes ganham
--- NULL pelo catálogo, e o gatilho de imutabilidade da 0052 — que é de linha — não é acionado por DDL); uma chave única
--- NOVA sobre colunas que já existem (id já é único: não tem como recusar acervo). NENHUM dado existente é escrito,
--- corrigido ou apagado. O efeito novo nasce DESLIGADO: nenhuma rota desta fatia chama o provedor.
+-- PRODUÇÃO (decisões 240/247). Quatro tabelas NOVAS e VAZIAS; quatro colunas ANULÁVEIS, sem default, em
+-- erp.analises_satelitais; uma chave única NOVA sobre colunas que já existem (id já é único: não tem como recusar
+-- acervo); a unicidade da janela refeita com data_alvo (nula em todo o acervo, e NULLS NOT DISTINCT: é a MESMA
+-- unicidade que o acervo já cumpre — não tem como recusá-lo). NADA é regravado nem escrito: ADD COLUMN sem default não regrava a tabela (as linhas existentes leem NULL
+-- pelo catálogo), e o gatilho de imutabilidade da 0052, que é de linha, não é acionado por DDL. NENHUM dado existente é
+-- escrito, corrigido ou apagado. O efeito novo nasce DESLIGADO: nenhuma rota desta fatia chama o provedor.
 --
--- TRAVAS DE TABELA. As tabelas novas pedem SHARE ROW EXCLUSIVE em erp.organizations, erp.empresas, erp.users e
--- erp.areas (alvos das FKs). O que pega ACCESS EXCLUSIVE em tabela existente — as colunas novas e a chave única de
--- erp.analises_satelitais, e as duas FKs que dependem dela — é a ÚLTIMA coisa do arquivo: a janela em que leitura e
--- escrita de análises esperam é só a do catálogo e da construção do índice (tabela pequena), nunca a espera pelas
--- outras travas. Cada pedido de trava espera no máximo lock_timeout = 2 s; se não conseguir, a migration aborta
--- inteira e o deploy para, sem nada aplicado.
+-- TRAVAS DE TABELA E JANELA.
+--   · Os CREATE TABLE com FK pegam SHARE ROW EXCLUSIVE em erp.organizations, erp.empresas, erp.users e erp.areas e a
+--     SEGURAM ATÉ O COMMIT: durante a migration, INSERT/UPDATE/DELETE nessas quatro tabelas esperam (a leitura não).
+--     Cada pedido de trava espera no máximo lock_timeout = 2 s, então no pior caso a escrita nelas fica parada por até
+--     ~2 s além do tempo da própria migration. Aplicar FORA DO PICO.
+--   · O que pega ACCESS EXCLUSIVE em tabela EXISTENTE — as colunas novas, os CHECKs delas, a chave única nova de
+--     erp.analises_satelitais, a unicidade da janela refeita (DROP + ADD CONSTRAINT na mesma transação: o índice dela é
+--     RECONSTRUÍDO) e as duas FKs que dependem da chave nova — é a ÚLTIMA coisa do arquivo, depois de todas as outras
+--     travas obtidas. NÃO é "só catálogo": o ADD COLUMN com CHECK e o CHECK da data alvo (conferir) e as duas chaves
+--     únicas (montar o índice) LEEM a tabela inteira sob ACCESS EXCLUSIVE — sem regravar —, e leitura e escrita de
+--     análises esperam até o commit. O volume de erp.analises_satelitais em produção NÃO foi medido: PENDING (esperado pequeno —
+--     uma linha por análise pedida desde a SAT-01). Sem a trava em 2 s, a migration aborta inteira e o deploy para, sem
+--     nada aplicado.
 --
 -- VOLTA. O repositório é forward-only (sem arquivo de descida). O caminho inverso, provado em
 -- packages/db/test/sat-02-0053.test.ts (constante SQL_REVERSO), é: soltar a FK análise → item, dropar as quatro
--- tabelas (consumo, itens, consultas, orçamentos), a função de imutabilidade do consumo, a chave única nova e as três
--- colunas de erp.analises_satelitais, e tirar a 0053 do ledger. Só por decisão humana: apagaria a fila e o consumo.
+-- tabelas (consumo, itens, consultas, orçamentos), a função de imutabilidade do consumo, a chave única nova, devolver
+-- a uq_analises_satelitais_janela da 0052, dropar as quatro colunas de erp.analises_satelitais e tirar a 0053 do ledger. Só por decisão humana: apagaria a fila e o consumo.
 --
 -- Trava (2026,87). lock_timeout 2s. O runner aplica o arquivo em UMA transação.
 -- =====================================================================
@@ -80,14 +99,17 @@ begin
      or to_regclass('erp.satelite_consumo') is not null
      or to_regclass('erp.satelite_orcamentos') is not null
      or to_regprocedure('erp.satelite_consumo_imutavel()') is not null
-     or exists (select 1 from pg_constraint where conname = 'analises_satelitais_org_empresa_key')
+     or exists (select 1 from pg_constraint where conname = 'analises_satelitais_org_empresa_area_key')
      or exists (select 1 from information_schema.columns
                  where table_schema = 'erp' and table_name = 'analises_satelitais'
-                   and column_name in ('consulta_item_id', 'resolucao_nativa_m', 'evalscript_sha256')) then
-    raise exception 'SAT-02: a 0053 ja foi aplicada ou ha schema divergente (satelite_consultas/satelite_consulta_itens/satelite_consumo/satelite_orcamentos/satelite_consumo_imutavel/analises_satelitais_org_empresa_key ou coluna nova de analises_satelitais ja existe).';
+                   and column_name in ('consulta_item_id', 'resolucao_nativa_m', 'evalscript_sha256', 'data_alvo')) then
+    raise exception 'SAT-02: a 0053 ja foi aplicada ou ha schema divergente (satelite_consultas/satelite_consulta_itens/satelite_consumo/satelite_orcamentos/satelite_consumo_imutavel/analises_satelitais_org_empresa_area_key ou coluna nova de analises_satelitais ja existe).';
   end if;
   if not exists (select 1 from pg_roles where rolname = 'erp_app') then
     raise exception 'SAT-02: papel erp_app ausente (0007); os privilegios das tabelas novas nao teriam destinatario.';
+  end if;
+  if current_setting('server_version_num')::int < 150000 then
+    raise exception 'SAT-02: PostgreSQL % sem UNIQUE NULLS NOT DISTINCT (exige 15+); a unicidade da janela com data_alvo nao teria como ser criada.', current_setting('server_version');
   end if;
   if to_regprocedure('erp.tenant_visible(uuid)') is null or to_regprocedure('erp.audit_row()') is null
      or to_regprocedure('erp.set_updated_at()') is null
@@ -101,13 +123,24 @@ begin
   end if;
   if (select count(*) from information_schema.columns
        where table_schema = 'erp' and table_name = 'analises_satelitais'
-         and column_name in ('id', 'organization_id', 'empresa_id') and is_nullable = 'NO') <> 3 then
-    raise exception 'SAT-02: erp.analises_satelitais sem id/organization_id/empresa_id obrigatorios; a chave unica composta nova exige os tres.';
+         and column_name in ('id', 'organization_id', 'empresa_id', 'area_id') and is_nullable = 'NO') <> 4 then
+    raise exception 'SAT-02: erp.analises_satelitais sem id/organization_id/empresa_id/area_id obrigatorios; a chave unica composta nova exige os quatro.';
   end if;
   if (select count(*) from pg_trigger t
        where not t.tgisinternal and t.tgrelid = to_regclass('erp.analises_satelitais')
          and t.tgname in ('trg_analises_satelitais_conferir', 'trg_analises_satelitais_imutavel', 'trg_analises_satelitais_imutavel_truncate')) <> 3 then
     raise exception 'SAT-02: gatilhos da 0052 (conferencia e imutabilidade de erp.analises_satelitais) ausentes; schema divergente.';
+  end if;
+  -- A unicidade da janela EXATAMENTE como a 0052 a criou (é ela que a 0053 refaz com o mesmo nome).
+  if not exists (
+    select 1 from pg_constraint c join pg_index i on i.indexrelid = c.conindid
+     where c.conname = 'uq_analises_satelitais_janela' and c.contype = 'u' and c.conrelid = to_regclass('erp.analises_satelitais')
+       and not i.indnullsnotdistinct
+       and (select array_agg(a.attname::text order by k.ord) from unnest(c.conkey) with ordinality k(attnum, ord)
+              join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum)
+           = array['organization_id', 'area_id', 'provedor', 'colecao', 'indice', 'versao_metodo', 'geometria_sha256', 'janela_inicio', 'janela_fim']
+  ) then
+    raise exception 'SAT-02: uq_analises_satelitais_janela de erp.analises_satelitais fora da forma da 0052 (9 colunas, nulos distintos); schema divergente.';
   end if;
   if not exists (select 1 from pg_policies where schemaname = 'erp' and tablename = 'analises_satelitais' and policyname = 'tenant_e_empresa') then
     raise exception 'SAT-02: politica tenant_e_empresa de erp.analises_satelitais ausente (0052); as tabelas novas copiam exatamente essa politica.';
@@ -177,6 +210,8 @@ create table erp.satelite_consultas (
 );
 
 create index ix_satelite_consultas_historico on erp.satelite_consultas (organization_id, empresa_id, created_at desc, id desc);
+-- O histórico SEM empresa fixa (escopo de várias empresas): a ordem da página sem depender do recorte por empresa.
+create index ix_satelite_consultas_historico_org on erp.satelite_consultas (organization_id, created_at desc, id desc);
 
 comment on table erp.satelite_consultas is 'Pedido de consulta satelital EM LOTE (SAT-02, decisão 295): áreas × períodos × índices, com a faixa estimada de créditos gravada antes de qualquer processamento. Muda de estado; escopo de empresa = o da área (pecuária).';
 comment on column erp.satelite_consultas.id is 'Identidade técnica (UUID).';
@@ -230,19 +265,26 @@ create table erp.satelite_consulta_itens (
     references erp.satelite_consultas (organization_id, empresa_id, id),
   constraint fk_satelite_consulta_itens_area foreign key (organization_id, empresa_id, area_id)
     references erp.areas (organization_id, empresa_id, id),
-  constraint satelite_consulta_itens_org_empresa_key unique (organization_id, empresa_id, id),
+  -- Alvos das FKs que provam o VÍNCULO, não só a empresa: o consumo aponta para o item DA MESMA CONSULTA, e a
+  -- análise aponta para o item DA MESMA ÁREA.
+  constraint satelite_consulta_itens_consulta_key unique (organization_id, empresa_id, consulta_id, id),
+  constraint satelite_consulta_itens_area_key unique (organization_id, empresa_id, area_id, id),
   constraint chk_satelite_consulta_itens_janela check (
     janela_fim >= janela_inicio and (data_alvo is null or (data_alvo >= janela_inicio and data_alvo <= janela_fim))
   )
 );
 
--- UM item VIVO por chave. O predicado é o MESMO que a API escreve no `on conflict (chave_idempotencia) where …`.
-create unique index uq_satelite_consulta_itens_chave on erp.satelite_consulta_itens (chave_idempotencia)
+-- UM item VIVO por organização e chave. O predicado é o MESMO que a API escreve no
+-- `on conflict (organization_id, chave_idempotencia) where …`. A organização na chave do índice: a unicidade nunca
+-- atravessa o tenant (uma linha de outra organização não barra, nem revela, nada desta).
+create unique index uq_satelite_consulta_itens_chave on erp.satelite_consulta_itens (organization_id, chave_idempotencia)
   where situacao in ('pendente', 'executando', 'concluido');
-create index ix_satelite_consulta_itens_fila on erp.satelite_consulta_itens (situacao, proxima_tentativa_em);
+-- A fila do executor: só o que ainda vai ser processado (concluído, reaproveitado, falho e cancelado não entram).
+create index ix_satelite_consulta_itens_fila on erp.satelite_consulta_itens (situacao, proxima_tentativa_em)
+  where situacao in ('pendente', 'executando');
 create index ix_satelite_consulta_itens_consulta on erp.satelite_consulta_itens (organization_id, empresa_id, consulta_id, created_at, id);
 
-comment on table erp.satelite_consulta_itens is 'A FILA da consulta satelital em lote (SAT-02, decisão 295): um item por área × janela × índice. UM item vivo (pendente/executando/concluido) por chave de idempotência; reaproveitado, falho e cancelado podem repetir a chave.';
+comment on table erp.satelite_consulta_itens is 'A FILA da consulta satelital em lote (SAT-02, decisão 295): um item por área × janela × índice. UM item vivo (pendente/executando/concluido) por organização e chave de idempotência; reaproveitado, falho e cancelado podem repetir a chave.';
 comment on column erp.satelite_consulta_itens.id is 'Identidade técnica (UUID).';
 comment on column erp.satelite_consulta_itens.consulta_id is 'Consulta a que o item pertence (FK composta: mesma organização e empresa).';
 comment on column erp.satelite_consulta_itens.organization_id is 'Tenant (organização).';
@@ -258,7 +300,7 @@ comment on column erp.satelite_consulta_itens.situacao is 'pendente, executando,
 comment on column erp.satelite_consulta_itens.tentativas is 'Tentativas feitas pelo executor.';
 comment on column erp.satelite_consulta_itens.proxima_tentativa_em is 'Quando o executor pode tentar de novo (nulo = já).';
 comment on column erp.satelite_consulta_itens.erro is 'Motivo da última falha, sanitizado (nunca token, cabeçalho nem resposta bruta).';
-comment on column erp.satelite_consulta_itens.analise_id is 'Análise registrada pelo item (FK composta para erp.analises_satelitais).';
+comment on column erp.satelite_consulta_itens.analise_id is 'Análise registrada pelo item: da MESMA área do item (FK composta organização, empresa, área, análise).';
 comment on column erp.satelite_consulta_itens.pu_gasto is 'Processing units gastas pelo item, como o provedor informou.';
 comment on column erp.satelite_consulta_itens.chave_idempotencia is 'SHA-256 (hex) de chave_idempotencia_origem, calculado pela API.';
 comment on column erp.satelite_consulta_itens.chave_idempotencia_origem is 'A origem legível da chave (organização|área|geometria|índice|data@janela|versão), para depurar.';
@@ -279,22 +321,29 @@ create table erp.satelite_consumo (
   origem_cabecalho text,
   created_at timestamptz not null default now(),
   constraint fk_satelite_consumo_empresa foreign key (organization_id, empresa_id) references erp.empresas (organization_id, id),
-  constraint fk_satelite_consumo_item foreign key (organization_id, empresa_id, consulta_item_id)
-    references erp.satelite_consulta_itens (organization_id, empresa_id, id),
+  -- O item do consumo é um item DA CONSULTA do consumo (não só da mesma empresa).
+  constraint fk_satelite_consumo_item foreign key (organization_id, empresa_id, consulta_id, consulta_item_id)
+    references erp.satelite_consulta_itens (organization_id, empresa_id, consulta_id, id),
   constraint fk_satelite_consumo_consulta foreign key (organization_id, empresa_id, consulta_id)
     references erp.satelite_consultas (organization_id, empresa_id, id),
+  -- Com MATCH SIMPLE, consulta nula desligaria a FK do item: consumo com item exige a consulta.
+  constraint chk_satelite_consumo_item_com_consulta check (consulta_item_id is null or consulta_id is not null),
   constraint chk_satelite_consumo_pu check (pu_gasto >= 0),
   -- 1 crédito = 0,01 PU. O crédito é DERIVADO do PU gravado; os dois nunca divergem.
   constraint chk_satelite_consumo_creditos check (creditos = round(pu_gasto * 100, 2))
 );
 
-create index ix_satelite_consumo_mes on erp.satelite_consumo (organization_id, empresa_id, created_at);
+-- A soma do consumo do mês (orçamento) sai só do índice: o crédito vai junto (include).
+create index ix_satelite_consumo_mes on erp.satelite_consumo (organization_id, empresa_id, created_at) include (creditos);
+-- O gasto DE UMA consulta (a reserva do orçamento é a estimativa menos o já gasto pela consulta), também só do índice.
+create index ix_satelite_consumo_consulta on erp.satelite_consumo (organization_id, empresa_id, consulta_id) include (creditos)
+  where consulta_id is not null;
 
 comment on table erp.satelite_consumo is 'LEDGER IMUTÁVEL do consumo do provedor satelital (SAT-02, decisão 295): uma linha por cobrança informada. Não se altera nem se apaga.';
 comment on column erp.satelite_consumo.id is 'Identidade técnica (UUID).';
 comment on column erp.satelite_consumo.organization_id is 'Tenant (organização).';
 comment on column erp.satelite_consumo.empresa_id is 'Empresa que consumiu (a da consulta).';
-comment on column erp.satelite_consumo.consulta_item_id is 'Item da fila que gerou o consumo (FK composta), quando houver.';
+comment on column erp.satelite_consumo.consulta_item_id is 'Item da fila que gerou o consumo, quando houver: um item DA consulta_id (FK composta organização, empresa, consulta, item); exige consulta_id.';
 comment on column erp.satelite_consumo.consulta_id is 'Consulta que gerou o consumo (FK composta), quando houver.';
 comment on column erp.satelite_consumo.operacao is 'Operação cobrada pelo provedor: process, statistical ou catalog.';
 comment on column erp.satelite_consumo.pu_gasto is 'Processing units cobradas.';
@@ -355,8 +404,13 @@ create trigger trg_satelite_consultas_updated
   for each row execute function erp.set_updated_at();
 
 create trigger trg_satelite_consultas_audit
-  after insert or update or delete on erp.satelite_consultas
+  after insert or delete on erp.satelite_consultas
   for each row execute function erp.audit_row();
+
+-- Alteração: só a mudança de SITUAÇÃO é auditada; o avanço dos contadores (o executor, item a item) não.
+create trigger trg_satelite_consultas_audit_situacao
+  after update on erp.satelite_consultas
+  for each row when (old.situacao is distinct from new.situacao) execute function erp.audit_row();
 
 create trigger trg_satelite_consulta_itens_updated
   before update on erp.satelite_consulta_itens
@@ -422,29 +476,48 @@ grant select on erp.satelite_orcamentos to erp_app;
 revoke insert, update, delete, truncate on erp.satelite_orcamentos from erp_app;
 
 -- ---------- 9) POR ÚLTIMO: erp.analises_satelitais (ACCESS EXCLUSIVE) e as FKs que dependem da chave única nova ----------
--- Três colunas ANULÁVEIS e SEM default: só catálogo. Nenhuma linha é regravada nem escrita (as existentes leem NULL),
--- e o gatilho de imutabilidade da 0052, que é de linha, não é acionado por DDL. Os CHECKs novos só olham as colunas
--- novas (NULL passa). Como a análise é imutável, as colunas novas só se preenchem na INSERÇÃO de uma análise nova.
+-- Quatro colunas ANULÁVEIS e SEM default: nenhuma linha é regravada nem escrita (as existentes leem NULL), e o gatilho
+-- de imutabilidade da 0052, que é de linha, não é acionado por DDL. Os CHECKs novos só olham as colunas novas (NULL
+-- passa), mas conferi-los LÊ a tabela inteira sob ACCESS EXCLUSIVE (ver o cabeçalho). Como a análise é imutável, as
+-- colunas novas só se preenchem na INSERÇÃO de uma análise nova.
 alter table erp.analises_satelitais
   add column consulta_item_id uuid,
   add column resolucao_nativa_m integer
     constraint chk_analises_satelitais_resolucao_nativa check (resolucao_nativa_m > 0),
   add column evalscript_sha256 text
-    constraint chk_analises_satelitais_evalscript_sha256 check (evalscript_sha256 ~ '^[0-9a-f]{64}$');
+    constraint chk_analises_satelitais_evalscript_sha256 check (evalscript_sha256 ~ '^[0-9a-f]{64}$'),
+  add column data_alvo date;
 
-comment on column erp.analises_satelitais.consulta_item_id is 'Item da fila da consulta em lote que produziu a análise (SAT-02; FK composta). Nulo nas análises avulsas e nas anteriores à 0053.';
+-- A data alvo cai DENTRO da janela, na convenção que a 0052 documenta para ela (dias UTC inteiros; janela_fim é a
+-- meia-noite UTC seguinte ao último dia, EXCLUSIVA — erp.analises_satelitais.janela_fim e janelaPadrao da SAT-01).
+alter table erp.analises_satelitais add constraint chk_analises_satelitais_data_alvo check (
+  data_alvo is null
+  or (data_alvo >= (janela_inicio at time zone 'UTC')::date and data_alvo < (janela_fim at time zone 'UTC')::date)
+);
+
+comment on column erp.analises_satelitais.consulta_item_id is 'Item da fila da consulta em lote que produziu a análise (SAT-02): da MESMA área da análise (FK composta organização, empresa, área, item). Nulo nas análises avulsas e nas anteriores à 0053.';
 comment on column erp.analises_satelitais.resolucao_nativa_m is 'Resolução nativa da coleção usada pelo executor, em metros (SAT-02). Nulo nas anteriores à 0053.';
 comment on column erp.analises_satelitais.evalscript_sha256 is 'SHA-256 (hex) do evalscript enviado ao provedor (SAT-02). Nulo nas anteriores à 0053.';
+comment on column erp.analises_satelitais.data_alvo is 'Dia pedido pelo slot da consulta em lote (período por data), dentro da janela; nulo = a imagem útil mais recente da janela (e em toda análise avulsa da SAT-01). Entra na unicidade da janela (NULLS NOT DISTINCT).';
 
--- Só uma chave nova sobre colunas que já existem (id já é único; organization_id e empresa_id são obrigatórios): não
--- muda linha nenhuma e não tem como recusar acervo.
-alter table erp.analises_satelitais add constraint analises_satelitais_org_empresa_key unique (organization_id, empresa_id, id);
+-- A unicidade da janela, refeita com O MESMO NOME (as rotas usam `on conflict on constraint uq_analises_satelitais_janela`)
+-- e com data_alvo: dois slots da mesma janela com datas alvo diferentes não colidem; NULLS NOT DISTINCT mantém a análise
+-- de data alvo nula (toda a SAT-01) com a unicidade de antes — duas nulas na mesma janela continuam colidindo. O índice
+-- é reconstruído aqui, sob a ACCESS EXCLUSIVE que a tabela já tem.
+alter table erp.analises_satelitais drop constraint uq_analises_satelitais_janela;
+alter table erp.analises_satelitais add constraint uq_analises_satelitais_janela unique nulls not distinct
+  (organization_id, area_id, provedor, colecao, indice, versao_metodo, geometria_sha256, janela_inicio, janela_fim, data_alvo);
+
+-- Só uma chave nova sobre colunas que já existem (id já é único; organization_id, empresa_id e area_id são
+-- obrigatórios): não muda linha nenhuma e não tem como recusar acervo. Inclui a ÁREA porque é ela que a FK do item
+-- confere: a análise de um item é sempre da área do item.
+alter table erp.analises_satelitais add constraint analises_satelitais_org_empresa_area_key unique (organization_id, empresa_id, area_id, id);
 
 alter table erp.satelite_consulta_itens add constraint fk_satelite_consulta_itens_analise
-  foreign key (organization_id, empresa_id, analise_id) references erp.analises_satelitais (organization_id, empresa_id, id);
+  foreign key (organization_id, empresa_id, area_id, analise_id) references erp.analises_satelitais (organization_id, empresa_id, area_id, id);
 
 alter table erp.analises_satelitais add constraint fk_analises_satelitais_consulta_item
-  foreign key (organization_id, empresa_id, consulta_item_id) references erp.satelite_consulta_itens (organization_id, empresa_id, id);
+  foreign key (organization_id, empresa_id, area_id, consulta_item_id) references erp.satelite_consulta_itens (organization_id, empresa_id, area_id, id);
 
 -- ---------- 10) pós-condições nomeadas (objetos, nunca contagem de tabela viva) ----------
 do $$
@@ -452,6 +525,8 @@ declare
   v_tabela text;
   v_ref record;
   v_fk record;
+  v_ch record;
+  v_ix record;
 begin
   select qual, with_check, roles into v_ref
     from pg_policies where schemaname = 'erp' and tablename = 'analises_satelitais' and policyname = 'tenant_e_empresa';
@@ -489,16 +564,22 @@ begin
     end if;
   end loop;
 
-  -- As FKs compostas entre as tabelas (e com a área e a análise), sem cascata, coluna a coluna.
+  -- As FKs compostas dos VÍNCULOS, sem cascata, coluna a coluna (origem e alvo).
   for v_fk in
     select * from (values
-      ('satelite_consulta_itens', 'fk_satelite_consulta_itens_consulta', 'satelite_consultas', array['organization_id', 'empresa_id', 'consulta_id']),
-      ('satelite_consulta_itens', 'fk_satelite_consulta_itens_area', 'areas', array['organization_id', 'empresa_id', 'area_id']),
-      ('satelite_consulta_itens', 'fk_satelite_consulta_itens_analise', 'analises_satelitais', array['organization_id', 'empresa_id', 'analise_id']),
-      ('satelite_consumo', 'fk_satelite_consumo_item', 'satelite_consulta_itens', array['organization_id', 'empresa_id', 'consulta_item_id']),
-      ('satelite_consumo', 'fk_satelite_consumo_consulta', 'satelite_consultas', array['organization_id', 'empresa_id', 'consulta_id']),
-      ('analises_satelitais', 'fk_analises_satelitais_consulta_item', 'satelite_consulta_itens', array['organization_id', 'empresa_id', 'consulta_item_id'])
-    ) as f(origem, nome, alvo, colunas)
+      ('satelite_consulta_itens', 'fk_satelite_consulta_itens_consulta', 'satelite_consultas',
+        array['organization_id', 'empresa_id', 'consulta_id'], array['organization_id', 'empresa_id', 'id']),
+      ('satelite_consulta_itens', 'fk_satelite_consulta_itens_area', 'areas',
+        array['organization_id', 'empresa_id', 'area_id'], array['organization_id', 'empresa_id', 'id']),
+      ('satelite_consulta_itens', 'fk_satelite_consulta_itens_analise', 'analises_satelitais',
+        array['organization_id', 'empresa_id', 'area_id', 'analise_id'], array['organization_id', 'empresa_id', 'area_id', 'id']),
+      ('satelite_consumo', 'fk_satelite_consumo_item', 'satelite_consulta_itens',
+        array['organization_id', 'empresa_id', 'consulta_id', 'consulta_item_id'], array['organization_id', 'empresa_id', 'consulta_id', 'id']),
+      ('satelite_consumo', 'fk_satelite_consumo_consulta', 'satelite_consultas',
+        array['organization_id', 'empresa_id', 'consulta_id'], array['organization_id', 'empresa_id', 'id']),
+      ('analises_satelitais', 'fk_analises_satelitais_consulta_item', 'satelite_consulta_itens',
+        array['organization_id', 'empresa_id', 'area_id', 'consulta_item_id'], array['organization_id', 'empresa_id', 'area_id', 'id'])
+    ) as f(origem, nome, alvo, colunas, colunas_alvo)
   loop
     if not exists (
       select 1 from pg_constraint c
@@ -507,63 +588,128 @@ begin
          and (select array_agg(a.attname::text order by k.ord) from unnest(c.conkey) with ordinality k(attnum, ord)
                 join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum) = v_fk.colunas
          and (select array_agg(a.attname::text order by k.ord) from unnest(c.confkey) with ordinality k(attnum, ord)
-                join pg_attribute a on a.attrelid = c.confrelid and a.attnum = k.attnum) = array['organization_id', 'empresa_id', 'id']
+                join pg_attribute a on a.attrelid = c.confrelid and a.attnum = k.attnum) = v_fk.colunas_alvo
     ) then
-      raise exception 'SAT-02: FK composta % (erp.% -> erp.%(organizacao, empresa, id); sem cascata) ausente.', v_fk.nome, v_fk.origem, v_fk.alvo;
+      raise exception 'SAT-02: FK composta % (erp.% -> erp.%; sem cascata) ausente ou com outras colunas.', v_fk.nome, v_fk.origem, v_fk.alvo;
     end if;
   end loop;
 
-  -- As chaves únicas (organização, empresa, id) que as FKs compostas usam, e a do orçamento por mês.
+  -- As chaves únicas que as FKs usam, e a do orçamento por mês, coluna a coluna.
+  for v_fk in
+    select * from (values
+      ('satelite_consultas', 'satelite_consultas_org_empresa_key', array['organization_id', 'empresa_id', 'id']),
+      ('satelite_consulta_itens', 'satelite_consulta_itens_consulta_key', array['organization_id', 'empresa_id', 'consulta_id', 'id']),
+      ('satelite_consulta_itens', 'satelite_consulta_itens_area_key', array['organization_id', 'empresa_id', 'area_id', 'id']),
+      ('analises_satelitais', 'analises_satelitais_org_empresa_area_key', array['organization_id', 'empresa_id', 'area_id', 'id']),
+      ('satelite_orcamentos', 'uq_satelite_orcamentos_mes', array['organization_id', 'empresa_id', 'mes_referencia'])
+    ) as u(tabela, nome, colunas)
+  loop
+    if not exists (
+      select 1 from pg_constraint c
+       where c.conname = v_fk.nome and c.contype = 'u' and c.conrelid = ('erp.' || v_fk.tabela)::regclass
+         and (select array_agg(a.attname::text order by k.ord) from unnest(c.conkey) with ordinality k(attnum, ord)
+                join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum) = v_fk.colunas
+    ) then
+      raise exception 'SAT-02: chave unica % de erp.% ausente ou com outras colunas.', v_fk.nome, v_fk.tabela;
+    end if;
+  end loop;
+
+  -- CHECKs pelo NOME. Nas tabelas novas, o conjunto é EXATAMENTE este (nenhum a mais, nenhum a menos, todos validados);
+  -- na análise, os dois novos (os 15 da 0052 são conferidos pela 0052).
+  for v_ch in
+    select * from (values
+      ('satelite_consultas', array['chk_satelite_consultas_concluida_em', 'chk_satelite_consultas_contadores', 'chk_satelite_consultas_estimativa',
+                                   'chk_satelite_consultas_parametros', 'chk_satelite_consultas_situacao']),
+      ('satelite_consulta_itens', array['chk_satelite_consulta_itens_chave', 'chk_satelite_consulta_itens_geometria_sha256',
+                                        'chk_satelite_consulta_itens_indice_bundle', 'chk_satelite_consulta_itens_janela', 'chk_satelite_consulta_itens_pu_gasto',
+                                        'chk_satelite_consulta_itens_situacao', 'chk_satelite_consulta_itens_tentativas', 'chk_satelite_consulta_itens_versao_metodo']),
+      ('satelite_consumo', array['chk_satelite_consumo_creditos', 'chk_satelite_consumo_item_com_consulta', 'chk_satelite_consumo_operacao',
+                                 'chk_satelite_consumo_pu']),
+      ('satelite_orcamentos', array['chk_satelite_orcamentos_limite', 'chk_satelite_orcamentos_mes'])
+    ) as k(tabela, nomes)
+  loop
+    if (select array_agg(c.conname::text order by c.conname) from pg_constraint c
+         where c.conrelid = ('erp.' || v_ch.tabela)::regclass and c.contype = 'c' and c.convalidated) is distinct from v_ch.nomes then
+      raise exception 'SAT-02: CHECKs de erp.% diferentes dos declarados (%).', v_ch.tabela, array_to_string(v_ch.nomes, ', ');
+    end if;
+  end loop;
   if (select count(*) from pg_constraint c
-       where c.contype = 'u' and (c.conrelid, c.conname) in (
-         ('erp.satelite_consultas'::regclass, 'satelite_consultas_org_empresa_key'),
-         ('erp.satelite_consulta_itens'::regclass, 'satelite_consulta_itens_org_empresa_key'),
-         ('erp.analises_satelitais'::regclass, 'analises_satelitais_org_empresa_key'),
-         ('erp.satelite_orcamentos'::regclass, 'uq_satelite_orcamentos_mes'))) <> 4 then
-    raise exception 'SAT-02: chaves unicas ausentes (satelite_consultas_org_empresa_key, satelite_consulta_itens_org_empresa_key, analises_satelitais_org_empresa_key, uq_satelite_orcamentos_mes).';
+       where c.conrelid = 'erp.analises_satelitais'::regclass and c.contype = 'c' and c.convalidated
+         and c.conname in ('chk_analises_satelitais_resolucao_nativa', 'chk_analises_satelitais_evalscript_sha256', 'chk_analises_satelitais_data_alvo')) <> 3 then
+    raise exception 'SAT-02: CHECKs novos de erp.analises_satelitais ausentes (chk_analises_satelitais_resolucao_nativa, chk_analises_satelitais_evalscript_sha256, chk_analises_satelitais_data_alvo).';
   end if;
 
-  -- UM item vivo por chave: índice ÚNICO, PARCIAL, só na chave, com o predicado das três situações vivas.
+  -- A unicidade da janela refeita: o MESMO nome, as 10 colunas na ordem, NULLS NOT DISTINCT, índice válido.
   if not exists (
-    select 1 from pg_index i
-     where i.indexrelid = to_regclass('erp.uq_satelite_consulta_itens_chave')
-       and i.indrelid = 'erp.satelite_consulta_itens'::regclass and i.indisunique and i.indisvalid
-       -- indkey é int2vector (base 0): uma coluna só, e é a chave.
-       and i.indnatts = 1
-       and i.indkey[0] = (select attnum from pg_attribute where attrelid = 'erp.satelite_consulta_itens'::regclass and attname = 'chave_idempotencia')
-       and pg_get_expr(i.indpred, i.indrelid) = '(situacao = ANY (ARRAY[''pendente''::text, ''executando''::text, ''concluido''::text]))'
+    select 1 from pg_constraint c join pg_index i on i.indexrelid = c.conindid
+     where c.conname = 'uq_analises_satelitais_janela' and c.contype = 'u' and c.conrelid = 'erp.analises_satelitais'::regclass
+       and i.indnullsnotdistinct and i.indisunique and i.indisvalid
+       and (select array_agg(a.attname::text order by k.ord) from unnest(c.conkey) with ordinality k(attnum, ord)
+              join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum)
+           = array['organization_id', 'area_id', 'provedor', 'colecao', 'indice', 'versao_metodo', 'geometria_sha256', 'janela_inicio', 'janela_fim', 'data_alvo']
   ) then
-    raise exception 'SAT-02: indice unico parcial uq_satelite_consulta_itens_chave (chave_idempotencia) where situacao in (pendente, executando, concluido) ausente.';
+    raise exception 'SAT-02: uq_analises_satelitais_janela fora do contrato (10 colunas com data_alvo, NULLS NOT DISTINCT).';
   end if;
+
+  -- Índices novos pelo NOME, com a definição inteira (colunas, ordem, unicidade, INCLUDE e predicado). O schema sai do
+  -- texto antes de comparar: pg_get_indexdef o omite quando erp está no search_path de quem aplica.
+  for v_ix in
+    select * from (values
+      ('uq_satelite_consulta_itens_chave', 'CREATE UNIQUE INDEX uq_satelite_consulta_itens_chave ON satelite_consulta_itens USING btree (organization_id, chave_idempotencia) WHERE (situacao = ANY (ARRAY[''pendente''::text, ''executando''::text, ''concluido''::text]))'),
+      ('ix_satelite_consulta_itens_fila', 'CREATE INDEX ix_satelite_consulta_itens_fila ON satelite_consulta_itens USING btree (situacao, proxima_tentativa_em) WHERE (situacao = ANY (ARRAY[''pendente''::text, ''executando''::text]))'),
+      ('ix_satelite_consulta_itens_consulta', 'CREATE INDEX ix_satelite_consulta_itens_consulta ON satelite_consulta_itens USING btree (organization_id, empresa_id, consulta_id, created_at, id)'),
+      ('ix_satelite_consultas_historico', 'CREATE INDEX ix_satelite_consultas_historico ON satelite_consultas USING btree (organization_id, empresa_id, created_at DESC, id DESC)'),
+      ('ix_satelite_consultas_historico_org', 'CREATE INDEX ix_satelite_consultas_historico_org ON satelite_consultas USING btree (organization_id, created_at DESC, id DESC)'),
+      ('ix_satelite_consumo_mes', 'CREATE INDEX ix_satelite_consumo_mes ON satelite_consumo USING btree (organization_id, empresa_id, created_at) INCLUDE (creditos)'),
+      ('ix_satelite_consumo_consulta', 'CREATE INDEX ix_satelite_consumo_consulta ON satelite_consumo USING btree (organization_id, empresa_id, consulta_id) INCLUDE (creditos) WHERE (consulta_id IS NOT NULL)')
+    ) as x(nome, definicao)
+  loop
+    if not exists (select 1 from pg_index i
+                    where i.indexrelid = to_regclass('erp.' || v_ix.nome) and i.indisvalid
+                      and regexp_replace(pg_get_indexdef(i.indexrelid), ' ON (erp\.)?', ' ON ') = v_ix.definicao) then
+      raise exception 'SAT-02: indice erp.% ausente ou fora do contrato (esperado: %).', v_ix.nome, v_ix.definicao;
+    end if;
+  end loop;
 
   -- As colunas novas da análise: anuláveis e sem default (nenhuma linha existente muda).
   if (select count(*) from pg_attribute a
        where a.attrelid = 'erp.analises_satelitais'::regclass and not a.attisdropped and not a.attnotnull and not a.atthasdef
          and ((a.attname = 'consulta_item_id' and a.atttypid = 'uuid'::regtype)
            or (a.attname = 'resolucao_nativa_m' and a.atttypid = 'integer'::regtype)
-           or (a.attname = 'evalscript_sha256' and a.atttypid = 'text'::regtype))) <> 3 then
-    raise exception 'SAT-02: colunas novas de erp.analises_satelitais (consulta_item_id uuid, resolucao_nativa_m integer, evalscript_sha256 text) ausentes ou fora do contrato (anulaveis, sem default).';
+           or (a.attname = 'evalscript_sha256' and a.atttypid = 'text'::regtype)
+           or (a.attname = 'data_alvo' and a.atttypid = 'date'::regtype))) <> 4 then
+    raise exception 'SAT-02: colunas novas de erp.analises_satelitais (consulta_item_id uuid, resolucao_nativa_m integer, evalscript_sha256 text, data_alvo date) ausentes ou fora do contrato (anulaveis, sem default).';
   end if;
 
   -- Gatilhos: imutabilidade do ledger (linha e comando), updated_at e auditoria.
   if (select count(*) from pg_trigger t
-       where not t.tgisinternal and (t.tgrelid, t.tgname, t.tgfoid) in (
+       where not t.tgisinternal and t.tgenabled = 'O' and (t.tgrelid, t.tgname, t.tgfoid) in (
          ('erp.satelite_consumo'::regclass, 'trg_satelite_consumo_imutavel', 'erp.satelite_consumo_imutavel()'::regprocedure),
          ('erp.satelite_consumo'::regclass, 'trg_satelite_consumo_imutavel_truncate', 'erp.satelite_consumo_imutavel()'::regprocedure),
          ('erp.satelite_consumo'::regclass, 'trg_satelite_consumo_audit', 'erp.audit_row()'::regprocedure),
          ('erp.satelite_consultas'::regclass, 'trg_satelite_consultas_updated', 'erp.set_updated_at()'::regprocedure),
          ('erp.satelite_consultas'::regclass, 'trg_satelite_consultas_audit', 'erp.audit_row()'::regprocedure),
+         ('erp.satelite_consultas'::regclass, 'trg_satelite_consultas_audit_situacao', 'erp.audit_row()'::regprocedure),
          ('erp.satelite_consulta_itens'::regclass, 'trg_satelite_consulta_itens_updated', 'erp.set_updated_at()'::regprocedure),
          ('erp.satelite_orcamentos'::regclass, 'trg_satelite_orcamentos_updated', 'erp.set_updated_at()'::regprocedure),
-         ('erp.satelite_orcamentos'::regclass, 'trg_satelite_orcamentos_audit', 'erp.audit_row()'::regprocedure))) <> 8 then
-    raise exception 'SAT-02: gatilhos das tabelas novas ausentes (imutabilidade do consumo por linha e por comando, updated_at, auditoria).';
+         ('erp.satelite_orcamentos'::regclass, 'trg_satelite_orcamentos_audit', 'erp.audit_row()'::regprocedure))) <> 9 then
+    raise exception 'SAT-02: gatilhos das tabelas novas ausentes ou desabilitados (imutabilidade do consumo por linha e por comando, updated_at, auditoria).';
   end if;
-  -- A imutabilidade do ledger cobre UPDATE e DELETE por linha (tgtype: ROW=1, DELETE=8, UPDATE=16) e TRUNCATE por comando (32).
+  -- tgtype: ROW=1, BEFORE=2, INSERT=4, DELETE=8, UPDATE=16, TRUNCATE=32.
+  -- A imutabilidade do ledger cobre UPDATE e DELETE por linha e TRUNCATE por comando.
   if not exists (select 1 from pg_trigger where tgrelid = 'erp.satelite_consumo'::regclass and tgname = 'trg_satelite_consumo_imutavel'
-                   and tgtype & (1 | 8 | 16) = (1 | 8 | 16) and tgenabled = 'O')
+                   and tgtype & (1 | 8 | 16) = (1 | 8 | 16))
      or not exists (select 1 from pg_trigger where tgrelid = 'erp.satelite_consumo'::regclass and tgname = 'trg_satelite_consumo_imutavel_truncate'
-                      and tgtype & 32 = 32 and tgtype & 1 = 0 and tgenabled = 'O') then
-    raise exception 'SAT-02: imutabilidade de erp.satelite_consumo fora do contrato (UPDATE/DELETE por linha e TRUNCATE por comando, habilitados).';
+                      and tgtype & 32 = 32 and tgtype & 1 = 0) then
+    raise exception 'SAT-02: imutabilidade de erp.satelite_consumo fora do contrato (UPDATE/DELETE por linha e TRUNCATE por comando).';
+  end if;
+  -- A auditoria da consulta: AFTER INSERT/DELETE sempre (sem UPDATE), e AFTER UPDATE só quando a situação muda.
+  if not exists (select 1 from pg_trigger where tgrelid = 'erp.satelite_consultas'::regclass and tgname = 'trg_satelite_consultas_audit'
+                   and tgtype = (1 | 4 | 8) and tgqual is null)
+     or not exists (select 1 from pg_trigger t where t.tgrelid = 'erp.satelite_consultas'::regclass and t.tgname = 'trg_satelite_consultas_audit_situacao'
+                      and t.tgtype = (1 | 16) and t.tgqual is not null
+                      and pg_get_triggerdef(t.oid) like '%WHEN ((old.situacao IS DISTINCT FROM new.situacao))%') then
+    raise exception 'SAT-02: auditoria de erp.satelite_consultas fora do contrato (INSERT/DELETE sempre; UPDATE so quando a situacao muda).';
   end if;
   -- A função de imutabilidade: INVOKER, search_path fixo, sem execute para PUBLIC nem erp_app.
   if not exists (select 1 from pg_proc p where p.oid = 'erp.satelite_consumo_imutavel()'::regprocedure

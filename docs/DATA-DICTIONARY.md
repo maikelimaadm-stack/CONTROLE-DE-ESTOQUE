@@ -2183,7 +2183,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.activity_operations` | 2 | não | — | não |
 | `erp.additional_infos` | 8 | sim | — | sim |
 | `erp.addressings` | 7 | sim | — | sim |
-| `erp.analises_satelitais` | 31 | sim | `empresa_id` | não |
+| `erp.analises_satelitais` | 32 | sim | `empresa_id` | não |
 | `erp.animal_categories` | 9 | sim | — | não |
 | `erp.animal_handling_items` | 8 | não | — | não |
 | `erp.animal_identifications` | 6 | sim | — | não |

@@ -19,7 +19,7 @@ import { TEST_URL } from "./setup.js";
  * continua, análise nova com as colunas novas grava; reaplicar para no preflight ("já aplicada") · DB-3 as listas dos
  * CHECKs e o predicado da chave são os do domínio (um dono só) · DB-4 RLS por empresa no módulo da área (outra
  * organização, sem escopo, escopo só em B; com check) · DB-5 ledger de consumo imutável e crédito derivado do PU ·
- * DB-6 um item VIVO por chave · DB-7 FKs compostas e CHECKs · DB-8 DESCE: o SQL reverso (SQL_REVERSO, abaixo) volta o
+ * DB-6 um item VIVO por organização e chave · DB-7 FKs compostas (empresa e VÍNCULOS: consulta, área) e CHECKs · DB-8 DESCE: o SQL reverso (SQL_REVERSO, abaixo) volta o
  * catálogo EXATAMENTE ao da 0052 e a 0053 reaplica em seguida, com o mesmo catálogo da primeira vez.
  *
  * Duas conexões: `db` (superusuário: monta o cenário e lê o catálogo) e `app` (papel da aplicação, SEM bypass de RLS,
@@ -35,10 +35,11 @@ const ALVO = "0053_satelite_consultas.sql";
 const ANTERIORES = listMigrations().filter((x) => x.name < ALVO);
 const SQL_ALVO = listMigrations().find((x) => x.name === ALVO)!.sql;
 const TRAVA = "SAT-02: outra transacao ja detem a trava desta migration (2026,87). Nada foi aplicado.";
-const JA = "SAT-02: a 0053 ja foi aplicada ou ha schema divergente (satelite_consultas/satelite_consulta_itens/satelite_consumo/satelite_orcamentos/satelite_consumo_imutavel/analises_satelitais_org_empresa_key ou coluna nova de analises_satelitais ja existe).";
+const JA = "SAT-02: a 0053 ja foi aplicada ou ha schema divergente (satelite_consultas/satelite_consulta_itens/satelite_consumo/satelite_orcamentos/satelite_consumo_imutavel/analises_satelitais_org_empresa_area_key ou coluna nova de analises_satelitais ja existe).";
 const IMUTAVEL_ANALISE = "CONFLICT: A análise satelital registrada não se altera nem se apaga: uma análise nova é registrada ao lado da anterior.";
 const IMUTAVEL_CONSUMO = "CONFLICT: O consumo satelital registrado não se altera nem se apaga: um consumo novo é registrado ao lado do anterior.";
-const COLUNAS_NOVAS = ["consulta_item_id", "resolucao_nativa_m", "evalscript_sha256"];
+const COLUNAS_NOVAS = ["consulta_item_id", "resolucao_nativa_m", "evalscript_sha256", "data_alvo"];
+const UQ_JANELA_0052 = ["organization_id", "area_id", "provedor", "colecao", "indice", "versao_metodo", "geometria_sha256", "janela_inicio", "janela_fim"];
 const TABELAS_NOVAS = ["satelite_consultas", "satelite_consulta_itens", "satelite_consumo", "satelite_orcamentos"] as const;
 type TabelaNova = (typeof TABELAS_NOVAS)[number];
 
@@ -61,13 +62,21 @@ const SQL_REVERSO = `
   -- 3) A função de imutabilidade do ledger (os gatilhos que a usavam já saíram com a tabela).
   drop function erp.satelite_consumo_imutavel();
   -- 4) A chave única nova da análise (a FK do item que a usava saiu com a tabela de itens).
-  alter table erp.analises_satelitais drop constraint analises_satelitais_org_empresa_key;
-  -- 5) As três colunas novas; os CHECKs e comentários delas vão junto. DDL não aciona o gatilho de imutabilidade
+  alter table erp.analises_satelitais drop constraint analises_satelitais_org_empresa_area_key;
+  -- 5) A unicidade da janela volta à da 0052 (mesmo nome, 9 colunas, nulos distintos). FAIL-CLOSED: se já houver duas
+  --    análises na mesma janela com datas alvo diferentes (o que só a 0053 permite), o índice não se constrói e a volta
+  --    inteira para (23505) — a decisão de o que fazer com esse acervo é humana; análise não se apaga.
+  alter table erp.analises_satelitais drop constraint uq_analises_satelitais_janela;
+  alter table erp.analises_satelitais add constraint uq_analises_satelitais_janela
+    unique (organization_id, area_id, provedor, colecao, indice, versao_metodo, geometria_sha256, janela_inicio, janela_fim);
+  alter table erp.analises_satelitais drop constraint chk_analises_satelitais_data_alvo;
+  -- 6) As quatro colunas novas; os CHECKs e comentários delas vão junto. DDL não aciona o gatilho de imutabilidade
   --    (que é de linha), e as colunas restantes de cada análise não mudam.
+  alter table erp.analises_satelitais drop column data_alvo;
   alter table erp.analises_satelitais drop column evalscript_sha256;
   alter table erp.analises_satelitais drop column resolucao_nativa_m;
   alter table erp.analises_satelitais drop column consulta_item_id;
-  -- 6) O ledger de migrations: a 0053 deixa de constar, e o runner a aplicaria de novo.
+  -- 7) O ledger de migrations: a 0053 deixa de constar, e o runner a aplicaria de novo.
   delete from public.erp_migrations where name = '${ALVO}';
 `;
 
@@ -86,7 +95,7 @@ const hashDe = async (areaId: string) =>
 const ctxPec = (userId: string, orgId = demo.orgId): TenantContext => ({ orgId, userId, modulo: "pecuaria" });
 
 // ---------- montagem de linhas ----------
-interface Analise { org?: string; empresa: string; area: string; janelaInicio: string; semObservacao?: boolean; novas?: { item: string | null; resolucao: number | null; evalscript: string | null } }
+interface Analise { org?: string; empresa: string; area: string; janelaInicio: string; semObservacao?: boolean; novas?: { item: string | null; resolucao: number | null; evalscript: string | null; dataAlvo?: string | null } }
 /** Uma análise da 0052 pela via que o gatilho de conferência aceita (área viva, com polígono, hash de agora). */
 async function inserirAnalise(q: Queryable, a: Analise) {
   const concluida = !a.semObservacao;
@@ -101,7 +110,7 @@ async function inserirAnalise(q: Queryable, a: Analise) {
     concluida ? "0.7200" : null, concluida ? "0.3100" : null, concluida ? "0.8800" : null, concluida ? "0.0900" : null,
     concluida ? 4934 : null, concluida ? 406 : null, concluida ? 4528 : null, concluida ? 4900 : null, concluida ? "0.9241" : null,
     '{"intervalos_recebidos":3}', demo.adminUserId];
-  if (a.novas) { colunas.push(...COLUNAS_NOVAS); valores.push(a.novas.item, a.novas.resolucao, a.novas.evalscript); }
+  if (a.novas) { colunas.push(...COLUNAS_NOVAS); valores.push(a.novas.item, a.novas.resolucao, a.novas.evalscript, a.novas.dataAlvo ?? null); }
   return q.query<{ id: string }>(
     `insert into erp.analises_satelitais (${colunas.join(", ")}) values (${valores.map((_, i) => `$${i + 1}`).join(", ")}) returning id`, valores);
 }
@@ -324,7 +333,7 @@ describe("DB-0 a DB-2 — a 0053 sobre o banco na 0052 com acervo: premissa, tra
     expect(new Set(acervo.map((l) => l.empresa))).toEqual(new Set([A, B, empresaX]));
     expect(new Set(acervo.map((l) => l.situacao))).toEqual(new Set(["concluida", "sem_observacao_util"]));
     for (const t of TABELAS_NOVAS) expect((await db.query<{ t: string | null }>("select to_regclass($1)::text t", [`erp.${t}`])).rows[0]!.t).toBeNull();
-    expect((await db.query("select 1 from pg_constraint where conname='analises_satelitais_org_empresa_key'")).rowCount).toBe(0);
+    expect((await db.query("select 1 from pg_constraint where conname='analises_satelitais_org_empresa_area_key'")).rowCount).toBe(0);
   });
 
   it("DB-1 TRAVA: com (2026,87) ocupada por outra sessão, a 0053 recusa sem aplicar nada", async () => {
@@ -366,7 +375,7 @@ describe("DB-0 a DB-2 — a 0053 sobre o banco na 0052 com acervo: premissa, tra
     // Linha a linha, com TODAS as colunas antigas: iguais; as três novas, nulas em todas.
     const agora = await analisesOrdenadas();
     expect(agora.map((j) => Object.fromEntries(Object.entries(j).filter(([k]) => !COLUNAS_NOVAS.includes(k))))).toEqual(analises0052);
-    expect(agora.map((j) => COLUNAS_NOVAS.map((k) => j[k]))).toEqual(analises0052.map(() => [null, null, null]));
+    expect(agora.map((j) => COLUNAS_NOVAS.map((k) => j[k]))).toEqual(analises0052.map(() => [null, null, null, null]));
     // ADD COLUMN anulável sem default é só catálogo: o arquivo físico da tabela é o mesmo.
     expect((await db.query<{ f: string }>("select pg_relation_filenode('erp.analises_satelitais')::text f")).rows[0]!.f, "a tabela não foi regravada").toBe(filenode0052);
   });
@@ -425,7 +434,7 @@ describe("DB-3 — as listas fechadas do banco são as do domínio", () => {
       `select i.indisunique unico, pg_get_expr(i.indpred, i.indrelid) predicado, pg_get_indexdef(i.indexrelid) def
          from pg_index i where i.indexrelid = 'erp.uq_satelite_consulta_itens_chave'::regclass`)).rows[0]!;
     expect(indice.unico).toBe(true);
-    expect(indice.def).toMatch(/ON erp\.satelite_consulta_itens USING btree \(chave_idempotencia\) WHERE/);
+    expect(indice.def).toMatch(/ON erp\.satelite_consulta_itens USING btree \(organization_id, chave_idempotencia\) WHERE/);
     expect([...indice.predicado.matchAll(/'([^']+)'::text/g)].map((m) => m[1])).toEqual([...SITUACOES_ITEM_VIVAS]);
   });
 });
@@ -504,6 +513,28 @@ describe("DB-4 (d) — RLS por empresa no módulo da área (pecuária), nas quat
     expect(await audit("satelite_consumo", ids.satelite_consumo.A)).toBe(1);
     expect(await audit("satelite_consulta_itens", ids.satelite_consulta_itens.A)).toBe(0);
   });
+
+  it("auditoria da consulta: UPDATE só de contador NÃO audita; a mudança de SITUAÇÃO audita (antes e depois)", async () => {
+    const consulta = (await inserirConsulta(db, { empresa: A, totais: [3, 0, 0, 0] })).rows[0]!.id;
+    const alteracoes = async () => (await db.query<{ antes: string; depois: string; concluidos: number }>(
+      `select before->>'situacao' antes, after->>'situacao' depois, (after->>'total_concluidos')::int concluidos
+         from erp.audit_logs where entity='satelite_consultas' and entity_id=$1 and action='update' order by created_at, id`, [consulta])).rows;
+    // O executor avança os contadores item a item: nenhuma linha de auditoria por avanço.
+    expect((await db.query("update erp.satelite_consultas set total_concluidos = 1 where id=$1", [consulta])).rowCount).toBe(1);
+    expect((await db.query("update erp.satelite_consultas set total_concluidos = 2, total_falhos = 0 where id=$1", [consulta])).rowCount).toBe(1);
+    expect(await alteracoes()).toEqual([]);
+    // Mudou a situação: uma linha, com o antes e o depois.
+    expect((await db.query("update erp.satelite_consultas set situacao = 'executando' where id=$1", [consulta])).rowCount).toBe(1);
+    expect(await alteracoes()).toEqual([{ antes: "pendente", depois: "executando", concluidos: 2 }]);
+    // Contador de novo: continua uma linha só; terminar a consulta (situação nova): a segunda.
+    await db.query("update erp.satelite_consultas set total_concluidos = 3 where id=$1", [consulta]);
+    await db.query("update erp.satelite_consultas set situacao = 'concluida', concluida_em = now() where id=$1", [consulta]);
+    expect(await alteracoes()).toEqual([
+      { antes: "pendente", depois: "executando", concluidos: 2 },
+      { antes: "executando", depois: "concluida", concluidos: 3 }
+    ]);
+    expect((await db.query("select 1 from erp.audit_logs where entity='satelite_consultas' and entity_id=$1 and action='create'", [consulta])).rowCount).toBe(1);
+  });
 });
 
 describe("DB-5 (e) — o ledger erp.satelite_consumo é imutável, e o crédito é derivado do PU", () => {
@@ -550,7 +581,7 @@ describe("DB-5 (e) — o ledger erp.satelite_consumo é imutável, e o crédito 
   });
 });
 
-describe("DB-6 (f) — UM item VIVO por chave de idempotência", () => {
+describe("DB-6 (f) — UM item VIVO por organização e chave de idempotência", () => {
   let consulta: string;
   beforeAll(async () => { consulta = (await inserirConsulta(db, { empresa: A })).rows[0]!.id; });
   const item = (chave: string, situacao: string) => inserirItem(db, { empresa: A, consulta, area: areaA, chave, situacao });
@@ -569,7 +600,7 @@ describe("DB-6 (f) — UM item VIVO por chave de idempotência", () => {
     await item(K, "concluido");
     for (const s of ["reaproveitado", "falho", "cancelado", "reaproveitado"]) expect((await item(K, s)).rowCount, s).toBe(1);
     expect((await db.query<{ s: string; n: number }>(
-      "select situacao s, count(*)::int n from erp.satelite_consulta_itens where chave_idempotencia=$1 group by situacao order by situacao", [K])).rows)
+      "select situacao s, count(*)::int n from erp.satelite_consulta_itens where organization_id=$2 and chave_idempotencia=$1 group by situacao order by situacao", [K, demo.orgId])).rows)
       .toEqual([{ s: "cancelado", n: 1 }, { s: "concluido", n: 1 }, { s: "falho", n: 1 }, { s: "reaproveitado", n: 2 }]);
   });
 
@@ -582,28 +613,47 @@ describe("DB-6 (f) — UM item VIVO por chave de idempotência", () => {
     expect([e.code, e.constraint]).toEqual(["23505", "uq_satelite_consulta_itens_chave"]);
   });
 
-  it("o INSERT da API (on conflict (chave) where <vivas> do nothing), como erp_app: chave viva → 0 linhas; chave livre → 1 linha", async () => {
+  it("a unicidade é POR ORGANIZAÇÃO: a mesma chave viva em OUTRA organização é aceita; na mesma organização, mesmo em outra empresa, 23505", async () => {
+    const K = chaveNova();
+    expect((await item(K, "pendente")).rowCount).toBe(1);
+    const consultaX = (await inserirConsulta(db, { org: outraOrg, empresa: empresaX })).rows[0]!.id;
+    expect((await inserirItem(db, { org: outraOrg, empresa: empresaX, consulta: consultaX, area: areaX, chave: K, situacao: "pendente" })).rowCount).toBe(1);
+    const consultaB = (await inserirConsulta(db, { empresa: B })).rows[0]!.id;
+    const e = await erroDe(inserirItem(db, { empresa: B, consulta: consultaB, area: areaB, chave: K, situacao: "executando" }));
+    expect([e.code, e.constraint]).toEqual(["23505", "uq_satelite_consulta_itens_chave"]);
+    expect((await db.query<{ org: string }>(
+      "select organization_id::text org from erp.satelite_consulta_itens where chave_idempotencia=$1 and situacao in ('pendente','executando','concluido') order by 1", [K])).rows.map((x) => x.org).sort())
+      .toEqual([demo.orgId, outraOrg].sort());
+  });
+
+  it("o INSERT da API (on conflict (organization_id, chave) where <vivas> do nothing), como erp_app: chave viva → 0 linhas; chave livre → 1 linha", async () => {
     const viva = chaveNova();
     await item(viva, "pendente");
     const inserirComoAApi = (chave: string) => withTx(app, ctxPec(demo.adminUserId), (tx) => tx.query(
       `insert into erp.satelite_consulta_itens (consulta_id, organization_id, empresa_id, area_id, geometria_sha256, indice_bundle, versao_metodo,
          janela_inicio, janela_fim, chave_idempotencia, chave_idempotencia_origem)
        values ($1,$2,$3,$4,$5,'ndvi','ndvi-v2','2026-09-05','2026-10-04',$6,'origem')
-       on conflict (chave_idempotencia) where situacao in ('pendente', 'executando', 'concluido') do nothing`,
+       on conflict (organization_id, chave_idempotencia) where situacao in ('pendente', 'executando', 'concluido') do nothing`,
       [consulta, demo.orgId, A, areaA, sha("geom"), chave]));
     expect((await inserirComoAApi(viva)).rowCount).toBe(0);
     expect((await inserirComoAApi(chaveNova())).rowCount).toBe(1);
   });
 });
 
-describe("DB-7 (g) — FKs compostas e CHECKs", () => {
-  let consultaA: string; let consultaB: string; let consultaX: string; let itemA: string; let itemB: string;
+describe("DB-7 (g) — FKs compostas (empresa e vínculos) e CHECKs", () => {
+  let consultaA: string; let consultaA2: string; let consultaB: string; let consultaX: string; let itemA: string; let itemB: string;
+  let areaA2: string; let analiseA2: string;
   beforeAll(async () => {
     consultaA = (await inserirConsulta(db, { empresa: A })).rows[0]!.id;
+    consultaA2 = (await inserirConsulta(db, { empresa: A })).rows[0]!.id;
     consultaB = (await inserirConsulta(db, { empresa: B })).rows[0]!.id;
     consultaX = (await inserirConsulta(db, { org: outraOrg, empresa: empresaX })).rows[0]!.id;
     itemA = (await inserirItem(db, { empresa: A, consulta: consultaA, area: areaA })).rows[0]!.id;
     itemB = (await inserirItem(db, { empresa: B, consulta: consultaB, area: areaB })).rows[0]!.id;
+    // Outra área da MESMA empresa A, com análise própria: o vínculo errado aqui não é de empresa, é de ÁREA.
+    areaA2 = await id1(`insert into erp.areas (organization_id, empresa_id, code, name, area_ha, usable_area_ha, land_use, status, tenure, geometria)
+         values ($1,$2,'SAT2-A2','[TEST] SAT2 SAT2-A2',12,12,'pastagem','ativa','propria',$3) returning id`, [demo.orgId, A, JSON.stringify(POLIGONO)]);
+    analiseA2 = (await inserirAnalise(db, { empresa: A, area: areaA2, janelaInicio: "2026-08-01T00:00:00Z" })).rows[0]!.id;
   });
   const fk = async (p: Promise<unknown>) => { const e = await erroDe(p); return [e.code, e.constraint]; };
 
@@ -613,7 +663,7 @@ describe("DB-7 (g) — FKs compostas e CHECKs", () => {
     expect(await fk(inserirItem(db, { empresa: B, consulta: consultaB, area: areaA }))).toEqual(["23503", "fk_satelite_consulta_itens_area"]);
     expect(await fk(inserirItem(db, { empresa: A, consulta: consultaA, area: areaX }))).toEqual(["23503", "fk_satelite_consulta_itens_area"]);
     expect(await fk(inserirItem(db, { empresa: A, consulta: consultaA, area: areaA, analise: analiseB }))).toEqual(["23503", "fk_satelite_consulta_itens_analise"]);
-    expect(await fk(inserirConsumo(db, { empresa: B, item: itemA }))).toEqual(["23503", "fk_satelite_consumo_item"]);
+    expect(await fk(inserirConsumo(db, { empresa: B, consulta: consultaB, item: itemA }))).toEqual(["23503", "fk_satelite_consumo_item"]);
     expect(await fk(inserirConsumo(db, { empresa: A, consulta: consultaX }))).toEqual(["23503", "fk_satelite_consumo_consulta"]);
     expect(await fk(inserirConsumo(db, { empresa: A, consulta: consultaB }))).toEqual(["23503", "fk_satelite_consumo_consulta"]);
     expect(await fk(inserirConsulta(db, { empresa: empresaX }))).toEqual(["23503", "fk_satelite_consultas_empresa"]);
@@ -624,6 +674,25 @@ describe("DB-7 (g) — FKs compostas e CHECKs", () => {
     // O positivo das mesmas portas: tudo na mesma (organização, empresa) grava.
     expect((await inserirItem(db, { empresa: A, consulta: consultaA, area: areaA, analise: analiseA })).rowCount).toBe(1);
     expect((await inserirConsumo(db, { empresa: A, item: itemA, consulta: consultaA })).rowCount).toBe(1);
+  });
+
+  it("VÍNCULOS na mesma empresa: consumo com item de OUTRA consulta, consumo com item e sem consulta, análise × item de OUTRA área → recusados; os certos gravam", async () => {
+    // Consumo: o item tem de ser DA consulta do consumo (FK por organização, empresa, consulta, item).
+    expect(await fk(inserirConsumo(db, { empresa: A, consulta: consultaA2, item: itemA }))).toEqual(["23503", "fk_satelite_consumo_item"]);
+    // Consumo com item e sem consulta: com MATCH SIMPLE a FK do item se desligaria — o CHECK recusa antes.
+    expect(await fk(inserirConsumo(db, { empresa: A, item: itemA }))).toEqual(["23514", "chk_satelite_consumo_item_com_consulta"]);
+    expect((await inserirConsumo(db, { empresa: A, consulta: consultaA, item: itemA })).rowCount, "item da própria consulta").toBe(1);
+    expect((await inserirConsumo(db, { empresa: A, consulta: consultaA2 })).rowCount, "consumo só da consulta").toBe(1);
+    // Item → análise: a análise tem de ser da ÁREA do item (FK por organização, empresa, área, análise).
+    expect(await fk(inserirItem(db, { empresa: A, consulta: consultaA, area: areaA, analise: analiseA2 }))).toEqual(["23503", "fk_satelite_consulta_itens_analise"]);
+    expect((await inserirItem(db, { empresa: A, consulta: consultaA, area: areaA2, analise: analiseA2 })).rowCount, "análise da própria área").toBe(1);
+    const e = await erroDe(db.query("update erp.satelite_consulta_itens set analise_id=$2 where id=$1", [itemA, analiseA2]));
+    expect([e.code, e.constraint], "nem por UPDATE").toEqual(["23503", "fk_satelite_consulta_itens_analise"]);
+    // Análise → item: o item tem de ser da ÁREA da análise (FK por organização, empresa, área, item).
+    expect(await fk(inserirAnalise(db, { empresa: A, area: areaA2, janelaInicio: "2026-06-01T00:00:00Z", novas: { item: itemA, resolucao: 10, evalscript: null } })))
+      .toEqual(["23503", "fk_analises_satelitais_consulta_item"]);
+    expect((await inserirAnalise(db, { empresa: A, area: areaA, janelaInicio: "2026-06-01T00:00:00Z", novas: { item: itemA, resolucao: 10, evalscript: null } })).rowCount,
+      "item da própria área").toBe(1);
   });
 
   it("consequência declarada da FK composta item → área: área COM item na fila não muda de empresa (23503); SEM item, muda", async () => {
@@ -677,7 +746,67 @@ describe("DB-7 (g) — FKs compostas e CHECKs", () => {
   });
 });
 
+describe("DB-7b — a unicidade da janela da análise com data_alvo (NULLS NOT DISTINCT, o MESMO nome da 0052)", () => {
+  it("catálogo: uq_analises_satelitais_janela = as 9 colunas da 0052 + data_alvo, NULLS NOT DISTINCT", async () => {
+    const r = (await db.query<{ colunas: string[]; nnd: boolean }>(
+      `select (select array_agg(a.attname::text order by k.ord) from unnest(c.conkey) with ordinality k(attnum, ord)
+                join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum) colunas, i.indnullsnotdistinct nnd
+         from pg_constraint c join pg_index i on i.indexrelid = c.conindid
+        where c.conname = 'uq_analises_satelitais_janela' and c.conrelid = 'erp.analises_satelitais'::regclass`)).rows;
+    expect(r).toEqual([{ colunas: [...UQ_JANELA_0052, "data_alvo"], nnd: true }]);
+  });
+
+  it("v1 (data_alvo nula) repetida na mesma janela continua recusada (inclusive pelo on conflict da SAT-01); v2 com datas alvo diferentes convivem; a mesma data alvo → 23505; data alvo fora da janela → 23514", async () => {
+    // Tudo numa transação DESFEITA: análise é imutável, e linhas que a 0052 recusaria impediriam a volta do DB-8.
+    const c = await db.connect();
+    const recusa = async (sql: Promise<unknown>) => {
+      await c.query("savepoint s");
+      const e = await erroDe(sql);
+      await c.query("rollback to savepoint s");
+      return [e.code, e.constraint];
+    };
+    const v = (dataAlvo: string | null) => inserirAnalise(c, { empresa: B, area: areaB, janelaInicio: "2026-05-01T00:00:00Z", novas: { item: null, resolucao: null, evalscript: null, dataAlvo } });
+    try {
+      await c.query("begin");
+      // A janela: 2026-05-01 00:00Z até 2026-05-31 00:00Z (exclusiva) — os dias 01..30.
+      expect((await inserirAnalise(c, { empresa: B, area: areaB, janelaInicio: "2026-05-01T00:00:00Z" })).rowCount, "a v1, sem data alvo").toBe(1);
+      expect(await recusa(inserirAnalise(c, { empresa: B, area: areaB, janelaInicio: "2026-05-01T00:00:00Z" })), "v1 repetida").toEqual(["23505", "uq_analises_satelitais_janela"]);
+      expect(await recusa(v(null)), "data alvo nula explícita = a mesma chave da v1 (NULLS NOT DISTINCT)").toEqual(["23505", "uq_analises_satelitais_janela"]);
+      // O caminho da SAT-01: on conflict on constraint uq_analises_satelitais_janela do nothing → 0 linhas.
+      const h = await hashDe(areaB);
+      const viaSat01 = await c.query(
+        `insert into erp.analises_satelitais (organization_id, empresa_id, area_id, provedor, colecao, indice, versao_metodo, geometria_sha256,
+           janela_inicio, janela_fim, resolucao_m, situacao, motivo_qualidade, criado_por)
+         values ($1,$2,$3,'copernicus_cdse','sentinel-2-l2a','ndvi','ndvi-v2',$4,'2026-05-01T00:00:00Z','2026-05-31T00:00:00Z',10,'sem_observacao_util','sem_aquisicao',$5)
+         on conflict on constraint uq_analises_satelitais_janela do nothing`, [demo.orgId, B, areaB, h, demo.adminUserId]);
+      expect(viaSat01.rowCount, "on conflict da SAT-01 continua reaproveitando").toBe(0);
+      // v2: datas alvo diferentes na MESMA janela convivem com a v1 e entre si.
+      expect((await v("2026-05-10")).rowCount).toBe(1);
+      expect((await v("2026-05-01")).rowCount, "o primeiro dia da janela").toBe(1);
+      expect((await v("2026-05-30")).rowCount, "o último dia da janela").toBe(1);
+      expect(await recusa(v("2026-05-10")), "a mesma data alvo").toEqual(["23505", "uq_analises_satelitais_janela"]);
+      expect(await recusa(v("2026-05-31")), "o fim é exclusivo").toEqual(["23514", "chk_analises_satelitais_data_alvo"]);
+      expect(await recusa(v("2026-04-30")), "antes da janela").toEqual(["23514", "chk_analises_satelitais_data_alvo"]);
+      expect((await c.query("select count(*)::int n from erp.analises_satelitais where area_id=$1 and janela_inicio='2026-05-01T00:00:00Z'", [areaB])).rows[0])
+        .toEqual({ n: 4 });
+    } finally { await c.query("rollback").catch(() => {}); c.release(); }
+    expect((await db.query("select 1 from erp.analises_satelitais where area_id=$1 and janela_inicio='2026-05-01T00:00:00Z'", [areaB])).rowCount, "nada ficou").toBe(0);
+  });
+});
+
 describe("DB-8 (b) — a 0053 DESCE pelo SQL reverso e SOBE de novo", () => {
+  it("FAIL-CLOSED: com duas análises na mesma janela e datas alvo diferentes (só a 0053 permite), a volta para inteira (23505) e nada muda", async () => {
+    const c = await db.connect();
+    try {
+      await c.query("begin");
+      await inserirAnalise(c, { empresa: B, area: areaB, janelaInicio: "2026-04-01T00:00:00Z" });
+      await inserirAnalise(c, { empresa: B, area: areaB, janelaInicio: "2026-04-01T00:00:00Z", novas: { item: null, resolucao: null, evalscript: null, dataAlvo: "2026-04-05" } });
+      const e = await erroDe(c.query(SQL_REVERSO));
+      expect([e.code, e.constraint]).toEqual(["23505", "uq_analises_satelitais_janela"]);
+    } finally { await c.query("rollback").catch(() => {}); c.release(); }
+    expect(await retratoCatalogo()).toEqual(catalogo0053);
+  });
+
   it("o SQL reverso volta o catálogo EXATAMENTE ao da 0052 (com linhas nas tabelas novas e análise apontando para item); as análises antigas não mudam", async () => {
     // Premissa: o retrato distingue os dois estados (senão a igualdade abaixo não provaria nada).
     expect(catalogo0053).not.toEqual(catalogo0052);
