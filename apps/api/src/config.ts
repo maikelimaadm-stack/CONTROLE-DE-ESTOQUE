@@ -1,6 +1,21 @@
 import { z } from "zod";
 import { sufixosDePreview } from "./lib/cors-origem.js";
 
+/**
+ * Inteiro OPCIONAL de variável de ambiente, na forma canônica (só dígitos, sem zero à esquerda) e dentro da faixa.
+ * AUSENTE (ou vazio) = `undefined` (quem usa aplica o padrão). Qualquer outra coisa (`1e2`, `0x2`, ` 3`, `-1`, `10.0`,
+ * fora da faixa) DERRUBA O STARTUP, e a mensagem não repete o valor recebido.
+ */
+const inteiroDeAmbiente = (minimo: number, maximo: number) => z.string().optional().transform((valor, ctx) => {
+  if (valor === undefined || valor === "") return undefined;
+  const n = /^[1-9]\d{0,8}$/.test(valor) ? Number(valor) : NaN;
+  if (!(n >= minimo && n <= maximo)) {
+    ctx.addIssue({ code: "custom", message: `use um inteiro de ${minimo} a ${maximo}, só dígitos, ou deixe ausente` });
+    return z.NEVER;
+  }
+  return n;
+});
+
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().default(3333),
@@ -85,6 +100,27 @@ const schema = z.object({
    */
   COPERNICUS_CLIENT_ID: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
   COPERNICUS_CLIENT_SECRET: z.string().optional().transform((v) => (v && v.trim() ? v.trim() : undefined)),
+  /**
+   * EXECUTOR DA FILA SATELITAL (SAT-03, decisão 296): consome `erp.satelite_consulta_itens` dentro do processo da API.
+   * `1` liga; `0` ou AUSENTE desliga — DESLIGADO é o padrão (efeito novo nasce desligado, decisão 240). Desligado, a API
+   * sobe igual e as consultas ficam na fila, sem gasto. Mesmo contrato fechado do COPERNICUS_ENABLED: valor fora de
+   * `0`/`1` DERRUBA O STARTUP. Ligado sem COPERNICUS_ENABLED=1 ou sem credencial, o executor não reserva nada.
+   */
+  SATELITE_WORKER_ENABLED: z.string().optional().superRefine((valor, ctx) => {
+    if (valor !== undefined && valor !== "0" && valor !== "1") {
+      ctx.addIssue({ code: "custom", message: "use 1 para ligar ou 0 (ou ausente) para desligar" });
+    }
+  }).transform((valor) => valor === "1"),
+  /** Segundos entre as rodadas do executor (1–3600). AUSENTE = o padrão de `lib/satelite/limites.ts`. Fora disso derruba o startup. */
+  SATELITE_WORKER_INTERVALO_S: inteiroDeAmbiente(1, 3600),
+  /**
+   * Limites GLOBAIS de chamada ao Copernicus (todas as réplicas), números em `lib/satelite/limites.ts`. AUSENTE = o
+   * padrão de lá; definido, troca o padrão. Inteiro canônico ≥ 1 — fora disso DERRUBA O STARTUP (um limite digitado
+   * errado não pode virar "sem limite"). Os valores certos dependem da conta: confirmar no painel do Copernicus.
+   */
+  SATELITE_LIMITE_SIMULTANEAS: inteiroDeAmbiente(1, 1000),
+  SATELITE_LIMITE_MINUTO_CONTA: inteiroDeAmbiente(1, 100_000),
+  SATELITE_LIMITE_MINUTO_ORG: inteiroDeAmbiente(1, 100_000),
   /** tentativas de login por IP por minuto (proteção contra força bruta) */
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10)
 });
