@@ -6,7 +6,9 @@ import { ClienteCopernicus, ENDERECOS_COPERNICUS, FalhaCopernicus, type Registro
 /**
  * SAT-03 (decisão 296) — o cabeçalho `x-processingunits-spent` exposto pelo cliente do Copernicus, sobre HTTP FALSO.
  * Prova: o PU da resposta 2xx que VALEU sai bruto (presente, ausente, depois de um 5xx repetido, depois de um 401 com
- * token renovado); `estatistica` continua devolvendo só o corpo; nada além do cabeçalho sai — nem segredo, nem token.
+ * token renovado); 2xx com corpo ilegível vira `resposta_malformada` COM o PU (`puCabecalho` presente = cobrada), e
+ * nenhuma outra falha o carrega; `estatistica` continua devolvendo só o corpo; nada além do cabeçalho sai — nem segredo,
+ * nem token.
  */
 
 const SEGREDO = "segredo-sat03-NAO-PODE-VAZAR";
@@ -14,7 +16,7 @@ const TOKEN = "token-sat03-NAO-PODE-VAZAR";
 const TOKEN_HOST = ENDERECOS_COPERNICUS.token.host;
 const API_HOST = ENDERECOS_COPERNICUS.estatistica.host;
 
-type Resp = { status: number; body?: unknown; pu?: string; retryAfter?: string } | "rede";
+type Resp = { status: number; body?: unknown; pu?: string; retryAfter?: string; quebrado?: boolean } | "rede";
 
 /** HTTP falso: fila de respostas por host; o cabeçalho de PU só existe quando a resposta o declara. */
 function falso(rotas: Record<string, Resp[]>) {
@@ -27,7 +29,7 @@ function falso(rotas: Record<string, Resp[]>) {
     return {
       status: r.status,
       headers: { get: (n: string) => (n === "x-processingunits-spent" ? r.pu ?? null : n === "retry-after" ? r.retryAfter ?? null : null) },
-      json: async () => r.body ?? null
+      json: async () => { if (r.quebrado) throw new SyntaxError("json"); return r.body ?? null; }
     };
   };
   return { buscar, pedidos };
@@ -59,6 +61,15 @@ describe("SAT-03 enviarPost — o cabeçalho de PU, bruto, só quando veio", () 
     const sem = await enviarPost(falso({ "e.test": [{ status: 200, body: { ok: 1 } }] }).buscar, "e.test", "/", "", {}, 1000);
     expect(sem).toStrictEqual({ tipo: "ok", status: 200, corpo: { ok: 1 }, tentarAposSegundos: null });
     expect(Object.keys(sem)).not.toContain("processingUnits");
+  });
+  it("2xx com corpo ilegível: a falha `corpo` carrega o PU quando ele veio (e só então)", async () => {
+    const com = await enviarPost(falso({ "e.test": [{ status: 200, quebrado: true, pu: "0.3" }] }).buscar, "e.test", "/", "", {}, 1000);
+    expect(com).toStrictEqual({ tipo: "falha", motivo: "corpo", status: 200, processingUnits: "0.3" });
+    const sem = await enviarPost(falso({ "e.test": [{ status: 200, quebrado: true }] }).buscar, "e.test", "/", "", {}, 1000);
+    expect(sem).toStrictEqual({ tipo: "falha", motivo: "corpo", status: 200 });
+    // 5xx com corpo ilegível não é falha de corpo (continua ok com corpo nulo, para o adaptador classificar)
+    const cinco = await enviarPost(falso({ "e.test": [{ status: 502, quebrado: true, pu: "1" }] }).buscar, "e.test", "/", "", {}, 1000);
+    expect(cinco).toMatchObject({ tipo: "ok", status: 502, corpo: null });
   });
   it("o valor sai como veio, sem tradução: quem valida é consumo.ts", async () => {
     const r = await enviarPost(falso({ "e.test": [{ status: 200, body: {}, pu: "1e2" }] }).buscar, "e.test", "/", "", {}, 1000);
@@ -100,6 +111,34 @@ describe("SAT-03 ClienteCopernicus.estatisticaComConsumo — o PU da resposta 2x
     expect((falha as FalhaCopernicus).tipo).toBe("indisponivel");
     expect(JSON.stringify(falha)).not.toMatch(/processingunits|puCabecalho/i);
     semSegredo(falha, t.registros);
+  });
+  it("2xx com corpo ilegível → resposta_malformada COM puCabecalho (o bruto, ou null se não veio): a chamada foi cobrada", async () => {
+    const com = cliente({ [TOKEN_HOST]: [tokenOk()], [API_HOST]: [{ status: 200, quebrado: true, pu: "0.3" }] });
+    let f: unknown;
+    try { await com.c.estatisticaComConsumo({}, com.registrar); } catch (e) { f = e; }
+    expect(f).toBeInstanceOf(FalhaCopernicus);
+    expect([(f as FalhaCopernicus).tipo, (f as FalhaCopernicus).status, (f as FalhaCopernicus).puCabecalho]).toEqual(["resposta_malformada", 200, "0.3"]);
+    semSegredo(f, com.registros);
+    const sem = cliente({ [TOKEN_HOST]: [tokenOk()], [API_HOST]: [{ status: 200, quebrado: true }] });
+    try { await sem.c.estatisticaComConsumo({}); } catch (e) { f = e; }
+    expect((f as FalhaCopernicus).puCabecalho).toBeNull();
+    expect("puCabecalho" in (f as object) && (f as FalhaCopernicus).puCabecalho !== undefined).toBe(true);
+  });
+  it("falha SEM 2xx (5xx, 4xx, 401, rede, token malformado) nunca carrega puCabecalho: o provedor não cobrou", async () => {
+    const casos: Record<string, Resp[]>[] = [
+      { [TOKEN_HOST]: [tokenOk()], [API_HOST]: [{ status: 500, pu: "1" }, { status: 500, pu: "1" }] },
+      { [TOKEN_HOST]: [tokenOk()], [API_HOST]: [{ status: 400, pu: "1" }] },
+      { [TOKEN_HOST]: [tokenOk(), tokenOk()], [API_HOST]: [{ status: 401, pu: "1" }, { status: 401, pu: "1" }] },
+      { [TOKEN_HOST]: [tokenOk()], [API_HOST]: ["rede", "rede"] },
+      { [TOKEN_HOST]: [{ status: 200, body: { sem: "token" }, pu: "1" }] }
+    ];
+    for (const rotas of casos) {
+      const t = cliente(rotas);
+      let f: unknown;
+      try { await t.c.estatisticaComConsumo({}); } catch (e) { f = e; }
+      expect(f).toBeInstanceOf(FalhaCopernicus);
+      expect((f as FalhaCopernicus).puCabecalho, (f as FalhaCopernicus).tipo).toBeUndefined();
+    }
   });
   it("`estatistica` continua devolvendo SÓ o corpo (mesma assinatura, mesmo comportamento)", async () => {
     const t = cliente({ [TOKEN_HOST]: [tokenOk()], [API_HOST]: [estat("0.9")] });

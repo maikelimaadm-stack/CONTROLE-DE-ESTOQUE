@@ -12,11 +12,12 @@ import type { BuscarFn } from "../consultas/http.js";
 
 /**
  * `processingUnits` (SAT-03, decisão 296): o valor BRUTO do cabeçalho `x-processingunits-spent` (o PU que o provedor
- * cobrou pela chamada), PRESENTE só quando o cabeçalho veio. Não é segredo; quem o lê e valida é `consumo.ts`.
+ * cobrou pela chamada), PRESENTE só quando o cabeçalho veio. Não é segredo; quem o lê e valida é `consumo.ts`. Vem
+ * também na falha `corpo` (2xx com corpo ilegível): a resposta foi 2xx, e a chamada foi cobrada do mesmo jeito.
  */
 export type RespostaEnvio =
   | { tipo: "ok"; status: number; corpo: unknown; tentarAposSegundos: number | null; processingUnits?: string }
-  | { tipo: "falha"; motivo: "tempo" | "rede" | "redirecionamento" | "corpo"; status?: number };
+  | { tipo: "falha"; motivo: "tempo" | "rede" | "redirecionamento" | "corpo"; status?: number; processingUnits?: string };
 
 /**
  * `Retry-After` em segundos (número inteiro ou data HTTP). Ausente, ilegível ou no passado → null: quem chama
@@ -51,12 +52,12 @@ export async function enviarPost(buscar: BuscarFn, host: string, caminho: string
       return { tipo: "falha", motivo: controle.signal.aborted ? "tempo" : "rede" };
     }
     if (r.status >= 300 && r.status < 400) return { tipo: "falha", motivo: "redirecionamento", status: r.status };
+    const pu = r.headers.get("x-processingunits-spent");
     let json: unknown = null;
     try { json = await r.json(); } catch {
       if (controle.signal.aborted) return { tipo: "falha", motivo: "tempo", status: r.status };
-      if (r.status < 300) return { tipo: "falha", motivo: "corpo", status: r.status };
+      if (r.status < 300) return { tipo: "falha", motivo: "corpo", status: r.status, ...(pu !== null ? { processingUnits: pu } : {}) };
     }
-    const pu = r.headers.get("x-processingunits-spent");
     return { tipo: "ok", status: r.status, corpo: json, tentarAposSegundos: segundosDoRetryAfter(r.headers.get("retry-after"), agoraMs()), ...(pu !== null ? { processingUnits: pu } : {}) };
   } finally { clearTimeout(timer); }
 }

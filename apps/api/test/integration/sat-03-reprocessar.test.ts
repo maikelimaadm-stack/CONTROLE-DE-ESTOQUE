@@ -5,7 +5,7 @@ import { createPool, type Db } from "@agro/db";
 import { D } from "@agro/shared";
 import { buildApp } from "../../src/server.js";
 import type { BuscarFn } from "../../src/lib/consultas/http.js";
-import { MSG_CONSULTA_CANCELADA, MSG_CONSULTA_NAO_ENCONTRADA } from "../../src/routes/satelite-consultas.js";
+import { MSG_CONSULTA_CANCELADA, MSG_CONSULTA_NAO_ENCONTRADA, MSG_EXCEDE_ORCAMENTO } from "../../src/routes/satelite-consultas.js";
 import { TEST_URL, configDeTeste, harness, type Harness } from "./setup.js";
 
 /**
@@ -14,7 +14,8 @@ import { TEST_URL, configDeTeste, harness, type Harness } from "./setup.js";
  * concluído, reaproveitado, pendente e em execução intactos; chave já viva noutro item → 'reaproveitado' (nenhum item
  * vivo duplicado, nem com duas chamadas ao mesmo tempo); contadores e situação recalculados; corpo e query estritos;
  * a MESMA 404 da SAT-02 (outra organização, inexistente, malformado, fora do escopo, empresa selecionada); 403 sem a
- * capacidade; nenhuma chamada ao provedor. (10) o saldo da prévia da SAT-02 ignora a linha de consumo com crédito nulo.
+ * capacidade; nenhuma chamada ao provedor; com orçamento, reabrir que passa do saldo do mês → o 422 da criação e nada
+ * muda. (10) o saldo da prévia da SAT-02 ignora a linha de consumo com crédito nulo.
  */
 
 const quadrado = (lon: number, lat: number, lado: number) =>
@@ -270,8 +271,53 @@ describe("SAT-03 reprocessar falhas — contrato estrito, a mesma 404, 403", () 
   });
 });
 
+const mes = () => { const d = new Date(); return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString().slice(0, 10); };
+
+describe("SAT-03 reprocessar falhas — barrado pelo saldo do mês (decisão do Maike)", () => {
+  let D_ = ""; let areaD = "";
+  beforeAll(async () => {
+    D_ = (await admin.query<{ id: string }>("insert into erp.empresas (organization_id, code, name) values ($1, 92, '[TEST] Empresa orçamento reprocessar SAT-03') returning id", [h.demo.orgId])).rows[0]!.id;
+    areaD = await novaArea(h.demo.orgId, D_, "SAT03R-d1");
+  });
+  const consumoDe = (consultaId: string | null, creditos: string) => admin.query(
+    `insert into erp.satelite_consumo (organization_id, empresa_id, consulta_id, operacao, pu_gasto, creditos, origem_cabecalho)
+     values ($1, $2, $3, 'statistical', $4::numeric / 100, $4, 'teste')`, [h.demo.orgId, D_, consultaId, creditos]);
+
+  it("orçamento apertado: o que a consulta voltaria a reservar (estimativa − gasto dela) passa do saldo SEM ela → o 422 da criação e NADA muda; com folga, reabre", async () => {
+    await admin.query("insert into erp.satelite_orcamentos (organization_id, empresa_id, mes_referencia, limite_creditos) values ($1,$2,$3,'20.00')", [h.demo.orgId, D_, mes()]);
+    const id = await novaConsulta(h.demo.orgId, D_, "concluida_com_falhas", { itens: 2, concluidos: 1, falhos: 1 }, "30.00");
+    await novoItem(id, h.demo.orgId, D_, { situacao: "concluido", tentativas: 1, rodada: 1, areaId: areaD });
+    const falho = await novoItem(id, h.demo.orgId, D_, { situacao: "falho", tentativas: 3, rodada: 3, erro: "rede", areaId: areaD });
+    await consumoDe(id, "5.00"); // a consulta já gastou 5.00 (no mês): voltaria a reservar 30 − 5 = 25; saldo sem ela = 20 − 5 = 15
+    const [consultaAntes, itensAntes] = [await linhaConsulta(id), await itens(id)];
+    const r = await reprocessar(id);
+    expect(r.statusCode, r.body).toBe(422);
+    expect(j<Erro>(r).error).toEqual({ code: "VALIDATION_ERROR", message: MSG_EXCEDE_ORCAMENTO, details: { reserva_creditos: "25.00", saldo_creditos_mes: "15.00" } });
+    expect(await linhaConsulta(id), "nenhum contador, nenhuma situação").toEqual(consultaAntes);
+    expect(await itens(id), "nenhum item").toEqual(itensAntes);
+
+    // Exatamente o saldo (25 ≤ 25) passa: o teto é "acima do saldo".
+    await admin.query("update erp.satelite_orcamentos set limite_creditos='30.00' where organization_id=$1 and empresa_id=$2", [h.demo.orgId, D_]);
+    const ok = await reprocessar(id);
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(j<Resposta>(ok)).toMatchObject({ reprocessados: 1, reaproveitados: 0, consulta: { situacao: "executando", total_falhos: 0 } });
+    expect((await porId(id))[falho]).toMatchObject({ situacao: "pendente", tentativas_rodada: 0 });
+  });
+
+  it("só reaproveitados (nada volta vivo) não reabre a consulta: passa mesmo sem saldo", async () => {
+    await admin.query("update erp.satelite_orcamentos set limite_creditos='0.00' where organization_id=$1 and empresa_id=$2", [h.demo.orgId, D_]);
+    const chave = chaveNova();
+    const viva = await novaConsulta(h.demo.orgId, D_, "pendente", { itens: 1 }, "0.00");
+    await novoItem(viva, h.demo.orgId, D_, { situacao: "pendente", chave, areaId: areaD });
+    const id = await novaConsulta(h.demo.orgId, D_, "concluida_com_falhas", { itens: 1, falhos: 1 }, "50.00");
+    await novoItem(id, h.demo.orgId, D_, { situacao: "falho", chave, tentativas: 3, rodada: 3, erro: "rede", areaId: areaD });
+    const r = await reprocessar(id);
+    expect(r.statusCode, r.body).toBe(200);
+    expect(j<Resposta>(r)).toMatchObject({ reprocessados: 0, reaproveitados: 1, consulta: { situacao: "concluida" } });
+  });
+});
+
 describe("SAT-03 (10) — o saldo da prévia da SAT-02 ignora o consumo com crédito NULO", () => {
-  const mes = () => { const d = new Date(); return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).toISOString().slice(0, 10); };
   const previa = async () => {
     const r = await api.inject({ method: "POST", url: "/api/satelite/consultas", headers: h.headers({ "content-type": "application/json" }),
       payload: JSON.stringify({ alvo: { tipo: "areas", area_ids: [area["c1"]] }, periodo: { tipo: "data", data: "2026-08-15", tolerancia_dias: 5 }, indices: ["ndvi"], confirmar: false }) });

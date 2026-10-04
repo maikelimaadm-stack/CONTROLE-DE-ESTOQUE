@@ -4,6 +4,7 @@ import { createPool, type Db } from "@agro/db";
 import { buildApp } from "../../src/server.js";
 import type { BuscarFn } from "../../src/lib/consultas/http.js";
 import { ENDERECOS_COPERNICUS } from "../../src/lib/satelite/copernicus.js";
+import { TENTATIVAS_AVULSAS_POR_MINUTO_INSTANCIA } from "../../src/lib/satelite/limites.js";
 import { MSG_AREA_NAO_ENCONTRADA, MSG_LIMITE_ANALISES } from "../../src/routes/analises-satelitais.js";
 import { TEST_URL, configDeTeste, harness, type Harness } from "./setup.js";
 
@@ -49,7 +50,8 @@ const instancias: FastifyInstance[] = [];
 /**
  * Desde a SAT-03 (decisão 296) o limite de chamadas é GLOBAL, contado pelo banco (ledger do último minuto + itens em
  * execução): instância nova não zera nada. As instâncias gerais desta suíte sobem com tetos altos, para um bloco não
- * esgotar o limite do outro; o limite tem teste próprio, com tetos próprios (aqui e em sat-03-sat01-limite-consumo).
+ * esgotar o limite do outro; o limite tem teste próprio, com tetos próprios (aqui e em sat-03-sat01-limite-consumo). O
+ * PISO por instância em tentativas por minuto continua (é por instância: cada bloco começa com a sua).
  */
 const TETOS_ALTOS = { SATELITE_LIMITE_MINUTO_CONTA: "100000", SATELITE_LIMITE_MINUTO_ORG: "100000", SATELITE_LIMITE_SIMULTANEAS: "1000" };
 const CREDENCIAL_FALSA = { COPERNICUS_ENABLED: "1", COPERNICUS_CLIENT_ID: ID_FALSO, COPERNICUS_CLIENT_SECRET: SEGREDO_FALSO, ...TETOS_ALTOS };
@@ -317,14 +319,23 @@ describe("SAT-01 POST — recusas antes de qualquer chamada ao provedor", () => 
     expect(ultima.statusCode).toBe(200);
     expect(j(ultima).analise.id).toBe(antiga);
   });
-  it("limite do ERP (global desde a SAT-03, contado pelo banco): recusa do provedor não gasta cota; com o ledger da organização no teto do último minuto, a seguinte → 429 sem chamar", async () => {
-    const TETO_ORG = 50; const RECUSAS = 10;
+  it(`limite do ERP (piso por instância): ${TENTATIVAS_AVULSAS_POR_MINUTO_INSTANCIA} tentativas ao provedor por minuto por organização, mesmo recusadas; a seguinte → 429 sem chamar`, async () => {
+    const instancia = await buildApp({ config: configDeTeste(CREDENCIAL_FALSA), db: h.db, logger: false, buscarExterno });
+    try {
+      chamadas.length = 0;
+      roteiro = Array.from({ length: TENTATIVAS_AVULSAS_POR_MINUTO_INSTANCIA }, () => ({ status: 400 }));
+      for (let i = 0; i < TENTATIVAS_AVULSAS_POR_MINUTO_INSTANCIA; i++) expect((await pedir(instancia, area["limite"]!)).statusCode).toBe(503);
+      const r = await pedir(instancia, area["limite"]!);
+      expect(r.statusCode, r.body).toBe(429);
+      expect(j(r)).toEqual({ error: { code: "RATE_LIMITED", message: MSG_LIMITE_ANALISES, details: { motivo: "limite_erp" } } });
+      expect(naApi()).toHaveLength(TENTATIVAS_AVULSAS_POR_MINUTO_INSTANCIA);
+    } finally { await instancia.close(); }
+  });
+  it("limite do ERP (global desde a SAT-03, contado pelo banco): com o ledger da organização no teto do último minuto, instância NOVA (piso zerado) → 429 sem chamar", async () => {
+    const TETO_ORG = 50;
     const instancia = await buildApp({ config: configDeTeste({ ...CREDENCIAL_FALSA, SATELITE_LIMITE_MINUTO_ORG: String(TETO_ORG) }), db: h.db, logger: false, buscarExterno });
     try {
       chamadas.length = 0;
-      roteiro = Array.from({ length: RECUSAS }, () => ({ status: 400 }));
-      for (let i = 0; i < RECUSAS; i++) expect((await pedir(instancia, area["limite"]!)).statusCode).toBe(503);
-      expect(naApi()).toHaveLength(RECUSAS);
       // O teto da organização no ledger do último minuto (linhas recentes; o que já havia só soma).
       await admin.query(
         `insert into erp.satelite_consumo (organization_id, empresa_id, operacao, pu_gasto, creditos, origem_cabecalho)
@@ -332,7 +343,7 @@ describe("SAT-01 POST — recusas antes de qualquer chamada ao provedor", () => 
       const r = await pedir(instancia, area["limite"]!);
       expect(r.statusCode, r.body).toBe(429);
       expect(j(r)).toEqual({ error: { code: "RATE_LIMITED", message: MSG_LIMITE_ANALISES, details: { motivo: "limite_erp" } } });
-      expect(naApi()).toHaveLength(RECUSAS);
+      expect(naApi()).toHaveLength(0);
     } finally { await instancia.close(); }
   });
 });

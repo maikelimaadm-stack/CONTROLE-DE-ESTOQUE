@@ -249,7 +249,7 @@ async function chavesVivas(ctx: ServiceCtx, chaves: readonly string[]): Promise<
  * mês. Uma consulta SQL, com o escopo de empresa em CADA ocorrência de tabela (orçamento, consumo do mês, consultas e
  * consumo de cada consulta).
  */
-async function saldoDoMes(ctx: ServiceCtx, empresaId: string, agora: Date): Promise<string | null> {
+async function saldoDoMes(ctx: ServiceCtx, empresaId: string, agora: Date, semConsulta?: string): Promise<string | null> {
   const inicio = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), 1));
   const fim = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth() + 1, 1));
   const params: unknown[] = [ctx.orgId, empresaId, inicio.toISOString().slice(0, 10), inicio, fim];
@@ -257,6 +257,9 @@ async function saldoDoMes(ctx: ServiceCtx, empresaId: string, agora: Date): Prom
   const escopoConsumo = empresaScopeSql(ctx, "c", params);
   const escopoReserva = empresaScopeSql(ctx, "s", params);
   const escopoGastoDaConsulta = empresaScopeSql(ctx, "cc", params);
+  // `semConsulta`: o saldo SEM a reserva desta consulta (o "reprocessar falhas" compara com o que ela voltaria a reservar).
+  let exclusao = "";
+  if (semConsulta) { params.push(semConsulta); exclusao = ` and s.id <> $${params.length}`; }
   const r = await ctx.tx.query<{ saldo: string }>(
     `select o.limite_creditos
             - (select coalesce(sum(c.creditos), 0) from erp.satelite_consumo c
@@ -267,11 +270,25 @@ async function saldoDoMes(ctx: ServiceCtx, empresaId: string, agora: Date): Prom
                    select coalesce(sum(cc.creditos), 0) as gasto from erp.satelite_consumo cc
                     where cc.organization_id = $1 and cc.empresa_id = $2 and cc.consulta_id = s.id${escopoGastoDaConsulta}
                  ) g
-                where s.organization_id = $1 and s.empresa_id = $2 and s.situacao in (${listaSql(SITUACOES_QUE_RESERVAM)})${escopoReserva}) as saldo
+                where s.organization_id = $1 and s.empresa_id = $2 and s.situacao in (${listaSql(SITUACOES_QUE_RESERVAM)})${escopoReserva}${exclusao}) as saldo
        from erp.satelite_orcamentos o
       where o.organization_id = $1 and o.empresa_id = $2 and o.mes_referencia = $3${escopoOrcamento}`, params);
   if (r.rows.length > 1) throw new Error("orçamento satelital: mais de uma linha para o mês");
   return r.rows[0]?.saldo ?? null;
+}
+
+/** O que a consulta reserva quando está aberta: greatest(estimativa − o já gasto por ela em qualquer mês, 0) — a regra do saldo. */
+async function reservaDaConsulta(ctx: ServiceCtx, consulta: LinhaConsulta): Promise<string> {
+  const params: unknown[] = [ctx.orgId, consulta.empresa_id, consulta.id];
+  const escopoConsulta = empresaScopeSql(ctx, "s", params);
+  const escopoGasto = empresaScopeSql(ctx, "cc", params);
+  const r = await ctx.tx.query<{ reserva: string }>(
+    `select greatest(s.estimativa_creditos - (select coalesce(sum(cc.creditos), 0) from erp.satelite_consumo cc
+                                                where cc.organization_id = $1 and cc.empresa_id = $2 and cc.consulta_id = s.id${escopoGasto}), 0) as reserva
+       from erp.satelite_consultas s
+      where s.organization_id = $1 and s.empresa_id = $2 and s.id = $3${escopoConsulta}`, params);
+  if (r.rowCount !== 1) throw new Error("consulta satelital: a reserva da consulta não alcançou exatamente uma linha");
+  return r.rows[0]!.reserva;
 }
 
 const faixaDe = (itens: readonly ItemPlanejado[]): FaixaCreditos => (itens.length ? somarFaixas(itens.map((i) => i.faixa)) : FAIXA_ZERO);
@@ -467,6 +484,11 @@ export default async function sateliteConsultasRoutes(app: FastifyInstance) {
    * Na transação: a consulta travada (`for update`, no escopo) PRIMEIRO — duas chamadas na mesma consulta se
    * serializam, e o executor (que trava a consulta para fechar um item) espera —; depois a trava da fila da empresa (a
    * mesma da criação: a chave viva não nasce em duas escritas ao mesmo tempo). ROW COUNT conferido.
+   *
+   * ORÇAMENTO (decisão do Maike: barrar pelo saldo): reabrir faz a consulta voltar a reservar greatest(estimativa − o
+   * já gasto por ela, 0). Com orçamento no mês e essa reserva acima do saldo calculado SEM a própria consulta, o MESMO
+   * 422 da criação (MSG_EXCEDE_ORCAMENTO) e nada muda. Conferido sob a trava da fila, antes de qualquer escrita; só quando
+   * algum item volta vivo (só reaproveitados não reabrem nada).
    */
   app.post("/satelite/consultas/:id/reprocessar-falhas", async (req) => {
     exigir(app, req, PERMISSAO_PEDIR_ANALISE);
@@ -502,6 +524,13 @@ export default async function sateliteConsultasRoutes(app: FastifyInstance) {
       for (const l of f.rows) {
         if (l.viva || vivasAgora.has(l.chave_idempotencia)) { reaproveitar.push(l.id); continue; }
         vivasAgora.add(l.chave_idempotencia); reprocessar.push(l.id);
+      }
+      if (reprocessar.length) {
+        const reserva = await reservaDaConsulta(ctx, consulta);
+        const saldo = await saldoDoMes(ctx, consulta.empresa_id, new Date(), consulta.id);
+        if (saldo !== null && D(reserva).gt(0) && D(reserva).gt(D(saldo))) {
+          throw validation(MSG_EXCEDE_ORCAMENTO, { reserva_creditos: reserva, saldo_creditos_mes: saldo });
+        }
       }
 
       if (f.rows.length) {

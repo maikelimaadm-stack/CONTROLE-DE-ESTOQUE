@@ -5,7 +5,9 @@
  * (`ClienteCopernicus.estatisticaComConsumo`). Ele é LIDO aqui, na forma estrita, e nunca traduzido: `1e2`, `-1`,
  * `1,5`, `NaN`, espaço ou texto longo não viram número — a linha entra com o PAR NULO (pu e créditos) e a origem
  * dizendo por quê (`cabecalho_invalido`, ou `cabecalho_ausente` quando não veio). A chamada aconteceu e conta para o
- * limite global do mesmo jeito (a linha existe); só o custo fica desconhecido, e um nulo nunca vira zero numa soma.
+ * limite global do mesmo jeito (a linha existe); só o custo fica desconhecido. Ele nunca é GRAVADO como zero (a linha
+ * diz "não sei", não "foi de graça"), mas o saldo do orçamento soma só os créditos conhecidos: a linha nula fica fora da
+ * soma (`sum` ignora nulo), o que na prática a conta como custo zero no saldo — decisão do Maike.
  *
  * O CRÉDITO é calculado PELO BANCO, da mesma expressão do CHECK da 0053 (`creditos = round(pu_gasto × 100, 2)`), sobre
  * o PU já convertido para o tipo da coluna: os dois nunca divergem, e nenhum ponto flutuante passa pelo Node.

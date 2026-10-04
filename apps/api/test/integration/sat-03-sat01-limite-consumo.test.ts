@@ -6,7 +6,7 @@ import { buildApp } from "../../src/server.js";
 import type { BuscarFn } from "../../src/lib/consultas/http.js";
 import { ENDERECOS_COPERNICUS } from "../../src/lib/satelite/copernicus.js";
 import { classificarLimite } from "../../src/lib/satelite/limite-global.js";
-import { MSG_LIMITE_ANALISES, MSG_POLIGONO_MUDOU } from "../../src/routes/analises-satelitais.js";
+import { MSG_LIMITE_ANALISES, MSG_POLIGONO_MUDOU, MSG_PROVEDOR_INDISPONIVEL } from "../../src/routes/analises-satelitais.js";
 import { TEST_URL, configDeTeste, harness, type Harness } from "./setup.js";
 
 /**
@@ -15,7 +15,8 @@ import { TEST_URL, configDeTeste, harness, type Harness } from "./setup.js";
  * Prova: (14) a resposta é a da SAT-01, campo a campo (201 nova, 200 reutilizada sem chamada, 429 do limite, 409 do
  * polígono); análise e consumo nascem na MESMA transação (falha forçada no INSERT do ledger não deixa a análise); (e)
  * ledger do último minuto no teto (organização ou conta) ou itens 'executando' no teto de simultâneas → o 429 de sempre
- * SEM chamar o provedor; o PU do cabeçalho vai para o ledger — sem cabeçalho, ou inválido, o par nulo com a origem.
+ * SEM chamar o provedor; o PU do cabeçalho vai para o ledger — sem cabeçalho, ou inválido, o par nulo com a origem; 2xx
+ * cuja LEITURA falhou (processamento parcial, corpo fora do contrato, corpo ilegível) → o 503 de sempre E o consumo.
  */
 
 const TOKEN_HOST = ENDERECOS_COPERNICUS.token.host;
@@ -28,7 +29,8 @@ const TETOS_ALTOS = { SATELITE_LIMITE_MINUTO_CONTA: "100000", SATELITE_LIMITE_MI
 const CREDENCIAL_FALSA = { COPERNICUS_ENABLED: "1", COPERNICUS_CLIENT_ID: "id-falso-sat03", COPERNICUS_CLIENT_SECRET: "segredo-falso-sat03" };
 
 type CorpoEstat = { aggregation: { timeRange: { from: string; to: string } } };
-type Passo = { status: number; pu?: string; antes?: () => Promise<void> };
+/** Um passo do provedor falso: status, PU e, se dado, o corpo (senão um dia útil) ou um corpo ilegível. */
+type Passo = { status: number; pu?: string; antes?: () => Promise<void>; corpo?: unknown; quebrado?: boolean };
 const util = { min: 0.31, max: 0.88, mean: 0.72, stDev: 0.09, sampleCount: 13_000, noDataCount: 2_000 };
 /** Resposta da Statistical API com um dia útil 3 dias antes do fim da janela pedida. */
 function corpoUtil(corpo: CorpoEstat) {
@@ -48,7 +50,10 @@ const buscarExterno: BuscarFn = async (url, init) => {
   if (!passo) throw new Error("Statistical API chamada sem roteiro no teste");
   await passo.antes?.();
   const corpo = JSON.parse(init.body ?? "{}") as CorpoEstat;
-  return { status: passo.status, headers: { get: (n: string) => (n === "x-processingunits-spent" ? passo.pu ?? null : null) }, json: async () => corpoUtil(corpo) };
+  return {
+    status: passo.status, headers: { get: (n: string) => (n === "x-processingunits-spent" ? passo.pu ?? null : null) },
+    json: async () => { if (passo.quebrado) throw new SyntaxError("json"); return passo.corpo !== undefined ? passo.corpo : corpoUtil(corpo); }
+  };
 };
 
 let h: Harness;
@@ -104,7 +109,8 @@ beforeAll(async () => {
   h = await harness();
   admin = createPool(TEST_URL, { max: 3 });
   A = h.demo.empresaIds[0]!;
-  for (const nome of ["nova", "limite", "falhaTx", "mudou", "semPu", "puInvalido", "puValido", "corrida", "conta", "simult", "voo1", "voo2", "voo3", "voo4", "voo5"]) {
+  for (const nome of ["nova", "limite", "falhaTx", "mudou", "semPu", "puInvalido", "puValido", "corrida", "conta", "simult", "voo1", "voo2", "voo3", "voo4", "voo5",
+    "parcial", "malformada", "ilegivel", "ilegivelSemPu", "cincoxx", "saiuDoEscopo"]) {
     area[nome] = await novaArea(h.demo.orgId, A, `SAT03-${nome}`);
   }
   // Organização X: o administrador do harness é DONO dela também (o mesmo token, outro X-Org-Id). O ledger dela começa
@@ -314,6 +320,51 @@ describe("SAT-03 (e) — limite GLOBAL: no teto, o 429 de sempre SEM chamar o pr
     for (const quebrado of [Number.NaN, -1, 1.5]) {
       expect(() => classificarLimite({ conta_minuto: quebrado, conta_executando: 0, org_minuto: 0, org_executando: 0 }, l)).toThrow(/fora do formato/);
     }
+  });
+});
+
+describe("SAT-03 — 2xx cuja leitura falhou: o 503 de sempre E o consumo (a chamada foi cobrada)", () => {
+  let ligada: FastifyInstance;
+  beforeAll(async () => { ligada = await instancia(); });
+  const corpo503 = (motivo: string) => ({ error: { code: "CONSULTA_INDISPONIVEL", message: MSG_PROVEDOR_INDISPONIVEL, details: { motivo } } });
+  const casos: [string, Passo, string, Record<string, unknown>][] = [
+    ["parcial", { status: 200, pu: "0.6", corpo: { status: "OK", data: [{ error: { type: "EXECUTION_ERROR" } }] } }, "processamento_parcial",
+      { pu_gasto: "0.6000", creditos: "60.00", origem_cabecalho: "0.6" }],
+    ["malformada", { status: 200, pu: "0.7", corpo: { data: [{ interval: { from: "x" } }] } }, "resposta_malformada",
+      { pu_gasto: "0.7000", creditos: "70.00", origem_cabecalho: "0.7" }],
+    ["ilegivel", { status: 200, pu: "0.8", quebrado: true }, "resposta_malformada", { pu_gasto: "0.8000", creditos: "80.00", origem_cabecalho: "0.8" }],
+    ["ilegivelSemPu", { status: 200, quebrado: true }, "resposta_malformada", { pu_gasto: null, creditos: null, origem_cabecalho: "cabecalho_ausente" }]
+  ];
+  for (const [nome, passo, motivo, esperado] of casos) {
+    it(`${nome}: 503 \`${motivo}\` com o corpo de sempre, nenhuma análise, UMA linha no ledger (${JSON.stringify(esperado)})`, async () => {
+      chamadas.length = 0; const antes = await idsDoLedger();
+      roteiro = [passo];
+      const r = await pedir(ligada, area[nome]!);
+      expect(r.statusCode, r.body).toBe(503);
+      expect(r.json()).toStrictEqual(corpo503(motivo));
+      expect(naApi()).toHaveLength(1);
+      expect(await analises(area[nome]!)).toHaveLength(0);
+      const novas = await novasNoLedger(antes);
+      expect(novas).toHaveLength(1);
+      expect(novas[0]).toMatchObject({ organization_id: h.demo.orgId, empresa_id: A, consulta_id: null, consulta_item_id: null, operacao: "statistical", ...esperado });
+    });
+  }
+  it("falha SEM 2xx (5xx persistente): o 503 de sempre e NENHUMA linha no ledger (o provedor não cobrou)", async () => {
+    chamadas.length = 0; const antes = await idsDoLedger();
+    roteiro = [{ status: 500, pu: "1" }, { status: 502, pu: "1" }];
+    const r = await pedir(ligada, area["cincoxx"]!);
+    expect(r.statusCode, r.body).toBe(503);
+    expect(r.json()).toStrictEqual(corpo503("indisponivel"));
+    expect(naApi()).toHaveLength(2);
+    expect(await novasNoLedger(antes)).toEqual([]);
+  });
+  it("a área sai do escopo (excluída) durante a chamada que voltou 2xx ilegível: o 503 de sempre, e o consumo NÃO é gravado (não há empresa no escopo)", async () => {
+    const antes = await idsDoLedger();
+    roteiro = [{ status: 200, pu: "0.9", quebrado: true, antes: async () => { await admin.query("update erp.areas set deleted_at=now() where id=$1", [area["saiuDoEscopo"]]); } }];
+    const r = await pedir(ligada, area["saiuDoEscopo"]!);
+    expect(r.statusCode, r.body).toBe(503);
+    expect(r.json()).toStrictEqual(corpo503("resposta_malformada"));
+    expect(await novasNoLedger(antes)).toEqual([]);
   });
 });
 
