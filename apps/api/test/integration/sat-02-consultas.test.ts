@@ -15,7 +15,7 @@ import { lerPoligono, planejarGrade } from "../../src/lib/satelite/geometria.js"
 import { MSG_AREA_GRANDE, MSG_AREA_NAO_ENCONTRADA, MSG_AREA_PEQUENA, MSG_AREA_SEM_POLIGONO, MSG_POLIGONO_FORA_DO_FORMATO } from "../../src/routes/analises-satelitais.js";
 import {
   MSG_ALVO_SEM_AREAS, MSG_CONSULTA_NAO_ENCONTRADA, MSG_EXCEDE_ORCAMENTO, MSG_NENHUMA_AREA_ANALISAVEL, MSG_RETIRO_NAO_ENCONTRADO, MSG_VARIAS_EMPRESAS,
-  msgItensDemais
+  msgItensDemais, msgItensDemaisPeloMenos
 } from "../../src/routes/satelite-consultas.js";
 import { TEST_URL, configDeTeste, harness, type Harness } from "./setup.js";
 
@@ -100,9 +100,9 @@ async function contagens(): Promise<Record<string, number>> {
   const r = await admin.query(`select ${TABELAS_SATELITE.map((t) => `(select count(*) from erp.${t})::int as ${t}`).join(", ")}`);
   return r.rows[0] as Record<string, number>;
 }
-/** Chaves com MAIS de um item vivo (pendente/executando/concluído) — tem de ser sempre vazio. */
+/** Chaves com MAIS de um item vivo (pendente/executando/concluído) na organização — tem de ser sempre vazio. */
 async function chavesVivasDuplicadas() {
-  return (await admin.query("select chave_idempotencia from erp.satelite_consulta_itens where situacao in ('pendente','executando','concluido') group by 1 having count(*) > 1")).rows;
+  return (await admin.query("select organization_id, chave_idempotencia from erp.satelite_consulta_itens where situacao in ('pendente','executando','concluido') group by 1, 2 having count(*) > 1")).rows;
 }
 async function itensDaConsulta(consultaId: string) {
   return (await admin.query<{ id: string; area_id: string; situacao: string; chave_idempotencia: string; chave_idempotencia_origem: string; geometria_sha256: string;
@@ -416,6 +416,22 @@ describe("SAT-02 POST — alvo e áreas ignoradas", () => {
     expect(criada.statusCode, criada.body).toBe(201);
     expect(await itensDaConsulta(j<Criada>(criada).consulta.id)).toHaveLength(200);
   });
+
+  it("recusa barata, ANTES do banco: os slots × índices de UMA área já passam de 200 → 422 'pelo menos N', sem ler área nenhuma", async () => {
+    const longo: PeriodoConsulta = { tipo: "intervalo", de: "2018-01-01", ate: "2025-12-31", cadencia: "decendial" };
+    const n = slotsDoPeriodo(longo, hoje()).length;
+    expect(n, "premissa: uma área sozinha passa do teto").toBeGreaterThan(200);
+    const antes = await contagens();
+    // A área é de OUTRA organização: no caminho normal seria 404; aqui a recusa vem antes de qualquer leitura.
+    for (const alvo of [areasAlvo(area["x1"]!), TODAS, { tipo: "retiro" as const, retiro_id: randomUUID() }]) {
+      const { resultado: r, sqls } = await comEspiao(() => consultar(pedido(alvo, longo, true)));
+      expect(r.statusCode, r.body).toBe(422);
+      expect(j<Erro>(r).error).toEqual({ code: "VALIDATION_ERROR", message: msgItensDemaisPeloMenos(n), details: { total_itens_minimo: n, maximo: 200 } });
+      expect(j<Erro>(r).error.message).toContain(`pelo menos ${n} itens`);
+      expect(sqls.filter((sql) => /erp\.(areas|retiros|satelite_)/.test(sql)), "nenhuma leitura de área, retiro ou tabela satelite_*").toEqual([]);
+    }
+    expect(await contagens()).toEqual(antes);
+  });
 });
 
 describe("SAT-02 POST — orçamento do mês da empresa", () => {
@@ -475,6 +491,44 @@ describe("SAT-02 POST — orçamento do mês da empresa", () => {
     expect(j<Criada>(r).consulta.situacao).toBe("concluida");
     const nova = j<Previa>(await consultar(pedido(areasAlvo(area["c1"]!), P3)));
     expect(nova).toMatchObject({ novos: 1, excede_orcamento: true });
+  });
+
+  it("reserva = o que AINDA falta gastar das pendentes/executando de qualquer mês: pendente do mês anterior reserva; executando com consumo parcial reserva só o restante (sem contar duas vezes); gasto acima da estimativa não reserva negativo; cancelada não reserva; consumo de outro mês sem consulta não conta", async () => {
+    await admin.query("update erp.satelite_orcamentos set limite_creditos='1000.00' where organization_id=$1 and empresa_id=$2", [h.demo.orgId, C]);
+    const MES_ANTERIOR = "date_trunc('month', now()) - interval '10 days'";
+    const AGORA = "now()";
+    const saldo = async () => j<Previa>(await consultar(pedido(areasAlvo(area["c1"]!), P3))).saldo_creditos_mes;
+    const novaConsulta = async (situacao: string, estimativa: string, criadaEm: string) => (await admin.query<{ id: string }>(
+      `insert into erp.satelite_consultas (organization_id, empresa_id, criado_por, parametros, estimativa_creditos, estimativa_creditos_minima, situacao, total_itens, created_at)
+       values ($1, $2, $3, '{}'::jsonb, $4, 0, $5, 1, ${criadaEm}) returning id`, [h.demo.orgId, C, h.demo.adminUserId, estimativa, situacao])).rows[0]!.id;
+    const consumo = (consultaId: string | null, creditos: string, quando: string) => admin.query(
+      `insert into erp.satelite_consumo (organization_id, empresa_id, consulta_id, operacao, pu_gasto, creditos, created_at)
+       values ($1, $2, $3, 'statistical', $4::numeric / 100, $4, ${quando})`, [h.demo.orgId, C, consultaId, creditos]);
+    // Herdado dos testes anteriores: consumo do mês 100.00 (sem consulta); reserva = a consulta B (pendente, sem consumo).
+    const base = D("1000.00").minus("100.00").minus(reservaB);
+    expect(await saldo(), "premissa: o estado herdado").toBe(base.toFixed(2));
+
+    await novaConsulta("pendente", "10.00", MES_ANTERIOR);
+    expect(await saldo(), "pendente criada no mês anterior continua reservando").toBe(base.minus("10.00").toFixed(2));
+
+    const executando = await novaConsulta("executando", "40.00", AGORA);
+    await consumo(executando, "15.00", AGORA);
+    await consumo(executando, "5.00", MES_ANTERIOR);
+    // consumo do mês +15; reserva +max(40 − (15 + 5), 0) = 20 — os 15 gastos contam uma vez só
+    expect(await saldo(), "executando com consumo parcial").toBe(base.minus("10.00").minus("15.00").minus("20.00").toFixed(2));
+
+    const estourada = await novaConsulta("executando", "10.00", AGORA);
+    await consumo(estourada, "12.00", AGORA);
+    // consumo do mês +12; reserva +max(10 − 12, 0) = 0, nunca negativa
+    expect(await saldo(), "gasto acima da estimativa").toBe(base.minus("10.00").minus("15.00").minus("20.00").minus("12.00").toFixed(2));
+
+    await admin.query("update erp.satelite_consultas set situacao='cancelada', concluida_em=now() where id=$1", [executando]);
+    // a reserva dela (20) sai; o consumo do mês (15) fica
+    const semExecutando = base.minus("10.00").minus("15.00").minus("12.00");
+    expect(await saldo(), "cancelada não reserva").toBe(semExecutando.toFixed(2));
+
+    await consumo(null, "7.00", MES_ANTERIOR);
+    expect(await saldo(), "consumo de outro mês, sem consulta, não conta").toBe(semExecutando.toFixed(2));
   });
 });
 
@@ -571,11 +625,11 @@ describe("SAT-02 — capacidade × escopo, a mesma 404", () => {
       return total;
     }
     const casos: { nome: string; ocorrencias: number; chamar: () => Promise<{ statusCode: number; body: string }> }[] = [
-      // áreas (1) + chaves vivas (1) + orçamento, consumo e reserva (3)
-      { nome: "POST prévia, alvo áreas", ocorrencias: 5, chamar: () => consultar(pedido(areasAlvo(area["b1"]!), PERIODO_DATA), soB) },
-      { nome: "POST criação, alvo todas", ocorrencias: 5, chamar: () => consultar(pedido(TODAS, { tipo: "data", data: "2026-04-15", tolerancia_dias: 2 }, true), soB) },
+      // áreas (1) + chaves vivas (1) + orçamento, consumo do mês, reserva e consumo de cada consulta (4)
+      { nome: "POST prévia, alvo áreas", ocorrencias: 6, chamar: () => consultar(pedido(areasAlvo(area["b1"]!), PERIODO_DATA), soB) },
+      { nome: "POST criação, alvo todas", ocorrencias: 6, chamar: () => consultar(pedido(TODAS, { tipo: "data", data: "2026-04-15", tolerancia_dias: 2 }, true), soB) },
       // + o retiro (1)
-      { nome: "POST prévia, alvo retiro", ocorrencias: 6, chamar: () => consultar(pedido({ tipo: "retiro", retiro_id: retiro["B"]! }, PERIODO_DATA), soB) },
+      { nome: "POST prévia, alvo retiro", ocorrencias: 7, chamar: () => consultar(pedido({ tipo: "retiro", retiro_id: retiro["B"]! }, PERIODO_DATA), soB) },
       // consulta (1) + itens (1)
       { nome: "GET /:id", ocorrencias: 2, chamar: () => detalhe(deB, "", soB) },
       { nome: "GET lista", ocorrencias: 1, chamar: () => historico("", soB) }

@@ -33,14 +33,18 @@ import { MSG_AREA_NAO_ENCONTRADA, PERMISSAO_PEDIR_ANALISE, PERMISSAO_VER_ANALISE
  *
  * IDEMPOTÊNCIA: cada item (área × janela × índice) tem a chave `sha256(origemChaveIdempotencia(...))` — organização,
  * área, hash do polígono, índice, data alvo + janela e versão do método. Se a chave já tem item VIVO (pendente,
- * executando, concluído), o item novo nasce `reaproveitado` e custa zero. O banco garante um vivo por chave (índice
- * único parcial da 0053); a corrida entre duas criações cai no `on conflict do nothing` e o perdedor vira
+ * executando, concluído), o item novo nasce `reaproveitado` e custa zero. O banco garante um vivo por chave na
+ * organização (índice único parcial da 0053 em (organization_id, chave_idempotencia)); a corrida entre duas criações cai
+ * no `on conflict do nothing` e o perdedor vira
  * `reaproveitado`. A criação ainda toma `pg_advisory_xact_lock` por (organização, empresa) ANTES de ler as chaves e o
  * orçamento: duas criações da mesma empresa são serializadas, e a segunda enxerga a reserva da primeira.
  *
  * ORÇAMENTO (mês UTC, por empresa): limite (`erp.satelite_orcamentos`) − consumido (`erp.satelite_consumo` no mês) −
- * reservado (estimativa máxima das consultas pendentes/executando criadas no mês). Sem linha de orçamento = sem limite
- * (saldo nulo). Estimativa acima do saldo: a prévia avisa; a criação recusa (422) e nada é gravado.
+ * reservado. Reservado = o que as consultas pendentes/executando (de QUALQUER mês) ainda podem gastar: para cada uma,
+ * greatest(estimativa máxima − consumo já registrado DELA em qualquer mês, 0). Assim o gasto parcial de uma consulta em
+ * execução conta uma vez só (no consumo), e a pendente do mês anterior continua reservando no dia 1. Sem linha de
+ * orçamento = sem limite (saldo nulo). Estimativa NOVA acima do saldo: a prévia avisa; a criação recusa (422) e nada é
+ * gravado.
  */
 
 export const MSG_CONSULTA_NAO_ENCONTRADA = "Consulta não encontrada";
@@ -50,6 +54,8 @@ export const MSG_NENHUMA_AREA_ANALISAVEL = "Nenhuma área do alvo pode ser anali
 export const MSG_VARIAS_EMPRESAS = "As áreas do alvo são de mais de uma empresa: selecione a empresa (X-Empresa-Id) ou peça uma consulta por empresa.";
 export const MSG_EXCEDE_ORCAMENTO = "A estimativa da consulta passa do saldo de créditos do mês da empresa; nada foi criado.";
 export const msgItensDemais = (n: number) => `A consulta teria ${n} itens; o máximo é ${MAX_ITENS_POR_CONSULTA} por consulta.`;
+/** Recusa ANTES do banco: só os slots × índices de UMA área já passam do teto (a contagem real seria maior ou igual). */
+export const msgItensDemaisPeloMenos = (n: number) => `A consulta teria pelo menos ${n} itens; o máximo é ${MAX_ITENS_POR_CONSULTA} por consulta.`;
 
 /** Situações de consulta que RESERVAM saldo do orçamento (ainda podem gastar). */
 const SITUACOES_QUE_RESERVAM = ["pendente", "executando"] as const;
@@ -227,8 +233,10 @@ async function chavesVivas(ctx: ServiceCtx, chaves: readonly string[]): Promise<
 }
 
 /**
- * Saldo de créditos do mês UTC da empresa: limite − consumido − reservado; `null` = sem orçamento (sem limite). Uma
- * consulta, com o escopo de empresa nas TRÊS tabelas (orçamento, consumo, consultas).
+ * Saldo de créditos do mês UTC da empresa: limite − consumido no mês − reservado; `null` = sem orçamento (sem limite).
+ * Reservado = Σ greatest(estimativa − consumo já registrado da consulta, 0) das consultas pendentes/executando de qualquer
+ * mês. Uma consulta SQL, com o escopo de empresa em CADA ocorrência de tabela (orçamento, consumo do mês, consultas e
+ * consumo de cada consulta).
  */
 async function saldoDoMes(ctx: ServiceCtx, empresaId: string, agora: Date): Promise<string | null> {
   const inicio = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), 1));
@@ -237,13 +245,18 @@ async function saldoDoMes(ctx: ServiceCtx, empresaId: string, agora: Date): Prom
   const escopoOrcamento = empresaScopeSql(ctx, "o", params);
   const escopoConsumo = empresaScopeSql(ctx, "c", params);
   const escopoReserva = empresaScopeSql(ctx, "s", params);
+  const escopoGastoDaConsulta = empresaScopeSql(ctx, "cc", params);
   const r = await ctx.tx.query<{ saldo: string }>(
     `select o.limite_creditos
             - (select coalesce(sum(c.creditos), 0) from erp.satelite_consumo c
                 where c.organization_id = $1 and c.empresa_id = $2 and c.created_at >= $4 and c.created_at < $5${escopoConsumo})
-            - (select coalesce(sum(s.estimativa_creditos), 0) from erp.satelite_consultas s
-                where s.organization_id = $1 and s.empresa_id = $2 and s.situacao in (${listaSql(SITUACOES_QUE_RESERVAM)})
-                  and s.created_at >= $4 and s.created_at < $5${escopoReserva}) as saldo
+            - (select coalesce(sum(greatest(s.estimativa_creditos - g.gasto, 0)), 0)
+                 from erp.satelite_consultas s
+                 cross join lateral (
+                   select coalesce(sum(cc.creditos), 0) as gasto from erp.satelite_consumo cc
+                    where cc.organization_id = $1 and cc.empresa_id = $2 and cc.consulta_id = s.id${escopoGastoDaConsulta}
+                 ) g
+                where s.organization_id = $1 and s.empresa_id = $2 and s.situacao in (${listaSql(SITUACOES_QUE_RESERVAM)})${escopoReserva}) as saldo
        from erp.satelite_orcamentos o
       where o.organization_id = $1 and o.empresa_id = $2 and o.mes_referencia = $3${escopoOrcamento}`, params);
   if (r.rows.length > 1) throw new Error("orçamento satelital: mais de uma linha para o mês");
@@ -275,7 +288,7 @@ async function inserirItens(ctx: ServiceCtx, consultaId: string, empresaId: stri
      select $1, $2, $3, u.area_id, u.geometria_sha256, u.indice_bundle, $4, u.data_alvo, u.janela_inicio, u.janela_fim, u.situacao, u.chave, u.origem
        from unnest($5::uuid[], $6::text[], $7::text[], $8::date[], $9::date[], $10::date[], $11::text[], $12::text[], $13::text[])
             as u (area_id, geometria_sha256, indice_bundle, data_alvo, janela_inicio, janela_fim, situacao, chave, origem)
-     on conflict (chave_idempotencia) where situacao in (${VIVAS_SQL}) do nothing
+     on conflict (organization_id, chave_idempotencia) where situacao in (${VIVAS_SQL}) do nothing
      returning chave_idempotencia`,
     [consultaId, ctx.orgId, empresaId, VERSAO_METODO_NDVI_V2,
       coluna((l) => l.item.area_id), coluna((l) => l.item.geometria_sha256), coluna((l) => l.item.indice),
@@ -384,6 +397,9 @@ export default async function sateliteConsultasRoutes(app: FastifyInstance) {
     const corpo = corpoSchema.parse(req.body);
     const agora = new Date();
     const slots = slotsOuRecusa(corpo.periodo, agora.toISOString().slice(0, 10));
+    // Recusa barata, sem ler área nenhuma: se UMA área já passa do teto, o alvo inteiro passa.
+    const porArea = slots.length * corpo.indices.length;
+    if (porArea > MAX_ITENS_POR_CONSULTA) throw validation(msgItensDemaisPeloMenos(porArea), { total_itens_minimo: porArea, maximo: MAX_ITENS_POR_CONSULTA });
     const r = await runService(app, req, PERMISSAO_PEDIR_ANALISE, (ctx) => processarConsulta(ctx, corpo, req.body, slots, agora));
     return reply.status(r.criada ? 201 : 200).send(r.corpo);
   });
@@ -399,13 +415,15 @@ export default async function sateliteConsultasRoutes(app: FastifyInstance) {
         `select ${colunasConsulta("s")} from erp.satelite_consultas s where s.id = $1 and s.organization_id = $2${sc.sql}`, sc.params);
       const consulta = c.rows[0];
       if (!consulta) throw err("NOT_FOUND", MSG_CONSULTA_NAO_ENCONTRADA);
-      const params: unknown[] = [ctx.orgId, consulta.id];
+      // A empresa da consulta (lida e autorizada acima) entra explícita: o índice (org, empresa, consulta, created_at, id)
+      // serve também ao dono sem X-Empresa-Id. O escopo continua, em cima.
+      const params: unknown[] = [ctx.orgId, consulta.id, consulta.empresa_id];
       const escopo = empresaScopeSql(ctx, "i", params);
       params.push(q.tamanho + 1, (q.pagina - 1) * q.tamanho);
       const r = await ctx.tx.query<LinhaItem>(
         `select ${COLUNAS_ITEM.map((col) => `i.${col}`).join(", ")}
            from erp.satelite_consulta_itens i
-          where i.organization_id = $1 and i.consulta_id = $2${escopo}
+          where i.organization_id = $1 and i.consulta_id = $2 and i.empresa_id = $3${escopo}
           order by i.created_at, i.id
           limit $${params.length - 1} offset $${params.length}`, params);
       return {
