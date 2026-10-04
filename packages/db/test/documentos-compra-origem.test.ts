@@ -186,10 +186,10 @@ describe("premissas e catálogo", () => {
     // de nota por XML e a guarda dos dados fiscais — operacoes-01-0047.test.ts; a 0049 cria o Mapa de
     // Manejo — MAPA-01, #91; a 0050 o cadastro de áreas; a 0051 unifica mapa × áreas; a 0052 cria o histórico de
     // análises satelitais por área — SAT-01, sat-01-0052.test.ts; a 0053 cria a consulta satelital em lote — SAT-02,
-    // sat-02-0053.test.ts).
+    // sat-02-0053.test.ts; a 0054 dá ao executor da fila a reserva e a contagem do limite — SAT-03, sat-03-0054.test.ts).
     const r = (await db.query<{ ate: number; n: number; ultima: string }>(
       "select count(*) filter (where name <= '0037_receber_pedido_de_compra.sql')::int ate, count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
-    expect(r).toEqual({ ate: 37, n: 53, ultima: "0053_satelite_consultas.sql" });
+    expect(r).toEqual({ ate: 37, n: 54, ultima: "0054_satelite_executor.sql" });
   });
 
   it("colunas novas: tipo e nulidade", async () => {
