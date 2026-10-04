@@ -44,6 +44,9 @@ import sateliteConsultasRoutes from "./routes/satelite-consultas.js";
 import produtosPesquisaRoutes from "./routes/produtos-pesquisa.js";
 import type { BuscarFn } from "./lib/consultas/http.js";
 import { politicaDeOrigem } from "./lib/cors-origem.js";
+import { ClienteCopernicus } from "./lib/satelite/copernicus.js";
+import { INTERVALO_EXECUTOR_PADRAO_S, limitesDaConfig } from "./lib/satelite/limites.js";
+import { WorkerSatelite, motivoExecutorDesligado } from "./lib/satelite/worker.js";
 
 /**
  * `criarPool` existe para que a ORDEM de "falha cedo" seja provável por EFEITO, e não por leitura do
@@ -65,6 +68,29 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   app.decorate("db", db);
   app.decorate("config", config);
   app.decorate("buscarExterno", opts.buscarExterno ?? ((url, init) => fetch(url, init)));
+  // SAT-03 (decisão 296): UM cliente Copernicus por PROCESSO — a rota avulsa da SAT-01 e o executor da fila emitem e
+  // reaproveitam o MESMO token (o provedor limita a emissão). Decorado ANTES das rotas: elas o leem no registro.
+  const clienteCopernicus = new ClienteCopernicus({
+    buscar: app.buscarExterno,
+    credenciais: config.COPERNICUS_CLIENT_ID && config.COPERNICUS_CLIENT_SECRET ? { clienteId: config.COPERNICUS_CLIENT_ID, segredo: config.COPERNICUS_CLIENT_SECRET } : null
+  });
+  app.decorate("clienteCopernicus", clienteCopernicus);
+  // O EXECUTOR DA FILA SATELITAL só existe com as três condições (SATELITE_WORKER_ENABLED, COPERNICUS_ENABLED e a
+  // credencial); faltando uma, UMA linha de log diz qual (sem valor nenhum) e nada é reservado — a API sobe igual.
+  const motivoDesligado = motivoExecutorDesligado(config, clienteCopernicus);
+  const executorSatelite = motivoDesligado ? null : new WorkerSatelite({
+    db, cliente: clienteCopernicus, limites: limitesDaConfig(config), log: app.log,
+    intervaloMs: (config.SATELITE_WORKER_INTERVALO_S ?? INTERVALO_EXECUTOR_PADRAO_S) * 1000
+  });
+  app.decorate("executorSatelite", executorSatelite);
+  if (executorSatelite) {
+    app.addHook("onReady", async () => {
+      executorSatelite.iniciar();
+      app.log.info({ satelite_executor: "ligado" }, "executor da fila satelital iniciado");
+    });
+  } else {
+    app.log.info({ satelite_executor: "desligado", motivo: motivoDesligado }, "executor da fila satelital não iniciado");
+  }
   await app.register(helmet, { contentSecurityPolicy: false });
   // Origem exata (produção) OU preview ancorado na conta do projeto. A decisão mora em `cors-origem.ts`,
   // com o porquê de não existir curinga de provedor aqui: `credentials` está ligado.
@@ -124,6 +150,7 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
     recusarCorpoLegado(req.body);
     recusarQueryLegada(req.query);
   });
-  app.addHook("onClose", async () => { if (!opts.db) await db.end(); });
+  // O executor para (e termina a rodada em curso) ANTES de o pool fechar: no mesmo gancho, a ordem não depende do Fastify.
+  app.addHook("onClose", async () => { await executorSatelite?.parar(); if (!opts.db) await db.end(); });
   return app;
 }

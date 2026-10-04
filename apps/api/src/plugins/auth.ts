@@ -4,9 +4,9 @@ import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
 import { DomainError } from "@agro/shared";
 import { withTx, type Db } from "@agro/db";
-import { AUTORIZACAO_PROPRIETARIO, autorizacaoPorModulo } from "@erp/plataforma";
 import type { Config } from "../config.js";
 import type { AuthUser, Membership, RequestContext } from "../lib/context.js";
+import { lerDadosDoMembro, vinculoDoMembro, type DadosDoMembro } from "../lib/contexto-membro.js";
 import { resolverEmpresaSelecionada } from "../lib/empresa-header.js";
 
 declare module "fastify" {
@@ -65,9 +65,8 @@ export default fp(async function authPlugin(app: FastifyInstance) {
   // Vínculo/permissões/escopos em cache por (usuário, organização) por 30 s: evita várias idas ao banco em
   // toda requisição (o banco fica em outra região). Alterações de perfil/vínculo passam a valer em até 30 s
   // nesta instância; a administração chama clearContextCache() e a mudança é imediata onde ela ocorre.
-  type MemberRow = { organization_id: string; org_name: string; role_id: string | null; is_owner: boolean; member_id: string };
-  type EscopoRow = { modulo: string; modo: string };
-  const ctxCache = new Map<string, { at: number; value: { row: MemberRow; escopos: EscopoRow[]; perms: string[] } }>();
+  // A LEITURA do vínculo mora em `lib/contexto-membro.ts` (o executor da fila satelital lê o mesmo, SAT-03); o cache é daqui.
+  const ctxCache = new Map<string, { at: number; value: DadosDoMembro }>();
   const CTX_TTL_MS = 30_000;
   app.decorate("clearContextCache", () => ctxCache.clear());
   // Contexto de tenant: X-Org-Id (obrigatório nas rotas de negócio) e X-Empresa-Id (empresa ativa — o
@@ -78,25 +77,14 @@ export default fp(async function authPlugin(app: FastifyInstance) {
     if (!orgId) return;
     const userId = req.auth.id;
     const cacheKey = `${userId}:${orgId}`; const cached = ctxCache.get(cacheKey);
-    const { row, escopos, perms } = cached && Date.now() - cached.at < CTX_TTL_MS ? cached.value : await withTx(app.db, { orgId, userId }, async (tx) => {
-      const m = await tx.query<MemberRow>(
-        "select m.id as member_id, m.organization_id, o.name as org_name, m.role_id, m.is_owner from erp.organization_members m join erp.organizations o on o.id=m.organization_id where m.user_id=$1 and m.organization_id=$2 and m.is_active and o.deleted_at is null",
-        [userId, orgId]);
-      const row = m.rows[0];
-      if (!row) throw new DomainError("PERMISSION_DENIED", "Usuário não é membro desta organização");
-      // Só os MODOS por módulo — nunca a lista de empresas (podem ser centenas; o conjunto é resolvido no SQL).
-      // `erp.member_farms` não é mais consultada aqui: a autoridade é o escopo por módulo (PRE-BASE2-02).
-      const escopos = row.is_owner ? [] : (await tx.query<EscopoRow>(
-        "select modulo, modo from erp.membro_escopos_empresa where organization_id=$1 and membro_id=$2", [orgId, row.member_id])).rows;
-      const perms = row.is_owner ? [] : (await tx.query<{ permission_key: string }>("select permission_key from erp.role_permissions where role_id=$1", [row.role_id])).rows.map((r) => r.permission_key);
-      return { row, escopos, perms };
+    const dados = cached && Date.now() - cached.at < CTX_TTL_MS ? cached.value : await withTx(app.db, { orgId, userId }, async (tx) => {
+      const lidos = await lerDadosDoMembro(tx, orgId, userId);
+      if (!lidos) throw new DomainError("PERMISSION_DENIED", "Usuário não é membro desta organização");
+      return lidos;
     });
-    if (!cached || Date.now() - cached.at >= CTX_TTL_MS) ctxCache.set(cacheKey, { at: Date.now(), value: { row, escopos, perms } });
-    const membership: Membership = {
-      orgId: row.organization_id, orgName: row.org_name, roleId: row.role_id, isOwner: row.is_owner,
-      memberId: row.member_id,
-      escopos: row.is_owner ? AUTORIZACAO_PROPRIETARIO : autorizacaoPorModulo(escopos.map((e) => [e.modulo, e.modo === "todas" ? "todas" : "selecionadas"] as const))
-    };
+    if (!cached || Date.now() - cached.at >= CTX_TTL_MS) ctxCache.set(cacheKey, { at: Date.now(), value: dados });
+    const { perms } = dados;
+    const membership: Membership = vinculoDoMembro(dados);
     // X-Empresa-Id é SELEÇÃO de trabalho, não autorização — e a autorização por MÓDULO é validada na porta
     // (runService conhece o módulo), não aqui. O que se exige neste ponto é que a empresa selecionada seja
     // uma das que este membro enxerga em ALGUM módulo: é exatamente o conjunto que alimenta o seletor de
