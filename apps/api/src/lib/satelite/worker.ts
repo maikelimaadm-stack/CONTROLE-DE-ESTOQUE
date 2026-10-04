@@ -10,6 +10,10 @@
  *      atingido não é falha: o item simplesmente não é reservado nesta rodada.
  *   2. Cada item reservado em paralelo (o lote já conta como 'executando' no limite), por `executar-item.ts`, em nome do
  *      criador da consulta. Um item nunca derruba o lote: o desfecho de cada um entra na contagem.
+ *   3. PAUSA: um item que terminou com o provedor sem serviço para a conta (429, 5xx, tempo, rede) faz ESTA instância
+ *      não reservar nada até agora + max(`PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S`, Retry-After). Falha não entra no
+ *      ledger nem no limite global: sem a pausa, um provedor que recusa na hora queimaria a fila inteira em segundos,
+ *      uma tentativa por item. A pausa é por processo (cada réplica aprende sozinha); o teto da rodada continua valendo.
  *
  * LIGA/DESLIGA (`server.ts`): só roda com SATELITE_WORKER_ENABLED=1, COPERNICUS_ENABLED=1 e o cliente com credencial —
  * `motivoExecutorDesligado` diz qual falta. Ligado, `iniciar()` no onReady e `parar()` no onClose (espera a rodada em
@@ -17,9 +21,11 @@
  */
 import { withTx, type Db } from "@agro/db";
 import type { Config } from "../../config.js";
-import type { ClienteCopernicus } from "./copernicus.js";
+import { FalhaCopernicus, type ClienteCopernicus, type TipoFalhaCopernicus } from "./copernicus.js";
 import { executarItem, resumoDoErro, type DesfechoItem, type ItemReservado, type LogSatelite } from "./executar-item.js";
-import { INTERVALO_EXECUTOR_PADRAO_S, LOTE_EXECUTOR, PRAZO_EXECUCAO_S, simultaneasDoExecutor, type LimitesSatelite } from "./limites.js";
+import {
+  INTERVALO_EXECUTOR_PADRAO_S, LOTE_EXECUTOR, PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S, PRAZO_EXECUCAO_S, simultaneasDoExecutor, type LimitesSatelite
+} from "./limites.js";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -47,6 +53,16 @@ export interface OpcoesWorker {
   aleatorio?: () => number;
 }
 
+/** Falhas que dizem "o provedor está sem serviço para a conta agora" — as que pausam o executor desta instância. */
+const FALHAS_QUE_PAUSAM: ReadonlySet<TipoFalhaCopernicus> = new Set<TipoFalhaCopernicus>(["limite", "indisponivel", "tempo", "rede"]);
+
+/** Segundos de pausa depois desta falha do provedor (a maior entre a pausa padrão e o Retry-After), ou null: não pausa. */
+export function pausaAposFalha(f: unknown): number | null {
+  if (!(f instanceof FalhaCopernicus) || !FALHAS_QUE_PAUSAM.has(f.tipo)) return null;
+  const pedida = f.tentarAposSegundos;
+  return Math.max(PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S, typeof pedida === "number" && Number.isFinite(pedida) ? pedida : 0);
+}
+
 /**
  * Por que o executor NÃO roda neste processo — ou `null` quando as três condições valem. O texto vai para o log de
  * uma linha do startup: só o nome da condição, nunca valor de variável nem credencial.
@@ -62,6 +78,8 @@ export class WorkerSatelite {
   private emCurso: Promise<ResumoRodada> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private ligado = false;
+  /** Até quando (ms do relógio do executor) esta instância não reserva nada — a pausa depois de falha do provedor. */
+  private pausadoAte = 0;
 
   constructor(private readonly opcoes: OpcoesWorker) {}
 
@@ -107,13 +125,24 @@ export class WorkerSatelite {
   }
 
   private async rodada(): Promise<ResumoRodada> {
+    const agora = this.opcoes.agora ?? Date.now;
+    // Em pausa, nada é reservado: nenhum item gasta tentativa contra um provedor sem serviço.
+    if (agora() < this.pausadoAte) return { reservados: 0, concluidos: 0, falhos: 0, adiados: 0 };
     const itens = await this.reservar();
-    const dep = { db: this.opcoes.db, cliente: this.opcoes.cliente, log: this.opcoes.log, agora: this.opcoes.agora ?? Date.now, aleatorio: this.opcoes.aleatorio ?? Math.random };
+    const dep = { db: this.opcoes.db, cliente: this.opcoes.cliente, log: this.opcoes.log, agora, aleatorio: this.opcoes.aleatorio ?? Math.random };
     // `executarItem` não lança; o `allSettled` é a garantia de que nem um defeito nele derruba o lote.
-    const desfechos = await Promise.allSettled(itens.map((item) => executarItem(dep, item)));
-    const contar = (d: DesfechoItem) => desfechos.filter((x) => (x.status === "fulfilled" ? x.value : "adiado") === d).length;
+    const resultados = await Promise.allSettled(itens.map((item) => executarItem(dep, item)));
+    const desfechos = resultados.map((x) => (x.status === "fulfilled" ? x.value.desfecho : "adiado"));
+    const contar = (d: DesfechoItem) => desfechos.filter((x) => x === d).length;
     const resumo: ResumoRodada = { reservados: itens.length, concluidos: contar("concluido"), falhos: contar("falho"), adiados: contar("adiado") };
     if (resumo.reservados) this.opcoes.log.info({ satelite_executor: resumo }, "rodada do executor satelital");
+    const falhas = resultados.flatMap((x) => (x.status === "fulfilled" && x.value.falhaDoProvedor ? [x.value.falhaDoProvedor] : []));
+    const pausaS = Math.max(0, ...falhas.map((f) => pausaAposFalha(f) ?? 0));
+    if (pausaS > 0) {
+      this.pausadoAte = Math.max(this.pausadoAte, agora() + pausaS * 1000);
+      const tipos = [...new Set(falhas.filter((f) => pausaAposFalha(f) !== null).map((f) => f.tipo))];
+      this.opcoes.log.warn({ satelite_executor: { pausa_s: pausaS, tipos_falha: tipos } }, "executor satelital em pausa: provedor sem serviço para a conta");
+    }
     return resumo;
   }
 }

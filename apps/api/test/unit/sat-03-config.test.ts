@@ -3,8 +3,10 @@ import type { Db } from "@agro/db";
 import { loadConfig } from "../../src/config.js";
 import { buildApp } from "../../src/server.js";
 import type { BuscarFn } from "../../src/lib/consultas/http.js";
-import { LIMITES_SATELITE_PADRAO, limitesDaConfig } from "../../src/lib/satelite/limites.js";
-import { WorkerSatelite, motivoExecutorDesligado } from "../../src/lib/satelite/worker.js";
+import { FalhaCopernicus } from "../../src/lib/satelite/copernicus.js";
+import { MODULO_EXECUTOR, PERMISSAO_EXECUTAR_ITEM } from "../../src/lib/satelite/contexto-worker.js";
+import { LIMITES_SATELITE_PADRAO, PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S, limitesDaConfig } from "../../src/lib/satelite/limites.js";
+import { WorkerSatelite, motivoExecutorDesligado, pausaAposFalha } from "../../src/lib/satelite/worker.js";
 
 /**
  * SAT-03 (decisão 296) — a CONFIGURAÇÃO do executor da fila satelital, lida no startup. O risco cercado é o executor
@@ -85,6 +87,26 @@ describe("executor · as três condições", () => {
     expect(motivoExecutorDesligado({ SATELITE_WORKER_ENABLED: true, COPERNICUS_ENABLED: false }, cliente(true))).toBe("COPERNICUS_ENABLED desligado");
     expect(motivoExecutorDesligado({ SATELITE_WORKER_ENABLED: true, COPERNICUS_ENABLED: true }, cliente(false))).toBe("credencial do Copernicus ausente");
     expect(motivoExecutorDesligado({ SATELITE_WORKER_ENABLED: true, COPERNICUS_ENABLED: true }, cliente(true))).toBeNull();
+  });
+});
+
+describe("executor · módulo do contexto do criador e pausa", () => {
+  it("o módulo da transação do executor é 'pecuaria' — o MESMO que a 0054 escreve à mão no acesso do criador", () => {
+    // Se a classificação da permissão mudar de módulo, este teste cai antes de o executor e a reserva divergirem.
+    expect(PERMISSAO_EXECUTAR_ITEM).toBe("analises_satelitais.create");
+    expect(MODULO_EXECUTOR).toBe("pecuaria");
+  });
+
+  it("pausa só para provedor sem serviço (429, 5xx, tempo, rede): a maior entre a pausa padrão e o Retry-After", () => {
+    for (const tipo of ["limite", "indisponivel", "tempo", "rede"] as const) {
+      expect(pausaAposFalha(new FalhaCopernicus(tipo, 503)), tipo).toBe(PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S);
+    }
+    expect(pausaAposFalha(new FalhaCopernicus("limite", 429, 600))).toBe(600);
+    expect(pausaAposFalha(new FalhaCopernicus("limite", 429, 3))).toBe(PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S);
+    for (const tipo of ["requisicao_recusada", "acesso_negado", "autenticacao", "resposta_malformada", "configuracao", "processamento_parcial"] as const) {
+      expect(pausaAposFalha(new FalhaCopernicus(tipo, 400)), tipo).toBeNull();
+    }
+    expect(pausaAposFalha(new Error("erro de banco"))).toBeNull();
   });
 });
 

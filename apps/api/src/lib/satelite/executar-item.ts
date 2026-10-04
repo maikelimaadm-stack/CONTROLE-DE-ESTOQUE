@@ -14,7 +14,10 @@
  *      tentativas), a área relida (polígono mudou no meio → consumo gravado + 'falho' `geometria_alterada`), a análise
  *      (`on conflict` na unicidade da janela + releitura), o consumo no ledger, o item 'concluido' e o recálculo.
  * Falha do provedor (ou da fase 3): a decisão de `retry.ts` — repetir → 'pendente' com `proxima_tentativa_em`; falhar
- * → 'falho' com o erro estável —, o consumo quando o provedor respondeu 2xx (a chamada gastou), e o recálculo.
+ * → 'falho' com o erro estável —, o consumo quando o provedor respondeu 2xx (a chamada gastou), e o recálculo. Erro que
+ * NÃO é do provedor DEPOIS de um 2xx (banco, defeito na gravação) não repete: repetir cobraria a chamada de novo — o item
+ * fica 'falho' `erro_gravacao` com o consumo gravado, e "reprocessar falhas" abre outra rodada quando o defeito sair.
+ * A falha do provedor da fase 2 volta para quem chama (`falhaDoProvedor`): é dela que o executor tira a pausa.
  *
  * Um item NUNCA derruba o lote nem o processo: toda exceção vira desfecho ("adiado", no pior caso: o item fica
  * 'executando' até o prazo, e a reserva seguinte o devolve para a fila). O LOG leva só ids, tipo de falha, status e
@@ -35,12 +38,15 @@ import type { GradeDaAnalise, PoligonoGeoJson } from "./geometria.js";
 import { TENTATIVAS_POR_RODADA } from "./limites.js";
 import { interpretarEstatistica, montarCorpoEstatistica, type Janela, type ResultadoNdvi } from "./ndvi.js";
 import { EVALSCRIPT_NDVI_SHA256, RESOLUCAO_NATIVA_NDVI_M, escolherObservacaoV2, janelaDoItem } from "./ndvi-v2.js";
-import { decidirAposFalha } from "./retry.js";
+import { decidirAposFalha, type DecisaoFalha } from "./retry.js";
 
 /** A linha que a reserva (`erp.satelite_reservar_itens`, migration 0054) devolve: só ids. */
 export interface ItemReservado { organization_id: string; empresa_id: string; consulta_id: string; item_id: string; criado_por: string }
 
 export type DesfechoItem = "concluido" | "falho" | "adiado";
+
+/** O desfecho do item e, quando a chamada ao provedor falhou (fase 2), a falha dele — de onde o executor tira a pausa. */
+export interface ResultadoItem { desfecho: DesfechoItem; falhaDoProvedor: FalhaCopernicus | null }
 
 /** O que o executor escreve no log: um objeto de ids, tipos e números, e uma frase fixa (o logger da API serve). */
 export interface LogSatelite {
@@ -63,7 +69,9 @@ export const ERROS_ITEM = {
   geometriaAlterada: "geometria_alterada",
   execucaoInterrompida: "execucao_interrompida",
   areaNaoEncontrada: "area_nao_encontrada",
-  metodoDesconhecido: "metodo_desconhecido"
+  metodoDesconhecido: "metodo_desconhecido",
+  /** Erro que não é do provedor DEPOIS de um 2xx (a chamada já foi cobrada): não repete. */
+  erroGravacao: "erro_gravacao"
 } as const;
 
 /** A recusa de `prepararPoligono` (mensagem da SAT-01) → código estável do item. Mensagem que não está aqui: genérica. */
@@ -185,6 +193,8 @@ async function chamarProvedor(dep: DependenciasItem, r: ItemReservado, p: Pronto
     const resultado = escolherObservacaoV2(interpretarEstatistica(resposta.corpo, p.janela), p.grade.pixelsGeometria, p.item.data_alvo);
     return { respondeu, resultado, falha: null };
   } catch (e) {
+    // 2xx com corpo ilegível: o cliente lança, mas a chamada foi cobrada — o PU (ou null) vem na própria falha.
+    if (respondeu === null && e instanceof FalhaCopernicus && e.puCabecalho !== undefined) respondeu = { puCabecalho: e.puCabecalho };
     return { respondeu, resultado: null, falha: e };
   }
 }
@@ -262,7 +272,9 @@ async function fecharFalha(dep: DependenciasItem, r: ItemReservado, tentativas: 
     }
     const { item } = aberto;
     if (respondeu) await consumoDo(ctx, r, respondeu.puCabecalho);
-    const d = decidirAposFalha(erro, item.tentativas_rodada, dep.agora(), dep.aleatorio);
+    const d: DecisaoFalha = respondeu && !(erro instanceof FalhaCopernicus)
+      ? { tipo: "falhar", erro: ERROS_ITEM.erroGravacao }
+      : decidirAposFalha(erro, item.tentativas_rodada, dep.agora(), dep.aleatorio);
     if (d.tipo === "repetir") await mudarItem(ctx, item, { situacao: "pendente", erro: d.erro, proxima: d.proximaTentativaEm });
     else await mudarItem(ctx, item, { situacao: "falho", erro: d.erro, proxima: null });
     await recalcularConsulta(ctx, item.consulta_id);
@@ -282,7 +294,13 @@ export function resumoDoErro(e: unknown): Record<string, unknown> {
 }
 
 /** Executa um item reservado. NUNCA lança: o desfecho é o que entra na contagem da rodada. */
-export async function executarItem(dep: DependenciasItem, r: ItemReservado): Promise<DesfechoItem> {
+export async function executarItem(dep: DependenciasItem, r: ItemReservado): Promise<ResultadoItem> {
+  let falhaDoProvedor: FalhaCopernicus | null = null;
+  const desfecho = await executarFases(dep, r, (f) => { falhaDoProvedor = f; });
+  return { desfecho, falhaDoProvedor };
+}
+
+async function executarFases(dep: DependenciasItem, r: ItemReservado, anotarFalha: (f: FalhaCopernicus) => void): Promise<DesfechoItem> {
   const ids = { item_id: r.item_id, consulta_id: r.consulta_id, organization_id: r.organization_id };
   const anotar = (desfecho: DesfechoItem, motivo: string | null, extra: Record<string, unknown> = {}) => {
     (desfecho === "concluido" ? dep.log.info : dep.log.warn).call(dep.log, { satelite_item: { ...ids, desfecho, motivo, ...extra } }, "item da fila satelital");
@@ -311,6 +329,7 @@ export async function executarItem(dep: DependenciasItem, r: ItemReservado): Pro
   if (f1.tipo === "adiado") return anotar("adiado", f1.motivo);
 
   const chamada = await chamarProvedor(dep, r, f1.pronto);
+  if (chamada.falha instanceof FalhaCopernicus) anotarFalha(chamada.falha);
   if (chamada.resultado === null) return falhar(f1.pronto.item.tentativas, chamada.respondeu, chamada.falha);
   try {
     const f3 = await fase3(dep, r, f1.pronto, { ...chamada, resultado: chamada.resultado });

@@ -4,6 +4,7 @@
  * consulta, grava o item e RECONTA. Assim duas réplicas fechando itens da mesma consulta nunca perdem uma soma.
  *
  *   `travarConsulta`     select … for update da consulta, no escopo (a RLS e o predicado de empresa). Fora → null.
+ *                        Devolve também a empresa da consulta (a dos itens: FK composta).
  *   `recalcularConsulta` contadores a partir dos itens; sem pendente nem executando → 'concluida' (nenhum falho) ou
  *                        'concluida_com_falhas', com `concluida_em`; com pendente/executando → 'executando' se algum
  *                        item já começou (foi reservado alguma vez, ou terminou), senão 'pendente', `concluida_em` nulo.
@@ -15,19 +16,23 @@
  * outra escrita (a ordem é sempre consulta → item).
  *
  * Sob a RLS de quem chama, e com o predicado de empresa (`empresaScopeSql`) em CADA ocorrência de tabela. ROW COUNT
- * conferido: a consulta travada e não alcançada pelo recálculo é defeito, nunca sucesso sem efeito.
+ * conferido: a consulta travada e não alcançada pelo recálculo é defeito, nunca sucesso sem efeito. A contagem chega aos
+ * itens pela EMPRESA da própria consulta (organização, empresa, consulta): é a ordem do índice
+ * ix_satelite_consulta_itens_consulta — sem a empresa, o índice só serviria pela organização. A empresa sai de uma
+ * subconsulta NÃO correlacionada (avaliada uma vez, antes): o valor dela entra como condição do índice.
  */
 import { empresaScopeSql, scopedById, type ServiceCtx } from "../context.js";
 
-export async function travarConsulta(ctx: ServiceCtx, consultaId: string): Promise<{ id: string; situacao: string } | null> {
+export async function travarConsulta(ctx: ServiceCtx, consultaId: string): Promise<{ id: string; situacao: string; empresa_id: string } | null> {
   const sc = scopedById(ctx, "s", consultaId);
-  const r = await ctx.tx.query<{ id: string; situacao: string }>(
-    `select s.id, s.situacao from erp.satelite_consultas s where s.id = $1 and s.organization_id = $2${sc.sql} for update of s`, sc.params);
+  const r = await ctx.tx.query<{ id: string; situacao: string; empresa_id: string }>(
+    `select s.id, s.situacao, s.empresa_id from erp.satelite_consultas s where s.id = $1 and s.organization_id = $2${sc.sql} for update of s`, sc.params);
   return r.rows[0] ?? null;
 }
 
 export async function recalcularConsulta(ctx: ServiceCtx, consultaId: string): Promise<void> {
   const params: unknown[] = [consultaId, ctx.orgId];
+  const escopoAlvo = empresaScopeSql(ctx, "a", params);
   const escopoItens = empresaScopeSql(ctx, "i", params);
   const escopoConsulta = empresaScopeSql(ctx, "s", params);
   const r = await ctx.tx.query(
@@ -38,7 +43,9 @@ export async function recalcularConsulta(ctx: ServiceCtx, consultaId: string): P
               count(*) filter (where i.situacao in ('pendente', 'executando'))::int as abertos,
               count(*) filter (where i.tentativas > 0 or i.situacao in ('executando', 'concluido', 'falho'))::int as comecados
          from erp.satelite_consulta_itens i
-        where i.consulta_id = $1 and i.organization_id = $2${escopoItens}
+        where i.organization_id = $2
+          and i.empresa_id = (select a.empresa_id from erp.satelite_consultas a where a.id = $1 and a.organization_id = $2${escopoAlvo})
+          and i.consulta_id = $1${escopoItens}
      )
      update erp.satelite_consultas s
         set total_concluidos = c.concluidos, total_falhos = c.falhos, total_reaproveitados = c.reaproveitados,

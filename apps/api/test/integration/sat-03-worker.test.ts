@@ -2,13 +2,15 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import pg from "pg";
 import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
-import { createPool, type Db } from "@agro/db";
+import { createPool, withTx, type Db } from "@agro/db";
 import { VERSAO_METODO_NDVI_V2, type PeriodoConsulta } from "@agro/domain";
 import { buildApp } from "../../src/server.js";
 import type { BuscarFn } from "../../src/lib/consultas/http.js";
 import { ClienteCopernicus, ENDERECOS_COPERNICUS } from "../../src/lib/satelite/copernicus.js";
+import { MODULO_EXECUTOR, contextoDoCriador } from "../../src/lib/satelite/contexto-worker.js";
 import { executarItem, type LogSatelite } from "../../src/lib/satelite/executar-item.js";
-import type { LimitesSatelite } from "../../src/lib/satelite/limites.js";
+import { recalcularConsulta } from "../../src/lib/satelite/fechamento.js";
+import { PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S, type LimitesSatelite } from "../../src/lib/satelite/limites.js";
 import { EVALSCRIPT_NDVI_SHA256 } from "../../src/lib/satelite/ndvi-v2.js";
 import { WorkerSatelite, type ResumoRodada } from "../../src/lib/satelite/worker.js";
 import { TEST_URL, configDeTeste, harness, type Harness } from "./setup.js";
@@ -38,7 +40,7 @@ const SEM_TETO: LimitesSatelite = { simultaneas: 1000, porMinutoConta: 100_000, 
 // O PROVEDOR FALSO — uma regra por área (pela longitude do primeiro vértice, única por área), registro de cada chamada.
 // ---------------------------------------------------------------------------------------------------------------
 interface CorpoEstat { input: { bounds: { geometry: { coordinates: number[][][] } } }; aggregation: { timeRange: { from: string; to: string }; evalscript: string } }
-type Resp = { status: number; body?: unknown; retryAfter?: string; pu?: string | null } | "rede";
+type Resp = { status: number; body?: unknown; retryAfter?: string; pu?: string | null; jsonQuebrado?: boolean } | "rede";
 type Regra = (corpo: CorpoEstat) => Resp;
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -62,7 +64,7 @@ const buscarMock: BuscarFn = async (url, init) => {
   const responder = (r: Exclude<Resp, "rede">) => ({
     status: r.status,
     headers: { get: (n: string) => (n === "retry-after" ? r.retryAfter ?? null : n === "x-processingunits-spent" ? r.pu ?? null : null) },
-    json: async () => r.body ?? null
+    json: async () => { if (r.jsonQuebrado) throw new SyntaxError("corpo ilegível"); return r.body ?? null; }
   });
   if (host === TOKEN_HOST) return responder({ status: 200, body: { access_token: TOKEN_FALSO, expires_in: 3600, token_type: "Bearer" } });
   if (host !== API_HOST) throw new Error(`host inesperado: ${host}`);
@@ -91,9 +93,9 @@ let api: FastifyInstance;
 let A = ""; let B = "";
 const poolsExtras: Db[] = [];
 
-function novoWorker(o: { db?: Db; lote?: number; limites?: Partial<LimitesSatelite> } = {}) {
+function novoWorker(o: { db?: Db; lote?: number; limites?: Partial<LimitesSatelite>; agora?: () => number } = {}) {
   const cliente = new ClienteCopernicus({ buscar: buscarMock, credenciais: { clienteId: ID_FALSO, segredo: SEGREDO_FALSO }, esperar: async () => {} });
-  return new WorkerSatelite({ db: o.db ?? h.db, cliente, limites: { ...SEM_TETO, ...o.limites }, log: logCapturado, lote: o.lote ?? 50 });
+  return new WorkerSatelite({ db: o.db ?? h.db, cliente, limites: { ...SEM_TETO, ...o.limites }, log: logCapturado, lote: o.lote ?? 50, ...(o.agora ? { agora: o.agora } : {}) });
 }
 const zero = (): ResumoRodada => ({ reservados: 0, concluidos: 0, falhos: 0, adiados: 0 });
 const somar = (a: ResumoRodada, b: ResumoRodada) => { a.reservados += b.reservados; a.concluidos += b.concluidos; a.falhos += b.falhos; a.adiados += b.adiados; };
@@ -280,9 +282,10 @@ describe("SAT-03 — falhas do provedor e retentativa", () => {
     const [area] = await novasAreas(1);
     regras.set(area!.chave, () => ({ status: 429 }));
     const id = await criarConsulta([area!], RECENTE, 1);
-    const w = novoWorker();
+    // Um executor NOVO a cada rodada: o 429 pausa a instância (teste próprio abaixo), e aqui o que se mede é o item.
+    const w = () => novoWorker();
     const t0 = Date.now();
-    expect(await w.rodarUmaVez()).toEqual({ reservados: 1, concluidos: 0, falhos: 0, adiados: 1 });
+    expect(await w().rodarUmaVez()).toEqual({ reservados: 1, concluidos: 0, falhos: 0, adiados: 1 });
     const t1 = Date.now();
     let [item] = await itens(id);
     expect(item).toMatchObject({ situacao: "pendente", tentativas: 1, tentativas_rodada: 1, erro: "limite (HTTP 429)", analise_id: null });
@@ -291,13 +294,13 @@ describe("SAT-03 — falhas do provedor e retentativa", () => {
     expect(proxima).toBeLessThanOrEqual(t1 + 36_000);
     expect(chamadasDa(area!.chave)).toHaveLength(1);
     expect((await consulta(id)).situacao).toBe("executando");
-    // Antes da próxima tentativa, nada é reservado.
-    expect((await w.rodarUmaVez()).reservados).toBe(0);
+    // Antes da próxima tentativa, nada é reservado (executor novo: não é a pausa, é a próxima tentativa do item).
+    expect((await w().rodarUmaVez()).reservados).toBe(0);
 
     // 2ª tentativa (o fixture adianta o relógio do item): espera BASE × FATOR = 120 s (±20%).
     await admin.query("update erp.satelite_consulta_itens set proxima_tentativa_em = now() - interval '1 second' where id=$1", [item!.id]);
     const t2 = Date.now();
-    await w.rodarUmaVez();
+    await w().rodarUmaVez();
     [item] = await itens(id);
     expect(item).toMatchObject({ situacao: "pendente", tentativas: 2, tentativas_rodada: 2 });
     expect(item!.proxima_tentativa_em!.getTime()).toBeGreaterThanOrEqual(t2 + 96_000);
@@ -305,7 +308,7 @@ describe("SAT-03 — falhas do provedor e retentativa", () => {
 
     // 3ª tentativa: o teto da rodada (TENTATIVAS_POR_RODADA = 3) → 'falho'.
     await admin.query("update erp.satelite_consulta_itens set proxima_tentativa_em = now() - interval '1 second' where id=$1", [item!.id]);
-    expect(await w.rodarUmaVez()).toEqual({ reservados: 1, concluidos: 0, falhos: 1, adiados: 0 });
+    expect(await w().rodarUmaVez()).toEqual({ reservados: 1, concluidos: 0, falhos: 1, adiados: 0 });
     [item] = await itens(id);
     expect(item).toMatchObject({ situacao: "falho", tentativas: 3, tentativas_rodada: 3, erro: "limite (HTTP 429)", proxima_tentativa_em: null });
     expect(chamadasDa(area!.chave)).toHaveLength(3);
@@ -340,6 +343,79 @@ describe("SAT-03 — falhas do provedor e retentativa", () => {
     expect(item).toMatchObject({ situacao: "falho", tentativas: 1, erro: "requisicao_recusada (HTTP 400)", analise_id: null, proxima_tentativa_em: null });
     expect(chamadasDa(area!.chave)).toHaveLength(1);
     expect(await consulta(id)).toMatchObject({ situacao: "concluida_com_falhas", total_falhos: 1 });
+  });
+
+  it("(I-3b) provedor sem serviço → o executor DESTA instância pausa: a rodada seguinte não reserva nem chama; passada a pausa (ou o Retry-After maior), volta", async () => {
+    const [a429, aOk, a429b, aOk2] = await novasAreas(4);
+    regras.set(a429!.chave, () => ({ status: 429 }));
+    regras.set(a429b!.chave, () => ({ status: 429, retryAfter: "300" }));
+    let deslocamentoMs = 0;
+    const w = novoWorker({ lote: 1, agora: () => Date.now() + deslocamentoMs });
+    const id429 = await criarConsulta([a429!], RECENTE, 1);
+    expect(await w.rodarUmaVez()).toEqual({ reservados: 1, concluidos: 0, falhos: 0, adiados: 1 });
+    const idOk = await criarConsulta([aOk!], RECENTE, 1);
+    // Logo depois e ainda dentro da pausa: nada reservado, o provedor não é chamado, o item nem ganha tentativa.
+    expect(await w.rodarUmaVez()).toEqual(zero());
+    deslocamentoMs = (PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S - 1) * 1000;
+    expect(await w.rodarUmaVez()).toEqual(zero());
+    expect(chamadasDa(aOk!.chave)).toEqual([]);
+    expect((await itens(idOk))[0]).toMatchObject({ situacao: "pendente", tentativas: 0 });
+    // Passada a pausa, volta a reservar.
+    deslocamentoMs = (PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S + 1) * 1000;
+    expect(await w.rodarUmaVez()).toEqual({ reservados: 1, concluidos: 1, falhos: 0, adiados: 0 });
+    expect(chamadasDa(aOk!.chave)).toHaveLength(1);
+
+    // Retry-After de 300 s, MAIOR que a pausa padrão: vale ele.
+    const id429b = await criarConsulta([a429b!], RECENTE, 1);
+    expect((await w.rodarUmaVez()).adiados).toBe(1);
+    const idOk2 = await criarConsulta([aOk2!], RECENTE, 1);
+    deslocamentoMs += (PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S + 1) * 1000;
+    expect(await w.rodarUmaVez()).toEqual(zero());
+    deslocamentoMs += 300 * 1000;
+    expect(await w.rodarUmaVez()).toEqual({ reservados: 1, concluidos: 1, falhos: 0, adiados: 0 });
+    expect((await itens(idOk2))[0]).toMatchObject({ situacao: "concluido" });
+    await tirarDaFila([...(await itens(id429)), ...(await itens(id429b))].map((i) => i.id));
+  });
+
+  it("(M-5) erro de gravação DEPOIS do 2xx → 'falho' erro_gravacao, com o consumo do 2xx gravado e SEM nova chamada", async () => {
+    const [area] = await novasAreas(1);
+    const id = await criarConsulta([area!], RECENTE, 1);
+    // Falha FORÇADA na fase 3: a gravação da análise recusa (como um erro de banco), só durante esta rodada.
+    const original = pg.Client.prototype.query;
+    const falharAnalise = function (this: unknown, ...args: unknown[]) {
+      const texto = typeof args[0] === "string" ? args[0] : (args[0] as { text?: string } | undefined)?.text ?? "";
+      if (/insert into erp\.analises_satelitais/.test(texto)) return Promise.reject(Object.assign(new Error("falha forçada do teste"), { code: "XX000" }));
+      return Reflect.apply(original, this, args);
+    };
+    const espiao = vi.spyOn(pg.Client.prototype, "query").mockImplementation(falharAnalise as unknown as typeof original);
+    let r: ResumoRodada;
+    try { r = await novoWorker().rodarUmaVez(); } finally { espiao.mockRestore(); }
+    expect(r).toEqual({ reservados: 1, concluidos: 0, falhos: 1, adiados: 0 });
+    const [item] = await itens(id);
+    expect(item).toMatchObject({ situacao: "falho", erro: "erro_gravacao", tentativas: 1, analise_id: null, proxima_tentativa_em: null });
+    expect(await analisesDe([item!.id])).toEqual([]);
+    expect(await consumoDe(id)).toEqual([expect.objectContaining({ consulta_item_id: item!.id, pu_gasto: "1.5000", creditos: "150.00" })]);
+    expect(chamadasDa(area!.chave)).toHaveLength(1);
+    // Nenhuma rodada seguinte cobra de novo.
+    expect((await drenar(novoWorker())).reservados).toBe(0);
+    expect(chamadasDa(area!.chave)).toHaveLength(1);
+    expect(await consulta(id)).toMatchObject({ situacao: "concluida_com_falhas", total_falhos: 1 });
+  });
+
+  it("2xx com corpo ILEGÍVEL: a chamada foi cobrada — uma linha no ledger (o PU do cabeçalho, ou o par nulo) e o item segue o retry.ts", async () => {
+    const [comPu, semPu] = await novasAreas(2);
+    regras.set(comPu!.chave, () => ({ status: 200, pu: "2.5", jsonQuebrado: true }));
+    regras.set(semPu!.chave, () => ({ status: 200, pu: null, jsonQuebrado: true }));
+    const id = await criarConsulta([comPu!, semPu!], RECENTE, 2);
+    expect(await novoWorker().rodarUmaVez()).toEqual({ reservados: 2, concluidos: 0, falhos: 2, adiados: 0 });
+    const lista = await itens(id);
+    // resposta_malformada falha na primeira (retry.ts): repetir não muda a resposta, só cobra de novo.
+    expect(lista.map((i) => [i.situacao, i.erro, i.analise_id])).toEqual([["falho", "resposta_malformada (HTTP 200)", null], ["falho", "resposta_malformada (HTTP 200)", null]]);
+    const consumo = await consumoDe(id);
+    const doItem = (areaId: string) => consumo.filter((l) => l.consulta_item_id === lista.find((i) => i.area_id === areaId)!.id);
+    expect(doItem(comPu!.id)).toEqual([expect.objectContaining({ pu_gasto: "2.5000", creditos: "250.00", origem_cabecalho: "2.5" })]);
+    expect(doItem(semPu!.id)).toEqual([expect.objectContaining({ pu_gasto: null, creditos: null, origem_cabecalho: "cabecalho_ausente" })]);
+    expect([...chamadasDa(comPu!.chave), ...chamadasDa(semPu!.chave)]).toHaveLength(2);
   });
 
   it("(5) parte falhando → 'concluida_com_falhas'; os concluídos ficam gravados", async () => {
@@ -541,20 +617,37 @@ describe("SAT-03 — o executor não sai do escopo do item", () => {
     const id = await criarConsulta([area!], RECENTE, 1, restrito.headers);
     const { resultado, sqls } = await comEspiao(() => novoWorker().rodarUmaVez());
     expect(resultado).toEqual({ reservados: 1, concluidos: 1, falhos: 0, adiados: 0 });
-    // fase 1: consulta (travar), item, área, consulta + itens (recálculo) = 5; fase 3: as mesmas 5 + a mudança do item = 6.
-    expect(conferirEscopo(sqls)).toBe(11);
+    // fase 1: consulta (travar), item, área, recálculo (consulta-alvo, itens, consulta) = 6; fase 3: as mesmas 6 + a mudança do item = 7.
+    expect(conferirEscopo(sqls)).toBe(13);
     const [item] = await itens(id);
     const [a] = await analisesDe([item!.id]);
     expect(a).toMatchObject({ criado_por: restrito.userId, empresa_id: A, situacao: "concluida" });
+  });
 
-    // O criador perde a empresa A depois do pedido: a reserva não pega o item (nada lido, nada gasto).
-    const [area2] = await novasAreas(1, A);
-    const id2 = await criarConsulta([area2!], RECENTE, 1, restrito.headers);
+  it("(1a/1b) criador perde a empresa depois do pedido → a reserva fecha os pendentes como 'falho' criador_sem_acesso e a consulta em 'concluida_com_falhas', sem chamar; a chave fica livre", async () => {
+    const restrito = await membro("SAT-03 perde A", "sat03-perde-a@demo.local", ["analises_satelitais.view", "analises_satelitais.create"], [{ modulo: "pecuaria", modo: "selecionadas", empresas: [A] }]);
+    const areas = await novasAreas(2, A);
+    const id = await criarConsulta(areas, RECENTE, 2, restrito.headers);
     await admin.query("delete from erp.membro_empresas where membro_id=$1 and empresa_id=$2", [restrito.membroId, A]);
     expect(await novoWorker().rodarUmaVez()).toEqual(zero());
-    expect(chamadasDa(area2!.chave)).toEqual([]);
-    expect((await itens(id2))[0]).toMatchObject({ situacao: "pendente", tentativas: 0 });
-    await tirarDaFila((await itens(id2)).map((i) => i.id));
+    expect(areas.flatMap((x) => chamadasDa(x.chave))).toEqual([]);
+    const lista = await itens(id);
+    expect(lista.map((i) => [i.situacao, i.erro, i.analise_id])).toEqual([["falho", "criador_sem_acesso", null], ["falho", "criador_sem_acesso", null]]);
+    const fechada = await consulta(id);
+    expect(fechada).toMatchObject({ situacao: "concluida_com_falhas", total_itens: 2, total_falhos: 2, total_concluidos: 0, total_reaproveitados: 0 });
+    expect(fechada.concluida_em).not.toBeNull();
+    expect(await consumoDe(id)).toEqual([]);
+    // A regra SQL da reserva é a do fechamento.ts: recalcular sob a RLS de quem ENXERGA a consulta (o dono) não muda nada.
+    await withTx(h.db, { orgId: h.demo.orgId, userId: h.demo.adminUserId, modulo: MODULO_EXECUTOR }, async (tx) => {
+      const ctx = await contextoDoCriador(tx, h.demo.orgId, h.demo.adminUserId);
+      expect(ctx).not.toBeNull();
+      await recalcularConsulta(ctx!, id);
+    });
+    expect(await consulta(id)).toEqual(fechada);
+    // (1b) A chave ficou livre: o mesmo pedido, de quem tem acesso, nasce 'pendente' (não 'reaproveitado') e roda.
+    const id2 = await criarConsulta(areas, RECENTE, 2);
+    expect((await itens(id2)).map((i) => i.situacao)).toEqual(["pendente", "pendente"]);
+    expect(await drenar(novoWorker())).toMatchObject({ reservados: 2, concluidos: 2 });
   });
 
   it("(16b) reserva que NÃO é do criador (escopo perdido depois da reserva, ou organização trocada): o item nem é visível — nada é lido, chamado ou gravado", async () => {
@@ -568,7 +661,7 @@ describe("SAT-03 — o executor não sai do escopo do item", () => {
     const dep = { db: h.db, cliente: new ClienteCopernicus({ buscar: buscarMock, credenciais: { clienteId: ID_FALSO, segredo: SEGREDO_FALSO } }), log: logCapturado, agora: Date.now, aleatorio: Math.random };
     const reservado = { organization_id: h.demo.orgId, empresa_id: B, consulta_id: id, item_id: item!.id, criado_por: restrito.userId };
     const logsInicio = logs.length;
-    expect(await executarItem(dep, reservado)).toBe("adiado");
+    expect((await executarItem(dep, reservado)).desfecho).toBe("adiado");
     // O criador AINDA é membro (há contexto): quem esconde o item é o escopo — a RLS e o predicado de empresa.
     expect(logs.slice(logsInicio).join("\n")).toContain("consulta_fora_do_escopo");
     // A mesma reserva com a organização TROCADA: o criador é dono da outra organização (há contexto), mas a GUC é a dela —
@@ -576,7 +669,7 @@ describe("SAT-03 — o executor não sai do escopo do item", () => {
     const outraOrg = (await admin.query<{ id: string }>("insert into erp.organizations (name, slug) values ('[TEST] Outra SAT-03 b','outra-sat03-b') returning id")).rows[0]!.id;
     await admin.query("insert into erp.organization_members (organization_id, user_id, is_owner) values ($1, $2, true)", [outraOrg, h.demo.adminUserId]);
     const logsAntes = logs.length;
-    expect(await executarItem(dep, { ...reservado, organization_id: outraOrg, criado_por: h.demo.adminUserId })).toBe("adiado");
+    expect((await executarItem(dep, { ...reservado, organization_id: outraOrg, criado_por: h.demo.adminUserId })).desfecho).toBe("adiado");
     expect(logs.slice(logsAntes).join("\n")).toContain("consulta_fora_do_escopo");
     expect(chamadasDa(area!.chave)).toEqual([]);
     expect((await itens(id))[0]).toMatchObject({ situacao: "executando", tentativas: 1, erro: null, analise_id: null });
@@ -613,6 +706,31 @@ describe("SAT-03 — o executor não sai do escopo do item", () => {
     expect(a).toMatchObject({ organization_id: orgX, empresa_id: empresaX, criado_por: donoX });
     expect(await consumoDe(consultaX)).toEqual([expect.objectContaining({ organization_id: orgX })]);
     expect(await consulta(consultaX)).toMatchObject({ situacao: "concluida", total_concluidos: 1 });
+  });
+});
+
+describe("SAT-03 — organização excluída", () => {
+  it("(1c) organização com deleted_at → os pendentes viram 'falho' criador_sem_acesso e a consulta fecha, sem chamar o provedor", async () => {
+    const orgY = (await admin.query<{ id: string }>("insert into erp.organizations (name, slug) values ('[TEST] Excluída SAT-03','excluida-sat03') returning id")).rows[0]!.id;
+    const empresaY = (await admin.query<{ id: string }>("insert into erp.empresas (organization_id, code, name) values ($1, 98, '[TEST] Empresa Y SAT-03') returning id", [orgY])).rows[0]!.id;
+    const donoY = (await admin.query<{ id: string }>("insert into erp.users (email, name) values ('dono-y-sat03@demo.local', '[TEST] Dono Y') returning id")).rows[0]!.id;
+    await admin.query("insert into erp.organization_members (organization_id, user_id, is_owner) values ($1, $2, true)", [orgY, donoY]);
+    const areaY = await novaArea(empresaY, { org: orgY });
+    const consultaY = (await admin.query<{ id: string }>(
+      `insert into erp.satelite_consultas (organization_id, empresa_id, criado_por, parametros, estimativa_creditos, estimativa_creditos_minima, situacao, total_itens)
+       values ($1, $2, $3, '{}'::jsonb, 1, 1, 'pendente', 1) returning id`, [orgY, empresaY, donoY])).rows[0]!.id;
+    const hoje = new Date().toISOString().slice(0, 10);
+    await admin.query(
+      `insert into erp.satelite_consulta_itens (consulta_id, organization_id, empresa_id, area_id, geometria_sha256, indice_bundle, versao_metodo,
+          janela_inicio, janela_fim, chave_idempotencia, chave_idempotencia_origem)
+       select $1, $2, $3, a.id, encode(sha256(convert_to(a.geometria::text, 'UTF8')), 'hex'), 'ndvi', $4, $5::date - 9, $5::date, $6, 'teste-sat03'
+         from erp.areas a where a.id = $7`, [consultaY, orgY, empresaY, VERSAO_METODO_NDVI_V2, hoje, createHash("sha256").update(randomUUID()).digest("hex"), areaY.id]);
+    await admin.query("update erp.organizations set deleted_at = now() where id = $1", [orgY]);
+    expect(await novoWorker().rodarUmaVez()).toEqual(zero());
+    expect(chamadasDa(areaY.chave)).toEqual([]);
+    expect((await itens(consultaY)).map((i) => [i.situacao, i.erro])).toEqual([["falho", "criador_sem_acesso"]]);
+    expect(await consulta(consultaY)).toMatchObject({ situacao: "concluida_com_falhas", total_falhos: 1 });
+    expect(await consumoDe(consultaY)).toEqual([]);
   });
 });
 
