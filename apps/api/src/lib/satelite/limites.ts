@@ -53,9 +53,6 @@ export const ESPERA_BASE_S = 30;
 export const ESPERA_FATOR = 4;
 export const ESPERA_JITTER = 0.2;
 
-/** Quanto adiar um item que encontrou o limite global (não é falha: volta para 'pendente'). */
-export const ADIAMENTO_POR_LIMITE_S = 20;
-
 export interface LimitesSatelite {
   simultaneas: number;
   porMinutoConta: number;

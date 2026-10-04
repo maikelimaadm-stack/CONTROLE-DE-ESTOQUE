@@ -4760,6 +4760,61 @@ Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registro
 identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.
 
 
+## SAT-03 — executor da fila satelital, limite global e ledger real (0054, decisão 296)
+
+Faixa **F1**. **Uma migration: `0054_satelite_executor.sql`** (pre-deploy pelo pipeline; trava (2026,88), `lock_timeout` 2 s,
+pré e pós-condições nomeadas `SAT-03: …`). **Variáveis novas** só no serviço da API (todas opcionais; ver `.env.example`):
+`SATELITE_WORKER_ENABLED` (0/1 fechado, **ausente = desligado**), `SATELITE_WORKER_INTERVALO_S`, `SATELITE_LIMITE_SIMULTANEAS`,
+`SATELITE_LIMITE_MINUTO_CONTA`, `SATELITE_LIMITE_MINUTO_ORG` (inteiro ≥ 1; inválido derruba o startup). Sem permissão nova.
+**Nada visual**: nenhuma mudança em `apps/web`.
+
+**O que a 0054 faz.** Duas portas estreitas SECURITY DEFINER, executáveis só pelo `erp_app`: `erp.satelite_reservar_itens(…)`
+(reserva itens da fila dentro dos tetos de chamada, com `SKIP LOCKED`, sem reservar item de criador que perdeu acesso; devolve só
+os ids) e `erp.satelite_contar_chamadas()` (só os números do limite). `erp.satelite_consumo`: PU e crédito anuláveis em par, com a
+origem obrigatória quando nulos. `erp.satelite_consulta_itens.tentativas_rodada`. Índice `ix_satelite_consumo_recente`.
+
+**Travas.** ACCESS EXCLUSIVE em `erp.satelite_consulta_itens` e depois em `erp.satelite_consumo` (nessa ordem, a mesma do POST da
+SAT-02) até o commit: só catálogo mais a leitura das duas tabelas para os CHECKs e o índice — tabelas pequenas (o ledger nunca foi
+escrito em produção antes desta fatia). Nenhuma tabela de terceiros é travada. Volumes de produção não medidos: **PENDING**. Não
+exige janela fora do pico; fora do pico continua sendo a folga recomendada. Trava que não vem em 2 s aborta a migration inteira.
+
+**API.**
+- Executor: com `SATELITE_WORKER_ENABLED=1` **e** `COPERNICUS_ENABLED=1` **e** credencial, roda dentro do processo da API a cada
+  `SATELITE_WORKER_INTERVALO_S` (padrão 5 s). Faltando uma das três, não reserva nada e escreve UMA linha de log com a condição que
+  falta. Desligado, as consultas ficam 'pendente' na fila, sem gasto.
+- `POST /api/satelite/consultas/:id/reprocessar-falhas` (nova): volta os itens 'falho' da consulta para a fila.
+- `POST /api/mapa/areas/:id/analises-satelitais/ndvi` (SAT-01): mesma resposta; o limite passa a ser o GLOBAL do banco e a
+  chamada grava o consumo no ledger na mesma transação da análise.
+
+**Limites (CONFIRMAR NO PAINEL DA CONTA COPERNICUS).** Números em `apps/api/src/lib/satelite/limites.ts`: 2 chamadas simultâneas
+(o executor usa 1 e deixa 1 para o "Analisar agora"), 30 por minuto na conta, 10 por minuto por organização. São padrões
+conservadores, não lidos da conta real: confira no painel (dataspace.copernicus.eu → Sentinel Hub → cota) as conexões
+concorrentes, requisições por minuto e processing units por mês, e troque por `SATELITE_LIMITE_*` se precisar.
+
+**Impacto em dados reais:** nenhum dado é corrigido ou apagado (decisões 240/247). Com o executor **ligado**, cada item pendente
+vira uma chamada ao Copernicus (gasta cota da conta), uma análise nova e uma linha no ledger. Com ele desligado, nada muda.
+
+**Ordem:** BANCO (0054, pre-deploy) → API. **API anterior × banco na 0054**: só acrescenta; a SAT-02 anterior soma o ledger
+ignorando nulo e não conhece a coluna nova (default 0). **API nova × banco sem a 0054**: não acontece no pipeline; se acontecesse,
+o pedido avulso da SAT-01 sem análise da janela responderia 500 (a contagem não existe) e o executor não reservaria nada.
+
+**Railway, depois do merge:**
+1. Deixe o deploy subir **com o executor desligado** (não crie `SATELITE_WORKER_ENABLED` ainda). Confira `public.erp_migrations`
+   com `0054_satelite_executor.sql`, api e web SUCCESS, e um "Analisar agora" respondendo como antes.
+2. Confira os limites no painel do Copernicus; se forem diferentes dos padrões, crie `SATELITE_LIMITE_SIMULTANEAS`,
+   `SATELITE_LIMITE_MINUTO_CONTA` e `SATELITE_LIMITE_MINUTO_ORG` no serviço `api`.
+3. Ligue: `SATELITE_WORKER_ENABLED=1` no serviço `api` (o Railway redeploya). `COPERNICUS_ENABLED=1` e a credencial já estão lá.
+4. Peça uma consulta pequena (1 área, 1 período) e acompanhe `GET /api/satelite/consultas/:id` até 'concluida'.
+5. Para desligar: `SATELITE_WORKER_ENABLED=0` (ou apague) e redeploy — o que estava 'executando' volta para a fila pelo prazo
+   (10 min) e nada mais é chamado.
+
+**Conferência pós-deploy:** a migration no ledger; `GET /api/satelite/consultas` autenticado → 200; o log de startup do executor
+(desligado com o motivo, ou ligado). Prova em produção autenticada e consumo real do Copernicus: **PENDING** (acesso que a
+sessão não tem).
+
+**Caminho de volta.** API: redeploy da versão anterior (ou só desligar o executor). Banco: forward-only; o inverso está provado em
+`packages/db/test/sat-03-0054.test.ts` e é fail-closed (com linha de PU desconhecido no ledger o NOT NULL não volta).
+
 ## SAT-02 — consulta satelital em lote: fila, estimativa e ledger de créditos (0053, decisão 295)
 
 Faixa **F1**. **Uma migration: `0053_satelite_consultas.sql`** (pre-deploy pelo pipeline, como as anteriores; trava (2026,87),
@@ -4908,9 +4963,9 @@ a edição (`PUT /api/resources/areas/:id` trocando `empresa_id`) responde 409 C
 pertence à empresa em que a área estava. Área cadastrada na empresa errada, depois de analisada, se corrige com área nova (e exclusão
 lógica da antiga, que mantém o histórico). Área sem análise continua mudando de empresa como antes.
 
-**Limites conhecidos.** Limite do ERP de 10 chamadas ao provedor por minuto por organização **por instância** da API, e reaproveitamento
-de chamadas simultâneas também por instância (com várias réplicas, multiplica — a restrição única no banco continua impedindo linha
-duplicada). Uma análise por área e polígono por dia UTC: pedir de novo no mesmo dia devolve a mesma, inclusive uma `sem_observacao_util`;
+**Limites conhecidos.** O limite de chamadas ao provedor deixou de ser por instância na SAT-03 (decisão 296): é GLOBAL, contado pelo
+banco — ver § SAT-03. O reaproveitamento de chamadas simultâneas continua por instância (com várias réplicas, a restrição única no
+banco continua impedindo linha duplicada). Uma análise por área e polígono por dia UTC: pedir de novo no mesmo dia devolve a mesma, inclusive uma `sem_observacao_util`;
 imagem adquirida mais tarde no mesmo dia só entra no dia seguinte. Área com menos de 10 pixels de 10 m ou caixa com mais de 2.500 pixels
 num lado é recusada (422) antes de chamar o provedor. `sem_aquisicao` × `cobertura_insuficiente` dependem de o provedor omitir dias sem
 imagem (comportamento a confirmar no smoke). **A cota da conta Copernicus é UMA para o ERP inteiro** (uma credencial): uma organização
