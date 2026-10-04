@@ -16,18 +16,28 @@
  * `Retry-After` só quando ele cabe em `ESPERA_MAXIMA_RETRY_AFTER_S` (senão devolve o limite a quem pediu, com o
  * tempo de espera); 5xx, tempo esgotado e falha de rede repetem uma vez após `ESPERA_ENTRE_TENTATIVAS_MS`;
  * 400/403/404 e os demais 4xx NUNCA repetem (repetir não muda a resposta, só gasta a cota). Sem laço aberto.
+ *
+ * PROCESS API (SAT-06, decisão 297): `processoComConsumo` pede a imagem de valores do NDVI. É a MESMA política da
+ * Statistical API — o mesmo token, as mesmas tentativas, o mesmo Retry-After, os mesmos tipos de falha — porque as
+ * duas passam pelo MESMO laço (`chamarComTentativas`); só o leitor do corpo muda (binário em vez de JSON).
  */
 import type { BuscarFn } from "../consultas/http.js";
-import { enviarPost } from "./http.js";
+import { enviarPost, lerCorpoJson, leitorCorpoBinario, type LeitorCorpo } from "./http.js";
+import { temAssinaturaPng } from "./png.js";
 
 /** Endereços OFICIAIS e públicos (não são configuração: são o contrato do provedor). */
 export const ENDERECOS_COPERNICUS = {
   token: { host: "identity.dataspace.copernicus.eu", caminho: "/auth/realms/CDSE/protocol/openid-connect/token" },
-  estatistica: { host: "sh.dataspace.copernicus.eu", caminho: "/statistics/v1" }
+  estatistica: { host: "sh.dataspace.copernicus.eu", caminho: "/statistics/v1" },
+  processo: { host: "sh.dataspace.copernicus.eu", caminho: "/api/v1/process" }
 } as const;
 
 export const TEMPO_MAXIMO_TOKEN_MS = 10_000;
 export const TEMPO_MAXIMO_ESTATISTICA_MS = 30_000;
+/** A Process API rasteriza até 2500 × 2500 px: mais folga que a estatística, o mesmo número de tentativas. */
+export const TEMPO_MAXIMO_PROCESSO_MS = 60_000;
+/** Teto do corpo da imagem: o mesmo do arquivo no banco (CHECK da 0055, 16 MiB). Acima disso não é a imagem pedida. */
+export const TAMANHO_MAXIMO_PNG_PROCESSO_BYTES = 16 * 1024 * 1024;
 export const MARGEM_RENOVACAO_TOKEN_S = 60;
 export const TENTATIVAS_MAXIMAS = 2;
 export const ESPERA_ENTRE_TENTATIVAS_MS = 500;
@@ -60,7 +70,7 @@ export class FalhaCopernicus extends Error {
 
 /** O que pode ir para o log de uma chamada — nada além disto. */
 export interface RegistroChamada {
-  endpoint: "token" | "estatistica";
+  endpoint: "token" | "estatistica" | "processo";
   status: number | null;
   duracaoMs: number;
   tentativa: number;
@@ -105,16 +115,39 @@ export class ClienteCopernicus {
    * da resposta sai daqui; quem lê o PU é `consumo.ts`.
    */
   async estatisticaComConsumo(corpo: unknown, registrar: (r: RegistroChamada) => void = () => {}): Promise<{ corpo: unknown; puCabecalho: string | null }> {
-    const texto = JSON.stringify(corpo);
+    const r = await this.chamarComTentativas("estatistica", ENDERECOS_COPERNICUS.estatistica, JSON.stringify(corpo), {}, TEMPO_MAXIMO_ESTATISTICA_MS, lerCorpoJson, registrar);
+    return { corpo: r.corpo, puCabecalho: r.puCabecalho };
+  }
+
+  /**
+   * POST na Process API (SAT-06, decisão 297): devolve a IMAGEM (PNG) da resposta 2xx que valeu e o cabeçalho
+   * `x-processingunits-spent` dela (bruto, ou null). Mesmas tentativas e mesmo token de `estatistica`. 2xx com corpo
+   * vazio, ilegível, acima do teto ou que não começa com a assinatura PNG → `resposta_malformada` COM `puCabecalho`
+   * definido: a chamada foi cobrada e quem a abriu grava o consumo. Quem confere a imagem por inteiro (cabeçalho,
+   * dimensões, dados) é `lerPngCinza8`, no chamador.
+   */
+  async processoComConsumo(corpo: unknown, registrar: (r: RegistroChamada) => void = () => {}): Promise<{ png: Buffer; puCabecalho: string | null }> {
+    const r = await this.chamarComTentativas("processo", ENDERECOS_COPERNICUS.processo, JSON.stringify(corpo), { accept: "image/png" },
+      TEMPO_MAXIMO_PROCESSO_MS, leitorCorpoBinario(TAMANHO_MAXIMO_PNG_PROCESSO_BYTES), registrar);
+    if (!Buffer.isBuffer(r.corpo) || !temAssinaturaPng(r.corpo)) throw new FalhaCopernicus("resposta_malformada", r.status, null, r.puCabecalho);
+    return { png: r.corpo, puCabecalho: r.puCabecalho };
+  }
+
+  /**
+   * O laço ÚNICO de chamada à API do provedor (Statistical e Process): token, tentativas, 401 com renovação, 429 com
+   * Retry-After, 5xx/tempo/rede repetidos uma vez, 4xx nunca. `ler` decide como o corpo é lido (JSON ou binário).
+   */
+  private async chamarComTentativas(endpoint: "estatistica" | "processo", destino: { host: string; caminho: string }, texto: string,
+    cabecalhos: Record<string, string>, tempoMs: number, ler: LeitorCorpo, registrar: (r: RegistroChamada) => void): Promise<{ corpo: unknown; puCabecalho: string | null; status: number }> {
     let renovouPor401 = false;
     for (let tentativa = 1; tentativa <= TENTATIVAS_MAXIMAS; tentativa++) {
       const token = await this.obterToken(registrar);
       const inicio = this.agora();
-      const r = await enviarPost(this.opcoes.buscar, ENDERECOS_COPERNICUS.estatistica.host, ENDERECOS_COPERNICUS.estatistica.caminho, texto,
-        { authorization: `Bearer ${token}`, "content-type": "application/json" }, TEMPO_MAXIMO_ESTATISTICA_MS, this.agora);
+      const r = await enviarPost(this.opcoes.buscar, destino.host, destino.caminho, texto,
+        { ...cabecalhos, authorization: `Bearer ${token}`, "content-type": "application/json" }, tempoMs, this.agora, ler);
       const ultima = tentativa === TENTATIVAS_MAXIMAS;
       const anotar = (status: number | null, tipoFalha: TipoFalhaCopernicus | null) =>
-        registrar({ endpoint: "estatistica", status, duracaoMs: this.agora() - inicio, tentativa, tipoFalha });
+        registrar({ endpoint, status, duracaoMs: this.agora() - inicio, tentativa, tipoFalha });
 
       if (r.tipo === "falha") {
         const tipo: TipoFalhaCopernicus = r.motivo === "tempo" ? "tempo" : r.motivo === "rede" ? "rede" : "resposta_malformada";
@@ -124,7 +157,7 @@ export class ClienteCopernicus {
         throw new FalhaCopernicus(tipo, r.status ?? null, null, r.motivo === "corpo" ? r.processingUnits ?? null : undefined);
       }
       const s = r.status;
-      if (s >= 200 && s < 300) { anotar(s, null); return { corpo: r.corpo, puCabecalho: r.processingUnits ?? null }; }
+      if (s >= 200 && s < 300) { anotar(s, null); return { corpo: r.corpo, puCabecalho: r.processingUnits ?? null, status: s }; }
       if (s === 401) {
         anotar(s, "autenticacao");
         this.token = null; // o token caiu antes do previsto: o próximo pedido emite outro

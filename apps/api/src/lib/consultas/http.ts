@@ -8,7 +8,11 @@
  * saída (`BuscarFn`, por isso ela aceita método e corpo), mas pela porta própria dele: `lib/satelite/http.ts`.
  */
 
-export type BuscarFn = (url: string, init: { signal: AbortSignal; redirect: "manual"; headers: Record<string, string>; method?: "GET" | "POST"; body?: string }) => Promise<{ status: number; headers: { get(n: string): string | null }; json(): Promise<unknown> }>;
+/**
+ * `arrayBuffer` (SAT-06, decisão 297) é OPCIONAL: só a Process API do provedor satelital lê corpo binário (a imagem). A
+ * resposta do `fetch` real o tem; mock sem ele, lido como binário, vira corpo ilegível — nunca um corpo inventado.
+ */
+export type BuscarFn = (url: string, init: { signal: AbortSignal; redirect: "manual"; headers: Record<string, string>; method?: "GET" | "POST"; body?: string }) => Promise<{ status: number; headers: { get(n: string): string | null }; json(): Promise<unknown>; arrayBuffer?(): Promise<ArrayBuffer> }>;
 
 export type RespostaHttp =
   | { tipo: "ok"; status: number; corpo: unknown }
