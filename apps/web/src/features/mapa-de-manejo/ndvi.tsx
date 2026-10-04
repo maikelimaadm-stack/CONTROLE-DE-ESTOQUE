@@ -102,6 +102,14 @@ function useHistoricoNdvi(areaId: string, ativo: boolean) {
   });
 }
 
+/** O motivo do 503 vem em `details.motivo` (SAT-01): `desligada` (COPERNICUS_ENABLED) ou `configuracao` (sem credencial). */
+export function mensagemDaRecusa(e: unknown): string {
+  if (e instanceof ApiError && e.status === 503 && (e.details as { motivo?: unknown } | undefined)?.motivo === "configuracao") {
+    return "A análise por satélite está ligada, mas a credencial do Copernicus não está configurada no servidor da API.";
+  }
+  return e instanceof Error ? e.message : "Não foi possível pedir a análise.";
+}
+
 interface RespostaAnalise { analise: { situacao: string; motivo_qualidade: string | null; valor_medio: string | null; observacao_inicio: string | null }; reutilizada: boolean }
 
 /**
@@ -218,8 +226,10 @@ export function NdviDaArea({ areaId, estado, temContorno }: { areaId: string; es
       });
       await qc.invalidateQueries({ queryKey: CHAVE_NDVI });
     },
-    // A mensagem é a do servidor (desligada, provedor indisponível, limite, área pequena…), já em português.
-    onError: (e) => setAviso({ tom: "erro", texto: e instanceof Error ? e.message : "Não foi possível pedir a análise." })
+    // A mensagem é a do servidor (desligada, provedor indisponível, limite, área pequena…), já em português. O 503 de
+    // integração ligada SEM credencial (`motivo: configuracao`, contrato da SAT-01) ganha o motivo por extenso: é o que
+    // diz a quem administra o que falta no servidor (nunca o valor da credencial — a tela não o conhece).
+    onError: (e) => setAviso({ tom: "erro", texto: mensagemDaRecusa(e) })
   });
 
   if (estado.situacao === "sem_permissao") return null;

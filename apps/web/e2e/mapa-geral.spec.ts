@@ -509,3 +509,25 @@ test("Mapa geral: o resumo do NDVI falha (500) — as áreas continuam no mapa, 
   await aviso.getByRole("button", { name: "Tentar de novo" }).click();
   await expect.poll(() => pedidos).toBe(antes + 1);
 });
+
+test("Mapa geral: 'Analisar agora' com a integração ligada e SEM credencial (503 `configuracao`) diz o que falta no servidor", async ({ page }) => {
+  await login(page);
+  await limparAreas(page);
+  const empresa = await empresaDaSessao(page);
+  const nome = uniq("NDVI SEM CREDENCIAL").toLocaleUpperCase("pt-BR");
+  const area = await api<Area>(page, "POST", "/api/resources/areas", {
+    empresa_id: empresa, name: nome, land_use: "pastagem", status: "ativa", tenure: "propria", area_ha: "100", usable_area_ha: "100", color: "#2563eb",
+    geometria: { type: "Polygon", coordinates: [[[-55.4, -15.2], [-55.39, -15.2], [-55.39, -15.19], [-55.4, -15.19], [-55.4, -15.2]]] }
+  });
+  // O 503 do contrato da SAT-01 para "ligada sem credencial" (o E2E roda com a integração DESLIGADA: aqui o servidor é simulado só nesta rota).
+  await page.route(`**/api/mapa/areas/${area.id}/analises-satelitais/ndvi`, (rota) => rota.fulfill({
+    status: 503, contentType: "application/json",
+    body: JSON.stringify({ error: { code: "CONSULTA_INDISPONIVEL", message: "A análise por satélite está desligada neste ambiente.", details: { motivo: "configuracao" } } })
+  }));
+  await page.goto("/mapa-geral");
+  await page.getByTestId("mapa-item-area").filter({ hasText: nome }).click();
+  const painel = page.getByTestId("mapa-area-selecionada");
+  await painel.getByTestId("mapa-ndvi-analisar").click();
+  await expect(painel.getByTestId("mapa-ndvi-aviso")).toHaveText("A análise por satélite está ligada, mas a credencial do Copernicus não está configurada no servidor da API.");
+  await limparAreas(page);
+});
