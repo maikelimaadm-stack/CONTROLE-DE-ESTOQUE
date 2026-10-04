@@ -180,7 +180,10 @@ describe("SAT-01 POST — análise concluída, gravada e reaproveitada", () => {
     expect(resto).toHaveLength(0);
     expect(linha).toMatchObject({ id: primeira.analise.id, organization_id: h.demo.orgId, empresa_id: A, criado_por: h.demo.adminUserId });
     expect(Object.keys(linha!.metadados_provedor).sort()).toEqual(["fonte_pixels_geometria", "intervalos_com_dado", "intervalos_com_erro", "intervalos_recebidos", "intervalos_uteis", "maior_cobertura", "status_provedor"]);
-    expect(JSON.stringify([linha, primeira])).not.toMatch(new RegExp(`${TOKEN_FALSO}|${SEGREDO_FALSO}|Bearer|evalscript`));
+    // O TEXTO do evalscript nunca é gravado nem devolvido. Desde a SAT-02 (0053) a linha tem a coluna `evalscript_sha256` (só o
+    // hash, nula na v1): o nome da coluna não é vazamento, o conteúdo do script seria.
+    expect(JSON.stringify([linha, primeira])).not.toMatch(new RegExp(`${TOKEN_FALSO}|${SEGREDO_FALSO}|Bearer|evalscript(?!_sha256)`));
+    expect(linha!.evalscript_sha256 ?? null, "v1 não grava hash de evalscript").toBeNull();
     const auditoria = await admin.query("select action from erp.audit_logs where entity='analises_satelitais' and entity_id=$1", [primeira.analise.id]);
     expect(auditoria.rows).toEqual([{ action: "create" }]);
   });

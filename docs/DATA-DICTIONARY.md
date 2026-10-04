@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 213 |
-| Tabelas com `organization_id` (escopo de organização) | 156 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 65 |
+| Tabelas no schema `erp` | 217 |
+| Tabelas com `organization_id` (escopo de organização) | 160 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 69 |
 | Entidades curadas neste dicionário | 61 |
 | Entidades com ID Global | 25 |
 | Entidades com Tipo de Operação | 19 |
 | Tipos de Operação referenciados | 32 |
-| Cobertura curada | 28.6% |
+| Cobertura curada | 28.1% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -2183,7 +2183,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.activity_operations` | 2 | não | — | não |
 | `erp.additional_infos` | 8 | sim | — | sim |
 | `erp.addressings` | 7 | sim | — | sim |
-| `erp.analises_satelitais` | 28 | sim | `empresa_id` | não |
+| `erp.analises_satelitais` | 32 | sim | `empresa_id` | não |
 | `erp.animal_categories` | 9 | sim | — | não |
 | `erp.animal_handling_items` | 8 | não | — | não |
 | `erp.animal_identifications` | 6 | sim | — | não |
@@ -2304,6 +2304,10 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.retiros` | 14 | sim | `empresa_id` | sim |
 | `erp.salary_advances` | 14 | sim | `empresa_id` | sim |
 | `erp.sales_document_items` | 12 | não | — | não |
+| `erp.satelite_consulta_itens` | 21 | sim | `empresa_id` | não |
+| `erp.satelite_consultas` | 15 | sim | `empresa_id` | não |
+| `erp.satelite_consumo` | 10 | sim | `empresa_id` | não |
+| `erp.satelite_orcamentos` | 7 | sim | `empresa_id` | não |
 | `erp.saved_reports` | 11 | sim | — | sim |
 | `erp.scheduled_reviews` | 10 | sim | — | sim |
 | `erp.service_order_lines` | 12 | não | — | não |

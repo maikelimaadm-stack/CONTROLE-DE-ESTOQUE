@@ -40,6 +40,7 @@ import plataformaRoutes from "./routes/plataforma.js";
 import referenciaRoutes from "./routes/referencias.js";
 import consultaRoutes from "./routes/consultas.js";
 import analisesSatelitaisRoutes from "./routes/analises-satelitais.js";
+import sateliteConsultasRoutes from "./routes/satelite-consultas.js";
 import produtosPesquisaRoutes from "./routes/produtos-pesquisa.js";
 import type { BuscarFn } from "./lib/consultas/http.js";
 import { politicaDeOrigem } from "./lib/cors-origem.js";
@@ -111,6 +112,7 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   await app.register(referenciaRoutes, { prefix: "/api" });
   await app.register(consultaRoutes, { prefix: "/api" });
   await app.register(analisesSatelitaisRoutes, { prefix: "/api" });
+  await app.register(sateliteConsultasRoutes, { prefix: "/api" });
   await app.register(produtosPesquisaRoutes, { prefix: "/api" });
   // ------------------------------------------------------------------------------------------------
   // CONTRATO NEGATIVO DO NOME ANTIGO DE EMPRESA (PRE-BASE2-05B).

@@ -4760,6 +4760,63 @@ Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registro
 identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.
 
 
+## SAT-02 — consulta satelital em lote: fila, estimativa e ledger de créditos (0053, decisão 295)
+
+Faixa **F1**. **Uma migration: `0053_satelite_consultas.sql`** (pre-deploy pelo pipeline, como as anteriores; trava (2026,87),
+`lock_timeout` 2 s, pré e pós-condições nomeadas `SAT-02: …`). Sem variável nova, sem permissão nova
+(`analises_satelitais.view`/`.create` da SAT-01). **Nada visual**: nenhuma mudança em `apps/web`.
+
+**O que a 0053 cria.** `erp.satelite_consultas` (o pedido), `erp.satelite_consulta_itens` (a fila; um item VIVO por
+`(organization_id, chave_idempotencia)`, índice único parcial), `erp.satelite_consumo` (ledger append-only: UPDATE, DELETE e TRUNCATE
+recusados por gatilho, inclusive para o dono do schema) e `erp.satelite_orcamentos` (limite mensal por empresa; sem linha = sem
+limite). Todas com organização + empresa, RLS `tenant_e_empresa` habilitada e forçada (módulo pecuária,
+`scripts/company-rls-modules.json`) e FKs compostas, inclusive as de coerência (item ↔ análise pela mesma área; consumo → item pela
+mesma consulta). Em `erp.analises_satelitais`: quatro colunas NULLABLE sem default (`consulta_item_id`, `resolucao_nativa_m`,
+`evalscript_sha256`, `data_alvo`), a chave única `(organization_id, empresa_id, area_id, id)` e a unicidade
+`uq_analises_satelitais_janela` refeita **com o mesmo nome**, agora com `data_alvo` e `NULLS NOT DISTINCT` (PostgreSQL 15+, conferido
+no preflight). Para o acervo, `data_alvo` é nula em todas as linhas e a unicidade é a mesma de antes.
+
+**Travas — aplicar FORA DO PICO.** Os CREATE TABLE com FK seguram SHARE ROW EXCLUSIVE em `erp.organizations`, `erp.empresas`,
+`erp.users` e `erp.areas` até o commit: a escrita nelas espera durante a migration (a leitura não). O que pega ACCESS EXCLUSIVE em
+`erp.analises_satelitais` (colunas, CHECKs, chave única nova, unicidade da janela refeita e as FKs que dependem dela) fica por ÚLTIMO
+no arquivo. Não é só catálogo: os CHECKs e as duas chaves únicas LEEM a tabela inteira (sem regravar), e leitura e escrita de análises
+esperam até o commit. O volume de `erp.analises_satelitais` em produção não foi medido (**PENDING**; esperado pequeno, uma linha por
+análise pedida desde a SAT-01). Trava que não vem em 2 s aborta a migration inteira e para o deploy, sem nada aplicado.
+
+**API — rotas novas** (prefixo `/api`; nenhuma chama o Copernicus):
+- `POST /satelite/consultas` — corpo estrito `{ alvo, periodo, indices, confirmar }`. `confirmar:false` devolve a PRÉVIA (itens,
+  reaproveitados, novos, faixa de créditos, saldo do mês, excede orçamento, áreas ignoradas) **sem gravar nada**; `confirmar:true` cria
+  a consulta e os itens `pendente` (ou `reaproveitado`, 0 crédito, quando a chave já tem item vivo). Até 200 itens por consulta
+  (períodos × índices acima disso → 422 antes de qualquer SQL). Custo novo que excede o saldo do orçamento definido → 422 e nada é
+  criado. Saldo = limite − consumo do mês (UTC) − reserva das consultas pendentes/executando (estimativa máxima menos o já consumido
+  por elas, de qualquer mês).
+- `GET /satelite/consultas/:id` — consulta, contadores e itens paginados; ETag fraco e `If-None-Match` → 304.
+- `GET /satelite/consultas` — histórico do escopo, mais recente primeiro.
+
+**Impacto em dados reais:** nenhum. Tabelas novas e vazias, colunas nullable, uma chave única que contém `id` (que já é chave, então
+nenhuma linha existente pode violá-la) e a unicidade da janela com `data_alvo` nula em todo o acervo (a mesma que ele já cumpre); nada
+é escrito, corrigido ou apagado (decisões 240/247). A rota só GRAVA o pedido e a fila —
+nenhum item é executado nesta fatia (o executor é a SAT-03), então nenhuma chamada ao provedor e nenhum crédito é gasto. A análise
+v1 (`POST …/ndvi`, `sat01-ndvi-v1`) continua igual e não é reprocessada.
+
+**Mudança de comportamento declarada:** depois da 0053, um `TRUNCATE` simples de `erp.analises_satelitais` é recusado pela FK dos
+itens (0A000) antes do gatilho de imutabilidade; com CASCADE, o gatilho da 0052 recusa. Continua recusado nos dois caminhos. Área
+com item na fila não muda de empresa (FK composta, 23503), como já acontecia com a área com análise.
+
+**Ordem:** BANCO (0053, pre-deploy) → API. A web não muda. **API anterior × banco na 0053**: a 0053 só acrescenta; a API anterior
+lista colunas explicitamente e não conhece as tabelas novas — funciona igual; o `on conflict on constraint
+uq_analises_satelitais_janela` dela continua valendo, porque o nome não mudou e a análise avulsa grava `data_alvo` nula. **API nova × banco sem a 0053**: não acontece no
+pipeline (a migration roda antes da API subir); se acontecesse, as rotas novas responderiam erro de tabela inexistente e as demais
+seguiriam iguais.
+
+**Conferência pós-deploy:** `public.erp_migrations` com `0053_satelite_consultas.sql`; `GET /api/satelite/consultas` autenticado →
+200 com `itens: []`; sem sessão → 401. Prova em produção autenticada: **PENDING** (acesso que a sessão não tem).
+
+**Caminho de volta.** API: redeploy da versão anterior (as tabelas ficam, sem uso). Banco: forward-only, como o resto do repositório;
+o caminho inverso (DROP das tabelas novas, das funções e das colunas, na ordem certa) está provado em
+`packages/db/test/sat-02-0053.test.ts` (volta o catálogo exatamente à 0052 e a 0053 reaplica), mas não se executa em produção sem
+missão própria — o ledger de consumo, quando tiver linha, é histórico e não se apaga.
+
 ## MAPA-GERAL — "Mapa geral" com o NDVI de cada área; "Cadastro de Área" no menu (decisão 294, sem migration)
 
 Faixa **F1**. Sem migration, sem variável nova, sem permissão nova (usa `analises_satelitais.view`/`.create` da SAT-01).
