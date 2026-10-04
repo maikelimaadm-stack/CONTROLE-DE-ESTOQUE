@@ -86,3 +86,35 @@ export const VALORES_CLASSE_SCL_EXCLUIDA: readonly number[] = CLASSES_SCL_EXCLUI
 /** Histórico: tamanho padrão e máximo de uma página (paginação no servidor). */
 export const HISTORICO_ANALISE_SATELITAL_PADRAO = 30;
 export const HISTORICO_ANALISE_SATELITAL_MAXIMO = 100;
+
+/** Resumo do Mapa geral (decisão 294): tamanho padrão e máximo de uma página (paginação no servidor). */
+export const RESUMO_ANALISE_SATELITAL_PADRAO = 500;
+export const RESUMO_ANALISE_SATELITAL_MAXIMO = 500;
+
+/**
+ * ESCALA FIXA DO NDVI NO MAPA GERAL (decisão 294) — o mesmo número tem a mesma classe em qualquer data, área ou
+ * empresa. Nunca é recalculada pelo mínimo/máximo do que está na tela: com escala relativa, o pasto seco da seca
+ * apareceria "verde". São classes de LEITURA do vigor espectral, não diagnóstico: não dizem que o pasto está bom ou
+ * degradado e não viram biomassa, oferta nem lotação (decisão 293, item 7). Limite inferior INCLUSIVO; a primeira
+ * classe começa em −1 (o menor NDVI possível). Mudar um limite muda a leitura de todo o histórico: é decisão nova.
+ */
+export interface ClasseNdvi { chave: string; rotulo: string; minimo: number }
+export const CLASSES_NDVI_MAPA: readonly ClasseNdvi[] = [
+  { chave: "sem_vegetacao", rotulo: "Pouca ou nenhuma vegetação (abaixo de 0,20)", minimo: -1 },
+  { chave: "baixo", rotulo: "Vigor baixo (0,20 a 0,40)", minimo: 0.2 },
+  { chave: "medio", rotulo: "Vigor médio (0,40 a 0,60)", minimo: 0.4 },
+  { chave: "alto", rotulo: "Vigor alto (0,60 ou mais)", minimo: 0.6 }
+] as const;
+
+/**
+ * A classe de um NDVI médio (o `numeric` da API vem como string). Fora de [−1, 1], vazio ou não numérico → `null`
+ * (sem classe: a tela mostra "sem análise", nunca uma cor inventada).
+ */
+export function classeNdvi(valor: string | number | null | undefined): ClasseNdvi | null {
+  if (valor === null || valor === undefined || (typeof valor === "string" && valor.trim() === "")) return null;
+  const n = typeof valor === "number" ? valor : Number(valor);
+  if (!Number.isFinite(n) || n < -1 || n > 1) return null;
+  let atual: ClasseNdvi | null = null;
+  for (const c of CLASSES_NDVI_MAPA) if (n >= c.minimo) atual = c;
+  return atual;
+}

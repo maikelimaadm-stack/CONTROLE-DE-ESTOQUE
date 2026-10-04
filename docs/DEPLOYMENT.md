@@ -4760,6 +4760,45 @@ Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registro
 identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.
 
 
+## MAPA-GERAL — "Mapa geral" com o NDVI de cada área; "Cadastro de Área" no menu (decisão 294, sem migration)
+
+Faixa **F1**. Sem migration, sem variável nova, sem permissão nova (usa `analises_satelitais.view`/`.create` da SAT-01).
+
+**O que entra:**
+
+- **API — rota nova de leitura** `GET /api/mapa/analises-satelitais/resumo?indice=ndvi&pagina=1&tamanho=500` (query
+  estrita; tamanho 1–500): o resumo de TODAS as áreas do escopo com pelo menos uma execução — última execução, última
+  observação útil, a útil anterior e a variação — numa consulta só para a página inteira, com o escopo do módulo
+  pecuária em cada tabela antes do `limit`. Só lê `erp.areas` e `erp.analises_satelitais`; **não chama o Copernicus**.
+- **Web — "Mapa geral"** (`/mapa-geral`; `/mapa-de-manejo` redireciona, preservando parâmetros): o mapa pinta cada área
+  pela classe FIXA do NDVI da última imagem útil (cinza sem imagem útil), seletor "NDVI / Cor do cadastro", legenda,
+  "não é biomassa" e a atribuição "Contains modified Copernicus Sentinel data [ano]". O painel da área mostra os números,
+  a variação, o histórico e o **"Analisar agora"** (o mesmo `POST` da SAT-01; desligado → a mensagem do servidor).
+- **Menu**: o módulo passa a "Mapa geral"; Configurações › Pecuária › "Áreas / Piquetes" passa a "Cadastro de Área"
+  (mesma rota `?tab=pecuaria&sub=areas`, mesma ficha). O rótulo do módulo de escopo no banco ("Mapa de Manejo", 0049)
+  não muda (exigiria migration).
+
+**Impacto em dados reais:** nenhum. O deploy não escreve, corrige nem apaga nada (decisões 240/247). Abrir o Mapa geral
+só LÊ as análises já gravadas; uma análise nova só nasce do clique em "Analisar agora", pela rota e pelas regras da
+SAT-01 (no máximo uma chamada ao provedor por área e polígono por dia; `COPERNICUS_ENABLED` decide se ela existe).
+
+**Ordem:** API e web saem do mesmo merge; nenhuma depende de migration. A ordem segura é **API primeiro**, mas as duas
+janelas foram medidas:
+
+- **web nova × API anterior** (a web sobe antes): o resumo responde 404 de ROTA, e o Mapa geral segue o de antes — áreas
+  na cor do cadastro, aviso "Análise por satélite ainda não disponível neste servidor", sem legenda e sem "Analisar
+  agora". Coberto por `apps/web/e2e/mapa-geral-skew-api-producao.spec.ts` (o mundo é perguntado à base na hora).
+- **web anterior × API nova**: a web anterior não conhece a rota nova e continua em `/mapa-de-manejo`, que ela mesma
+  serve; nenhuma rota que ela usa mudou.
+
+**Conferência pós-deploy:** `GET /api/mapa/analises-satelitais/resumo` autenticado responde 200 com `itens` (sem
+sessão: 401). Na web, o menu mostra "Mapa geral"; `/mapa-de-manejo` leva a `/mapa-geral`; com alguma área já analisada,
+ela aparece pintada pela classe e o painel mostra a data da imagem e a atribuição do Copernicus; Configurações ›
+Pecuária mostra "Cadastro de Área". Prova em produção autenticada: **PENDING** (acesso que a sessão não tem). Smoke com
+a conta real do Copernicus ("Analisar agora" concluindo): **PENDING** (decisão 293).
+
+**Caminho de volta:** redeploy da API e da web anteriores no Railway; nada no banco a desfazer.
+
 ## SAT-01 — análise por satélite da área: Copernicus Sentinel-2 L2A e NDVI (0052)
 
 Decisão 293. **Uma migration: `0052_analises_satelitais.sql`** (pre-deploy; trava (2026,86), `lock_timeout` 2 s, pré/pós-condições

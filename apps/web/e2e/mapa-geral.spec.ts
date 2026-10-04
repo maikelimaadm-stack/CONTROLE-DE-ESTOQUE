@@ -1,11 +1,16 @@
 import { test, expect, type Page } from "@playwright/test";
-import { api, login, uniq } from "./helpers";
+import { execFileSync } from "node:child_process";
+import { ADMIN, api, login, uniq } from "./helpers";
 
 /**
- * CADASTRO-AREAS-03 — o cadastro de área existe num lugar só: a ficha de Áreas/Piquetes, com o editor de contorno
- * completo (ímã nas vizinhas, vértices, mover, histórico) DENTRO dela. "Concluir contorno" devolve o polígono para a
- * ficha sem abrir nada por cima; quem grava é o Salvar. O Mapa de Manejo só mostra e leva ao cadastro. A importação
- * de contornos (KML / GeoJSON) mora na lista de Áreas/Piquetes.
+ * CADASTRO-AREAS-03 — o cadastro de área existe num lugar só: a ficha de Cadastro de Área (antes "Áreas / Piquetes"),
+ * com o editor de contorno completo (ímã nas vizinhas, vértices, mover, histórico) DENTRO dela. "Concluir contorno"
+ * devolve o polígono para a ficha sem abrir nada por cima; quem grava é o Salvar. O Mapa geral (antes Mapa de Manejo,
+ * decisão 294) só mostra e leva ao cadastro. A importação de contornos (KML / GeoJSON) mora na lista do cadastro.
+ *
+ * MAPA-GERAL (decisão 294) — o NDVI de cada área no Mapa geral: escala fixa, legenda, atribuição do Copernicus, painel
+ * com a última imagem útil, a variação, o histórico e o "Analisar agora" (o provedor fica DESLIGADO no E2E: a tela
+ * mostra a recusa controlada do servidor — nenhuma conta Copernicus, nenhuma chamada de rede).
  */
 test.use({ launchOptions: { ...(process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {}), args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader", "--ignore-gpu-blocklist"] } });
 
@@ -37,7 +42,7 @@ async function empresaDaSessao(page: Page): Promise<string> {
 
 const areas = async (page: Page) => (await api<{ items: Area[] }>(page, "GET", "/api/resources/areas?pageSize=500")).items;
 
-test("o Mapa de Manejo só mostra: lista, resume a área clicada e leva ao cadastro de Áreas/Piquetes", async ({ page }) => {
+test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro de Área; a rota antiga redireciona", async ({ page }) => {
   test.setTimeout(90_000);
   await login(page);
   await limparAreas(page);
@@ -49,8 +54,11 @@ test("o Mapa de Manejo só mostra: lista, resume a área clicada e leva ao cadas
     geometria: { type: "Polygon", coordinates: [[[lng, lat], [lng + 0.01, lat], [lng + 0.01, lat + 0.01], [lng, lat + 0.01], [lng, lat]]] }
   });
 
+  // a rota antiga do módulo (favoritos, links salvos) leva ao Mapa geral
   await page.goto("/mapa-de-manejo");
-  await expect(page.getByRole("heading", { name: "Mapa de Manejo" })).toBeVisible();
+  await expect(page).toHaveURL(/\/mapa-geral$/);
+  await expect(page.getByRole("heading", { name: "Mapa geral" })).toBeVisible();
+  await expect(page.getByTestId("mapa-ir-areas")).toHaveText("Cadastro de Área");
   // só visualização: nada de desenho, importação ou ficha por cima
   for (const id of ["mapa-nova-area", "mapa-cadastro-sem-contorno", "mapa-importacao", "mapa-confirmar", "campo-mapa-desenhar", "mapa-ficha-cadastro"]) {
     await expect(page.getByTestId(id), `o mapa não tem mais "${id}"`).toHaveCount(0);
@@ -82,8 +90,12 @@ test("o Mapa de Manejo só mostra: lista, resume a área clicada e leva ao cadas
   await expect(resumo).toContainText("120,00 ha");
   await expect(page.getByRole("dialog"), "o resumo não é janela nem ficha").toHaveCount(0);
   await expect(resumo.getByTestId("mapa-abrir-cadastro")).toHaveAttribute("href", `/cadastros/areas/${criada.id}`);
+  // área nunca analisada: o painel diz isso, e o mapa fica na cor do cadastro (sem NDVI em nenhuma área)
+  await expect(resumo.getByTestId("mapa-ndvi-sem-analise")).toHaveText("Nenhuma análise por satélite desta área ainda.");
+  await expect(page.getByTestId("mapa-cor-cadastro")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("mapa-legenda-ndvi")).toHaveCount(0);
 
-  // "Abrir cadastro" leva à ficha de Áreas/Piquetes, com o mapa do contorno nela
+  // "Abrir cadastro" leva à ficha de Cadastro de Área, com o mapa do contorno nela
   await resumo.getByTestId("mapa-abrir-cadastro").click();
   await expect(page).toHaveURL(new RegExp(`/cadastros/areas/${criada.id}$`));
   await expect(page.getByTestId("campo-mapa-area")).toBeVisible();
@@ -91,7 +103,7 @@ test("o Mapa de Manejo só mostra: lista, resume a área clicada e leva ao cadas
   await expect(page.getByTestId("campo-mapa-desenhar")).toHaveText("Editar contorno");
 });
 
-test.describe("contorno desenhado na ficha de Áreas/Piquetes", () => {
+test.describe("contorno desenhado na ficha de Cadastro de Área", () => {
   const L = 100;
 
   /** Abre o editor da ficha e devolve o conversor de deslocamento (px a partir do centro de trabalho) para a tela. */
@@ -314,7 +326,7 @@ test.describe("contorno desenhado na ficha de Áreas/Piquetes", () => {
   });
 });
 
-test("importação KML mini, na lista de Áreas/Piquetes, cria áreas brancas com os nomes do arquivo — e o mapa as mostra", async ({ page }) => {
+test("importação KML mini, na lista do Cadastro de Área, cria áreas brancas com os nomes do arquivo — e o mapa as mostra", async ({ page }) => {
   test.setTimeout(120_000);
   await login(page);
   await limparAreas(page);
@@ -328,12 +340,12 @@ test("importação KML mini, na lista de Áreas/Piquetes, cria áreas brancas co
     expect(a.color, "importação sempre branca").toBe("#f8f9fa");
     expect(a.geometria?.type, "com o contorno do arquivo").toBe("Polygon");
   }
-  await page.goto("/mapa-de-manejo");
+  await page.goto("/mapa-geral");
   await expect(page.getByTestId("mapa-item-area").filter({ hasText: "MT - PASTO 06 A" })).toBeVisible();
   await expect(page.getByTestId("mapa-item-area").filter({ hasText: "MT - PASTO 07 A" })).toBeVisible();
 });
 
-test("importação KML fazenda_kaiman, na lista de Áreas/Piquetes, carrega os 102 polígonos", async ({ page }) => {
+test("importação KML fazenda_kaiman, na lista do Cadastro de Área, carrega os 102 polígonos", async ({ page }) => {
   test.setTimeout(300_000);
   await login(page);
   await limparAreas(page);
@@ -346,4 +358,119 @@ test("importação KML fazenda_kaiman, na lista de Áreas/Piquetes, carrega os 1
   expect(lista.length, "102 polígonos do KML").toBe(102);
   expect(lista.every((a) => a.color === "#f8f9fa"), "todas brancas").toBe(true);
   expect(lista.some((a) => a.name.includes("PASTO"))).toBe(true);
+});
+
+// ---------- MAPA-GERAL (decisão 294): o NDVI de cada área ----------
+
+const BANCO = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
+const sql = (c: string) => execFileSync("psql", [BANCO, "-v", "ON_ERROR_STOP=1", "-Atc", c], { encoding: "utf8" }).trim();
+const FORMA_UUID = /^[0-9a-f-]{36}$/;
+
+/**
+ * Uma execução da análise gravada DIRETO no banco do E2E (o provedor fica desligado no E2E): janela, registro e imagem
+ * explícitos, hash do polígono atual da área (o gatilho da 0052 confere). `obs` nulo = sem observação útil.
+ */
+function semearAnalise(areaId: string, janela: string, criado: string, obs: { inicio: string; media: string } | null) {
+  expect(areaId).toMatch(FORMA_UUID);
+  const autor = sql(`select id from erp.users where email='${ADMIN.email}'`);
+  const fim = new Date(Date.parse(janela) + 30 * 86_400_000).toISOString();
+  const c = obs !== null;
+  sql(`insert into erp.analises_satelitais (organization_id, empresa_id, area_id, provedor, colecao, indice, versao_metodo, geometria_sha256,
+      janela_inicio, janela_fim, resolucao_m, situacao, motivo_qualidade, observacao_inicio, observacao_fim, valor_medio, valor_minimo,
+      valor_maximo, desvio_padrao, pixels_amostra, pixels_sem_dado, pixels_validos, pixels_geometria, cobertura_valida, criado_por, created_at)
+    select a.organization_id, a.empresa_id, a.id, 'copernicus_cdse', 'sentinel-2-l2a', 'ndvi', 'sat01-ndvi-v1', encode(sha256(convert_to(a.geometria::text, 'UTF8')), 'hex'),
+      '${janela}', '${fim}', 10, '${c ? "concluida" : "sem_observacao_util"}', ${c ? "null" : "'cobertura_insuficiente'"},
+      ${c ? `'${obs.inicio}', '${obs.inicio}'::timestamptz + interval '1 day', ${obs.media}, ${obs.media} - 0.2, ${obs.media} + 0.1, 0.05, 13000, 2000, 11000, 11860, 0.9275`
+        : "null, null, null, null, null, null, null, null, null, 11860, null"},
+      '${autor}', '${criado}'
+     from erp.areas a where a.id = '${areaId}'`);
+}
+
+/** A cor que o MAPA está pintando na área (a propriedade da fonte `areas`, não o estado da tela). */
+const corNoMapa = (page: Page, id: string) => page.evaluate((id) => {
+  const m = (window as unknown as { __mapaManejoE2E: { querySourceFeatures: (s: string) => { properties: Record<string, unknown> }[] } }).__mapaManejoE2E;
+  const f = m.querySourceFeatures("areas").find((x) => x.properties["id"] === id);
+  return f ? String(f.properties["cor_exibida"]) : null;
+}, id);
+
+test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com última imagem, variação e histórico; 'Analisar agora' com o provedor desligado", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await limparAreas(page);
+  const empresa = await empresaDaSessao(page);
+  const quadrado = (lng: number, lat: number) => ({ type: "Polygon", coordinates: [[[lng, lat], [lng + 0.01, lat], [lng + 0.01, lat + 0.01], [lng, lat + 0.01], [lng, lat]]] });
+  const criar = (nome: string, lng: number) => api<Area>(page, "POST", "/api/resources/areas", {
+    empresa_id: empresa, name: nome, land_use: "pastagem", status: "ativa", tenure: "propria", area_ha: "100", usable_area_ha: "100", color: "#2563eb", geometria: quadrado(lng, -15.2)
+  });
+  const verde = await criar(uniq("NDVI VERDE").toLocaleUpperCase("pt-BR"), -55.3);
+  const nublada = await criar(uniq("NDVI NUVEM").toLocaleUpperCase("pt-BR"), -55.28);
+  const nunca = await criar(uniq("NDVI NUNCA").toLocaleUpperCase("pt-BR"), -55.26);
+  semearAnalise(verde.id, "2026-08-01T00:00:00Z", "2026-08-10T12:00:00Z", { inicio: "2026-08-05T00:00:00Z", media: "0.55" });
+  semearAnalise(verde.id, "2026-09-05T00:00:00Z", "2026-09-12T12:00:00Z", { inicio: "2026-09-10T00:00:00Z", media: "0.72" });
+  semearAnalise(nublada.id, "2026-09-05T00:00:00Z", "2026-09-12T12:00:00Z", null);
+  const linhas = () => Number(sql(`select count(*) from erp.analises_satelitais where area_id in ('${verde.id}','${nublada.id}','${nunca.id}')`));
+  expect(linhas(), "premissa: três execuções semeadas").toBe(3);
+
+  const resumo = page.waitForResponse((r) => r.url().includes("/api/mapa/analises-satelitais/resumo") && r.request().method() === "GET");
+  await page.goto("/mapa-geral");
+  expect((await resumo).status(), "o mapa pede o resumo de TODAS as áreas numa chamada").toBe(200);
+  await expect(page.getByTestId("mapa-item-area")).toHaveCount(3);
+  await expect.poll(async () => page.evaluate(() => Boolean((window as unknown as { __mapaManejoE2E?: unknown }).__mapaManejoE2E)), { timeout: 30_000 }).toBe(true);
+
+  // escala FIXA: 0,72 é "vigor alto" (verde escuro); sem imagem útil e nunca analisada ficam cinza — no MAPA, não só na tela
+  await expect(page.getByTestId("mapa-cor-ndvi"), "com NDVI em alguma área, o mapa abre no NDVI").toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => corNoMapa(page, verde.id), { timeout: 15_000 }).toBe("#1a9850");
+  expect(await corNoMapa(page, nublada.id)).toBe("#94a3b8");
+  expect(await corNoMapa(page, nunca.id)).toBe("#94a3b8");
+  const legenda = page.getByTestId("mapa-legenda-ndvi");
+  await expect(legenda).toBeVisible();
+  await expect(legenda.getByTestId("mapa-legenda-classe")).toHaveText([
+    "Vigor alto (0,60 ou mais)", "Vigor médio (0,40 a 0,60)", "Vigor baixo (0,20 a 0,40)", "Pouca ou nenhuma vegetação (abaixo de 0,20)"
+  ]);
+  await expect(legenda).toContainText("Não é biomassa");
+  await expect(legenda.getByTestId("mapa-atribuicao-copernicus")).toHaveText("Contains modified Copernicus Sentinel data 2026");
+  await expect(page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).getByTestId("mapa-item-ndvi")).toHaveText("0,72");
+  await expect(page.getByTestId("mapa-item-area").filter({ hasText: nunca.name }).getByTestId("mapa-item-ndvi")).toHaveCount(0);
+
+  // painel da área: última imagem útil, classe, variação desde a imagem anterior, polígono atual
+  await page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).click();
+  const painel = page.getByTestId("mapa-area-selecionada");
+  await expect(painel.getByTestId("mapa-ndvi-valor")).toHaveText("0,72");
+  await expect(painel.getByTestId("mapa-ndvi-classe")).toHaveText("Vigor alto (0,60 ou mais)");
+  await expect(painel.getByTestId("mapa-ndvi-imagem")).toHaveText(/^Imagem de 10\/09\/2026 · 93\s?% da área vista$/);
+  await expect(painel.getByTestId("mapa-ndvi-variacao")).toHaveText("+0,17 desde a imagem de 05/08/2026");
+  await expect(painel.getByTestId("mapa-ndvi-contorno-anterior")).toHaveCount(0);
+  await expect(painel.getByTestId("mapa-atribuicao-copernicus")).toHaveText("Contains modified Copernicus Sentinel data 2026");
+
+  // histórico: as duas imagens, da mais recente para a mais antiga, e a linha do tempo
+  await painel.getByTestId("mapa-ndvi-ver-historico").click();
+  await expect(painel.getByTestId("mapa-ndvi-historico-item")).toHaveCount(2);
+  await expect(painel.getByTestId("mapa-ndvi-historico-item").first()).toContainText("10/09/2026");
+  await expect(painel.getByTestId("mapa-ndvi-historico-item").first()).toContainText("0,72");
+  await expect(painel.getByTestId("mapa-ndvi-historico-item").last()).toContainText("05/08/2026");
+  await expect(painel.getByTestId("mapa-ndvi-linha")).toBeVisible();
+
+  // "Analisar agora": o provedor está DESLIGADO no E2E — a recusa controlada do servidor aparece e nada é gravado
+  const pedido = page.waitForResponse((r) => r.url().endsWith(`/api/mapa/areas/${verde.id}/analises-satelitais/ndvi`) && r.request().method() === "POST");
+  await painel.getByTestId("mapa-ndvi-analisar").click();
+  expect((await pedido).status()).toBe(503);
+  await expect(painel.getByTestId("mapa-ndvi-aviso")).toHaveText("A análise por satélite está desligada neste ambiente.");
+  expect(linhas(), "nada gravado").toBe(3);
+
+  // a área cuja última execução não achou imagem útil: o motivo, sem número
+  await page.getByTestId("mapa-item-area").filter({ hasText: nublada.name }).click();
+  await expect(painel.getByTestId("mapa-ndvi-valor")).toHaveCount(0);
+  await expect(painel.getByTestId("mapa-ndvi-ultima-sem-imagem")).toContainText("Sem observação útil — Nuvem, sombra ou pixel inválido cobrindo a área em todas as imagens da janela.");
+  await page.getByTestId("mapa-item-area").filter({ hasText: nunca.name }).click();
+  await expect(painel.getByTestId("mapa-ndvi-sem-analise")).toBeVisible();
+
+  // "Cor do cadastro": a cor da área volta, a legenda do NDVI sai
+  await page.getByTestId("mapa-cor-cadastro").click();
+  await expect(legenda).toHaveCount(0);
+  await expect.poll(() => corNoMapa(page, verde.id)).not.toBe("#1a9850");
+  expect(await corNoMapa(page, nunca.id)).not.toBe("#94a3b8");
+  await page.getByTestId("mapa-cor-ndvi").click();
+  await expect.poll(() => corNoMapa(page, verde.id)).toBe("#1a9850");
+
+  await limparAreas(page);
 });
