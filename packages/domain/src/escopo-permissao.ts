@@ -157,6 +157,9 @@ const RECURSOS_POR_MODULO: Readonly<Record<string, readonly string[]>> = {
   ],
   pecuaria: [
     "animals", "animal_retroactive_costs", "retiros", "grazing_modules", "batches", "batch_grazing", "batch_area",
+    // SAT-01 (decisão 293): a análise satelital é DA ÁREA (erp.areas, recurso batch_area) e responde pelo mesmo
+    // escopo dela — um módulo próprio abriria um segundo caminho até a área, com escopo capaz de divergir.
+    "analises_satelitais",
     "animals_management", "inventoried_animals", "livestock_plannings", "herd_evolution",
     "animal_batch_transfer", "batch_grouping", "batch_module_area_transfer", "batch_farm_transfer",
     "animal_farm_transfer", "animal_sales", "animal_purchases", "animal_births", "animal_deaths",

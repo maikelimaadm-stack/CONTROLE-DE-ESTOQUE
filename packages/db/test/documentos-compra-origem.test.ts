@@ -184,10 +184,11 @@ describe("premissas e catálogo", () => {
     // imóvel rural do LCDPR — operacoes-01-0045.test.ts; a 0046 dá a TOP aos módulos com produto —
     // operacoes-01-f10-modulos-top.test.ts; a 0047 dá à compra a entrada
     // de nota por XML e a guarda dos dados fiscais — operacoes-01-0047.test.ts; a 0049 cria o Mapa de
-    // Manejo — MAPA-01, #91; a 0050 o cadastro de áreas; a 0051 unifica mapa × áreas).
+    // Manejo — MAPA-01, #91; a 0050 o cadastro de áreas; a 0051 unifica mapa × áreas; a 0052 cria o histórico de
+    // análises satelitais por área — SAT-01, sat-01-0052.test.ts).
     const r = (await db.query<{ ate: number; n: number; ultima: string }>(
       "select count(*) filter (where name <= '0037_receber_pedido_de_compra.sql')::int ate, count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
-    expect(r).toEqual({ ate: 37, n: 51, ultima: "0051_areas_mapa_unificado.sql" });
+    expect(r).toEqual({ ate: 37, n: 52, ultima: "0052_analises_satelitais.sql" });
   });
 
   it("colunas novas: tipo e nulidade", async () => {

@@ -256,9 +256,9 @@ describe("0038 — sobre o acervo de layouts de venda, como o runner aplica", ()
     expect(ledger).toEqual({ n: 38, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
     // No disco há mais do que o ledger deste arquivo (ele sobe só até a 0038): a 0039 (EDITAR-01), a 0040
-    // (ESTOQUE-01), a 0041 (TOP-CONFIG-08), da 0042 à 0048 (OPERACOES-01), a 0049 (MAPA-01), a 0050 (CADASTRO-AREAS-01)
-    // e a 0051 (CADASTRO-AREAS-02) vêm depois.
-    expect(noDisco.length, "51 migrations no repositório").toBe(51);
+    // (ESTOQUE-01), a 0041 (TOP-CONFIG-08), da 0042 à 0048 (OPERACOES-01), a 0049 (MAPA-01), a 0050 (CADASTRO-AREAS-01),
+    // a 0051 (CADASTRO-AREAS-02) e a 0052 (SAT-01) vêm depois.
+    expect(noDisco.length, "52 migrations no repositório").toBe(52);
     expect(noDisco[37]).toBe(ALVO);
     expect(noDisco[38], "a 0039 logo depois da 0038 no repositório").toBe("0039_versao_do_documento_de_venda.sql");
     expect(await retrato(), "nenhuma linha de layout ou de ligação muda").toEqual(antes);
