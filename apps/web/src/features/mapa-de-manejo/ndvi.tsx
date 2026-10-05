@@ -58,6 +58,14 @@ export type EstadoResumoIndice = EstadoNdvi;
 
 const CHAVE_NDVI = ["mapa-geral", "ndvi"] as const;
 
+/** 422 de schema estrito da API antiga: chave nova (`contexto`, `data_imagem` no resumo) — não é data civil inválida. */
+function campoNaoReconhecido(e: ApiError): boolean {
+  if (!Array.isArray(e.details)) return false;
+  return e.details.some((d) =>
+    typeof d === "object" && d !== null && "message" in d && (d as { message: unknown }).message === "Campo não reconhecido"
+  );
+}
+
 /**
  * Resumo operacional da Condição da Área: índice × data ativa × método v2 × geometria atual.
  * `data` entra na query key — trocar a data nunca reaproveita estatística de outro dia.
@@ -72,18 +80,33 @@ export function useResumoIndice(indice: IdIndice, data: DataDaCamada = DATA_ULTI
     enabled: pode,
     retry: false,
     queryFn: async () => {
-      try {
-        return await api<{ itens: ResumoNdviDaArea[]; tem_mais: boolean }>(
+      const pedido = (extras: Record<string, unknown>) =>
+        api<{ itens: ResumoNdviDaArea[]; tem_mais: boolean }>(
           `/api/mapa/analises-satelitais/resumo${qs({
             indice,
-            contexto: "condicao",
-            ...(dia ? { data_imagem: dia } : {}),
-            tamanho: RESUMO_ANALISE_SATELITAL_MAXIMO
+            tamanho: RESUMO_ANALISE_SATELITAL_MAXIMO,
+            ...extras
           })}`
         );
+      try {
+        // Condição da Área: método v2 + data (quando há). API anterior à R2 recusa `contexto`/`data_imagem`
+        // com "Campo não reconhecido" — aí caímos no contrato MAPA-GERAL (version skew). Data civil inválida
+        // continua 422 (outra mensagem) e NÃO faz fallback.
+        return await pedido({
+          contexto: "condicao",
+          ...(dia ? { data_imagem: dia } : {})
+        });
       } catch (e) {
         // A rota não tem parâmetro de caminho: 404 aqui só pode ser a ROTA ausente (a API anterior a esta fatia).
         if (e instanceof ApiError && e.status === 404) return null;
+        if (e instanceof ApiError && e.status === 422 && campoNaoReconhecido(e)) {
+          try {
+            return await pedido({});
+          } catch (e2) {
+            if (e2 instanceof ApiError && e2.status === 404) return null;
+            throw e2;
+          }
+        }
         throw e;
       }
     }

@@ -59,13 +59,29 @@ const requisitarApi: RequisitarJson = (caminho, opcoes) => api(caminho, { signal
  * Lista a imagem por área (nunca gera). Parte em lotes de até 200 ids. Sem `dataImagem`: a da última análise útil;
  * com ela: só aquele dia (sem fallback).
  */
-export function listarRastersPorAreas(
+/** 422 de schema estrito da API antiga (chave `contexto` nova) — não confundir com data civil inválida. */
+function campoNaoReconhecido(e: ApiError): boolean {
+  if (!Array.isArray(e.details)) return false;
+  return e.details.some((d) =>
+    typeof d === "object" && d !== null && "message" in d && (d as { message: unknown }).message === "Campo não reconhecido"
+  );
+}
+
+export async function listarRastersPorAreas(
   areaIds: readonly string[],
   indice = "ndvi",
   opcoes: { signal?: AbortSignal; dataImagem?: string } = {}
 ): Promise<RasterIndiceDto[]> {
-  // Condição da Área: sempre pastagem-essencial-v2 + geometria atual (backend resolve o método).
-  return listarPaginado(areaIds, indice, requisitarApi, { ...opcoes, contexto: "condicao" });
+  // Condição da Área: pastagem-essencial-v2 + geometria atual (backend resolve o método).
+  // API anterior à R2 recusa `contexto` com "Campo não reconhecido" — cai no contrato sem filtro de método (skew).
+  try {
+    return await listarPaginado(areaIds, indice, requisitarApi, { ...opcoes, contexto: "condicao" });
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 422 && campoNaoReconhecido(e)) {
+      return listarPaginado(areaIds, indice, requisitarApi, opcoes);
+    }
+    throw e;
+  }
 }
 
 /** Baixa o PNG pela URL assinada (CORS, sem credenciais). Em 404 devolve null para o chamador renovar o DTO. */
