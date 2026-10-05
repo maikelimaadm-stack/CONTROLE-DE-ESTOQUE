@@ -247,7 +247,11 @@ describe("SAT-06 (1)(2)(6)(11) — gerar, guardar, reaproveitar e servir", () =>
     expect(primeira.raster).toEqual({
       id: expect.any(String), analise_id: analise["base"], area_id: area["base"], indice: "ndvi", tipo: "valores", data_imagem: "2026-08-14",
       largura: grade.largura, altura: grade.altura, cantos_lnglat: expect.any(Array), escala_min: ESCALA_NDVI_RASTER.min, escala_max: ESCALA_NDVI_RASTER.max,
-      resolucao_m: RESOLUCAO_ALVO_M, resolucao_reduzida: false, url_assinada: expect.stringMatching(new RegExp(`^/api/mapa/rasters/${primeira.raster.id}/arquivo\\?t=[A-Za-z0-9_-]+$`)),
+      resolucao_m: RESOLUCAO_ALVO_M, resolucao_reduzida: false,
+      geometria_sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      encoding_version: "ndvi-valores-v1", nodata: 0, bits: 8,
+      native_resolution_m: 10, processing_resolution_m: 10,
+      url_assinada: expect.stringMatching(new RegExp(`^/api/mapa/rasters/${primeira.raster.id}/arquivo\\?t=[A-Za-z0-9_-]+$`)),
       expira_em: expect.any(String)
     });
     const restante = (Date.parse(primeira.raster.expira_em) - Date.now()) / 1000;
