@@ -23,9 +23,13 @@ import {
   PROVEDOR_COPERNICUS,
   VERSAO_CATALOGO_INDICES,
   VERSAO_METODO_PASTAGEM_ESSENCIAL,
+  avaliarAnomaliaSatelite,
   deltaPercentual,
   tendenciaCurta,
-  type IdIndiceSatelite
+  tendenciaJanela,
+  tendenciaUltimaComparacao,
+  type IdIndiceSatelite,
+  type PontoSerieIndice
 } from "@agro/domain";
 import { runService } from "../lib/service.js";
 import { err, type DomainError } from "../lib/errors.js";
@@ -339,6 +343,37 @@ async function lerUltimaTentativa(
   return null;
 }
 
+/** Série operacional (geometria atual) para anomalia/tendência — até 24 pontos úteis por índice. */
+async function lerSeriesAnomalia(
+  ctx: ServiceCtx,
+  areaId: string,
+  geometriaSha256: string | null
+): Promise<Partial<Record<IdIndiceSatelite, PontoSerieIndice[]>>> {
+  const out: Partial<Record<IdIndiceSatelite, PontoSerieIndice[]>> = {};
+  if (geometriaSha256 === null) return out;
+  for (const indice of INDICES_BUNDLE_ESSENCIAL) {
+    const params: unknown[] = [ctx.orgId, areaId, indice, VERSAO_METODO_PASTAGEM_ESSENCIAL, geometriaSha256];
+    const escopo = empresaScopeSql(ctx, "s", params);
+    const r = await ctx.tx.query<{
+      observacao_inicio: Date; valor_medio: string | null; cobertura_valida: string | null; geometria_sha256: string;
+    }>(
+      `select s.observacao_inicio, s.valor_medio::text, s.cobertura_valida::text, s.geometria_sha256
+         from erp.analises_satelitais s
+        where s.organization_id = $1 and s.area_id = $2 and s.indice = $3 and s.versao_metodo = $4
+          and s.geometria_sha256 = $5 and s.situacao = 'concluida'
+          and s.observacao_inicio is not null and s.valor_medio is not null${escopo}
+        order by s.observacao_inicio asc
+        limit 24`, params);
+    out[indice] = r.rows.map((l) => ({
+      data: l.observacao_inicio.toISOString(),
+      media: Number(l.valor_medio),
+      qualidadeOk: l.cobertura_valida !== null && Number(l.cobertura_valida) >= 0.6,
+      geometriaSha256: l.geometria_sha256
+    }));
+  }
+  return out;
+}
+
 async function lerAnterior(
   ctx: ServiceCtx,
   areaId: string,
@@ -520,44 +555,70 @@ export default async function sateliteCondicaoRoutes(app: FastifyInstance) {
         };
       }
 
+      const series = await lerSeriesAnomalia(ctx, area.id, hashAtual);
+      const anomalia = avaliarAnomaliaSatelite({ geometriaSha256Atual: hashAtual, series });
+      const tendencia = {
+        ultima: tendenciaUltimaComparacao(series.ndvi ?? []),
+        "30d": tendenciaJanela(series.ndvi ?? [], 30),
+        "90d": tendenciaJanela(series.ndvi ?? [], 90)
+      };
+
       return {
         area_id: area.id,
         versao_metodo: VERSAO_METODO_PASTAGEM_ESSENCIAL,
+        geometria_sha256: hashAtual,
         ultima_observacao_util,
         ultima_tentativa,
+        anomalia,
+        tendencia,
         aviso: AVISO_VEGETACAO_NAO_E_CAPIM
       };
     });
   });
 
+  /**
+   * Histórico OPERACIONAL: só análises cujo `geometria_sha256` confere com o polígono vigente
+   * em `erp.areas`. Contornos antigos permanecem no banco (arquivo), mas não atravessam a API.
+   * Sem geometria atual → `itens = []`. Paginação (`antes` + `limite`) nunca mistura A e B.
+   */
   app.get("/satelite/areas/:areaId/historico", async (req) => {
     exigir(app, req, PERMISSAO_VER_ANALISE);
     const q = historicoQuery.parse(req.query);
     const areaId = idDaArea(req);
     return runService(app, req, PERMISSAO_VER_ANALISE, async (ctx) => {
       const area = await lerAreaNoEscopo(ctx, areaId);
-      const params: unknown[] = [ctx.orgId, area.id, q.indice, VERSAO_METODO_PASTAGEM_ESSENCIAL, q.limite];
+      const hashAtual = area.geometria_sha256;
+      if (hashAtual === null) {
+        return {
+          area_id: area.id, indice: q.indice, versao_metodo: VERSAO_METODO_PASTAGEM_ESSENCIAL,
+          geometria_sha256: null, do_poligono_atual: true, itens: [], aviso: AVISO_VEGETACAO_NAO_E_CAPIM
+        };
+      }
+      const params: unknown[] = [ctx.orgId, area.id, q.indice, VERSAO_METODO_PASTAGEM_ESSENCIAL, hashAtual, q.limite];
       let filtroAntes = "";
       if (q.antes) { params.push(q.antes); filtroAntes = ` and s.created_at < $${params.length}::timestamptz`; }
       const escopo = empresaScopeSql(ctx, "s", params);
       const r = await ctx.tx.query<{
-        id: string; situacao: string; motivo_qualidade: string | null;
+        id: string; situacao: string; motivo_qualidade: string | null; geometria_sha256: string;
         observacao_inicio: Date | null; observacao_fim: Date | null;
         valor_medio: string | null; valor_minimo: string | null; valor_maximo: string | null; desvio_padrao: string | null;
         cobertura_valida: string | null; created_at: Date; percentis: unknown; histograma: unknown; qualidade: unknown;
       }>(
-        `select s.id, s.situacao, s.motivo_qualidade, s.observacao_inicio, s.observacao_fim,
+        `select s.id, s.situacao, s.motivo_qualidade, s.geometria_sha256, s.observacao_inicio, s.observacao_fim,
                 s.valor_medio::text, s.valor_minimo::text, s.valor_maximo::text, s.desvio_padrao::text,
                 s.cobertura_valida::text, s.created_at, e.percentis, e.histograma, e.qualidade
            from erp.analises_satelitais s
            left join erp.analises_satelitais_ext e on e.analise_id = s.id
-          where s.organization_id = $1 and s.area_id = $2 and s.indice = $3 and s.versao_metodo = $4${filtroAntes}${escopo}
+          where s.organization_id = $1 and s.area_id = $2 and s.indice = $3 and s.versao_metodo = $4
+            and s.geometria_sha256 = $5${filtroAntes}${escopo}
           order by s.created_at desc
-          limit $5`, params);
+          limit $6`, params);
       return {
         area_id: area.id, indice: q.indice, versao_metodo: VERSAO_METODO_PASTAGEM_ESSENCIAL,
+        geometria_sha256: hashAtual, do_poligono_atual: true,
         itens: r.rows.map((l) => ({
           id: l.id, situacao: l.situacao, motivo_qualidade: l.motivo_qualidade,
+          geometria_sha256: l.geometria_sha256, do_poligono_atual: true,
           observacao_inicio: l.observacao_inicio?.toISOString() ?? null,
           observacao_fim: l.observacao_fim?.toISOString() ?? null,
           valor_medio: l.valor_medio, valor_minimo: l.valor_minimo, valor_maximo: l.valor_maximo, desvio_padrao: l.desvio_padrao,
