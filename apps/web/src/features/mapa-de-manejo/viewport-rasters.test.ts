@@ -103,6 +103,16 @@ describe("pedidos de raster (fetch simulado)", () => {
     expect(url.searchParams.get("area_ids")!.split(",")).toHaveLength(TETO_RASTERS_NO_VIEWPORT);
   });
 
+  it("data escolhida: manda data_imagem; sem data (última imagem útil) o parâmetro NÃO existe", async () => {
+    const { fn, requisitar } = fetchSimulado();
+    await listarRastersPorAreas(["a1"], "ndmi", requisitar, { dataImagem: "2026-09-10" });
+    await listarRastersPorAreas(["a1"], "ndmi", requisitar);
+    const [comData, semData] = fn.mock.calls.map((c) => new URL(c[0], "http://api.local").searchParams);
+    expect(comData!.get("data_imagem")).toBe("2026-09-10");
+    expect(comData!.get("indice")).toBe("ndmi");
+    expect(semData!.has("data_imagem")).toBe(false);
+  });
+
   it("navegar pelos 6 índices na mesma vista = 6 listagens, não 1.200", async () => {
     const { fn, requisitar } = fetchSimulado();
     const sel = selecionarAreasDaVista(areas, VISTA_TODA);

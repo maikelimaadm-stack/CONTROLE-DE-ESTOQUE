@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   MSG_COMPARACAO_GEOMETRIA,
+  TEXTO_DADOS_INSUFICIENTES,
+  alturasDoHistograma,
   anomaliaDoHistorico,
   compararObservacoes,
   coberturaEmPercentual,
+  itemDaObservacao,
+  lerHistograma,
+  lerTendencia,
   observacoesComparaveis,
   pontosDoGrafico,
   serieDoHistorico,
@@ -136,5 +141,50 @@ describe("observacoesComparaveis / pontosDoGrafico / cobertura", () => {
   it("cobertura 0..1 vira percentual", () => {
     expect(coberturaEmPercentual("0.8730")).toBeCloseTo(87.3, 6);
     expect(coberturaEmPercentual(null)).toBeNull();
+  });
+});
+
+describe("tendência do painel", () => {
+  const fmt = (v: number) => v.toFixed(2).replace(".", ",");
+
+  it("delta nulo é 'Dados insuficientes' — NULL não é zero", () => {
+    const nula = lerTendencia({ periodo: "30d", delta: null, pontos: 1 }, fmt);
+    expect(nula).toEqual({ delta: null, texto: TEXTO_DADOS_INSUFICIENTES, direcao: "insuficiente" });
+    expect(lerTendencia(undefined, fmt).direcao).toBe("insuficiente");
+    expect(lerTendencia(null, fmt).texto).toBe("Dados insuficientes");
+    expect(lerTendencia({ periodo: "ultima", delta: Number.NaN, pontos: 3 }, fmt).direcao).toBe("insuficiente");
+  });
+
+  it("zero verdadeiro é '0,00' e estável; com sinal quando sobe ou cai", () => {
+    expect(lerTendencia({ periodo: "90d", delta: 0, pontos: 4 }, fmt)).toEqual({ delta: 0, texto: "0,00", direcao: "estavel" });
+    expect(lerTendencia({ periodo: "90d", delta: 0.054, pontos: 4 }, fmt)).toMatchObject({ texto: "+0,05", direcao: "subiu" });
+    expect(lerTendencia({ periodo: "90d", delta: -0.12, pontos: 4 }, fmt)).toMatchObject({ texto: "−0,12", direcao: "caiu" });
+  });
+});
+
+describe("histograma e observação da comparação", () => {
+  const oficial = { bins: [{ lowEdge: 0, highEdge: 0.5, count: 10 }, { lowEdge: 0.5, highEdge: 1, count: 30 }], underflowCount: 2, overflowCount: 0 };
+
+  it("lê o histograma oficial; forma estranha vira nulo", () => {
+    expect(lerHistograma(oficial)).toEqual({ bins: [{ baixo: 0, alto: 0.5, contagem: 10 }, { baixo: 0.5, alto: 1, contagem: 30 }], abaixo: 2, acima: 0 });
+    expect(lerHistograma(null)).toBeNull();
+    expect(lerHistograma({ bins: [] })).toBeNull();
+    expect(lerHistograma({ bins: [0, 1, 2], counts: [1, 2] })).toBeNull();
+    expect(lerHistograma({ bins: [{ lowEdge: 1, highEdge: 0, count: 1 }] })).toBeNull();
+    expect(lerHistograma({ bins: [{ lowEdge: 0, highEdge: 1, count: -1 }] })).toBeNull();
+  });
+
+  it("alturas relativas ao maior bin; histograma vazio de contagem não divide por zero", () => {
+    expect(alturasDoHistograma(lerHistograma(oficial)!)).toEqual([10 / 30, 1]);
+    expect(alturasDoHistograma({ bins: [{ baixo: 0, alto: 1, contagem: 0 }], abaixo: 0, acima: 0 })).toEqual([0]);
+  });
+
+  it("a análise da observação é a mais recente por criação", () => {
+    const itens = [
+      item("2026-09-10", "0.5", { id: "velha", criado_em: "2026-09-10T20:00:00.000Z" }),
+      item("2026-09-10", "0.6", { id: "nova", criado_em: "2026-09-11T20:00:00.000Z" })
+    ];
+    expect(itemDaObservacao(itens, "2026-09-10T13:00:00.000Z")?.id).toBe("nova");
+    expect(itemDaObservacao(itens, "2026-01-01T13:00:00.000Z")).toBeNull();
   });
 });

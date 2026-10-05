@@ -4,22 +4,28 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CATALOGO_INDICES, enumLabel, type EstadoQualidade } from "@agro/domain";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { Badge, Button } from "@/components/ui";
+import { Badge, Button, Input, NativeSelect } from "@/components/ui";
 import { dateBR, dateTimeBR, num, pct } from "@/lib/utils";
 import {
   AVISO_AGRONOMICO,
   INDICES_DA_ANOMALIA,
+  ROTULO_JANELA_TENDENCIA,
   ROTULO_NIVEL_ANOMALIA,
   ROTULO_QUALIDADE,
   anomaliaDoHistorico,
   coberturaEmPercentual,
   estimativaLegivel,
+  lerTendencia,
   type BundleDoResumo,
+  type HistoricoIndice,
   type IdIndice,
   type IndiceDoResumo,
-  type ResumoCondicao
+  type ResumoCondicao,
+  type TendenciaDoResumo
 } from "./condicao-modelo";
-import { CHAVE_CONDICAO, useHistoricoIndice, useHistoricosDaArea, useResumoCondicao } from "./condicao-dados";
+import { CHAVE_CONDICAO, useHistoricoIndice, useHistoricoPeriodo, useHistoricosDaArea, useResumoCondicao } from "./condicao-dados";
+import { analiseIdDaData, type DataDaCamada } from "./data-camada";
+import { PERIODOS_HISTORICO, PERIODO_HISTORICO_PADRAO, type PeriodoHistorico } from "./historico-periodo";
 import { GraficoHistorico } from "./grafico-historico";
 import { CompararModal } from "./comparar-modal";
 import { nomeDoIndice } from "./paletas-indices";
@@ -106,6 +112,27 @@ function BlocoQualidade({ obs }: { obs: BundleDoResumo }) {
   );
 }
 
+/** Tendência do NDVI por janela. Delta nulo = "Dados insuficientes" (NULL não é zero). */
+function BlocoTendencia({ tendencia }: { tendencia: TendenciaDoResumo }) {
+  return (
+    <Secao titulo="Tendência do NDVI" testId="condicao-tendencia">
+      {(["ultima", "30d", "90d"] as const).map((k) => {
+        const t = tendencia[k];
+        const leitura = lerTendencia(t, (v) => num(v, 2));
+        const cor = leitura.direcao === "subiu" ? "text-green-700" : leitura.direcao === "caiu" ? "text-red-700" : "text-slate-500";
+        return (
+          <div key={k} className="flex items-baseline gap-2 text-xs" data-testid={`condicao-tendencia-${k}`}>
+            <span className="w-36 shrink-0 text-slate-600">{ROTULO_JANELA_TENDENCIA[k]}</span>
+            <span className={`tabular-nums font-medium ${cor}`} data-testid={`condicao-tendencia-${k}-valor`}>{leitura.texto}</span>
+            {t && <span className="text-[10px] tabular-nums text-slate-400">{t.pontos} {t.pontos === 1 ? "observação útil" : "observações úteis"}</span>}
+          </div>
+        );
+      })}
+      <p className="text-[10px] leading-tight text-slate-500">Variação do NDVI médio entre observações do mesmo contorno.</p>
+    </Secao>
+  );
+}
+
 function BlocoAnomalia({ areaId, resumo }: { areaId: string; resumo: ResumoCondicao }) {
   const daApi = resumo.anomalia ?? null;
   const hist = useHistoricosDaArea(areaId, INDICES_DA_ANOMALIA, daApi === null);
@@ -139,6 +166,12 @@ export interface CondicaoDaAreaProps {
   nomeDaArea: string;
   indiceAtivo: IdIndice;
   raster: EntradaRasterEmMemoria | null;
+  /** Data ativa da camada: com data escolhida, "Gerar raster" é DESSA data e a falta de imagem é dita, não trocada. */
+  data: DataDaCamada;
+  /** A listagem de rasters da data escolhida não trouxe imagem para esta área. */
+  semImagemNaData: boolean;
+  /** O servidor informou o hash do contorno vigente: o mapa solta imagem guardada de outro contorno. */
+  onHashAtual: (areaId: string, geometriaSha256: string) => void;
   onRasterGerado: (dto: RasterIndiceDto) => Promise<void> | void;
   onNovaConsulta: () => void;
 }
@@ -156,13 +189,31 @@ export function CondicaoDaArea(p: CondicaoDaAreaProps) {
   const [comparando, setComparando] = React.useState(false);
   const [confirmando, setConfirmando] = React.useState<null | "analisar" | "raster">(null);
   const [aviso, setAviso] = React.useState<{ tom: "ok" | "erro"; texto: string } | null>(null);
+  const [periodo, setPeriodo] = React.useState<PeriodoHistorico>(PERIODO_HISTORICO_PADRAO);
+  const [personalizado, setPersonalizado] = React.useState({ de: "", ate: "" });
   React.useEffect(() => { setVerHistorico(false); setComparando(false); setConfirmando(null); setAviso(null); }, [p.areaId]);
 
-  const historicoQ = useHistoricoIndice(p.areaId, p.indiceAtivo, verHistorico);
+  const historicoQ = useHistoricoPeriodo(p.areaId, p.indiceAtivo, periodo, personalizado, verHistorico);
+  const historicoDoPeriodo = React.useMemo<HistoricoIndice | null>(() => {
+    const d = historicoQ.data;
+    if (!d) return null;
+    return { area_id: p.areaId, indice: p.indiceAtivo, geometria_sha256: d.carga.geometriaSha256, do_poligono_atual: true, itens: d.itens };
+  }, [historicoQ.data, p.areaId, p.indiceAtivo]);
+  // Para gerar a imagem de uma DATA escolhida é preciso a análise daquele dia (primeira página do histórico, em cache).
+  const dataEscolhida = p.data.tipo === "data" ? p.data.data : null;
+  const historicoBaseQ = useHistoricoIndice(p.areaId, p.indiceAtivo, dataEscolhida !== null);
   const podePedir = can(PERMISSAO_PEDIR);
   const resumo = resumoQ.data ?? null;
   const obs = resumo?.ultima_observacao_util ?? null;
-  const analiseDoIndice = obs?.indices[p.indiceAtivo]?.id ?? null;
+  const analiseDoIndice = dataEscolhida !== null
+    ? analiseIdDaData(historicoBaseQ.data?.itens ?? [], dataEscolhida)
+    : (obs?.indices[p.indiceAtivo]?.id ?? null);
+
+  const { onHashAtual } = p;
+  const hashAtual = resumo?.geometria_sha256 ?? null;
+  React.useEffect(() => {
+    if (hashAtual) onHashAtual(p.areaId, hashAtual);
+  }, [hashAtual, onHashAtual, p.areaId]);
 
   const analisar = useMutation({
     mutationFn: () => api<{ situacao?: string; motivo_qualidade?: string | null; reutilizada?: boolean }>(`/api/mapa/areas/${p.areaId}/analises-satelitais/condicao`, { method: "POST", body: {} }),
@@ -187,7 +238,7 @@ export function CondicaoDaArea(p: CondicaoDaAreaProps) {
 
   const gerar = useMutation({
     mutationFn: async () => {
-      if (!analiseDoIndice) throw new Error("Não há análise útil deste índice para gerar a imagem.");
+      if (!analiseDoIndice) throw new Error(dataEscolhida ? "Não há análise útil deste índice nesta data para gerar a imagem." : "Não há análise útil deste índice para gerar a imagem.");
       return gerarRasterDaAnalise(analiseDoIndice);
     },
     onSuccess: async (r) => {
@@ -252,6 +303,8 @@ export function CondicaoDaArea(p: CondicaoDaAreaProps) {
             {derivados && <p className="text-xs text-slate-700" data-testid="condicao-hidrica">Umidade relativa na vegetação: <strong>{estimativaLegivel(derivados.condicao_hidrica)}</strong></p>}
             <p className="text-[10px] leading-tight text-slate-500">O NDMI indica a água na vegetação; não mede a umidade do solo.</p>
           </Secao>
+
+          {resumo.tendencia && <BlocoTendencia tendencia={resumo.tendencia} />}
 
           <BlocoAnomalia areaId={p.areaId} resumo={resumo} />
         </>
@@ -319,26 +372,61 @@ export function CondicaoDaArea(p: CondicaoDaAreaProps) {
         {obs && (
           <Button type="button" size="sm" variant="ghost" onClick={() => setComparando(true)} data-testid="condicao-comparar">Comparar</Button>
         )}
-        {obs && podePedir && p.indiceAtivo !== "ndvi" && !rasterOk && analiseDoIndice && confirmando !== "raster" && (
+        {obs && podePedir && (dataEscolhida !== null || p.indiceAtivo !== "ndvi") && !rasterOk && analiseDoIndice && confirmando !== "raster" && (
           <Button type="button" size="sm" variant="outline" disabled={gerar.isPending} onClick={() => { setAviso(null); setConfirmando("raster"); }} data-testid="condicao-gerar-raster">
-            Gerar raster {nomeIndice}
+            Gerar raster {nomeIndice}{dataEscolhida ? ` de ${dateBR(dataEscolhida)}` : ""}
           </Button>
         )}
       </div>
-      {obs && p.indiceAtivo === "ndvi" && !rasterOk && podePedir && (
+      {dataEscolhida !== null && !rasterOk && p.semImagemNaData && (
+        <p className="text-xs text-amber-700" data-testid="condicao-sem-imagem-data">
+          Não há imagem de {nomeIndice} gerada em {dateBR(dataEscolhida)} para o contorno atual. Nenhuma outra data é usada no lugar.
+        </p>
+      )}
+      {obs && dataEscolhida === null && p.indiceAtivo === "ndvi" && !rasterOk && podePedir && (
         <p className="text-[10px] text-slate-500">A imagem do NDVI é gerada no bloco Análise NDVI, logo abaixo.</p>
       )}
 
       {verHistorico && (
         <div data-testid="condicao-historico-painel">
-          <div className="mb-1 text-xs font-semibold text-slate-600">{nomeIndice} ao longo do tempo</div>
-          {historicoQ.isLoading && <p className="text-xs text-slate-500">Carregando o histórico…</p>}
-          {historicoQ.error && <p className="text-xs text-red-600">Não foi possível carregar o histórico.</p>}
-          {historicoQ.data && <GraficoHistorico indice={p.indiceAtivo} historico={historicoQ.data} />}
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-slate-600">{nomeIndice} ao longo do tempo</span>
+            <NativeSelect
+              value={periodo}
+              onChange={(e) => setPeriodo(e.target.value as PeriodoHistorico)}
+              className="ml-auto h-[26px] w-auto py-0 text-xs"
+              aria-label="Período do histórico"
+              data-testid="condicao-historico-periodo"
+            >
+              {PERIODOS_HISTORICO.map((o) => <option key={o.valor} value={o.valor}>{o.rotulo}</option>)}
+            </NativeSelect>
+          </div>
+          {periodo === "personalizado" && (
+            <div className="mb-1 grid grid-cols-2 gap-2">
+              <label className="flex flex-col gap-0.5 text-[11px] text-slate-600">De
+                <Input type="date" value={personalizado.de} max={personalizado.ate || undefined} onChange={(e) => setPersonalizado((x) => ({ ...x, de: e.target.value }))} aria-label="Histórico a partir de" data-testid="condicao-historico-de" />
+              </label>
+              <label className="flex flex-col gap-0.5 text-[11px] text-slate-600">Até
+                <Input type="date" value={personalizado.ate} min={personalizado.de || undefined} onChange={(e) => setPersonalizado((x) => ({ ...x, ate: e.target.value }))} aria-label="Histórico até" data-testid="condicao-historico-ate" />
+              </label>
+            </div>
+          )}
+          {!historicoQ.janela.ok && <p className="text-xs text-amber-700" data-testid="condicao-historico-periodo-invalido">{historicoQ.janela.motivo}</p>}
+          {historicoQ.janela.ok && historicoQ.isLoading && <p className="text-xs text-slate-500">Carregando o histórico…</p>}
+          {historicoQ.error && <p className="text-xs text-red-600" data-testid="condicao-historico-erro">{historicoQ.error instanceof Error ? historicoQ.error.message : "Não foi possível carregar o histórico."}</p>}
+          {historicoDoPeriodo && historicoQ.data && historicoQ.janela.ok && (
+            <>
+              <GraficoHistorico indice={p.indiceAtivo} historico={historicoDoPeriodo} />
+              <p className="mt-1 text-[10px] leading-tight text-slate-500" data-testid="condicao-historico-cobertura">
+                {historicoQ.data.itens.length} {historicoQ.data.itens.length === 1 ? "observação" : "observações"} de {dateBR(historicoQ.janela.janela.inicio)} a {dateBR(historicoQ.janela.janela.fim)}
+                {historicoQ.data.carga.exaurido ? " · histórico completo" : historicoQ.data.carga.coberto ? " · período coberto" : " · limite de páginas: pode haver observações mais antigas fora desta lista"}.
+              </p>
+            </>
+          )}
         </div>
       )}
 
-      {comparando && <CompararModal aberto onFechar={() => setComparando(false)} areaId={p.areaId} areaNome={p.nomeDaArea} />}
+      {comparando && <CompararModal aberto onFechar={() => setComparando(false)} areaId={p.areaId} areaNome={p.nomeDaArea} indiceAtivo={p.indiceAtivo} />}
     </div>
   );
 }

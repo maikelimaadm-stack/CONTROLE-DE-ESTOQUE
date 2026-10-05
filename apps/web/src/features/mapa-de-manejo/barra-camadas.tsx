@@ -1,12 +1,14 @@
 "use client";
 import * as React from "react";
-import { Button } from "@/components/ui";
+import { Button, NativeSelect } from "@/components/ui";
 import { dateBR } from "@/lib/utils";
 import { AVISO_RENDER_SUAVIZADO, ROTULO_RENDER, type RenderRaster } from "./camada-rasters";
+import type { ModoCor } from "./cor-por-area";
+import { dataDoSeletor, valorDoSeletorDeData, type DataDaCamada, type OpcaoDeData } from "./data-camada";
 import { SeletorDeBase, type MapaBase } from "./mapa-base";
 import { FAMILIAS_CAMADA, familiaPorId, nomeDoIndice, type FamiliaCamada, type IdIndice } from "./paletas-indices";
 
-export type ModoCor = "pixel" | "area" | "cadastro";
+export type { ModoCor };
 
 function Grupo({ rotulo, children, testId }: { rotulo: string; children: React.ReactNode; testId?: string }) {
   return (
@@ -59,7 +61,12 @@ export interface BarraCamadasProps {
   onRender: (r: RenderRaster) => void;
   opacidade: number;
   onOpacidade: (v: number) => void;
-  /** Data das imagens carregadas (a mais recente), se houver. */
+  /** Data da camada: "Última imagem útil" ou um dia escolhido (nunca troca sozinha). */
+  data: DataDaCamada;
+  onData: (d: DataDaCamada) => void;
+  /** "Última imagem útil" + as datas úteis do histórico da área aberta, para o índice ativo. */
+  opcoesData: readonly OpcaoDeData[];
+  /** Data das imagens carregadas (a mais recente), se houver — informativa, só na última imagem útil. */
   dataImagem: string | null;
   podeConsultar: boolean;
   onNovaConsulta: () => void;
@@ -107,9 +114,16 @@ export function BarraCamadas(p: BarraCamadasProps) {
           </Grupo>
 
           <Grupo rotulo="Data" testId="mapa-grupo-data">
-            <div className="flex h-[26px] items-center rounded-md border border-slate-300 bg-white px-2.5 text-xs text-slate-600 shadow-sm" data-testid="mapa-data-camada">
-              Última imagem útil{p.dataImagem ? ` · ${dateBR(p.dataImagem)}` : ""}
-            </div>
+            <NativeSelect
+              value={valorDoSeletorDeData(p.data)}
+              onChange={(e) => p.onData(dataDoSeletor(e.target.value))}
+              aria-label="Data da imagem"
+              title={p.data.tipo === "ultima" ? "Mostra a imagem da última análise útil do contorno atual de cada área" : "Só as áreas com imagem gerada nesta data aparecem; nenhuma outra data é usada no lugar"}
+              className="h-[26px] min-w-[11rem] py-0 text-xs"
+              data-testid="mapa-data-camada"
+            >
+              {p.opcoesData.map((o) => <option key={o.valor} value={o.valor}>{o.valor === "ultima" && p.dataImagem ? `${o.rotulo} · ${dateBR(p.dataImagem)}` : o.rotulo}</option>)}
+            </NativeSelect>
           </Grupo>
 
           <Grupo rotulo="Cor das áreas" testId="mapa-grupo-cor">
@@ -118,7 +132,7 @@ export function BarraCamadas(p: BarraCamadasProps) {
               valor={p.modoCor}
               opcoes={[
                 { valor: "pixel", rotulo: "Por pixel" },
-                { valor: "area", rotulo: "Por área", desabilitado: p.indice !== "ndvi", dica: p.indice !== "ndvi" ? "A cor por área só existe para o NDVI" : undefined },
+                { valor: "area", rotulo: "Por área", dica: `Cor da média do ${nomeDoIndice(p.indice)} de cada área, na paleta desse índice` },
                 { valor: "cadastro", rotulo: "Cor do cadastro" }
               ]}
               onTrocar={p.onModoCor}

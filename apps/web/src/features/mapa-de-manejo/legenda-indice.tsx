@@ -1,7 +1,7 @@
 "use client";
 import { CATALOGO_INDICES } from "@agro/domain";
 import { num } from "@/lib/utils";
-import { COR_SEM_NDVI } from "./ndvi";
+import { COR_SEM_NDVI } from "./cor-por-area";
 import { PALETAS_INDICES, escalaDeCodificacao, gradienteCssDoIndice, type IdIndice } from "./paletas-indices";
 
 /**
@@ -9,7 +9,7 @@ import { PALETAS_INDICES, escalaDeCodificacao, gradienteCssDoIndice, type IdIndi
  * em linguagem de sinal e o lembrete de que índice de satélite não é biomassa, oferta de forragem nem lotação.
  * A atribuição do Copernicus NÃO mora aqui — uma só no mapa.
  */
-export function LegendaIndice({ indice }: { indice: IdIndice }) {
+export function LegendaIndice({ indice, modo = "pixel" }: { indice: IdIndice; modo?: "pixel" | "area" }) {
   const paleta = PALETAS_INDICES[indice];
   const paradas = paleta.paradas;
   const min = paradas[0]!.valor;
@@ -18,7 +18,7 @@ export function LegendaIndice({ indice }: { indice: IdIndice }) {
   const cat = CATALOGO_INDICES[indice];
   return (
     <div className="pointer-events-auto rounded-md border border-slate-200 bg-white/95 px-3 py-2 text-xs shadow-sm" data-testid="mapa-legenda-ndvi">
-      <div className="mb-1 font-semibold text-slate-700">{cat.nome} por pixel</div>
+      <div className="mb-1 font-semibold text-slate-700">{modo === "area" ? `${cat.nome} médio da última imagem útil` : `${cat.nome} por pixel`}</div>
       <div className="h-3 w-full rounded-sm border border-slate-300" style={{ background: gradienteCssDoIndice(indice) }} data-testid="mapa-legenda-gradiente" aria-hidden />
       <div className="relative mt-0.5 h-3 tabular-nums text-[10px] text-slate-600" data-testid="mapa-legenda-marcas">
         {paradas.map((p, i) => (

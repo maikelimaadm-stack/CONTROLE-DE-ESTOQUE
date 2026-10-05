@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   LIMITE_AREAS_NA_CONSULTA,
+  areasDesatualizadas,
   consultaTerminou,
+  itensDaConsulta,
   montarCorpoConsulta,
   progressoDaConsulta,
   resolverAlvo,
+  validarPeriodo,
   type FonteDeSelecao
 } from "./consulta-satelite";
 
@@ -35,15 +38,71 @@ describe("resolverAlvo", () => {
 
 describe("montarCorpoConsulta", () => {
   it("corpo estrito: alvo, período, bundle de 6 índices e confirmar — nada mais", () => {
-    const c = montarCorpoConsulta({ tipo: "todas" }, 30, false);
+    const c = montarCorpoConsulta({ tipo: "todas" }, { tipo: "mais_recente", janela_dias: 30 }, false);
     expect(Object.keys(c).sort()).toEqual(["alvo", "confirmar", "indices", "periodo"]);
     expect(c).toEqual({ alvo: { tipo: "todas" }, periodo: { tipo: "mais_recente", janela_dias: 30 }, indices: ["pastagem_essencial"], confirmar: false });
   });
 
-  it("a janela fica nos limites do domínio (1..90)", () => {
-    expect(montarCorpoConsulta({ tipo: "todas" }, 0, true).periodo.janela_dias).toBe(1);
-    expect(montarCorpoConsulta({ tipo: "todas" }, 500, true).periodo.janela_dias).toBe(90);
-    expect(montarCorpoConsulta({ tipo: "todas" }, 15, true).confirmar).toBe(true);
+  it("expõe os três períodos que a API aceita, sem traduzir nem descartar campo", () => {
+    expect(montarCorpoConsulta({ tipo: "todas" }, { tipo: "data", data: "2026-09-10", tolerancia_dias: 3 }, true).periodo)
+      .toEqual({ tipo: "data", data: "2026-09-10", tolerancia_dias: 3 });
+    expect(montarCorpoConsulta({ tipo: "todas" }, { tipo: "intervalo", de: "2026-07-01", ate: "2026-09-30", cadencia: "mensal" }, true).periodo)
+      .toEqual({ tipo: "intervalo", de: "2026-07-01", ate: "2026-09-30", cadencia: "mensal" });
+  });
+});
+
+describe("validarPeriodo (a mesma regra do servidor)", () => {
+  const HOJE = "2026-10-05";
+
+  it("mais recente: janela na faixa 1..90 vira 1 recorte; fora da faixa é recusada, nunca corrigida", () => {
+    expect(validarPeriodo({ tipo: "mais_recente", janelaDias: 30 }, HOJE)).toEqual({ ok: true, periodo: { tipo: "mais_recente", janela_dias: 30 }, slots: 1 });
+    expect(validarPeriodo({ tipo: "mais_recente", janelaDias: 0 }, HOJE).ok).toBe(false);
+    expect(validarPeriodo({ tipo: "mais_recente", janelaDias: 500 }, HOJE).ok).toBe(false);
+  });
+
+  it("data: exige a data; futura, anterior ao acervo ou tolerância fora da faixa são recusadas", () => {
+    const base = { tipo: "data", toleranciaDias: 3 } as const;
+    expect(validarPeriodo({ ...base, data: "" }, HOJE)).toEqual({ ok: false, motivo: "Escolha a data." });
+    expect(validarPeriodo({ ...base, data: "2026-09-10" }, HOJE)).toMatchObject({ ok: true, slots: 1, periodo: { tipo: "data", data: "2026-09-10", tolerancia_dias: 3 } });
+    expect(validarPeriodo({ ...base, data: "2026-10-06" }, HOJE).ok).toBe(false);
+    expect(validarPeriodo({ ...base, data: "2017-01-01" }, HOJE).ok).toBe(false);
+    expect(validarPeriodo({ ...base, data: "2026-09-10", toleranciaDias: 31 }, HOJE).ok).toBe(false);
+    expect(validarPeriodo({ ...base, data: "2026-09-10", toleranciaDias: 0 }, HOJE).ok).toBe(true);
+  });
+
+  it("intervalo: um recorte por mês ou decêndio; de depois de até é recusado", () => {
+    const m = validarPeriodo({ tipo: "intervalo", de: "2026-07-01", ate: "2026-09-30", cadencia: "mensal" }, HOJE);
+    expect(m).toMatchObject({ ok: true, slots: 3 });
+    const d = validarPeriodo({ tipo: "intervalo", de: "2026-07-01", ate: "2026-09-30", cadencia: "decendial" }, HOJE);
+    expect(d).toMatchObject({ ok: true, slots: 9 });
+    expect(validarPeriodo({ tipo: "intervalo", de: "2026-09-30", ate: "2026-07-01", cadencia: "mensal" }, HOJE).ok).toBe(false);
+    expect(validarPeriodo({ tipo: "intervalo", de: "", ate: "2026-07-01", cadencia: "mensal" }, HOJE)).toEqual({ ok: false, motivo: "Escolha a data inicial e a final." });
+  });
+
+  it("itens = áreas × recortes (acima de 200 a tela recusa antes do servidor)", () => {
+    expect(itensDaConsulta(10, 3)).toBe(30);
+    expect(itensDaConsulta(null, 3)).toBeNull();
+  });
+});
+
+describe("Áreas desatualizadas", () => {
+  const a = (id: string, geometria: unknown = { type: "Polygon" }) => ({ id, geometria });
+  const resumo = new Map([
+    ["valida", { ultima_observacao: { do_poligono_atual: true } }],
+    ["contorno-antigo", { ultima_observacao: { do_poligono_atual: false } }],
+    ["so-tentativa", { ultima_observacao: null }]
+  ]);
+
+  it("sem observação útil, ou com observação de outro contorno, está desatualizada; sem contorno nunca entra", () => {
+    const ids = areasDesatualizadas([a("valida"), a("contorno-antigo"), a("so-tentativa"), a("ausente"), a("sem-contorno", null)], resumo);
+    expect(ids).toEqual(["contorno-antigo", "so-tentativa", "ausente"]);
+  });
+
+  it("vira alvo de áreas; sem lista (resumo incompleto) a seleção é recusada, nunca chutada", () => {
+    expect(resolverAlvo("desatualizadas", fonte({ desatualizadas: ["x", "y"] }))).toMatchObject({ ok: true, alvo: { tipo: "areas", area_ids: ["x", "y"] }, quantidade: 2 });
+    expect(resolverAlvo("desatualizadas", fonte({ desatualizadas: null })).ok).toBe(false);
+    expect(resolverAlvo("desatualizadas", fonte()).ok).toBe(false);
+    expect(resolverAlvo("desatualizadas", fonte({ desatualizadas: [] })).ok).toBe(false);
   });
 });
 

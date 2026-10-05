@@ -5,15 +5,18 @@
  * minutos e NÃO fica em cache persistente: em 404 pedimos o DTO de novo uma vez. O bitmap DECODIFICADO (bytes cinza)
  * fica em memória enquanto a área está à vista, para trocar de modo sem baixar de novo.
  *
- * Carga PREGUIÇOSA: o cache é do índice ATIVO e da data ativa. Trocar de índice solta tudo (e revoga as ObjectURLs);
- * pedido obsoleto é abortado. O que decide quais áreas pedem raster está em `viewport-rasters.ts`.
+ * Carga PREGUIÇOSA: o cache é do índice ATIVO e da data ativa. Trocar de índice ou de data solta tudo (e revoga as
+ * ObjectURLs); pedido obsoleto é abortado. A identidade de cada entrada inclui o `geometria_sha256` (`cache-rasters.ts`):
+ * contorno novo = hash novo = entrada solta. O que decide quais áreas pedem raster está em `viewport-rasters.ts`.
  */
 "use client";
 import * as React from "react";
 import { ehIndiceDoBundle } from "@agro/domain";
 import { API_URL, api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { CacheRasters } from "./cache-rasters";
 import { bitmapParaBytesCinza, colorirRasterNdvi } from "./colorir-raster-ndvi";
+import { DATA_ULTIMA_IMAGEM, chaveDaData, dataImagemDoPedido, type DataDaCamada } from "./data-camada";
 import { escalaDeCodificacao, montarLutIndice, type IdIndice } from "./paletas-indices";
 import {
   idsFaltando,
@@ -23,15 +26,12 @@ import {
 } from "./viewport-rasters";
 
 export type { RasterIndiceDto } from "./viewport-rasters";
+export { DATA_ULTIMA_IMAGEM, type DataDaCamada } from "./data-camada";
 /** Compatibilidade com a SAT-07 (só NDVI). */
 export type RasterNdviDto = RasterIndiceDto;
 
 /** Mesma capacidade de leitura do resumo — evita import circular com `ndvi.tsx`. */
 const PERMISSAO_VER_RASTER = "analises_satelitais.view";
-
-/** Data ativa da camada. Hoje só a "última imagem útil": a API lista a imagem mais recente por área. */
-export type DataDaCamada = "ultima";
-export const DATA_ULTIMA_IMAGEM: DataDaCamada = "ultima";
 
 export interface EntradaRasterEmMemoria {
   dto: RasterIndiceDto;
@@ -55,9 +55,16 @@ export function urlAbsolutaDoArquivo(urlAssinada: string): string {
 
 const requisitarApi: RequisitarJson = (caminho, opcoes) => api(caminho, { signal: opcoes?.signal });
 
-/** Lista a imagem mais recente por área (nunca gera). Parte em lotes de até 200 ids. */
-export function listarRastersPorAreas(areaIds: readonly string[], indice = "ndvi", signal?: AbortSignal): Promise<RasterIndiceDto[]> {
-  return listarPaginado(areaIds, indice, requisitarApi, { signal });
+/**
+ * Lista a imagem por área (nunca gera). Parte em lotes de até 200 ids. Sem `dataImagem`: a da última análise útil;
+ * com ela: só aquele dia (sem fallback).
+ */
+export function listarRastersPorAreas(
+  areaIds: readonly string[],
+  indice = "ndvi",
+  opcoes: { signal?: AbortSignal; dataImagem?: string } = {}
+): Promise<RasterIndiceDto[]> {
+  return listarPaginado(areaIds, indice, requisitarApi, opcoes);
 }
 
 /** Baixa o PNG pela URL assinada (CORS, sem credenciais). Em 404 devolve null para o chamador renovar o DTO. */
@@ -107,12 +114,13 @@ export async function recolorirEntrada(entrada: EntradaRasterEmMemoria, lut: Uin
   return { ...entrada, canvas, blobUrl, erro: null };
 }
 
-async function montarEntrada(dto: RasterIndiceDto, indiceAtivo: IdIndice, signal?: AbortSignal): Promise<EntradaRasterEmMemoria> {
+/** Baixa o PNG do DTO e o deixa colorido na paleta do índice (e com os bytes guardados para recolorir). */
+export async function carregarEntradaRaster(dto: RasterIndiceDto, indiceAtivo: IdIndice, signal?: AbortSignal): Promise<EntradaRasterEmMemoria> {
   let blob = await baixarArquivoRaster(dto.url_assinada, signal);
   let dtoAtual = dto;
   if (!blob) {
-    // URL vencida: pede o DTO de novo UMA vez e tenta de novo.
-    const renovados = await listarRastersPorAreas([dto.area_id], dto.indice, signal);
+    // URL vencida: pede o DTO de novo UMA vez (a MESMA data da imagem) e tenta de novo.
+    const renovados = await listarRastersPorAreas([dto.area_id], dto.indice, { signal, dataImagem: dto.data_imagem });
     const novo = renovados.find((r) => r.area_id === dto.area_id) ?? null;
     if (!novo) throw new Error("Imagem não encontrada.");
     dtoAtual = novo;
@@ -177,77 +185,82 @@ export interface OpcoesRastersIndice {
   areaIds: readonly string[];
   indice: IdIndice;
   data?: DataDaCamada;
+  /** Assinatura local do contorno por área: contorno novo solta a imagem da área (junto com o hash do DTO). */
+  assinaturas?: ReadonlyMap<string, string>;
   ativo: boolean;
 }
 
 /**
  * Cache em memória dos rasters das áreas à vista para o ÍNDICE e a DATA ativos. Trocar de modo NÃO dispara rede.
- * Trocar de índice ou de data solta o cache (canvas, bytes e ObjectURLs). Sair da vista libera a área.
+ * Trocar de índice ou de data solta o cache (canvas, bytes e ObjectURLs). Sair da vista libera a área. Contorno novo
+ * (hash do DTO diferente, ou desenho diferente na lista de áreas) solta a entrada daquela área.
+ * Com data escolhida, área sem imagem NAQUELE dia fica sem imagem: nunca recebe outra data.
  */
-export function useRastersIndice({ areaIds, indice, data = DATA_ULTIMA_IMAGEM, ativo }: OpcoesRastersIndice) {
+export function useRastersIndice({ areaIds, indice, data = DATA_ULTIMA_IMAGEM, assinaturas, ativo }: OpcoesRastersIndice) {
   const { can, session } = useAuth();
   const pode = can(PERMISSAO_VER_RASTER);
   const [porArea, setPorArea] = React.useState<ReadonlyMap<string, EntradaRasterEmMemoria>>(new Map());
+  const [ausentes, setAusentes] = React.useState<ReadonlySet<string>>(new Set());
   const [situacao, setSituacao] = React.useState<"ocioso" | "carregando" | "pronto" | "erro">("ocioso");
   const [erro, setErro] = React.useState<string | null>(null);
-  const cacheRef = React.useRef(new Map<string, EntradaRasterEmMemoria>());
+  const cacheRef = React.useRef<CacheRasters<EntradaRasterEmMemoria> | null>(null);
+  if (cacheRef.current === null) cacheRef.current = new CacheRasters<EntradaRasterEmMemoria>(liberarEntrada);
+  const cache = cacheRef.current;
   /** Áreas já listadas SEM imagem neste índice/data — não repetem a listagem a cada movimento do mapa. */
   const semImagemRef = React.useRef(new Set<string>());
-  const chaveDoCacheRef = React.useRef(`${indice}|${data}`);
+  const [versao, setVersao] = React.useState(0);
+  const chaveData = chaveDaData(data);
+  const diaPedido = dataImagemDoPedido(data);
   const idsKey = areaIds.slice().sort().join(",");
 
-  const liberarFora = React.useCallback((manter: ReadonlySet<string>) => {
-    for (const [id, ent] of cacheRef.current) {
-      if (!manter.has(id)) {
-        liberarEntrada(ent);
-        cacheRef.current.delete(id);
-      }
-    }
-  }, []);
-
   React.useEffect(() => {
-    const chave = `${indice}|${data}`;
-    if (chaveDoCacheRef.current !== chave) {
-      liberarFora(new Set());
+    const mudouContexto = cache.trocarContexto(`${indice}|${chaveData}`);
+    if (mudouContexto) {
       semImagemRef.current.clear();
-      chaveDoCacheRef.current = chave;
       setPorArea(new Map());
+      setAusentes(new Set());
     }
+    const soltas = assinaturas ? cache.sincronizarGeometrias(assinaturas) : [];
+    for (const id of soltas) semImagemRef.current.delete(id);
+    if (soltas.length > 0) setPorArea(cache.snapshot());
     if (!ativo || !pode) {
-      liberarFora(new Set());
+      cache.limpar();
+      semImagemRef.current.clear();
       setPorArea(new Map());
+      setAusentes(new Set());
       setSituacao("ocioso");
       return;
     }
     const ids = areaIds.filter(Boolean);
-    const manter = new Set(ids);
-    liberarFora(manter);
+    cache.manter(new Set(ids));
     // Vista ainda sem áreas: NÃO marcar "pronto" — senão o mapa trava o modo padrão antes da primeira listagem real.
     if (ids.length === 0) {
-      setPorArea(new Map(cacheRef.current));
+      setPorArea(cache.snapshot());
       setSituacao("ocioso");
       return;
     }
     const controle = new AbortController();
     const { signal } = controle;
-    setSituacao((s) => (s === "pronto" && cacheRef.current.size > 0 ? s : "carregando"));
+    setSituacao((s) => (s === "pronto" && cache.tamanho > 0 ? s : "carregando"));
     (async () => {
       try {
-        const faltando = idsFaltando(ids, new Set([...cacheRef.current.keys(), ...semImagemRef.current]));
+        const faltando = idsFaltando(ids, new Set([...cache.keys(), ...semImagemRef.current]));
         if (faltando.length > 0) {
-          const dtos = await listarRastersPorAreas(faltando, indice, signal);
+          const listados = await listarRastersPorAreas(faltando, indice, { signal, dataImagem: diaPedido });
+          // Defesa: com data escolhida, só entra imagem DAQUELE dia (a API já não faz fallback; a tela também não).
+          const dtos = diaPedido ? listados.filter((d) => d.data_imagem === diaPedido) : listados;
           const comImagem = new Set(dtos.map((d) => d.area_id));
           for (const id of faltando) if (!comImagem.has(id)) semImagemRef.current.add(id);
           for (let i = 0; i < dtos.length; i += DOWNLOADS_SIMULTANEOS) {
             const grupo = dtos.slice(i, i + DOWNLOADS_SIMULTANEOS);
             await Promise.all(grupo.map(async (dto) => {
               try {
-                const entrada = await montarEntrada(dto, indice, signal);
+                const entrada = await carregarEntradaRaster(dto, indice, signal);
                 if (signal.aborted) { liberarEntrada(entrada); return; }
-                cacheRef.current.set(dto.area_id, entrada);
+                cache.guardar(dto.area_id, entrada);
               } catch (e) {
                 if (signal.aborted || ehAborto(e)) return;
-                cacheRef.current.set(dto.area_id, {
+                cache.guardar(dto.area_id, {
                   dto,
                   bytesCinza: new Uint8ClampedArray(0),
                   largura: 0,
@@ -262,7 +275,8 @@ export function useRastersIndice({ areaIds, indice, data = DATA_ULTIMA_IMAGEM, a
           }
         }
         if (signal.aborted) return;
-        setPorArea(new Map(cacheRef.current));
+        setPorArea(cache.snapshot());
+        setAusentes(new Set(semImagemRef.current));
         setErro(null);
         setSituacao("pronto");
       } catch (e) {
@@ -273,22 +287,36 @@ export function useRastersIndice({ areaIds, indice, data = DATA_ULTIMA_IMAGEM, a
     })();
     return () => { controle.abort(); };
     // session.empresaId troca o escopo; idsKey cobre a lista de áreas à vista.
-  }, [ativo, pode, idsKey, areaIds, indice, data, session?.empresaId, liberarFora]);
+  }, [ativo, pode, idsKey, areaIds, indice, chaveData, diaPedido, assinaturas, versao, session?.empresaId, cache]);
 
-  React.useEffect(() => () => {
-    liberarFora(new Set());
-  }, [liberarFora]);
+  React.useEffect(() => () => { cache.limpar(); }, [cache]);
 
-  /** Injeta/atualiza um raster (após "Gerar raster") sem nova listagem completa. */
-  const incorporarDto = React.useCallback(async (dto: RasterIndiceDto) => {
-    if (dto.indice !== indice) return;
-    const entrada = await montarEntrada(dto, indice);
-    liberarEntrada(cacheRef.current.get(dto.area_id));
+  /**
+   * Injeta/atualiza um raster (após "Gerar raster") sem nova listagem completa. Só entra o que combina com a camada:
+   * índice ativo; com data escolhida, o mesmo dia; na última imagem útil, nunca uma data mais antiga que a já mostrada.
+   * Devolve `false` quando a imagem gerada não pertence à camada atual (o chamador escolhe a data dela).
+   */
+  const incorporarDto = React.useCallback(async (dto: RasterIndiceDto): Promise<boolean> => {
+    if (dto.indice !== indice) return false;
+    if (diaPedido && dto.data_imagem !== diaPedido) return false;
+    const atual = cache.get(dto.area_id);
+    if (!diaPedido && atual && !atual.erro && atual.dto.data_imagem > dto.data_imagem) return false;
+    const entrada = await carregarEntradaRaster(dto, indice);
     semImagemRef.current.delete(dto.area_id);
-    cacheRef.current.set(dto.area_id, entrada);
-    setPorArea(new Map(cacheRef.current));
+    cache.guardar(dto.area_id, entrada);
+    setPorArea(cache.snapshot());
+    setAusentes(new Set(semImagemRef.current));
     setSituacao("pronto");
-  }, [indice]);
+    return true;
+  }, [indice, diaPedido, cache]);
+
+  /** O servidor informou o hash ATUAL do contorno da área: imagem guardada de outro hash é solta e a área é pedida de novo. */
+  const confirmarHashDaArea = React.useCallback((areaId: string, geometriaSha256: string | null | undefined) => {
+    if (!cache.invalidarSeHashDiferente(areaId, geometriaSha256)) return;
+    semImagemRef.current.delete(areaId);
+    setPorArea(cache.snapshot());
+    setVersao((v) => v + 1);
+  }, [cache]);
 
   const doIndiceAtivo = React.useMemo(
     () => new Map([...porArea].filter(([, e]) => e.dto.indice === indice)) as ReadonlyMap<string, EntradaRasterEmMemoria>,
@@ -300,11 +328,15 @@ export function useRastersIndice({ areaIds, indice, data = DATA_ULTIMA_IMAGEM, a
     erro,
     porArea: doIndiceAtivo,
     indice,
+    data,
+    /** Áreas listadas SEM imagem neste índice/data (a tela diz isso; nunca troca de data em silêncio). */
+    ausentes,
     temRaster: (areaId: string) => {
       const e = doIndiceAtivo.get(areaId);
       return Boolean(e && !e.erro && e.blobUrl);
     },
-    incorporarDto
+    incorporarDto,
+    confirmarHashDaArea
   };
 }
 

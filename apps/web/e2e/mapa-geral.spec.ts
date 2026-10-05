@@ -728,7 +728,12 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
     comparacao_observacao_anterior: { anterior_id: "x", anterior_valor_medio: "0.60", anterior_observacao_inicio: "2026-08-10T13:00:00.000Z", delta_percentual: 16.7, tendencia: "subiu" }
   });
   const resumo = {
-    area_id: area.id, versao_metodo: "pastagem-essencial-v2", ultima_tentativa: null, aviso: "x",
+    area_id: area.id, versao_metodo: "pastagem-essencial-v2", ultima_tentativa: null, aviso: "x", geometria_sha256: HASH,
+    tendencia: {
+      ultima: { periodo: "ultima", delta: -0.35, pontos: 3 },
+      "30d": { periodo: "30d", delta: null, pontos: 1 },
+      "90d": { periodo: "90d", delta: 0, pontos: 3 }
+    },
     ultima_observacao_util: {
       observacao_inicio: "2026-09-10T13:00:00.000Z", observacao_fim: "2026-09-10T13:00:01.000Z", do_poligono_atual: true,
       qualidade: {
@@ -746,7 +751,8 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   const item = (dia: string, media: string) => ({
     id: `h-${dia}`, situacao: "concluida", motivo_qualidade: null, geometria_sha256: HASH, do_poligono_atual: true,
     observacao_inicio: `${dia}T13:00:00.000Z`, observacao_fim: `${dia}T13:00:01.000Z`, valor_medio: media, valor_minimo: null, valor_maximo: null,
-    desvio_padrao: null, cobertura_valida: "0.9000", criado_em: `${dia}T20:00:00.000Z`
+    desvio_padrao: null, cobertura_valida: "0.9000", criado_em: `${dia}T20:00:00.000Z`,
+    histograma: { bins: [{ lowEdge: 0, highEdge: 0.5, count: 10 }, { lowEdge: 0.5, highEdge: 1, count: 30 }], underflowCount: 0, overflowCount: 0 }
   });
   const historico = (indice: string) => {
     const cai = indice === "ndvi" || indice === "ndre";
@@ -757,7 +763,9 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   const cors = { "Access-Control-Allow-Origin": "*" };
   const json = (corpo: unknown, status = 200) => ({ status, contentType: "application/json", headers: cors, body: JSON.stringify(corpo) });
   const listagensRaster: string[] = [];
-  const corposConsulta: { alvo: { tipo: string; area_ids?: string[] }; periodo: { tipo: string; janela_dias: number }; indices: string[]; confirmar: boolean }[] = [];
+  const corposConsulta: { alvo: { tipo: string; area_ids?: string[] }; periodo: Record<string, unknown>; indices: string[]; confirmar: boolean }[] = [];
+  const datasListadas: string[] = [];
+  let postsRasterAB = 0;
   let pollsConsulta = 0;
   const consultaId = "33333333-3333-4333-8333-333333333333";
   const dtoConsulta = (situacao: string, concluidos: number) => ({
@@ -767,8 +775,14 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
 
   await page.route(/\/api\/mapa\/rasters(\?|$)/, async (rota) => {
     if (rota.request().method() !== "GET") return rota.continue();
-    listagensRaster.push(new URL(rota.request().url()).searchParams.get("indice") ?? "");
+    const params = new URL(rota.request().url()).searchParams;
+    listagensRaster.push(params.get("indice") ?? "");
+    datasListadas.push(params.get("data_imagem") ?? "");
     await rota.fulfill(json({ itens: [], pagina: 1, tamanho: 200, tem_mais: false }));
+  });
+  await page.route(/\/api\/mapa\/analises-satelitais\/[^/]+\/raster$/, async (rota) => {
+    if (rota.request().method() === "POST") postsRasterAB += 1;
+    await rota.continue();
   });
   await page.route(`**/api/satelite/areas/${area.id}/resumo`, async (rota) => {
     if (rota.request().method() !== "GET") return rota.continue();
@@ -814,13 +828,23 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   await expect(barra.getByTestId("mapa-indice-evi2")).toBeVisible();
   await expect(barra.getByTestId("mapa-indice-ndmi"), "NDMI é da família Umidade, não do Vigor").toHaveCount(0);
 
+  // DATA: "Última imagem útil" por padrão (sem data_imagem na rede); sem área aberta não há datas para escolher
+  const seletorData = barra.getByTestId("mapa-data-camada");
+  await expect(seletorData).toHaveValue("ultima");
+  await expect(seletorData.locator("option")).toHaveCount(1);
+  expect(datasListadas.filter(Boolean), "a última imagem útil não manda data_imagem").toEqual([]);
+
   // só o índice ativo vai à rede: trocar de camada pede o índice novo, nunca os seis
   await expect.poll(() => listagensRaster.includes("ndvi")).toBe(true);
   await barra.getByTestId("mapa-camada-umidade").click();
   await expect(barra.getByTestId("mapa-indice-ndmi")).toHaveAttribute("aria-pressed", "true");
   await expect.poll(() => listagensRaster.includes("ndmi")).toBe(true);
   expect(listagensRaster.filter((i) => !["ndvi", "ndmi"].includes(i)), "nenhum outro índice foi pedido").toEqual([]);
-  await expect(barra.getByTestId("mapa-cor-area"), "a cor por área só existe para o NDVI").toBeDisabled();
+  // a cor por área vale para todos os índices; sem análise válida do NDMI a área fica cinza neutro — nunca no cadastro
+  await expect(barra.getByTestId("mapa-cor-area")).toBeEnabled();
+  await barra.getByTestId("mapa-cor-area").click();
+  await expect(barra.getByTestId("mapa-cor-area")).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => page.evaluate((id) => (window as unknown as { __mapaNdviE2E?: { indice: string; cores: Record<string, string> | null } }).__mapaNdviE2E?.cores?.[id] ?? null, area.id)).toBe("#94a3b8");
   await barra.getByTestId("mapa-camada-vigor").click();
   await expect(barra.getByTestId("mapa-indice-ndvi")).toHaveAttribute("aria-pressed", "true");
 
@@ -849,10 +873,33 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   await expect(condicao.getByTestId("condicao-vistoria")).toBeVisible();
   expect(await condicao.innerText(), "o painel não fala em praga nem em biomassa").not.toMatch(/praga|biomassa/i);
 
-  // histórico simples
+  // tendência do NDVI: delta nulo é "Dados insuficientes" (NULL ≠ 0); zero verdadeiro é "0,00"
+  await expect(condicao.getByTestId("condicao-tendencia-ultima-valor")).toHaveText("−0,35");
+  await expect(condicao.getByTestId("condicao-tendencia-30d-valor")).toHaveText("Dados insuficientes");
+  await expect(condicao.getByTestId("condicao-tendencia-90d-valor")).toHaveText("0,00");
+
+  // histórico por período (padrão 1 ano): as três observações do contorno atual
   await condicao.getByTestId("condicao-historico-abrir").click();
   await expect(condicao.getByTestId("condicao-historico-grafico")).toBeVisible();
   await expect(condicao.getByTestId("condicao-historico-item")).toHaveCount(3);
+  await expect(condicao.getByTestId("condicao-historico-periodo")).toHaveValue("1a");
+  await expect(condicao.getByTestId("condicao-historico-cobertura")).toContainText("histórico completo");
+  await condicao.getByTestId("condicao-historico-periodo").selectOption("personalizado");
+  await condicao.getByTestId("condicao-historico-de").fill("2026-08-01");
+  await condicao.getByTestId("condicao-historico-ate").fill("2026-08-31");
+  await expect(condicao.getByTestId("condicao-historico-item")).toHaveCount(1);
+  await condicao.getByTestId("condicao-historico-periodo").selectOption("1a");
+  await expect(condicao.getByTestId("condicao-historico-item")).toHaveCount(3);
+
+  // DATA da camada: as datas úteis do histórico do índice ativo; escolher uma pede data_imagem e NUNCA troca de data sozinha
+  await expect(seletorData.locator("option")).toHaveText([/Última imagem útil/, "10/09/2026", "10/08/2026", "10/07/2026"]);
+  await seletorData.selectOption("2026-08-10");
+  await expect.poll(() => datasListadas.includes("2026-08-10")).toBe(true);
+  await expect(page.getByTestId("mapa-sem-imagem-data")).toContainText("Nenhuma outra data é usada no lugar");
+  await expect(condicao.getByTestId("condicao-sem-imagem-data")).toContainText("10/08/2026");
+  await expect(condicao.getByTestId("condicao-gerar-raster")).toContainText("10/08/2026");
+  await seletorData.selectOption("ultima");
+  await expect(page.getByTestId("mapa-sem-imagem-data")).toHaveCount(0);
 
   // Comparar A × B (contorno único: compara)
   await condicao.getByTestId("condicao-comparar").click();
@@ -860,6 +907,13 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   await expect(comparar.getByTestId("comparar-tabela")).toBeVisible();
   await expect(comparar.getByTestId("comparar-linha-ndvi")).toBeVisible();
   await expect(comparar.getByTestId("comparar-bloqueada")).toHaveCount(0);
+  await expect(comparar.getByTestId("comparar-histograma-a")).toBeVisible();
+  await expect(comparar.getByTestId("comparar-histograma-b")).toBeVisible();
+  // imagens A/B: nada gerado ainda; o botão existe, e o Process API só roda no clique confirmado (aqui não clicamos)
+  await expect(comparar.getByTestId("comparar-imagem-a-ausente")).toBeVisible();
+  await expect(comparar.getByTestId("comparar-imagem-b-ausente")).toBeVisible();
+  await expect(comparar.getByTestId("comparar-gerar-imagem")).toBeVisible();
+  expect(postsRasterAB, "nenhuma imagem é gerada sem o clique confirmado").toBe(0);
   await comparar.getByTestId("comparar-fechar").click();
   await expect(comparar).toHaveCount(0);
 
@@ -867,13 +921,33 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   await condicao.getByTestId("condicao-nova-consulta").click();
   const modal = page.getByTestId("consulta-modal");
   await expect(modal.getByTestId("consulta-selecao-atual")).toBeChecked();
+  // "Áreas desatualizadas": o contorno atual não tem análise válida do índice ativo (aqui, a área só tem o resumo simulado do painel)
+  await expect(modal.getByTestId("consulta-selecao-desatualizadas")).toBeEnabled();
+  // período: "Uma data" com tolerância
+  await modal.getByTestId("consulta-periodo-tipo").selectOption("data");
+  await expect(modal.getByTestId("consulta-previa")).toBeDisabled();
+  await modal.getByTestId("consulta-data").fill("2026-09-10");
   await modal.getByTestId("consulta-previa").click();
   await expect(modal.getByTestId("consulta-previa-creditos")).toContainText("créditos");
   expect(corposConsulta).toHaveLength(1);
-  expect(corposConsulta[0]).toEqual({ alvo: { tipo: "areas", area_ids: [area.id] }, periodo: { tipo: "mais_recente", janela_dias: 30 }, indices: ["pastagem_essencial"], confirmar: false });
+  expect(corposConsulta[0]).toEqual({ alvo: { tipo: "areas", area_ids: [area.id] }, periodo: { tipo: "data", data: "2026-09-10", tolerancia_dias: 3 }, indices: ["pastagem_essencial"], confirmar: false });
+  // período: intervalo com cadência
+  await modal.getByTestId("consulta-periodo-tipo").selectOption("intervalo");
+  await modal.getByTestId("consulta-de").fill("2026-07-01");
+  await modal.getByTestId("consulta-ate").fill("2026-09-30");
+  await expect(modal.getByTestId("consulta-recortes")).toContainText("3 recortes");
+  await modal.getByTestId("consulta-previa").click();
+  await expect.poll(() => corposConsulta.length).toBe(2);
+  expect(corposConsulta[1]?.periodo).toEqual({ tipo: "intervalo", de: "2026-07-01", ate: "2026-09-30", cadencia: "mensal" });
+  // período padrão: mais recente
+  await modal.getByTestId("consulta-periodo-tipo").selectOption("mais_recente");
+  await modal.getByTestId("consulta-previa").click();
+  await expect(modal.getByTestId("consulta-previa-creditos")).toContainText("créditos");
+  expect(corposConsulta).toHaveLength(3);
+  expect(corposConsulta[2]).toEqual({ alvo: { tipo: "areas", area_ids: [area.id] }, periodo: { tipo: "mais_recente", janela_dias: 30 }, indices: ["pastagem_essencial"], confirmar: false });
   await modal.getByTestId("consulta-confirmar").click();
   await expect(modal.getByTestId("consulta-progresso")).toBeVisible();
-  expect(corposConsulta[1]?.confirmar).toBe(true);
+  expect(corposConsulta[3]?.confirmar).toBe(true);
   await expect(modal.getByTestId("consulta-progresso")).toContainText("Concluída", { timeout: 20_000 });
   await modal.getByTestId("consulta-fechar").click();
   await expect(modal).toHaveCount(0);

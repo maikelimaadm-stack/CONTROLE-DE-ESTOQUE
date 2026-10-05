@@ -18,7 +18,7 @@ export function GraficoHistorico({ indice, historico }: { indice: IdIndice; hist
   const pontos = React.useMemo(() => pontosDoGrafico(serie, escala), [serie, escala]);
   const nome = nomeDoIndice(indice);
   if (pontos.length === 0) {
-    return <p className="text-xs text-slate-500" data-testid="condicao-historico-vazio">Nenhuma observação de {nome} para o contorno atual.</p>;
+    return <p className="text-xs text-slate-500" data-testid="condicao-historico-vazio">Nenhuma observação de {nome} no período para o contorno atual.</p>;
   }
   const x = (v: number) => M + v * (L - 2 * M);
   const y = (v: number) => A - M - v * (A - 2 * M);

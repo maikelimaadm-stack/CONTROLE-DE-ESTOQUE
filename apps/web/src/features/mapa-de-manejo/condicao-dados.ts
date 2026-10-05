@@ -2,7 +2,14 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { api, ApiError, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { HistoricoIndice, IdIndice, ResumoCondicao } from "./condicao-modelo";
+import type { HistoricoIndice, IdIndice, ItemHistoricoIndice, ResumoCondicao } from "./condicao-modelo";
+import {
+  carregarHistoricoAteCobrir,
+  filtrarPorJanela,
+  janelaDoPeriodo,
+  type CargaHistorico,
+  type PeriodoHistorico
+} from "./historico-periodo";
 
 export const CHAVE_CONDICAO = ["mapa-geral", "condicao"] as const;
 /** Observações por índice no histórico do painel (a rota pagina no servidor; aqui só a primeira página). */
@@ -65,4 +72,42 @@ export function useHistoricosDaArea(areaId: string, indices: readonly IdIndice[]
     carregando: consultas.some((c) => c.isLoading),
     erro: consultas.find((c) => c.error)?.error ?? null
   };
+}
+
+export interface HistoricoDoPeriodo {
+  /** Observações do período (pela data da observação), do contorno atual. */
+  itens: ItemHistoricoIndice[];
+  carga: CargaHistorico;
+}
+
+/**
+ * Histórico do índice num PERÍODO (30d/60d/90d/6m/1a/personalizado): pagina por `antes` até cobrir o início do período ou
+ * esgotar o histórico e filtra pela data da observação. Só roda quando `ativo` e o período é válido.
+ */
+export function useHistoricoPeriodo(
+  areaId: string,
+  indice: IdIndice,
+  periodo: PeriodoHistorico,
+  personalizado: { de: string; ate: string },
+  ativo: boolean
+) {
+  const { can, session } = useAuth();
+  const hoje = new Date().toISOString().slice(0, 10);
+  const janela = janelaDoPeriodo(periodo, hoje, personalizado);
+  const inicio = janela.ok ? janela.janela.inicio : null;
+  const fim = janela.ok ? janela.janela.fim : null;
+  const consulta = useQuery({
+    queryKey: [...CHAVE_CONDICAO, "historico-periodo", areaId, indice, inicio, fim, session?.empresaId ?? null],
+    enabled: ativo && can(PERMISSAO_VER) && inicio !== null && fim !== null,
+    retry: false,
+    staleTime: 30_000,
+    queryFn: async ({ signal }): Promise<HistoricoDoPeriodo> => {
+      const carga = await carregarHistoricoAteCobrir(
+        (antes, limite) => api<HistoricoIndice>(`/api/satelite/areas/${areaId}/historico${qs({ indice, limite, antes })}`, { signal }),
+        { inicio: inicio!, fim: fim! }
+      );
+      return { itens: filtrarPorJanela(carga.itens, { inicio: inicio!, fim: fim! }), carga };
+    }
+  });
+  return { ...consulta, janela };
 }

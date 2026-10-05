@@ -29,6 +29,8 @@ export interface RasterIndiceDto {
   escala_max: number;
   resolucao_m: number;
   resolucao_reduzida: boolean;
+  /** Hash do contorno sobre o qual a imagem foi gerada — parte da identidade do cache. */
+  geometria_sha256?: string | null;
   url_assinada: string;
   expira_em: string;
   encoding_version?: string | null;
@@ -112,12 +114,16 @@ function consulta(parametros: Record<string, string | number>): string {
   return `?${p.toString()}`;
 }
 
-/** A imagem MAIS RECENTE do índice para cada área pedida (nunca gera). Lotes de até 200 ids; só o índice pedido. */
+/**
+ * A imagem do índice para cada área pedida (nunca gera). Lotes de até 200 ids; só o índice pedido.
+ * Sem `dataImagem`: a da última análise útil do contorno atual. Com `dataImagem` (YYYY-MM-DD): só aquele dia — a API
+ * não cai para outra data, e a tela também não.
+ */
 export async function listarRastersPorAreas(
   areaIds: readonly string[],
   indice: string,
   requisitar: RequisitarJson,
-  opcoes: { signal?: AbortSignal } = {}
+  opcoes: { signal?: AbortSignal; dataImagem?: string } = {}
 ): Promise<RasterIndiceDto[]> {
   const unicos = [...new Set(areaIds.filter(Boolean))];
   const saida: RasterIndiceDto[] = [];
@@ -127,7 +133,13 @@ export async function listarRastersPorAreas(
     for (;;) {
       if (opcoes.signal?.aborted) throw new DOMException("Pedido de raster abortado", "AbortError");
       const r = await requisitar<PaginaRasters>(
-        `/api/mapa/rasters${consulta({ area_ids: fatia.join(","), indice, pagina, tamanho: AREAS_POR_LISTAGEM })}`,
+        `/api/mapa/rasters${consulta({
+          area_ids: fatia.join(","),
+          indice,
+          ...(opcoes.dataImagem ? { data_imagem: opcoes.dataImagem } : {}),
+          pagina,
+          tamanho: AREAS_POR_LISTAGEM
+        })}`,
         { signal: opcoes.signal }
       );
       saida.push(...r.itens);

@@ -1,11 +1,13 @@
 "use client";
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CLASSES_NDVI_MAPA, RESUMO_ANALISE_SATELITAL_MAXIMO, classeNdvi, enumLabel, type ChaveClasseNdvi } from "@agro/domain";
+import { CLASSES_NDVI_MAPA, RESUMO_ANALISE_SATELITAL_MAXIMO, classeNdvi, enumLabel } from "@agro/domain";
 import { api, ApiError, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui";
 import { dateBR, dateTimeBR, num, pct } from "@/lib/utils";
+import { COR_CLASSE_NDVI, COR_SEM_NDVI, corDoNdvi } from "./cor-por-area";
+import type { IdIndice } from "./paletas-indices";
 import { PARADAS_NDVI_PIXEL } from "./paleta-ndvi-pixel";
 import {
   desenharMiniaturaRaster,
@@ -24,21 +26,7 @@ import {
 export const PERMISSAO_VER_NDVI = "analises_satelitais.view";
 export const PERMISSAO_PEDIR_NDVI = "analises_satelitais.create";
 
-/** Cor de cada classe da escala fixa (do vermelho ao verde escuro). A classe e o limite são do domínio. */
-export const COR_CLASSE_NDVI: Readonly<Record<ChaveClasseNdvi, string>> = {
-  sem_vegetacao: "#d73027",
-  baixo: "#fc8d59",
-  medio: "#d9ef8b",
-  alto: "#1a9850"
-};
-/** Área sem observação útil (ou nunca analisada): cinza — nunca uma cor de classe inventada. */
-export const COR_SEM_NDVI = "#94a3b8";
-
-export const corDoNdvi = (valor: string | null | undefined) => {
-  const c = classeNdvi(valor);
-  return c ? COR_CLASSE_NDVI[c.chave] : COR_SEM_NDVI;
-};
-
+/** Resumo por área de UM índice (`GET /api/mapa/analises-satelitais/resumo?indice=`): a mesma forma para qualquer índice. */
 export interface ResumoNdviDaArea {
   area_id: string;
   ultima_execucao: { situacao: string; motivo_qualidade: string | null; criado_em: string };
@@ -64,18 +52,27 @@ export type EstadoNdvi =
   | { situacao: "erro"; erro: unknown; tentarDeNovo: () => void }
   | { situacao: "pronto"; porArea: ReadonlyMap<string, ResumoNdviDaArea>; temMais: boolean };
 
+export type ResumoIndiceDaArea = ResumoNdviDaArea;
+export type EstadoResumoIndice = EstadoNdvi;
+
 const CHAVE_NDVI = ["mapa-geral", "ndvi"] as const;
 
-export function useResumoNdvi(): EstadoNdvi {
+/**
+ * O resumo de todas as áreas para o ÍNDICE pedido (cor por área, lista, "Áreas desatualizadas"). O NDVI segue o pedido
+ * de antes, sem o parâmetro `indice` (é o padrão da rota, e a API anterior não o conhece); os demais mandam `indice`.
+ */
+export function useResumoIndice(indice: IdIndice): EstadoResumoIndice {
   const { can, session } = useAuth();
   const pode = can(PERMISSAO_VER_NDVI);
   const q = useQuery({
-    queryKey: [...CHAVE_NDVI, "resumo", session?.empresaId ?? null],
+    queryKey: [...CHAVE_NDVI, "resumo", indice, session?.empresaId ?? null],
     enabled: pode,
     retry: false,
     queryFn: async () => {
       try {
-        return await api<{ itens: ResumoNdviDaArea[]; tem_mais: boolean }>(`/api/mapa/analises-satelitais/resumo${qs({ tamanho: RESUMO_ANALISE_SATELITAL_MAXIMO })}`);
+        return await api<{ itens: ResumoNdviDaArea[]; tem_mais: boolean }>(
+          `/api/mapa/analises-satelitais/resumo${qs({ ...(indice === "ndvi" ? {} : { indice }), tamanho: RESUMO_ANALISE_SATELITAL_MAXIMO })}`
+        );
       } catch (e) {
         // A rota não tem parâmetro de caminho: 404 aqui só pode ser a ROTA ausente (a API anterior a esta fatia).
         if (e instanceof ApiError && e.status === 404) return null;
@@ -95,6 +92,11 @@ export function useResumoNdvi(): EstadoNdvi {
     if (dados === null) return { situacao: "indisponivel" };
     return { situacao: "pronto", porArea: new Map(dados.itens.map((i) => [i.area_id, i])), temMais: dados.tem_mais };
   }, [pode, isLoading, error, dados, refetch]);
+}
+
+/** O NDVI para a tela inteira (permissão, disponibilidade da rota e o bloco "Satélite (NDVI)"). */
+export function useResumoNdvi(): EstadoNdvi {
+  return useResumoIndice("ndvi");
 }
 
 interface ItemHistorico { id: string; observacao_inicio: string; valor_medio: string; cobertura_valida: string; do_poligono_atual: boolean }

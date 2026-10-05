@@ -61,9 +61,26 @@ export interface BundleDoResumo {
   indices: Partial<Record<IdIndice, IndiceDoResumo>>;
 }
 
+/** Tendência do NDVI numa janela. `delta` NULO = dados insuficientes (nunca zero): `NULL ≠ 0`. */
+export interface TendenciaJanela {
+  periodo: "ultima" | "30d" | "90d";
+  delta: number | null;
+  pontos: number;
+}
+
+export interface TendenciaDoResumo {
+  ultima: TendenciaJanela;
+  "30d": TendenciaJanela;
+  "90d": TendenciaJanela;
+}
+
 export interface ResumoCondicao {
   area_id: string;
   versao_metodo: string;
+  /** Hash do contorno vigente da área, calculado pelo servidor (parte da identidade do cache de rasters). */
+  geometria_sha256?: string | null;
+  /** Tendência do NDVI (a API a calcula sobre a série do NDVI). Ausente na API anterior. */
+  tendencia?: TendenciaDoResumo | null;
   ultima_observacao_util: (BundleDoResumo & { indicadores_derivados: IndicadoresDerivados | null }) | null;
   ultima_tentativa: (BundleDoResumo & { situacao: string; motivo_qualidade: string | null; criado_em: string }) | null;
   /** A API pode devolver a anomalia pronta; sem ela a tela calcula pelo histórico. */
@@ -85,6 +102,8 @@ export interface ItemHistoricoIndice {
   desvio_padrao: string | null;
   cobertura_valida: string | null;
   criado_em: string;
+  /** Histograma oficial da Statistical API, quando a análise o guardou. */
+  histograma?: unknown;
 }
 
 export interface HistoricoIndice {
@@ -252,4 +271,78 @@ export function pontosDoGrafico(serie: readonly PontoSerieIndice[], escala: { mi
     valor: p.media,
     qualidadeOk: p.qualidadeOk
   }));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// TENDÊNCIA
+// ---------------------------------------------------------------------------------------------------------------
+
+export const ROTULO_JANELA_TENDENCIA: Readonly<Record<TendenciaJanela["periodo"], string>> = {
+  ultima: "Desde a imagem anterior",
+  "30d": "Últimos 30 dias",
+  "90d": "Últimos 90 dias"
+};
+
+export const TEXTO_DADOS_INSUFICIENTES = "Dados insuficientes";
+
+export interface LeituraTendencia {
+  /** `null` = dados insuficientes. */
+  delta: number | null;
+  /** Texto pronto: "+0,05", "−0,12", "0,00" ou "Dados insuficientes". */
+  texto: string;
+  direcao: "subiu" | "caiu" | "estavel" | "insuficiente";
+}
+
+/** Delta nulo (ou não finito) é "Dados insuficientes" — nunca "0,00". Zero verdadeiro é "0,00" e `estavel`. */
+export function lerTendencia(t: TendenciaJanela | null | undefined, formatar: (v: number) => string): LeituraTendencia {
+  const delta = t?.delta;
+  if (delta === null || delta === undefined || !Number.isFinite(delta)) {
+    return { delta: null, texto: TEXTO_DADOS_INSUFICIENTES, direcao: "insuficiente" };
+  }
+  const t2 = formatar(Math.abs(delta));
+  if (delta > 0) return { delta, texto: `+${t2}`, direcao: "subiu" };
+  if (delta < 0) return { delta, texto: `−${t2}`, direcao: "caiu" };
+  return { delta, texto: t2, direcao: "estavel" };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// HISTOGRAMA (comparação A × B)
+// ---------------------------------------------------------------------------------------------------------------
+
+export interface HistogramaIndice {
+  bins: { baixo: number; alto: number; contagem: number }[];
+  abaixo: number;
+  acima: number;
+}
+
+const finito = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+
+/** Lê o histograma oficial (`{ bins:[{lowEdge,highEdge,count}], underflowCount, overflowCount }`). Forma estranha → `null`. */
+export function lerHistograma(v: unknown): HistogramaIndice | null {
+  if (!v || typeof v !== "object") return null;
+  const h = v as { bins?: unknown; underflowCount?: unknown; overflowCount?: unknown };
+  if (!Array.isArray(h.bins) || h.bins.length === 0) return null;
+  const bins: HistogramaIndice["bins"] = [];
+  for (const b of h.bins) {
+    const o = b as { lowEdge?: unknown; highEdge?: unknown; count?: unknown } | null;
+    if (!o || !finito(o.lowEdge) || !finito(o.highEdge) || !finito(o.count) || o.count < 0 || o.highEdge <= o.lowEdge) return null;
+    bins.push({ baixo: o.lowEdge, alto: o.highEdge, contagem: o.count });
+  }
+  return { bins, abaixo: finito(h.underflowCount) ? h.underflowCount : 0, acima: finito(h.overflowCount) ? h.overflowCount : 0 };
+}
+
+/** O item do histórico da observação (a análise mais recente dela — a mesma regra de `serieDoHistorico`). */
+export function itemDaObservacao(itens: readonly ItemHistoricoIndice[], observacaoInicio: string): ItemHistoricoIndice | null {
+  let melhor: ItemHistoricoIndice | null = null;
+  for (const i of itens) {
+    if (i.observacao_inicio !== observacaoInicio) continue;
+    if (!melhor || melhor.criado_em < i.criado_em) melhor = i;
+  }
+  return melhor;
+}
+
+/** Alturas 0..1 das barras (pelo maior bin do próprio histograma). Sem contagem nenhuma: tudo zero. */
+export function alturasDoHistograma(h: HistogramaIndice): number[] {
+  const maior = Math.max(0, ...h.bins.map((b) => b.contagem));
+  return h.bins.map((b) => (maior === 0 ? 0 : b.contagem / maior));
 }
