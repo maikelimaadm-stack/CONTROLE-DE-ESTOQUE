@@ -1,7 +1,7 @@
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { SECOES_EXTENSAO_V5, configuracaoNeutraTopV4, entendeMovimentacaoInterna, familiaOperacionalDeDocumentoEstoque } from "@agro/domain";
 import { login, api, uniq, empresaAtiva } from "./helpers";
-import { cadastroDeEstoque, criarTopDeEstoque, entradaConfirmadaPelaApi, escolherNaReferencia, hojeISO, saldoNoServidor } from "./estoque-01-comum";
+import { cadastroDeEstoque, criarTopDeEstoque, entradaConfirmadaPelaApi, escolherNaReferencia, hojeISO, incluirItemNaCentralDeEstoque, saldoNoServidor } from "./estoque-01-comum";
 import { COMMITS_DAS_SECOES_V5, baseConheceSecaoV5, fonteDoWebContem, secoesDoFormato5DaBase, shaDaBase } from "./skew-fonte-da-base";
 
 /**
@@ -26,17 +26,32 @@ import { COMMITS_DAS_SECOES_V5, baseConheceSecaoV5, fonteDoWebContem, secoesDoFo
  * PREMISSAS (cada caso as afirma antes de medir): o web da base TEM a Central de Estoque (a marca
  * `estoque-central-armazem` no fonte do commit da base) e a API no ar é a DESTE HEAD (declara `movimentacaoInterna`).
  *
- * DUAS TELAS DA BASE QUE A API DESTA FASE MUDA SEM MUDAR O CONTRATO (K2-d, K2-e):
- *   · o "Ajustar estoque" do Saldo da base lê `empresa_id` da linha do saldo — que a base NÃO recebia (vazio → a
- *     empresa padrão) e a API desta fase passa a mandar (a empresa do local de estoque da linha). O diálogo da base não
- *     tem testid: os rótulos e a forma dos campos usados são os do commit da base (fixo), nunca os deste HEAD;
- *   · a fila de Aprovações de estoque da base lista também as espécies novas (a rota itera as sete): a base não as
- *     conhece, então a linha aparece SEM ações (transitório até a F5b, que liga a tela delas).
+ * O MUNDO DO WEB DA BASE (lido do fonte, como a F5b): Central DE ANTES (`estoque-item-*`) ou NO MOTOR
+ * (`central-estoque-*`). K2-a/b dirigem a grade do mundo; K2-d e K2-e também:
+ *   · ANTES: "Ajustar estoque" abre o diálogo; a fila lista a requisição SEM ações (a base não conhecia a espécie);
+ *   · MOTOR (F5b): "Ajustar estoque" abre a Central preenchida pela linha (empresa da linha no corpo); a fila liga as
+ *     ações da requisição.
  */
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333";
 
+/** A marca única de cada Central no fonte do web da base (a mesma da F5b). */
+const MARCA_DA_CENTRAL_DE_ANTES = 'data-testid="estoque-item-adicionar"';
+const MARCA_DA_CENTRAL_NO_MOTOR = 'PREFIXO_CENTRAL_ESTOQUE = "central-estoque"';
+/** A marca do Saldo → Central (F5b): sem ela, o "Ajustar estoque" da base ainda é o diálogo. */
+const MARCA_DO_AJUSTE_NA_CENTRAL = "useAjusteDoSaldoNaCentral";
+
 /** O fonte do web no commit da BASE contém `trecho`? O leitor de `skew-fonte-da-base.ts` (erro de leitura REPROVA). */
 const fonteDaBaseContem = (trecho: string): boolean => fonteDoWebContem(shaDaBase(), trecho);
+
+/** O mundo do web da base: exatamente uma das duas Centrais. */
+function mundoDoWebDaBase(): "antes" | "motor" {
+  const antes = fonteDaBaseContem(MARCA_DA_CENTRAL_DE_ANTES);
+  const motor = fonteDaBaseContem(MARCA_DA_CENTRAL_NO_MOTOR);
+  expect([antes, motor].filter(Boolean), "o web da base tem exatamente UMA Central de Estoque (a de antes ou a do motor)").toHaveLength(1);
+  const mundo = antes ? "antes" : "motor";
+  console.log(`[skew] OP01-F5a · K-2 · o web da base ${shaDaBase().slice(0, 7)} tem a Central de Estoque ${mundo === "antes" ? "DE ANTES (estoque-item-*)" : "NO MOTOR (central-estoque-*)"}`);
+  return mundo;
+}
 
 /** Vigia do navegador (o desenho de `skew-web-anterior.spec.ts`): CORS morto e erro de contrato não passam calados. */
 function vigiar(page: Page) {
@@ -63,22 +78,36 @@ async function premissas(page: Page) {
 
 type Cadastro = Awaited<ReturnType<typeof cadastroDeEstoque>>;
 type EspecieDaBase = "entrada" | "saida" | "transferencia" | "ajuste";
+type CamposDoItem = { quantidade?: string; contada?: string; custo?: string };
 const SEGMENTO: Record<EspecieDaBase, string> = { entrada: "entradas", saida: "saidas", transferencia: "transferencias", ajuste: "ajustes" };
 
 /**
- * Lança e confirma pela CENTRAL DE ESTOQUE DA BASE (os passos do ES-W1/ES-W2, só por testid). A Central já está aberta em
- * modo criação. Devolve o corpo da resposta do POST (o que o web da base recebeu) e o id do documento.
+ * Lança e confirma pela CENTRAL DE ESTOQUE DA BASE (os passos do ES-W1/ES-W2). A Central já está aberta em modo criação.
+ * O mundo decide a grade: DE ANTES (`estoque-item-*`) ou NO MOTOR (`central-estoque-*`, o helper da F5b).
  */
-async function salvarEConfirmarNaCentral(page: Page, especie: EspecieDaBase, c: Cadastro, preencher: (linha: Locator) => Promise<void>, destino?: string) {
+async function salvarEConfirmarNaCentral(
+  page: Page, mundo: "antes" | "motor", especie: EspecieDaBase, c: Cadastro, campos: CamposDoItem, destino?: string
+) {
   const central = page.getByTestId("estoque-central");
   await expect(central).toHaveAttribute("data-especie", especie);
   await expect(central).toHaveAttribute("data-modo", "criacao");
   await escolherNaReferencia(page, page.getByTestId("estoque-central-armazem"), c.nomeArmazem);
   if (destino) await escolherNaReferencia(page, page.getByTestId("estoque-central-armazem-destino"), destino);
-  await page.getByTestId("estoque-item-adicionar").click();
-  const linha = page.getByTestId("estoque-item").first();
-  await escolherNaReferencia(page, linha.getByTestId("estoque-item-produto"), c.nomeProduto);
-  await preencher(linha);
+  if (mundo === "antes") {
+    await page.getByTestId("estoque-item-adicionar").click();
+    const linha = page.getByTestId("estoque-item").first();
+    await escolherNaReferencia(page, linha.getByTestId("estoque-item-produto"), c.nomeProduto);
+    if (campos.quantidade !== undefined) await linha.getByTestId("estoque-item-quantidade").fill(campos.quantidade);
+    if (campos.contada !== undefined) await linha.getByTestId("estoque-item-quantidade-contada").fill(campos.contada);
+    if (campos.custo !== undefined) await linha.getByTestId("estoque-item-custo").fill(campos.custo);
+  } else {
+    await incluirItemNaCentralDeEstoque(page, {
+      nomeProduto: c.nomeProduto,
+      ...(campos.quantidade !== undefined ? { quantidade: campos.quantidade } : {}),
+      ...(campos.contada !== undefined ? { contada: campos.contada } : {}),
+      ...(campos.custo !== undefined ? { custo: campos.custo } : {}),
+    });
+  }
   const post = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === `/api/estoque/${SEGMENTO[especie]}`);
   await page.getByTestId("estoque-salvar").click();
   const resposta = await post;
@@ -140,25 +169,29 @@ test.describe("OP01-F5a · K-2 (sentido 2) — a Central de Estoque do web da ba
   test("K2-a entrada (com custo) e saída lançadas e confirmadas pela Central da base: corpo de sempre, saldo certo no servidor", async ({ page }) => {
     await login(page);
     await premissas(page);
+    const mundo = mundoDoWebDaBase();
     const { id: topEntrada } = await criarTopDeEstoque(page, "entrada");
     const { id: topSaida } = await criarTopDeEstoque(page, "saida");
     const c = await cadastroDeEstoque(page);
     expect(Number((await saldoNoServidor(page, c.armazem, c.produto)).quantity), "premissa: produto novo, sem saldo").toBe(0);
 
     const v = vigiar(page);
-    // ENTRADA pelo `+ Novo` da aba Movimentações da base (o caminho do ES-W1).
-    await page.goto("/estoque?tab=movimentacoes");
-    await expect(page.getByTestId("estoque-movimentacoes"), "a aba Movimentações da base abre").toBeVisible();
-    await expect(page.getByTestId("estoque-movimentacoes-indisponivel"), "a API deste HEAD serve a lista única").toHaveCount(0);
-    await page.getByTestId("estoque-novo").click();
-    const lancador = page.getByTestId("lancador-unificado");
-    await expect(lancador).toBeVisible();
-    await lancador.locator(`[data-testid="lancador-top"][data-top-id="${topEntrada}"]`).click();
-    await page.getByTestId("lancador-lancar").click();
-    await expect(page).toHaveURL(new RegExp(`/estoque/movimentacoes/entradas/new\\?tipo_operacao_id=${topEntrada}`));
-    const entrada = await salvarEConfirmarNaCentral(page, "entrada", c, async (linha) => {
-      await linha.getByTestId("estoque-item-quantidade").fill("5");
-      await linha.getByTestId("estoque-item-custo").fill("12,5");
+    // ENTRADA: DE ANTES pelo `+ Novo` da aba Movimentações; NO MOTOR pela rota com a TOP (o lançador unificado saiu).
+    if (mundo === "antes") {
+      await page.goto("/estoque?tab=movimentacoes");
+      await expect(page.getByTestId("estoque-movimentacoes"), "a aba Movimentações da base abre").toBeVisible();
+      await expect(page.getByTestId("estoque-movimentacoes-indisponivel"), "a API deste HEAD serve a lista única").toHaveCount(0);
+      await page.getByTestId("estoque-novo").click();
+      const lancador = page.getByTestId("lancador-unificado");
+      await expect(lancador).toBeVisible();
+      await lancador.locator(`[data-testid="lancador-top"][data-top-id="${topEntrada}"]`).click();
+      await page.getByTestId("lancador-lancar").click();
+      await expect(page).toHaveURL(new RegExp(`/estoque/movimentacoes/entradas/new\\?tipo_operacao_id=${topEntrada}`));
+    } else {
+      await page.goto(`/estoque/movimentacoes/entradas/new?tipo_operacao_id=${topEntrada}`);
+    }
+    const entrada = await salvarEConfirmarNaCentral(page, mundo, "entrada", c, {
+      quantidade: "5", custo: mundo === "antes" ? "12,5" : "12.5",
     });
     const lida = await api<{ itens: { custo_unitario: string | null }[]; movimentos: { movement_type: string; unit_cost: string }[] }>(page, "GET", `/api/estoque/entradas/${entrada.id}`);
     expect(lida.movimentos.map((m) => [m.movement_type, Number(m.unit_cost)]), "a entrada vale pelo custo informado na tela da base").toEqual([["entry", 12.5]]);
@@ -166,9 +199,7 @@ test.describe("OP01-F5a · K-2 (sentido 2) — a Central de Estoque do web da ba
 
     // SAÍDA pela rota de criação da base (o caminho do ES-W2): sem motivo — o par é opcional.
     await page.goto(`/estoque/movimentacoes/saidas/new?tipo_operacao_id=${topSaida}`);
-    const saida = await salvarEConfirmarNaCentral(page, "saida", c, async (linha) => {
-      await linha.getByTestId("estoque-item-quantidade").fill("2");
-    });
+    const saida = await salvarEConfirmarNaCentral(page, mundo, "saida", c, { quantidade: "2" });
     const saidaLida = await api<{ motivo_saida: string | null; movimentos: { movement_type: string; quantity: string }[] }>(page, "GET", `/api/estoque/saidas/${saida.id}`);
     expect(saidaLida.motivo_saida, "a saída da base nasce sem motivo").toBeNull();
     expect(saidaLida.movimentos.map((m) => [m.movement_type, Number(m.quantity)])).toEqual([["writeoff", 2]]);
@@ -181,6 +212,7 @@ test.describe("OP01-F5a · K-2 (sentido 2) — a Central de Estoque do web da ba
   test("K2-b transferência e ajuste lançados e confirmados pela Central da base: corpo de sempre, saldos certos no servidor", async ({ page }) => {
     await login(page);
     await premissas(page);
+    const mundo = mundoDoWebDaBase();
     const { id: topEntrada } = await criarTopDeEstoque(page, "entrada");
     const { id: topTransferencia } = await criarTopDeEstoque(page, "transferencia");
     const { id: topAjuste } = await criarTopDeEstoque(page, "ajuste");
@@ -193,18 +225,14 @@ test.describe("OP01-F5a · K-2 (sentido 2) — a Central de Estoque do web da ba
 
     const v = vigiar(page);
     await page.goto(`/estoque/movimentacoes/transferencias/new?tipo_operacao_id=${topTransferencia}`);
-    const transf = await salvarEConfirmarNaCentral(page, "transferencia", c, async (linha) => {
-      await linha.getByTestId("estoque-item-quantidade").fill("2");
-    }, destino!.description);
+    const transf = await salvarEConfirmarNaCentral(page, mundo, "transferencia", c, { quantidade: "2" }, destino!.description);
     const tLida = await api<{ movimentos: { movement_type: string }[] }>(page, "GET", `/api/estoque/transferencias/${transf.id}`);
     expect(tLida.movimentos.map((m) => m.movement_type).sort()).toEqual(["transfer_in", "transfer_out"]);
     expect((await saldoNoServidor(page, c.armazem, c.produto)).quantity, "origem: 5 − 2").toBe("3.0000");
     expect((await saldoNoServidor(page, destino!.id, c.produto)).quantity, "destino: 2").toBe("2.0000");
 
     await page.goto(`/estoque/movimentacoes/ajustes/new?tipo_operacao_id=${topAjuste}`);
-    const ajuste = await salvarEConfirmarNaCentral(page, "ajuste", c, async (linha) => {
-      await linha.getByTestId("estoque-item-quantidade-contada").fill("1");
-    });
+    const ajuste = await salvarEConfirmarNaCentral(page, mundo, "ajuste", c, { contada: "1" });
     const aLida = await api<{ itens: { custo_unitario: string | null }[]; movimentos: { movement_type: string; quantity: string }[] }>(page, "GET", `/api/estoque/ajustes/${ajuste.id}`);
     expect(aLida.movimentos.map((m) => [m.movement_type, Number(m.quantity)]), "contou 1 de 3: correção para baixo de 2").toEqual([["correction_out", 2]]);
     expect((await saldoNoServidor(page, c.armazem, c.produto)).quantity, "o saldo é a contagem").toBe("1.0000");
@@ -255,16 +283,19 @@ test.describe("OP01-F5a · K-2 (sentido 2) — a Central de Estoque do web da ba
     v.semErroDeContrato();
   });
 
-  test("K2-d o \"Ajustar estoque\" do Saldo da base, numa linha de OUTRA empresa: o diálogo da base usa a empresa da linha (o `empresa_id` novo do saldo), e a correção vale", async ({ page }) => {
+  test("K2-d o \"Ajustar estoque\" do Saldo da base, numa linha de OUTRA empresa: o diálogo (ou a Central da F5b) usa a empresa da linha (o `empresa_id` novo do saldo), e a correção vale", async ({ page }) => {
     await login(page);
     await premissas(page);
+    const ajusteNaCentral = fonteDaBaseContem(MARCA_DO_AJUSTE_NA_CENTRAL);
+    console.log(`[skew] OP01-F5a · K2-d · o web da base ${ajusteNaCentral ? "ABRE a Central" : "ABRE o diálogo"} no "Ajustar estoque" do Saldo`);
     const { id: topEntrada } = await criarTopDeEstoque(page, "entrada");
+    const { id: topAjuste } = await criarTopDeEstoque(page, "ajuste");
     const c = await cadastroDeEstoque(page);
     // A linha do saldo é de uma empresa que NÃO é a padrão: só assim o ajuste prova que usa a empresa da linha (a base,
     // sem a chave, cairia na empresa padrão — `useEmpresaPadrao`).
     const padrao = await empresaAtiva(page);
     const ctx = await api<{ empresas?: { id: string }[] }>(page, "GET", "/api/auth/context");
-    const locais = await api<{ items: { id: string; empresa_id?: string }[] }>(page, "GET", "/api/resources/warehouses?pageSize=100");
+    const locais = await api<{ items: { id: string; empresa_id?: string; description?: string }[] }>(page, "GET", "/api/resources/warehouses?pageSize=100");
     const outra = (ctx.empresas ?? []).map((e) => e.id).filter((id) => id !== padrao)
       .map((empresa) => ({ empresa, armazem: locais.items.find((w) => w.empresa_id === empresa)?.id }))
       .find((x) => x.armazem);
@@ -279,25 +310,56 @@ test.describe("OP01-F5a · K-2 (sentido 2) — a Central de Estoque do web da ba
     const noSaldo = page.getByRole("row").filter({ hasText: c.nomeProduto }).first();
     await expect(noSaldo, "o produto aparece no Saldo da base").toBeVisible();
     await noSaldo.getByRole("button", { name: "Ajustar estoque" }).click();
-    const dialogo = page.getByTestId("dialog");
-    await expect(dialogo, "o diálogo de ajuste da base abre").toBeVisible();
-    await dialogo.locator('input[type="number"][step="0.0001"]').fill("3");
-    await dialogo.locator("textarea").fill("Contagem do K2-d");
-    const post = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/stock/corrections");
-    await dialogo.getByRole("button", { name: "Salvar" }).click();
-    const resposta = await post;
-    expect(resposta.status(), `a correção da base vale contra a API nova: ${await resposta.text()}`).toBe(201);
-    expect(resposta.request().postDataJSON(), "o corpo da base leva a empresa DA LINHA, o local e o produto da linha")
-      .toMatchObject({ empresa_id: empresa, warehouse_id: armazem, product_id: c.produto, new_quantity: "3" });
+
+    if (ajusteNaCentral) {
+      // F5b: Central de ajuste preenchida pela linha; a empresa DA LINHA vai no POST de `/api/estoque/ajustes`.
+      await expect(page, "a Central de ajuste abre com a linha do Saldo").toHaveURL(new RegExp(`/estoque/movimentacoes/ajustes/new\\?.*empresa_id=${empresa}.*produto_id=${c.produto}`));
+      await expect(page.getByRole("dialog").filter({ hasText: "Ajustar estoque" }), "nada do diálogo antigo").toHaveCount(0);
+      await expect(page.getByTestId("top-lancador"), "sem a TOP na URL, a Central abre no lançador").toBeVisible();
+      await page.locator(`[data-testid="top-opcao"][data-top-id="${topAjuste}"]`).click();
+      await page.getByTestId("top-continuar").click();
+      await expect(page).toHaveURL(new RegExp(`tipo_operacao_id=${topAjuste}`));
+      const central = page.getByTestId("estoque-central");
+      await expect(central).toHaveAttribute("data-especie", "ajuste");
+      await expect(central).toHaveAttribute("data-modo", "criacao");
+      const linhas = page.getByTestId("central-estoque-linha");
+      await expect(linhas, "uma linha, a do Saldo").toHaveCount(1);
+      await linhas.first().getByLabel("Quantidade do item 1").fill("3");
+      const post = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/estoque/ajustes");
+      await page.getByTestId("estoque-salvar").click();
+      const resposta = await post;
+      expect(resposta.status(), `o ajuste da base vale contra a API nova: ${await resposta.text()}`).toBe(201);
+      expect(resposta.request().postDataJSON(), "o corpo leva a empresa DA LINHA, o local e o produto da linha")
+        .toMatchObject({ empresa_id: empresa, armazem_id: armazem, tipo_operacao_id: topAjuste, itens: [{ produto_id: c.produto, quantidade_contada: "3" }] });
+      const id = String(((await resposta.json()) as { id: string }).id);
+      await expect(page).toHaveURL(new RegExp(`/estoque/movimentacoes/ajustes/${id}$`));
+      const previa = page.waitForResponse((r) => r.request().method() === "GET" && new URL(r.url()).pathname.endsWith("/previa-confirmacao"));
+      await page.getByTestId("estoque-confirmar").click();
+      expect((await previa).status()).toBe(200);
+      await page.getByTestId("estoque-previa-confirmar").click();
+      await expect(central).toHaveAttribute("data-situacao", "confirmado");
+    } else {
+      const dialogo = page.getByTestId("dialog");
+      await expect(dialogo, "o diálogo de ajuste da base abre").toBeVisible();
+      await dialogo.locator('input[type="number"][step="0.0001"]').fill("3");
+      await dialogo.locator("textarea").fill("Contagem do K2-d");
+      const post = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/stock/corrections");
+      await dialogo.getByRole("button", { name: "Salvar" }).click();
+      const resposta = await post;
+      expect(resposta.status(), `a correção da base vale contra a API nova: ${await resposta.text()}`).toBe(201);
+      expect(resposta.request().postDataJSON(), "o corpo da base leva a empresa DA LINHA, o local e o produto da linha")
+        .toMatchObject({ empresa_id: empresa, warehouse_id: armazem, product_id: c.produto, new_quantity: "3" });
+    }
     expect((await saldoNoServidor(page, armazem, c.produto)).quantity, "o saldo é a contagem").toBe("3.0000");
 
     v.semBloqueio();
     v.semErroDeContrato();
   });
 
-  test("K2-e a fila de Aprovações de estoque da base com uma requisição PENDENTE (pela API deste HEAD): a fila abre, a linha aparece sem ações; a entrada pendente, que a base conhece, tem as dela", async ({ page }) => {
+  test("K2-e a fila de Aprovações de estoque da base com uma requisição PENDENTE (pela API deste HEAD): a fila abre; a entrada tem ações; a requisição tem ações só se a base já as liga (F5b)", async ({ page }) => {
     await login(page);
     await premissas(page);
+    const mundo = mundoDoWebDaBase();
     const c = await cadastroDeEstoque(page);
     // TOPs do formato 4 com "Sempre" (o molde do K-2 da TOP-CONFIG-08), uma da requisição de material e uma da entrada.
     const configuracao = { ...configuracaoNeutraTopV4(), aprovacao: { politica: "sempre" as const, valorMinimo: null, momento: "antes_da_confirmacao" as const } };
@@ -326,10 +388,14 @@ test.describe("OP01-F5a · K-2 (sentido 2) — a Central de Estoque do web da ba
       // PREMISSA DA AUSÊNCIA: a entrada (espécie que a base conhece) tem as ações — quem lê pode abrir e aprovar.
       await expect(linha(ent.id), "a entrada pendente aparece").toHaveAttribute("data-especie", "entrada");
       await expect(page.getByTestId(`aprovacao-aprovar-${ent.id}`), "a entrada tem Aprovar").toBeVisible();
-      // A requisição aparece, sem quebrar a fila, e SEM ações (a base não conhece a espécie: nada para abrir ou decidir).
+      // A requisição aparece sem quebrar a fila. DE ANTES: sem ações (a base não conhecia a espécie). NO MOTOR (F5b): com elas.
       await expect(linha(req.id), "a requisição pendente aparece na fila da base").toHaveAttribute("data-especie", "requisicao");
-      await expect(page.getByTestId(`aprovacao-aprovar-${req.id}`)).toHaveCount(0);
-      await expect(page.getByTestId(`aprovacao-abrir-${req.id}`)).toHaveCount(0);
+      if (mundo === "motor") {
+        await expect(page.getByTestId(`aprovacao-aprovar-${req.id}`), "a F5b liga Aprovar na requisição").toBeVisible();
+      } else {
+        await expect(page.getByTestId(`aprovacao-aprovar-${req.id}`)).toHaveCount(0);
+        await expect(page.getByTestId(`aprovacao-abrir-${req.id}`)).toHaveCount(0);
+      }
       v.semBloqueio();
       v.semErroDeContrato();
     } finally {

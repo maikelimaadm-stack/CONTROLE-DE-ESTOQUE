@@ -42,11 +42,13 @@ function marcasNoWebDaBase(marca: string): number {
 
 /**
  * O WEB DA BASE JÁ TEM AS CENTRAIS DA F10? O botão "Nova batelada" (`confinamento-nova-batelada`) e o formulário
- * embutido ("Nova batelada de dieta") são excludentes: exatamente um dos dois está no fonte, ou o mundo não se decide.
+ * embutido (`title="Nova batelada de dieta"` no CardHeader) são excludentes: exatamente um dos dois está no fonte, ou
+ * o mundo não se decide. A marca do embutido é o atributo `title=` — a string solta "Nova batelada de dieta" também
+ * aparece no comentário da página da Central depois da F10, e casar nela fingiria os dois mundos ao mesmo tempo.
  */
 function mundoDoWebDaBase(): Mundo {
   const novo = marcasNoWebDaBase("confinamento-nova-batelada");
-  const antigo = marcasNoWebDaBase("Nova batelada de dieta");
+  const antigo = marcasNoWebDaBase('title="Nova batelada de dieta"');
   console.log(`[skew] F10 · K-2 · o web da base tem ${novo} marca(s) da Central da batelada e ${antigo} do formulário embutido`);
   expect(novo > 0 !== antigo > 0, "exatamente um dos dois mundos está no fonte do web da base").toBe(true);
   return novo > 0 ? "novo" : "legado";
