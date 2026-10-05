@@ -53,8 +53,14 @@ async function shaArea(areaId: string): Promise<string | null> {
 async function gravarLinha(opts: {
   areaId: string; sha: string; indice?: string; createdAt: string;
   observacaoInicio?: string; observacaoFim?: string;
+  janelaInicio?: string; janelaFim?: string;
 }): Promise<string> {
   const indice = opts.indice ?? "ndvi";
+  // Unicidade uq_analises_satelitais_janela: janela (e data_alvo) precisam variar por linha.
+  const obsIni = opts.observacaoInicio ?? opts.createdAt;
+  const obsFim = opts.observacaoFim ?? new Date(Date.parse(opts.createdAt) + 86_400_000).toISOString();
+  const janelaInicio = opts.janelaInicio ?? new Date(Date.parse(obsIni) - 15 * 86_400_000).toISOString();
+  const janelaFim = opts.janelaFim ?? new Date(Date.parse(obsFim) + 5 * 86_400_000).toISOString();
   const r = await admin.query<{ id: string }>(
     `insert into erp.analises_satelitais (
         organization_id, empresa_id, area_id, provedor, colecao, indice, versao_metodo, geometria_sha256,
@@ -62,13 +68,12 @@ async function gravarLinha(opts: {
         observacao_inicio, observacao_fim, valor_medio, valor_minimo, valor_maximo, desvio_padrao,
         pixels_amostra, pixels_sem_dado, pixels_validos, pixels_geometria, cobertura_valida, criado_por, created_at)
      values ($1,$2,$3,'copernicus_cdse','sentinel-2-l2a',$4,$5,$6,
-        '2026-09-01T00:00:00Z','2026-10-01T00:00:00Z',20,10,'concluida',
-        $7::timestamptz,$8::timestamptz,0.55,0.40,0.70,0.05,100,15,85,100,0.8500,$9,$10::timestamptz)
+        $7::timestamptz,$8::timestamptz,20,10,'concluida',
+        $9::timestamptz,$10::timestamptz,0.55,0.40,0.70,0.05,100,15,85,100,0.8500,$11,$12::timestamptz)
      returning id`,
     [
       h.demo.orgId, A, opts.areaId, indice, VERSAO_METODO_PASTAGEM_ESSENCIAL, opts.sha,
-      opts.observacaoInicio ?? "2026-09-20T00:00:00Z",
-      opts.observacaoFim ?? "2026-09-21T00:00:00Z",
+      janelaInicio, janelaFim, obsIni, obsFim,
       h.demo.adminUserId, opts.createdAt
     ]);
   return r.rows[0]!.id;
