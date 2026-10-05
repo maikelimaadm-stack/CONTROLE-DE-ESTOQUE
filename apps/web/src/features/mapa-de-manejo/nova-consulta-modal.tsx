@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, qs } from "@/lib/api";
-import { Button, Dialog, NativeSelect } from "@/components/ui";
+import { Button, Dialog, Input, NativeSelect } from "@/components/ui";
 import { dateTimeBR, num } from "@/lib/utils";
 import type { AreaNoMapa } from "./mapa-base";
 import { CHAVE_CONDICAO } from "./condicao-dados";
@@ -169,7 +169,7 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
 
         {selecao === "escolhidas" && !bloqueado && (
           <div className="flex flex-col gap-1 rounded border border-slate-200 p-2" data-testid="consulta-escolhidas">
-            <input className="mg-input" placeholder="Buscar área" value={busca} onChange={(e) => setBusca(e.target.value)} aria-label="Buscar área" />
+            <Input placeholder="Buscar área" value={busca} onChange={(e) => setBusca(e.target.value)} aria-label="Buscar área" />
             <ul className="max-h-40 overflow-auto">
               {filtradas.map((a) => (
                 <li key={a.id}>
