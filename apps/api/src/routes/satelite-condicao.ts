@@ -28,7 +28,7 @@ import {
   type IdIndiceSatelite
 } from "@agro/domain";
 import { runService } from "../lib/service.js";
-import { DomainError, err, validation } from "../lib/errors.js";
+import { err, type DomainError } from "../lib/errors.js";
 import { empresaScopeSql, scopedById, type ServiceCtx } from "../lib/context.js";
 import { FalhaCopernicus, type RegistroChamada } from "../lib/satelite/copernicus.js";
 import { gravarConsumo } from "../lib/satelite/consumo.js";

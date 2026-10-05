@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 219 |
-| Tabelas com `organization_id` (escopo de organização) | 162 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 71 |
+| Tabelas no schema `erp` | 220 |
+| Tabelas com `organization_id` (escopo de organização) | 163 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 72 |
 | Entidades curadas neste dicionário | 61 |
 | Entidades com ID Global | 25 |
 | Entidades com Tipo de Operação | 19 |
 | Tipos de Operação referenciados | 32 |
-| Cobertura curada | 27.9% |
+| Cobertura curada | 27.7% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -2184,6 +2184,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.additional_infos` | 8 | sim | — | sim |
 | `erp.addressings` | 7 | sim | — | sim |
 | `erp.analises_satelitais` | 32 | sim | `empresa_id` | não |
+| `erp.analises_satelitais_ext` | 11 | sim | `empresa_id` | não |
 | `erp.animal_categories` | 9 | sim | — | não |
 | `erp.animal_handling_items` | 8 | não | — | não |
 | `erp.animal_identifications` | 6 | sim | — | não |
