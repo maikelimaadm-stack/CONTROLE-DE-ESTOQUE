@@ -51,6 +51,7 @@ async function gravarAnalise(opts: {
   areaId: string; sha: string; createdAt: string; observacaoInicio: string; observacaoFim: string;
   valor?: number;
 }): Promise<string> {
+  const medio = opts.valor ?? 0.55;
   const r = await admin.query<{ id: string }>(
     `insert into erp.analises_satelitais (
         organization_id, empresa_id, area_id, provedor, colecao, indice, versao_metodo, geometria_sha256,
@@ -59,12 +60,12 @@ async function gravarAnalise(opts: {
         pixels_validos, pixels_geometria, cobertura_valida, criado_por, created_at)
      values ($1,$2,$3,'copernicus_cdse','sentinel-2-l2a','ndvi',$4,$5,
         $6::timestamptz,$7::timestamptz,10,'concluida',$8::timestamptz,$9::timestamptz,
-        $10,0.4,0.7,0.05,100,10,90,100,0.9000,$11,$12::timestamptz) returning id`,
+        $10,$10-0.1,$10+0.1,0.05,100,10,90,100,0.9000,$11,$12::timestamptz) returning id`,
     [
       h.demo.orgId, A, opts.areaId, VERSAO_METODO_PASTAGEM_ESSENCIAL, opts.sha,
       new Date(Date.parse(opts.observacaoInicio) - 10 * 86_400_000).toISOString(),
       new Date(Date.parse(opts.observacaoFim) + 5 * 86_400_000).toISOString(),
-      opts.observacaoInicio, opts.observacaoFim, opts.valor ?? 0.55,
+      opts.observacaoInicio, opts.observacaoFim, medio,
       h.demo.adminUserId, opts.createdAt
     ]);
   return r.rows[0]!.id;
