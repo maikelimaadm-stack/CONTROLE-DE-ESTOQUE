@@ -61,7 +61,8 @@ test("MAPA-GERAL K-1 — web deste HEAD × API da base: o Mapa geral abre; legad
       expect(resposta.status(), "a tela perguntou, e a base respondeu a 404 de rota").toBe(404);
       await expect(page.getByTestId("mapa-ndvi-indisponivel")).toHaveText("Análise por satélite ainda não disponível neste servidor.");
       await expect(page.getByTestId("mapa-legenda-ndvi"), "sem a rota, sem legenda").toHaveCount(0);
-      await expect(page.getByTestId("mapa-cor-ndvi"), "sem a rota, sem o seletor de cor do NDVI").toHaveCount(0);
+      await expect(page.getByTestId("mapa-cor-area"), "sem a rota, sem o seletor de cor do NDVI").toHaveCount(0);
+      await expect(page.getByTestId("mapa-cor-pixel")).toHaveCount(0);
       await expect(painel.getByTestId("mapa-ndvi-indisponivel-area")).toBeVisible();
       await expect(painel.getByTestId("mapa-ndvi-analisar"), "sem a rota do resumo, o painel não oferece pedir análise").toHaveCount(0);
     } else {
