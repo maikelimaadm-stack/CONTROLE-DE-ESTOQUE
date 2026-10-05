@@ -33,13 +33,20 @@ describe("SAT-08 — catálogo e fórmulas", () => {
     expect(BANDAS_BUNDLE_ESSENCIAL).toEqual(["B02", "B04", "B05", "B08", "B8A", "B11", "SCL"]);
   });
 
-  it("EVI2 persistível até 2.5; NDVI continua [-1,1]; paleta visual ≠ constraint", () => {
+  it("EVI2 persistível até 2.5; MSAVI2 até -2.5; NDVI continua [-1,1]; paleta visual ≠ constraint", () => {
     expect(CATALOGO_INDICES.evi2.faixaPersistivel).toEqual({ min: -1, max: 2.5 });
     expect(CATALOGO_INDICES.evi2.faixaVisual).toEqual({ min: -1, max: 1 });
     expect(CATALOGO_INDICES.ndvi.faixaPersistivel).toEqual({ min: -1, max: 1 });
+    expect(CATALOGO_INDICES.msavi2.faixaPersistivel).toEqual({ min: -2.5, max: 1 });
+    expect(CATALOGO_INDICES.msavi2.faixaVisual).toEqual({ min: -1, max: 1 });
     const evi = calcularEvi2(0.8, 0.02)!;
     expect(evi).toBeGreaterThan(1);
     expect(evi).toBeLessThanOrEqual(2.5);
+    // S2L2A reflectance pode >1 (UINT15/10000); MSAVI2(NIR=0,RED=1.5) < -1
+    const msavi = calcularMsavi2(0, 1.5)!;
+    expect(msavi).toBeLessThan(-1);
+    expect(msavi).toBeGreaterThanOrEqual(-2.5);
+    expect(calcularMsavi2(0, 3.2767)!).toBeGreaterThanOrEqual(-2.5);
   });
 
   it("máscara por índice: B05 inválida não invalida NDVI", () => {

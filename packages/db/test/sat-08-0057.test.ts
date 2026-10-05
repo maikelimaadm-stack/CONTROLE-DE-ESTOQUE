@@ -81,6 +81,8 @@ describe("SAT-08 R1 — migration 0057", () => {
     )).rows[0]!.d;
     expect(faixa).toMatch(/2\.5/);
     expect(faixa).toMatch(/evi2/);
+    expect(faixa).toMatch(/msavi2/);
+    expect(faixa).toMatch(/-2\.5/);
 
     // WITH CHECK de escrita (empresa_id IS NOT NULL); USING de leitura (aceita nulo).
     const pol = (await db.query<{ qual: string; with_check: string }>(
@@ -105,6 +107,18 @@ describe("SAT-08 R1 — migration 0057", () => {
        returning id`,
       [demo.orgId, empresaId, areaId, VERSAO_METODO_PASTAGEM_ESSENCIAL, hash, demo.adminUserId]);
     expect(evi.rows[0]!.id).toBeTruthy();
+
+    // MSAVI2 com min -1.3028 (reflectância >1) — válido após 0057 R2
+    const msavi = await db.query<{ id: string }>(
+      `insert into erp.analises_satelitais (organization_id, empresa_id, area_id, provedor, colecao, indice, versao_metodo,
+          geometria_sha256, janela_inicio, janela_fim, resolucao_m, situacao, observacao_inicio, observacao_fim,
+          valor_medio, valor_minimo, valor_maximo, desvio_padrao, pixels_amostra, pixels_sem_dado, pixels_validos,
+          pixels_geometria, cobertura_valida, metadados_provedor, criado_por)
+       values ($1,$2,$3,'copernicus_cdse','sentinel-2-l2a','msavi2',$4,$5,'2026-09-01','2026-10-01',20,'concluida',
+          '2026-09-20','2026-09-21',-0.8000,-1.3028,-0.5000,0.0500,100,10,90,100,0.9000,'{}',$6)
+       returning id`,
+      [demo.orgId, empresaId, areaId, VERSAO_METODO_PASTAGEM_ESSENCIAL, hash, demo.adminUserId]);
+    expect(msavi.rows[0]!.id).toBeTruthy();
 
     // NDVI com max > 1 — continua recusado (mesmo hash; índice diferente da linha EVI2)
     await expect(db.query(

@@ -1,12 +1,14 @@
 /**
- * MÉTODO PASTAGEM ESSENCIAL (versão `pastagem-essencial-v2`) — SAT-08 R1, decisão 300.
+ * MÉTODO PASTAGEM ESSENCIAL (versão `pastagem-essencial-v2`) — SAT-08 R1/R2, decisão 300.
  *
  * Correção forward-only sobre a v1 (#101 / decisão 299):
  * - Statistical API: histograma oficial `{ bins:[{lowEdge,highEdge,count}], underflowCount, overflowCount }`.
  * - Percentis com chaves numéricas (`"5"`, `"5.0"`, `"05.0"` equivalentes).
  * - dataMask por output (máscara de pastagem nos índices; SCL/qualidade só com dataMask fonte).
  * - Validade por índice (bandas próprias) — B05 inválida não invalida NDVI.
- * - Faixas persistíveis por índice (EVI2 pode ultrapassar +1).
+ * - Faixas persistíveis por índice (EVI2 pode >1; MSAVI2 pode < -1 com reflectance >1).
+ * - Bundle completo: observação útil só se TODOS os 6 índices forem úteis no MESMO intervalo
+ *   (CRITERIO_UTIL_BUNDLE); não escolhe dia só pelo NDVI; não inventa 0 a partir de null.
  * - Agregação em 20 m; cada índice declara resolução nativa no catálogo.
  */
 import { createHash } from "node:crypto";
@@ -15,8 +17,10 @@ import {
   CATALOGO_INDICES,
   CLASSES_SCL_EXCLUIDAS,
   COLECAO_SENTINEL2_L2A,
+  CRITERIO_UTIL_BUNDLE,
   HISTOGRAMA_BINS_BSI,
   HISTOGRAMA_BINS_EVI2,
+  HISTOGRAMA_BINS_MSAVI2,
   HISTOGRAMA_BINS_VIGOR,
   INDICES_BUNDLE_ESSENCIAL,
   LIMIARES_COBERTURA_EXPERIMENTAL,
@@ -33,10 +37,10 @@ import {
 import { FalhaCopernicus } from "./copernicus.js";
 import type { GradeDaAnalise, PoligonoGeoJson } from "./geometria.js";
 import type { Janela, MetadadosAnalise } from "./ndvi.js";
-import { escolherObservacaoV2 } from "./ndvi-v2.js";
 
 const CRS84 = "http://www.opengis.net/def/crs/OGC/1.3/CRS84";
 const TOLERANCIA_FAIXA = 1e-6;
+const DIA_ISO = /^\d{4}-\d{2}-\d{2}$/;
 /** Classes SCL que entram no cloud_ratio (sombra de nuvem, nuvem média/alta, cirro). */
 const CLASSES_NUVEM_SCL = new Set([3, 8, 9, 10]);
 
@@ -112,8 +116,9 @@ export const EVALSCRIPT_PASTAGEM_SHA256 = createHash("sha256").update(EVALSCRIPT
 
 function histogramaPedido(id: IdIndiceSatelite): { bins: number[] } {
   if (id === "evi2") return { bins: [...HISTOGRAMA_BINS_EVI2] };
+  if (id === "msavi2") return { bins: [...HISTOGRAMA_BINS_MSAVI2] };
   if (id === "bsi") return { bins: [...HISTOGRAMA_BINS_BSI] };
-  // NDVI, NDRE, NDMI, MSAVI2: limiares de vigor alinhados (não centro aproximado).
+  // NDVI, NDRE, NDMI: limiares de vigor alinhados (não centro aproximado).
   return { bins: [...HISTOGRAMA_BINS_VIGOR] };
 }
 
@@ -333,7 +338,12 @@ export function interpretarEstatisticaMulti(corpo: unknown, janela: Janela): Est
   return { intervalos, errosEm, statusProvedor: status };
 }
 
-function valor4(v: number, min: number, max: number): string {
+/**
+ * Formata valor do índice com 4 casas. Defesa em profundidade: rejeita em runtime qualquer
+ * entrada que não seja number finito — ausência de dado NUNCA vira 0.0000 nem TypeError.
+ */
+export function valor4(v: unknown, min: number, max: number): string {
+  if (typeof v !== "number" || !Number.isFinite(v)) throw malformada();
   if (v < min - TOLERANCIA_FAIXA || v > max + TOLERANCIA_FAIXA) throw malformada();
   const t = Math.min(max, Math.max(min, v)).toFixed(4);
   return t === "-0.0000" ? "0.0000" : t;
@@ -342,6 +352,35 @@ function valor4(v: number, min: number, max: number): string {
 function coberturaDezMil(validos: number, pixelsGeometria: number): number {
   if (pixelsGeometria <= 0) return 0;
   return Math.min(10_000, Math.floor((validos * 10_000) / pixelsGeometria));
+}
+
+/** Um índice é útil no intervalo se atinge CRITERIO_UTIL_BUNDLE e tem stats finitos quando há válidos. */
+export function indiceUtilNoIntervalo(s: StatsIndice, pixelsGeometria: number): boolean {
+  if (s.validos < CRITERIO_UTIL_BUNDLE.pixelsValidosMinimos) return false;
+  if (coberturaDezMil(s.validos, pixelsGeometria) < Math.round(CRITERIO_UTIL_BUNDLE.coberturaMinima * 10_000)) return false;
+  if (s.validos > 0) {
+    for (const v of [s.media, s.minimo, s.maximo, s.desvio]) {
+      if (typeof v !== "number" || !Number.isFinite(v)) return false;
+    }
+  }
+  return true;
+}
+
+/** Bundle completo = TODOS os 6 índices essenciais úteis no MESMO intervalo. */
+export function intervaloBundleUtil(i: IntervaloMulti, pixelsGeometria: number): boolean {
+  return INDICES_BUNDLE_ESSENCIAL.every((id) => indiceUtilNoIntervalo(i.porIndice[id], pixelsGeometria));
+}
+
+function meiaNoiteUtc(dia: string): number {
+  const ms = DIA_ISO.test(dia) ? Date.parse(`${dia}T00:00:00Z`) : NaN;
+  if (!Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 10) !== dia) {
+    throw new RangeError("dia fora do formato AAAA-MM-DD");
+  }
+  return ms;
+}
+
+function diaUtc(d: Date): string {
+  return d.toISOString().slice(0, 10);
 }
 
 /**
@@ -493,40 +532,72 @@ export interface ResultadoPastagem {
 }
 
 /**
- * Escolhe a observação útil (critério do NDVI do bundle) e materializa os 6 índices do mesmo dia.
- * Reusa a lógica temporal da v2 via adaptação do NDVI para o seletor.
+ * Escolhe a observação útil do BUNDLE COMPLETO e materializa os 6 índices do mesmo dia.
+ *
+ * Um intervalo só é útil se TODOS os índices de INDICES_BUNDLE_ESSENCIAL atingem
+ * CRITERIO_UTIL_BUNDLE (cobertura + pixels mínimos + stats finitos). Não escolhe só pelo NDVI.
+ * Sem data alvo: o completo MAIS RECENTE. Com data alvo: se há intervalo no dia alvo e ele
+ * não é completo → sem_observacao_util (sem fallback silencioso); se não há aquisição no
+ * dia → o completo mais perto do alvo (empate: mais recente).
  */
 export function escolherObservacaoPastagem(
   lida: EstatisticaMultiLida,
   pixelsGeometria: number,
   dataAlvo: string | null
 ): ResultadoPastagem {
-  const comoNdvi = {
-    intervalos: lida.intervalos.map((i) => ({
-      inicio: i.inicio,
-      fim: i.fim,
-      amostra: i.porIndice.ndvi.amostra,
-      semDado: i.porIndice.ndvi.semDado,
-      validos: i.porIndice.ndvi.validos,
-      media: i.porIndice.ndvi.media,
-      minimo: i.porIndice.ndvi.minimo,
-      maximo: i.porIndice.ndvi.maximo,
-      desvio: i.porIndice.ndvi.desvio
-    })),
-    errosEm: lida.errosEm,
-    statusProvedor: lida.statusProvedor
+  const uteis = lida.intervalos.filter((i) => intervaloBundleUtil(i, pixelsGeometria));
+  const maiorCobNdvi = lida.intervalos.reduce<number | null>((m, i) =>
+    Math.max(m ?? 0, coberturaDezMil(i.porIndice.ndvi.validos, pixelsGeometria)), null);
+  const metadados: MetadadosAnalise = {
+    intervalos_recebidos: lida.intervalos.length + lida.errosEm.length,
+    intervalos_com_erro: lida.errosEm.length,
+    intervalos_com_dado: lida.intervalos.filter((i) =>
+      INDICES_BUNDLE_ESSENCIAL.some((id) => i.porIndice[id].validos > 0)).length,
+    intervalos_uteis: uteis.length,
+    maior_cobertura: maiorCobNdvi === null ? null : (maiorCobNdvi / 10_000).toFixed(4),
+    fonte_pixels_geometria: "grade_crs84",
+    status_provedor: lida.statusProvedor
   };
-  const escolha = escolherObservacaoV2(comoNdvi, pixelsGeometria, dataAlvo);
 
-  if (escolha.situacao === "sem_observacao_util") {
+  let escolhida: IntervaloMulti | undefined;
+  if (dataAlvo === null) {
+    escolhida = [...uteis].sort((a, b) => b.inicio.getTime() - a.inicio.getTime())[0];
+  } else {
+    const alvoMs = meiaNoiteUtc(dataAlvo);
+    const noDiaAlvo = lida.intervalos.filter((i) => diaUtc(i.inicio) === dataAlvo);
+    if (noDiaAlvo.length > 0) {
+      // Há aquisição no dia alvo: exige bundle completo NESSE dia — sem fallback silencioso.
+      escolhida = noDiaAlvo.filter((i) => intervaloBundleUtil(i, pixelsGeometria))
+        .sort((a, b) => b.inicio.getTime() - a.inicio.getTime())[0];
+    } else {
+      const dist = (inicio: Date) => Math.abs(inicio.getTime() - alvoMs);
+      escolhida = [...uteis].sort((a, b) =>
+        dist(a.inicio) - dist(b.inicio) || b.inicio.getTime() - a.inicio.getTime())[0];
+    }
+  }
+
+  const erroDecisivo = lida.errosEm.some((em) => {
+    if (em === null) return true;
+    if (!escolhida) return true;
+    if (dataAlvo === null) return em.getTime() >= escolhida.inicio.getTime();
+    const alvoMs = meiaNoiteUtc(dataAlvo);
+    const dErr = Math.abs(em.getTime() - alvoMs);
+    const dOk = Math.abs(escolhida.inicio.getTime() - alvoMs);
+    return dErr < dOk || (dErr === dOk && em.getTime() >= escolhida.inicio.getTime());
+  });
+  if (erroDecisivo) throw new FalhaCopernicus("processamento_parcial", 200);
+
+  if (!escolhida) {
+    const motivo: "sem_aquisicao" | "cobertura_insuficiente" =
+      lida.intervalos.length ? "cobertura_insuficiente" : "sem_aquisicao";
     const qualidade = qualidadeDe(
       { amostra: 0, semDado: 0, validos: 0, media: null, minimo: null, maximo: null, desvio: null, percentis: null, histograma: null },
-      pixelsGeometria, "sem_observacao_util", escolha.motivo, null, null
+      pixelsGeometria, "sem_observacao_util", motivo, null, null
     );
     const indices: ResultadoIndicePastagem[] = INDICES_BUNDLE_ESSENCIAL.map((id) => ({
       indice: id,
       situacao: "sem_observacao_util",
-      motivo: escolha.motivo,
+      motivo,
       observacao: null,
       valores: null,
       pixels: { amostra: 0, semDado: 0, validos: 0, geometria: pixelsGeometria },
@@ -536,11 +607,11 @@ export function escolherObservacaoPastagem(
       resolucao_m: RESOLUCAO_AGREGACAO_M,
       resolucao_nativa_m: CATALOGO_INDICES[id].resolucaoNativaM,
       qualidade,
-      metadados: escolha.metadados
+      metadados
     }));
     return {
       situacao: "sem_observacao_util",
-      motivo: escolha.motivo,
+      motivo,
       observacao: null,
       indices,
       indicadores: indicadoresDerivados({ ndviMedio: null, ndmiMedio: null, bsiMedio: null }),
@@ -550,24 +621,26 @@ export function escolherObservacaoPastagem(
     };
   }
 
-  const dia = lida.intervalos.find((i) =>
-    i.inicio.getTime() === escolha.observacao.inicio.getTime() && i.fim.getTime() === escolha.observacao.fim.getTime());
-  if (!dia) throw malformada();
-
+  const dia = escolhida;
   const indices: ResultadoIndicePastagem[] = INDICES_BUNDLE_ESSENCIAL.map((id) => {
     const s = dia.porIndice[id];
     const cat = CATALOGO_INDICES[id];
     const faixa = cat.faixaPersistivel;
+    // Defesa: índice útil já exige finitos; valor4 rejeita null/NaN/Infinity em runtime.
+    if (typeof s.desvio !== "number" || !Number.isFinite(s.desvio) || s.desvio < 0) throw malformada();
     const valores = {
-      medio: valor4(s.media!, faixa.min, faixa.max),
-      minimo: valor4(s.minimo!, faixa.min, faixa.max),
-      maximo: valor4(s.maximo!, faixa.min, faixa.max),
-      desvio: (s.desvio!).toFixed(4)
+      medio: valor4(s.media, faixa.min, faixa.max),
+      minimo: valor4(s.minimo, faixa.min, faixa.max),
+      maximo: valor4(s.maximo, faixa.min, faixa.max),
+      desvio: s.desvio.toFixed(4)
     };
-    if (s.desvio! < 0 || Number(valores.minimo) > Number(valores.medio) || Number(valores.medio) > Number(valores.maximo)) throw malformada();
+    if (Number(valores.minimo) > Number(valores.medio)
+      || Number(valores.medio) > Number(valores.maximo)) throw malformada();
     const cob = (coberturaDezMil(s.validos, pixelsGeometria) / 10_000).toFixed(4);
     const percentis = s.percentis
-      ? Object.fromEntries(Object.entries(s.percentis).map(([k, v]) => [k, v === null ? null : valor4(v, faixa.min, faixa.max)]))
+      ? Object.fromEntries(Object.entries(s.percentis).map(([k, v]) => [
+        k, v === null ? null : valor4(v, faixa.min, faixa.max)
+      ]))
       : null;
     return {
       indice: id,
@@ -582,7 +655,7 @@ export function escolherObservacaoPastagem(
       resolucao_m: RESOLUCAO_AGREGACAO_M,
       resolucao_nativa_m: cat.resolucaoNativaM,
       qualidade: qualidadeDe(s, pixelsGeometria, "concluida", null, dia.sclHistograma, dia.sclStats),
-      metadados: escolha.metadados
+      metadados
     };
   });
 
@@ -608,7 +681,7 @@ export function escolherObservacaoPastagem(
   return {
     situacao: "concluida",
     motivo: null,
-    observacao: escolha.observacao,
+    observacao: { inicio: dia.inicio, fim: dia.fim },
     indices,
     indicadores: { ...indicadores, versao: VERSAO_INDICADORES_DERIVADOS },
     qualidade: indices[0]!.qualidade,

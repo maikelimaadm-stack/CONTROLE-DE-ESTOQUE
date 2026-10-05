@@ -5,6 +5,7 @@ import {
   INDICES_BUNDLE_ESSENCIAL,
   VERSAO_METODO_PASTAGEM_ESSENCIAL,
   calcularEvi2,
+  calcularMsavi2,
   pixelValidoParaIndice
 } from "@agro/domain";
 import {
@@ -18,6 +19,7 @@ import {
   lerPercentis,
   montarCalculationsPastagem,
   montarCorpoPastagem,
+  valor4,
   type HistogramaCanonico
 } from "../../src/lib/satelite/pastagem-essencial.js";
 import { FalhaCopernicus } from "../../src/lib/satelite/copernicus.js";
@@ -44,27 +46,32 @@ function histOficial(
   return { bins, underflowCount: underflow, overflowCount: overflow };
 }
 
-function statsOficial(mean: number, opts: {
+function statsOficial(mean: number | null, opts: {
   sampleCount?: number;
   noDataCount?: number;
-  min?: number;
-  max?: number;
+  min?: number | null;
+  max?: number | null;
+  stDev?: number | null;
   hist?: HistogramaCanonico;
   percentisChave?: "dot" | "int";
 } = {}) {
   const sampleCount = opts.sampleCount ?? 100;
   const noDataCount = opts.noDataCount ?? 20;
-  const min = opts.min ?? mean - 0.1;
-  const max = opts.max ?? mean + 0.1;
-  const percentis = opts.percentisChave === "int"
-    ? { "5": mean - 0.08, "10": mean - 0.06, "25": mean - 0.03, "50": mean, "75": mean + 0.03, "90": mean + 0.06, "95": mean + 0.08 }
-    : { "5.0": mean - 0.08, "10.0": mean - 0.06, "25.0": mean - 0.03, "50.0": mean, "75.0": mean + 0.03, "90.0": mean + 0.06, "95.0": mean + 0.08 };
+  const validos = sampleCount - noDataCount;
+  const min = opts.min !== undefined ? opts.min : (mean === null ? null : mean - 0.1);
+  const max = opts.max !== undefined ? opts.max : (mean === null ? null : mean + 0.1);
+  const stDev = opts.stDev !== undefined ? opts.stDev : (mean === null ? null : 0.05);
+  const percentis = validos <= 0 || mean === null
+    ? undefined
+    : opts.percentisChave === "int"
+      ? { "5": mean - 0.08, "10": mean - 0.06, "25": mean - 0.03, "50": mean, "75": mean + 0.03, "90": mean + 0.06, "95": mean + 0.08 }
+      : { "5.0": mean - 0.08, "10.0": mean - 0.06, "25.0": mean - 0.03, "50.0": mean, "75.0": mean + 0.03, "90.0": mean + 0.06, "95.0": mean + 0.08 };
   return {
     bands: {
       B0: {
         stats: {
-          sampleCount, noDataCount, mean, min, max, stDev: 0.05,
-          percentiles: percentis
+          sampleCount, noDataCount, mean, min, max, stDev,
+          ...(percentis ? { percentiles: percentis } : {})
         },
         histogram: opts.hist ?? histOficial([-1, 0.2, 0.4, 0.6, 1], [5, 15, 25, 35], 0, 0)
       }
@@ -76,29 +83,37 @@ function statsOficial(mean: number, opts: {
  * Fixture oficial: outputs nomeados, percentis "5.0", histograma com lowEdge/highEdge/count,
  * underflow/overflow, SCL com vegetação/solo/água/sombra/nuvem/cirrus.
  */
-function fixtureOficial(medias: Record<string, number>, extras: {
-  evi2Max?: number;
-  ndviSample?: number;
-  ndviNoData?: number;
-  ndreSample?: number;
-  ndreNoData?: number;
-} = {}) {
+function fixtureOficial(
+  medias: Record<string, number | null>,
+  extras: {
+    evi2Max?: number;
+    msavi2Min?: number;
+    porIndice?: Partial<Record<string, { sampleCount?: number; noDataCount?: number; mean?: number | null; min?: number | null; max?: number | null; stDev?: number | null }>>;
+    from?: string;
+    to?: string;
+  } = {}
+) {
   const outputs: Record<string, unknown> = {};
   for (const id of INDICES_BUNDLE_ESSENCIAL) {
-    const mean = medias[id] ?? 0.4;
+    const over = extras.porIndice?.[id] ?? {};
+    const mean = over.mean !== undefined ? over.mean : (medias[id] ?? 0.4);
     const isEvi = id === "evi2";
-    const isNdvi = id === "ndvi";
-    const isNdre = id === "ndre";
+    const isMsavi = id === "msavi2";
     outputs[id] = statsOficial(mean, {
-      max: isEvi ? (extras.evi2Max ?? Math.max(mean + 0.1, 1.055)) : undefined,
-      min: isEvi ? Math.min(mean - 0.1, 0.2) : undefined,
-      sampleCount: isNdvi ? (extras.ndviSample ?? 100) : isNdre ? (extras.ndreSample ?? 100) : 100,
-      noDataCount: isNdvi ? (extras.ndviNoData ?? 20) : isNdre ? (extras.ndreNoData ?? 20) : 20,
+      max: over.max !== undefined ? over.max : (isEvi ? (extras.evi2Max ?? (typeof mean === "number" ? Math.max(mean + 0.1, 1.055) : null)) : undefined),
+      min: over.min !== undefined ? over.min : (isEvi && typeof mean === "number"
+        ? Math.min(mean - 0.1, 0.2)
+        : isMsavi ? (extras.msavi2Min ?? undefined) : undefined),
+      stDev: over.stDev,
+      sampleCount: over.sampleCount ?? 100,
+      noDataCount: over.noDataCount ?? 20,
       hist: id === "bsi"
         ? histOficial([-1, -0.1, 0.1, 0.2, 1], [10, 20, 30, 20], 0, 0)
         : id === "evi2"
           ? histOficial([-1, 0.2, 0.4, 0.6, 1, 2.5], [2, 8, 20, 30, 20], 0, 5)
-          : histOficial([-1, 0.2, 0.4, 0.6, 1], [5, 15, 25, 35], 2, 3)
+          : id === "msavi2"
+            ? histOficial([-2.5, -1, 0.2, 0.4, 0.6, 1], [0, 5, 15, 25, 35], 2, 3)
+            : histOficial([-1, 0.2, 0.4, 0.6, 1], [5, 15, 25, 35], 2, 3)
     });
   }
   // SCL: máscara só fonte — vegetação(4), solo(5), água(6), sombra(3), nuvem(8/9), cirrus(10)
@@ -117,9 +132,24 @@ function fixtureOficial(medias: Record<string, number>, extras: {
   };
   return {
     data: [{
-      interval: { from: "2026-09-20T00:00:00Z", to: "2026-09-21T00:00:00Z" },
+      interval: {
+        from: extras.from ?? "2026-09-20T00:00:00Z",
+        to: extras.to ?? "2026-09-21T00:00:00Z"
+      },
       outputs
     }],
+    status: "OK"
+  };
+}
+
+function fixtureMultiDia(dias: Array<{
+  from: string;
+  to: string;
+  medias: Record<string, number | null>;
+  porIndice?: Partial<Record<string, { sampleCount?: number; noDataCount?: number; mean?: number | null; min?: number | null; max?: number | null; stDev?: number | null }>>;
+}>) {
+  return {
+    data: dias.map((d) => fixtureOficial(d.medias, { from: d.from, to: d.to, porIndice: d.porIndice }).data[0]),
     status: "OK"
   };
 }
@@ -251,7 +281,12 @@ describe("SAT-08 R1 — pastagem essencial v2 (contrato Statistical API)", () =>
   it("máscara independente: NDVI e NDRE podem ter sampleCount/noDataCount distintos", () => {
     const corpo = fixtureOficial(
       { ndvi: 0.5, evi2: 0.4, ndre: 0.3, ndmi: 0.1, msavi2: 0.45, bsi: 0 },
-      { ndviSample: 100, ndviNoData: 10, ndreSample: 100, ndreNoData: 40 }
+      {
+        porIndice: {
+          ndvi: { sampleCount: 100, noDataCount: 10 },
+          ndre: { sampleCount: 100, noDataCount: 40 }
+        }
+      }
     );
     const r = escolherObservacaoPastagem(interpretarEstatisticaMulti(corpo, janela), 100, null);
     const ndvi = r.indices.find((i) => i.indice === "ndvi")!;
@@ -316,5 +351,113 @@ describe("SAT-08 R1 — pastagem essencial v2 (contrato Statistical API)", () =>
         overflowCount: 0
       }
     })).toBeNull();
+  });
+});
+
+const mediasCompletas = { ndvi: 0.55, evi2: 0.5, ndre: 0.35, ndmi: 0.12, msavi2: 0.5, bsi: -0.05 };
+
+describe("SAT-08 R2 — bundle completo e defesa de runtime", () => {
+  it("A: último dia incompleto (NDRE 0%) → escolhe o dia anterior completo", () => {
+    const corpo = fixtureMultiDia([
+      {
+        from: "2026-09-18T00:00:00Z", to: "2026-09-19T00:00:00Z",
+        medias: mediasCompletas
+      },
+      {
+        from: "2026-09-20T00:00:00Z", to: "2026-09-21T00:00:00Z",
+        medias: mediasCompletas,
+        porIndice: {
+          ndre: { sampleCount: 100, noDataCount: 100, mean: null, min: null, max: null, stDev: null }
+        }
+      }
+    ]);
+    const r = escolherObservacaoPastagem(interpretarEstatisticaMulti(corpo, janela), 100, null);
+    expect(r.situacao).toBe("concluida");
+    expect(r.observacao!.inicio.toISOString()).toBe("2026-09-18T00:00:00.000Z");
+    for (const i of r.indices) {
+      expect(i.situacao).toBe("concluida");
+      expect(i.observacao!.inicio.toISOString()).toBe("2026-09-18T00:00:00.000Z");
+      expect(i.valores).not.toBeNull();
+    }
+  });
+
+  it("B: só NDVI útil → sem_observacao_util; nenhum índice vira 0; sem TypeError", () => {
+    const corpo = fixtureOficial(mediasCompletas, {
+      porIndice: {
+        ndre: { sampleCount: 100, noDataCount: 100, mean: null, min: null, max: null, stDev: null }
+      }
+    });
+    const r = escolherObservacaoPastagem(interpretarEstatisticaMulti(corpo, janela), 100, null);
+    expect(r.situacao).toBe("sem_observacao_util");
+    expect(r.motivo).toBe("cobertura_insuficiente");
+    for (const i of r.indices) {
+      expect(i.situacao).toBe("sem_observacao_util");
+      expect(i.valores).toBeNull();
+    }
+  });
+
+  it("C: NDMI com válidos mas cobertura abaixo do critério → dia não útil", () => {
+    // 50 válidos / 100 geometria = 0.5 < 0.6 cobertura mínima
+    const corpo = fixtureOficial(mediasCompletas, {
+      porIndice: {
+        ndmi: { sampleCount: 100, noDataCount: 50 }
+      }
+    });
+    const r = escolherObservacaoPastagem(interpretarEstatisticaMulti(corpo, janela), 100, null);
+    expect(r.situacao).toBe("sem_observacao_util");
+    expect(r.motivo).toBe("cobertura_insuficiente");
+  });
+
+  it("D: valor4 rejeita null/NaN/Infinity; zero válidos não vira 0.0000", () => {
+    expect(() => valor4(null, -1, 1)).toThrow(FalhaCopernicus);
+    expect(() => valor4(undefined, -1, 1)).toThrow(FalhaCopernicus);
+    expect(() => valor4(NaN, -1, 1)).toThrow(FalhaCopernicus);
+    expect(() => valor4(Infinity, -1, 1)).toThrow(FalhaCopernicus);
+    expect(() => valor4("0.5", -1, 1)).toThrow(FalhaCopernicus);
+    expect(valor4(0.5, -1, 1)).toBe("0.5000");
+    const corpo = fixtureOficial(mediasCompletas, {
+      porIndice: {
+        ndre: { sampleCount: 100, noDataCount: 100, mean: null, min: null, max: null, stDev: null }
+      }
+    });
+    expect(() => escolherObservacaoPastagem(interpretarEstatisticaMulti(corpo, janela), 100, null))
+      .not.toThrow();
+    const r = escolherObservacaoPastagem(interpretarEstatisticaMulti(corpo, janela), 100, null);
+    expect(r.situacao).toBe("sem_observacao_util");
+    expect(r.indices.every((i) => i.valores === null)).toBe(true);
+  });
+
+  it("E: data alvo incompleta → sem_observacao_util sem fallback silencioso", () => {
+    const corpo = fixtureMultiDia([
+      {
+        from: "2026-09-18T00:00:00Z", to: "2026-09-19T00:00:00Z",
+        medias: mediasCompletas
+      },
+      {
+        from: "2026-09-20T00:00:00Z", to: "2026-09-21T00:00:00Z",
+        medias: mediasCompletas,
+        porIndice: {
+          ndre: { sampleCount: 100, noDataCount: 100, mean: null, min: null, max: null, stDev: null }
+        }
+      }
+    ]);
+    const r = escolherObservacaoPastagem(interpretarEstatisticaMulti(corpo, janela), 100, "2026-09-20");
+    expect(r.situacao).toBe("sem_observacao_util");
+    expect(r.motivo).toBe("cobertura_insuficiente");
+    expect(r.observacao).toBeNull();
+    // NÃO caiu no dia 18 completo
+    expect(r.indices.every((i) => i.valores === null)).toBe(true);
+  });
+
+  it("MSAVI2 < -1 (reflectância >1) é materializado quando o bundle é completo", () => {
+    const msavi = calcularMsavi2(0, 1.5)!;
+    expect(msavi).toBeLessThan(-1);
+    const corpo = fixtureOficial(
+      { ...mediasCompletas, msavi2: msavi },
+      { msavi2Min: msavi, porIndice: { msavi2: { min: msavi, max: -0.5, mean: msavi } } }
+    );
+    const r = escolherObservacaoPastagem(interpretarEstatisticaMulti(corpo, janela), 100, null);
+    expect(r.situacao).toBe("concluida");
+    expect(Number(r.indices.find((i) => i.indice === "msavi2")!.valores!.minimo)).toBeLessThan(-1);
   });
 });

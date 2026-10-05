@@ -167,14 +167,19 @@ export const CATALOGO_INDICES: Readonly<Record<IdIndiceSatelite, IndiceCatalogo>
     formula: "(2*B08 + 1 - sqrt((2*B08 + 1)^2 - 8*(B08 - B04))) / 2",
     bandas: ["B04", "B08"],
     resolucaoNativaM: 10,
-    faixaPersistivel: faixa(-1, 1),
+    // S2L2A óptico: REFLECTANCE default, DN=10000*REFLECTANCE, source UINT15 (até ≈3,2767).
+    // Docs: "Reflectance values can easily be above 1." Com RED>1 e NIR baixo a fórmula
+    // fica < -1 (ex.: NIR=0 RED=1,5 ≈ -1,30; RED=3,2767 ≈ -2,11). Teto matemático com
+    // bandas ≥0 é +1. Persistível [-2,5, 1]; operacional/visual ficam em [-1, 1].
+    faixaPersistivel: faixa(-2.5, 1),
     faixaOperacional: faixa(-1, 1),
     faixaVisual: faixa(-1, 1),
-    dominio: faixa(-1, 1),
+    dominio: faixa(-2.5, 1),
     finalidade: "Pastagem rala, degradação potencial e recuperação; reduz influência do solo.",
     limitacoes: [
       "Não confirma degradação sozinho.",
-      "Não separa capim útil de invasora."
+      "Não separa capim útil de invasora.",
+      "Valores < -1 são matematicamente válidos com reflectância >1 (fonte oficial S2L2A)."
     ],
     status: "principal",
     familia: "cobertura_solo",
@@ -207,6 +212,8 @@ export const CATALOGO_INDICES: Readonly<Record<IdIndiceSatelite, IndiceCatalogo>
 export const HISTOGRAMA_BINS_VIGOR = [-1, 0.2, 0.4, 0.6, 1] as const;
 /** EVI2: último edge acima de 1 para capturar valores válidos >1; overflow acima de 2.5. */
 export const HISTOGRAMA_BINS_EVI2 = [-1, 0.2, 0.4, 0.6, 1, 2.5] as const;
+/** MSAVI2: primeiro edge -2.5 cobre reflectância >1 (fórmula pode < -1); overflow acima de 1. */
+export const HISTOGRAMA_BINS_MSAVI2 = [-2.5, -1, 0.2, 0.4, 0.6, 1] as const;
 export const HISTOGRAMA_BINS_BSI = [-1, -0.1, 0.1, 0.2, 1] as const;
 
 /** Bandas de entrada do evalscript do bundle (além de SCL e dataMask). */

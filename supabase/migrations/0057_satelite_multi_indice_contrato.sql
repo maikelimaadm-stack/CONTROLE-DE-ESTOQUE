@@ -5,7 +5,8 @@
 --   1) amplia `versao_metodo` / coerência bundle×versão para `pastagem-essencial-v2`
 --      (histórico v1 continua aceito);
 --   2) substitui o CHECK genérico de faixa [-1,1] por faixas POR ÍNDICE
---      (EVI2 persistível até 2,5 — a fórmula pode ultrapassar +1);
+--      (EVI2 persistível até 2,5 — a fórmula pode ultrapassar +1;
+--       MSAVI2 persistível até -2,5 — S2L2A reflectance pode >1 e a fórmula pode < -1);
 --   3) corrige o WITH CHECK de `erp.analises_satelitais_ext` para o gabarito
 --      de ESCRITA da categoria A (0052/0055) — a 0056 copiou o predicado
 --      permissivo (aceita empresa_id nulo) também no WITH CHECK;
@@ -81,22 +82,24 @@ alter table erp.satelite_consulta_itens
 comment on column erp.satelite_consulta_itens.versao_metodo is
   'Versão do método do executor: ndvi-v2, pastagem-essencial-v1 (histórico) ou pastagem-essencial-v2 (ativo, SAT-08 R1).';
 
--- ---------- 5) faixa persistível POR ÍNDICE (EVI2 até 2,5) ----------
+-- ---------- 5) faixa persistível POR ÍNDICE (EVI2 até 2,5; MSAVI2 até -2,5) ----------
 -- Drop do CHECK genérico da 0056; o chk_analises_satelitais_faixa_ndvi da 0052 permanece (subset NDVI).
 alter table erp.analises_satelitais drop constraint if exists chk_analises_satelitais_faixa_indice;
 alter table erp.analises_satelitais
   add constraint chk_analises_satelitais_faixa_indice check (
     valor_minimo is null
     or (
-      (indice in ('ndvi', 'ndre', 'ndmi', 'msavi2', 'bsi')
+      (indice in ('ndvi', 'ndre', 'ndmi', 'bsi')
         and valor_minimo >= -1 and valor_maximo <= 1)
       or (indice = 'evi2'
         and valor_minimo >= -1 and valor_maximo <= 2.5)
+      or (indice = 'msavi2'
+        and valor_minimo >= -2.5 and valor_maximo <= 1)
     )
   );
 
 comment on constraint chk_analises_satelitais_faixa_indice on erp.analises_satelitais is
-  'SAT-08 R1: faixa persistível por índice. EVI2 até 2,5 (fórmula pode >1). Paleta visual NÃO define constraint.';
+  'SAT-08 R1/R2: faixa persistível por índice. EVI2 [-1,2.5]; MSAVI2 [-2.5,1] (S2L2A reflectance pode >1). Paleta visual NÃO define constraint.';
 
 -- ---------- 6) RLS da ext: WITH CHECK = escrita (categoria A), igual à 0052/0055 ----------
 -- A 0056 deixou USING e WITH CHECK no predicado de LEITURA (empresa_id is null or …).
@@ -129,8 +132,9 @@ begin
      where conname = 'chk_analises_satelitais_faixa_indice'
        and conrelid = 'erp.analises_satelitais'::regclass
        and pg_get_constraintdef(oid) like '%2.5%'
+       and pg_get_constraintdef(oid) like '%msavi2%'
   ) then
-    raise exception 'SAT-08 R1: chk_analises_satelitais_faixa_indice sem teto 2.5 do EVI2.';
+    raise exception 'SAT-08 R1: chk_analises_satelitais_faixa_indice sem EVI2 2.5 e/ou MSAVI2 -2.5.';
   end if;
   if (select array_agg(policyname::text order by policyname)
         from pg_policies where schemaname = 'erp' and tablename = 'analises_satelitais_ext')
