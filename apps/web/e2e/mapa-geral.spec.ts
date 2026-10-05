@@ -706,3 +706,177 @@ test("Mapa geral SAT-07: gradiente por pixel, sem POST ao abrir, troca de modo s
 
   await limparAreas(page);
 });
+
+// ---------- SATÉLITE COMPLETO (decisão 301): camadas por índice, Condição da área, Nova consulta, Comparar ----------
+
+test("Mapa geral — condição da área: barra de camadas, só o índice ativo na rede, painel sem diagnóstico, Nova consulta com progresso e Comparar", async ({ page }) => {
+  test.setTimeout(150_000);
+  await login(page);
+  await limparAreas(page);
+  const empresa = await empresaDaSessao(page);
+  const area = await api<Area>(page, "POST", "/api/resources/areas", {
+    empresa_id: empresa, name: uniq("CONDICAO").toLocaleUpperCase("pt-BR"), land_use: "pastagem", status: "ativa", tenure: "propria",
+    area_ha: "100", usable_area_ha: "100", color: "#2563eb",
+    geometria: { type: "Polygon", coordinates: [[[-55.7, -15.4], [-55.69, -15.4], [-55.69, -15.39], [-55.7, -15.39], [-55.7, -15.4]]] }
+  });
+
+  const HASH = "c".repeat(64);
+  const indices = ["ndvi", "evi2", "ndre", "ndmi", "msavi2", "bsi"] as const;
+  const resumoIndice = (id: string, media: string) => ({
+    id: `analise-${id}`, situacao: "concluida", motivo_qualidade: null, observacao_inicio: "2026-09-10T13:00:00.000Z", observacao_fim: "2026-09-10T13:00:01.000Z",
+    valor_medio: media, valor_minimo: "0.10", valor_maximo: "0.90", desvio_padrao: "0.08", cobertura_valida: "0.8100", resolucao_m: "20", resolucao_nativa_m: "10",
+    comparacao_observacao_anterior: { anterior_id: "x", anterior_valor_medio: "0.60", anterior_observacao_inicio: "2026-08-10T13:00:00.000Z", delta_percentual: 16.7, tendencia: "subiu" }
+  });
+  const resumo = {
+    area_id: area.id, versao_metodo: "pastagem-essencial-v2", ultima_tentativa: null, aviso: "x",
+    ultima_observacao_util: {
+      observacao_inicio: "2026-09-10T13:00:00.000Z", observacao_fim: "2026-09-10T13:00:01.000Z", do_poligono_atual: true,
+      qualidade: {
+        estado: "boa", cobertura_valida: "0.8100", indice_limitante: "ndmi", cloud_ratio: "0.0500", motivo: null,
+        coberturas_por_indice: { ndvi: "0.9300", evi2: "0.9300", ndre: "0.8500", ndmi: "0.8100", msavi2: "0.9300", bsi: "0.8300" }
+      },
+      indices: Object.fromEntries(indices.map((i) => [i, resumoIndice(i, i === "bsi" ? "0.04" : "0.72")])),
+      indicadores_derivados: {
+        versao: "1", experimental: true, aviso: "x", vegetacao_ativa_estimada: "alta", baixa_cobertura_estimada: "baixa", solo_exposto_estimado: "baixo",
+        condicao_hidrica: "media", resposta_vegetacao: "Alta resposta de vegetação",
+        fracoes_histograma: { vegetacao_ativa: 0.62, baixa_cobertura: 0.2, solo_exposto: 0.05 }
+      }
+    }
+  };
+  const item = (dia: string, media: string) => ({
+    id: `h-${dia}`, situacao: "concluida", motivo_qualidade: null, geometria_sha256: HASH, do_poligono_atual: true,
+    observacao_inicio: `${dia}T13:00:00.000Z`, observacao_fim: `${dia}T13:00:01.000Z`, valor_medio: media, valor_minimo: null, valor_maximo: null,
+    desvio_padrao: null, cobertura_valida: "0.9000", criado_em: `${dia}T20:00:00.000Z`
+  });
+  const historico = (indice: string) => {
+    const cai = indice === "ndvi" || indice === "ndre";
+    const serie = cai ? ["0.70", "0.70", "0.35"] : ["0.30", "0.30", "0.30"];
+    return { area_id: area.id, indice, geometria_sha256: HASH, do_poligono_atual: true, itens: [item("2026-09-10", serie[2]!), item("2026-08-10", serie[1]!), item("2026-07-10", serie[0]!)] };
+  };
+
+  const cors = { "Access-Control-Allow-Origin": "*" };
+  const json = (corpo: unknown, status = 200) => ({ status, contentType: "application/json", headers: cors, body: JSON.stringify(corpo) });
+  const listagensRaster: string[] = [];
+  const corposConsulta: { alvo: { tipo: string; area_ids?: string[] }; periodo: { tipo: string; janela_dias: number }; indices: string[]; confirmar: boolean }[] = [];
+  let pollsConsulta = 0;
+  const consultaId = "33333333-3333-4333-8333-333333333333";
+  const dtoConsulta = (situacao: string, concluidos: number) => ({
+    id: consultaId, situacao, total_itens: 2, total_concluidos: concluidos, total_falhos: 0, total_reaproveitados: 0,
+    criado_em: "2026-10-05T12:00:00.000Z", concluida_em: situacao === "concluida" ? "2026-10-05T12:00:09.000Z" : null
+  });
+
+  await page.route(/\/api\/mapa\/rasters(\?|$)/, async (rota) => {
+    if (rota.request().method() !== "GET") return rota.continue();
+    listagensRaster.push(new URL(rota.request().url()).searchParams.get("indice") ?? "");
+    await rota.fulfill(json({ itens: [], pagina: 1, tamanho: 200, tem_mais: false }));
+  });
+  await page.route(`**/api/satelite/areas/${area.id}/resumo`, async (rota) => {
+    if (rota.request().method() !== "GET") return rota.continue();
+    await rota.fulfill(json(resumo));
+  });
+  await page.route(new RegExp(`/api/satelite/areas/${area.id}/historico`), async (rota) => {
+    if (rota.request().method() !== "GET") return rota.continue();
+    await rota.fulfill(json(historico(new URL(rota.request().url()).searchParams.get("indice") ?? "ndvi")));
+  });
+  await page.route(/\/api\/satelite\/consultas(\?|$)/, async (rota) => {
+    if (rota.request().method() !== "POST") return rota.continue();
+    const corpo = rota.request().postDataJSON() as (typeof corposConsulta)[number];
+    corposConsulta.push(corpo);
+    if (!corpo.confirmar) {
+      await rota.fulfill(json({
+        total_itens: 2, reaproveitados: 0, novos: 2, estimativa_creditos: { minimo: "0.10", maximo: "0.30" }, saldo_creditos_mes: "50.00",
+        excede_orcamento: false, empresa_id: empresa, areas_ignoradas: []
+      }));
+      return;
+    }
+    await rota.fulfill(json({ consulta: dtoConsulta("pendente", 0), total_itens: 2, reaproveitados: 0, novos: 2, areas_ignoradas: [] }, 201));
+  });
+  await page.route(/\/api\/satelite\/consultas\/[^/?]+/, async (rota) => {
+    if (rota.request().method() !== "GET") return rota.continue();
+    pollsConsulta += 1;
+    const concluida = pollsConsulta > 1;
+    await rota.fulfill(json({ consulta: dtoConsulta(concluida ? "concluida" : "executando", concluida ? 2 : 1), itens: [], pagina: 1, tamanho: 1, tem_mais: true }));
+  });
+
+  await page.goto("/mapa-geral");
+  await expect(page.getByTestId("mapa-item-area")).toHaveCount(1);
+
+  // barra de camadas: os oito grupos, na ordem do contrato
+  const barra = page.getByTestId("mapa-barra-camadas");
+  await expect(barra).toBeVisible({ timeout: 30_000 });
+  await expect(barra.getByTestId("mapa-grupo-base")).toContainText("Satélite");
+  await expect(barra.getByTestId("mapa-visualizacao-condicao")).toHaveAttribute("aria-pressed", "true");
+  for (const [grupo, texto] of [
+    ["mapa-grupo-camada", "Cobertura/Solo"], ["mapa-grupo-indice", "NDVI"], ["mapa-grupo-data", "Última imagem útil"],
+    ["mapa-grupo-render", "Pixel real"], ["mapa-grupo-opacidade", "70%"], ["mapa-grupo-acao", "Nova consulta"]
+  ] as const) await expect(barra.getByTestId(grupo)).toContainText(texto);
+  await expect(barra.getByTestId("mapa-camada-vigor")).toHaveAttribute("aria-pressed", "true");
+  await expect(barra.getByTestId("mapa-indice-evi2")).toBeVisible();
+  await expect(barra.getByTestId("mapa-indice-ndmi"), "NDMI é da família Umidade, não do Vigor").toHaveCount(0);
+
+  // só o índice ativo vai à rede: trocar de camada pede o índice novo, nunca os seis
+  await expect.poll(() => listagensRaster.includes("ndvi")).toBe(true);
+  await barra.getByTestId("mapa-camada-umidade").click();
+  await expect(barra.getByTestId("mapa-indice-ndmi")).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => listagensRaster.includes("ndmi")).toBe(true);
+  expect(listagensRaster.filter((i) => !["ndvi", "ndmi"].includes(i)), "nenhum outro índice foi pedido").toEqual([]);
+  await expect(barra.getByTestId("mapa-cor-area"), "a cor por área só existe para o NDVI").toBeDisabled();
+  await barra.getByTestId("mapa-camada-vigor").click();
+  await expect(barra.getByTestId("mapa-indice-ndvi")).toHaveAttribute("aria-pressed", "true");
+
+  // render e opacidade (valem no modo por pixel)
+  await barra.getByTestId("mapa-cor-pixel").click();
+  await expect(barra.getByTestId("mapa-render-nearest")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("mapa-render-aviso")).toHaveCount(0);
+  await barra.getByTestId("mapa-render-linear").click();
+  await expect(page.getByTestId("mapa-render-aviso")).toContainText("Pixel real");
+  await barra.getByTestId("mapa-render-nearest").click();
+  await expect(page.getByTestId("mapa-render-aviso")).toHaveCount(0);
+  await barra.getByTestId("mapa-opacidade").fill("40");
+  await expect(barra.getByTestId("mapa-opacidade-valor")).toHaveText("40%");
+
+  // painel Condição da área: linguagem de sinal, qualidade, índice limitante, aviso agronômico
+  await page.getByTestId("mapa-item-area").click();
+  const painel = page.getByTestId("mapa-area-selecionada");
+  const condicao = painel.getByTestId("condicao-area");
+  await expect(condicao.getByTestId("condicao-resposta-vegetacao")).toHaveText("Alta resposta de vegetação");
+  await expect(condicao.getByTestId("condicao-qualidade-estado")).toHaveText("Boa");
+  await expect(condicao.getByTestId("condicao-limitante")).toContainText("NDMI");
+  await expect(condicao.getByTestId("condicao-solo-exposto")).toContainText("Solo exposto estimado: Baixo");
+  await expect(condicao.getByTestId("condicao-indice-ndvi-valor")).toHaveText("0,72");
+  await expect(condicao.getByTestId("condicao-aviso-agronomico")).toContainText("não é diagnóstico");
+  await expect(condicao.getByTestId("condicao-anomalia-nivel")).toContainText("Possível alteração");
+  await expect(condicao.getByTestId("condicao-vistoria")).toBeVisible();
+  expect(await condicao.innerText(), "o painel não fala em praga nem em biomassa").not.toMatch(/praga|biomassa/i);
+
+  // histórico simples
+  await condicao.getByTestId("condicao-historico-abrir").click();
+  await expect(condicao.getByTestId("condicao-historico-grafico")).toBeVisible();
+  await expect(condicao.getByTestId("condicao-historico-item")).toHaveCount(3);
+
+  // Comparar A × B (contorno único: compara)
+  await condicao.getByTestId("condicao-comparar").click();
+  const comparar = page.getByTestId("comparar-modal");
+  await expect(comparar.getByTestId("comparar-tabela")).toBeVisible();
+  await expect(comparar.getByTestId("comparar-linha-ndvi")).toBeVisible();
+  await expect(comparar.getByTestId("comparar-bloqueada")).toHaveCount(0);
+  await comparar.getByTestId("comparar-fechar").click();
+  await expect(comparar).toHaveCount(0);
+
+  // Nova consulta: prévia (nada gravado) → confirmar → progresso da API
+  await condicao.getByTestId("condicao-nova-consulta").click();
+  const modal = page.getByTestId("consulta-modal");
+  await expect(modal.getByTestId("consulta-selecao-atual")).toBeChecked();
+  await modal.getByTestId("consulta-previa").click();
+  await expect(modal.getByTestId("consulta-previa-creditos")).toContainText("créditos");
+  expect(corposConsulta).toHaveLength(1);
+  expect(corposConsulta[0]).toEqual({ alvo: { tipo: "areas", area_ids: [area.id] }, periodo: { tipo: "mais_recente", janela_dias: 30 }, indices: ["pastagem_essencial"], confirmar: false });
+  await modal.getByTestId("consulta-confirmar").click();
+  await expect(modal.getByTestId("consulta-progresso")).toBeVisible();
+  expect(corposConsulta[1]?.confirmar).toBe(true);
+  await expect(modal.getByTestId("consulta-progresso")).toContainText("Concluída", { timeout: 20_000 });
+  await modal.getByTestId("consulta-fechar").click();
+  await expect(modal).toHaveCount(0);
+
+  await limparAreas(page);
+});
