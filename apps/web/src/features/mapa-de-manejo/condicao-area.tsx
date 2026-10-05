@@ -403,11 +403,11 @@ export function CondicaoDaArea(p: CondicaoDaAreaProps) {
           </div>
           {periodo === "personalizado" && (
             <div className="mb-1 grid grid-cols-2 gap-2">
-              <label className="flex flex-col gap-0.5 text-[11px] text-slate-600">De
-                <Input type="date" value={personalizado.de} max={personalizado.ate || undefined} onChange={(e) => setPersonalizado((x) => ({ ...x, de: e.target.value }))} aria-label="Histórico a partir de" data-testid="condicao-historico-de" />
+              <label className="flex flex-col gap-0.5 text-[11px] text-slate-600" data-testid="condicao-historico-de">De
+                <Input type="date" value={personalizado.de} onChange={(e) => setPersonalizado((x) => ({ ...x, de: e.target.value }))} />
               </label>
-              <label className="flex flex-col gap-0.5 text-[11px] text-slate-600">Até
-                <Input type="date" value={personalizado.ate} min={personalizado.de || undefined} onChange={(e) => setPersonalizado((x) => ({ ...x, ate: e.target.value }))} aria-label="Histórico até" data-testid="condicao-historico-ate" />
+              <label className="flex flex-col gap-0.5 text-[11px] text-slate-600" data-testid="condicao-historico-ate">Até
+                <Input type="date" value={personalizado.ate} onChange={(e) => setPersonalizado((x) => ({ ...x, ate: e.target.value }))} />
               </label>
             </div>
           )}

@@ -3,7 +3,6 @@ import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, qs } from "@/lib/api";
 import { Button, Dialog, Input, NativeSelect } from "@/components/ui";
-import { DATA_MINIMA_SENTINEL2_L2A } from "@agro/domain";
 import { dateTimeBR, num } from "@/lib/utils";
 import type { AreaNoMapa } from "./mapa-base";
 import { CHAVE_CONDICAO } from "./condicao-dados";
@@ -101,7 +100,7 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
   });
 
   // Dia UTC de hoje, como o servidor conta (a data pedida não pode ser futura nem anterior ao acervo).
-  const hoje = React.useMemo(() => new Date().toISOString().slice(0, 10), [p.aberto]);
+  const hoje = new Date().toISOString().slice(0, 10);
   const periodoValidado = validarPeriodo(periodo, hoje);
   const itens = periodoValidado.ok && resolvido.ok ? itensDaConsulta(resolvido.quantidade, periodoValidado.slots) : null;
   const itensDemais = itens !== null && itens > LIMITE_AREAS_NA_CONSULTA;
@@ -110,7 +109,6 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
     : itensDemais ? `São ${itens} itens (áreas × recortes de tempo); o máximo é ${LIMITE_AREAS_NA_CONSULTA} por consulta. Reduza a seleção ou o período.`
     : null;
   const mudarPeriodo = (prox: PeriodoDoFormulario) => { setPeriodo(prox); setPrevia(null); setErro(null); };
-  const hojeNoCampo = hoje;
 
   const pedir = useMutation({
     mutationFn: async (confirmar: boolean) => {
@@ -261,9 +259,9 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
 
           {periodo.tipo === "data" && (
             <div className="grid grid-cols-2 gap-3">
-              <label className="flex flex-col gap-1 text-xs text-slate-600">
+              <label className="flex flex-col gap-1 text-xs text-slate-600" data-testid="consulta-data">
                 Data da imagem
-                <Input type="date" value={periodo.data} min={DATA_MINIMA_SENTINEL2_L2A} max={hojeNoCampo} onChange={(e) => mudarPeriodo({ ...periodo, data: e.target.value })} data-testid="consulta-data" aria-label="Data da imagem" />
+                <Input type="date" value={periodo.data} onChange={(e) => mudarPeriodo({ ...periodo, data: e.target.value })} />
               </label>
               <label className="flex flex-col gap-1 text-xs text-slate-600">
                 Tolerância (dias antes e depois)
@@ -276,13 +274,13 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
 
           {periodo.tipo === "intervalo" && (
             <div className="grid grid-cols-3 gap-3">
-              <label className="flex flex-col gap-1 text-xs text-slate-600">
+              <label className="flex flex-col gap-1 text-xs text-slate-600" data-testid="consulta-de">
                 De
-                <Input type="date" value={periodo.de} min={DATA_MINIMA_SENTINEL2_L2A} max={hojeNoCampo} onChange={(e) => mudarPeriodo({ ...periodo, de: e.target.value })} data-testid="consulta-de" aria-label="Data inicial" />
+                <Input type="date" value={periodo.de} onChange={(e) => mudarPeriodo({ ...periodo, de: e.target.value })} />
               </label>
-              <label className="flex flex-col gap-1 text-xs text-slate-600">
+              <label className="flex flex-col gap-1 text-xs text-slate-600" data-testid="consulta-ate">
                 Até
-                <Input type="date" value={periodo.ate} min={DATA_MINIMA_SENTINEL2_L2A} max={hojeNoCampo} onChange={(e) => mudarPeriodo({ ...periodo, ate: e.target.value })} data-testid="consulta-ate" aria-label="Data final" />
+                <Input type="date" value={periodo.ate} onChange={(e) => mudarPeriodo({ ...periodo, ate: e.target.value })} />
               </label>
               <label className="flex flex-col gap-1 text-xs text-slate-600">
                 Cadência

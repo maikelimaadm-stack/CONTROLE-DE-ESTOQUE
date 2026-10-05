@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { ADMIN, api, login, uniq } from "./helpers";
 
@@ -38,6 +38,13 @@ async function empresaDaSessao(page: Page): Promise<string> {
   const id = ctx.empresas?.[0]?.id;
   expect(id, "premissa: há empresa visível").toBeTruthy();
   return id!;
+}
+
+/** O campo de data do sistema é o calendário do modelo: digita-se dd/mm/aaaa no campo visível e Enter confirma. */
+async function digitarData(campo: Locator, ddmmaaaa: string) {
+  const visivel = campo.locator('input[type="text"]');
+  await visivel.fill(ddmmaaaa);
+  await visivel.press("Enter");
 }
 
 const areas = async (page: Page) => (await api<{ items: Area[] }>(page, "GET", "/api/resources/areas?pageSize=500")).items;
@@ -487,12 +494,16 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   await page.getByTestId("mapa-cor-area").click();
   await expect.poll(() => corNoMapa(page, verde.id)).toBe("#1a9850");
 
-  // contorno redesenhado DEPOIS da análise: o número fica, com o aviso de que foi calculado sobre o contorno anterior
+  // contorno redesenhado DEPOIS da análise: a análise do contorno anterior NÃO atravessa a API (nada de número "emprestado"),
+  // a área fica sem análise e CINZA no modo por área — nunca na cor do cadastro, que só aparece se o usuário a escolhe
   sql(`update erp.areas set geometria = '${JSON.stringify(quadrado(-55.3005, -15.2005))}'::jsonb where id = '${verde.id}'`);
   await page.reload();
   await page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).click();
-  await expect(painel.getByTestId("mapa-ndvi-valor")).toHaveText("0,72");
-  await expect(painel.getByTestId("mapa-ndvi-contorno-anterior")).toHaveText("Calculado sobre o contorno anterior da área. Peça uma análise nova.");
+  await expect(painel.getByTestId("mapa-ndvi-sem-analise")).toBeVisible();
+  await expect(painel.getByTestId("mapa-ndvi-valor")).toHaveCount(0);
+  await expect(painel.getByTestId("mapa-ndvi-contorno-anterior")).toHaveCount(0);
+  await page.getByTestId("mapa-cor-area").click();
+  await expect.poll(() => corNoMapa(page, verde.id), { timeout: 15_000 }).toBe("#94a3b8");
 
   await limparAreas(page);
 });
@@ -885,8 +896,8 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   await expect(condicao.getByTestId("condicao-historico-periodo")).toHaveValue("1a");
   await expect(condicao.getByTestId("condicao-historico-cobertura")).toContainText("histórico completo");
   await condicao.getByTestId("condicao-historico-periodo").selectOption("personalizado");
-  await condicao.getByTestId("condicao-historico-de").fill("2026-08-01");
-  await condicao.getByTestId("condicao-historico-ate").fill("2026-08-31");
+  await digitarData(condicao.getByTestId("condicao-historico-de"), "01/08/2026");
+  await digitarData(condicao.getByTestId("condicao-historico-ate"), "31/08/2026");
   await expect(condicao.getByTestId("condicao-historico-item")).toHaveCount(1);
   await condicao.getByTestId("condicao-historico-periodo").selectOption("1a");
   await expect(condicao.getByTestId("condicao-historico-item")).toHaveCount(3);
@@ -926,15 +937,15 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   // período: "Uma data" com tolerância
   await modal.getByTestId("consulta-periodo-tipo").selectOption("data");
   await expect(modal.getByTestId("consulta-previa")).toBeDisabled();
-  await modal.getByTestId("consulta-data").fill("2026-09-10");
+  await digitarData(modal.getByTestId("consulta-data"), "10/09/2026");
   await modal.getByTestId("consulta-previa").click();
   await expect(modal.getByTestId("consulta-previa-creditos")).toContainText("créditos");
   expect(corposConsulta).toHaveLength(1);
   expect(corposConsulta[0]).toEqual({ alvo: { tipo: "areas", area_ids: [area.id] }, periodo: { tipo: "data", data: "2026-09-10", tolerancia_dias: 3 }, indices: ["pastagem_essencial"], confirmar: false });
   // período: intervalo com cadência
   await modal.getByTestId("consulta-periodo-tipo").selectOption("intervalo");
-  await modal.getByTestId("consulta-de").fill("2026-07-01");
-  await modal.getByTestId("consulta-ate").fill("2026-09-30");
+  await digitarData(modal.getByTestId("consulta-de"), "01/07/2026");
+  await digitarData(modal.getByTestId("consulta-ate"), "30/09/2026");
   await expect(modal.getByTestId("consulta-recortes")).toContainText("3 recortes");
   await modal.getByTestId("consulta-previa").click();
   await expect.poll(() => corposConsulta.length).toBe(2);
