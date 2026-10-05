@@ -21,8 +21,11 @@ export const PROVEDOR_COPERNICUS = "copernicus_cdse";
 export const COLECOES_SATELITE: readonly string[] = ["sentinel-2-l2a"];
 export const COLECAO_SENTINEL2_L2A = "sentinel-2-l2a";
 
-/** Índice espectral. Só o NDVI nesta fatia; NDRE, EVI, SAVI, NDMI e LAI ficam para fatias próprias. */
-export const INDICES_SATELITE: readonly string[] = ["ndvi"];
+/**
+ * Índice espectral persistível. SAT-01 nasceu só com NDVI; SAT-08 (decisão 299) amplia o CHECK da 0056.
+ * Catálogo completo (fórmulas, bandas, limitações): `indices-satelitais.ts`.
+ */
+export const INDICES_SATELITE: readonly string[] = ["ndvi", "evi2", "ndre", "ndmi", "msavi2", "bsi"];
 export const INDICE_NDVI = "ndvi";
 
 /**

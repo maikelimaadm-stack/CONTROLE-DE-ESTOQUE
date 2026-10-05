@@ -42,6 +42,7 @@ import consultaRoutes from "./routes/consultas.js";
 import analisesSatelitaisRoutes from "./routes/analises-satelitais.js";
 import rastersSatelitaisRoutes from "./routes/rasters-satelitais.js";
 import sateliteConsultasRoutes from "./routes/satelite-consultas.js";
+import sateliteCondicaoRoutes from "./routes/satelite-condicao.js";
 import produtosPesquisaRoutes from "./routes/produtos-pesquisa.js";
 import type { BuscarFn } from "./lib/consultas/http.js";
 import { politicaDeOrigem } from "./lib/cors-origem.js";
@@ -165,6 +166,7 @@ export async function buildApp(opts: {
   await app.register(analisesSatelitaisRoutes, { prefix: "/api" });
   await app.register(rastersSatelitaisRoutes, { prefix: "/api" });
   await app.register(sateliteConsultasRoutes, { prefix: "/api" });
+  await app.register(sateliteCondicaoRoutes, { prefix: "/api" });
   await app.register(produtosPesquisaRoutes, { prefix: "/api" });
   // ------------------------------------------------------------------------------------------------
   // CONTRATO NEGATIVO DO NOME ANTIGO DE EMPRESA (PRE-BASE2-05B).

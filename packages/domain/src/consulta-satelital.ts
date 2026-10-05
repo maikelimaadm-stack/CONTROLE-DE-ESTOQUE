@@ -13,6 +13,7 @@
  */
 import { D, addDays, compareISO, isISODate, isoToBR, money, qty, type Decimal } from "@agro/shared";
 import { INDICE_NDVI } from "./analise-satelital.js";
+import { BANDAS_POR_BUNDLE, BUNDLE_PASTAGEM_ESSENCIAL, VERSAO_METODO_PASTAGEM_ESSENCIAL } from "./indices-satelitais.js";
 
 /**
  * Versão do método da consulta em lote. É outra versão que a da SAT-01 (`VERSAO_METODO_NDVI`) porque a janela deixa
@@ -20,8 +21,15 @@ import { INDICE_NDVI } from "./analise-satelital.js";
  */
 export const VERSAO_METODO_NDVI_V2 = "ndvi-v2";
 
-/** `indice_bundle` aceito. Só o NDVI — o mesmo índice da SAT-01, não uma segunda grafia dele. */
-export const INDICES_CONSULTA_SATELITE = [INDICE_NDVI] as const;
+/** `indice_bundle` aceito: NDVI avulso (SAT-02/03) ou o bundle essencial multi-índice (SAT-08). */
+export const INDICES_CONSULTA_SATELITE = [INDICE_NDVI, BUNDLE_PASTAGEM_ESSENCIAL] as const;
+export type IndiceBundleConsulta = (typeof INDICES_CONSULTA_SATELITE)[number];
+
+/** Versão do método por bundle — o executor só aceita o par conhecido. */
+export const VERSAO_METODO_POR_BUNDLE: Readonly<Record<IndiceBundleConsulta, string>> = {
+  ndvi: VERSAO_METODO_NDVI_V2,
+  pastagem_essencial: VERSAO_METODO_PASTAGEM_ESSENCIAL
+};
 
 /** Situação da consulta (o pedido inteiro). */
 export const SITUACOES_CONSULTA_SATELITE: readonly [string, string][] = [
@@ -92,8 +100,8 @@ export const COEFICIENTES_ESTIMATIVA_PU = {
   revisitaDias: 5 // Sentinel-2 (2 satélites) — máximo de passagens por janela
 } as const;
 
-/** Bandas lidas por índice. NDVI: B04 (vermelho), B08 (infravermelho próximo) e SCL (a máscara do método). */
-export const BANDAS_POR_INDICE: Readonly<Record<"ndvi", number>> = { ndvi: 3 };
+/** Bandas lidas por bundle/índice (entrada do evalscript, sem dataMask). */
+export const BANDAS_POR_INDICE: Readonly<Record<IndiceBundleConsulta, number>> = BANDAS_POR_BUNDLE;
 
 /** Histórico de consultas (`GET /api/satelite/consultas`): tamanho padrão e máximo de página, no servidor. */
 export const PAGINA_CONSULTAS = { padrao: 20, maximo: 100 } as const;
@@ -272,7 +280,7 @@ const SEPARADOR_ORIGEM = "|";
  * diferentes poderiam montar a mesma string.
  */
 export function origemChaveIdempotencia(p: {
-  organizationId: string; areaId: string; geometriaSha256: string; indiceBundle: "ndvi"; slot: SlotConsulta; versaoMetodo: string;
+  organizationId: string; areaId: string; geometriaSha256: string; indiceBundle: IndiceBundleConsulta; slot: SlotConsulta; versaoMetodo: string;
 }): string {
   const partes = [
     p.organizationId,
@@ -311,7 +319,7 @@ export function observacoesDoSlot(s: SlotConsulta): { minimo: number; maximo: nu
 }
 
 /** PU exato de UMA observação, em decimal (sem arredondar): a estimativa arredonda uma vez só, no fim. */
-function puExatoPorObservacao(pixelsBbox: number, indice: "ndvi"): Decimal {
+function puExatoPorObservacao(pixelsBbox: number, indice: IndiceBundleConsulta): Decimal {
   if (!Number.isSafeInteger(pixelsBbox) || pixelsBbox < 1) throw new RangeError(`pixels da caixa inválidos: ${pixelsBbox}`);
   // Índice fora da lista não herda as bandas de outro: sem bandas declaradas, não há estimativa.
   if (!Object.prototype.hasOwnProperty.call(BANDAS_POR_INDICE, indice)) throw new RangeError(`índice sem bandas declaradas: ${String(indice)}`);
@@ -326,7 +334,7 @@ function puExatoPorObservacao(pixelsBbox: number, indice: "ndvi"): Decimal {
  * max(pixels ÷ pixelsReferencia, fatorAreaMinimo) × (bandas do índice ÷ bandasReferencia) × fatorFormato.
  * Sai com 4 casas — a escala de `pu_gasto` no banco — só para exibir; a estimativa em créditos usa o valor exato.
  */
-export function puPorObservacao(pixelsBbox: number, indice: "ndvi"): string {
+export function puPorObservacao(pixelsBbox: number, indice: IndiceBundleConsulta): string {
   return qty(puExatoPorObservacao(pixelsBbox, indice), 4);
 }
 
@@ -334,7 +342,7 @@ export function puPorObservacao(pixelsBbox: number, indice: "ndvi"): string {
  * Faixa de créditos de UM item novo: PU por observação × CREDITOS_POR_PU × observações (mínima e máxima),
  * arredondada a 2 casas no fim. Item reaproveitado não passa por aqui: custa zero.
  */
-export function estimarCreditosItem(p: { pixelsBbox: number; indice: "ndvi"; slot: SlotConsulta }): FaixaCreditos {
+export function estimarCreditosItem(p: { pixelsBbox: number; indice: IndiceBundleConsulta; slot: SlotConsulta }): FaixaCreditos {
   const creditosPorObservacao = puExatoPorObservacao(p.pixelsBbox, p.indice).mul(CREDITOS_POR_PU);
   const obs = observacoesDoSlot(p.slot);
   return { minimo: money(creditosPorObservacao.mul(obs.minimo)), maximo: money(creditosPorObservacao.mul(obs.maximo)) };

@@ -7,6 +7,7 @@ export * from "./assets.js";
 export * from "./livestock.js";
 export * from "./tipos-de-uso-da-area.js";
 export * from "./analise-satelital.js";
+export * from "./indices-satelitais.js";
 export * from "./consulta-satelital.js";
 export * from "./rebanho.js";
 export * from "./notificacoes.js";
