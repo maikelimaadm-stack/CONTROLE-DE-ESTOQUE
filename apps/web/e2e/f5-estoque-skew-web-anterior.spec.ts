@@ -107,6 +107,12 @@ async function salvarEConfirmarNaCentral(
       ...(campos.contada !== undefined ? { contada: campos.contada } : {}),
       ...(campos.custo !== undefined ? { custo: campos.custo } : {}),
     });
+    // F5b + movimentacaoInterna: a saída exige Motivo e Justificativa (decisão D6) — sem eles o Salvar é zero POST.
+    if (especie === "saida") {
+      await page.getByRole("tab", { name: /^Motivo da saída/ }).click();
+      await page.getByTestId("estoque-central-motivo-saida-campo").selectOption("loss");
+      await page.getByTestId("estoque-central-justificativa").fill("K2-a saída sentido 2");
+    }
   }
   const post = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === `/api/estoque/${SEGMENTO[especie]}`);
   await page.getByTestId("estoque-salvar").click();
@@ -201,7 +207,9 @@ test.describe("OP01-F5a · K-2 (sentido 2) — a Central de Estoque do web da ba
     await page.goto(`/estoque/movimentacoes/saidas/new?tipo_operacao_id=${topSaida}`);
     const saida = await salvarEConfirmarNaCentral(page, mundo, "saida", c, { quantidade: "2" });
     const saidaLida = await api<{ motivo_saida: string | null; movimentos: { movement_type: string; quantity: string }[] }>(page, "GET", `/api/estoque/saidas/${saida.id}`);
-    expect(saidaLida.motivo_saida, "a saída da base nasce sem motivo").toBeNull();
+    // DE ANTES: sem Motivo. NO MOTOR (F5b + MI): a tela exige Motivo/Justificativa — o servidor grava o que veio.
+    if (mundo === "antes") expect(saidaLida.motivo_saida, "a saída da Central de antes nasce sem motivo").toBeNull();
+    else expect(saidaLida.motivo_saida, "a saída da F5b grava o motivo informado").toBe("loss");
     expect(saidaLida.movimentos.map((m) => [m.movement_type, Number(m.quantity)])).toEqual([["writeoff", 2]]);
     expect((await saldoNoServidor(page, c.armazem, c.produto)).quantity, "o saldo no servidor bate: 5 − 2").toBe("3.0000");
 
@@ -324,6 +332,10 @@ test.describe("OP01-F5a · K-2 (sentido 2) — a Central de Estoque do web da ba
       await expect(central).toHaveAttribute("data-modo", "criacao");
       const linhas = page.getByTestId("central-estoque-linha");
       await expect(linhas, "uma linha, a do Saldo").toHaveCount(1);
+      // A linha pré-preenchida só abre os campos quando marcada (o círculo da grade do motor).
+      const circulo = linhas.first().getByTestId("central-estoque-selecionar-item");
+      if ((await circulo.getAttribute("aria-checked")) !== "true") await circulo.click();
+      await expect(circulo).toHaveAttribute("aria-checked", "true");
       await linhas.first().getByLabel("Quantidade do item 1").fill("3");
       const post = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/estoque/ajustes");
       await page.getByTestId("estoque-salvar").click();
@@ -336,6 +348,7 @@ test.describe("OP01-F5a · K-2 (sentido 2) — a Central de Estoque do web da ba
       const previa = page.waitForResponse((r) => r.request().method() === "GET" && new URL(r.url()).pathname.endsWith("/previa-confirmacao"));
       await page.getByTestId("estoque-confirmar").click();
       expect((await previa).status()).toBe(200);
+      await expect(page.getByTestId("estoque-previa")).toBeVisible();
       await page.getByTestId("estoque-previa-confirmar").click();
       await expect(central).toHaveAttribute("data-situacao", "confirmado");
     } else {
