@@ -33,6 +33,7 @@ import { descreverCaminhoDeItem, errosDoServidor, numeroDoCampo, rotuloDoErro } 
 import { adaptadorDaCentralDeEstoque, chaveDaCopiaDeEstoque, chaveDepoisDeSalvarDeEstoque, colunasDoLayoutDoEstoque } from "./adaptador";
 import { formaDaEspecieNaCentral, type FormaDaEspecieNaCentral } from "./forma";
 import { useControleDeLote, type ControleDeLote } from "./lote";
+import { forcarColunaDeLoteNaAbertura, itensIniciaisDoPreenchimento, loteAposControleDoProduto } from "./preenchimento-saldo";
 import { useLayoutDoEstoque, useRegrasDaOperacaoDoEstoque } from "./regras";
 import {
   destinoDaOrigem, linhasDaOrigem, rotuloDoCampoDaOrigem, rotuloDoDocumentoDeOrigem, useOrigemDoEstoque, type DocumentoDeOrigem, type EstadoDaOrigem
@@ -420,9 +421,7 @@ export function useEstadoDaCriacaoDeEstoque({ variante, adaptador, estado, top: 
     h.empresa_id = empresaDaUrl || empresaPadrao;
     if (preenchimento.armazem_id) h.armazem_id = preenchimento.armazem_id;
     if (preenchimento.origem && forma.origem) h.origem_documento_id = preenchimento.origem;
-    const itens: ItemRow[] = preenchimento.produto_id
-      ? [{ product_id: preenchimento.produto_id, quantity: "", unit_value: "", generate_stock: true, ...(h.armazem_id ? { warehouse_id: h.armazem_id } : {}), ...(preenchimento.lote ? { provider_lot: preenchimento.lote } : {}) }]
-      : [];
+    const itens: ItemRow[] = itensIniciaisDoPreenchimento(preenchimento, h.armazem_id);
     const tocadosPelaUrl = new Set<string>([...(empresaDaUrl ? ["empresa_id"] : []), ...(preenchimento.armazem_id ? ["armazem_id"] : [])]);
     return { h, itens, tocadosPelaUrl };
   });
@@ -504,9 +503,16 @@ export function useEstadoDaCriacaoDeEstoque({ variante, adaptador, estado, top: 
     if (!forma.lote) return;
     let mudou = false;
     const novos = itens.map((it) => {
+      // Enquanto o cadastro não volta, o lote da URL/Saldo permanece (HOTFIX LT-K1).
+      const conhecido = lote.conhecido(it.product_id);
       const c = lote.daLinha(it.product_id);
-      const l = c.lote ? it.provider_lot : ""; const validade = forma.validade && c.validade ? it.expiration_date : "";
-      if ((it.provider_lot ?? "") !== (l ?? "") || (it.expiration_date ?? "") !== (validade ?? "")) { mudou = true; return { ...it, provider_lot: l, expiration_date: validade }; }
+      const l = loteAposControleDoProduto(it.provider_lot, { conhecido, lote: c.lote });
+      const validade = !conhecido ? (it.expiration_date ?? "")
+        : (forma.validade && c.validade ? (it.expiration_date ?? "") : "");
+      if ((it.provider_lot ?? "") !== l || (it.expiration_date ?? "") !== validade) {
+        mudou = true;
+        return { ...it, provider_lot: l, expiration_date: validade };
+      }
       return it;
     });
     if (mudou) setItensCru(novos);
@@ -603,7 +609,8 @@ export function useEstadoDaCriacaoDeEstoque({ variante, adaptador, estado, top: 
   }, [forma.destinoInformado, regras, herdados, h, rotulos]);
 
   /* ── as colunas dos itens ── */
-  const forcadas = (["lote", "validade"] as const).filter((c) => itens.some((it) => lote.pede(it.product_id, c)));
+  // Lote/validade JÁ trazidos pela linha do Saldo forçam a coluna na abertura (não esperam `lote.pede`).
+  const forcadas = (["lote", "validade"] as const).filter((c) => forcarColunaDeLoteNaAbertura(c, itens, lote.pede));
   const chaveDasForcadas = forcadas.join("|");
   const colunasDosItens = React.useMemo(
     () => colunasDoLayoutDoEstoque(familia, forma, estrutura.itens, chaveDasForcadas ? (chaveDasForcadas.split("|") as ("lote" | "validade")[]) : []),

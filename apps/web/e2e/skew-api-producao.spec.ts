@@ -1,5 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
+import { entendeMovimentacaoInterna } from "@agro/domain";
 import { login, adicionarItemNaCentral, salvarSemClassificacaoNaoEnvia, uniq, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
+import { criarTopDeEstoque } from "./estoque-01-comum";
 import { criarEmpresaEConferirContador, provarContadorIncompativel } from "./skew-contador-empresa";
 import { baseTemFatiaDeCadastro, capacidadeServidaConfere, cpfValido } from "./skew-fichas-cadastro";
 import { execFileSync } from "node:child_process";
@@ -1418,41 +1420,90 @@ test("CADASTROS FASE 6 · LT-K1 — sem `capacidades.loteNaEntrada` da base, cor
   expect(req.status(), await req.text()).toBe(201);
   const requisicao = (await req.json() as { id: string }).id;
 
-  // (1) CORREÇÃO, pela ação da linha do saldo (empresa, armazém, produto e lote pré-preenchidos)
+  // (1) CORREÇÃO / AJUSTE pela linha do saldo (empresa, armazém, produto e lote da linha).
+  // F5b: com movimentação interna + TOP de ajuste, abre a CENTRAL; senão, o diálogo de sempre.
+  // O lote da linha NÃO pode sumir em nenhum dos dois caminhos (HOTFIX LT-K1).
   await page.goto(`/estoque?tab=estoque&sub=saldo&product_id=${produto}`);
   await page.getByRole("row").filter({ hasText: lote }).getByRole("button", { name: "Ajustar estoque" }).click();
-  const dialogo = page.getByRole("dialog").filter({ hasText: "Ajustar estoque" });
-  await expect(dialogo.getByLabel("Lote", { exact: true }), "premissa: o lote veio da linha").toHaveValue(lote);
-  if (declara) {
-    await expect(dialogo.getByLabel("Validade", { exact: true }), "declarada, a validade aparece").toBeVisible();
-    // MUNDO ATUAL: o que a tela mostra VIAJA e a base GRAVA — a presença do campo sozinha não prova nada.
-    await dialogo.getByLabel("Nova quantidade").fill("4");
-    // o campo de data é o calendário do produto: digita-se dd/mm/aaaa e Enter confirma (o valor vira ISO)
-    await dialogo.getByLabel("Validade", { exact: true }).fill("15/03/2099");
-    await dialogo.getByLabel("Validade", { exact: true }).press("Enter");
-    await dialogo.getByLabel("Justificativa").fill("LT-K1 ajuste para cima com validade");
-    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/stock/corrections");
-    await dialogo.getByRole("button", { name: "Salvar" }).click();
-    const r = await resposta;
-    const enviado = r.request().postDataJSON() as Record<string, unknown>;
-    expect(enviado["provider_lot"], "premissa: o corpo é o deste ajuste").toBe(lote);
-    expect(enviado["expiration_date"], "a validade VIAJA para a base que a declara").toBe("2099-03-15");
-    expect(r.status(), await r.text()).toBe(201);
-    const correcao = (await r.json() as { id: string }).id;
-    expect(correcao, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
-    expect(sql(`select string_agg(concat_ws('|', movement_type, quantity, provider_lot, expiration_date), ';') from erp.stock_movements where source_id = '${correcao}'`),
-      "a base gravou a entrada de 1 no lote, COM a validade enviada").toBe(`correction_in|1.0000|${lote}|2099-03-15`);
+  await expect.poll(async () => {
+    if (/\/estoque\/movimentacoes\/ajustes\/new/.test(page.url())) return "central";
+    if (await page.getByRole("dialog").filter({ hasText: "Ajustar estoque" }).count()) return "dialogo";
+    return "";
+  }, { message: "abre a Central de ajuste OU o diálogo de sempre" }).toMatch(/^(central|dialogo)$/);
+  const caminhoAjuste = /\/estoque\/movimentacoes\/ajustes\/new/.test(page.url()) ? "central" as const : "dialogo" as const;
+
+  if (caminhoAjuste === "central") {
+    // CENTRAL (F5b): URL traz o lote; após a TOP, o campo acessível guarda o lote da linha.
+    await expect(page, "a URL preserva o lote da linha").toHaveURL(new RegExp(`lote=${lote}`));
+    const topsResp = await page.request.get(`${API}/api/estoque/ajustes/operation-types`, { headers: cab });
+    expect(topsResp.status(), await topsResp.text()).toBe(200);
+    const topsBody = await topsResp.json() as { capacidades?: unknown; items: { id: string }[] };
+    expect(entendeMovimentacaoInterna(topsBody.capacidades), "Central só com movimentação interna").toBe(true);
+    const topAjuste = topsBody.items[0]?.id ?? (await criarTopDeEstoque(page, "ajuste")).id;
+    await page.locator(`[data-testid="top-opcao"][data-top-id="${topAjuste}"]`).click();
+    await page.getByTestId("top-continuar").click();
+    await expect(page).toHaveURL(new RegExp(`tipo_operacao_id=${topAjuste}.*lote=${lote}`));
+    const linhaCentral = page.getByTestId("central-estoque-linha").first();
+    await expect(linhaCentral, "uma linha, a do Saldo").toBeVisible();
+    const circulo = linhaCentral.getByTestId("central-estoque-selecionar-item");
+    if ((await circulo.getAttribute("aria-checked")) !== "true") await circulo.click();
+    await expect(linhaCentral.getByLabel("Lote do item 1"), "premissa: o lote veio da linha").toHaveValue(lote);
+    await linhaCentral.getByLabel("Quantidade do item 1").fill("4");
+    const postAjuste = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/estoque/ajustes");
+    await page.getByTestId("estoque-salvar").click();
+    const rAjuste = await postAjuste;
+    const corpoAjuste = rAjuste.request().postDataJSON() as { itens: { lote?: string; quantidade_contada?: string }[] };
+    expect(rAjuste.status(), await rAjuste.text()).toBe(201);
+    expect(corpoAjuste.itens?.[0]?.lote, "o lote da linha VIAJA no corpo do ajuste").toBe(lote);
+    expect(corpoAjuste.itens?.[0]?.quantidade_contada).toBe("4");
+    const ajusteId = (await rAjuste.json() as { id: string }).id;
+    expect(ajusteId).toMatch(UUID);
+    // Confirma pela prévia (mesmo fluxo do PT-1). Validade da correção antiga fica no ramo do
+    // diálogo e nas partes (2)(3) deste LT-K1 quando `declara`.
+    await page.getByTestId("estoque-confirmar").click();
+    await expect(page.getByTestId("estoque-previa-corpo"), "a prévia está pronta").toHaveAttribute("data-situacao", "pronta");
+    const confirmar = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === `/api/estoque/ajustes/${ajusteId}/confirmar`);
+    await page.getByTestId("estoque-previa-confirmar").click();
+    const rConf = await confirmar;
+    expect(rConf.status(), await rConf.text()).toBe(200);
+    await expect(page.getByTestId("estoque-central"), "confirmado").toHaveAttribute("data-situacao", "confirmado");
+    // Partida 5 − requisição 2 = 3; contagem 4 → correction_in 1 no lote (mesmo efeito do diálogo).
+    expect(sql(`select string_agg(concat_ws('|', movement_type, quantity, provider_lot), ';') from erp.stock_movements where source_id = '${ajusteId}'`),
+      "a base gravou a correção no lote da linha").toMatch(new RegExp(`correction_in\\|1\\.0000\\|${lote}`));
   } else {
-    await expect(dialogo.getByLabel("Validade", { exact: true }), "o campo que a base descartaria não aparece").toHaveCount(0);
-    await dialogo.getByLabel("Nova quantidade").fill("4");
-    await dialogo.getByLabel("Justificativa").fill("LT-K1 ajuste para cima");
-    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/stock/corrections");
-    await dialogo.getByRole("button", { name: "Salvar" }).click();
-    const r = await resposta;
-    const enviado = r.request().postDataJSON() as Record<string, unknown>;
-    expect(enviado["provider_lot"], "premissa: o corpo é o deste ajuste").toBe(lote);
-    expect("expiration_date" in enviado, "a validade NÃO viaja para uma API que a descartaria").toBe(false);
-    expect(r.status(), "a base grava o ajuste com o lote, como sempre").toBe(201);
+    const dialogo = page.getByRole("dialog").filter({ hasText: "Ajustar estoque" });
+    await expect(dialogo.getByLabel("Lote", { exact: true }), "premissa: o lote veio da linha").toHaveValue(lote);
+    if (declara) {
+      await expect(dialogo.getByLabel("Validade", { exact: true }), "declarada, a validade aparece").toBeVisible();
+      // MUNDO ATUAL: o que a tela mostra VIAJA e a base GRAVA — a presença do campo sozinha não prova nada.
+      await dialogo.getByLabel("Nova quantidade").fill("4");
+      // o campo de data é o calendário do produto: digita-se dd/mm/aaaa e Enter confirma (o valor vira ISO)
+      await dialogo.getByLabel("Validade", { exact: true }).fill("15/03/2099");
+      await dialogo.getByLabel("Validade", { exact: true }).press("Enter");
+      await dialogo.getByLabel("Justificativa").fill("LT-K1 ajuste para cima com validade");
+      const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/stock/corrections");
+      await dialogo.getByRole("button", { name: "Salvar" }).click();
+      const r = await resposta;
+      const enviado = r.request().postDataJSON() as Record<string, unknown>;
+      expect(enviado["provider_lot"], "premissa: o corpo é o deste ajuste").toBe(lote);
+      expect(enviado["expiration_date"], "a validade VIAJA para a base que a declara").toBe("2099-03-15");
+      expect(r.status(), await r.text()).toBe(201);
+      const correcao = (await r.json() as { id: string }).id;
+      expect(correcao, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+      expect(sql(`select string_agg(concat_ws('|', movement_type, quantity, provider_lot, expiration_date), ';') from erp.stock_movements where source_id = '${correcao}'`),
+        "a base gravou a entrada de 1 no lote, COM a validade enviada").toBe(`correction_in|1.0000|${lote}|2099-03-15`);
+    } else {
+      await expect(dialogo.getByLabel("Validade", { exact: true }), "o campo que a base descartaria não aparece").toHaveCount(0);
+      await dialogo.getByLabel("Nova quantidade").fill("4");
+      await dialogo.getByLabel("Justificativa").fill("LT-K1 ajuste para cima");
+      const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/stock/corrections");
+      await dialogo.getByRole("button", { name: "Salvar" }).click();
+      const r = await resposta;
+      const enviado = r.request().postDataJSON() as Record<string, unknown>;
+      expect(enviado["provider_lot"], "premissa: o corpo é o deste ajuste").toBe(lote);
+      expect("expiration_date" in enviado, "a validade NÃO viaja para uma API que a descartaria").toBe(false);
+      expect(r.status(), "a base grava o ajuste com o lote, como sempre").toBe(201);
+    }
   }
 
   // (2) DEVOLUÇÃO a partir da requisição (itens pré-preenchidos com o lote do item)

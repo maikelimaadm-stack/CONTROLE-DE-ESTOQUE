@@ -11,6 +11,13 @@ import {
 import type { Row } from "@/features/docs/shared";
 import { ehTopsDaVariante, estadoDeTops, podeLancar, type EstadoTop } from "@/features/sales/tipo-operacao-select";
 import type { GrupoDeTops, VarianteDeVenda } from "@/features/sales/variantes";
+import {
+  CHAVES_PREENCHIMENTO_SALDO,
+  parametrosDoPreenchimentoSaldo,
+  preenchimentoDaUrlDeEstoque as preenchimentoDaUrlPuro,
+  rotaDoAjusteAPartirDoSaldo as rotaDoAjustePura,
+  type PreenchimentoSaldo
+} from "./central/preenchimento-saldo";
 
 /**
  * AS ESPÉCIES DO DOCUMENTO DE ESTOQUE QUE O PORTAL DE ESTOQUE SABE LANÇAR (ESTOQUE-01, decisão 274; OPERACOES-01 F5b,
@@ -85,30 +92,16 @@ export const varianteDeEstoquePorSegmento = (segmento: string | null | undefined
  * nunca autorização: a Central o confere contra o que o servidor devolve, e o servidor confere de novo ao gravar.
  * Esta é a lista das chaves; o lançador que as preserva e a Central que as lê usam a mesma.
  */
-export const CHAVES_DO_PREENCHIMENTO_DE_ESTOQUE = Object.freeze(["origem", "empresa_id", "armazem_id", "produto_id", "lote"] as const);
+/** Mesma lista canônica do módulo puro (`preenchimento-saldo`) — um só SSOT. */
+export const CHAVES_DO_PREENCHIMENTO_DE_ESTOQUE = CHAVES_PREENCHIMENTO_SALDO;
 export type ChaveDoPreenchimentoDeEstoque = (typeof CHAVES_DO_PREENCHIMENTO_DE_ESTOQUE)[number];
-export type PreenchimentoDoLancamentoDeEstoque = Partial<Record<ChaveDoPreenchimentoDeEstoque, string | null | undefined>>;
+export type PreenchimentoDoLancamentoDeEstoque = PreenchimentoSaldo;
 
 /** Só os valores não vazios, na ordem das chaves: chave vazia não viaja (a URL não afirma o que ninguém pediu). */
-function parametrosDoPreenchimento(p: PreenchimentoDoLancamentoDeEstoque | undefined): URLSearchParams {
-  const q = new URLSearchParams();
-  if (!p) return q;
-  for (const chave of CHAVES_DO_PREENCHIMENTO_DE_ESTOQUE) {
-    const valor = Object.hasOwn(p, chave) ? p[chave] : undefined;
-    if (typeof valor === "string" && valor !== "") q.set(chave, valor);
-  }
-  return q;
-}
+const parametrosDoPreenchimento = parametrosDoPreenchimentoSaldo;
 
 /** O preenchimento que a URL da Central traz (só as chaves conhecidas e não vazias). */
-export function preenchimentoDaUrlDeEstoque(params: { get(nome: string): string | null }): PreenchimentoDoLancamentoDeEstoque {
-  const out: PreenchimentoDoLancamentoDeEstoque = {};
-  for (const chave of CHAVES_DO_PREENCHIMENTO_DE_ESTOQUE) {
-    const valor = params.get(chave);
-    if (valor) out[chave] = valor;
-  }
-  return out;
-}
+export const preenchimentoDaUrlDeEstoque = preenchimentoDaUrlPuro;
 
 /**
  * A porta da Central em modo criação para uma TOP escolhida no `+ Novo` (ou no lançador da Central). Sem
@@ -122,21 +115,13 @@ export function rotaDeLancamentoDeEstoque(linha: { segmento: string; id: string 
 /** A espécie que o "Ajustar estoque" do Saldo lança na Central. */
 const ESPECIE_DO_AJUSTE: EspecieEstoque = "ajuste";
 
-const textoNaoVazio = (v: unknown): string | undefined => (typeof v === "string" && v !== "" ? v : undefined);
-
 /**
  * "AJUSTAR ESTOQUE" A PARTIR DO SALDO (F5b): a Central de ajuste em modo criação, sem TOP (o lançador da Central
  * pergunta qual), com a empresa, o Local de estoque, o produto e o lote DA LINHA DO SALDO (a linha já traz o
  * `empresa_id`, F5a). Só os não vazios: o saldo sem lote não pede lote.
  */
 export function rotaDoAjusteAPartirDoSaldo(linha: Row): string {
-  const busca = parametrosDoPreenchimento({
-    empresa_id: textoNaoVazio(linha["empresa_id"]),
-    armazem_id: textoNaoVazio(linha["warehouse_id"]),
-    produto_id: textoNaoVazio(linha["product_id"]),
-    lote: textoNaoVazio(linha["provider_lot"])
-  }).toString();
-  return `/estoque/movimentacoes/${SEGMENTO_DA_ESPECIE_ESTOQUE[ESPECIE_DO_AJUSTE]}/new${busca ? `?${busca}` : ""}`;
+  return rotaDoAjustePura(linha);
 }
 
 /**
