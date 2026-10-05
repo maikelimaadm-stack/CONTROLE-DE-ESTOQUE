@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createHash } from "node:crypto";
 import { createPool, type Db } from "../src/pool.js";
 import { listMigrations, resetSchema } from "../src/migrate.js";
 import { seedReference, seedDemo, type DemoOrg } from "../src/seed.js";
