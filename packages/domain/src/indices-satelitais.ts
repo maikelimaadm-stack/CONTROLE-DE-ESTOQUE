@@ -18,8 +18,14 @@ import { CLASSES_SCL_EXCLUIDAS, CRITERIO_OBSERVACAO_UTIL, INDICE_NDVI } from "./
 
 /** Bundle essencial da SAT-08: uma chamada Statistical → vários índices. */
 export const BUNDLE_PASTAGEM_ESSENCIAL = "pastagem_essencial";
-export const VERSAO_METODO_PASTAGEM_ESSENCIAL = "pastagem-essencial-v1";
-export const VERSAO_CATALOGO_INDICES = "1";
+/** Método da #101 (evalscript/máscara monolítica) — permanece no histórico; não é mais o método ativo. */
+export const VERSAO_METODO_PASTAGEM_ESSENCIAL_V1 = "pastagem-essencial-v1";
+/**
+ * Método ativo após SAT-08 R1 (decisão 300): dataMask por output, máscara por índice, histograma/percentis
+ * no contrato oficial. Mudar máscara/evalscript muda a versão — análises v1 não se reaproveitam.
+ */
+export const VERSAO_METODO_PASTAGEM_ESSENCIAL = "pastagem-essencial-v2";
+export const VERSAO_CATALOGO_INDICES = "2";
 
 /** Agregação do bundle: 20 m — honesta para red-edge/SWIR; índices 10 m declaram resolução nativa à parte. */
 export const RESOLUCAO_AGREGACAO_PASTAGEM_M = 20;
@@ -28,6 +34,15 @@ export type IdIndiceSatelite = "ndvi" | "evi2" | "ndre" | "ndmi" | "msavi2" | "b
 export type StatusIndice = "principal" | "avancado" | "experimental";
 export type FamiliaIndice = "vegetacao" | "umidade" | "cobertura_solo" | "senescencia" | "agua" | "queimada";
 
+export interface FaixaIndice { min: number; max: number }
+
+/**
+ * Faixas separadas (decisão 300): paleta visual NÃO define constraint científica.
+ * - persistivel: CHECK do banco / rejeição na gravação
+ * - operacional: faixa esperada em pastagem (documentação)
+ * - visual: paleta da UI futura
+ * - `dominio` = alias de `faixaPersistivel` (compat)
+ */
 export interface IndiceCatalogo {
   id: IdIndiceSatelite;
   nome: string;
@@ -35,7 +50,10 @@ export interface IndiceCatalogo {
   formula: string;
   bandas: readonly string[];
   resolucaoNativaM: 10 | 20;
-  dominio: { min: number; max: number };
+  faixaPersistivel: FaixaIndice;
+  faixaOperacional: FaixaIndice;
+  faixaVisual: FaixaIndice;
+  dominio: FaixaIndice;
   finalidade: string;
   limitacoes: readonly string[];
   status: StatusIndice;
@@ -54,6 +72,8 @@ export const INDICES_BUNDLE_ESSENCIAL: readonly IdIndiceSatelite[] = [
 /** Todos os índices persistíveis em `erp.analises_satelitais.indice` após a 0056. */
 export const INDICES_SATELITE_PERSISTIVEIS: readonly IdIndiceSatelite[] = INDICES_BUNDLE_ESSENCIAL;
 
+const faixa = (min: number, max: number): FaixaIndice => ({ min, max });
+
 export const CATALOGO_INDICES: Readonly<Record<IdIndiceSatelite, IndiceCatalogo>> = {
   ndvi: {
     id: "ndvi",
@@ -62,7 +82,10 @@ export const CATALOGO_INDICES: Readonly<Record<IdIndiceSatelite, IndiceCatalogo>
     formula: "(B08 - B04) / (B08 + B04)",
     bandas: ["B04", "B08"],
     resolucaoNativaM: 10,
-    dominio: { min: -1, max: 1 },
+    faixaPersistivel: faixa(-1, 1),
+    faixaOperacional: faixa(-1, 1),
+    faixaVisual: faixa(-1, 1),
+    dominio: faixa(-1, 1),
     finalidade: "Vigor geral e cobertura verde; série temporal.",
     limitacoes: [
       "Satura em vegetação densa.",
@@ -80,11 +103,16 @@ export const CATALOGO_INDICES: Readonly<Record<IdIndiceSatelite, IndiceCatalogo>
     formula: "2.5 * (B08 - B04) / (B08 + 2.4*B04 + 1)",
     bandas: ["B04", "B08"],
     resolucaoNativaM: 10,
-    dominio: { min: -1, max: 1 },
+    // EVI2 pode ultrapassar +1 (ex.: NIR=0,8 RED=0,02 ≈ 1,055). Persistível até ~2,5 (limite da fórmula com RED→0).
+    faixaPersistivel: faixa(-1, 2.5),
+    faixaOperacional: faixa(-1, 1.5),
+    faixaVisual: faixa(-1, 1),
+    dominio: faixa(-1, 2.5),
     finalidade: "Vigor com menor saturação em vegetação densa; complemento ao NDVI.",
     limitacoes: [
       "Ainda responde a qualquer vegetação verde.",
-      "Não diagnostica espécie nem praga."
+      "Não diagnostica espécie nem praga.",
+      "Valores >1 são matematicamente válidos — a paleta visual não os limita."
     ],
     status: "principal",
     familia: "vegetacao",
@@ -97,7 +125,10 @@ export const CATALOGO_INDICES: Readonly<Record<IdIndiceSatelite, IndiceCatalogo>
     formula: "(B8A - B05) / (B8A + B05)",
     bandas: ["B05", "B8A"],
     resolucaoNativaM: 20,
-    dominio: { min: -1, max: 1 },
+    faixaPersistivel: faixa(-1, 1),
+    faixaOperacional: faixa(-1, 1),
+    faixaVisual: faixa(-1, 1),
+    dominio: faixa(-1, 1),
     finalidade: "Red edge / clorofila relativa; complemento em dossel mais fechado.",
     limitacoes: [
       "Resolução nativa 20 m.",
@@ -115,7 +146,10 @@ export const CATALOGO_INDICES: Readonly<Record<IdIndiceSatelite, IndiceCatalogo>
     formula: "(B8A - B11) / (B8A + B11)",
     bandas: ["B8A", "B11"],
     resolucaoNativaM: 20,
-    dominio: { min: -1, max: 1 },
+    faixaPersistivel: faixa(-1, 1),
+    faixaOperacional: faixa(-1, 1),
+    faixaVisual: faixa(-1, 1),
+    dominio: faixa(-1, 1),
     finalidade: "Conteúdo relativo de água na vegetação; mudança temporal de estresse hídrico.",
     limitacoes: [
       "Resolução nativa 20 m.",
@@ -133,7 +167,10 @@ export const CATALOGO_INDICES: Readonly<Record<IdIndiceSatelite, IndiceCatalogo>
     formula: "(2*B08 + 1 - sqrt((2*B08 + 1)^2 - 8*(B08 - B04))) / 2",
     bandas: ["B04", "B08"],
     resolucaoNativaM: 10,
-    dominio: { min: -1, max: 1 },
+    faixaPersistivel: faixa(-1, 1),
+    faixaOperacional: faixa(-1, 1),
+    faixaVisual: faixa(-1, 1),
+    dominio: faixa(-1, 1),
     finalidade: "Pastagem rala, degradação potencial e recuperação; reduz influência do solo.",
     limitacoes: [
       "Não confirma degradação sozinho.",
@@ -150,7 +187,10 @@ export const CATALOGO_INDICES: Readonly<Record<IdIndiceSatelite, IndiceCatalogo>
     formula: "((B11 + B04) - (B08 + B02)) / ((B11 + B04) + (B08 + B02))",
     bandas: ["B02", "B04", "B08", "B11"],
     resolucaoNativaM: 20,
-    dominio: { min: -1, max: 1 },
+    faixaPersistivel: faixa(-1, 1),
+    faixaOperacional: faixa(-1, 1),
+    faixaVisual: faixa(-1, 1),
+    dominio: faixa(-1, 1),
     finalidade: "Solo exposto / baixa cobertura como sinal auxiliar.",
     limitacoes: [
       "BSI alto NÃO é degradação confirmada.",
@@ -162,6 +202,12 @@ export const CATALOGO_INDICES: Readonly<Record<IdIndiceSatelite, IndiceCatalogo>
     pergunta: "Quanto da área está coberta por vegetação e onde há solo exposto?"
   }
 } as const;
+
+/** Edges do histograma operacional NDVI/EVI2 (alinhados aos limiares, não centro aproximado). */
+export const HISTOGRAMA_BINS_VIGOR = [-1, 0.2, 0.4, 0.6, 1] as const;
+/** EVI2: último edge acima de 1 para capturar valores válidos >1; overflow acima de 2.5. */
+export const HISTOGRAMA_BINS_EVI2 = [-1, 0.2, 0.4, 0.6, 1, 2.5] as const;
+export const HISTOGRAMA_BINS_BSI = [-1, -0.1, 0.1, 0.2, 1] as const;
 
 /** Bandas de entrada do evalscript do bundle (além de SCL e dataMask). */
 export const BANDAS_BUNDLE_ESSENCIAL: readonly string[] = ["B02", "B04", "B05", "B08", "B8A", "B11", "SCL"] as const;
@@ -255,6 +301,36 @@ export function pixelValidoParaVegetacao(p: {
   if (CLASSES_SCL_EXCLUIDAS.some(([c]) => c === p.scl)) return false;
   const vals = [p.B02, p.B04, p.B05, p.B08, p.B8A, p.B11].filter((v) => v !== undefined) as number[];
   return vals.every((v) => v >= 0);
+}
+
+/**
+ * Validade mínima POR ÍNDICE (decisão 300): só as bandas do índice entram na máscara.
+ * B05 inválida NÃO invalida NDVI; B11 inválida NÃO invalida EVI2.
+ */
+export function pixelValidoParaIndice(
+  id: IdIndiceSatelite,
+  p: {
+    dataMask: number; scl: number;
+    B02?: number; B04?: number; B05?: number; B08?: number; B8A?: number; B11?: number;
+  }
+): boolean {
+  if (p.dataMask !== 1) return false;
+  if (CLASSES_SCL_EXCLUIDAS.some(([c]) => c === p.scl)) return false;
+  const ok = (v: number | undefined) => v !== undefined && v >= 0;
+  switch (id) {
+    case "ndvi":
+    case "evi2":
+    case "msavi2":
+      return ok(p.B04) && ok(p.B08);
+    case "ndre":
+      return ok(p.B05) && ok(p.B8A);
+    case "ndmi":
+      return ok(p.B8A) && ok(p.B11);
+    case "bsi":
+      return ok(p.B02) && ok(p.B04) && ok(p.B08) && ok(p.B11);
+    default:
+      return false;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------

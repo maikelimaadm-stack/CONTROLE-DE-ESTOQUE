@@ -31,7 +31,7 @@ import {
 import { DomainError } from "@agro/shared";
 import { empresaScopeSql, hasPermission, scopedById, type ServiceCtx } from "../context.js";
 import {
-  MSG_AREA_GRANDE, MSG_AREA_PEQUENA, MSG_AREA_SEM_POLIGONO, MSG_POLIGONO_FORA_DO_FORMATO, prepararPoligono, type AreaLida
+  MSG_AREA_SEM_POLIGONO, MSG_POLIGONO_FORA_DO_FORMATO, msgAreaGrande, msgAreaPequena, prepararPoligono, type AreaLida
 } from "../../routes/analises-satelitais.js";
 import { gravarBundlePastagem } from "../../routes/satelite-condicao.js";
 import { FalhaCopernicus, type ClienteCopernicus, type RegistroChamada } from "./copernicus.js";
@@ -82,12 +82,14 @@ export const ERROS_ITEM = {
   erroGravacao: "erro_gravacao"
 } as const;
 
-/** A recusa de `prepararPoligono` (mensagem da SAT-01) → código estável do item. Mensagem que não está aqui: genérica. */
+/** A recusa de `prepararPoligono` → código estável do item. Cobre 10 m (NDVI) e 20 m (bundle pastagem). */
 const RECUSA_DO_POLIGONO: ReadonlyMap<string, string> = new Map([
   [MSG_AREA_SEM_POLIGONO, "area_sem_poligono"],
   [MSG_POLIGONO_FORA_DO_FORMATO, "poligono_fora_do_formato"],
-  [MSG_AREA_PEQUENA, "area_pequena"],
-  [MSG_AREA_GRANDE, "area_grande"]
+  [msgAreaPequena(RESOLUCAO_PADRAO_M), "area_pequena"],
+  [msgAreaPequena(RESOLUCAO_AGREGACAO_M), "area_pequena"],
+  [msgAreaGrande(RESOLUCAO_PADRAO_M), "area_grande"],
+  [msgAreaGrande(RESOLUCAO_AGREGACAO_M), "area_grande"]
 ]);
 
 interface LinhaItem {

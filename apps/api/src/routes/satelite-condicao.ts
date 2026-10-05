@@ -246,13 +246,18 @@ function dtoCatalogo() {
       versao_metodo: VERSAO_METODO_PASTAGEM_ESSENCIAL,
       indices: [...INDICES_BUNDLE_ESSENCIAL],
       resolucao_agregacao_m: RESOLUCAO_AGREGACAO_M,
-      mascara: { dataMask: true, scl: true, cld: false }
+      mascara: { dataMask: true, scl: true, cld: false, por_output: true }
     }],
     indices: INDICES_BUNDLE_ESSENCIAL.map((id) => {
       const c = CATALOGO_INDICES[id];
       return {
         id: c.id, nome: c.nome, versao: c.versao, formula: c.formula, bandas: [...c.bandas],
-        resolucao_nativa_m: c.resolucaoNativaM, dominio: c.dominio, finalidade: c.finalidade,
+        resolucao_nativa_m: c.resolucaoNativaM,
+        dominio: c.dominio,
+        faixa_persistivel: c.faixaPersistivel,
+        faixa_operacional: c.faixaOperacional,
+        faixa_visual: c.faixaVisual,
+        finalidade: c.finalidade,
         limitacoes: [...c.limitacoes], status: c.status, familia: c.familia, pergunta: c.pergunta
       };
     })

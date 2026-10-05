@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
-  ErroPeriodoConsulta, FAIXA_ZERO, INDICES_CONSULTA_SATELITE, MAX_ITENS_POR_CONSULTA, PAGINA_CONSULTAS, PAGINA_ITENS_CONSULTA,
+  BUNDLE_PASTAGEM_ESSENCIAL, ErroPeriodoConsulta, FAIXA_ZERO, INDICES_CONSULTA_SATELITE, MAX_ITENS_POR_CONSULTA,
+  PAGINA_CONSULTAS, PAGINA_ITENS_CONSULTA, RESOLUCAO_AGREGACAO_PASTAGEM_M, RESOLUCAO_PADRAO_M,
   SITUACOES_ITEM_VIVAS, VERSAO_METODO_POR_BUNDLE, estimarCreditosItem, origemChaveIdempotencia, slotsDoPeriodo, somarFaixas,
   type FaixaCreditos, type PeriodoConsulta, type SlotConsulta
 } from "@agro/domain";
@@ -217,13 +218,17 @@ async function lerAreasDoAlvo(ctx: ServiceCtx, alvo: CorpoConsulta["alvo"]): Pro
   return r.rows;
 }
 
-/** Separa as analisáveis das ignoradas com os MESMOS critérios da SAT-01 (`prepararPoligono`): o motivo é a mensagem dela. */
-function separarAreas(areas: readonly AreaDoAlvo[]) {
+/**
+ * Separa as analisáveis das ignoradas com `prepararPoligono`.
+ * Resolução: 20 m se o pedido inclui o bundle pastagem (mensagem e grade honestas);
+ * 10 m se só NDVI avulso.
+ */
+function separarAreas(areas: readonly AreaDoAlvo[], resolucaoM: number) {
   const analisaveis: { area: AreaDoAlvo; hash: string; pixelsBbox: number }[] = [];
   const ignoradas: AreaIgnorada[] = [];
   for (const area of areas) {
     try {
-      const { grade } = prepararPoligono(area);
+      const { grade } = prepararPoligono(area, resolucaoM);
       analisaveis.push({ area, hash: area.geometria_sha256!, pixelsBbox: grade.larguraPx * grade.alturaPx });
     } catch (e) {
       if (!(e instanceof DomainError) || e.code !== "VALIDATION_ERROR") throw e;
@@ -359,7 +364,10 @@ async function processarConsulta(ctx: ServiceCtx, corpo: CorpoConsulta, corpoBru
   // Uma consulta = UMA empresa. O alvo inteiro (inclusive o que seria ignorado) precisa ser de uma empresa só.
   if (new Set(areas.map((a) => a.empresa_id)).size > 1) throw validation(MSG_VARIAS_EMPRESAS, [{ path: "alvo", message: MSG_VARIAS_EMPRESAS }]);
   const empresaId = areas[0]!.empresa_id;
-  const { analisaveis, ignoradas } = separarAreas(areas);
+  const resolucaoM = corpo.indices.includes(BUNDLE_PASTAGEM_ESSENCIAL)
+    ? RESOLUCAO_AGREGACAO_PASTAGEM_M
+    : RESOLUCAO_PADRAO_M;
+  const { analisaveis, ignoradas } = separarAreas(areas, resolucaoM);
   if (analisaveis.length === 0) throw validation(MSG_NENHUMA_AREA_ANALISAVEL, { areas_ignoradas: ignoradas });
   const totalItens = analisaveis.length * slots.length * corpo.indices.length;
   if (totalItens > MAX_ITENS_POR_CONSULTA) throw validation(msgItensDemais(totalItens), { total_itens: totalItens, maximo: MAX_ITENS_POR_CONSULTA });
