@@ -411,17 +411,20 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   const linhas = () => Number(sql(`select count(*) from erp.analises_satelitais where area_id in ('${verde.id}','${nublada.id}','${nunca.id}')`));
   expect(linhas(), "premissa: três execuções semeadas").toBe(3);
 
-  // Conta os pedidos de NDVI: um resumo para a tela inteira, nenhum pedido por área antes de abrir o painel.
-  const pedidosNdvi: string[] = [];
-  page.on("request", (r) => { const u = new URL(r.url()).pathname; if (u.includes("/analises-satelitais")) pedidosNdvi.push(`${r.method()} ${u}`); });
+  // Conta pedidos: um resumo (+ listagem de rasters), nenhum POST de geração e nenhuma pergunta por área antes do painel.
+  const pedidosSat: string[] = [];
+  page.on("request", (r) => {
+    const u = new URL(r.url()).pathname;
+    if (u.includes("/analises-satelitais") || u.includes("/mapa/rasters")) pedidosSat.push(`${r.method()} ${u}`);
+  });
   const resumo = page.waitForResponse((r) => r.url().includes("/api/mapa/analises-satelitais/resumo") && r.request().method() === "GET");
   await page.goto("/mapa-geral");
   expect((await resumo).status(), "o mapa pede o resumo de TODAS as áreas numa chamada").toBe(200);
   await expect(page.getByTestId("mapa-item-area")).toHaveCount(3);
   await expect.poll(async () => page.evaluate(() => Boolean((window as unknown as { __mapaManejoE2E?: unknown }).__mapaManejoE2E)), { timeout: 30_000 }).toBe(true);
 
-  // escala FIXA: 0,72 é "vigor alto" (verde escuro); sem imagem útil e nunca analisada ficam cinza — no MAPA, não só na tela
-  await expect(page.getByTestId("mapa-cor-ndvi"), "com NDVI em alguma área, o mapa abre no NDVI").toHaveAttribute("aria-pressed", "true");
+  // Sem raster gerado: abre em "Por área" (média sólida). 0,72 = vigor alto; sem imagem útil / nunca = cinza.
+  await expect(page.getByTestId("mapa-cor-area"), "sem imagem por pixel, o mapa abre na média por área").toHaveAttribute("aria-pressed", "true");
   await expect.poll(() => corNoMapa(page, verde.id), { timeout: 15_000 }).toBe("#1a9850");
   expect(await corNoMapa(page, nublada.id)).toBe("#94a3b8");
   expect(await corNoMapa(page, nunca.id)).toBe("#94a3b8");
@@ -432,10 +435,13 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   ]);
   await expect(legenda).toContainText("Não é biomassa");
   await expect(page.getByTestId("mapa-atribuicao-copernicus-mapa")).toHaveText("Contains modified Copernicus Sentinel data 2026");
+  await expect(page.getByTestId("mapa-atribuicao-copernicus"), "atribuição só no mapa — sem duplicar no painel").toHaveCount(0);
   await expect(page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).getByTestId("mapa-item-ndvi")).toHaveText("0,72");
   await expect(page.getByTestId("mapa-item-area").filter({ hasText: nunca.name }).getByTestId("mapa-item-ndvi")).toHaveCount(0);
 
-  expect(pedidosNdvi, "um resumo, nenhuma pergunta por área").toEqual(["GET /api/mapa/analises-satelitais/resumo"]);
+  expect(pedidosSat.filter((p) => p.startsWith("POST")), "abrir a tela NÃO gera imagem").toEqual([]);
+  expect(pedidosSat.filter((p) => p.includes("/analises-satelitais/resumo"))).toEqual(["GET /api/mapa/analises-satelitais/resumo"]);
+  expect(pedidosSat.some((p) => p.startsWith("GET /api/mapa/rasters")), "lista rasters sem gerar").toBe(true);
 
   // painel da área: última imagem útil, classe, variação desde a imagem anterior, polígono atual
   await page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).click();
@@ -446,7 +452,6 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   await expect(painel.getByTestId("mapa-ndvi-imagem")).toHaveText(/^Imagem de 10\/09\/2026 · 93\s?% da área vista$/);
   await expect(painel.getByTestId("mapa-ndvi-variacao")).toHaveText("+0,17 desde a imagem de 05/08/2026");
   await expect(painel.getByTestId("mapa-ndvi-contorno-anterior")).toHaveCount(0);
-  await expect(painel.getByTestId("mapa-atribuicao-copernicus")).toHaveText("Contains modified Copernicus Sentinel data 2026");
 
   // histórico: as duas imagens, da mais recente para a mais antiga, e a linha do tempo
   await painel.getByTestId("mapa-ndvi-ver-historico").click();
@@ -455,6 +460,7 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   await expect(painel.getByTestId("mapa-ndvi-historico-item").first()).toContainText("0,72");
   await expect(painel.getByTestId("mapa-ndvi-historico-item").last()).toContainText("05/08/2026");
   await expect(painel.getByTestId("mapa-ndvi-linha")).toBeVisible();
+  await expect(page.getByTestId("mapa-atribuicao-copernicus-mapa")).toHaveCount(1);
 
   // "Analisar agora": o provedor está DESLIGADO no E2E — a recusa controlada do servidor aparece e nada é gravado
   const pedido = page.waitForResponse((r) => r.url().endsWith(`/api/mapa/areas/${verde.id}/analises-satelitais/ndvi`) && r.request().method() === "POST");
@@ -478,7 +484,7 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   await expect(legenda).toHaveCount(0);
   await expect(page.getByTestId("mapa-atribuicao-copernicus-mapa"), "a lista continua com o NDVI: a atribuição fica").toHaveText("Contains modified Copernicus Sentinel data 2026");
   await expect.poll(() => corNoMapa(page, verde.id)).toBe("#306bec");
-  await page.getByTestId("mapa-cor-ndvi").click();
+  await page.getByTestId("mapa-cor-area").click();
   await expect.poll(() => corNoMapa(page, verde.id)).toBe("#1a9850");
 
   // contorno redesenhado DEPOIS da análise: o número fica, com o aviso de que foi calculado sobre o contorno anterior
@@ -503,7 +509,8 @@ test("Mapa geral: o resumo do NDVI falha (500) — as áreas continuam no mapa, 
   const aviso = page.getByTestId("mapa-ndvi-erro");
   await expect(aviso).toContainText("Não foi possível carregar o NDVI das áreas.");
   await expect(page.getByTestId("mapa-legenda-ndvi")).toHaveCount(0);
-  await expect(page.getByTestId("mapa-cor-ndvi"), "sem resumo, sem seletor de NDVI").toHaveCount(0);
+  await expect(page.getByTestId("mapa-cor-area"), "sem resumo, sem seletor de NDVI").toHaveCount(0);
+  await expect(page.getByTestId("mapa-cor-pixel")).toHaveCount(0);
   const antes = pedidos;
   expect(antes, "premissa: a tela pediu o resumo").toBeGreaterThanOrEqual(1);
   await aviso.getByRole("button", { name: "Tentar de novo" }).click();
@@ -529,5 +536,173 @@ test("Mapa geral: 'Analisar agora' com a integração ligada e SEM credencial (5
   const painel = page.getByTestId("mapa-area-selecionada");
   await painel.getByTestId("mapa-ndvi-analisar").click();
   await expect(painel.getByTestId("mapa-ndvi-aviso")).toHaveText("A análise por satélite está ligada, mas a credencial do Copernicus não está configurada no servidor da API.");
+  await limparAreas(page);
+});
+
+// ---------- SAT-07 (decisão 298): gradiente por pixel ----------
+
+/** PNG cinza 4×4 escrito com o mesmo contrato da SAT-06 (byte 0 = sem dado). */
+const PNG_NDVI_4X4 = Buffer.from(
+  // pixels: [0,80,200,0 / 0,40,220,0 / 0,120,160,0 / 0,0,0,0] via escreverPngCinza8
+  "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAAAAACMmsGiAAAAGUlEQVR4nGNgCDjBwMCgcYeBgaFiAQMYAAAndAM1iF6PqwAAAABJRU5ErkJggg==",
+  "base64"
+);
+
+test("Mapa geral SAT-07: gradiente por pixel, sem POST ao abrir, troca de modo sem rede, miniatura e gerar deliberado", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await limparAreas(page);
+  const empresa = await empresaDaSessao(page);
+  const quadrado = (lng: number, lat: number) => ({ type: "Polygon", coordinates: [[[lng, lat], [lng + 0.01, lat], [lng + 0.01, lat + 0.01], [lng, lat + 0.01], [lng, lat]]] });
+  const comRaster = await api<Area>(page, "POST", "/api/resources/areas", {
+    empresa_id: empresa, name: uniq("PIX VERDE").toLocaleUpperCase("pt-BR"), land_use: "pastagem", status: "ativa", tenure: "propria",
+    area_ha: "100", usable_area_ha: "100", color: "#2563eb", geometria: quadrado(-55.5, -15.3)
+  });
+  const semRaster = await api<Area>(page, "POST", "/api/resources/areas", {
+    empresa_id: empresa, name: uniq("PIX CINZA").toLocaleUpperCase("pt-BR"), land_use: "pastagem", status: "ativa", tenure: "propria",
+    area_ha: "100", usable_area_ha: "100", color: "#2563eb", geometria: quadrado(-55.48, -15.3)
+  });
+  semearAnalise(comRaster.id, "2026-09-01T00:00:00Z", "2026-09-12T12:00:00Z", { inicio: "2026-09-10T00:00:00Z", media: "0.55" });
+  semearAnalise(semRaster.id, "2026-09-01T00:00:00Z", "2026-09-12T12:00:00Z", { inicio: "2026-09-10T00:00:00Z", media: "0.55" });
+  const analiseCom = sql(`select id from erp.analises_satelitais where area_id = '${comRaster.id}' and situacao = 'concluida' order by observacao_inicio desc limit 1`);
+  const analiseSem = sql(`select id from erp.analises_satelitais where area_id = '${semRaster.id}' and situacao = 'concluida' order by observacao_inicio desc limit 1`);
+  expect(analiseCom).toMatch(FORMA_UUID);
+  expect(analiseSem).toMatch(FORMA_UUID);
+
+  const rasterId = "11111111-1111-4111-8111-111111111111";
+  const rasterNovoId = "22222222-2222-4222-8222-222222222222";
+  const cantos: [[number, number], [number, number], [number, number], [number, number]] = [
+    [-55.5, -15.29], [-55.49, -15.29], [-55.49, -15.3], [-55.5, -15.3]
+  ];
+  const dto = {
+    id: rasterId, analise_id: analiseCom, area_id: comRaster.id, indice: "ndvi", tipo: "valores",
+    data_imagem: "2026-09-10", largura: 4, altura: 4, cantos_lnglat: cantos,
+    escala_min: -0.2, escala_max: 1, resolucao_m: 10, resolucao_reduzida: false,
+    url_assinada: `/api/mapa/rasters/${rasterId}/arquivo?t=teste`, expira_em: "2099-01-01T00:00:00.000Z"
+  };
+
+  let postsRaster = 0;
+  let getsArquivo = 0;
+  let getsLista = 0;
+  const rastersPorArea = new Map<string, typeof dto>([[comRaster.id, dto]]);
+  const corsPng = {
+    "Access-Control-Allow-Origin": "*",
+    "Cross-Origin-Resource-Policy": "cross-origin",
+    "Access-Control-Allow-Methods": "GET, OPTIONS"
+  };
+
+  // Arquivo ANTES da listagem (rota mais específica primeiro).
+  await page.route(/\/api\/mapa\/rasters\/[^/]+\/arquivo/, async (rota) => {
+    if (rota.request().method() === "OPTIONS") {
+      await rota.fulfill({ status: 204, headers: corsPng });
+      return;
+    }
+    getsArquivo += 1;
+    await rota.fulfill({ status: 200, contentType: "image/png", headers: corsPng, body: PNG_NDVI_4X4 });
+  });
+  await page.route(/\/api\/mapa\/rasters(\?|$)/, async (rota) => {
+    if (rota.request().method() !== "GET") return rota.continue();
+    getsLista += 1;
+    const u = new URL(rota.request().url());
+    const ids = (u.searchParams.get("area_ids") ?? "").split(",").filter(Boolean);
+    const itens = ids.flatMap((id) => {
+      const r = rastersPorArea.get(id);
+      return r ? [r] : [];
+    });
+    await rota.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: { "Access-Control-Allow-Origin": "*" },
+      body: JSON.stringify({ itens, pagina: 1, tamanho: 50, tem_mais: false })
+    });
+  });
+  await page.route(`**/api/mapa/analises-satelitais/${analiseSem}/raster`, async (rota) => {
+    if (rota.request().method() !== "POST") return rota.continue();
+    postsRaster += 1;
+    const gerado = {
+      ...dto,
+      id: rasterNovoId,
+      analise_id: analiseSem,
+      area_id: semRaster.id,
+      cantos_lnglat: [[-55.48, -15.29], [-55.47, -15.29], [-55.47, -15.3], [-55.48, -15.3]] as typeof cantos,
+      url_assinada: `/api/mapa/rasters/${rasterNovoId}/arquivo?t=teste`,
+      resolucao_reduzida: true,
+      resolucao_m: 20
+    };
+    rastersPorArea.set(semRaster.id, gerado);
+    await rota.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ raster: gerado, reutilizada: true }) });
+  });
+  await page.route(`**/api/mapa/areas/${comRaster.id}/analises-satelitais/ultima**`, async (rota) => {
+    await rota.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ analise: { id: analiseCom }, ultima_observacao_util: { id: analiseCom } }) });
+  });
+  await page.route(`**/api/mapa/areas/${semRaster.id}/analises-satelitais/ultima**`, async (rota) => {
+    await rota.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ analise: { id: analiseSem }, ultima_observacao_util: { id: analiseSem } }) });
+  });
+
+  await page.goto("/mapa-geral");
+  await expect(page.getByTestId("mapa-item-area")).toHaveCount(2);
+  await expect.poll(async () => page.evaluate(() => Boolean((window as unknown as { __mapaManejoE2E?: unknown }).__mapaManejoE2E)), { timeout: 30_000 }).toBe(true);
+  // Espera a listagem mockada e o bitmap colorido antes de exigir o modo.
+  await expect.poll(() => getsLista, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+  await expect.poll(() => getsArquivo, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+  await expect.poll(async () => page.evaluate(() => {
+    const e = (window as unknown as { __mapaNdviE2E?: { modo?: string; rasters?: Record<string, { temImagem: boolean; erro?: string | null }> } }).__mapaNdviE2E;
+    return e ? { modo: e.modo, rasters: e.rasters } : null;
+  }), { timeout: 30_000 }).toEqual(expect.objectContaining({
+    modo: "pixel",
+    rasters: expect.objectContaining({ [comRaster.id]: expect.objectContaining({ temImagem: true }) })
+  }));
+  await expect(page.getByTestId("mapa-cor-pixel")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("mapa-legenda-gradiente")).toBeVisible();
+  await expect(page.getByTestId("mapa-legenda-ndvi")).toContainText("Não é biomassa");
+  expect(postsRaster, "abrir a tela NÃO dispara POST de raster").toBe(0);
+  const getsArquivoAposCarga = getsArquivo;
+  const getsListaAposCarga = getsLista;
+
+  await expect.poll(async () => page.evaluate(() => {
+    const e = (window as unknown as { __mapaNdviE2E: { amostrar: (id: string, x: number, y: number) => number[] | null; rasters: Record<string, { temImagem: boolean }> } }).__mapaNdviE2E;
+    const id = Object.keys(e.rasters).find((k) => e.rasters[k]?.temImagem);
+    if (!id) return null;
+    const a = e.amostrar(id, 1, 0);
+    const b = e.amostrar(id, 2, 0);
+    if (!a || !b) return null;
+    return { a, b, dif: a[0] !== b[0] || a[1] !== b[1] || a[2] !== b[2], alphaA: a[3], alphaB: b[3] };
+  }), { timeout: 20_000 }).toMatchObject({ dif: true, alphaA: 255, alphaB: 255 });
+
+  const alpha0 = await page.evaluate(() => {
+    const e = (window as unknown as { __mapaNdviE2E: { amostrar: (id: string, x: number, y: number) => number[] | null; rasters: Record<string, { temImagem: boolean }> } }).__mapaNdviE2E;
+    const id = Object.keys(e.rasters).find((k) => e.rasters[k]?.temImagem)!;
+    return e.amostrar(id, 0, 0)?.[3] ?? null;
+  });
+  expect(alpha0, "byte 0 → alfa 0").toBe(0);
+
+  await page.getByTestId("mapa-cor-area").click();
+  await expect(page.getByTestId("mapa-cor-area")).toHaveAttribute("aria-pressed", "true");
+  await page.getByTestId("mapa-cor-pixel").click();
+  await expect(page.getByTestId("mapa-cor-pixel")).toHaveAttribute("aria-pressed", "true");
+  expect(getsArquivo, "troca de modo não baixa PNG de novo").toBe(getsArquivoAposCarga);
+  expect(getsLista, "troca de modo não lista de novo").toBe(getsListaAposCarga);
+
+  await expect.poll(() => page.evaluate((id) => {
+    const m = (window as unknown as { __mapaManejoE2E: { querySourceFeatures: (s: string) => { properties: Record<string, unknown> }[] } }).__mapaManejoE2E;
+    const f = m.querySourceFeatures("areas").find((x) => x.properties["id"] === id);
+    return f ? Number(f.properties["opacidade_fill"]) : null;
+  }, semRaster.id)).toBeLessThan(0.5);
+
+  await page.getByTestId("mapa-item-area").filter({ hasText: comRaster.name }).click();
+  const painel = page.getByTestId("mapa-area-selecionada");
+  await expect(painel.getByTestId("mapa-ndvi-miniatura")).toBeVisible();
+  await expect(painel.getByTestId("mapa-ndvi-raster-meta")).toContainText("10 m");
+  await expect(painel.getByTestId("mapa-ndvi-gerar-imagem")).toHaveCount(0);
+
+  await page.getByTestId("mapa-item-area").filter({ hasText: semRaster.name }).click();
+  await expect(painel.getByTestId("mapa-ndvi-gerar-imagem")).toBeVisible({ timeout: 15_000 });
+  await painel.getByTestId("mapa-ndvi-gerar-imagem").click();
+  await expect(painel.getByTestId("mapa-ndvi-gerar-confirmacao")).toContainText("consome crédito");
+  await painel.getByTestId("mapa-ndvi-gerar-confirmar").click();
+  await expect(painel.getByTestId("mapa-ndvi-aviso")).toContainText("não houve custo");
+  await expect(painel.getByTestId("mapa-ndvi-resolucao-reduzida")).toContainText("20 m");
+  expect(postsRaster, "POST só no clique confirmado").toBe(1);
+
   await limparAreas(page);
 });

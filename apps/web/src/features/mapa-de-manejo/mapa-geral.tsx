@@ -13,53 +13,139 @@ import { CamadaDesenho } from "./camada-desenho";
 import { COR_PADRAO_AREA } from "./cores";
 import { AvisoDeLocalizacao, SeletorDeBase, desenharAreas, hectares, limites, marcarSelecao, rotulosDasAreas, useAreasDoMapa, useMapaBase } from "./mapa-base";
 import { AtribuicaoCopernicus, LegendaNdvi, NdviDaArea, anosDasImagens, corDoNdvi, useResumoNdvi } from "./ndvi";
+import { amostrarPixelCanvas, idCamadaRaster, sincronizarRastersNoMapa } from "./camada-rasters-ndvi";
+import { useRastersNdvi } from "./rasters-ndvi";
 
 /**
- * MAPA GERAL (decisão 294; antes Mapa de Manejo, decisões 289 e 292) — SÓ VISUALIZAÇÃO das áreas (erp.areas) e dos
- * resultados por área: o NDVI da última imagem útil pinta cada área na escala FIXA, com legenda e a atribuição do
- * Copernicus; o painel da área clicada mostra os números, a variação, o "Analisar agora" e o histórico. O cadastro de
- * área existe num lugar só: a ficha de Cadastro de Área, onde o contorno é desenhado. O mapa não grava área.
+ * MAPA GERAL (decisões 294 e 298) — visualização das áreas e do NDVI: por pixel (gradiente da SAT-06/07),
+ * por área (média sólida) ou cor do cadastro. O cadastro de área fica na ficha; o mapa não grava área.
  */
 
 const NOVA_AREA = "/cadastros/areas/new";
 const fichaDaArea = (id: string) => `/cadastros/areas/${id}`;
 
-type ModoCor = "ndvi" | "cadastro";
+/** Modos de cor do Mapa geral (SAT-07). */
+export type ModoCor = "pixel" | "area" | "cadastro";
+
+/** Áreas cujo bbox intersecta a vista atual do mapa (teto de rasters no viewport). */
+function idsNoViewport(m: MapLibreMap | null, areas: readonly { id: string; geometria: unknown }[]): string[] {
+  if (!m) return areas.map((a) => a.id);
+  const b = m.getBounds();
+  const o = b.getWest(), s = b.getSouth(), e = b.getEast(), n = b.getNorth();
+  return areas.filter((a) => {
+    const g = a.geometria as { type?: string; coordinates?: number[][][] } | null;
+    if (!g || g.type !== "Polygon" || !g.coordinates?.[0]?.length) return false;
+    let oeste = Infinity, sul = Infinity, leste = -Infinity, norte = -Infinity;
+    for (const pos of g.coordinates[0]) {
+      const lng = pos[0], lat = pos[1];
+      if (lng === undefined || lat === undefined) continue;
+      if (lng < oeste) oeste = lng;
+      if (lng > leste) leste = lng;
+      if (lat < sul) sul = lat;
+      if (lat > norte) norte = lat;
+    }
+    if (!Number.isFinite(oeste)) return false;
+    return leste >= o && oeste <= e && norte >= s && sul <= n;
+  }).map((a) => a.id);
+}
 
 export function MapaGeral() {
   const { can } = useAuth();
-  // A ficha nova já vem com a empresa da sessão (ou a primeira do contexto) — é PEDIDO; o servidor confere o escopo.
   const empresaId = useEmpresaPadrao();
   const lista = useAreasDoMapa();
   const areas = React.useMemo(() => lista.data?.items ?? [], [lista.data]);
   const ndvi = useResumoNdvi();
   const comNdvi = ndvi.situacao === "pronto";
-  // Sem escolha do usuário, o mapa abre no NDVI quando alguma área tem imagem útil (senão, tudo cinza não diria nada).
   const [modoEscolhido, setModoCor] = React.useState<ModoCor | null>(null);
   const algumNdvi = React.useMemo(() => ndvi.situacao === "pronto" && [...ndvi.porArea.values()].some((i) => i.ultima_observacao !== null), [ndvi]);
-  const modoCor: ModoCor = comNdvi ? modoEscolhido ?? (algumNdvi ? "ndvi" : "cadastro") : "cadastro";
   const [selecionada, setSelecionada] = React.useState<string | null>(null);
-  /** Área sob o mouse (rótulo em destaque + contorno por cima). */
   const [hoverAreaId, setHoverAreaId] = React.useState<string | null>(null);
+  const [idsViewport, setIdsViewport] = React.useState<string[]>([]);
+  /** Evita o flash "Por área" → "Por pixel" enquanto os rasters ainda carregam. */
+  const padraoTravadoRef = React.useRef(false);
   const areasRef = React.useRef(areas);
   React.useEffect(() => { areasRef.current = areas; }, [areas]);
   React.useEffect(() => {
     (window as unknown as { __mapaAreasE2E?: typeof areas }).__mapaAreasE2E = areas;
   }, [areas]);
 
-  /** No modo NDVI, a cor de cada área sai da escala fixa (cinza sem imagem útil); no modo cadastro, nenhuma troca. */
-  const corPorArea = React.useMemo(() => {
-    if (modoCor !== "ndvi" || ndvi.situacao !== "pronto") return null;
-    return new Map(areas.map((a) => [a.id, corDoNdvi(ndvi.porArea.get(a.id)?.ultima_observacao?.valor_medio)]));
-  }, [modoCor, ndvi, areas]);
-  React.useEffect(() => {
-    (window as unknown as { __mapaNdviE2E?: unknown }).__mapaNdviE2E = { situacao: ndvi.situacao, modo: modoCor, cores: corPorArea ? Object.fromEntries(corPorArea) : null };
-  }, [ndvi.situacao, modoCor, corPorArea]);
-
   const mapa = useMapaBase({ ganchoE2E: "__mapaManejoE2E", aoCarregar: registrarEventos });
   const { mapRef } = mapa;
 
-  /** Clique na área seleciona; passar o mouse destaca o contorno. */
+  // Viewport → quais áreas pedem raster (máx. 200 por requisição no cliente de listagem).
+  const atualizarViewport = React.useCallback(() => {
+    setIdsViewport(idsNoViewport(mapRef.current, areasRef.current));
+  }, [mapRef]);
+  React.useEffect(() => {
+    if (!mapa.pronto) return;
+    atualizarViewport();
+    const m = mapRef.current;
+    if (!m) return;
+    const onMove = () => atualizarViewport();
+    m.on("moveend", onMove);
+    return () => { m.off("moveend", onMove); };
+  }, [mapa.pronto, areas, mapRef, atualizarViewport]);
+
+  const rasters = useRastersNdvi(idsViewport, comNdvi);
+  const algumRaster = React.useMemo(() => {
+    for (const e of rasters.porArea.values()) if (e.blobUrl && !e.erro) return true;
+    return false;
+  }, [rasters.porArea]);
+
+  // Trava o padrão UMA vez, só depois que o viewport tem áreas E a listagem de rasters
+  // terminou — evita travar em "Por área" com viewport ainda vazio (ids=[]) e depois
+  // ignorar as imagens que chegam.
+  React.useEffect(() => {
+    if (!comNdvi || modoEscolhido !== null || padraoTravadoRef.current) return;
+    if (idsViewport.length === 0) return;
+    if (rasters.situacao === "carregando" || rasters.situacao === "ocioso") return;
+    padraoTravadoRef.current = true;
+    setModoCor(algumRaster ? "pixel" : algumNdvi ? "area" : "cadastro");
+  }, [comNdvi, modoEscolhido, rasters.situacao, algumRaster, algumNdvi, idsViewport.length]);
+
+  const modoCor: ModoCor = !comNdvi
+    ? "cadastro"
+    : (modoEscolhido ?? "cadastro");
+
+  /** Cor sólida do preenchimento (média NDVI ou cadastro). No modo pixel, áreas SEM raster caem na média. */
+  const corPorArea = React.useMemo((): ReadonlyMap<string, string> | null => {
+    if (modoCor === "cadastro" || ndvi.situacao !== "pronto") return null;
+    if (modoCor === "area" || modoCor === "pixel") {
+      return new Map(areas.map((a) => [a.id, corDoNdvi(ndvi.porArea.get(a.id)?.ultima_observacao?.valor_medio)] as const));
+    }
+    return null;
+  }, [modoCor, ndvi, areas]);
+
+  const opacidadePorArea = React.useMemo(() => {
+    if (modoCor !== "pixel") return null;
+    return new Map(areas.map((a) => {
+      const tem = rasters.temRaster(a.id);
+      // Com imagem: preenchimento some (o gradiente cobre). Sem imagem: opacidade menor = fallback distinto.
+      return [a.id, tem ? 0 : 0.42] as const;
+    }));
+  }, [modoCor, areas, rasters]);
+
+  React.useEffect(() => {
+    (window as unknown as { __mapaNdviE2E?: unknown }).__mapaNdviE2E = {
+      situacao: ndvi.situacao,
+      modo: modoCor,
+      cores: corPorArea ? Object.fromEntries(corPorArea) : null,
+      rasters: Object.fromEntries([...rasters.porArea].map(([id, e]) => [id, { id: e.dto.id, erro: e.erro, temImagem: Boolean(e.blobUrl) }])),
+      /** Amostra RGBA do canvas colorido (aceite: dois pixels diferentes no mesmo polígono). */
+      amostrar: (areaId: string, x: number, y: number) => {
+        const e = rasters.porArea.get(areaId);
+        if (!e?.canvas.width) return null;
+        return amostrarPixelCanvas(e.canvas, x, y);
+      },
+      camadaVisivel: (areaId: string) => {
+        const m = mapRef.current;
+        if (!m) return false;
+        try { return m.getLayoutProperty(idCamadaRaster(areaId), "visibility") !== "none" && Boolean(m.getLayer(idCamadaRaster(areaId))); }
+        catch { return false; }
+      }
+    };
+  }, [ndvi.situacao, modoCor, corPorArea, rasters.porArea, mapRef]);
+
   function registrarEventos(m: MapLibreMap) {
     m.on("click", "areas-fill", (e) => {
       const id = e.features?.[0]?.properties?.id != null ? String(e.features[0].properties.id) : null;
@@ -83,13 +169,18 @@ export function MapaGeral() {
     });
   }
 
-  // ---------- áreas no mapa ----------
   React.useEffect(() => {
     const m = mapRef.current;
     if (!m || !mapa.pronto) return;
-    desenharAreas(m, areas, null, corPorArea);
-  }, [areas, corPorArea, mapa.pronto, mapRef]);
-  // Contorno de seleção por cima dos vizinhos (feature-state na camada de destaque).
+    desenharAreas(m, areas, null, corPorArea, opacidadePorArea);
+  }, [areas, corPorArea, opacidadePorArea, mapa.pronto, mapRef]);
+
+  React.useEffect(() => {
+    const m = mapRef.current;
+    if (!m || !mapa.pronto) return;
+    sincronizarRastersNoMapa(m, rasters.porArea, modoCor === "pixel");
+  }, [rasters.porArea, modoCor, mapa.pronto, mapRef, areas]);
+
   const selecaoAnteriorRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     const m = mapRef.current;
@@ -99,7 +190,7 @@ export function MapaGeral() {
     if (selecionada) marcarSelecao(m, selecionada, true);
     selecaoAnteriorRef.current = selecionada;
   }, [selecionada, mapa.pronto, areas, corPorArea, mapRef]);
-  // Enquadra a propriedade uma vez, quando as áreas chegam.
+
   const enquadrouRef = React.useRef(false);
   React.useEffect(() => {
     const m = mapRef.current;
@@ -117,18 +208,17 @@ export function MapaGeral() {
     if (caixa) mapRef.current?.fitBounds(caixa, { padding: 60, maxZoom: 16 });
   }
 
-  // ---------- derivados para a tela ----------
   const m = mapa.pronto ? mapRef.current : null;
-  // Recalcula a cada redesenho do mapa (pan/zoom) — sem memo, senão o rótulo "gruda" na tela.
   const rotulos = m ? rotulosDasAreas(m, areas, hoverAreaId ?? selecionada) : [];
   const selecionadaObj = areas.find((a) => a.id === selecionada) ?? null;
   const totalHa = areas.reduce((s, a) => s + hectares(a.area_ha), 0);
   const podeCadastrar = can("batch_area.create");
   const entradaAreas = entryById("configuracoes.pecuaria.areas");
-  // Memo: a tela re-renderiza a cada quadro de pan/zoom (a camada de rótulos acompanha o mapa).
   const anosNdvi = React.useMemo(() => (ndvi.situacao === "pronto"
     ? anosDasImagens(areas.map((a) => ndvi.porArea.get(a.id)?.ultima_observacao?.observacao_inicio))
     : null), [ndvi, areas]);
+  const mostrarLegenda = comNdvi && (modoCor === "pixel" || modoCor === "area");
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
@@ -192,13 +282,12 @@ export function MapaGeral() {
                 </div>
               )}
               {ndvi.situacao === "pronto" && ndvi.temMais && <div className="rounded bg-white/90 px-2 py-1 text-xs text-amber-700 shadow-sm">O NDVI mostra as primeiras áreas do escopo; as demais aparecem sem cor de NDVI.</div>}
-              {modoCor === "ndvi" && comNdvi && <LegendaNdvi />}
+              {mostrarLegenda && <LegendaNdvi modo={modoCor === "pixel" ? "pixel" : "area"} />}
               {anosNdvi && <div className="rounded bg-white/90 px-2 py-0.5 shadow-sm"><AtribuicaoCopernicus anos={anosNdvi} testId="mapa-atribuicao-copernicus-mapa" /></div>}
             </div>
           )}
           <AvisoDeLocalizacao mapa={mapa} />
 
-          {/* Resumo da área clicada — só leitura; o cadastro abre na ficha de Cadastro de Área. */}
           {selecionadaObj && (
             <div className="absolute right-2 top-2 z-10 max-h-[calc(100%-1rem)] w-[min(20rem,calc(100%-1rem))] overflow-auto rounded-md border border-slate-200 bg-white p-3 shadow-lg" data-testid="mapa-area-selecionada">
               <div className="flex items-start gap-2">
@@ -212,7 +301,13 @@ export function MapaGeral() {
                 </div>
                 <Button type="button" size="icon" variant="ghost" onClick={() => setSelecionada(null)} aria-label="Fechar resumo" title="Fechar"><X className="h-4 w-4" aria-hidden /></Button>
               </div>
-              <NdviDaArea areaId={selecionadaObj.id} estado={ndvi} temContorno={Boolean(selecionadaObj.geometria)} />
+              <NdviDaArea
+                areaId={selecionadaObj.id}
+                estado={ndvi}
+                temContorno={Boolean(selecionadaObj.geometria)}
+                raster={rasters.porArea.get(selecionadaObj.id) ?? null}
+                onRasterGerado={async (dto) => { await rasters.incorporarDto(dto); setModoCor("pixel"); }}
+              />
               <div className="mt-2 flex justify-end">
                 <Link href={fichaDaArea(selecionadaObj.id)} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="mapa-abrir-cadastro">Abrir cadastro</Link>
               </div>
@@ -224,7 +319,7 @@ export function MapaGeral() {
   );
 }
 
-/** Cor das áreas: o NDVI (escala fixa) ou a cor do cadastro. */
+/** Cor das áreas: por pixel, por área (média) ou cor do cadastro. */
 function SeletorDeCor({ modo, onTrocar }: { modo: ModoCor; onTrocar: (m: ModoCor) => void }) {
   const botao = (valor: ModoCor, rotulo: string) => (
     <button type="button" onClick={() => onTrocar(valor)} aria-pressed={modo === valor} data-testid={`mapa-cor-${valor}`}
@@ -232,7 +327,8 @@ function SeletorDeCor({ modo, onTrocar }: { modo: ModoCor; onTrocar: (m: ModoCor
   );
   return (
     <div className="pointer-events-auto flex overflow-hidden rounded-md border border-slate-300 bg-white text-xs shadow-sm" role="group" aria-label="Cor das áreas">
-      {botao("ndvi", "NDVI")}
+      {botao("pixel", "Por pixel")}
+      {botao("area", "Por área")}
       {botao("cadastro", "Cor do cadastro")}
     </div>
   );

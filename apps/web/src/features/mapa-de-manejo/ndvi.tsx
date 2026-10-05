@@ -6,6 +6,13 @@ import { api, ApiError, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui";
 import { dateBR, dateTimeBR, num, pct } from "@/lib/utils";
+import { PARADAS_NDVI_PIXEL } from "./paleta-ndvi-pixel";
+import {
+  desenharMiniaturaRaster,
+  gerarRasterDaAnalise,
+  mensagemDoErroDeRaster,
+  type EntradaRasterEmMemoria
+} from "./rasters-ndvi";
 
 /**
  * MAPA GERAL (decisão 294) — o NDVI das áreas na tela: o resumo de TODAS as áreas numa chamada só, a escala fixa (as
@@ -128,11 +135,37 @@ export function AtribuicaoCopernicus({ anos, className, testId = "mapa-atribuica
 }
 
 /**
- * Legenda FIXA (a mesma em qualquer data e área) e o lembrete de que NDVI não é biomassa. A atribuição do Copernicus
- * NÃO mora aqui: ela aparece sempre que um número do NDVI está na tela (também na "Cor do cadastro", em que a lista
- * continua mostrando o NDVI de cada área).
+ * Legenda FIXA (a mesma em qualquer data e área) e o lembrete de que NDVI não é biomassa.
+ * No modo por pixel vira uma barra de gradiente com os valores das paradas; no modo por área
+ * continua a lista de classes. A atribuição do Copernicus NÃO mora aqui — uma só no mapa.
  */
-export function LegendaNdvi() {
+export function LegendaNdvi({ modo = "area", realceInterno = false }: { modo?: "pixel" | "area"; realceInterno?: boolean }) {
+  const aviso = "NDVI mede o vigor da vegetação. Não é biomassa, oferta de forragem nem lotação.";
+  if (modo === "pixel") {
+    const gradiente = `linear-gradient(90deg, ${PARADAS_NDVI_PIXEL.map((p, i) => {
+      const t = (i / (PARADAS_NDVI_PIXEL.length - 1)) * 100;
+      return `rgb(${p.r} ${p.g} ${p.b}) ${t}%`;
+    }).join(", ")})`;
+    return (
+      <div className="pointer-events-auto rounded-md border border-slate-200 bg-white/95 px-3 py-2 text-xs shadow-sm" data-testid="mapa-legenda-ndvi">
+        <div className="mb-1 font-semibold text-slate-700">NDVI por pixel</div>
+        <div className="h-3 w-full rounded-sm border border-slate-300" style={{ background: gradiente }} data-testid="mapa-legenda-gradiente" aria-hidden />
+        <div className="mt-0.5 flex justify-between tabular-nums text-[10px] text-slate-600" data-testid="mapa-legenda-marcas">
+          {PARADAS_NDVI_PIXEL.map((p) => <span key={p.ndvi}>{num(p.ndvi, 2)}</span>)}
+        </div>
+        <div className="mt-1 flex items-center gap-2">
+          <span className="h-3 w-4 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: COR_SEM_NDVI }} aria-hidden />
+          <span className="text-slate-700">Sem imagem útil ou sem análise</span>
+        </div>
+        {realceInterno && (
+          <p className="mt-1 max-w-[16rem] text-[10px] leading-tight text-amber-700" data-testid="mapa-legenda-relativa">
+            Cores relativas a esta área nesta data (realce interno ligado).
+          </p>
+        )}
+        <p className="mt-1 max-w-[16rem] text-[10px] leading-tight text-slate-500">{aviso}</p>
+      </div>
+    );
+  }
   return (
     <div className="pointer-events-auto rounded-md border border-slate-200 bg-white/95 px-3 py-2 text-xs shadow-sm" data-testid="mapa-legenda-ndvi">
       <div className="mb-1 font-semibold text-slate-700">NDVI médio da última imagem útil</div>
@@ -148,7 +181,7 @@ export function LegendaNdvi() {
           <span className="text-slate-700">Sem imagem útil ou sem análise</span>
         </li>
       </ul>
-      <p className="mt-1 max-w-[16rem] text-[10px] leading-tight text-slate-500">NDVI mede o vigor da vegetação vista pelo satélite. Não é biomassa, oferta de forragem nem lotação.</p>
+      <p className="mt-1 max-w-[16rem] text-[10px] leading-tight text-slate-500">{aviso}</p>
     </div>
   );
 }
@@ -196,22 +229,49 @@ function Historico({ areaId }: { areaId: string }) {
           </li>
         ))}
       </ul>
-      <AtribuicaoCopernicus anos={anosDasImagens(itens.map((i) => i.observacao_inicio))} />
     </div>
   );
 }
 
+function MiniaturaRaster({ entrada }: { entrada: EntradaRasterEmMemoria }) {
+  const ref = React.useRef<HTMLCanvasElement | null>(null);
+  React.useEffect(() => {
+    if (!ref.current || !entrada.canvas.width) return;
+    desenharMiniaturaRaster(entrada.canvas, ref.current, 168);
+  }, [entrada]);
+  return (
+    <canvas
+      ref={ref}
+      className="mt-1 max-w-full rounded border border-slate-200 bg-transparent"
+      data-testid="mapa-ndvi-miniatura"
+      aria-label="Miniatura do NDVI por pixel desta área"
+    />
+  );
+}
+
 /**
- * O bloco "Satélite (NDVI)" do painel da área clicada: a última imagem útil (média, mínimo, máximo, cobertura), a
- * variação desde a imagem útil anterior, o aviso de polígono redesenhado e de última execução sem imagem útil, o
- * "Analisar agora" (se o usuário pode pedir) e o histórico sob demanda.
+ * O bloco "Satélite (NDVI)" do painel da área clicada: números, histórico, "Analisar agora",
+ * miniatura do raster (SAT-07) e "Gerar imagem" deliberado (consome crédito).
  */
-export function NdviDaArea({ areaId, estado, temContorno }: { areaId: string; estado: EstadoNdvi; temContorno: boolean }) {
+export function NdviDaArea({
+  areaId,
+  estado,
+  temContorno,
+  raster,
+  onRasterGerado
+}: {
+  areaId: string;
+  estado: EstadoNdvi;
+  temContorno: boolean;
+  raster?: EntradaRasterEmMemoria | null;
+  onRasterGerado?: (dto: import("./rasters-ndvi").RasterNdviDto) => Promise<void> | void;
+}) {
   const { can } = useAuth();
   const qc = useQueryClient();
   const [verHistorico, setVerHistorico] = React.useState(false);
   const [aviso, setAviso] = React.useState<{ tom: "ok" | "erro"; texto: string } | null>(null);
-  React.useEffect(() => { setVerHistorico(false); setAviso(null); }, [areaId]);
+  const [confirmandoGerar, setConfirmandoGerar] = React.useState(false);
+  React.useEffect(() => { setVerHistorico(false); setAviso(null); setConfirmandoGerar(false); }, [areaId]);
   const analisar = useMutation({
     mutationFn: () => api<RespostaAnalise>(`/api/mapa/areas/${areaId}/analises-satelitais/ndvi`, { method: "POST", body: {} }),
     onSuccess: async (r) => {
@@ -226,10 +286,41 @@ export function NdviDaArea({ areaId, estado, temContorno }: { areaId: string; es
       });
       await qc.invalidateQueries({ queryKey: CHAVE_NDVI });
     },
-    // A mensagem é a do servidor (desligada, provedor indisponível, limite, área pequena…), já em português. O 503 de
-    // integração ligada SEM credencial (`motivo: configuracao`, contrato da SAT-01) ganha o motivo por extenso: é o que
-    // diz a quem administra o que falta no servidor (nunca o valor da credencial — a tela não o conhece).
     onError: (e) => setAviso({ tom: "erro", texto: mensagemDaRecusa(e) })
+  });
+
+  // `analise_id` para gerar imagem: só quando o painel está aberto e ainda não há raster (nunca ao abrir a tela).
+  const precisaAnaliseId = Boolean(temContorno && !raster?.blobUrl && can(PERMISSAO_PEDIR_NDVI) && estado.situacao === "pronto" && estado.porArea.get(areaId)?.ultima_observacao);
+  const ultima = useQuery({
+    queryKey: [...CHAVE_NDVI, "ultima-para-raster", areaId],
+    enabled: precisaAnaliseId,
+    queryFn: () => api<{ ultima_observacao_util: { id: string } | null }>(`/api/mapa/areas/${areaId}/analises-satelitais/ultima${qs({ indice: "ndvi" })}`)
+  });
+  const analiseIdParaRaster = ultima.data?.ultima_observacao_util?.id ?? null;
+
+  const gerar = useMutation({
+    mutationFn: async () => {
+      if (!analiseIdParaRaster) throw new Error("Não há análise útil para gerar a imagem.");
+      return gerarRasterDaAnalise(analiseIdParaRaster);
+    },
+    onSuccess: async (r) => {
+      setConfirmandoGerar(false);
+      setAviso({
+        tom: "ok",
+        texto: r.reutilizada
+          ? "A imagem já existia: não houve custo adicional."
+          : "Imagem gerada. O mapa será atualizado com o gradiente por pixel."
+      });
+      await onRasterGerado?.(r.raster);
+    },
+    onError: (e) => {
+      setConfirmandoGerar(false);
+      if (e instanceof ApiError && e.status === 403) {
+        setAviso(null);
+        return;
+      }
+      setAviso({ tom: "erro", texto: mensagemDoErroDeRaster(e) });
+    }
   });
 
   if (estado.situacao === "sem_permissao") return null;
@@ -244,10 +335,11 @@ export function NdviDaArea({ areaId, estado, temContorno }: { areaId: string; es
   const item = estado.porArea.get(areaId) ?? null;
   const obs = item?.ultima_observacao ?? null;
   const classe = obs ? classeNdvi(obs.valor_medio) : null;
-  // A última execução é mais nova que a última imagem útil e não achou imagem: diz isso (o número antigo continua).
   const execucaoSemImagem = item && item.ultima_execucao.situacao === "sem_observacao_util" && (!obs || (obs.criado_em ?? "") < item.ultima_execucao.criado_em)
     ? item.ultima_execucao : null;
   const podePedir = can(PERMISSAO_PEDIR_NDVI) && temContorno;
+  const podeGerarImagem = podePedir && Boolean(obs) && !raster?.blobUrl && Boolean(analiseIdParaRaster);
+  const rasterOk = raster && raster.blobUrl && !raster.erro ? raster : null;
   return (
     <div className="mt-2 flex flex-col gap-1 border-t border-slate-100 pt-2" data-testid="mapa-ndvi-area">
       {cabecalho}
@@ -276,12 +368,57 @@ export function NdviDaArea({ areaId, estado, temContorno }: { areaId: string; es
           Última análise ({dateTimeBR(execucaoSemImagem.criado_em)}): {enumLabel("analise_satelital_situacao", execucaoSemImagem.situacao)} — {enumLabel("analise_satelital_motivo", execucaoSemImagem.motivo_qualidade)}.
         </div>
       )}
+      {rasterOk && (
+        <div className="mt-1" data-testid="mapa-ndvi-raster-info">
+          <MiniaturaRaster entrada={rasterOk} />
+          <div className="mt-1 text-xs tabular-nums text-slate-600" data-testid="mapa-ndvi-raster-meta">
+            Imagem de {dateBR(rasterOk.dto.data_imagem)} · resolução {num(rasterOk.dto.resolucao_m, 0)} m
+          </div>
+          {rasterOk.dto.resolucao_reduzida && (
+            <p className="text-xs text-amber-700" data-testid="mapa-ndvi-resolucao-reduzida">
+              Imagem gerada em {num(rasterOk.dto.resolucao_m, 0)} m por causa do tamanho da área.
+            </p>
+          )}
+        </div>
+      )}
+      {raster?.erro && <p className="text-xs text-red-600" data-testid="mapa-ndvi-raster-erro">{raster.erro}</p>}
       {aviso && <p className={`text-xs ${aviso.tom === "erro" ? "text-red-600" : "text-green-700"}`} data-testid="mapa-ndvi-aviso" role="status">{aviso.texto}</p>}
       <div className="mt-1 flex flex-wrap gap-1.5">
         {podePedir && (
           <Button type="button" size="sm" variant="outline" disabled={analisar.isPending} onClick={() => { setAviso(null); analisar.mutate(); }} data-testid="mapa-ndvi-analisar">
             {analisar.isPending ? "Analisando…" : "Analisar agora"}
           </Button>
+        )}
+        {podeGerarImagem && !confirmandoGerar && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={gerar.isPending}
+            onClick={() => { setAviso(null); setConfirmandoGerar(true); }}
+            data-testid="mapa-ndvi-gerar-imagem"
+          >
+            Gerar imagem
+          </Button>
+        )}
+        {confirmandoGerar && (
+          <div className="flex w-full flex-col gap-1 rounded border border-amber-200 bg-amber-50 px-2 py-1.5" data-testid="mapa-ndvi-gerar-confirmacao">
+            <p className="text-xs text-amber-900">Gerar a imagem consome crédito de satélite e pode levar até 2 minutos. Continuar?</p>
+            <div className="flex flex-wrap gap-1">
+              <Button
+                type="button"
+                size="sm"
+                disabled={gerar.isPending}
+                onClick={() => gerar.mutate()}
+                data-testid="mapa-ndvi-gerar-confirmar"
+              >
+                {gerar.isPending ? "Gerando imagem…" : "Sim, gerar"}
+              </Button>
+              <Button type="button" size="sm" variant="ghost" disabled={gerar.isPending} onClick={() => setConfirmandoGerar(false)}>
+                Cancelar
+              </Button>
+            </div>
+          </div>
         )}
         {obs && (
           <Button type="button" size="sm" variant="ghost" aria-expanded={verHistorico} onClick={() => setVerHistorico((v) => !v)} data-testid="mapa-ndvi-ver-historico">
@@ -290,7 +427,6 @@ export function NdviDaArea({ areaId, estado, temContorno }: { areaId: string; es
         )}
       </div>
       {verHistorico && <Historico areaId={areaId} />}
-      {obs && <AtribuicaoCopernicus anos={anosDasImagens([obs.observacao_inicio, item?.observacao_anterior?.observacao_inicio])} />}
     </div>
   );
 }

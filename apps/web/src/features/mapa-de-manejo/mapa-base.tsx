@@ -145,7 +145,15 @@ export function useMapaBase(opts: { ganchoE2E: GanchoE2E; aoCarregar?: (m: MapLi
       m.on("load", () => {
         if (cancelado) return;
         m.addSource("areas", { type: "geojson", data: { type: "FeatureCollection", features: [] }, promoteId: "id" });
-        m.addLayer({ id: "areas-fill", type: "fill", source: "areas", paint: { "fill-color": ["coalesce", ["get", "cor_exibida"], COR_PADRAO_AREA], "fill-opacity": 0.78 } });
+        // `opacidade_fill` (SAT-07): no modo por pixel a área COM imagem fica transparente (o gradiente cobre);
+        // sem imagem fica mais clara para distinguir o fallback "por área".
+        m.addLayer({
+          id: "areas-fill", type: "fill", source: "areas",
+          paint: {
+            "fill-color": ["coalesce", ["get", "cor_exibida"], COR_PADRAO_AREA],
+            "fill-opacity": ["coalesce", ["get", "opacidade_fill"], 0.78]
+          }
+        });
         m.addLayer({
           id: "areas-contorno", type: "line", source: "areas",
           layout: { "line-join": "round", "line-cap": "round" },
@@ -212,13 +220,25 @@ export function useMapaBase(opts: { ganchoE2E: GanchoE2E; aoCarregar?: (m: MapLi
 /**
  * Põe as áreas na fonte `areas` do mapa (as sem contorno ficam de fora). `atual` é o contorno da ficha aberta.
  * `corPorArea` (Mapa geral, decisão 294) troca a cor exibida de cada área — o NDVI —, sem mudar a cor do cadastro.
+ * `opacidadePorArea` (SAT-07) ajusta o preenchimento quando o gradiente por pixel cobre a área.
  */
-export function desenharAreas(m: MapLibreMap, areas: readonly AreaNoMapa[], atual?: { geometria: Polygon; cor: string | null } | null, corPorArea?: ReadonlyMap<string, string> | null) {
+export function desenharAreas(
+  m: MapLibreMap,
+  areas: readonly AreaNoMapa[],
+  atual?: { geometria: Polygon; cor: string | null } | null,
+  corPorArea?: ReadonlyMap<string, string> | null,
+  opacidadePorArea?: ReadonlyMap<string, number> | null
+) {
   const src = m.getSource("areas") as GeoJSONSource | undefined;
   if (!src) return;
   const feature = (id: string, nome: string, cor: string | null, geometria: Polygon): Feature<Polygon> => {
     const exibida = corPorArea?.get(id) ?? corExibidaNoMapa(cor);
-    return { type: "Feature", id, properties: { id, nome, cor: cor ?? COR_PADRAO_AREA, cor_exibida: exibida, cor_borda: corBordaNoMapa(exibida) }, geometry: geometria };
+    const opacidade = opacidadePorArea?.get(id) ?? 0.78;
+    return {
+      type: "Feature", id,
+      properties: { id, nome, cor: cor ?? COR_PADRAO_AREA, cor_exibida: exibida, cor_borda: corBordaNoMapa(exibida), opacidade_fill: opacidade },
+      geometry: geometria
+    };
   };
   const features = areas.filter((a) => a.geometria && a.geometria.type === "Polygon").map((a) => feature(a.id, a.name, a.color, a.geometria as Polygon));
   if (atual) features.push(feature(ID_CONTORNO_ATUAL, "", atual.cor, atual.geometria));
