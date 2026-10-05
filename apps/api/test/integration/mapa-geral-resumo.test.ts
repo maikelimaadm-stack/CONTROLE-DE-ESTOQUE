@@ -27,7 +27,11 @@ interface Item {
   observacao_anterior: { observacao_inicio: string; valor_medio: string } | null;
   variacao: string | null;
 }
-interface Corpo { itens: Item[]; pagina: number; tamanho: number; tem_mais: boolean; error: { code: string; message: string } }
+interface Corpo {
+  itens: Item[]; pagina: number; tamanho: number; tem_mais: boolean;
+  modo?: string; data_imagem?: string | null; contexto?: string | null; versao_metodo?: string | null;
+  error: { code: string; message: string };
+}
 const j = (r: { json: () => unknown }) => r.json() as Corpo;
 const resumo = (query = "", headers = h.headers()) => h.app.inject({ method: "GET", url: `/api/mapa/analises-satelitais/resumo${query}`, headers });
 const porArea = (c: Corpo) => new Map(c.itens.map((i) => [i.area_id, i]));
@@ -161,7 +165,10 @@ describe("MAPA-GERAL resumo — capacidade × escopo", () => {
   it("capacidade com escopo só no módulo `mapa` (nada em pecuária): lista VAZIA, nunca todas — o módulo vem da permissão", async () => {
     const r = await resumo("", soMapa);
     expect(r.statusCode, r.body).toBe(200);
-    expect(j(r)).toEqual({ itens: [], pagina: 1, tamanho: 500, tem_mais: false });
+    expect(j(r)).toEqual({
+      itens: [], pagina: 1, tamanho: 500, tem_mais: false,
+      modo: "ultima", data_imagem: null, contexto: null, versao_metodo: null
+    });
   });
   it("seleção de empresa (X-Empresa-Id) só diminui: o dono com B selecionada vê só B; empresa proibida → 403", async () => {
     const dono = await resumo("", h.headers({ "x-empresa-id": B }));
