@@ -113,6 +113,13 @@ describe("pedidos de raster (fetch simulado)", () => {
     expect(semData!.has("data_imagem")).toBe(false);
   });
 
+  it("contexto=condicao: a listagem operacional manda o enum estrito (backend resolve pastagem-essencial-v2)", async () => {
+    const { fn, requisitar } = fetchSimulado();
+    await listarRastersPorAreas(["a1"], "ndvi", requisitar, { contexto: "condicao" });
+    const params = new URL(fn.mock.calls[0]![0], "http://api.local").searchParams;
+    expect(params.get("contexto")).toBe("condicao");
+  });
+
   it("navegar pelos 6 índices na mesma vista = 6 listagens, não 1.200", async () => {
     const { fn, requisitar } = fetchSimulado();
     const sel = selecionarAreasDaVista(areas, VISTA_TODA);

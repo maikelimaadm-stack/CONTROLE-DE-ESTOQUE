@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui";
 import { dateBR, dateTimeBR, num, pct } from "@/lib/utils";
 import { COR_CLASSE_NDVI, COR_SEM_NDVI, corDoNdvi } from "./cor-por-area";
+import { DATA_ULTIMA_IMAGEM, chaveDaData, dataImagemDoPedido, type DataDaCamada } from "./data-camada";
 import type { IdIndice } from "./paletas-indices";
 import { PARADAS_NDVI_PIXEL } from "./paleta-ndvi-pixel";
 import {
@@ -58,20 +59,27 @@ export type EstadoResumoIndice = EstadoNdvi;
 const CHAVE_NDVI = ["mapa-geral", "ndvi"] as const;
 
 /**
- * O resumo de todas as áreas para o ÍNDICE pedido (cor por área, lista, "Áreas desatualizadas"). O NDVI segue o pedido
- * de antes, sem o parâmetro `indice` (é o padrão da rota, e a API anterior não o conhece); os demais mandam `indice`.
+ * Resumo operacional da Condição da Área: índice × data ativa × método v2 × geometria atual.
+ * `data` entra na query key — trocar a data nunca reaproveita estatística de outro dia.
  */
-export function useResumoIndice(indice: IdIndice): EstadoResumoIndice {
+export function useResumoIndice(indice: IdIndice, data: DataDaCamada = DATA_ULTIMA_IMAGEM): EstadoResumoIndice {
   const { can, session } = useAuth();
   const pode = can(PERMISSAO_VER_NDVI);
+  const chaveData = chaveDaData(data);
+  const dia = dataImagemDoPedido(data);
   const q = useQuery({
-    queryKey: [...CHAVE_NDVI, "resumo", indice, session?.empresaId ?? null],
+    queryKey: [...CHAVE_NDVI, "resumo", indice, chaveData, session?.empresaId ?? null],
     enabled: pode,
     retry: false,
     queryFn: async () => {
       try {
         return await api<{ itens: ResumoNdviDaArea[]; tem_mais: boolean }>(
-          `/api/mapa/analises-satelitais/resumo${qs({ ...(indice === "ndvi" ? {} : { indice }), tamanho: RESUMO_ANALISE_SATELITAL_MAXIMO })}`
+          `/api/mapa/analises-satelitais/resumo${qs({
+            indice,
+            contexto: "condicao",
+            ...(dia ? { data_imagem: dia } : {}),
+            tamanho: RESUMO_ANALISE_SATELITAL_MAXIMO
+          })}`
         );
       } catch (e) {
         // A rota não tem parâmetro de caminho: 404 aqui só pode ser a ROTA ausente (a API anterior a esta fatia).
@@ -94,9 +102,9 @@ export function useResumoIndice(indice: IdIndice): EstadoResumoIndice {
   }, [pode, isLoading, error, dados, refetch]);
 }
 
-/** O NDVI para a tela inteira (permissão, disponibilidade da rota e o bloco "Satélite (NDVI)"). */
+/** Compatibilidade: resumo NDVI da última útil no método ativo (Condição). */
 export function useResumoNdvi(): EstadoNdvi {
-  return useResumoIndice("ndvi");
+  return useResumoIndice("ndvi", DATA_ULTIMA_IMAGEM);
 }
 
 interface ItemHistorico { id: string; observacao_inicio: string; valor_medio: string; cobertura_valida: string; do_poligono_atual: boolean }

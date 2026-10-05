@@ -64,7 +64,8 @@ export function listarRastersPorAreas(
   indice = "ndvi",
   opcoes: { signal?: AbortSignal; dataImagem?: string } = {}
 ): Promise<RasterIndiceDto[]> {
-  return listarPaginado(areaIds, indice, requisitarApi, opcoes);
+  // Condição da Área: sempre pastagem-essencial-v2 + geometria atual (backend resolve o método).
+  return listarPaginado(areaIds, indice, requisitarApi, { ...opcoes, contexto: "condicao" });
 }
 
 /** Baixa o PNG pela URL assinada (CORS, sem credenciais). Em 404 devolve null para o chamador renovar o DTO. */

@@ -123,7 +123,7 @@ export async function listarRastersPorAreas(
   areaIds: readonly string[],
   indice: string,
   requisitar: RequisitarJson,
-  opcoes: { signal?: AbortSignal; dataImagem?: string } = {}
+  opcoes: { signal?: AbortSignal; dataImagem?: string; contexto?: "condicao" } = {}
 ): Promise<RasterIndiceDto[]> {
   const unicos = [...new Set(areaIds.filter(Boolean))];
   const saida: RasterIndiceDto[] = [];
@@ -137,6 +137,7 @@ export async function listarRastersPorAreas(
           area_ids: fatia.join(","),
           indice,
           ...(opcoes.dataImagem ? { data_imagem: opcoes.dataImagem } : {}),
+          ...(opcoes.contexto ? { contexto: opcoes.contexto } : {}),
           pagina,
           tamanho: AREAS_POR_LISTAGEM
         })}`,

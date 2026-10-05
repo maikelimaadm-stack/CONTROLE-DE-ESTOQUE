@@ -3,9 +3,11 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { withTx } from "@agro/db";
 import {
-  COLECAO_SENTINEL2_L2A, INDICES_RASTER, PROVEDOR_COPERNICUS, encodingRasterDe, encodingRasterPorVersao,
-  moduloDaPermissao, type EncodingRasterIndice, type IdIndiceRaster
+  COLECAO_SENTINEL2_L2A, INDICES_RASTER, PROVEDOR_COPERNICUS, VERSAO_METODO_PASTAGEM_ESSENCIAL,
+  encodingRasterDe, encodingRasterPorVersao, moduloDaPermissao,
+  type EncodingRasterIndice, type IdIndiceRaster
 } from "@agro/domain";
+import { isISODate } from "@agro/shared";
 import { runService } from "../lib/service.js";
 import { DomainError, err, validation } from "../lib/errors.js";
 import { empresaScopeSql, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
@@ -94,7 +96,8 @@ const sha256Hex = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 const corpoVazio = z.object({}).strict();
 const semQuery = z.object({}).strict();
 const inteiroPositivo = (maximo: number) => z.string().regex(/^[1-9]\d{0,8}$/).transform(Number).pipe(z.number().int().min(1).max(maximo));
-const diaUtc = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+/** Dia civil canônico (calendário real). Regex sozinha aceitaria 2026-02-31 → Postgres 500. */
+const diaCivil = z.string().refine(isISODate, "Data inválida (use AAAA-MM-DD civil)");
 const listaQuery = z.object({
   /** `uuid,uuid,…` — só a forma canônica (minúsculas), sem repetir, 1..200. */
   area_ids: z.string().transform((v) => v.split(",")).pipe(
@@ -105,7 +108,12 @@ const listaQuery = z.object({
    * - ausente/`ultima`: raster da ÚLTIMA análise útil do polígono atual (não o último gerado).
    * - `data_imagem=YYYY-MM-DD`: só aquele dia; sem fallback para latest.
    */
-  data_imagem: diaUtc.optional(),
+  data_imagem: diaCivil.optional(),
+  /**
+   * `condicao` = Condição da Área: só `pastagem-essencial-v2` + geometria atual.
+   * Ausente: compatibilidade (SAT-06 / NDVI avulso) — geometria atual, sem filtro de método.
+   */
+  contexto: z.enum(["condicao"]).optional(),
   pagina: inteiroPositivo(1_000_000).default(1),
   tamanho: inteiroPositivo(AREAS_POR_LISTAGEM_MAXIMO).default(TAMANHO_PAGINA_PADRAO)
 }).strict();
@@ -475,40 +483,40 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
    * Sem `data_imagem`: raster da ÚLTIMA análise útil (concluída) do índice no polígono vigente.
    *   Se essa análise ainda não tem raster → a área não entra (UI oferece "gerar desta observação").
    * Com `data_imagem=YYYY-MM-DD`: só aquele dia; SEM fallback para latest.
+   * `contexto=condicao`: só análises `pastagem-essencial-v2` (Condição da Área).
    * Raster de geometria antiga NUNCA retorna.
    */
   app.get("/mapa/rasters", async (req) => {
     exigir(app, req, PERMISSAO_VER_ANALISE);
     const q = listaQuery.parse(req.query);
     return runService(app, req, PERMISSAO_VER_ANALISE, async (ctx) => {
+      const condicao = q.contexto === "condicao";
       const params: unknown[] = [ctx.orgId, q.area_ids, q.indice];
       const escopoArea = empresaScopeSql(ctx, "a", params);
       const escopoRaster = empresaScopeSql(ctx, "r", params);
       const escopoAnalise = empresaScopeSql(ctx, "s", params);
+      let filtroMetodo = "";
+      if (condicao) {
+        params.push(VERSAO_METODO_PASTAGEM_ESSENCIAL);
+        filtroMetodo = ` and s.versao_metodo = $${params.length}`;
+      }
       let filtroData = "";
       if (q.data_imagem) {
         params.push(q.data_imagem);
-        filtroData = ` and r.data_imagem = $${params.length}::date`;
+        filtroData = ` and (s.observacao_inicio at time zone 'UTC')::date = $${params.length}::date`;
       }
       params.push(q.tamanho + 1, (q.pagina - 1) * q.tamanho);
       const limite = `$${params.length - 1}`, deslocamento = `$${params.length}`;
       const hashArea = `encode(sha256(convert_to(a.geometria::text, 'UTF8')), 'hex')`;
-      // Modo última útil: amarra ao analise_id da última observação concluída do polígono atual.
-      // Modo data: filtra data_imagem exata + geometria atual (sem fallback).
-      const lateral = q.data_imagem
-        ? `select ${colunasRaster("r")}
-             from erp.satelite_rasters r
-            where r.organization_id = $1 and r.empresa_id = a.empresa_id and r.area_id = a.id and r.indice = $3
-              and r.geometria_sha256 = ${hashArea}${filtroData}${escopoRaster}
-            order by r.created_at desc, r.id desc
-            limit 1`
-        : `select ${colunasRaster("r")}
+      // Última útil OU data exata: sempre via análise (geometria + método + dia), depois o raster DESSA análise.
+      // Modo data sem contexto=condicao: ainda exige análise do polígono atual naquele dia (sem fallback latest).
+      const lateral = `select ${colunasRaster("r")}
              from (
                select s.id as analise_id
                  from erp.analises_satelitais s
                 where s.organization_id = $1 and s.area_id = a.id and s.indice = $3
                   and s.situacao = 'concluida' and s.observacao_inicio is not null
-                  and s.geometria_sha256 = ${hashArea}${escopoAnalise}
+                  and s.geometria_sha256 = ${hashArea}${filtroMetodo}${filtroData}${escopoAnalise}
                 order by s.observacao_inicio desc, s.created_at desc, s.id desc
                 limit 1
              ) util
@@ -529,7 +537,9 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
       return {
         itens, pagina: q.pagina, tamanho: q.tamanho, tem_mais: r.rows.length > q.tamanho,
         modo: q.data_imagem ? "data" : "ultima",
-        data_imagem: q.data_imagem ?? null
+        data_imagem: q.data_imagem ?? null,
+        contexto: q.contexto ?? null,
+        versao_metodo: condicao ? VERSAO_METODO_PASTAGEM_ESSENCIAL : null
       };
     });
   });

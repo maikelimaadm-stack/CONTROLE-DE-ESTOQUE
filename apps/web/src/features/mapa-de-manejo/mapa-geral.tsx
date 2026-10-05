@@ -12,7 +12,7 @@ import { dateBR, num } from "@/lib/utils";
 import { CamadaDesenho } from "./camada-desenho";
 import { COR_PADRAO_AREA } from "./cores";
 import { AvisoDeLocalizacao, desenharAreas, hectares, limites, marcarSelecao, rotulosDasAreas, useAreasDoMapa, useMapaBase } from "./mapa-base";
-import { AtribuicaoCopernicus, LegendaNdvi, NdviDaArea, PERMISSAO_PEDIR_NDVI, anosDasImagens, useResumoIndice, useResumoNdvi } from "./ndvi";
+import { AtribuicaoCopernicus, LegendaNdvi, PERMISSAO_PEDIR_NDVI, anosDasImagens, useResumoIndice } from "./ndvi";
 import { OPACIDADE_PADRAO, RENDER_PADRAO, amostrarPixelCanvas, idCamadaRaster, sincronizarRastersNoMapa, type RenderRaster } from "./camada-rasters";
 import { assinaturaDaGeometria } from "./cache-rasters";
 import { coresPorArea, mediaValidaDoIndice, type ModoCor } from "./cor-por-area";
@@ -49,14 +49,21 @@ export function MapaGeral() {
   const empresaId = useEmpresaPadrao();
   const lista = useAreasDoMapa();
   const areas = React.useMemo(() => lista.data?.items ?? [], [lista.data]);
-  const ndvi = useResumoNdvi();
-  const comNdvi = ndvi.situacao === "pronto";
   const [indice, setIndice] = React.useState<IdIndice>("ndvi");
   const [data, setData] = React.useState<DataDaCamada>(DATA_ULTIMA_IMAGEM);
-  /** Resumo por área do índice ATIVO: é dele que saem a cor por área, o valor da lista e "Áreas desatualizadas". */
-  const resumoIndice = useResumoIndice(indice);
+  /**
+   * Resumo da camada (índice × data ativa × método v2): cor por área e valor da lista.
+   * Resumo da última útil (mesmo índice): "Áreas desatualizadas" / sem análise — identidade operacional atual.
+   * Quando a data é "última", a query key coincide e há UMA só ida à rede.
+   */
+  const resumoIndice = useResumoIndice(indice, data);
+  const resumoUltima = useResumoIndice(indice, DATA_ULTIMA_IMAGEM);
+  const comNdvi = resumoIndice.situacao === "pronto" || resumoUltima.situacao === "pronto";
   const [modoEscolhido, setModoCor] = React.useState<ModoCor | null>(null);
-  const algumNdvi = React.useMemo(() => ndvi.situacao === "pronto" && [...ndvi.porArea.values()].some((i) => i.ultima_observacao !== null), [ndvi]);
+  const algumNdvi = React.useMemo(
+    () => resumoUltima.situacao === "pronto" && [...resumoUltima.porArea.values()].some((i) => i.ultima_observacao !== null),
+    [resumoUltima]
+  );
   const [selecionada, setSelecionada] = React.useState<string | null>(null);
   const [hoverAreaId, setHoverAreaId] = React.useState<string | null>(null);
   const [vista, setVista] = React.useState<Vista | null>(null);
@@ -164,7 +171,7 @@ export function MapaGeral() {
 
   React.useEffect(() => {
     (window as unknown as { __mapaNdviE2E?: unknown }).__mapaNdviE2E = {
-      situacao: ndvi.situacao,
+      situacao: resumoUltima.situacao,
       modo: modoCor,
       indice,
       data: data.tipo === "ultima" ? "ultima" : data.data,
@@ -184,7 +191,7 @@ export function MapaGeral() {
         catch { return false; }
       }
     };
-  }, [ndvi.situacao, modoCor, indice, data, resumoIndice.situacao, corPorArea, rasters.porArea, mapRef]);
+  }, [resumoUltima.situacao, modoCor, indice, data, resumoIndice.situacao, corPorArea, rasters.porArea, mapRef]);
 
   function registrarEventos(m: MapLibreMap) {
     m.on("click", "areas-fill", (e) => {
@@ -255,22 +262,24 @@ export function MapaGeral() {
   const podeCadastrar = can("batch_area.create");
   const entradaAreas = entryById("configuracoes.pecuaria.areas");
   const anosNdvi = React.useMemo(() => {
-    if (ndvi.situacao !== "pronto") return null;
-    const datas = areas.map((a) => ndvi.porArea.get(a.id)?.ultima_observacao?.observacao_inicio);
+    const fonte = resumoUltima.situacao === "pronto" ? resumoUltima : resumoIndice.situacao === "pronto" ? resumoIndice : null;
+    if (!fonte) return null;
+    const datas = areas.map((a) => fonte.porArea.get(a.id)?.ultima_observacao?.observacao_inicio);
     for (const e of rasters.porArea.values()) if (e.blobUrl && !e.erro) datas.push(e.dto.data_imagem);
     return anosDasImagens(datas);
-  }, [ndvi, areas, rasters.porArea]);
+  }, [resumoUltima, resumoIndice, areas, rasters.porArea]);
   const mostrarLegenda = comNdvi && (modoCor === "pixel" || modoCor === "area");
   const podeConsultar = can(PERMISSAO_PEDIR_NDVI);
   const idsSemAnalise = React.useMemo(
-    () => (ndvi.situacao === "pronto" ? areas.filter((a) => a.geometria && !ndvi.porArea.get(a.id)?.ultima_observacao).map((a) => a.id) : []),
-    [ndvi, areas]
+    () => (resumoUltima.situacao === "pronto"
+      ? areas.filter((a) => a.geometria && !resumoUltima.porArea.get(a.id)?.ultima_observacao).map((a) => a.id)
+      : []),
+    [resumoUltima, areas]
   );
-  // "Desatualizada" = o contorno ATUAL não tem análise válida do método ativo. Com a lista do resumo cortada no teto, as
-  // áreas que ficaram de fora não dá para afirmar: nesse caso a seleção fica indisponível, nunca chutada.
+  // "Desatualizada" = contorno ATUAL sem análise válida do método ativo v2 (última útil — não a data da camada).
   const desatualizadas = React.useMemo(
-    () => (resumoIndice.situacao === "pronto" && !resumoIndice.temMais ? areasDesatualizadas(areas, resumoIndice.porArea) : null),
-    [resumoIndice, areas]
+    () => (resumoUltima.situacao === "pronto" && !resumoUltima.temMais ? areasDesatualizadas(areas, resumoUltima.porArea) : null),
+    [resumoUltima, areas]
   );
   const semImagemDoIndice = modoCor === "pixel" && rasters.situacao === "pronto" && selecao.ids.length > 0 && !algumRaster;
   const ausentesNaVista = rasters.situacao === "pronto" ? selecao.ids.filter((id) => rasters.ausentes.has(id)).length : 0;
@@ -302,12 +311,15 @@ export function MapaGeral() {
             {!lista.isLoading && !lista.error && areas.length === 0 && <EmptyState title="Nenhuma área cadastrada" description="Cadastre as áreas em Cadastro de Área: o contorno desenhado na ficha aparece aqui." />}
             {areas.map((a) => {
               const media = resumoIndice.situacao === "pronto" ? mediaValidaDoIndice(resumoIndice.porArea.get(a.id)) : null;
+              const tituloMedia = data.tipo === "data"
+                ? `${nomeDoIndice(indice)} médio em ${dateBR(data.data)}`
+                : `${nomeDoIndice(indice)} médio da última imagem útil`;
               return (
                 <button key={a.id} type="button" data-testid="mapa-item-area" onClick={() => selecionarNaLista(a.id)}
                   className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-100 ${a.id === selecionada ? "bg-slate-100 ring-1 ring-slate-300" : ""}`}>
                   <span className="h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: corPorArea?.get(a.id) ?? a.color ?? COR_PADRAO_AREA }} aria-hidden />
                   <span className="min-w-0 flex-1 truncate font-medium text-slate-700">{a.name}</span>
-                  {media !== null && <span className="shrink-0 text-xs font-medium tabular-nums text-slate-700" title={`${nomeDoIndice(indice)} médio da última imagem útil`} data-testid="mapa-item-ndvi">{num(media, 2)}</span>}
+                  {media !== null && <span className="shrink-0 text-xs font-medium tabular-nums text-slate-700" title={tituloMedia} data-testid="mapa-item-ndvi">{num(media, 2)}</span>}
                   <span className="shrink-0 text-xs tabular-nums text-slate-500">{num(hectares(a.area_ha), 2)} ha</span>
                 </button>
               );
@@ -345,14 +357,14 @@ export function MapaGeral() {
           {!mapa.pronto && <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"><Spinner /></div>}
           {mapa.pronto && (
             <div className="pointer-events-none absolute bottom-2 left-2 flex max-w-[calc(100%-4rem)] flex-col items-start gap-1">
-              {ndvi.situacao === "indisponivel" && <div className="rounded bg-white/90 px-2 py-1 text-xs text-slate-600 shadow-sm" data-testid="mapa-ndvi-indisponivel">Análise por satélite ainda não disponível neste servidor.</div>}
-              {ndvi.situacao === "erro" && (
+              {resumoUltima.situacao === "indisponivel" && <div className="rounded bg-white/90 px-2 py-1 text-xs text-slate-600 shadow-sm" data-testid="mapa-ndvi-indisponivel">Análise por satélite ainda não disponível neste servidor.</div>}
+              {resumoUltima.situacao === "erro" && (
                 <div className="pointer-events-auto flex items-center gap-2 rounded bg-white/90 px-2 py-1 text-xs text-red-600 shadow-sm" data-testid="mapa-ndvi-erro">
                   Não foi possível carregar o NDVI das áreas.
-                  <Button type="button" size="sm" variant="ghost" onClick={ndvi.tentarDeNovo}>Tentar de novo</Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={resumoUltima.tentarDeNovo}>Tentar de novo</Button>
                 </div>
               )}
-              {ndvi.situacao === "pronto" && ndvi.temMais && <div className="rounded bg-white/90 px-2 py-1 text-xs text-amber-700 shadow-sm">O NDVI mostra as primeiras áreas do escopo; as demais aparecem sem cor de NDVI.</div>}
+              {resumoUltima.situacao === "pronto" && resumoUltima.temMais && <div className="rounded bg-white/90 px-2 py-1 text-xs text-amber-700 shadow-sm">O NDVI mostra as primeiras áreas do escopo; as demais aparecem sem cor de NDVI.</div>}
               {selecao.truncado && modoCor === "pixel" && (
                 <div className="rounded bg-white/90 px-2 py-1 text-xs text-amber-700 shadow-sm" data-testid="mapa-raster-truncado">
                   Mostrando a imagem de {selecao.ids.length} das {selecao.naVista} áreas à vista (as mais próximas do centro). Aproxime o mapa para ver as demais.
@@ -402,13 +414,6 @@ export function MapaGeral() {
                   onNovaConsulta={() => setConsulta({ aberta: true, selecao: "atual" })}
                 />
               )}
-              <NdviDaArea
-                areaId={selecionadaObj.id}
-                estado={ndvi}
-                temContorno={Boolean(selecionadaObj.geometria)}
-                raster={indice === "ndvi" ? (rasters.porArea.get(selecionadaObj.id) ?? null) : null}
-                onRasterGerado={aoGerarRaster}
-              />
               <div className="mt-2 flex justify-end">
                 <Link href={fichaDaArea(selecionadaObj.id)} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="mapa-abrir-cadastro">Abrir cadastro</Link>
               </div>

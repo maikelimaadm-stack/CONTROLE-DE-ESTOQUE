@@ -232,7 +232,18 @@ export function CondicaoDaArea(p: CondicaoDaAreaProps) {
     },
     onError: (e) => {
       setConfirmando(null);
-      setAviso({ tom: "erro", texto: e instanceof ApiError && e.status === 503 ? "A consulta por satélite está indisponível no momento." : e instanceof Error ? e.message : "Não foi possível pedir a análise." });
+      const motivo503 = e instanceof ApiError && e.status === 503
+        ? (e.details as { motivo?: unknown } | undefined)?.motivo
+        : undefined;
+      const texto503 = motivo503 === "configuracao"
+        ? "A análise por satélite está ligada, mas a credencial do Copernicus não está configurada no servidor da API."
+        : "A consulta por satélite está indisponível no momento.";
+      setAviso({
+        tom: "erro",
+        texto: e instanceof ApiError && e.status === 503
+          ? texto503
+          : e instanceof Error ? e.message : "Não foi possível pedir a análise."
+      });
     }
   });
 
@@ -372,7 +383,7 @@ export function CondicaoDaArea(p: CondicaoDaAreaProps) {
         {obs && (
           <Button type="button" size="sm" variant="ghost" onClick={() => setComparando(true)} data-testid="condicao-comparar">Comparar</Button>
         )}
-        {obs && podePedir && (dataEscolhida !== null || p.indiceAtivo !== "ndvi") && !rasterOk && analiseDoIndice && confirmando !== "raster" && (
+        {obs && podePedir && !rasterOk && analiseDoIndice && confirmando !== "raster" && (
           <Button type="button" size="sm" variant="outline" disabled={gerar.isPending} onClick={() => { setAviso(null); setConfirmando("raster"); }} data-testid="condicao-gerar-raster">
             Gerar raster {nomeIndice}{dataEscolhida ? ` de ${dateBR(dataEscolhida)}` : ""}
           </Button>
@@ -382,9 +393,6 @@ export function CondicaoDaArea(p: CondicaoDaAreaProps) {
         <p className="text-xs text-amber-700" data-testid="condicao-sem-imagem-data">
           Não há imagem de {nomeIndice} gerada em {dateBR(dataEscolhida)} para o contorno atual. Nenhuma outra data é usada no lugar.
         </p>
-      )}
-      {obs && dataEscolhida === null && p.indiceAtivo === "ndvi" && !rasterOk && podePedir && (
-        <p className="text-[10px] text-slate-500">A imagem do NDVI é gerada no bloco Análise NDVI, logo abaixo.</p>
       )}
 
       {verHistorico && (
