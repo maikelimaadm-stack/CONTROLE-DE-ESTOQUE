@@ -91,7 +91,8 @@ describe("SAT-08 — catálogo e fórmulas", () => {
     expect(condicaoHidricaNdmi(-0.1)).toBe("baixa");
     const ind = indicadoresDerivados({ ndviMedio: 0.55, ndmiMedio: 0.1, bsiMedio: 0.05 });
     expect(ind.experimental).toBe(true);
-    expect(ind.aviso.toLowerCase()).toMatch(/capim útil|confirmacao em campo|confirmação em campo/);
+    expect(ind.aviso.toLowerCase()).toMatch(/capim útil/);
+    expect(ind.aviso.toLowerCase()).toMatch(/campo/);
   });
 
   it("delta e tendência curta", () => {

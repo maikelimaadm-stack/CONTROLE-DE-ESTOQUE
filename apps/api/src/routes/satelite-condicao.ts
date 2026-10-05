@@ -148,7 +148,7 @@ async function gravarIndice(
   await ctx.tx.query(
     `insert into erp.analises_satelitais_ext (analise_id, organization_id, empresa_id, area_id, percentis, histograma, qualidade, indicadores_derivados, versao_distribuicao)
      values ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9)
-     on conflict (analise_id) do nothing`,
+     on conflict on constraint uq_analises_sat_ext_analise do nothing`,
     [
       analiseId, ctx.orgId, area.empresa_id, area.id,
       r.percentis ? JSON.stringify(r.percentis) : null,
@@ -424,9 +424,10 @@ export default async function sateliteCondicaoRoutes(app: FastifyInstance) {
       } catch (e) {
         if (!(e instanceof FalhaCopernicus)) throw e;
         if (abriuChamada && e.puCabecalho !== undefined) {
+          const puCabecalho = e.puCabecalho;
           await runService(app, req, PERMISSAO_PEDIR_ANALISE, async (ctx) => {
             const area = await lerAreaNoEscopo(ctx, areaId);
-            await gravarConsumo(ctx.tx, { organizationId: ctx.orgId, empresaId: area.empresa_id, consultaId: null, consultaItemId: null, puCabecalho: e.puCabecalho });
+            await gravarConsumo(ctx.tx, { organizationId: ctx.orgId, empresaId: area.empresa_id, consultaId: null, consultaItemId: null, puCabecalho });
           });
         }
         if (e.tentarAposSegundos !== null) reply.header("retry-after", String(e.tentarAposSegundos));
@@ -445,18 +446,21 @@ export default async function sateliteCondicaoRoutes(app: FastifyInstance) {
         if (!jaExistia) return { conflito: MSG_JANELA_DISPUTADA };
         return { ids, referenciaId, pastagem: feita.resultado, reutilizada: Object.values(ids).every((id) => a.existente?.[id as IdIndiceSatelite] === id) };
       });
-      if ("conflito" in desfecho) throw err("CONCURRENCY_CONFLICT", desfecho.conflito);
+      if ("conflito" in desfecho) {
+        throw err("CONCURRENCY_CONFLICT", typeof desfecho.conflito === "string" ? desfecho.conflito : MSG_JANELA_DISPUTADA);
+      }
+      const ok = desfecho as { ids: Record<IdIndiceSatelite, string>; referenciaId: string; pastagem: ResultadoPastagem; reutilizada: boolean };
       return reply.status(201).send({
         area_id: a.area.id,
         versao_metodo: VERSAO_METODO_PASTAGEM_ESSENCIAL,
-        analise_referencia_id: desfecho.referenciaId,
-        situacao: desfecho.pastagem.situacao,
-        motivo_qualidade: desfecho.pastagem.motivo,
-        observacao_inicio: desfecho.pastagem.observacao?.inicio.toISOString() ?? null,
-        observacao_fim: desfecho.pastagem.observacao?.fim.toISOString() ?? null,
-        indices: desfecho.pastagem.indices.map((r) => dtoIndice(r, desfecho.ids[r.indice])),
-        indicadores_derivados: desfecho.pastagem.indicadores,
-        qualidade: desfecho.pastagem.qualidade,
+        analise_referencia_id: ok.referenciaId,
+        situacao: ok.pastagem.situacao,
+        motivo_qualidade: ok.pastagem.motivo,
+        observacao_inicio: ok.pastagem.observacao?.inicio.toISOString() ?? null,
+        observacao_fim: ok.pastagem.observacao?.fim.toISOString() ?? null,
+        indices: ok.pastagem.indices.map((r) => dtoIndice(r, ok.ids[r.indice])),
+        indicadores_derivados: ok.pastagem.indicadores,
+        qualidade: ok.pastagem.qualidade,
         reutilizada: false,
         aviso: AVISO_VEGETACAO_NAO_E_CAPIM
       });

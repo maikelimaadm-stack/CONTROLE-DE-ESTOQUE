@@ -1,6 +1,7 @@
 {
   "_comentario": "MÓDULO DE ESCOPO EMPRESARIAL DE CADA TABELA (PRE-BASE2-03). Derivado da classificação já certificada em packages/domain/src/escopo-permissao.ts onde ela existe; as marcadas com _decidido foram decididas aqui porque a tabela é lida por mais de um recurso e a classificação por recurso não a alcança sozinha. O gate scripts/company-rls-matrix.mjs exige que TODA tabela com coluna canônica de empresa esteja nesta lista.",
   "analises_satelitais": "pecuaria",
+  "analises_satelitais_ext": "pecuaria",
   "animal_handlings": "pecuaria",
   "animal_movements": "pecuaria",
   "animal_retroactive_costs": "pecuaria",

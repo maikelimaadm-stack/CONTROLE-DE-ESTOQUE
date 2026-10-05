@@ -110,7 +110,8 @@ comment on column erp.satelite_consulta_itens.versao_metodo is
 
 -- ---------- 5) extensão imutável da análise (percentis / histograma / qualidade / indicadores) ----------
 create table erp.analises_satelitais_ext (
-  analise_id uuid primary key,
+  id uuid primary key default gen_random_uuid(),
+  analise_id uuid not null,
   organization_id uuid not null references erp.organizations(id),
   empresa_id uuid not null,
   area_id uuid not null,
@@ -121,6 +122,7 @@ create table erp.analises_satelitais_ext (
   versao_distribuicao text not null
     constraint chk_analises_sat_ext_versao check (versao_distribuicao ~ '^[a-z0-9][a-z0-9._-]{0,39}$'),
   created_at timestamptz not null default now(),
+  constraint uq_analises_sat_ext_analise unique (analise_id),
   constraint fk_analises_sat_ext_empresa foreign key (organization_id, empresa_id)
     references erp.empresas (organization_id, id),
   constraint fk_analises_sat_ext_analise foreign key (organization_id, empresa_id, area_id, analise_id)

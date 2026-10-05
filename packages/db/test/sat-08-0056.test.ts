@@ -27,14 +27,9 @@ beforeAll(async () => {
 
 afterAll(async () => { await app?.end(); await db?.end(); });
 
-async function listaCheck(tabela: string, nome: string): Promise<string[]> {
-  const r = await db.query<{ v: string }>(
-    `select unnest(string_to_array(regexp_replace(pg_get_constraintdef(c.oid), '.*\\((.*)\\).*', '\\1'), ', ')) as v
-       from pg_constraint c
-       join pg_class t on t.oid = c.conrelid
-       join pg_namespace n on n.oid = t.relnamespace
-      where n.nspname = 'erp' and t.relname = $1 and c.conname = $2`, [tabela, nome]);
-  return r.rows.map((x) => x.v.replace(/'/g, "").trim()).filter(Boolean);
+async function listaCheck(nome: string): Promise<string[]> {
+  const def = (await db.query<{ d: string }>("select pg_get_constraintdef(oid) d from pg_constraint where conname=$1", [nome])).rows[0]!.d;
+  return [...def.matchAll(/'([^']+)'::text/g)].map((m) => m[1]!);
 }
 
 describe("SAT-08 — migration 0056", () => {
@@ -51,11 +46,11 @@ describe("SAT-08 — migration 0056", () => {
 
   it("sobe: CHECKs do domínio + tabela ext; reaplicar falha", async () => {
     await db.query(SQL_ALVO);
-    const indices = await listaCheck("analises_satelitais", "chk_analises_satelitais_indice");
+    const indices = await listaCheck("chk_analises_satelitais_indice");
     expect(indices.sort()).toEqual([...INDICES_SATELITE].sort());
-    const bundles = await listaCheck("satelite_consulta_itens", "chk_satelite_consulta_itens_indice_bundle");
+    const bundles = await listaCheck("chk_satelite_consulta_itens_indice_bundle");
     expect(bundles.sort()).toEqual([...INDICES_CONSULTA_SATELITE].sort());
-    const versoes = await listaCheck("satelite_consulta_itens", "chk_satelite_consulta_itens_versao_metodo");
+    const versoes = await listaCheck("chk_satelite_consulta_itens_versao_metodo");
     expect(versoes).toContain("ndvi-v2");
     expect(versoes).toContain(VERSAO_METODO_PASTAGEM_ESSENCIAL);
     const t = await db.query(`select to_regclass('erp.analises_satelitais_ext') is not null as ok`);
@@ -63,24 +58,27 @@ describe("SAT-08 — migration 0056", () => {
     await expect(db.query(SQL_ALVO)).rejects.toThrow(JA);
   });
 
-  it("ext é imutável e RLS por empresa", async () => {
-    const area = await db.query<{ id: string; empresa_id: string }>(
-      `select id, empresa_id from erp.areas where organization_id = $1 and deleted_at is null limit 1`, [demo.orgId]);
-    const a = area.rows[0]!;
-    const hash = await db.query<{ h: string }>(
-      `select encode(sha256(convert_to(geometria::text, 'UTF8')), 'hex') as h from erp.areas where id = $1`, [a.id]);
-    const user = await db.query<{ id: string }>(`select id from erp.users where organization_id = $1 limit 1`, [demo.orgId]);
+  it("ext é imutável", async () => {
+    const empresa = (await db.query<{ id: string }>(
+      `select id from erp.empresas where organization_id = $1 limit 1`, [demo.orgId])).rows[0]!;
+    const poligono = { type: "Polygon", coordinates: [[[-47.1, -15.8], [-47.0, -15.8], [-47.0, -15.7], [-47.1, -15.7], [-47.1, -15.8]]] };
+    const area = (await db.query<{ id: string }>(
+      `insert into erp.areas (organization_id, empresa_id, code, name, area_ha, usable_area_ha, land_use, status, tenure, geometria)
+       values ($1,$2,'SAT08-A','[TEST] SAT-08',12,12,'pastagem','ativa','propria',$3::jsonb) returning id`,
+      [demo.orgId, empresa.id, JSON.stringify(poligono)])).rows[0]!;
+    const hash = (await db.query<{ h: string }>(
+      `select encode(sha256(convert_to(geometria::text, 'UTF8')), 'hex') as h from erp.areas where id = $1`, [area.id])).rows[0]!.h;
     const analise = await db.query<{ id: string }>(
       `insert into erp.analises_satelitais (organization_id, empresa_id, area_id, provedor, colecao, indice, versao_metodo,
           geometria_sha256, janela_inicio, janela_fim, resolucao_m, situacao, motivo_qualidade, pixels_geometria, metadados_provedor, criado_por)
        values ($1,$2,$3,'copernicus_cdse','sentinel-2-l2a','evi2',$4,$5,'2026-09-01','2026-10-01',20,'sem_observacao_util','sem_aquisicao',10,'{}',$6)
        returning id`,
-      [demo.orgId, a.empresa_id, a.id, VERSAO_METODO_PASTAGEM_ESSENCIAL, hash.rows[0]!.h, user.rows[0]!.id]);
+      [demo.orgId, empresa.id, area.id, VERSAO_METODO_PASTAGEM_ESSENCIAL, hash, demo.adminUserId]);
     const id = analise.rows[0]!.id;
     await db.query(
       `insert into erp.analises_satelitais_ext (analise_id, organization_id, empresa_id, area_id, qualidade, versao_distribuicao)
        values ($1,$2,$3,$4,'{"estado":"sem_imagem_util"}',$5)`,
-      [id, demo.orgId, a.empresa_id, a.id, VERSAO_METODO_PASTAGEM_ESSENCIAL]);
+      [id, demo.orgId, empresa.id, area.id, VERSAO_METODO_PASTAGEM_ESSENCIAL]);
     await expect(db.query(`update erp.analises_satelitais_ext set qualidade = '{}' where analise_id = $1`, [id]))
       .rejects.toThrow(/não se altera|nao se altera|CONFLICT/i);
   });
