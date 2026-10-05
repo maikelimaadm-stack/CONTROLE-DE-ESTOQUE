@@ -61,6 +61,8 @@ export function MapaGeral() {
   const [selecionada, setSelecionada] = React.useState<string | null>(null);
   const [hoverAreaId, setHoverAreaId] = React.useState<string | null>(null);
   const [idsViewport, setIdsViewport] = React.useState<string[]>([]);
+  /** Evita o flash "Por área" → "Por pixel" enquanto os rasters ainda carregam. */
+  const padraoTravadoRef = React.useRef(false);
   const areasRef = React.useRef(areas);
   React.useEffect(() => { areasRef.current = areas; }, [areas]);
   React.useEffect(() => {
@@ -90,10 +92,18 @@ export function MapaGeral() {
     return false;
   }, [rasters.porArea]);
 
-  // Padrão: por pixel quando há imagem; senão por área (média); senão cadastro.
+  // Trava o padrão UMA vez, só depois que a listagem de rasters terminou — evita abrir em
+  // "Por área" e saltar sozinho para "Por pixel" quando as imagens chegam.
+  React.useEffect(() => {
+    if (!comNdvi || modoEscolhido !== null || padraoTravadoRef.current) return;
+    if (rasters.situacao === "carregando" || rasters.situacao === "ocioso") return;
+    padraoTravadoRef.current = true;
+    setModoCor(algumRaster ? "pixel" : algumNdvi ? "area" : "cadastro");
+  }, [comNdvi, modoEscolhido, rasters.situacao, algumRaster, algumNdvi]);
+
   const modoCor: ModoCor = !comNdvi
     ? "cadastro"
-    : (modoEscolhido ?? (algumRaster ? "pixel" : algumNdvi ? "area" : "cadastro"));
+    : (modoEscolhido ?? "cadastro");
 
   /** Cor sólida do preenchimento (média NDVI ou cadastro). No modo pixel, áreas SEM raster caem na média. */
   const corPorArea = React.useMemo((): ReadonlyMap<string, string> | null => {

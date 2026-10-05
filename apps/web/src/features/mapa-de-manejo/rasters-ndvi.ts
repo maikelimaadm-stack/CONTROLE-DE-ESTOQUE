@@ -193,7 +193,6 @@ export function useRastersNdvi(areaIdsAtivos: readonly string[], ativo: boolean)
   const [situacao, setSituacao] = React.useState<"ocioso" | "carregando" | "pronto" | "erro">("ocioso");
   const [erro, setErro] = React.useState<string | null>(null);
   const cacheRef = React.useRef(new Map<string, EntradaRasterEmMemoria>());
-  const lutRef = React.useRef<Uint8ClampedArray | null>(null);
   const idsKey = areaIdsAtivos.slice().sort().join(",");
 
   const liberarFora = React.useCallback((manter: ReadonlySet<string>) => {
@@ -229,9 +228,6 @@ export function useRastersNdvi(areaIdsAtivos: readonly string[], ativo: boolean)
           const dtos = await listarRastersPorAreas(faltando);
           for (const dto of dtos) {
             if (cancelado) return;
-            if (!lutRef.current || lutRef.current.length < 1024) {
-              lutRef.current = montarLutNdvi(dto.escala_min, dto.escala_max);
-            }
             // Cada DTO pode ter escala própria — a LUT de COR usa a escala de CODIFICAÇÃO do DTO.
             const lut = montarLutNdvi(dto.escala_min, dto.escala_max);
             try {
