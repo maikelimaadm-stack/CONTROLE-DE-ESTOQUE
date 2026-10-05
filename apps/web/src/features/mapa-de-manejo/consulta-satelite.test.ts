@@ -21,9 +21,9 @@ describe("resolverAlvo", () => {
     expect(resolverAlvo("sem_analise", fonte({ semAnalise: ["z"] }))).toMatchObject({ ok: true, quantidade: 1 });
   });
 
-  it("retiro e fazenda mandam o alvo do servidor, sem geometria nem empresa", () => {
+  it("retiro e empresa mandam o alvo do servidor, sem geometria nem empresa_id no corpo", () => {
     expect(resolverAlvo("retiro", fonte({ retiroId: "r1" }))).toEqual({ ok: true, alvo: { tipo: "retiro", retiro_id: "r1" }, quantidade: null });
-    expect(resolverAlvo("fazenda", fonte())).toEqual({ ok: true, alvo: { tipo: "todas" }, quantidade: null });
+    expect(resolverAlvo("empresa", fonte())).toEqual({ ok: true, alvo: { tipo: "todas" }, quantidade: null });
   });
 
   it("seleção vazia ou acima do teto de 200 itens é recusada na tela", () => {

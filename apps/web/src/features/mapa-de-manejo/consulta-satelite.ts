@@ -15,19 +15,19 @@ import {
   type PeriodoConsulta
 } from "@agro/domain";
 
-export type SelecaoConsulta = "atual" | "escolhidas" | "viewport" | "retiro" | "fazenda" | "sem_analise" | "desatualizadas";
+export type SelecaoConsulta = "atual" | "escolhidas" | "viewport" | "retiro" | "empresa" | "sem_analise" | "desatualizadas";
 
 export const ROTULO_SELECAO: Readonly<Record<SelecaoConsulta, string>> = {
   atual: "Área aberta no painel",
   escolhidas: "Áreas escolhidas na lista",
   viewport: "Áreas à vista no mapa",
   retiro: "Um retiro",
-  fazenda: "Toda a fazenda",
+  empresa: "Toda a empresa",
   sem_analise: "Áreas ainda sem análise",
   desatualizadas: "Áreas desatualizadas"
 };
 
-export const ORDEM_SELECAO: readonly SelecaoConsulta[] = ["atual", "escolhidas", "viewport", "retiro", "fazenda", "sem_analise", "desatualizadas"];
+export const ORDEM_SELECAO: readonly SelecaoConsulta[] = ["atual", "escolhidas", "viewport", "retiro", "empresa", "sem_analise", "desatualizadas"];
 
 export type AlvoConsulta =
   | { tipo: "areas"; area_ids: string[] }
@@ -88,7 +88,7 @@ export function resolverAlvo(selecao: SelecaoConsulta, f: FonteDeSelecao): AlvoR
         : porLista(f.desatualizadas, "Todas as áreas com contorno têm análise válida do contorno atual para o índice ativo.");
     case "retiro":
       return f.retiroId ? { ok: true, alvo: { tipo: "retiro", retiro_id: f.retiroId }, quantidade: null } : { ok: false, motivo: "Escolha o retiro." };
-    case "fazenda":
+    case "empresa":
       return { ok: true, alvo: { tipo: "todas" }, quantidade: null };
   }
 }

@@ -93,15 +93,15 @@ export function planejarGradeRaster(poligono: PoligonoGeoJson, resolucaoAlvoM: n
     };
   };
   const maior = (r: number) => { const l = lados(r); return Math.max(l.largura, l.altura); };
-  const menor = (r: number) => { const l = lados(r); return Math.min(l.largura, l.altura); };
 
+  // Pixel real: resolucaoM NUNCA abaixo da nativa (10 m ou 20 m). Área grande pode
+  // aumentar o metro/pixel (reduzida=true). Área minúscula mantém a nativa e completa
+  // o bbox com margem até LADO_MINIMO_RASTER_PX — sem inventar 1 m / 2 m.
   let resolucaoM = resolucaoAlvoM;
   if (maior(resolucaoM) > LADO_MAXIMO_RASTER_PX) {
     const piso = Math.floor((Math.max(dx, dy) * cosLat) / (LADO_MAXIMO_RASTER_PX - 2 * MARGEM_RASTER_PX + 1));
     resolucaoM = Math.max(resolucaoAlvoM + 1, piso);
     while (maior(resolucaoM) > LADO_MAXIMO_RASTER_PX) resolucaoM++;
-  } else {
-    while (resolucaoM > 1 && menor(resolucaoM) < LADO_MINIMO_RASTER_PX && maior(resolucaoM - 1) <= LADO_MAXIMO_RASTER_PX) resolucaoM--;
   }
   const pixel = resolucaoM / cosLat;
   const { largura: l0, altura: a0 } = lados(resolucaoM);

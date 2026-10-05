@@ -1,12 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { ENCODING_RASTER_POR_INDICE, INDICES_RASTER } from "@agro/domain";
+import type { PoligonoGeoJson } from "../../src/lib/satelite/geometria.js";
 import { chaveCacheRaster, montarCorpoProcesso, planejarGradeRaster } from "../../src/lib/satelite/raster.js";
 import { EVALSCRIPT_RASTER_POR_INDICE } from "../../src/lib/satelite/evalscript-raster.js";
 
 const AREA = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const HASH = "a".repeat(64);
-const POLIGONO = {
-  type: "Polygon" as const,
+const POLIGONO: PoligonoGeoJson = {
+  type: "Polygon",
   coordinates: [[[-56.1, -15.6], [-56.1, -15.59], [-56.09, -15.59], [-56.09, -15.6], [-56.1, -15.6]]]
 };
 

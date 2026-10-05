@@ -952,7 +952,7 @@ describe("SAT-06 (15)(16) — escopo de empresa, organização, listagem em lote
     const ids201 = Array.from({ length: AREAS_POR_LISTAGEM_MAXIMO + 1 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
     const ids200 = ids201.slice(0, AREAS_POR_LISTAGEM_MAXIMO);
     for (const q of [
-      "", "area_ids=", `area_ids=${um},${um}`, `area_ids=${um.toUpperCase()}`, `area_ids=${um},`, `area_ids=${ids201.join(",")}`, `area_ids=${um}&indice=ndre`,
+      "", "area_ids=", `area_ids=${um},${um}`, `area_ids=${um.toUpperCase()}`, `area_ids=${um},`, `area_ids=${ids201.join(",")}`, `area_ids=${um}&indice=foo`,
       `area_ids=${um}&tamanho=0`, `area_ids=${um}&tamanho=201`, `area_ids=${um}&pagina=1e2`, `area_ids=${um}&pagina=01`, `area_ids=${um}&empresa_id=x`, `area_ids=${um}&x=1`,
       `area_ids=${um}&area_ids=${um}`
     ]) {

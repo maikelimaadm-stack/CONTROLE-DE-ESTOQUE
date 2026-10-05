@@ -5,6 +5,8 @@ import {
   avaliarAnomaliaSatelite,
   codificarValorRaster,
   decodificarByteRaster,
+  encodingRasterDe,
+  encodingRasterPorVersao,
   type PontoSerieIndice
 } from "../src/index.js";
 
@@ -63,5 +65,35 @@ describe("SAT-FINAL adversarial — contratos que não podem regredir", () => {
       expect(Number.isFinite(enc.scaleMin)).toBe(true);
       expect(Number.isFinite(enc.scaleMax)).toBe(true);
     }
+  });
+
+  it("ADV-6: versão desconhecida não herda metadados do catálogo atual do índice", () => {
+    expect(encodingRasterDe("ndvi")?.encodingVersion).toBe("ndvi-valores-v1");
+    expect(encodingRasterPorVersao("ndvi-valores-v1")?.encodingVersion).toBe("ndvi-valores-v1");
+    expect(encodingRasterPorVersao("ndvi-valores-v999-inexistente")).toBeNull();
+  });
+
+  it("ADV-7: 30 pontos com queda só no fim — anomalia precisa ver os recentes (série ASC completa)", () => {
+    const hash = "d".repeat(64);
+    const vals = Array.from({ length: 30 }, (_, i) => (i < 24 ? 0.7 : 0.7 - (i - 23) * 0.1));
+    const serie = vals.map((media, i) => ({
+      data: `2026-09-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
+      media,
+      qualidadeOk: true,
+      geometriaSha256: hash
+    }));
+    // Se alguém cortar ASC LIMIT 24 dos antigos, a queda some.
+    const soAntigos = serie.slice(0, 24);
+    const recentes = serie.slice(-24);
+    const rAntigos = avaliarAnomaliaSatelite({
+      geometriaSha256Atual: hash,
+      series: { ndvi: soAntigos, ndre: soAntigos, ndmi: soAntigos, bsi: soAntigos }
+    });
+    const rRecentes = avaliarAnomaliaSatelite({
+      geometriaSha256Atual: hash,
+      series: { ndvi: recentes, ndre: recentes, ndmi: recentes, bsi: recentes }
+    });
+    expect(rAntigos.nivel).toBe("nenhuma");
+    expect(["leve", "moderada", "forte"]).toContain(rRecentes.nivel);
   });
 });

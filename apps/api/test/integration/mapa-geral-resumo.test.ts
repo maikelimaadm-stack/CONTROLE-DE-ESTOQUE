@@ -22,7 +22,7 @@ const quadrado = (lon: number, lat: number, lado: number) =>
 
 interface Item {
   area_id: string;
-  ultima_execucao: { situacao: string; motivo_qualidade: string | null; criado_em: string };
+  ultima_execucao: { situacao: string; motivo_qualidade: string | null; criado_em: string } | null;
   ultima_observacao: { observacao_inicio: string; valor_medio: string; do_poligono_atual: boolean; [campo: string]: unknown } | null;
   observacao_anterior: { observacao_inicio: string; valor_medio: string } | null;
   variacao: string | null;
@@ -137,14 +137,18 @@ describe("MAPA-GERAL resumo — o que cada área mostra", () => {
     });
   });
 
-  it("uma imagem só: sem anterior e sem variação; polígono redesenhado → do_poligono_atual falso (o número fica, com o aviso)", async () => {
-    let i = porArea(j(await resumo())).get(area["deB"]!)!;
+  it("uma imagem só: sem anterior e sem variação; polígono redesenhado → área some do resumo operacional (não pinta valor antigo)", async () => {
+    const i = porArea(j(await resumo())).get(area["deB"]!)!;
     expect(i.ultima_observacao).toMatchObject({ valor_medio: "0.4500", do_poligono_atual: true });
     expect(i.observacao_anterior).toBeNull();
     expect(i.variacao).toBeNull();
+    // SATÉLITE COMPLETO R1: contorno antigo NÃO coloriza o mapa. Restaura o polígono para não
+    // derrubar os testes de escopo/paginação que compartilham a área deB.
+    const geomAntes = (await admin.query<{ geometria: unknown }>("select geometria from erp.areas where id=$1", [area["deB"]])).rows[0]!.geometria;
     await admin.query("update erp.areas set geometria=$2 where id=$1", [area["deB"], JSON.stringify(quadrado(-56.1, -15.6, 0.012))]);
-    i = porArea(j(await resumo())).get(area["deB"]!)!;
-    expect(i.ultima_observacao).toMatchObject({ valor_medio: "0.4500", do_poligono_atual: false });
+    expect(porArea(j(await resumo())).get(area["deB"]!)).toBeUndefined();
+    await admin.query("update erp.areas set geometria=$2 where id=$1", [area["deB"], JSON.stringify(geomAntes)]);
+    expect(porArea(j(await resumo())).get(area["deB"]!)?.ultima_observacao).toMatchObject({ valor_medio: "0.4500", do_poligono_atual: true });
   });
 });
 

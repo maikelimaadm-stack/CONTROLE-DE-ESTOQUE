@@ -7,6 +7,7 @@ import {
   codificarValorRaster,
   decodificarByteRaster,
   encodingRasterDe,
+  encodingRasterPorVersao,
   resolucaoNativaHonesta
 } from "../src/index.js";
 
@@ -62,5 +63,15 @@ describe("SAT-FINAL — encoding raster multi-índice", () => {
     expect(ENCODING_RASTER_POR_INDICE.ndvi.scaleMin).toBe(-0.2);
     expect(ENCODING_RASTER_POR_INDICE.ndvi.scaleMax).toBe(1.0);
     expect(encodingRasterDe("foo")).toBeNull();
+  });
+
+  it("R-9 lookup por versão armazenada — não pelo catálogo atual do índice", () => {
+    const v1 = encodingRasterPorVersao("ndvi-valores-v1");
+    expect(v1).not.toBeNull();
+    expect(v1!.encodingVersion).toBe("ndvi-valores-v1");
+    expect(v1!.nativeResolutionM).toBe(10);
+    // Versão desconhecida: fail-closed (não inventa metadados do catálogo atual).
+    expect(encodingRasterPorVersao("ndvi-valores-v999")).toBeNull();
+    expect(encodingRasterPorVersao("")).toBeNull();
   });
 });

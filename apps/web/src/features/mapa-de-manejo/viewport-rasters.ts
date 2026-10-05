@@ -34,7 +34,7 @@ export interface RasterIndiceDto {
   url_assinada: string;
   expira_em: string;
   encoding_version?: string | null;
-  nodata?: number;
+  nodata?: number | null;
   bits?: number;
   native_resolution_m?: number | null;
   processing_resolution_m?: number | null;

@@ -357,13 +357,17 @@ async function lerSeriesAnomalia(
     const r = await ctx.tx.query<{
       observacao_inicio: Date; valor_medio: string | null; cobertura_valida: string | null; geometria_sha256: string;
     }>(
-      `select s.observacao_inicio, s.valor_medio::text, s.cobertura_valida::text, s.geometria_sha256
-         from erp.analises_satelitais s
-        where s.organization_id = $1 and s.area_id = $2 and s.indice = $3 and s.versao_metodo = $4
-          and s.geometria_sha256 = $5 and s.situacao = 'concluida'
-          and s.observacao_inicio is not null and s.valor_medio is not null${escopo}
-        order by s.observacao_inicio asc
-        limit 24`, params);
+      // 24 MAIS RECENTES (DESC+LIMIT), depois ASC para o domínio (antigo→recente).
+      `select observacao_inicio, valor_medio, cobertura_valida, geometria_sha256 from (
+          select s.observacao_inicio, s.valor_medio::text as valor_medio, s.cobertura_valida::text as cobertura_valida, s.geometria_sha256
+            from erp.analises_satelitais s
+           where s.organization_id = $1 and s.area_id = $2 and s.indice = $3 and s.versao_metodo = $4
+             and s.geometria_sha256 = $5 and s.situacao = 'concluida'
+             and s.observacao_inicio is not null and s.valor_medio is not null${escopo}
+           order by s.observacao_inicio desc, s.created_at desc, s.id desc
+           limit 24
+        ) recentes
+        order by observacao_inicio asc`, params);
     out[indice] = r.rows.map((l) => ({
       data: l.observacao_inicio.toISOString(),
       media: Number(l.valor_medio),

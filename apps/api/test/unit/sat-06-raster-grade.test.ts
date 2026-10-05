@@ -113,15 +113,17 @@ describe("SAT-06 planejarGradeRaster — pixel de ~10 m NO TERRENO, margem, teto
     const ladoCom17 = Math.ceil((c.maxy - c.miny) / (17 / Math.cos(rad(latCentral(p))))) + 2 * MARGEM_RASTER_PX;
     expect(ladoCom17).toBeGreaterThan(LADO_MAXIMO_RASTER_PX);
   });
-  it("área MINÚSCULA: a resolução desce (inteiro ≥ 1) e o menor lado nunca fica abaixo de 32 px", () => {
-    const pequena = planejarGradeRaster(quadrado(-56.1, -15.6, 0.0012, 0.0012)); // ~130 m: 10 m daria 13 + 4 px
-    expect(pequena.resolucaoM).toBeLessThan(10);
-    expect(pequena.resolucaoM).toBeGreaterThanOrEqual(1);
+  it("área MINÚSCULA: resolução NUNCA abaixo da nativa; bbox completa até 32 px", () => {
+    // SATÉLITE COMPLETO R1: Pixel real = resolução nativa mínima (10 m). Sem reamostrar a 1 m.
+    const pequena = planejarGradeRaster(quadrado(-56.1, -15.6, 0.0012, 0.0012), 10);
+    expect(pequena.resolucaoM).toBe(10);
+    expect(pequena.resolucaoAlvoM).toBe(10);
     expect(Math.min(pequena.largura, pequena.altura)).toBeGreaterThanOrEqual(LADO_MINIMO_RASTER_PX);
     expect(pequena.reduzida).toBe(false);
-    // ~11 m de lado: nem a 1 m chega a 32 px — o lado é completado até 32 (margem centrada)
-    const minuscula = planejarGradeRaster(quadrado(-56.1, -15.6, 0.0001, 0.0001));
-    expect([minuscula.largura, minuscula.altura, minuscula.resolucaoM]).toEqual([32, 32, 1]);
+    const minuscula = planejarGradeRaster(quadrado(-56.1, -15.6, 0.0001, 0.0001), 10);
+    expect(minuscula.resolucaoM).toBe(10);
+    expect(minuscula.largura).toBe(LADO_MINIMO_RASTER_PX);
+    expect(minuscula.altura).toBe(LADO_MINIMO_RASTER_PX);
   });
   it("faixa longa e estreita: o teto vence (resolução reduzida) e o lado curto é completado até 32", () => {
     const g = planejarGradeRaster(quadrado(-56.5, -15.6, 0.25, 0.0005)); // ~27 km × 55 m

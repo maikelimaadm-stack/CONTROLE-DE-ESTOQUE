@@ -109,6 +109,17 @@ export function encodingRasterDe(indice: string): EncodingRasterIndice | null {
   return ENCODING_RASTER_POR_INDICE[indice as IdIndiceRaster];
 }
 
+/**
+ * Lookup pela versão QUE GEROU o raster (`versao_evalscript` armazenada).
+ * Não usar o catálogo atual do índice: encoding antigo ≠ versão nova com o mesmo nome de índice.
+ */
+export function encodingRasterPorVersao(versao: string): EncodingRasterIndice | null {
+  for (const enc of Object.values(ENCODING_RASTER_POR_INDICE)) {
+    if (enc.encodingVersion === versao) return enc;
+  }
+  return null;
+}
+
 /** Confere que o encoding declara a mesma resolução nativa do catálogo SSOT. */
 export function resolucaoNativaHonesta(indice: IdIndiceRaster): 10 | 20 {
   const cat = CATALOGO_INDICES[indice].resolucaoNativaM;

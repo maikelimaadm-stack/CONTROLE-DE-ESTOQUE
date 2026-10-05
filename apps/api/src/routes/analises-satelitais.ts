@@ -101,7 +101,7 @@ const resumoQuery = z.object({
 
 interface LinhaResumo {
   area_id: string; hash_atual: string | null;
-  ultima_situacao: string; ultima_motivo: string | null; ultima_criado: Date;
+  ultima_situacao: string | null; ultima_motivo: string | null; ultima_criado: Date | null;
   u_observacao_inicio: Date | null; u_observacao_fim: Date | null; u_valor_medio: string | null; u_valor_minimo: string | null;
   u_valor_maximo: string | null; u_desvio_padrao: string | null; u_cobertura_valida: string | null; u_pixels_validos: number | null;
   u_geometria_sha256: string | null; u_criado: Date | null;
@@ -423,17 +423,21 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
       const escopoUteis = empresaScopeSql(ctx, "s", params);
       params.push(q.tamanho + 1, (q.pagina - 1) * q.tamanho);
       const limite = `$${params.length - 1}`, deslocamento = `$${params.length}`;
-      // A imagem útil de ordem `n` da área (0 = a mais recente): distinct on por imagem, a análise mais recente dela.
+      // OPERACIONAL: só análises cujo geometria_sha256 confere com o polígono vigente.
+      // Contorno antigo não coloriza o mapa; após redesenho sem análise nova → sem observação.
+      const hashExpr = `case when ar.geometria is null then null else encode(sha256(convert_to(ar.geometria::text, 'UTF8')), 'hex') end`;
       const util = (n: number) => `
            select distinct on (s.observacao_inicio) s.observacao_inicio, s.observacao_fim, s.valor_medio, s.valor_minimo,
                   s.valor_maximo, s.desvio_padrao, s.cobertura_valida, s.pixels_validos, s.geometria_sha256, s.created_at
              from erp.analises_satelitais s
-            where s.organization_id = $1 and s.area_id = ar.id and s.indice = $2 and s.situacao = 'concluida'${escopoUteis}
+            where s.organization_id = $1 and s.area_id = ar.id and s.indice = $2 and s.situacao = 'concluida'
+              and ar.geometria is not null
+              and s.geometria_sha256 = encode(sha256(convert_to(ar.geometria::text, 'UTF8')), 'hex')${escopoUteis}
             order by s.observacao_inicio desc, s.created_at desc, s.id desc
             offset ${n} limit 1`;
       const r = await ctx.tx.query<LinhaResumo>(
         `select ar.id as area_id,
-                case when ar.geometria is null then null else encode(sha256(convert_to(ar.geometria::text, 'UTF8')), 'hex') end as hash_atual,
+                ${hashExpr} as hash_atual,
                 x.situacao as ultima_situacao, x.motivo_qualidade as ultima_motivo, x.created_at as ultima_criado,
                 u.observacao_inicio as u_observacao_inicio, u.observacao_fim as u_observacao_fim, u.valor_medio as u_valor_medio,
                 u.valor_minimo as u_valor_minimo, u.valor_maximo as u_valor_maximo, u.desvio_padrao as u_desvio_padrao,
@@ -444,19 +448,22 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
            from (
              select a.id, a.code, a.geometria
                from erp.areas a
-              where a.organization_id = $1 and a.deleted_at is null${escopoArea}
-                and exists (select 1 from erp.analises_satelitais e
-                             where e.organization_id = $1 and e.area_id = a.id and e.indice = $2${escopoExecucao})
+              where a.organization_id = $1 and a.deleted_at is null and a.geometria is not null${escopoArea}
+                and exists (
+                  select 1 from erp.analises_satelitais e
+                   where e.organization_id = $1 and e.area_id = a.id and e.indice = $2
+                     and e.geometria_sha256 = encode(sha256(convert_to(a.geometria::text, 'UTF8')), 'hex')${escopoExecucao})
               order by a.code, a.id
               limit ${limite} offset ${deslocamento}
            ) ar
-           cross join lateral (
+           left join lateral (
              select e.situacao, e.motivo_qualidade, e.created_at
                from erp.analises_satelitais e
-              where e.organization_id = $1 and e.area_id = ar.id and e.indice = $2${escopoExecucao}
+              where e.organization_id = $1 and e.area_id = ar.id and e.indice = $2
+                and e.geometria_sha256 = encode(sha256(convert_to(ar.geometria::text, 'UTF8')), 'hex')${escopoExecucao}
               order by e.created_at desc, e.id desc
               limit 1
-           ) x
+           ) x on true
            left join lateral (${util(0)}
            ) u on true
            left join lateral (${util(1)}
@@ -464,12 +471,14 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
           order by ar.code, ar.id`, params);
       const itens = r.rows.slice(0, q.tamanho).map((l) => ({
         area_id: l.area_id,
-        ultima_execucao: { situacao: l.ultima_situacao, motivo_qualidade: l.ultima_motivo, criado_em: l.ultima_criado.toISOString() },
+        ultima_execucao: l.ultima_criado ? {
+          situacao: l.ultima_situacao, motivo_qualidade: l.ultima_motivo, criado_em: l.ultima_criado.toISOString()
+        } : null,
         ultima_observacao: l.u_observacao_inicio ? {
           observacao_inicio: l.u_observacao_inicio.toISOString(), observacao_fim: l.u_observacao_fim?.toISOString() ?? null,
           valor_medio: l.u_valor_medio, valor_minimo: l.u_valor_minimo, valor_maximo: l.u_valor_maximo, desvio_padrao: l.u_desvio_padrao,
           cobertura_valida: l.u_cobertura_valida, pixels_validos: l.u_pixels_validos,
-          do_poligono_atual: l.hash_atual !== null && l.u_geometria_sha256 === l.hash_atual,
+          do_poligono_atual: true,
           criado_em: l.u_criado?.toISOString() ?? null
         } : null,
         observacao_anterior: l.a_observacao_inicio ? { observacao_inicio: l.a_observacao_inicio.toISOString(), valor_medio: l.a_valor_medio } : null,

@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { withTx } from "@agro/db";
 import {
-  COLECAO_SENTINEL2_L2A, INDICES_RASTER, PROVEDOR_COPERNICUS, encodingRasterDe, moduloDaPermissao,
-  type EncodingRasterIndice, type IdIndiceRaster
+  COLECAO_SENTINEL2_L2A, INDICES_RASTER, PROVEDOR_COPERNICUS, encodingRasterDe, encodingRasterPorVersao,
+  moduloDaPermissao, type EncodingRasterIndice, type IdIndiceRaster
 } from "@agro/domain";
 import { runService } from "../lib/service.js";
 import { DomainError, err, validation } from "../lib/errors.js";
@@ -94,11 +94,18 @@ const sha256Hex = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 const corpoVazio = z.object({}).strict();
 const semQuery = z.object({}).strict();
 const inteiroPositivo = (maximo: number) => z.string().regex(/^[1-9]\d{0,8}$/).transform(Number).pipe(z.number().int().min(1).max(maximo));
+const diaUtc = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const listaQuery = z.object({
   /** `uuid,uuid,…` — só a forma canônica (minúsculas), sem repetir, 1..200. */
   area_ids: z.string().transform((v) => v.split(",")).pipe(
     z.array(z.string().regex(UUID_CANONICO)).min(1).max(AREAS_POR_LISTAGEM_MAXIMO).refine((l) => new Set(l).size === l.length, "Área repetida")),
   indice: z.enum(INDICES_RASTER_ENUM).default("ndvi"),
+  /**
+   * Modo operacional:
+   * - ausente/`ultima`: raster da ÚLTIMA análise útil do polígono atual (não o último gerado).
+   * - `data_imagem=YYYY-MM-DD`: só aquele dia; sem fallback para latest.
+   */
+  data_imagem: diaUtc.optional(),
   pagina: inteiroPositivo(1_000_000).default(1),
   tamanho: inteiroPositivo(AREAS_POR_LISTAGEM_MAXIMO).default(TAMANHO_PAGINA_PADRAO)
 }).strict();
@@ -114,9 +121,10 @@ interface AreaRaster { id: string; empresa_id: string; geometria: unknown; geome
 interface LinhaRaster {
   id: string; empresa_id: string; analise_id: string; area_id: string; indice: string; tipo: string; data_imagem: string; largura: number; altura: number;
   cantos_lnglat: unknown; escala_min: string; escala_max: string; resolucao_m: number;
+  versao_evalscript: string; geometria_sha256: string;
 }
 const COLUNAS_RASTER = ["id", "empresa_id", "analise_id", "area_id", "indice", "tipo", "data_imagem", "largura", "altura", "cantos_lnglat",
-  "escala_min", "escala_max", "resolucao_m"];
+  "escala_min", "escala_max", "resolucao_m", "versao_evalscript", "geometria_sha256"];
 const colunasRaster = (alias: string) => COLUNAS_RASTER.map((c) => `${alias}.${c}`).join(", ");
 
 /** Tudo o que a FASE A decide sobre a imagem da análise, antes de qualquer chamada. */
@@ -242,18 +250,20 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
   /** DTO do ERP — nunca o corpo do provedor. A URL assinada é do usuário que pede, e vale `VALIDADE_URL_RASTER_S`. */
   function paraDto(l: LinhaRaster, orgId: string, userId: string) {
     const { token, expira } = assinador.assinar({ rasterId: l.id, organizationId: orgId, userId });
-    const enc = encodingRasterDe(l.indice);
+    // Metadados de encoding vêm da VERSÃO ARMAZENADA — não do catálogo atual do índice.
+    const enc = encodingRasterPorVersao(l.versao_evalscript);
     const escalaMin = Number(l.escala_min);
     const escalaMax = Number(l.escala_max);
-    const alvo = enc?.processingResolutionM ?? 10;
+    const alvo = enc?.processingResolutionM ?? null;
     return {
       id: l.id, analise_id: l.analise_id, area_id: l.area_id, indice: l.indice, tipo: l.tipo, data_imagem: l.data_imagem,
       largura: l.largura, altura: l.altura, cantos_lnglat: l.cantos_lnglat,
       escala_min: escalaMin, escala_max: escalaMax, resolucao_m: l.resolucao_m,
-      resolucao_reduzida: l.resolucao_m > alvo,
-      encoding_version: enc?.encodingVersion ?? null,
-      nodata: enc?.nodata ?? 0,
-      bits: enc?.bits ?? 8,
+      resolucao_reduzida: alvo !== null ? l.resolucao_m > alvo : false,
+      geometria_sha256: l.geometria_sha256,
+      encoding_version: l.versao_evalscript,
+      nodata: enc?.nodata ?? null,
+      bits: enc?.bits ?? null,
       native_resolution_m: enc?.nativeResolutionM ?? null,
       processing_resolution_m: enc?.processingResolutionM ?? null,
       url_assinada: `/api/mapa/rasters/${l.id}/arquivo?t=${token}`,
@@ -460,11 +470,12 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
   });
 
   /**
-   * A imagem MAIS RECENTE (data da imagem, depois o registro) de cada área pedida, numa consulta só. As áreas pedidas
-   * (até 200) são filtradas na própria `erp.areas` (viva, da organização, no escopo de empresa) e cada uma busca a SUA
-   * imagem mais recente por `lateral … limit 1` com o prefixo inteiro do índice da 0055 (organização, empresa DA ÁREA,
-   * área, índice); o `cross join` deixa de fora a área sem imagem ANTES do `limit` (a página nunca sai curta por
-   * recorte posterior). O escopo de empresa entra em CADA ocorrência de tabela (área e imagem). Não gera nada.
+   * Raster OPERACIONAL por área — preso à geometria atual de `erp.areas`.
+   *
+   * Sem `data_imagem`: raster da ÚLTIMA análise útil (concluída) do índice no polígono vigente.
+   *   Se essa análise ainda não tem raster → a área não entra (UI oferece "gerar desta observação").
+   * Com `data_imagem=YYYY-MM-DD`: só aquele dia; SEM fallback para latest.
+   * Raster de geometria antiga NUNCA retorna.
    */
   app.get("/mapa/rasters", async (req) => {
     exigir(app, req, PERMISSAO_VER_ANALISE);
@@ -473,23 +484,53 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
       const params: unknown[] = [ctx.orgId, q.area_ids, q.indice];
       const escopoArea = empresaScopeSql(ctx, "a", params);
       const escopoRaster = empresaScopeSql(ctx, "r", params);
+      const escopoAnalise = empresaScopeSql(ctx, "s", params);
+      let filtroData = "";
+      if (q.data_imagem) {
+        params.push(q.data_imagem);
+        filtroData = ` and r.data_imagem = $${params.length}::date`;
+      }
       params.push(q.tamanho + 1, (q.pagina - 1) * q.tamanho);
       const limite = `$${params.length - 1}`, deslocamento = `$${params.length}`;
+      const hashArea = `encode(sha256(convert_to(a.geometria::text, 'UTF8')), 'hex')`;
+      // Modo última útil: amarra ao analise_id da última observação concluída do polígono atual.
+      // Modo data: filtra data_imagem exata + geometria atual (sem fallback).
+      const lateral = q.data_imagem
+        ? `select ${colunasRaster("r")}
+             from erp.satelite_rasters r
+            where r.organization_id = $1 and r.empresa_id = a.empresa_id and r.area_id = a.id and r.indice = $3
+              and r.geometria_sha256 = ${hashArea}${filtroData}${escopoRaster}
+            order by r.created_at desc, r.id desc
+            limit 1`
+        : `select ${colunasRaster("r")}
+             from (
+               select s.id as analise_id
+                 from erp.analises_satelitais s
+                where s.organization_id = $1 and s.area_id = a.id and s.indice = $3
+                  and s.situacao = 'concluida' and s.observacao_inicio is not null
+                  and s.geometria_sha256 = ${hashArea}${escopoAnalise}
+                order by s.observacao_inicio desc, s.created_at desc, s.id desc
+                limit 1
+             ) util
+             join erp.satelite_rasters r
+               on r.organization_id = $1 and r.empresa_id = a.empresa_id and r.area_id = a.id
+              and r.analise_id = util.analise_id and r.indice = $3
+              and r.geometria_sha256 = ${hashArea}${escopoRaster}
+            limit 1`;
       const r = await ctx.tx.query<LinhaRaster>(
         `select ${colunasRaster("x")}
            from erp.areas a
-           cross join lateral (
-             select ${colunasRaster("r")}
-               from erp.satelite_rasters r
-              where r.organization_id = $1 and r.empresa_id = a.empresa_id and r.area_id = a.id and r.indice = $3${escopoRaster}
-              order by r.data_imagem desc, r.created_at desc, r.id desc
-              limit 1
-           ) x
-          where a.organization_id = $1 and a.id = any($2::uuid[]) and a.deleted_at is null${escopoArea}
+           cross join lateral (${lateral}) x
+          where a.organization_id = $1 and a.id = any($2::uuid[]) and a.deleted_at is null
+            and a.geometria is not null${escopoArea}
           order by a.code, a.id
           limit ${limite} offset ${deslocamento}`, params);
       const itens = r.rows.slice(0, q.tamanho).map((l) => paraDto(l, ctx.orgId, ctx.user.id));
-      return { itens, pagina: q.pagina, tamanho: q.tamanho, tem_mais: r.rows.length > q.tamanho };
+      return {
+        itens, pagina: q.pagina, tamanho: q.tamanho, tem_mais: r.rows.length > q.tamanho,
+        modo: q.data_imagem ? "data" : "ultima",
+        data_imagem: q.data_imagem ?? null
+      };
     });
   });
 
