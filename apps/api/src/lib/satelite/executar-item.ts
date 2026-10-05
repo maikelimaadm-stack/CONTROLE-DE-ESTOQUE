@@ -24,12 +24,16 @@
  * desfecho — nunca corpo, token, credencial ou mensagem crua de erro.
  */
 import { withTx, type Db, type TenantContext } from "@agro/db";
-import { COLECAO_SENTINEL2_L2A, INDICE_NDVI, PROVEDOR_COPERNICUS, RESOLUCAO_PADRAO_M, VERSAO_METODO_NDVI_V2 } from "@agro/domain";
+import {
+  BUNDLE_PASTAGEM_ESSENCIAL, COLECAO_SENTINEL2_L2A, INDICE_NDVI, PROVEDOR_COPERNICUS, RESOLUCAO_PADRAO_M,
+  VERSAO_METODO_NDVI_V2, VERSAO_METODO_PASTAGEM_ESSENCIAL
+} from "@agro/domain";
 import { DomainError } from "@agro/shared";
 import { empresaScopeSql, hasPermission, scopedById, type ServiceCtx } from "../context.js";
 import {
   MSG_AREA_GRANDE, MSG_AREA_PEQUENA, MSG_AREA_SEM_POLIGONO, MSG_POLIGONO_FORA_DO_FORMATO, prepararPoligono, type AreaLida
 } from "../../routes/analises-satelitais.js";
+import { gravarBundlePastagem } from "../../routes/satelite-condicao.js";
 import { FalhaCopernicus, type ClienteCopernicus, type RegistroChamada } from "./copernicus.js";
 import { gravarConsumo } from "./consumo.js";
 import { MODULO_EXECUTOR, PERMISSAO_EXECUTAR_ITEM, contextoDoCriador } from "./contexto-worker.js";
@@ -38,6 +42,10 @@ import type { GradeDaAnalise, PoligonoGeoJson } from "./geometria.js";
 import { TENTATIVAS_POR_RODADA } from "./limites.js";
 import { interpretarEstatistica, montarCorpoEstatistica, type Janela, type ResultadoNdvi } from "./ndvi.js";
 import { EVALSCRIPT_NDVI_SHA256, RESOLUCAO_NATIVA_NDVI_M, escolherObservacaoV2, janelaDoItem } from "./ndvi-v2.js";
+import {
+  RESOLUCAO_AGREGACAO_M, escolherObservacaoPastagem, interpretarEstatisticaMulti, montarCorpoPastagem,
+  type ResultadoPastagem
+} from "./pastagem-essencial.js";
 import { decidirAposFalha, type DecisaoFalha } from "./retry.js";
 
 /** A linha que a reserva (`erp.satelite_reservar_itens`, migration 0054) devolve: só ids. */
@@ -89,8 +97,19 @@ interface LinhaItem {
 
 interface Pronto { item: LinhaItem; poligono: PoligonoGeoJson; grade: GradeDaAnalise; janela: Janela }
 type Fase1 = { tipo: "executar"; pronto: Pronto } | { tipo: "falho"; erro: string } | { tipo: "adiado"; motivo: string };
+type ResultadoItemFila = ResultadoNdvi | ResultadoPastagem;
 /** O que a chamada deixou: `respondeu` (2xx, com o cabeçalho de PU) mesmo quando a leitura falhou — a chamada gastou. */
-interface Chamada { respondeu: { puCabecalho: string | null } | null; resultado: ResultadoNdvi | null; falha: unknown }
+interface Chamada { respondeu: { puCabecalho: string | null } | null; resultado: ResultadoItemFila | null; falha: unknown }
+
+function ehPastagem(item: LinhaItem): boolean {
+  return item.indice_bundle === BUNDLE_PASTAGEM_ESSENCIAL && item.versao_metodo === VERSAO_METODO_PASTAGEM_ESSENCIAL;
+}
+function ehNdviV2(item: LinhaItem): boolean {
+  return item.indice_bundle === INDICE_NDVI && item.versao_metodo === VERSAO_METODO_NDVI_V2;
+}
+function ehResultadoPastagem(r: ResultadoItemFila): r is ResultadoPastagem {
+  return "indices" in r && Array.isArray(r.indices);
+}
 
 const tenantDo = (r: ItemReservado): TenantContext => ({ orgId: r.organization_id, userId: r.criado_por, modulo: MODULO_EXECUTOR });
 
@@ -145,8 +164,8 @@ async function abrirItem(ctx: ServiceCtx, r: ItemReservado, tentativas: number |
 /** As recusas do ERP antes de chamar o provedor (`{ erro }`), ou o polígono pronto para ele. */
 async function conferir(ctx: ServiceCtx, item: LinhaItem): Promise<{ erro: string } | { area: AreaLida; poligono: PoligonoGeoJson; grade: GradeDaAnalise }> {
   if (!hasPermission(ctx, PERMISSAO_EXECUTAR_ITEM)) return { erro: ERROS_ITEM.semPermissao };
-  // Discriminador desconhecido NEGA: a v2 só sabe executar o NDVI da v2.
-  if (item.indice_bundle !== INDICE_NDVI || item.versao_metodo !== VERSAO_METODO_NDVI_V2) return { erro: ERROS_ITEM.metodoDesconhecido };
+  // Discriminador desconhecido NEGA: só NDVI v2 e o bundle pastagem essencial.
+  if (!ehNdviV2(item) && !ehPastagem(item)) return { erro: ERROS_ITEM.metodoDesconhecido };
   // Acima do teto só chega o item que réplicas caídas largaram 'executando' (a reserva soma 1 a cada recuperação): ele
   // não é tentado de novo, para um item que derruba o processo não derrubar todos.
   if (item.tentativas_rodada > TENTATIVAS_POR_RODADA) return { erro: ERROS_ITEM.execucaoInterrompida };
@@ -154,7 +173,8 @@ async function conferir(ctx: ServiceCtx, item: LinhaItem): Promise<{ erro: strin
   if (!area) return { erro: ERROS_ITEM.areaNaoEncontrada };
   if (area.geometria_sha256 !== item.geometria_sha256) return { erro: ERROS_ITEM.geometriaAlterada };
   try {
-    return { area, ...prepararPoligono(area) };
+    const resolucao = ehPastagem(item) ? RESOLUCAO_AGREGACAO_M : undefined;
+    return { area, ...prepararPoligono(area, resolucao) };
   } catch (e) {
     if (!(e instanceof DomainError) || e.code !== "VALIDATION_ERROR") throw e;
     return { erro: RECUSA_DO_POLIGONO.get(e.message) ?? "poligono_recusado" };
@@ -188,6 +208,13 @@ async function chamarProvedor(dep: DependenciasItem, r: ItemReservado, p: Pronto
   }, "chamada ao provedor de satélite");
   let respondeu: Chamada["respondeu"] = null;
   try {
+    if (ehPastagem(p.item)) {
+      const resposta = await dep.cliente.estatisticaComConsumo(montarCorpoPastagem(p.poligono, p.janela, p.grade), registrar);
+      respondeu = { puCabecalho: resposta.puCabecalho };
+      const resultado = escolherObservacaoPastagem(
+        interpretarEstatisticaMulti(resposta.corpo, p.janela), p.grade.pixelsGeometria, p.item.data_alvo);
+      return { respondeu, resultado, falha: null };
+    }
     const resposta = await dep.cliente.estatisticaComConsumo(montarCorpoEstatistica(p.poligono, p.janela, p.grade), registrar);
     respondeu = { puCabecalho: resposta.puCabecalho };
     const resultado = escolherObservacaoV2(interpretarEstatistica(resposta.corpo, p.janela), p.grade.pixelsGeometria, p.item.data_alvo);
@@ -232,7 +259,7 @@ const consumoDo = (ctx: ServiceCtx, r: ItemReservado, puCabecalho: string | null
   gravarConsumo(ctx.tx, { organizationId: ctx.orgId, empresaId: r.empresa_id, consultaId: r.consulta_id, consultaItemId: r.item_id, puCabecalho });
 
 /** FASE 3 — a gravação do resultado (a chamada respondeu 2xx e a escolha foi feita). */
-async function fase3(dep: DependenciasItem, r: ItemReservado, p: Pronto, chamada: Chamada & { resultado: ResultadoNdvi }): Promise<{ desfecho: DesfechoItem; motivo: string | null }> {
+async function fase3(dep: DependenciasItem, r: ItemReservado, p: Pronto, chamada: Chamada & { resultado: ResultadoItemFila }): Promise<{ desfecho: DesfechoItem; motivo: string | null }> {
   return withTx(dep.db, tenantDo(r), async (tx) => {
     const ctx = await contextoDoCriador(tx, r.organization_id, r.criado_por);
     if (!ctx) return { desfecho: "adiado", motivo: "criador_sem_acesso" };
@@ -252,7 +279,9 @@ async function fase3(dep: DependenciasItem, r: ItemReservado, p: Pronto, chamada
       await recalcularConsulta(ctx, item.consulta_id);
       return { desfecho: "falho", motivo: erro };
     }
-    const analiseId = await gravarAnalise(ctx, item, area, p.janela, chamada.resultado);
+    const analiseId = ehResultadoPastagem(chamada.resultado)
+      ? (await gravarBundlePastagem(ctx, area, p.janela, chamada.resultado, item.id, item.data_alvo)).referenciaId
+      : await gravarAnalise(ctx, item, area, p.janela, chamada.resultado);
     const consumo = await consumoDo(ctx, r, chamada.respondeu!.puCabecalho);
     await mudarItem(ctx, item, { situacao: "concluido", erro: null, proxima: null, analiseId, puGasto: consumo.pu_gasto });
     await recalcularConsulta(ctx, item.consulta_id);

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   ErroPeriodoConsulta, FAIXA_ZERO, INDICES_CONSULTA_SATELITE, MAX_ITENS_POR_CONSULTA, PAGINA_CONSULTAS, PAGINA_ITENS_CONSULTA,
-  SITUACOES_ITEM_VIVAS, VERSAO_METODO_NDVI_V2, estimarCreditosItem, origemChaveIdempotencia, slotsDoPeriodo, somarFaixas,
+  SITUACOES_ITEM_VIVAS, VERSAO_METODO_POR_BUNDLE, estimarCreditosItem, origemChaveIdempotencia, slotsDoPeriodo, somarFaixas,
   type FaixaCreditos, type PeriodoConsulta, type SlotConsulta
 } from "@agro/domain";
 import { D } from "@agro/shared";
@@ -117,7 +117,7 @@ const itensQuery = paginaQuery(PAGINA_ITENS_CONSULTA);
 interface AreaDoAlvo extends AreaLida { nome: string }
 interface AreaIgnorada { area_id: string; nome: string; motivo: string }
 interface ItemPlanejado {
-  area_id: string; geometria_sha256: string; indice: IndiceConsulta; slot: SlotConsulta; origem: string; chave: string; faixa: FaixaCreditos;
+  area_id: string; geometria_sha256: string; indice: IndiceConsulta; versao_metodo: string; slot: SlotConsulta; origem: string; chave: string; faixa: FaixaCreditos;
 }
 
 interface LinhaConsulta {
@@ -313,13 +313,14 @@ async function inserirItens(ctx: ServiceCtx, consultaId: string, empresaId: stri
   const g = await ctx.tx.query<{ chave_idempotencia: string }>(
     `insert into erp.satelite_consulta_itens (consulta_id, organization_id, empresa_id, area_id, geometria_sha256, indice_bundle, versao_metodo,
         data_alvo, janela_inicio, janela_fim, situacao, chave_idempotencia, chave_idempotencia_origem)
-     select $1, $2, $3, u.area_id, u.geometria_sha256, u.indice_bundle, $4, u.data_alvo, u.janela_inicio, u.janela_fim, u.situacao, u.chave, u.origem
-       from unnest($5::uuid[], $6::text[], $7::text[], $8::date[], $9::date[], $10::date[], $11::text[], $12::text[], $13::text[])
-            as u (area_id, geometria_sha256, indice_bundle, data_alvo, janela_inicio, janela_fim, situacao, chave, origem)
+     select $1, $2, $3, u.area_id, u.geometria_sha256, u.indice_bundle, u.versao_metodo, u.data_alvo, u.janela_inicio, u.janela_fim, u.situacao, u.chave, u.origem
+       from unnest($4::uuid[], $5::text[], $6::text[], $7::text[], $8::date[], $9::date[], $10::date[], $11::text[], $12::text[], $13::text[])
+            as u (area_id, geometria_sha256, indice_bundle, versao_metodo, data_alvo, janela_inicio, janela_fim, situacao, chave, origem)
      on conflict (organization_id, chave_idempotencia) where situacao in (${VIVAS_SQL}) do nothing
      returning chave_idempotencia`,
-    [consultaId, ctx.orgId, empresaId, VERSAO_METODO_NDVI_V2,
+    [consultaId, ctx.orgId, empresaId,
       coluna((l) => l.item.area_id), coluna((l) => l.item.geometria_sha256), coluna((l) => l.item.indice),
+      coluna((l) => l.item.versao_metodo),
       coluna((l) => l.item.slot.data_alvo), coluna((l) => l.item.slot.janela_inicio), coluna((l) => l.item.slot.janela_fim),
       coluna((l) => l.situacao), coluna((l) => l.item.chave), coluna((l) => l.item.origem)]);
   return { rowCount: g.rowCount ?? 0, chaves: new Set(g.rows.map((l) => l.chave_idempotencia)) };
@@ -367,8 +368,9 @@ async function processarConsulta(ctx: ServiceCtx, corpo: CorpoConsulta, corpoBru
   for (const { area, hash, pixelsBbox } of analisaveis) {
     for (const slot of slots) {
       for (const indice of corpo.indices) {
-        const origem = origemChaveIdempotencia({ organizationId: ctx.orgId, areaId: area.id, geometriaSha256: hash, indiceBundle: indice, slot, versaoMetodo: VERSAO_METODO_NDVI_V2 });
-        itens.push({ area_id: area.id, geometria_sha256: hash, indice, slot, origem, chave: chaveIdempotencia(origem), faixa: estimarCreditosItem({ pixelsBbox, indice, slot }) });
+        const versao_metodo = VERSAO_METODO_POR_BUNDLE[indice];
+        const origem = origemChaveIdempotencia({ organizationId: ctx.orgId, areaId: area.id, geometriaSha256: hash, indiceBundle: indice, slot, versaoMetodo: versao_metodo });
+        itens.push({ area_id: area.id, geometria_sha256: hash, indice, versao_metodo, slot, origem, chave: chaveIdempotencia(origem), faixa: estimarCreditosItem({ pixelsBbox, indice, slot }) });
       }
     }
   }

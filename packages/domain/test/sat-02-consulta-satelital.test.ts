@@ -58,8 +58,8 @@ describe("constantes da SAT-02 — o contrato que a 0053 e a API consomem", () =
   it("listas fechadas e limites", () => {
     expect(VERSAO_METODO_NDVI_V2).toBe("ndvi-v2");
     expect(VERSAO_METODO_NDVI_V2).not.toBe(VERSAO_METODO_NDVI); // método novo, não se reaproveita com a SAT-01
-    expect(INDICES_CONSULTA_SATELITE).toEqual(["ndvi"]);
-    expect(INDICES_CONSULTA_SATELITE[0]).toBe(INDICE_NDVI); // o mesmo índice da SAT-01, não uma segunda grafia
+    expect(INDICES_CONSULTA_SATELITE).toEqual(["ndvi", "pastagem_essencial"]);
+    expect(INDICES_CONSULTA_SATELITE[0]).toBe(INDICE_NDVI); // o NDVI da SAT-01 permanece o primeiro
     expect(SITUACOES_CONSULTA_SATELITE.map(([v]) => v)).toEqual(["pendente", "executando", "concluida", "concluida_com_falhas", "cancelada"]);
     expect(SITUACOES_ITEM_CONSULTA_SATELITE.map(([v]) => v)).toEqual(["pendente", "executando", "concluido", "reaproveitado", "falho", "cancelado"]);
     for (const [, rotulo] of [...SITUACOES_CONSULTA_SATELITE, ...SITUACOES_ITEM_CONSULTA_SATELITE]) expect(rotulo.trim()).not.toBe("");
@@ -73,7 +73,7 @@ describe("constantes da SAT-02 — o contrato que a 0053 e a API consomem", () =
     expect(DATA_MINIMA_SENTINEL2_L2A).toBe("2017-03-28");
     expect(CREDITOS_POR_PU).toBe(100);
     expect(COEFICIENTES_ESTIMATIVA_PU).toEqual({ pixelsReferencia: 262144, fatorAreaMinimo: 0.01, bandasReferencia: 3, fatorFormato: 1, revisitaDias: 5 });
-    expect(BANDAS_POR_INDICE).toEqual({ ndvi: 3 });
+    expect(BANDAS_POR_INDICE).toEqual({ ndvi: 3, pastagem_essencial: 7 });
     expect(PAGINA_CONSULTAS).toEqual({ padrao: 20, maximo: 100 });
     expect(PAGINA_ITENS_CONSULTA).toEqual({ padrao: 50, maximo: 100 });
   });

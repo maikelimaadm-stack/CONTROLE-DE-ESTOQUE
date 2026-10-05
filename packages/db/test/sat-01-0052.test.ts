@@ -150,7 +150,9 @@ describe("DB-3 — as listas fechadas do banco são as do domínio", () => {
   it("provedor, coleção, índice, situação e motivo espelham @agro/domain", async () => {
     expect(await lista("chk_analises_satelitais_provedor")).toEqual([...PROVEDORES_SATELITE]);
     expect(await lista("chk_analises_satelitais_colecao")).toEqual([...COLECOES_SATELITE]);
-    expect(await lista("chk_analises_satelitais_indice")).toEqual([...INDICES_SATELITE]);
+    // Na 0052 o CHECK era só NDVI; a SAT-08 (0056) amplia a lista no domínio e no banco.
+    expect(await lista("chk_analises_satelitais_indice")).toEqual(["ndvi"]);
+    expect(INDICES_SATELITE).toContain("ndvi");
     expect(await lista("chk_analises_satelitais_situacao")).toEqual([...VALORES_SITUACAO_ANALISE_SATELITAL]);
     expect(await lista("chk_analises_satelitais_motivo")).toEqual([...VALORES_MOTIVO_QUALIDADE_ANALISE_SATELITAL]);
   });

@@ -174,11 +174,14 @@ async function lerAnaliseDaJanela(ctx: ServiceCtx, area: AreaLida, janela: Janel
  * Polígono pronto para o provedor, ou a recusa (422) que nenhuma imagem mudaria. Exportada para a consulta em lote
  * (SAT-02, decisão 295) aplicar os MESMOS critérios ao separar as áreas ignoradas.
  */
-export function prepararPoligono(area: AreaLida): { poligono: PoligonoGeoJson; grade: GradeDaAnalise } {
+/**
+ * Polígono pronto para o provedor. `resolucaoM` padrão = 10 m (SAT-01/NDVI); o bundle pastagem (SAT-08) usa 20 m.
+ */
+export function prepararPoligono(area: AreaLida, resolucaoM: number = RESOLUCAO_PADRAO_M): { poligono: PoligonoGeoJson; grade: GradeDaAnalise } {
   if (area.geometria === null || area.geometria_sha256 === null) throw validation(MSG_AREA_SEM_POLIGONO, [{ path: "geometria", message: MSG_AREA_SEM_POLIGONO }]);
   const poligono = lerPoligono(area.geometria);
   if (!poligono) throw validation(MSG_POLIGONO_FORA_DO_FORMATO, [{ path: "geometria", message: MSG_POLIGONO_FORA_DO_FORMATO }]);
-  const grade = planejarGrade(poligono, RESOLUCAO_PADRAO_M);
+  const grade = planejarGrade(poligono, resolucaoM);
   if (!(grade.pixelsGeometria >= CRITERIO_OBSERVACAO_UTIL.pixelsValidosMinimos)) throw validation(MSG_AREA_PEQUENA, [{ path: "geometria", message: MSG_AREA_PEQUENA }]);
   // `!(… <= …)` também recusa NaN/Infinity (polígono degenerado ou perto do polo): fora da grade é fora.
   if (!(grade.larguraPx >= 1 && grade.larguraPx <= LADO_MAXIMO_PX && grade.alturaPx >= 1 && grade.alturaPx <= LADO_MAXIMO_PX)) {

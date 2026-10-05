@@ -427,7 +427,9 @@ describe("DB-3 — as listas fechadas do banco são as do domínio", () => {
   it("situação da consulta e do item, índice, versão do método, operação do consumo e as situações VIVAS da chave espelham @agro/domain", async () => {
     expect(await lista("chk_satelite_consultas_situacao")).toEqual(SITUACOES_CONSULTA_SATELITE.map(([v]) => v));
     expect(await lista("chk_satelite_consulta_itens_situacao")).toEqual(SITUACOES_ITEM_CONSULTA_SATELITE.map(([v]) => v));
-    expect(await lista("chk_satelite_consulta_itens_indice_bundle")).toEqual([...INDICES_CONSULTA_SATELITE]);
+    // Na 0053 o CHECK era só ndvi; a SAT-08 (0056) amplia. Domínio já lista o bundle novo.
+    expect(await lista("chk_satelite_consulta_itens_indice_bundle")).toEqual(["ndvi"]);
+    expect(INDICES_CONSULTA_SATELITE).toContain("ndvi");
     expect(await lista("chk_satelite_consulta_itens_versao_metodo")).toEqual([VERSAO_METODO_NDVI_V2]);
     expect(await lista("chk_satelite_consumo_operacao")).toEqual([...OPERACOES_CONSUMO_SATELITE]);
     const indice = (await db.query<{ unico: boolean; predicado: string; def: string }>(
