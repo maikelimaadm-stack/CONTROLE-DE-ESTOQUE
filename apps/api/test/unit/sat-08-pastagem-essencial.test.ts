@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import {
   CLASSES_SCL_EXCLUIDAS,
+  HISTOGRAMA_BINS_VIGOR,
+  HISTOGRAMA_EPS_BORDA,
   INDICES_BUNDLE_ESSENCIAL,
   VERSAO_METODO_PASTAGEM_ESSENCIAL,
   calcularEvi2,
@@ -12,6 +14,7 @@ import {
   EVALSCRIPT_PASTAGEM_ESSENCIAL,
   EVALSCRIPT_PASTAGEM_SHA256,
   RESOLUCAO_AGREGACAO_M,
+  TOLERANCIA_FAIXA,
   escolherObservacaoPastagem,
   fracaoBinsAlinhados,
   interpretarEstatisticaMulti,
@@ -174,9 +177,11 @@ describe("SAT-08 R1 — pastagem essencial v2 (contrato Statistical API)", () =>
     for (const id of INDICES_BUNDLE_ESSENCIAL) expect(c[id]).toBeTruthy();
     expect(c.scl).toBeTruthy();
     const ndvi = c.ndvi as { histograms: { default: { bins: number[] } } };
-    expect(ndvi.histograms.default.bins).toEqual([-1, 0.2, 0.4, 0.6, 1]);
+    // R3: bordas técnicas ±eps; limiares internos 0.2/0.4/0.6 exatos
+    expect(ndvi.histograms.default.bins).toEqual([...HISTOGRAMA_BINS_VIGOR]);
+    expect(ndvi.histograms.default.bins.slice(1, 4)).toEqual([0.2, 0.4, 0.6]);
     const evi = c.evi2 as { histograms: { default: { bins: number[] } } };
-    expect(evi.histograms.default.bins).toContain(2.5);
+    expect(evi.histograms.default.bins.some((b) => Math.abs(b - 2.5) < 1e-5 || b > 2.5)).toBe(true);
   });
 
   it("corpo pede agregação 20 m", () => {
@@ -273,9 +278,16 @@ describe("SAT-08 R1 — pastagem essencial v2 (contrato Statistical API)", () =>
     expect(r.qualidade.denominadores.pixels_geometricos).toBe(100);
     expect(r.qualidade.denominadores.pixels_com_dado_fonte).toBe(90);
 
-    // fração vegetação ativa (bins >= 0.4): 25+35 = 60 / 80
-    expect(r.indicadores.fracoes_histograma.vegetacao_ativa).toBeCloseTo(60 / 80, 5);
+    // R3: underflow/overflow preservados no histograma → fração derivada null (não enviesada)
+    expect(ndvi.histograma?.underflowCount).toBe(2);
+    expect(ndvi.histograma?.overflowCount).toBe(3);
+    expect(r.indicadores.fracoes_histograma.vegetacao_ativa).toBeNull();
     expect(r.indicadores.experimental).toBe(true);
+    // Qualidade top-level é do BUNDLE (não NDVI-only): todos com cobertura 0.80 → limitante = ndvi (empate SSOT)
+    expect(r.qualidade.cobertura_valida).toBe("0.8000");
+    expect(r.qualidade.indice_limitante).toBe("ndvi");
+    expect(r.qualidade.coberturas_por_indice.ndvi).toBe("0.8000");
+    expect("pixels_validos_indice" in r.qualidade.denominadores).toBe(false);
   });
 
   it("máscara independente: NDVI e NDRE podem ter sampleCount/noDataCount distintos", () => {
@@ -459,5 +471,102 @@ describe("SAT-08 R2 — bundle completo e defesa de runtime", () => {
     const r = escolherObservacaoPastagem(interpretarEstatisticaMulti(corpo, janela), 100, null);
     expect(r.situacao).toBe("concluida");
     expect(Number(r.indices.find((i) => i.indice === "msavi2")!.valores!.minimo)).toBeLessThan(-1);
+  });
+});
+
+/** Coberturas pedidas (pixelsGeometria=100) → noDataCount = 100 − válidos. */
+function coberturas(por: Partial<Record<string, number>>): Partial<Record<string, { sampleCount: number; noDataCount: number }>> {
+  const out: Partial<Record<string, { sampleCount: number; noDataCount: number }>> = {};
+  for (const [id, pct] of Object.entries(por)) {
+    const validos = Math.round(pct! * 100);
+    out[id] = { sampleCount: 100, noDataCount: 100 - validos };
+  }
+  return out;
+}
+
+describe("SAT-08 R3 — qualidade do bundle, maior_cobertura e histograma", () => {
+  it("Q1: qualidade top-level = MIN (NDRE 61%); NDVI individual permanece 95%", () => {
+    const corpo = fixtureOficial(mediasCompletas, {
+      porIndice: coberturas({ ndvi: 0.95, evi2: 0.90, ndre: 0.61, ndmi: 0.82, msavi2: 0.91, bsi: 0.80 })
+    });
+    const r = escolherObservacaoPastagem(interpretarEstatisticaMulti(corpo, janela), 100, null);
+    expect(r.situacao).toBe("concluida");
+    expect(r.qualidade.cobertura_valida).toBe("0.6100");
+    expect(r.qualidade.indice_limitante).toBe("ndre");
+    expect(r.qualidade.coberturas_por_indice).toMatchObject({
+      ndvi: "0.9500", evi2: "0.9000", ndre: "0.6100", ndmi: "0.8200", msavi2: "0.9100", bsi: "0.8000"
+    });
+    expect(r.indices.find((i) => i.indice === "ndvi")!.qualidade.cobertura_valida).toBe("0.9500");
+    expect(r.indices.find((i) => i.indice === "ndre")!.qualidade.cobertura_valida).toBe("0.6100");
+  });
+
+  it("Q2: índice limitante = bsi", () => {
+    const corpo = fixtureOficial(mediasCompletas, {
+      porIndice: coberturas({ ndvi: 0.95, evi2: 0.90, ndre: 0.85, ndmi: 0.82, msavi2: 0.91, bsi: 0.62 })
+    });
+    const r = escolherObservacaoPastagem(interpretarEstatisticaMulti(corpo, janela), 100, null);
+    expect(r.qualidade.indice_limitante).toBe("bsi");
+    expect(r.qualidade.cobertura_valida).toBe("0.6200");
+  });
+
+  it("Q3: empate NDRE=NDMI=61% → ordem SSOT (ndre antes de ndmi)", () => {
+    const corpo = fixtureOficial(mediasCompletas, {
+      porIndice: coberturas({ ndvi: 0.95, evi2: 0.90, ndre: 0.61, ndmi: 0.61, msavi2: 0.91, bsi: 0.80 })
+    });
+    const r = escolherObservacaoPastagem(interpretarEstatisticaMulti(corpo, janela), 100, null);
+    expect(r.qualidade.indice_limitante).toBe("ndre");
+    expect(r.qualidade.cobertura_valida).toBe("0.6100");
+  });
+
+  it("Q4: maior_cobertura = melhor MIN do bundle (80%), não o máximo do NDVI (98%)", () => {
+    const corpo = fixtureMultiDia([
+      {
+        from: "2026-09-18T00:00:00Z", to: "2026-09-19T00:00:00Z",
+        medias: mediasCompletas,
+        porIndice: coberturas({ ndvi: 0.98, evi2: 0.98, ndre: 0.61, ndmi: 0.61, msavi2: 0.98, bsi: 0.61 })
+      },
+      {
+        from: "2026-09-20T00:00:00Z", to: "2026-09-21T00:00:00Z",
+        medias: mediasCompletas,
+        porIndice: coberturas({ ndvi: 0.90, evi2: 0.90, ndre: 0.80, ndmi: 0.80, msavi2: 0.90, bsi: 0.80 })
+      }
+    ]);
+    const r = escolherObservacaoPastagem(interpretarEstatisticaMulti(corpo, janela), 100, null);
+    // MAX(MIN(A)=0.61, MIN(B)=0.80) = 0.80 — NÃO 0.98 do NDVI
+    expect(r.indices[0]!.metadados.maior_cobertura).toBe("0.8000");
+    expect(r.situacao).toBe("concluida");
+    expect(r.observacao!.inicio.toISOString()).toBe("2026-09-20T00:00:00.000Z");
+  });
+
+  it("H1: underflow=0 e overflow=0 → fração calculada", () => {
+    const hist = histOficial([-1, 0.2, 0.4, 0.6, 1], [10, 20, 30, 40], 0, 0);
+    expect(fracaoBinsAlinhados(hist, (low) => low >= 0.4 - 1e-12)).toBeCloseTo(70 / 100, 5);
+  });
+
+  it("H2: overflowCount > 0 → fração null (overflow preservado)", () => {
+    const hist = histOficial([-1, 0.2, 0.4, 0.6, 1], [10, 20, 30, 40], 0, 5);
+    expect(fracaoBinsAlinhados(hist, (low) => low >= 0.4 - 1e-12)).toBeNull();
+    expect(hist.overflowCount).toBe(5);
+  });
+
+  it("H3: underflowCount > 0 → fração null (underflow preservado)", () => {
+    const hist = histOficial([-1, 0.2, 0.4, 0.6, 1], [10, 20, 30, 40], 3, 0);
+    expect(fracaoBinsAlinhados(hist, (low) => low >= 0.4 - 1e-12)).toBeNull();
+    expect(hist.underflowCount).toBe(3);
+  });
+
+  it("H4: bordas técnicas ±eps; limiares internos 0.2/0.4/0.6 exatos", () => {
+    expect(HISTOGRAMA_EPS_BORDA).toBe(TOLERANCIA_FAIXA);
+    expect(HISTOGRAMA_BINS_VIGOR[0]).toBeCloseTo(-1 - HISTOGRAMA_EPS_BORDA, 12);
+    expect(HISTOGRAMA_BINS_VIGOR[1]).toBe(0.2);
+    expect(HISTOGRAMA_BINS_VIGOR[2]).toBe(0.4);
+    expect(HISTOGRAMA_BINS_VIGOR[3]).toBe(0.6);
+    expect(HISTOGRAMA_BINS_VIGOR[4]).toBeCloseTo(1 + HISTOGRAMA_EPS_BORDA, 12);
+    const calc = montarCalculationsPastagem() as {
+      ndvi: { histograms: { default: { bins: number[] } } };
+    };
+    const bins = calc.ndvi.histograms.default.bins;
+    expect(bins[0]).toBeCloseTo(-1 - HISTOGRAMA_EPS_BORDA, 12);
+    expect(bins[bins.length - 1]).toBeCloseTo(1 + HISTOGRAMA_EPS_BORDA, 12);
   });
 });

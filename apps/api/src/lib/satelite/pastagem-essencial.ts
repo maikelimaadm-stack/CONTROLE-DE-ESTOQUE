@@ -1,5 +1,5 @@
 /**
- * MÉTODO PASTAGEM ESSENCIAL (versão `pastagem-essencial-v2`) — SAT-08 R1/R2, decisão 300.
+ * MÉTODO PASTAGEM ESSENCIAL (versão `pastagem-essencial-v2`) — SAT-08 R1/R2/R3, decisão 300.
  *
  * Correção forward-only sobre a v1 (#101 / decisão 299):
  * - Statistical API: histograma oficial `{ bins:[{lowEdge,highEdge,count}], underflowCount, overflowCount }`.
@@ -9,6 +9,9 @@
  * - Faixas persistíveis por índice (EVI2 pode >1; MSAVI2 pode < -1 com reflectance >1).
  * - Bundle completo: observação útil só se TODOS os 6 índices forem úteis no MESMO intervalo
  *   (CRITERIO_UTIL_BUNDLE); não escolhe dia só pelo NDVI; não inventa 0 a partir de null.
+ * - Qualidade TOP-LEVEL = qualidade do BUNDLE (cobertura = MIN dos 6; índice limitante).
+ * - `maior_cobertura` = MAX da cobertura do bundle (MIN dos 6) por intervalo — não NDVI-only.
+ * - Frações de histograma: underflow/overflow > 0 → fração null (nunca descartados em silêncio).
  * - Agregação em 20 m; cada índice declara resolução nativa no catálogo.
  */
 import { createHash } from "node:crypto";
@@ -39,7 +42,8 @@ import type { GradeDaAnalise, PoligonoGeoJson } from "./geometria.js";
 import type { Janela, MetadadosAnalise } from "./ndvi.js";
 
 const CRS84 = "http://www.opengis.net/def/crs/OGC/1.3/CRS84";
-const TOLERANCIA_FAIXA = 1e-6;
+/** Mesma ordem de grandeza de HISTOGRAMA_EPS_BORDA (domínio) — borda técnica da faixa. */
+export const TOLERANCIA_FAIXA = 1e-6;
 const DIA_ISO = /^\d{4}-\d{2}-\d{2}$/;
 /** Classes SCL que entram no cloud_ratio (sombra de nuvem, nuvem média/alta, cirro). */
 const CLASSES_NUVEM_SCL = new Set([3, 8, 9, 10]);
@@ -387,12 +391,17 @@ function diaUtc(d: Date): string {
  * Fração espacial a partir de bins alinhados aos limiares.
  * Não usa centro do bin. Conta só bins cujo intervalo está inteiramente na faixa pedida.
  * É fração dos pixels do histograma (válidos do índice), não área geométrica exata.
+ *
+ * Política R3 (decisão 300): se underflowCount > 0 OU overflowCount > 0, a fração
+ * derivada é null — esses pixels ficam preservados no histograma para inspeção e
+ * NÃO entram no denominador por adivinhação nem são descartados em silêncio.
  */
 export function fracaoBinsAlinhados(
   hist: HistogramaCanonico | null,
   pred: (low: number, high: number) => boolean
 ): number | null {
   if (!hist || hist.bins.length === 0) return null;
+  if (hist.underflowCount > 0 || hist.overflowCount > 0) return null;
   let total = 0;
   let ok = 0;
   for (const b of hist.bins) {
@@ -430,6 +439,176 @@ export interface QualidadeObservacao {
     por_output: true;
   };
   motivo: string | null;
+}
+
+/**
+ * Qualidade TOP-LEVEL do bundle completo (R3).
+ * cobertura_valida = MIN das coberturas dos 6 índices; indice_limitante = quem produz o mínimo
+ * (empate: ordem SSOT de INDICES_BUNDLE_ESSENCIAL). Sem pixels_validos_indice no top-level.
+ */
+export interface QualidadeBundle {
+  versao: string;
+  estado: ReturnType<typeof estadoQualidade>;
+  cobertura_valida: string | null;
+  indice_limitante: IdIndiceSatelite | null;
+  coberturas_por_indice: Record<IdIndiceSatelite, string | null>;
+  /** MIN dos valid_ratio individuais (quando todos existem). */
+  valid_ratio_minimo: string | null;
+  cloud_ratio: string | null;
+  scl_composition: Record<string, number> | null;
+  denominadores: {
+    pixels_geometricos: number;
+    pixels_com_dado_fonte: number | null;
+    pixels_mascarados_qualidade: number | null;
+  };
+  mascara: {
+    scl_excluidas: number[];
+    cld: false;
+    dataMask: true;
+    por_output: true;
+  };
+  motivo: string | null;
+}
+
+/** Cobertura do bundle num intervalo = MIN das coberturas dos 6 (em décimos de milésimo). */
+export function coberturaBundleDezMil(i: IntervaloMulti, pixelsGeometria: number): number {
+  let min = Number.POSITIVE_INFINITY;
+  for (const id of INDICES_BUNDLE_ESSENCIAL) {
+    min = Math.min(min, coberturaDezMil(i.porIndice[id].validos, pixelsGeometria));
+  }
+  return Number.isFinite(min) ? min : 0;
+}
+
+/** Índice com a menor cobertura; empate → primeira ocorrência em INDICES_BUNDLE_ESSENCIAL. */
+export function indiceLimitanteDoIntervalo(i: IntervaloMulti, pixelsGeometria: number): IdIndiceSatelite {
+  let min = Number.POSITIVE_INFINITY;
+  let limitante: IdIndiceSatelite = INDICES_BUNDLE_ESSENCIAL[0]!;
+  for (const id of INDICES_BUNDLE_ESSENCIAL) {
+    const cob = coberturaDezMil(i.porIndice[id].validos, pixelsGeometria);
+    if (cob < min) {
+      min = cob;
+      limitante = id;
+    }
+  }
+  return limitante;
+}
+
+/** Monta qualidade do bundle a partir das qualidades individuais já materializadas. */
+export function qualidadeBundleDe(
+  indices: ResultadoIndicePastagem[],
+  situacao: "concluida" | "sem_observacao_util",
+  motivo: string | null,
+  pixelsGeometria: number
+): QualidadeBundle {
+  const coberturas_por_indice = {} as Record<IdIndiceSatelite, string | null>;
+  let cobMin: number | null = null;
+  let limitante: IdIndiceSatelite | null = null;
+  let validMin: number | null = null;
+  let ref: QualidadeObservacao | null = null;
+
+  for (const id of INDICES_BUNDLE_ESSENCIAL) {
+    const idx = indices.find((x) => x.indice === id);
+    const q = idx?.qualidade ?? null;
+    if (q && !ref) ref = q;
+    const cobStr = idx?.cobertura ?? q?.cobertura_valida ?? null;
+    coberturas_por_indice[id] = cobStr;
+    if (situacao === "concluida" && cobStr != null) {
+      const cob = Number(cobStr);
+      if (Number.isFinite(cob) && (cobMin === null || cob < cobMin)) {
+        cobMin = cob;
+        limitante = id;
+      }
+    }
+    const vr = q?.valid_ratio != null ? Number(q.valid_ratio) : null;
+    if (vr != null && Number.isFinite(vr) && (validMin === null || vr < validMin)) validMin = vr;
+  }
+
+  const estado = estadoQualidade(cobMin, situacao);
+  return {
+    versao: VERSAO_QUALIDADE,
+    estado,
+    cobertura_valida: cobMin === null ? null : cobMin.toFixed(4),
+    indice_limitante: situacao === "concluida" ? limitante : null,
+    coberturas_por_indice,
+    valid_ratio_minimo: validMin === null ? null : validMin.toFixed(4),
+    cloud_ratio: ref?.cloud_ratio ?? null,
+    scl_composition: ref?.scl_composition ?? null,
+    denominadores: {
+      pixels_geometricos: pixelsGeometria,
+      pixels_com_dado_fonte: ref?.denominadores.pixels_com_dado_fonte ?? null,
+      pixels_mascarados_qualidade: ref?.denominadores.pixels_mascarados_qualidade ?? null
+    },
+    mascara: {
+      scl_excluidas: CLASSES_SCL_EXCLUIDAS.map(([c]) => c),
+      cld: false,
+      dataMask: true,
+      por_output: true
+    },
+    motivo
+  };
+}
+
+/**
+ * Reconstrói qualidade do bundle a partir de coberturas já persistidas (resumo).
+ * Empate no MIN → ordem SSOT de INDICES_BUNDLE_ESSENCIAL.
+ */
+export function qualidadeBundleDeCoberturas(
+  coberturas: Record<IdIndiceSatelite, string | null>,
+  situacao: "concluida" | "sem_observacao_util",
+  motivo: string | null,
+  pixelsGeometria: number,
+  compartilhado: {
+    cloud_ratio: string | null;
+    scl_composition: Record<string, number> | null;
+    pixels_com_dado_fonte: number | null;
+    pixels_mascarados_qualidade: number | null;
+    valid_ratios?: Partial<Record<IdIndiceSatelite, string | null>>;
+  }
+): QualidadeBundle {
+  let cobMin: number | null = null;
+  let limitante: IdIndiceSatelite | null = null;
+  for (const id of INDICES_BUNDLE_ESSENCIAL) {
+    const cobStr = coberturas[id];
+    if (situacao === "concluida" && cobStr != null) {
+      const cob = Number(cobStr);
+      if (Number.isFinite(cob) && (cobMin === null || cob < cobMin)) {
+        cobMin = cob;
+        limitante = id;
+      }
+    }
+  }
+  let validMin: number | null = null;
+  if (compartilhado.valid_ratios) {
+    for (const id of INDICES_BUNDLE_ESSENCIAL) {
+      const vr = compartilhado.valid_ratios[id];
+      if (vr != null) {
+        const n = Number(vr);
+        if (Number.isFinite(n) && (validMin === null || n < validMin)) validMin = n;
+      }
+    }
+  }
+  return {
+    versao: VERSAO_QUALIDADE,
+    estado: estadoQualidade(cobMin, situacao),
+    cobertura_valida: cobMin === null ? null : cobMin.toFixed(4),
+    indice_limitante: situacao === "concluida" ? limitante : null,
+    coberturas_por_indice: { ...coberturas },
+    valid_ratio_minimo: validMin === null ? null : validMin.toFixed(4),
+    cloud_ratio: compartilhado.cloud_ratio,
+    scl_composition: compartilhado.scl_composition,
+    denominadores: {
+      pixels_geometricos: pixelsGeometria,
+      pixels_com_dado_fonte: compartilhado.pixels_com_dado_fonte,
+      pixels_mascarados_qualidade: compartilhado.pixels_mascarados_qualidade
+    },
+    mascara: {
+      scl_excluidas: CLASSES_SCL_EXCLUIDAS.map(([c]) => c),
+      cld: false,
+      dataMask: true,
+      por_output: true
+    },
+    motivo
+  };
 }
 
 function qualidadeDe(
@@ -526,7 +705,8 @@ export interface ResultadoPastagem {
   observacao: { inicio: Date; fim: Date } | null;
   indices: ResultadoIndicePastagem[];
   indicadores: IndicadoresDerivados;
-  qualidade: QualidadeObservacao;
+  /** Qualidade do BUNDLE (índice limitante), não a do NDVI. */
+  qualidade: QualidadeBundle;
   evalscript_sha256: string;
   versao_metodo: string;
 }
@@ -546,15 +726,16 @@ export function escolherObservacaoPastagem(
   dataAlvo: string | null
 ): ResultadoPastagem {
   const uteis = lida.intervalos.filter((i) => intervaloBundleUtil(i, pixelsGeometria));
-  const maiorCobNdvi = lida.intervalos.reduce<number | null>((m, i) =>
-    Math.max(m ?? 0, coberturaDezMil(i.porIndice.ndvi.validos, pixelsGeometria)), null);
+  // maior_cobertura (v2) = melhor cobertura do BUNDLE (MIN dos 6) entre os intervalos — não NDVI-only.
+  const maiorCobBundle = lida.intervalos.reduce<number | null>((m, i) =>
+    Math.max(m ?? 0, coberturaBundleDezMil(i, pixelsGeometria)), null);
   const metadados: MetadadosAnalise = {
     intervalos_recebidos: lida.intervalos.length + lida.errosEm.length,
     intervalos_com_erro: lida.errosEm.length,
     intervalos_com_dado: lida.intervalos.filter((i) =>
       INDICES_BUNDLE_ESSENCIAL.some((id) => i.porIndice[id].validos > 0)).length,
     intervalos_uteis: uteis.length,
-    maior_cobertura: maiorCobNdvi === null ? null : (maiorCobNdvi / 10_000).toFixed(4),
+    maior_cobertura: maiorCobBundle === null ? null : (maiorCobBundle / 10_000).toFixed(4),
     fonte_pixels_geometria: "grade_crs84",
     status_provedor: lida.statusProvedor
   };
@@ -590,7 +771,7 @@ export function escolherObservacaoPastagem(
   if (!escolhida) {
     const motivo: "sem_aquisicao" | "cobertura_insuficiente" =
       lida.intervalos.length ? "cobertura_insuficiente" : "sem_aquisicao";
-    const qualidade = qualidadeDe(
+    const qualidadeIndice = qualidadeDe(
       { amostra: 0, semDado: 0, validos: 0, media: null, minimo: null, maximo: null, desvio: null, percentis: null, histograma: null },
       pixelsGeometria, "sem_observacao_util", motivo, null, null
     );
@@ -606,7 +787,7 @@ export function escolherObservacaoPastagem(
       histograma: null,
       resolucao_m: RESOLUCAO_AGREGACAO_M,
       resolucao_nativa_m: CATALOGO_INDICES[id].resolucaoNativaM,
-      qualidade,
+      qualidade: qualidadeIndice,
       metadados
     }));
     return {
@@ -615,7 +796,7 @@ export function escolherObservacaoPastagem(
       observacao: null,
       indices,
       indicadores: indicadoresDerivados({ ndviMedio: null, ndmiMedio: null, bsiMedio: null }),
-      qualidade,
+      qualidade: qualidadeBundleDe(indices, "sem_observacao_util", motivo, pixelsGeometria),
       evalscript_sha256: EVALSCRIPT_PASTAGEM_SHA256,
       versao_metodo: VERSAO_METODO_PASTAGEM_ESSENCIAL
     };
@@ -684,7 +865,7 @@ export function escolherObservacaoPastagem(
     observacao: { inicio: dia.inicio, fim: dia.fim },
     indices,
     indicadores: { ...indicadores, versao: VERSAO_INDICADORES_DERIVADOS },
-    qualidade: indices[0]!.qualidade,
+    qualidade: qualidadeBundleDe(indices, "concluida", null, pixelsGeometria),
     evalscript_sha256: EVALSCRIPT_PASTAGEM_SHA256,
     versao_metodo: VERSAO_METODO_PASTAGEM_ESSENCIAL
   };

@@ -208,13 +208,29 @@ export const CATALOGO_INDICES: Readonly<Record<IdIndiceSatelite, IndiceCatalogo>
   }
 } as const;
 
-/** Edges do histograma operacional NDVI/EVI2 (alinhados aos limiares, não centro aproximado). */
-export const HISTOGRAMA_BINS_VIGOR = [-1, 0.2, 0.4, 0.6, 1] as const;
-/** EVI2: último edge acima de 1 para capturar valores válidos >1; overflow acima de 2.5. */
-export const HISTOGRAMA_BINS_EVI2 = [-1, 0.2, 0.4, 0.6, 1, 2.5] as const;
-/** MSAVI2: primeiro edge -2.5 cobre reflectância >1 (fórmula pode < -1); overflow acima de 1. */
-export const HISTOGRAMA_BINS_MSAVI2 = [-2.5, -1, 0.2, 0.4, 0.6, 1] as const;
-export const HISTOGRAMA_BINS_BSI = [-1, -0.1, 0.1, 0.2, 1] as const;
+/**
+ * Tolerância técnica de borda do histograma (= TOLERANCIA_FAIXA da API).
+ * Amplia só a borda EXTERNA da faixa persistível para valores exatamente no limite
+ * não caírem em underflow/overflow artificial. Thresholds agronômicos internos
+ * (0.20 / 0.40 / 0.60 / …) permanecem EXATOS.
+ */
+export const HISTOGRAMA_EPS_BORDA = 1e-6;
+
+/** Edges do histograma operacional NDVI/NDRE/NDMI (limiares internos exatos; bordas ±eps). */
+export const HISTOGRAMA_BINS_VIGOR = [
+  -1 - HISTOGRAMA_EPS_BORDA, 0.2, 0.4, 0.6, 1 + HISTOGRAMA_EPS_BORDA
+] as const;
+/** EVI2: limiares internos exatos; borda persistível ±eps (overflow acima de 2.5+eps). */
+export const HISTOGRAMA_BINS_EVI2 = [
+  -1 - HISTOGRAMA_EPS_BORDA, 0.2, 0.4, 0.6, 1, 2.5 + HISTOGRAMA_EPS_BORDA
+] as const;
+/** MSAVI2: borda persistível ±eps; limiares internos exatos. */
+export const HISTOGRAMA_BINS_MSAVI2 = [
+  -2.5 - HISTOGRAMA_EPS_BORDA, -1, 0.2, 0.4, 0.6, 1 + HISTOGRAMA_EPS_BORDA
+] as const;
+export const HISTOGRAMA_BINS_BSI = [
+  -1 - HISTOGRAMA_EPS_BORDA, -0.1, 0.1, 0.2, 1 + HISTOGRAMA_EPS_BORDA
+] as const;
 
 /** Bandas de entrada do evalscript do bundle (além de SCL e dataMask). */
 export const BANDAS_BUNDLE_ESSENCIAL: readonly string[] = ["B02", "B04", "B05", "B08", "B8A", "B11", "SCL"] as const;
