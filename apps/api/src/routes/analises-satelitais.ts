@@ -58,8 +58,17 @@ export const PERMISSAO_PEDIR_ANALISE = "analises_satelitais.create";
 export const MSG_AREA_NAO_ENCONTRADA = "Área não encontrada";
 export const MSG_AREA_SEM_POLIGONO = "A área não tem polígono desenhado; sem geometria não há análise por satélite.";
 export const MSG_POLIGONO_FORA_DO_FORMATO = "O polígono da área está fora do formato aceito (GeoJSON Polygon); redesenhe a área.";
-export const MSG_AREA_PEQUENA = `A área é pequena demais para a resolução de ${RESOLUCAO_PADRAO_M} m: não cabem ${CRITERIO_OBSERVACAO_UTIL.pixelsValidosMinimos} pixels dentro do polígono.`;
-export const MSG_AREA_GRANDE = `A área é grande demais para uma análise só: o retângulo que a envolve passa de ${LADO_MAXIMO_PX} pixels de ${RESOLUCAO_PADRAO_M} m num dos lados.`;
+/** Mensagem de área pequena parametrizada pela resolução (NDVI avulso = 10 m; bundle pastagem = 20 m). */
+export function msgAreaPequena(resolucaoM: number): string {
+  return `A área é pequena demais para a resolução de ${resolucaoM} m: não cabem ${CRITERIO_OBSERVACAO_UTIL.pixelsValidosMinimos} pixels dentro do polígono.`;
+}
+/** Mensagem de área grande parametrizada pela resolução (NDVI avulso = 10 m; bundle pastagem = 20 m). */
+export function msgAreaGrande(resolucaoM: number): string {
+  return `A área é grande demais para uma análise só: o retângulo que a envolve passa de ${LADO_MAXIMO_PX} pixels de ${resolucaoM} m num dos lados.`;
+}
+/** Compat SAT-01/SAT-02: constantes fixas em 10 m (NDVI avulso). */
+export const MSG_AREA_PEQUENA = msgAreaPequena(RESOLUCAO_PADRAO_M);
+export const MSG_AREA_GRANDE = msgAreaGrande(RESOLUCAO_PADRAO_M);
 export const MSG_ANALISE_DESLIGADA = "A análise por satélite está desligada neste ambiente.";
 export const MSG_PROVEDOR_INDISPONIVEL = "O provedor de imagens de satélite não respondeu como esperado; nenhuma análise foi gravada e as anteriores continuam valendo. Tente de novo mais tarde.";
 export const MSG_LIMITE_ANALISES = "Limite de análises por satélite por minuto atingido; tente em instantes.";
@@ -182,10 +191,12 @@ export function prepararPoligono(area: AreaLida, resolucaoM: number = RESOLUCAO_
   const poligono = lerPoligono(area.geometria);
   if (!poligono) throw validation(MSG_POLIGONO_FORA_DO_FORMATO, [{ path: "geometria", message: MSG_POLIGONO_FORA_DO_FORMATO }]);
   const grade = planejarGrade(poligono, resolucaoM);
-  if (!(grade.pixelsGeometria >= CRITERIO_OBSERVACAO_UTIL.pixelsValidosMinimos)) throw validation(MSG_AREA_PEQUENA, [{ path: "geometria", message: MSG_AREA_PEQUENA }]);
+  const msgPequena = msgAreaPequena(resolucaoM);
+  if (!(grade.pixelsGeometria >= CRITERIO_OBSERVACAO_UTIL.pixelsValidosMinimos)) throw validation(msgPequena, [{ path: "geometria", message: msgPequena }]);
   // `!(… <= …)` também recusa NaN/Infinity (polígono degenerado ou perto do polo): fora da grade é fora.
   if (!(grade.larguraPx >= 1 && grade.larguraPx <= LADO_MAXIMO_PX && grade.alturaPx >= 1 && grade.alturaPx <= LADO_MAXIMO_PX)) {
-    throw validation(MSG_AREA_GRANDE, [{ path: "geometria", message: MSG_AREA_GRANDE }]);
+    const msgGrande = msgAreaGrande(resolucaoM);
+    throw validation(msgGrande, [{ path: "geometria", message: msgGrande }]);
   }
   return { poligono, grade };
 }

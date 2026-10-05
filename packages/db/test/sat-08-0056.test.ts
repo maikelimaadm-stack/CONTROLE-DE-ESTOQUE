@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createPool, withTx, type Db } from "../src/pool.js";
+import { createPool, type Db } from "../src/pool.js";
 import { listMigrations, resetSchema } from "../src/migrate.js";
 import { seedReference, seedDemo, type DemoOrg } from "../src/seed.js";
 import { TEST_URL } from "./setup.js";
-import { INDICES_SATELITE, INDICES_CONSULTA_SATELITE, VERSAO_METODO_PASTAGEM_ESSENCIAL } from "@agro/domain";
+import { INDICES_SATELITE, INDICES_CONSULTA_SATELITE, VERSAO_METODO_PASTAGEM_ESSENCIAL_V1 } from "@agro/domain";
 
 /**
  * 0056 (SAT-08, decisão 299) — multi-índice / condição da área: CHECKs ampliados + tabela ext imutável.
@@ -52,7 +52,8 @@ describe("SAT-08 — migration 0056", () => {
     expect(bundles.sort()).toEqual([...INDICES_CONSULTA_SATELITE].sort());
     const versoes = await listaCheck("chk_satelite_consulta_itens_versao_metodo");
     expect(versoes).toContain("ndvi-v2");
-    expect(versoes).toContain(VERSAO_METODO_PASTAGEM_ESSENCIAL);
+    expect(versoes).toContain(VERSAO_METODO_PASTAGEM_ESSENCIAL_V1);
+    expect(versoes).not.toContain("pastagem-essencial-v2");
     const t = await db.query(`select to_regclass('erp.analises_satelitais_ext') is not null as ok`);
     expect(t.rows[0]!.ok).toBe(true);
     await expect(db.query(SQL_ALVO)).rejects.toThrow(JA);
@@ -73,12 +74,12 @@ describe("SAT-08 — migration 0056", () => {
           geometria_sha256, janela_inicio, janela_fim, resolucao_m, situacao, motivo_qualidade, pixels_geometria, metadados_provedor, criado_por)
        values ($1,$2,$3,'copernicus_cdse','sentinel-2-l2a','evi2',$4,$5,'2026-09-01','2026-10-01',20,'sem_observacao_util','sem_aquisicao',10,'{}',$6)
        returning id`,
-      [demo.orgId, empresa.id, area.id, VERSAO_METODO_PASTAGEM_ESSENCIAL, hash, demo.adminUserId]);
+      [demo.orgId, empresa.id, area.id, VERSAO_METODO_PASTAGEM_ESSENCIAL_V1, hash, demo.adminUserId]);
     const id = analise.rows[0]!.id;
     await db.query(
       `insert into erp.analises_satelitais_ext (analise_id, organization_id, empresa_id, area_id, qualidade, versao_distribuicao)
        values ($1,$2,$3,$4,'{"estado":"sem_imagem_util"}',$5)`,
-      [id, demo.orgId, empresa.id, area.id, VERSAO_METODO_PASTAGEM_ESSENCIAL]);
+      [id, demo.orgId, empresa.id, area.id, VERSAO_METODO_PASTAGEM_ESSENCIAL_V1]);
     await expect(db.query(`update erp.analises_satelitais_ext set qualidade = '{}' where analise_id = $1`, [id]))
       .rejects.toThrow(/não se altera|nao se altera|CONFLICT/i);
   });

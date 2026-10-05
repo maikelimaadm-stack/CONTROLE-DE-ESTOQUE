@@ -1,5 +1,5 @@
 /**
- * CONDIÇÃO DA ÁREA / MULTI-ÍNDICE — SAT-08, decisão 299.
+ * CONDIÇÃO DA ÁREA / MULTI-ÍNDICE — SAT-08, decisões 299/300.
  *
  *   GET  /api/satelite/catalogo-indices
  *   GET  /api/satelite/areas/:areaId/resumo
@@ -28,7 +28,7 @@ import {
   type IdIndiceSatelite
 } from "@agro/domain";
 import { runService } from "../lib/service.js";
-import { DomainError, err, validation } from "../lib/errors.js";
+import { err, type DomainError } from "../lib/errors.js";
 import { empresaScopeSql, scopedById, type ServiceCtx } from "../lib/context.js";
 import { FalhaCopernicus, type RegistroChamada } from "../lib/satelite/copernicus.js";
 import { gravarConsumo } from "../lib/satelite/consumo.js";
@@ -39,6 +39,8 @@ import {
   escolherObservacaoPastagem,
   interpretarEstatisticaMulti,
   montarCorpoPastagem,
+  qualidadeBundleDeCoberturas,
+  type QualidadeBundle,
   type ResultadoIndicePastagem,
   type ResultadoPastagem
 } from "../lib/satelite/pastagem-essencial.js";
@@ -196,45 +198,247 @@ async function lerBundleDaJanela(ctx: ServiceCtx, area: AreaLida, janela: Janela
 }
 
 interface LinhaResumo {
-  id: string; indice: string; situacao: string; motivo_qualidade: string | null;
+  id: string; indice: IdIndiceSatelite; situacao: string; motivo_qualidade: string | null;
   observacao_inicio: Date | null; observacao_fim: Date | null;
   valor_medio: string | null; valor_minimo: string | null; valor_maximo: string | null; desvio_padrao: string | null;
   cobertura_valida: string | null; resolucao_m: string; resolucao_nativa_m: string | null; versao_metodo: string;
-  created_at: Date;
+  geometria_sha256: string; janela_inicio: Date; janela_fim: Date; data_alvo: string | null;
+  pixels_geometria: number | null; created_at: Date;
   percentis: unknown; histograma: unknown; qualidade: unknown; indicadores_derivados: unknown;
 }
 
-async function lerUltimasPorIndice(ctx: ServiceCtx, areaId: string): Promise<LinhaResumo[]> {
-  const params: unknown[] = [ctx.orgId, areaId, VERSAO_METODO_PASTAGEM_ESSENCIAL, INDICES_BUNDLE_ESSENCIAL];
+/** Chave do bundle: mesmos campos que a unicidade efetiva + observação (quando concluída). */
+interface ChaveBundle {
+  geometria_sha256: string;
+  janela_inicio: Date;
+  janela_fim: Date;
+  data_alvo: string | null;
+  observacao_inicio: Date | null;
+  observacao_fim: Date | null;
+}
+
+async function lerLinhasDaChave(
+  ctx: ServiceCtx,
+  areaId: string,
+  chave: ChaveBundle,
+  soConcluidas: boolean
+): Promise<LinhaResumo[]> {
+  const params: unknown[] = [
+    ctx.orgId, areaId, VERSAO_METODO_PASTAGEM_ESSENCIAL, INDICES_BUNDLE_ESSENCIAL,
+    chave.geometria_sha256, chave.janela_inicio, chave.janela_fim, chave.data_alvo,
+    chave.observacao_inicio, chave.observacao_fim
+  ];
   const escopo = empresaScopeSql(ctx, "s", params);
+  const filtroSit = soConcluidas ? " and s.situacao = 'concluida'" : "";
   const r = await ctx.tx.query<LinhaResumo>(
-    `select distinct on (s.indice)
-            s.id, s.indice, s.situacao, s.motivo_qualidade, s.observacao_inicio, s.observacao_fim,
+    `select s.id, s.indice, s.situacao, s.motivo_qualidade, s.observacao_inicio, s.observacao_fim,
             s.valor_medio::text, s.valor_minimo::text, s.valor_maximo::text, s.desvio_padrao::text,
-            s.cobertura_valida::text, s.resolucao_m::text, s.resolucao_nativa_m::text, s.versao_metodo, s.created_at,
+            s.cobertura_valida::text, s.resolucao_m::text, s.resolucao_nativa_m::text, s.versao_metodo,
+            s.geometria_sha256, s.janela_inicio, s.janela_fim, s.data_alvo::text, s.pixels_geometria, s.created_at,
             e.percentis, e.histograma, e.qualidade, e.indicadores_derivados
        from erp.analises_satelitais s
        left join erp.analises_satelitais_ext e on e.analise_id = s.id
-      where s.organization_id = $1 and s.area_id = $2 and s.versao_metodo = $3 and s.indice = any($4::text[])${escopo}
-      order by s.indice, s.created_at desc`, params);
+      where s.organization_id = $1 and s.area_id = $2 and s.versao_metodo = $3 and s.indice = any($4::text[])
+        and s.geometria_sha256 = $5 and s.janela_inicio = $6 and s.janela_fim = $7
+        and s.data_alvo is not distinct from $8::date
+        and s.observacao_inicio is not distinct from $9::timestamptz
+        and s.observacao_fim is not distinct from $10::timestamptz${filtroSit}${escopo}`, params);
   return r.rows;
 }
 
-async function lerAnterior(ctx: ServiceCtx, areaId: string, indice: string, antesDe: Date): Promise<LinhaResumo | null> {
-  const params: unknown[] = [ctx.orgId, areaId, indice, VERSAO_METODO_PASTAGEM_ESSENCIAL, antesDe];
+/**
+ * Monta o bundle completo a partir da chave, ou null se o conjunto não tiver exatamente os 6
+ * índices (fail-closed: nunca mistura execuções distintas).
+ */
+function montarBundleOuNull(linhas: LinhaResumo[]): LinhaResumo[] | null {
+  if (linhas.length !== INDICES_BUNDLE_ESSENCIAL.length) return null;
+  const porIndice = new Map(linhas.map((l) => [l.indice, l]));
+  const ordenadas: LinhaResumo[] = [];
+  for (const id of INDICES_BUNDLE_ESSENCIAL) {
+    const l = porIndice.get(id);
+    if (!l) return null;
+    ordenadas.push(l);
+  }
+  return ordenadas;
+}
+
+/**
+ * Última observação útil e última tentativa do resumo amarram ao polígono ATUAL da área
+ * (`geometria_sha256`). Análise de contorno anterior NÃO vira condição atual — após redesenho
+ * sem análise nova, os dois campos ficam null (SAT-01 marca `do_poligono_atual=false` no DTO
+ * unitário; aqui o contrato do resumo é só o polígono vigente).
+ */
+async function lerUltimaObservacaoUtil(
+  ctx: ServiceCtx,
+  areaId: string,
+  geometriaSha256: string | null
+): Promise<LinhaResumo[] | null> {
+  if (geometriaSha256 === null) return null;
+  // Candidatos: análises NDVI concluídas do método ativo, da mais recente observação para a mais antiga.
+  const params: unknown[] = [ctx.orgId, areaId, VERSAO_METODO_PASTAGEM_ESSENCIAL, geometriaSha256];
+  const escopo = empresaScopeSql(ctx, "s", params);
+  const refs = await ctx.tx.query<{
+    geometria_sha256: string; janela_inicio: Date; janela_fim: Date; data_alvo: string | null;
+    observacao_inicio: Date; observacao_fim: Date;
+  }>(
+    `select s.geometria_sha256, s.janela_inicio, s.janela_fim, s.data_alvo::text,
+            s.observacao_inicio, s.observacao_fim
+       from erp.analises_satelitais s
+      where s.organization_id = $1 and s.area_id = $2 and s.versao_metodo = $3
+        and s.geometria_sha256 = $4
+        and s.indice = 'ndvi' and s.situacao = 'concluida'
+        and s.observacao_inicio is not null and s.observacao_fim is not null${escopo}
+      order by s.observacao_inicio desc, s.created_at desc`, params);
+  for (const ref of refs.rows) {
+    const linhas = await lerLinhasDaChave(ctx, areaId, {
+      geometria_sha256: ref.geometria_sha256,
+      janela_inicio: ref.janela_inicio,
+      janela_fim: ref.janela_fim,
+      data_alvo: ref.data_alvo,
+      observacao_inicio: ref.observacao_inicio,
+      observacao_fim: ref.observacao_fim
+    }, true);
+    const bundle = montarBundleOuNull(linhas);
+    if (bundle && bundle.every((l) => l.situacao === "concluida")) return bundle;
+  }
+  return null;
+}
+
+async function lerUltimaTentativa(
+  ctx: ServiceCtx,
+  areaId: string,
+  geometriaSha256: string | null
+): Promise<LinhaResumo[] | null> {
+  if (geometriaSha256 === null) return null;
+  const params: unknown[] = [ctx.orgId, areaId, VERSAO_METODO_PASTAGEM_ESSENCIAL, geometriaSha256];
+  const escopo = empresaScopeSql(ctx, "s", params);
+  const refs = await ctx.tx.query<{
+    geometria_sha256: string; janela_inicio: Date; janela_fim: Date; data_alvo: string | null;
+    observacao_inicio: Date | null; observacao_fim: Date | null;
+  }>(
+    `select s.geometria_sha256, s.janela_inicio, s.janela_fim, s.data_alvo::text,
+            s.observacao_inicio, s.observacao_fim
+       from erp.analises_satelitais s
+      where s.organization_id = $1 and s.area_id = $2 and s.versao_metodo = $3
+        and s.geometria_sha256 = $4
+        and s.indice = 'ndvi'${escopo}
+      order by s.created_at desc
+      limit 20`, params);
+  for (const ref of refs.rows) {
+    const linhas = await lerLinhasDaChave(ctx, areaId, {
+      geometria_sha256: ref.geometria_sha256,
+      janela_inicio: ref.janela_inicio,
+      janela_fim: ref.janela_fim,
+      data_alvo: ref.data_alvo,
+      observacao_inicio: ref.observacao_inicio,
+      observacao_fim: ref.observacao_fim
+    }, false);
+    const bundle = montarBundleOuNull(linhas);
+    if (bundle) return bundle;
+  }
+  return null;
+}
+
+async function lerAnterior(
+  ctx: ServiceCtx,
+  areaId: string,
+  indice: string,
+  antesDe: Date,
+  geometriaSha256: string
+): Promise<LinhaResumo | null> {
+  const params: unknown[] = [ctx.orgId, areaId, indice, VERSAO_METODO_PASTAGEM_ESSENCIAL, antesDe, geometriaSha256];
   const escopo = empresaScopeSql(ctx, "s", params);
   const r = await ctx.tx.query<LinhaResumo>(
     `select s.id, s.indice, s.situacao, s.motivo_qualidade, s.observacao_inicio, s.observacao_fim,
             s.valor_medio::text, s.valor_minimo::text, s.valor_maximo::text, s.desvio_padrao::text,
-            s.cobertura_valida::text, s.resolucao_m::text, s.resolucao_nativa_m::text, s.versao_metodo, s.created_at,
+            s.cobertura_valida::text, s.resolucao_m::text, s.resolucao_nativa_m::text, s.versao_metodo,
+            s.geometria_sha256, s.janela_inicio, s.janela_fim, s.data_alvo::text, s.pixels_geometria, s.created_at,
             e.percentis, e.histograma, e.qualidade, e.indicadores_derivados
        from erp.analises_satelitais s
        left join erp.analises_satelitais_ext e on e.analise_id = s.id
       where s.organization_id = $1 and s.area_id = $2 and s.indice = $3 and s.versao_metodo = $4
-        and s.situacao = 'concluida' and s.observacao_inicio < $5${escopo}
+        and s.situacao = 'concluida' and s.observacao_inicio < $5
+        and s.geometria_sha256 = $6${escopo}
       order by s.observacao_inicio desc
       limit 1`, params);
   return r.rows[0] ?? null;
+}
+
+function qualidadeDeLinhas(linhas: LinhaResumo[]): QualidadeBundle {
+  const coberturas = {} as Record<IdIndiceSatelite, string | null>;
+  const valid_ratios: Partial<Record<IdIndiceSatelite, string | null>> = {};
+  let cloud_ratio: string | null = null;
+  let scl_composition: Record<string, number> | null = null;
+  let pixels_com_dado_fonte: number | null = null;
+  let pixels_mascarados_qualidade: number | null = null;
+  let pixelsGeometria = 0;
+  const situacao = linhas.every((l) => l.situacao === "concluida") ? "concluida" as const : "sem_observacao_util" as const;
+  const motivo = situacao === "concluida" ? null : (linhas[0]?.motivo_qualidade ?? null);
+  for (const l of linhas) {
+    coberturas[l.indice] = l.cobertura_valida;
+    if (l.pixels_geometria != null) pixelsGeometria = l.pixels_geometria;
+    const q = l.qualidade && typeof l.qualidade === "object" ? l.qualidade as Record<string, unknown> : null;
+    if (q) {
+      if (typeof q["valid_ratio"] === "string") valid_ratios[l.indice] = q["valid_ratio"];
+      if (cloud_ratio === null && typeof q["cloud_ratio"] === "string") cloud_ratio = q["cloud_ratio"];
+      if (scl_composition === null && q["scl_composition"] && typeof q["scl_composition"] === "object") {
+        scl_composition = q["scl_composition"] as Record<string, number>;
+      }
+      const den = q["denominadores"] && typeof q["denominadores"] === "object"
+        ? q["denominadores"] as Record<string, unknown> : null;
+      if (den) {
+        if (pixels_com_dado_fonte === null && typeof den["pixels_com_dado_fonte"] === "number") {
+          pixels_com_dado_fonte = den["pixels_com_dado_fonte"];
+        }
+        if (pixels_mascarados_qualidade === null && typeof den["pixels_mascarados_qualidade"] === "number") {
+          pixels_mascarados_qualidade = den["pixels_mascarados_qualidade"];
+        }
+        if (typeof den["pixels_geometricos"] === "number") pixelsGeometria = den["pixels_geometricos"];
+      }
+    }
+  }
+  for (const id of INDICES_BUNDLE_ESSENCIAL) {
+    if (!(id in coberturas)) coberturas[id] = null;
+  }
+  return qualidadeBundleDeCoberturas(coberturas, situacao, motivo, pixelsGeometria, {
+    cloud_ratio, scl_composition, pixels_com_dado_fonte, pixels_mascarados_qualidade, valid_ratios
+  });
+}
+
+async function dtoIndicesDoBundle(
+  ctx: ServiceCtx,
+  areaId: string,
+  linhas: LinhaResumo[],
+  comComparacao: boolean,
+  geometriaSha256: string
+): Promise<Record<string, unknown>> {
+  const porIndice: Record<string, unknown> = {};
+  for (const l of linhas) {
+    let comparacao: unknown = null;
+    if (comComparacao && l.situacao === "concluida" && l.observacao_inicio) {
+      const ant = await lerAnterior(ctx, areaId, l.indice, l.observacao_inicio, geometriaSha256);
+      if (ant?.valor_medio != null && l.valor_medio != null) {
+        const delta = deltaPercentual(Number(l.valor_medio), Number(ant.valor_medio));
+        comparacao = {
+          anterior_id: ant.id,
+          anterior_valor_medio: ant.valor_medio,
+          anterior_observacao_inicio: ant.observacao_inicio?.toISOString() ?? null,
+          delta_percentual: delta === null ? null : Number(delta.toFixed(2)),
+          tendencia: tendenciaCurta(delta)
+        };
+      }
+    }
+    porIndice[l.indice] = {
+      id: l.id, situacao: l.situacao, motivo_qualidade: l.motivo_qualidade,
+      observacao_inicio: l.observacao_inicio?.toISOString() ?? null,
+      observacao_fim: l.observacao_fim?.toISOString() ?? null,
+      valor_medio: l.valor_medio, valor_minimo: l.valor_minimo, valor_maximo: l.valor_maximo, desvio_padrao: l.desvio_padrao,
+      cobertura_valida: l.cobertura_valida, resolucao_m: l.resolucao_m, resolucao_nativa_m: l.resolucao_nativa_m,
+      versao_metodo: l.versao_metodo, percentis: l.percentis, histograma: l.histograma, qualidade: l.qualidade,
+      ...(comComparacao ? { comparacao_observacao_anterior: comparacao } : {})
+    };
+  }
+  return porIndice;
 }
 
 function dtoCatalogo() {
@@ -246,13 +450,18 @@ function dtoCatalogo() {
       versao_metodo: VERSAO_METODO_PASTAGEM_ESSENCIAL,
       indices: [...INDICES_BUNDLE_ESSENCIAL],
       resolucao_agregacao_m: RESOLUCAO_AGREGACAO_M,
-      mascara: { dataMask: true, scl: true, cld: false }
+      mascara: { dataMask: true, scl: true, cld: false, por_output: true }
     }],
     indices: INDICES_BUNDLE_ESSENCIAL.map((id) => {
       const c = CATALOGO_INDICES[id];
       return {
         id: c.id, nome: c.nome, versao: c.versao, formula: c.formula, bandas: [...c.bandas],
-        resolucao_nativa_m: c.resolucaoNativaM, dominio: c.dominio, finalidade: c.finalidade,
+        resolucao_nativa_m: c.resolucaoNativaM,
+        dominio: c.dominio,
+        faixa_persistivel: c.faixaPersistivel,
+        faixa_operacional: c.faixaOperacional,
+        faixa_visual: c.faixaVisual,
+        finalidade: c.finalidade,
         limitacoes: [...c.limitacoes], status: c.status, familia: c.familia, pergunta: c.pergunta
       };
     })
@@ -279,46 +488,43 @@ export default async function sateliteCondicaoRoutes(app: FastifyInstance) {
     const areaId = idDaArea(req);
     return runService(app, req, PERMISSAO_VER_ANALISE, async (ctx) => {
       const area = await lerAreaNoEscopo(ctx, areaId);
-      const ultimas = await lerUltimasPorIndice(ctx, area.id);
-      const porIndice: Record<string, unknown> = {};
-      let indicadores: unknown = null;
-      let qualidade: unknown = null;
-      let observacao: { inicio: string | null; fim: string | null } = { inicio: null, fim: null };
-      for (const l of ultimas) {
-        let comparacao: unknown = null;
-        if (l.situacao === "concluida" && l.observacao_inicio) {
-          const ant = await lerAnterior(ctx, area.id, l.indice, l.observacao_inicio);
-          if (ant?.valor_medio != null && l.valor_medio != null) {
-            const delta = deltaPercentual(Number(l.valor_medio), Number(ant.valor_medio));
-            comparacao = {
-              anterior_id: ant.id,
-              anterior_valor_medio: ant.valor_medio,
-              anterior_observacao_inicio: ant.observacao_inicio?.toISOString() ?? null,
-              delta_percentual: delta === null ? null : Number(delta.toFixed(2)),
-              tendencia: tendenciaCurta(delta)
-            };
-          }
-        }
-        porIndice[l.indice] = {
-          id: l.id, situacao: l.situacao, motivo_qualidade: l.motivo_qualidade,
-          observacao_inicio: l.observacao_inicio?.toISOString() ?? null,
-          observacao_fim: l.observacao_fim?.toISOString() ?? null,
-          valor_medio: l.valor_medio, valor_minimo: l.valor_minimo, valor_maximo: l.valor_maximo, desvio_padrao: l.desvio_padrao,
-          cobertura_valida: l.cobertura_valida, resolucao_m: l.resolucao_m, resolucao_nativa_m: l.resolucao_nativa_m,
-          versao_metodo: l.versao_metodo, percentis: l.percentis, histograma: l.histograma, qualidade: l.qualidade,
-          comparacao_observacao_anterior: comparacao
+      const hashAtual = area.geometria_sha256;
+      const util = await lerUltimaObservacaoUtil(ctx, area.id, hashAtual);
+      const tentativa = await lerUltimaTentativa(ctx, area.id, hashAtual);
+
+      let ultima_observacao_util: Record<string, unknown> | null = null;
+      if (util && hashAtual !== null) {
+        const ndvi = util.find((l) => l.indice === "ndvi")!;
+        ultima_observacao_util = {
+          observacao_inicio: ndvi.observacao_inicio?.toISOString() ?? null,
+          observacao_fim: ndvi.observacao_fim?.toISOString() ?? null,
+          do_poligono_atual: true,
+          qualidade: qualidadeDeLinhas(util),
+          indices: await dtoIndicesDoBundle(ctx, area.id, util, true, hashAtual),
+          indicadores_derivados: ndvi.indicadores_derivados
         };
-        if (l.indice === "ndvi") {
-          indicadores = l.indicadores_derivados;
-          qualidade = l.qualidade;
-          observacao = { inicio: l.observacao_inicio?.toISOString() ?? null, fim: l.observacao_fim?.toISOString() ?? null };
-        }
       }
+
+      let ultima_tentativa: Record<string, unknown> | null = null;
+      if (tentativa && hashAtual !== null) {
+        const ref = tentativa.find((l) => l.indice === "ndvi") ?? tentativa[0]!;
+        ultima_tentativa = {
+          situacao: ref.situacao,
+          motivo_qualidade: ref.motivo_qualidade,
+          criado_em: ref.created_at.toISOString(),
+          observacao_inicio: ref.observacao_inicio?.toISOString() ?? null,
+          observacao_fim: ref.observacao_fim?.toISOString() ?? null,
+          do_poligono_atual: true,
+          qualidade: qualidadeDeLinhas(tentativa),
+          indices: await dtoIndicesDoBundle(ctx, area.id, tentativa, false, hashAtual)
+        };
+      }
+
       return {
         area_id: area.id,
         versao_metodo: VERSAO_METODO_PASTAGEM_ESSENCIAL,
-        observacao, qualidade, indices: porIndice,
-        indicadores_derivados: indicadores,
+        ultima_observacao_util,
+        ultima_tentativa,
         aviso: AVISO_VEGETACAO_NAO_E_CAPIM
       };
     });

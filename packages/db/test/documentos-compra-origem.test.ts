@@ -187,10 +187,11 @@ describe("premissas e catálogo", () => {
     // Manejo — MAPA-01, #91; a 0050 o cadastro de áreas; a 0051 unifica mapa × áreas; a 0052 cria o histórico de
     // análises satelitais por área — SAT-01, sat-01-0052.test.ts; a 0053 cria a consulta satelital em lote — SAT-02,
     // sat-02-0053.test.ts; a 0054 dá ao executor da fila a reserva e a contagem do limite — SAT-03, sat-03-0054.test.ts; a 0055
-    // guarda o raster de valores por pixel da análise — SAT-06, sat-06-0055.test.ts).
+    // guarda o raster de valores por pixel da análise — SAT-06, sat-06-0055.test.ts; a 0056 amplia multi-índice — SAT-08,
+    // sat-08-0056.test.ts; a 0057 corrige o contrato Statistical API — SAT-08 R1, sat-08-0057.test.ts).
     const r = (await db.query<{ ate: number; n: number; ultima: string }>(
       "select count(*) filter (where name <= '0037_receber_pedido_de_compra.sql')::int ate, count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
-    expect(r).toEqual({ ate: 37, n: 55, ultima: "0055_satelite_rasters.sql" });
+    expect(r).toEqual({ ate: 37, n: 57, ultima: "0057_satelite_multi_indice_contrato.sql" });
   });
 
   it("colunas novas: tipo e nulidade", async () => {

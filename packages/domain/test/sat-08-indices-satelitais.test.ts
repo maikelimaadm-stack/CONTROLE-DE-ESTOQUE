@@ -5,6 +5,7 @@ import {
   INDICES_BUNDLE_ESSENCIAL,
   RESOLUCAO_AGREGACAO_PASTAGEM_M,
   VERSAO_METODO_PASTAGEM_ESSENCIAL,
+  VERSAO_METODO_PASTAGEM_ESSENCIAL_V1,
   calcularBsi,
   calcularEvi2,
   calcularIndice,
@@ -16,6 +17,7 @@ import {
   deltaPercentual,
   estadoQualidade,
   indicadoresDerivados,
+  pixelValidoParaIndice,
   pixelValidoParaVegetacao,
   rotuloRespostaVegetacao,
   tendenciaCurta
@@ -23,11 +25,34 @@ import {
 import { CLASSES_SCL_EXCLUIDAS, INDICES_SATELITE } from "../src/analise-satelital.js";
 
 describe("SAT-08 — catálogo e fórmulas", () => {
-  it("bundle essencial tem os 6 índices e resolução de agregação 20 m", () => {
+  it("bundle essencial tem os 6 índices e resolução de agregação 20 m; método ativo v2", () => {
     expect([...INDICES_BUNDLE_ESSENCIAL]).toEqual(["ndvi", "evi2", "ndre", "ndmi", "msavi2", "bsi"]);
     expect(RESOLUCAO_AGREGACAO_PASTAGEM_M).toBe(20);
-    expect(VERSAO_METODO_PASTAGEM_ESSENCIAL).toBe("pastagem-essencial-v1");
+    expect(VERSAO_METODO_PASTAGEM_ESSENCIAL).toBe("pastagem-essencial-v2");
+    expect(VERSAO_METODO_PASTAGEM_ESSENCIAL_V1).toBe("pastagem-essencial-v1");
     expect(BANDAS_BUNDLE_ESSENCIAL).toEqual(["B02", "B04", "B05", "B08", "B8A", "B11", "SCL"]);
+  });
+
+  it("EVI2 persistível até 2.5; MSAVI2 até -2.5; NDVI continua [-1,1]; paleta visual ≠ constraint", () => {
+    expect(CATALOGO_INDICES.evi2.faixaPersistivel).toEqual({ min: -1, max: 2.5 });
+    expect(CATALOGO_INDICES.evi2.faixaVisual).toEqual({ min: -1, max: 1 });
+    expect(CATALOGO_INDICES.ndvi.faixaPersistivel).toEqual({ min: -1, max: 1 });
+    expect(CATALOGO_INDICES.msavi2.faixaPersistivel).toEqual({ min: -2.5, max: 1 });
+    expect(CATALOGO_INDICES.msavi2.faixaVisual).toEqual({ min: -1, max: 1 });
+    const evi = calcularEvi2(0.8, 0.02)!;
+    expect(evi).toBeGreaterThan(1);
+    expect(evi).toBeLessThanOrEqual(2.5);
+    // S2L2A reflectance pode >1 (UINT15/10000); MSAVI2(NIR=0,RED=1.5) < -1
+    const msavi = calcularMsavi2(0, 1.5)!;
+    expect(msavi).toBeLessThan(-1);
+    expect(msavi).toBeGreaterThanOrEqual(-2.5);
+    expect(calcularMsavi2(0, 3.2767)!).toBeGreaterThanOrEqual(-2.5);
+  });
+
+  it("máscara por índice: B05 inválida não invalida NDVI", () => {
+    const p = { dataMask: 1, scl: 4, B04: 0.1, B08: 0.4, B05: -1, B8A: 0.3, B02: 0.05, B11: 0.2 };
+    expect(pixelValidoParaIndice("ndvi", p)).toBe(true);
+    expect(pixelValidoParaIndice("ndre", p)).toBe(false);
   });
 
   it("NDRE e NDMI declaram resolução nativa 20 m; NDVI/EVI2/MSAVI2 10 m", () => {
