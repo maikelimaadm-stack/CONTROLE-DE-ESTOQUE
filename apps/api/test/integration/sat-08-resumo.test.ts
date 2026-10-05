@@ -4,9 +4,10 @@ import { INDICES_BUNDLE_ESSENCIAL, VERSAO_METODO_PASTAGEM_ESSENCIAL } from "@agr
 import { TEST_URL, harness, type Harness } from "./setup.js";
 
 /**
- * SAT-08 R3 — GET /api/satelite/areas/:areaId/resumo
+ * SAT-08 R3/R4 — GET /api/satelite/areas/:areaId/resumo
  * Última observação útil (bundle concluído completo) ≠ última tentativa
  * (pode ser sem_observacao_util). Nunca mistura índices de bundles distintos.
+ * R4: útil e tentativa amarram ao polígono atual — redesenho A→B não serve A como B.
  */
 
 let h: Harness;
@@ -16,6 +17,12 @@ let A = "";
 const POLIGONO = {
   type: "Polygon",
   coordinates: [[[-56.1, -15.6], [-56.1, -15.59], [-56.09, -15.59], [-56.09, -15.6], [-56.1, -15.6]]]
+};
+
+/** Contorno distinto (hash B) — redesenho do pasto. */
+const POLIGONO_B = {
+  type: "Polygon",
+  coordinates: [[[-56.1, -15.6], [-56.1, -15.585], [-56.085, -15.585], [-56.085, -15.6], [-56.1, -15.6]]]
 };
 
 beforeAll(async () => {
@@ -231,5 +238,61 @@ describe("SAT-08 R3 — resumo última útil × última tentativa", () => {
     };
     expect(body.ultima_observacao_util).toBeNull();
     expect(body.ultima_tentativa).toBeNull();
+  });
+
+  it("R5: redesenho A→B — resumo NÃO serve análise da geometria A como condição de B", async () => {
+    const areaId = await novaArea("sat08-r5");
+    const shaA = await shaArea(areaId);
+    await gravarBundle({
+      areaId, sha: shaA,
+      janelaInicio: "2026-09-01T00:00:00Z", janelaFim: "2026-10-01T00:00:00Z",
+      situacao: "concluida",
+      observacaoInicio: "2026-09-28T00:00:00Z", observacaoFim: "2026-09-29T00:00:00Z",
+      createdAt: "2026-09-29T18:00:00Z", cobertura: 0.88
+    });
+
+    const antes = (await resumo(areaId)).json() as {
+      ultima_observacao_util: { do_poligono_atual: boolean; observacao_inicio: string } | null;
+      ultima_tentativa: { do_poligono_atual: boolean; situacao: string } | null;
+    };
+    expect(antes.ultima_observacao_util).not.toBeNull();
+    expect(antes.ultima_observacao_util!.do_poligono_atual).toBe(true);
+    expect(antes.ultima_tentativa).not.toBeNull();
+    expect(antes.ultima_tentativa!.do_poligono_atual).toBe(true);
+
+    await admin.query(
+      `update erp.areas set geometria = $2, area_ha = 42, usable_area_ha = 42 where id = $1`,
+      [areaId, JSON.stringify(POLIGONO_B)]);
+    const shaB = await shaArea(areaId);
+    expect(shaB).not.toBe(shaA);
+
+    const depois = (await resumo(areaId)).json() as {
+      ultima_observacao_util: null | { observacao_inicio: string };
+      ultima_tentativa: null | { situacao: string };
+    };
+    expect(depois.ultima_observacao_util, "útil de A não pode parecer condição de B").toBeNull();
+    expect(depois.ultima_tentativa, "tentativa de A não pode parecer tentativa de B").toBeNull();
+
+    await gravarBundle({
+      areaId, sha: shaB,
+      janelaInicio: "2026-09-20T00:00:00Z", janelaFim: "2026-10-20T00:00:00Z",
+      situacao: "concluida",
+      observacaoInicio: "2026-10-05T00:00:00Z", observacaoFim: "2026-10-06T00:00:00Z",
+      createdAt: "2026-10-05T20:00:00Z", cobertura: 0.71
+    });
+    const comB = (await resumo(areaId)).json() as {
+      ultima_observacao_util: {
+        do_poligono_atual: boolean;
+        observacao_inicio: string;
+        qualidade: { cobertura_valida: string | null };
+      } | null;
+      ultima_tentativa: { do_poligono_atual: boolean; situacao: string } | null;
+    };
+    expect(comB.ultima_observacao_util).not.toBeNull();
+    expect(comB.ultima_observacao_util!.do_poligono_atual).toBe(true);
+    expect(comB.ultima_observacao_util!.observacao_inicio).toBe("2026-10-05T00:00:00.000Z");
+    expect(comB.ultima_observacao_util!.qualidade.cobertura_valida).toBe("0.7100");
+    expect(comB.ultima_tentativa!.do_poligono_atual).toBe(true);
+    expect(comB.ultima_tentativa!.situacao).toBe("concluida");
   });
 });

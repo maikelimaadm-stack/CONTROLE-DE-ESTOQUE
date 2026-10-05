@@ -1,5 +1,5 @@
 /**
- * CONDIÇÃO DA ÁREA / MULTI-ÍNDICE — SAT-08, decisão 299.
+ * CONDIÇÃO DA ÁREA / MULTI-ÍNDICE — SAT-08, decisões 299/300.
  *
  *   GET  /api/satelite/catalogo-indices
  *   GET  /api/satelite/areas/:areaId/resumo
@@ -262,9 +262,20 @@ function montarBundleOuNull(linhas: LinhaResumo[]): LinhaResumo[] | null {
   return ordenadas;
 }
 
-async function lerUltimaObservacaoUtil(ctx: ServiceCtx, areaId: string): Promise<LinhaResumo[] | null> {
+/**
+ * Última observação útil e última tentativa do resumo amarram ao polígono ATUAL da área
+ * (`geometria_sha256`). Análise de contorno anterior NÃO vira condição atual — após redesenho
+ * sem análise nova, os dois campos ficam null (SAT-01 marca `do_poligono_atual=false` no DTO
+ * unitário; aqui o contrato do resumo é só o polígono vigente).
+ */
+async function lerUltimaObservacaoUtil(
+  ctx: ServiceCtx,
+  areaId: string,
+  geometriaSha256: string | null
+): Promise<LinhaResumo[] | null> {
+  if (geometriaSha256 === null) return null;
   // Candidatos: análises NDVI concluídas do método ativo, da mais recente observação para a mais antiga.
-  const params: unknown[] = [ctx.orgId, areaId, VERSAO_METODO_PASTAGEM_ESSENCIAL];
+  const params: unknown[] = [ctx.orgId, areaId, VERSAO_METODO_PASTAGEM_ESSENCIAL, geometriaSha256];
   const escopo = empresaScopeSql(ctx, "s", params);
   const refs = await ctx.tx.query<{
     geometria_sha256: string; janela_inicio: Date; janela_fim: Date; data_alvo: string | null;
@@ -274,6 +285,7 @@ async function lerUltimaObservacaoUtil(ctx: ServiceCtx, areaId: string): Promise
             s.observacao_inicio, s.observacao_fim
        from erp.analises_satelitais s
       where s.organization_id = $1 and s.area_id = $2 and s.versao_metodo = $3
+        and s.geometria_sha256 = $4
         and s.indice = 'ndvi' and s.situacao = 'concluida'
         and s.observacao_inicio is not null and s.observacao_fim is not null${escopo}
       order by s.observacao_inicio desc, s.created_at desc`, params);
@@ -292,8 +304,13 @@ async function lerUltimaObservacaoUtil(ctx: ServiceCtx, areaId: string): Promise
   return null;
 }
 
-async function lerUltimaTentativa(ctx: ServiceCtx, areaId: string): Promise<LinhaResumo[] | null> {
-  const params: unknown[] = [ctx.orgId, areaId, VERSAO_METODO_PASTAGEM_ESSENCIAL];
+async function lerUltimaTentativa(
+  ctx: ServiceCtx,
+  areaId: string,
+  geometriaSha256: string | null
+): Promise<LinhaResumo[] | null> {
+  if (geometriaSha256 === null) return null;
+  const params: unknown[] = [ctx.orgId, areaId, VERSAO_METODO_PASTAGEM_ESSENCIAL, geometriaSha256];
   const escopo = empresaScopeSql(ctx, "s", params);
   const refs = await ctx.tx.query<{
     geometria_sha256: string; janela_inicio: Date; janela_fim: Date; data_alvo: string | null;
@@ -303,6 +320,7 @@ async function lerUltimaTentativa(ctx: ServiceCtx, areaId: string): Promise<Linh
             s.observacao_inicio, s.observacao_fim
        from erp.analises_satelitais s
       where s.organization_id = $1 and s.area_id = $2 and s.versao_metodo = $3
+        and s.geometria_sha256 = $4
         and s.indice = 'ndvi'${escopo}
       order by s.created_at desc
       limit 20`, params);
@@ -321,8 +339,14 @@ async function lerUltimaTentativa(ctx: ServiceCtx, areaId: string): Promise<Linh
   return null;
 }
 
-async function lerAnterior(ctx: ServiceCtx, areaId: string, indice: string, antesDe: Date): Promise<LinhaResumo | null> {
-  const params: unknown[] = [ctx.orgId, areaId, indice, VERSAO_METODO_PASTAGEM_ESSENCIAL, antesDe];
+async function lerAnterior(
+  ctx: ServiceCtx,
+  areaId: string,
+  indice: string,
+  antesDe: Date,
+  geometriaSha256: string
+): Promise<LinhaResumo | null> {
+  const params: unknown[] = [ctx.orgId, areaId, indice, VERSAO_METODO_PASTAGEM_ESSENCIAL, antesDe, geometriaSha256];
   const escopo = empresaScopeSql(ctx, "s", params);
   const r = await ctx.tx.query<LinhaResumo>(
     `select s.id, s.indice, s.situacao, s.motivo_qualidade, s.observacao_inicio, s.observacao_fim,
@@ -333,7 +357,8 @@ async function lerAnterior(ctx: ServiceCtx, areaId: string, indice: string, ante
        from erp.analises_satelitais s
        left join erp.analises_satelitais_ext e on e.analise_id = s.id
       where s.organization_id = $1 and s.area_id = $2 and s.indice = $3 and s.versao_metodo = $4
-        and s.situacao = 'concluida' and s.observacao_inicio < $5${escopo}
+        and s.situacao = 'concluida' and s.observacao_inicio < $5
+        and s.geometria_sha256 = $6${escopo}
       order by s.observacao_inicio desc
       limit 1`, params);
   return r.rows[0] ?? null;
@@ -384,13 +409,14 @@ async function dtoIndicesDoBundle(
   ctx: ServiceCtx,
   areaId: string,
   linhas: LinhaResumo[],
-  comComparacao: boolean
+  comComparacao: boolean,
+  geometriaSha256: string
 ): Promise<Record<string, unknown>> {
   const porIndice: Record<string, unknown> = {};
   for (const l of linhas) {
     let comparacao: unknown = null;
     if (comComparacao && l.situacao === "concluida" && l.observacao_inicio) {
-      const ant = await lerAnterior(ctx, areaId, l.indice, l.observacao_inicio);
+      const ant = await lerAnterior(ctx, areaId, l.indice, l.observacao_inicio, geometriaSha256);
       if (ant?.valor_medio != null && l.valor_medio != null) {
         const delta = deltaPercentual(Number(l.valor_medio), Number(ant.valor_medio));
         comparacao = {
@@ -462,23 +488,25 @@ export default async function sateliteCondicaoRoutes(app: FastifyInstance) {
     const areaId = idDaArea(req);
     return runService(app, req, PERMISSAO_VER_ANALISE, async (ctx) => {
       const area = await lerAreaNoEscopo(ctx, areaId);
-      const util = await lerUltimaObservacaoUtil(ctx, area.id);
-      const tentativa = await lerUltimaTentativa(ctx, area.id);
+      const hashAtual = area.geometria_sha256;
+      const util = await lerUltimaObservacaoUtil(ctx, area.id, hashAtual);
+      const tentativa = await lerUltimaTentativa(ctx, area.id, hashAtual);
 
       let ultima_observacao_util: Record<string, unknown> | null = null;
-      if (util) {
+      if (util && hashAtual !== null) {
         const ndvi = util.find((l) => l.indice === "ndvi")!;
         ultima_observacao_util = {
           observacao_inicio: ndvi.observacao_inicio?.toISOString() ?? null,
           observacao_fim: ndvi.observacao_fim?.toISOString() ?? null,
+          do_poligono_atual: true,
           qualidade: qualidadeDeLinhas(util),
-          indices: await dtoIndicesDoBundle(ctx, area.id, util, true),
+          indices: await dtoIndicesDoBundle(ctx, area.id, util, true, hashAtual),
           indicadores_derivados: ndvi.indicadores_derivados
         };
       }
 
       let ultima_tentativa: Record<string, unknown> | null = null;
-      if (tentativa) {
+      if (tentativa && hashAtual !== null) {
         const ref = tentativa.find((l) => l.indice === "ndvi") ?? tentativa[0]!;
         ultima_tentativa = {
           situacao: ref.situacao,
@@ -486,8 +514,9 @@ export default async function sateliteCondicaoRoutes(app: FastifyInstance) {
           criado_em: ref.created_at.toISOString(),
           observacao_inicio: ref.observacao_inicio?.toISOString() ?? null,
           observacao_fim: ref.observacao_fim?.toISOString() ?? null,
+          do_poligono_atual: true,
           qualidade: qualidadeDeLinhas(tentativa),
-          indices: await dtoIndicesDoBundle(ctx, area.id, tentativa, false)
+          indices: await dtoIndicesDoBundle(ctx, area.id, tentativa, false, hashAtual)
         };
       }
 
