@@ -141,9 +141,10 @@ describe("SAT-08 R3 — resumo última útil × última tentativa", () => {
       ultima_tentativa: { situacao: string; motivo_qualidade: string | null; criado_em: string } | null;
     };
     expect(body.ultima_observacao_util).not.toBeNull();
-    expect(body.ultima_observacao_util!.observacao_inicio).toBe("2026-09-20T00:00:00.000Z");
-    expect(body.ultima_observacao_util!.indices.ndvi.situacao).toBe("concluida");
-    expect(body.ultima_observacao_util!.indices.ndvi.valor_medio).toBe("0.5500");
+    const util = body.ultima_observacao_util!;
+    expect(util.observacao_inicio).toBe("2026-09-20T00:00:00.000Z");
+    expect(util.indices.ndvi?.situacao).toBe("concluida");
+    expect(util.indices.ndvi?.valor_medio).toBe("0.5500");
     expect(body.ultima_tentativa).not.toBeNull();
     expect(body.ultima_tentativa!.situacao).toBe("sem_observacao_util");
     expect(body.ultima_tentativa!.motivo_qualidade).toBe("cobertura_insuficiente");
@@ -196,8 +197,8 @@ describe("SAT-08 R3 — resumo última útil × última tentativa", () => {
       ultima_tentativa: { situacao: string };
     };
     expect(body.ultima_observacao_util.observacao_inicio).toBe("2026-10-03T00:00:00.000Z");
-    expect(body.ultima_observacao_util.indices.ndvi.valor_medio).toBe("0.5500");
-    expect(body.ultima_observacao_util.indices.ndre.valor_medio).toBe("0.5500");
+    expect(body.ultima_observacao_util.indices.ndvi?.valor_medio).toBe("0.5500");
+    expect(body.ultima_observacao_util.indices.ndre?.valor_medio).toBe("0.5500");
     expect(body.ultima_observacao_util.qualidade.cobertura_valida).toBe("0.7700");
     expect(body.ultima_tentativa.situacao).toBe("sem_observacao_util");
   });

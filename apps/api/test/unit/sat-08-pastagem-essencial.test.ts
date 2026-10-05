@@ -562,7 +562,7 @@ describe("SAT-08 R3 — qualidade do bundle, maior_cobertura e histograma", () =
     expect(HISTOGRAMA_BINS_VIGOR[2]).toBe(0.4);
     expect(HISTOGRAMA_BINS_VIGOR[3]).toBe(0.6);
     expect(HISTOGRAMA_BINS_VIGOR[4]).toBeCloseTo(1 + HISTOGRAMA_EPS_BORDA, 12);
-    const calc = montarCalculationsPastagem() as {
+    const calc = montarCalculationsPastagem() as unknown as {
       ndvi: { histograms: { default: { bins: number[] } } };
     };
     const bins = calc.ndvi.histograms.default.bins;
