@@ -585,8 +585,22 @@ test("Mapa geral SAT-07: gradiente por pixel, sem POST ao abrir, troca de modo s
   let getsArquivo = 0;
   let getsLista = 0;
   const rastersPorArea = new Map<string, typeof dto>([[comRaster.id, dto]]);
+  const corsPng = {
+    "Access-Control-Allow-Origin": "*",
+    "Cross-Origin-Resource-Policy": "cross-origin",
+    "Access-Control-Allow-Methods": "GET, OPTIONS"
+  };
 
-  await page.route((url) => url.pathname === "/api/mapa/rasters", async (rota) => {
+  // Arquivo ANTES da listagem (rota mais específica primeiro).
+  await page.route(/\/api\/mapa\/rasters\/[^/]+\/arquivo/, async (rota) => {
+    if (rota.request().method() === "OPTIONS") {
+      await rota.fulfill({ status: 204, headers: corsPng });
+      return;
+    }
+    getsArquivo += 1;
+    await rota.fulfill({ status: 200, contentType: "image/png", headers: corsPng, body: PNG_NDVI_4X4 });
+  });
+  await page.route(/\/api\/mapa\/rasters(\?|$)/, async (rota) => {
     if (rota.request().method() !== "GET") return rota.continue();
     getsLista += 1;
     const u = new URL(rota.request().url());
@@ -595,11 +609,12 @@ test("Mapa geral SAT-07: gradiente por pixel, sem POST ao abrir, troca de modo s
       const r = rastersPorArea.get(id);
       return r ? [r] : [];
     });
-    await rota.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ itens, pagina: 1, tamanho: 50, tem_mais: false }) });
-  });
-  await page.route(`**/api/mapa/rasters/*/arquivo**`, async (rota) => {
-    getsArquivo += 1;
-    await rota.fulfill({ status: 200, contentType: "image/png", body: PNG_NDVI_4X4 });
+    await rota.fulfill({
+      status: 200,
+      contentType: "application/json",
+      headers: { "Access-Control-Allow-Origin": "*" },
+      body: JSON.stringify({ itens, pagina: 1, tamanho: 50, tem_mais: false })
+    });
   });
   await page.route(`**/api/mapa/analises-satelitais/${analiseSem}/raster`, async (rota) => {
     if (rota.request().method() !== "POST") return rota.continue();
@@ -626,13 +641,21 @@ test("Mapa geral SAT-07: gradiente por pixel, sem POST ao abrir, troca de modo s
 
   await page.goto("/mapa-geral");
   await expect(page.getByTestId("mapa-item-area")).toHaveCount(2);
-  await expect.poll(async () => page.evaluate(() => (window as unknown as { __mapaNdviE2E?: { modo?: string } }).__mapaNdviE2E?.modo), { timeout: 30_000 }).toBe("pixel");
+  await expect.poll(async () => page.evaluate(() => Boolean((window as unknown as { __mapaManejoE2E?: unknown }).__mapaManejoE2E)), { timeout: 30_000 }).toBe(true);
+  // Espera a listagem mockada e o bitmap colorido antes de exigir o modo.
+  await expect.poll(() => getsLista, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+  await expect.poll(() => getsArquivo, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
+  await expect.poll(async () => page.evaluate(() => {
+    const e = (window as unknown as { __mapaNdviE2E?: { modo?: string; rasters?: Record<string, { temImagem: boolean; erro?: string | null }> } }).__mapaNdviE2E;
+    return e ? { modo: e.modo, rasters: e.rasters } : null;
+  }), { timeout: 30_000 }).toEqual(expect.objectContaining({
+    modo: "pixel",
+    rasters: expect.objectContaining({ [comRaster.id]: expect.objectContaining({ temImagem: true }) })
+  }));
   await expect(page.getByTestId("mapa-cor-pixel")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("mapa-legenda-gradiente")).toBeVisible();
   await expect(page.getByTestId("mapa-legenda-ndvi")).toContainText("Não é biomassa");
   expect(postsRaster, "abrir a tela NÃO dispara POST de raster").toBe(0);
-  expect(getsLista, "listou rasters").toBeGreaterThanOrEqual(1);
-  expect(getsArquivo, "baixou o PNG uma vez").toBeGreaterThanOrEqual(1);
   const getsArquivoAposCarga = getsArquivo;
   const getsListaAposCarga = getsLista;
 

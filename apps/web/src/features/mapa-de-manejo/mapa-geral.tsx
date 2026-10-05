@@ -92,14 +92,16 @@ export function MapaGeral() {
     return false;
   }, [rasters.porArea]);
 
-  // Trava o padrão UMA vez, só depois que a listagem de rasters terminou — evita abrir em
-  // "Por área" e saltar sozinho para "Por pixel" quando as imagens chegam.
+  // Trava o padrão UMA vez, só depois que o viewport tem áreas E a listagem de rasters
+  // terminou — evita travar em "Por área" com viewport ainda vazio (ids=[]) e depois
+  // ignorar as imagens que chegam.
   React.useEffect(() => {
     if (!comNdvi || modoEscolhido !== null || padraoTravadoRef.current) return;
+    if (idsViewport.length === 0) return;
     if (rasters.situacao === "carregando" || rasters.situacao === "ocioso") return;
     padraoTravadoRef.current = true;
     setModoCor(algumRaster ? "pixel" : algumNdvi ? "area" : "cadastro");
-  }, [comNdvi, modoEscolhido, rasters.situacao, algumRaster, algumNdvi]);
+  }, [comNdvi, modoEscolhido, rasters.situacao, algumRaster, algumNdvi, idsViewport.length]);
 
   const modoCor: ModoCor = !comNdvi
     ? "cadastro"

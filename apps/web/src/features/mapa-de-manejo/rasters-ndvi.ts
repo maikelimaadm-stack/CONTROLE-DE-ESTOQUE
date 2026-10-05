@@ -83,7 +83,12 @@ export async function baixarArquivoRaster(urlAssinada: string): Promise<Blob | n
 }
 
 async function blobParaBitmap(blob: Blob): Promise<ImageBitmap> {
-  return createImageBitmap(blob, { colorSpaceConversion: "none", premultiplyAlpha: "none" });
+  try {
+    return await createImageBitmap(blob, { colorSpaceConversion: "none", premultiplyAlpha: "none" });
+  } catch {
+    // Chromium antigo / ambiente de teste: opções tipadas podem falhar — tenta sem elas.
+    return createImageBitmap(blob);
+  }
 }
 
 function canvasHtml(largura: number, altura: number): HTMLCanvasElement {
@@ -214,9 +219,11 @@ export function useRastersNdvi(areaIdsAtivos: readonly string[], ativo: boolean)
     const ids = areaIdsAtivos.filter(Boolean);
     const manter = new Set(ids);
     liberarFora(manter);
+    // Viewport ainda sem áreas: NÃO marcar "pronto" — senão o mapa trava o modo padrão em
+    // "Por área" antes da primeira listagem real e ignora as imagens que chegam depois.
     if (ids.length === 0) {
       setPorArea(new Map(cacheRef.current));
-      setSituacao("pronto");
+      setSituacao("ocioso");
       return;
     }
     let cancelado = false;
