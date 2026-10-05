@@ -223,8 +223,14 @@ export function lerPercentis(stats: Record<string, unknown>): Record<string, num
       return Number.isFinite(n) && n === k;
     });
     if (matches.length === 0) return null;
-    const valores = matches.map(([, v]) => numeroOuNulo(v));
-    if (valores.some((v) => v === undefined)) return null;
+    const valores: Array<number | null> = [];
+    for (const [, v] of matches) {
+      // NaN/Infinity → fail-closed (não viram null silencioso).
+      if (typeof v === "number" && !Number.isFinite(v)) return null;
+      const lido = numeroOuNulo(v);
+      if (lido === undefined) return null;
+      valores.push(lido);
+    }
     const unicos = new Set(valores.map((v) => (v === null ? "null" : String(v))));
     if (unicos.size > 1) return null;
     out[`p${k}`] = valores[0]!;
