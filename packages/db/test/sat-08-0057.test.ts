@@ -82,6 +82,16 @@ describe("SAT-08 R1 — migration 0057", () => {
     expect(faixa).toMatch(/2\.5/);
     expect(faixa).toMatch(/evi2/);
 
+    // WITH CHECK de escrita (empresa_id IS NOT NULL); USING de leitura (aceita nulo).
+    const pol = (await db.query<{ qual: string; with_check: string }>(
+      `select coalesce(qual,'') qual, coalesce(with_check,'') with_check
+         from pg_policies
+        where schemaname='erp' and tablename='analises_satelitais_ext' and policyname='tenant_e_empresa'`
+    )).rows[0]!;
+    expect(pol.qual, "USING leitura").toMatch(/empresa_id is null/i);
+    expect(pol.with_check, "WITH CHECK escrita").toMatch(/empresa_id is not null/i);
+    expect(pol.with_check, "WITH CHECK não permissivo").not.toMatch(/empresa_id is null/i);
+
     const { empresaId, areaId, hash } = await criarArea();
 
     // EVI2 com max 1.055 — válido após 0057

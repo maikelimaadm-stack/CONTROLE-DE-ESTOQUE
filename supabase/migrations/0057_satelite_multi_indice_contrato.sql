@@ -6,8 +6,11 @@
 --      (histórico v1 continua aceito);
 --   2) substitui o CHECK genérico de faixa [-1,1] por faixas POR ÍNDICE
 --      (EVI2 persistível até 2,5 — a fórmula pode ultrapassar +1);
---   3) NÃO apaga, atualiza nem recria tabelas; RLS/FKs intactos;
---   4) zero UPDATE/DELETE de análises.
+--   3) corrige o WITH CHECK de `erp.analises_satelitais_ext` para o gabarito
+--      de ESCRITA da categoria A (0052/0055) — a 0056 copiou o predicado
+--      permissivo (aceita empresa_id nulo) também no WITH CHECK;
+--   4) NÃO apaga, atualiza nem recria tabelas; FKs intactos;
+--   5) zero UPDATE/DELETE de análises.
 --
 -- Trava (2026,91). lock_timeout 2s. Forward-only em produção.
 -- =====================================================================
@@ -59,7 +62,7 @@ begin
 end $$;
 
 -- ---------- 3) travas ----------
-lock table erp.analises_satelitais, erp.satelite_consulta_itens
+lock table erp.analises_satelitais, erp.satelite_consulta_itens, erp.analises_satelitais_ext
   in share row exclusive mode;
 
 -- ---------- 4) CHECKs: versão do método + coerência bundle×versão ----------
@@ -95,8 +98,23 @@ alter table erp.analises_satelitais
 comment on constraint chk_analises_satelitais_faixa_indice on erp.analises_satelitais is
   'SAT-08 R1: faixa persistível por índice. EVI2 até 2,5 (fórmula pode >1). Paleta visual NÃO define constraint.';
 
--- ---------- 6) pós-condições ----------
+-- ---------- 6) RLS da ext: WITH CHECK = escrita (categoria A), igual à 0052/0055 ----------
+-- A 0056 deixou USING e WITH CHECK no predicado de LEITURA (empresa_id is null or …).
+-- Escrever com empresa_id nulo alcançaria todas as empresas do escopo — proibido.
+drop policy tenant_e_empresa on erp.analises_satelitais_ext;
+create policy tenant_e_empresa on erp.analises_satelitais_ext for all to erp_app, authenticated
+  using (erp.tenant_visible(organization_id)
+         and (empresa_id is null or (select erp.escopo_empresa_total(erp.modulo_empresa_atual()))
+              or empresa_id in (select erp.empresas_do_membro(erp.modulo_empresa_atual()))))
+  with check (erp.tenant_visible(organization_id)
+         and ((select erp.escopo_empresa_total(erp.modulo_empresa_atual()))
+              or (empresa_id is not null and empresa_id in (select erp.empresas_do_membro(erp.modulo_empresa_atual())))));
+
+-- ---------- 7) pós-condições ----------
 do $$
+declare
+  v_qual text;
+  v_check text;
 begin
   if not exists (
     select 1 from pg_constraint
@@ -114,10 +132,22 @@ begin
   ) then
     raise exception 'SAT-08 R1: chk_analises_satelitais_faixa_indice sem teto 2.5 do EVI2.';
   end if;
-  -- RLS da ext intacta.
   if (select array_agg(policyname::text order by policyname)
         from pg_policies where schemaname = 'erp' and tablename = 'analises_satelitais_ext')
      is distinct from array['tenant_e_empresa'] then
-    raise exception 'SAT-08 R1: politica de erp.analises_satelitais_ext alterada indevidamente.';
+    raise exception 'SAT-08 R1: politica de erp.analises_satelitais_ext diferente de tenant_e_empresa (uma so).';
+  end if;
+  select coalesce(qual, ''), coalesce(with_check, '')
+    into v_qual, v_check
+    from pg_policies
+   where schemaname = 'erp' and tablename = 'analises_satelitais_ext' and policyname = 'tenant_e_empresa';
+  if v_qual !~* 'empresa_id is null' then
+    raise exception 'SAT-08 R1: USING de analises_satelitais_ext nao e o predicado de leitura.';
+  end if;
+  if v_check !~* 'empresa_id is not null' then
+    raise exception 'SAT-08 R1: WITH CHECK de analises_satelitais_ext nao e o predicado de escrita.';
+  end if;
+  if v_check ~* 'empresa_id is null' then
+    raise exception 'SAT-08 R1: WITH CHECK de analises_satelitais_ext ainda aceita empresa_id nulo.';
   end if;
 end $$;
