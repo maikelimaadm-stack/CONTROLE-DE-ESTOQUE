@@ -96,13 +96,17 @@ Hectares: maior resto sobre o **universo interno**; soma ≈ `area_total_ha`. Ca
 - `GET /api/mapa/condicao-pasto?area_ids=` — listagem v2 (filtra `versao_classificador` corrente; não gera). 404 = rota ausente (API anterior).
 - `GET /api/mapa/condicao-pasto/:mapaId/arquivo?t=` — PNG.
 
-## UI (MAPA-UX-02)
+## UI (MAPA-UX-02 + MAPA-UX-03)
 
-- CTA principal: **Analisar pastos** (lote: todos / visíveis / escolher / retiro / sem análise / desatualizados).
-- Popup **central** da área e da classe (não painel lateral).
-- Lista compacta; rótulos sem sobreposição (selecionada / hover).
+- CTA principal: **Analisar pastos** — default fixo **Todos os pastos** (nunca área aberta nem viewport).
+- Modal 3 etapas: seleção → prévia inequívoca → progresso; Opções avançadas fechadas.
+- Popup **central** da área e da classe (não painel lateral); sem Analisar/Gerar por área.
+- Lista compacta; rótulos só hover/selecionada.
+- Apresentação principal: **zonas** GeoJSON (fill-antialias); PNG categórico fica como fallback de baixa opacidade.
 - Índices em **Dados técnicos**.
 - Após consulta em lote com observação útil: gerar/reutilizar mapa v2 automaticamente (mesmo serviço da rota).
+- Estado estável: resumo conhecido ≠ raster do viewport; stale-while-revalidate (resultado não some no refresh); barra de status recupera consulta viva via `GET /api/satelite/consultas`.
+- Capacidade: `GET /api/satelite/capacidade` → `{ fila_disponivel, copernicus_disponivel }` (sem secrets). Worker off não finge processamento.
 
 ## Worker
 
