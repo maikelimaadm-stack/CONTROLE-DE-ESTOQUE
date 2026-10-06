@@ -13,13 +13,25 @@
  */
 import { LIMIARES_COBERTURA_EXPERIMENTAL } from "./indices-satelitais.js";
 
-/** Versão do classificador e do evalscript categórico (entra na identidade e no cache). */
-export const VERSAO_CLASSIFICADOR_CONDICAO_PASTO = "condicao-pasto-v1";
+/**
+ * Versão OPERACIONAL do classificador (entra na identidade e no cache).
+ * v2 = mesma ciência espectral da v1 + máscara geométrica (fora do polígono ≠ sem leitura).
+ * v1 permanece histórica; a listagem operacional só serve v2.
+ */
+export const VERSAO_CLASSIFICADOR_CONDICAO_PASTO = "condicao-pasto-v2";
+/** Evalscript espectral (thresholds): inalterado desde v1 — a correção espacial não muda a ciência. */
 export const VERSAO_EVALSCRIPT_CONDICAO_PASTO = "condicao-pasto-v1";
+/** Versão legada com resumo espacial incorreto (bbox inteira). Não reaproveitar como corrente. */
+export const VERSAO_CLASSIFICADOR_CONDICAO_PASTO_V1 = "condicao-pasto-v1";
 /** Resolução analítica efetiva: NDRE/NDMI/BSI são 20 m. */
 export const RESOLUCAO_ANALITICA_CONDICAO_PASTO_M = 20;
 export const TIPO_MAPA_CONDICAO_PASTO = "classificacao" as const;
 export const CHAVE_MAPA_CONDICAO_PASTO = "condicao_pasto" as const;
+/**
+ * Byte no PNG para pixel FORA do polígono (não é classe).
+ * Distinto de 0 (SEM_LEITURA dentro). LUT: alpha 0. Contagem: ignorado.
+ */
+export const BYTE_FORA_POLIGONO_CONDICAO = 255;
 
 export const AVISO_CONDICAO_PASTO_EXPERIMENTAL =
   "Estimativa espectral de cobertura/atividade vegetal. Não representa diretamente kg de capim nem confirma espécie de forragem.";
@@ -86,8 +98,8 @@ export interface ClasseCondicaoPasto {
  */
 export const CLASSES_CONDICAO_PASTO: readonly ClasseCondicaoPasto[] = [
   {
-    codigo: 0, id: "sem_leitura", nome: "Sem leitura", cor: "#9E9E9E",
-    interpretacao: "Não foi possível classificar o pixel (nuvem, sombra, máscara ou banda inválida).",
+    codigo: 0, id: "sem_leitura", nome: "Sem leitura", cor: "#E0E0E0",
+    interpretacao: "Nuvem, sombra ou pixel sem informação suficiente (somente DENTRO do polígono).",
     acao: "Aguarde outra passagem ou priorize vistoria se a área inteira ficou sem leitura.",
     agrupamentoProdutivoExperimental: false
   },
@@ -218,18 +230,68 @@ export function contagemVazia(): ContagemPixelsCondicao {
   return { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
 }
 
-/** Bytes fora de 0..6 entram em SEM_LEITURA (fail-closed). */
+/**
+ * Contagem SEM máscara (legado v1 / testes unitários de classificação).
+ * Bytes fora de 0..6 entram em SEM_LEITURA (fail-closed). Preferir `contarPixelsCondicaoComMascara`.
+ */
 export function contarPixelsCondicao(pixels: Uint8Array | readonly number[]): { contagem: ContagemPixelsCondicao; universo: number; bytesInvalidos: number } {
   const contagem = contagemVazia();
   let bytesInvalidos = 0;
   for (const b of pixels) {
+    if (b === BYTE_FORA_POLIGONO_CONDICAO) continue;
     if (b === 0 || b === 1 || b === 2 || b === 3 || b === 4 || b === 5 || b === 6) contagem[b] += 1;
     else {
       contagem[0] += 1;
       bytesInvalidos += 1;
     }
   }
-  return { contagem, universo: pixels.length, bytesInvalidos };
+  const universo = CLASSES_CONDICAO_PASTO.reduce((s, c) => s + contagem[c.codigo], 0);
+  return { contagem, universo, bytesInvalidos };
+}
+
+/**
+ * Contagem com suporte espacial: só pixels com máscara=1 (centro dentro do polígono).
+ * Fora do polígono não entra em universo, hectares nem %.
+ */
+export function contarPixelsCondicaoComMascara(
+  pixels: Uint8Array | readonly number[],
+  mascara: Uint8Array | readonly (0 | 1)[] | readonly boolean[]
+): { contagem: ContagemPixelsCondicao; universo: number; bytesInvalidos: number; pixelsForaPoligono: number } {
+  if (pixels.length !== mascara.length) {
+    throw new RangeError("contarPixelsCondicaoComMascara: pixels e máscara com tamanhos diferentes");
+  }
+  const contagem = contagemVazia();
+  let bytesInvalidos = 0;
+  let pixelsForaPoligono = 0;
+  for (let i = 0; i < pixels.length; i++) {
+    const dentro = mascara[i] === true || mascara[i] === 1;
+    if (!dentro) {
+      pixelsForaPoligono += 1;
+      continue;
+    }
+    const b = pixels[i]!;
+    if (b === 0 || b === 1 || b === 2 || b === 3 || b === 4 || b === 5 || b === 6) contagem[b] += 1;
+    else {
+      contagem[0] += 1;
+      bytesInvalidos += 1;
+    }
+  }
+  const universo = CLASSES_CONDICAO_PASTO.reduce((s, c) => s + contagem[c.codigo], 0);
+  return { contagem, universo, bytesInvalidos, pixelsForaPoligono };
+}
+
+/** Marca fora do polígono com BYTE_FORA_POLIGONO_CONDICAO; dentro permanece 0..6. */
+export function aplicarMascaraPoligonoNosPixels(
+  pixels: Uint8Array,
+  mascara: Uint8Array | readonly (0 | 1)[] | readonly boolean[]
+): Uint8Array {
+  if (pixels.length !== mascara.length) throw new RangeError("aplicarMascaraPoligonoNosPixels: tamanhos diferentes");
+  const saida = new Uint8Array(pixels.length);
+  for (let i = 0; i < pixels.length; i++) {
+    const dentro = mascara[i] === true || mascara[i] === 1;
+    saida[i] = dentro ? (pixels[i]! > 6 ? 0 : pixels[i]!) : BYTE_FORA_POLIGONO_CONDICAO;
+  }
+  return saida;
 }
 
 function arredondar(n: number, casas: number): number {
@@ -275,7 +337,7 @@ export interface LinhaResumoClasseCondicao {
 }
 
 export interface ResumoCondicaoPasto {
-  versao_classificador: typeof VERSAO_CLASSIFICADOR_CONDICAO_PASTO;
+  versao_classificador: string;
   experimental: true;
   resolucao_m: number;
   area_total_ha: string;
@@ -284,6 +346,8 @@ export interface ResumoCondicaoPasto {
   cobertura_valida: string;
   pixels_universo: number;
   pixels_sem_leitura: number;
+  /** Auditoria: pixels da bbox fora do polígono (não entram em %). */
+  pixels_fora_poligono?: number;
   classes: LinhaResumoClasseCondicao[];
   area_potencialmente_produtiva_ha: string;
   area_potencialmente_produtiva_percentual: string;
@@ -296,6 +360,7 @@ export function resumirCondicaoPasto(p: {
   areaTotalHa: number;
   resolucaoM?: number;
   bytesInvalidos?: number;
+  pixelsForaPoligono?: number;
 }): ResumoCondicaoPasto {
   const universo = CLASSES_CONDICAO_PASTO.reduce((s, c) => s + p.contagem[c.codigo], 0);
   const area = Number.isFinite(p.areaTotalHa) && p.areaTotalHa > 0 ? p.areaTotalHa : 0;
@@ -335,6 +400,7 @@ export function resumirCondicaoPasto(p: {
     cobertura_valida: cobertura.toFixed(4),
     pixels_universo: universo,
     pixels_sem_leitura: p.contagem[0],
+    ...(p.pixelsForaPoligono !== undefined ? { pixels_fora_poligono: p.pixelsForaPoligono } : {}),
     classes,
     area_potencialmente_produtiva_ha: prodHa.toFixed(2),
     area_potencialmente_produtiva_percentual: (universo === 0 ? 0 : Number(classes[1]!.area_estimada_percentual) + Number(classes[2]!.area_estimada_percentual)).toFixed(1),
@@ -388,11 +454,15 @@ export function badgePrincipalCondicao(resumo: ResumoCondicaoPasto): { id: IdCla
   return { id: top.id, rotulo: CLASSE_CONDICAO_POR_ID[top.id].nome, cor: CLASSE_CONDICAO_POR_ID[top.id].cor };
 }
 
-/** LUT RGBA 256×4: classes 0–6 com cor fixa; byte 0 tem alfa; 7–255 transparentes. */
-export function montarLutCondicaoPasto(opts?: { classeDestaque?: CodigoClasseCondicaoPasto | null; opacidadeOutras?: number }): Uint8ClampedArray {
+/**
+ * LUT RGBA 256×4: classes 0–6 com cor fixa; BYTE_FORA_POLIGONO (255) transparente.
+ * SEM_LEITURA (0) usa alpha baixo (~0,35) para não dominar a tela.
+ */
+export function montarLutCondicaoPasto(opts?: { classeDestaque?: CodigoClasseCondicaoPasto | null; opacidadeOutras?: number; opacidadeSemLeitura?: number }): Uint8ClampedArray {
   const lut = new Uint8ClampedArray(256 * 4);
   const destaque = opts?.classeDestaque;
   const opOutras = opts?.opacidadeOutras ?? 0.18;
+  const opSem = opts?.opacidadeSemLeitura ?? 0.35;
   for (const c of CLASSES_CONDICAO_PASTO) {
     const r = Number.parseInt(c.cor.slice(1, 3), 16);
     const g = Number.parseInt(c.cor.slice(3, 5), 16);
@@ -401,9 +471,14 @@ export function montarLutCondicaoPasto(opts?: { classeDestaque?: CodigoClasseCon
     lut[base] = r;
     lut[base + 1] = g;
     lut[base + 2] = b;
-    const alfa = destaque == null || destaque === c.codigo ? 255 : Math.round(255 * opOutras);
-    lut[base + 3] = c.codigo === 0 && destaque != null && destaque !== 0 ? Math.round(255 * opOutras) : alfa;
+    if (c.codigo === 0) {
+      const a = destaque != null && destaque !== 0 ? Math.round(255 * opOutras * opSem) : Math.round(255 * opSem);
+      lut[base + 3] = a;
+    } else {
+      lut[base + 3] = destaque == null || destaque === c.codigo ? 255 : Math.round(255 * opOutras);
+    }
   }
+  // 7..254 e 255 (fora do polígono): transparentes
   return lut;
 }
 

@@ -26,7 +26,7 @@ describe("SAT-COND-01 evalscript e Process", () => {
       geometriaSha256: "ab".repeat(32),
       dataImagem: "2026-10-05",
       colecao: "sentinel-2-l2a",
-      versaoClassificador: "condicao-pasto-v1",
+      versaoClassificador: "condicao-pasto-v2",
       versaoEvalscript: "condicao-pasto-v1",
       resolucaoM: 20,
       crs: "EPSG:3857",
@@ -35,7 +35,7 @@ describe("SAT-COND-01 evalscript e Process", () => {
     const a = chaveCacheCondicaoPasto(base);
     const b = chaveCacheCondicaoPasto({ ...base, geometriaSha256: "cd".repeat(32) });
     const c = chaveCacheCondicaoPasto({ ...base, dataImagem: "2026-10-01" });
-    const d = chaveCacheCondicaoPasto({ ...base, versaoClassificador: "condicao-pasto-v2" });
+    const d = chaveCacheCondicaoPasto({ ...base, versaoClassificador: "condicao-pasto-v1" });
     expect(a).toMatch(/^[0-9a-f]{64}$/);
     expect(new Set([a, b, c, d]).size).toBe(4);
   });
@@ -60,7 +60,7 @@ describe("SAT-COND-01 evalscript e Process", () => {
       areaId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       geometriaSha256: "ab".repeat(32),
       dataImagem: "2026-10-01",
-      versaoClassificador: "condicao-pasto-v1",
+      versaoClassificador: "condicao-pasto-v2",
       versaoEvalscript: "condicao-pasto-v1",
       resolucaoM: 20,
       fonte: "sentinel-2-l2a"
@@ -71,7 +71,7 @@ describe("SAT-COND-01 evalscript e Process", () => {
       areaId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       geometriaSha256: "ab".repeat(32),
       dataImagem: "2026-10-05",
-      versaoClassificador: "condicao-pasto-v1",
+      versaoClassificador: "condicao-pasto-v2",
       versaoEvalscript: "condicao-pasto-v1",
       resolucaoM: 20,
       fonte: "sentinel-2-l2a"

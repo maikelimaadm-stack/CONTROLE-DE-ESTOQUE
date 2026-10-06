@@ -90,7 +90,7 @@ describe("SAT-COND-01 — rota mapa de condição", () => {
     expect(corpo.mapa.mapa).toBe("condicao_pasto");
     expect(corpo.mapa.tipo).toBe("classificacao");
     expect(corpo.mapa.resolucao_m).toBeGreaterThanOrEqual(20);
-    expect(corpo.mapa.versao_classificador).toBe("condicao-pasto-v1");
+    expect(corpo.mapa.versao_classificador).toBe("condicao-pasto-v2");
     expect(corpo.mapa.resumo.classes).toHaveLength(7);
     expect(corpo.mapa.url_assinada).toMatch(/\/api\/mapa\/condicao-pasto\/.+\/arquivo\?t=/);
     expect(corpo.mapa).not.toHaveProperty("analise_id");

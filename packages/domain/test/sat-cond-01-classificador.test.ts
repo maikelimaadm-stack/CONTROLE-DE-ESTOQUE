@@ -207,10 +207,12 @@ describe("SAT-COND-01 — identidade", () => {
     expect(chaveIdentidadeMapaCondicao(a)).toContain("2026-10-01");
   });
 
-  it("I-03 classificador v1 separado de futuro v2", () => {
+  it("I-03 classificador corrente separado de legado/futuro", () => {
     const a = idBase();
-    const b = idBase({ versaoClassificador: "condicao-pasto-v2" });
-    expect(identidadesEquivalentes(a, b)).toBe(false);
+    const legado = idBase({ versaoClassificador: "condicao-pasto-v1" });
+    const futuro = idBase({ versaoClassificador: "condicao-pasto-v3" });
+    expect(identidadesEquivalentes(a, legado)).toBe(false);
+    expect(identidadesEquivalentes(a, futuro)).toBe(false);
   });
 
   it("I-04 não misturar observações diferentes", () => {

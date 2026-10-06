@@ -15,7 +15,7 @@ import { withTx } from "@agro/db";
 import {
   CHAVE_MAPA_CONDICAO_PASTO, COLECAO_SENTINEL2_L2A, TIPO_MAPA_CONDICAO_PASTO,
   VERSAO_CLASSIFICADOR_CONDICAO_PASTO, VERSAO_EVALSCRIPT_CONDICAO_PASTO, VERSAO_METODO_PASTAGEM_ESSENCIAL,
-  contarPixelsCondicao, moduloDaPermissao, resumirCondicaoPasto
+  aplicarMascaraPoligonoNosPixels, contarPixelsCondicaoComMascara, moduloDaPermissao, resumirCondicaoPasto
 } from "@agro/domain";
 import { isISODate } from "@agro/shared";
 import { runService } from "../lib/service.js";
@@ -25,12 +25,13 @@ import { lerDadosDoMembro, vinculoDoMembro } from "../lib/contexto-membro.js";
 import { FalhaCopernicus, camposLogErroProvedor, type RegistroChamada } from "../lib/satelite/copernicus.js";
 import { gravarConsumo, lerPuDoCabecalho } from "../lib/satelite/consumo.js";
 import { lerContagemChamadas } from "../lib/satelite/limite-global.js";
-import { lerPoligono } from "../lib/satelite/geometria.js";
-import { lerPngCinza8 } from "../lib/satelite/png.js";
+import { lerPoligono, type PoligonoGeoJson } from "../lib/satelite/geometria.js";
+import { escreverPngCinza8, lerPngCinza8 } from "../lib/satelite/png.js";
 import { CRS_RASTER, FORMATO_RASTER, dataImagemUtc, type GradeRaster } from "../lib/satelite/raster.js";
 import {
   caminhoDoMapaCondicao, chaveCacheCondicaoPasto, montarCorpoProcessoCondicao, planejarGradeCondicao
 } from "../lib/satelite/raster-condicao-pasto.js";
+import { mascaraPoligonoNaGrade } from "../lib/satelite/mascara-poligono-raster.js";
 import { armazenamentoMapaCondicao } from "../lib/satelite/armazenamento-mapa-condicao.js";
 import { criarAssinadorUrlRaster } from "../lib/satelite/url-assinada.js";
 import { resumoDoErro } from "../lib/satelite/executar-item.js";
@@ -80,8 +81,8 @@ const COLUNAS = [
 const colunas = (a: string) => COLUNAS.map((c) => `${a}.${c}`).join(", ");
 
 interface Plano {
-  area: AreaCondicao; observacao: ObservacaoUtil; grade: GradeRaster; dataImagem: string;
-  chave: string; storagePath: string; areaTotalHa: number;
+  area: AreaCondicao; observacao: ObservacaoUtil; grade: GradeRaster; poligono: PoligonoGeoJson;
+  dataImagem: string; chave: string; storagePath: string; areaTotalHa: number;
 }
 
 class FalhaArmazenamento extends Error {
@@ -153,7 +154,7 @@ export default async function sateliteCondicaoPastoRoutes(app: FastifyInstance) 
   const limiteAvulso = app.limiteAvulsoSatelite;
   const assinador = criarAssinadorUrlRaster(app.config);
   const moduloLeitura = moduloDaPermissao(PERMISSAO_VER_ANALISE);
-  const emAndamento = new Map<string, Promise<{ puCabecalho: string | null; pixels: Uint8Array }>>();
+  const emAndamento = new Map<string, Promise<{ puCabecalho: string | null; pixels: Uint8Array; mascara: Uint8Array }>>();
 
   function paraDto(l: LinhaMapa, orgId: string, userId: string) {
     const { token, expira } = assinador.assinar({ rasterId: l.id, organizationId: orgId, userId });
@@ -203,10 +204,10 @@ export default async function sateliteCondicaoPastoRoutes(app: FastifyInstance) 
     });
     const storagePath = caminhoDoMapaCondicao({ orgId: ctx.orgId, areaId: area.id, dataImagem, chaveCache: chave });
     const areaTotalHa = area.area_ha !== null && Number.isFinite(Number(area.area_ha)) ? Number(area.area_ha) : 0;
-    return { area, observacao, grade, dataImagem, chave, storagePath, areaTotalHa };
+    return { area, observacao, grade, poligono, dataImagem, chave, storagePath, areaTotalHa };
   }
 
-  async function gerar(req: FastifyRequest, plano: Plano): Promise<{ puCabecalho: string | null; pixels: Uint8Array }> {
+  async function gerar(req: FastifyRequest, plano: Plano): Promise<{ puCabecalho: string | null; pixels: Uint8Array; mascara: Uint8Array }> {
     const registrar = (c: RegistroChamada) => app.log.info({
       satelite: {
         provedor: "copernicus_cdse", endpoint: c.endpoint, status: c.status, duracao_ms: c.duracaoMs,
@@ -226,8 +227,11 @@ export default async function sateliteCondicaoPastoRoutes(app: FastifyInstance) 
     if (img.largura !== plano.grade.largura || img.altura !== plano.grade.altura) {
       throw new FalhaCopernicus("resposta_malformada", null, null, r.puCabecalho);
     }
+    // MAPA-UX-02: máscara geométrica — fora do polígono vira BYTE_FORA (não SEM_LEITURA).
+    const mascara = mascaraPoligonoNaGrade(plano.poligono, plano.grade);
+    const pixels = aplicarMascaraPoligonoNosPixels(img.pixels, mascara);
+    const png = escreverPngCinza8(plano.grade.largura, plano.grade.altura, pixels);
     try {
-      const png = r.png;
       await runService(app, req, PERMISSAO_PEDIR_ANALISE, (ctx) =>
         armazenamentoMapaCondicao.gravar(ctx.tx, {
           orgId: ctx.orgId, empresaId: plano.area.empresa_id, storagePath: plano.storagePath, png, sha256: sha256Hex(png)
@@ -235,18 +239,24 @@ export default async function sateliteCondicaoPastoRoutes(app: FastifyInstance) 
     } catch (e) {
       throw new FalhaArmazenamento(r.puCabecalho, e);
     }
-    return { puCabecalho: r.puCabecalho, pixels: img.pixels };
+    return { puCabecalho: r.puCabecalho, pixels, mascara };
   }
 
-  async function gravarMapa(ctx: ServiceCtx, p: Plano, feita: { puCabecalho: string | null; pixels: Uint8Array }): Promise<LinhaMapa | null> {
+  async function gravarMapa(
+    ctx: ServiceCtx,
+    p: Plano,
+    feita: { puCabecalho: string | null; pixels: Uint8Array; mascara: Uint8Array }
+  ): Promise<LinhaMapa | null> {
     const paramsArq: unknown[] = [ctx.orgId, p.area.empresa_id, p.storagePath];
     const escopoArq = empresaScopeSql(ctx, "f", paramsArq);
     const arquivo = await ctx.tx.query(
       "select 1 from erp.satelite_mapas_condicao_arquivos f where f.organization_id = $1 and f.empresa_id = $2 and f.storage_path = $3" + escopoArq,
       paramsArq);
     if (arquivo.rowCount !== 1) throw new Error("mapa de condição: o arquivo gravado não está visível na fase de registro");
-    const { contagem } = contarPixelsCondicao(feita.pixels);
-    const resumo = resumirCondicaoPasto({ contagem, areaTotalHa: p.areaTotalHa, resolucaoM: p.grade.resolucaoM });
+    const { contagem, pixelsForaPoligono } = contarPixelsCondicaoComMascara(feita.pixels, feita.mascara);
+    const resumo = resumirCondicaoPasto({
+      contagem, areaTotalHa: p.areaTotalHa, resolucaoM: p.grade.resolucaoM, pixelsForaPoligono
+    });
     const g = p.grade;
     const valores: unknown[] = [
       ctx.orgId, p.area.empresa_id, ctx.user.id, p.area.id, p.observacao.geometria_sha256,
@@ -306,7 +316,7 @@ export default async function sateliteCondicaoPastoRoutes(app: FastifyInstance) 
       limiteAvulso.ocupar(ctxPedido.orgId);
     }
     try {
-      let feita: { puCabecalho: string | null; pixels: Uint8Array };
+      let feita: { puCabecalho: string | null; pixels: Uint8Array; mascara: Uint8Array };
       try {
         feita = await geracao;
       } catch (e) {

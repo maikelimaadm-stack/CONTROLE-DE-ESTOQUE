@@ -90,6 +90,6 @@ describe("SAT-COND-01 — UI estática (UI-01..UI-10)", () => {
   it("badge e paleta versionada", () => {
     const r = resumirCondicaoPasto({ contagem: { 0: 0, 1: 80, 2: 20, 3: 0, 4: 0, 5: 0, 6: 0 }, areaTotalHa: 100 });
     expect(badgePrincipalCondicao(r).rotulo).toBe("Boa cobertura");
-    expect(CLASSES_CONDICAO_PASTO.map((c) => c.cor)).toEqual(["#9E9E9E", "#1B5E20", "#7CB342", "#F9A825", "#EF6C00", "#BF360C", "#1565C0"]);
+    expect(CLASSES_CONDICAO_PASTO.map((c) => c.cor)).toEqual(["#E0E0E0", "#1B5E20", "#7CB342", "#F9A825", "#EF6C00", "#BF360C", "#1565C0"]);
   });
 });

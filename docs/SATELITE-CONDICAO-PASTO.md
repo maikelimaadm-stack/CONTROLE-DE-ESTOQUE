@@ -1,50 +1,65 @@
 # Mapa integrado de condição do pasto
 
-Decisão **302**. Experiência padrão do Mapa geral: **uma classificação categórica**, não um índice científico.
+Decisão **302** (SAT-COND-01) + correção espacial **MAPA-UX-02**. Experiência padrão do Mapa geral: **uma classificação categórica**, não um índice científico.
 
 O produtor não escolhe NDVI, EVI2, NDRE, NDMI, MSAVI2 ou BSI para entender o pasto. Esses sinais entram juntos, na **mesma observação**, e saem como um mapa de classes mutuamente exclusivas com hectares estimados.
 
 ## Objetivo
 
-Responder, com um clique:
+Responder, com um clique (fluxo **Analisar pastos** em lote):
 
 - onde a vegetação está ativa e com boa cobertura;
 - onde a cobertura é moderada ou baixa;
 - onde há possível estresse hídrico (NDMI);
 - onde o solo aparece exposto (estimativa espectral);
 - onde há água (SCL);
-- onde não foi possível ler;
+- onde não foi possível ler **dentro** do pasto;
 - quanto isso representa em hectares e em %.
 
-## O que isto não é
+## Bug corrigido em MAPA-UX-02 — bbox × polígono
 
-Não é biomassa, kg MS/ha, lotação, espécie de capim, praga, doença, invasora confirmada nem diagnóstico agronômico. Vegetação detectada **não** é capim. Hectares por classe são **estimados** pela proporção de pixels classificados — não substituem o cadastro.
+A Process API devolve um PNG **retangular** da bbox da grade. Fora do polígono os bytes caíam em classe 0 (SEM_LEITURA), a LUT pintava cinza opaco e o MapLibre estendia a imagem pelos quatro cantos.
 
-## Versão
+**Errado:** retângulo cinza fora da cerca; hectares de “Sem leitura” inflados pela bbox.
+
+**Correto (v2):**
+
+| Conceito | Significado |
+|----------|-------------|
+| `FORA_DO_POLIGONO` (byte 255) | Não é classe; alpha 0; fora do universo/hectares/% |
+| `SEM_LEITURA` (código 0) | Somente pixel **dentro** do polígono sem qualidade/dado |
+
+Máscara geométrica: centro do pixel na grade EPSG:3857, anel externo menos furos. Contagem usa só máscara=1. PNG armazenado já com 255 fora.
+
+## Versão operacional
 
 | Peça | Valor |
 |------|--------|
-| Classificador | `condicao-pasto-v1` |
-| Evalscript | `condicao-pasto-v1` |
-| Resolução analítica efetiva | **20 m** (NDRE, NDMI e BSI nativos em 20 m) |
-| Saída Process API | PNG UINT8, 1 banda, 0..6 (0 = nodata / sem leitura) |
-| Renderização | `nearest` (nunca linear/suavizado para classes) |
+| Classificador corrente | `condicao-pasto-v2` |
+| Classificador legado | `condicao-pasto-v1` (histórico; resumo espacial incorreto; **não** reaproveitar) |
+| Evalscript espectral | `condicao-pasto-v1` (thresholds iguais — v2 não muda a ciência) |
+| Resolução analítica efetiva | **20 m** |
+| Saída Process API | PNG UINT8; 0..6 classes; 255 = fora |
+| Renderização de classes | `nearest` no dado; apresentação por **zonas** (contornos), sem grade |
 
-Trocar classificador, evalscript, geometria, data ou resolução **invalida** o mapa anterior.
+Documentação da v2: corrige máscara geométrica; regras espectrais permanecem as da v1.
+
+Trocar classificador, evalscript, geometria, data ou resolução **invalida** o mapa anterior (chave de cache).
 
 ## Classes (mutuamente exclusivas)
 
 | Código | Id | Nome na UI | Cor |
 |--------|-----|------------|-----|
-| 0 | `sem_leitura` | Sem leitura | `#9E9E9E` |
+| 0 | `sem_leitura` | Sem leitura | `#E0E0E0` (alpha baixo) |
 | 1 | `vegetacao_ativa_boa_cobertura` | Vegetação ativa · boa cobertura | `#1B5E20` |
 | 2 | `vegetacao_ativa_cobertura_moderada` | Vegetação ativa · cobertura moderada | `#7CB342` |
 | 3 | `baixa_cobertura` | Baixa cobertura | `#F9A825` |
 | 4 | `possivel_estresse_hidrico` | Possível estresse hídrico | `#EF6C00` |
 | 5 | `solo_exposto_estimado` | Solo exposto estimado | `#BF360C` |
 | 6 | `agua` | Água | `#1565C0` |
+| 255 | — | Fora do polígono | transparente |
 
-SSOT: `packages/domain/src/condicao-pasto.ts`. Evalscript, API, UI e testes consomem daqui.
+SSOT: `packages/domain/src/condicao-pasto.ts`.
 
 ## Combinação dos sinais
 
@@ -55,55 +70,44 @@ SSOT: `packages/domain/src/condicao-pasto.ts`. Evalscript, API, UI e testes cons
 | Umidade | NDMI |
 | Qualidade | SCL + dataMask |
 
-Precedência fail-closed (a primeira regra que casa vence):
-
-1. Sem leitura (`dataMask ≠ 1`, SCL fora de `[2,4,5,7]`, índice não finito)
-2. Água (SCL = 6)
-3. Solo exposto estimado
-4. Possível estresse hídrico
-5. Baixa cobertura
-6. Vegetação ativa · cobertura moderada
-7. Vegetação ativa · boa cobertura
-
-Água nunca vira solo. Pixel mascarado nunca vira classe produtiva. Solo não é reclassificado como estresse.
-
-Água nesta versão usa **só SCL**. Corpos pequenos ou mistos podem não aparecer — limitação documentada, sem NDWI/MNDWI nesta fatia.
+Precedência fail-closed: Sem leitura → Água → Solo → Estresse → Baixa → Moderada → Boa.
 
 ## Thresholds
 
-Heurísticas espectrais **v1**, não calibração agronômica. Reusam `LIMIARES_COBERTURA_EXPERIMENTAL` quando aplicável; os demais estão nomeados em `LIMIARES_CLASSIFICADOR_CONDICAO_PASTO`. O evalscript **interpola** esses valores — não redigita números.
+Heurísticas espectrais **v1** (não alteradas na v2). Evalscript interpola `LIMIARES_CLASSIFICADOR_CONDICAO_PASTO`.
 
 ## Identidade e persistência
 
-Identidade: organização + empresa + área + `geometria_sha256` + data da imagem + versão do classificador + versão do evalscript + resolução + fonte Sentinel-2 L2A.
+Identidade: organização + empresa + área + `geometria_sha256` + data + versão classificador + versão evalscript + resolução + fonte.
 
-Tabelas dedicadas (`erp.satelite_mapas_condicao` + `erp.satelite_mapas_condicao_arquivos`): a classificação combina seis índices da mesma observação. Apontar `analise_id` para um NDVI mentiria sobre a origem. Migration `0059` (trava `(2026,93)`). RLS `tenant_e_empresa` (módulo pecuária). Imutável (UPDATE/DELETE recusados). Sem DELETE de dado de produção.
+Tabelas `erp.satelite_mapas_condicao` (+ arquivos). Sem `analise_id`. Migration `0059` (trava `(2026,93)`). Imutável. Mapas v1 **não** são apagados nem atualizados; a listagem operacional filtra a versão corrente v2.
 
-Todos os sinais do pixel vêm da **mesma** janela `observacao_inicio`..`observacao_fim`. Misturar NDVI de um dia com NDMI de outro é proibido.
+Hectares: maior resto sobre o **universo interno**; soma ≈ `area_total_ha`. Campo opcional `pixels_fora_poligono` só auditoria.
+
+## Dado vs apresentação
+
+- **Dado analítico:** pixels categóricos 20 m (estatística, auditoria).
+- **Apresentação:** zonas/contornos derivados dos pixels, clipados ao polígono; suavização visual ≤ ~10 m se ativa; nunca altera contagens.
 
 ## Rotas
 
-- `POST /api/satelite/areas/:areaId/condicao-pasto` — gera ou reaproveita o mapa da observação útil do bundle `pastagem-essencial-v2` (exige análise NDVI desse método no contorno atual). Sem transação aberta durante HTTP externo.
-- `GET /api/satelite/areas/:areaId/condicao-pasto` — o mapa já gravado (404 se não).
-- `GET /api/mapa/condicao-pasto?area_ids=` — listagem operacional (não gera). Lista vazia é 200. 404 é a rota ausente (API anterior): o Mapa geral trata como vazio e não insiste — version skew sentido 1.
-- `GET /api/mapa/condicao-pasto/:mapaId/arquivo?t=` — PNG pela URL assinada (a redação do token também cobre este caminho).
+- `POST /api/satelite/areas/:areaId/condicao-pasto` — gera/reaproveita v2.
+- `GET /api/satelite/areas/:areaId/condicao-pasto` — mapa v2 gravado.
+- `GET /api/mapa/condicao-pasto?area_ids=` — listagem v2 (não gera). 404 = rota ausente (API anterior).
+- `GET /api/mapa/condicao-pasto/:mapaId/arquivo?t=` — PNG.
 
-Hectares: método do maior resto; a soma das áreas estimadas fecha a área total (2 casas); percentuais somam 100,0 (1 casa).
+## UI (MAPA-UX-02)
 
-## UI
-
-Mapa geral abre em **Condição**. Barra: data, opacidade, Atualizar condição, Dados técnicos. Sem família, índice ou Pixel/Área na experiência padrão.
-
-- Legenda interativa: ha e %; clique destaca a classe; segundo clique ou ESC limpa.
-- Lista: badge da condição (atenção se solo+estresse+baixa ≥ 15%); ordenação por atenção/nome/área/classe.
-- Área sem análise: CTA **Analisar condição** (consulta Statistical). Área com estatística e sem mapa: CTA **Gerar mapa de condição** (POST Process API, clique deliberado).
-- Zoom distante: cor predominante por área. Zoom adequado: raster categórico (viewport, teto 60, abort).
-- Dados técnicos: índices individuais, painel Condição da Área (SATÉLITE COMPLETO), paletas contínuas.
+- CTA principal: **Analisar pastos** (lote: todos / visíveis / escolher / retiro / sem análise / desatualizados).
+- Popup **central** da área e da classe (não painel lateral).
+- Lista compacta; rótulos sem sobreposição (selecionada / hover).
+- Índices em **Dados técnicos**.
+- Após consulta em lote com observação útil: gerar/reutilizar mapa v2 automaticamente (serviço compartilhado com a rota; worker pronto quando `SATELITE_WORKER_ENABLED=1`).
 
 ## Worker
 
-`SATELITE_WORKER_ENABLED` permanece desligado por padrão. Lote operacional é etapa separada, depois de Statistical API real comprovada.
+`SATELITE_WORKER_ENABLED` permanece desligado por padrão em produção até ativação operacional.
 
 ## Reversão
 
-Remover a experiência padrão devolve o Mapa geral ao modo técnico (famílias/índices). As tabelas `0059` ficam; mapas já gravados não são apagados.
+Listagem só v2; v1 fica no banco. Remover a experiência padrão devolve o modo técnico.
