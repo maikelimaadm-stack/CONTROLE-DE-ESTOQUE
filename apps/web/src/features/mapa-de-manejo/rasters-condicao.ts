@@ -8,7 +8,7 @@ import {
   type CodigoClasseCondicaoPasto,
   type ResumoCondicaoPasto
 } from "@agro/domain";
-import { API_URL, api } from "@/lib/api";
+import { API_URL, api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { CacheRasters } from "./cache-rasters";
 import { bitmapParaBytesCinza, colorirRasterNdvi } from "./colorir-raster-ndvi";
@@ -19,6 +19,14 @@ import { baixarArquivoRaster, liberarEntrada } from "./rasters-indice";
 
 const PERMISSAO_VER = "analises_satelitais.view";
 const DOWNLOADS_SIMULTANEOS = 4;
+
+const ehAborto = (e: unknown) =>
+  (e instanceof DOMException && e.name === "AbortError") || (e instanceof Error && e.name === "AbortError");
+
+/** 404 da listagem: a rota não existe neste binário (API anterior à SAT-COND-01). Lista vazia é 200. */
+export function ehRotaAusenteDaCondicao(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 404;
+}
 
 export interface MapaCondicaoDto {
   id: string;
@@ -153,11 +161,13 @@ export function useMapasCondicao(p: {
   const semRef = React.useRef(new Set<string>());
   const resumosRef = React.useRef(new Map<string, ResumoCondicaoPasto>());
   const datasRef = React.useRef(new Map<string, string>());
+  /** API anterior à SAT-COND-01: a rota não existe. Não insistir (e não abortar em loop). */
+  const rotaAusenteRef = React.useRef(false);
   const chaveData = chaveDaData(p.data ?? DATA_ULTIMA_IMAGEM);
   const diaPedido = dataImagemDoPedido(p.data ?? DATA_ULTIMA_IMAGEM);
+  /** Chave estável: `areaIds.filter()` a cada render abortava o GET e o vigia de skew via `net::ERR_ABORTED`. */
   const idsKey = p.areaIds.slice().sort().join(",");
   const classe = p.classeDestaque;
-  const ids = p.areaIds.filter(Boolean);
   const assinaturas = p.assinaturas;
 
   React.useEffect(() => {
@@ -180,6 +190,11 @@ export function useMapasCondicao(p: {
       setSituacao("ocioso");
       return;
     }
+    if (rotaAusenteRef.current) {
+      setSituacao("pronto");
+      return;
+    }
+    const ids = idsKey.split(",").filter(Boolean);
     cache.manter(new Set(ids));
     if (ids.length === 0) {
       setPorArea(cache.snapshot());
@@ -212,7 +227,7 @@ export function useMapasCondicao(p: {
                 if (controle.signal.aborted) { liberarEntrada(entrada); return; }
                 cache.guardar(dto.area_id, entrada);
               } catch (e) {
-                if (controle.signal.aborted) return;
+                if (controle.signal.aborted || ehAborto(e)) return;
                 cache.guardar(dto.area_id, {
                   dto: dtoComoRaster(dto),
                   bytesCinza: new Uint8ClampedArray(0), largura: 0, altura: 0,
@@ -236,15 +251,26 @@ export function useMapasCondicao(p: {
         if (controle.signal.aborted) return;
         setPorArea(cache.snapshot());
         setSituacao("pronto");
-      } catch {
-        if (controle.signal.aborted) return;
+      } catch (e) {
+        if (controle.signal.aborted || ehAborto(e)) return;
+        if (ehRotaAusenteDaCondicao(e)) {
+          rotaAusenteRef.current = true;
+          setPorArea(new Map());
+          setResumos(new Map());
+          setDatasPorArea(new Map());
+          setAusentes(new Set());
+          setSituacao("pronto");
+          return;
+        }
         setSituacao("erro");
       }
     })();
     return () => controle.abort();
-  }, [idsKey, chaveData, p.ativo, pode, classe, diaPedido, cache, ids, assinaturas, versao]);
+    // idsKey (não `ids`): array novo a cada render abortava o GET e o vigia via `net::ERR_ABORTED`.
+  }, [idsKey, chaveData, p.ativo, pode, classe, diaPedido, cache, assinaturas, versao]);
 
   const recarregar = React.useCallback(() => {
+    rotaAusenteRef.current = false;
     semRef.current.clear();
     setVersao((v) => v + 1);
   }, []);

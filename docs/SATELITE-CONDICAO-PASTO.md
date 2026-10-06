@@ -85,7 +85,7 @@ Todos os sinais do pixel vêm da **mesma** janela `observacao_inicio`..`observac
 
 - `POST /api/satelite/areas/:areaId/condicao-pasto` — gera ou reaproveita o mapa da observação útil do bundle `pastagem-essencial-v2` (exige análise NDVI desse método no contorno atual). Sem transação aberta durante HTTP externo.
 - `GET /api/satelite/areas/:areaId/condicao-pasto` — o mapa já gravado (404 se não).
-- `GET /api/mapa/condicao-pasto?area_ids=` — listagem operacional (não gera).
+- `GET /api/mapa/condicao-pasto?area_ids=` — listagem operacional (não gera). Lista vazia é 200. 404 é a rota ausente (API anterior): o Mapa geral trata como vazio e não insiste — version skew sentido 1.
 - `GET /api/mapa/condicao-pasto/:mapaId/arquivo?t=` — PNG pela URL assinada (a redação do token também cobre este caminho).
 
 Hectares: método do maior resto; a soma das áreas estimadas fecha a área total (2 casas); percentuais somam 100,0 (1 casa).

@@ -12,6 +12,7 @@ import {
 const mapaGeralSrc = readFileSync(resolve(__dirname, "mapa-geral.tsx"), "utf8");
 const barraSrc = readFileSync(resolve(__dirname, "barra-camadas.tsx"), "utf8");
 const legendaSrc = readFileSync(resolve(__dirname, "legenda-condicao.tsx"), "utf8");
+const rastersCondSrc = readFileSync(resolve(__dirname, "rasters-condicao.ts"), "utf8");
 
 describe("SAT-COND-01 — UI estática (UI-01..UI-10)", () => {
   it("UI-01 abre em Condição do Pasto", () => {
@@ -76,6 +77,14 @@ describe("SAT-COND-01 — UI estática (UI-01..UI-10)", () => {
     expect(legendaSrc).toContain("condicao-pasto-stats-sem-mapa");
     expect(mapaGeralSrc).toContain("gerarMapaCondicao");
     expect(mapaGeralSrc).toContain("statsSemMapa");
+  });
+
+  it("404 da listagem é rota ausente; o efeito depende de idsKey, não do array ids", () => {
+    expect(rastersCondSrc).toContain("rotaAusenteRef");
+    expect(rastersCondSrc).toContain("ehRotaAusenteDaCondicao");
+    expect(rastersCondSrc).toContain("e instanceof ApiError && e.status === 404");
+    expect(rastersCondSrc).toContain("}, [idsKey, chaveData, p.ativo, pode, classe, diaPedido, cache, assinaturas, versao]);");
+    expect(rastersCondSrc).not.toMatch(/cache, ids, assinaturas/);
   });
 
   it("badge e paleta versionada", () => {

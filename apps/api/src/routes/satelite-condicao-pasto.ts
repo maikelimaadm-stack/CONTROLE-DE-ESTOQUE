@@ -114,7 +114,6 @@ async function lerArea(ctx: ServiceCtx, areaId: string): Promise<AreaCondicao> {
 }
 
 async function lerObservacaoUtil(ctx: ServiceCtx, area: AreaCondicao, dataImagem?: string): Promise<ObservacaoUtil | null> {
-  if (area.geometria_sha256 === null) return null;
   const params: unknown[] = [ctx.orgId, area.id, VERSAO_METODO_PASTAGEM_ESSENCIAL, area.geometria_sha256];
   const escopo = empresaScopeSql(ctx, "s", params);
   let filtroData = "";
@@ -122,13 +121,15 @@ async function lerObservacaoUtil(ctx: ServiceCtx, area: AreaCondicao, dataImagem
     params.push(dataImagem);
     filtroData = ` and (s.observacao_inicio at time zone 'UTC')::date = $${params.length}::date`;
   }
+  // Prefere o contorno atual; se só houver observação do polígono anterior, devolve-a para o planejador
+  // recusar com geometria_alterada (filtrar pelo SHA atual escondia o caso atrás de sem_observacao).
   const r = await ctx.tx.query<ObservacaoUtil>(
     `select s.observacao_inicio, s.observacao_fim, s.geometria_sha256
        from erp.analises_satelitais s
       where s.organization_id = $1 and s.area_id = $2 and s.versao_metodo = $3
-        and s.geometria_sha256 = $4 and s.indice = 'ndvi' and s.situacao = 'concluida'
+        and s.indice = 'ndvi' and s.situacao = 'concluida'
         and s.observacao_inicio is not null and s.observacao_fim is not null${filtroData}${escopo}
-      order by s.observacao_inicio desc, s.created_at desc
+      order by (s.geometria_sha256 = $4) desc nulls last, s.observacao_inicio desc, s.created_at desc
       limit 1`, params);
   return r.rows[0] ?? null;
 }
