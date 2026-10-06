@@ -52,6 +52,8 @@ export interface DependenciasGarantirProdutos {
   log: LogMapaCondicao;
   copernicusEnabled: boolean;
   armazenamento: ArmazenamentoRaster;
+  /** Dedup de rasters em voo deste processo (worker). */
+  emAndamentoRaster?: Map<string, Promise<{ puCabecalho: string | null }>>;
 }
 
 export interface PedidoGarantirProdutos {
@@ -139,7 +141,8 @@ export async function garantirProdutosDaObservacaoCompleta(
   };
   const depRaster: DependenciasGerarRaster = {
     db: dep.db, cliente: dep.cliente, limiteAvulso: dep.limiteAvulso,
-    log: dep.log, copernicusEnabled: dep.copernicusEnabled, armazenamento: dep.armazenamento
+    log: dep.log, copernicusEnabled: dep.copernicusEnabled, armazenamento: dep.armazenamento,
+    emAndamento: dep.emAndamentoRaster
   };
 
   let chamadas = 0;

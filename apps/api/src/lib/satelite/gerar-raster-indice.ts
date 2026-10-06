@@ -61,7 +61,8 @@ function resumoErroRaster(e: unknown): Record<string, unknown> {
 }
 
 const sha256Hex = (b: Buffer) => createHash("sha256").update(b).digest("hex");
-const emAndamento = new Map<string, Promise<GeracaoFeita>>();
+/** Fallback só para chamadores que não passam mapa próprio (testes unitários). */
+const emAndamentoPadrao = new Map<string, Promise<GeracaoFeita>>();
 
 export interface LinhaAnaliseRaster {
   id: string; empresa_id: string; area_id: string; colecao: string; indice: string; geometria_sha256: string; situacao: string;
@@ -78,7 +79,8 @@ export interface PlanoRaster {
   dataImagem: string; chave: string; storagePath: string; encoding: EncodingRasterIndice;
 }
 
-interface GeracaoFeita { puCabecalho: string | null }
+export interface GeracaoFeitaRaster { puCabecalho: string | null }
+type GeracaoFeita = GeracaoFeitaRaster
 
 export class FalhaArmazenamentoRaster extends Error {
   constructor(readonly puCabecalho: string | null, readonly causa: unknown) {
@@ -98,6 +100,12 @@ export interface DependenciasGerarRaster {
   log: LogRasterIndice;
   copernicusEnabled: boolean;
   armazenamento: ArmazenamentoRaster;
+  /**
+   * Dedup de geração em voo NESTA instância.
+   * Cada processo/app deve passar o próprio Map — senão duas réplicas no mesmo Node
+   * compartilhariam o registro e a corrida entre réplicas deixaria de existir.
+   */
+  emAndamento?: Map<string, Promise<GeracaoFeita>>;
 }
 
 export interface PedidoGerarRaster {
@@ -271,6 +279,7 @@ export async function gerarOuReutilizarRasterIndice(
   if (a.existente) return { raster: a.existente, reutilizada: true };
   const { plano } = a;
 
+  const emAndamento = dep.emAndamento ?? emAndamentoPadrao;
   const chaveVoo = [pedido.orgId, plano.area.id, plano.chave].join("|");
   let geracao = emAndamento.get(chaveVoo);
   const abriuChamada = !geracao;
@@ -331,8 +340,14 @@ export async function gerarOuReutilizarRasterIndice(
       throw e;
     }
 
+    // Conflitos (área sumiu / geometria mudou / corrida) saem DEPOIS do commit:
+    // a chamada gastou → o consumo fica na mesma transação; a recusa é devolvida ao chamador.
+    type Desfecho =
+      | { raster: LinhaRaster; reutilizada: boolean }
+      | { conflito: DomainError };
+    let desfecho: Desfecho;
     try {
-      const desfecho = await comCtx(dep, pedido, async (ctx) => {
+      desfecho = await comCtx(dep, pedido, async (ctx): Promise<Desfecho> => {
         const analise = await lerAnaliseRaster(ctx, pedido.analiseId);
         const area = await lerArea(ctx, analise.area_id);
         const consumo = () => (abriuChamada
@@ -343,20 +358,19 @@ export async function gerarOuReutilizarRasterIndice(
           : Promise.resolve(null));
         if (!area) {
           await consumo();
-          throw err("NOT_FOUND", MSG_ANALISE_NAO_ENCONTRADA);
+          return { conflito: err("NOT_FOUND", MSG_ANALISE_NAO_ENCONTRADA) };
         }
         if (area.geometria_sha256 !== plano.analise.geometria_sha256) {
           await consumo();
-          throw validation(MSG_GEOMETRIA_ALTERADA, { motivo: "geometria_alterada" });
+          return { conflito: validation(MSG_GEOMETRIA_ALTERADA, { motivo: "geometria_alterada" }) };
         }
         const nova = await gravarRaster(ctx, plano, feita);
         const existente = nova ? null : await lerRasterDaChave(ctx, plano.chave);
         await consumo();
-        if (nova) return { raster: nova, reutilizada: false as const };
-        if (!existente) throw err("CONCURRENCY_CONFLICT", MSG_RASTER_DISPUTADO);
-        return { raster: existente, reutilizada: true as const };
+        if (nova) return { raster: nova, reutilizada: false };
+        if (!existente) return { conflito: err("CONCURRENCY_CONFLICT", MSG_RASTER_DISPUTADO) };
+        return { raster: existente, reutilizada: true };
       });
-      return desfecho;
     } catch (e) {
       if (abriuChamada && !(e instanceof DomainError)) {
         dep.log.error({
@@ -366,6 +380,8 @@ export async function gerarOuReutilizarRasterIndice(
       }
       throw e;
     }
+    if ("conflito" in desfecho) throw desfecho.conflito;
+    return desfecho;
   } finally {
     if (abriuChamada) {
       emAndamento.delete(chaveVoo);

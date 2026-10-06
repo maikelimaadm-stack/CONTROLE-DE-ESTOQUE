@@ -75,6 +75,8 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
   const armazenamento = app.armazenamentoRaster;
   const assinador = criarAssinadorUrlRaster(app.config);
   const moduloLeitura = moduloDaPermissao(PERMISSAO_VER_ANALISE);
+  /** Dedup em voo desta instância Fastify (não compartilhar entre réplicas no mesmo Node de teste). */
+  const emAndamentoRaster = new Map<string, Promise<{ puCabecalho: string | null }>>();
 
   function paraDto(l: LinhaRaster, orgId: string, userId: string) {
     const { token, expira } = assinador.assinar({ rasterId: l.id, organizationId: orgId, userId });
@@ -106,17 +108,26 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
     if (!COPERNICUS_ENABLED) throw err("CONSULTA_INDISPONIVEL", MSG_ANALISE_DESLIGADA, { motivo: "desligada" });
     if (!cliente.configurado) throw err("CONSULTA_INDISPONIVEL", MSG_ANALISE_DESLIGADA, { motivo: "configuracao" });
 
-    const r = await gerarOuReutilizarRasterIndice({
-      db: app.db,
-      cliente,
-      limiteAvulso,
-      log: req.log,
-      copernicusEnabled: COPERNICUS_ENABLED,
-      armazenamento
-    }, { orgId: ctxPedido.orgId, userId: ctxPedido.user.id, analiseId });
+    try {
+      const r = await gerarOuReutilizarRasterIndice({
+        db: app.db,
+        cliente,
+        limiteAvulso,
+        log: req.log,
+        copernicusEnabled: COPERNICUS_ENABLED,
+        armazenamento,
+        emAndamento: emAndamentoRaster
+      }, { orgId: ctxPedido.orgId, userId: ctxPedido.user.id, analiseId });
 
-    return reply.status(r.reutilizada ? 200 : 201)
-      .send({ raster: paraDto(r.raster, ctxPedido.orgId, ctxPedido.user.id), reutilizada: r.reutilizada });
+      return reply.status(r.reutilizada ? 200 : 201)
+        .send({ raster: paraDto(r.raster, ctxPedido.orgId, ctxPedido.user.id), reutilizada: r.reutilizada });
+    } catch (e) {
+      if (e instanceof DomainError && e.code === "RATE_LIMITED") {
+        const s = (e.details as { tentar_apos_segundos?: unknown } | undefined)?.tentar_apos_segundos;
+        if (typeof s === "number" && Number.isFinite(s)) reply.header("retry-after", String(s));
+      }
+      throw e;
+    }
   });
 
   app.get("/mapa/analises-satelitais/:analiseId/raster", async (req) => {
