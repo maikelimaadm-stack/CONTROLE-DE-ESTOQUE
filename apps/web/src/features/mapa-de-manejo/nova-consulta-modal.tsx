@@ -30,6 +30,11 @@ import {
   type RespostaConsulta,
   type SelecaoConsulta
 } from "./consulta-satelite";
+import {
+  MSG_FILA_INDISPONIVEL,
+  deveAvisarFilaIndisponivel,
+  feitosDaConsulta
+} from "./operacao-analise";
 
 const INTERVALO_ACOMPANHAMENTO_MS = 3000;
 
@@ -46,6 +51,19 @@ export interface NovaConsultaProps {
   selecaoInicial?: SelecaoConsulta;
   /** Chamado quando a consulta termina (para o mapa recarregar resumo e imagens). */
   onConcluida?: () => void;
+  /** Total de pastos (com contorno) e hectares — mostrado ao lado de "Todos os pastos". */
+  totalAreas?: number;
+  totalHa?: number;
+  /**
+   * Se há análise viva: abre direto no acompanhamento (não inicia outra).
+   * `consultaIdInicial` = id a acompanhar; `modoAcompanhar` força a mensagem "Há uma análise em andamento".
+   */
+  consultaIdInicial?: string | null;
+  modoAcompanhar?: boolean;
+  /** `fila_disponivel` de GET /api/satelite/capacidade — sem nomes de env. */
+  filaDisponivel?: boolean | null;
+  /** Notifica o mapa quando uma consulta nova foi criada (barra persistente). */
+  onConsultaEmAndamento?: (consultaId: string) => void;
 }
 
 function mensagemDoErro(e: unknown): string {
@@ -60,8 +78,8 @@ function mensagemDoErro(e: unknown): string {
 type EtapaAnalise = 1 | 2 | 3;
 
 /**
- * Modal "Analisar pastos" (MAPA-UX-02): etapa 1 seleção → etapa 2 prévia → etapa 3 progresso.
- * A consulta roda em fila no servidor; fechar o modal não a cancela.
+ * Modal "Analisar pastos" (MAPA-UX-02 + Part B): etapa 1 seleção → etapa 2 prévia → etapa 3 progresso.
+ * A consulta roda em fila no servidor; fechar o modal não a cancela. Uma operação viva → acompanha.
  */
 export function NovaConsultaModal(p: NovaConsultaProps) {
   const qc = useQueryClient();
@@ -75,6 +93,7 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
   const [etapa, setEtapa] = React.useState<EtapaAnalise>(1);
   const [avancadasAbertas, setAvancadasAbertas] = React.useState(false);
   const [erro, setErro] = React.useState<string | null>(null);
+  const [avisoFilaAoCriar, setAvisoFilaAoCriar] = React.useState(false);
   const avisouConclusaoRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
@@ -82,15 +101,21 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
     setSelecao(p.selecaoInicial ?? "empresa");
     setPrevia(null);
     setErro(null);
-    setConsultaId(null);
-    setEtapa(1);
     setAvancadasAbertas(false);
     setPeriodo(PERIODO_PADRAO);
     setBusca("");
     setEscolhidas(new Set());
     setRetiroId("");
     avisouConclusaoRef.current = null;
-  }, [p.aberto, p.selecaoInicial]);
+    setAvisoFilaAoCriar(false);
+    if (p.modoAcompanhar && p.consultaIdInicial) {
+      setConsultaId(p.consultaIdInicial);
+      setEtapa(3);
+    } else {
+      setConsultaId(null);
+      setEtapa(1);
+    }
+  }, [p.aberto, p.selecaoInicial, p.modoAcompanhar, p.consultaIdInicial]);
 
   const retiros = useQuery({
     queryKey: ["mapa-geral", "retiros"],
@@ -120,6 +145,13 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
     : null;
   const mudarPeriodo = (prox: PeriodoDoFormulario) => { setPeriodo(prox); setPrevia(null); setErro(null); if (etapa === 2) setEtapa(1); };
 
+  const pastosParaIniciar = previa
+    ? Math.max(0, previa.novos + previa.reaproveitados)
+    : (resolvido.ok && resolvido.quantidade !== null ? resolvido.quantidade : null);
+  const rotuloIniciar = pastosParaIniciar !== null
+    ? `Iniciar análise de ${pastosParaIniciar} ${pastosParaIniciar === 1 ? "pasto" : "pastos"}`
+    : "Iniciar análise de pastos";
+
   const pedir = useMutation({
     mutationFn: async (confirmar: boolean) => {
       if (!resolvido.ok) throw new Error(resolvido.motivo);
@@ -130,8 +162,12 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
     onSuccess: (r, confirmar) => {
       setErro(null);
       if (confirmar) {
-        setConsultaId((r as ConsultaCriada).consulta.id);
+        const criada = r as ConsultaCriada;
+        setConsultaId(criada.consulta.id);
         setEtapa(3);
+        if (p.filaDisponivel === false) setAvisoFilaAoCriar(true);
+        p.onConsultaEmAndamento?.(criada.consulta.id);
+        void qc.invalidateQueries({ queryKey: ["mapa-geral", "operacao-analise"] });
       } else {
         setPrevia(r as PreviaConsulta);
         setEtapa(2);
@@ -152,6 +188,26 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
   });
   const consulta = acompanhamento.data?.consulta ?? null;
   const terminou = consulta ? consultaTerminou(consulta.situacao) : false;
+  const feitos = consulta ? feitosDaConsulta(consulta) : 0;
+
+  const [agoraMs, setAgoraMs] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (!consulta || terminou || p.filaDisponivel !== false) return;
+    const t = window.setInterval(() => setAgoraMs(Date.now()), 2000);
+    return () => window.clearInterval(t);
+  }, [consulta, terminou, p.filaDisponivel]);
+
+  const avisoFilaAtraso = consulta
+    ? deveAvisarFilaIndisponivel({
+      filaDisponivel: p.filaDisponivel,
+      situacao: consulta.situacao,
+      feitos,
+      criadoEmMs: Date.parse(consulta.criado_em),
+      agoraMs
+    })
+    : false;
+  /** Ao criar com fila off, ou pendente com 0 progresso após limiar. */
+  const mostrarAvisoFila = avisoFilaAoCriar || avisoFilaAtraso;
 
   const { onConcluida } = p;
   React.useEffect(() => {
@@ -159,6 +215,7 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
     avisouConclusaoRef.current = consulta.id;
     void qc.invalidateQueries({ queryKey: CHAVE_CONDICAO });
     void qc.invalidateQueries({ queryKey: ["mapa-geral", "ndvi"] });
+    void qc.invalidateQueries({ queryKey: ["mapa-geral", "operacao-analise"] });
     onConcluida?.();
   }, [consulta, terminou, qc, onConcluida]);
 
@@ -171,6 +228,8 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
   }, [p.areas, escolhidas]);
   const bloqueado = consultaId !== null;
   const etapaAtiva: EtapaAnalise = bloqueado ? 3 : etapa;
+  const totalAreas = p.totalAreas;
+  const totalHa = p.totalHa;
 
   const footer = (() => {
     if (etapaAtiva === 3) {
@@ -191,7 +250,7 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
             onClick={() => pedir.mutate(true)}
             data-testid="consulta-confirmar"
           >
-            Iniciar análise
+            {rotuloIniciar}
           </Button>
         </>
       );
@@ -212,21 +271,31 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
     );
   })();
 
+  const tituloModal = p.modoAcompanhar && etapaAtiva === 3 && !terminou
+    ? "Há uma análise em andamento"
+    : "Analisar pastos";
+
   return (
     <Dialog
       open={p.aberto}
       onOpenChange={(o) => { if (!o) p.onFechar(); }}
-      title="Analisar pastos"
+      title={tituloModal}
       description={etapaAtiva === 3
         ? "A análise continua no servidor. Fechar não cancela."
         : etapaAtiva === 2
-          ? "Confira o custo estimado antes de iniciar. Nada foi gravado ainda."
+          ? "Confira o resumo antes de iniciar. Nada foi gravado ainda."
           : "Escolha quais pastos analisar. O pacote é a classificação integrada da condição do pasto."}
       size="lg"
       testId="consulta-modal"
       footer={footer}
     >
       <div className="flex flex-col gap-3 text-sm" data-testid="consulta-conteudo" data-etapa={etapaAtiva}>
+        {p.modoAcompanhar && etapaAtiva === 3 && !terminou && (
+          <p className="rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700" data-testid="consulta-em-andamento-aviso">
+            Há uma análise em andamento. Acompanhe o progresso abaixo — não é necessário iniciar outra.
+          </p>
+        )}
+
         {etapaAtiva === 1 && (
           <>
             <fieldset className="flex flex-col gap-1.5" disabled={bloqueado}>
@@ -237,6 +306,11 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
                   <label key={s} className={`flex items-center gap-2 ${indisponivel ? "text-slate-400" : "text-slate-700"}`}>
                     <input type="radio" name="selecao-consulta" className="accent-brand-500" checked={selecao === s} disabled={indisponivel} onChange={() => mudarSelecao(s)} data-testid={`consulta-selecao-${s}`} />
                     <span>{ROTULO_SELECAO[s]}</span>
+                    {s === "empresa" && totalAreas !== undefined && (
+                      <span className="text-xs tabular-nums text-slate-500" data-testid="consulta-todos-contador">
+                        ({totalAreas}{totalHa !== undefined ? ` · ${num(totalHa, 1)} ha` : ""})
+                      </span>
+                    )}
                     {s === "viewport" && <span className="text-xs tabular-nums text-slate-500">({p.idsNaVista.length})</span>}
                     {s === "sem_analise" && <span className="text-xs tabular-nums text-slate-500">({p.idsSemAnalise.length})</span>}
                     {s === "desatualizadas" && (
@@ -381,11 +455,11 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
 
         {etapaAtiva === 2 && previa && (
           <div className="flex flex-col gap-1 rounded border border-slate-200 bg-slate-50 p-3 text-[13px]" data-testid="consulta-previa-resultado">
-            <div className="font-semibold text-slate-700">Prévia (nada foi gravado)</div>
+            <div className="font-semibold uppercase tracking-wide text-slate-700" data-testid="consulta-previa-titulo">Resumo da análise</div>
             {resolvido.ok && resolvido.quantidade !== null && (
               <div className="tabular-nums" data-testid="consulta-previa-pastos">{resolvido.quantidade} {resolvido.quantidade === 1 ? "pasto selecionado" : "pastos selecionados"}</div>
             )}
-            <div className="tabular-nums">{previa.novos} {previa.novos === 1 ? "análise nova" : "análises novas"} · {previa.reaproveitados} reaproveitada{previa.reaproveitados === 1 ? "" : "s"} · {previa.total_itens} no total</div>
+            <div className="tabular-nums">{previa.novos} {previa.novos === 1 ? "pasto novo" : "pastos novos"} · {previa.reaproveitados} reaproveitado{previa.reaproveitados === 1 ? "" : "s"} · {previa.total_itens} no total</div>
             <div className="tabular-nums" data-testid="consulta-previa-creditos">
               Estimativa: {num(previa.estimativa_creditos.minimo, 2)} a {num(previa.estimativa_creditos.maximo, 2)} créditos
               {previa.saldo_creditos_mes !== null && <> · saldo do mês {num(previa.saldo_creditos_mes, 2)}</>}
@@ -411,12 +485,18 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
               <div className="h-full bg-brand-500 transition-all" style={{ width: `${consulta ? progressoDaConsulta(consulta) : 0}%` }} />
             </div>
             {consulta && (
-              <div className="text-xs tabular-nums text-slate-600">
-                {consulta.total_concluidos} concluído(s) · {consulta.total_reaproveitados} reaproveitado(s) · {consulta.total_falhos} com falha · {consulta.total_itens} no total
+              <div className="text-xs tabular-nums text-slate-600" data-testid="consulta-progresso-pastos">
+                {feitos} de {consulta.total_itens} pastos
+                {consulta.total_falhos > 0 && <> · {consulta.total_falhos} com falha</>}
                 {consulta.concluida_em && <> · terminou em {dateTimeBR(consulta.concluida_em)}</>}
               </div>
             )}
-            {terminou && consulta && consulta.total_falhos > 0 && <p className="text-xs text-amber-700">Alguns itens falharam. Eles podem ser reprocessados numa nova consulta.</p>}
+            {mostrarAvisoFila && (
+              <p className="text-xs text-amber-800" data-testid="consulta-fila-indisponivel" role="status">
+                {MSG_FILA_INDISPONIVEL}
+              </p>
+            )}
+            {terminou && consulta && consulta.total_falhos > 0 && <p className="text-xs text-amber-700">Alguns pastos falharam. Eles podem ser reprocessados numa nova consulta.</p>}
             {acompanhamento.error && <p className="text-xs text-red-600">{mensagemDoErro(acompanhamento.error)}</p>}
           </div>
         )}

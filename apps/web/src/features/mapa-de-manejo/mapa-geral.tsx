@@ -33,6 +33,8 @@ import { CondicaoDaArea } from "./condicao-area";
 import { LegendaIndice } from "./legenda-indice";
 import { DialogAreaCondicao, DialogClasseCondicao, LegendaCondicaoPasto } from "./legenda-condicao";
 import { NovaConsultaModal } from "./nova-consulta-modal";
+import { AvisoAtualizandoMapa, BarraStatusAnalise } from "./barra-status-analise";
+import { useOperacaoAnaliseViva } from "./use-operacao-analise";
 import { familiaDoIndice, familiaPorId, nomeDoIndice, type FamiliaCamada, type IdIndice } from "./paletas-indices";
 import { selecionarAreasDaVista, type Vista } from "./viewport-rasters";
 import { areasDesatualizadas, type SelecaoConsulta } from "./consulta-satelite";
@@ -82,7 +84,7 @@ export function MapaGeral() {
   const [familia, setFamilia] = React.useState<FamiliaCamada>("vigor");
   const [render, setRender] = React.useState<RenderRaster>(RENDER_PADRAO);
   const [opacidade, setOpacidade] = React.useState(OPACIDADE_PADRAO);
-  const [consulta, setConsulta] = React.useState<{ aberta: boolean; selecao?: SelecaoConsulta }>({ aberta: false });
+  const [consulta, setConsulta] = React.useState<{ aberta: boolean; selecao?: SelecaoConsulta; acompanhar?: boolean }>({ aberta: false });
   const padraoTravadoRef = React.useRef(false);
   const areasRef = React.useRef(areas);
   React.useEffect(() => { areasRef.current = areas; }, [areas]);
@@ -284,11 +286,24 @@ export function MapaGeral() {
     return () => window.removeEventListener("keydown", onKey);
   }, [classeFiltro, selecionada, consulta.aberta]);
 
-  /** Abre "Analisar pastos" e fecha popups de área/classe (um de cada vez). */
+  const podeConsultar = can(PERMISSAO_PEDIR_NDVI);
+  const operacao = useOperacaoAnaliseViva(podeConsultar);
+
+  /** Abre "Analisar pastos" e fecha popups de área/classe (um de cada vez). Com análise viva → acompanhar. */
   function abrirAnalise(selecao?: SelecaoConsulta) {
     setClasseFiltro(null);
     setSelecionada(null);
+    if (operacao.viva && operacao.consultaId) {
+      setConsulta({ aberta: true, acompanhar: true });
+      return;
+    }
     setConsulta({ aberta: true, selecao: selecao ?? "empresa" });
+  }
+
+  function acompanharAnalise() {
+    setClasseFiltro(null);
+    setSelecionada(null);
+    setConsulta({ aberta: true, acompanhar: true });
   }
 
   function selecionarNaLista(id: string) {
@@ -327,6 +342,9 @@ export function MapaGeral() {
   const dialogClasseAberto = Boolean(modoCondicao && classeFiltro !== null && !consulta.aberta);
   const dialogTecnicoAberto = Boolean(!modoCondicao && selecionadaObj && !consulta.aberta);
   const totalHa = areas.reduce((s, a) => s + hectares(a.area_ha), 0);
+  const pastosComContorno = React.useMemo(() => areas.filter((a) => a.geometria), [areas]);
+  const totalAreasAnalisaveis = pastosComContorno.length;
+  const totalHaAnalisaveis = pastosComContorno.reduce((s, a) => s + hectares(a.area_ha), 0);
   const podeCadastrar = can("batch_area.create");
   const entradaAreas = entryById("configuracoes.pecuaria.areas");
   const anosNdvi = React.useMemo(() => {
@@ -338,7 +356,6 @@ export function MapaGeral() {
     return anosDasImagens(datas);
   }, [resumoUltima, resumoIndice, areas, rastersAtivos, mapasCond.datasPorArea]);
   const mostrarLegendaTecnica = !modoCondicao && comNdvi && (modoCor === "pixel" || modoCor === "area");
-  const podeConsultar = can(PERMISSAO_PEDIR_NDVI);
   const idsSemAnalise = React.useMemo(
     () => (resumoUltima.situacao === "pronto"
       ? areas.filter((a) => a.geometria && !resumoUltima.porArea.get(a.id)?.ultima_observacao).map((a) => a.id)
@@ -457,6 +474,14 @@ export function MapaGeral() {
           {!mapa.pronto && <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"><Spinner /></div>}
           {mapa.pronto && (
             <div className="pointer-events-none absolute bottom-2 left-2 flex max-w-[calc(100%-4rem)] flex-col items-start gap-1">
+              {operacao.viva && operacao.consulta && (
+                <BarraStatusAnalise
+                  consulta={operacao.consulta}
+                  onAcompanhar={acompanharAnalise}
+                  filaIndisponivel={operacao.filaIndisponivel}
+                />
+              )}
+              <AvisoAtualizandoMapa visivel={modoCondicao && mapasCond.situacao === "carregando"} />
               {resumoUltima.situacao === "indisponivel" && <div className="rounded bg-white/90 px-2 py-1 text-xs text-slate-600 shadow-sm" data-testid="mapa-ndvi-indisponivel">Análise por satélite ainda não disponível neste servidor.</div>}
               {resumoUltima.situacao === "erro" && (
                 <div className="pointer-events-auto flex items-center gap-2 rounded bg-white/90 px-2 py-1 text-xs text-red-600 shadow-sm" data-testid="mapa-ndvi-erro">
@@ -567,7 +592,13 @@ export function MapaGeral() {
           idsDesatualizadas={desatualizadas}
           indiceAtivo={indice}
           selecaoInicial={consulta.selecao ?? "empresa"}
-          onConcluida={() => mapasCond.recarregar()}
+          totalAreas={totalAreasAnalisaveis}
+          totalHa={totalHaAnalisaveis}
+          modoAcompanhar={Boolean(consulta.acompanhar)}
+          consultaIdInicial={consulta.acompanhar ? operacao.consultaId : null}
+          filaDisponivel={operacao.capacidade?.fila_disponivel ?? null}
+          onConsultaEmAndamento={() => operacao.recarregar()}
+          onConcluida={() => { mapasCond.recarregar(); operacao.recarregar(); }}
         />
       )}
     </div>

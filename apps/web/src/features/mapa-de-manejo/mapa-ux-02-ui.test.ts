@@ -31,7 +31,8 @@ describe("MAPA-UX-02 — UI estática (UX-01..UX-15)", () => {
   it("UX-04 modal de análise é Dialog central", () => {
     expect(modalSrc).toContain("<Dialog");
     expect(modalSrc).toContain('testId="consulta-modal"');
-    expect(modalSrc).toContain('title="Analisar pastos"');
+    expect(modalSrc).toContain("title={tituloModal}");
+    expect(modalSrc).toContain('"Analisar pastos"');
   });
 
   it("UX-05 default Todos os pastos (empresa)", () => {
@@ -60,7 +61,7 @@ describe("MAPA-UX-02 — UI estática (UX-01..UX-15)", () => {
   it("UX-08 preview na segunda etapa", () => {
     expect(modalSrc).toContain("setEtapa(2)");
     expect(modalSrc).toContain("consulta-previa-resultado");
-    expect(modalSrc).toContain("Iniciar análise");
+    expect(modalSrc).toContain("Iniciar análise de");
     expect(modalSrc).toContain('data-testid="consulta-continuar"');
   });
 

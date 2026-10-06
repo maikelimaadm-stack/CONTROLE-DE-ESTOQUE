@@ -23,6 +23,7 @@ import { MSG_AREA_NAO_ENCONTRADA, PERMISSAO_PEDIR_ANALISE, PERMISSAO_VER_ANALISE
  *   POST /api/satelite/consultas        prévia (confirmar=false, NADA é gravado) ou criação (confirmar=true, 201)
  *   GET  /api/satelite/consultas/:id    a consulta e os itens dela (paginados no servidor), com ETag fraco
  *   GET  /api/satelite/consultas        histórico do escopo (paginado no servidor)
+ *   GET  /api/satelite/capacidade       fila e Copernicus disponíveis neste processo (sem segredos)
  *   POST /api/satelite/consultas/:id/reprocessar-falhas   SAT-03 (decisão 296): os itens 'falho' voltam para a fila
  *
  * AUTORIZAÇÃO = CAPACIDADE (`analises_satelitais.create` no POST, `.view` nos GETs) ∧ ESCOPO (módulo pecuária, o da
@@ -435,7 +436,36 @@ async function processarConsulta(ctx: ServiceCtx, corpo: CorpoConsulta, corpoBru
   };
 }
 
+/**
+ * Capacidade operacional do satélite neste processo (MAPA-UX-FINAL Part B).
+ * Sem segredos: só booleans derivados de `executorSatelite` e do cliente Copernicus.
+ */
+export function dtoCapacidadeSatelite(opts: {
+  executorPresente: boolean;
+  copernicusEnabled: boolean;
+  clienteConfigurado: boolean;
+}): { fila_disponivel: boolean; copernicus_disponivel: boolean } {
+  return {
+    fila_disponivel: opts.executorPresente,
+    copernicus_disponivel: opts.copernicusEnabled && opts.clienteConfigurado
+  };
+}
+
 export default async function sateliteConsultasRoutes(app: FastifyInstance) {
+  /**
+   * Fila e provedor disponíveis neste ambiente — a web usa para avisar "processamento em fila indisponível"
+   * sem expor nomes de variáveis de ambiente. Mesma capacidade de ver análises.
+   */
+  app.get("/satelite/capacidade", async (req) => {
+    exigir(app, req, PERMISSAO_VER_ANALISE);
+    semQuery.parse(req.query);
+    return runService(app, req, PERMISSAO_VER_ANALISE, async () => dtoCapacidadeSatelite({
+      executorPresente: app.executorSatelite != null,
+      copernicusEnabled: app.config.COPERNICUS_ENABLED,
+      clienteConfigurado: app.clienteCopernicus.configurado
+    }));
+  });
+
   app.post("/satelite/consultas", async (req, reply) => {
     exigir(app, req, PERMISSAO_PEDIR_ANALISE);
     semQuery.parse(req.query);
