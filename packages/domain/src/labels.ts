@@ -2,6 +2,7 @@ import { PURCHASE_STATUS_LABELS } from "./supply-workflow.js";
 import { TITLE_STATUS_LABELS } from "./financial.js";
 import { ACTION_LABELS } from "./permissions.js";
 import { MOTIVOS_QUALIDADE_ANALISE_SATELITAL, SITUACOES_ANALISE_SATELITAL } from "./analise-satelital.js";
+import { ROTULOS_CLASSE_CONDICAO_PASTO } from "./condicao-pasto.js";
 
 /**
  * Rótulos PT-BR dos valores técnicos (enums) que chegam do banco/API e são exibidos ao usuário.
@@ -103,7 +104,9 @@ export const ENUM_LABELS = {
   top_execucao: { legado: "Comportamento legado", configurada: "Usar configuração da TOP" },
   /** SAT-01 / MAPA-GERAL (decisões 293 e 294): situação e motivo da análise por satélite — as listas do dono, não cópia. */
   analise_satelital_situacao: Object.fromEntries(SITUACOES_ANALISE_SATELITAL) as Record<string, string>,
-  analise_satelital_motivo: Object.fromEntries(MOTIVOS_QUALIDADE_ANALISE_SATELITAL) as Record<string, string>
+  analise_satelital_motivo: Object.fromEntries(MOTIVOS_QUALIDADE_ANALISE_SATELITAL) as Record<string, string>,
+  /** SAT-COND-01: classes do mapa integrado (nunca o id cru). */
+  condicao_pasto_classe: ROTULOS_CLASSE_CONDICAO_PASTO as Record<string, string>
 } as const satisfies Record<string, Record<string, string>>;
 
 export type EnumDomain = keyof typeof ENUM_LABELS;

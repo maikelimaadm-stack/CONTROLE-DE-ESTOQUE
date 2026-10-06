@@ -47,9 +47,11 @@ const TABELAS_DO_RECURSO: Map<string, Set<string>> = (() => {
   // governados pelo recurso da análise — `analises_satelitais.create`/`.view`, módulo pecuária. Cobertura, não exceção.
   // SAT-08 (decisão 299/300): a extensão estatística (percentis/histograma/qualidade) é 1:1 com a análise —
   // mesma permissão `analises_satelitais`, módulo pecuária. Cobertura, não exceção.
+  // SAT-COND-01 (decisão 302): mapa categórico dedicado, mesma permissão/módulo; sem analise_id.
   for (const t of [
     "erp.satelite_consultas", "erp.satelite_consulta_itens", "erp.satelite_consumo", "erp.satelite_orcamentos",
-    "erp.satelite_rasters", "erp.satelite_raster_arquivos", "erp.analises_satelitais_ext"
+    "erp.satelite_rasters", "erp.satelite_raster_arquivos", "erp.analises_satelitais_ext",
+    "erp.satelite_mapas_condicao", "erp.satelite_mapas_condicao_arquivos"
   ]) add("analises_satelitais", t);
   return m;
 })();

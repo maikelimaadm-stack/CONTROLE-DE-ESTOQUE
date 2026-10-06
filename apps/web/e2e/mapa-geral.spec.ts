@@ -47,6 +47,14 @@ async function digitarData(campo: Locator, ddmmaaaa: string) {
   await visivel.press("Enter");
 }
 
+/** Família, índice e Pixel/Área ficam em Dados técnicos (SAT-COND-01). */
+async function entrarDadosTecnicos(page: Page) {
+  const btn = page.getByTestId("mapa-experiencia-tecnico");
+  await expect(btn).toBeVisible({ timeout: 30_000 });
+  await btn.click();
+  await expect(btn).toHaveAttribute("aria-pressed", "true");
+}
+
 const areas = async (page: Page) => (await api<{ items: Area[] }>(page, "GET", "/api/resources/areas?pageSize=500")).items;
 
 test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro de Área; a rota antiga redireciona", async ({ page }) => {
@@ -97,11 +105,16 @@ test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro 
   await expect(resumo).toContainText("120,00 ha");
   await expect(page.getByRole("dialog"), "o resumo não é janela nem ficha").toHaveCount(0);
   await expect(resumo.getByTestId("mapa-abrir-cadastro")).toHaveAttribute("href", `/cadastros/areas/${criada.id}`);
-  // área nunca analisada: painel único Condição da Área; mapa na cor do cadastro (sem NDVI em nenhuma área)
-  await expect(resumo.getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toContainText("não tem análise para o contorno atual");
+  // área nunca analisada: experiência padrão Condição do pasto (sem seletor de índice)
+  await expect(resumo.getByTestId("condicao-pasto-sem-analise")).toBeVisible();
   await expect(resumo.getByTestId("mapa-ndvi-area"), "painel legado NDVI ausente").toHaveCount(0);
-  await expect(page.getByTestId("mapa-cor-cadastro")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("mapa-experiencia-condicao")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("mapa-indice-ndvi")).toHaveCount(0);
+  await expect(page.getByTestId("mapa-cor-cadastro")).toHaveCount(0);
   await expect(page.getByTestId("mapa-legenda-ndvi")).toHaveCount(0);
+  await expect(page.getByTestId("legenda-condicao-pasto")).toBeVisible();
+  await entrarDadosTecnicos(page);
+  await expect(resumo.getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toContainText("não tem análise para o contorno atual");
 
   // "Abrir cadastro" leva à ficha de Cadastro de Área, com o mapa do contorno nela
   await resumo.getByTestId("mapa-abrir-cadastro").click();
@@ -436,6 +449,8 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   expect((await resumo).status(), "o mapa pede o resumo operacional (contexto=condicao)").toBe(200);
   await expect(page.getByTestId("mapa-item-area")).toHaveCount(3);
   await expect.poll(async () => page.evaluate(() => Boolean((window as unknown as { __mapaManejoE2E?: unknown }).__mapaManejoE2E)), { timeout: 30_000 }).toBe(true);
+  await expect(page.getByTestId("mapa-experiencia-condicao")).toHaveAttribute("aria-pressed", "true");
+  await entrarDadosTecnicos(page);
 
   // Sem raster gerado: abre em "Por área" (média sólida). 0,72 = vigor alto; sem imagem útil / nunca = cinza.
   await expect(page.getByTestId("mapa-cor-area"), "sem imagem por pixel, o mapa abre na média por área").toHaveAttribute("aria-pressed", "true");
@@ -495,6 +510,9 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   // a área fica sem análise e CINZA no modo por área — nunca na cor do cadastro, que só aparece se o usuário a escolhe
   sql(`update erp.areas set geometria = '${JSON.stringify(quadrado(-55.3005, -15.2005))}'::jsonb where id = '${verde.id}'`);
   await page.reload();
+  await expect(page.getByTestId("mapa-item-area").filter({ hasText: verde.name })).toBeVisible();
+  // Reload devolve a experiência padrão Condição; o painel `condicao-area` mora em Dados técnicos.
+  await entrarDadosTecnicos(page);
   await page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).click();
   await expect(page.getByTestId("mapa-area-selecionada").getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toBeVisible();
   await expect(page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).getByTestId("mapa-item-ndvi")).toHaveCount(0);
@@ -540,6 +558,7 @@ test("Mapa geral: 'Analisar área atual' com a integração ligada e SEM credenc
   }));
   await page.goto("/mapa-geral");
   await page.getByTestId("mapa-item-area").filter({ hasText: nome }).click();
+  await entrarDadosTecnicos(page);
   const painel = page.getByTestId("mapa-area-selecionada");
   const condicao = painel.getByTestId("condicao-area");
   await condicao.getByTestId("condicao-analisar-atual").click();
@@ -678,6 +697,7 @@ test("Mapa geral SAT-07: gradiente por pixel, sem POST ao abrir, troca de modo s
   await page.goto("/mapa-geral");
   await expect(page.getByTestId("mapa-item-area")).toHaveCount(2);
   await expect.poll(async () => page.evaluate(() => Boolean((window as unknown as { __mapaManejoE2E?: unknown }).__mapaManejoE2E)), { timeout: 30_000 }).toBe(true);
+  await entrarDadosTecnicos(page);
   // Espera a listagem mockada e o bitmap colorido antes de exigir o modo.
   await expect.poll(() => getsLista, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
   await expect.poll(() => getsArquivo, { timeout: 30_000 }).toBeGreaterThanOrEqual(1);
@@ -853,15 +873,18 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   await page.goto("/mapa-geral");
   await expect(page.getByTestId("mapa-item-area")).toHaveCount(1);
 
-  // barra de camadas: os oito grupos, na ordem do contrato
   const barra = page.getByTestId("mapa-barra-camadas");
   await expect(barra).toBeVisible({ timeout: 30_000 });
-  // Base: botões Satélite/Mapa quando há chave Google; senão o aviso (CI sem NEXT_PUBLIC_GOOGLE_MAPS_API_KEY).
   await expect(barra.getByTestId("mapa-grupo-base")).toContainText(/Satélite|chave do Google/);
-  await expect(barra.getByTestId("mapa-visualizacao-condicao")).toHaveAttribute("aria-pressed", "true");
+  await expect(barra.getByTestId("mapa-experiencia-condicao")).toHaveAttribute("aria-pressed", "true");
+  await expect(barra.getByTestId("mapa-grupo-indice")).toHaveCount(0);
+  await expect(barra.getByTestId("mapa-grupo-camada")).toHaveCount(0);
+  await expect(barra.getByTestId("mapa-nova-consulta")).toHaveText("Atualizar condição");
+  await expect(page.getByTestId("legenda-condicao-pasto")).toBeVisible();
+  await entrarDadosTecnicos(page);
   for (const [grupo, texto] of [
     ["mapa-grupo-camada", "Cobertura/Solo"], ["mapa-grupo-indice", "NDVI"], ["mapa-grupo-data", "Última imagem útil"],
-    ["mapa-grupo-render", "Pixel real"], ["mapa-grupo-opacidade", "70%"], ["mapa-grupo-acao", "Nova consulta"]
+    ["mapa-grupo-render", "Pixel real"], ["mapa-grupo-opacidade", "70%"], ["mapa-grupo-acao", "Atualizar condição"]
   ] as const) await expect(barra.getByTestId(grupo)).toContainText(texto);
   await expect(barra.getByTestId("mapa-camada-vigor")).toHaveAttribute("aria-pressed", "true");
   await expect(barra.getByTestId("mapa-indice-evi2")).toBeVisible();
@@ -993,3 +1016,110 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
 
   await limparAreas(page);
 });
+
+// ---------- SAT-COND-01: mapa categórico de condição do pasto ----------
+
+test("Mapa geral SAT-COND-01: condição padrão, legenda ha/%, filtro, ESC, lista e Dados técnicos", async ({ page }) => {
+  test.setTimeout(120_000);
+  await login(page);
+  await limparAreas(page);
+  const empresa = await empresaDaSessao(page);
+  const quadrado = (lng: number, lat: number) => ({ type: "Polygon", coordinates: [[[lng, lat], [lng + 0.01, lat], [lng + 0.01, lat + 0.01], [lng, lat + 0.01], [lng, lat]]] });
+  const pastoA = await api<Area>(page, "POST", "/api/resources/areas", {
+    empresa_id: empresa, name: uniq("COND A").toLocaleUpperCase("pt-BR"), land_use: "pastagem", status: "ativa", tenure: "propria",
+    area_ha: "80", usable_area_ha: "80", color: "#2563eb", geometria: quadrado(-55.6, -15.35)
+  });
+  const pastoB = await api<Area>(page, "POST", "/api/resources/areas", {
+    empresa_id: empresa, name: uniq("COND B").toLocaleUpperCase("pt-BR"), land_use: "pastagem", status: "ativa", tenure: "propria",
+    area_ha: "50", usable_area_ha: "50", color: "#2563eb", geometria: quadrado(-55.58, -15.35)
+  });
+
+  const classe = (codigo: number, id: string, nome: string, cor: string, ha: string, pct: string, pixels: number) => ({
+    codigo, id, nome, cor, pixels, proporcao: "0.1", area_estimada_ha: ha, area_estimada_percentual: pct
+  });
+  const resumoA = {
+    versao_classificador: "condicao-pasto-v1", experimental: true, resolucao_m: 20,
+    area_total_ha: "80.00", area_lida_ha: "76.00", area_sem_leitura_ha: "4.00", cobertura_valida: "0.9500",
+    pixels_universo: 100, pixels_sem_leitura: 5,
+    classes: [
+      classe(0, "sem_leitura", "Sem leitura", "#9E9E9E", "4.00", "5.0", 5),
+      classe(1, "vegetacao_ativa_boa_cobertura", "Vegetação ativa · boa cobertura", "#1B5E20", "54.40", "68.0", 68),
+      classe(2, "vegetacao_ativa_cobertura_moderada", "Vegetação ativa · cobertura moderada", "#7CB342", "12.00", "15.0", 15),
+      classe(3, "baixa_cobertura", "Baixa cobertura", "#F9A825", "4.00", "5.0", 5),
+      classe(4, "possivel_estresse_hidrico", "Possível estresse hídrico", "#EF6C00", "1.60", "2.0", 2),
+      classe(5, "solo_exposto_estimado", "Solo exposto estimado", "#BF360C", "4.00", "5.0", 5),
+      classe(6, "agua", "Água", "#1565C0", "0.00", "0.0", 0)
+    ],
+    area_potencialmente_produtiva_ha: "66.40", area_potencialmente_produtiva_percentual: "83.0",
+    aviso: "Estimativa espectral", avisos: [] as string[]
+  };
+  const resumoB = {
+    ...resumoA, area_total_ha: "50.00",
+    classes: resumoA.classes.map((c) => c.codigo === 5
+      ? { ...c, area_estimada_ha: "12.00", area_estimada_percentual: "24.0", pixels: 24 }
+      : c.codigo === 1
+        ? { ...c, area_estimada_ha: "20.00", area_estimada_percentual: "40.0", pixels: 40 }
+        : c)
+  };
+  const dto = (areaId: string, mapaId: string, resumo: typeof resumoA, cantos: number[][]) => ({
+    id: mapaId, area_id: areaId, mapa: "condicao_pasto", tipo: "classificacao", data_imagem: "2026-10-05",
+    largura: 4, altura: 4, cantos_lnglat: cantos, resolucao_m: 20, resolucao_analitica_m: 20,
+    geometria_sha256: "a".repeat(64), area_total_ha: resumo.area_total_ha, resumo,
+    url_assinada: `/api/mapa/condicao-pasto/${mapaId}/arquivo?t=teste`,
+    expira_em: "2099-01-01T00:00:00.000Z", versao_classificador: "condicao-pasto-v1"
+  });
+  const mapaA = "11111111-1111-4111-8111-111111111111";
+  const mapaB = "22222222-2222-4222-8222-222222222222";
+
+  const cors = { "Access-Control-Allow-Origin": "*" };
+  await page.route(/\/api\/mapa\/condicao-pasto(\?|$)/, async (rota) => {
+    if (rota.request().method() !== "GET") return rota.continue();
+    const ids = new URL(rota.request().url()).searchParams.get("area_ids") ?? "";
+    const itens = [];
+    if (ids.includes(pastoA.id)) itens.push(dto(pastoA.id, mapaA, resumoA, [[-55.6, -15.34], [-55.59, -15.34], [-55.59, -15.35], [-55.6, -15.35]]));
+    if (ids.includes(pastoB.id)) itens.push(dto(pastoB.id, mapaB, resumoB, [[-55.58, -15.34], [-55.57, -15.34], [-55.57, -15.35], [-55.58, -15.35]]));
+    await rota.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify({ itens, pagina: 1, tamanho: 200, tem_mais: false }) });
+  });
+  await page.route(/\/api\/mapa\/condicao-pasto\/[^/]+\/arquivo/, async (rota) => {
+    if (rota.request().method() === "OPTIONS") { await rota.fulfill({ status: 204, headers: cors }); return; }
+    await rota.fulfill({ status: 200, contentType: "image/png", headers: cors, body: PNG_NDVI_4X4 });
+  });
+
+  await page.goto("/mapa-geral");
+  await expect(page.getByTestId("mapa-experiencia-condicao")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("mapa-indice-ndvi")).toHaveCount(0);
+  const legenda = page.getByTestId("legenda-condicao-pasto");
+  await expect(legenda).toBeVisible({ timeout: 30_000 });
+  await expect(legenda.getByTestId("legenda-ha-solo_exposto_estimado")).toBeVisible();
+  await expect(legenda.getByTestId("legenda-pct-vegetacao_ativa_boa_cobertura")).toBeVisible();
+  await expect(page.getByTestId("mapa-item-badge")).toHaveCount(2);
+
+  await page.getByTestId("legenda-classe-solo_exposto_estimado").click();
+  await expect(page.getByTestId("painel-classe-condicao")).toBeVisible();
+  await expect(page.getByTestId("painel-classe-condicao")).toContainText("Solo exposto estimado");
+  await expect(page.getByTestId("mapa-item-area").nth(0)).toContainText(pastoB.name);
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("painel-classe-condicao")).toHaveCount(0);
+
+  await page.getByTestId("legenda-classe-solo_exposto_estimado").click();
+  await page.getByTestId("legenda-classe-solo_exposto_estimado").click();
+  await expect(page.getByTestId("painel-classe-condicao")).toHaveCount(0);
+
+  await page.getByTestId("mapa-item-area").filter({ hasText: pastoA.name }).click();
+  await expect(page.getByTestId("painel-area-condicao")).toBeVisible();
+  await expect(page.getByTestId("painel-area-condicao")).toContainText("ha");
+  await expect(page.getByTestId("condicao-area")).toHaveCount(0);
+
+  await page.getByTestId("mapa-experiencia-tecnico").click();
+  await expect(page.getByTestId("mapa-indice-ndvi")).toBeVisible();
+  await expect(page.getByTestId("mapa-indice-evi2")).toBeVisible();
+  await expect(page.getByTestId("condicao-area")).toBeVisible();
+
+  await page.getByTestId("mapa-experiencia-condicao").click();
+  await expect(page.getByTestId("mapa-indice-ndvi")).toHaveCount(0);
+  await expect(page.getByTestId("legenda-condicao-pasto")).toBeVisible();
+
+  await limparAreas(page);
+});
+

@@ -65,7 +65,7 @@ export function redigirUrlAssinada(url: string): string {
   const redigida = `${caminho}?${MARCADOR_TOKEN_OMITIDO}`;
   let atual = caminho;
   for (let volta = 0; volta < VOLTAS_DE_DECODIFICACAO; volta++) {
-    if (/\/rasters\//i.test(atual)) return redigida;
+    if (/\/(rasters|condicao-pasto)\//i.test(atual)) return redigida;
     let proximo: string;
     try { proximo = decodeURIComponent(atual); } catch { return redigida; }
     if (proximo === atual) return url;

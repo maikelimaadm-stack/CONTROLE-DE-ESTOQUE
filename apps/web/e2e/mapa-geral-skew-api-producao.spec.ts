@@ -16,6 +16,9 @@ import { MSG_ROTA_NAO_ENCONTRADA, vigiar, type Mundo } from "./operacoes-01-f2-s
  * com um aviso discreto — e nenhum erro na tela. Se a base tem o resumo mas ainda não aceita `contexto` (422), o web
  * cai no contrato anterior sem quebrar a tela.
  *
+ * SAT-COND-01: com o resumo presente, o HEAD também pergunta `GET /api/mapa/condicao-pasto`. A base sem essa rota
+ * responde 404 de ROTA — resposta HTTP, não abort. A tela não entra em loop de `AbortController` (`net::ERR_ABORTED`).
+ *
  * O MUNDO É PERGUNTADO À BASE NA HORA: a 404 de rota → legado (a base de hoje); 200 → novo (a base já com o resumo).
  * Qualquer outra resposta é defeito. Os dois ramos cobram prova POSITIVA: no legado, o pedido da tela SAIU e voltou
  * 404 de rota, e o aviso aparece; no novo, algum pedido do resumo voltou 200 e o aviso não aparece.
@@ -53,6 +56,11 @@ test("MAPA-GERAL K-1 — web deste HEAD × API da base: o Mapa geral abre; legad
     const pedido = page.waitForResponse((r) =>
       r.request().method() === "GET" && caminho(r) === PORTA && (r.status() === 200 || r.status() === 404)
     );
+    const pedidoCondicao = mundo === "novo"
+      ? page.waitForResponse((r) =>
+        r.request().method() === "GET" && caminho(r) === "/api/mapa/condicao-pasto" && (r.status() === 200 || r.status() === 404)
+      )
+      : null;
     await page.goto("/mapa-geral");
     const resposta = await pedido;
     await expect(page.getByRole("heading", { name: "Mapa geral" })).toBeVisible();
@@ -74,6 +82,8 @@ test("MAPA-GERAL K-1 — web deste HEAD × API da base: o Mapa geral abre; legad
       await expect(page.getByTestId("mapa-ndvi-indisponivel")).toHaveCount(0);
       // Painel analítico único (R2): Condição da Área — ou some em silêncio se a rota /satelite/.../resumo ainda não existir na base.
       await expect(painel.getByTestId("mapa-ndvi-area")).toHaveCount(0);
+      const rCond = await pedidoCondicao!;
+      expect([200, 404], "o GET do mapa de condição completa (404 de rota na base; nunca abort)").toContain(rCond.status());
     }
     await expect(painel.getByTestId("mapa-abrir-cadastro")).toHaveAttribute("href", `/cadastros/areas/${area.id}`);
     vigia.semBloqueio();

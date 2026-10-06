@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 220 |
-| Tabelas com `organization_id` (escopo de organização) | 163 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 72 |
+| Tabelas no schema `erp` | 222 |
+| Tabelas com `organization_id` (escopo de organização) | 165 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 74 |
 | Entidades curadas neste dicionário | 61 |
 | Entidades com ID Global | 25 |
 | Entidades com Tipo de Operação | 19 |
 | Tipos de Operação referenciados | 32 |
-| Cobertura curada | 27.7% |
+| Cobertura curada | 27.5% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -2308,6 +2308,8 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.satelite_consulta_itens` | 22 | sim | `empresa_id` | não |
 | `erp.satelite_consultas` | 15 | sim | `empresa_id` | não |
 | `erp.satelite_consumo` | 10 | sim | `empresa_id` | não |
+| `erp.satelite_mapas_condicao` | 28 | sim | `empresa_id` | não |
+| `erp.satelite_mapas_condicao_arquivos` | 8 | sim | `empresa_id` | não |
 | `erp.satelite_orcamentos` | 7 | sim | `empresa_id` | não |
 | `erp.satelite_raster_arquivos` | 8 | sim | `empresa_id` | não |
 | `erp.satelite_rasters` | 26 | sim | `empresa_id` | não |

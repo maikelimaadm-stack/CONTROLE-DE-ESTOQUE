@@ -373,7 +373,7 @@ export function CondicaoDaArea(p: CondicaoDaAreaProps) {
 
       <div className="flex flex-wrap gap-1.5" data-testid="condicao-acoes">
         {podePedir && p.temContorno && (
-          <Button type="button" size="sm" variant="outline" onClick={p.onNovaConsulta} data-testid="condicao-nova-consulta">Nova consulta</Button>
+          <Button type="button" size="sm" variant="outline" onClick={p.onNovaConsulta} data-testid="condicao-nova-consulta">Atualizar condição</Button>
         )}
         {obs && (
           <Button type="button" size="sm" variant="ghost" aria-expanded={verHistorico} onClick={() => setVerHistorico((v) => !v)} data-testid="condicao-historico-abrir">

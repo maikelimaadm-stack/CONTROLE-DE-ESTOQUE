@@ -9,6 +9,7 @@ import { SeletorDeBase, type MapaBase } from "./mapa-base";
 import { FAMILIAS_CAMADA, familiaPorId, nomeDoIndice, type FamiliaCamada, type IdIndice } from "./paletas-indices";
 
 export type { ModoCor };
+export type ExperienciaMapa = "condicao" | "tecnico";
 
 function Grupo({ rotulo, children, testId }: { rotulo: string; children: React.ReactNode; testId?: string }) {
   return (
@@ -51,6 +52,8 @@ export interface BarraCamadasProps {
   mapa: MapaBase;
   /** Há satélite utilizável (permissão e rota da API)? Sem ele só a BASE aparece. */
   comSatelite: boolean;
+  experiencia: ExperienciaMapa;
+  onExperiencia: (e: ExperienciaMapa) => void;
   familia: FamiliaCamada;
   onFamilia: (f: FamiliaCamada) => void;
   indice: IdIndice;
@@ -73,12 +76,13 @@ export interface BarraCamadasProps {
 }
 
 /**
- * Barra de camadas do Mapa geral: BASE · VISUALIZAÇÃO · CAMADA · ÍNDICE · DATA · RENDER · OPACIDADE · AÇÃO.
- * A família escolhe a PERGUNTA (vigor, umidade, cobertura/solo); o índice é uma resposta dentro dela.
+ * Barra do Mapa geral. A experiência padrão é CONDIÇÃO DO PASTO (sem família, índice ou Pixel/Área).
+ * Família, índice, paleta e render ficam em Dados técnicos.
  */
 export function BarraCamadas(p: BarraCamadasProps) {
   const familia = familiaPorId(p.familia);
-  const rasterAtivo = p.modoCor === "pixel";
+  const rasterAtivo = p.experiencia === "tecnico" && p.modoCor === "pixel";
+  const overlayAtivo = p.experiencia === "condicao" || rasterAtivo;
   return (
     <div className="flex flex-wrap items-end gap-x-4 gap-y-2 rounded-md border border-slate-200 bg-white px-3 py-2" data-testid="mapa-barra-camadas">
       {p.mapa.pronto && (
@@ -90,28 +94,41 @@ export function BarraCamadas(p: BarraCamadasProps) {
       {p.comSatelite && (
         <>
           <Grupo rotulo="Visualização" testId="mapa-grupo-visualizacao">
-            <Segmentado<"condicao"> rotulo="Visualização" valor="condicao" opcoes={[{ valor: "condicao", rotulo: "Condição" }]} onTrocar={() => undefined} prefixoTestId="mapa-visualizacao" />
-          </Grupo>
-
-          <Grupo rotulo="Camada" testId="mapa-grupo-camada">
-            <Segmentado<FamiliaCamada>
-              rotulo="Camada"
-              valor={p.familia}
-              opcoes={FAMILIAS_CAMADA.map((f) => ({ valor: f.id, rotulo: f.rotulo, dica: f.pergunta }))}
-              onTrocar={p.onFamilia}
-              prefixoTestId="mapa-camada"
+            <Segmentado<ExperienciaMapa>
+              rotulo="Visualização"
+              valor={p.experiencia}
+              opcoes={[
+                { valor: "condicao", rotulo: "Condição" },
+                { valor: "tecnico", rotulo: "Dados técnicos" }
+              ]}
+              onTrocar={p.onExperiencia}
+              prefixoTestId="mapa-experiencia"
             />
           </Grupo>
 
-          <Grupo rotulo="Índice" testId="mapa-grupo-indice">
-            <Segmentado<IdIndice>
-              rotulo="Índice"
-              valor={p.indice}
-              opcoes={familia.indices.map((i) => ({ valor: i, rotulo: nomeDoIndice(i) }))}
-              onTrocar={p.onIndice}
-              prefixoTestId="mapa-indice"
-            />
-          </Grupo>
+          {p.experiencia === "tecnico" && (
+            <>
+              <Grupo rotulo="Camada" testId="mapa-grupo-camada">
+                <Segmentado<FamiliaCamada>
+                  rotulo="Camada"
+                  valor={p.familia}
+                  opcoes={FAMILIAS_CAMADA.map((f) => ({ valor: f.id, rotulo: f.rotulo, dica: f.pergunta }))}
+                  onTrocar={p.onFamilia}
+                  prefixoTestId="mapa-camada"
+                />
+              </Grupo>
+
+              <Grupo rotulo="Índice" testId="mapa-grupo-indice">
+                <Segmentado<IdIndice>
+                  rotulo="Índice"
+                  valor={p.indice}
+                  opcoes={familia.indices.map((i) => ({ valor: i, rotulo: nomeDoIndice(i) }))}
+                  onTrocar={p.onIndice}
+                  prefixoTestId="mapa-indice"
+                />
+              </Grupo>
+            </>
+          )}
 
           <Grupo rotulo="Data" testId="mapa-grupo-data">
             <NativeSelect
@@ -126,33 +143,37 @@ export function BarraCamadas(p: BarraCamadasProps) {
             </NativeSelect>
           </Grupo>
 
-          <Grupo rotulo="Cor das áreas" testId="mapa-grupo-cor">
-            <Segmentado<ModoCor>
-              rotulo="Cor das áreas"
-              valor={p.modoCor}
-              opcoes={[
-                { valor: "pixel", rotulo: "Por pixel" },
-                { valor: "area", rotulo: "Por área", dica: `Cor da média do ${nomeDoIndice(p.indice)} de cada área, na paleta desse índice` },
-                { valor: "cadastro", rotulo: "Cor do cadastro" }
-              ]}
-              onTrocar={p.onModoCor}
-              prefixoTestId="mapa-cor"
-            />
-          </Grupo>
+          {p.experiencia === "tecnico" && (
+            <>
+              <Grupo rotulo="Cor das áreas" testId="mapa-grupo-cor">
+                <Segmentado<ModoCor>
+                  rotulo="Cor das áreas"
+                  valor={p.modoCor}
+                  opcoes={[
+                    { valor: "pixel", rotulo: "Por pixel" },
+                    { valor: "area", rotulo: "Por área", dica: `Cor da média do ${nomeDoIndice(p.indice)} de cada área, na paleta desse índice` },
+                    { valor: "cadastro", rotulo: "Cor do cadastro" }
+                  ]}
+                  onTrocar={p.onModoCor}
+                  prefixoTestId="mapa-cor"
+                />
+              </Grupo>
 
-          <Grupo rotulo="Render" testId="mapa-grupo-render">
-            <Segmentado<RenderRaster>
-              rotulo="Render"
-              valor={p.render}
-              opcoes={[
-                { valor: "nearest", rotulo: ROTULO_RENDER.nearest },
-                { valor: "linear", rotulo: ROTULO_RENDER.linear }
-              ]}
-              onTrocar={p.onRender}
-              prefixoTestId="mapa-render"
-              desabilitado={!rasterAtivo}
-            />
-          </Grupo>
+              <Grupo rotulo="Render" testId="mapa-grupo-render">
+                <Segmentado<RenderRaster>
+                  rotulo="Render"
+                  valor={p.render}
+                  opcoes={[
+                    { valor: "nearest", rotulo: ROTULO_RENDER.nearest },
+                    { valor: "linear", rotulo: ROTULO_RENDER.linear }
+                  ]}
+                  onTrocar={p.onRender}
+                  prefixoTestId="mapa-render"
+                  desabilitado={!rasterAtivo}
+                />
+              </Grupo>
+            </>
+          )}
 
           <Grupo rotulo="Opacidade" testId="mapa-grupo-opacidade">
             <label className="flex h-[26px] items-center gap-2 text-xs tabular-nums text-slate-600">
@@ -162,7 +183,7 @@ export function BarraCamadas(p: BarraCamadasProps) {
                 max={100}
                 step={5}
                 value={Math.round(p.opacidade * 100)}
-                disabled={!rasterAtivo}
+                disabled={!overlayAtivo}
                 onChange={(e) => p.onOpacidade(Number(e.target.value) / 100)}
                 aria-label="Opacidade da imagem de satélite"
                 className="w-24 accent-slate-700"
@@ -174,13 +195,13 @@ export function BarraCamadas(p: BarraCamadasProps) {
 
           {p.podeConsultar && (
             <Grupo rotulo="Ação" testId="mapa-grupo-acao">
-              <Button type="button" size="sm" variant="outline" onClick={p.onNovaConsulta} data-testid="mapa-nova-consulta">Nova consulta</Button>
+              <Button type="button" size="sm" variant="outline" onClick={p.onNovaConsulta} data-testid="mapa-nova-consulta">Atualizar condição</Button>
             </Grupo>
           )}
         </>
       )}
 
-      {p.comSatelite && p.render === "linear" && rasterAtivo && (
+      {p.comSatelite && p.experiencia === "tecnico" && p.render === "linear" && rasterAtivo && (
         <p className="basis-full text-[11px] leading-tight text-amber-700" role="note" data-testid="mapa-render-aviso">{AVISO_RENDER_SUAVIZADO}</p>
       )}
     </div>
