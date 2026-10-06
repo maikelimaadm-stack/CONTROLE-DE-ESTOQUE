@@ -91,9 +91,9 @@ Hectares: maior resto sobre o **universo interno**; soma ≈ `area_total_ha`. Ca
 
 ## Rotas
 
-- `POST /api/satelite/areas/:areaId/condicao-pasto` — gera/reaproveita v2.
+- `POST /api/satelite/areas/:areaId/condicao-pasto` — gera/reaproveita v2 via serviço interno `lib/satelite/gerar-mapa-condicao.ts`.
 - `GET /api/satelite/areas/:areaId/condicao-pasto` — mapa v2 gravado.
-- `GET /api/mapa/condicao-pasto?area_ids=` — listagem v2 (não gera). 404 = rota ausente (API anterior).
+- `GET /api/mapa/condicao-pasto?area_ids=` — listagem v2 (filtra `versao_classificador` corrente; não gera). 404 = rota ausente (API anterior).
 - `GET /api/mapa/condicao-pasto/:mapaId/arquivo?t=` — PNG.
 
 ## UI (MAPA-UX-02)
@@ -102,11 +102,11 @@ Hectares: maior resto sobre o **universo interno**; soma ≈ `area_total_ha`. Ca
 - Popup **central** da área e da classe (não painel lateral).
 - Lista compacta; rótulos sem sobreposição (selecionada / hover).
 - Índices em **Dados técnicos**.
-- Após consulta em lote com observação útil: gerar/reutilizar mapa v2 automaticamente (serviço compartilhado com a rota; worker pronto quando `SATELITE_WORKER_ENABLED=1`).
+- Após consulta em lote com observação útil: gerar/reutilizar mapa v2 automaticamente (mesmo serviço da rota).
 
 ## Worker
 
-`SATELITE_WORKER_ENABLED` permanece desligado por padrão em produção até ativação operacional.
+`SATELITE_WORKER_ENABLED` permanece desligado por padrão (config; sem mudança de variável Railway nesta fatia). Quando ligado (com Copernicus e credencial), após item `pastagem-essencial-v2` concluir com observação útil o executor chama, em best-effort, `gerarOuReutilizarMapaCondicao` / `tentarGerarMapaCondicaoAposPastagem`. Falha do mapa **não** falha o item estatístico — só log `warn`.
 
 ## Reversão
 

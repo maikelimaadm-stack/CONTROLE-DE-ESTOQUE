@@ -10,6 +10,7 @@ import { ClienteCopernicus, ENDERECOS_COPERNICUS } from "../../src/lib/satelite/
 import { MODULO_EXECUTOR, contextoDoCriador } from "../../src/lib/satelite/contexto-worker.js";
 import { executarItem, type LogSatelite } from "../../src/lib/satelite/executar-item.js";
 import { recalcularConsulta } from "../../src/lib/satelite/fechamento.js";
+import { LimiteAvulsoSatelite } from "../../src/lib/satelite/limite-avulso.js";
 import { PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S, type LimitesSatelite } from "../../src/lib/satelite/limites.js";
 import { EVALSCRIPT_NDVI_SHA256 } from "../../src/lib/satelite/ndvi-v2.js";
 import { WorkerSatelite, type ResumoRodada } from "../../src/lib/satelite/worker.js";
@@ -94,8 +95,13 @@ let A = ""; let B = "";
 const poolsExtras: Db[] = [];
 
 function novoWorker(o: { db?: Db; lote?: number; limites?: Partial<LimitesSatelite>; agora?: () => number } = {}) {
+  const limites = { ...SEM_TETO, ...o.limites };
   const cliente = new ClienteCopernicus({ buscar: buscarMock, credenciais: { clienteId: ID_FALSO, segredo: SEGREDO_FALSO }, esperar: async () => {} });
-  return new WorkerSatelite({ db: o.db ?? h.db, cliente, limites: { ...SEM_TETO, ...o.limites }, log: logCapturado, lote: o.lote ?? 50, ...(o.agora ? { agora: o.agora } : {}) });
+  return new WorkerSatelite({
+    db: o.db ?? h.db, cliente, limites, log: logCapturado,
+    limiteAvulso: new LimiteAvulsoSatelite(limites), copernicusEnabled: true,
+    lote: o.lote ?? 50, ...(o.agora ? { agora: o.agora } : {})
+  });
 }
 const zero = (): ResumoRodada => ({ reservados: 0, concluidos: 0, falhos: 0, adiados: 0 });
 const somar = (a: ResumoRodada, b: ResumoRodada) => { a.reservados += b.reservados; a.concluidos += b.concluidos; a.falhos += b.falhos; a.adiados += b.adiados; };
@@ -658,7 +664,12 @@ describe("SAT-03 — o executor não sai do escopo do item", () => {
     // A reserva já marcou o item (fixture) e o criador perdeu a empresa B logo depois.
     await admin.query("update erp.satelite_consulta_itens set situacao='executando', tentativas=1, tentativas_rodada=1, proxima_tentativa_em=now() + interval '10 minutes' where id=$1", [item!.id]);
     await admin.query("delete from erp.membro_empresas where membro_id=$1 and empresa_id=$2", [restrito.membroId, B]);
-    const dep = { db: h.db, cliente: new ClienteCopernicus({ buscar: buscarMock, credenciais: { clienteId: ID_FALSO, segredo: SEGREDO_FALSO } }), log: logCapturado, agora: Date.now, aleatorio: Math.random };
+    const dep = {
+      db: h.db,
+      cliente: new ClienteCopernicus({ buscar: buscarMock, credenciais: { clienteId: ID_FALSO, segredo: SEGREDO_FALSO } }),
+      log: logCapturado, agora: Date.now, aleatorio: Math.random,
+      limiteAvulso: new LimiteAvulsoSatelite(SEM_TETO), copernicusEnabled: true
+    };
     const reservado = { organization_id: h.demo.orgId, empresa_id: B, consulta_id: id, item_id: item!.id, criado_por: restrito.userId };
     const logsInicio = logs.length;
     expect((await executarItem(dep, reservado)).desfecho).toBe("adiado");

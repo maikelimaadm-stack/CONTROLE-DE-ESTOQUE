@@ -47,6 +47,8 @@ import {
   type ResultadoPastagem
 } from "./pastagem-essencial.js";
 import { decidirAposFalha, type DecisaoFalha } from "./retry.js";
+import { tentarGerarMapaCondicaoAposPastagem } from "./gerar-mapa-condicao.js";
+import type { LimiteAvulsoSatelite } from "./limite-avulso.js";
 
 /** A linha que a reserva (`erp.satelite_reservar_itens`, migration 0054) devolve: só ids. */
 export interface ItemReservado { organization_id: string; empresa_id: string; consulta_id: string; item_id: string; criado_por: string }
@@ -69,6 +71,10 @@ export interface DependenciasItem {
   log: LogSatelite;
   agora: () => number;
   aleatorio: () => number;
+  /** Mesmo objeto do processo (`app.limiteAvulsoSatelite`) — mapa de condição automático após pastagem. */
+  limiteAvulso: LimiteAvulsoSatelite;
+  /** Espelho de `COPERNICUS_ENABLED` no processo. */
+  copernicusEnabled: boolean;
 }
 
 /** Erros ESTÁVEIS gravados no item quando a recusa é do ERP (não do provedor). */
@@ -368,6 +374,17 @@ async function executarFases(dep: DependenciasItem, r: ItemReservado, anotarFalh
   if (chamada.resultado === null) return falhar(f1.pronto.item.tentativas, chamada.respondeu, chamada.falha);
   try {
     const f3 = await fase3(dep, r, f1.pronto, { ...chamada, resultado: chamada.resultado });
+    // MAPA-UX-02: após pastagem-essencial com observação útil, gera/reusa o mapa v2 (best-effort).
+    if (
+      f3.desfecho === "concluido"
+      && ehPastagem(f1.pronto.item)
+      && ehResultadoPastagem(chamada.resultado)
+      && chamada.resultado.situacao === "concluida"
+    ) {
+      await tentarGerarMapaCondicaoAposPastagem(dep, {
+        orgId: r.organization_id, userId: r.criado_por, areaId: f1.pronto.item.area_id
+      });
+    }
     return anotar(f3.desfecho, f3.motivo);
   } catch (e) {
     dep.log.error({ satelite_item: { ...ids, etapa: "gravacao", ...resumoDoErro(e) } }, "item da fila satelital: gravação falhou");
