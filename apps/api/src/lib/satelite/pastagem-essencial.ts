@@ -25,7 +25,7 @@ import {
   HISTOGRAMA_BINS_EVI2,
   HISTOGRAMA_BINS_MSAVI2,
   HISTOGRAMA_BINS_VIGOR,
-  binsSerializamComoMathFloat,
+  recusaBinsHistogramaFloat32,
   INDICES_BUNDLE_ESSENCIAL,
   LIMIARES_COBERTURA_EXPERIMENTAL,
   PERCENTIS_SATELITE,
@@ -120,16 +120,14 @@ function evaluatePixel(s) {
 export const EVALSCRIPT_PASTAGEM_SHA256 = createHash("sha256").update(EVALSCRIPT_PASTAGEM_ESSENCIAL, "utf8").digest("hex");
 
 function histogramaPedido(id: IdIndiceSatelite): { bins: number[] } {
-  if (id === "evi2") {
-    const bins = [...HISTOGRAMA_BINS_EVI2];
-    // Contrato CDSE: FLOAT32 exige bins que serializam como float (não o inteiro JSON `1`).
-    if (!binsSerializamComoMathFloat(bins)) throw new Error("histograma EVI2 incompatível com FLOAT32 no CDSE");
-    return { bins };
-  }
-  if (id === "msavi2") return { bins: [...HISTOGRAMA_BINS_MSAVI2] };
-  if (id === "bsi") return { bins: [...HISTOGRAMA_BINS_BSI] };
-  // NDVI, NDRE, NDMI: limiares de vigor alinhados (não centro aproximado).
-  return { bins: [...HISTOGRAMA_BINS_VIGOR] };
+  const bins = id === "evi2" ? [...HISTOGRAMA_BINS_EVI2]
+    : id === "msavi2" ? [...HISTOGRAMA_BINS_MSAVI2]
+    : id === "bsi" ? [...HISTOGRAMA_BINS_BSI]
+    : [...HISTOGRAMA_BINS_VIGOR];
+  // FLOAT32: recusa bins não finitos, fora de ordem, duplicados ou inteiro JSON (integer math no CDSE).
+  const recusa = recusaBinsHistogramaFloat32(bins) ?? recusaBinsHistogramaFloat32(JSON.parse(JSON.stringify(bins)) as number[]);
+  if (recusa) throw new Error(`histograma ${id} incompatível com FLOAT32 no CDSE (${recusa})`);
+  return { bins };
 }
 
 /** calculations: uma chave por output nomeado — nunca só `default` com outputs nomeados. */
@@ -144,6 +142,7 @@ export function montarCalculationsPastagem() {
   return {
     ...porIndice,
     scl: {
+      // UINT8: integer math é o contrato certo. NÃO passar por recusaBinsHistogramaFloat32.
       histograms: { default: { bins: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] } }
     }
   };

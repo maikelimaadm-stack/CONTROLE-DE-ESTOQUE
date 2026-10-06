@@ -5,6 +5,8 @@ import {
   HISTOGRAMA_BINS_BSI,
   HISTOGRAMA_BINS_EVI2,
   HISTOGRAMA_BINS_EVI2_RECUSADO_CDSE,
+  HISTOGRAMA_BINS_MSAVI2,
+  HISTOGRAMA_BINS_MSAVI2_RECUSADO_CDSE,
   HISTOGRAMA_BINS_VIGOR,
   HISTOGRAMA_EPS_BORDA,
   INDICES_BUNDLE_ESSENCIAL,
@@ -13,7 +15,9 @@ import {
   calcularEvi2,
   calcularMsavi2,
   indicadoresDerivados,
-  pixelValidoParaIndice
+  jsonSerializaComoInteiro,
+  pixelValidoParaIndice,
+  recusaBinsHistogramaFloat32
 } from "@agro/domain";
 import {
   EVALSCRIPT_PASTAGEM_ESSENCIAL,
@@ -658,5 +662,73 @@ describe("HOTFIX-SAT-RUNTIME-02 — histograma EVI2 (CDSE FLOAT32)", () => {
   it("percentis do EVI2 permanecem; NDVI/BSI statistics intactas", () => {
     expect(calc().evi2.statistics.default.percentiles.k).toEqual([5, 10, 25, 50, 75, 90, 95]);
     expect(calc().ndvi.statistics.default.percentiles.k).toEqual([5, 10, 25, 50, 75, 90, 95]);
+  });
+});
+
+describe("HOTFIX-SAT-RUNTIME-03 — histogramas FLOAT32 (JSON math float)", () => {
+  const calc = () => montarCalculationsPastagem() as unknown as Record<string, {
+    histograms: { default: { bins: number[] } };
+  }>;
+  const binsDe = (id: string) => calc()[id]!.histograms.default.bins;
+  const jsonBins = (edges: readonly number[]) => JSON.stringify([...edges]);
+
+  it("FLOAT-HIST-1: NDVI válido", () => {
+    const bins = binsDe("ndvi");
+    expect(bins).toEqual([...HISTOGRAMA_BINS_VIGOR]);
+    expect(recusaBinsHistogramaFloat32(bins)).toBeNull();
+    expect(recusaBinsHistogramaFloat32(JSON.parse(jsonBins(bins)) as number[])).toBeNull();
+  });
+  it("FLOAT-HIST-2: EVI2 válido", () => {
+    const bins = binsDe("evi2");
+    expect(bins).toEqual([...HISTOGRAMA_BINS_EVI2]);
+    expect(recusaBinsHistogramaFloat32(bins)).toBeNull();
+  });
+  it("FLOAT-HIST-3: NDRE válido", () => {
+    expect(binsDe("ndre")).toEqual([...HISTOGRAMA_BINS_VIGOR]);
+    expect(recusaBinsHistogramaFloat32(binsDe("ndre"))).toBeNull();
+  });
+  it("FLOAT-HIST-4: NDMI válido", () => {
+    expect(binsDe("ndmi")).toEqual([...HISTOGRAMA_BINS_VIGOR]);
+    expect(recusaBinsHistogramaFloat32(binsDe("ndmi"))).toBeNull();
+  });
+  it("FLOAT-HIST-5: MSAVI2 válido", () => {
+    const bins = binsDe("msavi2");
+    expect(bins).toEqual([...HISTOGRAMA_BINS_MSAVI2]);
+    expect(jsonBins(bins)).not.toContain(",-1,");
+    expect(jsonSerializaComoInteiro(-1)).toBe(true);
+    expect(jsonSerializaComoInteiro(-1.0)).toBe(true);
+    expect(recusaBinsHistogramaFloat32(bins)).toBeNull();
+    expect(recusaBinsHistogramaFloat32(JSON.parse(jsonBins(bins)) as number[])).toBeNull();
+  });
+  it("FLOAT-HIST-6: BSI válido", () => {
+    expect(binsDe("bsi")).toEqual([...HISTOGRAMA_BINS_BSI]);
+    expect(recusaBinsHistogramaFloat32(binsDe("bsi"))).toBeNull();
+  });
+  it("FLOAT-HIST-7: fixture com integer JSON inválido deve falhar", () => {
+    expect(jsonBins(HISTOGRAMA_BINS_MSAVI2_RECUSADO_CDSE)).toContain(",-1,");
+    expect(recusaBinsHistogramaFloat32(HISTOGRAMA_BINS_MSAVI2_RECUSADO_CDSE)).toBe("integer_json");
+    expect(recusaBinsHistogramaFloat32(HISTOGRAMA_BINS_EVI2_RECUSADO_CDSE)).toBe("integer_json");
+    expect(binsSerializamComoMathFloat(HISTOGRAMA_BINS_MSAVI2_RECUSADO_CDSE)).toBe(false);
+  });
+  it("FLOAT-HIST-8: NaN/Infinity deve falhar", () => {
+    expect(recusaBinsHistogramaFloat32([-1.000001, Number.NaN, 0.2])).toBe("nao_finito");
+    expect(recusaBinsHistogramaFloat32([-1.000001, Number.POSITIVE_INFINITY])).toBe("nao_finito");
+    expect(recusaBinsHistogramaFloat32([-1.000001, Number.NEGATIVE_INFINITY])).toBe("nao_finito");
+  });
+  it("FLOAT-HIST-9: ordem inválida deve falhar", () => {
+    expect(recusaBinsHistogramaFloat32([0.4, 0.2, 0.6])).toBe("ordem");
+    expect(recusaBinsHistogramaFloat32([0.2, 0.2, 0.4])).toBe("duplicado");
+    expect(recusaBinsHistogramaFloat32([0.2])).toBe("menos_de_dois");
+  });
+  it("FLOAT-HIST-10: correção do MSAVI2 não altera NDVI/BSI", () => {
+    expect(binsDe("ndvi")).toEqual([...HISTOGRAMA_BINS_VIGOR]);
+    expect(binsDe("bsi")).toEqual([...HISTOGRAMA_BINS_BSI]);
+    expect(binsDe("evi2")).toEqual([...HISTOGRAMA_BINS_EVI2]);
+  });
+  it("SCL permanece integer math (UINT8); fail-fast FLOAT32 não o recusa", () => {
+    const scl = calc().scl!.histograms.default.bins;
+    expect(scl).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(scl.every((n) => jsonSerializaComoInteiro(n))).toBe(true);
+    expect(() => montarCalculationsPastagem()).not.toThrow();
   });
 });
