@@ -254,8 +254,11 @@ export function MapaGeral() {
   React.useEffect(() => {
     const m = mapRef.current;
     if (!m || !mapa.pronto) return;
-    sincronizarRastersNoMapa(m, rastersAtivos, overlayPixel, { resampling: modoCondicao ? "nearest" : render, opacidade });
-  }, [rastersAtivos, overlayPixel, render, opacidade, mapa.pronto, mapRef, areas, modoCondicao]);
+    // Em condição: PNG categórico fica só como apoio (SEM_LEITURA / fallback); zonas são a apresentação.
+    const opRaster = modoCondicao ? Math.min(opacidade, OPACIDADE_PNG_SOB_ZONAS) : opacidade;
+    sincronizarRastersNoMapa(m, rastersAtivos, overlayPixel, { resampling: modoCondicao ? "nearest" : render, opacidade: opRaster });
+    sincronizarZonasCondicaoNoMapa(m, modoCondicao ? mapasCond.porArea : new Map(), modoCondicao && overlayPixel);
+  }, [rastersAtivos, overlayPixel, render, opacidade, mapa.pronto, mapRef, areas, modoCondicao, mapasCond.porArea]);
 
   const selecaoAnteriorRef = React.useRef<string | null>(null);
   React.useEffect(() => {
