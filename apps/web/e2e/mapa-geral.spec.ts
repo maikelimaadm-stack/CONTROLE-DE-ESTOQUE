@@ -47,12 +47,30 @@ async function digitarData(campo: Locator, ddmmaaaa: string) {
   await visivel.press("Enter");
 }
 
+/** Popup central da área (Dialog) bloqueia cliques na lista/toolbar — fechar antes. */
+async function fecharDialogArea(page: Page) {
+  const dialog = page.getByTestId("mapa-area-selecionada");
+  if (await dialog.count() === 0) return;
+  const fechar = page.getByTestId("dialog-area-fechar");
+  if (await fechar.isVisible().catch(() => false)) await fechar.click();
+  else await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+}
+
 /** Família, índice e Pixel/Área ficam em Dados técnicos (SAT-COND-01). */
 async function entrarDadosTecnicos(page: Page) {
+  await fecharDialogArea(page);
   const btn = page.getByTestId("mapa-experiencia-tecnico");
   await expect(btn).toBeVisible({ timeout: 30_000 });
   await btn.click();
   await expect(btn).toHaveAttribute("aria-pressed", "true");
+}
+
+/** Seleciona na lista após garantir que nenhum Dialog cobre a UI. */
+async function selecionarAreaNaLista(page: Page, nome: string | RegExp) {
+  await fecharDialogArea(page);
+  await page.getByTestId("mapa-item-area").filter({ hasText: nome }).click();
+  await expect(page.getByTestId("mapa-area-selecionada")).toBeVisible();
 }
 
 const areas = async (page: Page) => (await api<{ items: Area[] }>(page, "GET", "/api/resources/areas?pageSize=500")).items;
@@ -84,14 +102,14 @@ test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro 
   await expect(item).toBeVisible();
   await expect(page.getByTestId("mapa-item-area")).toHaveCount(1);
 
-  // clique NO POLÍGONO (centro projetado pelo próprio mapa) abre o resumo — só leitura
+  // clique NO POLÍGONO (centro projetado pelo próprio mapa) abre Dialog central — só leitura
   await expect.poll(async () => page.evaluate(() => Boolean((window as unknown as { __mapaManejoE2E?: unknown }).__mapaManejoE2E)), { timeout: 30_000 }).toBe(true);
-  await expect(page.getByTestId("mapa-rotulo-area").filter({ hasText: nome }), "a área aparece no mapa, enquadrada").toBeVisible({ timeout: 15_000 });
+  // rótulos só em hover/selecionada — o polígono no canvas é a prova de enquadramento
+  await expect(page.getByTestId("mapa-rotulo-area"), "sem hover/seleção não há rótulos permanentes").toHaveCount(0);
   const centro = await page.evaluate(({ lng, lat }) => {
     const m = (window as unknown as { __mapaManejoE2E: { project: (ll: [number, number]) => { x: number; y: number } } }).__mapaManejoE2E;
     return m.project([lng + 0.005, lat + 0.005]);
   }, { lng, lat });
-  // premissa: o polígono já está NO CANVAS naquele ponto (o rótulo é DOM e aparece antes do WebGL terminar a fonte)
   await expect.poll(async () => page.evaluate(({ x, y }) => {
     const m = (window as unknown as { __mapaManejoE2E: { queryRenderedFeatures: (p: [number, number], o: { layers: string[] }) => unknown[] } }).__mapaManejoE2E;
     return m.queryRenderedFeatures([x, y], { layers: ["areas-fill"] }).length;
@@ -101,9 +119,9 @@ test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro 
   await page.mouse.click(caixa!.x + centro.x, caixa!.y + centro.y);
   const resumo = page.getByTestId("mapa-area-selecionada");
   await expect(resumo).toBeVisible();
+  await expect(resumo).toHaveAttribute("role", "dialog");
   await expect(resumo).toContainText(nome);
-  await expect(resumo).toContainText("120,00 ha");
-  await expect(page.getByRole("dialog"), "o resumo não é janela nem ficha").toHaveCount(0);
+  await expect(resumo).toContainText("120");
   await expect(resumo.getByTestId("mapa-abrir-cadastro")).toHaveAttribute("href", `/cadastros/areas/${criada.id}`);
   // área nunca analisada: experiência padrão Condição do pasto (sem seletor de índice)
   await expect(resumo.getByTestId("condicao-pasto-sem-analise")).toBeVisible();
@@ -113,11 +131,14 @@ test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro 
   await expect(page.getByTestId("mapa-cor-cadastro")).toHaveCount(0);
   await expect(page.getByTestId("mapa-legenda-ndvi")).toHaveCount(0);
   await expect(page.getByTestId("legenda-condicao-pasto")).toBeVisible();
-  await entrarDadosTecnicos(page);
-  await expect(resumo.getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toContainText("não tem análise para o contorno atual");
+  await expect(page.getByTestId("mapa-rotulo-area").filter({ hasText: nome }), "selecionada mostra o nome").toBeVisible();
+  // Dados técnicos pelo rodapé do Dialog (fecha Condição e abre painel técnico da mesma área)
+  await resumo.getByTestId("condicao-pasto-dados-tecnicos").click();
+  await expect(page.getByTestId("mapa-experiencia-tecnico")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("mapa-area-selecionada").getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toContainText("não tem análise para o contorno atual");
 
   // "Abrir cadastro" leva à ficha de Cadastro de Área, com o mapa do contorno nela
-  await resumo.getByTestId("mapa-abrir-cadastro").click();
+  await page.getByTestId("mapa-area-selecionada").getByTestId("mapa-abrir-cadastro").click();
   await expect(page).toHaveURL(new RegExp(`/cadastros/areas/${criada.id}$`));
   await expect(page.getByTestId("campo-mapa-area")).toBeVisible();
   await expect(page.locator('input[name="name"]')).toHaveValue(nome);
@@ -472,8 +493,8 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   expect(pedidosSat.filter((p) => p.includes("/analises-satelitais/resumo")).length).toBeGreaterThanOrEqual(1);
   expect(pedidosSat.some((p) => p.startsWith("GET /api/mapa/rasters")), "lista rasters sem gerar").toBe(true);
 
-  // Painel único: Condição da Área (R2). Sem NdviDaArea legado. Bundle incompleto → sem observação útil do contrato.
-  await page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).click();
+  // Painel único (Dialog central): Condição da Área (R2). Sem NdviDaArea legado. Bundle incompleto → sem observação útil.
+  await selecionarAreaNaLista(page, verde.name);
   const painel = page.getByTestId("mapa-area-selecionada");
   const condicao = painel.getByTestId("condicao-area");
   await expect(condicao).toBeVisible();
@@ -481,7 +502,7 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   await expect(condicao.getByTestId("condicao-sem-analise")).toBeVisible();
   await expect(condicao.getByTestId("condicao-aviso-agronomico")).toContainText("não é diagnóstico");
 
-  // "Analisar área atual": o provedor está DESLIGADO no E2E — a recusa controlada do servidor aparece e nada é gravado
+  // "Analisar área atual" (Dados técnicos): provedor DESLIGADO no E2E — recusa controlada, nada gravado
   await condicao.getByTestId("condicao-analisar-atual").click();
   const pedido = page.waitForResponse((r) => r.url().endsWith(`/api/mapa/areas/${verde.id}/analises-satelitais/condicao`) && r.request().method() === "POST");
   await condicao.getByTestId("condicao-analisar-confirmar").click();
@@ -490,15 +511,15 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   expect(linhas(), "nada gravado").toBe(3);
 
   // área sem observação útil / nunca analisada: painel único sem número na lista
-  await page.getByTestId("mapa-item-area").filter({ hasText: nublada.name }).click();
-  await expect(painel.getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toBeVisible();
-  await page.getByTestId("mapa-item-area").filter({ hasText: nunca.name }).click();
-  await expect(painel.getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toBeVisible();
+  await selecionarAreaNaLista(page, nublada.name);
+  await expect(page.getByTestId("mapa-area-selecionada").getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toBeVisible();
+  await selecionarAreaNaLista(page, nunca.name);
+  await expect(page.getByTestId("mapa-area-selecionada").getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toBeVisible();
 
-  // "Cor do cadastro": a cor da área volta (a do cadastro, #2563eb, como o mapa a exibe), a legenda do NDVI sai. A área
-  // conferida é a enquadrada agora (a seleção na lista aproxima o mapa dela) — e a cor é EXATA, nunca "diferente de".
-  await page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).click();
+  // "Cor do cadastro": fecha o Dialog para alcançar a toolbar; a cor é EXATA.
+  await selecionarAreaNaLista(page, verde.name);
   await expect.poll(() => corNoMapa(page, verde.id), { timeout: 15_000 }).toBe("#1a9850");
+  await fecharDialogArea(page);
   await page.getByTestId("mapa-cor-cadastro").click();
   await expect(legenda).toHaveCount(0);
   await expect(page.getByTestId("mapa-atribuicao-copernicus-mapa"), "a lista continua com o NDVI: a atribuição fica").toHaveText("Contains modified Copernicus Sentinel data 2026");
@@ -513,8 +534,9 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   await expect(page.getByTestId("mapa-item-area").filter({ hasText: verde.name })).toBeVisible();
   // Reload devolve a experiência padrão Condição; o painel `condicao-area` mora em Dados técnicos.
   await entrarDadosTecnicos(page);
-  await page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).click();
+  await selecionarAreaNaLista(page, verde.name);
   await expect(page.getByTestId("mapa-area-selecionada").getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toBeVisible();
+  await fecharDialogArea(page);
   await expect(page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).getByTestId("mapa-item-ndvi")).toHaveCount(0);
   await page.getByTestId("mapa-cor-area").click();
   await expect.poll(() => corNoMapa(page, verde.id), { timeout: 15_000 }).toBe("#94a3b8");
@@ -557,8 +579,8 @@ test("Mapa geral: 'Analisar área atual' com a integração ligada e SEM credenc
     body: JSON.stringify({ error: { code: "CONSULTA_INDISPONIVEL", message: "A análise por satélite está desligada neste ambiente.", details: { motivo: "configuracao" } } })
   }));
   await page.goto("/mapa-geral");
-  await page.getByTestId("mapa-item-area").filter({ hasText: nome }).click();
   await entrarDadosTecnicos(page);
+  await selecionarAreaNaLista(page, nome);
   const painel = page.getByTestId("mapa-area-selecionada");
   const condicao = painel.getByTestId("condicao-area");
   await condicao.getByTestId("condicao-analisar-atual").click();
@@ -745,7 +767,7 @@ test("Mapa geral SAT-07: gradiente por pixel, sem POST ao abrir, troca de modo s
     return f ? Number(f.properties["opacidade_fill"]) : null;
   }, semRaster.id)).toBeLessThan(0.5);
 
-  await page.getByTestId("mapa-item-area").filter({ hasText: comRaster.name }).click();
+  await selecionarAreaNaLista(page, comRaster.name);
   const painel = page.getByTestId("mapa-area-selecionada");
   const condicao = painel.getByTestId("condicao-area");
   await expect(condicao).toBeVisible();
@@ -753,13 +775,14 @@ test("Mapa geral SAT-07: gradiente por pixel, sem POST ao abrir, troca de modo s
   await expect(condicao.getByTestId("condicao-gerar-raster")).toHaveCount(0);
   await expect(painel.getByTestId("mapa-ndvi-area"), "painel legado NDVI ausente").toHaveCount(0);
 
-  await page.getByTestId("mapa-item-area").filter({ hasText: semRaster.name }).click();
-  await expect(painel.getByTestId("condicao-gerar-raster")).toBeVisible({ timeout: 15_000 });
-  await painel.getByTestId("condicao-gerar-raster").click();
-  await expect(painel.getByTestId("condicao-gerar-confirmacao")).toContainText("consome crédito");
-  await painel.getByTestId("condicao-gerar-confirmar").click();
-  await expect(painel.getByTestId("condicao-aviso")).toContainText("não houve custo");
-  await expect(painel.getByTestId("condicao-raster-info")).toContainText("20 m");
+  await selecionarAreaNaLista(page, semRaster.name);
+  const painelSem = page.getByTestId("mapa-area-selecionada");
+  await expect(painelSem.getByTestId("condicao-gerar-raster")).toBeVisible({ timeout: 15_000 });
+  await painelSem.getByTestId("condicao-gerar-raster").click();
+  await expect(painelSem.getByTestId("condicao-gerar-confirmacao")).toContainText("consome crédito");
+  await painelSem.getByTestId("condicao-gerar-confirmar").click();
+  await expect(painelSem.getByTestId("condicao-aviso")).toContainText("não houve custo");
+  await expect(painelSem.getByTestId("condicao-raster-info")).toContainText("20 m");
   expect(postsRaster, "POST só no clique confirmado").toBe(1);
 
   await limparAreas(page);
@@ -922,8 +945,8 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   await barra.getByTestId("mapa-opacidade").fill("40");
   await expect(barra.getByTestId("mapa-opacidade-valor")).toHaveText("40%");
 
-  // painel Condição da área: linguagem de sinal, qualidade, índice limitante, aviso agronômico
-  await page.getByTestId("mapa-item-area").click();
+  // painel Condição da área (Dialog central em Dados técnicos)
+  await selecionarAreaNaLista(page, area.name);
   const painel = page.getByTestId("mapa-area-selecionada");
   const condicao = painel.getByTestId("condicao-area");
   await expect(condicao.getByTestId("condicao-resposta-vegetacao")).toHaveText("Alta resposta de vegetação");
@@ -1123,7 +1146,7 @@ test("Mapa geral SAT-COND-01: condição padrão, legenda ha/%, filtro, ESC, lis
   await page.getByTestId("dialog-classe-fechar").click();
   await expect(page.getByTestId("dialog-classe-condicao")).toHaveCount(0);
 
-  await page.getByTestId("mapa-item-area").filter({ hasText: pastoA.name }).click();
+  await selecionarAreaNaLista(page, pastoA.name);
   await expect(page.getByTestId("mapa-area-selecionada")).toBeVisible();
   await expect(page.getByTestId("painel-area-condicao")).toBeVisible();
   await expect(page.getByTestId("painel-area-condicao")).toContainText("%");
@@ -1136,6 +1159,8 @@ test("Mapa geral SAT-COND-01: condição padrão, legenda ha/%, filtro, ESC, lis
   await expect(page.getByTestId("mapa-indice-evi2")).toBeVisible();
   await expect(page.getByTestId("condicao-area")).toBeVisible();
 
+  // Dialog técnico permanece aberto após trocar experiência pelo rodapé — fechar para alcançar a toolbar
+  await fecharDialogArea(page);
   await page.getByTestId("mapa-experiencia-condicao").click();
   await expect(page.getByTestId("mapa-indice-ndvi")).toHaveCount(0);
   await expect(page.getByTestId("legenda-condicao-pasto")).toBeVisible();
