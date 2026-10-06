@@ -220,10 +220,31 @@ export const HISTOGRAMA_EPS_BORDA = 1e-6;
 export const HISTOGRAMA_BINS_VIGOR = [
   -1 - HISTOGRAMA_EPS_BORDA, 0.2, 0.4, 0.6, 1 + HISTOGRAMA_EPS_BORDA
 ] as const;
-/** EVI2: limiares internos exatos; borda persistível ±eps (overflow acima de 2.5+eps). */
+/**
+ * EVI2: limiares internos 0.2/0.4/0.6; borda persistível ±eps (overflow acima de 2.5+eps).
+ *
+ * CDSE Statistical API escolhe integer math quando algum `bins[]` serializa como inteiro JSON
+ * (`1` vira `"1"`). Isso é incompatível com `sampleType: FLOAT32` do output e devolve
+ * `COMMON_BAD_PAYLOAD` em `calculationsMap[evi2]->histograms[default]-><map value>`.
+ * O limiar 1.0 portanto leva `+eps` (como a borda de vigor) para o JSON ser float.
+ * Este histograma é só distribuição visual/estatística — frações agronômicas usam NDVI/BSI.
+ */
 export const HISTOGRAMA_BINS_EVI2 = [
+  -1 - HISTOGRAMA_EPS_BORDA, 0.2, 0.4, 0.6, 1 + HISTOGRAMA_EPS_BORDA, 2.5 + HISTOGRAMA_EPS_BORDA
+] as const;
+
+/** Payload H0 (pré-hotfix): o `1` inteiro JSON que o CDSE recusou. Não enviar. */
+export const HISTOGRAMA_BINS_EVI2_RECUSADO_CDSE = [
   -1 - HISTOGRAMA_EPS_BORDA, 0.2, 0.4, 0.6, 1, 2.5 + HISTOGRAMA_EPS_BORDA
 ] as const;
+
+/**
+ * True se cada borda serializa em JSON com ponto/expoente. O CDSE trata inteiro JSON (`1`)
+ * como integer math — incompatível com FLOAT32.
+ */
+export function binsSerializamComoMathFloat(edges: readonly number[]): boolean {
+  return edges.length >= 2 && edges.every((n) => Number.isFinite(n) && /[.eE]/.test(JSON.stringify(n)));
+}
 /** MSAVI2: borda persistível ±eps; limiares internos exatos. */
 export const HISTOGRAMA_BINS_MSAVI2 = [
   -2.5 - HISTOGRAMA_EPS_BORDA, -1, 0.2, 0.4, 0.6, 1 + HISTOGRAMA_EPS_BORDA
