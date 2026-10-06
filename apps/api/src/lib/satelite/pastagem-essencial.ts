@@ -25,6 +25,7 @@ import {
   HISTOGRAMA_BINS_EVI2,
   HISTOGRAMA_BINS_MSAVI2,
   HISTOGRAMA_BINS_VIGOR,
+  binsSerializamComoMathFloat,
   INDICES_BUNDLE_ESSENCIAL,
   LIMIARES_COBERTURA_EXPERIMENTAL,
   PERCENTIS_SATELITE,
@@ -119,7 +120,12 @@ function evaluatePixel(s) {
 export const EVALSCRIPT_PASTAGEM_SHA256 = createHash("sha256").update(EVALSCRIPT_PASTAGEM_ESSENCIAL, "utf8").digest("hex");
 
 function histogramaPedido(id: IdIndiceSatelite): { bins: number[] } {
-  if (id === "evi2") return { bins: [...HISTOGRAMA_BINS_EVI2] };
+  if (id === "evi2") {
+    const bins = [...HISTOGRAMA_BINS_EVI2];
+    // Contrato CDSE: FLOAT32 exige bins que serializam como float (não o inteiro JSON `1`).
+    if (!binsSerializamComoMathFloat(bins)) throw new Error("histograma EVI2 incompatível com FLOAT32 no CDSE");
+    return { bins };
+  }
   if (id === "msavi2") return { bins: [...HISTOGRAMA_BINS_MSAVI2] };
   if (id === "bsi") return { bins: [...HISTOGRAMA_BINS_BSI] };
   // NDVI, NDRE, NDMI: limiares de vigor alinhados (não centro aproximado).

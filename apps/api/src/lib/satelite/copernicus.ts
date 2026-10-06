@@ -69,6 +69,10 @@ export interface ErroProvedorSanitizado {
   code: string | null;
   message: string | null;
   parameter: string | null;
+  /** `error.errors[0].message` — primeiro item seguro, nunca o JSON bruto. */
+  detailMessage: string | null;
+  /** `error.errors[0].reason` — primeiro item seguro. */
+  detailReason: string | null;
 }
 
 /**
@@ -105,7 +109,9 @@ export function camposLogErroProvedor(e: ErroProvedorSanitizado | null | undefin
     provider_status: e.status,
     provider_error_code: e.code,
     provider_error_message_sanitized: e.message,
-    provider_parameter: e.parameter
+    provider_parameter: e.parameter,
+    provider_detail_message_sanitized: e.detailMessage,
+    provider_detail_reason_sanitized: e.detailReason
   };
 }
 
@@ -150,13 +156,10 @@ function objetoDoCorpoErro(corpo: unknown): Record<string, unknown> | null {
   return null;
 }
 
-function primeiroParametro(lista: unknown, proibidos: readonly string[]): string | null {
+function primeiroItemErro(lista: unknown): Record<string, unknown> | null {
   if (!Array.isArray(lista)) return null;
   for (const item of lista) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-    const o = item as Record<string, unknown>;
-    const p = textoSeguroErro(o.parameter ?? o.path ?? o.field ?? o.pointer ?? o.param ?? null, proibidos);
-    if (p) return p;
+    if (item && typeof item === "object" && !Array.isArray(item)) return item as Record<string, unknown>;
   }
   return null;
 }
@@ -166,17 +169,20 @@ function primeiroParametro(lista: unknown, proibidos: readonly string[]): string
  * (client id, secret, token) que NUNCA podem aparecer no recorte, mesmo que o provedor os ecoe.
  */
 export function sanitizarErroProvedor(status: number | null, corpo: unknown, proibidos: readonly string[] = []): ErroProvedorSanitizado {
-  const vazio: ErroProvedorSanitizado = { status, code: null, message: null, parameter: null };
+  const vazio: ErroProvedorSanitizado = { status, code: null, message: null, parameter: null, detailMessage: null, detailReason: null };
   const o = objetoDoCorpoErro(corpo);
   if (!o) return vazio;
   const errObj = o.error !== null && typeof o.error === "object" && !Array.isArray(o.error)
     ? o.error as Record<string, unknown>
     : null;
+  const primeiro = primeiroItemErro(errObj?.errors ?? o.errors);
   const code = textoSeguroErro(errObj?.code ?? errObj?.reason ?? o.code ?? o.reason ?? null, proibidos);
   const message = textoSeguroErro(errObj?.message ?? o.message ?? null, proibidos);
-  const parameter = primeiroParametro(errObj?.errors ?? o.errors, proibidos)
+  const parameter = textoSeguroErro(primeiro?.parameter ?? primeiro?.path ?? primeiro?.field ?? primeiro?.pointer ?? primeiro?.param ?? null, proibidos)
     ?? textoSeguroErro(errObj?.parameter ?? errObj?.path ?? o.parameter ?? o.path ?? null, proibidos);
-  return { status, code, message, parameter };
+  const detailMessage = textoSeguroErro(primeiro?.message ?? null, proibidos);
+  const detailReason = textoSeguroErro(primeiro?.reason ?? primeiro?.type ?? null, proibidos);
+  return { status, code, message, parameter, detailMessage, detailReason };
 }
 
 export interface Credenciais { clienteId: string; segredo: string }

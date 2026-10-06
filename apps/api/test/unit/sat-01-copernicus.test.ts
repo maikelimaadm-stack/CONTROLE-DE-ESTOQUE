@@ -231,7 +231,8 @@ describe("SAT-01 resiliência — 401, 403, 429, 5xx, tempo, rede, 4xx", () => {
       expect([f.tipo, f.status]).toEqual(["requisicao_recusada", status]);
       expect(t.f.chamadas.filter((c) => c.url.includes(API_HOST))).toHaveLength(1);
       expect(f.erroProvedor).toEqual({
-        status, code: "COMMON_BAD_PAYLOAD", message: "detalhe [redacted]", parameter: "aggregation.timeRange"
+        status, code: "COMMON_BAD_PAYLOAD", message: "detalhe [redacted]", parameter: "aggregation.timeRange",
+        detailMessage: null, detailReason: null
       });
       const reg = t.registros.find((r) => r.endpoint === "estatistica");
       expect(reg?.erroProvedor).toEqual(f.erroProvedor);
@@ -239,7 +240,9 @@ describe("SAT-01 resiliência — 401, 403, 429, 5xx, tempo, rede, 4xx", () => {
         provider_status: status,
         provider_error_code: "COMMON_BAD_PAYLOAD",
         provider_error_message_sanitized: "detalhe [redacted]",
-        provider_parameter: "aggregation.timeRange"
+        provider_parameter: "aggregation.timeRange",
+        provider_detail_message_sanitized: null,
+        provider_detail_reason_sanitized: null
       });
       expect(f.message).not.toContain("COMMON_BAD_PAYLOAD");
       expect(f.message).not.toContain("aggregation");
@@ -284,19 +287,53 @@ describe("HOTFIX-SAT-RUNTIME-01 — sanitizarErroProvedor", () => {
       status: 400,
       code: "COMMON_BAD_PAYLOAD",
       message: "[redacted]",
-      parameter: "input.bounds.geometry"
+      parameter: "input.bounds.geometry",
+      detailMessage: null,
+      detailReason: null
     });
     semSegredo(r);
   });
   it("corta mensagem longa e ignora corpo que não é objeto", () => {
     const longa = "x".repeat(LIMITE_TEXTO_ERRO_PROVEDOR + 40);
     expect(sanitizarErroProvedor(400, { message: longa }).message?.length).toBe(LIMITE_TEXTO_ERRO_PROVEDOR + 1); // + reticências
-    expect(sanitizarErroProvedor(400, null)).toEqual({ status: 400, code: null, message: null, parameter: null });
-    expect(sanitizarErroProvedor(400, "texto")).toEqual({ status: 400, code: null, message: null, parameter: null });
+    expect(sanitizarErroProvedor(400, null)).toEqual({ status: 400, code: null, message: null, parameter: null, detailMessage: null, detailReason: null });
+    expect(sanitizarErroProvedor(400, "texto")).toEqual({ status: 400, code: null, message: null, parameter: null, detailMessage: null, detailReason: null });
   });
-  it("aceita Buffer JSON (Process API 4xx lida como binário)", () => {
+  it("aceita Buffer JSON (Process API 4xx lida como binário)", async () => {
     const buf = Buffer.from(JSON.stringify({ error: { code: "BAD", message: "nope", errors: [{ path: "outputs.ndvi" }] } }));
-    expect(sanitizarErroProvedor(400, buf)).toEqual({ status: 400, code: "BAD", message: "nope", parameter: "outputs.ndvi" });
+    expect(sanitizarErroProvedor(400, buf)).toEqual({ status: 400, code: "BAD", message: "nope", parameter: "outputs.ndvi", detailMessage: null, detailReason: null });
+  });
+  it("HIST-EVI2-1: fixture do 400 real — code/parameter + errors[0] message/reason sanitizados", () => {
+    const r = sanitizarErroProvedor(400, {
+      error: {
+        status: 400,
+        reason: "Bad Request",
+        message: "Invalid request",
+        code: "COMMON_BAD_PAYLOAD",
+        errors: [{
+          parameter: "calculationsMap[evi2]->histograms[default]-><map value>",
+          message: "histogram math does not match sampleType",
+          reason: "COMMON_BAD_PAYLOAD"
+        }]
+      }
+    });
+    expect(r).toEqual({
+      status: 400,
+      code: "COMMON_BAD_PAYLOAD",
+      message: "Invalid request",
+      parameter: "calculationsMap[evi2]->histograms[default]-><map value>",
+      detailMessage: "histogram math does not match sampleType",
+      detailReason: "COMMON_BAD_PAYLOAD"
+    });
+    expect(camposLogErroProvedor(r)).toEqual({
+      provider_status: 400,
+      provider_error_code: "COMMON_BAD_PAYLOAD",
+      provider_error_message_sanitized: "Invalid request",
+      provider_parameter: "calculationsMap[evi2]->histograms[default]-><map value>",
+      provider_detail_message_sanitized: "histogram math does not match sampleType",
+      provider_detail_reason_sanitized: "COMMON_BAD_PAYLOAD"
+    });
+    semSegredo(r, camposLogErroProvedor(r));
   });
 });
 

@@ -2,12 +2,17 @@ import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import {
   CLASSES_SCL_EXCLUIDAS,
+  HISTOGRAMA_BINS_BSI,
+  HISTOGRAMA_BINS_EVI2,
+  HISTOGRAMA_BINS_EVI2_RECUSADO_CDSE,
   HISTOGRAMA_BINS_VIGOR,
   HISTOGRAMA_EPS_BORDA,
   INDICES_BUNDLE_ESSENCIAL,
   VERSAO_METODO_PASTAGEM_ESSENCIAL,
+  binsSerializamComoMathFloat,
   calcularEvi2,
   calcularMsavi2,
+  indicadoresDerivados,
   pixelValidoParaIndice
 } from "@agro/domain";
 import {
@@ -568,5 +573,90 @@ describe("SAT-08 R3 — qualidade do bundle, maior_cobertura e histograma", () =
     const bins = calc.ndvi.histograms.default.bins;
     expect(bins[0]).toBeCloseTo(-1 - HISTOGRAMA_EPS_BORDA, 12);
     expect(bins[bins.length - 1]).toBeCloseTo(1 + HISTOGRAMA_EPS_BORDA, 12);
+  });
+});
+
+describe("HOTFIX-SAT-RUNTIME-02 — histograma EVI2 (CDSE FLOAT32)", () => {
+  const calc = () => montarCalculationsPastagem() as unknown as {
+    ndvi: { histograms: { default: { bins: number[] } }; statistics: { default: { percentiles: { k: number[] } } } };
+    evi2: { histograms: { default: { bins: number[] } }; statistics: { default: { percentiles: { k: number[] } } } };
+    bsi: { histograms: { default: { bins: number[] } } };
+  };
+
+  it("HIST-EVI2-1: H0 (bins com inteiro JSON `1`) é o payload recusado pelo CDSE", () => {
+    expect(JSON.stringify([...HISTOGRAMA_BINS_EVI2_RECUSADO_CDSE])).toContain(",1,");
+    expect(binsSerializamComoMathFloat(HISTOGRAMA_BINS_EVI2_RECUSADO_CDSE)).toBe(false);
+  });
+
+  it("HIST-EVI2-2: payload enviado usa exatamente o contrato EVI2 (bins float, sem nBins)", () => {
+    const bins = calc().evi2.histograms.default.bins;
+    expect(bins).toEqual([...HISTOGRAMA_BINS_EVI2]);
+    expect(binsSerializamComoMathFloat(bins)).toBe(true);
+    expect(JSON.stringify(bins)).not.toMatch(/(^|[^0-9.])1([^0-9.eE]|$)/);
+    expect(calc().evi2.histograms.default).toEqual({ bins: [...HISTOGRAMA_BINS_EVI2] });
+    expect("nBins" in calc().evi2.histograms.default).toBe(false);
+    expect("binWidth" in calc().evi2.histograms.default).toBe(false);
+  });
+
+  it("HIST-EVI2-3: correção EVI2 não altera bins NDVI", () => {
+    expect(calc().ndvi.histograms.default.bins).toEqual([...HISTOGRAMA_BINS_VIGOR]);
+  });
+
+  it("HIST-EVI2-4: correção EVI2 não altera bins BSI", () => {
+    expect(calc().bsi.histograms.default.bins).toEqual([...HISTOGRAMA_BINS_BSI]);
+  });
+
+  it("HIST-EVI2-5: indicadores derivados com o mesmo NDVI/BSI permanecem iguais", () => {
+    const ndviHist = histOficial([...HISTOGRAMA_BINS_VIGOR], [10, 20, 30, 40], 0, 0);
+    const bsiHist = histOficial([...HISTOGRAMA_BINS_BSI], [5, 10, 15, 20], 0, 0);
+    const fracaoVegetacao = fracaoBinsAlinhados(ndviHist, (low, high) => low >= 0.4 - 1e-12 && high > low);
+    const fracaoBaixa = fracaoBinsAlinhados(ndviHist, (low, high) => low >= 0.2 - 1e-12 && high <= 0.4 + 1e-12);
+    const fracaoSolo = fracaoBinsAlinhados(bsiHist, (low) => low >= 0.1 - 1e-12);
+    const a = indicadoresDerivados({
+      ndviMedio: 0.55, ndmiMedio: 0.2, bsiMedio: 0.05,
+      fracaoVegetacaoAtiva: fracaoVegetacao, fracaoBaixaCobertura: fracaoBaixa, fracaoSoloExposto: fracaoSolo
+    });
+    const b = indicadoresDerivados({
+      ndviMedio: 0.55, ndmiMedio: 0.2, bsiMedio: 0.05,
+      fracaoVegetacaoAtiva: fracaoVegetacao, fracaoBaixaCobertura: fracaoBaixa, fracaoSoloExposto: fracaoSolo
+    });
+    expect(a.fracoes_histograma).toEqual(b.fracoes_histograma);
+    expect(a.vegetacao_ativa_estimada).toBe(b.vegetacao_ativa_estimada);
+    expect(a.baixa_cobertura_estimada).toBe(b.baixa_cobertura_estimada);
+    expect(a.solo_exposto_estimado).toBe(b.solo_exposto_estimado);
+    expect(fracaoVegetacao).not.toBeNull();
+    expect(fracaoBaixa).not.toBeNull();
+  });
+
+  it("HIST-EVI2-6: parser lê shape oficial bins=[{lowEdge,highEdge,count}] + underflow/overflow", () => {
+    const h = lerHistograma({
+      histogram: {
+        bins: [
+          { lowEdge: -1, highEdge: 0.2, count: 4 },
+          { lowEdge: 0.2, highEdge: 0.4, count: 6 },
+          { lowEdge: 0.4, highEdge: 0.6, count: 8 },
+          { lowEdge: 0.6, highEdge: 1.000001, count: 10 },
+          { lowEdge: 1.000001, highEdge: 2.500001, count: 12 }
+        ],
+        underflowCount: 1,
+        overflowCount: 2
+      }
+    });
+    expect(h).toEqual({
+      bins: [
+        { lowEdge: -1, highEdge: 0.2, count: 4 },
+        { lowEdge: 0.2, highEdge: 0.4, count: 6 },
+        { lowEdge: 0.4, highEdge: 0.6, count: 8 },
+        { lowEdge: 0.6, highEdge: 1.000001, count: 10 },
+        { lowEdge: 1.000001, highEdge: 2.500001, count: 12 }
+      ],
+      underflowCount: 1,
+      overflowCount: 2
+    });
+  });
+
+  it("percentis do EVI2 permanecem; NDVI/BSI statistics intactas", () => {
+    expect(calc().evi2.statistics.default.percentiles.k).toEqual([5, 10, 25, 50, 75, 90, 95]);
+    expect(calc().ndvi.statistics.default.percentiles.k).toEqual([5, 10, 25, 50, 75, 90, 95]);
   });
 });

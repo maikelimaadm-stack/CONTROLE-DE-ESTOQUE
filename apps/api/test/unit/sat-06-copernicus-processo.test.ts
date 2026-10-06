@@ -135,7 +135,7 @@ describe("SAT-06 processoComConsumo — a mesma política de tentativas da estat
       const f = await falhaDe(t.pedir());
       expect([f.tipo, f.status]).toEqual(["requisicao_recusada", status]);
       expect(t.naApi()).toHaveLength(1);
-      expect(f.erroProvedor).toEqual({ status, code: "BAD", message: "detalhe [redacted]", parameter: "evalscript" });
+      expect(f.erroProvedor).toEqual({ status, code: "BAD", message: "detalhe [redacted]", parameter: "evalscript", detailMessage: null, detailReason: null });
       semSegredo(f, t.registros);
     }
     const negado = cliente({ [TOKEN_HOST]: [tokenOk()], [API_HOST]: [{ status: 403 }] });
