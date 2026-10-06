@@ -577,7 +577,7 @@ describe("SAT-08 R3 — qualidade do bundle, maior_cobertura e histograma", () =
 });
 
 describe("HOTFIX-SAT-RUNTIME-02 — histograma EVI2 (CDSE FLOAT32)", () => {
-  const calc = () => montarCalculationsPastagem() as {
+  const calc = () => montarCalculationsPastagem() as unknown as {
     ndvi: { histograms: { default: { bins: number[] } }; statistics: { default: { percentiles: { k: number[] } } } };
     evi2: { histograms: { default: { bins: number[] } }; statistics: { default: { percentiles: { k: number[] } } } };
     bsi: { histograms: { default: { bins: number[] } } };
