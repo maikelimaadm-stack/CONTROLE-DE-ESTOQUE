@@ -109,7 +109,10 @@ export async function listarMapasCondicao(
   return saida;
 }
 
-/** Gera (ou reaproveita) o mapa categórico — só em clique deliberado. Gasta crédito da Process API na primeira vez. */
+/**
+ * API de geração do mapa categórico (POST). Mantida para o contrato do servidor;
+ * a UX MAPA-UX-02 não expõe CTA local — a geração fica no fluxo "Analisar pastos" em lote.
+ */
 export async function gerarMapaCondicao(areaId: string, dataImagem?: string): Promise<{ mapa: MapaCondicaoDto; reutilizada: boolean }> {
   const qs = dataImagem ? `?data_imagem=${encodeURIComponent(dataImagem)}` : "";
   return api<{ mapa: MapaCondicaoDto; reutilizada: boolean }>(`/api/satelite/areas/${areaId}/condicao-pasto${qs}`, {
@@ -118,6 +121,12 @@ export async function gerarMapaCondicao(areaId: string, dataImagem?: string): Pr
   });
 }
 
+/**
+ * Baixa o PNG categórico e aplica a LUT de cores.
+ * Recorte fora do polígono: o backend já grava alpha/byte 255 fora da geometria
+ * (máscara geométrica); aqui só colorimos classes 0..6 — não há overlay GeoJSON
+ * de zonas no MapLibre nesta fatia (ver zonas-condicao.ts para o helper puro).
+ */
 async function carregarEntrada(dto: MapaCondicaoDto, lut: Uint8ClampedArray, signal?: AbortSignal): Promise<Entrada> {
   const blob = await baixarArquivoRaster(dto.url_assinada, signal);
   if (!blob) throw new Error("Imagem do mapa de condição não encontrada.");

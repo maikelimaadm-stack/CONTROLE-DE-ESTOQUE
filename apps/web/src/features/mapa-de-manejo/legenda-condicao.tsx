@@ -1,11 +1,14 @@
 "use client";
 import * as React from "react";
+import Link from "next/link";
 import {
   CLASSES_CONDICAO_PASTO,
   AVISO_CONDICAO_PASTO_EXPERIMENTAL,
+  badgePrincipalCondicao,
   type CodigoClasseCondicaoPasto,
   type ResumoCondicaoPasto
 } from "@agro/domain";
+import { Button, Dialog, buttonVariants } from "@/components/ui";
 import { num } from "@/lib/utils";
 
 function linhaDe(resumo: ResumoCondicaoPasto | null, codigo: CodigoClasseCondicaoPasto) {
@@ -15,18 +18,37 @@ function linhaDe(resumo: ResumoCondicaoPasto | null, codigo: CodigoClasseCondica
   };
 }
 
+const IDS_OCULTAVEIS = new Set(["agua", "sem_leitura"]);
+
 export function LegendaCondicaoPasto(p: {
   resumo: ResumoCondicaoPasto | null;
   classe: CodigoClasseCondicaoPasto | null;
   onClasse: (c: CodigoClasseCondicaoPasto | null) => void;
 }) {
+  const [verTodas, setVerTodas] = React.useState(false);
+  const ocultasComZero = CLASSES_CONDICAO_PASTO.filter((c) => {
+    if (!IDS_OCULTAVEIS.has(c.id)) return false;
+    const pct = Number(linhaDe(p.resumo, c.codigo).area_estimada_percentual);
+    return pct <= 0;
+  });
+  const visiveis = CLASSES_CONDICAO_PASTO.filter((c) => {
+    if (verTodas) return true;
+    if (!IDS_OCULTAVEIS.has(c.id)) return true;
+    return Number(linhaDe(p.resumo, c.codigo).area_estimada_percentual) > 0;
+  });
+
   return (
     <div className="rounded-md border border-slate-200 bg-white/95 p-2 shadow-sm" data-testid="legenda-condicao-pasto">
-      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Condição do pasto</p>
+      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Condição</p>
       <ul className="flex flex-col gap-0.5">
-        {CLASSES_CONDICAO_PASTO.map((c) => {
+        {visiveis.map((c) => {
           const l = linhaDe(p.resumo, c.codigo);
           const ativo = p.classe === c.codigo;
+          const nomeCurto = c.id === "vegetacao_ativa_boa_cobertura" ? "Boa cobertura"
+            : c.id === "vegetacao_ativa_cobertura_moderada" ? "Cobertura moderada"
+            : c.id === "possivel_estresse_hidrico" ? "Possível estresse"
+            : c.id === "solo_exposto_estimado" ? "Solo exposto"
+            : c.nome;
           return (
             <li key={c.codigo}>
               <button
@@ -37,15 +59,25 @@ export function LegendaCondicaoPasto(p: {
                 className={`flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-xs hover:bg-slate-100 ${ativo ? "bg-slate-100 ring-1 ring-slate-300" : ""}`}
               >
                 <span className="h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: c.cor }} aria-hidden />
-                <span className="min-w-0 flex-1 truncate text-slate-700">{c.nome}</span>
-                <span className="tabular-nums text-slate-600" data-testid={`legenda-ha-${c.id}`}>{num(Number(l.area_estimada_ha), 2)} ha</span>
-                <span className="w-10 text-right tabular-nums text-slate-500" data-testid={`legenda-pct-${c.id}`}>{num(Number(l.area_estimada_percentual), 1)}%</span>
+                <span className="min-w-0 flex-1 truncate text-slate-700">{nomeCurto}</span>
+                <span className="hidden tabular-nums text-slate-500 sm:inline" data-testid={`legenda-ha-${c.id}`}>{num(Number(l.area_estimada_ha), 1)}</span>
+                <span className="w-9 text-right tabular-nums font-medium text-slate-600" data-testid={`legenda-pct-${c.id}`}>{num(Number(l.area_estimada_percentual), 0)}%</span>
               </button>
             </li>
           );
         })}
       </ul>
-      <p className="mt-1 text-[10px] text-slate-500">Resolução analítica: 20 m. {AVISO_CONDICAO_PASTO_EXPERIMENTAL}</p>
+      {ocultasComZero.length > 0 && (
+        <button
+          type="button"
+          className="mt-1 text-[10px] font-medium text-slate-500 underline hover:text-slate-700"
+          data-testid="legenda-ver-todas"
+          onClick={() => setVerTodas((v) => !v)}
+        >
+          {verTodas ? "Ocultar vazias" : "Ver todas"}
+        </button>
+      )}
+      <p className="mt-1 text-[10px] text-slate-500" title={AVISO_CONDICAO_PASTO_EXPERIMENTAL}>Resolução analítica: 20 m</p>
     </div>
   );
 }
@@ -63,73 +95,127 @@ export function BarraEmpilhadaCondicao({ resumo }: { resumo: ResumoCondicaoPasto
   );
 }
 
+/** Top 3 indicadores do resumo (por ha, só com pixels > 0). */
+function topIndicadores(resumo: ResumoCondicaoPasto, limite = 3) {
+  return [...resumo.classes]
+    .filter((c) => c.pixels > 0)
+    .sort((a, b) => Number(b.area_estimada_ha) - Number(a.area_estimada_ha) || a.codigo - b.codigo)
+    .slice(0, limite);
+}
+
+function pontosAtencao(resumo: ResumoCondicaoPasto, limite = 3) {
+  const alertas = resumo.classes
+    .filter((c) => (c.codigo === 3 || c.codigo === 4 || c.codigo === 5) && Number(c.area_estimada_ha) > 0)
+    .sort((a, b) => Number(b.area_estimada_ha) - Number(a.area_estimada_ha));
+  return alertas.slice(0, limite).map((c) => `${num(Number(c.area_estimada_ha), 1)} ha com ${c.nome.toLocaleLowerCase("pt-BR")}.`);
+}
+
 export function PainelAreaCondicao(p: {
   resumo: ResumoCondicaoPasto | null;
   dataImagem: string | null;
   semAnalise: boolean;
   statsSemMapa?: boolean;
-  onAtualizar?: () => void;
-  onGerarMapa?: () => void;
-  gerandoMapa?: boolean;
-  erroMapa?: string | null;
-  onDadosTecnicos?: () => void;
 }) {
+  const [detalhe, setDetalhe] = React.useState(false);
+  const badge = p.resumo ? badgePrincipalCondicao(p.resumo) : null;
+  const tops = p.resumo ? topIndicadores(p.resumo) : [];
+  const alertas = p.resumo ? pontosAtencao(p.resumo) : [];
   const coberturaPct = p.resumo ? Number((Number(p.resumo.cobertura_valida) * 100).toFixed(0)) : null;
+
   return (
-    <div className="mt-2 flex flex-col gap-1.5 text-sm" data-testid="painel-area-condicao">
+    <div className="flex flex-col gap-2 text-sm" data-testid="painel-area-condicao">
       <p className="text-xs tabular-nums text-slate-500">
-        {p.dataImagem ? <>Imagem: {p.dataImagem}</> : "Sem data de imagem"} · Resolução analítica: 20 m
+        {p.dataImagem ? <>Imagem {p.dataImagem}</> : "Sem data de imagem"} · 20 m
       </p>
+      {badge && (
+        <p className="text-sm font-medium" style={{ color: badge.cor }} data-testid="painel-area-badge">● {badge.rotulo}</p>
+      )}
       {p.semAnalise && (
         <p className="text-xs text-slate-600" data-testid="condicao-pasto-sem-analise">Sem análise de condição</p>
       )}
       {p.statsSemMapa && (
         <p className="text-xs text-slate-600" data-testid="condicao-pasto-stats-sem-mapa">
-          Há observação útil desta área, mas o mapa categórico ainda não foi gerado.
+          Há observação útil desta área; o mapa categórico será gerado na próxima análise em lote.
         </p>
       )}
       {p.resumo && (
         <>
           <BarraEmpilhadaCondicao resumo={p.resumo} />
-          <ul className="grid grid-cols-1 gap-0.5">
-            {p.resumo.classes.filter((c) => c.pixels > 0).map((c) => (
+          <ul className="flex flex-col gap-0.5">
+            {(detalhe ? p.resumo.classes.filter((c) => c.pixels > 0 || c.codigo !== 0) : tops).map((c) => (
               <li key={c.id} className="flex items-center justify-between gap-2 text-xs" data-testid={`card-classe-${c.id}`}>
                 <span className="flex min-w-0 items-center gap-1.5">
                   <span className="h-2.5 w-2.5 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: c.cor }} aria-hidden />
                   <span className="truncate text-slate-700">{c.nome}</span>
                 </span>
-                <span className="shrink-0 tabular-nums text-slate-600">{num(Number(c.area_estimada_ha), 2)} ha · {num(Number(c.area_estimada_percentual), 1)}%</span>
+                <span className="shrink-0 tabular-nums text-slate-600">
+                  {detalhe ? <>{num(Number(c.area_estimada_ha), 2)} ha · </> : null}
+                  {num(Number(c.area_estimada_percentual), 1)}%
+                </span>
               </li>
             ))}
           </ul>
+          {!detalhe && (
+            <button type="button" className="self-start text-xs font-medium text-slate-600 underline hover:text-slate-800" data-testid="painel-area-ver-detalhe" onClick={() => setDetalhe(true)}>
+              Ver detalhamento
+            </button>
+          )}
+          {alertas.length > 0 && (
+            <ul className="flex flex-col gap-0.5 text-xs text-amber-800" data-testid="painel-area-atencao">
+              {alertas.map((t) => <li key={t}>· {t}</li>)}
+            </ul>
+          )}
           {coberturaPct !== null && (
             <p className="text-[11px] tabular-nums text-slate-500" data-testid="condicao-cobertura-valida">
               Cobertura válida: {coberturaPct}%
               {Number(p.resumo.cobertura_valida) < 0.8 ? " — Leitura parcial — nuvens/sombras reduziram a área observável." : ""}
             </p>
           )}
-          <p className="text-[11px] text-slate-500">{AVISO_CONDICAO_PASTO_EXPERIMENTAL}</p>
+          <p className="text-[11px] text-slate-500" title={AVISO_CONDICAO_PASTO_EXPERIMENTAL}>{AVISO_CONDICAO_PASTO_EXPERIMENTAL}</p>
         </>
       )}
-      <div className="flex flex-wrap gap-1.5">
-        {p.semAnalise && p.onAtualizar && (
-          <button type="button" className="rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-50" onClick={p.onAtualizar} data-testid="condicao-pasto-analisar">
-            Analisar condição
-          </button>
-        )}
-        {p.statsSemMapa && p.onGerarMapa && (
-          <button type="button" className="rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-60" onClick={p.onGerarMapa} disabled={p.gerandoMapa} data-testid="condicao-pasto-gerar-mapa">
-            {p.gerandoMapa ? "Gerando mapa…" : "Gerar mapa de condição"}
-          </button>
-        )}
-        {p.onDadosTecnicos && (
-          <button type="button" className="rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-50" onClick={p.onDadosTecnicos} data-testid="condicao-pasto-dados-tecnicos">
-            Dados técnicos
-          </button>
-        )}
-      </div>
-      {p.erroMapa && <p className="text-xs text-red-600" data-testid="condicao-pasto-erro-mapa">{p.erroMapa}</p>}
     </div>
+  );
+}
+
+export function DialogAreaCondicao(p: {
+  aberto: boolean;
+  onFechar: () => void;
+  nome: string;
+  ha: number;
+  dataImagem: string | null;
+  resumo: ResumoCondicaoPasto | null;
+  semAnalise: boolean;
+  statsSemMapa?: boolean;
+  onDadosTecnicos?: () => void;
+  hrefCadastro: string;
+}) {
+  return (
+    <Dialog
+      open={p.aberto}
+      onOpenChange={(o) => { if (!o) p.onFechar(); }}
+      title={p.nome}
+      description={`${num(p.ha, 1)} ha · ${p.dataImagem ? `Imagem ${p.dataImagem}` : "Sem data"} · 20 m`}
+      size="md"
+      profile="content"
+      testId="mapa-area-selecionada"
+      footer={(
+        <>
+          <Button type="button" variant="ghost" onClick={p.onFechar} data-testid="dialog-area-fechar">Fechar</Button>
+          {p.onDadosTecnicos && (
+            <Button type="button" variant="outline" onClick={p.onDadosTecnicos} data-testid="condicao-pasto-dados-tecnicos">Dados técnicos</Button>
+          )}
+          <Link href={p.hrefCadastro} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="mapa-abrir-cadastro">Abrir cadastro</Link>
+        </>
+      )}
+    >
+      <PainelAreaCondicao
+        resumo={p.resumo}
+        dataImagem={p.dataImagem}
+        semAnalise={p.semAnalise}
+        statsSemMapa={p.statsSemMapa}
+      />
+    </Dialog>
   );
 }
 
@@ -145,26 +231,60 @@ export function PainelClasseCondicao(p: {
     .filter((x) => x.ha > 0)
     .sort((a, b) => b.ha - a.ha);
   const totalHa = linhas.reduce((s, x) => s + x.ha, 0);
+  const totalPct = [...p.resumos.values()].reduce((s, r) => {
+    const linha = r.classes.find((x) => x.codigo === p.codigo);
+    return s + Number(linha?.area_estimada_percentual ?? 0);
+  }, 0);
+  const pctMedio = p.resumos.size > 0 ? totalPct / p.resumos.size : 0;
+
   return (
-    <div className="rounded-md border border-slate-200 bg-white p-3 text-sm" data-testid="painel-classe-condicao">
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <h3 className="font-semibold text-slate-800" style={{ color: c.cor }}>{c.nome}</h3>
-        <button type="button" className="text-xs text-slate-500 underline" onClick={p.onLimpar} data-testid="painel-classe-limpar">Limpar</button>
-      </div>
-      <p className="tabular-nums text-slate-700">Área estimada: {num(totalHa, 2)} ha · {linhas.length} {linhas.length === 1 ? "área" : "áreas"}</p>
-      <p className="mt-1 text-xs text-slate-600">{c.interpretacao}</p>
-      <p className="mt-1 text-xs text-slate-600">{c.acao}</p>
-      <p className="mt-1 text-[11px] text-slate-500">{CLASSES_CONDICAO_PASTO[0] && c.id !== "sem_leitura" ? "Imagem de satélite não confirma causa, degradação ou espécie vegetal." : null}</p>
+    <div className="flex flex-col gap-1.5 text-sm" data-testid="painel-classe-condicao">
+      <p className="tabular-nums text-slate-700">
+        {num(totalHa, 1)} ha · {num(pctMedio, 1)}% · {linhas.length} {linhas.length === 1 ? "pasto afetado" : "pastos afetados"}
+      </p>
+      <p className="text-xs text-slate-600">{c.interpretacao}</p>
+      <p className="text-xs text-slate-600">{c.acao}</p>
       {linhas.length > 0 && (
-        <ol className="mt-2 flex flex-col gap-0.5 text-xs">
+        <ol className="mt-1 flex flex-col gap-0.5 text-xs">
           {linhas.slice(0, 8).map((x) => (
             <li key={x.id} className="flex justify-between gap-2 tabular-nums">
               <span className="truncate text-slate-700">{x.nome}</span>
-              <span>{num(x.ha, 2)} ha</span>
+              <span>{num(x.ha, 1)} ha</span>
             </li>
           ))}
         </ol>
       )}
+      <button type="button" className="sr-only" onClick={p.onLimpar} data-testid="painel-classe-limpar">Limpar</button>
     </div>
   );
 }
+
+export function DialogClasseCondicao(p: {
+  aberto: boolean;
+  codigo: CodigoClasseCondicaoPasto | null;
+  resumos: ReadonlyMap<string, ResumoCondicaoPasto>;
+  nomes: ReadonlyMap<string, string>;
+  onFechar: () => void;
+}) {
+  const c = p.codigo !== null ? CLASSES_CONDICAO_PASTO[p.codigo] : null;
+  return (
+    <Dialog
+      open={p.aberto && p.codigo !== null}
+      onOpenChange={(o) => { if (!o) p.onFechar(); }}
+      title={c?.nome ?? "Classe"}
+      description={c ? "Áreas com essa classe na vista atual." : undefined}
+      size="md"
+      profile="content"
+      testId="dialog-classe-condicao"
+      footer={<Button type="button" variant="ghost" onClick={p.onFechar} data-testid="dialog-classe-fechar">Fechar</Button>}
+    >
+      {p.codigo !== null && (
+        <PainelClasseCondicao codigo={p.codigo} resumos={p.resumos} nomes={p.nomes} onLimpar={p.onFechar} />
+      )}
+    </Dialog>
+  );
+}
+
+/** Alias estável para testes / imports (MAPA-UX-02). */
+export const PopupAreaCondicao = DialogAreaCondicao;
+export const PopupClasseCondicao = DialogClasseCondicao;

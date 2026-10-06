@@ -63,7 +63,7 @@ export function zonasDeRasterCondicao(p: {
 }): ZonaCondicao[] {
   const { pixels, largura, altura, cantos } = p;
   if (pixels.length !== largura * altura) throw new RangeError("zonas: tamanho incompatível");
-  const porClasse = new Map<number, number[][][]>();
+  const porClasse = new Map<number, number[][][][]>();
   for (let row = 0; row < altura; row++) {
     for (let col = 0; col < largura; col++) {
       const b = pixels[row * largura + col]!;

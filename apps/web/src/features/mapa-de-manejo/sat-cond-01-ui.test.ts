@@ -37,7 +37,8 @@ describe("SAT-COND-01 — UI estática (UI-01..UI-10)", () => {
   });
 
   it("UI-06 ESC limpa", () => {
-    expect(mapaGeralSrc).toContain('if (e.key === "Escape") setClasseFiltro(null)');
+    expect(mapaGeralSrc).toContain('if (e.key !== "Escape") return');
+    expect(mapaGeralSrc).toContain("setClasseFiltro(null)");
   });
 
   it("UI-07 lista ordena", () => {
@@ -46,8 +47,8 @@ describe("SAT-COND-01 — UI estática (UI-01..UI-10)", () => {
     expect(Object.keys(ROTULO_ORDENACAO_CONDICAO)).toEqual(["atencao", "nome", "area", "solo", "baixa", "estresse"]);
   });
 
-  it("UI-08 click área abre painel", () => {
-    expect(mapaGeralSrc).toContain("PainelAreaCondicao");
+  it("UI-08 click área abre painel/dialog central", () => {
+    expect(mapaGeralSrc).toContain("DialogAreaCondicao");
     expect(legendaSrc).toContain("painel-area-condicao");
     expect(legendaSrc).toContain("barra-empilhada-condicao");
   });
@@ -71,12 +72,12 @@ describe("SAT-COND-01 — UI estática (UI-01..UI-10)", () => {
     expect(mapaGeralSrc).toContain('resampling: modoCondicao ? "nearest"');
   });
 
-  it("UI-11 stats sem mapa pedem Gerar mapa de condição", () => {
-    expect(legendaSrc).toContain("Gerar mapa de condição");
-    expect(legendaSrc).toContain("condicao-pasto-gerar-mapa");
-    expect(legendaSrc).toContain("condicao-pasto-stats-sem-mapa");
-    expect(mapaGeralSrc).toContain("gerarMapaCondicao");
-    expect(mapaGeralSrc).toContain("statsSemMapa");
+  it("UI-11 sem CTA local Gerar mapa / Analisar condição (MAPA-UX-02)", () => {
+    expect(legendaSrc).not.toContain("Gerar mapa de condição");
+    expect(legendaSrc).not.toContain("Analisar condição");
+    expect(legendaSrc).not.toContain("condicao-pasto-gerar-mapa");
+    expect(legendaSrc).not.toContain("condicao-pasto-analisar");
+    expect(mapaGeralSrc).not.toContain("gerarMapaCondicao");
   });
 
   it("404 da listagem é rota ausente; o efeito depende de idsKey, não do array ids", () => {

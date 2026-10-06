@@ -57,30 +57,40 @@ function mensagemDoErro(e: unknown): string {
   return e instanceof Error ? e.message : "Não foi possível concluir o pedido.";
 }
 
+type EtapaAnalise = 1 | 2 | 3;
+
 /**
- * Modal "Nova consulta": escolhe quais áreas e a janela, mostra a PRÉVIA de custo (nada é gravado) e só então cria a
- * consulta, acompanhando o progresso na API. A consulta roda em fila no servidor; fechar o modal não a cancela.
+ * Modal "Analisar pastos" (MAPA-UX-02): etapa 1 seleção → etapa 2 prévia → etapa 3 progresso.
+ * A consulta roda em fila no servidor; fechar o modal não a cancela.
  */
 export function NovaConsultaModal(p: NovaConsultaProps) {
   const qc = useQueryClient();
-  const [selecao, setSelecao] = React.useState<SelecaoConsulta>(p.selecaoInicial ?? "atual");
+  const [selecao, setSelecao] = React.useState<SelecaoConsulta>(p.selecaoInicial ?? "empresa");
   const [escolhidas, setEscolhidas] = React.useState<ReadonlySet<string>>(new Set());
   const [retiroId, setRetiroId] = React.useState("");
   const [periodo, setPeriodo] = React.useState<PeriodoDoFormulario>(PERIODO_PADRAO);
   const [busca, setBusca] = React.useState("");
   const [previa, setPrevia] = React.useState<PreviaConsulta | null>(null);
   const [consultaId, setConsultaId] = React.useState<string | null>(null);
+  const [etapa, setEtapa] = React.useState<EtapaAnalise>(1);
+  const [avancadasAbertas, setAvancadasAbertas] = React.useState(false);
   const [erro, setErro] = React.useState<string | null>(null);
   const avisouConclusaoRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
     if (!p.aberto) return;
-    setSelecao(p.selecaoInicial ?? (p.areaAtualId ? "atual" : "viewport"));
+    setSelecao(p.selecaoInicial ?? "empresa");
     setPrevia(null);
     setErro(null);
     setConsultaId(null);
+    setEtapa(1);
+    setAvancadasAbertas(false);
+    setPeriodo(PERIODO_PADRAO);
+    setBusca("");
+    setEscolhidas(new Set());
+    setRetiroId("");
     avisouConclusaoRef.current = null;
-  }, [p.aberto, p.selecaoInicial, p.areaAtualId]);
+  }, [p.aberto, p.selecaoInicial]);
 
   const retiros = useQuery({
     queryKey: ["mapa-geral", "retiros"],
@@ -108,7 +118,7 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
     : !periodoValidado.ok ? periodoValidado.motivo
     : itensDemais ? `São ${itens} itens (áreas × recortes de tempo); o máximo é ${LIMITE_AREAS_NA_CONSULTA} por consulta. Reduza a seleção ou o período.`
     : null;
-  const mudarPeriodo = (prox: PeriodoDoFormulario) => { setPeriodo(prox); setPrevia(null); setErro(null); };
+  const mudarPeriodo = (prox: PeriodoDoFormulario) => { setPeriodo(prox); setPrevia(null); setErro(null); if (etapa === 2) setEtapa(1); };
 
   const pedir = useMutation({
     mutationFn: async (confirmar: boolean) => {
@@ -119,8 +129,13 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
     },
     onSuccess: (r, confirmar) => {
       setErro(null);
-      if (confirmar) setConsultaId((r as ConsultaCriada).consulta.id);
-      else setPrevia(r as PreviaConsulta);
+      if (confirmar) {
+        setConsultaId((r as ConsultaCriada).consulta.id);
+        setEtapa(3);
+      } else {
+        setPrevia(r as PreviaConsulta);
+        setEtapa(2);
+      }
     },
     onError: (e) => setErro(mensagemDoErro(e))
   });
@@ -147,161 +162,230 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
     onConcluida?.();
   }, [consulta, terminou, qc, onConcluida]);
 
-  const mudarSelecao = (s: SelecaoConsulta) => { setSelecao(s); setPrevia(null); setErro(null); };
+  const mudarSelecao = (s: SelecaoConsulta) => { setSelecao(s); setPrevia(null); setErro(null); if (etapa === 2) setEtapa(1); };
   const filtradas = p.areas.filter((a) => a.geometria && (!busca || a.name.toLocaleLowerCase("pt-BR").includes(busca.toLocaleLowerCase("pt-BR"))));
+  const haEscolhidas = React.useMemo(() => {
+    let s = 0;
+    for (const a of p.areas) if (escolhidas.has(a.id)) s += Number(a.area_ha) || 0;
+    return s;
+  }, [p.areas, escolhidas]);
   const bloqueado = consultaId !== null;
+  const etapaAtiva: EtapaAnalise = bloqueado ? 3 : etapa;
+
+  const footer = (() => {
+    if (etapaAtiva === 3) {
+      return (
+        <Button type="button" variant="ghost" onClick={p.onFechar} data-testid="consulta-fechar">
+          {terminou ? "Fechar" : "Continuar em segundo plano"}
+        </Button>
+      );
+    }
+    if (etapaAtiva === 2) {
+      return (
+        <>
+          <Button type="button" variant="ghost" onClick={() => { setEtapa(1); setErro(null); }} data-testid="consulta-voltar" disabled={pedir.isPending}>Voltar</Button>
+          <Button
+            type="button"
+            disabled={!previa || previa.excede_orcamento || motivoBloqueio !== null || pedir.isPending}
+            loading={pedir.isPending}
+            onClick={() => pedir.mutate(true)}
+            data-testid="consulta-confirmar"
+          >
+            Iniciar análise
+          </Button>
+        </>
+      );
+    }
+    return (
+      <>
+        <Button type="button" variant="ghost" onClick={p.onFechar} data-testid="consulta-fechar">Cancelar</Button>
+        <Button
+          type="button"
+          disabled={motivoBloqueio !== null || pedir.isPending}
+          loading={pedir.isPending}
+          onClick={() => pedir.mutate(false)}
+          data-testid="consulta-continuar"
+        >
+          Continuar
+        </Button>
+      </>
+    );
+  })();
 
   return (
     <Dialog
       open={p.aberto}
       onOpenChange={(o) => { if (!o) p.onFechar(); }}
-      title="Atualizar condição do pasto"
-      description="Busca a imagem útil das áreas escolhidas (a mais recente, a de uma data ou uma por mês/decêndio de um intervalo) e calcula a condição do pasto. Você não escolhe índice: o pacote é a classificação integrada. Gasta créditos de satélite."
+      title="Analisar pastos"
+      description={etapaAtiva === 3
+        ? "A análise continua no servidor. Fechar não cancela."
+        : etapaAtiva === 2
+          ? "Confira o custo estimado antes de iniciar. Nada foi gravado ainda."
+          : "Escolha quais pastos analisar. O pacote é a classificação integrada da condição do pasto."}
       size="lg"
       testId="consulta-modal"
-      footer={(
-        <>
-          <Button type="button" variant="ghost" onClick={p.onFechar} data-testid="consulta-fechar">{terminou ? "Fechar" : bloqueado ? "Continuar em segundo plano" : "Cancelar"}</Button>
-          {!bloqueado && (
-            <>
-              <Button type="button" variant="outline" disabled={motivoBloqueio !== null || pedir.isPending} loading={pedir.isPending && !previa} onClick={() => pedir.mutate(false)} data-testid="consulta-previa">
-                Ver prévia de custo
-              </Button>
-              <Button type="button" disabled={!previa || previa.excede_orcamento || motivoBloqueio !== null || pedir.isPending} loading={pedir.isPending && Boolean(previa)} onClick={() => pedir.mutate(true)} data-testid="consulta-confirmar">
-                Confirmar consulta
-              </Button>
-            </>
-          )}
-        </>
-      )}
+      footer={footer}
     >
-      <div className="flex flex-col gap-3 text-sm" data-testid="consulta-conteudo">
-        <fieldset className="flex flex-col gap-1.5" disabled={bloqueado}>
-          <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quais áreas</legend>
-          {ORDEM_SELECAO.map((s) => {
-            const indisponivel = (s === "atual" && !p.areaAtualId) || (s === "desatualizadas" && p.idsDesatualizadas === null);
-            return (
-              <label key={s} className={`flex items-center gap-2 ${indisponivel ? "text-slate-400" : "text-slate-700"}`}>
-                <input type="radio" name="selecao-consulta" className="accent-brand-500" checked={selecao === s} disabled={indisponivel} onChange={() => mudarSelecao(s)} data-testid={`consulta-selecao-${s}`} />
-                <span>{ROTULO_SELECAO[s]}</span>
-                {s === "viewport" && <span className="text-xs tabular-nums text-slate-500">({p.idsNaVista.length})</span>}
-                {s === "sem_analise" && <span className="text-xs tabular-nums text-slate-500">({p.idsSemAnalise.length})</span>}
-                {s === "desatualizadas" && (
-                  <span className="text-xs tabular-nums text-slate-500" title={`Sem análise válida do contorno atual para ${nomeDoIndice(p.indiceAtivo)}`}>
-                    ({p.idsDesatualizadas === null ? "indisponível" : `${p.idsDesatualizadas.length} · ${nomeDoIndice(p.indiceAtivo)}`})
-                  </span>
-                )}
-              </label>
-            );
-          })}
-        </fieldset>
-
-        {selecao === "escolhidas" && !bloqueado && (
-          <div className="flex flex-col gap-1 rounded border border-slate-200 p-2" data-testid="consulta-escolhidas">
-            <Input placeholder="Buscar área" value={busca} onChange={(e) => setBusca(e.target.value)} aria-label="Buscar área" />
-            <ul className="max-h-40 overflow-auto">
-              {filtradas.map((a) => (
-                <li key={a.id}>
-                  <label className="flex items-center gap-2 py-0.5 text-[13px]">
-                    <input type="checkbox" className="accent-brand-500" checked={escolhidas.has(a.id)} onChange={(e) => {
-                      const prox = new Set(escolhidas);
-                      if (e.target.checked) prox.add(a.id); else prox.delete(a.id);
-                      setEscolhidas(prox); setPrevia(null);
-                    }} />
-                    <span className="truncate">{a.name}</span>
+      <div className="flex flex-col gap-3 text-sm" data-testid="consulta-conteudo" data-etapa={etapaAtiva}>
+        {etapaAtiva === 1 && (
+          <>
+            <fieldset className="flex flex-col gap-1.5" disabled={bloqueado}>
+              <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Quais pastos?</legend>
+              {ORDEM_SELECAO.map((s) => {
+                const indisponivel = (s === "desatualizadas" && p.idsDesatualizadas === null);
+                return (
+                  <label key={s} className={`flex items-center gap-2 ${indisponivel ? "text-slate-400" : "text-slate-700"}`}>
+                    <input type="radio" name="selecao-consulta" className="accent-brand-500" checked={selecao === s} disabled={indisponivel} onChange={() => mudarSelecao(s)} data-testid={`consulta-selecao-${s}`} />
+                    <span>{ROTULO_SELECAO[s]}</span>
+                    {s === "viewport" && <span className="text-xs tabular-nums text-slate-500">({p.idsNaVista.length})</span>}
+                    {s === "sem_analise" && <span className="text-xs tabular-nums text-slate-500">({p.idsSemAnalise.length})</span>}
+                    {s === "desatualizadas" && (
+                      <span className="text-xs tabular-nums text-slate-500" title={`Sem análise válida do contorno atual para ${nomeDoIndice(p.indiceAtivo)}`}>
+                        ({p.idsDesatualizadas === null ? "indisponível" : `${p.idsDesatualizadas.length} · ${nomeDoIndice(p.indiceAtivo)}`})
+                      </span>
+                    )}
                   </label>
-                </li>
-              ))}
-            </ul>
-            <span className="text-xs text-slate-500">{escolhidas.size} de no máximo {LIMITE_AREAS_NA_CONSULTA} áreas</span>
-          </div>
-        )}
-
-        {selecao === "retiro" && !bloqueado && (
-          <label className="flex flex-col gap-1 text-xs text-slate-600">
-            Retiro
-            <NativeSelect value={retiroId} onChange={(e) => { setRetiroId(e.target.value); setPrevia(null); }} data-testid="consulta-retiro" aria-label="Retiro">
-              <option value="">{retiros.isLoading ? "Carregando…" : "Escolha o retiro"}</option>
-              {opcoesRetiro.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-            </NativeSelect>
-          </label>
-        )}
-
-        <fieldset className="flex flex-col gap-1.5" disabled={bloqueado} data-testid="consulta-periodo">
-          <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Período</legend>
-          <label className="flex flex-col gap-1 text-xs text-slate-600">
-            Tipo de período
-            <NativeSelect
-              value={periodo.tipo}
-              onChange={(e) => {
-                const tipo = e.target.value as PeriodoDoFormulario["tipo"];
-                mudarPeriodo(
-                  tipo === "mais_recente" ? PERIODO_PADRAO
-                  : tipo === "data" ? { tipo: "data", data: "", toleranciaDias: TOLERANCIA_DIAS_PADRAO }
-                  : { tipo: "intervalo", de: "", ate: "", cadencia: "mensal" }
                 );
-              }}
-              data-testid="consulta-periodo-tipo"
-              aria-label="Tipo de período"
-            >
-              {(Object.keys(ROTULO_TIPO_PERIODO) as PeriodoDoFormulario["tipo"][]).map((t) => <option key={t} value={t}>{ROTULO_TIPO_PERIODO[t]}</option>)}
-            </NativeSelect>
-          </label>
+              })}
+            </fieldset>
 
-          {periodo.tipo === "mais_recente" && (
-            <label className="flex flex-col gap-1 text-xs text-slate-600">
-              Procurar a imagem útil nos últimos
-              <NativeSelect value={periodo.janelaDias} onChange={(e) => mudarPeriodo({ tipo: "mais_recente", janelaDias: Number(e.target.value) })} data-testid="consulta-janela" aria-label="Janela em dias">
-                {JANELAS_DIAS_OPCOES.map((d) => <option key={d} value={d}>{d} dias</option>)}
-              </NativeSelect>
-            </label>
-          )}
+            {selecao === "escolhidas" && (
+              <div className="flex flex-col gap-1 rounded border border-slate-200 p-2" data-testid="consulta-escolhidas">
+                <Input placeholder="Buscar área" value={busca} onChange={(e) => setBusca(e.target.value)} aria-label="Buscar área" />
+                <div className="flex flex-wrap gap-1.5 text-xs">
+                  <button type="button" className="rounded border border-slate-300 px-2 py-0.5 text-slate-700 hover:bg-slate-50" data-testid="consulta-selecionar-todas" onClick={() => {
+                    setEscolhidas(new Set(filtradas.map((a) => a.id))); setPrevia(null);
+                  }}>Selecionar todas</button>
+                  <button type="button" className="rounded border border-slate-300 px-2 py-0.5 text-slate-700 hover:bg-slate-50" data-testid="consulta-limpar-escolhidas" onClick={() => {
+                    setEscolhidas(new Set()); setPrevia(null);
+                  }}>Limpar</button>
+                </div>
+                <ul className="max-h-40 overflow-auto">
+                  {filtradas.map((a) => (
+                    <li key={a.id}>
+                      <label className="flex items-center gap-2 py-0.5 text-[13px]">
+                        <input type="checkbox" className="accent-brand-500" checked={escolhidas.has(a.id)} onChange={(e) => {
+                          const prox = new Set(escolhidas);
+                          if (e.target.checked) prox.add(a.id); else prox.delete(a.id);
+                          setEscolhidas(prox); setPrevia(null);
+                        }} />
+                        <span className="truncate">{a.name}</span>
+                        <span className="ml-auto shrink-0 tabular-nums text-xs text-slate-500">{num(Number(a.area_ha) || 0, 1)} ha</span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+                <span className="text-xs tabular-nums text-slate-500" data-testid="consulta-escolhidas-contador">
+                  {escolhidas.size} de no máximo {LIMITE_AREAS_NA_CONSULTA} áreas · {num(haEscolhidas, 1)} ha
+                </span>
+              </div>
+            )}
 
-          {periodo.tipo === "data" && (
-            <div className="grid grid-cols-2 gap-3">
-              <label className="flex flex-col gap-1 text-xs text-slate-600" data-testid="consulta-data">
-                Data da imagem
-                <Input type="date" value={periodo.data} onChange={(e) => mudarPeriodo({ ...periodo, data: e.target.value })} />
-              </label>
+            {selecao === "retiro" && (
               <label className="flex flex-col gap-1 text-xs text-slate-600">
-                Tolerância (dias antes e depois)
-                <NativeSelect value={periodo.toleranciaDias} onChange={(e) => mudarPeriodo({ ...periodo, toleranciaDias: Number(e.target.value) })} data-testid="consulta-tolerancia" aria-label="Tolerância em dias">
-                  {TOLERANCIAS_DIAS_OPCOES.map((d) => <option key={d} value={d}>{d === 0 ? "Só a própria data" : `± ${d} dia${d === 1 ? "" : "s"}`}</option>)}
+                Retiro
+                <NativeSelect value={retiroId} onChange={(e) => { setRetiroId(e.target.value); setPrevia(null); }} data-testid="consulta-retiro" aria-label="Retiro">
+                  <option value="">{retiros.isLoading ? "Carregando…" : "Escolha o retiro"}</option>
+                  {opcoesRetiro.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
                 </NativeSelect>
               </label>
+            )}
+
+            <div className="rounded border border-slate-200 p-2" data-testid="consulta-periodo-resumo">
+              <p className="text-xs text-slate-600">Período: <span className="font-medium text-slate-800">{ROTULO_TIPO_PERIODO.mais_recente}</span></p>
+              <div className="mt-2" data-testid="consulta-opcoes-avancadas">
+                <button
+                  type="button"
+                  className="text-xs font-semibold text-slate-600 underline hover:text-slate-800"
+                  aria-expanded={avancadasAbertas}
+                  onClick={() => setAvancadasAbertas((v) => !v)}
+                  data-testid="consulta-opcoes-avancadas-toggle"
+                >
+                  Opções avançadas
+                </button>
+                {avancadasAbertas && (
+                  <fieldset className="mt-2 flex flex-col gap-1.5" data-testid="consulta-periodo">
+                    <label className="flex flex-col gap-1 text-xs text-slate-600">
+                      Tipo de período
+                      <NativeSelect
+                        value={periodo.tipo}
+                        onChange={(e) => {
+                          const tipo = e.target.value as PeriodoDoFormulario["tipo"];
+                          mudarPeriodo(
+                            tipo === "mais_recente" ? PERIODO_PADRAO
+                            : tipo === "data" ? { tipo: "data", data: "", toleranciaDias: TOLERANCIA_DIAS_PADRAO }
+                            : { tipo: "intervalo", de: "", ate: "", cadencia: "mensal" }
+                          );
+                        }}
+                        data-testid="consulta-periodo-tipo"
+                        aria-label="Tipo de período"
+                      >
+                        {(Object.keys(ROTULO_TIPO_PERIODO) as PeriodoDoFormulario["tipo"][]).map((t) => <option key={t} value={t}>{ROTULO_TIPO_PERIODO[t]}</option>)}
+                      </NativeSelect>
+                    </label>
+
+                    {periodo.tipo === "mais_recente" && (
+                      <label className="flex flex-col gap-1 text-xs text-slate-600">
+                        Procurar a imagem útil nos últimos
+                        <NativeSelect value={periodo.janelaDias} onChange={(e) => mudarPeriodo({ tipo: "mais_recente", janelaDias: Number(e.target.value) })} data-testid="consulta-janela" aria-label="Janela em dias">
+                          {JANELAS_DIAS_OPCOES.map((d) => <option key={d} value={d}>{d} dias</option>)}
+                        </NativeSelect>
+                      </label>
+                    )}
+
+                    {periodo.tipo === "data" && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <label className="flex flex-col gap-1 text-xs text-slate-600" data-testid="consulta-data">
+                          Data da imagem
+                          <Input type="date" value={periodo.data} onChange={(e) => mudarPeriodo({ ...periodo, data: e.target.value })} />
+                        </label>
+                        <label className="flex flex-col gap-1 text-xs text-slate-600">
+                          Tolerância (dias antes e depois)
+                          <NativeSelect value={periodo.toleranciaDias} onChange={(e) => mudarPeriodo({ ...periodo, toleranciaDias: Number(e.target.value) })} data-testid="consulta-tolerancia" aria-label="Tolerância em dias">
+                            {TOLERANCIAS_DIAS_OPCOES.map((d) => <option key={d} value={d}>{d === 0 ? "Só a própria data" : `± ${d} dia${d === 1 ? "" : "s"}`}</option>)}
+                          </NativeSelect>
+                        </label>
+                      </div>
+                    )}
+
+                    {periodo.tipo === "intervalo" && (
+                      <div className="grid grid-cols-3 gap-3">
+                        <label className="flex flex-col gap-1 text-xs text-slate-600" data-testid="consulta-de">
+                          De
+                          <Input type="date" value={periodo.de} onChange={(e) => mudarPeriodo({ ...periodo, de: e.target.value })} />
+                        </label>
+                        <label className="flex flex-col gap-1 text-xs text-slate-600" data-testid="consulta-ate">
+                          Até
+                          <Input type="date" value={periodo.ate} onChange={(e) => mudarPeriodo({ ...periodo, ate: e.target.value })} />
+                        </label>
+                        <label className="flex flex-col gap-1 text-xs text-slate-600">
+                          Cadência
+                          <NativeSelect value={periodo.cadencia} onChange={(e) => mudarPeriodo({ ...periodo, cadencia: e.target.value as "mensal" | "decendial" })} data-testid="consulta-cadencia" aria-label="Cadência">
+                            {(Object.keys(ROTULO_CADENCIA) as ("mensal" | "decendial")[]).map((c) => <option key={c} value={c}>{ROTULO_CADENCIA[c]}</option>)}
+                          </NativeSelect>
+                        </label>
+                      </div>
+                    )}
+                    {periodoValidado.ok && periodoValidado.slots > 1 && (
+                      <p className="text-xs tabular-nums text-slate-500" data-testid="consulta-recortes">{periodoValidado.slots} recortes de tempo (uma imagem útil por recorte)</p>
+                    )}
+                  </fieldset>
+                )}
+              </div>
             </div>
-          )}
 
-          {periodo.tipo === "intervalo" && (
-            <div className="grid grid-cols-3 gap-3">
-              <label className="flex flex-col gap-1 text-xs text-slate-600" data-testid="consulta-de">
-                De
-                <Input type="date" value={periodo.de} onChange={(e) => mudarPeriodo({ ...periodo, de: e.target.value })} />
-              </label>
-              <label className="flex flex-col gap-1 text-xs text-slate-600" data-testid="consulta-ate">
-                Até
-                <Input type="date" value={periodo.ate} onChange={(e) => mudarPeriodo({ ...periodo, ate: e.target.value })} />
-              </label>
-              <label className="flex flex-col gap-1 text-xs text-slate-600">
-                Cadência
-                <NativeSelect value={periodo.cadencia} onChange={(e) => mudarPeriodo({ ...periodo, cadencia: e.target.value as "mensal" | "decendial" })} data-testid="consulta-cadencia" aria-label="Cadência">
-                  {(Object.keys(ROTULO_CADENCIA) as ("mensal" | "decendial")[]).map((c) => <option key={c} value={c}>{ROTULO_CADENCIA[c]}</option>)}
-                </NativeSelect>
-              </label>
-            </div>
-          )}
-          {periodoValidado.ok && periodoValidado.slots > 1 && (
-            <p className="text-xs tabular-nums text-slate-500" data-testid="consulta-recortes">{periodoValidado.slots} recortes de tempo (uma imagem útil por recorte)</p>
-          )}
-        </fieldset>
+            {motivoBloqueio && <p className="text-xs text-amber-700" data-testid="consulta-alvo-invalido">{motivoBloqueio}</p>}
+            {erro && <p className="text-xs text-red-600" role="alert" data-testid="consulta-erro">{erro}</p>}
+          </>
+        )}
 
-        {motivoBloqueio && !bloqueado && <p className="text-xs text-amber-700" data-testid="consulta-alvo-invalido">{motivoBloqueio}</p>}
-        {erro && <p className="text-xs text-red-600" role="alert" data-testid="consulta-erro">{erro}</p>}
-
-        {previa && !bloqueado && (
-          <div className="flex flex-col gap-1 rounded border border-slate-200 bg-slate-50 p-2 text-[13px]" data-testid="consulta-previa-resultado">
+        {etapaAtiva === 2 && previa && (
+          <div className="flex flex-col gap-1 rounded border border-slate-200 bg-slate-50 p-3 text-[13px]" data-testid="consulta-previa-resultado">
             <div className="font-semibold text-slate-700">Prévia (nada foi gravado)</div>
-            <div className="tabular-nums">{previa.novos} {previa.novos === 1 ? "item novo" : "itens novos"} · {previa.reaproveitados} já existente{previa.reaproveitados === 1 ? "" : "s"} (sem custo) · {previa.total_itens} no total</div>
+            {resolvido.ok && resolvido.quantidade !== null && (
+              <div className="tabular-nums" data-testid="consulta-previa-pastos">{resolvido.quantidade} {resolvido.quantidade === 1 ? "pasto selecionado" : "pastos selecionados"}</div>
+            )}
+            <div className="tabular-nums">{previa.novos} {previa.novos === 1 ? "análise nova" : "análises novas"} · {previa.reaproveitados} reaproveitada{previa.reaproveitados === 1 ? "" : "s"} · {previa.total_itens} no total</div>
             <div className="tabular-nums" data-testid="consulta-previa-creditos">
               Estimativa: {num(previa.estimativa_creditos.minimo, 2)} a {num(previa.estimativa_creditos.maximo, 2)} créditos
               {previa.saldo_creditos_mes !== null && <> · saldo do mês {num(previa.saldo_creditos_mes, 2)}</>}
@@ -313,10 +397,11 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
                 <ul className="mt-1 list-disc pl-4">{previa.areas_ignoradas.map((a) => <li key={a.area_id}>{a.nome}: {a.motivo}</li>)}</ul>
               </details>
             )}
+            {erro && <p className="text-xs text-red-600" role="alert" data-testid="consulta-erro">{erro}</p>}
           </div>
         )}
 
-        {bloqueado && (
+        {etapaAtiva === 3 && (
           <div className="flex flex-col gap-1 rounded border border-slate-200 p-2" data-testid="consulta-progresso">
             <div className="flex items-center justify-between text-[13px]">
               <span className="font-semibold text-slate-700">{consulta ? (ROTULO_SITUACAO_CONSULTA[consulta.situacao] ?? consulta.situacao) : "Criando a consulta…"}</span>

@@ -2,7 +2,6 @@
 import * as React from "react";
 import Link from "next/link";
 import type { Map as MapLibreMap } from "maplibre-gl";
-import { X } from "lucide-react";
 import {
   badgePrincipalCondicao,
   corPredominanteCondicao,
@@ -16,7 +15,7 @@ import { qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { canonicalHref, entryById } from "@/lib/nav";
 import { useEmpresaPadrao } from "@/features/docs/shared";
-import { Card, CardBody, Button, Spinner, EmptyState, ErrorState, buttonVariants, NativeSelect } from "@/components/ui";
+import { Card, CardBody, Button, Dialog, Spinner, EmptyState, ErrorState, buttonVariants, NativeSelect } from "@/components/ui";
 import { dateBR, num } from "@/lib/utils";
 import { CamadaDesenho } from "./camada-desenho";
 import { COR_PADRAO_AREA } from "./cores";
@@ -25,14 +24,14 @@ import { AtribuicaoCopernicus, LegendaNdvi, PERMISSAO_PEDIR_NDVI, anosDasImagens
 import { OPACIDADE_PADRAO, RENDER_PADRAO, amostrarPixelCanvas, idCamadaRaster, sincronizarRastersNoMapa, type RenderRaster } from "./camada-rasters";
 import { assinaturaDaGeometria } from "./cache-rasters";
 import { coresPorArea, mediaValidaDoIndice, type ModoCor } from "./cor-por-area";
-import { DATA_ULTIMA_IMAGEM, dataEscolhida, dataImagemDoPedido, datasUteisDoHistorico, opcoesDeData, type DataDaCamada } from "./data-camada";
+import { DATA_ULTIMA_IMAGEM, dataEscolhida, datasUteisDoHistorico, opcoesDeData, type DataDaCamada } from "./data-camada";
 import { useHistoricoIndice } from "./condicao-dados";
-import { mensagemDoErroDeRaster, useRastersIndice, type RasterIndiceDto } from "./rasters-indice";
-import { gerarMapaCondicao, useMapasCondicao } from "./rasters-condicao";
+import { useRastersIndice, type RasterIndiceDto } from "./rasters-indice";
+import { useMapasCondicao } from "./rasters-condicao";
 import { BarraCamadas, type ExperienciaMapa } from "./barra-camadas";
 import { CondicaoDaArea } from "./condicao-area";
 import { LegendaIndice } from "./legenda-indice";
-import { LegendaCondicaoPasto, PainelAreaCondicao, PainelClasseCondicao } from "./legenda-condicao";
+import { DialogAreaCondicao, DialogClasseCondicao, LegendaCondicaoPasto } from "./legenda-condicao";
 import { NovaConsultaModal } from "./nova-consulta-modal";
 import { familiaDoIndice, familiaPorId, nomeDoIndice, type FamiliaCamada, type IdIndice } from "./paletas-indices";
 import { selecionarAreasDaVista, type Vista } from "./viewport-rasters";
@@ -84,8 +83,6 @@ export function MapaGeral() {
   const [render, setRender] = React.useState<RenderRaster>(RENDER_PADRAO);
   const [opacidade, setOpacidade] = React.useState(OPACIDADE_PADRAO);
   const [consulta, setConsulta] = React.useState<{ aberta: boolean; selecao?: SelecaoConsulta }>({ aberta: false });
-  const [gerandoMapa, setGerandoMapa] = React.useState(false);
-  const [erroMapa, setErroMapa] = React.useState<string | null>(null);
   const padraoTravadoRef = React.useRef(false);
   const areasRef = React.useRef(areas);
   React.useEffect(() => { areasRef.current = areas; }, [areas]);
@@ -220,7 +217,11 @@ export function MapaGeral() {
   function registrarEventos(m: MapLibreMap) {
     m.on("click", "areas-fill", (e) => {
       const id = e.features?.[0]?.properties?.id != null ? String(e.features[0].properties.id) : null;
-      if (id && areasRef.current.some((a) => a.id === id)) setSelecionada(id);
+      if (id && areasRef.current.some((a) => a.id === id)) {
+        setConsulta((c) => (c.aberta ? { aberta: false } : c));
+        setClasseFiltro(null);
+        setSelecionada(id);
+      }
     });
     let hoverId: string | null = null;
     m.on("mousemove", "areas-fill", (e) => {
@@ -274,21 +275,46 @@ export function MapaGeral() {
 
   React.useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setClasseFiltro(null);
+      if (e.key !== "Escape") return;
+      if (consulta.aberta) return;
+      if (classeFiltro !== null) { setClasseFiltro(null); return; }
+      if (selecionada) setSelecionada(null);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [classeFiltro, selecionada, consulta.aberta]);
+
+  /** Abre "Analisar pastos" e fecha popups de área/classe (um de cada vez). */
+  function abrirAnalise(selecao?: SelecaoConsulta) {
+    setClasseFiltro(null);
+    setSelecionada(null);
+    setConsulta({ aberta: true, selecao: selecao ?? "empresa" });
+  }
 
   function selecionarNaLista(id: string) {
+    if (consulta.aberta) setConsulta({ aberta: false });
+    setClasseFiltro(null);
     setSelecionada(id);
     const a = areas.find((x) => x.id === id);
     const caixa = a ? limites([a.geometria]) : null;
     if (caixa) mapRef.current?.fitBounds(caixa, { padding: 60, maxZoom: 16 });
   }
 
+  function filtrarClasse(c: CodigoClasseCondicaoPasto | null) {
+    if (consulta.aberta) setConsulta({ aberta: false });
+    if (c !== null) setSelecionada(null);
+    setClasseFiltro(c);
+  }
+
   const m = mapa.pronto ? mapRef.current : null;
-  const rotulos = m ? rotulosDasAreas(m, areas, hoverAreaId ?? selecionada) : [];
+  /** Só hover/selecionada — evita colisão de nomes; declutter em rotulosDasAreas fica como rede de segurança. */
+  const rotulos = m
+    ? (() => {
+        const id = hoverAreaId ?? selecionada;
+        if (!id) return [];
+        return rotulosDasAreas(m, areas.filter((a) => a.id === id), id);
+      })()
+    : [];
   const selecionadaObj = areas.find((a) => a.id === selecionada) ?? null;
   const temObservacaoUtil = (areaId: string) => {
     if (resumoIndice.situacao === "pronto" && resumoIndice.porArea.get(areaId)?.ultima_observacao) return true;
@@ -296,20 +322,10 @@ export function MapaGeral() {
     return false;
   };
   const temMapaCondicao = (areaId: string) => mapasCond.resumos.has(areaId);
-  async function gerarMapaDaSelecionada() {
-    if (!selecionada) return;
-    setGerandoMapa(true);
-    setErroMapa(null);
-    try {
-      const r = await gerarMapaCondicao(selecionada, dataImagemDoPedido(data));
-      await mapasCond.incorporarDto(r.mapa);
-    } catch (e) {
-      setErroMapa(mensagemDoErroDeRaster(e));
-    } finally {
-      setGerandoMapa(false);
-    }
-  }
-  React.useEffect(() => { setErroMapa(null); }, [selecionada]);
+  /** Popups mutuamente exclusivos com o modal Analisar pastos. */
+  const dialogAreaAberto = Boolean(modoCondicao && selecionadaObj && !consulta.aberta && classeFiltro === null);
+  const dialogClasseAberto = Boolean(modoCondicao && classeFiltro !== null && !consulta.aberta);
+  const dialogTecnicoAberto = Boolean(!modoCondicao && selecionadaObj && !consulta.aberta);
   const totalHa = areas.reduce((s, a) => s + hectares(a.area_ha), 0);
   const podeCadastrar = can("batch_area.create");
   const entradaAreas = entryById("configuracoes.pecuaria.areas");
@@ -391,8 +407,6 @@ export function MapaGeral() {
               const tituloMedia = data.tipo === "data"
                 ? `${nomeDoIndice(indice)} médio em ${dateBR(data.data)}`
                 : `${nomeDoIndice(indice)} médio da última imagem útil`;
-              const boaPct = resumo ? Number(resumo.classes.find((c) => c.codigo === 1)?.area_estimada_percentual ?? 0) : 0;
-              const atencaoPct = resumo ? pontuacaoLista(resumo) : 0;
               return (
                 <button key={a.id} type="button" data-testid="mapa-item-area" onClick={() => selecionarNaLista(a.id)}
                   className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-100 ${a.id === selecionada ? "bg-slate-100 ring-1 ring-slate-300" : ""}`}>
@@ -400,15 +414,11 @@ export function MapaGeral() {
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium text-slate-700">{a.name}</span>
                     {modoCondicao && badge && (
-                      <span className="flex flex-wrap items-center gap-x-1.5 text-[10px] text-slate-500" data-testid="mapa-item-badge">
-                        <span style={{ color: badge.cor }}>● {badge.rotulo}</span>
-                        {boaPct > 0 && <span>{num(boaPct, 0)}% vegetação ativa</span>}
-                        {atencaoPct > 0 && <span>{num(atencaoPct, 0)}% atenção</span>}
-                      </span>
+                      <span className="block truncate text-[11px]" style={{ color: badge.cor }} data-testid="mapa-item-badge">{badge.rotulo}</span>
                     )}
                   </span>
                   {media !== null && <span className="shrink-0 text-xs font-medium tabular-nums text-slate-700" title={tituloMedia} data-testid="mapa-item-ndvi">{num(media, 2)}</span>}
-                  <span className="shrink-0 text-xs tabular-nums text-slate-500">{num(hectares(a.area_ha), 2)} ha</span>
+                  <span className="shrink-0 text-xs tabular-nums text-slate-500">{num(hectares(a.area_ha), 1)} ha</span>
                 </button>
               );
             })}
@@ -436,7 +446,7 @@ export function MapaGeral() {
           opcoesData={opcoesData}
           dataImagem={dataImagem}
           podeConsultar={podeConsultar}
-          onNovaConsulta={() => setConsulta({ aberta: true, selecao: selecionada ? "atual" : "viewport" })}
+          onNovaConsulta={() => abrirAnalise("empresa")}
         />
         <Card className="relative min-h-0 flex-1 overflow-hidden">
           <div ref={mapa.containerRef} data-testid="mapa-canvas" className="h-full min-h-[420px] w-full" />
@@ -477,8 +487,8 @@ export function MapaGeral() {
               )}
               {rasters.situacao === "erro" && rasters.erro && <div className="rounded bg-white/90 px-2 py-1 text-xs text-red-600 shadow-sm" data-testid="mapa-raster-erro">{rasters.erro}</div>}
               {modoCondicao && comNdvi && (
-                <div className="pointer-events-auto w-[min(22rem,calc(100vw-2rem))]">
-                  <LegendaCondicaoPasto resumo={mapasCond.agregado} classe={classeFiltro} onClasse={setClasseFiltro} />
+                <div className="pointer-events-auto w-[min(18rem,calc(100vw-2rem))]">
+                  <LegendaCondicaoPasto resumo={mapasCond.agregado} classe={classeFiltro} onClasse={filtrarClasse} />
                 </div>
               )}
               {mostrarLegendaTecnica && (modoCor === "pixel" ? <LegendaIndice indice={indice} /> : indice === "ndvi" ? <LegendaNdvi modo="area" /> : <LegendaIndice indice={indice} modo="area" />)}
@@ -486,61 +496,65 @@ export function MapaGeral() {
             </div>
           )}
           <AvisoDeLocalizacao mapa={mapa} />
-
-          {modoCondicao && classeFiltro !== null && (
-            <div className="pointer-events-auto absolute left-2 top-2 z-10 w-[min(20rem,calc(100%-1rem))]">
-              <PainelClasseCondicao codigo={classeFiltro} resumos={mapasCond.resumos} nomes={nomesPorId} onLimpar={() => setClasseFiltro(null)} />
-            </div>
-          )}
-
-          {selecionadaObj && (
-            <div className="absolute right-2 top-2 z-10 max-h-[calc(100%-1rem)] w-[min(22rem,calc(100%-1rem))] overflow-auto rounded-md border border-slate-200 bg-white p-3 shadow-lg" data-testid="mapa-area-selecionada">
-              <div className="flex items-start gap-2">
-                <span className="mt-1 h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: selecionadaObj.color ?? COR_PADRAO_AREA }} aria-hidden />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold text-slate-800">{selecionadaObj.name}</div>
-                  <div className="text-xs tabular-nums text-slate-500">
-                    {selecionadaObj.code ? <>{selecionadaObj.code} · </> : null}{num(hectares(selecionadaObj.area_ha), 2)} ha
-                    {!selecionadaObj.geometria && <> · sem contorno</>}
-                  </div>
-                </div>
-                <Button type="button" size="icon" variant="ghost" onClick={() => setSelecionada(null)} aria-label="Fechar resumo" title="Fechar"><X className="h-4 w-4" aria-hidden /></Button>
-              </div>
-              {modoCondicao && (
-                <PainelAreaCondicao
-                  resumo={mapasCond.resumos.get(selecionadaObj.id) ?? null}
-                  dataImagem={mapasCond.datasPorArea.get(selecionadaObj.id) ? dateBR(mapasCond.datasPorArea.get(selecionadaObj.id)!) : null}
-                  semAnalise={!temMapaCondicao(selecionadaObj.id) && !temObservacaoUtil(selecionadaObj.id)}
-                  statsSemMapa={!temMapaCondicao(selecionadaObj.id) && temObservacaoUtil(selecionadaObj.id) && mapasCond.situacao === "pronto"}
-                  onAtualizar={podeConsultar ? () => setConsulta({ aberta: true, selecao: "atual" }) : undefined}
-                  onGerarMapa={podeConsultar ? () => void gerarMapaDaSelecionada() : undefined}
-                  gerandoMapa={gerandoMapa}
-                  erroMapa={erroMapa}
-                  onDadosTecnicos={() => setExperiencia("tecnico")}
-                />
-              )}
-              {comNdvi && !modoCondicao && (
-                <CondicaoDaArea
-                  areaId={selecionadaObj.id}
-                  nomeDaArea={selecionadaObj.name}
-                  temContorno={Boolean(selecionadaObj.geometria)}
-                  indiceAtivo={indice}
-                  raster={rasters.porArea.get(selecionadaObj.id) ?? null}
-                  data={data}
-                  semImagemNaData={rasters.ausentes.has(selecionadaObj.id)}
-                  onHashAtual={rasters.confirmarHashDaArea}
-                  onRasterGerado={aoGerarRaster}
-                  onNovaConsulta={() => setConsulta({ aberta: true, selecao: "atual" })}
-                />
-              )}
-              <div className="mt-2 flex justify-end">
-                <Link href={fichaDaArea(selecionadaObj.id)} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="mapa-abrir-cadastro">Abrir cadastro</Link>
-              </div>
-            </div>
-          )}
         </Card>
         </div>
       </div>
+
+      {modoCondicao && selecionadaObj && (
+        <DialogAreaCondicao
+          aberto={dialogAreaAberto}
+          onFechar={() => setSelecionada(null)}
+          nome={selecionadaObj.name}
+          ha={hectares(selecionadaObj.area_ha)}
+          dataImagem={mapasCond.datasPorArea.get(selecionadaObj.id) ? dateBR(mapasCond.datasPorArea.get(selecionadaObj.id)!) : null}
+          resumo={mapasCond.resumos.get(selecionadaObj.id) ?? null}
+          semAnalise={!temMapaCondicao(selecionadaObj.id) && !temObservacaoUtil(selecionadaObj.id)}
+          statsSemMapa={!temMapaCondicao(selecionadaObj.id) && temObservacaoUtil(selecionadaObj.id) && mapasCond.situacao === "pronto"}
+          onDadosTecnicos={() => setExperiencia("tecnico")}
+          hrefCadastro={fichaDaArea(selecionadaObj.id)}
+        />
+      )}
+
+      {!modoCondicao && selecionadaObj && (
+        <Dialog
+          open={dialogTecnicoAberto}
+          onOpenChange={(o) => { if (!o) setSelecionada(null); }}
+          title={selecionadaObj.name}
+          description={`${selecionadaObj.code ? `${selecionadaObj.code} · ` : ""}${num(hectares(selecionadaObj.area_ha), 2)} ha${!selecionadaObj.geometria ? " · sem contorno" : ""}`}
+          size="md"
+          profile="content"
+          testId="mapa-area-selecionada"
+          footer={(
+            <>
+              <Button type="button" variant="ghost" onClick={() => setSelecionada(null)} data-testid="dialog-area-fechar">Fechar</Button>
+              <Link href={fichaDaArea(selecionadaObj.id)} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="mapa-abrir-cadastro">Abrir cadastro</Link>
+            </>
+          )}
+        >
+          {comNdvi && (
+            <CondicaoDaArea
+              areaId={selecionadaObj.id}
+              nomeDaArea={selecionadaObj.name}
+              temContorno={Boolean(selecionadaObj.geometria)}
+              indiceAtivo={indice}
+              raster={rasters.porArea.get(selecionadaObj.id) ?? null}
+              data={data}
+              semImagemNaData={rasters.ausentes.has(selecionadaObj.id)}
+              onHashAtual={rasters.confirmarHashDaArea}
+              onRasterGerado={aoGerarRaster}
+              onNovaConsulta={() => abrirAnalise("empresa")}
+            />
+          )}
+        </Dialog>
+      )}
+
+      <DialogClasseCondicao
+        aberto={dialogClasseAberto}
+        codigo={classeFiltro}
+        resumos={mapasCond.resumos}
+        nomes={nomesPorId}
+        onFechar={() => setClasseFiltro(null)}
+      />
 
       {podeConsultar && (
         <NovaConsultaModal
@@ -552,15 +566,10 @@ export function MapaGeral() {
           idsSemAnalise={idsSemAnalise}
           idsDesatualizadas={desatualizadas}
           indiceAtivo={indice}
-          selecaoInicial={consulta.selecao}
+          selecaoInicial={consulta.selecao ?? "empresa"}
           onConcluida={() => mapasCond.recarregar()}
         />
       )}
     </div>
   );
-}
-
-function pontuacaoLista(resumo: { classes: { codigo: number; area_estimada_percentual: string }[] }): number {
-  return resumo.classes.filter((c) => c.codigo === 3 || c.codigo === 4 || c.codigo === 5)
-    .reduce((s, c) => s + Number(c.area_estimada_percentual), 0);
 }

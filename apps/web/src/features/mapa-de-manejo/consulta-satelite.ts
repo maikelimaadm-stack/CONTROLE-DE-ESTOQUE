@@ -19,15 +19,16 @@ export type SelecaoConsulta = "atual" | "escolhidas" | "viewport" | "retiro" | "
 
 export const ROTULO_SELECAO: Readonly<Record<SelecaoConsulta, string>> = {
   atual: "Área aberta no painel",
-  escolhidas: "Áreas escolhidas na lista",
-  viewport: "Áreas à vista no mapa",
-  retiro: "Um retiro",
-  empresa: "Toda a empresa",
-  sem_analise: "Áreas ainda sem análise",
-  desatualizadas: "Áreas desatualizadas"
+  escolhidas: "Escolher áreas",
+  viewport: "Áreas visíveis no mapa",
+  retiro: "Por retiro",
+  empresa: "Todos os pastos",
+  sem_analise: "Sem análise",
+  desatualizadas: "Desatualizados"
 };
 
-export const ORDEM_SELECAO: readonly SelecaoConsulta[] = ["atual", "escolhidas", "viewport", "retiro", "empresa", "sem_analise", "desatualizadas"];
+/** Ordem do modal "Analisar pastos" (MAPA-UX-02): sem "atual" — o fluxo padrão é em lote. */
+export const ORDEM_SELECAO: readonly SelecaoConsulta[] = ["empresa", "viewport", "escolhidas", "retiro", "sem_analise", "desatualizadas"];
 
 export type AlvoConsulta =
   | { tipo: "areas"; area_ids: string[] }
@@ -122,7 +123,7 @@ export const TOLERANCIA_DIAS_PADRAO = 3;
 export const TOLERANCIAS_DIAS_OPCOES: readonly number[] = [0, 1, 3, 5, 10, 15, 30];
 
 export const ROTULO_TIPO_PERIODO: Readonly<Record<PeriodoDoFormulario["tipo"], string>> = {
-  mais_recente: "Mais recente",
+  mais_recente: "Imagem mais recente disponível",
   data: "Uma data",
   intervalo: "Intervalo"
 };

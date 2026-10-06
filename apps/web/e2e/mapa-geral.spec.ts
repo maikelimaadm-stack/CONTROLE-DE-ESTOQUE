@@ -879,12 +879,13 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   await expect(barra.getByTestId("mapa-experiencia-condicao")).toHaveAttribute("aria-pressed", "true");
   await expect(barra.getByTestId("mapa-grupo-indice")).toHaveCount(0);
   await expect(barra.getByTestId("mapa-grupo-camada")).toHaveCount(0);
-  await expect(barra.getByTestId("mapa-nova-consulta")).toHaveText("Atualizar condição");
+  await expect(barra.getByTestId("mapa-nova-consulta")).toHaveText("Analisar pastos");
+  await expect(barra.getByTestId("mapa-grupo-opacidade")).toHaveCount(0);
   await expect(page.getByTestId("legenda-condicao-pasto")).toBeVisible();
   await entrarDadosTecnicos(page);
   for (const [grupo, texto] of [
     ["mapa-grupo-camada", "Cobertura/Solo"], ["mapa-grupo-indice", "NDVI"], ["mapa-grupo-data", "Última imagem útil"],
-    ["mapa-grupo-render", "Pixel real"], ["mapa-grupo-opacidade", "70%"], ["mapa-grupo-acao", "Atualizar condição"]
+    ["mapa-grupo-render", "Pixel real"], ["mapa-grupo-opacidade", "70%"], ["mapa-grupo-acao", "Analisar pastos"]
   ] as const) await expect(barra.getByTestId(grupo)).toContainText(texto);
   await expect(barra.getByTestId("mapa-camada-vigor")).toHaveAttribute("aria-pressed", "true");
   await expect(barra.getByTestId("mapa-indice-evi2")).toBeVisible();
@@ -979,34 +980,46 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   await comparar.getByTestId("comparar-fechar").click();
   await expect(comparar).toHaveCount(0);
 
-  // Nova consulta: prévia (nada gravado) → confirmar → progresso da API
+  // Analisar pastos: etapa 1 (Todos) → Continuar (prévia) → Iniciar → progresso
   await condicao.getByTestId("condicao-nova-consulta").click();
   const modal = page.getByTestId("consulta-modal");
-  await expect(modal.getByTestId("consulta-selecao-atual")).toBeChecked();
-  // "Áreas desatualizadas": o contorno atual não tem análise válida do índice ativo (aqui, a área só tem o resumo simulado do painel)
+  await expect(modal).toContainText("Analisar pastos");
+  await expect(modal.getByTestId("consulta-selecao-empresa")).toBeChecked();
   await expect(modal.getByTestId("consulta-selecao-desatualizadas")).toBeEnabled();
-  // período: "Uma data" com tolerância
+  const abrirAvancadas = async () => {
+    if (await modal.getByTestId("consulta-periodo-tipo").count() === 0) {
+      await modal.getByTestId("consulta-opcoes-avancadas-toggle").click();
+    }
+    await expect(modal.getByTestId("consulta-periodo-tipo")).toBeVisible();
+  };
+  // Opções avançadas fechadas; abrir para período "Uma data"
+  await expect(modal.getByTestId("consulta-periodo-tipo")).toHaveCount(0);
+  await abrirAvancadas();
   await modal.getByTestId("consulta-periodo-tipo").selectOption("data");
-  await expect(modal.getByTestId("consulta-previa")).toBeDisabled();
+  await expect(modal.getByTestId("consulta-continuar")).toBeDisabled();
   await digitarData(modal.getByTestId("consulta-data"), "10/09/2026");
-  await modal.getByTestId("consulta-previa").click();
+  await modal.getByTestId("consulta-continuar").click();
   await expect(modal.getByTestId("consulta-previa-creditos")).toContainText("créditos");
   expect(corposConsulta).toHaveLength(1);
-  expect(corposConsulta[0]).toEqual({ alvo: { tipo: "areas", area_ids: [area.id] }, periodo: { tipo: "data", data: "2026-09-10", tolerancia_dias: 3 }, indices: ["pastagem_essencial"], confirmar: false });
-  // período: intervalo com cadência
+  expect(corposConsulta[0]).toEqual({ alvo: { tipo: "todas" }, periodo: { tipo: "data", data: "2026-09-10", tolerancia_dias: 3 }, indices: ["pastagem_essencial"], confirmar: false });
+  // Voltar e trocar período: intervalo com cadência
+  await modal.getByTestId("consulta-voltar").click();
+  await abrirAvancadas();
   await modal.getByTestId("consulta-periodo-tipo").selectOption("intervalo");
   await digitarData(modal.getByTestId("consulta-de"), "01/07/2026");
   await digitarData(modal.getByTestId("consulta-ate"), "30/09/2026");
   await expect(modal.getByTestId("consulta-recortes")).toContainText("3 recortes");
-  await modal.getByTestId("consulta-previa").click();
+  await modal.getByTestId("consulta-continuar").click();
   await expect.poll(() => corposConsulta.length).toBe(2);
   expect(corposConsulta[1]?.periodo).toEqual({ tipo: "intervalo", de: "2026-07-01", ate: "2026-09-30", cadencia: "mensal" });
   // período padrão: mais recente
+  await modal.getByTestId("consulta-voltar").click();
+  await abrirAvancadas();
   await modal.getByTestId("consulta-periodo-tipo").selectOption("mais_recente");
-  await modal.getByTestId("consulta-previa").click();
+  await modal.getByTestId("consulta-continuar").click();
   await expect(modal.getByTestId("consulta-previa-creditos")).toContainText("créditos");
   expect(corposConsulta).toHaveLength(3);
-  expect(corposConsulta[2]).toEqual({ alvo: { tipo: "areas", area_ids: [area.id] }, periodo: { tipo: "mais_recente", janela_dias: 30 }, indices: ["pastagem_essencial"], confirmar: false });
+  expect(corposConsulta[2]).toEqual({ alvo: { tipo: "todas" }, periodo: { tipo: "mais_recente", janela_dias: 30 }, indices: ["pastagem_essencial"], confirmar: false });
   await modal.getByTestId("consulta-confirmar").click();
   await expect(modal.getByTestId("consulta-progresso")).toBeVisible();
   expect(corposConsulta[3]?.confirmar).toBe(true);
@@ -1038,7 +1051,7 @@ test("Mapa geral SAT-COND-01: condição padrão, legenda ha/%, filtro, ESC, lis
     codigo, id, nome, cor, pixels, proporcao: "0.1", area_estimada_ha: ha, area_estimada_percentual: pct
   });
   const resumoA = {
-    versao_classificador: "condicao-pasto-v1", experimental: true, resolucao_m: 20,
+    versao_classificador: "condicao-pasto-v2", experimental: true, resolucao_m: 20,
     area_total_ha: "80.00", area_lida_ha: "76.00", area_sem_leitura_ha: "4.00", cobertura_valida: "0.9500",
     pixels_universo: 100, pixels_sem_leitura: 5,
     classes: [
@@ -1066,7 +1079,7 @@ test("Mapa geral SAT-COND-01: condição padrão, legenda ha/%, filtro, ESC, lis
     largura: 4, altura: 4, cantos_lnglat: cantos, resolucao_m: 20, resolucao_analitica_m: 20,
     geometria_sha256: "a".repeat(64), area_total_ha: resumo.area_total_ha, resumo,
     url_assinada: `/api/mapa/condicao-pasto/${mapaId}/arquivo?t=teste`,
-    expira_em: "2099-01-01T00:00:00.000Z", versao_classificador: "condicao-pasto-v1"
+    expira_em: "2099-01-01T00:00:00.000Z", versao_classificador: "condicao-pasto-v2"
   });
   const mapaA = "11111111-1111-4111-8111-111111111111";
   const mapaB = "22222222-2222-4222-8222-222222222222";
@@ -1095,23 +1108,28 @@ test("Mapa geral SAT-COND-01: condição padrão, legenda ha/%, filtro, ESC, lis
   await expect(page.getByTestId("mapa-item-badge")).toHaveCount(2);
 
   await page.getByTestId("legenda-classe-solo_exposto_estimado").click();
+  await expect(page.getByTestId("dialog-classe-condicao")).toBeVisible();
   await expect(page.getByTestId("painel-classe-condicao")).toBeVisible();
-  await expect(page.getByTestId("painel-classe-condicao")).toContainText("Solo exposto estimado");
+  await expect(page.getByTestId("dialog-classe-condicao")).toContainText("Solo exposto estimado");
   await expect(page.getByTestId("mapa-item-area").nth(0)).toContainText(pastoB.name);
 
   await page.keyboard.press("Escape");
+  await expect(page.getByTestId("dialog-classe-condicao")).toHaveCount(0);
   await expect(page.getByTestId("painel-classe-condicao")).toHaveCount(0);
 
   await page.getByTestId("legenda-classe-solo_exposto_estimado").click();
   await page.getByTestId("legenda-classe-solo_exposto_estimado").click();
-  await expect(page.getByTestId("painel-classe-condicao")).toHaveCount(0);
+  await expect(page.getByTestId("dialog-classe-condicao")).toHaveCount(0);
 
   await page.getByTestId("mapa-item-area").filter({ hasText: pastoA.name }).click();
+  await expect(page.getByTestId("mapa-area-selecionada")).toBeVisible();
   await expect(page.getByTestId("painel-area-condicao")).toBeVisible();
-  await expect(page.getByTestId("painel-area-condicao")).toContainText("ha");
+  await expect(page.getByTestId("painel-area-condicao")).toContainText("%");
   await expect(page.getByTestId("condicao-area")).toHaveCount(0);
+  await expect(page.getByTestId("condicao-pasto-analisar")).toHaveCount(0);
+  await expect(page.getByTestId("condicao-pasto-gerar-mapa")).toHaveCount(0);
 
-  await page.getByTestId("mapa-experiencia-tecnico").click();
+  await page.getByTestId("condicao-pasto-dados-tecnicos").click();
   await expect(page.getByTestId("mapa-indice-ndvi")).toBeVisible();
   await expect(page.getByTestId("mapa-indice-evi2")).toBeVisible();
   await expect(page.getByTestId("condicao-area")).toBeVisible();
