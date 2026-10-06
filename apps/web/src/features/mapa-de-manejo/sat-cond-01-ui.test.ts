@@ -37,7 +37,8 @@ describe("SAT-COND-01 — UI estática (UI-01..UI-10)", () => {
   });
 
   it("UI-06 ESC limpa", () => {
-    expect(mapaGeralSrc).toContain('if (e.key === "Escape") setClasseFiltro(null)');
+    expect(mapaGeralSrc).toContain('if (e.key !== "Escape") return');
+    expect(mapaGeralSrc).toContain("setClasseFiltro(null)");
   });
 
   it("UI-07 lista ordena", () => {
@@ -46,8 +47,8 @@ describe("SAT-COND-01 — UI estática (UI-01..UI-10)", () => {
     expect(Object.keys(ROTULO_ORDENACAO_CONDICAO)).toEqual(["atencao", "nome", "area", "solo", "baixa", "estresse"]);
   });
 
-  it("UI-08 click área abre painel", () => {
-    expect(mapaGeralSrc).toContain("PainelAreaCondicao");
+  it("UI-08 click área abre painel/dialog central", () => {
+    expect(mapaGeralSrc).toContain("DialogAreaCondicao");
     expect(legendaSrc).toContain("painel-area-condicao");
     expect(legendaSrc).toContain("barra-empilhada-condicao");
   });
@@ -71,25 +72,25 @@ describe("SAT-COND-01 — UI estática (UI-01..UI-10)", () => {
     expect(mapaGeralSrc).toContain('resampling: modoCondicao ? "nearest"');
   });
 
-  it("UI-11 stats sem mapa pedem Gerar mapa de condição", () => {
-    expect(legendaSrc).toContain("Gerar mapa de condição");
-    expect(legendaSrc).toContain("condicao-pasto-gerar-mapa");
-    expect(legendaSrc).toContain("condicao-pasto-stats-sem-mapa");
-    expect(mapaGeralSrc).toContain("gerarMapaCondicao");
-    expect(mapaGeralSrc).toContain("statsSemMapa");
+  it("UI-11 sem CTA local Gerar mapa / Analisar condição (MAPA-UX-02)", () => {
+    expect(legendaSrc).not.toContain("Gerar mapa de condição");
+    expect(legendaSrc).not.toContain("Analisar condição");
+    expect(legendaSrc).not.toContain("condicao-pasto-gerar-mapa");
+    expect(legendaSrc).not.toContain("condicao-pasto-analisar");
+    expect(mapaGeralSrc).not.toContain("gerarMapaCondicao");
   });
 
   it("404 da listagem é rota ausente; o efeito depende de idsKey, não do array ids", () => {
     expect(rastersCondSrc).toContain("rotaAusenteRef");
     expect(rastersCondSrc).toContain("ehRotaAusenteDaCondicao");
     expect(rastersCondSrc).toContain("e instanceof ApiError && e.status === 404");
-    expect(rastersCondSrc).toContain("}, [idsKey, chaveData, p.ativo, pode, classe, diaPedido, cache, assinaturas, versao]);");
+    expect(rastersCondSrc).toContain("}, [idsKey, idsResumoKey, chaveData, p.ativo, pode, classe, diaPedido, cache, assinaturas, versao]);");
     expect(rastersCondSrc).not.toMatch(/cache, ids, assinaturas/);
   });
 
   it("badge e paleta versionada", () => {
     const r = resumirCondicaoPasto({ contagem: { 0: 0, 1: 80, 2: 20, 3: 0, 4: 0, 5: 0, 6: 0 }, areaTotalHa: 100 });
     expect(badgePrincipalCondicao(r).rotulo).toBe("Boa cobertura");
-    expect(CLASSES_CONDICAO_PASTO.map((c) => c.cor)).toEqual(["#9E9E9E", "#1B5E20", "#7CB342", "#F9A825", "#EF6C00", "#BF360C", "#1565C0"]);
+    expect(CLASSES_CONDICAO_PASTO.map((c) => c.cor)).toEqual(["#E0E0E0", "#1B5E20", "#7CB342", "#F9A825", "#EF6C00", "#BF360C", "#1565C0"]);
   });
 });

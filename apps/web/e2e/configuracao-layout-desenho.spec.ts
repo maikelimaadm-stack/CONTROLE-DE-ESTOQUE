@@ -330,8 +330,15 @@ async function cancelarArraste(page: Page) {
 
 /* ─────────── medição ─────────── */
 
+/** Chromium às vezes serializa opaco como `rgba(r, g, b, 1)` em vez de `rgb(r, g, b)`. */
 const css = (l: Locator, props: string[], pseudo: string | null = null) =>
-  l.evaluate((el, a) => { const cs = getComputedStyle(el, a.pseudo); return a.props.map((p) => cs.getPropertyValue(p)); }, { props, pseudo });
+  l.evaluate((el, a) => {
+    const cs = getComputedStyle(el, a.pseudo);
+    return a.props.map((p) => {
+      const v = cs.getPropertyValue(p);
+      return v.replace(/^rgba\((\d+),\s*(\d+),\s*(\d+),\s*1\)$/i, "rgb($1, $2, $3)");
+    });
+  }, { props, pseudo });
 const geo = (l: Locator) => l.evaluate((el) => { const q = el.getBoundingClientRect(); return { x: q.left, y: q.top, w: q.width, h: q.height, direita: q.right, baixo: q.bottom }; });
 /** O elemento-folha dentro de `l` cujo texto casa com `re` — o rótulo do campo, o "LINHA 1", o rótulo de grupo. */
 const folha = (l: Locator, re: RegExp, props: string[]) =>

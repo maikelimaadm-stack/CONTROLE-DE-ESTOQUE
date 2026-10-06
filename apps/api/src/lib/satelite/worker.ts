@@ -23,6 +23,7 @@ import { withTx, type Db } from "@agro/db";
 import type { Config } from "../../config.js";
 import { FalhaCopernicus, type ClienteCopernicus, type TipoFalhaCopernicus } from "./copernicus.js";
 import { executarItem, resumoDoErro, type DesfechoItem, type ItemReservado, type LogSatelite } from "./executar-item.js";
+import type { LimiteAvulsoSatelite } from "./limite-avulso.js";
 import {
   INTERVALO_EXECUTOR_PADRAO_S, LOTE_EXECUTOR, PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S, PRAZO_EXECUCAO_S, simultaneasDoExecutor, type LimitesSatelite
 } from "./limites.js";
@@ -43,6 +44,10 @@ export interface OpcoesWorker {
   cliente: ClienteCopernicus;
   limites: LimitesSatelite;
   log: LogSatelite;
+  /** Limite avulso do processo (mapa de condição automático após pastagem). */
+  limiteAvulso: LimiteAvulsoSatelite;
+  /** Espelho de `COPERNICUS_ENABLED` no processo. */
+  copernicusEnabled: boolean;
   /** Entre o fim de uma rodada e o começo da próxima (padrão: `INTERVALO_EXECUTOR_PADRAO_S`). */
   intervaloMs?: number;
   /** Itens pedidos à reserva por rodada (1–50; padrão `LOTE_EXECUTOR`). O teto real é a capacidade livre. */
@@ -129,7 +134,15 @@ export class WorkerSatelite {
     // Em pausa, nada é reservado: nenhum item gasta tentativa contra um provedor sem serviço.
     if (agora() < this.pausadoAte) return { reservados: 0, concluidos: 0, falhos: 0, adiados: 0 };
     const itens = await this.reservar();
-    const dep = { db: this.opcoes.db, cliente: this.opcoes.cliente, log: this.opcoes.log, agora, aleatorio: this.opcoes.aleatorio ?? Math.random };
+    const dep = {
+      db: this.opcoes.db,
+      cliente: this.opcoes.cliente,
+      log: this.opcoes.log,
+      agora,
+      aleatorio: this.opcoes.aleatorio ?? Math.random,
+      limiteAvulso: this.opcoes.limiteAvulso,
+      copernicusEnabled: this.opcoes.copernicusEnabled
+    };
     // `executarItem` não lança; o `allSettled` é a garantia de que nem um defeito nele derruba o lote.
     const resultados = await Promise.allSettled(itens.map((item) => executarItem(dep, item)));
     const desfechos = resultados.map((x) => (x.status === "fulfilled" ? x.value.desfecho : "adiado"));

@@ -55,6 +55,21 @@ export class CacheRasters<E extends EntradaComIdentidade> {
     return havia;
   }
 
+  /**
+   * Troca o contexto esvaziando o índice interno SEM liberar entradas (SWR).
+   * Devolve as entradas órfãs para o chamador liberar só após o commit do novo snapshot.
+   */
+  trocarContextoPreservando(chave: string): { mudou: boolean; orfas: E[] } {
+    if (this.contexto === chave) return { mudou: false, orfas: [] };
+    const havia = this.contexto !== null;
+    this.contexto = chave;
+    if (!havia) return { mudou: false, orfas: [] };
+    const orfas = [...this.porIdentidade.values()];
+    this.porIdentidade.clear();
+    this.identidadeDaArea.clear();
+    return { mudou: true, orfas };
+  }
+
   get tamanho(): number { return this.identidadeDaArea.size; }
   has(areaId: string): boolean { return this.identidadeDaArea.has(areaId); }
   keys(): string[] { return [...this.identidadeDaArea.keys()]; }

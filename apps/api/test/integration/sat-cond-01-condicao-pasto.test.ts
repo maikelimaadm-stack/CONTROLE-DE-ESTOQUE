@@ -80,18 +80,28 @@ describe("SAT-COND-01 — rota mapa de condição", () => {
     expect((get.json() as { error: { message: string } }).error.message).toBe(MSG_MAPA_NAO_ENCONTRADO);
   });
 
-  it("POST gera UINT8 categórico; segundo POST reutiliza; listagem e arquivo assinados", async () => {
+  it("POST gera UINT8 categórico v2; resumo com pixels_fora_poligono; segundo POST reutiliza; listagem filtra versão corrente", async () => {
     const sha = await shaArea(areaId);
     await semearObservacao(areaId, sha);
     const a = await app.inject({ method: "POST", url: `/api/satelite/areas/${areaId}/condicao-pasto`, headers: h.headers() });
     expect(a.statusCode, a.body).toBe(201);
-    const corpo = a.json() as { mapa: { id: string; mapa: string; tipo: string; resolucao_m: number; versao_classificador: string; resumo: { classes: { codigo: number; pixels: number }[] }; url_assinada: string }; reutilizada: boolean };
+    const corpo = a.json() as {
+      mapa: {
+        id: string; mapa: string; tipo: string; resolucao_m: number; versao_classificador: string;
+        resumo: { versao_classificador: string; pixels_fora_poligono: number; classes: { codigo: number; pixels: number }[] };
+        url_assinada: string;
+      };
+      reutilizada: boolean;
+    };
     expect(corpo.reutilizada).toBe(false);
     expect(corpo.mapa.mapa).toBe("condicao_pasto");
     expect(corpo.mapa.tipo).toBe("classificacao");
     expect(corpo.mapa.resolucao_m).toBeGreaterThanOrEqual(20);
-    expect(corpo.mapa.versao_classificador).toBe("condicao-pasto-v1");
+    expect(corpo.mapa.versao_classificador).toBe("condicao-pasto-v2");
+    expect(corpo.mapa.resumo.versao_classificador).toBe("condicao-pasto-v2");
     expect(corpo.mapa.resumo.classes).toHaveLength(7);
+    expect(typeof corpo.mapa.resumo.pixels_fora_poligono).toBe("number");
+    expect(corpo.mapa.resumo.pixels_fora_poligono).toBeGreaterThan(0);
     expect(corpo.mapa.url_assinada).toMatch(/\/api\/mapa\/condicao-pasto\/.+\/arquivo\?t=/);
     expect(corpo.mapa).not.toHaveProperty("analise_id");
     const processos = emu.chamadasProcesso();
@@ -106,9 +116,10 @@ describe("SAT-COND-01 — rota mapa de condição", () => {
 
     const lista = await app.inject({ method: "GET", url: `/api/mapa/condicao-pasto?area_ids=${areaId}`, headers: h.headers() });
     expect(lista.statusCode).toBe(200);
-    const itens = (lista.json() as { itens: { id: string }[] }).itens;
+    const itens = (lista.json() as { itens: { id: string; versao_classificador: string }[] }).itens;
     expect(itens).toHaveLength(1);
     expect(itens[0]!.id).toBe(corpo.mapa.id);
+    expect(itens[0]!.versao_classificador).toBe("condicao-pasto-v2");
 
     const arq = await app.inject({ method: "GET", url: corpo.mapa.url_assinada });
     expect(arq.statusCode).toBe(200);

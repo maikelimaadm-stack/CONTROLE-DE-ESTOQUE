@@ -100,13 +100,15 @@ export async function buildApp(opts: {
   app.decorate("clienteCopernicus", clienteCopernicus);
   // SAT-06 (decisão 297): o estado do pedido avulso ao provedor (chamadas em voo + piso por instância) é UM objeto por
   // processo, compartilhado pela análise da SAT-01 e pela imagem por pixel — o mesmo limite, as mesmas vagas.
-  app.decorate("limiteAvulsoSatelite", new LimiteAvulsoSatelite(limitesDaConfig(config)));
+  const limiteAvulsoSatelite = new LimiteAvulsoSatelite(limitesDaConfig(config));
+  app.decorate("limiteAvulsoSatelite", limiteAvulsoSatelite);
   app.decorate("armazenamentoRaster", opts.armazenamentoRaster ?? armazenamentoRaster);
   // O EXECUTOR DA FILA SATELITAL só existe com as três condições (SATELITE_WORKER_ENABLED, COPERNICUS_ENABLED e a
   // credencial); faltando uma, UMA linha de log diz qual (sem valor nenhum) e nada é reservado — a API sobe igual.
   const motivoDesligado = motivoExecutorDesligado(config, clienteCopernicus);
   const executorSatelite = motivoDesligado ? null : new WorkerSatelite({
     db, cliente: clienteCopernicus, limites: limitesDaConfig(config), log: app.log,
+    limiteAvulso: limiteAvulsoSatelite, copernicusEnabled: config.COPERNICUS_ENABLED,
     intervaloMs: (config.SATELITE_WORKER_INTERVALO_S ?? INTERVALO_EXECUTOR_PADRAO_S) * 1000
   });
   app.decorate("executorSatelite", executorSatelite);

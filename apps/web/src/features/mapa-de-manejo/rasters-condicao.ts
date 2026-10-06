@@ -109,7 +109,6 @@ export async function listarMapasCondicao(
   return saida;
 }
 
-/** Gera (ou reaproveita) o mapa categórico — só em clique deliberado. Gasta crédito da Process API na primeira vez. */
 export async function gerarMapaCondicao(areaId: string, dataImagem?: string): Promise<{ mapa: MapaCondicaoDto; reutilizada: boolean }> {
   const qs = dataImagem ? `?data_imagem=${encodeURIComponent(dataImagem)}` : "";
   return api<{ mapa: MapaCondicaoDto; reutilizada: boolean }>(`/api/satelite/areas/${areaId}/condicao-pasto${qs}`, {
@@ -140,8 +139,13 @@ async function carregarEntrada(dto: MapaCondicaoDto, lut: Uint8ClampedArray, sig
   }
 }
 
+function liberarOrfas(orfas: Entrada[]) {
+  for (const e of orfas) liberarEntrada(e);
+}
+
 export function useMapasCondicao(p: {
   areaIds: readonly string[];
+  areaIdsResumo?: readonly string[];
   data?: DataDaCamada;
   assinaturas?: ReadonlyMap<string, string>;
   ativo: boolean;
@@ -154,73 +158,100 @@ export function useMapasCondicao(p: {
   const [datasPorArea, setDatasPorArea] = React.useState<ReadonlyMap<string, string>>(new Map());
   const [ausentes, setAusentes] = React.useState<ReadonlySet<string>>(new Set());
   const [situacao, setSituacao] = React.useState<"ocioso" | "carregando" | "pronto" | "erro">("ocioso");
+  const [atualizando, setAtualizando] = React.useState(false);
+  const [erroAtualizacao, setErroAtualizacao] = React.useState<string | null>(null);
   const [versao, setVersao] = React.useState(0);
   const cacheRef = React.useRef<CacheRasters<Entrada> | null>(null);
   if (cacheRef.current === null) cacheRef.current = new CacheRasters<Entrada>(liberarEntrada);
   const cache = cacheRef.current;
   const semRef = React.useRef(new Set<string>());
+  /** Resumos conhecidos: NUNCA limpos ao sair da vista nem ao desligar a camada (`!ativo`). */
   const resumosRef = React.useRef(new Map<string, ResumoCondicaoPasto>());
   const datasRef = React.useRef(new Map<string, string>());
-  /** API anterior à SAT-COND-01: a rota não existe. Não insistir (e não abortar em loop). */
+  const orfasRef = React.useRef<Entrada[]>([]);
   const rotaAusenteRef = React.useRef(false);
   const chaveData = chaveDaData(p.data ?? DATA_ULTIMA_IMAGEM);
   const diaPedido = dataImagemDoPedido(p.data ?? DATA_ULTIMA_IMAGEM);
-  /** Chave estável: `areaIds.filter()` a cada render abortava o GET e o vigia de skew via `net::ERR_ABORTED`. */
   const idsKey = p.areaIds.slice().sort().join(",");
+  const idsResumoKey = (p.areaIdsResumo ?? p.areaIds).slice().sort().join(",");
   const classe = p.classeDestaque;
   const assinaturas = p.assinaturas;
 
   React.useEffect(() => {
-    const mudou = cache.trocarContexto(`condicao_pasto|${chaveData}`);
+    const { mudou, orfas } = cache.trocarContextoPreservando(`condicao_pasto|${chaveData}`);
     if (mudou) {
       semRef.current.clear();
-      resumosRef.current = new Map();
-      datasRef.current = new Map();
-      setPorArea(new Map());
-      setResumos(new Map());
-      setDatasPorArea(new Map());
-      setAusentes(new Set());
+      // NÃO limpa resumosRef / datasRef / setPorArea / setResumos — SWR até o commit.
+      if (orfas.length > 0) orfasRef.current.push(...orfas);
     }
-    if (assinaturas) cache.sincronizarGeometrias(assinaturas);
+    if (assinaturas) {
+      const soltas = cache.sincronizarGeometrias(assinaturas);
+      for (const id of soltas) semRef.current.delete(id);
+    }
+    // CACHE-01/02: ao desligar a camada (Dados técnicos) NÃO limpa resumos nem cache pesado.
     if (!p.ativo || !pode) {
-      cache.limpar();
-      semRef.current.clear();
-      setPorArea(new Map());
-      setAusentes(new Set());
-      setSituacao("ocioso");
+      setAtualizando(false);
       return;
     }
     if (rotaAusenteRef.current) {
       setSituacao("pronto");
+      setAtualizando(false);
       return;
     }
-    const ids = idsKey.split(",").filter(Boolean);
-    cache.manter(new Set(ids));
-    if (ids.length === 0) {
-      setPorArea(cache.snapshot());
-      setSituacao("ocioso");
+    const idsViewport = idsKey.split(",").filter(Boolean);
+    const idsResumo = idsResumoKey.split(",").filter(Boolean);
+    // CACHE-03: trim só do cache pesado à vista — resumosRef permanece intacto.
+    cache.manter(new Set(idsViewport));
+    if (!mudou) setPorArea(cache.snapshot());
+
+    if (idsResumo.length === 0 && idsViewport.length === 0) {
+      const temAlgo = resumosRef.current.size > 0 || orfasRef.current.length > 0;
+      setSituacao(temAlgo ? "pronto" : "ocioso");
+      setAtualizando(false);
       return;
     }
+
     const controle = new AbortController();
-    setSituacao((s) => (s === "pronto" && cache.tamanho > 0 ? s : "carregando"));
+    const temSnapshot = resumosRef.current.size > 0 || orfasRef.current.length > 0 || cache.tamanho > 0;
+    setAtualizando(true);
+    setErroAtualizacao(null);
+    setSituacao((s) => (s === "pronto" || temSnapshot ? "pronto" : "carregando"));
     const lut = montarLutCondicaoPasto({ classeDestaque: classe });
     (async () => {
       try {
-        const faltando = idsFaltando(ids, new Set([...cache.keys(), ...semRef.current]));
-        if (faltando.length > 0) {
-          const listados = await listarMapasCondicao(faltando, { signal: controle.signal, dataImagem: diaPedido });
+        const conhecidosResumo = mudou ? new Set<string>() : new Set(resumosRef.current.keys());
+        const faltandoResumo = idsResumo.filter((id) => !conhecidosResumo.has(id) && !semRef.current.has(id));
+        const faltandoRaster = idsFaltando(idsViewport, new Set([...cache.keys(), ...semRef.current]));
+        const aListar = [...new Set([...faltandoResumo, ...faltandoRaster])];
+
+        if (aListar.length > 0) {
+          const listados = await listarMapasCondicao(aListar, { signal: controle.signal, dataImagem: diaPedido });
           const dtos = diaPedido ? listados.filter((d) => d.data_imagem === diaPedido) : listados;
           const com = new Set(dtos.map((d) => d.area_id));
-          for (const id of faltando) if (!com.has(id)) semRef.current.add(id);
-          for (const d of dtos) {
-            resumosRef.current.set(d.area_id, d.resumo);
-            datasRef.current.set(d.area_id, d.data_imagem);
+          for (const id of aListar) if (!com.has(id)) semRef.current.add(id);
+
+          if (mudou) {
+            const novosResumos = new Map<string, ResumoCondicaoPasto>();
+            const novasDatas = new Map<string, string>();
+            for (const d of dtos) {
+              novosResumos.set(d.area_id, d.resumo);
+              novasDatas.set(d.area_id, d.data_imagem);
+            }
+            resumosRef.current = novosResumos;
+            datasRef.current = novasDatas;
+          } else {
+            for (const d of dtos) {
+              resumosRef.current.set(d.area_id, d.resumo);
+              datasRef.current.set(d.area_id, d.data_imagem);
+            }
           }
           setResumos(new Map(resumosRef.current));
           setDatasPorArea(new Map(datasRef.current));
           setAusentes(new Set(semRef.current));
-          for (let i = 0; i < dtos.length; i += DOWNLOADS_SIMULTANEOS) {
-            const grupo = dtos.slice(i, i + DOWNLOADS_SIMULTANEOS);
+
+          const paraBaixar = dtos.filter((d) => idsViewport.includes(d.area_id) && !cache.has(d.area_id));
+          for (let i = 0; i < paraBaixar.length; i += DOWNLOADS_SIMULTANEOS) {
+            const grupo = paraBaixar.slice(i, i + DOWNLOADS_SIMULTANEOS);
             await Promise.all(grupo.map(async (dto) => {
               try {
                 const entrada = await carregarEntrada(dto, lut, controle.signal);
@@ -238,6 +269,7 @@ export function useMapasCondicao(p: {
             }));
           }
         }
+
         for (const id of cache.keys()) {
           const ent = cache.get(id);
           if (!ent?.bytesCinza.length) continue;
@@ -249,25 +281,35 @@ export function useMapasCondicao(p: {
           cache.guardar(id, ent);
         }
         if (controle.signal.aborted) return;
+
         setPorArea(cache.snapshot());
+        liberarOrfas(orfasRef.current);
+        orfasRef.current = [];
         setSituacao("pronto");
+        setAtualizando(false);
+        setErroAtualizacao(null);
       } catch (e) {
         if (controle.signal.aborted || ehAborto(e)) return;
         if (ehRotaAusenteDaCondicao(e)) {
           rotaAusenteRef.current = true;
-          setPorArea(new Map());
-          setResumos(new Map());
-          setDatasPorArea(new Map());
-          setAusentes(new Set());
           setSituacao("pronto");
+          setAtualizando(false);
           return;
         }
+        // CACHE-04: erro mantém snapshot anterior.
+        setErroAtualizacao(e instanceof Error ? e.message : "Não foi possível atualizar o mapa de condição.");
         setSituacao("erro");
+        setAtualizando(false);
       }
     })();
     return () => controle.abort();
-    // idsKey (não `ids`): array novo a cada render abortava o GET e o vigia via `net::ERR_ABORTED`.
-  }, [idsKey, chaveData, p.ativo, pode, classe, diaPedido, cache, assinaturas, versao]);
+  }, [idsKey, idsResumoKey, chaveData, p.ativo, pode, classe, diaPedido, cache, assinaturas, versao]);
+
+  React.useEffect(() => () => {
+    liberarOrfas(orfasRef.current);
+    orfasRef.current = [];
+    cache.limpar();
+  }, [cache]);
 
   const recarregar = React.useCallback(() => {
     rotaAusenteRef.current = false;
@@ -288,6 +330,8 @@ export function useMapasCondicao(p: {
     setAusentes(new Set(semRef.current));
     setPorArea(cache.snapshot());
     setSituacao("pronto");
+    setAtualizando(false);
+    setErroAtualizacao(null);
     return true;
   }, [diaPedido, classe, cache]);
 
@@ -300,6 +344,8 @@ export function useMapasCondicao(p: {
 
   return {
     porArea, resumos, datasPorArea, datasDistintas, ausentes, situacao, agregado,
+    atualizando,
+    erroAtualizacao,
     temRaster: (id: string) => Boolean(cache.get(id)?.blobUrl),
     incorporarDto,
     recarregar

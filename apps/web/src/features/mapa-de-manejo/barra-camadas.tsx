@@ -172,30 +172,30 @@ export function BarraCamadas(p: BarraCamadasProps) {
                   desabilitado={!rasterAtivo}
                 />
               </Grupo>
+
+              <Grupo rotulo="Opacidade" testId="mapa-grupo-opacidade">
+                <label className="flex h-[26px] items-center gap-2 text-xs tabular-nums text-slate-600">
+                  <input
+                    type="range"
+                    min={10}
+                    max={100}
+                    step={5}
+                    value={Math.round(p.opacidade * 100)}
+                    disabled={!overlayAtivo}
+                    onChange={(e) => p.onOpacidade(Number(e.target.value) / 100)}
+                    aria-label="Opacidade da imagem de satélite"
+                    className="w-24 accent-slate-700"
+                    data-testid="mapa-opacidade"
+                  />
+                  <span className="w-9 text-right" data-testid="mapa-opacidade-valor">{Math.round(p.opacidade * 100)}%</span>
+                </label>
+              </Grupo>
             </>
           )}
 
-          <Grupo rotulo="Opacidade" testId="mapa-grupo-opacidade">
-            <label className="flex h-[26px] items-center gap-2 text-xs tabular-nums text-slate-600">
-              <input
-                type="range"
-                min={10}
-                max={100}
-                step={5}
-                value={Math.round(p.opacidade * 100)}
-                disabled={!overlayAtivo}
-                onChange={(e) => p.onOpacidade(Number(e.target.value) / 100)}
-                aria-label="Opacidade da imagem de satélite"
-                className="w-24 accent-slate-700"
-                data-testid="mapa-opacidade"
-              />
-              <span className="w-9 text-right" data-testid="mapa-opacidade-valor">{Math.round(p.opacidade * 100)}%</span>
-            </label>
-          </Grupo>
-
           {p.podeConsultar && (
             <Grupo rotulo="Ação" testId="mapa-grupo-acao">
-              <Button type="button" size="sm" variant="outline" onClick={p.onNovaConsulta} data-testid="mapa-nova-consulta">Atualizar condição</Button>
+              <Button type="button" size="sm" onClick={p.onNovaConsulta} data-testid="mapa-nova-consulta">Analisar pastos</Button>
             </Grupo>
           )}
         </>
