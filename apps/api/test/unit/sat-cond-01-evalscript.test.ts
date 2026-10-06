@@ -4,6 +4,7 @@ import {
   VERSAO_EVALSCRIPT_CONDICAO_PASTO,
   chaveIdentidadeMapaCondicao
 } from "@agro/domain";
+import type { PoligonoGeoJson } from "../../src/lib/satelite/geometria.js";
 import { EVALSCRIPT_CONDICAO_PASTO_V1 } from "../../src/lib/satelite/evalscript-condicao-pasto.js";
 import { chaveCacheCondicaoPasto, montarCorpoProcessoCondicao, planejarGradeCondicao } from "../../src/lib/satelite/raster-condicao-pasto.js";
 
@@ -40,7 +41,7 @@ describe("SAT-COND-01 evalscript e Process", () => {
   });
 
   it("corpo da Process API usa a janela da observação (sem misturar datas)", () => {
-    const poli = { type: "Polygon" as const, coordinates: [[[-56.1, -15.6], [-56.1, -15.59], [-56.09, -15.59], [-56.09, -15.6], [-56.1, -15.6]]] };
+    const poli: PoligonoGeoJson = { type: "Polygon", coordinates: [[[-56.1, -15.6], [-56.1, -15.59], [-56.09, -15.59], [-56.09, -15.6], [-56.1, -15.6]]] };
     const grade = planejarGradeCondicao(poli);
     expect(grade.resolucaoAlvoM).toBe(20);
     const corpo = montarCorpoProcessoCondicao(grade, {

@@ -47,7 +47,6 @@ export const MSG_GEOMETRIA_ALTERADA_CONDICAO = "O polígono da área mudou depoi
 const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const UUID_CANONICO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const corpoVazio = z.object({}).strict();
-const semQuery = z.object({}).strict();
 const diaCivil = z.string().refine(isISODate, "Data inválida (use AAAA-MM-DD civil)");
 const inteiroPositivo = (maximo: number) => z.string().regex(/^[1-9]\d{0,8}$/).transform(Number).pipe(z.number().int().min(1).max(maximo));
 const listaQuery = z.object({
