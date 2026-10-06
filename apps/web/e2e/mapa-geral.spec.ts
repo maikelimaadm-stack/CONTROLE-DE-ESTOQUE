@@ -510,6 +510,9 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   // a área fica sem análise e CINZA no modo por área — nunca na cor do cadastro, que só aparece se o usuário a escolhe
   sql(`update erp.areas set geometria = '${JSON.stringify(quadrado(-55.3005, -15.2005))}'::jsonb where id = '${verde.id}'`);
   await page.reload();
+  await expect(page.getByTestId("mapa-item-area").filter({ hasText: verde.name })).toBeVisible();
+  // Reload devolve a experiência padrão Condição; o painel `condicao-area` mora em Dados técnicos.
+  await entrarDadosTecnicos(page);
   await page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).click();
   await expect(page.getByTestId("mapa-area-selecionada").getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toBeVisible();
   await expect(page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).getByTestId("mapa-item-ndvi")).toHaveCount(0);
