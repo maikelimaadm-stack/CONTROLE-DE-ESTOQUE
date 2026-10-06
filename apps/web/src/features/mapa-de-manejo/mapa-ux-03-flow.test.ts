@@ -39,7 +39,7 @@ describe("MAPA-UX-03 — FLOW + QUEUE", () => {
     expect(barraSrc).toContain('data-testid="mapa-atualizando"');
     expect(mapaGeralSrc).toContain("BarraStatusAnalise");
     expect(mapaGeralSrc).toContain("AvisoAtualizandoMapa");
-    expect(mapaGeralSrc).toContain('mapasCond.situacao === "carregando"');
+    expect(mapaGeralSrc).toContain('mapasCond.atualizando');
     expect(modalSrc).toContain("Continuar em segundo plano");
     const c: ConsultaDto = {
       id: "x", situacao: "executando", total_itens: 102,

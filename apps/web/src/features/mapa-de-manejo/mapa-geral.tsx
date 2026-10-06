@@ -22,6 +22,7 @@ import { COR_PADRAO_AREA } from "./cores";
 import { AvisoDeLocalizacao, desenharAreas, hectares, limites, marcarSelecao, rotulosDasAreas, useAreasDoMapa, useMapaBase } from "./mapa-base";
 import { AtribuicaoCopernicus, LegendaNdvi, PERMISSAO_PEDIR_NDVI, anosDasImagens, useResumoIndice } from "./ndvi";
 import { OPACIDADE_PADRAO, RENDER_PADRAO, amostrarPixelCanvas, idCamadaRaster, sincronizarRastersNoMapa, type RenderRaster } from "./camada-rasters";
+import { OPACIDADE_PNG_SOB_ZONAS, sincronizarZonasCondicaoNoMapa } from "./camada-zonas-condicao";
 import { assinaturaDaGeometria } from "./cache-rasters";
 import { coresPorArea, mediaValidaDoIndice, type ModoCor } from "./cor-por-area";
 import { DATA_ULTIMA_IMAGEM, dataEscolhida, datasUteisDoHistorico, opcoesDeData, type DataDaCamada } from "./data-camada";
@@ -115,6 +116,7 @@ export function MapaGeral() {
   const rasters = useRastersIndice({ areaIds: selecao.ids, indice, data, assinaturas, ativo: comNdvi && !modoCondicao });
   const mapasCond = useMapasCondicao({
     areaIds: selecao.ids,
+    areaIdsResumo: areas.map((a) => a.id),
     data,
     assinaturas,
     ativo: comNdvi && modoCondicao,
@@ -481,7 +483,7 @@ export function MapaGeral() {
                   filaIndisponivel={operacao.filaIndisponivel}
                 />
               )}
-              <AvisoAtualizandoMapa visivel={modoCondicao && mapasCond.situacao === "carregando"} />
+              <AvisoAtualizandoMapa visivel={modoCondicao && (mapasCond.atualizando || mapasCond.situacao === "carregando")} />
               {resumoUltima.situacao === "indisponivel" && <div className="rounded bg-white/90 px-2 py-1 text-xs text-slate-600 shadow-sm" data-testid="mapa-ndvi-indisponivel">Análise por satélite ainda não disponível neste servidor.</div>}
               {resumoUltima.situacao === "erro" && (
                 <div className="pointer-events-auto flex items-center gap-2 rounded bg-white/90 px-2 py-1 text-xs text-red-600 shadow-sm" data-testid="mapa-ndvi-erro">

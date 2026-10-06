@@ -84,7 +84,7 @@ describe("SAT-COND-01 — UI estática (UI-01..UI-10)", () => {
     expect(rastersCondSrc).toContain("rotaAusenteRef");
     expect(rastersCondSrc).toContain("ehRotaAusenteDaCondicao");
     expect(rastersCondSrc).toContain("e instanceof ApiError && e.status === 404");
-    expect(rastersCondSrc).toContain("}, [idsKey, chaveData, p.ativo, pode, classe, diaPedido, cache, assinaturas, versao]);");
+    expect(rastersCondSrc).toContain("}, [idsKey, idsResumoKey, chaveData, p.ativo, pode, classe, diaPedido, cache, assinaturas, versao]);");
     expect(rastersCondSrc).not.toMatch(/cache, ids, assinaturas/);
   });
 
