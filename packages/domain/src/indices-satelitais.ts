@@ -233,20 +233,56 @@ export const HISTOGRAMA_BINS_EVI2 = [
   -1 - HISTOGRAMA_EPS_BORDA, 0.2, 0.4, 0.6, 1 + HISTOGRAMA_EPS_BORDA, 2.5 + HISTOGRAMA_EPS_BORDA
 ] as const;
 
+/**
+ * True se `JSON.stringify(n)` é um inteiro JSON (`-1`, `1`). `-1.0` em JS ainda vira `"-1"`.
+ * O CDSE trata isso como integer math — incompatível com output FLOAT32.
+ */
+export function jsonSerializaComoInteiro(n: number): boolean {
+  return Number.isFinite(n) && !/[.eE]/.test(JSON.stringify(n));
+}
+
+export type RecusaBinsHistogramaFloat32 = "menos_de_dois" | "nao_finito" | "integer_json" | "duplicado" | "ordem";
+
+/**
+ * Contrato dos bins FLOAT32 da Statistical API: ≥2 bordas, finitas, estritamente crescentes,
+ * cada valor serializado com ponto/expoente. Não usar em SCL (UINT8 / integer math).
+ */
+export function recusaBinsHistogramaFloat32(edges: readonly number[]): RecusaBinsHistogramaFloat32 | null {
+  if (edges.length < 2) return "menos_de_dois";
+  for (let i = 0; i < edges.length; i++) {
+    const n = edges[i]!;
+    if (typeof n !== "number" || !Number.isFinite(n)) return "nao_finito";
+    if (jsonSerializaComoInteiro(n)) return "integer_json";
+    if (i > 0) {
+      const prev = edges[i - 1]!;
+      if (n === prev) return "duplicado";
+      if (!(n > prev)) return "ordem";
+    }
+  }
+  return null;
+}
+
+/** True se as bordas passam no contrato FLOAT32 (inclui `JSON.stringify` de cada valor). */
+export function binsSerializamComoMathFloat(edges: readonly number[]): boolean {
+  return recusaBinsHistogramaFloat32(edges) === null;
+}
+
 /** Payload H0 (pré-hotfix): o `1` inteiro JSON que o CDSE recusou. Não enviar. */
 export const HISTOGRAMA_BINS_EVI2_RECUSADO_CDSE = [
   -1 - HISTOGRAMA_EPS_BORDA, 0.2, 0.4, 0.6, 1, 2.5 + HISTOGRAMA_EPS_BORDA
 ] as const;
 
 /**
- * True se cada borda serializa em JSON com ponto/expoente. O CDSE trata inteiro JSON (`1`)
- * como integer math — incompatível com FLOAT32.
+ * MSAVI2: borda persistível ±eps; limiares internos 0.2/0.4/0.6.
+ * O `-1` inteiro JSON selecionava integer math no CDSE (mesmo 400 do EVI2, output FLOAT32).
+ * Vai `-1 - eps` para o JSON ser float; frações agronômicas não usam este histograma.
  */
-export function binsSerializamComoMathFloat(edges: readonly number[]): boolean {
-  return edges.length >= 2 && edges.every((n) => Number.isFinite(n) && /[.eE]/.test(JSON.stringify(n)));
-}
-/** MSAVI2: borda persistível ±eps; limiares internos exatos. */
 export const HISTOGRAMA_BINS_MSAVI2 = [
+  -2.5 - HISTOGRAMA_EPS_BORDA, -1 - HISTOGRAMA_EPS_BORDA, 0.2, 0.4, 0.6, 1 + HISTOGRAMA_EPS_BORDA
+] as const;
+
+/** Payload recusado em produção pós-#106: `-1` inteiro JSON. Não enviar. */
+export const HISTOGRAMA_BINS_MSAVI2_RECUSADO_CDSE = [
   -2.5 - HISTOGRAMA_EPS_BORDA, -1, 0.2, 0.4, 0.6, 1 + HISTOGRAMA_EPS_BORDA
 ] as const;
 export const HISTOGRAMA_BINS_BSI = [
