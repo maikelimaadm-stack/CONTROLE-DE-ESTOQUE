@@ -60,7 +60,7 @@ export function LegendaCondicaoPasto(p: {
               >
                 <span className="h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: c.cor }} aria-hidden />
                 <span className="min-w-0 flex-1 truncate text-slate-700">{nomeCurto}</span>
-                <span className="hidden tabular-nums text-slate-500 sm:inline" data-testid={`legenda-ha-${c.id}`}>{num(Number(l.area_estimada_ha), 1)}</span>
+                <span className="tabular-nums text-[10px] text-slate-400" data-testid={`legenda-ha-${c.id}`}>{num(Number(l.area_estimada_ha), 1)} ha</span>
                 <span className="w-9 text-right tabular-nums font-medium text-slate-600" data-testid={`legenda-pct-${c.id}`}>{num(Number(l.area_estimada_percentual), 0)}%</span>
               </button>
             </li>
