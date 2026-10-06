@@ -29,6 +29,7 @@ import {
   VERSAO_METODO_NDVI_V2, VERSAO_METODO_PASTAGEM_ESSENCIAL
 } from "@agro/domain";
 import { DomainError } from "@agro/shared";
+import { escopoDoModulo } from "@erp/plataforma";
 import { empresaScopeSql, hasPermission, scopedById, type ServiceCtx } from "../context.js";
 import {
   MSG_AREA_SEM_POLIGONO, MSG_POLIGONO_FORA_DO_FORMATO, msgAreaGrande, msgAreaPequena, prepararPoligono, type AreaLida
@@ -50,13 +51,16 @@ import { decidirAposFalha, type DecisaoFalha } from "./retry.js";
 import { tentarGerarMapaCondicaoAposPastagem } from "./gerar-mapa-condicao.js";
 import type { LimiteAvulsoSatelite } from "./limite-avulso.js";
 
-/** A linha que a reserva (`erp.satelite_reservar_itens`, migration 0054) devolve: só ids. */
+/** A linha que a reserva (`erp.satelite_reservar_itens`, migration 0054/0060) devolve: só ids. */
 export interface ItemReservado { organization_id: string; empresa_id: string; consulta_id: string; item_id: string; criado_por: string }
 
 export type DesfechoItem = "concluido" | "falho" | "adiado";
 
-/** O desfecho do item e, quando a chamada ao provedor falhou (fase 2), a falha dele — de onde o executor tira a pausa. */
-export interface ResultadoItem { desfecho: DesfechoItem; falhaDoProvedor: FalhaCopernicus | null }
+/**
+ * O desfecho do item; a falha do provedor (fase 2) para a pausa por cota; e o motivo estável (ERP ou provedor)
+ * para a pausa fail-safe de cascata estrutural (`area_nao_encontrada`).
+ */
+export interface ResultadoItem { desfecho: DesfechoItem; falhaDoProvedor: FalhaCopernicus | null; motivo: string | null }
 
 /** O que o executor escreve no log: um objeto de ids, tipos e números, e uma frase fixa (o logger da API serve). */
 export interface LogSatelite {
@@ -143,6 +147,44 @@ async function lerArea(ctx: ServiceCtx, areaId: string): Promise<AreaLida | null
   return r.rows[0] ?? null;
 }
 
+interface DiagnosticoArea {
+  area_existe_no_tenant: boolean;
+  area_deletada: boolean;
+  area_visivel_no_escopo: boolean;
+  empresa_id: string | null;
+  modulo_usado: string;
+}
+
+/** Diagnóstico seguro (0060) quando `lerArea` falha: booleanos + ids — sem geometria nem PII. */
+async function diagnosticarAreaAusente(ctx: ServiceCtx, item: LinhaItem): Promise<Record<string, unknown>> {
+  const tipoEscopo = ctx.membership.isOwner
+    ? "owner"
+    : escopoDoModulo(ctx.membership.escopos, MODULO_EXECUTOR).tipo;
+  const base: Record<string, unknown> = {
+    item_id: item.id,
+    consulta_id: item.consulta_id,
+    area_id: item.area_id,
+    empresa_id: item.empresa_id,
+    organization_id: ctx.orgId,
+    modulo_executor: MODULO_EXECUTOR,
+    tipo_escopo: tipoEscopo
+  };
+  try {
+    const r = await ctx.tx.query<DiagnosticoArea>(
+      "select area_existe_no_tenant, area_deletada, area_visivel_no_escopo, empresa_id, modulo_usado from erp.satelite_diagnosticar_area($1, $2, $3, $4)",
+      [ctx.orgId, item.area_id, ctx.user.id, MODULO_EXECUTOR]);
+    const d = r.rows[0];
+    return {
+      ...base,
+      area_existe_no_tenant: d?.area_existe_no_tenant ?? false,
+      area_deletada: d?.area_deletada ?? false,
+      area_visivel_no_escopo: d?.area_visivel_no_escopo ?? false
+    };
+  } catch {
+    return { ...base, diagnostico: "indisponivel" };
+  }
+}
+
 /**
  * A mudança de situação do item, só se a reserva ainda é DESTA execução ('executando' e, quando conhecidas, as mesmas
  * tentativas — outra reserva somaria uma). ROW COUNT conferido: o item já travado e não alcançado é defeito.
@@ -189,6 +231,22 @@ async function conferir(ctx: ServiceCtx, item: LinhaItem): Promise<{ erro: strin
   }
 }
 
+/**
+ * Conferência pós-reserva (HOTFIX-SAT-WORKER-01): o item acabou de ser reservado; a área DEVE ser legível
+ * no mesmo módulo/escopo. Exportada para o teste de contrato reserva → execução.
+ */
+export async function conferirAreaAposReserva(dep: Pick<DependenciasItem, "db">, r: ItemReservado): Promise<{ ok: true; areaId: string } | { ok: false; erro: string }> {
+  return withTx(dep.db, tenantDo(r), async (tx) => {
+    const ctx = await contextoDoCriador(tx, r.organization_id, r.criado_por);
+    if (!ctx) return { ok: false, erro: "criador_sem_acesso" };
+    const item = await lerItem(ctx, r.item_id, false);
+    if (!item || item.consulta_id !== r.consulta_id) return { ok: false, erro: "item_fora_do_escopo" };
+    const area = await lerArea(ctx, item.area_id);
+    if (!area) return { ok: false, erro: ERROS_ITEM.areaNaoEncontrada };
+    return { ok: true, areaId: area.id };
+  });
+}
+
 async function fase1(dep: DependenciasItem, r: ItemReservado): Promise<Fase1> {
   return withTx(dep.db, tenantDo(r), async (tx) => {
     const ctx = await contextoDoCriador(tx, r.organization_id, r.criado_por);
@@ -199,6 +257,11 @@ async function fase1(dep: DependenciasItem, r: ItemReservado): Promise<Fase1> {
     const janela = janelaDoItem(item);
     const c = await conferir(ctx, item);
     if ("erro" in c) {
+      if (c.erro === ERROS_ITEM.areaNaoEncontrada) {
+        dep.log.error(
+          { satelite_item: { desfecho: "falho", motivo: c.erro, ...(await diagnosticarAreaAusente(ctx, item)) } },
+          "item da fila satelital: área não encontrada após reserva");
+      }
       await mudarItem(ctx, item, { situacao: "falho", erro: c.erro, proxima: null });
       await recalcularConsulta(ctx, item.consulta_id);
       return { tipo: "falho", erro: c.erro };
@@ -287,6 +350,11 @@ async function fase3(dep: DependenciasItem, r: ItemReservado, p: Pronto, chamada
     if (!area || area.geometria_sha256 !== item.geometria_sha256) {
       await consumoDo(ctx, r, chamada.respondeu!.puCabecalho);
       const erro = area ? ERROS_ITEM.geometriaAlterada : ERROS_ITEM.areaNaoEncontrada;
+      if (erro === ERROS_ITEM.areaNaoEncontrada) {
+        dep.log.error(
+          { satelite_item: { desfecho: "falho", motivo: erro, etapa: "gravacao", ...(await diagnosticarAreaAusente(ctx, item)) } },
+          "item da fila satelital: área não encontrada após reserva");
+      }
       await mudarItem(ctx, item, { situacao: "falho", erro, proxima: null });
       await recalcularConsulta(ctx, item.consulta_id);
       return { desfecho: "falho", motivo: erro };
@@ -337,15 +405,17 @@ export function resumoDoErro(e: unknown): Record<string, unknown> {
 /** Executa um item reservado. NUNCA lança: o desfecho é o que entra na contagem da rodada. */
 export async function executarItem(dep: DependenciasItem, r: ItemReservado): Promise<ResultadoItem> {
   let falhaDoProvedor: FalhaCopernicus | null = null;
-  const desfecho = await executarFases(dep, r, (f) => { falhaDoProvedor = f; });
-  return { desfecho, falhaDoProvedor };
+  const { desfecho, motivo } = await executarFases(dep, r, (f) => { falhaDoProvedor = f; });
+  return { desfecho, falhaDoProvedor, motivo };
 }
 
-async function executarFases(dep: DependenciasItem, r: ItemReservado, anotarFalha: (f: FalhaCopernicus) => void): Promise<DesfechoItem> {
+async function executarFases(
+  dep: DependenciasItem, r: ItemReservado, anotarFalha: (f: FalhaCopernicus) => void
+): Promise<{ desfecho: DesfechoItem; motivo: string | null }> {
   const ids = { item_id: r.item_id, consulta_id: r.consulta_id, organization_id: r.organization_id };
   const anotar = (desfecho: DesfechoItem, motivo: string | null, extra: Record<string, unknown> = {}) => {
     (desfecho === "concluido" ? dep.log.info : dep.log.warn).call(dep.log, { satelite_item: { ...ids, desfecho, motivo, ...extra } }, "item da fila satelital");
-    return desfecho;
+    return { desfecho, motivo };
   };
   // Último recurso: a falha registrada pela decisão de `retry.ts`. Se nem isso grava, o item fica 'executando' até o
   // prazo e a reserva seguinte o devolve para a fila (o teto da rodada impede o laço).
@@ -355,7 +425,7 @@ async function executarFases(dep: DependenciasItem, r: ItemReservado, anotarFalh
       return anotar(f.desfecho, f.motivo, resumoDoErro(erro));
     } catch (e) {
       dep.log.error({ satelite_item: { ...ids, etapa: "registro_da_falha", ...resumoDoErro(e) } }, "item da fila satelital sem desfecho gravado");
-      return "adiado" as const;
+      return { desfecho: "adiado" as const, motivo: "registro_da_falha" };
     }
   };
 

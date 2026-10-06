@@ -4,16 +4,18 @@
  *
  * UMA RODADA:
  *   1. RESERVA, numa transação curta e SEM contexto de tenant (GUC vazia): `erp.satelite_reservar_itens` (migration
- *      0054), a porta estreita que, sob advisory lock, devolve vencidos à fila, confere os três tetos GLOBAIS (simultâneas,
- *      por minuto na conta, por minuto na organização — `limites.ts`) e o ACESSO do criador (o mesmo predicado da RLS), e
- *      marca os itens 'executando' com prazo (`for update skip locked`: duas réplicas nunca pegam o mesmo item). Limite
- *      atingido não é falha: o item simplesmente não é reservado nesta rodada.
+ *      0054 + 0060), a porta estreita que, sob advisory lock, devolve vencidos à fila, confere os três tetos GLOBAIS
+ *      (simultâneas, por minuto na conta, por minuto na organização — `limites.ts`) e o ACESSO do criador + área viva
+ *      no mesmo módulo, e marca os itens 'executando' com prazo (`for update skip locked`: duas réplicas nunca pegam o
+ *      mesmo item). Limite atingido não é falha: o item simplesmente não é reservado nesta rodada.
  *   2. Cada item reservado em paralelo (o lote já conta como 'executando' no limite), por `executar-item.ts`, em nome do
  *      criador da consulta. Um item nunca derruba o lote: o desfecho de cada um entra na contagem.
  *   3. PAUSA: um item que terminou com o provedor sem serviço para a conta (429, 5xx, tempo, rede) faz ESTA instância
  *      não reservar nada até agora + max(`PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S`, Retry-After). Falha não entra no
  *      ledger nem no limite global: sem a pausa, um provedor que recusa na hora queimaria a fila inteira em segundos,
  *      uma tentativa por item. A pausa é por processo (cada réplica aprende sozinha); o teto da rodada continua valendo.
+ *   4. FAIL-SAFE ESTRUTURAL (HOTFIX-SAT-WORKER-01): `area_nao_encontrada` consecutivo (ou ≥ limiar na mesma rodada)
+ *      pausa o executor por `PAUSA_EXECUTOR_APOS_ERRO_ESTRUTURAL_S` — a próxima rodada não reserva nada.
  *
  * LIGA/DESLIGA (`server.ts`): só roda com SATELITE_WORKER_ENABLED=1, COPERNICUS_ENABLED=1 e o cliente com credencial —
  * `motivoExecutorDesligado` diz qual falta. Ligado, `iniciar()` no onReady e `parar()` no onClose (espera a rodada em
@@ -22,10 +24,12 @@
 import { withTx, type Db } from "@agro/db";
 import type { Config } from "../../config.js";
 import { FalhaCopernicus, type ClienteCopernicus, type TipoFalhaCopernicus } from "./copernicus.js";
-import { executarItem, resumoDoErro, type DesfechoItem, type ItemReservado, type LogSatelite } from "./executar-item.js";
+import { ERROS_ITEM, executarItem, resumoDoErro, type DesfechoItem, type ItemReservado, type LogSatelite } from "./executar-item.js";
 import type { LimiteAvulsoSatelite } from "./limite-avulso.js";
 import {
-  INTERVALO_EXECUTOR_PADRAO_S, LOTE_EXECUTOR, PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S, PRAZO_EXECUCAO_S, simultaneasDoExecutor, type LimitesSatelite
+  INTERVALO_EXECUTOR_PADRAO_S, LIMIAR_ERRO_ESTRUTURAL_CONSECUTIVO, LOTE_EXECUTOR,
+  PAUSA_EXECUTOR_APOS_ERRO_ESTRUTURAL_S, PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S, PRAZO_EXECUCAO_S,
+  simultaneasDoExecutor, type LimitesSatelite
 } from "./limites.js";
 
 declare module "fastify" {
@@ -56,16 +60,31 @@ export interface OpcoesWorker {
   prazoSegundos?: number;
   agora?: () => number;
   aleatorio?: () => number;
+  /** Só testes: substitui a reserva SQL (para forçar itens já escolhidos e provar a pausa estrutural). */
+  reservarFn?: () => Promise<ItemReservado[]>;
 }
 
 /** Falhas que dizem "o provedor está sem serviço para a conta agora" — as que pausam o executor desta instância. */
 const FALHAS_QUE_PAUSAM: ReadonlySet<TipoFalhaCopernicus> = new Set<TipoFalhaCopernicus>(["limite", "indisponivel", "tempo", "rede"]);
+
+/** Erros ESTÁVEIS do ERP que indicam divergência interna reserva→execução (não queimar a fila). */
+export const ERROS_ESTRUTURAIS_FILA: ReadonlySet<string> = new Set([ERROS_ITEM.areaNaoEncontrada]);
 
 /** Segundos de pausa depois desta falha do provedor (a maior entre a pausa padrão e o Retry-After), ou null: não pausa. */
 export function pausaAposFalha(f: unknown): number | null {
   if (!(f instanceof FalhaCopernicus) || !FALHAS_QUE_PAUSAM.has(f.tipo)) return null;
   const pedida = f.tentarAposSegundos;
   return Math.max(PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S, typeof pedida === "number" && Number.isFinite(pedida) ? pedida : 0);
+}
+
+/**
+ * Contagem consecutiva de erros estruturais da fila. Sucesso zera; outro falho/adiado mantém.
+ * Exportada para o teste de unidade do fail-safe (sem banco).
+ */
+export function atualizarContagemEstrutural(atual: number, motivo: string | null, desfecho: DesfechoItem): number {
+  if (motivo && ERROS_ESTRUTURAIS_FILA.has(motivo)) return atual + 1;
+  if (desfecho === "concluido") return 0;
+  return atual;
 }
 
 /**
@@ -83,8 +102,10 @@ export class WorkerSatelite {
   private emCurso: Promise<ResumoRodada> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private ligado = false;
-  /** Até quando (ms do relógio do executor) esta instância não reserva nada — a pausa depois de falha do provedor. */
+  /** Até quando (ms do relógio do executor) esta instância não reserva nada — a pausa depois de falha do provedor ou cascata. */
   private pausadoAte = 0;
+  /** Erros estruturais consecutivos (`area_nao_encontrada`) — limiar dispara pausa longa. */
+  private consecutivosEstruturais = 0;
 
   constructor(private readonly opcoes: OpcoesWorker) {}
 
@@ -120,6 +141,7 @@ export class WorkerSatelite {
   }
 
   private async reservar(): Promise<ItemReservado[]> {
+    if (this.opcoes.reservarFn) return this.opcoes.reservarFn();
     const { db, limites } = this.opcoes;
     // GUC VAZIA de propósito: a porta é SECURITY DEFINER e confere o acesso de cada criador por dentro; nenhuma
     // organização "do executor" existe para ser posta aqui.
@@ -131,7 +153,7 @@ export class WorkerSatelite {
 
   private async rodada(): Promise<ResumoRodada> {
     const agora = this.opcoes.agora ?? Date.now;
-    // Em pausa, nada é reservado: nenhum item gasta tentativa contra um provedor sem serviço.
+    // Em pausa, nada é reservado: nenhum item gasta tentativa contra um provedor sem serviço / cascata estrutural.
     if (agora() < this.pausadoAte) return { reservados: 0, concluidos: 0, falhos: 0, adiados: 0 };
     const itens = await this.reservar();
     const dep = {
@@ -145,11 +167,50 @@ export class WorkerSatelite {
     };
     // `executarItem` não lança; o `allSettled` é a garantia de que nem um defeito nele derruba o lote.
     const resultados = await Promise.allSettled(itens.map((item) => executarItem(dep, item)));
-    const desfechos = resultados.map((x) => (x.status === "fulfilled" ? x.value.desfecho : "adiado"));
+    const valores = resultados.map((x, i) => {
+      if (x.status === "fulfilled") return x.value;
+      this.opcoes.log.error({
+        satelite_executor: { etapa: "item", item_id: itens[i]?.item_id, ...resumoDoErro(x.reason) }
+      }, "item da fila satelital rejeitou sem desfecho");
+      return { desfecho: "adiado" as const, falhaDoProvedor: null, motivo: "rejeicao_interna" };
+    });
+    const desfechos = valores.map((x) => x.desfecho);
     const contar = (d: DesfechoItem) => desfechos.filter((x) => x === d).length;
     const resumo: ResumoRodada = { reservados: itens.length, concluidos: contar("concluido"), falhos: contar("falho"), adiados: contar("adiado") };
     if (resumo.reservados) this.opcoes.log.info({ satelite_executor: resumo }, "rodada do executor satelital");
-    const falhas = resultados.flatMap((x) => (x.status === "fulfilled" && x.value.falhaDoProvedor ? [x.value.falhaDoProvedor] : []));
+
+    // Fail-safe estrutural: conta consecutivos na ordem da reserva; ≥ limiar na rodada OU em sequência entre rodadas → pausa.
+    let estruturaisNaRodada = 0;
+    for (let i = 0; i < valores.length; i++) {
+      const v = valores[i]!;
+      const item = itens[i]!;
+      this.consecutivosEstruturais = atualizarContagemEstrutural(this.consecutivosEstruturais, v.motivo, v.desfecho);
+      if (v.motivo && ERROS_ESTRUTURAIS_FILA.has(v.motivo)) {
+        estruturaisNaRodada += 1;
+        if (estruturaisNaRodada === 1 || this.consecutivosEstruturais === 1) {
+          this.opcoes.log.error({
+            satelite_executor: {
+              erro_estrutural: v.motivo, consecutivos: this.consecutivosEstruturais,
+              item_id: item.item_id, consulta_id: item.consulta_id, organization_id: item.organization_id
+            }
+          }, "executor satelital: erro estrutural inesperado após reserva");
+        }
+      }
+    }
+    if (estruturaisNaRodada >= LIMIAR_ERRO_ESTRUTURAL_CONSECUTIVO || this.consecutivosEstruturais >= LIMIAR_ERRO_ESTRUTURAL_CONSECUTIVO) {
+      this.pausadoAte = Math.max(this.pausadoAte, agora() + PAUSA_EXECUTOR_APOS_ERRO_ESTRUTURAL_S * 1000);
+      this.opcoes.log.error({
+        satelite_executor: {
+          pausa_s: PAUSA_EXECUTOR_APOS_ERRO_ESTRUTURAL_S,
+          motivo: "cascata_erro_estrutural",
+          estruturais_na_rodada: estruturaisNaRodada,
+          consecutivos: this.consecutivosEstruturais,
+          reservados_na_rodada: itens.length
+        }
+      }, "executor satelital em pausa: cascata de erro estrutural — restante da fila não será consumido");
+    }
+
+    const falhas = valores.flatMap((x) => (x.falhaDoProvedor ? [x.falhaDoProvedor] : []));
     const pausaS = Math.max(0, ...falhas.map((f) => pausaAposFalha(f) ?? 0));
     if (pausaS > 0) {
       this.pausadoAte = Math.max(this.pausadoAte, agora() + pausaS * 1000);

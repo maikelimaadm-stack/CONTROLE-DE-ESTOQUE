@@ -70,7 +70,7 @@ describe("inventário go-live", () => {
         expect(Number(volume![0]!.animais)).toBe(20);
         // EDITAR-01, ESTOQUE-01, TOP-CONFIG-08, OPERACOES-01, MAPA-01, CADASTRO-AREAS, SAT-01, SAT-02, SAT-03 e SAT-06: a contagem e a última
         // migration acompanham a ordem do repositório.
-        expect(ledger![0]).toMatchObject({ migrations: "59", ultima: "0059_satelite_mapa_condicao_pasto.sql" });
+        expect(ledger![0]).toMatchObject({ migrations: "60", ultima: "0060_satelite_reserva_area_viva.sql" });
         expect(gatilho).toEqual([{ tgname: "trg_sales_documents_execucao_configurada", clausula_r1: true }]);
         expect(versoes).toEqual([{ versoes_com_execucao_configurada: "0" }]);
       } finally { await cli.query("rollback").catch(() => {}); cli.release(); }

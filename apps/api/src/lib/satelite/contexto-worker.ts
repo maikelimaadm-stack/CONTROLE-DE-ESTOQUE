@@ -8,12 +8,13 @@
  * (`empresaScopeSql`) recortar pelo mesmo módulo.
  *
  * O módulo é o da permissão de PEDIR a análise (`analises_satelitais.create` → pecuária, o da área), derivado por
- * `moduloDaPermissao` — nunca escrito à mão.
+ * `moduloDaPermissao` — nunca escrito à mão. No banco, a mesma constante é `erp.modulo_satelite_executor()` (0060):
+ * reserva e execução NÃO podem divergir de módulo.
  *
  * Vínculo inativo, organização excluída ou usuário fora dela: SEM contexto (`null`). Quem chama não toca o item: sob a
- * RLS do criador ele nem é visível. A reserva da 0054 já não reserva item de criador sem acesso; o que sobra é a
- * corrida (o acesso caiu depois da reserva): o item fica 'executando' até o prazo, volta para 'pendente' e não é
- * reservado de novo enquanto o criador não tiver acesso.
+ * RLS do criador ele nem é visível. A reserva (0054 + 0060) já não reserva item de criador sem acesso nem área morta;
+ * o que sobra é a corrida (o acesso caiu depois da reserva): o item fica 'executando' até o prazo, volta para
+ * 'pendente' e não é reservado de novo enquanto o criador não tiver acesso.
  */
 import type { Tx } from "@agro/db";
 import { moduloDaPermissao } from "@agro/domain";
@@ -22,6 +23,7 @@ import { lerDadosDoMembro, vinculoDoMembro } from "../contexto-membro.js";
 
 /** A permissão que o executor confere no criador, e de onde sai o módulo da transação. */
 export const PERMISSAO_EXECUTAR_ITEM = "analises_satelitais.create";
+/** Espelho de `erp.modulo_satelite_executor()` (0060). Se `moduloDaPermissao` mudar, o teste de unidade cai. */
 export const MODULO_EXECUTOR = moduloDaPermissao(PERMISSAO_EXECUTAR_ITEM);
 
 export async function contextoDoCriador(tx: Tx, orgId: string, criadoPor: string): Promise<ServiceCtx | null> {
