@@ -67,7 +67,11 @@ export function PainelAreaCondicao(p: {
   resumo: ResumoCondicaoPasto | null;
   dataImagem: string | null;
   semAnalise: boolean;
+  statsSemMapa?: boolean;
   onAtualizar?: () => void;
+  onGerarMapa?: () => void;
+  gerandoMapa?: boolean;
+  erroMapa?: string | null;
   onDadosTecnicos?: () => void;
 }) {
   const coberturaPct = p.resumo ? Number((Number(p.resumo.cobertura_valida) * 100).toFixed(0)) : null;
@@ -78,6 +82,11 @@ export function PainelAreaCondicao(p: {
       </p>
       {p.semAnalise && (
         <p className="text-xs text-slate-600" data-testid="condicao-pasto-sem-analise">Sem análise de condição</p>
+      )}
+      {p.statsSemMapa && (
+        <p className="text-xs text-slate-600" data-testid="condicao-pasto-stats-sem-mapa">
+          Há observação útil desta área, mas o mapa categórico ainda não foi gerado.
+        </p>
       )}
       {p.resumo && (
         <>
@@ -108,12 +117,18 @@ export function PainelAreaCondicao(p: {
             Analisar condição
           </button>
         )}
+        {p.statsSemMapa && p.onGerarMapa && (
+          <button type="button" className="rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-60" onClick={p.onGerarMapa} disabled={p.gerandoMapa} data-testid="condicao-pasto-gerar-mapa">
+            {p.gerandoMapa ? "Gerando mapa…" : "Gerar mapa de condição"}
+          </button>
+        )}
         {p.onDadosTecnicos && (
           <button type="button" className="rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-700 hover:bg-slate-50" onClick={p.onDadosTecnicos} data-testid="condicao-pasto-dados-tecnicos">
             Dados técnicos
           </button>
         )}
       </div>
+      {p.erroMapa && <p className="text-xs text-red-600" data-testid="condicao-pasto-erro-mapa">{p.erroMapa}</p>}
     </div>
   );
 }

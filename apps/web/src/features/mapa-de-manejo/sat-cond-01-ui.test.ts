@@ -70,6 +70,14 @@ describe("SAT-COND-01 — UI estática (UI-01..UI-10)", () => {
     expect(mapaGeralSrc).toContain('resampling: modoCondicao ? "nearest"');
   });
 
+  it("UI-11 stats sem mapa pedem Gerar mapa de condição", () => {
+    expect(legendaSrc).toContain("Gerar mapa de condição");
+    expect(legendaSrc).toContain("condicao-pasto-gerar-mapa");
+    expect(legendaSrc).toContain("condicao-pasto-stats-sem-mapa");
+    expect(mapaGeralSrc).toContain("gerarMapaCondicao");
+    expect(mapaGeralSrc).toContain("statsSemMapa");
+  });
+
   it("badge e paleta versionada", () => {
     const r = resumirCondicaoPasto({ contagem: { 0: 0, 1: 80, 2: 20, 3: 0, 4: 0, 5: 0, 6: 0 }, areaTotalHa: 100 });
     expect(badgePrincipalCondicao(r).rotulo).toBe("Boa cobertura");

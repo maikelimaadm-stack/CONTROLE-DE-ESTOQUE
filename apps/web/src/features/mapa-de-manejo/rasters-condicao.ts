@@ -101,6 +101,15 @@ export async function listarMapasCondicao(
   return saida;
 }
 
+/** Gera (ou reaproveita) o mapa categórico — só em clique deliberado. Gasta crédito da Process API na primeira vez. */
+export async function gerarMapaCondicao(areaId: string, dataImagem?: string): Promise<{ mapa: MapaCondicaoDto; reutilizada: boolean }> {
+  const qs = dataImagem ? `?data_imagem=${encodeURIComponent(dataImagem)}` : "";
+  return api<{ mapa: MapaCondicaoDto; reutilizada: boolean }>(`/api/satelite/areas/${areaId}/condicao-pasto${qs}`, {
+    method: "POST",
+    body: {}
+  });
+}
+
 async function carregarEntrada(dto: MapaCondicaoDto, lut: Uint8ClampedArray, signal?: AbortSignal): Promise<Entrada> {
   const blob = await baixarArquivoRaster(dto.url_assinada, signal);
   if (!blob) throw new Error("Imagem do mapa de condição não encontrada.");
@@ -137,6 +146,7 @@ export function useMapasCondicao(p: {
   const [datasPorArea, setDatasPorArea] = React.useState<ReadonlyMap<string, string>>(new Map());
   const [ausentes, setAusentes] = React.useState<ReadonlySet<string>>(new Set());
   const [situacao, setSituacao] = React.useState<"ocioso" | "carregando" | "pronto" | "erro">("ocioso");
+  const [versao, setVersao] = React.useState(0);
   const cacheRef = React.useRef<CacheRasters<Entrada> | null>(null);
   if (cacheRef.current === null) cacheRef.current = new CacheRasters<Entrada>(liberarEntrada);
   const cache = cacheRef.current;
@@ -232,8 +242,28 @@ export function useMapasCondicao(p: {
       }
     })();
     return () => controle.abort();
-  }, [idsKey, chaveData, p.ativo, pode, classe, diaPedido, cache, ids, assinaturas]);
+  }, [idsKey, chaveData, p.ativo, pode, classe, diaPedido, cache, ids, assinaturas, versao]);
 
+  const recarregar = React.useCallback(() => {
+    semRef.current.clear();
+    setVersao((v) => v + 1);
+  }, []);
+
+  const incorporarDto = React.useCallback(async (dto: MapaCondicaoDto): Promise<boolean> => {
+    if (diaPedido && dto.data_imagem !== diaPedido) return false;
+    const lut = montarLutCondicaoPasto({ classeDestaque: classe });
+    const entrada = await carregarEntrada(dto, lut);
+    semRef.current.delete(dto.area_id);
+    resumosRef.current.set(dto.area_id, dto.resumo);
+    datasRef.current.set(dto.area_id, dto.data_imagem);
+    cache.guardar(dto.area_id, entrada);
+    setResumos(new Map(resumosRef.current));
+    setDatasPorArea(new Map(datasRef.current));
+    setAusentes(new Set(semRef.current));
+    setPorArea(cache.snapshot());
+    setSituacao("pronto");
+    return true;
+  }, [diaPedido, classe, cache]);
 
   const datasDistintas = React.useMemo(() => [...new Set(datasPorArea.values())].sort(), [datasPorArea]);
   const agregado = React.useMemo(() => {
@@ -244,7 +274,9 @@ export function useMapasCondicao(p: {
 
   return {
     porArea, resumos, datasPorArea, datasDistintas, ausentes, situacao, agregado,
-    temRaster: (id: string) => Boolean(cache.get(id)?.blobUrl)
+    temRaster: (id: string) => Boolean(cache.get(id)?.blobUrl),
+    incorporarDto,
+    recarregar
   };
 }
 

@@ -25,10 +25,10 @@ import { AtribuicaoCopernicus, LegendaNdvi, PERMISSAO_PEDIR_NDVI, anosDasImagens
 import { OPACIDADE_PADRAO, RENDER_PADRAO, amostrarPixelCanvas, idCamadaRaster, sincronizarRastersNoMapa, type RenderRaster } from "./camada-rasters";
 import { assinaturaDaGeometria } from "./cache-rasters";
 import { coresPorArea, mediaValidaDoIndice, type ModoCor } from "./cor-por-area";
-import { DATA_ULTIMA_IMAGEM, dataEscolhida, datasUteisDoHistorico, opcoesDeData, type DataDaCamada } from "./data-camada";
+import { DATA_ULTIMA_IMAGEM, dataEscolhida, dataImagemDoPedido, datasUteisDoHistorico, opcoesDeData, type DataDaCamada } from "./data-camada";
 import { useHistoricoIndice } from "./condicao-dados";
-import { useRastersIndice, type RasterIndiceDto } from "./rasters-indice";
-import { useMapasCondicao } from "./rasters-condicao";
+import { mensagemDoErroDeRaster, useRastersIndice, type RasterIndiceDto } from "./rasters-indice";
+import { gerarMapaCondicao, useMapasCondicao } from "./rasters-condicao";
 import { BarraCamadas, type ExperienciaMapa } from "./barra-camadas";
 import { CondicaoDaArea } from "./condicao-area";
 import { LegendaIndice } from "./legenda-indice";
@@ -84,6 +84,8 @@ export function MapaGeral() {
   const [render, setRender] = React.useState<RenderRaster>(RENDER_PADRAO);
   const [opacidade, setOpacidade] = React.useState(OPACIDADE_PADRAO);
   const [consulta, setConsulta] = React.useState<{ aberta: boolean; selecao?: SelecaoConsulta }>({ aberta: false });
+  const [gerandoMapa, setGerandoMapa] = React.useState(false);
+  const [erroMapa, setErroMapa] = React.useState<string | null>(null);
   const padraoTravadoRef = React.useRef(false);
   const areasRef = React.useRef(areas);
   React.useEffect(() => { areasRef.current = areas; }, [areas]);
@@ -288,6 +290,26 @@ export function MapaGeral() {
   const m = mapa.pronto ? mapRef.current : null;
   const rotulos = m ? rotulosDasAreas(m, areas, hoverAreaId ?? selecionada) : [];
   const selecionadaObj = areas.find((a) => a.id === selecionada) ?? null;
+  const temObservacaoUtil = (areaId: string) => {
+    if (resumoIndice.situacao === "pronto" && resumoIndice.porArea.get(areaId)?.ultima_observacao) return true;
+    if (resumoUltima.situacao === "pronto" && resumoUltima.porArea.get(areaId)?.ultima_observacao) return true;
+    return false;
+  };
+  const temMapaCondicao = (areaId: string) => mapasCond.resumos.has(areaId);
+  async function gerarMapaDaSelecionada() {
+    if (!selecionada) return;
+    setGerandoMapa(true);
+    setErroMapa(null);
+    try {
+      const r = await gerarMapaCondicao(selecionada, dataImagemDoPedido(data));
+      await mapasCond.incorporarDto(r.mapa);
+    } catch (e) {
+      setErroMapa(mensagemDoErroDeRaster(e));
+    } finally {
+      setGerandoMapa(false);
+    }
+  }
+  React.useEffect(() => { setErroMapa(null); }, [selecionada]);
   const totalHa = areas.reduce((s, a) => s + hectares(a.area_ha), 0);
   const podeCadastrar = can("batch_area.create");
   const entradaAreas = entryById("configuracoes.pecuaria.areas");
@@ -488,8 +510,12 @@ export function MapaGeral() {
                 <PainelAreaCondicao
                   resumo={mapasCond.resumos.get(selecionadaObj.id) ?? null}
                   dataImagem={mapasCond.datasPorArea.get(selecionadaObj.id) ? dateBR(mapasCond.datasPorArea.get(selecionadaObj.id)!) : null}
-                  semAnalise={!mapasCond.resumos.has(selecionadaObj.id)}
+                  semAnalise={!temMapaCondicao(selecionadaObj.id) && !temObservacaoUtil(selecionadaObj.id)}
+                  statsSemMapa={!temMapaCondicao(selecionadaObj.id) && temObservacaoUtil(selecionadaObj.id) && mapasCond.situacao === "pronto"}
                   onAtualizar={podeConsultar ? () => setConsulta({ aberta: true, selecao: "atual" }) : undefined}
+                  onGerarMapa={podeConsultar ? () => void gerarMapaDaSelecionada() : undefined}
+                  gerandoMapa={gerandoMapa}
+                  erroMapa={erroMapa}
                   onDadosTecnicos={() => setExperiencia("tecnico")}
                 />
               )}
@@ -527,6 +553,7 @@ export function MapaGeral() {
           idsDesatualizadas={desatualizadas}
           indiceAtivo={indice}
           selecaoInicial={consulta.selecao}
+          onConcluida={() => mapasCond.recarregar()}
         />
       )}
     </div>

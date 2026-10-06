@@ -96,6 +96,7 @@ Mapa geral abre em **Condição**. Barra: data, opacidade, Atualizar condição,
 
 - Legenda interativa: ha e %; clique destaca a classe; segundo clique ou ESC limpa.
 - Lista: badge da condição (atenção se solo+estresse+baixa ≥ 15%); ordenação por atenção/nome/área/classe.
+- Área sem análise: CTA **Analisar condição** (consulta Statistical). Área com estatística e sem mapa: CTA **Gerar mapa de condição** (POST Process API, clique deliberado).
 - Zoom distante: cor predominante por área. Zoom adequado: raster categórico (viewport, teto 60, abort).
 - Dados técnicos: índices individuais, painel Condição da Área (SATÉLITE COMPLETO), paletas contínuas.
 
