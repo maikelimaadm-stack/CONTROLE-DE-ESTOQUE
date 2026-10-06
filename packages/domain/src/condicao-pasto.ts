@@ -15,14 +15,16 @@ import { LIMIARES_COBERTURA_EXPERIMENTAL } from "./indices-satelitais.js";
 
 /**
  * Versão OPERACIONAL do classificador (entra na identidade e no cache).
- * v2 = mesma ciência espectral da v1 + máscara geométrica (fora do polígono ≠ sem leitura).
- * v1 permanece histórica; a listagem operacional só serve v2.
+ * v3 = precedência conservadora (baixa cobertura ANTES de estresse) + estresse só com vigor/cobertura
+ * suficientes (SAT-BUNDLE-01A). v1/v2 permanecem históricas; a listagem operacional só serve v3.
  */
-export const VERSAO_CLASSIFICADOR_CONDICAO_PASTO = "condicao-pasto-v2";
-/** Evalscript espectral (thresholds): inalterado desde v1 — a correção espacial não muda a ciência. */
-export const VERSAO_EVALSCRIPT_CONDICAO_PASTO = "condicao-pasto-v1";
+export const VERSAO_CLASSIFICADOR_CONDICAO_PASTO = "condicao-pasto-v3";
+/** Evalscript espectral alinhado à precedência v3. */
+export const VERSAO_EVALSCRIPT_CONDICAO_PASTO = "condicao-pasto-v3";
 /** Versão legada com resumo espacial incorreto (bbox inteira). Não reaproveitar como corrente. */
 export const VERSAO_CLASSIFICADOR_CONDICAO_PASTO_V1 = "condicao-pasto-v1";
+/** v2 = máscara geométrica + precedência antiga (estresse antes de baixa cobertura). Histórica. */
+export const VERSAO_CLASSIFICADOR_CONDICAO_PASTO_V2 = "condicao-pasto-v2";
 /** Resolução analítica efetiva: NDRE/NDMI/BSI são 20 m. */
 export const RESOLUCAO_ANALITICA_CONDICAO_PASTO_M = 20;
 export const TIPO_MAPA_CONDICAO_PASTO = "classificacao" as const;
@@ -151,17 +153,18 @@ export const ROTULOS_CLASSE_CONDICAO_PASTO: Readonly<Record<IdClasseCondicaoPast
   Object.fromEntries(CLASSES_CONDICAO_PASTO.map((c) => [c.id, c.nome])) as Record<IdClasseCondicaoPasto, string>;
 
 /**
- * Precedência fail-closed (a primeira regra que casa vence; classes mutuamente exclusivas):
- * 1. SEM_LEITURA  2. AGUA  3. SOLO_EXPOSTO  4. ESTRESSE  5. BAIXA_COBERTURA
+ * Precedência fail-closed v3 (a primeira regra que casa vence; classes mutuamente exclusivas):
+ * 1. SEM_LEITURA  2. AGUA  3. SOLO_EXPOSTO  4. BAIXA_COBERTURA  5. ESTRESSE
  * 6. COBERTURA_MODERADA  7. BOA_COBERTURA
+ * Baixa cobertura NÃO é renomeada como estresse só porque NDMI é baixo.
  * Água nunca vira solo. Pixel mascarado nunca vira classe produtiva.
  */
 export const PRECEDENCIA_CLASSES_CONDICAO_PASTO: readonly IdClasseCondicaoPasto[] = [
   "sem_leitura",
   "agua",
   "solo_exposto_estimado",
-  "possivel_estresse_hidrico",
   "baixa_cobertura",
+  "possivel_estresse_hidrico",
   "vegetacao_ativa_cobertura_moderada",
   "vegetacao_ativa_boa_cobertura"
 ];
@@ -186,8 +189,11 @@ function sclPermitida(scl: number): boolean {
 }
 
 /**
- * Classifica UM pixel. Determinístico: mesmos sinais → mesma classe.
+ * Classifica UM pixel (v3). Determinístico: mesmos sinais → mesma classe.
  * Índices de datas diferentes NÃO devem ser misturados pelo chamador (I-04).
+ *
+ * Estresse hídrico só quando há cobertura/vigor suficientes para interpretar NDMI —
+ * não é classe-curinga para vegetação rala ou solo misto.
  */
 export function classificarPixelCondicaoPasto(p: PixelCondicaoPasto): CodigoClasseCondicaoPasto {
   const L = LIMIARES_CLASSIFICADOR_CONDICAO_PASTO;
@@ -204,12 +210,14 @@ export function classificarPixelCondicaoPasto(p: PixelCondicaoPasto): CodigoClas
   const soloFraco = bsi >= L.bsiSoloExposto && ndvi < L.ndviSoloExposto && msavi2 < L.msavi2CoberturaModerada;
   if (soloForte || soloFraco) return 5;
 
-  const vegetacaoPresente = ndvi >= L.ndviBaixaCobertura || msavi2 >= L.msavi2BaixaCobertura || evi2 >= L.evi2VigorAtivo;
-  if (ndmi < L.ndmiBaixa && vegetacaoPresente) return 4;
-
-  if (msavi2 < L.msavi2CoberturaModerada && ndvi < L.ndviVegetacaoAtiva) return 3;
+  // Baixa cobertura ANTES de estresse: NDMI baixo em cobertura fraca ≠ estresse hídrico.
+  const baixaCobertura = msavi2 < L.msavi2CoberturaModerada && ndvi < L.ndviVegetacaoAtiva;
+  if (baixaCobertura) return 3;
 
   const vigorAtivo = ndvi >= L.ndviVegetacaoAtiva && (evi2 >= L.evi2VigorAtivo || ndre >= L.ndreVigorAtivo);
+  const coberturaSuficienteParaHidrico = msavi2 >= L.msavi2CoberturaModerada;
+  if (ndmi < L.ndmiBaixa && coberturaSuficienteParaHidrico && vigorAtivo) return 4;
+
   if (msavi2 >= L.msavi2BoaCobertura && vigorAtivo) return 1;
 
   if (msavi2 >= L.msavi2CoberturaModerada || ndvi >= L.ndviVegetacaoAtiva) return 2;

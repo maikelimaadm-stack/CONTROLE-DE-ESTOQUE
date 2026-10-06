@@ -56,6 +56,27 @@ Reusa `erp.satelite_consultas` / itens / worker SAT-02/03. Sem fila paralela.
 ## Limitações científicas
 
 Vegetação verde ≠ capim útil. Sem kg MS/ha, oferta, lotação ou diagnóstico de praga até calibração de campo.
+NDMI indica umidade espectral da vegetação/dossel — **não** umidade volumétrica do solo.
+
+## Observação completa (SAT-BUNDLE-01A)
+
+Uma operação de produto (`pastagem_essencial`) = uma observação canônica:
+
+- Statistical: **1** chamada do bundle `pastagem-essencial-v2` → 6 índices irmãos;
+- Process: produtos espaciais automáticos (condição v3 + rasters técnicos dos 6 índices), com cache;
+- Contrato de leitura: `ObservacaoSatelitalCompleta` + temas (`condicao`, `umidade`, `vigor`, `cobertura_solo`).
+
+Trocar tema na futura UI **não** cria Statistical nem nova observação.
+
+Rotas F1 (sem UI):
+
+- `GET /api/mapa/areas/:areaId/observacao-satelital-completa`
+- `GET /api/mapa/observacoes-satelitais-completas/resumo`
+
+Orquestração: `garantirProdutosDaObservacaoCompleta` (worker após Statistical útil).
+Rasters: serviço interno `gerarOuReutilizarRasterIndice` (rota POST e worker).
+
+Próxima fatia: **SAT-BUNDLE-01B [F2]** — UI temática consumindo este contrato.
 
 ## Segurança
 

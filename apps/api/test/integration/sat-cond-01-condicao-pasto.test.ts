@@ -97,8 +97,8 @@ describe("SAT-COND-01 — rota mapa de condição", () => {
     expect(corpo.mapa.mapa).toBe("condicao_pasto");
     expect(corpo.mapa.tipo).toBe("classificacao");
     expect(corpo.mapa.resolucao_m).toBeGreaterThanOrEqual(20);
-    expect(corpo.mapa.versao_classificador).toBe("condicao-pasto-v2");
-    expect(corpo.mapa.resumo.versao_classificador).toBe("condicao-pasto-v2");
+    expect(corpo.mapa.versao_classificador).toBe("condicao-pasto-v3");
+    expect(corpo.mapa.resumo.versao_classificador).toBe("condicao-pasto-v3");
     expect(corpo.mapa.resumo.classes).toHaveLength(7);
     expect(typeof corpo.mapa.resumo.pixels_fora_poligono).toBe("number");
     expect(corpo.mapa.resumo.pixels_fora_poligono).toBeGreaterThan(0);
@@ -119,7 +119,7 @@ describe("SAT-COND-01 — rota mapa de condição", () => {
     const itens = (lista.json() as { itens: { id: string; versao_classificador: string }[] }).itens;
     expect(itens).toHaveLength(1);
     expect(itens[0]!.id).toBe(corpo.mapa.id);
-    expect(itens[0]!.versao_classificador).toBe("condicao-pasto-v2");
+    expect(itens[0]!.versao_classificador).toBe("condicao-pasto-v3");
 
     const arq = await app.inject({ method: "GET", url: corpo.mapa.url_assinada });
     expect(arq.statusCode).toBe(200);

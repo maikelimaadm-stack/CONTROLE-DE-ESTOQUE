@@ -48,8 +48,9 @@ import {
   type ResultadoPastagem
 } from "./pastagem-essencial.js";
 import { decidirAposFalha, type DecisaoFalha } from "./retry.js";
-import { tentarGerarMapaCondicaoAposPastagem } from "./gerar-mapa-condicao.js";
+import { tentarGarantirProdutosAposPastagem } from "./garantir-produtos-observacao.js";
 import type { LimiteAvulsoSatelite } from "./limite-avulso.js";
+import type { ArmazenamentoRaster } from "./armazenamento-raster.js";
 
 /** A linha que a reserva (`erp.satelite_reservar_itens`, migration 0054/0060) devolve: só ids. */
 export interface ItemReservado { organization_id: string; empresa_id: string; consulta_id: string; item_id: string; criado_por: string }
@@ -75,10 +76,12 @@ export interface DependenciasItem {
   log: LogSatelite;
   agora: () => number;
   aleatorio: () => number;
-  /** Mesmo objeto do processo (`app.limiteAvulsoSatelite`) — mapa de condição automático após pastagem. */
+  /** Mesmo objeto do processo (`app.limiteAvulsoSatelite`) — produtos espaciais após pastagem. */
   limiteAvulso: LimiteAvulsoSatelite;
   /** Espelho de `COPERNICUS_ENABLED` no processo. */
   copernicusEnabled: boolean;
+  /** Storage dos rasters técnicos (mesmo do processo). */
+  armazenamento: ArmazenamentoRaster;
 }
 
 /** Erros ESTÁVEIS gravados no item quando a recusa é do ERP (não do provedor). */
@@ -444,14 +447,14 @@ async function executarFases(
   if (chamada.resultado === null) return falhar(f1.pronto.item.tentativas, chamada.respondeu, chamada.falha);
   try {
     const f3 = await fase3(dep, r, f1.pronto, { ...chamada, resultado: chamada.resultado });
-    // MAPA-UX-02: após pastagem-essencial com observação útil, gera/reusa o mapa v2 (best-effort).
+    // SAT-BUNDLE-01A: após pastagem-essencial útil, garante condição v3 + 6 rasters (best-effort).
     if (
       f3.desfecho === "concluido"
       && ehPastagem(f1.pronto.item)
       && ehResultadoPastagem(chamada.resultado)
       && chamada.resultado.situacao === "concluida"
     ) {
-      await tentarGerarMapaCondicaoAposPastagem(dep, {
+      await tentarGarantirProdutosAposPastagem(dep, {
         orgId: r.organization_id, userId: r.criado_por, areaId: f1.pronto.item.area_id
       });
     }

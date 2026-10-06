@@ -26,6 +26,7 @@ import type { Config } from "../../config.js";
 import { FalhaCopernicus, type ClienteCopernicus, type TipoFalhaCopernicus } from "./copernicus.js";
 import { ERROS_ITEM, executarItem, resumoDoErro, type DesfechoItem, type ItemReservado, type LogSatelite } from "./executar-item.js";
 import type { LimiteAvulsoSatelite } from "./limite-avulso.js";
+import type { ArmazenamentoRaster } from "./armazenamento-raster.js";
 import {
   INTERVALO_EXECUTOR_PADRAO_S, LIMIAR_ERRO_ESTRUTURAL_CONSECUTIVO, LOTE_EXECUTOR,
   PAUSA_EXECUTOR_APOS_ERRO_ESTRUTURAL_S, PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S, PRAZO_EXECUCAO_S,
@@ -48,10 +49,12 @@ export interface OpcoesWorker {
   cliente: ClienteCopernicus;
   limites: LimitesSatelite;
   log: LogSatelite;
-  /** Limite avulso do processo (mapa de condição automático após pastagem). */
+  /** Limite avulso do processo (produtos espaciais automáticos após pastagem). */
   limiteAvulso: LimiteAvulsoSatelite;
   /** Espelho de `COPERNICUS_ENABLED` no processo. */
   copernicusEnabled: boolean;
+  /** Storage dos rasters técnicos do processo. */
+  armazenamento: ArmazenamentoRaster;
   /** Entre o fim de uma rodada e o começo da próxima (padrão: `INTERVALO_EXECUTOR_PADRAO_S`). */
   intervaloMs?: number;
   /** Itens pedidos à reserva por rodada (1–50; padrão `LOTE_EXECUTOR`). O teto real é a capacidade livre. */
@@ -163,7 +166,8 @@ export class WorkerSatelite {
       agora,
       aleatorio: this.opcoes.aleatorio ?? Math.random,
       limiteAvulso: this.opcoes.limiteAvulso,
-      copernicusEnabled: this.opcoes.copernicusEnabled
+      copernicusEnabled: this.opcoes.copernicusEnabled,
+      armazenamento: this.opcoes.armazenamento
     };
     // `executarItem` não lança; o `allSettled` é a garantia de que nem um defeito nele derruba o lote.
     const resultados = await Promise.allSettled(itens.map((item) => executarItem(dep, item)));

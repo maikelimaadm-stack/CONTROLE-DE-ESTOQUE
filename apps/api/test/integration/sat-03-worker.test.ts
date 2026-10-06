@@ -10,6 +10,7 @@ import { ClienteCopernicus, ENDERECOS_COPERNICUS } from "../../src/lib/satelite/
 import { MODULO_EXECUTOR, contextoDoCriador } from "../../src/lib/satelite/contexto-worker.js";
 import { executarItem, type LogSatelite } from "../../src/lib/satelite/executar-item.js";
 import { recalcularConsulta } from "../../src/lib/satelite/fechamento.js";
+import { armazenamentoRaster } from "../../src/lib/satelite/armazenamento-raster.js";
 import { LimiteAvulsoSatelite } from "../../src/lib/satelite/limite-avulso.js";
 import { PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S, type LimitesSatelite } from "../../src/lib/satelite/limites.js";
 import { EVALSCRIPT_NDVI_SHA256 } from "../../src/lib/satelite/ndvi-v2.js";
@@ -100,6 +101,7 @@ function novoWorker(o: { db?: Db; lote?: number; limites?: Partial<LimitesSateli
   return new WorkerSatelite({
     db: o.db ?? h.db, cliente, limites, log: logCapturado,
     limiteAvulso: new LimiteAvulsoSatelite(limites), copernicusEnabled: true,
+    armazenamento: armazenamentoRaster,
     lote: o.lote ?? 50, ...(o.agora ? { agora: o.agora } : {})
   });
 }
@@ -668,7 +670,8 @@ describe("SAT-03 — o executor não sai do escopo do item", () => {
       db: h.db,
       cliente: new ClienteCopernicus({ buscar: buscarMock, credenciais: { clienteId: ID_FALSO, segredo: SEGREDO_FALSO } }),
       log: logCapturado, agora: Date.now, aleatorio: Math.random,
-      limiteAvulso: new LimiteAvulsoSatelite(SEM_TETO), copernicusEnabled: true
+      limiteAvulso: new LimiteAvulsoSatelite(SEM_TETO), copernicusEnabled: true,
+      armazenamento: armazenamentoRaster
     };
     const reservado = { organization_id: h.demo.orgId, empresa_id: B, consulta_id: id, item_id: item!.id, criado_por: restrito.userId };
     const logsInicio = logs.length;

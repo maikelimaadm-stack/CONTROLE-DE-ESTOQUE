@@ -1,11 +1,11 @@
 /**
- * GERAÇÃO / REUTILIZAÇÃO DO MAPA DE CONDIÇÃO DO PASTO v2 — MAPA-UX-02.
+ * GERAÇÃO / REUTILIZAÇÃO DO MAPA DE CONDIÇÃO DO PASTO — MAPA-UX-02 / SAT-BUNDLE-01A.
  *
- * Serviço interno compartilhado pela rota HTTP (`POST …/condicao-pasto`) e pelo worker da fila
- * (após observação útil do bundle pastagem-essencial). Sem transação aberta durante HTTP externo.
+ * Serviço interno compartilhado pela rota HTTP (`POST …/condicao-pasto`) e pelo worker
+ * (`garantirProdutosDaObservacaoCompleta`). Sem transação aberta durante HTTP externo.
  *
- * Identidade do cache inclui `VERSAO_CLASSIFICADOR_CONDICAO_PASTO` (v2): máscara geométrica —
- * fora do polígono ≠ sem leitura. Linhas v1 permanecem no banco; a listagem operacional só serve v2.
+ * Identidade do cache inclui `VERSAO_CLASSIFICADOR_CONDICAO_PASTO` (v3): precedência conservadora
+ * + máscara geométrica. Linhas v1/v2 permanecem no banco; a listagem operacional só serve v3.
  */
 import { createHash } from "node:crypto";
 import { withTx, type Db } from "@agro/db";

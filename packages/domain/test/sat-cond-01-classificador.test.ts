@@ -209,10 +209,11 @@ describe("SAT-COND-01 — identidade", () => {
 
   it("I-03 classificador corrente separado de legado/futuro", () => {
     const a = idBase();
-    const legado = idBase({ versaoClassificador: "condicao-pasto-v1" });
-    const futuro = idBase({ versaoClassificador: "condicao-pasto-v3" });
+    const legado = idBase({ versaoClassificador: "condicao-pasto-v2" });
+    const futuro = idBase({ versaoClassificador: "condicao-pasto-v4" });
     expect(identidadesEquivalentes(a, legado)).toBe(false);
     expect(identidadesEquivalentes(a, futuro)).toBe(false);
+    expect(a.versaoClassificador).toBe("condicao-pasto-v3");
   });
 
   it("I-04 não misturar observações diferentes", () => {
