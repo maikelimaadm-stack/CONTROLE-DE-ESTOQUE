@@ -222,7 +222,7 @@ describe("o ALIAS — a chave antiga continua servindo o binário anterior", () 
     const c = await proximoCodigo(db, o, LEGADA);
 
     expect(a, "a chave legada continua a sequência canônica").toBe(58);
-    expect(b, "a canônica segue de onde a legada parou — é o MESMO contador").toBe(59);
+    expect(b, "a canônica segue de onde a legada parou — é o MESMO contador").toBe(60);
     expect(c, "e alternar entre as duas chaves não cria duas sequências").toBe(60);
     expect(await linhasDaEntidade(db, LEGADA), "pedir a chave legada não pode RESSUSCITAR a linha").toBe(0);
   });

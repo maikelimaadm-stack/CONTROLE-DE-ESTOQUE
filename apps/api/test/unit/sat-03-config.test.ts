@@ -5,8 +5,14 @@ import { buildApp } from "../../src/server.js";
 import type { BuscarFn } from "../../src/lib/consultas/http.js";
 import { FalhaCopernicus } from "../../src/lib/satelite/copernicus.js";
 import { MODULO_EXECUTOR, PERMISSAO_EXECUTAR_ITEM } from "../../src/lib/satelite/contexto-worker.js";
-import { LIMITES_SATELITE_PADRAO, PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S, limitesDaConfig } from "../../src/lib/satelite/limites.js";
-import { WorkerSatelite, motivoExecutorDesligado, pausaAposFalha } from "../../src/lib/satelite/worker.js";
+import { ERROS_ITEM } from "../../src/lib/satelite/executar-item.js";
+import {
+  LIMITES_SATELITE_PADRAO, LIMIAR_ERRO_ESTRUTURAL_CONSECUTIVO, PAUSA_EXECUTOR_APOS_ERRO_ESTRUTURAL_S,
+  PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S, limitesDaConfig
+} from "../../src/lib/satelite/limites.js";
+import {
+  WorkerSatelite, atualizarContagemEstrutural, ERROS_ESTRUTURAIS_FILA, motivoExecutorDesligado, pausaAposFalha
+} from "../../src/lib/satelite/worker.js";
 
 /**
  * SAT-03 (decisão 296) — a CONFIGURAÇÃO do executor da fila satelital, lida no startup. O risco cercado é o executor
@@ -91,7 +97,7 @@ describe("executor · as três condições", () => {
 });
 
 describe("executor · módulo do contexto do criador e pausa", () => {
-  it("o módulo da transação do executor é 'pecuaria' — o MESMO que a 0054 escreve à mão no acesso do criador", () => {
+  it("o módulo da transação do executor é 'pecuaria' — o MESMO que erp.modulo_satelite_executor() (0060)", () => {
     // Se a classificação da permissão mudar de módulo, este teste cai antes de o executor e a reserva divergirem.
     expect(PERMISSAO_EXECUTAR_ITEM).toBe("analises_satelitais.create");
     expect(MODULO_EXECUTOR).toBe("pecuaria");
@@ -107,6 +113,17 @@ describe("executor · módulo do contexto do criador e pausa", () => {
       expect(pausaAposFalha(new FalhaCopernicus(tipo, 400)), tipo).toBeNull();
     }
     expect(pausaAposFalha(new Error("erro de banco"))).toBeNull();
+  });
+
+  it("HOTFIX fail-safe: area_nao_encontrada é estrutural; limiar 2; pausa longa; sucesso zera a contagem", () => {
+    expect(ERROS_ESTRUTURAIS_FILA.has(ERROS_ITEM.areaNaoEncontrada)).toBe(true);
+    expect(LIMIAR_ERRO_ESTRUTURAL_CONSECUTIVO).toBe(2);
+    expect(PAUSA_EXECUTOR_APOS_ERRO_ESTRUTURAL_S).toBe(3600);
+    expect(atualizarContagemEstrutural(0, ERROS_ITEM.areaNaoEncontrada, "falho")).toBe(1);
+    expect(atualizarContagemEstrutural(1, ERROS_ITEM.areaNaoEncontrada, "falho")).toBe(2);
+    expect(atualizarContagemEstrutural(2, null, "concluido")).toBe(0);
+    expect(atualizarContagemEstrutural(1, "geometria_alterada", "falho")).toBe(1);
+    expect(atualizarContagemEstrutural(1, "limite (HTTP 429)", "adiado")).toBe(1);
   });
 });
 

@@ -46,6 +46,16 @@ export const TENTATIVAS_AVULSAS_POR_MINUTO_INSTANCIA = 10;
  */
 export const PAUSA_EXECUTOR_APOS_FALHA_DO_PROVEDOR_S = 60;
 
+/**
+ * HOTFIX-SAT-WORKER-01 — pausa desta instância quando `area_nao_encontrada` (ou outro erro estrutural da fila)
+ * se repete: sem isso o executor queima a fila marcando dezenas de itens como falhos por divergência interna.
+ * A pausa é longa de propósito; o processo precisa ser observado/reiniciado depois da correção.
+ */
+export const PAUSA_EXECUTOR_APOS_ERRO_ESTRUTURAL_S = 3600;
+
+/** Quantos erros estruturais consecutivos (ex.: `area_nao_encontrada`) disparam a pausa da cascata. */
+export const LIMIAR_ERRO_ESTRUTURAL_CONSECUTIVO = 2;
+
 /** Itens que o executor reserva por rodada (o teto real é a capacidade livre no momento). */
 export const LOTE_EXECUTOR = 5;
 
