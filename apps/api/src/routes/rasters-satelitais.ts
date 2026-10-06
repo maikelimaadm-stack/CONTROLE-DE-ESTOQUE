@@ -12,7 +12,7 @@ import { runService } from "../lib/service.js";
 import { DomainError, err, validation } from "../lib/errors.js";
 import { empresaScopeSql, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
 import { lerDadosDoMembro, vinculoDoMembro } from "../lib/contexto-membro.js";
-import { FalhaCopernicus, type RegistroChamada } from "../lib/satelite/copernicus.js";
+import { FalhaCopernicus, camposLogErroProvedor, type RegistroChamada } from "../lib/satelite/copernicus.js";
 import { gravarConsumo, lerPuDoCabecalho } from "../lib/satelite/consumo.js";
 import { lerContagemChamadas } from "../lib/satelite/limite-global.js";
 import { lerPoligono } from "../lib/satelite/geometria.js";
@@ -315,7 +315,7 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
         feita = await geracao;
       } catch (e) {
         if (e instanceof FalhaCopernicus) {
-          req.log.warn({ satelite: { provedor: PROVEDOR_COPERNICUS, analise_id: plano.analise.id, area_id: plano.area.id, tipo_falha: e.tipo, status: e.status } }, "imagem por satélite não gerada");
+          req.log.warn({ satelite: { provedor: PROVEDOR_COPERNICUS, analise_id: plano.analise.id, area_id: plano.area.id, tipo_falha: e.tipo, status: e.status, ...camposLogErroProvedor(e.erroProvedor) } }, "imagem por satélite não gerada");
           // Falha DEPOIS de um 2xx (PNG ilegível, dimensões trocadas): a chamada foi cobrada. Só o consumo, curto.
           if (abriuChamada && e.puCabecalho !== undefined) await gravarConsumoSemRaster(e.puCabecalho);
           if (e.tentarAposSegundos !== null) reply.header("retry-after", String(e.tentarAposSegundos));
@@ -403,7 +403,11 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
    */
   async function gerar(req: FastifyRequest, plano: PlanoRaster): Promise<GeracaoFeita> {
     const registrar = (c: RegistroChamada) => app.log.info({
-      satelite: { provedor: PROVEDOR_COPERNICUS, endpoint: c.endpoint, status: c.status, duracao_ms: c.duracaoMs, tentativa: c.tentativa, tipo_falha: c.tipoFalha, analise_id: plano.analise.id, area_id: plano.area.id }
+      satelite: {
+        provedor: PROVEDOR_COPERNICUS, endpoint: c.endpoint, status: c.status, duracao_ms: c.duracaoMs,
+        tentativa: c.tentativa, tipo_falha: c.tipoFalha, analise_id: plano.analise.id, area_id: plano.area.id,
+        ...camposLogErroProvedor(c.erroProvedor)
+      }
     }, "chamada ao provedor de satélite");
     const r = await cliente.processoComConsumo(montarCorpoProcesso(plano.grade, plano.janela, plano.encoding.indice), registrar);
     let img: { largura: number; altura: number };

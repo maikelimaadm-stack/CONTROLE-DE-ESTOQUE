@@ -131,10 +131,11 @@ describe("SAT-06 processoComConsumo — a mesma política de tentativas da estat
   });
   it("400/404/422 → requisicao_recusada e 403 → acesso_negado, NUNCA repetem; rede repete uma vez", async () => {
     for (const status of [400, 404, 422]) {
-      const t = cliente({ [TOKEN_HOST]: [tokenOk()], [API_HOST]: [{ status, json: { error: { message: `detalhe ${SEGREDO}` } } }] });
+      const t = cliente({ [TOKEN_HOST]: [tokenOk()], [API_HOST]: [{ status, json: { error: { code: "BAD", message: `detalhe ${SEGREDO}`, errors: [{ parameter: "evalscript" }] } } }] });
       const f = await falhaDe(t.pedir());
       expect([f.tipo, f.status]).toEqual(["requisicao_recusada", status]);
       expect(t.naApi()).toHaveLength(1);
+      expect(f.erroProvedor).toEqual({ status, code: "BAD", message: "detalhe [redacted]", parameter: "evalscript" });
       semSegredo(f, t.registros);
     }
     const negado = cliente({ [TOKEN_HOST]: [tokenOk()], [API_HOST]: [{ status: 403 }] });
@@ -186,13 +187,20 @@ describe("SAT-06 processoComConsumo — 2xx que não é a imagem: cobrada, respo
 });
 
 describe("SAT-06 nada de segredo em nenhum desfecho da Process API", () => {
-  it("erro e registro nunca carregam o segredo, o token nem 'Bearer'; registro só com as 5 chaves", async () => {
+  it("erro e registro nunca carregam o segredo, o token nem 'Bearer'; 4xx traz erroProvedor sanitizado", async () => {
     const desfechos: Resp[][] = [[{ status: 401 }, { status: 401 }], [{ status: 403 }], [{ status: 429, retryAfter: "99" }], [{ status: 500 }, { status: 500 }], ["rede", "rede"], [{ status: 400 }], [{ status: 200, binario: Buffer.from("x") }]];
     for (const api of desfechos) {
       const t = cliente({ [TOKEN_HOST]: [tokenOk(), tokenOk()], [API_HOST]: api });
       const f = await falhaDe(t.pedir());
       semSegredo(f, t.registros);
-      for (const r of t.registros) expect(Object.keys(r).sort()).toEqual(["duracaoMs", "endpoint", "status", "tentativa", "tipoFalha"]);
+      for (const r of t.registros) {
+        const keys = Object.keys(r).sort();
+        if (r.tipoFalha === "requisicao_recusada") {
+          expect(keys).toEqual(["duracaoMs", "endpoint", "erroProvedor", "status", "tentativa", "tipoFalha"]);
+        } else {
+          expect(keys).toEqual(["duracaoMs", "endpoint", "status", "tentativa", "tipoFalha"]);
+        }
+      }
     }
   });
   it("sem credencial: configuracao, nenhuma chamada", async () => {

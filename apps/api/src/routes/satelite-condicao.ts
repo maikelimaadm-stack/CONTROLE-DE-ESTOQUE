@@ -34,7 +34,7 @@ import {
 import { runService } from "../lib/service.js";
 import { err, type DomainError } from "../lib/errors.js";
 import { empresaScopeSql, scopedById, type ServiceCtx } from "../lib/context.js";
-import { FalhaCopernicus, type RegistroChamada } from "../lib/satelite/copernicus.js";
+import { FalhaCopernicus, camposLogErroProvedor, type RegistroChamada } from "../lib/satelite/copernicus.js";
 import { gravarConsumo } from "../lib/satelite/consumo.js";
 import { lerContagemChamadas } from "../lib/satelite/limite-global.js";
 import {
@@ -669,7 +669,10 @@ export default async function sateliteCondicaoRoutes(app: FastifyInstance) {
         throw err("RATE_LIMITED", MSG_LIMITE_ANALISES, { motivo: "limite_erp" });
       }
       const registrar = (c: RegistroChamada) => req.log.info({
-        satelite: { provedor: PROVEDOR_COPERNICUS, endpoint: c.endpoint, status: c.status, duracao_ms: c.duracaoMs, tentativa: c.tentativa, tipo_falha: c.tipoFalha, area_id: a.area.id }
+        satelite: {
+          provedor: PROVEDOR_COPERNICUS, endpoint: c.endpoint, status: c.status, duracao_ms: c.duracaoMs,
+          tentativa: c.tentativa, tipo_falha: c.tipoFalha, area_id: a.area.id, ...camposLogErroProvedor(c.erroProvedor)
+        }
       }, "chamada ao provedor de satélite");
       chamada = cliente.estatisticaComConsumo(montarCorpoPastagem(a.preparo.poligono, janela, a.preparo.grade), registrar)
         .then((r) => {
@@ -679,7 +682,7 @@ export default async function sateliteCondicaoRoutes(app: FastifyInstance) {
               puCabecalho: r.puCabecalho
             };
           } catch (e) {
-            if (e instanceof FalhaCopernicus) throw new FalhaCopernicus(e.tipo, e.status, e.tentarAposSegundos, r.puCabecalho);
+            if (e instanceof FalhaCopernicus) throw new FalhaCopernicus(e.tipo, e.status, e.tentarAposSegundos, r.puCabecalho, e.erroProvedor);
             throw e;
           }
         });
