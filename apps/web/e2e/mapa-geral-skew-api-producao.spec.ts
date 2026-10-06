@@ -4,19 +4,21 @@ import { chamarApi } from "./top-config-08-comum";
 import { MSG_ROTA_NAO_ENCONTRADA, vigiar, type Mundo } from "./operacoes-01-f2-skew-comum";
 
 /**
- * MAPA-GERAL (decisão 294) · K-1, SENTIDO 1 — O WEB DESTE HEAD CONTRA A API DA BASE (a janela "web antes da API" da
+ * MAPA-GERAL (decisão 294 / 301 R2) · K-1, SENTIDO 1 — O WEB DESTE HEAD CONTRA A API DA BASE (a janela "web antes da API" da
  * DEPLOYMENT).
  *
  * O nome termina em `skew-api-producao.spec.ts`: roda SÓ em `playwright.skew.config.ts` e o `playwright.config.ts`
  * comum o ignora — lá a API seria a deste HEAD e o caso ficaria verde por vacuidade.
  *
- * O QUE SE MEDE. O Mapa geral deste HEAD pergunta `GET /api/mapa/analises-satelitais/resumo` (a rota nova) para pintar
- * o NDVI. A base sem a rota responde a 404 de ROTA, e o mapa tem de continuar sendo o de antes: as áreas listadas e no
- * mapa, na cor do cadastro, SEM legenda de NDVI, SEM "Analisar agora", com um aviso discreto — e nenhum erro na tela.
+ * O QUE SE MEDE. O Mapa geral deste HEAD pergunta `GET /api/mapa/analises-satelitais/resumo` (com `contexto=condicao`
+ * quando a API entende) para pintar a condição. A base sem a rota responde a 404 de ROTA, e o mapa tem de continuar
+ * sendo o de antes: as áreas listadas e no mapa, na cor do cadastro, SEM legenda de NDVI, SEM seletor de cor satélite,
+ * com um aviso discreto — e nenhum erro na tela. Se a base tem o resumo mas ainda não aceita `contexto` (422), o web
+ * cai no contrato anterior sem quebrar a tela.
  *
- * O MUNDO É PERGUNTADO À BASE NA HORA: a 404 de rota → legado (a base de hoje); 200 → novo (a base já com esta fatia,
- * depois do merge). Qualquer outra resposta é defeito. Os dois ramos cobram prova POSITIVA: no legado, o pedido da tela
- * SAIU e voltou 404 de rota, e o aviso aparece; no novo, o pedido voltou 200 e o aviso não aparece.
+ * O MUNDO É PERGUNTADO À BASE NA HORA: a 404 de rota → legado (a base de hoje); 200 → novo (a base já com o resumo).
+ * Qualquer outra resposta é defeito. Os dois ramos cobram prova POSITIVA: no legado, o pedido da tela SAIU e voltou
+ * 404 de rota, e o aviso aparece; no novo, algum pedido do resumo voltou 200 e o aviso não aparece.
  */
 
 const caminho = (r: Response) => new URL(r.url()).pathname;
@@ -34,7 +36,7 @@ test("MAPA-GERAL K-1 — web deste HEAD × API da base: o Mapa geral abre; legad
     geometria: { type: "Polygon", coordinates: [[[-54.9, -15.3], [-54.89, -15.3], [-54.89, -15.29], [-54.9, -15.29], [-54.9, -15.3]]] }
   });
   try {
-    // O MUNDO, perguntado à base.
+    // O MUNDO, perguntado à base (sonda sem `contexto`: a base pré-R2 já pode ter o resumo).
     const sonda = await chamarApi<{ itens?: unknown[]; error?: { code?: string; message?: string } }>(page, "GET", PORTA);
     let mundo: Mundo;
     if (sonda.status === 404) {
@@ -47,8 +49,10 @@ test("MAPA-GERAL K-1 — web deste HEAD × API da base: o Mapa geral abre; legad
     }
     console.log(`[skew] MAPA-GERAL · K-1 · a base responde ${sonda.status} a GET ${PORTA} → mundo ${mundo}`);
 
-    // O MAPA GERAL deste HEAD: o pedido do resumo SAI (e é ele que decide o NDVI).
-    const pedido = page.waitForResponse((r) => r.request().method() === "GET" && caminho(r) === PORTA);
+    // O MAPA GERAL deste HEAD: o pedido do resumo SAI (pode haver 422 de `contexto` e um retry sem ele).
+    const pedido = page.waitForResponse((r) =>
+      r.request().method() === "GET" && caminho(r) === PORTA && (r.status() === 200 || r.status() === 404)
+    );
     await page.goto("/mapa-geral");
     const resposta = await pedido;
     await expect(page.getByRole("heading", { name: "Mapa geral" })).toBeVisible();
@@ -63,12 +67,13 @@ test("MAPA-GERAL K-1 — web deste HEAD × API da base: o Mapa geral abre; legad
       await expect(page.getByTestId("mapa-legenda-ndvi"), "sem a rota, sem legenda").toHaveCount(0);
       await expect(page.getByTestId("mapa-cor-area"), "sem a rota, sem o seletor de cor do NDVI").toHaveCount(0);
       await expect(page.getByTestId("mapa-cor-pixel")).toHaveCount(0);
-      await expect(painel.getByTestId("mapa-ndvi-indisponivel-area")).toBeVisible();
-      await expect(painel.getByTestId("mapa-ndvi-analisar"), "sem a rota do resumo, o painel não oferece pedir análise").toHaveCount(0);
+      // R2: painel único CondicaoDaArea — sem a rota do resumo global, o NDVI/condição operacional não pinta nem oferece analisar pelo contrato antigo.
+      await expect(painel.getByTestId("mapa-ndvi-area"), "painel legado NDVI não entra no Mapa geral").toHaveCount(0);
     } else {
       expect(resposta.status()).toBe(200);
       await expect(page.getByTestId("mapa-ndvi-indisponivel")).toHaveCount(0);
-      await expect(painel.getByTestId("mapa-ndvi-area")).toBeVisible();
+      // Painel analítico único (R2): Condição da Área — ou some em silêncio se a rota /satelite/.../resumo ainda não existir na base.
+      await expect(painel.getByTestId("mapa-ndvi-area")).toHaveCount(0);
     }
     await expect(painel.getByTestId("mapa-abrir-cadastro")).toHaveAttribute("href", `/cadastros/areas/${area.id}`);
     vigia.semBloqueio();

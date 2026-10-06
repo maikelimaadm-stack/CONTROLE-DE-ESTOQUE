@@ -8,6 +8,8 @@ export * from "./livestock.js";
 export * from "./tipos-de-uso-da-area.js";
 export * from "./analise-satelital.js";
 export * from "./indices-satelitais.js";
+export * from "./raster-satelital.js";
+export * from "./anomalia-satelital.js";
 export * from "./consulta-satelital.js";
 export * from "./rebanho.js";
 export * from "./notificacoes.js";

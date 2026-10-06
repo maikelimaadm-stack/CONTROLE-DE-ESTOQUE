@@ -23,6 +23,7 @@ import type { RotuloArea } from "./camada-desenho";
 export interface AreaNoMapa {
   id: string;
   empresa_id?: string;
+  retiro_id?: string | null;
   name: string;
   code?: string | null;
   area_ha?: string | number | null;

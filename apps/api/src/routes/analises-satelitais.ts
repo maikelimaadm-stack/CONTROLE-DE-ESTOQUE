@@ -3,8 +3,9 @@ import { z } from "zod";
 import {
   COLECAO_SENTINEL2_L2A, CRITERIO_OBSERVACAO_UTIL, HISTORICO_ANALISE_SATELITAL_MAXIMO, HISTORICO_ANALISE_SATELITAL_PADRAO,
   INDICES_SATELITE, INDICE_NDVI, PROVEDOR_COPERNICUS, RESOLUCAO_PADRAO_M, RESUMO_ANALISE_SATELITAL_MAXIMO, RESUMO_ANALISE_SATELITAL_PADRAO,
-  VERSAO_METODO_NDVI
+  VERSAO_METODO_NDVI, VERSAO_METODO_PASTAGEM_ESSENCIAL
 } from "@agro/domain";
+import { isISODate } from "@agro/shared";
 import { runService } from "../lib/service.js";
 import { DomainError, denied, err, validation } from "../lib/errors.js";
 import { empresaScopeSql, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
@@ -93,15 +94,24 @@ const historicoQuery = z.object({
  * (422), nunca traduzidos — contrato de entrada não canônico é recusado.
  */
 const inteiroPositivo = (maximo: number) => z.string().regex(/^[1-9]\d{0,8}$/).transform(Number).pipe(z.number().int().min(1).max(maximo));
+/** Dia civil canônico — rejeita 2026-02-31 etc. (nunca 500 do Postgres). */
+const diaCivil = z.string().refine(isISODate, "Data inválida (use AAAA-MM-DD civil)");
 const resumoQuery = z.object({
   indice: indiceSchema,
+  /**
+   * `condicao` = Condição da Área: só `pastagem-essencial-v2` + geometria atual (+ data opcional).
+   * Ausente: compatibilidade do resumo legado (geometria atual, qualquer método).
+   */
+  contexto: z.enum(["condicao"]).optional(),
+  /** Modo data: só a observação útil daquele dia UTC; sem fallback temporal. */
+  data_imagem: diaCivil.optional(),
   pagina: inteiroPositivo(1_000_000).default(1),
   tamanho: inteiroPositivo(RESUMO_ANALISE_SATELITAL_MAXIMO).default(RESUMO_ANALISE_SATELITAL_PADRAO)
 }).strict();
 
 interface LinhaResumo {
   area_id: string; hash_atual: string | null;
-  ultima_situacao: string; ultima_motivo: string | null; ultima_criado: Date;
+  ultima_situacao: string | null; ultima_motivo: string | null; ultima_criado: Date | null;
   u_observacao_inicio: Date | null; u_observacao_fim: Date | null; u_valor_medio: string | null; u_valor_minimo: string | null;
   u_valor_maximo: string | null; u_desvio_padrao: string | null; u_cobertura_valida: string | null; u_pixels_validos: number | null;
   u_geometria_sha256: string | null; u_criado: Date | null;
@@ -417,23 +427,47 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
     exigir(app, req, PERMISSAO_VER_ANALISE);
     const q = resumoQuery.parse(req.query);
     return runService(app, req, PERMISSAO_VER_ANALISE, async (ctx) => {
+      const condicao = q.contexto === "condicao";
       const params: unknown[] = [ctx.orgId, q.indice];
       const escopoArea = empresaScopeSql(ctx, "a", params);
       const escopoExecucao = empresaScopeSql(ctx, "e", params);
       const escopoUteis = empresaScopeSql(ctx, "s", params);
+      let filtroMetodoE = "";
+      let filtroMetodoS = "";
+      if (condicao) {
+        params.push(VERSAO_METODO_PASTAGEM_ESSENCIAL);
+        const pMetodo = `$${params.length}`;
+        filtroMetodoE = ` and e.versao_metodo = ${pMetodo}`;
+        filtroMetodoS = ` and s.versao_metodo = ${pMetodo}`;
+      }
+      let filtroDiaE = "";
+      let filtroDiaS = "";
+      let filtroDiaAntes = "";
+      if (q.data_imagem) {
+        params.push(q.data_imagem);
+        const pDia = `$${params.length}`;
+        filtroDiaE = ` and e.situacao = 'concluida' and e.observacao_inicio is not null and (e.observacao_inicio at time zone 'UTC')::date = ${pDia}::date`;
+        filtroDiaS = ` and (s.observacao_inicio at time zone 'UTC')::date = ${pDia}::date`;
+        filtroDiaAntes = ` and (s.observacao_inicio at time zone 'UTC')::date < ${pDia}::date`;
+      }
       params.push(q.tamanho + 1, (q.pagina - 1) * q.tamanho);
       const limite = `$${params.length - 1}`, deslocamento = `$${params.length}`;
-      // A imagem útil de ordem `n` da área (0 = a mais recente): distinct on por imagem, a análise mais recente dela.
-      const util = (n: number) => `
+      // OPERACIONAL: geometria atual; com contexto=condicao também método v2; com data_imagem só aquele dia.
+      const hashExpr = `case when ar.geometria is null then null else encode(sha256(convert_to(ar.geometria::text, 'UTF8')), 'hex') end`;
+      const hashMatch = (alias: string) =>
+        `${alias}.geometria_sha256 = encode(sha256(convert_to(ar.geometria::text, 'UTF8')), 'hex')`;
+      const util = (n: number, filtroDiaExtra: string) => `
            select distinct on (s.observacao_inicio) s.observacao_inicio, s.observacao_fim, s.valor_medio, s.valor_minimo,
                   s.valor_maximo, s.desvio_padrao, s.cobertura_valida, s.pixels_validos, s.geometria_sha256, s.created_at
              from erp.analises_satelitais s
-            where s.organization_id = $1 and s.area_id = ar.id and s.indice = $2 and s.situacao = 'concluida'${escopoUteis}
+            where s.organization_id = $1 and s.area_id = ar.id and s.indice = $2 and s.situacao = 'concluida'
+              and ar.geometria is not null
+              and ${hashMatch("s")}${filtroMetodoS}${filtroDiaExtra}${escopoUteis}
             order by s.observacao_inicio desc, s.created_at desc, s.id desc
             offset ${n} limit 1`;
       const r = await ctx.tx.query<LinhaResumo>(
         `select ar.id as area_id,
-                case when ar.geometria is null then null else encode(sha256(convert_to(ar.geometria::text, 'UTF8')), 'hex') end as hash_atual,
+                ${hashExpr} as hash_atual,
                 x.situacao as ultima_situacao, x.motivo_qualidade as ultima_motivo, x.created_at as ultima_criado,
                 u.observacao_inicio as u_observacao_inicio, u.observacao_fim as u_observacao_fim, u.valor_medio as u_valor_medio,
                 u.valor_minimo as u_valor_minimo, u.valor_maximo as u_valor_maximo, u.desvio_padrao as u_desvio_padrao,
@@ -444,38 +478,51 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
            from (
              select a.id, a.code, a.geometria
                from erp.areas a
-              where a.organization_id = $1 and a.deleted_at is null${escopoArea}
-                and exists (select 1 from erp.analises_satelitais e
-                             where e.organization_id = $1 and e.area_id = a.id and e.indice = $2${escopoExecucao})
+              where a.organization_id = $1 and a.deleted_at is null and a.geometria is not null${escopoArea}
+                and exists (
+                  select 1 from erp.analises_satelitais e
+                   where e.organization_id = $1 and e.area_id = a.id and e.indice = $2
+                     and e.geometria_sha256 = encode(sha256(convert_to(a.geometria::text, 'UTF8')), 'hex')
+                     ${filtroMetodoE}${filtroDiaE}${escopoExecucao})
               order by a.code, a.id
               limit ${limite} offset ${deslocamento}
            ) ar
-           cross join lateral (
+           left join lateral (
              select e.situacao, e.motivo_qualidade, e.created_at
                from erp.analises_satelitais e
-              where e.organization_id = $1 and e.area_id = ar.id and e.indice = $2${escopoExecucao}
+              where e.organization_id = $1 and e.area_id = ar.id and e.indice = $2
+                and e.geometria_sha256 = encode(sha256(convert_to(ar.geometria::text, 'UTF8')), 'hex')
+                ${filtroMetodoE}${filtroDiaE}${escopoExecucao}
               order by e.created_at desc, e.id desc
               limit 1
-           ) x
-           left join lateral (${util(0)}
+           ) x on true
+           left join lateral (${util(0, filtroDiaS)}
            ) u on true
-           left join lateral (${util(1)}
+           left join lateral (${util(q.data_imagem ? 0 : 1, q.data_imagem ? filtroDiaAntes : "")}
            ) p on true
           order by ar.code, ar.id`, params);
       const itens = r.rows.slice(0, q.tamanho).map((l) => ({
         area_id: l.area_id,
-        ultima_execucao: { situacao: l.ultima_situacao, motivo_qualidade: l.ultima_motivo, criado_em: l.ultima_criado.toISOString() },
+        ultima_execucao: l.ultima_criado ? {
+          situacao: l.ultima_situacao, motivo_qualidade: l.ultima_motivo, criado_em: l.ultima_criado.toISOString()
+        } : null,
         ultima_observacao: l.u_observacao_inicio ? {
           observacao_inicio: l.u_observacao_inicio.toISOString(), observacao_fim: l.u_observacao_fim?.toISOString() ?? null,
           valor_medio: l.u_valor_medio, valor_minimo: l.u_valor_minimo, valor_maximo: l.u_valor_maximo, desvio_padrao: l.u_desvio_padrao,
           cobertura_valida: l.u_cobertura_valida, pixels_validos: l.u_pixels_validos,
-          do_poligono_atual: l.hash_atual !== null && l.u_geometria_sha256 === l.hash_atual,
+          do_poligono_atual: true,
           criado_em: l.u_criado?.toISOString() ?? null
         } : null,
         observacao_anterior: l.a_observacao_inicio ? { observacao_inicio: l.a_observacao_inicio.toISOString(), valor_medio: l.a_valor_medio } : null,
         variacao: l.variacao
       }));
-      return { itens, pagina: q.pagina, tamanho: q.tamanho, tem_mais: r.rows.length > q.tamanho };
+      return {
+        itens, pagina: q.pagina, tamanho: q.tamanho, tem_mais: r.rows.length > q.tamanho,
+        modo: q.data_imagem ? "data" : "ultima",
+        data_imagem: q.data_imagem ?? null,
+        contexto: q.contexto ?? null,
+        versao_metodo: condicao ? VERSAO_METODO_PASTAGEM_ESSENCIAL : null
+      };
     });
   });
 }

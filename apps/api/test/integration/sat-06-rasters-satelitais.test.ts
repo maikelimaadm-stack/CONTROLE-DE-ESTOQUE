@@ -247,7 +247,11 @@ describe("SAT-06 (1)(2)(6)(11) — gerar, guardar, reaproveitar e servir", () =>
     expect(primeira.raster).toEqual({
       id: expect.any(String), analise_id: analise["base"], area_id: area["base"], indice: "ndvi", tipo: "valores", data_imagem: "2026-08-14",
       largura: grade.largura, altura: grade.altura, cantos_lnglat: expect.any(Array), escala_min: ESCALA_NDVI_RASTER.min, escala_max: ESCALA_NDVI_RASTER.max,
-      resolucao_m: RESOLUCAO_ALVO_M, resolucao_reduzida: false, url_assinada: expect.stringMatching(new RegExp(`^/api/mapa/rasters/${primeira.raster.id}/arquivo\\?t=[A-Za-z0-9_-]+$`)),
+      resolucao_m: RESOLUCAO_ALVO_M, resolucao_reduzida: false,
+      geometria_sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      encoding_version: "ndvi-valores-v1", nodata: 0, bits: 8,
+      native_resolution_m: 10, processing_resolution_m: 10,
+      url_assinada: expect.stringMatching(new RegExp(`^/api/mapa/rasters/${primeira.raster.id}/arquivo\\?t=[A-Za-z0-9_-]+$`)),
       expira_em: expect.any(String)
     });
     const restante = (Date.parse(primeira.raster.expira_em) - Date.now()) / 1000;
@@ -952,7 +956,7 @@ describe("SAT-06 (15)(16) — escopo de empresa, organização, listagem em lote
     const ids201 = Array.from({ length: AREAS_POR_LISTAGEM_MAXIMO + 1 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`);
     const ids200 = ids201.slice(0, AREAS_POR_LISTAGEM_MAXIMO);
     for (const q of [
-      "", "area_ids=", `area_ids=${um},${um}`, `area_ids=${um.toUpperCase()}`, `area_ids=${um},`, `area_ids=${ids201.join(",")}`, `area_ids=${um}&indice=ndre`,
+      "", "area_ids=", `area_ids=${um},${um}`, `area_ids=${um.toUpperCase()}`, `area_ids=${um},`, `area_ids=${ids201.join(",")}`, `area_ids=${um}&indice=foo`,
       `area_ids=${um}&tamanho=0`, `area_ids=${um}&tamanho=201`, `area_ids=${um}&pagina=1e2`, `area_ids=${um}&pagina=01`, `area_ids=${um}&empresa_id=x`, `area_ids=${um}&x=1`,
       `area_ids=${um}&area_ids=${um}`
     ]) {

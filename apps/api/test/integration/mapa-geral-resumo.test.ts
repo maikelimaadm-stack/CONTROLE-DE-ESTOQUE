@@ -22,12 +22,16 @@ const quadrado = (lon: number, lat: number, lado: number) =>
 
 interface Item {
   area_id: string;
-  ultima_execucao: { situacao: string; motivo_qualidade: string | null; criado_em: string };
+  ultima_execucao: { situacao: string; motivo_qualidade: string | null; criado_em: string } | null;
   ultima_observacao: { observacao_inicio: string; valor_medio: string; do_poligono_atual: boolean; [campo: string]: unknown } | null;
   observacao_anterior: { observacao_inicio: string; valor_medio: string } | null;
   variacao: string | null;
 }
-interface Corpo { itens: Item[]; pagina: number; tamanho: number; tem_mais: boolean; error: { code: string; message: string } }
+interface Corpo {
+  itens: Item[]; pagina: number; tamanho: number; tem_mais: boolean;
+  modo?: string; data_imagem?: string | null; contexto?: string | null; versao_metodo?: string | null;
+  error: { code: string; message: string };
+}
 const j = (r: { json: () => unknown }) => r.json() as Corpo;
 const resumo = (query = "", headers = h.headers()) => h.app.inject({ method: "GET", url: `/api/mapa/analises-satelitais/resumo${query}`, headers });
 const porArea = (c: Corpo) => new Map(c.itens.map((i) => [i.area_id, i]));
@@ -137,14 +141,18 @@ describe("MAPA-GERAL resumo — o que cada área mostra", () => {
     });
   });
 
-  it("uma imagem só: sem anterior e sem variação; polígono redesenhado → do_poligono_atual falso (o número fica, com o aviso)", async () => {
-    let i = porArea(j(await resumo())).get(area["deB"]!)!;
+  it("uma imagem só: sem anterior e sem variação; polígono redesenhado → área some do resumo operacional (não pinta valor antigo)", async () => {
+    const i = porArea(j(await resumo())).get(area["deB"]!)!;
     expect(i.ultima_observacao).toMatchObject({ valor_medio: "0.4500", do_poligono_atual: true });
     expect(i.observacao_anterior).toBeNull();
     expect(i.variacao).toBeNull();
+    // SATÉLITE COMPLETO R1: contorno antigo NÃO coloriza o mapa. Restaura o polígono para não
+    // derrubar os testes de escopo/paginação que compartilham a área deB.
+    const geomAntes = (await admin.query<{ geometria: unknown }>("select geometria from erp.areas where id=$1", [area["deB"]])).rows[0]!.geometria;
     await admin.query("update erp.areas set geometria=$2 where id=$1", [area["deB"], JSON.stringify(quadrado(-56.1, -15.6, 0.012))]);
-    i = porArea(j(await resumo())).get(area["deB"]!)!;
-    expect(i.ultima_observacao).toMatchObject({ valor_medio: "0.4500", do_poligono_atual: false });
+    expect(porArea(j(await resumo())).get(area["deB"]!)).toBeUndefined();
+    await admin.query("update erp.areas set geometria=$2 where id=$1", [area["deB"], JSON.stringify(geomAntes)]);
+    expect(porArea(j(await resumo())).get(area["deB"]!)?.ultima_observacao).toMatchObject({ valor_medio: "0.4500", do_poligono_atual: true });
   });
 });
 
@@ -157,7 +165,10 @@ describe("MAPA-GERAL resumo — capacidade × escopo", () => {
   it("capacidade com escopo só no módulo `mapa` (nada em pecuária): lista VAZIA, nunca todas — o módulo vem da permissão", async () => {
     const r = await resumo("", soMapa);
     expect(r.statusCode, r.body).toBe(200);
-    expect(j(r)).toEqual({ itens: [], pagina: 1, tamanho: 500, tem_mais: false });
+    expect(j(r)).toEqual({
+      itens: [], pagina: 1, tamanho: 500, tem_mais: false,
+      modo: "ultima", data_imagem: null, contexto: null, versao_metodo: null
+    });
   });
   it("seleção de empresa (X-Empresa-Id) só diminui: o dono com B selecionada vê só B; empresa proibida → 403", async () => {
     const dono = await resumo("", h.headers({ "x-empresa-id": B }));

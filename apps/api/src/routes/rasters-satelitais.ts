@@ -2,7 +2,12 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { withTx } from "@agro/db";
-import { COLECAO_SENTINEL2_L2A, INDICE_NDVI, PROVEDOR_COPERNICUS, moduloDaPermissao } from "@agro/domain";
+import {
+  COLECAO_SENTINEL2_L2A, INDICES_RASTER, PROVEDOR_COPERNICUS, VERSAO_METODO_PASTAGEM_ESSENCIAL,
+  encodingRasterDe, encodingRasterPorVersao, moduloDaPermissao,
+  type EncodingRasterIndice, type IdIndiceRaster
+} from "@agro/domain";
+import { isISODate } from "@agro/shared";
 import { runService } from "../lib/service.js";
 import { DomainError, err, validation } from "../lib/errors.js";
 import { empresaScopeSql, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
@@ -13,7 +18,7 @@ import { lerContagemChamadas } from "../lib/satelite/limite-global.js";
 import { lerPoligono } from "../lib/satelite/geometria.js";
 import { lerPngCinza8 } from "../lib/satelite/png.js";
 import {
-  CRS_RASTER, ESCALA_NDVI_RASTER, FORMATO_RASTER, RESOLUCAO_ALVO_M, TIPO_RASTER, VERSAO_EVALSCRIPT_RASTER,
+  CRS_RASTER, FORMATO_RASTER, TIPO_RASTER,
   chaveCacheRaster, dataImagemUtc, montarCorpoProcesso, planejarGradeRaster, type GradeRaster
 } from "../lib/satelite/raster.js";
 import { caminhoDoRaster } from "../lib/satelite/armazenamento-raster.js";
@@ -22,6 +27,8 @@ import { resumoDoErro } from "../lib/satelite/executar-item.js";
 import {
   MSG_ANALISE_DESLIGADA, MSG_LIMITE_ANALISES, MSG_LIMITE_PROVEDOR, MSG_POLIGONO_FORA_DO_FORMATO, PERMISSAO_PEDIR_ANALISE, PERMISSAO_VER_ANALISE, exigir
 } from "./analises-satelitais.js";
+
+const INDICES_RASTER_ENUM = INDICES_RASTER as unknown as [IdIndiceRaster, ...IdIndiceRaster[]];
 
 /**
  * IMAGEM DO NDVI POR PIXEL DA ANÁLISE (SAT-06, decisão 297) — Process API do Copernicus. Só API: sem tela, sem
@@ -74,7 +81,7 @@ export const MSG_ANALISE_NAO_ENCONTRADA = "Análise não encontrada";
 export const MSG_RASTER_NAO_ENCONTRADO = "Imagem não encontrada";
 export const MSG_SEM_OBSERVACAO = "A análise não tem observação útil: não há imagem de satélite para gerar.";
 export const MSG_GEOMETRIA_ALTERADA = "O polígono da área mudou depois da análise; peça uma análise nova antes de gerar a imagem.";
-export const MSG_METODO_DESCONHECIDO = "A imagem por pixel só existe para o NDVI do Sentinel-2 L2A.";
+export const MSG_METODO_DESCONHECIDO = "A imagem por pixel só existe para os índices do bundle essencial do Sentinel-2 L2A.";
 export const MSG_PROVEDOR_INDISPONIVEL_RASTER = "O provedor de imagens de satélite não respondeu como esperado; nenhuma imagem foi gravada. Tente de novo mais tarde.";
 export const MSG_ARMAZENAMENTO_FALHOU = "A imagem de satélite foi gerada, mas não pôde ser guardada; nenhuma imagem foi registrada. Tente de novo mais tarde.";
 export const MSG_RASTER_DISPUTADO = "A imagem desta análise foi disputada por outro pedido; peça a imagem de novo.";
@@ -89,11 +96,24 @@ const sha256Hex = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 const corpoVazio = z.object({}).strict();
 const semQuery = z.object({}).strict();
 const inteiroPositivo = (maximo: number) => z.string().regex(/^[1-9]\d{0,8}$/).transform(Number).pipe(z.number().int().min(1).max(maximo));
+/** Dia civil canônico (calendário real). Regex sozinha aceitaria 2026-02-31 → Postgres 500. */
+const diaCivil = z.string().refine(isISODate, "Data inválida (use AAAA-MM-DD civil)");
 const listaQuery = z.object({
   /** `uuid,uuid,…` — só a forma canônica (minúsculas), sem repetir, 1..200. */
   area_ids: z.string().transform((v) => v.split(",")).pipe(
     z.array(z.string().regex(UUID_CANONICO)).min(1).max(AREAS_POR_LISTAGEM_MAXIMO).refine((l) => new Set(l).size === l.length, "Área repetida")),
-  indice: z.enum([INDICE_NDVI]).default(INDICE_NDVI),
+  indice: z.enum(INDICES_RASTER_ENUM).default("ndvi"),
+  /**
+   * Modo operacional:
+   * - ausente/`ultima`: raster da ÚLTIMA análise útil do polígono atual (não o último gerado).
+   * - `data_imagem=YYYY-MM-DD`: só aquele dia; sem fallback para latest.
+   */
+  data_imagem: diaCivil.optional(),
+  /**
+   * `condicao` = Condição da Área: só `pastagem-essencial-v2` + geometria atual.
+   * Ausente: compatibilidade (SAT-06 / NDVI avulso) — geometria atual, sem filtro de método.
+   */
+  contexto: z.enum(["condicao"]).optional(),
   pagina: inteiroPositivo(1_000_000).default(1),
   tamanho: inteiroPositivo(AREAS_POR_LISTAGEM_MAXIMO).default(TAMANHO_PAGINA_PADRAO)
 }).strict();
@@ -109,15 +129,16 @@ interface AreaRaster { id: string; empresa_id: string; geometria: unknown; geome
 interface LinhaRaster {
   id: string; empresa_id: string; analise_id: string; area_id: string; indice: string; tipo: string; data_imagem: string; largura: number; altura: number;
   cantos_lnglat: unknown; escala_min: string; escala_max: string; resolucao_m: number;
+  versao_evalscript: string; geometria_sha256: string;
 }
 const COLUNAS_RASTER = ["id", "empresa_id", "analise_id", "area_id", "indice", "tipo", "data_imagem", "largura", "altura", "cantos_lnglat",
-  "escala_min", "escala_max", "resolucao_m"];
+  "escala_min", "escala_max", "resolucao_m", "versao_evalscript", "geometria_sha256"];
 const colunasRaster = (alias: string) => COLUNAS_RASTER.map((c) => `${alias}.${c}`).join(", ");
 
 /** Tudo o que a FASE A decide sobre a imagem da análise, antes de qualquer chamada. */
 interface PlanoRaster {
   analise: LinhaAnaliseRaster; area: AreaRaster; grade: GradeRaster; janela: { inicio: Date; fim: Date };
-  dataImagem: string; chave: string; storagePath: string;
+  dataImagem: string; chave: string; storagePath: string; encoding: EncodingRasterIndice;
 }
 
 /** O que a geração (provedor + PNG + arquivo) entrega à FASE C. */
@@ -170,8 +191,10 @@ async function planejar(ctx: ServiceCtx, analiseId: string): Promise<PlanoRaster
   if (analise.situacao !== "concluida" || !analise.observacao_inicio || !analise.observacao_fim) {
     throw validation(MSG_SEM_OBSERVACAO, { motivo: "sem_observacao" });
   }
-  // Discriminador desconhecido NEGA: só o NDVI do Sentinel-2 L2A tem evalscript de imagem.
-  if (analise.indice !== INDICE_NDVI || analise.colecao !== COLECAO_SENTINEL2_L2A) throw validation(MSG_METODO_DESCONHECIDO, { motivo: "metodo_desconhecido" });
+  const encoding = encodingRasterDe(analise.indice);
+  if (!encoding || analise.colecao !== COLECAO_SENTINEL2_L2A) {
+    throw validation(MSG_METODO_DESCONHECIDO, { motivo: "metodo_desconhecido" });
+  }
   // A área divide a empresa com a análise (FK composta da 0052): fora do escopo ou excluída é a mesma 404 da análise.
   const area = await lerArea(ctx, analise.area_id);
   if (!area) throw err("NOT_FOUND", MSG_ANALISE_NAO_ENCONTRADA);
@@ -182,7 +205,7 @@ async function planejar(ctx: ServiceCtx, analiseId: string): Promise<PlanoRaster
   if (!poligono) throw validation(MSG_POLIGONO_FORA_DO_FORMATO, { motivo: "poligono_fora_do_formato" });
   let grade: GradeRaster;
   try {
-    grade = planejarGradeRaster(poligono);
+    grade = planejarGradeRaster(poligono, encoding.processingResolutionM);
   } catch (e) {
     // Fora da faixa do EPSG:3857 (perto do polo) ou anel degenerado: forma que nenhuma imagem mudaria.
     if (e instanceof RangeError) throw validation(MSG_POLIGONO_FORA_DO_FORMATO, { motivo: "poligono_fora_do_formato" });
@@ -191,12 +214,18 @@ async function planejar(ctx: ServiceCtx, analiseId: string): Promise<PlanoRaster
   const dataImagem = dataImagemUtc(analise.observacao_inicio);
   // A chave é DA ÁREA (o id da área é o primeiro componente): duas áreas gêmeas — o mesmo polígono e a mesma data, até em
   // empresas diferentes — têm imagens próprias, e a unicidade (organization_id, chave_cache) da 0055 não as mistura.
+  // A versão do evalscript embute o índice; escala e resolução de processamento entram na chave.
   const chave = chaveCacheRaster({
-    areaId: area.id, geometriaSha256: analise.geometria_sha256, dataImagem, colecao: analise.colecao, versaoEvalscript: VERSAO_EVALSCRIPT_RASTER,
-    resolucaoM: grade.resolucaoM, crs: CRS_RASTER, formato: FORMATO_RASTER, escalaMin: ESCALA_NDVI_RASTER.min, escalaMax: ESCALA_NDVI_RASTER.max
+    areaId: area.id, geometriaSha256: analise.geometria_sha256, dataImagem, colecao: analise.colecao,
+    versaoEvalscript: encoding.encodingVersion,
+    resolucaoM: grade.resolucaoM, crs: CRS_RASTER, formato: FORMATO_RASTER,
+    escalaMin: encoding.scaleMin, escalaMax: encoding.scaleMax
   });
   const storagePath = caminhoDoRaster({ orgId: ctx.orgId, areaId: area.id, indice: analise.indice, dataImagem, chaveCache: chave });
-  return { analise, area, grade, janela: { inicio: analise.observacao_inicio, fim: analise.observacao_fim }, dataImagem, chave, storagePath };
+  return {
+    analise, area, grade, janela: { inicio: analise.observacao_inicio, fim: analise.observacao_fim },
+    dataImagem, chave, storagePath, encoding
+  };
 }
 
 /** A imagem da chave, no escopo — ou nenhuma. */
@@ -229,11 +258,22 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
   /** DTO do ERP — nunca o corpo do provedor. A URL assinada é do usuário que pede, e vale `VALIDADE_URL_RASTER_S`. */
   function paraDto(l: LinhaRaster, orgId: string, userId: string) {
     const { token, expira } = assinador.assinar({ rasterId: l.id, organizationId: orgId, userId });
+    // Metadados de encoding vêm da VERSÃO ARMAZENADA — não do catálogo atual do índice.
+    const enc = encodingRasterPorVersao(l.versao_evalscript);
+    const escalaMin = Number(l.escala_min);
+    const escalaMax = Number(l.escala_max);
+    const alvo = enc?.processingResolutionM ?? null;
     return {
       id: l.id, analise_id: l.analise_id, area_id: l.area_id, indice: l.indice, tipo: l.tipo, data_imagem: l.data_imagem,
       largura: l.largura, altura: l.altura, cantos_lnglat: l.cantos_lnglat,
-      escala_min: Number(l.escala_min), escala_max: Number(l.escala_max), resolucao_m: l.resolucao_m,
-      resolucao_reduzida: l.resolucao_m > RESOLUCAO_ALVO_M,
+      escala_min: escalaMin, escala_max: escalaMax, resolucao_m: l.resolucao_m,
+      resolucao_reduzida: alvo !== null ? l.resolucao_m > alvo : false,
+      geometria_sha256: l.geometria_sha256,
+      encoding_version: l.versao_evalscript,
+      nodata: enc?.nodata ?? null,
+      bits: enc?.bits ?? null,
+      native_resolution_m: enc?.nativeResolutionM ?? null,
+      processing_resolution_m: enc?.processingResolutionM ?? null,
       url_assinada: `/api/mapa/rasters/${l.id}/arquivo?t=${token}`,
       expira_em: new Date(expira * 1000).toISOString()
     };
@@ -365,7 +405,7 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
     const registrar = (c: RegistroChamada) => app.log.info({
       satelite: { provedor: PROVEDOR_COPERNICUS, endpoint: c.endpoint, status: c.status, duracao_ms: c.duracaoMs, tentativa: c.tentativa, tipo_falha: c.tipoFalha, analise_id: plano.analise.id, area_id: plano.area.id }
     }, "chamada ao provedor de satélite");
-    const r = await cliente.processoComConsumo(montarCorpoProcesso(plano.grade, plano.janela), registrar);
+    const r = await cliente.processoComConsumo(montarCorpoProcesso(plano.grade, plano.janela, plano.encoding.indice), registrar);
     let img: { largura: number; altura: number };
     try {
       // As dimensões PEDIDAS vão ao leitor: um IHDR de outro tamanho é recusado ANTES de descomprimir (sem inflar o que
@@ -398,8 +438,8 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
     const g = p.grade;
     const valores: unknown[] = [
       ctx.orgId, p.analise.empresa_id, ctx.user.id, p.analise.id, p.area.id, p.analise.geometria_sha256, p.analise.indice, TIPO_RASTER,
-      VERSAO_EVALSCRIPT_RASTER, p.dataImagem, p.storagePath, g.largura, g.altura, g.bbox3857[0], g.bbox3857[1], g.bbox3857[2], g.bbox3857[3],
-      JSON.stringify(g.cantosLngLat), ESCALA_NDVI_RASTER.min, ESCALA_NDVI_RASTER.max, g.resolucaoM, p.chave, lerPuDoCabecalho(feita.puCabecalho).pu
+      p.encoding.encodingVersion, p.dataImagem, p.storagePath, g.largura, g.altura, g.bbox3857[0], g.bbox3857[1], g.bbox3857[2], g.bbox3857[3],
+      JSON.stringify(g.cantosLngLat), p.encoding.scaleMin, p.encoding.scaleMax, g.resolucaoM, p.chave, lerPuDoCabecalho(feita.puCabecalho).pu
     ];
     const escopoOrigem = empresaScopeSql(ctx, "f", valores);
     const r = await ctx.tx.query<LinhaRaster>(
@@ -438,36 +478,69 @@ export default async function rastersSatelitaisRoutes(app: FastifyInstance) {
   });
 
   /**
-   * A imagem MAIS RECENTE (data da imagem, depois o registro) de cada área pedida, numa consulta só. As áreas pedidas
-   * (até 200) são filtradas na própria `erp.areas` (viva, da organização, no escopo de empresa) e cada uma busca a SUA
-   * imagem mais recente por `lateral … limit 1` com o prefixo inteiro do índice da 0055 (organização, empresa DA ÁREA,
-   * área, índice); o `cross join` deixa de fora a área sem imagem ANTES do `limit` (a página nunca sai curta por
-   * recorte posterior). O escopo de empresa entra em CADA ocorrência de tabela (área e imagem). Não gera nada.
+   * Raster OPERACIONAL por área — preso à geometria atual de `erp.areas`.
+   *
+   * Sem `data_imagem`: raster da ÚLTIMA análise útil (concluída) do índice no polígono vigente.
+   *   Se essa análise ainda não tem raster → a área não entra (UI oferece "gerar desta observação").
+   * Com `data_imagem=YYYY-MM-DD`: só aquele dia; SEM fallback para latest.
+   * `contexto=condicao`: só análises `pastagem-essencial-v2` (Condição da Área).
+   * Raster de geometria antiga NUNCA retorna.
    */
   app.get("/mapa/rasters", async (req) => {
     exigir(app, req, PERMISSAO_VER_ANALISE);
     const q = listaQuery.parse(req.query);
     return runService(app, req, PERMISSAO_VER_ANALISE, async (ctx) => {
+      const condicao = q.contexto === "condicao";
       const params: unknown[] = [ctx.orgId, q.area_ids, q.indice];
       const escopoArea = empresaScopeSql(ctx, "a", params);
       const escopoRaster = empresaScopeSql(ctx, "r", params);
+      const escopoAnalise = empresaScopeSql(ctx, "s", params);
+      let filtroMetodo = "";
+      if (condicao) {
+        params.push(VERSAO_METODO_PASTAGEM_ESSENCIAL);
+        filtroMetodo = ` and s.versao_metodo = $${params.length}`;
+      }
+      let filtroData = "";
+      if (q.data_imagem) {
+        params.push(q.data_imagem);
+        filtroData = ` and (s.observacao_inicio at time zone 'UTC')::date = $${params.length}::date`;
+      }
       params.push(q.tamanho + 1, (q.pagina - 1) * q.tamanho);
       const limite = `$${params.length - 1}`, deslocamento = `$${params.length}`;
+      const hashArea = `encode(sha256(convert_to(a.geometria::text, 'UTF8')), 'hex')`;
+      // Última útil OU data exata: sempre via análise (geometria + método + dia), depois o raster DESSA análise.
+      // Modo data sem contexto=condicao: ainda exige análise do polígono atual naquele dia (sem fallback latest).
+      const lateral = `select ${colunasRaster("r")}
+             from (
+               select s.id as analise_id
+                 from erp.analises_satelitais s
+                where s.organization_id = $1 and s.area_id = a.id and s.indice = $3
+                  and s.situacao = 'concluida' and s.observacao_inicio is not null
+                  and s.geometria_sha256 = ${hashArea}${filtroMetodo}${filtroData}${escopoAnalise}
+                order by s.observacao_inicio desc, s.created_at desc, s.id desc
+                limit 1
+             ) util
+             join erp.satelite_rasters r
+               on r.organization_id = $1 and r.empresa_id = a.empresa_id and r.area_id = a.id
+              and r.analise_id = util.analise_id and r.indice = $3
+              and r.geometria_sha256 = ${hashArea}${escopoRaster}
+            limit 1`;
       const r = await ctx.tx.query<LinhaRaster>(
         `select ${colunasRaster("x")}
            from erp.areas a
-           cross join lateral (
-             select ${colunasRaster("r")}
-               from erp.satelite_rasters r
-              where r.organization_id = $1 and r.empresa_id = a.empresa_id and r.area_id = a.id and r.indice = $3${escopoRaster}
-              order by r.data_imagem desc, r.created_at desc, r.id desc
-              limit 1
-           ) x
-          where a.organization_id = $1 and a.id = any($2::uuid[]) and a.deleted_at is null${escopoArea}
+           cross join lateral (${lateral}) x
+          where a.organization_id = $1 and a.id = any($2::uuid[]) and a.deleted_at is null
+            and a.geometria is not null${escopoArea}
           order by a.code, a.id
           limit ${limite} offset ${deslocamento}`, params);
       const itens = r.rows.slice(0, q.tamanho).map((l) => paraDto(l, ctx.orgId, ctx.user.id));
-      return { itens, pagina: q.pagina, tamanho: q.tamanho, tem_mais: r.rows.length > q.tamanho };
+      return {
+        itens, pagina: q.pagina, tamanho: q.tamanho, tem_mais: r.rows.length > q.tamanho,
+        modo: q.data_imagem ? "data" : "ultima",
+        data_imagem: q.data_imagem ?? null,
+        contexto: q.contexto ?? null,
+        versao_metodo: condicao ? VERSAO_METODO_PASTAGEM_ESSENCIAL : null
+      };
     });
   });
 

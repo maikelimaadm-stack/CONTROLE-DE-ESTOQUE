@@ -59,11 +59,11 @@ export function cabecalhosDeContexto(s: Session | null): Record<string, string> 
  */
 export function encerrarSessaoExpirada() { setSession(null); if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) location.href = "/login"; }
 
-export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean; idempotencyKey?: string } = {}): Promise<T> {
+export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean; idempotencyKey?: string; signal?: AbortSignal } = {}): Promise<T> {
   const s = getSession();
   const headers: Record<string, string> = { ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}), ...cabecalhosDeContexto(s), ...(opts.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : {}), ...(opts.headers ?? {}) };
   // Caminho, query, corpo e resposta são CANÔNICOS ponta a ponta: não há mais tradutor de fio no cliente.
-  const res = await fetch(`${API_URL}${path}`, { method: opts.method ?? "GET", headers, body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
+  const res = await fetch(`${API_URL}${path}`, { method: opts.method ?? "GET", headers, body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined, signal: opts.signal });
   if (opts.raw) return res as unknown as T;
   const text = await res.text();
   const data = text ? (JSON.parse(text) as unknown) : null;

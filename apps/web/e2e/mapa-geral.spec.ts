@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { ADMIN, api, login, uniq } from "./helpers";
 
@@ -38,6 +38,13 @@ async function empresaDaSessao(page: Page): Promise<string> {
   const id = ctx.empresas?.[0]?.id;
   expect(id, "premissa: há empresa visível").toBeTruthy();
   return id!;
+}
+
+/** O campo de data do sistema é o calendário do modelo: digita-se dd/mm/aaaa no campo visível e Enter confirma. */
+async function digitarData(campo: Locator, ddmmaaaa: string) {
+  const visivel = campo.locator('input[type="text"]');
+  await visivel.fill(ddmmaaaa);
+  await visivel.press("Enter");
 }
 
 const areas = async (page: Page) => (await api<{ items: Area[] }>(page, "GET", "/api/resources/areas?pageSize=500")).items;
@@ -90,8 +97,9 @@ test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro 
   await expect(resumo).toContainText("120,00 ha");
   await expect(page.getByRole("dialog"), "o resumo não é janela nem ficha").toHaveCount(0);
   await expect(resumo.getByTestId("mapa-abrir-cadastro")).toHaveAttribute("href", `/cadastros/areas/${criada.id}`);
-  // área nunca analisada: o painel diz isso, e o mapa fica na cor do cadastro (sem NDVI em nenhuma área)
-  await expect(resumo.getByTestId("mapa-ndvi-sem-analise")).toHaveText("Nenhuma análise por satélite desta área ainda.");
+  // área nunca analisada: painel único Condição da Área; mapa na cor do cadastro (sem NDVI em nenhuma área)
+  await expect(resumo.getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toContainText("não tem análise para o contorno atual");
+  await expect(resumo.getByTestId("mapa-ndvi-area"), "painel legado NDVI ausente").toHaveCount(0);
   await expect(page.getByTestId("mapa-cor-cadastro")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("mapa-legenda-ndvi")).toHaveCount(0);
 
@@ -378,7 +386,7 @@ function semearAnalise(areaId: string, janela: string, criado: string, obs: { in
   sql(`insert into erp.analises_satelitais (organization_id, empresa_id, area_id, provedor, colecao, indice, versao_metodo, geometria_sha256,
       janela_inicio, janela_fim, resolucao_m, situacao, motivo_qualidade, observacao_inicio, observacao_fim, valor_medio, valor_minimo,
       valor_maximo, desvio_padrao, pixels_amostra, pixels_sem_dado, pixels_validos, pixels_geometria, cobertura_valida, criado_por, created_at)
-    select a.organization_id, a.empresa_id, a.id, 'copernicus_cdse', 'sentinel-2-l2a', 'ndvi', 'sat01-ndvi-v1', encode(sha256(convert_to(a.geometria::text, 'UTF8')), 'hex'),
+    select a.organization_id, a.empresa_id, a.id, 'copernicus_cdse', 'sentinel-2-l2a', 'ndvi', 'pastagem-essencial-v2', encode(sha256(convert_to(a.geometria::text, 'UTF8')), 'hex'),
       '${janela}', '${fim}', 10, '${c ? "concluida" : "sem_observacao_util"}', ${c ? "null" : "'cobertura_insuficiente'"},
       ${c ? `'${obs.inicio}', '${obs.inicio}'::timestamptz + interval '1 day', ${obs.media}, ${obs.media} - 0.2, ${obs.media} + 0.1, 0.05, 13000, 2000, 11000, 11860, 0.9275`
         : "null, null, null, null, null, null, null, null, null, 11860, null"},
@@ -415,11 +423,17 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   const pedidosSat: string[] = [];
   page.on("request", (r) => {
     const u = new URL(r.url()).pathname;
-    if (u.includes("/analises-satelitais") || u.includes("/mapa/rasters")) pedidosSat.push(`${r.method()} ${u}`);
+    if (u.includes("/analises-satelitais") || u.includes("/mapa/rasters") || u.includes("/satelite/areas")) {
+      pedidosSat.push(`${r.method()} ${u}`);
+    }
   });
-  const resumo = page.waitForResponse((r) => r.url().includes("/api/mapa/analises-satelitais/resumo") && r.request().method() === "GET");
+  const resumo = page.waitForResponse((r) => {
+    const u = new URL(r.url());
+    return u.pathname.includes("/api/mapa/analises-satelitais/resumo") && r.request().method() === "GET"
+      && u.searchParams.get("contexto") === "condicao";
+  });
   await page.goto("/mapa-geral");
-  expect((await resumo).status(), "o mapa pede o resumo de TODAS as áreas numa chamada").toBe(200);
+  expect((await resumo).status(), "o mapa pede o resumo operacional (contexto=condicao)").toBe(200);
   await expect(page.getByTestId("mapa-item-area")).toHaveCount(3);
   await expect.poll(async () => page.evaluate(() => Boolean((window as unknown as { __mapaManejoE2E?: unknown }).__mapaManejoE2E)), { timeout: 30_000 }).toBe(true);
 
@@ -440,41 +454,31 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   await expect(page.getByTestId("mapa-item-area").filter({ hasText: nunca.name }).getByTestId("mapa-item-ndvi")).toHaveCount(0);
 
   expect(pedidosSat.filter((p) => p.startsWith("POST")), "abrir a tela NÃO gera imagem").toEqual([]);
-  expect(pedidosSat.filter((p) => p.includes("/analises-satelitais/resumo"))).toEqual(["GET /api/mapa/analises-satelitais/resumo"]);
+  expect(pedidosSat.filter((p) => p.includes("/analises-satelitais/resumo")).length).toBeGreaterThanOrEqual(1);
   expect(pedidosSat.some((p) => p.startsWith("GET /api/mapa/rasters")), "lista rasters sem gerar").toBe(true);
 
-  // painel da área: última imagem útil, classe, variação desde a imagem anterior, polígono atual
+  // Painel único: Condição da Área (R2). Sem NdviDaArea legado. Bundle incompleto → sem observação útil do contrato.
   await page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).click();
   const painel = page.getByTestId("mapa-area-selecionada");
-  await expect(painel.getByTestId("mapa-ndvi-valor")).toHaveText("0,72");
-  await expect(painel.getByTestId("mapa-ndvi-classe")).toHaveText("Vigor alto (0,60 ou mais)");
-  await expect(painel.getByTestId("mapa-ndvi-faixa")).toHaveText("Mínimo 0,52 · Máximo 0,82");
-  await expect(painel.getByTestId("mapa-ndvi-imagem")).toHaveText(/^Imagem de 10\/09\/2026 · 93\s?% da área vista$/);
-  await expect(painel.getByTestId("mapa-ndvi-variacao")).toHaveText("+0,17 desde a imagem de 05/08/2026");
-  await expect(painel.getByTestId("mapa-ndvi-contorno-anterior")).toHaveCount(0);
+  const condicao = painel.getByTestId("condicao-area");
+  await expect(condicao).toBeVisible();
+  await expect(painel.getByTestId("mapa-ndvi-area"), "painel legado NDVI não entra no Mapa geral").toHaveCount(0);
+  await expect(condicao.getByTestId("condicao-sem-analise")).toBeVisible();
+  await expect(condicao.getByTestId("condicao-aviso-agronomico")).toContainText("não é diagnóstico");
 
-  // histórico: as duas imagens, da mais recente para a mais antiga, e a linha do tempo
-  await painel.getByTestId("mapa-ndvi-ver-historico").click();
-  await expect(painel.getByTestId("mapa-ndvi-historico-item")).toHaveCount(2);
-  await expect(painel.getByTestId("mapa-ndvi-historico-item").first()).toContainText("10/09/2026");
-  await expect(painel.getByTestId("mapa-ndvi-historico-item").first()).toContainText("0,72");
-  await expect(painel.getByTestId("mapa-ndvi-historico-item").last()).toContainText("05/08/2026");
-  await expect(painel.getByTestId("mapa-ndvi-linha")).toBeVisible();
-  await expect(page.getByTestId("mapa-atribuicao-copernicus-mapa")).toHaveCount(1);
-
-  // "Analisar agora": o provedor está DESLIGADO no E2E — a recusa controlada do servidor aparece e nada é gravado
-  const pedido = page.waitForResponse((r) => r.url().endsWith(`/api/mapa/areas/${verde.id}/analises-satelitais/ndvi`) && r.request().method() === "POST");
-  await painel.getByTestId("mapa-ndvi-analisar").click();
+  // "Analisar área atual": o provedor está DESLIGADO no E2E — a recusa controlada do servidor aparece e nada é gravado
+  await condicao.getByTestId("condicao-analisar-atual").click();
+  const pedido = page.waitForResponse((r) => r.url().endsWith(`/api/mapa/areas/${verde.id}/analises-satelitais/condicao`) && r.request().method() === "POST");
+  await condicao.getByTestId("condicao-analisar-confirmar").click();
   expect((await pedido).status()).toBe(503);
-  await expect(painel.getByTestId("mapa-ndvi-aviso")).toHaveText("A análise por satélite está desligada neste ambiente.");
+  await expect(condicao.getByTestId("condicao-aviso")).toContainText("indisponível");
   expect(linhas(), "nada gravado").toBe(3);
 
-  // a área cuja última execução não achou imagem útil: o motivo, sem número
+  // área sem observação útil / nunca analisada: painel único sem número na lista
   await page.getByTestId("mapa-item-area").filter({ hasText: nublada.name }).click();
-  await expect(painel.getByTestId("mapa-ndvi-valor")).toHaveCount(0);
-  await expect(painel.getByTestId("mapa-ndvi-ultima-sem-imagem")).toContainText("Sem observação útil — Nuvem, sombra ou pixel inválido cobrindo a área em todas as imagens da janela.");
+  await expect(painel.getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toBeVisible();
   await page.getByTestId("mapa-item-area").filter({ hasText: nunca.name }).click();
-  await expect(painel.getByTestId("mapa-ndvi-sem-analise")).toBeVisible();
+  await expect(painel.getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toBeVisible();
 
   // "Cor do cadastro": a cor da área volta (a do cadastro, #2563eb, como o mapa a exibe), a legenda do NDVI sai. A área
   // conferida é a enquadrada agora (a seleção na lista aproxima o mapa dela) — e a cor é EXATA, nunca "diferente de".
@@ -487,12 +491,15 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   await page.getByTestId("mapa-cor-area").click();
   await expect.poll(() => corNoMapa(page, verde.id)).toBe("#1a9850");
 
-  // contorno redesenhado DEPOIS da análise: o número fica, com o aviso de que foi calculado sobre o contorno anterior
+  // contorno redesenhado DEPOIS da análise: a análise do contorno anterior NÃO atravessa a API (nada de número "emprestado"),
+  // a área fica sem análise e CINZA no modo por área — nunca na cor do cadastro, que só aparece se o usuário a escolhe
   sql(`update erp.areas set geometria = '${JSON.stringify(quadrado(-55.3005, -15.2005))}'::jsonb where id = '${verde.id}'`);
   await page.reload();
   await page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).click();
-  await expect(painel.getByTestId("mapa-ndvi-valor")).toHaveText("0,72");
-  await expect(painel.getByTestId("mapa-ndvi-contorno-anterior")).toHaveText("Calculado sobre o contorno anterior da área. Peça uma análise nova.");
+  await expect(page.getByTestId("mapa-area-selecionada").getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toBeVisible();
+  await expect(page.getByTestId("mapa-item-area").filter({ hasText: verde.name }).getByTestId("mapa-item-ndvi")).toHaveCount(0);
+  await page.getByTestId("mapa-cor-area").click();
+  await expect.poll(() => corNoMapa(page, verde.id), { timeout: 15_000 }).toBe("#94a3b8");
 
   await limparAreas(page);
 });
@@ -517,7 +524,7 @@ test("Mapa geral: o resumo do NDVI falha (500) — as áreas continuam no mapa, 
   await expect.poll(() => pedidos).toBe(antes + 1);
 });
 
-test("Mapa geral: 'Analisar agora' com a integração ligada e SEM credencial (503 `configuracao`) diz o que falta no servidor", async ({ page }) => {
+test("Mapa geral: 'Analisar área atual' com a integração ligada e SEM credencial (503 `configuracao`) diz o que falta no servidor", async ({ page }) => {
   await login(page);
   await limparAreas(page);
   const empresa = await empresaDaSessao(page);
@@ -526,16 +533,18 @@ test("Mapa geral: 'Analisar agora' com a integração ligada e SEM credencial (5
     empresa_id: empresa, name: nome, land_use: "pastagem", status: "ativa", tenure: "propria", area_ha: "100", usable_area_ha: "100", color: "#2563eb",
     geometria: { type: "Polygon", coordinates: [[[-55.4, -15.2], [-55.39, -15.2], [-55.39, -15.19], [-55.4, -15.19], [-55.4, -15.2]]] }
   });
-  // O 503 do contrato da SAT-01 para "ligada sem credencial" (o E2E roda com a integração DESLIGADA: aqui o servidor é simulado só nesta rota).
-  await page.route(`**/api/mapa/areas/${area.id}/analises-satelitais/ndvi`, (rota) => rota.fulfill({
+  // O 503 do contrato para "ligada sem credencial" (o E2E roda com a integração DESLIGADA: aqui o servidor é simulado só nesta rota).
+  await page.route(`**/api/mapa/areas/${area.id}/analises-satelitais/condicao`, (rota) => rota.fulfill({
     status: 503, contentType: "application/json",
     body: JSON.stringify({ error: { code: "CONSULTA_INDISPONIVEL", message: "A análise por satélite está desligada neste ambiente.", details: { motivo: "configuracao" } } })
   }));
   await page.goto("/mapa-geral");
   await page.getByTestId("mapa-item-area").filter({ hasText: nome }).click();
   const painel = page.getByTestId("mapa-area-selecionada");
-  await painel.getByTestId("mapa-ndvi-analisar").click();
-  await expect(painel.getByTestId("mapa-ndvi-aviso")).toHaveText("A análise por satélite está ligada, mas a credencial do Copernicus não está configurada no servidor da API.");
+  const condicao = painel.getByTestId("condicao-area");
+  await condicao.getByTestId("condicao-analisar-atual").click();
+  await condicao.getByTestId("condicao-analisar-confirmar").click();
+  await expect(condicao.getByTestId("condicao-aviso")).toHaveText("A análise por satélite está ligada, mas a credencial do Copernicus não está configurada no servidor da API.");
   await limparAreas(page);
 });
 
@@ -632,11 +641,38 @@ test("Mapa geral SAT-07: gradiente por pixel, sem POST ao abrir, troca de modo s
     rastersPorArea.set(semRaster.id, gerado);
     await rota.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ raster: gerado, reutilizada: true }) });
   });
-  await page.route(`**/api/mapa/areas/${comRaster.id}/analises-satelitais/ultima**`, async (rota) => {
-    await rota.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ analise: { id: analiseCom }, ultima_observacao_util: { id: analiseCom } }) });
+  // CondicaoDaArea exige o resumo do bundle (R2: painel único). Mock com observação útil e ids das análises semeadas.
+  const resumoPixel = (areaId: string, analiseId: string) => ({
+    area_id: areaId, versao_metodo: "pastagem-essencial-v2", ultima_tentativa: null, aviso: "x", geometria_sha256: "c".repeat(64),
+    tendencia: null,
+    ultima_observacao_util: {
+      observacao_inicio: "2026-09-10T00:00:00.000Z", observacao_fim: "2026-09-11T00:00:00.000Z", do_poligono_atual: true,
+      qualidade: {
+        estado: "boa", cobertura_valida: "0.9000", indice_limitante: "ndvi", cloud_ratio: "0.0500", motivo: null,
+        coberturas_por_indice: { ndvi: "0.9000", evi2: "0.9000", ndre: "0.9000", ndmi: "0.9000", msavi2: "0.9000", bsi: "0.9000" }
+      },
+      indices: Object.fromEntries(
+        (["ndvi", "evi2", "ndre", "ndmi", "msavi2", "bsi"] as const).map((i) => [i, {
+          id: i === "ndvi" ? analiseId : `analise-${i}-${areaId.slice(0, 8)}`,
+          situacao: "concluida", motivo_qualidade: null, observacao_inicio: "2026-09-10T00:00:00.000Z", observacao_fim: "2026-09-11T00:00:00.000Z",
+          valor_medio: "0.55", valor_minimo: "0.35", valor_maximo: "0.75", desvio_padrao: "0.05", cobertura_valida: "0.9000",
+          resolucao_m: "10", resolucao_nativa_m: "10", comparacao_observacao_anterior: null
+        }])
+      ),
+      indicadores_derivados: {
+        versao: "1", experimental: true, aviso: "x", vegetacao_ativa_estimada: "media", baixa_cobertura_estimada: "baixa",
+        solo_exposto_estimado: "baixo", condicao_hidrica: "media", resposta_vegetacao: "Resposta média de vegetação",
+        fracoes_histograma: { vegetacao_ativa: 0.5, baixa_cobertura: 0.2, solo_exposto: 0.05 }
+      }
+    }
   });
-  await page.route(`**/api/mapa/areas/${semRaster.id}/analises-satelitais/ultima**`, async (rota) => {
-    await rota.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ analise: { id: analiseSem }, ultima_observacao_util: { id: analiseSem } }) });
+  await page.route(`**/api/satelite/areas/${comRaster.id}/resumo`, async (rota) => {
+    if (rota.request().method() !== "GET") return rota.continue();
+    await rota.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(resumoPixel(comRaster.id, analiseCom)) });
+  });
+  await page.route(`**/api/satelite/areas/${semRaster.id}/resumo`, async (rota) => {
+    if (rota.request().method() !== "GET") return rota.continue();
+    await rota.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(resumoPixel(semRaster.id, analiseSem)) });
   });
 
   await page.goto("/mapa-geral");
@@ -691,18 +727,269 @@ test("Mapa geral SAT-07: gradiente por pixel, sem POST ao abrir, troca de modo s
 
   await page.getByTestId("mapa-item-area").filter({ hasText: comRaster.name }).click();
   const painel = page.getByTestId("mapa-area-selecionada");
-  await expect(painel.getByTestId("mapa-ndvi-miniatura")).toBeVisible();
-  await expect(painel.getByTestId("mapa-ndvi-raster-meta")).toContainText("10 m");
-  await expect(painel.getByTestId("mapa-ndvi-gerar-imagem")).toHaveCount(0);
+  const condicao = painel.getByTestId("condicao-area");
+  await expect(condicao).toBeVisible();
+  await expect(condicao.getByTestId("condicao-raster-info")).toContainText("10 m");
+  await expect(condicao.getByTestId("condicao-gerar-raster")).toHaveCount(0);
+  await expect(painel.getByTestId("mapa-ndvi-area"), "painel legado NDVI ausente").toHaveCount(0);
 
   await page.getByTestId("mapa-item-area").filter({ hasText: semRaster.name }).click();
-  await expect(painel.getByTestId("mapa-ndvi-gerar-imagem")).toBeVisible({ timeout: 15_000 });
-  await painel.getByTestId("mapa-ndvi-gerar-imagem").click();
-  await expect(painel.getByTestId("mapa-ndvi-gerar-confirmacao")).toContainText("consome crédito");
-  await painel.getByTestId("mapa-ndvi-gerar-confirmar").click();
-  await expect(painel.getByTestId("mapa-ndvi-aviso")).toContainText("não houve custo");
-  await expect(painel.getByTestId("mapa-ndvi-resolucao-reduzida")).toContainText("20 m");
+  await expect(painel.getByTestId("condicao-gerar-raster")).toBeVisible({ timeout: 15_000 });
+  await painel.getByTestId("condicao-gerar-raster").click();
+  await expect(painel.getByTestId("condicao-gerar-confirmacao")).toContainText("consome crédito");
+  await painel.getByTestId("condicao-gerar-confirmar").click();
+  await expect(painel.getByTestId("condicao-aviso")).toContainText("não houve custo");
+  await expect(painel.getByTestId("condicao-raster-info")).toContainText("20 m");
   expect(postsRaster, "POST só no clique confirmado").toBe(1);
+
+  await limparAreas(page);
+});
+
+// ---------- SATÉLITE COMPLETO (decisão 301): camadas por índice, Condição da área, Nova consulta, Comparar ----------
+
+test("Mapa geral — condição da área: barra de camadas, só o índice ativo na rede, painel sem diagnóstico, Nova consulta com progresso e Comparar", async ({ page }) => {
+  test.setTimeout(150_000);
+  await login(page);
+  await limparAreas(page);
+  const empresa = await empresaDaSessao(page);
+  const area = await api<Area>(page, "POST", "/api/resources/areas", {
+    empresa_id: empresa, name: uniq("CONDICAO").toLocaleUpperCase("pt-BR"), land_use: "pastagem", status: "ativa", tenure: "propria",
+    area_ha: "100", usable_area_ha: "100", color: "#2563eb",
+    geometria: { type: "Polygon", coordinates: [[[-55.7, -15.4], [-55.69, -15.4], [-55.69, -15.39], [-55.7, -15.39], [-55.7, -15.4]]] }
+  });
+
+  const HASH = "c".repeat(64);
+  const indices = ["ndvi", "evi2", "ndre", "ndmi", "msavi2", "bsi"] as const;
+  const resumoIndice = (id: string, media: string) => ({
+    id: `analise-${id}`, situacao: "concluida", motivo_qualidade: null, observacao_inicio: "2026-09-10T13:00:00.000Z", observacao_fim: "2026-09-10T13:00:01.000Z",
+    valor_medio: media, valor_minimo: "0.10", valor_maximo: "0.90", desvio_padrao: "0.08", cobertura_valida: "0.8100", resolucao_m: "20", resolucao_nativa_m: "10",
+    comparacao_observacao_anterior: { anterior_id: "x", anterior_valor_medio: "0.60", anterior_observacao_inicio: "2026-08-10T13:00:00.000Z", delta_percentual: 16.7, tendencia: "subiu" }
+  });
+  const resumo = {
+    area_id: area.id, versao_metodo: "pastagem-essencial-v2", ultima_tentativa: null, aviso: "x", geometria_sha256: HASH,
+    tendencia: {
+      ultima: { periodo: "ultima", delta: -0.35, pontos: 3 },
+      "30d": { periodo: "30d", delta: null, pontos: 1 },
+      "90d": { periodo: "90d", delta: 0, pontos: 3 }
+    },
+    ultima_observacao_util: {
+      observacao_inicio: "2026-09-10T13:00:00.000Z", observacao_fim: "2026-09-10T13:00:01.000Z", do_poligono_atual: true,
+      qualidade: {
+        estado: "boa", cobertura_valida: "0.8100", indice_limitante: "ndmi", cloud_ratio: "0.0500", motivo: null,
+        coberturas_por_indice: { ndvi: "0.9300", evi2: "0.9300", ndre: "0.8500", ndmi: "0.8100", msavi2: "0.9300", bsi: "0.8300" }
+      },
+      indices: Object.fromEntries(indices.map((i) => [i, resumoIndice(i, i === "bsi" ? "0.04" : "0.72")])),
+      indicadores_derivados: {
+        versao: "1", experimental: true, aviso: "x", vegetacao_ativa_estimada: "alta", baixa_cobertura_estimada: "baixa", solo_exposto_estimado: "baixo",
+        condicao_hidrica: "media", resposta_vegetacao: "Alta resposta de vegetação",
+        fracoes_histograma: { vegetacao_ativa: 0.62, baixa_cobertura: 0.2, solo_exposto: 0.05 }
+      }
+    }
+  };
+  const item = (dia: string, media: string) => ({
+    id: `h-${dia}`, situacao: "concluida", motivo_qualidade: null, geometria_sha256: HASH, do_poligono_atual: true,
+    observacao_inicio: `${dia}T13:00:00.000Z`, observacao_fim: `${dia}T13:00:01.000Z`, valor_medio: media, valor_minimo: null, valor_maximo: null,
+    desvio_padrao: null, cobertura_valida: "0.9000", criado_em: `${dia}T20:00:00.000Z`,
+    histograma: { bins: [{ lowEdge: 0, highEdge: 0.5, count: 10 }, { lowEdge: 0.5, highEdge: 1, count: 30 }], underflowCount: 0, overflowCount: 0 }
+  });
+  const historico = (indice: string) => {
+    const cai = indice === "ndvi" || indice === "ndre";
+    const serie = cai ? ["0.70", "0.70", "0.35"] : ["0.30", "0.30", "0.30"];
+    return { area_id: area.id, indice, geometria_sha256: HASH, do_poligono_atual: true, itens: [item("2026-09-10", serie[2]!), item("2026-08-10", serie[1]!), item("2026-07-10", serie[0]!)] };
+  };
+
+  const cors = { "Access-Control-Allow-Origin": "*" };
+  const json = (corpo: unknown, status = 200) => ({ status, contentType: "application/json", headers: cors, body: JSON.stringify(corpo) });
+  const listagensRaster: string[] = [];
+  const corposConsulta: { alvo: { tipo: string; area_ids?: string[] }; periodo: Record<string, unknown>; indices: string[]; confirmar: boolean }[] = [];
+  const datasListadas: string[] = [];
+  let postsRasterAB = 0;
+  let pollsConsulta = 0;
+  const consultaId = "33333333-3333-4333-8333-333333333333";
+  const dtoConsulta = (situacao: string, concluidos: number) => ({
+    id: consultaId, situacao, total_itens: 2, total_concluidos: concluidos, total_falhos: 0, total_reaproveitados: 0,
+    criado_em: "2026-10-05T12:00:00.000Z", concluida_em: situacao === "concluida" ? "2026-10-05T12:00:09.000Z" : null
+  });
+
+  await page.route(/\/api\/mapa\/rasters(\?|$)/, async (rota) => {
+    if (rota.request().method() !== "GET") return rota.continue();
+    const params = new URL(rota.request().url()).searchParams;
+    listagensRaster.push(params.get("indice") ?? "");
+    datasListadas.push(params.get("data_imagem") ?? "");
+    await rota.fulfill(json({ itens: [], pagina: 1, tamanho: 200, tem_mais: false }));
+  });
+  await page.route(/\/api\/mapa\/analises-satelitais\/[^/]+\/raster$/, async (rota) => {
+    if (rota.request().method() === "POST") postsRasterAB += 1;
+    await rota.continue();
+  });
+  await page.route(`**/api/satelite/areas/${area.id}/resumo`, async (rota) => {
+    if (rota.request().method() !== "GET") return rota.continue();
+    await rota.fulfill(json(resumo));
+  });
+  await page.route(new RegExp(`/api/satelite/areas/${area.id}/historico`), async (rota) => {
+    if (rota.request().method() !== "GET") return rota.continue();
+    await rota.fulfill(json(historico(new URL(rota.request().url()).searchParams.get("indice") ?? "ndvi")));
+  });
+  await page.route(/\/api\/satelite\/consultas(\?|$)/, async (rota) => {
+    if (rota.request().method() !== "POST") return rota.continue();
+    const corpo = rota.request().postDataJSON() as (typeof corposConsulta)[number];
+    corposConsulta.push(corpo);
+    if (!corpo.confirmar) {
+      await rota.fulfill(json({
+        total_itens: 2, reaproveitados: 0, novos: 2, estimativa_creditos: { minimo: "0.10", maximo: "0.30" }, saldo_creditos_mes: "50.00",
+        excede_orcamento: false, empresa_id: empresa, areas_ignoradas: []
+      }));
+      return;
+    }
+    await rota.fulfill(json({ consulta: dtoConsulta("pendente", 0), total_itens: 2, reaproveitados: 0, novos: 2, areas_ignoradas: [] }, 201));
+  });
+  await page.route(/\/api\/satelite\/consultas\/[^/?]+/, async (rota) => {
+    if (rota.request().method() !== "GET") return rota.continue();
+    pollsConsulta += 1;
+    const concluida = pollsConsulta > 1;
+    await rota.fulfill(json({ consulta: dtoConsulta(concluida ? "concluida" : "executando", concluida ? 2 : 1), itens: [], pagina: 1, tamanho: 1, tem_mais: true }));
+  });
+
+  await page.goto("/mapa-geral");
+  await expect(page.getByTestId("mapa-item-area")).toHaveCount(1);
+
+  // barra de camadas: os oito grupos, na ordem do contrato
+  const barra = page.getByTestId("mapa-barra-camadas");
+  await expect(barra).toBeVisible({ timeout: 30_000 });
+  // Base: botões Satélite/Mapa quando há chave Google; senão o aviso (CI sem NEXT_PUBLIC_GOOGLE_MAPS_API_KEY).
+  await expect(barra.getByTestId("mapa-grupo-base")).toContainText(/Satélite|chave do Google/);
+  await expect(barra.getByTestId("mapa-visualizacao-condicao")).toHaveAttribute("aria-pressed", "true");
+  for (const [grupo, texto] of [
+    ["mapa-grupo-camada", "Cobertura/Solo"], ["mapa-grupo-indice", "NDVI"], ["mapa-grupo-data", "Última imagem útil"],
+    ["mapa-grupo-render", "Pixel real"], ["mapa-grupo-opacidade", "70%"], ["mapa-grupo-acao", "Nova consulta"]
+  ] as const) await expect(barra.getByTestId(grupo)).toContainText(texto);
+  await expect(barra.getByTestId("mapa-camada-vigor")).toHaveAttribute("aria-pressed", "true");
+  await expect(barra.getByTestId("mapa-indice-evi2")).toBeVisible();
+  await expect(barra.getByTestId("mapa-indice-ndmi"), "NDMI é da família Umidade, não do Vigor").toHaveCount(0);
+
+  // DATA: "Última imagem útil" por padrão (sem data_imagem na rede); sem área aberta não há datas para escolher
+  const seletorData = barra.getByTestId("mapa-data-camada");
+  await expect(seletorData).toHaveValue("ultima");
+  await expect(seletorData.locator("option")).toHaveCount(1);
+  expect(datasListadas.filter(Boolean), "a última imagem útil não manda data_imagem").toEqual([]);
+
+  // só o índice ativo vai à rede: trocar de camada pede o índice novo, nunca os seis
+  await expect.poll(() => listagensRaster.includes("ndvi")).toBe(true);
+  await barra.getByTestId("mapa-camada-umidade").click();
+  await expect(barra.getByTestId("mapa-indice-ndmi")).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => listagensRaster.includes("ndmi")).toBe(true);
+  expect(listagensRaster.filter((i) => !["ndvi", "ndmi"].includes(i)), "nenhum outro índice foi pedido").toEqual([]);
+  // a cor por área vale para todos os índices; sem análise válida do NDMI a área fica cinza neutro — nunca no cadastro
+  await expect(barra.getByTestId("mapa-cor-area")).toBeEnabled();
+  await barra.getByTestId("mapa-cor-area").click();
+  await expect(barra.getByTestId("mapa-cor-area")).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => page.evaluate((id) => (window as unknown as { __mapaNdviE2E?: { indice: string; cores: Record<string, string> | null } }).__mapaNdviE2E?.cores?.[id] ?? null, area.id)).toBe("#94a3b8");
+  await barra.getByTestId("mapa-camada-vigor").click();
+  await expect(barra.getByTestId("mapa-indice-ndvi")).toHaveAttribute("aria-pressed", "true");
+
+  // render e opacidade (valem no modo por pixel)
+  await barra.getByTestId("mapa-cor-pixel").click();
+  await expect(barra.getByTestId("mapa-render-nearest")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("mapa-render-aviso")).toHaveCount(0);
+  await barra.getByTestId("mapa-render-linear").click();
+  await expect(page.getByTestId("mapa-render-aviso")).toContainText("Pixel real");
+  await barra.getByTestId("mapa-render-nearest").click();
+  await expect(page.getByTestId("mapa-render-aviso")).toHaveCount(0);
+  await barra.getByTestId("mapa-opacidade").fill("40");
+  await expect(barra.getByTestId("mapa-opacidade-valor")).toHaveText("40%");
+
+  // painel Condição da área: linguagem de sinal, qualidade, índice limitante, aviso agronômico
+  await page.getByTestId("mapa-item-area").click();
+  const painel = page.getByTestId("mapa-area-selecionada");
+  const condicao = painel.getByTestId("condicao-area");
+  await expect(condicao.getByTestId("condicao-resposta-vegetacao")).toHaveText("Alta resposta de vegetação");
+  await expect(condicao.getByTestId("condicao-qualidade-estado")).toHaveText("Boa");
+  await expect(condicao.getByTestId("condicao-limitante")).toContainText("NDMI");
+  await expect(condicao.getByTestId("condicao-solo-exposto")).toContainText("Solo exposto estimado: Baixo");
+  await expect(condicao.getByTestId("condicao-indice-ndvi-valor")).toHaveText("0,72");
+  await expect(condicao.getByTestId("condicao-aviso-agronomico")).toContainText("não é diagnóstico");
+  await expect(condicao.getByTestId("condicao-anomalia-nivel")).toContainText("Possível alteração");
+  await expect(condicao.getByTestId("condicao-vistoria")).toBeVisible();
+  expect(await condicao.innerText(), "o painel não fala em praga nem em biomassa").not.toMatch(/praga|biomassa/i);
+
+  // tendência do NDVI: delta nulo é "Dados insuficientes" (NULL ≠ 0); zero verdadeiro é "0,00"
+  await expect(condicao.getByTestId("condicao-tendencia-ultima-valor")).toHaveText("−0,35");
+  await expect(condicao.getByTestId("condicao-tendencia-30d-valor")).toHaveText("Dados insuficientes");
+  await expect(condicao.getByTestId("condicao-tendencia-90d-valor")).toHaveText("0,00");
+
+  // histórico por período (padrão 1 ano): as três observações do contorno atual
+  await condicao.getByTestId("condicao-historico-abrir").click();
+  await expect(condicao.getByTestId("condicao-historico-grafico")).toBeVisible();
+  await expect(condicao.getByTestId("condicao-historico-item")).toHaveCount(3);
+  await expect(condicao.getByTestId("condicao-historico-periodo")).toHaveValue("1a");
+  await expect(condicao.getByTestId("condicao-historico-cobertura")).toContainText("histórico completo");
+  await condicao.getByTestId("condicao-historico-periodo").selectOption("personalizado");
+  await digitarData(condicao.getByTestId("condicao-historico-de"), "01/08/2026");
+  await digitarData(condicao.getByTestId("condicao-historico-ate"), "31/08/2026");
+  await expect(condicao.getByTestId("condicao-historico-item")).toHaveCount(1);
+  await condicao.getByTestId("condicao-historico-periodo").selectOption("1a");
+  await expect(condicao.getByTestId("condicao-historico-item")).toHaveCount(3);
+
+  // DATA da camada: as datas úteis do histórico do índice ativo; escolher uma pede data_imagem e NUNCA troca de data sozinha
+  await expect(seletorData.locator("option")).toHaveText([/Última imagem útil/, "10/09/2026", "10/08/2026", "10/07/2026"]);
+  await seletorData.selectOption("2026-08-10");
+  await expect.poll(() => datasListadas.includes("2026-08-10")).toBe(true);
+  await expect(page.getByTestId("mapa-sem-imagem-data")).toContainText("Nenhuma outra data é usada no lugar");
+  await expect(condicao.getByTestId("condicao-sem-imagem-data")).toContainText("10/08/2026");
+  await expect(condicao.getByTestId("condicao-gerar-raster")).toContainText("10/08/2026");
+  await seletorData.selectOption("ultima");
+  await expect(page.getByTestId("mapa-sem-imagem-data")).toHaveCount(0);
+
+  // Comparar A × B (contorno único: compara)
+  await condicao.getByTestId("condicao-comparar").click();
+  const comparar = page.getByTestId("comparar-modal");
+  await expect(comparar.getByTestId("comparar-tabela")).toBeVisible();
+  await expect(comparar.getByTestId("comparar-linha-ndvi")).toBeVisible();
+  await expect(comparar.getByTestId("comparar-bloqueada")).toHaveCount(0);
+  await expect(comparar.getByTestId("comparar-histograma-a")).toBeVisible();
+  await expect(comparar.getByTestId("comparar-histograma-b")).toBeVisible();
+  // imagens A/B: nada gerado ainda; o botão existe, e o Process API só roda no clique confirmado (aqui não clicamos)
+  await expect(comparar.getByTestId("comparar-imagem-a-ausente")).toBeVisible();
+  await expect(comparar.getByTestId("comparar-imagem-b-ausente")).toBeVisible();
+  await expect(comparar.getByTestId("comparar-gerar-imagem")).toBeVisible();
+  expect(postsRasterAB, "nenhuma imagem é gerada sem o clique confirmado").toBe(0);
+  await comparar.getByTestId("comparar-fechar").click();
+  await expect(comparar).toHaveCount(0);
+
+  // Nova consulta: prévia (nada gravado) → confirmar → progresso da API
+  await condicao.getByTestId("condicao-nova-consulta").click();
+  const modal = page.getByTestId("consulta-modal");
+  await expect(modal.getByTestId("consulta-selecao-atual")).toBeChecked();
+  // "Áreas desatualizadas": o contorno atual não tem análise válida do índice ativo (aqui, a área só tem o resumo simulado do painel)
+  await expect(modal.getByTestId("consulta-selecao-desatualizadas")).toBeEnabled();
+  // período: "Uma data" com tolerância
+  await modal.getByTestId("consulta-periodo-tipo").selectOption("data");
+  await expect(modal.getByTestId("consulta-previa")).toBeDisabled();
+  await digitarData(modal.getByTestId("consulta-data"), "10/09/2026");
+  await modal.getByTestId("consulta-previa").click();
+  await expect(modal.getByTestId("consulta-previa-creditos")).toContainText("créditos");
+  expect(corposConsulta).toHaveLength(1);
+  expect(corposConsulta[0]).toEqual({ alvo: { tipo: "areas", area_ids: [area.id] }, periodo: { tipo: "data", data: "2026-09-10", tolerancia_dias: 3 }, indices: ["pastagem_essencial"], confirmar: false });
+  // período: intervalo com cadência
+  await modal.getByTestId("consulta-periodo-tipo").selectOption("intervalo");
+  await digitarData(modal.getByTestId("consulta-de"), "01/07/2026");
+  await digitarData(modal.getByTestId("consulta-ate"), "30/09/2026");
+  await expect(modal.getByTestId("consulta-recortes")).toContainText("3 recortes");
+  await modal.getByTestId("consulta-previa").click();
+  await expect.poll(() => corposConsulta.length).toBe(2);
+  expect(corposConsulta[1]?.periodo).toEqual({ tipo: "intervalo", de: "2026-07-01", ate: "2026-09-30", cadencia: "mensal" });
+  // período padrão: mais recente
+  await modal.getByTestId("consulta-periodo-tipo").selectOption("mais_recente");
+  await modal.getByTestId("consulta-previa").click();
+  await expect(modal.getByTestId("consulta-previa-creditos")).toContainText("créditos");
+  expect(corposConsulta).toHaveLength(3);
+  expect(corposConsulta[2]).toEqual({ alvo: { tipo: "areas", area_ids: [area.id] }, periodo: { tipo: "mais_recente", janela_dias: 30 }, indices: ["pastagem_essencial"], confirmar: false });
+  await modal.getByTestId("consulta-confirmar").click();
+  await expect(modal.getByTestId("consulta-progresso")).toBeVisible();
+  expect(corposConsulta[3]?.confirmar).toBe(true);
+  await expect(modal.getByTestId("consulta-progresso")).toContainText("Concluída", { timeout: 20_000 });
+  await modal.getByTestId("consulta-fechar").click();
+  await expect(modal).toHaveCount(0);
 
   await limparAreas(page);
 });
