@@ -3,7 +3,8 @@ import { CLASSES_SCL_EXCLUIDAS, CRITERIO_OBSERVACAO_UTIL, JANELA_PADRAO_DIAS } f
 import type { BuscarFn } from "../../src/lib/consultas/http.js";
 import { enviarPost, segundosDoRetryAfter } from "../../src/lib/satelite/http.js";
 import {
-  ClienteCopernicus, ENDERECOS_COPERNICUS, ESPERA_ENTRE_TENTATIVAS_MS, FalhaCopernicus, MARGEM_RENOVACAO_TOKEN_S, type RegistroChamada
+  ClienteCopernicus, ENDERECOS_COPERNICUS, ESPERA_ENTRE_TENTATIVAS_MS, FalhaCopernicus, LIMITE_TEXTO_ERRO_PROVEDOR,
+  MARGEM_RENOVACAO_TOKEN_S, camposLogErroProvedor, sanitizarErroProvedor, type RegistroChamada
 } from "../../src/lib/satelite/copernicus.js";
 import { areaEmGraus, lerPoligono, metrosPorGrau, planejarGrade, type PoligonoGeoJson } from "../../src/lib/satelite/geometria.js";
 import {
@@ -220,13 +221,29 @@ describe("SAT-01 resiliência — 401, 403, 429, 5xx, tempo, rede, 4xx", () => {
     const r = await enviarPost(falso({ [API_HOST]: ["tempo"] }).buscar, API_HOST, "/statistics/v1", "{}", {}, 10);
     expect(r).toEqual({ tipo: "falha", motivo: "tempo" });
   });
-  it("400/404/422 → requisicao_recusada, NUNCA repete; corpo do provedor não vai para o erro", async () => {
+  it("400/404/422 → requisicao_recusada, NUNCA repete; corpo bruto não vai para o erro; recorte sanitizado sim", async () => {
     for (const status of [400, 404, 422]) {
-      const t = cliente({ [TOKEN_HOST]: [tokenOk()], [API_HOST]: [{ status, body: { error: { message: `detalhe ${SEGREDO}` } } }] });
+      const t = cliente({ [TOKEN_HOST]: [tokenOk()], [API_HOST]: [{
+        status,
+        body: { error: { code: "COMMON_BAD_PAYLOAD", message: `detalhe ${SEGREDO}`, errors: [{ parameter: "aggregation.timeRange" }] } }
+      }] });
       const f = await falhaDe(t.pedir());
       expect([f.tipo, f.status]).toEqual(["requisicao_recusada", status]);
       expect(t.f.chamadas.filter((c) => c.url.includes(API_HOST))).toHaveLength(1);
-      semSegredo(f, t.registros);
+      expect(f.erroProvedor).toEqual({
+        status, code: "COMMON_BAD_PAYLOAD", message: "detalhe [redacted]", parameter: "aggregation.timeRange"
+      });
+      const reg = t.registros.find((r) => r.endpoint === "estatistica");
+      expect(reg?.erroProvedor).toEqual(f.erroProvedor);
+      expect(camposLogErroProvedor(reg?.erroProvedor)).toEqual({
+        provider_status: status,
+        provider_error_code: "COMMON_BAD_PAYLOAD",
+        provider_error_message_sanitized: "detalhe [redacted]",
+        provider_parameter: "aggregation.timeRange"
+      });
+      expect(f.message).not.toContain("COMMON_BAD_PAYLOAD");
+      expect(f.message).not.toContain("aggregation");
+      semSegredo(f, t.registros, camposLogErroProvedor(f.erroProvedor));
     }
   });
   it("2xx com corpo que não é JSON → resposta_malformada", async () => {
@@ -239,8 +256,47 @@ describe("SAT-01 resiliência — 401, 403, 429, 5xx, tempo, rede, 4xx", () => {
       const t = cliente({ [TOKEN_HOST]: [tokenOk(), tokenOk()], [API_HOST]: api });
       const f = await falhaDe(t.pedir());
       semSegredo(f, t.registros);
-      for (const r of t.registros) expect(Object.keys(r).sort()).toEqual(["duracaoMs", "endpoint", "status", "tentativa", "tipoFalha"]);
+      for (const r of t.registros) {
+        const keys = Object.keys(r).sort();
+        if (r.tipoFalha === "requisicao_recusada") {
+          expect(keys).toEqual(["duracaoMs", "endpoint", "erroProvedor", "status", "tentativa", "tipoFalha"]);
+        } else {
+          expect(keys).toEqual(["duracaoMs", "endpoint", "status", "tentativa", "tipoFalha"]);
+        }
+      }
     }
+  });
+});
+
+describe("HOTFIX-SAT-RUNTIME-01 — sanitizarErroProvedor", () => {
+  it("extrai code/message/parameter e redige geometry, Authorization e textos proibidos", () => {
+    const geo = { type: "Polygon", coordinates: [[[1, 2], [3, 4], [1, 2]]] };
+    const r = sanitizarErroProvedor(400, {
+      error: {
+        code: "COMMON_BAD_PAYLOAD",
+        message: `Invalid field; Authorization: Bearer ${TOKEN}; secret=${SEGREDO}`,
+        errors: [{ parameter: "input.bounds.geometry", path: "/input/bounds/geometry" }]
+      },
+      geometry: geo,
+      request: { input: { bounds: { geometry: geo } } }
+    }, [SEGREDO, TOKEN, CLIENTE_ID]);
+    expect(r).toEqual({
+      status: 400,
+      code: "COMMON_BAD_PAYLOAD",
+      message: "[redacted]",
+      parameter: "input.bounds.geometry"
+    });
+    semSegredo(r);
+  });
+  it("corta mensagem longa e ignora corpo que não é objeto", () => {
+    const longa = "x".repeat(LIMITE_TEXTO_ERRO_PROVEDOR + 40);
+    expect(sanitizarErroProvedor(400, { message: longa }).message?.length).toBe(LIMITE_TEXTO_ERRO_PROVEDOR + 1); // + reticências
+    expect(sanitizarErroProvedor(400, null)).toEqual({ status: 400, code: null, message: null, parameter: null });
+    expect(sanitizarErroProvedor(400, "texto")).toEqual({ status: 400, code: null, message: null, parameter: null });
+  });
+  it("aceita Buffer JSON (Process API 4xx lida como binário)", () => {
+    const buf = Buffer.from(JSON.stringify({ error: { code: "BAD", message: "nope", errors: [{ path: "outputs.ndvi" }] } }));
+    expect(sanitizarErroProvedor(400, buf)).toEqual({ status: 400, code: "BAD", message: "nope", parameter: "outputs.ndvi" });
   });
 });
 

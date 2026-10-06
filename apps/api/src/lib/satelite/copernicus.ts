@@ -10,7 +10,9 @@
  *
  * SEGREDO: o client secret e o access token existem só aqui dentro. Nenhuma mensagem de erro, registro de chamada
  * ou objeto devolvido carrega um dos dois (nem o corpo enviado ao provedor, nem o cabeçalho Authorization). O que
- * sai para o log é `RegistroChamada`: endpoint lógico, status, duração, tentativa e tipo de falha.
+ * sai para o log é `RegistroChamada`: endpoint lógico, status, duração, tentativa, tipo de falha e, em 4xx,
+ * um recorte SANITIZADO do erro do provedor (código, mensagem curta, parâmetro) — nunca o JSON bruto, geometria
+ * ou corpo do pedido.
  *
  * RESILIÊNCIA: tempo máximo explícito por chamada; no máximo `TENTATIVAS_MAXIMAS` tentativas; 429 respeita o
  * `Retry-After` só quando ele cabe em `ESPERA_MAXIMA_RETRY_AFTER_S` (senão devolve o limite a quem pediu, com o
@@ -55,14 +57,31 @@ export type TipoFalhaCopernicus =
   | "resposta_malformada"  // 2xx com corpo fora do contrato
   | "processamento_parcial"; // 2xx com dia(s) em erro que decidiriam a escolha (ndvi.ts): nada é gravado
 
+/** Teto do texto sanitizado que sai para log interno (mensagem/código/parâmetro do provedor). */
+export const LIMITE_TEXTO_ERRO_PROVEDOR = 500;
+
+/**
+ * Recorte SEGURO do erro 4xx do Copernicus para log interno. Nunca carrega Authorization, token, secret,
+ * geometry, coordinates nem o corpo completo do pedido/resposta.
+ */
+export interface ErroProvedorSanitizado {
+  status: number | null;
+  code: string | null;
+  message: string | null;
+  parameter: string | null;
+}
+
 /**
  * `puCabecalho` (SAT-03, decisão 296) existe SÓ na falha que veio DEPOIS de uma resposta 2xx da Statistical API (corpo
  * ilegível, ou a leitura do método recusou o corpo): a chamada foi cobrada, e quem a abriu grava o consumo. O valor é o
  * cabeçalho `x-processingunits-spent` bruto, ou null se ele não veio. Ausente (undefined) = o provedor não cobrou nada.
+ *
+ * `erroProvedor` (HOTFIX-SAT-RUNTIME-01) existe só em `requisicao_recusada` (4xx): recorte sanitizado para log
+ * interno. Nunca vai para a resposta HTTP ao cliente (`details.motivo` continua só o `tipo`).
  */
 export class FalhaCopernicus extends Error {
   constructor(readonly tipo: TipoFalhaCopernicus, readonly status: number | null = null, readonly tentarAposSegundos: number | null = null,
-    readonly puCabecalho?: string | null) {
+    readonly puCabecalho?: string | null, readonly erroProvedor?: ErroProvedorSanitizado | null) {
     super(`falha do provedor Copernicus: ${tipo}${status ? ` (HTTP ${status})` : ""}`);
     this.name = "FalhaCopernicus";
   }
@@ -75,6 +94,89 @@ export interface RegistroChamada {
   duracaoMs: number;
   tentativa: number;
   tipoFalha: TipoFalhaCopernicus | null;
+  /** Presente só em 4xx da Statistical/Process: recorte sanitizado do corpo de erro do provedor. */
+  erroProvedor?: ErroProvedorSanitizado | null;
+}
+
+/** Campos de log estruturado a partir do recorte sanitizado (nomes estáveis para Railway). */
+export function camposLogErroProvedor(e: ErroProvedorSanitizado | null | undefined): Record<string, string | number | null> {
+  if (!e) return {};
+  return {
+    provider_status: e.status,
+    provider_error_code: e.code,
+    provider_error_message_sanitized: e.message,
+    provider_parameter: e.parameter
+  };
+}
+
+function cortarTextoErro(s: string): string {
+  const t = s.trim().replace(/\s+/g, " ");
+  return t.length <= LIMITE_TEXTO_ERRO_PROVEDOR ? t : `${t.slice(0, LIMITE_TEXTO_ERRO_PROVEDOR)}…`;
+}
+
+/** True se o texto parece carregar credencial, Authorization, geometria ou corpo de pedido. */
+function textoProibidoNoErro(s: string): boolean {
+  if (/authorization\s*:/i.test(s)) return true;
+  if (/bearer\s+[A-Za-z0-9._\-+=/]{8,}/i.test(s)) return true;
+  if (/client_secret|access_token|refresh_token/i.test(s)) return true;
+  if (/"coordinates"\s*:/.test(s)) return true;
+  if (/"type"\s*:\s*"(?:Polygon|MultiPolygon|Feature)"/i.test(s)) return true;
+  if (/"evalscript"\s*:/i.test(s)) return true;
+  if (/"input"\s*:\s*\{/i.test(s) && /"bounds"\s*:/i.test(s)) return true;
+  return false;
+}
+
+function textoSeguroErro(v: unknown, proibidos: readonly string[]): string | null {
+  if (typeof v !== "string" || !v.trim()) return null;
+  let t = cortarTextoErro(v);
+  for (const p of proibidos) {
+    if (p.length >= 4 && t.includes(p)) t = t.split(p).join("[redacted]");
+  }
+  if (textoProibidoNoErro(t)) return "[redacted]";
+  return t;
+}
+
+function objetoDoCorpoErro(corpo: unknown): Record<string, unknown> | null {
+  if (corpo == null) return null;
+  if (typeof Buffer !== "undefined" && Buffer.isBuffer(corpo)) {
+    const t = corpo.toString("utf8").trim();
+    if (!t.startsWith("{") && !t.startsWith("[")) return null;
+    try {
+      const p: unknown = JSON.parse(t);
+      return p !== null && typeof p === "object" && !Array.isArray(p) ? p as Record<string, unknown> : null;
+    } catch { return null; }
+  }
+  if (typeof corpo === "object" && !Array.isArray(corpo)) return corpo as Record<string, unknown>;
+  return null;
+}
+
+function primeiroParametro(lista: unknown, proibidos: readonly string[]): string | null {
+  if (!Array.isArray(lista)) return null;
+  for (const item of lista) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const o = item as Record<string, unknown>;
+    const p = textoSeguroErro(o.parameter ?? o.path ?? o.field ?? o.pointer ?? o.param ?? null, proibidos);
+    if (p) return p;
+  }
+  return null;
+}
+
+/**
+ * Lê o corpo de erro 4xx do Copernicus e devolve só campos seguros para log. `proibidos` = valores conhecidos
+ * (client id, secret, token) que NUNCA podem aparecer no recorte, mesmo que o provedor os ecoe.
+ */
+export function sanitizarErroProvedor(status: number | null, corpo: unknown, proibidos: readonly string[] = []): ErroProvedorSanitizado {
+  const vazio: ErroProvedorSanitizado = { status, code: null, message: null, parameter: null };
+  const o = objetoDoCorpoErro(corpo);
+  if (!o) return vazio;
+  const errObj = o.error !== null && typeof o.error === "object" && !Array.isArray(o.error)
+    ? o.error as Record<string, unknown>
+    : null;
+  const code = textoSeguroErro(errObj?.code ?? errObj?.reason ?? o.code ?? o.reason ?? null, proibidos);
+  const message = textoSeguroErro(errObj?.message ?? o.message ?? null, proibidos);
+  const parameter = primeiroParametro(errObj?.errors ?? o.errors, proibidos)
+    ?? textoSeguroErro(errObj?.parameter ?? errObj?.path ?? o.parameter ?? o.path ?? null, proibidos);
+  return { status, code, message, parameter };
 }
 
 export interface Credenciais { clienteId: string; segredo: string }
@@ -100,6 +202,16 @@ export class ClienteCopernicus {
   }
 
   get configurado(): boolean { return this.opcoes.credenciais !== null; }
+
+  /** Valores que o sanitizador de erro 4xx nunca pode ecoar (credencial + token em uso). */
+  private textosProibidos(): string[] {
+    const out: string[] = [];
+    if (this.opcoes.credenciais) {
+      out.push(this.opcoes.credenciais.segredo, this.opcoes.credenciais.clienteId);
+    }
+    if (this.token?.valor) out.push(this.token.valor);
+    return out.filter((s) => s.length >= 4);
+  }
 
   /**
    * POST na Statistical API. Devolve o corpo JSON da resposta 2xx, tal como veio (quem interpreta é o método:
@@ -176,8 +288,10 @@ export class ClienteCopernicus {
         if (!ultima) { await this.esperar(ESPERA_ENTRE_TENTATIVAS_MS); continue; }
         throw new FalhaCopernicus("indisponivel", s);
       }
-      anotar(s, "requisicao_recusada");
-      throw new FalhaCopernicus("requisicao_recusada", s);
+      // 4xx (exceto 401/403/429 já tratados): o corpo do provedor é lido SÓ para log sanitizado — nunca repassado ao cliente.
+      const erroProvedor = sanitizarErroProvedor(s, r.corpo, this.textosProibidos());
+      registrar({ endpoint, status: s, duracaoMs: this.agora() - inicio, tentativa, tipoFalha: "requisicao_recusada", erroProvedor });
+      throw new FalhaCopernicus("requisicao_recusada", s, null, undefined, erroProvedor);
     }
     // Inalcançável: toda volta do laço termina em `return`, `continue` ou `throw`, e a última nunca continua.
     throw new FalhaCopernicus("indisponivel");

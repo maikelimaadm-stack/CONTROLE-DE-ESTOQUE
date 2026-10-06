@@ -9,7 +9,7 @@ import { isISODate } from "@agro/shared";
 import { runService } from "../lib/service.js";
 import { DomainError, denied, err, validation } from "../lib/errors.js";
 import { empresaScopeSql, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
-import { FalhaCopernicus, type RegistroChamada } from "../lib/satelite/copernicus.js";
+import { FalhaCopernicus, camposLogErroProvedor, type RegistroChamada } from "../lib/satelite/copernicus.js";
 import { gravarConsumo } from "../lib/satelite/consumo.js";
 import { lerContagemChamadas } from "../lib/satelite/limite-global.js";
 import { LADO_MAXIMO_PX, lerPoligono, planejarGrade, type GradeDaAnalise, type PoligonoGeoJson } from "../lib/satelite/geometria.js";
@@ -289,7 +289,10 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
         throw err("RATE_LIMITED", MSG_LIMITE_ANALISES, { motivo: "limite_erp" });
       }
       const registrar = (c: RegistroChamada) => req.log.info({
-        satelite: { provedor: PROVEDOR_COPERNICUS, endpoint: c.endpoint, status: c.status, duracao_ms: c.duracaoMs, tentativa: c.tentativa, tipo_falha: c.tipoFalha, area_id: a.area.id }
+        satelite: {
+          provedor: PROVEDOR_COPERNICUS, endpoint: c.endpoint, status: c.status, duracao_ms: c.duracaoMs,
+          tentativa: c.tentativa, tipo_falha: c.tipoFalha, area_id: a.area.id, ...camposLogErroProvedor(c.erroProvedor)
+        }
       }, "chamada ao provedor de satélite");
       // A chamada (corpo + PU) e a LEITURA do método são passos separados: a leitura que recusa um 2xx devolve a falha
       // com o PU da resposta (`puCabecalho` presente = cobrada), para quem abriu a chamada gravar o consumo dela.
@@ -298,7 +301,7 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
           try {
             return { resultado: escolherObservacao(interpretarEstatistica(r.corpo, janela), a.preparo.grade.pixelsGeometria), puCabecalho: r.puCabecalho };
           } catch (e) {
-            if (e instanceof FalhaCopernicus) throw new FalhaCopernicus(e.tipo, e.status, e.tentarAposSegundos, r.puCabecalho);
+            if (e instanceof FalhaCopernicus) throw new FalhaCopernicus(e.tipo, e.status, e.tentarAposSegundos, r.puCabecalho, e.erroProvedor);
             throw e;
           }
         });
@@ -312,7 +315,7 @@ export default async function analisesSatelitaisRoutes(app: FastifyInstance) {
         feita = await chamada;
       } catch (e) {
         if (!(e instanceof FalhaCopernicus)) throw e;
-        req.log.warn({ satelite: { provedor: PROVEDOR_COPERNICUS, area_id: a.area.id, tipo_falha: e.tipo, status: e.status } }, "análise por satélite não concluída");
+        req.log.warn({ satelite: { provedor: PROVEDOR_COPERNICUS, area_id: a.area.id, tipo_falha: e.tipo, status: e.status, ...camposLogErroProvedor(e.erroProvedor) } }, "análise por satélite não concluída");
         // Falha DEPOIS de um 2xx: a chamada foi cobrada. Só o consumo, numa transação curta (empresa da área relida no
         // escopo; área fora dele não grava). A resposta continua o mesmo 503.
         if (abriuChamada && e.puCabecalho !== undefined) await gravarConsumoSemAnalise(e.puCabecalho);

@@ -34,7 +34,7 @@ import {
   MSG_AREA_SEM_POLIGONO, MSG_POLIGONO_FORA_DO_FORMATO, msgAreaGrande, msgAreaPequena, prepararPoligono, type AreaLida
 } from "../../routes/analises-satelitais.js";
 import { gravarBundlePastagem } from "../../routes/satelite-condicao.js";
-import { FalhaCopernicus, type ClienteCopernicus, type RegistroChamada } from "./copernicus.js";
+import { FalhaCopernicus, camposLogErroProvedor, type ClienteCopernicus, type RegistroChamada } from "./copernicus.js";
 import { gravarConsumo } from "./consumo.js";
 import { MODULO_EXECUTOR, PERMISSAO_EXECUTAR_ITEM, contextoDoCriador } from "./contexto-worker.js";
 import { recalcularConsulta, travarConsulta } from "./fechamento.js";
@@ -206,7 +206,11 @@ async function fase1(dep: DependenciasItem, r: ItemReservado): Promise<Fase1> {
 /** FASE 2 — o provedor, sem transação. Nunca lança: o desfecho vai em `falha`. */
 async function chamarProvedor(dep: DependenciasItem, r: ItemReservado, p: Pronto): Promise<Chamada> {
   const registrar = (c: RegistroChamada) => dep.log.info({
-    satelite: { provedor: PROVEDOR_COPERNICUS, endpoint: c.endpoint, status: c.status, duracao_ms: c.duracaoMs, tentativa: c.tentativa, tipo_falha: c.tipoFalha, item_id: r.item_id, consulta_id: r.consulta_id }
+    satelite: {
+      provedor: PROVEDOR_COPERNICUS, endpoint: c.endpoint, status: c.status, duracao_ms: c.duracaoMs,
+      tentativa: c.tentativa, tipo_falha: c.tipoFalha, item_id: r.item_id, consulta_id: r.consulta_id,
+      ...camposLogErroProvedor(c.erroProvedor)
+    }
   }, "chamada ao provedor de satélite");
   let respondeu: Chamada["respondeu"] = null;
   try {
@@ -315,7 +319,7 @@ async function fecharFalha(dep: DependenciasItem, r: ItemReservado, tentativas: 
 
 /** O que um erro pode deixar no log: o tipo e o status (provedor), o código (ERP) ou o SQLSTATE — nunca a mensagem. */
 export function resumoDoErro(e: unknown): Record<string, unknown> {
-  if (e instanceof FalhaCopernicus) return { tipo_falha: e.tipo, status: e.status };
+  if (e instanceof FalhaCopernicus) return { tipo_falha: e.tipo, status: e.status, ...camposLogErroProvedor(e.erroProvedor) };
   if (e instanceof DomainError) return { tipo_falha: "erro_interno", codigo: e.code };
   const pg = (e && typeof e === "object" ? e : {}) as { code?: unknown; constraint?: unknown };
   return {
