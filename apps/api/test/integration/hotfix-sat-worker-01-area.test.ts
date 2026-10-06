@@ -238,7 +238,7 @@ describe("HOTFIX-SAT-WORKER-01 — fail-safe cascata + reprocessar", () => {
     expect(alvo.length).toBe(3);
     await admin.query("update erp.areas set deleted_at=now() where id = any($1::uuid[])", [areas]);
 
-    let agora = 10_000_000;
+    const agora = 10_000_000;
     let fila: ItemReservado[] = [...alvo];
     const cliente = new ClienteCopernicus({
       buscar: buscarMock, credenciais: { clienteId: ID_FALSO, segredo: SEGREDO_FALSO }, esperar: async () => {}
