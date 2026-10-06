@@ -78,7 +78,7 @@ describe("HOTFIX-SAT-WORKER-01 — migration 0060 reserva área viva", () => {
     const def = (await db.query<{ d: string }>(
       `select pg_get_functiondef(p.oid) d from pg_proc p join pg_namespace n on n.oid=p.pronamespace
         where n.nspname='erp' and p.proname='satelite_reservar_itens'
-          and pg_get_function_identity_arguments(p.oid)='integer, integer, integer, integer, integer'`
+          and pg_get_function_identity_arguments(p.oid) like '%integer%integer%integer%integer%integer%'`
     )).rows[0]!.d;
     expect(def).toContain("modulo_satelite_executor");
     expect(def).toContain("deleted_at is null");

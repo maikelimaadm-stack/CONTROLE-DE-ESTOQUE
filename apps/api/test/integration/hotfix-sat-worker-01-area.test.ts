@@ -231,7 +231,7 @@ describe("HOTFIX-SAT-WORKER-01 — contrato reserva → execução", () => {
 describe("HOTFIX-SAT-WORKER-01 — fail-safe cascata + reprocessar", () => {
   it("≥2 area_nao_encontrada na rodada pausam o executor; reprocessar-falhas reabre os afetados", async () => {
     const areas = [await novaArea(A), await novaArea(A), await novaArea(A)];
-    const consultaIds = [];
+    const consultaIds: string[] = [];
     for (const a of areas) consultaIds.push(await criarConsulta([a]));
     const reservados = await reservar(3);
     const alvo = reservados.filter((x) => consultaIds.includes(x.consulta_id));
