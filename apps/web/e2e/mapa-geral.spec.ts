@@ -856,7 +856,8 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   // barra de camadas: os oito grupos, na ordem do contrato
   const barra = page.getByTestId("mapa-barra-camadas");
   await expect(barra).toBeVisible({ timeout: 30_000 });
-  await expect(barra.getByTestId("mapa-grupo-base")).toContainText("Satélite");
+  // Base: botões Satélite/Mapa quando há chave Google; senão o aviso (CI sem NEXT_PUBLIC_GOOGLE_MAPS_API_KEY).
+  await expect(barra.getByTestId("mapa-grupo-base")).toContainText(/Satélite|chave do Google/);
   await expect(barra.getByTestId("mapa-visualizacao-condicao")).toHaveAttribute("aria-pressed", "true");
   for (const [grupo, texto] of [
     ["mapa-grupo-camada", "Cobertura/Solo"], ["mapa-grupo-indice", "NDVI"], ["mapa-grupo-data", "Última imagem útil"],
