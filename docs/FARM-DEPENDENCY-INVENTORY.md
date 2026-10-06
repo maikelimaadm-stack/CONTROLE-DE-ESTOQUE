@@ -112,18 +112,18 @@ Onde o produto ainda fala o nicho sem precisar. Ordem de ataque: quem concentra 
 | `apps/api/src/routes/fleet-hr.ts` | API — código | 3 |
 | `apps/api/test/integration/rls-matriz.test.ts` | API — testes | 3 |
 | `scripts/parity-map.mjs` | Scripts e gates | 3 |
-| `apps/api/src/plugins/auth.ts` | API — código | 2 |
 | `packages/domain/src/escopo-permissao.ts` | Pacotes compartilhados | 2 |
 | `apps/api/src/lib/context.ts` | API — código | 1 |
+| `apps/api/src/lib/contexto-membro.ts` | API — código | 1 |
 | `apps/api/src/lib/empresa.ts` | API — código | 1 |
 | `apps/api/src/lib/escopo-admin.ts` | API — código | 1 |
+| `apps/api/src/plugins/auth.ts` | API — código | 1 |
 | `apps/api/src/routes/attachments.ts` | API — código | 1 |
 | `apps/api/src/routes/supply.ts` | API — código | 1 |
 | `apps/api/src/server.ts` | API — código | 1 |
 | `apps/api/test/unit/escopo-classificacao.test.ts` | API — testes | 1 |
 | `packages/db/src/origem-organizacao.ts` | Pacotes compartilhados | 1 |
-| `packages/domain/src/permissions.ts` | Pacotes compartilhados | 1 |
-| _… mais 4 arquivo(s)_ | | 4 |
+| _… mais 5 arquivo(s)_ | | 5 |
 
 ## Por símbolo (o que precisa migrar)
 

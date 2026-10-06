@@ -155,8 +155,8 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
     <Dialog
       open={p.aberto}
       onOpenChange={(o) => { if (!o) p.onFechar(); }}
-      title="Nova consulta de satélite"
-      description="Busca a imagem útil das áreas escolhidas (a mais recente, a de uma data ou uma por mês/decêndio de um intervalo) e calcula a condição (vigor, umidade e cobertura). Gasta créditos de satélite."
+      title="Atualizar condição do pasto"
+      description="Busca a imagem útil das áreas escolhidas (a mais recente, a de uma data ou uma por mês/decêndio de um intervalo) e calcula a condição do pasto. Você não escolhe índice: o pacote é a classificação integrada. Gasta créditos de satélite."
       size="lg"
       testId="consulta-modal"
       footer={(

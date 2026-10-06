@@ -191,7 +191,7 @@ describe("premissas e catálogo", () => {
     // sat-08-0056.test.ts; a 0057 corrige o contrato Statistical API — SAT-08 R1, sat-08-0057.test.ts).
     const r = (await db.query<{ ate: number; n: number; ultima: string }>(
       "select count(*) filter (where name <= '0037_receber_pedido_de_compra.sql')::int ate, count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
-    expect(r).toEqual({ ate: 37, n: 58, ultima: "0058_satelite_raster_multi_indice.sql" });
+    expect(r).toEqual({ ate: 37, n: 59, ultima: "0059_satelite_mapa_condicao_pasto.sql" });
   });
 
   it("colunas novas: tipo e nulidade", async () => {

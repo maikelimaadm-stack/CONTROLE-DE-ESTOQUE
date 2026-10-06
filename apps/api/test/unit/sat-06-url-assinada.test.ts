@@ -20,6 +20,7 @@ describe("SAT-06 redigirUrlAssinada — o token nunca vai para o log", () => {
   it("a rota do arquivo: a query inteira vira o marcador", () => {
     expect(redigirUrlAssinada(`/api/mapa/rasters/${RASTER}/arquivo?t=${TOKEN}`)).toBe(omitida(`/api/mapa/rasters/${RASTER}/arquivo`));
     expect(redigirUrlAssinada(`/api/mapa/rasters/${RASTER}/arquivo/?x=1&t=${TOKEN}`)).toBe(omitida(`/api/mapa/rasters/${RASTER}/arquivo/`));
+    expect(redigirUrlAssinada(`/api/mapa/condicao-pasto/${RASTER}/arquivo?t=${TOKEN}`)).toBe(omitida(`/api/mapa/condicao-pasto/${RASTER}/arquivo`));
   });
 
   it("caminho CODIFICADO que o roteador decodifica (`%72asters`, `%2F`, maiúsculas, codificação dupla): também redigido", () => {
