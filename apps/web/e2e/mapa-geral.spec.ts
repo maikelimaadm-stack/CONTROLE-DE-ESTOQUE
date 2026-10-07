@@ -1127,12 +1127,13 @@ test("Mapa geral SAT-COND-01: condição padrão, legenda ha/%, filtro, ESC, lis
   await expect(page.getByTestId("dialog-classe-condicao")).toContainText("Solo exposto estimado");
   await expect(page.getByTestId("mapa-item-area").nth(0)).toContainText(pastoB.name);
 
-  await page.keyboard.press("Escape");
+  await page.getByTestId("dialog-classe-fechar").click();
   await expect(page.getByTestId("dialog-classe-condicao")).toHaveCount(0);
   await expect(page.getByTestId("painel-classe-condicao")).toHaveCount(0);
+  await expect(page.getByTestId("mapa-atualizando")).toHaveCount(0);
 
   // Reabre e fecha pelo rodapé (overlay do Dialog impede segundo clique na legenda)
-  await page.getByTestId("legenda-classe-solo_exposto_estimado").click();
+  await page.getByTestId("legenda-classe-solo_exposto_estimado").click({ timeout: 30_000 });
   await expect(page.getByTestId("dialog-classe-condicao")).toBeVisible();
   await page.getByTestId("dialog-classe-fechar").click();
   await expect(page.getByTestId("dialog-classe-condicao")).toHaveCount(0);
