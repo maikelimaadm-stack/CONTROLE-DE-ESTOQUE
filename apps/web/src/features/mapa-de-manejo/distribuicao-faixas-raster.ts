@@ -190,7 +190,6 @@ export function distribuirFaixasRasterNaArea(p: {
     return vazio;
   }
 
-  const porCodigo = new Map(faixas.map((f) => [f.codigo, f]));
   const faixasOut = faixas.map((f) =>
     linha(f, contagem.get(f.codigo) ?? 0, internos, validos, p.areaHa)
   );
@@ -217,7 +216,6 @@ export function distribuirFaixasRasterNaArea(p: {
     alvo.area_estimada_percentual = (alvo.area_estimada_ha / p.areaHa) * 100;
   }
 
-  void porCodigo;
   if (cacheKey) {
     CACHE.set(cacheKey, result);
     if (CACHE.size > CACHE_MAX) CACHE.delete(CACHE.keys().next().value!);
