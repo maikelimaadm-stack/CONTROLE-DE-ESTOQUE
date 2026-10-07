@@ -28,7 +28,8 @@ describe("MAPA-UX-03 — CACHE estável (CACHE-01..04)", () => {
     expect(rastersCondSrc).toContain("cache.manter(new Set(idsViewport))");
     expect(rastersCondSrc).toContain("resumosRef permanece intacto");
     expect(mapaGeralSrc).toContain("areaIdsResumo: areas.map((a) => a.id)");
-    expect(mapaGeralSrc).toContain("areaIds: selecao.ids");
+    // SAT-BUNDLE-01B R2: no modo operacional o cache pesado usa idsDetalhe (zoom); senão o viewport.
+    expect(mapaGeralSrc).toContain("areaIds: modoOperacional ? idsDetalhe : selecao.ids");
   });
 
   it("CACHE-04: erro de fetch preserva snapshot e expõe erroAtualizacao; sucesso é atômico", () => {
