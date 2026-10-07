@@ -93,19 +93,19 @@ Tabelas `erp.satelite_mapas_condicao` (+ arquivos). Sem `analise_id`. Migration 
 - `GET /api/mapa/condicao-pasto?area_ids=` — listagem v3 (não gera).
 - `GET /api/mapa/condicao-pasto/:mapaId/arquivo?t=` — PNG.
 
-## Worker / bundle (SAT-BUNDLE-01A R2)
+## Worker / bundle (SAT-BUNDLE-01C)
 
 Após Statistical útil do `pastagem-essencial-v2`, o executor **mantém o item em `executando`**
-(reserva ativa), chama `garantirProdutoCondicaoOperacional` com política **`principal`** e
-identidade temporal EXATA (`observacao_inicio`/`fim` + `geometria_sha256`), e só então fecha:
+(reserva ativa), chama `garantirProdutoCondicaoOperacional` / `materializarProdutosDaObservacao`
+com política **`principal`** e identidade temporal EXATA (`observacao_inicio`/`fim` + `geometria_sha256`),
+e só então fecha:
 
-- mapa condição v3 **somente**;
-- rasters técnicos dos 6 índices = **lazy** (rota POST / on-demand via `gerarOuReutilizarRasterIndice`);
-- Process automático a frio: até **1** chamada;
-- consumo Process do worker atribui `consulta_id` / `consulta_item_id`;
-- falha do Process → item `falho` `produto_condicao_falhou` (consulta ≠ concluída normal); Statistical permanece; reparo não repete Statistical;
-- produto em cache da **mesma observação** → reutilizado (0 Process);
-- reparo de reaproveitado: fail-closed (`pronto|reutilizado|falhou`); falha mantém reserva;
+- mapa condição v3 **e** rasters NDVI/EVI2/NDRE/NDMI/MSAVI2/BSI na **mesma** Process TAR multi-output (grade 20 m);
+- Process automático a frio: até **1** chamada (`Accept: application/tar`);
+- consumo Process do worker atribui `consulta_id` / `consulta_item_id` **uma vez** por request;
+- falha do Process / produtos faltantes → item `falho` `produtos_bundle_falharam`; Statistical permanece; reparo não repete Statistical;
+- cache total da **mesma observação** → reutilizado (0 Process); parcial → 1 Process só com faltantes;
+- reparo: fail-closed (`pronto|reutilizado|falhou`); falha mantém reserva;
 - `POST …/produtos-observacao/reparar` público = consumo avulso (sem IDs de ledger do cliente).
 
 ## Observação completa (contrato F1)

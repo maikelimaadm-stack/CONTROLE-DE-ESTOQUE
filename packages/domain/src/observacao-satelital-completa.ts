@@ -199,8 +199,8 @@ export interface ObservacaoSatelitalCompleta {
   };
   status_bundle: StatusBundleObservacao;
   /**
-   * Bundle visual pronto = 6 índices da mesma observação + mapa de condição disponível.
-   * Rasters técnicos são lazy: ausência deles NÃO impede visual_pronto.
+   * Bundle visual pronto = 6 índices Statistical + condição v3 + 6 rasters temáticos
+   * da mesma observação (SAT-BUNDLE-01C). Ausência de qualquer produto espacial → false.
    */
   visual_pronto: boolean;
   avisos: readonly string[];
@@ -324,18 +324,21 @@ export function produtoCondicaoIndisponivel(): ProdutoMapaCondicao {
 }
 
 /**
- * Status do bundle. “Completo” = identidade + 6 índices + mapa de condição.
- * Rasters técnicos materializados são informativos (lazy/on-demand) e NÃO bloqueiam completo.
+ * Status do bundle. “Completo” = identidade + 6 índices + condição v3 + 6 rasters.
+ * Qualquer produto espacial faltante → `produtos_parciais` (SAT-BUNDLE-01C).
  */
 export function statusBundleDe(p: {
   identidade: IdentidadeObservacaoSatelital | null;
   indicesCompletos: boolean;
   condicaoDisponivel: boolean;
-  /** Quantos rasters técnicos já materializados — não decide o status. */
+  /** Quantos rasters técnicos já materializados (de 6). Bloqueia completo se < 6. */
   rastersDisponiveis?: number;
 }): StatusBundleObservacao {
   if (!p.identidade) return p.indicesCompletos ? "identidade_invalida" : "sem_observacao";
   if (!p.indicesCompletos) return "incompleto_indices";
-  if (!p.condicaoDisponivel) return "produtos_parciais";
+  const rastersOk = p.rastersDisponiveis ?? 0;
+  if (!p.condicaoDisponivel || rastersOk < INDICES_BUNDLE_ESSENCIAL.length) {
+    return "produtos_parciais";
+  }
   return "completo";
 }

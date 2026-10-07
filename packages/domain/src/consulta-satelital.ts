@@ -101,12 +101,14 @@ export const COEFICIENTES_ESTIMATIVA_PU = {
 } as const;
 
 /**
- * Coeficientes da estimativa do Process AUTOMÁTICO do bundle (mapa integrado de condição).
- * SSOT do produto automático — NÃO inclui rasters técnicos lazy (on-demand).
+ * Coeficientes da estimativa do Process AUTOMÁTICO multi-output do bundle (SAT-BUNDLE-01C).
+ * Uma chamada Process TAR → condição v3 + até 6 rasters (grade 20 m).
+ * Faixa estimada — o ledger registra PU real; não prometer PU fixa por output.
  *
- * - `bandas`: bandas de entrada do evalscript de condição (B02…B11+SCL), sem dataMask.
- * - `fatorFormato`: PNG UINT8 de 1 banda; 1 = conservador até calibrar com o ledger.
- * Uma chamada Process por item (a data da observação escolhida), não multiplica pela janela.
+ * - `bandas`: bandas de entrada do evalscript do bundle (B02…B11+SCL), sem dataMask.
+ * - `fatorFormato`: PNG UINT8; 1 = conservador até calibrar com o ledger.
+ * Uma chamada Process por item (a data da observação escolhida), não multiplica pela janela
+ * nem pelo número de outputs.
  */
 export const COEFICIENTES_ESTIMATIVA_PROCESS_CONDICAO = {
   bandas: BANDAS_POR_BUNDLE.pastagem_essencial,
@@ -362,10 +364,9 @@ function puExatoProcessCondicao(pixelsBbox: number): Decimal {
 }
 
 /**
- * Faixa de créditos do Process AUTOMÁTICO (mapa de condição v3) — UM produto, UMA chamada.
- * `mapaReutilizavel: true` (comprovado) → zero. Ausente/false → estimativa conservadora
- * (a prévia não assume cache sem prova).
- * Rasters técnicos lazy NÃO entram.
+ * Faixa de créditos do Process AUTOMÁTICO multi-output — UMA chamada TAR (até 7 produtos).
+ * `mapaReutilizavel: true` (cache total comprovado dos produtos obrigatórios) → zero.
+ * Ausente/false → estimativa conservadora (a prévia não assume cache sem prova).
  */
 export function estimarCreditosProcessCondicao(p: {
   pixelsBbox: number;
@@ -380,15 +381,14 @@ export function estimarCreditosProcessCondicao(p: {
 /**
  * Faixa de créditos de UM item novo.
  * - NDVI avulso: só Statistical (janela × observações).
- * - `pastagem_essencial`: Statistical + Process do mapa de condição (produto automático).
- * Rasters técnicos lazy NÃO entram na prévia.
- * Item totalmente reaproveitado (Statistical + mapa) não passa por aqui: custa zero.
+ * - `pastagem_essencial`: Statistical + 1 Process multi-output (SAT-BUNDLE-01C).
+ * Item totalmente reaproveitado (Statistical + produtos) não passa por aqui: custa zero.
  */
 export function estimarCreditosItem(p: {
   pixelsBbox: number;
   indice: IndiceBundleConsulta;
   slot: SlotConsulta;
-  /** Só para pastagem: true quando o mapa de condição já existe e é comprovadamente reutilizável. */
+  /** Só para pastagem: true quando os produtos espaciais já existem e são reutilizáveis. */
   mapaCondicaoReutilizavel?: boolean;
 }): FaixaCreditos {
   const creditosPorObservacao = puExatoPorObservacao(p.pixelsBbox, p.indice).mul(CREDITOS_POR_PU);

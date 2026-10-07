@@ -1,19 +1,17 @@
 /**
- * ORQUESTRAÇÃO DOS PRODUTOS ESPACIAIS DA OBSERVAÇÃO COMPLETA — SAT-BUNDLE-01A R2.
+ * ORQUESTRAÇÃO DOS PRODUTOS ESPACIAIS DA OBSERVAÇÃO COMPLETA — SAT-BUNDLE-01C.
  *
- * Política automática `principal` (default do worker):
- *   A) mapa condição v3 SOMENTE
+ * Política automática `principal` (default do worker / reparo):
+ *   materializa os 7 produtos (condição v3 + 6 rasters) com no máximo 1 Process TAR.
  *
- * Rasters técnicos (NDVI, EVI2, NDRE, NDMI, MSAVI2, BSI): LAZY / on-demand via
- * `gerarOuReutilizarRasterIndice` (rota POST). NÃO são gerados automaticamente.
+ * Política `raster_explicito`: gera UM raster técnico sob demanda (rota legada POST).
+ * Internamente pode reutilizar o mesmo pipeline de cache; não dispara 7 Process.
  *
  * Identidade temporal: quando `identidade` (ou `analiseIdReferencia`) vem no pedido,
- * o mapa é daquela observação — nunca do “latest”.
+ * os produtos são daquela observação — nunca do “latest”.
  *
- * Fail-closed operacional: `garantirProdutoCondicaoOperacional` devolve
- * pronto | reutilizado | falhou. Best-effort (`tentarGarantir…`) só para caminhos
- * que explicitamente engolem falha; o worker/reparo de consulta usam o operacional.
- *
+ * Fail-closed operacional: `garantirProdutoCondicaoOperacional` /
+ * `repararProdutoPrincipalObservacao` devolvem pronto | reutilizado | falhou.
  * Sem transação DB longa envolvendo HTTP externo.
  */
 import { withTx, type Db } from "@agro/db";
@@ -28,18 +26,21 @@ import type { ClienteCopernicus } from "./copernicus.js";
 import { MODULO_EXECUTOR, contextoDoCriador } from "./contexto-worker.js";
 import type { LimiteAvulsoSatelite } from "./limite-avulso.js";
 import type { ArmazenamentoRaster } from "./armazenamento-raster.js";
-import {
-  gerarOuReutilizarMapaCondicao,
-  type DependenciasGerarMapaCondicao, type IdentidadeObservacaoMapa, type LogMapaCondicao
-} from "./gerar-mapa-condicao.js";
+import type { IdentidadeObservacaoMapa, LogMapaCondicao } from "./gerar-mapa-condicao.js";
 import {
   gerarOuReutilizarRasterIndice, type DependenciasGerarRaster
 } from "./gerar-raster-indice.js";
+import {
+  materializarProdutosDaObservacao, materializarProdutosOperacional,
+  type DependenciasMaterializar, type ResultadoMaterializacaoObservacao,
+  type ResultadoProdutoMaterializado
+} from "./materializar-produtos-observacao.js";
+import type { IdOutputBundleEspacial } from "./evalscript-bundle-espacial.js";
 
-/** Política de geração automática: só o mapa principal (default) ou um raster explícito. */
+/** Política de geração automática: bundle completo (default) ou um raster explícito. */
 export type PoliticaProdutosObservacao = "principal" | "raster_explicito";
 
-/** Desfecho operacional do produto obrigatório (mapa condição). */
+/** Desfecho operacional do bundle obrigatório (7 produtos). */
 export type StatusProdutoCondicaoOperacional = "pronto" | "reutilizado" | "falhou";
 
 export interface ResultadoProduto {
@@ -57,6 +58,12 @@ export interface ResultadoProdutosObservacao {
   chamadas_process: number;
   reutilizacoes: number;
   politica: PoliticaProdutosObservacao;
+  /** Outputs pedidos na Process TAR (vazio se cache total). */
+  outputs_solicitados: IdOutputBundleEspacial[];
+  /** Outputs já presentes antes da Process. */
+  outputs_reutilizados: IdOutputBundleEspacial[];
+  /** Todos os 7 obrigatórios presentes. */
+  completo: boolean;
 }
 
 export interface ResultadoProdutoCondicaoOperacional {
@@ -66,6 +73,10 @@ export interface ResultadoProdutoCondicaoOperacional {
   mapa_id: string | null;
   chamadas_process: number;
   erro?: string;
+  produtos?: ResultadoProdutoMaterializado[];
+  outputs_solicitados?: IdOutputBundleEspacial[];
+  outputs_reutilizados?: IdOutputBundleEspacial[];
+  completo?: boolean;
 }
 
 export interface DependenciasGarantirProdutos {
@@ -92,8 +103,8 @@ export interface PedidoGarantirProdutos {
   consultaId?: string | null;
   consultaItemId?: string | null;
   /**
-   * `principal` (default): só condição v3.
-   * `raster_explicito`: gera UM raster técnico pedido em `indiceRaster` (lazy).
+   * `principal` (default): 7 produtos via 1 Process multi-output.
+   * `raster_explicito`: gera UM raster técnico pedido em `indiceRaster` (legado lazy).
    */
   politica?: PoliticaProdutosObservacao;
   /** Obrigatório quando politica = raster_explicito. */
@@ -106,6 +117,13 @@ interface AnaliseIrma {
   observacao_inicio: Date;
   observacao_fim: Date;
   geometria_sha256: string;
+}
+
+function depMaterializar(dep: DependenciasGarantirProdutos): DependenciasMaterializar {
+  return {
+    db: dep.db, cliente: dep.cliente, limiteAvulso: dep.limiteAvulso,
+    log: dep.log, copernicusEnabled: dep.copernicusEnabled, armazenamento: dep.armazenamento
+  };
 }
 
 async function lerIdentidadeDaAnalise(
@@ -163,8 +181,6 @@ async function lerAnalisesDaObservacao(
       params.push(p.dataImagem);
       filtroAncora = ` and (s.observacao_inicio at time zone 'UTC')::date = $${params.length}::date`;
     }
-    // Âncora técnica NDVI só para localizar a observação; o contrato não “é NDVI”.
-    // Sem identidade: latest do contorno atual (rota manual). Com identidade: EXATA.
     const ancora = await ctx.tx.query<{ observacao_inicio: Date; observacao_fim: Date; geometria_sha256: string }>(
       `select s.observacao_inicio, s.observacao_fim, s.geometria_sha256
          from erp.analises_satelitais s
@@ -212,9 +228,47 @@ function rastersNaoMaterializados(): Record<IdIndiceSatelite, ResultadoProduto> 
   return rasters;
 }
 
+function mapearMaterializacao(
+  r: ResultadoMaterializacaoObservacao,
+  politica: PoliticaProdutosObservacao
+): ResultadoProdutosObservacao {
+  const porId = new Map(r.produtos.map((p) => [p.id, p]));
+  const statusDe = (s: ResultadoProdutoMaterializado["status"]): StatusProdutoEspacial => {
+    if (s === "pronto" || s === "reparado") return "pronto";
+    if (s === "reutilizado") return "reutilizado";
+    if (s === "falhou") return "falhou";
+    return "indisponivel";
+  };
+  const cond = porId.get("condicao");
+  const condicao: ResultadoProduto = cond
+    ? { chave: "condicao_pasto", status: statusDe(cond.status), id: cond.recurso_id, ...(cond.erro ? { erro: cond.erro } : {}) }
+    : { chave: "condicao_pasto", status: "indisponivel", id: null };
+  const rasters = rastersNaoMaterializados();
+  for (const indice of INDICES_BUNDLE_ESSENCIAL) {
+    const p = porId.get(indice);
+    if (p) {
+      rasters[indice] = {
+        chave: `raster_${indice}`, status: statusDe(p.status), id: p.recurso_id,
+        ...(p.erro ? { erro: p.erro } : {})
+      };
+    }
+  }
+  return {
+    area_id: r.area_id,
+    data_imagem: r.data_imagem,
+    condicao,
+    rasters,
+    chamadas_process: r.chamadas_process,
+    reutilizacoes: r.outputs_reutilizados.length,
+    politica,
+    outputs_solicitados: r.outputs_solicitados,
+    outputs_reutilizados: r.outputs_reutilizados,
+    completo: r.completo
+  };
+}
+
 /**
- * Garante o produto automático (condição v3) ou UM raster explícito.
- * Política default `principal`: NÃO gera os seis rasters técnicos.
+ * Garante os produtos automáticos (7 via TAR) ou UM raster explícito legado.
  */
 export async function garantirProdutosDaObservacaoCompleta(
   dep: DependenciasGarantirProdutos,
@@ -222,74 +276,50 @@ export async function garantirProdutosDaObservacaoCompleta(
 ): Promise<ResultadoProdutosObservacao> {
   const politica: PoliticaProdutosObservacao = pedido.politica ?? "principal";
   const identidade = await resolverIdentidade(dep, pedido);
-  const { analises, dataImagem } = await lerAnalisesDaObservacao(dep, pedido, identidade);
-  const porIndice = new Map(analises.map((a) => [a.indice, a]));
-
-  // Se o pedido não trouxe identidade mas a âncora resolveu uma observação, propaga-a ao mapa.
-  const identidadeEfetiva: IdentidadeObservacaoMapa | undefined = identidade ?? (
-    analises[0]
-      ? {
-        observacaoInicio: analises[0].observacao_inicio,
-        observacaoFim: analises[0].observacao_fim,
-        geometriaSha256: analises[0].geometria_sha256
-      }
-      : undefined
-  );
-
-  const depMapa: DependenciasGerarMapaCondicao = {
-    db: dep.db, cliente: dep.cliente, limiteAvulso: dep.limiteAvulso,
-    log: dep.log, copernicusEnabled: dep.copernicusEnabled
-  };
-
-  let chamadas = 0;
-  let reutilizacoes = 0;
-
-  let condicao: ResultadoProduto = {
-    chave: "condicao_pasto", status: "indisponivel", id: null
-  };
 
   if (politica === "principal") {
     try {
-      const r = await gerarOuReutilizarMapaCondicao(depMapa, {
+      const r = await materializarProdutosDaObservacao(depMaterializar(dep), {
         orgId: pedido.orgId,
         userId: pedido.userId,
         areaId: pedido.areaId,
         dataImagem: pedido.dataImagem,
-        identidade: identidadeEfetiva,
+        identidade,
+        analiseIdReferencia: pedido.analiseIdReferencia,
         consultaId: pedido.consultaId ?? null,
         consultaItemId: pedido.consultaItemId ?? null
       });
-      if (r.reutilizada) reutilizacoes += 1;
-      else chamadas += 1;
-      condicao = {
-        chave: "condicao_pasto",
-        status: r.reutilizada ? "reutilizado" : "pronto",
-        id: r.mapa.id
-      };
+      return mapearMaterializacao(r, politica);
     } catch (e) {
       dep.log.warn({
-        satelite: { area_id: pedido.areaId, etapa: "produto_condicao", codigo: codigoErro(e) }
-      }, "produto condição não garantido");
-      condicao = { chave: "condicao_pasto", status: "falhou", id: null, erro: codigoErro(e) };
+        satelite: { area_id: pedido.areaId, etapa: "produtos_bundle", codigo: codigoErro(e) }
+      }, "produtos do bundle espacial não garantidos");
+      return {
+        area_id: pedido.areaId,
+        data_imagem: pedido.dataImagem ?? null,
+        condicao: { chave: "condicao_pasto", status: "falhou", id: null, erro: codigoErro(e) },
+        rasters: rastersNaoMaterializados(),
+        chamadas_process: 0,
+        reutilizacoes: 0,
+        politica,
+        outputs_solicitados: [],
+        outputs_reutilizados: [],
+        completo: false
+      };
     }
-    return {
-      area_id: pedido.areaId,
-      data_imagem: dataImagem,
-      condicao,
-      rasters: rastersNaoMaterializados(),
-      chamadas_process: chamadas,
-      reutilizacoes,
-      politica
-    };
   }
 
-  // politica === raster_explicito — gera UM índice sob demanda (lazy).
+  // politica === raster_explicito — gera UM índice sob demanda (legado lazy).
+  const { analises, dataImagem } = await lerAnalisesDaObservacao(dep, pedido, identidade);
+  const porIndice = new Map(analises.map((a) => [a.indice, a]));
   const indice = pedido.indiceRaster;
   const rasters = rastersNaoMaterializados();
+  const condicao: ResultadoProduto = { chave: "condicao_pasto", status: "indisponivel", id: null };
   if (!indice || !INDICES_BUNDLE_ESSENCIAL.includes(indice)) {
     return {
       area_id: pedido.areaId, data_imagem: dataImagem, condicao, rasters,
-      chamadas_process: 0, reutilizacoes: 0, politica
+      chamadas_process: 0, reutilizacoes: 0, politica,
+      outputs_solicitados: [], outputs_reutilizados: [], completo: false
     };
   }
   const analise = porIndice.get(indice);
@@ -297,7 +327,8 @@ export async function garantirProdutosDaObservacaoCompleta(
     rasters[indice] = { chave: `raster_${indice}`, status: "indisponivel", id: null };
     return {
       area_id: pedido.areaId, data_imagem: dataImagem, condicao, rasters,
-      chamadas_process: 0, reutilizacoes: 0, politica
+      chamadas_process: 0, reutilizacoes: 0, politica,
+      outputs_solicitados: [], outputs_reutilizados: [], completo: false
     };
   }
   const depRaster: DependenciasGerarRaster = {
@@ -305,6 +336,8 @@ export async function garantirProdutosDaObservacaoCompleta(
     log: dep.log, copernicusEnabled: dep.copernicusEnabled, armazenamento: dep.armazenamento,
     emAndamento: dep.emAndamentoRaster
   };
+  let chamadas = 0;
+  let reutilizacoes = 0;
   try {
     const r = await gerarOuReutilizarRasterIndice(depRaster, {
       orgId: pedido.orgId, userId: pedido.userId, analiseId: analise.id
@@ -331,54 +364,51 @@ export async function garantirProdutosDaObservacaoCompleta(
     rasters,
     chamadas_process: chamadas,
     reutilizacoes,
-    politica
+    politica,
+    outputs_solicitados: [],
+    outputs_reutilizados: [],
+    completo: false
   };
 }
 
 /**
- * Caminho OPERACIONAL do produto obrigatório — retorna pronto | reutilizado | falhou.
+ * Caminho OPERACIONAL do bundle obrigatório — retorna pronto | reutilizado | falhou.
  * Falha NÃO é engolida como sucesso. Worker e reparo de consulta usam isto.
  */
 export async function garantirProdutoCondicaoOperacional(
   dep: DependenciasGarantirProdutos,
   pedido: PedidoGarantirProdutos
 ): Promise<ResultadoProdutoCondicaoOperacional> {
-  const r = await garantirProdutosDaObservacaoCompleta(dep, {
-    ...pedido,
-    politica: "principal"
+  const identidade = await resolverIdentidade(dep, pedido);
+  const { status, resultado } = await materializarProdutosOperacional(depMaterializar(dep), {
+    orgId: pedido.orgId,
+    userId: pedido.userId,
+    areaId: pedido.areaId,
+    dataImagem: pedido.dataImagem,
+    identidade,
+    analiseIdReferencia: pedido.analiseIdReferencia,
+    consultaId: pedido.consultaId ?? null,
+    consultaItemId: pedido.consultaItemId ?? null
   });
-  if (r.condicao.status === "pronto") {
-    return {
-      status: "pronto",
-      area_id: r.area_id,
-      data_imagem: r.data_imagem,
-      mapa_id: r.condicao.id,
-      chamadas_process: r.chamadas_process
-    };
-  }
-  if (r.condicao.status === "reutilizado") {
-    return {
-      status: "reutilizado",
-      area_id: r.area_id,
-      data_imagem: r.data_imagem,
-      mapa_id: r.condicao.id,
-      chamadas_process: 0
-    };
-  }
+  const mapa = resultado.produtos.find((p) => p.id === "condicao");
   return {
-    status: "falhou",
-    area_id: r.area_id,
-    data_imagem: r.data_imagem,
-    mapa_id: null,
-    chamadas_process: r.chamadas_process,
-    erro: r.condicao.erro ?? "falhou"
+    status,
+    area_id: resultado.area_id,
+    data_imagem: resultado.data_imagem,
+    mapa_id: mapa?.recurso_id ?? null,
+    chamadas_process: resultado.chamadas_process,
+    ...(status === "falhou" ? { erro: "produtos_bundle_falharam" } : {}),
+    produtos: resultado.produtos,
+    outputs_solicitados: resultado.outputs_solicitados,
+    outputs_reutilizados: resultado.outputs_reutilizados,
+    completo: resultado.completo
   };
 }
 
 /**
- * Reparo idempotente do produto principal (mapa de condição).
+ * Reparo idempotente dos produtos do bundle (condição + rasters).
  * Reutiliza Statistical gravada — NÃO chama Statistical de novo.
- * Mapa existente → 0 Process. Sem transação DB durante HTTP externo.
+ * Cache total → 0 Process. Parcial → 1 Process só com faltantes.
  * Retorno operacional (fail-closed).
  */
 export async function repararProdutoPrincipalObservacao(
@@ -410,6 +440,8 @@ export async function tentarGarantirProdutosAposPastagem(
         condicao: r.condicao.status,
         chamadas_process: r.chamadas_process,
         reutilizacoes: r.reutilizacoes,
+        completo: r.completo,
+        outputs_solicitados: r.outputs_solicitados,
         rasters: Object.fromEntries(
           INDICES_BUNDLE_ESSENCIAL.map((i) => [i, r.rasters[i].status])
         )

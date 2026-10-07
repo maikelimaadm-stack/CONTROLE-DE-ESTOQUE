@@ -26,6 +26,9 @@
 import type { BuscarFn } from "../consultas/http.js";
 import { enviarPost, lerCorpoJson, leitorCorpoBinario, type LeitorCorpo } from "./http.js";
 import { temAssinaturaPng } from "./png.js";
+import { TAMANHO_MAXIMO_TAR_PROCESSO_BYTES } from "./tar-processo.js";
+
+export { TAMANHO_MAXIMO_TAR_PROCESSO_BYTES };
 
 /** Endereços OFICIAIS e públicos (não são configuração: são o contrato do provedor). */
 export const ENDERECOS_COPERNICUS = {
@@ -249,6 +252,23 @@ export class ClienteCopernicus {
       TEMPO_MAXIMO_PROCESSO_MS, leitorCorpoBinario(TAMANHO_MAXIMO_PNG_PROCESSO_BYTES), registrar);
     if (!Buffer.isBuffer(r.corpo) || !temAssinaturaPng(r.corpo)) throw new FalhaCopernicus("resposta_malformada", r.status, null, r.puCabecalho);
     return { png: r.corpo, puCabecalho: r.puCabecalho };
+  }
+
+  /**
+   * Process API multi-output (SAT-BUNDLE-01C): `Accept: application/tar`.
+   * Devolve o TAR bruto da resposta 2xx + PU. O parser fail-closed (`tar-processo.ts`)
+   * valida membros; assinatura PNG por membro — não do arquivo inteiro.
+   * 2xx com corpo ilegível/acima do teto → `resposta_malformada` COM `puCabecalho`.
+   */
+  async processoTarComConsumo(corpo: unknown, registrar: (r: RegistroChamada) => void = () => {}): Promise<{ tar: Buffer; puCabecalho: string | null }> {
+    const r = await this.chamarComTentativas(
+      "processo", ENDERECOS_COPERNICUS.processo, JSON.stringify(corpo),
+      { accept: "application/tar" },
+      TEMPO_MAXIMO_PROCESSO_MS, leitorCorpoBinario(TAMANHO_MAXIMO_TAR_PROCESSO_BYTES), registrar);
+    if (!Buffer.isBuffer(r.corpo) || r.corpo.length === 0) {
+      throw new FalhaCopernicus("resposta_malformada", r.status, null, r.puCabecalho);
+    }
+    return { tar: r.corpo, puCabecalho: r.puCabecalho };
   }
 
   /**

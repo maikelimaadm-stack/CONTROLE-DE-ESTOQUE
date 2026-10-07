@@ -31,7 +31,7 @@ describe("SAT-BUNDLE-01A R1 — COST (estimativa)", () => {
     expect(Number(faixa.maximo)).toBeGreaterThanOrEqual(Number(faixa.minimo));
   });
 
-  it("COST-02: não estima seis rasters técnicos automáticos", () => {
+  it("COST-02: estima 1 Process multi-output (não 7 Process)", () => {
     const px = 262144;
     const s = slot(HOJE, HOJE);
     const faixa = estimarCreditosItem({
@@ -40,7 +40,7 @@ describe("SAT-BUNDLE-01A R1 — COST (estimativa)", () => {
     const processUm = estimarCreditosProcessCondicao({ pixelsBbox: px });
     const puStat = Number(puPorObservacao(px, BUNDLE_PASTAGEM_ESSENCIAL));
     const soStatCred = puStat * CREDITOS_POR_PU;
-    // Faixa = Statistical + 1 Process (não Statistical + 7 Process).
+    // Faixa = Statistical + 1 Process TAR (não Statistical + 7 Process).
     expect(Number(faixa.minimo)).toBeCloseTo(soStatCred + Number(processUm.minimo), 1);
     expect(Number(faixa.maximo)).toBeLessThan(soStatCred + 7 * Number(processUm.minimo));
     expect(COEFICIENTES_ESTIMATIVA_PROCESS_CONDICAO.bandas).toBe(7);

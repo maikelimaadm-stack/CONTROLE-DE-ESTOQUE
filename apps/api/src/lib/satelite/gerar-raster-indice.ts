@@ -2,7 +2,8 @@
  * GERAÇÃO / REUTILIZAÇÃO DO RASTER TÉCNICO POR ÍNDICE — SAT-BUNDLE-01A.
  *
  * Serviço interno compartilhado pela rota HTTP (`POST …/analises-satelitais/:id/raster`)
- * e sob demanda (`politica: raster_explicito`). O worker automático NÃO gera rasters (lazy).
+ * e sob demanda (`politica: raster_explicito`). O worker automático materializa rasters
+ * via Process TAR multi-output (SAT-BUNDLE-01C); esta rota permanece para pedido individual legado.
  * Sem transação aberta durante HTTP externo.
  *
  * Cache: mesma área + geometria + data + índice + versão de encoding + resolução → REUTILIZA.
