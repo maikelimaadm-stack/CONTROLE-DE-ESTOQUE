@@ -1,11 +1,13 @@
 /**
- * ORQUESTRAÇÃO DOS PRODUTOS ESPACIAIS DA OBSERVAÇÃO COMPLETA — SAT-BUNDLE-01A.
+ * ORQUESTRAÇÃO DOS PRODUTOS ESPACIAIS DA OBSERVAÇÃO COMPLETA — SAT-BUNDLE-01A R1.
  *
- * Após Statistical útil do bundle pastagem-essencial-v2:
- *   A) mapa condição v3
- *   B–G) rasters técnicos NDVI, EVI2, NDRE, NDMI, MSAVI2, BSI
+ * Política automática `principal` (default do worker):
+ *   A) mapa condição v3 SOMENTE
  *
- * Best-effort por produto: falha de um Process NÃO apaga Statistical.
+ * Rasters técnicos (NDVI, EVI2, NDRE, NDMI, MSAVI2, BSI): LAZY / on-demand via
+ * `gerarOuReutilizarRasterIndice` (rota POST). NÃO são gerados automaticamente.
+ *
+ * Best-effort: falha do Process NÃO apaga Statistical.
  * Cache: produto existente → reutilizado (sem nova chamada Process).
  * Sem transação DB longa envolvendo HTTP externo.
  */
@@ -29,6 +31,9 @@ import {
   gerarOuReutilizarRasterIndice, type DependenciasGerarRaster
 } from "./gerar-raster-indice.js";
 
+/** Política de geração automática: só o mapa principal (default) ou um raster explícito. */
+export type PoliticaProdutosObservacao = "principal" | "raster_explicito";
+
 export interface ResultadoProduto {
   chave: string;
   status: StatusProdutoEspacial;
@@ -43,6 +48,7 @@ export interface ResultadoProdutosObservacao {
   rasters: Record<IdIndiceSatelite, ResultadoProduto>;
   chamadas_process: number;
   reutilizacoes: number;
+  politica: PoliticaProdutosObservacao;
 }
 
 export interface DependenciasGarantirProdutos {
@@ -52,7 +58,7 @@ export interface DependenciasGarantirProdutos {
   log: LogMapaCondicao;
   copernicusEnabled: boolean;
   armazenamento: ArmazenamentoRaster;
-  /** Dedup de rasters em voo deste processo (worker). */
+  /** Dedup de rasters em voo deste processo (worker / reparo). */
   emAndamentoRaster?: Map<string, Promise<{ puCabecalho: string | null }>>;
 }
 
@@ -61,6 +67,16 @@ export interface PedidoGarantirProdutos {
   userId: string;
   areaId: string;
   dataImagem?: string;
+  /** Contexto da consulta em lote — atribui o Process automático ao ledger. */
+  consultaId?: string | null;
+  consultaItemId?: string | null;
+  /**
+   * `principal` (default): só condição v3.
+   * `raster_explicito`: gera UM raster técnico pedido em `indiceRaster` (lazy).
+   */
+  politica?: PoliticaProdutosObservacao;
+  /** Obrigatório quando politica = raster_explicito. */
+  indiceRaster?: IdIndiceSatelite;
 }
 
 interface AnaliseIrma {
@@ -124,25 +140,29 @@ function codigoErro(e: unknown): string {
   return typeof e;
 }
 
+function rastersNaoMaterializados(): Record<IdIndiceSatelite, ResultadoProduto> {
+  const rasters = {} as Record<IdIndiceSatelite, ResultadoProduto>;
+  for (const indice of INDICES_BUNDLE_ESSENCIAL) {
+    rasters[indice] = { chave: `raster_${indice}`, status: "indisponivel", id: null };
+  }
+  return rasters;
+}
+
 /**
- * Garante condição v3 + 6 rasters. Cada produto é independente (falha isolada).
- * Retorna contagem de chamadas Process (não-reutilizações) para o relatório.
+ * Garante o produto automático (condição v3) ou UM raster explícito.
+ * Política default `principal`: NÃO gera os seis rasters técnicos.
  */
 export async function garantirProdutosDaObservacaoCompleta(
   dep: DependenciasGarantirProdutos,
   pedido: PedidoGarantirProdutos
 ): Promise<ResultadoProdutosObservacao> {
+  const politica: PoliticaProdutosObservacao = pedido.politica ?? "principal";
   const { analises, dataImagem } = await lerAnalisesDaObservacao(dep, pedido);
   const porIndice = new Map(analises.map((a) => [a.indice, a]));
 
   const depMapa: DependenciasGerarMapaCondicao = {
     db: dep.db, cliente: dep.cliente, limiteAvulso: dep.limiteAvulso,
     log: dep.log, copernicusEnabled: dep.copernicusEnabled
-  };
-  const depRaster: DependenciasGerarRaster = {
-    db: dep.db, cliente: dep.cliente, limiteAvulso: dep.limiteAvulso,
-    log: dep.log, copernicusEnabled: dep.copernicusEnabled, armazenamento: dep.armazenamento,
-    emAndamento: dep.emAndamentoRaster
   };
 
   let chamadas = 0;
@@ -151,60 +171,106 @@ export async function garantirProdutosDaObservacaoCompleta(
   let condicao: ResultadoProduto = {
     chave: "condicao_pasto", status: "indisponivel", id: null
   };
-  try {
-    const r = await gerarOuReutilizarMapaCondicao(depMapa, {
-      orgId: pedido.orgId, userId: pedido.userId, areaId: pedido.areaId, dataImagem: pedido.dataImagem
-    });
-    if (r.reutilizada) reutilizacoes += 1;
-    else chamadas += 1;
-    condicao = {
-      chave: "condicao_pasto",
-      status: r.reutilizada ? "reutilizado" : "pronto",
-      id: r.mapa.id
-    };
-  } catch (e) {
-    dep.log.warn({
-      satelite: { area_id: pedido.areaId, etapa: "produto_condicao", codigo: codigoErro(e) }
-    }, "produto condição não garantido");
-    condicao = { chave: "condicao_pasto", status: "falhou", id: null, erro: codigoErro(e) };
-  }
 
-  const rasters = {} as Record<IdIndiceSatelite, ResultadoProduto>;
-  for (const indice of INDICES_BUNDLE_ESSENCIAL) {
-    const analise = porIndice.get(indice);
-    if (!analise) {
-      rasters[indice] = { chave: `raster_${indice}`, status: "indisponivel", id: null };
-      continue;
-    }
+  if (politica === "principal") {
     try {
-      const r = await gerarOuReutilizarRasterIndice(depRaster, {
-        orgId: pedido.orgId, userId: pedido.userId, analiseId: analise.id
+      const r = await gerarOuReutilizarMapaCondicao(depMapa, {
+        orgId: pedido.orgId,
+        userId: pedido.userId,
+        areaId: pedido.areaId,
+        dataImagem: pedido.dataImagem,
+        consultaId: pedido.consultaId ?? null,
+        consultaItemId: pedido.consultaItemId ?? null
       });
       if (r.reutilizada) reutilizacoes += 1;
       else chamadas += 1;
-      rasters[indice] = {
-        chave: `raster_${indice}`,
+      condicao = {
+        chave: "condicao_pasto",
         status: r.reutilizada ? "reutilizado" : "pronto",
-        id: r.raster.id
+        id: r.mapa.id
       };
     } catch (e) {
       dep.log.warn({
-        satelite: { area_id: pedido.areaId, indice, etapa: "produto_raster", codigo: codigoErro(e) }
-      }, "produto raster não garantido");
-      rasters[indice] = {
-        chave: `raster_${indice}`, status: "falhou", id: null, erro: codigoErro(e)
-      };
+        satelite: { area_id: pedido.areaId, etapa: "produto_condicao", codigo: codigoErro(e) }
+      }, "produto condição não garantido");
+      condicao = { chave: "condicao_pasto", status: "falhou", id: null, erro: codigoErro(e) };
     }
+    return {
+      area_id: pedido.areaId,
+      data_imagem: dataImagem,
+      condicao,
+      rasters: rastersNaoMaterializados(),
+      chamadas_process: chamadas,
+      reutilizacoes,
+      politica
+    };
   }
 
+  // politica === raster_explicito — gera UM índice sob demanda (lazy).
+  const indice = pedido.indiceRaster;
+  const rasters = rastersNaoMaterializados();
+  if (!indice || !INDICES_BUNDLE_ESSENCIAL.includes(indice)) {
+    return {
+      area_id: pedido.areaId, data_imagem: dataImagem, condicao, rasters,
+      chamadas_process: 0, reutilizacoes: 0, politica
+    };
+  }
+  const analise = porIndice.get(indice);
+  if (!analise) {
+    rasters[indice] = { chave: `raster_${indice}`, status: "indisponivel", id: null };
+    return {
+      area_id: pedido.areaId, data_imagem: dataImagem, condicao, rasters,
+      chamadas_process: 0, reutilizacoes: 0, politica
+    };
+  }
+  const depRaster: DependenciasGerarRaster = {
+    db: dep.db, cliente: dep.cliente, limiteAvulso: dep.limiteAvulso,
+    log: dep.log, copernicusEnabled: dep.copernicusEnabled, armazenamento: dep.armazenamento,
+    emAndamento: dep.emAndamentoRaster
+  };
+  try {
+    const r = await gerarOuReutilizarRasterIndice(depRaster, {
+      orgId: pedido.orgId, userId: pedido.userId, analiseId: analise.id
+    });
+    if (r.reutilizada) reutilizacoes += 1;
+    else chamadas += 1;
+    rasters[indice] = {
+      chave: `raster_${indice}`,
+      status: r.reutilizada ? "reutilizado" : "pronto",
+      id: r.raster.id
+    };
+  } catch (e) {
+    dep.log.warn({
+      satelite: { area_id: pedido.areaId, indice, etapa: "produto_raster", codigo: codigoErro(e) }
+    }, "produto raster não garantido");
+    rasters[indice] = {
+      chave: `raster_${indice}`, status: "falhou", id: null, erro: codigoErro(e)
+    };
+  }
   return {
     area_id: pedido.areaId,
     data_imagem: dataImagem,
     condicao,
     rasters,
     chamadas_process: chamadas,
-    reutilizacoes
+    reutilizacoes,
+    politica
   };
+}
+
+/**
+ * Reparo idempotente do produto principal (mapa de condição).
+ * Reutiliza Statistical gravada — NÃO chama Statistical de novo.
+ * Mapa existente → 0 Process. Sem transação DB durante HTTP externo.
+ */
+export async function repararProdutoPrincipalObservacao(
+  dep: DependenciasGarantirProdutos,
+  pedido: PedidoGarantirProdutos
+): Promise<ResultadoProdutosObservacao> {
+  return garantirProdutosDaObservacaoCompleta(dep, {
+    ...pedido,
+    politica: "principal"
+  });
 }
 
 /** Best-effort para o worker: nunca propaga; Statistical permanece válido. */
@@ -213,12 +279,16 @@ export async function tentarGarantirProdutosAposPastagem(
   pedido: PedidoGarantirProdutos
 ): Promise<void> {
   try {
-    const r = await garantirProdutosDaObservacaoCompleta(dep, pedido);
+    const r = await garantirProdutosDaObservacaoCompleta(dep, {
+      ...pedido,
+      politica: pedido.politica ?? "principal"
+    });
     dep.log.info({
       satelite: {
         area_id: r.area_id,
         data_imagem: r.data_imagem,
         etapa: "produtos_observacao_completa",
+        politica: r.politica,
         condicao: r.condicao.status,
         chamadas_process: r.chamadas_process,
         reutilizacoes: r.reutilizacoes,

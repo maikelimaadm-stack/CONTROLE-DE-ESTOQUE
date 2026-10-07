@@ -58,23 +58,34 @@ Reusa `erp.satelite_consultas` / itens / worker SAT-02/03. Sem fila paralela.
 Vegetação verde ≠ capim útil. Sem kg MS/ha, oferta, lotação ou diagnóstico de praga até calibração de campo.
 NDMI indica umidade espectral da vegetação/dossel — **não** umidade volumétrica do solo.
 
-## Observação completa (SAT-BUNDLE-01A)
+## Observação completa (SAT-BUNDLE-01A R1)
 
 Uma operação de produto (`pastagem_essencial`) = uma observação canônica:
 
-- Statistical: **1** chamada do bundle `pastagem-essencial-v2` → 6 índices irmãos;
-- Process: produtos espaciais automáticos (condição v3 + rasters técnicos dos 6 índices), com cache;
+- Statistical: **1** chamada do bundle `pastagem-essencial-v2` → 6 índices irmãos (estatística completa);
+- Process automático a frio: **até 1** chamada para o mapa integrado de condição v3;
+- Rasters técnicos (NDVI/EVI2/NDRE/NDMI/MSAVI2/BSI): **lazy**, on-demand e cacheados — não entram na geração automática nem na prévia;
 - Contrato de leitura: `ObservacaoSatelitalCompleta` + temas (`condicao`, `umidade`, `vigor`, `cobertura_solo`).
 
+“Observação completa” ≠ todos os PNGs técnicos materializados. O DTO distingue estatística disponível, raster materializado, não materializado e falhou.
+
 Trocar tema na futura UI **não** cria Statistical nem nova observação.
+
+Estimativa / orçamento (SSOT `estimarCreditosItem` + `estimarCreditosProcessCondicao`):
+
+- item novo pastagem = Statistical + Process da condição;
+- mapa comprovadamente reutilizável → Process = 0;
+- sem prova de cache → estimativa conservadora;
+- Process automático grava `consulta_id` / `consulta_item_id` no ledger.
 
 Rotas F1 (sem UI):
 
 - `GET /api/mapa/areas/:areaId/observacao-satelital-completa`
 - `GET /api/mapa/observacoes-satelitais-completas/resumo`
+- `POST /api/satelite/areas/:areaId/produtos-observacao/reparar` — reparo idempotente do mapa (reusa Statistical; 0 Process se mapa já existe)
 
-Orquestração: `garantirProdutosDaObservacaoCompleta` (worker após Statistical útil).
-Rasters: serviço interno `gerarOuReutilizarRasterIndice` (rota POST e worker).
+Orquestração: `garantirProdutosDaObservacaoCompleta` com política `principal` (worker após Statistical útil).
+Rasters: `gerarOuReutilizarRasterIndice` (rota POST / on-demand).
 
 Próxima fatia: **SAT-BUNDLE-01B [F2]** — UI temática consumindo este contrato.
 

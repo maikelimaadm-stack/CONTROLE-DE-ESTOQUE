@@ -198,7 +198,10 @@ export interface ObservacaoSatelitalCompleta {
     rasters: Record<IdIndiceSatelite, ProdutoRasterIndice>;
   };
   status_bundle: StatusBundleObservacao;
-  /** Bundle visual pronto = 6 índices da mesma observação + condição + 6 rasters disponíveis. */
+  /**
+   * Bundle visual pronto = 6 índices da mesma observação + mapa de condição disponível.
+   * Rasters técnicos são lazy: ausência deles NÃO impede visual_pronto.
+   */
   visual_pronto: boolean;
   avisos: readonly string[];
   umidade_pasto: {
@@ -320,16 +323,19 @@ export function produtoCondicaoIndisponivel(): ProdutoMapaCondicao {
   };
 }
 
+/**
+ * Status do bundle. “Completo” = identidade + 6 índices + mapa de condição.
+ * Rasters técnicos materializados são informativos (lazy/on-demand) e NÃO bloqueiam completo.
+ */
 export function statusBundleDe(p: {
   identidade: IdentidadeObservacaoSatelital | null;
   indicesCompletos: boolean;
   condicaoDisponivel: boolean;
-  rastersDisponiveis: number;
+  /** Quantos rasters técnicos já materializados — não decide o status. */
+  rastersDisponiveis?: number;
 }): StatusBundleObservacao {
   if (!p.identidade) return p.indicesCompletos ? "identidade_invalida" : "sem_observacao";
   if (!p.indicesCompletos) return "incompleto_indices";
-  if (!p.condicaoDisponivel || p.rastersDisponiveis < INDICES_BUNDLE_ESSENCIAL.length) {
-    return "produtos_parciais";
-  }
+  if (!p.condicaoDisponivel) return "produtos_parciais";
   return "completo";
 }

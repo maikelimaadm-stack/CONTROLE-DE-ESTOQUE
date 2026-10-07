@@ -99,17 +99,24 @@ describe("SAT-BUNDLE-01A — temas", () => {
 });
 
 describe("SAT-BUNDLE-01A — status do bundle / produtos", () => {
-  it("não diz completo se produtos espaciais faltam", () => {
+  it("completo = índices + condição; rasters técnicos lazy não bloqueiam", () => {
     const id = identidadeDoBundle(seis())!;
     expect(statusBundleDe({
       identidade: id, indicesCompletos: true, condicaoDisponivel: false, rastersDisponiveis: 6
     })).toBe("produtos_parciais");
     expect(statusBundleDe({
-      identidade: id, indicesCompletos: true, condicaoDisponivel: true, rastersDisponiveis: 5
-    })).toBe("produtos_parciais");
+      identidade: id, indicesCompletos: true, condicaoDisponivel: true, rastersDisponiveis: 0
+    })).toBe("completo");
     expect(statusBundleDe({
       identidade: id, indicesCompletos: true, condicaoDisponivel: true, rastersDisponiveis: 6
     })).toBe("completo");
+  });
+
+  it("SCI-01 / CLS-03: baixa cobertura + NDMI baixo → baixa cobertura (não estresse)", () => {
+    expect(classificarPixelCondicaoPasto({
+      dataMask: 1, scl: 4,
+      ndvi: 0.28, evi2: 0.18, ndre: 0.12, ndmi: -0.15, msavi2: 0.18, bsi: 0.02
+    })).toBe(3);
   });
 
   it("produto indisponível declarado, não inventado", () => {

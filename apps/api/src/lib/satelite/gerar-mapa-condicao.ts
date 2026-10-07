@@ -115,6 +115,12 @@ export interface PedidoGerarMapaCondicao {
   userId: string;
   areaId: string;
   dataImagem?: string;
+  /**
+   * Contexto opcional da consulta em lote: Process automático do worker atribui o consumo
+   * à consulta/item. Chamadas manuais/avulsas deixam null.
+   */
+  consultaId?: string | null;
+  consultaItemId?: string | null;
 }
 
 function tenantDo(p: PedidoGerarMapaCondicao) {
@@ -261,13 +267,26 @@ async function gravarMapa(
   return null;
 }
 
+function idsConsulta(p: PedidoGerarMapaCondicao): { consultaId: string | null; consultaItemId: string | null } {
+  return {
+    consultaId: p.consultaId ?? null,
+    consultaItemId: p.consultaItemId ?? null
+  };
+}
+
 async function gravarConsumoCurto(
   dep: DependenciasGerarMapaCondicao, p: PedidoGerarMapaCondicao, areaId: string, puCabecalho: string | null
 ): Promise<void> {
   await comCtx(dep, p, async (ctx) => {
     const area = await lerAreaCondicao(ctx, areaId);
+    const ids = idsConsulta(p);
     await gravarConsumo(ctx.tx, {
-      organizationId: ctx.orgId, empresaId: area.empresa_id, consultaId: null, consultaItemId: null, puCabecalho
+      organizationId: ctx.orgId,
+      empresaId: area.empresa_id,
+      consultaId: ids.consultaId,
+      consultaItemId: ids.consultaItemId,
+      puCabecalho,
+      operacao: "process"
     });
   });
 }
@@ -358,18 +377,21 @@ export async function gerarOuReutilizarMapaCondicao(
 
     const desfecho = await comCtx(dep, pedido, async (ctx) => {
       const area = await lerAreaCondicao(ctx, pedido.areaId);
+      const ids = idsConsulta(pedido);
+      const consumoProcess = (pu: string | null) => gravarConsumo(ctx.tx, {
+        organizationId: ctx.orgId,
+        empresaId: area.empresa_id,
+        consultaId: ids.consultaId,
+        consultaItemId: ids.consultaItemId,
+        puCabecalho: pu,
+        operacao: "process"
+      });
       if (area.geometria_sha256 !== plano.area.geometria_sha256) {
-        await gravarConsumo(ctx.tx, {
-          organizationId: ctx.orgId, empresaId: area.empresa_id, consultaId: null, consultaItemId: null, puCabecalho: feita.puCabecalho
-        });
+        await consumoProcess(feita.puCabecalho);
         throw validation(MSG_GEOMETRIA_ALTERADA_CONDICAO, { motivo: "geometria_alterada" });
       }
       const linha = await gravarMapa(ctx, plano, feita);
-      if (abriuChamada) {
-        await gravarConsumo(ctx.tx, {
-          organizationId: ctx.orgId, empresaId: area.empresa_id, consultaId: null, consultaItemId: null, puCabecalho: feita.puCabecalho
-        });
-      }
+      if (abriuChamada) await consumoProcess(feita.puCabecalho);
       return linha ?? await lerMapaDaChave(ctx, plano.chave);
     });
     if (!desfecho) {

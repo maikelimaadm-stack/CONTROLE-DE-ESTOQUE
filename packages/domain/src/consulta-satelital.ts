@@ -100,6 +100,19 @@ export const COEFICIENTES_ESTIMATIVA_PU = {
   revisitaDias: 5 // Sentinel-2 (2 satélites) — máximo de passagens por janela
 } as const;
 
+/**
+ * Coeficientes da estimativa do Process AUTOMÁTICO do bundle (mapa integrado de condição).
+ * SSOT do produto automático — NÃO inclui rasters técnicos lazy (on-demand).
+ *
+ * - `bandas`: bandas de entrada do evalscript de condição (B02…B11+SCL), sem dataMask.
+ * - `fatorFormato`: PNG UINT8 de 1 banda; 1 = conservador até calibrar com o ledger.
+ * Uma chamada Process por item (a data da observação escolhida), não multiplica pela janela.
+ */
+export const COEFICIENTES_ESTIMATIVA_PROCESS_CONDICAO = {
+  bandas: BANDAS_POR_BUNDLE.pastagem_essencial,
+  fatorFormato: 1
+} as const;
+
 /** Bandas lidas por bundle/índice (entrada do evalscript, sem dataMask). */
 export const BANDAS_POR_INDICE: Readonly<Record<IndiceBundleConsulta, number>> = BANDAS_POR_BUNDLE;
 
@@ -338,14 +351,60 @@ export function puPorObservacao(pixelsBbox: number, indice: IndiceBundleConsulta
   return qty(puExatoPorObservacao(pixelsBbox, indice), 4);
 }
 
+/** PU exato de UMA chamada Process do mapa de condição (área × bandas × formato). */
+function puExatoProcessCondicao(pixelsBbox: number): Decimal {
+  if (!Number.isSafeInteger(pixelsBbox) || pixelsBbox < 1) throw new RangeError(`pixels da caixa inválidos: ${pixelsBbox}`);
+  const c = COEFICIENTES_ESTIMATIVA_PU;
+  const p = COEFICIENTES_ESTIMATIVA_PROCESS_CONDICAO;
+  const fatorArea = D(pixelsBbox).div(c.pixelsReferencia);
+  const fatorAreaComPiso = fatorArea.gte(c.fatorAreaMinimo) ? fatorArea : D(c.fatorAreaMinimo);
+  return fatorAreaComPiso.mul(D(p.bandas).div(c.bandasReferencia)).mul(p.fatorFormato);
+}
+
 /**
- * Faixa de créditos de UM item novo: PU por observação × CREDITOS_POR_PU × observações (mínima e máxima),
- * arredondada a 2 casas no fim. Item reaproveitado não passa por aqui: custa zero.
+ * Faixa de créditos do Process AUTOMÁTICO (mapa de condição v3) — UM produto, UMA chamada.
+ * `mapaReutilizavel: true` (comprovado) → zero. Ausente/false → estimativa conservadora
+ * (a prévia não assume cache sem prova).
+ * Rasters técnicos lazy NÃO entram.
  */
-export function estimarCreditosItem(p: { pixelsBbox: number; indice: IndiceBundleConsulta; slot: SlotConsulta }): FaixaCreditos {
+export function estimarCreditosProcessCondicao(p: {
+  pixelsBbox: number;
+  mapaReutilizavel?: boolean;
+}): FaixaCreditos {
+  if (p.mapaReutilizavel === true) return { minimo: money(0), maximo: money(0) };
+  const creditos = puExatoProcessCondicao(p.pixelsBbox).mul(CREDITOS_POR_PU);
+  const valor = money(creditos);
+  return { minimo: valor, maximo: valor };
+}
+
+/**
+ * Faixa de créditos de UM item novo.
+ * - NDVI avulso: só Statistical (janela × observações).
+ * - `pastagem_essencial`: Statistical + Process do mapa de condição (produto automático).
+ * Rasters técnicos lazy NÃO entram na prévia.
+ * Item totalmente reaproveitado (Statistical + mapa) não passa por aqui: custa zero.
+ */
+export function estimarCreditosItem(p: {
+  pixelsBbox: number;
+  indice: IndiceBundleConsulta;
+  slot: SlotConsulta;
+  /** Só para pastagem: true quando o mapa de condição já existe e é comprovadamente reutilizável. */
+  mapaCondicaoReutilizavel?: boolean;
+}): FaixaCreditos {
   const creditosPorObservacao = puExatoPorObservacao(p.pixelsBbox, p.indice).mul(CREDITOS_POR_PU);
   const obs = observacoesDoSlot(p.slot);
-  return { minimo: money(creditosPorObservacao.mul(obs.minimo)), maximo: money(creditosPorObservacao.mul(obs.maximo)) };
+  const statistical: FaixaCreditos = {
+    minimo: money(creditosPorObservacao.mul(obs.minimo)),
+    maximo: money(creditosPorObservacao.mul(obs.maximo))
+  };
+  if (p.indice !== BUNDLE_PASTAGEM_ESSENCIAL) return statistical;
+  return somarFaixas([
+    statistical,
+    estimarCreditosProcessCondicao({
+      pixelsBbox: p.pixelsBbox,
+      mapaReutilizavel: p.mapaCondicaoReutilizavel
+    })
+  ]);
 }
 
 /** Soma de faixas, em decimal (0,1 + 0,2 = 0,30, sem o resíduo do ponto flutuante). Lista vazia → zero. */

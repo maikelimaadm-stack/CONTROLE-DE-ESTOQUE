@@ -93,16 +93,18 @@ Tabelas `erp.satelite_mapas_condicao` (+ arquivos). Sem `analise_id`. Migration 
 - `GET /api/mapa/condicao-pasto?area_ids=` — listagem v3 (não gera).
 - `GET /api/mapa/condicao-pasto/:mapaId/arquivo?t=` — PNG.
 
-## Worker / bundle (SAT-BUNDLE-01A)
+## Worker / bundle (SAT-BUNDLE-01A R1)
 
 Após item `pastagem-essencial-v2` com observação útil, o executor chama best-effort
-`garantirProdutosDaObservacaoCompleta` / `tentarGarantirProdutosAposPastagem`:
+`garantirProdutosDaObservacaoCompleta` / `tentarGarantirProdutosAposPastagem` com política **`principal`**:
 
-- mapa condição v3;
-- rasters técnicos dos 6 índices (mesmo serviço da rota POST de raster).
+- mapa condição v3 **somente**;
+- rasters técnicos dos 6 índices = **lazy** (rota POST / on-demand via `gerarOuReutilizarRasterIndice`).
 
-Falha de um produto **não** apaga o Statistical nem falha o item — só log `warn`.
+Process automático a frio: até **1** chamada. Consumo Process do worker atribui `consulta_id` / `consulta_item_id`.
+Falha do mapa **não** apaga o Statistical nem falha o item — só log `warn`.
 Produto em cache → reutilizado (sem nova Process).
+Reparo: `POST …/produtos-observacao/reparar` (idempotente; reusa Statistical).
 
 ## Observação completa (contrato F1)
 

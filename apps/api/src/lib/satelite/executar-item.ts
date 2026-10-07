@@ -447,7 +447,8 @@ async function executarFases(
   if (chamada.resultado === null) return falhar(f1.pronto.item.tentativas, chamada.respondeu, chamada.falha);
   try {
     const f3 = await fase3(dep, r, f1.pronto, { ...chamada, resultado: chamada.resultado });
-    // SAT-BUNDLE-01A: após pastagem-essencial útil, garante condição v3 + 6 rasters (best-effort).
+    // SAT-BUNDLE-01A R1: após pastagem-essencial útil, garante só condição v3 (best-effort).
+    // Rasters técnicos = lazy. Process automático atribui consulta/item no ledger.
     if (
       f3.desfecho === "concluido"
       && ehPastagem(f1.pronto.item)
@@ -455,7 +456,12 @@ async function executarFases(
       && chamada.resultado.situacao === "concluida"
     ) {
       await tentarGarantirProdutosAposPastagem(dep, {
-        orgId: r.organization_id, userId: r.criado_por, areaId: f1.pronto.item.area_id
+        orgId: r.organization_id,
+        userId: r.criado_por,
+        areaId: f1.pronto.item.area_id,
+        consultaId: r.consulta_id,
+        consultaItemId: r.item_id,
+        politica: "principal"
       });
     }
     return anotar(f3.desfecho, f3.motivo);
