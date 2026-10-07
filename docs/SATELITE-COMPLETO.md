@@ -100,7 +100,27 @@ Rotas F1 (sem UI):
 Orquestração operacional: `materializarProdutosDaObservacao` / `garantirProdutoCondicaoOperacional` → `pronto | reutilizado | falhou` (fail-closed).
 Rota legada de raster individual permanece; não remove pipeline duplicado.
 
-Próxima fatia: **SAT-BUNDLE-01B [F2]** — UI temática consumindo este contrato.
+## UI temática — SAT-BUNDLE-01B [F2]
+
+Fluxo operacional no Mapa geral:
+
+1. **Analisar pastos** — uma vez (consulta/processamento da observação completa).
+2. Toolbar de visualização: **Condição · Umidade · Vigor · Cobertura · Solo**.
+3. Trocar tema = só muda a apresentação (GET/cache dos produtos já materializados).
+   - Zero POST `/api/satelite/consultas`, zero Process, zero “Gerar raster”.
+4. Mapa operacional = **GeoJSON fill** (polígonos/isobands), não PNG/raster cru.
+5. Raster UINT8 20 m permanece dado-fonte; suavização só no contorno visual (≤ ~10 m).
+6. **Dados técnicos** (modo secundário): NDVI/EVI2/NDRE/NDMI/MSAVI2/BSI, histograma, raster cru opcional.
+
+| Tema | Fonte F1 |
+|------|----------|
+| Condição | `condicao-pasto-v3` (classes categóricas) |
+| Umidade | raster NDMI da mesma observação |
+| Vigor | raster NDRE (NDVI/EVI2 só no resumo técnico) |
+| Cobertura | raster MSAVI2 |
+| Solo | raster BSI |
+
+Limitações: vegetação ≠ capim útil; NDMI ≠ umidade volumétrica do solo; BSI ≠ erosão; faixas fixas para comparabilidade entre pastos/datas.
 
 ## Segurança
 

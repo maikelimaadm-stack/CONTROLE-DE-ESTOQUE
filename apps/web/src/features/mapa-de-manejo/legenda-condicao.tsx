@@ -10,6 +10,8 @@ import {
 } from "@agro/domain";
 import { Button, Dialog, buttonVariants } from "@/components/ui";
 import { num } from "@/lib/utils";
+import { PainelTemaContinuo } from "./painel-tema-pasto";
+import type { TemaMapaPasto } from "./temas-mapa-pasto";
 
 function linhaDe(resumo: ResumoCondicaoPasto | null, codigo: CodigoClasseCondicaoPasto) {
   return resumo?.classes.find((c) => c.codigo === codigo) ?? {
@@ -189,13 +191,20 @@ export function DialogAreaCondicao(p: {
   statsSemMapa?: boolean;
   onDadosTecnicos?: () => void;
   hrefCadastro: string;
+  /** Tema operacional ativo — conteúdo do Dialog muda; não troca análise. */
+  tema?: TemaMapaPasto;
+  medias?: Partial<Record<string, string | null>> | null;
+  coberturaValida?: string | null;
+  analiseCompleta?: boolean;
 }) {
+  const tema = p.tema ?? "condicao";
+  const statusObs = p.analiseCompleta ? "● Análise completa" : p.semAnalise ? "○ Sem análise" : "● Observação";
   return (
     <Dialog
       open={p.aberto}
       onOpenChange={(o) => { if (!o) p.onFechar(); }}
       title={p.nome}
-      description={`${num(p.ha, 1)} ha · ${p.dataImagem ? `Imagem ${p.dataImagem}` : "Sem data"} · 20 m`}
+      description={`${num(p.ha, 2)} ha · ${p.dataImagem ? `Observação: ${p.dataImagem}` : "Sem data"} · 20 m · ${statusObs}`}
       size="md"
       profile="content"
       testId="mapa-area-selecionada"
@@ -209,12 +218,23 @@ export function DialogAreaCondicao(p: {
         </>
       )}
     >
-      <PainelAreaCondicao
-        resumo={p.resumo}
-        dataImagem={p.dataImagem}
-        semAnalise={p.semAnalise}
-        statsSemMapa={p.statsSemMapa}
-      />
+      {tema === "condicao" ? (
+        <PainelAreaCondicao
+          resumo={p.resumo}
+          dataImagem={p.dataImagem}
+          semAnalise={p.semAnalise}
+          statsSemMapa={p.statsSemMapa}
+        />
+      ) : p.semAnalise ? (
+        <p className="text-xs text-slate-600" data-testid="condicao-pasto-sem-analise">Sem análise completa para esta data.</p>
+      ) : (
+        <PainelTemaContinuo
+          tema={tema}
+          medias={p.medias ?? null}
+          coberturaValida={p.coberturaValida}
+          dataImagem={p.dataImagem}
+        />
+      )}
     </Dialog>
   );
 }

@@ -115,7 +115,9 @@ Ver `docs/SATELITE-COMPLETO.md` e `packages/domain/src/observacao-satelital-comp
 - `GET /api/mapa/areas/:areaId/observacao-satelital-completa`
 - `GET /api/mapa/observacoes-satelitais-completas/resumo`
 
-UI temática (temas condição/umidade/vigor/cobertura_solo) = fatia **F2** (não nesta PR).
+UI temática (**SAT-BUNDLE-01B [F2]**): cinco temas no Mapa geral (Condição / Umidade / Vigor / Cobertura / Solo)
+sobre a mesma observação completa; troca de tema sem nova consulta; mapa vetorial operacional
+(poligonização/isobands); raster cru só em Dados técnicos. Ver `docs/SATELITE-COMPLETO.md`.
 
 ## Limitações
 

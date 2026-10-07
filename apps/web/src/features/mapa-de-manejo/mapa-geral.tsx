@@ -29,7 +29,7 @@ import { DATA_ULTIMA_IMAGEM, dataEscolhida, datasUteisDoHistorico, opcoesDeData,
 import { useHistoricoIndice } from "./condicao-dados";
 import { useRastersIndice, type RasterIndiceDto } from "./rasters-indice";
 import { useMapasCondicao } from "./rasters-condicao";
-import { BarraCamadas, type ExperienciaMapa } from "./barra-camadas";
+import { BarraCamadas } from "./barra-camadas";
 import { CondicaoDaArea } from "./condicao-area";
 import { LegendaIndice } from "./legenda-indice";
 import { DialogAreaCondicao, DialogClasseCondicao, LegendaCondicaoPasto } from "./legenda-condicao";
@@ -39,6 +39,11 @@ import { useOperacaoAnaliseViva } from "./use-operacao-analise";
 import { familiaDoIndice, familiaPorId, nomeDoIndice, type FamiliaCamada, type IdIndice } from "./paletas-indices";
 import { selecionarAreasDaVista, type Vista } from "./viewport-rasters";
 import { areasDesatualizadas, type SelecaoConsulta } from "./consulta-satelite";
+import { useResumosObservacoesCompletas, invalidarCacheObservacaoCompleta } from "./observacao-completa";
+import {
+  TEMA_DEFAULT, indiceFonteDoTema, rotuloStatusLista, type ModoMapaPasto, type TemaMapaPasto
+} from "./temas-mapa-pasto";
+import { LegendaTemaPasto } from "./legenda-tema-pasto";
 
 /**
  * MAPA GERAL (decisões 294, 298, 302) — experiência padrão: classificação integrada da condição do pasto.
@@ -62,11 +67,17 @@ export function MapaGeral() {
   const empresaId = useEmpresaPadrao();
   const lista = useAreasDoMapa();
   const areas = React.useMemo(() => lista.data?.items ?? [], [lista.data]);
-  const [experiencia, setExperiencia] = React.useState<ExperienciaMapa>("condicao");
+  const [modo, setModo] = React.useState<ModoMapaPasto>("operacional");
+  const [tema, setTema] = React.useState<TemaMapaPasto>(TEMA_DEFAULT);
+  /** Tema ainda pintado no mapa (SWR): só avança quando a fonte do novo tema está pronta. */
+  const [temaExibido, setTemaExibido] = React.useState<TemaMapaPasto>(TEMA_DEFAULT);
+  const [faixaFiltro, setFaixaFiltro] = React.useState<string | null>(null);
   const [classeFiltro, setClasseFiltro] = React.useState<CodigoClasseCondicaoPasto | null>(null);
   const [ordenacao, setOrdenacao] = React.useState<OrdenacaoListaCondicao>("atencao");
   const [indice, setIndice] = React.useState<IdIndice>("ndvi");
   const [data, setData] = React.useState<DataDaCamada>(DATA_ULTIMA_IMAGEM);
+  const experiencia = modo === "tecnico" ? "tecnico" : "condicao";
+  const setExperiencia = (e: "condicao" | "tecnico") => setModo(e === "tecnico" ? "tecnico" : "operacional");
   /**
    * Resumo da camada (índice × data ativa × método v2): cor por área e valor da lista no modo técnico.
    * Resumo da última útil (mesmo índice): "Áreas desatualizadas" / sem análise — identidade operacional atual.
@@ -95,7 +106,8 @@ export function MapaGeral() {
 
   const mapa = useMapaBase({ ganchoE2E: "__mapaManejoE2E", aoCarregar: registrarEventos });
   const { mapRef } = mapa;
-  const modoCondicao = experiencia === "condicao";
+  const modoOperacional = modo === "operacional";
+  const modoCondicao = modoOperacional; // legado: popups/lista de condição no modo operacional
 
   React.useEffect(() => {
     if (!mapa.pronto) return;
@@ -113,15 +125,38 @@ export function MapaGeral() {
   );
 
   const assinaturas = React.useMemo(() => new Map(areas.map((a) => [a.id, assinaturaDaGeometria(a.geometria)] as const)), [areas]);
-  const rasters = useRastersIndice({ areaIds: selecao.ids, indice, data, assinaturas, ativo: comNdvi && !modoCondicao });
+  const indiceTema = indiceFonteDoTema(tema);
+  const indiceRasterAtivo: IdIndice = modoOperacional && indiceTema ? indiceTema : indice;
+  const rasters = useRastersIndice({
+    areaIds: selecao.ids,
+    indice: indiceRasterAtivo,
+    data,
+    assinaturas,
+    ativo: comNdvi && (!modoOperacional || (tema !== "condicao" && indiceTema !== null))
+  });
   const mapasCond = useMapasCondicao({
     areaIds: selecao.ids,
     areaIdsResumo: areas.map((a) => a.id),
     data,
     assinaturas,
-    ativo: comNdvi && modoCondicao,
+    ativo: comNdvi && modoOperacional && (tema === "condicao" || temaExibido === "condicao"),
     classeDestaque: classeFiltro
   });
+  const resumosCompletos = useResumosObservacoesCompletas(
+    areas.map((a) => a.id),
+    data,
+    comNdvi && modoOperacional
+  );
+  const temaPronto = React.useMemo(() => {
+    if (!modoOperacional) return true;
+    if (tema === "condicao") {
+      return mapasCond.situacao === "pronto" || mapasCond.situacao === "erro" || selecao.ids.length === 0;
+    }
+    return rasters.situacao === "pronto" || rasters.situacao === "erro" || rasters.situacao === "ocioso" || selecao.ids.length === 0;
+  }, [modoOperacional, tema, mapasCond.situacao, rasters.situacao, selecao.ids.length]);
+  React.useEffect(() => {
+    if (temaPronto) setTemaExibido(tema);
+  }, [tema, temaPronto]);
   const historicoDaSelecionada = useHistoricoIndice(selecionada ?? "", indice, Boolean(selecionada) && comNdvi);
   const opcoesData = React.useMemo(
     () => opcoesDeData(datasUteisDoHistorico(selecionada ? (historicoDaSelecionada.data?.itens ?? []) : []), data, dateBR),
@@ -182,9 +217,12 @@ export function MapaGeral() {
     return coresPorArea(modoCor, indice, areas, resumoIndice.situacao === "pronto" ? resumoIndice.porArea : null);
   }, [modoCondicao, modoCor, indice, areas, resumoIndice, mapasCond.resumos]);
 
-  const overlayPixel = modoCondicao || modoCor === "pixel";
-  const rastersAtivos = modoCondicao ? mapasCond.porArea : rasters.porArea;
-  const temRaster = modoCondicao ? mapasCond.temRaster : rasters.temRaster;
+  const overlayPixel = (!modoOperacional && modoCor === "pixel") || modoOperacional;
+  /** Operacional: zonas vetoriais; técnico: PNG contínuo. */
+  const rastersAtivos = (modoOperacional && tema === "condicao")
+    ? mapasCond.porArea
+    : rasters.porArea;
+  const temRaster = (modoOperacional && tema === "condicao") ? mapasCond.temRaster : rasters.temRaster;
 
   const opacidadePorArea = React.useMemo(() => {
     if (!overlayPixel) return null;
@@ -197,8 +235,10 @@ export function MapaGeral() {
   React.useEffect(() => {
     (window as unknown as { __mapaNdviE2E?: unknown }).__mapaNdviE2E = {
       situacao: resumoUltima.situacao,
-      modo: modoCondicao ? "condicao" : modoCor,
+      modo: modoOperacional ? "condicao" : modoCor,
       experiencia,
+      tema,
+      modoMapa: modo,
       indice,
       data: data.tipo === "ultima" ? "ultima" : data.data,
       resumoIndice: resumoIndice.situacao,
@@ -216,7 +256,7 @@ export function MapaGeral() {
         catch { return false; }
       }
     };
-  }, [resumoUltima.situacao, modoCor, modoCondicao, experiencia, indice, data, resumoIndice.situacao, corPorArea, rastersAtivos, mapRef]);
+  }, [resumoUltima.situacao, modoCor, modoCondicao, experiencia, tema, modo, indice, data, resumoIndice.situacao, corPorArea, rastersAtivos, mapRef]);
 
   function registrarEventos(m: MapLibreMap) {
     m.on("click", "areas-fill", (e) => {
@@ -254,11 +294,19 @@ export function MapaGeral() {
   React.useEffect(() => {
     const m = mapRef.current;
     if (!m || !mapa.pronto) return;
-    // Em condição: PNG categórico fica só como apoio (SEM_LEITURA / fallback); zonas são a apresentação.
-    const opRaster = modoCondicao ? Math.min(opacidade, OPACIDADE_PNG_SOB_ZONAS) : opacidade;
-    sincronizarRastersNoMapa(m, rastersAtivos, overlayPixel, { resampling: modoCondicao ? "nearest" : render, opacidade: opRaster });
-    sincronizarZonasCondicaoNoMapa(m, modoCondicao ? mapasCond.porArea : new Map(), modoCondicao && overlayPixel);
-  }, [rastersAtivos, overlayPixel, render, opacidade, mapa.pronto, mapRef, areas, modoCondicao, mapasCond.porArea]);
+    // Operacional: ZERO image layer (OPACIDADE_PNG_SOB_ZONAS = 0); só GeoJSON.
+    const opRaster = modoOperacional ? OPACIDADE_PNG_SOB_ZONAS : opacidade;
+    sincronizarRastersNoMapa(
+      m,
+      modoOperacional ? new Map() : rastersAtivos,
+      !modoOperacional && overlayPixel,
+      { resampling: render, opacidade: opRaster }
+    );
+    const zonasFonte = modoOperacional
+      ? (temaExibido === "condicao" ? mapasCond.porArea : rasters.porArea)
+      : new Map();
+    sincronizarZonasCondicaoNoMapa(m, zonasFonte, modoOperacional, temaExibido);
+  }, [rastersAtivos, rasters.porArea, overlayPixel, render, opacidade, mapa.pronto, mapRef, areas, modoOperacional, temaExibido, mapasCond.porArea]);
 
   const selecaoAnteriorRef = React.useRef<string | null>(null);
   React.useEffect(() => {
@@ -389,7 +437,7 @@ export function MapaGeral() {
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <h1 className="text-base font-semibold text-slate-800">Mapa geral</h1>
-          <p className="text-xs text-slate-500">Condição do pasto por satélite: um mapa categórico da cobertura, do vigor e da umidade juntos. Os índices individuais ficam em Dados técnicos. O cadastro e o contorno de cada área ficam em Cadastro de Área.</p>
+          <p className="text-xs text-slate-500">Analise pastos uma vez; depois só escolha o que ver — Condição, Umidade, Vigor, Cobertura ou Solo. Trocar tema não cria nova consulta. Dados técnicos ficam separados. Grade 20 m; contornos suavizados só para visualização.</p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
           {entradaAreas && <Link href={canonicalHref(entradaAreas)} className={buttonVariants({ variant: "outline" })} data-testid="mapa-ir-areas">Cadastro de Área</Link>}
@@ -425,18 +473,25 @@ export function MapaGeral() {
             {areasOrdenadas.map((a) => {
               const resumo = mapasCond.resumos.get(a.id);
               const badge = resumo ? badgePrincipalCondicao(resumo) : null;
-              const media = !modoCondicao && resumoIndice.situacao === "pronto" ? mediaValidaDoIndice(resumoIndice.porArea.get(a.id)) : null;
+              const st = resumosCompletos.statusPorArea.get(a.id);
+              const sub = modoOperacional
+                ? (tema === "condicao" && badge
+                  ? badge.rotulo
+                  : rotuloStatusLista(st ?? "SEM_ANALISE", tema))
+                : null;
+              const media = !modoOperacional && resumoIndice.situacao === "pronto" ? mediaValidaDoIndice(resumoIndice.porArea.get(a.id)) : null;
               const tituloMedia = data.tipo === "data"
                 ? `${nomeDoIndice(indice)} médio em ${dateBR(data.data)}`
                 : `${nomeDoIndice(indice)} médio da última imagem útil`;
+              const corLista = st === "SEM_ANALISE" ? "#e2e8f0" : (corPorArea?.get(a.id) ?? a.color ?? COR_PADRAO_AREA);
               return (
                 <button key={a.id} type="button" data-testid="mapa-item-area" onClick={() => selecionarNaLista(a.id)}
                   className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-100 ${a.id === selecionada ? "bg-slate-100 ring-1 ring-slate-300" : ""}`}>
-                  <span className="h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: corPorArea?.get(a.id) ?? a.color ?? COR_PADRAO_AREA }} aria-hidden />
+                  <span className="h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: corLista }} aria-hidden />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium text-slate-700">{a.name}</span>
-                    {modoCondicao && badge && (
-                      <span className="block truncate text-[11px]" style={{ color: badge.cor }} data-testid="mapa-item-badge">{badge.rotulo}</span>
+                    {sub && (
+                      <span className="block truncate text-[11px] text-slate-500" style={badge && tema === "condicao" ? { color: badge.cor } : undefined} data-testid="mapa-item-badge">{sub}</span>
                     )}
                   </span>
                   {media !== null && <span className="shrink-0 text-xs font-medium tabular-nums text-slate-700" title={tituloMedia} data-testid="mapa-item-ndvi">{num(media, 2)}</span>}
@@ -451,6 +506,10 @@ export function MapaGeral() {
         <BarraCamadas
           mapa={mapa}
           comSatelite={comNdvi}
+          modo={modo}
+          onModo={setModo}
+          tema={tema}
+          onTema={(t) => { setTema(t); setClasseFiltro(null); setFaixaFiltro(null); }}
           experiencia={experiencia}
           onExperiencia={setExperiencia}
           familia={familia}
@@ -464,11 +523,12 @@ export function MapaGeral() {
           opacidade={opacidade}
           onOpacidade={setOpacidade}
           data={data}
-          onData={(d) => { setData(d); setClasseFiltro(null); }}
+          onData={(d) => { setData(d); setClasseFiltro(null); setFaixaFiltro(null); }}
           opcoesData={opcoesData}
           dataImagem={dataImagem}
           podeConsultar={podeConsultar}
           onNovaConsulta={() => abrirAnalise("empresa")}
+          carregandoTema={modoOperacional && tema !== temaExibido}
         />
         <Card className="relative min-h-0 flex-1 overflow-hidden">
           <div ref={mapa.containerRef} data-testid="mapa-canvas" className="h-full min-h-[420px] w-full" />
@@ -505,20 +565,25 @@ export function MapaGeral() {
                   {ausentesNaVista} de {selecao.ids.length} área(s) à vista sem imagem de {nomeDoIndice(indice)} em {dateBR(data.data)}. Nenhuma outra data é usada no lugar.
                 </div>
               )}
-              {data.tipo === "ultima" && semImagemDoIndice && indice !== "ndvi" && (
+              {data.tipo === "ultima" && semImagemDoIndice && !modoOperacional && (
                 <div className="rounded bg-white/90 px-2 py-1 text-xs text-slate-600 shadow-sm" data-testid="mapa-sem-imagem-indice">
-                  Nenhuma área à vista tem imagem de {nomeDoIndice(indice)} gerada. Abra uma área e use Gerar raster.
+                  Nenhuma área à vista tem imagem de {nomeDoIndice(indice)} na observação completa.
                 </div>
               )}
-              {modoCondicao && mapasCond.datasDistintas.length > 1 && (
+              {modoOperacional && tema === "condicao" && mapasCond.datasDistintas.length > 1 && (
                 <div className="rounded bg-white/90 px-2 py-1 text-xs text-amber-700 shadow-sm" data-testid="mapa-datas-incompativeis">
                   Há imagens de datas diferentes na vista. Escolha uma data para agregar hectares.
                 </div>
               )}
               {rasters.situacao === "erro" && rasters.erro && <div className="rounded bg-white/90 px-2 py-1 text-xs text-red-600 shadow-sm" data-testid="mapa-raster-erro">{rasters.erro}</div>}
-              {modoCondicao && comNdvi && (
+              {modoOperacional && comNdvi && tema === "condicao" && (
                 <div className="pointer-events-auto w-[min(18rem,calc(100vw-2rem))]">
                   <LegendaCondicaoPasto resumo={mapasCond.agregado} classe={classeFiltro} onClasse={filtrarClasse} />
+                </div>
+              )}
+              {modoOperacional && comNdvi && temaExibido !== "condicao" && (
+                <div className="pointer-events-auto w-[min(18rem,calc(100vw-2rem))]">
+                  <LegendaTemaPasto tema={temaExibido} faixaAtiva={faixaFiltro} onFaixa={setFaixaFiltro} />
                 </div>
               )}
               {mostrarLegendaTecnica && (modoCor === "pixel" ? <LegendaIndice indice={indice} /> : indice === "ndvi" ? <LegendaNdvi modo="area" /> : <LegendaIndice indice={indice} modo="area" />)}
@@ -542,6 +607,10 @@ export function MapaGeral() {
           statsSemMapa={!temMapaCondicao(selecionadaObj.id) && temObservacaoUtil(selecionadaObj.id) && mapasCond.situacao === "pronto"}
           onDadosTecnicos={() => setExperiencia("tecnico")}
           hrefCadastro={fichaDaArea(selecionadaObj.id)}
+          tema={tema}
+          medias={resumosCompletos.porArea.get(selecionadaObj.id)?.medias ?? null}
+          coberturaValida={resumosCompletos.porArea.get(selecionadaObj.id)?.cobertura_valida_bundle ?? null}
+          analiseCompleta={resumosCompletos.statusPorArea.get(selecionadaObj.id) === "PRONTO"}
         />
       )}
 
@@ -603,7 +672,11 @@ export function MapaGeral() {
           consultaIdInicial={consulta.acompanhar ? operacao.consultaId : null}
           filaDisponivel={operacao.capacidade?.fila_disponivel ?? null}
           onConsultaEmAndamento={() => operacao.recarregar()}
-          onConcluida={() => { mapasCond.recarregar(); operacao.recarregar(); }}
+          onConcluida={() => {
+            mapasCond.recarregar();
+            operacao.recarregar();
+            invalidarCacheObservacaoCompleta();
+          }}
         />
       )}
     </div>

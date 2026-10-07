@@ -25,21 +25,19 @@ describe("SAT-FINAL R2 — painel único Condição da Área (UI)", () => {
     expect(mapaGeralSrc).not.toContain("NdviDaArea");
   });
 
-  it("UI-3: gerar raster e listagem da condição usam contexto=condicao (método v2 no backend)", () => {
+  it("UI-3: listagem da condição usa contexto=condicao (método v2 no backend)", () => {
     expect(rastersIndiceSrc).toContain('contexto: "condicao"');
     expect(ndviSrc).toContain('contexto: "condicao"');
-    expect(condicaoSrc).toContain("gerarRasterDaAnalise");
-    expect(condicaoSrc).toContain("analiseDoIndice");
+    // Helper de geração permanece no módulo de rasters (Comparar / legado API); painel não o chama.
+    expect(rastersIndiceSrc).toContain("gerarRasterDaAnalise");
   });
 
-  it("UI-4: CondicaoDaArea não dispara POST Process ao montar (só no clique confirmado)", () => {
-    // Geração e análise só via useMutation + botão de confirmação.
-    expect(condicaoSrc).toMatch(/confirmando === "raster"/);
-    expect(condicaoSrc).toMatch(/confirmando === "analisar"/);
-    expect(condicaoSrc).toContain("condicao-gerar-confirmar");
-    expect(condicaoSrc).toContain("condicao-analisar-confirmar");
-    expect(condicaoSrc).toContain("onClick={() => gerar.mutate()}");
-    expect(condicaoSrc).toContain("onClick={() => analisar.mutate()}");
+  it("UI-4: CondicaoDaArea não dispara POST Process ao montar (01B: sem Gerar raster / Analisar área)", () => {
+    expect(condicaoSrc).not.toContain("condicao-gerar-raster");
+    expect(condicaoSrc).not.toContain("condicao-analisar-atual");
+    expect(condicaoSrc).not.toContain("gerarRasterDaAnalise");
+    expect(condicaoSrc).toContain("Analisar pastos");
+    expect(condicaoSrc).not.toContain("condicao-gerar-confirmar");
   });
 });
 

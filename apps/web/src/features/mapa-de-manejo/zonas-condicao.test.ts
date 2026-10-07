@@ -19,7 +19,8 @@ describe("MAPA-UX-02 — zonas visuais", () => {
     const zonas = zonasDeRasterCondicao({ pixels, largura: 4, altura: 3, cantos: CANTOS });
     expect(zonas.map((z) => z.codigo).sort()).toEqual([1, 2, 5]);
     expect(zonas.filter((z) => z.codigo === 1)).toHaveLength(1);
-    expect(zonas.find((z) => z.codigo === 1)!.geometry.coordinates.length).toBe(2);
+    // 01B: um blob → 1 Polygon (não MultiPolygon de runs).
+    expect(zonas.find((z) => z.codigo === 1)!.geometry.type).toBe("Polygon");
   });
 
   it("dois componentes da mesma classe ficam separados (determinístico)", () => {

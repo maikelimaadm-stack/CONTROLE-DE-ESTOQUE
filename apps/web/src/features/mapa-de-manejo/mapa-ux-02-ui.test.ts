@@ -10,7 +10,7 @@ const modalSrc = readFileSync(resolve(__dirname, "nova-consulta-modal.tsx"), "ut
 
 describe("MAPA-UX-02 — UI estática (UX-01..UX-15)", () => {
   it("UX-01 botão principal Analisar pastos", () => {
-    expect(barraSrc).toContain(">Analisar pastos<");
+    expect(barraSrc).toMatch(/Analisar pastos/);
     expect(barraSrc).toContain('data-testid="mapa-nova-consulta"');
     expect(barraSrc).not.toContain("Atualizar condição");
   });
@@ -108,7 +108,8 @@ describe("MAPA-UX-02 — UI estática (UX-01..UX-15)", () => {
 
   it("UX-15 lista compacta (nome, ha, badge)", () => {
     expect(mapaGeralSrc).toContain('data-testid="mapa-item-badge"');
-    expect(mapaGeralSrc).toContain("{badge.rotulo}");
+    expect(mapaGeralSrc).toContain("badge.rotulo");
+    expect(mapaGeralSrc).toContain("rotuloStatusLista");
     expect(mapaGeralSrc).not.toContain("% vegetação ativa");
     expect(mapaGeralSrc).not.toContain("% atenção");
   });
