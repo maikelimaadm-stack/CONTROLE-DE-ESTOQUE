@@ -5,11 +5,14 @@
  */
 "use client";
 import * as React from "react";
-import { api, qs } from "@/lib/api";
+import { api, ApiError, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { ObservacaoSatelitalCompleta } from "@agro/domain";
 import { DATA_ULTIMA_IMAGEM, type DataDaCamada } from "./data-camada";
 import { statusAreaDoResumo, type StatusAreaMapa } from "./temas-mapa-pasto";
+
+const ehAborto = (e: unknown) =>
+  (e instanceof DOMException && e.name === "AbortError") || (e instanceof Error && e.name === "AbortError");
 
 export const PERMISSAO_VER_OBSERVACAO = "analises_satelitais.view";
 
@@ -53,11 +56,18 @@ export async function listarResumosObservacoesCompletas(
       pagina: 1,
       tamanho: lote.length
     });
-    const r = await api<{ itens: ResumoObservacaoCompletaDto[] }>(
-      `/api/mapa/observacoes-satelitais-completas/resumo${q}`,
-      { signal: opcoes.signal }
-    );
-    itens.push(...(r.itens ?? []));
+    try {
+      const r = await api<{ itens: ResumoObservacaoCompletaDto[] }>(
+        `/api/mapa/observacoes-satelitais-completas/resumo${q}`,
+        { signal: opcoes.signal }
+      );
+      itens.push(...(r.itens ?? []));
+    } catch (e) {
+      if (ehAborto(e) || opcoes.signal?.aborted) throw e;
+      // 404 de rota (API anterior à F1) — falha fechada, sem loop.
+      if (e instanceof ApiError && e.status === 404) return [];
+      throw e;
+    }
   }
   CACHE_RESUMO.set(chave, { em: Date.now(), itens });
   return itens;
@@ -101,27 +111,43 @@ export function useResumosObservacoesCompletas(
   const pode = can(PERMISSAO_VER_OBSERVACAO);
   const [porArea, setPorArea] = React.useState<ReadonlyMap<string, ResumoObservacaoCompletaDto>>(new Map());
   const [situacao, setSituacao] = React.useState<"idle" | "carregando" | "pronto" | "erro">("idle");
-  const idsKey = areaIds.join(",");
+  const idsKey = [...areaIds].filter(Boolean).sort().join(",");
+  const diaKey = chaveData(data);
+  const rotaAusenteRef = React.useRef(false);
 
   React.useEffect(() => {
-    if (!ativo || !pode || areaIds.length === 0) {
+    if (!ativo || !pode || !idsKey) {
       setPorArea(new Map());
       setSituacao("idle");
       return;
     }
-    const ac = new AbortController();
+    if (rotaAusenteRef.current) {
+      setSituacao("pronto");
+      return;
+    }
+    const ids = idsKey.split(",");
+    // Sem AbortController: o vigia de skew trata net::ERR_ABORTED como falha de rede.
+    // idsKey/diaKey estáveis evitam tempestade de refetch.
+    let cancelado = false;
     setSituacao("carregando");
-    void listarResumosObservacoesCompletas(areaIds, { data, signal: ac.signal })
+    void listarResumosObservacoesCompletas(ids, { data })
       .then((itens) => {
-        if (ac.signal.aborted) return;
+        if (cancelado) return;
         setPorArea(new Map(itens.map((i) => [i.area_id, i])));
         setSituacao("pronto");
       })
-      .catch(() => {
-        if (!ac.signal.aborted) setSituacao("erro");
+      .catch((e) => {
+        if (cancelado) return;
+        if (e instanceof ApiError && e.status === 404) {
+          rotaAusenteRef.current = true;
+          setPorArea(new Map());
+          setSituacao("pronto");
+          return;
+        }
+        setSituacao("erro");
       });
-    return () => ac.abort();
-  }, [ativo, pode, idsKey, areaIds, data]);
+    return () => { cancelado = true; };
+  }, [ativo, pode, idsKey, diaKey, data]);
 
   const statusPorArea = React.useMemo(() => {
     const m = new Map<string, StatusAreaMapa>();

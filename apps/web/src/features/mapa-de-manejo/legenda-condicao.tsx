@@ -1,6 +1,5 @@
 "use client";
 import * as React from "react";
-import Link from "next/link";
 import {
   CLASSES_CONDICAO_PASTO,
   AVISO_CONDICAO_PASTO_EXPERIMENTAL,
@@ -214,7 +213,7 @@ export function DialogAreaCondicao(p: {
           {p.onDadosTecnicos && (
             <Button type="button" variant="outline" onClick={p.onDadosTecnicos} data-testid="condicao-pasto-dados-tecnicos">Dados técnicos</Button>
           )}
-          <Link href={p.hrefCadastro} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="mapa-abrir-cadastro">Abrir cadastro</Link>
+          <a href={p.hrefCadastro} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="mapa-abrir-cadastro">Abrir cadastro</a>
         </>
       )}
     >
@@ -289,6 +288,7 @@ export function DialogClasseCondicao(p: {
   const c = p.codigo !== null ? CLASSES_CONDICAO_PASTO[p.codigo] : null;
   return (
     <Dialog
+      key={p.codigo ?? "nenhuma"}
       open={p.aberto && p.codigo !== null}
       onOpenChange={(o) => { if (!o) p.onFechar(); }}
       title={c?.nome ?? "Classe"}

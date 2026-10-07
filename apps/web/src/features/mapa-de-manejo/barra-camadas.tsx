@@ -178,17 +178,20 @@ export function BarraCamadas(p: BarraCamadasProps) {
               </Grupo>
 
               <Grupo rotulo="Opacidade" testId="mapa-grupo-opacidade">
-                <input
-                  type="range"
-                  min={0.2}
-                  max={1}
-                  step={0.05}
-                  value={p.opacidade}
-                  disabled={!rasterAtivo}
-                  onChange={(e) => p.onOpacidade(Number(e.target.value))}
-                  data-testid="mapa-opacidade"
-                  className="w-24"
-                />
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="range"
+                    min={0.2}
+                    max={1}
+                    step={0.05}
+                    value={p.opacidade}
+                    disabled={!rasterAtivo}
+                    onChange={(e) => p.onOpacidade(Number(e.target.value))}
+                    data-testid="mapa-opacidade"
+                    className="w-24"
+                  />
+                  <span className="text-[10px] tabular-nums text-slate-500">{Math.round(p.opacidade * 100)}%</span>
+                </div>
               </Grupo>
             </>
           )}
@@ -198,7 +201,7 @@ export function BarraCamadas(p: BarraCamadasProps) {
               aria-label="Data da observação"
               value={valorDoSeletorDeData(p.data)}
               onChange={(e) => p.onData(dataDoSeletor(e.target.value))}
-              data-testid="mapa-data"
+              data-testid="mapa-data-camada"
               className="h-8 min-w-[10rem] text-xs"
             >
               {p.opcoesData.map((o) => (
@@ -212,8 +215,8 @@ export function BarraCamadas(p: BarraCamadasProps) {
             )}
           </Grupo>
 
-          <Grupo rotulo="Ações" testId="mapa-grupo-acoes">
-            <div className="flex gap-1.5">
+          <Grupo rotulo="Ações" testId="mapa-grupo-acao">
+            <div className="flex gap-1.5" data-testid="mapa-grupo-acoes">
               <Button
                 type="button"
                 size="sm"

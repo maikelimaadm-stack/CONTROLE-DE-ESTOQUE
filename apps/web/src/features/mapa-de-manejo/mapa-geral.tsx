@@ -142,8 +142,9 @@ export function MapaGeral() {
     ativo: comNdvi && modoOperacional && (tema === "condicao" || temaExibido === "condicao"),
     classeDestaque: classeFiltro
   });
+  const idsTodasAreas = React.useMemo(() => areas.map((a) => a.id), [areas]);
   const resumosCompletos = useResumosObservacoesCompletas(
-    areas.map((a) => a.id),
+    idsTodasAreas,
     data,
     comNdvi && modoOperacional
   );
@@ -626,7 +627,7 @@ export function MapaGeral() {
           footer={(
             <>
               <Button type="button" variant="ghost" onClick={() => setSelecionada(null)} data-testid="dialog-area-fechar">Fechar</Button>
-              <Link href={fichaDaArea(selecionadaObj.id)} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="mapa-abrir-cadastro">Abrir cadastro</Link>
+              <a href={fichaDaArea(selecionadaObj.id)} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="mapa-abrir-cadastro">Abrir cadastro</a>
             </>
           )}
         >
