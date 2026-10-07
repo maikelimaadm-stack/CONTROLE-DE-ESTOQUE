@@ -56,6 +56,51 @@ Reusa `erp.satelite_consultas` / itens / worker SAT-02/03. Sem fila paralela.
 ## Limitações científicas
 
 Vegetação verde ≠ capim útil. Sem kg MS/ha, oferta, lotação ou diagnóstico de praga até calibração de campo.
+NDMI indica umidade espectral da vegetação/dossel — **não** umidade volumétrica do solo.
+
+## Observação completa (SAT-BUNDLE-01A R2)
+
+Uma operação de produto (`pastagem_essencial`) = uma observação canônica:
+
+- Statistical: **1** chamada do bundle `pastagem-essencial-v2` → 6 índices irmãos (estatística completa);
+- Process automático a frio: **até 1** chamada para o mapa integrado de condição v3;
+- Rasters técnicos (NDVI/EVI2/NDRE/NDMI/MSAVI2/BSI): **lazy**, on-demand e cacheados — não entram na geração automática nem na prévia;
+- Contrato de leitura: `ObservacaoSatelitalCompleta` + temas (`condicao`, `umidade`, `vigor`, `cobertura_solo`).
+
+“Observação completa” ≠ todos os PNGs técnicos materializados. O DTO distingue estatística disponível, raster materializado, não materializado e falhou.
+
+Trocar tema na futura UI **não** cria Statistical nem nova observação.
+
+### Orçamento / reserva (R2)
+
+Ordem obrigatória no worker:
+
+1. Statistical 2xx → persistir análise + consumo Statistical;
+2. item permanece `executando` (consulta continua reservando saldo);
+3. Process da condição **fora** de transação DB, com identidade temporal EXATA;
+4. gravar produto + consumo Process;
+5. só então fechar item/consulta (`concluido` ou `falho` `produto_condicao_falhou`).
+
+Falha do Process **não** repete Statistical — reparo do produto apenas.
+Prova de cache do mapa: organização + empresa + área + geometria + `versao_classificador` + `data_imagem` + `observacao_inicio`/`observacao_fim`. Mapa de outra data não satisfaz.
+
+Estimativa / orçamento (SSOT `estimarCreditosItem` + `estimarCreditosProcessCondicao`):
+
+- item novo pastagem = Statistical + Process da condição;
+- mapa comprovadamente reutilizável **da mesma observação** → Process = 0;
+- sem prova de cache temporal → estimativa conservadora;
+- Process automático interno grava `consulta_id` / `consulta_item_id` no ledger.
+
+Rotas F1 (sem UI):
+
+- `GET /api/mapa/areas/:areaId/observacao-satelital-completa`
+- `GET /api/mapa/observacoes-satelitais-completas/resumo`
+- `POST /api/satelite/areas/:areaId/produtos-observacao/reparar` — reparo idempotente do mapa (reusa Statistical; 0 Process se mapa já existe); **não** aceita `consulta_id`/`consulta_item_id` (consumo avulso)
+
+Orquestração operacional: `garantirProdutoCondicaoOperacional` → `pronto | reutilizado | falhou` (fail-closed).
+Rasters: `gerarOuReutilizarRasterIndice` (rota POST / on-demand).
+
+Próxima fatia: **SAT-BUNDLE-01B [F2]** — UI temática consumindo este contrato.
 
 ## Segurança
 

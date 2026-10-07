@@ -18,6 +18,11 @@ describe("SAT-COND-01 evalscript e Process", () => {
     expect(EVALSCRIPT_CONDICAO_PASTO_V1).toContain("return [6]");
     expect(EVALSCRIPT_CONDICAO_PASTO_V1).toContain("return [0]");
     expect(EVALSCRIPT_CONDICAO_PASTO_V1).not.toMatch(/linear|FLOAT32/i);
+    // v3: baixa cobertura ANTES de estresse; estresse exige cobertura+vigor.
+    expect(EVALSCRIPT_CONDICAO_PASTO_V1).toContain("Precedência v3");
+    expect(EVALSCRIPT_CONDICAO_PASTO_V1).toContain("msavi2 < MSAVI2_MOD && ndvi < NDVI_ATIVA) return [3]");
+    expect(EVALSCRIPT_CONDICAO_PASTO_V1).toContain("ndmi < NDMI_BAIXA && msavi2 >= MSAVI2_MOD && vigor) return [4]");
+    expect(VERSAO_EVALSCRIPT_CONDICAO_PASTO).toBe("condicao-pasto-v3");
   });
 
   it("chave de cache muda com geometria, data e versão", () => {

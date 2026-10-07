@@ -4,7 +4,8 @@ import { z } from "zod";
 import {
   BUNDLE_PASTAGEM_ESSENCIAL, ErroPeriodoConsulta, FAIXA_ZERO, INDICES_CONSULTA_SATELITE, MAX_ITENS_POR_CONSULTA,
   PAGINA_CONSULTAS, PAGINA_ITENS_CONSULTA, RESOLUCAO_AGREGACAO_PASTAGEM_M, RESOLUCAO_PADRAO_M,
-  SITUACOES_ITEM_VIVAS, VERSAO_METODO_POR_BUNDLE, estimarCreditosItem, origemChaveIdempotencia, slotsDoPeriodo, somarFaixas,
+  SITUACOES_ITEM_VIVAS, VERSAO_CLASSIFICADOR_CONDICAO_PASTO, VERSAO_METODO_POR_BUNDLE,
+  estimarCreditosItem, estimarCreditosProcessCondicao, origemChaveIdempotencia, slotsDoPeriodo, somarFaixas,
   type FaixaCreditos, type PeriodoConsulta, type SlotConsulta
 } from "@agro/domain";
 import { D } from "@agro/shared";
@@ -12,7 +13,9 @@ import { runService } from "../lib/service.js";
 import { DomainError, err, validation } from "../lib/errors.js";
 import { empresaScopeSql, scopedById, type ServiceCtx } from "../lib/context.js";
 import { chaveIdempotencia } from "../lib/satelite/chave-consulta.js";
-import { recalcularConsulta } from "../lib/satelite/fechamento.js";
+import { recalcularConsulta, travarConsulta } from "../lib/satelite/fechamento.js";
+import { garantirProdutoCondicaoOperacional } from "../lib/satelite/garantir-produtos-observacao.js";
+import type { IdentidadeObservacaoMapa } from "../lib/satelite/gerar-mapa-condicao.js";
 import { MSG_AREA_NAO_ENCONTRADA, PERMISSAO_PEDIR_ANALISE, PERMISSAO_VER_ANALISE, exigir, prepararPoligono, type AreaLida } from "./analises-satelitais.js";
 
 /**
@@ -120,6 +123,18 @@ interface AreaDoAlvo extends AreaLida { nome: string }
 interface AreaIgnorada { area_id: string; nome: string; motivo: string }
 interface ItemPlanejado {
   area_id: string; geometria_sha256: string; indice: IndiceConsulta; versao_metodo: string; slot: SlotConsulta; origem: string; chave: string; faixa: FaixaCreditos;
+  pixelsBbox: number;
+}
+
+/** Reparo do mapa de condição após reaproveitamento de Statistical (sem nova Statistical). */
+export interface ReparoProdutoPendente {
+  orgId: string;
+  userId: string;
+  areaId: string;
+  consultaId: string;
+  consultaItemId: string;
+  /** Identidade temporal EXATA da análise reaproveitada — nunca “latest”. */
+  identidade: IdentidadeObservacaoMapa;
 }
 
 interface LinhaConsulta {
@@ -299,7 +314,10 @@ async function reservaDaConsulta(ctx: ServiceCtx, consulta: LinhaConsulta): Prom
 
 const faixaDe = (itens: readonly ItemPlanejado[]): FaixaCreditos => (itens.length ? somarFaixas(itens.map((i) => i.faixa)) : FAIXA_ZERO);
 
-async function inserirConsulta(ctx: ServiceCtx, empresaId: string, parametros: unknown, estimativa: FaixaCreditos, totalItens: number, reaproveitados: number, situacao: "pendente" | "concluida"): Promise<LinhaConsulta> {
+async function inserirConsulta(
+  ctx: ServiceCtx, empresaId: string, parametros: unknown, estimativa: FaixaCreditos, totalItens: number,
+  reaproveitados: number, situacao: "pendente" | "executando" | "concluida"
+): Promise<LinhaConsulta> {
   const g = await ctx.tx.query<LinhaConsulta>(
     `insert into erp.satelite_consultas (organization_id, empresa_id, criado_por, parametros, estimativa_creditos, estimativa_creditos_minima,
         situacao, total_itens, total_reaproveitados, concluida_em)
@@ -308,6 +326,44 @@ async function inserirConsulta(ctx: ServiceCtx, empresaId: string, parametros: u
     [ctx.orgId, empresaId, ctx.user.id, JSON.stringify(parametros), estimativa.maximo, estimativa.minimo, situacao, totalItens, reaproveitados]);
   if (g.rowCount !== 1) throw new Error("consulta satelital: a gravação da consulta não devolveu exatamente uma linha");
   return g.rows[0]!;
+}
+
+/**
+ * Chaves de itens reaproveitados cujo mapa de condição v3 já existe para a OBSERVAÇÃO EXATA
+ * da análise viva (área + geometria + versao_classificador + data_imagem + observacao_inicio/fim).
+ * Mapa de outra data NÃO conta — prova temporal (SAT-BUNDLE-01A R2 / BLOCKER C).
+ * Sem prova → estimativa conservadora do Process.
+ */
+export async function chavesComMapaCondicaoV3DaObservacao(
+  ctx: ServiceCtx, chaves: readonly string[]
+): Promise<Set<string>> {
+  if (chaves.length === 0) return new Set();
+  const params: unknown[] = [ctx.orgId, chaves as unknown as string[], VERSAO_CLASSIFICADOR_CONDICAO_PASTO];
+  const escopoV = empresaScopeSql(ctx, "v", params);
+  const escopoS = empresaScopeSql(ctx, "s", params);
+  const escopoM = empresaScopeSql(ctx, "m", params);
+  const r = await ctx.tx.query<{ chave_idempotencia: string }>(
+    `select distinct v.chave_idempotencia
+       from erp.satelite_consulta_itens v
+       join erp.analises_satelitais s
+         on s.id = v.analise_id and s.organization_id = v.organization_id
+       join erp.satelite_mapas_condicao m
+         on m.organization_id = v.organization_id
+        and m.area_id = v.area_id
+        and m.geometria_sha256 = v.geometria_sha256
+        and m.versao_classificador = $3
+        and m.data_imagem = (s.observacao_inicio at time zone 'UTC')::date
+        and m.observacao_inicio = s.observacao_inicio
+        and m.observacao_fim = s.observacao_fim
+      where v.organization_id = $1
+        and v.chave_idempotencia = any($2::text[])
+        and v.situacao in (${VIVAS_SQL})
+        and v.analise_id is not null
+        and s.situacao = 'concluida'
+        and s.observacao_inicio is not null
+        and s.observacao_fim is not null
+        ${escopoV}${escopoS}${escopoM}`, params);
+  return new Set(r.rows.map((l) => l.chave_idempotencia));
 }
 
 /**
@@ -342,7 +398,10 @@ async function travarFilaDaEmpresa(ctx: ServiceCtx, empresaId: string): Promise<
 }
 
 /** Ajuste da consulta quando itens perderam a corrida: viram reaproveitados, a estimativa cai. ROW COUNT conferido. */
-async function ajustarConsulta(ctx: ServiceCtx, consultaId: string, estimativa: FaixaCreditos, reaproveitados: number, situacao: "pendente" | "concluida"): Promise<LinhaConsulta> {
+async function ajustarConsulta(
+  ctx: ServiceCtx, consultaId: string, estimativa: FaixaCreditos, reaproveitados: number,
+  situacao: "pendente" | "executando" | "concluida"
+): Promise<LinhaConsulta> {
   const params: unknown[] = [consultaId, ctx.orgId, estimativa.maximo, estimativa.minimo, reaproveitados, situacao];
   const escopo = empresaScopeSql(ctx, "s", params);
   const g = await ctx.tx.query<LinhaConsulta>(
@@ -379,7 +438,12 @@ async function processarConsulta(ctx: ServiceCtx, corpo: CorpoConsulta, corpoBru
       for (const indice of corpo.indices) {
         const versao_metodo = VERSAO_METODO_POR_BUNDLE[indice];
         const origem = origemChaveIdempotencia({ organizationId: ctx.orgId, areaId: area.id, geometriaSha256: hash, indiceBundle: indice, slot, versaoMetodo: versao_metodo });
-        itens.push({ area_id: area.id, geometria_sha256: hash, indice, versao_metodo, slot, origem, chave: chaveIdempotencia(origem), faixa: estimarCreditosItem({ pixelsBbox, indice, slot }) });
+        // pastagem: Statistical + Process condição (rasters lazy fora da prévia). Conservador: sem prova de cache.
+        itens.push({
+          area_id: area.id, geometria_sha256: hash, indice, versao_metodo, slot, origem,
+          chave: chaveIdempotencia(origem), pixelsBbox,
+          faixa: estimarCreditosItem({ pixelsBbox, indice, slot })
+        });
       }
     }
   }
@@ -390,15 +454,37 @@ async function processarConsulta(ctx: ServiceCtx, corpo: CorpoConsulta, corpoBru
   const vivas = await chavesVivas(ctx, itens.map((i) => i.chave));
   const novos = itens.filter((i) => !vivas.has(i.chave));
   const reaproveitados = itens.filter((i) => vivas.has(i.chave));
-  const estimativa = faixaDe(novos);
+
+  // Reaproveitamento pastagem: Statistical = 0; Process só se o mapa da OBSERVAÇÃO EXATA
+  // (data_imagem + janela) NÃO for comprovadamente reutilizável.
+  const chavesPastagemReaproveitadas = reaproveitados
+    .filter((i) => i.indice === BUNDLE_PASTAGEM_ESSENCIAL)
+    .map((i) => i.chave);
+  const mapasProntos = await chavesComMapaCondicaoV3DaObservacao(ctx, chavesPastagemReaproveitadas);
+  const faixasProcessReparo: FaixaCreditos[] = [];
+  const reparosPlanejados: { item: ItemPlanejado; faixaProcess: FaixaCreditos }[] = [];
+  for (const item of reaproveitados) {
+    if (item.indice !== BUNDLE_PASTAGEM_ESSENCIAL) continue;
+    const mapaOk = mapasProntos.has(item.chave);
+    const faixaProcess = estimarCreditosProcessCondicao({
+      pixelsBbox: item.pixelsBbox,
+      mapaReutilizavel: mapaOk
+    });
+    if (D(faixaProcess.maximo).gt(0)) {
+      faixasProcessReparo.push(faixaProcess);
+      reparosPlanejados.push({ item, faixaProcess });
+    }
+  }
+
+  const estimativa = somarFaixas([faixaDe(novos), ...faixasProcessReparo]);
   const saldo = await saldoDoMes(ctx, empresaId, agora);
-  // O orçamento só barra CUSTO NOVO: uma consulta só de reaproveitados (estimativa 0) nunca excede, mesmo com o saldo do
-  // mês já negativo — ela não pede nada ao provedor.
+  // O orçamento só barra CUSTO NOVO (Statistical novos + Process automático sem mapa comprovado).
   const excede = saldo !== null && D(estimativa.maximo).gt(0) && D(estimativa.maximo).gt(D(saldo));
 
   if (!corpo.confirmar) {
     return {
       criada: false as const,
+      reparos: [] as ReparoProdutoPendente[],
       corpo: {
         total_itens: totalItens, reaproveitados: reaproveitados.length, novos: novos.length, estimativa_creditos: estimativa,
         saldo_creditos_mes: saldo, excede_orcamento: excede, empresa_id: empresaId, areas_ignoradas: ignoradas
@@ -407,7 +493,11 @@ async function processarConsulta(ctx: ServiceCtx, corpo: CorpoConsulta, corpoBru
   }
   if (excede) throw validation(MSG_EXCEDE_ORCAMENTO, { estimativa_creditos: estimativa, saldo_creditos_mes: saldo });
 
-  let consulta = await inserirConsulta(ctx, empresaId, corpoBruto, estimativa, totalItens, reaproveitados.length, novos.length ? "pendente" : "concluida");
+  // Só reaproveitados com Process pendente → 'executando' para manter a reserva até o reparo.
+  const situacaoInicial: "pendente" | "executando" | "concluida" = novos.length
+    ? "pendente"
+    : (faixasProcessReparo.length ? "executando" : "concluida");
+  let consulta = await inserirConsulta(ctx, empresaId, corpoBruto, estimativa, totalItens, reaproveitados.length, situacaoInicial);
   const gravacao = await inserirItens(ctx, consulta.id, empresaId, [
     ...novos.map((item) => ({ item, situacao: "pendente" })),
     ...reaproveitados.map((item) => ({ item, situacao: "reaproveitado" }))
@@ -419,15 +509,77 @@ async function processarConsulta(ctx: ServiceCtx, corpo: CorpoConsulta, corpoBru
   }
   let novosFinais = novos;
   let estimativaFinal = estimativa;
+  let reparosFinais = reparosPlanejados;
   if (perdidos.length) {
     const extra = await inserirItens(ctx, consulta.id, empresaId, perdidos.map((item) => ({ item, situacao: "reaproveitado" })));
     if (extra.rowCount !== perdidos.length) throw new Error("consulta satelital: a gravação dos itens reaproveitados não alcançou as linhas esperadas");
     novosFinais = novos.filter((i) => gravacao.chaves.has(i.chave));
-    estimativaFinal = faixaDe(novosFinais);
-    consulta = await ajustarConsulta(ctx, consulta.id, estimativaFinal, totalItens - novosFinais.length, novosFinais.length ? "pendente" : "concluida");
+    // Perdidos viram reaproveitados: podem precisar de Process se pastagem sem mapa da observação.
+    const mapasPerdidos = await chavesComMapaCondicaoV3DaObservacao(ctx, perdidos
+      .filter((i) => i.indice === BUNDLE_PASTAGEM_ESSENCIAL).map((i) => i.chave));
+    const faixasPerdidos: FaixaCreditos[] = [];
+    for (const item of perdidos) {
+      if (item.indice !== BUNDLE_PASTAGEM_ESSENCIAL) continue;
+      const mapaOk = mapasPerdidos.has(item.chave);
+      const faixaProcess = estimarCreditosProcessCondicao({ pixelsBbox: item.pixelsBbox, mapaReutilizavel: mapaOk });
+      if (D(faixaProcess.maximo).gt(0)) {
+        faixasPerdidos.push(faixaProcess);
+        reparosFinais = [...reparosFinais, { item, faixaProcess }];
+      }
+    }
+    estimativaFinal = somarFaixas([faixaDe(novosFinais), ...faixasProcessReparo, ...faixasPerdidos]);
+    const sit: "pendente" | "executando" | "concluida" = novosFinais.length
+      ? "pendente"
+      : (D(estimativaFinal.maximo).gt(0) ? "executando" : "concluida");
+    consulta = await ajustarConsulta(ctx, consulta.id, estimativaFinal, totalItens - novosFinais.length, sit);
   }
+
+  // Itens reaproveitados que precisam de reparo — identidade EXATA da análise viva.
+  const chavesReparo = new Set(reparosFinais.map((r) => r.item.chave));
+  const reparos: ReparoProdutoPendente[] = [];
+  if (chavesReparo.size) {
+    const params: unknown[] = [ctx.orgId, consulta.id, [...chavesReparo]];
+    const escopoI = empresaScopeSql(ctx, "i", params);
+    const escopoV = empresaScopeSql(ctx, "v", params);
+    const escopoS = empresaScopeSql(ctx, "s", params);
+    const r = await ctx.tx.query<{
+      id: string; area_id: string; chave_idempotencia: string;
+      observacao_inicio: Date; observacao_fim: Date; geometria_sha256: string;
+    }>(
+      `select i.id, i.area_id, i.chave_idempotencia,
+              s.observacao_inicio, s.observacao_fim, s.geometria_sha256
+         from erp.satelite_consulta_itens i
+         join erp.satelite_consulta_itens v
+           on v.organization_id = i.organization_id
+          and v.chave_idempotencia = i.chave_idempotencia
+          and v.situacao in (${VIVAS_SQL})
+          and v.analise_id is not null
+         join erp.analises_satelitais s
+           on s.id = v.analise_id and s.organization_id = v.organization_id
+          and s.situacao = 'concluida'
+          and s.observacao_inicio is not null and s.observacao_fim is not null
+        where i.organization_id = $1 and i.consulta_id = $2
+          and i.chave_idempotencia = any($3::text[]) and i.situacao = 'reaproveitado'
+          ${escopoI}${escopoV}${escopoS}`, params);
+    for (const linha of r.rows) {
+      reparos.push({
+        orgId: ctx.orgId,
+        userId: ctx.user.id,
+        areaId: linha.area_id,
+        consultaId: consulta.id,
+        consultaItemId: linha.id,
+        identidade: {
+          observacaoInicio: linha.observacao_inicio,
+          observacaoFim: linha.observacao_fim,
+          geometriaSha256: linha.geometria_sha256
+        }
+      });
+    }
+  }
+
   return {
     criada: true as const,
+    reparos,
     corpo: {
       consulta: consultaDto(consulta), total_itens: totalItens, reaproveitados: totalItens - novosFinais.length, novos: novosFinais.length,
       // O saldo lido sob a trava, ANTES desta consulta — o mesmo número que a prévia mostraria naquele instante.
@@ -476,6 +628,62 @@ export default async function sateliteConsultasRoutes(app: FastifyInstance) {
     const porArea = slots.length * corpo.indices.length;
     if (porArea > MAX_ITENS_POR_CONSULTA) throw validation(msgItensDemaisPeloMenos(porArea), { total_itens_minimo: porArea, maximo: MAX_ITENS_POR_CONSULTA });
     const r = await runService(app, req, PERMISSAO_PEDIR_ANALISE, (ctx) => processarConsulta(ctx, corpo, req.body, slots, agora));
+    // Após commit: reparo OPERACIONAL do mapa quando Statistical foi reaproveitada e o mapa falta.
+    // Sem transação aberta durante HTTP externo. Fail-closed: falha NÃO libera reserva como concluída.
+    if (r.criada && r.reparos.length > 0) {
+      const consultaId = r.corpo.consulta.id;
+      let algumFalhou = !app.config.COPERNICUS_ENABLED;
+      if (app.config.COPERNICUS_ENABLED) {
+        const dep = {
+          db: app.db,
+          cliente: app.clienteCopernicus,
+          limiteAvulso: app.limiteAvulsoSatelite,
+          log: req.log,
+          copernicusEnabled: app.config.COPERNICUS_ENABLED,
+          armazenamento: app.armazenamentoRaster
+        };
+        for (const reparo of r.reparos) {
+          const desfecho = await garantirProdutoCondicaoOperacional(dep, {
+            orgId: reparo.orgId,
+            userId: reparo.userId,
+            areaId: reparo.areaId,
+            identidade: reparo.identidade,
+            consultaId: reparo.consultaId,
+            consultaItemId: reparo.consultaItemId,
+            politica: "principal"
+          });
+          if (desfecho.status === "falhou") {
+            algumFalhou = true;
+            req.log.warn({
+              satelite: {
+                consulta_id: consultaId,
+                area_id: reparo.areaId,
+                consulta_item_id: reparo.consultaItemId,
+                etapa: "reparo_produto_reaproveitado",
+                status: desfecho.status,
+                erro: desfecho.erro ?? null
+              }
+            }, "reparo do mapa de condição falhou — consulta permanece reservando");
+          }
+        }
+      } else {
+        req.log.warn({
+          satelite: { consulta_id: consultaId, etapa: "reparo_produto_reaproveitado", motivo: "copernicus_desligado" }
+        }, "reparo do mapa pendente — Copernicus desligado; reserva mantida");
+      }
+      // Só libera a reserva quando TODOS os reparos obrigatórios fecharam (pronto|reutilizado).
+      // Falha → consulta permanece 'executando' (não vira concluída normal com mapa ausente).
+      if (!algumFalhou) {
+        try {
+          await runService(app, req, PERMISSAO_PEDIR_ANALISE, async (ctx) => {
+            const travada = await travarConsulta(ctx, consultaId);
+            if (travada) await recalcularConsulta(ctx, consultaId);
+          });
+        } catch {
+          req.log.warn({ satelite: { consulta_id: consultaId, etapa: "fechamento_reparo" } }, "fechamento após reparo de produtos não aplicado");
+        }
+      }
+    }
     return reply.status(r.criada ? 201 : 200).send(r.corpo);
   });
 

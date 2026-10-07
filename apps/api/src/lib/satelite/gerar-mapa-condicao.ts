@@ -1,11 +1,11 @@
 /**
- * GERAÇÃO / REUTILIZAÇÃO DO MAPA DE CONDIÇÃO DO PASTO v2 — MAPA-UX-02.
+ * GERAÇÃO / REUTILIZAÇÃO DO MAPA DE CONDIÇÃO DO PASTO — MAPA-UX-02 / SAT-BUNDLE-01A.
  *
- * Serviço interno compartilhado pela rota HTTP (`POST …/condicao-pasto`) e pelo worker da fila
- * (após observação útil do bundle pastagem-essencial). Sem transação aberta durante HTTP externo.
+ * Serviço interno compartilhado pela rota HTTP (`POST …/condicao-pasto`) e pelo worker
+ * (`garantirProdutosDaObservacaoCompleta`). Sem transação aberta durante HTTP externo.
  *
- * Identidade do cache inclui `VERSAO_CLASSIFICADOR_CONDICAO_PASTO` (v2): máscara geométrica —
- * fora do polígono ≠ sem leitura. Linhas v1 permanecem no banco; a listagem operacional só serve v2.
+ * Identidade do cache inclui `VERSAO_CLASSIFICADOR_CONDICAO_PASTO` (v3): precedência conservadora
+ * + máscara geométrica. Linhas v1/v2 permanecem no banco; a listagem operacional só serve v3.
  */
 import { createHash } from "node:crypto";
 import { withTx, type Db } from "@agro/db";
@@ -110,11 +110,30 @@ export interface DependenciasGerarMapaCondicao {
   copernicusEnabled: boolean;
 }
 
+/**
+ * Identidade temporal EXATA da observação do bundle.
+ * Quando presente, o mapa é daquela observação — nunca do “latest”.
+ */
+export interface IdentidadeObservacaoMapa {
+  observacaoInicio: Date;
+  observacaoFim: Date;
+  geometriaSha256: string;
+}
+
 export interface PedidoGerarMapaCondicao {
   orgId: string;
   userId: string;
   areaId: string;
+  /** Dia civil UTC — filtro fraco; preferir `identidade` quando conhecida. */
   dataImagem?: string;
+  /** Identidade temporal obrigatória no worker/reparo de item. */
+  identidade?: IdentidadeObservacaoMapa;
+  /**
+   * Contexto opcional da consulta em lote: Process automático do worker atribui o consumo
+   * à consulta/item. Chamadas manuais/avulsas deixam null.
+   */
+  consultaId?: string | null;
+  consultaItemId?: string | null;
 }
 
 function tenantDo(p: PedidoGerarMapaCondicao) {
@@ -142,8 +161,25 @@ export async function lerAreaCondicao(ctx: ServiceCtx, areaId: string): Promise<
 }
 
 export async function lerObservacaoUtilCondicao(
-  ctx: ServiceCtx, area: AreaCondicao, dataImagem?: string
+  ctx: ServiceCtx, area: AreaCondicao, dataImagem?: string, identidade?: IdentidadeObservacaoMapa
 ): Promise<ObservacaoUtil | null> {
+  // Identidade exata: UMA observação — nunca “latest”.
+  if (identidade) {
+    const params: unknown[] = [
+      ctx.orgId, area.id, VERSAO_METODO_PASTAGEM_ESSENCIAL,
+      identidade.observacaoInicio, identidade.observacaoFim, identidade.geometriaSha256
+    ];
+    const escopo = empresaScopeSql(ctx, "s", params);
+    const r = await ctx.tx.query<ObservacaoUtil>(
+      `select s.observacao_inicio, s.observacao_fim, s.geometria_sha256
+         from erp.analises_satelitais s
+        where s.organization_id = $1 and s.area_id = $2 and s.versao_metodo = $3
+          and s.indice = 'ndvi' and s.situacao = 'concluida'
+          and s.observacao_inicio = $4 and s.observacao_fim = $5
+          and s.geometria_sha256 = $6${escopo}
+        limit 1`, params);
+    return r.rows[0] ?? null;
+  }
   const params: unknown[] = [ctx.orgId, area.id, VERSAO_METODO_PASTAGEM_ESSENCIAL, area.geometria_sha256];
   const escopo = empresaScopeSql(ctx, "s", params);
   let filtroData = "";
@@ -173,10 +209,10 @@ export async function lerMapaDaChave(ctx: ServiceCtx, chave: string): Promise<Li
 }
 
 export async function planejarMapaCondicao(
-  ctx: ServiceCtx, areaId: string, dataImagemPedido?: string
+  ctx: ServiceCtx, areaId: string, dataImagemPedido?: string, identidade?: IdentidadeObservacaoMapa
 ): Promise<PlanoMapaCondicao> {
   const area = await lerAreaCondicao(ctx, areaId);
-  const observacao = await lerObservacaoUtilCondicao(ctx, area, dataImagemPedido);
+  const observacao = await lerObservacaoUtilCondicao(ctx, area, dataImagemPedido, identidade);
   if (!observacao) throw validation(MSG_SEM_OBSERVACAO_CONDICAO, { motivo: "sem_observacao" });
   if (area.geometria_sha256 === null || area.geometria_sha256 !== observacao.geometria_sha256) {
     throw validation(MSG_GEOMETRIA_ALTERADA_CONDICAO, { motivo: "geometria_alterada" });
@@ -261,13 +297,26 @@ async function gravarMapa(
   return null;
 }
 
+function idsConsulta(p: PedidoGerarMapaCondicao): { consultaId: string | null; consultaItemId: string | null } {
+  return {
+    consultaId: p.consultaId ?? null,
+    consultaItemId: p.consultaItemId ?? null
+  };
+}
+
 async function gravarConsumoCurto(
   dep: DependenciasGerarMapaCondicao, p: PedidoGerarMapaCondicao, areaId: string, puCabecalho: string | null
 ): Promise<void> {
   await comCtx(dep, p, async (ctx) => {
     const area = await lerAreaCondicao(ctx, areaId);
+    const ids = idsConsulta(p);
     await gravarConsumo(ctx.tx, {
-      organizationId: ctx.orgId, empresaId: area.empresa_id, consultaId: null, consultaItemId: null, puCabecalho
+      organizationId: ctx.orgId,
+      empresaId: area.empresa_id,
+      consultaId: ids.consultaId,
+      consultaItemId: ids.consultaItemId,
+      puCabecalho,
+      operacao: "process"
     });
   });
 }
@@ -288,7 +337,7 @@ export async function gerarOuReutilizarMapaCondicao(
   }
 
   const a = await comCtx(dep, pedido, async (ctx) => {
-    const plano = await planejarMapaCondicao(ctx, pedido.areaId, pedido.dataImagem);
+    const plano = await planejarMapaCondicao(ctx, pedido.areaId, pedido.dataImagem, pedido.identidade);
     const existente = await lerMapaDaChave(ctx, plano.chave);
     return { plano, existente, contagem: existente ? null : await lerContagemChamadas(ctx.tx) };
   });
@@ -358,18 +407,21 @@ export async function gerarOuReutilizarMapaCondicao(
 
     const desfecho = await comCtx(dep, pedido, async (ctx) => {
       const area = await lerAreaCondicao(ctx, pedido.areaId);
+      const ids = idsConsulta(pedido);
+      const consumoProcess = (pu: string | null) => gravarConsumo(ctx.tx, {
+        organizationId: ctx.orgId,
+        empresaId: area.empresa_id,
+        consultaId: ids.consultaId,
+        consultaItemId: ids.consultaItemId,
+        puCabecalho: pu,
+        operacao: "process"
+      });
       if (area.geometria_sha256 !== plano.area.geometria_sha256) {
-        await gravarConsumo(ctx.tx, {
-          organizationId: ctx.orgId, empresaId: area.empresa_id, consultaId: null, consultaItemId: null, puCabecalho: feita.puCabecalho
-        });
+        await consumoProcess(feita.puCabecalho);
         throw validation(MSG_GEOMETRIA_ALTERADA_CONDICAO, { motivo: "geometria_alterada" });
       }
       const linha = await gravarMapa(ctx, plano, feita);
-      if (abriuChamada) {
-        await gravarConsumo(ctx.tx, {
-          organizationId: ctx.orgId, empresaId: area.empresa_id, consultaId: null, consultaItemId: null, puCabecalho: feita.puCabecalho
-        });
-      }
+      if (abriuChamada) await consumoProcess(feita.puCabecalho);
       return linha ?? await lerMapaDaChave(ctx, plano.chave);
     });
     if (!desfecho) {

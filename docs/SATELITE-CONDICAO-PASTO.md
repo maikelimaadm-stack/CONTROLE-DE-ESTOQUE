@@ -1,6 +1,6 @@
 # Mapa integrado de condição do pasto
 
-Decisão **302** (SAT-COND-01) + correção espacial **MAPA-UX-02**. Experiência padrão do Mapa geral: **uma classificação categórica**, não um índice científico.
+Decisão **302** (SAT-COND-01) + correção espacial **MAPA-UX-02** + classificador **v3** (**SAT-BUNDLE-01A**). Experiência padrão do Mapa geral: **uma classificação categórica**, não um índice científico.
 
 O produtor não escolhe NDVI, EVI2, NDRE, NDMI, MSAVI2 ou BSI para entender o pasto. Esses sinais entram juntos, na **mesma observação**, e saem como um mapa de classes mutuamente exclusivas com hectares estimados.
 
@@ -10,7 +10,7 @@ Responder, com um clique (fluxo **Analisar pastos** em lote):
 
 - onde a vegetação está ativa e com boa cobertura;
 - onde a cobertura é moderada ou baixa;
-- onde há possível estresse hídrico (NDMI);
+- onde há possível estresse hídrico (NDMI) — só quando cobertura/vigor bastam;
 - onde o solo aparece exposto (estimativa espectral);
 - onde há água (SCL);
 - onde não foi possível ler **dentro** do pasto;
@@ -20,31 +20,25 @@ Responder, com um clique (fluxo **Analisar pastos** em lote):
 
 A Process API devolve um PNG **retangular** da bbox da grade. Fora do polígono os bytes caíam em classe 0 (SEM_LEITURA), a LUT pintava cinza opaco e o MapLibre estendia a imagem pelos quatro cantos.
 
-**Errado:** retângulo cinza fora da cerca; hectares de “Sem leitura” inflados pela bbox.
-
-**Correto (v2):**
+**Correto (desde v2; mantido em v3):**
 
 | Conceito | Significado |
 |----------|-------------|
 | `FORA_DO_POLIGONO` (byte 255) | Não é classe; alpha 0; fora do universo/hectares/% |
 | `SEM_LEITURA` (código 0) | Somente pixel **dentro** do polígono sem qualidade/dado |
 
-Máscara geométrica: centro do pixel na grade EPSG:3857, anel externo menos furos. Contagem usa só máscara=1. PNG armazenado já com 255 fora.
-
 ## Versão operacional
 
 | Peça | Valor |
 |------|--------|
-| Classificador corrente | `condicao-pasto-v2` |
-| Classificador legado | `condicao-pasto-v1` (histórico; resumo espacial incorreto; **não** reaproveitar) |
-| Evalscript espectral | `condicao-pasto-v1` (thresholds iguais — v2 não muda a ciência) |
+| Classificador corrente | `condicao-pasto-v3` |
+| Classificador histórico | `condicao-pasto-v2` (estresse antes de baixa cobertura) |
+| Classificador legado | `condicao-pasto-v1` (resumo espacial incorreto; **não** reaproveitar) |
+| Evalscript espectral | `condicao-pasto-v3` (precedência alinhada ao classificador) |
 | Resolução analítica efetiva | **20 m** |
 | Saída Process API | PNG UINT8; 0..6 classes; 255 = fora |
-| Renderização de classes | `nearest` no dado; apresentação por **zonas** (contornos), sem grade |
 
-Documentação da v2: corrige máscara geométrica; regras espectrais permanecem as da v1.
-
-Trocar classificador, evalscript, geometria, data ou resolução **invalida** o mapa anterior (chave de cache).
+Trocar classificador, evalscript, geometria, data ou resolução **invalida** o mapa anterior (chave de cache). Forward-only: nada apaga v1/v2.
 
 ## Classes (mutuamente exclusivas)
 
@@ -70,48 +64,59 @@ SSOT: `packages/domain/src/condicao-pasto.ts`.
 | Umidade | NDMI |
 | Qualidade | SCL + dataMask |
 
-Precedência fail-closed: Sem leitura → Água → Solo → Estresse → Baixa → Moderada → Boa.
+### Precedência v3 (conservadora)
+
+1. SEM_LEITURA  
+2. ÁGUA  
+3. SOLO_EXPOSTO  
+4. BAIXA_COBERTURA  
+5. POSSÍVEL_ESTRESSE_HÍDRICO  
+6. COBERTURA_MODERADA  
+7. BOA_COBERTURA  
+
+Estresse hídrico **não** é classe-curinga: exige cobertura suficiente (`MSAVI2 ≥ moderada`) **e** vigor corroborado **e** NDMI abaixo do limiar. Baixa cobertura + NDMI baixo → baixa cobertura, não estresse.
 
 ## Thresholds
 
-Heurísticas espectrais **v1** (não alteradas na v2). Evalscript interpola `LIMIARES_CLASSIFICADOR_CONDICAO_PASTO`.
+Heurísticas espectrais experimentais em `LIMIARES_CLASSIFICADOR_CONDICAO_PASTO`. Evalscript interpola o mesmo SSOT.
 
 ## Identidade e persistência
 
 Identidade: organização + empresa + área + `geometria_sha256` + data + versão classificador + versão evalscript + resolução + fonte.
 
-Tabelas `erp.satelite_mapas_condicao` (+ arquivos). Sem `analise_id`. Migration `0059` (trava `(2026,93)`). Imutável. Mapas v1 **não** são apagados nem atualizados; a listagem operacional filtra a versão corrente v2.
-
-Hectares: maior resto sobre o **universo interno**; soma ≈ `area_total_ha`. Campo opcional `pixels_fora_poligono` só auditoria.
-
-## Dado vs apresentação
-
-- **Dado analítico:** pixels categóricos 20 m (estatística, auditoria).
-- **Apresentação:** zonas/contornos derivados dos pixels, clipados ao polígono; suavização visual ≤ ~10 m se ativa; nunca altera contagens.
+Tabelas `erp.satelite_mapas_condicao` (+ arquivos). Sem `analise_id`. Migration `0059` (já aplicada). Imutável. Mapas v1/v2 **não** são apagados; a listagem operacional filtra a versão corrente v3.
 
 ## Rotas
 
-- `POST /api/satelite/areas/:areaId/condicao-pasto` — gera/reaproveita v2 via serviço interno `lib/satelite/gerar-mapa-condicao.ts`.
-- `GET /api/satelite/areas/:areaId/condicao-pasto` — mapa v2 gravado.
-- `GET /api/mapa/condicao-pasto?area_ids=` — listagem v2 (filtra `versao_classificador` corrente; não gera). 404 = rota ausente (API anterior).
+- `POST /api/satelite/areas/:areaId/condicao-pasto` — gera/reaproveita v3 via `lib/satelite/gerar-mapa-condicao.ts`.
+- `GET /api/satelite/areas/:areaId/condicao-pasto` — mapa v3 gravado.
+- `GET /api/mapa/condicao-pasto?area_ids=` — listagem v3 (não gera).
 - `GET /api/mapa/condicao-pasto/:mapaId/arquivo?t=` — PNG.
 
-## UI (MAPA-UX-02 + MAPA-UX-03)
+## Worker / bundle (SAT-BUNDLE-01A R2)
 
-- CTA principal: **Analisar pastos** — default fixo **Todos os pastos** (nunca área aberta nem viewport).
-- Modal 3 etapas: seleção → prévia inequívoca → progresso; Opções avançadas fechadas.
-- Popup **central** da área e da classe (não painel lateral); sem Analisar/Gerar por área.
-- Lista compacta; rótulos só hover/selecionada.
-- Apresentação principal: **zonas** GeoJSON (fill-antialias); PNG categórico fica como fallback de baixa opacidade.
-- Índices em **Dados técnicos**.
-- Após consulta em lote com observação útil: gerar/reutilizar mapa v2 automaticamente (mesmo serviço da rota).
-- Estado estável: resumo conhecido ≠ raster do viewport; stale-while-revalidate (resultado não some no refresh); barra de status recupera consulta viva via `GET /api/satelite/consultas`.
-- Capacidade: `GET /api/satelite/capacidade` → `{ fila_disponivel, copernicus_disponivel }` (sem secrets). Worker off não finge processamento.
+Após Statistical útil do `pastagem-essencial-v2`, o executor **mantém o item em `executando`**
+(reserva ativa), chama `garantirProdutoCondicaoOperacional` com política **`principal`** e
+identidade temporal EXATA (`observacao_inicio`/`fim` + `geometria_sha256`), e só então fecha:
 
-## Worker
+- mapa condição v3 **somente**;
+- rasters técnicos dos 6 índices = **lazy** (rota POST / on-demand via `gerarOuReutilizarRasterIndice`);
+- Process automático a frio: até **1** chamada;
+- consumo Process do worker atribui `consulta_id` / `consulta_item_id`;
+- falha do Process → item `falho` `produto_condicao_falhou` (consulta ≠ concluída normal); Statistical permanece; reparo não repete Statistical;
+- produto em cache da **mesma observação** → reutilizado (0 Process);
+- reparo de reaproveitado: fail-closed (`pronto|reutilizado|falhou`); falha mantém reserva;
+- `POST …/produtos-observacao/reparar` público = consumo avulso (sem IDs de ledger do cliente).
 
-`SATELITE_WORKER_ENABLED` permanece desligado por padrão (config; sem mudança de variável Railway nesta fatia). Quando ligado (com Copernicus e credencial), após item `pastagem-essencial-v2` concluir com observação útil o executor chama, em best-effort, `gerarOuReutilizarMapaCondicao` / `tentarGerarMapaCondicaoAposPastagem`. Falha do mapa **não** falha o item estatístico — só log `warn`.
+## Observação completa (contrato F1)
 
-## Reversão
+Ver `docs/SATELITE-COMPLETO.md` e `packages/domain/src/observacao-satelital-completa.ts`.
 
-Listagem só v2; v1 fica no banco. Remover a experiência padrão devolve o modo técnico.
+- `GET /api/mapa/areas/:areaId/observacao-satelital-completa`
+- `GET /api/mapa/observacoes-satelitais-completas/resumo`
+
+UI temática (temas condição/umidade/vigor/cobertura_solo) = fatia **F2** (não nesta PR).
+
+## Limitações
+
+Vegetação verde ≠ capim útil. Sem kg MS/ha, oferta, lotação ou diagnóstico de praga. NDMI ≠ umidade volumétrica do solo.

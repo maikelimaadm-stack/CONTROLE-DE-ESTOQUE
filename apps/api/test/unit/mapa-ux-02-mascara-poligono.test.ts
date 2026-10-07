@@ -103,10 +103,16 @@ describe("MAPA-UX-02 — máscara geométrica (ESP)", () => {
     expect(resumo.pixels_universo).not.toBe(mascara.length);
   });
 
-  it("ESP-10 v1 não é a versão operacional", async () => {
-    const { VERSAO_CLASSIFICADOR_CONDICAO_PASTO, VERSAO_CLASSIFICADOR_CONDICAO_PASTO_V1 } = await import("@agro/domain");
-    expect(VERSAO_CLASSIFICADOR_CONDICAO_PASTO).toBe("condicao-pasto-v2");
+  it("ESP-10 v1/v2 não são a versão operacional (v3)", async () => {
+    const {
+      VERSAO_CLASSIFICADOR_CONDICAO_PASTO,
+      VERSAO_CLASSIFICADOR_CONDICAO_PASTO_V1,
+      VERSAO_CLASSIFICADOR_CONDICAO_PASTO_V2
+    } = await import("@agro/domain");
+    expect(VERSAO_CLASSIFICADOR_CONDICAO_PASTO).toBe("condicao-pasto-v3");
     expect(VERSAO_CLASSIFICADOR_CONDICAO_PASTO_V1).toBe("condicao-pasto-v1");
+    expect(VERSAO_CLASSIFICADOR_CONDICAO_PASTO_V2).toBe("condicao-pasto-v2");
     expect(VERSAO_CLASSIFICADOR_CONDICAO_PASTO).not.toBe(VERSAO_CLASSIFICADOR_CONDICAO_PASTO_V1);
+    expect(VERSAO_CLASSIFICADOR_CONDICAO_PASTO).not.toBe(VERSAO_CLASSIFICADOR_CONDICAO_PASTO_V2);
   });
 });

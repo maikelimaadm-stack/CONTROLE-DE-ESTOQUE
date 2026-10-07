@@ -10,6 +10,7 @@ export * from "./analise-satelital.js";
 export * from "./indices-satelitais.js";
 export * from "./raster-satelital.js";
 export * from "./condicao-pasto.js";
+export * from "./observacao-satelital-completa.js";
 export * from "./anomalia-satelital.js";
 export * from "./consulta-satelital.js";
 export * from "./rebanho.js";

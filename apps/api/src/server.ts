@@ -44,6 +44,7 @@ import rastersSatelitaisRoutes from "./routes/rasters-satelitais.js";
 import sateliteConsultasRoutes from "./routes/satelite-consultas.js";
 import sateliteCondicaoRoutes from "./routes/satelite-condicao.js";
 import sateliteCondicaoPastoRoutes from "./routes/satelite-condicao-pasto.js";
+import observacaoSatelitalCompletaRoutes from "./routes/observacao-satelital-completa.js";
 import produtosPesquisaRoutes from "./routes/produtos-pesquisa.js";
 import type { BuscarFn } from "./lib/consultas/http.js";
 import { politicaDeOrigem } from "./lib/cors-origem.js";
@@ -102,13 +103,15 @@ export async function buildApp(opts: {
   // processo, compartilhado pela análise da SAT-01 e pela imagem por pixel — o mesmo limite, as mesmas vagas.
   const limiteAvulsoSatelite = new LimiteAvulsoSatelite(limitesDaConfig(config));
   app.decorate("limiteAvulsoSatelite", limiteAvulsoSatelite);
-  app.decorate("armazenamentoRaster", opts.armazenamentoRaster ?? armazenamentoRaster);
+  const armazenamentoRasterEfetivo = opts.armazenamentoRaster ?? armazenamentoRaster;
+  app.decorate("armazenamentoRaster", armazenamentoRasterEfetivo);
   // O EXECUTOR DA FILA SATELITAL só existe com as três condições (SATELITE_WORKER_ENABLED, COPERNICUS_ENABLED e a
   // credencial); faltando uma, UMA linha de log diz qual (sem valor nenhum) e nada é reservado — a API sobe igual.
   const motivoDesligado = motivoExecutorDesligado(config, clienteCopernicus);
   const executorSatelite = motivoDesligado ? null : new WorkerSatelite({
     db, cliente: clienteCopernicus, limites: limitesDaConfig(config), log: app.log,
     limiteAvulso: limiteAvulsoSatelite, copernicusEnabled: config.COPERNICUS_ENABLED,
+    armazenamento: armazenamentoRasterEfetivo,
     intervaloMs: (config.SATELITE_WORKER_INTERVALO_S ?? INTERVALO_EXECUTOR_PADRAO_S) * 1000
   });
   app.decorate("executorSatelite", executorSatelite);
@@ -171,6 +174,7 @@ export async function buildApp(opts: {
   await app.register(sateliteConsultasRoutes, { prefix: "/api" });
   await app.register(sateliteCondicaoRoutes, { prefix: "/api" });
   await app.register(sateliteCondicaoPastoRoutes, { prefix: "/api" });
+  await app.register(observacaoSatelitalCompletaRoutes, { prefix: "/api" });
   await app.register(produtosPesquisaRoutes, { prefix: "/api" });
   // ------------------------------------------------------------------------------------------------
   // CONTRATO NEGATIVO DO NOME ANTIGO DE EMPRESA (PRE-BASE2-05B).

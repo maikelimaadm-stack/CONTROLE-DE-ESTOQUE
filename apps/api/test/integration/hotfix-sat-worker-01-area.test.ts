@@ -6,6 +6,7 @@ import type { PeriodoConsulta } from "@agro/domain";
 import { buildApp } from "../../src/server.js";
 import type { BuscarFn } from "../../src/lib/consultas/http.js";
 import { ClienteCopernicus, ENDERECOS_COPERNICUS } from "../../src/lib/satelite/copernicus.js";
+import { armazenamentoRaster } from "../../src/lib/satelite/armazenamento-raster.js";
 import { MODULO_EXECUTOR } from "../../src/lib/satelite/contexto-worker.js";
 import {
   conferirAreaAposReserva, ERROS_ITEM, executarItem, type ItemReservado, type LogSatelite
@@ -144,7 +145,8 @@ describe("HOTFIX-SAT-WORKER-01 — contrato reserva → execução", () => {
     });
     const dep = {
       db: h.db, cliente, log, agora: Date.now, aleatorio: () => 0.5,
-      limiteAvulso: new LimiteAvulsoSatelite(SEM_TETO), copernicusEnabled: true
+      limiteAvulso: new LimiteAvulsoSatelite(SEM_TETO), copernicusEnabled: true,
+      armazenamento: armazenamentoRaster
     };
     const r = await executarItem(dep, item!);
     expect(r.desfecho).toBe("concluido");
@@ -246,6 +248,7 @@ describe("HOTFIX-SAT-WORKER-01 — fail-safe cascata + reprocessar", () => {
     const w = new WorkerSatelite({
       db: h.db, cliente, limites: SEM_TETO, log,
       limiteAvulso: new LimiteAvulsoSatelite(SEM_TETO), copernicusEnabled: true,
+      armazenamento: armazenamentoRaster,
       agora: () => agora,
       reservarFn: async () => {
         const out = fila;

@@ -15,7 +15,8 @@ const L = LIMIARES_CLASSIFICADOR_CONDICAO_PASTO;
 
 export const EVALSCRIPT_CONDICAO_PASTO_V1 = `//VERSION=3
 // Classificação integrada ${VERSAO_EVALSCRIPT_CONDICAO_PASTO}: UINT8 0..6 (0=sem leitura).
-// Precedência: SEM_LEITURA → AGUA → SOLO → ESTRESSE → BAIXA → MODERADA → BOA.
+// Precedência v3: SEM_LEITURA → AGUA → SOLO → BAIXA → ESTRESSE → MODERADA → BOA.
+// Estresse só com cobertura/vigor suficientes (não é curinga de vegetação rala).
 var SCL_OK = [${SCL_PERMITIDAS_CONDICAO_PASTO.join(", ")}];
 var SCL_AGUA = ${SCL_AGUA};
 var MSAVI2_BOA = ${JSON.stringify(L.msavi2BoaCobertura)};
@@ -55,9 +56,9 @@ function evaluatePixel(s) {
   var bsi = ((s.B11 + s.B04) - (s.B08 + s.B02)) / denBsi;
   if (!(isFinite(ndvi) && isFinite(evi2) && isFinite(ndre) && isFinite(ndmi) && isFinite(msavi2) && isFinite(bsi))) return [0];
   if ((bsi >= BSI_FORTE && msavi2 < MSAVI2_MOD) || (bsi >= BSI_SOLO && ndvi < NDVI_SOLO && msavi2 < MSAVI2_MOD)) return [5];
-  if (ndmi < NDMI_BAIXA && (ndvi >= NDVI_BAIXA || msavi2 >= MSAVI2_BAIXA || evi2 >= EVI2_VIGOR)) return [4];
   if (msavi2 < MSAVI2_MOD && ndvi < NDVI_ATIVA) return [3];
   var vigor = ndvi >= NDVI_ATIVA && (evi2 >= EVI2_VIGOR || ndre >= NDRE_VIGOR);
+  if (ndmi < NDMI_BAIXA && msavi2 >= MSAVI2_MOD && vigor) return [4];
   if (msavi2 >= MSAVI2_BOA && vigor) return [1];
   if (msavi2 >= MSAVI2_MOD || ndvi >= NDVI_ATIVA) return [2];
   return [0];
