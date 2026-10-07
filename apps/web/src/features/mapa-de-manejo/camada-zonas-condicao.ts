@@ -7,6 +7,7 @@ import { CLASSES_CONDICAO_PASTO } from "@agro/domain";
 import type { GeoJSONSource, Map as MapLibreMap } from "maplibre-gl";
 import type { MultiPolygon, Polygon } from "geojson";
 import { ANTES_DO_CONTORNO } from "./camada-rasters";
+import { assinaturaDaGeometria } from "./cache-rasters";
 import type { EntradaRasterEmMemoria } from "./rasters-indice";
 import { featureCollectionZonas, zonasDeRasterCondicao, type CantosLngLat } from "./zonas-condicao";
 import { featureCollectionIsobandas, isobandasDoRaster } from "./isobandas";
@@ -35,10 +36,10 @@ function chaveCache(
   return `${id}|${tema}|${bytesLen}|${largura}x${altura}|${geoKey}`;
 }
 
-function geoKey(g: Polygon | MultiPolygon | GeomPoly | null | undefined): string {
+/** Identidade geométrica real — não o tamanho da string JSON. */
+export function geoKey(g: Polygon | MultiPolygon | GeomPoly | null | undefined): string {
   if (!g) return "0";
-  try { return JSON.stringify(g.coordinates).length + ":" + g.type; }
-  catch { return "x"; }
+  return assinaturaDaGeometria(g);
 }
 
 export function featureCollectionDaEntrada(

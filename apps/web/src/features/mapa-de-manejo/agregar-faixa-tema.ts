@@ -1,20 +1,18 @@
 /**
- * Resumo agregado por faixa temática — SAT-BUNDLE-01B [F2] R1.
- * Usa médias do bulk F1 + hectares do cadastro. Zero POST.
+ * Agregação de faixa na VISTA ATUAL — SAT-BUNDLE-01B [F2] R2.
+ *
+ * Usa distribuição PIXEL-LEVEL (`distribuirFaixasRasterNaArea`).
+ * NÃO atribui area_ha inteira pela média do índice.
  */
-import { faixaDaMedia, mediaDoTema, type TemaMapaPasto } from "./temas-mapa-pasto";
+import {
+  agregarFaixaNaVista, type DistribuicaoFaixasArea
+} from "./distribuicao-faixas-raster";
+import { faixasDoTema, type TemaMapaPasto } from "./temas-mapa-pasto";
 
-export interface AreaParaAgregado {
-  id: string;
+export interface ItemDistribuicaoVista {
+  areaId: string;
   nome: string;
-  areaHa: number;
-  medias: Partial<Record<string, string | null>> | null | undefined;
-}
-
-export interface LinhaAgregadoFaixa {
-  id: string;
-  nome: string;
-  ha: number;
+  dist: DistribuicaoFaixasArea;
 }
 
 export interface AgregadoFaixaTema {
@@ -23,37 +21,28 @@ export interface AgregadoFaixaTema {
   ha: number;
   pct: number;
   pastos: number;
-  principais: LinhaAgregadoFaixa[];
+  principais: { id: string; nome: string; ha: number }[];
+  haCarregada: number;
+  escopo: "vista_atual";
 }
 
-export function agregarFaixaTema(p: {
+export function agregarFaixaTemaVista(p: {
   tema: TemaMapaPasto;
   faixaId: string;
-  areas: readonly AreaParaAgregado[];
+  itens: readonly ItemDistribuicaoVista[];
 }): AgregadoFaixaTema | null {
   if (p.tema === "condicao") return null;
-  const linhas: LinhaAgregadoFaixa[] = [];
-  let totalHaAnalisado = 0;
-  for (const a of p.areas) {
-    const media = mediaDoTema(p.tema, a.medias);
-    if (media === null) continue;
-    totalHaAnalisado += a.areaHa;
-    const faixa = faixaDaMedia(p.tema, media);
-    if (!faixa || faixa.id !== p.faixaId) continue;
-    linhas.push({ id: a.id, nome: a.nome, ha: a.areaHa });
-  }
-  linhas.sort((a, b) => b.ha - a.ha);
-  const ha = linhas.reduce((s, x) => s + x.ha, 0);
-  const pct = totalHaAnalisado > 0 ? (ha / totalHaAnalisado) * 100 : 0;
-  const rotulo = linhas.length
-    ? (faixaDaMedia(p.tema, mediaDoTema(p.tema, p.areas.find((a) => a.id === linhas[0]!.id)?.medias))?.rotulo ?? p.faixaId)
-    : p.faixaId;
+  const faixa = faixasDoTema(p.tema)?.find((f) => f.id === p.faixaId);
+  const rotulo = faixa?.rotulo ?? (p.faixaId === "sem_leitura" ? "Sem leitura" : p.faixaId);
+  const agg = agregarFaixaNaVista({ faixaId: p.faixaId, itens: p.itens });
   return {
     faixaId: p.faixaId,
     rotulo,
-    ha,
-    pct,
-    pastos: linhas.length,
-    principais: linhas.slice(0, 8)
+    ha: agg.ha,
+    pct: agg.pctDaVista,
+    pastos: agg.pastos,
+    principais: agg.principais,
+    haCarregada: agg.haCarregada,
+    escopo: "vista_atual"
   };
 }

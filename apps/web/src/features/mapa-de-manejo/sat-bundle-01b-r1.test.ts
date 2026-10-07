@@ -7,7 +7,6 @@ import { resolve } from "node:path";
 import booleanPointInPolygon from "@turf/boolean-point-in-polygon";
 import { polygon } from "@turf/helpers";
 import { codificarValorRaster } from "@agro/domain";
-import { agregarFaixaTema } from "./agregar-faixa-tema";
 import { clipGeometriaComArea, pontoEmPoligono } from "./clip-geometria";
 import { OPACIDADE_PNG_SOB_ZONAS } from "./camada-zonas-condicao";
 import { isobandasDoRaster } from "./isobandas";
@@ -165,19 +164,11 @@ describe("SAT-BUNDLE-01B R1 — clip / holes / suavização", () => {
 });
 
 describe("SAT-BUNDLE-01B R1 — legenda / agregado", () => {
-  it("R1-08: agregar faixa destaca pastos pela SSOT de faixas", () => {
-    const areas = [
-      { id: "a", nome: "Pasto A", areaHa: 40, medias: { ndmi: "0.20" } },
-      { id: "b", nome: "Pasto B", areaHa: 10, medias: { ndmi: "-0.10" } },
-      { id: "c", nome: "Pasto C", areaHa: 20, medias: { ndmi: "0.22" } }
-    ];
+  it("R1-08: leitura/cor por média (resumo); hectares vêm de pixels (R2)", () => {
     const faixa = faixaDaMedia("umidade", 0.20)!;
     expect(faixa.id).toBe("adequada");
-    const agg = agregarFaixaTema({ tema: "umidade", faixaId: faixa.id, areas });
-    expect(agg).not.toBeNull();
-    expect(agg!.pastos).toBe(2);
-    expect(agg!.ha).toBe(60);
-    expect(agg!.principais[0]!.nome).toBe("Pasto A");
+    expect(corDoTemaPorMedias("umidade", { ndmi: "0.20" })).toBe(faixa.cor);
+    expect(leituraTematicaLista("umidade", { ndmi: "0.20" })).toMatch(/Umidade adequada/i);
   });
 
   it("isobandas vigor usa NDRE (R1-02)", () => {

@@ -40,13 +40,18 @@ import { familiaDoIndice, familiaPorId, nomeDoIndice, type FamiliaCamada, type I
 import { selecionarAreasDaVista, type Vista } from "./viewport-rasters";
 import { areasDesatualizadas, type SelecaoConsulta } from "./consulta-satelite";
 import {
-  useResumosObservacoesCompletas, invalidarCacheObservacaoCompleta, PERMISSAO_VER_OBSERVACAO
+  useObservacaoSatelitalCompleta, useResumosObservacoesCompletas,
+  invalidarCacheObservacaoCompleta, PERMISSAO_VER_OBSERVACAO
 } from "./observacao-completa";
+import { distribuirFaixasRasterNaArea } from "./distribuicao-faixas-raster";
 import {
   TEMA_DEFAULT, corDoTemaPorMedias, indiceFonteDoTema, leituraTematicaLista,
   rotuloStatusLista, type ModoMapaPasto, type TemaMapaPasto
 } from "./temas-mapa-pasto";
 import { LegendaTemaPasto } from "./legenda-tema-pasto";
+import {
+  ZOOM_MINIMO_DETALHE_TEMAS, deveCarregarDetalheTematico, idsDetalheTematico
+} from "./zoom-detalhe-temas";
 
 /**
  * MAPA GERAL (decisões 294, 298, 302) — experiência padrão: classificação integrada da condição do pasto.
@@ -98,6 +103,7 @@ export function MapaGeral() {
   const [selecionada, setSelecionada] = React.useState<string | null>(null);
   const [hoverAreaId, setHoverAreaId] = React.useState<string | null>(null);
   const [vista, setVista] = React.useState<Vista | null>(null);
+  const [zoom, setZoom] = React.useState(0);
   const [familia, setFamilia] = React.useState<FamiliaCamada>("vigor");
   const [render, setRender] = React.useState<RenderRaster>(RENDER_PADRAO);
   const [opacidade, setOpacidade] = React.useState(OPACIDADE_PADRAO);
@@ -119,14 +125,23 @@ export function MapaGeral() {
     const m = mapRef.current;
     if (!m) return;
     setVista(vistaDoMapa(m));
-    const onMove = () => setVista(vistaDoMapa(m));
+    setZoom(m.getZoom());
+    const onMove = () => { setVista(vistaDoMapa(m)); setZoom(m.getZoom()); };
+    const onZoom = () => setZoom(m.getZoom());
     m.on("moveend", onMove);
-    return () => { m.off("moveend", onMove); };
+    m.on("zoomend", onZoom);
+    return () => { m.off("moveend", onMove); m.off("zoomend", onZoom); };
   }, [mapa.pronto, mapRef]);
 
   const selecao = React.useMemo(
     () => selecionarAreasDaVista(areas, vista, { prioritarias: selecionada ? [selecionada] : [] }),
     [areas, vista, selecionada]
+  );
+
+  const detalheTematico = deveCarregarDetalheTematico({ zoom, selecionadaId: selecionada });
+  const idsDetalhe = React.useMemo(
+    () => idsDetalheTematico({ zoom, selecionadaId: selecionada, idsViewport: selecao.ids }),
+    [zoom, selecionada, selecao.ids]
   );
 
   const assinaturas = React.useMemo(() => new Map(areas.map((a) => [a.id, assinaturaDaGeometria(a.geometria)] as const)), [areas]);
@@ -147,21 +162,26 @@ export function MapaGeral() {
     ? podeObservacao
     : comNdviLegado;
   const rasters = useRastersIndice({
-    areaIds: selecao.ids,
+    areaIds: modoOperacional ? idsDetalhe : selecao.ids,
     indice: indiceRasterAtivo,
     data,
     assinaturas,
     ativo: (!modoOperacional && comNdviLegado)
-      || (modoOperacional && podeObservacao && tema !== "condicao" && indiceTema !== null)
+      || (modoOperacional && podeObservacao && tema !== "condicao" && indiceTema !== null && idsDetalhe.length > 0)
   });
   const mapasCond = useMapasCondicao({
-    areaIds: selecao.ids,
+    areaIds: modoOperacional ? idsDetalhe : selecao.ids,
     areaIdsResumo: areas.map((a) => a.id),
     data,
     assinaturas,
     ativo: modoOperacional && podeObservacao && (tema === "condicao" || temaExibido === "condicao"),
     classeDestaque: classeFiltro
   });
+  const obsSelecionada = useObservacaoSatelitalCompleta(
+    selecionada,
+    data,
+    modoOperacional && Boolean(selecionada)
+  );
   const temaPronto = React.useMemo(() => {
     if (!modoOperacional) return true;
     if (tema === "condicao") {
@@ -335,14 +355,15 @@ export function MapaGeral() {
       !modoOperacional && overlayPixel,
       { resampling: render, opacidade: opRaster }
     );
-    const zonasFonte = modoOperacional
+    // Zoom distante: sem microzonas (só fill resumido). Detalhe = zoom próximo ou selecionada.
+    const zonasFonte = modoOperacional && detalheTematico
       ? (temaExibido === "condicao" ? mapasCond.porArea : rasters.porArea)
       : new Map();
     const destaque = temaExibido === "condicao" ? (classeFiltro != null ? String(classeFiltro) : null) : faixaFiltro;
     sincronizarZonasCondicaoNoMapa(
-      m, zonasFonte, modoOperacional, temaExibido, geometriasPorArea, destaque
+      m, zonasFonte, modoOperacional && detalheTematico, temaExibido, geometriasPorArea, destaque
     );
-  }, [rastersAtivos, rasters.porArea, overlayPixel, render, opacidade, mapa.pronto, mapRef, areas, modoOperacional, temaExibido, mapasCond.porArea, geometriasPorArea, faixaFiltro, classeFiltro]);
+  }, [rastersAtivos, rasters.porArea, overlayPixel, render, opacidade, mapa.pronto, mapRef, areas, modoOperacional, temaExibido, mapasCond.porArea, geometriasPorArea, faixaFiltro, classeFiltro, detalheTematico]);
 
   const selecaoAnteriorRef = React.useRef<string | null>(null);
   React.useEffect(() => {
@@ -399,6 +420,7 @@ export function MapaGeral() {
   function selecionarNaLista(id: string) {
     if (consulta.aberta) setConsulta({ aberta: false });
     setClasseFiltro(null);
+    setFaixaFiltro(null);
     setSelecionada(id);
     const a = areas.find((x) => x.id === id);
     const caixa = a ? limites([a.geometria]) : null;
@@ -421,12 +443,14 @@ export function MapaGeral() {
       })()
     : [];
   const selecionadaObj = areas.find((a) => a.id === selecionada) ?? null;
-  const temObservacaoUtil = (areaId: string) => {
-    if (resumoIndice.situacao === "pronto" && resumoIndice.porArea.get(areaId)?.ultima_observacao) return true;
-    if (resumoUltima.situacao === "pronto" && resumoUltima.porArea.get(areaId)?.ultima_observacao) return true;
-    return false;
-  };
   const temMapaCondicao = (areaId: string) => mapasCond.resumos.has(areaId);
+  /** SSOT operacional F1 — não usar resumo NDVI legado. */
+  const statusOperacional = (areaId: string) => resumosCompletos.statusPorArea.get(areaId) ?? null;
+  const semAnaliseOperacional = (areaId: string) => {
+    if (resumosCompletos.situacao !== "pronto") return false;
+    const st = statusOperacional(areaId);
+    return !st || st === "SEM_ANALISE";
+  };
   /** Popups mutuamente exclusivos com o modal Analisar pastos. */
   const dialogAreaAberto = Boolean(modoCondicao && selecionadaObj && !consulta.aberta && classeFiltro === null);
   const dialogClasseAberto = Boolean(modoCondicao && classeFiltro !== null && !consulta.aberta);
@@ -438,24 +462,70 @@ export function MapaGeral() {
   const podeCadastrar = can("batch_area.create");
   const entradaAreas = entryById("configuracoes.pecuaria.areas");
   const anosNdvi = React.useMemo(() => {
-    const fonte = resumoUltima.situacao === "pronto" ? resumoUltima : resumoIndice.situacao === "pronto" ? resumoIndice : null;
-    if (!fonte) return null;
-    const datas = areas.map((a) => fonte.porArea.get(a.id)?.ultima_observacao?.observacao_inicio);
+    const datas: (string | null | undefined)[] = [];
+    for (const r of resumosCompletos.porArea.values()) if (r.data_imagem) datas.push(r.data_imagem);
     for (const e of rastersAtivos.values()) if (e.blobUrl && !e.erro) datas.push(e.dto.data_imagem);
     for (const d of mapasCond.datasPorArea.values()) datas.push(d);
+    if (datas.length === 0 && resumoUltima.situacao === "pronto") {
+      for (const a of areas) datas.push(resumoUltima.porArea.get(a.id)?.ultima_observacao?.observacao_inicio);
+    }
     return anosDasImagens(datas);
-  }, [resumoUltima, resumoIndice, areas, rastersAtivos, mapasCond.datasPorArea]);
+  }, [resumosCompletos.porArea, areas, rastersAtivos, mapasCond.datasPorArea, resumoUltima]);
   const mostrarLegendaTecnica = !modoCondicao && comNdviLegado && (modoCor === "pixel" || modoCor === "area");
-  const idsSemAnalise = React.useMemo(
-    () => (resumoUltima.situacao === "pronto"
+  /** Operacional: SEM_ANALISE do bulk F1. Técnico: legado NDVI. */
+  const idsSemAnalise = React.useMemo(() => {
+    if (modoOperacional) {
+      if (resumosCompletos.situacao !== "pronto") return [];
+      return areas.filter((a) => a.geometria && semAnaliseOperacional(a.id)).map((a) => a.id);
+    }
+    return resumoUltima.situacao === "pronto"
       ? areas.filter((a) => a.geometria && !resumoUltima.porArea.get(a.id)?.ultima_observacao).map((a) => a.id)
-      : []),
-    [resumoUltima, areas]
-  );
-  const desatualizadas = React.useMemo(
-    () => (resumoUltima.situacao === "pronto" && !resumoUltima.temMais ? areasDesatualizadas(areas, resumoUltima.porArea) : null),
-    [resumoUltima, areas]
-  );
+      : [];
+  }, [modoOperacional, resumosCompletos.situacao, resumosCompletos.statusPorArea, areas, resumoUltima]);
+  /**
+   * Desatualizadas: bulk F1 não expõe `do_poligono_atual` — opção desabilitada no operacional
+   * (null = UI “ainda não é possível saber”). Técnico mantém legado NDVI.
+   */
+  const desatualizadas = React.useMemo(() => {
+    if (modoOperacional) return null;
+    return resumoUltima.situacao === "pronto" && !resumoUltima.temMais
+      ? areasDesatualizadas(areas, resumoUltima.porArea)
+      : null;
+  }, [modoOperacional, resumoUltima, areas]);
+
+  /** Distribuições pixel-level das áreas com raster carregado (vista/detalhe). */
+  const itensDistribuicaoVista = React.useMemo(() => {
+    if (!modoOperacional || temaExibido === "condicao") return [];
+    const out: { areaId: string; nome: string; dist: NonNullable<ReturnType<typeof distribuirFaixasRasterNaArea>> }[] = [];
+    for (const [id, ent] of rasters.porArea) {
+      const a = areas.find((x) => x.id === id);
+      if (!a?.geometria || !ent.bytesCinza.length || ent.erro || !ent.dto.cantos_lnglat) continue;
+      const dist = distribuirFaixasRasterNaArea({
+        pixels: ent.bytesCinza,
+        largura: ent.largura,
+        altura: ent.altura,
+        cantos: ent.dto.cantos_lnglat as [[number, number], [number, number], [number, number], [number, number]],
+        geometria: a.geometria,
+        tema: temaExibido,
+        areaHa: hectares(a.area_ha),
+        rasterId: ent.dto.id,
+        geometriaSha256: assinaturas.get(id) ?? ""
+      });
+      if (dist) out.push({ areaId: id, nome: a.name, dist });
+    }
+    return out;
+  }, [modoOperacional, temaExibido, rasters.porArea, areas, assinaturas]);
+
+  const distribuicaoSelecionada = React.useMemo(() => {
+    if (!selecionada || tema === "condicao") return null;
+    return itensDistribuicaoVista.find((x) => x.areaId === selecionada)?.dist ?? null;
+  }, [selecionada, tema, itensDistribuicaoVista]);
+
+  const sinalF1Selecionado = React.useMemo(() => {
+    const fonte = indiceFonteDoTema(tema);
+    if (!fonte || !obsSelecionada.obs) return null;
+    return obsSelecionada.obs.indices[fonte] ?? null;
+  }, [tema, obsSelecionada.obs]);
   const semImagemDoIndice = !modoCondicao && modoCor === "pixel" && rasters.situacao === "pronto" && selecao.ids.length > 0 && !algumRaster;
   const ausentesNaVista = !modoCondicao && rasters.situacao === "pronto" ? selecao.ids.filter((id) => rasters.ausentes.has(id)).length : 0;
 
@@ -629,14 +699,14 @@ export function MapaGeral() {
                   <LegendaTemaPasto
                     tema={temaExibido}
                     faixaAtiva={faixaFiltro}
-                    onFaixa={setFaixaFiltro}
-                    areas={areas.map((a) => ({
-                      id: a.id,
-                      nome: a.name,
-                      areaHa: hectares(a.area_ha),
-                      medias: resumosCompletos.porArea.get(a.id)?.medias
-                    }))}
+                    onFaixa={(id) => { setSelecionada(null); setFaixaFiltro(id); }}
+                    itensVista={itensDistribuicaoVista}
                   />
+                </div>
+              )}
+              {modoOperacional && !detalheTematico && (
+                <div className="rounded bg-white/90 px-2 py-1 text-[10px] text-slate-500 shadow-sm" data-testid="mapa-zoom-resumo">
+                  Zoom distante: cor resumida por pasto (média do tema). Aproxime (zoom ≥ {ZOOM_MINIMO_DETALHE_TEMAS}) para microzonas.
                 </div>
               )}
               {mostrarLegendaTecnica && (modoCor === "pixel" ? <LegendaIndice indice={indice} /> : indice === "ndvi" ? <LegendaNdvi modo="area" /> : <LegendaIndice indice={indice} modo="area" />)}
@@ -655,19 +725,37 @@ export function MapaGeral() {
           nome={selecionadaObj.name}
           ha={hectares(selecionadaObj.area_ha)}
           dataImagem={(resumosCompletos.porArea.get(selecionadaObj.id)?.data_imagem
-            ?? mapasCond.datasPorArea.get(selecionadaObj.id))
+            ?? mapasCond.datasPorArea.get(selecionadaObj.id)
+            ?? obsSelecionada.obs?.identidade.data_imagem)
             ? dateBR(resumosCompletos.porArea.get(selecionadaObj.id)?.data_imagem
-              ?? mapasCond.datasPorArea.get(selecionadaObj.id)!)
+              ?? mapasCond.datasPorArea.get(selecionadaObj.id)
+              ?? obsSelecionada.obs!.identidade.data_imagem)
             : null}
           resumo={mapasCond.resumos.get(selecionadaObj.id) ?? null}
-          semAnalise={!temMapaCondicao(selecionadaObj.id) && !temObservacaoUtil(selecionadaObj.id)}
-          statsSemMapa={!temMapaCondicao(selecionadaObj.id) && temObservacaoUtil(selecionadaObj.id) && mapasCond.situacao === "pronto"}
+          semAnalise={semAnaliseOperacional(selecionadaObj.id)}
+          statsSemMapa={
+            !semAnaliseOperacional(selecionadaObj.id)
+            && !temMapaCondicao(selecionadaObj.id)
+            && (statusOperacional(selecionadaObj.id) === "PRONTO" || statusOperacional(selecionadaObj.id) === "PARCIAL")
+            && tema === "condicao"
+          }
           onDadosTecnicos={() => setExperiencia("tecnico")}
           hrefCadastro={fichaDaArea(selecionadaObj.id)}
           tema={tema}
           medias={resumosCompletos.porArea.get(selecionadaObj.id)?.medias ?? null}
-          coberturaValida={resumosCompletos.porArea.get(selecionadaObj.id)?.cobertura_valida_bundle ?? null}
-          analiseCompleta={resumosCompletos.statusPorArea.get(selecionadaObj.id) === "PRONTO"}
+          coberturaValida={
+            sinalF1Selecionado?.cobertura_valida
+            ?? resumosCompletos.porArea.get(selecionadaObj.id)?.cobertura_valida_bundle
+            ?? null
+          }
+          analiseCompleta={statusOperacional(selecionadaObj.id) === "PRONTO"}
+          statusBundle={statusOperacional(selecionadaObj.id)}
+          mediaIndice={sinalF1Selecionado?.media ?? null}
+          minimoIndice={sinalF1Selecionado?.minimo ?? null}
+          maximoIndice={sinalF1Selecionado?.maximo ?? null}
+          distribuicao={distribuicaoSelecionada}
+          faixaAtiva={faixaFiltro}
+          onFaixa={setFaixaFiltro}
         />
       )}
 

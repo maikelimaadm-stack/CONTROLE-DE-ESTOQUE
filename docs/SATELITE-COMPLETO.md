@@ -110,9 +110,11 @@ Fluxo operacional no Mapa geral:
    - Zero POST `/api/satelite/consultas`, zero Process, zero “Gerar raster”.
 4. Mapa operacional = **GeoJSON fill** (polígonos/isobands), não PNG/raster cru.
 5. Raster UINT8 20 m permanece dado-fonte; suavização Chaikin ≤ ~10 m + **clip final** em `erp.areas.geometria`.
-6. Zoom distante / lista: cor e leitura do **tema atual** via bulk `ObservacaoSatelitalCompleta` (médias NDMI/NDRE/MSAVI2/BSI) — não sempre condição; SSOT operacional ≠ NDVI legado.
-7. Legenda temática: clique na faixa destaca no mapa e abre resumo agregado (ha / % / pastos) sem POST.
-8. **Dados técnicos** (modo secundário): NDVI/EVI2/NDRE/NDMI/MSAVI2/BSI, histograma, raster cru opcional.
+6. Zoom distante / lista: cor e leitura do **tema atual** via bulk (médias) — **resumo** por pasto; SSOT operacional ≠ NDVI legado.
+7. Zoom próximo (≥ 13) ou área selecionada: microzonas/isobands; distante = só fill resumido.
+8. Hectares por faixa = **pixels internos** ao polígono (não média × área total). Legenda agrega a **vista atual**.
+9. Popup da área: média/min/max/cobertura do GET F1 individual + distribuição pixel-level.
+10. **Dados técnicos** (modo secundário): NDVI/EVI2/NDRE/NDMI/MSAVI2/BSI, histograma, raster cru opcional.
 
 | Tema | Fonte F1 | Cor/lista (média) |
 |------|----------|-------------------|

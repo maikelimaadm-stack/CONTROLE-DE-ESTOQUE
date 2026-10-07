@@ -9,6 +9,7 @@ import {
 } from "@agro/domain";
 import { Button, Dialog, buttonVariants } from "@/components/ui";
 import { num } from "@/lib/utils";
+import type { DistribuicaoFaixasArea } from "./distribuicao-faixas-raster";
 import { PainelTemaContinuo } from "./painel-tema-pasto";
 import type { TemaMapaPasto } from "./temas-mapa-pasto";
 
@@ -195,9 +196,22 @@ export function DialogAreaCondicao(p: {
   medias?: Partial<Record<string, string | null>> | null;
   coberturaValida?: string | null;
   analiseCompleta?: boolean;
+  /** Status F1 (SEM_ANALISE / PREPARANDO / PRONTO / …). */
+  statusBundle?: string | null;
+  mediaIndice?: string | null;
+  minimoIndice?: string | null;
+  maximoIndice?: string | null;
+  distribuicao?: DistribuicaoFaixasArea | null;
+  faixaAtiva?: string | null;
+  onFaixa?: (id: string | null) => void;
 }) {
   const tema = p.tema ?? "condicao";
-  const statusObs = p.analiseCompleta ? "● Análise completa" : p.semAnalise ? "○ Sem análise" : "● Observação";
+  const statusObs = p.analiseCompleta ? "● Análise completa"
+    : p.semAnalise ? "○ Sem análise"
+      : p.statusBundle === "PREPARANDO" ? "◔ Preparando"
+        : p.statusBundle === "PARCIAL" ? "◐ Parcial"
+          : p.statusBundle === "FALHA" ? "✕ Falha"
+            : "● Observação";
   return (
     <Dialog
       open={p.aberto}
@@ -230,8 +244,14 @@ export function DialogAreaCondicao(p: {
         <PainelTemaContinuo
           tema={tema}
           medias={p.medias ?? null}
+          media={p.mediaIndice}
+          minimo={p.minimoIndice}
+          maximo={p.maximoIndice}
           coberturaValida={p.coberturaValida}
           dataImagem={p.dataImagem}
+          distribuicao={p.distribuicao}
+          faixaAtiva={p.faixaAtiva}
+          onFaixa={p.onFaixa}
         />
       )}
     </Dialog>
