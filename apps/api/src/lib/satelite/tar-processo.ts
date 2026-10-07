@@ -80,7 +80,8 @@ export async function extrairPngsDoTarProcesso(
   const precisos = new Set(solicitados);
   if (precisos.size === 0) throw new FalhaTarProcesso("membro_ausente", "nenhum output solicitado");
 
-  const extract = tarExtract({ allowUnknownFormat: false });
+  // tar-stream v3 tipa `extract()` sem opções; formato estranho cai em "error"/"tar_malformado".
+  const extract = tarExtract();
   const achados = new Map<IdOutputBundleEspacial, MembroTarPng>();
   let entries = 0;
 
@@ -126,7 +127,11 @@ export async function extrairPngsDoTarProcesso(
           const chunks: Buffer[] = [];
           let total = 0;
           for await (const chunk of stream) {
-            const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            let b: Buffer;
+            if (Buffer.isBuffer(chunk)) b = chunk;
+            else if (chunk instanceof Uint8Array) b = Buffer.from(chunk);
+            else if (typeof chunk === "string") b = Buffer.from(chunk);
+            else throw new FalhaTarProcesso("tar_malformado", "chunk de membro inválido");
             total += b.length;
             if (total > TAMANHO_MAXIMO_MEMBRO_TAR_BYTES) {
               throw new FalhaTarProcesso("tamanho_excedido", `membro ${id} acima do teto`);
@@ -145,7 +150,7 @@ export async function extrairPngsDoTarProcesso(
       })();
     });
     extract.on("finish", () => resolve());
-    extract.on("error", (e) => reject(new FalhaTarProcesso("tar_malformado", e instanceof Error ? e.message : "tar")));
+    extract.on("error", (e: unknown) => reject(new FalhaTarProcesso("tar_malformado", e instanceof Error ? e.message : "tar")));
   });
 
   const inlet = new PassThrough();
