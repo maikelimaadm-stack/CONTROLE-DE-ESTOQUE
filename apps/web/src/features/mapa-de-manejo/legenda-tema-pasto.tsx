@@ -76,7 +76,7 @@ export function LegendaTemaPasto({
         open={Boolean(faixaAtiva && agregado)}
         onOpenChange={(o) => { if (!o) onFaixa?.(null); }}
         title={agregado ? `${agregado.rotulo.toUpperCase()} — VISTA ATUAL` : "Faixa"}
-        description="Soma dos hectares estimados pelos pixels das áreas com raster carregado na vista. Não é total da fazenda por média."
+        description="Soma dos hectares estimados pelos pixels das áreas com raster carregado na vista. Não representa o total de todas as áreas por média."
         size="md"
         profile="content"
         testId="dialog-faixa-tema"
