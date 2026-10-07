@@ -178,20 +178,23 @@ export function BarraCamadas(p: BarraCamadasProps) {
               </Grupo>
 
               <Grupo rotulo="Opacidade" testId="mapa-grupo-opacidade">
-                <div className="flex items-center gap-1.5">
+                <label className="flex h-[26px] items-center gap-2 text-xs tabular-nums text-slate-600">
                   <input
                     type="range"
-                    min={0.2}
-                    max={1}
-                    step={0.05}
-                    value={p.opacidade}
+                    min={10}
+                    max={100}
+                    step={5}
+                    value={Math.round(p.opacidade * 100)}
                     disabled={!rasterAtivo}
-                    onChange={(e) => p.onOpacidade(Number(e.target.value))}
+                    onChange={(e) => p.onOpacidade(Number(e.target.value) / 100)}
+                    aria-label="Opacidade da imagem de satélite"
+                    className="w-24 accent-slate-700"
                     data-testid="mapa-opacidade"
-                    className="w-24"
                   />
-                  <span className="text-[10px] tabular-nums text-slate-500">{Math.round(p.opacidade * 100)}%</span>
-                </div>
+                  <span className="w-9 text-right" data-testid="mapa-opacidade-valor">
+                    {Math.round(p.opacidade * 100)}%
+                  </span>
+                </label>
               </Grupo>
             </>
           )}
@@ -227,8 +230,8 @@ export function BarraCamadas(p: BarraCamadasProps) {
               >
                 Dados técnicos
               </Button>
-              {/* Compat E2E legado: experiência binária ↔ modo operacional/técnico. */}
-              <span className="sr-only">
+              {/* Compat E2E legado: aria-pressed espelha operacional/técnico (clique via force ou Dados técnicos). */}
+              <span className="sr-only" aria-hidden="true">
                 <button
                   type="button"
                   data-testid="mapa-experiencia-condicao"
@@ -256,6 +259,12 @@ export function BarraCamadas(p: BarraCamadasProps) {
             </div>
           </Grupo>
         </>
+      )}
+
+      {p.comSatelite && modo === "tecnico" && p.render === "linear" && rasterAtivo && (
+        <p className="basis-full text-[11px] leading-tight text-amber-700" role="note" data-testid="mapa-render-aviso">
+          {AVISO_RENDER_SUAVIZADO}
+        </p>
       )}
     </div>
   );

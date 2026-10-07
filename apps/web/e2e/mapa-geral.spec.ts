@@ -66,6 +66,16 @@ async function entrarDadosTecnicos(page: Page) {
   await expect(btn).toHaveAttribute("aria-pressed", "true");
 }
 
+/** Volta ao modo operacional (temas) — espelho de entrarDadosTecnicos. */
+async function sairDadosTecnicos(page: Page) {
+  await fecharDialogArea(page);
+  const btn = page.getByTestId("mapa-dados-tecnicos");
+  await expect(btn).toBeVisible({ timeout: 30_000 });
+  if ((await btn.getAttribute("aria-pressed")) === "true") await btn.click();
+  await expect(btn).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByTestId("mapa-experiencia-condicao")).toHaveAttribute("aria-pressed", "true");
+}
+
 /** Seleciona na lista após garantir que nenhum Dialog cobre a UI. */
 async function selecionarAreaNaLista(page: Page, nome: string | RegExp) {
   await fecharDialogArea(page);
@@ -1151,9 +1161,8 @@ test("Mapa geral SAT-COND-01: condição padrão, legenda ha/%, filtro, ESC, lis
   await expect(page.getByTestId("mapa-indice-evi2")).toBeVisible();
   await expect(page.getByTestId("condicao-area")).toBeVisible();
 
-  // Dialog técnico permanece aberto após trocar experiência pelo rodapé — fechar para alcançar a toolbar
-  await fecharDialogArea(page);
-  await page.getByTestId("mapa-experiencia-condicao").click();
+  // Dialog técnico permanece aberto após Dados técnicos — fechar e voltar ao modo operacional pela toolbar
+  await sairDadosTecnicos(page);
   await expect(page.getByTestId("mapa-indice-ndvi")).toHaveCount(0);
   await expect(page.getByTestId("legenda-condicao-pasto")).toBeVisible();
 

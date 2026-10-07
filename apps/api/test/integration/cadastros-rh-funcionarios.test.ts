@@ -183,7 +183,9 @@ describe("RH-3 — sigilo de salário e valor hora; aba Pessoal exige people.edi
     expect(f.rh_remuneracao).not.toHaveProperty("base_salary");
     expect(f.rh_remuneracao).not.toHaveProperty("hour_value");
     expect(f.rh_remuneracao.jornada_semanal).toBe("44.00");
-    expect(ficha.body).not.toContain("3500");
+    // Não usar not.toContain("3500"): UUID de empresa_id pode conter o dígito (ex.: …c33500b5…).
+    expect(ficha.body).not.toMatch(/"base_salary"\s*:/);
+    expect(ficha.body).not.toMatch(/"hour_value"\s*:/);
     const lista = await get(`/api/resources/funcionarios?pageSize=200`, hv);
     expect(lista.statusCode).toBe(200);
     expect(lista.body).not.toContain("base_salary"); expect(lista.body).not.toContain("hour_value");
