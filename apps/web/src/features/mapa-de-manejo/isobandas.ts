@@ -1,16 +1,17 @@
 /**
- * ISOBANDS / FAIXAS VETORIAIS DE RASTER CONTÍNUO — SAT-BUNDLE-01B [F2].
+ * ISOBANDS / FAIXAS VETORIAIS DE RASTER CONTÍNUO — SAT-BUNDLE-01B [F2] R1.
  *
- * Decodifica UINT8 → valor → bin visual fixo → polygoniza (mesmo motor da condição).
- * Não desenha quadrados individuais. Não cria detalhe espacial inexistente.
+ * Decodifica UINT8 → valor → bin visual fixo → polygoniza → suaviza → clip na área.
  */
 import {
   ENCODING_RASTER_POR_INDICE, decodificarByteRaster, type IdIndiceSatelite
 } from "@agro/domain";
+import type { MultiPolygon, Polygon } from "geojson";
 import {
-  componentes4ConexosGrade, polygonizarComponente, simplificarAnelVisual,
+  componentes4ConexosGrade, polygonizarComponente, apresentarGeometriaZona,
   type CantosLngLat
 } from "./polygonizar-grade";
+import type { GeomPoly } from "./clip-geometria";
 import { faixasDoTema, type FaixaVisualTema, type TemaMapaPasto } from "./temas-mapa-pasto";
 
 export interface FeatureFaixa {
@@ -22,7 +23,7 @@ export interface FeatureFaixa {
     cor: string;
     componente: number;
   };
-  geometry: { type: "Polygon" | "MultiPolygon"; coordinates: number[][][] | number[][][][] };
+  geometry: GeomPoly;
 }
 
 function codigoDaFaixa(valor: number, faixas: readonly FaixaVisualTema[]): number {
@@ -57,6 +58,7 @@ export function isobandasDoRaster(p: {
   cantos: CantosLngLat;
   indice: IdIndiceSatelite;
   tema: TemaMapaPasto;
+  geometriaArea?: Polygon | MultiPolygon | GeomPoly | null;
 }): FeatureFaixa[] {
   const faixas = faixasDoTema(p.tema);
   if (!faixas) return [];
@@ -66,18 +68,16 @@ export function isobandasDoRaster(p: {
     ehValido: (v) => v > 0
   });
   const porCodigo = new Map(faixas.map((f) => [f.codigo, f]));
-  return comps.map((comp, i) => {
+  const out: FeatureFaixa[] = [];
+  comps.forEach((comp, i) => {
     const faixa = porCodigo.get(comp.codigo);
     const bruto = polygonizarComponente({
       pixels: comp.pixels, largura: p.largura, altura: p.altura, cantos: p.cantos
     });
-    let geometry = bruto;
-    if (geometry.type === "Polygon") {
-      const rings = (geometry.coordinates as number[][][]).map((r) => simplificarAnelVisual(r));
-      if (rings.every((r) => r.length >= 4)) geometry = { type: "Polygon", coordinates: rings };
-    }
-    return {
-      type: "Feature" as const,
+    const geometry = apresentarGeometriaZona(bruto, p.geometriaArea ?? null);
+    if (!geometry) return;
+    out.push({
+      type: "Feature",
       properties: {
         codigo: comp.codigo,
         faixa: faixa?.id ?? String(comp.codigo),
@@ -86,8 +86,9 @@ export function isobandasDoRaster(p: {
         componente: i
       },
       geometry
-    };
+    });
   });
+  return out;
 }
 
 export function featureCollectionIsobandas(feats: readonly FeatureFaixa[]): GeoJSON.FeatureCollection {

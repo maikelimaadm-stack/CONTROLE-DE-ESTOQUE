@@ -18,9 +18,9 @@ describe("SAT-BUNDLE-01B — VEC polygonização", () => {
     expect(zonas[0]!.geometry.type).toBe("Polygon");
     const rings = zonas[0]!.geometry.coordinates as number[][][];
     expect(rings.length).toBe(1);
-    // Contorno externo do 3×3 = retângulo (4 vértices + close ≥ 5).
+    // Contorno externo: suavização Chaikin aumenta vértices; ainda 1 anel.
     expect(rings[0]!.length).toBeGreaterThanOrEqual(5);
-    expect(rings[0]!.length).toBeLessThan(20);
+    expect(rings[0]!.length).toBeLessThan(80);
   });
 
   it("VEC-02: L-shape → 1 feature", () => {

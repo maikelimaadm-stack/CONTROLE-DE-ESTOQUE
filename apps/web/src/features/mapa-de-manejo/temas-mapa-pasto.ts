@@ -134,18 +134,67 @@ export function statusAreaDoResumo(p: {
   return "PREPARANDO";
 }
 
+/** Faixa visual da média (SSOT das FAIXAS_*). */
+export function faixaDaMedia(tema: TemaMapaPasto, media: number | null | undefined): FaixaVisualTema | null {
+  const faixas = faixasDoTema(tema);
+  if (!faixas || media === null || media === undefined || !Number.isFinite(media)) return null;
+  for (const f of faixas) {
+    if (media >= f.min && media < f.max) return f;
+    if (f.max === Infinity && media >= f.min) return f;
+  }
+  return faixas[faixas.length - 1] ?? null;
+}
+
+export function mediaDoTema(
+  tema: TemaMapaPasto,
+  medias: Partial<Record<string, string | null>> | null | undefined
+): number | null {
+  const ind = indiceFonteDoTema(tema);
+  if (!ind || !medias) return null;
+  const raw = medias[ind];
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Cor de zoom distante / lista a partir do bulk F1 (médias) — sem POST. */
+export function corDoTemaPorMedias(
+  tema: TemaMapaPasto,
+  medias: Partial<Record<string, string | null>> | null | undefined
+): string | null {
+  const faixa = faixaDaMedia(tema, mediaDoTema(tema, medias));
+  return faixa?.cor ?? null;
+}
+
+/** Rótulo humano da lista (mesma SSOT de faixas). */
+export function leituraTematicaLista(
+  tema: TemaMapaPasto,
+  medias: Partial<Record<string, string | null>> | null | undefined
+): string | null {
+  const faixa = faixaDaMedia(tema, mediaDoTema(tema, medias));
+  if (!faixa) return null;
+  switch (tema) {
+    case "umidade":
+      return `Umidade ${faixa.rotulo.toLowerCase()}`;
+    case "vigor":
+      return `Vigor ${faixa.rotulo.toLowerCase()}`;
+    case "cobertura":
+      return `Cobertura ${faixa.rotulo.toLowerCase()}`;
+    case "solo":
+      return faixa.rotulo === "Alta exposição" ? "Alta exposição estimada"
+        : faixa.rotulo === "Baixa exposição" ? "Baixa exposição estimada"
+          : `Exposição ${faixa.rotulo.toLowerCase()}`;
+    default:
+      return faixa.rotulo;
+  }
+}
+
 export function rotuloStatusLista(status: StatusAreaMapa, tema: TemaMapaPasto, resumoTema?: string | null): string {
   if (status === "SEM_ANALISE") return "Sem análise";
   if (status === "PREPARANDO") return "Preparando visualizações";
   if (status === "FALHA") return "Falha na observação";
   if (status === "DESATUALIZADO") return "Desatualizado";
   if (resumoTema) return resumoTema;
-  const nomes: Record<TemaMapaPasto, string> = {
-    condicao: "Condição disponível",
-    umidade: "Umidade disponível",
-    vigor: "Vigor disponível",
-    cobertura: "Cobertura disponível",
-    solo: "Solo disponível"
-  };
-  return status === "PARCIAL" ? "Parcial" : nomes[tema];
+  if (status === "PARCIAL") return "Parcial";
+  return leituraTematicaLista(tema, null) ?? "Observação disponível";
 }

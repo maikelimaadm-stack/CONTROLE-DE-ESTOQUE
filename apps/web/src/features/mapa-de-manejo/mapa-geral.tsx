@@ -39,9 +39,12 @@ import { useOperacaoAnaliseViva } from "./use-operacao-analise";
 import { familiaDoIndice, familiaPorId, nomeDoIndice, type FamiliaCamada, type IdIndice } from "./paletas-indices";
 import { selecionarAreasDaVista, type Vista } from "./viewport-rasters";
 import { areasDesatualizadas, type SelecaoConsulta } from "./consulta-satelite";
-import { useResumosObservacoesCompletas, invalidarCacheObservacaoCompleta } from "./observacao-completa";
 import {
-  TEMA_DEFAULT, indiceFonteDoTema, rotuloStatusLista, type ModoMapaPasto, type TemaMapaPasto
+  useResumosObservacoesCompletas, invalidarCacheObservacaoCompleta, PERMISSAO_VER_OBSERVACAO
+} from "./observacao-completa";
+import {
+  TEMA_DEFAULT, corDoTemaPorMedias, indiceFonteDoTema, leituraTematicaLista,
+  rotuloStatusLista, type ModoMapaPasto, type TemaMapaPasto
 } from "./temas-mapa-pasto";
 import { LegendaTemaPasto } from "./legenda-tema-pasto";
 
@@ -84,7 +87,9 @@ export function MapaGeral() {
    */
   const resumoIndice = useResumoIndice(indice, data);
   const resumoUltima = useResumoIndice(indice, DATA_ULTIMA_IMAGEM);
-  const comNdvi = resumoIndice.situacao === "pronto" || resumoUltima.situacao === "pronto";
+  /** Legado técnico: resumo por índice (NDVI etc.). Operacional NÃO depende disto como SSOT. */
+  const comNdviLegado = resumoIndice.situacao === "pronto" || resumoUltima.situacao === "pronto";
+  const podeObservacao = can(PERMISSAO_VER_OBSERVACAO);
   const [modoEscolhido, setModoCor] = React.useState<ModoCor | null>(null);
   const algumNdvi = React.useMemo(
     () => resumoUltima.situacao === "pronto" && [...resumoUltima.porArea.values()].some((i) => i.ultima_observacao !== null),
@@ -125,29 +130,38 @@ export function MapaGeral() {
   );
 
   const assinaturas = React.useMemo(() => new Map(areas.map((a) => [a.id, assinaturaDaGeometria(a.geometria)] as const)), [areas]);
+  const geometriasPorArea = React.useMemo(
+    () => new Map(areas.map((a) => [a.id, a.geometria] as const)),
+    [areas]
+  );
   const indiceTema = indiceFonteDoTema(tema);
   const indiceRasterAtivo: IdIndice = modoOperacional && indiceTema ? indiceTema : indice;
+  const idsTodasAreas = React.useMemo(() => areas.map((a) => a.id), [areas]);
+  /** Bulk F1 = SSOT operacional (não exige NDVI legado). */
+  const resumosCompletos = useResumosObservacoesCompletas(
+    idsTodasAreas,
+    data,
+    modoOperacional && podeObservacao
+  );
+  const comSatelite = modoOperacional
+    ? podeObservacao
+    : comNdviLegado;
   const rasters = useRastersIndice({
     areaIds: selecao.ids,
     indice: indiceRasterAtivo,
     data,
     assinaturas,
-    ativo: comNdvi && (!modoOperacional || (tema !== "condicao" && indiceTema !== null))
+    ativo: (!modoOperacional && comNdviLegado)
+      || (modoOperacional && podeObservacao && tema !== "condicao" && indiceTema !== null)
   });
   const mapasCond = useMapasCondicao({
     areaIds: selecao.ids,
     areaIdsResumo: areas.map((a) => a.id),
     data,
     assinaturas,
-    ativo: comNdvi && modoOperacional && (tema === "condicao" || temaExibido === "condicao"),
+    ativo: modoOperacional && podeObservacao && (tema === "condicao" || temaExibido === "condicao"),
     classeDestaque: classeFiltro
   });
-  const idsTodasAreas = React.useMemo(() => areas.map((a) => a.id), [areas]);
-  const resumosCompletos = useResumosObservacoesCompletas(
-    idsTodasAreas,
-    data,
-    comNdvi && modoOperacional
-  );
   const temaPronto = React.useMemo(() => {
     if (!modoOperacional) return true;
     if (tema === "condicao") {
@@ -158,7 +172,7 @@ export function MapaGeral() {
   React.useEffect(() => {
     if (temaPronto) setTemaExibido(tema);
   }, [tema, temaPronto]);
-  const historicoDaSelecionada = useHistoricoIndice(selecionada ?? "", indice, Boolean(selecionada) && comNdvi);
+  const historicoDaSelecionada = useHistoricoIndice(selecionada ?? "", indice, Boolean(selecionada) && comNdviLegado);
   const opcoesData = React.useMemo(
     () => opcoesDeData(datasUteisDoHistorico(selecionada ? (historicoDaSelecionada.data?.itens ?? []) : []), data, dateBR),
     [selecionada, historicoDaSelecionada.data, data]
@@ -167,22 +181,29 @@ export function MapaGeral() {
     for (const e of rasters.porArea.values()) if (e.blobUrl && !e.erro) return true;
     return false;
   }, [rasters.porArea]);
+  /** Data operacional: SSOT = bulk observação completa; técnico pode cair no raster. */
   const dataImagem = React.useMemo(() => {
     if (data.tipo !== "ultima") return null;
     let maior: string | null = null;
-    const fonte = modoCondicao ? mapasCond.porArea : rasters.porArea;
-    for (const e of fonte.values()) if (e.blobUrl && !e.erro && (maior === null || e.dto.data_imagem > maior)) maior = e.dto.data_imagem;
-    for (const d of mapasCond.datasPorArea.values()) if (maior === null || d > maior) maior = d;
+    if (modoOperacional) {
+      for (const r of resumosCompletos.porArea.values()) {
+        if (r.data_imagem && (maior === null || r.data_imagem > maior)) maior = r.data_imagem;
+      }
+      return maior;
+    }
+    for (const e of rasters.porArea.values()) {
+      if (e.blobUrl && !e.erro && (maior === null || e.dto.data_imagem > maior)) maior = e.dto.data_imagem;
+    }
     return maior;
-  }, [rasters.porArea, mapasCond.porArea, mapasCond.datasPorArea, data, modoCondicao]);
+  }, [modoOperacional, resumosCompletos.porArea, rasters.porArea, data]);
 
   React.useEffect(() => {
-    if (!comNdvi || modoEscolhido !== null || padraoTravadoRef.current) return;
+    if (!comNdviLegado || modoEscolhido !== null || padraoTravadoRef.current) return;
     if (selecao.ids.length === 0) return;
     if (rasters.situacao === "carregando" || rasters.situacao === "ocioso") return;
     padraoTravadoRef.current = true;
     setModoCor(algumRaster ? "pixel" : algumNdvi ? "area" : "cadastro");
-  }, [comNdvi, modoEscolhido, rasters.situacao, algumRaster, algumNdvi, selecao.ids.length]);
+  }, [comNdviLegado, modoEscolhido, rasters.situacao, algumRaster, algumNdvi, selecao.ids.length]);
 
   function escolherIndice(i: IdIndice) {
     setIndice(i);
@@ -204,19 +225,30 @@ export function MapaGeral() {
     if (!indices.includes(indice)) escolherIndice(indices[0]!);
   }
 
-  const modoCor: ModoCor = !comNdvi ? "cadastro" : (modoEscolhido ?? "cadastro");
+  const modoCor: ModoCor = !comNdviLegado ? "cadastro" : (modoEscolhido ?? "cadastro");
 
+  /** Zoom distante / lista: cor do TEMA atual (F1 bulk), não sempre condição. */
   const corPorArea = React.useMemo(() => {
-    if (modoCondicao) {
+    if (modoOperacional) {
       const m = new Map<string, string>();
       for (const a of areas) {
-        const resumo = mapasCond.resumos.get(a.id);
-        m.set(a.id, corPredominanteCondicao(resumo) ?? CINZA_SEM_ANALISE);
+        const r = resumosCompletos.porArea.get(a.id);
+        if (!r || r.status_bundle === "sem_observacao") {
+          m.set(a.id, CINZA_SEM_ANALISE);
+          continue;
+        }
+        if (temaExibido === "condicao") {
+          const resumo = mapasCond.resumos.get(a.id)
+            ?? (r.condicao_resumo as Parameters<typeof corPredominanteCondicao>[0]);
+          m.set(a.id, corPredominanteCondicao(resumo) ?? CINZA_SEM_ANALISE);
+        } else {
+          m.set(a.id, corDoTemaPorMedias(temaExibido, r.medias) ?? CINZA_SEM_ANALISE);
+        }
       }
       return m;
     }
     return coresPorArea(modoCor, indice, areas, resumoIndice.situacao === "pronto" ? resumoIndice.porArea : null);
-  }, [modoCondicao, modoCor, indice, areas, resumoIndice, mapasCond.resumos]);
+  }, [modoOperacional, temaExibido, areas, resumosCompletos.porArea, mapasCond.resumos, modoCor, indice, resumoIndice]);
 
   const overlayPixel = (!modoOperacional && modoCor === "pixel") || modoOperacional;
   /** Operacional: zonas vetoriais; técnico: PNG contínuo. */
@@ -306,8 +338,11 @@ export function MapaGeral() {
     const zonasFonte = modoOperacional
       ? (temaExibido === "condicao" ? mapasCond.porArea : rasters.porArea)
       : new Map();
-    sincronizarZonasCondicaoNoMapa(m, zonasFonte, modoOperacional, temaExibido);
-  }, [rastersAtivos, rasters.porArea, overlayPixel, render, opacidade, mapa.pronto, mapRef, areas, modoOperacional, temaExibido, mapasCond.porArea]);
+    const destaque = temaExibido === "condicao" ? (classeFiltro != null ? String(classeFiltro) : null) : faixaFiltro;
+    sincronizarZonasCondicaoNoMapa(
+      m, zonasFonte, modoOperacional, temaExibido, geometriasPorArea, destaque
+    );
+  }, [rastersAtivos, rasters.porArea, overlayPixel, render, opacidade, mapa.pronto, mapRef, areas, modoOperacional, temaExibido, mapasCond.porArea, geometriasPorArea, faixaFiltro, classeFiltro]);
 
   const selecaoAnteriorRef = React.useRef<string | null>(null);
   React.useEffect(() => {
@@ -333,12 +368,13 @@ export function MapaGeral() {
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
       if (consulta.aberta) return;
+      if (faixaFiltro !== null) { setFaixaFiltro(null); return; }
       if (classeFiltro !== null) { setClasseFiltro(null); return; }
       if (selecionada) setSelecionada(null);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [classeFiltro, selecionada, consulta.aberta]);
+  }, [faixaFiltro, classeFiltro, selecionada, consulta.aberta]);
 
   const podeConsultar = can(PERMISSAO_PEDIR_NDVI);
   const operacao = useOperacaoAnaliseViva(podeConsultar);
@@ -409,7 +445,7 @@ export function MapaGeral() {
     for (const d of mapasCond.datasPorArea.values()) datas.push(d);
     return anosDasImagens(datas);
   }, [resumoUltima, resumoIndice, areas, rastersAtivos, mapasCond.datasPorArea]);
-  const mostrarLegendaTecnica = !modoCondicao && comNdvi && (modoCor === "pixel" || modoCor === "area");
+  const mostrarLegendaTecnica = !modoCondicao && comNdviLegado && (modoCor === "pixel" || modoCor === "area");
   const idsSemAnalise = React.useMemo(
     () => (resumoUltima.situacao === "pronto"
       ? areas.filter((a) => a.geometria && !resumoUltima.porArea.get(a.id)?.ultima_observacao).map((a) => a.id)
@@ -455,7 +491,7 @@ export function MapaGeral() {
               <span>Áreas</span>
               {areas.length > 0 && <span className="font-normal normal-case tabular-nums text-slate-400">{areas.length} · {num(totalHa, 2)} ha</span>}
             </div>
-            {modoCondicao && comNdvi && (
+            {modoCondicao && comSatelite && (
               <NativeSelect
                 value={ordenacao}
                 onChange={(e) => setOrdenacao(e.target.value as OrdenacaoListaCondicao)}
@@ -475,10 +511,16 @@ export function MapaGeral() {
               const resumo = mapasCond.resumos.get(a.id);
               const badge = resumo ? badgePrincipalCondicao(resumo) : null;
               const st = resumosCompletos.statusPorArea.get(a.id);
+              const medias = resumosCompletos.porArea.get(a.id)?.medias;
+              const leitura = modoOperacional && tema !== "condicao"
+                ? leituraTematicaLista(tema, medias)
+                : null;
               const sub = modoOperacional
-                ? (tema === "condicao" && badge
-                  ? badge.rotulo
-                  : rotuloStatusLista(st ?? "SEM_ANALISE", tema))
+                ? (st && st !== "PRONTO" && st !== "PARCIAL"
+                  ? rotuloStatusLista(st, tema)
+                  : (tema === "condicao" && badge
+                    ? badge.rotulo
+                    : (leitura ?? rotuloStatusLista(st ?? "SEM_ANALISE", tema, leitura))))
                 : null;
               const media = !modoOperacional && resumoIndice.situacao === "pronto" ? mediaValidaDoIndice(resumoIndice.porArea.get(a.id)) : null;
               const tituloMedia = data.tipo === "data"
@@ -506,7 +548,7 @@ export function MapaGeral() {
         <div className="flex min-h-0 flex-col gap-2">
         <BarraCamadas
           mapa={mapa}
-          comSatelite={comNdvi}
+          comSatelite={comSatelite}
           modo={modo}
           onModo={setModo}
           tema={tema}
@@ -577,14 +619,24 @@ export function MapaGeral() {
                 </div>
               )}
               {rasters.situacao === "erro" && rasters.erro && <div className="rounded bg-white/90 px-2 py-1 text-xs text-red-600 shadow-sm" data-testid="mapa-raster-erro">{rasters.erro}</div>}
-              {modoOperacional && comNdvi && tema === "condicao" && (
+              {modoOperacional && comSatelite && tema === "condicao" && (
                 <div className="pointer-events-auto w-[min(18rem,calc(100vw-2rem))]">
                   <LegendaCondicaoPasto resumo={mapasCond.agregado} classe={classeFiltro} onClasse={filtrarClasse} />
                 </div>
               )}
-              {modoOperacional && comNdvi && temaExibido !== "condicao" && (
+              {modoOperacional && comSatelite && temaExibido !== "condicao" && (
                 <div className="pointer-events-auto w-[min(18rem,calc(100vw-2rem))]">
-                  <LegendaTemaPasto tema={temaExibido} faixaAtiva={faixaFiltro} onFaixa={setFaixaFiltro} />
+                  <LegendaTemaPasto
+                    tema={temaExibido}
+                    faixaAtiva={faixaFiltro}
+                    onFaixa={setFaixaFiltro}
+                    areas={areas.map((a) => ({
+                      id: a.id,
+                      nome: a.name,
+                      areaHa: hectares(a.area_ha),
+                      medias: resumosCompletos.porArea.get(a.id)?.medias
+                    }))}
+                  />
                 </div>
               )}
               {mostrarLegendaTecnica && (modoCor === "pixel" ? <LegendaIndice indice={indice} /> : indice === "ndvi" ? <LegendaNdvi modo="area" /> : <LegendaIndice indice={indice} modo="area" />)}
@@ -602,7 +654,11 @@ export function MapaGeral() {
           onFechar={() => setSelecionada(null)}
           nome={selecionadaObj.name}
           ha={hectares(selecionadaObj.area_ha)}
-          dataImagem={mapasCond.datasPorArea.get(selecionadaObj.id) ? dateBR(mapasCond.datasPorArea.get(selecionadaObj.id)!) : null}
+          dataImagem={(resumosCompletos.porArea.get(selecionadaObj.id)?.data_imagem
+            ?? mapasCond.datasPorArea.get(selecionadaObj.id))
+            ? dateBR(resumosCompletos.porArea.get(selecionadaObj.id)?.data_imagem
+              ?? mapasCond.datasPorArea.get(selecionadaObj.id)!)
+            : null}
           resumo={mapasCond.resumos.get(selecionadaObj.id) ?? null}
           semAnalise={!temMapaCondicao(selecionadaObj.id) && !temObservacaoUtil(selecionadaObj.id)}
           statsSemMapa={!temMapaCondicao(selecionadaObj.id) && temObservacaoUtil(selecionadaObj.id) && mapasCond.situacao === "pronto"}
@@ -631,7 +687,7 @@ export function MapaGeral() {
             </>
           )}
         >
-          {comNdvi && (
+          {comNdviLegado && (
             <CondicaoDaArea
               areaId={selecionadaObj.id}
               nomeDaArea={selecionadaObj.name}
