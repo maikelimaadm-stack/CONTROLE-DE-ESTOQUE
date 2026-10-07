@@ -99,14 +99,17 @@ describe("SAT-BUNDLE-01A — temas", () => {
 });
 
 describe("SAT-BUNDLE-01A — status do bundle / produtos", () => {
-  it("completo = índices + condição; rasters técnicos lazy não bloqueiam", () => {
+  it("completo = índices + condição + 6 rasters (SAT-BUNDLE-01C)", () => {
     const id = identidadeDoBundle(seis())!;
     expect(statusBundleDe({
       identidade: id, indicesCompletos: true, condicaoDisponivel: false, rastersDisponiveis: 6
     })).toBe("produtos_parciais");
     expect(statusBundleDe({
       identidade: id, indicesCompletos: true, condicaoDisponivel: true, rastersDisponiveis: 0
-    })).toBe("completo");
+    })).toBe("produtos_parciais");
+    expect(statusBundleDe({
+      identidade: id, indicesCompletos: true, condicaoDisponivel: true, rastersDisponiveis: 5
+    })).toBe("produtos_parciais");
     expect(statusBundleDe({
       identidade: id, indicesCompletos: true, condicaoDisponivel: true, rastersDisponiveis: 6
     })).toBe("completo");

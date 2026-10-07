@@ -253,10 +253,7 @@ export async function lerObservacaoSatelitalCompleta(
     "Trocar tema de visualização não cria nova consulta Statistical."
   ];
   if (!visualPronto) {
-    avisos.push("Mapa de condição indisponível — a observação Statistical permanece válida; reparo pode gerar só o produto ausente.");
-  }
-  if (rastersOk < INDICES_BUNDLE_ESSENCIAL.length) {
-    avisos.push("Rasters técnicos são sob demanda (lazy) — ausência não impede a observação completa.");
+    avisos.push("Produtos espaciais incompletos — a observação Statistical permanece válida; reparo gera só os faltantes (1 Process).");
   }
 
   // Identidade sintética fail-closed quando as linhas existem mas não fecham o bundle.

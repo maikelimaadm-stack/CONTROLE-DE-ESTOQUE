@@ -6,14 +6,14 @@ import {
   type DependenciasGarantirProdutos,
   type PedidoGarantirProdutos
 } from "../../src/lib/satelite/garantir-produtos-observacao.js";
-import * as mapaMod from "../../src/lib/satelite/gerar-mapa-condicao.js";
+import * as matMod from "../../src/lib/satelite/materializar-produtos-observacao.js";
 import * as rasterMod from "../../src/lib/satelite/gerar-raster-indice.js";
 import * as dbMod from "@agro/db";
 import { INDICES_BUNDLE_ESSENCIAL } from "@agro/domain";
 
 /**
- * SAT-BUNDLE-01A R1 — AUTO / REPAIR / COST consumo.
- * Stubs: withTx (leitura de análises) + serviços de geração.
+ * SAT-BUNDLE-01C — AUTO / REPAIR (evolução de 01A R1).
+ * Stubs: materializar (principal) + raster legado (explicito).
  */
 
 const PEDIDO: PedidoGarantirProdutos = {
@@ -35,6 +35,34 @@ function depBase(): DependenciasGarantirProdutos {
   };
 }
 
+function resultadoCompleto(opts: {
+  chamadas?: number;
+  reutilizados?: matMod.ResultadoMaterializacaoObservacao["outputs_reutilizados"];
+  solicitados?: matMod.ResultadoMaterializacaoObservacao["outputs_solicitados"];
+} = {}): matMod.ResultadoMaterializacaoObservacao {
+  const reutilizados = opts.reutilizados ?? [];
+  const solicitados = opts.solicitados ?? (
+    opts.chamadas === 0
+      ? []
+      : ["condicao", "ndvi", "evi2", "ndre", "ndmi", "msavi2", "bsi"] as const
+  );
+  const produtos = (["condicao", "ndvi", "evi2", "ndre", "ndmi", "msavi2", "bsi"] as const).map((id) => ({
+    id,
+    status: (reutilizados.includes(id) ? "reutilizado" : "pronto") as "pronto" | "reutilizado",
+    recurso_id: `id-${id}`
+  }));
+  return {
+    area_id: PEDIDO.areaId,
+    data_imagem: "2026-10-01",
+    produtos,
+    chamadas_process: opts.chamadas ?? 1,
+    outputs_solicitados: [...solicitados],
+    outputs_reutilizados: [...reutilizados],
+    completo: true,
+    pu_cabecalho: opts.chamadas === 0 ? null : "1.5"
+  };
+}
+
 function stubAnalises(comIndices = false): void {
   const analises = comIndices
     ? INDICES_BUNDLE_ESSENCIAL.map((indice) => ({
@@ -50,13 +78,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("SAT-BUNDLE-01A R1 — AUTO (worker só condição)", () => {
-  it("AUTO-01/02: política principal gera só condição; rasters ficam indisponíveis", async () => {
-    stubAnalises(false);
-    const mapaSpy = vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao").mockResolvedValue({
-      mapa: { id: "mapa-1" } as mapaMod.LinhaMapaCondicao,
-      reutilizada: false
-    });
+describe("SAT-BUNDLE-01C — AUTO (worker bundle multi-output)", () => {
+  it("AUTO-01/02: política principal materializa 7 produtos; 1 Process", async () => {
+    const matSpy = vi.spyOn(matMod, "materializarProdutosDaObservacao").mockResolvedValue(
+      resultadoCompleto({ chamadas: 1 })
+    );
     const rasterSpy = vi.spyOn(rasterMod, "gerarOuReutilizarRasterIndice");
 
     const r = await garantirProdutosDaObservacaoCompleta(depBase(), {
@@ -64,47 +90,42 @@ describe("SAT-BUNDLE-01A R1 — AUTO (worker só condição)", () => {
     });
 
     expect(r.politica).toBe("principal");
-    expect(mapaSpy).toHaveBeenCalledTimes(1);
-    expect(mapaSpy.mock.calls[0]![1]).toMatchObject({
+    expect(matSpy).toHaveBeenCalledTimes(1);
+    expect(matSpy.mock.calls[0]![1]).toMatchObject({
       consultaId: PEDIDO.consultaId,
       consultaItemId: PEDIDO.consultaItemId
     });
     expect(rasterSpy).not.toHaveBeenCalled();
-    for (const i of INDICES_BUNDLE_ESSENCIAL) {
-      expect(r.rasters[i].status).toBe("indisponivel");
-    }
     expect(r.condicao.status).toBe("pronto");
+    for (const i of INDICES_BUNDLE_ESSENCIAL) {
+      expect(r.rasters[i].status).toBe("pronto");
+    }
+    expect(r.completo).toBe(true);
     expect(r.chamadas_process).toBe(1);
   });
 
-  it("COST-03: Process automático recebe consultaId/itemId no pedido do mapa", async () => {
-    stubAnalises(false);
-    const mapaSpy = vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao").mockResolvedValue({
-      mapa: { id: "mapa-1" } as mapaMod.LinhaMapaCondicao,
-      reutilizada: false
-    });
-
+  it("COST-03: Process automático recebe consultaId/itemId no pedido", async () => {
+    const matSpy = vi.spyOn(matMod, "materializarProdutosDaObservacao").mockResolvedValue(
+      resultadoCompleto()
+    );
     await garantirProdutosDaObservacaoCompleta(depBase(), {
       ...PEDIDO, politica: "principal"
     });
-    expect(mapaSpy.mock.calls[0]![1]).toMatchObject({
+    expect(matSpy.mock.calls[0]![1]).toMatchObject({
       consultaId: PEDIDO.consultaId,
       consultaItemId: PEDIDO.consultaItemId
     });
   });
 
-  it("COST-04: sem contexto de consulta, mapa permanece avulso (null)", async () => {
-    stubAnalises(false);
-    const mapaSpy = vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao").mockResolvedValue({
-      mapa: { id: "mapa-1" } as mapaMod.LinhaMapaCondicao,
-      reutilizada: false
-    });
-
+  it("COST-04: sem contexto de consulta, materialização permanece avulsa (null)", async () => {
+    const matSpy = vi.spyOn(matMod, "materializarProdutosDaObservacao").mockResolvedValue(
+      resultadoCompleto()
+    );
     await garantirProdutosDaObservacaoCompleta(depBase(), {
       orgId: PEDIDO.orgId, userId: PEDIDO.userId, areaId: PEDIDO.areaId, politica: "principal"
     });
-    expect(mapaSpy.mock.calls[0]![1].consultaId ?? null).toBeNull();
-    expect(mapaSpy.mock.calls[0]![1].consultaItemId ?? null).toBeNull();
+    expect(matSpy.mock.calls[0]![1].consultaId ?? null).toBeNull();
+    expect(matSpy.mock.calls[0]![1].consultaItemId ?? null).toBeNull();
   });
 
   it("AUTO-03: raster_explicito gera um; AUTO-04: repetido reutiliza", async () => {
@@ -136,42 +157,50 @@ describe("SAT-BUNDLE-01A R1 — AUTO (worker só condição)", () => {
   });
 });
 
-describe("SAT-BUNDLE-01A R1 — REPAIR", () => {
-  it("REPAIR-01: reparo gera mapa sem chamar raster; política principal", async () => {
-    stubAnalises(false);
-    const mapaSpy = vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao").mockResolvedValue({
-      mapa: { id: "mapa-reparo" } as mapaMod.LinhaMapaCondicao,
-      reutilizada: false
+describe("SAT-BUNDLE-01C — REPAIR", () => {
+  it("REPAIR-01: reparo materializa bundle sem raster legado", async () => {
+    const matSpy = vi.spyOn(matMod, "materializarProdutosOperacional").mockResolvedValue({
+      status: "pronto",
+      resultado: resultadoCompleto({ chamadas: 1 })
     });
     const rasterSpy = vi.spyOn(rasterMod, "gerarOuReutilizarRasterIndice");
 
     const r = await repararProdutoPrincipalObservacao(depBase(), PEDIDO);
     expect(r.status).toBe("pronto");
     expect(r.chamadas_process).toBe(1);
+    expect(r.completo).toBe(true);
     expect(rasterSpy).not.toHaveBeenCalled();
-    expect(mapaSpy.mock.calls[0]![1].consultaId).toBe(PEDIDO.consultaId);
+    expect(matSpy.mock.calls[0]![1].consultaId).toBe(PEDIDO.consultaId);
   });
 
-  it("REPAIR-02: mapa existente → 0 Process", async () => {
-    stubAnalises(false);
-    vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao").mockResolvedValue({
-      mapa: { id: "mapa-cache" } as mapaMod.LinhaMapaCondicao,
-      reutilizada: true
+  it("REPAIR-02: cache total → 0 Process", async () => {
+    vi.spyOn(matMod, "materializarProdutosOperacional").mockResolvedValue({
+      status: "reutilizado",
+      resultado: resultadoCompleto({
+        chamadas: 0,
+        reutilizados: ["condicao", "ndvi", "evi2", "ndre", "ndmi", "msavi2", "bsi"]
+      })
     });
 
     const r = await repararProdutoPrincipalObservacao(depBase(), PEDIDO);
     expect(r.status).toBe("reutilizado");
     expect(r.chamadas_process).toBe(0);
-    expect(r.mapa_id).toBe("mapa-cache");
+    expect(r.mapa_id).toBe("id-condicao");
   });
 
   it("REPAIR-03: falha transitória pode ser tentada de novo (idempotente)", async () => {
-    stubAnalises(false);
-    const mapaSpy = vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao")
-      .mockRejectedValueOnce(Object.assign(new Error("transiente"), { code: "CONSULTA_INDISPONIVEL" }))
+    const matSpy = vi.spyOn(matMod, "materializarProdutosOperacional")
       .mockResolvedValueOnce({
-        mapa: { id: "mapa-ok" } as mapaMod.LinhaMapaCondicao,
-        reutilizada: false
+        status: "falhou",
+        resultado: {
+          area_id: PEDIDO.areaId, data_imagem: null, produtos: [],
+          chamadas_process: 0, outputs_solicitados: [], outputs_reutilizados: [],
+          completo: false, pu_cabecalho: null
+        }
+      })
+      .mockResolvedValueOnce({
+        status: "pronto",
+        resultado: resultadoCompleto()
       });
 
     const falha = await repararProdutoPrincipalObservacao(depBase(), PEDIDO);
@@ -179,11 +208,11 @@ describe("SAT-BUNDLE-01A R1 — REPAIR", () => {
 
     const ok = await repararProdutoPrincipalObservacao(depBase(), PEDIDO);
     expect(ok.status).toBe("pronto");
-    expect(mapaSpy).toHaveBeenCalledTimes(2);
+    expect(matSpy).toHaveBeenCalledTimes(2);
   });
 
   it("best-effort do worker não propaga", async () => {
-    vi.spyOn(dbMod, "withTx").mockRejectedValue(new Error("db"));
+    vi.spyOn(matMod, "materializarProdutosDaObservacao").mockRejectedValue(new Error("db"));
     await expect(tentarGarantirProdutosAposPastagem(depBase(), PEDIDO)).resolves.toBeUndefined();
   });
 });

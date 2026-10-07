@@ -10,12 +10,13 @@
  *      consulta 'pendente' → 'executando'.
  *   2. SEM transação: a Statistical API pelo cliente compartilhado (`estatisticaComConsumo`: o corpo e o cabeçalho de PU),
  *      a leitura estrita e a escolha da v2 (`ndvi-v2.ts`), com a janela do item CONVERTIDA (fim exclusivo).
- *      Reparo `produto_condicao_falhou` (já tem `analise_id`): PULA a Statistical — só Process do mapa.
+ *      Reparo `produtos_bundle_falharam` / legado `produto_condicao_falhou` (já tem `analise_id`):
+ *      PULA a Statistical — só Process multi-output dos faltantes.
  *   3. transação curta: grava análise + consumo Statistical. Bundle pastagem útil: item PERMANECE 'executando'
  *      (reserva ativa) — NÃO fecha nem recalcula para 'concluida' ainda.
- *   4. SEM transação: Process do mapa condição v3 com identidade EXATA da observação.
- *   5. transação curta: Process ok → item 'concluido' + recalcular; falha → 'falho' `produto_condicao_falhou`
- *      (consulta ≠ concluída normal) + recalcular. NÃO repete Statistical.
+ *   4. SEM transação: Process TAR multi-output (condição + 6 rasters) com identidade EXATA.
+ *   5. transação curta: Process ok + 7 produtos → item 'concluido' + recalcular;
+ *      falha → 'falho' `produtos_bundle_falharam` + recalcular. NÃO repete Statistical.
  * Falha do provedor (ou da fase 3): a decisão de `retry.ts` — repetir → 'pendente' com `proxima_tentativa_em`; falhar
  * → 'falho' com o erro estável —, o consumo quando o provedor respondeu 2xx (a chamada gastou), e o recálculo. Erro que
  * NÃO é do provedor DEPOIS de um 2xx (banco, defeito na gravação) não repete: repetir cobraria a chamada de novo — o item
@@ -98,9 +99,11 @@ export const ERROS_ITEM = {
   /** Erro que não é do provedor DEPOIS de um 2xx (a chamada já foi cobrada): não repete. */
   erroGravacao: "erro_gravacao",
   /**
-   * Statistical ok, Process do mapa condição falhou. Reprocessar NÃO chama Statistical de novo —
-   * só o caminho de reparo do produto (identidade da análise já gravada).
+   * Statistical ok, Process multi-output / persistência do bundle falhou.
+   * Reprocessar NÃO chama Statistical de novo — só materializa faltantes.
    */
+  produtosBundleFalharam: "produtos_bundle_falharam",
+  /** Legado (#111): tratado como alias de reparo de produtos do bundle. */
   produtoCondicaoFalhou: "produto_condicao_falhou"
 } as const;
 
@@ -430,7 +433,7 @@ async function fase3(dep: DependenciasItem, r: ItemReservado, p: Pronto, chamada
   });
 }
 
-/** Fecha o item após o Process do mapa (sucesso → concluido; falha → produto_condicao_falhou). */
+/** Fecha o item após o Process multi-output (sucesso → concluido; falha → produtos_bundle_falharam). */
 async function fecharAposProcess(
   dep: DependenciasItem,
   r: ItemReservado,
@@ -453,10 +456,10 @@ async function fecharAposProcess(
       return { desfecho: "concluido", motivo: null };
     }
     await mudarItem(ctx, item, {
-      situacao: "falho", erro: ERROS_ITEM.produtoCondicaoFalhou, proxima: null
+      situacao: "falho", erro: ERROS_ITEM.produtosBundleFalharam, proxima: null
     });
     await recalcularConsulta(ctx, item.consulta_id);
-    return { desfecho: "falho", motivo: ERROS_ITEM.produtoCondicaoFalhou };
+    return { desfecho: "falho", motivo: ERROS_ITEM.produtosBundleFalharam };
   });
 }
 
@@ -496,7 +499,7 @@ async function lerIdentidadeDaAnaliseItem(
   });
 }
 
-async function executarProcessCondicao(
+async function executarProcessBundle(
   dep: DependenciasItem,
   r: ItemReservado,
   areaId: string,
@@ -511,7 +514,10 @@ async function executarProcessCondicao(
     consultaItemId: r.item_id,
     politica: "principal"
   });
-  return { ok: resultado.status === "pronto" || resultado.status === "reutilizado", status: resultado.status };
+  return {
+    ok: (resultado.status === "pronto" || resultado.status === "reutilizado") && resultado.completo !== false,
+    status: resultado.status
+  };
 }
 
 /** A falha (do provedor, da leitura ou de uma fase): a decisão de `retry.ts`, o consumo se houve 2xx, o recálculo. */
@@ -591,16 +597,16 @@ async function executarFases(
       if (!ref) {
         return falhar(f1.pronto.item.tentativas, null, new Error("analise_referencia_ausente"));
       }
-      const process = await executarProcessCondicao(dep, r, f1.pronto.item.area_id, ref.identidade);
+      const process = await executarProcessBundle(dep, r, f1.pronto.item.area_id, ref.identidade);
       const fechado = await fecharAposProcess(
         dep, r, f1.pronto.item.tentativas, process.ok, ref.analiseId, ref.puGasto
       );
       return anotar(fechado.desfecho, fechado.motivo, {
-        etapa: "reparo_produto_condicao", process_status: process.status
+        etapa: "reparo_produtos_bundle", process_status: process.status
       });
     } catch (e) {
-      dep.log.error({ satelite_item: { ...ids, etapa: "reparo_produto_condicao", ...resumoDoErro(e) } },
-        "item da fila satelital: reparo do produto falhou");
+      dep.log.error({ satelite_item: { ...ids, etapa: "reparo_produtos_bundle", ...resumoDoErro(e) } },
+        "item da fila satelital: reparo do bundle falhou");
       try {
         const fechado = await fecharAposProcess(
           dep, r, f1.pronto.item.tentativas, false,
@@ -626,19 +632,19 @@ async function executarFases(
   }
   if (f3.tipo === "fechado") return anotar(f3.desfecho, f3.motivo);
 
-  // Reserva ainda ativa (item 'executando'). Process fora de TX; só então fecha.
-  // Falha do Process NÃO repete Statistical — fecha com produto_condicao_falhou.
+  // Reserva ainda ativa (item 'executando'). Process TAR fora de TX; só então fecha.
+  // Falha do Process NÃO repete Statistical — fecha com produtos_bundle_falharam.
   try {
-    const process = await executarProcessCondicao(dep, r, f1.pronto.item.area_id, f3.identidade);
+    const process = await executarProcessBundle(dep, r, f1.pronto.item.area_id, f3.identidade);
     const fechado = await fecharAposProcess(
       dep, r, f1.pronto.item.tentativas, process.ok, f3.analiseId, f3.puGasto
     );
     return anotar(fechado.desfecho, fechado.motivo, {
-      etapa: "process_condicao", process_status: process.status
+      etapa: "process_bundle", process_status: process.status
     });
   } catch (e) {
-    dep.log.error({ satelite_item: { ...ids, etapa: "process_condicao", ...resumoDoErro(e) } },
-      "item da fila satelital: Process da condição falhou");
+    dep.log.error({ satelite_item: { ...ids, etapa: "process_bundle", ...resumoDoErro(e) } },
+      "item da fila satelital: Process multi-output do bundle falhou");
     try {
       const fechado = await fecharAposProcess(
         dep, r, f1.pronto.item.tentativas, false, f3.analiseId, f3.puGasto

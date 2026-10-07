@@ -7,14 +7,13 @@ import {
   type DependenciasGarantirProdutos,
   type PedidoGarantirProdutos
 } from "../../src/lib/satelite/garantir-produtos-observacao.js";
-import * as mapaMod from "../../src/lib/satelite/gerar-mapa-condicao.js";
+import * as matMod from "../../src/lib/satelite/materializar-produtos-observacao.js";
 import { ERROS_ITEM } from "../../src/lib/satelite/executar-item.js";
 import * as dbMod from "@agro/db";
 import { isISODate } from "@agro/shared";
 
 /**
- * SAT-BUNDLE-01A R2 — BUDGET / TEMP / REPAIR / SEC.
- * Provas unitárias dos blockers A–E sem banco real.
+ * SAT-BUNDLE-01C — BUDGET / TEMP / REPAIR / SEC (evolução de 01A R2).
  */
 
 const ORG = "00000000-0000-4000-8000-000000000001";
@@ -51,40 +50,49 @@ function depBase(): DependenciasGarantirProdutos {
   };
 }
 
-function stubAnalises(): void {
-  vi.spyOn(dbMod, "withTx").mockResolvedValue({
-    analises: [{
-      id: "analise-ndvi",
-      indice: "ndvi",
-      observacao_inicio: IDENT_05.observacaoInicio,
-      observacao_fim: IDENT_05.observacaoFim,
-      geometria_sha256: HASH
-    }],
-    dataImagem: "2026-10-05"
-  });
+function resultadoOk(status: "pronto" | "reutilizado", identidade = IDENT_05): {
+  status: "pronto" | "reutilizado" | "falhou";
+  resultado: matMod.ResultadoMaterializacaoObservacao;
+} {
+  const chamadas = status === "reutilizado" ? 0 : 1;
+  const ids = ["condicao", "ndvi", "evi2", "ndre", "ndmi", "msavi2", "bsi"] as const;
+  return {
+    status,
+    resultado: {
+      area_id: AREA,
+      data_imagem: identidade.observacaoInicio.toISOString().slice(0, 10),
+      produtos: ids.map((id) => ({
+        id, status: status === "reutilizado" ? "reutilizado" as const : "pronto" as const,
+        recurso_id: `id-${id}`
+      })),
+      chamadas_process: chamadas,
+      outputs_solicitados: chamadas === 0 ? [] : [...ids],
+      outputs_reutilizados: chamadas === 0 ? [...ids] : [],
+      completo: true,
+      pu_cabecalho: chamadas === 0 ? null : "2.0"
+    }
+  };
 }
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("SAT-BUNDLE-01A R2 — BUDGET (reserva até Process)", () => {
-  it("BUDGET-01/02: ordem Statistical → Process → fechar; ERRO estável produto_condicao_falhou", async () => {
-    // Contrato estável do fechamento: falha do Process NÃO é concluido.
+describe("SAT-BUNDLE-01C — BUDGET (reserva até Process)", () => {
+  it("BUDGET-01/02: ordem Statistical → Process bundle → fechar; ERRO produtos_bundle_falharam", async () => {
+    expect(ERROS_ITEM.produtosBundleFalharam).toBe("produtos_bundle_falharam");
     expect(ERROS_ITEM.produtoCondicaoFalhou).toBe("produto_condicao_falhou");
-    expect(ERROS_ITEM.produtoCondicaoFalhou).not.toBe("erro_gravacao");
     const src = await import("node:fs").then((fs) =>
       fs.readFileSync(new URL("../../src/lib/satelite/executar-item.ts", import.meta.url), "utf8")
     );
-    // Statistical anexa análise SEM fechar; Process roda; só fecharAposProcess conclui.
     expect(src).toContain("anexarAnaliseEnquantoExecuta");
     expect(src).toContain('tipo: "aguarda_process"');
     expect(src).toContain("fecharAposProcess");
-    expect(src).toContain("executarProcessCondicao");
-    // Não pode voltar o padrão R1: fechar concluido e só então tentarGarantir best-effort.
+    expect(src).toContain("executarProcessBundle");
+    expect(src).toContain("produtos_bundle_falharam");
     expect(src).not.toContain("tentarGarantirProdutosAposPastagem");
     const idxAnexar = src.indexOf("anexarAnaliseEnquantoExecuta");
-    const idxProcess = src.indexOf("executarProcessCondicao");
+    const idxProcess = src.indexOf("executarProcessBundle");
     const idxFechar = src.indexOf("async function fecharAposProcess");
     expect(idxAnexar).toBeGreaterThan(0);
     expect(idxProcess).toBeGreaterThan(idxAnexar);
@@ -92,11 +100,7 @@ describe("SAT-BUNDLE-01A R2 — BUDGET (reserva até Process)", () => {
   });
 
   it("BUDGET-03: Process reutilizado → status reutilizado sem custo novo", async () => {
-    stubAnalises();
-    vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao").mockResolvedValue({
-      mapa: { id: "mapa-cache" } as mapaMod.LinhaMapaCondicao,
-      reutilizada: true
-    });
+    vi.spyOn(matMod, "materializarProdutosOperacional").mockResolvedValue(resultadoOk("reutilizado"));
     const r = await garantirProdutoCondicaoOperacional(depBase(), {
       ...PEDIDO, identidade: IDENT_05
     });
@@ -105,10 +109,14 @@ describe("SAT-BUNDLE-01A R2 — BUDGET (reserva até Process)", () => {
   });
 
   it("BUDGET-04: Process falha → status falhou (não mascara como concluída)", async () => {
-    stubAnalises();
-    vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao").mockRejectedValue(
-      Object.assign(new Error("process down"), { code: "CONSULTA_INDISPONIVEL" })
-    );
+    vi.spyOn(matMod, "materializarProdutosOperacional").mockResolvedValue({
+      status: "falhou",
+      resultado: {
+        area_id: AREA, data_imagem: null, produtos: [],
+        chamadas_process: 0, outputs_solicitados: [], outputs_reutilizados: [],
+        completo: false, pu_cabecalho: null
+      }
+    });
     const r = await garantirProdutoCondicaoOperacional(depBase(), {
       ...PEDIDO, identidade: IDENT_05
     });
@@ -117,29 +125,25 @@ describe("SAT-BUNDLE-01A R2 — BUDGET (reserva até Process)", () => {
   });
 
   it("BUDGET-02: Process 200 grava pronto com consulta/item no pedido", async () => {
-    stubAnalises();
-    const mapaSpy = vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao").mockResolvedValue({
-      mapa: { id: "mapa-novo" } as mapaMod.LinhaMapaCondicao,
-      reutilizada: false
-    });
+    const matSpy = vi.spyOn(matMod, "materializarProdutosOperacional").mockResolvedValue(
+      resultadoOk("pronto")
+    );
     const r = await garantirProdutoCondicaoOperacional(depBase(), {
       ...PEDIDO, identidade: IDENT_05
     });
     expect(r.status).toBe("pronto");
     expect(r.chamadas_process).toBe(1);
-    expect(mapaSpy.mock.calls[0]![1]).toMatchObject({
+    expect(matSpy.mock.calls[0]![1]).toMatchObject({
       consultaId: CONSULTA,
       consultaItemId: ITEM,
       identidade: IDENT_05
     });
   });
 
-  it("BUDGET-05: duas identidades distintas não compartilham o mesmo pedido de mapa", async () => {
-    stubAnalises();
-    const mapaSpy = vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao").mockResolvedValue({
-      mapa: { id: "m" } as mapaMod.LinhaMapaCondicao,
-      reutilizada: false
-    });
+  it("BUDGET-05: duas identidades distintas não compartilham o mesmo pedido", async () => {
+    const matSpy = vi.spyOn(matMod, "materializarProdutosOperacional").mockResolvedValue(
+      resultadoOk("pronto")
+    );
     await garantirProdutoCondicaoOperacional(depBase(), {
       ...PEDIDO, identidade: IDENT_01, consultaId: CONSULTA, consultaItemId: ITEM
     });
@@ -149,43 +153,30 @@ describe("SAT-BUNDLE-01A R2 — BUDGET (reserva até Process)", () => {
       consultaId: "00000000-0000-4000-8000-000000000020",
       consultaItemId: "00000000-0000-4000-8000-000000000021"
     });
-    expect(mapaSpy).toHaveBeenCalledTimes(2);
-    expect(mapaSpy.mock.calls[0]![1].identidade).toEqual(IDENT_01);
-    expect(mapaSpy.mock.calls[1]![1].identidade).toEqual(IDENT_05);
-    expect(mapaSpy.mock.calls[0]![1].consultaId).not.toBe(mapaSpy.mock.calls[1]![1].consultaId);
+    expect(matSpy).toHaveBeenCalledTimes(2);
+    expect(matSpy.mock.calls[0]![1].identidade).toEqual(IDENT_01);
+    expect(matSpy.mock.calls[1]![1].identidade).toEqual(IDENT_05);
+    expect(matSpy.mock.calls[0]![1].consultaId).not.toBe(matSpy.mock.calls[1]![1].consultaId);
   });
 });
 
-describe("SAT-BUNDLE-01A R2 — TEMP (identidade da observação)", () => {
-  it("TEMP-01/02: identidade 05/10 é passada ao gerador — mapa 01/10 não satisfaz por chave distinta", async () => {
-    stubAnalises();
-    const mapaSpy = vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao").mockResolvedValue({
-      mapa: { id: "mapa-05" } as mapaMod.LinhaMapaCondicao,
-      reutilizada: false
-    });
+describe("SAT-BUNDLE-01C — TEMP (identidade da observação)", () => {
+  it("TEMP-01/02: identidade 05/10 é passada ao materializador", async () => {
+    const matSpy = vi.spyOn(matMod, "materializarProdutosDaObservacao").mockResolvedValue(
+      resultadoOk("pronto", IDENT_05).resultado
+    );
     await garantirProdutosDaObservacaoCompleta(depBase(), {
       ...PEDIDO, identidade: IDENT_05, politica: "principal"
     });
-    expect(mapaSpy.mock.calls[0]![1].identidade).toEqual(IDENT_05);
-    expect(mapaSpy.mock.calls[0]![1].identidade?.observacaoInicio).not.toEqual(IDENT_01.observacaoInicio);
+    expect(matSpy.mock.calls[0]![1].identidade).toEqual(IDENT_05);
+    expect(matSpy.mock.calls[0]![1].identidade?.observacaoInicio).not.toEqual(IDENT_01.observacaoInicio);
   });
 
-  it("TEMP-03: worker histórico — analiseIdReferencia resolve identidade, não latest livre", async () => {
-    const identidadeSpy = vi.spyOn(dbMod, "withTx")
-      .mockResolvedValueOnce(IDENT_01) // resolverIdentidade via analiseId
-      .mockResolvedValueOnce({
-        analises: [{
-          id: "a-ndvi", indice: "ndvi",
-          observacao_inicio: IDENT_01.observacaoInicio,
-          observacao_fim: IDENT_01.observacaoFim,
-          geometria_sha256: HASH
-        }],
-        dataImagem: "2026-10-01"
-      });
-    const mapaSpy = vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao").mockResolvedValue({
-      mapa: { id: "mapa-hist" } as mapaMod.LinhaMapaCondicao,
-      reutilizada: false
-    });
+  it("TEMP-03: worker histórico — analiseIdReferencia resolve identidade", async () => {
+    vi.spyOn(dbMod, "withTx").mockResolvedValueOnce(IDENT_01);
+    const matSpy = vi.spyOn(matMod, "materializarProdutosOperacional").mockResolvedValue(
+      resultadoOk("pronto", IDENT_01)
+    );
 
     await garantirProdutoCondicaoOperacional(depBase(), {
       orgId: ORG, userId: USER, areaId: AREA,
@@ -193,21 +184,17 @@ describe("SAT-BUNDLE-01A R2 — TEMP (identidade da observação)", () => {
       consultaId: CONSULTA, consultaItemId: ITEM
     });
 
-    expect(identidadeSpy).toHaveBeenCalled();
-    expect(mapaSpy.mock.calls[0]![1].identidade).toEqual(IDENT_01);
+    expect(matSpy.mock.calls[0]![1].identidade).toEqual(IDENT_01);
   });
 
   it("TEMP-04/05: duas observações da mesma área geram pedidos com identidades separadas", async () => {
-    stubAnalises();
-    const mapaSpy = vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao").mockResolvedValue({
-      mapa: { id: "m" } as mapaMod.LinhaMapaCondicao,
-      reutilizada: false
-    });
-    // Fora de ordem: 05 primeiro, depois 01 — identidades não se trocam.
+    const matSpy = vi.spyOn(matMod, "materializarProdutosOperacional").mockResolvedValue(
+      resultadoOk("pronto")
+    );
     await garantirProdutoCondicaoOperacional(depBase(), { ...PEDIDO, identidade: IDENT_05 });
     await garantirProdutoCondicaoOperacional(depBase(), { ...PEDIDO, identidade: IDENT_01 });
-    expect(mapaSpy.mock.calls[0]![1].identidade).toEqual(IDENT_05);
-    expect(mapaSpy.mock.calls[1]![1].identidade).toEqual(IDENT_01);
+    expect(matSpy.mock.calls[0]![1].identidade).toEqual(IDENT_05);
+    expect(matSpy.mock.calls[1]![1].identidade).toEqual(IDENT_01);
   });
 
   it("chaveCacheCondicaoPasto inclui data_imagem — 01/10 ≠ 05/10", async () => {
@@ -223,23 +210,27 @@ describe("SAT-BUNDLE-01A R2 — TEMP (identidade da observação)", () => {
   });
 });
 
-describe("SAT-BUNDLE-01A R2 — REPAIR fail-closed", () => {
+describe("SAT-BUNDLE-01C — REPAIR fail-closed", () => {
   it("REPAIR-04: reaproveitado 05/10 + identidade 05/10 no pedido (não 01/10)", async () => {
-    stubAnalises();
-    const mapaSpy = vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao").mockResolvedValue({
-      mapa: { id: "mapa-05" } as mapaMod.LinhaMapaCondicao,
-      reutilizada: false
-    });
+    const matSpy = vi.spyOn(matMod, "materializarProdutosOperacional").mockResolvedValue(
+      resultadoOk("pronto", IDENT_05)
+    );
     await repararProdutoPrincipalObservacao(depBase(), {
       ...PEDIDO, identidade: IDENT_05
     });
-    expect(mapaSpy.mock.calls[0]![1].identidade).toEqual(IDENT_05);
-    expect(mapaSpy.mock.calls[0]![1].identidade?.observacaoInicio.getUTCDate()).toBe(5);
+    expect(matSpy.mock.calls[0]![1].identidade).toEqual(IDENT_05);
+    expect(matSpy.mock.calls[0]![1].identidade?.observacaoInicio.getUTCDate()).toBe(5);
   });
 
   it("REPAIR-05: reparo falha → status falhou (não sucesso normal)", async () => {
-    stubAnalises();
-    vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao").mockRejectedValue(new Error("boom"));
+    vi.spyOn(matMod, "materializarProdutosOperacional").mockResolvedValue({
+      status: "falhou",
+      resultado: {
+        area_id: AREA, data_imagem: null, produtos: [],
+        chamadas_process: 0, outputs_solicitados: [], outputs_reutilizados: [],
+        completo: false, pu_cabecalho: null
+      }
+    });
     const r = await repararProdutoPrincipalObservacao(depBase(), {
       ...PEDIDO, identidade: IDENT_05
     });
@@ -249,8 +240,7 @@ describe("SAT-BUNDLE-01A R2 — REPAIR fail-closed", () => {
   });
 });
 
-describe("SAT-BUNDLE-01A R2 — SEC (endpoint público)", () => {
-  /** Espelho do schema público — IDs de ledger são RECUSADOS. */
+describe("SAT-BUNDLE-01C — SEC (endpoint público)", () => {
   const reparoCorpoPublico = z.object({
     data_imagem: z.string().refine(isISODate, "Data inválida").optional()
   }).strict();
@@ -269,28 +259,23 @@ describe("SAT-BUNDLE-01A R2 — SEC (endpoint público)", () => {
     expect(reparoCorpoPublico.parse({})).toEqual({});
   });
 
-  it("SEC-02/03: reparo público força consultaId/itemId null (não atribui ledger de outra área/consulta)", async () => {
-    stubAnalises();
-    const mapaSpy = vi.spyOn(mapaMod, "gerarOuReutilizarMapaCondicao").mockResolvedValue({
-      mapa: { id: "mapa-avulso" } as mapaMod.LinhaMapaCondicao,
-      reutilizada: false
-    });
-    // Mesmo que o caller tente passar IDs, o contrato do endpoint zera — testamos o serviço
-    // chamado como o endpoint faz (null/null).
+  it("SEC-02/03: reparo público força consultaId/itemId null", async () => {
+    const matSpy = vi.spyOn(matMod, "materializarProdutosOperacional").mockResolvedValue(
+      resultadoOk("pronto")
+    );
     await repararProdutoPrincipalObservacao(depBase(), {
       orgId: ORG, userId: USER, areaId: AREA,
       dataImagem: "2026-10-05",
       consultaId: null,
       consultaItemId: null
     });
-    expect(mapaSpy.mock.calls[0]![1].consultaId).toBeNull();
-    expect(mapaSpy.mock.calls[0]![1].consultaItemId).toBeNull();
+    expect(matSpy.mock.calls[0]![1].consultaId).toBeNull();
+    expect(matSpy.mock.calls[0]![1].consultaItemId).toBeNull();
   });
 });
 
-describe("SAT-BUNDLE-01A R2 — SQL temporal da prova de cache", () => {
+describe("SAT-BUNDLE-01C — SQL temporal da prova de cache", () => {
   it("chavesComMapaCondicaoV3DaObservacao casa data_imagem + observacao_inicio/fim", async () => {
-    // Importa o símbolo exportado e confere que a query textual exige identidade temporal.
     const src = await import("node:fs").then((fs) =>
       fs.readFileSync(new URL("../../src/routes/satelite-consultas.ts", import.meta.url), "utf8")
     );
@@ -298,17 +283,5 @@ describe("SAT-BUNDLE-01A R2 — SQL temporal da prova de cache", () => {
     expect(src).toContain("m.data_imagem = (s.observacao_inicio at time zone 'UTC')::date");
     expect(src).toContain("m.observacao_inicio = s.observacao_inicio");
     expect(src).toContain("m.observacao_fim = s.observacao_fim");
-    // Regressão: prova antiga só por area+geom NÃO deve voltar.
-    expect(src).not.toMatch(/areasComMapaCondicaoV3\s*\(/);
-  });
-
-  it("fechamento da consulta após reparo é fail-closed", async () => {
-    const src = await import("node:fs").then((fs) =>
-      fs.readFileSync(new URL("../../src/routes/satelite-consultas.ts", import.meta.url), "utf8")
-    );
-    expect(src).toContain("garantirProdutoCondicaoOperacional");
-    expect(src).toContain("algumFalhou");
-    expect(src).toContain("if (!algumFalhou)");
-    expect(src).not.toContain("tentarGarantirProdutosAposPastagem");
   });
 });

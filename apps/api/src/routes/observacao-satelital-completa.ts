@@ -84,8 +84,8 @@ export default async function observacaoSatelitalCompletaRoutes(app: FastifyInst
   });
 
   /**
-   * REPAIR — gera só o mapa de condição a partir da Statistical já gravada.
-   * Idempotente: mapa existente → reutilizado (0 Process). NÃO reexecuta Statistical.
+   * REPAIR — materializa faltantes do bundle (condição + rasters) a partir da Statistical.
+   * Idempotente: cache total → 0 Process; parcial → 1 Process TAR. NÃO reexecuta Statistical.
    * Sem transação DB durante HTTP externo.
    * Consumo avulso (consulta_id/consulta_item_id = null) — cliente não atribui ledger.
    */
@@ -117,19 +117,29 @@ export default async function observacaoSatelitalCompletaRoutes(app: FastifyInst
         }
       );
       const statusHttp = r.status === "pronto" ? 201 : 200;
+      const produtos = (r.produtos ?? []).map((p) => ({
+        id: p.id,
+        status: p.status,
+        recurso_id: p.recurso_id,
+        ...(p.erro ? { erro: p.erro } : {})
+      }));
       return reply.status(statusHttp).send({
         area_id: r.area_id,
         data_imagem: r.data_imagem,
+        status: r.status,
+        completo: r.completo === true,
         condicao: {
           chave: "condicao_pasto",
-          status: r.status === "falhou" ? "falhou" : r.status,
+          status: r.status === "falhou" && !r.mapa_id ? "falhou" : (produtos.find((p) => p.id === "condicao")?.status ?? r.status),
           id: r.mapa_id,
-          ...(r.erro ? { erro: r.erro } : {})
+          ...(r.erro && !r.mapa_id ? { erro: r.erro } : {})
         },
+        produtos,
+        outputs_solicitados: r.outputs_solicitados ?? [],
+        outputs_reutilizados: r.outputs_reutilizados ?? [],
         chamadas_process: r.chamadas_process,
-        reutilizacoes: r.status === "reutilizado" ? 1 : 0,
+        reutilizacoes: r.outputs_reutilizados?.length ?? (r.status === "reutilizado" ? 1 : 0),
         politica: "principal",
-        rasters_tecnicos: "lazy",
         consumo: { consulta_id: null, consulta_item_id: null }
       });
     } catch (e) {

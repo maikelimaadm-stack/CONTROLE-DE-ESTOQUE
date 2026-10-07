@@ -438,7 +438,7 @@ async function processarConsulta(ctx: ServiceCtx, corpo: CorpoConsulta, corpoBru
       for (const indice of corpo.indices) {
         const versao_metodo = VERSAO_METODO_POR_BUNDLE[indice];
         const origem = origemChaveIdempotencia({ organizationId: ctx.orgId, areaId: area.id, geometriaSha256: hash, indiceBundle: indice, slot, versaoMetodo: versao_metodo });
-        // pastagem: Statistical + Process condição (rasters lazy fora da prévia). Conservador: sem prova de cache.
+        // pastagem: Statistical + 1 Process multi-output (SAT-BUNDLE-01C). Conservador: sem prova de cache.
         itens.push({
           area_id: area.id, geometria_sha256: hash, indice, versao_metodo, slot, origem,
           chave: chaveIdempotencia(origem), pixelsBbox,
