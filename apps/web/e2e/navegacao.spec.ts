@@ -75,13 +75,13 @@ test("área de estoque: abas, seletor interno, sem o '+ Novo' antigo, menu novo 
   await page.goto("/estoque/baixas/new");
   await expect(page.getByText("Nova baixa de estoque", { exact: true })).toBeVisible();
 });
-test("menu principal: só módulos (≤ 14), sem abas repetidas; breadcrumbs derivados da navegação", async ({ page }) => {
+test("menu principal: só módulos (≤ 15), sem abas repetidas; breadcrumbs derivados da navegação", async ({ page }) => {
   await login(page);
   const nav = page.getByRole("navigation", { name: "Menu principal" });
   const more = nav.getByTestId("nav-more"); if (await more.count()) await more.click(); // módulos que não couberam ficam em "Mais"
-  const modules = nav.getByTestId("nav-module"); const n = await modules.count(); expect(n).toBeGreaterThanOrEqual(10); expect(n).toBeLessThanOrEqual(14); // 14 desde a MAPA-01 (#91, decisão 289: o mapa é o 15º módulo do registry — "Mapa geral" desde a decisão 294)
+  const modules = nav.getByTestId("nav-module"); const n = await modules.count(); expect(n).toBeGreaterThanOrEqual(10); expect(n).toBeLessThanOrEqual(15); // Início fora da barra; 15 desde MAPA-MANEJO-PASTOS (decisão 303: Mapa de Manejo ao lado do Mapa geral)
   await expect(nav.getByText("Cadastros Base")).toHaveCount(0); await expect(nav.getByText("Saldo e Movimentações")).toHaveCount(0); await expect(nav.getByText("Entradas e Recebimentos")).toHaveCount(0);
-  for (const m of ["Compras", "Estoque", "Financeiro", "Vendas", "Pecuária", "Confinamento", "Frota e Ativos", "RH", "Ordens de Serviço", "Fiscal", "Relatórios", "Configurações", "Aprovações", "Mapa geral"]) await expect(modules.filter({ hasText: m }).first()).toBeVisible();
+  for (const m of ["Compras", "Estoque", "Financeiro", "Vendas", "Pecuária", "Confinamento", "Frota e Ativos", "RH", "Ordens de Serviço", "Fiscal", "Relatórios", "Configurações", "Aprovações", "Mapa geral", "Mapa de Manejo"]) await expect(modules.filter({ hasText: m }).first()).toBeVisible();
   await page.goto("/configuracoes?tab=financeiro&sub=chart-accounts");
   const crumbs = page.getByRole("navigation", { name: "Navegação" }); await expect(crumbs).toContainText("Configurações"); await expect(crumbs).toContainText("Financeiro"); await expect(crumbs).toContainText("Plano de Contas");
   await expect(page.locator("table")).toBeVisible();

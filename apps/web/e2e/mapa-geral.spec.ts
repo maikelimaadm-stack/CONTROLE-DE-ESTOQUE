@@ -97,8 +97,8 @@ test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro 
     geometria: { type: "Polygon", coordinates: [[[lng, lat], [lng + 0.01, lat], [lng + 0.01, lat + 0.01], [lng, lat + 0.01], [lng, lat]]] }
   });
 
-  // a rota antiga do módulo (favoritos, links salvos) leva ao Mapa geral
-  await page.goto("/mapa-de-manejo");
+  // Mapa geral continua em /mapa-geral (listagem + satélite); /mapa-de-manejo é o Mapa de Manejo (só pastos)
+  await page.goto("/mapa-geral");
   await expect(page).toHaveURL(/\/mapa-geral$/);
   await expect(page.getByRole("heading", { name: "Mapa geral" })).toBeVisible();
   await expect(page.getByTestId("mapa-ir-areas")).toHaveText("Cadastro de Área");
