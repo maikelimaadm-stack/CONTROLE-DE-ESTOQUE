@@ -9,7 +9,7 @@ import { assinaturaDaGeometria } from "./cache-rasters";
 import { geoKey, OPACIDADE_PNG_SOB_ZONAS } from "./camada-zonas-condicao";
 import {
   agregarFaixaNaVista, chaveCacheDistribuicao, centroPixelLngLat,
-  distribuirFaixasRasterNaArea, FAIXA_SEM_LEITURA_ID, limparCacheDistribuicaoFaixas
+  distribuirFaixasRasterNaArea, limparCacheDistribuicaoFaixas
 } from "./distribuicao-faixas-raster";
 import { idsDetalheTematico, deveCarregarDetalheTematico, ZOOM_MINIMO_DETALHE_TEMAS } from "./zoom-detalhe-temas";
 
