@@ -146,7 +146,7 @@ describe("SAT-BUNDLE-01A R1 — REPAIR", () => {
     const rasterSpy = vi.spyOn(rasterMod, "gerarOuReutilizarRasterIndice");
 
     const r = await repararProdutoPrincipalObservacao(depBase(), PEDIDO);
-    expect(r.condicao.status).toBe("pronto");
+    expect(r.status).toBe("pronto");
     expect(r.chamadas_process).toBe(1);
     expect(rasterSpy).not.toHaveBeenCalled();
     expect(mapaSpy.mock.calls[0]![1].consultaId).toBe(PEDIDO.consultaId);
@@ -160,9 +160,9 @@ describe("SAT-BUNDLE-01A R1 — REPAIR", () => {
     });
 
     const r = await repararProdutoPrincipalObservacao(depBase(), PEDIDO);
-    expect(r.condicao.status).toBe("reutilizado");
+    expect(r.status).toBe("reutilizado");
     expect(r.chamadas_process).toBe(0);
-    expect(r.reutilizacoes).toBe(1);
+    expect(r.mapa_id).toBe("mapa-cache");
   });
 
   it("REPAIR-03: falha transitória pode ser tentada de novo (idempotente)", async () => {
@@ -175,10 +175,10 @@ describe("SAT-BUNDLE-01A R1 — REPAIR", () => {
       });
 
     const falha = await repararProdutoPrincipalObservacao(depBase(), PEDIDO);
-    expect(falha.condicao.status).toBe("falhou");
+    expect(falha.status).toBe("falhou");
 
     const ok = await repararProdutoPrincipalObservacao(depBase(), PEDIDO);
-    expect(ok.condicao.status).toBe("pronto");
+    expect(ok.status).toBe("pronto");
     expect(mapaSpy).toHaveBeenCalledTimes(2);
   });
 

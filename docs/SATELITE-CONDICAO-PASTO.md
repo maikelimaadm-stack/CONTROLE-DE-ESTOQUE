@@ -93,18 +93,20 @@ Tabelas `erp.satelite_mapas_condicao` (+ arquivos). Sem `analise_id`. Migration 
 - `GET /api/mapa/condicao-pasto?area_ids=` — listagem v3 (não gera).
 - `GET /api/mapa/condicao-pasto/:mapaId/arquivo?t=` — PNG.
 
-## Worker / bundle (SAT-BUNDLE-01A R1)
+## Worker / bundle (SAT-BUNDLE-01A R2)
 
-Após item `pastagem-essencial-v2` com observação útil, o executor chama best-effort
-`garantirProdutosDaObservacaoCompleta` / `tentarGarantirProdutosAposPastagem` com política **`principal`**:
+Após Statistical útil do `pastagem-essencial-v2`, o executor **mantém o item em `executando`**
+(reserva ativa), chama `garantirProdutoCondicaoOperacional` com política **`principal`** e
+identidade temporal EXATA (`observacao_inicio`/`fim` + `geometria_sha256`), e só então fecha:
 
 - mapa condição v3 **somente**;
-- rasters técnicos dos 6 índices = **lazy** (rota POST / on-demand via `gerarOuReutilizarRasterIndice`).
-
-Process automático a frio: até **1** chamada. Consumo Process do worker atribui `consulta_id` / `consulta_item_id`.
-Falha do mapa **não** apaga o Statistical nem falha o item — só log `warn`.
-Produto em cache → reutilizado (sem nova Process).
-Reparo: `POST …/produtos-observacao/reparar` (idempotente; reusa Statistical).
+- rasters técnicos dos 6 índices = **lazy** (rota POST / on-demand via `gerarOuReutilizarRasterIndice`);
+- Process automático a frio: até **1** chamada;
+- consumo Process do worker atribui `consulta_id` / `consulta_item_id`;
+- falha do Process → item `falho` `produto_condicao_falhou` (consulta ≠ concluída normal); Statistical permanece; reparo não repete Statistical;
+- produto em cache da **mesma observação** → reutilizado (0 Process);
+- reparo de reaproveitado: fail-closed (`pronto|reutilizado|falhou`); falha mantém reserva;
+- `POST …/produtos-observacao/reparar` público = consumo avulso (sem IDs de ledger do cliente).
 
 ## Observação completa (contrato F1)
 

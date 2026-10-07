@@ -2,7 +2,7 @@
  * EXECUÇÃO DE UM ITEM DA FILA SATELITAL (SAT-03, decisão 296) — do item reservado à análise gravada (ou à falha
  * registrada), em nome de QUEM CRIOU a consulta (`contexto-worker.ts`).
  *
- * TRÊS FASES, e NENHUMA transação aberta esperando o provedor:
+ * TRÊS FASES (+ Process obrigatório do bundle), e NENHUMA transação aberta esperando o provedor:
  *   1. transação curta, sob a RLS do criador: a consulta travada, o item (ainda 'executando', no escopo) e a área NO
  *      ESCOPO; a capacidade `analises_satelitais.create` do criador (sem ela → 'falho' `sem_permissao`); item recuperado
  *      de réplica caída além do teto da rodada → 'falho' `execucao_interrompida`; o polígono pelo hash do BANCO
@@ -10,9 +10,12 @@
  *      consulta 'pendente' → 'executando'.
  *   2. SEM transação: a Statistical API pelo cliente compartilhado (`estatisticaComConsumo`: o corpo e o cabeçalho de PU),
  *      a leitura estrita e a escolha da v2 (`ndvi-v2.ts`), com a janela do item CONVERTIDA (fim exclusivo).
- *   3. transação curta: a consulta travada, o item RELIDO (a reserva ainda é desta execução: 'executando' com as mesmas
- *      tentativas), a área relida (polígono mudou no meio → consumo gravado + 'falho' `geometria_alterada`), a análise
- *      (`on conflict` na unicidade da janela + releitura), o consumo no ledger, o item 'concluido' e o recálculo.
+ *      Reparo `produto_condicao_falhou` (já tem `analise_id`): PULA a Statistical — só Process do mapa.
+ *   3. transação curta: grava análise + consumo Statistical. Bundle pastagem útil: item PERMANECE 'executando'
+ *      (reserva ativa) — NÃO fecha nem recalcula para 'concluida' ainda.
+ *   4. SEM transação: Process do mapa condição v3 com identidade EXATA da observação.
+ *   5. transação curta: Process ok → item 'concluido' + recalcular; falha → 'falho' `produto_condicao_falhou`
+ *      (consulta ≠ concluída normal) + recalcular. NÃO repete Statistical.
  * Falha do provedor (ou da fase 3): a decisão de `retry.ts` — repetir → 'pendente' com `proxima_tentativa_em`; falhar
  * → 'falho' com o erro estável —, o consumo quando o provedor respondeu 2xx (a chamada gastou), e o recálculo. Erro que
  * NÃO é do provedor DEPOIS de um 2xx (banco, defeito na gravação) não repete: repetir cobraria a chamada de novo — o item
@@ -48,7 +51,8 @@ import {
   type ResultadoPastagem
 } from "./pastagem-essencial.js";
 import { decidirAposFalha, type DecisaoFalha } from "./retry.js";
-import { tentarGarantirProdutosAposPastagem } from "./garantir-produtos-observacao.js";
+import { garantirProdutoCondicaoOperacional } from "./garantir-produtos-observacao.js";
+import type { IdentidadeObservacaoMapa } from "./gerar-mapa-condicao.js";
 import type { LimiteAvulsoSatelite } from "./limite-avulso.js";
 import type { ArmazenamentoRaster } from "./armazenamento-raster.js";
 
@@ -92,7 +96,12 @@ export const ERROS_ITEM = {
   areaNaoEncontrada: "area_nao_encontrada",
   metodoDesconhecido: "metodo_desconhecido",
   /** Erro que não é do provedor DEPOIS de um 2xx (a chamada já foi cobrada): não repete. */
-  erroGravacao: "erro_gravacao"
+  erroGravacao: "erro_gravacao",
+  /**
+   * Statistical ok, Process do mapa condição falhou. Reprocessar NÃO chama Statistical de novo —
+   * só o caminho de reparo do produto (identidade da análise já gravada).
+   */
+  produtoCondicaoFalhou: "produto_condicao_falhou"
 } as const;
 
 /** A recusa de `prepararPoligono` → código estável do item. Cobre 10 m (NDVI) e 20 m (bundle pastagem). */
@@ -108,6 +117,7 @@ const RECUSA_DO_POLIGONO: ReadonlyMap<string, string> = new Map([
 interface LinhaItem {
   id: string; consulta_id: string; empresa_id: string; area_id: string; geometria_sha256: string; indice_bundle: string; versao_metodo: string;
   data_alvo: string | null; janela_inicio: string; janela_fim: string; situacao: string; tentativas: number; tentativas_rodada: number;
+  analise_id: string | null; erro: string | null;
 }
 
 interface Pronto { item: LinhaItem; poligono: PoligonoGeoJson; grade: GradeDaAnalise; janela: Janela }
@@ -133,7 +143,7 @@ async function lerItem(ctx: ServiceCtx, itemId: string, travar: boolean): Promis
   const sc = scopedById(ctx, "i", itemId);
   const r = await ctx.tx.query<LinhaItem>(
     `select i.id, i.consulta_id, i.empresa_id, i.area_id, i.geometria_sha256, i.indice_bundle, i.versao_metodo, i.data_alvo, i.janela_inicio,
-            i.janela_fim, i.situacao, i.tentativas, i.tentativas_rodada
+            i.janela_fim, i.situacao, i.tentativas, i.tentativas_rodada, i.analise_id, i.erro
        from erp.satelite_consulta_itens i
       where i.id = $1 and i.organization_id = $2${sc.sql}${travar ? " for update of i" : ""}`, sc.params);
   return r.rows[0] ?? null;
@@ -336,17 +346,42 @@ async function gravarAnalise(ctx: ServiceCtx, item: LinhaItem, area: AreaLida, j
 const consumoDo = (ctx: ServiceCtx, r: ItemReservado, puCabecalho: string | null) =>
   gravarConsumo(ctx.tx, { organizationId: ctx.orgId, empresaId: r.empresa_id, consultaId: r.consulta_id, consultaItemId: r.item_id, puCabecalho });
 
-/** FASE 3 — a gravação do resultado (a chamada respondeu 2xx e a escolha foi feita). */
-async function fase3(dep: DependenciasItem, r: ItemReservado, p: Pronto, chamada: Chamada & { resultado: ResultadoItemFila }): Promise<{ desfecho: DesfechoItem; motivo: string | null }> {
+/**
+ * Anexa análise + PU do Statistical sem fechar o item — mantém 'executando' e a reserva da consulta
+ * até o Process obrigatório terminar (SAT-BUNDLE-01A R2 / BLOCKER A).
+ */
+async function anexarAnaliseEnquantoExecuta(
+  ctx: ServiceCtx, item: LinhaItem, analiseId: string, puGasto: string | null
+): Promise<void> {
+  const params: unknown[] = [item.id, ctx.orgId, item.tentativas, analiseId, puGasto];
+  const escopo = empresaScopeSql(ctx, "i", params);
+  const r = await ctx.tx.query(
+    `update erp.satelite_consulta_itens i
+        set analise_id = $4::uuid, pu_gasto = $5::numeric, erro = null
+      where i.id = $1 and i.organization_id = $2 and i.situacao = 'executando' and i.tentativas = $3${escopo}`, params);
+  if (r.rowCount !== 1) throw new Error("item satelital: anexar análise não alcançou exatamente o item em execução");
+}
+
+type Fase3Ok =
+  | { tipo: "fechado"; desfecho: DesfechoItem; motivo: string | null }
+  | {
+    tipo: "aguarda_process";
+    identidade: IdentidadeObservacaoMapa;
+    analiseId: string;
+    puGasto: string | null;
+  };
+
+/** FASE 3 — gravação do Statistical. Bundle útil NÃO fecha o item (reserva até Process). */
+async function fase3(dep: DependenciasItem, r: ItemReservado, p: Pronto, chamada: Chamada & { resultado: ResultadoItemFila }): Promise<Fase3Ok> {
   return withTx(dep.db, tenantDo(r), async (tx) => {
     const ctx = await contextoDoCriador(tx, r.organization_id, r.criado_por);
-    if (!ctx) return { desfecho: "adiado", motivo: "criador_sem_acesso" };
+    if (!ctx) return { tipo: "fechado", desfecho: "adiado", motivo: "criador_sem_acesso" };
     const aberto = await abrirItem(ctx, r, p.item.tentativas);
     if (typeof aberto === "string") {
       // A reserva não é mais desta execução (o prazo venceu e outra réplica a pegou): o item não é desta escrita, mas a
       // chamada gastou do mesmo jeito. Sem o item visível, nem o consumo tem onde entrar.
       if (aberto === "reserva_perdida") await consumoDo(ctx, r, chamada.respondeu!.puCabecalho);
-      return { desfecho: "adiado", motivo: aberto };
+      return { tipo: "fechado", desfecho: "adiado", motivo: aberto };
     }
     const { item } = aberto;
     const area = await lerArea(ctx, item.area_id);
@@ -360,16 +395,123 @@ async function fase3(dep: DependenciasItem, r: ItemReservado, p: Pronto, chamada
       }
       await mudarItem(ctx, item, { situacao: "falho", erro, proxima: null });
       await recalcularConsulta(ctx, item.consulta_id);
-      return { desfecho: "falho", motivo: erro };
+      return { tipo: "fechado", desfecho: "falho", motivo: erro };
     }
     const analiseId = ehResultadoPastagem(chamada.resultado)
       ? (await gravarBundlePastagem(ctx, area, p.janela, chamada.resultado, item.id, item.data_alvo)).referenciaId
       : await gravarAnalise(ctx, item, area, p.janela, chamada.resultado);
     const consumo = await consumoDo(ctx, r, chamada.respondeu!.puCabecalho);
+
+    // Bundle pastagem útil: reserva permanece até o Process do mapa (item fica 'executando').
+    if (
+      ehPastagem(item)
+      && ehResultadoPastagem(chamada.resultado)
+      && chamada.resultado.situacao === "concluida"
+      && chamada.resultado.observacao
+    ) {
+      await anexarAnaliseEnquantoExecuta(ctx, item, analiseId, consumo.pu_gasto);
+      // Recalcula com item ainda 'executando' → consulta permanece reservando saldo.
+      await recalcularConsulta(ctx, item.consulta_id);
+      return {
+        tipo: "aguarda_process",
+        identidade: {
+          observacaoInicio: chamada.resultado.observacao.inicio,
+          observacaoFim: chamada.resultado.observacao.fim,
+          geometriaSha256: item.geometria_sha256
+        },
+        analiseId,
+        puGasto: consumo.pu_gasto
+      };
+    }
+
     await mudarItem(ctx, item, { situacao: "concluido", erro: null, proxima: null, analiseId, puGasto: consumo.pu_gasto });
     await recalcularConsulta(ctx, item.consulta_id);
-    return { desfecho: "concluido", motivo: null };
+    return { tipo: "fechado", desfecho: "concluido", motivo: null };
   });
+}
+
+/** Fecha o item após o Process do mapa (sucesso → concluido; falha → produto_condicao_falhou). */
+async function fecharAposProcess(
+  dep: DependenciasItem,
+  r: ItemReservado,
+  tentativas: number,
+  ok: boolean,
+  analiseId: string,
+  puGasto: string | null
+): Promise<{ desfecho: DesfechoItem; motivo: string | null }> {
+  return withTx(dep.db, tenantDo(r), async (tx) => {
+    const ctx = await contextoDoCriador(tx, r.organization_id, r.criado_por);
+    if (!ctx) return { desfecho: "adiado", motivo: "criador_sem_acesso" };
+    const aberto = await abrirItem(ctx, r, tentativas);
+    if (typeof aberto === "string") return { desfecho: "adiado", motivo: aberto };
+    const { item } = aberto;
+    if (ok) {
+      await mudarItem(ctx, item, {
+        situacao: "concluido", erro: null, proxima: null, analiseId, puGasto
+      });
+      await recalcularConsulta(ctx, item.consulta_id);
+      return { desfecho: "concluido", motivo: null };
+    }
+    await mudarItem(ctx, item, {
+      situacao: "falho", erro: ERROS_ITEM.produtoCondicaoFalhou, proxima: null
+    });
+    await recalcularConsulta(ctx, item.consulta_id);
+    return { desfecho: "falho", motivo: ERROS_ITEM.produtoCondicaoFalhou };
+  });
+}
+
+/** Identidade temporal da análise já gravada (reparo sem repetir Statistical). */
+async function lerIdentidadeDaAnaliseItem(
+  dep: DependenciasItem, r: ItemReservado, item: LinhaItem
+): Promise<{ identidade: IdentidadeObservacaoMapa; analiseId: string; puGasto: string | null } | null> {
+  if (!item.analise_id) return null;
+  return withTx(dep.db, tenantDo(r), async (tx) => {
+    const ctx = await contextoDoCriador(tx, r.organization_id, r.criado_por);
+    if (!ctx) return null;
+    const params: unknown[] = [ctx.orgId, item.analise_id, item.area_id];
+    const escopo = empresaScopeSql(ctx, "s", params);
+    const a = await ctx.tx.query<{ observacao_inicio: Date; observacao_fim: Date; geometria_sha256: string }>(
+      `select s.observacao_inicio, s.observacao_fim, s.geometria_sha256
+         from erp.analises_satelitais s
+        where s.organization_id = $1 and s.id = $2 and s.area_id = $3
+          and s.situacao = 'concluida'
+          and s.observacao_inicio is not null and s.observacao_fim is not null${escopo}
+        limit 1`, params);
+    const row = a.rows[0];
+    if (!row) return null;
+    const paramsI: unknown[] = [item.id, ctx.orgId];
+    const escopoI = empresaScopeSql(ctx, "i", paramsI);
+    const pu = await ctx.tx.query<{ pu_gasto: string | null }>(
+      `select i.pu_gasto::text from erp.satelite_consulta_itens i
+        where i.id = $1 and i.organization_id = $2${escopoI}`, paramsI);
+    return {
+      identidade: {
+        observacaoInicio: row.observacao_inicio,
+        observacaoFim: row.observacao_fim,
+        geometriaSha256: row.geometria_sha256
+      },
+      analiseId: item.analise_id!,
+      puGasto: pu.rows[0]?.pu_gasto ?? null
+    };
+  });
+}
+
+async function executarProcessCondicao(
+  dep: DependenciasItem,
+  r: ItemReservado,
+  areaId: string,
+  identidade: IdentidadeObservacaoMapa
+): Promise<{ ok: boolean; status: string }> {
+  const resultado = await garantirProdutoCondicaoOperacional(dep, {
+    orgId: r.organization_id,
+    userId: r.criado_por,
+    areaId,
+    identidade,
+    consultaId: r.consulta_id,
+    consultaItemId: r.item_id,
+    politica: "principal"
+  });
+  return { ok: resultado.status === "pronto" || resultado.status === "reutilizado", status: resultado.status };
 }
 
 /** A falha (do provedor, da leitura ou de uma fase): a decisão de `retry.ts`, o consumo se houve 2xx, o recálculo. */
@@ -442,31 +584,68 @@ async function executarFases(
   if (f1.tipo === "falho") return anotar("falho", f1.erro);
   if (f1.tipo === "adiado") return anotar("adiado", f1.motivo);
 
+  // Reparo: Statistical já gravada (analise_id) → NÃO repetir Statistical; só Process com identidade exata.
+  if (ehPastagem(f1.pronto.item) && f1.pronto.item.analise_id) {
+    try {
+      const ref = await lerIdentidadeDaAnaliseItem(dep, r, f1.pronto.item);
+      if (!ref) {
+        return falhar(f1.pronto.item.tentativas, null, new Error("analise_referencia_ausente"));
+      }
+      const process = await executarProcessCondicao(dep, r, f1.pronto.item.area_id, ref.identidade);
+      const fechado = await fecharAposProcess(
+        dep, r, f1.pronto.item.tentativas, process.ok, ref.analiseId, ref.puGasto
+      );
+      return anotar(fechado.desfecho, fechado.motivo, {
+        etapa: "reparo_produto_condicao", process_status: process.status
+      });
+    } catch (e) {
+      dep.log.error({ satelite_item: { ...ids, etapa: "reparo_produto_condicao", ...resumoDoErro(e) } },
+        "item da fila satelital: reparo do produto falhou");
+      try {
+        const fechado = await fecharAposProcess(
+          dep, r, f1.pronto.item.tentativas, false,
+          f1.pronto.item.analise_id, null
+        );
+        return anotar(fechado.desfecho, fechado.motivo, resumoDoErro(e));
+      } catch (e2) {
+        return falhar(f1.pronto.item.tentativas, null, e2);
+      }
+    }
+  }
+
   const chamada = await chamarProvedor(dep, r, f1.pronto);
   if (chamada.falha instanceof FalhaCopernicus) anotarFalha(chamada.falha);
   if (chamada.resultado === null) return falhar(f1.pronto.item.tentativas, chamada.respondeu, chamada.falha);
+
+  let f3: Fase3Ok;
   try {
-    const f3 = await fase3(dep, r, f1.pronto, { ...chamada, resultado: chamada.resultado });
-    // SAT-BUNDLE-01A R1: após pastagem-essencial útil, garante só condição v3 (best-effort).
-    // Rasters técnicos = lazy. Process automático atribui consulta/item no ledger.
-    if (
-      f3.desfecho === "concluido"
-      && ehPastagem(f1.pronto.item)
-      && ehResultadoPastagem(chamada.resultado)
-      && chamada.resultado.situacao === "concluida"
-    ) {
-      await tentarGarantirProdutosAposPastagem(dep, {
-        orgId: r.organization_id,
-        userId: r.criado_por,
-        areaId: f1.pronto.item.area_id,
-        consultaId: r.consulta_id,
-        consultaItemId: r.item_id,
-        politica: "principal"
-      });
-    }
-    return anotar(f3.desfecho, f3.motivo);
+    f3 = await fase3(dep, r, f1.pronto, { ...chamada, resultado: chamada.resultado });
   } catch (e) {
     dep.log.error({ satelite_item: { ...ids, etapa: "gravacao", ...resumoDoErro(e) } }, "item da fila satelital: gravação falhou");
     return falhar(f1.pronto.item.tentativas, chamada.respondeu, e);
+  }
+  if (f3.tipo === "fechado") return anotar(f3.desfecho, f3.motivo);
+
+  // Reserva ainda ativa (item 'executando'). Process fora de TX; só então fecha.
+  // Falha do Process NÃO repete Statistical — fecha com produto_condicao_falhou.
+  try {
+    const process = await executarProcessCondicao(dep, r, f1.pronto.item.area_id, f3.identidade);
+    const fechado = await fecharAposProcess(
+      dep, r, f1.pronto.item.tentativas, process.ok, f3.analiseId, f3.puGasto
+    );
+    return anotar(fechado.desfecho, fechado.motivo, {
+      etapa: "process_condicao", process_status: process.status
+    });
+  } catch (e) {
+    dep.log.error({ satelite_item: { ...ids, etapa: "process_condicao", ...resumoDoErro(e) } },
+      "item da fila satelital: Process da condição falhou");
+    try {
+      const fechado = await fecharAposProcess(
+        dep, r, f1.pronto.item.tentativas, false, f3.analiseId, f3.puGasto
+      );
+      return anotar(fechado.desfecho, fechado.motivo, resumoDoErro(e));
+    } catch (e2) {
+      return falhar(f1.pronto.item.tentativas, chamada.respondeu, e2);
+    }
   }
 }

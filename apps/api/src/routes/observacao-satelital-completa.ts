@@ -1,5 +1,5 @@
 /**
- * ROTAS DA OBSERVAÇÃO SATELITAL COMPLETA — SAT-BUNDLE-01A [F1] + R1.
+ * ROTAS DA OBSERVAÇÃO SATELITAL COMPLETA — SAT-BUNDLE-01A [F1] + R1 + R2.
  *
  * GET  /api/mapa/areas/:areaId/observacao-satelital-completa
  * GET  /api/mapa/observacoes-satelitais-completas/resumo
@@ -7,6 +7,9 @@
  *
  * Capacidade: view nas GETs; create no reparo. Fora de escopo → 404.
  * Sem PNG, sem geometria, sem segredo.
+ *
+ * SEC (R2): o endpoint público de reparo NÃO aceita consulta_id / consulta_item_id —
+ * reparo manual = consumo avulso (null/null). Atribuição ao ledger só por fluxos internos.
  */
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -40,11 +43,9 @@ const resumoQuery = z.object({
   tamanho: inteiroPositivo(AREAS_POR_LISTAGEM_MAXIMO).default(50)
 }).strict();
 
+/** Reparo manual: só data_imagem opcional. IDs de ledger do cliente são RECUSADOS (422). */
 const reparoCorpo = z.object({
-  data_imagem: diaCivil.optional(),
-  /** Atribuição opcional ao ledger da consulta de origem. */
-  consulta_id: z.string().regex(UUID_CANONICO).optional(),
-  consulta_item_id: z.string().regex(UUID_CANONICO).optional()
+  data_imagem: diaCivil.optional()
 }).strict();
 
 function idArea(req: FastifyRequest): string {
@@ -86,6 +87,7 @@ export default async function observacaoSatelitalCompletaRoutes(app: FastifyInst
    * REPAIR — gera só o mapa de condição a partir da Statistical já gravada.
    * Idempotente: mapa existente → reutilizado (0 Process). NÃO reexecuta Statistical.
    * Sem transação DB durante HTTP externo.
+   * Consumo avulso (consulta_id/consulta_item_id = null) — cliente não atribui ledger.
    */
   app.post("/satelite/areas/:areaId/produtos-observacao/reparar", async (req, reply) => {
     const ctxPedido = exigir(app, req, PERMISSAO_PEDIR_ANALISE);
@@ -108,20 +110,27 @@ export default async function observacaoSatelitalCompletaRoutes(app: FastifyInst
           userId: ctxPedido.user.id,
           areaId,
           dataImagem: corpo.data_imagem,
-          consultaId: corpo.consulta_id ?? null,
-          consultaItemId: corpo.consulta_item_id ?? null,
+          // SEC: reparo público = avulso. Worker/fluxos internos passam IDs pelo serviço.
+          consultaId: null,
+          consultaItemId: null,
           politica: "principal"
         }
       );
-      const reutilizada = r.condicao.status === "reutilizado";
-      return reply.status(reutilizada ? 200 : (r.condicao.status === "pronto" ? 201 : 200)).send({
+      const statusHttp = r.status === "pronto" ? 201 : 200;
+      return reply.status(statusHttp).send({
         area_id: r.area_id,
         data_imagem: r.data_imagem,
-        condicao: r.condicao,
+        condicao: {
+          chave: "condicao_pasto",
+          status: r.status === "falhou" ? "falhou" : r.status,
+          id: r.mapa_id,
+          ...(r.erro ? { erro: r.erro } : {})
+        },
         chamadas_process: r.chamadas_process,
-        reutilizacoes: r.reutilizacoes,
-        politica: r.politica,
-        rasters_tecnicos: "lazy"
+        reutilizacoes: r.status === "reutilizado" ? 1 : 0,
+        politica: "principal",
+        rasters_tecnicos: "lazy",
+        consumo: { consulta_id: null, consulta_item_id: null }
       });
     } catch (e) {
       if (e instanceof DomainError) {
