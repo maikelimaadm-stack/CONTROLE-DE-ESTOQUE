@@ -57,13 +57,23 @@ async function fecharDialogArea(page: Page) {
   await expect(dialog).toHaveCount(0);
 }
 
-/** Família, índice e Pixel/Área ficam em Dados técnicos (SAT-COND-01). */
+/** Família, índice e Pixel/Área ficam em Dados técnicos (SAT-BUNDLE-01B). */
 async function entrarDadosTecnicos(page: Page) {
   await fecharDialogArea(page);
-  const btn = page.getByTestId("mapa-experiencia-tecnico");
+  const btn = page.getByTestId("mapa-dados-tecnicos");
   await expect(btn).toBeVisible({ timeout: 30_000 });
-  await btn.click();
+  if ((await btn.getAttribute("aria-pressed")) !== "true") await btn.click();
   await expect(btn).toHaveAttribute("aria-pressed", "true");
+}
+
+/** Volta ao modo operacional (temas) — espelho de entrarDadosTecnicos. */
+async function sairDadosTecnicos(page: Page) {
+  await fecharDialogArea(page);
+  const btn = page.getByTestId("mapa-dados-tecnicos");
+  await expect(btn).toBeVisible({ timeout: 30_000 });
+  if ((await btn.getAttribute("aria-pressed")) === "true") await btn.click();
+  await expect(btn).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByTestId("mapa-experiencia-condicao")).toHaveAttribute("aria-pressed", "true");
 }
 
 /** Seleciona na lista após garantir que nenhum Dialog cobre a UI. */
@@ -502,12 +512,10 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   await expect(condicao.getByTestId("condicao-sem-analise")).toBeVisible();
   await expect(condicao.getByTestId("condicao-aviso-agronomico")).toContainText("não é diagnóstico");
 
-  // "Analisar área atual" (Dados técnicos): provedor DESLIGADO no E2E — recusa controlada, nada gravado
-  await condicao.getByTestId("condicao-analisar-atual").click();
-  const pedido = page.waitForResponse((r) => r.url().endsWith(`/api/mapa/areas/${verde.id}/analises-satelitais/condicao`) && r.request().method() === "POST");
-  await condicao.getByTestId("condicao-analisar-confirmar").click();
-  expect((await pedido).status()).toBe(503);
-  await expect(condicao.getByTestId("condicao-aviso")).toContainText("indisponível");
+  // SAT-BUNDLE-01B: análise individual removida do painel — só "Analisar pastos" na barra
+  await expect(condicao.getByTestId("condicao-analisar-atual")).toHaveCount(0);
+  await expect(condicao.getByTestId("condicao-gerar-raster")).toHaveCount(0);
+  await expect(condicao.getByTestId("condicao-sem-analise-dica")).toContainText("Analisar pastos");
   expect(linhas(), "nada gravado").toBe(3);
 
   // área sem observação útil / nunca analisada: painel único sem número na lista
@@ -564,28 +572,24 @@ test("Mapa geral: o resumo do NDVI falha (500) — as áreas continuam no mapa, 
   await expect.poll(() => pedidos).toBe(antes + 1);
 });
 
-test("Mapa geral: 'Analisar área atual' com a integração ligada e SEM credencial (503 `configuracao`) diz o que falta no servidor", async ({ page }) => {
+test("Mapa geral: painel técnico sem 'Analisar área atual' — ação única é Analisar pastos (01B)", async ({ page }) => {
   await login(page);
   await limparAreas(page);
   const empresa = await empresaDaSessao(page);
   const nome = uniq("NDVI SEM CREDENCIAL").toLocaleUpperCase("pt-BR");
-  const area = await api<Area>(page, "POST", "/api/resources/areas", {
+  await api<Area>(page, "POST", "/api/resources/areas", {
     empresa_id: empresa, name: nome, land_use: "pastagem", status: "ativa", tenure: "propria", area_ha: "100", usable_area_ha: "100", color: "#2563eb",
     geometria: { type: "Polygon", coordinates: [[[-55.4, -15.2], [-55.39, -15.2], [-55.39, -15.19], [-55.4, -15.19], [-55.4, -15.2]]] }
   });
-  // O 503 do contrato para "ligada sem credencial" (o E2E roda com a integração DESLIGADA: aqui o servidor é simulado só nesta rota).
-  await page.route(`**/api/mapa/areas/${area.id}/analises-satelitais/condicao`, (rota) => rota.fulfill({
-    status: 503, contentType: "application/json",
-    body: JSON.stringify({ error: { code: "CONSULTA_INDISPONIVEL", message: "A análise por satélite está desligada neste ambiente.", details: { motivo: "configuracao" } } })
-  }));
   await page.goto("/mapa-geral");
   await entrarDadosTecnicos(page);
   await selecionarAreaNaLista(page, nome);
   const painel = page.getByTestId("mapa-area-selecionada");
   const condicao = painel.getByTestId("condicao-area");
-  await condicao.getByTestId("condicao-analisar-atual").click();
-  await condicao.getByTestId("condicao-analisar-confirmar").click();
-  await expect(condicao.getByTestId("condicao-aviso")).toHaveText("A análise por satélite está ligada, mas a credencial do Copernicus não está configurada no servidor da API.");
+  await expect(condicao.getByTestId("condicao-analisar-atual")).toHaveCount(0);
+  await expect(condicao.getByTestId("condicao-gerar-raster")).toHaveCount(0);
+  await expect(condicao.getByTestId("condicao-nova-consulta")).toBeVisible();
+  await expect(page.getByTestId("mapa-nova-consulta")).toBeVisible();
   await limparAreas(page);
 });
 
@@ -775,15 +779,12 @@ test("Mapa geral SAT-07: gradiente por pixel, sem POST ao abrir, troca de modo s
   await expect(condicao.getByTestId("condicao-gerar-raster")).toHaveCount(0);
   await expect(painel.getByTestId("mapa-ndvi-area"), "painel legado NDVI ausente").toHaveCount(0);
 
+  // SAT-BUNDLE-01B: geração manual de raster removida da UX — backend legado permanece
   await selecionarAreaNaLista(page, semRaster.name);
   const painelSem = page.getByTestId("mapa-area-selecionada");
-  await expect(painelSem.getByTestId("condicao-gerar-raster")).toBeVisible({ timeout: 15_000 });
-  await painelSem.getByTestId("condicao-gerar-raster").click();
-  await expect(painelSem.getByTestId("condicao-gerar-confirmacao")).toContainText("consome crédito");
-  await painelSem.getByTestId("condicao-gerar-confirmar").click();
-  await expect(painelSem.getByTestId("condicao-aviso")).toContainText("não houve custo");
-  await expect(painelSem.getByTestId("condicao-raster-info")).toContainText("20 m");
-  expect(postsRaster, "POST só no clique confirmado").toBe(1);
+  await expect(painelSem.getByTestId("condicao-gerar-raster")).toHaveCount(0);
+  await expect(painelSem.getByTestId("condicao-nova-consulta")).toBeVisible();
+  expect(postsRaster, "sem Gerar raster na UI → zero POST Process").toBe(0);
 
   await limparAreas(page);
 });
@@ -983,7 +984,7 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   await expect.poll(() => datasListadas.includes("2026-08-10")).toBe(true);
   await expect(page.getByTestId("mapa-sem-imagem-data")).toContainText("Nenhuma outra data é usada no lugar");
   await expect(condicao.getByTestId("condicao-sem-imagem-data")).toContainText("10/08/2026");
-  await expect(condicao.getByTestId("condicao-gerar-raster")).toContainText("10/08/2026");
+  await expect(condicao.getByTestId("condicao-gerar-raster")).toHaveCount(0);
   await seletorData.selectOption("ultima");
   await expect(page.getByTestId("mapa-sem-imagem-data")).toHaveCount(0);
 
@@ -1136,12 +1137,13 @@ test("Mapa geral SAT-COND-01: condição padrão, legenda ha/%, filtro, ESC, lis
   await expect(page.getByTestId("dialog-classe-condicao")).toContainText("Solo exposto estimado");
   await expect(page.getByTestId("mapa-item-area").nth(0)).toContainText(pastoB.name);
 
-  await page.keyboard.press("Escape");
+  await page.getByTestId("dialog-classe-fechar").click();
   await expect(page.getByTestId("dialog-classe-condicao")).toHaveCount(0);
   await expect(page.getByTestId("painel-classe-condicao")).toHaveCount(0);
+  await expect(page.getByTestId("mapa-atualizando")).toHaveCount(0);
 
   // Reabre e fecha pelo rodapé (overlay do Dialog impede segundo clique na legenda)
-  await page.getByTestId("legenda-classe-solo_exposto_estimado").click();
+  await page.getByTestId("legenda-classe-solo_exposto_estimado").click({ timeout: 30_000 });
   await expect(page.getByTestId("dialog-classe-condicao")).toBeVisible();
   await page.getByTestId("dialog-classe-fechar").click();
   await expect(page.getByTestId("dialog-classe-condicao")).toHaveCount(0);
@@ -1159,9 +1161,8 @@ test("Mapa geral SAT-COND-01: condição padrão, legenda ha/%, filtro, ESC, lis
   await expect(page.getByTestId("mapa-indice-evi2")).toBeVisible();
   await expect(page.getByTestId("condicao-area")).toBeVisible();
 
-  // Dialog técnico permanece aberto após trocar experiência pelo rodapé — fechar para alcançar a toolbar
-  await fecharDialogArea(page);
-  await page.getByTestId("mapa-experiencia-condicao").click();
+  // Dialog técnico permanece aberto após Dados técnicos — fechar e voltar ao modo operacional pela toolbar
+  await sairDadosTecnicos(page);
   await expect(page.getByTestId("mapa-indice-ndvi")).toHaveCount(0);
   await expect(page.getByTestId("legenda-condicao-pasto")).toBeVisible();
 

@@ -1,6 +1,5 @@
 "use client";
 import * as React from "react";
-import Link from "next/link";
 import {
   CLASSES_CONDICAO_PASTO,
   AVISO_CONDICAO_PASTO_EXPERIMENTAL,
@@ -10,6 +9,9 @@ import {
 } from "@agro/domain";
 import { Button, Dialog, buttonVariants } from "@/components/ui";
 import { num } from "@/lib/utils";
+import type { DistribuicaoFaixasArea } from "./distribuicao-faixas-raster";
+import { PainelTemaContinuo } from "./painel-tema-pasto";
+import type { TemaMapaPasto } from "./temas-mapa-pasto";
 
 function linhaDe(resumo: ResumoCondicaoPasto | null, codigo: CodigoClasseCondicaoPasto) {
   return resumo?.classes.find((c) => c.codigo === codigo) ?? {
@@ -189,13 +191,33 @@ export function DialogAreaCondicao(p: {
   statsSemMapa?: boolean;
   onDadosTecnicos?: () => void;
   hrefCadastro: string;
+  /** Tema operacional ativo — conteúdo do Dialog muda; não troca análise. */
+  tema?: TemaMapaPasto;
+  medias?: Partial<Record<string, string | null>> | null;
+  coberturaValida?: string | null;
+  analiseCompleta?: boolean;
+  /** Status F1 (SEM_ANALISE / PREPARANDO / PRONTO / …). */
+  statusBundle?: string | null;
+  mediaIndice?: string | null;
+  minimoIndice?: string | null;
+  maximoIndice?: string | null;
+  distribuicao?: DistribuicaoFaixasArea | null;
+  faixaAtiva?: string | null;
+  onFaixa?: (id: string | null) => void;
 }) {
+  const tema = p.tema ?? "condicao";
+  const statusObs = p.analiseCompleta ? "● Análise completa"
+    : p.semAnalise ? "○ Sem análise"
+      : p.statusBundle === "PREPARANDO" ? "◔ Preparando"
+        : p.statusBundle === "PARCIAL" ? "◐ Parcial"
+          : p.statusBundle === "FALHA" ? "✕ Falha"
+            : "● Observação";
   return (
     <Dialog
       open={p.aberto}
       onOpenChange={(o) => { if (!o) p.onFechar(); }}
       title={p.nome}
-      description={`${num(p.ha, 1)} ha · ${p.dataImagem ? `Imagem ${p.dataImagem}` : "Sem data"} · 20 m`}
+      description={`${num(p.ha, 2)} ha · ${p.dataImagem ? `Observação: ${p.dataImagem}` : "Sem data"} · 20 m · ${statusObs}`}
       size="md"
       profile="content"
       testId="mapa-area-selecionada"
@@ -205,16 +227,33 @@ export function DialogAreaCondicao(p: {
           {p.onDadosTecnicos && (
             <Button type="button" variant="outline" onClick={p.onDadosTecnicos} data-testid="condicao-pasto-dados-tecnicos">Dados técnicos</Button>
           )}
-          <Link href={p.hrefCadastro} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="mapa-abrir-cadastro">Abrir cadastro</Link>
+          <a href={p.hrefCadastro} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="mapa-abrir-cadastro">Abrir cadastro</a>
         </>
       )}
     >
-      <PainelAreaCondicao
-        resumo={p.resumo}
-        dataImagem={p.dataImagem}
-        semAnalise={p.semAnalise}
-        statsSemMapa={p.statsSemMapa}
-      />
+      {tema === "condicao" ? (
+        <PainelAreaCondicao
+          resumo={p.resumo}
+          dataImagem={p.dataImagem}
+          semAnalise={p.semAnalise}
+          statsSemMapa={p.statsSemMapa}
+        />
+      ) : p.semAnalise ? (
+        <p className="text-xs text-slate-600" data-testid="condicao-pasto-sem-analise">Sem análise completa para esta data.</p>
+      ) : (
+        <PainelTemaContinuo
+          tema={tema}
+          medias={p.medias ?? null}
+          media={p.mediaIndice}
+          minimo={p.minimoIndice}
+          maximo={p.maximoIndice}
+          coberturaValida={p.coberturaValida}
+          dataImagem={p.dataImagem}
+          distribuicao={p.distribuicao}
+          faixaAtiva={p.faixaAtiva}
+          onFaixa={p.onFaixa}
+        />
+      )}
     </Dialog>
   );
 }
@@ -269,6 +308,7 @@ export function DialogClasseCondicao(p: {
   const c = p.codigo !== null ? CLASSES_CONDICAO_PASTO[p.codigo] : null;
   return (
     <Dialog
+      key={p.codigo ?? "nenhuma"}
       open={p.aberto && p.codigo !== null}
       onOpenChange={(o) => { if (!o) p.onFechar(); }}
       title={c?.nome ?? "Classe"}

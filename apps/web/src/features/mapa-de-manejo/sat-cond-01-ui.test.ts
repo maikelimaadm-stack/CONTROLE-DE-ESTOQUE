@@ -16,12 +16,15 @@ const rastersCondSrc = readFileSync(resolve(__dirname, "rasters-condicao.ts"), "
 
 describe("SAT-COND-01 — UI estática (UI-01..UI-10)", () => {
   it("UI-01 abre em Condição do Pasto", () => {
-    expect(mapaGeralSrc).toContain('useState<ExperienciaMapa>("condicao")');
-    expect(barraSrc).toContain('{ valor: "condicao", rotulo: "Condição" }');
+    expect(mapaGeralSrc).toContain('useState<ModoMapaPasto>("operacional")');
+    expect(mapaGeralSrc).toContain("TEMA_DEFAULT");
+    expect(barraSrc).toContain("TEMAS_MAPA_PASTO");
+    expect(barraSrc).toContain("mapa-tema");
+    expect(barraSrc).toContain('prefixoTestId="mapa-tema"');
   });
 
   it("UI-02 não exige índice na barra principal", () => {
-    expect(barraSrc).toContain('p.experiencia === "tecnico"');
+    expect(barraSrc).toContain('modo === "tecnico"');
     expect(barraSrc).toMatch(/Índice[\s\S]*mapa-grupo-indice/);
     expect(mapaGeralSrc).toContain("Dados técnicos");
   });
@@ -54,22 +57,23 @@ describe("SAT-COND-01 — UI estática (UI-01..UI-10)", () => {
   });
 
   it("UI-09 Dados técnicos contém índices", () => {
-    expect(barraSrc).toContain('{ valor: "tecnico", rotulo: "Dados técnicos" }');
+    expect(barraSrc).toContain("mapa-dados-tecnicos");
     expect(mapaGeralSrc).toContain("<CondicaoDaArea");
     expect(mapaGeralSrc).toContain('setExperiencia("tecnico")');
   });
 
   it("UI-10 siglas não dominam a tela principal", () => {
-    expect(barraSrc).not.toMatch(/experiencia === "condicao"[\s\S]{0,80}mapa-grupo-indice/);
-    expect(mapaGeralSrc).toContain("Condição do pasto por satélite");
+    expect(barraSrc).not.toMatch(/modo === "operacional"[\s\S]{0,80}mapa-grupo-indice/);
+    expect(mapaGeralSrc).toContain("Analise pastos uma vez");
     expect(CLASSES_CONDICAO_PASTO.every((c) => !/NDVI|EVI2|MSAVI2/.test(c.nome))).toBe(true);
   });
 
-  it("LUT categórica: destaque reduz as outras; nearest é o render da condição", () => {
+  it("LUT categórica: destaque reduz as outras; operacional sem PNG", () => {
     const lut = montarLutCondicaoPasto({ classeDestaque: 5 });
     expect(lut[5 * 4 + 3]).toBe(255);
     expect(lut[1 * 4 + 3]).toBeLessThan(255);
-    expect(mapaGeralSrc).toContain('resampling: modoCondicao ? "nearest"');
+    expect(mapaGeralSrc).toContain("modoOperacional ? new Map()");
+    expect(mapaGeralSrc).toContain("OPACIDADE_PNG_SOB_ZONAS");
   });
 
   it("UI-11 sem CTA local Gerar mapa / Analisar condição (MAPA-UX-02)", () => {
