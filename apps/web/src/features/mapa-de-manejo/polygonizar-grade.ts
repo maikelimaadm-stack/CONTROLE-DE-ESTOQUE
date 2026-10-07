@@ -27,14 +27,6 @@ function canto(
   return [top[0] + (bot[0] - top[0]) * v, top[1] + (bot[1] - top[1]) * v];
 }
 
-function chaveAresta(a: string, b: string): string {
-  return a < b ? `${a}|${b}` : `${b}|${a}`;
-}
-
-function chaveVert(col: number, row: number): string {
-  return `${col},${row}`;
-}
-
 /**
  * Componentes 4-conexos de classes/bins > 0. Byte 0 e valores fora de `ehValido` são ignorados.
  */
@@ -152,9 +144,9 @@ export function aneisDoComponente(p: {
       // path já fecha (último === start).
       let area = 0;
       for (let i = 0; i < coords.length - 1; i++) {
-        const [x0, y0] = coords[i]!;
-        const [x1, y1] = coords[i + 1]!;
-        area += x0 * y1 - x1 * y0;
+        const a = coords[i]!;
+        const b = coords[i + 1]!;
+        area += a[0]! * b[1]! - b[0]! * a[1]!;
       }
       aneis.push({ coords, areaAssinada: area / 2 });
     }

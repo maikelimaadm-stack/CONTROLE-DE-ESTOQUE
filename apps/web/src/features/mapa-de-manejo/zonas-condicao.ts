@@ -86,9 +86,9 @@ export function featureCollectionZonas(zonas: readonly ZonaCondicao[]): GeoJSON.
   return {
     type: "FeatureCollection",
     features: zonas.map((z) => ({
-      type: "Feature",
+      type: "Feature" as const,
       properties: z.properties,
-      geometry: z.geometry
+      geometry: z.geometry as GeoJSON.Polygon | GeoJSON.MultiPolygon
     }))
   };
 }

@@ -8,7 +8,7 @@ import * as React from "react";
 import { api, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { ObservacaoSatelitalCompleta } from "@agro/domain";
-import { DATA_ULTIMA_IMAGEM, dataEscolhida, type DataDaCamada } from "./data-camada";
+import { DATA_ULTIMA_IMAGEM, type DataDaCamada } from "./data-camada";
 import { statusAreaDoResumo, type StatusAreaMapa } from "./temas-mapa-pasto";
 
 export const PERMISSAO_VER_OBSERVACAO = "analises_satelitais.view";
@@ -30,7 +30,7 @@ const CACHE_OBS = new Map<string, { em: number; obs: ObservacaoSatelitalCompleta
 const TTL_MS = 60_000;
 
 function chaveData(data: DataDaCamada): string {
-  return data === DATA_ULTIMA_IMAGEM ? "ultima" : dataEscolhida(data) ?? "ultima";
+  return data.tipo === "ultima" ? "ultima" : data.data;
 }
 
 export async function listarResumosObservacoesCompletas(

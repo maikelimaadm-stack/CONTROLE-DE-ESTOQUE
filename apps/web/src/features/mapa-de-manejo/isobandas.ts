@@ -94,9 +94,9 @@ export function featureCollectionIsobandas(feats: readonly FeatureFaixa[]): GeoJ
   return {
     type: "FeatureCollection",
     features: feats.map((f) => ({
-      type: "Feature",
+      type: "Feature" as const,
       properties: f.properties,
-      geometry: f.geometry
+      geometry: f.geometry as GeoJSON.Polygon | GeoJSON.MultiPolygon
     }))
   };
 }
