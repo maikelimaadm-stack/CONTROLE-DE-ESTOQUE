@@ -293,7 +293,7 @@ export function DialogAreaCondicao(p: {
   if (p.variante === "painel") {
     return (
       <aside
-        className="pointer-events-auto flex max-h-[min(70vh,32rem)] w-full flex-col gap-2 overflow-hidden rounded-t-xl border border-slate-200 bg-white p-3 shadow-lg sm:max-h-none sm:rounded-md lg:h-full lg:max-h-none lg:w-[320px] lg:shrink-0"
+        className="pointer-events-auto flex max-h-[min(45dvh,22rem)] w-full flex-col gap-2 overflow-hidden rounded-t-xl border border-slate-200 bg-white p-3 shadow-lg sm:max-h-[min(50dvh,26rem)] sm:rounded-md lg:h-full lg:max-h-none lg:w-[320px] lg:shrink-0"
         data-testid="mapa-area-selecionada"
         aria-label={`Detalhe de ${p.nome}`}
       >

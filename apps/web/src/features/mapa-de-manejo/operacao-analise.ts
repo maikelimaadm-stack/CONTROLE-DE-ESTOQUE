@@ -49,12 +49,12 @@ export function feitosDaConsulta(
   return Math.min(c.total_itens, c.total_concluidos + c.total_falhos + c.total_reaproveitados);
 }
 
-/** Texto compacto da barra persistente: "Analisando áreas · 38/102". */
+/** Texto compacto da barra persistente: "Analisando · 38/102" (itens = análises, não áreas). */
 export function rotuloBarraAnalise(
   c: Pick<ConsultaDto, "total_itens" | "total_concluidos" | "total_falhos" | "total_reaproveitados" | "situacao">
 ): string {
   const feitos = feitosDaConsulta(c);
-  return `Analisando áreas · ${feitos}/${c.total_itens}`;
+  return `Analisando · ${feitos}/${c.total_itens}`;
 }
 
 export const MSG_FILA_INDISPONIVEL = "Processamento em fila indisponível neste ambiente.";

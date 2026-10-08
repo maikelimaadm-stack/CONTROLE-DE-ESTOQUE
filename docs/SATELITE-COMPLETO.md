@@ -105,16 +105,18 @@ Rota legada de raster individual permanece; não remove pipeline duplicado.
 Fluxo operacional no Mapa geral:
 
 1. **Analisar áreas** — uma vez (consulta/processamento da observação completa).
-2. Toolbar de visualização: **Condição · Umidade · Vigor · Cobertura · Solo**.
-3. Trocar tema = só muda a apresentação (GET/cache dos produtos já materializados).
+2. Toolbar: **Só áreas · Condição · Umidade · Vigor · Cobertura · Solo** · Data · Analisar áreas · **Mais opções** (Base + Dados técnicos).
+3. Prévia de crédito amarrada à identidade do pedido (org · empresa · alvo · período · pacote); resposta atrasada é ignorada; confirmação exige prévia correspondente.
+4. Falha parcial → **Concluir análise** (`POST …/reprocessar-falhas`), só faltantes; não “iniciar de novo”.
+5. Trocar tema = só muda a apresentação (GET/cache dos produtos já materializados).
    - Zero POST `/api/satelite/consultas`, zero Process, zero “Gerar raster”.
-4. Mapa operacional = **GeoJSON fill** (polígonos/isobands), não PNG/raster cru.
-5. Raster UINT8 20 m permanece dado-fonte; suavização Chaikin ≤ ~10 m + **clip final** em `erp.areas.geometria`.
-6. Zoom distante / lista: cor e leitura do **tema atual** via bulk (médias) — **resumo** por pasto; SSOT operacional ≠ NDVI legado.
-7. Zoom próximo (≥ 13) ou área selecionada: microzonas/isobands; distante = só fill resumido.
-8. Hectares por faixa = **pixels internos** ao polígono (não média × área total). Legenda agrega a **vista atual**.
-9. Popup da área: média/min/max/cobertura do GET F1 individual + distribuição pixel-level.
-10. **Dados técnicos** (modo secundário): NDVI/EVI2/NDRE/NDMI/MSAVI2/BSI, histograma, raster cru opcional.
+6. Mapa operacional = **GeoJSON fill** (polígonos/isobands), não PNG/raster cru.
+7. Raster UINT8 20 m permanece dado-fonte; suavização Chaikin ≤ ~10 m + **clip final** fail-closed em `erp.areas.geometria` (prova por diferença em m²).
+8. Zoom distante / lista: cor e leitura do **tema atual** via bulk (médias) — **resumo** por pasto; SSOT operacional ≠ NDVI legado.
+9. Zoom próximo (≥ 13) ou área selecionada: microzonas/isobands; distante = só fill resumido.
+10. Hectares por faixa = **pixels internos** ao polígono (não média × área total). Legenda agrega a **vista atual**.
+11. Detalhe da área: painel lateral (desktop) / sheet compacto (mobile); histórico sob demanda.
+12. **Dados técnicos** (dentro de Mais opções): NDVI/EVI2/NDRE/NDMI/MSAVI2/BSI, histograma, raster cru opcional.
 
 | Tema | Fonte F1 | Cor/lista (média) |
 |------|----------|-------------------|

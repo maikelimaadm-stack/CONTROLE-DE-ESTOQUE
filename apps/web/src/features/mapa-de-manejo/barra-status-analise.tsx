@@ -33,7 +33,7 @@ export function BarraStatusAnalise({ consulta, onAcompanhar, filaIndisponivel }:
       <div className="h-1 w-full overflow-hidden rounded bg-slate-300/80" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label="Progresso da análise">
         <div className="h-full bg-brand-500 transition-all" style={{ width: `${pct}%` }} data-testid="mapa-barra-analise-trilha" />
       </div>
-      <span className="sr-only">{feitos} de {consulta.total_itens} pastos</span>
+      <span className="sr-only">{feitos} de {consulta.total_itens} análises</span>
       {filaIndisponivel && (
         <p className="rounded bg-amber-50/95 px-2 py-1 text-[11px] text-amber-800 shadow-sm" data-testid="mapa-fila-indisponivel" role="status">
           {MSG_FILA_INDISPONIVEL}

@@ -6,6 +6,7 @@ import { Button, Dialog, Input, NativeSelect } from "@/components/ui";
 import { dateTimeBR, num } from "@/lib/utils";
 import type { AreaNoMapa } from "./mapa-base";
 import { CHAVE_CONDICAO } from "./condicao-dados";
+import { useAuth } from "@/lib/auth";
 import {
   JANELAS_DIAS_OPCOES,
   LIMITE_AREAS_NA_CONSULTA,
@@ -16,13 +17,16 @@ import {
   ROTULO_TIPO_PERIODO,
   TOLERANCIAS_DIAS_OPCOES,
   TOLERANCIA_DIAS_PADRAO,
+  chaveDaPrevia,
   consultaTerminou,
   itensDaConsulta,
   montarCorpoConsulta,
+  previaCorrespondeAoPedido,
   progressoDaConsulta,
   resolverAlvo,
   validarPeriodo,
   type ConsultaCriada,
+  type ConsultaDto,
   type PeriodoDoFormulario,
   type PreviaConsulta,
   type RespostaConsulta,
@@ -33,6 +37,16 @@ import {
   deveAvisarFilaIndisponivel,
   feitosDaConsulta
 } from "./operacao-analise";
+import {
+  GestorTentativasPrevia,
+  ehAbortError,
+  marcarErroTentativa,
+  montarSnapshotPedido,
+  type PedidoTentativaPrevia
+} from "./previa-tentativa";
+import { textoLinhaResumoPedido, textoProgressoAnalises } from "./resumo-pedido";
+
+type PreviaComChave = PreviaConsulta & { chave: string; tentativaId?: number };
 
 const INTERVALO_ACOMPANHAMENTO_MS = 3000;
 
@@ -75,20 +89,30 @@ function mensagemDoErro(e: unknown): string {
  */
 export function NovaConsultaModal(p: NovaConsultaProps) {
   const qc = useQueryClient();
+  const { session } = useAuth();
   const [selecao, setSelecao] = React.useState<SelecaoConsulta>(p.selecaoInicial ?? "empresa");
   const [escolhidas, setEscolhidas] = React.useState<ReadonlySet<string>>(new Set());
   const [retiroId, setRetiroId] = React.useState("");
   const [periodo, setPeriodo] = React.useState<PeriodoDoFormulario>(PERIODO_PADRAO);
   const [busca, setBusca] = React.useState("");
-  const [previa, setPrevia] = React.useState<PreviaConsulta | null>(null);
+  const [previa, setPrevia] = React.useState<PreviaComChave | null>(null);
   const [consultaId, setConsultaId] = React.useState<string | null>(null);
   const [avancadasAbertas, setAvancadasAbertas] = React.useState(false);
   const [erro, setErro] = React.useState<string | null>(null);
   const [avisoFilaAoCriar, setAvisoFilaAoCriar] = React.useState(false);
   const avisouConclusaoRef = React.useRef<string | null>(null);
+  const previaAbortRef = React.useRef<AbortController | null>(null);
+  const pedidoEnvioRef = React.useRef<{ chave: string } | null>(null);
+  const gestorPreviaRef = React.useRef(new GestorTentativasPrevia());
+  const chavePedidoAtualRef = React.useRef<string | null>(null);
+  const snapshotPedidoRef = React.useRef<ReturnType<typeof montarSnapshotPedido> | null>(null);
 
   React.useEffect(() => {
-    if (!p.aberto) return;
+    if (!p.aberto) {
+      gestorPreviaRef.current.invalidar();
+      previaAbortRef.current?.abort();
+      return;
+    }
     setSelecao(p.selecaoInicial ?? "empresa");
     setPrevia(null);
     setErro(null);
@@ -99,6 +123,7 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
     setRetiroId("");
     avisouConclusaoRef.current = null;
     setAvisoFilaAoCriar(false);
+    gestorPreviaRef.current.invalidar();
     if (p.modoAcompanhar && p.consultaIdInicial) {
       setConsultaId(p.consultaIdInicial);
     } else {
@@ -142,55 +167,170 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
     return s;
   }, [p.areas, escolhidas]);
 
-  const linhaResumo = React.useMemo(() => {
-    if (selecao === "escolhidas") {
-      return `${escolhidas.size} áreas · ${num(haEscolhidas, 1)} ha`;
-    }
-    if (selecao === "viewport") {
-      const ha = p.areas.filter((a) => p.idsNaVista.includes(a.id)).reduce((s, a) => s + (Number(a.area_ha) || 0), 0);
-      return `${p.idsNaVista.length} áreas · ${num(ha, 1)} ha`;
-    }
-    if (p.totalAreas !== undefined) {
-      return `${p.totalAreas} áreas · ${num(p.totalHa ?? 0, 1)} ha`;
-    }
-    if (resolvido.ok && resolvido.quantidade !== null) {
-      return `${resolvido.quantidade} áreas`;
-    }
-    return null;
-  }, [selecao, escolhidas.size, haEscolhidas, p.idsNaVista, p.areas, p.totalAreas, p.totalHa, resolvido]);
+  const chavePedidoAtual = React.useMemo(() => {
+    if (!resolvido.ok || !periodoValidado.ok) return null;
+    return chaveDaPrevia({
+      organizationId: session?.orgId ?? null,
+      empresaId: session?.empresaId ?? null,
+      alvo: resolvido.alvo,
+      periodo: periodoValidado.periodo
+    });
+  }, [resolvido, periodoValidado, session?.orgId, session?.empresaId]);
+  chavePedidoAtualRef.current = chavePedidoAtual;
+  snapshotPedidoRef.current = (resolvido.ok && periodoValidado.ok)
+    ? montarSnapshotPedido({
+      organizationId: session?.orgId ?? null,
+      empresaId: session?.empresaId ?? null,
+      alvo: resolvido.alvo,
+      periodo: periodoValidado.periodo
+    })
+    : null;
 
-  // Prévia automática (sem gravar) para mostrar crédito antes do clique único.
+  const previaValida = previaCorrespondeAoPedido(previa, chavePedidoAtual);
+
+  const haDoAlvo = React.useMemo(() => {
+    if (selecao === "escolhidas") return haEscolhidas;
+    if (selecao === "viewport") {
+      return p.areas.filter((a) => p.idsNaVista.includes(a.id)).reduce((s, a) => s + (Number(a.area_ha) || 0), 0);
+    }
+    if (selecao === "sem_analise") {
+      return p.areas.filter((a) => p.idsSemAnalise.includes(a.id)).reduce((s, a) => s + (Number(a.area_ha) || 0), 0);
+    }
+    if (selecao === "desatualizadas" && p.idsDesatualizadas) {
+      const ids = p.idsDesatualizadas;
+      return p.areas.filter((a) => ids.includes(a.id)).reduce((s, a) => s + (Number(a.area_ha) || 0), 0);
+    }
+    if (selecao === "empresa" && p.totalHa !== undefined) return p.totalHa;
+    return null;
+  }, [selecao, haEscolhidas, p.areas, p.idsNaVista, p.idsSemAnalise, p.idsDesatualizadas, p.totalHa]);
+
+  const areasUnicasDoAlvo = React.useMemo(() => {
+    if (resolvido.ok && resolvido.quantidade !== null) return resolvido.quantidade;
+    if (selecao === "empresa" && p.totalAreas !== undefined) return p.totalAreas;
+    return null;
+  }, [resolvido, selecao, p.totalAreas]);
+
+  const linhaResumo = React.useMemo(() => {
+    const periodos = periodoValidado.ok ? periodoValidado.slots : null;
+    if (previaValida && previa) {
+      const analises = previa.total_itens;
+      return textoLinhaResumoPedido({
+        areasUnicas: areasUnicasDoAlvo,
+        periodos,
+        analises,
+        areasIgnoradas: previa.areas_ignoradas?.length ?? 0,
+        hectares: haDoAlvo,
+        formatarHa: (ha) => num(ha, 1)
+      });
+    }
+    return textoLinhaResumoPedido({
+      areasUnicas: areasUnicasDoAlvo,
+      periodos: periodos != null && periodos > 1 ? periodos : null,
+      analises: itens,
+      hectares: haDoAlvo,
+      formatarHa: (ha) => num(ha, 1)
+    });
+  }, [previaValida, previa, areasUnicasDoAlvo, periodoValidado, haDoAlvo, itens]);
+
+  // Prévia: snapshot + tentativa; sucesso E erro conferem a tentativa vigente (ref, não closure).
   const previaAuto = useMutation({
-    mutationFn: async () => {
-      if (!resolvido.ok || !periodoValidado.ok) throw new Error(motivoBloqueio ?? "Seleção inválida");
-      const corpo = montarCorpoConsulta(resolvido.alvo, periodoValidado.periodo, false);
-      return api<PreviaConsulta>("/api/satelite/consultas", { method: "POST", body: corpo });
+    mutationFn: async (pedido: PedidoTentativaPrevia) => {
+      previaAbortRef.current?.abort();
+      const ac = new AbortController();
+      previaAbortRef.current = ac;
+      const corpo = montarCorpoConsulta(pedido.alvo, pedido.periodo, false);
+      try {
+        const r = await api<PreviaConsulta>("/api/satelite/consultas", { method: "POST", body: corpo, signal: ac.signal });
+        return { ...r, chave: pedido.chave, tentativaId: pedido.tentativaId };
+      } catch (e) {
+        throw marcarErroTentativa(e, { id: pedido.tentativaId, chave: pedido.chave });
+      }
     },
-    onSuccess: (r) => { setPrevia(r); setErro(null); },
-    onError: (e) => { setPrevia(null); setErro(mensagemDoErro(e)); }
+    onSuccess: (r) => {
+      if (!gestorPreviaRef.current.deveAplicar(
+        { tentativaId: r.tentativaId, chave: r.chave },
+        chavePedidoAtualRef.current
+      )) return;
+      setPrevia(r);
+      setErro(null);
+    },
+    onError: (e) => {
+      if (ehAbortError(e)) return;
+      const tentativaId = (e as { tentativaId?: number }).tentativaId;
+      const chave = (e as { chave?: string }).chave;
+      if (tentativaId == null || !chave) return;
+      if (!gestorPreviaRef.current.deveAplicar(
+        { tentativaId, chave },
+        chavePedidoAtualRef.current
+      )) return;
+      setPrevia(null);
+      setErro(mensagemDoErro(e));
+    }
   });
 
+  // Depende só da chave (string estável). `resolvido`/`periodoValidado` mudam de identidade
+  // a cada render — se entrassem nas deps, setErro/setPrevia re-disparariam a prévia e
+  // apagariam o erro vigente com uma segunda tentativa.
   React.useEffect(() => {
-    if (!p.aberto || consultaId || motivoBloqueio) {
-      if (motivoBloqueio) setPrevia(null);
+    if (!p.aberto || consultaId || motivoBloqueio || !chavePedidoAtual) {
+      if (motivoBloqueio) {
+        setPrevia(null);
+        gestorPreviaRef.current.invalidar();
+      }
       return;
     }
-    const t = window.setTimeout(() => previaAuto.mutate(), 280);
-    return () => window.clearTimeout(t);
-  }, [p.aberto, consultaId, selecao, retiroId, escolhidas, periodo, motivoBloqueio]);
+    if (previa && previa.chave !== chavePedidoAtual) setPrevia(null);
+    const t = window.setTimeout(() => {
+      const snapshot = snapshotPedidoRef.current;
+      if (!snapshot || snapshot.chave !== chavePedidoAtualRef.current) return;
+      const tentativa = gestorPreviaRef.current.iniciar(snapshot.chave);
+      previaAuto.mutate({ ...snapshot, tentativaId: tentativa.id });
+    }, 280);
+    return () => {
+      window.clearTimeout(t);
+      previaAbortRef.current?.abort();
+    };
+  }, [p.aberto, consultaId, chavePedidoAtual, motivoBloqueio]);
 
   const pedir = useMutation({
     mutationFn: async () => {
       if (!resolvido.ok) throw new Error(resolvido.motivo);
       if (!periodoValidado.ok) throw new Error(periodoValidado.motivo);
+      if (!chavePedidoAtual || !previaCorrespondeAoPedido(previa, chavePedidoAtual)) {
+        throw new Error("Aguarde a estimativa do pedido atual antes de analisar.");
+      }
+      if (previa?.excede_orcamento) throw new Error("A estimativa passa do saldo do mês.");
+      pedidoEnvioRef.current = { chave: chavePedidoAtual };
       const corpo = montarCorpoConsulta(resolvido.alvo, periodoValidado.periodo, true);
-      return api<ConsultaCriada>("/api/satelite/consultas", { method: "POST", body: corpo });
+      return api<ConsultaCriada>("/api/satelite/consultas", {
+        method: "POST",
+        body: corpo,
+        idempotencyKey: `consulta:${chavePedidoAtual}`
+      });
     },
     onSuccess: (criada) => {
       setErro(null);
       setConsultaId(criada.consulta.id);
       if (p.filaDisponivel === false) setAvisoFilaAoCriar(true);
       p.onConsultaEmAndamento?.(criada.consulta.id);
+      void qc.invalidateQueries({ queryKey: ["mapa-geral", "operacao-analise"] });
+    },
+    onError: (e) => setErro(mensagemDoErro(e))
+  });
+
+  const reprocessar = useMutation({
+    mutationFn: async (id: string) => {
+      return api<{ consulta: ConsultaDto; reprocessados: number; reaproveitados: number }>(
+        `/api/satelite/consultas/${id}/reprocessar-falhas`,
+        { method: "POST", idempotencyKey: `reprocessar:${id}` }
+      );
+    },
+    onSuccess: (r) => {
+      setErro(null);
+      setConsultaId(r.consulta.id);
+      avisouConclusaoRef.current = null;
+      p.onConsultaEmAndamento?.(r.consulta.id);
+      void qc.invalidateQueries({ queryKey: [...CHAVE_CONDICAO, "consulta", r.consulta.id] });
       void qc.invalidateQueries({ queryKey: ["mapa-geral", "operacao-analise"] });
     },
     onError: (e) => setErro(mensagemDoErro(e))
@@ -239,8 +379,14 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
   }, [consulta, terminou, qc, onConcluida]);
 
   const emProgresso = consultaId !== null;
-  const excede = Boolean(previa?.excede_orcamento);
-  const podeAnalisar = !emProgresso && !motivoBloqueio && !excede && !pedir.isPending;
+  const excede = Boolean(previaValida && previa?.excede_orcamento);
+  const calculandoPrevia = !emProgresso && !motivoBloqueio && Boolean(chavePedidoAtual) && previaAuto.isPending;
+  const podeAnalisar = !emProgresso
+    && !motivoBloqueio
+    && previaValida
+    && !excede
+    && !pedir.isPending
+    && !previaAuto.isPending;
 
   const tituloModal = p.modoAcompanhar && emProgresso && !terminou
     ? "Há uma análise em andamento"
@@ -431,7 +577,11 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
               <p className="text-sm font-medium tabular-nums text-slate-800" data-testid="consulta-linha-resumo">{linhaResumo}</p>
             )}
 
-            {previa && (
+            {calculandoPrevia && (
+              <p className="text-xs text-slate-500" data-testid="consulta-previa-calculando">Calculando estimativa…</p>
+            )}
+
+            {previaValida && previa && (
               <div className="rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700" data-testid="consulta-previa-resultado">
                 <span data-testid="consulta-previa-creditos">
                   Estimativa: {num(previa.estimativa_creditos.minimo, 2)}–{num(previa.estimativa_creditos.maximo, 2)} créditos
@@ -445,7 +595,33 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
             )}
 
             {motivoBloqueio && <p className="text-xs text-amber-700" data-testid="consulta-alvo-invalido">{motivoBloqueio}</p>}
-            {erro && <p className="text-xs text-red-600" role="alert" data-testid="consulta-erro">{erro}</p>}
+            {erro && !emProgresso && (
+              <div className="flex flex-col gap-1" data-testid="consulta-erro-bloco">
+                <p className="text-xs text-red-600" role="alert" data-testid="consulta-erro">{erro}</p>
+                {chavePedidoAtual && resolvido.ok && periodoValidado.ok && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="self-start min-h-11 sm:min-h-0"
+                    data-testid="consulta-previa-retry"
+                    onClick={() => {
+                      const snapshot = montarSnapshotPedido({
+                        organizationId: session?.orgId ?? null,
+                        empresaId: session?.empresaId ?? null,
+                        alvo: resolvido.alvo,
+                        periodo: periodoValidado.periodo
+                      });
+                      if (snapshot.chave !== chavePedidoAtual) return;
+                      const tentativa = gestorPreviaRef.current.iniciar(snapshot.chave);
+                      previaAuto.mutate({ ...snapshot, tentativaId: tentativa.id });
+                    }}
+                  >
+                    Tentar estimativa de novo
+                  </Button>
+                )}
+              </div>
+            )}
           </>
         )}
 
@@ -460,8 +636,7 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
             </div>
             {consulta && (
               <div className="text-xs tabular-nums text-slate-600" data-testid="consulta-progresso-pastos">
-                {feitos} de {consulta.total_itens} áreas
-                {consulta.total_falhos > 0 && <> · {consulta.total_falhos} com falha</>}
+                {textoProgressoAnalises(feitos, consulta.total_itens, consulta.total_falhos)}
                 {consulta.concluida_em && <> · terminou em {dateTimeBR(consulta.concluida_em)}</>}
               </div>
             )}
@@ -469,7 +644,23 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
               <p className="text-xs text-amber-800" data-testid="consulta-fila-indisponivel" role="status">{MSG_FILA_INDISPONIVEL}</p>
             )}
             {terminou && consulta && consulta.total_falhos > 0 && (
-              <p className="text-xs text-amber-700">Algumas áreas falharam. Inicie de novo para processar só as faltantes (o servidor reaproveita o que já está pronto).</p>
+              <div className="flex flex-col gap-1.5" data-testid="consulta-falha-parcial">
+                <p className="text-xs text-amber-700">
+                  Algumas análises falharam. Conclua a análise para reprocessar só as faltantes — o que já está pronto é reaproveitado.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="self-start min-h-11 sm:min-h-0"
+                  loading={reprocessar.isPending}
+                  disabled={reprocessar.isPending}
+                  onClick={() => reprocessar.mutate(consulta.id)}
+                  data-testid="consulta-reprocessar-falhas"
+                >
+                  Concluir análise
+                </Button>
+                {erro && <p className="text-xs text-red-600" role="alert" data-testid="consulta-erro">{erro}</p>}
+              </div>
             )}
             {acompanhamento.error && <p className="text-xs text-red-600">{mensagemDoErro(acompanhamento.error)}</p>}
           </div>

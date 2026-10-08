@@ -710,7 +710,7 @@ export function MapaGeral() {
 
         <div className="relative flex min-h-0 flex-col gap-2 lg:flex-row">
         <Card className="relative min-h-0 flex-1 overflow-hidden">
-          <div ref={mapa.containerRef} data-testid="mapa-canvas" className="h-full min-h-[420px] w-full" />
+          <div ref={mapa.containerRef} data-testid="mapa-canvas" className="h-[max(40dvh,16rem)] min-h-0 w-full flex-1 lg:h-full lg:min-h-[min(60dvh,28rem)]" />
           {mapa.pronto && (
             <CamadaDesenho desenhando={false} rotulosAreas={rotulos} pts={[]} fechado={false} cur={null} raw={null} ima={null} travado={false}
               rumo={null} arrastando={false} arrastoVertice={-1} hover={null} lados={[]} />

@@ -1,7 +1,8 @@
 /**
- * Clip / contenção espacial para zonas temáticas — SAT-BUNDLE-01B [F2] R1 + correção fail-closed.
+ * Clip / contenção espacial para zonas temáticas — SAT-BUNDLE-01B [F2] + prova por diferença.
  * Fora do polígono da área = zero geometria. Sem área válida = null (nunca desenha sem recorte).
  */
+import area from "@turf/area";
 import booleanPointInPolygon from "@turf/boolean-point-in-polygon";
 import { featureCollection, multiPolygon, point, polygon } from "@turf/helpers";
 import intersect from "@turf/intersect";
@@ -12,38 +13,116 @@ export type GeomPoly = {
   coordinates: Position[][] | Position[][][];
 };
 
+/** Resultado discriminado: vazio legítimo ≠ falha geométrica ≠ sem área. */
+export type ClipDetalhe =
+  | { status: "ok"; geom: GeomPoly }
+  | { status: "sem_area" }
+  | { status: "invalido" }
+  | { status: "vazio" }
+  | { status: "erro" };
+
 function comoFeature(g: GeomPoly | Polygon | MultiPolygon): Feature<Polygon | MultiPolygon> | null {
-  if (g.type === "Polygon") {
-    const rings = g.coordinates as Position[][];
-    if (!rings[0] || rings[0].length < 4) return null;
-    return polygon(rings as Position[][]);
+  try {
+    if (g.type === "Polygon") {
+      const rings = g.coordinates as Position[][];
+      if (!rings[0] || rings[0].length < 4) return null;
+      return polygon(rings as Position[][]);
+    }
+    const polys = g.coordinates as Position[][][];
+    const ok = polys.filter((p) => p[0] && p[0].length >= 4);
+    if (ok.length === 0) return null;
+    return multiPolygon(ok as Position[][][]);
+  } catch {
+    return null;
   }
-  const polys = g.coordinates as Position[][][];
-  const ok = polys.filter((p) => p[0] && p[0].length >= 4);
-  if (ok.length === 0) return null;
-  return multiPolygon(ok as Position[][][]);
 }
 
 /**
- * Interseção com a geometria da área.
- * - Sem área / área inválida → null (fail-closed: não publica geometria sem recorte).
- * - Interseção vazia ou erro geométrico → null (não vaza o footprint do raster).
+ * Clip com status discriminado (para UI/diagnóstico).
+ * `comoFeature` fica dentro do fluxo — geometria inválida não derruba a tela.
+ */
+export function clipGeometriaComAreaDetalhe(
+  geom: GeomPoly,
+  areaGeom: Polygon | MultiPolygon | GeomPoly | null | undefined
+): ClipDetalhe {
+  if (!areaGeom) return { status: "sem_area" };
+  const a = comoFeature(areaGeom as GeomPoly);
+  const b = comoFeature(geom);
+  if (!a || !b) return { status: "invalido" };
+  try {
+    const r = intersect(featureCollection([a, b]));
+    if (!r?.geometry) return { status: "vazio" };
+    if (r.geometry.type !== "Polygon" && r.geometry.type !== "MultiPolygon") return { status: "vazio" };
+    return { status: "ok", geom: r.geometry as GeomPoly };
+  } catch {
+    return { status: "erro" };
+  }
+}
+
+/**
+ * Interseção com a geometria da área (fail-closed).
+ * - Sem área / inválida / vazia / erro → null (não vaza o footprint).
  */
 export function clipGeometriaComArea(
   geom: GeomPoly,
-  area: Polygon | MultiPolygon | GeomPoly | null | undefined
+  areaGeom: Polygon | MultiPolygon | GeomPoly | null | undefined
 ): GeomPoly | null {
-  if (!area) return null;
-  const a = comoFeature(area as GeomPoly);
-  const b = comoFeature(geom);
-  if (!a || !b) return null;
+  const d = clipGeometriaComAreaDetalhe(geom, areaGeom);
+  return d.status === "ok" ? d.geom : null;
+}
+
+/** Área em m² (Turf/geodesic). Não usar graus². */
+export function areaM2(g: GeomPoly | Polygon | MultiPolygon): number {
+  const f = comoFeature(g as GeomPoly);
+  if (!f) return 0;
   try {
-    const r = intersect(featureCollection([a, b]));
-    if (!r?.geometry) return null;
-    if (r.geometry.type !== "Polygon" && r.geometry.type !== "MultiPolygon") return null;
-    return r.geometry as GeomPoly;
+    return area(f);
   } catch {
-    return null;
+    return 0;
+  }
+}
+
+/**
+ * Vazamento: área(camada) − área(camada ∩ polígono), em m².
+ * Contido perfeitamente → ~0. Tolerância típica de teste: 1 m² (ruído numérico).
+ */
+export function areaVazamentoM2(
+  camada: GeomPoly,
+  areaCadastro: Polygon | MultiPolygon | GeomPoly
+): number {
+  const a = comoFeature(areaCadastro as GeomPoly);
+  const b = comoFeature(camada);
+  if (!a || !b) return areaM2(camada);
+  try {
+    const inter = intersect(featureCollection([a, b]));
+    const areaCamada = area(b);
+    const areaInter = inter?.geometry ? area(inter) : 0;
+    return Math.max(0, areaCamada - areaInter);
+  } catch {
+    return areaM2(camada);
+  }
+}
+
+/**
+ * Cobertura ausente em relação a um suporte esperado (ex.: grade toda válida dentro do pasto), em m²:
+ * área(esperado) − área(esperado ∩ obtido).
+ */
+export function areaAusenteM2(
+  esperado: GeomPoly | Polygon | MultiPolygon,
+  obtido: GeomPoly | Polygon | MultiPolygon | null | undefined
+): number {
+  if (!obtido) return areaM2(esperado as GeomPoly);
+  const a = comoFeature(esperado as GeomPoly);
+  const b = comoFeature(obtido as GeomPoly);
+  if (!a) return 0;
+  if (!b) return area(a);
+  try {
+    const inter = intersect(featureCollection([a, b]));
+    const areaEsp = area(a);
+    const areaInter = inter?.geometry ? area(inter) : 0;
+    return Math.max(0, areaEsp - areaInter);
+  } catch {
+    return area(a);
   }
 }
 
@@ -68,10 +147,10 @@ export function pontoEmPoligono(anelExterior: Position[], p: Position): boolean 
 
 /** Contém o ponto na geometria (Polygon ou MultiPolygon), inclusive buracos via turf. */
 export function pontoNaArea(
-  area: Polygon | MultiPolygon | GeomPoly,
+  areaGeom: Polygon | MultiPolygon | GeomPoly,
   p: Position
 ): boolean {
-  const f = comoFeature(area as GeomPoly);
+  const f = comoFeature(areaGeom as GeomPoly);
   if (!f) return false;
   try {
     return booleanPointInPolygon(point(p), f);
@@ -81,18 +160,17 @@ export function pontoNaArea(
 }
 
 /**
- * Amostra densa dos vértices (+ centroides de anéis) e conta quantos caem fora da área.
- * Usado em testes de contenção (diferença geométrica amostrada).
+ * Amostra densa dos vértices (sem usar centroide como prova de vazamento — côncavo/buraco).
+ * Complemento da diferença por área, não substituto.
  */
 export function amostrarVazamentoForaDaArea(
   geom: GeomPoly,
-  area: Polygon | MultiPolygon | GeomPoly,
+  areaGeom: Polygon | MultiPolygon | GeomPoly,
   passo = 1
 ): { fora: number; total: number } {
   const verts: Position[] = [];
   const pushAnel = (anel: Position[]) => {
     for (let i = 0; i < anel.length - 1; i += passo) verts.push(anel[i]!);
-    if (anel.length >= 4) verts.push(centroideAnel(anel));
   };
   if (geom.type === "Polygon") {
     for (const anel of geom.coordinates as Position[][]) pushAnel(anel);
@@ -103,7 +181,7 @@ export function amostrarVazamentoForaDaArea(
   }
   let fora = 0;
   for (const v of verts) {
-    if (!pontoNaArea(area, v)) fora++;
+    if (!pontoNaArea(areaGeom, v)) fora++;
   }
   return { fora, total: verts.length };
 }

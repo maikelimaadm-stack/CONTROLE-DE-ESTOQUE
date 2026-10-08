@@ -160,11 +160,53 @@ export function itensDaConsulta(quantidadeAreas: number | null, slots: number): 
 /** Corpo estrito: alvo, período já VALIDADO, bundle de 6 índices e confirmar — nada mais. */
 export function montarCorpoConsulta(alvo: AlvoConsulta, periodo: PeriodoConsulta, confirmar: boolean): CorpoConsulta {
   return {
-    alvo,
+    alvo: canonizarAlvo(alvo),
     periodo,
     indices: [BUNDLE_PASTAGEM_ESSENCIAL],
     confirmar
   };
+}
+
+/** Lista de IDs estável (ordem irrelevante → ordenada). */
+export function canonizarIds(ids: readonly string[]): string[] {
+  return [...new Set(ids)].sort((a, b) => a.localeCompare(b));
+}
+
+export function canonizarAlvo(alvo: AlvoConsulta): AlvoConsulta {
+  if (alvo.tipo === "areas") return { tipo: "areas", area_ids: canonizarIds(alvo.area_ids) };
+  return alvo;
+}
+
+/**
+ * Identidade estável da prévia: organização · empresa · alvo · período · pacote.
+ * Respostas antigas só aplicam se a chave ainda for a do pedido atual.
+ */
+export function chaveDaPrevia(p: {
+  organizationId?: string | null;
+  empresaId?: string | null;
+  alvo: AlvoConsulta;
+  periodo: PeriodoConsulta;
+  pacote?: string;
+}): string {
+  const alvo = canonizarAlvo(p.alvo);
+  const alvoTxt = alvo.tipo === "todas" ? "todas"
+    : alvo.tipo === "retiro" ? `retiro:${alvo.retiro_id}`
+    : `areas:${alvo.area_ids.join(",")}`;
+  return [
+    p.organizationId ?? "",
+    p.empresaId ?? "",
+    alvoTxt,
+    JSON.stringify(p.periodo),
+    p.pacote ?? BUNDLE_PASTAGEM_ESSENCIAL
+  ].join("|");
+}
+
+/** A prévia em tela só é usável se a chave bater com o pedido atual. */
+export function previaCorrespondeAoPedido(
+  previa: { chave: string } | null | undefined,
+  chaveAtual: string | null
+): boolean {
+  return Boolean(previa && chaveAtual && previa.chave === chaveAtual);
 }
 
 export interface PreviaConsulta {
