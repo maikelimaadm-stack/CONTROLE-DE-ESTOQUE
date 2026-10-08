@@ -472,7 +472,7 @@ export function MapaGeral() {
     const st = statusOperacional(areaId);
     return !st || st === "SEM_ANALISE";
   };
-  /** Popups mutuamente exclusivos com o modal Analisar pastos. */
+  /** Popups mutuamente exclusivos com o modal Analisar áreas. */
   const dialogAreaAberto = Boolean(modoCondicao && selecionadaObj && !consulta.aberta && classeFiltro === null);
   const dialogClasseAberto = Boolean(modoCondicao && classeFiltro !== null && !consulta.aberta);
   const dialogTecnicoAberto = Boolean(!modoCondicao && selecionadaObj && !consulta.aberta);
