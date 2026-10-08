@@ -47,14 +47,14 @@ async function digitarData(campo: Locator, ddmmaaaa: string) {
   await visivel.press("Enter");
 }
 
-/** Popup central da área (Dialog) bloqueia cliques na lista/toolbar — fechar antes. */
+/** Painel lateral / bottom sheet da área — fechar antes de clicar na lista/toolbar. */
 async function fecharDialogArea(page: Page) {
-  const dialog = page.getByTestId("mapa-area-selecionada");
-  if (await dialog.count() === 0) return;
+  const painel = page.getByTestId("mapa-area-selecionada");
+  if (await painel.count() === 0) return;
   const fechar = page.getByTestId("dialog-area-fechar");
   if (await fechar.isVisible().catch(() => false)) await fechar.click();
   else await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
+  await expect(painel).toHaveCount(0);
 }
 
 /** Família, índice e Pixel/Área ficam em Dados técnicos (SAT-BUNDLE-01B). */
@@ -112,7 +112,7 @@ test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro 
   await expect(item).toBeVisible();
   await expect(page.getByTestId("mapa-item-area")).toHaveCount(1);
 
-  // clique NO POLÍGONO (centro projetado pelo próprio mapa) abre Dialog central — só leitura
+  // clique NO POLÍGONO (centro projetado pelo próprio mapa) abre painel lateral — só leitura
   await expect.poll(async () => page.evaluate(() => Boolean((window as unknown as { __mapaManejoE2E?: unknown }).__mapaManejoE2E)), { timeout: 30_000 }).toBe(true);
   // rótulos só em hover/selecionada — o polígono no canvas é a prova de enquadramento
   await expect(page.getByTestId("mapa-rotulo-area"), "sem hover/seleção não há rótulos permanentes").toHaveCount(0);
@@ -129,7 +129,9 @@ test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro 
   await page.mouse.click(caixa!.x + centro.x, caixa!.y + centro.y);
   const resumo = page.getByTestId("mapa-area-selecionada");
   await expect(resumo).toBeVisible();
-  await expect(resumo).toHaveAttribute("role", "dialog");
+  // Detalhe operacional = painel não modal (aside), não Dialog central
+  await expect(resumo).toHaveJSProperty("tagName", "ASIDE");
+  await expect(resumo).toHaveAttribute("aria-label", new RegExp(`Detalhe de ${nome}`, "i"));
   await expect(resumo).toContainText(nome);
   await expect(resumo).toContainText("120");
   await expect(resumo.getByTestId("mapa-abrir-cadastro")).toHaveAttribute("href", `/cadastros/areas/${criada.id}`);
@@ -142,7 +144,7 @@ test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro 
   await expect(page.getByTestId("mapa-legenda-ndvi")).toHaveCount(0);
   await expect(page.getByTestId("legenda-condicao-pasto")).toBeVisible();
   await expect(page.getByTestId("mapa-rotulo-area").filter({ hasText: nome }), "selecionada mostra o nome").toBeVisible();
-  // Dados técnicos pelo rodapé do Dialog (fecha Condição e abre painel técnico da mesma área)
+  // Dados técnicos pelo rodapé do painel (abre modo técnico da mesma área)
   await resumo.getByTestId("condicao-pasto-dados-tecnicos").click();
   await expect(page.getByTestId("mapa-experiencia-tecnico")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("mapa-area-selecionada").getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toContainText("não tem análise para o contorno atual");
