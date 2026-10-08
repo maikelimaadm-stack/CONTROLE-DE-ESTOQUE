@@ -37,8 +37,16 @@ import {
   deveAvisarFilaIndisponivel,
   feitosDaConsulta
 } from "./operacao-analise";
+import {
+  GestorTentativasPrevia,
+  ehAbortError,
+  marcarErroTentativa,
+  montarSnapshotPedido,
+  type PedidoTentativaPrevia
+} from "./previa-tentativa";
+import { textoLinhaResumoPedido, textoProgressoAnalises } from "./resumo-pedido";
 
-type PreviaComChave = PreviaConsulta & { chave: string };
+type PreviaComChave = PreviaConsulta & { chave: string; tentativaId?: number };
 
 const INTERVALO_ACOMPANHAMENTO_MS = 3000;
 
@@ -95,9 +103,15 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
   const avisouConclusaoRef = React.useRef<string | null>(null);
   const previaAbortRef = React.useRef<AbortController | null>(null);
   const pedidoEnvioRef = React.useRef<{ chave: string } | null>(null);
+  const gestorPreviaRef = React.useRef(new GestorTentativasPrevia());
+  const chavePedidoAtualRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
-    if (!p.aberto) return;
+    if (!p.aberto) {
+      gestorPreviaRef.current.invalidar();
+      previaAbortRef.current?.abort();
+      return;
+    }
     setSelecao(p.selecaoInicial ?? "empresa");
     setPrevia(null);
     setErro(null);
@@ -108,6 +122,7 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
     setRetiroId("");
     avisouConclusaoRef.current = null;
     setAvisoFilaAoCriar(false);
+    gestorPreviaRef.current.invalidar();
     if (p.modoAcompanhar && p.consultaIdInicial) {
       setConsultaId(p.consultaIdInicial);
     } else {
@@ -160,81 +175,115 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
       periodo: periodoValidado.periodo
     });
   }, [resolvido, periodoValidado, session?.orgId, session?.empresaId]);
+  chavePedidoAtualRef.current = chavePedidoAtual;
 
   const previaValida = previaCorrespondeAoPedido(previa, chavePedidoAtual);
 
-  const linhaResumo = React.useMemo(() => {
-    // Preferir contagem da prévia do pedido atual (servidor = autoridade de elegíveis).
-    if (previaValida && previa) {
-      const elegiveis = Math.max(0, previa.total_itens - (previa.areas_ignoradas?.length ?? 0));
-      // total_itens é áreas×slots; para mais_recente (1 slot) ≈ áreas elegíveis.
-      const n = previa.novos + previa.reaproveitados;
-      if (n > 0) return `${n} áreas no pedido`;
-      if (elegiveis >= 0) return `${previa.total_itens} itens · ${previa.areas_ignoradas.length} ignorada(s)`;
-    }
-    if (selecao === "escolhidas") {
-      return `${escolhidas.size} áreas · ${num(haEscolhidas, 1)} ha`;
-    }
+  const haDoAlvo = React.useMemo(() => {
+    if (selecao === "escolhidas") return haEscolhidas;
     if (selecao === "viewport") {
-      const ha = p.areas.filter((a) => p.idsNaVista.includes(a.id)).reduce((s, a) => s + (Number(a.area_ha) || 0), 0);
-      return `${p.idsNaVista.length} áreas · ${num(ha, 1)} ha`;
+      return p.areas.filter((a) => p.idsNaVista.includes(a.id)).reduce((s, a) => s + (Number(a.area_ha) || 0), 0);
     }
     if (selecao === "sem_analise") {
-      const ha = p.areas.filter((a) => p.idsSemAnalise.includes(a.id)).reduce((s, a) => s + (Number(a.area_ha) || 0), 0);
-      return `${p.idsSemAnalise.length} áreas · ${num(ha, 1)} ha`;
+      return p.areas.filter((a) => p.idsSemAnalise.includes(a.id)).reduce((s, a) => s + (Number(a.area_ha) || 0), 0);
     }
     if (selecao === "desatualizadas" && p.idsDesatualizadas) {
       const ids = p.idsDesatualizadas;
-      const ha = p.areas.filter((a) => ids.includes(a.id)).reduce((s, a) => s + (Number(a.area_ha) || 0), 0);
-      return `${ids.length} áreas · ${num(ha, 1)} ha`;
+      return p.areas.filter((a) => ids.includes(a.id)).reduce((s, a) => s + (Number(a.area_ha) || 0), 0);
     }
-    if (selecao === "empresa" && p.totalAreas !== undefined) {
-      return `${p.totalAreas} áreas · ${num(p.totalHa ?? 0, 1)} ha`;
-    }
-    if (resolvido.ok && resolvido.quantidade !== null) {
-      return `${resolvido.quantidade} áreas`;
-    }
+    if (selecao === "empresa" && p.totalHa !== undefined) return p.totalHa;
     return null;
-  }, [selecao, escolhidas.size, haEscolhidas, p.idsNaVista, p.idsSemAnalise, p.idsDesatualizadas, p.areas, p.totalAreas, p.totalHa, resolvido, previa, previaValida]);
+  }, [selecao, haEscolhidas, p.areas, p.idsNaVista, p.idsSemAnalise, p.idsDesatualizadas, p.totalHa]);
 
-  // Prévia automática amarrada à chave do pedido — respostas atrasadas são ignoradas.
+  const areasUnicasDoAlvo = React.useMemo(() => {
+    if (resolvido.ok && resolvido.quantidade !== null) return resolvido.quantidade;
+    if (selecao === "empresa" && p.totalAreas !== undefined) return p.totalAreas;
+    return null;
+  }, [resolvido, selecao, p.totalAreas]);
+
+  const linhaResumo = React.useMemo(() => {
+    const periodos = periodoValidado.ok ? periodoValidado.slots : null;
+    if (previaValida && previa) {
+      const analises = previa.total_itens;
+      return textoLinhaResumoPedido({
+        areasUnicas: areasUnicasDoAlvo,
+        periodos,
+        analises,
+        areasIgnoradas: previa.areas_ignoradas?.length ?? 0,
+        hectares: haDoAlvo,
+        formatarHa: (ha) => num(ha, 1)
+      });
+    }
+    return textoLinhaResumoPedido({
+      areasUnicas: areasUnicasDoAlvo,
+      periodos: periodos != null && periodos > 1 ? periodos : null,
+      analises: itens,
+      hectares: haDoAlvo,
+      formatarHa: (ha) => num(ha, 1)
+    });
+  }, [previaValida, previa, areasUnicasDoAlvo, periodoValidado, haDoAlvo, itens]);
+
+  // Prévia: snapshot + tentativa; sucesso E erro conferem a tentativa vigente (ref, não closure).
   const previaAuto = useMutation({
-    mutationFn: async (chave: string) => {
-      if (!resolvido.ok || !periodoValidado.ok) throw new Error(motivoBloqueio ?? "Seleção inválida");
+    mutationFn: async (pedido: PedidoTentativaPrevia) => {
       previaAbortRef.current?.abort();
       const ac = new AbortController();
       previaAbortRef.current = ac;
-      const corpo = montarCorpoConsulta(resolvido.alvo, periodoValidado.periodo, false);
-      const r = await api<PreviaConsulta>("/api/satelite/consultas", { method: "POST", body: corpo, signal: ac.signal });
-      return { ...r, chave };
+      const corpo = montarCorpoConsulta(pedido.alvo, pedido.periodo, false);
+      try {
+        const r = await api<PreviaConsulta>("/api/satelite/consultas", { method: "POST", body: corpo, signal: ac.signal });
+        return { ...r, chave: pedido.chave, tentativaId: pedido.tentativaId };
+      } catch (e) {
+        throw marcarErroTentativa(e, { id: pedido.tentativaId, chave: pedido.chave });
+      }
     },
     onSuccess: (r) => {
-      // Só aplica se ainda for o pedido atual (proteção A/B fora de ordem).
-      if (r.chave !== chavePedidoAtual) return;
+      if (!gestorPreviaRef.current.deveAplicar(
+        { tentativaId: r.tentativaId, chave: r.chave },
+        chavePedidoAtualRef.current
+      )) return;
       setPrevia(r);
       setErro(null);
     },
     onError: (e) => {
-      if (e instanceof DOMException && e.name === "AbortError") return;
-      if (e instanceof Error && e.name === "AbortError") return;
+      if (ehAbortError(e)) return;
+      const tentativaId = (e as { tentativaId?: number }).tentativaId;
+      const chave = (e as { chave?: string }).chave;
+      if (tentativaId == null || !chave) return;
+      if (!gestorPreviaRef.current.deveAplicar(
+        { tentativaId, chave },
+        chavePedidoAtualRef.current
+      )) return;
       setPrevia(null);
       setErro(mensagemDoErro(e));
     }
   });
 
   React.useEffect(() => {
-    if (!p.aberto || consultaId || motivoBloqueio || !chavePedidoAtual) {
-      if (motivoBloqueio) setPrevia(null);
+    if (!p.aberto || consultaId || motivoBloqueio || !chavePedidoAtual || !resolvido.ok || !periodoValidado.ok) {
+      if (motivoBloqueio) {
+        setPrevia(null);
+        gestorPreviaRef.current.invalidar();
+      }
       return;
     }
-    // Invalida imediatamente a prévia de outro pedido.
     if (previa && previa.chave !== chavePedidoAtual) setPrevia(null);
-    const t = window.setTimeout(() => previaAuto.mutate(chavePedidoAtual), 280);
+    const snapshot = montarSnapshotPedido({
+      organizationId: session?.orgId ?? null,
+      empresaId: session?.empresaId ?? null,
+      alvo: resolvido.alvo,
+      periodo: periodoValidado.periodo
+    });
+    if (snapshot.chave !== chavePedidoAtual) return;
+    const t = window.setTimeout(() => {
+      const tentativa = gestorPreviaRef.current.iniciar(snapshot.chave);
+      previaAuto.mutate({ ...snapshot, tentativaId: tentativa.id });
+    }, 280);
     return () => {
       window.clearTimeout(t);
       previaAbortRef.current?.abort();
     };
-  }, [p.aberto, consultaId, chavePedidoAtual, motivoBloqueio]);
+  }, [p.aberto, consultaId, chavePedidoAtual, motivoBloqueio, resolvido, periodoValidado, session?.orgId, session?.empresaId]);
 
   const pedir = useMutation({
     mutationFn: async () => {
@@ -542,8 +591,25 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
             {erro && !emProgresso && (
               <div className="flex flex-col gap-1" data-testid="consulta-erro-bloco">
                 <p className="text-xs text-red-600" role="alert" data-testid="consulta-erro">{erro}</p>
-                {chavePedidoAtual && (
-                  <Button type="button" size="sm" variant="outline" className="self-start min-h-11 sm:min-h-0" data-testid="consulta-previa-retry" onClick={() => previaAuto.mutate(chavePedidoAtual)}>
+                {chavePedidoAtual && resolvido.ok && periodoValidado.ok && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="self-start min-h-11 sm:min-h-0"
+                    data-testid="consulta-previa-retry"
+                    onClick={() => {
+                      const snapshot = montarSnapshotPedido({
+                        organizationId: session?.orgId ?? null,
+                        empresaId: session?.empresaId ?? null,
+                        alvo: resolvido.alvo,
+                        periodo: periodoValidado.periodo
+                      });
+                      if (snapshot.chave !== chavePedidoAtual) return;
+                      const tentativa = gestorPreviaRef.current.iniciar(snapshot.chave);
+                      previaAuto.mutate({ ...snapshot, tentativaId: tentativa.id });
+                    }}
+                  >
                     Tentar estimativa de novo
                   </Button>
                 )}
@@ -563,8 +629,7 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
             </div>
             {consulta && (
               <div className="text-xs tabular-nums text-slate-600" data-testid="consulta-progresso-pastos">
-                {feitos} de {consulta.total_itens} áreas
-                {consulta.total_falhos > 0 && <> · {consulta.total_falhos} com falha</>}
+                {textoProgressoAnalises(feitos, consulta.total_itens, consulta.total_falhos)}
                 {consulta.concluida_em && <> · terminou em {dateTimeBR(consulta.concluida_em)}</>}
               </div>
             )}
@@ -574,7 +639,7 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
             {terminou && consulta && consulta.total_falhos > 0 && (
               <div className="flex flex-col gap-1.5" data-testid="consulta-falha-parcial">
                 <p className="text-xs text-amber-700">
-                  Algumas áreas falharam. Conclua a análise para reprocessar só as faltantes — o que já está pronto é reaproveitado.
+                  Algumas análises falharam. Conclua a análise para reprocessar só as faltantes — o que já está pronto é reaproveitado.
                 </p>
                 <Button
                   type="button"

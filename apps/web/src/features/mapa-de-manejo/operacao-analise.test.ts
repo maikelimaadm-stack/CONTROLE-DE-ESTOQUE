@@ -45,7 +45,7 @@ describe("operacao-analise — helpers puros", () => {
   it("rotuloBarraAnalise e feitos", () => {
     const c = base({ total_concluidos: 30, total_reaproveitados: 8 });
     expect(feitosDaConsulta(c)).toBe(38);
-    expect(rotuloBarraAnalise(c)).toBe("Analisando áreas · 38/102");
+    expect(rotuloBarraAnalise(c)).toBe("Analisando · 38/102");
   });
 
   it("primeiraConsultaViva pega a primeira viva da lista", () => {

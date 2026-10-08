@@ -64,6 +64,8 @@ describe("MAPA-UX-02 — UI estática (UX-01..UX-15) + enxuto Analisar áreas", 
     expect(modalSrc).toContain("previaAuto");
     expect(modalSrc).toContain("chaveDaPrevia");
     expect(modalSrc).toContain("previaCorrespondeAoPedido");
+    expect(modalSrc).toContain("GestorTentativasPrevia");
+    expect(modalSrc).toContain("deveAplicar");
     expect(modalSrc).toContain('data-testid="consulta-confirmar"');
     expect(modalSrc).toContain("montarCorpoConsulta(resolvido.alvo, periodoValidado.periodo, true)");
     expect(modalSrc).not.toContain("setEtapa(2)");
@@ -73,9 +75,11 @@ describe("MAPA-UX-02 — UI estática (UX-01..UX-15) + enxuto Analisar áreas", 
     expect(modalSrc).toContain("consulta-progresso");
     expect(modalSrc).toContain("Continuar em segundo plano");
     expect(modalSrc).toContain("emProgresso");
+    expect(modalSrc).toContain("textoProgressoAnalises");
     expect(modalSrc).toContain("consulta-reprocessar-falhas");
     expect(modalSrc).toContain("reprocessar-falhas");
     expect(modalSrc).toContain("Concluir análise");
+    expect(modalSrc).not.toMatch(/\$\{feitos\} de \{\w+\.total_itens\} áreas/);
   });
 
   it("UX-10 click área abre painel (não modal amontoado)", () => {

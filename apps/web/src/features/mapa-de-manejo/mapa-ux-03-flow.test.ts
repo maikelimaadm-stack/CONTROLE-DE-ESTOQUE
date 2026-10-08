@@ -32,7 +32,7 @@ describe("MAPA-UX-03 — FLOW + QUEUE", () => {
   });
 
   it("FLOW-02 barra persistente após iniciar; distinta de Atualizando mapa", () => {
-    expect(operacaoSrc).toContain("Analisando áreas");
+    expect(operacaoSrc).toContain("Analisando ·");
     expect(barraSrc).toContain("rotuloBarraAnalise");
     expect(barraSrc).toContain('data-testid="mapa-barra-analise"');
     expect(barraSrc).toContain("Atualizando mapa…");
@@ -46,7 +46,7 @@ describe("MAPA-UX-03 — FLOW + QUEUE", () => {
       total_concluidos: 38, total_falhos: 0, total_reaproveitados: 0,
       criado_em: "2026-10-06T12:00:00.000Z", concluida_em: null
     };
-    expect(rotuloBarraAnalise(c)).toBe("Analisando áreas · 38/102");
+    expect(rotuloBarraAnalise(c)).toBe("Analisando · 38/102");
   });
 
   it("FLOW-03 uma op viva → Analisar áreas abre acompanhar (não inicia outra)", () => {
