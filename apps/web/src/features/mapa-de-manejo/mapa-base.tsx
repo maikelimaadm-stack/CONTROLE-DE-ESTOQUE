@@ -271,7 +271,12 @@ export function limites(poligonos: readonly (Polygon | null | undefined)[]): Cai
 }
 
 /** Nomes e hectares das áreas na projeção atual, já sem sobreposição (recalcula a cada redesenho). */
-export function rotulosDasAreas(m: MapLibreMap, areas: readonly AreaNoMapa[], destaqueId: string | null): RotuloArea[] {
+export function rotulosDasAreas(
+  m: MapLibreMap,
+  areas: readonly AreaNoMapa[],
+  destaqueId: string | null,
+  cabecasPorArea?: ReadonlyMap<string, number> | null
+): RotuloArea[] {
   const proj = (ll: LngLat): Px => { const p = m.project(ll); return { x: p.x, y: p.y }; };
   const brutos = areas.flatMap((a) => {
     const anel = anelAberto(a.geometria);
@@ -285,9 +290,28 @@ export function rotulosDasAreas(m: MapLibreMap, areas: readonly AreaNoMapa[], de
       if (p.y < minY) minY = p.y;
       if (p.y > maxY) maxY = p.y;
     }
-    return [{ id: a.id, px: c ? proj(c) : centroPx(pts, anel, proj), nome: a.name, ha: hectares(a.area_ha), larguraPx: maxX - minX, alturaPx: maxY - minY }];
+    const cabecas = cabecasPorArea?.get(a.id);
+    return [{
+      id: a.id,
+      px: c ? proj(c) : centroPx(pts, anel, proj),
+      nome: a.name,
+      ha: hectares(a.area_ha),
+      cabecas: cabecas && cabecas > 0 ? cabecas : undefined,
+      larguraPx: maxX - minX,
+      alturaPx: maxY - minY
+    }];
   });
-  return suavizarRotulos(brutos, { destaqueId, zoom: m.getZoom() });
+  const visiveis = suavizarRotulos(brutos, { destaqueId, zoom: m.getZoom() });
+  return visiveis.map((r) => ({
+    id: r.id,
+    px: r.px,
+    nome: r.nome,
+    ha: r.ha,
+    cabecas: r.cabecas,
+    opacidade: r.opacidade,
+    fonteNome: r.fonteNome,
+    fonteHa: r.fonteHa
+  }));
 }
 
 /** Satélite × ruas (sem chave do Google, só o aviso). */

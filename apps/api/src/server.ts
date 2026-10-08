@@ -40,6 +40,7 @@ import plataformaRoutes from "./routes/plataforma.js";
 import referenciaRoutes from "./routes/referencias.js";
 import consultaRoutes from "./routes/consultas.js";
 import analisesSatelitaisRoutes from "./routes/analises-satelitais.js";
+import mapaManejoRoutes from "./routes/mapa-manejo.js";
 import rastersSatelitaisRoutes from "./routes/rasters-satelitais.js";
 import sateliteConsultasRoutes from "./routes/satelite-consultas.js";
 import sateliteCondicaoRoutes from "./routes/satelite-condicao.js";
@@ -170,6 +171,7 @@ export async function buildApp(opts: {
   await app.register(referenciaRoutes, { prefix: "/api" });
   await app.register(consultaRoutes, { prefix: "/api" });
   await app.register(analisesSatelitaisRoutes, { prefix: "/api" });
+  await app.register(mapaManejoRoutes, { prefix: "/api" });
   await app.register(rastersSatelitaisRoutes, { prefix: "/api" });
   await app.register(sateliteConsultasRoutes, { prefix: "/api" });
   await app.register(sateliteCondicaoRoutes, { prefix: "/api" });

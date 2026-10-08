@@ -6,6 +6,7 @@ export interface RotuloAreaBruto {
   px: Px;
   nome: string;
   ha: number;
+  cabecas?: number;
   larguraPx?: number;
   alturaPx?: number;
 }
@@ -27,8 +28,9 @@ export function fontesDoZoom(zoom: number): { nome: number; ha: number } {
 }
 
 function caixa(r: RotuloAreaBruto, pad: number, fonteNome: number) {
+  const linhas = 1 + (r.ha > 0 ? 1 : 0) + (r.cabecas && r.cabecas > 0 ? 1 : 0);
   const w = Math.max(fonteNome * 3.5, r.nome.length * (fonteNome * 0.58)) + pad * 2;
-  const h = (r.ha > 0 ? fonteNome * 2.2 : fonteNome * 1.25) + pad * 2;
+  const h = fonteNome * (0.25 + linhas * 1.05) + pad * 2;
   return { x: r.px.x - w / 2, y: r.px.y - h / 2, w, h };
 }
 
