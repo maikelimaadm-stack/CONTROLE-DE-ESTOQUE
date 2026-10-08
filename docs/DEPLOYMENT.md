@@ -4938,7 +4938,8 @@ Faixa **F1**. Sem migration, sem variável nova, sem permissão nova (usa `anali
   observação útil, a útil anterior e a variação — numa consulta só para a página inteira (a página de áreas é cortada
   primeiro; cada área busca as suas linhas pelos índices da 0052), com o escopo do módulo pecuária em cada ocorrência de
   tabela. Só lê `erp.areas` e `erp.analises_satelitais`; **não chama o Copernicus**.
-- **Web — "Mapa geral"** (`/mapa-geral`; `/mapa-de-manejo` redireciona, preservando parâmetros): o mapa pinta cada área
+- **Web — "Mapa de Manejo"** (`/mapa-de-manejo`, decisão 303): pastos com numeração/código no mapa, sem listagem lateral e sem satélite; módulo de menu próprio ao lado do Mapa geral.
+- **Web — "Mapa geral"** (`/mapa-geral`): o mapa pinta cada área
   pela classe FIXA do NDVI da última imagem útil (cinza sem imagem útil), seletor "NDVI / Cor do cadastro", legenda,
   "não é biomassa" e a atribuição "Contains modified Copernicus Sentinel data [ano]". O painel da área mostra os números,
   a variação, o histórico e o **"Analisar agora"** (o mesmo `POST` da SAT-01; desligado → a mensagem do servidor).
@@ -4961,7 +4962,7 @@ janelas foram medidas:
   serve; nenhuma rota que ela usa mudou.
 
 **Conferência pós-deploy:** `GET /api/mapa/analises-satelitais/resumo` autenticado responde 200 com `itens` (sem
-sessão: 401). Na web, o menu mostra "Mapa geral"; `/mapa-de-manejo` leva a `/mapa-geral`; com alguma área já analisada,
+sessão: 401). Na web, o menu mostra "Mapa geral" e "Mapa de Manejo"; `/mapa-de-manejo` é a tela só de pastos; com alguma área já analisada,
 ela aparece pintada pela classe e o painel mostra a data da imagem e a atribuição do Copernicus; Configurações ›
 Pecuária mostra "Cadastro de Área". Prova em produção autenticada: **PENDING** (acesso que a sessão não tem). Smoke com
 a conta real do Copernicus ("Analisar agora" concluindo): **PENDING** (decisão 293).

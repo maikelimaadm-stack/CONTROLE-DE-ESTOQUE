@@ -18,7 +18,7 @@ describe("SAT-COND-01 — UI estática (UI-01..UI-10)", () => {
   it("UI-01 abre em Condição do Pasto", () => {
     expect(mapaGeralSrc).toContain('useState<ModoMapaPasto>("operacional")');
     expect(mapaGeralSrc).toContain("TEMA_DEFAULT");
-    expect(barraSrc).toContain("TEMAS_MAPA_PASTO");
+    expect(barraSrc).toContain("VISUALIZACOES_MAPA_PASTO");
     expect(barraSrc).toContain("mapa-tema");
     expect(barraSrc).toContain('prefixoTestId="mapa-tema"');
   });
@@ -64,7 +64,8 @@ describe("SAT-COND-01 — UI estática (UI-01..UI-10)", () => {
 
   it("UI-10 siglas não dominam a tela principal", () => {
     expect(barraSrc).not.toMatch(/modo === "operacional"[\s\S]{0,80}mapa-grupo-indice/);
-    expect(mapaGeralSrc).toContain("Analise pastos uma vez");
+    expect(mapaGeralSrc).toContain("Mapa geral");
+    expect(barraSrc).toContain("Analisar áreas");
     expect(CLASSES_CONDICAO_PASTO.every((c) => !/NDVI|EVI2|MSAVI2/.test(c.nome))).toBe(true);
   });
 

@@ -141,6 +141,8 @@ export function sincronizarZonasCondicaoNoMapa(
   const features: GeoJSON.Feature[] = [];
   for (const [areaId, ent] of porArea) {
     const geo = geometriasPorArea?.get(areaId) ?? null;
+    // Sem contorno cadastrado: não publica zona (fail-closed — evita footprint do raster fora do pasto).
+    if (!geo) continue;
     const fc = featureCollectionTematicaDaEntrada(ent, tema, geo);
     if (!fc) continue;
     for (const f of fc.features) {

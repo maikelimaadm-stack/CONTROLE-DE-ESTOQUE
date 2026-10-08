@@ -71,11 +71,13 @@ export const MODULES = [
   // administrador vê 13 —, e quando a barra não cabe, quem vai para o "Mais" é ele, não um módulo de todo dia.
   // A permissão é a das SEIS capacidades Aprovar (qualquer uma mostra o módulo); cada aba exige a sua.
   m("aprovacoes", "Aprovações", "/aprovacoes", { perm: ["sales.approve", "compras.approve", ...P.APROVACAO_ESTOQUE], keywords: ["aprovar", "reprovar", "aprovação", "aguardando aprovação", "fila de aprovação"], description: "Documentos que aguardam aprovação antes de serem confirmados" }),
-  // MAPA-01 (decisão 289): módulo de topo NEUTRO do Mapa de Manejo (15º módulo; o teto do menu foi elevado de 14 para 15 em scripts/nav-audit.mjs, como contrato de UX desta fatia). Serve lavoura e pecuária; sem gado nesta fatia.
+  // MAPA-01 (decisão 289): módulo de topo NEUTRO (15º). Serve lavoura e pecuária; sem gado nesta fatia.
   // CADASTRO-AREAS-02: o mapa mostra erp.areas (permissão batch_area); mapa_areas ficou legado de skew.
   // CADASTRO-AREAS-03: o mapa é SÓ VISUALIZAÇÃO — o cadastro e o contorno da área ficam na ficha de Áreas/Piquetes.
-  // MAPA-GERAL (decisão 294): o módulo passa a "Mapa geral" (rota /mapa-geral; /mapa-de-manejo redireciona) — as áreas e os resultados de cada uma (NDVI por satélite).
-  m("mapa", "Mapa geral", "/mapa-geral", { perm: "batch_area.view", aliases: ["/mapa-de-manejo"], keywords: ["mapa", "mapa geral", "mapa de manejo", "área", "áreas", "piquete", "talhão", "polígono", "georreferenciamento", "satélite", "ndvi", "vigor", "manejo"], description: "Mapa da propriedade com as áreas e os resultados de cada uma (NDVI por satélite)" })
+  // MAPA-GERAL (decisão 294): "Mapa geral" em /mapa-geral — áreas + resultados (satélite/condição).
+  // MAPA-MANEJO-PASTOS (decisão 303): "Mapa de Manejo" em /mapa-de-manejo — só pastos com numeração, sem listagem; 16º módulo (teto elevado em nav-audit).
+  m("mapa", "Mapa geral", "/mapa-geral", { perm: "batch_area.view", keywords: ["mapa", "mapa geral", "área", "áreas", "piquete", "talhão", "polígono", "georreferenciamento", "satélite", "ndvi", "vigor", "condição"], description: "Mapa da propriedade com as áreas e os resultados de cada uma (condição e índices por satélite)" }),
+  m("mapa-manejo", "Mapa de Manejo", "/mapa-de-manejo", { perm: "batch_area.view", keywords: ["mapa de manejo", "manejo", "pasto", "pastos", "piquete", "numeração", "código da área"], description: "Mapa dos pastos com a numeração de cada um, sem listagem ao lado" })
 ];
 
 export const AREAS = [

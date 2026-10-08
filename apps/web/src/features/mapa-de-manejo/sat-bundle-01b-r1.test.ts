@@ -187,7 +187,8 @@ describe("SAT-BUNDLE-01B R1 — legenda / agregado", () => {
 describe("SAT-BUNDLE-01B R1 — polygonizar regressão", () => {
   it("3×3 ainda é 1 Polygon", () => {
     const pixels = new Uint8Array(9).fill(1);
-    const zonas = zonasDeRasterCondicao({ pixels, largura: 3, altura: 3, cantos: CANTOS });
+    const area = { type: "Polygon" as const, coordinates: [[[0, 0], [3, 0], [3, 3], [0, 3], [0, 0]]] };
+    const zonas = zonasDeRasterCondicao({ pixels, largura: 3, altura: 3, cantos: CANTOS, geometriaArea: area });
     expect(zonas).toHaveLength(1);
     expect(zonas[0]!.geometry.type).toBe("Polygon");
   });

@@ -36,7 +36,7 @@ describe("SAT-FINAL R2 — painel único Condição da Área (UI)", () => {
     expect(condicaoSrc).not.toContain("condicao-gerar-raster");
     expect(condicaoSrc).not.toContain("condicao-analisar-atual");
     expect(condicaoSrc).not.toContain("gerarRasterDaAnalise");
-    expect(condicaoSrc).toContain("Analisar pastos");
+    expect(condicaoSrc).toContain("Analisar áreas");
     expect(condicaoSrc).not.toContain("condicao-gerar-confirmar");
   });
 });

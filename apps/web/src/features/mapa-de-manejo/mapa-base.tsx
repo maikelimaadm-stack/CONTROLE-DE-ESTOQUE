@@ -14,9 +14,9 @@ import { suavizarRotulos } from "./rotulos";
 import type { RotuloArea } from "./camada-desenho";
 
 /**
- * Base de mapa COMPARTILHADA pelas duas telas do mesmo cadastro (erp.areas): o Mapa geral (só visualização) e o
- * editor de contorno da ficha de Áreas/Piquetes. Aqui fica só o mecanismo do mapa — imagem, camadas das áreas,
- * localização, troca de base, rótulos. Quem desenha e quem abre o cadastro é a tela.
+ * Base de mapa COMPARTILHADA pelas telas do mesmo cadastro (erp.areas): o Mapa geral, o Mapa de Manejo (pastos)
+ * e o editor de contorno da ficha de Áreas/Piquetes. Aqui fica só o mecanismo do mapa — imagem, camadas das
+ * áreas, localização, troca de base, rótulos. Quem desenha e quem abre o cadastro é a tela.
  */
 
 /** Área como a listagem de `areas` a devolve (só o que o mapa usa). */
@@ -64,7 +64,7 @@ const PRECISAO_BOA_M = 50;
 /** Feature da área desenhada nesta ficha (contorno atual) na fonte das áreas. */
 export const ID_CONTORNO_ATUAL = "__contorno_atual";
 
-type GanchoE2E = "__mapaManejoE2E" | "__editorContornoE2E";
+type GanchoE2E = "__mapaManejoE2E" | "__mapaManejoPastosE2E" | "__editorContornoE2E";
 
 export interface MapaBase {
   containerRef: React.RefObject<HTMLDivElement | null>;

@@ -6,7 +6,7 @@ O produtor não escolhe NDVI, EVI2, NDRE, NDMI, MSAVI2 ou BSI para entender o pa
 
 ## Objetivo
 
-Responder, com um clique (fluxo **Analisar pastos** em lote):
+Responder, com um clique (fluxo **Analisar áreas** em lote):
 
 - onde a vegetação está ativa e com boa cobertura;
 - onde a cobertura é moderada ou baixa;

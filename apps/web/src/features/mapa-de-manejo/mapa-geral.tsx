@@ -15,7 +15,7 @@ import { qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { canonicalHref, entryById } from "@/lib/nav";
 import { useEmpresaPadrao } from "@/features/docs/shared";
-import { Card, CardBody, Button, Dialog, Spinner, EmptyState, ErrorState, buttonVariants, NativeSelect } from "@/components/ui";
+import { Card, CardBody, Button, Dialog, Drawer, Spinner, EmptyState, ErrorState, buttonVariants, NativeSelect } from "@/components/ui";
 import { dateBR, num } from "@/lib/utils";
 import { CamadaDesenho } from "./camada-desenho";
 import { COR_PADRAO_AREA } from "./cores";
@@ -45,8 +45,8 @@ import {
 } from "./observacao-completa";
 import { distribuirFaixasRasterNaArea } from "./distribuicao-faixas-raster";
 import {
-  TEMA_DEFAULT, corDoTemaPorMedias, indiceFonteDoTema, leituraTematicaLista,
-  rotuloStatusLista, type ModoMapaPasto, type TemaMapaPasto
+  TEMA_DEFAULT, corDoTemaPorMedias, ehTemaAnalitico, indiceFonteDoTema, leituraTematicaLista,
+  rotuloStatusLista, type ModoMapaPasto, type TemaMapaPasto, type VisualizacaoMapaPasto
 } from "./temas-mapa-pasto";
 import { LegendaTemaPasto } from "./legenda-tema-pasto";
 import {
@@ -76,6 +76,7 @@ export function MapaGeral() {
   const lista = useAreasDoMapa();
   const areas = React.useMemo(() => lista.data?.items ?? [], [lista.data]);
   const [modo, setModo] = React.useState<ModoMapaPasto>("operacional");
+  const [visualizacao, setVisualizacao] = React.useState<VisualizacaoMapaPasto>(TEMA_DEFAULT);
   const [tema, setTema] = React.useState<TemaMapaPasto>(TEMA_DEFAULT);
   /** Tema ainda pintado no mapa (SWR): só avança quando a fonte do novo tema está pronta. */
   const [temaExibido, setTemaExibido] = React.useState<TemaMapaPasto>(TEMA_DEFAULT);
@@ -84,8 +85,12 @@ export function MapaGeral() {
   const [ordenacao, setOrdenacao] = React.useState<OrdenacaoListaCondicao>("atencao");
   const [indice, setIndice] = React.useState<IdIndice>("ndvi");
   const [data, setData] = React.useState<DataDaCamada>(DATA_ULTIMA_IMAGEM);
+  const [listaAbertaMobile, setListaAbertaMobile] = React.useState(false);
+  const [listaRecolhida, setListaRecolhida] = React.useState(false);
+  const [buscaLista, setBuscaLista] = React.useState("");
   const experiencia = modo === "tecnico" ? "tecnico" : "condicao";
   const setExperiencia = (e: "condicao" | "tecnico") => setModo(e === "tecnico" ? "tecnico" : "operacional");
+  const soAreas = visualizacao === "areas";
   /**
    * Resumo da camada (índice × data ativa × método v2): cor por área e valor da lista no modo técnico.
    * Resumo da última útil (mesmo índice): "Áreas desatualizadas" / sem análise — identidade operacional atual.
@@ -117,8 +122,16 @@ export function MapaGeral() {
 
   const mapa = useMapaBase({ ganchoE2E: "__mapaManejoE2E", aoCarregar: registrarEventos });
   const { mapRef } = mapa;
-  const modoOperacional = modo === "operacional";
+  const modoOperacional = modo === "operacional" && !soAreas;
   const modoCondicao = modoOperacional; // legado: popups/lista de condição no modo operacional
+
+  // Resize MapLibre ao abrir/fechar painéis (mobile drawer / detalhe).
+  React.useEffect(() => {
+    const m = mapRef.current;
+    if (!m || !mapa.pronto) return;
+    const t = window.setTimeout(() => { m.resize(); }, 80);
+    return () => window.clearTimeout(t);
+  }, [listaAbertaMobile, listaRecolhida, selecionada, mapa.pronto, mapRef]);
 
   React.useEffect(() => {
     if (!mapa.pronto) return;
@@ -158,9 +171,8 @@ export function MapaGeral() {
     data,
     modoOperacional && podeObservacao
   );
-  const comSatelite = modoOperacional
-    ? podeObservacao
-    : comNdviLegado;
+  // Só áreas também precisa da barra (Analisar / Visualização); não exige NDVI legado.
+  const comSatelite = podeObservacao || comNdviLegado || soAreas;
   const rasters = useRastersIndice({
     areaIds: modoOperacional ? idsDetalhe : selecao.ids,
     indice: indiceRasterAtivo,
@@ -270,12 +282,12 @@ export function MapaGeral() {
     return coresPorArea(modoCor, indice, areas, resumoIndice.situacao === "pronto" ? resumoIndice.porArea : null);
   }, [modoOperacional, temaExibido, areas, resumosCompletos.porArea, mapasCond.resumos, modoCor, indice, resumoIndice]);
 
-  const overlayPixel = (!modoOperacional && modoCor === "pixel") || modoOperacional;
-  /** Operacional: zonas vetoriais; técnico: PNG contínuo. */
-  const rastersAtivos = (modoOperacional && tema === "condicao")
+  const overlayPixel = soAreas ? false : ((!modoOperacional && modoCor === "pixel") || modoOperacional);
+  /** Operacional: zonas vetoriais; técnico: PNG contínuo. Usa temaExibido para coherência SWR. */
+  const rastersAtivos = (modoOperacional && temaExibido === "condicao")
     ? mapasCond.porArea
     : rasters.porArea;
-  const temRaster = (modoOperacional && tema === "condicao") ? mapasCond.temRaster : rasters.temRaster;
+  const temRaster = (modoOperacional && temaExibido === "condicao") ? mapasCond.temRaster : rasters.temRaster;
 
   const opacidadePorArea = React.useMemo(() => {
     if (!overlayPixel) return null;
@@ -400,8 +412,9 @@ export function MapaGeral() {
   const podeConsultar = can(PERMISSAO_PEDIR_NDVI);
   const operacao = useOperacaoAnaliseViva(podeConsultar);
 
-  /** Abre "Analisar pastos" e fecha popups de área/classe (um de cada vez). Com análise viva → acompanhar. */
+  /** Abre "Analisar áreas" e fecha lista/detalhe/classe (um overlay de cada vez). Com análise viva → acompanhar. */
   function abrirAnalise(selecao?: SelecaoConsulta) {
+    setListaAbertaMobile(false);
     setClasseFiltro(null);
     setSelecionada(null);
     if (operacao.viva && operacao.consultaId) {
@@ -412,9 +425,17 @@ export function MapaGeral() {
   }
 
   function acompanharAnalise() {
+    setListaAbertaMobile(false);
     setClasseFiltro(null);
     setSelecionada(null);
     setConsulta({ aberta: true, acompanhar: true });
+  }
+
+  function abrirListaMobile() {
+    setConsulta({ aberta: false });
+    setClasseFiltro(null);
+    setSelecionada(null);
+    setListaAbertaMobile(true);
   }
 
   function selecionarNaLista(id: string) {
@@ -451,7 +472,7 @@ export function MapaGeral() {
     const st = statusOperacional(areaId);
     return !st || st === "SEM_ANALISE";
   };
-  /** Popups mutuamente exclusivos com o modal Analisar pastos. */
+  /** Popups mutuamente exclusivos com o modal Analisar áreas. */
   const dialogAreaAberto = Boolean(modoCondicao && selecionadaObj && !consulta.aberta && classeFiltro === null);
   const dialogClasseAberto = Boolean(modoCondicao && classeFiltro !== null && !consulta.aberta);
   const dialogTecnicoAberto = Boolean(!modoCondicao && selecionadaObj && !consulta.aberta);
@@ -539,110 +560,155 @@ export function MapaGeral() {
     ).map((x) => areas.find((a) => a.id === x.id)!);
   }, [modoCondicao, areas, mapasCond.resumos, ordenacao, classeFiltro]);
 
+  const areasFiltradasLista = React.useMemo(() => {
+    const q = buscaLista.trim().toLocaleLowerCase("pt-BR");
+    if (!q) return areasOrdenadas;
+    return areasOrdenadas.filter((a) =>
+      a.name.toLocaleLowerCase("pt-BR").includes(q)
+      || (a.code?.toLocaleLowerCase("pt-BR").includes(q) ?? false)
+    );
+  }, [areasOrdenadas, buscaLista]);
+
+  const conteudoLista = (
+    <>
+      <input
+        type="search"
+        placeholder="Buscar por nome ou código"
+        value={buscaLista}
+        onChange={(e) => setBuscaLista(e.target.value)}
+        aria-label="Buscar áreas"
+        className="mb-1 h-11 w-full rounded border border-slate-200 px-2 text-xs sm:h-8"
+        data-testid="mapa-busca-lista"
+      />
+      {modoCondicao && comSatelite && (
+        <NativeSelect
+          value={ordenacao}
+          onChange={(e) => setOrdenacao(e.target.value as OrdenacaoListaCondicao)}
+          aria-label="Ordenar áreas"
+          className="mb-1 h-11 py-0 text-xs sm:h-[26px]"
+          data-testid="mapa-ordenacao-condicao"
+        >
+          {(Object.keys(ROTULO_ORDENACAO_CONDICAO) as OrdenacaoListaCondicao[]).map((k) => (
+            <option key={k} value={k}>{ROTULO_ORDENACAO_CONDICAO[k]}</option>
+          ))}
+        </NativeSelect>
+      )}
+      {lista.isLoading && <Spinner />}
+      {lista.error && <ErrorState title="Não foi possível carregar as áreas" error={lista.error} onRetry={() => void lista.refetch()} />}
+      {!lista.isLoading && !lista.error && areas.length === 0 && <EmptyState title="Nenhuma área cadastrada" description="Cadastre as áreas em Cadastro de Área: o contorno desenhado na ficha aparece aqui." />}
+      {areasFiltradasLista.map((a) => {
+        const resumo = mapasCond.resumos.get(a.id);
+        const badge = resumo ? badgePrincipalCondicao(resumo) : null;
+        const st = resumosCompletos.statusPorArea.get(a.id);
+        const medias = resumosCompletos.porArea.get(a.id)?.medias;
+        const leitura = modoOperacional && tema !== "condicao"
+          ? leituraTematicaLista(tema, medias)
+          : null;
+        const sub = modoOperacional
+          ? (st && st !== "PRONTO" && st !== "PARCIAL"
+            ? rotuloStatusLista(st, tema)
+            : (tema === "condicao" && badge
+              ? badge.rotulo
+              : (leitura ?? rotuloStatusLista(st ?? "SEM_ANALISE", tema, leitura))))
+          : null;
+        const media = !modoOperacional && resumoIndice.situacao === "pronto" ? mediaValidaDoIndice(resumoIndice.porArea.get(a.id)) : null;
+        const tituloMedia = data.tipo === "data"
+          ? `${nomeDoIndice(indice)} médio em ${dateBR(data.data)}`
+          : `${nomeDoIndice(indice)} médio da última imagem útil`;
+        const corLista = st === "SEM_ANALISE" ? "#e2e8f0" : (corPorArea?.get(a.id) ?? a.color ?? COR_PADRAO_AREA);
+        return (
+          <button key={a.id} type="button" data-testid="mapa-item-area" onClick={() => { selecionarNaLista(a.id); setListaAbertaMobile(false); }}
+            className={`flex min-h-11 items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-100 sm:min-h-0 ${a.id === selecionada ? "bg-slate-100 ring-1 ring-slate-300" : ""}`}>
+            <span className="h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: corLista }} aria-hidden />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium text-slate-700">{a.code ? `${a.code} · ${a.name}` : a.name}</span>
+              {sub && (
+                <span className="block truncate text-[11px] text-slate-500" style={badge && temaExibido === "condicao" ? { color: badge.cor } : undefined} data-testid="mapa-item-badge">{sub}</span>
+              )}
+            </span>
+            {media !== null && <span className="shrink-0 text-xs font-medium tabular-nums text-slate-700" title={tituloMedia} data-testid="mapa-item-ndvi">{num(media, 2)}</span>}
+            <span className="shrink-0 text-xs tabular-nums text-slate-500">{num(hectares(a.area_ha), 1)} ha</span>
+          </button>
+        );
+      })}
+    </>
+  );
+
+  const painelListaDesktop = (
+    <>
+      <div className="mb-1 flex items-center justify-between gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <span>Áreas</span>
+        <span className="flex items-center gap-2">
+          {areas.length > 0 && <span className="font-normal normal-case tabular-nums text-slate-400">{areas.length} · {num(totalHa, 2)} ha</span>}
+          <button type="button" className="min-h-11 text-[10px] font-medium normal-case text-slate-500 underline sm:min-h-0" data-testid="mapa-recolher-lista" onClick={() => setListaRecolhida(true)}>Recolher</button>
+        </span>
+      </div>
+      {conteudoLista}
+    </>
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <h1 className="text-base font-semibold text-slate-800">Mapa geral</h1>
-          <p className="text-xs text-slate-500">Analise pastos uma vez; depois só escolha o que ver — Condição, Umidade, Vigor, Cobertura ou Solo. Trocar tema não cria nova consulta. Dados técnicos ficam separados. Grade 20 m; contornos suavizados só para visualização.</p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          {entradaAreas && <Link href={canonicalHref(entradaAreas)} className={buttonVariants({ variant: "outline" })} data-testid="mapa-ir-areas">Cadastro de Área</Link>}
-          {podeCadastrar && <Link href={`${NOVA_AREA}${qs({ empresa_id: empresaId || undefined })}`} className={buttonVariants()} data-testid="mapa-cadastrar-area">Cadastrar área</Link>}
+          {listaRecolhida && (
+            <Button type="button" size="sm" variant="outline" className="hidden lg:inline-flex" data-testid="mapa-expandir-lista" onClick={() => setListaRecolhida(false)}>Áreas</Button>
+          )}
+          {entradaAreas && <Link href={canonicalHref(entradaAreas)} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="mapa-ir-areas">Cadastro de Área</Link>}
+          {podeCadastrar && <Link href={`${NOVA_AREA}${qs({ empresa_id: empresaId || undefined })}`} className={buttonVariants({ size: "sm" })} data-testid="mapa-cadastrar-area">Cadastrar área</Link>}
         </div>
       </div>
 
       {mapa.erroBase && <Card><CardBody><p className="text-sm text-red-600" data-testid="mapa-erro">{mapa.erroBase}</p></CardBody></Card>}
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 lg:grid-cols-[280px_1fr]">
-        <Card className="min-h-0 overflow-hidden">
-          <CardBody className="flex h-full min-h-0 flex-col gap-1 overflow-auto">
-            <div className="mb-1 flex items-baseline justify-between text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <span>Áreas</span>
-              {areas.length > 0 && <span className="font-normal normal-case tabular-nums text-slate-400">{areas.length} · {num(totalHa, 2)} ha</span>}
-            </div>
-            {modoCondicao && comSatelite && (
-              <NativeSelect
-                value={ordenacao}
-                onChange={(e) => setOrdenacao(e.target.value as OrdenacaoListaCondicao)}
-                aria-label="Ordenar áreas"
-                className="mb-1 h-[26px] py-0 text-xs"
-                data-testid="mapa-ordenacao-condicao"
-              >
-                {(Object.keys(ROTULO_ORDENACAO_CONDICAO) as OrdenacaoListaCondicao[]).map((k) => (
-                  <option key={k} value={k}>{ROTULO_ORDENACAO_CONDICAO[k]}</option>
-                ))}
-              </NativeSelect>
-            )}
-            {lista.isLoading && <Spinner />}
-            {lista.error && <ErrorState title="Não foi possível carregar as áreas" error={lista.error} onRetry={() => void lista.refetch()} />}
-            {!lista.isLoading && !lista.error && areas.length === 0 && <EmptyState title="Nenhuma área cadastrada" description="Cadastre as áreas em Cadastro de Área: o contorno desenhado na ficha aparece aqui." />}
-            {areasOrdenadas.map((a) => {
-              const resumo = mapasCond.resumos.get(a.id);
-              const badge = resumo ? badgePrincipalCondicao(resumo) : null;
-              const st = resumosCompletos.statusPorArea.get(a.id);
-              const medias = resumosCompletos.porArea.get(a.id)?.medias;
-              const leitura = modoOperacional && tema !== "condicao"
-                ? leituraTematicaLista(tema, medias)
-                : null;
-              const sub = modoOperacional
-                ? (st && st !== "PRONTO" && st !== "PARCIAL"
-                  ? rotuloStatusLista(st, tema)
-                  : (tema === "condicao" && badge
-                    ? badge.rotulo
-                    : (leitura ?? rotuloStatusLista(st ?? "SEM_ANALISE", tema, leitura))))
-                : null;
-              const media = !modoOperacional && resumoIndice.situacao === "pronto" ? mediaValidaDoIndice(resumoIndice.porArea.get(a.id)) : null;
-              const tituloMedia = data.tipo === "data"
-                ? `${nomeDoIndice(indice)} médio em ${dateBR(data.data)}`
-                : `${nomeDoIndice(indice)} médio da última imagem útil`;
-              const corLista = st === "SEM_ANALISE" ? "#e2e8f0" : (corPorArea?.get(a.id) ?? a.color ?? COR_PADRAO_AREA);
-              return (
-                <button key={a.id} type="button" data-testid="mapa-item-area" onClick={() => selecionarNaLista(a.id)}
-                  className={`flex items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-100 ${a.id === selecionada ? "bg-slate-100 ring-1 ring-slate-300" : ""}`}>
-                  <span className="h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: corLista }} aria-hidden />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium text-slate-700">{a.name}</span>
-                    {sub && (
-                      <span className="block truncate text-[11px] text-slate-500" style={badge && tema === "condicao" ? { color: badge.cor } : undefined} data-testid="mapa-item-badge">{sub}</span>
-                    )}
-                  </span>
-                  {media !== null && <span className="shrink-0 text-xs font-medium tabular-nums text-slate-700" title={tituloMedia} data-testid="mapa-item-ndvi">{num(media, 2)}</span>}
-                  <span className="shrink-0 text-xs tabular-nums text-slate-500">{num(hectares(a.area_ha), 1)} ha</span>
-                </button>
-              );
-            })}
-          </CardBody>
-        </Card>
+      <BarraCamadas
+        mapa={mapa}
+        comSatelite={comSatelite}
+        modo={modo}
+        onModo={setModo}
+        visualizacao={visualizacao}
+        onVisualizacao={(v) => {
+          setVisualizacao(v);
+          if (ehTemaAnalitico(v)) { setTema(v); setClasseFiltro(null); setFaixaFiltro(null); }
+        }}
+        tema={tema}
+        onTema={(t) => { setTema(t); setVisualizacao(t); setClasseFiltro(null); setFaixaFiltro(null); }}
+        experiencia={experiencia}
+        onExperiencia={setExperiencia}
+        familia={familia}
+        onFamilia={escolherFamilia}
+        indice={indice}
+        onIndice={escolherIndice}
+        modoCor={modoCor}
+        onModoCor={setModoCor}
+        render={render}
+        onRender={setRender}
+        opacidade={opacidade}
+        onOpacidade={setOpacidade}
+        data={data}
+        onData={(d) => { setData(d); setClasseFiltro(null); setFaixaFiltro(null); }}
+        opcoesData={opcoesData}
+        dataImagem={dataImagem}
+        podeConsultar={podeConsultar}
+        onNovaConsulta={() => abrirAnalise("empresa")}
+        carregandoTema={modoOperacional && tema !== temaExibido}
+        onAbrirLista={abrirListaMobile}
+        listaAberta={listaAbertaMobile}
+      />
 
-        <div className="flex min-h-0 flex-col gap-2">
-        <BarraCamadas
-          mapa={mapa}
-          comSatelite={comSatelite}
-          modo={modo}
-          onModo={setModo}
-          tema={tema}
-          onTema={(t) => { setTema(t); setClasseFiltro(null); setFaixaFiltro(null); }}
-          experiencia={experiencia}
-          onExperiencia={setExperiencia}
-          familia={familia}
-          onFamilia={escolherFamilia}
-          indice={indice}
-          onIndice={escolherIndice}
-          modoCor={modoCor}
-          onModoCor={setModoCor}
-          render={render}
-          onRender={setRender}
-          opacidade={opacidade}
-          onOpacidade={setOpacidade}
-          data={data}
-          onData={(d) => { setData(d); setClasseFiltro(null); setFaixaFiltro(null); }}
-          opcoesData={opcoesData}
-          dataImagem={dataImagem}
-          podeConsultar={podeConsultar}
-          onNovaConsulta={() => abrirAnalise("empresa")}
-          carregandoTema={modoOperacional && tema !== temaExibido}
-        />
+      <div className={`grid min-h-0 flex-1 gap-2 ${listaRecolhida ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-[260px_1fr]"}`}>
+        {!listaRecolhida && (
+          <Card className="hidden min-h-0 overflow-hidden lg:flex">
+            <CardBody className="flex h-full min-h-0 flex-col gap-1 overflow-auto">
+              {painelListaDesktop}
+            </CardBody>
+          </Card>
+        )}
+
+        <div className="relative flex min-h-0 flex-col gap-2 lg:flex-row">
         <Card className="relative min-h-0 flex-1 overflow-hidden">
           <div ref={mapa.containerRef} data-testid="mapa-canvas" className="h-full min-h-[420px] w-full" />
           {mapa.pronto && (
@@ -683,13 +749,13 @@ export function MapaGeral() {
                   Nenhuma área à vista tem imagem de {nomeDoIndice(indice)} na observação completa.
                 </div>
               )}
-              {modoOperacional && tema === "condicao" && mapasCond.datasDistintas.length > 1 && (
+              {modoOperacional && temaExibido === "condicao" && mapasCond.datasDistintas.length > 1 && (
                 <div className="rounded bg-white/90 px-2 py-1 text-xs text-amber-700 shadow-sm" data-testid="mapa-datas-incompativeis">
                   Há imagens de datas diferentes na vista. Escolha uma data para agregar hectares.
                 </div>
               )}
               {rasters.situacao === "erro" && rasters.erro && <div className="rounded bg-white/90 px-2 py-1 text-xs text-red-600 shadow-sm" data-testid="mapa-raster-erro">{rasters.erro}</div>}
-              {modoOperacional && comSatelite && tema === "condicao" && (
+              {modoOperacional && comSatelite && temaExibido === "condicao" && (
                 <div className="pointer-events-auto w-[min(18rem,calc(100vw-2rem))]">
                   <LegendaCondicaoPasto resumo={mapasCond.agregado} classe={classeFiltro} onClasse={filtrarClasse} />
                 </div>
@@ -715,49 +781,64 @@ export function MapaGeral() {
           )}
           <AvisoDeLocalizacao mapa={mapa} />
         </Card>
+
+        {modoCondicao && selecionadaObj && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 p-2 lg:pointer-events-auto lg:static lg:inset-auto lg:z-auto lg:p-0">
+            <DialogAreaCondicao
+              variante="painel"
+              aberto={dialogAreaAberto}
+              onFechar={() => setSelecionada(null)}
+              nome={selecionadaObj.name}
+              ha={hectares(selecionadaObj.area_ha)}
+              dataImagem={(resumosCompletos.porArea.get(selecionadaObj.id)?.data_imagem
+                ?? mapasCond.datasPorArea.get(selecionadaObj.id)
+                ?? obsSelecionada.obs?.identidade.data_imagem)
+                ? dateBR(resumosCompletos.porArea.get(selecionadaObj.id)?.data_imagem
+                  ?? mapasCond.datasPorArea.get(selecionadaObj.id)
+                  ?? obsSelecionada.obs!.identidade.data_imagem)
+                : null}
+              resumo={mapasCond.resumos.get(selecionadaObj.id) ?? null}
+              semAnalise={semAnaliseOperacional(selecionadaObj.id)}
+              statsSemMapa={
+                !semAnaliseOperacional(selecionadaObj.id)
+                && !temMapaCondicao(selecionadaObj.id)
+                && (statusOperacional(selecionadaObj.id) === "PRONTO" || statusOperacional(selecionadaObj.id) === "PARCIAL")
+                && temaExibido === "condicao"
+              }
+              onDadosTecnicos={() => setExperiencia("tecnico")}
+              hrefCadastro={fichaDaArea(selecionadaObj.id)}
+              tema={temaExibido}
+              medias={resumosCompletos.porArea.get(selecionadaObj.id)?.medias ?? null}
+              coberturaValida={
+                sinalF1Selecionado?.cobertura_valida
+                ?? resumosCompletos.porArea.get(selecionadaObj.id)?.cobertura_valida_bundle
+                ?? null
+              }
+              analiseCompleta={statusOperacional(selecionadaObj.id) === "PRONTO"}
+              statusBundle={statusOperacional(selecionadaObj.id)}
+              mediaIndice={sinalF1Selecionado?.media ?? null}
+              minimoIndice={sinalF1Selecionado?.minimo ?? null}
+              maximoIndice={sinalF1Selecionado?.maximo ?? null}
+              distribuicao={distribuicaoSelecionada}
+              faixaAtiva={faixaFiltro}
+              onFaixa={setFaixaFiltro}
+            />
+          </div>
+        )}
         </div>
       </div>
 
-      {modoCondicao && selecionadaObj && (
-        <DialogAreaCondicao
-          aberto={dialogAreaAberto}
-          onFechar={() => setSelecionada(null)}
-          nome={selecionadaObj.name}
-          ha={hectares(selecionadaObj.area_ha)}
-          dataImagem={(resumosCompletos.porArea.get(selecionadaObj.id)?.data_imagem
-            ?? mapasCond.datasPorArea.get(selecionadaObj.id)
-            ?? obsSelecionada.obs?.identidade.data_imagem)
-            ? dateBR(resumosCompletos.porArea.get(selecionadaObj.id)?.data_imagem
-              ?? mapasCond.datasPorArea.get(selecionadaObj.id)
-              ?? obsSelecionada.obs!.identidade.data_imagem)
-            : null}
-          resumo={mapasCond.resumos.get(selecionadaObj.id) ?? null}
-          semAnalise={semAnaliseOperacional(selecionadaObj.id)}
-          statsSemMapa={
-            !semAnaliseOperacional(selecionadaObj.id)
-            && !temMapaCondicao(selecionadaObj.id)
-            && (statusOperacional(selecionadaObj.id) === "PRONTO" || statusOperacional(selecionadaObj.id) === "PARCIAL")
-            && tema === "condicao"
-          }
-          onDadosTecnicos={() => setExperiencia("tecnico")}
-          hrefCadastro={fichaDaArea(selecionadaObj.id)}
-          tema={tema}
-          medias={resumosCompletos.porArea.get(selecionadaObj.id)?.medias ?? null}
-          coberturaValida={
-            sinalF1Selecionado?.cobertura_valida
-            ?? resumosCompletos.porArea.get(selecionadaObj.id)?.cobertura_valida_bundle
-            ?? null
-          }
-          analiseCompleta={statusOperacional(selecionadaObj.id) === "PRONTO"}
-          statusBundle={statusOperacional(selecionadaObj.id)}
-          mediaIndice={sinalF1Selecionado?.media ?? null}
-          minimoIndice={sinalF1Selecionado?.minimo ?? null}
-          maximoIndice={sinalF1Selecionado?.maximo ?? null}
-          distribuicao={distribuicaoSelecionada}
-          faixaAtiva={faixaFiltro}
-          onFaixa={setFaixaFiltro}
-        />
-      )}
+      <Drawer
+        open={listaAbertaMobile}
+        onOpenChange={setListaAbertaMobile}
+        title="Áreas"
+        description={areas.length > 0 ? `${areas.length} · ${num(totalHa, 2)} ha` : undefined}
+        size="sm"
+        side="right"
+        testId="mapa-lista-drawer"
+      >
+        {conteudoLista}
+      </Drawer>
 
       {!modoCondicao && selecionadaObj && (
         <Dialog

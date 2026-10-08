@@ -27,7 +27,7 @@ export const ROTULO_SELECAO: Readonly<Record<SelecaoConsulta, string>> = {
   desatualizadas: "Desatualizados"
 };
 
-/** Ordem do modal "Analisar pastos" (MAPA-UX-02): sem "atual" — o fluxo padrão é em lote. */
+/** Ordem do modal "Analisar áreas" (MAPA-UX-02): sem "atual" — o fluxo padrão é em lote. */
 export const ORDEM_SELECAO: readonly SelecaoConsulta[] = ["empresa", "viewport", "escolhidas", "retiro", "sem_analise", "desatualizadas"];
 
 export type AlvoConsulta =

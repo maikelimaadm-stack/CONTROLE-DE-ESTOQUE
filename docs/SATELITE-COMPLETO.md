@@ -104,7 +104,7 @@ Rota legada de raster individual permanece; não remove pipeline duplicado.
 
 Fluxo operacional no Mapa geral:
 
-1. **Analisar pastos** — uma vez (consulta/processamento da observação completa).
+1. **Analisar áreas** — uma vez (consulta/processamento da observação completa).
 2. Toolbar de visualização: **Condição · Umidade · Vigor · Cobertura · Solo**.
 3. Trocar tema = só muda a apresentação (GET/cache dos produtos já materializados).
    - Zero POST `/api/satelite/consultas`, zero Process, zero “Gerar raster”.

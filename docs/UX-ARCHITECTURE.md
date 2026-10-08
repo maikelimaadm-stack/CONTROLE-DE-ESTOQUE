@@ -36,7 +36,7 @@ com parâmetros dinâmicos.
 | Abas antigas (`?tab=saidas&sub=…`) | `canonicalize()` no `Workspace` (replace no cliente, demais parâmetros preservados) |
 | Notificações | rotas canônicas; notificação de registro abre o registro (`/suprimentos/view/:id`, `/cadastros/documents/:id`) |
 | Rotas de detalhe | `DETAIL_ROUTES` no registro (padrões, ex.: `/pecuaria/manejo/:type/:id`, `/pecuaria/pesagens/:id`, `/frota/abastecimentos/:id`) — `detailRouteFor()` dá módulo/área/rótulo ao breadcrumb; toda lista com "Visualizar" aponta para um padrão registrado |
-| Auditoria | `apps/web/scripts/nav-audit.mjs` (roda no `lint`): ids únicos, aliases/abas antigas/redirects com destino existente, `tab("id")` das páginas válidos, **links internos estáticos** (`href`, `base`, `back`, `router.push`) casando com página existente ou padrão de `DETAIL_ROUTES` — link para rota antiga (só válida por redirect) é erro —, guardrails (≤ 14 módulos; > 5 áreas gera aviso). Rotas montadas dinamicamente (`${…}`) ficam fora do regex de propósito |
+| Auditoria | `apps/web/scripts/nav-audit.mjs` (roda no `lint`): ids únicos, aliases/abas antigas/redirects com destino existente, `tab("id")` das páginas válidos, **links internos estáticos** (`href`, `base`, `back`, `router.push`) casando com página existente ou padrão de `DETAIL_ROUTES` — link para rota antiga (só válida por redirect) é erro —, guardrails (≤ 16 módulos; > 5 áreas gera aviso). Rotas montadas dinamicamente (`${…}`) ficam fora do regex de propósito |
 
 ## Menu antes → depois
 

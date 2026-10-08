@@ -13,6 +13,25 @@ import {
 
 export type TemaMapaPasto = "condicao" | "umidade" | "vigor" | "cobertura" | "solo";
 
+/** Visualização da barra: Só áreas (sem análise) + os cinco temas. */
+export type VisualizacaoMapaPasto = "areas" | TemaMapaPasto;
+
+export const VISUALIZACOES_MAPA_PASTO: readonly {
+  id: VisualizacaoMapaPasto;
+  rotulo: string;
+}[] = [
+  { id: "areas", rotulo: "Só áreas" },
+  { id: "condicao", rotulo: "Condição" },
+  { id: "umidade", rotulo: "Umidade" },
+  { id: "vigor", rotulo: "Vigor" },
+  { id: "cobertura", rotulo: "Cobertura" },
+  { id: "solo", rotulo: "Solo" }
+] as const;
+
+export function ehTemaAnalitico(v: VisualizacaoMapaPasto): v is TemaMapaPasto {
+  return v !== "areas";
+}
+
 export const TEMAS_MAPA_PASTO: readonly {
   id: TemaMapaPasto;
   rotulo: string;

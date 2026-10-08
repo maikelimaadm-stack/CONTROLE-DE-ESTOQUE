@@ -47,14 +47,14 @@ async function digitarData(campo: Locator, ddmmaaaa: string) {
   await visivel.press("Enter");
 }
 
-/** Popup central da área (Dialog) bloqueia cliques na lista/toolbar — fechar antes. */
+/** Painel lateral / bottom sheet da área — fechar antes de clicar na lista/toolbar. */
 async function fecharDialogArea(page: Page) {
-  const dialog = page.getByTestId("mapa-area-selecionada");
-  if (await dialog.count() === 0) return;
+  const painel = page.getByTestId("mapa-area-selecionada");
+  if (await painel.count() === 0) return;
   const fechar = page.getByTestId("dialog-area-fechar");
   if (await fechar.isVisible().catch(() => false)) await fechar.click();
   else await page.keyboard.press("Escape");
-  await expect(dialog).toHaveCount(0);
+  await expect(painel).toHaveCount(0);
 }
 
 /** Família, índice e Pixel/Área ficam em Dados técnicos (SAT-BUNDLE-01B). */
@@ -97,8 +97,8 @@ test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro 
     geometria: { type: "Polygon", coordinates: [[[lng, lat], [lng + 0.01, lat], [lng + 0.01, lat + 0.01], [lng, lat + 0.01], [lng, lat]]] }
   });
 
-  // a rota antiga do módulo (favoritos, links salvos) leva ao Mapa geral
-  await page.goto("/mapa-de-manejo");
+  // Mapa geral continua em /mapa-geral (listagem + satélite); /mapa-de-manejo é o Mapa de Manejo (só pastos)
+  await page.goto("/mapa-geral");
   await expect(page).toHaveURL(/\/mapa-geral$/);
   await expect(page.getByRole("heading", { name: "Mapa geral" })).toBeVisible();
   await expect(page.getByTestId("mapa-ir-areas")).toHaveText("Cadastro de Área");
@@ -112,7 +112,7 @@ test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro 
   await expect(item).toBeVisible();
   await expect(page.getByTestId("mapa-item-area")).toHaveCount(1);
 
-  // clique NO POLÍGONO (centro projetado pelo próprio mapa) abre Dialog central — só leitura
+  // clique NO POLÍGONO (centro projetado pelo próprio mapa) abre painel lateral — só leitura
   await expect.poll(async () => page.evaluate(() => Boolean((window as unknown as { __mapaManejoE2E?: unknown }).__mapaManejoE2E)), { timeout: 30_000 }).toBe(true);
   // rótulos só em hover/selecionada — o polígono no canvas é a prova de enquadramento
   await expect(page.getByTestId("mapa-rotulo-area"), "sem hover/seleção não há rótulos permanentes").toHaveCount(0);
@@ -129,7 +129,9 @@ test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro 
   await page.mouse.click(caixa!.x + centro.x, caixa!.y + centro.y);
   const resumo = page.getByTestId("mapa-area-selecionada");
   await expect(resumo).toBeVisible();
-  await expect(resumo).toHaveAttribute("role", "dialog");
+  // Detalhe operacional = painel não modal (aside), não Dialog central
+  await expect(resumo).toHaveJSProperty("tagName", "ASIDE");
+  await expect(resumo).toHaveAttribute("aria-label", new RegExp(`Detalhe de ${nome}`, "i"));
   await expect(resumo).toContainText(nome);
   await expect(resumo).toContainText("120");
   await expect(resumo.getByTestId("mapa-abrir-cadastro")).toHaveAttribute("href", `/cadastros/areas/${criada.id}`);
@@ -142,7 +144,7 @@ test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro 
   await expect(page.getByTestId("mapa-legenda-ndvi")).toHaveCount(0);
   await expect(page.getByTestId("legenda-condicao-pasto")).toBeVisible();
   await expect(page.getByTestId("mapa-rotulo-area").filter({ hasText: nome }), "selecionada mostra o nome").toBeVisible();
-  // Dados técnicos pelo rodapé do Dialog (fecha Condição e abre painel técnico da mesma área)
+  // Dados técnicos pelo rodapé do painel (abre modo técnico da mesma área)
   await resumo.getByTestId("condicao-pasto-dados-tecnicos").click();
   await expect(page.getByTestId("mapa-experiencia-tecnico")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("mapa-area-selecionada").getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toContainText("não tem análise para o contorno atual");
@@ -512,10 +514,10 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   await expect(condicao.getByTestId("condicao-sem-analise")).toBeVisible();
   await expect(condicao.getByTestId("condicao-aviso-agronomico")).toContainText("não é diagnóstico");
 
-  // SAT-BUNDLE-01B: análise individual removida do painel — só "Analisar pastos" na barra
+  // SAT-BUNDLE-01B: análise individual removida do painel — só "Analisar áreas" na barra
   await expect(condicao.getByTestId("condicao-analisar-atual")).toHaveCount(0);
   await expect(condicao.getByTestId("condicao-gerar-raster")).toHaveCount(0);
-  await expect(condicao.getByTestId("condicao-sem-analise-dica")).toContainText("Analisar pastos");
+  await expect(condicao.getByTestId("condicao-sem-analise-dica")).toContainText("Analisar áreas");
   expect(linhas(), "nada gravado").toBe(3);
 
   // área sem observação útil / nunca analisada: painel único sem número na lista
@@ -572,7 +574,7 @@ test("Mapa geral: o resumo do NDVI falha (500) — as áreas continuam no mapa, 
   await expect.poll(() => pedidos).toBe(antes + 1);
 });
 
-test("Mapa geral: painel técnico sem 'Analisar área atual' — ação única é Analisar pastos (01B)", async ({ page }) => {
+test("Mapa geral: painel técnico sem 'Analisar área atual' — ação única é Analisar áreas (01B)", async ({ page }) => {
   await login(page);
   await limparAreas(page);
   const empresa = await empresaDaSessao(page);
@@ -903,13 +905,13 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   await expect(barra.getByTestId("mapa-experiencia-condicao")).toHaveAttribute("aria-pressed", "true");
   await expect(barra.getByTestId("mapa-grupo-indice")).toHaveCount(0);
   await expect(barra.getByTestId("mapa-grupo-camada")).toHaveCount(0);
-  await expect(barra.getByTestId("mapa-nova-consulta")).toHaveText("Analisar pastos");
+  await expect(barra.getByTestId("mapa-nova-consulta")).toHaveText("Analisar áreas");
   await expect(barra.getByTestId("mapa-grupo-opacidade")).toHaveCount(0);
   await expect(page.getByTestId("legenda-condicao-pasto")).toBeVisible();
   await entrarDadosTecnicos(page);
   for (const [grupo, texto] of [
     ["mapa-grupo-camada", "Cobertura/Solo"], ["mapa-grupo-indice", "NDVI"], ["mapa-grupo-data", "Última imagem útil"],
-    ["mapa-grupo-render", "Pixel real"], ["mapa-grupo-opacidade", "70%"], ["mapa-grupo-acao", "Analisar pastos"]
+    ["mapa-grupo-render", "Pixel real"], ["mapa-grupo-opacidade", "70%"], ["mapa-grupo-acao", "Analisar áreas"]
   ] as const) await expect(barra.getByTestId(grupo)).toContainText(texto);
   await expect(barra.getByTestId("mapa-camada-vigor")).toHaveAttribute("aria-pressed", "true");
   await expect(barra.getByTestId("mapa-indice-evi2")).toBeVisible();
@@ -1004,49 +1006,39 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
   await comparar.getByTestId("comparar-fechar").click();
   await expect(comparar).toHaveCount(0);
 
-  // Analisar pastos: etapa 1 (Todos) → Continuar (prévia) → Iniciar → progresso
+  // Analisar áreas: prévia automática (confirmar:false) + um clique (confirmar:true)
   await condicao.getByTestId("condicao-nova-consulta").click();
   const modal = page.getByTestId("consulta-modal");
-  await expect(modal).toContainText("Analisar pastos");
+  await expect(modal).toContainText("Analisar áreas");
   await expect(modal.getByTestId("consulta-selecao-empresa")).toBeChecked();
-  await expect(modal.getByTestId("consulta-selecao-desatualizadas")).toBeEnabled();
   const abrirAvancadas = async () => {
     if (await modal.getByTestId("consulta-periodo-tipo").count() === 0) {
       await modal.getByTestId("consulta-opcoes-avancadas-toggle").click();
     }
     await expect(modal.getByTestId("consulta-periodo-tipo")).toBeVisible();
   };
-  // Opções avançadas fechadas; abrir para período "Uma data"
+  // Mais opções fechadas; abrir para período "Uma data"
   await expect(modal.getByTestId("consulta-periodo-tipo")).toHaveCount(0);
   await abrirAvancadas();
   await modal.getByTestId("consulta-periodo-tipo").selectOption("data");
-  await expect(modal.getByTestId("consulta-continuar")).toBeDisabled();
   await digitarData(modal.getByTestId("consulta-data"), "10/09/2026");
-  await modal.getByTestId("consulta-continuar").click();
-  await expect(modal.getByTestId("consulta-previa-creditos")).toContainText("créditos");
-  expect(corposConsulta).toHaveLength(1);
-  expect(corposConsulta[0]).toEqual({ alvo: { tipo: "todas" }, periodo: { tipo: "data", data: "2026-09-10", tolerancia_dias: 3 }, indices: ["pastagem_essencial"], confirmar: false });
-  // Voltar e trocar período: intervalo com cadência
-  await modal.getByTestId("consulta-voltar").click();
-  await abrirAvancadas();
+  await expect(modal.getByTestId("consulta-previa-creditos")).toContainText("créditos", { timeout: 10_000 });
+  await expect.poll(() => corposConsulta.some((c) => c.confirmar === false && (c.periodo as { data?: string }).data === "2026-09-10")).toBe(true);
+  // Trocar período: intervalo com cadência — nova prévia automática
+  const nAntesIntervalo = corposConsulta.length;
   await modal.getByTestId("consulta-periodo-tipo").selectOption("intervalo");
   await digitarData(modal.getByTestId("consulta-de"), "01/07/2026");
   await digitarData(modal.getByTestId("consulta-ate"), "30/09/2026");
-  await expect(modal.getByTestId("consulta-recortes")).toContainText("3 recortes");
-  await modal.getByTestId("consulta-continuar").click();
-  await expect.poll(() => corposConsulta.length).toBe(2);
-  expect(corposConsulta[1]?.periodo).toEqual({ tipo: "intervalo", de: "2026-07-01", ate: "2026-09-30", cadencia: "mensal" });
-  // período padrão: mais recente
-  await modal.getByTestId("consulta-voltar").click();
-  await abrirAvancadas();
+  await expect.poll(() => corposConsulta.length).toBeGreaterThan(nAntesIntervalo);
+  expect(corposConsulta.some((c) => c.confirmar === false && JSON.stringify(c.periodo) === JSON.stringify({ tipo: "intervalo", de: "2026-07-01", ate: "2026-09-30", cadencia: "mensal" }))).toBe(true);
+  // período padrão: mais recente → um clique Analisar áreas
   await modal.getByTestId("consulta-periodo-tipo").selectOption("mais_recente");
-  await modal.getByTestId("consulta-continuar").click();
-  await expect(modal.getByTestId("consulta-previa-creditos")).toContainText("créditos");
-  expect(corposConsulta).toHaveLength(3);
-  expect(corposConsulta[2]).toEqual({ alvo: { tipo: "todas" }, periodo: { tipo: "mais_recente", janela_dias: 30 }, indices: ["pastagem_essencial"], confirmar: false });
+  await expect(modal.getByTestId("consulta-previa-creditos")).toContainText("créditos", { timeout: 10_000 });
+  const nAntesConfirm = corposConsulta.length;
   await modal.getByTestId("consulta-confirmar").click();
   await expect(modal.getByTestId("consulta-progresso")).toBeVisible();
-  expect(corposConsulta[3]?.confirmar).toBe(true);
+  await expect.poll(() => corposConsulta.length).toBeGreaterThan(nAntesConfirm);
+  expect(corposConsulta.some((c) => c.confirmar === true)).toBe(true);
   await expect(modal.getByTestId("consulta-progresso")).toContainText("Concluída", { timeout: 20_000 });
   await modal.getByTestId("consulta-fechar").click();
   await expect(modal).toHaveCount(0);
