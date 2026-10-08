@@ -66,7 +66,10 @@ describe("MAPA-UX-02 — UI estática (UX-01..UX-15) + enxuto Analisar áreas", 
     expect(modalSrc).toContain("previaCorrespondeAoPedido");
     expect(modalSrc).toContain("GestorTentativasPrevia");
     expect(modalSrc).toContain("deveAplicar");
+    expect(modalSrc).toContain("snapshotPedidoRef");
     expect(modalSrc).toContain('data-testid="consulta-confirmar"');
+    // deps do effect da prévia: só chave estável — não resolvido/periodoValidado por identidade
+    expect(modalSrc).toMatch(/\}, \[p\.aberto, consultaId, chavePedidoAtual, motivoBloqueio\]\);/);
     expect(modalSrc).toContain("montarCorpoConsulta(resolvido.alvo, periodoValidado.periodo, true)");
     expect(modalSrc).not.toContain("setEtapa(2)");
   });

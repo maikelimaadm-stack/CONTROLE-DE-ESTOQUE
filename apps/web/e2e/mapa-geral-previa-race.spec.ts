@@ -101,7 +101,9 @@ test("Mapa geral: resumo 10×3 = 30 análises; erro vigente + retry; troca de pe
     if (corpo.periodo?.tipo === "intervalo") {
       if (falhasIntervaloRestantes > 0) {
         falhasIntervaloRestantes -= 1;
-        await rota.fulfill(json({ error: "estimativa temporária" }, 503));
+        await rota.fulfill(json({
+          error: { code: "UNAVAILABLE", message: "A consulta por satélite está indisponível no momento." }
+        }, 503));
         return;
       }
       await rota.fulfill(json({

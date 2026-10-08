@@ -105,6 +105,7 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
   const pedidoEnvioRef = React.useRef<{ chave: string } | null>(null);
   const gestorPreviaRef = React.useRef(new GestorTentativasPrevia());
   const chavePedidoAtualRef = React.useRef<string | null>(null);
+  const snapshotPedidoRef = React.useRef<ReturnType<typeof montarSnapshotPedido> | null>(null);
 
   React.useEffect(() => {
     if (!p.aberto) {
@@ -176,6 +177,14 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
     });
   }, [resolvido, periodoValidado, session?.orgId, session?.empresaId]);
   chavePedidoAtualRef.current = chavePedidoAtual;
+  snapshotPedidoRef.current = (resolvido.ok && periodoValidado.ok)
+    ? montarSnapshotPedido({
+      organizationId: session?.orgId ?? null,
+      empresaId: session?.empresaId ?? null,
+      alvo: resolvido.alvo,
+      periodo: periodoValidado.periodo
+    })
+    : null;
 
   const previaValida = previaCorrespondeAoPedido(previa, chavePedidoAtual);
 
@@ -259,8 +268,11 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
     }
   });
 
+  // Depende só da chave (string estável). `resolvido`/`periodoValidado` mudam de identidade
+  // a cada render — se entrassem nas deps, setErro/setPrevia re-disparariam a prévia e
+  // apagariam o erro vigente com uma segunda tentativa.
   React.useEffect(() => {
-    if (!p.aberto || consultaId || motivoBloqueio || !chavePedidoAtual || !resolvido.ok || !periodoValidado.ok) {
+    if (!p.aberto || consultaId || motivoBloqueio || !chavePedidoAtual) {
       if (motivoBloqueio) {
         setPrevia(null);
         gestorPreviaRef.current.invalidar();
@@ -268,14 +280,9 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
       return;
     }
     if (previa && previa.chave !== chavePedidoAtual) setPrevia(null);
-    const snapshot = montarSnapshotPedido({
-      organizationId: session?.orgId ?? null,
-      empresaId: session?.empresaId ?? null,
-      alvo: resolvido.alvo,
-      periodo: periodoValidado.periodo
-    });
-    if (snapshot.chave !== chavePedidoAtual) return;
     const t = window.setTimeout(() => {
+      const snapshot = snapshotPedidoRef.current;
+      if (!snapshot || snapshot.chave !== chavePedidoAtualRef.current) return;
       const tentativa = gestorPreviaRef.current.iniciar(snapshot.chave);
       previaAuto.mutate({ ...snapshot, tentativaId: tentativa.id });
     }, 280);
@@ -283,7 +290,7 @@ export function NovaConsultaModal(p: NovaConsultaProps) {
       window.clearTimeout(t);
       previaAbortRef.current?.abort();
     };
-  }, [p.aberto, consultaId, chavePedidoAtual, motivoBloqueio, resolvido, periodoValidado, session?.orgId, session?.empresaId]);
+  }, [p.aberto, consultaId, chavePedidoAtual, motivoBloqueio]);
 
   const pedir = useMutation({
     mutationFn: async () => {
