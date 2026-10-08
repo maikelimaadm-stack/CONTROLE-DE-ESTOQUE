@@ -57,23 +57,30 @@ async function fecharDialogArea(page: Page) {
   await expect(painel).toHaveCount(0);
 }
 
-/** Família, índice e Pixel/Área ficam em Dados técnicos (SAT-BUNDLE-01B). */
+/** Família, índice e Pixel/Área ficam em Mais opções → Dados técnicos (visível). */
 async function entrarDadosTecnicos(page: Page) {
   await fecharDialogArea(page);
+  const mais = page.getByTestId("mapa-mais-opcoes");
+  await expect(mais).toBeVisible({ timeout: 30_000 });
+  if ((await page.getByTestId("mapa-mais-opcoes-painel").count()) === 0) await mais.click();
+  await expect(page.getByTestId("mapa-mais-opcoes-painel")).toBeVisible();
   const btn = page.getByTestId("mapa-dados-tecnicos");
-  await expect(btn).toBeVisible({ timeout: 30_000 });
+  await expect(btn).toBeVisible();
   if ((await btn.getAttribute("aria-pressed")) !== "true") await btn.click();
   await expect(btn).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("mapa-barra-tecnica")).toBeVisible();
 }
 
 /** Volta ao modo operacional (temas) — espelho de entrarDadosTecnicos. */
 async function sairDadosTecnicos(page: Page) {
   await fecharDialogArea(page);
+  const mais = page.getByTestId("mapa-mais-opcoes");
+  await expect(mais).toBeVisible({ timeout: 30_000 });
+  if ((await page.getByTestId("mapa-mais-opcoes-painel").count()) === 0) await mais.click();
   const btn = page.getByTestId("mapa-dados-tecnicos");
-  await expect(btn).toBeVisible({ timeout: 30_000 });
+  await expect(btn).toBeVisible();
   if ((await btn.getAttribute("aria-pressed")) === "true") await btn.click();
   await expect(btn).toHaveAttribute("aria-pressed", "false");
-  await expect(page.getByTestId("mapa-experiencia-condicao")).toHaveAttribute("aria-pressed", "true");
 }
 
 /** Seleciona na lista após garantir que nenhum Dialog cobre a UI. */
@@ -138,7 +145,7 @@ test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro 
   // área nunca analisada: experiência padrão Condição do pasto (sem seletor de índice)
   await expect(resumo.getByTestId("condicao-pasto-sem-analise")).toBeVisible();
   await expect(resumo.getByTestId("mapa-ndvi-area"), "painel legado NDVI ausente").toHaveCount(0);
-  await expect(page.getByTestId("mapa-experiencia-condicao")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("mapa-barra-tecnica")).toHaveCount(0);
   await expect(page.getByTestId("mapa-indice-ndvi")).toHaveCount(0);
   await expect(page.getByTestId("mapa-cor-cadastro")).toHaveCount(0);
   await expect(page.getByTestId("mapa-legenda-ndvi")).toHaveCount(0);
@@ -146,7 +153,7 @@ test("o Mapa geral só mostra: lista, resume a área clicada e leva ao Cadastro 
   await expect(page.getByTestId("mapa-rotulo-area").filter({ hasText: nome }), "selecionada mostra o nome").toBeVisible();
   // Dados técnicos pelo rodapé do painel (abre modo técnico da mesma área)
   await resumo.getByTestId("condicao-pasto-dados-tecnicos").click();
-  await expect(page.getByTestId("mapa-experiencia-tecnico")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("mapa-dados-tecnicos")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("mapa-area-selecionada").getByTestId("condicao-area").getByTestId("condicao-sem-analise")).toContainText("não tem análise para o contorno atual");
 
   // "Abrir cadastro" leva à ficha de Cadastro de Área, com o mapa do contorno nela
@@ -482,7 +489,7 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   expect((await resumo).status(), "o mapa pede o resumo operacional (contexto=condicao)").toBe(200);
   await expect(page.getByTestId("mapa-item-area")).toHaveCount(3);
   await expect.poll(async () => page.evaluate(() => Boolean((window as unknown as { __mapaManejoE2E?: unknown }).__mapaManejoE2E)), { timeout: 30_000 }).toBe(true);
-  await expect(page.getByTestId("mapa-experiencia-condicao")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("mapa-barra-tecnica")).toHaveCount(0);
   await entrarDadosTecnicos(page);
 
   // Sem raster gerado: abre em "Por área" (média sólida). 0,72 = vigor alto; sem imagem útil / nunca = cinza.
@@ -901,14 +908,14 @@ test("Mapa geral — condição da área: barra de camadas, só o índice ativo 
 
   const barra = page.getByTestId("mapa-barra-camadas");
   await expect(barra).toBeVisible({ timeout: 30_000 });
-  await expect(barra.getByTestId("mapa-grupo-base")).toContainText(/Satélite|chave do Google/);
-  await expect(barra.getByTestId("mapa-experiencia-condicao")).toHaveAttribute("aria-pressed", "true");
+  await expect(barra.getByTestId("mapa-barra-tecnica")).toHaveCount(0);
   await expect(barra.getByTestId("mapa-grupo-indice")).toHaveCount(0);
   await expect(barra.getByTestId("mapa-grupo-camada")).toHaveCount(0);
   await expect(barra.getByTestId("mapa-nova-consulta")).toHaveText("Analisar áreas");
   await expect(barra.getByTestId("mapa-grupo-opacidade")).toHaveCount(0);
   await expect(page.getByTestId("legenda-condicao-pasto")).toBeVisible();
   await entrarDadosTecnicos(page);
+  await expect(barra.getByTestId("mapa-grupo-base")).toContainText(/Satélite|chave do Google/);
   for (const [grupo, texto] of [
     ["mapa-grupo-camada", "Cobertura/Solo"], ["mapa-grupo-indice", "NDVI"], ["mapa-grupo-data", "Última imagem útil"],
     ["mapa-grupo-render", "Pixel real"], ["mapa-grupo-opacidade", "70%"], ["mapa-grupo-acao", "Analisar áreas"]
@@ -1115,7 +1122,7 @@ test("Mapa geral SAT-COND-01: condição padrão, legenda ha/%, filtro, ESC, lis
   });
 
   await page.goto("/mapa-geral");
-  await expect(page.getByTestId("mapa-experiencia-condicao")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("mapa-barra-tecnica")).toHaveCount(0);
   await expect(page.getByTestId("mapa-indice-ndvi")).toHaveCount(0);
   const legenda = page.getByTestId("legenda-condicao-pasto");
   await expect(legenda).toBeVisible({ timeout: 30_000 });

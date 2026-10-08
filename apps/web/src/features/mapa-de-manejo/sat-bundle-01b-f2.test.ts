@@ -99,12 +99,13 @@ describe("SAT-BUNDLE-01B — contrato UI / NET / VIS / POP", () => {
 
   it("toolbar: sem Família/Índice/Pixel/Render no modo operacional", () => {
     const barra = src("barra-camadas.tsx");
-    expect(barra).toMatch(/modo === "operacional"/);
+    expect(barra).toMatch(/setModo\("operacional"\)/);
     expect(barra).toMatch(/mapa-grupo-tema/);
-    // Controles técnicos só dentro do bloco tecnico
-    const idxTecnico = barra.indexOf('modo === "tecnico"');
+    // Controles técnicos só dentro do bloco tecnico (painel Mais opções)
+    const idxTecnico = barra.indexOf('modo === "tecnico" &&');
     expect(idxTecnico).toBeGreaterThan(0);
     expect(barra.indexOf("mapa-grupo-indice")).toBeGreaterThan(idxTecnico);
     expect(barra.indexOf("mapa-grupo-cor")).toBeGreaterThan(idxTecnico);
+    expect(barra).toContain("mapa-mais-opcoes-painel");
   });
 });
