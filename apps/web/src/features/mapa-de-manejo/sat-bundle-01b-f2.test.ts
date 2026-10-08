@@ -50,7 +50,7 @@ describe("SAT-BUNDLE-01B — contrato UI / NET / VIS / POP", () => {
     const geral = src("mapa-geral.tsx");
     const barra = src("barra-camadas.tsx");
     expect(barra).toMatch(/mapa-tema/);
-    expect(barra).toMatch(/Analisar pastos/);
+    expect(barra).toMatch(/Analisar áreas/);
     expect(barra).toMatch(/Dados técnicos/);
     expect(barra).not.toMatch(/Gerar raster/);
     expect(geral).toMatch(/onTema=\{\(t\) => \{ setTema\(t\)/);
@@ -63,7 +63,7 @@ describe("SAT-BUNDLE-01B — contrato UI / NET / VIS / POP", () => {
     const area = src("condicao-area.tsx");
     expect(area).not.toMatch(/data-testid="condicao-gerar-raster"/);
     expect(area).not.toMatch(/data-testid="condicao-analisar-atual"/);
-    expect(area).toMatch(/Analisar pastos/);
+    expect(area).toMatch(/Analisar pastos|Analisar áreas/);
     expect(area).not.toMatch(/gerarRasterDaAnalise/);
   });
 

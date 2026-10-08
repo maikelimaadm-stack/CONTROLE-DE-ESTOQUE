@@ -49,14 +49,14 @@ describe("MAPA-UX-03 — FLOW + QUEUE", () => {
     expect(rotuloBarraAnalise(c)).toBe("Analisando pastos · 38/102");
   });
 
-  it("FLOW-03 uma op viva → Analisar pastos abre acompanhar (não inicia outra)", () => {
+  it("FLOW-03 uma op viva → Analisar áreas abre acompanhar (não inicia outra)", () => {
     expect(mapaGeralSrc).toContain("operacao.viva && operacao.consultaId");
     expect(mapaGeralSrc).toContain("acompanhar: true");
     expect(mapaGeralSrc).toContain("modoAcompanhar");
     expect(modalSrc).toContain("modoAcompanhar");
     expect(modalSrc).toContain("Há uma análise em andamento");
     expect(modalSrc).toContain("consultaIdInicial");
-    expect(modalSrc).toContain('setEtapa(3)');
+    expect(modalSrc).toContain("setConsultaId(p.consultaIdInicial)");
   });
 
   it("FLOW-04 fila indisponível: mensagem amigável sem nomes de env", () => {
@@ -77,13 +77,13 @@ describe("MAPA-UX-03 — FLOW + QUEUE", () => {
     expect(MSG_FILA_INDISPONIVEL).not.toMatch(/SATELITE_WORKER|COPERNICUS_|ENABLED/);
   });
 
-  it("Part B modal: default empresa, contagem Todos, RESUMO, botão pastos", () => {
+  it("Part B modal: default empresa, contagem, prévia e Analisar áreas", () => {
     expect(ORDEM_SELECAO[0]).toBe("empresa");
     expect(ROTULO_SELECAO.empresa).toBe("Todos os pastos");
     expect(modalSrc).toContain("consulta-todos-contador");
     expect(modalSrc).toContain("totalAreas");
-    expect(modalSrc).toContain("Resumo da análise");
-    expect(modalSrc).toContain("Iniciar análise de");
+    expect(modalSrc).toContain("consulta-previa-resultado");
+    expect(modalSrc).toContain("Analisar áreas");
     expect(modalSrc).toContain("consulta-progresso-pastos");
     expect(modalSrc).toContain("setAvancadasAbertas(false)");
     expect(mapaGeralSrc).toContain("totalAreas={totalAreasAnalisaveis}");

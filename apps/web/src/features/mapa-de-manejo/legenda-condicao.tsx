@@ -180,6 +180,50 @@ export function PainelAreaCondicao(p: {
   );
 }
 
+function ConteudoDetalheArea(p: {
+  tema: TemaMapaPasto;
+  resumo: ResumoCondicaoPasto | null;
+  dataImagem: string | null;
+  semAnalise: boolean;
+  statsSemMapa?: boolean;
+  medias?: Partial<Record<string, string | null>> | null;
+  coberturaValida?: string | null;
+  mediaIndice?: string | null;
+  minimoIndice?: string | null;
+  maximoIndice?: string | null;
+  distribuicao?: DistribuicaoFaixasArea | null;
+  faixaAtiva?: string | null;
+  onFaixa?: (id: string | null) => void;
+}) {
+  if (p.tema === "condicao") {
+    return (
+      <PainelAreaCondicao
+        resumo={p.resumo}
+        dataImagem={p.dataImagem}
+        semAnalise={p.semAnalise}
+        statsSemMapa={p.statsSemMapa}
+      />
+    );
+  }
+  if (p.semAnalise) {
+    return <p className="text-xs text-slate-600" data-testid="condicao-pasto-sem-analise">Sem análise completa para esta data.</p>;
+  }
+  return (
+    <PainelTemaContinuo
+      tema={p.tema}
+      medias={p.medias ?? null}
+      media={p.mediaIndice}
+      minimo={p.minimoIndice}
+      maximo={p.maximoIndice}
+      coberturaValida={p.coberturaValida}
+      dataImagem={p.dataImagem}
+      distribuicao={p.distribuicao}
+      faixaAtiva={p.faixaAtiva}
+      onFaixa={p.onFaixa}
+    />
+  );
+}
+
 export function DialogAreaCondicao(p: {
   aberto: boolean;
   onFechar: () => void;
@@ -191,12 +235,11 @@ export function DialogAreaCondicao(p: {
   statsSemMapa?: boolean;
   onDadosTecnicos?: () => void;
   hrefCadastro: string;
-  /** Tema operacional ativo — conteúdo do Dialog muda; não troca análise. */
+  /** Tema operacional ativo — conteúdo do painel muda; não troca análise. */
   tema?: TemaMapaPasto;
   medias?: Partial<Record<string, string | null>> | null;
   coberturaValida?: string | null;
   analiseCompleta?: boolean;
-  /** Status F1 (SEM_ANALISE / PREPARANDO / PRONTO / …). */
   statusBundle?: string | null;
   mediaIndice?: string | null;
   minimoIndice?: string | null;
@@ -204,6 +247,11 @@ export function DialogAreaCondicao(p: {
   distribuicao?: DistribuicaoFaixasArea | null;
   faixaAtiva?: string | null;
   onFaixa?: (id: string | null) => void;
+  /**
+   * `painel` = lateral desktop / bottom sheet mobile (não modal).
+   * `dialog` = modal central (legado / fallback estreito).
+   */
+  variante?: "painel" | "dialog";
 }) {
   const tema = p.tema ?? "condicao";
   const statusObs = p.analiseCompleta ? "● Análise completa"
@@ -212,12 +260,59 @@ export function DialogAreaCondicao(p: {
         : p.statusBundle === "PARCIAL" ? "◐ Parcial"
           : p.statusBundle === "FALHA" ? "✕ Falha"
             : "● Observação";
+  const resumoLinha = `${num(p.ha, 2)} ha · ${p.dataImagem ? `Observação: ${p.dataImagem}` : "Sem data"} · ${statusObs}`;
+  const corpo = (
+    <ConteudoDetalheArea
+      tema={tema}
+      resumo={p.resumo}
+      dataImagem={p.dataImagem}
+      semAnalise={p.semAnalise}
+      statsSemMapa={p.statsSemMapa}
+      medias={p.medias}
+      coberturaValida={p.coberturaValida}
+      mediaIndice={p.mediaIndice}
+      minimoIndice={p.minimoIndice}
+      maximoIndice={p.maximoIndice}
+      distribuicao={p.distribuicao}
+      faixaAtiva={p.faixaAtiva}
+      onFaixa={p.onFaixa}
+    />
+  );
+  const acoes = (
+    <div className="flex flex-wrap gap-1.5 border-t border-slate-100 pt-2">
+      <Button type="button" variant="ghost" size="sm" className="min-h-11 sm:min-h-0" onClick={p.onFechar} data-testid="dialog-area-fechar">Fechar</Button>
+      {p.onDadosTecnicos && (
+        <Button type="button" variant="outline" size="sm" className="min-h-11 sm:min-h-0" onClick={p.onDadosTecnicos} data-testid="condicao-pasto-dados-tecnicos">Dados técnicos</Button>
+      )}
+      <a href={p.hrefCadastro} className={buttonVariants({ variant: "outline", size: "sm" })} data-testid="mapa-abrir-cadastro">Abrir cadastro</a>
+    </div>
+  );
+
+  if (!p.aberto) return null;
+
+  if (p.variante === "painel") {
+    return (
+      <aside
+        className="pointer-events-auto flex max-h-[min(70vh,32rem)] w-full flex-col gap-2 overflow-hidden rounded-t-xl border border-slate-200 bg-white p-3 shadow-lg sm:max-h-none sm:rounded-md lg:h-full lg:max-h-none lg:w-[320px] lg:shrink-0"
+        data-testid="mapa-area-selecionada"
+        aria-label={`Detalhe de ${p.nome}`}
+      >
+        <div className="min-w-0">
+          <h2 className="truncate text-sm font-semibold text-slate-800">{p.nome}</h2>
+          <p className="text-xs tabular-nums text-slate-500">{resumoLinha}</p>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{corpo}</div>
+        {acoes}
+      </aside>
+    );
+  }
+
   return (
     <Dialog
       open={p.aberto}
       onOpenChange={(o) => { if (!o) p.onFechar(); }}
       title={p.nome}
-      description={`${num(p.ha, 2)} ha · ${p.dataImagem ? `Observação: ${p.dataImagem}` : "Sem data"} · 20 m · ${statusObs}`}
+      description={resumoLinha}
       size="md"
       profile="content"
       testId="mapa-area-selecionada"
@@ -231,29 +326,7 @@ export function DialogAreaCondicao(p: {
         </>
       )}
     >
-      {tema === "condicao" ? (
-        <PainelAreaCondicao
-          resumo={p.resumo}
-          dataImagem={p.dataImagem}
-          semAnalise={p.semAnalise}
-          statsSemMapa={p.statsSemMapa}
-        />
-      ) : p.semAnalise ? (
-        <p className="text-xs text-slate-600" data-testid="condicao-pasto-sem-analise">Sem análise completa para esta data.</p>
-      ) : (
-        <PainelTemaContinuo
-          tema={tema}
-          medias={p.medias ?? null}
-          media={p.mediaIndice}
-          minimo={p.minimoIndice}
-          maximo={p.maximoIndice}
-          coberturaValida={p.coberturaValida}
-          dataImagem={p.dataImagem}
-          distribuicao={p.distribuicao}
-          faixaAtiva={p.faixaAtiva}
-          onFaixa={p.onFaixa}
-        />
-      )}
+      {corpo}
     </Dialog>
   );
 }

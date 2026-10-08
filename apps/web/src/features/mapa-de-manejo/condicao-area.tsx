@@ -172,7 +172,7 @@ export interface CondicaoDaAreaProps {
 
 /**
  * Painel "Dados técnicos" da área: seis índices, qualidade, tendência, histórico e Comparar.
- * SAT-BUNDLE-01B: sem "Gerar raster" e sem "Analisar esta área" — só "Analisar pastos".
+ * SAT-BUNDLE-01B: sem "Gerar raster" e sem "Analisar esta área" — só "Analisar áreas".
  */
 export function CondicaoDaArea(p: CondicaoDaAreaProps) {
   const { can } = useAuth();
@@ -271,7 +271,7 @@ export function CondicaoDaArea(p: CondicaoDaAreaProps) {
           )}
           {podePedir && p.temContorno && (
             <p className="text-xs text-slate-600" data-testid="condicao-sem-analise-dica">
-              Use <strong>Analisar pastos</strong> na barra do mapa para gerar a observação completa.
+              Use <strong>Analisar áreas</strong> na barra do mapa para gerar a observação completa (Condição, Umidade, Vigor, Cobertura e Solo).
             </p>
           )}
         </div>
@@ -288,7 +288,7 @@ export function CondicaoDaArea(p: CondicaoDaAreaProps) {
 
       <div className="flex flex-wrap gap-1.5" data-testid="condicao-acoes">
         {podePedir && p.temContorno && (
-          <Button type="button" size="sm" variant="outline" onClick={p.onNovaConsulta} data-testid="condicao-nova-consulta">Analisar pastos</Button>
+          <Button type="button" size="sm" variant="outline" onClick={p.onNovaConsulta} data-testid="condicao-nova-consulta">Analisar áreas</Button>
         )}
         {obs && (
           <Button type="button" size="sm" variant="ghost" aria-expanded={verHistorico} onClick={() => setVerHistorico((v) => !v)} data-testid="condicao-historico-abrir">

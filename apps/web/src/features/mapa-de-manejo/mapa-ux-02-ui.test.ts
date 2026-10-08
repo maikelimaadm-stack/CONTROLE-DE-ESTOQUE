@@ -8,9 +8,9 @@ const barraSrc = readFileSync(resolve(__dirname, "barra-camadas.tsx"), "utf8");
 const legendaSrc = readFileSync(resolve(__dirname, "legenda-condicao.tsx"), "utf8");
 const modalSrc = readFileSync(resolve(__dirname, "nova-consulta-modal.tsx"), "utf8");
 
-describe("MAPA-UX-02 — UI estática (UX-01..UX-15)", () => {
-  it("UX-01 botão principal Analisar pastos", () => {
-    expect(barraSrc).toMatch(/Analisar pastos/);
+describe("MAPA-UX-02 — UI estática (UX-01..UX-15) + enxuto Analisar áreas", () => {
+  it("UX-01 botão principal Analisar áreas", () => {
+    expect(barraSrc).toMatch(/Analisar áreas/);
     expect(barraSrc).toContain('data-testid="mapa-nova-consulta"');
     expect(barraSrc).not.toContain("Atualizar condição");
   });
@@ -28,14 +28,15 @@ describe("MAPA-UX-02 — UI estática (UX-01..UX-15)", () => {
     expect(mapaGeralSrc).not.toContain("gerarMapaCondicao");
   });
 
-  it("UX-04 modal de análise é Dialog central", () => {
+  it("UX-04 modal de análise é Dialog central enxuto", () => {
     expect(modalSrc).toContain("<Dialog");
     expect(modalSrc).toContain('testId="consulta-modal"');
     expect(modalSrc).toContain("title={tituloModal}");
-    expect(modalSrc).toContain('"Analisar pastos"');
+    expect(modalSrc).toContain('"Analisar áreas"');
+    expect(modalSrc).toContain('data-testid="consulta-confirmar"');
   });
 
-  it("UX-05 default Todos os pastos (empresa)", () => {
+  it("UX-05 default Todas as áreas (empresa)", () => {
     expect(ORDEM_SELECAO[0]).toBe("empresa");
     expect(ROTULO_SELECAO.empresa).toBe("Todos os pastos");
     expect(modalSrc).toContain('p.selecaoInicial ?? "empresa"');
@@ -51,38 +52,39 @@ describe("MAPA-UX-02 — UI estática (UX-01..UX-15)", () => {
     expect(modalSrc).toContain("consulta-escolhidas-contador");
   });
 
-  it("UX-07 Opções avançadas fechadas por padrão", () => {
-    expect(modalSrc).toContain("Opções avançadas");
+  it("UX-07 Mais opções fechadas por padrão", () => {
+    expect(modalSrc).toContain("Mais opções");
     expect(modalSrc).toContain('data-testid="consulta-opcoes-avancadas"');
     expect(modalSrc).toContain("setAvancadasAbertas(false)");
     expect(modalSrc).toContain("{avancadasAbertas &&");
   });
 
-  it("UX-08 preview na segunda etapa", () => {
-    expect(modalSrc).toContain("setEtapa(2)");
+  it("UX-08 prévia automática + um clique confirma", () => {
     expect(modalSrc).toContain("consulta-previa-resultado");
-    expect(modalSrc).toContain("Iniciar análise de");
-    expect(modalSrc).toContain('data-testid="consulta-continuar"');
+    expect(modalSrc).toContain("previaAuto");
+    expect(modalSrc).toContain('data-testid="consulta-confirmar"');
+    expect(modalSrc).toContain("montarCorpoConsulta(resolvido.alvo, periodoValidado.periodo, true)");
+    expect(modalSrc).not.toContain("setEtapa(2)");
   });
 
-  it("UX-09 progresso na terceira etapa", () => {
-    expect(modalSrc).toContain("setEtapa(3)");
+  it("UX-09 progresso após iniciar", () => {
     expect(modalSrc).toContain("consulta-progresso");
     expect(modalSrc).toContain("Continuar em segundo plano");
+    expect(modalSrc).toContain("emProgresso");
   });
 
-  it("UX-10 click área abre popup central", () => {
+  it("UX-10 click área abre painel (não modal amontoado)", () => {
     expect(mapaGeralSrc).toContain("DialogAreaCondicao");
+    expect(mapaGeralSrc).toContain('variante="painel"');
     expect(mapaGeralSrc).toContain("dialogAreaAberto");
-    expect(legendaSrc).toContain('testId="mapa-area-selecionada"');
+    expect(legendaSrc).toContain("variante?: \"painel\" | \"dialog\"");
     expect(legendaSrc).toContain("Ver detalhamento");
   });
 
-  it("UX-11 sem painel lateral flutuante em Condição; técnico também em Dialog", () => {
+  it("UX-11 detalhe operacional em painel; técnico em Dialog", () => {
     expect(mapaGeralSrc).toContain("dialogTecnicoAberto");
     expect(mapaGeralSrc).toContain("!modoCondicao && selecionadaObj");
-    expect(mapaGeralSrc).not.toMatch(/absolute right-2 top-2[\s\S]{0,120}mapa-area-selecionada/);
-    expect(mapaGeralSrc).not.toMatch(/modoCondicao && classeFiltro !== null[\s\S]{0,80}absolute left-2/);
+    expect(mapaGeralSrc).toContain('variante="painel"');
     expect(mapaGeralSrc).not.toContain("PainelClasseCondicao codigo={classeFiltro}");
   });
 
@@ -106,19 +108,21 @@ describe("MAPA-UX-02 — UI estática (UX-01..UX-15)", () => {
     expect(mapaGeralSrc).toContain("rotulosDasAreas(m, areas.filter((a) => a.id === id), id)");
   });
 
-  it("UX-15 lista compacta (nome, ha, badge)", () => {
+  it("UX-15 lista compacta (nome, ha, badge) + busca", () => {
     expect(mapaGeralSrc).toContain('data-testid="mapa-item-badge"');
     expect(mapaGeralSrc).toContain("badge.rotulo");
     expect(mapaGeralSrc).toContain("rotuloStatusLista");
+    expect(mapaGeralSrc).toContain("mapa-busca-lista");
     expect(mapaGeralSrc).not.toContain("% vegetação ativa");
     expect(mapaGeralSrc).not.toContain("% atenção");
   });
 
-  it("toolbar: opacidade/render/família/índice só em Dados técnicos", () => {
-    expect(barraSrc).toContain('p.experiencia === "tecnico"');
-    expect(barraSrc).toMatch(/experiencia === "tecnico"[\s\S]*mapa-grupo-opacidade/);
-    expect(barraSrc).toMatch(/experiencia === "tecnico"[\s\S]*mapa-grupo-render/);
-    expect(barraSrc).toMatch(/experiencia === "tecnico"[\s\S]*mapa-grupo-indice/);
+  it("toolbar: Só áreas + temas; técnico em Dados técnicos", () => {
+    expect(barraSrc).toContain("Só áreas");
+    expect(barraSrc).toContain("VISUALIZACOES_MAPA_PASTO");
+    expect(barraSrc).toContain("mapa-dados-tecnicos");
+    expect(barraSrc).toContain('modo === "tecnico"');
+    expect(barraSrc).toContain("mapa-grupo-opacidade");
   });
 
   it("legenda compacta: Ver todas para água/sem leitura a 0%", () => {
