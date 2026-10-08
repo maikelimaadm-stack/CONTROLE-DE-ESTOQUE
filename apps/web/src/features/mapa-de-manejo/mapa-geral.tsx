@@ -15,7 +15,7 @@ import { qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { canonicalHref, entryById } from "@/lib/nav";
 import { useEmpresaPadrao } from "@/features/docs/shared";
-import { Card, CardBody, Button, Dialog, Spinner, EmptyState, ErrorState, buttonVariants, NativeSelect } from "@/components/ui";
+import { Card, CardBody, Button, Dialog, Drawer, Spinner, EmptyState, ErrorState, buttonVariants, NativeSelect } from "@/components/ui";
 import { dateBR, num } from "@/lib/utils";
 import { CamadaDesenho } from "./camada-desenho";
 import { COR_PADRAO_AREA } from "./cores";
@@ -412,8 +412,9 @@ export function MapaGeral() {
   const podeConsultar = can(PERMISSAO_PEDIR_NDVI);
   const operacao = useOperacaoAnaliseViva(podeConsultar);
 
-  /** Abre "Analisar pastos" e fecha popups de área/classe (um de cada vez). Com análise viva → acompanhar. */
+  /** Abre "Analisar áreas" e fecha lista/detalhe/classe (um overlay de cada vez). Com análise viva → acompanhar. */
   function abrirAnalise(selecao?: SelecaoConsulta) {
+    setListaAbertaMobile(false);
     setClasseFiltro(null);
     setSelecionada(null);
     if (operacao.viva && operacao.consultaId) {
@@ -424,9 +425,17 @@ export function MapaGeral() {
   }
 
   function acompanharAnalise() {
+    setListaAbertaMobile(false);
     setClasseFiltro(null);
     setSelecionada(null);
     setConsulta({ aberta: true, acompanhar: true });
+  }
+
+  function abrirListaMobile() {
+    setConsulta({ aberta: false });
+    setClasseFiltro(null);
+    setSelecionada(null);
+    setListaAbertaMobile(true);
   }
 
   function selecionarNaLista(id: string) {
@@ -560,77 +569,82 @@ export function MapaGeral() {
     );
   }, [areasOrdenadas, buscaLista]);
 
-  const painelLista = (
-            <>
-            <div className="mb-1 flex items-center justify-between gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-              <span>Áreas</span>
-              <span className="flex items-center gap-2">
-                {areas.length > 0 && <span className="font-normal normal-case tabular-nums text-slate-400">{areas.length} · {num(totalHa, 2)} ha</span>}
-                <button type="button" className="hidden min-h-11 text-[10px] font-medium normal-case text-slate-500 underline lg:inline sm:min-h-0" data-testid="mapa-recolher-lista" onClick={() => setListaRecolhida(true)}>Recolher</button>
-                <button type="button" className="min-h-11 text-[10px] font-medium normal-case text-slate-500 underline lg:hidden sm:min-h-0" data-testid="mapa-fechar-lista-mobile" onClick={() => setListaAbertaMobile(false)}>Fechar</button>
-              </span>
-            </div>
-            <input
-              type="search"
-              placeholder="Buscar por nome ou código"
-              value={buscaLista}
-              onChange={(e) => setBuscaLista(e.target.value)}
-              aria-label="Buscar áreas"
-              className="mb-1 h-11 w-full rounded border border-slate-200 px-2 text-xs sm:h-8"
-              data-testid="mapa-busca-lista"
-            />
-            {modoCondicao && comSatelite && (
-              <NativeSelect
-                value={ordenacao}
-                onChange={(e) => setOrdenacao(e.target.value as OrdenacaoListaCondicao)}
-                aria-label="Ordenar áreas"
-                className="mb-1 h-11 py-0 text-xs sm:h-[26px]"
-                data-testid="mapa-ordenacao-condicao"
-              >
-                {(Object.keys(ROTULO_ORDENACAO_CONDICAO) as OrdenacaoListaCondicao[]).map((k) => (
-                  <option key={k} value={k}>{ROTULO_ORDENACAO_CONDICAO[k]}</option>
-                ))}
-              </NativeSelect>
-            )}
-            {lista.isLoading && <Spinner />}
-            {lista.error && <ErrorState title="Não foi possível carregar as áreas" error={lista.error} onRetry={() => void lista.refetch()} />}
-            {!lista.isLoading && !lista.error && areas.length === 0 && <EmptyState title="Nenhuma área cadastrada" description="Cadastre as áreas em Cadastro de Área: o contorno desenhado na ficha aparece aqui." />}
-            {areasFiltradasLista.map((a) => {
-              const resumo = mapasCond.resumos.get(a.id);
-              const badge = resumo ? badgePrincipalCondicao(resumo) : null;
-              const st = resumosCompletos.statusPorArea.get(a.id);
-              const medias = resumosCompletos.porArea.get(a.id)?.medias;
-              const leitura = modoOperacional && tema !== "condicao"
-                ? leituraTematicaLista(tema, medias)
-                : null;
-              const sub = modoOperacional
-                ? (st && st !== "PRONTO" && st !== "PARCIAL"
-                  ? rotuloStatusLista(st, tema)
-                  : (tema === "condicao" && badge
-                    ? badge.rotulo
-                    : (leitura ?? rotuloStatusLista(st ?? "SEM_ANALISE", tema, leitura))))
-                : null;
-              const media = !modoOperacional && resumoIndice.situacao === "pronto" ? mediaValidaDoIndice(resumoIndice.porArea.get(a.id)) : null;
-              const tituloMedia = data.tipo === "data"
-                ? `${nomeDoIndice(indice)} médio em ${dateBR(data.data)}`
-                : `${nomeDoIndice(indice)} médio da última imagem útil`;
-              const corLista = st === "SEM_ANALISE" ? "#e2e8f0" : (corPorArea?.get(a.id) ?? a.color ?? COR_PADRAO_AREA);
-              return (
-                <button key={a.id} type="button" data-testid="mapa-item-area" onClick={() => { selecionarNaLista(a.id); setListaAbertaMobile(false); }}
-                  className={`flex min-h-11 items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-100 sm:min-h-0 ${a.id === selecionada ? "bg-slate-100 ring-1 ring-slate-300" : ""}`}>
-                  <span className="h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: corLista }} aria-hidden />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium text-slate-700">{a.code ? `${a.code} · ${a.name}` : a.name}</span>
-                    {sub && (
-                      <span className="block truncate text-[11px] text-slate-500" style={badge && temaExibido === "condicao" ? { color: badge.cor } : undefined} data-testid="mapa-item-badge">{sub}</span>
-                    )}
-                  </span>
-                  {media !== null && <span className="shrink-0 text-xs font-medium tabular-nums text-slate-700" title={tituloMedia} data-testid="mapa-item-ndvi">{num(media, 2)}</span>}
-                  <span className="shrink-0 text-xs tabular-nums text-slate-500">{num(hectares(a.area_ha), 1)} ha</span>
-                </button>
-              );
-            })}
-            </>
+  const conteudoLista = (
+    <>
+      <input
+        type="search"
+        placeholder="Buscar por nome ou código"
+        value={buscaLista}
+        onChange={(e) => setBuscaLista(e.target.value)}
+        aria-label="Buscar áreas"
+        className="mb-1 h-11 w-full rounded border border-slate-200 px-2 text-xs sm:h-8"
+        data-testid="mapa-busca-lista"
+      />
+      {modoCondicao && comSatelite && (
+        <NativeSelect
+          value={ordenacao}
+          onChange={(e) => setOrdenacao(e.target.value as OrdenacaoListaCondicao)}
+          aria-label="Ordenar áreas"
+          className="mb-1 h-11 py-0 text-xs sm:h-[26px]"
+          data-testid="mapa-ordenacao-condicao"
+        >
+          {(Object.keys(ROTULO_ORDENACAO_CONDICAO) as OrdenacaoListaCondicao[]).map((k) => (
+            <option key={k} value={k}>{ROTULO_ORDENACAO_CONDICAO[k]}</option>
+          ))}
+        </NativeSelect>
+      )}
+      {lista.isLoading && <Spinner />}
+      {lista.error && <ErrorState title="Não foi possível carregar as áreas" error={lista.error} onRetry={() => void lista.refetch()} />}
+      {!lista.isLoading && !lista.error && areas.length === 0 && <EmptyState title="Nenhuma área cadastrada" description="Cadastre as áreas em Cadastro de Área: o contorno desenhado na ficha aparece aqui." />}
+      {areasFiltradasLista.map((a) => {
+        const resumo = mapasCond.resumos.get(a.id);
+        const badge = resumo ? badgePrincipalCondicao(resumo) : null;
+        const st = resumosCompletos.statusPorArea.get(a.id);
+        const medias = resumosCompletos.porArea.get(a.id)?.medias;
+        const leitura = modoOperacional && tema !== "condicao"
+          ? leituraTematicaLista(tema, medias)
+          : null;
+        const sub = modoOperacional
+          ? (st && st !== "PRONTO" && st !== "PARCIAL"
+            ? rotuloStatusLista(st, tema)
+            : (tema === "condicao" && badge
+              ? badge.rotulo
+              : (leitura ?? rotuloStatusLista(st ?? "SEM_ANALISE", tema, leitura))))
+          : null;
+        const media = !modoOperacional && resumoIndice.situacao === "pronto" ? mediaValidaDoIndice(resumoIndice.porArea.get(a.id)) : null;
+        const tituloMedia = data.tipo === "data"
+          ? `${nomeDoIndice(indice)} médio em ${dateBR(data.data)}`
+          : `${nomeDoIndice(indice)} médio da última imagem útil`;
+        const corLista = st === "SEM_ANALISE" ? "#e2e8f0" : (corPorArea?.get(a.id) ?? a.color ?? COR_PADRAO_AREA);
+        return (
+          <button key={a.id} type="button" data-testid="mapa-item-area" onClick={() => { selecionarNaLista(a.id); setListaAbertaMobile(false); }}
+            className={`flex min-h-11 items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-100 sm:min-h-0 ${a.id === selecionada ? "bg-slate-100 ring-1 ring-slate-300" : ""}`}>
+            <span className="h-3 w-3 shrink-0 rounded-sm border border-slate-300" style={{ backgroundColor: corLista }} aria-hidden />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium text-slate-700">{a.code ? `${a.code} · ${a.name}` : a.name}</span>
+              {sub && (
+                <span className="block truncate text-[11px] text-slate-500" style={badge && temaExibido === "condicao" ? { color: badge.cor } : undefined} data-testid="mapa-item-badge">{sub}</span>
+              )}
+            </span>
+            {media !== null && <span className="shrink-0 text-xs font-medium tabular-nums text-slate-700" title={tituloMedia} data-testid="mapa-item-ndvi">{num(media, 2)}</span>}
+            <span className="shrink-0 text-xs tabular-nums text-slate-500">{num(hectares(a.area_ha), 1)} ha</span>
+          </button>
+        );
+      })}
+    </>
+  );
+
+  const painelListaDesktop = (
+    <>
+      <div className="mb-1 flex items-center justify-between gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <span>Áreas</span>
+        <span className="flex items-center gap-2">
+          {areas.length > 0 && <span className="font-normal normal-case tabular-nums text-slate-400">{areas.length} · {num(totalHa, 2)} ha</span>}
+          <button type="button" className="min-h-11 text-[10px] font-medium normal-case text-slate-500 underline sm:min-h-0" data-testid="mapa-recolher-lista" onClick={() => setListaRecolhida(true)}>Recolher</button>
+        </span>
+      </div>
+      {conteudoLista}
+    </>
   );
 
   return (
@@ -681,7 +695,7 @@ export function MapaGeral() {
         podeConsultar={podeConsultar}
         onNovaConsulta={() => abrirAnalise("empresa")}
         carregandoTema={modoOperacional && tema !== temaExibido}
-        onAbrirLista={() => setListaAbertaMobile(true)}
+        onAbrirLista={abrirListaMobile}
         listaAberta={listaAbertaMobile}
       />
 
@@ -689,7 +703,7 @@ export function MapaGeral() {
         {!listaRecolhida && (
           <Card className="hidden min-h-0 overflow-hidden lg:flex">
             <CardBody className="flex h-full min-h-0 flex-col gap-1 overflow-auto">
-              {painelLista}
+              {painelListaDesktop}
             </CardBody>
           </Card>
         )}
@@ -814,14 +828,17 @@ export function MapaGeral() {
         </div>
       </div>
 
-      {listaAbertaMobile && (
-        <div className="fixed inset-0 z-40 flex flex-col justify-end bg-slate-900/40 lg:hidden" data-testid="mapa-lista-drawer">
-          <button type="button" className="min-h-0 flex-1 cursor-default" aria-label="Fechar lista" onClick={() => setListaAbertaMobile(false)} />
-          <div className="max-h-[70vh] overflow-auto rounded-t-xl border border-slate-200 bg-white p-3 shadow-xl safe-area-pb">
-            {painelLista}
-          </div>
-        </div>
-      )}
+      <Drawer
+        open={listaAbertaMobile}
+        onOpenChange={setListaAbertaMobile}
+        title="Áreas"
+        description={areas.length > 0 ? `${areas.length} · ${num(totalHa, 2)} ha` : undefined}
+        size="sm"
+        side="right"
+        testId="mapa-lista-drawer"
+      >
+        {conteudoLista}
+      </Drawer>
 
       {!modoCondicao && selecionadaObj && (
         <Dialog

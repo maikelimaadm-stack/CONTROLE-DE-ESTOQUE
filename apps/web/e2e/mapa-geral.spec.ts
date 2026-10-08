@@ -512,10 +512,10 @@ test("Mapa geral: NDVI na escala fixa, legenda e atribuição; painel com últim
   await expect(condicao.getByTestId("condicao-sem-analise")).toBeVisible();
   await expect(condicao.getByTestId("condicao-aviso-agronomico")).toContainText("não é diagnóstico");
 
-  // SAT-BUNDLE-01B: análise individual removida do painel — só "Analisar pastos" na barra
+  // SAT-BUNDLE-01B: análise individual removida do painel — só "Analisar áreas" na barra
   await expect(condicao.getByTestId("condicao-analisar-atual")).toHaveCount(0);
   await expect(condicao.getByTestId("condicao-gerar-raster")).toHaveCount(0);
-  await expect(condicao.getByTestId("condicao-sem-analise-dica")).toContainText("Analisar pastos");
+  await expect(condicao.getByTestId("condicao-sem-analise-dica")).toContainText("Analisar áreas");
   expect(linhas(), "nada gravado").toBe(3);
 
   // área sem observação útil / nunca analisada: painel único sem número na lista
