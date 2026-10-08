@@ -75,9 +75,9 @@ export const MODULES = [
   // CADASTRO-AREAS-02: o mapa mostra erp.areas (permissão batch_area); mapa_areas ficou legado de skew.
   // CADASTRO-AREAS-03: o mapa é SÓ VISUALIZAÇÃO — o cadastro e o contorno da área ficam na ficha de Áreas/Piquetes.
   // MAPA-GERAL (decisão 294): "Mapa geral" em /mapa-geral — áreas + resultados (satélite/condição).
-  // MAPA-MANEJO-PASTOS (decisão 303): "Mapa de Manejo" em /mapa-de-manejo — só pastos com numeração, sem listagem; 16º módulo (teto elevado em nav-audit).
+  // MAPA-MANEJO (decisão 303): "Mapa de Manejo" em /mapa-de-manejo — só polígonos das áreas cadastradas, sem listagem nem satélite; 16º módulo (teto elevado em nav-audit).
   m("mapa", "Mapa geral", "/mapa-geral", { perm: "batch_area.view", keywords: ["mapa", "mapa geral", "área", "áreas", "piquete", "talhão", "polígono", "georreferenciamento", "satélite", "ndvi", "vigor", "condição"], description: "Mapa da propriedade com as áreas e os resultados de cada uma (condição e índices por satélite)" }),
-  m("mapa-manejo", "Mapa de Manejo", "/mapa-de-manejo", { perm: "batch_area.view", keywords: ["mapa de manejo", "manejo", "pasto", "pastos", "piquete", "numeração", "código da área"], description: "Mapa dos pastos com a numeração de cada um, sem listagem ao lado" })
+  m("mapa-manejo", "Mapa de Manejo", "/mapa-de-manejo", { perm: "batch_area.view", keywords: ["mapa de manejo", "manejo", "área", "áreas", "piquete", "talhão", "polígono", "contorno"], description: "Mapa com os polígonos das áreas cadastradas — só visualização, sem listagem ao lado" })
 ];
 
 export const AREAS = [
