@@ -9,11 +9,15 @@ import { codificarValorRaster } from "@agro/domain";
 const CANTOS: [[number, number], [number, number], [number, number], [number, number]] = [
   [0, 3], [3, 3], [3, 0], [0, 0]
 ];
+const AREA_GRADE = {
+  type: "Polygon" as const,
+  coordinates: [[[0, 0], [3, 0], [3, 3], [0, 3], [0, 0]]]
+};
 
 describe("SAT-BUNDLE-01B — VEC polygonização", () => {
   it("VEC-01: 3×3 mesma classe → 1 Polygon (não 3 runs)", () => {
     const pixels = new Uint8Array(9).fill(1);
-    const zonas = zonasDeRasterCondicao({ pixels, largura: 3, altura: 3, cantos: CANTOS });
+    const zonas = zonasDeRasterCondicao({ pixels, largura: 3, altura: 3, cantos: CANTOS, geometriaArea: AREA_GRADE });
     expect(zonas).toHaveLength(1);
     expect(zonas[0]!.geometry.type).toBe("Polygon");
     const rings = zonas[0]!.geometry.coordinates as number[][][];
@@ -37,21 +41,21 @@ describe("SAT-BUNDLE-01B — VEC polygonização", () => {
 
   it("VEC-03: ilha separada → 2 features da mesma classe", () => {
     const pixels = Uint8Array.from([1, 0, 1, 0, 0, 0]);
-    const zonas = zonasDeRasterCondicao({ pixels, largura: 3, altura: 2, cantos: CANTOS });
+    const zonas = zonasDeRasterCondicao({ pixels, largura: 3, altura: 2, cantos: CANTOS, geometriaArea: AREA_GRADE });
     expect(zonas.filter((z) => z.codigo === 1)).toHaveLength(2);
   });
 
   it("VEC-05: duas faixas sem overlap de código no mesmo pixel", () => {
     const pixels = Uint8Array.from([1, 1, 2, 2]);
-    const zonas = zonasDeRasterCondicao({ pixels, largura: 2, altura: 2, cantos: CANTOS });
+    const zonas = zonasDeRasterCondicao({ pixels, largura: 2, altura: 2, cantos: CANTOS, geometriaArea: AREA_GRADE });
     expect(new Set(zonas.map((z) => z.codigo)).size).toBe(2);
   });
 
   it("VEC-06/10: fora/sem leitura não vira geometria; sem runs como produto final", () => {
     const pixels = new Uint8Array(9).fill(0);
-    expect(zonasDeRasterCondicao({ pixels, largura: 3, altura: 3, cantos: CANTOS })).toEqual([]);
+    expect(zonasDeRasterCondicao({ pixels, largura: 3, altura: 3, cantos: CANTOS, geometriaArea: AREA_GRADE })).toEqual([]);
     const cheio = new Uint8Array(9).fill(2);
-    const z = zonasDeRasterCondicao({ pixels: cheio, largura: 3, altura: 3, cantos: CANTOS });
+    const z = zonasDeRasterCondicao({ pixels: cheio, largura: 3, altura: 3, cantos: CANTOS, geometriaArea: AREA_GRADE });
     // 1 exterior — não 3 polígonos de run.
     expect(z).toHaveLength(1);
     if (z[0]!.geometry.type === "Polygon") {
@@ -91,7 +95,7 @@ describe("SAT-BUNDLE-01B — isobandas", () => {
       pixels[i] = codificarValorRaster(0.4, enc.scaleMin, enc.scaleMax);
     }
     const feats = isobandasDoRaster({
-      pixels, largura: 3, altura: 3, cantos: CANTOS, indice: "ndre", tema: "vigor"
+      pixels, largura: 3, altura: 3, cantos: CANTOS, indice: "ndre", tema: "vigor", geometriaArea: AREA_GRADE
     });
     expect(feats.length).toBe(1);
     expect(feats[0]!.geometry.type).toBe("Polygon");
