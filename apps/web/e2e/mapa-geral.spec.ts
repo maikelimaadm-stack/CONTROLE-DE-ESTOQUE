@@ -77,10 +77,12 @@ async function sairDadosTecnicos(page: Page) {
   const mais = page.getByTestId("mapa-mais-opcoes");
   await expect(mais).toBeVisible({ timeout: 30_000 });
   if ((await page.getByTestId("mapa-mais-opcoes-painel").count()) === 0) await mais.click();
+  await expect(page.getByTestId("mapa-mais-opcoes-painel")).toBeVisible();
   const btn = page.getByTestId("mapa-dados-tecnicos");
   await expect(btn).toBeVisible();
   if ((await btn.getAttribute("aria-pressed")) === "true") await btn.click();
   await expect(btn).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByTestId("mapa-barra-tecnica")).toHaveCount(0);
 }
 
 /** Seleciona na lista após garantir que nenhum Dialog cobre a UI. */

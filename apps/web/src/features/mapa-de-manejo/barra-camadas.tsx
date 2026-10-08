@@ -249,6 +249,7 @@ export function BarraCamadas(p: BarraCamadasProps) {
                   onClick={() => {
                     if (modo === "tecnico") {
                       setModo("operacional");
+                      setMaisOpcoes(true); // mantém o painel aberto (Base + botão)
                     } else {
                       setModo("tecnico");
                       setMaisOpcoes(true);
