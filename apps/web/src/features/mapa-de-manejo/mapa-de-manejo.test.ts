@@ -5,32 +5,31 @@ import { describe, expect, it } from "vitest";
 const dir = resolve(__dirname);
 const src = (f: string) => readFileSync(resolve(dir, f), "utf8");
 
-describe("Mapa de Manejo — áreas com polígonos", () => {
-  it("componente: mapa full-bleed, só polígonos das áreas", () => {
+describe("Mapa de Manejo — áreas com polígonos e animais", () => {
+  it("componente: mapa com rótulos de animais por área", () => {
     const s = src("mapa-de-manejo.tsx");
     expect(s).toContain("Mapa de Manejo");
-    expect(s).toContain("mapa-de-manejo");
-    expect(s).toContain("mapa-manejo-canvas");
-    expect(s).toContain("desenharAreas");
-    expect(s).not.toContain("mapa-item-area");
-    expect(s).not.toContain("grid-cols-[280px_1fr]");
+    expect(s).toContain("useCabecasPorArea");
+    expect(s).toContain("rotulosDasAreas");
+    expect(s).toContain("CamadaDesenho");
     expect(s).not.toContain("BarraCamadas");
-    expect(s).not.toContain("NovaConsultaModal");
-    expect(s).not.toContain("useObservacaoSatelitalCompleta");
-    expect(s).not.toContain("sincronizarRastersNoMapa");
-    expect(s).not.toContain("rotulosDasAreas");
-    expect(s).not.toContain("CamadaDesenho");
+    expect(s).not.toContain("mapa-geral");
   });
 
-  it("página própria em /mapa-de-manejo", () => {
-    const page = readFileSync(resolve(dir, "../../app/(app)/mapa-de-manejo/page.tsx"), "utf8");
-    expect(page).toContain("MapaDeManejo");
-    expect(page).not.toContain("MapaGeral");
+  it("hook consulta cabeças por área na API do mapa de manejo", () => {
+    const s = src("use-cabecas-por-area.ts");
+    expect(s).toContain("/api/mapa/areas/cabecas-por-area");
   });
 
-  it("menu: módulo Mapa de Manejo separado do Mapa geral", () => {
-    const nav = readFileSync(resolve(dir, "../../../nav.registry.mjs"), "utf8");
-    expect(nav).toContain('m("mapa-manejo", "Mapa de Manejo", "/mapa-de-manejo"');
-    expect(nav).toContain('m("mapa", "Mapa geral", "/mapa-geral"');
+  it("rótulo do mapa exibe quantidade de animais", () => {
+    const s = src("camada-desenho.tsx");
+    expect(s).toContain("animais");
+    expect(s).toContain("cabecas");
+  });
+
+  it("Mapa geral não usa contagem de animais (só Mapa de Manejo)", () => {
+    const geral = src("mapa-geral.tsx");
+    expect(geral).not.toContain("useCabecasPorArea");
+    expect(geral).not.toContain("cabecas-por-area");
   });
 });

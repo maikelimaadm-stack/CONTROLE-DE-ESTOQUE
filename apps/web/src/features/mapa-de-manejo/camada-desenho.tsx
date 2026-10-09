@@ -25,6 +25,8 @@ export interface RotuloArea {
   px: Px;
   nome: string;
   ha: number;
+  /** Animais nos lotes da área (identificados + cadastro por contagem). */
+  cabecas?: number;
   opacidade?: number;
   fonteNome?: number;
   fonteHa?: number;
@@ -105,6 +107,11 @@ export function CamadaDesenho(p: Props) {
             {r.ha > 0 && (
               <div className="mt-px whitespace-nowrap font-semibold tabular-nums" style={{ fontSize: fonteHa, color: "#e2e8f0" }}>
                 ha {num(r.ha, 2)}
+              </div>
+            )}
+            {typeof r.cabecas === "number" && r.cabecas > 0 && (
+              <div className="mt-px whitespace-nowrap font-semibold tabular-nums" style={{ fontSize: fonteHa, color: "#fef08a" }}>
+                {num(r.cabecas, 0)} {r.cabecas === 1 ? "animal" : "animais"}
               </div>
             )}
           </div>
