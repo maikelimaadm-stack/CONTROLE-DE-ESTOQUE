@@ -2,14 +2,15 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, sum, type DecimalString, type ISODate } from "@agro/shared";
 import {
-  SITUACOES_DE_LOTACAO, VALORES_TIPO_DE_USO_DA_AREA,
-  capacidadeDaEstacao, diasDeDescanso, diasDeOcupacao, estacaoDoAno, rodizioRealizadoVersusPlanejado, situacaoDeLotacao, uaPorHectare,
-  type EstacaoDoAno, type RodizioRealizadoVersusPlanejado, type SituacaoDeLotacao
+  MODOS_DE_COLORACAO, SITUACOES_DE_LOTACAO, VALORES_TIPO_DE_USO_DA_AREA,
+  capacidadeDaEstacao, categoriasPresentesNormalizadas, centroideDePoligono, diasDeDescanso, diasDeOcupacao, estacaoDoAno, faixaDaArea,
+  resolverIconeDoLote, resolverIdentificadorDaArea, rodizioRealizadoVersusPlanejado, situacaoDeLotacao, uaPorHectare,
+  type CategoriaPresente, type ConfiguracaoDeIcone, type EstacaoDoAno, type RodizioRealizadoVersusPlanejado, type SituacaoDeLotacao
 } from "@agro/domain";
 import { runService } from "../lib/service.js";
 import { consultaEscopada, hasPermission } from "../lib/context.js";
 import { err } from "../lib/errors.js";
-import { rebanhoDosLotes, type RebanhoDoLote } from "../lib/rebanho-dos-lotes.js";
+import { rebanhoDosLotes, type RebanhoDoLote, type RebanhoDoLoteComCategorias } from "../lib/rebanho-dos-lotes.js";
 
 /**
  * MAPA-MANEJO-01 (decisão 305) — OCUPAÇÃO DA ÁREA e o MAPA OPERACIONAL (leituras; nenhuma escrita).
@@ -34,6 +35,8 @@ const PERMISSAO_OBJETOS = "map_objects.view";
 const PERMISSAO_MANEJO = "nutritions.view";
 /** Pesagem: a mesma de `GET /livestock/weighings`, módulo pecuária. */
 const PERMISSAO_PESAGEM = "weighings.view";
+/** Configuração de ícone do mapa (`erp.configuracoes_de_icone`, MAPA-MANEJO-02): capacidade própria, módulo pecuária. */
+const PERMISSAO_ICONES = "icon_config.view";
 
 /** A MESMA 404 para inexistente, de outra organização, fora do escopo, excluída e id malformado. */
 const MSG_AREA_NAO_ENCONTRADA = "Área não encontrada";
@@ -60,12 +63,17 @@ const historicoQuery = z.object({
   page: inteiroPositivo(1_000_000).default(1),
   pageSize: inteiroPositivo(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE)
 }).strict();
-/** Filtros do mapa operacional. Estrito: parâmetro desconhecido é 422, nunca ignorado (descarte calado amplia o recorte). */
+/**
+ * Filtros do mapa operacional e o modo de coloração (`coloracao`, MAPA-MANEJO-02: um dos `MODOS_DE_COLORACAO` do
+ * domínio, padrão `padrao`; não recorta nada, só escolhe a faixa de cada área). Estrito: parâmetro desconhecido ou
+ * modo fora da lista é 422, nunca ignorado (descarte calado amplia o recorte; modo traduzido pinta outra regra).
+ */
 const operacionalQuery = z.object({
   retiro_id: z.uuid().optional(),
   grazing_module_id: z.uuid().optional(),
   land_use: z.enum(VALORES_TIPO_DE_USO_DA_AREA).optional(),
-  situacao: z.enum(FILTROS_DE_SITUACAO).optional()
+  situacao: z.enum(FILTROS_DE_SITUACAO).optional(),
+  coloracao: z.enum(MODOS_DE_COLORACAO).default("padrao")
 }).strict();
 
 function idDaArea(req: FastifyRequest): string {
@@ -133,6 +141,57 @@ const somaUa = (lotes: readonly { ua: DecimalString }[]): DecimalString => sum(l
 const COLUNAS_ABERTA = `o.id, o.area_id, o.batch_id, o.data_inicio, o.origem_da_data, o.cabecas_na_entrada, o.ua_na_entrada,
        b.code as lote_code, b.description as lote_description`;
 const JOIN_LOTE = `left join erp.batches b on b.id = o.batch_id and b.organization_id = o.organization_id and {{escopo:b.empresa_id}}`;
+
+// --------------------------------------------------------------------------------------------------
+// MAPA-MANEJO-02 (decisão 306) — o que só o mapa operacional acrescenta: identificador, ícone e faixa de cada área
+// --------------------------------------------------------------------------------------------------
+
+/**
+ * O identificador do lote (`erp.batches`, migration 0062), lido pelo MESMO `JOIN_LOTE` da consulta das abertas: lote
+ * fora do escopo chega com as três colunas nulas e conta como NÃO identificado. Só o mapa operacional lê estas
+ * colunas; a leitura da ocupação continua com `COLUNAS_ABERTA` como estava.
+ */
+const COLUNAS_IDENTIFICADOR = `b.identificador_nome, b.identificador_sigla, b.identificador_cor`;
+type LinhaAbertaComIdentificador = LinhaAberta & { identificador_nome: string | null; identificador_sigla: string | null; identificador_cor: string | null };
+
+/**
+ * O ícone da área: a configuração que vale (`resolverIconeDoLote`, entre as da empresa da área) e as categorias
+ * presentes normalizadas, em ordem. Sem configuração que case, os quatro primeiros campos são nulos e `categorias`
+ * continua preenchida — "sem ícone configurado" é diferente de "sem a capacidade" (aí o bloco inteiro é `null`).
+ */
+type IconeDaArea = {
+  config_id: string | null; categoria: string | null; icone_url: string | null; cor_padrao: string | null; categorias: string[];
+};
+/** Configuração de ícone como sai da consulta (o domínio refiltra ativo, exclusão e tipo; não confia no SQL). */
+type ConfiguracaoDeIconeDaEmpresa = ConfiguracaoDeIcone & { empresa_id: string };
+
+function iconeDaArea(categorias: readonly CategoriaPresente[], configsDaEmpresa: readonly ConfiguracaoDeIconeDaEmpresa[]): IconeDaArea {
+  const nomes = categorias.map((c) => c.nome);
+  const config = resolverIconeDoLote(nomes, configsDaEmpresa);
+  return {
+    config_id: config?.id ?? null,
+    categoria: config?.categoria ?? null,
+    icone_url: config?.icone_url ?? null,
+    cor_padrao: config?.cor_padrao ?? null,
+    categorias: categoriasPresentesNormalizadas(nomes)
+  };
+}
+
+/**
+ * As categorias presentes na ÁREA: as dos lotes abertos nela, somadas pelo nome como cadastrado. A normalização
+ * (btrim + maiúsculas) e o desempate são do domínio (`faixaDeCategoria`, `categoriasPresentesNormalizadas`).
+ */
+function categoriasDaArea(abertas: readonly LinhaAberta[], rebanho: Map<string, RebanhoDoLoteComCategorias>): CategoriaPresente[] {
+  const porNome = new Map<string, number>();
+  for (const o of abertas) {
+    for (const c of rebanho.get(o.batch_id)?.categorias ?? []) porNome.set(c.nome, (porNome.get(c.nome) ?? 0) + c.cabecas);
+  }
+  return [...porNome].map(([nome, cabecas]) => ({ nome, cabecas }));
+}
+
+/** O início da ocupação aberta MAIS ANTIGA da área (`ISODate` compara como texto); `null` = área vazia. */
+const inicioDaAbertaMaisAntiga = (abertas: readonly LinhaAberta[]): ISODate | null =>
+  abertas.reduce<ISODate | null>((menor, o) => (menor === null || o.data_inicio < menor ? o.data_inicio : menor), null);
 
 export default async function mapaOcupacaoRoutes(app: FastifyInstance) {
   /**
@@ -300,36 +359,61 @@ export default async function mapaOcupacaoRoutes(app: FastifyInstance) {
   }));
 
   /**
-   * GET /api/mapa/operacional[?retiro_id&grazing_module_id&land_use&situacao] — UMA chamada com tudo o que o mapa
-   * operacional desenha.
+   * GET /api/mapa/operacional[?retiro_id&grazing_module_id&land_use&situacao&coloracao] — UMA chamada com tudo o que
+   * o mapa operacional desenha.
    *
    * ÁREAS no escopo (vivas), cada uma com: as ocupações abertas (lotes com cabeças, UA e dias no piquete), os dias de
    * descanso de quem está vazia, a UA/ha e a situação de lotação (a MESMA regra da leitura da ocupação —
    * `lotacaoDaArea`), e a data do último manejo e da última pesagem registrados NA área (`area_id` do documento).
    *
+   * MAPA-MANEJO-02 (decisão 306) — ACRÉSCIMOS; nenhuma chave anterior mudou de nome nem de tipo. Toda regra mora no
+   * domínio; aqui só se lê no SQL e se entrega a ele:
+   * - topo `coloracao`: o modo usado (`MODOS_DE_COLORACAO`, padrão `padrao`); `capacidades.icones` (`icon_config.view`).
+   * - área `centroide` ({ lon, lat } | null): `centroideDePoligono(geometria)` (centroide-de-poligono do domínio); `null`
+   *   sem geometria ou sem ponto válido.
+   * - área `identificador` ({ misto: false, cor, sigla, nome } | { misto: true } | null): `resolverIdentificadorDaArea`
+   *   (identificador-do-lote do domínio) sobre os lotes ABERTOS visíveis — lote fora do escopo conta como não
+   *   identificado (as colunas chegam nulas pelo `JOIN_LOTE`).
+   * - área `icone`: `null` SEM `icon_config.view`; com ela `{ config_id, categoria, icone_url, cor_padrao, categorias }`
+   *   — `categorias` são as presentes nos lotes abertos, normalizadas e em ordem (`categoriasPresentesNormalizadas`);
+   *   a configuração é a de `resolverIconeDoLote` (configuracao-de-icone do domínio) entre as ATIVAS da EMPRESA DA
+   *   ÁREA, `tipo_entidade` lote; sem match, os quatro primeiros campos são nulos.
+   * - área `faixa` (FaixaDoMapa | null): `faixaDaArea(coloracao, …)` (cores-do-mapa do domínio); `null` em `padrao`.
+   *   Situação do pasto: o início da ocupação aberta mais ANTIGA da área, a `ultima_saida` e o mesmo `hoje` da rota
+   *   (`current_date` do banco); categoria: as categorias presentes somadas na área; lotação: a `ua_total` e a área
+   *   ÚTIL. A cor de cada faixa é da tela: aqui não há hex.
+   *
    * CAPACIDADE × ESCOPO, com AND, em cada bloco:
-   * - `objetos`: os objetos de mapa vivos do escopo SÓ para quem tem `map_objects.view`; sem ela, `objetos: []` (a
-   *   consulta nem roda). Com filtro, só os objetos das áreas que passaram no filtro; sem filtro, todos os do escopo
-   *   (inclusive os fora de área).
+   * - `objetos`: os objetos de mapa vivos do escopo SÓ para quem tem `map_objects.view`; sem ela, `objetos: []`.
+   *   Com filtro, só os objetos das áreas que passaram no filtro; sem filtro, todos os do escopo (inclusive os fora
+   *   de área).
    * - `ultimo_manejo`: SÓ com `nutritions.view` (a capacidade de `GET /livestock/handlings`); sem ela, `null`.
    * - `ultima_pesagem`: SÓ com `weighings.view`; sem ela, `null`.
+   * - `icone`: SÓ com `icon_config.view`; sem ela, `null` (e a configuração nem é lida).
    * `capacidades` diz à tela qual bloco veio — `null` sem capacidade é diferente de `null` sem registro.
-   * As quatro permissões são do módulo pecuária, o mesmo da rota: o escopo de empresa de cada tabela é o da área.
+   * As cinco permissões são do módulo pecuária, o mesmo da rota: o escopo de empresa de cada tabela é o da área.
    *
    * Filtros: `retiro_id`, `grazing_module_id` e `land_use` no SQL das áreas; `situacao` (dentro | proximo | acima |
-   * sem_referencia) depois das agregações, também no servidor. Parâmetro desconhecido ou fora da forma → 422.
+   * sem_referencia) depois das agregações, também no servidor. `coloracao` não recorta. Parâmetro desconhecido ou
+   * fora da forma → 422.
    *
-   * Consultas, FIXAS (nenhuma por área): (1) áreas + hoje; (2) ocupações abertas; (3) última saída por área;
-   * (4) rebanho de todos os lotes abertos (`rebanhoDosLotes`); (5) objetos (só com a capacidade); (6) último manejo e
-   * última pesagem por área, agregados juntos (só com alguma das duas capacidades). Sem área, (2)-(4) e (6) não rodam;
-   * sem lote aberto, (4) não roda.
+   * Consultas, FIXAS (nenhuma por área; contadas em mapa-manejo-01-operacional.test.ts MM-10b — com todas as
+   * capacidades, begin + 6 + commit = 8, igual antes da MAPA-MANEJO-02): (1) áreas + hoje; (2) ocupações abertas, com
+   * o lote e o identificador dele; (3) última saída por área; (4) rebanho de todos os lotes abertos com as categorias
+   * presentes (`rebanhoDosLotes(…, { comCategorias: true })`, a mesma consulta); (5) objetos E configurações de ícone,
+   * numa só (`select <objetos> as objetos, <ícones> as icones`): cada parte só entra com a sua capacidade (objetos:
+   * `map_objects.view` e o recorte acima; ícones: `icon_config.view` e haver área) e, sem nenhuma das duas, a consulta
+   * não roda; (6) último manejo e última pesagem por área, agregados juntos (só com alguma das duas capacidades).
+   * Sem área, (2)-(4) e (6) não rodam; sem lote aberto, (4) não roda. Centróide e faixas são conta no Node.
    */
   app.get("/mapa/operacional", async (req) => runService(app, req, PERMISSAO, async (ctx) => {
     const f = operacionalQuery.parse(req.query);
+    const coloracao = f.coloracao;
     const capacidades = {
       objetos: hasPermission(ctx, PERMISSAO_OBJETOS),
       manejo: hasPermission(ctx, PERMISSAO_MANEJO),
-      pesagem: hasPermission(ctx, PERMISSAO_PESAGEM)
+      pesagem: hasPermission(ctx, PERMISSAO_PESAGEM),
+      icones: hasPermission(ctx, PERMISSAO_ICONES)
     };
 
     const params: unknown[] = [ctx.orgId];
@@ -360,12 +444,12 @@ export default async function mapaOcupacaoRoutes(app: FastifyInstance) {
     const linhasArea = ra.rows.filter((a): a is typeof a & { id: string } => a.id !== null);
     const idsDasAreas = linhasArea.map((a) => a.id);
 
-    const abertasPorArea = new Map<string, LinhaAberta[]>();
+    const abertasPorArea = new Map<string, LinhaAbertaComIdentificador[]>();
     const ultimaSaidaPorArea = new Map<string, ISODate>();
-    let rebanho = new Map<string, RebanhoDoLote>();
+    let rebanho = new Map<string, RebanhoDoLoteComCategorias>();
     if (idsDasAreas.length) {
-      const ro = await consultaEscopada<LinhaAberta>(ctx,
-        `select ${COLUNAS_ABERTA}
+      const ro = await consultaEscopada<LinhaAbertaComIdentificador>(ctx,
+        `select ${COLUNAS_ABERTA}, ${COLUNAS_IDENTIFICADOR}
            from erp.ocupacoes_de_area o
            ${JOIN_LOTE}
           where o.organization_id = $1 and o.area_id = any($2::uuid[]) and o.data_fim is null and o.deleted_at is null
@@ -383,13 +467,18 @@ export default async function mapaOcupacaoRoutes(app: FastifyInstance) {
         [ctx.orgId, idsDasAreas]);
       for (const s of rs.rows) ultimaSaidaPorArea.set(s.area_id, s.ultima_saida);
 
-      rebanho = await rebanhoDosLotes(ctx, ro.rows.map((o) => o.batch_id));
+      rebanho = await rebanhoDosLotes(ctx, ro.rows.map((o) => o.batch_id), { comCategorias: true });
     }
 
+    // As categorias presentes de cada área ficam fora da resposta (o ícone e a faixa as consomem).
+    const categoriasPorArea = new Map<string, CategoriaPresente[]>();
     const areas = linhasArea.map((a) => {
-      const lotes = (abertasPorArea.get(a.id) ?? []).map((o) => loteAberto(o, rebanho, hoje));
+      const abertas = abertasPorArea.get(a.id) ?? [];
+      const lotes = abertas.map((o) => loteAberto(o, rebanho, hoje));
       const ua_total = somaUa(lotes);
       const ultima_saida = ultimaSaidaPorArea.get(a.id) ?? null;
+      const categorias = categoriasDaArea(abertas, rebanho);
+      categoriasPorArea.set(a.id, categorias);
       return {
         id: a.id, empresa_id: a.empresa_id, name: a.name, code: a.code, color: a.color, area_ha: a.area_ha, usable_area_ha: a.usable_area_ha,
         land_use: a.land_use, status: a.status, geometria: a.geometria, retiro_id: a.retiro_id, grazing_module_id: a.grazing_module_id,
@@ -403,7 +492,15 @@ export default async function mapaOcupacaoRoutes(app: FastifyInstance) {
         dias_de_descanso: descansoDaArea(lotes.length > 0, ultima_saida, hoje),
         ...lotacaoDaArea(a, ua_total, estacao),
         ultimo_manejo: null as ISODate | null,
-        ultima_pesagem: null as ISODate | null
+        ultima_pesagem: null as ISODate | null,
+        centroide: centroideDePoligono(a.geometria),
+        identificador: resolverIdentificadorDaArea(abertas),
+        // preenchido depois da consulta (5), só com a capacidade
+        icone: null as IconeDaArea | null,
+        faixa: faixaDaArea(coloracao, {
+          landUse: a.land_use, uaTotal: ua_total, usableAreaHa: a.usable_area_ha, areaHa: a.area_ha,
+          inicioDaAbertaMaisAntiga: inicioDaAbertaMaisAntiga(abertas), ultimaSaida: ultima_saida, hoje, categorias
+        })
       };
     });
 
@@ -414,19 +511,51 @@ export default async function mapaOcupacaoRoutes(app: FastifyInstance) {
     const idsFiltrados = filtradas.map((a) => a.id);
     const temFiltro = Boolean(f.retiro_id || f.grazing_module_id || f.land_use || f.situacao);
 
+    // (5) objetos e configurações de ícone numa consulta só; cada parte entra só com a sua capacidade.
     let objetos: Record<string, unknown>[] = [];
-    if (capacidades.objetos && (!temFiltro || idsFiltrados.length)) {
+    const comObjetos = capacidades.objetos && (!temFiltro || idsFiltrados.length > 0);
+    const comIcones = capacidades.icones && filtradas.length > 0;
+    if (comObjetos || comIcones) {
       const po: unknown[] = [ctx.orgId];
-      let recorte = "";
-      if (temFiltro) { po.push(idsFiltrados); recorte = `and m.area_id = any($${po.length}::uuid[])`; }
-      const rm = await consultaEscopada(ctx,
-        `select m.id, m.empresa_id, m.area_id, m.tipo, m.forma, m.geometria, m.code, m.name, m.descricao, m.capacidade,
-                m.unidade_capacidade, m.trough_id, m.is_active
-           from erp.objetos_de_mapa m
-          where m.organization_id = $1 and m.deleted_at is null and {{escopo:m.empresa_id}} ${recorte}
-          order by m.name, m.id`,
-        po);
-      objetos = rm.rows;
+      let parteObjetos = "null::json";
+      if (comObjetos) {
+        let recorte = "";
+        if (temFiltro) { po.push(idsFiltrados); recorte = `and m.area_id = any($${po.length}::uuid[])`; }
+        // Os MESMOS campos, tipos e ordem de antes: numeric sai como texto (`::text`, o que o driver entregava), a
+        // geometria como jsonb e a ordem é `m.name, m.id` dentro do json_agg.
+        parteObjetos = `coalesce((
+             select json_agg(json_build_object(
+                      'id', m.id, 'empresa_id', m.empresa_id, 'area_id', m.area_id, 'tipo', m.tipo, 'forma', m.forma,
+                      'geometria', m.geometria, 'code', m.code, 'name', m.name, 'descricao', m.descricao,
+                      'capacidade', m.capacidade::text, 'unidade_capacidade', m.unidade_capacidade, 'trough_id', m.trough_id,
+                      'is_active', m.is_active) order by m.name, m.id)
+               from erp.objetos_de_mapa m
+              where m.organization_id = $1 and m.deleted_at is null and {{escopo:m.empresa_id}} ${recorte}
+           ), '[]'::json)`;
+      }
+      let parteIcones = "null::json";
+      if (comIcones) {
+        // Só as empresas das áreas devolvidas: o ícone de cada área vem das configurações da EMPRESA DELA.
+        po.push([...new Set(filtradas.map((a) => a.empresa_id))]);
+        parteIcones = `coalesce((
+             select json_agg(json_build_object(
+                      'id', c.id, 'empresa_id', c.empresa_id, 'tipo_entidade', c.tipo_entidade, 'categoria', c.categoria,
+                      'categorias_misto', c.categorias_misto, 'icone_url', c.icone_url, 'cor_padrao', c.cor_padrao,
+                      'ativo', c.ativo) order by c.empresa_id, c.id)
+               from erp.configuracoes_de_icone c
+              where c.organization_id = $1 and c.empresa_id = any($${po.length}::uuid[]) and c.tipo_entidade = 'lote'
+                and c.ativo and c.deleted_at is null and {{escopo:c.empresa_id}}
+           ), '[]'::json)`;
+      }
+      const rm = await consultaEscopada<{ objetos: Record<string, unknown>[] | null; icones: ConfiguracaoDeIconeDaEmpresa[] | null }>(ctx,
+        `select ${parteObjetos} as objetos, ${parteIcones} as icones`, po);
+      const linha = rm.rows[0]!;
+      if (comObjetos) objetos = linha.objetos ?? [];
+      if (comIcones) {
+        const configsPorEmpresa = new Map<string, ConfiguracaoDeIconeDaEmpresa[]>();
+        for (const c of linha.icones ?? []) configsPorEmpresa.set(c.empresa_id, [...(configsPorEmpresa.get(c.empresa_id) ?? []), c]);
+        for (const a of filtradas) a.icone = iconeDaArea(categoriasPorArea.get(a.id) ?? [], configsPorEmpresa.get(a.empresa_id) ?? []);
+      }
     }
 
     if ((capacidades.manejo || capacidades.pesagem) && idsFiltrados.length) {
@@ -454,6 +583,6 @@ export default async function mapaOcupacaoRoutes(app: FastifyInstance) {
       }
     }
 
-    return { hoje, estacao, capacidades, areas: filtradas, objetos };
+    return { hoje, estacao, coloracao, capacidades, areas: filtradas, objetos };
   }));
 }

@@ -100,9 +100,10 @@ type AreaOp = {
   ocupada: boolean; lotes: Aberta[]; cabecas_total: number; ua_total: string; ultima_saida: string | null; dias_de_descanso: number | null;
   ua_por_hectare: string | null; capacidade_da_estacao: string | null; situacao_de_lotacao: string | null;
   ultimo_manejo: string | null; ultima_pesagem: string | null;
+  centroide: { lon: number; lat: number } | null; identificador: unknown; icone: unknown; faixa: unknown;
 };
 type Objeto = { id: string; empresa_id: string; area_id: string | null; tipo: string; forma: string; geometria: unknown; code: string | null; name: string; descricao: string | null; capacidade: string | null; unidade_capacidade: string | null; trough_id: string | null; is_active: boolean };
-type Operacional = { hoje: string; estacao: string; capacidades: { objetos: boolean; manejo: boolean; pesagem: boolean }; areas: AreaOp[]; objetos: Objeto[] };
+type Operacional = { hoje: string; estacao: string; coloracao: string; capacidades: { objetos: boolean; manejo: boolean; pesagem: boolean; icones: boolean }; areas: AreaOp[]; objetos: Objeto[] };
 const dtoLote = (l: Lote): LoteDto => ({ id: l.id, code: l.code, description: l.description });
 const ids = (xs: readonly { id: string }[]) => xs.map((x) => x.id);
 const achar = (r: Operacional, areaId: string) => { const a = r.areas.find((x) => x.id === areaId); if (!a) throw new Error(`área ${areaId} ausente da resposta`); return a; };
@@ -154,7 +155,7 @@ describe("MM-10a — uma chamada devolve tudo: áreas, ocupação, descanso, lot
     expect(r.hoje).toBe(hoje);
     const estacao = estacaoEsperada();
     expect(r.estacao).toBe(estacao);
-    expect(r.capacidades).toEqual({ objetos: true, manejo: true, pesagem: true });
+    expect(r.capacidades).toEqual({ objetos: true, manejo: true, pesagem: true, icones: true });
 
     expect(achar(r, A1)).toEqual({
       id: A1, empresa_id: E1, name: `${TAG} A1 ocupada`, code: expect.any(String), color: "#112233", area_ha: "50.0000", usable_area_ha: "40.0000",
@@ -171,7 +172,14 @@ describe("MM-10a — uma chamada devolve tudo: áreas, ocupação, descanso, lot
       // 9,75 ÷ 40 (área ÚTIL) = 0,24375 → "0.24"; nas duas estações a razão fica abaixo de 0,90
       ua_por_hectare: "0.24", capacidade_da_estacao: estacao === "aguas" ? "2.000" : "1.000", situacao_de_lotacao: "dentro",
       // o manejo excluído (−1) não conta; o de −40 (L3 em A1 naquela data) é mais antigo
-      ultimo_manejo: dia(-2), ultima_pesagem: dia(-3)
+      ultimo_manejo: dia(-2), ultima_pesagem: dia(-3),
+      // MAPA-MANEJO-02: centróide do quadrado de 0,01° (-55..-54,99 × -15,01..-15) = o centro dele; nenhum lote com
+      // identificador; o dono tem icon_config.view e não há configuração para a categoria desta semeadura (a 1 categoria
+      // de L1 e L2, normalizada); `padrao` não tem faixa
+      centroide: { lon: expect.closeTo(-54.995, 6), lat: expect.closeTo(-15.005, 6) },
+      identificador: null,
+      icone: { config_id: null, categoria: null, icone_url: null, cor_padrao: null, categorias: [`Categoria ${TAG}`.toUpperCase()] },
+      faixa: null
     });
     expect(achar(r, A2)).toMatchObject({
       ocupada: false, lotes: [], cabecas_total: 0, ua_total: "0.00", ultima_saida: dia(-9), dias_de_descanso: 9,
@@ -335,7 +343,7 @@ describe("MM-10c — filtros, 422, escopo de empresa e capacidade × escopo", ()
     expect(achar(dono, Z).ultimo_manejo).toBe(dia(-3));
     expect(ids(dono.objetos)).toContain(OZ);
     const r = await ok("/api/mapa/operacional", m);
-    expect(r.capacidades).toEqual({ objetos: true, manejo: true, pesagem: true });
+    expect(r.capacidades).toEqual({ objetos: true, manejo: true, pesagem: true, icones: false });
     expect(ids(r.areas)).toEqual(expect.arrayContaining([F1, F2, F3, F4, F5]));
     expect(ids(r.areas)).not.toContain(Z);
     expect(r.areas.every((a) => a.empresa_id === E1)).toBe(true);
@@ -355,15 +363,15 @@ describe("MM-10c — filtros, 422, escopo de empresa e capacidade × escopo", ()
     expect(achar(dono, F1)).toMatchObject({ ultimo_manejo: dia(-3), ultima_pesagem: dia(-2) });
 
     const a = await ok(`/api/mapa/operacional?retiro_id=${RF}`, soArea);
-    expect(a.capacidades).toEqual({ objetos: false, manejo: false, pesagem: false });
+    expect(a.capacidades).toEqual({ objetos: false, manejo: false, pesagem: false, icones: false });
     expect(a.objetos).toEqual([]);
     expect(ids(a.areas)).toEqual([F1, F2, F3, F4]);
     expect(a.areas.map((x) => [x.ultimo_manejo, x.ultima_pesagem])).toEqual([[null, null], [null, null], [null, null], [null, null]]);
-    // o resto da área continua igual ao do dono (capacidade não mexe em lotação)
-    expect(a.areas.map((x) => ({ ...x, ultimo_manejo: null, ultima_pesagem: null }))).toEqual(dono.areas.map((x) => ({ ...x, ultimo_manejo: null, ultima_pesagem: null })));
+    // o resto da área continua igual ao do dono (capacidade não mexe em lotação); sem icon_config.view o ícone é null
+    expect(a.areas.map((x) => ({ ...x, ultimo_manejo: null, ultima_pesagem: null }))).toEqual(dono.areas.map((x) => ({ ...x, ultimo_manejo: null, ultima_pesagem: null, icone: null })));
 
     const p = await ok(`/api/mapa/operacional?retiro_id=${RF}`, comPesagem);
-    expect(p.capacidades).toEqual({ objetos: false, manejo: false, pesagem: true });
+    expect(p.capacidades).toEqual({ objetos: false, manejo: false, pesagem: true, icones: false });
     expect(p.objetos).toEqual([]);
     expect(achar(p, F1)).toMatchObject({ ultimo_manejo: null, ultima_pesagem: dia(-2) });
 
