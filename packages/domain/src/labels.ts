@@ -3,6 +3,8 @@ import { TITLE_STATUS_LABELS } from "./financial.js";
 import { ACTION_LABELS } from "./permissions.js";
 import { MOTIVOS_QUALIDADE_ANALISE_SATELITAL, SITUACOES_ANALISE_SATELITAL } from "./analise-satelital.js";
 import { ROTULOS_CLASSE_CONDICAO_PASTO } from "./condicao-pasto.js";
+import type { MotivoDeSaida, OrigemDaData, SituacaoDeLotacao } from "./ocupacao-de-area.js";
+import { TIPOS_DE_OBJETO_DE_MAPA, type FormaDeObjeto, type UnidadeDeCapacidade } from "./objetos-de-mapa.js";
 
 /**
  * Rótulos PT-BR dos valores técnicos (enums) que chegam do banco/API e são exibidos ao usuário.
@@ -106,7 +108,18 @@ export const ENUM_LABELS = {
   analise_satelital_situacao: Object.fromEntries(SITUACOES_ANALISE_SATELITAL) as Record<string, string>,
   analise_satelital_motivo: Object.fromEntries(MOTIVOS_QUALIDADE_ANALISE_SATELITAL) as Record<string, string>,
   /** SAT-COND-01: classes do mapa integrado (nunca o id cru). */
-  condicao_pasto_classe: ROTULOS_CLASSE_CONDICAO_PASTO as Record<string, string>
+  condicao_pasto_classe: ROTULOS_CLASSE_CONDICAO_PASTO as Record<string, string>,
+  // MAPA-MANEJO-01: a ocupação da área (erp.ocupacoes_de_area) e os objetos do mapa (erp.objetos_de_mapa). As
+  // listas de valores são dos donos (ocupacao-de-area.ts, objetos-de-mapa.ts); o `satisfies` recusa valor sem rótulo.
+  /** De onde veio a data de entrada da ocupação: `criacao_do_lote` é estimativa, e o rótulo diz isso. */
+  origem_da_data_ocupacao: { movimento: "Movimento registrado", entrada_do_lote: "Entrada do lote", criacao_do_lote: "Criação do lote (estimativa)", informada: "Informada" } satisfies Record<OrigemDaData, string>,
+  motivo_saida_ocupacao: { transferencia: "Transferência", encerramento_do_lote: "Encerramento do lote", correcao: "Correção" } satisfies Record<MotivoDeSaida, string>,
+  /** O rótulo do tipo é do catálogo de objetos do mapa — não cópia. */
+  tipo_objeto_mapa: Object.fromEntries(TIPOS_DE_OBJETO_DE_MAPA.map((t) => [t.tipo, t.rotulo])) as Record<string, string>,
+  forma_objeto_mapa: { ponto: "Ponto", linha: "Linha" } satisfies Record<FormaDeObjeto, string>,
+  unidade_capacidade_objeto_mapa: { m: "metros", t: "toneladas", kg: "quilos", sc: "sacas" } satisfies Record<UnidadeDeCapacidade, string>,
+  /** Situação CALCULADA da lotação da área (não é coluna do banco); sem referência, a tela diz "sem referência". */
+  situacao_lotacao: { dentro: "Dentro da capacidade", proximo: "Próximo da capacidade", acima: "Acima da capacidade" } satisfies Record<SituacaoDeLotacao, string>
 } as const satisfies Record<string, Record<string, string>>;
 
 export type EnumDomain = keyof typeof ENUM_LABELS;

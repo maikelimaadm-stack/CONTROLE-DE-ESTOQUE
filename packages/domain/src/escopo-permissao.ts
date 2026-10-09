@@ -160,6 +160,10 @@ const RECURSOS_POR_MODULO: Readonly<Record<string, readonly string[]>> = {
     // SAT-01 (decisão 293): a análise satelital é DA ÁREA (erp.areas, recurso batch_area) e responde pelo mesmo
     // escopo dela — um módulo próprio abriria um segundo caminho até a área, com escopo capaz de divergir.
     "analises_satelitais",
+    // MAPA-MANEJO-01: os objetos do mapa (erp.objetos_de_mapa, cocho e depósito a pasto) servem o manejo do gado
+    // na área e respondem pelo escopo dela (pecuária). NÃO o módulo `mapa`, que governa só o cadastro
+    // `mapa_areas`: pôr o objeto lá abriria um segundo escopo sobre a mesma área, capaz de divergir do primeiro.
+    "map_objects",
     "animals_management", "inventoried_animals", "livestock_plannings", "herd_evolution",
     "animal_batch_transfer", "batch_grouping", "batch_module_area_transfer", "batch_farm_transfer",
     "animal_farm_transfer", "animal_sales", "animal_purchases", "animal_births", "animal_deaths",
