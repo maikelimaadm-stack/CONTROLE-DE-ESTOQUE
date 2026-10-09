@@ -5,6 +5,8 @@ import { MOTIVOS_QUALIDADE_ANALISE_SATELITAL, SITUACOES_ANALISE_SATELITAL } from
 import { ROTULOS_CLASSE_CONDICAO_PASTO } from "./condicao-pasto.js";
 import type { MotivoDeSaida, OrigemDaData, SituacaoDeLotacao } from "./ocupacao-de-area.js";
 import { TIPOS_DE_OBJETO_DE_MAPA, type FormaDeObjeto, type UnidadeDeCapacidade } from "./objetos-de-mapa.js";
+import type { TipoDeEntidadeDeIcone } from "./configuracao-de-icone.js";
+import type { FaixaDeLotacaoUaHa, ModoDeColoracao, SituacaoDoPasto } from "./cores-do-mapa.js";
 
 /**
  * Rótulos PT-BR dos valores técnicos (enums) que chegam do banco/API e são exibidos ao usuário.
@@ -119,7 +121,21 @@ export const ENUM_LABELS = {
   forma_objeto_mapa: { ponto: "Ponto", linha: "Linha" } satisfies Record<FormaDeObjeto, string>,
   unidade_capacidade_objeto_mapa: { m: "metros", t: "toneladas", kg: "quilos", sc: "sacas" } satisfies Record<UnidadeDeCapacidade, string>,
   /** Situação CALCULADA da lotação da área (não é coluna do banco); sem referência, a tela diz "sem referência". */
-  situacao_lotacao: { dentro: "Dentro da capacidade", proximo: "Próximo da capacidade", acima: "Acima da capacidade" } satisfies Record<SituacaoDeLotacao, string>
+  situacao_lotacao: { dentro: "Dentro da capacidade", proximo: "Próximo da capacidade", acima: "Acima da capacidade" } satisfies Record<SituacaoDeLotacao, string>,
+  // MAPA-MANEJO-02: a coloração do mapa operacional (cores-do-mapa.ts), a configuração de ícone (configuracao-de-icone.ts)
+  // e o identificador do lote (identificador-do-lote.ts). As listas são dos donos; os rótulos moram SÓ aqui — as
+  // funções de faixa os leem daqui (`enumLabel`), nunca redigitam. O `satisfies` recusa valor sem rótulo.
+  /** Modo de coloração do mapa (parâmetro `coloracao` de `/mapa/operacional`). */
+  modo_de_coloracao: { padrao: "Padrão (cor da área)", uso_da_area: "Uso da área", lotacao_ua_ha: "Lotação (UA/ha)", situacao_pasto: "Situação do pasto", categoria: "Categoria animal predominante" } satisfies Record<ModoDeColoracao, string>,
+  /** Faixa de lotação em UA/ha (calculada; não é coluna do banco). Sem área útil não há lotação a mostrar. */
+  faixa_de_lotacao_ua_ha: { sublotacao: "Sublotação", moderada: "Lotação moderada", ideal: "Lotação ideal", alta: "Lotação alta", superlotacao: "Superlotação", sem_area_util: "Sem área útil cadastrada" } satisfies Record<FaixaDeLotacaoUaHa, string>,
+  /** Situação do pasto pelos dias de ocupação ou de descanso (calculada). */
+  situacao_do_pasto: { normal: "Ocupação normal", atencao: "Ocupação em atenção", critico: "Ocupação crítica", em_descanso: "Em descanso", sem_registro: "Sem registro de ocupação" } satisfies Record<SituacaoDoPasto, string>,
+  /** Modo categoria: a chave das outras faixas é a própria categoria (rótulo = o nome cadastrado); só a ausência tem rótulo aqui. */
+  faixa_de_categoria: { sem_rebanho: "Sem rebanho" },
+  tipo_entidade_icone: { lote: "Lote", objeto_de_mapa: "Objeto do mapa", area: "Área" } satisfies Record<TipoDeEntidadeDeIcone, string>,
+  /** O marcador da área cujos lotes têm identificadores diferentes. */
+  identificador_do_lote: { misto: "Misto" }
 } as const satisfies Record<string, Record<string, string>>;
 
 export type EnumDomain = keyof typeof ENUM_LABELS;

@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 224 |
-| Tabelas com `organization_id` (escopo de organização) | 167 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 76 |
+| Tabelas no schema `erp` | 225 |
+| Tabelas com `organization_id` (escopo de organização) | 168 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 77 |
 | Entidades curadas neste dicionário | 61 |
 | Entidades com ID Global | 25 |
 | Entidades com Tipo de Operação | 19 |
 | Tipos de Operação referenciados | 32 |
-| Cobertura curada | 27.2% |
+| Cobertura curada | 27.1% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -89,6 +89,7 @@ Entidade operacional/jurídica dos registros: é a EMPRESA do contrato multiempr
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
+| `fuso_horario` |  | text | sim |  |  |  |  |
 
 ### ERP-PLATAFORMA-USUARIO — Usuário
 
@@ -2208,7 +2209,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.bank_accounts` | 21 | sim | — | sim |
 | `erp.bank_movement_apportionments` | 8 | não | — | não |
 | `erp.batch_categories` | 2 | não | — | não |
-| `erp.batches` | 21 | sim | `empresa_id` | sim |
+| `erp.batches` | 24 | sim | `empresa_id` | sim |
 | `erp.bonuses` | 11 | sim | — | sim |
 | `erp.breeding_protocols` | 7 | sim | — | não |
 | `erp.breeding_season_batches` | 2 | não | — | não |
@@ -2220,6 +2221,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.chart_accounts` | 12 | sim | — | sim |
 | `erp.client_profiles` | 9 | não | — | não |
 | `erp.condicoes_pagamento` | 16 | sim | — | sim |
+| `erp.configuracoes_de_icone` | 12 | sim | `empresa_id` | sim |
 | `erp.contract_items` | 6 | não | — | não |
 | `erp.contracts` | 18 | sim | `empresa_id` | sim |
 | `erp.cost_centers` | 11 | sim | — | sim |

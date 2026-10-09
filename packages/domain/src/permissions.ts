@@ -171,6 +171,11 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   // desenhado —, como `analises_satelitais` (decisão 294): grupo é rótulo de tela; o ESCOPO de empresa é o
   // módulo pecuária (escopo-permissao.ts), o mesmo da área, nunca o módulo neutro `mapa`.
   R("map_objects", "Objetos do mapa", "Mapa geral"),
+  // MAPA-MANEJO-02: a configuração de ícone do mapa (erp.configuracoes_de_icone: qual ícone vale para cada categoria de
+  // animal, e para o lote misto). Capacidade própria, separada de `map_objects`: quem desenha objeto não ganha, por
+  // isso, o poder de trocar o ícone que toda a empresa vê, nem o contrário. Grupo "Mapa geral" na tela de perfis (como
+  // `map_objects`); o ESCOPO de empresa é o módulo pecuária (escopo-permissao.ts), nunca o módulo neutro `mapa`.
+  R("icon_config", "Ícones do mapa", "Mapa geral"),
   R("budgets", "Orçamentos", "Operacional > Vendas"),
   R("orders", "Pedidos", "Operacional > Vendas"),
   // TOP-CONFIG-08 (decisão 277): `approve` é a aprovação da TOP no formato 4 — decidir se o documento aberto pode
