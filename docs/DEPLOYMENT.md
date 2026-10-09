@@ -4760,6 +4760,61 @@ Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registro
 identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.
 
 
+## MAPA-MANEJO-01 — fundação operacional do Mapa de Manejo (0061, decisão 305)
+
+Faixa **F1**, PR #118. **Uma migration: `0061_ocupacao_de_area_e_objetos_de_mapa.sql`** (pre-deploy pelo pipeline; trava
+(2026,95), `lock_timeout` 2 s, pré e pós-condições nomeadas `MAPA-MANEJO-01: …`, a primeira é "já aplicada"). Sem variável
+nova. **Permissão nova `map_objects`** (view/create/edit/delete, módulo pecuária): chega a `erp.permissions` pelo
+`seedPermissions` do deploy e vai para o perfil Administrador; os outros perfis precisam de concessão explícita. **Nada
+visual**: nenhuma mudança em `apps/web` — a tela é outra fatia.
+
+**O que a 0061 cria e muda.**
+- `erp.ocupacoes_de_area` (lote × área × período, com a origem da data) e `erp.objetos_de_mapa` (cocho, depósito a pasto),
+  RLS `tenant_e_empresa` forçada (módulo pecuária), sem DELETE para o `erp_app`, auditadas por gatilho.
+- Gatilho `trg_batches_fechar_ocupacao` em `erp.batches`: toda troca de área, encerramento, exclusão, reativação ou criação
+  de lote com área mantém a ocupação. **Lote ativo** = status `active`, sem exclusão e sem `exit_date`.
+- `area_id` NOVA (nula) em `erp.animal_handlings` e `erp.weighings` + gatilho BEFORE INSERT que a preenche pela ocupação do
+  lote NA DATA do documento.
+- `revoke delete, truncate on erp.areas from erp_app` (5.3); a unique de código de área só é conferida (5.1).
+
+**Passos destrutivos: nenhum.** Nenhum DROP, nenhum DELETE, nenhum TRUNCATE. O backfill da ocupação é só INSERT na tabela nova.
+O ÚNICO UPDATE em tabela existente é o backfill de `area_id` em manejo e pesagem, e ele só escreve na coluna nova (que nasce
+nula na mesma transação). O REVOKE em `erp.areas` retira um privilégio sem uso (a exclusão de área é lógica).
+
+**Produção — conferido SÓ COM LEITURA em 09/10/2026** (SELECT pelo conector do projeto Supabase; nada foi escrito):
+ledger com **60** migrations, a última `0060_satelite_reserva_area_viva.sql`; nenhum objeto da 0061 existe; a trava
+(2026,95) livre; o papel do pre-deploy (`erp_migrator`) tem BYPASSRLS e é dono de `erp.batches`; `uq_batches_tenant`,
+`areas_org_empresa_key` e o módulo `pecuaria` presentes; `areas_empresa_id_code_key UNIQUE (empresa_id, code)` presente com 0
+duplicatas (5.1 só confere); o `erp_app` ainda tem DELETE em `erp.areas` (5.3 tem efeito). Acervo: **1 lote** com área,
+ativo e sem saída → o backfill insere **1 ocupação** (origem `criacao_do_lote`: sem movimento e sem entrada); 0 lotes
+`active` com saída; 244 áreas; 0 movimentos, 0 manejos, 0 pesagens e 0 cochos → o UPDATE da camada 2 não toca nenhuma linha.
+Tamanhos: `areas` 808 kB, `batches` 80 kB, `animal_handlings` e `weighings` 24 kB — as travas (ACCESS EXCLUSIVE breve do
+ADD COLUMN; SHARE ROW EXCLUSIVE das FKs em `areas`, `batches`, `empresas`, `organizations`, `troughs`,
+`animal_movements`; SHARE dos índices) duram milissegundos; cada pedido espera no máximo 2 s e, sem a trava, a 0061 aborta
+inteira, sem nada aplicado. Veredito: **APLICA_LIMPO** pela leitura; a aplicação real é a do pipeline.
+
+**Ordem:** BANCO (0061, pre-deploy) → API. **API anterior × banco na 0061**: a transferência de lote continua funcionando (o
+gatilho abre e fecha a ocupação com a data de hoje, sem ligar o movimento); `GET /livestock/weighings` e `/handlings`
+passam a trazer `area_id` (aditivo, via `w.*`/`h.*`). **API nova × banco sem a 0061**: não acontece no pipeline; se
+acontecesse, a transferência e as rotas novas responderiam erro de tabela ausente.
+
+**API — rotas novas** (prefixo `/api`): `GET/POST /mapa/objetos`, `GET/PATCH/DELETE /mapa/objetos/:id` (`map_objects.*`;
+exclusão lógica); `GET /mapa/areas/:id/ocupacao`, `GET /mapa/areas/:id/ocupacao/historico` e `GET /mapa/operacional`
+(`batch_area.view`). A transferência `POST /livestock/transfers/batch-to-module-area` mantém corpo, resposta e permissão.
+
+**Impacto em dados reais:** nada é apagado nem corrigido (decisões 240/247). Uma ocupação nova em produção, com data
+estimada pela criação do lote — a coluna `origem_da_data` diz isso, para ninguém ler os dias dela como medidos.
+
+**Roteiro do Maike em produção (depois do deploy; leitura):**
+1. `select name from public.erp_migrations order by name desc limit 1` → `0061_ocupacao_de_area_e_objetos_de_mapa.sql`.
+2. `select origem_da_data, count(*) from erp.ocupacoes_de_area group by 1` → `criacao_do_lote | 1`.
+3. Mover o lote de área pela tela de transferência e conferir que a ocupação anterior fecha e a nova abre com a data do
+   movimento: **PENDING** (é escrita; só com a decisão do Maike).
+
+**Caminho de volta.** API: redeploy da versão anterior (as tabelas e colunas ficam, sem uso; o gatilho continua mantendo a
+ocupação). Banco: forward-only; desfazer exige migration nova, por decisão humana.
+
+
 ## SAT-06 — imagem do NDVI por pixel, recortada no polígono (0055, decisão 297)
 
 Faixa **F1**. **Uma migration: `0055_satelite_rasters.sql`** (pre-deploy pelo pipeline; trava (2026,89), `lock_timeout` 2 s,
