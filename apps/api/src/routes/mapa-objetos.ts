@@ -102,9 +102,15 @@ type CorpoEditar = z.infer<typeof editarSchema>;
 
 /** Página até 100 mil: sem teto, `?page=1e308` passaria pelo `int()` e o OFFSET estouraria no banco (500). */
 const PAGINA_MAXIMA = 100_000;
+/**
+ * Inteiro positivo na forma CANÔNICA (só dígitos, sem zero à esquerda): `1e1`, `0x2`, ` 3` ou `2.0` são recusados (422),
+ * nunca traduzidos — o mesmo critério das rotas de ocupação.
+ */
+const inteiroPositivo = (maximo: number) =>
+  z.string().regex(/^[1-9]\d{0,8}$/, "Número inteiro inválido").transform(Number).pipe(z.number().int().min(1).max(maximo));
 const listaSchema = z.object({
-  page: z.coerce.number().int().min(1).max(PAGINA_MAXIMA).default(1),
-  pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
+  page: inteiroPositivo(PAGINA_MAXIMA).default(1),
+  pageSize: inteiroPositivo(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE),
   area_id: uuid.optional(),
   tipo: tipo.optional(),
 }).strict();

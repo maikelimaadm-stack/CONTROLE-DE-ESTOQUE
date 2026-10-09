@@ -340,7 +340,10 @@ export default async function livestockRoutes(app: FastifyInstance) {
     const n = (await ctx.tx.query<{ n: string }>("select count(*) n from erp.animals where batch_id=$1 and status='active'", [d.batch_id])).rows[0]!.n;
     const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,batch_id,destination_module_id,destination_area_id,quantity,note,created_by) values ($1,$2,$3,'module_area_transfer',$4,$5,$6,$7,$8,$9,$10) returning id", [ctx.orgId, d.empresa_id, code, d.movement_date, d.batch_id, d.grazing_module_id ?? null, d.area_id ?? null, Number(n), d.note ?? null, ctx.user.id]);
     await atribuirIdGlobalSeAplicavel(ctx, "animal_movements", r.rows[0]!.id);
-    const movimentoId = r.rows[0]!.id; const areaDestino = d.area_id ?? null;
+    const movimentoId = r.rows[0]!.id;
+    // O uuid volta do banco em minúsculas; o corpo aceita maiúsculas (contrato de hoje). Compara na forma do banco: a mesma
+    // área em maiúsculas não é troca de área (o gatilho também não a vê como troca).
+    const areaDestino = d.area_id ? d.area_id.toLowerCase() : null;
     if ((anterior?.area_id ?? null) !== areaDestino) {
       if (anterior) {
         if (d.movement_date < anterior.data_inicio) {

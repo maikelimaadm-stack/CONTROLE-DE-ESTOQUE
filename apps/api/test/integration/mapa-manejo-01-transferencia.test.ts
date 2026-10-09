@@ -180,6 +180,18 @@ describe("MM-7b — fecha a anterior e abre a nova, com os dois movimentos ligad
     expect(await totalDeOcupacoes()).toBe(total0 + 2);
     expect((await admin.query("select 1 from erp.ocupacoes_de_area where movimento_entrada_id=$1 or movimento_saida_id=$1", [m3])).rowCount).toBe(0);
 
+    // a MESMA área em maiúsculas (o corpo aceita) também não é troca: a aberta continua aberta, nada é ligado ao movimento
+    expect(a3).toBe(a3.toLowerCase());
+    const r3b = await transferir(corpo(l, a3.toUpperCase(), D.hoje, { note: "mesma área em maiúsculas" }));
+    expect(r3b.statusCode, r3b.body).toBe(201);
+    const m3b = (r3b.json() as { id: string }).id;
+    const o3b = await ocupacoes(l);
+    expect(o3b).toEqual(o2);
+    expect(o3b.filter((x) => x.data_fim === null)).toHaveLength(1);
+    expect(await totalDeOcupacoes()).toBe(total0 + 2);
+    expect((await admin.query("select 1 from erp.ocupacoes_de_area where movimento_entrada_id=$1 or movimento_saida_id=$1", [m3b])).rowCount).toBe(0);
+    expect((await admin.query<{ a: string }>("select area_id::text a from erp.batches where id=$1", [l])).rows[0]!.a).toBe(a3);
+
     // área → nula: fecha a aberta com a saída ligada e a data da transferência; nenhuma nova
     const r4 = await transferir(corpo(l, null, D.hoje));
     expect(r4.statusCode, r4.body).toBe(201);

@@ -162,6 +162,13 @@ describe("MM-9a — criar, listar, detalhe, editar e exclusão lógica", () => {
     // a consulta é estrita: filtro desconhecido e tipo fora do catálogo → 422
     expect((await pag("cor=azul")).statusCode).toBe(422);
     expect((await pag("tipo=cerca")).statusCode).toBe(422);
+    // paginação fora da forma canônica é recusada, nunca traduzida (1e1 → 10, 0x2 → 2, " 3" → 3, "2.0" → 2)
+    for (const qs of ["page=1e1", "pageSize=0x2", "page=%203", "page=2.0", "page=01", "page=0", "pageSize=1001", "page=100001", "page=", "page=-1"]) {
+      const r = await pag(`area_id=${areaE1Pag}&${qs}`);
+      expect([qs, r.statusCode]).toEqual([qs, 422]);
+    }
+    // a forma canônica continua aceita no limite
+    expect([(await pag(`area_id=${areaE1Pag}&pageSize=1000&page=100000`)).statusCode]).toEqual([200]);
   });
 
   it("detalhe, edição parcial e exclusão lógica (a linha fica no banco com deleted_at)", async () => {
