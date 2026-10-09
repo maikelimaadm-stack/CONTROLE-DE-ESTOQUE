@@ -14,6 +14,7 @@ import { atribuirIdGlobal, atribuirIdGlobalSeAplicavel, paginaComIdGlobal } from
 import { joinDaTopDoModulo, tiposDeOperacaoDoModulo, topDoLancamentoDoModulo } from "../lib/top-do-modulo.js";
 import { exigirEquipamentos, formaCanonica } from "../lib/referencias-do-modulo.js";
 import { financeiroDoMovimentoDeAnimais } from "../lib/financeiro-pecuaria.js";
+import { rebanhoDosLotes } from "../lib/rebanho-dos-lotes.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -309,13 +310,61 @@ export default async function livestockRoutes(app: FastifyInstance) {
     for (const s of d.source_batch_ids) { if (s === d.destination_batch_id) continue; const u = await ctx.tx.query("update erp.animals set batch_id=$2 where batch_id=$1 and organization_id=$3 and status='active' returning id", [s, d.destination_batch_id, ctx.orgId]); n += u.rowCount ?? 0; await ctx.tx.query("update erp.herd_lots set batch_id=$2 where batch_id=$1", [s, d.destination_batch_id]); if (d.close_sources) await ctx.tx.query("update erp.batches set status='closed', exit_date=$2 where id=$1", [s, d.movement_date]); }
     await ctx.tx.query("update erp.animal_movements set quantity=$2 where id=$1", [r.rows[0]!.id, n]); return { id: r.rows[0]!.id, code, moved: n };
   })));
+  /**
+   * TRANSFERÊNCIA DE LOTE → MÓDULO / ÁREA / CURRAL. O contrato é o de antes, intocado: o mesmo corpo, `{ id, code }`
+   * com 201, a permissão `batch_module_area_transfer.create`, 403 sem ela e 404 "Lote" quando o lote não é achado.
+   *
+   * MAPA-MANEJO-01 (decisão 305) — A OCUPAÇÃO DA ÁREA, na MESMA transação. O gatilho `trg_batches_fechar_ocupacao`
+   * (erp.batches) garante o registro: quando a área do lote muda, fecha a ocupação aberta (data_fim = hoje, motivo
+   * `transferencia`) e abre a nova (data_inicio = hoje, origem `movimento`). A API acrescenta o que só ela sabe, sem
+   * consulta por animal:
+   *   · a anterior: `data_fim` = data da transferência e `movimento_saida_id` = este movimento. Data ANTERIOR ao
+   *     início dela é 422 em `movement_date`, e a transação inteira volta (lote, movimento, ocupações): período
+   *     invertido nunca é gravado;
+   *   · a nova: `data_inicio` = data da transferência, `movimento_entrada_id` = este movimento, cabeças e UA na
+   *     entrada (`rebanhoDosLotes`: animais ativos + rebanho por contagem, UA com o peso mandando).
+   * Área igual (só módulo, curral ou observação): nenhuma ocupação é tocada. O lote é travado ANTES de ler a aberta:
+   * duas transferências simultâneas do mesmo lote leem, cada uma, a ocupação que a outra deixou. Cada UPDATE de
+   * ocupação confere o ROW COUNT (a linha lida e não gravada é erro, não sucesso sem efeito).
+   * Ocupação que o usuário NÃO enxerga (área de empresa fora do escopo do módulo, ou fora da empresa selecionada) não
+   * é lida nem ajustada: fica com as datas do gatilho, sem os movimentos ligados.
+   */
   app.post("/livestock/transfers/batch-to-module-area", async (req, reply) => reply.status(201).send(await runService(app, req, "batch_module_area_transfer.create", async (ctx) => {
     const d = z.object({ empresa_id: uuid, movement_date: date, batch_id: uuid, grazing_module_id: uuid.optional().nullable(), area_id: uuid.optional().nullable(), corral_id: uuid.optional().nullable(), note: z.string().optional().nullable() }).parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id);
     const code = await animalCode(ctx, "batch_area_transfer");
+    await ctx.tx.query("select 1 from erp.batches where id=$1 and organization_id=$2 for update", [d.batch_id, ctx.orgId]);
+    const anterior = (await consultaEscopada<{ id: string; area_id: string; data_inicio: string }>(ctx,
+      "select o.id, o.area_id, o.data_inicio::text as data_inicio from erp.ocupacoes_de_area o where o.organization_id=$1 and o.batch_id=$2 and o.data_fim is null and o.deleted_at is null and {{escopo:o.empresa_id}} for update",
+      [ctx.orgId, d.batch_id])).rows[0];
     const u = await ctx.tx.query("update erp.batches set grazing_module_id=$2, area_id=$3, corral_id=$4, updated_at=now() where id=$1 and organization_id=$5 returning id", [d.batch_id, d.grazing_module_id ?? null, d.area_id ?? null, d.corral_id ?? null, ctx.orgId]); if (!u.rowCount) throw notFound("Lote");
     const n = (await ctx.tx.query<{ n: string }>("select count(*) n from erp.animals where batch_id=$1 and status='active'", [d.batch_id])).rows[0]!.n;
     const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,batch_id,destination_module_id,destination_area_id,quantity,note,created_by) values ($1,$2,$3,'module_area_transfer',$4,$5,$6,$7,$8,$9,$10) returning id", [ctx.orgId, d.empresa_id, code, d.movement_date, d.batch_id, d.grazing_module_id ?? null, d.area_id ?? null, Number(n), d.note ?? null, ctx.user.id]);
     await atribuirIdGlobalSeAplicavel(ctx, "animal_movements", r.rows[0]!.id);
+    const movimentoId = r.rows[0]!.id;
+    // O uuid volta do banco em minúsculas; o corpo aceita maiúsculas (contrato de hoje). Compara na forma do banco: a mesma
+    // área em maiúsculas não é troca de área (o gatilho também não a vê como troca).
+    const areaDestino = d.area_id ? d.area_id.toLowerCase() : null;
+    if ((anterior?.area_id ?? null) !== areaDestino) {
+      if (anterior) {
+        if (d.movement_date < anterior.data_inicio) {
+          const msg = `A data da transferência (${d.movement_date}) é anterior ao início da ocupação atual do lote na área (${anterior.data_inicio}).`;
+          throw validation(`movement_date: ${msg}`, [{ path: "movement_date", message: msg }]);
+        }
+        const f = await ctx.tx.query("update erp.ocupacoes_de_area set data_fim=$3, movimento_saida_id=$4 where id=$1 and organization_id=$2", [anterior.id, ctx.orgId, d.movement_date, movimentoId]);
+        if (f.rowCount !== 1) throw new Error("transferência de lote: a ocupação anterior lida não foi fechada");
+      }
+      if (areaDestino) {
+        const nova = (await consultaEscopada<{ id: string }>(ctx,
+          "select o.id from erp.ocupacoes_de_area o where o.organization_id=$1 and o.batch_id=$2 and o.area_id=$3 and o.data_fim is null and o.deleted_at is null and {{escopo:o.empresa_id}}",
+          [ctx.orgId, d.batch_id, areaDestino])).rows[0];
+        if (nova) {
+          const rebanho = (await rebanhoDosLotes(ctx, [d.batch_id])).get(d.batch_id);
+          if (!rebanho) throw new Error("transferência de lote: rebanho do lote não calculado");
+          const a = await ctx.tx.query("update erp.ocupacoes_de_area set data_inicio=$3, movimento_entrada_id=$4, cabecas_na_entrada=$5, ua_na_entrada=$6 where id=$1 and organization_id=$2", [nova.id, ctx.orgId, d.movement_date, movimentoId, rebanho.cabecas, rebanho.ua]);
+          if (a.rowCount !== 1) throw new Error("transferência de lote: a ocupação nova lida não foi ajustada");
+        }
+      }
+    }
     return { id: r.rows[0]!.id, code };
   })));
   /**

@@ -165,6 +165,12 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   // MAPA-GERAL (decisão 294): o grupo das duas permissões na tela de perfis passa a "Mapa geral" (rótulo de tela; a
   // chave e o módulo de escopo não mudam).
   R("analises_satelitais", "Análises por satélite", "Mapa geral", ["view", "create"]),
+  // MAPA-MANEJO-01: os objetos desenhados no mapa (erp.objetos_de_mapa: cocho, depósito a pasto). Capacidade
+  // própria, separada de `batch_area` e de `mapa_areas`: quem cadastra área não ganha, por isso, o poder de
+  // desenhar e apagar objetos, nem o contrário. O grupo na tela de perfis é "Mapa geral" — onde o objeto é
+  // desenhado —, como `analises_satelitais` (decisão 294): grupo é rótulo de tela; o ESCOPO de empresa é o
+  // módulo pecuária (escopo-permissao.ts), o mesmo da área, nunca o módulo neutro `mapa`.
+  R("map_objects", "Objetos do mapa", "Mapa geral"),
   R("budgets", "Orçamentos", "Operacional > Vendas"),
   R("orders", "Pedidos", "Operacional > Vendas"),
   // TOP-CONFIG-08 (decisão 277): `approve` é a aprovação da TOP no formato 4 — decidir se o documento aberto pode

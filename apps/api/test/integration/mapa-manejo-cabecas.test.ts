@@ -6,8 +6,8 @@ import { harness, TEST_URL, type Harness } from "./setup.js";
  * Mapa de Manejo — cabeças por área: animais identificados + rebanho por contagem nos lotes da área.
  */
 describe("Mapa de Manejo — cabeças por área", () => {
-  let h: Harness | undefined;
-  let admin: pg.Client | undefined;
+  let h: Harness;
+  let admin: pg.Client;
 
   beforeAll(async () => {
     h = await harness();

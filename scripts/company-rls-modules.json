@@ -41,6 +41,8 @@
   "maintenances": "frota_ativos",
   "mapa_areas": "mapa",
   "notas_fiscais_xml": "fiscal",
+  "objetos_de_mapa": "pecuaria",
+  "ocupacoes_de_area": "pecuaria",
   "opening_balances": "estoque",
   "processings": "pecuaria",
   "purchase_requests": "compras",

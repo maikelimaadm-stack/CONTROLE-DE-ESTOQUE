@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 222 |
-| Tabelas com `organization_id` (escopo de organização) | 165 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 74 |
+| Tabelas no schema `erp` | 224 |
+| Tabelas com `organization_id` (escopo de organização) | 167 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 76 |
 | Entidades curadas neste dicionário | 61 |
 | Entidades com ID Global | 25 |
 | Entidades com Tipo de Operação | 19 |
 | Tipos de Operação referenciados | 32 |
-| Cobertura curada | 27.5% |
+| Cobertura curada | 27.2% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -1923,6 +1923,7 @@ Manejo sanitário, nutricional ou reprodutivo aplicado a animais/lotes.
 | `empresa_id` |  | uuid | sim |  |  |  |  |
 | `tipo_operacao_id` |  | uuid | não |  |  |  |  |
 | `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
+| `area_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-PECUARIA-PESAGEM — Pesagem
 
@@ -1953,6 +1954,7 @@ Evento de pesagem de animais, base de desempenho e ganho de peso.
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `area_id` |  | uuid | não |  |  |  |  |
 
 ### ERP-PECUARIA-BATELADA — Batelada
 
@@ -2276,6 +2278,8 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.nature_operations` | 21 | sim | — | sim |
 | `erp.notificacao_leituras` | 4 | sim | — | não |
 | `erp.notifications` | 17 | sim | `empresa_id` | não |
+| `erp.objetos_de_mapa` | 17 | sim | `empresa_id` | sim |
+| `erp.ocupacoes_de_area` | 17 | sim | `empresa_id` | sim |
 | `erp.ofx_transactions` | 10 | sim | — | não |
 | `erp.opening_balances` | 15 | sim | `empresa_id` | não |
 | `erp.operations` | 11 | sim | — | sim |

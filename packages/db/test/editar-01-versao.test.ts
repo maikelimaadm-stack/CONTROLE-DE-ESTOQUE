@@ -388,7 +388,7 @@ describe("0039 — sobre o acervo de documentos de venda, como o runner aplica",
     const ledger = (await db.query<{ n: number; ultima: string }>("select count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
     expect(ledger).toEqual({ n: 39, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
-    expect(noDisco.length, "60 migrations no repositório (a 0040 ESTOQUE-01, a 0041 TOP-CONFIG-08, OPERACOES-01 0042–0048, MAPA-01 0049, CADASTRO-AREAS-01 0050, CADASTRO-AREAS-02 0051, SAT-01 0052, SAT-02 0053, SAT-03 0054, SAT-06 0055 e HOTFIX-SAT-WORKER-01 0060 vêm depois)").toBe(60);
+    expect(noDisco.length, "61 migrations no repositório (a 0040 ESTOQUE-01, a 0041 TOP-CONFIG-08, OPERACOES-01 0042–0048, MAPA-01 0049, CADASTRO-AREAS-01 0050, CADASTRO-AREAS-02 0051, SAT-01 0052, SAT-02 0053, SAT-03 0054, SAT-06 0055, HOTFIX-SAT-WORKER-01 0060 e MAPA-MANEJO-01 0061 vêm depois)").toBe(61);
     expect(noDisco[38]).toBe(ALVO);
     // ADD COLUMN com default constante é só metadado: o arquivo físico é o mesmo, e o 0 vem do catálogo.
     expect((await db.query<{ f: number }>("select pg_relation_filenode('erp.sales_documents')::int f")).rows[0]!.f, "a tabela não foi regravada").toBe(filenodeAntes);

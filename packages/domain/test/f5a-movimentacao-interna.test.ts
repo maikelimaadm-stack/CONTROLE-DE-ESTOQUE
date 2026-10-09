@@ -651,7 +651,9 @@ describe("MI-10 a paridade do domínio com os CHECKs do banco", () => {
   });
 
   it("MI-10 o motivo da saída no documento de estoque: o CHECK tem os 13 motivos do domínio, na mesma ordem", () => {
-    const r = listaDaUltimaMigration(/motivo_saida\s+in\s*\(([^)]*)\)/gi);
+    // Amarrado ao CHECK NOMEADO do documento de estoque: outra tabela também tem coluna motivo_saida
+    // (erp.ocupacoes_de_area, 0061), e o padrão solto pegaria a lista dela.
+    const r = listaDaUltimaMigration(/chk_documentos_estoque_motivo_saida\s+check\s*\(\(\s*motivo_saida\s+is\s+null\s+or\s+motivo_saida\s+in\s*\(([^)]*)\)/gi);
     expect(r?.arquivo && r.arquivo >= "0043", `a premissa — o CHECK nasce na 0043 (${r?.arquivo})`).toBe(true);
     expect(r?.valores).toEqual([...MOTIVOS_SAIDA_ESTOQUE]);
   });
