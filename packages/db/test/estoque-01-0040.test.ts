@@ -303,7 +303,7 @@ describe("0040 — sobre o banco até a 0039, como o runner aplica", () => {
     const ledger = (await db.query<{ n: number; ultima: string }>("select count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
     expect(ledger).toEqual({ n: 40, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
-    expect(noDisco.length, "61 migrations no repositório (0001..0061; a 0041 TOP-CONFIG-08, OPERACOES-01 0042–0048, MAPA-01 0049, CADASTRO-AREAS-01 0050, CADASTRO-AREAS-02 0051, SAT-01 0052, SAT-02 0053, SAT-03 0054, SAT-06 0055, HOTFIX-SAT-WORKER-01 0060 e MAPA-MANEJO-01 0061 vêm depois)").toBe(61);
+    expect(noDisco.length, "62 migrations no repositório (0001..0062; a 0041 TOP-CONFIG-08, OPERACOES-01 0042–0048, MAPA-01 0049, CADASTRO-AREAS-01 0050, CADASTRO-AREAS-02 0051, SAT-01 0052, SAT-02 0053, SAT-03 0054, SAT-06 0055, HOTFIX-SAT-WORKER-01 0060, MAPA-MANEJO-01 0061 e MAPA-MANEJO-02 0062 vêm depois)").toBe(62);
     expect(noDisco[39]).toBe(ALVO);
     expect(await tabelasExistem()).toEqual({ a: "erp.documentos_estoque", b: "erp.documentos_estoque_itens" });
     // A trava é de transação: depois do commit, outra sessão a obtém.
