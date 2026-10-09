@@ -53,6 +53,11 @@ const TABELAS_DO_RECURSO: Map<string, Set<string>> = (() => {
     "erp.satelite_rasters", "erp.satelite_raster_arquivos", "erp.analises_satelitais_ext",
     "erp.satelite_mapas_condicao", "erp.satelite_mapas_condicao_arquivos"
   ]) add("analises_satelitais", t);
+  // MAPA-MANEJO-01 (decisão 305): o objeto do mapa é o recurso `map_objects` (módulo pecuária); a ocupação de área é
+  // lida por `batch_area.view` (a mesma da área e do lote) e escrita pelo gatilho de erp.batches e pela transferência
+  // de lote. Cobertura, não exceção.
+  add("map_objects", "erp.objetos_de_mapa");
+  add("batch_area", "erp.ocupacoes_de_area");
   return m;
 })();
 

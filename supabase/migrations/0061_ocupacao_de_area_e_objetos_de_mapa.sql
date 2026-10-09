@@ -363,11 +363,14 @@ create trigger trg_objetos_de_mapa_cocho_conferir
 -- ---------- 6) o gatilho que protege a invariante: erp.batches → erp.ocupacoes_de_area ----------
 -- POR QUE NO GATILHO: qualquer caminho que mova o lote — a rota de hoje, uma futura, um UPDATE manual —
 -- mantém a história íntegra. O serviço enriquece; o gatilho garante que o registro exista.
+-- LOTE ATIVO, em TODA esta migration (gatilho, backfill e pós-condições): status 'active', deleted_at nulo e
+-- exit_date nula. Uma definição só: exit_date preenchida É encerramento (a regra do gatilho), então o backfill
+-- e a reabertura também a respeitam — senão o backfill abriria ocupação que o próprio gatilho trata como fechada.
 --   · área mudou, lote encerrado (status 'closed' ou exit_date preenchida) ou excluído → fecha a aberta:
 --     data_fim = greatest(data_inicio, current_date); motivo transferencia | encerramento_do_lote | correcao.
 --   · área mudou para valor não nulo, com o lote ativo → abre a nova: data_inicio = current_date,
 --     origem 'movimento' (a API, na mesma transação, liga o movimento e ajusta a data do movimento).
---   · lote reativado (fechado/excluído → ativo) com área → abre a nova, origem 'movimento'.
+--   · lote reativado (fechado/excluído/com saída → ativo) com área → abre a nova, origem 'movimento'.
 --   · só curral ou módulo mudou → NADA (a ocupação é de ÁREA).
 --   · lote CRIADO já com área e ativo → abre: data_inicio = entry_date (entrada_do_lote) ou o dia
 --     (criacao_do_lote) — a mesma regra do backfill, sem movimento.
@@ -383,7 +386,7 @@ declare
   v_empresa_da_area uuid;
 begin
   if tg_op = 'INSERT' then
-    if new.area_id is null or new.status <> 'active' or new.deleted_at is not null then
+    if new.area_id is null or new.status <> 'active' or new.deleted_at is not null or new.exit_date is not null then
       return null;
     end if;
     select a.empresa_id into v_empresa_da_area
@@ -403,8 +406,8 @@ begin
   v_encerrando := (new.status = 'closed' and old.status is distinct from 'closed')
                   or (new.exit_date is not null and old.exit_date is null)
                   or v_excluido;
-  v_ativo_depois := new.status = 'active' and new.deleted_at is null and not v_encerrando;
-  v_reativou := v_ativo_depois and (old.status is distinct from 'active' or old.deleted_at is not null);
+  v_ativo_depois := new.status = 'active' and new.deleted_at is null and new.exit_date is null and not v_encerrando;
+  v_reativou := v_ativo_depois and (old.status is distinct from 'active' or old.deleted_at is not null or old.exit_date is not null);
 
   if v_area_mudou or v_encerrando then
     update erp.ocupacoes_de_area o
@@ -434,6 +437,7 @@ comment on function erp.batches_fechar_ocupacao() is
   'MAPA-MANEJO-01 (decisão 305): mantém erp.ocupacoes_de_area a partir de erp.batches — fecha a aberta quando a área muda ou o lote encerra/é excluído; abre a nova quando a área muda para não nula com o lote ativo (ou o lote é reativado ou criado com área). Só curral ou módulo não mexe na ocupação.';
 
 -- ---------- 7) backfill da ocupação: UMA aberta por lote ativo com área (SÓ INSERT na tabela nova) ----------
+-- Lote ativo = status 'active', deleted_at nulo e exit_date nula (a definição única da seção 6).
 -- data_inicio, nesta ordem: o movement_date do module_area_transfer MAIS RECENTE (não cancelado, não excluído)
 -- deste lote para a área atual → 'movimento'; senão entry_date → 'entrada_do_lote'; senão a data de
 -- created_at → 'criacao_do_lote'. cabecas_na_entrada e ua_na_entrada ficam NULAS: não se inventa retroativo.
@@ -464,7 +468,8 @@ select b.organization_id,
   ) m on true
  where b.area_id is not null
    and b.deleted_at is null
-   and b.status = 'active';
+   and b.status = 'active'
+   and b.exit_date is null;
 
 -- ---------- 8) o gatilho de erp.batches (depois do backfill) ----------
 create trigger trg_batches_fechar_ocupacao
@@ -600,7 +605,7 @@ end $$;
 
 -- ---------- 12) 5.1 — o unique de código por empresa em erp.areas ----------
 -- Num banco migrado do zero ele EXISTE: areas_empresa_id_code_key (empresa_id, code), recriado pela 0014
--- (0014:451-476 troca farm_id por empresa_id em toda chave UNIQUE) antes de a 0017 apagar farm_id. Aqui só
+-- (0014:451-476 passa toda chave UNIQUE da coluna legada para empresa_id) antes de a 0017 apagar a legada. Aqui só
 -- se CONFERE. Se faltar (produção divergente), conta as duplicatas: sem duplicata cria o índice; com
 -- duplicata NÃO cria, avisa os códigos e segue — a decisão é do Maike, não desta migration.
 do $$
@@ -778,7 +783,7 @@ begin
   -- para lote não elegível ou em outra área.
   select string_agg(b.id::text, ', ' order by b.id) into v_ids
     from erp.batches b
-   where b.area_id is not null and b.deleted_at is null and b.status = 'active'
+   where b.area_id is not null and b.deleted_at is null and b.status = 'active' and b.exit_date is null
      and (select count(*) from erp.ocupacoes_de_area o
            where o.organization_id = b.organization_id and o.batch_id = b.id and o.area_id = b.area_id
              and o.data_fim is null and o.deleted_at is null) <> 1;
@@ -789,7 +794,7 @@ begin
     from erp.ocupacoes_de_area o
     join erp.batches b on b.id = o.batch_id and b.organization_id = o.organization_id
    where o.data_fim is null and o.deleted_at is null
-     and not (b.area_id is not distinct from o.area_id and b.deleted_at is null and b.status = 'active');
+     and not (b.area_id is not distinct from o.area_id and b.deleted_at is null and b.status = 'active' and b.exit_date is null);
   if v_ids is not null then
     raise exception 'MAPA-MANEJO-01: pos-condicao do backfill — ocupacao aberta para lote nao elegivel ou fora da area atual: %', v_ids;
   end if;
