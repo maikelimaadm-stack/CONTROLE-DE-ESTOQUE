@@ -14,7 +14,10 @@ export { CmdDisplay, CmdPanel };
 // carregado sob demanda: evita ciclo de módulos (o formulário declarativo usa RefSelect)
 const ResourceQuickCreate = React.lazy(() => import("@/features/resources/quick-create").then((m) => ({ default: m.ResourceQuickCreate })));
 
-/** `caminho` e `kind` vêm só dos cadastros em árvore ("1 Insumos › 1.01 Fertilizantes"); API anterior não os manda. */
+/**
+ * `caminho` e `kind` vêm só dos cadastros em árvore ("1 Insumos › 1.01 Fertilizantes"); API anterior não os manda.
+ * O `caminho` nunca substitui o nome: vai só no `title` da opção e da caixa (SELETOR-01, decisão 309).
+ */
 export interface Option { id: string; label: string; code?: string | null; caminho?: string | null; kind?: string | null }
 
 /**
@@ -26,8 +29,6 @@ export function filtroDaReferencia(f: FieldDef): Record<string, string> | undefi
   if (!f.ref.exigeAnalitico) return f.ref.filtro;
   return { ...(f.ref.filtro ?? {}), kind: "analytic" };
 }
-/** Texto mostrado de uma opção: o caminho na árvore quando houver; senão o rótulo. */
-const textoDaOpcao = (o: Option) => o.caminho || o.label;
 /**
  * Fonte PRÓPRIA das opções (R1, W-8 — Matriz): quando o recorte não cabe no `/options` (que só filtra por igualdade),
  * quem usa busca no servidor por outra rota (ex.: a listagem com `campo__is_empty`). `chave` entra na chave do cache.
@@ -63,12 +64,16 @@ export function RefSelect({ resource, value, onChange, placeholder = "Selecione"
   // árvore: o valor já gravado também aparece pelo caminho — a MESMA rota de opções, recortada pelo id (sem o recorte de analítico, para um valor antigo continuar legível)
   const { data: umNaArvore } = useQuery({ queryKey: ["option-one-caminho", resource, value], queryFn: () => api<Option[]>(`/api/resources/${resource}/options${qs({ id: value ?? undefined, include_inactive: "1" })}`), enabled: Boolean(value) && !current && Boolean(def?.tree), staleTime: 60_000 });
   const doValor = umNaArvore?.find((o) => o.id === value);
-  const label = (current ? textoDaOpcao(current) : undefined) ?? (doValor ? textoDaOpcao(doValor) : undefined) ?? labelHint ?? (one ? String(one[def?.labelField ?? "name"] ?? one["description"] ?? one["name"] ?? "") : "");
-  const seen = new Set<string>(); const opts = (data ?? []).filter((o) => { const k = `${o.code ?? ""}|${o.label}`; if (seen.has(k) && o.id !== value) return false; seen.add(k); return true; }).map((o) => ({ value: o.id, label: textoDaOpcao(o), code: o.caminho ? undefined : o.code }));
+  const label = current?.label ?? doValor?.label ?? labelHint ?? (one ? String(one[def?.labelField ?? "name"] ?? one["description"] ?? one["name"] ?? "") : "");
+  // SELETOR-01 (decisão 309): código antes do nome — na árvore, chip do código + nome; a cadeia (`caminho`) só no `title`.
+  // Na árvore, código nulo, vazio ou só de espaços = sem chip, na lista e na caixa; fora da árvore, o `code` de sempre.
+  const opcaoDoValor = current ?? doValor; const naArvore = opcaoDoValor?.caminho ? opcaoDoValor : undefined;
+  const codigoNaCaixa = naArvore?.code?.trim();
+  const seen = new Set<string>(); const opts = (data ?? []).filter((o) => { const k = `${o.code ?? ""}|${o.label}`; if (seen.has(k) && o.id !== value) return false; seen.add(k); return true; }).map((o) => ({ value: o.id, label: o.label, code: o.caminho ? o.code?.trim() || null : o.code, title: o.caminho || undefined }));
   return (<>
     <Popover.Root open={open} onOpenChange={(o) => { if (disabled) return; setOpen(o); onOpenChange?.(o); if (!o) setSearch(""); }}>
       <Popover.Trigger asChild>
-        <CmdDisplay id={idDaCaixa} disabled={disabled} empty={!value} placeholder={placeholder} aria-expanded={open} className={cn("mg-input", className)} onClear={allowEmpty ? () => onChange(null) : undefined}>{value ? label || "…" : null}</CmdDisplay>
+        <CmdDisplay id={idDaCaixa} disabled={disabled} empty={!value} placeholder={placeholder} aria-expanded={open} className={cn("mg-input", className)} onClear={allowEmpty ? () => onChange(null) : undefined} title={naArvore?.caminho || undefined}>{!value ? null : naArvore ? <>{codigoNaCaixa ? <span className="cmd-option__code mr-1.5 shrink-0">{codigoNaCaixa}</span> : null}<span className="truncate">{naArvore.label || "…"}</span></> : label || "…"}</CmdDisplay>
       </Popover.Trigger>
       <Popover.Portal><Popover.Content align="start" sideOffset={4} className={classeDoPainel ? cn(PAINEL_DA_LISTA, classeDoPainel) : PAINEL_DA_LISTA}>
         <CmdPanel options={opts} value={value ?? null} search={search} onSearch={setSearch} loading={isLoading} emptyText="Nenhum resultado" destaqueAoAbrir={semDestaqueAoAbrir ? -1 : undefined} onPick={(o) => { const src = data?.find((x) => x.id === o.value); setPicked(src ?? { id: o.value, label: o.label, code: o.code ?? null }); onChange(o.value, src); setOpen(false); setSearch(""); }}

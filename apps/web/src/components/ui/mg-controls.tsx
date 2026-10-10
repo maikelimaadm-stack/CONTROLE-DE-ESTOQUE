@@ -11,7 +11,8 @@ import { COPY } from "@/lib/copy";
    avisos (erp-toast-panel) e pílula de obrigatórios (form-validation-status).
    ================================================================================================ */
 
-export interface SelectOption { value: string; label: string; code?: string | null }
+/** `title`: dica nativa da opção (SELETOR-01: a cadeia da árvore); ausente = nenhum atributo, como sempre. */
+export interface SelectOption { value: string; label: string; code?: string | null; title?: string | null }
 
 /** Painel de opções do modelo base (cmd-panel): caixa de pesquisa + lista com destaque por teclado. */
 export function CmdPanel({ options, value, onPick, search, onSearch, searchable = true, loading, emptyText = "Nenhuma opção", placeholder = "Pesquisar...", autoFocus = true, footer, destaqueAoAbrir = 0 }: { options: SelectOption[]; value?: string | null; onPick: (o: SelectOption) => void; search: string; onSearch: (s: string) => void; searchable?: boolean; loading?: boolean; emptyText?: string; placeholder?: string; autoFocus?: boolean; /** rodapé fixo (ex.: "+ Cadastrar novo") */ footer?: React.ReactNode;
@@ -30,7 +31,7 @@ export function CmdPanel({ options, value, onPick, search, onSearch, searchable 
     <div ref={listRef} className="cmd-panel-options" role="listbox">
       {loading && <div className="cmd-panel__empty">Carregando…</div>}
       {!loading && options.length === 0 && <div className="cmd-panel__empty">{emptyText}</div>}
-      {options.map((o, i) => <button type="button" key={o.value} role="option" aria-selected={o.value === value} className={cn("cmd-option", o.value === value && "selected", i === hi && "highlighted")} onMouseEnter={() => setHi(i)} onClick={() => onPick(o)}>{o.code && <span className="cmd-option__code">{o.code}</span>}<span className="truncate">{o.label}</span></button>)}
+      {options.map((o, i) => <button type="button" key={o.value} role="option" aria-selected={o.value === value} className={cn("cmd-option", o.value === value && "selected", i === hi && "highlighted")} title={o.title ?? undefined} onMouseEnter={() => setHi(i)} onClick={() => onPick(o)}>{o.code && <span className="cmd-option__code">{o.code}</span>}<span className="truncate">{o.label}</span></button>)}
     </div>
     {footer && !loading && <div className="cmd-panel__footer">{footer}</div>}
   </div>;
