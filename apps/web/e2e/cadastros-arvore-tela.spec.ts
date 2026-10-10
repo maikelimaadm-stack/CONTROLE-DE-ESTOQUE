@@ -7,8 +7,9 @@ import { login, api, uniq, abrirLancamentoDeVendas, escolherTopEContinuar, CLASS
  *
  * AR-1 árvore à esquerda, ficha à direita; recolher/expandir; a busca abre o caminho; alternar com a lista.
  * AR-2 "Novo filho": superior preenchido e código sugerido pelo servidor; grava e aparece na árvore.
- * AR-3 o campo de busca da venda mostra o CAMINHO e só oferece analítico (premissa: sem o recorte, a
- *      sintética existe e viria). RV1: tirar o recorte do lookup da venda deixa este teste vermelho.
+ * AR-3 o campo de busca da venda mostra CÓDIGO + NOME (o chip `cmd-option__code` e o nome; a cadeia de ancestrais
+ *      só no `title` — SELETOR-01, decisão 309) e só oferece analítico (premissa: sem o recorte, a sintética existe e
+ *      viria). RV1: tirar o recorte do lookup da venda deixa este teste vermelho.
  * AR-4 "Mover": novo superior → prévia do código novo; a recusa da API aparece na tela.
  * AR-5 (R1-5, revisto pela decisão 257 D-5 / AJUSTES 01) "Mover…" também para registro COM filhos, com a prévia
  *      do galho; a edição comum continua recusando a troca de superior (422 "Use Mover.").
@@ -72,7 +73,7 @@ test("AR-2 — Novo filho: superior preenchido, código sugerido pelo servidor, 
   await expect(no(page, nome)).toHaveAttribute("aria-level", "3");
 });
 
-test("AR-3 — venda: o campo Natureza mostra o caminho e só oferece analítico", async ({ page }) => {
+test("AR-3 — venda: o campo Natureza mostra código + nome (a cadeia no title) e só oferece analítico", async ({ page }) => {
   await login(page);
   // premissa anti-vácuo: sem o recorte, a porta de opções devolve a SINTÉTICA com caminho
   const sem = await api<{ id: string; kind: string; caminho: string }[]>(page, "GET", "/api/resources/financial_categories/options?search=Receitas");
@@ -92,10 +93,28 @@ test("AR-3 — venda: o campo Natureza mostra o caminho e só oferece analítico
   expect(corpo.filter((o) => o.kind !== "analytic"), "nenhuma sintética chega ao lookup").toEqual([]);
   const opcao = painel.getByRole("option", { name: new RegExp(CLASSIFICACAO_DO_SEED.categoria.nome) });
   await expect(opcao).toHaveCount(1);
-  await expect(opcao, "o caminho aparece: '1 RECEITAS › 1.01 Receitas da Pecuária › 1.01.001 Venda de Boi Gordo'").toContainText(/1 RECEITAS › 1\.01 Receitas da Pecuária › 1\.01\.001 Venda de Boi Gordo/);
-  // e a sintética, buscada pelo nome, não é oferecida
+  // SELETOR-01 (decisão 309): código ANTES do nome — o chip do código e o nome, nesta ordem e nada mais na linha; a
+  // cadeia de ancestrais sai do texto visível e vai inteira para o `title` (tooltip nativo) da opção
+  const { codigo, nome } = CLASSIFICACAO_DO_SEED.categoria;
+  await expect(opcao.locator(".cmd-option__code"), `o chip mostra exatamente '${codigo}'`).toHaveText(codigo);
+  const partes = opcao.locator(":scope > span");
+  await expect(partes, `a linha é [chip '${codigo}'] + nome '${nome}', nesta ordem e só os dois`).toHaveText([codigo, nome]);
+  await expect(partes.first(), "o primeiro da linha é o chip de código").toHaveClass(/(^|\s)cmd-option__code(\s|$)/);
+  await expect(opcao, "o texto visível é só código + nome").toHaveText(`${codigo}${nome}`);
+  for (const daCadeia of ["›", "1 RECEITAS", "Receitas da Pecuária"]) await expect(opcao, `a cadeia saiu da linha: sem '${daCadeia}'`).not.toContainText(daCadeia);
+  await expect(opcao, "a cadeia completa está no title").toHaveAttribute("title", `1 RECEITAS › 1.01 Receitas da Pecuária › ${codigo} ${nome}`);
+  // e a sintética, buscada pelo nome, não é oferecida (no formato novo o texto dela seria "1.01Receitas da Pecuária" —
+  // chip + nome —, e a regex ancorada em `$` continua pegando; a analítica abaixo dela não termina assim).
+  // Anti-vácuo: a busca troca a chave da consulta e a lista fica vazia ("Carregando…") até a resposta — um
+  // toHaveCount(0) ali passaria antes de a busca voltar. Espera a resposta DESTA busca e a lista assentar com ela.
+  const respSintetica = page.waitForResponse((r) => new URL(r.url()).pathname.endsWith("/api/resources/financial_categories/options") && new URL(r.url()).searchParams.get("search") === "Receitas da Pecuária");
   await page.getByPlaceholder("Pesquisar...").fill("Receitas da Pecuária");
-  await expect(painel.getByRole("option").filter({ hasText: /Receitas da Pecuária$/ })).toHaveCount(0);
+  const corpoSintetica = await (await respSintetica).json() as { id: string; kind: string }[];
+  await expect(painel.getByText("Carregando…"), "a lista assentou com a resposta desta busca").toHaveCount(0);
+  if (corpoSintetica.length) await expect(painel.getByRole("option"), "a lista mostra o que a busca devolveu").not.toHaveCount(0);
+  else await expect(painel.getByText("Nenhum resultado"), "a busca voltou vazia e a lista diz isso").toBeVisible();
+  await expect(painel.getByRole("option").filter({ hasText: /Receitas da Pecuária$/ }), "a sintética não é oferecida na lista").toHaveCount(0);
+  expect(corpoSintetica.filter((o) => o.kind !== "analytic"), "nenhuma sintética na resposta desta busca (recorte de analítico ativo)").toEqual([]);
 });
 
 test("AR-4 — Mover: novo superior com código sugerido; a recusa da API aparece na tela", async ({ page }) => {
