@@ -118,12 +118,14 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
 .valor > :last-child { overflow: hidden; text-overflow: ellipsis; }
 .vazio { color: #94a3b8; }
 /*
- * multilinha SÓ LEITURA: o texto começa no TOPO e QUEBRA. A 1ª linha fica no y do valor de uma linha só (centro 15:
- * conteúdo a partir de 2 + 5,5 = 7,5, linha de 15px); o valor ocupa o resto da caixa e rola se passar dela — sem
- * reticências. O valor de uma linha não muda.
+ * multilinha SÓ LEITURA: o texto começa no TOPO e QUEBRA. Quem o põe no topo é o `align-items: flex-start` da caixa
+ * (o valor é filho único: nada de `align-self` nele, que anularia o da caixa). A 1ª linha fica no y do valor de uma
+ * linha só (centro 15: conteúdo a partir de 2 + 5,5 = 7,5, linha de 15px). O valor cresce com o texto até a altura da
+ * caixa (`max-height: 100%` resolve: a caixa tem altura definida, top e bottom 0) e dali rola — sem reticências. O valor
+ * de uma linha não muda.
  */
 .linha[data-multilinha] .caixa:not([data-controle]) { align-items: flex-start; padding-top: 5.5px; }
-.linha[data-multilinha] .caixa:not([data-controle]) .valor { align-self: stretch; white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: hidden; overflow-y: auto; }
+.linha[data-multilinha] .caixa:not([data-controle]) .valor { max-height: 100%; white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: hidden; overflow-y: auto; }
 
 /*
  * o controle (Input, RefSelect, MgDatePicker, Textarea) perde a caixa própria e É a caixa do desenho (o `.fc`): cobre a
@@ -265,8 +267,8 @@ fieldset:disabled .caixa .controle { cursor: default; }
 [data-densidade="compacto"] fieldset:disabled .linha .rotulo,
 [data-densidade="compacto"] .linha[data-multilinha] .rotulo { top: 3px; transform: none; font-size: 8.5px; line-height: 1; }
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa:not([data-controle]) { padding-top: 13px !important; padding-bottom: 4px !important; align-items: flex-end; }
-/* multilinha só leitura no compacto: o texto começa no topo, logo abaixo do rótulo flutuante (os 13px de cima ficam) —
-   mesma especificidade da regra acima, e depois dela */
+/* multilinha só leitura no compacto: o texto começa no topo, logo abaixo do rótulo flutuante (os 13px de cima ficam);
+   sem esta regra, o flex-end acima levaria o texto ao fundo dos 80px — mesma especificidade da regra acima, e depois dela */
 [data-densidade="compacto"] .linha[data-multilinha] .caixa:not([data-controle]) { align-items: flex-start; }
 /* um padding só para o controle com o rótulo flutuando (input, data, pesquisa): 13 em cima e 2 embaixo deixam a área do
    texto com os 15px da linha. Numa área de 14 o input centrava a linha e o botão da pesquisa a punha no topo — meio pixel
