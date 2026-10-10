@@ -4,8 +4,9 @@ import { todayISO } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Field, Input } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { useEmpresaPadrao, useCreate, DocList, colDate } from "@/features/docs/shared";
-export function TransferBatchLocation({ batchId, onDone, history = true }: { batchId?: string; onDone?: () => void; history?: boolean } = {}) {
-  const empresa = useEmpresaPadrao(); const [f, setF] = React.useState({ empresa_id: "", movement_date: todayISO(), batch_id: batchId ?? "", grazing_module_id: "", area_id: "", corral_id: "", note: "" });
+/** `areaIdInicial` (MAPA-MANEJO-04): área de destino já escolhida no mapa — só preenche o campo, que continua editável. Ausente = como sempre. */
+export function TransferBatchLocation({ batchId, onDone, history = true, areaIdInicial }: { batchId?: string; onDone?: () => void; history?: boolean; areaIdInicial?: string } = {}) {
+  const empresa = useEmpresaPadrao(); const [f, setF] = React.useState({ empresa_id: "", movement_date: todayISO(), batch_id: batchId ?? "", grazing_module_id: "", area_id: areaIdInicial ?? "", corral_id: "", note: "" });
   React.useEffect(() => { setF((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
   const create = useCreate("/api/livestock/transfers/batch-to-module-area", () => { setF({ ...f, batch_id: "" }); onDone?.(); });
   return <div className="space-y-3"><Card><CardHeader title="Transferência de Lote → Módulo / Área / Curral" subtitle="Atualiza a localização do lote (pastejo rotacionado ou confinamento) e registra o histórico." actions={<Button size="sm" loading={create.isPending} disabled={!f.batch_id || !(f.grazing_module_id || f.area_id || f.corral_id)} onClick={() => create.mutate({ ...f, grazing_module_id: f.grazing_module_id || null, area_id: f.area_id || null, corral_id: f.corral_id || null, note: f.note || null })}>Transferir</Button>} /><CardBody>

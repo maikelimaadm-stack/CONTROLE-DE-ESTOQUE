@@ -1,6 +1,8 @@
 "use client";
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Spinner, EmptyState, ErrorState } from "@/components/ui";
+import { useAuth } from "@/lib/auth";
 import { CamadaDesenho } from "./camada-desenho";
 import {
   AvisoDeLocalizacao,
@@ -11,7 +13,7 @@ import {
 } from "./mapa-base";
 import { instalarCamadasDeLotes, sincronizarLotes } from "./camada-lotes";
 import { registrarImagensDosIcones } from "./imagens-do-mapa";
-import { useMapaOperacional, type FiltrosDoMapa } from "./operacional-dados";
+import { useMapaOperacional, type AreaOperacional, type FiltrosDoMapa } from "./operacional-dados";
 import { coloracaoDasAreas, comLinhaExtra } from "./coloracao-no-mapa";
 import { LegendaDoMapa, POSICAO_DA_LEGENDA } from "./legenda-do-mapa";
 import { SeletorDeColoracao } from "./seletor-de-coloracao";
@@ -19,6 +21,9 @@ import { BarraDoMapaOperacional, CAMADAS_INICIAIS, aplicarCamadasVisiveis, type 
 import { MolduraDoPainel, PainelDoPasto } from "./painel-do-pasto";
 import { destacarSelecao, registrarSelecao, useResizeAdiado } from "./selecao-no-mapa";
 import { useEscEmCascata } from "./use-esc-em-cascata";
+import { registrarArraste } from "./mover-lote";
+import { InterruptorDeArraste, PERMISSAO_DE_MOVER, useArrasteLigado } from "./interruptor-de-arraste";
+import { MoverLoteDialogo, avisarArraste } from "./mover-lote-dialogo";
 
 /**
  * MAPA DE MANEJO (F2) — o mapa operacional: polígonos das áreas cadastradas e, em cada área ocupada, o MARCADOR
@@ -28,6 +33,9 @@ import { useEscEmCascata } from "./use-esc-em-cascata";
  * UMA fonte de dados: `GET /api/mapa/operacional` (operacional-dados.ts), uma chamada por combinação de filtros e
  * coloração. Os polígonos, os rótulos, os marcadores, as faixas e o painel saem da MESMA resposta; a tela desenha o que
  * a API resolveu — a única decisão dela é a paleta (paleta-do-mapa.ts). Decisão 308.
+ *
+ * MOVER LOTE: o arraste nasce DESLIGADO (interruptor na barra, só com a permissão de transferir) e só ESCOLHE o
+ * destino; quem grava é o Confirmar do formulário de movimentação que já existe.
  */
 
 const FILTROS_INICIAIS: FiltrosDoMapa = { coloracao: "padrao", retiro_id: null, grazing_module_id: null };
@@ -37,6 +45,11 @@ export function MapaDeManejo() {
   const [camadas, setCamadas] = React.useState<CamadasVisiveis>(CAMADAS_INICIAIS);
   const [faixaFiltro, setFaixaFiltro] = React.useState<string | null>(null);
   const [selecionada, setSelecionada] = React.useState<string | null>(null);
+  const [movimento, setMovimento] = React.useState<{ origem: AreaOperacional; destino: AreaOperacional } | null>(null);
+  const { can } = useAuth();
+  const qc = useQueryClient();
+  const podeMover = can(PERMISSAO_DE_MOVER);
+  const [arrasteLigado, setArrasteLigado] = useArrasteLigado();
 
   const operacional = useMapaOperacional(filtros);
   const resposta = operacional.data ?? null;
@@ -80,6 +93,29 @@ export function MapaDeManejo() {
     const m = mapRef.current;
     if (!m || !mapa.pronto) return;
     return registrarSelecao(m, setSelecionada);
+  }, [mapa.pronto, mapRef]);
+
+  // Arraste de lote (registrado DEPOIS da seleção: o cursor "grab" vence o "pointer"). Os getters leem o valor da
+  // última renderização sem reinstalar os eventos. Soltar em outra área abre o diálogo e fecha o painel — nunca dois
+  // overlays; na própria área ou fora de qualquer área, só o aviso, e o marcador continua no centróide de origem.
+  const ligadoRef = React.useRef(false);
+  const areasRef = React.useRef(areas);
+  React.useEffect(() => {
+    ligadoRef.current = podeMover && arrasteLigado && movimento === null;
+    areasRef.current = areas;
+  });
+  React.useEffect(() => {
+    const m = mapRef.current;
+    if (!m || !mapa.pronto) return;
+    return registrarArraste(m, {
+      ligado: () => ligadoRef.current,
+      areas: () => areasRef.current,
+      aoSoltar: (r) => {
+        if (r.tipo !== "destino") { avisarArraste(r); return; }
+        setSelecionada(null);
+        setMovimento({ origem: r.origem, destino: r.destino });
+      }
+    });
   }, [mapa.pronto, mapRef]);
 
   // A área selecionada que saiu da resposta (filtro novo) deixa de estar selecionada.
@@ -155,6 +191,7 @@ export function MapaDeManejo() {
         objetosDisponiveis={resposta?.capacidades.objetos ?? true}
       >
         <SeletorDeColoracao valor={filtros.coloracao} aoMudar={mudarColoracao} />
+        {podeMover && <InterruptorDeArraste ligado={arrasteLigado} aoMudar={setArrasteLigado} />}
       </BarraDoMapaOperacional>
 
       <div className="relative flex min-h-0 flex-1 flex-col gap-2 lg:flex-row">
@@ -208,6 +245,14 @@ export function MapaDeManejo() {
           </MolduraDoPainel>
         )}
       </div>
+
+      <MoverLoteDialogo
+        origem={movimento?.origem ?? null}
+        destino={movimento?.destino ?? null}
+        aberto={movimento !== null}
+        aoFechar={() => setMovimento(null)}
+        aoConcluir={() => { setMovimento(null); void qc.invalidateQueries({ queryKey: ["mapa", "operacional"] }); }}
+      />
     </div>
   );
 }
