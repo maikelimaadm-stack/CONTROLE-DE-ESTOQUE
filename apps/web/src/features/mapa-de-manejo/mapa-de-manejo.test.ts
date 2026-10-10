@@ -9,7 +9,10 @@ describe("Mapa de Manejo — áreas com polígonos e animais", () => {
   it("componente: mapa com rótulos de animais por área", () => {
     const s = src("mapa-de-manejo.tsx");
     expect(s).toContain("Mapa de Manejo");
-    expect(s).toContain("useCabecasPorArea");
+    expect(s).toContain("useMapaOperacional");
+    // UMA fonte de dados: a resposta do mapa operacional (MAPA-MANEJO-04)
+    expect(s).not.toContain("useCabecasPorArea");
+    expect(s).not.toContain("useAreasDoMapa");
     expect(s).toContain("rotulosDasAreas");
     expect(s).toContain("CamadaDesenho");
     expect(s).not.toContain("BarraCamadas");

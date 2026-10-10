@@ -27,6 +27,8 @@ export interface RotuloArea {
   ha: number;
   /** Animais nos lotes da área (identificados + cadastro por contagem). */
   cabecas?: number;
+  /** Linha a mais, abaixo das cabeças (MAPA-MANEJO-04: a faixa da coloração em texto, com o número quando há). Sem ela, nada muda. */
+  linhaExtra?: string;
   opacidade?: number;
   fonteNome?: number;
   fonteHa?: number;
@@ -112,6 +114,11 @@ export function CamadaDesenho(p: Props) {
             {typeof r.cabecas === "number" && r.cabecas > 0 && (
               <div className="mt-px whitespace-nowrap font-semibold tabular-nums" style={{ fontSize: fonteHa, color: "#fef08a" }}>
                 {num(r.cabecas, 0)} {r.cabecas === 1 ? "animal" : "animais"}
+              </div>
+            )}
+            {r.linhaExtra && (
+              <div className="mt-px whitespace-nowrap font-semibold tabular-nums" style={{ fontSize: fonteHa, color: "#bae6fd" }} data-testid="mapa-rotulo-linha-extra">
+                {r.linhaExtra}
               </div>
             )}
           </div>
