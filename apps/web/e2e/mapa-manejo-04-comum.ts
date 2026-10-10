@@ -37,6 +37,9 @@ import { api, empresaAtiva, login, uniq } from "./helpers";
  * `escolherColoracao` (troca o "Colorir por" e devolve a resposta nova), `painelDoPasto`, `proximaRespostaOperacional`
  * e `contarRequisicoes` (chamadas a /api/mapa/operacional no fio). Descanso: `descansarArea` (entra, sai e data a saída).
  *
+ * DATAS: toda data relativa sai da RÉGUA DA API (`hojeDaApi`, `diaDaApi`, `somarDias`) — nunca do `current_date` do
+ * banco nem do relógio do Node (que divergem do dia da empresa entre 00h e 03h UTC).
+ *
  * IMAGEM DE ÍCONE: gerada EM TEMPO DE EXECUÇÃO (`pngSolido`: zlib + crc32, PNG RGBA de cor sólida) e servida por
  * `servirIcones` numa origem `.invalid` interceptada pela página. Nenhum arquivo de imagem entra no repositório.
  */
@@ -166,7 +169,10 @@ export interface PedidoDeLote {
   /** padrão "Garrote" */
   categoria?: CategoriaDoSeed;
   identificador?: IdentificadorPedido;
-  /** `entry_date` do lote (ISO) = início da ocupação; ausente = o dia de hoje na empresa da área (o gatilho decide). */
+  /**
+   * `entry_date` do lote (ISO) = início da ocupação — calcule na régua da API (`diaDaApi`). Ausente = o dia que o
+   * gatilho escolhe (o da empresa da área): use só quando o caso não depende de quantos dias o lote está na área.
+   */
   entrada?: string;
 }
 
@@ -257,36 +263,73 @@ export function definirIdentificador(loteId: string, i: IdentificadorPedido): vo
            where id = '${loteId}'`);
 }
 
-/** O dia do BANCO (`current_date`) deslocado de `dias` (negativo = passado), em ISO — a mesma régua do `hoje` da API. */
-export const diaDoBanco = (dias = 0) => sqlMm4(`select (current_date + (${Math.trunc(dias)}))::text`);
+/**
+ * A RÉGUA DOS DIAS: o `hoje` que a PRÓPRIA API usa — o topo de `GET /api/mapa/operacional` (as empresas do seed têm o
+ * mesmo fuso). Nunca o `current_date` do banco nem o relógio do Node: o banco está em UTC, o gatilho fecha a ocupação
+ * no dia da EMPRESA (`erp.hoje_na_empresa`) e a API conta pelo dia dela — em UTC 00h–03h (São Paulo) os três divergem.
+ * Lido por `page.request`, com a sessão do navegador: fora da rede da página, não entra em `contarRequisicoes`.
+ */
+export async function hojeDaApi(page: Page): Promise<string> {
+  const s = await page.evaluate(() => JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token?: string; orgId?: string | null; empresaId?: string | null });
+  expect(s.token, "premissa: há sessão no navegador para ler o hoje da API").toBeTruthy();
+  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333";
+  const r = await page.request.get(`${base}${CAMINHO_OPERACIONAL}`, {
+    headers: { authorization: `Bearer ${s.token}`, ...(s.orgId ? { "x-org-id": s.orgId } : {}), ...(s.empresaId ? { "x-empresa-id": s.empresaId } : {}) }
+  });
+  expect(r.status(), `premissa: ${CAMINHO_OPERACIONAL} responde para ler o hoje`).toBe(200);
+  const hoje = ((await r.json()) as { hoje?: unknown }).hoje;
+  expect(hoje, "premissa: a API devolve o hoje em ISO").toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  return String(hoje);
+}
 
-/** Tira o lote da área pela API do cadastro de lotes (`area_id` nulo): o gatilho fecha a ocupação aberta hoje. */
+/** Data ISO somada de `dias` dias (negativo = passado), em aritmética de calendário pura (sem fuso). */
+export function somarDias(iso: string, dias: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + Math.trunc(dias));
+  return d.toISOString().slice(0, 10);
+}
+
+/** O dia da RÉGUA DA API deslocado de `dias` (negativo = passado), em ISO: `somarDias(hojeDaApi(page), dias)`. */
+export async function diaDaApi(page: Page, dias = 0): Promise<string> {
+  return somarDias(await hojeDaApi(page), dias);
+}
+
+/** Tira o lote da área pela API do cadastro de lotes (`area_id` nulo): o gatilho fecha a ocupação aberta (no dia da empresa). */
 export async function retirarLoteDaArea(page: Page, loteId: string): Promise<void> {
   await api(page, "PUT", `/api/resources/batches/${loteId}`, { area_id: null });
   expect(sqlMm4(`select count(*) from erp.ocupacoes_de_area where batch_id = '${loteId}' and data_fim is null and deleted_at is null`),
     "premissa: o gatilho fechou a ocupação do lote").toBe("0");
 }
 
+const DATA_ISO = /^\d{4}-\d{2}-\d{2}$/;
+
 /**
- * Leva para o PASSADO a última ocupação FECHADA do lote (entrada `entradaHaDias` e saída `saidaHaDias` dias antes do
- * dia do banco). Direto no banco: nenhuma rota grava saída com data passada (o gatilho fecha no dia de hoje).
+ * Grava as DATAS da última ocupação FECHADA do lote (entrada e saída em ISO, calculadas pelo chamador na régua da API
+ * — `diaDaApi`/`somarDias`). Direto no banco: nenhuma rota grava saída com data escolhida (o gatilho fecha no dia que
+ * ELE escolhe, o da empresa), e o teste não depende desse dia.
  */
-export function datarUltimaSaida(loteId: string, c: { saidaHaDias: number; entradaHaDias: number }): void {
+export function datarUltimaSaida(loteId: string, c: { entrada: string; saida: string }): void {
   expect(loteId).toMatch(FORMA_UUID);
-  expect(c.entradaHaDias, "premissa: a entrada vem antes da saída").toBeGreaterThanOrEqual(c.saidaHaDias);
-  sqlMm4(`update erp.ocupacoes_de_area set data_inicio = current_date - ${Math.trunc(c.entradaHaDias)}, data_fim = current_date - ${Math.trunc(c.saidaHaDias)}
+  expect([c.entrada, c.saida], "premissa: datas ISO").toEqual([expect.stringMatching(DATA_ISO), expect.stringMatching(DATA_ISO)]);
+  expect(c.entrada <= c.saida, "premissa: a entrada não vem depois da saída").toBe(true);
+  sqlMm4(`update erp.ocupacoes_de_area set data_inicio = '${c.entrada}'::date, data_fim = '${c.saida}'::date
            where id = (select id from erp.ocupacoes_de_area where batch_id = '${loteId}' and data_fim is not null and deleted_at is null
                         order by data_fim desc, id desc limit 1)`);
+  expect(sqlMm4(`select data_inicio::text || ' ' || data_fim::text from erp.ocupacoes_de_area
+                  where batch_id = '${loteId}' and data_fim is not null and deleted_at is null order by data_fim desc, id desc limit 1`),
+    "premissa: a ocupação fechada ficou com as datas pedidas").toBe(`${c.entrada} ${c.saida}`);
 }
 
 /**
- * Deixa a área VAZIA e EM DESCANSO há `dias` dias: um lote entra (API), sai (API) e a saída é datada no passado
- * (banco). `dias = 0` deixa a saída de hoje (descanso de 0 dias — diferente de "sem registro"). Devolve o lote.
+ * Deixa a área VAZIA e EM DESCANSO há `dias` dias NA RÉGUA DA API: um lote entra (API), sai (API) e a saída é gravada
+ * em `hoje da API − dias` (banco) — também com `dias = 0` (saída = o hoje da API: descanso de 0 dias, diferente de
+ * "sem registro"), nunca o dia que o gatilho escolheu. Devolve o lote.
  */
 export async function descansarArea(page: Page, c: { empresa: string; area: string; dias: number }): Promise<LoteSemeado> {
   const lote = await criarLoteNaArea(page, { empresa: c.empresa, area: c.area, lote: { cabecas: 3 } });
   await retirarLoteDaArea(page, lote.id);
-  if (c.dias > 0) datarUltimaSaida(lote.id, { saidaHaDias: c.dias, entradaHaDias: c.dias + 10 });
+  const hoje = await hojeDaApi(page);
+  datarUltimaSaida(lote.id, { entrada: somarDias(hoje, -(c.dias + 10)), saida: somarDias(hoje, -c.dias) });
   return lote;
 }
 

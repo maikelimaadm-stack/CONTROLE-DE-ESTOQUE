@@ -112,7 +112,7 @@ export function MoverLoteDialogo({ origem, destino, aberto, aoFechar, aoConcluir
       size="xl"
       testId="mover-lote-dialogo"
       footer={unico ? undefined : (
-        <Button type="button" variant="outline" onClick={() => setEscolha(null)} data-testid="mover-lote-trocar-lote">
+        <Button type="button" variant="outline" className="!min-h-11 sm:!min-h-0" onClick={() => setEscolha(null)} data-testid="mover-lote-trocar-lote">
           Trocar lote
         </Button>
       )}

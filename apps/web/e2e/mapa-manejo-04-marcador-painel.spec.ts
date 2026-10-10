@@ -13,12 +13,12 @@ import {
   desativarIcones,
   deslocar,
   desprojetar,
-  diaDoBanco,
   distanciaEmPx,
   emL,
   entrarComoAdmin,
   escolherColoracao,
   formatoPtBr,
+  hojeDaApi,
   marcadoresNaFonte,
   marcadoresPorArea,
   mediaDosVertices,
@@ -33,6 +33,7 @@ import {
   retangulo,
   semearAreas,
   servirIcones,
+  somarDias,
   temImagem,
   triangulo,
   zoomDoMapa,
@@ -414,11 +415,12 @@ test("MM4-3b — o painel traz cabeças, UA/ha, dias no piquete e a faixa, com o
   test.setTimeout(120_000);
   const empresa = await entrarComoAdmin(page);
   const o = regiao("T1", 9);
+  const hoje = await hojeDaApi(page); // as entradas na régua da API
   // 40 Boi Gordo (1 UA) + 30 Garrote (0,5 UA) em 45 ha úteis: lotação de faixa com número
   const areas = await semearAreas(page, empresa, [
     { rotulo: "3b lotada", geometria: quadrado(o), lotes: [
-      { cabecas: 40, categoria: "Boi Gordo", entrada: diaDoBanco(-12) },
-      { cabecas: 30, categoria: "Garrote", entrada: diaDoBanco(-5) }
+      { cabecas: 40, categoria: "Boi Gordo", entrada: somarDias(hoje, -12) },
+      { cabecas: 30, categoria: "Garrote", entrada: somarDias(hoje, -5) }
     ] }
   ]);
   const [c] = areas as [AreaSemeada];

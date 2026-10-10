@@ -2,21 +2,22 @@ import { test, expect, type Page } from "@playwright/test";
 import { enumLabel, type ModoDeColoracao } from "@agro/domain";
 import { api, primeiroId, uniq } from "./helpers";
 import {
-  CAMADAS,
-  CAMINHO_OPERACIONAL,
-  OPCOES_WEBGL,
-  ORIGEM_DOS_ICONES,
+  abrirMapaNasAreas,
   aguardarAreasNoMapa,
   aguardarMapaParado,
-  abrirMapaNasAreas,
   areaDaResposta,
+  CAMADAS,
+  CAMINHO_OPERACIONAL,
   dadosDaFonte,
   deslocar,
   enquadrar,
   entrarComoAdmin,
+  hojeDaApi,
+  mapaPronto,
   marcadoresNaFonte,
   marcadoresPorArea,
-  mapaPronto,
+  OPCOES_WEBGL,
+  ORIGEM_DOS_ICONES,
   pngSolido,
   pontoNaPagina,
   proximaRespostaOperacional,
@@ -24,7 +25,7 @@ import {
   regiao,
   renderizadas,
   semearAreas,
-  sqlMm4,
+  somarDias,
   type AreaDaApi,
   type AreaSemeada,
   type PedidoDeArea,
@@ -258,8 +259,8 @@ async function conferirCores(page: Page, resposta: RespostaOperacionalE2E, areas
 // Semeadura própria (retiro, módulo, objeto de mapa) e datas do banco
 // ------------------------------------------------------------------------------------------------------------------
 
-/** `current_date - dias` do banco de e2e (o mesmo "hoje" da rota), em ISO. */
-const diasAtras = (dias: number) => sqlMm4(`select (current_date - ${Math.trunc(dias)})::text`);
+/** `dias` antes do `hoje` que a PRÓPRIA API usa (a régua da rota — nunca o `current_date` do banco), em ISO. */
+const diasAtras = async (page: Page, dias: number) => somarDias(await hojeDaApi(page), -Math.trunc(dias));
 
 /** Retiro NOVO pela API do cadastro. */
 async function criarRetiro(page: Page, empresa: string, rotulo: string): Promise<{ id: string; nome: string }> {
@@ -301,7 +302,7 @@ test("MM4-4a — trocar o modo de coloração muda a cor dos polígonos (cor da 
   test.setTimeout(240_000);
   const empresa = await entrarComoAdmin(page);
   const o = regiao("T2", 1);
-  const [d10, d60, d120] = [diasAtras(10), diasAtras(60), diasAtras(120)];
+  const [d10, d60, d120] = [await diasAtras(page, 10), await diasAtras(page, 60), await diasAtras(page, 120)];
   // área útil 10 ha e cabeças de 5 a 30 (UA 1 cada): as faixas de lotação se distinguem; as entradas, as de situação
   const util = { usable_area_ha: "10" };
   const pedidos: PedidoDeArea[] = [
@@ -437,8 +438,8 @@ test("MM4-4c — cada faixa aparece como TEXTO, não só cor: na legenda e na li
   const o = regiao("T2", 3);
   const util = { usable_area_ha: "10" };
   const areas = await semearAreas(page, empresa, [
-    { rotulo: "4c a", geometria: quadrado(o), lotes: [boiGordo(15, diasAtras(12))], campos: util },
-    { rotulo: "4c b", geometria: quadrado(deslocar(o, 0.007)), lotes: [boiGordo(10, diasAtras(60))], campos: util },
+    { rotulo: "4c a", geometria: quadrado(o), lotes: [boiGordo(15, await diasAtras(page, 12))], campos: util },
+    { rotulo: "4c b", geometria: quadrado(deslocar(o, 0.007)), lotes: [boiGordo(10, await diasAtras(page, 60))], campos: util },
     { rotulo: "4c c", geometria: quadrado(deslocar(o, 0.014)), campos: util }
   ]);
   const vazia = areas[2]!;

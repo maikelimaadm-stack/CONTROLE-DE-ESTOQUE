@@ -12,7 +12,7 @@ import {
   contarRequisicoes,
   dadosDaFonte,
   deslocar,
-  diaDoBanco,
+  diaDaApi,
   enquadrar,
   entrarComoAdmin,
   mapaPronto,
@@ -194,8 +194,8 @@ async function ligarArraste(page: Page): Promise<void> {
 /** Semeia origem (com os lotes pedidos) e uma OUTRA área vazia ao lado, na região do caso. */
 async function semearOrigemEOutra(page: Page, empresa: string, caso: number, rotulo: string, lotes: { cabecas: number; categoria?: "Garrote" | "Novilha" }[]): Promise<[AreaSemeada, AreaSemeada]> {
   const o = regiao("T3", caso);
-  // entrada 5 dias antes do dia do banco: a transferência (datada de hoje) nunca cai antes do início da ocupação
-  const entrada = diaDoBanco(-5);
+  // entrada 5 dias antes do `hoje` da API (a régua da rota): a transferência (datada de hoje) nunca cai antes do início
+  const entrada = await diaDaApi(page, -5);
   const [origem, outra] = await semearAreas(page, empresa, [
     { rotulo: `${rotulo} origem`, geometria: quadrado(o), lotes: lotes.map((l) => ({ ...l, entrada })) },
     { rotulo: `${rotulo} outra`, geometria: quadrado(deslocar(o, 0.007)) }

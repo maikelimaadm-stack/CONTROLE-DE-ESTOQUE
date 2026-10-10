@@ -3,7 +3,7 @@ import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Spinner, EmptyState, ErrorState } from "@/components/ui";
 import { useAuth } from "@/lib/auth";
-import { CamadaDesenho } from "./camada-desenho";
+import { CamadaDesenho, type RotuloArea } from "./camada-desenho";
 import {
   AvisoDeLocalizacao,
   desenharAreas,
@@ -12,7 +12,7 @@ import {
   useMapaBase
 } from "./mapa-base";
 import { instalarCamadasDeLotes, sincronizarLotes } from "./camada-lotes";
-import { registrarImagensDosIcones } from "./imagens-do-mapa";
+import { LADO_MAIOR_PX, LADO_MINIMO_PX, ZOOM_AFASTADO, ZOOM_DE_TRABALHO, registrarImagensDosIcones } from "./imagens-do-mapa";
 import { useMapaOperacional, type AreaOperacional, type FiltrosDoMapa } from "./operacional-dados";
 import { coloracaoDasAreas, comLinhaExtra } from "./coloracao-no-mapa";
 import { LegendaDoMapa, POSICAO_DA_LEGENDA } from "./legenda-do-mapa";
@@ -39,6 +39,24 @@ import { MoverLoteDialogo, avisarArraste } from "./mover-lote-dialogo";
  */
 
 const FILTROS_INICIAIS: FiltrosDoMapa = { coloracao: "padrao", retiro_id: null, grazing_module_id: null };
+
+/**
+ * POSIÇÃO EM PIXEL (só apresentação): o rótulo da área com marcador desce para logo ABAIXO do marcador — os dois
+ * nascem no mesmo ponto e o texto cobriria o contador. Meio lado do marcador pelo zoom (a mesma curva do ícone:
+ * `LADO_MINIMO_PX` afastado, `LADO_MAIOR_PX` no zoom de trabalho) + a meia altura do próprio rótulo (linhas de
+ * camada-desenho.tsx, entrelinha 1,2) + uma folga.
+ */
+function rotulosAbaixoDoMarcador(rotulos: RotuloArea[], comMarcador: ReadonlySet<string>, zoom: number): RotuloArea[] {
+  if (comMarcador.size === 0) return rotulos;
+  const t = Math.min(1, Math.max(0, (zoom - ZOOM_AFASTADO) / (ZOOM_DE_TRABALHO - ZOOM_AFASTADO)));
+  const meioMarcador = (LADO_MINIMO_PX + (LADO_MAIOR_PX - LADO_MINIMO_PX) * t) / 2;
+  return rotulos.map((r) => {
+    if (!comMarcador.has(r.id)) return r;
+    const linha = (r.fonteHa ?? 9.5) * 1.2 + 1;
+    const altura = (r.fonteNome ?? 11) * 1.2 + (r.ha > 0 ? linha : 0) + (r.cabecas ? linha : 0) + (r.linhaExtra ? linha : 0);
+    return { ...r, px: { x: r.px.x, y: r.px.y + meioMarcador + 3 + altura / 2 } };
+  });
+}
 
 export function MapaDeManejo() {
   const [filtros, setFiltros] = React.useState<FiltrosDoMapa>(FILTROS_INICIAIS);
@@ -156,7 +174,13 @@ export function MapaDeManejo() {
   }, [areas, mapa.pronto, mapRef]);
 
   const m = mapa.pronto ? mapRef.current : null;
-  const rotulos = m ? comLinhaExtra(rotulosDasAreas(m, areas, selecionada, cabecasPorArea), coloracao.linhaPorArea) : [];
+  const comMarcador = React.useMemo(
+    () => new Set(camadas.lotes ? areas.filter((a) => a.lotes.length > 0 && a.centroide).map((a) => a.id) : []),
+    [areas, camadas.lotes]
+  );
+  const rotulos = m
+    ? rotulosAbaixoDoMarcador(comLinhaExtra(rotulosDasAreas(m, areas, selecionada, cabecasPorArea), coloracao.linhaPorArea), comMarcador, m.getZoom())
+    : [];
 
   const comContorno = areas.filter((a) => a.geometria?.type === "Polygon").length;
   const carregando = operacional.isLoading;
