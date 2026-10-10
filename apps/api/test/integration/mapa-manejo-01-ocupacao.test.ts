@@ -9,8 +9,9 @@ import { escoposDeTodosOsModulos, harness, TEST_URL, type Harness } from "./setu
  *   GET /api/mapa/areas/:areaId/ocupacao            abertas, últimas fechadas, descanso, lotação, rodízio
  *   GET /api/mapa/areas/:areaId/ocupacao/historico  o histórico inteiro, paginado no servidor
  *
- * O cenário é semeado pela conexão TESTEMUNHA (superusuário), com datas relativas ao `current_date` DO BANCO: o
- * esperado de cada número sai das datas semeadas, não do relógio do Node. A API lê como `erp_app` (sem bypass de RLS).
+ * O cenário é semeado pela conexão TESTEMUNHA (superusuário), com datas relativas ao dia da EMPRESA do cenário lido
+ * NO BANCO (`(now() at time zone fuso_horario)::date`, o `hoje` da rota — MAPA-MANEJO-03, decisão 307): o esperado de
+ * cada número sai das datas semeadas, não do relógio do Node. A API lê como `erp_app` (sem bypass de RLS).
  */
 let h: Harness; let admin: Db;
 type Hdr = Record<string, string>;
@@ -123,7 +124,7 @@ beforeAll(async () => {
   admin = createPool(TEST_URL, { max: 3 });
   E1 = h.demo.empresaIds[0]!; E2 = h.demo.empresaIds[1]!;
   expect(E2).not.toBe(E1);
-  hoje = (await admin.query<{ d: string }>("select current_date::text as d")).rows[0]!.d;
+  hoje = (await admin.query<{ d: string }>("select (now() at time zone fuso_horario)::date::text as d from erp.empresas where id = $1", [E1])).rows[0]!.d;
   especie = (await admin.query<{ id: string }>("select id from erp.animal_species where organization_id is null order by name limit 1")).rows[0]!.id;
   categoria = await id("insert into erp.animal_categories (organization_id, species_id, name, ua_factor) values ($1,$2,$3,0.75) returning id", [h.demo.orgId, especie, `Categoria ${TAG}`]);
 }, 240_000);
