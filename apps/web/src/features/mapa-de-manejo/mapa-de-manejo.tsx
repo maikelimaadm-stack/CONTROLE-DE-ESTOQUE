@@ -195,8 +195,11 @@ export function MapaDeManejo() {
       </BarraDoMapaOperacional>
 
       <div className="relative flex min-h-0 flex-1 flex-col gap-2 lg:flex-row">
-        <div className="relative min-h-0 flex-1 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
-          <div ref={mapa.containerRef} data-testid="mapa-manejo-canvas" className="h-full min-h-[480px] w-full" />
+        {/* A caixa visível É o tamanho do canvas (o MapLibre mede o contêiner): em tela estreita, altura própria e a
+            caixa acompanha; do lg para cima, a altura da coluna com piso. Sem canvas maior que a caixa, os controles do
+            canto e o enquadramento não ficam cortados. */}
+        <div className="relative min-h-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100 lg:flex-1">
+          <div ref={mapa.containerRef} data-testid="mapa-manejo-canvas" className="h-[max(40dvh,16rem)] min-h-0 w-full lg:h-full lg:min-h-[min(60dvh,28rem)]" />
           {mapa.pronto && (
             <CamadaDesenho
               desenhando={false}
