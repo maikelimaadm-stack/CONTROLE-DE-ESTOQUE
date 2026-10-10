@@ -20,8 +20,10 @@ import { rebanhoDosLotes, type RebanhoDoLote, type RebanhoDoLoteComCategorias } 
  *   GET /api/mapa/operacional                       UMA chamada com tudo o que o mapa operacional desenha
  *
  * Permissão das três: `batch_area.view` (módulo pecuária — o escopo de empresa da área). As contas moram no domínio
- * (`packages/domain/src/ocupacao-de-area.ts`); aqui só se agrega no SQL e se entrega a ele. "Hoje" é o `current_date`
- * do BANCO, lido na primeira consulta de cada rota — nunca o relógio do Node, que pode estar em outro dia.
+ * (`packages/domain/src/ocupacao-de-area.ts`); aqui só se agrega no SQL e se entrega a ele. "Hoje" é o dia da EMPRESA
+ * DA ÁREA (MAPA-MANEJO-03, decisão 307): `(now() at time zone e.fuso_horario)::date`, a mesma regra de
+ * `erp.hoje_na_empresa`, lido do BANCO na primeira consulta de cada rota, com `erp.empresas` juntada — nunca o
+ * dia do fuso da sessão do banco nem o relógio do Node, que podem estar em outro dia.
  *
  * NÚMERO DE CONSULTAS FIXO em todas as rotas: nenhuma consulta por área, por lote nem por ocupação. É contado por
  * teste (mapa-manejo-01-ocupacao.test.ts MM-8b, mapa-manejo-01-operacional.test.ts MM-10b).
@@ -224,8 +226,9 @@ export default async function mapaOcupacaoRoutes(app: FastifyInstance) {
       `select a.id, a.empresa_id, a.code, a.name, a.area_ha, a.usable_area_ha, a.land_use, a.status, a.retiro_id, a.grazing_module_id,
               a.support_capacity_rainy_ua_ha, a.support_capacity_dry_ua_ha, a.max_stocking_ua,
               (g.id is not null) as modulo_visivel, g.rest_days, g.occupation_days,
-              current_date::text as hoje
+              (now() at time zone e.fuso_horario)::date::text as hoje
          from erp.areas a
+         join erp.empresas e on e.id = a.empresa_id and e.organization_id = a.organization_id
          left join erp.grazing_modules g on g.id = a.grazing_module_id and g.organization_id = a.organization_id
               and g.deleted_at is null and {{escopo:g.empresa_id}}
         where a.id = $2 and a.organization_id = $1 and a.deleted_at is null and {{escopo:a.empresa_id}}`,
@@ -311,11 +314,12 @@ export default async function mapaOcupacaoRoutes(app: FastifyInstance) {
     const areaId = idDaArea(req);
     const q = historicoQuery.parse(req.query);
     const ra = await consultaEscopada<{ id: string; total: number; hoje: ISODate }>(ctx,
-      `select a.id, current_date::text as hoje,
+      `select a.id, (now() at time zone e.fuso_horario)::date::text as hoje,
               (select count(*) from erp.ocupacoes_de_area o
                 where o.organization_id = a.organization_id and o.area_id = a.id and o.deleted_at is null
                   and {{escopo:o.empresa_id}})::int as total
          from erp.areas a
+         join erp.empresas e on e.id = a.empresa_id and e.organization_id = a.organization_id
         where a.id = $2 and a.organization_id = $1 and a.deleted_at is null and {{escopo:a.empresa_id}}`,
       [ctx.orgId, areaId]);
     const area = ra.rows[0];
@@ -379,9 +383,13 @@ export default async function mapaOcupacaoRoutes(app: FastifyInstance) {
    *   a configuração é a de `resolverIconeDoLote` (configuracao-de-icone do domínio) entre as ATIVAS da EMPRESA DA
    *   ÁREA, `tipo_entidade` lote; sem match, os quatro primeiros campos são nulos.
    * - área `faixa` (FaixaDoMapa | null): `faixaDaArea(coloracao, …)` (cores-do-mapa do domínio); `null` em `padrao`.
-   *   Situação do pasto: o início da ocupação aberta mais ANTIGA da área, a `ultima_saida` e o mesmo `hoje` da rota
-   *   (`current_date` do banco); categoria: as categorias presentes somadas na área; lotação: a `ua_total` e a área
-   *   ÚTIL. A cor de cada faixa é da tela: aqui não há hex.
+   *   Situação do pasto: o início da ocupação aberta mais ANTIGA da área, a `ultima_saida` e o dia da empresa da
+   *   área; categoria: as categorias presentes somadas na área; lotação: a `ua_total` e a área ÚTIL. A cor de cada
+   *   faixa é da tela: aqui não há hex.
+   *
+   * O DIA (MAPA-MANEJO-03, decisão 307): cada área conta pelo dia da EMPRESA DELA (dias de ocupação dos lotes, dias
+   * de descanso, faixa e a estação da lotação). O `hoje` e a `estacao` do topo são o dia MAIS ANTIGO entre as empresas
+   * do escopo; sem empresa no escopo, o dia de America/Sao_Paulo (a mesma queda de `erp.hoje_na_empresa`).
    *
    * CAPACIDADE × ESCOPO, com AND, em cada bloco:
    * - `objetos`: os objetos de mapa vivos do escopo SÓ para quem tem `map_objects.view`; sem ela, `objetos: []`.
@@ -421,19 +429,26 @@ export default async function mapaOcupacaoRoutes(app: FastifyInstance) {
     if (f.retiro_id) { params.push(f.retiro_id); filtros.push(`and a.retiro_id = $${params.length}`); }
     if (f.grazing_module_id) { params.push(f.grazing_module_id); filtros.push(`and a.grazing_module_id = $${params.length}`); }
     if (f.land_use) { params.push(f.land_use); filtros.push(`and a.land_use = $${params.length}`); }
-    // Uma linha sempre (o dia vem mesmo sem área): a lista de áreas entra pelo left join.
+    // Uma linha sempre (o dia vem mesmo sem área): a lista de áreas entra pelo left join. `hoje_da_area` (o dia da
+    // empresa da área) é coluna interna: a área da resposta é montada campo a campo e não a devolve.
     const ra = await consultaEscopada<ReferenciasDaArea & {
       hoje: ISODate; id: string | null; empresa_id: string; name: string; code: string; color: string | null;
       area_ha: DecimalString; land_use: string; status: string; geometria: unknown;
-      retiro_id: string | null; grazing_module_id: string | null;
+      retiro_id: string | null; grazing_module_id: string | null; hoje_da_area: ISODate;
     }>(ctx,
-      `with dia as (select current_date::text as hoje)
+      `with dia as (
+         select coalesce(min((now() at time zone e.fuso_horario)::date), (now() at time zone 'America/Sao_Paulo')::date)::text as hoje
+           from erp.empresas e
+          where e.organization_id = $1 and e.deleted_at is null and {{escopo:e.id}}
+       )
        select dia.hoje, a.*
          from dia
          left join (
            select a.id, a.empresa_id, a.name, a.code, a.color, a.area_ha, a.usable_area_ha, a.land_use, a.status, a.geometria,
-                  a.retiro_id, a.grazing_module_id, a.support_capacity_rainy_ua_ha, a.support_capacity_dry_ua_ha, a.max_stocking_ua
+                  a.retiro_id, a.grazing_module_id, a.support_capacity_rainy_ua_ha, a.support_capacity_dry_ua_ha, a.max_stocking_ua,
+                  (now() at time zone e.fuso_horario)::date::text as hoje_da_area
              from erp.areas a
+             join erp.empresas e on e.id = a.empresa_id and e.organization_id = a.organization_id
             where a.organization_id = $1 and a.deleted_at is null and {{escopo:a.empresa_id}}
               ${filtros.join(" ")}
          ) a on true
@@ -473,8 +488,9 @@ export default async function mapaOcupacaoRoutes(app: FastifyInstance) {
     // As categorias presentes de cada área ficam fora da resposta (o ícone e a faixa as consomem).
     const categoriasPorArea = new Map<string, CategoriaPresente[]>();
     const areas = linhasArea.map((a) => {
+      const hojeDaArea = a.hoje_da_area;
       const abertas = abertasPorArea.get(a.id) ?? [];
-      const lotes = abertas.map((o) => loteAberto(o, rebanho, hoje));
+      const lotes = abertas.map((o) => loteAberto(o, rebanho, hojeDaArea));
       const ua_total = somaUa(lotes);
       const ultima_saida = ultimaSaidaPorArea.get(a.id) ?? null;
       const categorias = categoriasDaArea(abertas, rebanho);
@@ -489,8 +505,8 @@ export default async function mapaOcupacaoRoutes(app: FastifyInstance) {
         cabecas_total: lotes.reduce((s, l) => s + l.cabecas, 0),
         ua_total,
         ultima_saida,
-        dias_de_descanso: descansoDaArea(lotes.length > 0, ultima_saida, hoje),
-        ...lotacaoDaArea(a, ua_total, estacao),
+        dias_de_descanso: descansoDaArea(lotes.length > 0, ultima_saida, hojeDaArea),
+        ...lotacaoDaArea(a, ua_total, estacaoDoAno(hojeDaArea)),
         ultimo_manejo: null as ISODate | null,
         ultima_pesagem: null as ISODate | null,
         centroide: centroideDePoligono(a.geometria),
@@ -499,7 +515,7 @@ export default async function mapaOcupacaoRoutes(app: FastifyInstance) {
         icone: null as IconeDaArea | null,
         faixa: faixaDaArea(coloracao, {
           landUse: a.land_use, uaTotal: ua_total, usableAreaHa: a.usable_area_ha, areaHa: a.area_ha,
-          inicioDaAbertaMaisAntiga: inicioDaAbertaMaisAntiga(abertas), ultimaSaida: ultima_saida, hoje, categorias
+          inicioDaAbertaMaisAntiga: inicioDaAbertaMaisAntiga(abertas), ultimaSaida: ultima_saida, hoje: hojeDaArea, categorias
         })
       };
     });
