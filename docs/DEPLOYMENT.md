@@ -4849,7 +4849,11 @@ de fuso custa ~8 ms por gravação em `erp.empresas` (lê `pg_timezone_names`).
    `select name from public.erp_migrations order by name desc limit 1` → `0062_icones_identificador_e_fuso.sql`;
    `select id, fuso_horario from erp.empresas` → 1 linha, `America/Sao_Paulo`.
 2. **ESCRITA EM PRODUÇÃO — decisão do Maike, só depois do passo 1** (antes dele a coluna não existe). O fuso de Cuiabá
-   na empresa de produção (id `9a2f0c2f-7d3c-4277-b37f-10a26ab43853`, código 1), pelo editor SQL do projeto Supabase:
+   na empresa de produção (id `9a2f0c2f-7d3c-4277-b37f-10a26ab43853`, código 1), pelo editor SQL do projeto Supabase.
+   Antes, confira que o papel do editor executa a função da CHECK de fuso (só o dono `erp_migrator` e o `erp_app` executam):
+   `select current_user, has_function_privilege('erp.fuso_horario_valido(text)', 'EXECUTE')` → `true`. Lido em produção
+   (SELECT, 10/10/2026): o editor é `postgres`, não superusuário, e HERDA `erp_migrator` — então dá `true`. Se der `false`,
+   pare: o UPDATE seria recusado (42501, sem efeito) e o papel é decisão do Maike.
 
    ```sql
    update erp.empresas set fuso_horario = 'America/Cuiaba' where id = '9a2f0c2f-7d3c-4277-b37f-10a26ab43853';
