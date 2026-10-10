@@ -26,7 +26,12 @@
 }
 
 /* ═════════════ campo ═════════════ */
-.campo { position: relative; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+/*
+ * `--recuo`: onde o TEXTO começa dentro da caixa — valor, controle e, no compacto, o rótulo flutuante. É UM só, 32px,
+ * com ou sem ícone (decisão 310): travado e com lupa na mesma coluna põem o texto no mesmo x. Mora no `.campo`, não na
+ * linha, porque o erro e o "abaixo" são irmãos da linha — só daqui o valor chega a eles.
+ */
+.campo { --recuo: 32px; position: relative; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 
 /*
  * GEOMETRIA DO DESENHO: a linha tem borda TRANSPARENTE de 1px (o `.fld`), e rótulo, caixa e ícone moram no padding-box
@@ -35,16 +40,19 @@
  * referência do desenho (o `.fx` a partir de 136px, topo +4 da linha) — o deslocamento mora no próprio painel, no fim.
  */
 .linha {
-  --recuo: 10px;
   position: relative;
   height: 30px;
   box-sizing: border-box;
   border: 1px solid transparent;
 }
-.linha[data-icone] { --recuo: 32px; }
 .linha[data-multilinha] { height: 80px; }
 
-/* rótulo à frente (padrão): 126px, à direita, ":" antes do "*" */
+/*
+ * rótulo à frente (padrão): 126px, à direita, ":" antes do "*". Altura de 28px, a do padding-box da linha (o da caixa):
+ * o centro do rótulo é o da caixa, 15. A caixa de linha é a do valor, 15px (12,5 × 1,2): o glifo da DM Sans (16px) não
+ * cabe nela e o Chrome reparte a sobra −1/0 — com a mesma linha, rótulo e valor ficam no mesmo centro e na mesma
+ * linha-base (com linha de 12px a sobra é −2/−2 e o rótulo ficava 0,5px abaixo).
+ */
 .rotulo {
   position: absolute;
   left: 0;
@@ -52,7 +60,7 @@
   z-index: 2;
   box-sizing: content-box;
   width: 126px;
-  height: 30px;
+  height: 28px;
   max-width: none;
   display: flex;
   align-items: center;
@@ -60,7 +68,7 @@
   padding: 0 2px 0 0;
   font-size: 12px;
   font-weight: 500;
-  line-height: 1;
+  line-height: 15px;
   color: #64748b;
   white-space: nowrap;
   overflow: hidden;
@@ -109,11 +117,20 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
 .valor { display: flex; align-items: baseline; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
 .valor > :last-child { overflow: hidden; text-overflow: ellipsis; }
 .vazio { color: #94a3b8; }
+/*
+ * multilinha SÓ LEITURA: o texto começa no TOPO e QUEBRA. Quem o põe no topo é o `align-items: flex-start` da caixa
+ * (o valor é filho único: nada de `align-self` nele, que anularia o da caixa). A 1ª linha fica no y do valor de uma
+ * linha só (centro 15: conteúdo a partir de 2 + 5,5 = 7,5, linha de 15px). O valor cresce com o texto até a altura da
+ * caixa (`max-height: 100%` resolve: a caixa tem altura definida, top e bottom 0) e dali rola — sem reticências. O valor
+ * de uma linha não muda.
+ */
+.linha[data-multilinha] .caixa:not([data-controle]) { align-items: flex-start; padding-top: 5.5px; }
+.linha[data-multilinha] .caixa:not([data-controle]) .valor { max-height: 100%; white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: hidden; overflow-y: auto; }
 
 /*
  * o controle (Input, RefSelect, MgDatePicker, Textarea) perde a caixa própria e É a caixa do desenho (o `.fc`): cobre a
- * border-box dela (−1px sobre o padding-box), com borda transparente de 1px e o padding de 10px (32px com ícone) —
- * o texto termina em reticências antes do recuo direito, e antes do "limpar" quando há valor.
+ * border-box dela (−1px sobre o padding-box), com borda transparente de 1px e, à esquerda, o `--recuo` do campo (32px,
+ * com ou sem ícone) — o texto termina em reticências antes do recuo direito, e antes do "limpar" quando há valor.
  */
 .caixa[data-controle] { padding: 0; }
 .caixa[data-controle] > :not([type="hidden"]) {
@@ -149,7 +166,10 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
 fieldset:disabled .caixa .controle { cursor: default; }
 .caixa input.controle::placeholder { color: transparent; }
 .caixa select.controle { appearance: none; background-image: none !important; }
-.caixa textarea.controle { resize: none; line-height: 1.5; }
+/* área de texto (sempre multilinha), densidade padrão: a 1ª linha no y do valor de uma linha só (centro 15). O conteúdo
+   começa em 2 e a linha mede 1,5em ⇒ 15 − 2 − ,75em = 13px − ,75em (3,625px com 12,5px). A especificidade é BAIXA de
+   propósito: vence o padding da `.controle` (!important lá também) e perde para as do compacto (13px), que não mudam */
+.caixa textarea.controle { resize: none; line-height: 1.5; padding-top: calc(13px - .75em) !important; }
 /* seletor de referência: a lupa mora à esquerda; o chevron sai, o "limpar" continua à direita */
 .caixa :global(.cmd-display) { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
 .caixa :global(.cmd-display-placeholder) { color: #94a3b8; font-weight: 500; }
@@ -197,19 +217,20 @@ fieldset:disabled .caixa .controle { cursor: default; }
 .botaoData:disabled { cursor: default; }
 .botaoData:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
 
-/* erro sob a caixa, com ícone */
+/* erro sob a caixa, com ícone, e o "abaixo": começam no x do VALOR — o padding-box da caixa (138) + o `--recuo`; no
+   compacto, a caixa cobre a borda da linha: 1 + o `--recuo` */
 .erro {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding-left: 138px;
+  padding-left: calc(138px + var(--recuo));
   font-size: 11px;
   line-height: 14px;
   color: #b91c1c;
   animation: aparecerErro var(--mi, 170ms) cubic-bezier(.16, 1, .3, 1) backwards;
 }
 .erro svg { width: 12px; height: 12px; flex-shrink: 0; }
-.abaixo { padding-left: 138px; }
+.abaixo { padding-left: calc(138px + var(--recuo)); }
 
 /* ═════════════ compacto: rótulo DENTRO da caixa (flutuante), 32px ═════════════ */
 [data-densidade="compacto"] .linha { height: 32px; }
@@ -234,22 +255,26 @@ fieldset:disabled .caixa .controle { cursor: default; }
 }
 [data-densidade="compacto"] .rotulo::after { content: none; }
 [data-densidade="compacto"] .obrigatorio { margin-left: 0; }
-[data-densidade="compacto"] .linha[data-icone] .rotulo { padding-left: 32px; max-width: calc(100% - 38px); }
+/* o rótulo flutuante começa no x do valor (o recuo de 32px, com ou sem ícone); a chave sim/não não é coluna de texto e
+   fica com o dela */
+[data-densidade="compacto"] .linha:not([data-chave]) .rotulo { padding-left: 32px; max-width: calc(100% - 38px); }
 [data-densidade="compacto"] .icone { left: 10px; }
 [data-densidade="compacto"] .botaoData { left: 11px; }
 [data-densidade="compacto"] .erro,
-[data-densidade="compacto"] .abaixo { padding-left: 2px; }
+[data-densidade="compacto"] .abaixo { padding-left: calc(1px + var(--recuo)); }
 /* flutuante: preenchido, só leitura, travado, com foco ou aberto */
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .rotulo,
 [data-densidade="compacto"] fieldset:disabled .linha .rotulo,
 [data-densidade="compacto"] .linha[data-multilinha] .rotulo { top: 3px; transform: none; font-size: 8.5px; line-height: 1; }
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa:not([data-controle]) { padding-top: 13px !important; padding-bottom: 4px !important; align-items: flex-end; }
+/* multilinha só leitura no compacto: o texto começa no topo, logo abaixo do rótulo flutuante (os 13px de cima ficam);
+   sem esta regra, o flex-end acima levaria o texto ao fundo dos 80px — mesma especificidade da regra acima, e depois dela */
+[data-densidade="compacto"] .linha[data-multilinha] .caixa:not([data-controle]) { align-items: flex-start; }
+/* um padding só para o controle com o rótulo flutuando (input, data, pesquisa): 13 em cima e 2 embaixo deixam a área do
+   texto com os 15px da linha. Numa área de 14 o input centrava a linha e o botão da pesquisa a punha no topo — meio pixel
+   entre os dois; com 15 os dois põem o glifo no mesmo y (centro 21, o do ícone: 50% + 5px) */
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .controle,
-[data-densidade="compacto"] fieldset:disabled .linha .controle { padding-top: 13px !important; padding-bottom: 3px !important; align-items: flex-end; }
-/* o botão da pesquisa é bloco (as reticências pedem) e não desce a linha de 15px até o fim de uma área de 14: com 12px
-   em cima a área tem os 15 da linha, e o texto fica onde o flex-end do desenho o põe */
-[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa :global(.cmd-display),
-[data-densidade="compacto"] fieldset:disabled .linha .caixa :global(.cmd-display) { padding-top: 12px !important; }
+[data-densidade="compacto"] fieldset:disabled .linha .controle { padding-top: 13px !important; padding-bottom: 2px !important; }
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .icone,
 [data-densidade="compacto"] fieldset:disabled .linha .icone { top: calc(50% + 5px); }
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .botaoData,
