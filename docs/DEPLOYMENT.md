@@ -4815,7 +4815,10 @@ de `updated_at`, que não dispara em ADD COLUMN. **Tempo e travas:** a 0062 inte
 `erp.batches` enquanto a transação dura (ADD COLUMN e ADD CONSTRAINT), e as FKs da tabela nova pedem SHARE ROW
 EXCLUSIVE em `erp.organizations` e `erp.empresas`; cada pedido de trava espera no máximo 2 s e, sem a trava, a 0062
 aborta inteira, sem nada aplicado — reaplicar depois. **Papel:** a pré-condição exige superusuário ou BYPASSRLS — o
-pre-deploy aplica com `erp_migrator` (`bypassrls`, ver os papéis no topo deste arquivo), o mesmo da 0061. Veredito:
+pre-deploy aplica com `erp_migrator` (`bypassrls`, ver os papéis no topo deste arquivo), o mesmo da 0061. Outra
+pré-condição exige que quem aplica seja o DONO de `erp.batches_fechar_ocupacao()`: a função recriada mantém o dono da 0061
+e chama `erp.hoje_na_empresa`, que só o dono executa — aplicada por outro papel, a 0062 passaria e toda gravação de lote
+falharia. Produção (SELECT): as funções da 0061 são de `erp_migrator`, o papel que aplica. Veredito:
 **APLICA_LIMPO** pela leitura; a aplicação real é a do pipeline.
 
 **Ordem:** BANCO (0062, pre-deploy) → API → WEB (o web não muda nesta fatia). **API anterior × banco na 0062**: nenhuma

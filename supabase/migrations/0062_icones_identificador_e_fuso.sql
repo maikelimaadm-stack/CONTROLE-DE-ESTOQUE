@@ -106,6 +106,13 @@ begin
   if not exists (select 1 from pg_roles where rolname = current_user and (rolsuper or rolbypassrls)) then
     raise exception 'MAPA-MANEJO-02: o papel que aplica a migration (%) precisa ser superusuario ou ter BYPASSRLS.', current_user;
   end if;
+  -- A função de gatilho recriada (create or replace mantém o dono da 0061) chama erp.hoje_na_empresa, que nasce do papel
+  -- que aplica e só o dono executa. Se quem aplica não é o dono da função de gatilho, a migration aplicaria limpa e TODA
+  -- gravação de lote falharia por falta de EXECUTE. Em produção o dono é o erp_migrator, o mesmo papel que aplica.
+  if (select pg_get_userbyid(p.proowner) from pg_proc p where p.oid = 'erp.batches_fechar_ocupacao()'::regprocedure) <> current_user then
+    raise exception 'MAPA-MANEJO-02: o papel que aplica a migration (%) nao e o dono de erp.batches_fechar_ocupacao() (%); a funcao recriada chamaria erp.hoje_na_empresa sem EXECUTE e toda gravacao de lote falharia. Aplique como o dono.',
+      current_user, (select pg_get_userbyid(p.proowner) from pg_proc p where p.oid = 'erp.batches_fechar_ocupacao()'::regprocedure);
+  end if;
 end $$;
 
 -- =====================================================================
@@ -406,6 +413,12 @@ begin
                (to_regprocedure('erp.batches_fechar_ocupacao()'), true, 'v'))
          and p.proconfig = array['search_path=erp, pg_temp']) <> 5 then
     raise exception 'MAPA-MANEJO-02: pos-condicao — funcoes novas (ou a recriada) fora da forma (SECURITY DEFINER/INVOKER, volatilidade ou search_path fixo).';
+  end if;
+
+  -- O dono da função de gatilho executa o que ela chama (o mesmo papel: a pré-condição exigiu quem aplica = o dono).
+  if not has_function_privilege((select p.proowner from pg_proc p where p.oid = 'erp.batches_fechar_ocupacao()'::regprocedure), 'erp.hoje_na_empresa(uuid)', 'EXECUTE')
+     or not has_function_privilege((select p.proowner from pg_proc p where p.oid = 'erp.hoje_na_empresa(uuid)'::regprocedure), 'erp.dia_no_fuso(timestamptz,text)', 'EXECUTE') then
+    raise exception 'MAPA-MANEJO-02: pos-condicao — o dono de erp.batches_fechar_ocupacao() nao executa erp.hoje_na_empresa (ou o dono desta nao executa erp.dia_no_fuso).';
   end if;
 
   -- EXECUTE: ninguém além do dono nas três de gatilho; SÓ o erp_app além do dono nas duas de CHECK.

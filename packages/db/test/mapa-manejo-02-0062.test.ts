@@ -52,6 +52,8 @@ const SEM_POLITICA = "MAPA-MANEJO-02: politica tenant_e_empresa de erp.areas aus
 const SEM_PECUARIA = "MAPA-MANEJO-02: modulo de escopo pecuaria ausente.";
 const SEM_ERP_APP = "MAPA-MANEJO-02: papel erp_app ausente (0007).";
 const SEM_BYPASS = (papel: string) => `MAPA-MANEJO-02: o papel que aplica a migration (${papel}) precisa ser superusuario ou ter BYPASSRLS.`;
+const NAO_DONO = (papel: string, dono: string) =>
+  `MAPA-MANEJO-02: o papel que aplica a migration (${papel}) nao e o dono de erp.batches_fechar_ocupacao() (${dono}); a funcao recriada chamaria erp.hoje_na_empresa sem EXECUTE e toda gravacao de lote falharia. Aplique como o dono.`;
 
 const FUNCOES = ["erp.batches_fechar_ocupacao()", "erp.dia_no_fuso(timestamp with time zone,text)", "erp.fuso_horario_valido(text)",
   "erp.hoje_na_empresa(uuid)", "erp.icone_categorias_misto_validas(text[])"];
@@ -256,7 +258,7 @@ describe("MM2-6 — a 0062 recusa SEM efeito (antes de aplicar)", () => {
     expect(await retrato()).toEqual(retratoInicial);
   });
 
-  it("MM2-6a REVERSAS: cada pré-condição quebrada (uma por transação desfeita) recusa a 0062 com a SUA mensagem exata, sem efeito — as 14 do B1 (itens 2 a 15)", async () => {
+  it("MM2-6a REVERSAS: cada pré-condição quebrada (uma por transação desfeita) recusa a 0062 com a SUA mensagem exata, sem efeito — as 15 (itens 2 a 16; a 16: quem aplica tem de ser o dono da função de gatilho)", async () => {
     /** Recria a função de gatilho com o corpo transformado, MANTENDO security definer e o search_path (só o corpo muda). */
     const recriarCorpo = (expr: string) =>
       `do $$ declare v text; begin
@@ -264,6 +266,8 @@ describe("MM2-6 — a 0062 recusa SEM efeito (antes de aplicar)", () => {
          execute format('create or replace function erp.batches_fechar_ocupacao() returns trigger language plpgsql security definer set search_path = erp, pg_temp as %L', ${expr});
        end $$`;
     type Esperada = string | ((corpoDepoisDaSabotagem: string) => string);
+    /** O papel que aplica (o do runner): a mensagem 16 o nomeia. */
+    const quemAplica = (await db.query<{ u: string }>("select current_user::text as u")).rows[0]!.u;
     const PRE: [number, string, string, Esperada][] = [
       [2, "já aplicada (erp.configuracoes_de_icone existe)", "create table erp.configuracoes_de_icone (x int)", JA],
       [2, "já aplicada (hoje_na_empresa existe)", "create function erp.hoje_na_empresa(uuid) returns date language sql as 'select null::date'", JA],
@@ -295,7 +299,11 @@ describe("MM2-6 — a 0062 recusa SEM efeito (antes de aplicar)", () => {
         "set local session_replication_role = replica; delete from erp.modulos_escopo_empresa where chave = 'pecuaria'; set local session_replication_role = origin", SEM_PECUARIA],
       [14, "papel erp_app ausente", "alter role erp_app rename to erp_app_sabotado", SEM_ERP_APP],
       // Papel real SEM superusuário e SEM BYPASSRLS (o papel da aplicação): a última pré-condição recusa.
-      [15, "papel sem bypass (erp_app_test)", "set local role erp_app_test", SEM_BYPASS("erp_app_test")]
+      [15, "papel sem bypass (erp_app_test)", "set local role erp_app_test", SEM_BYPASS("erp_app_test")],
+      // O dono da função de gatilho da 0061 é OUTRO papel (com bypass): sem esta recusa, a 0062 aplicaria limpa e o
+      // gatilho recriado (que mantém o dono) chamaria erp.hoje_na_empresa sem EXECUTE — toda gravação de lote falharia.
+      [16, "dono da função de gatilho é outro papel", "create role mm2_dono_sabotado nologin bypassrls; alter function erp.batches_fechar_ocupacao() owner to mm2_dono_sabotado",
+        NAO_DONO(quemAplica, "mm2_dono_sabotado")]
     ];
     const c = await db.connect();
     const obtido: [string, string, unknown][] = [];
@@ -316,9 +324,9 @@ describe("MM2-6 — a 0062 recusa SEM efeito (antes de aplicar)", () => {
       }
     } finally { c.release(); }
     expect(obtido).toEqual(esperado);
-    expect(obtido).toHaveLength(27);
-    // As 14 mensagens do resumo do B1 (itens 2 a 15) foram TODAS provocadas; a 1 (trava) é o MM2-6b.
-    expect([...new Set(PRE.map(([item]) => item))]).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    expect(obtido).toHaveLength(28);
+    // As 15 mensagens (itens 2 a 16) foram TODAS provocadas; a 1 (trava) é o MM2-6b.
+    expect([...new Set(PRE.map(([item]) => item))]).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
     // O md5 da mensagem 6 é o do corpo SABOTADO, não o da 0061.
     expect(esperado.find(([nome]) => nome.startsWith("corpo da 0061 com"))![1]).not.toContain(MD5_0061);
     // As sabotagens foram desfeitas: o banco está como antes (nem a 0062, nem a sabotagem).
