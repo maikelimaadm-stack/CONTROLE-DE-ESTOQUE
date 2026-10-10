@@ -1038,7 +1038,8 @@ export default async function comprasRoutes(app: FastifyInstance) {
      * `{ false, false }`. Aditivo, sem capacidade nova (o molde de `exigeArmazem`): a Central anterior pega as chaves
      * de hoje campo a campo e ignora esta. Nenhuma consulta a mais (vem da mesma leitura de `regrasDaTopAtual`).
      *
-     * LANCAMENTO-01 (decisão 311): + `secao` e `padroes`, DEPOIS de `regrasGerais` (que deixa de ser a última), da
+     * LANCAMENTO-01 (decisão 311): + `secao` e `padroes`, logo ANTES de `regrasGerais` (que continua a ÚLTIMA chave — o
+     * contrato da F2 que o skew mede, `operacoes-01-f2-skew-comum.ts`), da
      * versão ATUAL — o que a TOP já sabe do financeiro, para a Central semear o campo vazio. Aditivo, sem capacidade
      * nova e com `contractVersion` 1 (o molde de `exigeArmazem`): a Central anterior lê as chaves de hoje campo a campo
      * e ignora estas. A FORMA é a de `GET /api/financeiro/tops` (financeiro-tops.ts), chave por chave — um contrato só,
@@ -1087,9 +1088,9 @@ export default async function comprasRoutes(app: FastifyInstance) {
         exigeFormaPagamento: efeitos?.exigeFormaPagamento ?? false,
         exigeVencimento: efeitos?.exigeVencimento ?? false,
         exigeArmazem: efeitos?.exigeArmazem ?? false,
-        regrasGerais: regrasGeraisDaVariante(regrasGerais, especie === "compra"),
         secao: { provisao: fin.secao.provisao, documentoTroca: fin.secao.documentoTroca, semClassificacao: fin.secao.semClassificacao },
         padroes: p ? { natureza: p.natureza, centro: p.centro, tipoTitulo: p.tipoTitulo, formaPagamento: p.formaPagamento, conta: p.conta } : null,
+        regrasGerais: regrasGeraisDaVariante(regrasGerais, especie === "compra"),
       };
     }));
 

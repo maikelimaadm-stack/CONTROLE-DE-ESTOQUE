@@ -11,7 +11,7 @@ import { COMPRA, PEDIDO_DE_COMPRA, ORCAMENTO_DE_COMPRA, cfg5Fin, topCompraNo5, t
 
 /**
  * LANCAMENTO-01 (decisão 311) — `GET /api/compras/{compras|pedidos}/regras-da-operacao` DIZ O QUE A TOP JÁ SABE DO
- * FINANCEIRO: `secao` e `padroes`, depois de `regrasGerais`, na forma de `GET /api/financeiro/tops` (um contrato só, o
+ * FINANCEIRO: `secao` e `padroes`, logo antes de `regrasGerais` (a última), na forma de `GET /api/financeiro/tops` (um contrato só, o
  * da Central Financeira), da versão ATUAL e pela MESMA fonte do salvar (`padroesDaTopParaExecucao`). E a rede do produto
  * que diz o local (o 4.3 da fatia), no servidor de hoje.
  *
@@ -63,10 +63,13 @@ let outra: { orgId: string; headers: Hdr };
 
 // ─────────────── o contrato ───────────────
 
-/** As chaves de HOJE de `/regras-da-operacao` de compras, na ordem (a F2 acrescentou `regrasGerais`, a última até aqui). */
+/** As chaves de HOJE de `/regras-da-operacao` de compras, na ordem (a F2 acrescentou `regrasGerais`, a ÚLTIMA). */
 const CHAVES_DE_HOJE = ["contractVersion", "formato", "exigencias", "condicoesPermitidas", "geraTitulos", "exigeFormaPagamento", "exigeVencimento", "exigeArmazem", "regrasGerais"] as const;
-/** As de hoje + as da LANCAMENTO-01, no fim. */
-const CHAVES = [...CHAVES_DE_HOJE, "secao", "padroes"];
+/**
+ * As de hoje + as da LANCAMENTO-01 logo ANTES de `regrasGerais`, que continua a ÚLTIMA (o contrato da F2 que o skew
+ * mede: `apps/web/e2e/operacoes-01-f2-skew-comum.ts`, `regrasGeraisDoCorpo`).
+ */
+const CHAVES = [...CHAVES_DE_HOJE.slice(0, -1), "secao", "padroes", "regrasGerais"];
 /** As chaves de `/compras/orcamentos/regras-da-operacao` (a rota do orçamento, que NÃO muda). */
 const CHAVES_DO_ORCAMENTO = ["contractVersion", "formato", "exigencias", "condicoesPermitidas", "geraTitulos", "exigeFormaPagamento", "exigeVencimento", "exigeArmazem"];
 const CHAVES_DA_SECAO = ["provisao", "documentoTroca", "semClassificacao"];
@@ -172,7 +175,7 @@ describe("LANC-I1 contrato: secao e padroes da versão atual, na forma da Centra
     const t = await topCompraNo5({ secao: { documentoTroca: false }, padroes: CINCO() });
     expect(await linhasDosPadroes(t.versaoId), "premissa: a versão tem a linha dos padrões").toBe(1);
     const b = await ok(daTop("compras", t.id));
-    expect(Object.keys(b), "as chaves de hoje, na ordem, e depois secao e padroes").toEqual(CHAVES);
+    expect(Object.keys(b), "as chaves de hoje, na ordem, com secao e padroes logo antes de regrasGerais (a última)").toEqual(CHAVES);
     expect(b.contractVersion).toBe(1);
     expect(b.secao, "a seção DA VERSÃO (o documento não troca), não o neutro").toEqual({ provisao: false, documentoTroca: false, semClassificacao: "padrao_legado" });
     expect(Object.keys(b.secao as object)).toEqual(CHAVES_DA_SECAO);

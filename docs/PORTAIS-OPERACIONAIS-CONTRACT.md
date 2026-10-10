@@ -779,8 +779,9 @@ TOP (F2/F3b).
 
 ## Os padrões financeiros da TOP nas regras da operação de Compras (LANCAMENTO-01, decisão 311)
 
-`GET /api/compras/{pedidos|compras}/regras-da-operacao?tipo_operacao_id=` responde, DEPOIS das chaves de hoje (depois
-de `regrasGerais`), duas chaves ADITIVAS da versão ATUAL da TOP: o que o sistema já sabe do financeiro do lançamento,
+`GET /api/compras/{pedidos|compras}/regras-da-operacao?tipo_operacao_id=` responde, logo ANTES de `regrasGerais` (que
+continua a ÚLTIMA chave, o contrato da OPERACOES-01 F2 que o version skew mede), duas chaves ADITIVAS da versão ATUAL
+da TOP: o que o sistema já sabe do financeiro do lançamento,
 para a Central não perguntar o que a TOP responde. `contractVersion` continua 1 e não há capacidade nova (o molde de
 `exigeArmazem`): a Central anterior lê as chaves de hoje campo a campo e ignora as duas (`lerRegras`,
 `features/compras/layout-da-central.ts`).

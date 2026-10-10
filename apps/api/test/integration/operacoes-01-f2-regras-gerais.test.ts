@@ -55,10 +55,10 @@ const AS_DUAS: RegrasGerais = { confirmacaoAutomatica: true, aceitaSemItens: tru
 /** As chaves de `/regras-da-operacao` de vendas, na ordem: as de hoje + `regrasGerais` por último. */
 const CHAVES_VENDA = ["formato", "exigencias", "condicoesPermitidas", "clienteEmAtraso", "reservaEstoque", "regrasGerais"];
 /**
- * As chaves de `/regras-da-operacao` de compras, na ordem: as de hoje + `regrasGerais`; depois dela, LANCAMENTO-01
- * (decisão 311): `secao` e `padroes` no fim.
+ * As chaves de `/regras-da-operacao` de compras, na ordem: as de hoje + `regrasGerais` por último; LANCAMENTO-01
+ * (decisão 311): `secao` e `padroes` logo antes dela, que continua a ÚLTIMA.
  */
-const CHAVES_COMPRA = ["contractVersion", "formato", "exigencias", "condicoesPermitidas", "geraTitulos", "exigeFormaPagamento", "exigeVencimento", "exigeArmazem", "regrasGerais", "secao", "padroes"];
+const CHAVES_COMPRA = ["contractVersion", "formato", "exigencias", "condicoesPermitidas", "geraTitulos", "exigeFormaPagamento", "exigeVencimento", "exigeArmazem", "secao", "padroes", "regrasGerais"];
 /** As chaves do POST de hoje (sem a confirmação automática). */
 const CHAVES_DO_POST_VENDA = ["id", "subtotal", "total"];
 const CHAVES_DO_POST_COMPRA = ["id", "codigo", "especie", "situacao", "valor_itens", "valor_total"];
