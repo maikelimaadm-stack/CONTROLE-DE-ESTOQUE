@@ -776,3 +776,56 @@ rural (LCDPR)" com o padrão da empresa já escolhido (`fin-baixa-imovel`, `fin-
 detalhe, a coluna "Imóvel rural"; a baixa em lote da Central ainda não mostra o campo (o servidor aplica o padrão de
 cada empresa). Continua sem o motor da Central de documento: a Central de Vendas ainda não pré-preenche os padrões da
 TOP (F2/F3b).
+
+## Os padrões financeiros da TOP nas regras da operação de Compras (LANCAMENTO-01, decisão 311)
+
+`GET /api/compras/{pedidos|compras}/regras-da-operacao?tipo_operacao_id=` responde, DEPOIS das chaves de hoje (depois
+de `regrasGerais`), duas chaves ADITIVAS da versão ATUAL da TOP: o que o sistema já sabe do financeiro do lançamento,
+para a Central não perguntar o que a TOP responde. `contractVersion` continua 1 e não há capacidade nova (o molde de
+`exigeArmazem`): a Central anterior lê as chaves de hoje campo a campo e ignora as duas (`lerRegras`,
+`features/compras/layout-da-central.ts`).
+
+```
+secao:   { provisao: boolean, documentoTroca: boolean, semClassificacao: "padrao_legado" | "exigir" }
+padroes: { natureza:       { id, codigo, nome } | null,
+           centro:         { id, codigo, nome } | null,
+           tipoTitulo:     { id, nome } | null,
+           formaPagamento: { id, nome } | null,
+           conta:          { id, codigo, descricao } | null } | null
+```
+
+- **Um contrato só.** A forma de `secao` e dos cinco campos de `padroes` é a de `GET /api/financeiro/tops` (Central
+  Financeira, F9a), chave por chave; o tipo web é declarado uma vez (`features/central/contrato.ts`). Diferença
+  declarada: aqui o OBJETO `padroes` pode ser `null` (regra abaixo); na lista financeira ele é sempre o objeto, com os
+  campos nulos.
+- **Fonte.** `padroesDaTopParaExecucao` (`apps/api/src/lib/financeiro-top.ts`), a mesma que o salvar da compra e do
+  pedido executa (`padroesDaTopNoSalvarDaCompra`): nenhuma segunda régua do formato 5 ou do perfil na rota. Só o formato
+  5 de família com perfil de padrões executa — a compra e o pedido de compra têm perfil; o orçamento de compra não, e
+  `/compras/orcamentos/regras-da-operacao` não muda. Os rótulos vêm da mesma leitura (o histórico da versão, mesmo de
+  cadastro inativado depois): a rota diz o que a TOP manda; quem confere o cadastro utilizável continua sendo o
+  servidor, no salvar e na confirmação.
+- **A regra do null.** `padroes: null` sempre que a versão não tem padrão a executar: formatos 1 a 4, versão ilegível,
+  ou o formato 5 sem a linha dos padrões. Fail-closed: nunca o padrão de outra versão nem de outra família. Dentro do
+  objeto, campo sem padrão = `null`.
+- **A seção vai sempre**, a da função — o neutro `{ provisao: false, documentoTroca: true, semClassificacao:
+  "padrao_legado" }` quando a versão não executa, a regra da lista financeira para a TOP sem padrões: o neutro é o que o
+  servidor executa. No formato 5 sem padrões, a seção é a da versão (por exemplo `documentoTroca: false`) com
+  `padroes: null`.
+- **`semClassificacao` em Compras é sempre "padrao_legado"**: o editor da TOP recusa "exigir" nas duas famílias (o
+  perfil delas não tem "sem natureza e centro"), e o servidor classifica a compra sempre com "exigir"
+  (`padroesDaTopNoSalvarDaCompra`). Aqui "padrao_legado" NÃO dispensa natureza e centro: a obrigatoriedade na tela
+  continua vindo de `geraTitulos`, como hoje.
+- **`podeTrocar` não vai na resposta**: a tela o deriva, `secao.documentoTroca && trocaPeloDocumento` do perfil da
+  família (`perfilDosPadroesFinanceiros`, no domínio; na compra e no pedido de compra `trocaPeloDocumento` é verdadeiro,
+  então vale `secao.documentoTroca`). A trava na tela é apresentação: quem recusa a troca é o servidor, no salvar
+  (`financeiroPadrao.documentoTroca`), e só quando há o que classificar — a compra que gera título; o pedido com a
+  provisão ligada.
+- **Autorização e 404: as de hoje.** A seção e os padrões são lidos DEPOIS de `runService(<recurso>.create)` e do
+  select da existência. TOP inexistente, de outra organização, de outra família, inativa, excluída, id malformado ou
+  ausente: a MESMA 404, com as MESMAS consultas de antes (o id malformado não vai ao banco; os outros, só o select da
+  existência).
+- **Custo, declarado.** A função relê a versão que a porta já leu (+1 consulta: a versão com o pai) e, só quando a
+  versão executa, lê os padrões com os rótulos numa consulta (+1: a tabela da 0045 com os cadastros; sem N+1).
+  Consultas do handler, contadas com o espião de `pg.Client`: compra 3 → 4 (formatos 1 a 4) ou 5 (formato 5); pedido 2
+  → 3 ou 4. A releitura fica de propósito: a assinatura de `padroesDaTopParaExecucao` não muda e a Central Financeira
+  não é tocada.

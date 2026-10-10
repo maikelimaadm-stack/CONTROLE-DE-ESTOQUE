@@ -328,7 +328,8 @@ describe("A1-3 — cobrança do layout ao lançar", () => {
 describe("A1-4 — regras-da-operacao: exigeFormaPagamento, exigeVencimento e exigeArmazem (e, desde a OPERACOES-01 F2, regrasGerais)", () => {
   // OPERACOES-01 F2 (decisão 279) acrescentou `regrasGerais` — e nenhuma outra chave. O valor é provado em
   // `operacoes-01-f2-regras-gerais.test.ts`; aqui, só a lista exata das chaves.
-  const CHAVES = ["condicoesPermitidas", "contractVersion", "exigeArmazem", "exigeFormaPagamento", "exigeVencimento", "exigencias", "formato", "geraTitulos", "regrasGerais"];
+  // LANCAMENTO-01 (decisão 311): + `padroes` e `secao` (o valor é provado em `lancamento-01-regras-padroes.test.ts`).
+  const CHAVES = ["condicoesPermitidas", "contractVersion", "exigeArmazem", "exigeFormaPagamento", "exigeVencimento", "exigencias", "formato", "geraTitulos", "padroes", "regrasGerais", "secao"];
   const regras = (segmento: "pedidos" | "compras", t: string, app: FastifyInstance = h.app) =>
     app.inject({ method: "GET", url: `/api/compras/${segmento}/regras-da-operacao?tipo_operacao_id=${t}`, headers: h.headers() });
 
