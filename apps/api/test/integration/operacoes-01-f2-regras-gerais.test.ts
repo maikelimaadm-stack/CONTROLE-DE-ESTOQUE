@@ -30,7 +30,8 @@ import {
  *   RG-8  o bloco não custa consulta: as MESMAS consultas (texto e ordem) para uma TOP que liga as duas e para uma que
  *         não liga nada; a família vem por subselect DENTRO da leitura da versão que já existia (a mesma SQL), e a
  *         versão continua lida as vezes de antes do bloco — na venda, duas (a porta e as regras); na compra, três (a
- *         porta, as regras e os efeitos previstos);
+ *         porta, as regras e os efeitos previstos) — quatro desde a LANCAMENTO-01 (decisão 311): + a releitura declarada
+ *         de `padroesDaTopParaExecucao`;
  *         nenhuma leitura própria da gravação (`lerVersaoCongeladaTop`). O "como antes" é o desenho do diff (nenhuma
  *         chamada nova ao banco nas rotas); o teste fixa o número para que uma leitura a mais reprove.
  *   RG-9  FORMATO 5 (OPERACOES-01 F4, decisão 281 — o que o editor grava desde a F4): o bloco e a gravação pela MESMA
@@ -53,8 +54,11 @@ const AS_DUAS: RegrasGerais = { confirmacaoAutomatica: true, aceitaSemItens: tru
 
 /** As chaves de `/regras-da-operacao` de vendas, na ordem: as de hoje + `regrasGerais` por último. */
 const CHAVES_VENDA = ["formato", "exigencias", "condicoesPermitidas", "clienteEmAtraso", "reservaEstoque", "regrasGerais"];
-/** As chaves de `/regras-da-operacao` de compras, na ordem: as de hoje + `regrasGerais` por último. */
-const CHAVES_COMPRA = ["contractVersion", "formato", "exigencias", "condicoesPermitidas", "geraTitulos", "exigeFormaPagamento", "exigeVencimento", "exigeArmazem", "regrasGerais"];
+/**
+ * As chaves de `/regras-da-operacao` de compras, na ordem: as de hoje + `regrasGerais` por último; LANCAMENTO-01
+ * (decisão 311): `secao` e `padroes` logo antes dela, que continua a ÚLTIMA.
+ */
+const CHAVES_COMPRA = ["contractVersion", "formato", "exigencias", "condicoesPermitidas", "geraTitulos", "exigeFormaPagamento", "exigeVencimento", "exigeArmazem", "secao", "padroes", "regrasGerais"];
 /** As chaves do POST de hoje (sem a confirmação automática). */
 const CHAVES_DO_POST_VENDA = ["id", "subtotal", "total"];
 const CHAVES_DO_POST_COMPRA = ["id", "codigo", "especie", "situacao", "valor_itens", "valor_total"];
@@ -455,7 +459,7 @@ describe("RG-8 o bloco não custa consulta", () => {
     expect(a.sqls.filter((s) => /select v\.configuracao, t\.codigo_base/.test(s)), "nenhuma leitura própria da gravação").toHaveLength(0);
   });
 
-  it("RG-8 compras: TOP formato 4 Automática + Permitido e TOP formato 4 neutra disparam as MESMAS consultas; a família DENTRO da leitura da versão, lida três vezes (porta + regras + efeitos previstos da compra)", async () => {
+  it("RG-8 compras: TOP formato 4 Automática + Permitido e TOP formato 4 neutra disparam as MESMAS consultas; a família DENTRO da leitura da versão, lida quatro vezes (porta + regras + efeitos previstos da compra + a releitura declarada de padroesDaTopParaExecucao)", async () => {
     const liga = await topDa("compras.compra", automaticaEPermitido());
     const neutra = await topDa("compras.compra", cfg4());
     await ok(regrasCompra("compras", `?tipo_operacao_id=${liga}`));
@@ -467,7 +471,8 @@ describe("RG-8 o bloco não custa consulta", () => {
     const daFamilia = a.sqls.filter((s) => s.includes("tb.codigo_base"));
     expect(daFamilia, "o subselect da família, numa SQL só").toHaveLength(1);
     expect(daFamilia[0], "e ela É a leitura das regras da versão (a de `regrasPorFiltro`, com o subselect das condições)").toMatch(/tipos_operacao_versao_condicoes/);
-    expect(leemAVersao(a.sqls), "a versão lida três vezes — a porta, as regras e os efeitos previstos da compra (`efeitosPrevistosDaCompra`) —, nenhuma a mais").toHaveLength(3);
+    // LANCAMENTO-01 (decisão 311): + a releitura declarada de padroesDaTopParaExecucao.
+    expect(leemAVersao(a.sqls), "a versão lida quatro vezes — a porta, as regras, os efeitos previstos da compra (`efeitosPrevistosDaCompra`) e a releitura declarada de `padroesDaTopParaExecucao` —, nenhuma a mais").toHaveLength(4);
     expect(a.sqls.filter((s) => /select v\.configuracao, t\.codigo_base/.test(s)), "nenhuma leitura própria da gravação").toHaveLength(0);
   });
 });
