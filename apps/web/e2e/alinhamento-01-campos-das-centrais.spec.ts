@@ -24,7 +24,8 @@ import { hojeISO } from "./estoque-01-comum";
  * │ ALN-3b D2   o mesmo campo no COMPACTO: a 1ª linha começa abaixo do texto do rótulo flutuante e o padding-top     │
  * │             continua 13 px (prova de que o compacto não mudou)                                                   │
  * │ ALN-4a D4+5 campo simples só-leitura (Dados principais da consulta de compras): o centro do texto do rótulo no    │
- * │             centro do texto do valor; a linha-base dos dois é REGISTRADA (o número do D5)                        │
+ * │             centro do texto do valor — tolerância 0,25 px: único gate do D4 (1,0 px) e do D5 (0,5 px); 1 px  │
+ * │             não veria nenhum dos dois sozinho; a linha-base dos dois é só REGISTRADA (o número do D5)            │
  * │ ALN-5a D6   compacto preenchido (criação da venda): o y do texto do RefSelect = o y do texto do input da coluna  │
  * │             — tolerância 0,25 px: o D6 é de MEIO pixel, e 1 px não o veria (medido no ANTES)                     │
  * │ ALN-6a D8   a mensagem de erro começa no x do texto do controle, nas DUAS densidades (criação da saída de       │
@@ -58,6 +59,7 @@ import { hojeISO } from "./estoque-01-comum";
  * REVERSAS (do executor; duas observações cada; NUNCA commitadas): R1 `--recuo: 10px` no campo sem ícone → ALN-1a
  * vermelho · R2 `align-items: center` no multilinha só-leitura → ALN-2a · R2c `flex-end` de volta no multilinha do
  * compacto → ALN-2c vermelho · R3 `white-space: nowrap` no valor → ALN-2b ·
+ * RD4 `.rotulo` height 30px de volta → ALN-4a vermelho · RD5 `.rotulo` line-height 1 de volta → ALN-4a vermelho ·
  * R4 as duas regras de padding-top do compacto (13 no controle × 12 no botão da pesquisa) → ALN-5a · R5 início da caixa
  * 137 → 140 → ALN-7a.
  */
@@ -543,8 +545,13 @@ test("ALN-4a — D4+D5: campo simples só-leitura (consulta de compras): o centr
     log("ALN-4a", `${l.rotulo}: rótulo ${l.r.fonte} topo=${f(l.r.topo)} altura=${f(l.r.altura)} centro=${f(l.r.centro)} linha-base=${f(l.r.linhaBase)} · valor ${l.v.fonte} topo=${f(l.v.topo)} altura=${f(l.v.altura)} centro=${f(l.v.centro)} linha-base=${f(l.v.linhaBase)} · Δcentro=${f(l.centro)} · Δlinha-base=${f(l.base)}`);
   }
   const pior = linhas.reduce((a, b) => (Math.abs(b.centro) > Math.abs(a.centro) ? b : a));
-  log("ALN-4a", `maior |Δcentro| = ${f(Math.abs(pior.centro))} (${pior.rotulo})`);
-  for (const l of linhas) expect(Math.abs(l.centro), `ALN-4a (${l.rotulo}): o centro do texto do rótulo coincide com o centro do texto do valor — tolerância 1 px`).toBeLessThanOrEqual(1);
+  log("ALN-4a", `maior |Δcentro| = ${f(Math.abs(pior.centro))} (${pior.rotulo}) · maior |Δlinha-base| = ${f(Math.max(...linhas.map((l) => Math.abs(l.base ?? 0))))}`);
+  /* TOLERÂNCIA 0,25 px, e não 1: este caso é o ÚNICO gate do D4 e do D5, e os dois são de 1 px ou menos — o D4 (o rótulo
+     de 30 px num padding-box de 28) mede 1,0 e o D5 (line-height 1 no rótulo × 1,2 no valor: o glifo de 16 px se reparte
+     −2/−2 numa linha de 12 e −1/0 numa de 15) mede 0,5. Com 1 px, o D4 sozinho passaria no limite (1,00) e o D5 sozinho
+     (0,50) nunca seria visto; só os dois juntos (1,50) reprovavam. Rótulo e valor são medidos pela MESMA régua (o Range),
+     em fração de pixel; o DEPOIS mede 0,00 nos campos todos. A linha-base fica só REGISTRADA (o log acima), sem asserção. */
+  for (const l of linhas) expect(Math.abs(l.centro), `ALN-4a (${l.rotulo}): o centro do texto do rótulo coincide com o centro do texto do valor — tolerância 0,25 px`).toBeLessThanOrEqual(0.25);
 });
 
 /* ═════════════════════════════════════════════ ALN-5 (D6) ═════════════════════════════════════════════ */
