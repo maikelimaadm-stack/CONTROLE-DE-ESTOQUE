@@ -42,6 +42,7 @@ import consultaRoutes from "./routes/consultas.js";
 import analisesSatelitaisRoutes from "./routes/analises-satelitais.js";
 import mapaManejoRoutes from "./routes/mapa-manejo.js";
 import mapaObjetosRoutes from "./routes/mapa-objetos.js";
+import mapaIconesRoutes from "./routes/mapa-icones.js";
 import mapaOcupacaoRoutes from "./routes/mapa-ocupacao.js";
 import rastersSatelitaisRoutes from "./routes/rasters-satelitais.js";
 import sateliteConsultasRoutes from "./routes/satelite-consultas.js";
@@ -175,6 +176,7 @@ export async function buildApp(opts: {
   await app.register(analisesSatelitaisRoutes, { prefix: "/api" });
   await app.register(mapaManejoRoutes, { prefix: "/api" });
   await app.register(mapaObjetosRoutes, { prefix: "/api" });
+  await app.register(mapaIconesRoutes, { prefix: "/api" });
   await app.register(mapaOcupacaoRoutes, { prefix: "/api" });
   await app.register(rastersSatelitaisRoutes, { prefix: "/api" });
   await app.register(sateliteConsultasRoutes, { prefix: "/api" });

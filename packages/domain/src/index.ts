@@ -59,3 +59,8 @@ export * from "./nfe-compra.js";
 // MAPA-MANEJO-01: a ocupação da área (lotação, descanso, rodízio) e o catálogo dos objetos do mapa.
 export * from "./ocupacao-de-area.js";
 export * from "./objetos-de-mapa.js";
+// MAPA-MANEJO-02: o identificador do lote, a configuração de ícone, o centróide da área e a coloração do mapa.
+export * from "./identificador-do-lote.js";
+export * from "./configuracao-de-icone.js";
+export * from "./centroide-de-poligono.js";
+export * from "./cores-do-mapa.js";

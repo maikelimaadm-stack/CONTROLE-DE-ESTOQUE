@@ -58,6 +58,8 @@ const TABELAS_DO_RECURSO: Map<string, Set<string>> = (() => {
   // de lote. Cobertura, não exceção.
   add("map_objects", "erp.objetos_de_mapa");
   add("batch_area", "erp.ocupacoes_de_area");
+  // MAPA-MANEJO-02 (decisão 306): a configuração de ícone é o recurso `icon_config` (módulo pecuária).
+  add("icon_config", "erp.configuracoes_de_icone");
   return m;
 })();
 

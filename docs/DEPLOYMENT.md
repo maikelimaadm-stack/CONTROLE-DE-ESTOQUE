@@ -4760,6 +4760,121 @@ Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registro
 identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.
 
 
+## MAPA-MANEJO-02 — marcador agregado: fuso, identificador e ícones (0062, decisão 306)
+
+Faixa **F1**. **Uma migration: `0062_icones_identificador_e_fuso.sql`** (pre-deploy pelo pipeline; trava (2026,96),
+`lock_timeout` 2 s, pré e pós-condições nomeadas `MAPA-MANEJO-02: …`; depois da trava, a primeira pergunta é "já
+aplicada"). Sem variável nova. **Permissão nova `icon_config`** (view/create/edit/delete, módulo pecuária, grupo "Mapa
+geral"): chega a `erp.permissions` pelo `seedPermissions` do deploy e vai para o perfil Administrador; os outros perfis
+precisam de concessão explícita. **Nada visual**: nenhuma mudança em `apps/web` — a tela é outra fatia.
+
+**O que a 0062 cria e muda, objeto por objeto.**
+- `erp.fuso_horario_valido(text)` — sql, STABLE, INVOKER, `search_path` fixo: o nome existe em `pg_timezone_names`;
+  nulo → false. É a função do CHECK de fuso; EXECUTE só do dono e do `erp_app` (sem PUBLIC).
+- `erp.dia_no_fuso(timestamptz, text)` — plpgsql, STABLE, INVOKER: o dia do instante no fuso; nunca lança (fuso nulo,
+  vazio ou inválido → `America/Sao_Paulo`). EXECUTE só do dono.
+- `erp.empresas.fuso_horario` — `text not null default 'America/Sao_Paulo'` + `chk_empresas_fuso_horario`
+  (`erp.fuso_horario_valido(fuso_horario)`). Default constante: a linha existente lê o default sem ser reescrita.
+- `erp.hoje_na_empresa(uuid)` — plpgsql, STABLE, SECURITY DEFINER: o dia de `now()` no fuso da empresa; empresa
+  inexistente → São Paulo; nunca lança. EXECUTE só do dono (só o gatilho chama; a API não).
+- `erp.batches_fechar_ocupacao()` — `create or replace` com o corpo da 0061 e só 3 trocas: `current_date` →
+  `erp.hoje_na_empresa(…)` da empresa da ÁREA na abertura do lote criado com área, no fechamento da aberta e na
+  abertura pela troca de área. O gatilho `trg_batches_fechar_ocupacao` fica como está (nome, eventos, função, ligado).
+- `erp.batches.identificador_nome`, `identificador_sigla`, `identificador_cor` — text, nulas, sem default, sem
+  backfill; `chk_batches_identificador_cor` (`#RRGGBB`) e `chk_batches_identificador_sigla` (1 a 4 caracteres depois
+  do `btrim`). Nenhuma rota grava nelas nesta fatia (o cadastro genérico de lote lê e grava só os campos declarados).
+- `erp.icone_categorias_misto_validas(text[])` — plpgsql, IMMUTABLE: a lista do MISTO (2 ou mais, sem nulo, sem
+  repetição, canônica). É a função do CHECK do MISTO; EXECUTE só do dono e do `erp_app` (sem PUBLIC).
+- `erp.configuracoes_de_icone` — tabela nova, nasce vazia: `fk_configuracoes_de_icone_organizacao`;
+  `fk_configuracoes_de_icone_empresa` COMPOSTA, `(organization_id, empresa_id)` → `erp.empresas (organization_id, id)`;
+  `chk_icone_tipo_entidade`, `chk_icone_categoria_canonica`, `chk_icone_misto_so_no_misto`, `chk_icone_cor_padrao`,
+  `chk_icone_tem_imagem_ou_cor`, `chk_icone_url_https`; `uq_configuracoes_de_icone_categoria` (parcial: viva e não
+  MISTO) e `ix_configuracoes_de_icone_tipo`; RLS habilitada e forçada com UMA política, `tenant_e_empresa`, igual à de
+  `erp.areas` (módulo pecuária); `erp_app` com select/insert/update, sem DELETE e sem TRUNCATE; gatilhos
+  `trg_configuracoes_de_icone_updated` e `trg_configuracoes_de_icone_audit`.
+
+**Passos destrutivos: nenhum.** Só DDL: nenhum INSERT, UPDATE ou DELETE em linha existente, nenhum DROP, nenhum TRUNCATE.
+A única função substituída é a de gatilho da 0061, recriada com o MESMO corpo e só as 3 trocas: a pré-condição confere o
+md5 normalizado do corpo atual (`md5(btrim(regexp_replace(prosrc, '[[:space:]]+', ' ', 'g')))` =
+`abd1b04a22400f0b3ef76c546a765ecb`, o da 0061) e PARA se divergir — recriar apagaria em silêncio uma mudança feita fora
+do repositório; a pós-condição desfaz as 3 trocas e confere que o md5 volta ao mesmo valor. **O de produção bate**
+(leitura abaixo).
+
+**Produção — conferido SÓ COM LEITURA em 09/10/2026, ~22h UTC** (SELECT pelo conector do projeto Supabase; nada foi
+escrito): ledger com **61** migrations, a última `0061_ocupacao_de_area_e_objetos_de_mapa.sql`; a 0062 ausente e nenhum
+objeto dela existe (`fuso_horario`, `identificador_*`, `configuracoes_de_icone`, `hoje_na_empresa`); a trava (2026,96)
+livre; `erp.batches_fechar_ocupacao()` SECURITY DEFINER com `search_path=erp, pg_temp`, 3 `current_date` e md5
+normalizado `abd1b04a22400f0b3ef76c546a765ecb` (= o esperado pela pré-condição); o gatilho ligado (`tgenabled` 'O');
+`empresas_org_id_key` presente; `America/Cuiaba` e `America/Sao_Paulo` em `pg_timezone_names`; sessão em UTC,
+`statement_timeout` 2 min. **Linhas das tabelas alteradas:** `erp.empresas` **1** (80 kB) — recebe `fuso_horario` =
+`America/Sao_Paulo` pelo default, sem reescrever a linha, e o CHECK valida 1 linha; `erp.batches` **1** (80 kB) — recebe
+as 3 colunas nulas, e os 2 CHECKs validam 1 linha; `erp.configuracoes_de_icone` nasce com 0. Para contexto (nenhuma é
+alterada): `erp.ocupacoes_de_area` 1, `erp.areas` 244, `erp.animal_categories` 9. O único gatilho de `erp.empresas` é o
+de `updated_at`, que não dispara em ADD COLUMN. **Tempo e travas:** a 0062 inteira, numa transação, aplicou em
+**156 ms** num banco local com 0001..0061 (Postgres 16, tabelas quase vazias); ACCESS EXCLUSIVE em `erp.empresas` e
+`erp.batches` enquanto a transação dura (ADD COLUMN e ADD CONSTRAINT), e as FKs da tabela nova pedem SHARE ROW
+EXCLUSIVE em `erp.organizations` e `erp.empresas`; cada pedido de trava espera no máximo 2 s e, sem a trava, a 0062
+aborta inteira, sem nada aplicado — reaplicar depois. **Papel:** a pré-condição exige superusuário ou BYPASSRLS — o
+pre-deploy aplica com `erp_migrator` (`bypassrls`, ver os papéis no topo deste arquivo), o mesmo da 0061. Outra
+pré-condição exige que quem aplica seja o DONO de `erp.batches_fechar_ocupacao()`: a função recriada mantém o dono da 0061
+e chama `erp.hoje_na_empresa`, que só o dono executa — aplicada por outro papel, a 0062 passaria e toda gravação de lote
+falharia. Produção (SELECT): as funções da 0061 são de `erp_migrator`, o papel que aplica. Veredito:
+**APLICA_LIMPO** pela leitura; a aplicação real é a do pipeline.
+
+**Ordem:** BANCO (0062, pre-deploy) → API → WEB (o web não muda nesta fatia). **API anterior × banco na 0062**: nenhuma
+resposta muda — o cadastro genérico de empresa e de lote lê e grava só os campos declarados (as colunas novas não
+aparecem), a transferência segue igual, e o gatilho passa a datar a ocupação pelo fuso da empresa (São Paulo até o
+passo 2 do roteiro). **API nova × banco sem a 0062**: não acontece no pipeline; se acontecesse, `/mapa/operacional` e
+`/mapa/icones` responderiam erro de coluna ou tabela ausente.
+
+**API — rotas novas** (prefixo `/api`): `GET/POST /mapa/icones`, `GET/PATCH/DELETE /mapa/icones/:id`
+(`icon_config.*`; exclusão lógica). **Rota alterada, só acréscimo:** `GET /mapa/operacional` aceita `?coloracao=`
+(`padrao` por omissão; fora da lista → 422) e devolve, além do que já devolvia, `coloracao` e `capacidades.icones` no
+topo e `centroide`, `identificador`, `icone` e `faixa` por área — nenhuma chave anterior mudou de nome nem de tipo, e o
+número de consultas continua 8.
+
+**Impacto em dados reais:** nada é apagado nem corrigido (decisões 240/247). A 0062 não escreve em nenhuma linha
+existente: a empresa passa a ler `America/Sao_Paulo` pelo default, o lote ganha 3 colunas nulas e a ocupação existente
+fica como está. Depois do UPDATE do passo 2, só as datas que o gatilho gravar DALI EM DIANTE usam o dia de Cuiabá —
+nada é recalculado para trás.
+
+**Riscos declarados (este deploy não os resolve):** as leituras (`/mapa/areas/:id/ocupacao`, `/historico`,
+`/mapa/operacional`) contam os dias pelo `current_date` do banco, em UTC: de 20h a 24h em Cuiabá o `hoje` da resposta e
+os dias de ocupação e de descanso aparecem com +1. Até o passo 2, o gatilho data pelo dia de São Paulo, uma hora à frente
+de Cuiabá: de 23h a 24h em Cuiabá a ocupação aberta ou fechada pelo gatilho ainda ganha a data do dia seguinte. O CHECK
+de fuso custa ~8 ms por gravação em `erp.empresas` (lê `pg_timezone_names`).
+
+**Roteiro do Maike em produção (depois do merge):**
+1. **Aplicar a 0062 pelo pipeline** (o pre-deploy do deploy da `main`; nunca à mão). Conferência (leitura):
+   `select name from public.erp_migrations order by name desc limit 1` → `0062_icones_identificador_e_fuso.sql`;
+   `select id, fuso_horario from erp.empresas` → 1 linha, `America/Sao_Paulo`.
+2. **ESCRITA EM PRODUÇÃO — decisão do Maike, só depois do passo 1** (antes dele a coluna não existe). O fuso de Cuiabá
+   na empresa de produção (id `9a2f0c2f-7d3c-4277-b37f-10a26ab43853`, código 1), pelo editor SQL do projeto Supabase.
+   Antes, confira que o papel do editor executa a função da CHECK de fuso (só o dono `erp_migrator` e o `erp_app` executam):
+   `select current_user, has_function_privilege('erp.fuso_horario_valido(text)', 'EXECUTE')` → `true`. Lido em produção
+   (SELECT, 10/10/2026): o editor é `postgres`, não superusuário, e HERDA `erp_migrator` — então dá `true`. Se der `false`,
+   pare: o UPDATE seria recusado (42501, sem efeito) e o papel é decisão do Maike.
+
+   ```sql
+   update erp.empresas set fuso_horario = 'America/Cuiaba' where id = '9a2f0c2f-7d3c-4277-b37f-10a26ab43853';
+   ```
+
+   Esperado: **1 linha** (`UPDATE 1`); outro número → parar e conferir antes de seguir. O gatilho de `updated_at` atualiza
+   o `updated_at` da mesma linha; nada mais muda. **Conferência** (como superusuário, no editor SQL —
+   `erp.hoje_na_empresa` não tem EXECUTE para a API): `select id, fuso_horario, (now() at time zone fuso_horario)::date
+   from erp.empresas;` → `America/Cuiaba` e a data de hoje em Cuiabá. **Volta:** o mesmo UPDATE com
+   `'America/Sao_Paulo'` no lugar de `'America/Cuiaba'` (1 linha).
+3. **Pós-conferência: PENDING** — quem tem acesso autenticado a produção confere: (a) `GET /api/mapa/operacional` e
+   `?coloracao=situacao_pasto` devolvem as chaves novas, e as antigas com os mesmos valores de antes; (b) um lote criado
+   com área e sem data de entrada, ou encerrado, entre 20h e 24h de Cuiabá grava a ocupação com a data LOCAL (a
+   transferência pela rota usa a data do movimento) — é escrita, só com a decisão do Maike. Sem essa conferência, nada
+   desta fatia está provado em produção.
+
+**Caminho de volta.** API: redeploy da versão anterior (a tabela, as colunas e as funções ficam, sem uso pela API; o
+gatilho continua datando a ocupação pelo fuso da empresa). Fuso: o UPDATE de volta do passo 2. Banco: forward-only;
+desfazer exige migration nova, por decisão humana.
+
+
 ## MAPA-MANEJO-01 — fundação operacional do Mapa de Manejo (0061, decisão 305)
 
 Faixa **F1**, PR #118. **Uma migration: `0061_ocupacao_de_area_e_objetos_de_mapa.sql`** (pre-deploy pelo pipeline; trava

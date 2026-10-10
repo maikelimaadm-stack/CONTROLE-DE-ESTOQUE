@@ -237,7 +237,7 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     // consumo e o orçamento satelitais e colunas anuláveis em `erp.analises_satelitais`; a SAT-03 (0054) dá ao executor da
     // fila a reserva e a contagem do limite (só tabelas satelitais); a SAT-06 (0055) cria o arquivo e o metadado do raster
     // satelital (só tabelas satelitais novas) — nada no recorte que a purga lê.
-    expect(noDisco.length, "61 migrations no repositório (a última é a MAPA-MANEJO-01 0061)").toBe(61);
+    expect(noDisco.length, "62 migrations no repositório (a última é a MAPA-MANEJO-02 0062)").toBe(62);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
     expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");
