@@ -47,7 +47,12 @@
 }
 .linha[data-multilinha] { height: 80px; }
 
-/* rótulo à frente (padrão): 126px, à direita, ":" antes do "*" */
+/*
+ * rótulo à frente (padrão): 126px, à direita, ":" antes do "*". Altura de 28px, a do padding-box da linha (o da caixa):
+ * o centro do rótulo é o da caixa, 15. A caixa de linha é a do valor, 15px (12,5 × 1,2): o glifo da DM Sans (16px) não
+ * cabe nela e o Chrome reparte a sobra −1/0 — com a mesma linha, rótulo e valor ficam no mesmo centro e na mesma
+ * linha-base (com linha de 12px a sobra é −2/−2 e o rótulo ficava 0,5px abaixo).
+ */
 .rotulo {
   position: absolute;
   left: 0;
@@ -55,7 +60,7 @@
   z-index: 2;
   box-sizing: content-box;
   width: 126px;
-  height: 30px;
+  height: 28px;
   max-width: none;
   display: flex;
   align-items: center;
@@ -63,7 +68,7 @@
   padding: 0 2px 0 0;
   font-size: 12px;
   font-weight: 500;
-  line-height: 1;
+  line-height: 15px;
   color: #64748b;
   white-space: nowrap;
   overflow: hidden;
@@ -210,19 +215,20 @@ fieldset:disabled .caixa .controle { cursor: default; }
 .botaoData:disabled { cursor: default; }
 .botaoData:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
 
-/* erro sob a caixa, com ícone */
+/* erro sob a caixa, com ícone, e o "abaixo": começam no x do VALOR — o padding-box da caixa (138) + o `--recuo`; no
+   compacto, a caixa cobre a borda da linha: 1 + o `--recuo` */
 .erro {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding-left: 138px;
+  padding-left: calc(138px + var(--recuo));
   font-size: 11px;
   line-height: 14px;
   color: #b91c1c;
   animation: aparecerErro var(--mi, 170ms) cubic-bezier(.16, 1, .3, 1) backwards;
 }
 .erro svg { width: 12px; height: 12px; flex-shrink: 0; }
-.abaixo { padding-left: 138px; }
+.abaixo { padding-left: calc(138px + var(--recuo)); }
 
 /* ═════════════ compacto: rótulo DENTRO da caixa (flutuante), 32px ═════════════ */
 [data-densidade="compacto"] .linha { height: 32px; }
@@ -253,7 +259,7 @@ fieldset:disabled .caixa .controle { cursor: default; }
 [data-densidade="compacto"] .icone { left: 10px; }
 [data-densidade="compacto"] .botaoData { left: 11px; }
 [data-densidade="compacto"] .erro,
-[data-densidade="compacto"] .abaixo { padding-left: 2px; }
+[data-densidade="compacto"] .abaixo { padding-left: calc(1px + var(--recuo)); }
 /* flutuante: preenchido, só leitura, travado, com foco ou aberto */
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .rotulo,
 [data-densidade="compacto"] fieldset:disabled .linha .rotulo,
@@ -262,12 +268,11 @@ fieldset:disabled .caixa .controle { cursor: default; }
 /* multilinha só leitura no compacto: o texto começa no topo, logo abaixo do rótulo flutuante (os 13px de cima ficam) —
    mesma especificidade da regra acima, e depois dela */
 [data-densidade="compacto"] .linha[data-multilinha] .caixa:not([data-controle]) { align-items: flex-start; }
+/* um padding só para o controle com o rótulo flutuando (input, data, pesquisa): 13 em cima e 2 embaixo deixam a área do
+   texto com os 15px da linha. Numa área de 14 o input centrava a linha e o botão da pesquisa a punha no topo — meio pixel
+   entre os dois; com 15 os dois põem o glifo no mesmo y (centro 21, o do ícone: 50% + 5px) */
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .controle,
-[data-densidade="compacto"] fieldset:disabled .linha .controle { padding-top: 13px !important; padding-bottom: 3px !important; align-items: flex-end; }
-/* o botão da pesquisa é bloco (as reticências pedem) e não desce a linha de 15px até o fim de uma área de 14: com 12px
-   em cima a área tem os 15 da linha, e o texto fica onde o flex-end do desenho o põe */
-[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa :global(.cmd-display),
-[data-densidade="compacto"] fieldset:disabled .linha .caixa :global(.cmd-display) { padding-top: 12px !important; }
+[data-densidade="compacto"] fieldset:disabled .linha .controle { padding-top: 13px !important; padding-bottom: 2px !important; }
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .icone,
 [data-densidade="compacto"] fieldset:disabled .linha .icone { top: calc(50% + 5px); }
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .botaoData,
