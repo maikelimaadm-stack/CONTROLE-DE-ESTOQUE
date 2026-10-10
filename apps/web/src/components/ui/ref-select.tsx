@@ -65,10 +65,11 @@ export function RefSelect({ resource, value, onChange, placeholder = "Selecione"
   const { data: umNaArvore } = useQuery({ queryKey: ["option-one-caminho", resource, value], queryFn: () => api<Option[]>(`/api/resources/${resource}/options${qs({ id: value ?? undefined, include_inactive: "1" })}`), enabled: Boolean(value) && !current && Boolean(def?.tree), staleTime: 60_000 });
   const doValor = umNaArvore?.find((o) => o.id === value);
   const label = current?.label ?? doValor?.label ?? labelHint ?? (one ? String(one[def?.labelField ?? "name"] ?? one["description"] ?? one["name"] ?? "") : "");
-  // SELETOR-01 (decisão 309): código antes do nome — na árvore, chip do código + nome; a cadeia (`caminho`) só no `title`
+  // SELETOR-01 (decisão 309): código antes do nome — na árvore, chip do código + nome; a cadeia (`caminho`) só no `title`.
+  // Na árvore, código nulo, vazio ou só de espaços = sem chip, na lista e na caixa; fora da árvore, o `code` de sempre.
   const opcaoDoValor = current ?? doValor; const naArvore = opcaoDoValor?.caminho ? opcaoDoValor : undefined;
   const codigoNaCaixa = naArvore?.code?.trim();
-  const seen = new Set<string>(); const opts = (data ?? []).filter((o) => { const k = `${o.code ?? ""}|${o.label}`; if (seen.has(k) && o.id !== value) return false; seen.add(k); return true; }).map((o) => ({ value: o.id, label: o.label, code: o.code, title: o.caminho || undefined }));
+  const seen = new Set<string>(); const opts = (data ?? []).filter((o) => { const k = `${o.code ?? ""}|${o.label}`; if (seen.has(k) && o.id !== value) return false; seen.add(k); return true; }).map((o) => ({ value: o.id, label: o.label, code: o.caminho ? o.code?.trim() || null : o.code, title: o.caminho || undefined }));
   return (<>
     <Popover.Root open={open} onOpenChange={(o) => { if (disabled) return; setOpen(o); onOpenChange?.(o); if (!o) setSearch(""); }}>
       <Popover.Trigger asChild>

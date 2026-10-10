@@ -19,10 +19,11 @@ import { login, api, uniq, abrirLancamentoDeVendas, escolherTopEContinuar, CLASS
  * SEL-1c Centro de resultado: o mesmo (chip + nome; cadeia no `title`).
  * SEL-2a a caixa FECHADA, depois de escolher: chip + nome, sem a cadeia no texto; a cadeia no `title` da caixa.
  * SEL-3a nó RAIZ (sem ancestral): código + nome, nenhum "›" sobrando; `title` = "CÓD NOME".
- * SEL-3b opção com código nulo/vazio: só o nome, sem chip vazio — (a) Tipos de Documento (árvore SEM coluna de código:
- *        a porta manda `code` nulo e nenhum `caminho`); (b) Grupo de Produtos (a única árvore com `code` anulável — só no
- *        acervo, a API não cria nó sem código), pela resposta INTERCEPTADA da porta de opções (um nó com `code` nulo e
- *        outro com `code` vazio, com o `caminho` que o servidor calcularia).
+ * SEL-3b opção com código nulo/vazio/só de espaços: só o nome, sem chip vazio — (a) Tipos de Documento (árvore SEM
+ *        coluna de código: a porta manda `code` nulo e nenhum `caminho`); (b) Grupo de Produtos (a única árvore com
+ *        `code` anulável — só no acervo, a API não cria nó sem código), pela resposta INTERCEPTADA da porta de opções
+ *        (um nó com `code` nulo, um com `code` vazio e um com `code` só de espaços, com o `caminho` que o servidor
+ *        calcularia), na lista e na caixa fechada.
  * SEL-4a NÃO-REGRESSÃO: seletor SEM árvore idêntico ao da main — Cliente (com código: chip + nome, sem `title`) e Forma
  *        de pagamento (sem código: só o nome); caixa fechada = SÓ o texto do nome, sem chip e sem `title`; o seletor de
  *        opções fixas (MgSelect) não ganhou `title`.
@@ -30,7 +31,8 @@ import { login, api, uniq, abrirLancamentoDeVendas, escolherTopEContinuar, CLASS
  * SEL-5a dois nós de NOMES IGUAIS em pais diferentes: o chip (código) e o `title` os distinguem.
  *
  * Reversas da fatia: R1 voltar `code: o.caminho ? undefined : o.code` → SEL-1a vermelho; R2 voltar `label: o.caminho ||
- * o.label` → SEL-1a vermelho; R3 tirar o `title` da opção → SEL-1b vermelho.
+ * o.label` → SEL-1a vermelho; R3 tirar o `title` da opção → SEL-1b vermelho; R4 tirar o `trim` do código da lista
+ * (`code: o.code`) → SEL-3b vermelho (chip de espaços na lista); R5 tirar o `trim` da caixa → SEL-3b vermelho.
  */
 
 type Opcao = { id: string; label: string; code: string | null; caminho?: string | null; kind?: string | null };
@@ -195,16 +197,22 @@ test("SEL-3b — opção com código nulo ou vazio: só o nome, SEM chip vazio",
   await page.keyboard.press("Escape");
 
   // (b) Grupo de Produtos: a única árvore com `code` anulável (acervo, migration 0025) — a API não cria nó sem código,
-  // então a resposta REAL da porta é interceptada e dois nós raiz ganham `code` nulo e `code` vazio, com o `caminho`
-  // que o servidor calcularia para eles (`concat_ws(' ', code, nome)`).
-  const alterados = new Map<string, string | null>([["Insumos", null], ["Produção", ""]]);
+  // então a resposta REAL da porta é interceptada: dois nós raiz ganham `code` nulo e `code` vazio, e um analítico
+  // ganha `code` só de espaços (código em branco = sem código, como no `rotuloDaOpcao`), cada um com o `caminho` que o
+  // servidor calcularia (`concat_ws(' ', code, nome)` no último elo da cadeia). O nó é achado pelo nome E pelo código
+  // do seed: se a troca não acontecer, o chip do seed aparece e o teste reprova — não passa em vazio.
+  const alterados = [
+    { nome: "Insumos", doSeed: "1", code: null, pai: "" },
+    { nome: "Produção", doSeed: "3", code: "", pai: "" },
+    { nome: "Sanidade Animal", doSeed: "2.02", code: "   ", pai: "2 Pecuária › " }
+  ].map((a) => ({ ...a, caminho: a.pai + comoConcatWs(a.code, a.nome) }));
   let interceptadas = 0;
   await page.route(/\/api\/resources\/product_groups\/options(\?|$)/, async (route) => {
     if (route.request().method() !== "GET") { await route.continue(); return; }
     const resposta = await route.fetch();
     const corpo = (await resposta.json()) as Opcao[];
     interceptadas += 1;
-    await route.fulfill({ response: resposta, json: corpo.map((o) => (alterados.has(o.label) && !o.caminho?.includes("›") ? { ...o, code: alterados.get(o.label) ?? null, caminho: comoConcatWs(alterados.get(o.label) ?? null, o.label) } : o)) });
+    await route.fulfill({ response: resposta, json: corpo.map((o) => { const a = alterados.find((x) => x.nome === o.label && x.doSeed === o.code); return a ? { ...o, code: a.code, caminho: a.caminho } : o; }) });
   });
   await page.goto("/cadastros/product_groups/new");
   const cGrupo = campo(page, "Grupo superior");
@@ -214,21 +222,24 @@ test("SEL-3b — opção com código nulo ou vazio: só o nome, SEM chip vazio",
   expect(interceptadas, "premissa: a lista veio da resposta interceptada").toBeGreaterThan(0);
   // premissa anti-vácuo: na MESMA lista, um nó com código continua com o chip
   await expect(opcaoPeloNome(page, painel, "Pecuária").locator(".cmd-option__code"), "nó com código: chip").toHaveText("2");
-  for (const [nome, code] of alterados) {
+  for (const { nome, code, caminho } of alterados) {
     const opcao = opcaoPeloNome(page, painel, nome);
     await expect(opcao).toHaveCount(1);
     await expect(opcao.locator(".cmd-option__code"), `${nome} (code ${JSON.stringify(code)}): sem chip vazio`).toHaveCount(0);
     await expect(opcao, `${nome}: só o nome`).toHaveText(nome);
     expect(await filhos(opcao)).toEqual(["truncate"]);
-    await expect(opcao, `${nome}: o caminho continua no title`).toHaveAttribute("title", comoConcatWs(code, nome));
+    await expect(opcao, `${nome}: o caminho continua no title`).toHaveAttribute("title", caminho);
   }
-  // a caixa fechada do nó sem código: só o nome, sem chip; o caminho no title
-  await opcaoPeloNome(page, painel, "Insumos").click();
-  await expect(painel.getByRole("listbox")).toBeHidden();
+  // a caixa fechada do nó sem código (nulo, vazio, só de espaços): só o nome, sem chip; o caminho no title
   const cx = caixa(cGrupo);
-  await expect(cx).toHaveText("Insumos");
-  await expect(cx.locator(".cmd-option__code"), "caixa fechada sem chip vazio").toHaveCount(0);
-  await expect(cx).toHaveAttribute("title", "Insumos");
+  for (const { nome, caminho } of alterados) {
+    if (!(await painel.getByRole("listbox").isVisible())) await cx.click();
+    await opcaoPeloNome(page, painel, nome).click();
+    await expect(painel.getByRole("listbox")).toBeHidden();
+    await expect(cx).toHaveText(nome);
+    await expect(cx.locator(".cmd-option__code"), `caixa fechada de ${nome}: sem chip vazio`).toHaveCount(0);
+    await expect(cx).toHaveAttribute("title", caminho);
+  }
 });
 
 test("SEL-4a — NÃO-REGRESSÃO: seletor sem árvore idêntico ao da main (opção e caixa fechada); MgSelect sem title", async ({ page }) => {
