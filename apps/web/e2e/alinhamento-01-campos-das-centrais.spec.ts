@@ -17,6 +17,8 @@ import { hojeISO } from "./estoque-01-comum";
  * │             topo do texto do rótulo — tolerância 2 px                                                            │
  * │ ALN-2b D1   texto LONGO (Observações da consulta de venda): quebra em mais de uma linha e não é cortado         │
  * │             (scrollWidth <= clientWidth no valor e no filho)                                                     │
+ * │ ALN-2c D1   multilinha só-leitura no COMPACTO (Observações da consulta de Estoque e de Compras): a 1ª linha      │
+ * │             começa logo abaixo do texto do rótulo flutuante, e não no fundo dos 80 px — tolerância 3 px          │
  * │ ALN-3a D2   criação multilinha (Observação da venda, rótulo à frente): o centro da 1ª linha da textarea no      │
  * │             centro do texto do rótulo — tolerância 1 px                                                          │
  * │ ALN-3b D2   o mesmo campo no COMPACTO: a 1ª linha começa abaixo do texto do rótulo flutuante e o padding-top     │
@@ -54,7 +56,8 @@ import { hojeISO } from "./estoque-01-comum";
  * └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * REVERSAS (do executor; duas observações cada; NUNCA commitadas): R1 `--recuo: 10px` no campo sem ícone → ALN-1a
- * vermelho · R2 `align-items: center` no multilinha só-leitura → ALN-2a · R3 `white-space: nowrap` no valor → ALN-2b ·
+ * vermelho · R2 `align-items: center` no multilinha só-leitura → ALN-2a · R2c `flex-end` de volta no multilinha do
+ * compacto → ALN-2c vermelho · R3 `white-space: nowrap` no valor → ALN-2b ·
  * R4 as duas regras de padding-top do compacto (13 no controle × 12 no botão da pesquisa) → ALN-5a · R5 início da caixa
  * 137 → 140 → ALN-7a.
  */
@@ -439,6 +442,40 @@ test("ALN-2b — D1: texto longo no multilinha só-leitura (Observações da con
   expect(m.valor!.scroll, "ALN-2b: o valor não está cortado na horizontal (scrollWidth <= clientWidth)").toBeLessThanOrEqual(m.valor!.client);
   expect(m.valor!.filho, "premissa: o valor tem o filho que leva o texto").not.toBeNull();
   expect(m.valor!.filho!.scroll, "ALN-2b: o filho do valor não está cortado (scrollWidth <= clientWidth)").toBeLessThanOrEqual(m.valor!.filho!.client);
+});
+
+/**
+ * Multilinha só-leitura no COMPACTO: o rótulo flutua no alto da caixa, e a 1ª linha do valor começa logo abaixo do texto
+ * dele (3 px) — não no fundo dos 80 px, onde o `flex-end` do compacto a punha.
+ */
+function conferirMultilinhaNoCompacto(caso: string, onde: string, m: CampoMedido) {
+  expect(m.multilinha, `premissa (${onde}): o campo é multilinha`).toBe(true);
+  expect(m.controle, `premissa (${onde}): só leitura (sem controle)`).toBeNull();
+  expect(Math.round(m.alturaDaLinha), `premissa (${onde}): a linha do multilinha tem 80 px (há fundo para onde o texto cair)`).toBe(80);
+  expect(m.rotuloTexto, `premissa (${onde}): o rótulo tem texto`).not.toBeNull();
+  expect(m.valor?.texto, `premissa (${onde}): o valor tem texto`).toBeTruthy();
+  const r = m.rotuloTexto!, v = m.valor!.texto!;
+  expect(r.base, `premissa (${onde}): o rótulo FLUTUA no alto da caixa (o texto dele acaba na metade de cima)`).toBeLessThan(m.alturaDaLinha / 2);
+  const d = v.topo - r.base;
+  log(caso, `${onde}: linha=${f(m.alturaDaLinha)} · texto do rótulo flutuante ${f(r.topo)}–${f(r.base)} · texto do valor topo=${f(v.topo)} base=${f(v.base)} centro=${f(v.centro)} linhas=${v.linhas} · topo do valor − base do rótulo=${f(d)} · do fundo da linha à base do valor=${f(m.alturaDaLinha - v.base)}`);
+  expect.soft(Math.abs(d), `${caso} (${onde}): a 1ª linha começa logo abaixo do texto do rótulo flutuante, não no fundo dos 80 px — tolerância 3 px`).toBeLessThanOrEqual(3);
+}
+
+test("ALN-2c — D1 no COMPACTO: multilinha só-leitura (Observações da consulta de Estoque e de Compras): a 1ª linha começa logo abaixo do texto do rótulo flutuante, e não no fundo dos 80px", async ({ page }) => {
+  await login(page);
+  const entrada = await entradaPelaApi(page, "Conferir a nota na portaria.");
+  const raizEstoque = await consultaDeEntrada(page, entrada);
+  await abrirAba(page, "central-estoque", "Observações");
+  await expect(page.getByTestId("estoque-central-observacao"), "premissa: a observação do servidor").toHaveText("Conferir a nota na portaria.");
+  await compacto(raizEstoque);
+  conferirMultilinhaNoCompacto("ALN-2c", "estoque", await medir(linhaDe(page.getByTestId("central-estoque-painel").locator('[data-campo="Observação"]'))));
+
+  const compra = await compraPelaApi(page, { observacao: "Entregar no armazém da sede." });
+  expect(compra.observacao, "premissa: o servidor gravou a observação").toBe("Entregar no armazém da sede.");
+  const raizCompras = await consultaDeCompra(page, compra);
+  await abrirAba(page, "central-compras", "Observações");
+  await compacto(raizCompras);
+  conferirMultilinhaNoCompacto("ALN-2c", "compras", await medir(linhaDe(page.getByTestId("central-compras-painel").locator('[data-campo="Observação"]'))));
 });
 
 /* ═════════════════════════════════════════════ ALN-3 (D2) ═════════════════════════════════════════════ */
