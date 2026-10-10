@@ -13,7 +13,8 @@ import { escoposDeTodosOsModulos, harness, TEST_URL, type Harness } from "./setu
  * `weighings.view`) por área. Filtros `retiro_id`, `grazing_module_id`, `land_use` e `situacao`; o resto é 422.
  * O número de consultas é FIXO e CONTADO (MM-10b): 3 e 30 áreas fazem as mesmas consultas, tabela por tabela.
  *
- * Semeadura pela conexão TESTEMUNHA (superusuário), com datas relativas ao `current_date` do banco.
+ * Semeadura pela conexão TESTEMUNHA (superusuário), com datas relativas ao dia da EMPRESA do cenário lido no banco
+ * (`(now() at time zone fuso_horario)::date`, o `hoje` da rota — MAPA-MANEJO-03, decisão 307).
  */
 let h: Harness; let admin: Db;
 type Hdr = Record<string, string>;
@@ -113,7 +114,7 @@ beforeAll(async () => {
   admin = createPool(TEST_URL, { max: 3 });
   E1 = h.demo.empresaIds[0]!; E2 = h.demo.empresaIds[1]!;
   expect(E2).not.toBe(E1);
-  hoje = (await admin.query<{ d: string }>("select current_date::text as d")).rows[0]!.d;
+  hoje = (await admin.query<{ d: string }>("select (now() at time zone fuso_horario)::date::text as d from erp.empresas where id = $1", [E1])).rows[0]!.d;
   especie = (await admin.query<{ id: string }>("select id from erp.animal_species where organization_id is null order by name limit 1")).rows[0]!.id;
   categoria = await id("insert into erp.animal_categories (organization_id, species_id, name, ua_factor) values ($1,$2,$3,0.75) returning id", [h.demo.orgId, especie, `Categoria ${TAG}`]);
   // premissa: as quatro capacidades da rota respondem pelo MESMO módulo de escopo (o da área) — capacidade AND escopo

@@ -14,7 +14,8 @@ import { escoposDeTodosOsModulos, harness, TEST_URL, type Harness } from "./setu
  * capacidade `icon_config.view` × `map_objects.view`; MM2-13d cada modo de coloração, o centróide, o identificador e
  * o ícone, área por área, com o dado semeado.
  *
- * Semeadura pela conexão TESTEMUNHA (superusuário), com datas relativas ao `current_date` do banco (o `hoje` da rota).
+ * Semeadura pela conexão TESTEMUNHA (superusuário), com datas relativas ao dia da EMPRESA do cenário lido no banco
+ * (`(now() at time zone fuso_horario)::date`, o `hoje` da rota — MAPA-MANEJO-03, decisão 307).
  * As categorias têm fator UA 1 e nenhum animal é pesado: a UA de cada área é o número de cabeças (conta à mão simples).
  */
 let h: Harness; let admin: Db;
@@ -159,7 +160,7 @@ beforeAll(async () => {
   admin = createPool(TEST_URL, { max: 3 });
   E1 = h.demo.empresaIds[0]!; E2 = h.demo.empresaIds[1]!;
   expect(E2).not.toBe(E1);
-  hoje = (await admin.query<{ d: string }>("select current_date::text as d")).rows[0]!.d;
+  hoje = (await admin.query<{ d: string }>("select (now() at time zone fuso_horario)::date::text as d from erp.empresas where id = $1", [E1])).rows[0]!.d;
   especie = (await admin.query<{ id: string }>("select id from erp.animal_species where organization_id is null order by name limit 1")).rows[0]!.id;
   // premissas: as capacidades da rota respondem pelo MESMO módulo de escopo (o da área); os modos do domínio são os cinco daqui
   expect(["batch_area.view", "map_objects.view", "nutritions.view", "weighings.view", "icon_config.view"].map(moduloDaPermissao))
