@@ -177,7 +177,7 @@ test("SEL-3a — nó RAIZ (sem ancestral): código + nome, nenhum separador sobr
   await expect(cx).toHaveAttribute("title", "1 RECEITAS");
 });
 
-test("SEL-3b — opção com código nulo ou vazio: só o nome, SEM chip vazio", async ({ page }) => {
+test("SEL-3b — opção com código nulo, vazio ou só de espaços: só o nome, SEM chip vazio", async ({ page }) => {
   await login(page);
   // (a) Tipos de Documento: árvore (parent_id) SEM coluna de código — a porta manda `code` nulo e nenhum `caminho`
   const pai = await api<{ id: string }>(page, "POST", "/api/resources/document_types", { name: uniq("Pasta SEL-3b"), position: 0 });
