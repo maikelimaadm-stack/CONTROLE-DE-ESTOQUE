@@ -784,3 +784,63 @@ test("LANC-T9 — o PEDIDO de compra: com a provisão ligada a TOP semeia o par 
   const previa = await api<Record<string, unknown>>(page, "GET", `/api/compras/pedidos/${id}/previa-finalizacao`);
   expect(previa["podeFinalizar"], `o servidor diz que o pedido finaliza (a provisão com o par da TOP): ${JSON.stringify(previa["recusas"])}`).toBe(true);
 });
+
+/* ═════════════════════════════════════ LANC-T10 ═════════════════════════════════════ */
+
+test("LANC-T10 — a TOP com os 5 padrões E 'Exigir centro de resultado' (exigência geral, que o servidor cobra SOBRE O CORPO antes de olhar a TOP), na compra e no pedido com provisão: a tela semeia o par e o PRIMEIRO Salvar grava, com o PAR INTEIRO da TOP no corpo e no gravado", async ({ page }) => {
+  test.setTimeout(180_000);
+  await login(page);
+  const m = await montar(page);
+  const neutra = configuracaoNeutraTopV5();
+  const exigeCentro: ConfiguracaoTipoOperacaoV5 = { ...neutra, geral: { ...neutra.geral, exigeCentroResultado: true } };
+  const compra = await topDoCaso(page, "T10 compra", { configuracao: exigeCentro, padroes: OS_CINCO(m) });
+  const pedido = await topDoCaso(page, "T10 pedido", { familia: "compras.pedido", configuracao: { ...exigeCentro, financeiroPadrao: { ...neutra.financeiroPadrao, provisao: true } }, padroes: OS_CINCO(m) });
+  const casos = [
+    { segmento: "compras" as const, top: compra, secao: SECAO_NEUTRA },
+    { segmento: "pedidos" as const, top: pedido, secao: { ...SECAO_NEUTRA, provisao: true } }
+  ];
+  for (const c of casos) {
+    const envios = escutarPosts(page, `/api/compras/${c.segmento}`);
+    const { regras } = await abrirCriacao(page, c.segmento, c.top.id);
+    premissaDosPadroes(regras, m, { secao: c.secao, padroes: CINCO_IDS(m) });
+    expect(regras["exigencias"], `premissa no fio (${c.segmento}): a TOP exige o centro de resultado`).toEqual(["centro_custo_id"]);
+    for (const k of OMITIDAS_PELO_PAR) await expect(campo(page, k), `${c.segmento} · ${k}: semeado pela TOP`).toHaveAttribute("data-padrao-top", "semeado");
+    await expect(campo(page, "centro_custo_id").locator('[data-parte="req"]'), `${c.segmento}: o "*" da exigência no centro, já preenchido`).toHaveCount(1);
+    await preencherOMinimo(page, m);
+    const envio = await salvar(page, envios);
+    registrar(`T10 ${c.segmento}`, { status: envio.status, chaves: chaves(envio.corpo), json: envio.status === 201 ? null : envio.json });
+    const id = await gravou(page, envio, c.segmento);
+    expect(envios.length, `${c.segmento}: o PRIMEIRO Salvar gravou — um POST só`).toBe(1);
+    expect([envio.corpo["categoria_financeira_id"] ?? null, envio.corpo["centro_custo_id"] ?? null], `${c.segmento}: o par INTEIRO no corpo (o centro é cobrado sobre o corpo)`).toEqual([m.natureza.id, m.centro.id]);
+    const g = await gravado(page, id, c.segmento);
+    expect([g.categoria_financeira_id, g.centro_custo_id], `${c.segmento}: o gravado com a natureza e o centro da TOP`).toEqual([m.natureza.id, m.centro.id]);
+  }
+});
+
+/* ═════════════════════════════════════ LANC-T11 ═════════════════════════════════════ */
+
+test("LANC-T11 — a compra de TOTAL ZERO com a TOP de 5 padrões: o par aparece semeado, mas o POST não leva natureza nem centro e o documento grava os dois nulos, como hoje (sem título, o servidor nem usa nem cobra o par)", async ({ page }) => {
+  test.setTimeout(180_000);
+  await login(page);
+  const m = await montar(page);
+  const top = await topDoCaso(page, "T11", { configuracao: configuracaoNeutraTopV5(), padroes: OS_CINCO(m) });
+  const envios = escutarPosts(page, "/api/compras/compras");
+  const { regras } = await abrirCriacao(page, "compras", top.id);
+  premissaDosPadroes(regras, m, { secao: SECAO_NEUTRA, padroes: CINCO_IDS(m) });
+  expect(regras["geraTitulos"], "premissa no fio: a TOP gera título (o que não gera é o total zero)").toBe(true);
+  for (const k of OMITIDAS_PELO_PAR) await expect(campo(page, k), `${k}: semeado pela TOP`).toHaveAttribute("data-padrao-top", "semeado");
+  await escolherNoCampo(page, campo(page, "fornecedor_id"), m.fornecedor.nome);
+  await novaLinhaCom(page, m.produto);
+  await expect(await entradaDaLinha(linhas(page).first(), "Valor unitário do item 1"), "premissa: o valor unitário fica no zero com que a linha nasce").toHaveValue("0");
+  await expect(page.getByTestId("compras-total"), "premissa: o total do documento é zero").toContainText("0,00");
+  for (const k of OMITIDAS_PELO_PAR) await expect(campo(page, k), `${k}: continua semeado com o total zero`).toHaveAttribute("data-padrao-top", "semeado");
+  const envio = await salvar(page, envios);
+  const id = await gravou(page, envio);
+  registrar("T11 corpo", { chaves: chaves(envio.corpo), itens: itensDe(envio.corpo) });
+  for (const k of OMITIDAS_PELO_PAR) expect(Object.hasOwn(envio.corpo, k), `${k}: fora do corpo também com o total zero`).toBe(false);
+  expect(chaves(envio.corpo), "as chaves de hoje menos o par").toEqual(semAs(CHAVES_DE_HOJE, OMITIDAS_PELO_PAR));
+  const d = await api<Record<string, unknown>>(page, "GET", `/api/compras/compras/${id}`);
+  expect(Number(texto(d["valor_total"])), "premissa: o servidor gravou total zero").toBe(0);
+  const g = await gravado(page, id);
+  expect([g.categoria_financeira_id, g.centro_custo_id], "o gravado sem natureza e centro, como hoje — nunca um par que o operador não escolheu").toEqual([null, null]);
+});
