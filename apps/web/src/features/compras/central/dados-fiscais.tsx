@@ -5,6 +5,7 @@ import { enumLabel, enumOptions } from "@/lib/copy";
 import { D } from "@agro/shared";
 import { brl } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
+import { AVISO_PADRAO_INVALIDO_CENTRAL } from "@agro/domain";
 import { Button, Input, NativeSelect } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { CampoDaCentral, CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
@@ -35,12 +36,24 @@ export const QUANTIDADE_DE_DADOS_FISCAIS = CAMPOS_DOS_DADOS_FISCAIS.length + 1;
 
 const TIPOS_DE_DOCUMENTO = enumOptions("document_type");
 
-/** O bloco "Dados fiscais" da criação (dentro dos Dados adicionais). */
+/**
+ * O bloco "Dados fiscais" da criação (dentro dos Dados adicionais).
+ *
+ * LANCAMENTO-01 (decisão 311): o TIPO DE TÍTULO é um padrão da TOP. O estado o semeia no campo vazio (e o tira do corpo
+ * enquanto for o semeado: a confirmação usa o da TOP); aqui só se desenha, com os MESMOS recursos dos campos do
+ * cabeçalho — a dica ao `RefSelect` (o nome do tipo), `data-padrao-top="semeado"` no invólucro, o aviso de padrão
+ * inválido de hoje e a trava da TOP que não deixa trocar pelo mesmo `fieldset` de sempre. Sem a TOP valer, nada muda.
+ */
 export function DadosFiscaisDaCriacao({ e }: { e: EstadoDaCriacao }) {
   if (!e.dadosFiscaisAtivos) return null;
   const f = e.fiscal;
-  const cc = (c: ChaveDosDadosFiscais, rotulo: string, o: { preenchido: boolean; icone?: "pesquisa" | "selecao"; testId?: string; dica?: string }, controle: React.ReactElement) =>
-    <CampoDaCentral key={c} rotulo={rotulo} erro={e.erro(c)} icone={o.icone ?? null} preenchido={o.preenchido} testId={o.testId} dica={o.dica} data-campo-fiscal={c}>{controle}</CampoDaCentral>;
+  const cc = (c: ChaveDosDadosFiscais, rotulo: string, o: { preenchido: boolean; icone?: "pesquisa" | "selecao"; testId?: string; dica?: string; abaixo?: React.ReactNode }, controle: React.ReactElement) =>
+    <CampoDaCentral key={c} rotulo={rotulo} erro={e.erro(c)} icone={o.icone ?? null} preenchido={o.preenchido} testId={o.testId} dica={o.dica} abaixo={o.abaixo} data-campo-fiscal={c}
+      {...(e.semeadoPelaTop(c) ? { "data-padrao-top": "semeado" } : {})}>{controle}</CampoDaCentral>;
+  const tipoTitulo = cc("tipo_titulo_id", "Tipo de título", {
+    preenchido: f.tipo_titulo_id !== "", icone: "pesquisa", testId: "compras-tipo-titulo",
+    abaixo: e.padraoInvalido("tipo_titulo_id") ? <p data-testid="padrao-invalido-aviso" className="mt-0.5 text-[11px] text-amber-700">{AVISO_PADRAO_INVALIDO_CENTRAL}</p> : undefined
+  }, <RefSelect resource="title_types" value={f.tipo_titulo_id} onChange={(v) => e.mudarFiscal({ tipo_titulo_id: v ?? "" })} labelHint={e.dica("tipo_titulo_id")} />);
   const valor = (c: "valor_ipi" | "valor_icms_st" | "seguro", rotulo: string, testId: string) =>
     cc(c, rotulo, { preenchido: f[c] !== "" },
       <Input data-testid={testId} type="number" step="0.01" min="0" inputMode="decimal" value={f[c]} onChange={(ev) => e.mudarFiscal({ [c]: ev.target.value })} />);
@@ -60,8 +73,9 @@ export function DadosFiscaisDaCriacao({ e }: { e: EstadoDaCriacao }) {
       {valor("valor_ipi", "IPI", "compras-valor-ipi")}
       {valor("valor_icms_st", "ICMS-ST", "compras-valor-icms-st")}
       {valor("seguro", "Seguro", "compras-seguro")}
-      {cc("tipo_titulo_id", "Tipo de título", { preenchido: f.tipo_titulo_id !== "", icone: "pesquisa", testId: "compras-tipo-titulo" },
-        <RefSelect resource="title_types" value={f.tipo_titulo_id} onChange={(v) => e.mudarFiscal({ tipo_titulo_id: v ?? "" })} />)}
+      {e.travado("tipo_titulo_id")
+        ? <fieldset key="tipo_titulo_id" disabled data-editavel="false" data-travado-pela-top="true" style={{ display: "contents" }}>{tipoTitulo}</fieldset>
+        : tipoTitulo}
       {cc("classificacao_gasto", "Classificação", { preenchido: true, icone: "selecao" },
         <NativeSelect data-testid="compras-classificacao-gasto" value={f.classificacao_gasto} onChange={(ev) => e.mudarFiscal({ classificacao_gasto: ev.target.value })}>
           <option value="">{enumLabel("classification", "unclassified")}</option>

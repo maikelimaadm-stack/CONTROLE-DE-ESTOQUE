@@ -90,8 +90,13 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const h = e.cabecalho;
   const receber = e.modo === "receber";
 
-  /* Sem layout (sem a capacidade) nada de `data-campo`; com layout, o invólucro do campo leva o que levava. */
-  const dc = (c: string) => (e.layout ? { "data-campo": c, "data-obrigatorio": String(e.obrigatorio(c)), ...(e.forcados.has(c) ? { "data-forcado": "true" } : {}) } : {});
+  /* Sem layout (sem a capacidade) nada de `data-campo`; com layout, o invólucro do campo leva o que levava.
+     LANCAMENTO-01 (decisão 311): o campo cujo valor é o que o padrão da TOP semeou leva `data-padrao-top="semeado"` no
+     MESMO invólucro (atributo, nenhum desenho novo); sem a TOP valer (API anterior, receber), nada a mais. */
+  const dc = (c: string) => ({
+    ...(e.layout ? { "data-campo": c, "data-obrigatorio": String(e.obrigatorio(c)), ...(e.forcados.has(c) ? { "data-forcado": "true" } : {}) } : {}),
+    ...(e.semeadoPelaTop(c) ? { "data-padrao-top": "semeado" } : {})
+  });
   const aviso = (c: string) => (e.padraoInvalido(c) ? <p data-testid="padrao-invalido-aviso" className="mt-0.5 text-[11px] text-amber-700">{AVISO_PADRAO_INVALIDO_CENTRAL}</p> : null);
   const cc = (c: string, hoje: string, o: { icone?: IconeDoCampo; preenchido: boolean; multilinha?: boolean; desabilitado?: boolean; testId?: string }, controle: React.ReactElement) =>
     <CampoDaCentral rotulo={e.rotulo(c, hoje)} obrigatorio={e.obrigatorio(c)} erro={e.erro(c)} icone={o.icone ?? null} preenchido={o.preenchido} multilinha={o.multilinha}
@@ -120,7 +125,7 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
       case "transportadora_id": return cc(c, "Transportadora", { icone: "pesquisa", preenchido: Boolean(h.transportadora_id) },
         <RefSelect resource="people" value={h.transportadora_id} onChange={mudar("transportadora_id")} filter={{ is_transporter: "true" }} labelHint={e.dica("transportadora_id")} />);
       case "categoria_financeira_id": return cc(c, "Natureza de despesa", { icone: "pesquisa", preenchido: Boolean(h.categoria_financeira_id) },
-        <RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={mudar("categoria_financeira_id")} buscarOpcoes={opcoesDeNaturezaDeDespesa} />);
+        <RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={mudar("categoria_financeira_id")} buscarOpcoes={opcoesDeNaturezaDeDespesa} labelHint={e.dica("categoria_financeira_id")} />);
       case "centro_custo_id": return cc(c, "Centro de resultado", { icone: "pesquisa", preenchido: Boolean(h.centro_custo_id) },
         <RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={mudar("centro_custo_id")} filter={{ kind: "analytic" }} labelHint={e.dica("centro_custo_id")} />);
       case "condicao_pagamento_id": return cc(c, "Condição de pagamento", { icone: "pesquisa", preenchido: Boolean(h.condicao_pagamento_id) },
@@ -143,12 +148,13 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
       default: return null;
     }
   };
-  /* Não editável do layout TRAVA (a decisão é do estado: `travado`), mostrando o valor. */
+  /* Não editável do layout TRAVA (a decisão é do estado: `travado`), mostrando o valor. LANCAMENTO-01: a TOP que não deixa
+     trocar os padrões trava pelo MESMO `fieldset` — com `data-travado-pela-top` para dizer de onde veio a trava. */
   const render = (c: string) => {
     const n = desenhar(c);
     if (n === null) return null;
     return e.travado(c)
-      ? <fieldset key={c} disabled data-editavel="false" style={{ display: "contents" }}>{n}</fieldset>
+      ? <fieldset key={c} disabled data-editavel="false" data-travado-pela-top={e.travadoPelaTop(c) ? "true" : undefined} style={{ display: "contents" }}>{n}</fieldset>
       : <React.Fragment key={c}>{n}</React.Fragment>;
   };
 

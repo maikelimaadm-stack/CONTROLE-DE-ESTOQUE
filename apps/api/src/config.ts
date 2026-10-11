@@ -121,6 +121,20 @@ const schema = z.object({
   SATELITE_LIMITE_SIMULTANEAS: inteiroDeAmbiente(1, 1000),
   SATELITE_LIMITE_MINUTO_CONTA: inteiroDeAmbiente(1, 100_000),
   SATELITE_LIMITE_MINUTO_ORG: inteiroDeAmbiente(1, 100_000),
+  /**
+   * O LOCAL PADRÃO DO PRODUTO NA LINHA NOVA DA CENTRAL DE COMPRAS (LANCAMENTO-01, emenda R2 da decisão 311). `1` liga;
+   * `0` ou AUSENTE desliga — DESLIGADO é o padrão (efeito novo nasce desligado, decisão 240 item 4): ligado, a linha
+   * nova da compra nasce com o local do cadastro do produto, e a confirmação passa a dar entrada de estoque onde antes
+   * não dava (ela só cria a entrada para o item com local). A API só DECLARA a capacidade em `regras-da-operacao` de
+   * compras (`localDoProdutoNaLinha`); quem age é a tela, e desligada ela não lê nada a mais. Ligar é decisão do Maike
+   * (`docs/DEPLOYMENT.md` § LANCAMENTO-01). Mesmo contrato fechado do COPERNICUS_ENABLED: valor fora de `0`/`1` DERRUBA O
+   * STARTUP, e a mensagem não repete o valor recebido.
+   */
+  COMPRAS_LOCAL_DO_PRODUTO_ENABLED: z.string().optional().superRefine((valor, ctx) => {
+    if (valor !== undefined && valor !== "0" && valor !== "1") {
+      ctx.addIssue({ code: "custom", message: "use 1 para ligar ou 0 (ou ausente) para desligar" });
+    }
+  }).transform((valor) => valor === "1"),
   /** tentativas de login por IP por minuto (proteção contra força bruta) */
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10)
 });

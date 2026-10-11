@@ -6,8 +6,9 @@
  * o documento preso (só cancelar). A confirmação e a finalização conferem de novo (um cadastro pode ter sido inativado
  * depois).
  *
- *   · a COMPRA que gera título: a troca proibida (`documentoTroca` desligado e o documento com natureza, centro ou
- *     forma diferentes do padrão) recusa; sem natureza e centro no documento e com o PAR na TOP, a compra é salva — a
+ *   · a COMPRA que gera título: a troca proibida (`documentoTroca` desligado e o documento com natureza, centro, forma
+ *     ou tipo de título diferentes do padrão — o tipo de título desde a decisão 311, emenda R2) recusa; sem natureza e
+ *     centro no documento e com o PAR na TOP, a compra é salva — a
  *     exigência de hoje ("Informe a natureza financeira e o centro de resultado…") é dispensada e a confirmação usa o
  *     par da TOP (`classificacaoDaTop`);
  *   · o PEDIDO cuja TOP provisiona, com QUALQUER total (zero inclusive): a troca proibida recusa, e a falta de
@@ -35,8 +36,17 @@ import { padroesDaTopParaExecucao } from "./financeiro-top.js";
 /** A família do pedido de compra, perguntada ao registry. */
 const FAMILIA_DO_PEDIDO_DE_COMPRA: string | undefined = familiaOperacionalDeDocumentoCompra("pedido");
 
-/** O que o documento informa e a TOP pode mandar: a natureza e o centro (o par do documento) e a forma de pagamento. */
-export interface DocumentoDeCompraNoSalvar { naturezaId: string | null; centroCustoId: string | null; formaPagamentoId: string | null }
+/**
+ * O que o documento informa e a TOP pode mandar: a natureza e o centro (o par do documento), a forma de pagamento e o
+ * tipo de título. `tipoTituloId` é OPCIONAL (ausente = vazio = não é troca): só a compra o carrega — o pedido não tem
+ * tipo de título (os dados fiscais são só da compra).
+ */
+export interface DocumentoDeCompraNoSalvar {
+  naturezaId: string | null;
+  centroCustoId: string | null;
+  formaPagamentoId: string | null;
+  tipoTituloId?: string | null;
+}
 
 /**
  * Confere os padrões financeiros da TOP no SALVAR da compra (`especie = "compra"`) ou do pedido (`"pedido"`). Devolve
@@ -69,10 +79,15 @@ export async function padroesDaTopNoSalvarDaCompra(ctx: ServiceCtx, p: {
     if (!ligada) return nada;
   }
 
-  // 4. A troca proibida: o documento informou outro valor num campo que a TOP padroniza.
+  // 4. A troca proibida: o documento informou outro valor num campo que a TOP padroniza. O tipo de título entra na MESMA
+  //    conferência (decisão 311, emenda R2): a tela travava o tipo de título e o servidor não recusava — agora os dois
+  //    dizem o mesmo. Ausente (o pedido) é vazio, e vazio não é troca.
   const doc = p.documento;
   if (fin.padroes && !fin.secao.documentoTroca) {
-    const campos = camposTrocadosDosPadroes(fin.padroes, { naturezaIds: [doc.naturezaId], centroCustoIds: [doc.centroCustoId], formaPagamentoId: doc.formaPagamentoId });
+    const campos = camposTrocadosDosPadroes(fin.padroes, {
+      naturezaIds: [doc.naturezaId], centroCustoIds: [doc.centroCustoId], formaPagamentoId: doc.formaPagamentoId,
+      tipoTituloId: doc.tipoTituloId ?? null,
+    });
     if (campos.length) {
       const m = mensagemDosPadroesTrocados(campos);
       throw new DomainError("TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA", m, { exigencias: [{ caminho: "financeiroPadrao.documentoTroca", mensagem: m }] });

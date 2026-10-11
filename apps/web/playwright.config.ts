@@ -21,10 +21,15 @@ export default defineConfig({
   // suíte medir sempre o mesmo produto. O estado desligado (o padrão de produção) é provado na integração,
   // e a tela dele por capacidade fabricada (W4). TOPs sem execução configurada — todas as das demais specs —
   // confirmam pelo legado com o gate ligado ou desligado.
+  // COMPRAS_LOCAL_DO_PRODUTO_ENABLED (LANCAMENTO-01, emenda R2 da decisão 311): o CI mede o mundo LIGADO — o local
+  // padrão do produto na linha nova da Central de Compras (os LANC-T do local e a medição da 311) —, como o gate ao lado.
+  // Diferente dele, o valor do ambiente VENCE: `COMPRAS_LOCAL_DO_PRODUTO_ENABLED=0` exportado para o runner mede o
+  // DESLIGADO, que é o padrão de produção (a chave nasce desligada; ligar é decisão do Maike). As configs de skew não
+  // a passam: a API da base não a conhece (ausente = desligada).
   // Harness e2e: todos os specs batem na mesma API a partir de um único IP; o limite global de produção (300 req/min)
   // estoura em sequências de navegação e derruba o carregamento do contexto ("Não foi possível carregar sua organização").
   webServer: [
-    { command: `npx tsx src/main.ts`, cwd: "../api", port: API_PORT, reuseExistingServer: !process.env.CI, timeout: 120_000, env: { DATABASE_URL: DB, PORT: String(API_PORT), WEB_ORIGIN: `http://127.0.0.1:${WEB_PORT}`, API_LOG_LEVEL: "warn", AUTH_MODE: "local", LOCAL_AUTH_SECRET: "e2e-secret-not-for-prod", NODE_ENV: "test", LOGIN_RATE_LIMIT_MAX: "1000", RATE_LIMIT_MAX: "100000", TOP_EFFECTS_RUNTIME_V1_ENABLED: "1" } },
+    { command: `npx tsx src/main.ts`, cwd: "../api", port: API_PORT, reuseExistingServer: !process.env.CI, timeout: 120_000, env: { DATABASE_URL: DB, PORT: String(API_PORT), WEB_ORIGIN: `http://127.0.0.1:${WEB_PORT}`, API_LOG_LEVEL: "warn", AUTH_MODE: "local", LOCAL_AUTH_SECRET: "e2e-secret-not-for-prod", NODE_ENV: "test", LOGIN_RATE_LIMIT_MAX: "1000", RATE_LIMIT_MAX: "100000", TOP_EFFECTS_RUNTIME_V1_ENABLED: "1", COMPRAS_LOCAL_DO_PRODUTO_ENABLED: process.env.COMPRAS_LOCAL_DO_PRODUTO_ENABLED ?? "1" } },
     { command: `npx next start -p ${WEB_PORT}`, port: WEB_PORT, reuseExistingServer: !process.env.CI, timeout: 120_000, env: { NEXT_PUBLIC_API_URL: `http://127.0.0.1:${API_PORT}` } }
   ]
 });

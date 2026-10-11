@@ -3,6 +3,7 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, qs } from "@/lib/api";
 import { Field, NativeSelect } from "@/components/ui";
+import type { PadroesFinanceirosDaTop, SecaoFinanceiraDaTop } from "@/features/central/contrato";
 import { useFinanceiroPelaTop } from "./capacidade";
 
 /**
@@ -21,16 +22,16 @@ import { useFinanceiroPelaTop } from "./capacidade";
  */
 export type DirecaoDaTop = "pagar" | "receber" | "movimento";
 
-/** Um cadastro padrão como a API o devolve (natureza e centro com código; conta com código e descrição). */
-export interface PadraoComCodigo { id: string; codigo: string; nome: string }
+/**
+ * Um cadastro padrão como a API o devolve (natureza e centro com código; conta com código e descrição). A forma de
+ * `secao` e `padroes` é declarada UMA vez no contrato da Central (LANCAMENTO-01, decisão 311): a mesma de
+ * `regras-da-operacao` das compras. Movimento de TIPO, chave por chave a de antes — nenhum comportamento muda.
+ */
+export type { PadraoComCodigo } from "@/features/central/contrato";
 export interface TopFinanceira {
   id: string; codigo: string; nome: string; versao: number; versaoId: string; padrao: boolean;
-  secao: { provisao: boolean; documentoTroca: boolean; semClassificacao: string };
-  padroes: {
-    natureza: PadraoComCodigo | null; centro: PadraoComCodigo | null;
-    tipoTitulo: { id: string; nome: string } | null; formaPagamento: { id: string; nome: string } | null;
-    conta: { id: string; codigo: string; descricao: string } | null;
-  };
+  secao: SecaoFinanceiraDaTop;
+  padroes: PadroesFinanceirosDaTop;
 }
 
 /** As TOPs da família do lançamento (só com a capacidade; sem ela, a consulta nem existe). */
