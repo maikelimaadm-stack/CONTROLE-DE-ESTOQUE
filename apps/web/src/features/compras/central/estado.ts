@@ -3,7 +3,7 @@ import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import {
-  ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA, ERRO_EXIGENCIA_NAO_ATENDIDA, LAYOUT_DO_SISTEMA, MSG_FINALIZAR_SO_PEDIDO_ABERTO, MSG_PEDIDO_JA_TEM_VENCEDOR,
+  ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA, ERRO_EXIGENCIA_NAO_ATENDIDA, FORMA_UUID_PADRAO, LAYOUT_DO_SISTEMA, MSG_FINALIZAR_SO_PEDIDO_ABERTO, MSG_PEDIDO_JA_TEM_VENCEDOR,
   MSG_PEDIDO_SEM_TOP_DE_ORCAMENTO, camposObrigatoriosFaltando, catalogoDaFamilia, chavePadraoDeCadastro, mensagemCampoObrigatorio,
   type CampoDoLayout, type EstruturaLayout
 } from "@agro/domain";
@@ -41,6 +41,10 @@ import {
 } from "../layout-da-central";
 import { useImportacaoXml } from "../importacao/capacidade";
 import { adaptadorDaCentralDeCompras, chaveDaCopiaDeCompra, chaveDepoisDeSalvarDeCompra, corpoDoCancelamento } from "./adaptador";
+import {
+  dicaDaTop, localConfirmadoNaEmpresa, localDasLinhasNovas, localDoCadastroDoProduto, mesmoId, omissaoDoCorpo, padraoDaTopInvalido,
+  padroesDaTopAplicam, planoDaSemeadura, podeTrocarOsPadroes, travadoPelaTop, type CampoDoPadraoDaTop, type Semeadura
+} from "./padroes-da-top";
 
 /**
  * O ESTADO DA CENTRAL DE COMPRAS (VISUAL-UX-04, decisão 276) — a lógica de `central-compras.tsx` e `consulta-compra.tsx`
@@ -236,10 +240,17 @@ export interface ControleDeLote {
   daLinha: (produtoId: string) => { lote: boolean; validade: boolean };
   pede: (produtoId: string, campo: "lote" | "validade") => boolean;
 }
+/**
+ * A leitura do CADASTRO do produto da linha — uma por produto DISTINTO, a mesma chave de cache para quem a usar (o
+ * controle de lote e, LANCAMENTO-01, o local padrão do produto): dois leitores, um pedido só.
+ */
+const leituraDoProduto = (id: string) => ({
+  queryKey: ["compras-produto-lote", id], queryFn: () => api<Record<string, unknown>>(`/api/resources/products/${id}`), staleTime: 60_000, retry: false
+});
 /** Controle de lote de cada produto (cadastro). Desconhecido = aberto (o servidor é quem recusa). */
 function useControleDeLote(produtos: string[]): ControleDeLote {
   const unicos = Array.from(new Set(produtos.filter(Boolean)));
-  const qs = useQueries({ queries: unicos.map((id) => ({ queryKey: ["compras-produto-lote", id], queryFn: () => api<Record<string, unknown>>(`/api/resources/products/${id}`), staleTime: 60_000, retry: false })) });
+  const qs = useQueries({ queries: unicos.map(leituraDoProduto) });
   const mapa = new Map<string, string>(); const ilegivel = new Set<string>();
   unicos.forEach((id, i) => {
     const q = qs[i]; const c = q?.data?.["controle_lote"];
@@ -258,6 +269,29 @@ function useControleDeLote(produtos: string[]): ControleDeLote {
       return campo === "lote" ? c !== "nenhum" : c === "lote_validade";
     }
   };
+}
+
+/**
+ * LANCAMENTO-01 (decisão 311; L1/L2) — O LOCAL PADRÃO DO PRODUTO, CONFERIDO NA EMPRESA DO DOCUMENTO. A fonte é o cadastro
+ * (`default_warehouse_id`), pela MESMA leitura do controle de lote (`leituraDoProduto`: na compra, nenhum pedido a mais;
+ * no PEDIDO de compra é leitura NOVA, uma por produto distinto, só com a coluna do local na grade). Quem não tem
+ * `products.view` recebe 403: sem local do produto (fica o do cabeçalho, o de hoje). O local só vale se for da empresa
+ * do documento e ativo: `/api/resources/warehouses/options?empresa_id=…&id=…`, UMA pergunta por par (empresa, local)
+ * distinto; `[]`, erro ou forma estranha ⇒ IGNORADO. Devolve o local conferido do produto, ou `null`.
+ */
+function useLocaisDosProdutos(produtos: string[], empresaId: string): (produtoId: string) => string | null {
+  const unicos = Array.from(new Set(produtos.filter(Boolean)));
+  const qs = useQueries({ queries: unicos.map(leituraDoProduto) });
+  const localDe = new Map<string, string>();
+  unicos.forEach((id, i) => { const l = localDoCadastroDoProduto(qs[i]?.data); if (l) localDe.set(id, l); });
+  const locais = FORMA_UUID_PADRAO.test(empresaId) ? Array.from(new Set(localDe.values())) : [];
+  const confirmacoes = useQueries({ queries: locais.map((local) => ({
+    queryKey: ["compras-local-do-produto", empresaId, local],
+    queryFn: () => api<unknown>(`/api/resources/warehouses/options?${new URLSearchParams({ empresa_id: empresaId, id: local }).toString()}`),
+    staleTime: 60_000, retry: false
+  })) });
+  const conferidos = new Set(locais.filter((local, i) => localConfirmadoNaEmpresa(confirmacoes[i]?.data, local)));
+  return (produtoId) => { const l = localDe.get(produtoId); return l && conferidos.has(l) ? l : null; };
 }
 
 const COLUNAS_DE_HOJE_DA_COMPRA: ColunaDoEditorDeItens[] = ["warehouse", "product", "quantity", "unit_value", "discount", "discount_percent", "lot", "expiration"];
@@ -403,11 +437,24 @@ export interface EstadoDaCriacao {
   cfg: ReadonlyMap<string, CampoDoLayout>;
   rotulo: (campo: string, hoje: string) => string;
   obrigatorio: (campo: string) => boolean;
+  /** Trava pelo layout (não editável) OU pela TOP que não deixa trocar os padrões (LANCAMENTO-01, `travadoPelaTop`). */
   travado: (campo: string) => boolean;
   padraoDoCampo: (campo: string) => PadraoDeCadastro | null;
+  /** O padrão de cadastro do layout é inválido OU (LANCAMENTO-01) o padrão da TOP veio sem o rótulo: o aviso de hoje. */
   padraoInvalido: (campo: string) => boolean;
-  /** Rótulo do padrão de cadastro enquanto o valor for o do padrão (dica ao RefSelect). */
-  dica: (campo: ChaveDoCabecalho) => string | undefined;
+  /**
+   * Rótulo do padrão enquanto o valor for o do padrão (dica ao RefSelect): o de cadastro do layout primeiro; senão
+   * (LANCAMENTO-01) o da TOP — "código · nome" na natureza e no centro, o nome na forma e no tipo de título.
+   */
+  dica: (campo: ChaveDoCabecalho | "tipo_titulo_id") => string | undefined;
+  /**
+   * LANCAMENTO-01 (decisão 311): o valor do campo é o que o padrão da TOP semeou (o invólucro leva
+   * `data-padrao-top="semeado"`). Falso sempre que a TOP não vale (`padroesDaTopAplicam`: API anterior, receber, compra
+   * que não gera título, pedido sem provisão) — e aí nada é semeado, travado ou omitido.
+   */
+  semeadoPelaTop: (campo: string) => boolean;
+  /** A TOP trava o campo (o `fieldset` leva `data-travado-pela-top="true"`); `travado` já o inclui. */
+  travadoPelaTop: (campo: string) => boolean;
   /** O campo veio do pedido com valor (no receber). */
   doPedido: (campo: string) => boolean;
   colunasDoLayout: ColunaDoLayoutNoEditor[] | undefined;
@@ -423,8 +470,11 @@ export interface EstadoDaCriacao {
    * O local das linhas NOVAS: começa no padrão de cadastro do layout para a empresa do documento e muda pelo campo do
    * cabeçalho; cada linha troca o seu. Estado da TELA: nunca vai no corpo, não conta como alteração, não entra na cópia
    * do Duplicar. `null` sem `localNaGrade`.
+   * LANCAMENTO-01 (decisão 311): a linha nova que ganha produto passa ao local padrão do PRODUTO (conferido na empresa)
+   * — a não ser que o operador tenha ajustado a célula ou ESCOLHIDO o local do cabeçalho (`localDasLinhasNovas`).
    */
   localDoCabecalho: LocalDeEstoque | null;
+  /** A escolha do operador no campo do cabeçalho (conta como resposta dele para as linhas que nascem depois). */
   escolherLocal: (local: LocalDeEstoque | null) => void;
 
   /* erros e pendências */
@@ -501,6 +551,11 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const capacidadeFiscal = useImportacaoXml(ehCompra && !modoReceber);
   const dadosFiscaisAtivos = ehCompra && !modoReceber && capacidadeFiscal === "sim";
   const [fiscal, setFiscal] = React.useState<DadosFiscais>(dadosFiscaisVazios);
+  /* LANCAMENTO-01 (decisão 311): o INICIAL dos dados fiscais — vazio, ou com o tipo de título que a TOP semeou (não conta
+     como alteração, e o Descartar volta a ele). Sem semeadura, vazio: o "alterado" de hoje, byte a byte. */
+  const fiscalInicial = React.useRef<DadosFiscais>(dadosFiscaisVazios());
+  /* O QUE A TOP SEMEOU (registrado pelo efeito dos padrões, nunca pela tela): a REGRA do corpo (`omissaoDoCorpo`) o consulta. */
+  const semeadura = React.useRef<Semeadura>({});
   const mudarFiscal = React.useCallback((p: Partial<DadosFiscais>) => setFiscal((o) => ({ ...o, ...p })), []);
   const [rateio, setRateio] = React.useState<RateioDaCompraNaTela>(rateioDoDocumento);
   const mudarTipoDoRateio = (tipo: TipoDoRateioDaCompra) => setRateio((r) => ({ ...r, tipo }));
@@ -545,14 +600,23 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const totalExibido = totalItens + Number(h.frete || 0) + Number(h.outras_despesas || 0) - Number(h.desconto || 0)
     + (dadosFiscaisAtivos ? Number(impostosDosDadosFiscais(fiscal)) : 0);
 
+  /* LANCAMENTO-01 (decisão 311) — A REGRA DO CORPO (`omissaoDoCorpo`): fora do corpo só o que o SERVIDOR decide — o PAR
+     natureza+centro que a TOP semeou (o salvar aplica o mesmo par da TOP: na compra com total > 0, no pedido com qualquer
+     total) e o tipo de título semeado (a confirmação usa o da TOP). Sem `aplica`, nada sai: o corpo de hoje. A regra é do
+     corpo, não estado escondido: `documentoConferido` (as pendências) deriva dele, e o omitido nunca é obrigatório do
+     layout (a regra o exige), então nunca vira pendência. */
+  const omissao = () => omissaoDoCorpo({
+    aplica: aplicaATop, servidorAplicaOPar: !ehCompra || totalExibido > 0, padroes: padroesTop, semeado: semeadura.current,
+    natureza: h.categoria_financeira_id, centro: h.centro_custo_id, tipoTitulo: fiscal.tipo_titulo_id, obrigatorioNoLayout: obrigatorioNoLayout
+  });
   const cabecalhoDoCorpo = () => ({
     tipo_operacao_id: top,
     transportadora_id: opcional(h.transportadora_id),
     data_documento: h.data_documento,
     data_vencimento: opcional(h.data_vencimento),
     ...(ehCompra ? { data_entrada: opcional(h.data_entrada), numero_nota: opcional(h.numero_nota), serie_nota: opcional(h.serie_nota) } : {}),
-    categoria_financeira_id: opcional(h.categoria_financeira_id),
-    centro_custo_id: opcional(h.centro_custo_id),
+    categoria_financeira_id: omissao().classificacao ? undefined : opcional(h.categoria_financeira_id),
+    centro_custo_id: omissao().classificacao ? undefined : opcional(h.centro_custo_id),
     condicao_pagamento_id: opcional(h.condicao_pagamento_id),
     ...(ajustarParcelas ? { plano_parcelas: plano } : {}),
     forma_pagamento_id: opcional(h.forma_pagamento_id),
@@ -575,7 +639,8 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     : { empresa_id: h.empresa_id, fornecedor_id: h.fornecedor_id, ...cabecalhoDoCorpo(),
       itens: itens.map((i) => ({ produto_id: i.product_id, ...camposDoItem(i), ...(dadosFiscaisAtivos ? corpoDaClassificacaoDoItem(i, rateio.tipo) : {}) })),
       // F7: DEPOIS das chaves de hoje, e só as preenchidas — sem a capacidade (ou nada preenchido), o corpo de hoje.
-      ...(dadosFiscaisAtivos ? { ...corpoDosDadosFiscais(fiscal), ...corpoDoRateio(rateio) } : {}) });
+      // LANCAMENTO-01: o tipo de título que a TOP semeou não vai (`omissaoDoCorpo`).
+      ...(dadosFiscaisAtivos ? { ...corpoDosDadosFiscais(omissao().tipoTitulo ? { ...fiscal, tipo_titulo_id: "" } : fiscal), ...corpoDoRateio(rateio) } : {}) });
   const documentoConferido = (): Record<string, unknown> => (recebendo
     ? { ...cabecalhoDoCorpo(), empresa_id: String(recebendo.pedido["empresa_id"] ?? ""), fornecedor_id: String(recebendo.pedido["fornecedor_id"] ?? ""),
       itens: itens.map((i) => ({ produto_id: i.product_id, ...camposDoItem(i) })) }
@@ -642,6 +707,24 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const padraoNaoPermitido = (c: string) => c === "condicao_pagamento_id" && condicaoNaoPermitida(padroes.validos.get(c)?.id ?? "");
   const padraoDoCampo = (c: string) => (doLayoutComCadastro(c) && !padraoNaoPermitido(c) ? padroes.validos.get(c) ?? null : null);
   const padraoInvalido = (c: string) => doLayoutComCadastro(c) && (padroes.invalidos.has(c) || padraoNaoPermitido(c));
+  /** O obrigatório do LAYOUT configurado (o que o servidor cobra sobre o corpo, `cobrarLayoutDaCompra`) — sem a regra. */
+  const obrigatorioNoLayout = (c: string) => Boolean(layout) && cfg.get(c)?.obrigatorio === true;
+
+  /* ── LANCAMENTO-01 (decisão 311): os padrões financeiros da TOP (`padroes-da-top.ts`). ── */
+  const padroesDaTop = regras?.padroesDaTop ?? null;
+  const padroesTop = padroesDaTop?.padroes ?? null;
+  const aplicaATop = padroesDaTopAplicam({ modo: modoReceber ? "receber" : "criacao", ehCompra, lidos: padroesDaTop, geraTitulos: regras?.geraTitulos ?? null });
+  /* `podeTrocar` (AND, o perfil da família no domínio). Sem a seção, nada a travar: a trava só existe com `aplica`. */
+  const podeTrocar = padroesDaTop ? podeTrocarOsPadroes(padroesDaTop.secao, familia) : true;
+  /* A forma só se semeia COBRADA: a regra da TOP a exige, ou o layout a marca obrigatória. */
+  const formaCobrada = regras?.exigeFormaPagamento === true || obrigatorioNoLayout("forma_pagamento_id");
+  /** O valor que a tela mostra no campo que a TOP pode preencher (o tipo de título mora nos dados fiscais). */
+  const valorNaTela = (c: string): string => (c === "tipo_titulo_id" ? (dadosFiscaisAtivos ? fiscal.tipo_titulo_id : "") : c in h ? h[c as ChaveDoCabecalho] : "");
+  const travadoPelaTopNaTela = (c: string) => travadoPelaTop({ aplica: aplicaATop, podeTrocar, padroes: padroesTop, campo: c, valor: valorNaTela(c) });
+  const semeadoPelaTopNaTela = (c: string) => {
+    const s = semeadura.current[c as CampoDoPadraoDaTop];
+    return aplicaATop && s !== undefined && mesmoId(valorNaTela(c), s);
+  };
 
   const padraoArmazem = layout && layout.itens.some((c) => c.campo === "armazem_id") ? padroes.validos.get(chavePadraoDeCadastro("itens", "armazem_id")) : undefined;
   const armazemPadrao = padraoArmazem && padraoArmazem.empresaId && padraoArmazem.empresaId === h.empresa_id ? padraoArmazem.id : null;
@@ -653,33 +736,74 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     [padraoArmazem, h.empresa_id]);
   const local = useLocalDoCabecalho(padraoDoLocal, h.empresa_id);
 
-  /* PADRÕES DO LAYOUT: uma vez por resposta, só em campo intocado, nunca no que o pedido trouxe. */
+  /* PADRÕES DO LAYOUT: uma vez por resposta, só em campo intocado, nunca no que o pedido trouxe.
+     LANCAMENTO-01 (decisão 311; S2): no MESMO efeito e DEPOIS deles, os padrões financeiros da TOP — a ordem é a da
+     precedência (o padrão de cadastro do layout vem antes e nunca é sobrescrito). Só com `aplica`, só em campo que
+     continuou VAZIO depois do layout e da cópia, e só no que o operador não tocou (`planoDaSemeadura`). Os semeados
+     entram no `inicial` (não contam como alteração; o Descartar volta a eles) e ficam em `semeadura` para a regra do
+     corpo. Uma vez por resposta das regras (o mesmo objeto enquanto o servidor responde o mesmo) e por bloco fiscal. */
   const padroesAplicados = React.useRef<{ resposta: unknown; preenchimento: string } | null>(null);
+  const semeaduraFeita = React.useRef<{ regras: RegrasDaCompra | null; fiscais: boolean } | null>(null);
   React.useEffect(() => {
     if (!layout || regrasPendente || (modoReceber && !preenchimento)) return;
     const marca = padroesAplicados.current;
-    if (marca && marca.resposta === layoutRecebido && marca.preenchimento === preenchimento) return;
-    padroesAplicados.current = { resposta: layoutRecebido, preenchimento };
     const antes = inicial.current;
-    const aceita = (c: string): c is keyof Cabecalho => c in antes && !doPedido.current.has(c);
     const novos: Partial<Cabecalho> = {};
-    for (const x of [...layout.cabecalho, ...layout.rodape.flatMap((a) => a.campos)]) {
-      if (!x.valorPadrao || !aceita(x.campo)) continue;
-      const v = valorDoPadrao(x.valorPadrao, empresaPadrao);
-      if (v !== null) novos[x.campo] = v;
+    if (!marca || marca.resposta !== layoutRecebido || marca.preenchimento !== preenchimento) {
+      padroesAplicados.current = { resposta: layoutRecebido, preenchimento };
+      const aceita = (c: string): c is keyof Cabecalho => c in antes && !doPedido.current.has(c);
+      for (const x of [...layout.cabecalho, ...layout.rodape.flatMap((a) => a.campos)]) {
+        if (!x.valorPadrao || !aceita(x.campo)) continue;
+        const v = valorDoPadrao(x.valorPadrao, empresaPadrao);
+        if (v !== null) novos[x.campo] = v;
+      }
+      for (const [c, p] of padroes.validos) if (aceita(c) && padraoDoCampo(c)) novos[c] = p.id;
+      const chaves = Object.keys(novos) as (keyof Cabecalho)[];
+      if (chaves.length) {
+        inicial.current = { ...antes, ...novos };
+        setH((o) => {
+          const r = { ...o };
+          for (const k of chaves) if (o[k] === antes[k] || (k === "empresa_id" && o[k] === empresaPadrao)) r[k] = novos[k]!;
+          return r;
+        });
+      }
+      if (modoReceber && armazemPadrao) setItensCru((ls) => ls.map((l) => (l.warehouse_id ? l : { ...l, warehouse_id: armazemPadrao })));
     }
-    for (const [c, p] of padroes.validos) if (aceita(c) && padraoDoCampo(c)) novos[c] = p.id;
-    const chaves = Object.keys(novos) as (keyof Cabecalho)[];
-    if (chaves.length) {
-      inicial.current = { ...antes, ...novos };
+
+    /* (2) A TOP, DEPOIS do layout. */
+    const feita = semeaduraFeita.current;
+    if (feita && feita.regras === regras && feita.fiscais === dadosFiscaisAtivos) return;
+    semeaduraFeita.current = { regras, fiscais: dadosFiscaisAtivos };
+    if (!aplicaATop || !padroesTop) return;
+    const depoisDoLayout = inicial.current;
+    // o que a tela vai mostrar: o padrão do layout no campo intocado (o MESMO critério do `setH` acima), senão o de agora
+    // (a cópia do Duplicar, o que o operador já digitou)
+    const naTela = (k: ChaveDoCabecalho) => (novos[k] !== undefined && h[k] === antes[k] ? novos[k]! : h[k]);
+    const plano = planoDaSemeadura(padroesTop, {
+      natureza: naTela("categoria_financeira_id"), centro: naTela("centro_custo_id"), formaPagamento: naTela("forma_pagamento_id"),
+      tipoTitulo: dadosFiscaisAtivos ? fiscal.tipo_titulo_id : null
+    }, {
+      formaCobrada,
+      // o campo que o operador tocou (≠ do inicial, o que a abertura e o layout deram) não é semeado
+      livre: (c) => (c === "tipo_titulo_id" ? fiscal.tipo_titulo_id === fiscalInicial.current.tipo_titulo_id : naTela(c) === depoisDoLayout[c])
+    });
+    const { tipo_titulo_id: tipoTitulo, ...doCabecalho } = plano;
+    const chavesDaTop = Object.keys(doCabecalho) as Exclude<CampoDoPadraoDaTop, "tipo_titulo_id">[];
+    if (chavesDaTop.length) {
+      inicial.current = { ...depoisDoLayout, ...doCabecalho };
       setH((o) => {
         const r = { ...o };
-        for (const k of chaves) if (o[k] === antes[k] || (k === "empresa_id" && o[k] === empresaPadrao)) r[k] = novos[k]!;
+        for (const k of chavesDaTop) if (o[k] === depoisDoLayout[k]) r[k] = doCabecalho[k]!;
         return r;
       });
     }
-    if (modoReceber && armazemPadrao) setItensCru((ls) => ls.map((l) => (l.warehouse_id ? l : { ...l, warehouse_id: armazemPadrao })));
-  }, [layout, layoutRecebido, regrasPendente, modoReceber, preenchimento, empresaPadrao, padroes, padraoDoCampo, armazemPadrao]);
+    if (tipoTitulo) {
+      fiscalInicial.current = { ...fiscalInicial.current, tipo_titulo_id: tipoTitulo };
+      setFiscal((o) => (o.tipo_titulo_id === "" ? { ...o, tipo_titulo_id: tipoTitulo } : o));
+    }
+    if (Object.keys(plano).length) semeadura.current = { ...semeadura.current, ...plano };
+  }, [layout, layoutRecebido, regrasPendente, modoReceber, preenchimento, empresaPadrao, padroes, padraoDoCampo, armazemPadrao,
+    regras, aplicaATop, padroesTop, dadosFiscaisAtivos, formaCobrada, h, fiscal]);
 
   const colunasForcadas = [
     ...(regras?.exigeArmazem ? ["armazem_id"] : []),
@@ -690,6 +814,26 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   /* Com o local escondido pelo layout (e não exigido pela regra) a linha nasce sem local, como antes: preencher um campo
      que o usuário não vê nem troca seria o contrário de "o item pode trocar o local". */
   const localNaGrade = !modoReceber && fieldsDosItens.includes("warehouse");
+
+  /* LANCAMENTO-01 (decisão 311; L1–L4) — O LOCAL DA LINHA NOVA: o local padrão do PRODUTO, conferido na empresa do
+     documento (`useLocaisDosProdutos`), acima do local do cabeçalho que é só padrão (o do layout) ou vazio, e abaixo da
+     resposta do operador — o ajuste na célula, ou o local do cabeçalho que ele ESCOLHEU (`escolherLocal`). Só na
+     criação e só com a coluna do local na grade (escondida, a linha continua sem local, como antes). A marca de quem é
+     o local mora na LINHA (`LOCAL_DA_LINHA`): o motor genérico de itens não muda. O `armazem_id` da linha continua sendo
+     valor do documento (nenhum código do servidor o resolve) e vai no corpo, como hoje. */
+  const [localEscolhidoEm, setLocalEscolhidoEm] = React.useState<string | null>(null);
+  // a escolha vale para a empresa em que foi feita — a MESMA regra de `useLocalDoCabecalho` (trocar a empresa a limpa)
+  React.useEffect(() => { if (localEscolhidoEm !== null && localEscolhidoEm !== h.empresa_id) setLocalEscolhidoEm(null); }, [h.empresa_id, localEscolhidoEm]);
+  const cabecalhoEscolhido = localEscolhidoEm !== null && localEscolhidoEm === h.empresa_id && local.local !== null;
+  const escolherLocal = (l: LocalDeEstoque | null) => { local.escolher(l); setLocalEscolhidoEm(l ? h.empresa_id : null); };
+  const localDoProduto = useLocaisDosProdutos(localNaGrade ? itens.map((i) => i.product_id) : [], h.empresa_id);
+  React.useEffect(() => {
+    if (!localNaGrade) return;
+    const ctx = { cabecalhoEscolhido, localDoProduto, geraEstoque: itemGeraEstoque };
+    const novas = localDasLinhasNovas(itens, ctx);
+    // só quando muda; sobre o estado MAIS RECENTE (o efeito do lote pode ter acabado de mexer nas mesmas linhas)
+    if (novas !== itens) setItensCru((ls) => (ls === itens ? novas : localDasLinhasNovas(ls, ctx)));
+  });
 
   /* OBRIGATÓRIOS: a MESMA função do domínio que a API usa. */
   const [tentouSalvar, setTentouSalvar] = React.useState(false);
@@ -737,11 +881,12 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     salvarM.mutate();
   };
 
-  /* ALTERADO: contra o estado inicial, sem a empresa (preenchida por efeito). A cópia conta como alteração. */
+  /* ALTERADO: contra o estado inicial, sem a empresa (preenchida por efeito). A cópia conta como alteração. Os dados
+     fiscais contra o inicial deles (vazio; com o tipo de título que a TOP semeou, LANCAMENTO-01 — semeado não é alteração). */
   const semEmpresa = ({ empresa_id: _empresa, ...resto }: Cabecalho) => resto;
   const alterado = (itens.length > 0 && (!modoReceber || JSON.stringify(itens) !== JSON.stringify(abertura.current?.itens ?? [])))
     || ajustarParcelas || JSON.stringify(semEmpresa(h)) !== JSON.stringify(semEmpresa(inicial.current))
-    || (dadosFiscaisAtivos && (CAMPOS_DOS_DADOS_FISCAIS.some((c) => fiscal[c] !== "") || JSON.stringify(rateio) !== JSON.stringify(rateioDoDocumento())));
+    || (dadosFiscaisAtivos && (CAMPOS_DOS_DADOS_FISCAIS.some((c) => fiscal[c] !== fiscalInicial.current[c]) || JSON.stringify(rateio) !== JSON.stringify(rateioDoDocumento())));
   useDirtyTab(alterado && !salvarM.isSuccess);
   React.useEffect(() => {
     if (modoReceber && preenchimento && !abertura.current) abertura.current = { h: inicial.current, itens: linhasDoRecebimento(recebendo?.pedido.itens ?? []) };
@@ -754,8 +899,8 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const descartar = () => {
     if (modoReceber) { router.push(rotaDoPedido); return; }
     setH({ ...inicial.current, empresa_id: inicial.current.empresa_id || empresaPadrao });
-    setItensCru([]); setAjustarParcelas(false); setPlano(defaultPlan()); setFiscal(dadosFiscaisVazios()); setRateio(rateioDoDocumento()); setErros({}); setTentouSalvar(false); setPendenciasAbertas(false);
-    local.descartar(); // o local do cabeçalho volta ao padrão
+    setItensCru([]); setAjustarParcelas(false); setPlano(defaultPlan()); setFiscal({ ...fiscalInicial.current }); setRateio(rateioDoDocumento()); setErros({}); setTentouSalvar(false); setPendenciasAbertas(false);
+    local.descartar(); setLocalEscolhidoEm(null); // o local do cabeçalho volta ao padrão (e deixa de ser escolha do operador)
   };
 
   const rotuloDoPedido = enumLabel("especie_documento_compra", "pedido");
@@ -780,12 +925,19 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     zonas, forcados: desenho?.forcados ?? new Set<string>(), cfg,
     rotulo: (c, hoje) => cfg.get(c)?.rotulo || hoje,
     obrigatorio: (c) => (layout ? Boolean(cfg.get(c)?.obrigatorio) : doSistema.has(c)) || exigidosPelaRegra.has(c),
-    travado: travadoDoLayout,
-    padraoDoCampo, padraoInvalido,
-    dica: (c) => { const p = padraoDoCampo(c); return p && h[c] === p.id ? p.rotulo : undefined; },
+    // LANCAMENTO-01: OR com a TOP que não deixa trocar (o layout continua decidindo a trava dele, intacta)
+    travado: (c) => travadoDoLayout(c) || travadoPelaTopNaTela(c),
+    padraoDoCampo,
+    padraoInvalido: (c) => padraoInvalido(c) || padraoDaTopInvalido(aplicaATop, padroesDaTop, c),
+    dica: (c) => {
+      // o padrão de cadastro do layout tem prioridade enquanto o valor é o dele; senão, o da TOP enquanto é o dela
+      if (c !== "tipo_titulo_id") { const p = padraoDoCampo(c); if (p && h[c] === p.id) return p.rotulo; }
+      return dicaDaTop({ aplica: aplicaATop, padroes: padroesTop, campo: c, valor: valorNaTela(c) });
+    },
+    semeadoPelaTop: semeadoPelaTopNaTela, travadoPelaTop: travadoPelaTopNaTela,
     doPedido: (c) => modoReceber && doPedido.current.has(c),
     colunasDoLayout, fieldsDosItens,
-    localNaGrade, localDoCabecalho: localNaGrade ? local.local : null, escolherLocal: local.escolher,
+    localNaGrade, localDoCabecalho: localNaGrade ? local.local : null, escolherLocal,
     erro, errosDaTela, errosDeItens, pendencias, pendenciasAbertas, setPendenciasAbertas,
     rotuloDoSalvar: rotuloDoSalvar(regras?.regrasGerais, can("compras.edit")),
     travaDoSalvar, salvarDesabilitado: travaDoSalvar !== null, salvando: salvarM.isPending, salvar,

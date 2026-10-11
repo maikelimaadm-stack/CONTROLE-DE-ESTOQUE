@@ -499,3 +499,27 @@ export interface AvisoDoSalvar { tipo: TipoDoAviso; texto: string }
  * gravação; a Central só lê.
  */
 export interface RegrasGeraisDaCentral { confirmacaoAutomatica: boolean; aceitaSemItens: boolean }
+
+/* ─────────────── LANCAMENTO-01 (decisão 311) — a seção e os padrões financeiros da TOP ─────────────── */
+
+/**
+ * A FORMA de `secao` e `padroes` como o SERVIDOR os manda — UM contrato só, chave por chave: o de
+ * `GET /api/financeiro/tops` (a Central Financeira, OPERACOES-01 F9, `top-financeira.tsx`) e o de
+ * `GET /api/compras/{compras|pedidos}/regras-da-operacao` (LANCAMENTO-01, a Central de Compras). Declarada UMA vez,
+ * aqui; as duas telas importam daqui (uma segunda declaração envelheceria em silêncio na primeira chave nova).
+ *
+ * `semClassificacao` é `string`, não a união do domínio (`SemClassificacaoTop`): a tela não decide nada por ela (quem
+ * classifica é o servidor, e na compra ele classifica sempre com "exigir"), e uma opção nova do domínio não pode
+ * derrubar a leitura da TOP — a união é atribuível a `string`, então os dois usos cabem no mesmo tipo.
+ * `podeTrocar` NÃO faz parte do contrato: a tela o deriva (`secao.documentoTroca` E o perfil da família no domínio).
+ */
+export interface PadraoComCodigo { id: string; codigo: string; nome: string }
+export interface PadraoComNome { id: string; nome: string }
+export interface ContaPadraoDaTop { id: string; codigo: string; descricao: string }
+export interface SecaoFinanceiraDaTop { provisao: boolean; documentoTroca: boolean; semClassificacao: string }
+/** Cada padrão `null` quando a versão da TOP não o tem. */
+export interface PadroesFinanceirosDaTop {
+  natureza: PadraoComCodigo | null; centro: PadraoComCodigo | null;
+  tipoTitulo: PadraoComNome | null; formaPagamento: PadraoComNome | null;
+  conta: ContaPadraoDaTop | null;
+}
