@@ -2,6 +2,7 @@ import type { Locator, Page } from "@playwright/test";
 import { LAYOUT_DO_SISTEMA, configuracaoNeutraTopV5, type ConfiguracaoTipoOperacaoV5, type EstruturaLayout } from "@agro/domain";
 import { api, empresaAtiva, login, uniq } from "./helpers";
 import { test, expect, codigoTop, criarCadastro, criarTop, doSeed, referenciasDoSeed, type Opcao } from "./central-compras-fixtures";
+import { cabecalhosDaSessao } from "./top-config-08-comum";
 
 /**
  * LANCAMENTO-01 (F1, decisão 311) — A TELA: a Central de Compras REAL semeia o que a TOP já sabe e o local do produto.
@@ -27,6 +28,16 @@ import { test, expect, codigoTop, criarCadastro, criarTop, doSeed, referenciasDo
  * pela porta administrativa) nascem no caso e saem no fim pela exclusão lógica; o layout dos casos de precedência sai
  * pela exclusão da própria API. Natureza, centro, tipo de título, forma e conta vêm do seed, pelo NOME. Os documentos
  * ficam (o ledger é imutável). 1440×900.
+ *
+ * OS DOIS MUNDOS DA CHAVE DO LOCAL DO PRODUTO (emenda R2 da decisão 311). O local padrão do produto na linha nova só vale
+ * com a capacidade `localDoProdutoNaLinha` que `regras-da-operacao` declara (a chave `COMPRAS_LOCAL_DO_PRODUTO_ENABLED` da
+ * API, desligada por padrão). O CI mede o mundo LIGADO (`playwright.config.ts`: `?? "1"`); `COMPRAS_LOCAL_DO_PRODUTO_ENABLED=0`
+ * exportado para o runner mede o DESLIGADO. Nenhum caso pula: cada um que toca o local lê a chave NO FIO (`chaveNoFio`,
+ * que também reprova se a API de pé não é a que o runner pediu) e assegura o ramo dela — LIGADA, o local do produto
+ * conferido, a outra empresa ignorada, o ajuste preservado, o cabeçalho escolhido vencendo, as leituras contadas;
+ * DESLIGADA, a linha nova com o local do CABEÇALHO, como na main (vazio, "—", sem padrão do layout), ZERO leitura nova,
+ * e o gravado e a entrada de estoque da main. O LANC-T12 é o caso do desligado (e, ligada, o mesmo cenário no ramo
+ * ligado), com a resposta SEM a chave (a API anterior) fabricada no fio: o portão fecha nos dois mundos.
  */
 
 test.use({ viewport: { width: 1440, height: 900 } });
@@ -48,6 +59,12 @@ const texto = (v: unknown) => (typeof v === "string" ? v : v === null || v === u
 const chaves = (o: unknown) => (ehObj(o) ? Object.keys(o).sort() : []);
 const itensDe = (o: Record<string, unknown>) => (Array.isArray(o["itens"]) ? (o["itens"] as Record<string, unknown>[]) : []);
 const semAs = (lista: readonly string[], fora: readonly string[]) => lista.filter((k) => !fora.includes(k));
+/** O item da linha sem local (o local do cabeçalho vazio, como na main): a chave do local não vai. */
+const CHAVES_DO_ITEM_SEM_LOCAL = semAs(CHAVES_DO_ITEM_DE_HOJE, ["armazem_id"]);
+/** A recusa do servidor ao tipo de título trocado numa TOP que não deixa o documento trocar (emenda R2, P4) — por extenso. */
+const MSG_TROCA_DO_TIPO = "Esta operação não deixa trocar o tipo de título: use o padrão da TOP.";
+/** A recusa de hoje da compra cuja execução exige o local e o item foi sem ele — por extenso. */
+const MSG_SEM_O_LOCAL = "A operação desta compra exige o local de estoque de todos os itens";
 
 /** Uma linha de registro no console e nas anotações do teste (o relatório lê as duas). */
 function registrar(rotulo: string, conteudo: unknown) {
@@ -58,7 +75,6 @@ function registrar(rotulo: string, conteudo: unknown) {
 
 /* ═════════════════════════════════════ A FIXTURE ═════════════════════════════════════ */
 
-interface PadraoComCodigo { id: string; codigo: string; nome: string }
 interface Montado {
   tag: string; empresa: string;
   natureza: Opcao & { codigo: string; nome: string }; centro: Opcao & { codigo: string; nome: string };
@@ -301,6 +317,55 @@ function premissaDosPadroes(regras: Record<string, unknown>, m: Montado, esperad
 const CINCO_IDS = (m: Montado) => ({ natureza: m.natureza.id, centro: m.centro.id, tipoTitulo: m.tipoTitulo.id, formaPagamento: m.forma.id, conta: m.conta.id });
 const SECAO_NEUTRA = { provisao: false, documentoTroca: true, semClassificacao: "padrao_legado" };
 
+/* ═════════════════════════════ A CHAVE DO LOCAL DO PRODUTO (emenda R2 da decisão 311) ═════════════════════════════ */
+
+/**
+ * O MUNDO DO CASO, lido NO FIO: a capacidade `localDoProdutoNaLinha` que a página recebeu de `regras-da-operacao`, pela
+ * MESMA régua da tela (só o booleano `true` liga; ausente — a API anterior — é desligada). E conferido contra o mundo que
+ * o runner PEDIU (`playwright.config.ts` passa `COMPRAS_LOCAL_DO_PRODUTO_ENABLED ?? "1"` à API): uma API de pé com outro
+ * valor (servidor reaproveitado) não mede o que o caso diz — reprova aqui, em vez de passar pelo outro ramo.
+ */
+function chaveNoFio(regras: Record<string, unknown>, onde: string): boolean {
+  const ligada = regras["localDoProdutoNaLinha"] === true;
+  const pedida = (process.env.COMPRAS_LOCAL_DO_PRODUTO_ENABLED ?? "1") === "1";
+  registrar(`${onde} chave`, { localDoProdutoNaLinha: Object.hasOwn(regras, "localDoProdutoNaLinha") ? regras["localDoProdutoNaLinha"] : "(ausente)", pedidaPeloRunner: pedida ? "1" : "0" });
+  expect(ligada, `premissa no fio (${onde}): a chave que a API de pé declara é a que o runner pediu`).toBe(pedida);
+  return ligada;
+}
+
+/** O local que a célula da linha mostra: o dado, ou o vazio ("—") — a linha com o local do cabeçalho vazio. */
+async function localDaLinha(linha: Locator, local: { nome: string } | null, mensagem: string) {
+  const celula = linha.getByTestId(`${P}-armazem`);
+  if (local) await expect(celula, mensagem).toContainText(local.nome);
+  else await expect(celula, mensagem).toHaveText("—");
+}
+
+/** As leituras que o local do produto pode fazer, no fio: o cadastro do produto e TODA pergunta a `warehouses/options`. */
+interface Leituras { produto: number; opcoesDoLocal: string[]; conferencias: string[] }
+function escutarLeituras(page: Page, produtoId: string): { zerar: () => void; agora: () => Leituras } {
+  let produto = 0; let opcoes: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() !== "GET") return;
+    const u = new URL(r.url());
+    if (u.pathname === `/api/resources/products/${produtoId}`) produto++;
+    if (u.pathname === "/api/resources/warehouses/options") opcoes.push(u.search);
+  });
+  return {
+    zerar: () => { produto = 0; opcoes = []; },
+    agora: () => ({
+      produto, opcoesDoLocal: [...opcoes],
+      // a CONFERÊNCIA do local na empresa: a pergunta com `id` (o par empresa × local)
+      conferencias: opcoes.map((q) => new URLSearchParams(q)).filter((q) => q.has("id")).map((q) => `${q.get("empresa_id")}|${q.get("id")}`)
+    })
+  };
+}
+
+/** Um POST forjado pelo `page.request` — o corpo que a TELA não deixa mandar —, com a sessão da página: o status e a resposta. */
+async function postForjado(page: Page, caminho: string, corpo: Record<string, unknown>): Promise<{ status: number; json: unknown }> {
+  const r = await page.request.post(`${process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333"}${caminho}`, { headers: await cabecalhosDaSessao(page), data: corpo });
+  return { status: r.status(), json: await r.json().catch(() => null) };
+}
+
 /* ═════════════════════════════════════ LANC-T1 ═════════════════════════════════════ */
 
 test("LANC-T1 — compra que gera título, TOP com os 5 padrões, o documento troca: natureza e centro SEMEADOS com o 'código · nome' da TOP na dica, o tipo de título semeado, a forma não cobrada vazia; o POST sem natureza, centro e tipo de título; o gravado com os três nulos; a prévia e o título da confirmação com o par e o tipo da TOP (R2)", async ({ page }) => {
@@ -324,6 +389,10 @@ test("LANC-T1 — compra que gera título, TOP com os 5 padrões, o documento tr
   const { regras } = await abrirCriacao(page, "compras", top.id);
   premissaDosPadroes(regras, m, { secao: SECAO_NEUTRA, padroes: CINCO_IDS(m) });
   expect([regras["geraTitulos"], regras["exigeFormaPagamento"]], "premissa no fio: gera título; a forma não é cobrada").toEqual([true, false]);
+  const ligada = chaveNoFio(regras, "T1");
+  // O LOCAL DA LINHA NOVA: ligada, o do produto; desligada, o do cabeçalho — vazio (sem padrão do layout), como na main.
+  const localNovo = ligada ? m.local : null;
+  await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
 
   // SEMEADOS, com a dica da TOP enquanto a árvore não responde.
   for (const [c, p] of [["categoria_financeira_id", m.natureza], ["centro_custo_id", m.centro]] as const) {
@@ -352,7 +421,7 @@ test("LANC-T1 — compra que gera título, TOP com os 5 padrões, o documento tr
   await expect(tipo.getByRole("combobox"), "com o nome do padrão").toContainText(m.tipoTitulo.label);
 
   await preencherOMinimo(page, m);
-  await expect(linhas(page).first().getByTestId(`${P}-armazem`), "a linha nova nasce com o local do produto").toContainText(m.local.nome);
+  await localDaLinha(linhas(page).first(), localNovo, ligada ? "a linha nova nasce com o local do produto" : "desligada: a linha nova com o local do cabeçalho (vazio), como na main");
   const envio = await salvar(page, envios);
   const id = await gravou(page, envio);
   registrar("T1 corpo", { chaves: chaves(envio.corpo), item0: itensDe(envio.corpo)[0] ?? null });
@@ -360,28 +429,39 @@ test("LANC-T1 — compra que gera título, TOP com os 5 padrões, o documento tr
   // O CORPO: as chaves de hoje MENOS o par (o servidor o aplica); sem a forma (vazia) e sem o tipo de título semeado.
   expect(chaves(envio.corpo), "o POST com as chaves de hoje menos natureza e centro").toEqual(semAs(CHAVES_DE_HOJE, OMITIDAS_PELO_PAR));
   for (const k of [...OMITIDAS_PELO_PAR, "forma_pagamento_id", "tipo_titulo_id"]) expect(Object.hasOwn(envio.corpo, k), `${k} fora do corpo`).toBe(false);
-  expect(itensDe(envio.corpo).map(chaves), "o item com as chaves de hoje").toEqual([CHAVES_DO_ITEM_DE_HOJE]);
-  expect(itensDe(envio.corpo)[0], "o item com o produto e o local dele").toMatchObject({ produto_id: m.produto.id, armazem_id: m.local.id });
+  expect(itensDe(envio.corpo).map(chaves), ligada ? "o item com as chaves de hoje" : "desligada: o item sem local, sem a chave do local (a main)").toEqual([ligada ? CHAVES_DO_ITEM_DE_HOJE : CHAVES_DO_ITEM_SEM_LOCAL]);
+  expect(itensDe(envio.corpo)[0], ligada ? "o item com o produto e o local dele" : "o item com o produto").toMatchObject({ produto_id: m.produto.id, ...(localNovo ? { armazem_id: localNovo.id } : {}) });
 
-  // O GRAVADO: natureza, centro, forma e tipo de título nulos (como hoje); o item no local do produto.
+  // O GRAVADO: natureza, centro, forma e tipo de título nulos (como hoje); o item no local do produto (ligada) ou sem local.
   const g = await gravado(page, id);
   registrar("T1 gravado", g);
-  expect(g, "o servidor gravou o que o corpo levou").toEqual({ categoria_financeira_id: null, centro_custo_id: null, forma_pagamento_id: null, tipo_titulo_id: null, itens_armazem: [m.local.id] });
+  expect(g, "o servidor gravou o que o corpo levou").toEqual({ categoria_financeira_id: null, centro_custo_id: null, forma_pagamento_id: null, tipo_titulo_id: null, itens_armazem: [localNovo?.id ?? null] });
 
-  // A PRÉVIA DA CONFIRMAÇÃO: o par da TOP.
+  // A PRÉVIA DA CONFIRMAÇÃO: o par da TOP; e a ENTRADA DE ESTOQUE que ela prevê (ligada, no local do produto; desligada,
+  // nenhuma — o item sem local fica fora da entrada, como na main).
   const previa = await api<Record<string, unknown>>(page, "GET", `/api/compras/compras/${id}/previa-confirmacao`);
   const fin = ehObj(previa["financeiro"]) ? previa["financeiro"] : {};
   registrar("T1 previa", fin);
   expect(fin["efeito"], "a prévia: título a pagar").toBe("pagar");
   expect(fin["classificacao"], "a prévia classifica com o par da TOP").toEqual({
     categoria: { id: m.natureza.id, codigo: m.natureza.codigo, nome: m.natureza.nome }, centro: { id: m.centro.id, codigo: m.centro.codigo, nome: m.centro.nome }, padraoDaTop: true });
+  const est = ehObj(previa["estoque"]) ? previa["estoque"] : {};
+  expect([est["efeito"], Array.isArray(est["itens"])], "premissa: a prévia dá entrada de estoque (a política) e lista os itens que entram").toEqual(["entrada", true]);
+  const previstas = (Array.isArray(est["itens"]) ? (est["itens"] as Record<string, unknown>[]) : []).map((i) => [i["armazem_id"], i["produto_id"]]);
+  registrar("T1 previa estoque", { itens: previstas, itensForaDaEntrada: est["itensForaDaEntrada"] ?? null });
+  expect(previstas, ligada ? "a prévia: a entrada no local do produto" : "desligada: a prévia sem entrada (o item sem local), como na main").toEqual(localNovo ? [[localNovo.id, m.produto.id]] : []);
 
-  // A CONFIRMAÇÃO: o título com o par e o tipo de título da TOP.
+  // A CONFIRMAÇÃO: o título com o par e o tipo de título da TOP; e a entrada de estoque que a confirmação FEZ.
   await page.getByTestId("compras-confirmar").click();
   await expect(page.getByTestId("compras-previa")).toHaveAttribute("data-situacao", "pronta");
   await page.getByTestId("confirm-dialog-confirm").click();
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "confirmado");
-  const titulos = (await api<{ titulos: { id: string }[] }>(page, "GET", `/api/compras/compras/${id}`)).titulos;
+  const confirmada = await api<{ titulos: { id: string }[]; movimentos?: unknown }>(page, "GET", `/api/compras/compras/${id}`);
+  expect(Array.isArray(confirmada.movimentos), "premissa: o detalhe da compra confirmada traz as entradas no estoque").toBe(true);
+  const entradas = (confirmada.movimentos as Record<string, unknown>[]).map((x) => [x["warehouse_id"], x["product_id"]]);
+  registrar("T1 entradas no estoque", entradas);
+  expect(entradas, ligada ? "a entrada de estoque no local do produto" : "desligada: nenhuma entrada de estoque (o item sem local), como na main").toEqual(localNovo ? [[localNovo.id, m.produto.id]] : []);
+  const titulos = confirmada.titulos;
   expect(titulos.length, "a compra confirmada gerou um título").toBe(1);
   const titulo = await api<{ title_type_id: string | null; conta_prevista_id?: string | null; apportionments: { financial_category_id: string; cost_center_id: string }[] }>(
     page, "GET", `/api/financial/payables/${titulos[0]!.id}`);
@@ -401,6 +481,7 @@ test("LANC-T2 — a TOP que NÃO deixa o documento trocar (documentoTroca false)
   const { regras } = await abrirCriacao(page, "compras", top.id);
   premissaDosPadroes(regras, m, { secao: { ...SECAO_NEUTRA, documentoTroca: false }, padroes: CINCO_IDS(m) });
   expect([regras["geraTitulos"], regras["exigeFormaPagamento"]], "premissa no fio: gera título e cobra a forma").toEqual([true, true]);
+  const ligada = chaveNoFio(regras, "T2");
 
   const travas = dados(page).locator('fieldset[data-editavel="false"][data-travado-pela-top="true"]');
   for (const [c, rotulo] of [["categoria_financeira_id", m.natureza.nome], ["centro_custo_id", m.centro.nome], ["forma_pagamento_id", m.forma.label]] as const) {
@@ -428,7 +509,24 @@ test("LANC-T2 — a TOP que NÃO deixa o documento trocar (documentoTroca false)
   expect(envio.corpo["forma_pagamento_id"], "a forma semeada vai: a da TOP").toBe(m.forma.id);
   const g = await gravado(page, id);
   registrar("T2 gravado", g);
-  expect(g, "o gravado: o par nulo (o servidor classifica pela TOP), a forma da TOP").toEqual({ categoria_financeira_id: null, centro_custo_id: null, forma_pagamento_id: m.forma.id, tipo_titulo_id: null, itens_armazem: [m.local.id] });
+  expect(g, "o gravado: o par nulo (o servidor classifica pela TOP), a forma da TOP; o item no local do produto (ligada) ou sem local (desligada, a main)")
+    .toEqual({ categoria_financeira_id: null, centro_custo_id: null, forma_pagamento_id: m.forma.id, tipo_titulo_id: null, itens_armazem: [ligada ? m.local.id : null] });
+
+  // E O SERVIDOR TAMBÉM RECUSA (emenda R2, P4): a trava da tela é a régua do servidor, nunca mais estrita. O MESMO corpo
+  // que a tela mandou, FORJADO pelo `page.request` com OUTRO tipo de título (a tela travada não deixa) → a recusa da troca;
+  // com o tipo da TOP → grava (a recusa é a TROCA, não o campo).
+  const tipos = await api<Opcao[]>(page, "GET", "/api/resources/title_types/options");
+  const outroTipo = tipos.find((t) => t.id !== m.tipoTitulo.id);
+  expect(outroTipo, "premissa: um segundo tipo de título no seed").toBeTruthy();
+  const forjado = await postForjado(page, "/api/compras/compras", { ...envio.corpo, tipo_titulo_id: outroTipo!.id });
+  registrar("T2 forjado com outro tipo de título", { tipo: outroTipo!.label, status: forjado.status, json: forjado.json });
+  expect(forjado.status, `o servidor recusa a troca do tipo de título: ${JSON.stringify(forjado.json)}`).toBe(422);
+  expect(ehObj(forjado.json) ? forjado.json["error"] : null, "a recusa da troca, no caminho da seção, com a mensagem do domínio").toEqual({
+    code: "TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA", message: MSG_TROCA_DO_TIPO, details: { exigencias: [{ caminho: "financeiroPadrao.documentoTroca", mensagem: MSG_TROCA_DO_TIPO }] } });
+  const comOTipoDaTop = await postForjado(page, "/api/compras/compras", { ...envio.corpo, tipo_titulo_id: m.tipoTitulo.id });
+  expect(comOTipoDaTop.status, `premissa: o MESMO corpo com o tipo da TOP grava — a recusa é a troca: ${JSON.stringify(comOTipoDaTop.json)}`).toBe(201);
+  const comOTipo = ehObj(comOTipoDaTop.json) ? texto(comOTipoDaTop.json["id"]) : "";
+  expect((await gravado(page, comOTipo)).tipo_titulo_id, "e gravou o tipo da TOP").toBe(m.tipoTitulo.id);
 });
 
 /* ═════════════════════════════════════ LANC-T3 ═════════════════════════════════════ */
@@ -443,6 +541,7 @@ test("LANC-T3 — receber um pedido cuja TOP de compra tem os 5 padrões: na cri
   // PRESENÇA antes da ausência: a MESMA TOP, na criação, semeia o par.
   const { regras } = await abrirCriacao(page, "compras", topCompra.id);
   premissaDosPadroes(regras, m, { secao: SECAO_NEUTRA, padroes: CINCO_IDS(m) });
+  chaveNoFio(regras, "T3");
   await expect(campo(page, "categoria_financeira_id"), "premissa: na criação, a TOP semeia a natureza").toHaveAttribute("data-padrao-top", "semeado");
   await expect(campo(page, "centro_custo_id"), "premissa: e o centro").toHaveAttribute("data-padrao-top", "semeado");
 
@@ -493,6 +592,7 @@ test("LANC-T4 — TOP no 5 que gera título com SÓ o centro: nada semeado (meio
   const { regras } = await abrirCriacao(page, "compras", top.id);
   premissaDosPadroes(regras, m, { secao: SECAO_NEUTRA, padroes: { natureza: null, centro: m.centro.id, tipoTitulo: null, formaPagamento: null, conta: null } });
   expect(regras["geraTitulos"], "premissa no fio: gera título").toBe(true);
+  chaveNoFio(regras, "T4");
 
   for (const c of ["categoria_financeira_id", "centro_custo_id"]) {
     await expect(caixa(page, c), `${c}: vazio`).toHaveClass(/is-empty/);
@@ -512,7 +612,7 @@ test("LANC-T4 — TOP no 5 que gera título com SÓ o centro: nada semeado (meio
 
 /* ═════════════════════════════════════ LANC-T5 ═════════════════════════════════════ */
 
-test("LANC-T5a — o local do produto: a linha nova nasce com o local do produto da empresa do documento; o de OUTRA empresa é IGNORADO (o POST nunca o leva); o ajuste do operador não muda ao trocar o produto; N linhas do mesmo produto = uma leitura do produto e uma conferência do local (R5)", async ({ page }) => {
+test("LANC-T5a — o local do produto: a linha nova nasce com o local do produto da empresa do documento; o de OUTRA empresa é IGNORADO (o POST nunca o leva); o ajuste do operador não muda ao trocar o produto; N linhas do mesmo produto = uma leitura do produto e uma conferência do local (R5) — com a chave DESLIGADA (no fio), as linhas com o local do cabeçalho (vazio), nenhuma conferência, e o ajuste do operador", async ({ page }) => {
   test.setTimeout(180_000);
   await login(page);
   const m = await montar(page);
@@ -536,20 +636,25 @@ test("LANC-T5a — o local do produto: a linha nova nasce com o local do produto
     if (u.pathname === "/api/resources/warehouses/options" && u.searchParams.has("id")) conferencias.push(`${u.searchParams.get("empresa_id")}|${u.searchParams.get("id")}`);
   });
   const envios = escutarPosts(page, "/api/compras/compras");
-  await abrirCriacao(page, "compras", top.id);
+  const { regras } = await abrirCriacao(page, "compras", top.id);
+  const ligada = chaveNoFio(regras, "T5a");
+  // ligada, a linha nova nasce no local do produto; desligada, no do cabeçalho (vazio), como na main
+  const localNovo = ligada ? m.local : null;
   await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
   await escolherNoCampo(page, campo(page, "fornecedor_id"), m.fornecedor.nome);
 
-  // (1) TRÊS linhas do MESMO produto: todas no local dele; uma leitura do cadastro e uma conferência do local.
+  // (1) TRÊS linhas do MESMO produto: todas no local dele (ligada); uma leitura do cadastro e uma conferência do local.
   for (let i = 0; i < 3; i++) {
     await novaLinhaCom(page, m.produto);
-    await expect(linhas(page).nth(i).getByTestId(`${P}-armazem`), `linha ${i + 1}: o local do produto`).toContainText(m.local.nome);
+    await localDaLinha(linhas(page).nth(i), localNovo, ligada ? `linha ${i + 1}: o local do produto` : `linha ${i + 1}: desligada, o local do cabeçalho (vazio)`);
   }
+  await estavel(page);
   registrar("T5a leituras", { produto: leituras.length, conferencias });
   // a leitura do cadastro é UMA por produto distinto, com a chave do controle de lote (o local a reusa); a outra
   // leitura do mesmo endereço é a da unidade, do motor da grade, que já existia — e nenhuma cresce com as linhas.
+  // Desligada, as MESMAS duas (as de hoje, na compra) e nenhuma conferência do local.
   expect(leituras.length, "o cadastro do produto: a do motor (unidade) e a da Central (lote e local), nenhuma por linha").toBe(2);
-  expect(conferencias, "uma conferência do local, na empresa do documento").toEqual([`${m.empresa}|${m.local.id}`]);
+  expect(conferencias, ligada ? "uma conferência do local, na empresa do documento" : "desligada: nenhuma conferência do local").toEqual(ligada ? [`${m.empresa}|${m.local.id}`] : []);
 
   // (2) O produto com o local de OUTRA empresa: ignorado — a linha fica com o do cabeçalho (vazio).
   await novaLinhaCom(page, comOutra);
@@ -558,7 +663,7 @@ test("LANC-T5a — o local do produto: a linha nova nasce com o local do produto
 
   // (3) O AJUSTE do operador: a linha nasce no local do produto, ele troca, e trocar o produto não derruba o ajuste.
   await novaLinhaCom(page, m.produto);
-  await expect(linhas(page).nth(4).getByTestId(`${P}-armazem`), "linha 5: nasce no local do produto").toContainText(m.local.nome);
+  await localDaLinha(linhas(page).nth(4), localNovo, ligada ? "linha 5: nasce no local do produto" : "linha 5: desligada, nasce no do cabeçalho (vazio)");
   await escolherLocalDaLinha(page, 4, ajuste);
   await escolherProduto(page, 4, terceiro);
   await estavel(page);
@@ -569,9 +674,10 @@ test("LANC-T5a — o local do produto: a linha nova nasce com o local do produto
   const id = await gravou(page, envio);
   const noCorpo = itensDe(envio.corpo).map((i) => i["armazem_id"] ?? null);
   registrar("T5a corpo", noCorpo);
-  expect(noCorpo, "no POST: o local do produto, o vazio (outra empresa ignorada) e o ajuste").toEqual([m.local.id, m.local.id, m.local.id, null, ajuste.id]);
+  const esperado = [localNovo?.id ?? null, localNovo?.id ?? null, localNovo?.id ?? null, null, ajuste.id];
+  expect(noCorpo, ligada ? "no POST: o local do produto, o vazio (outra empresa ignorada) e o ajuste" : "no POST (desligada): sem local nas quatro primeiras, como na main, e o ajuste").toEqual(esperado);
   expect(JSON.stringify(envio.corpo).includes(daOutra.id), "o POST nunca leva o local da outra empresa").toBe(false);
-  expect((await gravado(page, id)).itens_armazem, "o gravado igual ao corpo").toEqual([m.local.id, m.local.id, m.local.id, null, ajuste.id]);
+  expect((await gravado(page, id)).itens_armazem, "o gravado igual ao corpo").toEqual(esperado);
 });
 
 test("LANC-T5b — o local do cabeçalho ESCOLHIDO pelo operador vence o do produto para a linha nova", async ({ page }) => {
@@ -581,7 +687,8 @@ test("LANC-T5b — o local do cabeçalho ESCOLHIDO pelo operador vence o do prod
   const escolhido = await criarLocal(page, m.empresa, m.tag, "local escolhido");
   const top = await topDoCaso(page, "T5b", { configuracao: configuracaoNeutraTopV5(), padroes: OS_CINCO(m) });
   const envios = escutarPosts(page, "/api/compras/compras");
-  await abrirCriacao(page, "compras", top.id);
+  // nos dois mundos a escolha do cabeçalho vale para a linha nova (desligada, é o local do cabeçalho da main)
+  chaveNoFio((await abrirCriacao(page, "compras", top.id)).regras, "T5b");
   await escolherNoCampo(page, page.getByTestId(`${P}-local-padrao`), escolhido.nome);
   await preencherOMinimo(page, m);
   await estavel(page);
@@ -628,6 +735,7 @@ test("LANC-T6a — PRECEDÊNCIA: o padrão de cadastro do LAYOUT no centro (≠ 
     const envios = escutarPosts(page, "/api/compras/compras");
     const { regras, layout: efetivo } = await abrirCriacao(page, "compras", top.id);
     premissaDosPadroes(regras, m, { secao: SECAO_NEUTRA, padroes: CINCO_IDS(m) });
+    chaveNoFio(regras, "T6a");
     expect(efetivo, "premissa no fio: o layout ligado com o padrão de cadastro no centro").toMatchObject({ origem: "ligado", id: layout, padroesDeCadastro: { centro_custo_id: { id: doLayout!.id } } });
     registrar("T6a ids", { centroDoLayout: doLayout!.id, centroDaTop: m.centro.id });
 
@@ -659,6 +767,7 @@ test("LANC-T6b — o layout com o MESMO centro da TOP: a natureza é semeada pel
     const envios = escutarPosts(page, "/api/compras/compras");
     const { regras, layout: efetivo } = await abrirCriacao(page, "compras", top.id);
     premissaDosPadroes(regras, m, { secao: SECAO_NEUTRA, padroes: CINCO_IDS(m) });
+    chaveNoFio(regras, "T6b");
     expect(efetivo, "premissa no fio: o layout com o centro da TOP como padrão de cadastro").toMatchObject({ origem: "ligado", id: layout, padroesDeCadastro: { centro_custo_id: { id: m.centro.id } } });
     await expect(campo(page, "categoria_financeira_id"), "a natureza: semeada pela TOP").toHaveAttribute("data-padrao-top", "semeado");
     await expect(caixa(page, "categoria_financeira_id")).toContainText(m.natureza.nome);
@@ -676,7 +785,7 @@ test("LANC-T6b — o layout com o MESMO centro da TOP: a natureza é semeada pel
 
 /* ═════════════════════════════════════ LANC-T7 ═════════════════════════════════════ */
 
-test("LANC-T7 — a forma COBRADA (execução do M1-E: forma, local e vencimento exigidos): a forma semeada com a da TOP VAI no POST e o local vem do produto — o primeiro Salvar grava, sem as recusas de forma e de local; sobram fornecedor, produto, valor e vencimento", async ({ page }) => {
+test("LANC-T7 — a forma COBRADA (execução do M1-E: forma, local e vencimento exigidos): a forma semeada com a da TOP VAI no POST e o local vem do produto — o primeiro Salvar grava, sem as recusas de forma e de local; sobram fornecedor, produto, valor e vencimento — com a chave DESLIGADA (no fio), o local volta a ser pergunta: a recusa de hoje no local do item, e o operador o responde", async ({ page }) => {
   test.setTimeout(180_000);
   await login(page);
   const m = await montar(page);
@@ -685,6 +794,8 @@ test("LANC-T7 — a forma COBRADA (execução do M1-E: forma, local e vencimento
   const { regras } = await abrirCriacao(page, "compras", top.id);
   premissaDosPadroes(regras, m, { secao: SECAO_NEUTRA, padroes: CINCO_IDS(m) });
   expect([regras["exigeFormaPagamento"], regras["exigeArmazem"], regras["exigeVencimento"]], "premissa no fio: a execução do M1-E").toEqual([true, true, true]);
+  const ligada = chaveNoFio(regras, "T7");
+  await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
   await expect(campo(page, "forma_pagamento_id"), "a forma cobrada: semeada").toHaveAttribute("data-padrao-top", "semeado");
   await expect(caixa(page, "forma_pagamento_id"), "com a da TOP").toContainText(m.forma.label);
   await expect(campo(page, "forma_pagamento_id").locator('[data-parte="req"]'), "o \"*\" da regra, já preenchido").toHaveCount(1);
@@ -692,17 +803,28 @@ test("LANC-T7 — a forma COBRADA (execução do M1-E: forma, local e vencimento
 
   const gestos: string[] = [];
   await preencherOMinimo(page, m); gestos.push("Fornecedor", "Item 1 · Produto", "Item 1 · Valor unitário");
-  await expect(linhas(page).first().getByTestId(`${P}-armazem`), "o local exigido: o do produto").toContainText(m.local.nome);
+  await localDaLinha(linhas(page).first(), ligada ? m.local : null, ligada ? "o local exigido: o do produto" : "desligada: a linha com o local do cabeçalho (vazio), como na main");
   const vence = new Date(Date.now() + 30 * 86_400_000);
   const entrada = campo(page, "data_vencimento").locator('input:not([type="hidden"])').first();
   await entrada.fill(dataBr(vence)); await entrada.press("Enter");
   await expect(campo(page, "data_vencimento").locator('input[type="hidden"]')).toHaveValue(dataIso(vence));
   gestos.push("Vencimento");
-  registrar("T7 gestos", gestos);
 
-  const envio = await salvar(page, envios);
+  let envio = await salvar(page, envios);
+  if (!ligada) {
+    // DESLIGADA: o local volta a ser pergunta (a main) — a recusa de hoje do servidor, no local do item; o operador
+    // escolhe o local na linha e o Salvar seguinte grava. A forma continua semeada (não há recusa de forma).
+    registrar("T7 recusa do local (desligada)", { status: envio.status, json: envio.json, item0: itensDe(envio.corpo)[0] ?? null });
+    expect(Object.hasOwn(itensDe(envio.corpo)[0] ?? {}, "armazem_id"), "desligada: o item foi sem local").toBe(false);
+    expect(envio.status, "desligada: o servidor recusa o item sem local (a de hoje)").toBe(422);
+    expect(envio.json, "no local do item, com a mensagem de hoje").toMatchObject({ error: { code: "VALIDATION_ERROR", message: MSG_SEM_O_LOCAL, details: [{ path: "itens[0].armazem_id", message: MSG_SEM_O_LOCAL }] } });
+    await escolherLocalDaLinha(page, 0, m.local);
+    gestos.push("Item 1 · Local de estoque");
+    envio = await salvar(page, envios);
+  }
+  registrar("T7 gestos", gestos);
   const id = await gravou(page, envio);
-  expect(envios.length, "um POST só: nenhuma recusa de forma nem de local antes").toBe(1);
+  expect(envios.length, ligada ? "um POST só: nenhuma recusa de forma nem de local antes" : "desligada: dois POSTs — a recusa do local e o que gravou; nenhuma recusa de forma").toBe(ligada ? 1 : 2);
   expect(envio.corpo["forma_pagamento_id"], "a forma semeada VAI no corpo").toBe(m.forma.id);
   expect(itensDe(envio.corpo).map((i) => i["armazem_id"] ?? null), "o local do produto no item").toEqual([m.local.id]);
   for (const k of OMITIDAS_PELO_PAR) expect(Object.hasOwn(envio.corpo, k), `${k}: o par semeado fora do corpo`).toBe(false);
@@ -720,6 +842,8 @@ test("LANC-T8 — cabeçalho e itens de hoje intactos: a TOP sem padrões (padro
   const { regras } = await abrirCriacao(page, "compras", top.id);
   premissaDosPadroes(regras, m, { secao: SECAO_NEUTRA, padroes: null });
   expect(regras["geraTitulos"], "premissa no fio: a compra de hoje gera título").toBe(true);
+  const ligada = chaveNoFio(regras, "T8");
+  await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
   await expect(campo(page, "categoria_financeira_id"), "premissa: o campo da natureza está na tela").toHaveCount(1);
   await expect(central(page).locator("[data-padrao-top]"), "sem padrões: nada semeado").toHaveCount(0);
   await expect(central(page).locator('fieldset[data-travado-pela-top="true"]'), "nada travado").toHaveCount(0);
@@ -730,15 +854,17 @@ test("LANC-T8 — cabeçalho e itens de hoje intactos: a TOP sem padrões (padro
   const id = await gravou(page, envio);
   registrar("T8 corpo", { chaves: chaves(envio.corpo), item: itensDe(envio.corpo).map(chaves) });
   expect(chaves(envio.corpo), "as chaves da compra de hoje").toEqual(CHAVES_DE_HOJE);
-  expect(itensDe(envio.corpo).map(chaves), "o item de hoje").toEqual([CHAVES_DO_ITEM_DE_HOJE]);
+  // o item de hoje: ligada, com o local do produto; desligada, a linha com o local do cabeçalho vazio — sem a chave do local
+  expect(itensDe(envio.corpo).map(chaves), ligada ? "o item de hoje" : "o item de hoje sem local (a linha com o cabeçalho vazio, como na main)").toEqual([ligada ? CHAVES_DO_ITEM_DE_HOJE : CHAVES_DO_ITEM_SEM_LOCAL]);
   expect([envio.corpo["categoria_financeira_id"], envio.corpo["centro_custo_id"]], "o par do operador").toEqual([m.natureza.id, m.centro.id]);
   const g = await gravado(page, id);
   expect([g.categoria_financeira_id, g.centro_custo_id], "o gravado com o par do operador").toEqual([m.natureza.id, m.centro.id]);
+  expect(g.itens_armazem, "o item gravado: no local do produto (ligada) ou sem local (desligada)").toEqual([ligada ? m.local.id : null]);
 });
 
 /* ═════════════════════════════════════ LANC-T9 ═════════════════════════════════════ */
 
-test("LANC-T9 — o PEDIDO de compra: com a provisão ligada a TOP semeia o par e ele sai do corpo (o servidor aplica o par com qualquer total), a linha nasce no local do produto (leitura nova no pedido: uma por produto distinto) e o pedido finaliza; a MESMA TOP com a provisão desligada não semeia nada", async ({ page }) => {
+test("LANC-T9 — o PEDIDO de compra: com a provisão ligada a TOP semeia o par e ele sai do corpo (o servidor aplica o par com qualquer total), a linha nasce no local do produto (leitura nova no pedido: uma por produto distinto) e o pedido finaliza; a MESMA TOP com a provisão desligada não semeia nada — com a chave DESLIGADA (no fio), a linha com o local do cabeçalho (vazio), sem a leitura nova nem a conferência", async ({ page }) => {
   test.setTimeout(180_000);
   await login(page);
   const m = await montar(page);
@@ -764,23 +890,29 @@ test("LANC-T9 — o PEDIDO de compra: com a provisão ligada a TOP semeia o par 
   const com = await abrirCriacao(page, "pedidos", comProvisao.id);
   await expect(central(page)).toHaveAttribute("data-especie", "pedido");
   premissaDosPadroes(com.regras, m, { secao: { ...SECAO_NEUTRA, provisao: true }, padroes: CINCO_IDS(m) });
+  const ligada = chaveNoFio(com.regras, "T9");
+  const localNovo = ligada ? m.local : null;
+  await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
   for (const c of ["categoria_financeira_id", "centro_custo_id"]) await expect(campo(page, c), `${c}: semeado pela TOP que provisiona`).toHaveAttribute("data-padrao-top", "semeado");
   await expect(caixa(page, "forma_pagamento_id"), "a forma não cobrada: vazia").toHaveClass(/is-empty/);
   await preencherOMinimo(page, m);
   await novaLinhaCom(page, m.produto);
   await (await entradaDaLinha(linhas(page).nth(1), "Valor unitário do item 2")).fill("10");
-  for (let i = 0; i < 2; i++) await expect(linhas(page).nth(i).getByTestId(`${P}-armazem`), `linha ${i + 1}: o local do produto`).toContainText(m.local.nome);
+  for (let i = 0; i < 2; i++) await localDaLinha(linhas(page).nth(i), localNovo, ligada ? `linha ${i + 1}: o local do produto` : `linha ${i + 1}: desligada, o local do cabeçalho (vazio)`);
+  await estavel(page);
   registrar("T9 leituras no pedido", { produto: leituras.length, conferencias });
-  expect(leituras.length, "duas linhas do mesmo produto: a leitura do motor (unidade) e a da Central (o local), nenhuma por linha").toBe(2);
-  expect(conferencias, "uma conferência do local, na empresa do documento").toEqual([`${m.empresa}|${m.local.id}`]);
+  // ligada: a leitura do motor (unidade) e a da Central (o local); desligada: SÓ a do motor, a de hoje — nenhuma nova
+  expect(leituras.length, ligada ? "duas linhas do mesmo produto: a leitura do motor (unidade) e a da Central (o local), nenhuma por linha" : "desligada: só a leitura do motor (unidade), a de hoje — nenhuma leitura nova no pedido").toBe(ligada ? 2 : 1);
+  expect(conferencias, ligada ? "uma conferência do local, na empresa do documento" : "desligada: nenhuma conferência do local").toEqual(ligada ? [`${m.empresa}|${m.local.id}`] : []);
 
   const envio = await salvar(page, envios);
   const id = await gravou(page, envio, "pedidos");
   registrar("T9 corpo", { chaves: chaves(envio.corpo), itens: itensDe(envio.corpo).map((i) => i["armazem_id"] ?? null) });
   for (const k of OMITIDAS_PELO_PAR) expect(Object.hasOwn(envio.corpo, k), `${k}: o par semeado fora do corpo do pedido`).toBe(false);
-  expect(itensDe(envio.corpo).map((i) => i["armazem_id"] ?? null), "os itens no local do produto").toEqual([m.local.id, m.local.id]);
+  expect(itensDe(envio.corpo).map((i) => i["armazem_id"] ?? null), ligada ? "os itens no local do produto" : "desligada: os itens sem local, como na main").toEqual([localNovo?.id ?? null, localNovo?.id ?? null]);
   const g = await gravado(page, id, "pedidos");
   expect([g.categoria_financeira_id, g.centro_custo_id], "o pedido gravado com o par nulo, como hoje").toEqual([null, null]);
+  expect(g.itens_armazem, "os itens gravados como o corpo os levou").toEqual([localNovo?.id ?? null, localNovo?.id ?? null]);
   const previa = await api<Record<string, unknown>>(page, "GET", `/api/compras/pedidos/${id}/previa-finalizacao`);
   expect(previa["podeFinalizar"], `o servidor diz que o pedido finaliza (a provisão com o par da TOP): ${JSON.stringify(previa["recusas"])}`).toBe(true);
 });
@@ -803,6 +935,7 @@ test("LANC-T10 — a TOP com os 5 padrões E 'Exigir centro de resultado' (exig�
     const envios = escutarPosts(page, `/api/compras/${c.segmento}`);
     const { regras } = await abrirCriacao(page, c.segmento, c.top.id);
     premissaDosPadroes(regras, m, { secao: c.secao, padroes: CINCO_IDS(m) });
+    chaveNoFio(regras, `T10 ${c.segmento}`);
     expect(regras["exigencias"], `premissa no fio (${c.segmento}): a TOP exige o centro de resultado`).toEqual(["centro_custo_id"]);
     for (const k of OMITIDAS_PELO_PAR) await expect(campo(page, k), `${c.segmento} · ${k}: semeado pela TOP`).toHaveAttribute("data-padrao-top", "semeado");
     await expect(campo(page, "centro_custo_id").locator('[data-parte="req"]'), `${c.segmento}: o "*" da exigência no centro, já preenchido`).toHaveCount(1);
@@ -828,6 +961,7 @@ test("LANC-T11 — a compra de TOTAL ZERO com a TOP de 5 padrões: o par aparece
   const { regras } = await abrirCriacao(page, "compras", top.id);
   premissaDosPadroes(regras, m, { secao: SECAO_NEUTRA, padroes: CINCO_IDS(m) });
   expect(regras["geraTitulos"], "premissa no fio: a TOP gera título (o que não gera é o total zero)").toBe(true);
+  chaveNoFio(regras, "T11");
   for (const k of OMITIDAS_PELO_PAR) await expect(campo(page, k), `${k}: semeado pela TOP`).toHaveAttribute("data-padrao-top", "semeado");
   await escolherNoCampo(page, campo(page, "fornecedor_id"), m.fornecedor.nome);
   await novaLinhaCom(page, m.produto);
@@ -843,4 +977,120 @@ test("LANC-T11 — a compra de TOTAL ZERO com a TOP de 5 padrões: o par aparece
   expect(Number(texto(d["valor_total"])), "premissa: o servidor gravou total zero").toBe(0);
   const g = await gravado(page, id);
   expect([g.categoria_financeira_id, g.centro_custo_id], "o gravado sem natureza e centro, como hoje — nunca um par que o operador não escolheu").toEqual([null, null]);
+});
+
+/* ═════════════════════════════════════ LANC-T12 ═════════════════════════════════════ */
+
+/** Um layout de compra (a cópia do do sistema) com o padrão de cadastro no Local de estoque dos ITENS, ligado à TOP. */
+async function layoutComOLocal(page: Page, topId: string, localId: string): Promise<string> {
+  const estrutura: EstruturaLayout = structuredClone(LAYOUT_DO_SISTEMA("compras.compra"));
+  expect(estrutura.itens.map((x) => x.campo), "premissa: o local está nos itens do layout do sistema da compra").toContain("armazem_id");
+  estrutura.itens = estrutura.itens.map((x) => (x.campo === "armazem_id" ? { ...x, valorPadrao: { tipo: "registro" as const, id: localId } } : x));
+  const id = (await api<{ id: string }>(page, "POST", LAYOUTS, { familia: "compras.compra", nome: uniq("Layout LANC-T12"), estrutura })).id;
+  await api(page, "PUT", `${LAYOUTS}/${id}/tops`, { tipoOperacaoIds: [topId] });
+  return id;
+}
+
+test("LANC-T12 — a CHAVE do local do produto (emenda R2), lida no fio: DESLIGADA, N linhas do mesmo produto não fazem NENHUMA leitura nova — zero `warehouses/options`; no pedido, de `products/:id` só a do motor da grade (a unidade), a de hoje; na compra, a do motor e a do controle de lote, as de hoje — e a linha nova nasce e fica com o local do CABEÇALHO (o padrão do layout na compra, o vazio no pedido), gravada assim, como na main; LIGADA, o MESMO cenário assegura o ramo ligado; e a resposta SEM a chave (a API anterior, fabricada no fio) fecha o portão nos dois mundos", async ({ page }) => {
+  test.setTimeout(240_000);
+  await login(page);
+  const m = await montar(page);
+  const doCabecalho = await criarLocal(page, m.empresa, m.tag, "local do cabecalho");
+  // As TOPs de hoje, sem padrões: o operador responde o par na compra (o mesmo caso roda contra a API da main).
+  const compra = await topDoCaso(page, "T12 compra");
+  const pedido = await topDoCaso(page, "T12 pedido", { familia: "compras.pedido" });
+  const layout = await layoutComOLocal(page, compra.id, doCabecalho.id);
+  const N = 3;
+  const leituras = escutarLeituras(page, m.produto.id);
+  const valores = async () => { for (let i = 0; i < N; i++) await (await entradaDaLinha(linhas(page).nth(i), `Valor unitário do item ${i + 1}`)).fill("10"); };
+
+  // (1) A COMPRA, com o local do CABEÇALHO vindo do padrão do layout (não escolhido pelo operador): ligada, o local do
+  // produto vence a base; desligada, a linha fica com o do cabeçalho — a main.
+  await comLayout(page, layout, async () => {
+    const envios = escutarPosts(page, "/api/compras/compras");
+    const { regras, layout: efetivo } = await abrirCriacao(page, "compras", compra.id);
+    const ligada = chaveNoFio(regras, "T12 compra");
+    expect(efetivo, "premissa no fio: o layout ligado com o padrão de cadastro no local dos itens").toMatchObject({ origem: "ligado", id: layout, padroesDeCadastro: { "itens.armazem_id": { id: doCabecalho.id } } });
+    await expect(page.getByTestId(`${P}-local-padrao`), "premissa: o cabeçalho nasce no padrão do layout").toContainText(doCabecalho.nome);
+    const localNovo = ligada ? m.local : doCabecalho;
+    leituras.zerar();
+    await escolherNoCampo(page, campo(page, "fornecedor_id"), m.fornecedor.nome);
+    for (let i = 0; i < N; i++) {
+      await novaLinhaCom(page, m.produto);
+      await localDaLinha(linhas(page).nth(i), localNovo, ligada ? `compra, linha ${i + 1}: o local do produto (vence a base do cabeçalho)` : `compra, linha ${i + 1}: desligada, o local do cabeçalho`);
+    }
+    await estavel(page);
+    const lidas = leituras.agora();
+    registrar("T12 compra leituras", lidas);
+    expect(lidas.produto, "compra: o cadastro do produto lido pelo motor (unidade) e pelo controle de lote — as de hoje, nenhuma por linha").toBe(2);
+    if (ligada) expect(lidas.conferencias, "compra ligada: uma conferência do local do produto, na empresa do documento").toEqual([`${m.empresa}|${m.local.id}`]);
+    else expect(lidas.opcoesDoLocal, "compra desligada: NENHUMA pergunta a warehouses/options").toEqual([]);
+    await escolherNoCampo(page, campo(page, "categoria_financeira_id"), m.natureza.label);
+    await escolherNoCampo(page, campo(page, "centro_custo_id"), m.centro.label);
+    await valores();
+    const envio = await salvar(page, envios);
+    const id = await gravou(page, envio);
+    const noCorpo = itensDe(envio.corpo).map((i) => i["armazem_id"] ?? null);
+    registrar("T12 compra corpo", noCorpo);
+    expect(itensDe(envio.corpo).map(chaves), "compra: os itens com as chaves de hoje").toEqual(Array.from({ length: N }, () => CHAVES_DO_ITEM_DE_HOJE));
+    expect(noCorpo, ligada ? "compra ligada: o local do produto no POST" : "compra desligada: o local do cabeçalho no POST").toEqual(Array.from({ length: N }, () => localNovo.id));
+    expect((await gravado(page, id)).itens_armazem, "compra: o gravado igual ao corpo").toEqual(noCorpo);
+  });
+
+  // (2) O PEDIDO, sem layout (o cabeçalho vazio): ligada, a leitura NOVA do produto e a conferência; desligada, nenhuma.
+  {
+    const envios = escutarPosts(page, "/api/compras/pedidos");
+    const { regras } = await abrirCriacao(page, "pedidos", pedido.id);
+    const ligada = chaveNoFio(regras, "T12 pedido");
+    await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
+    const localNovo = ligada ? m.local : null;
+    leituras.zerar();
+    await escolherNoCampo(page, campo(page, "fornecedor_id"), m.fornecedor.nome);
+    for (let i = 0; i < N; i++) {
+      await novaLinhaCom(page, m.produto);
+      await localDaLinha(linhas(page).nth(i), localNovo, ligada ? `pedido, linha ${i + 1}: o local do produto` : `pedido, linha ${i + 1}: desligada, o local do cabeçalho (vazio)`);
+    }
+    await estavel(page);
+    const lidas = leituras.agora();
+    registrar("T12 pedido leituras", lidas);
+    expect(lidas.produto, ligada ? "pedido ligado: a leitura do motor (unidade) e a NOVA da Central (o local), nenhuma por linha" : "pedido desligado: só a leitura do motor (unidade), a de hoje — nenhuma products/:id nova").toBe(ligada ? 2 : 1);
+    if (ligada) expect(lidas.conferencias, "pedido ligado: uma conferência do local do produto").toEqual([`${m.empresa}|${m.local.id}`]);
+    else expect(lidas.opcoesDoLocal, "pedido desligado: NENHUMA pergunta a warehouses/options").toEqual([]);
+    await valores();
+    const envio = await salvar(page, envios);
+    const id = await gravou(page, envio, "pedidos");
+    const noCorpo = itensDe(envio.corpo).map((i) => i["armazem_id"] ?? null);
+    registrar("T12 pedido corpo", { chaves: itensDe(envio.corpo).map(chaves), armazem: noCorpo });
+    expect(itensDe(envio.corpo).map(chaves), ligada ? "pedido ligado: os itens com o local" : "pedido desligado: os itens sem a chave do local, como na main")
+      .toEqual(Array.from({ length: N }, () => (ligada ? CHAVES_DO_ITEM_DE_HOJE : CHAVES_DO_ITEM_SEM_LOCAL)));
+    expect(noCorpo, "pedido: o local de cada item no POST").toEqual(Array.from({ length: N }, () => localNovo?.id ?? null));
+    expect((await gravado(page, id, "pedidos")).itens_armazem, "pedido: o gravado igual ao corpo").toEqual(noCorpo);
+  }
+
+  // (3) A API ANTERIOR: a MESMA resposta de `regras-da-operacao` SEM a chave (fabricada no fio, o resto intacto). A tela é
+  // fail-closed — ausente é desligada — nos DOIS mundos: nenhuma leitura nova, a linha com o local do cabeçalho (vazio).
+  const rotaDasRegras = (u: URL) => u.pathname === "/api/compras/pedidos/regras-da-operacao" && u.searchParams.get("tipo_operacao_id") === pedido.id;
+  await page.route(rotaDasRegras, async (rota) => {
+    const r = await rota.fetch();
+    const corpo = (await r.json()) as Record<string, unknown>;
+    await rota.fulfill({ response: r, json: Object.fromEntries(Object.entries(corpo).filter(([k]) => k !== "localDoProdutoNaLinha")) });
+  });
+  {
+    const { regras } = await abrirCriacao(page, "pedidos", pedido.id);
+    registrar("T12 API anterior: as chaves que a página recebeu", Object.keys(regras));
+    expect(Object.hasOwn(regras, "localDoProdutoNaLinha"), "premissa no fio: a página recebeu a resposta SEM a chave (a API anterior)").toBe(false);
+    expect([Object.keys(regras).at(-1), Array.isArray(regras["exigencias"])], "premissa: o resto da resposta intacto (regrasGerais a última)").toEqual(["regrasGerais", true]);
+    leituras.zerar();
+    await escolherNoCampo(page, campo(page, "fornecedor_id"), m.fornecedor.nome);
+    for (let i = 0; i < N; i++) {
+      await novaLinhaCom(page, m.produto);
+      await localDaLinha(linhas(page).nth(i), null, `API anterior, linha ${i + 1}: o local do cabeçalho (vazio) — o portão fechado`);
+    }
+    await estavel(page);
+    const lidas = leituras.agora();
+    registrar("T12 API anterior leituras", lidas);
+    expect(lidas.produto, "API anterior: só a leitura do motor (unidade) — a ausência fecha o portão").toBe(1);
+    expect(lidas.opcoesDoLocal, "API anterior: NENHUMA pergunta a warehouses/options").toEqual([]);
+  }
+  await page.unroute(rotaDasRegras);
 });
