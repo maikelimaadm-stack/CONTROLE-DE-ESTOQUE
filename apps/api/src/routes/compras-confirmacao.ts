@@ -445,8 +445,10 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
     if (fp?.padroes?.contaBancariaId && !(await contaPadraoUtilizavel(ctx, fp.padroes.contaBancariaId, { trava: modo.trava }))) {
       modo.recusar(recusaDaTop("padroesFinanceiros.contaBancariaId", MENSAGEM_CONTA_PADRAO_INUTILIZAVEL));
     }
+    // Decisão 311, emenda R2: o tipo de título entra na MESMA conferência da troca (a tela o travava e o servidor não
+    // recusava — agora os dois dizem o mesmo; é a rede do salvar, `padroesDaTopNoSalvarDaCompra`).
     if (fp?.padroes && !fp.secao.documentoTroca) {
-      const campos = camposTrocadosDosPadroes(fp.padroes, { naturezaIds: [d.categoria_financeira_id], centroCustoIds: [d.centro_custo_id], formaPagamentoId: d.forma_pagamento_id });
+      const campos = camposTrocadosDosPadroes(fp.padroes, { naturezaIds: [d.categoria_financeira_id], centroCustoIds: [d.centro_custo_id], formaPagamentoId: d.forma_pagamento_id, tipoTituloId: d.tipo_titulo_id });
       if (campos.length) modo.recusar(recusaDaTop("financeiroPadrao.documentoTroca", mensagemDosPadroesTrocados(campos)));
     }
   }

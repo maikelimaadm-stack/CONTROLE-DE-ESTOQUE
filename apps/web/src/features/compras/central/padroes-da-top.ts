@@ -25,9 +25,14 @@ import type {
  *   · O QUE SAI DO CORPO (`omissaoDoCorpo`): o par natureza+centro que a TOP semeou (o servidor aplica o mesmo par) e o
  *     tipo de título semeado (a confirmação usa o da TOP). A forma semeada VAI (o servidor nunca a tira da TOP).
  *   · O QUE TRAVA (`podeTrocarOsPadroes`, `travadoPelaTop`): a TOP que não deixa o documento trocar os padrões trava o
- *     campo cujo valor é o padrão dela — apresentação; quem recusa a troca é o servidor.
+ *     campo cujo valor é o padrão dela — apresentação; quem recusa a troca é o servidor, no salvar e na confirmação,
+ *     nos quatro campos (natureza, centro, forma e — desde a emenda R2 — o tipo de título): a trava da tela é a mesma
+ *     régua do servidor, nunca mais estrita.
  *   · O LOCAL DA LINHA NOVA (`localDasLinhasNovas`): o local de estoque padrão do PRODUTO, conferido na empresa do
- *     documento, acima do padrão do cabeçalho e abaixo da resposta do operador.
+ *     documento, acima do padrão do cabeçalho e abaixo da resposta do operador. SÓ com a capacidade
+ *     `localDoProdutoNaLinha` da resposta (emenda R2: a chave do servidor, desligada por padrão — `localDoProdutoLigado`,
+ *     `portaoDoLocalDoProduto`, `localDasLinhasNovasNoPortao`); desligada, nenhuma leitura nova e nenhum efeito: a linha
+ *     de antes da 311.
  *
  * Nenhum código de família escrito aqui: o perfil sai do domínio (`perfilDosPadroesFinanceiros`).
  */
@@ -271,6 +276,34 @@ export function padraoDaTopInvalido(aplica: boolean, lidos: PadroesDaTopLidos | 
 
 /* ═════════════════════════════════════ O LOCAL DA LINHA NOVA ═════════════════════════════════════ */
 
+/**
+ * A CAPACIDADE do local padrão do produto (emenda R2 da decisão 311): `localDoProdutoNaLinha` de `regras-da-operacao`,
+ * que o servidor declara pela chave `COMPRAS_LOCAL_DO_PRODUTO_ENABLED` (desligada por padrão — decisão 240 item 4: ligada,
+ * a confirmação dá entrada de estoque onde antes não dava). FAIL-CLOSED: só o booleano `true` liga; ausente (a API
+ * anterior), `false`, `"true"`, `1`, `null` ou resposta que não é objeto ⇒ desligada.
+ */
+export function localDoProdutoLigado(resposta: unknown): boolean {
+  return ehObj(resposta) && resposta.localDoProdutoNaLinha === true;
+}
+
+/** O que o portão do local do produto deixa a tela fazer. */
+export interface PortaoDoLocal {
+  /** O efeito do local da linha nova (`localDasLinhasNovas`) roda. Fechado, a linha nasce e fica como hoje, sem marca. */
+  roda: boolean;
+  /** Os produtos cujo cadastro a tela lê PARA O LOCAL (e cujo local confere na empresa). Fechado: nenhum — zero leitura nova. */
+  produtos: string[];
+}
+/**
+ * O PORTÃO do local do produto: a capacidade ligada (`localDoProdutoLigado`) E a coluna do local na grade da criação
+ * (escondida, a linha continua sem local, como antes). AND: qualquer um falso fecha tudo — nenhum produto a ler (nem o
+ * `products/:id` novo do pedido, nem `warehouses/options`; a leitura do controle de lote da compra é outra e continua) e
+ * nenhum efeito sobre as linhas.
+ */
+export function portaoDoLocalDoProduto(p: { ligado: boolean; localNaGrade: boolean; produtos: readonly string[] }): PortaoDoLocal {
+  const roda = p.ligado && p.localNaGrade;
+  return { roda, produtos: roda ? [...p.produtos] : [] };
+}
+
 /** O `default_warehouse_id` do cadastro do produto (`GET /api/resources/products/:id`), só com forma de UUID. */
 export function localDoCadastroDoProduto(produto: unknown): string | null {
   const l = ehObj(produto) ? produto["default_warehouse_id"] : undefined;
@@ -318,9 +351,10 @@ const mesmaMarca = (a: MarcaDoLocal | null, b: MarcaDoLocal): boolean =>
  *      `products.view`, de outra empresa, inativo), a `base` — o de hoje.
  * Devolve o MESMO array quando nada muda (o estado não re-renderiza à toa).
  */
-export function localDasLinhasNovas(linhas: ItemRow[], ctx: {
+export interface ContextoDoLocal {
   cabecalhoEscolhido: boolean; localDoProduto: (produtoId: string) => string | null; geraEstoque: (i: ItemRow) => boolean;
-}): ItemRow[] {
+}
+export function localDasLinhasNovas(linhas: ItemRow[], ctx: ContextoDoLocal): ItemRow[] {
   let mudou = false;
   const novas = linhas.map((l) => {
     const local = texto(l.warehouse_id) ? l.warehouse_id : "";
@@ -338,4 +372,13 @@ export function localDasLinhasNovas(linhas: ItemRow[], ctx: {
     return { ...l, ...(alvo !== local ? { warehouse_id: alvo } : {}), [LOCAL_DA_LINHA]: m };
   });
   return mudou ? novas : linhas;
+}
+
+/**
+ * O efeito do local da linha nova ATRÁS DO PORTÃO (emenda R2) — o que o estado executa a cada render. Fechado (a
+ * capacidade desligada, ausente ou ainda chegando; ou sem a coluna do local): as MESMAS linhas — nenhum local trocado e
+ * nenhuma marca `LOCAL_DA_LINHA` —, a linha que nasce com o local do cabeçalho e fica com ele, como antes da 311.
+ */
+export function localDasLinhasNovasNoPortao(portao: PortaoDoLocal, linhas: ItemRow[], ctx: ContextoDoLocal): ItemRow[] {
+  return portao.roda ? localDasLinhasNovas(linhas, ctx) : linhas;
 }

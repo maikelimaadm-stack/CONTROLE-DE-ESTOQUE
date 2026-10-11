@@ -42,8 +42,9 @@ import {
 import { useImportacaoXml } from "../importacao/capacidade";
 import { adaptadorDaCentralDeCompras, chaveDaCopiaDeCompra, chaveDepoisDeSalvarDeCompra, corpoDoCancelamento } from "./adaptador";
 import {
-  dicaDaTop, localConfirmadoNaEmpresa, localDasLinhasNovas, localDoCadastroDoProduto, mesmoId, omissaoDoCorpo, padraoDaTopInvalido,
-  padroesDaTopAplicam, planoDaSemeadura, podeTrocarOsPadroes, travadoPelaTop, type CampoDoPadraoDaTop, type CobrancaNoCorpo, type Semeadura
+  dicaDaTop, localConfirmadoNaEmpresa, localDasLinhasNovasNoPortao, localDoCadastroDoProduto, mesmoId, omissaoDoCorpo, padraoDaTopInvalido,
+  padroesDaTopAplicam, planoDaSemeadura, podeTrocarOsPadroes, portaoDoLocalDoProduto, travadoPelaTop, type CampoDoPadraoDaTop,
+  type CobrancaNoCorpo, type Semeadura
 } from "./padroes-da-top";
 
 /**
@@ -278,6 +279,8 @@ function useControleDeLote(produtos: string[]): ControleDeLote {
  * `products.view` recebe 403: sem local do produto (fica o do cabeçalho, o de hoje). O local só vale se for da empresa
  * do documento e ativo: `/api/resources/warehouses/options?empresa_id=…&id=…`, UMA pergunta por par (empresa, local)
  * distinto; `[]`, erro ou forma estranha ⇒ IGNORADO. Devolve o local conferido do produto, ou `null`.
+ * Emenda R2: quem chama passa os produtos pelo PORTÃO (`portaoDoLocalDoProduto`) — com a capacidade desligada, a lista
+ * vazia: nenhuma leitura sai daqui.
  */
 function useLocaisDosProdutos(produtos: string[], empresaId: string): (produtoId: string) => string | null {
   const unicos = Array.from(new Set(produtos.filter(Boolean)));
@@ -471,7 +474,8 @@ export interface EstadoDaCriacao {
    * cabeçalho; cada linha troca o seu. Estado da TELA: nunca vai no corpo, não conta como alteração, não entra na cópia
    * do Duplicar. `null` sem `localNaGrade`.
    * LANCAMENTO-01 (decisão 311): a linha nova que ganha produto passa ao local padrão do PRODUTO (conferido na empresa)
-   * — a não ser que o operador tenha ajustado a célula ou ESCOLHIDO o local do cabeçalho (`localDasLinhasNovas`).
+   * — a não ser que o operador tenha ajustado a célula ou ESCOLHIDO o local do cabeçalho (`localDasLinhasNovas`). Só com
+   * a capacidade `localDoProdutoNaLinha` (emenda R2; desligada, o local do cabeçalho, como antes).
    */
   localDoCabecalho: LocalDeEstoque | null;
   /** A escolha do operador no campo do cabeçalho (conta como resposta dele para as linhas que nascem depois). */
@@ -830,19 +834,25 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
      resposta do operador — o ajuste na célula, ou o local do cabeçalho que ele ESCOLHEU (`escolherLocal`). Só na
      criação e só com a coluna do local na grade (escondida, a linha continua sem local, como antes). A marca de quem é
      o local mora na LINHA (`LOCAL_DA_LINHA`): o motor genérico de itens não muda. O `armazem_id` da linha continua sendo
-     valor do documento (nenhum código do servidor o resolve) e vai no corpo, como hoje. */
+     valor do documento (nenhum código do servidor o resolve) e vai no corpo, como hoje.
+     EMENDA R2 — O PORTÃO (`portaoDoLocalDoProduto`): tudo isto só com a capacidade `localDoProdutoNaLinha` que o servidor
+     declara (`regras.localDoProdutoNaLinha`; a chave dele nasce desligada — decisão 240 item 4). Desligada, ausente (a
+     API anterior) ou com as regras ainda chegando: nenhum produto a ler para o local (nem `products/:id` no pedido, nem
+     `warehouses/options`) e o efeito NÃO roda — a linha nasce com o local do cabeçalho e fica com ele, sem a marca, como
+     antes da 311. */
   const [localEscolhidoEm, setLocalEscolhidoEm] = React.useState<string | null>(null);
   // a escolha vale para a empresa em que foi feita — a MESMA regra de `useLocalDoCabecalho` (trocar a empresa a limpa)
   React.useEffect(() => { if (localEscolhidoEm !== null && localEscolhidoEm !== h.empresa_id) setLocalEscolhidoEm(null); }, [h.empresa_id, localEscolhidoEm]);
   const cabecalhoEscolhido = localEscolhidoEm !== null && localEscolhidoEm === h.empresa_id && local.local !== null;
   const escolherLocal = (l: LocalDeEstoque | null) => { local.escolher(l); setLocalEscolhidoEm(l ? h.empresa_id : null); };
-  const localDoProduto = useLocaisDosProdutos(localNaGrade ? itens.map((i) => i.product_id) : [], h.empresa_id);
+  const portaoDoLocal = portaoDoLocalDoProduto({ ligado: regras?.localDoProdutoNaLinha === true, localNaGrade, produtos: itens.map((i) => i.product_id) });
+  const localDoProduto = useLocaisDosProdutos(portaoDoLocal.produtos, h.empresa_id);
   React.useEffect(() => {
-    if (!localNaGrade) return;
     const ctx = { cabecalhoEscolhido, localDoProduto, geraEstoque: itemGeraEstoque };
-    const novas = localDasLinhasNovas(itens, ctx);
+    // portão fechado ⇒ as MESMAS linhas: nenhum `setItensCru`, nenhuma marca
+    const novas = localDasLinhasNovasNoPortao(portaoDoLocal, itens, ctx);
     // só quando muda; sobre o estado MAIS RECENTE (o efeito do lote pode ter acabado de mexer nas mesmas linhas)
-    if (novas !== itens) setItensCru((ls) => (ls === itens ? novas : localDasLinhasNovas(ls, ctx)));
+    if (novas !== itens) setItensCru((ls) => (ls === itens ? novas : localDasLinhasNovasNoPortao(portaoDoLocal, ls, ctx)));
   });
 
   /* OBRIGATÓRIOS: a MESMA função do domínio que a API usa. */

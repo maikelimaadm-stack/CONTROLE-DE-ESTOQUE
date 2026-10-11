@@ -67,9 +67,10 @@ let outra: { orgId: string; headers: Hdr };
 const CHAVES_DE_HOJE = ["contractVersion", "formato", "exigencias", "condicoesPermitidas", "geraTitulos", "exigeFormaPagamento", "exigeVencimento", "exigeArmazem", "regrasGerais"] as const;
 /**
  * As de hoje + as da LANCAMENTO-01 logo ANTES de `regrasGerais`, que continua a ÚLTIMA (o contrato da F2 que o skew
- * mede: `apps/web/e2e/operacoes-01-f2-skew-comum.ts`, `regrasGeraisDoCorpo`).
+ * mede: `apps/web/e2e/operacoes-01-f2-skew-comum.ts`, `regrasGeraisDoCorpo`). A emenda R2 acrescentou
+ * `localDoProdutoNaLinha` entre `padroes` e `regrasGerais` (o valor é provado em `lancamento-01-r2-chave.test.ts`).
  */
-const CHAVES = [...CHAVES_DE_HOJE.slice(0, -1), "secao", "padroes", "regrasGerais"];
+const CHAVES = [...CHAVES_DE_HOJE.slice(0, -1), "secao", "padroes", "localDoProdutoNaLinha", "regrasGerais"];
 /** As chaves de `/compras/orcamentos/regras-da-operacao` (a rota do orçamento, que NÃO muda). */
 const CHAVES_DO_ORCAMENTO = ["contractVersion", "formato", "exigencias", "condicoesPermitidas", "geraTitulos", "exigeFormaPagamento", "exigeVencimento", "exigeArmazem"];
 const CHAVES_DA_SECAO = ["provisao", "documentoTroca", "semClassificacao"];

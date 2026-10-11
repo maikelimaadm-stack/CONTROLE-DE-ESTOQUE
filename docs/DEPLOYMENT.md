@@ -4760,6 +4760,43 @@ Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registro
 identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.
 
 
+## LANCAMENTO-01 (decisão 311) — a chave do local do produto
+
+Faixa **F1**, sem migration, sem trava, sem permissão nova. **Variável nova: `COMPRAS_LOCAL_DO_PRODUTO_ENABLED`, só no
+serviço da API** (nunca no web, nunca `NEXT_PUBLIC_*`; ver `.env.example`). O web não tem par: ele lê a capacidade
+`localDoProdutoNaLinha` na resposta de `GET /api/compras/{compras|pedidos}/regras-da-operacao`.
+
+| Valor | Efeito |
+|---|---|
+| ausente ou `0` | **DESLIGADA — o padrão.** A linha nova da Central de Compras nasce com o local do cabeçalho, como antes da 311; a tela não faz nenhuma leitura nova |
+| `1` | ligada (abaixo) |
+| qualquer outro (`2`, `true`, vazio…) | **derruba o startup da API**; a mensagem nomeia a variável e não repete o valor |
+
+**O que liga.** A linha nova da Central de Compras (compra e pedido de compra, só na criação e só com a coluna do local
+na grade) nasce com o **local de estoque padrão do produto** (`products.default_warehouse_id`), quando ele é da empresa
+do documento e está ativo — abaixo do ajuste do operador e do local do cabeçalho que ele escolheu (decisão 311, item 6).
+E a **confirmação da compra passa a dar entrada de estoque nessas linhas**: ela só cria a entrada do item que tem local,
+e antes a linha nascia sem ele quando o cabeçalho estava vazio. É por isso que a chave nasce desligada (decisão 240,
+item 4: efeito novo nasce desligado).
+
+**Ligar é autorização explícita do Maike**, pedida na hora, para esta ação. Nada liga sozinho: nem o deploy desta PR,
+nem o CI (o E2E do CI mede o mundo ligado, mas só no ambiente dele).
+
+**Produção** (leitura de 11/10/2026, só SELECT): uma organização; 419 produtos com controle de estoque, **nenhum com
+local padrão**; 0 itens que ganhariam local; 1 compra confirmada com 4 itens de produto com estoque sem local (documento
+de 11/02/2026, lançado em 05/10/2026), que não muda; 0 compras abertas com tipo de título. **Ligar hoje não muda nada
+até algum produto ganhar local padrão** — o efeito começa no primeiro produto cadastrado com local.
+
+**Ligar:** `COMPRAS_LOCAL_DO_PRODUTO_ENABLED=1` no serviço da API e redeploy da API. Conferência: com a sessão de um
+comprador, `GET /api/compras/compras/regras-da-operacao?tipo_operacao_id=<uma TOP de compra>` responde
+`"localDoProdutoNaLinha": true` (gate externo: exige sessão autenticada em produção — sem ela, PENDING).
+
+**Desligar:** remover a variável (ou pôr `0`) e redeploy da API. A resposta volta a dizer `false` e a tela deixa de
+pôr o local do produto nas linhas novas — sem migration e sem tocar documento algum: as linhas já salvas com o local do
+produto continuam com ele (é valor do documento), e as compras já confirmadas não mudam. Nenhuma outra variável depende
+desta.
+
+
 ## MAPA-MANEJO-02 — marcador agregado: fuso, identificador e ícones (0062, decisão 306)
 
 Faixa **F1**. **Uma migration: `0062_icones_identificador_e_fuso.sql`** (pre-deploy pelo pipeline; trava (2026,96),

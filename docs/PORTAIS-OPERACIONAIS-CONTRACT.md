@@ -819,8 +819,9 @@ padroes: { natureza:       { id, codigo, nome } | null,
 - **`podeTrocar` não vai na resposta**: a tela o deriva, `secao.documentoTroca && trocaPeloDocumento` do perfil da
   família (`perfilDosPadroesFinanceiros`, no domínio; na compra e no pedido de compra `trocaPeloDocumento` é verdadeiro,
   então vale `secao.documentoTroca`). A trava na tela é apresentação: quem recusa a troca é o servidor, no salvar
-  (`financeiroPadrao.documentoTroca`), e só quando há o que classificar — a compra que gera título; o pedido com a
-  provisão ligada.
+  (`financeiroPadrao.documentoTroca`) e na confirmação, e só quando há o que classificar — a compra que gera título; o
+  pedido com a provisão ligada. Desde a emenda R2, a recusa cobre também o TIPO DE TÍTULO da compra (a mesma
+  `camposTrocadosDosPadroes`): a trava dele na tela é a régua do servidor, não uma mais estrita.
 - **Autorização e 404: as de hoje.** A seção e os padrões são lidos DEPOIS de `runService(<recurso>.create)` e do
   select da existência. TOP inexistente, de outra organização, de outra família, inativa, excluída, id malformado ou
   ausente: a MESMA 404, com as MESMAS consultas de antes (o id malformado não vai ao banco; os outros, só o select da
@@ -830,3 +831,14 @@ padroes: { natureza:       { id, codigo, nome } | null,
   Consultas do handler, contadas com o espião de `pg.Client`: compra 3 → 4 (formatos 1 a 4) ou 5 (formato 5); pedido 2
   → 3 ou 4. A releitura fica de propósito: a assinatura de `padroesDaTopParaExecucao` não muda e a Central Financeira
   não é tocada.
+- **Uma versão só (emenda R2).** O select da existência CAPTURA a versão atual, e tudo da resposta sai dela: o formato,
+  as exigências, as condições e `regrasGerais` (`regrasDaVersaoCongelada`, pelo id da versão), os efeitos, a seção e os
+  padrões. Antes, as regras resolviam a versão atual de novo pela TOP, e uma revisão publicada no meio da requisição
+  misturava duas versões na resposta. A contagem de consultas é a mesma.
+- **`localDoProdutoNaLinha: boolean` (emenda R2).** A terceira chave aditiva, logo DEPOIS de `padroes` e ANTES de
+  `regrasGerais` (que continua a última), nas duas espécies: a CAPACIDADE do local padrão do produto na linha nova da
+  Central de Compras. Não vem da TOP: é a chave do processo da API `COMPRAS_LOCAL_DO_PRODUTO_ENABLED` (desligada por
+  padrão; `docs/DEPLOYMENT.md` § LANCAMENTO-01), por isso não custa consulta e não depende da versão. A Central lê
+  `=== true`; ausente (a API anterior) ou qualquer outro valor = desligada — e desligada ela não lê o cadastro do
+  produto para o local (nem `products/:id` no pedido, nem `warehouses/options`) nem mexe no local da linha. A 404 e o
+  403 são os de antes, com e sem a chave, e não a carregam. O orçamento de compra não a tem.

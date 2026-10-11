@@ -65,7 +65,8 @@ import {
 } from "../lib/documento-comercial.js";
 import { layoutEfetivo, respostaDoLayoutEfetivo } from "../lib/layout-documento.js";
 import { lerVersaoCongeladaTop, confirmaAutomaticamente, tentarConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
-import { regrasDaVersaoTop, regrasDaTopAtual } from "./vendas-regras-operacao.js";
+// LANCAMENTO-01 R2: `regras-da-operacao` lê as regras da versão que a existência CAPTUROU (`regrasDaVersaoCongelada`).
+import { regrasDaVersaoTop, regrasDaVersaoCongelada } from "./vendas-regras-operacao.js";
 import { regrasGeraisDaVariante } from "./regras-gerais-da-central.js";
 import {
   registrarConfirmacaoCompras, cancelarCompraConfirmada, conferirNotaDuplicada, confirmarCompraNaTransacao, conferirChaveDeAcessoLivre,
@@ -923,7 +924,9 @@ async function lancarComTop(ctx: ServiceCtx, especie: EspecieCompra, d: Document
     especie, versaoId: top.tipoOperacaoVersaoId,
     geraTitulo: especie === "compra" && Boolean(efeitos?.titulo) && D(totais.total).gt(0),
     documento: { naturezaId: classificacao?.categoriaFinanceiraId ?? null, centroCustoId: classificacao?.centroCustoId ?? null,
-      formaPagamentoId: d.forma_pagamento_id ?? null },
+      formaPagamentoId: d.forma_pagamento_id ?? null,
+      // LANCAMENTO-01 R2: o tipo de título também é conferido na troca proibida (o pedido não o carrega: sempre nulo).
+      tipoTituloId: d.tipo_titulo_id ?? null },
   });
   if (efeitos) conferirExigenciasDoTitulo({ ...d, data_vencimento: dataVencimento }, efeitos, totais.total, plano, { classificacaoDaTop, comRateio: Boolean(d.rateio) });
 
@@ -1036,7 +1039,7 @@ export default async function comprasRoutes(app: FastifyInstance) {
      * versão ATUAL e pela MESMA régua do POST (`regrasGeraisDaVersaoTop`; a confirmação automática e os itens vazios
      * só valem na espécie `compra` — `topQueAceitaSemItens` e o gancho do POST). Pedido de compra: sempre
      * `{ false, false }`. Aditivo, sem capacidade nova (o molde de `exigeArmazem`): a Central anterior pega as chaves
-     * de hoje campo a campo e ignora esta. Nenhuma consulta a mais (vem da mesma leitura de `regrasDaTopAtual`).
+     * de hoje campo a campo e ignora esta. Nenhuma consulta a mais (vem da mesma leitura das regras da versão).
      *
      * LANCAMENTO-01 (decisão 311): + `secao` e `padroes`, logo ANTES de `regrasGerais` (que continua a ÚLTIMA chave — o
      * contrato da F2 que o skew mede, `operacoes-01-f2-skew-comum.ts`), da
@@ -1061,6 +1064,18 @@ export default async function comprasRoutes(app: FastifyInstance) {
      *     pai) e, só quando a versão executa, lê os padrões com os rótulos (+1, a tabela da 0045 com os cadastros, numa
      *     consulta só — sem N+1). Consultas do handler: compra 3 → 4 (formatos 1 a 4) ou 5 (formato 5); pedido 2 → 3
      *     ou 4. A releitura fica para não mudar a assinatura da função nem tocar a Central Financeira.
+     *
+     * LANCAMENTO-01, emenda R2 da decisão 311:
+     *   · UMA VERSÃO SÓ: o select da existência CAPTURA a versão atual (`versao_id`), e TUDO da resposta sai dela — o
+     *     formato, as exigências, as condições e `regrasGerais` (`regrasDaVersaoCongelada`, pelo id), os efeitos e a
+     *     seção/padrões. Antes, as regras resolviam a versão atual DE NOVO pela TOP (`regrasDaTopAtual`): uma revisão
+     *     publicada entre as duas leituras misturava duas versões na mesma resposta. A MESMA contagem: uma consulta das
+     *     regras, como antes.
+     *   · + `localDoProdutoNaLinha` (boolean), logo DEPOIS de `padroes` e ANTES de `regrasGerais` (que continua a
+     *     ÚLTIMA): a CAPACIDADE do local padrão do produto na linha nova da Central de Compras, a chave do processo
+     *     `COMPRAS_LOCAL_DO_PRODUTO_ENABLED` (`config.ts`; desligada é o padrão — decisão 240 item 4). Aditiva, sem
+     *     `contractVersion` novo: a Central lê `=== true` e trata a ausência (a API anterior) como desligada. CUSTO:
+     *     nenhuma consulta (vem da configuração do processo), e a mesma nas duas espécies — o pedido também a declara.
      */
     app.get(`${base}/regras-da-operacao`, async (req) => runService(app, req, `${recurso}.create`, async (ctx) => {
       const familia = familiaDaEspecie(especie);
@@ -1071,7 +1086,8 @@ export default async function comprasRoutes(app: FastifyInstance) {
            join erp.tipos_operacao_versoes v on v.tipo_operacao_id = t.id and v.organization_id = t.organization_id and v.versao = t.versao_atual
           where t.id = $1 and t.organization_id = $2 and t.codigo_base = $3 and t.ativo and t.excluido_em is null`, [bruto, ctx.orgId, familia]);
       if (!v.rows[0]) throw notFound("Tipo de operação");
-      const { formato, regras, regrasGerais } = await regrasDaTopAtual(ctx, bruto);
+      // R2: as regras da versão CAPTURADA acima (nunca a atual resolvida de novo) — a mesma das linhas seguintes.
+      const { formato, regras, regrasGerais } = await regrasDaVersaoCongelada(ctx, v.rows[0].versao_id);
       // A versão ATUAL gera contas a pagar? (a tela marca natureza/centro como obrigatórios). Pedido nunca gera.
       const efeitos = especie === "compra"
         ? await efeitosPrevistosDaCompra(ctx, { tipoOperacaoVersaoId: v.rows[0].versao_id, codigoBase: familia }, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED)
@@ -1090,6 +1106,8 @@ export default async function comprasRoutes(app: FastifyInstance) {
         exigeArmazem: efeitos?.exigeArmazem ?? false,
         secao: { provisao: fin.secao.provisao, documentoTroca: fin.secao.documentoTroca, semClassificacao: fin.secao.semClassificacao },
         padroes: p ? { natureza: p.natureza, centro: p.centro, tipoTitulo: p.tipoTitulo, formaPagamento: p.formaPagamento, conta: p.conta } : null,
+        // R2: a capacidade do local padrão do produto na linha nova (a chave do processo; desligada é o padrão).
+        localDoProdutoNaLinha: app.config.COMPRAS_LOCAL_DO_PRODUTO_ENABLED,
         regrasGerais: regrasGeraisDaVariante(regrasGerais, especie === "compra"),
       };
     }));

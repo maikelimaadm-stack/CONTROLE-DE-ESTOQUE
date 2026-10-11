@@ -5,7 +5,7 @@ import {
 import { todayISO } from "@/lib/utils";
 import type { ColunaDoEditorDeItens, ColunaDoLayoutNoEditor } from "@/features/docs/shared";
 import { lerRegrasGerais, type RegrasGeraisDaCentral } from "@/features/central/regras-gerais";
-import { lerPadroesDaTop, type PadroesDaTopLidos } from "./central/padroes-da-top";
+import { lerPadroesDaTop, localDoProdutoLigado, type PadroesDaTopLidos } from "./central/padroes-da-top";
 
 /**
  * O LAYOUT DO DOCUMENTO NA CENTRAL DE COMPRAS (COMPRAS-03, decisão 269) — contas PURAS, sem React e sem rede.
@@ -103,12 +103,17 @@ export const hrefDoConfigurador = (l: LayoutQueVale) => (l.origem !== "sistema" 
  * `GET /api/financeiro/tops`), pelo leitor estrito `lerPadroesDaTop` (`central/padroes-da-top.ts`, onde moram as
  * decisões puras). Ausentes (API anterior) ou fora da forma = `null`: nada semeado, travado ou omitido — a Central de
  * hoje, byte a byte. Como `regrasGerais`, não decide a forma das outras chaves: um bloco estranho não derruba as regras.
+ *
+ * LANCAMENTO-01, emenda R2: `localDoProdutoNaLinha` — a capacidade do local padrão do produto na linha nova (a chave do
+ * servidor, desligada por padrão), pelo leitor `localDoProdutoLigado`: só o booleano `true` liga; ausente (API anterior)
+ * ou qualquer outra coisa = desligada, e a tela não lê nada a mais. Também não decide a forma das outras chaves.
  */
 export interface RegrasDaCompra {
   exigencias: string[]; condicoesPermitidas: string[] | null; geraTitulos: boolean | null;
   exigeFormaPagamento: boolean; exigeVencimento: boolean; exigeArmazem: boolean;
   regrasGerais: RegrasGeraisDaCentral;
   padroesDaTop: PadroesDaTopLidos | null;
+  localDoProdutoNaLinha: boolean;
 }
 export function lerRegras(v: unknown): RegrasDaCompra | null {
   if (!ehObj(v) || !Array.isArray(v.exigencias) || !v.exigencias.every((x) => typeof x === "string")) return null;
@@ -118,7 +123,8 @@ export function lerRegras(v: unknown): RegrasDaCompra | null {
     exigencias: v.exigencias as string[], condicoesPermitidas: (cp as string[] | null | undefined) ?? null, geraTitulos: typeof v.geraTitulos === "boolean" ? v.geraTitulos : null,
     exigeFormaPagamento: v.exigeFormaPagamento === true, exigeVencimento: v.exigeVencimento === true, exigeArmazem: v.exigeArmazem === true,
     regrasGerais: lerRegrasGerais(v.regrasGerais),
-    padroesDaTop: lerPadroesDaTop(v)
+    padroesDaTop: lerPadroesDaTop(v),
+    localDoProdutoNaLinha: localDoProdutoLigado(v)
   };
 }
 

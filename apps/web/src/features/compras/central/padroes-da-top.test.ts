@@ -5,7 +5,7 @@ import type { PadroesFinanceirosDaTop } from "@/features/central/contrato";
 import {
   LOCAL_DA_LINHA, cobradoNoCorpo, dicaDaTop, lerPadroesDaTop, localConfirmadoNaEmpresa, localDasLinhasNovas, localDoCadastroDoProduto, marcaDoLocal,
   omissaoDoCorpo, padraoDaTopInvalido, padroesDaTopAplicam, planoDaSemeadura, podeTrocarOsPadroes, travadoPelaTop, type CobrancaNoCorpo,
-  type PadroesDaTopLidos
+  type PadroesDaTopLidos, localDasLinhasNovasNoPortao, localDoProdutoLigado, portaoDoLocalDoProduto
 } from "./padroes-da-top";
 
 /**
@@ -404,5 +404,67 @@ describe("LANC-U12 o local da linha nova (L3): operador → produto → cabeçal
     expect(reordenadas.map((l) => l.warehouse_id)).toEqual([LOCAL_DO_PRODUTO, LOCAL_DO_OPERADOR]);
     expect(localDasLinhasNovas(reordenadas, ctx())).toBe(reordenadas);
     expect(Object.keys(reordenadas[0]!)).toContain(LOCAL_DA_LINHA);
+  });
+});
+
+/* ═════════════════════════════ A CHAVE DO LOCAL DO PRODUTO (emenda R2 da decisão 311) ═════════════════════════════ */
+
+describe("LANC-U14 o leitor da capacidade `localDoProdutoNaLinha`: só o booleano true liga (fail-closed)", () => {
+  it("ausente (a API anterior) ⇒ desligada; o resto da resposta continua lido", () => {
+    const anterior = respostaComPadroes();
+    expect(Object.hasOwn(anterior, "localDoProdutoNaLinha"), "premissa: a resposta de exemplo não tem a chave").toBe(false);
+    expect(localDoProdutoLigado(anterior)).toBe(false);
+    expect(lerPadroesDaTop(anterior), "a chave ausente não derruba os padrões").not.toBeNull();
+  });
+  it.each([
+    ["false", false], ["o texto \"true\"", "true"], ["o número 1", 1], ["null", null], ["um objeto", { ligado: true }], ["uma lista", [true]]
+  ])("%s ⇒ desligada", (_nome, valor) => {
+    expect(localDoProdutoLigado(respostaComPadroes({ localDoProdutoNaLinha: valor }))).toBe(false);
+  });
+  it("resposta que não é objeto ⇒ desligada; o booleano true ⇒ ligada (premissa: o leitor não é sempre falso)", () => {
+    for (const r of [null, undefined, "x", 1, [respostaComPadroes({ localDoProdutoNaLinha: true })]]) expect(localDoProdutoLigado(r), JSON.stringify(r)).toBe(false);
+    expect(localDoProdutoLigado(respostaComPadroes({ localDoProdutoNaLinha: true }))).toBe(true);
+  });
+});
+
+describe("LANC-U15 o portão: desligada (ou sem a coluna do local) ⇒ nenhum produto a ler e o efeito não roda", () => {
+  const produtos = [P1, P2, P3, P1];
+  it("desligada ⇒ { roda: false, produtos: [] } — zero leitura nova, mesmo com a coluna do local e linhas com produto", () => {
+    expect(portaoDoLocalDoProduto({ ligado: false, localNaGrade: true, produtos })).toEqual({ roda: false, produtos: [] });
+  });
+  it("sem a coluna do local na grade ⇒ fechado também (o AND)", () => {
+    expect(portaoDoLocalDoProduto({ ligado: true, localNaGrade: false, produtos })).toEqual({ roda: false, produtos: [] });
+    expect(portaoDoLocalDoProduto({ ligado: false, localNaGrade: false, produtos })).toEqual({ roda: false, produtos: [] });
+  });
+  it("ligada e com a coluna ⇒ roda, com os produtos das linhas (premissa: o portão não é sempre fechado)", () => {
+    const p = portaoDoLocalDoProduto({ ligado: true, localNaGrade: true, produtos });
+    expect(p).toEqual({ roda: true, produtos });
+    expect(p.produtos).not.toBe(produtos); // uma cópia: o portão não devolve a lista de quem chamou
+  });
+  it("a capacidade lida da resposta alimenta o portão: a API anterior fecha, o true abre", () => {
+    const daResposta = (r: unknown) => portaoDoLocalDoProduto({ ligado: localDoProdutoLigado(r), localNaGrade: true, produtos });
+    expect(daResposta(respostaComPadroes())).toEqual({ roda: false, produtos: [] });
+    expect(daResposta(respostaComPadroes({ localDoProdutoNaLinha: true })).roda).toBe(true);
+  });
+});
+
+describe("LANC-U16 o efeito do local atrás do portão: desligada, a linha nasce e fica com o local do cabeçalho, SEM a marca", () => {
+  const fechado = portaoDoLocalDoProduto({ ligado: false, localNaGrade: true, produtos: [P1] });
+  const aberto = portaoDoLocalDoProduto({ ligado: true, localNaGrade: true, produtos: [P1] });
+  it("fechado ⇒ as MESMAS linhas (nenhum local trocado, nenhuma marca), do nascimento ao produto escolhido", () => {
+    const nascidas = [linhaDoMotor(EMPRESA_A_LOCAL_CAB)];
+    const nasce = localDasLinhasNovasNoPortao(fechado, nascidas, ctx());
+    expect(nasce, "a linha que o motor criou, intacta").toBe(nascidas);
+    const comProduto = [comOMotor(nasce[0]!, "product_id", P1)];
+    const depois = localDasLinhasNovasNoPortao(fechado, comProduto, ctx());
+    expect(depois).toBe(comProduto);
+    expect(depois[0]?.warehouse_id, "o local do cabeçalho, como antes da 311").toBe(EMPRESA_A_LOCAL_CAB);
+    expect(Object.keys(depois[0]!), "sem a marca de quem pôs o local").not.toContain(LOCAL_DA_LINHA);
+  });
+  it("premissa: o MESMO cenário com o portão aberto marca a linha e põe o local do produto", () => {
+    const nasce = localDasLinhasNovasNoPortao(aberto, [linhaDoMotor(EMPRESA_A_LOCAL_CAB)], ctx());
+    expect(marcaDoLocal(nasce[0]!)).toEqual({ dono: "sistema", base: EMPRESA_A_LOCAL_CAB, atual: EMPRESA_A_LOCAL_CAB });
+    const depois = localDasLinhasNovasNoPortao(aberto, [comOMotor(nasce[0]!, "product_id", P1)], ctx());
+    expect(depois[0]?.warehouse_id).toBe(LOCAL_DO_PRODUTO);
   });
 });
