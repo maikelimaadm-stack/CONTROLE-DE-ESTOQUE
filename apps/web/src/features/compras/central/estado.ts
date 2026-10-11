@@ -43,7 +43,7 @@ import { useImportacaoXml } from "../importacao/capacidade";
 import { adaptadorDaCentralDeCompras, chaveDaCopiaDeCompra, chaveDepoisDeSalvarDeCompra, corpoDoCancelamento } from "./adaptador";
 import {
   dicaDaTop, localConfirmadoNaEmpresa, localDasLinhasNovas, localDoCadastroDoProduto, mesmoId, omissaoDoCorpo, padraoDaTopInvalido,
-  padroesDaTopAplicam, planoDaSemeadura, podeTrocarOsPadroes, travadoPelaTop, type CampoDoPadraoDaTop, type Semeadura
+  padroesDaTopAplicam, planoDaSemeadura, podeTrocarOsPadroes, travadoPelaTop, type CampoDoPadraoDaTop, type CobrancaNoCorpo, type Semeadura
 } from "./padroes-da-top";
 
 /**
@@ -600,14 +600,16 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const totalExibido = totalItens + Number(h.frete || 0) + Number(h.outras_despesas || 0) - Number(h.desconto || 0)
     + (dadosFiscaisAtivos ? Number(impostosDosDadosFiscais(fiscal)) : 0);
 
-  /* LANCAMENTO-01 (decisão 311) — A REGRA DO CORPO (`omissaoDoCorpo`): fora do corpo só o que o SERVIDOR decide — o PAR
-     natureza+centro que a TOP semeou (o salvar aplica o mesmo par da TOP: na compra com total > 0, no pedido com qualquer
-     total) e o tipo de título semeado (a confirmação usa o da TOP). Sem `aplica`, nada sai: o corpo de hoje. A regra é do
-     corpo, não estado escondido: `documentoConferido` (as pendências) deriva dele, e o omitido nunca é obrigatório do
-     layout (a regra o exige), então nunca vira pendência. */
+  /* LANCAMENTO-01 (decisão 311) — A REGRA DO CORPO (`omissaoDoCorpo`): fora do corpo, o PAR natureza+centro que a TOP
+     semeou e o operador não mexeu (o salvar da compra que gera título e o do pedido que provisiona aplicam o mesmo par da
+     TOP; a compra de total zero não gera título e não usa nem cobra o par — fora do corpo grava o de hoje, sem par) e o
+     tipo de título semeado (a confirmação usa o da TOP). Nunca sai o campo que o servidor COBRA SOBRE O CORPO antes de
+     olhar a TOP (`cobradoNoCorpo`). Sem `aplica`, nada sai: o corpo de hoje. A regra é do corpo, não estado escondido:
+     `documentoConferido` (as pendências) deriva dele, e o omitido nunca é obrigatório do layout, então nunca vira
+     pendência. */
   const omissao = () => omissaoDoCorpo({
-    aplica: aplicaATop, servidorAplicaOPar: !ehCompra || totalExibido > 0, padroes: padroesTop, semeado: semeadura.current,
-    natureza: h.categoria_financeira_id, centro: h.centro_custo_id, tipoTitulo: fiscal.tipo_titulo_id, obrigatorioNoLayout: obrigatorioNoLayout
+    aplica: aplicaATop, padroes: padroesTop, semeado: semeadura.current,
+    natureza: h.categoria_financeira_id, centro: h.centro_custo_id, tipoTitulo: fiscal.tipo_titulo_id, cobrancaNoCorpo
   });
   const cabecalhoDoCorpo = () => ({
     tipo_operacao_id: top,
@@ -709,6 +711,14 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const padraoInvalido = (c: string) => doLayoutComCadastro(c) && (padroes.invalidos.has(c) || padraoNaoPermitido(c));
   /** O obrigatório do LAYOUT configurado (o que o servidor cobra sobre o corpo, `cobrarLayoutDaCompra`) — sem a regra. */
   const obrigatorioNoLayout = (c: string) => Boolean(layout) && cfg.get(c)?.obrigatorio === true;
+  /**
+   * O que o servidor COBRA SOBRE O CORPO no salvar, ANTES de olhar os padrões da TOP (`cobradoNoCorpo`): o obrigatório do
+   * layout (`cobrarLayoutDaCompra`) e as exigências gerais da TOP (`cobrarRegrasDaCompra` → `exigenciasGeraisFaltando`,
+   * que roda antes de `padroesDaTopNoSalvarDaCompra` e não sabe da TOP — omitir ali o centro exigido seria o 422 "Centro
+   * de resultado é obrigatório nesta operação." para sempre). As exigências gerais são o MESMO `regras.exigencias` que
+   * alimenta `camposExigidosPelaRegra` (não uma segunda lista). Campo cobrado assim nunca sai do corpo (`omissaoDoCorpo`).
+   */
+  const cobrancaNoCorpo: CobrancaNoCorpo = { obrigatorioNoLayout, exigenciasGerais: regras?.exigencias ?? [] };
 
   /* ── LANCAMENTO-01 (decisão 311): os padrões financeiros da TOP (`padroes-da-top.ts`). ── */
   const padroesDaTop = regras?.padroesDaTop ?? null;

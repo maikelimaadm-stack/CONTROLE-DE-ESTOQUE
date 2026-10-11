@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { familiaOperacionalDeDocumentoCompra, perfilDosPadroesFinanceiros, resolverTipoOperacao } from "@agro/domain";
+import { EXIGENCIAS_GERAIS_COMPRA_TOP, familiaOperacionalDeDocumentoCompra, perfilDosPadroesFinanceiros, resolverTipoOperacao } from "@agro/domain";
 import type { ItemRow } from "@/features/docs/shared";
 import type { PadroesFinanceirosDaTop } from "@/features/central/contrato";
 import {
-  LOCAL_DA_LINHA, dicaDaTop, lerPadroesDaTop, localConfirmadoNaEmpresa, localDasLinhasNovas, localDoCadastroDoProduto, marcaDoLocal,
-  omissaoDoCorpo, padraoDaTopInvalido, padroesDaTopAplicam, planoDaSemeadura, podeTrocarOsPadroes, travadoPelaTop, type PadroesDaTopLidos
+  LOCAL_DA_LINHA, cobradoNoCorpo, dicaDaTop, lerPadroesDaTop, localConfirmadoNaEmpresa, localDasLinhasNovas, localDoCadastroDoProduto, marcaDoLocal,
+  omissaoDoCorpo, padraoDaTopInvalido, padroesDaTopAplicam, planoDaSemeadura, podeTrocarOsPadroes, travadoPelaTop, type CobrancaNoCorpo,
+  type PadroesDaTopLidos
 } from "./padroes-da-top";
 
 /**
@@ -43,6 +44,8 @@ const padroes = (): PadroesFinanceirosDaTop => {
 };
 
 const FAMILIA_COMPRA = familiaOperacionalDeDocumentoCompra("compra");
+/** Nada cobrado sobre o corpo antes da TOP: nenhum obrigatório do layout, nenhuma exigência geral. */
+const SEM_COBRANCA: CobrancaNoCorpo = { obrigatorioNoLayout: () => false, exigenciasGerais: [] };
 const FAMILIA_SOLICITACAO = resolverTipoOperacao("erp.purchase_requests")?.codigo;
 
 describe("LANC-U01 o leitor: a API anterior não manda secao nem padroes ⇒ null (a tela de hoje)", () => {
@@ -161,7 +164,7 @@ describe("LANC-U06 receber ⇒ nada (nem semeado, nem travado, nem omitido, nem 
     const aplica = padroesDaTopAplicam({ modo: "receber", ehCompra: true, lidos: l, geraTitulos: true });
     expect(aplica).toBe(false);
     const semeado = { categoria_financeira_id: NAT, centro_custo_id: CEN, tipo_titulo_id: TIT };
-    expect(omissaoDoCorpo({ aplica, servidorAplicaOPar: true, padroes: l.padroes, semeado, natureza: NAT, centro: CEN, tipoTitulo: TIT, obrigatorioNoLayout: () => false }))
+    expect(omissaoDoCorpo({ aplica, padroes: l.padroes, semeado, natureza: NAT, centro: CEN, tipoTitulo: TIT, cobrancaNoCorpo: SEM_COBRANCA }))
       .toEqual({ classificacao: false, tipoTitulo: false });
     expect(travadoPelaTop({ aplica, podeTrocar: false, padroes: l.padroes, campo: "categoria_financeira_id", valor: NAT })).toBe(false);
     expect(dicaDaTop({ aplica, padroes: l.padroes, campo: "categoria_financeira_id", valor: NAT })).toBeUndefined();
@@ -207,8 +210,8 @@ describe("LANC-U08 a forma só cobrada; o tipo de título só com o bloco fiscal
 
 describe("LANC-U09 a regra do CORPO (S6)", () => {
   const corpo = (o: Partial<Parameters<typeof omissaoDoCorpo>[0]> = {}) => omissaoDoCorpo({
-    aplica: true, servidorAplicaOPar: true, padroes: padroes(), semeado: { categoria_financeira_id: NAT, centro_custo_id: CEN },
-    natureza: NAT, centro: CEN, tipoTitulo: "", obrigatorioNoLayout: () => false, ...o
+    aplica: true, padroes: padroes(), semeado: { categoria_financeira_id: NAT, centro_custo_id: CEN },
+    natureza: NAT, centro: CEN, tipoTitulo: "", cobrancaNoCorpo: SEM_COBRANCA, ...o
   });
   it("o par semeado pela TOP, intocado ⇒ fora do corpo (o servidor aplica o mesmo par)", () => {
     expect(corpo().classificacao).toBe(true);
@@ -222,11 +225,8 @@ describe("LANC-U09 a regra do CORPO (S6)", () => {
     expect(corpo({ natureza: "" }).classificacao).toBe(false);
   });
   it("o layout marca a natureza (ou o centro) obrigatória ⇒ no corpo (o servidor cobra o layout sobre o corpo)", () => {
-    expect(corpo({ obrigatorioNoLayout: (c) => c === "categoria_financeira_id" }).classificacao).toBe(false);
-    expect(corpo({ obrigatorioNoLayout: (c) => c === "centro_custo_id" }).classificacao).toBe(false);
-  });
-  it("a compra de total zero (o servidor não aplica o par) ⇒ no corpo", () => {
-    expect(corpo({ servidorAplicaOPar: false }).classificacao).toBe(false);
+    expect(corpo({ cobrancaNoCorpo: { ...SEM_COBRANCA, obrigatorioNoLayout: (c) => c === "categoria_financeira_id" } }).classificacao).toBe(false);
+    expect(corpo({ cobrancaNoCorpo: { ...SEM_COBRANCA, obrigatorioNoLayout: (c) => c === "centro_custo_id" } }).classificacao).toBe(false);
   });
   it("o tipo de título semeado sai; trocado, vai; sem aplica, tudo vai", () => {
     expect(corpo({ semeado: { tipo_titulo_id: TIT }, tipoTitulo: TIT }).tipoTitulo).toBe(true);
@@ -241,6 +241,40 @@ describe("LANC-U09 a regra do CORPO (S6)", () => {
     expect(corpo({ padroes: novoPar }).classificacao).toBe(false);
     expect(corpo({ padroes: novoPar, semeado: { tipo_titulo_id: TIT }, tipoTitulo: TIT }).tipoTitulo).toBe(true); // o tipo é o mesmo
     expect(corpo({ padroes: { ...novoPar, tipoTitulo: { id: FOR, nome: "x" } }, semeado: { tipo_titulo_id: TIT }, tipoTitulo: TIT }).tipoTitulo).toBe(false);
+  });
+});
+
+describe("LANC-U13 o que o servidor COBRA SOBRE O CORPO antes da TOP nunca sai do corpo; o total não entra na regra", () => {
+  /** O caminho que o servidor cobra para cada exigência geral da compra (o mapa do domínio que `cobrarRegrasDaCompra` usa). */
+  const caminhoDa = (chave: string) => {
+    const c = EXIGENCIAS_GERAIS_COMPRA_TOP.find((x) => x.chave === chave)?.caminho;
+    if (!c) throw new Error(`premissa: o domínio declara a exigência geral ${chave} da compra`);
+    return c;
+  };
+  const corpo = (cobrancaNoCorpo: CobrancaNoCorpo) => omissaoDoCorpo({
+    aplica: true, padroes: padroes(), semeado: { categoria_financeira_id: NAT, centro_custo_id: CEN },
+    natureza: NAT, centro: CEN, tipoTitulo: "", cobrancaNoCorpo
+  });
+  it("(a) a exigência geral do CENTRO (`exigencias: [\"centro_custo_id\"]`) ⇒ o par vai INTEIRO no corpo", () => {
+    const exigencias = [caminhoDa("exigeCentroResultado")];
+    expect(exigencias, "premissa: o servidor cobra o centro pelo caminho do corpo").toEqual(["centro_custo_id"]);
+    expect(cobradoNoCorpo("centro_custo_id", { ...SEM_COBRANCA, exigenciasGerais: exigencias })).toBe(true);
+    expect(corpo({ ...SEM_COBRANCA, exigenciasGerais: exigencias }).classificacao).toBe(false);
+  });
+  it("(b) a exigência geral de OUTRO campo (observação, fornecedor, transportadora) ⇒ o par continua fora do corpo", () => {
+    const outras = [caminhoDa("exigeObservacao"), caminhoDa("exigeParceiro"), caminhoDa("exigeTransportadora")];
+    expect(outras).not.toContain("centro_custo_id");
+    expect(outras).not.toContain("categoria_financeira_id");
+    expect(corpo({ ...SEM_COBRANCA, exigenciasGerais: outras }).classificacao).toBe(true);
+  });
+  it("(c) a compra de TOTAL ZERO: a regra não recebe o total — o par semeado e não cobrado fica FORA do corpo (o gravado de hoje)", () => {
+    // a compra que gera título é a mesma com qualquer total: `aplica` não olha o total, e a omissão também não
+    expect(padroesDaTopAplicam({ modo: "criacao", ehCompra: true, lidos: lidos(), geraTitulos: true })).toBe(true);
+    expect(corpo(SEM_COBRANCA)).toEqual({ classificacao: true, tipoTitulo: false });
+  });
+  it("(d) o obrigatório do LAYOUT continua levando o par inteiro ao corpo (também junto de uma exigência de outro campo)", () => {
+    expect(corpo({ obrigatorioNoLayout: (c) => c === "centro_custo_id", exigenciasGerais: [] }).classificacao).toBe(false);
+    expect(corpo({ obrigatorioNoLayout: (c) => c === "categoria_financeira_id", exigenciasGerais: [caminhoDa("exigeObservacao")] }).classificacao).toBe(false);
   });
 });
 

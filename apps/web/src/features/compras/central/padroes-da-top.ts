@@ -186,10 +186,30 @@ export interface OmissaoDoCorpo {
 }
 
 /**
- * A REGRA DO CORPO (D3: fora do corpo só o que o servidor decide). Natureza e centro saem JUNTOS, só se:
- *   aplica ∧ o servidor aplica o par da TOP neste salvar (a compra com total > 0; o pedido com qualquer total) ∧ os DOIS
- *   foram semeados pela TOP ∧ a tela ainda mostra os dois semeados (= o par da TOP) ∧ o layout não marca nenhum dos dois
- *   obrigatório (o servidor cobra o obrigatório do layout sobre o CORPO, sem saber da TOP).
+ * O que o servidor COBRA SOBRE O CORPO no salvar, ANTES de olhar os padrões da TOP (e sem saber deles): o obrigatório do
+ * layout configurado (`cobrarLayoutDaCompra`) e as exigências gerais da TOP (`cobrarRegrasDaCompra` →
+ * `exigenciasGeraisFaltando`, que roda antes de `padroesDaTopNoSalvarDaCompra`). `exigenciasGerais` é o `exigencias` de
+ * `regras-da-operacao` — o MESMO dado de `camposExigidosPelaRegra`, nunca uma segunda lista.
+ */
+export interface CobrancaNoCorpo {
+  obrigatorioNoLayout: (campo: string) => boolean;
+  exigenciasGerais: readonly string[];
+}
+/** O campo é cobrado sobre o corpo antes da TOP: o obrigatório do layout OU uma exigência geral da TOP. */
+export const cobradoNoCorpo = (campo: string, c: CobrancaNoCorpo): boolean => c.obrigatorioNoLayout(campo) || c.exigenciasGerais.includes(campo);
+
+/**
+ * A REGRA DO CORPO (D3 do dono: o derivado não vai no corpo quando o servidor já o decide; onde ele NÃO decide, o valor
+ * é do documento e vai no corpo COMO HOJE — e hoje o corpo não leva o que o operador não escolheu). Natureza e centro
+ * saem JUNTOS, só se:
+ *   aplica ∧ os DOIS foram semeados pela TOP ∧ a tela ainda mostra os dois semeados (= o par da TOP) ∧ NENHUM dos dois é
+ *   COBRADO SOBRE O CORPO pelo servidor antes de ele olhar a TOP (`cobradoNoCorpo`): o obrigatório do layout
+ *   (`cobrarLayoutDaCompra`) e as exigências gerais da TOP (`cobrarRegrasDaCompra` → `exigenciasGeraisFaltando`, no salvar
+ *   ANTES de `padroesDaTopNoSalvarDaCompra`) — omitir um campo cobrado ali seria a recusa "… é obrigatório nesta
+ *   operação." para sempre, com o par da TOP na tela.
+ * O TOTAL não entra: com a compra de total zero não há título, e o servidor nem usa nem cobra o par (a exigência do título
+ * sai cedo e os padrões no salvar não fazem nada) — o semeado fica só exibido, FORA do corpo, e o documento grava o de
+ * hoje (sem natureza e centro), nunca um par que o operador não escolheu.
  * Por que juntos: o salvar RECUSA a natureza sem o centro (e o contrário) antes de olhar a TOP — "Informe a natureza e o
  * centro de resultado juntos". O que veio do layout (ou da cópia) vai no corpo como hoje, mesmo igual ao da TOP; então
  * um par com metade do layout e metade da TOP vai INTEIRO. O operador que mudou um do par manda os DOIS (senão o
@@ -197,16 +217,16 @@ export interface OmissaoDoCorpo {
  * O tipo de título semeado sai (a confirmação usa `tipo do documento ?? o da TOP`). A forma semeada sempre vai.
  */
 export function omissaoDoCorpo(p: {
-  aplica: boolean; servidorAplicaOPar: boolean; padroes: PadroesFinanceirosDaTop | null; semeado: Semeadura;
+  aplica: boolean; padroes: PadroesFinanceirosDaTop | null; semeado: Semeadura;
   natureza: string; centro: string; tipoTitulo: string;
-  obrigatorioNoLayout: (campo: "categoria_financeira_id" | "centro_custo_id") => boolean;
+  /** O que o servidor cobra SOBRE O CORPO antes de olhar a TOP (`cobradoNoCorpo`). */
+  cobrancaNoCorpo: CobrancaNoCorpo;
 }): OmissaoDoCorpo {
   if (!p.aplica || !p.padroes) return { classificacao: false, tipoTitulo: false };
   const s = p.semeado;
-  const classificacao = p.servidorAplicaOPar
-    && mesmoId(s.categoria_financeira_id, p.padroes.natureza?.id) && mesmoId(s.centro_custo_id, p.padroes.centro?.id)
+  const classificacao = mesmoId(s.categoria_financeira_id, p.padroes.natureza?.id) && mesmoId(s.centro_custo_id, p.padroes.centro?.id)
     && mesmoId(p.natureza, s.categoria_financeira_id) && mesmoId(p.centro, s.centro_custo_id)
-    && !p.obrigatorioNoLayout("categoria_financeira_id") && !p.obrigatorioNoLayout("centro_custo_id");
+    && !cobradoNoCorpo("categoria_financeira_id", p.cobrancaNoCorpo) && !cobradoNoCorpo("centro_custo_id", p.cobrancaNoCorpo);
   const tipoTitulo = mesmoId(s.tipo_titulo_id, p.padroes.tipoTitulo?.id) && mesmoId(p.tipoTitulo, s.tipo_titulo_id);
   return { classificacao, tipoTitulo };
 }
