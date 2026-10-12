@@ -46,7 +46,8 @@
  * barras, a unidade do uCom — os da conferência, `vinculosDosItens`, com o fornecedor do corpo) e com o que a IMPORTAÇÃO
  * já decidiu (o local do item, só se é da empresa da importação, ativo e vivo — senão o campo não vai). O corpo traz só
  * o Grupo e a Natureza de custo (UMA pergunta para a nota) e os itens. Só entra item SEM vínculo, com a unidade resolvida
- * e a NCM vigente: qualquer recusa sai ANTES de gravar o primeiro produto. Dois itens com o mesmo código e a mesma
+ * e a NCM vigente, e só com o fornecedor resolvido quando a nota tem candidatos (sem ele, o vínculo do fornecedor não é
+ * perguntado e o lote duplicaria o produto): qualquer recusa sai ANTES de gravar o primeiro produto. Dois itens com o mesmo código e a mesma
  * unidade são UM produto (`chaveDoProdutoDaNota`). Cada produto nasce pela MESMA porta do `POST /resources/products`
  * (`createOne`: código sob a trava da numeração, ID Global, registry, regras do cadastro, auditoria pelo gatilho) —
  * nunca um INSERT daqui. Uma transação: ou todos nascem, ou nenhum. A importação continua PENDENTE (nada é atualizado
@@ -107,6 +108,7 @@ export const MSG_ITEM_COM_PRODUTO = "Este item já tem produto (vínculo lembrad
 export const MSG_ITEM_AMBIGUO = "Mais de um produto corresponde a este item: escolha o produto, não crie outro.";
 export const MSG_ITEM_SEM_UNIDADE = "A unidade deste item na nota não corresponde a uma unidade de medida só: crie o produto pelo item.";
 export const MSG_NCM_DO_ITEM = "A NCM deste item na nota não é uma NCM de 8 dígitos vigente: crie o produto pelo item e escolha a NCM.";
+export const MSG_LOTE_SEM_FORNECEDOR = "Escolha o fornecedor da nota antes de criar os produtos: sem ele não se sabe se o código do fornecedor já liga o item a um produto.";
 
 const recusa = (path: string, message: string, extra: Record<string, unknown> = {}) => err("VALIDATION_ERROR", message, [{ path, message, ...extra }]);
 const naoEncontradaDfe = () => err("NOT_FOUND", "DF-e não encontrada");
@@ -576,8 +578,13 @@ async function criarProdutosDaNota(ctx: ServiceCtx, id: string, corpo: CriarProd
   if (imp.situacao === "gerada") throw err("CONFLICT", msgImportacaoGerada(imp.documento_compra_codigo ?? ""));
   if (imp.situacao === "descartada") throw err("CONFLICT", MSG_IMPORTACAO_DESCARTADA);
   // 2) a nota do XML GUARDADO; o fornecedor (pedido: um dos candidatos) e os vínculos COM ele — os que a tela viu.
+  //    Com candidatos e SEM fornecedor escolhido (ambíguo sem escolha, ou o cadastro não é Fornecedor), os vínculos do
+  //    fornecedor não são perguntados: um item que o código do fornecedor já liga a um produto pareceria "sem vínculo" e
+  //    o lote o DUPLICARIA. A dúvida não vira cadastro: recusa antes de qualquer gravação (fail-closed).
   const nota = notaDaImportacao(imp);
-  const { fornecedorEscolhido } = resolverParceiro(await candidatosDoEmitente(ctx, nota), corpo.fornecedor_id ?? null);
+  const candidatos = await candidatosDoEmitente(ctx, nota);
+  const { fornecedorEscolhido } = resolverParceiro(candidatos, corpo.fornecedor_id ?? null);
+  if (candidatos.length > 0 && !fornecedorEscolhido) throw recusa("fornecedor_id", MSG_LOTE_SEM_FORNECEDOR);
   const vinculos = await vinculosDosItens(ctx, nota, fornecedorEscolhido);
   // 3) cada item do corpo: existe na nota; SEM vínculo (com produto, ou ambíguo, criar seria duplicar); unidade resolvida.
   const naNota = new Set(nota.itens.map((i) => i.nItem));

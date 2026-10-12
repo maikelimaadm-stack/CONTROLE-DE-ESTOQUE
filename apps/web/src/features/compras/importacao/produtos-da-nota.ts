@@ -38,6 +38,16 @@ export function declaraCriarProdutosDaNota(conf: unknown): boolean {
   return ehObjeto(capacidades) && propria(capacidades, "criarProdutosDaNota") === CAPACIDADE_CRIAR_PRODUTOS_DA_NOTA;
 }
 
+/**
+ * O fornecedor está RESOLVIDO para o lote? Escolhido na conferência (`fornecedorEscolhido`), ou a nota sem nenhum
+ * candidato (`parceiro.situacao === "nenhum"`: não há fornecedor cujo código ligue o item). Com candidatos e sem escolha
+ * (ambíguo, ou o cadastro que não é Fornecedor), o servidor recusa o lote: os vínculos do fornecedor não foram
+ * perguntados, e criar duplicaria o produto que o código do fornecedor já liga. A tela mostra o botão desabilitado.
+ */
+export function fornecedorResolvidoParaOLote(conf: Pick<ConferenciaDaImportacaoNfe, "fornecedorEscolhido" | "parceiro">): boolean {
+  return (ehTexto(conf.fornecedorEscolhido) && conf.fornecedorEscolhido !== "") || conf.parceiro.situacao === "nenhum";
+}
+
 /** A unidade do cadastro que o servidor resolveu pelo uCom (`measurement_id`, própria e não vazia); senão `null`. */
 export function unidadeDoPreenchimento(p: PreenchimentoDoProduto): string | null {
   const id = propria(p as unknown as Record<string, unknown>, "measurement_id");

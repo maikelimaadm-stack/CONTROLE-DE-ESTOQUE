@@ -33,6 +33,9 @@ import {
  *   XML-I39 importação GERADA ⇒ 409 (a compra dita); DESCARTADA ⇒ 409; nada criado;
  *   XML-I40 `fornecedor_id` (C5): os vínculos são os do fornecedor escolhido — com o que lembra o item ⇒ 422; com outro
  *           candidato ⇒ 201; fora dos candidatos ⇒ 422 em `fornecedor_id`.
+ *   XML-I41 o fornecedor RESOLVIDO (achado A5-1 do cético): com candidatos e sem fornecedor escolhido (ambíguo sem
+ *           `fornecedor_id`, ou o cadastro que não é Fornecedor) ⇒ 422 em `fornecedor_id`, nada criado — os vínculos do
+ *           fornecedor não foram perguntados, e o item que o código dele liga seria duplicado; sem candidato ⇒ 201.
  */
 
 beforeAll(async () => { await iniciar(); await prepararXml01(); }, 240_000);
@@ -325,5 +328,39 @@ describe("o fornecedor escolhido (C5)", () => {
     const b = await criados(criarProdutos(imp.id, corpoLote(itens, { fornecedor_id: daFilial })));
     expect(b.itens.map((i) => i.nItem)).toEqual([1]);
     expect(b.itens[0]!.produto.id, "o produto criado não é o lembrado do outro fornecedor").not.toBe(lembrado.id);
+  });
+
+  it("XML-I41 com candidatos e sem fornecedor escolhido ⇒ 422 em fornecedor_id e nada criado; sem candidato nenhum ⇒ 201", async () => {
+    const MSG = "Escolha o fornecedor da nota antes de criar os produtos: sem ele não se sabe se o código do fornecedor já liga o item a um produto.";
+    // ambíguo: o cadastro e a filial com o documento do emitente; o código do item LEMBRADO no do cadastro.
+    const emitente = emitenteNovo();
+    const doCadastro = await fornecedorComDocumento(emitente);
+    const daFilial = await fornecedorComDocumento(emitenteNovo());
+    await c.admin.query("insert into erp.provider_branches (person_id, name, document) values ($1, 'Filial sintética XML-01 I41', $2)", [daFilial, emitente]);
+    const imp = await importada(notaSintetica({ emitenteCnpj: emitente, itens: [itemNota("G-1", "CX")] }).xml, { empresaId: c.I.empresa });
+    const lembrado = await produto();
+    await c.admin.query(
+      `insert into erp.produto_fornecedor_vinculos (organization_id, fornecedor_id, codigo_fornecedor, unidade_fornecedor, produto_id, tipo_fator, fator, criado_por)
+       values ($1, $2, 'G-1', 'CX', $3, 'multiply', 1, $4)`, [c.h.demo.orgId, doCadastro, lembrado.id, x.adminId]);
+    const semEscolha = await conferenciaLida(imp.id);
+    expect([semEscolha.parceiro.situacao, semEscolha.fornecedorEscolhido], "premissa: ambíguo e sem fornecedor escolhido").toEqual(["ambiguo", null]);
+    expect([vinculoDo(semEscolha, 1).situacao, vinculoDo(await conferenciaLida(imp.id, { fornecedorId: doCadastro }), 1).situacao],
+      "premissa: sem a escolha o item parece sem vínculo; com o fornecedor do cadastro, ele é lembrado").toEqual(["nenhum", "lembrado"]);
+    const amb = recusa(await semGravar(() => criarProdutos(imp.id, corpoLote([{ n_item: 1 }]))), 422, "VALIDATION_ERROR");
+    expect([caminhos(amb), amb.message], JSON.stringify(amb)).toEqual([["fornecedor_id"], MSG]);
+
+    // o cadastro do emitente que NÃO é Fornecedor: um candidato, nenhum escolhido.
+    const outro = emitenteNovo();
+    await fornecedorComDocumento(outro, { fornecedor: false });
+    const impNao = await importada(notaSintetica({ emitenteCnpj: outro, itens: [itemNota("G-2", "CX")] }).xml, { empresaId: c.I.empresa });
+    expect((await conferenciaLida(impNao.id)).parceiro.situacao, "premissa: o cadastro não é Fornecedor").toBe("nao_fornecedor");
+    const nao = recusa(await semGravar(() => criarProdutos(impNao.id, corpoLote([{ n_item: 1 }]))), 422, "VALIDATION_ERROR");
+    expect([caminhos(nao), nao.message]).toEqual([["fornecedor_id"], MSG]);
+
+    // sem candidato nenhum (o emitente sem cadastro): não há fornecedor cujo código ligue o item ⇒ o lote cria.
+    const semCadastro = emitenteNovo();
+    const impNenhum = await importada(notaSintetica({ emitenteCnpj: semCadastro, itens: [itemNota("G-3", "CX")] }).xml, { empresaId: c.I.empresa });
+    expect((await conferenciaLida(impNenhum.id)).parceiro.situacao, "premissa: nenhum cadastro com o documento").toBe("nenhum");
+    expect((await criados(criarProdutos(impNenhum.id, corpoLote([{ n_item: 1 }])))).produtos).toHaveLength(1);
   });
 });

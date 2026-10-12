@@ -11,7 +11,7 @@ import { DialogoDeCadastroRapido } from "./aba-cabecalho";
 import { criarProdutosDaImportacao, recusasNoCampo } from "./api";
 import { decimalDigitado, type EstadoDaConferencia } from "./estado";
 import {
-  corpoDoLote, declaraCriarProdutosDaNota, itensSemLocalGravado, mensagensDaRecusaDoLote, planoDoLote, quantidadeDeProdutos, rotuloDoLote,
+  corpoDoLote, declaraCriarProdutosDaNota, fornecedorResolvidoParaOLote, itensSemLocalGravado, mensagensDaRecusaDoLote, planoDoLote, quantidadeDeProdutos, rotuloDoLote,
   unidadeDoPreenchimento, type PlanoDoLote
 } from "./produtos-da-nota";
 
@@ -52,13 +52,15 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
   const podeLote = e.pendente && can("products.create") && declaraCriarProdutosDaNota(conf);
   const plano = podeLote ? planoDoLote(conf, e.itens) : null;
   const produtosDoLote = plano ? quantidadeDeProdutos(plano.lista) : 0;
+  const fornecedorDoLote = fornecedorResolvidoParaOLote(conf);
   const [aberturasDoLote, setAberturasDoLote] = React.useState(0);
   const [loteAberto, setLoteAberto] = React.useState(false);
 
   return <div data-testid="importacao-aba-itens" className="flex flex-col gap-3">
-    {plano && produtosDoLote > 0 && <div>
-      <Button size="sm" variant="outline" data-testid="importacao-criar-produtos" data-quantidade={produtosDoLote}
+    {plano && produtosDoLote > 0 && <div className="flex flex-wrap items-center gap-2">
+      <Button size="sm" variant="outline" data-testid="importacao-criar-produtos" data-quantidade={produtosDoLote} disabled={!fornecedorDoLote}
         onClick={() => { setAberturasDoLote((k) => k + 1); setLoteAberto(true); }}>{rotuloDoLote(produtosDoLote)}</Button>
+      {!fornecedorDoLote && <span className="text-[12px] text-amber-800" data-testid="importacao-criar-produtos-sem-fornecedor">Escolha o fornecedor na aba Cabeçalho para criar os produtos de uma vez: os vínculos do item dependem dele.</span>}
     </div>}
     {conf.nota.itens.map((item) => {
       const n = item.nItem;

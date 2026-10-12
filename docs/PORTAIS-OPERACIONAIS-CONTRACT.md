@@ -905,6 +905,7 @@ corpo (CriarProdutosDaNota, .strict(), chave desconhecida na raiz ou no item = 4
 | o XML guardado não é mais lido pelo leitor | 422 `VALIDATION_ERROR` | — | `O XML guardado desta importação não pôde ser lido de novo: descarte a importação e importe o arquivo outra vez.` |
 | `fornecedor_id` fora dos candidatos do emitente | 422 `VALIDATION_ERROR` | `fornecedor_id` | `O fornecedor escolhido não é o emitente desta nota.` |
 | `fornecedor_id` que não é do tipo Fornecedor | 422 `VALIDATION_ERROR` | `fornecedor_id` | `O cadastro escolhido não é do tipo Fornecedor: marque-o como fornecedor no cadastro.` |
+| a nota tem candidatos e nenhum fornecedor foi escolhido (ambíguo sem `fornecedor_id`, ou o cadastro que não é Fornecedor) — os vínculos do fornecedor não seriam perguntados | 422 `VALIDATION_ERROR` | `fornecedor_id` | `Escolha o fornecedor da nota antes de criar os produtos: sem ele não se sabe se o código do fornecedor já liga o item a um produto.` |
 | item que não está na nota | 422 `VALIDATION_ERROR` | `itens[i].n_item` | `Este item não existe na nota.` |
 | item lembrado ou sugerido | 422 `VALIDATION_ERROR` | `itens[i].n_item` | `Este item já tem produto (vínculo lembrado ou sugerido): use esse produto, não crie outro.` |
 | item ambíguo | 422 `VALIDATION_ERROR` | `itens[i].n_item` | `Mais de um produto corresponde a este item: escolha o produto, não crie outro.` |

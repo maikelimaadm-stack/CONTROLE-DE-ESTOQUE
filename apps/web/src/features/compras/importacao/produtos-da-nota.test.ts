@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { CAPACIDADE_CRIAR_PRODUTOS_DA_NOTA, type ItemDaConferenciaNfe, type ProdutoDoVinculo, type VinculoDoItemDaNota } from "@agro/domain";
 import {
   corpoDoLote, declaraCriarProdutosDaNota, itensSemLocalGravado, lerProdutosCriadosDaNota, mensagensDaRecusaDoLote, planoDoLote,
-  quantidadeDeProdutos, rotuloDoLote, unidadeDoPreenchimento
+  quantidadeDeProdutos, rotuloDoLote, unidadeDoPreenchimento, fornecedorResolvidoParaOLote
 } from "./produtos-da-nota";
 
 /**
@@ -177,5 +177,18 @@ describe("XML-01 U6 a recusa 422 no diálogo: o caminho do item do CORPO ganha o
     const corpo = { group_id: GRUPO, financial_category_id: NATUREZA, itens: [{ n_item: 2, armazem_id: null }, { n_item: 6, armazem_id: null }] };
     expect(mensagensDaRecusaDoLote([{ path: "itens[1].ncm_code", message: "NCM não vigente" }, { path: "group_id", message: "Grupo sintético" }, { path: "itens[9]", message: "fora" }], corpo))
       .toEqual(["Item 6: NCM não vigente", "Grupo sintético", "fora"]);
+  });
+});
+
+describe("XML-01 U7 o fornecedor resolvido para o lote: escolhido, ou a nota sem candidatos (achado A5-1 do cético)", () => {
+  it("escolhido ⇒ sim; sem candidatos (`nenhum`) ⇒ sim", () => {
+    expect(fornecedorResolvidoParaOLote({ fornecedorEscolhido: "f1", parceiro: { situacao: "encontrado", id: "f1", nome: "F", documento: "1" } })).toBe(true);
+    expect(fornecedorResolvidoParaOLote({ fornecedorEscolhido: "f2", parceiro: { situacao: "ambiguo", candidatos: [] } })).toBe(true);
+    expect(fornecedorResolvidoParaOLote({ fornecedorEscolhido: null, parceiro: { situacao: "nenhum", preenchimento: {} as never } })).toBe(true);
+  });
+  it("ambíguo sem escolha, ou o cadastro que não é Fornecedor ⇒ não (os vínculos do fornecedor não foram perguntados)", () => {
+    expect(fornecedorResolvidoParaOLote({ fornecedorEscolhido: null, parceiro: { situacao: "ambiguo", candidatos: [] } })).toBe(false);
+    expect(fornecedorResolvidoParaOLote({ fornecedorEscolhido: "", parceiro: { situacao: "ambiguo", candidatos: [] } })).toBe(false);
+    expect(fornecedorResolvidoParaOLote({ fornecedorEscolhido: null, parceiro: { situacao: "nao_fornecedor", id: "p", nome: "P" } })).toBe(false);
   });
 });

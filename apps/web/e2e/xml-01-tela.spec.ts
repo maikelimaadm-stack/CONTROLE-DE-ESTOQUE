@@ -7,7 +7,7 @@ import { cabecalhosDaSessao } from "./top-config-08-comum";
 import { cnpjDeEmitenteSintetico, eanSintetico, notaSinteticaDeVariosItens, type ItemDaNotaDeVariosItens, type NotaSinteticaDeVariosItens } from "./compras-f7-nfe-sintetica";
 
 /**
- * XML-01 (decisão 312) — O PRODUTO DA NOTA EM LOTE, NA TELA DA CONFERÊNCIA. Os casos XML-T1 a XML-T4.
+ * XML-01 (decisão 312) — O PRODUTO DA NOTA EM LOTE, NA TELA DA CONFERÊNCIA. Os casos XML-T1 a XML-T5.
  *
  * ┌─ O QUE ESTE ARQUIVO PROVA ─────────────────────────────────────────────────────────────────────────────┐
  * │ XML-T1 o lote ponta a ponta na conferência REAL: 1 item sugerido (EAN de produto existente), 4 itens     │
@@ -25,6 +25,9 @@ import { cnpjDeEmitenteSintetico, eanSintetico, notaSinteticaDeVariosItens, type
  * │        usuário recebe 403 e nada é criado.                                                               │
  * │ XML-T4 o diálogo de UM item continua: abre com descrição, NCM, código de barras E a unidade já            │
  * │        preenchidos; a pessoa escolhe só Grupo e Natureza; salvar dá o produto ao item.                   │
+ * │ XML-T5 o fornecedor AMBÍGUO sem escolha (achado A5-1 do cético): o botão do lote aparece DESABILITADO,   │
+ * │        com o motivo; o corpo forjado sem `fornecedor_id` recebe 422 em `fornecedor_id` e nada nasce;      │
+ * │        escolhido o fornecedor na aba Cabeçalho, o botão habilita e o motivo some.                        │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * O XML é SINTÉTICO (`notaSinteticaDeVariosItens`: CNPJ, chave e EAN inventados, DVs calculados lá). Os cadastros do
@@ -518,4 +521,58 @@ test("XML-T4 — o diálogo de UM item continua: abre com descrição, NCM, cód
   const gravado = await api<Record<string, unknown>>(page, "GET", `/api/resources/products/${row.id}`);
   expect(gravado, "o produto gravado com a unidade do uCom").toMatchObject({ description: itens[0]!.descricao, ncm_code: "31052000", barcode: ean, measurement_id: kg.id });
   console.log(`[XML-T4] fio | POST /api/resources/products ${resposta.status()} | measurement_id enviado = ${String(enviado["measurement_id"])} (KG ${kg.id}) sem a pessoa tocar na unidade`);
+});
+
+/* ═════════════════════════════════ XML-T5 ═════════════════════════════════ */
+
+test("XML-T5 — o fornecedor ambíguo sem escolha: o botão do lote fica DESABILITADO com o motivo; o corpo forjado sem fornecedor recebe 422 em fornecedor_id e nada nasce; escolhido o fornecedor, o botão habilita", async ({ page }) => {
+  test.setTimeout(180_000);
+  await login(page);
+  const c = await cenario(page, "T5");
+  const r = c.rodada;
+  await premissaDasNcms(page, { "31052000": true });
+  // A FILIAL de outro fornecedor com o documento do emitente: o cadastro e a filial são DOIS candidatos ⇒ ambíguo.
+  await criarCadastro(page, "people", {
+    name: uniq("XML01 T5 outro forn"), person_type: "legal", is_provider: true, document: cnpjDeEmitenteSintetico(),
+    filiais: [{ name: `Filial sintética XML01 T5 ${r}`, document: c.emitente }]
+  });
+  const itens: ItemDaNotaDeVariosItens[] = [
+    { codigo: `T5-${r}-01`, descricao: `XMLT5 adubo ${r}`, unidade: "KG", ncm: "31052000", ean: eanSintetico(), quantidade: "10", valorUnitario: "3.00", valorProdutos: "30.00" }
+  ];
+  const nota = notaSinteticaDeVariosItens({ emitenteCnpj: c.emitente, emitenteNome: `Emitente sintético ${uniq("XML01")}`, itens });
+  const imp = await api<{ id: string }>(page, "POST", "/api/compras/importacoes", { nome_arquivo: `nfe-${nota.numero}.xml`, arquivo_base64: Buffer.from(nota.xml, "utf8").toString("base64"), empresa_id: c.empresa });
+  const conf = await api<ConferenciaLida>(page, "GET", `/api/compras/importacoes/${imp.id}`);
+  expect([conf.parceiro.situacao, conf.fornecedorEscolhido, vinculoDe(conf, 1).situacao, unidadeDoPreenchimento(conf, 1)],
+    "premissa: o parceiro AMBÍGUO, nenhum fornecedor escolhido, o item sem vínculo e com a unidade (candidato do lote)").toEqual(["ambiguo", null, "nenhum", c.unidadeDe("KG").id]);
+
+  // A TELA: o botão aparece (é aplicável), mas DESABILITADO, com o motivo.
+  const fio = ouvirFio(page, imp.id);
+  await abrirConferencia(page, imp.id);
+  const botao = page.getByTestId("importacao-criar-produtos");
+  await expect(botao, "o lote é aplicável: o botão aparece").toBeVisible();
+  await expect(botao, "sem fornecedor escolhido: desabilitado").toBeDisabled();
+  await expect(page.getByTestId("importacao-criar-produtos-sem-fornecedor")).toHaveText("Escolha o fornecedor na aba Cabeçalho para criar os produtos de uma vez: os vínculos do item dependem dele.");
+
+  // O SERVIDOR é quem nega: o corpo forjado sem `fornecedor_id` → 422 em `fornecedor_id`, e nada criado.
+  const cab = await cabecalhosDaSessao(page);
+  const forjado = await page.request.post(`${API}/api/compras/importacoes/${imp.id}/criar-produtos`, {
+    headers: { ...cab, "content-type": "application/json", "Idempotency-Key": randomUUID() },
+    data: { group_id: c.ref.grupo.id, financial_category_id: c.ref.natureza.id, itens: [{ n_item: 1, armazem_id: null }] }
+  });
+  const texto = await forjado.text();
+  expect(forjado.status(), `o lote sem fornecedor escolhido é recusado: ${texto.slice(0, 300)}`).toBe(422);
+  const erro = (JSON.parse(texto) as { error: { code: string; details: { path: string; message: string }[] } }).error;
+  expect([erro.code, erro.details.map((d) => d.path)]).toEqual(["VALIDATION_ERROR", ["fornecedor_id"]]);
+  expect(erro.details[0]!.message).toBe("Escolha o fornecedor da nota antes de criar os produtos: sem ele não se sabe se o código do fornecedor já liga o item a um produto.");
+  expect(await produtosCom(page, r), "ZERO produto do caso").toBe(0);
+  expect(fio.aoLote(), "a tela não chamou o lote (o botão está desabilitado)").toBe(0);
+
+  // Escolhido o fornecedor (na aba Cabeçalho), a conferência relida o traz e o botão habilita.
+  await page.getByTestId("importacao-aba-cabecalho-rotulo").click();
+  await page.getByTestId("importacao-parceiro-escolha").selectOption(c.fornecedor);
+  await expect(page.getByTestId("importacao-conferencia")).toHaveAttribute("data-relendo", "nao");
+  await page.getByTestId("importacao-aba-itens-rotulo").click();
+  await expect(botao, "com o fornecedor escolhido: habilitado").toBeEnabled();
+  await expect(page.getByTestId("importacao-criar-produtos-sem-fornecedor")).toHaveCount(0);
+  console.log(`[XML-T5] fio | parceiro=${conf.parceiro.situacao} escolhido=${String(conf.fornecedorEscolhido)} | botão desabilitado com o motivo | forjado ${forjado.status()} ${erro.details[0]!.path} | produtos do caso=0 | escolhido ⇒ habilitado`);
 });
