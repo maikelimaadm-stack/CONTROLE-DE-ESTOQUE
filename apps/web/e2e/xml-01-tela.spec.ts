@@ -424,7 +424,7 @@ test("XML-T3 — sem products.create (com compras.create): a conferência com a 
   // O PERFIL: compras.create (e as leituras da tela), SEM products.create.
   const permissoes = ["compras.view", "compras.create", "products.view", "warehouses.view"];
   const papel = await api<{ id: string }>(page, "POST", "/api/admin/roles", { name: uniq("XML01 comprador sem cadastro"), permissions: permissoes });
-  const comprador = { email: `e2e-xml01-sem-produto-${Date.now().toString(36)}@demo.local`, password: "Comprador@12345" };
+  const comprador = { email: `e2e-xml01-sem-produto-${Date.now().toString(36)}@demo.local`, password: "Restrito@12345" };
   await api(page, "POST", "/api/admin/members", {
     name: "XML01 comprador sem cadastro de produto", email: comprador.email, password: comprador.password, role_id: papel.id,
     escopos_empresas: [{ modulo: "compras", modo: "todas", empresas: [] }]
