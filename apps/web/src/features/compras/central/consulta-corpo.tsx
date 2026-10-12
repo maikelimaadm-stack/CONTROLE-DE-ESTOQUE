@@ -43,6 +43,14 @@ const CAMPOS_FISCAIS = ["numero_nota", "serie_nota", "data_entrada"] as const;
 
 /** "02/10/2026, 14:30 por Maria" — a data e hora de quem fez, como o "Saldo encerrado em … por …" dos itens. */
 const quemEQuando = (q: { em: string; porNome: string }) => `${dateTimeBR(q.em)} por ${q.porNome || "—"}`;
+/**
+ * EDITAR-02 (decisão 313, P5): a `version` do documento que a consulta mostra — o conteúdo VISTO, para a decisão de
+ * aprovação valer para ele (mudou depois → 409). SE ela vai na decisão não se decide aqui: o bloco da aprovação só a
+ * manda quando a SITUAÇÃO da aprovação a declara (`versaoDaDecisaoDaConsulta`). A presença dela no documento não diz
+ * nada: o GET por id da base também a devolve (`d.*`, com o banco na 0063).
+ */
+const versaoDoDocumento = (d: Record<string, unknown>): string | undefined =>
+  typeof d["version"] === "string" || typeof d["version"] === "number" ? String(d["version"]) : undefined;
 
 /** A zona padrão da consulta: a do layout do sistema da família da espécie. */
 export const zonasPadraoDaConsulta = (familia: string): ZonasDaCentral => zonasDaCentral(familia, LAYOUT_DO_SISTEMA(familia));
@@ -89,9 +97,9 @@ export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: Zon
   const adicionais = (top ? 3 : 2) + (e.finalizacao ? 1 : 0) + (e.aprovadoOrcamento ? 1 : 0);
   return <>
     {e.ehCompra && <AprovacaoDoDocumento area="compras" documentoId={String(d["id"])} documentoAberto={e.situacao === "aberto"}
-      prefixoTestid={PREFIXO_CENTRAL_COMPRAS} codigo={t(d["codigo"])} />}
+      versao={versaoDoDocumento(d)} prefixoTestid={PREFIXO_CENTRAL_COMPRAS} codigo={t(d["codigo"])} />}
     {e.ehPedido && e.capacidade === "sim" && <AprovacaoDoDocumento area="compras" especie="pedido" documentoId={String(d["id"])}
-      documentoAberto={e.situacao === "aberto"} prefixoTestid={PREFIXO_CENTRAL_COMPRAS} codigo={t(d["codigo"])} />}
+      documentoAberto={e.situacao === "aberto"} versao={versaoDoDocumento(d)} prefixoTestid={PREFIXO_CENTRAL_COMPRAS} codigo={t(d["codigo"])} />}
     <ColunaDeCampos>
       <CampoLeitura rotulo="Fornecedor" adorno="pesquisa" testId="compras-consulta-fornecedor" valor={t(d["fornecedor_nome"])} />
       <CampoLeitura rotulo="Empresa" adorno="pesquisa" testId="compras-consulta-empresa" valor={t(d["empresa_nome"])} />

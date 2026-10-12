@@ -107,7 +107,7 @@ async function comprasGeradas(pedidoId: string): Promise<string[]> {
 const receber = (p: { id: string; itens: { id: string; quantidade: string }[] }, topDestino: string, quantidades?: string[], extra: Record<string, unknown> = {}) =>
   receberPedido(p.id, corpoReceber(topDestino, p.itens.map((i, k) => ({ item_origem_id: i.id, quantidade: quantidades?.[k] ?? i.quantidade })), extra));
 
-type LinhaFila = { id: string; especie: string; situacao: string; valor: string | null; ultimaDecisao: { decisao: string } | null };
+type LinhaFila = { id: string; especie: string; situacao: string; valor: string | null; ultimaDecisao: { decisao: string } | null; version: string };
 /** A fila de compras INTEIRA de quem pergunta (página de 1000, conferida contra o total). */
 async function filaDeCompras(headers: Hdr = c.h.headers()): Promise<LinhaFila[]> {
   const r = await fila("compras", headers, { pageSize: 1000 });
@@ -308,9 +308,10 @@ describe("FP-3 a aprovação do pedido ao finalizar", () => {
     expect(j(await previaFinalizacao(ped.id))).toEqual({ contractVersion: 1, podeFinalizar: false, recusas: [pendente], aprovacao: { situacao: "pendente" } });
     expect((await cabecalho(ped.id)).situacao).toBe("aberto");
     // A fila volta a listar, como pendente, com a última decisão (a aprovação que deixou de cobrir).
-    expect((await filaDeCompras()).find((l) => l.id === ped.id)).toMatchObject({ especie: "pedido", situacao: "pendente", valor: "60.00", ultimaDecisao: { decisao: "aprovado" } });
-    // Aprovada de novo (agora pelo valor de 60), finaliza.
-    expect((await aprovar("compras", ped.id)).statusCode).toBe(200);
+    const naFila = (await filaDeCompras()).find((l) => l.id === ped.id);
+    expect(naFila).toMatchObject({ especie: "pedido", situacao: "pendente", valor: "60.00", ultimaDecisao: { decisao: "aprovado" } });
+    // Aprovada de novo (agora pelo valor de 60), finaliza. EDITAR-02 (P5): com a versão que a fila mostrou (o UPDATE a subiu).
+    expect((await aprovar("compras", ped.id, { version: naFila!.version })).statusCode).toBe(200);
     expect((await filaDeCompras()).map((l) => l.id)).not.toContain(ped.id);
     expect((await finalizar(ped.id)).statusCode).toBe(200);
     expect((await cabecalho(ped.id)).situacao).toBe("finalizado");

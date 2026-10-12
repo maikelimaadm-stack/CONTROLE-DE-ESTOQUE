@@ -161,6 +161,7 @@ export const MOTIVOS_DA_PROVISAO_COMPRA = Object.freeze({
   recebido: (codigo: string): string => `Recebido na compra ${codigo}`,
   compraConfirmada: (codigo: string): string => `Compra ${codigo} confirmada`,
   compraCancelada: (codigo: string): string => `Compra ${codigo} cancelada`,
+  compraAlterada: (codigo: string): string => `Compra ${codigo} alterada`,
 } as const);
 
 /**

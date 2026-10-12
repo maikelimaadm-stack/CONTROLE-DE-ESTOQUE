@@ -6,7 +6,7 @@ import type { Pendencia, PosicaoDoRotuloValor } from "@/features/central/barra";
 import { LancadorDeTipoOperacao, pedidoImpossivel } from "@/features/sales/lancador-tipo-operacao";
 import type { VarianteDeCompra } from "./variantes";
 import { PREFIXO_CENTRAL_COMPRAS } from "./central/adaptador";
-import { descreverCaminhoDeItem, useEntradaDaCentral, useEstadoDaCriacao, type EstadoDaCriacao, type PropsDoEstadoDaCriacao } from "./central/estado";
+import { descreverCaminhoDeItem, useAberturaDaEdicao, useEntradaDaCentral, useEstadoDaCriacao, type EstadoDaCriacao, type PropsDoEstadoDaCriacao } from "./central/estado";
 import { irParaPendenciaDaCompra, useBarraDaCriacao } from "./central/criacao-barra";
 import { AvisosDaCriacao, DadosDaCriacao, identidadeDaCriacao } from "./central/criacao-dados";
 import { ItensDaCriacaoDeCompra } from "./central/criacao-itens";
@@ -22,10 +22,32 @@ import { CentralDoOrcamento } from "./orcamento/central-orcamento";
  *
  * OPERACOES-01 F6b (decisão 283): um DESPACHANTE, sem hook — o orçamento de compra (`/compras/orcamentos/new`, que
  * nasce do pedido) é a Central do orçamento (`orcamento/central-orcamento.tsx`); o pedido e a compra, a de hoje.
+ *
+ * EDITAR-02 (decisão 313): `modo="edicao"` — o pedido ou a compra SALVO no MESMO formulário, aberto pela consulta no
+ * lugar (sem rota nova; o molde do orçamento): o `GET /edicao` carrega, e o formulário é o de sempre
+ * (`useEstadoDaCriacao` com `edicao`). Sem `modo` (a rota de criação), nada muda.
  */
-export function CentralDeCompras({ variante }: { variante: VarianteDeCompra }) {
+export type PropsDaCentralDeCompras =
+  | { variante: VarianteDeCompra; modo?: "criacao" }
+  | { variante: VarianteDeCompra; modo: "edicao"; id: string; onFechar: (salvou: boolean) => void; onRecusada: (motivo: string) => void };
+
+export function CentralDeCompras(props: PropsDaCentralDeCompras) {
+  const { variante } = props;
+  if (props.modo === "edicao") return <EdicaoDoPedidoEDaCompra variante={variante} id={props.id} onFechar={props.onFechar} onRecusada={props.onRecusada} />;
   if (variante.variante === "orcamento") return <CentralDoOrcamento variante={variante} />;
   return <CentralDoPedidoEDaCompra variante={variante} />;
+}
+
+/** A EDIÇÃO no lugar da consulta: carregando o `/edicao`, a moldura de sempre em "carregando"; pronta, o formulário. */
+function EdicaoDoPedidoEDaCompra({ variante, id, onFechar, onRecusada }: { variante: VarianteDeCompra; id: string; onFechar: (salvou: boolean) => void; onRecusada: (motivo: string) => void }) {
+  const abertura = useAberturaDaEdicao({ variante, id, onFechar, onRecusada });
+  if (abertura.situacao === "carregando") {
+    return <div data-testid="compras-central" data-especie={variante.variante} data-modo="edicao" data-situacao="carregando" className="contents">
+      <CentralDeDocumento prefixoTestid={PREFIXO_CENTRAL_COMPRAS} carregando titulo="Documento de compra"
+        identidade={{ nome: "Carregando documento", alterado: false }} acoes={null} dados={null} itens={null} abas={[]} />
+    </div>;
+  }
+  return <FormularioDeCompra key={abertura.chave} {...abertura.props} />;
 }
 
 /** A Central de Compras do pedido e da compra (o corpo de antes da F6b, sem mudança). */
@@ -67,7 +89,8 @@ function FormularioDeCompra(props: PropsDoEstadoDaCriacao) {
   const receber = e.modo === "receber";
   const abas = abasDoPainelDaCriacao(e, (c) => <DadosDaCriacao e={estadoDeUmCampo(e, c)} />);
 
-  return <div data-testid="compras-central" data-especie={e.variante.variante} data-modo={receber ? "receber" : "lancar"} className="contents">
+  return <div data-testid="compras-central" data-especie={e.variante.variante} data-modo={receber ? "receber" : e.modo === "edicao" ? "edicao" : "lancar"}
+    data-documento-id={e.documentoEmEdicao ? String(e.documentoEmEdicao["id"] ?? "") : undefined} className="contents">
     <CentralDeDocumento
       prefixoTestid={PREFIXO_CENTRAL_COMPRAS}
       titulo={e.titulo}
@@ -91,5 +114,11 @@ function FormularioDeCompra(props: PropsDoEstadoDaCriacao) {
     <ConfirmDialog open={e.confirmarTroca} onOpenChange={e.setConfirmarTroca} title="Alterar o Tipo de Operação?"
       description="Os dados já preenchidos neste lançamento serão descartados." danger
       onConfirm={() => { e.setConfirmarTroca(false); e.voltarAoLancador(); }} />
+    {/* EDITAR-02: o documento mudou desde que a edição abriu (409 da PATCH) — a mensagem do servidor e a OFERTA de
+        recarregar (o rascunho só é descartado se a pessoa aceitar). */}
+    <ConfirmDialog open={e.conflito !== null} onOpenChange={(aberto) => { if (!aberto) e.fecharConflito(); }} title="O documento mudou"
+      confirmLabel="Recarregar o documento" dismissLabel="Continuar editando" onConfirm={e.recarregarEdicao}>
+      <p data-testid="compras-edicao-conflito" className="text-sm text-slate-600">{e.conflito}</p>
+    </ConfirmDialog>
   </div>;
 }

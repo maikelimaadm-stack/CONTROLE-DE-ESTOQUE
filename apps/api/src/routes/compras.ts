@@ -24,7 +24,9 @@
  * POST, a MESMA confirmação do /confirm, num savepoint). Versão no formato 1, 2 ou 3: rotas, corpos e respostas de
  * hoje, chave por chave.
  *
- * O que NÃO existe aqui (fora da fatia): editar documento salvo.
+ * EDITAR-02 (decisão 313): editar o documento SALVO (a compra aberta e o pedido aberto sem compra viva) é a PATCH de
+ * `compras-edicao.ts`, que confere pelo MESMO núcleo do lançamento (`nucleoDoLancamento`, extraído de `lancarComTop`
+ * sem mudar ordem, código nem mensagem do POST) e cujo contrato (`CONTRATO_DA_EDICAO`) mora aqui, ao lado do POST.
  *
  * OPERACOES-01 F6a (decisão 283): o PEDIDO ganha a situação `finalizado` (Finalizar = a confirmação do pedido, em
  * `compras-finalizacao.ts`) e passa a ser cancelado também finalizado; a espécie nova ORÇAMENTO mora na mesma tabela,
@@ -61,7 +63,7 @@ import { installmentPlanSchema, exigirRateioAnalitico } from "../services/financ
 import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
 import {
   resolverTopParaLancamento, validarClassificacaoDoDocumento, recusaDeCampoDaClassificacao, validarCondicaoDoDocumento,
-  type ClassificacaoFinanceira, type RegraDaClassificacao, type TopDoLancamento,
+  type ClassificacaoFinanceira, type CondicaoDoDocumento, type RegraDaClassificacao, type TopDoLancamento,
 } from "../lib/documento-comercial.js";
 import { layoutEfetivo, respostaDoLayoutEfetivo } from "../lib/layout-documento.js";
 import { lerVersaoCongeladaTop, confirmaAutomaticamente, tentarConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
@@ -82,6 +84,11 @@ import { sincronizarProvisaoDoPedidoDeCompra } from "../lib/financeiro-provisao.
 // LANCAMENTO-01 (decisão 311): a seção e os padrões financeiros da versão ATUAL em `regras-da-operacao`.
 import { padroesDaTopParaExecucao } from "../lib/financeiro-top.js";
 import { MOTIVOS_DA_PROVISAO, MOTIVOS_DA_PROVISAO_COMPRA } from "@agro/domain";
+// EDITAR-02 (decisão 313): a PATCH e o `/edicao` (o contrato da PATCH mora aqui, ao lado do POST; as mensagens genéricas
+// da 272 são importadas — o texto é um só — e as próprias de compras moram nos arquivos da edição).
+import { recusaDoNumero, LIMITES_DA_EDICAO, MSG_EDICAO_EMPRESA, MSG_EDICAO_TROCA_DE_OPERACAO, type LimiteDoNumero } from "./vendas-edicao-patch.js";
+import { MSG_EDICAO_ESPECIE, MSG_EDICAO_DADOS_FISCAIS, type CamposDaEdicaoDeCompra, type ContratoDaEdicaoDeCompra } from "./compras-edicao-patch.js";
+import { registrarEdicaoCompras } from "./compras-edicao.js";
 
 const t = criarTradutor(ptBR);
 
@@ -89,14 +96,14 @@ const t = criarTradutor(ptBR);
 
 export type EspecieCompra = "pedido" | "compra";
 /** A espécie, o segmento da rota e o recurso de permissão. Uma lista só; nada de mapa espalhado. */
-const ESPECIES: readonly { especie: EspecieCompra; segmento: "pedidos" | "compras"; recurso: "pedidos_compra" | "compras" }[] = [
+export const ESPECIES: readonly { especie: EspecieCompra; segmento: "pedidos" | "compras"; recurso: "pedidos_compra" | "compras" }[] = [
   { especie: "pedido", segmento: "pedidos", recurso: "pedidos_compra" },
   { especie: "compra", segmento: "compras", recurso: "compras" },
 ];
 const recursoDa = (e: EspecieCompra) => ESPECIES.find((x) => x.especie === e)!.recurso;
 
 /** A família da espécie — perguntada ao registry. Fail-closed se o registry deixar de declará-la. */
-function familiaDaEspecie(especie: EspecieCompra): string {
+export function familiaDaEspecie(especie: EspecieCompra): string {
   const familia = familiaOperacionalDeDocumentoCompra(especie);
   if (!familia) throw new DomainError("TIPO_OPERACAO_INDISPONIVEL", "Tipo de operação indisponível para este lançamento", { especie });
   return familia;
@@ -105,8 +112,11 @@ function familiaDaEspecie(especie: EspecieCompra): string {
 // ─────────────── contrato de entrada (estrito) ───────────────
 
 const dec = z.union([z.number(), z.string()]).transform(String);
-const decNaoNegativo = dec.refine((v) => { try { return D(v).gte(0); } catch { return false; } }, "Informe um valor maior ou igual a zero");
-const decPositivo = dec.refine((v) => { try { return D(v).gt(0); } catch { return false; } }, "Informe uma quantidade maior que zero");
+/** As mensagens dos dois validadores de número do POST (EDITAR-02: a PATCH usa as MESMAS, em `decDaEdicao`). */
+const MSG_VALOR_NAO_NEGATIVO = "Informe um valor maior ou igual a zero";
+const MSG_QUANTIDADE_POSITIVA_DO_LANCAMENTO = "Informe uma quantidade maior que zero";
+const decNaoNegativo = dec.refine((v) => { try { return D(v).gte(0); } catch { return false; } }, MSG_VALOR_NAO_NEGATIVO);
+const decPositivo = dec.refine((v) => { try { return D(v).gt(0); } catch { return false; } }, MSG_QUANTIDADE_POSITIVA_DO_LANCAMENTO);
 const date = z.string().refine(isISODate, "Data inválida");
 /**
  * COMPRAS-03_R1 (c): TODO uuid dos corpos de compra (lançar pedido, lançar compra e, por derivação, receber) sai do
@@ -551,6 +561,12 @@ const recusaDoItem = (i: number, campo: string, message: string) => recusa(`iten
 const CAMPOS_FISCAIS_DO_CABECALHO = ["chave_acesso", "uf_nota", "tipo_documento_fiscal", "valor_ipi", "valor_icms_st", "seguro", "tipo_titulo_id", "classificacao_gasto", "rateio"] as const;
 const CAMPOS_FISCAIS_DO_ITEM = ["gera_estoque", "imobilizado", "categoria_financeira_id", "centro_custo_id", "valor_ipi", "valor_icms_st"] as const;
 export const MSG_PEDIDO_SEM_DADOS_FISCAIS = "O pedido de compra não tem dados fiscais: este campo é da compra";
+/** Os textos de hoje das recusas do pedido (EDITAR-02: a PATCH do pedido recusa as MESMAS chaves com o MESMO texto). */
+export const MSG_PEDIDO_SEM_NOTA = "O pedido de compra não tem nota nem entrada: este campo é da compra";
+export const MSG_PEDIDO_SEM_LOTE = "O pedido de compra não aceita lote: o lote é informado na compra";
+export const MSG_PEDIDO_SEM_VALIDADE = "O pedido de compra não aceita validade: a validade é informada na compra";
+/** Os campos da nota/entrada que o pedido não tem (a ordem da recusa de hoje). */
+const CAMPOS_DA_NOTA_DO_CABECALHO = ["numero_nota", "serie_nota", "data_entrada"] as const;
 
 /**
  * A espécie `pedido` não aceita o que é da nota/entrada: 422 no primeiro campo presente. OPERACOES-01 F7: nem os
@@ -558,11 +574,10 @@ export const MSG_PEDIDO_SEM_DADOS_FISCAIS = "O pedido de compra não tem dados f
  */
 function conferirCamposDaEspecie(especie: EspecieCompra, d: DocumentoCompraEntrada): void {
   if (especie !== "pedido") return;
-  const msg = "O pedido de compra não tem nota nem entrada: este campo é da compra";
-  for (const campo of ["numero_nota", "serie_nota", "data_entrada"] as const) if (d[campo]) throw recusa(campo, msg);
+  for (const campo of CAMPOS_DA_NOTA_DO_CABECALHO) if (d[campo]) throw recusa(campo, MSG_PEDIDO_SEM_NOTA);
   d.itens.forEach((it, i) => {
-    if (it.lote) throw recusaDoItem(i, "lote", "O pedido de compra não aceita lote: o lote é informado na compra");
-    if (it.validade) throw recusaDoItem(i, "validade", "O pedido de compra não aceita validade: a validade é informada na compra");
+    if (it.lote) throw recusaDoItem(i, "lote", MSG_PEDIDO_SEM_LOTE);
+    if (it.validade) throw recusaDoItem(i, "validade", MSG_PEDIDO_SEM_VALIDADE);
   });
   for (const campo of CAMPOS_FISCAIS_DO_CABECALHO) if (d[campo] != null) throw recusa(campo, MSG_PEDIDO_SEM_DADOS_FISCAIS);
   d.itens.forEach((it, i) => {
@@ -570,22 +585,32 @@ function conferirCamposDaEspecie(especie: EspecieCompra, d: DocumentoCompraEntra
   });
 }
 
+/**
+ * Quais parceiros conferir. O POST confere os três (`TODOS_OS_PARCEIROS`); a PATCH (EDITAR-02, decisão 313, D6) só o que
+ * ela TROCA — o gravado não é reconferido, senão a correção de uma observação seria recusada porque o fornecedor foi
+ * excluído depois do lançamento. As consultas e as recusas são as de hoje.
+ */
+export interface ParceirosAConferir { fornecedor: boolean; transportadora: boolean; formaPagamento: boolean }
+const TODOS_OS_PARCEIROS: ParceirosAConferir = { fornecedor: true, transportadora: true, formaPagamento: true };
+
 /** Fornecedor (`is_provider`) e transportadora (`is_transporter`) da organização, vivos. Mesma recusa para tudo. */
-async function conferirParceiros(ctx: ServiceCtx, d: DocumentoCompraEntrada): Promise<void> {
-  const f = await ctx.tx.query("select 1 from erp.people where id = $1 and organization_id = $2 and deleted_at is null and is_provider for share", [d.fornecedor_id, ctx.orgId]);
-  if (!f.rowCount) throw recusa("fornecedor_id", "Fornecedor inválido: escolha uma pessoa cadastrada como fornecedor");
-  if (d.transportadora_id) {
+async function conferirParceiros(ctx: ServiceCtx, d: DocumentoCompraEntrada, o: ParceirosAConferir = TODOS_OS_PARCEIROS): Promise<void> {
+  if (o.fornecedor) {
+    const f = await ctx.tx.query("select 1 from erp.people where id = $1 and organization_id = $2 and deleted_at is null and is_provider for share", [d.fornecedor_id, ctx.orgId]);
+    if (!f.rowCount) throw recusa("fornecedor_id", "Fornecedor inválido: escolha uma pessoa cadastrada como fornecedor");
+  }
+  if (o.transportadora && d.transportadora_id) {
     const tr = await ctx.tx.query("select 1 from erp.people where id = $1 and organization_id = $2 and deleted_at is null and is_transporter for share", [d.transportadora_id, ctx.orgId]);
     if (!tr.rowCount) throw recusa("transportadora_id", "Transportadora inválida: escolha uma pessoa cadastrada como transportadora");
   }
-  if (d.forma_pagamento_id) {
+  if (o.formaPagamento && d.forma_pagamento_id) {
     const pm = await ctx.tx.query("select 1 from erp.payment_methods where id = $1 and (organization_id = $2 or organization_id is null) and is_active", [d.forma_pagamento_id, ctx.orgId]);
     if (!pm.rowCount) throw recusa("forma_pagamento_id", "Forma de pagamento inválida");
   }
 }
 
 /** O que a política da versão congelada PREVÊ para a confirmação — cobrado já ao SALVAR (a confirmação confere de novo). */
-interface EfeitosPrevistos { entrada: boolean; titulo: boolean; exigeArmazem: boolean; exigeFormaPagamento: boolean; exigeVencimento: boolean }
+export interface EfeitosPrevistos { entrada: boolean; titulo: boolean; exigeArmazem: boolean; exigeFormaPagamento: boolean; exigeVencimento: boolean }
 
 async function efeitosPrevistosDaCompra(ctx: ServiceCtx, top: Pick<TopDoLancamento, "tipoOperacaoVersaoId" | "codigoBase">, execucaoConfiguradaHabilitada: boolean): Promise<EfeitosPrevistos> {
   const v = await ctx.tx.query<{ configuracao: unknown }>("select configuracao from erp.tipos_operacao_versoes where id = $1 and organization_id = $2", [top.tipoOperacaoVersaoId, ctx.orgId]);
@@ -606,7 +631,7 @@ async function efeitosPrevistosDaCompra(ctx: ServiceCtx, top: Pick<TopDoLancamen
 }
 
 /** O plano de parcelas que o documento GRAVA — do corpo, ou derivado da condição. É o que a confirmação lê. */
-type PlanoGravado = Record<string, unknown> & { first_due_date?: string };
+export type PlanoGravado = Record<string, unknown> & { first_due_date?: string };
 
 /**
  * COMPRA QUE VAI GERAR TÍTULO (política congelada prevê conta a pagar E valor_total > 0): natureza e centro
@@ -666,18 +691,25 @@ function conferirFormaDoDocumento(d: DocumentoCompraEntrada): void {
  * Itens: produto da organização; armazém da empresa do documento; lote só em produto que controla lote e
  * validade só em "lote e validade" (senão 422 no item); lote/validade obrigatórios quando o item vai dar entrada;
  * armazém obrigatório quando a política exige armazém.
+ *
+ * EDITAR-02 (decisão 313, D6): `indices` = só os itens (posições de `d.itens`) que a PATCH inclui ou cujo produto, local,
+ * lote, validade ou "gera estoque" ela troca — o item que não muda não é reconferido (um produto inativado depois do
+ * lançamento não recusa a correção de uma observação). Conjunto vazio = nenhuma consulta. Ausente = o POST (todos).
  */
-async function conferirItens(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, efeitos: EfeitosPrevistos | null): Promise<void> {
+async function conferirItens(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, efeitos: EfeitosPrevistos | null, indices?: ReadonlySet<number>): Promise<void> {
+  if (indices && indices.size === 0) return;
+  const alvo = indices ? d.itens.filter((_, i) => indices.has(i)) : d.itens;
   const produtos = await ctx.tx.query<{ id: string; control_stock: boolean; controle_lote: string }>(
     "select id, control_stock, controle_lote from erp.products where id = any($1::uuid[]) and organization_id = $2 and deleted_at is null",
-    [[...new Set(d.itens.map((i) => i.produto_id))], ctx.orgId]);
+    [[...new Set(alvo.map((i) => i.produto_id))], ctx.orgId]);
   const porProduto = new Map(produtos.rows.map((p) => [p.id, p]));
-  const armazensPedidos = [...new Set(d.itens.map((i) => i.armazem_id).filter((x): x is string => Boolean(x)))];
+  const armazensPedidos = [...new Set(alvo.map((i) => i.armazem_id).filter((x): x is string => Boolean(x)))];
   const armazens = armazensPedidos.length
     ? await ctx.tx.query<{ id: string }>("select id from erp.warehouses where id = any($1::uuid[]) and organization_id = $2 and empresa_id = $3 and deleted_at is null and is_active", [armazensPedidos, ctx.orgId, d.empresa_id])
     : { rows: [] as { id: string }[] };
   const armazemValido = new Set(armazens.rows.map((w) => w.id));
   d.itens.forEach((it, i) => {
+    if (indices && !indices.has(i)) return;
     const p = porProduto.get(it.produto_id);
     if (!p) throw recusaDoItem(i, "produto_id", "Produto inválido");
     if (it.armazem_id && !armazemValido.has(it.armazem_id)) throw recusaDoItem(i, "armazem_id", "Local de estoque inválido: escolha um local de estoque ativo da empresa do documento");
@@ -703,8 +735,14 @@ async function conferirItens(ctx: ServiceCtx, especie: EspecieCompra, d: Documen
  *  · com rateio, o cabeçalho não tem natureza nem centro (quem classifica é o rateio); por valor: soma EXATA de 100%,
  *    safra viva da organização; nos dois: natureza de DESPESA, natureza e centro analíticos e ativos, conta contábil da
  *    organização (`exigirRateioAnalitico`, a porta da casa), cada recusa no seu caminho.
+ *
+ * EDITAR-02 (decisão 313, D5) — `edicao`: a PATCH confere sobre o documento COMO FICARÁ, com o rateio GRAVADO (o tipo de
+ * título, o tipo do rateio e as linhas do rateio por valor são imutáveis desde a 0047 — a PATCH nem os aceita no corpo).
+ * As conferências puras do item rodam em todos os itens, como no POST; o tipo de título e as linhas do rateio por valor,
+ * que não mudam, não são reconferidos; no rateio por produto, a natureza e o centro só dos itens em
+ * `classificacaoDosItens` (os novos e os que a PATCH reclassifica). Ausente = o POST, exatamente como antes.
  */
-async function conferirDadosFiscais(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada): Promise<void> {
+async function conferirDadosFiscais(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, edicao?: { classificacaoDosItens: ReadonlySet<number> }): Promise<void> {
   if (especie !== "compra") return;
   const porProduto = d.rateio?.tipo === "por_produto";
   d.itens.forEach((it, i) => {
@@ -714,7 +752,7 @@ async function conferirDadosFiscais(ctx: ServiceCtx, especie: EspecieCompra, d: 
     if (cat !== null && !porProduto) throw recusaDoItem(i, "categoria_financeira_id", "Natureza por item só com rateio por produto");
     if (cat === null && porProduto) throw recusaDoItem(i, "categoria_financeira_id", "Com rateio por produto, informe a natureza e o centro de resultado de cada item");
   });
-  if (d.tipo_titulo_id) {
+  if (!edicao && d.tipo_titulo_id) {
     const tt = await ctx.tx.query("select 1 from erp.title_types where id = $1 and (organization_id is null or organization_id = $2)", [d.tipo_titulo_id, ctx.orgId]);
     if (!tt.rowCount) throw recusa("tipo_titulo_id", "Tipo de título inválido");
   }
@@ -723,9 +761,12 @@ async function conferirDadosFiscais(ctx: ServiceCtx, especie: EspecieCompra, d: 
   if (d.categoria_financeira_id || d.centro_custo_id) {
     throw recusa(d.categoria_financeira_id ? "categoria_financeira_id" : "centro_custo_id", "Com rateio, a natureza e o centro ficam nas linhas do rateio");
   }
+  // EDITAR-02: as linhas do rateio por valor são as gravadas (imutáveis); no rateio por produto, só os itens reclassificados.
+  if (edicao && (d.rateio.tipo === "por_valor" || edicao.classificacaoDosItens.size === 0)) return;
+  const itensDaClassificacao = edicao ? d.itens.filter((_, i) => edicao.classificacaoDosItens.has(i)) : d.itens;
   const linhas = d.rateio.tipo === "por_valor"
     ? d.rateio.linhas.map((l) => ({ financialCategoryId: l.categoria_financeira_id, costCenterId: l.centro_custo_id, chartAccountId: l.conta_contabil_id ?? null }))
-    : d.itens.map((it) => ({ financialCategoryId: it.categoria_financeira_id!, costCenterId: it.centro_custo_id!, chartAccountId: null }));
+    : itensDaClassificacao.map((it) => ({ financialCategoryId: it.categoria_financeira_id!, costCenterId: it.centro_custo_id!, chartAccountId: null }));
   const caminho = d.rateio.tipo === "por_valor" ? "rateio.linhas" : "itens";
   if (d.rateio.tipo === "por_valor") {
     const soma = d.rateio.linhas.reduce((a, l) => a.plus(D(l.percentual)), D(0));
@@ -752,8 +793,12 @@ async function conferirDadosFiscais(ctx: ServiceCtx, especie: EspecieCompra, d: 
   }
 }
 
-/** Regras da operação (formato 3): exigências gerais com o mapa da compra e condição permitida. Sem "cliente em atraso". */
-async function cobrarRegrasDaCompra(ctx: ServiceCtx, top: TopDoLancamento, d: DocumentoCompraEntrada): Promise<void> {
+/**
+ * Regras da operação (formato 3): exigências gerais com o mapa da compra e condição permitida. Sem "cliente em atraso".
+ * EDITAR-02 (decisão 313, D6): a PATCH confere a condição permitida SÓ quando a troca (`conferirCondicao`, a régua da 272
+ * em `cobrarRegrasDaOperacao` de vendas); as exigências gerais, sempre, sobre o documento como ficará. O POST: as duas.
+ */
+async function cobrarRegrasDaCompra(ctx: ServiceCtx, top: TopDoLancamento, d: DocumentoCompraEntrada, o: { conferirCondicao: boolean } = { conferirCondicao: true }): Promise<void> {
   const regras = await regrasDaVersaoTop(ctx, top.tipoOperacaoVersaoId);
   if (!regras) return;
   const faltando = exigenciasGeraisFaltando(regras.config, d, EXIGENCIAS_GERAIS_COMPRA_TOP);
@@ -761,7 +806,7 @@ async function cobrarRegrasDaCompra(ctx: ServiceCtx, top: TopDoLancamento, d: Do
     throw new DomainError(ERRO_EXIGENCIA_NAO_ATENDIDA, MENSAGEM_EXIGENCIA_NAO_ATENDIDA,
       { exigencias: faltando.map((x) => ({ caminho: x.caminho, mensagem: `${x.rotulo} é obrigatório nesta operação.` })) });
   }
-  if (d.condicao_pagamento_id && regras.condicoesPermitidas && !regras.condicoesPermitidas.includes(d.condicao_pagamento_id)) {
+  if (o.conferirCondicao && d.condicao_pagamento_id && regras.condicoesPermitidas && !regras.condicoesPermitidas.includes(d.condicao_pagamento_id)) {
     throw new DomainError(ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA, MENSAGEM_CONDICAO_NAO_PERMITIDA, { campo: "condicao_pagamento_id" });
   }
 }
@@ -833,7 +878,7 @@ export interface OrigemDoLancamento { documentoId: string; itemOrigemIds: readon
  * A nota já está numa Compra que o usuário NÃO vê (outra empresa): a conferência sob RLS não a achou e o índice
  * único recusa. 409 DUPLICATE_DOCUMENT SEM dizer onde — dizer seria revelar o documento fora do escopo.
  */
-function recusaDaNotaInvisivel(e: unknown): never {
+export function recusaDaNotaInvisivel(e: unknown): never {
   const pe = e as { code?: string; constraint?: string };
   // OPERACOES-01 F7: também a CHAVE DE ACESSO numa compra que o usuário não vê (`ux_documentos_compra_chave`, 0047).
   if (pe.code === "23505" && (pe.constraint === "ux_documentos_compra_nota" || pe.constraint === "ux_documentos_compra_chave")) {
@@ -859,9 +904,145 @@ function recusaDaNotaInvisivel(e: unknown): never {
 async function topQueAceitaSemItens(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada): Promise<TopDoLancamento> {
   if (especie !== "compra") throw recusaDosItensVazios();
   const top = await resolverTopParaLancamento(ctx, familiaDaEspecie(especie), d.tipo_operacao_id);
-  const r = regrasGeraisDaVersaoTop(await lerVersaoCongeladaTop(ctx, top.tipoOperacaoVersaoId));
-  if (!r.ok || !r.regras.aceitaSemItens) throw recusaDosItensVazios();
+  await exigirVersaoQueAceitaSemItens(ctx, especie, top.tipoOperacaoVersaoId);
   return top;
+}
+
+/**
+ * A REGRA DOS ITENS VAZIOS pela VERSÃO dada (a que o lançamento congela; na PATCH, a congelada do documento — EDITAR-02,
+ * decisão 313). Pedido, formato 1 a 3, "Proibido" ou configuração ilegível → a recusa de HOJE, a do esquema estrito.
+ * Extraída de `topQueAceitaSemItens` sem mudar nada dela (a mesma leitura, a mesma recusa, a mesma ordem).
+ */
+export async function exigirVersaoQueAceitaSemItens(ctx: ServiceCtx, especie: EspecieCompra, versaoId: string): Promise<void> {
+  if (especie !== "compra") throw recusaDosItensVazios();
+  const r = regrasGeraisDaVersaoTop(await lerVersaoCongeladaTop(ctx, versaoId));
+  if (!r.ok || !r.regras.aceitaSemItens) throw recusaDosItensVazios();
+}
+
+/** As duplicatas da nota como o lançamento as grava (`parcelas_nota`, OPERACOES-01 F7). */
+export interface ParcelaDaNotaGravada { numero: string; vencimento: string; valor: string }
+
+/**
+ * EDITAR-02 (decisão 313, D6) — O QUE A PATCH MUDA NO NÚCLEO: a régua da 272 "conferir só o que a PATCH troca". Cada
+ * campo diz o que NÃO é reconferido porque não muda; o resto (exigências da versão congelada, efeitos previstos, totais,
+ * plano, padrões financeiros da TOP, exigências do título e layout) é conferido SEMPRE, sobre o documento como ficará.
+ */
+export interface EdicaoNoNucleo {
+  /** O documento editado: a nota duplicada não o conta contra si (`excluirDocumentoId`). */
+  documentoId: string;
+  /** Os parceiros que a PATCH troca (`conferirParceiros` só deles). */
+  parceiros: ParceirosAConferir;
+  /** A classificação: trocou (o par como ficará, pela régua do POST) ou a GRAVADA (não revalidada). */
+  classificacao: { trocou: true } | { trocou: false; gravada: ClassificacaoFinanceira | null };
+  /** A condição: trocou (validada e conferida contra a versão) ou a GRAVADA (lida só para derivar o plano). */
+  condicao: { trocou: true } | { trocou: false; gravada: CondicaoDoDocumento | null };
+  /** Os itens (posições) novos ou com produto, local, lote, validade ou "gera estoque" trocados (`conferirItens`). */
+  itensAConferir: ReadonlySet<number>;
+  /** Os itens novos ou com natureza/centro trocados (o rateio por produto, `conferirDadosFiscais`). */
+  classificacaoDosItens: ReadonlySet<number>;
+  /** Fornecedor, número ou série da nota mudam: a nota duplicada é reconferida. */
+  notaDuplicada: boolean;
+  /** Logo depois de calcular os totais: o que não cabe na coluna (422 no campo, nunca o 500 do banco). */
+  conferirTotais: (totais: { valorItens: string; total: string }, itensTotais: readonly string[]) => void;
+  /** A regra do plano da PATCH (o plano gravado a MANTER), ou `null` para a conta do POST. */
+  planoMantido: (total: string) => { plano: PlanoGravado | null; ajustadas: boolean } | null;
+}
+
+/** O que o núcleo decide — o que o POST e a PATCH gravam. */
+export interface ResultadoDoNucleo {
+  top: TopDoLancamento;
+  classificacao: ClassificacaoFinanceira | null;
+  condicao: CondicaoDoDocumento | null;
+  totais: { valorItens: string; total: string };
+  /** O total de cada `d.itens[i]` (a conta do domínio), na ordem. */
+  itensTotais: string[];
+  parcelasNota: ParcelaDaNotaGravada[] | null;
+  plano: PlanoGravado | null;
+  parcelasAjustadas: boolean;
+  dataVencimento: string | null;
+}
+
+/**
+ * EDITAR-02 (decisão 313, D6) — O NÚCLEO DO LANÇAMENTO: as conferências, os totais e o plano, EXTRAÍDOS de `lancarComTop`
+ * sem mudar a ordem, o código nem a mensagem de nenhuma recusa. O POST da espécie, o RECEBIMENTO (pela mesma `lancar`) e a
+ * importação do XML chamam sem `edicao` — o de hoje, linha a linha. A PATCH do documento salvo (`compras-edicao.ts`) chama
+ * com o documento COMO FICARÁ (o gravado + o que muda), a TOP e a versão GRAVADAS (`top`, nunca a atual resolvida de novo)
+ * e o que não muda em `edicao`. Não há regra de lançamento fora daqui: uma segunda cópia "equivalente" para a edição
+ * divergiria na primeira fatia que mexesse numa das duas.
+ *
+ * ORDEM (a de hoje): campos da espécie → forma → a TOP → parceiros → classificação → condição → regras da versão
+ * (exigências gerais e condição permitida) → efeitos previstos → itens → dados fiscais → totais → duplicatas da nota →
+ * plano → padrões financeiros da TOP (decisão 311/286) → exigências do título → nota duplicada → chave de acesso → layout.
+ */
+export async function nucleoDoLancamento(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, execucaoConfiguradaHabilitada: boolean,
+  o: { top: () => Promise<TopDoLancamento>; parcelasNota: readonly ParcelaDaNotaGravada[] | null; edicao?: EdicaoNoNucleo }): Promise<ResultadoDoNucleo> {
+  const e = o.edicao;
+  conferirCamposDaEspecie(especie, d);
+  conferirFormaDoDocumento(d);
+  const familia = familiaDaEspecie(especie);
+  const top = await o.top();
+  await conferirParceiros(ctx, d, e?.parceiros);
+  const classificacao = !e || e.classificacao.trocou ? await classificacaoDaCompra(ctx, d) : e.classificacao.gravada;
+  const condicao = !e || e.condicao.trocou
+    ? (d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null)
+    : e.condicao.gravada;
+  await cobrarRegrasDaCompra(ctx, top, d, { conferirCondicao: !e || e.condicao.trocou });
+  const efeitos = especie === "compra" ? await efeitosPrevistosDaCompra(ctx, top, execucaoConfiguradaHabilitada) : null;
+  await conferirItens(ctx, especie, d, efeitos, e?.itensAConferir);
+  await conferirDadosFiscais(ctx, especie, d, e ? { classificacaoDosItens: e.classificacaoDosItens } : undefined);
+
+  // Totais SEMPRE no servidor: itens − descontos + frete + outras − desconto (+ IPI + ICMS-ST + seguro, OPERACOES-01 F7:
+  // a conta do domínio, a MESMA do CHECK da 0047; sem os três, é o total de hoje).
+  const itensCalculo = d.itens.map((i) => ({ quantity: i.quantidade, unitPrice: i.valor_unitario, discount: i.desconto, discountPercent: i.desconto_percentual }));
+  const totais = totaisDaCompra(d.itens.map((i) => ({ quantidade: i.quantidade, valorUnitario: i.valor_unitario, desconto: i.desconto, descontoPercentual: i.desconto_percentual })),
+    { frete: d.frete, outras: d.outras_despesas, desconto: d.desconto, ipi: d.valor_ipi ?? "0", icmsSt: d.valor_icms_st ?? "0", seguro: d.seguro ?? "0" });
+  const itensTotais = itensCalculo.map((i) => itemTotal(i));
+  // EDITAR-02: só a PATCH — o total que não cabe na coluna é 422 no campo (o POST continua com o débito de hoje).
+  e?.conferirTotais(totais, itensTotais);
+  // OPERACOES-01 F7: as duplicatas da nota importada substituem o plano (e a condição não gera um): a soma é o total.
+  const parcelasNota = o.parcelasNota?.length ? o.parcelasNota.map((p) => ({ numero: p.numero, vencimento: p.vencimento, valor: money(p.valor) })) : null;
+  if (parcelasNota && !parcelasNota.reduce((a, p) => a.plus(D(p.valor)), D(0)).eq(D(totais.total))) {
+    throw recusa("financeiro.parcelas", "As parcelas da nota não fecham o total da compra");
+  }
+  // O plano GRAVADO sai ANTES da conferência das exigências do título (item 0 da COMPRAS-02): a exigência de
+  // vencimento confere o primeiro vencimento deste plano — o que a confirmação vai ler do banco.
+  // EDITAR-02: a PATCH que não troca plano, condição nem (no plano derivado) data e total MANTÉM o plano gravado.
+  const mantido = e?.planoMantido(totais.total) ?? null;
+  const plano: PlanoGravado | null = mantido ? mantido.plano : parcelasNota ? null : d.plano_parcelas ? { ...d.plano_parcelas }
+    : condicao ? { ...planoDaCondicao(condicao, { dataDocumento: d.data_documento, total: totais.total }) } : null;
+  const dataVencimento = parcelasNota ? parcelasNota[0]!.vencimento : d.data_vencimento ?? null;
+  // OPERACOES-01 F9b (decisão 286): os padrões financeiros da TOP (formato 5) no SALVAR — a troca proibida e a
+  // classificação que a provisão do pedido exige são recusadas aqui, antes do número. Sem TOP no 5 com padrões ou
+  // provisão, nada muda (sem consulta quando a compra não gera título; o pedido é conferido com qualquer total).
+  // EDITAR-02 (decisão 313): a lib supunha que "a compra e o pedido não se editam"; a PATCH passa por aqui SEMPRE, sobre
+  // o documento como ficará, pela versão congelada — sem isso a troca proibida só apareceria na confirmação.
+  const { classificacaoDaTop } = await padroesDaTopNoSalvarDaCompra(ctx, {
+    especie, versaoId: top.tipoOperacaoVersaoId,
+    geraTitulo: especie === "compra" && Boolean(efeitos?.titulo) && D(totais.total).gt(0),
+    documento: { naturezaId: classificacao?.categoriaFinanceiraId ?? null, centroCustoId: classificacao?.centroCustoId ?? null,
+      formaPagamentoId: d.forma_pagamento_id ?? null,
+      // LANCAMENTO-01 R2: o tipo de título também é conferido na troca proibida (o pedido não o carrega: sempre nulo).
+      tipoTituloId: d.tipo_titulo_id ?? null },
+  });
+  if (efeitos) conferirExigenciasDoTitulo({ ...d, data_vencimento: dataVencimento }, efeitos, totais.total, plano, { classificacaoDaTop, comRateio: Boolean(d.rateio) });
+
+  // EDITAR-02: na PATCH, só quando fornecedor, número ou série mudam — e sem contar o próprio documento.
+  if (especie === "compra" && d.numero_nota && (!e || e.notaDuplicada)) {
+    await conferirNotaDuplicada(ctx, { fornecedorId: d.fornecedor_id, numero: d.numero_nota, serie: d.serie_nota, excluirDocumentoId: e?.documentoId ?? null });
+  }
+  // OPERACOES-01 F7: a CHAVE, depois do número/série — trava a chave (a mesma trava dos gatilhos da 0047) e diz onde
+  // a nota está quando a pessoa a enxerga; o banco recusa o resto. EDITAR-02: a chave não muda depois do lançamento
+  // (0047), então a PATCH não a reconfere.
+  if (!e && especie === "compra" && d.chave_acesso) await conferirChaveDeAcessoLivre(ctx, d.chave_acesso);
+
+  // COMPRAS-03: o layout da TOP, por último entre as recusas e antes do número — vale para o POST das duas espécies,
+  // para o RECEBIMENTO (que chega aqui com a TOP de destino) e, desde a EDITAR-02, para a PATCH (o layout de HOJE da
+  // TOP do documento, sobre o documento como ficará).
+  await cobrarLayoutDaCompra(ctx, familia, top, d);
+
+  // Derivado no servidor, como na venda: plano próprio sobre uma condição = parcelas ajustadas.
+  const parcelasAjustadas = mantido ? mantido.ajustadas : Boolean(d.plano_parcelas) && condicao !== null;
+  return { top, classificacao, condicao, totais, itensTotais, parcelasNota, plano, parcelasAjustadas, dataVencimento };
 }
 
 /**
@@ -872,6 +1053,8 @@ async function topQueAceitaSemItens(ctx: ServiceCtx, especie: EspecieCompra, d: 
  * TOP-CONFIG-08: devolve o corpo de HOJE, chave por chave (é o que o recebimento espalha na resposta dele). O POST
  * chama `lancarComTop`, que devolve também a TOP congelada, para decidir a confirmação automática sem reler o
  * documento. A confirmação NUNCA mora aqui dentro: ela é o fim de cada caminho que grava, e este serve aos dois.
+ *
+ * EDITAR-02 (decisão 313): as conferências, os totais e o plano moram em `nucleoDoLancamento`, o MESMO da PATCH.
  */
 export async function lancar(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, execucaoConfiguradaHabilitada: boolean, origem?: OrigemDoLancamento, extras?: ExtrasDaNotaImportada) {
   return (await lancarComTop(ctx, especie, d, execucaoConfiguradaHabilitada, origem, extras)).documento;
@@ -890,57 +1073,11 @@ async function lancarComTop(ctx: ServiceCtx, especie: EspecieCompra, d: Document
   }
   // TOP-CONFIG-08: itens vazios → a TOP e a regra dela ANTES de qualquer outra conferência (ver `topQueAceitaSemItens`).
   const topDoSemItens = d.itens.length === 0 ? await topQueAceitaSemItens(ctx, especie, d) : null;
-  conferirCamposDaEspecie(especie, d);
-  conferirFormaDoDocumento(d);
-  const familia = familiaDaEspecie(especie);
-  const top = topDoSemItens ?? await resolverTopParaLancamento(ctx, familia, d.tipo_operacao_id);
-  await conferirParceiros(ctx, d);
-  const classificacao = await classificacaoDaCompra(ctx, d);
-  const condicao = d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null;
-  await cobrarRegrasDaCompra(ctx, top, d);
-  const efeitos = especie === "compra" ? await efeitosPrevistosDaCompra(ctx, top, execucaoConfiguradaHabilitada) : null;
-  await conferirItens(ctx, especie, d, efeitos);
-  await conferirDadosFiscais(ctx, especie, d);
-
-  // Totais SEMPRE no servidor: itens − descontos + frete + outras − desconto (+ IPI + ICMS-ST + seguro, OPERACOES-01 F7:
-  // a conta do domínio, a MESMA do CHECK da 0047; sem os três, é o total de hoje).
-  const itensCalculo = d.itens.map((i) => ({ quantity: i.quantidade, unitPrice: i.valor_unitario, discount: i.desconto, discountPercent: i.desconto_percentual }));
-  const totais = totaisDaCompra(d.itens.map((i) => ({ quantidade: i.quantidade, valorUnitario: i.valor_unitario, desconto: i.desconto, descontoPercentual: i.desconto_percentual })),
-    { frete: d.frete, outras: d.outras_despesas, desconto: d.desconto, ipi: d.valor_ipi ?? "0", icmsSt: d.valor_icms_st ?? "0", seguro: d.seguro ?? "0" });
-  // OPERACOES-01 F7: as duplicatas da nota importada substituem o plano (e a condição não gera um): a soma é o total.
-  const parcelasNota = extras?.parcelasNota?.length ? extras.parcelasNota.map((p) => ({ numero: p.numero, vencimento: p.vencimento, valor: money(p.valor) })) : null;
-  if (parcelasNota && !parcelasNota.reduce((a, p) => a.plus(D(p.valor)), D(0)).eq(D(totais.total))) {
-    throw recusa("financeiro.parcelas", "As parcelas da nota não fecham o total da compra");
-  }
-  // O plano GRAVADO sai ANTES da conferência das exigências do título (item 0 da COMPRAS-02): a exigência de
-  // vencimento confere o primeiro vencimento deste plano — o que a confirmação vai ler do banco.
-  const plano: PlanoGravado | null = parcelasNota ? null : d.plano_parcelas ? { ...d.plano_parcelas }
-    : condicao ? { ...planoDaCondicao(condicao, { dataDocumento: d.data_documento, total: totais.total }) } : null;
-  const dataVencimento = parcelasNota ? parcelasNota[0]!.vencimento : d.data_vencimento ?? null;
-  // OPERACOES-01 F9b (decisão 286): os padrões financeiros da TOP (formato 5) no SALVAR — a compra e o pedido não se editam:
-  // a troca proibida e a classificação que a provisão do pedido exige são recusadas aqui, antes do número. Sem TOP no 5 com
-  // padrões ou provisão, nada muda (sem consulta quando a compra não gera título; o pedido é conferido com qualquer total).
-  const { classificacaoDaTop } = await padroesDaTopNoSalvarDaCompra(ctx, {
-    especie, versaoId: top.tipoOperacaoVersaoId,
-    geraTitulo: especie === "compra" && Boolean(efeitos?.titulo) && D(totais.total).gt(0),
-    documento: { naturezaId: classificacao?.categoriaFinanceiraId ?? null, centroCustoId: classificacao?.centroCustoId ?? null,
-      formaPagamentoId: d.forma_pagamento_id ?? null,
-      // LANCAMENTO-01 R2: o tipo de título também é conferido na troca proibida (o pedido não o carrega: sempre nulo).
-      tipoTituloId: d.tipo_titulo_id ?? null },
+  const { top, classificacao, condicao, totais, itensTotais, parcelasNota, plano, parcelasAjustadas, dataVencimento } = await nucleoDoLancamento(ctx, especie, d, execucaoConfiguradaHabilitada, {
+    // A TOP no MESMO ponto de hoje (depois da forma): a do sem itens, ou a da família, versão ATUAL, `for share`.
+    top: async () => topDoSemItens ?? await resolverTopParaLancamento(ctx, familiaDaEspecie(especie), d.tipo_operacao_id),
+    parcelasNota: extras?.parcelasNota ?? null,
   });
-  if (efeitos) conferirExigenciasDoTitulo({ ...d, data_vencimento: dataVencimento }, efeitos, totais.total, plano, { classificacaoDaTop, comRateio: Boolean(d.rateio) });
-
-  if (especie === "compra" && d.numero_nota) await conferirNotaDuplicada(ctx, { fornecedorId: d.fornecedor_id, numero: d.numero_nota, serie: d.serie_nota, excluirDocumentoId: null });
-  // OPERACOES-01 F7: a CHAVE, depois do número/série — trava a chave (a mesma trava dos gatilhos da 0047) e diz onde
-  // a nota está quando a pessoa a enxerga; o banco recusa o resto.
-  if (especie === "compra" && d.chave_acesso) await conferirChaveDeAcessoLivre(ctx, d.chave_acesso);
-
-  // COMPRAS-03: o layout da TOP, por último entre as recusas e antes do número — vale para o POST das duas espécies
-  // e para o RECEBIMENTO (que chega aqui com a TOP de destino).
-  await cobrarLayoutDaCompra(ctx, familia, top, d);
-
-  // Derivado no servidor, como na venda: plano próprio sobre uma condição = parcelas ajustadas.
-  const parcelasAjustadas = Boolean(d.plano_parcelas) && condicao !== null;
 
   const codigo = await nextCode(ctx.tx, ctx.orgId, `compras_${especie}`);
   const valores = [ctx.orgId, d.empresa_id, especie, codigo, top.tipoOperacaoId, top.tipoOperacaoVersaoId,
@@ -968,7 +1105,7 @@ async function lancarComTop(ctx: ServiceCtx, especie: EspecieCompra, d: Document
     await ctx.tx.query(
       `insert into erp.documentos_compra_itens (${COLUNAS_ITEM.join(", ")}) values (${marcadores(COLUNAS_ITEM.length)})`,
       [ctx.orgId, id, it.produto_id, it.armazem_id ?? null, it.quantidade, it.valor_unitario, money(it.desconto), it.desconto_percentual,
-        itemTotal(itensCalculo[i]!), it.lote, it.validade ?? null, it.observacao, i, origem?.itemOrigemIds[i] ?? null,
+        itensTotais[i]!, it.lote, it.validade ?? null, it.observacao, i, origem?.itemOrigemIds[i] ?? null,
         it.gera_estoque ?? null, it.imobilizado ?? null, it.categoria_financeira_id ?? null, it.centro_custo_id ?? null,
         it.valor_ipi != null ? money(it.valor_ipi) : null, it.valor_icms_st != null ? money(it.valor_icms_st) : null,
         daNota?.nItemNota ?? null, daNota?.codigoProdutoNota ?? null, daNota?.descricaoProdutoNota ?? null, daNota?.unidadeNota ?? null,
@@ -992,6 +1129,162 @@ async function lancarComTop(ctx: ServiceCtx, especie: EspecieCompra, d: Document
       ...(extras?.solicitacaoCompraId ? { solicitacaoCompraId: extras.solicitacaoCompraId } : {}) });
   return { documento: { id, codigo, especie, situacao: "aberto", valor_itens: totais.valorItens, valor_total: totais.total }, top };
 }
+
+// ─────────────── as regras da operação (lançamento e edição) ───────────────
+
+/** As duas chaves do processo que a resposta das regras lê (a configuração da instância, nunca o cliente). */
+export interface ConfiguracaoDasRegrasDaCompra { execucaoConfiguradaHabilitada: boolean; localDoProdutoNaLinha: boolean }
+
+/**
+ * EDITAR-02 (decisão 313, D10) — A MONTAGEM DA RESPOSTA DE `regras-da-operacao` DE COMPRAS, extraída da rota sem mudar
+ * nada dela (as mesmas consultas, na mesma ordem, e as mesmas chaves, na mesma ordem), para UM dono servir às DUAS portas:
+ *   `GET <base>/regras-da-operacao?tipo_operacao_id=` → a versão ATUAL capturada pela rota (o lançamento);
+ *   `GET <base>/:id/edicao`                             → a versão CONGELADA do documento salvo (a que a PATCH cobra).
+ * A pergunta (qual versão) é de cada porta; a FORMA é esta, e só esta — o molde de `respostaDasRegrasDaOperacao` de
+ * vendas (272 item 4): duas montagens acabariam divergindo em silêncio. O comentário da rota diz o porquê de cada chave.
+ */
+export async function respostaDasRegrasDaCompra(ctx: ServiceCtx, especie: EspecieCompra, familia: string, versaoId: string, config: ConfiguracaoDasRegrasDaCompra) {
+  const { formato, regras, regrasGerais } = await regrasDaVersaoCongelada(ctx, versaoId);
+  // A versão gera contas a pagar? (a tela marca natureza/centro como obrigatórios). Pedido nunca gera.
+  const efeitos = especie === "compra"
+    ? await efeitosPrevistosDaCompra(ctx, { tipoOperacaoVersaoId: versaoId, codigoBase: familia }, config.execucaoConfiguradaHabilitada)
+    : null;
+  // LANCAMENTO-01: a seção e os padrões da versão, só DEPOIS da 404 de quem chama (ver o comentário da rota).
+  const fin = await padroesDaTopParaExecucao(ctx, versaoId);
+  const p = fin.padroes;
+  return {
+    contractVersion: 1,
+    formato,
+    exigencias: regras ? camposExigidosTop(regras.config, EXIGENCIAS_GERAIS_COMPRA_TOP) : [],
+    condicoesPermitidas: regras?.condicoesPermitidas ?? null,
+    geraTitulos: efeitos?.titulo ?? false,
+    exigeFormaPagamento: efeitos?.exigeFormaPagamento ?? false,
+    exigeVencimento: efeitos?.exigeVencimento ?? false,
+    exigeArmazem: efeitos?.exigeArmazem ?? false,
+    secao: { provisao: fin.secao.provisao, documentoTroca: fin.secao.documentoTroca, semClassificacao: fin.secao.semClassificacao },
+    padroes: p ? { natureza: p.natureza, centro: p.centro, tipoTitulo: p.tipoTitulo, formaPagamento: p.formaPagamento, conta: p.conta } : null,
+    // R2: a capacidade do local padrão do produto na linha nova (a chave do processo; desligada é o padrão).
+    localDoProdutoNaLinha: config.localDoProdutoNaLinha,
+    regrasGerais: regrasGeraisDaVariante(regrasGerais, especie === "compra"),
+  };
+}
+export type RegrasDaOperacaoDaCompra = Awaited<ReturnType<typeof respostaDasRegrasDaCompra>>;
+
+// ─────────────── EDITAR-02 (decisão 313): o contrato da PATCH ───────────────
+
+/**
+ * O NÚMERO DA PATCH: o MESMO `dec` do POST, com a FORMA canônica e o LIMITE DA COLUNA conferidos (`recusaDoNumero`, a régua
+ * da 272) ANTES de ler qualquer registro — e, passando dos dois, o sinal com o texto de HOJE do POST (os validadores
+ * `decPositivo`/`decNaoNegativo`). Uma recusa por campo, nunca duas. O limite é só dígitos e casas: o sinal é do POST.
+ */
+type SinalDoNumero = "positivo" | "naoNegativo";
+const decDaEdicao = (limite: LimiteDoNumero, sinal: SinalDoNumero) => dec.superRefine((v, c) => {
+  const forma = recusaDoNumero(v, { inteiros: limite.inteiros, decimais: limite.decimais });
+  if (forma) { c.addIssue({ code: "custom", message: forma }); return; }
+  if (sinal === "positivo" && !D(v).gt(0)) c.addIssue({ code: "custom", message: MSG_QUANTIDADE_POSITIVA_DO_LANCAMENTO });
+  if (sinal === "naoNegativo" && D(v).lt(0)) c.addIssue({ code: "custom", message: MSG_VALOR_NAO_NEGATIVO });
+});
+const dinheiroDaEdicao = decDaEdicao(LIMITES_DA_EDICAO.dinheiro, "naoNegativo");
+const campoDoItem = itemSchema.shape;
+const campoDoDocumento = documentoSchema.shape;
+
+/**
+ * O ITEM DA PATCH: com `id` é um item DESTE documento (campo ausente = o gravado); sem `id` é novo e exige produto,
+ * quantidade e valor unitário (conferido na forma, `lerPedidoDaEdicaoDeCompra`). Os MESMOS nomes e validadores do item
+ * do POST, SEM `default` (ausente quer dizer "fica o gravado", e o padrão "0" do POST zeraria o desconto em silêncio) e
+ * com `.optional()` por fora do texto (o `textoOpcional` do POST transforma o AUSENTE em `null`, que na PATCH seria
+ * "limpar"). `.strict()`: chave desconhecida é 422.
+ */
+const itemDaEdicaoSchema = z.object({
+  id: uuid.optional(),
+  produto_id: campoDoItem.produto_id.optional(),
+  armazem_id: campoDoItem.armazem_id,
+  quantidade: decDaEdicao(LIMITES_DA_EDICAO.quantidade, "positivo").optional(),
+  valor_unitario: decDaEdicao(LIMITES_DA_EDICAO.preco, "naoNegativo").optional(),
+  desconto: dinheiroDaEdicao.optional(),
+  desconto_percentual: decDaEdicao(LIMITES_DA_EDICAO.percentual, "naoNegativo").optional(),
+  lote: campoDoItem.lote.optional(),
+  validade: campoDoItem.validade,
+  observacao: campoDoItem.observacao.optional(),
+  gera_estoque: campoDoItem.gera_estoque,
+  imobilizado: campoDoItem.imobilizado,
+  categoria_financeira_id: campoDoItem.categoria_financeira_id,
+  centro_custo_id: campoDoItem.centro_custo_id,
+  valor_ipi: dinheiroDaEdicao.nullish(),
+  valor_icms_st: dinheiroDaEdicao.nullish(),
+}).strict();
+
+/** O plano da PATCH é ESTRITO nas chaves e nos valores (o molde da 272): a entrada é dinheiro canônico. */
+const planoDaEdicaoSchema = installmentPlanSchema.extend({ down_payment_value: dinheiroDaEdicao.optional() }).strict();
+
+/**
+ * O CABEÇALHO DA PATCH: os campos do POST MENOS os imutáveis (empresa, TOP e versão congelada, espécie, dados fiscais do
+ * cabeçalho — recusas próprias, `CONTRATO_DA_EDICAO`). Sem `default`; `null` só onde o POST aceita. `itens` sem mínimo:
+ * quem decide a lista é o documento (item salvo não sai — decisão do dono P1; a compra sem itens do formato 4 continua
+ * sem itens). A nota e a entrada são só da compra.
+ */
+const camposDaEdicao = {
+  fornecedor_id: campoDoDocumento.fornecedor_id.optional(),
+  transportadora_id: campoDoDocumento.transportadora_id,
+  data_documento: campoDoDocumento.data_documento.optional(),
+  data_vencimento: campoDoDocumento.data_vencimento,
+  categoria_financeira_id: campoDoDocumento.categoria_financeira_id,
+  centro_custo_id: campoDoDocumento.centro_custo_id,
+  condicao_pagamento_id: campoDoDocumento.condicao_pagamento_id,
+  plano_parcelas: planoDaEdicaoSchema.nullish(),
+  forma_pagamento_id: campoDoDocumento.forma_pagamento_id,
+  frete: dinheiroDaEdicao.optional(),
+  outras_despesas: dinheiroDaEdicao.optional(),
+  desconto: dinheiroDaEdicao.optional(),
+  observacao: campoDoDocumento.observacao.optional(),
+  itens: z.array(itemDaEdicaoSchema).optional(),
+};
+const edicaoDoPedidoSchema = z.object(camposDaEdicao).strict() satisfies z.ZodType<CamposDaEdicaoDeCompra>;
+const edicaoDaCompraSchema = z.object({
+  ...camposDaEdicao,
+  data_entrada: campoDoDocumento.data_entrada,
+  numero_nota: campoDoDocumento.numero_nota.optional(),
+  serie_nota: campoDoDocumento.serie_nota.optional(),
+}).strict() satisfies z.ZodType<CamposDaEdicaoDeCompra>;
+
+/** As recusas próprias de chave de toda PATCH (422 no campo, JUNTAS — a 272): o que a edição não troca nunca. */
+const RECUSAS_DE_IDENTIDADE: Readonly<Record<string, string>> = {
+  empresa_id: MSG_EDICAO_EMPRESA,
+  tipo_operacao_id: MSG_EDICAO_TROCA_DE_OPERACAO,
+  tipo_operacao_versao_id: MSG_EDICAO_TROCA_DE_OPERACAO,
+  especie: MSG_EDICAO_ESPECIE,
+};
+
+/**
+ * O CONTRATO DA PATCH POR ESPÉCIE (lido pela forma, `lerPedidoDaEdicaoDeCompra`):
+ *   · compra → os dados fiscais do CABEÇALHO são imutáveis desde a 0047 (`documentos_compra_nota_guarda`): recusa
+ *     própria, "Os dados fiscais da compra não mudam depois do lançamento." (D5);
+ *   · pedido → a nota, a entrada e os dados fiscais (do cabeçalho e do item), o lote e a validade são da compra: as
+ *     recusas do POST, com o texto do POST (`conferirCamposDaEspecie`), na forma — com a chave presente, qualquer valor.
+ * Chave fora da lista → "Campo não reconhecido na edição do documento." (nunca ignorada; D11: os padrões financeiros
+ * da TOP — `padroes`, `secao`, `natureza`… — não são campos do documento).
+ */
+export const CONTRATO_DA_EDICAO: Readonly<Record<EspecieCompra, ContratoDaEdicaoDeCompra>> = {
+  compra: {
+    schema: edicaoDaCompraSchema,
+    chaves: new Set(Object.keys(edicaoDaCompraSchema.shape)),
+    recusasDeChave: { ...RECUSAS_DE_IDENTIDADE, ...Object.fromEntries(CAMPOS_FISCAIS_DO_CABECALHO.map((c) => [c, MSG_EDICAO_DADOS_FISCAIS])) },
+    recusasDeChaveDoItem: {},
+  },
+  pedido: {
+    schema: edicaoDoPedidoSchema,
+    chaves: new Set(Object.keys(edicaoDoPedidoSchema.shape)),
+    recusasDeChave: {
+      ...RECUSAS_DE_IDENTIDADE,
+      ...Object.fromEntries(CAMPOS_DA_NOTA_DO_CABECALHO.map((c) => [c, MSG_PEDIDO_SEM_NOTA])),
+      ...Object.fromEntries(CAMPOS_FISCAIS_DO_CABECALHO.map((c) => [c, MSG_PEDIDO_SEM_DADOS_FISCAIS])),
+    },
+    recusasDeChaveDoItem: {
+      lote: MSG_PEDIDO_SEM_LOTE, validade: MSG_PEDIDO_SEM_VALIDADE,
+      ...Object.fromEntries(CAMPOS_FISCAIS_DO_ITEM.map((c) => [c, MSG_PEDIDO_SEM_DADOS_FISCAIS])),
+    },
+  },
+};
 
 // ─────────────── rotas ───────────────
 
@@ -1086,30 +1379,10 @@ export default async function comprasRoutes(app: FastifyInstance) {
            join erp.tipos_operacao_versoes v on v.tipo_operacao_id = t.id and v.organization_id = t.organization_id and v.versao = t.versao_atual
           where t.id = $1 and t.organization_id = $2 and t.codigo_base = $3 and t.ativo and t.excluido_em is null`, [bruto, ctx.orgId, familia]);
       if (!v.rows[0]) throw notFound("Tipo de operação");
-      // R2: as regras da versão CAPTURADA acima (nunca a atual resolvida de novo) — a mesma das linhas seguintes.
-      const { formato, regras, regrasGerais } = await regrasDaVersaoCongelada(ctx, v.rows[0].versao_id);
-      // A versão ATUAL gera contas a pagar? (a tela marca natureza/centro como obrigatórios). Pedido nunca gera.
-      const efeitos = especie === "compra"
-        ? await efeitosPrevistosDaCompra(ctx, { tipoOperacaoVersaoId: v.rows[0].versao_id, codigoBase: familia }, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED)
-        : null;
-      // LANCAMENTO-01: a seção e os padrões da versão ATUAL, só DEPOIS da 404 (ver o comentário da rota).
-      const fin = await padroesDaTopParaExecucao(ctx, v.rows[0].versao_id);
-      const p = fin.padroes;
-      return {
-        contractVersion: 1,
-        formato,
-        exigencias: regras ? camposExigidosTop(regras.config, EXIGENCIAS_GERAIS_COMPRA_TOP) : [],
-        condicoesPermitidas: regras?.condicoesPermitidas ?? null,
-        geraTitulos: efeitos?.titulo ?? false,
-        exigeFormaPagamento: efeitos?.exigeFormaPagamento ?? false,
-        exigeVencimento: efeitos?.exigeVencimento ?? false,
-        exigeArmazem: efeitos?.exigeArmazem ?? false,
-        secao: { provisao: fin.secao.provisao, documentoTroca: fin.secao.documentoTroca, semClassificacao: fin.secao.semClassificacao },
-        padroes: p ? { natureza: p.natureza, centro: p.centro, tipoTitulo: p.tipoTitulo, formaPagamento: p.formaPagamento, conta: p.conta } : null,
-        // R2: a capacidade do local padrão do produto na linha nova (a chave do processo; desligada é o padrão).
-        localDoProdutoNaLinha: app.config.COMPRAS_LOCAL_DO_PRODUTO_ENABLED,
-        regrasGerais: regrasGeraisDaVariante(regrasGerais, especie === "compra"),
-      };
+      // R2: as regras da versão CAPTURADA acima (nunca a atual resolvida de novo). EDITAR-02 (decisão 313, D10): a
+      // montagem mora em `respostaDasRegrasDaCompra`, a MESMA do `GET <base>/:id/edicao` (lá, pela versão CONGELADA).
+      return respostaDasRegrasDaCompra(ctx, especie, familia, v.rows[0].versao_id, {
+        execucaoConfiguradaHabilitada: app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED, localDoProdutoNaLinha: app.config.COMPRAS_LOCAL_DO_PRODUTO_ENABLED });
     }));
 
     /**
@@ -1233,6 +1506,8 @@ export default async function comprasRoutes(app: FastifyInstance) {
   registrarConfirmacaoCompras(app);
   registrarRecebimentoCompras(app);
   registrarFinalizacaoCompras(app);
+  // EDITAR-02 (decisão 313): `GET <base>/:id/edicao` e `PATCH <base>/:id` das duas espécies.
+  registrarEdicaoCompras(app);
 }
 
 /** OPERACOES-01 F6a: a capacidade de ler o orçamento de compra (o recurso da espécie nova). */

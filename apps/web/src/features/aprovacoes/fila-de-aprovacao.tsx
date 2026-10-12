@@ -48,7 +48,7 @@ export function FilaDeAprovacao({ area }: { area: AreaDeAprovacao }) {
     retry: false
   });
 
-  // A decisão: a linha como a fila a mostrou (a `version` da venda vem dela) e a ação escolhida. Ela continua guardada
+  // A decisão: a linha como a fila a mostrou (a `version` da venda — e a da compra, quando declarada — vem dela) e a ação escolhida. Ela continua guardada
   // enquanto o diálogo fecha — o título não pisca vazio na animação de saída.
   const [decisao, setDecisao] = React.useState<{ linha: LinhaDaFila; decisao: Decisao } | null>(null);
   const [aberto, setAberto] = React.useState(false);
@@ -86,7 +86,7 @@ export function FilaDeAprovacao({ area }: { area: AreaDeAprovacao }) {
       if (e instanceof ApiError && e.status === 422) { setErroDoDialogo(e.message); return; }
       setAberto(false);
       if (portaDaDecisaoAusente(e)) setMensagem({ texto: MSG_APROVACOES_INDISPONIVEIS, tom: "aviso" });
-      // A venda mudou depois que a fila foi carregada (outra versão): a fila é recarregada e a pessoa confere de novo.
+      // O documento mudou depois que a fila foi carregada (outra versão): a fila é recarregada e a pessoa confere de novo.
       else if (e instanceof ApiError && e.code === "CONCURRENCY_CONFLICT") setMensagem({ texto: MSG_DOCUMENTO_MUDOU_NA_FILA, tom: "aviso" });
       // O resto (documento que deixou de estar aberto, que não exige mais aprovação, sem permissão, invisível): a
       // mensagem é a do servidor, e a fila recarregada mostra o estado real.

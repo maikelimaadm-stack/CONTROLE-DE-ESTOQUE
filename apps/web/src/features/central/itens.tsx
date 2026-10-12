@@ -15,11 +15,10 @@ import { ConfigurarColunas } from "./configurar-colunas";
 import { BotaoAmpliar } from "./moldura";
 import estilos from "./moldura.module.css";
 import grade from "./grade.module.css";
-import type {
-  ChaveCampoDoItem, ChaveColunaDoItem, LayoutDosItens, OpcaoReal, Preferencia, PropsDosItens, Visao
-} from "./contrato";
+import { maximoDaQuantidade, type ChaveCampoDoItem, type ChaveColunaDoItem, type LayoutDosItens, type OpcaoReal, type Preferencia, type PropsDosItens,
+  type TravasDaLinha, type Visao } from "./contrato";
 
-export type { ChaveCampoDoItem, ChaveColunaDoItem, ItensDaOrigem, LayoutDosItens, LoteDosItens, PropsDosItens } from "./contrato";
+export type { ChaveCampoDoItem, ChaveColunaDoItem, ItensDaOrigem, LayoutDosItens, LoteDosItens, PropsDosItens, TravasDaLinha } from "./contrato";
 
 /**
  * ITENS DA CENTRAL — o MOTOR (VISUAL-UX-04): duas VISÕES (e as duas juntas) do MESMO `items`.
@@ -44,6 +43,11 @@ export type { ChaveCampoDoItem, ChaveColunaDoItem, ItensDaOrigem, LayoutDosItens
  * OPERACOES-01 F5b (decisão 282): `linhaNovaEmBranco` (a linha nova sem quantidade nem unitário), `subtotal={false}`
  * (o rodapé sem "Subtotal dos itens") e `casasDaQuantidade` (a quantidade da célula não ativa) — acréscimos com o
  * padrão de hoje: sem eles, nada muda.
+ * EDITAR-02 (decisão 313): `travasDaLinha` (o que a edição do documento salvo recusa em cada linha: o item salvo que não
+ * sai, o produto, a quantidade, o valor unitário e os descontos — o controle de sempre em leitura, pelos MESMOS ramos do
+ * modo "da origem" e da célula não ativa; o teto da quantidade pelo MESMO `max` do receber, `maximoDaQuantidade`; o
+ * motivo da trava na `dica` do campo do formulário do item) e `aceitaLinhaNova={false}` (sem Adicionar e Duplicar). Sem
+ * eles, nada muda.
  */
 
 /**
@@ -167,7 +171,7 @@ function CodigoDoProduto({ id, conhecido }: { id?: string; conhecido?: OpcaoReal
 export function ItensDaCentral({
   prefixoTestid, colunas: colunasDaEspecie, items, onChange, layout, erros, armazemPadrao, pesquisaDeProduto = null, reservaEstoque = null,
   armazemPorItem, armazemForcado = false, custoMedioNoUnitario = true, lote = null, daOrigem = null, linhaUnica = false,
-  linhaNovaEmBranco = false, subtotal: comSubtotal = true, casasDaQuantidade = 2
+  linhaNovaEmBranco = false, subtotal: comSubtotal = true, casasDaQuantidade = 2, travasDaLinha = null, aceitaLinhaNova = true
 }: PropsDosItens) {
   const tid = (sufixo: string) => `${prefixoTestid}-${sufixo}`;
   // a capacidade da pesquisa nova é perguntada ao montar os itens (uma vez por sessão): ao abrir a pesquisa ela já chegou
@@ -259,8 +263,12 @@ export function ItensDaCentral({
   const corrente = mostraFormulario ? atual : sel;
 
   /** Modo "da origem": não se acrescenta nem duplica; com a quantidade travada, também não se remove. */
-  const podeAdicionar = !daOrigem && !linhaUnica;
+  const podeAdicionar = !daOrigem && !linhaUnica && aceitaLinhaNova;
   const podeRemover = !daOrigem?.quantidadeTravada && !linhaUnica;
+  /** EDITAR-02: as travas da linha (nenhuma sem `travasDaLinha`). */
+  const travas = (it: ItemRow | undefined): TravasDaLinha => (it && travasDaLinha ? travasDaLinha(it) : {});
+  /** A linha marcada pode sair: sem as travas, a regra de sempre; com elas, nunca o item salvo (`fixa`). */
+  const podeRemoverA = (i: number) => podeRemover && !travas(items[i]).fixa;
 
   const atualizar = (i: number, chave: string, v: unknown) => onChange(items.map((it, j) => (j === i ? { ...it, [chave]: v } : it)));
   const adicionar = () => {
@@ -282,8 +290,8 @@ export function ItensDaCentral({
     setSelecionado(c + 1);
   };
   const remover = () => {
-    if (!podeRemover) return;
     const c = corrente;
+    if (!podeRemoverA(c)) return;
     if (!items[c]) return;
     onChange(items.filter((_, j) => j !== c));
     setPesquisa(null);
@@ -330,11 +338,13 @@ export function ItensDaCentral({
     : <StockCell warehouseId={it.warehouse_id} productId={it.product_id} onCost={() => { /* só exibe */ }} />);
   const loteDe = (it: ItemRow) => (lote ? lote.daLinha(it) : { lote: false, validade: false });
   const maxDaOrigem = (it: ItemRow) => (daOrigem ? daOrigem.saldo(it) : undefined);
+  /** O `max` da quantidade: o saldo da origem (o receber) ou o teto das travas da linha (a edição); senão nenhum. */
+  const maxDaQuantidade = (it: ItemRow) => maximoDaQuantidade(daOrigem, travas(it), it);
 
   const celula = (k: ChaveColunaDoItem, it: ItemRow, i: number, ativa: boolean) => {
     switch (k) {
       case "codigo": return <td key={k}><CodigoDoProduto id={it.product_id} conhecido={conhecidos[it.product_id]} /></td>;
-      case "produto": return <td key={k}>{daOrigem
+      case "produto": return <td key={k}>{daOrigem || travas(it).produto
         ? <CelulaTravada recurso="products" id={it.product_id} conhecido={conhecidos[it.product_id]} testId={tid("produto")} />
         : <CelulaDeReferencia recurso="products" id={it.product_id} conhecido={conhecidos[it.product_id]} vazio="Selecione o produto" erro={pendente(i)}
           rotuloAcao={(o) => (o ? `Trocar o produto do item ${i + 1}` : `Selecionar o produto do item ${i + 1}`)}
@@ -347,12 +357,12 @@ export function ItensDaCentral({
       case "estoque": return <td key={k} className={cn(grade.numero, grade.estoque)}>{saldoDoItem(it)}</td>;
       case "saldo": return <td key={k} className={grade.numero} data-testid={tid("saldo-da-origem")}>{num(maxDaOrigem(it) ?? "0", 4)}</td>;
       case "quantidade": return <td key={k} className={grade.numero}><span className={grade.quantidade}>
-        {ativa && !daOrigem?.quantidadeTravada
-          ? <input className={grade.entrada} aria-label={`Quantidade do item ${i + 1}`} type="number" step="0.0001" min="0" max={maxDaOrigem(it)} value={it.quantity} onChange={(e) => atualizar(i, "quantity", e.target.value)} />
+        {ativa && !daOrigem?.quantidadeTravada && !travas(it).quantidade
+          ? <input className={grade.entrada} aria-label={`Quantidade do item ${i + 1}`} type="number" step="0.0001" min="0" max={maxDaQuantidade(it)} value={it.quantity} onChange={(e) => atualizar(i, "quantity", e.target.value)} />
           : <span data-testid={tid("quantidade")}>{num(linhaNovaEmBranco ? it.quantity : it.quantity || "0", casasDaQuantidade)}</span>}
         <Unidade produto={it.product_id} testId={tid("unidade")} />
       </span></td>;
-      case "unitario": return <td key={k} className={grade.numero}>{ativa ? <input className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(i, "unit_value", e.target.value)} /> : brl(it.unit_value ?? "0")}</td>;
+      case "unitario": return <td key={k} className={grade.numero}>{ativa && !travas(it).unitario ? <input className={grade.entrada} aria-label={`Valor unitário do item ${i + 1}`} type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(i, "unit_value", e.target.value)} /> : brl(it.unit_value ?? "0")}</td>;
       case "desconto": return <td key={k} className={grade.numero}>{Number(it.discount || 0) ? brl(it.discount!) : "—"}</td>;
       case "descontoPercentual": return <td key={k} className={grade.numero}>{Number(it.discount_percent || 0) ? `${num(it.discount_percent!, 2)}%` : "—"}</td>;
       case "total": return <td key={k} className={cn(grade.numero, grade.forte)}>{brl(totalDaLinhaExibido(it))}</td>;
@@ -420,17 +430,17 @@ export function ItensDaCentral({
   const campoDeReferencia = (campo: "product_id" | "warehouse_id", recurso: string) => {
     const id = (item?.[campo] as string | undefined) || undefined;
     const d = doCampo(campo === "product_id" ? "produto" : "armazem");
-    if (campo === "product_id" && daOrigem) {
-      return <CampoDaCentral rotulo={d.label} estado="travado" {...d.attrs}><RotuloTravado recurso={recurso} id={id} /></CampoDaCentral>;
+    if (campo === "product_id" && (daOrigem || travas(item).produto)) {
+      return <CampoDaCentral rotulo={d.label} estado="travado" dica={travas(item).motivos?.produto} {...d.attrs}><RotuloTravado recurso={recurso} id={id} /></CampoDaCentral>;
     }
     return <CampoDaCentral rotulo={d.label} obrigatorio={d.required} erro={d.error} icone="pesquisa" preenchido={Boolean(id)} {...d.attrs}>
       <CampoReferenciaBotao recurso={recurso} valor={id} conhecido={id ? conhecidos[id] : undefined} aberto={Boolean(pesquisa?.modo === "fluxo" && pesquisa.campo === campo)}
         onAbrir={(el) => setPesquisa(pesquisa?.modo === "fluxo" && pesquisa.campo === campo ? null : { linha: atual, campo, ancora: el, modo: "fluxo" })} />
     </CampoDaCentral>;
   };
-  const campoNumerico = (k: "quantidade" | "unitario" | "desconto" | "descontoPercentual", chave: "quantity" | "unit_value" | "discount" | "discount_percent", valor: string, extra: { step: string; max?: string; desabilitado?: boolean }) => {
+  const campoNumerico = (k: "quantidade" | "unitario" | "desconto" | "descontoPercentual", chave: "quantity" | "unit_value" | "discount" | "discount_percent", valor: string, extra: { step: string; max?: string; desabilitado?: boolean; dica?: string }) => {
     const d = doCampo(k);
-    return <CampoDaCentral rotulo={d.label} obrigatorio={d.required} erro={d.error} preenchido={valor !== ""} {...(extra.desabilitado ? { estado: "desabilitado" as const } : {})} {...d.attrs}>
+    return <CampoDaCentral rotulo={d.label} obrigatorio={d.required} erro={d.error} preenchido={valor !== ""} dica={extra.dica} {...(extra.desabilitado ? { estado: "desabilitado" as const } : {})} {...d.attrs}>
       <Input type="number" step={extra.step} min="0" max={extra.max} disabled={extra.desabilitado || undefined} value={valor} onChange={(e) => atualizar(atual, chave, e.target.value)} />
     </CampoDaCentral>;
   };
@@ -448,10 +458,10 @@ export function ItensDaCentral({
       case "estoque": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" data-campo={layout ? "estoque" : undefined}>{saldoDoItem(it)}</CampoDaCentral>;
       case "saldo": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" testId={tid("item-saldo")}>{num(maxDaOrigem(it) ?? "0", 4)}</CampoDaCentral>;
       case "unidade": return <CampoDaCentral rotulo="Unidade" estado="travado" testId={tid("item-unidade")}><UnidadeTravada produto={it.product_id} /></CampoDaCentral>;
-      case "quantidade": return campoNumerico(k, "quantity", it.quantity, { step: "0.0001", ...(daOrigem ? { max: maxDaOrigem(it), desabilitado: daOrigem.quantidadeTravada } : {}) });
-      case "unitario": return campoNumerico(k, "unit_value", it.unit_value ?? "", { step: "0.000001" });
-      case "desconto": return campoNumerico(k, "discount", it.discount ?? "", { step: "0.01" });
-      case "descontoPercentual": return campoNumerico(k, "discount_percent", it.discount_percent ?? "", { step: "0.01", max: "100" });
+      case "quantidade": return campoNumerico(k, "quantity", it.quantity, { step: "0.0001", max: maxDaQuantidade(it), ...(daOrigem ? { desabilitado: daOrigem.quantidadeTravada } : {}), ...(travas(it).quantidade ? { desabilitado: true, dica: travas(it).motivos?.quantidade } : {}) });
+      case "unitario": return campoNumerico(k, "unit_value", it.unit_value ?? "", { step: "0.000001", ...(travas(it).unitario ? { desabilitado: true, dica: travas(it).motivos?.unitario } : {}) });
+      case "desconto": return campoNumerico(k, "discount", it.discount ?? "", { step: "0.01", ...(travas(it).desconto ? { desabilitado: true, dica: travas(it).motivos?.desconto } : {}) });
+      case "descontoPercentual": return campoNumerico(k, "discount_percent", it.discount_percent ?? "", { step: "0.01", max: "100", ...(travas(it).desconto ? { desabilitado: true, dica: travas(it).motivos?.desconto } : {}) });
       case "total": return <CampoDaCentral rotulo={rotuloCampo(k)} estado="travado" data-campo={layout ? "total" : undefined}><span data-testid={tid("item-total")}>{brl(totalDaLinhaExibido(it))}</span></CampoDaCentral>;
       case "lote": return campoDeTexto(k, "provider_lot", it.provider_lot ?? "", loteDe(it).lote);
       case "validade": return campoDeTexto(k, "expiration_date", it.expiration_date ?? "", loteDe(it).validade);
@@ -502,7 +512,7 @@ export function ItensDaCentral({
       {podeAdicionar && <button type="button" className={cn(grade.botao, grade.botaoAdicionar, estilos.dicaInicio)} aria-label="Adicionar produto" data-dica="Adicionar produto" data-testid={tid("adicionar-item")} onClick={adicionar}><Plus aria-hidden /></button>}
       {corrente >= 0 && <>
         {podeAdicionar && <button type="button" className={cn(grade.botao, grade.botaoAcaoItem, estilos.dicaInicio)} aria-label="Duplicar item" data-dica="Duplicar item" data-testid={tid("duplicar-item")} onClick={duplicar}><Copy aria-hidden /></button>}
-        {podeRemover && <button type="button" className={cn(grade.botao, grade.botaoAcaoItem, grade.botaoRemover, estilos.dicaInicio)} aria-label="Remover item" data-dica="Remover item" data-testid={tid("remover-item")} onClick={remover}><Trash2 aria-hidden /></button>}
+        {podeRemoverA(corrente) && <button type="button" className={cn(grade.botao, grade.botaoAcaoItem, grade.botaoRemover, estilos.dicaInicio)} aria-label="Remover item" data-dica="Remover item" data-testid={tid("remover-item")} onClick={remover}><Trash2 aria-hidden /></button>}
       </>}
       <span className={grade.espaco} />
       <div className={grade.segmento} role="group" aria-label="Visualização dos itens">

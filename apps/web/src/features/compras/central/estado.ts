@@ -19,7 +19,7 @@ import type { BuscaDeOpcoes, Option } from "@/components/ui/ref-select";
 import { defaultPlan, totalDaLinhaExibido, useDoc, useEmpresaPadrao, type ColunaDoEditorDeItens, type ColunaDoLayoutNoEditor, type ItemRow, type Plan, type Row } from "@/features/docs/shared";
 import { entendeLayoutDocumento, podeLancar, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { topSelecionada } from "@/features/sales/lancador-tipo-operacao";
-import type { AdaptadorDaCentral, CopiaEmMemoria, DepoisDeSalvar, LocalDeEstoque, Pendencia } from "@/features/central/contrato";
+import type { AdaptadorDaCentral, CopiaEmMemoria, DepoisDeSalvar, LocalDeEstoque, Pendencia, TravasDaLinha } from "@/features/central/contrato";
 import { useLocalDoCabecalho } from "@/features/central/local-padrao";
 import { descartarCopia, espiarCopia } from "@/features/central/duplicar-memoria";
 import { abreConfirmarNaChegada, confirmarPodeAbrir, consumirSalvo, descartarSalvo, entregarSalvo } from "@/features/central/salvo";
@@ -41,6 +41,13 @@ import {
 } from "../layout-da-central";
 import { useImportacaoXml } from "../importacao/capacidade";
 import { adaptadorDaCentralDeCompras, chaveDaCopiaDeCompra, chaveDepoisDeSalvarDeCompra, corpoDoCancelamento } from "./adaptador";
+import {
+  MSG_EDICAO_INDISPONIVEL, chaveDaEdicao, conflitoDaEdicao, edicaoIndisponivel, lerEdicao, portaDaEdicao, portaDoDocumento,
+  type EdicaoDoDocumentoDeCompra
+} from "./edicao-api";
+import {
+  aberturaDoDocumento, acaoEditar, campoTravadoNaEdicao, corpoDaEdicao, itensNaEdicao, motivoDaTravaNaEdicao, mudouAlgo, travasDaLinhaNaTela, type AcaoEditar
+} from "./edicao";
 import {
   dicaDaTop, localConfirmadoNaEmpresa, localDasLinhasNovasNoPortao, localDoCadastroDoProduto, mesmoId, omissaoDoCorpo, padraoDaTopInvalido,
   padroesDaTopAplicam, planoDaSemeadura, podeTrocarOsPadroes, portaoDoLocalDoProduto, travadoPelaTop, type CampoDoPadraoDaTop,
@@ -67,6 +74,11 @@ import {
  * cabeçalho (chave de acesso, UF, tipo de documento, IPI, ICMS-ST, seguro, tipo de título, classificação) — estado
  * próprio (`fiscal`), no corpo SÓ quando preenchidos e no total exibido (IPI + ICMS-ST + seguro). Sem a capacidade (a API
  * anterior), o corpo é o de hoje, byte a byte.
+ *
+ * EDITAR-02 (decisão 313): o MESMO formulário em MODO EDIÇÃO (`edicao` nas props; sem rota nova — a consulta troca no
+ * lugar, como o orçamento), aberto pelo `GET /edicao` (o documento gravado, a versão, os limites, as regras da versão
+ * CONGELADA e o layout de hoje — `edicao-api.ts`). Nada é semeado (nem o padrão do layout, nem os padrões da TOP da
+ * 311); o que a PATCH não aceita fica em leitura; o Salvar manda `PATCH { version, ...só o que mudou }` (`edicao.ts`).
  */
 
 /* ═════════════════════════════════════ Tipos ═════════════════════════════════════ */
@@ -364,14 +376,29 @@ export interface PropsDoEstadoDaCriacao {
   topDaUrl: string;
   top: TopOperacional | null;
   escritaTopConfirmada: boolean;
+  /** EDITAR-02 (decisão 313): o documento salvo aberto em EDIÇÃO (só pela consulta). Ausente: criação ou receber. */
+  edicao?: EdicaoAberta | null;
 }
+
+/** EDITAR-02: o que a consulta entrega ao formulário em modo edição. */
+export interface EdicaoAberta {
+  /** A resposta do `GET /edicao`, conferida e com `podeEditar` (a consulta não abre o formulário sem ela). */
+  dados: EdicaoDoDocumentoDeCompra;
+  /** Volta à consulta; `salvou` = a PATCH gravou. */
+  onFechar: (salvou: boolean) => void;
+  /** A oferta do conflito de versão: pergunta o `GET /edicao` de novo e descarta o rascunho. */
+  recarregar: () => void;
+}
+
+/** O que não mudou nada não vai ao servidor: a edição volta à consulta com este aviso. */
+export const MSG_EDICAO_SEM_MUDANCA = "Nada mudou: o documento continua como estava.";
 
 /** Por que o Salvar está DESABILITADO por estado (não por pendência). null: habilitado. */
 export type TravaDoSalvar = null | "top-nao-confirmada" | "pedido-carregando" | "pedido-recusado" | "layout-carregando" | "layout-falhou"
   | "regras-carregando" | "regras-falharam" | "capacidade-carregando" | "salvando";
 
 export interface EstadoDaCriacao {
-  modo: "criacao" | "receber";
+  modo: "criacao" | "receber" | "edicao";
   variante: VarianteDeCompra;
   adaptador: AdaptadorDaCentral;
   ehCompra: boolean;
@@ -516,9 +543,26 @@ export interface EstadoDaCriacao {
   voltar: () => void;
   /** A cópia (Duplicar) que abriu este formulário. */
   copiaAplicada: boolean;
+
+  /* EDITAR-02 (decisão 313): o modo edição */
+  /** O documento gravado (o `documento` do `GET /edicao`); `null` fora da edição. Os dados fiscais dele, em leitura. */
+  documentoEmEdicao: Row | null;
+  /** O campo do cabeçalho que a edição trava (a empresa; o resto pelos limites do servidor). `travado` já o inclui. */
+  travadoNaEdicao: (campo: string) => boolean;
+  /** O motivo do servidor para a trava do campo na edição (`data-motivo` do invólucro); `null` = livre. */
+  motivoNaEdicao: (campo: string) => string | null;
+  /** As travas de cada linha da grade (o item salvo não sai; os limites dele). `null` fora da edição. */
+  travasDaLinha: ((linha: ItemRow) => TravasDaLinha) | null;
+  /** A grade aceita item novo (fora da edição, sempre; na edição, conforme os limites). */
+  aceitaLinhaNova: boolean;
+  /** O conflito de versão da PATCH: a mensagem do servidor, com a oferta de recarregar. `null` sem conflito. */
+  conflito: string | null;
+  fecharConflito: () => void;
+  /** Recarrega a edição (o `GET /edicao` de novo) e descarta o rascunho. */
+  recarregarEdicao: () => void;
 }
 
-export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, pedidoId, topDaUrl, top: topDoLancamento, escritaTopConfirmada }: PropsDoEstadoDaCriacao): EstadoDaCriacao {
+export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, pedidoId, topDaUrl, top: topDoLancamento, escritaTopConfirmada: escritaDaCriacao, edicao = null }: PropsDoEstadoDaCriacao): EstadoDaCriacao {
   const router = useRouter(); const tr = useTradutor(); const qc = useQueryClient(); const { can } = useAuth();
   const ehCompra = variante.variante === "compra";
   const familia = variante.familia;
@@ -526,34 +570,48 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const recebimento = useRecebimentoDoPedido(pedidoId, topDaUrl, variante.variante);
   const modoReceber = recebimento.situacao !== "inativo";
   const recebendo = recebimento.situacao === "pronto" ? recebimento : null;
+  /* EDITAR-02 (decisão 313): o documento salvo em EDIÇÃO — a TOP é a GRAVADA (já conferida pelo servidor no `/edicao`). */
+  const modoEdicao = edicao !== null && !modoReceber;
+  const documentoEmEdicao = modoEdicao ? edicao.dados.documento : null;
+  const limites = modoEdicao ? edicao.dados.limites : null;
+  const escritaTopConfirmada = modoEdicao || escritaDaCriacao;
   const [topDoPasso, setTopDoPasso] = React.useState("");
-  const top = modoReceber ? topDoPasso : topDoLancamento?.id ?? "";
-  const [movimento] = React.useState(() => (estado.situacao === "pronto" ? estado.dados.family.label : ""));
+  const top = modoReceber ? topDoPasso : documentoEmEdicao ? String(documentoEmEdicao["tipo_operacao_id"] ?? "") : topDoLancamento?.id ?? "";
+  const [movimento] = React.useState(() => (modoEdicao ? tr(variante.chaveI18n) : estado.situacao === "pronto" ? estado.dados.family.label : ""));
+  /** A ABERTURA da edição: o documento gravado nas chaves da Central, lida UMA vez (o rascunho é estado do formulário). */
+  const [aberturaDaEdicao] = React.useState(() => (documentoEmEdicao ? aberturaDoDocumento(documentoEmEdicao, defaultPlan) : null));
 
   /* A CÓPIA (Duplicar) — lida UMA vez, da memória; só vale para esta espécie e esta TOP. Como na venda, o formulário que
-     monta encerra a entrega mesmo quando ela não vale para ele: a cópia de outra TOP não fica para uma criação seguinte. */
+     monta encerra a entrega mesmo quando ela não vale para ele: a cópia de outra TOP não fica para uma criação seguinte.
+     A EDIÇÃO não é criação: não lê nem encerra a cópia (ela é de uma criação desta espécie, que ainda vai abrir). */
   const [copia] = React.useState<CopiaDeCompra | null>(() =>
-    (!modoReceber && topDoLancamento ? espiarCopia<Partial<Cabecalho>>(chaveDaCopiaDeCompra, variante.segmento, topDoLancamento.id) : null));
+    (!modoReceber && !modoEdicao && topDoLancamento ? espiarCopia<Partial<Cabecalho>>(chaveDaCopiaDeCompra, variante.segmento, topDoLancamento.id) : null));
   const avisouCopia = React.useRef(false);
   React.useEffect(() => {
+    if (modoEdicao) return;
     descartarCopia(chaveDaCopiaDeCompra, variante.segmento);
     if (copia && !avisouCopia.current) { avisouCopia.current = true; toast.info("Cópia aberta como rascunho"); }
-  }, [copia, variante.segmento]);
+  }, [copia, variante.segmento, modoEdicao]);
 
-  const [h, setH] = React.useState<Cabecalho>(() => ({ ...cabecalhoVazio(), ...(copia?.cabecalho ?? {}), data_documento: todayISO() }));
+  const [h, setH] = React.useState<Cabecalho>(() => (aberturaDaEdicao ? { ...aberturaDaEdicao.cabecalho }
+    : { ...cabecalhoVazio(), ...(copia?.cabecalho ?? {}), data_documento: todayISO() }));
   /** O estado INICIAL ("intocado"): a abertura (sem a cópia: a cópia é alteração), o pedido e os padrões aplicados. */
-  const inicial = React.useRef<Cabecalho>(cabecalhoVazio());
+  const inicial = React.useRef<Cabecalho>(aberturaDaEdicao ? { ...aberturaDaEdicao.cabecalho } : cabecalhoVazio());
   const abertura = React.useRef<{ h: Cabecalho; itens: ItemRow[] } | null>(null);
   React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresaPadrao })); }, [empresaPadrao]);
   const mudar = React.useCallback((p: Partial<Cabecalho>) => setH((o) => ({ ...o, ...p })), []);
-  const [itens, setItensCru] = React.useState<ItemRow[]>(() => copia?.itens ?? []);
-  const setItens = (novos: ItemRow[]) => setItensCru((antes) => (modoReceber ? acompanharDescontoDaOrigem(antes, novos) : novos));
-  const [ajustarParcelas, setAjustarParcelas] = React.useState(false);
-  const [plano, setPlano] = React.useState<Plan>(defaultPlan());
+  const [itens, setItensCru] = React.useState<ItemRow[]>(() => aberturaDaEdicao?.itens ?? copia?.itens ?? []);
+  /* Na EDIÇÃO, a defesa do handler (`itensNaEdicao`): o item salvo não sai, a cópia de um item salvo é item novo, o
+     item novo só onde a edição o aceita e o campo travado volta ao valor anterior. */
+  const setItens = (novos: ItemRow[]) => setItensCru((antes) => (modoReceber ? acompanharDescontoDaOrigem(antes, novos)
+    : limites ? itensNaEdicao(antes, novos, limites) : novos));
+  const [ajustarParcelas, setAjustarParcelas] = React.useState(aberturaDaEdicao?.ajustarParcelas ?? false);
+  const [plano, setPlano] = React.useState<Plan>(() => (aberturaDaEdicao ? { ...aberturaDaEdicao.plano } : defaultPlan()));
   /* DADOS FISCAIS (F7): só na criação da compra e com a capacidade "sim" — sem ela, nenhuma chave nova no corpo. A
-     pergunta é a das TOPs da compra (já respondida para o formulário existir): nenhum pedido a mais. */
-  const capacidadeFiscal = useImportacaoXml(ehCompra && !modoReceber);
-  const dadosFiscaisAtivos = ehCompra && !modoReceber && capacidadeFiscal === "sim";
+     pergunta é a das TOPs da compra (já respondida para o formulário existir): nenhum pedido a mais. Na EDIÇÃO, nunca: os
+     dados fiscais do cabeçalho não mudam depois do lançamento (a PATCH os recusa) — aparecem em leitura. */
+  const capacidadeFiscal = useImportacaoXml(ehCompra && !modoReceber && !modoEdicao);
+  const dadosFiscaisAtivos = ehCompra && !modoReceber && !modoEdicao && capacidadeFiscal === "sim";
   const [fiscal, setFiscal] = React.useState<DadosFiscais>(dadosFiscaisVazios);
   /* LANCAMENTO-01 (decisão 311): o INICIAL dos dados fiscais — vazio, ou com o tipo de título que a TOP semeou (não conta
      como alteração, e o Descartar volta a ele). Sem semeadura, vazio: o "alterado" de hoje, byte a byte. */
@@ -601,8 +659,14 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   }, [recebendo, pedidoId]);
 
   const totalItens = itens.reduce((a, it) => a + totalDaLinhaExibido(it), 0);
+  /* EDITAR-02: na edição, IPI, ICMS-ST e seguro GRAVADOS (não mudam depois do lançamento) entram no total exibido, como na
+     conta do servidor. */
+  const [impostosGravados] = React.useState(() => (documentoEmEdicao ? impostosDosDadosFiscais({
+    ...dadosFiscaisVazios(), valor_ipi: String(documentoEmEdicao["valor_ipi"] ?? ""), valor_icms_st: String(documentoEmEdicao["valor_icms_st"] ?? ""),
+    seguro: String(documentoEmEdicao["seguro"] ?? "")
+  }) : "0"));
   const totalExibido = totalItens + Number(h.frete || 0) + Number(h.outras_despesas || 0) - Number(h.desconto || 0)
-    + (dadosFiscaisAtivos ? Number(impostosDosDadosFiscais(fiscal)) : 0);
+    + (dadosFiscaisAtivos ? Number(impostosDosDadosFiscais(fiscal)) : 0) + Number(impostosGravados);
 
   /* LANCAMENTO-01 (decisão 311) — A REGRA DO CORPO (`omissaoDoCorpo`): fora do corpo, o PAR natureza+centro que a TOP
      semeou e o operador não mexeu (o salvar da compra que gera título e o do pedido que provisiona aplicam o mesmo par da
@@ -640,28 +704,54 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     ...(ehCompra ? { lote: opcional(i.provider_lot ?? ""), validade: opcional(i.expiration_date ?? "") } : {})
   });
   /** O corpo do POST — as MESMAS chaves de hoje (lançar e `/convert`). */
-  const corpo = (): Record<string, unknown> => (modoReceber
+  const corpoDoLancamento = (): Record<string, unknown> => (modoReceber
     ? { ...cabecalhoDoCorpo(), itens: itens.map((i) => ({ item_origem_id: String(i["item_origem_id"] ?? ""), ...camposDoItem(i) })) }
     : { empresa_id: h.empresa_id, fornecedor_id: h.fornecedor_id, ...cabecalhoDoCorpo(),
       itens: itens.map((i) => ({ produto_id: i.product_id, ...camposDoItem(i), ...(dadosFiscaisAtivos ? corpoDaClassificacaoDoItem(i, rateio.tipo) : {}) })),
       // F7: DEPOIS das chaves de hoje, e só as preenchidas — sem a capacidade (ou nada preenchido), o corpo de hoje.
       // LANCAMENTO-01: o tipo de título que a TOP semeou não vai (`omissaoDoCorpo`).
       ...(dadosFiscaisAtivos ? { ...corpoDosDadosFiscais(omissao().tipoTitulo ? { ...fiscal, tipo_titulo_id: "" } : fiscal), ...corpoDoRateio(rateio) } : {}) });
+  /**
+   * EDITAR-02 (decisão 313): o corpo da PATCH — `{ version, ...só o que mudou }` contra a abertura (`corpoDaEdicao`).
+   * Nada semeado: o que vai é só o que o operador mudou.
+   */
+  const corpoDaPatch = (): Record<string, unknown> => (modoEdicao && aberturaDaEdicao
+    ? corpoDaEdicao({ version: edicao.dados.version, ehCompra, abertura: aberturaDaEdicao, atual: { cabecalho: h, itens, ajustarParcelas, plano } })
+    : {});
+  const corpo = (): Record<string, unknown> => (modoEdicao ? corpoDaPatch() : corpoDoLancamento());
+  /* O que as pendências conferem: o documento COMO FICARÁ (na edição, o gravado com o que mudou — a forma do lançamento,
+     sem nenhuma omissão: na edição a TOP não semeia nada). */
   const documentoConferido = (): Record<string, unknown> => (recebendo
     ? { ...cabecalhoDoCorpo(), empresa_id: String(recebendo.pedido["empresa_id"] ?? ""), fornecedor_id: String(recebendo.pedido["fornecedor_id"] ?? ""),
       itens: itens.map((i) => ({ produto_id: i.product_id, ...camposDoItem(i) })) }
-    : corpo());
+    : corpoDoLancamento());
 
   const segmentoDoPedido = varianteDeCompra("pedido")?.segmento ?? "";
-  const porta = modoReceber ? `/api/compras/${segmentoDoPedido}/${pedidoId}/convert` : `/api/compras/${variante.segmento}`;
+  const idEmEdicao = documentoEmEdicao ? String(documentoEmEdicao["id"] ?? "") : "";
+  const porta = modoReceber ? `/api/compras/${segmentoDoPedido}/${pedidoId}/convert`
+    : modoEdicao ? portaDoDocumento(variante.segmento, idEmEdicao) : `/api/compras/${variante.segmento}`;
 
   // A chave do Salvar: a MESMA até o servidor RECUSAR (4xx). Rede, 5xx ou resposta perdida: o reenvio repete a chave e
   // recebe a resposta gravada (o documento que a 1ª tentativa já criou), nunca um segundo documento.
   const chave = useChaveDeIdempotencia();
   const depoisDeSalvar = React.useRef<DepoisDeSalvar>({ confirmar: false });
+  /* EDITAR-02: o conflito de versão da PATCH (409 CONCURRENCY_CONFLICT) — a mensagem do servidor e a oferta de recarregar. */
+  const [conflito, setConflito] = React.useState<string | null>(null);
   const salvarM = useMutation({
-    mutationFn: () => { const c = corpo(); return api<RespostaDoSalvar>(porta, { method: "POST", body: c, idempotencyKey: chave.doEnvio(c) }); },
+    mutationFn: () => {
+      const c = corpo();
+      // EDITAR-02: a PATCH leva a MESMA regra da chave do POST (a MESMA até o servidor recusar).
+      return api<RespostaDoSalvar>(porta, { method: modoEdicao ? "PATCH" : "POST", body: c, idempotencyKey: chave.doEnvio(c) });
+    },
     onSuccess: (r) => {
+      if (modoEdicao) {
+        // A PATCH não confirma (P4 da 313): o aviso é só o do salvar; a consulta volta atualizada.
+        toast.success("Alterações salvas");
+        void invalidarLeiturasDeCompras(qc);
+        void qc.invalidateQueries({ queryKey: chaveDaEdicao(variante.segmento, idEmEdicao) });
+        edicao.onFechar(true);
+        return;
+      }
       // O aviso sai da RESPOSTA (`confirmacaoAutomatica`), pelo motor — um por Salvar, lançar ou receber; sem a chave,
       // o "Salvo com sucesso" de antes.
       avisarSalvo(r);
@@ -670,10 +760,24 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
       entregarSalvo(chaveDepoisDeSalvarDeCompra, r.id, depoisDeSalvar.current);
       router.push(adaptador.rotas.registro(r.id));
     },
-    onError: (e) => { const aviso = chave.depoisDoErro(e); setErros(errosDoServidor(e)); toast.error(aviso); }
+    onError: (e) => {
+      const aviso = chave.depoisDoErro(e);
+      // EDITAR-02: o documento mudou desde o `/edicao` — a mensagem do servidor, com a oferta de recarregar (o rascunho
+      // só sai se a pessoa aceitar). As outras recusas (409 de situação, 422) vão ao lugar de sempre.
+      const mudou = modoEdicao ? conflitoDaEdicao(e) : null;
+      if (mudou) { setErros({}); setConflito(mudou); return; }
+      setErros(errosDoServidor(e)); toast.error(aviso);
+    }
   });
 
-  const { regras, pendente: regrasPendente, falhou: regrasFalharam } = useRegrasDaCompra(variante.segmento, top, modoReceber ? Boolean(recebendo) && !!top : podeLancar(estado) && !!top);
+  const daCriacao = useRegrasDaCompra(variante.segmento, top, modoEdicao ? false : modoReceber ? Boolean(recebendo) && !!top : podeLancar(estado) && !!top);
+  /* EDITAR-02: as regras da versão CONGELADA vêm no `/edicao` (as portas do lançamento pedem `.create` e respondem pela
+     versão ATUAL) — o MESMO leitor; fora da forma, "as regras não carregaram" (o Salvar trava, como na criação). */
+  const regrasCruasDaEdicao = modoEdicao ? edicao.dados.regras : undefined;
+  const regrasDaEdicao = React.useMemo(() => (modoEdicao ? lerRegras(regrasCruasDaEdicao) : null), [modoEdicao, regrasCruasDaEdicao]);
+  const regras = modoEdicao ? regrasDaEdicao : daCriacao.regras;
+  const regrasPendente = modoEdicao ? false : daCriacao.pendente;
+  const regrasFalharam = modoEdicao ? regrasDaEdicao === null : daCriacao.falhou;
   const exigidosPelaRegra = React.useMemo<ReadonlySet<string>>(() => new Set(camposExigidosPelaRegra(regras, ehCompra)), [regras, ehCompra]);
   const lote = useControleDeLote(ehCompra ? itens.map((i) => i.product_id) : []);
   React.useEffect(() => {
@@ -689,20 +793,22 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   });
 
   /* ── LAYOUT (COMPRAS-03): só com a capacidade; sem ela, LAYOUT_DO_SISTEMA. ── */
-  const layoutAtivo = entendeLayoutDocumento(estado);
+  /* EDITAR-02: na edição o layout de HOJE da TOP vem no `/edicao` (nenhuma pergunta a mais); fora da forma, "layout não
+     carregado" (o Salvar trava, como na criação). Os PADRÕES do layout não valem na edição: o documento tem os seus. */
+  const layoutAtivo = modoEdicao || entendeLayoutDocumento(estado);
   const layoutQ = useQuery<unknown, ApiError>({
     queryKey: ["layout-efetivo", "compras", variante.segmento, top],
     queryFn: () => api<unknown>(`/api/compras/${variante.segmento}/layout-efetivo?tipo_operacao_id=${encodeURIComponent(top)}`),
-    enabled: layoutAtivo && Boolean(top),
+    enabled: !modoEdicao && layoutAtivo && Boolean(top),
     retry: false
   });
-  const layoutRecebido = layoutQ.data;
+  const layoutRecebido = modoEdicao ? edicao.dados.layout : layoutQ.data;
   const layout = React.useMemo(() => (layoutAtivo ? estruturaDaResposta(layoutRecebido) : null), [layoutAtivo, layoutRecebido]);
-  const layoutPendente = layoutAtivo && !layout;
-  const layoutNaoCarregado = layoutPendente && (layoutQ.isError || (layoutQ.isSuccess && !layout));
+  const layoutPendente = !modoEdicao && layoutAtivo && !layout;
+  const layoutNaoCarregado = modoEdicao ? !layout : layoutPendente && (layoutQ.isError || (layoutQ.isSuccess && !layout));
   const capacidadePendente = modoReceber && podeCriar && estado.situacao === "carregando";
   const layoutVale = React.useMemo(() => (layout ? layoutQueVale(layoutRecebido) : null), [layout, layoutRecebido]);
-  const padroes = React.useMemo(() => (layout ? padroesDaResposta(layoutRecebido) : SEM_PADROES), [layout, layoutRecebido]);
+  const padroes = React.useMemo(() => (layout && !modoEdicao ? padroesDaResposta(layoutRecebido) : SEM_PADROES), [layout, modoEdicao, layoutRecebido]);
   const cfg = React.useMemo(() => new Map<string, CampoDoLayout>(layout ? [...layout.cabecalho, ...layout.rodape.flatMap((a) => a.campos)].map((x) => [x.campo, x]) : []), [layout]);
   const catalogo = React.useMemo(() => catalogoDaFamilia(familia), [familia]);
   const doSistema = React.useMemo(() => new Set(catalogo.filter((c) => c.parte !== "itens" && c.sistema).map((c) => c.chave)), [catalogo]);
@@ -727,7 +833,8 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   /* ── LANCAMENTO-01 (decisão 311): os padrões financeiros da TOP (`padroes-da-top.ts`). ── */
   const padroesDaTop = regras?.padroesDaTop ?? null;
   const padroesTop = padroesDaTop?.padroes ?? null;
-  const aplicaATop = padroesDaTopAplicam({ modo: modoReceber ? "receber" : "criacao", ehCompra, lidos: padroesDaTop, geraTitulos: regras?.geraTitulos ?? null });
+  // EDITAR-02: na edição, NUNCA (decisão 311 item 2: só na criação) — nada semeado, travado ou omitido pela TOP.
+  const aplicaATop = padroesDaTopAplicam({ modo: modoReceber ? "receber" : modoEdicao ? "edicao" : "criacao", ehCompra, lidos: padroesDaTop, geraTitulos: regras?.geraTitulos ?? null });
   /* `podeTrocar` (AND, o perfil da família no domínio). Sem a seção, nada a travar: a trava só existe com `aplica`. */
   const podeTrocar = padroesDaTop ? podeTrocarOsPadroes(padroesDaTop.secao, familia) : true;
   /* A forma só se semeia COBRADA: a regra da TOP a exige, ou o layout a marca obrigatória. */
@@ -759,7 +866,8 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const padroesAplicados = React.useRef<{ resposta: unknown; preenchimento: string } | null>(null);
   const semeaduraFeita = React.useRef<{ regras: RegrasDaCompra | null; fiscais: boolean } | null>(null);
   React.useEffect(() => {
-    if (!layout || regrasPendente || (modoReceber && !preenchimento)) return;
+    // EDITAR-02: o documento salvo não recebe padrão nenhum (nem o do layout, nem o da TOP): a abertura é o gravado.
+    if (modoEdicao || !layout || regrasPendente || (modoReceber && !preenchimento)) return;
     const marca = padroesAplicados.current;
     const antes = inicial.current;
     const novos: Partial<Cabecalho> = {};
@@ -816,7 +924,7 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
       setFiscal((o) => (o.tipo_titulo_id === "" ? { ...o, tipo_titulo_id: tipoTitulo } : o));
     }
     if (Object.keys(plano).length) semeadura.current = { ...semeadura.current, ...plano };
-  }, [layout, layoutRecebido, regrasPendente, modoReceber, preenchimento, empresaPadrao, padroes, padraoDoCampo, armazemPadrao,
+  }, [modoEdicao, layout, layoutRecebido, regrasPendente, modoReceber, preenchimento, empresaPadrao, padroes, padraoDoCampo, armazemPadrao,
     regras, aplicaATop, padroesTop, dadosFiscaisAtivos, formaCobrada, h, fiscal]);
 
   const colunasForcadas = [
@@ -827,7 +935,9 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const fieldsDosItens: ColunaDoEditorDeItens[] = colunasDoLayout ? colunasDoLayout.map((c) => c.coluna) : ehCompra ? COLUNAS_DE_HOJE_DA_COMPRA : COLUNAS_DE_HOJE_DO_PEDIDO;
   /* Com o local escondido pelo layout (e não exigido pela regra) a linha nasce sem local, como antes: preencher um campo
      que o usuário não vê nem troca seria o contrário de "o item pode trocar o local". */
-  const localNaGrade = !modoReceber && fieldsDosItens.includes("warehouse");
+  /* EDITAR-02: na edição, também não — o "Local de estoque" do cabeçalho e o local padrão do produto (311) são da criação;
+     o item novo da edição nasce sem local, e cada linha escolhe o seu. */
+  const localNaGrade = !modoReceber && !modoEdicao && fieldsDosItens.includes("warehouse");
 
   /* LANCAMENTO-01 (decisão 311; L1–L4) — O LOCAL DA LINHA NOVA: o local padrão do PRODUTO, conferido na empresa do
      documento (`useLocaisDosProdutos`), acima do local do cabeçalho que é só padrão (o do layout) ou vazio, e abaixo da
@@ -895,16 +1005,21 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     // A defesa no handler: `disabled` é apresentação.
     if (travaDoSalvar) return;
     setErros({});
+    setConflito(null);
+    // EDITAR-02: nada mudou ⇒ nada vai ao servidor (zero PATCH) — a edição volta à consulta, que continua a mesma.
+    if (modoEdicao && !mudouAlgo(corpoDaPatch())) { toast.info(MSG_EDICAO_SEM_MUDANCA); edicao.onFechar(false); return; }
     setTentouSalvar(true);
     if (pendencias.length) { setPendenciasAbertas(true); return; } // zero POST
-    depoisDeSalvar.current = { confirmar: ehCompra && Boolean(opcoes?.confirmar) };
+    // A PATCH não confirma (P4 da 313): o pedido de abrir o Confirmar é só da criação.
+    depoisDeSalvar.current = { confirmar: ehCompra && !modoEdicao && Boolean(opcoes?.confirmar) };
     salvarM.mutate();
   };
 
   /* ALTERADO: contra o estado inicial, sem a empresa (preenchida por efeito). A cópia conta como alteração. Os dados
-     fiscais contra o inicial deles (vazio; com o tipo de título que a TOP semeou, LANCAMENTO-01 — semeado não é alteração). */
+     fiscais contra o inicial deles (vazio; com o tipo de título que a TOP semeou, LANCAMENTO-01 — semeado não é alteração).
+     EDITAR-02: na edição, alterado = a PATCH mudaria alguma coisa (a MESMA conta do corpo, contra o gravado). */
   const semEmpresa = ({ empresa_id: _empresa, ...resto }: Cabecalho) => resto;
-  const alterado = (itens.length > 0 && (!modoReceber || JSON.stringify(itens) !== JSON.stringify(abertura.current?.itens ?? [])))
+  const alterado = modoEdicao ? mudouAlgo(corpoDaPatch()) : (itens.length > 0 && (!modoReceber || JSON.stringify(itens) !== JSON.stringify(abertura.current?.itens ?? [])))
     || ajustarParcelas || JSON.stringify(semEmpresa(h)) !== JSON.stringify(semEmpresa(inicial.current))
     || (dadosFiscaisAtivos && (CAMPOS_DOS_DADOS_FISCAIS.some((c) => fiscal[c] !== fiscalInicial.current[c]) || JSON.stringify(rateio) !== JSON.stringify(rateioDoDocumento())));
   useDirtyTab(alterado && !salvarM.isSuccess);
@@ -915,9 +1030,10 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const voltarAoLancador = () => router.replace(adaptador.rotas.nova);
   const alterarOperacao = () => { if (alterado) setConfirmarTroca(true); else voltarAoLancador(); };
   const rotaDoPedido = rotaDoDocumento({ id: pedidoId, especie: "pedido" });
-  /** DESCARTAR: zero escrita. Criação → volta à abertura; receber → volta ao pedido. */
+  /** DESCARTAR: zero escrita. Criação → volta à abertura; receber → volta ao pedido; edição → volta à consulta. */
   const descartar = () => {
     if (modoReceber) { router.push(rotaDoPedido); return; }
+    if (modoEdicao) { edicao.onFechar(false); return; }
     setH({ ...inicial.current, empresa_id: inicial.current.empresa_id || empresaPadrao });
     setItensCru([]); setAjustarParcelas(false); setPlano(defaultPlan()); setFiscal({ ...fiscalInicial.current }); setRateio(rateioDoDocumento()); setErros({}); setTentouSalvar(false); setPendenciasAbertas(false);
     local.descartar(); setLocalEscolhidoEm(null); // o local do cabeçalho volta ao padrão (e deixa de ser escolha do operador)
@@ -925,17 +1041,25 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
 
   const rotuloDoPedido = enumLabel("especie_documento_compra", "pedido");
   const codigoDoPedido = recebendo ? String(recebendo.pedido["codigo"] ?? "") : "";
-  const titulo = modoReceber ? `Receber ${rotuloDoPedido.toLowerCase()} ${codigoDoPedido}`.trim() : `Novo documento · ${tr(variante.chaveI18n)}`;
+  const codigoEmEdicao = documentoEmEdicao ? String(documentoEmEdicao["codigo"] ?? "") : "";
+  const titulo = modoReceber ? `Receber ${rotuloDoPedido.toLowerCase()} ${codigoDoPedido}`.trim()
+    : modoEdicao ? `Editar ${tr(variante.chaveI18n).toLowerCase()} ${codigoEmEdicao}`.trim() : `Novo documento · ${tr(variante.chaveI18n)}`;
 
   const travadoDoLayout = (c: string) => Boolean(layout) && cfg.get(c)?.editavel === false && !padraoInvalido(c)
     && !(exigidosPelaRegra.has(c) && !(Boolean(cfg.get(c)?.valorPadrao) || Boolean(padraoDoCampo(c))) && !(modoReceber && doPedido.current.has(c)));
 
+  const topGravada = documentoEmEdicao && typeof documentoEmEdicao["tipo_operacao"] === "object" && documentoEmEdicao["tipo_operacao"] !== null
+    ? documentoEmEdicao["tipo_operacao"] as { codigo?: unknown; nome?: unknown } : null;
   const topInfo = recebendo
     ? { id: top, codigo: recebendo.passo.codigo, nome: recebendo.passo.nome, movimento: recebendo.passo.familiaRotulo }
-    : topDoLancamento ? { id: topDoLancamento.id, codigo: topDoLancamento.code, nome: topDoLancamento.name, movimento } : null;
+    : modoEdicao ? { id: top, codigo: String(topGravada?.codigo ?? ""), nome: String(topGravada?.nome ?? ""), movimento }
+      : topDoLancamento ? { id: topDoLancamento.id, codigo: topDoLancamento.code, nome: topDoLancamento.name, movimento } : null;
+  /* EDITAR-02: o que a edição trava — no cabeçalho (`campoTravadoNaEdicao`) e em cada linha (`travasDoItem`). */
+  const travadoNaEdicao = (c: string) => limites !== null && campoTravadoNaEdicao(limites, c);
+  const travasDaLinha = React.useMemo(() => travasDaLinhaNaTela(limites), [limites]);
 
   return {
-    modo: modoReceber ? "receber" : "criacao", variante, adaptador, ehCompra, familia, estadoTop: estado, escritaTopConfirmada, top: topInfo, titulo,
+    modo: modoReceber ? "receber" : modoEdicao ? "edicao" : "criacao", variante, adaptador, ehCompra, familia, estadoTop: estado, escritaTopConfirmada, top: topInfo, titulo,
     pedidoId, recebimento, recebendo, emPartes: recebendo?.passo.emPartes === true, rotuloDoPedido, codigoDoPedido, rotaDoPedido,
     mostrarFormulario: !modoReceber || Boolean(recebendo),
     cabecalho: h, mudar, itens, setItens, ajustarParcelas, setAjustarParcelas, plano, setPlano, totalItens, totalExibido, lote,
@@ -946,7 +1070,8 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     rotulo: (c, hoje) => cfg.get(c)?.rotulo || hoje,
     obrigatorio: (c) => (layout ? Boolean(cfg.get(c)?.obrigatorio) : doSistema.has(c)) || exigidosPelaRegra.has(c),
     // LANCAMENTO-01: OR com a TOP que não deixa trocar (o layout continua decidindo a trava dele, intacta)
-    travado: (c) => travadoDoLayout(c) || travadoPelaTopNaTela(c),
+    // EDITAR-02: OR com o que a edição trava (a empresa; o resto pelos limites do servidor)
+    travado: (c) => travadoDoLayout(c) || travadoPelaTopNaTela(c) || travadoNaEdicao(c),
     padraoDoCampo,
     padraoInvalido: (c) => padraoInvalido(c) || padraoDaTopInvalido(aplicaATop, padroesDaTop, c),
     dica: (c) => {
@@ -959,13 +1084,80 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     colunasDoLayout, fieldsDosItens,
     localNaGrade, localDoCabecalho: localNaGrade ? local.local : null, escolherLocal,
     erro, errosDaTela, errosDeItens, pendencias, pendenciasAbertas, setPendenciasAbertas,
-    rotuloDoSalvar: rotuloDoSalvar(regras?.regrasGerais, can("compras.edit")),
+    // EDITAR-02: a PATCH não confirma (P4 da 313) — na edição, "Salvar", nunca "Salvar e confirmar".
+    rotuloDoSalvar: rotuloDoSalvar(regras?.regrasGerais, can("compras.edit") && !modoEdicao),
     travaDoSalvar, salvarDesabilitado: travaDoSalvar !== null, salvando: salvarM.isPending, salvar,
-    podeConfirmarNaCriacao: ehCompra && !modoReceber,
+    podeConfirmarNaCriacao: ehCompra && !modoReceber && !modoEdicao,
     corpo,
     alterado, descartar, alterarOperacao, voltarAoLancador, confirmarTroca, setConfirmarTroca,
-    voltar: () => router.push(modoReceber ? rotaDoPedido : adaptador.rotas.lista),
-    copiaAplicada: copia !== null
+    voltar: () => { if (modoEdicao) { edicao.onFechar(false); return; } router.push(modoReceber ? rotaDoPedido : adaptador.rotas.lista); },
+    copiaAplicada: copia !== null,
+    documentoEmEdicao, travadoNaEdicao, travasDaLinha, aceitaLinhaNova: limites === null || limites.itemNovo === null,
+    motivoNaEdicao: (c) => (limites !== null ? motivoDaTravaNaEdicao(limites, c) : null),
+    conflito, fecharConflito: () => setConflito(null),
+    recarregarEdicao: () => { setConflito(null); if (modoEdicao) edicao.recarregar(); }
+  };
+}
+
+/* ═════════════════════════════ A ABERTURA DA EDIÇÃO ═════════════════════════════ */
+
+/**
+ * EDITAR-02 (decisão 313) — o que a consulta precisa para trocar, NO LUGAR, para o formulário de edição: o `GET /edicao`
+ * (uma ida só: o documento, a versão, os limites, as regras da versão CONGELADA e o layout de hoje).
+ *   · a resposta conferida (`lerEdicao`) e com `podeEditar` ⇒ "pronta": as props do formulário (`useEstadoDaCriacao` em
+ *     modo edição) e a `chave` dele — que só muda quando a pessoa RECARREGA (a oferta do conflito de versão);
+ *   · `podeEditar` falso ⇒ `onRecusada(motivo)` (a consulta mostra a recusa do servidor e não entra em edição);
+ *   · erro, ou resposta fora da forma ⇒ o aviso e `onFechar(false)` (a API anterior: "ainda não está disponível").
+ * A leitura que abriu o formulário fica CONGELADA nele: uma releitura em segundo plano (outra aba que salvou) nunca troca
+ * a versão debaixo do rascunho — só o "Recarregar" faz isso, e descarta o rascunho de propósito.
+ */
+export type AberturaDaEdicaoNaConsulta =
+  | { situacao: "carregando" }
+  | { situacao: "pronta"; chave: string; props: PropsDoEstadoDaCriacao };
+
+export function useAberturaDaEdicao({ variante, id, onFechar, onRecusada }: {
+  variante: VarianteDeCompra; id: string; onFechar: (salvou: boolean) => void; onRecusada: (motivo: string) => void;
+}): AberturaDaEdicaoNaConsulta {
+  const tr = useTradutor(); const { can } = useAuth(); const qc = useQueryClient();
+  const rotulo = tr(variante.chaveI18n);
+  const adaptador = React.useMemo(() => adaptadorDaCentralDeCompras(variante, rotulo), [variante, rotulo]);
+  /** O número da leitura pedida: o "Recarregar" pede outra (chave nova ⇒ pergunta nova, nunca a do cache). */
+  const [leitura, setLeitura] = React.useState(0);
+  const q = useQuery<unknown, ApiError>({
+    queryKey: [...chaveDaEdicao(variante.segmento, id), leitura],
+    queryFn: () => api<unknown>(portaDaEdicao(variante.segmento, id)),
+    retry: false, staleTime: Infinity, gcTime: 0, refetchOnWindowFocus: false, refetchOnReconnect: false
+  });
+  const [aberta, setAberta] = React.useState<{ dados: EdicaoDoDocumentoDeCompra; leitura: number } | null>(null);
+  const tratada = React.useRef<unknown>(null);
+  React.useEffect(() => {
+    if (q.isError) {
+      if (tratada.current === q.error) return;
+      tratada.current = q.error;
+      toast.error(edicaoIndisponivel(q.error) ? MSG_EDICAO_INDISPONIVEL : q.error.message);
+      onFechar(false);
+      return;
+    }
+    if (q.data === undefined || tratada.current === q.data) return;
+    tratada.current = q.data;
+    const lida = lerEdicao(q.data);
+    if (!lida) { toast.error(MSG_EDICAO_INDISPONIVEL); onFechar(false); return; }
+    if (!lida.podeEditar) { toast.warning(lida.motivo ?? MSG_EDICAO_INDISPONIVEL); onRecusada(lida.motivo ?? MSG_EDICAO_INDISPONIVEL); return; }
+    setAberta({ dados: lida, leitura });
+  }, [q.isError, q.error, q.data, leitura, onFechar, onRecusada]);
+  const recarregar = React.useCallback(() => {
+    // a consulta embaixo também é relida (ela é o que aparece ao voltar)
+    void invalidarLeiturasDeCompras(qc);
+    setLeitura((n) => n + 1);
+  }, [qc]);
+  if (!aberta || aberta.leitura !== leitura) return { situacao: "carregando" };
+  return {
+    situacao: "pronta",
+    chave: `edicao:${id}:${aberta.leitura}`,
+    props: {
+      variante, adaptador, estado: { situacao: "carregando" }, podeCriar: can(`${variante.perm}.create`), pedidoId: "", topDaUrl: "", top: null,
+      escritaTopConfirmada: true, edicao: { dados: aberta.dados, onFechar, recarregar }
+    }
   };
 }
 
@@ -1077,6 +1269,24 @@ export interface EstadoDaConsulta {
    * de TOPs de orçamento pronto e sem orçamento vencedor; `opcoes` são as TOPs do leque com a rota da criação.
    */
   novoOrcamento: { visivel: boolean; dicaDesabilitada: string | null; opcoes: OpcaoDeNovoOrcamento[] };
+
+  /*
+   * EDITAR-02 (decisão 313) — EDITAR o pedido e a compra: a Central de criação em modo edição, NO LUGAR (sem rota nova).
+   * A ação aparece com `<recurso>.edit` E `<recurso>.view`; desabilitada com o motivo no que a consulta já sabe
+   * (`acaoEditar`). Quem decide é o servidor: o `GET /edicao` responde `podeEditar`/`motivo` (a MESMA pergunta da PATCH).
+   */
+  editar: AcaoEditar & {
+    /** O formulário de edição está aberto (no lugar da consulta). */
+    editando: boolean;
+    /** Abre a edição — só com a ação habilitada (a MESMA regra do `disabled`, conferida no handler). */
+    abrir: () => void;
+    /** Volta à consulta; `salvou` = a PATCH gravou (a consulta mostra o "Salvo ✓"). */
+    fechar: (salvou: boolean) => void;
+    /** O `GET /edicao` recusou (`podeEditar` falso): volta à consulta, e a ação fica desabilitada com o motivo dele. */
+    recusada: (motivo: string) => void;
+  };
+  /** A PATCH acabou de gravar (o "Salvo ✓" da consulta, como o que vem da criação). */
+  salvoNaEdicao: boolean;
 }
 
 const DICA_PEDIDO_COM_COMPRA = "O pedido tem compra não cancelada: cancele a compra antes de cancelar o pedido.";
@@ -1119,6 +1329,10 @@ export function useEstadoDaConsulta({ variante, id }: { variante: VarianteDeComp
   const [encerrando, setEncerrando] = React.useState(false);
   const [finalizando, setFinalizando] = React.useState(false);
   const [aprovandoParaOrcamento, setAprovandoParaOrcamento] = React.useState(false);
+  /* EDITAR-02: a edição no lugar e a recusa que o `/edicao` deu (vale até o documento ser lido de novo). */
+  const [editando, setEditando] = React.useState(false);
+  const [recusaDaEdicao, setRecusaDaEdicao] = React.useState<{ motivo: string; leitura: number } | null>(null);
+  const [salvoNaEdicao, setSalvoNaEdicao] = React.useState(false);
   // Uma chave por ação, a MESMA até o servidor RECUSAR (`trocaAChaveDeIdempotencia`): na queda de rede o reenvio repete
   // a chave e recebe a resposta gravada — a ação nunca acontece duas vezes.
   const chaveConfirmar = useChaveDeIdempotencia();
@@ -1228,6 +1442,19 @@ export function useEstadoDaConsulta({ variante, id }: { variante: VarianteDeComp
     ocupado: aprovarParaOrcamentoM.isPending
   };
 
+  /* ── EDITAR-02 (decisão 313): o "Editar" do pedido e da compra. ── */
+  // a recusa do `/edicao` vale para a LEITURA em que foi dada: o documento relido (outra aba, um cancelamento) a apaga
+  const recusaVigente = recusaDaEdicao && recusaDaEdicao.leitura === q.dataUpdatedAt ? recusaDaEdicao.motivo : null;
+  const acao = acaoEditar({
+    can, perm: variante.perm, carregado: Boolean(d), situacao, ehPedido, comprasGeradas, recusaDoServidor: recusaVigente
+  });
+  const editar: EstadoDaConsulta["editar"] = {
+    ...acao, editando,
+    abrir: () => { if (acao.visivel && acao.dicaDesabilitada === null) { setSalvoNaEdicao(false); setEditando(true); } },
+    fechar: (salvou) => { setEditando(false); setSalvoNaEdicao(salvou); if (salvou) recarregar(); },
+    recusada: (motivo) => { setEditando(false); setRecusaDaEdicao({ motivo, leitura: q.dataUpdatedAt }); }
+  };
+
   return {
     modo: "consulta", variante, adaptador, id, porta, q, documento: d, situacao, ehCompra, ehPedido,
     titulo: d ? `${rotulo} ${d["codigo"] ? String(d["codigo"]) : "—"}` : rotulo,
@@ -1252,6 +1479,7 @@ export function useEstadoDaConsulta({ variante, id }: { variante: VarianteDeComp
     salvoAgora: salvo !== null,
     recarregar,
     capacidade, pedidoEmAndamento, exigeFinalizar, finalizacao, aprovadoOrcamento, finalizar, aprovarParaOrcamento,
-    novoOrcamento: { visivel: novoOrcamentoVisivel, dicaDesabilitada: dicaDoNovoOrcamento(temVencedor, leque, opcoesDeOrcamento), opcoes: opcoesDeOrcamento }
+    novoOrcamento: { visivel: novoOrcamentoVisivel, dicaDesabilitada: dicaDoNovoOrcamento(temVencedor, leque, opcoesDeOrcamento), opcoes: opcoesDeOrcamento },
+    editar, salvoNaEdicao
   };
 }

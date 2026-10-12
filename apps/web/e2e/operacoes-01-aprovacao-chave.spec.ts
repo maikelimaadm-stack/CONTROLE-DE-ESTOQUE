@@ -22,7 +22,8 @@ import { test, expect, codigoTop, criarCadastro, criarTop, doSeed, referenciasDo
 const PV = "central-vendas";
 const PC = "central-compras";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-type Situacao = { situacao: string; ultimaDecisao: null | { decisao: string; observacao: string | null } };
+/** P5 (decisão 313): a de compras declara também a `version` do documento; a de vendas, não. */
+type Situacao = { situacao: string; ultimaDecisao: null | { decisao: string; observacao: string | null }; version?: string };
 const situacaoNoServidor = (page: Page, area: "vendas" | "compras", id: string) => api<Situacao>(page, "GET", `/api/aprovacoes/${area}/${id}`);
 const dialogo = (page: Page) => page.getByTestId("aprovacao-dialogo");
 
@@ -122,7 +123,11 @@ test("AK-2 — compra: Reprovar grava mas a resposta morre na rede; a 2ª (outro
       itens: [{ produto_id: produto.id, armazem_id: armazem.id, quantidade: "2", valor_unitario: "10.00" }]
     });
     compraId = compra.id;
-    expect(await situacaoNoServidor(page, "compras", compra.id), "premissa: a compra aberta aguarda a aprovação").toEqual({ situacao: "pendente", ultimaDecisao: null });
+    // P5 (decisão 313): a situação da aprovação de compras declara, no fim, a `version` do documento — a da compra lida
+    // pela API aqui, sem escrita no meio.
+    const versaoDaCompra = (await api<{ version: string }>(page, "GET", `/api/compras/compras/${compra.id}`)).version;
+    expect(await situacaoNoServidor(page, "compras", compra.id), "premissa: a compra aberta aguarda a aprovação, com a versão do documento")
+      .toEqual({ situacao: "pendente", ultimaDecisao: null, version: versaoDaCompra });
 
     let statusDaPrimeiraNoServidor = 0;
     const chaves = escutarDecisao(page, `**/api/aprovacoes/compras/${compra.id}/reprovar`, async (n, route) => {

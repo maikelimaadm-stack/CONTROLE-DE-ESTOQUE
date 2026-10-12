@@ -263,11 +263,13 @@ describe("F9B-D6 o alvo da provisão do pedido de compra finalizado", () => {
 describe("F9B-D7 os textos da provisão da compra e da seção", () => {
   it("os motivos da provisão do pedido de compra, congelados e exatos", () => {
     expect(Object.isFrozen(MOTIVOS_DA_PROVISAO_COMPRA)).toBe(true);
-    expect(Object.keys(MOTIVOS_DA_PROVISAO_COMPRA)).toEqual(["pedidoFinalizado", "recebido", "compraConfirmada", "compraCancelada"]);
+    // EDITAR-02 (decisão 313) acrescenta "compraAlterada": a PATCH da compra gerada ressincroniza o pedido de origem.
+    expect(Object.keys(MOTIVOS_DA_PROVISAO_COMPRA)).toEqual(["pedidoFinalizado", "recebido", "compraConfirmada", "compraCancelada", "compraAlterada"]);
     expect(MOTIVOS_DA_PROVISAO_COMPRA.pedidoFinalizado).toBe("Pedido finalizado");
     expect(MOTIVOS_DA_PROVISAO_COMPRA.recebido("7")).toBe("Recebido na compra 7");
     expect(MOTIVOS_DA_PROVISAO_COMPRA.compraConfirmada("7")).toBe("Compra 7 confirmada");
     expect(MOTIVOS_DA_PROVISAO_COMPRA.compraCancelada("7")).toBe("Compra 7 cancelada");
+    expect(MOTIVOS_DA_PROVISAO_COMPRA.compraAlterada("7")).toBe("Compra 7 alterada");
     // A premissa: a API os lê pelo índice do pacote (o mesmo objeto).
     expect(dominio.MOTIVOS_DA_PROVISAO_COMPRA).toBe(MOTIVOS_DA_PROVISAO_COMPRA);
   });

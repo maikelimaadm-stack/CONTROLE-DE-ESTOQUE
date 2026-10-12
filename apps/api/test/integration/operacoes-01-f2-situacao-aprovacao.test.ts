@@ -58,6 +58,14 @@ async function situacao(modulo: Modulo, id: string, headers: Hdr = c.h.headers()
   const r = await lerSituacao(modulo, id, headers);
   expect(r.statusCode, `${modulo}/${id}: ${r.body}`).toBe(200);
   const b = j(r);
+  // EDITAR-02 (decisão 313, P5): a da COMPRA declara também `version`, no FIM — a do documento no banco (a declaração
+  // de que a decisão confere a versão). A conta (`situacao`, `ultimaDecisao`) é a de sempre, e é ela que volta.
+  if (modulo === "compras") {
+    expect(Object.keys(b), "o contrato da resposta da compra: as duas chaves e a versão").toEqual(["situacao", "ultimaDecisao", "version"]);
+    const banco = (await c.admin.query<{ v: string }>("select version::text v from erp.documentos_compra where id = $1", [id])).rows[0]?.v;
+    expect(b["version"], "a versão declarada é a do documento no banco").toBe(banco);
+    return { situacao: b["situacao"], ultimaDecisao: b["ultimaDecisao"] } as unknown as Situacao;
+  }
   expect(Object.keys(b), "o contrato da resposta: só as duas chaves").toEqual(["situacao", "ultimaDecisao"]);
   return b as unknown as Situacao;
 }

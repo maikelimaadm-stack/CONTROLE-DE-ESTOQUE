@@ -277,6 +277,40 @@ export interface ItensDaOrigem {
   testIdDaLinha?: (item: ItemRow) => string;
 }
 
+/**
+ * EDITAR-02 (decisão 313): as TRAVAS DE UMA LINHA na edição de um documento salvo — o que a gravação recusa naquela
+ * linha. Cada campo travado mostra o controle de sempre em leitura (a célula travada do produto, o número sem a entrada
+ * na grade, o campo desabilitado no formulário do item); nenhum desenho novo. Ausente (ou tudo `false`): a linha de hoje.
+ */
+export interface TravasDaLinha {
+  /** A linha não sai (o item salvo do documento em edição): o Remover não aparece com ela marcada. */
+  fixa?: boolean;
+  produto?: boolean;
+  quantidade?: boolean;
+  /** Valor unitário. */
+  unitario?: boolean;
+  /** Desconto e desconto %. */
+  desconto?: boolean;
+  /**
+   * O teto da quantidade da linha (a compra gerada de pedido: o saldo do item do pedido) — o MESMO `max` que o modo "da
+   * origem" põe na quantidade do receber. Ausente: nenhum (o de hoje).
+   */
+  quantidadeMaxima?: string;
+  /**
+   * O motivo de cada campo travado (o texto do servidor), na `dica` do campo do formulário do item — o `title` que o
+   * `CampoDaCentral` já tem. A célula da grade não tem dica de campo travado (só a do erro): ali o motivo não aparece.
+   */
+  motivos?: Partial<Record<"produto" | "quantidade" | "unitario" | "desconto", string>>;
+}
+
+/**
+ * O `max` da quantidade de uma linha: o saldo da origem no modo "da origem" (o receber, como sempre); senão o teto das
+ * travas da linha (a edição, EDITAR-02); senão nenhum — `undefined`, e o atributo nem aparece (o DOM de hoje).
+ */
+export function maximoDaQuantidade(daOrigem: ItensDaOrigem | null | undefined, travas: TravasDaLinha, item: ItemRow): string | undefined {
+  return daOrigem ? daOrigem.saldo(item) : travas.quantidadeMaxima;
+}
+
 /** OPERACOES-01 F3b: um local de estoque escolhido (o id e o rótulo que a tela mostra). */
 export interface LocalDeEstoque { id: string; rotulo: string }
 
@@ -343,6 +377,13 @@ export interface PropsDosItens {
   subtotal?: boolean;
   /** OPERACOES-01 F5b: casas da quantidade na célula NÃO ativa da grade. Padrão 2 (o de hoje). */
   casasDaQuantidade?: number;
+  /**
+   * EDITAR-02 (decisão 313): as travas de cada linha (`TravasDaLinha`) na edição de um documento salvo. Ausente: nenhuma
+   * (o de hoje).
+   */
+  travasDaLinha?: ((item: ItemRow) => TravasDaLinha) | null;
+  /** EDITAR-02: `false` tira Adicionar e Duplicar (a edição que não aceita item novo). Padrão `true` (o de hoje). */
+  aceitaLinhaNova?: boolean;
 }
 
 /* ─────────────── M8 — itens-salvos.tsx e configurar-colunas.tsx ─────────────── */

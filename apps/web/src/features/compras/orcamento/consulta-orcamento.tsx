@@ -56,7 +56,8 @@ function colunasDaLeitura(variante: VarianteDeCompra): ColunasDosItens {
   return { ...colunasDosItensDeCompras(variante), leitura: ["armazem", "codigo", "produto", "quantidade", "unitario", "total"] };
 }
 
-const IconeEditar = () => <Pencil width={15} height={15} strokeWidth={2} aria-hidden />;
+/** O ícone do "Editar" — também o do pedido e da compra (EDITAR-02, `central/consulta-barra.tsx`): um desenho só. */
+export const IconeEditar = () => <Pencil width={15} height={15} strokeWidth={2} aria-hidden />;
 
 export function ConsultaDeOrcamento({ variante, id }: { variante: VarianteDeCompra; id: string }) {
   const tr = useTradutor();

@@ -9,7 +9,7 @@ import estilosCentral from "@/features/central/moldura.module.css";
 import {
   MSG_APROVACOES_INDISPONIVEIS, MSG_DOCUMENTO_MUDOU_NA_CONSULTA,
   PERMISSAO_DA_PORTA_DA_DECISAO, chaveAoAbrirDecisao, chaveDaSituacaoDoDocumento, chaveDepoisDaDecisao, corpoDaDecisao, documentoDaConsulta, lerSituacaoDoDocumento, mensagemDaAprovacao,
-  portaDaDecisaoAusente, portaDaDecisaoDoDocumento, portaDaSituacaoDoDocumento, textoDaUltimaDecisao, valorDaSituacaoNaFila,
+  portaDaDecisaoAusente, portaDaDecisaoDoDocumento, portaDaSituacaoDoDocumento, textoDaUltimaDecisao, valorDaSituacaoNaFila, versaoDaDecisaoDaConsulta,
   type AreaDaConsulta, type ChaveDaDecisao, type Decisao, type RespostaDaDecisao, type TomDaMensagem
 } from "./areas-de-aprovacao";
 import { DialogoDaDecisao } from "./decisao-de-aprovacao";
@@ -19,7 +19,11 @@ export interface PropsDaAprovacaoDoDocumento {
   documentoId: string;
   /** O documento está aberto (a consulta já sabe). Fechado, nada é perguntado nem desenhado. */
   documentoAberto: boolean;
-  /** Na venda, a `version` do documento que a tela mostra: a decisão vale para o conteúdo visto (mudou → 409). */
+  /**
+   * A `version` do documento que a tela mostra: a decisão vale para o conteúdo visto (mudou → 409). Na venda, sempre;
+   * na compra (EDITAR-02, decisão 313, P5), só quando a SITUAÇÃO da aprovação a declara (`versaoDaDecisaoDaConsulta`;
+   * sem a declaração — a API da base —, a decisão vai sem ela, como antes).
+   */
   versao?: string;
   /** O prefixo de testid da Central que monta o bloco. */
   prefixoTestid: string;
@@ -84,7 +88,7 @@ export function AprovacaoDoDocumento({ area, documentoId, documentoAberto, versa
   const chaveDaTentativa = (d: Decisao) => (chave.current = chaveAoAbrirDecisao(chave.current, documentoId, d, newIdem));
   const decidir = useMutation<RespostaDaDecisao, Error, { decisao: Decisao; texto: string }>({
     mutationFn: ({ decisao: d, texto: t }) => api<RespostaDaDecisao>(portaDaDecisaoDoDocumento(area, documentoId, d, especie) ?? "", {
-      method: "POST", body: corpoDaDecisao(area, versao, d, t), idempotencyKey: chaveDaTentativa(d).chave
+      method: "POST", body: corpoDaDecisao(area, versaoDaDecisaoDaConsulta(area, versao, q.data), d, t), idempotencyKey: chaveDaTentativa(d).chave
     }),
     onSuccess: (resposta, { decisao: d }) => {
       if (chave.current) chave.current = chaveDepoisDaDecisao(chave.current, null, newIdem);
@@ -100,7 +104,7 @@ export function AprovacaoDoDocumento({ area, documentoId, documentoAberto, versa
       else {
         setAberto(false);
         if (portaDaDecisaoAusente(e)) toast.warning(MSG_APROVACOES_INDISPONIVEIS);
-        // A venda mudou depois que a consulta foi aberta (outra versão): ela é recarregada e a pessoa confere de novo.
+        // O documento mudou depois que a consulta foi aberta (outra versão): ele é recarregado e a pessoa confere de novo.
         else if (e instanceof ApiError && e.code === "CONCURRENCY_CONFLICT") toast.warning(MSG_DOCUMENTO_MUDOU_NA_CONSULTA);
         // O resto (documento que deixou de estar aberto, que não exige mais aprovação, sem permissão, invisível): a
         // mensagem é a do servidor, e a consulta recarregada mostra o estado real.

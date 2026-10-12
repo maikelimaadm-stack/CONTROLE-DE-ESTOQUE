@@ -133,11 +133,13 @@ export function podeTrocarOsPadroes(secao: SecaoFinanceiraDaTop, familia: string
 
 /**
  * `aplica` — os padrões da TOP valem neste formulário: a CRIAÇÃO (nunca o receber: as linhas e o cabeçalho vêm do
- * pedido; nunca a consulta) ∧ padrões ≠ null ∧ o documento que o servidor classifica pela TOP no salvar
- * (`padroesDaTopNoSalvarDaCompra`): a compra que gera título (`regras.geraTitulos`), o pedido cuja TOP provisiona
- * (`secao.provisao`). Fora disso: nada semeado, nada travado, nada omitido — a tela de hoje.
+ * pedido; nunca a consulta; EDITAR-02, decisão 313: nunca a EDIÇÃO do documento salvo — o item 2 da 311 é "só na
+ * criação", e semear num documento que já tem os seus valores gravaria o que o operador não escolheu) ∧ padrões ≠ null
+ * ∧ o documento que o servidor classifica pela TOP no salvar (`padroesDaTopNoSalvarDaCompra`): a compra que gera título
+ * (`regras.geraTitulos`), o pedido cuja TOP provisiona (`secao.provisao`). Fora disso: nada semeado, nada travado, nada
+ * omitido — a tela de hoje.
  */
-export function padroesDaTopAplicam(p: { modo: "criacao" | "receber"; ehCompra: boolean; lidos: PadroesDaTopLidos | null; geraTitulos: boolean | null }): boolean {
+export function padroesDaTopAplicam(p: { modo: "criacao" | "receber" | "edicao"; ehCompra: boolean; lidos: PadroesDaTopLidos | null; geraTitulos: boolean | null }): boolean {
   if (p.modo !== "criacao" || !p.lidos || p.lidos.padroes === null) return false;
   return p.ehCompra ? p.geraTitulos === true : p.lidos.secao.provisao === true;
 }

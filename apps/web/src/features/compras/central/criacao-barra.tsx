@@ -20,6 +20,10 @@ import type { EstadoDaCriacao, TravaDoSalvar } from "./estado";
  * do estado (obrigatórios do layout, exigências da TOP, itens); clicar com pendência = zero POST e a pílula abre.
  * O Salvar continua DESABILITADO por estado (`travaDoSalvar`), com a dica do motivo. O rótulo dele vem do estado
  * (`rotuloDoSalvar`, OPERACOES-01 F2): "Salvar e confirmar" com a TOP de Confirmação Automática, "Salvar" no resto.
+ *
+ * EDITAR-02 (decisão 313): na EDIÇÃO o mesmo conjunto, com o molde do orçamento — o ✕ é "Voltar à consulta" sem
+ * alteração (volta direto) e "Descartar alterações" com ela (pergunta antes); sem "Confirmar compra" (a PATCH não
+ * confirma) e sem "Alterar operação" (a TOP do documento salvo não troca).
  */
 
 export const PREFIXO = PREFIXO_CENTRAL_COMPRAS;
@@ -86,17 +90,21 @@ export function useBarraDaCriacao({ e, densidade, onDensidade, onIr = irParaPend
   const descartar = () => { setPerguntaDescartar(false); setTentou(false); e.descartar(); };
   const podeConfirmar = e.podeConfirmarNaCriacao && can("compras.edit");
   const receber = e.modo === "receber";
+  const edicao = e.modo === "edicao";
+  /* Na edição sem alteração, o ✕ volta à consulta sem perguntar (nada a perder); com alteração, pergunta. */
+  const clicarDescartar = () => { if (edicao && !e.alterado) { e.descartar(); return; } setPerguntaDescartar(true); };
 
-  /* O leque da criação: Alterar operação (fora do receber), Imprimir e Histórico desabilitados (ainda não há documento). */
+  /* O leque da criação: Alterar operação (fora do receber e da edição), Imprimir e Histórico desabilitados (ainda não há
+     documento; na edição, o documento salvo é o da consulta). */
   const rapidas: ItemRapido[] = [
-    ...(receber ? [] : [{ chave: "alterar", rotulo: "Alterar operação", testId: "top-alterar", icone: <IconeAlterarOperacao />, onSelect: e.alterarOperacao }]),
+    ...(receber || edicao ? [] : [{ chave: "alterar", rotulo: "Alterar operação", testId: "top-alterar", icone: <IconeAlterarOperacao />, onSelect: e.alterarOperacao }]),
     { chave: "imprimir", rotulo: "Imprimir", testId: `${PREFIXO}-imprimir`, icone: <IconeImprimir />, desabilitado: true, onSelect: () => undefined },
     ...(can("audit_logs.view") ? [{ chave: "historico", rotulo: "Histórico de alterações", testId: `${PREFIXO}-historico`, icone: <IconeHistorico />, desabilitado: true, onSelect: () => undefined }] : [])
   ];
 
   const acoes = <ConjuntoDaBarra>
-    <BotaoDaBarra rotulo="Descartar alterações" disabled={(!e.alterado && !receber) || e.salvando} data-testid={`${PREFIXO}-descartar`}
-      onClick={() => setPerguntaDescartar(true)}><IconeDescartar /></BotaoDaBarra>
+    <BotaoDaBarra rotulo={edicao && !e.alterado ? "Voltar à consulta" : "Descartar alterações"} disabled={(!e.alterado && !receber && !edicao) || e.salvando}
+      data-testid={`${PREFIXO}-descartar`} onClick={clicarDescartar}><IconeDescartar /></BotaoDaBarra>
     <BotaoDaBarra rotulo={e.rotuloDoSalvar} dica={dicaTrava ?? e.rotuloDoSalvar} ocupado={e.salvando} disabled={e.salvarDesabilitado}
       data-testid="compras-salvar" onClick={() => clicarSalvar(false)}><IconeSalvar /></BotaoDaBarra>
     {podeConfirmar && <PilulaDaBarra icone={<IconeConfirmar />} dica={dicaTrava ?? "Confirmar compra"} disabled={e.salvarDesabilitado}

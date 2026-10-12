@@ -172,7 +172,11 @@ test("F6B-P1 — pedido com aprovação 'Sempre' e 'Exigir finalizado': Receber�
   expect([passos.status(), corpoDosPassos.exigeFinalizar, corpoDosPassos.items.map((x) => x.codigo)], "premissa no fio: a TOP exige o pedido finalizado, e o passo é a compra")
     .toEqual([200, true, [topCompra.codigo]]);
   const situacao = await situacaoNoFio;
-  expect([situacao.status(), await situacao.json()], "premissa no fio: a aprovação do pedido está pendente").toEqual([200, { situacao: "pendente", ultimaDecisao: null }]);
+  // P5 (decisão 313): a situação da aprovação de compras declara, no fim, a `version` do documento (a que a decisão manda
+  // de volta) — a do pedido lido pela API aqui, sem escrita no meio.
+  const versaoDoPedido = (await api<{ version: string }>(page, "GET", `/api/compras/pedidos/${pedido.id}`)).version;
+  expect([situacao.status(), await situacao.json()], "premissa no fio: a aprovação do pedido está pendente, com a versão do documento")
+    .toEqual([200, { situacao: "pendente", ultimaDecisao: null, version: versaoDoPedido }]);
   const bloco = page.getByTestId(`${P}-aprovacao`);
   await expect(bloco, "o bloco da aprovação aparece no pedido, pendente").toHaveAttribute("data-situacao", "pendente");
   await expect(page.getByTestId(`${P}-aprovacao-situacao`)).toHaveText("Aguardando aprovação");

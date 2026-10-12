@@ -156,11 +156,11 @@ describe("premissas do cenário", () => {
       "select tgname from pg_trigger where tgrelid in ('erp.documentos_compra'::regclass, 'erp.documentos_compra_itens'::regclass) and not tgisinternal and tgenabled='O' order by tgname")).rows.map((x) => x.tgname);
     // A 0037 (COMPRAS-02) acrescenta o gatilho da origem nos itens; a 0041 (TOP-CONFIG-08), a guarda da aprovação no
     // cabeçalho; a 0044 (OPERACOES-01 F6a), a guarda da finalização do pedido no cabeçalho e a dos itens do orçamento;
-    // a 0047 (OPERACOES-01 F7), a guarda dos dados fiscais no cabeçalho (chave de acesso cruzada com a nota antiga).
-    // Os quatro da 0036 continuam, com os mesmos nomes.
+    // a 0047 (OPERACOES-01 F7), a guarda dos dados fiscais no cabeçalho (chave de acesso cruzada com a nota antiga);
+    // a 0063 (EDITAR-02), a versão do cabeçalho. Os quatro da 0036 continuam, com os mesmos nomes.
     expect(trg).toEqual(["trg_documentos_compra_aprovacao", "trg_documentos_compra_audit", "trg_documentos_compra_conferir",
       "trg_documentos_compra_finalizacao", "trg_documentos_compra_itens_documento_aberto", "trg_documentos_compra_itens_orcamento_guarda",
-      "trg_documentos_compra_itens_origem_guarda", "trg_documentos_compra_nota", "trg_documentos_compra_transicao"]);
+      "trg_documentos_compra_itens_origem_guarda", "trg_documentos_compra_nota", "trg_documentos_compra_transicao", "trg_documentos_compra_versao"]);
     expect((await db.query("select 1 from pg_constraint where conname='uq_warehouses_tenant' and contype='u'")).rowCount).toBe(1);
   });
 });
