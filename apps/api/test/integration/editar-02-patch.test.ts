@@ -7,7 +7,8 @@ import {
   type EspecieCompra, type Hdr, type Resposta,
 } from "./top-config-08-ajuda.js";
 import { topCompraNo5, topPedidoNo5, pedidoCompra, finalizado, recebido, codigoDe, topOrcamentoNo4 } from "./f9b-ajuda.js";
-import { cnpjComDv, notaSintetica, fornecedorComDocumento, importada, gerar, ITEM_PADRAO } from "./f7-ajuda.js";
+import { cnpjComDv, notaSintetica, fornecedorComDocumento, importada, gerar, ITEM_PADRAO, chaveNova } from "./f7-ajuda.js";
+import { compraDoXml, cnpjNovo } from "./editar-02-ajuda.js";
 import {
   MSG_DOCUMENTO_MUDOU, MSG_EDICAO_EMPRESA, MSG_EDICAO_TROCA_DE_OPERACAO, MSG_EDICAO_CAMPO_DESCONHECIDO, MSG_EDICAO_VERSAO_AUSENTE,
   MSG_EDICAO_VERSAO_INVALIDA, MSG_EDICAO_ITEM_DE_OUTRO_DOCUMENTO, MSG_EDICAO_ITEM_REPETIDO,
@@ -18,6 +19,7 @@ import {
   MSG_EDICAO_DOCUMENTO_APROVADO, msgEdicaoPedidoComCompraViva, MSG_EDICAO_FORNECEDOR_DA_COMPRA_DO_PEDIDO, MSG_EDICAO_PRODUTO_DA_COMPRA_DO_PEDIDO,
   MSG_EDICAO_ITEM_NOVO_NA_COMPRA_DO_PEDIDO, MSG_EDICAO_QUANTIDADE_DO_PEDIDO_CONVERTIDO, MSG_EDICAO_QUANTIDADE_ACIMA_DO_SALDO,
   MSG_EDICAO_FORNECEDOR_DO_PEDIDO_COM_COMPRA, MSG_EDICAO_ITEM_ORCADO, MSG_EDICAO_COMPRA_DA_NOTA, MSG_EDICAO_ITEM_DA_NOTA,
+  MSG_EDICAO_IDENTIDADE_DA_NOTA, MSG_EDICAO_CABECALHO_DA_NOTA,
 } from "../../src/routes/compras-edicao-regras.js";
 import { MSG_PEDIDO_SEM_NOTA, MSG_PEDIDO_SEM_DADOS_FISCAIS, MSG_PEDIDO_SEM_LOTE } from "../../src/routes/compras.js";
 
@@ -42,7 +44,9 @@ import { MSG_PEDIDO_SEM_NOTA, MSG_PEDIDO_SEM_DADOS_FISCAIS, MSG_PEDIDO_SEM_LOTE 
  *   (i) Idempotency-Key; (j) a PATCH que não muda nada; (k) o evento do histórico; (l) a provisão do pedido (D12);
  *   (n) o número de consultas (CONTADO, `.claude/rules/backend-api.md`): 1 × 20 itens mudados no mesmo conjunto de colunas
  *       → as mesmas consultas, tabela por tabela; a conferência de visibilidade antes da chave é o recorte enxuto, e o
- *       documento só é lido completo sob a trava e na resposta (no pedido com orçamentos, a lista e os preços também).
+ *       documento só é lido completo sob a trava e na resposta (no pedido com orçamentos, a lista e os preços também);
+ *   (o) P6 (decisão do dono, o B1 do cético): a compra com chave de acesso não troca fornecedor, número nem série; a compra
+ *       VINDA DA NOTA (importada do XML), mesmo sem as duplicatas, não troca frete, outras despesas nem desconto.
  *
  * TESTEMUNHA: o BANCO, lido por conexão de superusuário (sem RLS) — a linha do documento, os itens, os movimentos de
  * estoque, os títulos e a trilha. "Nada gravado" = as fotos idênticas antes e depois, nunca só o status HTTP.
@@ -443,7 +447,7 @@ describe("(h) itens: P1, a compra da nota (P3), a compra do pedido (D2), D3 e D4
     }
   });
 
-  it("P3: a compra da NOTA com as duplicatas — produto, quantidade, valor, descontos, frete, condição e item novo → 422 no campo; local, observação e datas editam", async () => {
+  it("P3: a compra da NOTA com as duplicatas — produto, quantidade, valor, descontos (valor e percentual), frete, outras despesas, desconto, condição e item novo → 422 no campo; local, observação e datas editam", async () => {
     const emitente = cnpjComDv(`8${String(Date.now() % 1e10).padStart(11, "0").slice(-11)}`);
     const fornecedor = await fornecedorComDocumento(emitente);
     const p = await produto();
@@ -465,10 +469,14 @@ describe("(h) itens: P1, a compra da nota (P3), a compra do pedido (D2), D3 e D4
       [{ itens: [{ id: item.id, quantidade: "9" }] }, "itens[0].quantidade", MSG_EDICAO_COMPRA_DA_NOTA],
       [{ itens: [{ id: item.id, valor_unitario: "99" }] }, "itens[0].valor_unitario", MSG_EDICAO_COMPRA_DA_NOTA],
       [{ itens: [{ id: item.id, desconto: "1.00" }] }, "itens[0].desconto", MSG_EDICAO_COMPRA_DA_NOTA],
+      // L5 (o cético): o desconto em PERCENTUAL do item também forma o total.
+      [{ itens: [{ id: item.id, desconto_percentual: "1" }] }, "itens[0].desconto_percentual", MSG_EDICAO_COMPRA_DA_NOTA],
       [{ itens: [{ id: item.id, produto_id: (await produto()).id }] }, "itens[0].produto_id", MSG_EDICAO_COMPRA_DA_NOTA],
       [{ itens: [{ id: item.id, valor_ipi: "1.00" }] }, "itens[0].valor_ipi", MSG_EDICAO_ITEM_DA_NOTA],
       [{ itens: [{ id: item.id }, { produto_id: p.id, quantidade: "1", valor_unitario: "1" }] }, "itens[1]", MSG_EDICAO_COMPRA_DA_NOTA],
       [{ frete: "5.00" }, "frete", MSG_EDICAO_COMPRA_DA_NOTA],
+      // L5 (o cético): as outras despesas do cabeçalho também.
+      [{ outras_despesas: "5.00" }, "outras_despesas", MSG_EDICAO_COMPRA_DA_NOTA],
       [{ desconto: "5.00" }, "desconto", MSG_EDICAO_COMPRA_DA_NOTA],
       [{ condicao_pagamento_id: await condicao() }, "condicao_pagamento_id", MSG_EDICAO_COMPRA_DA_NOTA],
       [{ data_vencimento: "2026-12-01" }, "data_vencimento", MSG_EDICAO_COMPRA_DA_NOTA],
@@ -761,5 +769,92 @@ describe("(n) o número de consultas da PATCH: nenhuma por item; a visibilidade 
     const [orcamentos, precos] = [indices(sqls, SQL_ORCAMENTOS), indices(sqls, SQL_PRECOS_DOS_ORCAMENTOS)];
     expect([orcamentos.length, precos.length], "os orçamentos e os preços: só nas duas leituras completas (sob a trava e a resposta)").toEqual([2, 2]);
     expect([...orcamentos, ...precos].every((k) => k > trava), "nada dos orçamentos antes da trava (nem antes da chave)").toBe(true);
+  });
+});
+
+// ─────────────── (o) P6: a identidade da nota e o cabeçalho da compra vinda da nota ───────────────
+
+const IDENTIDADE = ["fornecedor_id", "numero_nota", "serie_nota"] as const;
+
+describe("(o) P6: a chave de acesso trava fornecedor, número e série; a compra vinda da nota trava frete, outras despesas e desconto", () => {
+  it("compra do XML com duplicatas e chave (o B1 do cético): fornecedor, número e série → 422 cada um e juntos, nada gravado; o mesmo valor não é troca; confirmar mantém o fornecedor e o número da nota", async () => {
+    const x = await compraDoXml({ duplicatas: true });
+    const outro = await fornecedorComDocumento(cnpjNovo());
+    const antes = await foto(x.id);
+    const v = await versao(x.id);
+    const troca: Record<(typeof IDENTIDADE)[number], unknown> = { fornecedor_id: outro, numero_nota: "777777", serie_nota: "99" };
+    for (const campo of IDENTIDADE) {
+      const r = await patch("compra", x.id, { version: v, [campo]: troca[campo] });
+      recusada(r, 422, "VALIDATION_ERROR");
+      expect(detalhes(r), campo).toEqual([{ path: campo, message: MSG_EDICAO_IDENTIDADE_DA_NOTA }]);
+    }
+    const juntos = await patch("compra", x.id, { version: v, ...troca });
+    expect(detalhes(juntos), "as três juntas, no campo").toEqual(IDENTIDADE.map((path) => ({ path, message: MSG_EDICAO_IDENTIDADE_DA_NOTA })));
+    expect(await foto(x.id), "nada gravado").toEqual(antes);
+    // O MESMO valor não é troca: 200, e só a observação muda.
+    const igual = await patch("compra", x.id, { version: v, fornecedor_id: x.fornecedor, numero_nota: x.nota.numero, serie_nota: x.nota.serie, observacao: "conferida" });
+    expect(igual.statusCode, igual.body).toBe(200);
+    // Confirmar: a compra e o título são do fornecedor DA NOTA, com o número DA NOTA (o que a chave diz).
+    const conf = await confirmarCompra(x.id);
+    expect(conf.statusCode, conf.body).toBe(200);
+    const depois = await linha(x.id);
+    expect([depois.situacao, depois.fornecedor_id, depois.numero_nota, depois.serie_nota, depois.chave_acesso, depois.observacao])
+      .toEqual(["confirmado", x.fornecedor, x.nota.numero, x.nota.serie, x.nota.chave, "conferida"]);
+    const titulos = (await c.admin.query<{ person_id: string; number: string; amount: string }>(
+      "select person_id::text as person_id, number, amount::text as amount from erp.financial_titles where source_type = 'documentos_compra' and source_id = $1 order by installment_number", [x.id])).rows;
+    expect(titulos, "os títulos das duplicatas: do fornecedor e com o número da nota (<número>-<parcela>)").toEqual([
+      { person_id: x.fornecedor, number: `${x.nota.numero}-1`, amount: "500.00" }, { person_id: x.fornecedor, number: `${x.nota.numero}-2`, amount: "500.00" }]);
+  });
+
+  it("compra MANUAL com a chave digitada: as três travam; a compra SEM chave: as três editam (premissa)", async () => {
+    const outro = await fornecedorComDocumento(cnpjNovo());
+    const comChave = await documento("compra", [itemCompra((await produto()).id)], { chave_acesso: chaveNova(), numero_nota: "123", serie_nota: "1" });
+    const semChave = await documento("compra", [itemCompra((await produto()).id)], { numero_nota: "124", serie_nota: "1" });
+    const banco = await linha(comChave);
+    expect([banco.chave_acesso !== null, banco.dfe_id, (await itensNoBanco(comChave))[0]!.n_item_nota], "premissa: manual — com a chave, sem DF-e nem linha da nota").toEqual([true, null, null]);
+    expect((await linha(semChave)).chave_acesso, "premissa: sem chave").toBeNull();
+    const troca = { fornecedor_id: outro, numero_nota: "777777", serie_nota: "99" };
+    const antes = await foto(comChave);
+    const r = await patch("compra", comChave, { version: await versao(comChave), ...troca });
+    recusada(r, 422, "VALIDATION_ERROR");
+    expect(detalhes(r)).toEqual(IDENTIDADE.map((path) => ({ path, message: MSG_EDICAO_IDENTIDADE_DA_NOTA })));
+    expect(await foto(comChave), "nada gravado").toEqual(antes);
+    // Sem nota vinda do XML, frete, outras despesas e desconto continuam livres (a P6 só trava a identidade aqui).
+    const despesas = await patch("compra", comChave, { version: await versao(comChave), frete: "5.00", outras_despesas: "2.00", desconto: "1.00" });
+    expect(despesas.statusCode, despesas.body).toBe(200);
+    // Premissa: sem a chave, as três editam.
+    const ok = await patch("compra", semChave, { version: await versao(semChave), ...troca });
+    expect(ok.statusCode, ok.body).toBe(200);
+    const depois = await linha(semChave);
+    expect([depois.fornecedor_id, depois.numero_nota, depois.serie_nota]).toEqual([outro, "777777", "99"]);
+  });
+
+  it("compra do XML SEM duplicatas: frete, outras despesas e desconto → 422 (o motivo da nota); o local e a observação editam; a data do documento segue editável (resíduo declarado)", async () => {
+    const x = await compraDoXml({ duplicatas: false });
+    expect([x.item.n_item_nota, (await linha(x.id)).dfe_id], "premissa: vinda da nota pela linha da nota (o XML enviado, sem DF-e)").toEqual([1, null]);
+    const antes = await foto(x.id);
+    const v = await versao(x.id);
+    for (const campo of ["frete", "outras_despesas", "desconto"] as const) {
+      const r = await patch("compra", x.id, { version: v, [campo]: "5.00" });
+      recusada(r, 422, "VALIDATION_ERROR");
+      expect(detalhes(r), campo).toEqual([{ path: campo, message: MSG_EDICAO_CABECALHO_DA_NOTA }]);
+    }
+    // A identidade também (a compra do XML tem a chave), e o item da linha da nota (a P3 de sempre).
+    const identidade = await patch("compra", x.id, { version: v, numero_nota: "777777" });
+    expect(detalhes(identidade)).toEqual([{ path: "numero_nota", message: MSG_EDICAO_IDENTIDADE_DA_NOTA }]);
+    const item = await patch("compra", x.id, { version: v, itens: [{ id: x.item.id, quantidade: "9" }] });
+    expect(detalhes(item)).toEqual([{ path: "itens[0].quantidade", message: MSG_EDICAO_ITEM_DA_NOTA }]);
+    expect(await foto(x.id), "nada gravado").toEqual(antes);
+    // O MESMO valor não é troca.
+    const banco = await linha(x.id);
+    const igual = await patch("compra", x.id, { version: v, frete: String(banco.frete), outras_despesas: String(banco.outras_despesas), desconto: String(banco.desconto) });
+    expect(igual.statusCode, igual.body).toBe(200);
+    expect(await versao(x.id), "o mesmo valor não grava (a versão não sobe)").toBe(v);
+    // O que não veio da nota edita: o local do item e a observação; e a data do documento (o resíduo declarado da P6).
+    const ok = await patch("compra", x.id, { version: v, observacao: "conferida", data_documento: "2026-09-09", itens: [{ id: x.item.id, armazem_id: c.I.warehouse2 }] });
+    expect(ok.statusCode, ok.body).toBe(200);
+    const depois = await linha(x.id);
+    expect([depois.observacao, depois.data_documento, depois.frete, depois.valor_total]).toEqual(["conferida", "2026-09-09", banco.frete, banco.valor_total]);
+    expect((await itensNoBanco(x.id))[0]).toMatchObject({ armazem_id: c.I.warehouse2, quantidade: x.item.quantidade });
   });
 });

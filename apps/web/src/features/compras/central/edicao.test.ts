@@ -260,6 +260,22 @@ describe("as travas da edição (P1: item salvo não sai; os limites do servidor
     expect(campoTravadoNaEdicao(limites, "toString")).toBe(false);
   });
 
+  it("P6: fornecedor, número e série da compra com chave, e frete, outras despesas e desconto da compra vinda da nota — travados pelos limites, com o motivo do servidor (o mesmo mecanismo do cabeçalho)", () => {
+    const DA_CHAVE = "A nota desta compra tem chave de acesso: fornecedor, número e série vêm da chave e não mudam.";
+    const DO_XML = "Esta compra veio da nota fiscal: frete, outras despesas e desconto do cabeçalho são os da nota…";
+    const p6: LimitesDaEdicaoDeCompra = {
+      campos: { fornecedor_id: DA_CHAVE, numero_nota: DA_CHAVE, serie_nota: DA_CHAVE, frete: DO_XML, outras_despesas: DO_XML, desconto: DO_XML },
+      itemNovo: null, itens: []
+    };
+    for (const c of ["fornecedor_id", "numero_nota", "serie_nota"]) {
+      expect(campoTravadoNaEdicao(p6, c), c).toBe(true);
+      expect(motivoDaTravaNaEdicao(p6, c), c).toBe(DA_CHAVE);
+    }
+    for (const c of ["frete", "outras_despesas", "desconto"]) expect(motivoDaTravaNaEdicao(p6, c), c).toBe(DO_XML);
+    // o que a P6 deixa livre: a data do documento (o resíduo declarado), a entrada e a observação
+    for (const c of ["data_documento", "data_entrada", "observacao"]) expect(campoTravadoNaEdicao(p6, c), c).toBe(false);
+  });
+
   it("a defesa do handler: o item salvo que sumiu volta (a lista anterior inteira)", () => {
     const a = abrir().itens;
     expect(itensNaEdicao(a, [a[1]!], SEM_LIMITES)).toEqual(a);

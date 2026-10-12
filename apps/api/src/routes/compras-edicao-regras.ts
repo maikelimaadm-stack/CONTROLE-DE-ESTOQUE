@@ -88,6 +88,14 @@ export const MSG_EDICAO_ITEM_ORCADO = "O item do pedido de compra já orçado n�
 export const MSG_EDICAO_COMPRA_DA_NOTA = "Esta compra veio da nota com as duplicatas: o que forma o total e as parcelas é o da nota e não muda. Para corrigir, cancele a compra e lance de novo.";
 /** P3 — o item que carrega a linha da nota (`n_item_nota`): produto, quantidade, valores, descontos e impostos da nota. */
 export const MSG_EDICAO_ITEM_DA_NOTA = "Este item veio da nota fiscal: produto, quantidade, valores, descontos e impostos são os da nota e não mudam.";
+/**
+ * P6 (decisão do dono) — a compra com CHAVE DE ACESSO (digitada ou do XML): a chave (imutável, 0047) codifica o emitente,
+ * o número e a série da nota. Trocar fornecedor, número ou série desmentiria a chave — e o título nasceria para outro
+ * fornecedor com outro número.
+ */
+export const MSG_EDICAO_IDENTIDADE_DA_NOTA = "A nota desta compra tem chave de acesso: fornecedor, número e série vêm da chave e não mudam.";
+/** P6 — a compra VINDA DA NOTA (importada do XML), mesmo sem as duplicatas: frete, outras despesas e desconto vieram da nota. */
+export const MSG_EDICAO_CABECALHO_DA_NOTA = "Esta compra veio da nota fiscal: frete, outras despesas e desconto do cabeçalho são os da nota e não mudam. Para corrigir, cancele a compra e lance de novo.";
 
 /** O que forma o total da compra no cabeçalho, e as parcelas (P3; `data_vencimento` = a 1ª duplicata — decisão do A2). */
 const CABECALHO_DA_NOTA: readonly CampoDoCabecalhoDeCompra[] = ["frete", "outras_despesas", "desconto", "condicao_pagamento_id", "data_vencimento"];
@@ -95,6 +103,21 @@ const CABECALHO_DA_NOTA: readonly CampoDoCabecalhoDeCompra[] = ["frete", "outras
 const ITEM_DO_TOTAL: readonly CampoDoItemDeCompra[] = ["produto_id", "quantidade", "valor_unitario", "desconto", "desconto_percentual"];
 /** A linha da nota no item (P3): o que forma o total e os impostos que vieram da linha. */
 const ITEM_DA_LINHA_DA_NOTA: readonly CampoDoItemDeCompra[] = [...ITEM_DO_TOTAL, "valor_ipi", "valor_icms_st"];
+/** P6 — o que a chave de acesso codifica (o emitente, o número e a série). */
+const IDENTIDADE_DA_NOTA: readonly CampoDoCabecalhoDeCompra[] = ["fornecedor_id", "numero_nota", "serie_nota"];
+/** P6 — o que o cabeçalho da compra vinda da nota trouxe da nota (os totais `vFrete`, `vOutro`, `vDesc`). */
+const DESPESAS_DA_NOTA: readonly CampoDoCabecalhoDeCompra[] = ["frete", "outras_despesas", "desconto"];
+
+/**
+ * P6 — "VINDA DA NOTA" (importada do XML), pelo que o BANCO já guarda e que SÓ a importação grava (os `extras` de
+ * `lancar`, parâmetro interno que nunca vem do cliente; o vínculo da importação): a DF-e ligada (`dfe_id`), a importação
+ * que gerou a compra (`importacao_id`, lido na MESMA consulta do documento) OU algum item com a linha da nota
+ * (`n_item_nota`). Qualquer um dos três basta (fail-closed). A compra manual — mesmo com a chave digitada — não tem
+ * nenhum dos três.
+ */
+export function compraVindaDaNota(doc: Pick<DocumentoGravadoDeCompra, "especie" | "dfe_id" | "importacao_id" | "itens">): boolean {
+  return doc.especie === "compra" && (doc.dfe_id != null || doc.importacao_id != null || doc.itens.some((i) => i.n_item_nota != null));
+}
 
 /**
  * OS LIMITES DE UMA EDIÇÃO PERMITIDA — a ÚNICA função que os calcula, para a PATCH (que recusa a TROCA de um campo
@@ -106,7 +129,10 @@ const ITEM_DA_LINHA_DA_NOTA: readonly CampoDoItemDeCompra[] = [...ITEM_DO_TOTAL,
  *                       (a compra gerada de pedido aberto ou finalizado: o saldo do item do pedido + o que esta compra já
  *                       tem; `null` = sem teto além da coluna).
  * Os motivos, na ordem em que valem (o primeiro de cada campo fica): D2 (compra gerada de pedido), D4 (pedido que gerou
- * compra), D3 (item orçado), P3 (compra com as duplicatas da nota; item com a linha da nota).
+ * compra), D3 (item orçado), P3 (compra com as duplicatas da nota; item com a linha da nota), P6 (compra com chave de
+ * acesso: fornecedor, número e série; compra vinda da nota: frete, outras despesas e desconto do cabeçalho).
+ * RESÍDUO DECLARADO (P6, decisão do dono): `data_documento` é a emissão da nota (o AAMM está na chave) e continua
+ * editável, pela letra da P3.
  * Consultas (nunca uma por item): a compra gerada de pedido, UMA (o item de origem, o pedido e o que as outras compras
  * vivas já ligaram); o pedido com itens, UMA (os itens orçados por orçamento não cancelado); o resto, nenhuma.
  */
@@ -116,7 +142,8 @@ export interface LimitesDaEdicaoDeCompra {
   itens: { id: string; campos: Record<string, string>; quantidadeMaxima: string | null }[];
 }
 
-type DocumentoParaLimites = Pick<DocumentoGravadoDeCompra, "id" | "especie" | "origem_documento_id" | "parcelas_nota" | "itens" | "compras_geradas">;
+type DocumentoParaLimites = Pick<DocumentoGravadoDeCompra, "id" | "especie" | "origem_documento_id" | "parcelas_nota" | "itens" | "compras_geradas"
+  | "chave_acesso" | "dfe_id" | "importacao_id">;
 
 export async function limitesDaEdicaoDeCompra(ctx: ServiceCtx, doc: DocumentoParaLimites): Promise<LimitesDaEdicaoDeCompra> {
   const campos: Record<string, string> = {};
@@ -174,6 +201,11 @@ export async function limitesDaEdicaoDeCompra(ctx: ServiceCtx, doc: DocumentoPar
   }
   // P3 — o item que carrega a linha da nota.
   doc.itens.forEach((g, k) => { if (g.n_item_nota != null) travar(itens[k]!.campos, ITEM_DA_LINHA_DA_NOTA, MSG_EDICAO_ITEM_DA_NOTA); });
+
+  // P6 — a compra com chave de acesso (digitada ou do XML): o que a chave codifica.
+  if (doc.especie === "compra" && doc.chave_acesso != null) travar(campos, IDENTIDADE_DA_NOTA, MSG_EDICAO_IDENTIDADE_DA_NOTA);
+  // P6 — a compra vinda da nota, mesmo sem as duplicatas (com elas, a P3 acima já travou, com o motivo dela).
+  if (compraVindaDaNota(doc)) travar(campos, DESPESAS_DA_NOTA, MSG_EDICAO_CABECALHO_DA_NOTA);
 
   return { campos, itemNovo, itens };
 }

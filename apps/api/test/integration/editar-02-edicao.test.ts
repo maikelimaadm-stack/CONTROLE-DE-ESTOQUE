@@ -8,7 +8,10 @@ import {
   type EspecieCompra, type Hdr, type Resposta,
 } from "./top-config-08-ajuda.js";
 import { MSG_EDICAO_COMPRA_CONFIRMADA, msgEdicaoPedidoComCompraViva, MSG_EDICAO_FORNECEDOR_DA_COMPRA_DO_PEDIDO, MSG_EDICAO_PRODUTO_DA_COMPRA_DO_PEDIDO,
-  MSG_EDICAO_ITEM_NOVO_NA_COMPRA_DO_PEDIDO } from "../../src/routes/compras-edicao-regras.js";
+  MSG_EDICAO_ITEM_NOVO_NA_COMPRA_DO_PEDIDO, MSG_EDICAO_IDENTIDADE_DA_NOTA, MSG_EDICAO_CABECALHO_DA_NOTA, MSG_EDICAO_COMPRA_DA_NOTA,
+  MSG_EDICAO_ITEM_DA_NOTA } from "../../src/routes/compras-edicao-regras.js";
+import { fornecedorComDocumento, chaveNova } from "./f7-ajuda.js";
+import { compraDoXml, cnpjNovo } from "./editar-02-ajuda.js";
 
 /**
  * EDITAR-02 (decisão 313) — `GET /api/compras/{pedidos|compras}/:id/edicao` e a PORTA das duas rotas da edição.
@@ -22,7 +25,9 @@ import { MSG_EDICAO_COMPRA_CONFIRMADA, msgEdicaoPedidoComCompraViva, MSG_EDICAO_
  *   (m) o `/edicao`: `podeEditar`/`motivo` da MESMA função da PATCH (a mensagem do 409 é o `motivo`), `version`, os
  *       `limites`, `regras` pela versão CONGELADA (a TOP republicada depois não muda o que a edição cobra), `layout` o de
  *       HOJE da TOP, `documento` = o `GET :id`; leitura pura (nada gravado, a versão não sobe);
- *   (n) o número de consultas (CONTADO, `.claude/rules/backend-api.md`): 1 × 20 itens → as mesmas, tabela por tabela.
+ *   (n) o número de consultas (CONTADO, `.claude/rules/backend-api.md`): 1 × 20 itens → as mesmas, tabela por tabela;
+ *   (p) P6: os `limites` declaram a identidade da nota (compra com chave) e o cabeçalho da compra vinda da nota, com o
+ *       motivo — os MESMOS que a PATCH recusa.
  *
  * TESTEMUNHA: o banco, por conexão de superusuário (sem RLS).
  */
@@ -263,5 +268,48 @@ describe("(n) o número de consultas do /edicao: nenhuma por item", () => {
       provados++;
     }
     expect(provados).toBe(2);
+  });
+});
+
+// ─────────────── (p) P6: os limites da nota ───────────────
+
+describe("(p) P6: o /edicao declara a identidade da nota e o cabeçalho da compra vinda da nota — os MESMOS limites da PATCH", () => {
+  const IDENTIDADE = { fornecedor_id: MSG_EDICAO_IDENTIDADE_DA_NOTA, numero_nota: MSG_EDICAO_IDENTIDADE_DA_NOTA, serie_nota: MSG_EDICAO_IDENTIDADE_DA_NOTA };
+  const DA_LINHA = Object.fromEntries(["produto_id", "quantidade", "valor_unitario", "desconto", "desconto_percentual", "valor_ipi", "valor_icms_st"].map((c) => [c, MSG_EDICAO_ITEM_DA_NOTA]));
+
+  it("XML sem duplicatas: identidade + frete/outras despesas/desconto; com duplicatas: a P3 + identidade; manual com chave: só a identidade; sem chave: nada", async () => {
+    const semDuplicatas = await compraDoXml({ duplicatas: false });
+    const e1 = await lida("compra", semDuplicatas.id);
+    expect(e1.podeEditar).toBe(true);
+    expect(e1.limites.campos).toEqual({ ...IDENTIDADE, frete: MSG_EDICAO_CABECALHO_DA_NOTA, outras_despesas: MSG_EDICAO_CABECALHO_DA_NOTA, desconto: MSG_EDICAO_CABECALHO_DA_NOTA });
+    expect(e1.limites.itens).toEqual([{ id: semDuplicatas.item.id, campos: DA_LINHA, quantidadeMaxima: null }]);
+    expect(e1.limites.itemNovo, "sem as duplicatas, o item novo entra (a P3 só o trava com elas)").toBeNull();
+
+    const comDuplicatas = await compraDoXml({ duplicatas: true });
+    const e2 = await lida("compra", comDuplicatas.id);
+    expect(e2.limites.campos, "com as duplicatas, o motivo da P3 fica no que ela já travava; a identidade se soma").toEqual({
+      ...Object.fromEntries(["frete", "outras_despesas", "desconto", "condicao_pagamento_id", "data_vencimento", "plano_parcelas"].map((c) => [c, MSG_EDICAO_COMPRA_DA_NOTA])),
+      ...IDENTIDADE,
+    });
+    expect(e2.limites.itemNovo).toBe(MSG_EDICAO_COMPRA_DA_NOTA);
+
+    const manual = await documento("compra", { chave_acesso: chaveNova(), numero_nota: "321", serie_nota: "1" });
+    expect((await lida("compra", manual)).limites.campos, "manual com a chave digitada: só a identidade").toEqual(IDENTIDADE);
+    const semChave = await documento("compra", { numero_nota: "322", serie_nota: "1" });
+    expect((await lida("compra", semChave)).limites.campos, "sem chave: nada travado no cabeçalho").toEqual({});
+  });
+
+  it("cada campo que o /edicao declara, trocado, é a 422 da PATCH com o MESMO motivo — e o /edicao é leitura pura", async () => {
+    const x = await compraDoXml({ duplicatas: false });
+    const antes = await foto(x.id);
+    const e = await lida("compra", x.id);
+    const outro = await fornecedorComDocumento(cnpjNovo());
+    const troca: Record<string, unknown> = { fornecedor_id: outro, numero_nota: "777777", serie_nota: "99", frete: "5.00", outras_despesas: "5.00", desconto: "5.00" };
+    expect(Object.keys(e.limites.campos).sort(), "premissa: os seis campos declarados").toEqual(Object.keys(troca).sort());
+    for (const [campo, motivo] of Object.entries(e.limites.campos)) {
+      const r = await patch("compra", x.id, { version: e.version, [campo]: troca[campo] });
+      expect([r.statusCode, erro(r).details], campo).toEqual([422, [{ path: campo, message: motivo }]]);
+    }
+    expect(await foto(x.id), "nada gravado").toEqual(antes);
   });
 });

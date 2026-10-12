@@ -57,6 +57,10 @@ export interface DocumentoGravadoDeCompra {
   observacao: string | null; origem_documento_id: string | null;
   chave_acesso: string | null; uf_nota: string | null; tipo_documento_fiscal: string | null; valor_ipi: string | null; valor_icms_st: string | null;
   seguro: string | null; tipo_titulo_id: string | null; classificacao_gasto: string | null; rateio_tipo: string | null; parcelas_nota: unknown;
+  /** A DF-e ligada (só a importação do XML a grava, OPERACOES-01 F7). */
+  dfe_id: string | null;
+  /** A importação do XML que GEROU a compra (`erp.importacoes_nfe_compra.documento_compra_id`); a chave só vem quando há. */
+  importacao_id?: string;
   itens: ItemGravadoDeCompra[];
   compras_geradas?: { id: string; codigo: string; situacao: string }[];
   rateio?: LinhaDoRateioDaCompra[];
