@@ -2828,7 +2828,7 @@ débito de hoje.
 | 7 | o documento lido (sem trava: a linha já é desta transação; no pedido, as compras geradas lidas SOB a trava) e `recusaDaEdicaoDeCompra` | 409 `INVALID_STATUS_TRANSITION` (abaixo) |
 | 8 | o documento como ficará (`edicaoDeCompraComoFicara`) | 422 em `itens` (P1) ou em `itens[i].id` |
 | 9 | na compra gerada de pedido, a trava do PEDIDO de origem (`travarPedidoDeCompraDaProvisao`: compra → pedido, a ordem do confirmar e do cancelar) — também numa PATCH que não muda nada | — |
-| 10 | os LIMITES (`limitesDaEdicaoDeCompra`: D2, D4, D3, P3 e P6): a TROCA de um campo travado; o igual ao gravado não é troca | 422 `VALIDATION_ERROR` no campo, com o motivo dos limites (abaixo) |
+| 10 | os LIMITES (`limitesDaEdicaoDeCompra`: D2, D4, D3, P3, P6 e D15): a TROCA de um campo travado; o igual ao gravado não é troca | 422 `VALIDATION_ERROR` no campo, com o motivo dos limites (abaixo) |
 | 11 | nada muda (valores canônicos e plano iguais ao gravado, itens iguais) | 200 com o documento lido sob a trava, SEM escrita e SEM subir a versão |
 | 12 | documento sem itens: a versão CONGELADA tem de aceitar (formato 4 "Permitido", só a compra) | a recusa de hoje do POST |
 | 13 | o NÚCLEO do lançamento (`nucleoDoLancamento`), com a TOP e a versão GRAVADAS e o documento como ficará: campos da espécie, forma, parceiros (só o que a PATCH troca), classificação e condição (só se trocam), regras da versão congelada (a condição permitida só se a condição troca), efeitos previstos, itens (só os novos ou com produto, local, lote, validade ou "gera estoque" trocados), dados fiscais sobre o rateio GRAVADO, totais (+ IPI, ICMS-ST e seguro gravados), duplicatas da nota, plano, padrões financeiros da TOP (`padroesDaTopNoSalvarDaCompra`, decisão 311/286 — SEMPRE), exigências do título, nota duplicada (só se fornecedor, número ou série mudam, sem contar o próprio documento) e o layout de HOJE da TOP | os códigos e as mensagens do POST, os mesmos caminhos |
@@ -2865,9 +2865,11 @@ continua sendo a rede):
 | item com a linha da nota (`n_item_nota`) | o que forma o total do item e `valor_ipi`, `valor_icms_st` | "Este item veio da nota fiscal: produto, quantidade, valores, descontos e impostos são os da nota e não mudam." |
 | compra com CHAVE DE ACESSO (digitada ou do XML) — P6 | `fornecedor_id`, `numero_nota`, `serie_nota` (o que a chave codifica) | `MSG_EDICAO_IDENTIDADE_DA_NOTA`: "A nota desta compra tem chave de acesso: fornecedor, número e série vêm da chave e não mudam." |
 | compra VINDA DA NOTA, mesmo sem as duplicatas (`compraVindaDaNota`: a DF-e ligada, `dfe_id`, ou a importação que a gerou, ou algum item com `n_item_nota`) — P6 | `frete`, `outras_despesas`, `desconto` do cabeçalho | `MSG_EDICAO_CABECALHO_DA_NOTA`: "Esta compra veio da nota fiscal: frete, outras despesas e desconto do cabeçalho são os da nota e não mudam. Para corrigir, cancele a compra e lance de novo." |
+| compra VINDA DA NOTA (o mesmo critério), com ou sem as duplicatas — D15 | item novo (`itens[k]`; o `/edicao` o declara em `limites.itemNovo`) | `MSG_EDICAO_ITEM_NOVO_NA_COMPRA_DA_NOTA`: "Esta compra veio da nota fiscal: os itens são os da nota, e um item novo mudaria o total. Para comprar outro produto, lance outra compra." (com as duplicatas, vale o motivo da P3, que vem primeiro) |
 
-Saem todos juntos. Em cada campo vale o PRIMEIRO motivo, nesta ordem: D2, D4, D3, P3, P6 — na compra da nota gerada de
-pedido, o fornecedor leva o motivo da D2; com as duplicatas, frete, outras despesas e desconto levam o da P3. Local,
+Saem todos juntos. Em cada campo vale o PRIMEIRO motivo, nesta ordem: D2, D4, D3, P3, P6, D15 — na compra da nota gerada
+de pedido, o fornecedor leva o motivo da D2; com as duplicatas, frete, outras despesas e desconto levam o da P3. No item
+novo, a ordem é D2 (a compra gerada de pedido), P3 (as duplicatas) e D15 (a compra vinda da nota). Local,
 lote, validade, observação, datas (fora o vencimento com as duplicatas), classificação e "gera estoque"/"imobilizado"
 seguem editáveis. **Resíduo declarado da P6:** `data_documento` (a emissão da nota; o AAMM está na chave) segue editável
 mesmo com a chave, pela letra da P3. A compra manual SEM chave e sem vínculo com a nota não tem trava de nota.
