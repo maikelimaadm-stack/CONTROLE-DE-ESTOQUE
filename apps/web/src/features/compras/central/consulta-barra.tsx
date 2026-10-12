@@ -25,6 +25,7 @@ import {
 } from "./adaptador";
 import type { Cabecalho, CopiaDeCompra, EstadoDaConsulta, OpcaoDeNovoOrcamento } from "./estado";
 import { DialogoAprovarParaOrcamento, DialogoFinalizarPedido } from "./dialogos-pedido";
+import { IconeEditar } from "../orcamento/consulta-orcamento";
 
 /**
  * BARRA DA CONSULTA DA CENTRAL DE COMPRAS (VISUAL-UX-04, decisão 276) — o modelo da venda, sobre o motor.
@@ -40,6 +41,10 @@ import { DialogoAprovarParaOrcamento, DialogoFinalizarPedido } from "./dialogos-
  *   - Pedido com a capacidade da F6 (OPERACOES-01 F6b, decisão 283; sem ela, a barra de hoje): "Finalizar" (com a
  *     prévia do servidor), "Aprovar para orçamento" e "Novo orçamento" (pelo leque de TOPs de orçamento do pedido); o
  *     "Receber…" também no pedido FINALIZADO, e desabilitado no aberto cuja TOP exige o pedido finalizado.
+ *   - EDITAR-02 (decisão 313): a pílula "Editar" (`compras-editar`, a MESMA pílula e o MESMO ícone do "Editar orçamento"),
+ *     com `<recurso>.edit` E `.view`; desabilitada com o motivo (`data-dica`/`data-motivo`) no confirmado, no cancelado,
+ *     no pedido com compra viva, finalizado ou convertido — e na recusa que o `/edicao` acabou de dar. O handler confere a
+ *     MESMA regra (`e.editar.abrir`).
  *
  * Nada aqui chama a API de escrita: confirmar, cancelar e encerrar moram no estado (`useEstadoDaConsulta`).
  * Duplicar entrega a cópia em memória (nada na URL além da TOP, nada em storage) e abre a criação.
@@ -192,6 +197,8 @@ export function useBarraDaConsulta({ e, rotulo, densidade, onDensidade, salvoVis
     {podeCriar && <NovoDocumento prefixoTestid={PREFIXO} fonte={fonteNovo} />}
     {podeCriar && <BotaoDaBarra rotulo="Duplicar documento" dica={e.dicaDuplicarDesabilitado ?? "Duplicar documento"} disabled={!e.podeDuplicar}
       data-testid={`${PREFIXO}-duplicar`} onClick={duplicar}><IconeDuplicar /></BotaoDaBarra>}
+    {e.editar.visivel && <PilulaDaBarra icone={<IconeEditar />} dica={e.editar.dicaDesabilitada ?? `Editar ${especie}`} disabled={e.editar.dicaDesabilitada !== null}
+      data-testid="compras-editar" data-motivo={e.editar.dicaDesabilitada ?? undefined} onClick={e.editar.abrir}>Editar</PilulaDaBarra>}
     {e.ehCompra && can("compras.edit") && <PilulaDaBarra icone={<IconeConfirmar />} dica="Confirmar compra" disabled={!e.podeConfirmar || e.confirmarOcupado}
       data-testid="compras-confirmar" onClick={() => { if (e.podeConfirmar) e.setConfirmando(true); }}>Confirmar compra</PilulaDaBarra>}
     {e.ehPedido && (e.podeReceber || !e.pedidoEmAndamento)

@@ -14,7 +14,7 @@ import estilosCv from "@/features/central/moldura.module.css";
 import { hrefDoConfigurador, textoDoLayoutQueVale } from "../layout-da-central";
 import { PREFIXO_CENTRAL_COMPRAS } from "./adaptador";
 import { CAMPOS_DOS_DADOS_FISCAIS, opcoesDeNaturezaDeDespesa, type ChaveDoCabecalho, type EstadoDaCriacao } from "./estado";
-import { DadosFiscaisDaCriacao, QUANTIDADE_DE_DADOS_FISCAIS } from "./dados-fiscais";
+import { DadosFiscaisDaConsulta, DadosFiscaisDaCriacao, QUANTIDADE_DE_DADOS_FISCAIS, RateioDaConsulta, temDadosFiscais } from "./dados-fiscais";
 
 /**
  * CENTRAL DE COMPRAS — DADOS PRINCIPAIS DA CRIAÇÃO (VISUAL-UX-04, decisão 276).
@@ -32,6 +32,10 @@ import { DadosFiscaisDaCriacao, QUANTIDADE_DE_DADOS_FISCAIS } from "./dados-fisc
  * OPERACOES-01 F7 (decisão 284): na criação da COMPRA, com a capacidade `importacaoXml` "sim", o bloco "Dados fiscais"
  * (`compras-dados-fiscais`) no FIM dos Dados adicionais — fora do layout (não é campo dele: sem `data-campo`, sem "*",
  * fora das pendências). Sem a capacidade, nada muda.
+ *
+ * EDITAR-02 (decisão 313): na EDIÇÃO, o campo que a PATCH não aceita fica no MESMO `fieldset` travado de sempre, com
+ * `data-travado-na-edicao="true"` e o motivo do servidor em `data-motivo` (a empresa; o resto pelos limites); os dados fiscais do
+ * cabeçalho (que não mudam depois do lançamento) aparecem em LEITURA, pelos MESMOS blocos da consulta.
  */
 
 /** O caminho da recusa da classificação de um item (F7), nos dois formatos do servidor: `itens[0].x` e `itens.0.x`. */
@@ -39,7 +43,7 @@ const CAMINHO_DA_CLASSIFICACAO_DO_ITEM = /^itens(?:\[\d+\]|\.\d+)\.(?:gera_estoq
 
 /** "Novo pedido de compra" / "Nova compra" — o nome do documento ainda sem número; o ponto acende com alteração. */
 export function identidadeDaCriacao(e: EstadoDaCriacao): IdentidadeDoDocumento {
-  const nome = e.modo === "receber" ? e.titulo : e.variante.variante === "pedido" ? "Novo pedido de compra" : "Nova compra";
+  const nome = e.modo === "receber" || e.modo === "edicao" ? e.titulo : e.variante.variante === "pedido" ? "Novo pedido de compra" : "Nova compra";
   return {
     nome,
     alterado: e.alterado,
@@ -154,7 +158,8 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
     const n = desenhar(c);
     if (n === null) return null;
     return e.travado(c)
-      ? <fieldset key={c} disabled data-editavel="false" data-travado-pela-top={e.travadoPelaTop(c) ? "true" : undefined} style={{ display: "contents" }}>{n}</fieldset>
+      ? <fieldset key={c} disabled data-editavel="false" data-travado-pela-top={e.travadoPelaTop(c) ? "true" : undefined}
+        data-travado-na-edicao={e.travadoNaEdicao(c) ? "true" : undefined} data-motivo={e.motivoNaEdicao(c) ?? undefined} style={{ display: "contents" }}>{n}</fieldset>
       : <React.Fragment key={c}>{n}</React.Fragment>;
   };
 
@@ -183,9 +188,13 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
      painel desenha por este mesmo componente (`estadoDeUmCampo`, em `central-compras.tsx`, zera a TOP): lá o bloco
      repetiria os campos (e o botão "Dados adicionais") em cada campo do painel. */
   const comDadosFiscais = e.dadosFiscaisAtivos && e.top !== null;
+  /* EDITAR-02: na edição da compra com dados fiscais, os MESMOS blocos de leitura da consulta (nos Dados do documento,
+     nunca no campo único do painel — o mesmo critério do bloco da criação). */
+  const fiscaisEmLeitura = e.modo === "edicao" && e.ehCompra && e.top !== null && e.documentoEmEdicao !== null && temDadosFiscais(e.documentoEmEdicao)
+    ? e.documentoEmEdicao : null;
   // o Local de estoque conta como campo de Dados adicionais quando a Empresa mora lá; os dados fiscais, quando existem
   const quantidade = recolhidos.length + (e.localNaGrade && recolhidos.includes("empresa_id") ? 1 : 0)
-    + (comDadosFiscais ? QUANTIDADE_DE_DADOS_FISCAIS : 0);
+    + (comDadosFiscais || fiscaisEmLeitura ? QUANTIDADE_DE_DADOS_FISCAIS : 0);
   /* Campo com erro numa zona recolhida não ficaria à vista: com erro lá dentro, Dados adicionais abre. */
   const erroEscondido = recolhidos.some((c) => Boolean(e.erro(c))) || (comDadosFiscais && (CAMPOS_DOS_DADOS_FISCAIS.some((c) => Boolean(e.erro(c)))
     || Object.keys(e.errosDaTela).some((c) => c.startsWith("rateio") || CAMINHO_DA_CLASSIFICACAO_DO_ITEM.test(c))));
@@ -206,6 +215,10 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
         <ColunaDeCampos>{comOLocal(a.campos)}</ColunaDeCampos>
       </div>)}
       {comDadosFiscais && <DadosFiscaisDaCriacao e={e} />}
+      {fiscaisEmLeitura && <div data-testid="compras-edicao-dados-fiscais" className="contents">
+        <DadosFiscaisDaConsulta d={fiscaisEmLeitura} />
+        <RateioDaConsulta d={fiscaisEmLeitura} />
+      </div>}
     </DadosAdicionais>
   </>;
 }

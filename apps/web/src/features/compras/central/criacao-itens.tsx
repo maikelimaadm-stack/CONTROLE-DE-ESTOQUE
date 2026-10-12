@@ -25,6 +25,10 @@ import type { EstadoDaCriacao } from "./estado";
  * OPERACOES-01 F3b (decisão 280): a linha NOVA nasce com o "Local de estoque" do cabeçalho (`localDoCabecalho`, estado
  * da tela, do `useEstadoDaCriacao`) e troca o seu na célula; a pesquisa de produto é a da ENTRADA — aparece tudo, com o
  * saldo do local da linha para quem o vê (com a capacidade da pesquisa; sem ela, a pesquisa de antes).
+ *
+ * EDITAR-02 (decisão 313): na EDIÇÃO, as travas de cada linha (`travasDaLinha`: o item salvo não sai — o Remover não
+ * aparece com ele marcado —; produto, quantidade, valor unitário e descontos conforme os limites) e, sem item novo
+ * (`aceitaLinhaNova` falso), nem Adicionar nem Duplicar. O item novo da edição se remove antes de salvar.
  */
 
 /** Coluna do editor de hoje → chave do catálogo de compras (a que `colunasDosItensDeCompras` mapeia). */
@@ -41,7 +45,7 @@ function caminhoDoMotor(caminho: string): string | null {
 }
 
 export function ItensDaCriacaoDeCompra({ estado }: { estado: EstadoDaCriacao }) {
-  const { variante, ehCompra, itens, setItens, colunasDoLayout, fieldsDosItens, errosDeItens, lote, localDoCabecalho, regras } = estado;
+  const { variante, ehCompra, itens, setItens, colunasDoLayout, fieldsDosItens, errosDeItens, lote, localDoCabecalho, regras, travasDaLinha, aceitaLinhaNova } = estado;
   const colunas = React.useMemo(() => colunasDosItensDeCompras(variante), [variante]);
 
   /** Sempre um layout: com a capacidade, o de `colunasDoEditor`; sem, as colunas de hoje — na ordem fixa da compra. */
@@ -65,6 +69,6 @@ export function ItensDaCriacaoDeCompra({ estado }: { estado: EstadoDaCriacao }) 
   return <div data-testid="compras-itens">
     <ItensDoMotor prefixoTestid={PREFIXO_CENTRAL_COMPRAS} colunas={colunas} items={itens} onChange={setItens} layout={layout}
       erros={erros} armazemPadrao={localDoCabecalho} armazemPorItem armazemForcado={regras?.exigeArmazem === true} custoMedioNoUnitario={false}
-      lote={controleDeLote} pesquisaDeProduto={PESQUISA_DE_PRODUTO_DA_ENTRADA} />
+      lote={controleDeLote} pesquisaDeProduto={PESQUISA_DE_PRODUTO_DA_ENTRADA} travasDaLinha={travasDaLinha} aceitaLinhaNova={aceitaLinhaNova} />
   </div>;
 }

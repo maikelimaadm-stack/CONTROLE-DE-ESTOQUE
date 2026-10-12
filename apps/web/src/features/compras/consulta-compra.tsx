@@ -16,6 +16,7 @@ import { DadosDaConsulta, ItensDaConsulta, abasDaConsulta } from "./central/cons
 import { DialogoConfirmarCompra } from "./central/dialogos-compra";
 import { ConsultaDeOrcamento } from "./orcamento/consulta-orcamento";
 import { abaDosOrcamentos } from "./orcamento/aba-orcamentos";
+import { CentralDeCompras } from "./central-compras";
 
 /**
  * CONSULTA DO DOCUMENTO DE COMPRA (COMPRAS-01..02; sobre o motor na VISUAL-UX-04, decisão 276): `/compras/<seg>/<id>`.
@@ -25,6 +26,10 @@ import { abaDosOrcamentos } from "./orcamento/aba-orcamentos";
  * OPERACOES-01 F6b (decisão 283): um DESPACHANTE, sem hook — o orçamento de compra tem a consulta própria
  * (`orcamento/consulta-orcamento.tsx`); o pedido e a compra, a de hoje. No PEDIDO, a aba "Orçamentos"
  * (`orcamento/aba-orcamentos.tsx`) entra antes de "Observações" — só com a capacidade da API e o pedido que usa cotação.
+ *
+ * EDITAR-02 (decisão 313): o "Editar" troca a consulta, NO LUGAR (sem rota nova, como o orçamento), pela Central de
+ * Compras em modo edição (`CentralDeCompras modo="edicao"`); ao voltar, a consulta relida e — se a PATCH gravou — o
+ * "Salvo ✓".
  */
 export function ConsultaDeCompra({ variante, id }: { variante: VarianteDeCompra; id: string }) {
   if (variante.variante === "orcamento") return <ConsultaDeOrcamento variante={variante} id={id} />;
@@ -50,6 +55,8 @@ function ConsultaDoPedidoEDaCompra({ variante, id }: { variante: VarianteDeCompr
     const t = window.setTimeout(() => setSalvoVisivel(false), TEMPO_DO_SALVO_MS);
     return () => window.clearTimeout(t);
   }, [salvoVisivel]);
+  // EDITAR-02: a PATCH que gravou acende o "Salvo ✓" da consulta (o mesmo de quem chega da criação).
+  React.useEffect(() => { if (e.salvoNaEdicao) setSalvoVisivel(true); }, [e.salvoNaEdicao]);
   const barra = useBarraDaConsulta({ e, rotulo, densidade, onDensidade: setDensidade, salvoVisivel });
   const d = e.documento;
   useTabTitle(d ? e.titulo : null);
@@ -61,6 +68,7 @@ function ConsultaDoPedidoEDaCompra({ variante, id }: { variante: VarianteDeCompr
     }
     return <LoadingOr q={e.q}>{null}</LoadingOr>;
   }
+  if (e.editar.editando) return <CentralDeCompras variante={variante} modo="edicao" id={id} onFechar={e.editar.fechar} onRecusada={e.editar.recusada} />;
   const codigo = d["codigo"] ? String(d["codigo"]) : "";
   return <div data-testid="compras-consulta" className="contents">
     <div data-testid="compras-consulta-corpo" data-situacao={e.situacao} data-especie={variante.variante} className="contents">
