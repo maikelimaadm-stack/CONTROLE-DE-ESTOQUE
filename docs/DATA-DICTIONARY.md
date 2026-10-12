@@ -1309,6 +1309,7 @@ Documento comercial de compra (decisões 267 e 283). A coluna `especie` decide a
 | `parcelas_nota` | Parcelas da nota | jsonb | não |  |  |  | Só compra: as duplicatas da nota (de 1 a 120), conferidas com o líquido; exclusivas com o plano de parcelas da condição. |
 | `dfe_id` | DF-e | uuid | não |  |  |  | Só compra: a DF-e de onde a nota veio (FK composta), da mesma chave e sem empresa ou da mesma empresa. |
 | `solicitacao_compra_id` | Solicitação de compra | uuid | não |  |  |  | Só compra: a solicitação de compra atendida (FK composta), da mesma empresa; ao receber, a solicitação aceita a compra. |
+| `version` |  | bigint | sim |  |  |  |  |
 
 ### ERP-COMPRAS-DOCUMENTO-ITEM — Item do Documento de Compra
 

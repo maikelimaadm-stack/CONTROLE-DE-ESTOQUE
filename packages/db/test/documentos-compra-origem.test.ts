@@ -191,7 +191,7 @@ describe("premissas e catálogo", () => {
     // sat-08-0056.test.ts; a 0057 corrige o contrato Statistical API — SAT-08 R1, sat-08-0057.test.ts).
     const r = (await db.query<{ ate: number; n: number; ultima: string }>(
       "select count(*) filter (where name <= '0037_receber_pedido_de_compra.sql')::int ate, count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
-    expect(r).toEqual({ ate: 37, n: 62, ultima: "0062_icones_identificador_e_fuso.sql" });
+    expect(r).toEqual({ ate: 37, n: 63, ultima: "0063_versao_do_documento_de_compra.sql" });
   });
 
   it("colunas novas: tipo e nulidade", async () => {
@@ -229,7 +229,8 @@ describe("premissas e catálogo", () => {
     // A 0041 (TOP-CONFIG-08) acrescenta a guarda da aprovação, só na entrada em confirmado. A 0044 (OPERACOES-01 F6a)
     // troca a conferência, a transição e a guarda da origem pelas funções novas (MESMOS nomes de gatilho, mesma ordem de
     // disparo) e acrescenta a guarda da finalização do pedido e a dos itens do orçamento. A 0047 (OPERACOES-01 F7)
-    // acrescenta a guarda dos dados fiscais (chave de acesso cruzada com a nota antiga).
+    // acrescenta a guarda dos dados fiscais (chave de acesso cruzada com a nota antiga). A 0063 (EDITAR-02) acrescenta a
+    // versão do cabeçalho, o último BEFORE UPDATE por nome (editar-02-versao.test.ts).
     expect(t).toEqual([
       { tgname: "trg_documentos_compra_aprovacao", def: "CREATE TRIGGER trg_documentos_compra_aprovacao BEFORE UPDATE OF situacao ON erp.documentos_compra FOR EACH ROW WHEN (((old.situacao = 'aberto'::text) AND (new.situacao = 'confirmado'::text))) EXECUTE FUNCTION erp.documentos_compra_aprovacao_guarda()" },
       { tgname: "trg_documentos_compra_audit", def: "CREATE TRIGGER trg_documentos_compra_audit AFTER INSERT OR DELETE OR UPDATE ON erp.documentos_compra FOR EACH ROW EXECUTE FUNCTION erp.audit_row()" },
@@ -239,7 +240,8 @@ describe("premissas e catálogo", () => {
       { tgname: "trg_documentos_compra_itens_orcamento_guarda", def: "CREATE TRIGGER trg_documentos_compra_itens_orcamento_guarda BEFORE INSERT OR UPDATE OF item_pedido_orcado_id, quantidade, produto_id, lote, validade ON erp.documentos_compra_itens FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_item_orcamento_guarda()" },
       { tgname: "trg_documentos_compra_itens_origem_guarda", def: "CREATE TRIGGER trg_documentos_compra_itens_origem_guarda BEFORE INSERT OR UPDATE OF origem_item_id, quantidade, produto_id ON erp.documentos_compra_itens FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_item_origem_guarda_v2()" },
       { tgname: "trg_documentos_compra_nota", def: "CREATE TRIGGER trg_documentos_compra_nota BEFORE INSERT OR UPDATE OF chave_acesso, uf_nota, tipo_documento_fiscal, valor_ipi, valor_icms_st, seguro, tipo_titulo_id, classificacao_gasto, rateio_tipo, parcelas_nota, dfe_id, solicitacao_compra_id ON erp.documentos_compra FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_nota_guarda()" },
-      { tgname: "trg_documentos_compra_transicao", def: "CREATE TRIGGER trg_documentos_compra_transicao BEFORE UPDATE OF situacao ON erp.documentos_compra FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_transicao_v3()" }
+      { tgname: "trg_documentos_compra_transicao", def: "CREATE TRIGGER trg_documentos_compra_transicao BEFORE UPDATE OF situacao ON erp.documentos_compra FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_transicao_v3()" },
+      { tgname: "trg_documentos_compra_versao", def: "CREATE TRIGGER trg_documentos_compra_versao BEFORE UPDATE ON erp.documentos_compra FOR EACH ROW EXECUTE FUNCTION erp.documentos_compra_versao()" }
     ]);
     const velhas = (await db.query(
       `select to_regprocedure('erp.documentos_compra_conferir()') a, to_regprocedure('erp.documentos_compra_transicao()') b,
