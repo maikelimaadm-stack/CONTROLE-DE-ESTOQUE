@@ -1,7 +1,11 @@
 "use client";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { CONTRATO_CONFERENCIA_IMPORTACAO_NFE, type CompraGeradaDaNota, type ConferenciaDaImportacaoNfe, type GerarCompraDaNota } from "@agro/domain";
+import {
+  CONTRATO_CONFERENCIA_IMPORTACAO_NFE, type CompraGeradaDaNota, type ConferenciaDaImportacaoNfe, type CriarProdutosDaNota, type GerarCompraDaNota,
+  type ProdutosCriadosDaNota
+} from "@agro/domain";
 import { api, ApiError } from "@/lib/api";
+import { lerProdutosCriadosDaNota } from "./produtos-da-nota";
 
 /**
  * AS PORTAS DA IMPORTAÇÃO DO XML DA NF-e (OPERACOES-01 F7, decisão 284) — e a leitura ESTRITA do que elas respondem.
@@ -11,6 +15,7 @@ import { api, ApiError } from "@/lib/api";
  *   GET  /api/compras/importacoes/:id              a conferência (`?fornecedor_id=` escolhe entre os candidatos)
  *   POST /api/compras/importacoes/:id/gerar-compra a COMPRA ABERTA (201) — nunca confirmada aqui
  *   POST /api/compras/importacoes/:id/descartar    a importação descartada (200)
+ *   POST /api/compras/importacoes/:id/criar-produtos  os produtos da nota em lote (201) — XML-01, só com a capacidade da conferência
  *
  * Nenhuma destas portas é perguntada sem a capacidade `importacaoXml` "sim" (`./capacidade`): a tela que chama é que
  * só aparece com ela. A conferência só vira tela depois de CONFERIDA a forma (`lerConferencia`): um corpo fora do
@@ -83,6 +88,22 @@ export const gerarCompraDaImportacao = (id: string, corpo: GerarCompraDaNota, ch
 
 export const descartarImportacao = (id: string, chave: string) =>
   api<{ id: string; situacao: "descartada" }>(`/api/compras/importacoes/${encodeURIComponent(id)}/descartar`, { method: "POST", body: {}, idempotencyKey: chave });
+
+/** A resposta do lote fora do contrato: os produtos podem ter sido criados, mas a tela não os aplica por conta própria. */
+export const MSG_RESPOSTA_DO_LOTE_FORA_DA_FORMA = "A resposta do servidor não é a que esta tela sabe ler: confira os produtos no cadastro antes de tentar de novo.";
+
+/**
+ * XML-01 (decisão 312): `POST /api/compras/importacoes/:id/criar-produtos` — os produtos dos itens sem vínculo, com o
+ * Grupo e a Natureza de custo perguntados UMA vez. Só é chamada com a capacidade declarada na conferência
+ * (`declaraCriarProdutosDaNota`). A resposta 201 é conferida ANTES de virar tela (`lerProdutosCriadosDaNota`): fora da
+ * forma é erro (`MSG_RESPOSTA_DO_LOTE_FORA_DA_FORMA`), e a chave fica a mesma (o reenvio recebe a resposta gravada).
+ */
+export async function criarProdutosDaImportacao(id: string, corpo: CriarProdutosDaNota, chave: string): Promise<ProdutosCriadosDaNota> {
+  const r = await api<unknown>(`/api/compras/importacoes/${encodeURIComponent(id)}/criar-produtos`, { method: "POST", body: corpo, idempotencyKey: chave });
+  const lido = lerProdutosCriadosDaNota(r, { importacaoId: id, nItens: corpo.itens.map((i) => i.n_item) });
+  if (!lido) throw new Error(MSG_RESPOSTA_DO_LOTE_FORA_DA_FORMA);
+  return lido;
+}
 
 /* ═════════════════════════════════════ a leitura das recusas ═════════════════════════════════════ */
 

@@ -248,7 +248,19 @@ export type VinculoDoItemDaNota =
   | { situacao: "lembrado"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator }
   | { situacao: "sugerido"; origem: "codigo_fornecedor" | "codigo_barras"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator }
   | { situacao: "ambiguo"; candidatos: ProdutoDoVinculo[] }
-  | { situacao: "nenhum"; preenchimento: { description: string; ncm_code: string | null; barcode: string | null } };
+  | { situacao: "nenhum"; preenchimento: PreenchimentoDoProduto };
+
+/**
+ * Pré-preenchimento do cadastro de produto (chaves do recurso `products`), pelo item da nota; a pessoa confirma antes
+ * de criar. `measurement_id` (XML-01, decisão 312) é ADITIVO e só vem quando o uCom casa com UMA unidade (a da
+ * organização vence a do sistema); não casou, casou com mais de uma ou uCom vazio ⇒ a chave não vem.
+ */
+export interface PreenchimentoDoProduto {
+  description: string;
+  ncm_code: string | null;
+  barcode: string | null;
+  measurement_id?: string;
+}
 
 /** Pré-preenchimento do cadastro de parceiro (chaves do recurso `people`); a pessoa confirma antes de criar. */
 export interface PreenchimentoDoFornecedor {
@@ -321,6 +333,43 @@ export interface ConferenciaDaImportacaoNfe {
   divergencias: DivergenciaDaImportacaoNfe[];
   /** Nota já lançada (visível). */
   duplicidade: { onde: "compra" | "documento_fiscal_estoque"; codigo: string } | null;
+  /** XML-01 (decisão 312), ADITIVO: a API que tem `POST /compras/importacoes/:id/criar-produtos` declara; sem ela, não há lote. */
+  capacidades?: { criarProdutosDaNota: typeof CAPACIDADE_CRIAR_PRODUTOS_DA_NOTA };
+}
+
+/** Capacidade declarada na conferência (`capacidades.criarProdutosDaNota`): a rota do cadastro em lote existe. */
+export const CAPACIDADE_CRIAR_PRODUTOS_DA_NOTA = 1;
+
+/**
+ * Corpo do `POST /compras/importacoes/:id/criar-produtos` (XML-01, decisão 312): só DECISÕES. O Grupo e a Natureza de
+ * custo são UMA pergunta para a nota; o local de cada item é a decisão que a conferência já tem (o mesmo `armazem_id`
+ * do "Gerar compra"); `fornecedor_id` é o fornecedor escolhido na conferência (pedido, conferido contra os candidatos).
+ * A descrição, a NCM, o código de barras e a unidade vêm do XML guardado, nunca do corpo.
+ */
+export interface CriarProdutosDaNota {
+  group_id: string;
+  financial_category_id: string;
+  fornecedor_id?: string | null;
+  itens: { n_item: number; armazem_id?: string | null }[];
+}
+
+/**
+ * O PRODUTO que um item da nota pede, para o lote: dois itens com o MESMO código do fornecedor e a MESMA unidade são o
+ * mesmo produto (a chave do vínculo lembrado) — o lote cria UM e os dois itens o recebem. Sem código, o item é sozinho.
+ */
+export function chaveDoProdutoDaNota(item: Pick<ItemDaNota, "nItem" | "codigo" | "unidade">): string {
+  const codigo = String(item.codigo ?? "").trim();
+  return codigo ? `${codigo}\u0000${normalizarUnidadeDaNota(item.unidade)}` : `\u0000item\u0000${item.nItem}`;
+}
+
+/** Um produto criado pelo lote (a linha que a porta do cadastro gravou). */
+export interface ProdutoCriadoDaNota { id: string; codigo: string; descricao: string }
+
+/** Resposta 201 do cadastro em lote: os produtos criados e, por item, o vínculo agora resolvido e o local padrão gravado. */
+export interface ProdutosCriadosDaNota {
+  importacao_id: string;
+  produtos: ProdutoCriadoDaNota[];
+  itens: { nItem: number; produto: ProdutoDoVinculo; localPadrao: string | null }[];
 }
 
 export type RateioDoGerarCompra =

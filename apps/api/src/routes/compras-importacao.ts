@@ -2,14 +2,16 @@
  * ═══ OPERACOES-01 F7 (decisão 284) — A ENTRADA DE NOTA POR XML NA CENTRAL DE COMPRAS ═══
  *
  * Importar o XML de uma NF-e é o começo de LANÇAR UMA COMPRA: as rotas pedem `compras.create` (módulo compras) e
- * nenhuma permissão nova. O "Lançar" da DF-e pede também `dfe.launch`, e gerar a compra COM PEDIDO pede também
- * `pedidos_compra.edit` (receber o pedido muda o pedido, como na porta do receber) — CAPACIDADE ∧ CAPACIDADE, nunca OR.
+ * nenhuma permissão nova. O "Lançar" da DF-e pede também `dfe.launch`, gerar a compra COM PEDIDO pede também
+ * `pedidos_compra.edit` (receber o pedido muda o pedido, como na porta do receber) e criar os PRODUTOS da nota pede
+ * também `products.create` (a capacidade da porta do cadastro) — CAPACIDADE ∧ CAPACIDADE, nunca OR.
  *
  *   POST /compras/importacoes                  o arquivo (XML, ou ZIP com um único XML) em base64 → 201 conferência
  *   POST /compras/importacoes/da-dfe/:dfeId    o XML GUARDADO da DF-e → 201 conferência
  *   GET  /compras/importacoes/:id              a conferência (`?fornecedor_id=` escolhe o fornecedor entre os candidatos)
  *   POST /compras/importacoes/:id/gerar-compra a COMPRA ABERTA, com as decisões do corpo e os VALORES da nota guardada
  *   POST /compras/importacoes/:id/descartar    a importação descartada (nunca apagada)
+ *   POST /compras/importacoes/:id/criar-produtos os PRODUTOS dos itens sem vínculo, de uma vez (XML-01) → 201
  *
  * O ARQUIVO é lido FORA da transação (nenhuma conexão do pool fica presa descompactando): base64 → bytes (≤ 3 MB) →
  * ZIP (`lib/zip-leitor.ts`) ou XML → texto (`textoDoXml`) → a leitura do domínio (`lerNotaFiscalEletronica`), com TODAS
@@ -40,6 +42,17 @@
  * precedente da nota antiga com `dfe_id` (que também não exige): a nota foi lançada, e a fila só registra o fato. A
  * importação que NASCE da DF-e (`/da-dfe`) exige `dfe.launch`, porque ali a pessoa age sobre a fila.
  *
+ * CRIAR OS PRODUTOS DA NOTA (XML-01, decisão 312): o produto nasce com o que a NOTA já disse (descrição, NCM, código de
+ * barras, a unidade do uCom — os da conferência, `vinculosDosItens`, com o fornecedor do corpo) e com o que a IMPORTAÇÃO
+ * já decidiu (o local do item, só se é da empresa da importação, ativo e vivo — senão o campo não vai). O corpo traz só
+ * o Grupo e a Natureza de custo (UMA pergunta para a nota) e os itens. Só entra item SEM vínculo, com a unidade resolvida
+ * e a NCM vigente, e só com o fornecedor resolvido quando a nota tem candidatos (sem ele, o vínculo do fornecedor não é
+ * perguntado e o lote duplicaria o produto): qualquer recusa sai ANTES de gravar o primeiro produto. Dois itens com o mesmo código e a mesma
+ * unidade são UM produto (`chaveDoProdutoDaNota`). Cada produto nasce pela MESMA porta do `POST /resources/products`
+ * (`createOne`: código sob a trava da numeração, ID Global, registry, regras do cadastro, auditoria pelo gatilho) —
+ * nunca um INSERT daqui. Uma transação: ou todos nascem, ou nenhum. A importação continua PENDENTE (nada é atualizado
+ * nela): a decisão fica na auditoria (`criar_produtos`). Travas: a importação (`for update`) → as da porta.
+ *
  * PADRÕES DE TODA ROTA: corpo `.strict()` (chave desconhecida = 422), uuid em minúsculas antes do hash, a 404 de
  * visibilidade ANTES do `idempotent` (o replay não atravessa o escopo), Idempotency-Key com o autor no hash, ROW COUNT
  * em todo UPDATE sob RLS, id malformado = a mesma 404, escopo de empresa no SQL.
@@ -50,8 +63,9 @@ import { createHash } from "node:crypto";
 import { D, money, isISODate, DomainError } from "@agro/shared";
 import {
   lerNotaFiscalEletronica, linhasDoItemDaNota, totaisDaCompra, conferirTotalDaNota, parcelasDaNota, valoresNaoSuportadosDaNota,
-  normalizarUnidadeDaNota, moduloDaPermissao,
+  normalizarUnidadeDaNota, moduloDaPermissao, chaveDoProdutoDaNota, getResource,
   type NotaFiscalLida, type LinhaDaCompraDaNota, type CompraGeradaDaNota, type ItemDoRecebimento, type ControleDeLoteDoProduto,
+  type PreenchimentoDoProduto, type ProdutosCriadosDaNota,
 } from "@agro/domain";
 import { runService, idempotent, audit, requirePermission } from "../lib/service.js";
 import { err } from "../lib/errors.js";
@@ -60,10 +74,12 @@ import { textoDoXml, resolverDestinatario, guardarXmlDaNota, conferirChaveDeAces
 import { pareceZip, xmlDoZip, MENSAGEM_DA_RECUSA_DO_ZIP } from "../lib/zip-leitor.js";
 import {
   lerImportacao, notaDaImportacao, montarConferencia, candidatosDoEmitente, resolverParceiro, dfeDaNota, cabecalhoDaNota, mensagemNaoSuportado,
-  naoEncontrada, FORMA_UUID, type ImportacaoLida,
+  vinculosDosItens, naoEncontrada, FORMA_UUID, type ImportacaoLida,
 } from "../lib/importacao-nfe-conferencia.js";
+import { ncmsVigentes } from "../lib/ncm-do-produto.js";
 import { lancar, type DocumentoCompraEntrada, type ExtrasDaNotaImportada, type OrigemDoLancamento } from "./compras.js";
 import { prepararRecebimentoDoPedido, concluirRecebimentoDoPedido } from "./compras-recebimento.js";
+import { createOne } from "./resources.js";
 
 // ─────────────── limites e mensagens ───────────────
 
@@ -74,6 +90,7 @@ const LIMITE_DO_CORPO = Math.ceil(ARQUIVO_MAXIMO_IMPORTACAO * 1.4) + 4096;
 const PERMISSAO = "compras.create";
 const PERMISSAO_DFE = "dfe.launch";
 const PERMISSAO_RECEBER_PEDIDO = "pedidos_compra.edit";
+const PERMISSAO_CRIAR_PRODUTO = "products.create";
 
 export const MSG_IMPORTACAO_PENDENTE = "Esta nota já tem uma importação pendente.";
 export const MSG_ARQUIVO_GRANDE = "Arquivo maior que 3 MB.";
@@ -85,6 +102,13 @@ export const MSG_DFE_EM_APROVACAO = "Esta DF-e tem um rascunho de aprovação pe
 export const MSG_DFE_MUDOU = "A DF-e desta nota já foi lançada, ignorada ou está em aprovação na fila de DF-e: descarte esta importação.";
 export const MSG_IMPORTACAO_DESCARTADA = "Esta importação foi descartada.";
 export const msgImportacaoGerada = (codigo: string) => `Esta importação já gerou a Compra ${codigo}.`;
+export const MSG_ITEM_FORA_DA_NOTA = "Este item não existe na nota.";
+export const MSG_ITEM_REPETIDO = "Informe cada item da nota uma vez só.";
+export const MSG_ITEM_COM_PRODUTO = "Este item já tem produto (vínculo lembrado ou sugerido): use esse produto, não crie outro.";
+export const MSG_ITEM_AMBIGUO = "Mais de um produto corresponde a este item: escolha o produto, não crie outro.";
+export const MSG_ITEM_SEM_UNIDADE = "A unidade deste item na nota não corresponde a uma unidade de medida só: crie o produto pelo item.";
+export const MSG_NCM_DO_ITEM = "A NCM deste item na nota não é uma NCM de 8 dígitos vigente: crie o produto pelo item e escolha a NCM.";
+export const MSG_LOTE_SEM_FORNECEDOR = "Escolha o fornecedor da nota antes de criar os produtos: sem ele não se sabe se o código do fornecedor já liga o item a um produto.";
 
 const recusa = (path: string, message: string, extra: Record<string, unknown> = {}) => err("VALIDATION_ERROR", message, [{ path, message, ...extra }]);
 const naoEncontradaDfe = () => err("NOT_FOUND", "DF-e não encontrada");
@@ -149,6 +173,14 @@ const gerarSchema = z.object({
   itens: z.array(itemDoGerarSchema).min(1).max(990),
 }).strict();
 type GerarEntrada = z.infer<typeof gerarSchema>;
+/** O cadastro em lote (`CriarProdutosDaNota`): só decisões — a descrição, a NCM, o código de barras e a unidade são da nota. */
+const criarProdutosSchema = z.object({
+  group_id: uuid,
+  financial_category_id: uuid,
+  fornecedor_id: uuid.nullish(),
+  itens: z.array(z.object({ n_item: z.number().int().min(1).max(990), armazem_id: uuid.nullish() }).strict()).min(1).max(990),
+}).strict();
+type CriarProdutosEntrada = z.infer<typeof criarProdutosSchema>;
 
 // ─────────────── o arquivo ───────────────
 
@@ -502,6 +534,128 @@ async function gerarCompra(app: FastifyInstance, ctxDaRota: ServiceCtx, id: stri
   return { id: compra.id, codigo: compra.codigo, especie: "compra", situacao: "aberto", valor_itens: compra.valor_itens, valor_total: compra.valor_total, importacao_id: imp.id };
 }
 
+// ─────────────── criar os produtos da nota ───────────────
+
+/**
+ * O caminho de uma recusa da PORTA DO CADASTRO, traduzido para o CORPO do lote: o Grupo e a Natureza de custo são da
+ * nota e ficam no campo do corpo; qualquer outro campo do produto vai para o item de onde o produto veio
+ * (`itens[i].<campo>`). A porta dá o caminho em texto (`detalheDoErro`) ou em lista (`["ncm_code"]`). Nada mais muda.
+ */
+function caminhoDoProdutoNoCorpo(path: unknown, corpoDoItem: number): unknown {
+  const texto = Array.isArray(path) ? path.join(".") : typeof path === "string" ? path : null;
+  if (texto === null) return path;
+  const raiz = texto.split(".")[0];
+  if (raiz === "group_id" || raiz === "financial_category_id") return texto;
+  return texto ? `itens[${corpoDoItem}].${texto}` : `itens[${corpoDoItem}]`;
+}
+async function comCaminhoDoItem<T>(corpoDoItem: number, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof DomainError && Array.isArray(e.details)) {
+      const details = (e.details as unknown[]).map((d) => (d && typeof d === "object" && "path" in d
+        ? { ...(d as Record<string, unknown>), path: caminhoDoProdutoNoCorpo((d as { path: unknown }).path, corpoDoItem) } : d));
+      throw new DomainError(e.code, e.message, details);
+    }
+    throw e;
+  }
+}
+
+/** Um item confirmado do lote, já conferido: o item do corpo, o pré-preenchimento da conferência e a unidade dela. */
+interface ItemDoLote { corpo: number; nItem: number; preenchimento: PreenchimentoDoProduto; measurementId: string; armazemId: string | null }
+/** A linha do produto criado, para o `ProdutoDoVinculo` (as colunas da conferência) e o local gravado. */
+interface LinhaDoProdutoCriado {
+  id: string; codigo: string; descricao: string; unidade: string | null; controle_lote: ControleDeLoteDoProduto; controla_estoque: boolean; local_padrao: string | null;
+}
+
+/**
+ * CRIAR OS PRODUTOS DA NOTA — dentro da transação da rota, sob a chave de idempotência. TODAS as conferências antes do
+ * primeiro produto; um throw (aqui ou na porta) desfaz todos. Nunca INSERT em erp.products: a porta é `createOne`.
+ */
+async function criarProdutosDaNota(ctx: ServiceCtx, id: string, corpo: CriarProdutosEntrada): Promise<ProdutosCriadosDaNota> {
+  // 1) a importação travada (a mesma 1ª trava do gerar e do descartar); decidida → 409.
+  const imp: ImportacaoLida = await lerImportacao(ctx, id, { lock: true });
+  if (imp.situacao === "gerada") throw err("CONFLICT", msgImportacaoGerada(imp.documento_compra_codigo ?? ""));
+  if (imp.situacao === "descartada") throw err("CONFLICT", MSG_IMPORTACAO_DESCARTADA);
+  // 2) a nota do XML GUARDADO; o fornecedor (pedido: um dos candidatos) e os vínculos COM ele — os que a tela viu.
+  //    Com candidatos e SEM fornecedor escolhido (ambíguo sem escolha, ou o cadastro não é Fornecedor), os vínculos do
+  //    fornecedor não são perguntados: um item que o código do fornecedor já liga a um produto pareceria "sem vínculo" e
+  //    o lote o DUPLICARIA. A dúvida não vira cadastro: recusa antes de qualquer gravação (fail-closed).
+  const nota = notaDaImportacao(imp);
+  const candidatos = await candidatosDoEmitente(ctx, nota);
+  const { fornecedorEscolhido } = resolverParceiro(candidatos, corpo.fornecedor_id ?? null);
+  if (candidatos.length > 0 && !fornecedorEscolhido) throw recusa("fornecedor_id", MSG_LOTE_SEM_FORNECEDOR);
+  const vinculos = await vinculosDosItens(ctx, nota, fornecedorEscolhido);
+  // 3) cada item do corpo: existe na nota; SEM vínculo (com produto, ou ambíguo, criar seria duplicar); unidade resolvida.
+  const naNota = new Set(nota.itens.map((i) => i.nItem));
+  const confirmados = new Map<number, ItemDoLote>();
+  corpo.itens.forEach((b, i) => {
+    if (!naNota.has(b.n_item)) throw recusa(`itens[${i}].n_item`, MSG_ITEM_FORA_DA_NOTA);
+    const v = vinculos.get(b.n_item)!;
+    if (v.situacao === "lembrado" || v.situacao === "sugerido") throw recusa(`itens[${i}].n_item`, MSG_ITEM_COM_PRODUTO);
+    if (v.situacao === "ambiguo") throw recusa(`itens[${i}].n_item`, MSG_ITEM_AMBIGUO);
+    // Produto sem unidade não existe (measurement_id é NOT NULL): uCom vazio, sem unidade ou com mais de uma → fora.
+    if (!v.preenchimento.measurement_id) throw recusa(`itens[${i}].n_item`, MSG_ITEM_SEM_UNIDADE);
+    confirmados.set(b.n_item, { corpo: i, nItem: b.n_item, preenchimento: v.preenchimento, measurementId: v.preenchimento.measurement_id, armazemId: b.armazem_id ?? null });
+  });
+  // 4) a NCM da nota de cada item confirmado é escolhível (8 dígitos, vigente) — uma consulta, a regra da porta.
+  const comNcm = [...confirmados.values()].filter((x): x is ItemDoLote & { preenchimento: { ncm_code: string } } => Boolean(x.preenchimento.ncm_code));
+  const vigentes = await ncmsVigentes(ctx, comNcm.map((x) => x.preenchimento.ncm_code));
+  const foraDaRegra = comNcm.find((x) => !vigentes.has(x.preenchimento.ncm_code));
+  if (foraDaRegra) throw recusa(`itens[${foraDaRegra.corpo}].ncm_code`, MSG_NCM_DO_ITEM, { ncm: foraDaRegra.preenchimento.ncm_code });
+  // 5) os locais pedidos que valem: da organização, da EMPRESA DA IMPORTAÇÃO, ativos e vivos, no escopo (e sob a RLS) —
+  //    uma consulta. Fora disso o campo não vai no produto (e a resposta diz `localPadrao: null`).
+  const pedidos = [...new Set([...confirmados.values()].map((x) => x.armazemId).filter((x): x is string => x !== null))];
+  const params: unknown[] = [ctx.orgId, imp.empresa_id, pedidos];
+  const locais = new Set(pedidos.length === 0 ? [] : (await ctx.tx.query<{ id: string }>(
+    `select w.id::text as id from erp.warehouses w
+      where w.organization_id = $1 and w.empresa_id = $2 and w.id = any($3::uuid[]) and w.is_active and w.deleted_at is null${empresaScopeSql(ctx, "w", params, { ignoreSelected: true })}`,
+    params)).rows.map((x) => x.id));
+  // 6) UM produto por chave (código + unidade), na ordem da nota; os dados (e o local) são os do 1º item da chave.
+  const lote = new Map<string, { origem: ItemDoLote; nItens: number[] }>();
+  for (const item of nota.itens) {
+    const x = confirmados.get(item.nItem);
+    if (!x) continue;
+    const chave = chaveDoProdutoDaNota(item);
+    const ja = lote.get(chave);
+    if (ja) ja.nItens.push(item.nItem);
+    else lote.set(chave, { origem: x, nItens: [item.nItem] });
+  }
+  // 7) cada produto pela PORTA do cadastro (a mesma do POST /resources/products), com os defaults dela — como o diálogo.
+  const def = getResource("products")!;
+  const criados: string[] = [];
+  const produtoDoItem = new Map<number, string>();
+  for (const { origem: o, nItens } of lote.values()) {
+    const p = o.preenchimento;
+    const local = o.armazemId !== null && locais.has(o.armazemId) ? o.armazemId : null;
+    const corpoDoProduto: Record<string, unknown> = {
+      description: p.description.slice(0, 120), group_id: corpo.group_id, financial_category_id: corpo.financial_category_id, measurement_id: o.measurementId,
+      ...(p.ncm_code ? { ncm_code: p.ncm_code } : {}), ...(p.barcode ? { barcode: p.barcode } : {}), ...(local ? { default_warehouse_id: local } : {}),
+    };
+    const criado = (await comCaminhoDoItem(o.corpo, () => createOne(ctx, def, corpoDoProduto))) as { id: string };
+    criados.push(criado.id);
+    for (const n of nItens) produtoDoItem.set(n, criado.id);
+  }
+  // 8) os criados numa leitura (nunca uma por produto): o vínculo agora resolvido de cada item e o local GRAVADO.
+  const linhas = new Map((await ctx.tx.query<LinhaDoProdutoCriado>(
+    `select p.id::text as id, p.code as codigo, p.description as descricao, mu.symbol as unidade, p.controle_lote, p.control_stock as controla_estoque,
+            p.default_warehouse_id::text as local_padrao
+       from erp.products p left join erp.measurement_units mu on mu.id = p.measurement_id
+      where p.organization_id = $1 and p.id = any($2::uuid[])`, [ctx.orgId, criados])).rows.map((x) => [x.id, x]));
+  // 9) a auditoria da decisão (a importação continua pendente: nada é atualizado nela).
+  const nItens = nota.itens.filter((i) => produtoDoItem.has(i.nItem)).map((i) => i.nItem);
+  await audit(ctx.tx, ctx, "importacoes_nfe_compra", imp.id, "criar_produtos", { produtos: criados, itens: nItens });
+  return {
+    importacao_id: imp.id,
+    produtos: criados.map((pid) => { const l = linhas.get(pid)!; return { id: l.id, codigo: l.codigo, descricao: l.descricao }; }),
+    itens: nItens.map((n) => {
+      const l = linhas.get(produtoDoItem.get(n)!)!;
+      return { nItem: n, produto: { id: l.id, codigo: l.codigo, descricao: l.descricao, unidade: l.unidade, controleLote: l.controle_lote, controlaEstoque: l.controla_estoque },
+        localPadrao: l.local_padrao };
+    }),
+  };
+}
+
 // ─────────────── rotas ───────────────
 
 export default async function comprasImportacaoRoutes(app: FastifyInstance) {
@@ -570,6 +724,22 @@ export default async function comprasImportacaoRoutes(app: FastifyInstance) {
     return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
       { action: "gerar_compra_da_nfe", sourceId: id, corpo, actorId: ctx.user.id },
       () => gerarCompra(app, ctx, id, corpo))).result;
+  })));
+
+  /**
+   * CRIAR OS PRODUTOS DA NOTA (XML-01). `compras.create` (a porta) ∧ `products.create` (a do cadastro), antes do corpo;
+   * corpo conferido (cada item uma vez só) antes de tudo; a importação visível ANTES do `idempotent`.
+   */
+  app.post("/compras/importacoes/:id/criar-produtos", async (req, reply) => reply.status(201).send(await runService(app, req, PERMISSAO, async (ctx) => {
+    requirePermission(ctx, PERMISSAO_CRIAR_PRODUTO);
+    const id = (req.params as { id: string }).id.toLowerCase();
+    const corpo = criarProdutosSchema.parse(req.body);
+    const vistos = new Set<number>();
+    corpo.itens.forEach((b, i) => { if (vistos.has(b.n_item)) throw recusa(`itens[${i}].n_item`, MSG_ITEM_REPETIDO); vistos.add(b.n_item); });
+    await lerImportacao(ctx, id);
+    return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
+      { action: "criar_produtos_da_nfe", sourceId: id, corpo, actorId: ctx.user.id },
+      () => criarProdutosDaNota(ctx, id, corpo))).result;
   })));
 
   /** DESCARTAR a importação pendente (nunca apagada: a linha fica, descartada). */

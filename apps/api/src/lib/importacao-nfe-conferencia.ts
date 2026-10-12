@@ -16,6 +16,8 @@
  *   · os VÍNCULOS dos itens — três consultas no total: o vínculo LEMBRADO (fornecedor + código + unidade), o código no
  *     fornecedor (`produto_fornecedores`) e o código de barras (`products.barcode` e `produto_unidades.codigo_barras`);
  *     mais de um produto = ambíguo; produto excluído nunca é sugerido;
+ *   · a UNIDADE do produto a criar (XML-01, decisão 312) — o uCom dos itens sem vínculo, UMA consulta: a da organização
+ *     vence a do sistema, uma só ou nenhuma (`unidadeDoCadastroPelaNota`); a conferência declara `criarProdutosDaNota`;
  *   · os PEDIDOS — os referenciados pela nota (`xPed`, o código do pedido) e até 20 candidatos do fornecedor, da
  *     empresa, abertos ou finalizados e com saldo (a conta do saldo é a da leitura do pedido); só para quem tem
  *     `pedidos_compra.view` (CAPACIDADE ∧ ESCOPO: a conferência não é uma porta lateral para o pedido);
@@ -24,6 +26,7 @@
 import {
   lerNotaFiscalEletronica, quantidadeInterna, unitarioInterno, linhasDoItemDaNota, totaisDaCompra, conferirTotalDaNota, parcelasDaNota,
   valoresNaoSuportadosDaNota, normalizarUnidadeDaNota, saldoDoItemDoPedido, formatarChaveDeAcesso, CONTRATO_CONFERENCIA_IMPORTACAO_NFE,
+  CAPACIDADE_CRIAR_PRODUTOS_DA_NOTA, type PreenchimentoDoProduto,
   type NotaFiscalLida, type ItemDaNota, type ConferenciaDaImportacaoNfe, type ParceiroDaImportacaoNfe, type ProdutoDoVinculo,
   type VinculoDoItemDaNota, type ItemDaConferenciaNfe, type PedidoCandidatoDaNota, type DivergenciaDaImportacaoNfe, type TipoFator,
   type ControleDeLoteDoProduto, type SituacaoImportacaoNfe, type OrigemImportacaoNfe, type LinhaDaCompraDaNota,
@@ -187,9 +190,46 @@ const produtoDoVinculo = (p: LinhaDeProduto): ProdutoDoVinculo =>
 const eanDoItem = (i: ItemDaNota): string | null => (i.ean && i.ean.trim() && i.ean.trim().toUpperCase() !== "SEM GTIN" ? i.ean.trim() : null);
 const chaveDoVinculo = (codigo: string, unidade: string) => `${codigo}\u0000${unidade}`;
 
+/** Uma unidade de medida que o uCom pode ser: a da ORGANIZAÇÃO (`daOrganizacao`) ou a do sistema (`organization_id` nulo). */
+export interface UnidadeDoCadastro { id: string; simbolo: string; daOrganizacao: boolean }
+
+/** O símbolo do cadastro como a consulta o compara: `upper(btrim(symbol))` (o `btrim` tira só espaço). */
+const simboloDoCadastro = (s: string) => String(s ?? "").replace(/^ +| +$/g, "").toUpperCase();
+
+/**
+ * A UNIDADE do cadastro pelo uCom da nota (XML-01, decisão 312) — PURA, e a única decisão (a consulta só traz as
+ * linhas): o uCom normalizado (`normalizarUnidadeDaNota`) IGUAL ao símbolo aparado em maiúsculas; nunca "a mais
+ * parecida", nunca "a primeira". A da organização vence a do sistema: exatamente uma da organização → ela (mesmo que o
+ * sistema também tenha); mais de uma da organização → nenhuma (não cai para a do sistema); nenhuma da organização → a
+ * do sistema só quando é exatamente uma. uCom vazio → nenhuma. Unidade errada num produto é custo errado para sempre:
+ * na dúvida, `null` (e o pré-preenchimento vem sem `measurement_id`).
+ */
+export function unidadeDoCadastroPelaNota(linhas: readonly UnidadeDoCadastro[], uCom: string): string | null {
+  const alvo = normalizarUnidadeDaNota(uCom);
+  if (!alvo) return null;
+  const casam = linhas.filter((l) => simboloDoCadastro(l.simbolo) === alvo);
+  const ids = (daOrganizacao: boolean) => [...new Set(casam.filter((l) => l.daOrganizacao === daOrganizacao).map((l) => l.id))];
+  const daOrganizacao = ids(true);
+  if (daOrganizacao.length > 0) return daOrganizacao.length === 1 ? daOrganizacao[0]! : null;
+  const doSistema = ids(false);
+  return doSistema.length === 1 ? doSistema[0]! : null;
+}
+
+/** As unidades candidatas aos uCom (normalizados e DISTINTOS) — UMA consulta para a nota; sem uCom, nenhuma consulta. */
+async function unidadesDosUCom(ctx: ServiceCtx, simbolos: readonly string[]): Promise<UnidadeDoCadastro[]> {
+  if (simbolos.length === 0) return [];
+  const r = await ctx.tx.query<{ id: string; simbolo: string; da_organizacao: boolean }>(
+    `select mu.id::text as id, mu.symbol as simbolo, mu.organization_id is not null as da_organizacao
+       from erp.measurement_units mu
+      where (mu.organization_id = $1 or mu.organization_id is null) and upper(btrim(mu.symbol)) = any($2::text[])`,
+    [ctx.orgId, [...simbolos]]);
+  return r.rows.map((x) => ({ id: x.id, simbolo: x.simbolo, daOrganizacao: x.da_organizacao }));
+}
+
 /**
  * O VÍNCULO de cada item, em TRÊS consultas (nunca uma por item): lembrado → código no fornecedor → código de barras.
- * Sem fornecedor escolhido, só o código de barras (o vínculo é do fornecedor).
+ * Sem fornecedor escolhido, só o código de barras (o vínculo é do fornecedor). Os itens sem vínculo (`nenhum`) levam o
+ * pré-preenchimento da nota e, com a unidade resolvida, o `measurement_id` — mais UMA consulta, para os uCom distintos.
  */
 export async function vinculosDosItens(ctx: ServiceCtx, nota: NotaFiscalLida, fornecedorId: string | null): Promise<Map<number, VinculoDoItemDaNota>> {
   const codigos = [...new Set(nota.itens.map((i) => i.codigo.trim()))];
@@ -245,6 +285,7 @@ export async function vinculosDosItens(ctx: ServiceCtx, nota: NotaFiscalLida, fo
     }
   }
   const out = new Map<number, VinculoDoItemDaNota>();
+  const semVinculo: { item: ItemDaNota; preenchimento: PreenchimentoDoProduto }[] = [];
   for (const item of nota.itens) {
     const lembrado = lembrados.get(chaveDoVinculo(item.codigo.trim(), normalizarUnidadeDaNota(item.unidade)));
     if (lembrado) { out.set(item.nItem, { situacao: "lembrado", produto: produtoDoVinculo(lembrado.produto), fator: lembrado.fator, tipoFator: lembrado.tipo }); continue; }
@@ -255,7 +296,15 @@ export async function vinculosDosItens(ctx: ServiceCtx, nota: NotaFiscalLida, fo
     const porBarras = [...((ean && porEan.get(ean)?.values()) || [])];
     if (porBarras.length === 1) { const x = porBarras[0]!; out.set(item.nItem, { situacao: "sugerido", origem: "codigo_barras", produto: produtoDoVinculo(x.produto), fator: x.fator, tipoFator: x.tipo }); continue; }
     if (porBarras.length > 1) { out.set(item.nItem, { situacao: "ambiguo", candidatos: porBarras.map((x) => produtoDoVinculo(x.produto)) }); continue; }
-    out.set(item.nItem, { situacao: "nenhum", preenchimento: { description: item.descricao, ncm_code: item.ncm, barcode: ean } });
+    const preenchimento: PreenchimentoDoProduto = { description: item.descricao, ncm_code: item.ncm, barcode: ean };
+    out.set(item.nItem, { situacao: "nenhum", preenchimento });
+    semVinculo.push({ item, preenchimento });
+  }
+  // A unidade dos `nenhum`: sem casamento único, a chave `measurement_id` não vem (nunca nula, nunca "a mais parecida").
+  const linhasDaUnidade = await unidadesDosUCom(ctx, [...new Set(semVinculo.map((x) => normalizarUnidadeDaNota(x.item.unidade)).filter(Boolean))]);
+  for (const { item, preenchimento } of semVinculo) {
+    const measurementId = unidadeDoCadastroPelaNota(linhasDaUnidade, item.unidade);
+    if (measurementId) out.set(item.nItem, { situacao: "nenhum", preenchimento: { ...preenchimento, measurement_id: measurementId } });
   }
   return out;
 }
@@ -478,5 +527,6 @@ export async function montarConferencia(ctx: ServiceCtx, imp: ImportacaoLida, fo
     financeiro: { parcelas: { ...parcelas, origem: "nota" } },
     divergencias: pendente ? divergencias : [],
     duplicidade,
+    capacidades: { criarProdutosDaNota: CAPACIDADE_CRIAR_PRODUTOS_DA_NOTA },
   };
 }

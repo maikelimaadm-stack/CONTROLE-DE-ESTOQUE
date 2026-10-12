@@ -3,11 +3,17 @@ import * as React from "react";
 import { enumLabel } from "@/lib/copy";
 import { useAuth } from "@/lib/auth";
 import { brl, dateBR } from "@/lib/utils";
-import { Button, Field, Input, NativeSelect } from "@/components/ui";
+import { toast } from "@/lib/toast";
+import { Button, Dialog, Field, Input, NativeSelect } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { opcoesDeNaturezaDeDespesa } from "../central/estado";
 import { DialogoDeCadastroRapido } from "./aba-cabecalho";
+import { criarProdutosDaImportacao, recusasNoCampo } from "./api";
 import { decimalDigitado, type EstadoDaConferencia } from "./estado";
+import {
+  corpoDoLote, declaraCriarProdutosDaNota, fornecedorResolvidoParaOLote, itensSemLocalGravado, mensagensDaRecusaDoLote, planoDoLote, quantidadeDeProdutos, rotuloDoLote,
+  unidadeDoPreenchimento, type PlanoDoLote
+} from "./produtos-da-nota";
 
 /**
  * A ABA "ITENS, VÍNCULOS E LOTES" (OPERACOES-01 F7, decisão 284): cada item da nota com o que a nota diz (código,
@@ -16,6 +22,11 @@ import { decimalDigitado, type EstadoDaConferencia } from "./estado";
  * pré-preenchimento da nota e só com a confirmação), o fator e o tipo, o Local de estoque, "Gera estoque",
  * "Imobilizado" e "Lembrar este vínculo". A quantidade e o unitário internos são as contas do domínio (as do servidor).
  * Os lotes vêm do rastro da nota (somente leitura); sem rastro, o produto que controla lote pede o lote.
+ *
+ * XML-01 (decisão 312): com a capacidade declarada na conferência (`criarProdutosDaNota`), `products.create` e ao menos
+ * um produto a criar, "Criar N produtos da nota" (acima dos cartões) cria de uma vez os produtos dos itens sem vínculo:
+ * o Grupo e a Natureza de custo são perguntados UMA vez; o resto vem da nota e do Local de cada item. Sem a capacidade
+ * (a API anterior), a aba é a de antes: sem o botão e sem nenhuma pergunta nova. O diálogo de UM item continua igual.
  */
 
 const Checkbox = ({ testId, rotulo, marcado, onMudar, desabilitado }: { testId: string; rotulo: string; marcado: boolean; onMudar: (v: boolean) => void; desabilitado?: boolean }) =>
@@ -33,10 +44,24 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
       return n ? { description: n.descricao.slice(0, 120), ...(n.ncm ? { ncm_code: n.ncm } : {}) } : {};
     }
     const p = itemDoCadastro.vinculo.preenchimento;
-    return { description: p.description.slice(0, 120), ...(p.ncm_code ? { ncm_code: p.ncm_code } : {}), ...(p.barcode ? { barcode: p.barcode } : {}) };
+    const unidade = unidadeDoPreenchimento(p);
+    return { description: p.description.slice(0, 120), ...(p.ncm_code ? { ncm_code: p.ncm_code } : {}), ...(p.barcode ? { barcode: p.barcode } : {}),
+      ...(unidade ? { measurement_id: unidade } : {}) };
   };
+  // O LOTE: só com a importação pendente, a permissão (apresentação — quem nega é a rota) e a capacidade declarada.
+  const podeLote = e.pendente && can("products.create") && declaraCriarProdutosDaNota(conf);
+  const plano = podeLote ? planoDoLote(conf, e.itens) : null;
+  const produtosDoLote = plano ? quantidadeDeProdutos(plano.lista) : 0;
+  const fornecedorDoLote = fornecedorResolvidoParaOLote(conf);
+  const [aberturasDoLote, setAberturasDoLote] = React.useState(0);
+  const [loteAberto, setLoteAberto] = React.useState(false);
 
   return <div data-testid="importacao-aba-itens" className="flex flex-col gap-3">
+    {plano && produtosDoLote > 0 && <div className="flex flex-wrap items-center gap-2">
+      <Button size="sm" variant="outline" data-testid="importacao-criar-produtos" data-quantidade={produtosDoLote} disabled={!fornecedorDoLote}
+        onClick={() => { setAberturasDoLote((k) => k + 1); setLoteAberto(true); }}>{rotuloDoLote(produtosDoLote)}</Button>
+      {!fornecedorDoLote && <span className="text-[12px] text-amber-800" data-testid="importacao-criar-produtos-sem-fornecedor">Escolha o fornecedor na aba Cabeçalho para criar os produtos de uma vez: os vínculos do item dependem dele.</span>}
+    </div>}
     {conf.nota.itens.map((item) => {
       const n = item.nItem;
       const d = e.itens.find((x) => x.nItem === n)!;
@@ -134,5 +159,89 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
         e.conhecerProduto(row);
         e.mudarItem(criandoPara, { produtoId: String(row["id"]), produtoManual: true, fator: "1", tipoFator: "multiply" });
       }} />
+    {plano && <DialogoDeProdutosDaNota key={aberturasDoLote} e={e} plano={plano} aberto={loteAberto} onFechar={() => setLoteAberto(false)} />}
   </div>;
+}
+
+/**
+ * O DIÁLOGO DO LOTE (XML-01): a lista dos itens que viram produto (cada um marcado; desmarcar tira do lote), os que
+ * ficam de fora (a unidade da nota não corresponde a uma do cadastro: crie pelo item), o Grupo e a Natureza de custo
+ * UMA vez. Nada é perguntado ao abrir: só "Criar" chama o servidor. 201 ⇒ cada item recebe o seu produto (e a tela o
+ * conhece) e o diálogo fecha; recusa ⇒ as mensagens aqui, o diálogo aberto e os itens como estavam.
+ */
+function DialogoDeProdutosDaNota({ e, plano, aberto, onFechar }: { e: EstadoDaConferencia; plano: PlanoDoLote; aberto: boolean; onFechar: () => void }) {
+  const { conf } = e;
+  const [desmarcados, setDesmarcados] = React.useState<ReadonlySet<number>>(() => new Set());
+  const [grupoId, setGrupoId] = React.useState("");
+  const [naturezaId, setNaturezaId] = React.useState("");
+  const [erros, setErros] = React.useState<string[]>([]);
+  const [enviando, setEnviando] = React.useState(false);
+  const marcados = new Set(plano.lista.map((i) => i.nItem).filter((n) => !desmarcados.has(n)));
+  const corpo = corpoDoLote(conf, plano.lista, e.itens, marcados, grupoId, naturezaId);
+  const quantidade = quantidadeDeProdutos(plano.lista, marcados);
+  const marcar = (nItem: number, marcado: boolean) => setDesmarcados((d) => {
+    const n = new Set(d);
+    if (marcado) n.delete(nItem); else n.add(nItem);
+    return n;
+  });
+
+  const confirmar = async () => {
+    if (!corpo || enviando) return;
+    setEnviando(true);
+    setErros([]);
+    try {
+      const r = await criarProdutosDaImportacao(conf.id, corpo, e.chaveDoLote.doEnvio(corpo));
+      e.renovarChaveDoLote();
+      e.conhecerProdutosDoVinculo(r.itens.map((i) => i.produto));
+      for (const i of r.itens) e.mudarItem(i.nItem, { produtoId: i.produto.id, produtoManual: true, fator: "1", tipoFator: "multiply" });
+      const semLocal = itensSemLocalGravado(corpo, r);
+      const criados = `${r.produtos.length === 1 ? "1 produto criado" : `${r.produtos.length} produtos criados`} pela nota.`;
+      if (semLocal.length) toast.warning(`${criados} O Local de estoque não foi gravado no produto ${semLocal.length === 1 ? "do item" : "dos itens"} ${semLocal.join(", ")}.`);
+      else toast.success(criados);
+      onFechar();
+    } catch (err) {
+      const mensagem = e.chaveDoLote.depoisDoErro(err);
+      const recusas = recusasNoCampo(err);
+      setErros(recusas.length ? mensagensDaRecusaDoLote(recusas, corpo) : [mensagem]);
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  return <Dialog open={aberto} onOpenChange={(o) => { if (!o && !enviando) onFechar(); }} title="Criar produtos pela nota" size="md" testId="importacao-criar-produtos-dialogo" preventClose={enviando}
+    footer={<>
+      <Button variant="outline" onClick={onFechar} disabled={enviando}>Fechar</Button>
+      <Button data-testid="importacao-criar-produtos-confirmar" loading={enviando} disabled={!corpo} onClick={() => void confirmar()}>{rotuloDoLote(quantidade)}</Button>
+    </>}>
+    <div className="flex flex-col gap-3">
+      <p className="text-sm text-slate-600">Cada produto nasce com a descrição, a NCM, o código de barras e a unidade da nota, e com o Local de estoque escolhido no item. O Grupo e a Natureza de custo valem para todos. Itens com o mesmo código do fornecedor e a mesma unidade viram um produto só.</p>
+      <ul className="flex flex-col gap-2">
+        {plano.lista.map((i) => <li key={i.nItem} data-testid={`importacao-criar-produtos-item-${i.nItem}`}>
+          <Checkbox testId={`importacao-criar-produtos-item-${i.nItem}-marcado`} rotulo={`Item ${i.nItem} — ${i.descricao} — ${i.unidade}`} marcado={!desmarcados.has(i.nItem)}
+            desabilitado={enviando} onMudar={(x) => marcar(i.nItem, x)} />
+        </li>)}
+      </ul>
+      {plano.fora.length > 0 && <div className="flex flex-col gap-2">
+        <span className="text-[12px] text-amber-800">Ficam de fora (a unidade da nota não corresponde a uma unidade do cadastro — crie pelo item):</span>
+        <ul className="ml-4 list-disc text-[12px]">
+          {plano.fora.map((i) => <li key={i.nItem} data-testid={`importacao-criar-produtos-fora-${i.nItem}`}>Item {i.nItem} — {i.descricao} — {i.unidade}</li>)}
+        </ul>
+      </div>}
+      <div className="grid grid-cols-12 gap-3">
+        <Field label="Grupo" span={6} required>
+          <div data-testid="importacao-criar-produtos-grupo">
+            <RefSelect resource="product_groups" value={grupoId} filter={{ kind: "analytic" }} disabled={enviando} onChange={(id) => setGrupoId(id ?? "")} />
+          </div>
+        </Field>
+        <Field label="Natureza de custo" span={6} required>
+          <div data-testid="importacao-criar-produtos-natureza">
+            <RefSelect resource="financial_categories" value={naturezaId} filter={{ kind: "analytic" }} disabled={enviando} onChange={(id) => setNaturezaId(id ?? "")} />
+          </div>
+        </Field>
+      </div>
+      {erros.length > 0 && <ul data-testid="importacao-criar-produtos-erro" className="list-disc rounded border border-red-200 bg-red-50 py-2 pl-6 pr-3 text-[12.5px] text-red-800">
+        {erros.map((m, k) => <li key={k}>{m}</li>)}
+      </ul>}
+    </div>
+  </Dialog>;
 }

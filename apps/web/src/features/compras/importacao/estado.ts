@@ -8,6 +8,7 @@ import {
   type MotivoDaRecusaDaLinha, type ParcelasDaNota, type ProdutoDoVinculo, type TipoFator
 } from "@agro/domain";
 import { api, type ApiError } from "@/lib/api";
+import { novaChaveDeIdempotencia } from "../pedido-e-orcamento";
 import type { RecusaNoCampo } from "./api";
 
 /**
@@ -261,6 +262,19 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
       controleLote: controle === "lote" || controle === "lote_validade" ? controle : "nenhum" } }));
   }, []);
 
+  /** XML-01: os produtos que o cadastro em lote criou (o `ProdutoDoVinculo` da resposta) — conhecidos sem reler nada. */
+  const conhecerProdutosDoVinculo = React.useCallback((ps: readonly ProdutoDoVinculo[]) => {
+    setConhecidos((c) => { const n = { ...c }; for (const p of ps) n[p.id] = produtoDoVinculo(p); return n; });
+  }, []);
+
+  /**
+   * XML-01: a chave de idempotência do cadastro em lote — a regra do "Gerar compra" (`novaChaveDeIdempotencia`: a
+   * MESMA até o servidor recusar), vivendo com a conferência (trocar de aba não a perde). Depois do 201 o lote seguinte
+   * é OUTRA operação: `renovarChaveDoLote`.
+   */
+  const [chaveDoLote, setChaveDoLote] = React.useState(novaChaveDeIdempotencia);
+  const renovarChaveDoLote = React.useCallback(() => setChaveDoLote(novaChaveDeIdempotencia()), []);
+
   /* ── mudanças ── */
   const mudarCab = (p: Partial<CabecalhoNaTela>) => setCab((c) => ({ ...c, ...p }));
   const mudarFin = (p: Partial<FinanceiroNaTela>) => setFin((f) => ({ ...f, ...p }));
@@ -384,7 +398,8 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
   return {
     conf, itens, cab, fin, produtos, erroDeProduto, contas, total, parcelas, divergencias, bloqueios, recusas, pendente,
     mudarCab, mudarFin, mudarItem, mudarPedido, mudarLinhaDoRateio, adicionarLinhaDoRateio, removerLinhaDoRateio, conhecerProduto,
-    corpo, setRecusas, erroEm, erroDoItem, recusasPorAba
+    corpo, setRecusas, erroEm, erroDoItem, recusasPorAba,
+    conhecerProdutosDoVinculo, chaveDoLote, renovarChaveDoLote
   };
 }
 
