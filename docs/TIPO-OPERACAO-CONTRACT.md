@@ -2725,3 +2725,211 @@ O produto (a Implantação, a confirmação, a tela antiga e a compatibilidade) 
 - **Skew:** o detector `secoesDoFormato5DaBase` acompanha sozinho (o HEAD tem seis seções); o K2-0 de
   `f5-estoque-skew-web-anterior.spec.ts:131` compara o COMMIT HEAD com o domínio e só vale
   rodado sobre o commit da F11: feito em 03/10 sobre `dbfac4e` (que contém `f451020`), 6/6.
+
+## 19. Editar o pedido de compra e a compra salvos (EDITAR-02)
+
+> Decisão 313 (o porquê mora lá). Esta seção é o contrato: rotas, corpo, códigos e resposta. O molde é o §15 (venda);
+> aqui só o que é de compras, e o que difere.
+> Rotas e gravação: `registrarEdicaoCompras`, `travarDocumentoDeCompraDaEdicao` e `editarDocumentoDeCompra` em
+> `apps/api/src/routes/compras-edicao.ts`. Funções puras (forma do corpo, documento como ficará, plano, totais, evento e
+> as mensagens próprias): `apps/api/src/routes/compras-edicao-patch.ts`. Recusas de estado e limites num lugar só, para
+> a PATCH e para o `/edicao`: `recusaDaEdicaoDeCompra` e `limitesDaEdicaoDeCompra` em
+> `apps/api/src/routes/compras-edicao-regras.ts`. O núcleo das conferências é o do LANÇAMENTO (`nucleoDoLancamento`,
+> `apps/api/src/routes/compras.ts`, o MESMO do POST, do receber e do XML); o contrato da PATCH por espécie é
+> `CONTRATO_DA_EDICAO` (mesmo arquivo). Invariante: o gatilho `trg_documentos_compra_versao` (0063). Implantação em
+> `docs/DEPLOYMENT.md` § EDITAR-02.
+
+**Editável: a compra ABERTA e o pedido de compra ABERTO sem compra viva, não aprovado.** Não há PUT de pedido nem de
+compra (o orçamento de compra continua com o PUT dele, fora daqui). **Excluir não existe:** nenhuma rota apaga documento
+ou item de compra, e o papel da aplicação não tem DELETE nas duas tabelas; o caminho para desfazer é cancelar (com
+estorno, na compra confirmada).
+
+### 19.1 A versão do documento de compra (0063)
+
+- `erp.documentos_compra.version bigint not null default 0`, nas TRÊS espécies da tabela (pedido, compra e orçamento):
+  default constante (só metadado), o acervo lê 0, todo INSERT nasce 0 (nenhuma rota cita a coluna).
+- Gatilho `trg_documentos_compra_versao` → `erp.documentos_compra_versao()` (plpgsql, SECURITY INVOKER,
+  `search_path = erp, pg_temp`, EXECUTE só do dono): BEFORE UPDATE, por linha, sem lista de colunas e sem WHEN;
+  `new.version := old.version + 1` em QUALQUER update do cabeçalho — PATCH, confirmar, cancelar, finalizar, converter,
+  reabrir, encerrar o saldo, aprovar para orçamento, o vencedor do orçamento, o PUT do orçamento, script de suporte —,
+  inclusive o que não muda nada. No documento aberto o valor que o UPDATE mandar em `version` vira old+1; fora do aberto
+  a conferência v3 (0044) recusa o UPDATE que mude a coluna ("só a situação muda").
+- É o ÚLTIMO BEFORE UPDATE por nome, depois de `trg_documentos_compra_aprovacao`, `_conferir`, `_finalizacao`, `_nota` e
+  `_transicao`, e PRECISA ser: a conferência v3 congela a LINHA INTEIRA fora do aberto (`to_jsonb(new)` menos a situação
+  e o carimbo); somada antes dela, a versão faria todo UPDATE de documento não aberto ser recusado. A pré-condição exige
+  o conjunto exato dos cinco e a pós-condição confere a ordem.
+- A versão é do CABEÇALHO: escrita só em itens não soma; quem grava item toca o cabeçalho na MESMA transação (a PATCH
+  sempre). Receber o pedido em partes cria a compra (INSERT, versão 0) e só TRAVA o pedido: a versão do pedido fica
+  parada, embora ele passe a ter compra viva — por isso "pedido com compra viva" é pergunta feita sob a trava (§19.2),
+  não uma mudança de versão.
+- O papel da aplicação não desliga, não derruba nem contorna o gatilho (as mesmas perguntas da 0039, §15.1).
+- Na API, `version` sai como texto de dígitos no `GET <base>/:id` (o `d.*` traz a coluna), na resposta da PATCH e no
+  `/edicao`; a forma de entrada é a do §15.1 (texto canônico até o maior `bigint`, ou inteiro JSON seguro ≥ 0).
+
+### 19.2 PATCH `/api/compras/{pedidos,compras}/:id`
+
+Permissão `<recurso>.edit` **E** `<recurso>.view` (`pedidos_compra.edit` + `pedidos_compra.view`, `compras.edit` +
+`compras.view`), por chave exata, nenhuma permissão nova: sem `.edit` → 403 (`runService`); com `.edit` e sem `.view` →
+403 (`requirePermission`, a primeira linha do handler), antes de ler o corpo. O `:id` vai a minúsculas antes de tudo.
+`Idempotency-Key` OPCIONAL pelo helper oficial; o hash leva a ação `editar_documento_compra`, o documento, a espécie, o
+corpo canônico depois da forma (`{ version, ...campos }`, UUID em minúsculas) e o autor: mesma chave e mesmo corpo → a
+MESMA resposta, sem gravar de novo; mesma chave com outro corpo ou outro autor → 409 `CONFLICT`.
+
+**Corpo ESTRITO** — `{ version, ...só o que muda }`, com os nomes e os validadores do POST da espécie, sem `default`
+(ausente = fica o gravado; `null` limpa só onde o POST aceita vazio):
+
+| Chave | Regra |
+| --- | --- |
+| `version` | obrigatória, na forma do §19.1; ausente → "Informe a versão do documento que você abriu."; torta → "Versão inválida: envie a versão que o documento devolveu." |
+| `fornecedor_id`, `transportadora_id`, `data_documento`, `data_vencimento`, `categoria_financeira_id`, `centro_custo_id`, `condicao_pagamento_id`, `forma_pagamento_id`, `frete`, `outras_despesas`, `desconto`, `observacao` | as duas espécies; ausente = o gravado · `null` = limpa (onde o POST aceita) · valor = troca; igual ao gravado (valor canônico) não é mudança |
+| `data_entrada`, `numero_nota`, `serie_nota` | só a compra; no pedido → 422 "O pedido de compra não tem nota nem entrada: este campo é da compra" (com a chave presente, qualquer valor — inclusive `null`) |
+| `plano_parcelas` | estrito nas chaves e nos valores (a entrada é dinheiro canônico); diferente do gravado = decisão explícita; igual ao gravado não é mudança (a régua do §15.2, com o "vazio" de compras: `null`) |
+| `itens` | ausente = nenhuma linha tocada · presente = a lista nova COMPLETA, por id (abaixo); sem mínimo de tamanho |
+| `empresa_id` | 422 no campo: "A empresa não muda na edição do documento." |
+| `tipo_operacao_id`, `tipo_operacao_versao_id` | 422 no campo: "Trocar a operação não é edição: cancele e lance de novo na operação certa." |
+| `especie` | 422 no campo: "A espécie do documento não muda na edição: pedido e compra são documentos diferentes." |
+| `chave_acesso`, `uf_nota`, `tipo_documento_fiscal`, `valor_ipi`, `valor_icms_st`, `seguro`, `tipo_titulo_id`, `classificacao_gasto`, `rateio` | compra: 422 no campo, "Os dados fiscais da compra não mudam depois do lançamento." (imutáveis no banco desde a 0047); pedido: "O pedido de compra não tem dados fiscais: este campo é da compra" |
+| qualquer outra chave — inclusive os padrões financeiros da TOP (`padroes`, `secao`, `natureza`, `tipoTitulo`…), `codigo`, `situacao`, `origem_*` | 422 no campo: "Campo não reconhecido na edição do documento." (nunca descartada) |
+
+As recusas de chave saem JUNTAS, uma por campo, antes de ler qualquer registro e de reservar a chave de idempotência;
+depois vêm os validadores (caminhos `itens[i].<campo>`).
+
+**Item** (por id): `produto_id`, `armazem_id`, `quantidade`, `valor_unitario`, `desconto`, `desconto_percentual`,
+`lote`, `validade`, `observacao`, `gera_estoque`, `imobilizado`, `categoria_financeira_id`, `centro_custo_id`,
+`valor_ipi`, `valor_icms_st`. No pedido, `lote`, `validade` e os dados fiscais do item são recusados na forma com o
+texto do POST ("O pedido de compra não aceita lote: o lote é informado na compra", "…não aceita validade…", "…não tem
+dados fiscais…"), pela simples presença da chave.
+
+| Linha da lista | Efeito |
+| --- | --- |
+| com `id` de item DESTE documento | o mesmo item (mesma ligação com a origem, o orçamento e a linha da nota); campo ausente = o gravado |
+| sem `id` | item novo; exige `produto_id`, `quantidade` e `valor_unitario` na FORMA (422 "Campo obrigatório" em `itens[i].<campo>`) |
+| item SALVO que não vem | **422 em `itens`: "Item salvo não sai do documento: para tirar um item, cancele o documento (o cancelamento estorna) e lance de novo."** — nada se apaga (decisão do dono P1) |
+| `id` de outro documento ou inexistente (indistinguíveis) | 422 em `itens[i].id`: "Este item não é deste documento." |
+| `id` repetido | 422 em `itens[i].id`: "Este item aparece mais de uma vez na lista." |
+
+**Números**: `recusaDoNumero` e `LIMITES_DA_EDICAO` do §15.2 — dinheiro (`frete`, `outras_despesas`, `desconto`, o
+desconto e os impostos do item, a entrada do plano) 16 + 2; `quantidade` 14 + 4 (> 0); `valor_unitario` 12 + 6 (≥ 0);
+`desconto_percentual` 3 + 4 (e ≤ 100 pelo núcleo). O sinal recusado usa o texto do POST. Total calculado que não cabe em
+`numeric(18,2)` → 422 "O total calculado passa do limite: até 16 dígitos inteiros e 2 casas decimais." em
+`itens[i].valor_total`, `valor_itens` ou `valor_total`. Só a PATCH confere os dígitos inteiros; o POST continua com o
+débito de hoje.
+
+**Ordem:**
+
+| # | Passo | Recusa |
+| --- | --- | --- |
+| 1 | `<recurso>.edit` (`runService`) e `<recurso>.view` (`requirePermission`) | 403 |
+| 2 | a forma do corpo (`lerPedidoDaEdicaoDeCompra`): chaves, versão, validadores, números, item novo incompleto | 422 `VALIDATION_ERROR` no campo |
+| 3 | id malformado, documento invisível (outra organização, fora do escopo de empresa, inexistente, outra espécie) — `lerDocumentoCompra`, o do GET | a MESMA 404 "Documento não encontrado" |
+| 4 | idempotência (depois da 404) | 409 `CONFLICT` |
+| 5 | a trava SEM junção (`travarDocumentoDeCompraDaEdicao`: `id` e `version` só de `erp.documentos_compra`, `for update of d`, o recorte do `scopedById`) | zero linhas → a MESMA 404 |
+| 6 | a versão, logo depois da trava | 409 `CONCURRENCY_CONFLICT` "Este documento mudou desde que você o abriu. Recarregue antes de salvar." |
+| 7 | o documento lido (sem trava: a linha já é desta transação; no pedido, as compras geradas lidas SOB a trava) e `recusaDaEdicaoDeCompra` | 409 `INVALID_STATUS_TRANSITION` (abaixo) |
+| 8 | o documento como ficará (`edicaoDeCompraComoFicara`) | 422 em `itens` (P1) ou em `itens[i].id` |
+| 9 | na compra gerada de pedido, a trava do PEDIDO de origem (`travarPedidoDeCompraDaProvisao`: compra → pedido, a ordem do confirmar e do cancelar) — também numa PATCH que não muda nada | — |
+| 10 | os LIMITES (`limitesDaEdicaoDeCompra`): a TROCA de um campo travado; o igual ao gravado não é troca | 422 `VALIDATION_ERROR` no campo, com o motivo dos limites (abaixo) |
+| 11 | nada muda (valores canônicos e plano iguais ao gravado, itens iguais) | 200 com o documento lido sob a trava, SEM escrita e SEM subir a versão |
+| 12 | documento sem itens: a versão CONGELADA tem de aceitar (formato 4 "Permitido", só a compra) | a recusa de hoje do POST |
+| 13 | o NÚCLEO do lançamento (`nucleoDoLancamento`), com a TOP e a versão GRAVADAS e o documento como ficará: campos da espécie, forma, parceiros (só o que a PATCH troca), classificação e condição (só se trocam), regras da versão congelada (a condição permitida só se a condição troca), efeitos previstos, itens (só os novos ou com produto, local, lote, validade ou "gera estoque" trocados), dados fiscais sobre o rateio GRAVADO, totais (+ IPI, ICMS-ST e seguro gravados), duplicatas da nota, plano, padrões financeiros da TOP (`padroesDaTopNoSalvarDaCompra`, decisão 311/286 — SEMPRE), exigências do título, nota duplicada (só se fornecedor, número ou série mudam, sem contar o próprio documento) e o layout de HOJE da TOP | os códigos e as mensagens do POST, os mesmos caminhos |
+| 14 | a gravação (abaixo) | 404 se o UPDATE não achar a linha aberta (ROW COUNT); a nota repetida numa compra invisível sai como no POST |
+
+**Recusas de estado** — 409 `INVALID_STATUS_TRANSITION`, uma mensagem por caso, `details.situacao` sempre:
+
+| Caso | Mensagem | `details` a mais |
+| --- | --- | --- |
+| compra confirmada | "Esta compra está confirmada: a entrada no estoque e as contas a pagar já foram lançadas e não se editam. Para corrigir, cancele a compra (o cancelamento estorna o estoque e as contas) e lance de novo." | — |
+| documento cancelado | "Este documento está cancelado: não há o que editar." | — |
+| pedido finalizado | "Este pedido já foi finalizado e não se edita." | — |
+| pedido convertido | "Este pedido já foi convertido em compra e não se edita." | — |
+| pedido aberto com compra viva (não cancelada) | "Este pedido já gerou a compra {código}: editar o pedido desmentiria a compra. Cancele a compra para editar o pedido." (no plural, com os códigos separados por vírgula) | `compras: [{ id, codigo, situacao }]`, as vivas, na ordem de nascimento |
+| a ÚLTIMA decisão em `erp.aprovacoes_compra` é "aprovado" (compra ou pedido) | "Este documento já foi aprovado e não se edita: a edição mudaria o que foi aprovado. Para corrigir, cancele e lance de novo." | `aprovacao: "aprovado"` |
+| outra situação (fail-closed) | "Este documento não se edita nesta situação." | — |
+
+A ordem é a da tabela: a situação vem antes da compra viva (o pedido finalizado com compra viva recebe a recusa do
+finalizado), e a aprovação é perguntada só quando todo o resto passou. Reprovado ou sem decisão edita.
+
+**Limites de uma edição permitida** — 422 `VALIDATION_ERROR` no campo, só quando o valor MUDA (o banco — 0044, 0047 —
+continua sendo a rede):
+
+| Documento | Travado | Mensagem |
+| --- | --- | --- |
+| compra gerada de pedido | `fornecedor_id` | "O fornecedor da compra gerada de um pedido é o do pedido; ele não muda." |
+| compra gerada de pedido | `itens[i].produto_id` | "O produto do item vem do pedido de origem e não muda." |
+| compra gerada de pedido | item novo (`itens[i]`) | "A compra gerada de um pedido só tem os itens do pedido: para comprar outro produto, lance outra compra." |
+| compra gerada de pedido convertido | `itens[i].quantidade` | "O pedido de origem já foi convertido: a quantidade do item não muda." |
+| compra gerada de pedido aberto ou finalizado | `itens[i].quantidade` acima do teto (o item do pedido menos o que as OUTRAS compras vivas ligaram) | a mensagem do recebimento acima do saldo (`MSG_ITENS_DO_RECEBIMENTO.acima_do_saldo`) |
+| pedido que gerou compra (só canceladas) | `fornecedor_id` | "O fornecedor do pedido de compra não muda depois que o pedido gerou compra." |
+| item do pedido orçado (orçamento não cancelado) | `itens[i].produto_id`, `itens[i].quantidade` | "O item do pedido de compra já orçado não troca de produto nem de quantidade." |
+| compra com as duplicatas da nota (`parcelas_nota`) | `frete`, `outras_despesas`, `desconto`, `condicao_pagamento_id`, `data_vencimento`, `plano_parcelas`, item novo e, em cada item, `produto_id`, `quantidade`, `valor_unitario`, `desconto`, `desconto_percentual` | "Esta compra veio da nota com as duplicatas: o que forma o total e as parcelas é o da nota e não muda. Para corrigir, cancele a compra e lance de novo." |
+| item com a linha da nota (`n_item_nota`) | o que forma o total do item e `valor_ipi`, `valor_icms_st` | "Este item veio da nota fiscal: produto, quantidade, valores, descontos e impostos são os da nota e não mudam." |
+
+Saem todos juntos. Local, lote, validade, observação, datas (fora o vencimento com as duplicatas), classificação e
+"gera estoque"/"imobilizado" seguem editáveis.
+
+**Gravação**: UM `UPDATE` do cabeçalho sempre que algo grava (também a PATCH que só muda item: os totais moram nele),
+com os campos que mudam, a classificação e a condição que o núcleo decidiu (só quando a PATCH as troca), `valor_itens`,
+`valor_total`, `plano_parcelas`, `parcelas_ajustadas` e `atualizado_em`, `where … and situacao = 'aberto'`; a aplicação
+NUNCA escreve `version` (o gatilho soma 1). Itens EM LUGAR: o item alterado recebe um `UPDATE` SÓ das colunas que
+mudaram (os gatilhos dos itens da 0044 disparam pela coluna citada: citar a quantidade que não mudou recusaria a compra
+de um pedido convertido mesmo para corrigir a observação), os alterados com o mesmo conjunto de colunas num comando só
+(`unnest`); os novos num `INSERT` só, `posicao` = o índice. Nenhum `DELETE`. ROW COUNT conferido em cada escrita.
+**A PATCH não confirma** (nem com a TOP de confirmação "Automática"): nenhum efeito de estoque ou financeiro.
+**Provisão (decisão 286)**: a PATCH do pedido ressincroniza a provisão dele (`sincronizarProvisaoDoPedidoDeCompra`, motivo
+`MOTIVOS_DA_PROVISAO.pedidoGravado` — o pedido aberto nunca finalizado: uma leitura, nenhum efeito); a PATCH da compra
+gerada de pedido ressincroniza a do pedido de origem (travado no passo 9) com o motivo
+`MOTIVOS_DA_PROVISAO_COMPRA.compraAlterada(código)` ("Compra X alterada").
+
+**Resposta 200**: o documento como o `GET <base>/:id`, com a `version` nova.
+
+**Histórico**: além da foto de `erp.audit_row` (o cabeçalho inteiro, com a versão), UM evento `update` (entidade
+`documentos_compra`) com `{ via: "patch", campos, derivados }`, `before`/`after` só das colunas do cabeçalho que
+mudaram (as enviadas e as derivadas: totais, plano) e `itens: { alterados }` → `{ alterados, incluidos }` (a `posicao`
+conta). Não há `removidos`.
+
+### 19.3 GET `/api/compras/{pedidos,compras}/:id/edicao`
+
+A porta da tela de edição, numa chamada. `<recurso>.view` conferida antes de abrir a transação e `<recurso>.edit` pelo
+`runService` (não pede `.create`, como as portas de apoio do lançamento pedem). Documento invisível → a MESMA 404 do
+`GET <base>/:id`. Leitura pura, sem trava.
+
+| Chave | Tipo | De onde sai |
+| --- | --- | --- |
+| `podeEditar` | boolean | `recusaDaEdicaoDeCompra` — a MESMA pergunta, na MESMA ordem, da PATCH |
+| `motivo` | texto ou `null` | a mensagem da recusa (a mesma da 409 da PATCH) |
+| `limites` | `{ campos: { campo: motivo }, itemNovo: motivo ou null, itens: [{ id, campos: { campo: motivo }, quantidadeMaxima: texto ou null }] }` | `limitesDaEdicaoDeCompra` — a MESMA função que a PATCH usa para recusar; `quantidadeMaxima` só na compra gerada de pedido aberto ou finalizado |
+| `version` | texto de dígitos | a do documento |
+| `regras` | a forma de `GET <base>/regras-da-operacao` | `respostaDasRegrasDaCompra`, pela versão CONGELADA da TOP (a mesma função da rota de apoio) |
+| `condicoesPermitidas` | lista ou `null` | o mesmo valor de `regras.condicoesPermitidas` |
+| `layout` | a forma de `GET <base>/layout-efetivo` | `respostaDoLayoutEfetivo`, o layout ligado HOJE à TOP do documento (é o que a PATCH cobra) |
+| `documento` | o objeto do `GET <base>/:id` | diferença declarada do §15.3: a tela abre a edição numa ida só; não há `situacaoCliente` (compra não tem cliente em atraso) |
+
+### 19.4 Aprovar e reprovar conferem a versão vista (P5)
+
+`POST /api/aprovacoes/compras/:id/aprovar` e `POST /api/aprovacoes/compras/:id/reprovar` (compra e pedido,
+`apps/api/src/routes/aprovacoes-compras.ts`) passam a conferir a `version` que o aprovador viu, sob a trava do
+documento sem junção (a MESMA linha que a PATCH e a confirmação travam), logo depois da recusa do documento que não
+está aberto: diferente da travada → 409 `CONCURRENCY_CONFLICT` "Este documento mudou desde que você o abriu.
+Recarregue antes de salvar.", nada decidido e nada confirmado (nem pela confirmação automática). O corpo de cada um
+ganha `version` (a forma do §19.1; fora dela, inclusive `null` → 422 "Versão inválida: envie a versão que o documento
+devolveu."), opcional SÓ pela ponte da janela de implantação: ausente vale "0" (o documento como nasceu) — a web
+anterior aprova o documento intocado e recebe 409 no que mudou; nunca "sem conferência". A fila de aprovação
+(`GET /api/aprovacoes/compras`) declara a `version` de cada documento (chave a mais, no fim da linha), e a web a envia
+só quando a fila a declara. A ponte sai quando a web anterior não existir mais (a `version` passa a obrigatória, como
+na venda). A tabela das decisões não ganha coluna (nenhuma migration a mais): a REGRA de aprovação continua a da 0041
+(por valor e versão da TOP); o que muda é que a decisão não vale sobre um documento diferente do que foi visto.
+
+### 19.5 Na tela (Central de Compras)
+
+A consulta da compra e do pedido ganha a pílula "Editar" (`compras-editar`): some sem `<recurso>.edit` e `.view`;
+DESABILITADA, com o motivo em `data-dica` e `data-motivo` — o mesmo texto da recusa do servidor —, no confirmado, no
+cancelado, no pedido finalizado, convertido ou com compra viva; o aprovado (P2) só a consulta não sabe, e a recusa do
+`/edicao` aparece ao abrir. O clique troca a consulta, NO LUGAR (sem rota nova), pela MESMA Central da criação em modo
+edição (`compras-central[data-modo="edicao"][data-documento-id]`), carregada pelo `/edicao`: o gravado, sem semear
+nada (nem o padrão do layout, nem os padrões financeiros da TOP — decisão 311 item 2, só na criação —, nem o local do
+produto); o campo travado no `fieldset` de sempre com `data-travado-na-edicao="true"` e `data-motivo`; o item salvo sem
+o Remover; sem Adicionar e Duplicar quando `limites.itemNovo` não é nulo; a quantidade com `max` = `quantidadeMaxima`.
+Salvar = a PATCH `{ version, ...só o que mudou }` com `Idempotency-Key` (nada mudou = zero PATCH); 200 → "Alterações
+salvas" e a consulta relida; 409 `CONCURRENCY_CONFLICT` → o diálogo com a mensagem do servidor e "Recarregar o
+documento" (`compras-edicao-conflito`). Contra a API sem as portas (404 de rota), "A edição de documento de compra ainda
+não está disponível neste servidor." e a consulta continua.

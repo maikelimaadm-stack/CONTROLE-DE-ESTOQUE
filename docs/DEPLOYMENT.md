@@ -4760,6 +4760,108 @@ Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registro
 identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.
 
 
+## EDITAR-02 — editar a compra e o pedido abertos (0063)
+
+Decisão 313. Faixa **F1**. **Uma migration: `0063_versao_do_documento_de_compra.sql`** (pre-deploy; trava (2026,97),
+`lock_timeout` 2 s, pré/pós-condições nomeadas `EDITAR-02: ...`, não destrutiva, sem backfill, sem `begin`/`commit`
+próprio — o runner aplica o arquivo numa transação e registra o nome no ledger). O que ela faz: a coluna
+`erp.documentos_compra.version bigint not null default 0` (nas três espécies da tabela: pedido, compra e orçamento),
+a função `erp.documentos_compra_versao()` (plpgsql, SECURITY INVOKER, `search_path = erp, pg_temp`, EXECUTE tirado de
+todo papel além do dono) e o gatilho BEFORE UPDATE por linha `trg_documentos_compra_versao`, sem lista de colunas e sem
+WHEN, que faz `new.version := old.version + 1` em todo update do cabeçalho — o ÚLTIMO BEFORE UPDATE por nome, depois das
+cinco guardas, porque a conferência v3 (0044) congela a linha inteira fora do aberto. A coluna nasce com o default
+constante, sem reescrever a tabela; o `alter table` pede a trava exclusiva de `erp.documentos_compra` por um instante —
+com uma transação longa segurando a tabela, a migration desiste em 2 s sem aplicar nada, e o deploy é refeito (seguro:
+nada foi aplicado). **Nenhuma variável nova, nenhuma permissão nova:** a PATCH e o `/edicao` usam `<recurso>.edit` junto
+com `<recurso>.view` (`pedidos_compra`, `compras`); o aprovar e o reprovar de compras continuam com `compras.approve`.
+O que entra junto com ela: na API, `GET /api/compras/{pedidos,compras}/:id/edicao`, `PATCH /api/compras/{pedidos,compras}/:id`
+e a `version` conferida no aprovar e no reprovar de compras (P5; `docs/TIPO-OPERACAO-CONTRACT.md` §19); na web, a pílula
+"Editar" na consulta da compra e do pedido e a Central em modo edição, e a tela de Aprovações mandando a `version` que
+a fila declara.
+
+**Pré-condição:** a 0063 recusa, com a mensagem nomeada e sem aplicar nada:
+- **a trava (2026,97) já detida** por outra transação — antes de tudo;
+- **já aplicada ou schema divergente** — `erp.documentos_compra.version` já existe (`EDITAR-02: erp.documentos_compra.version
+  ja existe; ...`, a PRIMEIRA pergunta, por `to_regclass`, para a reaplicação dizer o motivo verdadeiro); a função
+  `erp.documentos_compra_versao()` ou o gatilho `trg_documentos_compra_versao` já existem;
+- **`erp.documentos_compra` ausente** (a cadeia de migrations fora de ordem);
+- **os BEFORE UPDATE por linha de `erp.documentos_compra` não são exatamente os cinco de hoje**, por nome e por função:
+  `trg_documentos_compra_aprovacao` → `erp.documentos_compra_aprovacao_guarda` (0041), `_conferir` →
+  `erp.documentos_compra_conferir_v3`, `_finalizacao` → `erp.documentos_compra_finalizacao_guarda`, `_transicao` →
+  `erp.documentos_compra_transicao_v3` (0044) e `_nota` → `erp.documentos_compra_nota_guarda` (0047) — a mensagem lista
+  os encontrados. É sobre esse conjunto que valem "o que cada guarda compara" e "a versão é a última";
+- **quem aplica** não é dono de `erp.documentos_compra` (`pg_has_role(..., 'USAGE')`) ou não cria objetos no schema `erp`;
+- **o papel da aplicação poderia contornar o gatilho** — primeiro, que o `erp_app` existe; depois: superusuário ou com SET
+  em `session_replication_role`; MEMBRO (`MEMBER`, porque ele é NOINHERIT e ainda faria SET ROLE) do papel dono da
+  tabela; TRIGGER na tabela; MEMBRO, direto ou em cadeia, com ou sem herança, de qualquer papel superusuário, com SET em
+  `session_replication_role` ou com TRIGGER na tabela; `session_replication_role` guardado em `pg_db_role_setting` para
+  ele ou para todos os papéis (`setrole = 0`), em qualquer banco.
+
+**Conferido em produção (só leitura, pela sessão, 12/10/2026) — o estado sobre o qual as pré-condições passam** (cinco
+SELECT, nenhuma escrita, nenhuma transação aberta): ledger em 62, a última `0062_icones_identificador_e_fuso.sql` (a 0063
+não aplicada); PostgreSQL 17.6; `erp.documentos_compra` existe, sem `version`, sem `erp.documentos_compra_versao()` e sem
+`trg_documentos_compra_versao`; a trava (2026,97) sem detentor; os BEFORE UPDATE por linha são EXATAMENTE os cinco
+esperados, por nome e função, todos ligados como 'O' (além deles, o AFTER da auditoria, fora da conta); dono
+`erp_migrator`, com CREATE em `erp`; `erp_app` existe, não superusuário, NOINHERIT, sem SET em `session_replication_role`,
+não MEMBER do dono, sem TRIGGER, membro de nenhum papel perigoso, nenhum ajuste de `session_replication_role` guardado;
+`erp_app` com SELECT e UPDATE e SEM DELETE em `erp.documentos_compra` e em `erp.documentos_compra_itens`. Tamanho total da
+tabela 216 kB; no instante da leitura, uma única trava na tabela (a da própria leitura) e nenhuma transação não ociosa
+com mais de 1 minuto: a aplicação é instantânea. A aplicação real continua pelo pipeline, por decisão do Maike.
+
+**Pós-condições** (objetos, nunca contagem de tabela viva; uma mensagem por objeto): a coluna (`bigint`, `not null`,
+default `0`, sem identity nem generated); o SELECT da coluna pelo `erp_app` (`has_column_privilege` — o grant de tabela
+da 0036 vale para a coluna nova, sem grant novo); a função (plpgsql, retorna trigger, SECURITY INVOKER, `search_path`
+fixo, EXECUTE só do dono); o gatilho (BEFORE, por linha, só UPDATE, sem coluna, sem WHEN, sem argumento, ligado como 'O',
+na função certa); e a ORDEM — os BEFORE UPDATE por linha são as cinco guardas e a versão, a versão por último. Em erro,
+publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0063) → API → web.** Janelas:
+1. **API ANTERIOR × banco novo:** a API anterior nunca escreve `version`; o INSERT dela nomeia as colunas, e o documento
+   nasce 0. Cada UPDATE dela (confirmar, cancelar, receber quando converte ou reabre o pedido, encerrar o saldo,
+   finalizar, aprovar para orçamento, o vencedor, o PUT do orçamento) passa pelo gatilho, que só soma 1. O gatilho não
+   recusa nada, não lê outra tabela e não toca outra coluna; ele dispara DEPOIS das cinco guardas — inclusive da
+   conferência v3, que compara a linha inteira fora do aberto e por isso nunca vê a versão mudar —, então nenhuma
+   gravação da API anterior muda de resultado, código ou mensagem. O `select d.*` do `GET` anterior passa a trazer
+   `version` (aditivo, ignorado), e a foto de `erp.audit_row` também (Histórico, abaixo).
+2. **web ANTERIOR × API nova:** a web anterior não chama a PATCH nem o `/edicao`. Criar, consultar, confirmar e cancelar
+   a compra e o pedido funcionam como hoje (provado pelo `apps/web/e2e/editar-02-skew-web-anterior.spec.ts`: o bundle da
+   base cria pela Central (201), consulta com a `version` a mais, confirma pela prévia (200) e cancela (200), sem nenhuma
+   resposta 404/422/5xx); as escritas dela sobem a versão pelo gatilho. **A aprovação de compras (P5) nesta janela — a
+   PONTE:** a web anterior aprova e reprova sem mandar `version`; a API nova a lê como "0" (o documento como nasceu) e
+   confere: o documento que ninguém tocou desde o lançamento é decidido como hoje; o que já teve QUALQUER update (aprovado
+   para orçamento, vencedor escolhido, editado pela PATCH) recebe 409 `CONCURRENCY_CONFLICT` e não é decidido — fail-closed,
+   nunca "sem conferência" —, até a web nova chegar (que manda a `version` da fila). Produção hoje: nenhum pedido e
+   nenhuma aprovação de compra — nenhum caso. A ponte sai quando a web anterior não existir mais (decisão 313, P5).
+3. **web NOVA × API anterior:** a consulta oferece o "Editar" (a tela não sabe a versão do servidor); o clique pergunta o
+   `/edicao`, recebe a 404 de ROTA e avisa "A edição de documento de compra ainda não está disponível neste servidor.",
+   voltando à MESMA consulta; nenhuma PATCH sai, e a consulta continua (provado pelo
+   `apps/web/e2e/editar-02-skew-api-producao.spec.ts`: a compra confirma pela tela depois do aviso). Na aprovação, a web
+   nova só manda a `version` que a API NOVA declara: a fila da API anterior não a declara, e a decisão vai como hoje.
+
+**Histórico de alterações:** a tela lista os campos que mudaram na foto de `erp.audit_row`; com a 0063 a `version`
+aparece em toda alteração do documento de compra (`version: N → N+1`), e a PATCH que grava gera DUAS linhas — a do
+gatilho (o cabeçalho inteiro) e o evento da PATCH (`via: patch`, só o que mudou). Verdadeiro e sem dado novo; nenhuma
+mudança de tela nesta fatia (risco declarado na decisão 313).
+
+**Impacto em dados reais (decisão 240): os documentos de compra ganham a coluna `version` (0 para todos); nenhum valor
+existente muda.** Medido em produção (só leitura, 12/10/2026): 2 documentos de compra, ambos compra CONFIRMADA vinda do
+XML (com as duplicatas da nota), 9 itens, 0 pedidos, 0 documentos abertos, 0 aprovações — **hoje nenhum documento de
+produção é editável pela 313**, e o P5 não tem decisão a conferir. A edição não cria movimento de estoque nem título (a
+PATCH não confirma); a provisão do pedido (decisão 286) só é ressincronizada pela regra que já existe, sobre o valor novo
+do mesmo documento. Não é efeito novo da 240 item 4: nada a ligar, nenhuma variável. **Nada se apaga** (decisão 247): a
+PATCH não tem DELETE, e o `erp_app` não tem DELETE nas tabelas do documento de compra.
+
+**Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0063 FICA: a API anterior convive
+com ela (janela 1). Voltando só a API, a aprovação de compras volta a decidir sem conferir a versão (o comportamento de
+antes da 313) e a web nova deixa de editar (janela 3); voltando só a web, vale a ponte (janela 2). Remover a coluna, a
+função ou o gatilho só por migration NOVA, e é decisão do Maike — nunca editando a 0063. As edições já feitas pela PATCH
+são edições comuns do documento e ficam; nada de apagar dado de produção (decisão 247).
+
+**PENDING (gate externo):** a aplicação da 0063 em produção pelo pipeline e a conferência pós-deploy autenticada (um
+`GET /api/compras/compras/:id` trazendo `version`, e o `/edicao` respondendo pela API nova) exigem acesso autenticado a
+produção — sem ele, PENDING; nunca substituídos por local, preview ou CI.
+
+
 ## LANCAMENTO-01 (decisão 311) — a chave do local do produto
 
 Faixa **F1**, sem migration, sem trava, sem permissão nova. **Variável nova: `COMPRAS_LOCAL_DO_PRODUTO_ENABLED`, só no
