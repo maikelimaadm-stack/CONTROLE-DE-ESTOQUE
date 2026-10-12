@@ -49,9 +49,15 @@ async function situacao(id: string, headers: Hdr = c.h.headers()): Promise<Situa
   const r = await lerSituacao(id, headers);
   expect(r.statusCode, `${id}: ${r.body}`).toBe(200);
   const b = j(r);
-  expect(Object.keys(b), "o contrato da resposta: só as duas chaves").toEqual(["situacao", "ultimaDecisao"]);
-  return b as unknown as Situacao;
+  // EDITAR-02 (decisão 313, P5): + `version`, no FIM — a do documento no banco (a declaração de que a decisão confere a
+  // versão). A conta (`situacao`, `ultimaDecisao`) é a de sempre, e é ela que volta.
+  expect(Object.keys(b), "o contrato da resposta: as duas chaves e a versão").toEqual(["situacao", "ultimaDecisao", "version"]);
+  expect(b["version"], "a versão declarada é a do documento no banco").toBe(await versaoNoBanco(id));
+  return { situacao: b["situacao"], ultimaDecisao: b["ultimaDecisao"] } as unknown as Situacao;
 }
+/** EDITAR-02 (P5): a `version` do documento como o BANCO a guarda (texto do bigint); `undefined` = não existe. */
+const versaoNoBanco = async (id: string): Promise<string | undefined> =>
+  (await c.admin.query<{ v: string }>("select version::text v from erp.documentos_compra where id = $1", [id])).rows[0]?.v;
 
 /** A prévia da finalização do pedido (a conta do finalizar, F6a): a premissa da situação. */
 async function previaDaFinalizacao(id: string): Promise<{ podeFinalizar: boolean; aprovacao: { situacao: string } | null; recusas: Erro[] }> {
@@ -224,11 +230,13 @@ describe("SP-1 A1 — a situação do PEDIDO pela conta do finalizar (com a cobe
       .toEqual({ situacao: "pendente", ultimaDecisao: primeira });
     expect(await previaDaFinalizacao(k.ped.id), "premissa: a prévia diz o mesmo — pendente").toMatchObject({ podeFinalizar: false, aprovacao: { situacao: "pendente" } });
 
-    // APROVADO DE NOVO: cobre os 48,00.
-    const em2 = decididoEm(await aprovar("compras", k.ped.id, {}));
+    // APROVADO DE NOVO: cobre os 48,00. EDITAR-02 (P5): com a versão que a consulta do pedido mostra (o vencedor a subiu).
+    const lido = await c.ligada.inject({ method: "GET", url: `/api/compras/pedidos/${k.ped.id}`, headers: c.h.headers() });
+    expect(lido.statusCode, lido.body).toBe(200);
+    const em2 = decididoEm(await aprovar("compras", k.ped.id, { version: j(lido).version }));
     const segunda: UltimaDecisao = { decisao: "aprovado", observacao: null, decididoPor: quem, decididoEm: em2 };
     const aberto = await comConsultas(() => lerSituacao(k.ped.id));
-    expect([aberto.r.statusCode, j(aberto.r)]).toEqual([200, { situacao: "aprovado", ultimaDecisao: segunda }]);
+    expect([aberto.r.statusCode, j(aberto.r)]).toEqual([200, { situacao: "aprovado", ultimaDecisao: segunda, version: await versaoNoBanco(k.ped.id) }]);
     expect(quantas(aberto.sqls, SQL_VERSAO_TOP), "premissa: no aberto a TOP é lida (uma vez)").toBe(1);
     // A conta não usa os orçamentos: a situação não os lê, nem os preços — PREMISSA: o mesmo usuário, na leitura do
     // MESMO pedido, lê os dois (ele tem `orcamentos_compra.view`, e o pedido tem orçamentos com itens).
@@ -242,7 +250,7 @@ describe("SP-1 A1 — a situação do PEDIDO pela conta do finalizar (com a cobe
     const fin = await finalizar(k.ped.id);
     expect(fin.statusCode, fin.body).toBe(200);
     const fechado = await comConsultas(() => lerSituacao(k.ped.id));
-    expect([fechado.r.statusCode, j(fechado.r)]).toEqual([200, { situacao: "nao_aberto", ultimaDecisao: segunda }]);
+    expect([fechado.r.statusCode, j(fechado.r)]).toEqual([200, { situacao: "nao_aberto", ultimaDecisao: segunda, version: await versaoNoBanco(k.ped.id) }]);
     expect(quantas(fechado.sqls, SQL_VERSAO_TOP), "o pedido que não está aberto não lê a TOP").toBe(0);
     expect(quantas(fechado.sqls, SQL_DOCUMENTO), "premissa: o espião viu a leitura do documento").toBeGreaterThan(0);
     expect(await decisoesDe("aprovacoes_compra", k.ped.id), "ler a situação não grava decisão").toHaveLength(2);

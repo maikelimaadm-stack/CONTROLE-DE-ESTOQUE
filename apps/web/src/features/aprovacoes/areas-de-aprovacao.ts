@@ -6,6 +6,7 @@ import { mensagemDoServidorNoMolde } from "@/features/central/salvar";
 import { varianteDeVenda } from "@/features/sales/variantes";
 import { varianteDeCompra } from "@/features/compras/variantes";
 import { rotaDoDocumentoEstoque, varianteDeEstoque } from "@/features/estoque/movimentacoes-variantes";
+import { VERSAO_NA_DECISAO, corpoDaDecisaoPelaVersao, versaoDaDecisaoNaConsulta, type Decisao, type VersaoNaDecisao } from "./corpo-da-decisao";
 
 /**
  * AS TRÊS FILAS DE APROVAÇÃO — O CONTRATO DAS ROTAS E O QUE CADA ÁREA SABE (TOP-CONFIG-08, decisão 277).
@@ -38,7 +39,8 @@ export type UltimaDecisao = { decisao: "aprovado" | "reprovado"; observacao: str
  * A linha da fila (GET /api/aprovacoes/<área>), chave por chave como as rotas a devolvem. `type` e não `interface`
  * de propósito: a grade recebe linhas como `Record<string, unknown>`, e só o alias de objeto é atribuível a ele.
  * `especie`: "venda" | "compra" | "entrada" | "saida" | "transferencia" | "ajuste". `valor` é nulo no estoque (o
- * valor do documento de estoque só existe na confirmação). `version` só na venda — é ela que a decisão devolve.
+ * valor do documento de estoque só existe na confirmação). `version`: na venda, sempre; na compra, desde a EDITAR-02
+ * (decisão 313, P5), quando a API a declara — é ela que a decisão devolve.
  */
 export type LinhaDaFila = {
   id: string; codigo: string; especie: string; data: string;
@@ -71,8 +73,8 @@ export type RespostaDaDecisao = {
   confirmacaoAutomatica?: ResultadoConfirmacaoAutomatica;
 };
 
-/** A ação da linha — é também o último segmento da porta (`…/aprovar`, `…/reprovar`). */
-export type Decisao = "aprovar" | "reprovar";
+/** A ação da linha — é também o último segmento da porta (`…/aprovar`, `…/reprovar`). O dono é `corpo-da-decisao`. */
+export type { Decisao } from "./corpo-da-decisao";
 
 // ── Textos da tela (exatos: os E2E procuram por eles) ─────────────────────────────────────────────────────────
 export const MSG_FILA_VAZIA = "Nenhum documento aguardando aprovação.";
@@ -80,7 +82,7 @@ export const MSG_APROVACOES_INDISPONIVEIS = "As aprovações ainda não estão d
 export const MSG_DOCUMENTO_MUDOU_NA_FILA = "O documento mudou depois que a lista foi carregada. A lista foi atualizada; confira antes de aprovar.";
 export const MSG_APROVADO = "Aprovado.";
 export const MSG_APROVADO_E_CONFIRMADO = "Aprovado e confirmado.";
-/** A decisão da CONSULTA voltou 409: a venda mudou depois que a tela foi aberta (outra versão). */
+/** A decisão da CONSULTA voltou 409: o documento (a venda; a compra, desde a EDITAR-02) mudou depois que a tela foi aberta. */
 export const MSG_DOCUMENTO_MUDOU_NA_CONSULTA = "O documento mudou depois que foi aberto. Ele foi carregado de novo; confira antes de aprovar.";
 /**
  * A mensagem do servidor dentro de um molde que já termina em ponto. O dono da pontuação é o motor da Central
@@ -134,8 +136,12 @@ interface ConfiguracaoDaArea {
   rotuloDoParceiro: string;
   /** Venda e compra têm valor; o documento de estoque não tem (só na confirmação). */
   temValor: boolean;
-  /** Venda: a decisão leva a `version` que a tela mostrou — documento alterado depois responde 409. */
-  levaVersao: boolean;
+  /**
+   * A `version` que a decisão leva (`VERSAO_NA_DECISAO`, em `corpo-da-decisao`): a que a tela mostrou — documento
+   * alterado depois responde 409. Venda: sempre; compra: só quando uma resposta que só a API nova emite a declarou (a
+   * linha da fila; na consulta, a situação da aprovação); estoque: nunca.
+   */
+  versaoNaDecisao: VersaoNaDecisao;
   /**
    * O documento de uma espécie (a da linha, ou a da consulta), pelas variantes dos portais. `undefined` = espécie
    * desconhecida: sem ação.
@@ -193,7 +199,7 @@ export const CONFIGURACAO_DAS_AREAS: Readonly<Record<AreaDeAprovacao, Configurac
     porta: PORTA_DA_FILA_DE_VENDAS,
     rotuloDoParceiro: "Cliente",
     temValor: true,
-    levaVersao: true,
+    versaoNaDecisao: VERSAO_NA_DECISAO.vendas,
     documento: () => { const v = varianteDeVenda(KIND_DA_VENDA); return v ? { segmento: v.segmento, perm: v.perm } : undefined; },
     portaDaDecisao: (l, _d, decisao) => `${raizDoDocumento(PORTA_DA_FILA_DE_VENDAS, l.id)}/${decisao}`,
     rotaDaConsulta: (l, d) => `/vendas/${d.segmento}/${id(l)}`
@@ -202,7 +208,7 @@ export const CONFIGURACAO_DAS_AREAS: Readonly<Record<AreaDeAprovacao, Configurac
     porta: PORTA_DA_FILA_DE_COMPRAS,
     rotuloDoParceiro: "Fornecedor",
     temValor: true,
-    levaVersao: false,
+    versaoNaDecisao: VERSAO_NA_DECISAO.compras,
     // A espécie é a que o SERVIDOR classificou na linha ("compra"), nunca suposta pela aba.
     documento: (especie) => { const v = varianteDeCompra(especie); return v ? { segmento: v.segmento, perm: v.perm } : undefined; },
     portaDaDecisao: (l, _d, decisao) => `${raizDoDocumento(PORTA_DA_FILA_DE_COMPRAS, l.id)}/${decisao}`,
@@ -212,7 +218,7 @@ export const CONFIGURACAO_DAS_AREAS: Readonly<Record<AreaDeAprovacao, Configurac
     porta: PORTA_DA_FILA_DO_ESTOQUE,
     rotuloDoParceiro: "Espécie",
     temValor: false,
-    levaVersao: false,
+    versaoNaDecisao: VERSAO_NA_DECISAO.estoque,
     // Cada espécie tem o seu recurso de permissão (`entradas_estoque`…) e o seu segmento (`entradas`…).
     documento: (especie) => { const v = varianteDeEstoque(especie); return v ? { segmento: v.segmento, perm: v.perm } : undefined; },
     portaDaDecisao: (l, d, decisao) => `${raizDoDocumento(filaDaEspecieDoEstoque(d.segmento), l.id)}/${decisao}`,
@@ -246,18 +252,22 @@ export const PERMISSAO_DA_PORTA_DA_DECISAO: Readonly<Record<AreaDaConsulta, stri
   Object.freeze({ vendas: "sales.approve", compras: "compras.approve", estoque: null });
 
 /**
- * O corpo da decisão — estrito, como as rotas o leem:
- *   · aprovar: `{ observacao? }` (ausente quando vazia), mais `version` na venda;
- *   · reprovar: `{ motivo }` (obrigatório), mais `version` na venda.
- * `versao`: a `version` da venda que a tela mostrou (a linha da fila, ou o documento da consulta).
+ * O corpo da decisão — estrito, como as rotas o leem (a regra mora em `corpo-da-decisao`):
+ *   · aprovar: `{ observacao? }` (ausente quando vazia), mais `version` pela regra da área;
+ *   · reprovar: `{ motivo }` (obrigatório), mais `version` pela regra da área.
+ * `versao`: a `version` que a tela mostrou (a linha da fila, ou o documento da consulta); `undefined` = não declarada.
  */
 export function corpoDaDecisao(area: AreaDeAprovacao, versao: string | undefined, decisao: Decisao, texto: string): Record<string, unknown> {
-  const corpo: Record<string, unknown> = {};
-  if (CONFIGURACAO_DAS_AREAS[area].levaVersao) corpo["version"] = versao;
-  const t = texto.trim();
-  if (decisao === "reprovar") corpo["motivo"] = t;
-  else if (t) corpo["observacao"] = t;
-  return corpo;
+  return corpoDaDecisaoPelaVersao(CONFIGURACAO_DAS_AREAS[area].versaoNaDecisao, versao, decisao, texto);
+}
+
+/**
+ * A `version` que a decisão da CONSULTA leva (a regra em `corpo-da-decisao`): a do documento mostrado; na compra, só
+ * quando a SITUAÇÃO da aprovação (`situacao`, a resposta crua da porta da situação) a declara — nunca pela presença de
+ * `version` no documento, que o GET por id da base também devolve.
+ */
+export function versaoDaDecisaoDaConsulta(area: AreaDaConsulta, versaoDoDocumento: string | undefined, situacao: unknown): string | undefined {
+  return versaoDaDecisaoNaConsulta(CONFIGURACAO_DAS_AREAS[area].versaoNaDecisao, versaoDoDocumento, situacao);
 }
 
 /**

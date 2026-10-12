@@ -189,7 +189,7 @@ async function trilha(id: string, action: string, doServico = false) {
     [id, action])).rows;
 }
 
-type LinhaFila = { id: string; especie: string; situacao: string; valor: string | null; ultimaDecisao: { decisao: string } | null };
+type LinhaFila = { id: string; especie: string; situacao: string; valor: string | null; ultimaDecisao: { decisao: string } | null; version: string };
 /** A fila de compras INTEIRA de quem pergunta (página de 1000, conferida contra o total). */
 async function filaDeCompras(headers: Hdr = c.h.headers()): Promise<LinhaFila[]> {
   const r = await fila("compras", headers, { pageSize: 1000 });
@@ -787,8 +787,10 @@ describe("OR-5 o fluxo completo pela API", () => {
     const pendente = await finalizar(ped.id);
     expect(pendente.statusCode, pendente.body).toBe(409);
     expect(erro(pendente)).toEqual({ code: "APROVACAO_PENDENTE", message: MSG_PENDENTE_PEDIDO, details: { politica: "por_valor", valorMinimo: "1000.00", valorDocumento: "1000.00" } });
-    expect((await filaDeCompras()).find((l) => l.id === ped.id)).toMatchObject({ especie: "pedido", situacao: "pendente", valor: "1000.00", ultimaDecisao: null });
-    const aprovado = await aprovar("compras", ped.id, { observacao: "Vencedor da cotação" });
+    const naFila = (await filaDeCompras()).find((l) => l.id === ped.id);
+    expect(naFila).toMatchObject({ especie: "pedido", situacao: "pendente", valor: "1000.00", ultimaDecisao: null });
+    // EDITAR-02 (P5): a decisão leva a versão que a fila mostrou (o vencedor e o aprovado para orçamento a subiram).
+    const aprovado = await aprovar("compras", ped.id, { observacao: "Vencedor da cotação", version: naFila!.version });
     expect(aprovado.statusCode, aprovado.body).toBe(200);
     const fin = await finalizar(ped.id);
     expect(fin.statusCode, fin.body).toBe(200);

@@ -22,10 +22,22 @@
  * inexistente — a tela nova lê esse 404 como "aprovações indisponíveis neste servidor", sem quebrar o resto.
  *
  * ┌─ O MODELO ─────────────────────────────────────────────────────────────────────────────────────────────┐
- * │ `erp.aprovacoes_compra`: uma linha por DECISÃO, só inserção (sem UPDATE e sem DELETE). A compra não tem   │
- * │ edição, então a decisão VIGENTE é a última (id desc), e vale enquanto o documento estiver aberto. A fatia │
- * │ que um dia criar edição de compra terá de invalidar a aprovação (a venda faz isso pela versão).           │
- * │ Reprovada pode ser aprovada depois por uma decisão nova; a história fica.                                │
+ * │ `erp.aprovacoes_compra`: uma linha por DECISÃO, só inserção (sem UPDATE e sem DELETE). A decisão VIGENTE  │
+ * │ é a última (id desc), e vale enquanto o documento estiver aberto. Reprovada pode ser aprovada depois por   │
+ * │ uma decisão nova; a história fica.                                                                       │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ EDITAR-02 (decisão 313, P5 — decisão do dono) — A DECISÃO VALE PARA A VERSÃO QUE O APROVADOR VIU ─────────┐
+ * │ Desde a EDITAR-02 a compra aberta e o pedido aberto se editam (PATCH, `compras-edicao.ts`), e a versão do  │
+ * │ documento (`version`, 0063) sobe pelo gatilho em TODO update do cabeçalho. Sem amarrar a decisão à versão, │
+ * │ o aprovador aprovaria — e, com Confirmação Automática, confirmaria — um conteúdo editado DEPOIS que ele o  │
+ * │ viu na fila. Por isso aprovar e reprovar levam a `version` vista (a da fila, ou a do documento na        │
+ * │ consulta) e, JÁ SOB a trava do documento, ela é conferida contra a TRAVADA: diferente → 409              │
+ * │ CONCURRENCY_CONFLICT (`MSG_DOCUMENTO_MUDOU`), nada decidido, nada confirmado. A trava é a mesma que a       │
+ * │ PATCH e a confirmação pedem (a linha do documento, `for update`, sem junção): decisão × edição ×           │
+ * │ confirmação se enfileiram nela, e quem chega depois lê a versão que a anterior deixou.                   │
+ * │ A tabela de decisões NÃO ganha a versão (nenhuma migration): a conferência é na porta, a única que grava  │
+ * │ a decisão. A PATCH, do outro lado, recusa o documento cuja última decisão é "aprovado" (P2).              │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ A ORDEM DO APROVAR E DO REPROVAR (o molde do PATCH da venda) ─────────────────────────────────────────┐
@@ -38,9 +50,10 @@
  * │    recorte de empresa;                                                                                   │
  * │ 4. a IDEMPOTÊNCIA (`Idempotency-Key`; ação, documento, texto e AUTOR no hash): o reenvio devolve o corpo │
  * │    gravado — a decisão e o resultado da confirmação automática — e nunca decide nem confirma duas vezes; │
- * │ 5. a TRAVA do documento, `for update` SEM junção: é ela que impede duas decisões e a confirmação de se    │
- * │    cruzarem, e que dá a ordem das decisões. Zero linhas → a mesma 404;                                   │
- * │ 6. documento que não está aberto → 409 CONFLICT "Só documento aberto passa por aprovação.";             │
+ * │ 5. a TRAVA do documento, `for update` SEM junção: é ela que impede duas decisões, a edição e a confirmação│
+ * │    de se cruzarem, e que dá a ordem das decisões. Zero linhas → a mesma 404;                            │
+ * │ 6. documento que não está aberto → 409 CONFLICT "Só documento aberto passa por aprovação."; e, LOGO     │
+ * │    DEPOIS (EDITAR-02, P5), a versão VISTA contra a TRAVADA → 409 CONCURRENCY_CONFLICT se diferem;        │
  * │ 7. documento que não exige aprovação (formato 1 a 3, ou formato 4 cuja política, com o total ATUAL, não   │
  * │    exige) → 409 APROVACAO_NAO_EXIGIDA "Este documento não precisa de aprovação.";                         │
  * │ 8. grava a decisão (`registrarDecisao`; o gatilho da 0041 confere tudo de novo e ATRIBUI TOP, versão,     │
@@ -84,6 +97,8 @@ import { pageQuerySchema } from "../lib/pagination.js";
 import { situacaoDaAprovacao, registrarDecisao } from "../lib/aprovacao-documento.js";
 import { confirmaAutomaticamente, tentarConfirmacaoAutomatica, lerVersaoCongeladaTop, type ResultadoConfirmacaoAutomatica } from "../lib/confirmacao-automatica.js";
 import { lerDocumentoCompra } from "./compras.js";
+// EDITAR-02 (P5): as mensagens da versão são as da PATCH (o texto é um só — importado, nunca copiado).
+import { MSG_DOCUMENTO_MUDOU, MSG_EDICAO_VERSAO_INVALIDA } from "./vendas-edicao-patch.js";
 import { recusarParametrosDaSituacao, respostaDaSituacaoDaAprovacao, type RespostaDaSituacaoDaAprovacao } from "./aprovacoes-situacao.js";
 import { confirmarCompraNaTransacao } from "./compras-confirmacao.js";
 import { situacaoDaAprovacaoDoPedido } from "./compras-finalizacao.js";
@@ -117,13 +132,39 @@ const especiesQueLeSituacao = (ctx: ServiceCtx): EspecieAprovavel[] =>
 // ─────────────── contrato de entrada (estrito) ───────────────
 
 /**
+ * EDITAR-02 (P5) — A VERSÃO QUE O APROVADOR VIU: o MESMO contrato da `version` da PATCH e da decisão da venda
+ * (`aprovacoes-vendas.ts`): o TEXTO do bigint que a fila e o GET devolvem, na forma canônica (sem zero à esquerda,
+ * dentro do bigint), ou um inteiro JSON exato e ≥ 0. Fora da forma (inclusive `null`) → 422 "Versão inválida…".
+ * Cópia da forma canônica de `aprovacoes-vendas.ts` (privada lá; vendas não se toca nesta fatia — a dívida da D13).
+ *
+ * PONTE DA JANELA DE DEPLOY (decisão do coordenador, com SAÍDA declarada): `version` AUSENTE vale "0" — o documento
+ * como NASCEU (a 0063 dá 0 a todo documento) — e a MESMA conferência roda. Nunca "sem conferência": a web anterior a
+ * esta fatia (que não conhece a versão da compra e manda só `{ observacao }`/`{ motivo }`) aprova o documento que
+ * ninguém tocou e recebe 409 no que mudou desde que nasceu. SAI quando a web anterior não existir mais em produção: a
+ * `version` passa a obrigatória, como na venda (ausente → "Informe a versão do documento que você abriu.").
+ */
+const FORMA_VERSAO = /^(0|[1-9]\d{0,18})$/;
+const VERSAO_MAXIMA = 9223372036854775807n;
+const versaoCanonica = (v: string | number): string | null =>
+  typeof v === "string" ? (FORMA_VERSAO.test(v) && BigInt(v) <= VERSAO_MAXIMA ? v : null)
+    : Number.isSafeInteger(v) && v >= 0 ? String(v) : null;
+const versaoVistaSchema = z.union([z.string(), z.number()], { error: () => MSG_EDICAO_VERSAO_INVALIDA })
+  .superRefine((v, c) => { if (versaoCanonica(v) === null) c.addIssue({ code: "custom", message: MSG_EDICAO_VERSAO_INVALIDA }); })
+  .transform((v) => String(v))
+  .optional();
+/** A ponte: `version` ausente é a versão em que todo documento de compra NASCE (0063). */
+const VERSAO_DA_PONTE = "0";
+
+/**
  * Aprovar: observação opcional (ausente, `null` ou vazia → `null`), até 500. Reprovar: motivo obrigatório, de 1 a 500
  * (o CHECK da 0041 exige o motivo não vazio na reprovação). `.strict()`: chave desconhecida é 422 — nunca descartada.
+ * EDITAR-02 (P5): + `version` (a vista; ausente = a ponte, acima).
  */
 const aprovarSchema = z.object({
+  version: versaoVistaSchema,
   observacao: z.string().trim().max(500).nullish().transform((v) => (v ? v : null)),
 }).strict();
-const reprovarSchema = z.object({ motivo: z.string().trim().min(1).max(500) }).strict();
+const reprovarSchema = z.object({ version: versaoVistaSchema, motivo: z.string().trim().min(1).max(500) }).strict();
 
 const recusa = (path: string, message: string) => err("VALIDATION_ERROR", message, [{ path, message }]);
 
@@ -132,7 +173,10 @@ const PARAMETROS_DA_FILA = new Set(["page", "pageSize"]);
 
 // ─────────────── a fila ───────────────
 
-/** Uma linha da fila (o corpo que a tela de Aprovações consome). `version` só existe na venda. */
+/**
+ * Uma linha da fila (o corpo que a tela de Aprovações consome). EDITAR-02 (P5), ADITIVO e no FIM: `version` — a do
+ * documento (texto do bigint), a que a decisão manda de volta. A web anterior ignora a chave a mais.
+ */
 type LinhaDaFilaCompra = {
   id: string; codigo: string; especie: EspecieAprovavel; data: string;
   empresa: { id: string; nome: string };
@@ -142,6 +186,7 @@ type LinhaDaFilaCompra = {
   lancadoPor: { id: string; nome: string } | null;
   situacao: "pendente" | "reprovado";
   ultimaDecisao: { decisao: "aprovado" | "reprovado"; observacao: string | null; decididoPor: { id: string; nome: string }; decididoEm: string } | null;
+  version: string;
 };
 
 interface LinhaLida {
@@ -149,7 +194,7 @@ interface LinhaLida {
   fornecedor_id: string; fornecedor_nome: string | null; tipo_operacao_id: string; operacao_nome: string;
   valor: string; criado_por: string | null; lancado_por_nome: string | null;
   ud_decisao: "aprovado" | "reprovado" | null; ud_observacao: string | null; ud_decidido_por: string | null;
-  ud_decidido_por_nome: string | null; ud_decidido_em: Date | null;
+  ud_decidido_por_nome: string | null; ud_decidido_em: Date | null; version: string;
 }
 
 async function listarFila(ctx: ServiceCtx, query: unknown) {
@@ -198,7 +243,7 @@ async function listarFila(ctx: ServiceCtx, query: unknown) {
             d.fornecedor_id, fo.name as fornecedor_nome, d.tipo_operacao_id, v.nome as operacao_nome,
             d.valor_total::text as valor, d.criado_por, ul.name as lancado_por_nome,
             ud.decisao as ud_decisao, ud.observacao as ud_observacao, ud.decidido_por as ud_decidido_por,
-            ud_u.name as ud_decidido_por_nome, ud.decidido_em as ud_decidido_em
+            ud_u.name as ud_decidido_por_nome, ud.decidido_em as ud_decidido_em, d.version::text as version
        ${de}
       order by d.data_documento desc, d.created_at desc, d.id
       limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
@@ -214,6 +259,7 @@ async function listarFila(ctx: ServiceCtx, query: unknown) {
       ? { decisao: l.ud_decisao, observacao: l.ud_observacao, decididoPor: { id: l.ud_decidido_por, nome: l.ud_decidido_por_nome ?? "" },
           decididoEm: l.ud_decidido_em.toISOString() }
       : null,
+    version: l.version,
   }));
   // O ID Global de cada documento (o localizador humano da organização), como nas listas de hoje: uma consulta a
   // mais, fixa, e a marca `idGlobal` que a tela lê para mostrar a coluna (id-global-audit).
@@ -229,11 +275,14 @@ async function listarFila(ctx: ServiceCtx, query: unknown) {
  * linhas é a MESMA 404.
  *
  * OPERACOES-01 F6a: a espécie é a que `especieVisivel` achou entre as que ele aprova (compra ou pedido), no WHERE como antes.
+ *
+ * EDITAR-02 (P5): + `version` — a versão TRAVADA, que a decisão confere contra a vista. É a mesma trava (a linha, sem
+ * junção, `for update`) que a PATCH (`compras-edicao.ts`) e a confirmação pedem: a versão lida aqui vale até o commit.
  */
 async function travarCompraDaDecisao(ctx: ServiceCtx, id: string, especie: EspecieAprovavel) {
   const sc = scopedById(ctx, "d", id); sc.params.push(especie);
-  const r = await ctx.tx.query<{ id: string; situacao: string; empresa_id: string; valor_total: string; tipo_operacao_versao_id: string | null }>(
-    `select d.id, d.situacao, d.empresa_id, d.valor_total::text as valor_total, d.tipo_operacao_versao_id
+  const r = await ctx.tx.query<{ id: string; situacao: string; empresa_id: string; valor_total: string; tipo_operacao_versao_id: string | null; version: string }>(
+    `select d.id, d.situacao, d.empresa_id, d.valor_total::text as valor_total, d.tipo_operacao_versao_id, d.version::text as version
        from erp.documentos_compra d
       where d.id = $1 and d.organization_id = $2 and d.especie = $${sc.params.length}${sc.sql}
         for update of d`, sc.params);
@@ -269,7 +318,10 @@ async function decidir(app: FastifyInstance, req: FastifyRequest, decisao: Decis
   return runService(app, req, PERMISSAO_APROVAR, async (ctx) => {
     // 1. o corpo, antes de qualquer leitura de registro e antes da chave.
     // O texto da decisão vai para a MESMA coluna (`observacao`): a observação da aprovação ou o motivo da reprovação.
-    const observacao = decisao === "aprovado" ? aprovarSchema.parse(req.body ?? {}).observacao : reprovarSchema.parse(req.body ?? {}).motivo;
+    // EDITAR-02 (P5): e a versão VISTA — ausente, a ponte ("0", o documento como nasceu; ver `versaoVistaSchema`).
+    const corpo = decisao === "aprovado" ? aprovarSchema.parse(req.body ?? {}) : reprovarSchema.parse(req.body ?? {});
+    const observacao = "motivo" in corpo ? corpo.motivo : corpo.observacao;
+    const versaoVista = corpo.version ?? VERSAO_DA_PONTE;
     const bruto = (req.params as { id: string }).id;
     // 2. id malformado é inexistente: a MESMA 404.
     if (!FORMA_UUID_PADRAO.test(bruto)) throw notFound("Documento");
@@ -283,16 +335,23 @@ async function decidir(app: FastifyInstance, req: FastifyRequest, decisao: Decis
     await lerDocumentoCompra(ctx, id, especie);
     // 4. a idempotência — com o AUTOR no hash: chave alheia nunca devolve a resposta de outro. A espécie entra no
     // hash SÓ no pedido: o da compra fica idêntico ao de antes (a chave de um reenvio do cliente da base continua valendo).
+    // EDITAR-02 (P5): a `version` entra no hash SÓ quando VEIO — o corpo da web anterior (sem ela) tem o hash de antes.
     const texto = decisao === "aprovado" ? { observacao } : { motivo: observacao };
     return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
       { action: decisao === "aprovado" ? "aprovar_documento_compra" : "reprovar_documento_compra", sourceId: id, ...texto, actorId: ctx.user.id,
-        ...(especie === "pedido" ? { especie } : {}) },
+        ...(especie === "pedido" ? { especie } : {}), ...(corpo.version !== undefined ? { version: corpo.version } : {}) },
       async (): Promise<RespostaDaDecisao> => {
         // 5. a trava do documento: serializa as decisões entre si e com a confirmação. Daqui em diante, o id é o
         // que o BANCO devolveu (`doc.id`): a decisão, a trilha e a confirmação falam do documento lido.
         const doc = await travarCompraDaDecisao(ctx, id, especie);
         // 6. só documento aberto passa por aprovação.
         if (doc.situacao !== "aberto") throw err("CONFLICT", MENSAGEM_APROVACAO_SO_DOCUMENTO_ABERTO);
+        // 6b. EDITAR-02 (P5): a versão que o aprovador viu é a TRAVADA? Comparada como bigint (o texto canônico dos dois
+        // lados). Diferente → 409 CONCURRENCY_CONFLICT, antes de qualquer outra leitura: nada é decidido, nada é
+        // confirmado. DEPOIS da situação, de propósito (diferente da venda): o documento fechado responde a recusa de
+        // hoje ("Só documento aberto…") qualquer que seja a versão — confirmar e cancelar também sobem a versão, e a web
+        // anterior (que não manda versão: a ponte) receberia um 409 de "mudou" no lugar da recusa que ela conhece.
+        if (BigInt(doc.version) !== BigInt(versaoVista)) throw err("CONCURRENCY_CONFLICT", MSG_DOCUMENTO_MUDOU);
         // 7. exige aprovação? A versão congelada e o total ATUAL, pela mesma regra da confirmação.
         const versaoTop = await lerVersaoCongeladaTop(ctx, doc.tipo_operacao_versao_id);
         const situacao = await situacaoDaAprovacao(ctx,
@@ -320,11 +379,18 @@ async function decidir(app: FastifyInstance, req: FastifyRequest, decisao: Decis
  * A SITUAÇÃO DA APROVAÇÃO DE UMA COMPRA OU DE UM PEDIDO DE COMPRA (`pedidos_compra.view`, AND), para a consulta da
  * Central de Compras. Quem chama já passou pelo `compras.view`. A espécie é procurada só entre as que o usuário lê
  * aqui (`especiesQueLeSituacao`) e o documento é achado pela MESMA leitura do GET por id (`lerDocumentoCompra`, com a
- * espécie achada), que aplica organização, escopo de empresa e espécie: a 404 é a mesma, com o mesmo corpo. O
- * documento de compra não tem versão: a decisão vigente é a última (a régua de `situacaoDaAprovacao`). A compra: a
- * conta da `lib`, como na F2. O pedido ABERTO: a conta do finalizar, com a cobertura do valor (OPERACOES-01 F6b).
+ * espécie achada), que aplica organização, escopo de empresa e espécie: a 404 é a mesma, com o mesmo corpo. A
+ * decisão da compra não guarda a versão do documento: a vigente é a última (a régua de `situacaoDaAprovacao`). A
+ * compra: a conta da `lib`, como na F2. O pedido ABERTO: a conta do finalizar, com a cobertura do valor (OPERACOES-01
+ * F6b).
+ *
+ * EDITAR-02 (decisão 313, P5): + `version`, ADITIVO e no FIM — a do documento lido (texto do bigint). É a DECLARAÇÃO de
+ * que esta API confere a versão na decisão: a consulta da web só manda a `version` no aprovar/reprovar quando a
+ * situação a declara. A presença de `version` no GET por id do documento NÃO serve de declaração: o `d.*` da base a
+ * devolve desde a 0063 (o banco migra antes do binário), e a base recusa (`.strict()`) a chave na decisão. A web
+ * anterior lê só `situacao` e `ultimaDecisao` e ignora a chave a mais.
  */
-async function situacaoDoDocumentoDeCompra(ctx: ServiceCtx, params: unknown, query: unknown): Promise<RespostaDaSituacaoDaAprovacao> {
+async function situacaoDoDocumentoDeCompra(ctx: ServiceCtx, params: unknown, query: unknown): Promise<RespostaDaSituacaoDaAprovacao & { version: string }> {
   // 1. Parâmetro de consulta: 422, antes de qualquer leitura (nunca ignorado).
   recusarParametrosDaSituacao(query);
   // 2. Forma do id: fora dela é inexistente — a MESMA 404, e o id nunca vai ao SQL (22P02 seria 500).
@@ -336,7 +402,7 @@ async function situacaoDoDocumentoDeCompra(ctx: ServiceCtx, params: unknown, que
   // A conta não usa os orçamentos do pedido: a leitura não os pede (nem os preços de cada um).
   const doc = await lerDocumentoCompra(ctx, id, especie, { semOrcamentos: true });
   // 4. A conta (o contrato em `aprovacoes-situacao.ts`). O pedido entrega a do finalizar, que só roda no aberto.
-  return respostaDaSituacaoDaAprovacao(ctx, {
+  const resposta = await respostaDaSituacaoDaAprovacao(ctx, {
     modulo: "compras",
     documentoId: String(doc["id"]),
     aberto: doc["situacao"] === "aberto",
@@ -344,6 +410,11 @@ async function situacaoDoDocumentoDeCompra(ctx: ServiceCtx, params: unknown, que
     valorDocumento: String(doc["valor_total"]),
     tipoOperacaoVersaoId: typeof doc["tipo_operacao_versao_id"] === "string" ? doc["tipo_operacao_versao_id"] : null,
   }, especie === "pedido" ? () => situacaoDaAprovacaoDoPedido(ctx, doc) : undefined);
+  // 5. EDITAR-02 (P5): a versão do documento lido — a declaração (ver acima). `version` é `not null` (0063): sem ela
+  // lida, é corrupção — recusar, nunca declarar uma versão inventada.
+  const version = doc["version"];
+  if (typeof version !== "string" && typeof version !== "number") throw new Error("documento de compra sem versão");
+  return { ...resposta, version: String(version) };
 }
 
 // ─────────────── rotas ───────────────
@@ -355,10 +426,10 @@ export default async function aprovacoesComprasRoutes(app: FastifyInstance) {
    */
   app.get("/aprovacoes/compras", async (req) => runService(app, req, PERMISSAO_APROVAR, (ctx) => listarFila(ctx, req.query)));
 
-  /** APROVAR `{ observacao? }` — e, com Confirmação Automática, confirmar no mesmo pedido. */
+  /** APROVAR `{ version?, observacao? }` — e, com Confirmação Automática, confirmar no mesmo pedido. EDITAR-02 (P5): a versão vista. */
   app.post("/aprovacoes/compras/:id/aprovar", async (req) => decidir(app, req, "aprovado"));
 
-  /** REPROVAR `{ motivo }` — a compra fica aberta; uma aprovação nova, depois, a libera. */
+  /** REPROVAR `{ version?, motivo }` — a compra fica aberta; uma aprovação nova, depois, a libera. EDITAR-02 (P5): a versão vista. */
   app.post("/aprovacoes/compras/:id/reprovar", async (req) => decidir(app, req, "reprovado"));
 
   /**

@@ -711,15 +711,16 @@ describe("AP-9 — a FILA (venda, compra e estoque)", () => {
         .toEqual([x.id, "compra", "aberto", c.I.empresa, false, true]);
       expect(linhaDe(f, x.id).situacao).toBe(x.ultima === "reprovado" ? "reprovado" : "pendente");
     }
-    const db = (await c.admin.query<{ codigo: string; empresa: string; fornecedor: string; operacao: string; lancador: string }>(
-      `select d.codigo, e.name empresa, p.name fornecedor, v.nome operacao, u.name lancador
+    const db = (await c.admin.query<{ codigo: string; empresa: string; fornecedor: string; operacao: string; lancador: string; version: string }>(
+      `select d.codigo, e.name empresa, p.name fornecedor, v.nome operacao, u.name lancador, d.version::text version
          from erp.documentos_compra d join erp.empresas e on e.id=d.empresa_id join erp.people p on p.id=d.fornecedor_id
          join erp.tipos_operacao_versoes v on v.id=d.tipo_operacao_versao_id join erp.users u on u.id=d.criado_por where d.id=$1`, [pendente])).rows[0]!;
     expect(linhaDe(f, pendente)).toEqual({
       id: pendente, codigo: db.codigo, especie: "compra", data: DATA, empresa: { id: c.I.empresa, nome: db.empresa },
       parceiro: { id: c.I.provider, nome: db.fornecedor }, operacao: { id: tSempre, nome: db.operacao }, valor: "30.00",
       lancadoPor: { id: c.h.demo.adminUserId, nome: db.lancador }, situacao: "pendente", ultimaDecisao: null,
-      id_global: await idGlobalDe("documentos_compra", pendente),
+      // EDITAR-02 (P5): a fila de compras declara a versão do documento (a que a decisão manda de volta).
+      version: db.version, id_global: await idGlobalDe("documentos_compra", pendente),
     });
     expect(linhaDe(f, reprovada)).toMatchObject({ situacao: "reprovado", ultimaDecisao: { decisao: "reprovado", observacao: "Fornecedor bloqueado" } });
     expect(f.idGlobal).toEqual({ tipoEntidade: "documentos_compra", rotulo: expect.any(String) });
