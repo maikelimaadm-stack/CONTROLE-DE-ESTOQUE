@@ -291,21 +291,24 @@ test("F2A-2 — compra, TOP Automática + aprovação 'Sempre': 'Salvar e confir
   await expect(page, "depois do POST a Central abre a consulta da compra salva").toHaveURL(new RegExp(`/compras/compras/${corpo.id}$`));
   const consulta = page.getByTestId("compras-consulta-corpo");
   await expect(consulta, "a consulta abre a compra aberta").toHaveAttribute("data-situacao", "aberto");
-  const lida = await api<{ codigo: string; situacao: string }>(page, "GET", `/api/compras/compras/${corpo.id}`);
+  const lida = await api<{ codigo: string; situacao: string; version: string }>(page, "GET", `/api/compras/compras/${corpo.id}`);
   expect(lida.situacao, "no servidor, aberta").toBe("aberto");
 
-  // (3) A SITUAÇÃO: o que a consulta recebeu no fio é o que o bloco mostra.
+  // (3) A SITUAÇÃO: o que a consulta recebeu no fio é o que o bloco mostra. P5 (decisão 313): a situação da aprovação de
+  // compras declara, no fim, a `version` do documento — a da compra lida pela API acima, sem escrita no meio.
   const s = await situacaoNoFio;
   expect(caminho(s), "a consulta perguntou a situação DESTA compra").toBe(`/api/aprovacoes/compras/${corpo.id}`);
-  expect([s.status(), await s.json()], "a situação no fio: pendente, sem decisão nenhuma").toEqual([200, { situacao: "pendente", ultimaDecisao: null }]);
+  expect([s.status(), await s.json()], "a situação no fio: pendente, sem decisão nenhuma, com a versão do documento")
+    .toEqual([200, { situacao: "pendente", ultimaDecisao: null, version: lida.version }]);
   const bloco = page.getByTestId(`${PC}-aprovacao`);
   await expect(bloco, "o bloco da aprovação aparece pendente").toHaveAttribute("data-situacao", "pendente");
   await expect(page.getByTestId(`${PC}-aprovacao-situacao`)).toHaveText("Aguardando aprovação");
 
-  // (4) APROVAR: a compra não leva versão, e sem observação o corpo é VAZIO.
+  // (4) APROVAR: sem observação, o corpo é SÓ a versão — P5 (decisão 313): a decisão de compras leva a `version` que a
+  // situação declarou (a do documento), e o servidor a confere sob a trava.
   await abrirDecisao(page, PC, "aprovar", lida.codigo);
   const decidida = await enviarDecisao(page, "compras", corpo.id, "aprovar");
-  expect(decidida.enviado, "o corpo do Aprovar da compra: nenhuma chave").toEqual({});
+  expect(decidida.enviado, "o corpo do Aprovar da compra: exatamente a versão do documento").toEqual({ version: lida.version });
   expect(decidida.status, "o servidor aprovou").toBe(200);
   expect(decidida.corpo["aprovacao"], "a decisão gravada é a aprovação").toMatchObject({ decisao: "aprovado" });
   expect(decidida.corpo["confirmacaoAutomatica"], "e a aprovação disparou a confirmação automática").toEqual({ confirmado: true });
