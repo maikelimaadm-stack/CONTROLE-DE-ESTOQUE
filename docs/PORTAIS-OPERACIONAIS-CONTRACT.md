@@ -842,3 +842,82 @@ padroes: { natureza:       { id, codigo, nome } | null,
   `=== true`; ausente (a API anterior) ou qualquer outro valor = desligada — e desligada ela não lê o cadastro do
   produto para o local (nem `products/:id` no pedido, nem `warehouses/options`) nem mexe no local da linha. A 404 e o
   403 são os de antes, com e sem a chave, e não a carregam. O orçamento de compra não a tem.
+
+## O produto da nota em lote (XML-01, decisão 312)
+
+Na importação do XML (`/compras/importacoes/<id>`, aba de itens), os itens SEM vínculo viram produto de uma vez: o
+produto nasce com o que a NOTA já disse (descrição, NCM, código de barras, a unidade do uCom) e com o que a IMPORTAÇÃO
+já decidiu (o Local de estoque do item); só o Grupo e a Natureza de custo são pergunta, UMA vez para a nota. A
+conferência e a rota da F7 continuam as de hoje; tudo aqui é aditivo. Os tipos moram em `packages/domain/src/nfe-compra.ts`.
+
+**A conferência** (`GET /api/compras/importacoes/:id` e a resposta da importação) ganha duas chaves aditivas:
+
+```
+itens[].vinculo (situacao "nenhum").preenchimento.measurement_id?: string   // ausente = a unidade não se resolveu
+capacidades?: { criarProdutosDaNota: 1 }                                    // CAPACIDADE_CRIAR_PRODUTOS_DA_NOTA
+```
+
+- `measurement_id` só vem quando o uCom casa com UMA unidade: o símbolo aparado e em maiúsculas igual ao uCom
+  normalizado; a da organização vence a do sistema; duas da organização ⇒ nenhuma (não cai para a do sistema); só do
+  sistema, só se for uma. Sem casamento único a chave NÃO vem (nunca `null`, nunca "a mais parecida"). Uma consulta para
+  os uCom distintos da nota.
+- `capacidades.criarProdutosDaNota === 1`, em propriedade própria, é o que liga o lote na tela. Ausente (a API
+  anterior) ⇒ sem botão: a aba é a de hoje.
+
+**A rota** `POST /api/compras/importacoes/:id/criar-produtos` (Idempotency-Key opcional, com o autor no hash):
+
+```
+corpo (CriarProdutosDaNota, .strict(), chave desconhecida na raiz ou no item = 422):
+  { group_id: uuid, financial_category_id: uuid, fornecedor_id?: uuid | null,
+    itens: [{ n_item: 1..990, armazem_id?: uuid | null }]   // de 1 a 990 itens
+  }
+201 (ProdutosCriadosDaNota):
+  { importacao_id: string,
+    produtos: [{ id, codigo, descricao }],                              // um por PRODUTO criado, na ordem da nota
+    itens: [{ nItem, produto: { id, codigo, descricao, unidade, controleLote, controlaEstoque }, localPadrao: string | null }]
+  }                                                                     // um por item CONFIRMADO, na ordem da nota
+```
+
+- **Só decisões no corpo.** Descrição (`slice(0, 120)`, como o diálogo de um item), NCM, código de barras e unidade
+  saem do XML GUARDADO; o corpo não tem como mandá-los. `fornecedor_id` é o fornecedor escolhido na conferência (pedido,
+  conferido contra os candidatos do emitente): os vínculos do servidor são calculados com ele.
+- **Um produto por código + unidade.** Dois itens com o mesmo código do fornecedor e a mesma unidade são UM produto
+  (`chaveDoProdutoDaNota`), com os dados e o local do 1º item da chave; os dois itens o recebem em `itens`.
+- **O local** (`armazem_id`) só é gravado em `default_warehouse_id` se for da EMPRESA DA IMPORTAÇÃO, da organização,
+  ativo, vivo e no escopo; fora disso o produto nasce sem local e `localPadrao` do item é `null`. `localPadrao` é sempre
+  o que ficou GRAVADO no produto.
+- **A porta é a do cadastro.** Cada produto nasce por `createOne` (a mesma de `POST /api/resources/products`): código
+  do contador, ID Global, registry, regras do cadastro, auditoria `create` pelo gatilho. Uma transação: ou todos, ou
+  nenhum. A importação continua `pendente`; a trilha dela ganha `criar_produtos`.
+
+**Recusas**, na ordem em que são conferidas (todas antes do primeiro produto, menos as da porta, que desfazem o lote):
+
+| Quando | Status / código | `path` | Mensagem |
+|---|---|---|---|
+| falta `compras.create` | 403 `PERMISSION_DENIED` | — | `Sem permissão: compras.create` |
+| falta `products.create` | 403 `PERMISSION_DENIED` | — | `Sem permissão: products.create` |
+| corpo fora do contrato (chave desconhecida, uuid malformado, `itens` vazio ou com mais de 990, `n_item` fora de 1..990) | 422 `VALIDATION_ERROR` | o do campo | a do esquema |
+| `n_item` repetido no corpo | 422 `VALIDATION_ERROR` | `itens[i].n_item` | `Informe cada item da nota uma vez só.` |
+| importação malformada, inexistente, de outro tenant ou fora do escopo de empresa (antes do `idempotent`) | 404 `NOT_FOUND` | — | `Importação não encontrada` |
+| Idempotency-Key já usada com outro corpo ou por outro autor | 409 `CONFLICT` | — | `Idempotency-Key reutilizada com corpo diferente` |
+| importação gerada | 409 `CONFLICT` | — | `Esta importação já gerou a Compra <código>.` |
+| importação descartada | 409 `CONFLICT` | — | `Esta importação foi descartada.` |
+| o XML guardado não é mais lido pelo leitor | 422 `VALIDATION_ERROR` | — | `O XML guardado desta importação não pôde ser lido de novo: descarte a importação e importe o arquivo outra vez.` |
+| `fornecedor_id` fora dos candidatos do emitente | 422 `VALIDATION_ERROR` | `fornecedor_id` | `O fornecedor escolhido não é o emitente desta nota.` |
+| `fornecedor_id` que não é do tipo Fornecedor | 422 `VALIDATION_ERROR` | `fornecedor_id` | `O cadastro escolhido não é do tipo Fornecedor: marque-o como fornecedor no cadastro.` |
+| item que não está na nota | 422 `VALIDATION_ERROR` | `itens[i].n_item` | `Este item não existe na nota.` |
+| item lembrado ou sugerido | 422 `VALIDATION_ERROR` | `itens[i].n_item` | `Este item já tem produto (vínculo lembrado ou sugerido): use esse produto, não crie outro.` |
+| item ambíguo | 422 `VALIDATION_ERROR` | `itens[i].n_item` | `Mais de um produto corresponde a este item: escolha o produto, não crie outro.` |
+| unidade não resolvida (nenhuma ou mais de uma) | 422 `VALIDATION_ERROR` | `itens[i].n_item` | `A unidade deste item na nota não corresponde a uma unidade de medida só: crie o produto pelo item.` |
+| NCM da nota que não é de 8 dígitos vigente (item sem NCM passa) | 422 `VALIDATION_ERROR` | `itens[i].ncm_code` (com `ncm`) | `A NCM deste item na nota não é uma NCM de 8 dígitos vigente: crie o produto pelo item e escolha a NCM.` |
+| recusa da porta no Grupo ou na Natureza (ex.: sintético) | 422 `VALIDATION_ERROR` | `group_id` / `financial_category_id` | a da porta do cadastro |
+| recusa da porta em outro campo do produto | a da porta | `itens[i].<campo>` | a da porta do cadastro |
+
+`i` é o índice do item no `itens` do CORPO (a tela o traduz para "Item <nItem>: …"). As recusas de item saem nesta
+ordem: primeiro, item a item na ordem do corpo, a presença na nota, o vínculo e a unidade (o primeiro que falha); só
+então a NCM, a do primeiro item do corpo fora da regra. A 404 é a mesma para todos os casos de visibilidade, também com
+uma chave já usada.
+
+**Version skew.** A web anterior contra a API nova lê a conferência com as duas chaves novas e funciona como hoje (não
+as lê). A web nova contra a API sem a rota não recebe `capacidades`: nem o botão "Criar N produtos da nota" nem pergunta
+nova aparecem, e o diálogo de um item continua o de hoje (o `measurement_id` no preset só quando a conferência o traz).
