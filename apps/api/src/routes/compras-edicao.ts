@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { D, DomainError, money } from "@agro/shared";
-import { MOTIVOS_DA_PROVISAO, MOTIVOS_DA_PROVISAO_COMPRA } from "@agro/domain";
+import { FORMA_UUID_PADRAO, MOTIVOS_DA_PROVISAO, MOTIVOS_DA_PROVISAO_COMPRA } from "@agro/domain";
 import { runService, idempotent, audit, requirePermission } from "../lib/service.js";
 import { notFound, err } from "../lib/errors.js";
 import { scopedById, type ServiceCtx } from "../lib/context.js";
@@ -64,22 +64,46 @@ export interface EdicaoDoDocumentoDeCompra {
   documento: Record<string, unknown>;
 }
 
-// ─────────────── a trava ───────────────
+// ─────────────── o recorte: a visibilidade e a trava ───────────────
 
 /**
- * A TRAVA DA PATCH, SEM JUNÇÃO (A14 do A0; a regra da 272, EDITAR-01_R1 1.2 k): só `erp.documentos_compra`, só `id` e
- * `version`, `for update`. Com a junção do fornecedor de `lerDocumentoCompra`, quem espera a trava relê a linha nova e
- * REAVALIA a junção com o fornecedor da foto antiga — a PATCH concorrente que trocou o fornecedor faria esta responder
- * 404 sobre um documento que só MUDOU; o certo é o 409 da versão. O RECORTE é o MESMO de `lerDocumentoCompra`
- * (organização, espécie e escopo de empresa do módulo, pelo `scopedById`): zero linhas é a MESMA 404.
+ * O RECORTE DA EDIÇÃO, SEM JUNÇÃO: só `erp.documentos_compra`, só `id` e `version`, com o MESMO recorte de
+ * `lerDocumentoCompra` — a forma do id, a organização, a espécie e o escopo de empresa do módulo (`scopedById`). Fora da
+ * forma ou zero linhas: a MESMA 404 do GET :id (`notFound("Documento")`: mesmo status, mesmo corpo) para malformado,
+ * inexistente, de outra organização, fora do escopo e de outra espécie. Dois usos:
+ *   · `conferirDocumentoDeCompraVisivel` (sem trava) — a PATCH, ANTES da idempotência;
+ *   · `travarDocumentoDeCompraDaEdicao` (`for update`) — a PATCH, já dentro do `idempotent`.
  */
-async function travarDocumentoDeCompraDaEdicao(ctx: ServiceCtx, id: string, especie: EspecieCompra): Promise<{ id: string; version: string }> {
+async function recorteDaEdicao(ctx: ServiceCtx, id: string, especie: EspecieCompra, trava: boolean): Promise<{ id: string; version: string }> {
+  if (!FORMA_UUID_PADRAO.test(id)) throw notFound("Documento");
   const sc = scopedById(ctx, "d", id); sc.params.push(especie);
   const r = await ctx.tx.query<{ id: string; version: string }>(
     `select d.id, d.version from erp.documentos_compra d
-      where d.id = $1 and d.organization_id = $2 and d.especie = $${sc.params.length}${sc.sql} for update of d`, sc.params);
+      where d.id = $1 and d.organization_id = $2 and d.especie = $${sc.params.length}${sc.sql}${trava ? " for update of d" : ""}`, sc.params);
   if (!r.rows[0]) throw notFound("Documento");
   return r.rows[0];
+}
+
+/**
+ * A CONFERÊNCIA DE VISIBILIDADE da PATCH, antes da idempotência (o replay devolveria a resposta gravada sem passar pelo
+ * recorte de empresa) — ENXUTA de propósito, achado MÉDIO da revisão de desempenho: a leitura COMPLETA
+ * (`lerDocumentoCompra`: as junções, os itens, as compras geradas e, no pedido de quem vê orçamento, a lista e os preços
+ * de TODOS os orçamentos) só para dar a 404 era jogada fora inteira. O documento só é lido completo depois da trava (a
+ * pergunta "pode editar?") e na resposta. Sem as junções aqui, nenhuma 404 nova escapa: a leitura completa sob a trava
+ * dá a mesma 404, e o erro desfaz a transação — a reserva da chave inclusive.
+ */
+async function conferirDocumentoDeCompraVisivel(ctx: ServiceCtx, id: string, especie: EspecieCompra): Promise<void> {
+  await recorteDaEdicao(ctx, id, especie, false);
+}
+
+/**
+ * A TRAVA DA PATCH, SEM JUNÇÃO (A14 do A0; a regra da 272, EDITAR-01_R1 1.2 k): o recorte com `for update`. Com a junção
+ * do fornecedor de `lerDocumentoCompra`, quem espera a trava relê a linha nova e REAVALIA a junção com o fornecedor da
+ * foto antiga — a PATCH concorrente que trocou o fornecedor faria esta responder 404 sobre um documento que só MUDOU; o
+ * certo é o 409 da versão.
+ */
+async function travarDocumentoDeCompraDaEdicao(ctx: ServiceCtx, id: string, especie: EspecieCompra): Promise<{ id: string; version: string }> {
+  return recorteDaEdicao(ctx, id, especie, true);
 }
 
 // ─────────────── os limites ───────────────
@@ -346,8 +370,9 @@ export function registrarEdicaoCompras(app: FastifyInstance): void {
      *   0. a CAPACIDADE: `<recurso>.edit` (a porta) e `<recurso>.view` (a resposta é o documento inteiro) → 403, antes de
      *      ler qualquer coisa, inclusive o corpo;
      *   1. a FORMA do pedido (`lerPedidoDaEdicaoDeCompra`) → 422, antes de ler qualquer registro e de reservar a chave;
-     *   2. o documento VISÍVEL (`lerDocumentoCompra`: id malformado e invisível são a MESMA 404 do GET) — antes do helper,
-     *      que devolveria a resposta gravada sem passar pelo recorte de empresa;
+     *   2. o documento VISÍVEL (`conferirDocumentoDeCompraVisivel`: o recorte de `lerDocumentoCompra` sem ler o documento;
+     *      id malformado e invisível são a MESMA 404 do GET) — antes do helper, que devolveria a resposta gravada sem
+     *      passar pelo recorte de empresa;
      *   3. a IDEMPOTÊNCIA: mesma chave + mesmo corpo (canônico, pós-zod, uuid em minúsculas) + mesmo autor → a MESMA
      *      resposta, sem gravar de novo; outro corpo ou outro autor com a mesma chave → 409 CONFLICT do helper;
      *   4. `editarDocumentoDeCompra` (a trava, a versão e o resto).
@@ -357,7 +382,7 @@ export function registrarEdicaoCompras(app: FastifyInstance): void {
       const pedido = lerPedidoDaEdicaoDeCompra(req.body, CONTRATO_DA_EDICAO[especie]);
       // COMPRAS-03_R1 (c): o :id em minúsculas ANTES do hash — a mesma URL com outra caixa é o mesmo documento.
       const id = (req.params as { id: string }).id.toLowerCase();
-      await lerDocumentoCompra(ctx, id, especie);
+      await conferirDocumentoDeCompraVisivel(ctx, id, especie);
       return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
         { action: "editar_documento_compra", sourceId: id, especie, body: { version: pedido.versao, ...pedido.campos }, actorId: ctx.user.id },
         () => editarDocumentoDeCompra(app, ctx, especie, id, pedido))).result;

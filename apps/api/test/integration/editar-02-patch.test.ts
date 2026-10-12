@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import pg from "pg";
 import { LAYOUT_DO_SISTEMA, MOTIVOS_DA_PROVISAO_COMPRA, type EstruturaLayout } from "@agro/domain";
 import {
   c, iniciar, encerrar, j, erro, produto, top, cfg4, itemCompra, corpoCompra, compraLancada, lancarCompra, confirmarCompra, lerCompra,
@@ -38,7 +39,10 @@ import { MSG_PEDIDO_SEM_NOTA, MSG_PEDIDO_SEM_DADOS_FISCAIS, MSG_PEDIDO_SEM_LOTE 
  *   (h) itens: item salvo ausente (P1), de outro documento e repetido → 422; a compra da nota (P3); a compra gerada de
  *       pedido (D2, com a prova de que o UPDATE do item só cita a coluna que mudou); o pedido com compra cancelada (D4);
  *       o item orçado (D3);
- *   (i) Idempotency-Key; (j) a PATCH que não muda nada; (k) o evento do histórico; (l) a provisão do pedido (D12).
+ *   (i) Idempotency-Key; (j) a PATCH que não muda nada; (k) o evento do histórico; (l) a provisão do pedido (D12);
+ *   (n) o número de consultas (CONTADO, `.claude/rules/backend-api.md`): 1 × 20 itens mudados no mesmo conjunto de colunas
+ *       → as mesmas consultas, tabela por tabela; a conferência de visibilidade antes da chave é o recorte enxuto, e o
+ *       documento só é lido completo sob a trava e na resposta (no pedido com orçamentos, a lista e os preços também).
  *
  * TESTEMUNHA: o BANCO, lido por conexão de superusuário (sem RLS) — a linha do documento, os itens, os movimentos de
  * estoque, os títulos e a trilha. "Nada gravado" = as fotos idênticas antes e depois, nunca só o status HTTP.
@@ -666,5 +670,96 @@ describe("(l) a provisão do pedido de compra (decisão 286) na PATCH", () => {
     // P4: a PATCH não confirma — a compra continua aberta, sem estoque nem título próprio.
     expect((await linha(compra.id)).situacao).toBe("aberto");
     expect(await efeitos(compra.id)).toMatchObject({ movimentos: 0, titulos: 0 });
+  });
+});
+
+// ─────────────── (n) o número de consultas ───────────────
+
+/** As consultas SQL que a requisição dispara (o molde do ED-9 da EDITAR-01 e do PQ-6): o texto de cada uma, em ordem. */
+async function comConsultas<T>(f: () => Promise<T>): Promise<{ r: T; sqls: string[] }> {
+  const espiao = vi.spyOn(pg.Client.prototype, "query");
+  try {
+    const r = await f();
+    const sqls = espiao.mock.calls.map((x) => x[0] as unknown).map((x) => (typeof x === "string" ? x : (x as { text?: unknown } | null)?.text))
+      .filter((x): x is string => typeof x === "string");
+    return { r, sqls };
+  } finally { espiao.mockRestore(); }
+}
+/** A leitura COMPLETA do documento (`lerDocumentoCompra`): a junção que só ela faz. */
+const SQL_LEITURA_COMPLETA = /dorig\.codigo as origem_codigo/;
+/** O recorte da edição, sem junção (`recorteDaEdicao`): com `for update` é a trava; sem, a visibilidade. */
+const SQL_RECORTE = /select d\.id, d\.version from erp\.documentos_compra d\b/;
+const SQL_CHAVE = /insert into erp\.idempotency_keys\b/;
+/** Os orçamentos do pedido e os preços deles (as duas consultas de `lerDocumentoCompra` no pedido de quem vê orçamento). */
+const SQL_ORCAMENTOS = /from erp\.documentos_compra o\s+join erp\.people fo\b[\s\S]*o\.pedido_orcado_id = \$2/;
+const SQL_PRECOS_DOS_ORCAMENTOS = /from erp\.documentos_compra_itens i\s+join erp\.documentos_compra o on o\.id = i\.documento_id[\s\S]*o\.pedido_orcado_id = \$2/;
+const TABELAS_CONTADAS = ["erp.documentos_compra d", "erp.documentos_compra_itens", "erp.products", "erp.people", "erp.tipos_operacao_versoes",
+  "erp.financial_titles", "erp.stock_movements", "erp.audit_logs", "erp.idempotency_keys"] as const;
+const porTabela = (sqls: string[]) => Object.fromEntries(TABELAS_CONTADAS.map((t) => [t, sqls.filter((q) => q.includes(t)).length]));
+const indices = (sqls: string[], re: RegExp) => sqls.flatMap((q, k) => (re.test(q) ? [k] : []));
+
+describe("(n) o número de consultas da PATCH: nenhuma por item; a visibilidade antes da chave é enxuta", () => {
+  it("1 × 20 itens mudados no MESMO conjunto de colunas → o MESMO número de consultas, tabela por tabela — compra e pedido", async () => {
+    /** Uma PATCH de AQUECIMENTO (a primeira do caminho não entra na conta) e a CONTADA: a quantidade de TODOS os itens. */
+    async function contar(especie: EspecieCompra, id: string) {
+      const itens = await itensDe(especie, id);
+      const aquece = await patch(especie, id, { version: await versao(id), itens: itens.map((i) => ({ id: i.id, quantidade: "2" })) });
+      expect(aquece.statusCode, aquece.body).toBe(200);
+      const v = await versao(id);
+      const { r, sqls } = await comConsultas(() => patch(especie, id, { version: v, itens: itens.map((i) => ({ id: i.id, quantidade: "3" })) }, c.h.headers(), `e2-n-${unico()}`));
+      expect(r.statusCode, r.body).toBe(200);
+      expect((await itensDe(especie, id)).map((i) => Number(i.quantidade)), `${especie}: premissa — todos os itens mudaram`).toEqual(itens.map(() => 3));
+      const recorte = indices(sqls, SQL_RECORTE);
+      return {
+        itens: itens.length, total: sqls.length, porTabela: porTabela(sqls),
+        leiturasCompletas: indices(sqls, SQL_LEITURA_COMPLETA).length,
+        updatesDosItens: sqls.filter((q) => /update erp\.documentos_compra_itens\b/.test(q)).length,
+        // A ordem: a visibilidade (sem trava) → a chave → a trava (o recorte com `for update`).
+        ordem: [recorte.length, /for update/.test(sqls[recorte[0]!]!), indices(sqls, SQL_CHAVE)[0]! > recorte[0]!, /for update of d/.test(sqls[recorte[1]!]!), recorte[1]! > indices(sqls, SQL_CHAVE)[0]!],
+      };
+    }
+    let provados = 0;
+    for (const especie of ESPECIES) {
+      const um = await documento(especie, [itemCompra((await produto()).id, "1", "10.00")]);
+      const produtos: string[] = [];
+      for (let k = 0; k < 20; k++) produtos.push((await produto()).id);
+      const vinte = await documento(especie, produtos.map((p) => itemCompra(p, "1", "10.00")));
+      const [c1, c20] = [await contar(especie, um), await contar(especie, vinte)];
+      expect([c1.itens, c20.itens], `${especie}: premissa — 1 e 20 itens`).toEqual([1, 20]);
+      expect(c1.total, `${especie}: premissa — o espião viu as consultas`).toBeGreaterThan(10);
+      expect(c1.porTabela["erp.documentos_compra_itens"], `${especie}: premissa — os itens foram lidos e gravados`).toBeGreaterThan(1);
+      expect(c20, `${especie}: as MESMAS consultas — nenhuma por item`).toEqual({ ...c1, itens: 20 });
+      // O documento é lido COMPLETO duas vezes: sob a trava (a pergunta "pode editar?") e a resposta. A conferência de
+      // visibilidade antes da chave é o recorte, sem junção e sem trava.
+      expect([c1.leiturasCompletas, c1.updatesDosItens], `${especie}: duas leituras completas; um UPDATE para os itens do mesmo conjunto de colunas`).toEqual([2, 1]);
+      expect(c1.ordem, `${especie}: a visibilidade (sem trava) antes da chave; a trava depois`).toEqual([2, false, true, true, true]);
+      provados++;
+    }
+    expect(provados).toBe(2);
+  });
+
+  it("pedido COM orçamentos (quem vê orçamento): a visibilidade não lê os orçamentos nem os preços — só as leituras completas, sob a trava", async () => {
+    const topOrc = await topOrcamentoNo4();
+    const topPedido = await top("compras.pedido", { configuracao: cfg4(), destinos: [{ tipoOperacaoId: topOrc, ordem: 0, emPartes: false }] });
+    const pedido = await documento("pedido", [itemCompra((await produto()).id, "3", "10.00"), itemCompra((await produto()).id, "2", "10.00")], { tipo_operacao_id: topPedido });
+    const itens = await itensDe("pedido", pedido);
+    expect((await post(`/api/compras/pedidos/${pedido}/aprovar-para-orcamento`)).statusCode).toBe(200);
+    // Dois orçamentos, de dois fornecedores (um orçamento por fornecedor no pedido).
+    for (const [fornecedor, valor] of [[c.I.provider, "9.00"], [await fornecedorComDocumento(cnpjComDv(`7${String(Date.now() % 1e10).padStart(11, "0").slice(-11)}`)), "9.50"]] as const) {
+      const orc = await post(`/api/compras/pedidos/${pedido}/orcamentos`, { tipo_operacao_id: topOrc, fornecedor_id: fornecedor, data_documento: "2026-09-10",
+        itens: itens.map((i) => ({ item_pedido_id: i.id, valor_unitario: valor })) });
+      expect(orc.statusCode, `premissa: o orçamento nasce — ${orc.body}`).toBe(201);
+    }
+    const g = await lerCompra("pedido", pedido);
+    expect((j(g).orcamentos as unknown[]).length, "premissa: o GET do pedido traz os dois orçamentos").toBe(2);
+    const v = await versao(pedido);
+    const { r, sqls } = await comConsultas(() => patch("pedido", pedido, { version: v, observacao: "com orçamentos" }, c.h.headers(), `e2-n-orc-${unico()}`));
+    expect(r.statusCode, r.body).toBe(200);
+    expect((j(r).orcamentos as unknown[]).length, "a resposta é o documento como o GET (com os orçamentos)").toBe(2);
+    const trava = sqls.findIndex((q) => SQL_RECORTE.test(q) && /for update of d/.test(q));
+    expect(trava, "premissa: o espião viu a trava").toBeGreaterThanOrEqual(0);
+    const [orcamentos, precos] = [indices(sqls, SQL_ORCAMENTOS), indices(sqls, SQL_PRECOS_DOS_ORCAMENTOS)];
+    expect([orcamentos.length, precos.length], "os orçamentos e os preços: só nas duas leituras completas (sob a trava e a resposta)").toEqual([2, 2]);
+    expect([...orcamentos, ...precos].every((k) => k > trava), "nada dos orçamentos antes da trava (nem antes da chave)").toBe(true);
   });
 });

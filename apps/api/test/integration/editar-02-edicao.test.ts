@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import pg from "pg";
 import { seedDemo } from "@agro/db";
 import { LAYOUT_DO_SISTEMA, type EstruturaLayout } from "@agro/domain";
 import {
@@ -20,7 +21,8 @@ import { MSG_EDICAO_COMPRA_CONFIRMADA, msgEdicaoPedidoComCompraViva, MSG_EDICAO_
  *       pelo catálogo: a tabela não tem coluna de exclusão — decisão 247, nada se apaga);
  *   (m) o `/edicao`: `podeEditar`/`motivo` da MESMA função da PATCH (a mensagem do 409 é o `motivo`), `version`, os
  *       `limites`, `regras` pela versão CONGELADA (a TOP republicada depois não muda o que a edição cobra), `layout` o de
- *       HOJE da TOP, `documento` = o `GET :id`; leitura pura (nada gravado, a versão não sobe).
+ *       HOJE da TOP, `documento` = o `GET :id`; leitura pura (nada gravado, a versão não sobe);
+ *   (n) o número de consultas (CONTADO, `.claude/rules/backend-api.md`): 1 × 20 itens → as mesmas, tabela por tabela.
  *
  * TESTEMUNHA: o banco, por conexão de superusuário (sem RLS).
  */
@@ -215,5 +217,51 @@ describe("(m) o /edicao: a mesma pergunta da PATCH, a versão congelada, o layou
       itemNovo: MSG_EDICAO_ITEM_NOVO_NA_COMPRA_DO_PEDIDO,
       itens: [{ id: itemGerado, campos: { produto_id: MSG_EDICAO_PRODUTO_DA_COMPRA_DO_PEDIDO }, quantidadeMaxima: "2.0000" }],
     });
+  });
+});
+
+// ─────────────── (n) o número de consultas ───────────────
+
+/** As consultas SQL que a requisição dispara (o molde do ED-9 da EDITAR-01 e do PQ-6): o texto de cada uma, em ordem. */
+async function comConsultas<T>(f: () => Promise<T>): Promise<{ r: T; sqls: string[] }> {
+  const espiao = vi.spyOn(pg.Client.prototype, "query");
+  try {
+    const r = await f();
+    const sqls = espiao.mock.calls.map((x) => x[0] as unknown).map((x) => (typeof x === "string" ? x : (x as { text?: unknown } | null)?.text))
+      .filter((x): x is string => typeof x === "string");
+    return { r, sqls };
+  } finally { espiao.mockRestore(); }
+}
+const TABELAS_CONTADAS = ["erp.documentos_compra d", "erp.documentos_compra_itens", "erp.products", "erp.aprovacoes_compra", "erp.tipos_operacao_versoes",
+  "erp.layouts_documento", "erp.financial_titles", "erp.stock_movements"] as const;
+
+describe("(n) o número de consultas do /edicao: nenhuma por item", () => {
+  it("1 × 20 itens → o MESMO número de consultas, tabela por tabela, e o documento lido completo UMA vez — compra e pedido", async () => {
+    async function contar(especie: EspecieCompra, id: string) {
+      await lida(especie, id); // aquece: a primeira leitura do caminho não entra na conta
+      const { r, sqls } = await comConsultas(() => edicao(especie, id));
+      expect(r.statusCode, r.body).toBe(200);
+      const e = j(r) as unknown as EdicaoLida;
+      return {
+        itens: e.limites.itens.length, total: sqls.length,
+        porTabela: Object.fromEntries(TABELAS_CONTADAS.map((t) => [t, sqls.filter((q) => q.includes(t)).length])),
+        leiturasCompletas: sqls.filter((q) => /dorig\.codigo as origem_codigo/.test(q)).length,
+      };
+    }
+    let provados = 0;
+    for (const especie of ESPECIES) {
+      const um = await documento(especie);
+      const produtos: string[] = [];
+      for (let k = 0; k < 20; k++) produtos.push((await produto()).id);
+      const vinte = (await compraLancada(especie, corpoCompra(produtos.map((p) => itemCompra(p, "1", "10.00")), {}, especie))).id;
+      const [c1, c20] = [await contar(especie, um), await contar(especie, vinte)];
+      expect([c1.itens, c20.itens], `${especie}: premissa — 1 e 20 itens`).toEqual([1, 20]);
+      expect(c1.total, `${especie}: premissa — o espião viu as consultas`).toBeGreaterThan(5);
+      expect(c1.porTabela["erp.documentos_compra_itens"], `${especie}: premissa — os itens foram lidos`).toBeGreaterThan(0);
+      expect(c20, `${especie}: as MESMAS consultas — nenhuma por item`).toEqual({ ...c1, itens: 20 });
+      expect(c1.leiturasCompletas, `${especie}: o documento lido completo uma vez`).toBe(1);
+      provados++;
+    }
+    expect(provados).toBe(2);
   });
 });
