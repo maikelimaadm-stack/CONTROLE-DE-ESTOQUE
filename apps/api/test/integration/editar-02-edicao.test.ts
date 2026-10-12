@@ -9,7 +9,7 @@ import {
 } from "./top-config-08-ajuda.js";
 import { MSG_EDICAO_COMPRA_CONFIRMADA, msgEdicaoPedidoComCompraViva, MSG_EDICAO_FORNECEDOR_DA_COMPRA_DO_PEDIDO, MSG_EDICAO_PRODUTO_DA_COMPRA_DO_PEDIDO,
   MSG_EDICAO_ITEM_NOVO_NA_COMPRA_DO_PEDIDO, MSG_EDICAO_IDENTIDADE_DA_NOTA, MSG_EDICAO_CABECALHO_DA_NOTA, MSG_EDICAO_COMPRA_DA_NOTA,
-  MSG_EDICAO_ITEM_DA_NOTA } from "../../src/routes/compras-edicao-regras.js";
+  MSG_EDICAO_ITEM_DA_NOTA, MSG_EDICAO_ITEM_NOVO_NA_COMPRA_DA_NOTA } from "../../src/routes/compras-edicao-regras.js";
 import { fornecedorComDocumento, chaveNova } from "./f7-ajuda.js";
 import { compraDoXml, cnpjNovo } from "./editar-02-ajuda.js";
 
@@ -283,7 +283,7 @@ describe("(p) P6: o /edicao declara a identidade da nota e o cabeçalho da compr
     expect(e1.podeEditar).toBe(true);
     expect(e1.limites.campos).toEqual({ ...IDENTIDADE, frete: MSG_EDICAO_CABECALHO_DA_NOTA, outras_despesas: MSG_EDICAO_CABECALHO_DA_NOTA, desconto: MSG_EDICAO_CABECALHO_DA_NOTA });
     expect(e1.limites.itens).toEqual([{ id: semDuplicatas.item.id, campos: DA_LINHA, quantidadeMaxima: null }]);
-    expect(e1.limites.itemNovo, "sem as duplicatas, o item novo entra (a P3 só o trava com elas)").toBeNull();
+    expect(e1.limites.itemNovo, "D15: sem as duplicatas, o item novo também não entra (o motivo próprio da nota)").toBe(MSG_EDICAO_ITEM_NOVO_NA_COMPRA_DA_NOTA);
 
     const comDuplicatas = await compraDoXml({ duplicatas: true });
     const e2 = await lida("compra", comDuplicatas.id);
@@ -291,12 +291,14 @@ describe("(p) P6: o /edicao declara a identidade da nota e o cabeçalho da compr
       ...Object.fromEntries(["frete", "outras_despesas", "desconto", "condicao_pagamento_id", "data_vencimento", "plano_parcelas"].map((c) => [c, MSG_EDICAO_COMPRA_DA_NOTA])),
       ...IDENTIDADE,
     });
-    expect(e2.limites.itemNovo).toBe(MSG_EDICAO_COMPRA_DA_NOTA);
+    expect(e2.limites.itemNovo, "com as duplicatas, o motivo da P3 (vem primeiro)").toBe(MSG_EDICAO_COMPRA_DA_NOTA);
 
     const manual = await documento("compra", { chave_acesso: chaveNova(), numero_nota: "321", serie_nota: "1" });
-    expect((await lida("compra", manual)).limites.campos, "manual com a chave digitada: só a identidade").toEqual(IDENTIDADE);
+    const lidaManual = await lida("compra", manual);
+    expect([lidaManual.limites.campos, lidaManual.limites.itemNovo], "manual com a chave digitada: só a identidade; o item novo entra").toEqual([IDENTIDADE, null]);
     const semChave = await documento("compra", { numero_nota: "322", serie_nota: "1" });
-    expect((await lida("compra", semChave)).limites.campos, "sem chave: nada travado no cabeçalho").toEqual({});
+    const lidaSemChave = await lida("compra", semChave);
+    expect([lidaSemChave.limites.campos, lidaSemChave.limites.itemNovo], "sem chave: nada travado").toEqual([{}, null]);
   });
 
   it("cada campo que o /edicao declara, trocado, é a 422 da PATCH com o MESMO motivo — e o /edicao é leitura pura", async () => {

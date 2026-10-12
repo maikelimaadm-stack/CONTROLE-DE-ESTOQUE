@@ -260,13 +260,17 @@ describe("as travas da edição (P1: item salvo não sai; os limites do servidor
     expect(campoTravadoNaEdicao(limites, "toString")).toBe(false);
   });
 
-  it("P6: fornecedor, número e série da compra com chave, e frete, outras despesas e desconto da compra vinda da nota — travados pelos limites, com o motivo do servidor (o mesmo mecanismo do cabeçalho)", () => {
+  it("P6 e D15: fornecedor, número e série da compra com chave; frete, outras despesas, desconto e o item novo da compra vinda da nota (mesmo sem duplicatas) — travados pelos limites, com o motivo do servidor (os mesmos mecanismos)", () => {
     const DA_CHAVE = "A nota desta compra tem chave de acesso: fornecedor, número e série vêm da chave e não mudam.";
     const DO_XML = "Esta compra veio da nota fiscal: frete, outras despesas e desconto do cabeçalho são os da nota…";
+    const ITEM_NOVO_DO_XML = "Esta compra veio da nota fiscal: os itens são os da nota, e um item novo mudaria o total…";
     const p6: LimitesDaEdicaoDeCompra = {
       campos: { fornecedor_id: DA_CHAVE, numero_nota: DA_CHAVE, serie_nota: DA_CHAVE, frete: DO_XML, outras_despesas: DO_XML, desconto: DO_XML },
-      itemNovo: null, itens: []
+      itemNovo: ITEM_NOVO_DO_XML, itens: []
     };
+    // D15: com `itemNovo`, o item novo não entra (a grade também esconde Adicionar e Duplicar: `aceitaLinhaNova` falso).
+    const a = abrir().itens;
+    expect(itensNaEdicao(a, [...a, { product_id: PRODUTO, quantity: "1" }], p6)).toEqual(a);
     for (const c of ["fornecedor_id", "numero_nota", "serie_nota"]) {
       expect(campoTravadoNaEdicao(p6, c), c).toBe(true);
       expect(motivoDaTravaNaEdicao(p6, c), c).toBe(DA_CHAVE);

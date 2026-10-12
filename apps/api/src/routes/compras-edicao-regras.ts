@@ -96,6 +96,12 @@ export const MSG_EDICAO_ITEM_DA_NOTA = "Este item veio da nota fiscal: produto, 
 export const MSG_EDICAO_IDENTIDADE_DA_NOTA = "A nota desta compra tem chave de acesso: fornecedor, número e série vêm da chave e não mudam.";
 /** P6 — a compra VINDA DA NOTA (importada do XML), mesmo sem as duplicatas: frete, outras despesas e desconto vieram da nota. */
 export const MSG_EDICAO_CABECALHO_DA_NOTA = "Esta compra veio da nota fiscal: frete, outras despesas e desconto do cabeçalho são os da nota e não mudam. Para corrigir, cancele a compra e lance de novo.";
+/**
+ * D15 (decisão do coordenador, o B3 do cético; o princípio da P3 do dono: trava o que forma o total) — a compra VINDA DA
+ * NOTA, mesmo sem as duplicatas, não ganha item: o item novo poria o total acima do da nota, e o título nasceria acima da
+ * NF-e. Texto próprio: o do cabeçalho fala de frete, outras despesas e desconto, e não cabe no item.
+ */
+export const MSG_EDICAO_ITEM_NOVO_NA_COMPRA_DA_NOTA = "Esta compra veio da nota fiscal: os itens são os da nota, e um item novo mudaria o total. Para comprar outro produto, lance outra compra.";
 
 /** O que forma o total da compra no cabeçalho, e as parcelas (P3; `data_vencimento` = a 1ª duplicata — decisão do A2). */
 const CABECALHO_DA_NOTA: readonly CampoDoCabecalhoDeCompra[] = ["frete", "outras_despesas", "desconto", "condicao_pagamento_id", "data_vencimento"];
@@ -130,7 +136,8 @@ export function compraVindaDaNota(doc: Pick<DocumentoGravadoDeCompra, "especie" 
  *                       tem; `null` = sem teto além da coluna).
  * Os motivos, na ordem em que valem (o primeiro de cada campo fica): D2 (compra gerada de pedido), D4 (pedido que gerou
  * compra), D3 (item orçado), P3 (compra com as duplicatas da nota; item com a linha da nota), P6 (compra com chave de
- * acesso: fornecedor, número e série; compra vinda da nota: frete, outras despesas e desconto do cabeçalho).
+ * acesso: fornecedor, número e série; compra vinda da nota: frete, outras despesas e desconto do cabeçalho), D15 (compra
+ * vinda da nota: o item novo — com as duplicatas, vale o motivo da P3, que vem primeiro).
  * RESÍDUO DECLARADO (P6, decisão do dono): `data_documento` é a emissão da nota (o AAMM está na chave) e continua
  * editável, pela letra da P3.
  * Consultas (nunca uma por item): a compra gerada de pedido, UMA (o item de origem, o pedido e o que as outras compras
@@ -204,8 +211,12 @@ export async function limitesDaEdicaoDeCompra(ctx: ServiceCtx, doc: DocumentoPar
 
   // P6 — a compra com chave de acesso (digitada ou do XML): o que a chave codifica.
   if (doc.especie === "compra" && doc.chave_acesso != null) travar(campos, IDENTIDADE_DA_NOTA, MSG_EDICAO_IDENTIDADE_DA_NOTA);
-  // P6 — a compra vinda da nota, mesmo sem as duplicatas (com elas, a P3 acima já travou, com o motivo dela).
-  if (compraVindaDaNota(doc)) travar(campos, DESPESAS_DA_NOTA, MSG_EDICAO_CABECALHO_DA_NOTA);
+  // P6 e D15 — a compra vinda da nota, mesmo sem as duplicatas (com elas, a P3 acima já travou, com o motivo dela): o
+  // cabeçalho que veio da nota e o item novo.
+  if (compraVindaDaNota(doc)) {
+    travar(campos, DESPESAS_DA_NOTA, MSG_EDICAO_CABECALHO_DA_NOTA);
+    itemNovo ??= MSG_EDICAO_ITEM_NOVO_NA_COMPRA_DA_NOTA;
+  }
 
   return { campos, itemNovo, itens };
 }

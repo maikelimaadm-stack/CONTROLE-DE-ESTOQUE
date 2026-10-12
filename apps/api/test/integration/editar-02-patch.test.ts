@@ -19,7 +19,7 @@ import {
   MSG_EDICAO_DOCUMENTO_APROVADO, msgEdicaoPedidoComCompraViva, MSG_EDICAO_FORNECEDOR_DA_COMPRA_DO_PEDIDO, MSG_EDICAO_PRODUTO_DA_COMPRA_DO_PEDIDO,
   MSG_EDICAO_ITEM_NOVO_NA_COMPRA_DO_PEDIDO, MSG_EDICAO_QUANTIDADE_DO_PEDIDO_CONVERTIDO, MSG_EDICAO_QUANTIDADE_ACIMA_DO_SALDO,
   MSG_EDICAO_FORNECEDOR_DO_PEDIDO_COM_COMPRA, MSG_EDICAO_ITEM_ORCADO, MSG_EDICAO_COMPRA_DA_NOTA, MSG_EDICAO_ITEM_DA_NOTA,
-  MSG_EDICAO_IDENTIDADE_DA_NOTA, MSG_EDICAO_CABECALHO_DA_NOTA,
+  MSG_EDICAO_IDENTIDADE_DA_NOTA, MSG_EDICAO_CABECALHO_DA_NOTA, MSG_EDICAO_ITEM_NOVO_NA_COMPRA_DA_NOTA,
 } from "../../src/routes/compras-edicao-regras.js";
 import { MSG_PEDIDO_SEM_NOTA, MSG_PEDIDO_SEM_DADOS_FISCAIS, MSG_PEDIDO_SEM_LOTE } from "../../src/routes/compras.js";
 
@@ -829,7 +829,7 @@ describe("(o) P6: a chave de acesso trava fornecedor, número e série; a compra
     expect([depois.fornecedor_id, depois.numero_nota, depois.serie_nota]).toEqual([outro, "777777", "99"]);
   });
 
-  it("compra do XML SEM duplicatas: frete, outras despesas e desconto → 422 (o motivo da nota); o local e a observação editam; a data do documento segue editável (resíduo declarado)", async () => {
+  it("compra do XML SEM duplicatas: frete, outras despesas, desconto e item novo (D15) → 422 (o motivo da nota); o local e a observação editam; a data do documento segue editável (resíduo declarado)", async () => {
     const x = await compraDoXml({ duplicatas: false });
     expect([x.item.n_item_nota, (await linha(x.id)).dfe_id], "premissa: vinda da nota pela linha da nota (o XML enviado, sem DF-e)").toEqual([1, null]);
     const antes = await foto(x.id);
@@ -844,7 +844,12 @@ describe("(o) P6: a chave de acesso trava fornecedor, número e série; a compra
     expect(detalhes(identidade)).toEqual([{ path: "numero_nota", message: MSG_EDICAO_IDENTIDADE_DA_NOTA }]);
     const item = await patch("compra", x.id, { version: v, itens: [{ id: x.item.id, quantidade: "9" }] });
     expect(detalhes(item)).toEqual([{ path: "itens[0].quantidade", message: MSG_EDICAO_ITEM_DA_NOTA }]);
-    expect(await foto(x.id), "nada gravado").toEqual(antes);
+    // D15 (o B3 do cético): o item NOVO poria o total acima da nota (1000.00 → 1050.00) — 422 no item, sem duplicatas também.
+    const novo = await patch("compra", x.id, { version: v, itens: [{ id: x.item.id }, { produto_id: (await produto()).id, quantidade: "1", valor_unitario: "50.00" }] });
+    recusada(novo, 422, "VALIDATION_ERROR");
+    expect(detalhes(novo)).toEqual([{ path: "itens[1]", message: MSG_EDICAO_ITEM_NOVO_NA_COMPRA_DA_NOTA }]);
+    expect(await foto(x.id), "nada gravado (o total continua o da nota)").toEqual(antes);
+    expect((await linha(x.id)).valor_total, "premissa: o total da nota").toBe("1000.00");
     // O MESMO valor não é troca.
     const banco = await linha(x.id);
     const igual = await patch("compra", x.id, { version: v, frete: String(banco.frete), outras_despesas: String(banco.outras_despesas), desconto: String(banco.desconto) });
