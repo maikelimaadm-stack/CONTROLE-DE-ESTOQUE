@@ -2821,14 +2821,14 @@ débito de hoje.
 | --- | --- | --- |
 | 1 | `<recurso>.edit` (`runService`) e `<recurso>.view` (`requirePermission`) | 403 |
 | 2 | a forma do corpo (`lerPedidoDaEdicaoDeCompra`): chaves, versão, validadores, números, item novo incompleto | 422 `VALIDATION_ERROR` no campo |
-| 3 | id malformado, documento invisível (outra organização, fora do escopo de empresa, inexistente, outra espécie) — `lerDocumentoCompra`, o do GET | a MESMA 404 "Documento não encontrado" |
+| 3 | id malformado, documento invisível (outra organização, fora do escopo de empresa, inexistente, outra espécie) — `conferirDocumentoDeCompraVisivel`: o MESMO recorte de `lerDocumentoCompra` (forma do id, organização, espécie, escopo de empresa), num SELECT enxuto sem ler o documento | a MESMA 404 "Documento não encontrado" do GET |
 | 4 | idempotência (depois da 404) | 409 `CONFLICT` |
 | 5 | a trava SEM junção (`travarDocumentoDeCompraDaEdicao`: `id` e `version` só de `erp.documentos_compra`, `for update of d`, o recorte do `scopedById`) | zero linhas → a MESMA 404 |
 | 6 | a versão, logo depois da trava | 409 `CONCURRENCY_CONFLICT` "Este documento mudou desde que você o abriu. Recarregue antes de salvar." |
 | 7 | o documento lido (sem trava: a linha já é desta transação; no pedido, as compras geradas lidas SOB a trava) e `recusaDaEdicaoDeCompra` | 409 `INVALID_STATUS_TRANSITION` (abaixo) |
 | 8 | o documento como ficará (`edicaoDeCompraComoFicara`) | 422 em `itens` (P1) ou em `itens[i].id` |
 | 9 | na compra gerada de pedido, a trava do PEDIDO de origem (`travarPedidoDeCompraDaProvisao`: compra → pedido, a ordem do confirmar e do cancelar) — também numa PATCH que não muda nada | — |
-| 10 | os LIMITES (`limitesDaEdicaoDeCompra`): a TROCA de um campo travado; o igual ao gravado não é troca | 422 `VALIDATION_ERROR` no campo, com o motivo dos limites (abaixo) |
+| 10 | os LIMITES (`limitesDaEdicaoDeCompra`: D2, D4, D3, P3 e P6): a TROCA de um campo travado; o igual ao gravado não é troca | 422 `VALIDATION_ERROR` no campo, com o motivo dos limites (abaixo) |
 | 11 | nada muda (valores canônicos e plano iguais ao gravado, itens iguais) | 200 com o documento lido sob a trava, SEM escrita e SEM subir a versão |
 | 12 | documento sem itens: a versão CONGELADA tem de aceitar (formato 4 "Permitido", só a compra) | a recusa de hoje do POST |
 | 13 | o NÚCLEO do lançamento (`nucleoDoLancamento`), com a TOP e a versão GRAVADAS e o documento como ficará: campos da espécie, forma, parceiros (só o que a PATCH troca), classificação e condição (só se trocam), regras da versão congelada (a condição permitida só se a condição troca), efeitos previstos, itens (só os novos ou com produto, local, lote, validade ou "gera estoque" trocados), dados fiscais sobre o rateio GRAVADO, totais (+ IPI, ICMS-ST e seguro gravados), duplicatas da nota, plano, padrões financeiros da TOP (`padroesDaTopNoSalvarDaCompra`, decisão 311/286 — SEMPRE), exigências do título, nota duplicada (só se fornecedor, número ou série mudam, sem contar o próprio documento) e o layout de HOJE da TOP | os códigos e as mensagens do POST, os mesmos caminhos |
@@ -2863,9 +2863,14 @@ continua sendo a rede):
 | item do pedido orçado (orçamento não cancelado) | `itens[i].produto_id`, `itens[i].quantidade` | "O item do pedido de compra já orçado não troca de produto nem de quantidade." |
 | compra com as duplicatas da nota (`parcelas_nota`) | `frete`, `outras_despesas`, `desconto`, `condicao_pagamento_id`, `data_vencimento`, `plano_parcelas`, item novo e, em cada item, `produto_id`, `quantidade`, `valor_unitario`, `desconto`, `desconto_percentual` | "Esta compra veio da nota com as duplicatas: o que forma o total e as parcelas é o da nota e não muda. Para corrigir, cancele a compra e lance de novo." |
 | item com a linha da nota (`n_item_nota`) | o que forma o total do item e `valor_ipi`, `valor_icms_st` | "Este item veio da nota fiscal: produto, quantidade, valores, descontos e impostos são os da nota e não mudam." |
+| compra com CHAVE DE ACESSO (digitada ou do XML) — P6 | `fornecedor_id`, `numero_nota`, `serie_nota` (o que a chave codifica) | `MSG_EDICAO_IDENTIDADE_DA_NOTA`: "A nota desta compra tem chave de acesso: fornecedor, número e série vêm da chave e não mudam." |
+| compra VINDA DA NOTA, mesmo sem as duplicatas (`compraVindaDaNota`: a DF-e ligada, `dfe_id`, ou a importação que a gerou, ou algum item com `n_item_nota`) — P6 | `frete`, `outras_despesas`, `desconto` do cabeçalho | `MSG_EDICAO_CABECALHO_DA_NOTA`: "Esta compra veio da nota fiscal: frete, outras despesas e desconto do cabeçalho são os da nota e não mudam. Para corrigir, cancele a compra e lance de novo." |
 
-Saem todos juntos. Local, lote, validade, observação, datas (fora o vencimento com as duplicatas), classificação e
-"gera estoque"/"imobilizado" seguem editáveis.
+Saem todos juntos. Em cada campo vale o PRIMEIRO motivo, nesta ordem: D2, D4, D3, P3, P6 — na compra da nota gerada de
+pedido, o fornecedor leva o motivo da D2; com as duplicatas, frete, outras despesas e desconto levam o da P3. Local,
+lote, validade, observação, datas (fora o vencimento com as duplicatas), classificação e "gera estoque"/"imobilizado"
+seguem editáveis. **Resíduo declarado da P6:** `data_documento` (a emissão da nota; o AAMM está na chave) segue editável
+mesmo com a chave, pela letra da P3. A compra manual SEM chave e sem vínculo com a nota não tem trava de nota.
 
 **Gravação**: UM `UPDATE` do cabeçalho sempre que algo grava (também a PATCH que só muda item: os totais moram nele),
 com os campos que mudam, a classificação e a condição que o núcleo decidiu (só quando a PATCH as troca), `valor_itens`,
@@ -2874,8 +2879,9 @@ NUNCA escreve `version` (o gatilho soma 1). Itens EM LUGAR: o item alterado rece
 mudaram (os gatilhos dos itens da 0044 disparam pela coluna citada: citar a quantidade que não mudou recusaria a compra
 de um pedido convertido mesmo para corrigir a observação), os alterados com o mesmo conjunto de colunas num comando só
 (`unnest`); os novos num `INSERT` só, `posicao` = o índice. Nenhum `DELETE`. ROW COUNT conferido em cada escrita.
-**A PATCH não confirma** (nem com a TOP de confirmação "Automática"): nenhum efeito de estoque ou financeiro.
-**Provisão (decisão 286)**: a PATCH do pedido ressincroniza a provisão dele (`sincronizarProvisaoDoPedidoDeCompra`, motivo
+**A PATCH não confirma** (nem com a TOP de confirmação "Automática"): nenhum movimento de estoque, nenhum título real.
+**Provisão (decisão 286; a EXCEÇÃO declarada à P4, M1 — só os títulos PREVISTOS mudam, cancelados com trilha e
+recriados; nunca título real; nada se apaga)**: a PATCH do pedido ressincroniza a provisão dele (`sincronizarProvisaoDoPedidoDeCompra`, motivo
 `MOTIVOS_DA_PROVISAO.pedidoGravado` — o pedido aberto nunca finalizado: uma leitura, nenhum efeito); a PATCH da compra
 gerada de pedido ressincroniza a do pedido de origem (travado no passo 9) com o motivo
 `MOTIVOS_DA_PROVISAO_COMPRA.compraAlterada(código)` ("Compra X alterada").
@@ -2897,7 +2903,7 @@ A porta da tela de edição, numa chamada. `<recurso>.view` conferida antes de a
 | --- | --- | --- |
 | `podeEditar` | boolean | `recusaDaEdicaoDeCompra` — a MESMA pergunta, na MESMA ordem, da PATCH |
 | `motivo` | texto ou `null` | a mensagem da recusa (a mesma da 409 da PATCH) |
-| `limites` | `{ campos: { campo: motivo }, itemNovo: motivo ou null, itens: [{ id, campos: { campo: motivo }, quantidadeMaxima: texto ou null }] }` | `limitesDaEdicaoDeCompra` — a MESMA função que a PATCH usa para recusar; `quantidadeMaxima` só na compra gerada de pedido aberto ou finalizado |
+| `limites` | `{ campos: { campo: motivo }, itemNovo: motivo ou null, itens: [{ id, campos: { campo: motivo }, quantidadeMaxima: texto ou null }] }` | `limitesDaEdicaoDeCompra` — a MESMA função que a PATCH usa para recusar, com os MESMOS motivos (inclusive os da P6: a identidade da nota na compra com chave e o cabeçalho da compra vinda da nota); `quantidadeMaxima` só na compra gerada de pedido aberto ou finalizado |
 | `version` | texto de dígitos | a do documento |
 | `regras` | a forma de `GET <base>/regras-da-operacao` | `respostaDasRegrasDaCompra`, pela versão CONGELADA da TOP (a mesma função da rota de apoio) |
 | `condicoesPermitidas` | lista ou `null` | o mesmo valor de `regras.condicoesPermitidas` |

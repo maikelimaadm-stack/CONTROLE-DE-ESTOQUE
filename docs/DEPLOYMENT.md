@@ -4845,10 +4845,13 @@ mudança de tela nesta fatia (risco declarado na decisão 313).
 
 **Impacto em dados reais (decisão 240): os documentos de compra ganham a coluna `version` (0 para todos); nenhum valor
 existente muda.** Medido em produção (só leitura, 12/10/2026): 2 documentos de compra, ambos compra CONFIRMADA vinda do
-XML (com as duplicatas da nota), 9 itens, 0 pedidos, 0 documentos abertos, 0 aprovações — **hoje nenhum documento de
-produção é editável pela 313**, e o P5 não tem decisão a conferir. A edição não cria movimento de estoque nem título (a
-PATCH não confirma); a provisão do pedido (decisão 286) só é ressincronizada pela regra que já existe, sobre o valor novo
-do mesmo documento. Não é efeito novo da 240 item 4: nada a ligar, nenhuma variável. **Nada se apaga** (decisão 247): a
+XML (com a chave de acesso e as duplicatas da nota), 9 itens, 0 pedidos, 0 documentos abertos, 0 aprovações — **hoje
+nenhum documento de produção é editável pela 313** (confirmada não se edita), e o P5 não tem decisão a conferir. Se um
+dia uma compra da nota ficar ABERTA, a P6 trava o que veio dela: com a chave, fornecedor, número e série; vinda da nota,
+também frete, outras despesas e desconto do cabeçalho (com as duplicatas, a P3 já trava o que forma o total). A edição
+não cria movimento de estoque nem título real (a PATCH não confirma); a provisão do pedido (decisão 286) é a EXCEÇÃO
+declarada à P4 (M1): ressincronizada pela regra que já existe, sobre o valor novo do mesmo documento, só os títulos
+PREVISTOS mudam (cancelados com trilha e recriados), nunca título real, e o pedido nunca finalizado não tem efeito. Não é efeito novo da 240 item 4: nada a ligar, nenhuma variável. **Nada se apaga** (decisão 247): a
 PATCH não tem DELETE, e o `erp_app` não tem DELETE nas tabelas do documento de compra.
 
 **Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0063 FICA: a API anterior convive
