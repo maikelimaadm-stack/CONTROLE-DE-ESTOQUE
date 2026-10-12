@@ -1,10 +1,12 @@
 /**
  * OS PADRÕES FINANCEIROS DA TOP NO SALVAR DA COMPRA E DO PEDIDO DE COMPRA (OPERACOES-01 F9b, decisão 286).
  *
- * A compra e o pedido de compra NÃO SE EDITAM (não há PUT): o que a TOP (a versão congelada, no formato 5) manda sobre
- * o documento é conferido aqui, no lançamento, antes do número — recusar só na confirmação ou na finalização deixaria
- * o documento preso (só cancelar). A confirmação e a finalização conferem de novo (um cadastro pode ter sido inativado
- * depois).
+ * O que a TOP (a versão congelada, no formato 5) manda sobre o documento é conferido aqui, no lançamento, antes do número
+ * — recusar só na confirmação ou na finalização deixaria o documento preso (só cancelar). A confirmação e a finalização
+ * conferem de novo (um cadastro pode ter sido inativado depois). EDITAR-02 (decisão 313): a compra aberta e o pedido
+ * aberto passaram a se editar (a PATCH de `compras-edicao.ts`), e a PATCH passa por aqui SEMPRE, pelo MESMO núcleo do
+ * lançamento (`nucleoDoLancamento`), sobre o documento como ficará — a premissa "o documento não se edita" deixou de
+ * valer, e sem esta conferência na PATCH a troca proibida só apareceria na confirmação ou na finalização.
  *
  *   · a COMPRA que gera título: a troca proibida (`documentoTroca` desligado e o documento com natureza, centro, forma
  *     ou tipo de título diferentes do padrão — o tipo de título desde a decisão 311, emenda R2) recusa; sem natureza e
