@@ -291,6 +291,24 @@ export interface TravasDaLinha {
   unitario?: boolean;
   /** Desconto e desconto %. */
   desconto?: boolean;
+  /**
+   * O teto da quantidade da linha (a compra gerada de pedido: o saldo do item do pedido) — o MESMO `max` que o modo "da
+   * origem" põe na quantidade do receber. Ausente: nenhum (o de hoje).
+   */
+  quantidadeMaxima?: string;
+  /**
+   * O motivo de cada campo travado (o texto do servidor), na `dica` do campo do formulário do item — o `title` que o
+   * `CampoDaCentral` já tem. A célula da grade não tem dica de campo travado (só a do erro): ali o motivo não aparece.
+   */
+  motivos?: Partial<Record<"produto" | "quantidade" | "unitario" | "desconto", string>>;
+}
+
+/**
+ * O `max` da quantidade de uma linha: o saldo da origem no modo "da origem" (o receber, como sempre); senão o teto das
+ * travas da linha (a edição, EDITAR-02); senão nenhum — `undefined`, e o atributo nem aparece (o DOM de hoje).
+ */
+export function maximoDaQuantidade(daOrigem: ItensDaOrigem | null | undefined, travas: TravasDaLinha, item: ItemRow): string | undefined {
+  return daOrigem ? daOrigem.saldo(item) : travas.quantidadeMaxima;
 }
 
 /** OPERACOES-01 F3b: um local de estoque escolhido (o id e o rótulo que a tela mostra). */

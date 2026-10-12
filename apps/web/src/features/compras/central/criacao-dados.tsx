@@ -15,6 +15,7 @@ import { hrefDoConfigurador, textoDoLayoutQueVale } from "../layout-da-central";
 import { PREFIXO_CENTRAL_COMPRAS } from "./adaptador";
 import { CAMPOS_DOS_DADOS_FISCAIS, opcoesDeNaturezaDeDespesa, type ChaveDoCabecalho, type EstadoDaCriacao } from "./estado";
 import { DadosFiscaisDaConsulta, DadosFiscaisDaCriacao, QUANTIDADE_DE_DADOS_FISCAIS, RateioDaConsulta, temDadosFiscais } from "./dados-fiscais";
+import { dicaDaIdentidadeNaEdicao } from "./edicao";
 
 /**
  * CENTRAL DE COMPRAS — DADOS PRINCIPAIS DA CRIAÇÃO (VISUAL-UX-04, decisão 276).
@@ -34,7 +35,8 @@ import { DadosFiscaisDaConsulta, DadosFiscaisDaCriacao, QUANTIDADE_DE_DADOS_FISC
  * fora das pendências). Sem a capacidade, nada muda.
  *
  * EDITAR-02 (decisão 313): na EDIÇÃO, o campo que a PATCH não aceita fica no MESMO `fieldset` travado de sempre, com
- * `data-travado-na-edicao="true"` e o motivo do servidor em `data-motivo` (a empresa; o resto pelos limites); os dados fiscais do
+ * `data-travado-na-edicao="true"` e o motivo do servidor em `data-motivo` e na `dica` do campo (o `title` que o
+ * `CampoDaCentral` já tem; fora da edição, nenhuma) — a empresa; o resto pelos limites; os dados fiscais do
  * cabeçalho (que não mudam depois do lançamento) aparecem em LEITURA, pelos MESMOS blocos da consulta.
  */
 
@@ -47,7 +49,8 @@ export function identidadeDaCriacao(e: EstadoDaCriacao): IdentidadeDoDocumento {
   return {
     nome,
     alterado: e.alterado,
-    dica: e.ehCompra
+    // EDITAR-02: a edição não confirma (P4 da 313) — a dica dela diz isso; a da criação e a do receber, as de hoje.
+    dica: e.modo === "edicao" ? dicaDaIdentidadeNaEdicao(e.ehCompra) : e.ehCompra
       ? "O que a confirmação faz no estoque e no financeiro depende do Tipo de Operação e é mostrado antes de confirmar."
       : "Pedido de compra: sem efeito em estoque ou financeiro; a compra é lançada ao receber o pedido."
   };
@@ -104,7 +107,7 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const aviso = (c: string) => (e.padraoInvalido(c) ? <p data-testid="padrao-invalido-aviso" className="mt-0.5 text-[11px] text-amber-700">{AVISO_PADRAO_INVALIDO_CENTRAL}</p> : null);
   const cc = (c: string, hoje: string, o: { icone?: IconeDoCampo; preenchido: boolean; multilinha?: boolean; desabilitado?: boolean; testId?: string }, controle: React.ReactElement) =>
     <CampoDaCentral rotulo={e.rotulo(c, hoje)} obrigatorio={e.obrigatorio(c)} erro={e.erro(c)} icone={o.icone ?? null} preenchido={o.preenchido} multilinha={o.multilinha}
-      estado={o.desabilitado ? "desabilitado" : "editavel"} testId={o.testId} abaixo={aviso(c)} {...dc(c)}>{controle}</CampoDaCentral>;
+      estado={o.desabilitado ? "desabilitado" : "editavel"} testId={o.testId} abaixo={aviso(c)} dica={e.motivoNaEdicao(c) ?? undefined} {...dc(c)}>{controle}</CampoDaCentral>;
   const mudar = (c: ChaveDoCabecalho) => (v: string | null | undefined) => e.mudar({ [c]: v ?? "" });
   const data = (c: ChaveDoCabecalho, hoje: string, testId: string) =>
     cc(c, hoje, { icone: "data", preenchido: Boolean(h[c]), testId }, <DataDaCentral rotulo={e.rotulo(c, hoje)} value={h[c]} onChange={mudar(c)} />);

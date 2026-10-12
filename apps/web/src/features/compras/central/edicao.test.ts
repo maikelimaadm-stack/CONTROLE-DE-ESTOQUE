@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { ItemRow, Plan, Row } from "@/features/docs/shared";
 import {
   DICA_EDITAR_CANCELADO, DICA_EDITAR_CONFIRMADA, DICA_EDITAR_PEDIDO_CONVERTIDO, DICA_EDITAR_PEDIDO_FINALIZADO, aberturaDoDocumento, acaoEditar,
-  MOTIVO_EMPRESA_NA_EDICAO, campoTravadoNaEdicao, corpoDaEdicao, dicaDoEditar, itensNaEdicao, motivoDaTravaNaEdicao, mudouAlgo, travasDoItem,
-  type EstadoDaEdicao
+  MOTIVO_EMPRESA_NA_EDICAO, campoTravadoNaEdicao, corpoDaEdicao, dicaDaIdentidadeNaEdicao, dicaDoEditar, itensNaEdicao, motivoDaTravaNaEdicao, mudouAlgo,
+  travasDaLinhaNaTela, travasDoItem, type EstadoDaEdicao
 } from "./edicao";
 import { MSG_DOCUMENTO_MUDOU_NA_EDICAO, conflitoDaEdicao, edicaoIndisponivel, lerEdicao, type LimitesDaEdicaoDeCompra } from "./edicao-api";
 import { lerPadroesDaTop, padroesDaTopAplicam } from "./padroes-da-top";
+import { maximoDaQuantidade } from "../../central/contrato";
 
 /**
  * EDITAR-02 (decisão 313) — as contas PURAS da edição do pedido de compra e da compra na Central: a ação "Editar" na
@@ -214,12 +215,38 @@ describe("as travas da edição (P1: item salvo não sai; os limites do servidor
     ]
   };
 
-  it("o item salvo é FIXO (o Remover não aparece) e leva os limites dele; o item novo, nenhuma trava", () => {
+  it("o item salvo é FIXO (o Remover não aparece) e leva os limites dele, com o MOTIVO do servidor; o item novo, nenhuma trava", () => {
     const a = abrir();
-    expect(travasDoItem(limites, a.itens[0]!)).toEqual({ fixa: true, produto: true, quantidade: true, unitario: false, desconto: false });
-    expect(travasDoItem(limites, a.itens[1]!)).toEqual({ fixa: true, produto: false, quantidade: false, unitario: true, desconto: true });
+    expect(travasDoItem(limites, a.itens[0]!)).toEqual({
+      fixa: true, produto: true, quantidade: true, unitario: false, desconto: false,
+      motivos: { produto: "O produto do item vem do pedido de origem e não muda.", quantidade: "O pedido de origem já foi convertido…" }
+    });
+    expect(travasDoItem(limites, a.itens[1]!)).toEqual({
+      fixa: true, produto: false, quantidade: false, unitario: true, desconto: true, motivos: { unitario: DA_NOTA, desconto: DA_NOTA }, quantidadeMaxima: "5.0000"
+    });
     expect(travasDoItem(SEM_LIMITES, a.itens[1]!)).toEqual({ fixa: true, produto: false, quantidade: false, unitario: false, desconto: false });
     expect(travasDoItem(limites, { product_id: PRODUTO, quantity: "1" })).toEqual({});
+  });
+
+  it("o teto da quantidade (D2): o `max` na EDIÇÃO; nenhum na CRIAÇÃO; o receber continua com o saldo da origem", () => {
+    const a = abrir();
+    const daEdicao = travasDaLinhaNaTela(limites);
+    expect(daEdicao).not.toBeNull();
+    // a edição: o item com teto o recebe; o que tem a quantidade travada e o item novo, não
+    expect(maximoDaQuantidade(null, daEdicao!(a.itens[1]!), a.itens[1]!)).toBe("5.0000");
+    expect(maximoDaQuantidade(null, daEdicao!(a.itens[0]!), a.itens[0]!)).toBeUndefined();
+    const novo: ItemRow = { product_id: PRODUTO, quantity: "1" };
+    expect(maximoDaQuantidade(null, daEdicao!(novo), novo)).toBeUndefined();
+    // a criação: sem limites, a grade não recebe travas — nenhum `max` (o DOM de hoje)
+    expect(travasDaLinhaNaTela(null)).toBeNull();
+    expect(maximoDaQuantidade(null, {}, a.itens[1]!)).toBeUndefined();
+    // o receber: o saldo da origem, como sempre (vence qualquer trava)
+    expect(maximoDaQuantidade({ saldo: () => "7.0000", quantidadeTravada: false }, { quantidadeMaxima: "5.0000" }, a.itens[1]!)).toBe("7.0000");
+  });
+
+  it("a dica do nome na edição não promete confirmação (P4: editar não confirma)", () => {
+    expect(dicaDaIdentidadeNaEdicao(true)).toBe("Editar não confirma: salve as alterações e confirme pela consulta.");
+    expect(dicaDaIdentidadeNaEdicao(false)).not.toMatch(/antes de confirmar/);
   });
 
   it("o cabeçalho: a empresa sempre; o resto pelos limites do servidor, com o motivo dele", () => {

@@ -46,7 +46,7 @@ import {
   type EdicaoDoDocumentoDeCompra
 } from "./edicao-api";
 import {
-  aberturaDoDocumento, acaoEditar, campoTravadoNaEdicao, corpoDaEdicao, itensNaEdicao, motivoDaTravaNaEdicao, mudouAlgo, travasDoItem, type AcaoEditar
+  aberturaDoDocumento, acaoEditar, campoTravadoNaEdicao, corpoDaEdicao, itensNaEdicao, motivoDaTravaNaEdicao, mudouAlgo, travasDaLinhaNaTela, type AcaoEditar
 } from "./edicao";
 import {
   dicaDaTop, localConfirmadoNaEmpresa, localDasLinhasNovasNoPortao, localDoCadastroDoProduto, mesmoId, omissaoDoCorpo, padraoDaTopInvalido,
@@ -1056,7 +1056,7 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
       : topDoLancamento ? { id: topDoLancamento.id, codigo: topDoLancamento.code, nome: topDoLancamento.name, movimento } : null;
   /* EDITAR-02: o que a edição trava — no cabeçalho (`campoTravadoNaEdicao`) e em cada linha (`travasDoItem`). */
   const travadoNaEdicao = (c: string) => limites !== null && campoTravadoNaEdicao(limites, c);
-  const travasDaLinha = React.useMemo(() => (limites ? (l: ItemRow) => travasDoItem(limites, l) : null), [limites]);
+  const travasDaLinha = React.useMemo(() => travasDaLinhaNaTela(limites), [limites]);
 
   return {
     modo: modoReceber ? "receber" : modoEdicao ? "edicao" : "criacao", variante, adaptador, ehCompra, familia, estadoTop: estado, escritaTopConfirmada, top: topInfo, titulo,

@@ -285,16 +285,42 @@ export function motivoDaTravaNaEdicao(limites: LimitesDaEdicaoDeCompra, campo: s
 export const campoTravadoNaEdicao = (limites: LimitesDaEdicaoDeCompra, campo: string): boolean => motivoDaTravaNaEdicao(limites, campo) !== null;
 
 /**
- * As travas de UMA linha: o item salvo é FIXO (P1: não sai) e leva os limites dele (`limites.itens[].campos`: produto,
- * quantidade, valor unitário, descontos); o item novo, nenhuma.
+ * As travas de UMA linha: o item salvo é FIXO (P1: não sai) e leva os limites dele (`limites.itens[]`): os campos
+ * travados (produto, quantidade, valor unitário, descontos) com o MOTIVO do servidor de cada um, e o teto da quantidade
+ * (`quantidadeMaxima`, D2: o saldo do item do pedido de origem — o `max` da quantidade, como no receber). O item novo,
+ * nenhuma.
  */
 export function travasDoItem(limites: LimitesDaEdicaoDeCompra, linha: ItemRow): TravasDaLinha {
   const id = idDoItem(linha);
   if (!id) return {};
-  const campos = limites.itens.find((x) => x.id === id.toLowerCase())?.campos ?? {};
-  const tem = (c: string) => Object.hasOwn(campos, c);
-  return { fixa: true, produto: tem("produto_id"), quantidade: tem("quantidade"), unitario: tem("valor_unitario"), desconto: tem("desconto") || tem("desconto_percentual") };
+  const limite = limites.itens.find((x) => x.id === id.toLowerCase());
+  const campos = limite?.campos ?? {};
+  const motivo = (...c: string[]) => c.map((x) => (Object.hasOwn(campos, x) ? campos[x] : undefined)).find((m) => m !== undefined);
+  const motivos = { produto: motivo("produto_id"), quantidade: motivo("quantidade"), unitario: motivo("valor_unitario"), desconto: motivo("desconto", "desconto_percentual") };
+  const travas: TravasDaLinha = {
+    fixa: true, produto: motivos.produto !== undefined, quantidade: motivos.quantidade !== undefined,
+    unitario: motivos.unitario !== undefined, desconto: motivos.desconto !== undefined
+  };
+  const comMotivo = Object.fromEntries(Object.entries(motivos).filter(([, m]) => m !== undefined)) as NonNullable<TravasDaLinha["motivos"]>;
+  if (Object.keys(comMotivo).length) travas.motivos = comMotivo;
+  if (limite?.quantidadeMaxima != null && !travas.quantidade) travas.quantidadeMaxima = limite.quantidadeMaxima;
+  return travas;
 }
+
+/**
+ * As travas que a GRADE recebe: na edição, as de cada linha (`travasDoItem`); fora dela (a criação, o receber), `null` —
+ * a grade de hoje, sem teto de quantidade nem motivo (o receber continua com o `max` do modo "da origem").
+ */
+export const travasDaLinhaNaTela = (limites: LimitesDaEdicaoDeCompra | null): ((linha: ItemRow) => TravasDaLinha) | null =>
+  (limites ? (l: ItemRow) => travasDoItem(limites, l) : null);
+
+/**
+ * A dica do nome do documento em EDIÇÃO (a da criação fala da confirmação, que a PATCH não faz — P4 da 313): editar só
+ * grava; confirmar a compra, e finalizar ou receber o pedido, seguem pela consulta.
+ */
+export const dicaDaIdentidadeNaEdicao = (ehCompra: boolean): string => (ehCompra
+  ? "Editar não confirma: salve as alterações e confirme pela consulta."
+  : "Editar não finaliza nem recebe o pedido: salve as alterações e siga pela consulta.");
 
 /** Os campos da linha que cada trava protege (as chaves do motor). */
 const PROTEGIDOS: readonly { trava: keyof Omit<TravasDaLinha, "fixa">; chaves: readonly string[] }[] = [
