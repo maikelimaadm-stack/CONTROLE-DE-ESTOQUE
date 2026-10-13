@@ -995,4 +995,4 @@ tabela de recusas acima. Nenhuma recusa e nenhuma mensagem nova.
 **Version skew.** A web anterior contra a API nova lê as origens novas e gera a compra, mas mostra "(código do
 fornecedor)" para toda origem que não é `codigo_barras` e deixa o "Lembrar" marcado também no sugerido pela descrição —
 o risco da janela de deploy, declarado na decisão 314. A web nova contra a API anterior não recebe as origens novas: a
-aba é a de hoje. Os dois sentidos em E2E (`<A4b>`; o resultado em `docs/TESTING.md`).
+aba é a de hoje. Os dois sentidos em E2E (`apps/web/e2e/xml-02-skew-api-producao.spec.ts` e `xml-02-skew-web-anterior.spec.ts`; o resultado em `docs/TESTING.md`).
