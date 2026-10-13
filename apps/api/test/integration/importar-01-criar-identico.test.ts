@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createPool, type Db } from "@agro/db";
 import { harness, TEST_URL, type Harness } from "./setup.js";
-import { cenariosDoCriar } from "./importar-01-criar-cenarios.js";
+import { cenariosDoCriar, listasDoBanco, semColacao } from "./importar-01-criar-cenarios.js";
 
 /**
  * IMPORTAR-01 (decisão 317) — O CRIAR FICOU IDÊNTICO.
@@ -16,6 +16,10 @@ import { cenariosDoCriar } from "./importar-01-criar-cenarios.js";
  * modo fora da lista, a chave desconhecida, a falta de `.create`, e o que ficou no banco (código gerado, referências,
  * ID Global e trilha de auditoria). Esta suíte roda os MESMOS cenários sobre o fonte deste HEAD e exige a MESMA saída —
  * inclusive as CHAVES da resposta, na mesma ordem: o CRIAR não ganha campo nenhum.
+ *
+ * A COLAÇÃO: a referência foi gerada num banco C.UTF-8, e o CI roda en_US.utf8. Nos modelos, as listas que vêm do banco
+ * (campos `ref`) são comparadas, dos dois lados, na ordem por ponto de código (`semColacao`), e o primeiro da lista dos
+ * cenários é o primeiro nessa ordem. O conteúdo continua comparado inteiro; só a ordem do `order by` do banco sai da conta.
  */
 let h: Harness; let admin: Db;
 beforeAll(async () => { h = await harness(); admin = createPool(TEST_URL, { max: 2 }); }, 180_000);
@@ -33,8 +37,11 @@ describe("IMPORTAR-01 · o CRIAR igual ao da base", () => {
     ]);
     expect((referencia["produtos_gravar_parcial"] as { status: number; gravadas: number }), "premissa: a referência gravou no parcial").toMatchObject({ status: 201, gravadas: 1 });
     expect((referencia["banco_produtos"] as unknown[]).length, "premissa: a referência criou três produtos").toBe(3);
+    // premissa: a normalização da colação alcança as listas do banco (os títulos são os da aba "Listas")
+    expect(listasDoBanco("products"), "premissa: as listas do banco do Produto").toEqual(expect.arrayContaining(["Grupo", "1ª Un. Medida"]));
     const atual = JSON.parse(JSON.stringify(await cenariosDoCriar(h, admin))) as Record<string, unknown>;
-    for (const k of Object.keys(referencia)) expect(atual[k], `cenário ${k}`).toEqual(referencia[k]);
+    const comparavel = (k: string, v: unknown) => (k.startsWith("modelo_") ? semColacao(k.slice("modelo_".length), v as Parameters<typeof semColacao>[1]) : v);
+    for (const k of Object.keys(referencia)) expect(comparavel(k, atual[k]), `cenário ${k}`).toEqual(comparavel(k, referencia[k]));
     expect(Object.keys(atual)).toEqual(Object.keys(referencia));
   }, 120_000);
 });

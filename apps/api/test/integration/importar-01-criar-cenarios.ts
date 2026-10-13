@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { getResource } from "@agro/domain";
 import type { Db } from "@agro/db";
 import type { Harness } from "./setup.js";
 
@@ -63,6 +64,43 @@ async function conteudo(buf: Buffer): Promise<Json> {
   return abas;
 }
 
+/**
+ * A ORDEM POR PONTO DE CÓDIGO — a mesma de um banco com colação C.UTF-8, em que a referência foi gerada.
+ *
+ * As listas da aba "Listas" que vêm do BANCO (campo `ref`: `carregarReferencia`, `order by code, rótulo`, que esta
+ * fatia não mudou) seguem a COLAÇÃO do banco: sob C.UTF-8 "L - Litro" vem antes de "ar - Arroba"; sob en_US (o
+ * `postgres:16` do CI) vem depois de "km". O CONTEÚDO de cada uma continua comparado inteiro (valor, formato, nota e cor
+ * de cada célula), na ordem por ponto de código, que é a ordem C.UTF-8. As listas FIXAS do código (`select`: Sim/Não,
+ * Tipo do item…) não dependem do banco e seguem comparadas na ordem do modelo.
+ */
+const porPontoDeCodigo = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b));
+
+/** Os títulos das listas que vêm do banco no modelo do cadastro: os campos `ref` (o título da lista é o rótulo do campo). */
+export function listasDoBanco(key: string): string[] {
+  const def = getResource(key);
+  if (!def) throw new Error(`cadastro ${key} fora do registry`);
+  return def.fields.filter((f) => f.type === "ref").map((f) => f.label);
+}
+
+/** O conteúdo de um modelo com as listas que vêm do banco na ordem por ponto de código; o resto, intacto. */
+export function semColacao(key: string, modelo: Json): Json {
+  if (!modelo || typeof modelo !== "object" || Array.isArray(modelo)) return modelo;
+  const listas = modelo["Listas"];
+  if (!listas || typeof listas !== "object" || Array.isArray(listas)) return modelo;
+  const celulas = { ...(listas["celulas"] as Record<string, Json>) };
+  const doBanco = new Set(listasDoBanco(key));
+  const colunaDe = (endereco: string) => /^[A-Z]+/.exec(endereco)![0];
+  const valorDe = (c: Json | undefined) => (c && typeof c === "object" && !Array.isArray(c) ? c["v"] : null);
+  for (const col of new Set(Object.keys(celulas).map(colunaDe))) {
+    const titulo = valorDe(celulas[`${col}1`]);
+    if (typeof titulo !== "string" || !doBanco.has(titulo)) continue;
+    const linhas = Object.keys(celulas).filter((e) => colunaDe(e) === col && e !== `${col}1`).sort((a, b) => Number(a.slice(col.length)) - Number(b.slice(col.length)));
+    const valores = linhas.map((e) => celulas[e]!).sort((x, y) => porPontoDeCodigo(String(valorDe(x)), String(valorDe(y))));
+    linhas.forEach((e, i) => { celulas[e] = valores[i]!; });
+  }
+  return { ...modelo, Listas: { ...listas, celulas } };
+}
+
 const b64 = (wb: ExcelJS.Workbook) => wb.xlsx.writeBuffer().then((b) => Buffer.from(b as ArrayBuffer).toString("base64"));
 
 /** Resposta da API normalizada; a planilha de erros vira o conteúdo dela. */
@@ -95,9 +133,13 @@ export async function cenariosDoCriar(h: Harness, admin: Db): Promise<Record<str
     for (const [titulo, v] of Object.entries(valores)) { const n = t.indexOf(titulo) + 1; if (!n) throw new Error(`coluna ${titulo} fora do modelo: ${t.join(" | ")}`); row.getCell(n).value = v; }
     row.commit();
   };
+  // o primeiro da lista na ordem por ponto de código (a da referência, C.UTF-8), não na do banco que roda o teste
   const primeiroDaLista = (wb: ExcelJS.Workbook, chave: string) => {
     const ws = wb.getWorksheet("Listas")!; let c = 0; ws.getRow(1).eachCell((x, n) => { if (x.value === chave) c = n; });
-    const v = c ? ws.getRow(2).getCell(c).value : null; if (!v) throw new Error(`lista ${chave} vazia`); return String(v);
+    const valores: string[] = [];
+    if (c) ws.getColumn(c).eachCell((x, linha) => { if (linha > 1 && x.value !== null && x.value !== undefined) valores.push(String(x.value)); });
+    if (!valores.length) throw new Error(`lista ${chave} vazia`);
+    return valores.sort(porPontoDeCodigo)[0]!;
   };
 
   // 1. OS MODELOS do CRIAR (o que a tela baixa hoje): conteúdo inteiro, quatro cadastros (com e sem código)
