@@ -3,7 +3,7 @@ import { withTx } from "@agro/db";
 import type { DivergenciaDaImportacaoNfe, FormaDePagamentoDaConferencia, VinculoDoItemDaNota } from "@agro/domain";
 import { c, iniciar, encerrar, unico, j, erro } from "./top-config-08-ajuda.js";
 import { notaSintetica, importada, fornecedorComDocumento, conferencia, gerar, type ItemSintetico, type OpcoesNotaSintetica } from "./f7-ajuda.js";
-import { prepararXml01, conferenciaLida, vinculoDo, eanNovo, emitenteNovo, outraOrganizacao, comConsultas, tocamUnidades, x, type Conferencia } from "./xml-01-ajuda.js";
+import { prepararXml01, conferenciaLida, vinculoDo, eanNovo, emitenteNovo, outraOrganizacao, comConsultas, tocamUnidades, unidadesQueCasam, x, type Conferencia } from "./xml-01-ajuda.js";
 
 /**
  * XML-04 (decisão 318) — "o fator vem do cadastro, a forma vem da nota, e a duplicata diz por quê": a CONFERÊNCIA
@@ -21,13 +21,17 @@ import { prepararXml01, conferenciaLida, vinculoDo, eanNovo, emitenteNovo, outra
  *   XML4-C5  o código de barras de OUTRA unidade do produto é pergunta; o da própria unidade confirma;
  *   XML4-C6  a unidade da ORGANIZAÇÃO vence a do SISTEMA (a linha do produto na do sistema vira pergunta); sem a da
  *            organização, a do sistema vale;
- *   XML4-C7  CONSULTAS CONTADAS: 1 item e 10 itens (todos os caminhos e a forma) fazem o MESMO número de consultas;
+ *   XML4-C7  CONSULTAS CONTADAS: 1 item, 10 itens e 50 itens (todos os caminhos e a forma; os 50 com 25 produtos e 15
+ *            uCom distintos) fazem o MESMO número de consultas, e a consulta ÚNICA do cadastro leva todos eles;
  *   XML4-C8  a FORMA: ligada (do sistema e da organização), sem ligação, forma inativa, várias, sem tPag; a ligação
  *            EXCLUÍDA não vale; a de OUTRA organização não vale (o filtro explícito e a RLS, cada um sozinho);
  *   XML4-C9  as PARCELAS: `nao_conferem` com o total, a origem do líquido, as falhas e as diferenças, e a mensagem com
  *            os três números (o código e o `bloqueia` de antes); `sem_duplicatas` com o motivo, sem divergência;
  *   XML4-C10 o "Gerar compra" aceita o fator DIGITADO num item que é pergunta e a forma da nota; a forma inativa é
  *            recusada como sempre; o GET não grava vínculo, o gerar grava o fator digitado, e a nota seguinte o lembra.
+ *   XML4-C11 o CENÁRIO DA MEDIÇÃO (fase 0), com as unidades do seed: a principal dá 1, a alternativa dá o fator dela, os
+ *            DOIS itens com uCom fora do cadastro (U1 BD, U2 FD) perguntam COM a unidade, e o vínculo lembrado leva o
+ *            cadastro ao lado — o fator nunca cai no 1 em silêncio.
  */
 
 beforeAll(async () => { await iniciar(); await prepararXml01(); }, 240_000);
@@ -353,40 +357,78 @@ describe("XML4-C6 a unidade da ORGANIZAÇÃO vence a do SISTEMA", () => {
 /** As consultas da FORMA (a ligação da organização). */
 const daForma = (sqls: string[]): string[] => sqls.filter((s) => /\bfrom\s+erp\.formas_pagamento_da_nfe\b/.test(s));
 
+/**
+ * UM BLOCO dos 10 caminhos da contagem, com unidades, produtos e códigos PRÓPRIOS (nada repetido entre blocos: cada
+ * bloco a mais é produto, unidade e código a mais na nota): lembrado, código no fornecedor (unidade alternativa,
+ * principal e fora do cadastro), código de barras, referência, descrição (pergunta) e três `nenhum`. `registrar` grava,
+ * DEPOIS da importação (o fornecedor nasce com a nota), o vínculo lembrado e o código no fornecedor do bloco.
+ */
+async function blocoDaContagem() {
+  const u = unico().toUpperCase();
+  const [principal, caixa, fora] = [simboloNovo(), simboloNovo(), simboloNovo()];
+  const [uPrincipal, uCaixa] = [await unidade(principal), await unidade(caixa)];
+  await unidade(fora);
+  const ean = eanNovo();
+  const [t1, t2, t3] = [unico(), unico(), unico()];
+  const pLembrado = await produtoNovo(uPrincipal);
+  const pCodigo = await produtoNovo(uPrincipal);
+  await unidadeDoProduto(pCodigo.id, uCaixa, "12");
+  const pBarras = await produtoNovo(uPrincipal, { barcode: ean });
+  const pReferencia = await produtoNovo(uPrincipal, { reference: `CT-R-${u}` });
+  const pDescricao = await produtoNovo(uPrincipal, { descricao: `${t1} ${t2} ${t3}` });
+  const itens = [
+    item(`CT-L-${u}`, principal), item(`CT-C-${u}`, caixa), item(`CT-C-${u}`, principal), item(`CT-B-${u}`, principal, { ean }),
+    item(`CT-R-${u}`, principal), item(`CT-D-${u}`, caixa, { descricao: `${t1} ${t2} ${t3} CONTADO` }), item(`CT-C-${u}`, fora),
+    item(`CT-N1-${u}`, principal, { ean: eanNovo() }), item(`CT-N2-${u}`, fora), item(`CT-N3-${u}`, caixa),
+  ];
+  const registrar = async (fornecedor: string): Promise<void> => {
+    await lembrar(fornecedor, `CT-L-${u}`, principal, pLembrado.id, "1");
+    await codigoNoFornecedor(pCodigo.id, fornecedor, `CT-C-${u}`);
+  };
+  return {
+    u, principal, itens, registrar, pBarras, pReferencia, pDescricao,
+    /** Os símbolos (uCom) e os produtos que o bloco põe na consulta do cadastro. */
+    simbolos: [principal, caixa, fora], produtos: [pLembrado, pCodigo, pBarras, pReferencia, pDescricao].map((p) => p.id),
+  };
+}
+/** O caminho de cada item da conferência (o lembrado, a origem do sugerido, ou a situação). */
+const caminhosDa = (conf: Conferencia): string[] => conf.itens.map((i) => (i.vinculo.situacao === "sugerido" ? i.vinculo.origem : i.vinculo.situacao));
+/** De onde veio o fator de cada item com produto. */
+const origensDoFator = (conf: Conferencia) => conf.itens.filter((i) => i.vinculo.situacao === "sugerido" || i.vinculo.situacao === "lembrado")
+  .map((i) => (i.vinculo as VinculoComProduto).fatorPelaNota?.origem);
+/** A consulta do cadastro (premissa: exatamente uma) e o que ela pergunta: os uCom e os produtos, em ordem. */
+function consultaDoCadastro(medida: { sqls: string[]; params: unknown[][] }): { simbolos: string[]; produtos: string[] } {
+  const k = medida.sqls.findIndex((sql) => tocamUnidades([sql]).length > 0);
+  expect(k, "premissa: a consulta do cadastro foi feita").toBeGreaterThanOrEqual(0);
+  const p = medida.params[k]!;
+  return { simbolos: [...(p[1] as string[])].sort(), produtos: [...(p[2] as string[])].sort() };
+}
+
 describe("XML4-C7 CONSULTAS CONTADAS: nada por item", () => {
-  it("1 item e 10 itens (lembrado, código no fornecedor, código de barras, referência, descrição, pergunta, nenhum; com a forma da nota) → o MESMO número de consultas", async () => {
-    const u = unico().toUpperCase();
-    const [principal, caixa, fora] = [simboloNovo(), simboloNovo(), simboloNovo()];
-    const [uPrincipal, uCaixa] = [await unidade(principal), await unidade(caixa)];
-    await unidade(fora);
+  it("1, 10 e 50 itens (lembrado, código no fornecedor, código de barras, referência, descrição, pergunta, nenhum; com a forma da nota) → o MESMO número de consultas", async () => {
     const forma = await formaDaOrganizacao();
     await ligar("13", forma.id);
     const pagamentos = [{ tPag: "13", vPag: "20.00" }];
-    const ean = eanNovo();
-    const [t1, t2, t3] = [unico(), unico(), unico()];
-    const pLembrado = await produtoNovo(uPrincipal);
-    const pCodigo = await produtoNovo(uPrincipal);
-    await unidadeDoProduto(pCodigo.id, uCaixa, "12");
-    const pBarras = await produtoNovo(uPrincipal, { barcode: ean });
-    const pReferencia = await produtoNovo(uPrincipal, { reference: `CT-R-${u}` });
-    const pDescricao = await produtoNovo(uPrincipal, { descricao: `${t1} ${t2} ${t3}` });
-    const dez = await notaImportada([
-      item(`CT-L-${u}`, principal), item(`CT-C-${u}`, caixa), item(`CT-C-${u}`, principal), item(`CT-B-${u}`, principal, { ean }),
-      item(`CT-R-${u}`, principal), item(`CT-D-${u}`, caixa, { descricao: `${t1} ${t2} ${t3} CONTADO` }), item(`CT-C-${u}`, fora),
-      item(`CT-N1-${u}`, principal, { ean: eanNovo() }), item(`CT-N2-${u}`, fora), item(`CT-N3-${u}`, caixa),
-    ], { pagamentos: [{ tPag: "13", vPag: "200.00" }] });
-    await lembrar(dez.fornecedor, `CT-L-${u}`, principal, pLembrado.id, "1");
-    await codigoNoFornecedor(pCodigo.id, dez.fornecedor, `CT-C-${u}`);
+    const bloco = await blocoDaContagem();
+    const { u, principal, pBarras, pReferencia, pDescricao } = bloco;
+    const dez = await notaImportada(bloco.itens, { pagamentos: [{ tPag: "13", vPag: "200.00" }] });
+    await bloco.registrar(dez.fornecedor);
     const um = await notaImportada([item(`CT-UM-${u}`, principal, { ean: eanNovo() })], { pagamentos });
-    await conferenciaLida(dez.id); await conferenciaLida(um.id); // aquece a rota (o cache da autenticação)
+    // 50 itens: CINCO blocos dos 10 caminhos, cada um com os PRÓPRIOS produtos, unidades e códigos (25 produtos achados e
+    // 15 uCom distintos na MESMA consulta do cadastro).
+    const blocos: Awaited<ReturnType<typeof blocoDaContagem>>[] = [];
+    for (let k = 0; k < 5; k++) blocos.push(await blocoDaContagem());
+    const cinquenta = await notaImportada(blocos.flatMap((b) => b.itens), { pagamentos: [{ tPag: "13", vPag: "1000.00" }] });
+    for (const b of blocos) await b.registrar(cinquenta.fornecedor);
+    await conferenciaLida(dez.id); await conferenciaLida(um.id); await conferenciaLida(cinquenta.id); // aquece a rota (o cache da autenticação)
 
     const d = await comConsultas(() => conferenciaLida(dez.id));
     const s = await comConsultas(() => conferenciaLida(um.id));
-    const caminhos = d.r.itens.map((i) => (i.vinculo.situacao === "sugerido" ? i.vinculo.origem : i.vinculo.situacao));
+    const q = await comConsultas(() => conferenciaLida(cinquenta.id));
+    const caminhos = caminhosDa(d.r);
     expect(caminhos, "premissa: os 10 itens passam por todos os caminhos").toEqual([
       "lembrado", "codigo_fornecedor", "codigo_fornecedor", "codigo_barras", "reference", "descricao", "codigo_fornecedor", "nenhum", "nenhum", "nenhum"]);
-    expect(d.r.itens.filter((i) => i.vinculo.situacao === "sugerido" || i.vinculo.situacao === "lembrado")
-      .map((i) => (i.vinculo as VinculoComProduto).fatorPelaNota?.origem), "premissa: o fator de cada caminho saiu do cadastro")
+    expect(origensDoFator(d.r), "premissa: o fator de cada caminho saiu do cadastro")
       .toEqual(["vinculo", "unidade_do_produto", "unidade_principal", "unidade_principal", "unidade_principal", "pergunta", "pergunta"]);
     expect([pBarras.id, pReferencia.id, pDescricao.id], "premissa: os produtos dos caminhos 3 a 5").toEqual(
       [4, 5, 6].map((k) => (vinculoDo(d.r, k) as VinculoComProduto).produto.id));
@@ -395,7 +437,21 @@ describe("XML4-C7 CONSULTAS CONTADAS: nada por item", () => {
     expect([tocamUnidades(d.sqls).length, tocamUnidades(s.sqls).length], "UMA consulta do cadastro (unidades, produtos e linhas), 10 itens e 1").toEqual([1, 1]);
     expect([daForma(d.sqls).length, daForma(s.sqls).length], "UMA consulta da forma, 10 itens e 1").toEqual([1, 1]);
     expect(d.sqls.length, `o MESMO número de consultas, 10 itens e 1 (10: ${d.sqls.length}; 1: ${s.sqls.length})`).toBe(s.sqls.length);
-    console.log(`XML-04 A1b CONSULTAS ${JSON.stringify({ dezItens: d.sqls.length, umItem: s.sqls.length })}`);
+
+    // 50 itens: os MESMOS caminhos e as MESMAS origens do fator, cinco vezes — e a MESMA contagem de 1 e de 10.
+    expect(q.r.itens, "premissa: a nota tem 50 itens").toHaveLength(50);
+    expect(caminhosDa(q.r), "premissa: os 50 itens passam pelos mesmos caminhos (cinco blocos)").toEqual(blocos.flatMap(() => caminhos));
+    expect(origensDoFator(q.r), "premissa: o fator dos 50 saiu do cadastro como o dos 10").toEqual(blocos.flatMap(() => origensDoFator(d.r)));
+    expect(blocos.flatMap((b) => [b.pBarras.id, b.pReferencia.id, b.pDescricao.id]), "premissa: os produtos dos caminhos 3 a 5 de cada bloco")
+      .toEqual(blocos.flatMap((_, b) => [4, 5, 6].map((k) => (vinculoDo(q.r, b * 10 + k) as VinculoComProduto).produto.id)));
+    expect(q.r.financeiro.forma, "premissa: a forma ligada").toEqual({ situacao: "ligada", tPag: "13", forma });
+    expect([tocamUnidades(q.sqls).length, daForma(q.sqls).length], "UMA consulta do cadastro e UMA da forma, 50 itens").toEqual([1, 1]);
+    expect([consultaDoCadastro(d), consultaDoCadastro(q)], "a consulta ÚNICA leva TODOS os uCom e TODOS os produtos achados: 3 e 5 (10 itens), 15 e 25 (50 itens)")
+      .toEqual([{ simbolos: [...bloco.simbolos].sort(), produtos: [...bloco.produtos].sort() },
+        { simbolos: blocos.flatMap((b) => b.simbolos).sort(), produtos: blocos.flatMap((b) => b.produtos).sort() }]);
+    expect([q.sqls.length, d.sqls.length], `o MESMO número de consultas, 50 itens, 10 e 1 (50: ${q.sqls.length}; 10: ${d.sqls.length}; 1: ${s.sqls.length})`)
+      .toEqual([s.sqls.length, s.sqls.length]);
+    console.log(`XML4-C7 CONSULTAS ${JSON.stringify({ umItem: s.sqls.length, dezItens: d.sqls.length, cinquentaItens: q.sqls.length })}`);
   });
 });
 
@@ -589,6 +645,72 @@ describe("XML4-C10 o \"Gerar compra\" com o fator DIGITADO e a forma da NOTA", (
     expect(fatorDo(conf2, 1)).toEqual({ caminho: "lembrado", produto: p.id, fator: "12.000000", tipoFator: "multiply",
       fatorPelaNota: { origem: "vinculo", unidadeDaNota: caixa, cadastro: null }, quantidadeInterna: "24.0000" });
     expect(doFator(conf2, 1)).toEqual([]);
+  });
+});
+
+// ═════════════════════════════════════ XML4-C11 o cenário da medição ═════════════════════════════════════
+
+/**
+ * O CENÁRIO DA MEDIÇÃO da fase 0 (`ITENS_DO_CENARIO` de `apps/web/e2e/xml-04-comum.ts`), na conferência e com as
+ * unidades do SEED (do sistema): P1..P4 na unidade principal; A1..A3 numa alternativa de compra com fator ≠ 1; U1 (BD) e
+ * U2 (FD) com um uCom que o cadastro do produto NÃO tem — os nove pela REFERÊNCIA, o caminho cujo fator era o "1" fixo
+ * (`FATOR_SEM_UNIDADE`) —; e o V pelo vínculo LEMBRADO (6) contra o cadastro (CX = 12).
+ */
+interface ItemDaMedicao { papel: string; uCom: string; principal: string; alternativa: { unidade: string; fator: string } | null; vinculo: string | null }
+const CENARIO_DA_MEDICAO: readonly ItemDaMedicao[] = [
+  { papel: "P1", uCom: "KG", principal: "KG", alternativa: null, vinculo: null },
+  { papel: "P2", uCom: "L", principal: "L", alternativa: null, vinculo: null },
+  { papel: "P3", uCom: "UN", principal: "UN", alternativa: null, vinculo: null },
+  { papel: "P4", uCom: "SC", principal: "SC", alternativa: null, vinculo: null },
+  { papel: "A1", uCom: "SC", principal: "KG", alternativa: { unidade: "SC", fator: "50" }, vinculo: null },
+  { papel: "A2", uCom: "CX", principal: "UN", alternativa: { unidade: "CX", fator: "24" }, vinculo: null },
+  { papel: "A3", uCom: "GL", principal: "L", alternativa: { unidade: "GL", fator: "5" }, vinculo: null },
+  { papel: "U1", uCom: "BD", principal: "KG", alternativa: null, vinculo: null },
+  { papel: "U2", uCom: "FD", principal: "UN", alternativa: null, vinculo: null },
+  { papel: "V", uCom: "CX", principal: "UN", alternativa: { unidade: "CX", fator: "12" }, vinculo: "6" },
+];
+
+describe("XML4-C11 o cenário da MEDIÇÃO: os 2 itens com uCom fora do cadastro PERGUNTAM, com a unidade — nunca 1 em silêncio", () => {
+  it("P1..P4 → 1 (principal); A1..A3 → o fator da alternativa; U1 (BD) e U2 (FD) → pergunta com a unidade e o aviso que a diz; V → o vínculo (6), com o cadastro (12) ao lado", async () => {
+    const doSeed = new Map<string, string>();
+    for (const s of new Set(CENARIO_DA_MEDICAO.flatMap((i) => [i.uCom, i.principal, ...(i.alternativa ? [i.alternativa.unidade] : [])]))) {
+      const casam = await unidadesQueCasam(s);
+      expect(casam, `premissa: o uCom ${s} casa com UMA unidade, a do sistema (seed), e com nenhuma da organização`).toEqual({ organizacao: [], sistema: [expect.any(String)] });
+      doSeed.set(s, casam.sistema[0]!);
+    }
+    const u = unico().toUpperCase();
+    const codigo = (papel: string) => `MD-${papel}-${u}`;
+    const produtos: Produto[] = [];
+    for (const i of CENARIO_DA_MEDICAO) {
+      const p = await produtoNovo(doSeed.get(i.principal)!, i.vinculo ? {} : { reference: codigo(i.papel) });
+      if (i.alternativa) await unidadeDoProduto(p.id, doSeed.get(i.alternativa.unidade)!, i.alternativa.fator);
+      produtos.push(p);
+    }
+    const n = await notaImportada(CENARIO_DA_MEDICAO.map((i) => item(codigo(i.papel), i.uCom)));
+    const nV = CENARIO_DA_MEDICAO.findIndex((i) => i.vinculo !== null) + 1;
+    await lembrar(n.fornecedor, codigo("V"), "CX", produtos[nV - 1]!.id, "6");
+    const conf = await conferenciaLida(n.id);
+    const doItem = (nItem: number) => ({ produto: produtos[nItem - 1]!.id, quantidadeInterna: "2.0000" });
+    const naPrincipal = (nItem: number) => ({ caminho: "reference", ...doItem(nItem), fator: "1", tipoFator: "multiply",
+      fatorPelaNota: { origem: "unidade_principal", unidadeDaNota: CENARIO_DA_MEDICAO[nItem - 1]!.uCom } });
+    const naAlternativa = (nItem: number, fator: string, quantidadeInterna: string) => ({ caminho: "reference", ...doItem(nItem), fator, tipoFator: "multiply",
+      fatorPelaNota: { origem: "unidade_do_produto", unidadeDaNota: CENARIO_DA_MEDICAO[nItem - 1]!.uCom }, quantidadeInterna });
+    const pergunta = (nItem: number) => ({ caminho: "reference", ...doItem(nItem), fator: "1", tipoFator: "multiply",
+      fatorPelaNota: { origem: "pergunta", unidadeDaNota: CENARIO_DA_MEDICAO[nItem - 1]!.uCom, motivo: "unidade_fora_do_cadastro" } });
+    expect(CENARIO_DA_MEDICAO.map((_, k) => fatorDo(conf, k + 1))).toEqual([
+      naPrincipal(1), naPrincipal(2), naPrincipal(3), naPrincipal(4),
+      naAlternativa(5, "50.000000", "100.0000"), naAlternativa(6, "24.000000", "48.0000"), naAlternativa(7, "5.000000", "10.0000"),
+      pergunta(8), pergunta(9),
+      { caminho: "lembrado", ...doItem(10), fator: "6.000000", tipoFator: "multiply", quantidadeInterna: "12.0000",
+        fatorPelaNota: { origem: "vinculo", unidadeDaNota: "CX", cadastro: { fator: "12.000000", tipoFator: "multiply" } } },
+    ]);
+    // U1 e U2: a pergunta diz a UNIDADE que a nota trouxe (o fator "1" do fio é só a compatibilidade com a web anterior).
+    expect([doFator(conf, 8), doFator(conf, 9)], "U1 e U2: o aviso com a unidade da nota (BD, FD) e o produto")
+      .toEqual([[perguntaFora(8, "BD", produtos[7]!)], [perguntaFora(9, "FD", produtos[8]!)]]);
+    expect(CENARIO_DA_MEDICAO.map((_, k) => doFator(conf, k + 1).map((x) => x.codigo)), "nenhum outro aviso de fator, só o do V")
+      .toEqual([[], [], [], [], [], [], [], ["fator_a_informar"], ["fator_a_informar"], ["fator_do_vinculo_diferente_do_cadastro"]]);
+    expect(doFator(conf, 10)[0]!.mensagem).toBe(
+      `Item 10: o vínculo lembrado usa fator 6 (multiplica); o cadastro do produto ${produtos[9]!.codigo}, para a unidade CX, diz 12 (multiplica). Vale o do vínculo: confira.`);
   });
 });
 

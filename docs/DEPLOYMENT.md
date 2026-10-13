@@ -4760,6 +4760,141 @@ Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registro
 identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.
 
 
+## XML-04 — o fator vem do cadastro, a forma vem da nota, a duplicata diz por quê (0064, decisão 318)
+
+Decisão 318. Faixa **F1**. **Uma migration: `0064_formas_pagamento_da_nfe.sql`** (pre-deploy; trava (2026,98),
+`lock_timeout` 2 s, pré/pós-condições nomeadas `XML-04: ...`, não destrutiva, sem backfill e sem semente, sem
+`begin`/`commit` próprio — o runner aplica o arquivo numa transação e registra o nome no ledger). O que ela faz: CRIA a
+tabela `erp.formas_pagamento_da_nfe`, a ligação, por organização, do código tPag da NF-e a uma forma de pagamento
+(`erp.payment_methods`, da organização ou do sistema) — `id`, `organization_id` (FK
+`fk_formas_pagamento_da_nfe_organizacao` → `erp.organizations`), `codigo_tpag` (CHECK
+`chk_formas_pagamento_da_nfe_codigo_tpag`, dois dígitos), `forma_pagamento_id` (FK `fk_formas_pagamento_da_nfe_forma` →
+`erp.payment_methods`), `created_at`, `updated_at` e `deleted_at`, sem `empresa_id` e sem `is_active` —; o índice único
+PARCIAL `ux_formas_pagamento_da_nfe_codigo_vivo` em `(organization_id, codigo_tpag) where deleted_at is null` (um código
+vivo por organização; a mesma forma pode receber vários códigos); a função `erp.formas_pagamento_da_nfe_forma_guarda()`
+(plpgsql, SECURITY INVOKER, `search_path = erp, pg_temp`, EXECUTE tirado de todo papel além do dono) e três gatilhos por
+linha — `trg_formas_pagamento_da_nfe_forma` (BEFORE INSERT OR UPDATE: a forma é da organização da ligação ou do sistema,
+senão `VALIDATION_ERROR`, P0001 → 422, a MESMA recusa para a forma inexistente; excluir nunca é bloqueado),
+`trg_formas_pagamento_da_nfe_updated` (`erp.set_updated_at`) e `trg_formas_pagamento_da_nfe_audit` (`erp.audit_row`, o
+histórico do cadastro) —; a RLS habilitada e forçada com a política ÚNICA `tenant_isolation` (a mesma de
+`erp.condicoes_pagamento`); `erp_app` com select, insert e update, delete e truncate revogados (a exclusão é lógica).
+**Não altera nenhuma tabela existente:** nenhum ALTER, UPDATE, DELETE, TRUNCATE, DROP, CREATE OR REPLACE nem INSERT de
+dado (a varredura de `packages/db/test/xml-04-0064.test.ts`, X8). As duas FKs APONTAM para `erp.organizations` e
+`erp.payment_methods`: criar cada uma pede, por um instante, a trava SHARE ROW EXCLUSIVE da tabela referida (bloqueia a
+escrita nela, não a leitura); com uma transação de escrita aberta numa delas, a migration desiste em 2 s sem aplicar nada
+(X3), e o deploy é refeito (seguro: nada foi aplicado). **Nenhuma variável nova, nenhuma permissão nova:** o cadastro
+usa `sales` (a das Formas de Pagamento; o menu, `sales.view`); a conferência e o "Gerar compra" continuam com
+`compras.create`. O que entra junto com ela: na API, a conferência da importação (`GET /api/compras/importacoes/:id`,
+`apps/api/src/lib/importacao-nfe-conferencia.ts`) com o fator pelo cadastro, a forma que a nota diz e as parcelas que
+dizem por quê, e o recurso genérico `formas_pagamento_da_nfe` (`/api/resources/formas_pagamento_da_nfe`, pelo registry);
+na web, a conferência do XML (`apps/web/src/features/compras/importacao/**`) e o cadastro "Formas de Pagamento da NF-e"
+em Configurações › Financeiro. O "Gerar compra" não mudou. Contrato em `docs/PORTAIS-OPERACIONAIS-CONTRACT.md` § "O
+fator, a forma e a duplicata da nota (XML-04, decisão 318)".
+
+**Pré-condição:** a 0064 recusa, com a mensagem nomeada e sem aplicar nada:
+- **a trava (2026,98) já detida** por outra transação — antes de tudo (`XML-04: outra transacao ja detem a trava desta
+  migration (2026,98). Nada foi aplicado.`); a trava da 0063, (2026,97), não a segura;
+- **já aplicada ou schema divergente** — `erp.formas_pagamento_da_nfe` já existe (`XML-04: erp.formas_pagamento_da_nfe ja
+  existe; a 0064 ja foi aplicada ou ha schema divergente.`, a PRIMEIRA pergunta, por `to_regclass`, para a reaplicação
+  dizer o motivo verdadeiro); a função `erp.formas_pagamento_da_nfe_forma_guarda()` já existe; já existe uma relação
+  `erp.ux_formas_pagamento_da_nfe_codigo_vivo`;
+- **a cadeia de migrations fora de ordem** — a 0063 não aplicada (`erp.documentos_compra.version` ausente);
+  `erp.organizations` ausente; `erp.set_updated_at()`, `erp.audit_row()` ou `erp.tenant_visible(uuid)` ausentes;
+- **a premissa do gatilho** — `erp.payment_methods` ausente, ou sem `id` e `organization_id` do tipo uuid;
+- **a política de referência** — a `tenant_isolation` de `erp.condicoes_pagamento` (0031) ausente (a pós-condição compara
+  a da tabela nova com ela);
+- **o papel da aplicação** — `erp_app` não existe;
+- **quem aplica** não cria objetos no schema `erp`, ou não tem REFERENCES em `erp.organizations` ou em
+  `erp.payment_methods` (as FKs seriam recusadas no meio, com um erro genérico em vez do motivo nomeado).
+
+**Pós-condições** (catálogo, nunca contagem de tabela viva; uma mensagem por objeto): a tabela comum do schema `erp`; as
+colunas EXATAS, na ordem — nome, tipo, not null e default (sem `is_active`, sem `empresa_id`); a chave primária em `id`;
+o CHECK de dois dígitos; as duas FKs, coluna a coluna, e só as duas; os índices únicos — a chave primária e o parcial do
+código vivo, e nenhum outro (nada único na forma); a guarda (plpgsql, retorna trigger, SECURITY INVOKER, `search_path`
+fixo) e o EXECUTE só do dono; os três gatilhos EXATOS (nome, tipo e função; ligados como 'O', sem coluna, sem WHEN, sem
+argumento); a RLS habilitada e forçada com a política ÚNICA igual à de `erp.condicoes_pagamento` (`qual`, `with_check` e
+papéis); os privilégios do `erp_app` (select, insert e update; nada de delete, truncate, references ou trigger). Em erro,
+publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0064) → API → web.** A API nova lê a tabela nova (a consulta da forma, quando a nota traz um tPag, e o
+recurso do cadastro): por isso a 0064 é pre-deploy da API, e a API não sobe sem ela. Janelas:
+1. **API ANTERIOR × banco novo:** a API anterior não conhece `erp.formas_pagamento_da_nfe`; nada do que ela lê ou grava
+   passa pela tabela nova (vazia), e nenhuma tabela que ela usa mudou — as FKs novas só apontam para `erp.organizations`
+   e `erp.payment_methods`, sem mudar uma linha delas. O registry anterior não tem o recurso: nada o chama.
+2. **web ANTERIOR × API nova:** a conferência é ADITIVA (`itens[].vinculo.fatorPelaNota`, `financeiro.forma`, os campos
+   novos de `financeiro.parcelas`, `nota.pagamentos`, `nota.duplicatasDescartadas`) e a web anterior não os lê; as duas
+   divergências novas do fator (`fator_a_informar`, `fator_do_vinculo_diferente_do_cadastro`) chegam com
+   `bloqueia: false` e aparecem como AVISO na aba Divergências; o fator da PERGUNTA continua vindo "1" (o valor de
+   compatibilidade). A conferência abre e o "Gerar compra" dá 201 (o caso K2 de
+   `apps/web/e2e/xml-04-skew-web-anterior.spec.ts`; o resultado em `docs/TESTING.md`). **O risco da janela**, declarado
+   na decisão 318: quem gerar sem conferir grava o 1 nos itens perguntados — o que a web anterior já fazia na referência
+   e na descrição; no código de barras de outra unidade do produto a main dava o fator da unidade dona do código, e a
+   janela dá 1 com o aviso —, e a forma da nota não vem escolhida. A janela é a do deploy. O menu da web anterior não tem o cadastro novo.
+3. **web NOVA × API anterior:** a conferência da API anterior não traz `fatorPelaNota` nem `financeiro.forma`, e a tela é
+   a de antes: o fator como o servidor manda, nenhuma origem, pergunta ou aviso novo, NENHUM pedido à TOP
+   (`/regras-da-operacao`, `/layout-efetivo`) e o corpo do "Gerar compra" idêntico (o caso K1 de
+   `apps/web/e2e/xml-04-skew-api-producao.spec.ts`: 201); a explicação das duplicatas não depende da API (a tela recalcula
+   as parcelas com a regra do domínio que embute, que não mudou). A entrada "Formas de Pagamento da NF-e" do menu aparece,
+   mas a API anterior não tem o recurso: a aba recebe a recusa do servidor e nada é gravado.
+
+**Por que a ordem inversa também é segura** (web antes da API, ou a volta só da API): todos os campos novos são
+aditivos e a web nova os lê por PROPRIEDADE PRÓPRIA (sem eles, a tela de antes, byte a byte no corpo); a API anterior
+ignora a tabela nova. O que NÃO é seguro é a API nova sem a 0064 — o pre-deploy garante a ordem.
+
+**Impacto em dados reais (decisão 240): a 0064 cria uma tabela VAZIA; nenhum registro existente muda; nada se apaga
+(decisão 247).**
+- **A FORMA: nenhum efeito no dia do merge.** Nenhuma ligação existe (sem backfill, sem semente): a conferência devolve
+  `sem_ligacao` (ou `varias`/`sem_tpag`), e a forma continua PERGUNTA — ou o padrão da TOP que a cobra (decisão 311) —
+  até o dono ligar os códigos no cadastro novo. É o mesmo padrão da 311 com o local do produto. Ligar um código é decisão
+  do dono, pelo cadastro, com a trilha de auditoria.
+- **O FATOR: muda de comportamento JÁ no dia do merge.** O item cujo uCom não é unidade do produto no cadastro (nem a
+  principal, nem uma linha de `erp.produto_unidades` viva e de compra), cuja linha é só de venda, ou cujo cEAN é o
+  código de barras de OUTRA unidade do produto passa a PERGUNTAR — o campo vazio e a pendência do fator até a pessoa
+  digitar — em vez de vir com o 1 (a referência e a descrição) ou com o fator da ficha do fornecedor ou da unidade dona
+  do código de barras; o item cujo uCom é uma alternativa de compra passa a vir com o fator dela (antes, 1 na referência
+  e na descrição); o código no fornecedor com a ficha numa unidade e a nota em outra passa a seguir a NOTA. Onde a ficha,
+  o código de barras e a nota dizem a mesma unidade, o número é o da main (`apps/api/test/integration/xml-04-nao-regressao.test.ts`).
+  Os vínculos lembrados continuam valendo com o fator deles (o cadastro discordando só avisa). A conferência continua só
+  lendo: a importação pendente em produção passa a mostrar o fator novo na próxima leitura, e o "Gerar compra" só grava
+  o que a pessoa confirma. Sem chave de ativação: a 240 (4) desliga EFEITO novo (o que grava ou movimenta), e esta fatia
+  não grava nada que a pessoa não confirme; o prompt da fatia proíbe variável nova.
+
+**Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0064 FICA: a API anterior convive
+com ela (janela 1) — vazia, ou com as ligações que o dono criou, que nada fazem na API anterior. Voltando só a API, a web
+nova vê a conferência sem os campos novos (janela 3) e o cadastro das ligações deixa de responder; voltando só a web,
+vale a janela 2. As ligações criadas pelo dono são dado de produção: nunca apagadas (decisão 247), nunca DROP; tirar a
+tabela, a função ou os gatilhos só por migration NOVA, e é decisão do Maike — nunca editando a 0064. As compras geradas
+com o fator do cadastro ou com a forma da nota são compras comuns e ficam.
+
+**Conferência de PRODUÇÃO depois do deploy (só SELECT e leitura de catálogo; nada de escrita, nem dentro de transação
+com rollback):**
+1. o ledger traz a `0064_formas_pagamento_da_nfe.sql` como a última: `select name from public.erp_migrations order by name desc limit 1`;
+2. as colunas, na ordem (7: `id`, `organization_id`, `codigo_tpag`, `forma_pagamento_id`, `created_at`, `updated_at`,
+   `deleted_at`): `select column_name, data_type, is_nullable, column_default from information_schema.columns where table_schema = 'erp' and table_name = 'formas_pagamento_da_nfe' order by ordinal_position`;
+3. as restrições (4: o CHECK, as duas FKs e a PK): `select conname, pg_get_constraintdef(oid) from pg_constraint where conrelid = 'erp.formas_pagamento_da_nfe'::regclass order by conname`;
+4. os índices (2: a PK e o parcial `where (deleted_at is null)`): `select indexname, indexdef from pg_indexes where schemaname = 'erp' and tablename = 'formas_pagamento_da_nfe' order by indexname`;
+5. os gatilhos (3, ligados como 'O'): `select tgname, tgenabled from pg_trigger where tgrelid = 'erp.formas_pagamento_da_nfe'::regclass and not tgisinternal order by tgname`;
+6. a RLS e a política: `select relrowsecurity, relforcerowsecurity from pg_class where oid = 'erp.formas_pagamento_da_nfe'::regclass`
+   (t, t) e `select policyname, cmd, permissive, roles from pg_policies where schemaname = 'erp' and tablename = 'formas_pagamento_da_nfe'` (uma linha: `tenant_isolation`, ALL);
+7. os privilégios do `erp_app` (INSERT, SELECT, UPDATE): `select privilege_type from information_schema.role_table_grants where table_schema = 'erp' and table_name = 'formas_pagamento_da_nfe' and grantee = 'erp_app' order by 1`;
+8. a guarda (não SECURITY DEFINER, `search_path` fixo, sem EXECUTE do `erp_app`): `select prosecdef, proconfig, has_function_privilege('erp_app', oid, 'execute') from pg_proc where oid = 'erp.formas_pagamento_da_nfe_forma_guarda()'::regprocedure`;
+9. nenhuma ligação semeada (0 até o dono ligar) e o acervo de formas intacto (o mesmo número do gate abaixo):
+   `select count(*) from erp.formas_pagamento_da_nfe` e `select count(*), count(*) filter (where organization_id is null) from erp.payment_methods`.
+
+**PENDING (gate externo):** a aplicação da 0064 em produção pelo pipeline e a conferência pós-deploy autenticada (a
+conferência de uma importação pela API nova trazendo `fatorPelaNota` e `financeiro.forma`, e o cadastro "Formas de
+Pagamento da NF-e" respondendo) exigem acesso autenticado a produção — sem ele, PENDING; nunca substituídos por local,
+preview ou CI.
+
+### Gate de produção (pré-merge, só leitura)
+
+O estado de produção sobre o qual as pré-condições da 0064 passam, objeto por objeto, a contagem de
+`erp.payment_methods` (quantas são do sistema), se a aplicação é instantânea, e a lista íntegra dos comandos rodados —
+só SELECT e leitura de catálogo:
+
+<<GATE_PRODUCAO>>
+
+
 ## EDITAR-02 — editar a compra e o pedido abertos (0063)
 
 Decisão 313. Faixa **F1**. **Uma migration: `0063_versao_do_documento_de_compra.sql`** (pre-deploy; trava (2026,97),
