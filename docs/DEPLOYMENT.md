@@ -4780,9 +4780,14 @@ histórico do cadastro) —; a RLS habilitada e forçada com a política ÚNICA 
 `erp.condicoes_pagamento`); `erp_app` com select, insert e update, delete e truncate revogados (a exclusão é lógica).
 **Não altera nenhuma tabela existente:** nenhum ALTER, UPDATE, DELETE, TRUNCATE, DROP, CREATE OR REPLACE nem INSERT de
 dado (a varredura de `packages/db/test/xml-04-0064.test.ts`, X8). As duas FKs APONTAM para `erp.organizations` e
-`erp.payment_methods`: criar cada uma pede, por um instante, a trava SHARE ROW EXCLUSIVE da tabela referida (bloqueia a
-escrita nela, não a leitura); com uma transação de escrita aberta numa delas, a migration desiste em 2 s sem aplicar nada
-(X3), e o deploy é refeito (seguro: nada foi aplicado). **Nenhuma variável nova, nenhuma permissão nova:** o cadastro
+`erp.payment_methods`: criar cada uma toma a trava SHARE ROW EXCLUSIVE da tabela referida, que fica até o COMMIT da
+migration — a ESCRITA em `erp.payment_methods` e em `erp.organizations` espera por esse tempo (medido localmente: 20 a
+30 ms), a leitura não —; com uma transação de escrita aberta numa delas, a migration desiste em 2 s sem aplicar nada
+(X3, provado nas duas tabelas), e o deploy é refeito (seguro: nada foi aplicado). **Efeito da FK no cadastro que já
+existia:** uma forma DA ORGANIZAÇÃO que já teve ligação — mesmo excluída, porque a exclusão é lógica e a linha fica —
+não se apaga mais pelo cadastro de Formas de Pagamento (a FK recusa: 409 "Registro referenciado"); a que nunca foi
+ligada se apaga como antes (XA5). Na produção de hoje o efeito é nulo: as 10 formas são do sistema, que a organização
+já não apaga. **Nenhuma variável nova, nenhuma permissão nova:** o cadastro
 usa `sales` (a das Formas de Pagamento; o menu, `sales.view`); a conferência e o "Gerar compra" continuam com
 `compras.create`. O que entra junto com ela: na API, a conferência da importação (`GET /api/compras/importacoes/:id`,
 `apps/api/src/lib/importacao-nfe-conferencia.ts`) com o fator pelo cadastro, a forma que a nota diz e as parcelas que
@@ -4828,17 +4833,23 @@ recurso do cadastro): por isso a 0064 é pre-deploy da API, e a API não sobe se
    compatibilidade). A conferência abre e o "Gerar compra" dá 201 (o caso K2 de
    `apps/web/e2e/xml-04-skew-web-anterior.spec.ts`; o resultado em `docs/TESTING.md`). **O risco da janela**, declarado
    na decisão 318: quem gerar sem conferir grava o 1 nos itens perguntados — o que a web anterior já fazia na referência
-   e na descrição; no código de barras de outra unidade do produto a main dava o fator da unidade dona do código, e a
-   janela dá 1 com o aviso —, e a forma da nota não vem escolhida. A janela é a do deploy. O menu da web anterior não tem o cadastro novo.
+   e na descrição — e, como o "Lembrar" da web anterior nasce marcado no código no fornecedor e no código de barras,
+   esse 1 vira VÍNCULO LEMBRADO, que nas notas seguintes vence sem pergunta. Onde a main dava um número e a API nova
+   pergunta (a linha só de venda, o uCom que não é unidade do cadastro, a unidade do sistema com homônima da
+   organização, o código de barras de outra unidade), a janela troca esse número pelo 1. **Na produção de hoje isso não
+   muda número nenhum:** com 0 linhas vivas em `erp.produto_unidades` (gate abaixo), a main também dá 1 em todos esses
+   caminhos. O risco cresce só se o dono cadastrar unidades alternativas enquanto algum navegador ainda roda o bundle
+   anterior. A forma da nota não vem escolhida. A janela é a do deploy. O menu da web anterior não tem o cadastro novo.
 3. **web NOVA × API anterior:** a conferência da API anterior não traz `fatorPelaNota` nem `financeiro.forma`, e a tela é
    a de antes: o fator como o servidor manda, nenhuma origem, pergunta ou aviso novo, NENHUM pedido à TOP
-   (`/regras-da-operacao`, `/layout-efetivo`) e o corpo do "Gerar compra" idêntico (o caso K1 de
-   `apps/web/e2e/xml-04-skew-api-producao.spec.ts`: 201); a explicação das duplicatas não depende da API (a tela recalcula
+   (`/regras-da-operacao`, `/layout-efetivo`), nenhuma resposta 404/422/5xx à tela, e o corpo do "Gerar compra" com as
+   MESMAS chaves da web anterior, na mesma ordem (topo, financeiro, rateio e cada item), a forma vazia e os fatores como o
+   servidor manda (o caso K1 de `apps/web/e2e/xml-04-skew-api-producao.spec.ts`, que mede as chaves no fio: 201); a explicação das duplicatas não depende da API (a tela recalcula
    as parcelas com a regra do domínio que embute, que não mudou). A entrada "Formas de Pagamento da NF-e" do menu aparece,
    mas a API anterior não tem o recurso: a aba recebe a recusa do servidor e nada é gravado.
 
 **Por que a ordem inversa também é segura** (web antes da API, ou a volta só da API): todos os campos novos são
-aditivos e a web nova os lê por PROPRIEDADE PRÓPRIA (sem eles, a tela de antes, byte a byte no corpo); a API anterior
+aditivos e a web nova os lê por PROPRIEDADE PRÓPRIA (sem eles, a tela de antes, com as mesmas chaves no corpo — K1); a API anterior
 ignora a tabela nova. O que NÃO é seguro é a API nova sem a 0064 — o pre-deploy garante a ordem.
 
 **Impacto em dados reais (decisão 240): a 0064 cria uma tabela VAZIA; nenhum registro existente muda; nada se apaga
