@@ -246,7 +246,12 @@ export interface ProdutoDoVinculo {
 
 export type VinculoDoItemDaNota =
   | { situacao: "lembrado"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator }
-  | { situacao: "sugerido"; origem: "codigo_fornecedor" | "codigo_barras" | "reference" | "descricao"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator }
+  | { situacao: "sugerido"; origem: "codigo_fornecedor" | "codigo_barras" | "reference"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator }
+  /**
+   * A DESCRIÇÃO semelhante (XML-02, decisão 314) só SUGERE: o item continua sendo um item que a nota pode cadastrar, e
+   * por isso leva o MESMO pré-preenchimento do `nenhum` (a tela oferece "criar o produto" também para ele).
+   */
+  | { situacao: "sugerido"; origem: "descricao"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator; preenchimento: PreenchimentoDoProduto }
   | { situacao: "ambiguo"; candidatos: ProdutoDoVinculo[] }
   | { situacao: "nenhum"; preenchimento: PreenchimentoDoProduto };
 

@@ -3,7 +3,11 @@ import pg from "pg";
 import { mesmoNcm, TETO_DE_CANDIDATOS_DA_DESCRICAO, type VinculoDoItemDaNota } from "@agro/domain";
 import { c, iniciar, encerrar, unico } from "./top-config-08-ajuda.js";
 import { conferencia, importada, notaSintetica, type ItemSintetico } from "./f7-ajuda.js";
-import { prepararXml01, notaImportada, conferenciaLida, vinculoDo, eanNovo, outraOrganizacao, x, type Conferencia } from "./xml-01-ajuda.js";
+import {
+  prepararXml01, notaImportada, conferenciaLida, vinculoDo, eanNovo, outraOrganizacao, x, type Conferencia,
+  criarProdutos, criados, corpoLote, recusa, caminhos, fotografia, produtosNoBanco, unidadeDaOrganizacao, NCM_VIGENTE,
+} from "./xml-01-ajuda.js";
+import { MSG_ITEM_COM_PRODUTO } from "../../src/routes/compras-importacao.js";
 import { sqlMesmoNcm } from "../../src/lib/importacao-nfe-conferencia.js";
 
 /**
@@ -30,7 +34,10 @@ import { sqlMesmoNcm } from "../../src/lib/importacao-nfe-conferencia.js";
  *            ⇒ o MESMO número de consultas de 1 item;
  *   XML2-I8  o TETO: 7 acima do limiar ⇒ ambíguo com 5, na ordem do domínio; o corte é no SQL (o NCM decide quem entra);
  *   XML2-I9  a fronteira do limiar no SQL real: exatamente ½ (2/4 e 3/6) não casa; 3/5 casa;
- *   XML2-I10 o "mesmo NCM" do SQL (o desempate do corte) é o `mesmoNcm` do domínio, par a par.
+ *   XML2-I10 o "mesmo NCM" do SQL (o desempate do corte) é o `mesmoNcm` do domínio, par a par;
+ *   XML2-I11 o LOTE do XML-01 olha só a IDENTIDADE (caminhos 1 a 4): o item que a descrição sugere leva o pré-preenchimento
+ *            do `nenhum` (com a unidade) e o lote o CRIA; o sugerido pela referência continua recusado (422, nada criado);
+ *            e o lote não faz a consulta da descrição.
  */
 
 beforeAll(async () => { await iniciar(); await prepararXml01(); }, 240_000);
@@ -445,5 +452,45 @@ describe("XML2-I10 o \"mesmo NCM\" do SQL é o mesmoNcm do domínio", () => {
     const doDominio = pares.map(([a, b]) => mesmoNcm(a, b));
     expect(r.rows.map((x0) => x0.igual)).toEqual(doDominio);
     expect([doDominio.filter(Boolean).length, doDominio.filter((v) => !v).length], "premissa: os dois lados aparecem").toEqual([4, 11]);
+  });
+});
+
+// ═════════════════════════════════════ XML2-I11 o lote olha só a identidade ═════════════════════════════════════
+
+describe("XML2-I11 o lote do XML-01 olha só a IDENTIDADE (caminhos 1 a 4)", () => {
+  it("o sugerido pela descrição leva o pré-preenchimento com a unidade e o lote o CRIA (sem a consulta da descrição); o sugerido pela referência é recusado e nada é criado", async () => {
+    const u = unico();
+    const dDescricao = `ROCADEIRA LATERAL GASOLINA ${unico()} ${unico()}`;
+    const parecido = await produtoNovo(dDescricao.replace("GASOLINA", "GASOLINA 52CC"));
+    const peloCodigo = await produtoNovo(`PRODUTO DA REFERENCIA DO LOTE ${unico()}`, { reference: `LT-${u}` });
+    const un = await unidadeDaOrganizacao("UN");
+    const n = await notaImportada([
+      item(`LD-${u}`, dDescricao, { ncm: NCM_VIGENTE }),
+      item(`LT-${u}`, `ITEM PELA REFERENCIA ${unico()}`, { ncm: NCM_VIGENTE }),
+    ]);
+    const conf = await conferenciaLida(n.id);
+    expect(resumos(conf), "premissa: 1 pela descrição, 2 pela referência").toEqual([sugerido("descricao", parecido), sugerido("reference", peloCodigo)]);
+    const v1 = vinculoDo(conf, 1) as Extract<VinculoDoItemDaNota, { origem: "descricao" }>;
+    expect(v1.preenchimento, "o sugerido pela descrição leva o pré-preenchimento do nenhum, com a unidade do uCom")
+      .toEqual({ description: dDescricao, ncm_code: NCM_VIGENTE, barcode: null, measurement_id: un });
+    expect(Object.hasOwn(vinculoDo(conf, 2), "preenchimento"), "o sugerido pela identidade NÃO leva pré-preenchimento").toBe(false);
+
+    // O sugerido pela REFERÊNCIA (identidade): recusado no item, nada criado.
+    const antes = await fotografia();
+    const r2 = await criarProdutos(n.id, corpoLote([{ n_item: 2 }], { fornecedor_id: n.fornecedor }));
+    const e2 = recusa(r2, 422, "VALIDATION_ERROR");
+    expect([caminhos(e2), (e2.details as { message?: string }[]).map((d) => d.message)]).toEqual([["itens[0].n_item"], [MSG_ITEM_COM_PRODUTO]]);
+    expect(await fotografia(), "nada criado").toEqual(antes);
+
+    // O sugerido pela DESCRIÇÃO: o lote o cria, com o que a nota disse — e sem perguntar a descrição.
+    const { r: r1, consultas } = await comConsultas(() => criarProdutos(n.id, corpoLote([{ n_item: 1 }], { fornecedor_id: n.fornecedor })));
+    const feitos = await criados(r1);
+    expect(doCaminho(consultas, CAMINHO_5), "o lote não faz a consulta da descrição").toHaveLength(0);
+    expect(doCaminho(consultas, CAMINHO_4), "o lote faz a da referência (identidade)").toHaveLength(1);
+    expect([feitos.produtos.length, feitos.itens.map((i) => [i.nItem, i.produto.id])], "um produto, para o item 1")
+      .toEqual([1, [[1, feitos.produtos[0]?.id]]]);
+    const [novo] = await produtosNoBanco(feitos.produtos.map((p) => p.id));
+    expect([novo!.description, novo!.ncm_code, novo!.measurement_id], "nasce com o que a nota disse").toEqual([dDescricao, NCM_VIGENTE, un]);
+    expect(novo!.id, "um produto NOVO, não o parecido").not.toBe(parecido.id);
   });
 });

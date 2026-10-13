@@ -585,7 +585,8 @@ async function criarProdutosDaNota(ctx: ServiceCtx, id: string, corpo: CriarProd
   const candidatos = await candidatosDoEmitente(ctx, nota);
   const { fornecedorEscolhido } = resolverParceiro(candidatos, corpo.fornecedor_id ?? null);
   if (candidatos.length > 0 && !fornecedorEscolhido) throw recusa("fornecedor_id", MSG_LOTE_SEM_FORNECEDOR);
-  const vinculos = await vinculosDosItens(ctx, nota, fornecedorEscolhido);
+  //    Só a IDENTIDADE (caminhos 1 a 4, decisão 314): a descrição semelhante só sugere, e nunca impede cadastrar.
+  const vinculos = await vinculosDosItens(ctx, nota, fornecedorEscolhido, { soIdentidade: true });
   // 3) cada item do corpo: existe na nota; SEM vínculo (com produto, ou ambíguo, criar seria duplicar); unidade resolvida.
   const naNota = new Set(nota.itens.map((i) => i.nItem));
   const confirmados = new Map<number, ItemDoLote>();

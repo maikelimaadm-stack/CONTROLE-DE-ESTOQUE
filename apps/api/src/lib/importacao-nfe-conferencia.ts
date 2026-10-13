@@ -236,6 +236,9 @@ async function unidadesDosUCom(ctx: ServiceCtx, simbolos: readonly string[]): Pr
  */
 const FATOR_SEM_UNIDADE = { fator: "1", tipo: "multiply" as TipoFator };
 
+/** O vínculo de um item que a NOTA ainda pode cadastrar (o `nenhum` e o sugerido pela descrição): leva o pré-preenchimento. */
+type VinculoCadastravel = Extract<VinculoDoItemDaNota, { situacao: "nenhum" } | { origem: "descricao" }>;
+
 /**
  * 4º CAMINHO — a REFERÊNCIA do produto (`products.reference`, o "Cod. Produto (fornecedor)" do cadastro) igual ao cProd,
  * aparados os DOIS lados (`btrim`), sem caixa trocada (identidade é igualdade). UMA consulta, pelos cProd DISTINTOS dos
@@ -335,10 +338,16 @@ async function candidatosPelaDescricao(ctx: ServiceCtx, itens: readonly ItemDaNo
  * achou decide o item, e os de baixo NÃO rodam para ele (cada consulta nova leva só os itens ainda pendentes). Sem
  * fornecedor escolhido, os dois primeiros não rodam (o vínculo é do fornecedor). A descrição no máximo SUGERE (nada é
  * gravado aqui: o vínculo lembrado nasce só do que a pessoa confirma no "Gerar compra"). Os itens sem vínculo (`nenhum`)
- * levam o pré-preenchimento da nota e, com a unidade resolvida, o `measurement_id` — mais UMA consulta, para os uCom
- * distintos.
+ * e os sugeridos pela descrição (que a nota ainda pode cadastrar) levam o pré-preenchimento da nota e, com a unidade
+ * resolvida, o `measurement_id` — mais UMA consulta, para os uCom distintos.
+ *
+ * `soIdentidade` (o lote do XML-01, decisão 314): só os caminhos 1 a 4 — a IDENTIDADE. A semelhança não roda, e o item
+ * que só ela ligaria fica `nenhum`, como era: o lote continua recusando o que tem produto por identidade, e a sugestão
+ * por descrição nunca impede cadastrar o produto da nota.
  */
-export async function vinculosDosItens(ctx: ServiceCtx, nota: NotaFiscalLida, fornecedorId: string | null): Promise<Map<number, VinculoDoItemDaNota>> {
+export async function vinculosDosItens(
+  ctx: ServiceCtx, nota: NotaFiscalLida, fornecedorId: string | null, opcoes: { soIdentidade?: boolean } = {}
+): Promise<Map<number, VinculoDoItemDaNota>> {
   const codigos = [...new Set(nota.itens.map((i) => i.codigo.trim()))];
   const unidades = nota.itens.map((i) => normalizarUnidadeDaNota(i.unidade));
   const lembrados = new Map<string, { produto: LinhaDeProduto; fator: string; tipo: TipoFator }>();
@@ -415,25 +424,25 @@ export async function vinculosDosItens(ctx: ServiceCtx, nota: NotaFiscalLida, fo
     if (achados.length > 1) { out.set(item.nItem, { situacao: "ambiguo", candidatos: achados.map(produtoDoVinculo) }); continue; }
     semReferencia.push(item);
   }
-  // 5: a DESCRIÇÃO semelhante — só para os que 1 a 4 não resolveram; a decisão é a do domínio.
-  const porDescricao = await candidatosPelaDescricao(ctx, semReferencia);
-  const semVinculo: { item: ItemDaNota; preenchimento: PreenchimentoDoProduto }[] = [];
+  // 5: a DESCRIÇÃO semelhante — só para os que 1 a 4 não resolveram, e nunca no `soIdentidade`; a decisão é a do domínio.
+  const porDescricao = await candidatosPelaDescricao(ctx, opcoes.soIdentidade ? [] : semReferencia);
+  const cadastraveis: { item: ItemDaNota; vinculo: VinculoCadastravel }[] = [];
   for (const item of semReferencia) {
     const decisao = decidirPelaDescricao(porDescricao.get(item.nItem) ?? []);
-    if (decisao.situacao === "sugerido") {
-      out.set(item.nItem, { situacao: "sugerido", origem: "descricao", produto: decisao.candidato.produto, fator: FATOR_SEM_UNIDADE.fator, tipoFator: FATOR_SEM_UNIDADE.tipo });
-      continue;
-    }
     if (decisao.situacao === "ambiguo") { out.set(item.nItem, { situacao: "ambiguo", candidatos: decisao.candidatos.map((c) => c.produto) }); continue; }
     const preenchimento: PreenchimentoDoProduto = { description: item.descricao, ncm_code: item.ncm, barcode: eanDoItem(item) };
-    out.set(item.nItem, { situacao: "nenhum", preenchimento });
-    semVinculo.push({ item, preenchimento });
+    const vinculo: VinculoCadastravel = decisao.situacao === "sugerido"
+      ? { situacao: "sugerido", origem: "descricao", produto: decisao.candidato.produto, fator: FATOR_SEM_UNIDADE.fator, tipoFator: FATOR_SEM_UNIDADE.tipo, preenchimento }
+      : { situacao: "nenhum", preenchimento };
+    out.set(item.nItem, vinculo);
+    cadastraveis.push({ item, vinculo });
   }
-  // A unidade dos `nenhum`: sem casamento único, a chave `measurement_id` não vem (nunca nula, nunca "a mais parecida").
-  const linhasDaUnidade = await unidadesDosUCom(ctx, [...new Set(semVinculo.map((x) => normalizarUnidadeDaNota(x.item.unidade)).filter(Boolean))]);
-  for (const { item, preenchimento } of semVinculo) {
+  // A unidade dos que a nota pode cadastrar (`nenhum` e sugerido pela descrição): sem casamento único, a chave
+  // `measurement_id` não vem (nunca nula, nunca "a mais parecida").
+  const linhasDaUnidade = await unidadesDosUCom(ctx, [...new Set(cadastraveis.map((x) => normalizarUnidadeDaNota(x.item.unidade)).filter(Boolean))]);
+  for (const { item, vinculo } of cadastraveis) {
     const measurementId = unidadeDoCadastroPelaNota(linhasDaUnidade, item.unidade);
-    if (measurementId) out.set(item.nItem, { situacao: "nenhum", preenchimento: { ...preenchimento, measurement_id: measurementId } });
+    if (measurementId) out.set(item.nItem, { ...vinculo, preenchimento: { ...vinculo.preenchimento, measurement_id: measurementId } });
   }
   return out;
 }
