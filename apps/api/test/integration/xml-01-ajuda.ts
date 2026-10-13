@@ -21,7 +21,8 @@ import { cnpjComDv, conferencia, importada, fornecedorComDocumento, notaSintetic
  *   · as UNIDADES: a da organização e a do sistema (`organization_id` nulo), e quais casam com um uCom (a regra da
  *     decisão 312: o símbolo aparado, em maiúsculas, igual ao uCom normalizado — nunca "o mais parecido");
  *   · o ESPIÃO das consultas (o molde do RG-8 / LANC-I4: `pg.Client.prototype.query`), para contar a consulta das
- *     unidades e provar que uma recusa não chegou a mandar um INSERT em `erp.products`.
+ *     unidades (desde a XML-04, a do cadastro do fator) e provar que uma recusa não chegou a mandar um INSERT em
+ *     `erp.products`.
  */
 
 // ─────────────── identidade do caso ───────────────

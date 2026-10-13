@@ -944,7 +944,8 @@ preenchimento: { description, ncm_code, barcode, measurement_id? }   // o MESMO 
 - Só o sugerido pela DESCRIÇÃO leva `preenchimento`: o item continua um item que a nota pode cadastrar. Os sugeridos
   por identidade não o levam. O `measurement_id` segue a regra da unidade do uCom da XML-01 (ausente = não resolvida),
   na mesma consulta dos uCom distintos.
-- O fator dos caminhos 4 e 5 é "1", `multiply` (a unidade padrão do produto, como no código de barras do produto).
+- O fator dos caminhos 4 e 5 era "1", `multiply`, até a XML-04; desde a decisão 318 o fator de TODOS os caminhos sai do
+  cadastro pelo uCom da nota (§ "O fator, a forma e a duplicata da nota (XML-04, decisão 318)").
 
 **A ordem.** O caminho mais forte que achou decide o item; os de baixo NÃO rodam para ele (cada consulta leva só os
 itens ainda pendentes). Sem fornecedor escolhido, 1 e 2 não rodam.
@@ -974,7 +975,7 @@ as duas strings como parâmetro):
 - **Teto**: 5 candidatos por item (`TETO_DE_CANDIDATOS_DA_DESCRICAO`), cortados no SQL.
 
 **Consultas.** No máximo cinco por conferência — uma por caminho, nenhuma quando não há item pendente para ele —, mais
-a das unidades; nunca uma por item. As consultas dos caminhos 4 e 5 recortam a organização e o produto vivo e ativo
+a do cadastro (desde a XML-04, a do fator pelo uCom, que absorveu a das unidades); nunca uma por item. As consultas dos caminhos 4 e 5 recortam a organização e o produto vivo e ativo
 explicitamente, além da RLS. Os lexemas dos produtos e dos itens são CTEs `as materialized`. Nenhum índice novo.
 
 **Nada é gravado.** O vínculo lembrado continua nascendo só no "Gerar compra", do `lembrar_vinculo` que o corpo
