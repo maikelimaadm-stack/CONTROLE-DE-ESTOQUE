@@ -19,6 +19,10 @@ import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } f
  * mão, sem a função do domínio que o servidor usa — senão o teste conferiria a conta com ela mesma). Cada caso cria os
  * PRÓPRIOS cadastros (fornecedor, local de estoque, produto, TOP) pela API, limpos no fim pela fixture; a compra fica
  * (ledger). O que vai no fio é lido no fio, e o servidor confere o que gravou.
+ *
+ * RATEIO-01 (decisão 316): o rateio e a classificação dos itens saíram do bloco "Dados fiscais" para a aba "Rateio" do
+ * painel — o FC-1 os lê LÁ, com as mesmas asserções (o item nasce gerando estoque, é marcado imobilizado, o rateio é o
+ * do documento, e o corpo e a gravação são os mesmos).
  */
 
 const P = "central-compras";
@@ -120,6 +124,16 @@ async function compraNaCentral(page: Page, c: Cenario) {
   return fiscais;
 }
 
+/** RATEIO-01 (decisão 316): a aba "Rateio" do painel aberta; devolve o bloco do rateio e da classificação dos itens. */
+async function abaDoRateio(page: Page): Promise<Locator> {
+  const aba = page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Rateio", exact: true });
+  await aba.click();
+  await expect(aba).toHaveAttribute("aria-selected", "true");
+  const bloco = page.getByTestId(`${P}-painel`).getByTestId("compras-rateio-e-itens");
+  await expect(bloco, "com a capacidade, o rateio e a classificação dos itens estão na aba Rateio").toBeVisible();
+  return bloco;
+}
+
 const postDaCompra = (page: Page) => page.waitForResponse((r) => r.request().method() === "POST" && caminho(r) === "/api/compras/compras");
 
 /* ═════════════════════════════════ FC-1 ═════════════════════════════════ */
@@ -138,10 +152,12 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imo
   await fiscais.getByTestId("compras-seguro").fill("5.50");
   await expect(page.getByTestId("compras-total"), "100,00 + IPI 10,00 + seguro 5,50").toContainText("115,50");
   // A classificação do item na tela manual (o que a nota antiga tinha): o item 1 é imobilizado; o rateio fica o do documento.
-  const classificacao = fiscais.getByTestId("compras-item-classificacao-0");
+  // RATEIO-01 (decisão 316): o rateio e a classificação dos itens moram na aba "Rateio" do painel, não nos Dados fiscais.
+  const rateio = await abaDoRateio(page);
+  const classificacao = rateio.getByTestId("compras-item-classificacao-0");
   await expect(classificacao.getByTestId("compras-item-0-gera-estoque"), "premissa: o item nasce gerando estoque").toBeChecked();
   await classificacao.getByTestId("compras-item-0-imobilizado").check();
-  await expect(fiscais.getByTestId("compras-rateio-tipo")).toHaveValue("documento");
+  await expect(rateio.getByTestId("compras-rateio-tipo")).toHaveValue("documento");
 
   // NO FIO: só as chaves preenchidas, os valores em TEXTO, a chave sem os espaços
   const post = postDaCompra(page);

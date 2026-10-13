@@ -14,8 +14,9 @@ import estilosCv from "@/features/central/moldura.module.css";
 import { hrefDoConfigurador, textoDoLayoutQueVale } from "../layout-da-central";
 import { PREFIXO_CENTRAL_COMPRAS } from "./adaptador";
 import { CAMPOS_DOS_DADOS_FISCAIS, opcoesDeNaturezaDeDespesa, type ChaveDoCabecalho, type EstadoDaCriacao } from "./estado";
-import { DadosFiscaisDaConsulta, DadosFiscaisDaCriacao, QUANTIDADE_DE_DADOS_FISCAIS, RateioDaConsulta, temDadosFiscais } from "./dados-fiscais";
+import { DadosFiscaisDaConsulta, DadosFiscaisDaCriacao, RateioDaConsulta, temDadosFiscais } from "./dados-fiscais";
 import { dicaDaIdentidadeNaEdicao } from "./edicao";
+import { blocoFiscalNosDados, erroEscondidoNosDados, quantidadeDosDadosAdicionais } from "./rateio-no-rodape";
 
 /**
  * CENTRAL DE COMPRAS — DADOS PRINCIPAIS DA CRIAÇÃO (VISUAL-UX-04, decisão 276).
@@ -34,14 +35,15 @@ import { dicaDaIdentidadeNaEdicao } from "./edicao";
  * (`compras-dados-fiscais`) no FIM dos Dados adicionais — fora do layout (não é campo dele: sem `data-campo`, sem "*",
  * fora das pendências). Sem a capacidade, nada muda.
  *
+ * RATEIO-01 (decisão 316): o RATEIO e a classificação dos itens saíram desse bloco — moram na aba "Rateio" do painel
+ * (`criacao-painel.tsx`). Aqui ficam os oito dados fiscais do cabeçalho; a contagem e o erro escondido deixam o rateio
+ * de fora (a recusa dele abre a aba dele) — as contas em `rateio-no-rodape.ts`.
+ *
  * EDITAR-02 (decisão 313): na EDIÇÃO, o campo que a PATCH não aceita fica no MESMO `fieldset` travado de sempre, com
  * `data-travado-na-edicao="true"` e o motivo do servidor em `data-motivo` e na `dica` do campo (o `title` que o
  * `CampoDaCentral` já tem; fora da edição, nenhuma) — a empresa; o resto pelos limites; os dados fiscais do
  * cabeçalho (que não mudam depois do lançamento) aparecem em LEITURA, pelos MESMOS blocos da consulta.
  */
-
-/** O caminho da recusa da classificação de um item (F7), nos dois formatos do servidor: `itens[0].x` e `itens.0.x`. */
-const CAMINHO_DA_CLASSIFICACAO_DO_ITEM = /^itens(?:\[\d+\]|\.\d+)\.(?:gera_estoque|imobilizado|categoria_financeira_id|centro_custo_id)$/;
 
 /** "Novo pedido de compra" / "Nova compra" — o nome do documento ainda sem número; o ponto acende com alteração. */
 export function identidadeDaCriacao(e: EstadoDaCriacao): IdentidadeDoDocumento {
@@ -190,17 +192,18 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   /* Os DADOS FISCAIS (F7) moram nos Dados do documento — o desenho que traz a TOP travada —, nunca no campo único que o
      painel desenha por este mesmo componente (`estadoDeUmCampo`, em `central-compras.tsx`, zera a TOP): lá o bloco
      repetiria os campos (e o botão "Dados adicionais") em cada campo do painel. */
-  const comDadosFiscais = e.dadosFiscaisAtivos && e.top !== null;
+  const comDadosFiscais = blocoFiscalNosDados(e);
   /* EDITAR-02: na edição da compra com dados fiscais, os MESMOS blocos de leitura da consulta (nos Dados do documento,
      nunca no campo único do painel — o mesmo critério do bloco da criação). */
   const fiscaisEmLeitura = e.modo === "edicao" && e.ehCompra && e.top !== null && e.documentoEmEdicao !== null && temDadosFiscais(e.documentoEmEdicao)
     ? e.documentoEmEdicao : null;
   // o Local de estoque conta como campo de Dados adicionais quando a Empresa mora lá; os dados fiscais, quando existem
-  const quantidade = recolhidos.length + (e.localNaGrade && recolhidos.includes("empresa_id") ? 1 : 0)
-    + (comDadosFiscais || fiscaisEmLeitura ? QUANTIDADE_DE_DADOS_FISCAIS : 0);
-  /* Campo com erro numa zona recolhida não ficaria à vista: com erro lá dentro, Dados adicionais abre. */
-  const erroEscondido = recolhidos.some((c) => Boolean(e.erro(c))) || (comDadosFiscais && (CAMPOS_DOS_DADOS_FISCAIS.some((c) => Boolean(e.erro(c)))
-    || Object.keys(e.errosDaTela).some((c) => c.startsWith("rateio") || CAMINHO_DA_CLASSIFICACAO_DO_ITEM.test(c))));
+  // (RATEIO-01: na criação, sem o rateio — ele está no painel)
+  const quantidade = quantidadeDosDadosAdicionais({ recolhidos, localNaGrade: e.localNaGrade,
+    fiscais: comDadosFiscais ? "criacao" : fiscaisEmLeitura ? "leitura" : null, camposFiscais: CAMPOS_DOS_DADOS_FISCAIS.length });
+  /* Campo com erro numa zona recolhida não ficaria à vista: com erro lá dentro, Dados adicionais abre (a recusa do rateio
+     abre a aba dele, no painel — RATEIO-01). */
+  const erroEscondido = erroEscondidoNosDados({ recolhidos, blocoFiscal: comDadosFiscais, camposFiscais: CAMPOS_DOS_DADOS_FISCAIS, erro: e.erro });
   const aberto = maisDados || erroEscondido;
 
   return <>
