@@ -13,9 +13,11 @@
  *     ficam os que casam a IE (do cadastro, dos endereços ou da filial) quando isso deixa ao menos um. Um → encontrado
  *     (ou "não é fornecedor"); mais de um → ambíguo, com os candidatos; nenhum → o pré-preenchimento do emitente (a
  *     tela cria SÓ com a confirmação da pessoa, pela porta de cadastro). Nunca "o primeiro";
- *   · os VÍNCULOS dos itens — três consultas no total: o vínculo LEMBRADO (fornecedor + código + unidade), o código no
- *     fornecedor (`produto_fornecedores`) e o código de barras (`products.barcode` e `produto_unidades.codigo_barras`);
- *     mais de um produto = ambíguo; produto excluído nunca é sugerido;
+ *   · os VÍNCULOS dos itens (decisão 314: identidade primeiro, semelhança depois) — no máximo cinco consultas, uma por
+ *     caminho, cada uma só para os itens que os caminhos de cima não resolveram: o vínculo LEMBRADO (fornecedor + código
+ *     + unidade), o código no fornecedor (`produto_fornecedores`), o código de barras (`products.barcode` e
+ *     `produto_unidades.codigo_barras`), a REFERÊNCIA do produto (`products.reference` = cProd) e a DESCRIÇÃO semelhante
+ *     (`descricao-do-produto` do domínio); mais de um produto = ambíguo; produto excluído nunca é sugerido;
  *   · a UNIDADE do produto a criar (XML-01, decisão 312) — o uCom dos itens sem vínculo, UMA consulta: a da organização
  *     vence a do sistema, uma só ou nenhuma (`unidadeDoCadastroPelaNota`); a conferência declara `criarProdutosDaNota`;
  *   · os PEDIDOS — os referenciados pela nota (`xPed`, o código do pedido) e até 20 candidatos do fornecedor, da
@@ -27,6 +29,8 @@ import {
   lerNotaFiscalEletronica, quantidadeInterna, unitarioInterno, linhasDoItemDaNota, totaisDaCompra, conferirTotalDaNota, parcelasDaNota,
   valoresNaoSuportadosDaNota, normalizarUnidadeDaNota, saldoDoItemDoPedido, formatarChaveDeAcesso, CONTRATO_CONFERENCIA_IMPORTACAO_NFE,
   CAPACIDADE_CRIAR_PRODUTOS_DA_NOTA, type PreenchimentoDoProduto,
+  TRADUCAO_DA_DESCRICAO_DE, TRADUCAO_DA_DESCRICAO_PARA, TETO_DE_CANDIDATOS_DA_DESCRICAO, sqlLexemasDaDescricao, sqlLexemasEmComum,
+  sqlLexemasNoTotal, sqlAcimaDoLimiarDaDescricao, mesmoNcm, decidirPelaDescricao, type CandidatoDaDescricao,
   type NotaFiscalLida, type ItemDaNota, type ConferenciaDaImportacaoNfe, type ParceiroDaImportacaoNfe, type ProdutoDoVinculo,
   type VinculoDoItemDaNota, type ItemDaConferenciaNfe, type PedidoCandidatoDaNota, type DivergenciaDaImportacaoNfe, type TipoFator,
   type ControleDeLoteDoProduto, type SituacaoImportacaoNfe, type OrigemImportacaoNfe, type LinhaDaCompraDaNota,
@@ -227,9 +231,112 @@ async function unidadesDosUCom(ctx: ServiceCtx, simbolos: readonly string[]): Pr
 }
 
 /**
- * O VÍNCULO de cada item, em TRÊS consultas (nunca uma por item): lembrado → código no fornecedor → código de barras.
- * Sem fornecedor escolhido, só o código de barras (o vínculo é do fornecedor). Os itens sem vínculo (`nenhum`) levam o
- * pré-preenchimento da nota e, com a unidade resolvida, o `measurement_id` — mais UMA consulta, para os uCom distintos.
+ * O fator dos caminhos que NÃO passam por unidade (a referência e a descrição): 1, multiplica — o mesmo padrão do
+ * código de barras do produto (a unidade padrão dele). A pessoa confere o fator na tela antes de gerar.
+ */
+const FATOR_SEM_UNIDADE = { fator: "1", tipo: "multiply" as TipoFator };
+
+/**
+ * 4º CAMINHO — a REFERÊNCIA do produto (`products.reference`, o "Cod. Produto (fornecedor)" do cadastro) igual ao cProd,
+ * aparados os DOIS lados (`btrim`), sem caixa trocada (identidade é igualdade). UMA consulta, pelos cProd DISTINTOS dos
+ * itens dados (os que os caminhos 1 a 3 não resolveram); nenhum item → nenhuma consulta. Só produto vivo e ATIVO: a
+ * referência é um campo do produto, sem fornecedor — identidade mais fraca que as de cima —, e o produto inativo é o
+ * que o próprio seletor da tela já não oferece (`resources.options` filtra `is_active`); a sugestão não pode trazer o
+ * que a pessoa não escolheria à mão. A ordem é código e id (`collate "C"`: a mesma em qualquer locale do banco); mais
+ * de um produto é ambíguo, nunca "o primeiro". Devolve, por referência aparada, os produtos na ordem.
+ */
+async function produtosPelaReferencia(ctx: ServiceCtx, itens: readonly ItemDaNota[]): Promise<Map<string, LinhaDeProduto[]>> {
+  const porReferencia = new Map<string, LinhaDeProduto[]>();
+  const codigos = [...new Set(itens.map((i) => i.codigo.trim()).filter(Boolean))];
+  if (codigos.length === 0) return porReferencia;
+  const r = await ctx.tx.query<LinhaDeProduto & { referencia: string }>(
+    `select btrim(p.reference) as referencia, ${COLUNAS_PRODUTO}
+       from erp.products p left join erp.measurement_units mu on mu.id = p.measurement_id
+      where p.organization_id = $1 and p.deleted_at is null and p.is_active
+        and btrim(p.reference) = any(select btrim(c) from unnest($2::text[]) as c)
+      order by p.code collate "C", p.id`, [ctx.orgId, codigos]);
+  for (const x of r.rows) {
+    const lista = porReferencia.get(x.referencia) ?? [];
+    lista.push(x);
+    porReferencia.set(x.referencia, lista);
+  }
+  return porReferencia;
+}
+
+/**
+ * O "mesmo NCM" em SQL — a MESMA regra de `mesmoNcm` do domínio: só os dígitos (`[^0-9]` some), os dois preenchidos e
+ * iguais; nulo ou vazio de qualquer lado ⇒ falso. Serve à ORDEM do recorte no SQL (o desempate antes do teto); a decisão
+ * usa a função do domínio, e o teste de integração da XML-02 confere as duas sobre os mesmos pares.
+ */
+export const sqlMesmoNcm = (ncmDoItem: string, ncmDoProduto: string): string => {
+  const digitos = (col: string) => `regexp_replace(coalesce(${col}, ''), '[^0-9]', '', 'g')`;
+  return `(${digitos(ncmDoItem)} <> '' and ${digitos(ncmDoItem)} = ${digitos(ncmDoProduto)})`;
+};
+
+/**
+ * 5º CAMINHO — a DESCRIÇÃO semelhante (`descricao-do-produto` do domínio): UMA consulta para a nota inteira, só para os
+ * itens dados (os que os caminhos 1 a 4 não resolveram); nenhum item → nenhuma consulta. Tudo no SQL, e o Node recebe
+ * só os candidatos que importam:
+ *  · `lp` (materializada): os lexemas de cada produto da ORGANIZAÇÃO, vivo e ATIVO (a RLS também recorta; o filtro é
+ *    explícito), pela normalização do domínio com as strings do `translate` como PARÂMETRO; `li` (materializada): os
+ *    lexemas de cada item, por `unnest` (descrição, nItem, NCM). Materializar é o que faz o `to_tsvector` rodar uma vez
+ *    por produto e por item, nunca por par;
+ *  · o cruzamento só onde os lexemas se tocam (`&&`), com `comuns`/`total` (o Jaccard em inteiros) e o LIMIAR do
+ *    domínio; a ordem é a do domínio (`compararCandidatosDaDescricao`): pontuação (a fração `comuns/total` em `numeric`
+ *    — exata para as contagens de lexemas de uma descrição), mesmo NCM primeiro, código (`collate "C"`), id (a ordem do
+ *    uuid é a do texto em minúsculas);
+ *  · o TETO por item no SQL (`row_number() over (partition by item)`), com a contagem dos que passaram o limiar ao lado
+ *    (o `acimaDoLimiar` do domínio, antes do corte; o contrato do ambíguo não o carrega).
+ * O NCM nunca casa sozinho: só ordena dentro do empate (o cruzamento e o limiar são só da descrição).
+ */
+async function candidatosPelaDescricao(ctx: ServiceCtx, itens: readonly ItemDaNota[]): Promise<Map<number, (CandidatoDaDescricao & { produto: ProdutoDoVinculo })[]>> {
+  const porItem = new Map<number, (CandidatoDaDescricao & { produto: ProdutoDoVinculo })[]>();
+  if (itens.length === 0) return porItem;
+  const r = await ctx.tx.query<LinhaDeProduto & { n_item: number; posicao: number; acima_do_limiar: number; comuns: number; total: number; ncm_produto: string | null }>(
+    `with lp as materialized (
+       select p.id, p.code, p.ncm_code, ${sqlLexemasDaDescricao("p.description", "$2", "$3")} as lex
+         from erp.products p
+        where p.organization_id = $1 and p.deleted_at is null and p.is_active
+     ), li as materialized (
+       select t.n_item, t.ncm, ${sqlLexemasDaDescricao("t.descricao", "$2", "$3")} as lex
+         from unnest($4::text[], $5::int[], $6::text[]) as t(descricao, n_item, ncm)
+     ), par as (
+       select li.n_item, lp.id, lp.code, ${sqlLexemasEmComum("li.lex", "lp.lex")} as comuns, ${sqlLexemasNoTotal("li.lex", "lp.lex")} as total,
+              ${sqlMesmoNcm("li.ncm", "lp.ncm_code")} as mesmo_ncm
+         from li join lp on lp.lex && li.lex
+     ), acima as (
+       select par.n_item, par.id, par.comuns, par.total,
+              row_number() over (partition by par.n_item
+                                 order by par.comuns::numeric / par.total desc, par.mesmo_ncm desc, par.code collate "C", par.id) as posicao,
+              count(*) over (partition by par.n_item) as acima_do_limiar
+         from par
+        where ${sqlAcimaDoLimiarDaDescricao("par.comuns", "par.total")}
+     )
+     select a.n_item, a.posicao::int as posicao, a.acima_do_limiar::int as acima_do_limiar, a.comuns, a.total, p.ncm_code as ncm_produto, ${COLUNAS_PRODUTO}
+       from acima a
+       join erp.products p on p.id = a.id and p.organization_id = $1
+       left join erp.measurement_units mu on mu.id = p.measurement_id
+      where a.posicao <= $7
+      order by a.n_item, a.posicao`,
+    [ctx.orgId, TRADUCAO_DA_DESCRICAO_DE, TRADUCAO_DA_DESCRICAO_PARA, itens.map((i) => i.descricao), itens.map((i) => i.nItem), itens.map((i) => i.ncm),
+      TETO_DE_CANDIDATOS_DA_DESCRICAO]);
+  const ncmDoItem = new Map(itens.map((i) => [i.nItem, i.ncm]));
+  for (const x of r.rows) {
+    const lista = porItem.get(x.n_item) ?? [];
+    lista.push({ id: x.id, codigo: x.codigo, comuns: x.comuns, total: x.total, mesmoNcm: mesmoNcm(ncmDoItem.get(x.n_item), x.ncm_produto), produto: produtoDoVinculo(x) });
+    porItem.set(x.n_item, lista);
+  }
+  return porItem;
+}
+
+/**
+ * O VÍNCULO de cada item (decisão 314), em no máximo CINCO consultas (nunca uma por item), na ordem da força: lembrado →
+ * código no fornecedor → código de barras → referência do produto → descrição semelhante. O caminho mais forte que
+ * achou decide o item, e os de baixo NÃO rodam para ele (cada consulta nova leva só os itens ainda pendentes). Sem
+ * fornecedor escolhido, os dois primeiros não rodam (o vínculo é do fornecedor). A descrição no máximo SUGERE (nada é
+ * gravado aqui: o vínculo lembrado nasce só do que a pessoa confirma no "Gerar compra"). Os itens sem vínculo (`nenhum`)
+ * levam o pré-preenchimento da nota e, com a unidade resolvida, o `measurement_id` — mais UMA consulta, para os uCom
+ * distintos.
  */
 export async function vinculosDosItens(ctx: ServiceCtx, nota: NotaFiscalLida, fornecedorId: string | null): Promise<Map<number, VinculoDoItemDaNota>> {
   const codigos = [...new Set(nota.itens.map((i) => i.codigo.trim()))];
@@ -285,7 +392,8 @@ export async function vinculosDosItens(ctx: ServiceCtx, nota: NotaFiscalLida, fo
     }
   }
   const out = new Map<number, VinculoDoItemDaNota>();
-  const semVinculo: { item: ItemDaNota; preenchimento: PreenchimentoDoProduto }[] = [];
+  // 1 a 3: a IDENTIDADE pelo fornecedor e pelo código de barras (as consultas acima).
+  const semIdentidade: ItemDaNota[] = [];
   for (const item of nota.itens) {
     const lembrado = lembrados.get(chaveDoVinculo(item.codigo.trim(), normalizarUnidadeDaNota(item.unidade)));
     if (lembrado) { out.set(item.nItem, { situacao: "lembrado", produto: produtoDoVinculo(lembrado.produto), fator: lembrado.fator, tipoFator: lembrado.tipo }); continue; }
@@ -296,7 +404,28 @@ export async function vinculosDosItens(ctx: ServiceCtx, nota: NotaFiscalLida, fo
     const porBarras = [...((ean && porEan.get(ean)?.values()) || [])];
     if (porBarras.length === 1) { const x = porBarras[0]!; out.set(item.nItem, { situacao: "sugerido", origem: "codigo_barras", produto: produtoDoVinculo(x.produto), fator: x.fator, tipoFator: x.tipo }); continue; }
     if (porBarras.length > 1) { out.set(item.nItem, { situacao: "ambiguo", candidatos: porBarras.map((x) => produtoDoVinculo(x.produto)) }); continue; }
-    const preenchimento: PreenchimentoDoProduto = { description: item.descricao, ncm_code: item.ncm, barcode: ean };
+    semIdentidade.push(item);
+  }
+  // 4: a REFERÊNCIA do produto — só para os que 1 a 3 não resolveram.
+  const porReferencia = await produtosPelaReferencia(ctx, semIdentidade);
+  const semReferencia: ItemDaNota[] = [];
+  for (const item of semIdentidade) {
+    const achados = porReferencia.get(item.codigo.trim()) ?? [];
+    if (achados.length === 1) { out.set(item.nItem, { situacao: "sugerido", origem: "reference", produto: produtoDoVinculo(achados[0]!), fator: FATOR_SEM_UNIDADE.fator, tipoFator: FATOR_SEM_UNIDADE.tipo }); continue; }
+    if (achados.length > 1) { out.set(item.nItem, { situacao: "ambiguo", candidatos: achados.map(produtoDoVinculo) }); continue; }
+    semReferencia.push(item);
+  }
+  // 5: a DESCRIÇÃO semelhante — só para os que 1 a 4 não resolveram; a decisão é a do domínio.
+  const porDescricao = await candidatosPelaDescricao(ctx, semReferencia);
+  const semVinculo: { item: ItemDaNota; preenchimento: PreenchimentoDoProduto }[] = [];
+  for (const item of semReferencia) {
+    const decisao = decidirPelaDescricao(porDescricao.get(item.nItem) ?? []);
+    if (decisao.situacao === "sugerido") {
+      out.set(item.nItem, { situacao: "sugerido", origem: "descricao", produto: decisao.candidato.produto, fator: FATOR_SEM_UNIDADE.fator, tipoFator: FATOR_SEM_UNIDADE.tipo });
+      continue;
+    }
+    if (decisao.situacao === "ambiguo") { out.set(item.nItem, { situacao: "ambiguo", candidatos: decisao.candidatos.map((c) => c.produto) }); continue; }
+    const preenchimento: PreenchimentoDoProduto = { description: item.descricao, ncm_code: item.ncm, barcode: eanDoItem(item) };
     out.set(item.nItem, { situacao: "nenhum", preenchimento });
     semVinculo.push({ item, preenchimento });
   }

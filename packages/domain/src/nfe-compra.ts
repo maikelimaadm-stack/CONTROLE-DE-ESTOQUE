@@ -246,7 +246,7 @@ export interface ProdutoDoVinculo {
 
 export type VinculoDoItemDaNota =
   | { situacao: "lembrado"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator }
-  | { situacao: "sugerido"; origem: "codigo_fornecedor" | "codigo_barras"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator }
+  | { situacao: "sugerido"; origem: "codigo_fornecedor" | "codigo_barras" | "reference" | "descricao"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator }
   | { situacao: "ambiguo"; candidatos: ProdutoDoVinculo[] }
   | { situacao: "nenhum"; preenchimento: PreenchimentoDoProduto };
 

@@ -38,9 +38,14 @@ export const eanNovo = (): string => `78${String(Date.now() % 1e8).padStart(8, "
 /** NCM de 8 dígitos VIGENTE na carga oficial (a premissa é conferida no banco onde importa). */
 export const NCM_VIGENTE = "31052000";
 
-/** Um item da nota: 2 unidades a 10,00 (vProd 20,00), sem GTIN, NCM vigente; a descrição leva o código e um sufixo único. */
+/**
+ * Um item da nota: 2 unidades a 10,00 (vProd 20,00), sem GTIN, NCM vigente; a descrição leva o código e QUATRO sufixos
+ * únicos. Quatro, e não um, por causa da DESCRIÇÃO semelhante da XML-02 (decisão 314): o que duas descrições daqui
+ * repetem (o prefixo e o código: 5 lexemas) fica sempre ABAIXO da metade dos lexemas do par (5 de 13), então o produto
+ * que um caso cria a partir da nota não vira sugestão por descrição para o item do caso seguinte com o mesmo código.
+ */
 export const itemNota = (codigo: string, unidade: string, extra: Partial<ItemSintetico> = {}): ItemSintetico => ({
-  codigo, descricao: `Produto XML-01 ${codigo} ${unico()}`, unidade, quantidade: "2.0000", valorUnitario: "10.0000000000", valorProdutos: "20.00",
+  codigo, descricao: `Produto XML-01 ${codigo} ${unico()} ${unico()} ${unico()} ${unico()}`, unidade, quantidade: "2.0000", valorUnitario: "10.0000000000", valorProdutos: "20.00",
   ean: "SEM GTIN", ncm: NCM_VIGENTE, ...extra,
 });
 
@@ -271,7 +276,11 @@ export async function comConsultas<T>(f: () => Promise<T>): Promise<{ r: T; sqls
     return { r, sqls: chamadas.map((x0) => x0.sql), params: chamadas.map((x0) => x0.params) };
   } finally { espiao.mockRestore(); }
 }
-/** As consultas que tocam a tabela de unidades. */
-export const tocamUnidades = (sqls: string[]): string[] => sqls.filter((s) => /\berp\."?measurement_units"?/.test(s));
+/**
+ * As consultas que LEEM a tabela de unidades (`from erp.measurement_units`): a das unidades da nota. As consultas dos
+ * vínculos só a juntam (`join`) para o símbolo da unidade do produto — e, desde a XML-02 (decisão 314), a referência e
+ * a descrição procuram vínculo também sem fornecedor e sem GTIN, então "tocar" a tabela já não separa as duas.
+ */
+export const tocamUnidades = (sqls: string[]): string[] => sqls.filter((s) => /\bfrom\s+erp\."?measurement_units"?/i.test(s));
 /** Os INSERT em `erp.products` (a porta genérica escreve `insert into erp."products" (…)`). */
 export const insercoesDeProduto = (sqls: string[]): string[] => sqls.filter((s) => /insert\s+into\s+erp\."?products"?\s*\(/i.test(s));
