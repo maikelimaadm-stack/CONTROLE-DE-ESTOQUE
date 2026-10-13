@@ -185,10 +185,31 @@ export function conferirTotalDaNota(totalCalculado: string, vNF: string): { conf
   return { confere: diferenca.abs().lte(D(TOLERANCIA_TOTAL_DA_NOTA)), diferenca: money(diferenca) };
 }
 
+/** XML-04 (decisão 318): qual comparação das parcelas falhou (pode ser mais de uma). */
+export type FalhaDasParcelasDaNota = "soma_diferente_do_liquido" | "liquido_diferente_do_total" | "ultima_parcela_nao_positiva";
+
+/**
+ * As parcelas da nota. A REGRA não mudou na XML-04; os campos marcados como ADITIVOS só DIZEM por quê (opcionais no
+ * tipo porque a resposta de uma API anterior não os traz — a web os lê por propriedade própria).
+ */
 export type ParcelasDaNota =
-  | { situacao: "sem_duplicatas" }
+  | {
+    situacao: "sem_duplicatas";
+    /** ADITIVO (XML-04): a nota não traz `<dup>`, ou trouxe e o leitor descartou por falta de vencimento. */
+    motivo?: "nota_sem_duplicatas" | "duplicata_sem_vencimento";
+  }
   | { situacao: "conferem"; parcelas: ParcelaDaNota[] }
-  | { situacao: "nao_conferem"; soma: string; liquido: string };
+  | {
+    situacao: "nao_conferem"; soma: string; liquido: string;
+    /** ADITIVOS (XML-04): o total da compra comparado, de onde veio o líquido, as comparações que falharam e as diferenças (com sinal). */
+    total?: string;
+    origemDoLiquido?: "fatura" | "nota";
+    falhas?: FalhaDasParcelasDaNota[];
+    /** soma − líquido */
+    diferencaSomaLiquido?: string;
+    /** líquido − total */
+    diferencaLiquidoTotal?: string;
+  };
 
 /**
  * As parcelas da nota para a compra. Líquido = `fatura.liquido` quando há fatura com líquido, senão o vNF. Usa as
@@ -244,14 +265,35 @@ export interface ProdutoDoVinculo {
   controlaEstoque: boolean;
 }
 
+/**
+ * XML-04 (decisão 318) — DE ONDE VEIO O FATOR do item (ADITIVO: a API anterior não manda; a web lê por propriedade
+ * própria). O fator vem do CADASTRO pelo uCom DA NOTA (`unidadeDaNota`, normalizado); quando nada o respalda, é PERGUNTA:
+ *   · `unidade_principal`  — o uCom é a unidade principal do produto: 1, multiplica;
+ *   · `unidade_do_produto` — o uCom é uma unidade do produto (`produto_unidades`, viva, de compra): o fator dela;
+ *   · `vinculo`            — o vínculo lembrado (decisão explícita do operador para aquele fornecedor e código) VENCE o
+ *                            cadastro; `cadastro` só vem quando o cadastro respalda um fator DIFERENTE (a tela avisa
+ *                            com os dois números);
+ *   · `pergunta`           — nada respalda: o uCom não está no cadastro do produto (`unidade_fora_do_cadastro`), ou
+ *                            está, mas o cEAN da nota é o código de barras de OUTRA unidade do mesmo produto — o GTIN é
+ *                            da unidade comercial da nota, e as duas dizendo coisas diferentes é dúvida, nunca escolha
+ *                            (`codigo_de_barras_de_outra_unidade`). O código de barras nunca DÁ fator sozinho. O `fator` do
+ *                            vínculo continua "1" SÓ por compatibilidade com a web anterior; a web desta versão o
+ *                            trata como vazio e pede o número.
+ */
+export type FatorDoItemDaNota =
+  | { origem: "unidade_principal"; unidadeDaNota: string }
+  | { origem: "unidade_do_produto"; unidadeDaNota: string }
+  | { origem: "vinculo"; unidadeDaNota: string; cadastro: { fator: string; tipoFator: TipoFator } | null }
+  | { origem: "pergunta"; unidadeDaNota: string; motivo: "unidade_fora_do_cadastro" | "codigo_de_barras_de_outra_unidade" };
+
 export type VinculoDoItemDaNota =
-  | { situacao: "lembrado"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator }
-  | { situacao: "sugerido"; origem: "codigo_fornecedor" | "codigo_barras" | "reference"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator }
+  | { situacao: "lembrado"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator; fatorPelaNota?: FatorDoItemDaNota }
+  | { situacao: "sugerido"; origem: "codigo_fornecedor" | "codigo_barras" | "reference"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator; fatorPelaNota?: FatorDoItemDaNota }
   /**
    * A DESCRIÇÃO semelhante (XML-02, decisão 314) só SUGERE: o item continua sendo um item que a nota pode cadastrar, e
    * por isso leva o MESMO pré-preenchimento do `nenhum` (a tela oferece "criar o produto" também para ele).
    */
-  | { situacao: "sugerido"; origem: "descricao"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator; preenchimento: PreenchimentoDoProduto }
+  | { situacao: "sugerido"; origem: "descricao"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator; preenchimento: PreenchimentoDoProduto; fatorPelaNota?: FatorDoItemDaNota }
   | { situacao: "ambiguo"; candidatos: ProdutoDoVinculo[] }
   | { situacao: "nenhum"; preenchimento: PreenchimentoDoProduto };
 
@@ -310,6 +352,24 @@ export interface PedidoCandidatoDaNota {
   itens: { id: string; posicao: number; produtoId: string; produtoDescricao: string; quantidade: string; saldo: string; valorUnitario: string }[];
 }
 
+/**
+ * XML-04 (decisão 318) — a FORMA DE PAGAMENTO que a nota diz, na conferência. A nota diz uma forma só quando traz
+ * EXATAMENTE um `<detPag>` com `tPag` (`formaDaNota`); o código vira forma pela LIGAÇÃO da organização
+ * (`erp.formas_pagamento_da_nfe`, viva), e só uma forma ATIVA serve. Fora disso a nota não diz forma — nunca "a
+ * primeira", nunca "a mais parecida":
+ *   · `ligada`        — o tPag tem ligação e a forma está ativa: é a forma da nota;
+ *   · `sem_ligacao`   — o tPag não tem ligação na organização;
+ *   · `forma_inativa` — a ligação aponta para uma forma inativa (a tela diz qual);
+ *   · `varias`        — a nota traz mais de um `<detPag>`;
+ *   · `sem_tpag`      — a nota não traz `<detPag>`, ou o único não tem `tPag`.
+ */
+export type FormaDePagamentoDaConferencia =
+  | { situacao: "ligada"; tPag: string; forma: { id: string; nome: string } }
+  | { situacao: "sem_ligacao"; tPag: string }
+  | { situacao: "forma_inativa"; tPag: string; forma: { id: string; nome: string } }
+  | { situacao: "varias"; quantidade: number }
+  | { situacao: "sem_tpag" };
+
 export interface DivergenciaDaImportacaoNfe { codigo: string; mensagem: string; nItem: number | null; bloqueia: boolean }
 
 export interface ConferenciaDaImportacaoNfe {
@@ -334,7 +394,11 @@ export interface ConferenciaDaImportacaoNfe {
     /** Até 20, do fornecedor, da empresa, aberto|finalizado, com saldo. */
     candidatos: PedidoCandidatoDaNota[];
   };
-  financeiro: { parcelas: ParcelasDaNota & { origem: "nota" } };
+  financeiro: {
+    parcelas: ParcelasDaNota & { origem: "nota" };
+    /** XML-04 (decisão 318), ADITIVO: a forma de pagamento que a NOTA diz (tPag), já traduzida pela ligação da organização. */
+    forma?: FormaDePagamentoDaConferencia;
+  };
   divergencias: DivergenciaDaImportacaoNfe[];
   /** Nota já lançada (visível). */
   duplicidade: { onde: "compra" | "documento_fiscal_estoque"; codigo: string } | null;

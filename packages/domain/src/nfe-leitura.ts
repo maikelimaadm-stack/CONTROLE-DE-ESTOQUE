@@ -97,6 +97,55 @@ export interface ItemDaNota {
 
 export interface ParcelaDaNota { numero: string; vencimento: string; valor: string }
 
+/** XML-04 (decisão 318): um `<detPag>` do grupo `<pag>` da NF-e — o código da forma de pagamento (tPag) e o valor (vPag). */
+export interface PagamentoDaNota { tPag: string | null; vPag: string | null }
+
+/**
+ * XML-04 (decisão 318) — os códigos de `tPag` do leiaute da NF-e (Manual de Orientação do Contribuinte, com as notas
+ * técnicas 2020.006 e 2023.004), com o rótulo do leiaute. É a tabela da NF-e, não um enum do produto: a nota traz o
+ * código, e a organização LIGA o código a uma forma de pagamento sua ou do sistema (`erp.formas_pagamento_da_nfe`).
+ */
+export const CODIGOS_TPAG_DA_NFE: readonly (readonly [string, string])[] = Object.freeze([
+  ["01", "Dinheiro"],
+  ["02", "Cheque"],
+  ["03", "Cartão de crédito"],
+  ["04", "Cartão de débito"],
+  ["05", "Cartão da loja, crediário digital ou outros crediários"],
+  ["10", "Vale alimentação"],
+  ["11", "Vale refeição"],
+  ["12", "Vale presente"],
+  ["13", "Vale combustível"],
+  ["15", "Boleto bancário"],
+  ["16", "Depósito bancário"],
+  ["17", "Pix dinâmico"],
+  ["18", "Transferência bancária ou carteira digital"],
+  ["19", "Programa de fidelidade, cashback ou crédito virtual"],
+  ["20", "Pix estático"],
+  ["21", "Crédito em loja"],
+  ["22", "Pagamento eletrônico não informado (falha de hardware do emissor)"],
+  ["90", "Sem pagamento"],
+  ["99", "Outros"]
+] as const);
+
+/** O rótulo do leiaute para um `tPag` (`null` quando o código não é do leiaute). */
+export function rotuloDoTPag(tPag: string): string | null {
+  return CODIGOS_TPAG_DA_NFE.find(([codigo]) => codigo === tPag)?.[1] ?? null;
+}
+
+/**
+ * XML-04 (decisão 318) — a forma que a NOTA diz, pelo grupo `<pag>`. FAIL-CLOSED: só EXATAMENTE um `<detPag>` com `tPag`
+ * é uma forma. Mais de um `<detPag>` (mesmo com o mesmo tPag) não é uma forma — nunca "o primeiro"; nenhum, ou o único
+ * sem `tPag`, também não.
+ */
+export type FormaDaNota = { situacao: "uma"; tPag: string } | { situacao: "varias"; quantidade: number } | { situacao: "sem_tpag" };
+
+export function formaDaNota(nota: Pick<NotaFiscalLida, "pagamentos">): FormaDaNota {
+  const pagamentos = nota.pagamentos ?? [];
+  if (pagamentos.length > 1) return { situacao: "varias", quantidade: pagamentos.length };
+  const tPag = pagamentos[0]?.tPag ?? null;
+  return tPag ? { situacao: "uma", tPag } : { situacao: "sem_tpag" };
+}
+
 export interface EnderecoDoEmitente {
   logradouro: string | null; numero: string | null; bairro: string | null; codigoMunicipio: string | null;
   municipio: string | null; cep: string | null; telefone: string | null;
@@ -131,6 +180,18 @@ export interface NotaFiscalLida {
   };
   fatura: { numero: string | null; valorOriginal: string | null; desconto: string | null; liquido: string | null } | null;
   duplicatas: ParcelaDaNota[];
+  /**
+   * XML-04 (decisão 318), ADITIVO: quantas duplicatas (`<dup>`) a nota trouxe e o leitor DESCARTOU por falta de
+   * vencimento (a regra de sempre: uma sem `dVenc` esvazia `duplicatas`). Zero quando nada foi descartado. Opcional no
+   * tipo porque a resposta de uma API anterior não o traz.
+   */
+  duplicatasDescartadas?: number;
+  /**
+   * XML-04 (decisão 318), ADITIVO: os `<pag><detPag>` da nota, NA ORDEM, como vieram (`tPag` e `vPag` aparados; ausente
+   * ⇒ `null`). Nunca recusa a leitura: um pagamento malformado é só um pagamento sem código. Opcional no tipo porque a
+   * resposta de uma API anterior não o traz.
+   */
+  pagamentos?: PagamentoDaNota[];
   xPedCabecalho: string | null;
   informacoesComplementares: string | null;
 }
