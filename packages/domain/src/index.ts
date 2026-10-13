@@ -56,6 +56,8 @@ export * from "./tipo-operacao-secao-implantacao.js";
 export * from "./xml-leitor.js";
 export * from "./nfe-leitura.js";
 export * from "./nfe-compra.js";
+// XML-02 (decisão 314): a descrição do produto — normalização TS = SQL, pontuação, limiar, teto e a decisão do 5º caminho.
+export * from "./descricao-do-produto.js";
 // MAPA-MANEJO-01: a ocupação da área (lotação, descanso, rodízio) e o catálogo dos objetos do mapa.
 export * from "./ocupacao-de-area.js";
 export * from "./objetos-de-mapa.js";
