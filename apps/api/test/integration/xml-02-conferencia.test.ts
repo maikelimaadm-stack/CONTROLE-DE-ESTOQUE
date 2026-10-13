@@ -304,9 +304,12 @@ describe("XML2-I5 o NCM nunca casa sozinho", () => {
       item(`NC2-${unico()}`, "CALCARIO EM PO ENSACADO", { ncm: "25010090" }),
       item(`NC3-${unico()}`, "CALCARIO DOLOMITICO FILLER 1T"),
     ]);
-    const conf = await conferenciaLida(n.id);
+    const { conf, consultas } = await conferenciaContada(n.id);
     expect(conf.nota.itens.map((i) => i.ncm), "premissa: os dois primeiros com o NCM do produto").toEqual(["25010090", "25010090", null]);
     expect(resumos(conf)).toEqual([NENHUM, NENHUM, sugerido("descricao", calcario)]);
+    // No SQL também: o par que só tem o NCM (ou 1 lexema abaixo do limiar) nem chega ao Node — só o item 3 volta.
+    const [q5] = doCaminho(consultas, CAMINHO_5);
+    expect(q5!.linhas.map((l) => [l.n_item, l.id]), "a consulta da descrição só devolve o item 3").toEqual([[3, calcario.id]]);
   });
 });
 
