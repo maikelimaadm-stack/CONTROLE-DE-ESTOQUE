@@ -4,7 +4,7 @@ import { test, expect } from "./central-compras-fixtures";
 import { shaDaBase } from "./skew-fonte-da-base";
 import { vigiar, type Mundo } from "./operacoes-01-f2-skew-comum";
 import {
-  COMMITS_DA_XML02, MARCA_DA_XML02, ROTULO, TEXTO_DA_CONFERENCIA_DO_PALPITE, abrirConferencia, caixaDoProduto, cenarioDaXml02, fonteDoCommitContem,
+  COMMITS_DA_XML02, MARCA_DA_XML02, ROTULO, TEXTO_DA_CONFERENCIA_DA_REFERENCIA, TEXTO_DA_CONFERENCIA_DO_PALPITE, abrirConferencia, caixaDoProduto, cenarioDaXml02, fonteDoCommitContem,
   fonteDoHeadContem, gerarCompraPelaTela, importarNota, itemDo, lembrarNoCorpo, lerConferencia, produtoDo, resumoDoVinculo, vinculoDe,
   vinculosLembradosDo, webDaBaseTemAXml02, type ConferenciaNoFio
 } from "./xml-02-comum";
@@ -25,13 +25,17 @@ import {
  * (é a API nova). O VIGIA: nenhuma resposta 404/422/5xx da API nova ao cliente da base e nenhuma requisição morta.
  *
  * O MUNDO DO WEB DA BASE é lido do FONTE do commit (`webDaBaseTemAXml02`: o `apps/web/src` tem a linha da conferência do
- * palpite, `-sugestao-descricao`; reprova quando não consegue ler):
+ * palpite, `sugestao-descricao`; reprova quando não consegue ler):
  *   · LEGADO (a base sem a XML-02) — O RISCO DECLARADO DA JANELA (decisão 314, riscos (a)): o web da base mostra
- *     "(código do fornecedor)" para toda origem que não é `codigo_barras` e deixa "Lembrar" MARCADO também no palpite;
- *     gerando assim, o vínculo do palpite é GRAVADO. Isto fica OBSERVADO e registrado (`[skew] …` no log), como FATO
- *     da janela — não como asserção de que é bom. O que se afirma é o que não pode quebrar: lê e gera;
- *   · NOVO (a base já com a XML-02, depois do merge): o web da base é o deste HEAD — o rótulo da descrição, a linha da
- *     conferência e "Lembrar" desmarcado — e o Gerar NÃO grava o palpite. Aqui é contrato, e se afirma.
+ *     "(código do fornecedor)" para toda origem que não é `codigo_barras` e deixa "Lembrar" MARCADO também nos
+ *     palpites (a descrição e a referência); gerando assim, os vínculos dos palpites são GRAVADOS. Isto fica OBSERVADO
+ *     e registrado (`[skew] …` no log), como FATO da janela — não como asserção de que é bom. O que se afirma é o que
+ *     não pode quebrar: lê e gera;
+ *   · NOVO (a base já com a XML-02, depois do merge): o web da base é o deste HEAD — a descrição E a referência como
+ *     palpite (decisão do dono, 21214fd5): o rótulo de cada uma, a linha da conferência de cada uma, "Lembrar"
+ *     desmarcado e "Criar produto" — e o Gerar NÃO grava nenhum dos dois. Aqui é contrato, e se afirma. (O d2086dd8 —
+ *     a XML-02 com a referência ainda como identidade na tela — nunca é base: entra na main no mesmo merge que o
+ *     21214fd5; ver `COMMITS_DA_XML02`.)
  *
  * PROVA REVERSA DO DETECTOR: o caso "detector" (sem navegador) roda `webDaBaseTemAXml02` sobre dois commits fixos — a
  * main antes da XML-02 ⇒ falso; o commit da XML-02 na branch da PR #127 ⇒ verdadeiro.
@@ -60,8 +64,9 @@ function origensNovas(conf: ConferenciaNoFio, n: { D: number; R: number }, produ
  * O DETECTOR — prova reversa, sem navegador
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
 
-testeSemNavegador("XML-02 · K2 · prova reversa do detector do web da base: a main antes da XML-02 → false; o commit da XML-02 → true", () => {
-  expect(fonteDoHeadContem(MARCA_DA_XML02.web, "apps/web/src"), `premissa: o web deste HEAD tem ${MARCA_DA_XML02.web}`).toBe(true);
+testeSemNavegador("XML-02 · K2 · prova reversa do detector do web da base: a main antes da XML-02 → false; o commit da XML-02 → true; este HEAD → true", () => {
+  // O HEAD também é lido como "tem a XML-02": é ele que vira a base depois do merge (com o hífen, o 21214fd5 seria legado).
+  expect(fonteDoHeadContem(MARCA_DA_XML02.web, "apps/web/src"), `este HEAD: o web tem ${MARCA_DA_XML02.web}`).toBe(true);
   expect(webDaBaseTemAXml02(COMMITS_DA_XML02.sem), `${COMMITS_DA_XML02.sem.slice(0, 8)} (a main com a EDITAR-02): sem a XML-02`).toBe(false);
   expect(webDaBaseTemAXml02(COMMITS_DA_XML02.com), `${COMMITS_DA_XML02.com.slice(0, 8)} (a XML-02 na branch da PR #127): com a XML-02`).toBe(true);
   // O detector lê o fonte do COMMIT (e não a árvore de agora): no commit sem a XML-02, a aba de itens existe e não tem a marca.
@@ -72,7 +77,7 @@ testeSemNavegador("XML-02 · K2 · prova reversa do detector do web da base: a m
  * K2 · A CONFERÊNCIA DA BASE LÊ AS ORIGENS NOVAS E GERA A COMPRA
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
 
-test("XML-02 · K2 (sentido 2) — a conferência da base sobre a API deste HEAD: com as origens novas (lidas no fio) renderiza sem erro e o Gerar compra dá 201; o risco da janela (o rótulo, o \"Lembrar\" e o vínculo do palpite) fica observado no mundo legado e afirmado no novo", async ({ page }) => {
+test("XML-02 · K2 (sentido 2) — a conferência da base sobre a API deste HEAD: com as origens novas (lidas no fio) renderiza sem erro e o Gerar compra dá 201; o risco da janela (o rótulo, o \"Lembrar\" e o vínculo dos palpites) fica observado no mundo legado e afirmado no novo", async ({ page }) => {
   test.setTimeout(240_000);
   const mundo = mundoDoWebDaBase();
   await login(page);
@@ -100,18 +105,21 @@ test("XML-02 · K2 (sentido 2) — a conferência da base sobre a API deste HEAD
   // e o "Criar produto" de cada item.
   const rotuloNaTela = async (k: number) => (await item(k).getByText(/^Sugerido( \(.+\))?$/).allTextContents()).join(" | ");
   const lembrarNaTela = (k: number) => page.getByTestId(`importacao-item-${k}-lembrar`).isChecked();
-  const observado = {
-    D: { rotulo: await rotuloNaTela(n.D), lembrar: await lembrarNaTela(n.D), criarProduto: await page.getByTestId(`importacao-item-${n.D}-criar-produto`).count(), conferencia: await page.getByTestId(`importacao-item-${n.D}-sugestao-descricao`).count() },
-    R: { rotulo: await rotuloNaTela(n.R), lembrar: await lembrarNaTela(n.R), criarProduto: await page.getByTestId(`importacao-item-${n.R}-criar-produto`).count(), conferencia: await page.getByTestId(`importacao-item-${n.R}-sugestao-descricao`).count() }
-  };
-  console.log(`[skew] XML-02 · K2 · mundo ${mundo} · na tela da base: item ${n.D} (descrição) rótulo="${observado.D.rotulo}" Lembrar=${observado.D.lembrar ? "MARCADO" : "desmarcado"} Criar produto=${observado.D.criarProduto} linha do palpite=${observado.D.conferencia}`
-    + ` | item ${n.R} (referência) rótulo="${observado.R.rotulo}" Lembrar=${observado.R.lembrar ? "MARCADO" : "desmarcado"} Criar produto=${observado.R.criarProduto}`);
+  const doCartao = async (k: number) => ({
+    rotulo: await rotuloNaTela(k), lembrar: await lembrarNaTela(k), criarProduto: await page.getByTestId(`importacao-item-${k}-criar-produto`).count(),
+    conferenciaDaDescricao: await page.getByTestId(`importacao-item-${k}-sugestao-descricao`).count(),
+    conferenciaDaReferencia: await page.getByTestId(`importacao-item-${k}-sugestao-referencia`).count()
+  });
+  const observado = { D: await doCartao(n.D), R: await doCartao(n.R) };
+  const linha = (o: typeof observado.D) => `rótulo="${o.rotulo}" Lembrar=${o.lembrar ? "MARCADO" : "desmarcado"} Criar produto=${o.criarProduto} linha do palpite (descrição/referência)=${o.conferenciaDaDescricao}/${o.conferenciaDaReferencia}`;
+  console.log(`[skew] XML-02 · K2 · mundo ${mundo} · na tela da base: item ${n.D} (descrição) ${linha(observado.D)} | item ${n.R} (referência) ${linha(observado.R)}`);
   if (mundo === "novo") {
-    expect(observado, "mundo novo: o web da base é o deste HEAD").toEqual({
-      D: { rotulo: ROTULO.descricao, lembrar: false, criarProduto: 1, conferencia: 1 },
-      R: { rotulo: ROTULO.referencia, lembrar: true, criarProduto: 0, conferencia: 0 }
+    expect(observado, "mundo novo: o web da base é o deste HEAD — os dois palpites").toEqual({
+      D: { rotulo: ROTULO.descricao, lembrar: false, criarProduto: 1, conferenciaDaDescricao: 1, conferenciaDaReferencia: 0 },
+      R: { rotulo: ROTULO.referencia, lembrar: false, criarProduto: 1, conferenciaDaDescricao: 0, conferenciaDaReferencia: 1 }
     });
     await expect(page.getByTestId(`importacao-item-${n.D}-sugestao-descricao`)).toHaveText(TEXTO_DA_CONFERENCIA_DO_PALPITE);
+    await expect(page.getByTestId(`importacao-item-${n.R}-sugestao-referencia`)).toHaveText(TEXTO_DA_CONFERENCIA_DA_REFERENCIA);
   }
 
   // O "GERAR COMPRA" da base, sem tocar em nada.
@@ -122,14 +130,14 @@ test("XML-02 · K2 (sentido 2) — a conferência da base sobre a API deste HEAD
   await expect(page, "a base abre a consulta da compra").toHaveURL(new RegExp(`/compras/compras/${g.compra!.id}$`));
   const gravados = vinculosLembradosDo(c.fornecedor);
   const par = (papel: "D" | "R") => { const i = c.itens[n[papel] - 1]!; return `${i.codigo}|${i.unidade}|${p[papel].id}`; };
-  const palpiteGravado = gravados.includes(par("D"));
+  const gravado = (papel: "D" | "R") => (gravados.includes(par(papel)) ? "GRAVADO — o risco declarado da janela" : "não gravado");
   console.log(`[skew] XML-02 · K2 · mundo ${mundo} · gerar ${g.status} | lembrar_vinculo no corpo: ${JSON.stringify(lembrarNoCorpo(g.corpo).map(([k, , l]) => [k, l]))}`
-    + ` | vínculos lembrados do fornecedor depois: ${gravados.length} (o do palpite ${palpiteGravado ? "GRAVADO — o risco declarado da janela" : "não gravado"})`);
+    + ` | vínculos lembrados do fornecedor depois: ${gravados.length} (o do palpite da descrição ${gravado("D")}; o da referência ${gravado("R")})`);
   if (mundo === "novo") {
-    expect(lembrarNoCorpo(g.corpo), "mundo novo: o palpite vai com lembrar_vinculo false").toEqual([[n.D, p.D.id, false], [n.R, p.R.id, true]]);
-    expect(gravados, "mundo novo: o banco ganha SÓ o par da referência").toEqual([par("R")]);
+    expect(lembrarNoCorpo(g.corpo), "mundo novo: os dois palpites vão com lembrar_vinculo false").toEqual([[n.D, p.D.id, false], [n.R, p.R.id, false]]);
+    expect(gravados, "mundo novo: o banco NÃO ganha par nenhum do fornecedor").toEqual([]);
   } else {
-    expect(gravados, "nos dois mundos: o par da referência (identidade, \"Lembrar\" marcado) é gravado").toContain(par("R"));
+    expect(gravados, "mundo legado: o web da base deixa \"Lembrar\" marcado na referência, e o par dela é gravado (o risco da janela, observado)").toContain(par("R"));
   }
   v.semBloqueio();
   v.semErroDeContrato();

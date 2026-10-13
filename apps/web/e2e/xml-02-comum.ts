@@ -22,7 +22,7 @@ import { cnpjDeEmitenteSintetico, eanSintetico, notaSinteticaDeVariosItens, type
  * │   D  DESCRIÇÃO semelhante: o produto foi cadastrado à mão (sem barcode, sem referência, sem vínculo); a    │
  * │      nota troca a ordem das palavras e acrescenta a embalagem                       → palpite (caminho 5)    │
  * │   R  REFERÊNCIA: o produto tem `reference` = o cProd do item; a descrição não tem nada em comum com a nota │
- * │                                                                                     → identidade (caminho 4) │
+ * │      → caminho 4: identidade no SERVIDOR (o lote não o cria), PALPITE na TELA (decisão do dono, 21214fd5)   │
  * │   N  sem produto no cadastro                                                        → `nenhum`               │
  * │ Toda descrição leva o sorteio da execução (`X02<rodada>`): o produto de uma execução anterior que tivesse    │
  * │ ficado vivo dividiria só 3 de 6 lexemas com o item — exatamente a metade, que NÃO casa (a 314 casa com       │
@@ -36,7 +36,7 @@ import { cnpjDeEmitenteSintetico, eanSintetico, notaSinteticaDeVariosItens, type
  * └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ OS DETECTORES DO MUNDO DA BASE (lidos do FONTE do commit da base) ────────────────────────────────────────┐
- * │ `webDaBaseTemAXml02`: o `apps/web/src` do commit tem a linha da conferência do palpite (`-sugestao-descricao`)│
+ * │ `webDaBaseTemAXml02`: o `apps/web/src` do commit tem a linha da conferência do palpite (`sugestao-descricao`) │
  * │ `apiDaBaseTemAXml02`: o `apps/api/src` do commit monta o sugerido de origem "descricao"                     │
  * │ Os dois REPROVAM quando não conseguem ler (commit ausente, árvore quebrada) — nunca viram "não tem". A prova │
  * │ reversa de cada um roda num caso próprio do spec do sentido dele, sobre dois commits FIXOS: a main antes da │
@@ -65,19 +65,29 @@ export const ROTULO = {
   codigoDeBarras: "Sugerido (código de barras)",
   semVinculo: "Sem vínculo"
 } as const;
-/** A linha que pede a conferência do palpite (`importacao-item-<n>-sugestao-descricao`). */
+/** A linha que pede a conferência do palpite da DESCRIÇÃO (`importacao-item-<n>-sugestao-descricao`). */
 export const TEXTO_DA_CONFERENCIA_DO_PALPITE = "Produto sugerido pela descrição semelhante: confira antes de gerar.";
+/** A linha que pede a conferência do palpite da REFERÊNCIA (`importacao-item-<n>-sugestao-referencia`). */
+export const TEXTO_DA_CONFERENCIA_DA_REFERENCIA = "Produto sugerido pela referência do produto: confira antes de gerar.";
 
 /* ═════════════════════════════════ os detectores do mundo da base ═════════════════════════════════ */
 
-/** As marcas da XML-02 no fonte: a da tela (o testid da linha do palpite) e a da API (o sugerido de origem "descricao"). */
-export const MARCA_DA_XML02 = { web: "-sugestao-descricao", api: "origem: \"descricao\"" } as const;
+/**
+ * As marcas da XML-02 no fonte: a da tela (o sufixo do testid da linha do palpite) e a da API (o sugerido de origem
+ * "descricao"). A da tela vai SEM o hífen: desde o 21214fd5 o testid sai de `${pede}-${palpite.sufixoDoTestid}` e o fonte
+ * só tem `"sugestao-descricao"`; com o hífen, a base que já tem a XML-02 seria lida como legado.
+ */
+export const MARCA_DA_XML02 = { web: "sugestao-descricao", api: "origem: \"descricao\"" } as const;
 
 /** Dois commits FIXOS, um por mundo. Nenhum é a base desta execução: ela muda a cada PR e só exercitaria o ramo dela. */
 export const COMMITS_DA_XML02 = {
   /** A main com a EDITAR-02 mesclada (#126), a base da PR #127: sem a XML-02. */
   sem: "4c163ee81b9556d967a75a9af65bf464897b96fa",
-  /** O commit da XML-02 na branch da PR #127 (decisão 314, o contrato e as linhas de TESTING): a tela e a API da fatia. */
+  /**
+   * O commit da XML-02 na branch da PR #127 (decisão 314, o contrato e as linhas de TESTING): a tela e a API da fatia.
+   * Nele a tela ainda trata a referência como identidade; ele NUNCA é base de PR: entra na main no mesmo merge que o
+   * 21214fd5 (a referência como palpite). Por isso o mundo "novo" é um só — o comportamento de agora —, sem um terceiro.
+   */
   com: "d2086dd857750950acfb89e2bcd27f48a65f3e45"
 } as const;
 
