@@ -11,9 +11,10 @@ import { DialogoDeCadastroRapido } from "./aba-cabecalho";
 import { criarProdutosDaImportacao, recusasNoCampo } from "./api";
 import { decimalDigitado, type EstadoDaConferencia } from "./estado";
 import {
-  corpoDoLote, declaraCriarProdutosDaNota, fornecedorResolvidoParaOLote, itensSemLocalGravado, mensagensDaRecusaDoLote, planoDoLote, quantidadeDeProdutos, rotuloDoLote,
-  unidadeDoPreenchimento, type PlanoDoLote
+  cadastravelPelaNota, corpoDoLote, declaraCriarProdutosDaNota, fornecedorResolvidoParaOLote, itensSemLocalGravado, mensagensDaRecusaDoLote, planoDoLote,
+  presetDoProdutoDoItem, quantidadeDeProdutos, rotuloDoLote, type PlanoDoLote
 } from "./produtos-da-nota";
+import { rotuloDoVinculo, sugeridoPelaDescricao } from "./vinculo-do-item";
 
 /**
  * A ABA "ITENS, VÍNCULOS E LOTES" (OPERACOES-01 F7, decisão 284): cada item da nota com o que a nota diz (código,
@@ -23,8 +24,15 @@ import {
  * "Imobilizado" e "Lembrar este vínculo". A quantidade e o unitário internos são as contas do domínio (as do servidor).
  * Os lotes vêm do rastro da nota (somente leitura); sem rastro, o produto que controla lote pede o lote.
  *
+ * XML-02 (decisão 314): o rótulo diz de onde veio o sugerido (código do fornecedor, código de barras, referência do
+ * produto ou descrição semelhante — `rotuloDoVinculo`). O sugerido pela DESCRIÇÃO semelhante vem escolhido, mas é
+ * PALPITE: uma linha pede a conferência enquanto o produto é o sugerido, "Lembrar este vínculo" nasce DESMARCADO
+ * (`lembrarDoVinculo`, no estado) e "Criar produto" é oferecido como no sem vínculo, com o mesmo pré-preenchimento.
+ * No lote ele só entra depois que a pessoa tira o produto sugerido (`planoDoLote`).
+ *
  * XML-01 (decisão 312): com a capacidade declarada na conferência (`criarProdutosDaNota`), `products.create` e ao menos
- * um produto a criar, "Criar N produtos da nota" (acima dos cartões) cria de uma vez os produtos dos itens sem vínculo:
+ * um produto a criar, "Criar N produtos da nota" (acima dos cartões) cria de uma vez os produtos dos itens sem vínculo
+ * (e dos sugeridos pela descrição cujo produto a pessoa tirou):
  * o Grupo e a Natureza de custo são perguntados UMA vez; o resto vem da nota e do Local de cada item. Sem a capacidade
  * (a API anterior), a aba é a de antes: sem o botão e sem nenhuma pergunta nova. O diálogo de UM item continua igual.
  */
@@ -38,16 +46,7 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
   const { conf } = e;
   const leitura = !e.pendente;
   const itemDoCadastro = criandoPara === null ? null : conf.itens.find((i) => i.nItem === criandoPara) ?? null;
-  const presetDoProduto = (): Record<string, string> => {
-    if (!itemDoCadastro || itemDoCadastro.vinculo.situacao !== "nenhum") {
-      const n = conf.nota.itens.find((i) => i.nItem === criandoPara);
-      return n ? { description: n.descricao.slice(0, 120), ...(n.ncm ? { ncm_code: n.ncm } : {}) } : {};
-    }
-    const p = itemDoCadastro.vinculo.preenchimento;
-    const unidade = unidadeDoPreenchimento(p);
-    return { description: p.description.slice(0, 120), ...(p.ncm_code ? { ncm_code: p.ncm_code } : {}), ...(p.barcode ? { barcode: p.barcode } : {}),
-      ...(unidade ? { measurement_id: unidade } : {}) };
-  };
+  const presetDoProduto = (): Record<string, string> => presetDoProdutoDoItem(itemDoCadastro?.vinculo, conf.nota.itens.find((i) => i.nItem === criandoPara));
   // O LOTE: só com a importação pendente, a permissão (apresentação — quem nega é a rota) e a capacidade declarada.
   const podeLote = e.pendente && can("products.create") && declaraCriarProdutosDaNota(conf);
   const plano = podeLote ? planoDoLote(conf, e.itens) : null;
@@ -78,7 +77,7 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
           <span className="font-mono text-[11px] text-slate-500">{item.codigo}</span>
           <span className="text-[13px]">{item.descricao}</span>
           <span className="text-[12px] text-slate-600" data-testid={`${pede}-quantidade-nota`}>{item.quantidade} {item.unidade} × {brl(item.valorUnitario)} = {brl(item.valorProdutos)}</span>
-          <span className="rounded bg-slate-100 px-1.5 text-[11px] text-slate-600">{enumLabel("vinculo_item_nfe", v.situacao)}{v.situacao === "sugerido" ? ` (${v.origem === "codigo_barras" ? "código de barras" : "código do fornecedor"})` : ""}</span>
+          <span className="rounded bg-slate-100 px-1.5 text-[11px] text-slate-600" data-testid={`${pede}-vinculo`}>{rotuloDoVinculo(v)}</span>
         </header>
         <div className="grid grid-cols-12 gap-3">
           <Field label="Produto" span={5} required error={e.erroDoItem(n, "produto_id")}>
@@ -101,12 +100,13 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
             <span>Unitário interno: <strong data-testid={`${pede}-unitario-interno`}>{conta.situacao === "pronta" ? conta.unitarioInterno : "—"}</strong></span>
           </div>
 
+          {sugeridoPelaDescricao(v) && !leitura && d.produtoId === v.produto.id && <p className="col-span-12 text-[12px] text-amber-800" data-testid={`${pede}-sugestao-descricao`}>Produto sugerido pela descrição semelhante: confira antes de gerar.</p>}
           {v.situacao === "ambiguo" && !leitura && <div className="col-span-12 flex flex-wrap items-center gap-1.5" data-testid={`${pede}-candidatos`}>
             <span className="text-[12px] text-amber-800">Mais de um produto corresponde:</span>
             {v.candidatos.map((c) => <Button key={c.id} size="sm" variant={d.produtoId === c.id ? "default" : "outline"} data-testid={`${pede}-candidato-${c.id}`}
               onClick={() => e.mudarItem(n, { produtoId: c.id, produtoManual: true })}>{c.codigo} — {c.descricao}</Button>)}
           </div>}
-          {!leitura && can("products.create") && (v.situacao === "nenhum" || v.situacao === "ambiguo") && <div className="col-span-12">
+          {!leitura && can("products.create") && (cadastravelPelaNota(v) || v.situacao === "ambiguo") && <div className="col-span-12">
             <Button size="sm" variant="outline" data-testid={`${pede}-criar-produto`} onClick={() => setCriandoPara(n)}>Criar produto</Button>
           </div>}
 

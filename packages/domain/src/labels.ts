@@ -78,6 +78,8 @@ export const ENUM_LABELS = {
   situacao_importacao_nfe: { pendente: "Pendente", gerada: "Compra gerada", descartada: "Descartada" },
   origem_importacao_nfe: { arquivo: "Arquivo XML", dfe: "DF-e recebida" },
   vinculo_item_nfe: { lembrado: "Vínculo lembrado", sugerido: "Sugerido", ambiguo: "Mais de um produto corresponde", nenhum: "Sem vínculo" },
+  // XML-02 (decisão 314): de onde veio o produto SUGERIDO — vai entre parênteses depois de "Sugerido", por isso em minúscula.
+  origem_vinculo_item_nfe: { codigo_fornecedor: "código do fornecedor", codigo_barras: "código de barras", reference: "referência do produto", descricao: "descrição semelhante" },
   classificacao_gasto: { capex: "CAPEX", opex: "OPEX" },
   rateio_compra: { documento: "Natureza e centro do documento", por_valor: "Por valor", por_produto: "Por produto" },
   tipo_fator_conversao: { multiply: "Multiplica", divide: "Divide" },

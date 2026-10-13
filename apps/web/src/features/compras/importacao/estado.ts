@@ -10,6 +10,7 @@ import {
 import { api, type ApiError } from "@/lib/api";
 import { novaChaveDeIdempotencia } from "../pedido-e-orcamento";
 import type { RecusaNoCampo } from "./api";
+import { decisaoDoVinculo } from "./vinculo-do-item";
 
 /**
  * O ESTADO DA CONFERÊNCIA DO XML (OPERACOES-01 F7, decisão 284) — sem JSX. As abas só DESENHAM; o que vai no corpo do
@@ -138,28 +139,7 @@ const hoje = () => { const d = new Date(); return `${d.getFullYear()}-${String(d
 
 const produtoDoVinculo = (p: ProdutoDoVinculo): ProdutoNaTela => ({ id: p.id, codigo: p.codigo, descricao: p.descricao, controleLote: p.controleLote, controlaEstoque: p.controlaEstoque });
 
-/** A decisão de um item pelo vínculo do servidor (lembrado/sugerido traz produto e fator; o resto, vazio e fator 1). */
-function decisaoDoVinculo(conf: ConferenciaDaImportacaoNfe, nItem: number, base?: DecisaoDoItemNaTela): DecisaoDoItemNaTela {
-  const i = conf.itens.find((x) => x.nItem === nItem);
-  const v = i?.vinculo;
-  const comVinculo = v && (v.situacao === "lembrado" || v.situacao === "sugerido") ? v : null;
-  return {
-    nItem,
-    produtoId: comVinculo ? comVinculo.produto.id : "",
-    produtoManual: false,
-    fator: comVinculo ? D(comVinculo.fator).toFixed() : "1",
-    tipoFator: comVinculo ? comVinculo.tipoFator : "multiply",
-    armazemId: base?.armazemId ?? "",
-    geraEstoque: base?.geraEstoque ?? true,
-    imobilizado: base?.imobilizado ?? false,
-    lembrar: base?.lembrar ?? true,
-    lote: base?.lote ?? "",
-    validade: base?.validade ?? "",
-    itemOrigemId: base?.itemOrigemId ?? "",
-    categoriaId: base?.categoriaId ?? "",
-    centroId: base?.centroId ?? ""
-  };
-}
+// A decisão de um item pelo vínculo do servidor (`decisaoDoVinculo`) mora em ./vinculo-do-item: pura, provada no teste.
 
 /** O pedido pré-escolhido: o único pedido que os itens da nota apontam (xPed/nItemPed), quando é um dos candidatos. */
 function pedidoReferenciado(conf: ConferenciaDaImportacaoNfe): string {
@@ -211,14 +191,18 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
 
   // O FORNECEDOR MUDOU (escolhido entre os candidatos, ou cadastrado): o servidor manda os vínculos e os pedidos DELE.
   // O item cuja pessoa escolheu o produto fica como está; os outros seguem o vínculo novo. O pedido é refeito.
+  // `vinculosAnteriores`: os vínculos em que as decisões de agora nasceram (o "Lembrar" que a pessoa mudou fica).
   const fornecedorAnterior = React.useRef(conf.fornecedorEscolhido);
+  const vinculosAnteriores = React.useRef(conf.itens);
   React.useEffect(() => {
     if (fornecedorAnterior.current === conf.fornecedorEscolhido) return;
     fornecedorAnterior.current = conf.fornecedorEscolhido;
+    const anteriores = vinculosAnteriores.current;
+    vinculosAnteriores.current = conf.itens;
     const pedidoId = o.podeReceberPedido ? pedidoReferenciado(conf) : "";
     setCab((c) => ({ ...c, pedidoId }));
     setItens((atuais) => atuais.map((d) => {
-      const nova = d.produtoManual ? d : decisaoDoVinculo(conf, d.nItem, d);
+      const nova = d.produtoManual ? d : decisaoDoVinculo(conf, d.nItem, d, anteriores.find((x) => x.nItem === d.nItem)?.vinculo);
       return { ...nova, itemOrigemId: itemDoPedidoPara(conf, pedidoId, d.nItem, nova.produtoId) };
     }));
   }, [conf, o.podeReceberPedido]);

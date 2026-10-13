@@ -1,10 +1,11 @@
 import {
   CAPACIDADE_CRIAR_PRODUTOS_DA_NOTA, chaveDoProdutoDaNota,
   type ConferenciaDaImportacaoNfe, type CriarProdutosDaNota, type ItemDaConferenciaNfe, type ItemDaNota, type PreenchimentoDoProduto,
-  type ProdutoDoVinculo, type ProdutosCriadosDaNota
+  type ProdutoDoVinculo, type ProdutosCriadosDaNota, type VinculoDoItemDaNota
 } from "@agro/domain";
 import type { RecusaNoCampo } from "./api";
 import type { DecisaoDoItemNaTela } from "./estado";
+import { sugeridoPelaDescricao } from "./vinculo-do-item";
 
 /**
  * O CADASTRO EM LOTE DOS PRODUTOS DA NOTA (XML-01, decisão 312) — contas PURAS, sem React e sem rede (a aba de itens
@@ -17,8 +18,16 @@ import type { DecisaoDoItemNaTela } from "./estado";
  *
  *   · CAPACIDADE (`declaraCriarProdutosDaNota`): a conferência declara `capacidades.criarProdutosDaNota === 1`, em
  *     propriedade PRÓPRIA (nunca herdada). Sem a declaração (a API anterior) não há lote: a aba fica como era.
- *   · CANDIDATO (`planoDoLote`): item com vínculo `nenhum` E sem produto escolhido na tela. Com a unidade resolvida
- *     pelo servidor (`preenchimento.measurement_id`) ⇒ entra na lista; sem ⇒ fica de fora (crie pelo item).
+ *   · CADASTRÁVEL (`preenchimentoParaCadastrar`, XML-02/decisão 314): o item que a nota ainda pode cadastrar — vínculo
+ *     `nenhum` OU sugerido pela DESCRIÇÃO semelhante (palpite: o produto pode não ser aquele), os dois com o
+ *     pré-preenchimento do servidor. O lembrado, o ambíguo e o sugerido por IDENTIDADE (código do fornecedor, código de
+ *     barras, referência do produto) não: criar seria duplicar o produto que já existe.
+ *   · CANDIDATO (`planoDoLote`): item cadastrável E sem produto escolhido na tela. O sugerido pela descrição chega com o
+ *     produto escolhido: só entra se a pessoa TIROU o produto, nunca por padrão (senão o lote duplicaria o produto que
+ *     a descrição achou). Com a unidade resolvida pelo servidor (`preenchimento.measurement_id`) ⇒ entra na lista;
+ *     sem ⇒ fica de fora (crie pelo item). O servidor do lote olha só a identidade (caminhos 1 a 4) e aceita os dois.
+ *   · O CADASTRO DE UM ITEM (`presetDoProdutoDoItem`): o pré-preenchimento do cadastrável (descrição, NCM, código de
+ *     barras e a unidade resolvida); sem ele, a descrição e a NCM da nota.
  *   · CONTAGEM (`quantidadeDeProdutos`): por PRODUTO, não por item — dois itens com o mesmo código do fornecedor e a
  *     mesma unidade são UM produto (`chaveDoProdutoDaNota`, a mesma chave do servidor).
  *   · CORPO (`corpoDoLote`): só DECISÕES — o Grupo, a Natureza, o fornecedor escolhido na conferência (quando houver)
@@ -56,11 +65,36 @@ export function unidadeDoPreenchimento(p: PreenchimentoDoProduto): string | null
 
 /** Um item da nota que o lote cria: o que a nota diz dele e a chave do PRODUTO que ele pede. */
 export interface ItemDoLote { nItem: number; codigo: string; descricao: string; unidade: string; chave: string }
-/** Um item sem vínculo que NÃO entra no lote (a unidade da nota não corresponde a uma unidade do cadastro). */
+/** Um item cadastrável que NÃO entra no lote (a unidade da nota não corresponde a uma unidade do cadastro). */
 export interface ItemForaDoLote { nItem: number; codigo: string; descricao: string; unidade: string; motivo: "unidade_nao_resolvida" }
 export interface PlanoDoLote { lista: ItemDoLote[]; fora: ItemForaDoLote[] }
 
-/** Quem entra no lote e quem fica de fora, na ordem da nota. Item com produto escolhido na tela não é candidato. */
+/** O item que a nota ainda pode cadastrar: sem vínculo, ou sugerido pela descrição semelhante. */
+export const cadastravelPelaNota = (v: VinculoDoItemDaNota | undefined): boolean => v?.situacao === "nenhum" || sugeridoPelaDescricao(v);
+
+/** O pré-preenchimento do servidor (próprio, com a descrição em texto) do item cadastrável; senão, ou fora da forma, `null`. */
+export function preenchimentoParaCadastrar(v: VinculoDoItemDaNota | undefined): PreenchimentoDoProduto | null {
+  if (!v || !cadastravelPelaNota(v)) return null;
+  const p = propria(v as unknown as Record<string, unknown>, "preenchimento");
+  return ehObjeto(p) && ehTexto(propria(p, "description")) ? (p as unknown as PreenchimentoDoProduto) : null;
+}
+
+/**
+ * O pré-preenchimento do cadastro rápido de UM item (chaves do recurso `products`): o do servidor para o cadastrável
+ * (descrição até 120, NCM, código de barras e a unidade resolvida, cada um só quando vem); sem ele, a descrição e a NCM da nota.
+ */
+export function presetDoProdutoDoItem(v: VinculoDoItemDaNota | undefined, item: Pick<ItemDaNota, "descricao" | "ncm"> | undefined): Record<string, string> {
+  const p = preenchimentoParaCadastrar(v);
+  if (!p) return item ? { description: item.descricao.slice(0, 120), ...(item.ncm ? { ncm_code: item.ncm } : {}) } : {};
+  const unidade = unidadeDoPreenchimento(p);
+  return { description: p.description.slice(0, 120), ...(p.ncm_code ? { ncm_code: p.ncm_code } : {}), ...(p.barcode ? { barcode: p.barcode } : {}),
+    ...(unidade ? { measurement_id: unidade } : {}) };
+}
+
+/**
+ * Quem entra no lote e quem fica de fora, na ordem da nota: só o item cadastrável (`nenhum` ou sugerido pela descrição)
+ * SEM produto escolhido na tela — o sugerido pela descrição só depois que a pessoa tirou o produto sugerido.
+ */
 export function planoDoLote(
   conf: { nota: { itens: readonly Pick<ItemDaNota, "nItem" | "codigo" | "descricao" | "unidade">[] }; itens: readonly Pick<ItemDaConferenciaNfe, "nItem" | "vinculo">[] },
   decisoes: readonly Pick<DecisaoDoItemNaTela, "nItem" | "produtoId">[]
@@ -70,9 +104,10 @@ export function planoDoLote(
   for (const item of conf.nota.itens) {
     const v = conf.itens.find((x) => x.nItem === item.nItem)?.vinculo;
     const d = decisoes.find((x) => x.nItem === item.nItem);
-    if (!v || v.situacao !== "nenhum" || !d || d.produtoId) continue;
+    if (!cadastravelPelaNota(v) || !d || d.produtoId) continue;
     const base = { nItem: item.nItem, codigo: item.codigo, descricao: item.descricao, unidade: item.unidade };
-    if (unidadeDoPreenchimento(v.preenchimento)) lista.push({ ...base, chave: chaveDoProdutoDaNota(item) });
+    const p = preenchimentoParaCadastrar(v);
+    if (p && unidadeDoPreenchimento(p)) lista.push({ ...base, chave: chaveDoProdutoDaNota(item) });
     else fora.push({ ...base, motivo: "unidade_nao_resolvida" });
   }
   return { lista, fora };
