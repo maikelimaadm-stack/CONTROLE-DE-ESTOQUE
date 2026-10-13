@@ -228,11 +228,17 @@ export function unidadeDoCadastroPelaNota(linhas: readonly UnidadeDoCadastro[], 
   return doSistema.length === 1 ? doSistema[0]! : null;
 }
 
-/** Uma unidade VIVA do produto (`erp.produto_unidades`; a consulta filtra `deleted_at`), de compra ou não. */
-export interface UnidadeDoProduto { measurementId: string; fator: string; tipoFator: TipoFator; usoCompra: boolean; codigoBarras: string | null }
+/**
+ * Uma unidade VIVA do produto (`erp.produto_unidades`; a consulta filtra `deleted_at`), de compra ou não. `simbolo` é o
+ * da unidade de medida dela — só para a pergunta DIZER qual é (nunca decide nada); ausente ou nulo, a pergunta não o diz.
+ */
+export interface UnidadeDoProduto { measurementId: string; fator: string; tipoFator: TipoFator; usoCompra: boolean; codigoBarras: string | null; simbolo?: string | null }
 
-/** O cadastro de UM produto que o fator lê: a unidade principal (`measurement_id`), o código de barras e as unidades vivas. */
-export interface CadastroDoProduto { measurementId: string; codigoBarras: string | null; unidades: readonly UnidadeDoProduto[] }
+/**
+ * O cadastro de UM produto que o fator lê: a unidade principal (`measurement_id`, e o `simbolo` dela, só para dizer), o
+ * código de barras e as unidades vivas.
+ */
+export interface CadastroDoProduto { measurementId: string; codigoBarras: string | null; unidades: readonly UnidadeDoProduto[]; simbolo?: string | null }
 
 /** O fator de um item com produto: o que vai no vínculo (`fator`, `tipoFator`) e de onde ele veio (`fatorPelaNota`). */
 export interface FatorDoItem { fator: string; tipoFator: TipoFator; fatorPelaNota: FatorDoItemDaNota }
@@ -253,6 +259,9 @@ const codigoDeBarrasDoCadastro = (s: string | null) => String(s ?? "").replace(/
  *   5. o cEAN da nota é o código de barras de alguma unidade do produto (`products.barcode` → a principal;
  *      `produto_unidades.codigo_barras` → a da linha, de compra ou não) e NENHUMA delas é a unidade de 2/3 → PERGUNTA
  *      (`codigo_de_barras_de_outra_unidade`). O código de barras nunca DÁ fator; o que não é de unidade do produto não conta.
+ *      A pergunta leva o número na mão (`codigoDeBarras`: o símbolo da unidade dona do código e o fator dela no cadastro —
+ *      a principal é 1, multiplica) SÓ quando o cEAN é de EXATAMENTE uma unidade do produto, com um fator só; de duas ou
+ *      mais (ou sem o símbolo), o campo não vem — nunca "a primeira" (`unidadeDoCodigoDeBarras`).
  * A PERGUNTA leva fator 1, multiplica, SÓ pela web anterior (a desta versão pede o número). Com o vínculo LEMBRADO
  * (`lembrado`), o fator e o tipo são os DELE — a decisão explícita do operador para aquele fornecedor, código e unidade
  * vence o cadastro —, e `cadastro` só vem quando o cadastro respalda (não é pergunta) um fator DIFERENTE (número ou tipo).
@@ -270,9 +279,29 @@ export function fatorDoItemPelaNota(
   return { fator: lembrado.fator, tipoFator: lembrado.tipoFator, fatorPelaNota: { origem: "vinculo", unidadeDaNota, cadastro } };
 }
 
+type PerguntaDoFator = Extract<FatorDoItemDaNota, { origem: "pergunta" }>;
+/** O número na mão da pergunta do código de barras de outra unidade (o campo aditivo do contrato). */
+type UnidadeDoCodigoDeBarras = NonNullable<PerguntaDoFator["codigoDeBarras"]>;
+/** Uma unidade do produto de que o cEAN é o código de barras: a principal (1, multiplica) ou a de uma linha (o fator dela). */
+interface DonoDoCodigoDeBarras { measurementId: string; simbolo: string | null; fator: string; tipoFator: TipoFator }
+
+/**
+ * A unidade de que o cEAN da nota é o código de barras, com o fator dela no cadastro (XML-04, decisão 318: a pergunta diz
+ * o número, nunca "confira"). Só quando é EXATAMENTE uma unidade do produto e as fontes que a apontam (o
+ * `products.barcode` e as linhas) dão UM fator só (número e tipo); duas unidades, dois fatores ou o símbolo ausente →
+ * nada (o campo não vem). Nunca "a primeira". O símbolo vai como a régua da 312 o compara (`simboloDoCadastro`: aparado,
+ * em maiúsculas) — a MESMA forma da `unidadeDaNota` ao lado ("sc" do seed é dito "SC", contra o "KG" da nota).
+ */
+function unidadeDoCodigoDeBarras(donos: readonly DonoDoCodigoDeBarras[]): UnidadeDoCodigoDeBarras | null {
+  const [d] = donos;
+  if (!d || donos.some((x) => x.measurementId !== d.measurementId || x.tipoFator !== d.tipoFator || !D(x.fator).eq(D(d.fator)))) return null;
+  const unidade = simboloDoCadastro(d.simbolo ?? "");
+  return unidade ? { unidade, fator: d.fator, tipoFator: d.tipoFator } : null;
+}
+
 function fatorPeloCadastro(unidades: readonly UnidadeDoCadastro[], produto: CadastroDoProduto | null, unidadeDaNota: string, ean: string | null): FatorDoItem {
-  const pergunta = (motivo: Extract<FatorDoItemDaNota, { origem: "pergunta" }>["motivo"]): FatorDoItem =>
-    ({ fator: "1", tipoFator: "multiply", fatorPelaNota: { origem: "pergunta", unidadeDaNota, motivo } });
+  const pergunta = (motivo: PerguntaDoFator["motivo"], codigoDeBarras: UnidadeDoCodigoDeBarras | null = null): FatorDoItem =>
+    ({ fator: "1", tipoFator: "multiply", fatorPelaNota: { origem: "pergunta", unidadeDaNota, motivo, ...(codigoDeBarras ? { codigoDeBarras } : {}) } });
   const unidade = unidadeDoCadastroPelaNota(unidades, unidadeDaNota);
   if (!unidade || !produto) return pergunta("unidade_fora_do_cadastro");
   let achado: FatorDoItem;
@@ -285,10 +314,14 @@ function fatorPeloCadastro(unidades: readonly UnidadeDoCadastro[], produto: Cada
     achado = { fator: linha.fator, tipoFator: linha.tipoFator, fatorPelaNota: { origem: "unidade_do_produto", unidadeDaNota } };
   }
   if (ean) {
-    const unidadesDoEan = new Set<string>();
-    if (codigoDeBarrasDoCadastro(produto.codigoBarras) === ean) unidadesDoEan.add(produto.measurementId);
-    for (const l of produto.unidades) if (codigoDeBarrasDoCadastro(l.codigoBarras) === ean) unidadesDoEan.add(l.measurementId);
-    if (unidadesDoEan.size > 0 && !unidadesDoEan.has(unidade)) return pergunta("codigo_de_barras_de_outra_unidade");
+    const donos: DonoDoCodigoDeBarras[] = [];
+    if (codigoDeBarrasDoCadastro(produto.codigoBarras) === ean) {
+      donos.push({ measurementId: produto.measurementId, simbolo: produto.simbolo ?? null, fator: "1", tipoFator: "multiply" });
+    }
+    for (const l of produto.unidades) {
+      if (codigoDeBarrasDoCadastro(l.codigoBarras) === ean) donos.push({ measurementId: l.measurementId, simbolo: l.simbolo ?? null, fator: l.fator, tipoFator: l.tipoFator });
+    }
+    if (donos.length > 0 && !donos.some((d) => d.measurementId === unidade)) return pergunta("codigo_de_barras_de_outra_unidade", unidadeDoCodigoDeBarras(donos));
   }
   return achado;
 }
@@ -300,7 +333,9 @@ export interface CadastroDoFator { unidades: UnidadeDoCadastro[]; produtos: Map<
  * O CADASTRO para o fator e para a unidade do produto a criar — UMA consulta para a nota (nunca uma por item): as
  * unidades de medida candidatas aos uCom (normalizados e DISTINTOS; da organização OU do sistema), a unidade principal e
  * o código de barras de cada produto achado (vivo) e as linhas VIVAS de `produto_unidades` deles (o uso de compra vai
- * junto: quem decide é `fatorDoItemPelaNota`). Sem uCom, nenhuma consulta: sem unidade, nada se resolve.
+ * junto: quem decide é `fatorDoItemPelaNota`). Na MESMA consulta, o símbolo da unidade principal e o de cada linha (a
+ * coluna `simbolo`, pela unidade da organização ou do sistema): só para a pergunta do código de barras de outra unidade
+ * DIZER qual é. Sem uCom, nenhuma consulta: sem unidade, nada se resolve.
  */
 async function cadastroDoFator(ctx: ServiceCtx, produtoIds: readonly string[], simbolos: readonly string[]): Promise<CadastroDoFator> {
   const cadastro: CadastroDoFator = { unidades: [], produtos: new Map() };
@@ -314,21 +349,24 @@ async function cadastroDoFator(ctx: ServiceCtx, produtoIds: readonly string[], s
        from erp.measurement_units mu
       where (mu.organization_id = $1 or mu.organization_id is null) and upper(btrim(mu.symbol)) = any($2::text[])
      union all
-     select 'produto', p.id::text, null, null, p.measurement_id::text, p.barcode, null, null, null
+     select 'produto', p.id::text, pm.symbol, null, p.measurement_id::text, p.barcode, null, null, null
        from erp.products p
+       left join erp.measurement_units pm on pm.id = p.measurement_id and (pm.organization_id = $1 or pm.organization_id is null)
       where p.organization_id = $1 and p.deleted_at is null and p.id = any($3::uuid[])
      union all
-     select 'unidade_do_produto', pu.product_id::text, null, null, pu.measurement_id::text, pu.codigo_barras, pu.fator::text, pu.tipo_fator, pu.uso_compra
+     select 'unidade_do_produto', pu.product_id::text, um.symbol, null, pu.measurement_id::text, pu.codigo_barras, pu.fator::text, pu.tipo_fator, pu.uso_compra
        from erp.produto_unidades pu
+       left join erp.measurement_units um on um.id = pu.measurement_id and (um.organization_id = $1 or um.organization_id is null)
       where pu.organization_id = $1 and pu.deleted_at is null and pu.product_id = any($3::uuid[])`,
     [ctx.orgId, [...simbolos], [...produtoIds]]);
   const unidadesPorProduto = new Map<string, UnidadeDoProduto[]>();
   for (const x of r.rows) {
     if (x.tipo === "unidade") cadastro.unidades.push({ id: x.id, simbolo: x.simbolo ?? "", daOrganizacao: x.da_organizacao === true });
-    else if (x.tipo === "produto") cadastro.produtos.set(x.id, { measurementId: x.measurement_id!, codigoBarras: x.codigo_barras, unidades: [] });
+    else if (x.tipo === "produto") cadastro.produtos.set(x.id, { measurementId: x.measurement_id!, codigoBarras: x.codigo_barras, unidades: [], simbolo: x.simbolo ?? null });
     else {
       const lista = unidadesPorProduto.get(x.id) ?? [];
-      lista.push({ measurementId: x.measurement_id!, fator: x.fator!, tipoFator: x.tipo_fator!, usoCompra: x.uso_compra === true, codigoBarras: x.codigo_barras });
+      lista.push({ measurementId: x.measurement_id!, fator: x.fator!, tipoFator: x.tipo_fator!, usoCompra: x.uso_compra === true, codigoBarras: x.codigo_barras,
+        simbolo: x.simbolo ?? null });
       unidadesPorProduto.set(x.id, lista);
     }
   }
@@ -718,16 +756,22 @@ const numeroDoFator = (f: string) => D(f).toFixed();
 /**
  * XML-04 (decisão 318) — a DIVERGÊNCIA do fator de um item com produto, ou nenhuma. NÃO bloqueia: a web anterior
  * bloquearia a nota inteira por um código que não conhece; a tela desta versão bloqueia pelo fator vazio. A PERGUNTA
- * (`fator_a_informar`) diz a unidade da nota, o produto e o motivo; o vínculo lembrado que o cadastro contradiz
- * (`fator_do_vinculo_diferente_do_cadastro`) diz os DOIS números, e que vale o do vínculo.
+ * (`fator_a_informar`) diz a unidade da nota, o produto e o motivo — no código de barras de outra unidade, a unidade de
+ * que o código é e o fator dela no cadastro, quando é uma só (`codigoDeBarras`); o vínculo lembrado que o cadastro
+ * contradiz (`fator_do_vinculo_diferente_do_cadastro`) diz os DOIS números, e que vale o do vínculo. Número na mão,
+ * nunca "confira".
  */
 export function divergenciaDoFator(nItem: number, v: VinculoDoItemDaNota): DivergenciaDaImportacaoNfe | null {
   if ((v.situacao !== "lembrado" && v.situacao !== "sugerido") || !v.fatorPelaNota) return null;
   const f = v.fatorPelaNota;
   const produto = v.produto.codigo;
   if (f.origem === "pergunta") {
+    const doCodigo = f.codigoDeBarras;
     const mensagem = f.motivo === "codigo_de_barras_de_outra_unidade"
-      ? `Item ${nItem}: o código de barras da nota é de outra unidade do produto ${produto}: confira o fator.`
+      ? doCodigo
+        ? `Item ${nItem}: o código de barras da nota é da unidade ${doCodigo.unidade} do produto ${produto} `
+          + `(fator ${numeroDoFator(doCodigo.fator)}, ${NOME_DO_TIPO_DE_FATOR[doCodigo.tipoFator]}), mas a nota diz ${f.unidadeDaNota}: informe o fator.`
+        : `Item ${nItem}: o código de barras da nota é de outra unidade do produto ${produto}, e não da unidade ${f.unidadeDaNota} da nota: informe o fator.`
       : f.unidadeDaNota
         ? `Item ${nItem}: a unidade ${f.unidadeDaNota} da nota não é unidade de compra do produto ${produto} no cadastro: informe o fator.`
         : `Item ${nItem}: a nota não traz a unidade do item, e o cadastro do produto ${produto} não diz o fator: informe o fator.`;
@@ -736,7 +780,7 @@ export function divergenciaDoFator(nItem: number, v: VinculoDoItemDaNota): Diver
   if (f.origem === "vinculo" && f.cadastro) {
     return div("fator_do_vinculo_diferente_do_cadastro", `Item ${nItem}: o vínculo lembrado usa fator ${numeroDoFator(v.fator)} (${NOME_DO_TIPO_DE_FATOR[v.tipoFator]}); `
       + `o cadastro do produto ${produto}, para a unidade ${f.unidadeDaNota}, diz ${numeroDoFator(f.cadastro.fator)} (${NOME_DO_TIPO_DE_FATOR[f.cadastro.tipoFator]}). `
-      + "Vale o do vínculo: confira.", false, nItem);
+      + "Vale o do vínculo.", false, nItem);
   }
   return null;
 }

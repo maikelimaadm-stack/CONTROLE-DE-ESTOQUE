@@ -30,12 +30,16 @@ import {
  *   · LEGADO (a base sem a XML-04): a tela é a de HOJE — o fator de cada item vem preenchido COMO O SERVIDOR MANDA
  *     (o "1" da referência e o 6 do vínculo), nenhuma origem, pergunta ou aviso do fator, nenhuma origem, pergunta ou
  *     aviso da forma (e o campo sem `data-origem`), ZERO pedido a `/regras-da-operacao` e a `/layout-efetivo` enquanto
- *     a conferência está aberta (contado no fio), e o "Gerar compra" dá 201 com o fator que a tela mostrou. A explicação
+ *     a conferência está aberta (contado no fio), e o "Gerar compra" dá 201 com o fator que a tela mostrou. O CORPO do
+ *     "Gerar compra", MEDIDO no fio: as CHAVES — no topo, em `financeiro`, no `rateio` e em cada item — são EXATAMENTE as
+ *     que a web da base manda para a mesma conferência (`CHAVES_DO_CORPO_NA_BASE`, lidas do fonte dela), na mesma ordem,
+ *     e a forma vai vazia como hoje (`forma_pagamento_id: null`, nada gravado). A explicação
  *     das duplicatas NÃO depende da API: com o total calculado, a tela recalcula as parcelas com a regra do domínio que
  *     embute (`parcelasDaNota`) e diz os três números e as duas comparações — conferido por extenso;
  *   · NOVO (a base já com a XML-04, depois do merge): o comportamento deste HEAD — a origem do fator, o campo vazio na
  *     pergunta (a pessoa digita) e a TOP perguntada; o "Gerar compra" dá 201.
- * O VIGIA: nenhuma requisição morta no navegador.
+ * O VIGIA (`vigiar`, desde a abertura da conferência até o 201): nenhuma requisição morta no navegador
+ * (`semBloqueio`) e nenhuma resposta 404, 422 ou 5xx da API da base à tela deste web (`semErroDeContrato`).
  *
  * PROVA REVERSA DO DETECTOR: o caso "detector" (sem navegador) roda `apiDaBaseTemAXml04` sobre dois commits fixos — a
  * main antes da XML-04 ⇒ falso; o commit da XML-04 na branch da fatia ⇒ verdadeiro.
@@ -43,6 +47,32 @@ import {
  * OS DADOS nascem pela API DA BASE (as portas de `central-compras-fixtures`, com a exclusão lógica no fim do caso);
  * nada se liga (a base não tem o cadastro da ligação). A compra, a importação e o vínculo lembrado ficam (decisão 247).
  */
+
+/**
+ * AS CHAVES DO CORPO DO "GERAR COMPRA" QUE A WEB DA BASE MANDA PARA ESTA CONFERÊNCIA — tiradas do fonte da base
+ * (origin/main 33291879: `git show 33291879:apps/web/src/features/compras/importacao/estado.ts`, a função `corpo()`,
+ * :343-378), na ORDEM em que ela as serializa. No mundo legado, o corpo que ESTE web manda à API da base tem de ter
+ * exatamente estas chaves — nem uma a mais, nem uma a menos, na mesma ordem — no topo, em `financeiro`, no `rateio` e em
+ * cada item. As chaves CONDICIONAIS da base, e por que esta conferência as tem ou não:
+ *   · `financeiro.condicao_pagamento_id` e `financeiro.data_vencimento` só vão com `parcelas: "condicao"` (:359) — é o
+ *     caso: as duplicatas do cenário não fecham e o vencimento é digitado (o caso confere `parcelas` no corpo);
+ *   · o `rateio` "documento" (:348) leva `tipo`, `categoria_financeira_id` e `centro_custo_id` — é o caso (a natureza e
+ *     o centro do documento); "por_valor" e "por_produto" (:346-347) teriam outras chaves e não rodam aqui;
+ *   · `lote` e `validade` do item só vão com o item sem rastro E o lote (ou a validade) digitado (:373-374) — o caso
+ *     não digita nenhum dos dois: não vão.
+ */
+const CHAVES_DO_CORPO_NA_BASE = {
+  topo: ["tipo_operacao_id", "fornecedor_id", "data_entrada", "observacao", "transportadora_id", "pedido_id", "solicitacao_compra_id", "financeiro", "itens"],
+  financeiro: ["parcelas", "condicao_pagamento_id", "data_vencimento", "forma_pagamento_id", "tipo_titulo_id", "classificacao_gasto", "rateio"],
+  rateio: ["tipo", "categoria_financeira_id", "centro_custo_id"],
+  item: ["n_item", "produto_id", "fator", "tipo_fator", "lembrar_vinculo", "armazem_id", "gera_estoque", "imobilizado", "item_origem_id", "categoria_financeira_id", "centro_custo_id"]
+} as const;
+
+/** O corpo do POST do "Gerar compra" como foi no fio: o que o K1 lê por nome (as chaves são medidas inteiras, por `Object.keys`). */
+interface CorpoDoGerarNoFio {
+  financeiro: Record<string, unknown> & { rateio: Record<string, unknown> };
+  itens: (Record<string, unknown> & { n_item: number; fator: string })[];
+}
 
 /** PREMISSA: o que o ramo legado cobra ausente existe neste HEAD (sem ela, "não aparece" seria verde por vacuidade). */
 function premissaDasMarcas() {
@@ -147,7 +177,7 @@ test("XML-04 · K1 (sentido 1) — a conferência deste web sobre a API da base:
   expect(resposta.status(), `a base gera a compra deste web: ${texto.slice(0, 300)}`).toBe(201);
   const compra = JSON.parse(texto) as { id: string; situacao: string; valor_total: string };
   expect([compra.situacao, D(compra.valor_total).toFixed(2)], "a compra nasce ABERTA, com o total da nota").toEqual(["aberto", c.nota.vNF]);
-  const corpo = resposta.request().postDataJSON() as { financeiro: Record<string, unknown>; itens: { n_item: number; fator: string }[] };
+  const corpo = resposta.request().postDataJSON() as CorpoDoGerarNoFio;
   const gravada = compraNoBanco(compra.id);
   const fatoresDoCorpo = corpo.itens.map((i) => D(i.fator).toFixed());
   expect(gravada.itens.map((l) => l.split("|")[3]), "o banco gravou o fator que a tela mandou").toEqual(fatoresDoCorpo);
@@ -156,9 +186,18 @@ test("XML-04 · K1 (sentido 1) — a conferência deste web sobre a API da base:
     expect(pedidosAteOGerar, "mundo legado: NENHUM pedido a /regras-da-operacao nem a /layout-efetivo com a conferência aberta (no fio)").toEqual([]);
     expect(fatoresDoCorpo, "mundo legado: o corpo leva o fator como o servidor mandou").toEqual(papeis.map((_, k) => D(vinculoNoFio(noFio, k + 1).fator ?? "0").toFixed()));
     expect([Object.hasOwn(corpo.financeiro, "forma_pagamento_id") ? corpo.financeiro["forma_pagamento_id"] : "ausente", gravada.forma], "mundo legado: a forma, como hoje (ninguém escolheu)").toEqual([null, null]);
+    // O CORPO, MEDIDO: as chaves que a web da base manda para esta conferência, exatamente e na mesma ordem.
+    expect([corpo.financeiro["parcelas"], corpo.financeiro.rateio["tipo"], corpo.itens.length], "premissa: as chaves condicionais da base — a condição (as duplicatas não fecham), o rateio do documento, os itens da nota")
+      .toEqual(["condicao", "documento", papeis.length]);
+    expect({ topo: Object.keys(corpo), financeiro: Object.keys(corpo.financeiro), rateio: Object.keys(corpo.financeiro.rateio), itens: corpo.itens.map((i) => Object.keys(i)) },
+      "mundo legado: as CHAVES do corpo (topo, financeiro, rateio e cada item) são exatamente as da web da base para a mesma conferência")
+      .toEqual({ topo: CHAVES_DO_CORPO_NA_BASE.topo, financeiro: CHAVES_DO_CORPO_NA_BASE.financeiro, rateio: CHAVES_DO_CORPO_NA_BASE.rateio, itens: papeis.map(() => CHAVES_DO_CORPO_NA_BASE.item) });
+    console.log(`[skew] XML-04 · K1 · o corpo do Gerar: as chaves da web da base — topo ${Object.keys(corpo).length}, financeiro ${Object.keys(corpo.financeiro).length}, `
+      + `rateio ${Object.keys(corpo.financeiro.rateio).length}, item ${CHAVES_DO_CORPO_NA_BASE.item.length} × ${corpo.itens.length} | forma_pagamento_id ${JSON.stringify(corpo.financeiro["forma_pagamento_id"])}`);
   } else {
     expect(pedidosAteOGerar.length, "mundo novo: a tela pergunta a TOP (a conferência declara a forma da nota)").toBeGreaterThan(0);
   }
   console.log(`[skew] XML-04 · K1 · mundo ${mundo} | pedidos à TOP com a conferência aberta: ${pedidosAteOGerar.length} | gerar ${resposta.status()} | fatores no corpo ${JSON.stringify(fatoresDoCorpo)} | forma gravada ${gravada.forma ?? "nenhuma"}`);
   v.semBloqueio();
+  v.semErroDeContrato();
 });

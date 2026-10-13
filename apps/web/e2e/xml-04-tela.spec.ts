@@ -164,7 +164,7 @@ test("X4-T1 — o FATOR na aba Itens: a unidade principal e a alternativa com o 
       await expect(origem, `(d) ${i.papel}: a origem`).toHaveText("Fator do vínculo lembrado.");
       await expect(origem).toHaveAttribute("data-origem", "vinculo");
       await expect(aviso, `(d) ${i.papel}: o aviso com os dois números`).toHaveText(
-        `O vínculo lembrado usa o fator ${i.fatorDoVinculo} (${MULTIPLICA}) e o cadastro do produto diz ${i.alternativa!.fator} (${MULTIPLICA}) para a unidade ${i.uCom}: vale o do vínculo; confira.`);
+        `O vínculo lembrado usa o fator ${i.fatorDoVinculo} (${MULTIPLICA}) e o cadastro do produto diz ${i.alternativa!.fator} (${MULTIPLICA}) para a unidade ${i.uCom}: vale o do vínculo.`);
       await expect(doItem(page, k1, "lembrar"), `(d) ${i.papel}: o lembrado nasce com "Lembrar" marcado`).toBeChecked();
     }
     if (i.grupo !== "fora_do_cadastro") await expect(pergunta, `${i.papel}: sem pergunta`).toHaveCount(0);
@@ -177,7 +177,7 @@ test("X4-T1 — o FATOR na aba Itens: a unidade principal e a alternativa com o 
   expect(doFator.map(([codigo, bloqueia, texto]) => [codigo, bloqueia, textoNormalizado(texto).replace(/\s*Ir para .*$/, "")]), "as divergências do fator na aba Divergências").toEqual([
     ["item_fator_invalido", "sim", `Bloqueia: Item ${n.U1}: informe o fator (maior que zero, até 6 casas).`],
     ["item_fator_invalido", "sim", `Bloqueia: Item ${n.U2}: informe o fator (maior que zero, até 6 casas).`],
-    ["fator_do_vinculo_diferente_do_cadastro", "nao", `Aviso: Item ${n.V}: O vínculo lembrado usa o fator 6 (${MULTIPLICA}) e o cadastro do produto diz 12 (${MULTIPLICA}) para a unidade CX: vale o do vínculo; confira.`]
+    ["fator_do_vinculo_diferente_do_cadastro", "nao", `Aviso: Item ${n.V}: O vínculo lembrado usa o fator 6 (${MULTIPLICA}) e o cadastro do produto diz 12 (${MULTIPLICA}) para a unidade CX: vale o do vínculo.`]
   ]);
 
   // O FINANCEIRO resolvido: a forma da nota (ligada) já escolhida; o vencimento (a condição: as duplicatas não fecham), a natureza e o centro.

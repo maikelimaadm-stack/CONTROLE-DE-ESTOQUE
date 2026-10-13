@@ -13,7 +13,7 @@ import { estruturaDaResposta, lerRegras } from "../layout-da-central";
 import type { RecusaNoCampo } from "./api";
 import { fatorNaTela } from "./fator-do-item";
 import { formaDaImportacao, lerFormaDaConferencia, topDaForma } from "./forma-da-nota";
-import { decisaoDoVinculo, fatorPelaNotaDoVinculo, fatorValido, lembrarAoTrocarProduto } from "./vinculo-do-item";
+import { decisaoDoVinculo, fatorAoTrocarProduto, fatorPelaNotaDoVinculo, fatorValido, lembrarAoTrocarProduto } from "./vinculo-do-item";
 
 /**
  * O ESTADO DA CONFERÊNCIA DO XML (OPERACOES-01 F7, decisão 284) — sem JSX. As abas só DESENHAM; o que vai no corpo do
@@ -193,13 +193,36 @@ function pedidoReferenciado(conf: ConferenciaDaImportacaoNfe): string {
 }
 
 /** O item do pedido de cada item da nota: o que a nota aponta (nItemPed), senão o ÚNICO item do pedido com o mesmo produto. */
-function itemDoPedidoPara(conf: ConferenciaDaImportacaoNfe, pedidoId: string, nItem: number, produtoId: string): string {
+function itemDoPedidoPara(conf: Pick<ConferenciaDaImportacaoNfe, "itens" | "pedidos">, pedidoId: string, nItem: number, produtoId: string): string {
   if (!pedidoId) return "";
   const apontado = conf.itens.find((x) => x.nItem === nItem)?.itemDoPedido;
   if (apontado && apontado.pedidoId === pedidoId) return apontado.itemId;
   const pedido = conf.pedidos.candidatos.find((p) => p.id === pedidoId);
   const mesmos = (pedido?.itens ?? []).filter((x) => produtoId && x.produtoId === produtoId);
   return mesmos.length === 1 ? mesmos[0]!.id : "";
+}
+
+/**
+ * A decisão de UM item depois da mudança `p` da pessoa (o que `mudarItem` grava) — PURA, provada no teste. Sem estoque,
+ * sem local. Trocar o produto refaz o item do pedido, o "Lembrar" do palpite (XML-02, decisão 314) e o FATOR que o
+ * servidor derivou para o produto do vínculo (XML-04, decisão 318: `fatorAoTrocarProduto` — outro produto com o campo
+ * ainda no fator do vínculo ⇒ o campo vazio; de volta, o fator do vínculo). A mudança que já traz o fator (o produto
+ * criado pela nota) fica como veio.
+ */
+export function itemMudado(conf: Pick<ConferenciaDaImportacaoNfe, "itens" | "pedidos">, pedidoId: string, d: DecisaoDoItemNaTela, p: Partial<DecisaoDoItemNaTela>): DecisaoDoItemNaTela {
+  const nova = { ...d, ...p };
+  if (p.geraEstoque === false) nova.armazemId = "";
+  if (p.produtoId !== undefined && p.produtoId !== d.produtoId) {
+    const v = conf.itens.find((x) => x.nItem === d.nItem)?.vinculo;
+    nova.itemOrigemId = itemDoPedidoPara(conf, pedidoId, d.nItem, nova.produtoId);
+    // XML-02 (decisão 314): no palpite, trocar o produto é a escolha da pessoa — o "Lembrar" segue a escolha.
+    const lembrar = p.lembrar === undefined ? lembrarAoTrocarProduto(v, p.produtoId) : undefined;
+    if (lembrar !== undefined) nova.lembrar = lembrar;
+    // XML-04 (decisão 318): o fator derivado é do produto do vínculo — não fica calado no campo de outro produto.
+    const fator = p.fator === undefined && p.tipoFator === undefined ? fatorAoTrocarProduto(v, d, p.produtoId) : undefined;
+    if (fator) { nova.fator = fator.fator; nova.tipoFator = fator.tipoFator; }
+  }
+  return nova;
 }
 
 /* ═════════════════════════════════════ o hook ═════════════════════════════════════ */
@@ -309,18 +332,7 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
   /* ── mudanças ── */
   const mudarCab = (p: Partial<CabecalhoNaTela>) => setCab((c) => ({ ...c, ...p }));
   const mudarFin = (p: Partial<FinanceiroNaTela>) => setFin((f) => ({ ...f, ...p }));
-  const mudarItem = (nItem: number, p: Partial<DecisaoDoItemNaTela>) => setItens((atuais) => atuais.map((d) => {
-    if (d.nItem !== nItem) return d;
-    const nova = { ...d, ...p };
-    if (p.geraEstoque === false) nova.armazemId = "";
-    if (p.produtoId !== undefined && p.produtoId !== d.produtoId) {
-      nova.itemOrigemId = itemDoPedidoPara(conf, cab.pedidoId, nItem, nova.produtoId);
-      // XML-02 (decisão 314): no palpite, trocar o produto é a escolha da pessoa — o "Lembrar" segue a escolha.
-      const lembrar = p.lembrar === undefined ? lembrarAoTrocarProduto(conf.itens.find((x) => x.nItem === nItem)?.vinculo, p.produtoId) : undefined;
-      if (lembrar !== undefined) nova.lembrar = lembrar;
-    }
-    return nova;
-  }));
+  const mudarItem = (nItem: number, p: Partial<DecisaoDoItemNaTela>) => setItens((atuais) => atuais.map((d) => (d.nItem === nItem ? itemMudado(conf, cab.pedidoId, d, p) : d)));
   const mudarPedido = (pedidoId: string) => {
     setCab((c) => ({ ...c, pedidoId }));
     setItens((atuais) => atuais.map((d) => ({ ...d, itemOrigemId: itemDoPedidoPara(conf, pedidoId, d.nItem, d.produtoId) })));

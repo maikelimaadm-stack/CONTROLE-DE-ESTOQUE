@@ -83,6 +83,213 @@ const retrato = async () => ({
 });
 let antes: Awaited<ReturnType<typeof retrato>>;
 
+/**
+ * O RETRATO DO BANCO INTEIRO — a prova de que a 0064 não toca NADA além do que cria.
+ *
+ * O `retrato` acima lê três coisas; uma `alter table erp.products add column …` injetada na migration passava por
+ * ele (achado do cético, 12/12 verde). Este lê o catálogo de TODO schema do usuário (hoje erp e public: o ledger e as
+ * extensões moram em public) e os dados de toda tabela: relações (tipo, dono, RLS habilitada/forçada, opções, a
+ * definição da visão, do índice e da sequência), colunas (tipo, not null, default, identidade, colação, ACL de
+ * coluna), restrições, gatilhos (inclusive os INTERNOS das chaves estrangeiras, atribuídos à tabela DONA da
+ * restrição), políticas, privilégios por papel (o ACL explodido: concedente, papel, privilégio, repasse), funções
+ * (assinatura, retorno, linguagem, definer, config, volatilidade, dono, ACL e o md5 do corpo), tipos, comentários,
+ * regras, schemas, default privileges, extensões, gatilhos de evento, os papéis do RLS (atributos, de quem são
+ * membros, config) e, por tabela, a contagem mais o md5 das linhas. O ledger (public.erp_migrations) fica fora dos
+ * dados: a linha da 0064 é conferida pelo nome em X5.
+ *
+ * Cada item carrega o seu ALVO: a tabela (de uma coluna, um índice, um gatilho, uma política, um privilégio), a
+ * assinatura (de uma função), o nome (do resto). Depois da 0064, a única diferença aceita é ACRÉSCIMO cujo alvo é a
+ * tabela nova ou a função nova — qualquer outra (+, - ou ~) sai, linha a linha, na mensagem.
+ *
+ * Os nomes de tabela do retrato de dados vêm do CATÁLOGO, citados pelo próprio banco (format %I), nunca de entrada.
+ */
+type ItemDoRetrato = { tipo: string; alvo: string; chave: string; valor: string };
+type Diferenca = { sinal: "+" | "-" | "~"; tipo: string; alvo: string; texto: string };
+const DO_USUARIO = (col: string) => `${col} <> 'information_schema' and ${col} !~ '^pg_'`;
+const ASSINATURA = "n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')'";
+/** Toda relação do usuário, com o alvo: a própria relação, ou a tabela de um índice. */
+const REL = `with rel as (
+  select c.oid, c.relkind, n.nspname, c.relname, n.nspname || '.' || c.relname as nome,
+         coalesce((select tn.nspname || '.' || tc.relname from pg_index i join pg_class tc on tc.oid = i.indrelid
+                     join pg_namespace tn on tn.oid = tc.relnamespace where i.indexrelid = c.oid),
+                  n.nspname || '.' || c.relname) as alvo
+    from pg_class c join pg_namespace n on n.oid = c.relnamespace
+   where ${DO_USUARIO("n.nspname")})`;
+const PAPEIS_DO_RLS = "('erp_app', 'erp_app_compat', 'authenticated', 'anon')";
+const PARTES_DO_RETRATO: [string, string][] = [
+  ["relacao", `${REL}
+    select r.alvo, r.nome as chave,
+           concat_ws(' | ', 'tipo=' || c.relkind::text, 'dono=' || c.relowner::regrole::text,
+                     'rls=' || c.relrowsecurity || '/forcada=' || c.relforcerowsecurity, 'persistencia=' || c.relpersistence::text,
+                     'replica=' || c.relreplident::text, 'opcoes=' || c.reloptions::text,
+                     case when c.relkind in ('v', 'm') then 'visao=' || md5(pg_get_viewdef(c.oid)) end,
+                     case when i.indexrelid is not null then pg_get_indexdef(c.oid) || ' valido=' || i.indisvalid end,
+                     case when s.seqrelid is not null then 'sequencia=' || concat_ws(',', format_type(s.seqtypid, null), s.seqstart,
+                       s.seqincrement, s.seqmin, s.seqmax, s.seqcache, s.seqcycle) end) as valor
+      from rel r join pg_class c on c.oid = r.oid
+      left join pg_index i on i.indexrelid = c.oid left join pg_sequence s on s.seqrelid = c.oid`],
+  ["coluna", `${REL}
+    select r.alvo, r.nome || '.' || a.attname as chave,
+           concat_ws(' | ', format_type(a.atttypid, a.atttypmod), case when a.attnotnull then 'not null' end,
+                     'default=' || pg_get_expr(d.adbin, d.adrelid), 'identidade=' || nullif(a.attidentity::text, ''),
+                     'gerada=' || nullif(a.attgenerated::text, ''),
+                     'colacao=' || case when a.attcollation <> 0 then a.attcollation::regcollation::text end,
+                     'acl=' || a.attacl::text, 'posicao=' || a.attnum) as valor
+      from rel r join pg_attribute a on a.attrelid = r.oid
+      left join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
+     where r.relkind in ('r', 'p', 'v', 'm', 'f', 'c') and a.attnum > 0 and not a.attisdropped`],
+  ["restricao", `
+    select coalesce(rn.nspname || '.' || rc.relname, format_type(k.contypid, null)) as alvo,
+           coalesce(rn.nspname || '.' || rc.relname, format_type(k.contypid, null)) || '.' || k.conname as chave,
+           concat_ws(' | ', k.contype::text, pg_get_constraintdef(k.oid), 'validada=' || k.convalidated,
+                     'adiavel=' || k.condeferrable || '/' || k.condeferred, 'sem heranca=' || k.connoinherit) as valor
+      from pg_constraint k join pg_namespace n on n.oid = k.connamespace
+      left join pg_class rc on rc.oid = k.conrelid left join pg_namespace rn on rn.oid = rc.relnamespace
+     where ${DO_USUARIO("n.nspname")}`],
+  // Os gatilhos INTERNOS (os RI_ConstraintTrigger que toda chave estrangeira cria também na tabela REFERIDA) têm como
+  // alvo a tabela DONA da restrição: as duas FKs da tabela nova põem gatilhos em erp.organizations e erp.payment_methods,
+  // e isso é efeito da tabela nova — já uma FK de OUTRA tabela apontando para a nova tem alvo na outra, e reprova.
+  ["gatilho", `
+    select coalesce(kn.nspname || '.' || kc.relname, n.nspname || '.' || c.relname) as alvo,
+           n.nspname || '.' || c.relname || '.' || t.tgname as chave,
+           concat_ws(' | ', pg_get_triggerdef(t.oid), 'ligado=' || t.tgenabled::text, 'interno=' || t.tgisinternal,
+                     'restricao=' || k.conname) as valor
+      from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace
+      left join pg_constraint k on k.oid = t.tgconstraint
+      left join pg_class kc on kc.oid = k.conrelid left join pg_namespace kn on kn.oid = kc.relnamespace
+     where ${DO_USUARIO("n.nspname")}`],
+  ["politica", `
+    select p.schemaname || '.' || p.tablename as alvo, p.schemaname || '.' || p.tablename || '.' || p.policyname as chave,
+           concat_ws(' | ', p.permissive, p.cmd, p.roles::text, 'using=' || p.qual, 'check=' || p.with_check) as valor
+      from pg_policies p where ${DO_USUARIO("p.schemaname")}`],
+  ["privilegio", `${REL}
+    select r.alvo,
+           r.nome || ' -> ' || case when a.grantee = 0 then 'public' else a.grantee::regrole::text end || ' ' || a.privilege_type
+             || ' por ' || a.grantor::regrole::text as chave,
+           'repassa=' || a.is_grantable as valor
+      from rel r join pg_class c on c.oid = r.oid
+      cross join lateral aclexplode(coalesce(c.relacl, acldefault(case when c.relkind = 'S' then 's' else 'r' end::"char", c.relowner))) a
+     where r.relkind in ('r', 'p', 'v', 'm', 'S', 'f')`],
+  ["funcao", `
+    select ${ASSINATURA} as alvo, ${ASSINATURA} as chave,
+           concat_ws(' | ', 'tipo=' || p.prokind::text, 'retorno=' || pg_get_function_result(p.oid), 'linguagem=' || l.lanname,
+                     'definer=' || p.prosecdef, 'config=' || p.proconfig::text, 'volatilidade=' || p.provolatile::text,
+                     'estrita=' || p.proisstrict, 'leakproof=' || p.proleakproof, 'paralela=' || p.proparallel::text,
+                     'dono=' || p.proowner::regrole::text, 'corpo=' || md5(coalesce(p.prosrc, '') || '/' || coalesce(p.probin, '')),
+                     'acl=' || coalesce(p.proacl::text, 'padrao')) as valor
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace join pg_language l on l.oid = p.prolang
+     where ${DO_USUARIO("n.nspname")}`],
+  ["tipo", `
+    select n.nspname || '.' || t.typname as alvo, n.nspname || '.' || t.typname as chave,
+           concat_ws(' | ', 'tipo=' || t.typtype::text, 'dono=' || t.typowner::regrole::text,
+                     'base=' || case when t.typtype = 'd' then format_type(t.typbasetype, t.typtypmod) end,
+                     'not null=' || t.typnotnull, 'default=' || t.typdefault,
+                     'rotulos=' || (select string_agg(e.enumlabel, ',' order by e.enumsortorder) from pg_enum e where e.enumtypid = t.oid),
+                     'acl=' || t.typacl::text) as valor
+      from pg_type t join pg_namespace n on n.oid = t.typnamespace
+     where ${DO_USUARIO("n.nspname")} and t.typcategory <> 'A'
+       and (t.typtype in ('b', 'e', 'd', 'r', 'm')
+            or (t.typtype = 'c' and exists (select 1 from pg_class c where c.oid = t.typrelid and c.relkind = 'c')))`],
+  ["comentario", `${REL}
+    select r.alvo, 'relacao ' || r.nome || coalesce('.' || a.attname, '') as chave, md5(d.description) as valor
+      from pg_description d join rel r on d.classoid = 'pg_class'::regclass and d.objoid = r.oid
+      left join pg_attribute a on a.attrelid = r.oid and a.attnum = d.objsubid and d.objsubid > 0
+    union all
+    select ${ASSINATURA}, 'funcao ' || ${ASSINATURA}, md5(d.description)
+      from pg_description d join pg_proc p on d.classoid = 'pg_proc'::regclass and d.objoid = p.oid
+      join pg_namespace n on n.oid = p.pronamespace where ${DO_USUARIO("n.nspname")}
+    union all
+    select coalesce(rn.nspname || '.' || rc.relname, format_type(k.contypid, null)),
+           'restricao ' || coalesce(rn.nspname || '.' || rc.relname, format_type(k.contypid, null)) || '.' || k.conname, md5(d.description)
+      from pg_description d join pg_constraint k on d.classoid = 'pg_constraint'::regclass and d.objoid = k.oid
+      join pg_namespace n on n.oid = k.connamespace
+      left join pg_class rc on rc.oid = k.conrelid left join pg_namespace rn on rn.oid = rc.relnamespace
+     where ${DO_USUARIO("n.nspname")}
+    union all
+    select n.nspname || '.' || c.relname, 'gatilho ' || n.nspname || '.' || c.relname || '.' || t.tgname, md5(d.description)
+      from pg_description d join pg_trigger t on d.classoid = 'pg_trigger'::regclass and d.objoid = t.oid
+      join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace where ${DO_USUARIO("n.nspname")}
+    union all
+    select n.nspname || '.' || c.relname, 'politica ' || n.nspname || '.' || c.relname || '.' || p.polname, md5(d.description)
+      from pg_description d join pg_policy p on d.classoid = 'pg_policy'::regclass and d.objoid = p.oid
+      join pg_class c on c.oid = p.polrelid join pg_namespace n on n.oid = c.relnamespace where ${DO_USUARIO("n.nspname")}
+    union all
+    select n.nspname || '.' || t.typname, 'tipo ' || n.nspname || '.' || t.typname, md5(d.description)
+      from pg_description d join pg_type t on d.classoid = 'pg_type'::regclass and d.objoid = t.oid
+      join pg_namespace n on n.oid = t.typnamespace where ${DO_USUARIO("n.nspname")}
+    union all
+    select n.nspname, 'schema ' || n.nspname, md5(d.description)
+      from pg_description d join pg_namespace n on d.classoid = 'pg_namespace'::regclass and d.objoid = n.oid
+     where ${DO_USUARIO("n.nspname")}`],
+  ["regra", `
+    select r.schemaname || '.' || r.tablename as alvo, r.schemaname || '.' || r.tablename || '.' || r.rulename as chave,
+           md5(r.definition) as valor
+      from pg_rules r where ${DO_USUARIO("r.schemaname")}`],
+  ["schema", `
+    select n.nspname as alvo, n.nspname as chave,
+           'dono=' || n.nspowner::regrole::text || ' | acl=' || coalesce(n.nspacl::text, 'padrao') as valor
+      from pg_namespace n where ${DO_USUARIO("n.nspname")}`],
+  ["acl_padrao", `
+    select 'default privileges' as alvo,
+           d.defaclrole::regrole::text || ' em ' || case when d.defaclnamespace = 0 then '*' else d.defaclnamespace::regnamespace::text end
+             || ' de ' || d.defaclobjtype::text as chave,
+           d.defaclacl::text as valor
+      from pg_default_acl d`],
+  ["extensao", "select 'extensoes' as alvo, e.extname as chave, e.extversion || ' em ' || e.extnamespace::regnamespace::text as valor from pg_extension e"],
+  ["gatilho_de_evento", `
+    select 'gatilhos de evento' as alvo, e.evtname as chave,
+           concat_ws(' | ', e.evtevent, e.evtfoid::regprocedure::text, e.evtenabled::text, e.evttags::text) as valor
+      from pg_event_trigger e`],
+  // Papéis são do CLUSTER (outros bancos de teste rodam ao lado): só os papéis do RLS, e só o que eles HERDAM.
+  ["papel", `
+    select 'papeis' as alvo, r.rolname as chave,
+           concat_ws(' | ', 'super=' || r.rolsuper, 'herda=' || r.rolinherit, 'cria papel=' || r.rolcreaterole,
+                     'cria banco=' || r.rolcreatedb, 'login=' || r.rolcanlogin, 'replicacao=' || r.rolreplication,
+                     'bypassrls=' || r.rolbypassrls,
+                     'membro de=' || (select string_agg(m.roleid::regrole::text, ',' order by m.roleid::regrole::text)
+                                        from pg_auth_members m where m.member = r.oid),
+                     'config=' || (select string_agg(s.setconfig::text, ';' order by s.setdatabase) from pg_db_role_setting s
+                                    where s.setrole = r.oid and s.setdatabase in (0, (select oid from pg_database where datname = current_database())))) as valor
+      from pg_roles r where r.rolname in ${PAPEIS_DO_RLS}
+    union all
+    select 'banco', 'config do banco atual',
+           coalesce((select s.setconfig::text from pg_db_role_setting s
+                      where s.setrole = 0 and s.setdatabase = (select oid from pg_database where datname = current_database())), '-')`],
+  ["dados", `${REL}
+    select r.alvo, r.nome as chave,
+           (xpath('/row/h/text()', query_to_xml(format(
+             'select count(*) || '':'' || coalesce(md5(string_agg(md5(t::text), '''' order by md5(t::text))), ''-'') as h from %I.%I t',
+             r.nspname, r.relname), false, true, '')))[1]::text as valor
+      from rel r where r.relkind in ('r', 'p') and r.nome <> 'public.erp_migrations'`]
+];
+async function retratoDoBanco(): Promise<Map<string, ItemDoRetrato>> {
+  const partes = await Promise.all(PARTES_DO_RETRATO.map(async ([tipo, sql]) =>
+    (await db.query<{ alvo: string; chave: string; valor: string | null }>(sql)).rows.map((r) => ({ tipo, alvo: r.alvo, chave: r.chave, valor: r.valor ?? "" }))));
+  const mapa = new Map<string, ItemDoRetrato>();
+  for (const item of partes.flat()) {
+    const k = `${item.tipo} ${item.chave}`;
+    if (mapa.has(k)) throw new Error(`retrato do banco com chave repetida: ${k}`);
+    mapa.set(k, item);
+  }
+  return mapa;
+}
+function diferencas(de: Map<string, ItemDoRetrato>, para: Map<string, ItemDoRetrato>): Diferenca[] {
+  const out: Diferenca[] = [];
+  for (const [k, a] of de) {
+    const d = para.get(k);
+    if (!d) out.push({ sinal: "-", tipo: a.tipo, alvo: a.alvo, texto: `- ${k} (era: ${a.valor})` });
+    else if (d.valor !== a.valor || d.alvo !== a.alvo) out.push({ sinal: "~", tipo: a.tipo, alvo: a.alvo, texto: `~ ${k}: ${a.valor} => ${d.valor}` });
+  }
+  for (const [k, d] of para) if (!de.has(k)) out.push({ sinal: "+", tipo: d.tipo, alvo: d.alvo, texto: `+ ${k} = ${d.valor}` });
+  return out.sort((x, y) => (x.texto < y.texto ? -1 : x.texto > y.texto ? 1 : 0));
+}
+const contarPorTipo = (itens: { tipo: string }[]) =>
+  itens.reduce<Record<string, number>>((acc, i) => ({ ...acc, [i.tipo]: (acc[i.tipo] ?? 0) + 1 }), {});
+/** O que a 0064 cria. Acréscimo com alvo fora daqui — e qualquer remoção ou mudança — é tocar o que não é dela. */
+const NOVOS = new Set(["erp.formas_pagamento_da_nfe", "erp.formas_pagamento_da_nfe_forma_guarda()"]);
+let bancoAntes: Map<string, ItemDoRetrato>;
+let bancoDepois: Map<string, ItemDoRetrato>;
+
 /** Ligação gravada pelo papel da aplicação (a resposta traz o ROW COUNT e o id). */
 const ligar = (ctx: TenantContext, org: string, codigo: string, forma: string, extra = "") =>
   naApp(ctx, (tx) => tx.query<{ id: string }>(
@@ -112,6 +319,7 @@ beforeAll(async () => {
   formaA = (await db.query<{ id: string }>("insert into erp.payment_methods (organization_id, name) values ($1, '[TEST] X04 Forma A') returning id", [demo.orgId])).rows[0]!.id;
   formaB = (await db.query<{ id: string }>("insert into erp.payment_methods (organization_id, name) values ($1, '[TEST] X04 Forma B') returning id", [orgB])).rows[0]!.id;
   antes = await retrato();
+  bancoAntes = await retratoDoBanco();
 }, 300_000);
 afterAll(async () => { await app?.end(); await db?.end(); });
 
@@ -137,6 +345,20 @@ describe("0064 — sobre o acervo de formas de pagamento, como o runner aplica",
     expect(vistas).toContain(formaA);
     expect(vistas).not.toContain(formaB);
     expect(antes.formas).toHaveLength(12);
+    // O retrato do banco inteiro VÊ o banco (senão "nada mudou" seria verdade sobre um retrato vazio): cada parte tem
+    // itens, e as tabelas que a 0064 não pode tocar estão nele, com catálogo e dados.
+    const tamanhos = contarPorTipo([...bancoAntes.values()]);
+    console.info(`[X04-RETRATO] antes da 0064: ${bancoAntes.size} itens ${JSON.stringify(tamanhos)}`);
+    for (const [tipo, minimo] of Object.entries({
+      relacao: 600, coluna: 2000, restricao: 1200, gatilho: 2500, politica: 200, privilegio: 1800, funcao: 150, tipo: 1,
+      comentario: 500, schema: 2, acl_padrao: 1, extensao: 3, papel: 4, dados: 200
+    })) expect([tipo, (tamanhos[tipo] ?? 0) >= minimo], `o retrato tem ao menos ${minimo} itens de ${tipo}`).toEqual([tipo, true]);
+    for (const chave of ["relacao erp.products", "coluna erp.products.description", "relacao erp.payment_methods", "dados erp.payment_methods",
+      "dados erp.products", "dados erp.organizations", "funcao erp.set_updated_at()", "funcao erp.audit_row()", "schema erp", "schema public"]) {
+      expect([chave, bancoAntes.has(chave)]).toEqual([chave, true]);
+    }
+    expect(bancoAntes.get("dados erp.payment_methods")?.valor, "os dados entram pelo conteúdo: 12 formas").toMatch(/^12:[0-9a-f]{32}$/);
+    expect([...bancoAntes.keys()].filter((k) => k.includes("formas_pagamento_da_nfe")), "nada da 0064 no retrato de antes").toEqual([]);
   });
 
   it("X2 trava (2026,98) em uso por outra sessão: a 0064 recusa antes de tudo, sem efeito", async () => {
@@ -156,7 +378,7 @@ describe("0064 — sobre o acervo de formas de pagamento, como o runner aplica",
     expect(await temTabela()).toBe(false);
   });
 
-  it("X3 lock_timeout 2s: uma escrita aberta em erp.payment_methods faz a 0064 desistir em ~2s, sem efeito", async () => {
+  it("X3 lock_timeout 2s: uma escrita aberta em erp.payment_methods, ou em erp.organizations, faz a 0064 desistir em ~2s, sem efeito", async () => {
     const escritor = await db.connect();
     try {
       await escritor.query("begin");
@@ -168,6 +390,18 @@ describe("0064 — sobre o acervo de formas de pagamento, como o runner aplica",
       expect(ms, "desistiu pelo lock_timeout, não por outro motivo imediato").toBeGreaterThanOrEqual(1900);
       expect(ms, "e não ficou pendurada").toBeLessThan(10_000);
     } finally { await escritor.query("rollback"); escritor.release(); }
+    // A OUTRA tabela referida: a FK da organização pede a mesma ShareRowExclusive em erp.organizations, então uma
+    // escrita aberta lá também faz a 0064 desistir pelo lock_timeout (o cético só tinha a sonda dele para esta).
+    const escritorOrg = await db.connect();
+    try {
+      await escritorOrg.query("begin");
+      await escritorOrg.query("update erp.organizations set name = name where id = $1", [orgB]);
+      const t0 = Date.now();
+      await expect(aplicar()).rejects.toThrow(/lock timeout/);
+      const ms = Date.now() - t0;
+      expect(ms, "erp.organizations: desistiu pelo lock_timeout").toBeGreaterThanOrEqual(1900);
+      expect(ms, "erp.organizations: e não ficou pendurada").toBeLessThan(10_000);
+    } finally { await escritorOrg.query("rollback"); escritorOrg.release(); }
     expect(await noLedger()).toBe(false);
     expect(await temTabela()).toBe(false);
     expect(await temFuncao()).toBe(false);
@@ -217,9 +451,10 @@ describe("0064 — sobre o acervo de formas de pagamento, como o runner aplica",
     expect((await db.query("select 1 from pg_roles where rolname like 'x04r\\_%'")).rowCount).toBe(0);
     expect((await db.query("select 1 from pg_roles where rolname = 'erp_app'")).rowCount, "o rename do erp_app foi desfeito").toBe(1);
     expect(await retrato()).toEqual(antes);
+    expect(diferencas(bancoAntes, await retratoDoBanco()).map((d) => d.texto), "as recusas não deixaram nada no catálogo nem nos dados").toEqual([]);
   });
 
-  it("X5 aplica: ledger com 64 (a 0064 por último), tabela VAZIA, acervo idêntico, objetos no catálogo", async () => {
+  it("X5 aplica: ledger com 64 (a 0064 por último), tabela VAZIA, acervo idêntico, objetos no catálogo, e nada fora dela mudou no banco inteiro", async () => {
     await aplicar();
     const ledger = (await db.query<{ n: number; ultima: string }>("select count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
     expect(ledger).toEqual({ n: 64, ultima: ALVO });
@@ -229,6 +464,33 @@ describe("0064 — sobre o acervo de formas de pagamento, como o runner aplica",
     // SEM SEMENTE: nenhuma ligação nasce (o superusuário lê sem RLS: zero é zero de verdade), e nada foi auditado.
     expect((await db.query<{ n: number }>("select count(*)::int n from erp.formas_pagamento_da_nfe")).rows[0]!.n).toBe(0);
     expect(await retrato(), "formas, organizações e auditoria intactas").toEqual(antes);
+
+    // NADA FORA DA 0064 MUDOU: o retrato do banco inteiro, antes × depois. A única diferença aceita é ACRÉSCIMO com
+    // alvo na tabela nova ou na função nova; o resto (outra tabela alterada, função existente reescrita, privilégio
+    // novo em outra tabela, linha mexida, objeto removido) sai aqui, linha a linha.
+    bancoDepois = await retratoDoBanco();
+    const dif = diferencas(bancoAntes, bancoDepois);
+    const daFatia = dif.filter((d) => d.sinal === "+" && NOVOS.has(d.alvo));
+    const alheias = dif.filter((d) => !daFatia.includes(d));
+    console.info(`[X04-RETRATO] depois da 0064: ${bancoDepois.size} itens; diferenças ${dif.length} (da 0064 ${daFatia.length}, alheias ${alheias.length})`);
+    expect(alheias.map((d) => d.texto), "a 0064 só cria a tabela nova, a função nova e o que é delas: nada mais muda no banco").toEqual([]);
+    // E o retrato VIU a 0064 (um retrato cego também daria "nada alheio"): cada categoria do que ela cria aparece.
+    // Os privilégios do DONO variam com a versão do PostgreSQL (o 17 acrescenta MAINTAIN): contados à parte.
+    expect(contarPorTipo(daFatia.filter((d) => d.tipo !== "privilegio")),
+      "a tabela (e os 2 índices), 7 colunas, 4 restrições, 3 gatilhos + 8 internos das 2 FKs, 1 política, a função, 9 comentários, os dados").toEqual({
+      relacao: 3, coluna: 7, restricao: 4, gatilho: 11, politica: 1, funcao: 1, comentario: 9, dados: 1
+    });
+    const dono = /\| dono=([^ |]+)/.exec(bancoDepois.get("relacao erp.formas_pagamento_da_nfe")?.valor ?? "")?.[1];
+    expect(dono, "o dono da tabela nova está no retrato").toBeTruthy();
+    const privilegios = daFatia.filter((d) => d.tipo === "privilegio");
+    expect(privilegios.filter((d) => d.texto.includes(" -> erp_app ")).map((d) => d.texto.replace(/ por .*$/, "")))
+      .toEqual(["INSERT", "SELECT", "UPDATE"].map((p) => `+ privilegio erp.formas_pagamento_da_nfe -> erp_app ${p}`));
+    expect(privilegios.filter((d) => !d.texto.includes(" -> erp_app ") && !d.texto.includes(` -> ${dono} `)).map((d) => d.texto),
+      "nenhum outro papel além do dono e do erp_app").toEqual([]);
+    expect(bancoDepois.get("dados erp.formas_pagamento_da_nfe")?.valor, "a tabela nova nasce vazia").toBe("0:-");
+    // Os internos nas tabelas REFERIDAS são das FKs da tabela nova (alvo dela), e só eles.
+    expect(daFatia.filter((d) => d.tipo === "gatilho" && !d.texto.startsWith("+ gatilho erp.formas_pagamento_da_nfe.")).map((d) => d.texto.split(".")[1]))
+      .toEqual(["organizations", "organizations", "payment_methods", "payment_methods"]);
 
     const colunas = (await db.query(
       `select column_name, data_type, is_nullable, column_default from information_schema.columns
@@ -286,6 +548,7 @@ describe("0064 — sobre o acervo de formas de pagamento, como o runner aplica",
   it("X6 reaplicar é recusado pela pré-condição de 'já aplicada', sem efeito", async () => {
     expect(await recusaDa0064()).toBe(JA_APLICADA);
     expect((await db.query<{ n: number }>("select count(*)::int n from erp.formas_pagamento_da_nfe")).rows[0]!.n).toBe(0);
+    expect(diferencas(bancoDepois, await retratoDoBanco()).map((d) => d.texto), "a reaplicação recusada não deixou nada").toEqual([]);
   });
 
   it("X7 pós-condições: só de catálogo, passam no banco aplicado, e cada uma, quebrada, recusa com a sua mensagem", async () => {
@@ -364,9 +627,10 @@ describe("0064 — sobre o acervo de formas de pagamento, como o runner aplica",
     // Nada ficou.
     expect((await db.query<{ x: boolean }>("select has_function_privilege('erp_app', 'erp.formas_pagamento_da_nfe_forma_guarda()', 'execute') x")).rows[0]!.x).toBe(false);
     expect((await db.query("select 1 from pg_indexes where schemaname='erp' and tablename='formas_pagamento_da_nfe'")).rowCount).toBe(2);
+    expect(diferencas(bancoDepois, await retratoDoBanco()).map((d) => d.texto), "as sabotagens desfeitas não deixaram nada").toEqual([]);
   });
 
-  it("X8 a migration não tem DROP, TRUNCATE, DELETE, UPDATE, ALTER COLUMN ... TYPE, CREATE OR REPLACE nem INSERT de dado", () => {
+  it("X8 a migration não tem DROP, TRUNCATE, DELETE, UPDATE, ALTER COLUMN ... TYPE, CREATE OR REPLACE nem INSERT de dado, e só cria, altera, comenta e concede o que é dela", () => {
     // O texto sem os comentários de linha (o cabeçalho FALA dessas palavras; o SQL não as executa).
     const codigo = sqlDaAlvo().split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
     expect(codigo.length, "a varredura corre sobre o SQL de verdade").toBeGreaterThan(5000);
@@ -378,7 +642,10 @@ describe("0064 — sobre o acervo de formas de pagamento, como o runner aplica",
       ["UPDATE", /\bupdate\s+(only\s+)?[\w."]+\s+set\b/i, "update erp.payment_methods set name = name"],
       ["ALTER COLUMN TYPE", /\balter\s+column\s+[\w"]+\s+(set\s+data\s+)?type\b/i, "alter table erp.x alter column y type int"],
       ["CREATE OR REPLACE", /\bcreate\s+or\s+replace\b/i, "create or replace function erp.f()"],
-      ["INSERT", /\binsert\s+into\b/i, "insert into erp.formas_pagamento_da_nfe values (1)"]
+      ["INSERT", /\binsert\s+into\b/i, "insert into erp.formas_pagamento_da_nfe values (1)"],
+      // O valor de sequência fica FORA do retrato do banco (nextval não é transacional: uma escrita desfeita o avança),
+      // então mexer nele é vigiado aqui, no texto; o dinâmico cai na lista fechada abaixo.
+      ["SETVAL", /\bsetval\s*\(/i, "select setval('erp.audit_logs_id_seq', 1)"]
     ];
     for (const [nome, padrao, amostra] of proibidos) {
       expect([nome, padrao.test(amostra)], "reversa: o padrão pega a amostra").toEqual([nome, true]);
@@ -387,6 +654,69 @@ describe("0064 — sobre o acervo de formas de pagamento, como o runner aplica",
     // Contraprova do TRUNCATE e do UPDATE: o REVOKE e o gatilho de UPDATE estão no SQL e não são comando de dado.
     expect(codigo).toMatch(/revoke delete, truncate on erp\.formas_pagamento_da_nfe from erp_app/);
     expect(codigo).toMatch(/before insert or update on erp\.formas_pagamento_da_nfe/);
+
+    // O QUE ELA CRIA, ALTERA, COMENTA, CONCEDE, AJUSTA E EXECUTA EM TEXTO: listas FECHADAS, só a tabela nova, a função
+    // nova e o que é delas. "alter table" de outra tabela, "create or replace" de função existente, grant em outra
+    // tabela, comentário alheio, "set" de outra coisa e SQL dinâmico novo reprovam aqui (e o retrato do banco, em X5,
+    // pega o efeito, inclusive do que se esconde em texto). A varredura corre SEM os textos entre aspas — as mensagens
+    // das pré-condições falam "CREATE TABLE" —, e o SQL dinâmico, que mora justamente em texto, tem a lista dele.
+    const semTextos = codigo.replace(/'(?:[^']|'')*'/g, "''");
+    const norm = (s: string) => s.replace(/\s+/g, " ").replace(/"/g, "").trim().toLowerCase();
+    const varre = {
+      cria: /\bcreate\s+(?:or\s+replace\s+)?(?:(?:unique\s+)?index|trigger|policy)\s+\w+\b[^;]*?\bon\s+(?:only\s+)?[\w."]+|\bcreate\s+(?:or\s+replace\s+)?(?:unique\s+)?\w+\s+(?:if\s+not\s+exists\s+)?[\w."]+(?:\(\))?/gi,
+      altera: /\balter\s+\w+\s+(?:if\s+exists\s+)?(?:only\s+)?[\w."]+/gi,
+      concede: /\b(?:grant|revoke)\b[^;]*/gi,
+      comenta: /\bcomment\s+on\s+\w+\s+[\w."]+(?:\(\))?/gi,
+      ajusta: /\bset\s+(?:local\s+|session\s+)?[\w.]+/gi,
+      dinamico: /\bexecute\s+(?!function\b|on\b)[^;]*/gi
+    };
+    const lista = (re: RegExp, texto: string) => [...texto.matchAll(re)].map((m) => norm(m[0]));
+    const listas = (texto: string, dinamico: string) => ({
+      cria: lista(varre.cria, texto), altera: lista(varre.altera, texto), concede: lista(varre.concede, texto),
+      comenta: lista(varre.comenta, texto), ajusta: lista(varre.ajusta, texto), dinamico: lista(varre.dinamico, dinamico)
+    });
+    // Reversa de cada padrão: a sabotagem de amostra aparece na lista dela.
+    const amostras: [keyof typeof varre, string, string][] = [
+      ["altera", "alter table erp.products add column x04 text;", "alter table erp.products"],
+      ["altera", "alter function erp.set_updated_at() security definer;", "alter function erp.set_updated_at"],
+      ["cria", "create or replace function erp.set_updated_at() returns trigger", "create or replace function erp.set_updated_at()"],
+      ["cria", "create trigger trg_x after update on erp.products for each row execute function erp.audit_row();", "create trigger trg_x after update on erp.products"],
+      ["cria", "create view erp.v_x as select 1;", "create view erp.v_x"],
+      ["concede", "grant select on erp.products to anon;", "grant select on erp.products to anon"],
+      ["concede", "grant erp_app to anon;", "grant erp_app to anon"],
+      ["comenta", "comment on table erp.products is 'x';", "comment on table erp.products"],
+      ["ajusta", "set local session_replication_role = replica;", "set local session_replication_role"],
+      ["dinamico", "execute 'alter ' || 'table erp.products add column x04 text';", "execute 'alter ' || 'table erp.products add column x04 text'"]
+    ];
+    for (const [qual, sabotagem, esperado] of amostras) {
+      expect([qual, sabotagem, lista(varre[qual], sabotagem)], "reversa: o padrão pega a amostra").toEqual([qual, sabotagem, [esperado]]);
+    }
+    // O SQL dinâmico é lido COM os textos (o format é o que executa), sem as mensagens de erro e os comentários de
+    // catálogo — onde "EXECUTE de …" é frase, não comando.
+    const semMensagens = codigo.replace(/\b(raise\s+exception|is)\s+'(?:[^']|'')*'/gi, "$1 ''");
+    const T = "erp.formas_pagamento_da_nfe";
+    expect(listas(semTextos, semMensagens)).toEqual({
+      cria: [
+        `create table ${T}`,
+        `create unique index ux_formas_pagamento_da_nfe_codigo_vivo on ${T}`,
+        "create function erp.formas_pagamento_da_nfe_forma_guarda()",
+        `create trigger trg_formas_pagamento_da_nfe_forma before insert or update on ${T}`,
+        `create trigger trg_formas_pagamento_da_nfe_updated before update on ${T}`,
+        `create trigger trg_formas_pagamento_da_nfe_audit after insert or update or delete on ${T}`,
+        `create policy tenant_isolation on ${T}`
+      ],
+      altera: [`alter table ${T}`, `alter table ${T}`],
+      concede: [`grant select, insert, update on ${T} to erp_app`, `revoke delete, truncate on ${T} from erp_app`],
+      comenta: [`comment on table ${T}`, ...["id", "organization_id", "codigo_tpag", "forma_pagamento_id", "created_at", "updated_at", "deleted_at"]
+        .map((c) => `comment on column ${T}.${c}`), "comment on function erp.formas_pagamento_da_nfe_forma_guarda()"],
+      ajusta: ["set local lock_timeout", "set search_path"],
+      dinamico: [
+        "execute format('revoke execute on function %s from public', r.fn)",
+        "execute format('revoke execute on function %s from %s', r.fn, r.grantee::regrole::text)"
+      ]
+    });
+    // E o laço do SQL dinâmico só percorre a GUARDA nova (r.fn vem do catálogo, preso à assinatura dela).
+    expect(codigo).toMatch(/where p\.oid = 'erp\.formas_pagamento_da_nfe_forma_guarda\(\)'::regprocedure\s+and a\.privilege_type = 'EXECUTE' and a\.grantee <> p\.proowner\s+loop/);
   });
 });
 
@@ -524,5 +854,30 @@ describe("a ligação pelo papel da aplicação (RLS, GUC da transação) e pelo
     // A linha da B está intacta, e a da A também.
     expect(await linhaDe(idB)).toEqual({ organization_id: orgB, codigo_tpag: "17", forma_pagamento_id: formaSistema, vivo: true });
     expect((await linhaDe(minha))?.organization_id).toBe(demo.orgId);
+  });
+
+  it("XA5 efeito no cadastro que já existia: a forma da organização que JÁ TEVE ligação (mesmo excluída) não se apaga mais — a FK recusa; a sem ligação se apaga", async () => {
+    // Achado do cético, fixado em número: erp.payment_methods não tem exclusão lógica (o cadastro genérico faz DELETE
+    // físico), e a ligação excluída fica como histórico (o erp_app não apaga). Então a FK fk_formas_pagamento_da_nfe_forma
+    // segura a forma: 23503, que a API devolve como 409. Tudo pelo papel da aplicação, numa transação DESFEITA.
+    const c = await app.connect();
+    try {
+      await c.query("begin");
+      await c.query("select set_config('app.org_id', $1, true), set_config('app.user_id', $2, true)", [demo.orgId, demo.adminUserId]);
+      const novaForma = async (nome: string) =>
+        (await c.query<{ id: string }>("insert into erp.payment_methods (organization_id, name) values ($1, $2) returning id", [demo.orgId, nome])).rows[0]!.id;
+      const comLigacao = await novaForma("[TEST] X04 Forma que já foi ligada");
+      const semLigacao = await novaForma("[TEST] X04 Forma nunca ligada");
+      const lig = (await c.query<{ id: string }>(
+        "insert into erp.formas_pagamento_da_nfe (organization_id, codigo_tpag, forma_pagamento_id) values ($1, '99', $2) returning id", [demo.orgId, comLigacao])).rows[0]!.id;
+      expect((await c.query("update erp.formas_pagamento_da_nfe set deleted_at = now() where id = $1 and organization_id = $2", [lig, demo.orgId])).rowCount).toBe(1);
+      await c.query("savepoint s1");
+      const apagar = await erroDe(c.query("delete from erp.payment_methods where id = $1 and organization_id = $2", [comLigacao, demo.orgId]));
+      expect([apagar.code, apagar.message]).toEqual(["23503", expect.stringContaining("fk_formas_pagamento_da_nfe_forma")]);
+      await c.query("rollback to savepoint s1");
+      expect((await c.query("delete from erp.payment_methods where id = $1 and organization_id = $2", [semLigacao, demo.orgId])).rowCount,
+        "a forma sem ligação continua se apagando: 1 linha").toBe(1);
+    } finally { await c.query("rollback"); c.release(); }
+    expect((await db.query("select 1 from erp.payment_methods where name like '[TEST] X04 Forma %ligada'")).rowCount, "o ensaio foi desfeito").toBe(0);
   });
 });

@@ -18,7 +18,9 @@ import { prepararXml01, conferenciaLida, vinculoDo, eanNovo, emitenteNovo, outra
  *   XML4-C3  a REFERÊNCIA e a DESCRIÇÃO (antes, 1 de chute) agora pelo cadastro; a descrição guarda o pré-preenchimento;
  *   XML4-C4  as PERGUNTAS: uCom fora do cadastro do produto, uCom sem unidade de medida, a linha SÓ DE VENDA (R2), a linha
  *            EXCLUÍDA (R3) — cada uma com o aviso `fator_a_informar` (não bloqueia) e o fator 1 só por compatibilidade;
- *   XML4-C5  o código de barras de OUTRA unidade do produto é pergunta; o da própria unidade confirma;
+ *   XML4-C5  o código de barras de OUTRA unidade do produto é pergunta, com a unidade dona do código e o fator dela no
+ *            cadastro (`codigoDeBarras`) quando ela é UMA só, e sem o campo quando o código é de duas; o da própria
+ *            unidade confirma;
  *   XML4-C6  a unidade da ORGANIZAÇÃO vence a do SISTEMA (a linha do produto na do sistema vira pergunta); sem a da
  *            organização, a do sistema vale;
  *   XML4-C7  CONSULTAS CONTADAS: 1 item, 10 itens e 50 itens (todos os caminhos e a forma; os 50 com 25 produtos e 15
@@ -171,8 +173,14 @@ const doFator = (conf: Conferencia, nItem: number): DivergenciaDaImportacaoNfe[]
   conf.divergencias.filter((d) => d.nItem === nItem && d.codigo.startsWith("fator_"));
 const perguntaFora = (nItem: number, unidadeDaNota: string, p: Produto): DivergenciaDaImportacaoNfe =>
   ({ codigo: "fator_a_informar", nItem, bloqueia: false, mensagem: `Item ${nItem}: a unidade ${unidadeDaNota} da nota não é unidade de compra do produto ${p.codigo} no cadastro: informe o fator.` });
-const perguntaDoEan = (nItem: number, p: Produto): DivergenciaDaImportacaoNfe =>
-  ({ codigo: "fator_a_informar", nItem, bloqueia: false, mensagem: `Item ${nItem}: o código de barras da nota é de outra unidade do produto ${p.codigo}: confira o fator.` });
+/**
+ * A pergunta do código de barras de OUTRA unidade: com a unidade dona do código e o fator dela no cadastro (`doCodigo`,
+ * o número como a mensagem o diz) — ou, quando o código é de mais de uma unidade do produto, sem o número.
+ */
+const perguntaDoEan = (nItem: number, p: Produto, unidadeDaNota: string, doCodigo: { unidade: string; fator: string; tipo: "multiplica" | "divide" } | null): DivergenciaDaImportacaoNfe =>
+  ({ codigo: "fator_a_informar", nItem, bloqueia: false, mensagem: doCodigo
+    ? `Item ${nItem}: o código de barras da nota é da unidade ${doCodigo.unidade} do produto ${p.codigo} (fator ${doCodigo.fator}, ${doCodigo.tipo}), mas a nota diz ${unidadeDaNota}: informe o fator.`
+    : `Item ${nItem}: o código de barras da nota é de outra unidade do produto ${p.codigo}, e não da unidade ${unidadeDaNota} da nota: informe o fator.` });
 
 // ═════════════════════════════════════ XML4-C1 o vínculo lembrado ═════════════════════════════════════
 
@@ -201,9 +209,9 @@ describe("XML4-C1 o vínculo LEMBRADO vence o cadastro e diz quando o cadastro d
     expect([1, 2, 3, 4].map((k) => doFator(conf, k))).toEqual([
       [],
       [{ codigo: "fator_do_vinculo_diferente_do_cadastro", nItem: 2, bloqueia: false,
-        mensagem: `Item 2: o vínculo lembrado usa fator 1 (multiplica); o cadastro do produto ${p.codigo}, para a unidade ${caixa}, diz 12 (multiplica). Vale o do vínculo: confira.` }],
+        mensagem: `Item 2: o vínculo lembrado usa fator 1 (multiplica); o cadastro do produto ${p.codigo}, para a unidade ${caixa}, diz 12 (multiplica). Vale o do vínculo.` }],
       [{ codigo: "fator_do_vinculo_diferente_do_cadastro", nItem: 3, bloqueia: false,
-        mensagem: `Item 3: o vínculo lembrado usa fator 12 (divide); o cadastro do produto ${p.codigo}, para a unidade ${caixa}, diz 12 (multiplica). Vale o do vínculo: confira.` }],
+        mensagem: `Item 3: o vínculo lembrado usa fator 12 (divide); o cadastro do produto ${p.codigo}, para a unidade ${caixa}, diz 12 (multiplica). Vale o do vínculo.` }],
       [],
     ]);
   });
@@ -297,27 +305,46 @@ describe("XML4-C4 nada respalda o fator: PERGUNTA (nunca 1 em silêncio)", () =>
 
 // ═════════════════════════════════════ XML4-C5 o código de barras ═════════════════════════════════════
 
-describe("XML4-C5 o código de barras de OUTRA unidade do produto é dúvida", () => {
-  it("cEAN da caixa com uCom da principal → pergunta; cEAN da principal com uCom da caixa → pergunta; cada um com a própria unidade → o cadastro", async () => {
-    const [principal, caixa] = [simboloNovo(), simboloNovo()];
-    const [uPrincipal, uCaixa] = [await unidade(principal), await unidade(caixa)];
-    const [eanPrincipal, eanCaixa] = [eanNovo(), eanNovo()];
+describe("XML4-C5 o código de barras de OUTRA unidade do produto é dúvida — e a pergunta diz o número", () => {
+  it("cEAN da caixa com uCom da principal → pergunta com a caixa e o 12; cEAN da principal com uCom da caixa → pergunta com a principal e o 1; cada um com a própria unidade → o cadastro; cEAN de DUAS unidades → pergunta sem o número", async () => {
+    const [principal, caixa, fardo] = [simboloNovo(), simboloNovo(), simboloNovo()];
+    const [uPrincipal, uCaixa, uFardo] = [await unidade(principal), await unidade(caixa), await unidade(fardo)];
+    const [eanPrincipal, eanCaixa, eanDeDuas] = [eanNovo(), eanNovo(), eanNovo()];
     const p = await produtoNovo(uPrincipal, { barcode: eanPrincipal });
     await unidadeDoProduto(p.id, uCaixa, "12", { barcode: eanCaixa });
+    // O código de DUAS unidades do mesmo produto: o do produto (a principal) e o da caixa; a nota diz o fardo (de compra, 4).
+    const p2 = await produtoNovo(uPrincipal, { barcode: eanDeDuas });
+    await unidadeDoProduto(p2.id, uCaixa, "12", { barcode: eanDeDuas });
+    await unidadeDoProduto(p2.id, uFardo, "4");
+    const doisDonos = await c.admin.query<{ n: string }>(
+      `select ((select count(*) from erp.products where id = $1 and barcode = $2) + (select count(*) from erp.produto_unidades where product_id = $1 and codigo_barras = $2 and deleted_at is null))::text n`,
+      [p2.id, eanDeDuas]);
+    expect(doisDonos.rows[0]!.n, "premissa: o código do item 5 é de DUAS unidades do produto (a principal e a caixa)").toBe("2");
     const n = await notaImportada([
       item(`EA1-${unico()}`, principal, { ean: eanCaixa }), item(`EA2-${unico()}`, caixa, { ean: eanCaixa }),
       item(`EA3-${unico()}`, caixa, { ean: eanPrincipal }), item(`EA4-${unico()}`, principal, { ean: eanPrincipal }),
+      item(`EA5-${unico()}`, fardo, { ean: eanDeDuas }),
     ]);
     const conf = await conferenciaLida(n.id);
-    const doEan = (unidadeDaNota: string) => ({ caminho: "codigo_barras", produto: p.id, fator: "1", tipoFator: "multiply",
-      fatorPelaNota: { origem: "pergunta", unidadeDaNota, motivo: "codigo_de_barras_de_outra_unidade" }, quantidadeInterna: "2.0000" });
-    expect([1, 2, 3, 4].map((k) => fatorDo(conf, k))).toEqual([
-      doEan(principal),
+    const doEan = (produto: Produto, unidadeDaNota: string, codigoDeBarras?: { unidade: string; fator: string; tipoFator: string }) => ({
+      caminho: "codigo_barras", produto: produto.id, fator: "1", tipoFator: "multiply",
+      fatorPelaNota: { origem: "pergunta", unidadeDaNota, motivo: "codigo_de_barras_de_outra_unidade", ...(codigoDeBarras ? { codigoDeBarras } : {}) },
+      quantidadeInterna: "2.0000" });
+    expect([1, 2, 3, 4, 5].map((k) => fatorDo(conf, k))).toEqual([
+      doEan(p, principal, { unidade: caixa, fator: "12.000000", tipoFator: "multiply" }),
       { caminho: "codigo_barras", produto: p.id, fator: "12.000000", tipoFator: "multiply", fatorPelaNota: { origem: "unidade_do_produto", unidadeDaNota: caixa }, quantidadeInterna: "24.0000" },
-      doEan(caixa),
+      doEan(p, caixa, { unidade: principal, fator: "1", tipoFator: "multiply" }),
       { caminho: "codigo_barras", produto: p.id, fator: "1", tipoFator: "multiply", fatorPelaNota: { origem: "unidade_principal", unidadeDaNota: principal }, quantidadeInterna: "2.0000" },
+      doEan(p2, fardo),
     ]);
-    expect([1, 2, 3, 4].map((k) => doFator(conf, k))).toEqual([[perguntaDoEan(1, p)], [], [perguntaDoEan(3, p)], []]);
+    // O item 5: o campo NÃO vem (nem como chave vazia) — de duas unidades, nunca "a primeira".
+    expect(Object.keys(fatorDo(conf, 5).fatorPelaNota ?? {}), "o código de duas unidades não leva o número").not.toContain("codigoDeBarras");
+    expect([1, 2, 3, 4, 5].map((k) => doFator(conf, k))).toEqual([
+      [perguntaDoEan(1, p, principal, { unidade: caixa, fator: "12", tipo: "multiplica" })], [],
+      [perguntaDoEan(3, p, caixa, { unidade: principal, fator: "1", tipo: "multiplica" })], [],
+      [perguntaDoEan(5, p2, fardo, null)],
+    ]);
+    expect(conf.divergencias.filter((d) => d.codigo.startsWith("fator_") && /confir/i.test(d.mensagem)), "nenhuma manda conferir").toEqual([]);
   });
 });
 
@@ -710,7 +737,7 @@ describe("XML4-C11 o cenário da MEDIÇÃO: os 2 itens com uCom fora do cadastro
     expect(CENARIO_DA_MEDICAO.map((_, k) => doFator(conf, k + 1).map((x) => x.codigo)), "nenhum outro aviso de fator, só o do V")
       .toEqual([[], [], [], [], [], [], [], ["fator_a_informar"], ["fator_a_informar"], ["fator_do_vinculo_diferente_do_cadastro"]]);
     expect(doFator(conf, 10)[0]!.mensagem).toBe(
-      `Item 10: o vínculo lembrado usa fator 6 (multiplica); o cadastro do produto ${produtos[9]!.codigo}, para a unidade CX, diz 12 (multiplica). Vale o do vínculo: confira.`);
+      `Item 10: o vínculo lembrado usa fator 6 (multiplica); o cadastro do produto ${produtos[9]!.codigo}, para a unidade CX, diz 12 (multiplica). Vale o do vínculo.`);
   });
 });
 

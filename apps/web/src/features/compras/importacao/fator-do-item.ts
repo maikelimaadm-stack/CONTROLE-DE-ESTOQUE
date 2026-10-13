@@ -2,7 +2,7 @@ import { D } from "@agro/shared";
 import { enumLabel, type TipoFator, type VinculoDoItemDaNota } from "@agro/domain";
 import { num } from "@/lib/utils";
 import type { DecisaoDoItemNaTela } from "./estado";
-import { fatorPelaNotaDoVinculo, fatorValido } from "./vinculo-do-item";
+import { fatorPelaNotaDoVinculo, fatorValido, mostraOFatorDoVinculo, type FatorPelaNotaLido } from "./vinculo-do-item";
 
 /**
  * DE ONDE VEIO O FATOR DO ITEM, NA TELA (XML-04, decisão 318: "o fator vem do cadastro") — leituras PURAS, sem React e
@@ -12,12 +12,15 @@ import { fatorPelaNotaDoVinculo, fatorValido } from "./vinculo-do-item";
  * diz PERTO DO CAMPO e enquanto o campo mostra o fator dessa origem, para o produto do vínculo:
  *   · `unidade_principal` / `unidade_do_produto` — do cadastro, pela unidade da nota;
  *   · `vinculo` — do vínculo lembrado; o cadastro que diz OUTRO fator para a unidade vira AVISO com os dois números
- *     (vale o do vínculo: a pessoa confere);
- *   · `pergunta` — o campo nasce VAZIO (`fatorInicialDoVinculo`) e a pergunta diz por quê; o item é pendência (a de
+ *     (vale o do vínculo);
+ *   · `pergunta` — o campo nasce VAZIO (`fatorInicialDoVinculo`) e a pergunta diz por quê, com o número na mão quando
+ *     o servidor o manda (o código de barras de outra unidade: a unidade e o fator dela); o item é pendência (a de
  *     sempre, o fator inválido) até a pessoa digitar um fator válido.
  * O fator continua EDITÁVEL: a pessoa sempre ganha. O fator que ela mudou (outro número ou outra conversão; na pergunta,
- * o primeiro fator válido) é "informado na tela" — sem aviso e sem pergunta. Outro produto no item ⇒ nenhuma origem (a
- * do servidor é do produto do vínculo). Sem `fatorPelaNota` (a API anterior) ⇒ `null`: a aba de antes.
+ * o primeiro fator válido) é "informado na tela" — sem aviso e sem pergunta. OUTRO produto no item (a origem do servidor
+ * é do produto do vínculo): o campo sem fator válido (a troca o esvaziou, `fatorAoTrocarProduto`) é a pergunta do
+ * produto trocado; com fator, nenhuma origem; sem produto, nada (a pendência é o produto). Sem `fatorPelaNota` (a API
+ * anterior) ⇒ `null`: a aba de antes.
  */
 
 export type OrigemDoFatorNaTela = "unidade_principal" | "unidade_do_produto" | "vinculo" | "pergunta" | "informado";
@@ -36,11 +39,26 @@ export interface FatorNaTela {
 const numeroDoFator = (f: string) => { const d = D(f); return num(d.toFixed(), d.decimalPlaces()); };
 const conversao = (t: TipoFator) => enumLabel("tipo_fator_conversao", t);
 
-/** A pergunta do fator, pelo motivo (motivo desconhecido ⇒ a pergunta sem o porquê). */
-function perguntaDoFator(unidade: string, motivo: "unidade_fora_do_cadastro" | "codigo_de_barras_de_outra_unidade" | null): string {
-  if (motivo === "codigo_de_barras_de_outra_unidade") return "O código de barras da nota é de outra unidade do produto: informe o fator.";
-  if (motivo === "unidade_fora_do_cadastro") {
-    return unidade ? `A unidade ${unidade} da nota não está no cadastro do produto: informe o fator.` : "A nota não traz a unidade do item: informe o fator.";
+/** A pergunta do produto trocado: o fator do servidor era do produto do vínculo, e a troca esvaziou o campo. */
+const PERGUNTA_DO_PRODUTO_TROCADO = "O produto foi trocado: informe o fator do produto escolhido.";
+
+/**
+ * A pergunta do fator, pelo motivo (motivo desconhecido ⇒ a pergunta sem o porquê). O código de barras de outra
+ * unidade diz a unidade e o fator dela quando o servidor os manda (`codigoDeBarras`); sem eles, a unidade da nota.
+ */
+function perguntaDoFator(f: Extract<FatorPelaNotaLido, { origem: "pergunta" }>): string {
+  const u = f.unidadeDaNota;
+  if (f.motivo === "codigo_de_barras_de_outra_unidade") {
+    const cb = f.codigoDeBarras;
+    if (cb) {
+      return `O código de barras da nota é da unidade ${cb.unidade} do produto (fator ${numeroDoFator(cb.fator)}, ${conversao(cb.tipoFator).toLocaleLowerCase("pt-BR")}), `
+        + `${u ? `mas a nota diz ${u}` : "mas a nota não traz a unidade"}: informe o fator.`;
+    }
+    return u ? `O código de barras da nota é de outra unidade do produto, e não da unidade ${u} da nota: informe o fator.`
+      : "O código de barras da nota é de outra unidade do produto, e a nota não traz a unidade: informe o fator.";
+  }
+  if (f.motivo === "unidade_fora_do_cadastro") {
+    return u ? `A unidade ${u} da nota não está no cadastro do produto: informe o fator.` : "A nota não traz a unidade do item: informe o fator.";
   }
   return "O cadastro do produto não diz o fator desta unidade da nota: informe o fator.";
 }
@@ -48,13 +66,15 @@ function perguntaDoFator(unidade: string, motivo: "unidade_fora_do_cadastro" | "
 /** A origem do fator que o campo mostra, para o item com a decisão `d` (`null`: a tela não diz origem nenhuma). */
 export function fatorNaTela(v: VinculoDoItemDaNota | undefined, d: Pick<DecisaoDoItemNaTela, "produtoId" | "fator" | "tipoFator">): FatorNaTela | null {
   const f = fatorPelaNotaDoVinculo(v);
-  if (!f || !v || (v.situacao !== "lembrado" && v.situacao !== "sugerido") || d.produtoId !== v.produto.id) return null;
+  if (!f || !v || (v.situacao !== "lembrado" && v.situacao !== "sugerido")) return null;
+  if (d.produtoId !== v.produto.id) {
+    return d.produtoId !== "" && !fatorValido(d.fator) ? { origem: "pergunta", texto: null, aviso: null, pergunta: PERGUNTA_DO_PRODUTO_TROCADO } : null;
+  }
   const informado: FatorNaTela = { origem: "informado", texto: "Fator informado na tela.", aviso: null, pergunta: null };
   if (f.origem === "pergunta") {
-    return fatorValido(d.fator) ? informado : { origem: "pergunta", texto: null, aviso: null, pergunta: perguntaDoFator(f.unidadeDaNota, f.motivo) };
+    return fatorValido(d.fator) ? informado : { origem: "pergunta", texto: null, aviso: null, pergunta: perguntaDoFator(f) };
   }
-  const oDoServidor = fatorValido(d.fator) && D(d.fator).eq(D(v.fator)) && d.tipoFator === v.tipoFator;
-  if (!oDoServidor) return informado;
+  if (!mostraOFatorDoVinculo(v, d)) return informado;
   const u = f.unidadeDaNota;
   switch (f.origem) {
     case "unidade_principal":
@@ -65,7 +85,7 @@ export function fatorNaTela(v: VinculoDoItemDaNota | undefined, d: Pick<DecisaoD
       return {
         origem: "vinculo", texto: "Fator do vínculo lembrado.", pergunta: null,
         aviso: f.cadastro
-          ? `O vínculo lembrado usa o fator ${numeroDoFator(v.fator)} (${conversao(v.tipoFator)}) e o cadastro do produto diz ${numeroDoFator(f.cadastro.fator)} (${conversao(f.cadastro.tipoFator)}) para a unidade ${u}: vale o do vínculo; confira.`
+          ? `O vínculo lembrado usa o fator ${numeroDoFator(v.fator)} (${conversao(v.tipoFator)}) e o cadastro do produto diz ${numeroDoFator(f.cadastro.fator)} (${conversao(f.cadastro.tipoFator)}) para a unidade ${u}: vale o do vínculo.`
           : null
       };
   }

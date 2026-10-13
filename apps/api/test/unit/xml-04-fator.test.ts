@@ -11,7 +11,8 @@ import type { ServiceCtx } from "../../src/lib/context.js";
  * Em todo caminho que acha produto (lembrado, código no fornecedor, código de barras, referência, descrição), o fator é
  * o do cadastro para a unidade da nota: a principal (1), uma unidade VIVA e DE COMPRA do produto (o fator dela) ou a
  * PERGUNTA — nunca 1 em silêncio. O código de barras de OUTRA unidade do produto põe o fator em dúvida; ele nunca dá
- * fator. O vínculo lembrado VENCE (a decisão explícita do operador) e o cadastro só aparece quando o contradiz. A decisão
+ * fator, e a pergunta diz a unidade dona do código e o fator dela no cadastro quando ela é UMA só (`codigoDeBarras`); as
+ * mensagens dizem o número, nunca "confira". O vínculo lembrado VENCE (a decisão explícita do operador) e o cadastro só aparece quando o contradiz. A decisão
  * é uma função PURA (testada aqui, caso a caso); a consulta é UMA para a nota inteira (CONTADA aqui, com um contexto
  * falso que obedece aos filtros do SQL: o que está sob teste é a forma de perguntar). A exclusão (`deleted_at`) na base
  * real é da integração.
@@ -21,14 +22,15 @@ const u = (n: number) => `bbbbbbbb-0000-4000-8000-${String(n).padStart(12, "0")}
 const p = (n: number) => `cccccccc-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const org = (id: string, simbolo: string): UnidadeDoCadastro => ({ id, simbolo, daOrganizacao: true });
 const sistema = (id: string, simbolo: string): UnidadeDoCadastro => ({ id, simbolo, daOrganizacao: false });
-const linha = (measurementId: string, fator: string, tipoFator: "multiply" | "divide", o: Partial<UnidadeDoProduto> = {}): UnidadeDoProduto =>
-  ({ measurementId, fator, tipoFator, usoCompra: true, codigoBarras: null, ...o });
-const produto = (measurementId: string, unidades: UnidadeDoProduto[] = [], codigoBarras: string | null = null): CadastroDoProduto =>
-  ({ measurementId, codigoBarras, unidades });
-const doItem = (unidade: string, ean: string | null = null) => ({ unidade, ean });
-
 const UN = u(1); const CX = u(3); const KG = u(4); const G = u(5);
 const UNIDADES = [sistema(UN, "UN"), sistema(u(2), "CX"), org(CX, "CX"), sistema(KG, "KG"), sistema(G, "G")];
+/** O símbolo que a consulta traz para a unidade do produto (a coluna `simbolo`): o do cadastro de unidades, ou nenhum. */
+const simboloDe = (measurementId: string): string | null => UNIDADES.find((x) => x.id === measurementId)?.simbolo ?? null;
+const linha = (measurementId: string, fator: string, tipoFator: "multiply" | "divide", o: Partial<UnidadeDoProduto> = {}): UnidadeDoProduto =>
+  ({ measurementId, fator, tipoFator, usoCompra: true, codigoBarras: null, simbolo: simboloDe(measurementId), ...o });
+const produto = (measurementId: string, unidades: UnidadeDoProduto[] = [], codigoBarras: string | null = null): CadastroDoProduto =>
+  ({ measurementId, codigoBarras, unidades, simbolo: simboloDe(measurementId) });
+const doItem = (unidade: string, ean: string | null = null) => ({ unidade, ean });
 const EAN = "7891234567895"; const EAN_CX = "17891234567892"; const EAN_OUTRO = "7890000000001";
 
 describe("fatorDoItemPelaNota — a decisão (pura)", () => {
@@ -76,17 +78,52 @@ describe("fatorDoItemPelaNota — a decisão (pura)", () => {
     expect(fatorDoItemPelaNota(UNIDADES, produto(UN, [linha(CX, "12", "multiply"), linha(CX, "6", "multiply", { usoCompra: false })]), doItem("CX")).fator).toBe("12");
   });
 
-  it("o cEAN é o código de barras de OUTRA unidade do produto ⇒ PERGUNTA (codigo_de_barras_de_outra_unidade)", () => {
-    const outra = { origem: "pergunta", unidadeDaNota: "CX", motivo: "codigo_de_barras_de_outra_unidade" };
-    // O GTIN é o da principal (UN), a nota diz CX (de compra, fator 12).
+  it("o cEAN é o código de barras de OUTRA unidade do produto ⇒ PERGUNTA (codigo_de_barras_de_outra_unidade), com a unidade dona do código e o fator dela", () => {
+    const outra = (unidadeDaNota: string, codigoDeBarras: { unidade: string; fator: string; tipoFator: "multiply" | "divide" }) =>
+      ({ origem: "pergunta", unidadeDaNota, motivo: "codigo_de_barras_de_outra_unidade", codigoDeBarras });
+    // O GTIN é o da PRINCIPAL (UN: 1, multiplica), a nota diz CX (de compra, fator 12).
     expect(fatorDoItemPelaNota(UNIDADES, produto(UN, [linha(CX, "12", "multiply")], EAN), doItem("CX", EAN))).toEqual(
-      { fator: "1", tipoFator: "multiply", fatorPelaNota: outra });
-    // O GTIN é o de uma linha SÓ DE VENDA de outra unidade (KG): conta também.
+      { fator: "1", tipoFator: "multiply", fatorPelaNota: outra("CX", { unidade: "UN", fator: "1", tipoFator: "multiply" }) });
+    // O GTIN é o de uma linha SÓ DE VENDA de outra unidade (KG, 5): conta também, com o fator DELA.
     expect(fatorDoItemPelaNota(UNIDADES, produto(UN, [linha(CX, "12", "multiply"), linha(KG, "5", "multiply", { usoCompra: false, codigoBarras: EAN })]), doItem("CX", EAN)).fatorPelaNota)
-      .toEqual(outra);
-    // A nota diz a principal e o GTIN é o da caixa.
+      .toEqual(outra("CX", { unidade: "KG", fator: "5", tipoFator: "multiply" }));
+    // A nota diz a principal e o GTIN é o da ALTERNATIVA (a caixa de 12).
     expect(fatorDoItemPelaNota(UNIDADES, produto(UN, [linha(CX, "12", "multiply", { codigoBarras: EAN_CX })]), doItem("UN", EAN_CX)).fatorPelaNota)
-      .toEqual({ origem: "pergunta", unidadeDaNota: "UN", motivo: "codigo_de_barras_de_outra_unidade" });
+      .toEqual(outra("UN", { unidade: "CX", fator: "12", tipoFator: "multiply" }));
+    // A alternativa que DIVIDE: o tipo vai junto, e o fator é o texto do cadastro.
+    expect(fatorDoItemPelaNota(UNIDADES, produto(KG, [linha(G, "1000.000000", "divide", { codigoBarras: EAN_CX })]), doItem("KG", EAN_CX)).fatorPelaNota)
+      .toEqual(outra("KG", { unidade: "G", fator: "1000.000000", tipoFator: "divide" }));
+  });
+
+  it("o cEAN de MAIS DE UMA unidade do produto (ou de uma só com dois fatores, ou sem símbolo) ⇒ a mesma pergunta, SEM o campo — nunca a primeira", () => {
+    const semCampo = (unidadeDaNota: string) => ({ origem: "pergunta", unidadeDaNota, motivo: "codigo_de_barras_de_outra_unidade" });
+    const semONumero = (f: ReturnType<typeof fatorDoItemPelaNota>) => {
+      expect(Object.keys(f.fatorPelaNota), "o campo não vem (nem como undefined)").not.toContain("codigoDeBarras");
+      return f.fatorPelaNota;
+    };
+    // Da principal (UN) E de uma linha (KG): duas unidades.
+    expect(semONumero(fatorDoItemPelaNota(UNIDADES, produto(UN, [linha(CX, "12", "multiply"), linha(KG, "5", "multiply", { codigoBarras: EAN })], EAN), doItem("CX", EAN))))
+      .toStrictEqual(semCampo("CX"));
+    // De duas linhas (KG e G).
+    expect(semONumero(fatorDoItemPelaNota(UNIDADES, produto(UN, [linha(CX, "12", "multiply"), linha(KG, "5", "multiply", { codigoBarras: EAN }), linha(G, "9", "divide", { codigoBarras: EAN })]), doItem("CX", EAN))))
+      .toStrictEqual(semCampo("CX"));
+    // UMA unidade (a principal UN), mas duas fontes com fatores diferentes (o código do produto: 1; uma linha da mesma UN: 6).
+    expect(semONumero(fatorDoItemPelaNota(UNIDADES, produto(UN, [linha(CX, "12", "multiply"), linha(UN, "6", "multiply", { codigoBarras: EAN })], EAN), doItem("CX", EAN))))
+      .toStrictEqual(semCampo("CX"));
+    // UMA unidade com UM fator pelas duas fontes ("1" e "1.000000", multiplica): o campo vem.
+    expect(fatorDoItemPelaNota(UNIDADES, produto(UN, [linha(CX, "12", "multiply"), linha(UN, "1.000000", "multiply", { codigoBarras: EAN })], EAN), doItem("CX", EAN)).fatorPelaNota)
+      .toEqual({ ...semCampo("CX"), codigoDeBarras: { unidade: "UN", fator: "1", tipoFator: "multiply" } });
+    // A unidade dona do código sem símbolo (a consulta não o trouxe): não se diz o que não se leu.
+    expect(semONumero(fatorDoItemPelaNota(UNIDADES, produto(UN, [linha(CX, "12", "multiply"), linha(u(7), "3", "multiply", { codigoBarras: EAN })]), doItem("CX", EAN))))
+      .toStrictEqual(semCampo("CX"));
+    expect(semONumero(fatorDoItemPelaNota(UNIDADES, produto(UN, [linha(CX, "12", "multiply"), linha(KG, "3", "multiply", { codigoBarras: EAN, simbolo: "  " })]), doItem("CX", EAN))))
+      .toStrictEqual(semCampo("CX"));
+  });
+
+  it("o símbolo é DITO como a régua da 312 o compara (aparado, em maiúsculas: a forma da unidade da nota), e nunca decide: a unidade dona do código é pelo id", () => {
+    // A caixa da ORGANIZAÇÃO guarda " cx " (o seed guarda "sc", "kg"…); o código é dela, e a nota diz UN.
+    expect(fatorDoItemPelaNota(UNIDADES, produto(UN, [linha(CX, "6", "multiply", { codigoBarras: EAN_CX, simbolo: " cx " })]), doItem("UN", EAN_CX)).fatorPelaNota)
+      .toEqual({ origem: "pergunta", unidadeDaNota: "UN", motivo: "codigo_de_barras_de_outra_unidade", codigoDeBarras: { unidade: "CX", fator: "6", tipoFator: "multiply" } });
   });
 
   it("o cEAN é o código de barras da MESMA unidade ⇒ o fator do cadastro (o código de barras não muda nada)", () => {
@@ -158,18 +195,47 @@ describe("divergenciaDoFator — a pergunta e o vínculo contrariado, sem bloque
       mensagem: "Item 3: a unidade PCT da nota não é unidade de compra do produto P-1 no cadastro: informe o fator." });
   });
 
-  it("PERGUNTA pelo código de barras: fator_a_informar, dizendo que o GTIN é de outra unidade", () => {
+  it("PERGUNTA pelo código de barras, COM o número: a unidade de que o código é, o fator dela no cadastro e a unidade da nota", () => {
+    const peloCodigo = (unidadeDaNota: string, codigoDeBarras: { unidade: string; fator: string; tipoFator: "multiply" | "divide" }): VinculoDoItemDaNota =>
+      ({ situacao: "sugerido", origem: "codigo_barras", produto: PRODUTO, fator: "1", tipoFator: "multiply",
+        fatorPelaNota: { origem: "pergunta", unidadeDaNota, motivo: "codigo_de_barras_de_outra_unidade", codigoDeBarras } });
+    // O código é o da CAIXA (alternativa, 12 multiplica) e a nota diz UN.
+    expect(divergenciaDoFator(1, peloCodigo("UN", { unidade: "CX", fator: "12.000000", tipoFator: "multiply" }))).toEqual({ codigo: "fator_a_informar", nItem: 1, bloqueia: false,
+      mensagem: "Item 1: o código de barras da nota é da unidade CX do produto P-1 (fator 12, multiplica), mas a nota diz UN: informe o fator." });
+    // O código é o da PRINCIPAL (1, multiplica) e a nota diz CX.
+    expect(divergenciaDoFator(4, peloCodigo("CX", { unidade: "UN", fator: "1", tipoFator: "multiply" }))?.mensagem)
+      .toBe("Item 4: o código de barras da nota é da unidade UN do produto P-1 (fator 1, multiplica), mas a nota diz CX: informe o fator.");
+    // A alternativa que DIVIDE.
+    expect(divergenciaDoFator(5, peloCodigo("KG", { unidade: "G", fator: "1000.000000", tipoFator: "divide" }))?.mensagem)
+      .toBe("Item 5: o código de barras da nota é da unidade G do produto P-1 (fator 1000, divide), mas a nota diz KG: informe o fator.");
+  });
+
+  it("PERGUNTA pelo código de barras SEM o campo (o código é de mais de uma unidade): diz que é de outra unidade e qual é a da nota", () => {
     const v: VinculoDoItemDaNota = { situacao: "sugerido", origem: "codigo_barras", produto: PRODUTO, fator: "1", tipoFator: "multiply",
       fatorPelaNota: { origem: "pergunta", unidadeDaNota: "CX", motivo: "codigo_de_barras_de_outra_unidade" } };
     expect(divergenciaDoFator(1, v)).toEqual({ codigo: "fator_a_informar", nItem: 1, bloqueia: false,
-      mensagem: "Item 1: o código de barras da nota é de outra unidade do produto P-1: confira o fator." });
+      mensagem: "Item 1: o código de barras da nota é de outra unidade do produto P-1, e não da unidade CX da nota: informe o fator." });
   });
 
   it("o lembrado que o cadastro contradiz: os DOIS números, e vale o do vínculo", () => {
     const v: VinculoDoItemDaNota = { situacao: "lembrado", produto: PRODUTO, fator: "6.000000", tipoFator: "multiply",
       fatorPelaNota: { origem: "vinculo", unidadeDaNota: "CX", cadastro: { fator: "12.000000", tipoFator: "divide" } } };
     expect(divergenciaDoFator(2, v)).toEqual({ codigo: "fator_do_vinculo_diferente_do_cadastro", nItem: 2, bloqueia: false,
-      mensagem: "Item 2: o vínculo lembrado usa fator 6 (multiplica); o cadastro do produto P-1, para a unidade CX, diz 12 (divide). Vale o do vínculo: confira." });
+      mensagem: "Item 2: o vínculo lembrado usa fator 6 (multiplica); o cadastro do produto P-1, para a unidade CX, diz 12 (divide). Vale o do vínculo." });
+  });
+
+  it("nenhuma mensagem do fator manda \"conferir\": cada uma diz o número, ou o que falta (regra da 318)", () => {
+    const comProduto = (fatorPelaNota: Extract<VinculoDoItemDaNota, { situacao: "sugerido" }>["fatorPelaNota"]): VinculoDoItemDaNota =>
+      ({ situacao: "sugerido", origem: "reference", produto: PRODUTO, fator: "1", tipoFator: "multiply", fatorPelaNota });
+    const mensagens = [
+      divergenciaDoFator(1, comProduto({ origem: "pergunta", unidadeDaNota: "PCT", motivo: "unidade_fora_do_cadastro" })),
+      divergenciaDoFator(1, comProduto({ origem: "pergunta", unidadeDaNota: "", motivo: "unidade_fora_do_cadastro" })),
+      divergenciaDoFator(1, comProduto({ origem: "pergunta", unidadeDaNota: "CX", motivo: "codigo_de_barras_de_outra_unidade" })),
+      divergenciaDoFator(1, comProduto({ origem: "pergunta", unidadeDaNota: "CX", motivo: "codigo_de_barras_de_outra_unidade", codigoDeBarras: { unidade: "UN", fator: "1", tipoFator: "multiply" } })),
+      divergenciaDoFator(1, { situacao: "lembrado", produto: PRODUTO, fator: "6", tipoFator: "multiply", fatorPelaNota: { origem: "vinculo", unidadeDaNota: "CX", cadastro: { fator: "12", tipoFator: "multiply" } } }),
+    ].map((d) => d?.mensagem);
+    expect(mensagens.every((m) => typeof m === "string" && m.length > 0), "premissa: as cinco mensagens existem").toBe(true);
+    expect(mensagens.filter((m) => /confir/i.test(m ?? ""))).toEqual([]);
   });
 
   it("nada a dizer: o cadastro respalda, o lembrado concorda, sem produto ou a API anterior (sem fatorPelaNota)", () => {
@@ -232,12 +298,15 @@ function ctxFalso(o: { ambiguoNoFornecedor?: boolean } = {}) {
             .filter((x) => (x.organization_id === orgId || x.organization_id === null) && simbolos.includes(x.symbol.trim().toUpperCase()))
             .map((x) => ({ tipo: "unidade", id: x.id, simbolo: x.symbol, da_organizacao: x.organization_id !== null,
               measurement_id: null, codigo_barras: null, fator: null, tipo_fator: null, uso_compra: null }));
+          // O símbolo da unidade do produto só vem se a consulta o SELECIONA (a junção `pm`/`um`), recortado pela organização.
+          const simboloVisivel = (measurementId: string, selecionado: boolean): string | null => (selecionado
+            ? CADASTRO_DE_UNIDADES.find((x) => x.id === measurementId && (x.organization_id === orgId || x.organization_id === null))?.symbol ?? null : null);
           const produtos = PRODUTOS.filter((x) => ids.includes(x.id) && !(x.deleted && sql.includes("p.deleted_at is null")))
-            .map((x) => ({ tipo: "produto", id: x.id, simbolo: null, da_organizacao: null, measurement_id: x.measurement_id, codigo_barras: x.barcode,
-              fator: null, tipo_fator: null, uso_compra: null }));
+            .map((x) => ({ tipo: "produto", id: x.id, simbolo: simboloVisivel(x.measurement_id, sql.includes("pm.symbol")), da_organizacao: null,
+              measurement_id: x.measurement_id, codigo_barras: x.barcode, fator: null, tipo_fator: null, uso_compra: null }));
           const linhas = LINHAS.filter((x) => ids.includes(x.product_id) && !(x.deleted && sql.includes("pu.deleted_at is null")))
-            .map((x) => ({ tipo: "unidade_do_produto", id: x.product_id, simbolo: null, da_organizacao: null, measurement_id: x.measurement_id,
-              codigo_barras: x.codigo_barras, fator: x.fator, tipo_fator: x.tipo_fator, uso_compra: x.uso_compra }));
+            .map((x) => ({ tipo: "unidade_do_produto", id: x.product_id, simbolo: simboloVisivel(x.measurement_id, sql.includes("um.symbol")), da_organizacao: null,
+              measurement_id: x.measurement_id, codigo_barras: x.codigo_barras, fator: x.fator, tipo_fator: x.tipo_fator, uso_compra: x.uso_compra }));
           return resposta([...linhas, ...unidades, ...produtos]);
         }
         if (sql.includes("from erp.produto_fornecedor_vinculos v")) {
@@ -303,8 +372,9 @@ describe("vinculosDosItens — o fator pelo cadastro, numa consulta só", () => 
       fatorPelaNota: { origem: "vinculo", unidadeDaNota: "CX", cadastro: { fator: "12.000000", tipoFator: "multiply" } } });
     expect(resumo(2)).toEqual({ situacao: "sugerido", origem: "codigo_fornecedor", produto: p(3), fator: "1", tipoFator: "multiply",
       fatorPelaNota: { origem: "pergunta", unidadeDaNota: "CX", motivo: "unidade_fora_do_cadastro" } });
+    // O GTIN é o da principal de P1 (UN): a pergunta diz a unidade dona do código e o fator dela (1), da MESMA consulta.
     expect(resumo(3)).toEqual({ situacao: "sugerido", origem: "codigo_barras", produto: p(1), fator: "1", tipoFator: "multiply",
-      fatorPelaNota: { origem: "pergunta", unidadeDaNota: "CX", motivo: "codigo_de_barras_de_outra_unidade" } });
+      fatorPelaNota: { origem: "pergunta", unidadeDaNota: "CX", motivo: "codigo_de_barras_de_outra_unidade", codigoDeBarras: { unidade: "UN", fator: "1", tipoFator: "multiply" } } });
     expect(resumo(4)).toEqual({ situacao: "sugerido", origem: "reference", produto: p(2), fator: "1000.000000", tipoFator: "divide",
       fatorPelaNota: { origem: "unidade_do_produto", unidadeDaNota: "G" } });
     expect(resumo(5)).toEqual({ situacao: "sugerido", origem: "descricao", produto: p(1), fator: "1", tipoFator: "multiply",
@@ -332,6 +402,9 @@ describe("vinculosDosItens — o fator pelo cadastro, numa consulta só", () => 
     expect(q!.sql).toContain("upper(btrim(mu.symbol)) = any($2::text[])");
     expect(q!.sql).toContain("pu.deleted_at is null");
     expect(q!.sql).toContain("p.deleted_at is null");
+    // O símbolo da unidade principal e o de cada linha vêm na MESMA consulta, recortados pela organização (ou do sistema).
+    expect(q!.sql).toContain("left join erp.measurement_units pm on pm.id = p.measurement_id and (pm.organization_id = $1 or pm.organization_id is null)");
+    expect(q!.sql).toContain("left join erp.measurement_units um on um.id = pu.measurement_id and (um.organization_id = $1 or um.organization_id is null)");
     // O código no fornecedor não traz mais o fator (nem a unidade alternativa sem filtro de uso de compra).
     const doFornecedor = consultas.find((x) => x.sql.includes("from erp.produto_fornecedores pf"))!;
     expect(doFornecedor.sql).not.toContain("produto_unidades");

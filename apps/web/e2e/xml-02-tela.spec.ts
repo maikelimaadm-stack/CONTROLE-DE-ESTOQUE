@@ -400,6 +400,13 @@ test("X2-T6 — a pessoa corrige o palpite e a escolha dela é lembrada: a refer
   await escolherNoSeletor(page, seletorR, certo.descricao, `Produto do item ${r} (o certo, de novo)`);
   await expect.soft(lembrarR, "o outro produto de novo: \"Lembrar\" MARCADO").toBeChecked();
   await expect(caixaDoProduto(page, r), "o item fica com o produto da pessoa").toContainText(certo.descricao);
+  // XML-04 (decisão 318): o fator que veio do cadastro do produto do palpite NÃO segue para o produto da pessoa — o
+  // campo esvazia e a tela pergunta; a pessoa informa o fator do produto certo (a mesma unidade da nota: 1).
+  const fatorR = page.getByTestId(`importacao-item-${r}-fator`);
+  await expect(fatorR, "o produto foi trocado: o fator do palpite não segue para o produto da pessoa").toHaveValue("");
+  await expect(page.getByTestId(`importacao-item-${r}-fator-pergunta`)).toHaveText("O produto foi trocado: informe o fator do produto escolhido.");
+  await fatorR.fill("1");
+  await expect(page.getByTestId(`importacao-item-${r}-fator-pergunta`), "digitado: a pergunta sai").toHaveCount(0);
 
   // A DESCRIÇÃO CORRIGIDA PELO "CRIAR PRODUTO": o produto criado fica escolhido e o "Lembrar" marcado.
   await page.getByTestId(`importacao-item-${d}-criar-produto`).click();

@@ -23,6 +23,8 @@ import type { DecisaoDoItemNaTela } from "./estado";
  *   · DE ONDE VEIO O FATOR (XML-04, decisão 318 — `fatorPelaNotaDoVinculo`): lido por PROPRIEDADE PRÓPRIA do vínculo;
  *     a API anterior não o manda e a decisão é a de antes. Com a PERGUNTA, o fator nasce VAZIO (nunca o "1" que o
  *     servidor ainda manda por compatibilidade): o item é pendência até a pessoa informar o fator.
+ *   · FATOR NA TROCA DE PRODUTO (XML-04 — `fatorAoTrocarProduto`): o fator derivado é do produto do vínculo; outro
+ *     produto com o campo ainda nele ⇒ o campo vazio, até a pessoa digitar; de volta ao produto do vínculo, o fator dele.
  */
 
 /**
@@ -70,11 +72,18 @@ export function lembrarAoTrocarProduto(v: VinculoDoItemDaNota | undefined, produ
   return produtoId !== v.produto.id;
 }
 
-/** O `fatorPelaNota` lido: a pergunta com um motivo que a tela não conhece continua pergunta (`motivo: null`). */
+/**
+ * O `fatorPelaNota` lido: a pergunta com um motivo que a tela não conhece continua pergunta (`motivo: null`); o
+ * `codigoDeBarras` (a unidade do produto de que o cEAN da nota é o código, com o fator do cadastro dela) só com o motivo
+ * `codigo_de_barras_de_outra_unidade` e na forma certa — senão `null`.
+ */
 export type FatorPelaNotaLido =
   | Exclude<FatorDoItemDaNota, { origem: "pergunta" | "vinculo" }>
   | { origem: "vinculo"; unidadeDaNota: string; cadastro: { fator: string; tipoFator: TipoFator } | null }
-  | { origem: "pergunta"; unidadeDaNota: string; motivo: Extract<FatorDoItemDaNota, { origem: "pergunta" }>["motivo"] | null };
+  | {
+    origem: "pergunta"; unidadeDaNota: string; motivo: Extract<FatorDoItemDaNota, { origem: "pergunta" }>["motivo"] | null;
+    codigoDeBarras: { unidade: string; fator: string; tipoFator: TipoFator } | null;
+  };
 
 /** O fator que a tela aceita no campo: texto decimal (ponto), até 12 inteiros e 6 casas, maior que zero. */
 export const fatorValido = (v: string) => /^\d{1,12}(\.\d{1,6})?$/.test(v) && D(v).gt(0);
@@ -86,7 +95,9 @@ const fatorDecimal = (v: unknown): v is string => typeof v === "string" && /^\d+
 /**
  * XML-04 (decisão 318): DE ONDE VEIO O FATOR do item, por PROPRIEDADE PRÓPRIA do vínculo lembrado ou sugerido (a API
  * anterior não o manda ⇒ `null`, a tela de antes). FAIL-CLOSED: forma estranha ou origem que a tela não conhece (uma API
- * mais nova) ⇒ `null`; o cadastro do vínculo fora da forma ⇒ sem cadastro (a tela não afirma um número que não leu).
+ * mais nova) ⇒ `null`; o cadastro do vínculo fora da forma ⇒ sem cadastro (a tela não afirma um número que não leu). O
+ * `codigoDeBarras` da pergunta também é lido por PROPRIEDADE PRÓPRIA e só com o motivo dele; ausente (a API sem ele),
+ * fora da forma ou com outro motivo ⇒ `null` (a pergunta diz a unidade da nota, sem o número).
  */
 export function fatorPelaNotaDoVinculo(v: VinculoDoItemDaNota | undefined): FatorPelaNotaLido | null {
   if (!v || (v.situacao !== "lembrado" && v.situacao !== "sugerido") || !Object.hasOwn(v, "fatorPelaNota")) return null;
@@ -99,8 +110,13 @@ export function fatorPelaNotaDoVinculo(v: VinculoDoItemDaNota | undefined): Fato
       const c = f.cadastro;
       return { origem: "vinculo", unidadeDaNota, cadastro: ehObjeto(c) && fatorDecimal(c.fator) && ehTipoFator(c.tipoFator) ? { fator: c.fator, tipoFator: c.tipoFator } : null };
     }
-    case "pergunta":
-      return { origem: "pergunta", unidadeDaNota, motivo: f.motivo === "unidade_fora_do_cadastro" || f.motivo === "codigo_de_barras_de_outra_unidade" ? f.motivo : null };
+    case "pergunta": {
+      const motivo = f.motivo === "unidade_fora_do_cadastro" || f.motivo === "codigo_de_barras_de_outra_unidade" ? f.motivo : null;
+      const cb = motivo === "codigo_de_barras_de_outra_unidade" && Object.hasOwn(f, "codigoDeBarras") ? f.codigoDeBarras : undefined;
+      const codigoDeBarras = ehObjeto(cb) && typeof cb.unidade === "string" && cb.unidade.trim() !== "" && fatorDecimal(cb.fator) && ehTipoFator(cb.tipoFator)
+        ? { unidade: cb.unidade.trim(), fator: cb.fator, tipoFator: cb.tipoFator } : null;
+      return { origem: "pergunta", unidadeDaNota, motivo, codigoDeBarras };
+    }
     default: return null;
   }
 }
@@ -108,6 +124,36 @@ export function fatorPelaNotaDoVinculo(v: VinculoDoItemDaNota | undefined): Fato
 /** O fator com que o item NASCE pelo vínculo: o do servidor, ou VAZIO quando o fator é pergunta (XML-04). */
 export const fatorInicialDoVinculo = (v: Extract<VinculoDoItemDaNota, { situacao: "lembrado" | "sugerido" }>): string =>
   (fatorPelaNotaDoVinculo(v)?.origem === "pergunta" ? "" : D(v.fator).toFixed());
+
+/**
+ * O campo ainda mostra o fator com que o item nasceu pelo vínculo (`fatorInicialDoVinculo`): o MESMO número (também
+ * escrito de outro jeito, "6.0") e a MESMA conversão — a pessoa não os mudou. Na pergunta, o campo vazio.
+ */
+export function mostraOFatorDoVinculo(v: Extract<VinculoDoItemDaNota, { situacao: "lembrado" | "sugerido" }>, d: Pick<DecisaoDoItemNaTela, "fator" | "tipoFator">): boolean {
+  const inicial = fatorInicialDoVinculo(v);
+  if (d.tipoFator !== v.tipoFator) return false;
+  return inicial === "" ? d.fator === "" : fatorValido(d.fator) && D(d.fator).eq(D(inicial));
+}
+
+/**
+ * XML-04 (decisão 318) — o FATOR quando a PESSOA troca o produto de um item cujo fator o servidor derivou
+ * (`fatorPelaNota`: o cadastro pela unidade da nota, o vínculo lembrado, ou a pergunta). Esse fator é do PRODUTO DO
+ * VÍNCULO; com outro produto ele não diz nada, e deixá-lo no campo seria um número calado de outro produto:
+ *   · sai do produto do vínculo (para outro, ou nenhum) com o campo ainda no fator do vínculo
+ *     (`mostraOFatorDoVinculo`) ⇒ o campo VAZIO e "multiplica" (o padrão do item sem vínculo); a tela pergunta
+ *     (`fatorNaTela`) e o item é a pendência do fator inválido de sempre até a pessoa digitar;
+ *   · volta ao produto do vínculo com o campo vazio ⇒ o fator e a conversão do vínculo (e a origem volta, na tela);
+ *   · o fator que a pessoa DIGITOU fica (é dela), num sentido e no outro — também de um outro produto para um terceiro;
+ *   · sem `fatorPelaNota` (a API anterior; o ambíguo e o sem vínculo, que não o têm) ⇒ `undefined`: o de antes.
+ */
+export function fatorAoTrocarProduto(v: VinculoDoItemDaNota | undefined, d: Pick<DecisaoDoItemNaTela, "produtoId" | "fator" | "tipoFator">, produtoId: string):
+  Pick<DecisaoDoItemNaTela, "fator" | "tipoFator"> | undefined {
+  if ((v?.situacao !== "lembrado" && v?.situacao !== "sugerido") || !fatorPelaNotaDoVinculo(v) || produtoId === d.produtoId) return undefined;
+  if (produtoId === v.produto.id) return d.fator === "" ? { fator: fatorInicialDoVinculo(v), tipoFator: v.tipoFator } : undefined;
+  // Saindo de um produto que não é o do vínculo: o campo já foi esvaziado na saída do vínculo, ou é da pessoa.
+  if (d.produtoId !== v.produto.id) return undefined;
+  return mostraOFatorDoVinculo(v, d) ? { fator: "", tipoFator: "multiply" } : undefined;
+}
 
 /**
  * A decisão de um item pelo vínculo do servidor (lembrado/sugerido traz produto e fator — VAZIO quando o fator é
