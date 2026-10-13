@@ -12,9 +12,17 @@
  * arquivo inteiro, um savepoint por linha para listar TODOS os erros. Modo `tudo` (padrão): havendo qualquer
  * erro, nada é gravado. Modo `parcial` (CADASTROS FASE 2): a linha com erro tem o savepoint desfeito e as
  * certas são gravadas na mesma transação; as erradas voltam numa PLANILHA DE ERROS gerada na mesma execução,
- * a partir do arquivo já lido em memória (nunca relido depois do commit). Nunca atualiza registro existente: importar é criar. Entrada que não dá para ler sem adivinhar
+ * a partir do arquivo já lido em memória (nunca relido depois do commit). O CRIAR nunca atualiza registro existente. Entrada que não dá para ler sem adivinhar
  * (número ambíguo, célula com erro de fórmula, valor em coluna sem título) é RECUSADA, nunca reinterpretada
  * nem descartada em silêncio.
+ *
+ * DUAS AÇÕES, ESCOLHA EXPLÍCITA (IMPORTAR-01, decisão 317) — uma nunca faz o trabalho da outra, e "criar ou
+ * atualizar" não existe:
+ *   · CRIAR (o padrão, o de sempre): `importarPlanilha` + `createOne`, exatamente como antes;
+ *   · ATUALIZAR: `atualizarPlanilha` casa cada linha pelo CÓDIGO (só nesta organização, só registro vivo, uma
+ *     consulta para o arquivo) e passa pela MESMA porta de edição da tela (`getOne` + `updateOne`, injetadas pela
+ *     rota) só com as colunas PRESENTES no arquivo. Coluna ausente não mexe; célula vazia em coluna presente recusa
+ *     a linha; código que não casa é erro da linha, nunca criação. Só para cadastro importável COM código.
  */
 import { inflateRawSync } from "node:zlib";
 import ExcelJS from "exceljs";
@@ -51,7 +59,10 @@ export function camposImportaveis(def: ResourceDef): FieldDef[] {
 
 /** Cabeçalho da coluna: o rótulo da tela; `*` marca obrigatório. Rótulo repetido ganha o nome técnico. */
 export function cabecalhos(def: ResourceDef): { campo: FieldDef; titulo: string; chave: string }[] {
-  const campos = camposImportaveis(def);
+  return rotular(camposImportaveis(def));
+}
+
+function rotular(campos: FieldDef[]): { campo: FieldDef; titulo: string; chave: string }[] {
   const contagem = new Map<string, number>();
   for (const f of campos) contagem.set(f.label, (contagem.get(f.label) ?? 0) + 1);
   return campos.map((f) => {
@@ -60,6 +71,34 @@ export function cabecalhos(def: ResourceDef): { campo: FieldDef; titulo: string;
   });
 }
 type Cabecalho = ReturnType<typeof cabecalhos>[number];
+
+/** A AÇÃO da planilha (decisão 317). `criar` é o padrão e o comportamento de sempre. */
+export const ACOES_IMPORTACAO = ["criar", "atualizar"] as const;
+export type AcaoImportacao = (typeof ACOES_IMPORTACAO)[number];
+export const MSG_SEM_CODIGO = "Este cadastro não tem código: atualizar por planilha não está disponível nele (só criar).";
+/** Célula vazia numa coluna PRESENTE (ATUALIZAR): recusa a linha — atualizar nunca apaga valor e nunca ignora a coluna. */
+export const MSG_PRESENTE_VAZIA = "Vazio numa coluna presente. Para não mexer neste campo, apague a coluna do arquivo; para mudar, preencha.";
+
+/**
+ * O CÓDIGO do cadastro, a chave do ATUALIZAR — do registry (fonte única), nunca uma lista solta. Cadastro importável
+ * sem campo `code` (unidades, endereçamentos, locais de estoque, variedades) não tem chave: só CRIAR.
+ */
+export function campoDoCodigo(def: ResourceDef): FieldDef | null {
+  return def.importacao ? def.fields.find((f) => f.name === "code") ?? null : null;
+}
+export const aceitaAtualizar = (def: ResourceDef) => campoDoCodigo(def) !== null;
+
+/**
+ * Colunas do modelo de cada ação. CRIAR: as de sempre (`cabecalhos`). ATUALIZAR: o CÓDIGO primeiro, OBRIGATÓRIO — mesmo
+ * onde a tela o mostra só leitura (Produto, Parceiro): aqui ele só IDENTIFICA o registro e nunca é gravado —, e as
+ * demais colunas do formulário, nenhuma obrigatória (coluna ausente não mexe).
+ */
+export function cabecalhosDaAcao(def: ResourceDef, acao: AcaoImportacao): Cabecalho[] {
+  if (acao === "criar") return cabecalhos(def);
+  const codigo = campoDoCodigo(def);
+  if (!codigo) throw validation(MSG_SEM_CODIGO);
+  return rotular([{ ...codigo, readOnly: false, required: true }, ...camposImportaveis(def).filter((f) => f.name !== codigo.name).map((f) => ({ ...f, required: false }))]);
+}
 
 /**
  * Cabeçalhos com o NOME DE ANTES (OPERACOES-01 F3a, decisão 280): a planilha baixada antes de um rótulo mudar
@@ -273,12 +312,16 @@ const condicao = (def: ResourceDef, f: FieldDef) => {
 
 // ------------------------------------------------------------------ modelo
 
-export async function gerarModelo(ctx: ServiceCtx, def: ResourceDef): Promise<Buffer> {
+/**
+ * `acao` (decisão 317): o modelo do CRIAR é o de sempre. O do ATUALIZAR traz o CÓDIGO primeiro (vermelho, a chave),
+ * as mesmas colunas e listas, nenhuma outra obrigatória, e as instruções do ATUALIZAR.
+ */
+export async function gerarModelo(ctx: ServiceCtx, def: ResourceDef, acao: AcaoImportacao = "criar"): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   const dados = wb.addWorksheet(ABA_DADOS, { views: [{ state: "frozen", ySplit: 1 }] });
   const listas = wb.addWorksheet(ABA_LISTAS);
   const instrucoes = wb.addWorksheet("Instruções");
-  const cols = cabecalhos(def);
+  const cols = cabecalhosDaAcao(def, acao);
   dados.columns = cols.map((c) => ({ header: c.titulo, key: c.campo.name, width: Math.max(14, Math.min(40, c.titulo.length + 4)) }));
   let colunaLista = 0; let temCondicional = false;
   for (const [i, c] of cols.entries()) {
@@ -290,8 +333,10 @@ export async function gerarModelo(ctx: ServiceCtx, def: ResourceDef): Promise<Bu
     const destaque = f.required ? COR_OBRIGATORIO : cond ? COR_CONDICIONAL : null;
     cab.font = { bold: true, color: { argb: destaque ? "FFFFFFFF" : "FF1F2937" } };
     cab.fill = { type: "pattern", pattern: "solid", fgColor: { argb: destaque ?? "FFE5E7EB" } };
-    const autoRef = f.type === "ref" && f.ref?.resource === def.key;
-    let valores: string[] | null = null; let dica = f.help ?? "";
+    // o superior numa linha ANTERIOR do arquivo só existe no CRIAR: no ATUALIZAR nada nasce, o superior já existe
+    const autoRef = acao === "criar" && f.type === "ref" && f.ref?.resource === def.key;
+    const chaveDoAtualizar = acao === "atualizar" && f.name === "code";
+    let valores: string[] | null = null; let dica = chaveDoAtualizar ? "CHAVE: o código do registro desta organização que será atualizado, como na listagem. Ele nunca é alterado." : f.help ?? "";
     const mais = (t: string) => { dica = `${dica ? dica + " " : ""}${t}`; };
     if (f.type === "ref" && f.ref) { const alvo = getResource(f.ref.resource); if (alvo) { valores = (await carregarReferencia(ctx, alvo, f.ref.filtro)).exibicao; mais(autoRef ? `Escolha da lista ou use uma linha ANTERIOR deste arquivo (${alvo.labelPlural}).` : `Escolha da lista (cadastros de ${alvo.labelPlural} existentes).`); } }
     else if (f.type === "select" && f.options) { valores = f.options.map((o) => o.label); mais("Escolha da lista."); }
@@ -321,7 +366,22 @@ export async function gerarModelo(ctx: ServiceCtx, def: ResourceDef): Promise<Bu
   }
   instrucoes.getColumn(1).width = 110;
   const foraDoModelo = def.fields.filter((f) => !f.readOnly && f.type === "json").map((f) => f.label);
-  const itens = [
+  const itens = acao === "atualizar" ? [
+    `Preencha a aba "${ABA_DADOS}", uma linha por registro a ATUALIZAR (até ${IMPORTACAO_LINHAS_MAXIMO}). Não altere o título das colunas que ficarem.`,
+    `A coluna "${cols[0]!.chave}" (em VERMELHO) é a CHAVE: identifica o registro desta organização que será atualizado. Ela nunca é alterada.`,
+    "Só as colunas PRESENTES no arquivo são alteradas. APAGUE as colunas que não quer mudar: coluna ausente não mexe no cadastro.",
+    "Célula VAZIA numa coluna presente RECUSA a linha: atualizar nunca apaga valor. Para limpar um campo, use a tela do cadastro.",
+    "Código que não existe nesta organização é ERRO da linha: atualizar nunca cria registro (para criar, use \"Criar registros\"). Código repetido no arquivo também é erro.",
+    ...(temCondicional ? ["Colunas em LARANJA são obrigatórias numa condição: a nota do cabeçalho diz qual (vale o valor da planilha ou, sem a coluna, o do cadastro)."] : []),
+    `Colunas com lista só aceitam valores da lista (aba "${ABA_LISTAS}"), que traz os cadastros existentes no momento do download. Cadastrou algo depois? Baixe o modelo de novo.`,
+    "Nomes repetidos vêm na lista com um complemento (empresa, grupo, caminho). Use o valor exatamente como está na lista.",
+    "Colunas de texto estão no formato Texto para manter zeros à esquerda (CPF/CNPJ, CEP, códigos). Ao colar de outra planilha, cole só os valores.",
+    "Números com vírgula decimal: 1234,56 ou 1.234,56. Ponto sem vírgula (1.000) é recusado por ser ambíguo.",
+    "Sim/Não, opções e datas (DD/MM/AAAA) seguem o texto da tela. Célula com erro de fórmula é recusada.",
+    "Ao importar, o sistema mostra a PRÉVIA antes de gravar: quantas linhas casaram pelo código, quantas não casaram e QUAIS colunas mudam em cada uma. Cada linha passa pelas mesmas regras da tela de edição.",
+    "Nenhum registro é excluído por planilha.",
+    ...(foraDoModelo.length ? [`Não vão no modelo (altere pela tela): ${foraDoModelo.join(", ")}.`] : []),
+  ] : [
     `Preencha a aba "${ABA_DADOS}", uma linha por registro (até ${IMPORTACAO_LINHAS_MAXIMO}). Não altere nem reordene o cabeçalho.`,
     "Colunas em VERMELHO com * são obrigatórias.",
     ...(temCondicional ? ["Colunas em LARANJA são obrigatórias numa condição: a nota do cabeçalho diz qual."] : []),
@@ -335,7 +395,7 @@ export async function gerarModelo(ctx: ServiceCtx, def: ResourceDef): Promise<Bu
     ...(def.tree ? ["Cadastro em árvore: o superior pode ser um registro existente ou uma linha ANTERIOR deste mesmo arquivo."] : []),
     ...(foraDoModelo.length ? [`Não vão no modelo (preencha pela tela depois): ${foraDoModelo.join(", ")}.`] : []),
   ];
-  const linhas = [`Modelo de importação — ${def.labelPlural}`, "", ...itens.map((t, k) => `${k + 1}. ${t}`)];
+  const linhas = [`${acao === "atualizar" ? "Modelo de atualização" : "Modelo de importação"} — ${def.labelPlural}`, "", ...itens.map((t, k) => `${k + 1}. ${t}`)];
   linhas.forEach((t, k) => { const c = instrucoes.getCell(`A${k + 1}`); c.value = t; if (k === 0) c.font = { bold: true, size: 13 }; });
   return Buffer.from(await wb.xlsx.writeBuffer() as ArrayBuffer);
 }
@@ -354,9 +414,30 @@ export interface ResultadoImportacao {
   /** XLSX com SÓ as linhas com erro (colunas do modelo + "Erros"), em base64; null sem linha com erro ou acima do limite */
   planilha_erros_base64: string | null;
 }
+/** O que muda numa linha do ATUALIZAR: a linha, o código e os TÍTULOS das colunas cujo valor gravado mudou. */
+export interface AlteracaoImportacao { linha: number; codigo: string; colunas: string[] }
+/**
+ * Resultado do ATUALIZAR (decisão 317): o do CRIAR mais a ação e a PRÉVIA do que muda. O CRIAR não ganha chave
+ * nenhuma — a resposta dele é a de antes. `certas` = casaram e passaram (mudando ou não); `gravadas` = as que MUDARAM
+ * e foram gravadas; linha que não muda nada não é gravada (nem auditada).
+ */
+export interface ResultadoAtualizacao extends ResultadoImportacao {
+  acao: "atualizar";
+  /** linhas cujo código identificou UM registro vivo desta organização */
+  casaram: number;
+  /** linhas cujo código não identificou registro (vazio, ilegível, inexistente, de outra organização, excluído) */
+  nao_casaram: number;
+  /** linhas certas em que nada muda */
+  sem_alteracao: number;
+  /** linhas certas em que algo muda, e o quê */
+  alteracoes: AlteracaoImportacao[];
+}
 interface Celula { v: ExcelJS.CellValue; formato: string }
-/** O arquivo lido e conferido na forma, sem banco: cabeçalho mapeado e só as linhas que existem. */
-export interface PlanilhaLida { cols: Cabecalho[]; linhas: { n: number; celulas: Map<string, Celula>; erros: ErroImportacao[] }[]; erros: ErroImportacao[] }
+/**
+ * O arquivo lido e conferido na forma, sem banco: cabeçalho mapeado e só as linhas que existem. `presentes`: os
+ * campos cujas colunas ESTÃO no cabeçalho do arquivo (no ATUALIZAR, só eles são alterados).
+ */
+export interface PlanilhaLida { cols: Cabecalho[]; presentes: Set<string>; linhas: { n: number; celulas: Map<string, Celula>; erros: ErroImportacao[] }[]; erros: ErroImportacao[] }
 
 /**
  * Soma do tamanho DESCOMPRIMIDO das partes do zip, descomprimindo de verdade com teto: o tamanho declarado no
@@ -449,9 +530,9 @@ const formatoDeZeros = (fmt: string) => { const f = fmt.replace(/[\\"]/g, ""); r
  * Lê e confere a FORMA do arquivo, sem banco: roda antes de abrir a transação, para nenhuma conexão do pool
  * ficar presa enquanto o XLSX é descompactado e percorrido.
  */
-export async function lerPlanilha(def: ResourceDef, arquivo: Buffer): Promise<PlanilhaLida> {
-  const cols = cabecalhos(def);
-  const falha = (mensagem: string, linha = 0): PlanilhaLida => ({ cols, linhas: [], erros: [{ linha, coluna: null, mensagem }] });
+export async function lerPlanilha(def: ResourceDef, arquivo: Buffer, acao: AcaoImportacao = "criar"): Promise<PlanilhaLida> {
+  const cols = cabecalhosDaAcao(def, acao);
+  const falha = (mensagem: string, linha = 0): PlanilhaLida => ({ cols, presentes: new Set(), linhas: [], erros: [{ linha, coluna: null, mensagem }] });
   const tamanho = tamanhoDescomprimido(arquivo, IMPORTACAO_DESCOMPRIMIDO_MAXIMO);
   if (tamanho === null) return falha("Arquivo inválido: envie o modelo em XLSX.");
   if (tamanho > IMPORTACAO_DESCOMPRIMIDO_MAXIMO) return falha(`Arquivo grande demais depois de descompactado (limite de ${IMPORTACAO_DESCOMPRIMIDO_MAXIMO / 1024 / 1024} MB). Divida em arquivos menores.`);
@@ -478,7 +559,9 @@ export async function lerPlanilha(def: ResourceDef, arquivo: Buffer): Promise<Pl
     vistas.add(c.campo.name); mapa.set(n, c);
   });
   for (const c of cols) if (c.campo.required && !vistas.has(c.campo.name)) erros.push({ linha: 1, coluna: c.chave, mensagem: "Coluna obrigatória ausente no arquivo." });
-  if (erros.length) return { cols, linhas: [], erros };
+  // ATUALIZAR com só a chave não muda nada: o arquivo é recusado, nunca "gravado" sem efeito
+  if (acao === "atualizar" && vistas.size === 1 && vistas.has(cols[0]!.campo.name)) erros.push({ linha: 1, coluna: null, mensagem: `Nenhuma coluna para atualizar: deixe no arquivo a coluna ${cols[0]!.chave} e só as colunas que vão mudar.` });
+  if (erros.length) return { cols, presentes: vistas, linhas: [], erros };
 
   // Só as linhas que EXISTEM no arquivo (eachRow sem includeEmpty pula os buracos): uma célula na linha
   // 1.048.576 não faz percorrer um milhão de linhas, e eachCell não cria objeto para célula ausente.
@@ -504,7 +587,7 @@ export async function lerPlanilha(def: ResourceDef, arquivo: Buffer): Promise<Pl
   });
   if (excedeu) return falha(`Limite de ${IMPORTACAO_LINHAS_MAXIMO} linhas por arquivo.`, excedeu);
   if (!linhas.length) return falha("Nenhuma linha preenchida.");
-  return { cols, linhas, erros: [] };
+  return { cols, presentes: vistas, linhas, erros: [] };
 }
 
 // ------------------------------------------------------------------ gravação
@@ -572,11 +655,73 @@ const comoCorrigir = (mensagem: string) => {
   return m && !mensagem.includes("Use o formato") ? `${mensagem} Use o formato ${m[1]}.` : mensagem;
 };
 
+const MSG_ZEROS_A_ESQUERDA = "A célula é um número com formato de zeros à esquerda: o arquivo guarda só o número, sem os zeros. Formate a coluna como Texto e digite de novo.";
+
+/** O que a tradução de uma célula precisa: as referências carregadas, os municípios (sob demanda) e, só no CRIAR, as falhas. */
+interface Traducao {
+  def: ResourceDef;
+  refs: Map<string, Referencia>;
+  municipios: () => Promise<{ ids: Set<number>; porNome: Map<string, number> }>;
+  /** CRIAR: o que linhas anteriores com erro teriam criado (o superior numa linha anterior). ATUALIZAR: ausente — nada nasce. */
+  falhas?: Map<string, number>;
+}
+
+/**
+ * Traduz UMA célula PREENCHIDA (`t` não vazio) para o valor do corpo da porta, ou a recusa. É a MESMA tradução no
+ * CRIAR e no ATUALIZAR (texto da lista → id, "Sim" → true, "1.234,56" → "1234.56"); quem decide a célula vazia é
+ * quem chama.
+ */
+async function traduzirCelula(x: Traducao, f: FieldDef, cel: Celula | undefined, t: string, corpo: Record<string, unknown>, recusa: (m: string) => void): Promise<void> {
+  const v = cel?.v ?? null;
+  // MUNICÍPIO (CADASTROS Fase 4): código IBGE de 7 dígitos OU "Nome - UF" (sem diferenciar acento/maiúscula)
+  if (f.busca === "municipios") {
+    const m = await x.municipios();
+    const id = /^\d{7}$/.test(t) ? (m.ids.has(Number(t)) ? Number(t) : null) : m.porNome.get(semAcento(t).replace(/\s*[-/]\s*/g, " - ")) ?? null;
+    if (id !== null) corpo[f.name] = id; else recusa(`Município "${t}" não encontrado. Use o código IBGE (7 dígitos) ou "Nome - UF", ex.: "Gurupi - TO".`);
+    return;
+  }
+  switch (f.type) {
+    case "ref": {
+      const ref = f.ref ? x.refs.get(f.ref.resource) : undefined;
+      const superior = f.ref?.resource === x.def.key && x.falhas !== undefined;
+      const r = ref ? resolver(ref, t, superior ? { superior, falhas: x.falhas } : {}) : { erro: `"${t}" não encontrado.` };
+      if ("id" in r) corpo[f.name] = r.id; else recusa(r.erro);
+      break;
+    }
+    case "select": { const o = f.options?.find((x) => normal(x.label) === normal(t) || normal(x.value) === normal(t)); if (o) corpo[f.name] = o.value; else recusa(`"${t}" não é uma opção válida. Opções: ${(f.options ?? []).map((x) => x.label).join("; ")}.`); break; }
+    case "boolean": { const b = normal(t); if (["sim", "s", "true", "1"].includes(b)) corpo[f.name] = true; else if (["não", "nao", "n", "false", "0"].includes(b)) corpo[f.name] = false; else recusa("Use Sim ou Não."); break; }
+    case "date": { const d = data(v); if (d) corpo[f.name] = d; else recusa("Data inválida (use DD/MM/AAAA)."); break; }
+    case "integer": { const n = numero(v); if (n !== null && /^-?\d+$/.test(n)) corpo[f.name] = Number(n); else recusa("Número inteiro inválido."); break; }
+    case "number": case "money": case "quantity": case "percent": { const n = numero(v); if (n !== null) corpo[f.name] = n; else recusa("Número inválido. Use vírgula decimal (1234,56 ou 1.234,56)."); break; }
+    case "tags": { const partes = t.split(/[;,]/).map((p) => p.trim()).filter(Boolean); const vals = partes.map((p) => f.options?.find((o) => normal(o.label) === normal(p) || normal(o.value) === normal(p))?.value ?? (f.options ? null : p)); if (vals.some((y) => y === null)) recusa("Valor fora da lista."); else corpo[f.name] = vals; break; }
+    default:
+      if (typeof valorBase(v) === "number" && formatoDeZeros(cel?.formato ?? "")) recusa(MSG_ZEROS_A_ESQUERDA);
+      else corpo[f.name] = t;
+  }
+}
+
+/** As referências das colunas, UMA carga por cadastro apontado. */
+async function carregarReferencias(ctx: ServiceCtx, cols: Cabecalho[]): Promise<Map<string, Referencia>> {
+  const refs = new Map<string, Referencia>();
+  for (const c of cols) if (c.campo.type === "ref" && c.campo.ref && !refs.has(c.campo.ref.resource)) { const alvo = getResource(c.campo.ref.resource); if (alvo) refs.set(c.campo.ref.resource, await carregarReferencia(ctx, alvo)); }
+  return refs;
+}
+
+/** Municípios (referência global da Fase 3), carregados UMA vez por importação e só se alguma coluna usa. */
+function carregadorDeMunicipios(ctx: ServiceCtx): Traducao["municipios"] {
+  let cacheMunicipios: { ids: Set<number>; porNome: Map<string, number> } | null = null;
+  return async () => {
+    if (cacheMunicipios) return cacheMunicipios;
+    const r = await ctx.tx.query<{ id: number; name: string; state_code: string | null }>("select id, name, state_code from erp.cities");
+    cacheMunicipios = { ids: new Set(r.rows.map((x) => x.id)), porNome: new Map(r.rows.filter((x) => x.state_code).map((x) => [semAcento(`${x.name} - ${x.state_code}`), x.id])) };
+    return cacheMunicipios;
+  };
+}
+
 export async function importarPlanilha(ctx: ServiceCtx, def: ResourceDef, planilha: PlanilhaLida, criar: Criar, simulacao: boolean, modo: ModoImportacao = "tudo"): Promise<ResultadoImportacao> {
   const { cols } = planilha;
   const erros: ErroImportacao[] = [];
-  const refs = new Map<string, Referencia>();
-  for (const c of cols) if (c.campo.type === "ref" && c.campo.ref && !refs.has(c.campo.ref.resource)) { const alvo = getResource(c.campo.ref.resource); if (alvo) refs.set(c.campo.ref.resource, await carregarReferencia(ctx, alvo)); }
+  const refs = await carregarReferencias(ctx, cols);
   const rotulo = (campo: string) => cols.find((c) => c.campo.name === campo)?.chave ?? def.fields.find((f) => f.name === campo)?.label ?? campo;
   const condicionais = cols.flatMap((c) => { const cond = condicao(def, c.campo); return cond ? [{ c, cond }] : []; });
 
@@ -594,14 +739,7 @@ export async function importarPlanilha(ctx: ServiceCtx, def: ResourceDef, planil
     for (const t of textos) if (t && !falhas.has(semAcento(t))) falhas.set(semAcento(t), n);
   };
 
-  // Municípios (referência global da Fase 3), carregados UMA vez por importação e só se alguma coluna usa.
-  let cacheMunicipios: { ids: Set<number>; porNome: Map<string, number> } | null = null;
-  const municipios = async () => {
-    if (cacheMunicipios) return cacheMunicipios;
-    const r = await ctx.tx.query<{ id: number; name: string; state_code: string | null }>("select id, name, state_code from erp.cities");
-    cacheMunicipios = { ids: new Set(r.rows.map((x) => x.id)), porNome: new Map(r.rows.filter((x) => x.state_code).map((x) => [semAcento(`${x.name} - ${x.state_code}`), x.id])) };
-    return cacheMunicipios;
-  };
+  const municipios = carregadorDeMunicipios(ctx);
   const criados: { linha: number; id: string }[] = [];
   for (const { n, celulas, erros: errosDaLeitura } of planilha.linhas) {
     const corpo: Record<string, unknown> = {};
@@ -613,31 +751,7 @@ export async function importarPlanilha(ctx: ServiceCtx, def: ResourceDef, planil
       if (erroCel) { recusa(erroCel); continue; }
       const t = texto(v);
       if (t === "") { if (f.required) recusa("Obrigatório."); continue; }
-      // MUNICÍPIO (CADASTROS Fase 4): código IBGE de 7 dígitos OU "Nome - UF" (sem diferenciar acento/maiúscula)
-      if (f.busca === "municipios") {
-        const m = await municipios();
-        const id = /^\d{7}$/.test(t) ? (m.ids.has(Number(t)) ? Number(t) : null) : m.porNome.get(semAcento(t).replace(/\s*[-/]\s*/g, " - ")) ?? null;
-        if (id !== null) corpo[f.name] = id; else recusa(`Município "${t}" não encontrado. Use o código IBGE (7 dígitos) ou "Nome - UF", ex.: "Gurupi - TO".`);
-        continue;
-      }
-      switch (f.type) {
-        case "ref": {
-          const ref = f.ref ? refs.get(f.ref.resource) : undefined;
-          const superior = f.ref?.resource === def.key;
-          const r = ref ? resolver(ref, t, superior ? { superior, falhas } : {}) : { erro: `"${t}" não encontrado.` };
-          if ("id" in r) corpo[f.name] = r.id; else recusa(r.erro);
-          break;
-        }
-        case "select": { const o = f.options?.find((x) => normal(x.label) === normal(t) || normal(x.value) === normal(t)); if (o) corpo[f.name] = o.value; else recusa(`"${t}" não é uma opção válida. Opções: ${(f.options ?? []).map((x) => x.label).join("; ")}.`); break; }
-        case "boolean": { const b = normal(t); if (["sim", "s", "true", "1"].includes(b)) corpo[f.name] = true; else if (["não", "nao", "n", "false", "0"].includes(b)) corpo[f.name] = false; else recusa("Use Sim ou Não."); break; }
-        case "date": { const d = data(v); if (d) corpo[f.name] = d; else recusa("Data inválida (use DD/MM/AAAA)."); break; }
-        case "integer": { const x = numero(v); if (x !== null && /^-?\d+$/.test(x)) corpo[f.name] = Number(x); else recusa("Número inteiro inválido."); break; }
-        case "number": case "money": case "quantity": case "percent": { const x = numero(v); if (x !== null) corpo[f.name] = x; else recusa("Número inválido. Use vírgula decimal (1234,56 ou 1.234,56)."); break; }
-        case "tags": { const partes = t.split(/[;,]/).map((p) => p.trim()).filter(Boolean); const vals = partes.map((p) => f.options?.find((o) => normal(o.label) === normal(p) || normal(o.value) === normal(p))?.value ?? (f.options ? null : p)); if (vals.some((x) => x === null)) recusa("Valor fora da lista."); else corpo[f.name] = vals; break; }
-        default:
-          if (typeof valorBase(v) === "number" && formatoDeZeros(cel?.formato ?? "")) recusa("A célula é um número com formato de zeros à esquerda: o arquivo guarda só o número, sem os zeros. Formate a coluna como Texto e digite de novo.");
-          else corpo[f.name] = t;
-      }
+      await traduzirCelula({ def, refs, municipios, falhas }, f, cel, t, corpo, recusa);
     }
     for (const { c, cond } of condicionais) {
       const atual = cond.campo in corpo ? corpo[cond.campo] : cond.padrao;
@@ -685,6 +799,171 @@ export async function importarPlanilha(ctx: ServiceCtx, def: ResourceDef, planil
   return { linhas: planilha.linhas.length, gravadas, erros, simulacao, modo, certas, com_erro: linhasComErro.size, planilha_erros_base64 };
 }
 
+// ------------------------------------------------------------------ ATUALIZAR (IMPORTAR-01, decisão 317)
+
+/**
+ * A PORTA DE EDIÇÃO DA TELA, injetada pela rota (como o `createOne` do CRIAR): `ler` = `getOne` (a MESMA 404 de
+ * inexistente, de outra organização, excluído ou fora do escopo) e `atualizar` = `updateOne` (schema PARCIAL do
+ * registry, regras do cadastro, UPDATE só do que veio, auditoria pelo gatilho). Nenhum UPDATE em tabela de cadastro
+ * sai deste arquivo.
+ */
+export interface PortaDeEdicao {
+  ler: (ctx: ServiceCtx, def: ResourceDef, id: string) => Promise<Record<string, unknown>>;
+  atualizar: (ctx: ServiceCtx, def: ResourceDef, id: string, body: unknown) => Promise<Record<string, unknown>>;
+}
+
+/**
+ * CASAMENTO PELO CÓDIGO: só nesta organização (o predicado explícito, além da RLS), só registro VIVO, UMA consulta para
+ * o arquivo inteiro (nada de N+1). Devolve código → ids: mais de um id é recusado por quem resolve, nunca "o primeiro".
+ * Tabela e coluna vêm do registry estático (`ident`), o valor é parametrizado.
+ */
+export async function casarPorCodigo(ctx: Pick<ServiceCtx, "tx" | "orgId">, def: ResourceDef, codigos: string[]): Promise<Map<string, string[]>> {
+  const mapa = new Map<string, string[]>();
+  if (!codigos.length) return mapa;
+  const r = await ctx.tx.query<{ id: string; codigo: string }>(
+    `select id::text as id, code::text as codigo from erp.${ident(def.table)} where organization_id = $1 and code = any($2::text[])${def.softDelete ? " and deleted_at is null" : ""}`,
+    [ctx.orgId, codigos]);
+  for (const x of r.rows) acrescentar(mapa, x.codigo, x.id);
+  return mapa;
+}
+
+/** O código resolve para UM registro, ou a linha é recusada: inexistente nunca vira criação, repetido nunca vira "o primeiro". */
+export function resolverCodigo(alvos: Map<string, string[]>, codigo: string, def: Pick<ResourceDef, "labelPlural">): { id: string } | { erro: string } {
+  const ids = alvos.get(codigo) ?? [];
+  if (ids.length === 1) return { id: ids[0]! };
+  if (ids.length > 1) return { erro: `"${codigo}" corresponde a ${ids.length} registros de ${def.labelPlural}: nada é atualizado sem saber qual.` };
+  return { erro: codigoNaoEncontrado(codigo, def) };
+}
+const codigoNaoEncontrado = (codigo: string, def: Pick<ResourceDef, "labelPlural">) => `"${codigo}" não encontrado em ${def.labelPlural}. Atualizar não cria registro: para criar, use "Criar registros".`;
+
+/** O código lido de uma célula, com as mesmas recusas da tradução (erro de fórmula, número que perdeu os zeros). */
+function codigoDaCelula(cel: Celula | undefined): { codigo: string } | { erro: string } {
+  const v = cel?.v ?? null;
+  const erroCel = erroDaCelula(v);
+  if (erroCel) return { erro: erroCel };
+  if (typeof valorBase(v) === "number" && formatoDeZeros(cel?.formato ?? "")) return { erro: MSG_ZEROS_A_ESQUERDA };
+  const t = texto(v);
+  return t ? { codigo: t } : { erro: "Obrigatório: o código identifica o registro a atualizar." };
+}
+
+/**
+ * Colunas do modelo cujo valor GRAVADO mudou (a leitura da tela antes × depois da porta) — inclusive as que a planilha
+ * não trouxe, se a porta as mudou por regra do cadastro, e a própria chave, se a porta a mudasse: a prévia mostra o
+ * efeito, não o pedido.
+ */
+export function colunasQueMudaram(cols: Cabecalho[], antes: Record<string, unknown>, depois: Record<string, unknown>): string[] {
+  return cols.filter((c) => JSON.stringify(antes[c.campo.name] ?? null) !== JSON.stringify(depois[c.campo.name] ?? null)).map((c) => c.chave);
+}
+
+/**
+ * A VERSÃO FÍSICA da linha (`xmin`): todo UPDATE cria versão nova, mesmo com valores iguais. É como o ATUALIZAR confere
+ * o ROW COUNT da porta, que não o confere (`updateOne` descarta o rowCount): versão igual depois da porta = o UPDATE
+ * não alcançou a linha (a RLS devolve zero linhas sem erro) = a linha é recusada, nunca "atualizada" sem efeito.
+ */
+async function versaoDaLinha(ctx: ServiceCtx, def: ResourceDef, id: string): Promise<string | null> {
+  const r = await ctx.tx.query<{ v: string }>(`select xmin::text as v from erp.${ident(def.table)} where id = $1 and organization_id = $2`, [id, ctx.orgId]);
+  return r.rows[0]?.v ?? null;
+}
+export const MSG_NAO_GRAVOU = "A gravação não alcançou o registro (fora do escopo de escrita): nada foi alterado nesta linha.";
+
+/**
+ * ATUALIZAR em lote: cada linha casa pelo CÓDIGO e passa pela porta de edição da tela com SÓ as colunas presentes.
+ * Uma transação para o arquivo (a da rota), um savepoint por linha — como no CRIAR. Linha em que nada muda tem o
+ * savepoint desfeito: não grava nem gera auditoria. Prévia, modo `tudo` e `parcial` decidem na rota, como no CRIAR.
+ */
+export async function atualizarPlanilha(ctx: ServiceCtx, def: ResourceDef, planilha: PlanilhaLida, porta: PortaDeEdicao, simulacao: boolean, modo: ModoImportacao = "tudo"): Promise<ResultadoAtualizacao> {
+  const { cols, presentes } = planilha;
+  const chave = cols[0]!; // `cabecalhosDaAcao`: no ATUALIZAR, a primeira coluna é o código
+  const editaveis = cols.filter((c) => c !== chave && presentes.has(c.campo.name));
+  const erros: ErroImportacao[] = [];
+  const refs = await carregarReferencias(ctx, editaveis);
+  const traducao: Traducao = { def, refs, municipios: carregadorDeMunicipios(ctx) };
+  const rotulo = (campo: string) => cols.find((c) => c.campo.name === campo)?.chave ?? def.fields.find((f) => f.name === campo)?.label ?? campo;
+  const condicionais = cols.flatMap((c) => { const cond = condicao(def, c.campo); return cond ? [{ c, cond }] : []; });
+
+  // o código de cada linha; o repetido no arquivo é erro em TODAS as linhas que o repetem (qual valeria?)
+  const codigos = new Map<number, { codigo: string } | { erro: string }>();
+  const linhasDoCodigo = new Map<string, number[]>();
+  for (const { n, celulas } of planilha.linhas) {
+    const c = codigoDaCelula(celulas.get(chave.campo.name));
+    codigos.set(n, c);
+    if ("codigo" in c) linhasDoCodigo.set(c.codigo, [...(linhasDoCodigo.get(c.codigo) ?? []), n]);
+  }
+  const alvos = await casarPorCodigo(ctx, def, [...linhasDoCodigo.keys()]);
+
+  let casaram = 0; let semAlteracao = 0;
+  const alteracoes: AlteracaoImportacao[] = [];
+  for (const { n, celulas, erros: errosDaLeitura } of planilha.linhas) {
+    const errosDaLinha: ErroImportacao[] = [...errosDaLeitura];
+    const recusaCodigo = (m: string) => errosDaLinha.push({ linha: n, coluna: chave.chave, mensagem: m });
+    const lido = codigos.get(n)!;
+    const codigo = "codigo" in lido ? lido.codigo : "";
+    let id: string | null = null; let antes: Record<string, unknown> | null = null;
+    if ("erro" in lido) recusaCodigo(lido.erro);
+    else {
+      const r = resolverCodigo(alvos, codigo, def);
+      if ("erro" in r) recusaCodigo(r.erro);
+      else {
+        // a leitura da tela: o que a 404 dela esconde (escopo, filtro fixo) também não casa
+        try { antes = await porta.ler(ctx, def, r.id); id = r.id; casaram += 1; }
+        catch (e) { if (e instanceof DomainError && e.code === "NOT_FOUND") recusaCodigo(codigoNaoEncontrado(codigo, def)); else throw e; }
+      }
+      const repetidas = linhasDoCodigo.get(codigo) ?? [];
+      if (repetidas.length > 1) recusaCodigo(`Código repetido no arquivo (linhas ${repetidas.join(", ")}): cada registro aparece uma vez.`);
+    }
+    const corpo: Record<string, unknown> = {};
+    for (const c of editaveis) {
+      const f = c.campo; const cel = celulas.get(f.name); const v = cel?.v ?? null;
+      const recusa = (m: string) => errosDaLinha.push({ linha: n, coluna: c.chave, mensagem: m });
+      const erroCel = erroDaCelula(v);
+      if (erroCel) { recusa(erroCel); continue; }
+      const t = texto(v);
+      // coluna PRESENTE e célula vazia: recusa (atualizar não apaga e não ignora); coluna ausente nem entra aqui
+      if (t === "") { recusa(MSG_PRESENTE_VAZIA); continue; }
+      await traduzirCelula(traducao, f, cel, t, corpo, recusa);
+    }
+    // obrigatório condicional sobre o registro como FICARIA (a planilha por cima do gravado), só quando a linha mexe
+    // na condição ou no campo; o banco continua sendo a última palavra (ex.: chk_product_fin_cat)
+    if (antes) for (const { c, cond } of condicionais) {
+      if (!(cond.campo in corpo) && !(c.campo.name in corpo)) continue;
+      const atual = cond.campo in corpo ? corpo[cond.campo] : antes[cond.campo];
+      const valor = c.campo.name in corpo ? corpo[c.campo.name] : antes[c.campo.name];
+      if (atual === cond.igual && (valor === undefined || valor === null || valor === "") && !errosDaLinha.some((e) => e.coluna === c.chave)) errosDaLinha.push({ linha: n, coluna: c.chave, mensagem: `Obrigatório quando ${cond.texto}.` });
+    }
+    if (errosDaLinha.length || !id || !antes) { erros.push(...errosDaLinha); continue; }
+    await ctx.tx.query("savepoint importacao_linha");
+    try {
+      const versao = await versaoDaLinha(ctx, def, id);
+      const depois = await porta.atualizar(ctx, def, id, corpo);
+      if ((await versaoDaLinha(ctx, def, id)) === versao) throw validation(MSG_NAO_GRAVOU);
+      const colunas = colunasQueMudaram(cols, antes, depois);
+      if (colunas.length) {
+        await ctx.tx.query("release savepoint importacao_linha");
+        alteracoes.push({ linha: n, codigo, colunas });
+      } else {
+        // nada muda: a gravação (e a linha de auditoria dela) é desfeita
+        await ctx.tx.query("rollback to savepoint importacao_linha");
+        await ctx.tx.query("release savepoint importacao_linha");
+        semAlteracao += 1;
+      }
+    } catch (e) {
+      await ctx.tx.query("rollback to savepoint importacao_linha");
+      await ctx.tx.query("release savepoint importacao_linha");
+      for (const x of await errosDaGravacao(ctx, e, def, rotulo)) erros.push({ linha: n, ...x, mensagem: comoCorrigir(x.mensagem) });
+    }
+  }
+  const linhasComErro = new Set(erros.map((e) => e.linha));
+  const certas = alteracoes.length + semAlteracao;
+  const vaiGravar = !simulacao && (modo === "parcial" ? certas > 0 : !erros.length);
+  // a planilha de erros do ATUALIZAR traz SÓ as colunas presentes: devolvida e corrigida, ela não pode ganhar
+  // colunas vazias (que recusariam a linha) nem colunas que a pessoa tirou
+  const planilha_erros_base64 = linhasComErro.size ? await gerarPlanilhaErros(planilha, erros, true) : null;
+  return {
+    linhas: planilha.linhas.length, gravadas: vaiGravar ? alteracoes.length : 0, erros, simulacao, modo, certas, com_erro: linhasComErro.size, planilha_erros_base64,
+    acao: "atualizar", casaram, nao_casaram: planilha.linhas.length - casaram, sem_alteracao: semAlteracao, alteracoes,
+  };
+}
+
 /** Limite da planilha de erros: o mesmo do arquivo enviado (8 MB). Acima disso ela não volta (null), e a lista na tela continua valendo. */
 export const PLANILHA_ERROS_MAXIMO = 8 * 1024 * 1024;
 
@@ -693,12 +972,13 @@ export const PLANILHA_ERROS_MAXIMO = 8 * 1024 * 1024;
  * formato Texto para preservar zeros à esquerda), os valores como o usuário mandou e a coluna "Erros" no fim.
  * Corrigida, ela volta pela mesma importação: a coluna "Erros" é ignorada na leitura.
  */
-export async function gerarPlanilhaErros(planilha: PlanilhaLida, erros: ErroImportacao[]): Promise<string | null> {
+export async function gerarPlanilhaErros(planilha: PlanilhaLida, erros: ErroImportacao[], soPresentes = false): Promise<string | null> {
   const porLinha = new Map<number, ErroImportacao[]>();
   for (const e of erros) porLinha.set(e.linha, [...(porLinha.get(e.linha) ?? []), e]);
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet(ABA_DADOS, { views: [{ state: "frozen", ySplit: 1 }] });
-  const { cols } = planilha;
+  // `soPresentes` (ATUALIZAR): só as colunas que vieram no arquivo, na ordem do modelo
+  const cols = soPresentes ? planilha.cols.filter((c) => planilha.presentes.has(c.campo.name)) : planilha.cols;
   ws.columns = [...cols.map((c) => ({ header: c.titulo, width: Math.max(14, Math.min(40, c.titulo.length + 4)) })), { header: COLUNA_ERROS, width: 80 }];
   cols.forEach((c, i) => { if (TIPOS_TEXTO.includes(c.campo.type)) ws.getColumn(i + 1).numFmt = "@"; });
   ws.getRow(1).font = { bold: true };
