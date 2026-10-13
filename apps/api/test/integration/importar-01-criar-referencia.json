@@ -1,0 +1,5245 @@
+{
+ "modelo_products": {
+  "Dados": {
+   "celulas": {
+    "A1": {
+     "v": "Descrição *",
+     "fmt": "@",
+     "nota": "OBRIGATÓRIO. Nome do produto que está sendo cadastrado",
+     "cor": "FFC62828"
+    },
+    "B1": {
+     "v": "Grupo *",
+     "fmt": "@",
+     "nota": "OBRIGATÓRIO. Só grupo analítico recebe produto Escolha da lista (cadastros de Grupos de Produtos existentes).",
+     "cor": "FFC62828"
+    },
+    "C1": {
+     "v": "1ª Un. Medida *",
+     "fmt": "@",
+     "nota": "OBRIGATÓRIO. Unidade padrão (o rótulo é também o cabeçalho da planilha de importação) Escolha da lista (cadastros de Unidades de Medida existentes).",
+     "cor": "FFC62828"
+    },
+    "D1": {
+     "v": "Marca",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "E1": {
+     "v": "Fabricante",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "F1": {
+     "v": "Cod. Produto (fornecedor)",
+     "fmt": "@",
+     "nota": "Referência",
+     "cor": "FFE5E7EB"
+    },
+    "G1": {
+     "v": "Código de barras",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "H1": {
+     "v": "Tipo do item",
+     "fmt": null,
+     "nota": "Tipo do item do SPED (registro 0200) Escolha da lista.",
+     "cor": "FFE5E7EB"
+    },
+    "I1": {
+     "v": "Controla estoque",
+     "fmt": null,
+     "nota": "Gerencia o produto no estoque e calcula custo médio automaticamente Sim ou Não.",
+     "cor": "FFE5E7EB"
+    },
+    "J1": {
+     "v": "Estoque mínimo",
+     "fmt": null,
+     "nota": "Alerta quando o estoque atingir ou ficar abaixo Número com vírgula decimal (1234,56 ou 1.234,56).",
+     "cor": "FFE5E7EB"
+    },
+    "K1": {
+     "v": "Estoque máximo",
+     "fmt": null,
+     "nota": "Número com vírgula decimal (1234,56 ou 1.234,56).",
+     "cor": "FFE5E7EB"
+    },
+    "L1": {
+     "v": "Local de estoque padrão",
+     "fmt": "@",
+     "nota": "Escolha da lista (cadastros de Locais de estoque existentes).",
+     "cor": "FFE5E7EB"
+    },
+    "M1": {
+     "v": "Endereçamento",
+     "fmt": "@",
+     "nota": "Escolha da lista (cadastros de Endereçamentos existentes).",
+     "cor": "FFE5E7EB"
+    },
+    "N1": {
+     "v": "Controle de lote",
+     "fmt": null,
+     "nota": "Lote: exige o lote na entrada; na saída sem lote informado, o sistema escolhe pela validade mais próxima (lote vencido só sai informado). Lote + validade: também exige a validade na entrada. Mudar com saldo exige zerar o saldo em todos os locais de estoque. Escolha da lista.",
+     "cor": "FFE5E7EB"
+    },
+    "O1": {
+     "v": "Período de Carência (dias)",
+     "fmt": null,
+     "nota": "Dias de espera após aplicação antes de vender/abater o animal Número inteiro.",
+     "cor": "FFE5E7EB"
+    },
+    "P1": {
+     "v": "NCM",
+     "fmt": "@",
+     "nota": "Nomenclatura Comum do Mercosul (8 dígitos)",
+     "cor": "FFE5E7EB"
+    },
+    "Q1": {
+     "v": "CEST",
+     "fmt": "@",
+     "nota": "7 dígitos (ex.: 28.038.00)",
+     "cor": "FFE5E7EB"
+    },
+    "R1": {
+     "v": "Origem",
+     "fmt": null,
+     "nota": "Escolha da lista.",
+     "cor": "FFE5E7EB"
+    },
+    "S1": {
+     "v": "Emitir NFe",
+     "fmt": null,
+     "nota": "Sim ou Não.",
+     "cor": "FFE5E7EB"
+    },
+    "T1": {
+     "v": "Regra fiscal",
+     "fmt": "@",
+     "nota": "Escolha da lista (cadastros de Regras Fiscais existentes).",
+     "cor": "FFE5E7EB"
+    },
+    "U1": {
+     "v": "Natureza de custo",
+     "fmt": "@",
+     "nota": "OBRIGATÓRIO quando “Controla estoque” = Sim. Obrigatória quando o produto controla estoque Escolha da lista (cadastros de Naturezas existentes).",
+     "cor": "FFEF6C00"
+    },
+    "V1": {
+     "v": "Centro de resultado padrão",
+     "fmt": "@",
+     "nota": "Escolha da lista (cadastros de Centros de Resultado existentes).",
+     "cor": "FFE5E7EB"
+    },
+    "W1": {
+     "v": "Valor de referência",
+     "fmt": null,
+     "nota": "Valor de mercado do produto Número com vírgula decimal (1234,56 ou 1.234,56).",
+     "cor": "FFE5E7EB"
+    },
+    "X1": {
+     "v": "Variedade",
+     "fmt": "@",
+     "nota": "Escolha da lista (cadastros de Variedades/Culturas existentes).",
+     "cor": "FFE5E7EB"
+    },
+    "Y1": {
+     "v": "Qualidade",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "Z1": {
+     "v": "Princípio ativo",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "AA1": {
+     "v": "Registro no MAPA",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "AB1": {
+     "v": "Apontamento",
+     "fmt": null,
+     "nota": "Permite uso na aba de apontamentos Sim ou Não.",
+     "cor": "FFE5E7EB"
+    },
+    "AC1": {
+     "v": "Adiciona ao Inventário",
+     "fmt": null,
+     "nota": "Cadastra automaticamente no inventário de bens Sim ou Não.",
+     "cor": "FFE5E7EB"
+    },
+    "AD1": {
+     "v": "Ativo",
+     "fmt": null,
+     "nota": "Sim ou Não.",
+     "cor": "FFE5E7EB"
+    }
+   },
+   "colunas": [
+    {
+     "largura": 15,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 19,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 29,
+     "fmt": "@"
+    },
+    {
+     "largura": 20,
+     "fmt": "@"
+    },
+    {
+     "largura": 16,
+     "fmt": null
+    },
+    {
+     "largura": 20,
+     "fmt": null
+    },
+    {
+     "largura": 18,
+     "fmt": null
+    },
+    {
+     "largura": 18,
+     "fmt": null
+    },
+    {
+     "largura": 27,
+     "fmt": "@"
+    },
+    {
+     "largura": 17,
+     "fmt": "@"
+    },
+    {
+     "largura": 20,
+     "fmt": null
+    },
+    {
+     "largura": 30,
+     "fmt": null
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": null
+    },
+    {
+     "largura": 14,
+     "fmt": null
+    },
+    {
+     "largura": 16,
+     "fmt": "@"
+    },
+    {
+     "largura": 21,
+     "fmt": "@"
+    },
+    {
+     "largura": 30,
+     "fmt": "@"
+    },
+    {
+     "largura": 23,
+     "fmt": null
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 19,
+     "fmt": "@"
+    },
+    {
+     "largura": 20,
+     "fmt": "@"
+    },
+    {
+     "largura": 15,
+     "fmt": null
+    },
+    {
+     "largura": 26,
+     "fmt": null
+    },
+    {
+     "largura": 14,
+     "fmt": null
+    }
+   ],
+   "validacoes": [
+    {
+     "coluna": "AB",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$N$2:$N$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Apontamento",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "AC",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$O$2:$O$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Adiciona ao Inventário",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "AD",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$P$2:$P$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Ativo",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "B",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$A$2:$A$9"
+      ],
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Grupo",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "C",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$B$2:$B$26"
+      ],
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "1ª Un. Medida",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "H",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$C$2:$C$13"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Tipo do item",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "I",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$D$2:$D$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Controla estoque",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "L",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$E$2:$E$7"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Local de estoque padrão",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "M",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$F$2:$F$2"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Endereçamento",
+      "error": "Não há endereçamento cadastrado(a). Cadastre antes de importar."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "N",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$G$2:$G$4"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Controle de lote",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "R",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$H$2:$H$10"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Origem",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "S",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$I$2:$I$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Emitir NFe",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "T",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$J$2:$J$2"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Regra fiscal",
+      "error": "Não há regra fiscal cadastrado(a). Cadastre antes de importar."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "U",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$K$2:$K$16"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Natureza de custo",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "V",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$L$2:$L$8"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Centro de resultado padrão",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "X",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$M$2:$M$2"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Variedade",
+      "error": "Não há variedade cadastrado(a). Cadastre antes de importar."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    }
+   ]
+  },
+  "Listas": {
+   "celulas": {
+    "A1": {
+     "v": "Grupo",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B1": {
+     "v": "1ª Un. Medida",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C1": {
+     "v": "Tipo do item",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "D1": {
+     "v": "Controla estoque",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "E1": {
+     "v": "Local de estoque padrão",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "F1": {
+     "v": "Endereçamento",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "G1": {
+     "v": "Controle de lote",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "H1": {
+     "v": "Origem",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "I1": {
+     "v": "Emitir NFe",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "J1": {
+     "v": "Regra fiscal",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K1": {
+     "v": "Natureza de custo",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "L1": {
+     "v": "Centro de resultado padrão",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "M1": {
+     "v": "Variedade",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "N1": {
+     "v": "Apontamento",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "O1": {
+     "v": "Adiciona ao Inventário",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "P1": {
+     "v": "Ativo",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A2": {
+     "v": "1.01 - Fertilizantes",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B2": {
+     "v": "@ - Arroba (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C2": {
+     "v": "00 - Mercadoria para revenda",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "D2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "E2": {
+     "v": "ALM - Almoxarifado Central 1 (<empresa:1>)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "G2": {
+     "v": "Nenhum",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "H2": {
+     "v": "0 - Nacional",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "I2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K2": {
+     "v": "1.01.001 - Venda de Boi Gordo",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "L2": {
+     "v": "1.01.001 - Adm Geral",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "N2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "O2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "P2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A3": {
+     "v": "1.02 - Defensivos",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B3": {
+     "v": "BAG - Big bag (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C3": {
+     "v": "01 - Matéria-prima",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "D3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "E3": {
+     "v": "ALM - Almoxarifado Central 2 (<empresa:2>)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "G3": {
+     "v": "Lote",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "H3": {
+     "v": "1 - Estrangeira (importação direta)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "I3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K3": {
+     "v": "1.01.002 - Venda de Bezerros",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "L3": {
+     "v": "1.02.001 - Estoque Insumos",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "N3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "O3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "P3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A4": {
+     "v": "1.03 - Sementes",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B4": {
+     "v": "L - Litro (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C4": {
+     "v": "02 - Embalagem",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "E4": {
+     "v": "FAB - Fábrica de Ração (<empresa:1>)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "G4": {
+     "v": "Lote + validade",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "H4": {
+     "v": "2 - Estrangeira (mercado interno)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K4": {
+     "v": "1.02.001 - Venda de Soja",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "L4": {
+     "v": "1.03.001 - Parque de Máquinas",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A5": {
+     "v": "1.04 - Combustíveis e Lubrificantes",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B5": {
+     "v": "bd - Balde (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C5": {
+     "v": "03 - Produto em processo",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "E5": {
+     "v": "FAB - Fábrica de Ração (<empresa:2>)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "H5": {
+     "v": "3 - Nacional, importado > 40% e ≤ 70%",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K5": {
+     "v": "1.03.001 - Venda de Produtos",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "L5": {
+     "v": "2.01.001 - Cria",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A6": {
+     "v": "1.05 - Peças e Filtros",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B6": {
+     "v": "cab - Cabeça (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C6": {
+     "v": "04 - Produto acabado",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "E6": {
+     "v": "SILO - Silo de Grãos (<empresa:1>)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "H6": {
+     "v": "4 - Nacional, processos produtivos básicos",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K6": {
+     "v": "2.01.001 - Energia Elétrica",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "L6": {
+     "v": "2.01.002 - Recria",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A7": {
+     "v": "2.01 - Rações e Suplementos",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B7": {
+     "v": "cx - Caixa (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C7": {
+     "v": "05 - Subproduto",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "E7": {
+     "v": "SILO - Silo de Grãos (<empresa:2>)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "H7": {
+     "v": "5 - Nacional, importado ≤ 40%",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K7": {
+     "v": "2.01.002 - Telefone/Internet",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "L7": {
+     "v": "2.01.003 - Engorda/Confinamento",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A8": {
+     "v": "2.02 - Sanidade Animal",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B8": {
+     "v": "dose - Dose (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C8": {
+     "v": "06 - Produto intermediário",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "H8": {
+     "v": "6 - Estrangeira (importação direta) sem similar nacional (CAMEX)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K8": {
+     "v": "2.01.003 - Salários e Encargos",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "L8": {
+     "v": "3.01.001 - Soja",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A9": {
+     "v": "3.01 - Grãos",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B9": {
+     "v": "dz - Dúzia (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C9": {
+     "v": "07 - Material de uso e consumo",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "H9": {
+     "v": "7 - Estrangeira (mercado interno) sem similar nacional (CAMEX)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K9": {
+     "v": "2.02.001 - Nutrição Animal",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B10": {
+     "v": "fd - Fardo (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C10": {
+     "v": "08 - Ativo imobilizado",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "H10": {
+     "v": "8 - Nacional, importado > 70%",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K10": {
+     "v": "2.02.002 - Sanidade Animal",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B11": {
+     "v": "g - Grama (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C11": {
+     "v": "09 - Serviços",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K11": {
+     "v": "2.02.003 - Compra de Animais",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B12": {
+     "v": "gl - Galão (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C12": {
+     "v": "10 - Outros insumos",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K12": {
+     "v": "2.03.001 - Combustíveis",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B13": {
+     "v": "h - Hora (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C13": {
+     "v": "99 - Outras",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K13": {
+     "v": "2.03.002 - Peças e Manutenção",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B14": {
+     "v": "ha - Hectare (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K14": {
+     "v": "2.04.001 - Fertilizantes",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B15": {
+     "v": "kg - Quilograma (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K15": {
+     "v": "2.04.002 - Sementes",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B16": {
+     "v": "km - Quilômetro (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K16": {
+     "v": "2.04.003 - Defensivos",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B17": {
+     "v": "m - Metro (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B18": {
+     "v": "mL - Mililitro (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B19": {
+     "v": "m² - Metro quadrado (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B20": {
+     "v": "m³ - Metro cúbico (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B21": {
+     "v": "par - Par (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B22": {
+     "v": "pc - Peça (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B23": {
+     "v": "rl - Rolo (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B24": {
+     "v": "sc - Saca (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B25": {
+     "v": "ton - Tonelada (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B26": {
+     "v": "un - Unidade (padrão)",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    }
+   },
+   "colunas": [
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    }
+   ],
+   "validacoes": []
+  },
+  "Instruções": {
+   "celulas": {
+    "A1": {
+     "v": "Modelo de importação — Produtos",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A2": {
+     "v": "",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A3": {
+     "v": "1. Preencha a aba \"Dados\", uma linha por registro (até 5000). Não altere nem reordene o cabeçalho.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A4": {
+     "v": "2. Colunas em VERMELHO com * são obrigatórias.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A5": {
+     "v": "3. Colunas em LARANJA são obrigatórias numa condição: a nota do cabeçalho diz qual.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A6": {
+     "v": "4. Colunas com lista só aceitam valores da lista (aba \"Listas\"), que traz os cadastros existentes no momento do download. Cadastrou algo depois? Baixe o modelo de novo.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A7": {
+     "v": "5. Nomes repetidos vêm na lista com um complemento (empresa, grupo, caminho). Use o valor exatamente como está na lista.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A8": {
+     "v": "6. Colunas de texto estão no formato Texto para manter zeros à esquerda (CPF/CNPJ, CEP, códigos). Ao colar de outra planilha, cole só os valores.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A9": {
+     "v": "7. Números com vírgula decimal: 1234,56 ou 1.234,56. Ponto sem vírgula (1.000) é recusado por ser ambíguo.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A10": {
+     "v": "8. Sim/Não, opções e datas (DD/MM/AAAA) seguem o texto da tela. Célula com erro de fórmula é recusada.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A11": {
+     "v": "9. Ao importar, o sistema mostra a prévia com os erros linha a linha. \"Importar tudo\" só grava se não houver nenhum erro; \"Importar só as linhas certas\" grava as certas e devolve uma planilha com as linhas de erro (coluna \"Erros\" no fim), que pode ser corrigida e importada de novo.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A12": {
+     "v": "10. Importar sempre CRIA registros; não altera cadastros existentes. Código repetido é recusado.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A13": {
+     "v": "11. Não vão no modelo (preencha pela tela depois): Parâmetros fiscais (CFOP, CST, alíquotas, IBS/CBS).",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    }
+   },
+   "colunas": [
+    {
+     "largura": 110,
+     "fmt": null
+    }
+   ],
+   "validacoes": []
+  }
+ },
+ "modelo_people": {
+  "Dados": {
+   "celulas": {
+    "A1": {
+     "v": "Tipo de pessoa",
+     "fmt": null,
+     "nota": "Segue o documento: 11 dígitos → Física; 14 → Jurídica. Estrangeira só manual. Escolha da lista.",
+     "cor": "FFE5E7EB"
+    },
+    "B1": {
+     "v": "CPF/CNPJ",
+     "fmt": "@",
+     "nota": "CPF ou CNPJ (também o alfanumérico). Estrangeiro: livre.",
+     "cor": "FFE5E7EB"
+    },
+    "C1": {
+     "v": "Nome Social/Fantasia *",
+     "fmt": "@",
+     "nota": "OBRIGATÓRIO.",
+     "cor": "FFC62828"
+    },
+    "D1": {
+     "v": "Nome Completo/Razão Social",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "E1": {
+     "v": "Cliente",
+     "fmt": null,
+     "nota": "Sim ou Não.",
+     "cor": "FFE5E7EB"
+    },
+    "F1": {
+     "v": "Fornecedor",
+     "fmt": null,
+     "nota": "Sim ou Não.",
+     "cor": "FFE5E7EB"
+    },
+    "G1": {
+     "v": "Transportadora",
+     "fmt": null,
+     "nota": "Sim ou Não.",
+     "cor": "FFE5E7EB"
+    },
+    "H1": {
+     "v": "Funcionário",
+     "fmt": null,
+     "nota": "Sim ou Não.",
+     "cor": "FFE5E7EB"
+    },
+    "I1": {
+     "v": "Proprietário",
+     "fmt": null,
+     "nota": "Sim ou Não.",
+     "cor": "FFE5E7EB"
+    },
+    "J1": {
+     "v": "Matriz",
+     "fmt": "@",
+     "nota": "Parceiro matriz desta filial (só Jurídica). Escolha da lista ou use uma linha ANTERIOR deste arquivo (Parceiros).",
+     "cor": "FFE5E7EB"
+    },
+    "K1": {
+     "v": "Inscrição estadual",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "L1": {
+     "v": "Inscrição municipal",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "M1": {
+     "v": "RG",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "N1": {
+     "v": "CAEPF",
+     "fmt": "@",
+     "nota": "14 dígitos",
+     "cor": "FFE5E7EB"
+    },
+    "O1": {
+     "v": "Nascimento/Abertura",
+     "fmt": null,
+     "nota": "Data no formato DD/MM/AAAA.",
+     "cor": "FFE5E7EB"
+    },
+    "P1": {
+     "v": "Sexo",
+     "fmt": null,
+     "nota": "Escolha da lista.",
+     "cor": "FFE5E7EB"
+    },
+    "Q1": {
+     "v": "Site",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "R1": {
+     "v": "Ativo",
+     "fmt": null,
+     "nota": "Sim ou Não.",
+     "cor": "FFE5E7EB"
+    },
+    "S1": {
+     "v": "CEP",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "T1": {
+     "v": "Endereço",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "U1": {
+     "v": "Número",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "V1": {
+     "v": "Complemento",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "W1": {
+     "v": "Bairro",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "X1": {
+     "v": "Cidade",
+     "fmt": null,
+     "nota": "Código IBGE (7 dígitos) ou \"Nome - UF\", ex.: \"Gurupi - TO\".",
+     "cor": "FFE5E7EB"
+    },
+    "Y1": {
+     "v": "Caixa postal",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "Z1": {
+     "v": "Latitude",
+     "fmt": null,
+     "nota": "Número com vírgula decimal (1234,56 ou 1.234,56).",
+     "cor": "FFE5E7EB"
+    },
+    "AA1": {
+     "v": "Longitude",
+     "fmt": null,
+     "nota": "Número com vírgula decimal (1234,56 ou 1.234,56).",
+     "cor": "FFE5E7EB"
+    },
+    "AB1": {
+     "v": "Telefone",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "AC1": {
+     "v": "Celular",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "AD1": {
+     "v": "E-mail",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "AE1": {
+     "v": "E-mail para NF-e",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "AF1": {
+     "v": "Contato principal",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "AG1": {
+     "v": "Telefone do contato",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "AH1": {
+     "v": "Indicador de IE",
+     "fmt": null,
+     "nota": "Escolha da lista.",
+     "cor": "FFE5E7EB"
+    },
+    "AI1": {
+     "v": "Consumidor final",
+     "fmt": null,
+     "nota": "Sim ou Não.",
+     "cor": "FFE5E7EB"
+    },
+    "AJ1": {
+     "v": "Produtor rural",
+     "fmt": null,
+     "nota": "Um parceiro por CPF; cada propriedade tem a sua IE nos Endereços adicionais. Sim ou Não.",
+     "cor": "FFE5E7EB"
+    },
+    "AK1": {
+     "v": "Calcula FUNRURAL",
+     "fmt": null,
+     "nota": "fornecedor produtor rural: a compra retém o FUNRURAL Sim ou Não.",
+     "cor": "FFE5E7EB"
+    },
+    "AL1": {
+     "v": "Regime tributário",
+     "fmt": null,
+     "nota": "Escolha da lista.",
+     "cor": "FFE5E7EB"
+    },
+    "AM1": {
+     "v": "CNAE principal",
+     "fmt": "@",
+     "nota": "7 dígitos",
+     "cor": "FFE5E7EB"
+    },
+    "AN1": {
+     "v": "Banco",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "AO1": {
+     "v": "Tipo de conta",
+     "fmt": null,
+     "nota": "Escolha da lista.",
+     "cor": "FFE5E7EB"
+    },
+    "AP1": {
+     "v": "Agência",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "AQ1": {
+     "v": "Conta",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    },
+    "AR1": {
+     "v": "Tipo de chave Pix",
+     "fmt": null,
+     "nota": "Escolha da lista.",
+     "cor": "FFE5E7EB"
+    },
+    "AS1": {
+     "v": "Chave Pix",
+     "fmt": "@",
+     "nota": null,
+     "cor": "FFE5E7EB"
+    }
+   },
+   "colunas": [
+    {
+     "largura": 18,
+     "fmt": null
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 26,
+     "fmt": "@"
+    },
+    {
+     "largura": 30,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": null
+    },
+    {
+     "largura": 14,
+     "fmt": null
+    },
+    {
+     "largura": 18,
+     "fmt": null
+    },
+    {
+     "largura": 15,
+     "fmt": null
+    },
+    {
+     "largura": 16,
+     "fmt": null
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 22,
+     "fmt": "@"
+    },
+    {
+     "largura": 23,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 23,
+     "fmt": null
+    },
+    {
+     "largura": 14,
+     "fmt": null
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": null
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 15,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": null
+    },
+    {
+     "largura": 16,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": null
+    },
+    {
+     "largura": 14,
+     "fmt": null
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 20,
+     "fmt": "@"
+    },
+    {
+     "largura": 21,
+     "fmt": "@"
+    },
+    {
+     "largura": 23,
+     "fmt": "@"
+    },
+    {
+     "largura": 19,
+     "fmt": null
+    },
+    {
+     "largura": 20,
+     "fmt": null
+    },
+    {
+     "largura": 18,
+     "fmt": null
+    },
+    {
+     "largura": 20,
+     "fmt": null
+    },
+    {
+     "largura": 21,
+     "fmt": null
+    },
+    {
+     "largura": 18,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 17,
+     "fmt": null
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 21,
+     "fmt": null
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    }
+   ],
+   "validacoes": [
+    {
+     "coluna": "A",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$A$2:$A$4"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Tipo de pessoa",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "AH",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$J$2:$J$4"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Indicador de IE",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "AI",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$K$2:$K$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Consumidor final",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "AJ",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$L$2:$L$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Produtor rural",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "AK",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$M$2:$M$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Calcula FUNRURAL",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "AL",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$N$2:$N$4"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Regime tributário",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "AO",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$O$2:$O$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Tipo de conta",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "AR",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$P$2:$P$5"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Tipo de chave Pix",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "E",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$B$2:$B$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Cliente",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "F",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$C$2:$C$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Fornecedor",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "G",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$D$2:$D$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Transportadora",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "H",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$E$2:$E$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Funcionário",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "I",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$F$2:$F$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Proprietário",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "J",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$G$2:$G$4"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "warning",
+      "errorTitle": "Matriz",
+      "error": "Fora da lista. Vale se for uma linha ANTERIOR deste arquivo; senão, escolha da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "P",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$H$2:$H$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Sexo",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "R",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$I$2:$I$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Ativo",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    }
+   ]
+  },
+  "Listas": {
+   "celulas": {
+    "A1": {
+     "v": "Tipo de pessoa",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B1": {
+     "v": "Cliente",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C1": {
+     "v": "Fornecedor",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "D1": {
+     "v": "Transportadora",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "E1": {
+     "v": "Funcionário",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "F1": {
+     "v": "Proprietário",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "G1": {
+     "v": "Matriz",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "H1": {
+     "v": "Sexo",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "I1": {
+     "v": "Ativo",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "J1": {
+     "v": "Indicador de IE",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K1": {
+     "v": "Consumidor final",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "L1": {
+     "v": "Produtor rural",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "M1": {
+     "v": "Calcula FUNRURAL",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "N1": {
+     "v": "Regime tributário",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "O1": {
+     "v": "Tipo de conta",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "P1": {
+     "v": "Tipo de chave Pix",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A2": {
+     "v": "Física",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "D2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "E2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "F2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "G2": {
+     "v": "00001 - [DEMO] Agropecuária Cerrado Ltda",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "H2": {
+     "v": "Feminino",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "I2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "J2": {
+     "v": "Contribuinte",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "L2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "M2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "N2": {
+     "v": "Simples Nacional",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "O2": {
+     "v": "Corrente",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "P2": {
+     "v": "CPF/CNPJ",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A3": {
+     "v": "Jurídica",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "D3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "E3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "F3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "G3": {
+     "v": "00002 - [DEMO] Posto Rural Diesel",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "H3": {
+     "v": "Masculino",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "I3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "J3": {
+     "v": "Isento",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "K3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "L3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "M3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "N3": {
+     "v": "MEI",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "O3": {
+     "v": "Poupança",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "P3": {
+     "v": "Telefone",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A4": {
+     "v": "Estrangeira",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "G4": {
+     "v": "00003 - [DEMO] Frigorífico Boi Bom S.A.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "J4": {
+     "v": "Não contribuinte",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "N4": {
+     "v": "Normal",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "P4": {
+     "v": "E-mail",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "P5": {
+     "v": "Aleatória",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    }
+   },
+   "colunas": [
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    }
+   ],
+   "validacoes": []
+  },
+  "Instruções": {
+   "celulas": {
+    "A1": {
+     "v": "Modelo de importação — Parceiros",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A2": {
+     "v": "",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A3": {
+     "v": "1. Preencha a aba \"Dados\", uma linha por registro (até 5000). Não altere nem reordene o cabeçalho.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A4": {
+     "v": "2. Colunas em VERMELHO com * são obrigatórias.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A5": {
+     "v": "3. Colunas com lista só aceitam valores da lista (aba \"Listas\"), que traz os cadastros existentes no momento do download. Cadastrou algo depois? Baixe o modelo de novo.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A6": {
+     "v": "4. Nomes repetidos vêm na lista com um complemento (empresa, grupo, caminho). Use o valor exatamente como está na lista.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A7": {
+     "v": "5. Colunas de texto estão no formato Texto para manter zeros à esquerda (CPF/CNPJ, CEP, códigos). Ao colar de outra planilha, cole só os valores.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A8": {
+     "v": "6. Números com vírgula decimal: 1234,56 ou 1.234,56. Ponto sem vírgula (1.000) é recusado por ser ambíguo.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A9": {
+     "v": "7. Sim/Não, opções e datas (DD/MM/AAAA) seguem o texto da tela. Célula com erro de fórmula é recusada.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A10": {
+     "v": "8. Ao importar, o sistema mostra a prévia com os erros linha a linha. \"Importar tudo\" só grava se não houver nenhum erro; \"Importar só as linhas certas\" grava as certas e devolve uma planilha com as linhas de erro (coluna \"Erros\" no fim), que pode ser corrigida e importada de novo.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A11": {
+     "v": "9. Importar sempre CRIA registros; não altera cadastros existentes. Código repetido é recusado.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    }
+   },
+   "colunas": [
+    {
+     "largura": 110,
+     "fmt": null
+    }
+   ],
+   "validacoes": []
+  }
+ },
+ "modelo_chart_accounts": {
+  "Dados": {
+   "celulas": {
+    "A1": {
+     "v": "Código *",
+     "fmt": "@",
+     "nota": "OBRIGATÓRIO.",
+     "cor": "FFC62828"
+    },
+    "B1": {
+     "v": "Descrição *",
+     "fmt": "@",
+     "nota": "OBRIGATÓRIO.",
+     "cor": "FFC62828"
+    },
+    "C1": {
+     "v": "Condição *",
+     "fmt": null,
+     "nota": "OBRIGATÓRIO. Escolha da lista.",
+     "cor": "FFC62828"
+    },
+    "D1": {
+     "v": "Analítica *",
+     "fmt": null,
+     "nota": "OBRIGATÓRIO. Sim: recebe lançamentos. Não: sintética, só agrupa outras. Escolha da lista.",
+     "cor": "FFC62828"
+    },
+    "E1": {
+     "v": "Tipo",
+     "fmt": null,
+     "nota": "Escolha da lista.",
+     "cor": "FFE5E7EB"
+    },
+    "F1": {
+     "v": "Conta superior",
+     "fmt": "@",
+     "nota": "Escolha da lista ou use uma linha ANTERIOR deste arquivo (Plano de Contas).",
+     "cor": "FFE5E7EB"
+    },
+    "G1": {
+     "v": "Ativo",
+     "fmt": null,
+     "nota": "Sim ou Não.",
+     "cor": "FFE5E7EB"
+    }
+   },
+   "colunas": [
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 15,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": null
+    },
+    {
+     "largura": 15,
+     "fmt": null
+    },
+    {
+     "largura": 14,
+     "fmt": null
+    },
+    {
+     "largura": 18,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": null
+    }
+   ],
+   "validacoes": [
+    {
+     "coluna": "C",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$A$2:$A$4"
+      ],
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Condição",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "D",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$B$2:$B$3"
+      ],
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Analítica",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "E",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$C$2:$C$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Tipo",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "F",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$D$2:$D$9"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "warning",
+      "errorTitle": "Conta superior",
+      "error": "Fora da lista. Vale se for uma linha ANTERIOR deste arquivo; senão, escolha da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    },
+    {
+     "coluna": "G",
+     "regra": {
+      "type": "list",
+      "formulae": [
+       "Listas!$E$2:$E$3"
+      ],
+      "allowBlank": true,
+      "showErrorMessage": true,
+      "errorStyle": "stop",
+      "errorTitle": "Ativo",
+      "error": "Escolha um valor da lista."
+     },
+     "de": 2,
+     "ate": 5001,
+     "celulas": 5000
+    }
+   ]
+  },
+  "Listas": {
+   "celulas": {
+    "A1": {
+     "v": "Condição",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B1": {
+     "v": "Analítica",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C1": {
+     "v": "Tipo",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "D1": {
+     "v": "Conta superior",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "E1": {
+     "v": "Ativo",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A2": {
+     "v": "Débito",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C2": {
+     "v": "CAPEX",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "D2": {
+     "v": "1 - ATIVO",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "E2": {
+     "v": "Sim",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A3": {
+     "v": "Crédito",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "B3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "C3": {
+     "v": "OPEX",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "D3": {
+     "v": "1.1.01 - Caixa e Bancos",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "E3": {
+     "v": "Não",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A4": {
+     "v": "Ambos",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "D4": {
+     "v": "1.1.02 - Estoques",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "D5": {
+     "v": "2 - PASSIVO",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "D6": {
+     "v": "2.1.01 - Fornecedores",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "D7": {
+     "v": "3 - RESULTADO",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "D8": {
+     "v": "3.1.01 - Receitas",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "D9": {
+     "v": "3.2.01 - Despesas",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    }
+   },
+   "colunas": [
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    },
+    {
+     "largura": 40,
+     "fmt": null
+    }
+   ],
+   "validacoes": []
+  },
+  "Instruções": {
+   "celulas": {
+    "A1": {
+     "v": "Modelo de importação — Plano de Contas",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A2": {
+     "v": "",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A3": {
+     "v": "1. Preencha a aba \"Dados\", uma linha por registro (até 5000). Não altere nem reordene o cabeçalho.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A4": {
+     "v": "2. Colunas em VERMELHO com * são obrigatórias.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A5": {
+     "v": "3. Colunas com lista só aceitam valores da lista (aba \"Listas\"), que traz os cadastros existentes no momento do download. Cadastrou algo depois? Baixe o modelo de novo.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A6": {
+     "v": "4. Nomes repetidos vêm na lista com um complemento (empresa, grupo, caminho). Use o valor exatamente como está na lista.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A7": {
+     "v": "5. Colunas de texto estão no formato Texto para manter zeros à esquerda (CPF/CNPJ, CEP, códigos). Ao colar de outra planilha, cole só os valores.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A8": {
+     "v": "6. Números com vírgula decimal: 1234,56 ou 1.234,56. Ponto sem vírgula (1.000) é recusado por ser ambíguo.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A9": {
+     "v": "7. Sim/Não, opções e datas (DD/MM/AAAA) seguem o texto da tela. Célula com erro de fórmula é recusada.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A10": {
+     "v": "8. Ao importar, o sistema mostra a prévia com os erros linha a linha. \"Importar tudo\" só grava se não houver nenhum erro; \"Importar só as linhas certas\" grava as certas e devolve uma planilha com as linhas de erro (coluna \"Erros\" no fim), que pode ser corrigida e importada de novo.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A11": {
+     "v": "9. Importar sempre CRIA registros; não altera cadastros existentes. Código repetido é recusado.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A12": {
+     "v": "10. Cadastro em árvore: o superior pode ser um registro existente ou uma linha ANTERIOR deste mesmo arquivo.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    }
+   },
+   "colunas": [
+    {
+     "largura": 110,
+     "fmt": null
+    }
+   ],
+   "validacoes": []
+  }
+ },
+ "modelo_measurement_units": {
+  "Dados": {
+   "celulas": {
+    "A1": {
+     "v": "Sigla *",
+     "fmt": "@",
+     "nota": "OBRIGATÓRIO.",
+     "cor": "FFC62828"
+    },
+    "B1": {
+     "v": "Nome *",
+     "fmt": "@",
+     "nota": "OBRIGATÓRIO.",
+     "cor": "FFC62828"
+    },
+    "C1": {
+     "v": "Casas decimais",
+     "fmt": null,
+     "nota": "Número inteiro.",
+     "cor": "FFE5E7EB"
+    }
+   },
+   "colunas": [
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 14,
+     "fmt": "@"
+    },
+    {
+     "largura": 18,
+     "fmt": null
+    }
+   ],
+   "validacoes": []
+  },
+  "Listas": {
+   "celulas": {},
+   "colunas": [],
+   "validacoes": []
+  },
+  "Instruções": {
+   "celulas": {
+    "A1": {
+     "v": "Modelo de importação — Unidades de Medida",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A2": {
+     "v": "",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A3": {
+     "v": "1. Preencha a aba \"Dados\", uma linha por registro (até 5000). Não altere nem reordene o cabeçalho.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A4": {
+     "v": "2. Colunas em VERMELHO com * são obrigatórias.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A5": {
+     "v": "3. Colunas com lista só aceitam valores da lista (aba \"Listas\"), que traz os cadastros existentes no momento do download. Cadastrou algo depois? Baixe o modelo de novo.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A6": {
+     "v": "4. Nomes repetidos vêm na lista com um complemento (empresa, grupo, caminho). Use o valor exatamente como está na lista.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A7": {
+     "v": "5. Colunas de texto estão no formato Texto para manter zeros à esquerda (CPF/CNPJ, CEP, códigos). Ao colar de outra planilha, cole só os valores.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A8": {
+     "v": "6. Números com vírgula decimal: 1234,56 ou 1.234,56. Ponto sem vírgula (1.000) é recusado por ser ambíguo.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A9": {
+     "v": "7. Sim/Não, opções e datas (DD/MM/AAAA) seguem o texto da tela. Célula com erro de fórmula é recusada.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A10": {
+     "v": "8. Ao importar, o sistema mostra a prévia com os erros linha a linha. \"Importar tudo\" só grava se não houver nenhum erro; \"Importar só as linhas certas\" grava as certas e devolve uma planilha com as linhas de erro (coluna \"Erros\" no fim), que pode ser corrigida e importada de novo.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    },
+    "A11": {
+     "v": "9. Importar sempre CRIA registros; não altera cadastros existentes. Código repetido é recusado.",
+     "fmt": null,
+     "nota": null,
+     "cor": null
+    }
+   },
+   "colunas": [
+    {
+     "largura": 110,
+     "fmt": null
+    }
+   ],
+   "validacoes": []
+  }
+ },
+ "produtos_previa_tudo": {
+  "status": 422,
+  "chaves": [
+   "linhas",
+   "gravadas",
+   "erros",
+   "simulacao",
+   "modo",
+   "certas",
+   "com_erro",
+   "planilha_erros_base64"
+  ],
+  "linhas": 4,
+  "gravadas": 0,
+  "erros": [
+   {
+    "linha": 3,
+    "coluna": "Descrição",
+    "mensagem": "Obrigatório."
+   },
+   {
+    "linha": 4,
+    "coluna": "Grupo",
+    "mensagem": "\"Grupo Que Nao Existe IMP01\" não encontrado em Grupos de Produtos. Use um valor da aba Listas."
+   },
+   {
+    "linha": 5,
+    "coluna": "Estoque mínimo",
+    "mensagem": "Número inválido. Use vírgula decimal (1234,56 ou 1.234,56)."
+   }
+  ],
+  "simulacao": true,
+  "modo": "tudo",
+  "certas": 1,
+  "com_erro": 3,
+  "planilha_erros_base64": {
+   "Dados": {
+    "celulas": {
+     "A1": {
+      "v": "Descrição *",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "B1": {
+      "v": "Grupo *",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C1": {
+      "v": "1ª Un. Medida *",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "D1": {
+      "v": "Marca",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "E1": {
+      "v": "Fabricante",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "F1": {
+      "v": "Cod. Produto (fornecedor)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "G1": {
+      "v": "Código de barras",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "H1": {
+      "v": "Tipo do item",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "I1": {
+      "v": "Controla estoque",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "J1": {
+      "v": "Estoque mínimo",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "K1": {
+      "v": "Estoque máximo",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "L1": {
+      "v": "Local de estoque padrão",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "M1": {
+      "v": "Endereçamento",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "N1": {
+      "v": "Controle de lote",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "O1": {
+      "v": "Período de Carência (dias)",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "P1": {
+      "v": "NCM",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "Q1": {
+      "v": "CEST",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "R1": {
+      "v": "Origem",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "S1": {
+      "v": "Emitir NFe",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "T1": {
+      "v": "Regra fiscal",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "U1": {
+      "v": "Natureza de custo",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "V1": {
+      "v": "Centro de resultado padrão",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "W1": {
+      "v": "Valor de referência",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "X1": {
+      "v": "Variedade",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "Y1": {
+      "v": "Qualidade",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "Z1": {
+      "v": "Princípio ativo",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "AA1": {
+      "v": "Registro no MAPA",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "AB1": {
+      "v": "Apontamento",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AC1": {
+      "v": "Adiciona ao Inventário",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AD1": {
+      "v": "Ativo",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE1": {
+      "v": "Erros",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "B2": {
+      "v": "1.01 - Fertilizantes",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C2": {
+      "v": "@ - Arroba (padrão)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "I2": {
+      "v": "Não",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE2": {
+      "v": "Descrição: Obrigatório.",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "A3": {
+      "v": "IMP01 Criar Grupo Errado",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "B3": {
+      "v": "Grupo Que Nao Existe IMP01",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C3": {
+      "v": "@ - Arroba (padrão)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "I3": {
+      "v": "Não",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE3": {
+      "v": "Grupo: \"Grupo Que Nao Existe IMP01\" não encontrado em Grupos de Produtos. Use um valor da aba Listas.",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "A4": {
+      "v": "IMP01 Criar Numero Ambiguo",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "B4": {
+      "v": "1.01 - Fertilizantes",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C4": {
+      "v": "@ - Arroba (padrão)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "I4": {
+      "v": "Não",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "J4": {
+      "v": "1.000",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE4": {
+      "v": "Estoque mínimo: Número inválido. Use vírgula decimal (1234,56 ou 1.234,56).",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     }
+    },
+    "colunas": [
+     {
+      "largura": 15,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 19,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 29,
+      "fmt": "@"
+     },
+     {
+      "largura": 20,
+      "fmt": "@"
+     },
+     {
+      "largura": 16,
+      "fmt": null
+     },
+     {
+      "largura": 20,
+      "fmt": null
+     },
+     {
+      "largura": 18,
+      "fmt": null
+     },
+     {
+      "largura": 18,
+      "fmt": null
+     },
+     {
+      "largura": 27,
+      "fmt": "@"
+     },
+     {
+      "largura": 17,
+      "fmt": "@"
+     },
+     {
+      "largura": 20,
+      "fmt": null
+     },
+     {
+      "largura": 30,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": null
+     },
+     {
+      "largura": 16,
+      "fmt": "@"
+     },
+     {
+      "largura": 21,
+      "fmt": "@"
+     },
+     {
+      "largura": 30,
+      "fmt": "@"
+     },
+     {
+      "largura": 23,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 19,
+      "fmt": "@"
+     },
+     {
+      "largura": 20,
+      "fmt": "@"
+     },
+     {
+      "largura": 15,
+      "fmt": null
+     },
+     {
+      "largura": 26,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": null
+     },
+     {
+      "largura": 80,
+      "fmt": null
+     }
+    ],
+    "validacoes": []
+   }
+  }
+ },
+ "produtos_previa_parcial": {
+  "status": 200,
+  "chaves": [
+   "linhas",
+   "gravadas",
+   "erros",
+   "simulacao",
+   "modo",
+   "certas",
+   "com_erro",
+   "planilha_erros_base64"
+  ],
+  "linhas": 4,
+  "gravadas": 0,
+  "erros": [
+   {
+    "linha": 3,
+    "coluna": "Descrição",
+    "mensagem": "Obrigatório."
+   },
+   {
+    "linha": 4,
+    "coluna": "Grupo",
+    "mensagem": "\"Grupo Que Nao Existe IMP01\" não encontrado em Grupos de Produtos. Use um valor da aba Listas."
+   },
+   {
+    "linha": 5,
+    "coluna": "Estoque mínimo",
+    "mensagem": "Número inválido. Use vírgula decimal (1234,56 ou 1.234,56)."
+   }
+  ],
+  "simulacao": true,
+  "modo": "parcial",
+  "certas": 1,
+  "com_erro": 3,
+  "planilha_erros_base64": {
+   "Dados": {
+    "celulas": {
+     "A1": {
+      "v": "Descrição *",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "B1": {
+      "v": "Grupo *",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C1": {
+      "v": "1ª Un. Medida *",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "D1": {
+      "v": "Marca",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "E1": {
+      "v": "Fabricante",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "F1": {
+      "v": "Cod. Produto (fornecedor)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "G1": {
+      "v": "Código de barras",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "H1": {
+      "v": "Tipo do item",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "I1": {
+      "v": "Controla estoque",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "J1": {
+      "v": "Estoque mínimo",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "K1": {
+      "v": "Estoque máximo",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "L1": {
+      "v": "Local de estoque padrão",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "M1": {
+      "v": "Endereçamento",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "N1": {
+      "v": "Controle de lote",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "O1": {
+      "v": "Período de Carência (dias)",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "P1": {
+      "v": "NCM",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "Q1": {
+      "v": "CEST",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "R1": {
+      "v": "Origem",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "S1": {
+      "v": "Emitir NFe",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "T1": {
+      "v": "Regra fiscal",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "U1": {
+      "v": "Natureza de custo",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "V1": {
+      "v": "Centro de resultado padrão",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "W1": {
+      "v": "Valor de referência",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "X1": {
+      "v": "Variedade",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "Y1": {
+      "v": "Qualidade",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "Z1": {
+      "v": "Princípio ativo",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "AA1": {
+      "v": "Registro no MAPA",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "AB1": {
+      "v": "Apontamento",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AC1": {
+      "v": "Adiciona ao Inventário",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AD1": {
+      "v": "Ativo",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE1": {
+      "v": "Erros",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "B2": {
+      "v": "1.01 - Fertilizantes",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C2": {
+      "v": "@ - Arroba (padrão)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "I2": {
+      "v": "Não",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE2": {
+      "v": "Descrição: Obrigatório.",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "A3": {
+      "v": "IMP01 Criar Grupo Errado",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "B3": {
+      "v": "Grupo Que Nao Existe IMP01",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C3": {
+      "v": "@ - Arroba (padrão)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "I3": {
+      "v": "Não",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE3": {
+      "v": "Grupo: \"Grupo Que Nao Existe IMP01\" não encontrado em Grupos de Produtos. Use um valor da aba Listas.",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "A4": {
+      "v": "IMP01 Criar Numero Ambiguo",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "B4": {
+      "v": "1.01 - Fertilizantes",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C4": {
+      "v": "@ - Arroba (padrão)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "I4": {
+      "v": "Não",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "J4": {
+      "v": "1.000",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE4": {
+      "v": "Estoque mínimo: Número inválido. Use vírgula decimal (1234,56 ou 1.234,56).",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     }
+    },
+    "colunas": [
+     {
+      "largura": 15,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 19,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 29,
+      "fmt": "@"
+     },
+     {
+      "largura": 20,
+      "fmt": "@"
+     },
+     {
+      "largura": 16,
+      "fmt": null
+     },
+     {
+      "largura": 20,
+      "fmt": null
+     },
+     {
+      "largura": 18,
+      "fmt": null
+     },
+     {
+      "largura": 18,
+      "fmt": null
+     },
+     {
+      "largura": 27,
+      "fmt": "@"
+     },
+     {
+      "largura": 17,
+      "fmt": "@"
+     },
+     {
+      "largura": 20,
+      "fmt": null
+     },
+     {
+      "largura": 30,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": null
+     },
+     {
+      "largura": 16,
+      "fmt": "@"
+     },
+     {
+      "largura": 21,
+      "fmt": "@"
+     },
+     {
+      "largura": 30,
+      "fmt": "@"
+     },
+     {
+      "largura": 23,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 19,
+      "fmt": "@"
+     },
+     {
+      "largura": 20,
+      "fmt": "@"
+     },
+     {
+      "largura": 15,
+      "fmt": null
+     },
+     {
+      "largura": 26,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": null
+     },
+     {
+      "largura": 80,
+      "fmt": null
+     }
+    ],
+    "validacoes": []
+   }
+  }
+ },
+ "produtos_gravar_tudo_com_erro": {
+  "status": 422,
+  "chaves": [
+   "linhas",
+   "gravadas",
+   "erros",
+   "simulacao",
+   "modo",
+   "certas",
+   "com_erro",
+   "planilha_erros_base64"
+  ],
+  "linhas": 4,
+  "gravadas": 0,
+  "erros": [
+   {
+    "linha": 3,
+    "coluna": "Descrição",
+    "mensagem": "Obrigatório."
+   },
+   {
+    "linha": 4,
+    "coluna": "Grupo",
+    "mensagem": "\"Grupo Que Nao Existe IMP01\" não encontrado em Grupos de Produtos. Use um valor da aba Listas."
+   },
+   {
+    "linha": 5,
+    "coluna": "Estoque mínimo",
+    "mensagem": "Número inválido. Use vírgula decimal (1234,56 ou 1.234,56)."
+   }
+  ],
+  "simulacao": false,
+  "modo": "tudo",
+  "certas": 1,
+  "com_erro": 3,
+  "planilha_erros_base64": {
+   "Dados": {
+    "celulas": {
+     "A1": {
+      "v": "Descrição *",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "B1": {
+      "v": "Grupo *",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C1": {
+      "v": "1ª Un. Medida *",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "D1": {
+      "v": "Marca",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "E1": {
+      "v": "Fabricante",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "F1": {
+      "v": "Cod. Produto (fornecedor)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "G1": {
+      "v": "Código de barras",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "H1": {
+      "v": "Tipo do item",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "I1": {
+      "v": "Controla estoque",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "J1": {
+      "v": "Estoque mínimo",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "K1": {
+      "v": "Estoque máximo",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "L1": {
+      "v": "Local de estoque padrão",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "M1": {
+      "v": "Endereçamento",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "N1": {
+      "v": "Controle de lote",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "O1": {
+      "v": "Período de Carência (dias)",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "P1": {
+      "v": "NCM",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "Q1": {
+      "v": "CEST",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "R1": {
+      "v": "Origem",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "S1": {
+      "v": "Emitir NFe",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "T1": {
+      "v": "Regra fiscal",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "U1": {
+      "v": "Natureza de custo",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "V1": {
+      "v": "Centro de resultado padrão",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "W1": {
+      "v": "Valor de referência",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "X1": {
+      "v": "Variedade",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "Y1": {
+      "v": "Qualidade",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "Z1": {
+      "v": "Princípio ativo",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "AA1": {
+      "v": "Registro no MAPA",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "AB1": {
+      "v": "Apontamento",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AC1": {
+      "v": "Adiciona ao Inventário",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AD1": {
+      "v": "Ativo",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE1": {
+      "v": "Erros",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "B2": {
+      "v": "1.01 - Fertilizantes",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C2": {
+      "v": "@ - Arroba (padrão)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "I2": {
+      "v": "Não",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE2": {
+      "v": "Descrição: Obrigatório.",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "A3": {
+      "v": "IMP01 Criar Grupo Errado",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "B3": {
+      "v": "Grupo Que Nao Existe IMP01",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C3": {
+      "v": "@ - Arroba (padrão)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "I3": {
+      "v": "Não",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE3": {
+      "v": "Grupo: \"Grupo Que Nao Existe IMP01\" não encontrado em Grupos de Produtos. Use um valor da aba Listas.",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "A4": {
+      "v": "IMP01 Criar Numero Ambiguo",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "B4": {
+      "v": "1.01 - Fertilizantes",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C4": {
+      "v": "@ - Arroba (padrão)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "I4": {
+      "v": "Não",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "J4": {
+      "v": "1.000",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE4": {
+      "v": "Estoque mínimo: Número inválido. Use vírgula decimal (1234,56 ou 1.234,56).",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     }
+    },
+    "colunas": [
+     {
+      "largura": 15,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 19,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 29,
+      "fmt": "@"
+     },
+     {
+      "largura": 20,
+      "fmt": "@"
+     },
+     {
+      "largura": 16,
+      "fmt": null
+     },
+     {
+      "largura": 20,
+      "fmt": null
+     },
+     {
+      "largura": 18,
+      "fmt": null
+     },
+     {
+      "largura": 18,
+      "fmt": null
+     },
+     {
+      "largura": 27,
+      "fmt": "@"
+     },
+     {
+      "largura": 17,
+      "fmt": "@"
+     },
+     {
+      "largura": 20,
+      "fmt": null
+     },
+     {
+      "largura": 30,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": null
+     },
+     {
+      "largura": 16,
+      "fmt": "@"
+     },
+     {
+      "largura": 21,
+      "fmt": "@"
+     },
+     {
+      "largura": 30,
+      "fmt": "@"
+     },
+     {
+      "largura": 23,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 19,
+      "fmt": "@"
+     },
+     {
+      "largura": 20,
+      "fmt": "@"
+     },
+     {
+      "largura": 15,
+      "fmt": null
+     },
+     {
+      "largura": 26,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": null
+     },
+     {
+      "largura": 80,
+      "fmt": null
+     }
+    ],
+    "validacoes": []
+   }
+  }
+ },
+ "produtos_gravar_parcial": {
+  "status": 201,
+  "chaves": [
+   "linhas",
+   "gravadas",
+   "erros",
+   "simulacao",
+   "modo",
+   "certas",
+   "com_erro",
+   "planilha_erros_base64"
+  ],
+  "linhas": 4,
+  "gravadas": 1,
+  "erros": [
+   {
+    "linha": 3,
+    "coluna": "Descrição",
+    "mensagem": "Obrigatório."
+   },
+   {
+    "linha": 4,
+    "coluna": "Grupo",
+    "mensagem": "\"Grupo Que Nao Existe IMP01\" não encontrado em Grupos de Produtos. Use um valor da aba Listas."
+   },
+   {
+    "linha": 5,
+    "coluna": "Estoque mínimo",
+    "mensagem": "Número inválido. Use vírgula decimal (1234,56 ou 1.234,56)."
+   }
+  ],
+  "simulacao": false,
+  "modo": "parcial",
+  "certas": 1,
+  "com_erro": 3,
+  "planilha_erros_base64": {
+   "Dados": {
+    "celulas": {
+     "A1": {
+      "v": "Descrição *",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "B1": {
+      "v": "Grupo *",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C1": {
+      "v": "1ª Un. Medida *",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "D1": {
+      "v": "Marca",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "E1": {
+      "v": "Fabricante",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "F1": {
+      "v": "Cod. Produto (fornecedor)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "G1": {
+      "v": "Código de barras",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "H1": {
+      "v": "Tipo do item",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "I1": {
+      "v": "Controla estoque",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "J1": {
+      "v": "Estoque mínimo",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "K1": {
+      "v": "Estoque máximo",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "L1": {
+      "v": "Local de estoque padrão",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "M1": {
+      "v": "Endereçamento",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "N1": {
+      "v": "Controle de lote",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "O1": {
+      "v": "Período de Carência (dias)",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "P1": {
+      "v": "NCM",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "Q1": {
+      "v": "CEST",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "R1": {
+      "v": "Origem",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "S1": {
+      "v": "Emitir NFe",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "T1": {
+      "v": "Regra fiscal",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "U1": {
+      "v": "Natureza de custo",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "V1": {
+      "v": "Centro de resultado padrão",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "W1": {
+      "v": "Valor de referência",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "X1": {
+      "v": "Variedade",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "Y1": {
+      "v": "Qualidade",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "Z1": {
+      "v": "Princípio ativo",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "AA1": {
+      "v": "Registro no MAPA",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "AB1": {
+      "v": "Apontamento",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AC1": {
+      "v": "Adiciona ao Inventário",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AD1": {
+      "v": "Ativo",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE1": {
+      "v": "Erros",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "B2": {
+      "v": "1.01 - Fertilizantes",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C2": {
+      "v": "@ - Arroba (padrão)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "I2": {
+      "v": "Não",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE2": {
+      "v": "Descrição: Obrigatório.",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "A3": {
+      "v": "IMP01 Criar Grupo Errado",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "B3": {
+      "v": "Grupo Que Nao Existe IMP01",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C3": {
+      "v": "@ - Arroba (padrão)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "I3": {
+      "v": "Não",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE3": {
+      "v": "Grupo: \"Grupo Que Nao Existe IMP01\" não encontrado em Grupos de Produtos. Use um valor da aba Listas.",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "A4": {
+      "v": "IMP01 Criar Numero Ambiguo",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "B4": {
+      "v": "1.01 - Fertilizantes",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C4": {
+      "v": "@ - Arroba (padrão)",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "I4": {
+      "v": "Não",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "J4": {
+      "v": "1.000",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "AE4": {
+      "v": "Estoque mínimo: Número inválido. Use vírgula decimal (1234,56 ou 1.234,56).",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     }
+    },
+    "colunas": [
+     {
+      "largura": 15,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 19,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 29,
+      "fmt": "@"
+     },
+     {
+      "largura": 20,
+      "fmt": "@"
+     },
+     {
+      "largura": 16,
+      "fmt": null
+     },
+     {
+      "largura": 20,
+      "fmt": null
+     },
+     {
+      "largura": 18,
+      "fmt": null
+     },
+     {
+      "largura": 18,
+      "fmt": null
+     },
+     {
+      "largura": 27,
+      "fmt": "@"
+     },
+     {
+      "largura": 17,
+      "fmt": "@"
+     },
+     {
+      "largura": 20,
+      "fmt": null
+     },
+     {
+      "largura": 30,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": null
+     },
+     {
+      "largura": 16,
+      "fmt": "@"
+     },
+     {
+      "largura": 21,
+      "fmt": "@"
+     },
+     {
+      "largura": 30,
+      "fmt": "@"
+     },
+     {
+      "largura": 23,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 19,
+      "fmt": "@"
+     },
+     {
+      "largura": 20,
+      "fmt": "@"
+     },
+     {
+      "largura": 15,
+      "fmt": null
+     },
+     {
+      "largura": 26,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": null
+     },
+     {
+      "largura": 80,
+      "fmt": null
+     }
+    ],
+    "validacoes": []
+   }
+  }
+ },
+ "produtos_gravar_tudo": {
+  "status": 201,
+  "chaves": [
+   "linhas",
+   "gravadas",
+   "erros",
+   "simulacao",
+   "modo",
+   "certas",
+   "com_erro",
+   "planilha_erros_base64"
+  ],
+  "linhas": 2,
+  "gravadas": 2,
+  "erros": [],
+  "simulacao": false,
+  "modo": "tudo",
+  "certas": 2,
+  "com_erro": 0,
+  "planilha_erros_base64": null
+ },
+ "contas_codigo_existente": {
+  "status": 422,
+  "chaves": [
+   "linhas",
+   "gravadas",
+   "erros",
+   "simulacao",
+   "modo",
+   "certas",
+   "com_erro",
+   "planilha_erros_base64"
+  ],
+  "linhas": 2,
+  "gravadas": 0,
+  "erros": [
+   {
+    "linha": 2,
+    "coluna": "Código",
+    "mensagem": "Já existe um registro com este valor."
+   }
+  ],
+  "simulacao": false,
+  "modo": "tudo",
+  "certas": 1,
+  "com_erro": 1,
+  "planilha_erros_base64": {
+   "Dados": {
+    "celulas": {
+     "A1": {
+      "v": "Código *",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "B1": {
+      "v": "Descrição *",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C1": {
+      "v": "Condição *",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "D1": {
+      "v": "Analítica *",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "E1": {
+      "v": "Tipo",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "F1": {
+      "v": "Conta superior",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "G1": {
+      "v": "Ativo",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "H1": {
+      "v": "Erros",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "A2": {
+      "v": "2",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "B2": {
+      "v": "IMP01 Conta Repetida",
+      "fmt": "@",
+      "nota": null,
+      "cor": null
+     },
+     "C2": {
+      "v": "Crédito",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "D2": {
+      "v": "Não",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     },
+     "H2": {
+      "v": "Código: Já existe um registro com este valor.",
+      "fmt": null,
+      "nota": null,
+      "cor": null
+     }
+    },
+    "colunas": [
+     {
+      "largura": 14,
+      "fmt": "@"
+     },
+     {
+      "largura": 15,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": null
+     },
+     {
+      "largura": 15,
+      "fmt": null
+     },
+     {
+      "largura": 14,
+      "fmt": null
+     },
+     {
+      "largura": 18,
+      "fmt": "@"
+     },
+     {
+      "largura": 14,
+      "fmt": null
+     },
+     {
+      "largura": 80,
+      "fmt": null
+     }
+    ],
+    "validacoes": []
+   }
+  }
+ },
+ "produtos_coluna_codigo": {
+  "status": 422,
+  "chaves": [
+   "linhas",
+   "gravadas",
+   "erros",
+   "simulacao",
+   "modo",
+   "certas",
+   "com_erro",
+   "planilha_erros_base64"
+  ],
+  "linhas": 0,
+  "gravadas": 0,
+  "erros": [
+   {
+    "linha": 1,
+    "coluna": "Código",
+    "mensagem": "Coluna desconhecida para Produtos. Baixe o modelo atualizado."
+   }
+  ],
+  "simulacao": true,
+  "modo": "tudo",
+  "certas": 0,
+  "com_erro": 0,
+  "planilha_erros_base64": null
+ },
+ "parceiros_gravar_tudo": {
+  "status": 201,
+  "chaves": [
+   "linhas",
+   "gravadas",
+   "erros",
+   "simulacao",
+   "modo",
+   "certas",
+   "com_erro",
+   "planilha_erros_base64"
+  ],
+  "linhas": 2,
+  "gravadas": 2,
+  "erros": [],
+  "simulacao": false,
+  "modo": "tudo",
+  "certas": 2,
+  "com_erro": 0,
+  "planilha_erros_base64": null
+ },
+ "modo_fora_da_lista": {
+  "status": 422,
+  "chaves": [
+   "error"
+  ],
+  "error": {
+   "code": "VALIDATION_ERROR",
+   "message": "modo: Opção inválida",
+   "details": [
+    {
+     "path": "modo",
+     "message": "Opção inválida"
+    }
+   ]
+  }
+ },
+ "chave_desconhecida": {
+  "status": 422,
+  "chaves": [
+   "error"
+  ],
+  "error": {
+   "code": "VALIDATION_ERROR",
+   "message": "Dados inválidos",
+   "details": [
+    {
+     "path": "",
+     "message": "Campo não reconhecido"
+    }
+   ]
+  }
+ },
+ "sem_permissao": {
+  "status": 403,
+  "chaves": [
+   "error"
+  ],
+  "error": {
+   "code": "PERMISSION_DENIED",
+   "message": "Sem permissão: people.create"
+  }
+ },
+ "banco_produtos": [
+  {
+   "code": "00009",
+   "description": "IMP01 Criar Certo A",
+   "grupo": "1.01",
+   "unidade": "@",
+   "control_stock": false,
+   "min_stock": null,
+   "reference_price": "0.00",
+   "marca": null,
+   "is_active": true,
+   "id_global": 1,
+   "auditoria": [
+    "create"
+   ]
+  },
+  {
+   "code": "00010",
+   "description": "IMP01 Criar Certo B",
+   "grupo": "1.01",
+   "unidade": "@",
+   "control_stock": false,
+   "min_stock": "12.5000",
+   "reference_price": "0.00",
+   "marca": "Marca IMP01",
+   "is_active": true,
+   "id_global": 1,
+   "auditoria": [
+    "create"
+   ]
+  },
+  {
+   "code": "00011",
+   "description": "IMP01 Criar Certo C",
+   "grupo": "1.01",
+   "unidade": "@",
+   "control_stock": false,
+   "min_stock": null,
+   "reference_price": "1234.56",
+   "marca": null,
+   "is_active": true,
+   "id_global": 1,
+   "auditoria": [
+    "create"
+   ]
+  }
+ ],
+ "banco_parceiros": [
+  {
+   "code": "0006",
+   "name": "IMP01 Parceiro A",
+   "is_client": true,
+   "is_provider": false,
+   "phone": null,
+   "id_global": 1
+  },
+  {
+   "code": "0007",
+   "name": "IMP01 Parceiro B",
+   "is_client": false,
+   "is_provider": true,
+   "phone": "(63) 3333-0000",
+   "id_global": 1
+  }
+ ],
+ "banco_contas": [
+  {
+   "code": "2",
+   "description": "PASSIVO"
+  }
+ ]
+}
