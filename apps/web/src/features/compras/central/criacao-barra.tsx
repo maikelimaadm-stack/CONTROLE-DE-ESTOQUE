@@ -9,6 +9,7 @@ import {
 import { DialogoDescartar } from "@/features/central/dialogos";
 import { PREFIXO_CENTRAL_COMPRAS, fonteDosDocumentosDeCompras } from "./adaptador";
 import type { EstadoDaCriacao, TravaDoSalvar } from "./estado";
+import { ROTULO_DA_ABA_DO_RATEIO, caminhoDoRateioComErro, rateioNoPainel, testIdDoAlvoDoRateio } from "./rateio-no-rodape";
 
 /**
  * BARRA DA CRIAÇÃO DA CENTRAL DE COMPRAS (VISUAL-UX-04, decisão 276) — o mesmo modelo da venda, sobre o motor.
@@ -24,6 +25,9 @@ import type { EstadoDaCriacao, TravaDoSalvar } from "./estado";
  * EDITAR-02 (decisão 313): na EDIÇÃO o mesmo conjunto, com o molde do orçamento — o ✕ é "Voltar à consulta" sem
  * alteração (volta direto) e "Descartar alterações" com ela (pergunta antes); sem "Confirmar compra" (a PATCH não
  * confirma) e sem "Alterar operação" (a TOP do documento salvo não troca).
+ *
+ * RATEIO-01 (decisão 316): a recusa do rateio abre a aba "Rateio" do painel e leva ao controle (o efeito abaixo, pelo
+ * `onIr`); `irParaPendenciaDaCompra` sabe achar o pedaço do rateio que mostra a recusa.
  */
 
 export const PREFIXO = PREFIXO_CENTRAL_COMPRAS;
@@ -44,12 +48,19 @@ export function dicaDaTravaDoSalvar(trava: TravaDoSalvar): string | null {
   }
 }
 
-/** Leva ao campo da pendência: itens → a linha da grade; cabeçalho → o primeiro controle com o nome do campo. */
+/**
+ * Leva ao campo da pendência: itens → a linha da grade; cabeçalho → o primeiro controle com o nome do campo.
+ * RATEIO-01 (decisão 316): o caminho do rateio (ou da classificação de um item), com o rateio desenhado (a aba "Rateio"
+ * aberta), → o pedaço do rateio que mostra a recusa. Sem o rateio na tela, o de antes.
+ */
 export function irParaPendenciaDaCompra(p: Pendencia): void {
   const central = document.querySelector<HTMLElement>(`[data-testid="${PREFIXO}"]`) ?? document.body;
   const controle = (raiz: Element | null | undefined) =>
     raiz?.querySelector<HTMLElement>("button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)") ?? null;
   const focar = (el: HTMLElement | null) => { if (!el) return; el.scrollIntoView({ block: "nearest" }); el.focus(); };
+  const doRateio = testIdDoAlvoDoRateio(p.caminho);
+  const alvoDoRateio = doRateio ? central.querySelector<HTMLElement>(`[data-testid="${doRateio}"]`) : null;
+  if (alvoDoRateio) { focar(controle(alvoDoRateio) ?? alvoDoRateio); return; }
   if (p.caminho.startsWith("itens") || p.caminho.startsWith("items")) {
     const regiao = central.querySelector<HTMLElement>(`[data-testid="${PREFIXO}-itens"]`);
     const i = /^ite[mn]s\[(\d+)\]/.exec(p.caminho)?.[1];
@@ -80,6 +91,16 @@ export function useBarraDaCriacao({ e, densidade, onDensidade, onIr = irParaPend
   const temPendencia = e.pendencias.length > 0;
   const fecharPendencias = e.setPendenciasAbertas;
   React.useEffect(() => { if (!temPendencia) fecharPendencias(false); }, [temPendencia, fecharPendencias]);
+  /* RATEIO-01 (decisão 316): a recusa do servidor no rateio (ou na classificação de um item) mora na aba "Rateio" do
+     painel — ela ABRE a aba e leva ao controle, pelo MESMO caminho da pendência no painel (`onIr`: a aba do caminho,
+     depois o campo). Uma vez por recusa: o Salvar limpa os erros antes de enviar, e a próxima recusa volta a abrir. */
+  const caminhoDoRateio = rateioNoPainel(e) ? caminhoDoRateioComErro(e.errosDaTela) : null;
+  const mensagemDoRateio = caminhoDoRateio ? e.errosDaTela[caminhoDoRateio] ?? "" : "";
+  const irAgora = React.useRef(onIr);
+  React.useEffect(() => { irAgora.current = onIr; });
+  React.useEffect(() => {
+    if (caminhoDoRateio) irAgora.current({ caminho: caminhoDoRateio, rotulo: ROTULO_DA_ABA_DO_RATEIO, mensagem: mensagemDoRateio });
+  }, [caminhoDoRateio, mensagemDoRateio]);
 
   const dicaTrava = dicaDaTravaDoSalvar(e.travaDoSalvar);
   const clicarSalvar = (confirmar: boolean) => {

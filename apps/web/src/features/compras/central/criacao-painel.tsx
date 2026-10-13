@@ -6,6 +6,8 @@ import { PainelColuna, PainelLargo, PainelRepartido, TitulosDoDocumento } from "
 import type { AbaDoPainel } from "@/features/central/contrato";
 import { linkDoTituloDeCompra } from "./adaptador";
 import type { EstadoDaCriacao } from "./estado";
+import { RateioEItensDaCriacao } from "./dados-fiscais";
+import { ABA_DO_RATEIO, ROTULO_DA_ABA_DO_RATEIO, abaDoRateio, caminhoDoRateioComErro, rateioNoPainel } from "./rateio-no-rodape";
 
 /**
  * CENTRAL DE COMPRAS — O PAINEL INFERIOR DA CRIAÇÃO (VISUAL-UX-04, decisão 276).
@@ -22,6 +24,10 @@ import type { EstadoDaCriacao } from "./estado";
  *       Financeiro  → Parcelas e o plano do motor (`PlanoDaCentral`, via o renderizador), com os títulos à direita
  *                     (na criação ainda não há nenhum);
  *       Observações → Observação (área larga).
+ *   - RATEIO-01 (decisão 316): o RATEIO da compra e a CLASSIFICAÇÃO DOS ITENS (`RateioEItensDaCriacao`) — um bloco, não
+ *     campo do layout — saem dos Dados fiscais e entram numa aba própria, "Rateio", logo depois do Financeiro (área
+ *     larga), quando `rateioNoPainel` (a criação da compra com a capacidade `importacaoXml`). A aba leva o ponto de
+ *     pendência com a recusa do rateio, e `abaDoCampoNoPainel` a devolve para o caminho dela (a recusa abre a aba).
  */
 
 /** Os campos do cabeçalho que a criação desenha no painel, não nos Dados. `criacao-dados.tsx` deixa de desenhá-los. */
@@ -74,6 +80,12 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
     </PainelRepartido>
   });
 
+  /* RATEIO-01: o rateio e a classificação dos itens — o estado inteiro (não o campo único do renderizador). */
+  if (rateioNoPainel(e)) abas.push({
+    value: valorUnico(ABA_DO_RATEIO), label: ROTULO_DA_ABA_DO_RATEIO, erro: caminhoDoRateioComErro(e.errosDaTela) !== null,
+    content: <PainelLargo><RateioEItensDaCriacao e={e} /></PainelLargo>
+  });
+
   /* As abas do rodapé do layout, na ordem dele; `compras-zona-aba-<índice>` continua no conteúdo de cada uma. */
   for (const a of e.zonas.abas) {
     const especial = a.campos.includes("plano_parcelas") || a.campos.includes("condicao_pagamento_id");
@@ -100,6 +112,8 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
 
 /** O valor da aba do painel em que o campo mora (para a lista de pendências levar ao campo). `null` = não está no painel. */
 export function abaDoCampoNoPainel(e: EstadoDaCriacao, campo: string): string | null {
+  const doRateio = abaDoRateio(e, campo);
+  if (doRateio) return doRateio;
   const doCabecalho = camposDoPainelNoCabecalho(e);
   if (doCabecalho.has(campo)) {
     if (TOTAIS.includes(campo)) return "totais";
