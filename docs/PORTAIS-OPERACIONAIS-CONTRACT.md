@@ -981,10 +981,14 @@ explicitamente, além da RLS. Os lexemas dos produtos e dos itens são CTEs `as 
 confirma (F7).
 
 **A tela** (`apps/web/src/features/compras/importacao/**`): o rótulo do vínculo diz de onde veio cada sugerido. O
-sugerido pela descrição vem escolhido, rotulado "Sugerido (descrição semelhante)", com um aviso para a pessoa conferir
-antes de gerar, e com "Lembrar este vínculo" DESMARCADO — marcar é a confirmação. O lembrado, os sugeridos por
-identidade e o ambíguo resolvido pelo clique ficam como hoje (marcado). O sugerido pela descrição oferece "Criar
-produto", como o `nenhum`; o lote "Criar N produtos da nota" só o inclui se a pessoa tirou o produto sugerido.
+sugerido pela descrição e o sugerido pela REFERÊNCIA vêm escolhidos, rotulados "Sugerido (descrição semelhante)" e
+"Sugerido (referência do produto)", com um aviso para a pessoa conferir antes de gerar, e com "Lembrar este vínculo"
+DESMARCADO — marcar é a confirmação. A referência é identidade no servidor (a ordem e o ambíguo não mudam) e PALPITE na
+tela, por decisão do dono: na produção, quase toda referência é um número sem o fornecedor, e nas compras já geradas
+por nota ela teria escolhido o produto errado em 3 de 8 itens (decisão 314). O lembrado, os sugeridos pelo código do
+fornecedor e pelo código de barras e o ambíguo resolvido pelo clique ficam como hoje (marcado). Os dois palpites
+oferecem "Criar produto"; o lote "Criar N produtos da nota" só inclui o da descrição, e só se a pessoa tirou o produto
+sugerido (o da referência é identidade para o lote).
 
 **O lote** (`POST /api/compras/importacoes/:id/criar-produtos`, XML-01, acima) olha só a IDENTIDADE: calcula os vínculos
 pelos caminhos 1 a 4 (`vinculosDosItens(…, { soIdentidade: true })`), sem a consulta da descrição. O item que só a
