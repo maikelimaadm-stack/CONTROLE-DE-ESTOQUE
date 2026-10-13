@@ -11,7 +11,7 @@ import { RefSelect } from "@/components/ui/ref-select";
 import { CampoDaCentral, CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
 import { SimpleTable, type Row } from "@/features/docs/shared";
 import {
-  CAMPOS_DOS_DADOS_FISCAIS, centroDoItem, itemGeraEstoque, itemImobilizado, naturezaDoItem, opcoesDeNaturezaDeDespesa, somaDoRateio,
+  centroDoItem, itemGeraEstoque, itemImobilizado, naturezaDoItem, opcoesDeNaturezaDeDespesa, somaDoRateio,
   type ChaveDosDadosFiscais, type EstadoDaCriacao, type TipoDoRateioDaCompra
 } from "./estado";
 
@@ -25,14 +25,13 @@ import {
  *   · CONSULTA (`DadosFiscaisDaConsulta`, `RateioDaConsulta`, `BensDaConsulta`): leitura do que o detalhe trouxe. Compra
  *     sem nenhum dado fiscal (a de hoje, ou a API anterior) não mostra nada.
  *
- *   · RATEIO E ITENS (`RateioEItensDaCriacao`, `compras-rateio-e-itens`), no mesmo bloco: o rateio (do documento, por
- *     valor ou por produto) e, por item da grade, "Gera estoque", "Imobilizado" e — com o rateio por produto — natureza
- *     e centro. Fora da grade do motor comum (que é a mesma das outras Centrais): a classificação mora na LINHA da grade
+ *   · RATEIO E ITENS (`RateioEItensDaCriacao`, `compras-rateio-e-itens`): o rateio (do documento, por valor ou por
+ *     produto) e, por item da grade, "Gera estoque", "Imobilizado" e — com o rateio por produto — natureza e centro. Fora
+ *     da grade do motor comum (que é a mesma das outras Centrais): a classificação mora na LINHA da grade
  *     (`CLASSIFICACAO_DO_ITEM`), e o corpo só leva o que foge do padrão.
+ *     RATEIO-01 (decisão 316): NÃO mora mais no bloco "Dados fiscais" — é desenhado na aba "Rateio" do painel inferior
+ *     (`criacao-painel.tsx`; onde, em `rateio-no-rodape.ts`). O MESMO componente, o mesmo estado, o mesmo corpo.
  */
-
-/** Os campos do bloco na criação — a contagem de "Dados adicionais · N campos" (os fiscais e o rateio). */
-export const QUANTIDADE_DE_DADOS_FISCAIS = CAMPOS_DOS_DADOS_FISCAIS.length + 1;
 
 const TIPOS_DE_DOCUMENTO = enumOptions("document_type");
 
@@ -83,14 +82,16 @@ export function DadosFiscaisDaCriacao({ e }: { e: EstadoDaCriacao }) {
           <option value="opex">{enumLabel("classificacao_gasto", "opex")}</option>
         </NativeSelect>)}
     </ColunaDeCampos>
-    <RateioEItensDaCriacao e={e} />
   </div>;
 }
 
 const TIPOS_DE_RATEIO: readonly TipoDoRateioDaCompra[] = ["documento", "por_valor", "por_produto"];
 
-/** O rateio da compra e a classificação de cada item da grade (gera estoque, imobilizado, natureza e centro). */
-function RateioEItensDaCriacao({ e }: { e: EstadoDaCriacao }) {
+/**
+ * O rateio da compra e a classificação de cada item da grade (gera estoque, imobilizado, natureza e centro).
+ * RATEIO-01 (decisão 316): desenhado na aba "Rateio" do painel (`abasDoPainelDaCriacao`), nunca nos Dados.
+ */
+export function RateioEItensDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const r = e.rateio;
   // O caminho da recusa nos dois formatos do servidor (`itens[0].x` das regras, `itens.0.x` do esquema).
   const erroEm = (base: string, k: number, campo: string) => e.erro(`${base}[${k}].${campo}`) ?? e.erro(`${base}.${k}.${campo}`);
