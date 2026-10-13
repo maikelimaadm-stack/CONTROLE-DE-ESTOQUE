@@ -922,3 +922,84 @@ uma chave já usada.
 **Version skew.** A web anterior contra a API nova lê a conferência com as duas chaves novas e funciona como hoje (não
 as lê). A web nova contra a API sem a rota não recebe `capacidades`: nem o botão "Criar N produtos da nota" nem pergunta
 nova aparecem, e o diálogo de um item continua o de hoje (o `measurement_id` no preset só quando a conferência o traz).
+
+## O item da nota encontra o produto que já existe (XML-02, decisão 314)
+
+Na conferência da importação (`GET /api/compras/importacoes/:id` e a resposta da importação), o vínculo de cada item
+procura o produto que JÁ tem cadastro também pela REFERÊNCIA do produto e pela DESCRIÇÃO semelhante — sempre DEPOIS
+dos três caminhos de identidade da F7 (`docs/OPERACOES-CONTRACT.md` §5), nunca no lugar deles. Nenhuma rota, corpo,
+capacidade ou permissão nova; `contractVersion` continua 1; a conferência continua só lendo. O porquê de cada regra
+está na decisão 314.
+
+**O contrato** (aditivo; `VinculoDoItemDaNota` em `packages/domain/src/nfe-compra.ts`):
+
+```
+itens[].vinculo, as variantes do sugerido:
+  { situacao: "sugerido", origem: "codigo_fornecedor" | "codigo_barras" | "reference", produto, fator, tipoFator }
+  { situacao: "sugerido", origem: "descricao", produto, fator, tipoFator, preenchimento }      // variante NOVA
+preenchimento: { description, ncm_code, barcode, measurement_id? }   // o MESMO do "nenhum" (XML-01, acima)
+```
+
+- `origem` ganha "reference" e "descricao"; `lembrado`, `ambiguo` e `nenhum` não mudam.
+- Só o sugerido pela DESCRIÇÃO leva `preenchimento`: o item continua um item que a nota pode cadastrar. Os sugeridos
+  por identidade não o levam. O `measurement_id` segue a regra da unidade do uCom da XML-01 (ausente = não resolvida),
+  na mesma consulta dos uCom distintos.
+- O fator dos caminhos 4 e 5 é "1", `multiply` (a unidade padrão do produto, como no código de barras do produto).
+
+**A ordem.** O caminho mais forte que achou decide o item; os de baixo NÃO rodam para ele (cada consulta leva só os
+itens ainda pendentes). Sem fornecedor escolhido, 1 e 2 não rodam.
+
+| # | Caminho | Casa quando | Um produto | Mais de um | Produto |
+|---|---|---|---|---|---|
+| 1 | vínculo lembrado | o fornecedor escolhido + cProd + uCom em `erp.produto_fornecedor_vinculos` | `lembrado` | — | vivo |
+| 2 | código no fornecedor | `produto_fornecedores` do fornecedor escolhido com o cProd (aparado) | `sugerido` "codigo_fornecedor" | `ambiguo` | vivo |
+| 3 | código de barras | o cEAN em `products.barcode` ou `produto_unidades.codigo_barras` | `sugerido` "codigo_barras" | `ambiguo` | vivo |
+| 4 | referência (nova) | `btrim(products.reference)` = `btrim(cProd)`, com caixa | `sugerido` "reference" | `ambiguo`, por código `collate "C"` e id | vivo, ATIVO, da organização |
+| 5 | descrição (nova) | a pontuação acima do limiar (abaixo) | `sugerido` "descricao" | `ambiguo`, até 5, na ordem abaixo; nada escolhido | vivo, ATIVO, da organização |
+| — | nenhum caminho | — | `nenhum`, com o `preenchimento` | — | — |
+
+**A descrição semelhante** (`packages/domain/src/descricao-do-produto.ts`; a regra é escrita uma vez, e o SQL recebe
+as duas strings como parâmetro):
+
+- **Normalização**: `translate` com `TRADUCAO_DA_DESCRICAO_DE` e `TRADUCAO_DA_DESCRICAO_PARA` (A–Z → a–z; as letras
+  acentuadas do português → a letra base; as marcas combinantes U+0300–U+036F apagadas), toda sequência fora de
+  [a-z0-9] → um espaço, pontas aparadas; sem `lower()`. Em SQL:
+  `btrim(regexp_replace(translate(coalesce(col, ''), $de::text, $para::text), '[^a-z0-9]+', ' ', 'g'))`.
+- **Lexemas**: `tsvector_to_array(to_tsvector('pg_catalog.portuguese', <normalizada>))`, só no SQL.
+- **Pontuação e limiar**: `comuns` = os lexemas que o item e o produto têm, `total` = os da união; casa quando
+  `comuns·2 > total` (exatamente a metade não casa; 0/0 nunca).
+- **Ordem dos candidatos**: pontuação, mesmo NCM primeiro, código `collate "C"`, id. "Mesmo NCM" compara só os dígitos
+  e exige os dois preenchidos (`mesmoNcm`; `sqlMesmoNcm` na consulta).
+- **O NCM nunca casa sozinho**: o cruzamento e o limiar são só da descrição; o NCM só ordena quem já passou.
+- **Teto**: 5 candidatos por item (`TETO_DE_CANDIDATOS_DA_DESCRICAO`), cortados no SQL.
+
+**Consultas.** No máximo cinco por conferência — uma por caminho, nenhuma quando não há item pendente para ele —, mais
+a das unidades; nunca uma por item. As consultas dos caminhos 4 e 5 recortam a organização e o produto vivo e ativo
+explicitamente, além da RLS. Os lexemas dos produtos e dos itens são CTEs `as materialized`. Nenhum índice novo.
+
+**Nada é gravado.** O vínculo lembrado continua nascendo só no "Gerar compra", do `lembrar_vinculo` que o corpo
+confirma (F7).
+
+**A tela** (`apps/web/src/features/compras/importacao/**`): o rótulo do vínculo diz de onde veio cada sugerido. O
+sugerido pela descrição e o sugerido pela REFERÊNCIA vêm escolhidos, rotulados "Sugerido (descrição semelhante)" e
+"Sugerido (referência do produto)", com um aviso para a pessoa conferir antes de gerar, e com "Lembrar este vínculo"
+DESMARCADO — marcar é a confirmação. A referência é identidade no servidor (a ordem e o ambíguo não mudam) e PALPITE na
+tela, por decisão do dono: na produção, quase toda referência é um número sem o fornecedor, e nas compras já geradas
+por nota ela teria escolhido o produto errado em 3 de 8 itens (decisão 314). O lembrado, os sugeridos pelo código do
+fornecedor e pelo código de barras e o ambíguo resolvido pelo clique ficam como hoje (marcado). Os dois palpites
+oferecem "Criar produto"; o lote "Criar N produtos da nota" só inclui o da descrição, e só se a pessoa tirou o produto
+sugerido (o da referência é identidade para o lote). No palpite, trocar o produto por OUTRO (o seletor, o candidato,
+"Criar produto", o lote) marca o "Lembrar" — a correção da pessoa fica lembrada —, e voltar ao produto do palpite o
+desmarca. O ambíguo pela descrição não leva pré-preenchimento: a tela não o põe no lote, e o "Criar produto" dele (como o
+do sugerido pela referência) abre só com a descrição e a NCM da nota.
+
+**O lote** (`POST /api/compras/importacoes/:id/criar-produtos`, XML-01, acima) olha só a IDENTIDADE: calcula os vínculos
+pelos caminhos 1 a 4 (`vinculosDosItens(…, { soIdentidade: true })`), sem a consulta da descrição. O item que só a
+descrição ligaria (sugerido ou ambíguo por ela) é `nenhum` para o lote, que o cria; o sugerido e o ambíguo por
+identidade — também pela referência — continuam recusados pelas linhas "item lembrado ou sugerido" e "item ambíguo" da
+tabela de recusas acima. Nenhuma recusa e nenhuma mensagem nova.
+
+**Version skew.** A web anterior contra a API nova lê as origens novas e gera a compra, mas mostra "(código do
+fornecedor)" para toda origem que não é `codigo_barras` e deixa o "Lembrar" marcado também no sugerido pela descrição —
+o risco da janela de deploy, declarado na decisão 314. A web nova contra a API anterior não recebe as origens novas: a
+aba é a de hoje. Os dois sentidos em E2E (`apps/web/e2e/xml-02-skew-api-producao.spec.ts` e `xml-02-skew-web-anterior.spec.ts`; o resultado em `docs/TESTING.md`).

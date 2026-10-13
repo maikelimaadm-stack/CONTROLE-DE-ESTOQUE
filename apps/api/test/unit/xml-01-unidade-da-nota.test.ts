@@ -113,12 +113,18 @@ const item = (nItem: number, unidade: string, ean: string | null = null): ItemDa
 });
 const notaCom = (itens: ItemDaNota[]) => ({ itens }) as unknown as NotaFiscalLida;
 const consultasDeUnidade = (c: { sql: string; params: unknown[] }[]) => c.filter((x) => x.sql.includes("from erp.measurement_units mu"));
+/**
+ * Cada consulta pelo que pergunta. Sem fornecedor e sem GTIN, o lembrado, o código no fornecedor e o código de barras não
+ * rodam; a referência e a descrição (XML-02, decisão 314) rodam para os itens pendentes — e devolvem nada aqui.
+ */
+const tipoDaConsulta = (x: { sql: string }) =>
+  x.sql.includes("from erp.measurement_units mu") ? "unidade" : x.sql.includes("btrim(p.reference)") ? "referencia" : x.sql.includes("to_tsvector(") ? "descricao" : x.sql;
 
 describe("vinculosDosItens — a unidade numa consulta só", () => {
   it("vários itens sem vínculo: UMA consulta, com os uCom DISTINTOS e normalizados, recortada pela organização", async () => {
     const { ctx, consultas } = ctxFalso();
     const v = await vinculosDosItens(ctx, notaCom([item(1, "KG"), item(2, " kg"), item(3, "UN"), item(4, "LT"), item(5, "PCT")]), null);
-    expect(consultas).toHaveLength(1);
+    expect(consultas.map(tipoDaConsulta)).toEqual(["referencia", "descricao", "unidade"]);
     const [q] = consultasDeUnidade(consultas);
     expect(q!.params[0]).toBe(ORG);
     expect([...(q!.params[1] as string[])].sort()).toEqual(["KG", "LT", "PCT", "UN"]);
@@ -140,7 +146,7 @@ describe("vinculosDosItens — a unidade numa consulta só", () => {
   it("nenhum item sem vínculo com uCom: NENHUMA consulta de unidade, e a chave não vem", async () => {
     const { ctx, consultas } = ctxFalso();
     const v = await vinculosDosItens(ctx, notaCom([item(1, ""), item(2, "   ")]), null);
-    expect(consultas).toHaveLength(0);
+    expect(consultas.map(tipoDaConsulta), "nenhuma de unidade (só a referência e a descrição, pelos pendentes)").toEqual(["referencia", "descricao"]);
     for (const n of [1, 2]) {
       const x = v.get(n);
       expect(x?.situacao).toBe("nenhum");

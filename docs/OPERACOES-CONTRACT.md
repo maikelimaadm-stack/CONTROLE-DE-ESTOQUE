@@ -1399,7 +1399,7 @@ decimais em texto): `id`, `situacao` (pendente · gerada · descartada), `origem
 `criadoPorNome`, `empresa {id, nome}`, `documentoCompra {id, codigo, situacao} | null`, `nota` (a NF-e lida, sem o XML),
 `fornecedorEscolhido`, `parceiro` (`encontrado` · `ambiguo` com `candidatos` [cadastro ou filial, com a IE] ·
 `nao_fornecedor` · `nenhum` com o `preenchimento` do recurso `people`), `itens` (por `nItem`: `vinculo` — `lembrado` ·
-`sugerido` [pelo código no fornecedor ou pelo código de barras] · `ambiguo` · `nenhum` com o `preenchimento` do recurso
+`sugerido` [pelo código no fornecedor, pelo código de barras, pela referência ou pela descrição semelhante — XML-02, decisão 314, em `docs/PORTAIS-OPERACIONAIS-CONTRACT.md`] · `ambiguo` · `nenhum` com o `preenchimento` do recurso
 `products` —, `quantidadeInterna`, `valorUnitarioInterno`, `itemDoPedido`), `pedidos` (`referenciados` pelo `xPed` e até 20
 `candidatos` do fornecedor, da empresa, aberto ou finalizado e com saldo — vazios sem `pedidos_compra.view`), `financeiro.parcelas`
 (`conferem` · `nao_conferem` · `sem_duplicatas`, com `origem: "nota"`), `divergencias` (`codigo`, `mensagem`, `nItem`,
