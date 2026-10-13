@@ -135,6 +135,8 @@ async function comConsultas<T>(f: () => Promise<T>): Promise<{ r: T; consultas: 
 /** A consulta do 4º caminho (a referência) e a do 5º (a descrição), pelo texto. */
 const CAMINHO_4 = /\bbtrim\(p\.reference\)/;
 const CAMINHO_5 = /\bto_tsvector\(/;
+/** A consulta do CADASTRO (XML-04: as unidades dos uCom, os produtos achados e as linhas deles), a única que LÊ as unidades. */
+const CADASTRO = /\bfrom\s+erp\.measurement_units\b/;
 const doCaminho = (consultas: Consulta[], forma: RegExp): Consulta[] => consultas.filter((q) => forma.test(q.sql));
 /** A conferência lida COM as consultas contadas (200 exigido). */
 async function conferenciaContada(id: string): Promise<{ conf: Conferencia; consultas: Consulta[] }> {
@@ -193,7 +195,9 @@ describe("XML2-I1 a nota da fase 0, pela API", () => {
       sugerido("descricao", p("M1")), sugerido("descricao", p("M2")), ambiguo(p("M3"), salDoSeed), sugerido("descricao", p("M4")),
       sugerido("reference", p("R1")), sugerido("reference", p("R2")), NENHUM, NENHUM,
     ]);
-    // O fator dos caminhos sem unidade é 1 (multiplica): a quantidade interna é a da nota.
+    // O fator é 1 (multiplica) e a quantidade interna é a da nota. XML-04 (decisão 318): o fator vem do cadastro pelo
+    // uCom — 1 na unidade principal (R2, KG) e, onde o cadastro não respalda (SC, L, UN), a PERGUNTA, que leva 1 só por
+    // compatibilidade com a web anterior (a desta versão pede o número).
     for (const k of [5, 6, 8, 9, 10]) {
       const i = conf.itens.find((x0) => x0.nItem === k)!;
       expect([i.vinculo.situacao === "sugerido" ? [i.vinculo.fator, i.vinculo.tipoFator] : null, i.quantidadeInterna], `item ${k}: fator 1, quantidade da nota`)
@@ -368,7 +372,10 @@ describe("XML2-I7 CONSULTAS CONTADAS", () => {
     const comPendente = await conferenciaContada(mais.id);
     expect(resumos(comPendente.conf).map((r) => r.situacao)).toEqual(["lembrado", "sugerido", "sugerido", "nenhum"]);
     expect([doCaminho(comPendente.consultas, CAMINHO_4).length, doCaminho(comPendente.consultas, CAMINHO_5).length]).toEqual([1, 1]);
-    expect(comPendente.consultas.length - toda.consultas.length, "o pendente custa as 2 consultas novas e a das unidades").toBe(3);
+    // XML-04 (decisão 318): a consulta das unidades virou a do CADASTRO (unidades, produtos e linhas — o fator), que já
+    // roda para os itens achados pelos caminhos 1 a 3; o pendente não a acrescenta, só a lê de novo.
+    expect([doCaminho(toda.consultas, CADASTRO).length, doCaminho(comPendente.consultas, CADASTRO).length], "UMA consulta do cadastro, com e sem o pendente").toEqual([1, 1]);
+    expect(comPendente.consultas.length - toda.consultas.length, "o pendente custa as 2 consultas novas (a do cadastro já roda para os achados)").toBe(2);
   });
 
   it("50 itens pendentes (5 pela referência, 5 pela descrição, 40 nenhum) ⇒ o MESMO número de consultas que 1 item", async () => {

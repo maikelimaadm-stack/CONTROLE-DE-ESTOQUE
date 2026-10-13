@@ -18,17 +18,26 @@
  *     + unidade), o código no fornecedor (`produto_fornecedores`), o código de barras (`products.barcode` e
  *     `produto_unidades.codigo_barras`), a REFERÊNCIA do produto (`products.reference` = cProd) e a DESCRIÇÃO semelhante
  *     (`descricao-do-produto` do domínio); mais de um produto = ambíguo; produto excluído nunca é sugerido;
- *   · a UNIDADE do produto a criar (XML-01, decisão 312) — o uCom dos itens sem vínculo, UMA consulta: a da organização
- *     vence a do sistema, uma só ou nenhuma (`unidadeDoCadastroPelaNota`); a conferência declara `criarProdutosDaNota`;
+ *   · o FATOR de cada item com produto (XML-04, decisão 318) e a UNIDADE do produto a criar (XML-01, decisão 312) — UMA
+ *     consulta para a nota (`cadastroDoFator`): as unidades de medida dos uCom, a unidade principal e o código de barras
+ *     dos produtos achados e as unidades vivas deles. O fator vem do CADASTRO pelo uCom da nota, nunca de um chute
+ *     (`fatorDoItemPelaNota`); a unidade do produto a criar, da mesma linha (`unidadeDoCadastroPelaNota`); a
+ *     conferência declara `criarProdutosDaNota`;
  *   · os PEDIDOS — os referenciados pela nota (`xPed`, o código do pedido) e até 20 candidatos do fornecedor, da
  *     empresa, abertos ou finalizados e com saldo (a conta do saldo é a da leitura do pedido); só para quem tem
  *     `pedidos_compra.view` (CAPACIDADE ∧ ESCOPO: a conferência não é uma porta lateral para o pedido);
  *   · as PARCELAS da nota, as DIVERGÊNCIAS (com `bloqueia`) e a DUPLICIDADE (a nota já lançada que a pessoa enxerga).
+ *     As parcelas que não conferem DIZEM POR QUÊ (XML-04, decisão 318): os três números e cada comparação, com a
+ *     diferença (`mensagemDasParcelas`) — a regra, o código e o `bloqueia` continuam os de antes;
+ *   · a FORMA DE PAGAMENTO que a nota diz (XML-04, decisão 318) — o tPag de EXATAMENTE um `<detPag>` (`formaDaNota`)
+ *     vira forma pela LIGAÇÃO viva da organização (`erp.formas_pagamento_da_nfe`), numa consulta só e só quando há um
+ *     tPag (`formaDePagamentoDaNota`); nunca "a primeira", nunca a inativa como forma da nota.
  */
 import {
   lerNotaFiscalEletronica, quantidadeInterna, unitarioInterno, linhasDoItemDaNota, totaisDaCompra, conferirTotalDaNota, parcelasDaNota,
   valoresNaoSuportadosDaNota, normalizarUnidadeDaNota, saldoDoItemDoPedido, formatarChaveDeAcesso, CONTRATO_CONFERENCIA_IMPORTACAO_NFE,
-  CAPACIDADE_CRIAR_PRODUTOS_DA_NOTA, type PreenchimentoDoProduto,
+  CAPACIDADE_CRIAR_PRODUTOS_DA_NOTA, type PreenchimentoDoProduto, type FatorDoItemDaNota, formaDaNota, type FormaDePagamentoDaConferencia,
+  type ParcelasDaNota, type FalhaDasParcelasDaNota,
   TRADUCAO_DA_DESCRICAO_DE, TRADUCAO_DA_DESCRICAO_PARA, TETO_DE_CANDIDATOS_DA_DESCRICAO, sqlLexemasDaDescricao, sqlLexemasEmComum,
   sqlLexemasNoTotal, sqlAcimaDoLimiarDaDescricao, mesmoNcm, decidirPelaDescricao, type CandidatoDaDescricao,
   type NotaFiscalLida, type ItemDaNota, type ConferenciaDaImportacaoNfe, type ParceiroDaImportacaoNfe, type ProdutoDoVinculo,
@@ -191,7 +200,7 @@ const produtoDoVinculo = (p: LinhaDeProduto): ProdutoDoVinculo =>
   ({ id: p.id, codigo: p.codigo, descricao: p.descricao, unidade: p.unidade, controleLote: p.controle_lote, controlaEstoque: p.controla_estoque });
 
 /** Os códigos de barras que valem (o leitor já tirou "SEM GTIN"; vazio não casa). */
-const eanDoItem = (i: ItemDaNota): string | null => (i.ean && i.ean.trim() && i.ean.trim().toUpperCase() !== "SEM GTIN" ? i.ean.trim() : null);
+const eanDoItem = (i: Pick<ItemDaNota, "ean">): string | null => (i.ean && i.ean.trim() && i.ean.trim().toUpperCase() !== "SEM GTIN" ? i.ean.trim() : null);
 const chaveDoVinculo = (codigo: string, unidade: string) => `${codigo}\u0000${unidade}`;
 
 /** Uma unidade de medida que o uCom pode ser: a da ORGANIZAÇÃO (`daOrganizacao`) ou a do sistema (`organization_id` nulo). */
@@ -219,25 +228,113 @@ export function unidadeDoCadastroPelaNota(linhas: readonly UnidadeDoCadastro[], 
   return doSistema.length === 1 ? doSistema[0]! : null;
 }
 
-/** As unidades candidatas aos uCom (normalizados e DISTINTOS) — UMA consulta para a nota; sem uCom, nenhuma consulta. */
-async function unidadesDosUCom(ctx: ServiceCtx, simbolos: readonly string[]): Promise<UnidadeDoCadastro[]> {
-  if (simbolos.length === 0) return [];
-  const r = await ctx.tx.query<{ id: string; simbolo: string; da_organizacao: boolean }>(
-    `select mu.id::text as id, mu.symbol as simbolo, mu.organization_id is not null as da_organizacao
-       from erp.measurement_units mu
-      where (mu.organization_id = $1 or mu.organization_id is null) and upper(btrim(mu.symbol)) = any($2::text[])`,
-    [ctx.orgId, [...simbolos]]);
-  return r.rows.map((x) => ({ id: x.id, simbolo: x.simbolo, daOrganizacao: x.da_organizacao }));
-}
+/** Uma unidade VIVA do produto (`erp.produto_unidades`; a consulta filtra `deleted_at`), de compra ou não. */
+export interface UnidadeDoProduto { measurementId: string; fator: string; tipoFator: TipoFator; usoCompra: boolean; codigoBarras: string | null }
+
+/** O cadastro de UM produto que o fator lê: a unidade principal (`measurement_id`), o código de barras e as unidades vivas. */
+export interface CadastroDoProduto { measurementId: string; codigoBarras: string | null; unidades: readonly UnidadeDoProduto[] }
+
+/** O fator de um item com produto: o que vai no vínculo (`fator`, `tipoFator`) e de onde ele veio (`fatorPelaNota`). */
+export interface FatorDoItem { fator: string; tipoFator: TipoFator; fatorPelaNota: FatorDoItemDaNota }
+
+/** O código de barras do cadastro como a consulta do 3º caminho o compara: `btrim` (só espaço); vazio não é código. */
+const codigoDeBarrasDoCadastro = (s: string | null) => String(s ?? "").replace(/^ +| +$/g, "") || null;
 
 /**
- * O fator dos caminhos que NÃO passam por unidade (a referência e a descrição): 1, multiplica — o mesmo padrão do
- * código de barras do produto (a unidade padrão dele). A pessoa confere o fator na tela antes de gerar.
+ * O FATOR DO ITEM PELO CADASTRO (XML-04, decisão 318) — PURA, e a única decisão (a consulta só traz as linhas). Para o
+ * produto achado e o uCom da nota (`normalizarUnidadeDaNota`):
+ *   1. o uCom vira UMA unidade do cadastro (`unidadeDoCadastroPelaNota`: a da organização vence a do sistema); nenhuma,
+ *      ou mais de uma → PERGUNTA (`unidade_fora_do_cadastro`);
+ *   2. é a unidade PRINCIPAL do produto → 1, multiplica (`unidade_principal`);
+ *   3. senão, é a unidade de uma linha VIVA e DE COMPRA do produto → o fator e o tipo dela (`unidade_do_produto`); duas
+ *      linhas dessas com fatores diferentes (o índice único do banco não deixa, mas a decisão não depende dele) → PERGUNTA;
+ *   4. senão → PERGUNTA (`unidade_fora_do_cadastro`): a linha só de venda e a unidade que o produto não tem também.
+ *      NUNCA 1 em silêncio;
+ *   5. o cEAN da nota é o código de barras de alguma unidade do produto (`products.barcode` → a principal;
+ *      `produto_unidades.codigo_barras` → a da linha, de compra ou não) e NENHUMA delas é a unidade de 2/3 → PERGUNTA
+ *      (`codigo_de_barras_de_outra_unidade`). O código de barras nunca DÁ fator; o que não é de unidade do produto não conta.
+ * A PERGUNTA leva fator 1, multiplica, SÓ pela web anterior (a desta versão pede o número). Com o vínculo LEMBRADO
+ * (`lembrado`), o fator e o tipo são os DELE — a decisão explícita do operador para aquele fornecedor, código e unidade
+ * vence o cadastro —, e `cadastro` só vem quando o cadastro respalda (não é pergunta) um fator DIFERENTE (número ou tipo).
+ * Produto que a consulta não trouxe (`null`) não tem cadastro: PERGUNTA.
  */
-const FATOR_SEM_UNIDADE = { fator: "1", tipo: "multiply" as TipoFator };
+export function fatorDoItemPelaNota(
+  unidades: readonly UnidadeDoCadastro[], produto: CadastroDoProduto | null, item: Pick<ItemDaNota, "unidade" | "ean">,
+  lembrado: { fator: string; tipoFator: TipoFator } | null = null,
+): FatorDoItem {
+  const unidadeDaNota = normalizarUnidadeDaNota(item.unidade);
+  const peloCadastro = fatorPeloCadastro(unidades, produto, unidadeDaNota, eanDoItem(item));
+  if (!lembrado) return peloCadastro;
+  const c = peloCadastro.fatorPelaNota.origem === "pergunta" ? null : peloCadastro;
+  const cadastro = c && (!D(c.fator).eq(D(lembrado.fator)) || c.tipoFator !== lembrado.tipoFator) ? { fator: c.fator, tipoFator: c.tipoFator } : null;
+  return { fator: lembrado.fator, tipoFator: lembrado.tipoFator, fatorPelaNota: { origem: "vinculo", unidadeDaNota, cadastro } };
+}
 
-/** O vínculo de um item que a NOTA ainda pode cadastrar (o `nenhum` e o sugerido pela descrição): leva o pré-preenchimento. */
-type VinculoCadastravel = Extract<VinculoDoItemDaNota, { situacao: "nenhum" } | { origem: "descricao" }>;
+function fatorPeloCadastro(unidades: readonly UnidadeDoCadastro[], produto: CadastroDoProduto | null, unidadeDaNota: string, ean: string | null): FatorDoItem {
+  const pergunta = (motivo: Extract<FatorDoItemDaNota, { origem: "pergunta" }>["motivo"]): FatorDoItem =>
+    ({ fator: "1", tipoFator: "multiply", fatorPelaNota: { origem: "pergunta", unidadeDaNota, motivo } });
+  const unidade = unidadeDoCadastroPelaNota(unidades, unidadeDaNota);
+  if (!unidade || !produto) return pergunta("unidade_fora_do_cadastro");
+  let achado: FatorDoItem;
+  if (unidade === produto.measurementId) {
+    achado = { fator: "1", tipoFator: "multiply", fatorPelaNota: { origem: "unidade_principal", unidadeDaNota } };
+  } else {
+    const deCompra = produto.unidades.filter((l) => l.measurementId === unidade && l.usoCompra);
+    const linha = deCompra[0];
+    if (!linha || deCompra.some((l) => l.tipoFator !== linha.tipoFator || !D(l.fator).eq(D(linha.fator)))) return pergunta("unidade_fora_do_cadastro");
+    achado = { fator: linha.fator, tipoFator: linha.tipoFator, fatorPelaNota: { origem: "unidade_do_produto", unidadeDaNota } };
+  }
+  if (ean) {
+    const unidadesDoEan = new Set<string>();
+    if (codigoDeBarrasDoCadastro(produto.codigoBarras) === ean) unidadesDoEan.add(produto.measurementId);
+    for (const l of produto.unidades) if (codigoDeBarrasDoCadastro(l.codigoBarras) === ean) unidadesDoEan.add(l.measurementId);
+    if (unidadesDoEan.size > 0 && !unidadesDoEan.has(unidade)) return pergunta("codigo_de_barras_de_outra_unidade");
+  }
+  return achado;
+}
+
+/** O que a consulta do cadastro traz: as unidades de medida dos uCom e, por produto, o cadastro que o fator lê. */
+export interface CadastroDoFator { unidades: UnidadeDoCadastro[]; produtos: Map<string, CadastroDoProduto> }
+
+/**
+ * O CADASTRO para o fator e para a unidade do produto a criar — UMA consulta para a nota (nunca uma por item): as
+ * unidades de medida candidatas aos uCom (normalizados e DISTINTOS; da organização OU do sistema), a unidade principal e
+ * o código de barras de cada produto achado (vivo) e as linhas VIVAS de `produto_unidades` deles (o uso de compra vai
+ * junto: quem decide é `fatorDoItemPelaNota`). Sem uCom, nenhuma consulta: sem unidade, nada se resolve.
+ */
+async function cadastroDoFator(ctx: ServiceCtx, produtoIds: readonly string[], simbolos: readonly string[]): Promise<CadastroDoFator> {
+  const cadastro: CadastroDoFator = { unidades: [], produtos: new Map() };
+  if (simbolos.length === 0) return cadastro;
+  const r = await ctx.tx.query<{
+    tipo: "unidade" | "produto" | "unidade_do_produto"; id: string; simbolo: string | null; da_organizacao: boolean | null;
+    measurement_id: string | null; codigo_barras: string | null; fator: string | null; tipo_fator: TipoFator | null; uso_compra: boolean | null;
+  }>(
+    `select 'unidade' as tipo, mu.id::text as id, mu.symbol as simbolo, mu.organization_id is not null as da_organizacao,
+            null::text as measurement_id, null::text as codigo_barras, null::text as fator, null::text as tipo_fator, null::boolean as uso_compra
+       from erp.measurement_units mu
+      where (mu.organization_id = $1 or mu.organization_id is null) and upper(btrim(mu.symbol)) = any($2::text[])
+     union all
+     select 'produto', p.id::text, null, null, p.measurement_id::text, p.barcode, null, null, null
+       from erp.products p
+      where p.organization_id = $1 and p.deleted_at is null and p.id = any($3::uuid[])
+     union all
+     select 'unidade_do_produto', pu.product_id::text, null, null, pu.measurement_id::text, pu.codigo_barras, pu.fator::text, pu.tipo_fator, pu.uso_compra
+       from erp.produto_unidades pu
+      where pu.organization_id = $1 and pu.deleted_at is null and pu.product_id = any($3::uuid[])`,
+    [ctx.orgId, [...simbolos], [...produtoIds]]);
+  const unidadesPorProduto = new Map<string, UnidadeDoProduto[]>();
+  for (const x of r.rows) {
+    if (x.tipo === "unidade") cadastro.unidades.push({ id: x.id, simbolo: x.simbolo ?? "", daOrganizacao: x.da_organizacao === true });
+    else if (x.tipo === "produto") cadastro.produtos.set(x.id, { measurementId: x.measurement_id!, codigoBarras: x.codigo_barras, unidades: [] });
+    else {
+      const lista = unidadesPorProduto.get(x.id) ?? [];
+      lista.push({ measurementId: x.measurement_id!, fator: x.fator!, tipoFator: x.tipo_fator!, usoCompra: x.uso_compra === true, codigoBarras: x.codigo_barras });
+      unidadesPorProduto.set(x.id, lista);
+    }
+  }
+  for (const [id, p] of cadastro.produtos) cadastro.produtos.set(id, { ...p, unidades: unidadesPorProduto.get(id) ?? [] });
+  return cadastro;
+}
 
 /**
  * 4º CAMINHO — a REFERÊNCIA do produto (`products.reference`, o "Cod. Produto (fornecedor)" do cadastro) igual ao cProd,
@@ -333,13 +430,33 @@ async function candidatosPelaDescricao(ctx: ServiceCtx, itens: readonly ItemDaNo
 }
 
 /**
+ * Um item que ACHOU produto, antes do fator: o fator é decidido depois, para todos de uma vez, com o cadastro numa
+ * consulta só (`cadastroDoFator`). O lembrado leva o fator do vínculo; o sugerido pela descrição, o pré-preenchimento.
+ */
+type ProdutoAchado =
+  | { situacao: "lembrado"; produto: ProdutoDoVinculo; lembrado: { fator: string; tipoFator: TipoFator } }
+  | { situacao: "sugerido"; origem: "codigo_fornecedor" | "codigo_barras" | "reference"; produto: ProdutoDoVinculo }
+  | { situacao: "sugerido"; origem: "descricao"; produto: ProdutoDoVinculo; preenchimento: PreenchimentoDoProduto };
+
+/** O vínculo do item achado com o fator decidido (`fatorDoItemPelaNota`). */
+function vinculoComFator(a: ProdutoAchado, f: FatorDoItem): VinculoDoItemDaNota {
+  if (a.situacao === "lembrado") return { situacao: "lembrado", produto: a.produto, ...f };
+  if (a.origem === "descricao") return { situacao: "sugerido", origem: "descricao", produto: a.produto, ...f, preenchimento: a.preenchimento };
+  return { situacao: "sugerido", origem: a.origem, produto: a.produto, ...f };
+}
+
+/**
  * O VÍNCULO de cada item (decisão 314), em no máximo CINCO consultas (nunca uma por item), na ordem da força: lembrado →
  * código no fornecedor → código de barras → referência do produto → descrição semelhante. O caminho mais forte que
  * achou decide o item, e os de baixo NÃO rodam para ele (cada consulta nova leva só os itens ainda pendentes). Sem
  * fornecedor escolhido, os dois primeiros não rodam (o vínculo é do fornecedor). A descrição no máximo SUGERE (nada é
- * gravado aqui: o vínculo lembrado nasce só do que a pessoa confirma no "Gerar compra"). Os itens sem vínculo (`nenhum`)
- * e os sugeridos pela descrição (que a nota ainda pode cadastrar) levam o pré-preenchimento da nota e, com a unidade
- * resolvida, o `measurement_id` — mais UMA consulta, para os uCom distintos.
+ * gravado aqui: o vínculo lembrado nasce só do que a pessoa confirma no "Gerar compra").
+ *
+ * Depois da IDENTIDADE, mais UMA consulta (`cadastroDoFator`), para a nota inteira: o FATOR de cada item com produto
+ * (XML-04, decisão 318) vem do cadastro pelo uCom da nota, em TODOS os caminhos — o caminho decide QUAL produto, nunca o
+ * fator (`fatorDoItemPelaNota`; o lembrado guarda o dele) —, e os itens sem vínculo (`nenhum`) e os sugeridos pela
+ * descrição (que a nota ainda pode cadastrar) levam o pré-preenchimento da nota e, com a unidade resolvida pelas MESMAS
+ * linhas, o `measurement_id`.
  *
  * `soIdentidade` (o lote do XML-01, decisão 314): só os caminhos 1 a 4 — a IDENTIDADE. A semelhança não roda, e o item
  * que só ela ligaria fica `nenhum`, como era: o lote continua recusando o que tem produto por identidade, e a sugestão
@@ -351,7 +468,7 @@ export async function vinculosDosItens(
   const codigos = [...new Set(nota.itens.map((i) => i.codigo.trim()))];
   const unidades = nota.itens.map((i) => normalizarUnidadeDaNota(i.unidade));
   const lembrados = new Map<string, { produto: LinhaDeProduto; fator: string; tipo: TipoFator }>();
-  const doFornecedor = new Map<string, Map<string, { produto: LinhaDeProduto; fator: string; tipo: TipoFator }>>();
+  const doFornecedor = new Map<string, Map<string, LinhaDeProduto>>();
   if (fornecedorId) {
     const l = await ctx.tx.query<LinhaDeProduto & { codigo_fornecedor: string; unidade_fornecedor: string; fator: string; tipo_fator: TipoFator }>(
       `select v.codigo_fornecedor, v.unidade_fornecedor, v.fator::text as fator, v.tipo_fator, ${COLUNAS_PRODUTO}
@@ -362,87 +479,93 @@ export async function vinculosDosItens(
           and (v.codigo_fornecedor, v.unidade_fornecedor) in (select * from unnest($3::text[], $4::text[]))`,
       [ctx.orgId, fornecedorId, nota.itens.map((i) => i.codigo.trim()), unidades]);
     for (const x of l.rows) lembrados.set(chaveDoVinculo(x.codigo_fornecedor, x.unidade_fornecedor), { produto: x, fator: x.fator, tipo: x.tipo_fator });
-    // O código no fornecedor (cadastro do produto). A unidade de compra do cadastro, quando é uma unidade alternativa do
-    // produto, dá o fator dela; senão 1 (multiplica).
-    const s = await ctx.tx.query<LinhaDeProduto & { codigo_no_fornecedor: string; fator: string | null; tipo_fator: TipoFator | null }>(
-      `select btrim(pf.codigo_no_fornecedor) as codigo_no_fornecedor, pu.fator::text as fator, pu.tipo_fator, ${COLUNAS_PRODUTO}
+    // O código no fornecedor (cadastro do produto): só a IDENTIDADE — o fator é o do cadastro pelo uCom, como nos outros.
+    const s = await ctx.tx.query<LinhaDeProduto & { codigo_no_fornecedor: string }>(
+      `select btrim(pf.codigo_no_fornecedor) as codigo_no_fornecedor, ${COLUNAS_PRODUTO}
          from erp.produto_fornecedores pf
          join erp.products p on p.id = pf.product_id and p.organization_id = pf.organization_id and p.deleted_at is null
          left join erp.measurement_units mu on mu.id = p.measurement_id
-         left join erp.produto_unidades pu on pu.product_id = pf.product_id and pu.organization_id = pf.organization_id
-                                          and pu.measurement_id = pf.measurement_id and pu.deleted_at is null
         where pf.organization_id = $1 and pf.person_id = $2 and pf.deleted_at is null and btrim(pf.codigo_no_fornecedor) = any($3::text[])
         order by p.code, p.id`, [ctx.orgId, fornecedorId, codigos]);
     for (const x of s.rows) {
-      const m = doFornecedor.get(x.codigo_no_fornecedor) ?? new Map();
-      if (!m.has(x.id)) m.set(x.id, { produto: x, fator: x.fator ?? "1", tipo: x.tipo_fator ?? "multiply" });
+      const m = doFornecedor.get(x.codigo_no_fornecedor) ?? new Map<string, LinhaDeProduto>();
+      if (!m.has(x.id)) m.set(x.id, x);
       doFornecedor.set(x.codigo_no_fornecedor, m);
     }
   }
   const eans = [...new Set(nota.itens.map(eanDoItem).filter((x): x is string => Boolean(x)))];
-  const porEan = new Map<string, Map<string, { produto: LinhaDeProduto; fator: string; tipo: TipoFator }>>();
+  const porEan = new Map<string, Map<string, LinhaDeProduto>>();
   if (eans.length) {
-    // O código de barras do produto (unidade padrão, fator 1) vem ANTES do da unidade alternativa (o fator dela).
-    const b = await ctx.tx.query<LinhaDeProduto & { ean: string; fator: string; tipo_fator: TipoFator; ordem: number }>(
-      `select btrim(p.barcode) as ean, '1' as fator, 'multiply' as tipo_fator, 0 as ordem, ${COLUNAS_PRODUTO}
+    // O código de barras do produto vem ANTES do da unidade alternativa (a ordem dos candidatos). Só a IDENTIDADE: o
+    // código de barras nunca dá o fator (ele só põe o fator do cadastro em DÚVIDA — `fatorDoItemPelaNota`).
+    const b = await ctx.tx.query<LinhaDeProduto & { ean: string; ordem: number }>(
+      `select btrim(p.barcode) as ean, 0 as ordem, ${COLUNAS_PRODUTO}
          from erp.products p left join erp.measurement_units mu on mu.id = p.measurement_id
         where p.organization_id = $1 and p.deleted_at is null and btrim(p.barcode) = any($2::text[])
        union all
-       select btrim(u.codigo_barras), u.fator::text, u.tipo_fator, 1, ${COLUNAS_PRODUTO}
+       select btrim(u.codigo_barras), 1, ${COLUNAS_PRODUTO}
          from erp.produto_unidades u
          join erp.products p on p.id = u.product_id and p.organization_id = u.organization_id and p.deleted_at is null
          left join erp.measurement_units mu on mu.id = p.measurement_id
         where u.organization_id = $1 and u.deleted_at is null and btrim(u.codigo_barras) = any($2::text[])
         order by ordem, codigo, id`, [ctx.orgId, eans]);
     for (const x of b.rows) {
-      const m = porEan.get(x.ean) ?? new Map();
-      if (!m.has(x.id)) m.set(x.id, { produto: x, fator: x.fator, tipo: x.tipo_fator });
+      const m = porEan.get(x.ean) ?? new Map<string, LinhaDeProduto>();
+      if (!m.has(x.id)) m.set(x.id, x);
       porEan.set(x.ean, m);
     }
   }
   const out = new Map<number, VinculoDoItemDaNota>();
+  const achados = new Map<number, ProdutoAchado>();
   // 1 a 3: a IDENTIDADE pelo fornecedor e pelo código de barras (as consultas acima).
   const semIdentidade: ItemDaNota[] = [];
   for (const item of nota.itens) {
     const lembrado = lembrados.get(chaveDoVinculo(item.codigo.trim(), normalizarUnidadeDaNota(item.unidade)));
-    if (lembrado) { out.set(item.nItem, { situacao: "lembrado", produto: produtoDoVinculo(lembrado.produto), fator: lembrado.fator, tipoFator: lembrado.tipo }); continue; }
+    if (lembrado) { achados.set(item.nItem, { situacao: "lembrado", produto: produtoDoVinculo(lembrado.produto), lembrado: { fator: lembrado.fator, tipoFator: lembrado.tipo } }); continue; }
     const porCodigo = [...(doFornecedor.get(item.codigo.trim())?.values() ?? [])];
-    if (porCodigo.length === 1) { const x = porCodigo[0]!; out.set(item.nItem, { situacao: "sugerido", origem: "codigo_fornecedor", produto: produtoDoVinculo(x.produto), fator: x.fator, tipoFator: x.tipo }); continue; }
-    if (porCodigo.length > 1) { out.set(item.nItem, { situacao: "ambiguo", candidatos: porCodigo.map((x) => produtoDoVinculo(x.produto)) }); continue; }
+    if (porCodigo.length === 1) { achados.set(item.nItem, { situacao: "sugerido", origem: "codigo_fornecedor", produto: produtoDoVinculo(porCodigo[0]!) }); continue; }
+    if (porCodigo.length > 1) { out.set(item.nItem, { situacao: "ambiguo", candidatos: porCodigo.map(produtoDoVinculo) }); continue; }
     const ean = eanDoItem(item);
     const porBarras = [...((ean && porEan.get(ean)?.values()) || [])];
-    if (porBarras.length === 1) { const x = porBarras[0]!; out.set(item.nItem, { situacao: "sugerido", origem: "codigo_barras", produto: produtoDoVinculo(x.produto), fator: x.fator, tipoFator: x.tipo }); continue; }
-    if (porBarras.length > 1) { out.set(item.nItem, { situacao: "ambiguo", candidatos: porBarras.map((x) => produtoDoVinculo(x.produto)) }); continue; }
+    if (porBarras.length === 1) { achados.set(item.nItem, { situacao: "sugerido", origem: "codigo_barras", produto: produtoDoVinculo(porBarras[0]!) }); continue; }
+    if (porBarras.length > 1) { out.set(item.nItem, { situacao: "ambiguo", candidatos: porBarras.map(produtoDoVinculo) }); continue; }
     semIdentidade.push(item);
   }
   // 4: a REFERÊNCIA do produto — só para os que 1 a 3 não resolveram.
   const porReferencia = await produtosPelaReferencia(ctx, semIdentidade);
   const semReferencia: ItemDaNota[] = [];
   for (const item of semIdentidade) {
-    const achados = porReferencia.get(item.codigo.trim()) ?? [];
-    if (achados.length === 1) { out.set(item.nItem, { situacao: "sugerido", origem: "reference", produto: produtoDoVinculo(achados[0]!), fator: FATOR_SEM_UNIDADE.fator, tipoFator: FATOR_SEM_UNIDADE.tipo }); continue; }
-    if (achados.length > 1) { out.set(item.nItem, { situacao: "ambiguo", candidatos: achados.map(produtoDoVinculo) }); continue; }
+    const achadosDaReferencia = porReferencia.get(item.codigo.trim()) ?? [];
+    if (achadosDaReferencia.length === 1) { achados.set(item.nItem, { situacao: "sugerido", origem: "reference", produto: produtoDoVinculo(achadosDaReferencia[0]!) }); continue; }
+    if (achadosDaReferencia.length > 1) { out.set(item.nItem, { situacao: "ambiguo", candidatos: achadosDaReferencia.map(produtoDoVinculo) }); continue; }
     semReferencia.push(item);
   }
   // 5: a DESCRIÇÃO semelhante — só para os que 1 a 4 não resolveram, e nunca no `soIdentidade`; a decisão é a do domínio.
   const porDescricao = await candidatosPelaDescricao(ctx, opcoes.soIdentidade ? [] : semReferencia);
-  const cadastraveis: { item: ItemDaNota; vinculo: VinculoCadastravel }[] = [];
+  const cadastraveis: ItemDaNota[] = [];
   for (const item of semReferencia) {
     const decisao = decidirPelaDescricao(porDescricao.get(item.nItem) ?? []);
     if (decisao.situacao === "ambiguo") { out.set(item.nItem, { situacao: "ambiguo", candidatos: decisao.candidatos.map((c) => c.produto) }); continue; }
     const preenchimento: PreenchimentoDoProduto = { description: item.descricao, ncm_code: item.ncm, barcode: eanDoItem(item) };
-    const vinculo: VinculoCadastravel = decisao.situacao === "sugerido"
-      ? { situacao: "sugerido", origem: "descricao", produto: decisao.candidato.produto, fator: FATOR_SEM_UNIDADE.fator, tipoFator: FATOR_SEM_UNIDADE.tipo, preenchimento }
-      : { situacao: "nenhum", preenchimento };
-    out.set(item.nItem, vinculo);
-    cadastraveis.push({ item, vinculo });
+    if (decisao.situacao === "sugerido") achados.set(item.nItem, { situacao: "sugerido", origem: "descricao", produto: decisao.candidato.produto, preenchimento });
+    else out.set(item.nItem, { situacao: "nenhum", preenchimento });
+    cadastraveis.push(item);
   }
-  // A unidade dos que a nota pode cadastrar (`nenhum` e sugerido pela descrição): sem casamento único, a chave
-  // `measurement_id` não vem (nunca nula, nunca "a mais parecida").
-  const linhasDaUnidade = await unidadesDosUCom(ctx, [...new Set(cadastraveis.map((x) => normalizarUnidadeDaNota(x.item.unidade)).filter(Boolean))]);
-  for (const { item, vinculo } of cadastraveis) {
-    const measurementId = unidadeDoCadastroPelaNota(linhasDaUnidade, item.unidade);
-    if (measurementId) out.set(item.nItem, { ...vinculo, preenchimento: { ...vinculo.preenchimento, measurement_id: measurementId } });
+  // O CADASTRO (uma consulta): o fator de cada item achado e a unidade dos que a nota pode cadastrar (`nenhum` e sugerido
+  // pela descrição). Sem casamento único da unidade, a chave `measurement_id` não vem (nunca nula, nunca "a mais parecida").
+  const precisaDoCadastro = achados.size > 0 || cadastraveis.length > 0;
+  const cadastro = await cadastroDoFator(ctx, [...new Set([...achados.values()].map((a) => a.produto.id))],
+    precisaDoCadastro ? [...new Set(unidades.filter(Boolean))] : []);
+  for (const item of nota.itens) {
+    const achado = achados.get(item.nItem);
+    if (achado) {
+      const lembrado = achado.situacao === "lembrado" ? achado.lembrado : null;
+      out.set(item.nItem, vinculoComFator(achado, fatorDoItemPelaNota(cadastro.unidades, cadastro.produtos.get(achado.produto.id) ?? null, item, lembrado)));
+    }
+    const v = out.get(item.nItem)!;
+    if (v.situacao !== "nenhum" && !(v.situacao === "sugerido" && v.origem === "descricao")) continue;
+    const measurementId = unidadeDoCadastroPelaNota(cadastro.unidades, item.unidade);
+    if (measurementId) out.set(item.nItem, { ...v, preenchimento: { ...v.preenchimento, measurement_id: measurementId } });
   }
   return out;
 }
@@ -534,6 +657,30 @@ export async function dfeDaNota(ctx: ServiceCtx, imp: Pick<ImportacaoLida, "dfe_
   return r.rows[0] ?? null;
 }
 
+// ─────────────── a forma de pagamento ───────────────
+
+/**
+ * XML-04 (decisão 318) — a FORMA DE PAGAMENTO que a nota diz. Mais de um `<detPag>` (`varias`) e nenhum tPag
+ * (`sem_tpag`) voltam como o domínio os lê, SEM consulta. Com UM tPag, UMA consulta sob a RLS da transação: a ligação
+ * VIVA da organização para o código e a forma dela (da organização ou do sistema — a mesma regra do gatilho da 0064,
+ * repetida no `join`). Nenhuma linha → `sem_ligacao`; uma, ativa → `ligada`; uma, inativa → `forma_inativa` (a tela diz
+ * qual). Mais de uma (o índice único parcial não deixa) → `sem_ligacao`: fail-closed, nunca "a primeira".
+ */
+export async function formaDePagamentoDaNota(ctx: ServiceCtx, nota: Pick<NotaFiscalLida, "pagamentos">): Promise<FormaDePagamentoDaConferencia> {
+  const daNota = formaDaNota(nota);
+  if (daNota.situacao !== "uma") return daNota;
+  const { tPag } = daNota;
+  const r = await ctx.tx.query<{ id: string; nome: string; ativa: boolean }>(
+    `select pm.id::text as id, pm.name as nome, pm.is_active as ativa
+       from erp.formas_pagamento_da_nfe l
+       join erp.payment_methods pm on pm.id = l.forma_pagamento_id and (pm.organization_id = l.organization_id or pm.organization_id is null)
+      where l.organization_id = $1 and l.codigo_tpag = $2 and l.deleted_at is null`, [ctx.orgId, tPag]);
+  const ligacao = r.rows.length === 1 ? r.rows[0]! : null;
+  if (!ligacao) return { situacao: "sem_ligacao", tPag };
+  const forma = { id: ligacao.id, nome: ligacao.nome };
+  return ligacao.ativa ? { situacao: "ligada", tPag, forma } : { situacao: "forma_inativa", tPag, forma };
+}
+
 // ─────────────── as contas da conferência ───────────────
 
 /** As linhas que a compra teria com o vínculo (para o total e o rastro); `null` sem vínculo resolvido. */
@@ -563,6 +710,57 @@ const MSG_NAO_SUPORTADO: Record<string, string> = {
   ipi_devolvido: "A nota tem IPI devolvido (vIPIDevol), que a compra não representa.",
 };
 export const mensagemNaoSuportado = (v: string) => MSG_NAO_SUPORTADO[v] ?? "A nota tem um valor que a compra não representa.";
+
+const NOME_DO_TIPO_DE_FATOR: Record<TipoFator, string> = { multiply: "multiplica", divide: "divide" };
+/** O fator como número, sem as casas vazias do banco ("12.000000" → "12"). */
+const numeroDoFator = (f: string) => D(f).toFixed();
+
+/**
+ * XML-04 (decisão 318) — a DIVERGÊNCIA do fator de um item com produto, ou nenhuma. NÃO bloqueia: a web anterior
+ * bloquearia a nota inteira por um código que não conhece; a tela desta versão bloqueia pelo fator vazio. A PERGUNTA
+ * (`fator_a_informar`) diz a unidade da nota, o produto e o motivo; o vínculo lembrado que o cadastro contradiz
+ * (`fator_do_vinculo_diferente_do_cadastro`) diz os DOIS números, e que vale o do vínculo.
+ */
+export function divergenciaDoFator(nItem: number, v: VinculoDoItemDaNota): DivergenciaDaImportacaoNfe | null {
+  if ((v.situacao !== "lembrado" && v.situacao !== "sugerido") || !v.fatorPelaNota) return null;
+  const f = v.fatorPelaNota;
+  const produto = v.produto.codigo;
+  if (f.origem === "pergunta") {
+    const mensagem = f.motivo === "codigo_de_barras_de_outra_unidade"
+      ? `Item ${nItem}: o código de barras da nota é de outra unidade do produto ${produto}: confira o fator.`
+      : f.unidadeDaNota
+        ? `Item ${nItem}: a unidade ${f.unidadeDaNota} da nota não é unidade de compra do produto ${produto} no cadastro: informe o fator.`
+        : `Item ${nItem}: a nota não traz a unidade do item, e o cadastro do produto ${produto} não diz o fator: informe o fator.`;
+    return div("fator_a_informar", mensagem, false, nItem);
+  }
+  if (f.origem === "vinculo" && f.cadastro) {
+    return div("fator_do_vinculo_diferente_do_cadastro", `Item ${nItem}: o vínculo lembrado usa fator ${numeroDoFator(v.fator)} (${NOME_DO_TIPO_DE_FATOR[v.tipoFator]}); `
+      + `o cadastro do produto ${produto}, para a unidade ${f.unidadeDaNota}, diz ${numeroDoFator(f.cadastro.fator)} (${NOME_DO_TIPO_DE_FATOR[f.cadastro.tipoFator]}). `
+      + "Vale o do vínculo: confira.", false, nItem);
+  }
+  return null;
+}
+
+/**
+ * XML-04 (decisão 318) — a MENSAGEM das duplicatas que não conferem: os TRÊS números (Σ vDup; o líquido, dizendo se veio
+ * da fatura (vLiq) ou do total da nota (vNF); o total da compra) e as DUAS comparações, cada uma com a diferença (com
+ * sinal: soma − líquido, líquido − total) quando falhou ou "confere"; a última duplicata não positiva vem dita à parte.
+ * Só EXPLICA o resultado de `parcelasDaNota`: o código, o `bloqueia` e a regra são os de antes. Sem os campos da XML-04
+ * (o tipo os declara opcionais), a mensagem de antes — nunca um número inventado.
+ */
+export function mensagemDasParcelas(p: Extract<ParcelasDaNota, { situacao: "nao_conferem" }>): string {
+  const { total, falhas, diferencaSomaLiquido, diferencaLiquidoTotal } = p;
+  if (total === undefined || falhas === undefined || diferencaSomaLiquido === undefined || diferencaLiquidoTotal === undefined) {
+    return `As duplicatas da nota (${p.soma}) não conferem com o líquido (${p.liquido}): use a condição de pagamento.`;
+  }
+  const comparacao = (falha: FalhaDasParcelasDaNota, diferenca: string) => (falhas.includes(falha) ? `diferença ${diferenca}` : "confere");
+  const liquido = p.origemDoLiquido === "fatura" ? "líquido (fatura, vLiq)" : "líquido (total da nota, vNF)";
+  const ultima = falhas.includes("ultima_parcela_nao_positiva")
+    ? "; a última duplicata, ajustada para a soma fechar no total da compra, ficaria com valor zero ou negativo" : "";
+  return `As duplicatas não conferem: Σ vDup ${p.soma} × ${liquido} ${p.liquido} — ${comparacao("soma_diferente_do_liquido", diferencaSomaLiquido)}; `
+    + `líquido ${p.liquido} × total da compra ${total} — ${comparacao("liquido_diferente_do_total", diferencaLiquidoTotal)}${ultima}. `
+    + "Use a condição de pagamento.";
+}
 
 /**
  * A CONFERÊNCIA (`ConferenciaDaImportacaoNfe`). `fornecedorPedido` = o `?fornecedor_id` (pedido, conferido contra os
@@ -604,6 +802,8 @@ export async function montarConferencia(ctx: ServiceCtx, imp: ImportacaoLida, fo
     }
     if (vinculo.situacao === "nenhum") divergencias.push(div("item_sem_vinculo", `Item ${item.nItem}: associe um produto (ou crie o produto).`, true, item.nItem));
     if (vinculo.situacao === "ambiguo") divergencias.push(div("item_ambiguo", `Item ${item.nItem}: mais de um produto corresponde; escolha o produto.`, true, item.nItem));
+    const doFator = divergenciaDoFator(item.nItem, vinculo);
+    if (doFator) divergencias.push(doFator);
     const linhas = linhasDoVinculo(item, vinculo);
     if (!linhas) todosComVinculo = false;
     else if (!linhas.ok) {
@@ -635,9 +835,11 @@ export async function montarConferencia(ctx: ServiceCtx, imp: ImportacaoLida, fo
     else totalDaCompra = t.total;
   }
   const parcelas = parcelasDaNota(nota, totalDaCompra);
-  if (parcelas.situacao === "nao_conferem") {
-    divergencias.push(div("parcelas_nao_conferem", `As duplicatas da nota (${parcelas.soma}) não conferem com o líquido (${parcelas.liquido}): use a condição de pagamento.`, false));
-  }
+  // XML-04: a mensagem diz POR QUÊ (o código e o `bloqueia` são os de antes). `sem_duplicatas` continua SEM divergência,
+  // como sempre — também quando a nota trouxe duplicatas sem vencimento: a compra usa a condição de pagamento, e o
+  // motivo vai no próprio resultado (`financeiro.parcelas.motivo`), que a aba Financeiro explica.
+  if (parcelas.situacao === "nao_conferem") divergencias.push(div("parcelas_nao_conferem", mensagemDasParcelas(parcelas), false));
+  const forma = await formaDePagamentoDaNota(ctx, nota);
 
   let duplicidade: ConferenciaDaImportacaoNfe["duplicidade"] = null;
   if (pendente) {
@@ -662,7 +864,7 @@ export async function montarConferencia(ctx: ServiceCtx, imp: ImportacaoLida, fo
       ? { id: imp.documento_compra_id, codigo: imp.documento_compra_codigo, situacao: imp.documento_compra_situacao ?? "" } : null,
     nota, fornecedorEscolhido, parceiro, itens,
     pedidos: { referenciados: pedidos.referenciados, candidatos: pedidos.candidatos },
-    financeiro: { parcelas: { ...parcelas, origem: "nota" } },
+    financeiro: { parcelas: { ...parcelas, origem: "nota" }, forma },
     divergencias: pendente ? divergencias : [],
     duplicidade,
     capacidades: { criarProdutosDaNota: CAPACIDADE_CRIAR_PRODUTOS_DA_NOTA },

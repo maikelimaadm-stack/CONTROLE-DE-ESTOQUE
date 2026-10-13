@@ -1,5 +1,5 @@
 import { D } from "@agro/shared";
-import { enumLabel, hasEnumLabel, type ConferenciaDaImportacaoNfe, type VinculoDoItemDaNota } from "@agro/domain";
+import { enumLabel, hasEnumLabel, type ConferenciaDaImportacaoNfe, type FatorDoItemDaNota, type TipoFator, type VinculoDoItemDaNota } from "@agro/domain";
 import type { DecisaoDoItemNaTela } from "./estado";
 
 /**
@@ -20,6 +20,9 @@ import type { DecisaoDoItemNaTela } from "./estado";
  *     "Lembrar" passa a marcado; voltando ao produto do palpite, desmarcado.
  *   · DECISÃO (`decisaoDoVinculo`): a decisão do item com que a tela nasce (e que a troca de fornecedor refaz) — o
  *     produto e o fator do lembrado e de todo sugerido (também o pela descrição, que vem escolhido) e o "Lembrar" acima.
+ *   · DE ONDE VEIO O FATOR (XML-04, decisão 318 — `fatorPelaNotaDoVinculo`): lido por PROPRIEDADE PRÓPRIA do vínculo;
+ *     a API anterior não o manda e a decisão é a de antes. Com a PERGUNTA, o fator nasce VAZIO (nunca o "1" que o
+ *     servidor ainda manda por compatibilidade): o item é pendência até a pessoa informar o fator.
  */
 
 /**
@@ -67,8 +70,48 @@ export function lembrarAoTrocarProduto(v: VinculoDoItemDaNota | undefined, produ
   return produtoId !== v.produto.id;
 }
 
+/** O `fatorPelaNota` lido: a pergunta com um motivo que a tela não conhece continua pergunta (`motivo: null`). */
+export type FatorPelaNotaLido =
+  | Exclude<FatorDoItemDaNota, { origem: "pergunta" | "vinculo" }>
+  | { origem: "vinculo"; unidadeDaNota: string; cadastro: { fator: string; tipoFator: TipoFator } | null }
+  | { origem: "pergunta"; unidadeDaNota: string; motivo: Extract<FatorDoItemDaNota, { origem: "pergunta" }>["motivo"] | null };
+
+/** O fator que a tela aceita no campo: texto decimal (ponto), até 12 inteiros e 6 casas, maior que zero. */
+export const fatorValido = (v: string) => /^\d{1,12}(\.\d{1,6})?$/.test(v) && D(v).gt(0);
+
+const ehObjeto = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const ehTipoFator = (v: unknown): v is TipoFator => v === "multiply" || v === "divide";
+const fatorDecimal = (v: unknown): v is string => typeof v === "string" && /^\d+(\.\d+)?$/.test(v) && D(v).gt(0);
+
 /**
- * A decisão de um item pelo vínculo do servidor (lembrado/sugerido traz produto e fator; o resto, vazio e fator 1).
+ * XML-04 (decisão 318): DE ONDE VEIO O FATOR do item, por PROPRIEDADE PRÓPRIA do vínculo lembrado ou sugerido (a API
+ * anterior não o manda ⇒ `null`, a tela de antes). FAIL-CLOSED: forma estranha ou origem que a tela não conhece (uma API
+ * mais nova) ⇒ `null`; o cadastro do vínculo fora da forma ⇒ sem cadastro (a tela não afirma um número que não leu).
+ */
+export function fatorPelaNotaDoVinculo(v: VinculoDoItemDaNota | undefined): FatorPelaNotaLido | null {
+  if (!v || (v.situacao !== "lembrado" && v.situacao !== "sugerido") || !Object.hasOwn(v, "fatorPelaNota")) return null;
+  const f: unknown = v.fatorPelaNota;
+  if (!ehObjeto(f) || typeof f.unidadeDaNota !== "string") return null;
+  const unidadeDaNota = f.unidadeDaNota;
+  switch (f.origem) {
+    case "unidade_principal": case "unidade_do_produto": return { origem: f.origem, unidadeDaNota };
+    case "vinculo": {
+      const c = f.cadastro;
+      return { origem: "vinculo", unidadeDaNota, cadastro: ehObjeto(c) && fatorDecimal(c.fator) && ehTipoFator(c.tipoFator) ? { fator: c.fator, tipoFator: c.tipoFator } : null };
+    }
+    case "pergunta":
+      return { origem: "pergunta", unidadeDaNota, motivo: f.motivo === "unidade_fora_do_cadastro" || f.motivo === "codigo_de_barras_de_outra_unidade" ? f.motivo : null };
+    default: return null;
+  }
+}
+
+/** O fator com que o item NASCE pelo vínculo: o do servidor, ou VAZIO quando o fator é pergunta (XML-04). */
+export const fatorInicialDoVinculo = (v: Extract<VinculoDoItemDaNota, { situacao: "lembrado" | "sugerido" }>): string =>
+  (fatorPelaNotaDoVinculo(v)?.origem === "pergunta" ? "" : D(v.fator).toFixed());
+
+/**
+ * A decisão de um item pelo vínculo do servidor (lembrado/sugerido traz produto e fator — VAZIO quando o fator é
+ * pergunta, XML-04; o resto, vazio e fator 1).
  * `base` é a decisão anterior do item e `vinculoAnterior` o vínculo em que ela nasceu (a troca de fornecedor): o que a
  * pessoa já decidiu no item (local, estoque, lote, pedido, natureza) fica; o "Lembrar" segue `lembrarDoVinculo`.
  */
@@ -80,7 +123,7 @@ export function decisaoDoVinculo(conf: Pick<ConferenciaDaImportacaoNfe, "itens">
     nItem,
     produtoId: comVinculo ? comVinculo.produto.id : "",
     produtoManual: false,
-    fator: comVinculo ? D(comVinculo.fator).toFixed() : "1",
+    fator: comVinculo ? fatorInicialDoVinculo(comVinculo) : "1",
     tipoFator: comVinculo ? comVinculo.tipoFator : "multiply",
     armazemId: base?.armazemId ?? "",
     geraEstoque: base?.geraEstoque ?? true,

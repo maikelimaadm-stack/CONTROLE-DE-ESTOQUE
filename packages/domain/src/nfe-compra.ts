@@ -215,20 +215,35 @@ export type ParcelasDaNota =
  * As parcelas da nota para a compra. Líquido = `fatura.liquido` quando há fatura com líquido, senão o vNF. Usa as
  * duplicatas quando Σ vDup = líquido (±0,01) E líquido = total da compra (±0,01); a última parcela absorve a diferença
  * para a soma ser EXATAMENTE o total. Sem duplicatas → `sem_duplicatas` (a condição de pagamento); senão `nao_conferem`.
+ *
+ * XML-04 (decisão 318): a regra é a mesma; a resposta só DIZ por quê. `sem_duplicatas` leva o `motivo` (a nota não
+ * traz `<dup>`, ou o leitor as descartou por falta de vencimento). `nao_conferem` leva o total comparado, de onde veio
+ * o líquido, TODAS as comparações que falharam (as duas podem falhar juntas; a última parcela não positiva só é
+ * conferida quando as duas passaram) e as duas diferenças, com sinal, sempre presentes.
  */
 export function parcelasDaNota(nota: NotaFiscalLida, valorTotalDaCompra: string): ParcelasDaNota {
-  if (nota.duplicatas.length === 0) return { situacao: "sem_duplicatas" };
-  const liquido = D(nota.fatura?.liquido ?? nota.totais.nota);
+  if (nota.duplicatas.length === 0) {
+    return { situacao: "sem_duplicatas", motivo: (nota.duplicatasDescartadas ?? 0) > 0 ? "duplicata_sem_vencimento" : "nota_sem_duplicatas" };
+  }
+  const liquidoDaFatura = nota.fatura?.liquido ?? null;
+  const liquido = D(liquidoDaFatura ?? nota.totais.nota);
   const soma = nota.duplicatas.reduce((a, p) => a.plus(D(p.valor)), D(0));
   const total = D(valorTotalDaCompra);
   const tolerancia = D(TOLERANCIA_TOTAL_DA_NOTA);
-  const naoConferem = { situacao: "nao_conferem" as const, soma: money(soma), liquido: money(liquido) };
-  if (soma.minus(liquido).abs().gt(tolerancia) || liquido.minus(total).abs().gt(tolerancia)) return naoConferem;
+  const naoConferem = (falhas: FalhaDasParcelasDaNota[]): ParcelasDaNota => ({
+    situacao: "nao_conferem", soma: money(soma), liquido: money(liquido), total: money(total),
+    origemDoLiquido: liquidoDaFatura !== null ? "fatura" : "nota", falhas,
+    diferencaSomaLiquido: money(soma.minus(liquido)), diferencaLiquidoTotal: money(liquido.minus(total)),
+  });
+  const falhas: FalhaDasParcelasDaNota[] = [];
+  if (soma.minus(liquido).abs().gt(tolerancia)) falhas.push("soma_diferente_do_liquido");
+  if (liquido.minus(total).abs().gt(tolerancia)) falhas.push("liquido_diferente_do_total");
+  if (falhas.length > 0) return naoConferem(falhas);
   const parcelas = nota.duplicatas.map((p) => ({ ...p, valor: money(p.valor) }));
   const ultima = parcelas[parcelas.length - 1]!;
   const antes = parcelas.slice(0, -1).reduce((a, p) => a.plus(D(p.valor)), D(0));
   const valorDaUltima = total.minus(antes);
-  if (!valorDaUltima.gt(0)) return naoConferem;
+  if (!valorDaUltima.gt(0)) return naoConferem(["ultima_parcela_nao_positiva"]);
   ultima.valor = money(valorDaUltima);
   return { situacao: "conferem", parcelas };
 }

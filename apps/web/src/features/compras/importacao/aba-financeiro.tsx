@@ -6,17 +6,26 @@ import { Button, Field, Input, NativeSelect } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { opcoesDeNaturezaDeDespesa } from "../central/estado";
 import { decimalDigitado, percentualValido, type EstadoDaConferencia, type FinanceiroNaTela } from "./estado";
+import { explicacaoDasParcelas } from "./explicacao-das-parcelas";
 
 /**
  * A ABA "FINANCEIRO" DA CONFERÊNCIA (OPERACOES-01 F7, decisão 284): as parcelas da NOTA (as duplicatas, quando somam o
  * líquido e o líquido é o total da compra) ou a condição de pagamento; a forma, o tipo de título, a classificação
  * CAPEX/OPEX e o rateio (natureza e centro do documento, por valor — percentuais em TEXTO decimal —, ou por produto,
  * com o par em cada item). O título nasce na CONFIRMAÇÃO da compra, nunca aqui; a TOP decide se há financeiro.
+ *
+ * XML-04 (decisão 318): as duplicatas que não servem DIZEM POR QUÊ (`explicacaoDasParcelas`, do mesmo resultado que
+ * decide "Usar a condição de pagamento"): os três números, cada comparação que falhou com a diferença, ou o motivo de
+ * não haver duplicatas. A forma de pagamento é a RESOLVIDA no estado (`formaDaImportacao`): a escolha da pessoa, a da
+ * nota, o padrão da TOP que a cobra, ou a pergunta — com a origem, a pergunta e o aviso da trava da TOP perto do campo;
+ * o campo trava como na Central quando o valor é o padrão da TOP que não deixa trocar.
  */
 export function AbaFinanceiro({ e }: { e: EstadoDaConferencia }) {
   const { fin } = e;
   const leitura = !e.pendente;
   const conferem = e.parcelas.situacao === "conferem" ? e.parcelas : null;
+  const explicacao = explicacaoDasParcelas(e.parcelas);
+  const { forma } = e;
   const somaDoRateio = fin.linhas.reduce((a, l) => (percentualValido(l.percentual) ? a.plus(D(l.percentual)) : a), D(0));
 
   return <div data-testid="importacao-aba-financeiro" className="flex flex-col gap-4">
@@ -27,10 +36,11 @@ export function AbaFinanceiro({ e }: { e: EstadoDaConferencia }) {
           <thead><tr className="text-left text-slate-500"><th>Duplicata</th><th>Vencimento</th><th className="text-right">Valor</th></tr></thead>
           <tbody>{conferem.parcelas.map((p, k) => <tr key={k} data-testid="importacao-parcela"><td>{p.numero}</td><td>{dateBR(p.vencimento)}</td><td className="text-right">{brl(p.valor)}</td></tr>)}</tbody>
         </table>
-        : <p className="text-[12.5px] text-slate-600" data-testid="importacao-parcelas-indisponiveis">
-          {e.parcelas.situacao === "sem_duplicatas" ? "A nota não traz duplicatas: a compra usa a condição de pagamento."
-            : `As duplicatas da nota (${brl(e.parcelas.situacao === "nao_conferem" ? e.parcelas.soma : "0")}) não conferem com o líquido: a compra usa a condição de pagamento.`}
-        </p>}
+        : <>
+          <p className="text-[12.5px] text-slate-600" data-testid="importacao-parcelas-indisponiveis">{explicacao?.resumo}</p>
+          {explicacao?.numeros && <p className="text-[12.5px] text-slate-600" data-testid="importacao-parcelas-numeros">{explicacao.numeros}</p>}
+          {explicacao?.falhas.map((f) => <p key={f.codigo} className="text-[12.5px] text-slate-600" data-testid="importacao-parcelas-falha" data-falha={f.codigo}>{f.texto}</p>)}
+        </>}
       <label className="flex items-center gap-1.5 text-[12.5px]">
         <input type="checkbox" data-testid="importacao-usar-condicao" checked={fin.parcelas === "condicao"} disabled={leitura || !conferem}
           onChange={(ev) => e.mudarFin({ parcelas: ev.target.checked ? "condicao" : "nota" })} />
@@ -49,8 +59,13 @@ export function AbaFinanceiro({ e }: { e: EstadoDaConferencia }) {
         </Field>
       </>}
       <Field label="Forma de pagamento" span={5} error={e.erroEm("financeiro.forma_pagamento_id")}>
-        <div data-testid="importacao-forma"><RefSelect resource="payment_methods" value={fin.formaId} disabled={leitura} onChange={(v) => e.mudarFin({ formaId: v ?? "" })} /></div>
+        <div data-testid="importacao-forma" data-origem={forma.declarada ? forma.origem : undefined} data-travado-pela-top={forma.travada ? "true" : undefined}>
+          <RefSelect resource="payment_methods" value={forma.formaId} labelHint={forma.rotulo} disabled={leitura || forma.travada} onChange={(v) => e.mudarFin({ formaId: v ?? "", formaEscolhida: true })} />
+        </div>
       </Field>
+      {forma.texto && <p className="col-span-12 text-[12.5px] text-slate-600" data-testid="importacao-forma-origem">{forma.texto}</p>}
+      {forma.pergunta && <p className="col-span-12 text-[12px] text-amber-800" data-testid="importacao-forma-pergunta">{forma.pergunta}</p>}
+      {forma.aviso && <p className="col-span-12 text-[12px] text-amber-800" data-testid="importacao-forma-aviso">{forma.aviso}</p>}
       <Field label="Tipo de título" span={4} error={e.erroEm("financeiro.tipo_titulo_id")}>
         <div data-testid="importacao-tipo-titulo"><RefSelect resource="title_types" value={fin.tipoTituloId} disabled={leitura} onChange={(v) => e.mudarFin({ tipoTituloId: v ?? "" })} /></div>
       </Field>

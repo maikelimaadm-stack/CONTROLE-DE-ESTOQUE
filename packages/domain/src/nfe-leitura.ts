@@ -12,8 +12,9 @@
  *   · ao menos um `det`; decimais no formato da NF-e (valores em dinheiro com até 2 casas); datas AAAA-MM-DD válidas.
  *
  * Lê também o rastro (lote) de cada item, a fatura e as duplicatas (`cobr`), o pedido do item (`xPed`/`nItemPed`) e o
- * do cabeçalho (`compra/xPed`). ICMS-ST do item = `vICMSST` + `vFCPST` do grupo de ICMS do item; ICMS-ST do total =
- * `vST` + `vFCPST`. Valor opcional ausente vale "0.00".
+ * do cabeçalho (`compra/xPed`) e, desde a XML-04 (decisão 318), os pagamentos (`pag/detPag`, sem nunca recusar por eles).
+ * ICMS-ST do item = `vICMSST` + `vFCPST` do grupo de ICMS do item; ICMS-ST do total = `vST` + `vFCPST`. Valor opcional
+ * ausente vale "0.00".
  *
  * FUNÇÃO PURA: sem DOM, sem Node, sem relógio. Nada de ponto flutuante: os números ficam como texto decimal.
  */
@@ -440,6 +441,18 @@ export function lerNotaFiscalEletronica(texto: string): LeituraDaNfe {
   const duplicatas: ParcelaDaNota[] = lidas.every((d) => d.vencimento !== null)
     ? lidas.map((d) => ({ numero: d.numero, vencimento: d.vencimento!, valor: d.valor }))
     : [];
+  // XML-04 (decisão 318): a regra acima não muda; a nota só passa a DIZER quantas `<dup>` a regra descartou (todas as
+  // lidas, quando uma delas não tem vencimento). `dVenc` presente e inválido continua recusa (`data_invalida`), nunca
+  // descarte.
+  const duplicatasDescartadas = duplicatas.length === 0 ? lidas.length : 0;
+
+  // XML-04 (decisão 318): os `<detPag>` do grupo de pagamento, na ordem. O leiaute 4.00 tem UM `<pag>`; se vierem
+  // vários, entram os `<detPag>` de todos (nunca só os do primeiro: "o primeiro" é o palpite que a decisão tira). Nada
+  // aqui recusa a leitura: `tPag` vazio e `vPag` fora do formato da NF-e viram `null` (um pagamento sem código).
+  const pagamentos: PagamentoDaNota[] = filhosChamados(infNFe, "pag").flatMap((pag) => filhosChamados(pag, "detPag")).map((detPag) => {
+    const vPag = opcional(textoEm(detPag, "vPag"));
+    return { tPag: opcional(textoEm(detPag, "tPag")), vPag: vPag !== null && DINHEIRO.test(vPag) ? money(vPag) : null };
+  });
 
   if (l.recusas.length > 0 || !docEmit || !docDest) {
     return { ok: false, recusas: l.recusas };
@@ -481,6 +494,8 @@ export function lerNotaFiscalEletronica(texto: string): LeituraDaNfe {
       totais,
       fatura,
       duplicatas,
+      duplicatasDescartadas,
+      pagamentos,
       xPedCabecalho: opcional(textoEm(infNFe, "compra", "xPed")),
       informacoesComplementares: opcional(textoEm(infNFe, "infAdic", "infCpl"))
     }

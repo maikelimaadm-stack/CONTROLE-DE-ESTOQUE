@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { D, money } from "@agro/shared";
 import {
   conferirTotalDaNota, linhasDoItemDaNota, parcelasDaNota, quantidadeInterna, totaisDaCompra, unitarioInterno,
@@ -9,8 +9,11 @@ import {
 } from "@agro/domain";
 import { api, type ApiError } from "@/lib/api";
 import { novaChaveDeIdempotencia } from "../pedido-e-orcamento";
+import { estruturaDaResposta, lerRegras } from "../layout-da-central";
 import type { RecusaNoCampo } from "./api";
-import { decisaoDoVinculo, lembrarAoTrocarProduto } from "./vinculo-do-item";
+import { fatorNaTela } from "./fator-do-item";
+import { formaDaImportacao, lerFormaDaConferencia, topDaForma } from "./forma-da-nota";
+import { decisaoDoVinculo, fatorPelaNotaDoVinculo, fatorValido, lembrarAoTrocarProduto } from "./vinculo-do-item";
 
 /**
  * O ESTADO DA CONFERÊNCIA DO XML (OPERACOES-01 F7, decisão 284) — sem JSX. As abas só DESENHAM; o que vai no corpo do
@@ -25,6 +28,13 @@ import { decisaoDoVinculo, lembrarAoTrocarProduto } from "./vinculo-do-item";
  *   · Pendência que BLOQUEIA o "Gerar compra": a divergência do servidor que a tela não resolve (parceiro, valor que a
  *     compra não representa, nota já lançada, DF-e em andamento) e o que a tela sabe que falta (TOP, produto de cada
  *     item, fator, lote, total que não bate, parcelas da nota que não conferem, item sem o item do pedido).
+ *   · XML-04 (decisão 318): o FATOR que é pergunta nasce vazio e é a pendência do fator inválido de sempre; o aviso do
+ *     vínculo lembrado contra o cadastro é refeito pela tela enquanto o campo mostra o fator do vínculo (`fatorNaTela`).
+ *     A FORMA de pagamento é RESOLVIDA a cada desenho (`formaDaImportacao`: operador → nota → padrão da TOP só cobrando →
+ *     pergunta, com a trava da TOP); o estado guarda só a escolha EXPLÍCITA da pessoa (`formaEscolhida`), que nenhum
+ *     recálculo apaga. A TOP é lida (`/regras-da-operacao` e o layout efetivo, as perguntas e as chaves da Central) SÓ
+ *     quando a conferência declara a forma da nota (`financeiro.forma`): sem ela (a API anterior), nenhuma pergunta nova
+ *     e o corpo de antes, byte a byte.
  */
 
 export type AbaDaConferencia = "cabecalho" | "itens" | "pedido" | "financeiro" | "divergencias";
@@ -32,6 +42,13 @@ export const ABAS_DA_CONFERENCIA: readonly AbaDaConferencia[] = ["cabecalho", "i
 
 /** As divergências do servidor que a tela RESOLVE com as decisões (ela recalcula com as mesmas contas do domínio). */
 const RESOLVIDAS_NA_TELA: ReadonlySet<string> = new Set(["item_sem_vinculo", "item_ambiguo", "rastro_diferente_da_quantidade", "quantidade_invalida", "total_diferente", "lote_sem_rastro"]);
+/**
+ * XML-04 (decisão 318): os AVISOS do fator de um item (não bloqueiam no servidor) que a tela refaz pela decisão — o
+ * molde do `lote_sem_rastro`: a pergunta vira a pendência do fator inválido enquanto o campo não tem um fator válido, e
+ * o vínculo contra o cadastro, o aviso da tela enquanto o campo mostra o fator do vínculo. A tela só os assume quando lê
+ * o `fatorPelaNota` daquele item; senão o aviso do servidor fica, como veio.
+ */
+const DO_FATOR_NA_TELA: ReadonlySet<string> = new Set(["fator_a_informar", "fator_do_vinculo_diferente_do_cadastro"]);
 
 /** A decisão de UM item da nota, como a tela a guarda (texto nos campos digitáveis). */
 export interface DecisaoDoItemNaTela {
@@ -58,7 +75,10 @@ export interface FinanceiroNaTela {
   parcelas: "nota" | "condicao";
   condicaoId: string;
   vencimento: string;
+  /** A forma que a PESSOA escolheu (`formaEscolhida`); a forma da tela é a resolvida (`formaDaImportacao`). */
   formaId: string;
+  /** XML-04: a pessoa escolheu (ou esvaziou) a forma — a escolha dela vence a nota e a TOP. */
+  formaEscolhida: boolean;
   tipoTituloId: string;
   classificacao: "" | "capex" | "opex";
   rateioTipo: "documento" | "por_valor" | "por_produto";
@@ -87,7 +107,7 @@ export type ContaDoItem =
 
 /** Vírgula vira ponto e o resto fica como digitado (a forma é conferida em `fatorValido`/`percentualValido`). */
 export const decimalDigitado = (v: string) => v.replace(/\s+/g, "").replace(",", ".");
-export const fatorValido = (v: string) => /^\d{1,12}(\.\d{1,6})?$/.test(v) && D(v).gt(0);
+export { fatorValido };
 export const percentualValido = (v: string) => /^\d{1,3}(\.\d{1,4})?$/.test(v) && D(v).gt(0) && D(v).lte(100);
 
 /* ═════════════════════════════════════ caminho → aba ═════════════════════════════════════ */
@@ -133,6 +153,29 @@ export function contaDoItem(item: ItemDaNota, d: DecisaoDoItemNaTela, produto: P
   return { situacao: "pronta", quantidadeInterna: q, unitarioInterno: r.linhas.length === 1 ? r.linhas[0]!.valorUnitario : u, linhas: r.linhas };
 }
 
+/* ═════════════════════════════════════ as divergências do servidor ═════════════════════════════════════ */
+
+const vinculoDoItem = (conf: Pick<ConferenciaDaImportacaoNfe, "itens">, nItem: number | null) => conf.itens.find((x) => x.nItem === nItem)?.vinculo;
+
+/** As divergências do SERVIDOR como a tela as mostra: sem as que ela resolve, cada uma na aba em que se resolve. */
+export function divergenciasDoServidorNaTela(conf: Pick<ConferenciaDaImportacaoNfe, "divergencias" | "itens">): DivergenciaNaTela[] {
+  const out: DivergenciaNaTela[] = [];
+  for (const dv of conf.divergencias) {
+    if (RESOLVIDAS_NA_TELA.has(dv.codigo)) continue;
+    if (DO_FATOR_NA_TELA.has(dv.codigo) && fatorPelaNotaDoVinculo(vinculoDoItem(conf, dv.nItem))) continue;
+    const aba: AbaDaConferencia = dv.codigo.startsWith("parceiro_") ? "cabecalho" : dv.codigo === "parcelas_nao_conferem" ? "financeiro"
+      : dv.codigo === "preco_diferente_do_pedido" ? "pedido" : "divergencias";
+    out.push({ ...dv, aba, origem: "servidor" });
+  }
+  return out;
+}
+
+/** XML-04: o aviso do vínculo lembrado contra o cadastro, refeito pela tela enquanto o campo mostra o fator do vínculo. */
+export function avisoDoFatorNaTela(conf: Pick<ConferenciaDaImportacaoNfe, "itens">, d: DecisaoDoItemNaTela): DivergenciaNaTela | null {
+  const aviso = fatorNaTela(vinculoDoItem(conf, d.nItem), d)?.aviso;
+  return aviso ? { codigo: "fator_do_vinculo_diferente_do_cadastro", mensagem: `Item ${d.nItem}: ${aviso}`, nItem: d.nItem, bloqueia: false, aba: "itens", origem: "tela" } : null;
+}
+
 /* ═════════════════════════════════════ as decisões iniciais ═════════════════════════════════════ */
 
 const hoje = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
@@ -167,6 +210,10 @@ export interface OpcoesDoEstado {
   /** A pessoa pode receber pedido (`pedidos_compra.edit`): sem isso, nenhum pedido é pré-escolhido. */
   podeReceberPedido: boolean;
   solicitacaoId: string | null;
+  /** XML-04: a espécie compra (o segmento das portas e a família dos padrões da TOP); `null` sem a variante. */
+  compra: { segmento: string; familia: string } | null;
+  /** XML-04: a porta das TOPs declara o layout do documento (a Central só lê o layout efetivo com ela). */
+  entendeLayout: boolean;
 }
 
 export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: OpcoesDoEstado) {
@@ -180,7 +227,7 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
   const [itens, setItens] = React.useState<DecisaoDoItemNaTela[]>(inicio.decisoes);
   const [cab, setCab] = React.useState<CabecalhoNaTela>(() => ({ topId: o.topPadrao ?? "", dataEntrada: hoje(), observacao: "", transportadoraId: "", pedidoId: inicio.pedidoId }));
   const [fin, setFin] = React.useState<FinanceiroNaTela>(() => ({
-    parcelas: conf.financeiro.parcelas.situacao === "conferem" ? "nota" : "condicao", condicaoId: "", vencimento: "", formaId: "", tipoTituloId: "",
+    parcelas: conf.financeiro.parcelas.situacao === "conferem" ? "nota" : "condicao", condicaoId: "", vencimento: "", formaId: "", formaEscolhida: false, tipoTituloId: "",
     classificacao: "", rateioTipo: "documento", categoriaId: "", centroId: "", linhas: [{ categoriaId: "", centroId: "", contaId: "", safraId: "", percentual: "100" }]
   }));
   const [recusas, setRecusas] = React.useState<RecusaNoCampo[]>([]);
@@ -303,14 +350,32 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
   }
   const parcelas: ParcelasDaNota = total?.confere ? parcelasDaNota(conf.nota, total.total) : conf.financeiro.parcelas;
 
+  /* ── XML-04: a forma de pagamento (a nota, a TOP escolhida e a escolha da pessoa) ── */
+  const formaDaNota = React.useMemo(() => lerFormaDaConferencia(conf.financeiro), [conf]);
+  const segmento = o.compra?.segmento ?? "";
+  // A TOP só é perguntada quando a conferência declara a forma da nota — as MESMAS portas e chaves da Central.
+  const pedeATop = formaDaNota !== undefined && conf.situacao === "pendente" && Boolean(segmento) && Boolean(cab.topId);
+  const regrasDaTop = useQuery<unknown, ApiError>({
+    queryKey: ["compras-regras-da-operacao", segmento, cab.topId],
+    queryFn: () => api<unknown>(`/api/compras/${segmento}/regras-da-operacao?tipo_operacao_id=${encodeURIComponent(cab.topId)}`),
+    enabled: pedeATop, retry: false
+  });
+  const layoutDaTop = useQuery<unknown, ApiError>({
+    queryKey: ["layout-efetivo", "compras", segmento, cab.topId],
+    queryFn: () => api<unknown>(`/api/compras/${segmento}/layout-efetivo?tipo_operacao_id=${encodeURIComponent(cab.topId)}`),
+    enabled: pedeATop && o.entendeLayout, retry: false
+  });
+  const regras = React.useMemo(() => (pedeATop && regrasDaTop.data !== undefined ? lerRegras(regrasDaTop.data) : null), [pedeATop, regrasDaTop.data]);
+  const layout = React.useMemo(() => (pedeATop && o.entendeLayout ? estruturaDaResposta(layoutDaTop.data) : null), [pedeATop, o.entendeLayout, layoutDaTop.data]);
+  const forma = formaDaImportacao({
+    operador: fin.formaEscolhida ? fin.formaId : null, daNota: formaDaNota,
+    top: o.compra ? topDaForma(regras, { familia: o.compra.familia, layout }) : null
+  });
+  /** A TOP escolhida ainda chegando: a forma resolvida pode mudar (o "Gerar compra" espera, como espera a releitura). */
+  const lendoATop = pedeATop && (regrasDaTop.isPending || (o.entendeLayout && layoutDaTop.isPending));
+
   /* ── divergências e pendências ── */
-  const divergencias: DivergenciaNaTela[] = [];
-  for (const dv of conf.divergencias) {
-    if (RESOLVIDAS_NA_TELA.has(dv.codigo)) continue;
-    const aba: AbaDaConferencia = dv.codigo.startsWith("parceiro_") ? "cabecalho" : dv.codigo === "parcelas_nao_conferem" ? "financeiro"
-      : dv.codigo === "preco_diferente_do_pedido" ? "pedido" : "divergencias";
-    divergencias.push({ ...dv, aba, origem: "servidor" });
-  }
+  const divergencias: DivergenciaNaTela[] = divergenciasDoServidorNaTela(conf);
   const pendente = conf.situacao === "pendente";
   if (pendente) {
     if (!cab.topId) divergencias.push({ codigo: "top", mensagem: "Escolha a TOP de compra.", nItem: null, bloqueia: true, aba: "cabecalho", origem: "tela" });
@@ -322,6 +387,8 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
       else if (c.situacao === "fator_invalido") divergencias.push({ codigo: "item_fator_invalido", mensagem: `Item ${n}: informe o fator (maior que zero, até 6 casas).`, nItem: n, bloqueia: true, aba: "itens", origem: "tela" });
       else if (c.situacao === "recusa") divergencias.push({ codigo: `item_${c.motivo}`, mensagem: `Item ${n}: ${MSG_DA_LINHA[c.motivo]}`, nItem: n, bloqueia: true, aba: "itens", origem: "tela" });
       const d = itens.find((x) => x.nItem === n)!;
+      const avisoDoFator = avisoDoFatorNaTela(conf, d);
+      if (avisoDoFator) divergencias.push(avisoDoFator);
       if (cab.pedidoId && !d.itemOrigemId) divergencias.push({ codigo: "item_sem_item_do_pedido", mensagem: `Item ${n}: ligue o item da nota a um item do pedido.`, nItem: n, bloqueia: true, aba: "pedido", origem: "tela" });
       if (fin.rateioTipo === "por_produto" && (!d.categoriaId || !d.centroId)) divergencias.push({ codigo: "item_sem_natureza", mensagem: `Item ${n}: com o rateio por produto, informe a natureza e o centro do item.`, nItem: n, bloqueia: true, aba: "itens", origem: "tela" });
     }
@@ -329,7 +396,9 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
       divergencias.push({ codigo: "total_diferente", mensagem: `O total calculado (${total.total}) não bate com o total da nota (${money(totais.nota)}).`, nItem: null, bloqueia: true, aba: "divergencias", origem: "tela" });
     }
     if (fin.parcelas === "nota" && parcelas.situacao !== "conferem") {
-      divergencias.push({ codigo: "parcelas_da_nota", mensagem: parcelas.situacao === "sem_duplicatas" ? "A nota não traz duplicatas: use a condição de pagamento." : "As duplicatas da nota não conferem com o total: use a condição de pagamento.", nItem: null, bloqueia: true, aba: "financeiro", origem: "tela" });
+      const semVencimento = parcelas.situacao === "sem_duplicatas" && Object.hasOwn(parcelas, "motivo") && parcelas.motivo === "duplicata_sem_vencimento";
+      divergencias.push({ codigo: "parcelas_da_nota", mensagem: semVencimento ? "A nota trouxe duplicatas sem vencimento: use a condição de pagamento."
+        : parcelas.situacao === "sem_duplicatas" ? "A nota não traz duplicatas: use a condição de pagamento." : "As duplicatas da nota não conferem com o total: use a condição de pagamento.", nItem: null, bloqueia: true, aba: "financeiro", origem: "tela" });
     }
     if (fin.rateioTipo === "por_valor") {
       const ruins = fin.linhas.some((l) => !l.categoriaId || !l.centroId || !percentualValido(l.percentual));
@@ -357,7 +426,7 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
       financeiro: {
         parcelas: fin.parcelas,
         ...(fin.parcelas === "condicao" ? { condicao_pagamento_id: fin.condicaoId || null, data_vencimento: fin.vencimento || null } : {}),
-        forma_pagamento_id: fin.formaId || null,
+        forma_pagamento_id: forma.formaId || null,
         tipo_titulo_id: fin.tipoTituloId || null,
         classificacao_gasto: fin.classificacao || null,
         rateio
@@ -385,7 +454,7 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
   const recusasPorAba = (aba: AbaDaConferencia) => recusas.filter((r) => abaDoCaminho(r.path) === aba).length;
 
   return {
-    conf, itens, cab, fin, produtos, erroDeProduto, contas, total, parcelas, divergencias, bloqueios, recusas, pendente,
+    conf, itens, cab, fin, produtos, erroDeProduto, contas, total, parcelas, forma, lendoATop, divergencias, bloqueios, recusas, pendente,
     mudarCab, mudarFin, mudarItem, mudarPedido, mudarLinhaDoRateio, adicionarLinhaDoRateio, removerLinhaDoRateio, conhecerProduto,
     corpo, setRecusas, erroEm, erroDoItem, recusasPorAba,
     conhecerProdutosDoVinculo, chaveDoLote, renovarChaveDoLote

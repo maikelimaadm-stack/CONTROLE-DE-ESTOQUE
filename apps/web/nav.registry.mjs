@@ -290,6 +290,8 @@ export const AREAS = [
   cfg("financeiro", "chart-accounts", "Plano de Contas", "chart_accounts.view", { keywords: ["conta contábil", "conta do plano"] }),
   cfg("financeiro", "title-types", "Tipos de Título", "payables.view"),
   cfg("financeiro", "payment-methods", "Formas de Pagamento", "sales.view"),
+  // XML-04 (decisão 318): a ligação do código tPag da NF-e a uma forma de pagamento — a mesma permissão das Formas.
+  cfg("financeiro", "formas-pagamento-da-nfe", "Formas de Pagamento da NF-e", "sales.view", { keywords: ["tpag", "forma da nota", "pagamento da nota", "xml", "importação de nota"] }),
   cfg("financeiro", "condicoes-pagamento", "Condições de Pagamento", "sales.view"),
   cfg("financeiro", "financial-freezes", "Congelamentos", "financial_freezes.view", { keywords: ["fechar período", "bloquear lançamentos"] }),
   cfg("financeiro", "naturezas-baixa", "Naturezas padrão da baixa", "financial_categories.view", { keywords: ["juros", "multa", "desconto", "tarifa", "natureza padrão"] }),

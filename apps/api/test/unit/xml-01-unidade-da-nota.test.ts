@@ -88,11 +88,13 @@ function ctxFalso() {
     tx: {
       query: async (sql: string, params: unknown[] = []) => {
         consultas.push({ sql, params });
+        // XML-04 (decisão 318): a consulta das unidades é a do CADASTRO do fator (`tipo` em cada linha); o banco falso
+        // só conhece as unidades — nenhum produto volta, e o item achado fica com o fator a perguntar.
         if (sql.includes("from erp.measurement_units mu")) {
           const [orgId, simbolos] = params as [string, string[]];
           const rows = CADASTRO
             .filter((x) => (x.organization_id === orgId || x.organization_id === null) && simbolos.includes(x.symbol.trim().toUpperCase()))
-            .map((x) => ({ id: x.id, simbolo: x.symbol, da_organizacao: x.organization_id !== null }));
+            .map((x) => ({ tipo: "unidade", id: x.id, simbolo: x.symbol, da_organizacao: x.organization_id !== null }));
           return { rows, rowCount: rows.length };
         }
         if (sql.includes("btrim(p.barcode)")) {
@@ -154,19 +156,29 @@ describe("vinculosDosItens — a unidade numa consulta só", () => {
     }
   });
 
-  it("o item que JÁ tem vínculo não entra na consulta da unidade (só os `nenhum`)", async () => {
+  // XML-04 (decisão 318): o item que JÁ tem produto também precisa da unidade do uCom — é dela que sai o FATOR. A
+  // consulta continua UMA para a nota (a do cadastro: os uCom de todos os itens e os produtos achados), e o
+  // pré-preenchimento com a unidade continua só dos que a nota pode cadastrar.
+  it("o item que JÁ tem vínculo entra na consulta do cadastro pelo uCom (o fator); a unidade a criar continua só dos `nenhum`", async () => {
     const { ctx, consultas } = ctxFalso();
     const v = await vinculosDosItens(ctx, notaCom([item(1, "CX", EAN), item(2, "UN")]), null);
     expect(v.get(1)?.situacao).toBe("sugerido");
+    expect(Object.prototype.hasOwnProperty.call(v.get(1), "preenchimento"), "o sugerido pela identidade não leva pré-preenchimento").toBe(false);
     const unidade = consultasDeUnidade(consultas);
     expect(unidade).toHaveLength(1);
-    expect(unidade[0]!.params[1]).toEqual(["UN"]);
+    expect([...(unidade[0]!.params[1] as string[])].sort()).toEqual(["CX", "UN"]);
+    expect(unidade[0]!.params[2], "o produto achado vai na MESMA consulta").toEqual([u(99)]);
+    const x = v.get(2);
+    expect(x?.situacao === "nenhum" ? x.preenchimento.measurement_id : null).toBe(u(3));
   });
 
-  it("todos os itens com vínculo: nenhuma consulta de unidade", async () => {
+  it("todos os itens com vínculo: UMA consulta do cadastro (o fator), com os uCom distintos e o produto uma vez só", async () => {
     const { ctx, consultas } = ctxFalso();
     await vinculosDosItens(ctx, notaCom([item(1, "KG", EAN), item(2, "UN", EAN)]), null);
-    expect(consultasDeUnidade(consultas)).toHaveLength(0);
+    const unidade = consultasDeUnidade(consultas);
+    expect(unidade).toHaveLength(1);
+    expect([...(unidade[0]!.params[1] as string[])].sort()).toEqual(["KG", "UN"]);
+    expect(unidade[0]!.params[2]).toEqual([u(99)]);
   });
 
   it("a unidade de OUTRA organização nunca é a do produto", async () => {

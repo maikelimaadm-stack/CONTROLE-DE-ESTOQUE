@@ -11,6 +11,7 @@ import { enumLabel } from "@/lib/copy";
 import { brl, dateBR } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { empresaDestinoDoRegistro } from "@/lib/empresa-ativa";
+import { entendeLayoutDocumento } from "@/features/sales/tipo-operacao-select";
 import { useTabTitle } from "@/lib/workspace-tabs";
 import { Button, ConfirmDialog, EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import { useTopsDaEspecie, varianteDeCompra } from "../variantes";
@@ -35,6 +36,10 @@ import { AbaDivergencias } from "./aba-divergencias";
  *
  * Sem a capacidade `importacaoXml` (a API anterior) a página não pergunta nada: diz que a importação não está
  * disponível nesta versão do servidor. A recusa do servidor (422) volta para o campo e para a aba do `path`.
+ *
+ * XML-04 (decisão 318): o estado recebe a espécie compra (segmento e família) e se a porta das TOPs entende o layout
+ * do documento — para ler, como a Central, o que a TOP escolhida diz da forma de pagamento. Enquanto essa leitura chega,
+ * o "Gerar compra" espera (a forma resolvida pode mudar), como espera a releitura da conferência.
  */
 
 const NOME_DA_ABA: Record<AbaDaConferencia, string> = {
@@ -88,7 +93,9 @@ function ConferenciaCarregada({ conf, solicitacaoId, relendo, erroDaReleitura, o
   const e = useEstadoDaConferencia(conf, {
     topPadrao: tops.situacao === "pronto" ? tops.dados.defaultId : null,
     podeReceberPedido: can("pedidos_compra.edit"),
-    solicitacaoId: solicitacao
+    solicitacaoId: solicitacao,
+    compra: varianteDaCompra ? { segmento: varianteDaCompra.segmento, familia: varianteDaCompra.familia } : null,
+    entendeLayout: entendeLayoutDocumento(tops)
   });
   const [aba, setAba] = React.useState<AbaDaConferencia>("cabecalho");
   const [descartando, setDescartando] = React.useState(false);
@@ -166,7 +173,7 @@ function ConferenciaCarregada({ conf, solicitacaoId, relendo, erroDaReleitura, o
       actions={e.pendente ? <>
         <Button variant="outline" data-testid="importacao-descartar" disabled={gerando || descartando} onClick={() => setConfirmandoDescarte(true)}>Descartar importação</Button>
         <span title={DICA_DO_GERAR}>
-          <Button data-testid="importacao-gerar-compra" loading={gerando} disabled={bloqueado || relendo || descartando} aria-describedby="importacao-dica-gerar" onClick={() => void gerar()}>Gerar compra</Button>
+          <Button data-testid="importacao-gerar-compra" loading={gerando} disabled={bloqueado || relendo || descartando || e.lendoATop} aria-describedby="importacao-dica-gerar" onClick={() => void gerar()}>Gerar compra</Button>
         </span>
       </> : undefined} />
     {e.pendente && <p id="importacao-dica-gerar" className="text-[12px] text-slate-500">{DICA_DO_GERAR}{e.bloqueios.length > 0 ? ` Antes, resolva ${e.bloqueios.length === 1 ? "1 pendência" : `${e.bloqueios.length} pendências`} (aba Divergências).` : ""}</p>}
