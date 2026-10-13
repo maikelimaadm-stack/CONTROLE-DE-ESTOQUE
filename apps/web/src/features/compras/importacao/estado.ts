@@ -10,7 +10,7 @@ import {
 import { api, type ApiError } from "@/lib/api";
 import { novaChaveDeIdempotencia } from "../pedido-e-orcamento";
 import type { RecusaNoCampo } from "./api";
-import { decisaoDoVinculo } from "./vinculo-do-item";
+import { decisaoDoVinculo, lembrarAoTrocarProduto } from "./vinculo-do-item";
 
 /**
  * O ESTADO DA CONFERÊNCIA DO XML (OPERACOES-01 F7, decisão 284) — sem JSX. As abas só DESENHAM; o que vai no corpo do
@@ -266,7 +266,12 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
     if (d.nItem !== nItem) return d;
     const nova = { ...d, ...p };
     if (p.geraEstoque === false) nova.armazemId = "";
-    if (p.produtoId !== undefined && p.produtoId !== d.produtoId) nova.itemOrigemId = itemDoPedidoPara(conf, cab.pedidoId, nItem, nova.produtoId);
+    if (p.produtoId !== undefined && p.produtoId !== d.produtoId) {
+      nova.itemOrigemId = itemDoPedidoPara(conf, cab.pedidoId, nItem, nova.produtoId);
+      // XML-02 (decisão 314): no palpite, trocar o produto é a escolha da pessoa — o "Lembrar" segue a escolha.
+      const lembrar = p.lembrar === undefined ? lembrarAoTrocarProduto(conf.itens.find((x) => x.nItem === nItem)?.vinculo, p.produtoId) : undefined;
+      if (lembrar !== undefined) nova.lembrar = lembrar;
+    }
     return nova;
   }));
   const mudarPedido = (pedidoId: string) => {

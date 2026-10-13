@@ -16,6 +16,8 @@ import type { DecisaoDoItemNaTela } from "./estado";
  *     identidade (a descrição semelhante e, fail-closed, a origem desconhecida): o palpite só vira vínculo lembrado com a
  *     marcação da pessoa. Refeito o vínculo (troca de fornecedor), o que a pessoa mudou fica e o resto segue o vínculo
  *     novo; o palpite volta desmarcado (o vínculo lembrado é do fornecedor: marcar com outro fornecedor não vale para este).
+ *   · TROCA DE PRODUTO (`lembrarAoTrocarProduto`): no palpite, a pessoa que troca o produto por outro decidiu — o
+ *     "Lembrar" passa a marcado; voltando ao produto do palpite, desmarcado.
  *   · DECISÃO (`decisaoDoVinculo`): a decisão do item com que a tela nasce (e que a troca de fornecedor refaz) — o
  *     produto e o fator do lembrado e de todo sugerido (também o pela descrição, que vem escolhido) e o "Lembrar" acima.
  */
@@ -52,6 +54,17 @@ export function lembrarDoVinculo(v: VinculoDoItemDaNota | undefined, anterior?: 
   const padrao = lembrarPorPadrao(v);
   if (!padrao || !anterior) return padrao;
   return anterior.lembrar === lembrarPorPadrao(anterior.vinculo) ? padrao : anterior.lembrar;
+}
+
+/**
+ * O "Lembrar" quando a PESSOA troca o produto de um item (o seletor, o candidato, "Criar produto", o lote). No palpite,
+ * a troca é a escolha da pessoa: OUTRO produto ⇒ marcado, como a escolha à mão no item sem vínculo (o que ela corrigiu
+ * fica lembrado para a próxima nota); de volta ao produto do palpite ⇒ desmarcado; sem produto ⇒ fica como está. Fora do
+ * palpite, `undefined`: o "Lembrar" fica como está (a regra de antes). A pessoa sempre pode mudar a marcação depois.
+ */
+export function lembrarAoTrocarProduto(v: VinculoDoItemDaNota | undefined, produtoId: string): boolean | undefined {
+  if (v?.situacao !== "sugerido" || !sugeridoPorPalpite(v) || produtoId === "") return undefined;
+  return produtoId !== v.produto.id;
 }
 
 /**

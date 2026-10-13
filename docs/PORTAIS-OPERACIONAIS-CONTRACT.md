@@ -988,7 +988,10 @@ tela, por decisão do dono: na produção, quase toda referência é um número 
 por nota ela teria escolhido o produto errado em 3 de 8 itens (decisão 314). O lembrado, os sugeridos pelo código do
 fornecedor e pelo código de barras e o ambíguo resolvido pelo clique ficam como hoje (marcado). Os dois palpites
 oferecem "Criar produto"; o lote "Criar N produtos da nota" só inclui o da descrição, e só se a pessoa tirou o produto
-sugerido (o da referência é identidade para o lote).
+sugerido (o da referência é identidade para o lote). No palpite, trocar o produto por OUTRO (o seletor, o candidato,
+"Criar produto", o lote) marca o "Lembrar" — a correção da pessoa fica lembrada —, e voltar ao produto do palpite o
+desmarca. O ambíguo pela descrição não leva pré-preenchimento: a tela não o põe no lote, e o "Criar produto" dele (como o
+do sugerido pela referência) abre só com a descrição e a NCM da nota.
 
 **O lote** (`POST /api/compras/importacoes/:id/criar-produtos`, XML-01, acima) olha só a IDENTIDADE: calcula os vínculos
 pelos caminhos 1 a 4 (`vinculosDosItens(…, { soIdentidade: true })`), sem a consulta da descrição. O item que só a

@@ -218,12 +218,13 @@ describe("XML2-I1 a nota da fase 0, pela API", () => {
 
 // ═════════════════════════════════════ XML2-I2 precedência ═════════════════════════════════════
 
-describe("XML2-I2 PRECEDÊNCIA: a identidade vence a descrição (os 3 pares)", () => {
-  it("lembrado × descrição ⇒ o lembrado; GTIN × descrição ⇒ o GTIN; referência × descrição ⇒ a referência — e, sem a identidade, o mesmo texto é sugerido a OUTRO produto", async () => {
+describe("XML2-I2 PRECEDÊNCIA: a identidade vence a descrição (os 3 pares do prompt e o código no fornecedor)", () => {
+  it("lembrado × descrição ⇒ o lembrado; código no fornecedor × descrição ⇒ o código; GTIN × descrição ⇒ o GTIN; referência × descrição ⇒ a referência — e, sem a identidade, o mesmo texto é sugerido a OUTRO produto", async () => {
     const u = unico();
     const dLembrado = `LEMBRADO-VS-DESCRICAO ${unico()} ${unico()}`;
     const dGtin = `GTIN-VS-DESCRICAO ${unico()} ${unico()}`;
     const dReferencia = `REFERENCIA-VS-DESCRICAO ${unico()} ${unico()}`;
+    const dCodigo = `CODIGO-VS-DESCRICAO ${unico()} ${unico()}`;
     const lembrado = await produtoNovo(`PRODUTO DO VINCULO ${unico()}`);
     const peloTextoDoLembrado = await produtoNovo(dLembrado);
     const ean = eanNovo();
@@ -231,18 +232,23 @@ describe("XML2-I2 PRECEDÊNCIA: a identidade vence a descrição (os 3 pares)", 
     const peloTextoDoGtin = await produtoNovo(dGtin);
     const peloCodigo = await produtoNovo(`PRODUTO DA REFERENCIA ${unico()}`, { reference: `P3-${u}` });
     const peloTextoDaReferencia = await produtoNovo(dReferencia);
+    const peloCodigoNoFornecedor = await produtoNovo(`PRODUTO DO CODIGO NO FORNECEDOR ${unico()}`);
+    const peloTextoDoCodigo = await produtoNovo(dCodigo);
     const n = await notaImportada([
       item(`P1-${u}`, dLembrado), item(`P1B-${u}`, dLembrado),
       item(`P2-${u}`, dGtin, { ean }), item(`P2B-${u}`, dGtin),
       item(`P3-${u}`, dReferencia), item(`P3B-${u}`, dReferencia),
+      item(`P4-${u}`, dCodigo), item(`P4B-${u}`, dCodigo),
     ]);
     await lembrar(n.fornecedor!, `P1-${u}`, "UN", lembrado.id);
+    await codigoNoFornecedor(peloCodigoNoFornecedor.id, n.fornecedor!, `P4-${u}`);
     const conf = await conferenciaLida(n.id);
     expect(conf.fornecedorEscolhido, "premissa: o fornecedor do vínculo lembrado é o escolhido").toBe(n.fornecedor);
     expect(resumos(conf)).toEqual([
       { situacao: "lembrado", produto: lembrado.id }, sugerido("descricao", peloTextoDoLembrado),
       sugerido("codigo_barras", peloGtin), sugerido("descricao", peloTextoDoGtin),
       sugerido("reference", peloCodigo), sugerido("descricao", peloTextoDaReferencia),
+      sugerido("codigo_fornecedor", peloCodigoNoFornecedor), sugerido("descricao", peloTextoDoCodigo),
     ]);
   });
 });

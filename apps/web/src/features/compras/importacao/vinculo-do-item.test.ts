@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { UNKNOWN_VALUE, type ItemDaConferenciaNfe, type ProdutoDoVinculo, type VinculoDoItemDaNota } from "@agro/domain";
-import { conferenciaDoPalpite, decisaoDoVinculo, lembrarDoVinculo, lembrarPorPadrao, rotuloDoVinculo, sugeridoPelaDescricao, sugeridoPorPalpite } from "./vinculo-do-item";
+import { conferenciaDoPalpite, decisaoDoVinculo, lembrarAoTrocarProduto, lembrarDoVinculo, lembrarPorPadrao, rotuloDoVinculo, sugeridoPelaDescricao, sugeridoPorPalpite } from "./vinculo-do-item";
 
 /**
  * XML-02 (decisão 314) — o vínculo do item na tela: o rótulo da origem pelos rótulos do domínio (nunca o valor técnico),
@@ -132,5 +132,22 @@ describe("XML-02 V6 a linha que pede a conferência do palpite conhecido (refer�
     expect(conferenciaDoPalpite(descricao)).toEqual({ sufixoDoTestid: "sugestao-descricao", texto: "Produto sugerido pela descrição semelhante: confira antes de gerar." });
     const semLinha = [lembrado, sugerido("codigo_fornecedor"), sugerido("codigo_barras"), origemFutura, ambiguo, nenhum, undefined];
     expect(semLinha.map(conferenciaDoPalpite)).toEqual(semLinha.map(() => null));
+  });
+});
+
+describe("XML-02 V7 a pessoa troca o produto de um palpite: o 'Lembrar' segue a escolha dela", () => {
+  const OUTRO = "00000000-0000-4000-8000-0000000000aa";
+  it("palpite (referência, descrição, origem desconhecida): outro produto ⇒ marcado; o do palpite ⇒ desmarcado; sem produto ⇒ fica", () => {
+    for (const v of [sugerido("reference"), descricao, origemFutura]) {
+      expect(lembrarAoTrocarProduto(v, OUTRO), "outro produto").toBe(true);
+      expect(lembrarAoTrocarProduto(v, P1), "o produto do palpite").toBe(false);
+      expect(lembrarAoTrocarProduto(v, ""), "sem produto").toBeUndefined();
+    }
+    expect(new Set([P1, OUTRO]).size, "premissa: os dois produtos são diferentes").toBe(2);
+  });
+  it("fora do palpite (lembrado, identidade, ambíguo, nenhum, sem vínculo): o 'Lembrar' fica como está", () => {
+    for (const v of [lembrado, sugerido("codigo_fornecedor"), sugerido("codigo_barras"), ambiguo, nenhum, undefined]) {
+      expect(lembrarAoTrocarProduto(v, OUTRO)).toBeUndefined();
+    }
   });
 });
