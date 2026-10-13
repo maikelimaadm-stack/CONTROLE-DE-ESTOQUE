@@ -14,7 +14,7 @@ import {
   cadastravelPelaNota, corpoDoLote, declaraCriarProdutosDaNota, fornecedorResolvidoParaOLote, itensSemLocalGravado, mensagensDaRecusaDoLote, planoDoLote,
   presetDoProdutoDoItem, quantidadeDeProdutos, rotuloDoLote, type PlanoDoLote
 } from "./produtos-da-nota";
-import { rotuloDoVinculo, sugeridoPelaDescricao } from "./vinculo-do-item";
+import { conferenciaDoPalpite, rotuloDoVinculo, sugeridoPorPalpite } from "./vinculo-do-item";
 
 /**
  * A ABA "ITENS, VÍNCULOS E LOTES" (OPERACOES-01 F7, decisão 284): cada item da nota com o que a nota diz (código,
@@ -25,10 +25,11 @@ import { rotuloDoVinculo, sugeridoPelaDescricao } from "./vinculo-do-item";
  * Os lotes vêm do rastro da nota (somente leitura); sem rastro, o produto que controla lote pede o lote.
  *
  * XML-02 (decisão 314): o rótulo diz de onde veio o sugerido (código do fornecedor, código de barras, referência do
- * produto ou descrição semelhante — `rotuloDoVinculo`). O sugerido pela DESCRIÇÃO semelhante vem escolhido, mas é
- * PALPITE: uma linha pede a conferência enquanto o produto é o sugerido, "Lembrar este vínculo" nasce DESMARCADO
- * (`lembrarDoVinculo`, no estado) e "Criar produto" é oferecido como no sem vínculo, com o mesmo pré-preenchimento.
- * No lote ele só entra depois que a pessoa tira o produto sugerido (`planoDoLote`).
+ * produto ou descrição semelhante — `rotuloDoVinculo`). O sugerido pela REFERÊNCIA e pela DESCRIÇÃO semelhante vem
+ * escolhido, mas é PALPITE: uma linha pede a conferência enquanto o produto é o sugerido, "Lembrar este vínculo" nasce
+ * DESMARCADO (`lembrarDoVinculo`, no estado) e "Criar produto" é oferecido. O da descrição leva o pré-preenchimento
+ * do sem vínculo e entra no lote depois que a pessoa tira o produto sugerido (`planoDoLote`); o da referência não (o
+ * lote olha a identidade, e a referência é identidade no servidor).
  *
  * XML-01 (decisão 312): com a capacidade declarada na conferência (`criarProdutosDaNota`), `products.create` e ao menos
  * um produto a criar, "Criar N produtos da nota" (acima dos cartões) cria de uma vez os produtos dos itens sem vínculo
@@ -71,6 +72,7 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
       const comEntrada = d.geraEstoque && (produto?.controlaEstoque ?? true);
       const pedeLote = item.rastro.length === 0 && comEntrada && produto && produto.controleLote !== "nenhum";
       const rotuloDoProduto = v.situacao === "lembrado" || v.situacao === "sugerido" ? `${v.produto.codigo} — ${v.produto.descricao}` : null;
+      const palpite = conferenciaDoPalpite(v);
       return <section key={n} data-testid={pede} data-vinculo={v.situacao} className="rounded border px-3 py-2">
         <header className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <strong className="text-[13px]">Item {n}</strong>
@@ -100,13 +102,13 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
             <span>Unitário interno: <strong data-testid={`${pede}-unitario-interno`}>{conta.situacao === "pronta" ? conta.unitarioInterno : "—"}</strong></span>
           </div>
 
-          {sugeridoPelaDescricao(v) && !leitura && d.produtoId === v.produto.id && <p className="col-span-12 text-[12px] text-amber-800" data-testid={`${pede}-sugestao-descricao`}>Produto sugerido pela descrição semelhante: confira antes de gerar.</p>}
+          {palpite && !leitura && v.situacao === "sugerido" && d.produtoId === v.produto.id && <p className="col-span-12 text-[12px] text-amber-800" data-testid={`${pede}-${palpite.sufixoDoTestid}`}>{palpite.texto}</p>}
           {v.situacao === "ambiguo" && !leitura && <div className="col-span-12 flex flex-wrap items-center gap-1.5" data-testid={`${pede}-candidatos`}>
             <span className="text-[12px] text-amber-800">Mais de um produto corresponde:</span>
             {v.candidatos.map((c) => <Button key={c.id} size="sm" variant={d.produtoId === c.id ? "default" : "outline"} data-testid={`${pede}-candidato-${c.id}`}
               onClick={() => e.mudarItem(n, { produtoId: c.id, produtoManual: true })}>{c.codigo} — {c.descricao}</Button>)}
           </div>}
-          {!leitura && can("products.create") && (cadastravelPelaNota(v) || v.situacao === "ambiguo") && <div className="col-span-12">
+          {!leitura && can("products.create") && (cadastravelPelaNota(v) || sugeridoPorPalpite(v) || v.situacao === "ambiguo") && <div className="col-span-12">
             <Button size="sm" variant="outline" data-testid={`${pede}-criar-produto`} onClick={() => setCriandoPara(n)}>Criar produto</Button>
           </div>}
 

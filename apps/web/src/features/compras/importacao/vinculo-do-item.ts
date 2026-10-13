@@ -5,8 +5,10 @@ import type { DecisaoDoItemNaTela } from "./estado";
 /**
  * O VÍNCULO DE UM ITEM DA NOTA NA TELA (XML-02, decisão 314) — leituras PURAS, sem React e sem rede (a aba de itens e o
  * estado da conferência só as chamam; o teste de unidade as prova uma a uma). A regra: IDENTIDADE primeiro, semelhança
- * depois. O lembrado e o sugerido por identidade (código do fornecedor, código de barras, referência do produto) vêm
- * escolhidos, como sempre; o sugerido pela DESCRIÇÃO semelhante também vem escolhido, mas é PALPITE, e a tela o trata assim.
+ * depois. O lembrado e o sugerido pelo código do fornecedor ou pelo código de barras vêm escolhidos, como sempre; o
+ * sugerido pela REFERÊNCIA do produto e pela DESCRIÇÃO semelhante também vêm escolhidos, mas são PALPITE na tela.
+ * A referência é palpite por decisão do dono (decisão 314): na produção, quase toda referência é um número sem o
+ * fornecedor, e nas compras já geradas por nota ela teria escolhido o produto errado em 3 de 8 itens.
  *
  *   · RÓTULO (`rotuloDoVinculo`): a situação e, no sugerido, a origem — as duas pelos rótulos do domínio (`enumLabel`),
  *     nunca o valor técnico. Origem que a tela não conhece (uma API mais nova) ⇒ só "Sugerido", sem o parêntese.
@@ -18,14 +20,18 @@ import type { DecisaoDoItemNaTela } from "./estado";
  *     produto e o fator do lembrado e de todo sugerido (também o pela descrição, que vem escolhido) e o "Lembrar" acima.
  */
 
-/** As origens do sugerido que são IDENTIDADE (caminhos 2 a 4 da decisão 314). Fora daqui, o sugerido é palpite. */
-const ORIGENS_DE_IDENTIDADE: ReadonlySet<string> = new Set(["codigo_fornecedor", "codigo_barras", "reference"]);
+/**
+ * As origens do sugerido que a TELA trata como identidade (caminhos 2 e 3 da decisão 314). Fora daqui, o sugerido é
+ * palpite: a referência do produto (o 4º caminho — identidade no servidor, palpite na tela, decisão do dono), a
+ * descrição semelhante e qualquer origem que a tela não conhece (fail-closed).
+ */
+const ORIGENS_DE_IDENTIDADE: ReadonlySet<string> = new Set(["codigo_fornecedor", "codigo_barras"]);
 
 /** O sugerido pela DESCRIÇÃO semelhante (o 5º caminho): o palpite que a tela pede para conferir. */
 type SugeridoPelaDescricao = Extract<VinculoDoItemDaNota, { origem: "descricao" }>;
 export const sugeridoPelaDescricao = (v: VinculoDoItemDaNota | undefined): v is SugeridoPelaDescricao => v?.situacao === "sugerido" && v.origem === "descricao";
 
-/** O sugerido que NÃO é por identidade — a descrição semelhante, ou uma origem que a tela não conhece (fail-closed). */
+/** O sugerido que a tela trata como palpite — a referência, a descrição semelhante, ou uma origem desconhecida (fail-closed). */
 export const sugeridoPorPalpite = (v: VinculoDoItemDaNota | undefined): boolean => v?.situacao === "sugerido" && !ORIGENS_DE_IDENTIDADE.has(v.origem);
 
 /** "Sugerido (descrição semelhante)", "Vínculo lembrado"…: pelos rótulos do domínio; a origem desconhecida não aparece. */
@@ -34,7 +40,7 @@ export function rotuloDoVinculo(v: VinculoDoItemDaNota): string {
   return v.situacao === "sugerido" && hasEnumLabel("origem_vinculo_item_nfe", v.origem) ? `${situacao} (${enumLabel("origem_vinculo_item_nfe", v.origem)})` : situacao;
 }
 
-/** O "Lembrar este vínculo" PADRÃO de um vínculo: marcado, menos no palpite. */
+/** O "Lembrar este vínculo" PADRÃO de um vínculo: marcado, menos no palpite (a referência, a descrição, a origem desconhecida). */
 export const lembrarPorPadrao = (v: VinculoDoItemDaNota | undefined): boolean => !sugeridoPorPalpite(v);
 
 /**
@@ -73,4 +79,15 @@ export function decisaoDoVinculo(conf: Pick<ConferenciaDaImportacaoNfe, "itens">
     categoriaId: base?.categoriaId ?? "",
     centroId: base?.centroId ?? ""
   };
+}
+
+/**
+ * A linha que pede a conferência do palpite CONHECIDO (a referência do produto e a descrição semelhante), com o testid
+ * de cada um; a origem desconhecida não tem linha (o rótulo já é só "Sugerido" e o "Lembrar" vem desmarcado).
+ */
+export function conferenciaDoPalpite(v: VinculoDoItemDaNota | undefined): { sufixoDoTestid: "sugestao-descricao" | "sugestao-referencia"; texto: string } | null {
+  if (v?.situacao !== "sugerido") return null;
+  if (v.origem === "descricao") return { sufixoDoTestid: "sugestao-descricao", texto: `Produto sugerido pela ${enumLabel("origem_vinculo_item_nfe", "descricao")}: confira antes de gerar.` };
+  if (v.origem === "reference") return { sufixoDoTestid: "sugestao-referencia", texto: `Produto sugerido pela ${enumLabel("origem_vinculo_item_nfe", "reference")}: confira antes de gerar.` };
+  return null;
 }

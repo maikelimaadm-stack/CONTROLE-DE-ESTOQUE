@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { UNKNOWN_VALUE, type ItemDaConferenciaNfe, type ProdutoDoVinculo, type VinculoDoItemDaNota } from "@agro/domain";
-import { decisaoDoVinculo, lembrarDoVinculo, lembrarPorPadrao, rotuloDoVinculo, sugeridoPelaDescricao, sugeridoPorPalpite } from "./vinculo-do-item";
+import { conferenciaDoPalpite, decisaoDoVinculo, lembrarDoVinculo, lembrarPorPadrao, rotuloDoVinculo, sugeridoPelaDescricao, sugeridoPorPalpite } from "./vinculo-do-item";
 
 /**
  * XML-02 (decisão 314) — o vínculo do item na tela: o rótulo da origem pelos rótulos do domínio (nunca o valor técnico),
@@ -50,27 +50,31 @@ describe("XML-02 V1 o rótulo do vínculo: a origem do sugerido pelos rótulos d
   });
 });
 
-describe("XML-02 V2 'Lembrar este vínculo' nasce DESMARCADO só no palpite (a descrição semelhante)", () => {
+describe("XML-02 V2 'Lembrar este vínculo' nasce DESMARCADO só no palpite (a referência do produto e a descrição semelhante)", () => {
   const casos: [string, VinculoDoItemDaNota | undefined, boolean][] = [
     ["lembrado", lembrado, true], ["codigo_fornecedor", sugerido("codigo_fornecedor"), true], ["codigo_barras", sugerido("codigo_barras"), true],
-    ["reference", sugerido("reference"), true], ["ambiguo", ambiguo, true], ["nenhum", nenhum, true], ["sem vínculo na resposta", undefined, true],
+    ["reference", sugerido("reference"), false], ["ambiguo", ambiguo, true], ["nenhum", nenhum, true], ["sem vínculo na resposta", undefined, true],
     ["descricao", descricao, false], ["origem desconhecida (fail-closed)", origemFutura, false]
   ];
-  it("o padrão de cada vínculo (premissa: há marcado E desmarcado; só a descrição e a origem desconhecida desmarcam)", () => {
+  it("o padrão de cada vínculo (premissa: há marcado E desmarcado; só a referência, a descrição e a origem desconhecida desmarcam)", () => {
     expect(casos).toHaveLength(9);
     for (const [nome, v, esperado] of casos) {
       expect(lembrarPorPadrao(v), nome).toBe(esperado);
       expect(lembrarDoVinculo(v), nome).toBe(esperado);
     }
-    expect(casos.filter(([, v]) => !lembrarDoVinculo(v)).map(([nome]) => nome)).toEqual(["descricao", "origem desconhecida (fail-closed)"]);
+    expect(casos.filter(([, v]) => !lembrarDoVinculo(v)).map(([nome]) => nome)).toEqual(["reference", "descricao", "origem desconhecida (fail-closed)"]);
   });
-  it("palpite: a descrição e a origem desconhecida; o sugerido pela descrição é só o da descrição", () => {
-    expect(casos.filter(([, v]) => sugeridoPorPalpite(v)).map(([nome]) => nome)).toEqual(["descricao", "origem desconhecida (fail-closed)"]);
+  it("palpite: a referência, a descrição e a origem desconhecida; o sugerido pela descrição é só o da descrição", () => {
+    expect(casos.filter(([, v]) => sugeridoPorPalpite(v)).map(([nome]) => nome)).toEqual(["reference", "descricao", "origem desconhecida (fail-closed)"]);
     expect(casos.filter(([, v]) => sugeridoPelaDescricao(v)).map(([nome]) => nome)).toEqual(["descricao"]);
   });
 });
 
 describe("XML-02 V3 o 'Lembrar' refeito pela troca de fornecedor: o palpite volta desmarcado; o que a pessoa mudou fica", () => {
+  it("o vínculo novo é a referência ⇒ desmarcado, mesmo vindo de um marcado à mão", () => {
+    expect(lembrarDoVinculo(sugerido("reference"), { lembrar: true, vinculo: lembrado })).toBe(false);
+    expect(lembrarDoVinculo(sugerido("reference"), { lembrar: true, vinculo: descricao })).toBe(false);
+  });
   it("o vínculo novo é a descrição ⇒ desmarcado, venha de onde vier e marcado ou não", () => {
     expect(lembrarDoVinculo(descricao, { lembrar: true, vinculo: lembrado })).toBe(false);
     expect(lembrarDoVinculo(descricao, { lembrar: true, vinculo: sugerido("codigo_fornecedor") })).toBe(false);
@@ -85,7 +89,7 @@ describe("XML-02 V3 o 'Lembrar' refeito pela troca de fornecedor: o palpite volt
   });
   it("entre vínculos que não são palpite, como era (`base.lembrar`): o desmarcado pela pessoa fica desmarcado", () => {
     expect(lembrarDoVinculo(sugerido("codigo_barras"), { lembrar: false, vinculo: lembrado })).toBe(false);
-    expect(lembrarDoVinculo(nenhum, { lembrar: false, vinculo: sugerido("reference") })).toBe(false);
+    expect(lembrarDoVinculo(nenhum, { lembrar: false, vinculo: sugerido("codigo_barras") })).toBe(false);
     expect(lembrarDoVinculo(lembrado, { lembrar: true, vinculo: nenhum })).toBe(true);
     expect(lembrarDoVinculo(ambiguo, { lembrar: true, vinculo: undefined })).toBe(true);
     expect(lembrarDoVinculo(ambiguo, { lembrar: false, vinculo: undefined })).toBe(false);
@@ -101,15 +105,15 @@ describe("XML-02 V4 skew: web nova + API anterior (só lembrado, sugerido por c�
   });
 });
 
-describe("XML-02 V5 a decisão com que a tela nasce: o sugerido pela descrição vem ESCOLHIDO, com 'Lembrar' desmarcado", () => {
+describe("XML-02 V5 a decisão com que a tela nasce: o sugerido pela referência e pela descrição vem ESCOLHIDO, com 'Lembrar' desmarcado", () => {
   const item = (nItem: number, vinculo: VinculoDoItemDaNota): ItemDaConferenciaNfe => ({ nItem, vinculo, quantidadeInterna: null, valorUnitarioInterno: null, itemDoPedido: null });
   const vinculos = [lembrado, sugerido("codigo_fornecedor"), sugerido("codigo_barras"), sugerido("reference"), descricao, ambiguo, nenhum];
   const conf = { itens: vinculos.map((v, k) => item(k + 1, v)) };
-  it("produto e fator do lembrado e de todo sugerido; o 'Lembrar' desmarcado só no item 5 (a descrição)", () => {
+  it("produto e fator do lembrado e de todo sugerido; o 'Lembrar' desmarcado só nos itens 4 (a referência) e 5 (a descrição)", () => {
     const d = conf.itens.map((i) => decisaoDoVinculo(conf, i.nItem));
     expect(d).toHaveLength(7);
     expect(d.map((x) => x.produtoId)).toEqual([P1, P1, P1, P1, P1, "", ""]);
-    expect(d.map((x) => x.lembrar)).toEqual([true, true, true, true, false, true, true]);
+    expect(d.map((x) => x.lembrar)).toEqual([true, true, true, false, false, true, true]);
     expect(d.every((x) => !x.produtoManual && x.fator === "1" && x.tipoFator === "multiply")).toBe(true);
   });
   it("refeita pela troca de fornecedor: o que a pessoa decidiu no item fica; o lembrado que vira descrição volta desmarcado", () => {
@@ -119,5 +123,14 @@ describe("XML-02 V5 a decisão com que a tela nasce: o sugerido pela descrição
     const daDescricao = decisaoDoVinculo(conf, 5);
     expect(daDescricao.lembrar).toBe(false);
     expect(decisaoDoVinculo({ itens: [item(5, lembrado)] }, 5, daDescricao, descricao).lembrar).toBe(true);
+  });
+});
+
+describe("XML-02 V6 a linha que pede a conferência do palpite conhecido (referência e descrição), com o testid de cada um", () => {
+  it("referência e descrição: o texto pelo rótulo do domínio e o testid próprio; identidade, origem desconhecida e o resto: sem linha", () => {
+    expect(conferenciaDoPalpite(sugerido("reference"))).toEqual({ sufixoDoTestid: "sugestao-referencia", texto: "Produto sugerido pela referência do produto: confira antes de gerar." });
+    expect(conferenciaDoPalpite(descricao)).toEqual({ sufixoDoTestid: "sugestao-descricao", texto: "Produto sugerido pela descrição semelhante: confira antes de gerar." });
+    const semLinha = [lembrado, sugerido("codigo_fornecedor"), sugerido("codigo_barras"), origemFutura, ambiguo, nenhum, undefined];
+    expect(semLinha.map(conferenciaDoPalpite)).toEqual(semLinha.map(() => null));
   });
 });
