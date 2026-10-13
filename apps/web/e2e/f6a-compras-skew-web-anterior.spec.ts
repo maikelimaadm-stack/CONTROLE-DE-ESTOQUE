@@ -2,6 +2,7 @@ import { test, expect, type Locator, type Page, type Response } from "@playwrigh
 import { cfg4 } from "./top-config-08-comum";
 import { login, uniq } from "./helpers";
 import { hojeISO } from "./estoque-01-comum";
+import { fonteDoWebContem, shaDaBase } from "./skew-fonte-da-base";
 
 /**
  * OPERACOES-01 · F6a · K-2, SENTIDO 2 — O WEB DA BASE CONTRA A API DESTE HEAD (decisão 283; a janela "API antes do web"
@@ -272,6 +273,28 @@ test("OP01-F6a · K2-1 (sentido 2) — o web da base recebe pelo 'Receber…' o 
  * K2-2 — A FILA DA BASE LISTA O PEDIDO QUE EXIGE APROVAÇÃO E O APROVA; A FINALIZAÇÃO PASSA DEPOIS
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
 
+/**
+ * O CORPO DA APROVAÇÃO DA BASE depende do commit dela. Até a EDITAR-02 (decisão 313, P5) a decisão de COMPRAS ia sem a
+ * `version` (`levaVersao: false`); a partir dela, a área de compras leva a `version` que a linha da fila declara
+ * (`versaoNaDecisao: VERSAO_NA_DECISAO.compras`, em `features/aprovacoes/areas-de-aprovacao.ts`) — e a API deste HEAD a
+ * declara. A base vira um commit com a EDITAR-02 assim que ela entra na main (foi o que deixou este caso vermelho na
+ * XML-02, PR #127): o mundo sai do FONTE do commit da base, nunca do comportamento.
+ */
+const MARCA_DA_VERSAO_NA_DECISAO_DE_COMPRAS = "VERSAO_NA_DECISAO.compras";
+const decisaoDeCompraDaBaseLevaVersao = (sha: string = shaDaBase()) => fonteDoWebContem(sha, MARCA_DA_VERSAO_NA_DECISAO_DE_COMPRAS);
+/** Dois commits FIXOS da main, um por mundo (nenhum é a base desta execução, que muda a cada PR). */
+const COMMITS_DA_VERSAO_NA_DECISAO = {
+  /** #125 — a XML-01 na main: a decisão de compras ainda sem a `version`. */
+  sem: "a930fff882eecc324ff6114b4bca11b1bf6868eb",
+  /** #126 — a EDITAR-02 na main: a decisão de compras com a `version` da fila. */
+  com: "4c163ee81b9556d967a75a9af65bf464897b96fa"
+} as const;
+
+test("OP01-F6a · prova reversa do detector da versão na decisão de compras: antes da EDITAR-02 → false; com ela → true", () => {
+  expect([decisaoDeCompraDaBaseLevaVersao(COMMITS_DA_VERSAO_NA_DECISAO.sem), decisaoDeCompraDaBaseLevaVersao(COMMITS_DA_VERSAO_NA_DECISAO.com)])
+    .toStrictEqual([false, true]);
+});
+
 test("OP01-F6a · K2-2 (sentido 2) — a fila Aprovações › Compras da base lista o pedido cuja TOP (formato 4) exige aprovação e o aprova pela tela; depois, finalizar na API nova dá 200 e a consulta da base abre o pedido finalizado, sem Receber", async ({ page }) => {
   await login(page);
   const cab = await cabecalhosDaSessao(page);
@@ -313,7 +336,11 @@ test("OP01-F6a · K2-2 (sentido 2) — a fila Aprovações › Compras da base l
     const decisao = (await resposta.json()) as { aprovacao?: { decisao?: string } } & Record<string, unknown>;
     expect(decisao.aprovacao?.decisao).toBe("aprovado");
     expect("confirmacaoAutomatica" in decisao, "o pedido não confirma sozinho ao ser aprovado").toBe(false);
-    expect(resposta.request().postDataJSON(), "o corpo da base: sem observação, vazio").toEqual({});
+    // Sem observação; a `version` só quando a base já é a da EDITAR-02 (o detector acima, pelo fonte do commit).
+    const levaVersao = decisaoDeCompraDaBaseLevaVersao();
+    console.log(`[skew] OP01-F6a · K2-2 · a decisão de compras do web da base ${levaVersao ? "LEVA" : "NÃO leva"} a version → corpo ${levaVersao ? "{ version }" : "vazio"}`);
+    expect(resposta.request().postDataJSON(), "o corpo da base: sem observação (e a version, desde a EDITAR-02)")
+      .toEqual(levaVersao ? { version: expect.stringMatching(/^\d+$/) } : {});
     await expect(page.getByTestId("aprovacao-mensagem")).toHaveText("Aprovado.");
     await expect(linha, "a linha aprovada sai da fila").toHaveCount(0);
 
