@@ -299,7 +299,15 @@ export type FatorDoItemDaNota =
   | { origem: "unidade_principal"; unidadeDaNota: string }
   | { origem: "unidade_do_produto"; unidadeDaNota: string }
   | { origem: "vinculo"; unidadeDaNota: string; cadastro: { fator: string; tipoFator: TipoFator } | null }
-  | { origem: "pergunta"; unidadeDaNota: string; motivo: "unidade_fora_do_cadastro" | "codigo_de_barras_de_outra_unidade" };
+  | {
+    origem: "pergunta"; unidadeDaNota: string; motivo: "unidade_fora_do_cadastro" | "codigo_de_barras_de_outra_unidade";
+    /**
+     * ADITIVO (XML-04): com `codigo_de_barras_de_outra_unidade`, a unidade do produto de que o cEAN da nota é o código de
+     * barras, com o fator do cadastro dela — o número na mão, nunca "confira". Só quando o cEAN é de EXATAMENTE uma
+     * unidade do produto; senão não vem.
+     */
+    codigoDeBarras?: { unidade: string; fator: string; tipoFator: TipoFator };
+  };
 
 export type VinculoDoItemDaNota =
   | { situacao: "lembrado"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator; fatorPelaNota?: FatorDoItemDaNota }
