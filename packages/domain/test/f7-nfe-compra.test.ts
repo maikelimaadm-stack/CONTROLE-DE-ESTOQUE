@@ -228,8 +228,10 @@ describe("F7 — parcelas da nota", () => {
   it("duplicatas que não somam o líquido, ou líquido diferente do total → nao_conferem (a pessoa usa a condição)", () => {
     const x = nfeSintetica({ duplicatas: [{ numero: "1", vencimento: "2026-10-01", valor: "700.00" }, { numero: "2", vencimento: "2026-11-01", valor: "700.00" }] });
     expect(x.vNF).toBe("1500.00"); // premissa: 1400 ≠ 1500
-    expect(parcelasDaNota(lida(x.xml), "1500.00")).toEqual({ situacao: "nao_conferem", soma: "1400.00", liquido: "1500.00" });
-    expect(parcelasDaNota(lida(xmlComDuplicatas().xml), "1540.02")).toEqual({ situacao: "nao_conferem", soma: "1540.00", liquido: "1540.00" });
+    expect(parcelasDaNota(lida(x.xml), "1500.00")).toEqual({ situacao: "nao_conferem", soma: "1400.00", liquido: "1500.00", total: "1500.00",
+      origemDoLiquido: "nota", falhas: ["soma_diferente_do_liquido"], diferencaSomaLiquido: "-100.00", diferencaLiquidoTotal: "0.00" });
+    expect(parcelasDaNota(lida(xmlComDuplicatas().xml), "1540.02")).toEqual({ situacao: "nao_conferem", soma: "1540.00", liquido: "1540.00", total: "1540.02",
+      origemDoLiquido: "fatura", falhas: ["liquido_diferente_do_total"], diferencaSomaLiquido: "0.00", diferencaLiquidoTotal: "-0.02" });
   });
 
   it("o líquido é o da fatura quando ela traz vLiq (e não o vNF)", () => {
@@ -237,14 +239,15 @@ describe("F7 — parcelas da nota", () => {
       duplicatas: [{ numero: "1", vencimento: "2026-10-01", valor: "1400.00" }] });
     const n = lida(x.xml);
     expect(n.totais.nota).toBe("1500.00"); // premissa: vNF 1500, líquido 1400
-    expect(parcelasDaNota(n, "1500.00")).toEqual({ situacao: "nao_conferem", soma: "1400.00", liquido: "1400.00" });
+    expect(parcelasDaNota(n, "1500.00")).toEqual({ situacao: "nao_conferem", soma: "1400.00", liquido: "1400.00", total: "1500.00",
+      origemDoLiquido: "fatura", falhas: ["liquido_diferente_do_total"], diferencaSomaLiquido: "0.00", diferencaLiquidoTotal: "-100.00" });
     expect(parcelasDaNota(n, "1400.00")).toEqual({ situacao: "conferem", parcelas: [{ numero: "1", vencimento: "2026-10-01", valor: "1400.00" }] });
   });
 
   it("sem duplicatas → sem_duplicatas", () => {
     const n = lida(xmlSimples().xml);
     expect(n.duplicatas).toEqual([]);
-    expect(parcelasDaNota(n, n.totais.nota)).toEqual({ situacao: "sem_duplicatas" });
+    expect(parcelasDaNota(n, n.totais.nota)).toEqual({ situacao: "sem_duplicatas", motivo: "nota_sem_duplicatas" });
   });
 });
 

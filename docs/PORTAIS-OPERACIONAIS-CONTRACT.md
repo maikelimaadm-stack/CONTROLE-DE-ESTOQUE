@@ -944,7 +944,8 @@ preenchimento: { description, ncm_code, barcode, measurement_id? }   // o MESMO 
 - Só o sugerido pela DESCRIÇÃO leva `preenchimento`: o item continua um item que a nota pode cadastrar. Os sugeridos
   por identidade não o levam. O `measurement_id` segue a regra da unidade do uCom da XML-01 (ausente = não resolvida),
   na mesma consulta dos uCom distintos.
-- O fator dos caminhos 4 e 5 é "1", `multiply` (a unidade padrão do produto, como no código de barras do produto).
+- O fator dos caminhos 4 e 5 era "1", `multiply`, até a XML-04; desde a decisão 318 o fator de TODOS os caminhos sai do
+  cadastro pelo uCom da nota (§ "O fator, a forma e a duplicata da nota (XML-04, decisão 318)").
 
 **A ordem.** O caminho mais forte que achou decide o item; os de baixo NÃO rodam para ele (cada consulta leva só os
 itens ainda pendentes). Sem fornecedor escolhido, 1 e 2 não rodam.
@@ -974,7 +975,7 @@ as duas strings como parâmetro):
 - **Teto**: 5 candidatos por item (`TETO_DE_CANDIDATOS_DA_DESCRICAO`), cortados no SQL.
 
 **Consultas.** No máximo cinco por conferência — uma por caminho, nenhuma quando não há item pendente para ele —, mais
-a das unidades; nunca uma por item. As consultas dos caminhos 4 e 5 recortam a organização e o produto vivo e ativo
+a do cadastro (desde a XML-04, a do fator pelo uCom, que absorveu a das unidades); nunca uma por item. As consultas dos caminhos 4 e 5 recortam a organização e o produto vivo e ativo
 explicitamente, além da RLS. Os lexemas dos produtos e dos itens são CTEs `as materialized`. Nenhum índice novo.
 
 **Nada é gravado.** O vínculo lembrado continua nascendo só no "Gerar compra", do `lembrar_vinculo` que o corpo
@@ -1003,3 +1004,202 @@ tabela de recusas acima. Nenhuma recusa e nenhuma mensagem nova.
 fornecedor)" para toda origem que não é `codigo_barras` e deixa o "Lembrar" marcado também no sugerido pela descrição —
 o risco da janela de deploy, declarado na decisão 314. A web nova contra a API anterior não recebe as origens novas: a
 aba é a de hoje. Os dois sentidos em E2E (`apps/web/e2e/xml-02-skew-api-producao.spec.ts` e `xml-02-skew-web-anterior.spec.ts`; o resultado em `docs/TESTING.md`).
+
+## O fator, a forma e a duplicata da nota (XML-04, decisão 318)
+
+Na conferência da importação (`GET /api/compras/importacoes/:id` e a resposta da importação), três campos que a pessoa
+respondia item a item, ou às cegas, passam a vir do que a NOTA diz ou do que o CADASTRO sabe; quando ainda são pergunta,
+a resposta e a tela dizem POR QUÊ, com o número na mão. Nenhuma rota de importação nova, nenhum corpo novo (o "Gerar
+compra" é o da F7, `docs/OPERACOES-CONTRACT.md` §5), nenhuma capacidade ou permissão nova; `contractVersion` continua 1;
+a conferência continua só lendo. Tudo é ADITIVO e a web lê por PROPRIEDADE PRÓPRIA. Os tipos moram em
+`packages/domain/src/nfe-compra.ts` e `packages/domain/src/nfe-leitura.ts`; o porquê de cada regra está na decisão 318.
+
+**O contrato** (os campos novos; ausentes na API anterior):
+
+```
+nota.pagamentos?: { tPag: string | null; vPag: string | null }[]     // PagamentoDaNota: os <pag><detPag>, na ordem
+nota.duplicatasDescartadas?: number                                    // as <dup> que o leitor descartou por falta de vencimento
+
+itens[].vinculo (lembrado e sugerido, as quatro origens).fatorPelaNota?: FatorDoItemDaNota
+  { origem: "unidade_principal";  unidadeDaNota: string }
+  { origem: "unidade_do_produto"; unidadeDaNota: string }
+  { origem: "vinculo";            unidadeDaNota: string; cadastro: { fator: string; tipoFator: "multiply" | "divide" } | null }
+  { origem: "pergunta";           unidadeDaNota: string; motivo: "unidade_fora_do_cadastro" | "unidade_homonima_da_organizacao" }
+
+financeiro.forma?: FormaDePagamentoDaConferencia
+  { situacao: "ligada";        tPag: string; forma: { id: string; nome: string } }
+  { situacao: "sem_ligacao";   tPag: string }
+  { situacao: "forma_inativa"; tPag: string; forma: { id: string; nome: string } }
+  { situacao: "varias";        quantidade: number }                    // mais de um <detPag>
+  { situacao: "sem_tpag" }
+
+financeiro.parcelas (ParcelasDaNota), os campos novos:
+  sem_duplicatas:  motivo?: "nota_sem_duplicatas" | "duplicata_sem_vencimento"
+  nao_conferem:    total?: string; origemDoLiquido?: "fatura" | "nota";
+                   falhas?: ("soma_diferente_do_liquido" | "liquido_diferente_do_total" | "ultima_parcela_nao_positiva")[];
+                   diferencaSomaLiquido?: string    // soma − líquido, com sinal
+                   diferencaLiquidoTotal?: string   // líquido − total, com sinal
+```
+
+- `unidadeDaNota` é o uCom normalizado (`normalizarUnidadeDaNota`); vazio quando a nota não traz a unidade.
+- O `fator` e o `tipoFator` do vínculo são os que VALEM: os do cadastro em `unidade_principal` ("1", `multiply`) e em
+  `unidade_do_produto` (os da linha de `produto_unidades`); os do VÍNCULO em `vinculo` — o lembrado vence, e `cadastro` só
+  vem quando o cadastro respalda um fator DIFERENTE, no número ou no tipo —; em `pergunta`, "1", `multiply`, SÓ pela web
+  anterior: a web desta versão o trata como vazio.
+- Onde estão: `FatorDoItemDaNota` (`nfe-compra.ts:298`), `FormaDePagamentoDaConferencia` (`nfe-compra.ts:381`),
+  `ParcelasDaNota` e `FalhaDasParcelasDaNota` (`nfe-compra.ts:189`), `PagamentoDaNota`, `CODIGOS_TPAG_DA_NFE`,
+  `rotuloDoTPag` e `formaDaNota` (`nfe-leitura.ts:102`–`:143`). Na API (`apps/api/src/lib/importacao-nfe-conferencia.ts`):
+  a decisão do fator `fatorDoItemPelaNota`, a consulta `cadastroDoFator`, a forma `formaDePagamentoDaNota`, as
+  divergências `divergenciaDoFator` e a mensagem das parcelas `mensagemDasParcelas`.
+
+**O fator — a régua.** Vale para os cinco caminhos da XML-02 (lembrado, código no fornecedor, código de barras,
+referência, descrição): o caminho decide QUAL produto, nunca o fator. O uCom da nota vira UMA unidade do cadastro pela
+régua da unidade da XML-01 (a da organização vence a do sistema; uma só, ou nenhuma), e então:
+
+| # | Quando | `fatorPelaNota` | O fator |
+|---|---|---|---|
+| 1 | o uCom não vira UMA unidade do cadastro (nenhuma, duas, ou a nota sem unidade) — com DUAS (o mesmo símbolo depois de aparar e pôr em maiúsculas), a mensagem é a de fora do cadastro mesmo quando o produto está numa delas (decisão 318, risco (s)) | `pergunta`, `unidade_fora_do_cadastro` | a pessoa informa |
+| 2 | é a unidade PRINCIPAL do produto (`products.measurement_id`) | `unidade_principal` | 1, multiplica |
+| 3 | é a unidade de uma linha de `erp.produto_unidades` do produto, VIVA e DE COMPRA (`uso_compra`) | `unidade_do_produto` | o fator e o tipo da linha |
+| 4 | duas linhas dessas com fatores (ou tipos) diferentes | `pergunta`, `unidade_fora_do_cadastro` | a pessoa informa |
+| 5 | nem 2 nem 3 (a linha só de venda, a excluída, a unidade que o produto não tem) | `pergunta`, `unidade_fora_do_cadastro` | a pessoa informa |
+| 6 | o uCom chega, pela régua, a uma unidade da ORGANIZAÇÃO, e o produto está na unidade do SISTEMA com o mesmo símbolo (como principal ou linha viva de compra) | `pergunta`, `unidade_homonima_da_organizacao` | a pessoa informa |
+| — | o item tem vínculo LEMBRADO | `vinculo` | o do vínculo; `cadastro` traz o de 2 ou 3 quando é OUTRO número ou tipo |
+
+O código de barras só acha o PRODUTO (o caminho 3): nunca dá fator nem põe o fator em dúvida — o fator é só o do uCom
+(decisão do Maike: a regra 3.1 à letra). UMA consulta do cadastro para a nota — as unidades de medida dos uCom distintos
+de todos os itens, a unidade principal dos produtos achados e as linhas vivas de `produto_unidades` deles — que também dá
+o `measurement_id` do pré-preenchimento da XML-01; nenhuma consulta sem uCom. Com isso, o que as seções acima dizem do
+fator "1" dos caminhos 4 e 5 (XML-02) e da consulta "das unidades" (XML-01 e XML-02) vale até a XML-04: desde ela, o
+fator de todos os caminhos é o desta régua, e a consulta das unidades é a do cadastro (uma por conferência, também
+quando todos os itens têm vínculo).
+
+**As divergências novas, e a mensagem nova** (nenhuma bloqueia; `sem_duplicatas` continua sem divergência). O fator é
+escrito sem as casas vazias do banco ("12.000000" → "12"); os valores, em texto decimal com ponto:
+
+| código | quando | mensagem |
+|---|---|---|
+| `fator_a_informar` | `pergunta` pela unidade | `Item <n>: a unidade <uCom> da nota não é unidade de compra do produto <código> no cadastro: informe o fator.` |
+| `fator_a_informar` | `pergunta`, a nota sem a unidade | `Item <n>: a nota não traz a unidade do item, e o cadastro do produto <código> não diz o fator: informe o fator.` |
+| `fator_a_informar` | `pergunta`, `unidade_homonima_da_organizacao` | `Item <n>: a unidade <uCom> da nota é a da organização, e o produto <código> está cadastrado na <uCom> do sistema: informe o fator.` |
+| `fator_do_vinculo_diferente_do_cadastro` | `vinculo` com `cadastro` | `Item <n>: o vínculo lembrado usa fator <v> (multiplica ou divide); o cadastro do produto <código>, para a unidade <uCom>, diz <c> (multiplica ou divide). Vale o do vínculo.` |
+| `parcelas_nao_conferem` (a de sempre; a mensagem muda) | `nao_conferem` | `As duplicatas não conferem: Σ vDup <soma> × líquido (fatura, vLiq) <líquido> — <comparação>; líquido <líquido> × total da compra <total> — <comparação>. Use a condição de pagamento.` — cada `<comparação>` é `diferença <valor com sinal>` quando falhou e `confere` quando não; o líquido do vNF se escreve `líquido (total da nota, vNF)`; com `ultima_parcela_nao_positiva`, antes do ponto: `; a última duplicata, ajustada para a soma fechar no total da compra, ficaria com valor zero ou negativo`. Sem os campos novos, a mensagem de antes |
+
+A web desta versão tira `fator_a_informar` e `fator_do_vinculo_diferente_do_cadastro` da lista do servidor quando lê o
+`fatorPelaNota` daquele item, e os refaz pela decisão (o molde do `lote_sem_rastro`): a pergunta vira a pendência do
+fator inválido de sempre (`Item <n>: informe o fator (maior que zero, até 6 casas).`, bloqueia) enquanto o campo não
+tem um fator válido; o aviso do vínculo, `Item <n>: <o aviso da tela, abaixo>` (Aviso, aba Itens), enquanto o campo
+mostra o fator do vínculo. Sem o `fatorPelaNota` do item, o aviso do servidor fica como veio.
+
+**A forma — a régua do servidor** (`formaDaNota`, e a ligação viva da organização em `erp.formas_pagamento_da_nfe`, 0064):
+
+| A nota | A ligação do tPag | `financeiro.forma` | Consulta |
+|---|---|---|---|
+| mais de um `<detPag>` (mesmo com o mesmo tPag) | — | `varias`, com a `quantidade` | nenhuma |
+| nenhum `<detPag>`, ou o único sem tPag | — | `sem_tpag` | nenhuma |
+| exatamente um `<detPag>` com tPag | nenhuma viva na organização | `sem_ligacao` | uma |
+| idem | viva, e a forma ATIVA | `ligada`, com a forma | uma |
+| idem | viva, e a forma INATIVA | `forma_inativa`, com a forma (nunca a forma da nota) | uma |
+
+A consulta roda sob a RLS e recorta a organização explicitamente; a forma é da organização ou do sistema (a regra do
+gatilho da 0064, repetida no `join`). Mais de uma ligação viva (o índice único não deixa) ⇒ `sem_ligacao`. A forma não
+vira divergência.
+
+**A precedência da forma na tela** (`formaDaImportacao`, `apps/web/src/features/compras/importacao/forma-da-nota.ts`;
+resolvida a cada desenho — o estado guarda só a escolha explícita da pessoa):
+1. o OPERADOR — a escolha dele nunca é sobrescrita por um recálculo; esvaziar o campo também é resposta;
+2. a NOTA — só a `ligada`;
+3. o padrão financeiro da TOP, SÓ quando a TOP COBRA a forma (a régua da Central: a regra exige a forma OU o layout a
+   marca obrigatória) e os padrões valem (`padroesDaTopAplicam`; `planoDaSemeadura` preenche só o campo vazio);
+4. a PERGUNTA — o campo vazio, com o porquê. A pergunta não bloqueia por si: a obrigatoriedade é a da TOP e do servidor.
+
+**A trava da TOP**: a TOP que não deixa o documento trocar os padrões (`podeTrocarOsPadroes` falso) vence a forma da
+nota e a escolha do operador quando elas DIFEREM do padrão dela — o servidor recusaria a troca —; o campo cujo valor é o
+padrão fica travado pela mesma conta da Central (`travadoPelaTop`); contra a forma da NOTA, a tela avisa com as duas formas
+(a da nota, com o código, e a da TOP); contra a escolha do OPERADOR, diz só a forma da TOP que vale, como a Central. Sem a trava, a
+escolha guardada volta. A TOP só é lida quando a conferência declara `financeiro.forma`, pelas mesmas portas e chaves da
+Central: `GET /api/compras/<segmento>/regras-da-operacao?tipo_operacao_id=` e, quando a porta das TOPs declara o layout,
+`GET /api/compras/<segmento>/layout-efetivo?tipo_operacao_id=`; enquanto chegam, o "Gerar compra" espera; se falham, a
+forma é resolvida sem a TOP e o servidor continua a autoridade. O corpo do "Gerar compra" não muda: o
+`financeiro.forma_pagamento_id` é a forma RESOLVIDA (ou `null`). Sem `financeiro.forma` (a API anterior): a forma é a da
+pessoa, a TOP não é lida, nenhum texto aparece.
+
+**Os textos da tela, por situação.** O FATOR, perto do campo "Fator" do item (`fator-do-item.ts`; mostrados enquanto o
+campo tem o fator do servidor para o produto do vínculo — outro produto no item ⇒ só a pergunta do produto trocado, enquanto o campo não tem fator válido; o número como a tela
+escreve número, com vírgula; a conversão pelo rótulo do enum, "Multiplica" ou "Divide"):
+
+| Situação | `data-testid` | Texto |
+|---|---|---|
+| `unidade_principal` | `importacao-item-<n>-fator-origem`, `data-origem="unidade_principal"` | `Fator do cadastro: unidade principal do produto (<uCom>).` (sem o uCom, sem o parêntese) |
+| `unidade_do_produto` | `importacao-item-<n>-fator-origem`, `data-origem="unidade_do_produto"` | `Fator do cadastro: unidade <uCom> do produto.` |
+| `vinculo` | `importacao-item-<n>-fator-origem`, `data-origem="vinculo"` | `Fator do vínculo lembrado.` |
+| `vinculo` com `cadastro` | `importacao-item-<n>-fator-aviso` | `O vínculo lembrado usa o fator <v> (<conversão>) e o cadastro do produto diz <c> (<conversão>) para a unidade <uCom>: vale o do vínculo.` |
+| `pergunta`, `unidade_fora_do_cadastro` | `importacao-item-<n>-fator-pergunta` | `A unidade <uCom> da nota não está no cadastro do produto: informe o fator.` (a nota sem a unidade: `A nota não traz a unidade do item: informe o fator.`) |
+| `pergunta`, `unidade_homonima_da_organizacao` | `importacao-item-<n>-fator-pergunta` | `A unidade <uCom> da nota é a da organização, e o produto está cadastrado na <uCom> do sistema: informe o fator.` (sem a unidade da nota, o texto genérico abaixo) |
+| o produto do item TROCADO por outro (o campo tinha o fator que o servidor deu ao produto do vínculo, e esvazia) | `importacao-item-<n>-fator-pergunta` | `O produto foi trocado: informe o fator do produto escolhido.` (some quando a pessoa digita um fator válido; de volta ao produto do vínculo, voltam o fator e a origem; o fator que a pessoa digitou nunca esvazia) |
+| `pergunta`, motivo que a tela não conhece | `importacao-item-<n>-fator-pergunta` | `O cadastro do produto não diz o fator desta unidade da nota: informe o fator.` |
+| a pessoa mudou o número ou a conversão (na pergunta, o primeiro fator válido) | `importacao-item-<n>-fator-origem`, `data-origem="informado"` | `Fator informado na tela.` |
+
+Na pergunta o campo nasce VAZIO (nunca o "1" de compatibilidade). A FORMA, abaixo do campo "Forma de pagamento" da aba
+Financeiro (`forma-da-nota.ts`; o código com o rótulo do leiaute, `CODIGOS_TPAG_DA_NFE`; código fora do leiaute, só o
+código; a escolha do operador não tem texto):
+
+| Situação | `data-testid` | Texto |
+|---|---|---|
+| a forma da nota (`ligada`) | `importacao-forma-origem` | `Forma de pagamento da nota (código <tPag> — <rótulo>).` |
+| o padrão da TOP que cobra | `importacao-forma-origem` | `Forma de pagamento padrão da TOP desta compra.` |
+| `varias` | `importacao-forma-pergunta` | `A nota traz <quantidade> formas de pagamento (detPag): escolha a forma.` |
+| `sem_tpag` | `importacao-forma-pergunta` | `A nota não diz a forma de pagamento: escolha a forma.` |
+| `sem_ligacao` | `importacao-forma-pergunta` | `O código <tPag> (<rótulo>) da nota não está ligado a uma forma de pagamento da organização: ligue em Configurações › Financeiro › Formas de Pagamento da NF-e, ou escolha a forma.` |
+| `forma_inativa` | `importacao-forma-pergunta` | `A forma <nome>, ligada ao código <tPag> (<rótulo>) da nota, está inativa: escolha a forma.` |
+| `financeiro.forma` fora do contrato | `importacao-forma-pergunta` | `A forma de pagamento da nota não pôde ser lida: escolha a forma.` |
+| a TOP trava contra a forma da nota | `importacao-forma-aviso` | `A nota diz <forma da nota> (código <tPag> — <rótulo>), mas a TOP desta compra não deixa trocar a forma de pagamento: vale a dela, <forma da TOP>.` |
+| a TOP trava contra a escolha do operador | `importacao-forma-aviso` | `A TOP desta compra não deixa trocar a forma de pagamento: vale a dela, <forma da TOP>.` |
+
+A DUPLICATA que não serve, na aba Financeiro (`explicacao-das-parcelas.ts`; a explicação do MESMO resultado que decide
+"Usar a condição de pagamento" — o da conferência, ou o que a tela recalcula com o total dela; dinheiro pelo formatador
+da tela):
+
+| Situação | `data-testid` | Texto |
+|---|---|---|
+| `sem_duplicatas`, `nota_sem_duplicatas` (ou sem motivo) | `importacao-parcelas-indisponiveis` | `A nota não traz duplicatas: a compra usa a condição de pagamento.` |
+| `sem_duplicatas`, `duplicata_sem_vencimento` | `importacao-parcelas-indisponiveis` | `A nota trouxe duplicatas sem vencimento: a compra usa a condição de pagamento.` |
+| `nao_conferem` | `importacao-parcelas-indisponiveis` | `As duplicatas da nota não conferem: a compra usa a condição de pagamento.` |
+| `nao_conferem`, os números | `importacao-parcelas-numeros` | `Soma das duplicatas: R$ <soma> · Líquido da fatura (vLiq): R$ <líquido> · Total da compra: R$ <total>.` — o líquido do vNF: `Líquido (o total da nota, vNF: a nota não traz o líquido da fatura)`; a API anterior: `Líquido`, e sem o total |
+| `soma_diferente_do_liquido` | `importacao-parcelas-falha`, `data-falha="soma_diferente_do_liquido"` | `A soma das duplicatas fica R$ <diferença> abaixo do líquido.` (ou `acima`; sem a diferença: `é diferente do líquido`) |
+| `liquido_diferente_do_total` | `importacao-parcelas-falha`, `data-falha="liquido_diferente_do_total"` | `O líquido fica R$ <diferença> abaixo do total da compra.` (ou `acima`; sem a diferença: `é diferente do total da compra`) |
+| `ultima_parcela_nao_positiva` | `importacao-parcelas-falha`, `data-falha="ultima_parcela_nao_positiva"` | `A soma e o líquido conferem com o total, mas a última duplicata, ajustada para a soma fechar no total da compra, ficaria com valor zero ou negativo.` |
+
+A pendência da tela com "as parcelas da nota" escolhidas e o resultado que não confere ganha o caso sem vencimento: `A
+nota trouxe duplicatas sem vencimento: use a condição de pagamento.` (os outros dois, os de antes). A falha que a tela
+não conhece não aparece; a diferença ausente não é inventada.
+
+**Os `data-testid` novos** (acréscimos; nenhum removido ou renomeado): `importacao-item-<n>-fator-origem` (com
+`data-origem`: `unidade_principal`, `unidade_do_produto`, `vinculo` ou `informado`), `importacao-item-<n>-fator-pergunta`,
+`importacao-item-<n>-fator-aviso`, `importacao-parcelas-numeros`, `importacao-parcelas-falha` (com `data-falha`),
+`importacao-forma-origem`, `importacao-forma-pergunta` e `importacao-forma-aviso`; no `importacao-forma` de sempre, dois
+atributos novos: `data-origem` (`operador`, `nota`, `top` ou `pergunta`, só quando a conferência declara a forma) e
+`data-travado-pela-top="true"` (o campo travado pela TOP).
+
+**O cadastro "Formas de Pagamento da NF-e"** — a ligação, por organização, do código tPag a uma forma de pagamento:
+- registry `formas_pagamento_da_nfe` (`packages/domain/src/resources/registries.ts`), tabela `erp.formas_pagamento_da_nfe`
+  (0064), "Forma de Pagamento da NF-e" / "Formas de Pagamento da NF-e"; a porta genérica `/api/resources/formas_pagamento_da_nfe`;
+- permissão `sales` — `sales.view` lista e abre, `sales.create`, `sales.edit` e `sales.delete` gravam —, a das Formas de
+  Pagamento; nenhuma nova;
+- menu: Configurações › Financeiro, logo depois de "Formas de Pagamento" (`configuracoes.financeiro.formas-pagamento-da-nfe`,
+  `sales.view`, em `apps/web/nav.registry.mjs`), na subaba da aba Financeiro de `apps/web/src/app/(app)/configuracoes/page.tsx`;
+  a `route` do registry (`/cadastros/formas-de-pagamento-da-nfe`) é metadado, como a das Formas de Pagamento;
+- campos: `codigo_tpag` "Código da NF-e (tPag)" — a lista dos códigos do leiaute, com o rótulo ("15 — Boleto bancário"),
+  obrigatório, na lista e no filtro; `forma_pagamento_id` "Forma de pagamento" — referência às Formas de Pagamento (as do
+  sistema e as da organização, nunca as de outra), obrigatória, na lista. Rótulo e ordem padrão pelo código; exclusão
+  LÓGICA (`deleted_at`), sem "Ativo": desligar é excluir, e o código excluído fica livre;
+- recusas: código fora do leiaute → 422 em `codigo_tpag`; dois vivos com o mesmo código → 409 (o índice único da 0064);
+  a forma de OUTRA organização e a inexistente → a MESMA 422 do gatilho da 0064 (`A forma de pagamento precisa existir e
+  ser desta organização ou do sistema.`); a ligação de outra organização → a MESMA 404 do inexistente; sem `sales` → 403.
+
+**Version skew.** A web anterior contra a API nova lê a conferência com os campos novos sem usá-los: o fator da pergunta
+aparece "1" (compatibilidade), as duas divergências novas do fator aparecem como aviso, a forma da nota não vem
+escolhida, e o "Gerar compra" funciona — o risco da janela de deploy, declarado na decisão 318. A web nova contra a API
+anterior não recebe `fatorPelaNota` nem `financeiro.forma`: a aba é a de hoje, sem pedido à TOP, com o corpo de antes. Os
+dois sentidos em E2E (`apps/web/e2e/xml-04-skew-api-producao.spec.ts` e `xml-04-skew-web-anterior.spec.ts`; o resultado
+em `docs/TESTING.md`); a ordem de implantação e as janelas em `docs/DEPLOYMENT.md` § XML-04.

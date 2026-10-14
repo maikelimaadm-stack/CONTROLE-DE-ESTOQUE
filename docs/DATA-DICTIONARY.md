@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 225 |
-| Tabelas com `organization_id` (escopo de organização) | 168 |
+| Tabelas no schema `erp` | 226 |
+| Tabelas com `organization_id` (escopo de organização) | 169 |
 | Tabelas com coluna de empresa (hoje `farm_id`) | 77 |
 | Entidades curadas neste dicionário | 61 |
 | Entidades com ID Global | 25 |
 | Entidades com Tipo de Operação | 19 |
 | Tipos de Operação referenciados | 32 |
-| Cobertura curada | 27.1% |
+| Cobertura curada | 27.0% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -2257,6 +2257,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.financial_categories` | 15 | sim | — | sim |
 | `erp.financial_freezes` | 9 | sim | `empresa_id` | não |
 | `erp.fodders` | 11 | sim | — | sim |
+| `erp.formas_pagamento_da_nfe` | 7 | sim | — | sim |
 | `erp.grazing_modules` | 23 | sim | `empresa_id` | sim |
 | `erp.harvests` | 14 | sim | — | sim |
 | `erp.herd_lots` | 13 | sim | `empresa_id` | não |
