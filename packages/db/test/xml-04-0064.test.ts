@@ -717,8 +717,11 @@ describe("0064 — sobre o acervo de formas de pagamento, como o runner aplica",
         "execute format('revoke execute on function %s from %s', r.fn, r.grantee::regrole::text)"
       ]
     });
-    // O VALOR da espera, não só o nome: o X3 aceita qualquer desistência entre ~1,9 s e 10 s (achado do cético).
+    // O VALOR da espera, não só o nome: o X3 mede o TEMPO e aceita uma desistência entre ~1,9 s e 4 s (achado do cético).
     expect(codigo.match(/set local lock_timeout\s*=\s*'[^']*'/gi), "lock_timeout de 2 s, uma vez só").toEqual(["set local lock_timeout = '2s'"]);
+    // E nenhuma OUTRA porta para a espera: o nome só aparece nesse `set local` (os textos contam — um
+    // `set_config('lock_timeout', '3s', true)` depois dele passaria pelo X3, que aceita até 4 s; achado do cético, rodada 5).
+    expect(codigo.match(/lock_timeout/gi), "o lock_timeout só no set local, sem set_config nem outro set").toEqual(["lock_timeout"]);
     // E o laço do SQL dinâmico só percorre a GUARDA nova (r.fn vem do catálogo, preso à assinatura dela).
     expect(codigo).toMatch(/where p\.oid = 'erp\.formas_pagamento_da_nfe_forma_guarda\(\)'::regprocedure\s+and a\.privilege_type = 'EXECUTE' and a\.grantee <> p\.proowner\s+loop/);
   });
