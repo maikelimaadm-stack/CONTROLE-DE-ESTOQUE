@@ -292,6 +292,12 @@ export interface TravasDaLinha {
   /** Desconto e desconto %. */
   desconto?: boolean;
   /**
+   * EDITAR-03 (decisão 315): o local de estoque da linha (a parte de pedido que reserva estoque, item que controla
+   * estoque — o `armazemTravado` do /edicao de vendas): a célula travada de sempre (a do produto, com `warehouses`) na
+   * grade e o campo travado no formulário do item. Ausente (ou `false`): o local de hoje.
+   */
+  armazem?: boolean;
+  /**
    * O teto da quantidade da linha (a compra gerada de pedido: o saldo do item do pedido) — o MESMO `max` que o modo "da
    * origem" põe na quantidade do receber. Ausente: nenhum (o de hoje).
    */
@@ -300,7 +306,7 @@ export interface TravasDaLinha {
    * O motivo de cada campo travado (o texto do servidor), na `dica` do campo do formulário do item — o `title` que o
    * `CampoDaCentral` já tem. A célula da grade não tem dica de campo travado (só a do erro): ali o motivo não aparece.
    */
-  motivos?: Partial<Record<"produto" | "quantidade" | "unitario" | "desconto", string>>;
+  motivos?: Partial<Record<"produto" | "quantidade" | "unitario" | "desconto" | "armazem", string>>;
 }
 
 /**

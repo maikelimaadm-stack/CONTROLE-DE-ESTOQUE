@@ -48,6 +48,9 @@ export type { ChaveCampoDoItem, ChaveColunaDoItem, ItensDaOrigem, LayoutDosItens
  * modo "da origem" e da célula não ativa; o teto da quantidade pelo MESMO `max` do receber, `maximoDaQuantidade`; o
  * motivo da trava na `dica` do campo do formulário do item) e `aceitaLinhaNova={false}` (sem Adicionar e Duplicar). Sem
  * eles, nada muda.
+ * EDITAR-03 (decisão 315): `TravasDaLinha.armazem` (o local de estoque que a edição da venda recusa trocar naquela
+ * linha) — a MESMA `CelulaTravada` do produto na grade (`warehouses`, o mesmo testid) e o MESMO ramo travado do produto
+ * no formulário do item, com o motivo na `dica`. Desligada por padrão: sem ela, o local de hoje.
  */
 
 /**
@@ -350,10 +353,12 @@ export function ItensDaCentral({
           rotuloAcao={(o) => (o ? `Trocar o produto do item ${i + 1}` : `Selecionar o produto do item ${i + 1}`)}
           aberto={pesquisa?.linha === i && pesquisa.campo === "product_id"} testId={tid("produto")}
           onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "product_id", ancora: el, modo: "flutuante" }); }} />}</td>;
-      case "armazem": return <td key={k}><CelulaDeReferencia recurso="warehouses" id={it.warehouse_id} conhecido={it.warehouse_id ? conhecidos[it.warehouse_id] : undefined} vazio="—"
-        rotuloAcao={(o) => (o ? `Local de estoque: ${o.label}` : "Local de estoque")}
-        aberto={pesquisa?.linha === i && pesquisa.campo === "warehouse_id"} testId={tid("armazem")}
-        onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "warehouse_id", ancora: el, modo: "flutuante" }); }} /></td>;
+      case "armazem": return <td key={k}>{travas(it).armazem
+        ? <CelulaTravada recurso="warehouses" id={it.warehouse_id} conhecido={it.warehouse_id ? conhecidos[it.warehouse_id] : undefined} testId={tid("armazem")} />
+        : <CelulaDeReferencia recurso="warehouses" id={it.warehouse_id} conhecido={it.warehouse_id ? conhecidos[it.warehouse_id] : undefined} vazio="—"
+          rotuloAcao={(o) => (o ? `Local de estoque: ${o.label}` : "Local de estoque")}
+          aberto={pesquisa?.linha === i && pesquisa.campo === "warehouse_id"} testId={tid("armazem")}
+          onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "warehouse_id", ancora: el, modo: "flutuante" }); }} />}</td>;
       case "estoque": return <td key={k} className={cn(grade.numero, grade.estoque)}>{saldoDoItem(it)}</td>;
       case "saldo": return <td key={k} className={grade.numero} data-testid={tid("saldo-da-origem")}>{num(maxDaOrigem(it) ?? "0", 4)}</td>;
       case "quantidade": return <td key={k} className={grade.numero}><span className={grade.quantidade}>
@@ -429,9 +434,11 @@ export function ItensDaCentral({
   const doCampo = (k: ChaveColunaDoItem) => ({ attrs: dataCampo(k), required: obrigatoria(k), error: erroDe(atual, k), label: rotuloColuna(k) });
   const campoDeReferencia = (campo: "product_id" | "warehouse_id", recurso: string) => {
     const id = (item?.[campo] as string | undefined) || undefined;
-    const d = doCampo(campo === "product_id" ? "produto" : "armazem");
-    if (campo === "product_id" && (daOrigem || travas(item).produto)) {
-      return <CampoDaCentral rotulo={d.label} estado="travado" dica={travas(item).motivos?.produto} {...d.attrs}><RotuloTravado recurso={recurso} id={id} /></CampoDaCentral>;
+    const chave = campo === "product_id" ? "produto" : "armazem";
+    const d = doCampo(chave);
+    // o produto trava no modo "da origem" e pela trava da linha; o local, só pela trava da linha (EDITAR-03, decisão 315)
+    if (campo === "product_id" ? daOrigem || travas(item).produto : travas(item).armazem) {
+      return <CampoDaCentral rotulo={d.label} estado="travado" dica={travas(item).motivos?.[chave]} {...d.attrs}><RotuloTravado recurso={recurso} id={id} /></CampoDaCentral>;
     }
     return <CampoDaCentral rotulo={d.label} obrigatorio={d.required} erro={d.error} icone="pesquisa" preenchido={Boolean(id)} {...d.attrs}>
       <CampoReferenciaBotao recurso={recurso} valor={id} conhecido={id ? conhecidos[id] : undefined} aberto={Boolean(pesquisa?.modo === "fluxo" && pesquisa.campo === campo)}

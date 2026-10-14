@@ -1,6 +1,6 @@
 "use client";
 import { ItensDaCentral as ItensDoMotor, type LayoutDosItens } from "@/features/central/itens";
-import { PESQUISA_DE_PRODUTO_DA_SAIDA, type LocalDeEstoque } from "@/features/central/contrato";
+import { PESQUISA_DE_PRODUTO_DA_SAIDA, type LocalDeEstoque, type TravasDaLinha } from "@/features/central/contrato";
 import type { ItemRow } from "@/features/docs/shared";
 import { PREFIXO_CENTRAL_VENDAS, colunasDosItensDeVendas } from "./central-vendas-adaptador";
 
@@ -15,11 +15,15 @@ import { PREFIXO_CENTRAL_VENDAS, colunasDosItensDeVendas } from "./central-venda
  * OPERACOES-01 F3b (decisão 280): as três variantes (orçamento, pedido e venda) são SAÍDAS — a pesquisa de produto da
  * linha vem com "Só com saldo neste local" ligado (com a capacidade da pesquisa nova; sem ela, a pesquisa de hoje). O
  * local das linhas novas é o "Local de estoque" do cabeçalho, estado da tela que a página entrega em `armazemPadrao`.
+ *
+ * EDITAR-03 (decisão 315): na EDIÇÃO do documento salvo, o formulário entrega as travas de cada linha (`travasDaLinha`,
+ * pelos limites do `/edicao`: a parte gerada e o local de estoque que a PATCH recusa trocar) e `aceitaLinhaNova` — as
+ * MESMAS props do motor que a edição de compras usa. Ausentes (a criação): o motor de hoje, idêntico.
  */
 
 export type { LayoutDosItens } from "@/features/central/itens";
 
-export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao, reservaEstoque }: {
+export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao, reservaEstoque, travasDaLinha, aceitaLinhaNova }: {
   items: ItemRow[]; onChange: (i: ItemRow[]) => void;
   /** Só com a capacidade `layoutDocumento`: sem ele a grade é a de hoje, idêntica. */
   layout?: LayoutDosItens | null;
@@ -32,7 +36,12 @@ export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao, 
    * layout (VENDAS-A3-1b). Ausente/null: a linha nasce sem local, como antes.
    */
   armazemPadrao?: LocalDeEstoque | null;
+  /** EDITAR-03: as travas de cada linha na edição do documento salvo. Ausente: nenhuma (a criação). */
+  travasDaLinha?: ((item: ItemRow) => TravasDaLinha) | null;
+  /** EDITAR-03: `false` tira Adicionar e Duplicar (a parte gerada). Ausente: o padrão do motor (`true`). */
+  aceitaLinhaNova?: boolean;
 }) {
   return <ItensDoMotor prefixoTestid={PREFIXO_CENTRAL_VENDAS} colunas={colunasDosItensDeVendas} items={items} onChange={onChange} layout={layout}
-    erros={erros} armazemPadrao={armazemPadrao} pesquisaDeProduto={PESQUISA_DE_PRODUTO_DA_SAIDA} reservaEstoque={reservaEstoque} />;
+    erros={erros} armazemPadrao={armazemPadrao} pesquisaDeProduto={PESQUISA_DE_PRODUTO_DA_SAIDA} reservaEstoque={reservaEstoque}
+    {...(travasDaLinha ? { travasDaLinha } : {})} {...(aceitaLinhaNova !== undefined ? { aceitaLinhaNova } : {})} />;
 }

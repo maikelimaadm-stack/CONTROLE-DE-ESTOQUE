@@ -10,7 +10,7 @@ import { useTabTitle, useWorkspaceTabs, type WsTab } from "@/lib/workspace-tabs"
 import { useDoc, LoadingOr, type Row } from "@/features/docs/shared";
 import { useAction } from "@/features/docs/actions";
 import { HistoryDialog } from "@/features/base1/history-dialog";
-import { CentralVendasWorkspace, type AbaDoPainel } from "@/features/sales/central-vendas-workspace";
+import { CentralVendasWorkspace } from "@/features/sales/central-vendas-workspace";
 import { ItensSalvos } from "@/features/sales/central-vendas-consulta";
 import { CampoLeitura, ChaveSimNao, ColunaDeCampos, DadosAdicionais } from "@/features/sales/central-vendas-campo";
 import { useQuery } from "@tanstack/react-query";
@@ -18,7 +18,10 @@ import { api } from "@/lib/api";
 import { DerivadosDoDocumento, PainelColuna, PainelLargo, PainelRepartido, PlanoEmLeitura, TitulosDoDocumento, dedutivelDoPlano } from "@/features/sales/central-vendas-painel";
 /* VISUAL-UX-02 W1: barra, leque, diálogos, Duplicar e "Salvo" (entrega em memória) */
 import { AcoesRapidas, BotaoDaBarra, ConjuntoDaBarra, ConjuntoDireito, IconeCancelarDocumento, IconeConfirmar, IconeConverter, IconeDuplicar, IconeEncerrarSaldo, IconeHistorico, IconeImprimir, IndicadorConfirmando, IndicadorSalvo, NovoDocumento, PilulaDaBarra, PosicaoDoRotulo, TEMPO_DO_SALVO_MS, chaveDepoisDeSalvar, type DepoisDeSalvar, type ItemRapido, type PosicaoDoRotuloValor } from "@/features/sales/central-vendas-barra";
-import { DialogoCancelarDocumento, DialogoConfirmarVenda } from "@/features/sales/central-vendas-dialogos";
+import { DialogoCancelarDocumento, DialogoConfirmarVenda, PreviaNoDialogo } from "@/features/sales/central-vendas-dialogos";
+/* EDITAR-03 (decisão 315): a pílula Editar (o ícone de editar que já existe, o da consulta de compras) e a edição no lugar. */
+import { IconeEditar } from "@/features/compras/orcamento/consulta-orcamento";
+import { ABAS_DA_LEITURA_PENDENTE, EdicaoDaVendaNoLugar, useEditarNaConsultaDeVenda } from "@/features/sales/central-vendas-editar-no-lugar";
 import { chaveDaCopia, copiaDoDocumento, motivoParaNaoDuplicar } from "@/features/sales/central-vendas-duplicar";
 import { descartarEntrega, entregarEmMemoria, espiarEntrega } from "@/lib/entrega-em-memoria";
 import { ConfirmarFechamentoDeAba } from "@/components/layout/workspace-tabs";
@@ -30,7 +33,7 @@ import { destinoDeCompatibilidade, usaCadeiaDeCompatibilidade, useProximosPassos
 import { varianteDeVenda } from "@/features/sales/variantes";
 import { DialogoEncerrarSaldo, ItensDaConversao, ehParteGerada, fraseItensDaOrigem, itensParaEnvio, linhasIniciais, saldoDoItem, temParteGerada, useOrigemDaParte, type LinhaDaParte } from "@/features/sales/faturar-em-partes";
 import { D } from "@agro/shared";
-import { usePreviaDaConfirmacao, linhaDeEstoque, linhaFinanceira, padraoAutomaticoPrevisto, TEXTO_SEM_PREVIA, type EstadoDaPrevia } from "@/features/sales/previa-confirmacao";
+import { usePreviaDaConfirmacao, padraoAutomaticoPrevisto } from "@/features/sales/previa-confirmacao";
 /* OPERACOES-01 F2 (decisão 279): o diálogo de Confirmar só em documento aberto (UMA regra, do motor) e a situação da
    aprovação na consulta (o bloco das Aprovações, o mesmo diálogo da fila). */
 import { abreConfirmarNaChegada, confirmarPodeAbrir } from "@/features/central/salvo";
@@ -70,18 +73,8 @@ const DO_REGISTRO: Record<string, { titulo: string; novo: string; perm: string; 
  * código faria a tela dizer "Não informada" — e prometer o padrão automático — numa venda que a guarda do
  * banco vai RECUSAR confirmar. Com o id e sem o nome, a tela diz que está informada e não inventa o nome.
  */
-/**
- * LEITURA PENDENTE: as abas que TODA variante tem, sem conteúdo — estrutura da tela, não dado do documento. Os valores
- * são os das abas da consulta (abaixo), para a aba escolhida continuar a mesma quando a leitura chega; "Documentos
- * derivados" só entra com o registro, porque depende da variante que só ele diz.
- */
-const ABAS_DA_LEITURA_PENDENTE: AbaDoPainel[] = [
-  { value: "totais", label: "Totais", content: null },
-  { value: "financeiro", label: "Financeiro", content: null },
-  { value: "frete", label: "Frete e transporte", content: null },
-  { value: "fiscal", label: "Fiscal", content: null },
-  { value: "observacoes", label: "Observações", content: null }
-];
+/* LEITURA PENDENTE: as abas sem conteúdo (`ABAS_DA_LEITURA_PENDENTE`) moram em `central-vendas-editar-no-lugar.tsx` desde a
+   EDITAR-03 — a abertura da edição mostra o MESMO esqueleto enquanto lê. */
 
 function rotuloDaClassificacao(id: unknown, codigo: unknown, nome: unknown, ausente: string, semNome: string): string {
   if (!id) return ausente;
@@ -109,32 +102,17 @@ function rotuloDaClassificacao(id: unknown, codigo: unknown, nome: unknown, ause
  *
  * ANEXOS NÃO SÃO LIGADOS. `sales_documents` não está em `ATTACHMENT_PARENTS`
  * (apps/api/src/lib/attachment-parent.ts): o botão apareceria e responderia 422. Botão que aparece e
- * não funciona é pior que botão nenhum — abrir a superfície é outra fatia, com backend. Pelo mesmo
- * motivo não há "Editar": documento salvo não tem contrato de edição.
+ * não funciona é pior que botão nenhum — abrir a superfície é outra fatia, com backend.
+ *
+ * EDITAR (EDITAR-03, decisão 315; antes desta fatia a venda salva não tinha tela de edição — o contrato existe desde a
+ * 272). A pílula "Editar" troca esta consulta, NO LUGAR (sem rota nova), pela MESMA Central de Vendas em modo edição
+ * (`EdicaoDaVendaNoLugar`: `GET :id` + `GET /edicao` com a guarda de versão; o Salvar manda a PATCH). Ela some sem
+ * `<variante>.edit` ou `.view`, e o motivo de estar desabilitada vem do `GET /edicao` — a MESMA recusa da PATCH; a tela
+ * não escreve regra de editável (`useEditarNaConsultaDeVenda`).
+ *
+ * O corpo do diálogo "Confirmar venda" (`PreviaNoDialogo`) mora em `central-vendas-dialogos.tsx` desde a EDITAR-03: é
+ * também o corpo do aviso do Salvar que confirma, na edição.
  */
-/**
- * O corpo do diálogo "Confirmar venda". Três estados, e nenhum deles promete efeito que o servidor não disse:
- * carregando (botão desabilitado), sem prévia (texto neutro) e com prévia (as linhas de efeito, ou a recusa).
- * Com recusa prevista só a recusa aparece — listar efeitos de uma confirmação que não vai acontecer seria
- * prometer de novo.
- */
-function PreviaNoDialogo({ estado }: { estado: EstadoDaPrevia }) {
-  if (estado.situacao === "carregando") return <p data-testid="previa-confirmacao-carregando" className="text-[12.5px] leading-[1.5] text-slate-600">Carregando o que a confirmação vai fazer nesta venda…</p>;
-  if (estado.situacao === "nao-confirmado") return <p data-testid="previa-confirmacao-neutra" className="text-[12.5px] leading-[1.5] text-slate-600">{TEXTO_SEM_PREVIA}</p>;
-  const p = estado.previa;
-  if (!p.podeConfirmar) {
-    return <div data-testid="previa-confirmacao-recusa" role="alert" className="space-y-1 text-[12.5px] leading-[1.5] text-slate-700">
-      <p className="font-medium">Esta venda não pode ser confirmada agora:</p>
-      {p.recusas.map((r, i) => <p key={i} data-testid="previa-confirmacao-recusa-mensagem">{r.message}</p>)}
-    </div>;
-  }
-  const estoque = linhaDeEstoque(p);
-  const financeiro = linhaFinanceira(p, { dinheiro: brl, data: dateBR });
-  return <ul data-testid="previa-confirmacao" className="space-y-1 text-[12.5px] leading-[1.5] text-slate-700">
-    {estoque && <li data-testid="previa-confirmacao-estoque">{estoque}</li>}
-    {financeiro && <li data-testid="previa-confirmacao-financeiro">{financeiro}</li>}
-  </ul>;
-}
 
 export default function Page({ params }: { params: Promise<{ kind: string; id: string }> }) {
   const { kind: segmentoDaRota, id } = use(params);
@@ -197,6 +175,11 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   const ws = useWorkspaceTabs();
   const [perguntaDuplicar, setPerguntaDuplicar] = React.useState<WsTab | null>(null);
   /* ── fim VISUAL-UX-02 W1 ── */
+
+  /* EDITAR-03 (decisão 315): a ação Editar da VARIANTE DO REGISTRO (`k`) — pergunta o `/edicao` só com `.edit` E `.view`;
+     a PATCH que gravou acende o "Salvo", e a recusa da abertura relê esta consulta. */
+  const editar = useEditarNaConsultaDeVenda({ id, documento: d, perm: k?.perm ?? null, segmento: k?.segmento ?? null,
+    onSalvou: () => setSalvoVisivel(true), onReler: () => { void q.refetch(); } });
 
   /**
    * OS PRÓXIMOS PASSOS — a política do documento, não a cadeia fixa da tela.
@@ -263,6 +246,10 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
      nem a variante, que só o registro diz. Erro continua no estado oficial (404 igual para tudo o que não se vê). */
   if (!d && q.isLoading) return <CentralVendasWorkspace carregando titulo="Documento de venda" identidade={{ nome: "Carregando documento", alterado: false }} acoes={null} dados={null} itens={null} abas={ABAS_DA_LEITURA_PENDENTE} />;
   if (!d) return <LoadingOr q={q}>{null}</LoadingOr>;
+  /* EDITAR-03: a MESMA Central de Vendas em modo edição, no lugar desta consulta (o molde da 313 em compras). */
+  if (editar.editando && k) {
+    return <EdicaoDaVendaNoLugar segmento={k.segmento} id={id} densidade={densidade} onDensidade={setDensidade} onFechar={editar.fechar} onRecusada={editar.recusada} />;
+  }
 
   const passoSelecionado = itens.length === 1 ? itens[0]! : itens.find((x) => x.tipoOperacaoId === passoEscolhido) ?? null;
   const topDaConversao = passoSelecionado ? passoSelecionado.tipoOperacaoId : legado ? topLegado : "";
@@ -347,6 +334,10 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         {/* VISUAL-UX-02 W1 — consulta: [Novo documento +] [Duplicar documento] [pílula] */}
         {k && can(`${k.perm}.create`) && varianteDoRegistro && <NovoDocumento variante={varianteDoRegistro} />}
         {k && can(`${k.perm}.create`) && <BotaoDaBarra rotulo="Duplicar documento" dica={motivoSemCopia ?? "Duplicar documento"} disabled={motivoSemCopia !== null} data-testid="central-vendas-duplicar" onClick={duplicar}><IconeDuplicar /></BotaoDaBarra>}
+        {/* EDITAR-03: some sem `.edit`/`.view`; desabilitada com o motivo DO SERVIDOR (o `/edicao`) na dica e em `data-motivo`
+            — o molde da 313. O handler confere a MESMA regra do `disabled`. */}
+        {k && editar.visivel && <PilulaDaBarra icone={<IconeEditar />} dica={editar.dicaDesabilitada ?? `Editar ${k.titulo.toLowerCase()}`} disabled={editar.dicaDesabilitada !== null}
+          data-testid="vendas-editar" data-motivo={editar.dicaDesabilitada ?? undefined} onClick={editar.abrir}>Editar</PilulaDaBarra>}
         {/* Venda: Confirmar venda, visível e DESABILITADA quando o documento não está aberto (confirmada, cancelada…).
             OPERACOES-01 F2: a regra é a do motor (`confirmarPodeAbrir`), no `disabled` E no handler — `disabled` é apresentação. */}
         {variante === "sale" && can("sales.edit") && <PilulaDaBarra icone={<IconeConfirmar />} dica="Confirmar venda" disabled={!confirmarPodeAbrir(editavel, can("sales.edit")) || act.isPending} data-testid="central-vendas-confirmar"
