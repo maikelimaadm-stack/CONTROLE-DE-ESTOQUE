@@ -388,7 +388,9 @@ describe("0064 — sobre o acervo de formas de pagamento, como o runner aplica",
       await expect(aplicar()).rejects.toThrow(/lock timeout/);
       const ms = Date.now() - t0;
       expect(ms, "desistiu pelo lock_timeout, não por outro motivo imediato").toBeGreaterThanOrEqual(1900);
-      expect(ms, "e não ficou pendurada").toBeLessThan(10_000);
+      // Teto perto dos 2 s (com folga para máquina lenta): a espera que vale de FATO é a de 2 s, não só o texto do
+      // `set local` (o X8) — um `set_config('lock_timeout', '5s', true)` depois dele passaria pelo X8 (achado do cético).
+      expect(ms, "e desistiu perto dos 2 s, não de uma espera maior").toBeLessThan(4_000);
     } finally { await escritor.query("rollback"); escritor.release(); }
     // A OUTRA tabela referida: a FK da organização pede a mesma ShareRowExclusive em erp.organizations, então uma
     // escrita aberta lá também faz a 0064 desistir pelo lock_timeout (o cético só tinha a sonda dele para esta).
@@ -400,7 +402,7 @@ describe("0064 — sobre o acervo de formas de pagamento, como o runner aplica",
       await expect(aplicar()).rejects.toThrow(/lock timeout/);
       const ms = Date.now() - t0;
       expect(ms, "erp.organizations: desistiu pelo lock_timeout").toBeGreaterThanOrEqual(1900);
-      expect(ms, "erp.organizations: e não ficou pendurada").toBeLessThan(10_000);
+      expect(ms, "erp.organizations: e desistiu perto dos 2 s, não de uma espera maior").toBeLessThan(4_000);
     } finally { await escritorOrg.query("rollback"); escritorOrg.release(); }
     expect(await noLedger()).toBe(false);
     expect(await temTabela()).toBe(false);

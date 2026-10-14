@@ -4783,8 +4783,10 @@ dado (provado pelo RETRATO do banco inteiro antes e depois em `packages/db/test/
 `erp.payment_methods`: criar cada uma toma a trava SHARE ROW EXCLUSIVE da tabela referida, que fica até o COMMIT da
 migration — a ESCRITA em `erp.payment_methods` e em `erp.organizations` espera por esse tempo (medido localmente: 15 a
 30 ms sem disputa), a leitura não —; com uma transação de escrita aberta numa delas, a migration desiste sem aplicar
-nada (X3, provado nas duas tabelas), e o deploy é refeito (seguro: nada foi aplicado). Enquanto ela ESPERA, a escrita
-que chega nas DUAS tabelas fica na fila atrás dela; o `lock_timeout` de 2 s (o X8 fixa o valor) vale para CADA espera,
+nada (X3, provado nas duas tabelas, com teto de 4 s), e o deploy é refeito (seguro: nada foi aplicado). Enquanto ela
+ESPERA, a escrita que chega fica na fila atrás dela — nas DUAS tabelas quando ela espera `erp.payment_methods` (a segunda
+FK, já com `erp.organizations` em mãos), só em `erp.organizations` quando é essa que ela espera —; o `lock_timeout` de
+2 s (o X8 fixa o valor) vale para CADA espera,
 não para a migration inteira: no caso composto que o cético mediu (as duas ocupadas em sequência), ela desistiu em ~3,8 s
 e a escrita da fila esperou o mesmo. Na produção: 1 organização, as formas quase não são escritas, e o gate não viu
 trava alheia nem transação longa. **Efeito da FK no cadastro que já
