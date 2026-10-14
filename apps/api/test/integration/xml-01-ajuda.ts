@@ -280,7 +280,7 @@ export async function comConsultas<T>(f: () => Promise<T>): Promise<{ r: T; sqls
 /**
  * As consultas que LEEM a tabela de unidades (`from erp.measurement_units`): desde a XML-04 (decisão 318), a consulta do
  * CADASTRO DO FATOR (`cadastroDoFator`, UMA por nota), que absorveu a das unidades da nota da XML-01 — as unidades dos
- * uCom, a unidade principal e o código de barras dos produtos achados e as linhas vivas de `produto_unidades` deles; o
+ * uCom, a unidade principal dos produtos achados e as linhas vivas de `produto_unidades` deles; o
  * `measurement_id` do produto a criar sai das mesmas linhas. As consultas dos vínculos só a juntam (`join`) para o
  * símbolo da unidade do produto — e, desde a XML-02 (decisão 314), a referência e a descrição procuram vínculo também
  * sem fornecedor e sem GTIN, então "tocar" a tabela já não separa as duas.

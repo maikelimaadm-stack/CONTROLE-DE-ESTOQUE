@@ -73,17 +73,17 @@ export function lembrarAoTrocarProduto(v: VinculoDoItemDaNota | undefined, produ
 }
 
 /**
- * O `fatorPelaNota` lido: a pergunta com um motivo que a tela não conhece continua pergunta (`motivo: null`); o
- * `codigoDeBarras` (a unidade do produto de que o cEAN da nota é o código, com o fator do cadastro dela) só com o motivo
- * `codigo_de_barras_de_outra_unidade` e na forma certa — senão `null`.
+ * O `fatorPelaNota` lido: a pergunta com um motivo que a tela não conhece (ou herdado do protótipo) continua pergunta
+ * (`motivo: null`, o texto genérico). O código de barras só acha o PRODUTO: a pergunta não carrega nada dele.
  */
+type MotivoDaPergunta = Extract<FatorDoItemDaNota, { origem: "pergunta" }>["motivo"];
 export type FatorPelaNotaLido =
   | Exclude<FatorDoItemDaNota, { origem: "pergunta" | "vinculo" }>
   | { origem: "vinculo"; unidadeDaNota: string; cadastro: { fator: string; tipoFator: TipoFator } | null }
-  | {
-    origem: "pergunta"; unidadeDaNota: string; motivo: Extract<FatorDoItemDaNota, { origem: "pergunta" }>["motivo"] | null;
-    codigoDeBarras: { unidade: string; fator: string; tipoFator: TipoFator } | null;
-  };
+  | { origem: "pergunta"; unidadeDaNota: string; motivo: MotivoDaPergunta | null };
+
+/** Os motivos da pergunta que a tela conhece (e diz); fora deles, o texto genérico (fail-closed). */
+const ehMotivoDaPergunta = (v: unknown): v is MotivoDaPergunta => v === "unidade_fora_do_cadastro" || v === "unidade_homonima_da_organizacao";
 
 /** O fator que a tela aceita no campo: texto decimal (ponto), até 12 inteiros e 6 casas, maior que zero. */
 export const fatorValido = (v: string) => /^\d{1,12}(\.\d{1,6})?$/.test(v) && D(v).gt(0);
@@ -96,8 +96,9 @@ const fatorDecimal = (v: unknown): v is string => typeof v === "string" && /^\d+
  * XML-04 (decisão 318): DE ONDE VEIO O FATOR do item, por PROPRIEDADE PRÓPRIA do vínculo lembrado ou sugerido (a API
  * anterior não o manda ⇒ `null`, a tela de antes). FAIL-CLOSED: forma estranha ou origem que a tela não conhece (uma API
  * mais nova) ⇒ `null`; o cadastro do vínculo fora da forma ⇒ sem cadastro (a tela não afirma um número que não leu). O
- * `codigoDeBarras` da pergunta também é lido por PROPRIEDADE PRÓPRIA e só com o motivo dele; ausente (a API sem ele),
- * fora da forma ou com outro motivo ⇒ `null` (a pergunta diz a unidade da nota, sem o número).
+ * `motivo` da pergunta também é lido por PROPRIEDADE PRÓPRIA: ausente, herdado do protótipo ou desconhecido ⇒ `null`
+ * (a pergunta continua, com o texto genérico). Propriedade a mais na pergunta (um `codigoDeBarras` de uma API que o
+ * mande) não é lida: o fator é só o do uCom.
  */
 export function fatorPelaNotaDoVinculo(v: VinculoDoItemDaNota | undefined): FatorPelaNotaLido | null {
   if (!v || (v.situacao !== "lembrado" && v.situacao !== "sugerido") || !Object.hasOwn(v, "fatorPelaNota")) return null;
@@ -111,11 +112,8 @@ export function fatorPelaNotaDoVinculo(v: VinculoDoItemDaNota | undefined): Fato
       return { origem: "vinculo", unidadeDaNota, cadastro: ehObjeto(c) && fatorDecimal(c.fator) && ehTipoFator(c.tipoFator) ? { fator: c.fator, tipoFator: c.tipoFator } : null };
     }
     case "pergunta": {
-      const motivo = f.motivo === "unidade_fora_do_cadastro" || f.motivo === "codigo_de_barras_de_outra_unidade" ? f.motivo : null;
-      const cb = motivo === "codigo_de_barras_de_outra_unidade" && Object.hasOwn(f, "codigoDeBarras") ? f.codigoDeBarras : undefined;
-      const codigoDeBarras = ehObjeto(cb) && typeof cb.unidade === "string" && cb.unidade.trim() !== "" && fatorDecimal(cb.fator) && ehTipoFator(cb.tipoFator)
-        ? { unidade: cb.unidade.trim(), fator: cb.fator, tipoFator: cb.tipoFator } : null;
-      return { origem: "pergunta", unidadeDaNota, motivo, codigoDeBarras };
+      const m = Object.hasOwn(f, "motivo") ? f.motivo : undefined;
+      return { origem: "pergunta", unidadeDaNota, motivo: ehMotivoDaPergunta(m) ? m : null };
     }
     default: return null;
   }

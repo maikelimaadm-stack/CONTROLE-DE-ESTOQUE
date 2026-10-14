@@ -34,12 +34,10 @@ const doProduto = sugerido("50.000000", { origem: "unidade_do_produto", unidadeD
 const doVinculo = lembrado("6", { origem: "vinculo", unidadeDaNota: "CX", cadastro: null });
 const vinculoContraCadastro = lembrado("6.000000", { origem: "vinculo", unidadeDaNota: "CX", cadastro: { fator: "12.000000", tipoFator: "multiply" } });
 const foraDoCadastro = sugerido("1", { origem: "pergunta", unidadeDaNota: "BD", motivo: "unidade_fora_do_cadastro" });
-/** O cEAN da nota é o código de barras da unidade CX do produto, e a nota diz UN — sem o `codigoDeBarras` (a API sem ele). */
-const outroCodigoDeBarras = sugerido("1", { origem: "pergunta", unidadeDaNota: "UN", motivo: "codigo_de_barras_de_outra_unidade" });
-/** O mesmo, com o `codigoDeBarras`: a unidade CX do produto, fator 12, multiplica. */
-const outroCodigoDeBarrasComONumero = sugerido("1", {
-  origem: "pergunta", unidadeDaNota: "UN", motivo: "codigo_de_barras_de_outra_unidade", codigoDeBarras: { unidade: "CX", fator: "12.000000", tipoFator: "multiply" }
-});
+/** O uCom KG chega, pela régua das unidades, à KG da ORGANIZAÇÃO, e o produto está cadastrado na KG do SISTEMA. */
+const homonima = sugerido("1", { origem: "pergunta", unidadeDaNota: "KG", motivo: "unidade_homonima_da_organizacao" });
+const PERGUNTA_HOMONIMA_KG = "A unidade KG da nota é a da organização, e o produto está cadastrado na KG do sistema: informe o fator.";
+const PERGUNTA_GENERICA = "O cadastro do produto não diz o fator desta unidade da nota: informe o fator.";
 /** A API anterior: o mesmo vínculo, sem `fatorPelaNota`. */
 const anterior = sugerido("1");
 
@@ -83,8 +81,7 @@ describe("XML-04 T2 a PERGUNTA: o campo nasce VAZIO (nunca o '1' do servidor) e 
   it("o servidor manda fator '1' por compatibilidade; a tela nasce vazia, com a pergunta de cada motivo", () => {
     for (const [v, pergunta] of [
       [foraDoCadastro, "A unidade BD da nota não está no cadastro do produto: informe o fator."],
-      [outroCodigoDeBarras, "O código de barras da nota é de outra unidade do produto, e não da unidade UN da nota: informe o fator."],
-      [outroCodigoDeBarrasComONumero, "O código de barras da nota é da unidade CX do produto (fator 12, multiplica), mas a nota diz UN: informe o fator."]
+      [homonima, PERGUNTA_HOMONIMA_KG]
     ] as const) {
       expect(v.situacao === "sugerido" ? v.fator : null, "premissa: o fator de compatibilidade do servidor").toBe("1");
       const d = decisao(v);
@@ -193,48 +190,68 @@ describe("XML-04 T5 a API anterior (sem `fatorPelaNota`) e a forma estranha: a t
   });
 });
 
-describe("XML-04 T6 o código de barras de OUTRA unidade: a pergunta com o número na mão (nunca 'confira')", () => {
-  const comCodigo = (unidadeDaNota: string, codigoDeBarras: unknown) =>
-    sugerido("1", { origem: "pergunta", unidadeDaNota, motivo: "codigo_de_barras_de_outra_unidade", codigoDeBarras } as unknown as FatorDoItemDaNota);
+describe("XML-04 T6 a unidade HOMÔNIMA da organização: a pergunta diz o porquê verdadeiro; o código de barras não põe o fator em dúvida", () => {
   const pergunta = (v: VinculoDoItemDaNota) => fatorNaTela(v, decisao(v))?.pergunta;
-  const SEM_O_NUMERO_UN = "O código de barras da nota é de outra unidade do produto, e não da unidade UN da nota: informe o fator.";
+  const comPergunta = (f: Record<string, unknown>) => sugerido("1", { origem: "pergunta", unidadeDaNota: "UN", ...f } as unknown as FatorDoItemDaNota);
+  const codigoDeBarras = { unidade: "CX", fator: "12.000000", tipoFator: "multiply" };
 
-  it("com o `codigoDeBarras`: a unidade do código, o fator do cadastro dela (como a tela escreve número) e a conversão; e a unidade da nota", () => {
-    expect(fatorPelaNotaDoVinculo(outroCodigoDeBarrasComONumero)).toEqual({
-      origem: "pergunta", unidadeDaNota: "UN", motivo: "codigo_de_barras_de_outra_unidade", codigoDeBarras: { unidade: "CX", fator: "12.000000", tipoFator: "multiply" }
-    });
-    expect(pergunta(outroCodigoDeBarrasComONumero)).toBe("O código de barras da nota é da unidade CX do produto (fator 12, multiplica), mas a nota diz UN: informe o fator.");
-    expect(pergunta(comCodigo("KG", { unidade: "FD", fator: "0.500000", tipoFator: "divide" }))).toBe("O código de barras da nota é da unidade FD do produto (fator 0,5, divide), mas a nota diz KG: informe o fator.");
-    expect(pergunta(comCodigo("G", { unidade: "KG", fator: "1000.000000", tipoFator: "multiply" }))).toBe("O código de barras da nota é da unidade KG do produto (fator 1.000, multiplica), mas a nota diz G: informe o fator.");
-    expect(decisao(outroCodigoDeBarrasComONumero).fator, "o número é dito, nunca escolhido: o campo nasce vazio").toBe("");
+  it("o motivo lido por propriedade própria; o texto EXATO com a unidade da nota (as duas de mesmo símbolo); o campo VAZIO e a pendência; o digitado é 'informado'", () => {
+    expect(fatorPelaNotaDoVinculo(homonima)).toEqual({ origem: "pergunta", unidadeDaNota: "KG", motivo: "unidade_homonima_da_organizacao" });
+    expect(pergunta(homonima)).toBe(PERGUNTA_HOMONIMA_KG);
+    expect(pergunta(sugerido("1", { origem: "pergunta", unidadeDaNota: "SC", motivo: "unidade_homonima_da_organizacao" })))
+      .toBe("A unidade SC da nota é a da organização, e o produto está cadastrado na SC do sistema: informe o fator.");
+    expect(pergunta(sugerido("1", { origem: "pergunta", unidadeDaNota: "KG", motivo: "unidade_fora_do_cadastro" })), "premissa: o outro motivo, na mesma unidade, diz outra coisa")
+      .toBe("A unidade KG da nota não está no cadastro do produto: informe o fator.");
+    const d = decisao(homonima);
+    expect(d.fator, "o '1' de compatibilidade do servidor não entra no campo").toBe("");
+    expect(contaDoItem(item, d, produtoNaTela)).toEqual({ situacao: "fator_invalido" });
+    expect(fatorNaTela(homonima, { ...d, fator: "50" })).toEqual({ origem: "informado", texto: "Fator informado na tela.", aviso: null, pergunta: null });
+    const lista = divergenciasDoServidorNaTela({ divergencias: [{ codigo: "fator_a_informar", mensagem: "do servidor", nItem: 1, bloqueia: false }], itens: conf(homonima).itens });
+    expect(lista, "a tela lê o `fatorPelaNota` do item e refaz a pergunta: o aviso do servidor sai").toEqual([]);
   });
-  it("sem o campo (a API sem ele): a unidade da nota, sem o número; a unidade da nota vazia: o texto possível", () => {
-    expect(fatorPelaNotaDoVinculo(outroCodigoDeBarras)).toEqual({ origem: "pergunta", unidadeDaNota: "UN", motivo: "codigo_de_barras_de_outra_unidade", codigoDeBarras: null });
-    expect(pergunta(outroCodigoDeBarras)).toBe(SEM_O_NUMERO_UN);
-    expect(pergunta(comCodigo("", { unidade: "CX", fator: "12", tipoFator: "multiply" }))).toBe("O código de barras da nota é da unidade CX do produto (fator 12, multiplica), mas a nota não traz a unidade: informe o fator.");
-    expect(pergunta(sugerido("1", { origem: "pergunta", unidadeDaNota: "", motivo: "codigo_de_barras_de_outra_unidade" })))
-      .toBe("O código de barras da nota é de outra unidade do produto, e a nota não traz a unidade: informe o fator.");
-  });
-  it("FAIL-CLOSED: o campo fora da forma, herdado do protótipo, ou com OUTRO motivo ⇒ sem o número (a tela não afirma o que não leu)", () => {
-    const foraDaForma: unknown[] = [
-      { unidade: "", fator: "12", tipoFator: "multiply" }, { unidade: "  ", fator: "12", tipoFator: "multiply" }, { unidade: 7, fator: "12", tipoFator: "multiply" },
-      { unidade: "CX", fator: "doze", tipoFator: "multiply" }, { unidade: "CX", fator: "0", tipoFator: "multiply" }, { unidade: "CX", fator: 12, tipoFator: "multiply" },
-      { unidade: "CX", fator: "12", tipoFator: "soma" }, { unidade: "CX", fator: "12" }, "CX", null, [], 12
-    ];
-    for (const cb of foraDaForma) {
-      const v = comCodigo("UN", cb);
-      expect(fatorPelaNotaDoVinculo(v), JSON.stringify(cb)).toMatchObject({ origem: "pergunta", motivo: "codigo_de_barras_de_outra_unidade", codigoDeBarras: null });
-      expect(pergunta(v), JSON.stringify(cb)).toBe(SEM_O_NUMERO_UN);
+  it("motivo que a tela não conhece (também o do código de barras, que saiu), ausente ou HERDADO do protótipo ⇒ o texto genérico, com o campo vazio (fail-closed)", () => {
+    const desconhecidos: unknown[] = ["codigo_de_barras_de_outra_unidade", "motivo_futuro", "UNIDADE_HOMONIMA_DA_ORGANIZACAO", " unidade_homonima_da_organizacao", "unidade_homonima", "", 7, null, true, {}];
+    const vinculos = [...desconhecidos.map((motivo) => comPergunta({ motivo })), comPergunta({})];
+    const herdado = sugerido("1", Object.assign(Object.create({ motivo: "unidade_homonima_da_organizacao" }) as object, { origem: "pergunta", unidadeDaNota: "UN" }) as FatorDoItemDaNota);
+    for (const v of [...vinculos, herdado]) {
+      const nome = JSON.stringify(v.situacao === "sugerido" ? v.fatorPelaNota : null);
+      expect(fatorPelaNotaDoVinculo(v), nome).toEqual({ origem: "pergunta", unidadeDaNota: "UN", motivo: null });
+      expect(decisao(v).fator, nome).toBe("");
+      expect(pergunta(v), nome).toBe(PERGUNTA_GENERICA);
     }
-    const herdado = sugerido("1", Object.assign(Object.create({ codigoDeBarras: { unidade: "CX", fator: "12", tipoFator: "multiply" } }) as object,
-      { origem: "pergunta", unidadeDaNota: "UN", motivo: "codigo_de_barras_de_outra_unidade" }) as FatorDoItemDaNota);
-    expect(pergunta(herdado), "herdado do protótipo: não é propriedade própria").toBe(SEM_O_NUMERO_UN);
-    const outroMotivo = sugerido("1", { origem: "pergunta", unidadeDaNota: "BD", motivo: "unidade_fora_do_cadastro", codigoDeBarras: { unidade: "CX", fator: "12", tipoFator: "multiply" } });
-    expect(fatorPelaNotaDoVinculo(outroMotivo)).toMatchObject({ motivo: "unidade_fora_do_cadastro", codigoDeBarras: null });
-    expect(pergunta(outroMotivo)).toBe("A unidade BD da nota não está no cadastro do produto: informe o fator.");
+    expect(vinculos.length + 1, "premissa: os 10 desconhecidos, o ausente e o herdado").toBe(12);
+    const semUnidade = sugerido("1", { origem: "pergunta", unidadeDaNota: "", motivo: "unidade_homonima_da_organizacao" });
+    expect(pergunta(semUnidade), "sem a unidade da nota (o servidor não manda assim), a tela não afirma o homônimo").toBe(PERGUNTA_GENERICA);
   });
-  it("nenhum texto do fator na tela diz 'confira': cada pergunta termina pedindo o fator, e o aviso diz os dois números", () => {
-    const vinculos = [principal, doProduto, doVinculo, vinculoContraCadastro, foraDoCadastro, outroCodigoDeBarras, outroCodigoDeBarrasComONumero,
+  it("o `codigoDeBarras` que uma API mande junto NÃO é lido: o motivo dele é desconhecido (genérico, sem número), e nos motivos conhecidos o texto é o do uCom", () => {
+    const doCodigo = comPergunta({ motivo: "codigo_de_barras_de_outra_unidade", codigoDeBarras });
+    expect(fatorPelaNotaDoVinculo(doCodigo)).toEqual({ origem: "pergunta", unidadeDaNota: "UN", motivo: null });
+    expect(pergunta(doCodigo)).toBe(PERGUNTA_GENERICA);
+    expect(pergunta(doCodigo), "nenhum número nem unidade do código de barras na tela").not.toMatch(/12|CX|código de barras/i);
+    for (const [motivo, texto] of [
+      ["unidade_fora_do_cadastro", "A unidade UN da nota não está no cadastro do produto: informe o fator."],
+      ["unidade_homonima_da_organizacao", "A unidade UN da nota é a da organização, e o produto está cadastrado na UN do sistema: informe o fator."]
+    ] as const) {
+      const v = comPergunta({ motivo, codigoDeBarras });
+      expect(fatorPelaNotaDoVinculo(v), motivo).toEqual({ origem: "pergunta", unidadeDaNota: "UN", motivo });
+      expect(pergunta(v), motivo).toBe(texto);
+    }
+  });
+  it("a API anterior (sem `fatorPelaNota`, ou com o homônimo herdado do protótipo) ⇒ nada: nenhuma origem, nenhuma pergunta, o fator do servidor e o aviso dele", () => {
+    const herdada = Object.assign(Object.create({ fatorPelaNota: { origem: "pergunta", unidadeDaNota: "KG", motivo: "unidade_homonima_da_organizacao" } }) as object,
+      { situacao: "sugerido", origem: "reference", produto, fator: "1", tipoFator: "multiply" }) as VinculoDoItemDaNota;
+    for (const [nome, v] of [["ausente", anterior], ["herdada", herdada]] as const) {
+      expect(fatorPelaNotaDoVinculo(v), nome).toBeNull();
+      const d = decisao(v);
+      expect(d.fator, nome).toBe("1");
+      expect(fatorNaTela(v, d), nome).toBeNull();
+      const lista = divergenciasDoServidorNaTela({ divergencias: [{ codigo: "fator_a_informar", mensagem: "do servidor", nItem: 1, bloqueia: false }], itens: conf(v).itens });
+      expect(lista.map((x) => [x.codigo, x.origem]), nome).toEqual([["fator_a_informar", "servidor"]]);
+    }
+  });
+  it("nenhum texto do fator na tela diz 'confira' nem fala do código de barras: cada pergunta termina pedindo o fator, e o aviso diz os dois números", () => {
+    const vinculos = [principal, doProduto, doVinculo, vinculoContraCadastro, foraDoCadastro, homonima, comPergunta({ motivo: "codigo_de_barras_de_outra_unidade", codigoDeBarras }),
+      sugerido("1", { origem: "pergunta", unidadeDaNota: "SC", motivo: "unidade_homonima_da_organizacao" }),
       sugerido("1", { origem: "pergunta", unidadeDaNota: "", motivo: "unidade_fora_do_cadastro" }),
       sugerido("1", { origem: "pergunta", unidadeDaNota: "BD", motivo: "motivo_futuro" } as unknown as FatorDoItemDaNota)];
     const textos: string[] = [];
@@ -250,7 +267,8 @@ describe("XML-04 T6 o código de barras de OUTRA unidade: a pergunta com o núme
     }
     expect(textos.length, "premissa: há textos (perguntas, origens e avisos) para conferir").toBeGreaterThan(30);
     expect(new Set(textos).size, "premissa: textos diferentes").toBeGreaterThanOrEqual(12);
-    expect(textos.filter((t) => /confira/i.test(t))).toEqual([]);
+    expect(textos, "premissa: o homônimo está entre eles").toContain(PERGUNTA_HOMONIMA_KG);
+    expect(textos.filter((t) => /confira|código de barras/i.test(t))).toEqual([]);
   });
 });
 
@@ -309,7 +327,7 @@ describe("XML-04 T7 a TROCA DE PRODUTO: o fator derivado é do produto do víncu
   it("a PERGUNTA do servidor (o campo já nasce vazio): na troca, a pergunta passa a ser a do produto trocado; de volta, a do servidor", () => {
     for (const [v, doServidor] of [
       [foraDoCadastro, "A unidade BD da nota não está no cadastro do produto: informe o fator."],
-      [outroCodigoDeBarrasComONumero, "O código de barras da nota é da unidade CX do produto (fator 12, multiplica), mas a nota diz UN: informe o fator."]
+      [homonima, PERGUNTA_HOMONIMA_KG]
     ] as const) {
       const c = confDaTroca(v);
       const d0 = decisaoDoVinculo(c, 1);

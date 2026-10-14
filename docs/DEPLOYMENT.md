@@ -4779,7 +4779,7 @@ senão `VALIDATION_ERROR`, P0001 → 422, a MESMA recusa para a forma inexistent
 histórico do cadastro) —; a RLS habilitada e forçada com a política ÚNICA `tenant_isolation` (a mesma de
 `erp.condicoes_pagamento`); `erp_app` com select, insert e update, delete e truncate revogados (a exclusão é lógica).
 **Não altera nenhuma tabela existente:** nenhum ALTER, UPDATE, DELETE, TRUNCATE, DROP, CREATE OR REPLACE nem INSERT de
-dado (a varredura de `packages/db/test/xml-04-0064.test.ts`, X8). As duas FKs APONTAM para `erp.organizations` e
+dado (provado pelo RETRATO do banco inteiro antes e depois em `packages/db/test/xml-04-0064.test.ts`, X5 — catálogo e dados: só o que é da tabela e da função novas muda — e pela varredura do texto, X8, que é heurística: não vê, por exemplo, um MERGE; quem o pega é o X5). As duas FKs APONTAM para `erp.organizations` e
 `erp.payment_methods`: criar cada uma toma a trava SHARE ROW EXCLUSIVE da tabela referida, que fica até o COMMIT da
 migration — a ESCRITA em `erp.payment_methods` e em `erp.organizations` espera por esse tempo (medido localmente: 20 a
 30 ms), a leitura não —; com uma transação de escrita aberta numa delas, a migration desiste em 2 s sem aplicar nada
@@ -4836,7 +4836,7 @@ recurso do cadastro): por isso a 0064 é pre-deploy da API, e a API não sobe se
    e na descrição — e, como o "Lembrar" da web anterior nasce marcado no código no fornecedor e no código de barras,
    esse 1 vira VÍNCULO LEMBRADO, que nas notas seguintes vence sem pergunta. Onde a main dava um número e a API nova
    pergunta (a linha só de venda, o uCom que não é unidade do cadastro, a unidade do sistema com homônima da
-   organização, o código de barras de outra unidade), a janela troca esse número pelo 1. **Na produção de hoje isso não
+   organização), a janela troca esse número pelo 1. **Na produção de hoje isso não
    muda número nenhum:** com 0 linhas vivas em `erp.produto_unidades` (gate abaixo), a main também dá 1 em todos esses
    caminhos. O risco cresce só se o dono cadastrar unidades alternativas enquanto algum navegador ainda roda o bundle
    anterior. A forma da nota não vem escolhida. A janela é a do deploy. O menu da web anterior não tem o cadastro novo.
@@ -4844,8 +4844,10 @@ recurso do cadastro): por isso a 0064 é pre-deploy da API, e a API não sobe se
    a de antes: o fator como o servidor manda, nenhuma origem, pergunta ou aviso novo, NENHUM pedido à TOP
    (`/regras-da-operacao`, `/layout-efetivo`), nenhuma resposta 404/422/5xx à tela, e o corpo do "Gerar compra" com as
    MESMAS chaves da web anterior, na mesma ordem (topo, financeiro, rateio e cada item), a forma vazia e os fatores como o
-   servidor manda (o caso K1 de `apps/web/e2e/xml-04-skew-api-producao.spec.ts`, que mede as chaves no fio: 201); a explicação das duplicatas não depende da API (a tela recalcula
-   as parcelas com a regra do domínio que embute, que não mudou). A entrada "Formas de Pagamento da NF-e" do menu aparece,
+   servidor manda (o caso K1 de `apps/web/e2e/xml-04-skew-api-producao.spec.ts`, que mede as chaves no fio: 201); a explicação das duplicatas que não fecham não depende da API (a tela
+   recalcula as parcelas com a regra do domínio que embute, que não mudou); o MOTIVO do `sem_duplicatas` depende (o
+   `duplicatasDescartadas` vem do leitor da API), e com a API anterior a nota com `<dup>` sem vencimento aparece como "A
+   nota não traz duplicatas" — o mesmo texto da base, sem regressão. A entrada "Formas de Pagamento da NF-e" do menu aparece,
    mas a API anterior não tem o recurso: a aba recebe a recusa do servidor e nada é gravado.
 
 **Por que a ordem inversa também é segura** (web antes da API, ou a volta só da API): todos os campos novos são
@@ -4859,19 +4861,26 @@ ignora a tabela nova. O que NÃO é seguro é a API nova sem a 0064 — o pre-de
   até o dono ligar os códigos no cadastro novo. É o mesmo padrão da 311 com o local do produto. Ligar um código é decisão
   do dono, pelo cadastro, com a trilha de auditoria.
 - **O FATOR: muda de comportamento JÁ no dia do merge.** O item cujo uCom não é unidade do produto no cadastro (nem a
-  principal, nem uma linha de `erp.produto_unidades` viva e de compra), cuja linha é só de venda, ou cujo cEAN é o
-  código de barras de OUTRA unidade do produto passa a PERGUNTAR — o campo vazio e a pendência do fator até a pessoa
-  digitar — em vez de vir com o 1 (a referência e a descrição) ou com o fator da ficha do fornecedor ou da unidade dona
-  do código de barras; o item cujo uCom é uma alternativa de compra passa a vir com o fator dela (antes, 1 na referência
-  e na descrição); o código no fornecedor com a ficha numa unidade e a nota em outra passa a seguir a NOTA. Onde a ficha,
-  o código de barras e a nota dizem a mesma unidade, o número é o da main (`apps/api/test/integration/xml-04-nao-regressao.test.ts`).
+  principal, nem uma linha de `erp.produto_unidades` viva e de compra), cuja linha é só de venda, ou cujo uCom chega à
+  unidade da organização enquanto o produto está na homônima do sistema passa a PERGUNTAR — o campo vazio e a pendência
+  do fator até a pessoa digitar — em vez de vir com o 1 (a referência e a descrição) ou com o fator da ficha do
+  fornecedor ou da unidade dona do código de barras; o item cujo uCom é uma alternativa de compra passa a vir com o fator
+  dela (antes, 1 na referência e na descrição); o código no fornecedor e o código de barras com a ficha, ou o código,
+  numa unidade e a nota em outra passam a seguir o uCom DA NOTA — o código de barras só acha o produto (a regra 3.1 à
+  letra, decisão do Maike). Onde o uCom chega à unidade de compra que a main usava, o número é o da main, também com o
+  cEAN de outra unidade (`apps/api/test/integration/xml-04-nao-regressao.test.ts`, NR1; os casos que mudam, com o número
+  da main ao lado, no NR2 e na decisão 318, risco (a)). **Na produção de hoje** (gate abaixo): 0 linhas vivas em
+  `erp.produto_unidades` e 0 unidades da organização — o fator do cadastro é 1 (a principal) ou PERGUNTA; dos 9 vínculos
+  lembrados (todos com fator 1), 4 estão numa unidade que não é a principal e continuam dando 1, sem pergunta e sem aviso
+  (o lembrado vence e não há cadastro que respalde outro número), como na main.
   Os vínculos lembrados continuam valendo com o fator deles (o cadastro discordando só avisa). A conferência continua só
   lendo: a importação pendente em produção passa a mostrar o fator novo na próxima leitura, e o "Gerar compra" só grava
   o que a pessoa confirma. Sem chave de ativação: a 240 (4) desliga EFEITO novo (o que grava ou movimenta), e esta fatia
   não grava nada que a pessoa não confirme; o prompt da fatia proíbe variável nova.
 
 **Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0064 FICA: a API anterior convive
-com ela (janela 1) — vazia, ou com as ligações que o dono criou, que nada fazem na API anterior. Voltando só a API, a web
+com ela (janela 1) — vazia, ou com as ligações que o dono criou, que a API anterior não lê (a FK continua barrando,
+também com a API anterior, a exclusão de uma forma da organização que já teve ligação — XA5). Voltando só a API, a web
 nova vê a conferência sem os campos novos (janela 3) e o cadastro das ligações deixa de responder; voltando só a web,
 vale a janela 2. As ligações criadas pelo dono são dado de produção: nunca apagadas (decisão 247), nunca DROP; tirar a
 tabela, a função ou os gatilhos só por migration NOVA, e é decisão do Maike — nunca editando a 0064. As compras geradas
@@ -4903,7 +4912,7 @@ O estado de produção sobre o qual as pré-condições da 0064 passam, objeto p
 `erp.payment_methods` (quantas são do sistema), se a aplicação é instantânea, e a lista íntegra dos comandos rodados —
 só SELECT e leitura de catálogo:
 
-**Conferido em produção (só leitura, pela sessão, 13/10/2026; quatro SELECT, nenhuma escrita, nenhuma transação
+**Conferido em produção (só leitura, pela sessão, 13 e 14/10/2026; cinco SELECT, nenhuma escrita, nenhuma transação
 aberta):** ledger em 63, a última `0063_versao_do_documento_de_compra.sql` (a 0064 não aplicada); PostgreSQL 17.6;
 livres os três nomes da 0064 (`erp.formas_pagamento_da_nfe`, `erp.ux_formas_pagamento_da_nfe_codigo_vivo`,
 `erp.formas_pagamento_da_nfe_forma_guarda()`); a 0063 aplicada (`erp.documentos_compra.version` existe);
@@ -4928,6 +4937,8 @@ Comandos rodados contra a produção (na íntegra, nesta ordem; projeto Supabase
 2. `select (select count(*) from public.erp_migrations) as ledger_total, (select max(name) from public.erp_migrations) as ultima, exists (select 1 from public.erp_migrations where name like '0064%') as ja_tem_0064, to_regclass('erp.formas_pagamento_da_nfe') is null as tabela_livre, to_regclass('erp.ux_formas_pagamento_da_nfe_codigo_vivo') is null as indice_livre, to_regprocedure('erp.formas_pagamento_da_nfe_forma_guarda()') is null as funcao_livre, exists (select 1 from pg_attribute a where a.attrelid = to_regclass('erp.documentos_compra') and a.attname = 'version' and not a.attisdropped) as tem_0063, to_regclass('erp.organizations') is not null as tem_organizations, (select format_type(a.atttypid, a.atttypmod) from pg_attribute a where a.attrelid = to_regclass('erp.payment_methods') and a.attname = 'id' and not a.attisdropped) as pm_id_tipo, (select format_type(a.atttypid, a.atttypmod) from pg_attribute a where a.attrelid = to_regclass('erp.payment_methods') and a.attname = 'organization_id' and not a.attisdropped) as pm_org_tipo, to_regprocedure('erp.set_updated_at()') is not null as tem_set_updated_at, to_regprocedure('erp.audit_row()') is not null as tem_audit_row, to_regprocedure('erp.tenant_visible(uuid)') is not null as tem_tenant_visible, exists (select 1 from pg_policies p where p.schemaname = 'erp' and p.tablename = 'condicoes_pagamento' and p.policyname = 'tenant_isolation') as tem_politica_referencia, exists (select 1 from pg_policies p where p.schemaname = 'erp' and p.tablename = 'payment_methods') as payment_methods_tem_politica, exists (select 1 from pg_roles where rolname = 'erp_app') as tem_erp_app, exists (select 1 from pg_roles where rolname = 'authenticated') as tem_authenticated, (select pg_get_userbyid(c.relowner) from pg_class c where c.oid = to_regclass('erp.payment_methods')) as dono_payment_methods, (select nspowner::regrole::text from pg_namespace where nspname = 'erp') as dono_schema_erp, version() as versao`
 3. `select (select count(*) from pg_locks l where l.locktype = 'advisory' and l.classid = 2026 and l.objid = 98) as detentores_trava_2026_98, has_schema_privilege('erp_migrator', 'erp', 'CREATE') as migrator_create_erp, has_table_privilege('erp_migrator', 'erp.organizations', 'REFERENCES') as migrator_ref_organizations, has_table_privilege('erp_migrator', 'erp.payment_methods', 'REFERENCES') as migrator_ref_payment_methods, (select count(*) from erp.payment_methods) as formas_total, (select count(*) from erp.payment_methods where organization_id is null) as formas_do_sistema, (select count(*) from erp.payment_methods where organization_id is not null) as formas_da_organizacao, (select count(*) from erp.payment_methods where is_active) as formas_ativas, (select string_agg(name, ', ' order by name) from erp.payment_methods) as nomes_das_formas, (select count(*) from erp.organizations) as organizacoes, pg_size_pretty(pg_total_relation_size('erp.payment_methods')) as tamanho_payment_methods, pg_size_pretty(pg_total_relation_size('erp.organizations')) as tamanho_organizations, (select count(*) from pg_locks l where l.relation in (to_regclass('erp.payment_methods'), to_regclass('erp.organizations')) and l.pid <> pg_backend_pid()) as travas_alheias_nas_referenciadas, (select count(*) from pg_stat_activity a where a.state <> 'idle' and a.xact_start < now() - interval '1 minute' and a.pid <> pg_backend_pid()) as transacoes_nao_ociosas_mais_1min, (select count(*) from erp.importacoes_nfe_compra where situacao = 'pendente') as importacoes_pendentes, (select count(*) from erp.importacoes_nfe_compra) as importacoes_total, (select count(*) from erp.produto_fornecedor_vinculos) as vinculos_lembrados, (select count(*) from erp.produto_unidades where deleted_at is null) as produto_unidades_vivas, (select count(*) from erp.produto_unidades where deleted_at is null and uso_compra) as produto_unidades_vivas_de_compra`
 4. `select count(*) as vinculos, count(*) filter (where upper(btrim(mu.symbol)) = v.unidade_fornecedor) as na_unidade_principal, count(*) filter (where upper(btrim(mu.symbol)) = v.unidade_fornecedor and (v.fator <> 1 or v.tipo_fator <> 'multiply')) as avisariam_vinculo_diferente_do_cadastro, count(*) filter (where v.fator = 1 and v.tipo_fator = 'multiply') as com_fator_1 from erp.produto_fornecedor_vinculos v join erp.products p on p.id = v.produto_id and p.organization_id = v.organization_id left join erp.measurement_units mu on mu.id = p.measurement_id`
+5. `select (select count(*) from erp.measurement_units where organization_id is not null) as unidades_da_organizacao, (select count(*) from erp.measurement_units o where o.organization_id is not null and exists (select 1 from erp.measurement_units s where s.organization_id is null and upper(btrim(s.symbol)) = upper(btrim(o.symbol)))) as unidades_da_organizacao_homonimas_do_sistema, (select count(*) from erp.products where barcode is not null and btrim(barcode) <> '') as produtos_com_codigo_de_barras, (select count(*) from erp.products) as produtos`
+   → 0 unidades da organização, 0 homônimas do sistema; 231 de 423 produtos com código de barras (o código de barras só acha o produto: nenhum efeito no fator).
 
 A aplicação real continua pelo pipeline, por decisão do Maike.
 

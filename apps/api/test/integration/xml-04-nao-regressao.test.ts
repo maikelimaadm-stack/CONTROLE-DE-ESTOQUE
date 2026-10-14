@@ -10,23 +10,25 @@ import { prepararXml01, conferenciaLida, vinculoDo, eanNovo, emitenteNovo, unida
  *
  * A main tirava o fator do CÓDIGO NO FORNECEDOR da unidade de compra da FICHA do fornecedor
  * (`produto_fornecedores.measurement_id`), o do CÓDIGO DE BARRAS da unidade DONA do código e o do LEMBRADO do vínculo; a
- * XML-04 tira os dois primeiros do uCom DA NOTA pelo cadastro (`produto_unidades`, só a linha VIVA e DE COMPRA, pela
- * régua de unidade da 312) e mantém o do vínculo. Onde a ficha, o código de barras e a nota dizem a MESMA unidade, a
- * linha é de compra e o uCom é uma unidade do cadastro, o número não pode mudar:
+ * XML-04 tira os dois primeiros SÓ do uCom DA NOTA pelo cadastro (`produto_unidades`, só a linha VIVA e DE COMPRA, pela
+ * régua de unidade da 312) e mantém o do vínculo — a regra 3.1 à letra (decisão do Maike): o código de barras só ACHA o
+ * produto, nunca dá fator nem o põe em dúvida. Onde a ficha e a nota dizem a MESMA unidade, a linha é de compra e o uCom
+ * é uma unidade do cadastro, o número não pode mudar — diga o cEAN da nota a unidade que disser:
  *
  *   XML4-NR1 o MESMO fator da main: o produto em KG com a alternativa SC = 50 (multiplica), pelo código no fornecedor
  *            (ficha em SC), pelo código de barras da SC e pelo vínculo lembrado (50); a principal (KG) pelo código no
- *            fornecedor e pelo código de barras do produto (1); e uma alternativa que DIVIDE (CX = 4) — as unidades do
- *            SEED (do sistema), o mundo real;
+ *            fornecedor e pelo código de barras do produto (1); uma alternativa que DIVIDE (CX = 4); e o cEAN de OUTRA
+ *            unidade com a ficha e a nota na mesma (B18 e B20 do cético: 50 e 1) — as unidades do SEED (do sistema),
+ *            o mundo real;
  *   XML4-NR2 o que MUDA, de propósito, com o número da main escrito ao lado — e em nenhum caso a fatia dá um número
  *            ERRADO: ou segue a nota pelo cadastro, ou PERGUNTA:
- *              (a) a ficha (ou o código de barras) diz uma unidade e a nota diz outra — a main seguia a ficha (ou o
- *                  código), a XML-04 segue a nota pelo cadastro (ou pergunta);
+ *              (a) a ficha (ou o código de barras) diz uma unidade e a nota diz outra — a main seguia a ficha (ou a
+ *                  unidade dona do código), a XML-04 segue o uCom da nota pelo cadastro (B11, B10, B12 e B5 do cético);
  *              (b) a main dava o número certo e a XML-04 PERGUNTA de propósito (os casos B1, B4, B2 e B7 do cético):
  *                  a linha da unidade é SÓ DE VENDA (pela ficha e pelo código de barras — a 3.1 só aceita linha de
- *                  compra); o uCom não é unidade do cadastro ("SACO" — a 3.1 exige que o uCom case); a unidade da
- *                  ORGANIZAÇÃO tem o mesmo símbolo da do SISTEMA em que estão a linha e a ficha (a 3.3: a da organização
- *                  vence, fail-closed).
+ *                  compra; o cEAN não entra); o uCom não é unidade do cadastro ("SACO" — a 3.1 exige que o uCom case);
+ *                  a unidade da ORGANIZAÇÃO tem o mesmo símbolo da do SISTEMA em que estão a linha e a ficha (a 3.3: a
+ *                  da organização vence, fail-closed — e a pergunta diz esse porquê, `unidade_homonima_da_organizacao`).
  *
  * "O mesmo da main" não é suposição: as tabelas `NA_MAIN_*` foram OBTIDAS rodando ESTE cenário (o arquivo sem as
  * asserções de `fatorPelaNota` e das divergências do fator, que a main não tem) contra o código de `origin/main`
@@ -137,7 +139,11 @@ const doFator = (conf: Conferencia, nItem: number): DivergenciaDaImportacaoNfe[]
 
 // ═════════════════════════════════════ XML4-NR1 o mesmo fator da main ═════════════════════════════════════
 
-/** O fator que a MAIN entrega no cenário do NR1 (obtido em `origin/main`), sem o produto (que é do caso). */
+/**
+ * O fator que a MAIN entrega no cenário do NR1 (obtido em `origin/main`), sem o produto (que é do caso). Os dois últimos
+ * (B18 e B20 do cético) entraram com a decisão do Maike ("a 3.1 à letra") e foram OBTIDOS do mesmo jeito: o cenário
+ * rodado contra o código da main.
+ */
 const NA_MAIN_NR1 = [
   { caminho: "codigo_fornecedor", fator: "50.000000", tipoFator: "multiply", quantidadeInterna: "100.0000", valorUnitarioInterno: "0.200000" },
   { caminho: "codigo_barras", fator: "50.000000", tipoFator: "multiply", quantidadeInterna: "100.0000", valorUnitarioInterno: "0.200000" },
@@ -145,52 +151,71 @@ const NA_MAIN_NR1 = [
   { caminho: "codigo_fornecedor", fator: "1", tipoFator: "multiply", quantidadeInterna: "2.0000", valorUnitarioInterno: "10.000000" },
   { caminho: "codigo_barras", fator: "1", tipoFator: "multiply", quantidadeInterna: "2.0000", valorUnitarioInterno: "10.000000" },
   { caminho: "codigo_fornecedor", fator: "4.000000", tipoFator: "divide", quantidadeInterna: "0.5000", valorUnitarioInterno: "40.000000" },
+  { caminho: "codigo_fornecedor", fator: "50.000000", tipoFator: "multiply", quantidadeInterna: "100.0000", valorUnitarioInterno: "0.200000" },
+  { caminho: "codigo_fornecedor", fator: "1", tipoFator: "multiply", quantidadeInterna: "2.0000", valorUnitarioInterno: "10.000000" },
 ] as const;
 
 describe("XML4-NR1 o fator que a main já acertava continua o MESMO", () => {
-  it("KG com SC = 50: código no fornecedor (ficha SC, nota SC), código de barras da SC (nota SC) e vínculo 50 → 50; KG pela ficha e pelo código de barras do produto → 1; CX = 4 que divide → 4", async () => {
+  it("KG com SC = 50: código no fornecedor (ficha SC, nota SC), código de barras da SC (nota SC) e vínculo 50 → 50; KG pela ficha e pelo código de barras do produto → 1; CX = 4 que divide → 4; o cEAN de OUTRA unidade com a ficha e a nota na mesma (B18 → 50, B20 → 1)", async () => {
     const u = unico().toUpperCase();
     const [kg, sc, cx] = [await unidadeDoSeed("KG"), await unidadeDoSeed("SC"), await unidadeDoSeed("CX")];
-    const [eanDaSaca, eanDoProduto] = [eanNovo(), eanNovo()];
+    const [eanDaSaca, eanDoProduto, eanDoProdutoB18, eanDaSacaB20] = [eanNovo(), eanNovo(), eanNovo(), eanNovo()];
     const saco = await produtoNovo(kg);
     await alternativa(saco.id, sc, "50", "multiply", eanDaSaca);
     const quilo = await produtoNovo(kg, eanDoProduto);
     const caixa = await produtoNovo(kg);
     await alternativa(caixa.id, cx, "4", "divide");
+    // B18: a ficha, o cadastro e a nota dizem SC (50); o cEAN da nota é o `products.barcode` — o da principal KG.
+    const b18 = await produtoNovo(kg, eanDoProdutoB18);
+    await alternativa(b18.id, sc, "50", "multiply");
+    // B20: a ficha e a nota dizem KG (a principal, 1); o cEAN da nota é o da linha SC.
+    const b20 = await produtoNovo(kg);
+    await alternativa(b20.id, sc, "50", "multiply", eanDaSacaB20);
     const n = await notaImportada([
       item(`NR-CF-${u}`, "SC"), item(`NR-EAN-${u}`, "SC", eanDaSaca), item(`NR-L-${u}`, "SC"),
       item(`NR-CF1-${u}`, "KG"), item(`NR-E1-${u}`, "KG", eanDoProduto), item(`NR-CFD-${u}`, "CX"),
+      item(`NR-B18-${u}`, "SC", eanDoProdutoB18), item(`NR-B20-${u}`, "KG", eanDaSacaB20),
     ]);
     await fichaDoFornecedor(saco.id, n.fornecedor, `NR-CF-${u}`, sc);
     await lembrar(n.fornecedor, `NR-L-${u}`, "SC", saco.id, "50");
     await fichaDoFornecedor(quilo.id, n.fornecedor, `NR-CF1-${u}`, kg);
     await fichaDoFornecedor(caixa.id, n.fornecedor, `NR-CFD-${u}`, cx);
+    await fichaDoFornecedor(b18.id, n.fornecedor, `NR-B18-${u}`, sc);
+    await fichaDoFornecedor(b20.id, n.fornecedor, `NR-B20-${u}`, kg);
     const conf = await conferenciaLida(n.id);
     expect(conf.fornecedorEscolhido, "premissa: o fornecedor das fichas e do vínculo é o escolhido").toBe(n.fornecedor);
+    expect(conf.nota.itens.slice(6).map((i) => i.ean), "premissa: o B18 e o B20 trazem o cEAN de OUTRA unidade do produto").toEqual([eanDoProdutoB18, eanDaSacaB20]);
 
-    const lido = [1, 2, 3, 4, 5, 6].map((k) => fatorNaConferencia(conf, k));
+    const itens = [1, 2, 3, 4, 5, 6, 7, 8];
+    const lido = itens.map((k) => fatorNaConferencia(conf, k));
     console.log(`XML4-NR1 FATOR ${JSON.stringify(lido.map((f) => [f.caminho, f.fator, f.tipoFator, f.quantidadeInterna, f.valorUnitarioInterno]))}`);
-    const produtos = [saco, saco, saco, quilo, quilo, caixa].map((p) => p.id);
+    const produtos = [saco, saco, saco, quilo, quilo, caixa, b18, b20].map((p) => p.id);
     expect(lido, "o MESMO fator, tipo, quantidade e unitário internos da main").toEqual(NA_MAIN_NR1.map((f, k) => ({ ...f, produto: produtos[k] })));
 
     // Só a XML-04: DE ONDE o fator veio — do cadastro pelo uCom (nunca da ficha nem do código), e o vínculo sem aviso.
-    expect([1, 2, 3, 4, 5, 6].map((k) => comProduto(conf, k).fatorPelaNota)).toEqual([
+    expect(itens.map((k) => comProduto(conf, k).fatorPelaNota)).toEqual([
       { origem: "unidade_do_produto", unidadeDaNota: "SC" }, { origem: "unidade_do_produto", unidadeDaNota: "SC" },
       { origem: "vinculo", unidadeDaNota: "SC", cadastro: null },
       { origem: "unidade_principal", unidadeDaNota: "KG" }, { origem: "unidade_principal", unidadeDaNota: "KG" },
       { origem: "unidade_do_produto", unidadeDaNota: "CX" },
+      { origem: "unidade_do_produto", unidadeDaNota: "SC" }, { origem: "unidade_principal", unidadeDaNota: "KG" },
     ]);
-    expect([1, 2, 3, 4, 5, 6].flatMap((k) => doFator(conf, k)), "nada a perguntar nem a conferir").toEqual([]);
+    expect(itens.flatMap((k) => doFator(conf, k)), "nada a perguntar nem a conferir").toEqual([]);
   });
 });
 
 // ═════════════════════════════════════ XML4-NR2 o que muda, de propósito ═════════════════════════════════════
 
-/** O fator que a MAIN entrega no cenário do NR2 (a) (obtido em `origin/main`): a ficha ou o código de barras mandava. */
+/**
+ * O fator que a MAIN entrega no cenário do NR2 (a) (obtido em `origin/main`): a ficha ou a unidade DONA do código de
+ * barras mandava. O quarto (B5 do cético: o cEAN da principal com a nota na SC) entrou com a decisão do Maike ("a 3.1 à
+ * letra") e foi OBTIDO do mesmo jeito.
+ */
 const NA_MAIN_NR2 = [
   { caminho: "codigo_fornecedor", fator: "50.000000", tipoFator: "multiply", quantidadeInterna: "100.0000", valorUnitarioInterno: "0.200000" },
   { caminho: "codigo_fornecedor", fator: "1", tipoFator: "multiply", quantidadeInterna: "2.0000", valorUnitarioInterno: "10.000000" },
   { caminho: "codigo_barras", fator: "50.000000", tipoFator: "multiply", quantidadeInterna: "100.0000", valorUnitarioInterno: "0.200000" },
+  { caminho: "codigo_barras", fator: "1", tipoFator: "multiply", quantidadeInterna: "2.0000", valorUnitarioInterno: "10.000000" },
 ] as const;
 
 /**
@@ -207,40 +232,40 @@ const NA_MAIN_NR2_PERGUNTA = [
 ] as const;
 
 describe("XML4-NR2 o que MUDA, de propósito: onde a ficha ou o código de barras contradiz a nota, onde a linha não é de compra, onde o uCom não é unidade do cadastro e onde a unidade da organização vence a do sistema — e em todos esses a fatia segue a nota ou PERGUNTA, nunca um número errado", () => {
-  it("(a) ficha em SC e nota em KG → 1 (a nota); ficha sem unidade e nota em SC → 50 (o cadastro); código de barras da SC e nota em KG → pergunta, com a SC e o 50", async () => {
+  it("(a) ficha em SC e nota em KG → 1 (a nota); ficha sem unidade e nota em SC → 50 (o cadastro); código de barras da SC e nota em KG → 1 (o uCom: a principal); código de barras da principal KG e nota em SC → 50 (o uCom: a SC)", async () => {
     const u = unico().toUpperCase();
     const [kg, sc] = [await unidadeDoSeed("KG"), await unidadeDoSeed("SC")];
-    const eanDaSaca = eanNovo();
-    const [fichaSaca, fichaSemUnidade, barrasDaSaca] = [await produtoNovo(kg), await produtoNovo(kg), await produtoNovo(kg)];
+    const [eanDaSaca, eanDaPrincipal] = [eanNovo(), eanNovo()];
+    const [fichaSaca, fichaSemUnidade, barrasDaSaca, barrasDaPrincipal] = [await produtoNovo(kg), await produtoNovo(kg), await produtoNovo(kg), await produtoNovo(kg, eanDaPrincipal)];
     await alternativa(fichaSaca.id, sc, "50", "multiply");
     await alternativa(fichaSemUnidade.id, sc, "50", "multiply");
     await alternativa(barrasDaSaca.id, sc, "50", "multiply", eanDaSaca);
-    const n = await notaImportada([item(`NR-MA-${u}`, "KG"), item(`NR-MB-${u}`, "SC"), item(`NR-MC-${u}`, "KG", eanDaSaca)]);
+    await alternativa(barrasDaPrincipal.id, sc, "50", "multiply");
+    const n = await notaImportada([item(`NR-MA-${u}`, "KG"), item(`NR-MB-${u}`, "SC"), item(`NR-MC-${u}`, "KG", eanDaSaca), item(`NR-MD-${u}`, "SC", eanDaPrincipal)]);
     await fichaDoFornecedor(fichaSaca.id, n.fornecedor, `NR-MA-${u}`, sc);
     await fichaDoFornecedor(fichaSemUnidade.id, n.fornecedor, `NR-MB-${u}`, null);
     const conf = await conferenciaLida(n.id);
 
-    const lido = [1, 2, 3].map((k) => fatorNaConferencia(conf, k));
+    const lido = [1, 2, 3, 4].map((k) => fatorNaConferencia(conf, k));
     console.log(`XML4-NR2 FATOR ${JSON.stringify(lido.map((f) => [f.caminho, f.fator, f.tipoFator, f.quantidadeInterna, f.valorUnitarioInterno]))}`);
-    const produtos = [fichaSaca, fichaSemUnidade, barrasDaSaca].map((p) => p.id);
+    const produtos = [fichaSaca, fichaSemUnidade, barrasDaSaca, barrasDaPrincipal].map((p) => p.id);
     expect(lido.map((f) => f.produto), "premissa: cada item achou o produto do caso").toEqual(produtos);
     const daXml04 = [
       { caminho: "codigo_fornecedor", fator: "1", tipoFator: "multiply", quantidadeInterna: "2.0000", valorUnitarioInterno: "10.000000" },
       { caminho: "codigo_fornecedor", fator: "50.000000", tipoFator: "multiply", quantidadeInterna: "100.0000", valorUnitarioInterno: "0.200000" },
       { caminho: "codigo_barras", fator: "1", tipoFator: "multiply", quantidadeInterna: "2.0000", valorUnitarioInterno: "10.000000" },
+      { caminho: "codigo_barras", fator: "50.000000", tipoFator: "multiply", quantidadeInterna: "100.0000", valorUnitarioInterno: "0.200000" },
     ];
-    expect(lido, "o fator pela NOTA (a main dava o da ficha ou o do código de barras: `NA_MAIN_NR2`)").toEqual(daXml04.map((f, k) => ({ ...f, produto: produtos[k] })));
-    expect(lido.map((f, k) => f.fator === NA_MAIN_NR2[k]!.fator), "os três são os que MUDAM em relação à main").toEqual([false, false, false]);
-    expect([1, 2, 3].map((k) => comProduto(conf, k).fatorPelaNota)).toEqual([
+    expect(lido, "o fator pelo uCom da NOTA (a main dava o da ficha ou o da unidade dona do código de barras: `NA_MAIN_NR2`)").toEqual(daXml04.map((f, k) => ({ ...f, produto: produtos[k] })));
+    expect(lido.map((f, k) => f.fator === NA_MAIN_NR2[k]!.fator), "os quatro são os que MUDAM em relação à main").toEqual([false, false, false, false]);
+    expect([1, 2, 3, 4].map((k) => comProduto(conf, k).fatorPelaNota), "o fator saiu do uCom: o código de barras só achou o produto").toEqual([
       { origem: "unidade_principal", unidadeDaNota: "KG" }, { origem: "unidade_do_produto", unidadeDaNota: "SC" },
-      { origem: "pergunta", unidadeDaNota: "KG", motivo: "codigo_de_barras_de_outra_unidade", codigoDeBarras: { unidade: "SC", fator: "50.000000", tipoFator: "multiply" } },
+      { origem: "unidade_principal", unidadeDaNota: "KG" }, { origem: "unidade_do_produto", unidadeDaNota: "SC" },
     ]);
-    expect([1, 2, 3].map((k) => doFator(conf, k).map((d) => [d.codigo, d.mensagem])), "o código de barras de outra unidade PERGUNTA, com a unidade dona do código e o fator dela")
-      .toEqual([[], [], [["fator_a_informar",
-        `Item 3: o código de barras da nota é da unidade SC do produto ${barrasDaSaca.codigo} (fator 50, multiplica), mas a nota diz KG: informe o fator.`]]]);
+    expect([1, 2, 3, 4].flatMap((k) => doFator(conf, k)), "nada a perguntar: o cadastro respalda o uCom, diga o cEAN o que disser").toEqual([]);
   });
 
-  it("(b) a main dava o número e a fatia PERGUNTA: linha SC = 50 só de VENDA pela ficha (B1) e pelo código de barras (B4) → main 50; ficha SC e nota \"SACO\" (B2) → main 50; linha e ficha na unidade do SISTEMA com o símbolo de uma da ORGANIZAÇÃO (B7) → main 10", async () => {
+  it("(b) a main dava o número e a fatia PERGUNTA: linha SC = 50 só de VENDA pela ficha (B1) e pelo código de barras (B4) → main 50; ficha SC e nota \"SACO\" (B2) → main 50; linha e ficha na unidade do SISTEMA com o símbolo de uma da ORGANIZAÇÃO (B7, a pergunta da homônima) → main 10", async () => {
     const u = unico().toUpperCase();
     const [kg, sc] = [await unidadeDoSeed("KG"), await unidadeDoSeed("SC")];
     expect(await unidadesQueCasam("SACO"), "premissa: SACO não é símbolo de unidade nenhuma").toEqual({ organizacao: [], sistema: [] });
@@ -269,10 +294,18 @@ describe("XML4-NR2 o que MUDA, de propósito: onde a ficha ou o código de barra
     expect(lido, "a fatia PERGUNTA (a main dava `NA_MAIN_NR2_PERGUNTA`)").toEqual(NA_MAIN_NR2_PERGUNTA.map((f, k) => ({ caminho: f.caminho, produto: produtos[k]!.id, ...pergunta })));
     expect(lido.map((f, k) => f.fator === NA_MAIN_NR2_PERGUNTA[k]!.fator), "os quatro MUDAM em relação à main").toEqual([false, false, false, false]);
     const unidadesDaNota = ["SC", "SC", "SACO", z.simbolo];
-    expect([1, 2, 3, 4].map((k) => comProduto(conf, k).fatorPelaNota), "a PERGUNTA, com a unidade que a nota trouxe")
-      .toEqual(unidadesDaNota.map((unidadeDaNota) => ({ origem: "pergunta", unidadeDaNota, motivo: "unidade_fora_do_cadastro" })));
-    expect([1, 2, 3, 4].map((k) => doFator(conf, k).map((d) => [d.codigo, d.bloqueia, d.mensagem])), "o aviso diz a unidade e o produto; não bloqueia no servidor")
-      .toEqual(unidadesDaNota.map((unidadeDaNota, k) => [["fator_a_informar", false,
-        `Item ${k + 1}: a unidade ${unidadeDaNota} da nota não é unidade de compra do produto ${produtos[k]!.codigo} no cadastro: informe o fator.`]]));
+    const motivos = ["unidade_fora_do_cadastro", "unidade_fora_do_cadastro", "unidade_fora_do_cadastro", "unidade_homonima_da_organizacao"];
+    expect([1, 2, 3, 4].map((k) => comProduto(conf, k).fatorPelaNota), "a PERGUNTA, com a unidade que a nota trouxe e o porquê")
+      .toEqual(unidadesDaNota.map((unidadeDaNota, k) => ({ origem: "pergunta", unidadeDaNota, motivo: motivos[k] })));
+    // B4 (o cEAN da linha só de venda acha o produto) pergunta EXATAMENTE como B1 (a ficha, sem cEAN): a pergunta vem da
+    // 3.1 (a linha não é de compra), não do código de barras.
+    expect(comProduto(conf, 2).fatorPelaNota, "B4 = B1: o cEAN não entra").toEqual(comProduto(conf, 1).fatorPelaNota);
+    expect([1, 2, 3, 4].map((k) => doFator(conf, k).map((d) => [d.codigo, d.bloqueia, d.mensagem])), "o aviso diz a unidade, o produto e o porquê; não bloqueia no servidor")
+      .toEqual([
+        ...unidadesDaNota.slice(0, 3).map((unidadeDaNota, k) => [["fator_a_informar", false,
+          `Item ${k + 1}: a unidade ${unidadeDaNota} da nota não é unidade de compra do produto ${produtos[k]!.codigo} no cadastro: informe o fator.`]]),
+        [["fator_a_informar", false,
+          `Item 4: a unidade ${z.simbolo} da nota é a da organização, e o produto ${b7.codigo} está cadastrado na ${z.simbolo} do sistema: informe o fator.`]],
+      ]);
   });
 });

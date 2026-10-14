@@ -18,11 +18,12 @@ import { prepararXml01, conferenciaLida, vinculoDo, eanNovo, emitenteNovo, outra
  *   XML4-C3  a REFERÊNCIA e a DESCRIÇÃO (antes, 1 de chute) agora pelo cadastro; a descrição guarda o pré-preenchimento;
  *   XML4-C4  as PERGUNTAS: uCom fora do cadastro do produto, uCom sem unidade de medida, a linha SÓ DE VENDA (R2), a linha
  *            EXCLUÍDA (R3) — cada uma com o aviso `fator_a_informar` (não bloqueia) e o fator 1 só por compatibilidade;
- *   XML4-C5  o código de barras de OUTRA unidade do produto é pergunta, com a unidade dona do código e o fator dela no
- *            cadastro (`codigoDeBarras`) quando ela é UMA só, e sem o campo quando o código é de duas; o da própria
- *            unidade confirma;
- *   XML4-C6  a unidade da ORGANIZAÇÃO vence a do SISTEMA (a linha do produto na do sistema vira pergunta); sem a da
- *            organização, a do sistema vale;
+ *   XML4-C5  o código de barras de OUTRA unidade do produto (de uma ou de duas) NÃO muda o fator que o uCom dá: o código
+ *            de barras só ACHA o produto (decisão do Maike: a regra 3.1 à letra — o fator sai só do uCom);
+ *   XML4-C6  a unidade da ORGANIZAÇÃO vence a do SISTEMA (a linha ou a principal do produto na do sistema vira
+ *            pergunta, com o motivo `unidade_homonima_da_organizacao` e a mensagem que diz o porquê verdadeiro); o produto
+ *            que não usa a homônima (ou só numa linha de venda) pergunta pelo motivo geral; sem a da organização, a do
+ *            sistema vale;
  *   XML4-C7  CONSULTAS CONTADAS: 1 item, 10 itens e 50 itens (todos os caminhos e a forma; os 50 com 25 produtos e 15
  *            uCom distintos) fazem o MESMO número de consultas, e a consulta ÚNICA do cadastro leva todos eles;
  *   XML4-C8  a FORMA: ligada (do sistema e da organização), sem ligação, forma inativa, várias, sem tPag; a ligação
@@ -173,14 +174,10 @@ const doFator = (conf: Conferencia, nItem: number): DivergenciaDaImportacaoNfe[]
   conf.divergencias.filter((d) => d.nItem === nItem && d.codigo.startsWith("fator_"));
 const perguntaFora = (nItem: number, unidadeDaNota: string, p: Produto): DivergenciaDaImportacaoNfe =>
   ({ codigo: "fator_a_informar", nItem, bloqueia: false, mensagem: `Item ${nItem}: a unidade ${unidadeDaNota} da nota não é unidade de compra do produto ${p.codigo} no cadastro: informe o fator.` });
-/**
- * A pergunta do código de barras de OUTRA unidade: com a unidade dona do código e o fator dela no cadastro (`doCodigo`,
- * o número como a mensagem o diz) — ou, quando o código é de mais de uma unidade do produto, sem o número.
- */
-const perguntaDoEan = (nItem: number, p: Produto, unidadeDaNota: string, doCodigo: { unidade: string; fator: string; tipo: "multiplica" | "divide" } | null): DivergenciaDaImportacaoNfe =>
-  ({ codigo: "fator_a_informar", nItem, bloqueia: false, mensagem: doCodigo
-    ? `Item ${nItem}: o código de barras da nota é da unidade ${doCodigo.unidade} do produto ${p.codigo} (fator ${doCodigo.fator}, ${doCodigo.tipo}), mas a nota diz ${unidadeDaNota}: informe o fator.`
-    : `Item ${nItem}: o código de barras da nota é de outra unidade do produto ${p.codigo}, e não da unidade ${unidadeDaNota} da nota: informe o fator.` });
+/** A pergunta da unidade HOMÔNIMA: a unidade da nota é a da organização, e o produto está na do sistema (o porquê verdadeiro). */
+const perguntaHomonima = (nItem: number, unidadeDaNota: string, p: Produto): DivergenciaDaImportacaoNfe =>
+  ({ codigo: "fator_a_informar", nItem, bloqueia: false,
+    mensagem: `Item ${nItem}: a unidade ${unidadeDaNota} da nota é a da organização, e o produto ${p.codigo} está cadastrado na ${unidadeDaNota} do sistema: informe o fator.` });
 
 // ═════════════════════════════════════ XML4-C1 o vínculo lembrado ═════════════════════════════════════
 
@@ -305,8 +302,13 @@ describe("XML4-C4 nada respalda o fator: PERGUNTA (nunca 1 em silêncio)", () =>
 
 // ═════════════════════════════════════ XML4-C5 o código de barras ═════════════════════════════════════
 
-describe("XML4-C5 o código de barras de OUTRA unidade do produto é dúvida — e a pergunta diz o número", () => {
-  it("cEAN da caixa com uCom da principal → pergunta com a caixa e o 12; cEAN da principal com uCom da caixa → pergunta com a principal e o 1; cada um com a própria unidade → o cadastro; cEAN de DUAS unidades → pergunta sem o número", async () => {
+/**
+ * XML4-C5 provava, até a decisão do Maike ("seguir a 3.1 à letra"), que o código de barras de OUTRA unidade punha o fator
+ * em dúvida. Agora prova o CONTRÁRIO: o fator sai SÓ do uCom pelo cadastro, em todos os caminhos, e o código de barras só
+ * ACHA o produto (a identidade do 3º caminho, que não muda) — nunca dá fator nem o põe em dúvida. O cenário é o MESMO.
+ */
+describe("XML4-C5 o código de barras de OUTRA unidade do produto NÃO muda o fator que o uCom dá (decisão do Maike: a 3.1 à letra)", () => {
+  it("cEAN da caixa com uCom da principal → 1; cEAN da principal com uCom da caixa → 12; cada um com a própria unidade → o mesmo; cEAN de DUAS unidades com uCom do fardo → 4 — e nada a perguntar", async () => {
     const [principal, caixa, fardo] = [simboloNovo(), simboloNovo(), simboloNovo()];
     const [uPrincipal, uCaixa, uFardo] = [await unidade(principal), await unidade(caixa), await unidade(fardo)];
     const [eanPrincipal, eanCaixa, eanDeDuas] = [eanNovo(), eanNovo(), eanNovo()];
@@ -326,38 +328,33 @@ describe("XML4-C5 o código de barras de OUTRA unidade do produto é dúvida —
       item(`EA5-${unico()}`, fardo, { ean: eanDeDuas }),
     ]);
     const conf = await conferenciaLida(n.id);
-    const doEan = (produto: Produto, unidadeDaNota: string, codigoDeBarras?: { unidade: string; fator: string; tipoFator: string }) => ({
-      caminho: "codigo_barras", produto: produto.id, fator: "1", tipoFator: "multiply",
-      fatorPelaNota: { origem: "pergunta", unidadeDaNota, motivo: "codigo_de_barras_de_outra_unidade", ...(codigoDeBarras ? { codigoDeBarras } : {}) },
-      quantidadeInterna: "2.0000" });
-    expect([1, 2, 3, 4, 5].map((k) => fatorDo(conf, k))).toEqual([
-      doEan(p, principal, { unidade: caixa, fator: "12.000000", tipoFator: "multiply" }),
-      { caminho: "codigo_barras", produto: p.id, fator: "12.000000", tipoFator: "multiply", fatorPelaNota: { origem: "unidade_do_produto", unidadeDaNota: caixa }, quantidadeInterna: "24.0000" },
-      doEan(p, caixa, { unidade: principal, fator: "1", tipoFator: "multiply" }),
-      { caminho: "codigo_barras", produto: p.id, fator: "1", tipoFator: "multiply", fatorPelaNota: { origem: "unidade_principal", unidadeDaNota: principal }, quantidadeInterna: "2.0000" },
-      doEan(p2, fardo),
+    const peloUCom = (produto: Produto, unidadeDaNota: string, fator: string, origem: "unidade_principal" | "unidade_do_produto", quantidadeInterna: string) =>
+      ({ caminho: "codigo_barras", produto: produto.id, fator, tipoFator: "multiply", fatorPelaNota: { origem, unidadeDaNota }, quantidadeInterna });
+    expect([1, 2, 3, 4, 5].map((k) => fatorDo(conf, k)), "o código de barras ACHOU cada produto; o fator é o do uCom, com ou sem o cEAN de outra unidade").toEqual([
+      peloUCom(p, principal, "1", "unidade_principal", "2.0000"),
+      peloUCom(p, caixa, "12.000000", "unidade_do_produto", "24.0000"),
+      peloUCom(p, caixa, "12.000000", "unidade_do_produto", "24.0000"),
+      peloUCom(p, principal, "1", "unidade_principal", "2.0000"),
+      peloUCom(p2, fardo, "4.000000", "unidade_do_produto", "8.0000"),
     ]);
-    // O item 5: o campo NÃO vem (nem como chave vazia) — de duas unidades, nunca "a primeira".
-    expect(Object.keys(fatorDo(conf, 5).fatorPelaNota ?? {}), "o código de duas unidades não leva o número").not.toContain("codigoDeBarras");
-    expect([1, 2, 3, 4, 5].map((k) => doFator(conf, k))).toEqual([
-      [perguntaDoEan(1, p, principal, { unidade: caixa, fator: "12", tipo: "multiplica" })], [],
-      [perguntaDoEan(3, p, caixa, { unidade: principal, fator: "1", tipo: "multiplica" })], [],
-      [perguntaDoEan(5, p2, fardo, null)],
-    ]);
-    expect(conf.divergencias.filter((d) => d.codigo.startsWith("fator_") && /confir/i.test(d.mensagem)), "nenhuma manda conferir").toEqual([]);
+    // O mesmo uCom dá o MESMO fator com o cEAN de OUTRA unidade (1, 3) e com o da própria (4, 2): o cEAN não entra.
+    const fatorEOrigem = (k: number) => { const f = fatorDo(conf, k); return [f.fator, f.tipoFator, f.fatorPelaNota]; };
+    expect([1, 3].map(fatorEOrigem), "com o cEAN de outra unidade = com o da própria").toEqual([4, 2].map(fatorEOrigem));
+    expect([1, 2, 3, 4, 5].map((k) => doFator(conf, k)), "nada a perguntar: o cadastro respalda o uCom").toEqual([[], [], [], [], []]);
   });
 });
 
 // ═════════════════════════════════════ XML4-C6 organização × sistema ═════════════════════════════════════
 
-describe("XML4-C6 a unidade da ORGANIZAÇÃO vence a do SISTEMA", () => {
-  it("o mesmo símbolo nas duas: a linha do produto na da organização vale; na do sistema (ou a principal do sistema) é pergunta; só no sistema, a do sistema vale", async () => {
+describe("XML4-C6 a unidade da ORGANIZAÇÃO vence a do SISTEMA, e a pergunta diz o porquê verdadeiro", () => {
+  it("o mesmo símbolo nas duas: a linha do produto na da organização vale; na do sistema (linha de compra ou principal) é pergunta HOMÔNIMA; o produto sem a homônima (ou só com uma linha de venda nela) pergunta pelo motivo geral; só no sistema, a do sistema vale", async () => {
     const u = unico();
     const [ambos, soSistema, principal] = [simboloNovo(), simboloNovo(), simboloNovo()];
     const uPrincipal = await unidade(principal);
     const daOrganizacao = await unidade(ambos);
     const doSistema = await unidade(ambos, { sistema: true });
     const soDoSistema = await unidade(soSistema, { sistema: true });
+    expect(await unidadesQueCasam(ambos), "premissa: o símbolo casa com UMA da organização e UMA do sistema").toEqual({ organizacao: [daOrganizacao], sistema: [doSistema] });
     const pOrg = await produtoNovo(uPrincipal);
     await unidadeDoProduto(pOrg.id, daOrganizacao, "5");
     const pSis = await produtoNovo(uPrincipal);
@@ -365,17 +362,25 @@ describe("XML4-C6 a unidade da ORGANIZAÇÃO vence a do SISTEMA", () => {
     const pPrincipalSis = await produtoNovo(doSistema);
     const pSoSistema = await produtoNovo(uPrincipal);
     await unidadeDoProduto(pSoSistema.id, soDoSistema, "3");
-    const n = await notaImportada([item(`OS1-${u}`, ambos), item(`OS2-${u}`, ambos), item(`OS3-${u}`, ambos), item(`OS4-${u}`, soSistema)]);
-    for (const [k, p] of [pOrg, pSis, pPrincipalSis, pSoSistema].entries()) await codigoNoFornecedor(p.id, n.fornecedor, `OS${k + 1}-${u}`);
+    const pSemHomonima = await produtoNovo(uPrincipal);
+    const pVendaSis = await produtoNovo(uPrincipal);
+    await unidadeDoProduto(pVendaSis.id, doSistema, "7", { compra: false });
+    const produtos = [pOrg, pSis, pPrincipalSis, pSoSistema, pSemHomonima, pVendaSis];
+    const n = await notaImportada([item(`OS1-${u}`, ambos), item(`OS2-${u}`, ambos), item(`OS3-${u}`, ambos), item(`OS4-${u}`, soSistema),
+      item(`OS5-${u}`, ambos), item(`OS6-${u}`, ambos)]);
+    for (const [k, p] of produtos.entries()) await codigoNoFornecedor(p.id, n.fornecedor, `OS${k + 1}-${u}`);
     const conf = await conferenciaLida(n.id);
-    const pergunta = (p: Produto) => ({ caminho: "codigo_fornecedor", produto: p.id, fator: "1", tipoFator: "multiply",
-      fatorPelaNota: { origem: "pergunta", unidadeDaNota: ambos, motivo: "unidade_fora_do_cadastro" }, quantidadeInterna: "2.0000" });
-    expect([1, 2, 3, 4].map((k) => fatorDo(conf, k))).toEqual([
+    const pergunta = (p: Produto, motivo: "unidade_homonima_da_organizacao" | "unidade_fora_do_cadastro") => ({ caminho: "codigo_fornecedor", produto: p.id, fator: "1",
+      tipoFator: "multiply", fatorPelaNota: { origem: "pergunta", unidadeDaNota: ambos, motivo }, quantidadeInterna: "2.0000" });
+    expect([1, 2, 3, 4, 5, 6].map((k) => fatorDo(conf, k))).toEqual([
       { caminho: "codigo_fornecedor", produto: pOrg.id, fator: "5.000000", tipoFator: "multiply", fatorPelaNota: { origem: "unidade_do_produto", unidadeDaNota: ambos }, quantidadeInterna: "10.0000" },
-      pergunta(pSis), pergunta(pPrincipalSis),
+      pergunta(pSis, "unidade_homonima_da_organizacao"), pergunta(pPrincipalSis, "unidade_homonima_da_organizacao"),
       { caminho: "codigo_fornecedor", produto: pSoSistema.id, fator: "3.000000", tipoFator: "multiply", fatorPelaNota: { origem: "unidade_do_produto", unidadeDaNota: soSistema }, quantidadeInterna: "6.0000" },
+      pergunta(pSemHomonima, "unidade_fora_do_cadastro"), pergunta(pVendaSis, "unidade_fora_do_cadastro"),
     ]);
-    expect([1, 2, 3, 4].map((k) => doFator(conf, k).length)).toEqual([0, 1, 1, 0]);
+    expect([1, 2, 3, 4, 5, 6].map((k) => doFator(conf, k)), "a homônima diz que a unidade da nota é a da organização e o produto está na do sistema; as outras, o motivo geral").toEqual([
+      [], [perguntaHomonima(2, ambos, pSis)], [perguntaHomonima(3, ambos, pPrincipalSis)], [], [perguntaFora(5, ambos, pSemHomonima)], [perguntaFora(6, ambos, pVendaSis)],
+    ]);
   });
 });
 

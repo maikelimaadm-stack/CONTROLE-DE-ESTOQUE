@@ -1024,8 +1024,7 @@ itens[].vinculo (lembrado e sugerido, as quatro origens).fatorPelaNota?: FatorDo
   { origem: "unidade_principal";  unidadeDaNota: string }
   { origem: "unidade_do_produto"; unidadeDaNota: string }
   { origem: "vinculo";            unidadeDaNota: string; cadastro: { fator: string; tipoFator: "multiply" | "divide" } | null }
-  { origem: "pergunta";           unidadeDaNota: string; motivo: "unidade_fora_do_cadastro" | "codigo_de_barras_de_outra_unidade";
-    codigoDeBarras?: { unidade: string; fator: string; tipoFator: TipoFator } }   // só no código de barras de outra unidade, quando o cEAN é de UMA unidade do produto
+  { origem: "pergunta";           unidadeDaNota: string; motivo: "unidade_fora_do_cadastro" | "unidade_homonima_da_organizacao" }
 
 financeiro.forma?: FormaDePagamentoDaConferencia
   { situacao: "ligada";        tPag: string; forma: { id: string; nome: string } }
@@ -1064,12 +1063,12 @@ régua da unidade da XML-01 (a da organização vence a do sistema; uma só, ou 
 | 3 | é a unidade de uma linha de `erp.produto_unidades` do produto, VIVA e DE COMPRA (`uso_compra`) | `unidade_do_produto` | o fator e o tipo da linha |
 | 4 | duas linhas dessas com fatores (ou tipos) diferentes | `pergunta`, `unidade_fora_do_cadastro` | a pessoa informa |
 | 5 | nem 2 nem 3 (a linha só de venda, a excluída, a unidade que o produto não tem) | `pergunta`, `unidade_fora_do_cadastro` | a pessoa informa |
-| 6 | 2 ou 3, mas o cEAN da nota é o código de barras de OUTRA unidade do produto (`products.barcode` → a principal; `produto_unidades.codigo_barras` → a da linha, de compra ou não) | `pergunta`, `codigo_de_barras_de_outra_unidade` | a pessoa informa |
+| 6 | o uCom chega, pela régua, a uma unidade da ORGANIZAÇÃO, e o produto está na unidade do SISTEMA com o mesmo símbolo (como principal ou linha viva de compra) | `pergunta`, `unidade_homonima_da_organizacao` | a pessoa informa |
 | — | o item tem vínculo LEMBRADO | `vinculo` | o do vínculo; `cadastro` traz o de 2 ou 3 quando é OUTRO número ou tipo |
 
-O código de barras nunca DÁ fator: só põe o do cadastro em dúvida; o cEAN que não é de unidade do produto (e o "SEM
-GTIN") não conta. UMA consulta do cadastro para a nota — as unidades de medida dos uCom distintos de todos os itens, a
-unidade principal e o código de barras dos produtos achados e as linhas vivas de `produto_unidades` deles — que também dá
+O código de barras só acha o PRODUTO (o caminho 3): nunca dá fator nem põe o fator em dúvida — o fator é só o do uCom
+(decisão do Maike: a regra 3.1 à letra). UMA consulta do cadastro para a nota — as unidades de medida dos uCom distintos
+de todos os itens, a unidade principal dos produtos achados e as linhas vivas de `produto_unidades` deles — que também dá
 o `measurement_id` do pré-preenchimento da XML-01; nenhuma consulta sem uCom. Com isso, o que as seções acima dizem do
 fator "1" dos caminhos 4 e 5 (XML-02) e da consulta "das unidades" (XML-01 e XML-02) vale até a XML-04: desde ela, o
 fator de todos os caminhos é o desta régua, e a consulta das unidades é a do cadastro (uma por conferência, também
@@ -1082,8 +1081,7 @@ escrito sem as casas vazias do banco ("12.000000" → "12"); os valores, em text
 |---|---|---|
 | `fator_a_informar` | `pergunta` pela unidade | `Item <n>: a unidade <uCom> da nota não é unidade de compra do produto <código> no cadastro: informe o fator.` |
 | `fator_a_informar` | `pergunta`, a nota sem a unidade | `Item <n>: a nota não traz a unidade do item, e o cadastro do produto <código> não diz o fator: informe o fator.` |
-| `fator_a_informar` | `pergunta` pelo código de barras, com `codigoDeBarras` | `Item <n>: o código de barras da nota é da unidade <unidade> do produto <código> (fator <f>, multiplica ou divide), mas a nota diz <uCom>: informe o fator.` |
-| `fator_a_informar` | `pergunta` pelo código de barras, sem `codigoDeBarras` (o cEAN é de mais de uma unidade do produto) | `Item <n>: o código de barras da nota é de outra unidade do produto <código>, e não da unidade <uCom> da nota: informe o fator.` |
+| `fator_a_informar` | `pergunta`, `unidade_homonima_da_organizacao` | `Item <n>: a unidade <uCom> da nota é a da organização, e o produto <código> está cadastrado na <uCom> do sistema: informe o fator.` |
 | `fator_do_vinculo_diferente_do_cadastro` | `vinculo` com `cadastro` | `Item <n>: o vínculo lembrado usa fator <v> (multiplica ou divide); o cadastro do produto <código>, para a unidade <uCom>, diz <c> (multiplica ou divide). Vale o do vínculo.` |
 | `parcelas_nao_conferem` (a de sempre; a mensagem muda) | `nao_conferem` | `As duplicatas não conferem: Σ vDup <soma> × líquido (fatura, vLiq) <líquido> — <comparação>; líquido <líquido> × total da compra <total> — <comparação>. Use a condição de pagamento.` — cada `<comparação>` é `diferença <valor com sinal>` quando falhou e `confere` quando não; o líquido do vNF se escreve `líquido (total da nota, vNF)`; com `ultima_parcela_nao_positiva`, antes do ponto: `; a última duplicata, ajustada para a soma fechar no total da compra, ficaria com valor zero ou negativo`. Sem os campos novos, a mensagem de antes |
 
@@ -1117,7 +1115,8 @@ resolvida a cada desenho — o estado guarda só a escolha explícita da pessoa)
 
 **A trava da TOP**: a TOP que não deixa o documento trocar os padrões (`podeTrocarOsPadroes` falso) vence a forma da
 nota e a escolha do operador quando elas DIFEREM do padrão dela — o servidor recusaria a troca —; o campo cujo valor é o
-padrão fica travado pela mesma conta da Central (`travadoPelaTop`), e a tela avisa com as duas formas. Sem a trava, a
+padrão fica travado pela mesma conta da Central (`travadoPelaTop`); contra a forma da NOTA, a tela avisa com as duas formas
+(a da nota, com o código, e a da TOP); contra a escolha do OPERADOR, diz só a forma da TOP que vale, como a Central. Sem a trava, a
 escolha guardada volta. A TOP só é lida quando a conferência declara `financeiro.forma`, pelas mesmas portas e chaves da
 Central: `GET /api/compras/<segmento>/regras-da-operacao?tipo_operacao_id=` e, quando a porta das TOPs declara o layout,
 `GET /api/compras/<segmento>/layout-efetivo?tipo_operacao_id=`; enquanto chegam, o "Gerar compra" espera; se falham, a
@@ -1136,8 +1135,7 @@ escreve número, com vírgula; a conversão pelo rótulo do enum, "Multiplica" o
 | `vinculo` | `importacao-item-<n>-fator-origem`, `data-origem="vinculo"` | `Fator do vínculo lembrado.` |
 | `vinculo` com `cadastro` | `importacao-item-<n>-fator-aviso` | `O vínculo lembrado usa o fator <v> (<conversão>) e o cadastro do produto diz <c> (<conversão>) para a unidade <uCom>: vale o do vínculo.` |
 | `pergunta`, `unidade_fora_do_cadastro` | `importacao-item-<n>-fator-pergunta` | `A unidade <uCom> da nota não está no cadastro do produto: informe o fator.` (a nota sem a unidade: `A nota não traz a unidade do item: informe o fator.`) |
-| `pergunta`, `codigo_de_barras_de_outra_unidade`, com `codigoDeBarras` | `importacao-item-<n>-fator-pergunta` | `O código de barras da nota é da unidade <unidade> do produto (fator <f>, <conversão em minúscula>), mas a nota diz <uCom>: informe o fator.` (a nota sem a unidade: `…, mas a nota não traz a unidade: informe o fator.`) |
-| `pergunta`, `codigo_de_barras_de_outra_unidade`, sem `codigoDeBarras` | `importacao-item-<n>-fator-pergunta` | `O código de barras da nota é de outra unidade do produto, e não da unidade <uCom> da nota: informe o fator.` (a nota sem a unidade: `O código de barras da nota é de outra unidade do produto, e a nota não traz a unidade: informe o fator.`) |
+| `pergunta`, `unidade_homonima_da_organizacao` | `importacao-item-<n>-fator-pergunta` | `A unidade <uCom> da nota é a da organização, e o produto está cadastrado na <uCom> do sistema: informe o fator.` (sem a unidade da nota, o texto genérico abaixo) |
 | o produto do item TROCADO por outro (o campo tinha o fator que o servidor deu ao produto do vínculo, e esvazia) | `importacao-item-<n>-fator-pergunta` | `O produto foi trocado: informe o fator do produto escolhido.` (some quando a pessoa digita um fator válido; de volta ao produto do vínculo, voltam o fator e a origem; o fator que a pessoa digitou nunca esvazia) |
 | `pergunta`, motivo que a tela não conhece | `importacao-item-<n>-fator-pergunta` | `O cadastro do produto não diz o fator desta unidade da nota: informe o fator.` |
 | a pessoa mudou o número ou a conversão (na pergunta, o primeiro fator válido) | `importacao-item-<n>-fator-origem`, `data-origem="informado"` | `Fator informado na tela.` |

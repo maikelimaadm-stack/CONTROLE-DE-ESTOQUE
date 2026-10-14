@@ -288,26 +288,20 @@ export interface ProdutoDoVinculo {
  *   · `vinculo`            — o vínculo lembrado (decisão explícita do operador para aquele fornecedor e código) VENCE o
  *                            cadastro; `cadastro` só vem quando o cadastro respalda um fator DIFERENTE (a tela avisa
  *                            com os dois números);
- *   · `pergunta`           — nada respalda: o uCom não está no cadastro do produto (`unidade_fora_do_cadastro`), ou
- *                            está, mas o cEAN da nota é o código de barras de OUTRA unidade do mesmo produto — o GTIN é
- *                            da unidade comercial da nota, e as duas dizendo coisas diferentes é dúvida, nunca escolha
- *                            (`codigo_de_barras_de_outra_unidade`). O código de barras nunca DÁ fator sozinho. O `fator` do
- *                            vínculo continua "1" SÓ por compatibilidade com a web anterior; a web desta versão o
- *                            trata como vazio e pede o número.
+ *   · `pergunta`           — nada respalda: o uCom não é unidade de compra do produto no cadastro
+ *                            (`unidade_fora_do_cadastro`), ou o uCom chega, pela régua das unidades (a da organização
+ *                            vence a do sistema), a uma unidade da ORGANIZAÇÃO enquanto o produto está cadastrado na
+ *                            unidade do SISTEMA com o mesmo símbolo (`unidade_homonima_da_organizacao` — a régua é a
+ *                            da 312, e a pergunta diz o porquê verdadeiro). O código de barras só acha o PRODUTO:
+ *                            nunca dá fator nem põe o fator em dúvida — o fator é só o do uCom (decisão do Maike: a
+ *                            regra 3.1 à letra). O `fator` do vínculo continua "1" SÓ por compatibilidade com a web
+ *                            anterior; a web desta versão o trata como vazio e pede o número.
  */
 export type FatorDoItemDaNota =
   | { origem: "unidade_principal"; unidadeDaNota: string }
   | { origem: "unidade_do_produto"; unidadeDaNota: string }
   | { origem: "vinculo"; unidadeDaNota: string; cadastro: { fator: string; tipoFator: TipoFator } | null }
-  | {
-    origem: "pergunta"; unidadeDaNota: string; motivo: "unidade_fora_do_cadastro" | "codigo_de_barras_de_outra_unidade";
-    /**
-     * ADITIVO (XML-04): com `codigo_de_barras_de_outra_unidade`, a unidade do produto de que o cEAN da nota é o código de
-     * barras, com o fator do cadastro dela — o número na mão, nunca "confira". Só quando o cEAN é de EXATAMENTE uma
-     * unidade do produto; senão não vem.
-     */
-    codigoDeBarras?: { unidade: string; fator: string; tipoFator: TipoFator };
-  };
+  | { origem: "pergunta"; unidadeDaNota: string; motivo: "unidade_fora_do_cadastro" | "unidade_homonima_da_organizacao" };
 
 export type VinculoDoItemDaNota =
   | { situacao: "lembrado"; produto: ProdutoDoVinculo; fator: string; tipoFator: TipoFator; fatorPelaNota?: FatorDoItemDaNota }

@@ -13,9 +13,10 @@ import { fatorPelaNotaDoVinculo, fatorValido, mostraOFatorDoVinculo, type FatorP
  *   · `unidade_principal` / `unidade_do_produto` — do cadastro, pela unidade da nota;
  *   · `vinculo` — do vínculo lembrado; o cadastro que diz OUTRO fator para a unidade vira AVISO com os dois números
  *     (vale o do vínculo);
- *   · `pergunta` — o campo nasce VAZIO (`fatorInicialDoVinculo`) e a pergunta diz por quê, com o número na mão quando
- *     o servidor o manda (o código de barras de outra unidade: a unidade e o fator dela); o item é pendência (a de
- *     sempre, o fator inválido) até a pessoa digitar um fator válido.
+ *   · `pergunta` — o campo nasce VAZIO (`fatorInicialDoVinculo`) e a pergunta diz por quê (a unidade da nota fora do
+ *     cadastro do produto; ou a unidade da nota que, pela régua das unidades, é a da ORGANIZAÇÃO, com o produto
+ *     cadastrado na do SISTEMA de mesmo símbolo); o item é pendência (a de sempre, o fator inválido) até a pessoa
+ *     digitar um fator válido. O código de barras só acha o produto: nunca dá fator nem põe o fator em dúvida.
  * O fator continua EDITÁVEL: a pessoa sempre ganha. O fator que ela mudou (outro número ou outra conversão; na pergunta,
  * o primeiro fator válido) é "informado na tela" — sem aviso e sem pergunta. OUTRO produto no item (a origem do servidor
  * é do produto do vínculo): o campo sem fator válido (a troca o esvaziou, `fatorAoTrocarProduto`) é a pergunta do
@@ -43,19 +44,14 @@ const conversao = (t: TipoFator) => enumLabel("tipo_fator_conversao", t);
 const PERGUNTA_DO_PRODUTO_TROCADO = "O produto foi trocado: informe o fator do produto escolhido.";
 
 /**
- * A pergunta do fator, pelo motivo (motivo desconhecido ⇒ a pergunta sem o porquê). O código de barras de outra
- * unidade diz a unidade e o fator dela quando o servidor os manda (`codigoDeBarras`); sem eles, a unidade da nota.
+ * A pergunta do fator, pelo motivo (motivo desconhecido ⇒ a pergunta sem o porquê). A unidade homônima diz as duas
+ * unidades de mesmo símbolo — a da organização (a da nota, pela régua) e a do sistema (a do cadastro do produto); sem a
+ * unidade da nota (o servidor não manda esse motivo assim), a tela não afirma o homônimo: o texto genérico.
  */
 function perguntaDoFator(f: Extract<FatorPelaNotaLido, { origem: "pergunta" }>): string {
   const u = f.unidadeDaNota;
-  if (f.motivo === "codigo_de_barras_de_outra_unidade") {
-    const cb = f.codigoDeBarras;
-    if (cb) {
-      return `O código de barras da nota é da unidade ${cb.unidade} do produto (fator ${numeroDoFator(cb.fator)}, ${conversao(cb.tipoFator).toLocaleLowerCase("pt-BR")}), `
-        + `${u ? `mas a nota diz ${u}` : "mas a nota não traz a unidade"}: informe o fator.`;
-    }
-    return u ? `O código de barras da nota é de outra unidade do produto, e não da unidade ${u} da nota: informe o fator.`
-      : "O código de barras da nota é de outra unidade do produto, e a nota não traz a unidade: informe o fator.";
+  if (f.motivo === "unidade_homonima_da_organizacao" && u) {
+    return `A unidade ${u} da nota é a da organização, e o produto está cadastrado na ${u} do sistema: informe o fator.`;
   }
   if (f.motivo === "unidade_fora_do_cadastro") {
     return u ? `A unidade ${u} da nota não está no cadastro do produto: informe o fator.` : "A nota não traz a unidade do item: informe o fator.";
