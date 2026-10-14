@@ -12,8 +12,9 @@
  *   · ao menos um `det`; decimais no formato da NF-e (valores em dinheiro com até 2 casas); datas AAAA-MM-DD válidas.
  *
  * Lê também o rastro (lote) de cada item, a fatura e as duplicatas (`cobr`), o pedido do item (`xPed`/`nItemPed`) e o
- * do cabeçalho (`compra/xPed`). ICMS-ST do item = `vICMSST` + `vFCPST` do grupo de ICMS do item; ICMS-ST do total =
- * `vST` + `vFCPST`. Valor opcional ausente vale "0.00".
+ * do cabeçalho (`compra/xPed`) e, desde a XML-04 (decisão 318), os pagamentos (`pag/detPag`, sem nunca recusar por eles).
+ * ICMS-ST do item = `vICMSST` + `vFCPST` do grupo de ICMS do item; ICMS-ST do total = `vST` + `vFCPST`. Valor opcional
+ * ausente vale "0.00".
  *
  * FUNÇÃO PURA: sem DOM, sem Node, sem relógio. Nada de ponto flutuante: os números ficam como texto decimal.
  */
@@ -97,6 +98,55 @@ export interface ItemDaNota {
 
 export interface ParcelaDaNota { numero: string; vencimento: string; valor: string }
 
+/** XML-04 (decisão 318): um `<detPag>` do grupo `<pag>` da NF-e — o código da forma de pagamento (tPag) e o valor (vPag). */
+export interface PagamentoDaNota { tPag: string | null; vPag: string | null }
+
+/**
+ * XML-04 (decisão 318) — os códigos de `tPag` do leiaute da NF-e (Manual de Orientação do Contribuinte, com as notas
+ * técnicas 2020.006 e 2023.004), com o rótulo do leiaute. É a tabela da NF-e, não um enum do produto: a nota traz o
+ * código, e a organização LIGA o código a uma forma de pagamento sua ou do sistema (`erp.formas_pagamento_da_nfe`).
+ */
+export const CODIGOS_TPAG_DA_NFE: readonly (readonly [string, string])[] = Object.freeze([
+  ["01", "Dinheiro"],
+  ["02", "Cheque"],
+  ["03", "Cartão de crédito"],
+  ["04", "Cartão de débito"],
+  ["05", "Cartão da loja, crediário digital ou outros crediários"],
+  ["10", "Vale alimentação"],
+  ["11", "Vale refeição"],
+  ["12", "Vale presente"],
+  ["13", "Vale combustível"],
+  ["15", "Boleto bancário"],
+  ["16", "Depósito bancário"],
+  ["17", "Pix dinâmico"],
+  ["18", "Transferência bancária ou carteira digital"],
+  ["19", "Programa de fidelidade, cashback ou crédito virtual"],
+  ["20", "Pix estático"],
+  ["21", "Crédito em loja"],
+  ["22", "Pagamento eletrônico não informado (falha de hardware do emissor)"],
+  ["90", "Sem pagamento"],
+  ["99", "Outros"]
+] as const);
+
+/** O rótulo do leiaute para um `tPag` (`null` quando o código não é do leiaute). */
+export function rotuloDoTPag(tPag: string): string | null {
+  return CODIGOS_TPAG_DA_NFE.find(([codigo]) => codigo === tPag)?.[1] ?? null;
+}
+
+/**
+ * XML-04 (decisão 318) — a forma que a NOTA diz, pelo grupo `<pag>`. FAIL-CLOSED: só EXATAMENTE um `<detPag>` com `tPag`
+ * é uma forma. Mais de um `<detPag>` (mesmo com o mesmo tPag) não é uma forma — nunca "o primeiro"; nenhum, ou o único
+ * sem `tPag`, também não.
+ */
+export type FormaDaNota = { situacao: "uma"; tPag: string } | { situacao: "varias"; quantidade: number } | { situacao: "sem_tpag" };
+
+export function formaDaNota(nota: Pick<NotaFiscalLida, "pagamentos">): FormaDaNota {
+  const pagamentos = nota.pagamentos ?? [];
+  if (pagamentos.length > 1) return { situacao: "varias", quantidade: pagamentos.length };
+  const tPag = pagamentos[0]?.tPag ?? null;
+  return tPag ? { situacao: "uma", tPag } : { situacao: "sem_tpag" };
+}
+
 export interface EnderecoDoEmitente {
   logradouro: string | null; numero: string | null; bairro: string | null; codigoMunicipio: string | null;
   municipio: string | null; cep: string | null; telefone: string | null;
@@ -131,6 +181,18 @@ export interface NotaFiscalLida {
   };
   fatura: { numero: string | null; valorOriginal: string | null; desconto: string | null; liquido: string | null } | null;
   duplicatas: ParcelaDaNota[];
+  /**
+   * XML-04 (decisão 318), ADITIVO: quantas duplicatas (`<dup>`) a nota trouxe e o leitor DESCARTOU por falta de
+   * vencimento (a regra de sempre: uma sem `dVenc` esvazia `duplicatas`). Zero quando nada foi descartado. Opcional no
+   * tipo porque a resposta de uma API anterior não o traz.
+   */
+  duplicatasDescartadas?: number;
+  /**
+   * XML-04 (decisão 318), ADITIVO: os `<pag><detPag>` da nota, NA ORDEM, como vieram (`tPag` e `vPag` aparados; ausente
+   * ⇒ `null`). Nunca recusa a leitura: um pagamento malformado é só um pagamento sem código. Opcional no tipo porque a
+   * resposta de uma API anterior não o traz.
+   */
+  pagamentos?: PagamentoDaNota[];
   xPedCabecalho: string | null;
   informacoesComplementares: string | null;
 }
@@ -379,6 +441,18 @@ export function lerNotaFiscalEletronica(texto: string): LeituraDaNfe {
   const duplicatas: ParcelaDaNota[] = lidas.every((d) => d.vencimento !== null)
     ? lidas.map((d) => ({ numero: d.numero, vencimento: d.vencimento!, valor: d.valor }))
     : [];
+  // XML-04 (decisão 318): a regra acima não muda; a nota só passa a DIZER quantas `<dup>` a regra descartou (todas as
+  // lidas, quando uma delas não tem vencimento). `dVenc` presente e inválido continua recusa (`data_invalida`), nunca
+  // descarte.
+  const duplicatasDescartadas = duplicatas.length === 0 ? lidas.length : 0;
+
+  // XML-04 (decisão 318): os `<detPag>` do grupo de pagamento, na ordem. O leiaute 4.00 tem UM `<pag>`; se vierem
+  // vários, entram os `<detPag>` de todos (nunca só os do primeiro: "o primeiro" é o palpite que a decisão tira). Nada
+  // aqui recusa a leitura: `tPag` vazio e `vPag` fora do formato da NF-e viram `null` (um pagamento sem código).
+  const pagamentos: PagamentoDaNota[] = filhosChamados(infNFe, "pag").flatMap((pag) => filhosChamados(pag, "detPag")).map((detPag) => {
+    const vPag = opcional(textoEm(detPag, "vPag"));
+    return { tPag: opcional(textoEm(detPag, "tPag")), vPag: vPag !== null && DINHEIRO.test(vPag) ? money(vPag) : null };
+  });
 
   if (l.recusas.length > 0 || !docEmit || !docDest) {
     return { ok: false, recusas: l.recusas };
@@ -420,6 +494,8 @@ export function lerNotaFiscalEletronica(texto: string): LeituraDaNfe {
       totais,
       fatura,
       duplicatas,
+      duplicatasDescartadas,
+      pagamentos,
       xPedCabecalho: opcional(textoEm(infNFe, "compra", "xPed")),
       informacoesComplementares: opcional(textoEm(infNFe, "infAdic", "infCpl"))
     }

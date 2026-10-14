@@ -1407,7 +1407,9 @@ decimais em texto): `id`, `situacao` (pendente · gerada · descartada), `origem
 resolvido; item sem vínculo ou ambíguo; II, ICMS desonerado ou IPI devolvido diferentes de zero; total calculado ≠ vNF
 além de R$ 0,01; rastro ≠ quantidade; nota já lançada. Não bloqueiam: duplicatas que não conferem (a pessoa usa a
 condição); produto com lote sem rastro (a pessoa informa o lote); preço do item ≠ preço do pedido referenciado; IE do
-cadastro diferente da do emitente (`parceiro_ie_diferente`).
+cadastro diferente da do emitente (`parceiro_ie_diferente`); o fator do item que é pergunta (`fator_a_informar`) e o
+fator do vínculo lembrado que o cadastro contradiz (`fator_do_vinculo_diferente_do_cadastro`) — XML-04, decisão 318, em
+`docs/PORTAIS-OPERACIONAIS-CONTRACT.md`.
 
 **A leitura do XML** (`packages/domain/src/xml-leitor.ts` e `nfe-leitura.ts`, puros, sem DOM e sem dependência): só
 `nfeProc` com `NFe/infNFe` e `protNFe/infProt`; `cStat` 100 ou 150; `mod` 55; `tpAmb` 1; chave de 44 dígitos com DV,

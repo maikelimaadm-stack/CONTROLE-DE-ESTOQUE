@@ -13,6 +13,7 @@ import {
   COR_PADRAO_DA_AREA
 } from "../tipos-de-uso-da-area.js";
 import { CAPACIDADE_LCDPR, OPCOES_TIPO_EXPLORACAO, OPCOES_TIPO_LCDPR } from "../financeiro-lcdpr.js";
+import { CODIGOS_TPAG_DA_NFE } from "../nfe-leitura.js";
 
 const active = (name = "is_active"): FieldDef => ({ name, label: "Ativo", type: "boolean", default: true, list: true, filter: true, span: 2 });
 const B = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "boolean", default: false, ...extra });
@@ -37,6 +38,8 @@ const TIPOS_DE_ITEM: [string, string][] = [
   ["04", "04 - Produto acabado"], ["05", "05 - Subproduto"], ["06", "06 - Produto intermediário"], ["07", "07 - Material de uso e consumo"],
   ["08", "08 - Ativo imobilizado"], ["09", "09 - Serviços"], ["10", "10 - Outros insumos"], ["99", "99 - Outras"]
 ];
+/** XML-04 (decisão 318): o código tPag da NF-e com o rótulo do leiaute ("15 — Boleto bancário"); a tabela mora no domínio. */
+const OPCOES_TPAG_DA_NFE: [string, string][] = CODIGOS_TPAG_DA_NFE.map(([codigo, rotulo]): [string, string] => [codigo, `${codigo} — ${rotulo}`]);
 /** Origem da mercadoria (tabela A da NF-e, 0 a 8). */
 const ORIGENS_DA_MERCADORIA: [string, string][] = [
   ["0", "0 - Nacional"], ["1", "1 - Estrangeira (importação direta)"], ["2", "2 - Estrangeira (mercado interno)"], ["3", "3 - Nacional, importado > 40% e ≤ 70%"],
@@ -335,6 +338,18 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
   {
     key: "payment_methods", label: "Forma de Pagamento", labelPlural: "Formas de Pagamento", table: "payment_methods", permission: "sales", labelField: "name", route: "/cadastros/formas-de-pagamento", sharedDefaults: true,
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 6 }), active()]
+  },
+  {
+    // FORMA DE PAGAMENTO DA NF-e (XML-04, decisão 318): a LIGAÇÃO do código tPag da nota a uma forma de pagamento da
+    // organização ou do sistema (erp.formas_pagamento_da_nfe, 0064). Mesma permissão das Formas de pagamento: é a mesma
+    // família de cadastro, e quem cadastra as formas é quem as liga. Sem is_active: desligar é excluir (lógico), e o
+    // código excluído fica livre para outra ligação. Uma forma por código entre as vivas (índice único da 0064); a
+    // forma de outra organização é recusada pelo gatilho da 0064 (422).
+    key: "formas_pagamento_da_nfe", label: "Forma de Pagamento da NF-e", labelPlural: "Formas de Pagamento da NF-e", table: "formas_pagamento_da_nfe", permission: "sales", labelField: "codigo_tpag", route: "/cadastros/formas-de-pagamento-da-nfe", softDelete: true, defaultSort: "codigo_tpag",
+    fields: [
+      S("codigo_tpag", "Código da NF-e (tPag)", OPCOES_TPAG_DA_NFE, { required: true, list: true, filter: true, help: "O meio de pagamento que a nota informa no grupo de pagamento (detPag/tPag).", span: 6 }),
+      REF("forma_pagamento_id", "Forma de pagamento", "payment_methods", { required: true, list: true, help: "A forma que a nota com este código recebe na importação.", span: 6 })
+    ]
   },
   {
     // CONDIÇÃO DE PAGAMENTO (VENDAS-A4, decisão 258): o MODELO que deriva o plano de parcelas (planoDaCondicao, domínio).

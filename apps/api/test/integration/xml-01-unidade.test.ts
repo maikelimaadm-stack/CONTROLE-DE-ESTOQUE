@@ -144,7 +144,7 @@ describe("4.1 a unidade da nota (uCom) no pré-preenchimento", () => {
   it("XML-I10 UMA consulta a erp.measurement_units para a nota inteira (5 unidades distintas em 6 itens) — e a mesma com 1 item", async () => {
     // Emitente SEM cadastro e itens SEM GTIN: o lembrado, o código no fornecedor e o código de barras não são procurados;
     // a referência e a descrição (XML-02) são, e só JUNTAM a tabela de unidades. A única que a LÊ (`tocamUnidades`) é a
-    // das unidades da nota.
+    // do cadastro (desde a XML-04, decisão 318, a do fator pelo uCom, que absorveu a das unidades da nota).
     const daOrg = await unidadeDaOrganizacao("XQD");
     const esperado: Record<string, string> = { CX: await doSistema("cx"), UN: await doSistema("un"), SC: await doSistema("sc"), L: await doSistema("L"), XQD: daOrg };
     const varias = await notaImportada(["CX", "UN", "SC", "L", "XQD", "CX"].map((u, k) => itemNota(`U10-${k + 1}`, u)), { fornecedor: false });

@@ -10,6 +10,7 @@ import { opcoesDeNaturezaDeDespesa } from "../central/estado";
 import { DialogoDeCadastroRapido } from "./aba-cabecalho";
 import { criarProdutosDaImportacao, recusasNoCampo } from "./api";
 import { decimalDigitado, type EstadoDaConferencia } from "./estado";
+import { fatorNaTela } from "./fator-do-item";
 import {
   cadastravelPelaNota, corpoDoLote, declaraCriarProdutosDaNota, fornecedorResolvidoParaOLote, itensSemLocalGravado, mensagensDaRecusaDoLote, planoDoLote,
   presetDoProdutoDoItem, quantidadeDeProdutos, rotuloDoLote, type PlanoDoLote
@@ -36,6 +37,10 @@ import { conferenciaDoPalpite, rotuloDoVinculo, sugeridoPorPalpite } from "./vin
  * (e dos sugeridos pela descrição cujo produto a pessoa tirou):
  * o Grupo e a Natureza de custo são perguntados UMA vez; o resto vem da nota e do Local de cada item. Sem a capacidade
  * (a API anterior), a aba é a de antes: sem o botão e sem nenhuma pergunta nova. O diálogo de UM item continua igual.
+ *
+ * XML-04 (decisão 318): perto do Fator, DE ONDE ele veio (`fatorNaTela`: o cadastro pela unidade da nota, o vínculo
+ * lembrado — com o aviso dos dois números quando o cadastro diz outro —, ou a PERGUNTA, com o campo vazio). O campo
+ * continua editável: o fator mudado pela pessoa é "informado na tela". Sem `fatorPelaNota` (a API anterior), nada novo.
  */
 
 const Checkbox = ({ testId, rotulo, marcado, onMudar, desabilitado }: { testId: string; rotulo: string; marcado: boolean; onMudar: (v: boolean) => void; desabilitado?: boolean }) =>
@@ -73,6 +78,7 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
       const pedeLote = item.rastro.length === 0 && comEntrada && produto && produto.controleLote !== "nenhum";
       const rotuloDoProduto = v.situacao === "lembrado" || v.situacao === "sugerido" ? `${v.produto.codigo} — ${v.produto.descricao}` : null;
       const palpite = conferenciaDoPalpite(v);
+      const fator = fatorNaTela(v, d);
       return <section key={n} data-testid={pede} data-vinculo={v.situacao} className="rounded border px-3 py-2">
         <header className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <strong className="text-[13px]">Item {n}</strong>
@@ -101,6 +107,9 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
             <span>Quantidade interna: <strong data-testid={`${pede}-quantidade-interna`}>{conta.situacao === "pronta" ? conta.quantidadeInterna : "—"}</strong></span>
             <span>Unitário interno: <strong data-testid={`${pede}-unitario-interno`}>{conta.situacao === "pronta" ? conta.unitarioInterno : "—"}</strong></span>
           </div>
+          {fator?.texto && <p className="col-span-12 text-[12px] text-slate-600" data-testid={`${pede}-fator-origem`} data-origem={fator.origem}>{fator.texto}</p>}
+          {fator?.pergunta && <p className="col-span-12 text-[12px] text-amber-800" data-testid={`${pede}-fator-pergunta`}>{fator.pergunta}</p>}
+          {fator?.aviso && <p className="col-span-12 text-[12px] text-amber-800" data-testid={`${pede}-fator-aviso`}>{fator.aviso}</p>}
 
           {palpite && !leitura && v.situacao === "sugerido" && d.produtoId === v.produto.id && <p className="col-span-12 text-[12px] text-amber-800" data-testid={`${pede}-${palpite.sufixoDoTestid}`}>{palpite.texto}</p>}
           {v.situacao === "ambiguo" && !leitura && <div className="col-span-12 flex flex-wrap items-center gap-1.5" data-testid={`${pede}-candidatos`}>

@@ -21,7 +21,8 @@ import { cnpjComDv, conferencia, importada, fornecedorComDocumento, notaSintetic
  *   · as UNIDADES: a da organização e a do sistema (`organization_id` nulo), e quais casam com um uCom (a regra da
  *     decisão 312: o símbolo aparado, em maiúsculas, igual ao uCom normalizado — nunca "o mais parecido");
  *   · o ESPIÃO das consultas (o molde do RG-8 / LANC-I4: `pg.Client.prototype.query`), para contar a consulta das
- *     unidades e provar que uma recusa não chegou a mandar um INSERT em `erp.products`.
+ *     unidades (desde a XML-04, a do cadastro do fator) e provar que uma recusa não chegou a mandar um INSERT em
+ *     `erp.products`.
  */
 
 // ─────────────── identidade do caso ───────────────
@@ -277,9 +278,12 @@ export async function comConsultas<T>(f: () => Promise<T>): Promise<{ r: T; sqls
   } finally { espiao.mockRestore(); }
 }
 /**
- * As consultas que LEEM a tabela de unidades (`from erp.measurement_units`): a das unidades da nota. As consultas dos
- * vínculos só a juntam (`join`) para o símbolo da unidade do produto — e, desde a XML-02 (decisão 314), a referência e
- * a descrição procuram vínculo também sem fornecedor e sem GTIN, então "tocar" a tabela já não separa as duas.
+ * As consultas que LEEM a tabela de unidades (`from erp.measurement_units`): desde a XML-04 (decisão 318), a consulta do
+ * CADASTRO DO FATOR (`cadastroDoFator`, UMA por nota), que absorveu a das unidades da nota da XML-01 — as unidades dos
+ * uCom, a unidade principal dos produtos achados e as linhas vivas de `produto_unidades` deles; o
+ * `measurement_id` do produto a criar sai das mesmas linhas. As consultas dos vínculos só a juntam (`join`) para o
+ * símbolo da unidade do produto — e, desde a XML-02 (decisão 314), a referência e a descrição procuram vínculo também
+ * sem fornecedor e sem GTIN, então "tocar" a tabela já não separa as duas.
  */
 export const tocamUnidades = (sqls: string[]): string[] => sqls.filter((s) => /\bfrom\s+erp\."?measurement_units"?/i.test(s));
 /** Os INSERT em `erp.products` (a porta genérica escreve `insert into erp."products" (…)`). */
