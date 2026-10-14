@@ -320,11 +320,27 @@ test("TOP-CONFIG-04A · o web da base renomeia uma TOP do formato 2 e a configur
  * API da mesma base (`.skew-classificacao-financeira.json`, gravado por `scripts/skew-classificacao-financeira.mjs`):
  * os dois lados nasceram juntos na VENDAS-A1, e divergência entre eles é o detector errado, não um terceiro mundo.
  */
+/**
+ * O FONTE DO FORMULÁRIO DE CRIAÇÃO DE VENDA no commit `sha`: a página de sempre e, desde a EDITAR-03 (decisão 315), o
+ * módulo para onde o formulário se mudou (`features/sales/central-vendas-formulario.tsx`; a página só o renderiza). Os dois
+ * lidos e concatenados — o detector conta o MESMO trecho, more ele onde morar. Arquivo ausente no commit (a base anterior à
+ * mudança) = vazio; qualquer outro erro de leitura REPROVA.
+ */
+function fonteDoFormularioDeVendaNaBase(raiz: string, sha: string): string {
+  const ler = (caminho: string, opcional: boolean): string => {
+    if (opcional) {
+      try { execFileSync("git", ["cat-file", "-e", `${sha}:${caminho}`], { cwd: raiz, stdio: "pipe" }); } catch { return ""; }
+    }
+    return execFileSync("git", ["show", `${sha}:${caminho}`], { cwd: raiz, encoding: "utf8" });
+  };
+  return ler("apps/web/src/app/(app)/vendas/[kind]/new/page.tsx", false) + "\n" + ler("apps/web/src/features/sales/central-vendas-formulario.tsx", true);
+}
+
 function rotulosDaClassificacaoNoWebDaBase(): { natureza: string; centro: string } | null {
   const raiz = path.resolve(__dirname, "../../..");
   const sha = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
   expect(sha, "`.api-anterior.base` é gravado por scripts/api-anterior.mjs ao montar a árvore").toMatch(/^[0-9a-f]{40}$/);
-  const fonte = execFileSync("git", ["show", `${sha}:apps/web/src/app/(app)/vendas/[kind]/new/page.tsx`], { cwd: raiz, encoding: "utf8" });
+  const fonte = fonteDoFormularioDeVendaNaBase(raiz, sha);
   // o rótulo é literal (`label="…"`) até a A3-1; a partir dela vem do layout com o de hoje como reserva (`label={rot(chave, "…")}`);
   // desde a VISUAL-UX-02 (decisão 270) o campo é o da Central: `cc(chave, "…", { obrigatorio: true, … }, <RefSelect …`
   const rotulos = (recurso: string) => [...fonte.matchAll(new RegExp(`(?:<Field label=(?:"([^"]+)"|\\{rot\\(chave, "([^"]+)"\\)\\}) required[^>]*>|cc\\(chave, "([^"]+)", \\{ obrigatorio: true[^}]*\\}, )<RefSelect resource="${recurso}"`, "g"))].map((m) => (m[1] ?? m[2] ?? m[3])!);
@@ -1031,7 +1047,7 @@ function webDaBaseConheceLayout(): boolean {
   const raiz = path.resolve(__dirname, "../../..");
   const sha = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
   expect(sha, "`.api-anterior.base` é gravado por scripts/api-anterior.mjs ao montar a árvore").toMatch(/^[0-9a-f]{40}$/);
-  const fonte = execFileSync("git", ["show", `${sha}:apps/web/src/app/(app)/vendas/[kind]/new/page.tsx`], { cwd: raiz, encoding: "utf8" });
+  const fonte = fonteDoFormularioDeVendaNaBase(raiz, sha);
   const pedidos = (fonte.match(/\/layout-efetivo\?tipo_operacao_id=/g) ?? []).length;
   expect(pedidos, "detector do pedido de layout no web da base: zero ou uma ocorrência").toBeLessThanOrEqual(1);
   const arq = path.join(raiz, ".skew-layout-documento.json");

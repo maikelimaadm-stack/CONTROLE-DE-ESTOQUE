@@ -54,7 +54,8 @@ const ALTURA_DO_CABECALHO_DE_DADOS = 37;
  */
 const DOCUMENTOS_ABERTOS = expect.stringMatching(/^\d+ documentos? abertos?$/);
 const BARRA_DA_CRIACAO_DE_VENDA = ["Descartar alterações", "Salvar", "Confirmar venda", "Rótulo antes do campo", "Rótulo dentro do campo", "Ações rápidas"];
-const BARRA_DA_CONSULTA_DE_VENDA = ["Novo documento", "Duplicar documento", "Confirmar venda", "Rótulo antes do campo", "Rótulo dentro do campo", "Ações rápidas"];
+/* EDITAR-03 (decisão 315): a consulta ganhou a pílula "Editar" (some sem `.edit`; o usuário deste spec tem), depois de Duplicar. */
+const BARRA_DA_CONSULTA_DE_VENDA = ["Novo documento", "Duplicar documento", "Editar", "Confirmar venda", "Rótulo antes do campo", "Rótulo dentro do campo", "Ações rápidas"];
 const LEQUE_DA_CRIACAO = ["Alterar operação", "Imprimir", "Histórico de alterações", DOCUMENTOS_ABERTOS];
 const LEQUE_DA_CONSULTA_DE_VENDA_ABERTA = ["Imprimir", "Histórico de alterações", DOCUMENTOS_ABERTOS, "Cancelar venda…"];
 
@@ -1348,13 +1349,16 @@ test("W30 — documento SALVO abre na Central em consulta: barra do desenho, leq
   await expect(page.getByTestId("central-vendas-situacao").locator("[data-status]")).toHaveAttribute("data-status", salvo.status);
   await expect(page.getByTestId("central-vendas-alterado"), "consulta não tem alteração").toHaveCount(0);
 
-  // a barra do desenho na CONSULTA (decisão 270): Novo documento, Duplicar e a pílula; Posição do rótulo e Ações rápidas.
-  // Nada de Voltar, Anexos, Editar ou Descartar.
+  // a barra do desenho na CONSULTA (decisão 270): Novo documento, Duplicar e as pílulas; Posição do rótulo e Ações rápidas.
+  // Nada de Voltar, Anexos ou Descartar. EDITAR-03 (decisão 315): "Editar" passou a existir — exatamente UMA, a pílula
+  // `vendas-editar`, na posição da lista acima (o resto da asserção é o de antes).
   const barra = ws.getByTestId("central-vendas-acoes");
   expect(await nomesDaBarra(page)).toEqual(BARRA_DA_CONSULTA_DE_VENDA);
   const semDica = await barra.getByRole("button").evaluateAll((els) => els.filter((b) => !(b.textContent ?? "").trim() && !b.getAttribute("data-dica")).length);
   expect(semDica, "ação só de ícone sem dica").toBe(0);
-  for (const proibida of [/^voltar$/i, /anexo/i, /^editar/i, /descartar/i]) await expect(ws.getByRole("button", { name: proibida }), `${proibida}`).toHaveCount(0);
+  for (const proibida of [/^voltar$/i, /anexo/i, /descartar/i]) await expect(ws.getByRole("button", { name: proibida }), `${proibida}`).toHaveCount(0);
+  await expect(ws.getByRole("button", { name: /^editar/i }), "uma só ação Editar: a pílula").toHaveCount(1);
+  await expect(ws.getByTestId("vendas-editar")).toHaveCount(1);
 
   // o leque: Imprimir, Histórico, Documentos abertos e Cancelar — as ações reais que "Mais ações" tinha, e as da barra
   expect(await nomesDoLeque(page)).toEqual(LEQUE_DA_CONSULTA_DE_VENDA_ABERTA);
