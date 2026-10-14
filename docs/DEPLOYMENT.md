@@ -4781,9 +4781,13 @@ histórico do cadastro) —; a RLS habilitada e forçada com a política ÚNICA 
 **Não altera nenhuma tabela existente:** nenhum ALTER, UPDATE, DELETE, TRUNCATE, DROP, CREATE OR REPLACE nem INSERT de
 dado (provado pelo RETRATO do banco inteiro antes e depois em `packages/db/test/xml-04-0064.test.ts`, X5 — catálogo e dados: só o que é da tabela e da função novas muda — e pela varredura do texto, X8, que é heurística: não vê, por exemplo, um MERGE; quem o pega é o X5). As duas FKs APONTAM para `erp.organizations` e
 `erp.payment_methods`: criar cada uma toma a trava SHARE ROW EXCLUSIVE da tabela referida, que fica até o COMMIT da
-migration — a ESCRITA em `erp.payment_methods` e em `erp.organizations` espera por esse tempo (medido localmente: 20 a
-30 ms), a leitura não —; com uma transação de escrita aberta numa delas, a migration desiste em 2 s sem aplicar nada
-(X3, provado nas duas tabelas), e o deploy é refeito (seguro: nada foi aplicado). **Efeito da FK no cadastro que já
+migration — a ESCRITA em `erp.payment_methods` e em `erp.organizations` espera por esse tempo (medido localmente: 15 a
+30 ms sem disputa), a leitura não —; com uma transação de escrita aberta numa delas, a migration desiste sem aplicar
+nada (X3, provado nas duas tabelas), e o deploy é refeito (seguro: nada foi aplicado). Enquanto ela ESPERA, a escrita
+que chega nas DUAS tabelas fica na fila atrás dela; o `lock_timeout` de 2 s (o X8 fixa o valor) vale para CADA espera,
+não para a migration inteira: no caso composto que o cético mediu (as duas ocupadas em sequência), ela desistiu em ~3,8 s
+e a escrita da fila esperou o mesmo. Na produção: 1 organização, as formas quase não são escritas, e o gate não viu
+trava alheia nem transação longa. **Efeito da FK no cadastro que já
 existia:** uma forma DA ORGANIZAÇÃO que já teve ligação — mesmo excluída, porque a exclusão é lógica e a linha fica —
 não se apaga mais pelo cadastro de Formas de Pagamento (a FK recusa: 409 "Registro referenciado"); a que nunca foi
 ligada se apaga como antes (XA5). Na produção de hoje o efeito é nulo: as 10 formas são do sistema, que a organização
@@ -4912,7 +4916,7 @@ O estado de produção sobre o qual as pré-condições da 0064 passam, objeto p
 `erp.payment_methods` (quantas são do sistema), se a aplicação é instantânea, e a lista íntegra dos comandos rodados —
 só SELECT e leitura de catálogo:
 
-**Conferido em produção (só leitura, pela sessão, 13 e 14/10/2026; cinco SELECT, nenhuma escrita, nenhuma transação
+**Conferido em produção (só leitura, pela sessão, 13 e 14/10/2026; seis SELECT, nenhuma escrita, nenhuma transação
 aberta):** ledger em 63, a última `0063_versao_do_documento_de_compra.sql` (a 0064 não aplicada); PostgreSQL 17.6;
 livres os três nomes da 0064 (`erp.formas_pagamento_da_nfe`, `erp.ux_formas_pagamento_da_nfe_codigo_vivo`,
 `erp.formas_pagamento_da_nfe_forma_guarda()`); a 0063 aplicada (`erp.documentos_compra.version` existe);
@@ -4939,6 +4943,8 @@ Comandos rodados contra a produção (na íntegra, nesta ordem; projeto Supabase
 4. `select count(*) as vinculos, count(*) filter (where upper(btrim(mu.symbol)) = v.unidade_fornecedor) as na_unidade_principal, count(*) filter (where upper(btrim(mu.symbol)) = v.unidade_fornecedor and (v.fator <> 1 or v.tipo_fator <> 'multiply')) as avisariam_vinculo_diferente_do_cadastro, count(*) filter (where v.fator = 1 and v.tipo_fator = 'multiply') as com_fator_1 from erp.produto_fornecedor_vinculos v join erp.products p on p.id = v.produto_id and p.organization_id = v.organization_id left join erp.measurement_units mu on mu.id = p.measurement_id`
 5. `select (select count(*) from erp.measurement_units where organization_id is not null) as unidades_da_organizacao, (select count(*) from erp.measurement_units o where o.organization_id is not null and exists (select 1 from erp.measurement_units s where s.organization_id is null and upper(btrim(s.symbol)) = upper(btrim(o.symbol)))) as unidades_da_organizacao_homonimas_do_sistema, (select count(*) from erp.products where barcode is not null and btrim(barcode) <> '') as produtos_com_codigo_de_barras, (select count(*) from erp.products) as produtos`
    → 0 unidades da organização, 0 homônimas do sistema; 231 de 423 produtos com código de barras (o código de barras só acha o produto: nenhum efeito no fator).
+6. `select (select count(*) from (select upper(btrim(symbol)) s from erp.measurement_units where organization_id is null group by 1 having count(*) > 1) d) as simbolos_duplicados_no_sistema, (select count(*) from (select organization_id, upper(btrim(symbol)) s from erp.measurement_units where organization_id is not null group by 1, 2 having count(*) > 1) d) as simbolos_duplicados_na_organizacao, (select count(*) from erp.measurement_units where organization_id is null) as unidades_do_sistema`
+   → 0 símbolos duplicados no sistema (25 unidades), 0 na organização: a unidade ambígua (risco (s) da 318) não ocorre hoje.
 
 A aplicação real continua pelo pipeline, por decisão do Maike.
 

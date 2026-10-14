@@ -1058,7 +1058,7 @@ régua da unidade da XML-01 (a da organização vence a do sistema; uma só, ou 
 
 | # | Quando | `fatorPelaNota` | O fator |
 |---|---|---|---|
-| 1 | o uCom não vira UMA unidade do cadastro (nenhuma, duas, ou a nota sem unidade) | `pergunta`, `unidade_fora_do_cadastro` | a pessoa informa |
+| 1 | o uCom não vira UMA unidade do cadastro (nenhuma, duas, ou a nota sem unidade) — com DUAS (o mesmo símbolo depois de aparar e pôr em maiúsculas), a mensagem é a de fora do cadastro mesmo quando o produto está numa delas (decisão 318, risco (s)) | `pergunta`, `unidade_fora_do_cadastro` | a pessoa informa |
 | 2 | é a unidade PRINCIPAL do produto (`products.measurement_id`) | `unidade_principal` | 1, multiplica |
 | 3 | é a unidade de uma linha de `erp.produto_unidades` do produto, VIVA e DE COMPRA (`uso_compra`) | `unidade_do_produto` | o fator e o tipo da linha |
 | 4 | duas linhas dessas com fatores (ou tipos) diferentes | `pergunta`, `unidade_fora_do_cadastro` | a pessoa informa |
