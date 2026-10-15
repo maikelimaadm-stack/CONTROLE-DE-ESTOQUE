@@ -359,23 +359,27 @@ test("CC-2 — barra e leque por modo e por permissão; sem Anexos; Esc fecha", 
   await expect(page.getByTestId(`${WORKSPACE}-acoes-rapidas-leque`), "e o leque sai da árvore").toHaveCount(0);
   await expect(page.getByTestId(`${WORKSPACE}-acoes-rapidas`), "e o foco volta ao botão").toBeFocused();
 
-  // CONSULTA da compra aberta: [Novo] [Duplicar] [Confirmar compra]; leque Imprimir, Histórico, N documentos, Cancelar compra…
+  // CONSULTA da compra aberta: [Novo] [Duplicar] [Confirmar compra] [Cancelar compra…]; leque Imprimir, Histórico, N documentos
   await abrirConsulta(page, compra);
   await expect(page.getByTestId(`${WORKSPACE}-novo`)).toBeVisible();
   await expect(page.getByTestId(`${WORKSPACE}-duplicar`)).toBeVisible();
   await expect(page.getByTestId("compras-confirmar")).toBeEnabled();
+  const cancelar = page.getByTestId("compras-cancelar");
+  await expect(cancelar).toBeEnabled();
+  await expect(cancelar).toHaveText(/Cancelar compra/);
+  const cor = await cancelar.evaluate((el) => getComputedStyle(el).color);
+  const [r, g, bl] = (cor.match(/\d+/g) ?? []).map(Number);
+  expect(r! > g! && r! > bl!, `Cancelar em vermelho (${cor})`).toBe(true);
   const consulta = await nomesDoLeque(page);
-  expect(consulta).toEqual(["Imprimir", "Histórico de alterações", expect.stringMatching(documentos), "Cancelar compra…"]);
+  expect(consulta).toEqual(["Imprimir", "Histórico de alterações", expect.stringMatching(documentos)]);
   const leque = page.getByTestId(`${WORKSPACE}-acoes-rapidas-leque`);
   await expect(leque.getByText(/anexo/i), "sem Anexos").toHaveCount(0);
   await expect(leque.getByRole("menuitem", { name: /anexo/i })).toHaveCount(0);
-  const cor = await page.getByTestId("compras-cancelar").evaluate((el) => getComputedStyle(el).color);
-  const [r, g, bl] = (cor.match(/\d+/g) ?? []).map(Number);
-  expect(r! > g! && r! > bl!, `Cancelar em vermelho (${cor})`).toBe(true);
+  await expect(leque.getByTestId("compras-cancelar"), "Cancelar na barra, não no leque").toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(leque).toHaveCount(0);
 
-  // POR PERMISSÃO: sem audit_logs.view e sem compras.delete, o leque não oferece Histórico nem Cancelar
+  // POR PERMISSÃO: sem audit_logs.view e sem compras.delete — sem Histórico no leque e sem pílula Cancelar
   await page.route("**/api/auth/context", async (rota) => {
     const resposta = await rota.fetch();
     const corpo = await resposta.json() as { permissions: string[] };
@@ -383,10 +387,11 @@ test("CC-2 — barra e leque por modo e por permissão; sem Anexos; Esc fecha", 
   });
   await page.reload();
   await expect(page.getByTestId(`${WORKSPACE}-identidade-nome`)).toHaveText(compra.codigo);
+  await expect(page.getByTestId("compras-cancelar"), "sem compras.delete, sem Cancelar na barra").toHaveCount(0);
   const semPermissao = await nomesDoLeque(page);
   expect(semPermissao[0], "premissa: o leque abriu").toBe("Imprimir");
   expect(semPermissao.some((n) => /Histórico/.test(n)), "sem audit_logs.view, sem Histórico").toBe(false);
-  expect(semPermissao.some((n) => /^Cancelar/.test(n)), "sem compras.delete, sem Cancelar").toBe(false);
+  expect(semPermissao.some((n) => /^Cancelar/.test(n)), "Cancelar não volta ao leque").toBe(false);
   await page.keyboard.press("Escape");
   await page.unroute("**/api/auth/context");
 

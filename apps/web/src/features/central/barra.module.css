@@ -73,6 +73,11 @@
 .pilula:active:not(:disabled) { background: #dde3e8; transform: scale(.975); }
 .pilula:disabled { opacity: .42; cursor: not-allowed; }
 .pilula:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+/* Cancelar documento na barra: a mesma vermelha do item `perigo` do leque (#b91c1c / #fef2f2). */
+.pilulaPerigo { color: #b91c1c; }
+.pilulaPerigo:hover:not(:disabled) { background: #fef2f2; color: #b91c1c; border-color: #fecaca; box-shadow: 0 3px 9px rgba(185, 28, 28, .18); }
+.pilulaPerigo:active:not(:disabled) { background: #fee2e2; color: #b91c1c; }
+.pilulaPerigo:focus-visible { outline-color: #b91c1c; }
 
 .girar { display: inline-flex; animation: girar 800ms linear infinite; }
 @keyframes girar { to { transform: rotate(360deg); } }

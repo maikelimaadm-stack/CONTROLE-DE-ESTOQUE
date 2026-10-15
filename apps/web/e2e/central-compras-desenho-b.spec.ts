@@ -49,16 +49,6 @@ function gravarPosts(page: Page, filtro: (caminho: string) => boolean) {
   return posts;
 }
 
-/** Abre o leque de Ações rápidas (se fechado) e devolve o item. */
-async function itemDoLeque(page: Page, testId: string) {
-  const leque = page.getByTestId(`${P}-acoes-rapidas`);
-  if ((await leque.getAttribute("aria-expanded")) !== "true") await leque.click();
-  await expect(leque).toHaveAttribute("aria-expanded", "true");
-  const item = page.getByTestId(testId);
-  await expect(item).toBeVisible();
-  return item;
-}
-
 /** O cadastro de base: TOP de Compra e de Pedido (Pedido → Compra, em partes), dois produtos, armazém e fornecedor CRIADOS aqui; natureza e centro do seed, pelo nome. */
 async function cenario(page: Page) {
   const topCompra = { codigo: codigoTop("4"), id: "" };
@@ -249,7 +239,7 @@ test("CC-8 — Cancelar com motivo: {motivo} aparado, vazio sem motivo, Idempote
   const com = await compraAberta(page, c);
   await page.goto(`/compras/compras/${com.id}`);
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "aberto");
-  await (await itemDoLeque(page, "compras-cancelar")).click();
+  await page.getByTestId("compras-cancelar").click();
   const dialogo = page.getByTestId("confirm-dialog");
   await expect(dialogo).toContainText(`Cancelar compra ${com.codigo}?`);
   await expect(dialogo.getByText("Motivo (opcional)")).toBeVisible();
@@ -269,7 +259,7 @@ test("CC-8 — Cancelar com motivo: {motivo} aparado, vazio sem motivo, Idempote
   const sem = await compraAberta(page, c);
   await page.goto(`/compras/compras/${sem.id}`);
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "aberto");
-  await (await itemDoLeque(page, "compras-cancelar")).click();
+  await page.getByTestId("compras-cancelar").click();
   await expect(page.getByTestId(`${P}-cancelar-motivo`)).toHaveValue("");
   const req2 = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === `/api/compras/compras/${sem.id}/cancel`);
   await page.getByTestId("confirm-dialog").getByRole("button", { name: "Cancelar compra" }).click();
@@ -280,7 +270,7 @@ test("CC-8 — Cancelar com motivo: {motivo} aparado, vazio sem motivo, Idempote
   expect(r2.headers()["idempotency-key"]).toBeTruthy();
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "cancelado");
 
-  // (3) PEDIDO COM COMPRA VIVA: Cancelar fica no leque, DESABILITADO, com a dica de hoje.
+  // (3) PEDIDO COM COMPRA VIVA: Cancelar fica na barra, DESABILITADO, com a dica de hoje.
   const pedido = await pedidoAberto(page, c);
   await api(page, "POST", `/api/compras/pedidos/${pedido.id}/convert`, {
     tipo_operacao_id: c.topCompra.id, data_documento: "2026-09-02", categoria_financeira_id: c.natureza.id, centro_custo_id: c.centro.id,
@@ -288,10 +278,10 @@ test("CC-8 — Cancelar com motivo: {motivo} aparado, vazio sem motivo, Idempote
   });
   await page.goto(`/compras/pedidos/${pedido.id}`);
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "aberto");
-  const travado = await itemDoLeque(page, "compras-cancelar");
+  const travado = page.getByTestId("compras-cancelar");
   await expect(travado).toBeDisabled();
-  await expect(travado).toHaveAttribute("aria-label", "O pedido tem compra não cancelada: cancele a compra antes de cancelar o pedido.");
-  await page.keyboard.press("Escape");
+  await expect(travado).toHaveAttribute("data-dica", "O pedido tem compra não cancelada: cancele a compra antes de cancelar o pedido.");
+  await expect(travado).toHaveAttribute("data-motivo", "O pedido tem compra não cancelada: cancele a compra antes de cancelar o pedido.");
 
   // (4) A CORRIDA: pedido sem compra na abertura; a compra nasce depois — o 409 do servidor aparece com a mensagem dele.
   const corrida = await pedidoAberto(page, c);
@@ -303,7 +293,7 @@ test("CC-8 — Cancelar com motivo: {motivo} aparado, vazio sem motivo, Idempote
   });
   await page.goto(`/compras/pedidos/${corrida.id}`);
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "aberto");
-  const livre = await itemDoLeque(page, "compras-cancelar");
+  const livre = page.getByTestId("compras-cancelar");
   await expect(livre, "sem compra viva na abertura, Cancelar fica habilitado").toBeEnabled();
   await livre.click();
   await page.getByTestId("confirm-dialog").getByRole("button", { name: "Cancelar pedido de compra" }).click();

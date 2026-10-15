@@ -37,9 +37,9 @@ import {
  * `estado-orcamento.ts`; a edição é a Central do orçamento em modo "edicao", NO LUGAR (sem rota nova).
  *
  * Barra: SEM Novo documento e SEM Duplicar (o orçamento nasce do pedido, pelo "Novo orçamento" dele). A pílula "Editar
- * orçamento" (com `orcamentos_compra.edit`; habilitada com o orçamento aberto). O leque: Imprimir, Histórico e "Cancelar
- * orçamento de compra…" (com `orcamentos_compra.delete` e o orçamento aberto). Escolher o vencedor é da aba "Orçamentos"
- * do pedido, onde está a comparação — não daqui.
+ * orçamento" (com `orcamentos_compra.edit`; habilitada com o orçamento aberto) e a pílula vermelha "Cancelar orçamento de
+ * compra…" (com `orcamentos_compra.delete` e o orçamento aberto). O leque: Imprimir e Histórico. Escolher o vencedor é da
+ * aba "Orçamentos" do pedido, onde está a comparação — não daqui.
  */
 
 const PREFIXO = PREFIXO_CENTRAL_COMPRAS;
@@ -92,15 +92,17 @@ export function ConsultaDeOrcamento({ variante, id }: { variante: VarianteDeComp
   const acoes = <ConjuntoDaBarra>
     {e.podeEditar && <PilulaDaBarra icone={<IconeEditar />} dica={e.editarHabilitado ? "Editar orçamento" : MSG_ORCAMENTO_NAO_ABERTO} disabled={!e.editarHabilitado}
       data-testid="compras-orcamento-editar" onClick={() => { if (e.editarHabilitado) e.setEditando(true); }}>Editar orçamento</PilulaDaBarra>}
+    {e.podeCancelar && <PilulaDaBarra icone={<IconeCancelarDocumento />} perigo dica={`Cancelar ${ESPECIE_NO_CANCELAMENTO}`}
+      disabled={e.cancelarOcupado} ocupado={e.cancelarOcupado} data-testid="compras-cancelar"
+      onClick={() => { if (!e.cancelarOcupado) e.setCancelando(true); }}>
+      Cancelar {ESPECIE_NO_CANCELAMENTO}…
+    </PilulaDaBarra>}
   </ConjuntoDaBarra>;
   const antes: ItemRapido[] = [
     { chave: "imprimir", rotulo: "Imprimir", testId: `${PREFIXO}-imprimir`, icone: <IconeImprimir />, onSelect: () => window.print() },
     ...(e.podeVerHistorico ? [{ chave: "historico", rotulo: "Histórico de alterações", testId: `${PREFIXO}-historico`, icone: <IconeHistorico />, onSelect: () => setHistorico(true) }] : [])
   ];
-  const depois: ItemRapido[] = e.podeCancelar ? [{
-    chave: "cancelar", rotulo: `Cancelar ${ESPECIE_NO_CANCELAMENTO}…`, testId: "compras-cancelar", icone: <IconeCancelarDocumento />, perigo: true,
-    desabilitado: e.cancelarOcupado, onSelect: () => e.setCancelando(true)
-  }] : [];
+  const depois: ItemRapido[] = [];
   const direita = <ConjuntoDireito>
     {salvoVisivel ? <IndicadorSalvo prefixoTestid={PREFIXO} /> : null}
     <PosicaoDoRotulo prefixoTestid={PREFIXO} valor={densidade} onChange={setDensidade} />
