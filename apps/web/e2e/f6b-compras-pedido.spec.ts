@@ -1,6 +1,6 @@
 import type { Locator, Page, Request, Response } from "@playwright/test";
 import { todayISO } from "../src/lib/utils";
-import { login, api, uniq, empresaAtiva } from "./helpers";
+import { login, api, uniq, empresaAtiva, abrirAbaDoPainelDeCompras } from "./helpers";
 import { cfg5, detalheTopNoServidor } from "./top-config-08-comum";
 import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 
@@ -379,16 +379,19 @@ test("F6B-P3 — a rede cai depois de o servidor gravar a compra: o reenvio do S
   const salvar = page.getByTestId("compras-salvar");
   await expect(salvar, "o Salvar saiu da trava").toBeEnabled();
   await escolher(page, "Fornecedor", c.nomeFornecedor);
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
+  await escolher(page, "Local de estoque", c.nomeArmazem);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
   await escolherNaCelula(page, linha.getByTestId(`${P}-produto`), c.produtoA.nome);
-  await escolherNaCelula(page, linha.getByTestId(`${P}-armazem`), c.nomeArmazem);
   await linha.getByLabel("Quantidade do item 1").fill("3");
   await linha.getByLabel("Valor unitário do item 1").fill("7");
   await expect(page.getByTestId(`${P}-subtotal`)).toContainText("21,00");
-  await abrirAba(page, "Observações");
+  // Observação mora nos Dados principais (decisão 319), expansível
+  const abrirObs = page.getByTestId("compras-observacao-abrir");
+  if (await abrirObs.count()) await abrirObs.click();
   await page.getByTestId("compras-observacao").fill(observacao);
 
   // (1) A 1ª TENTATIVA: o servidor gravou, mas o navegador viu a rede cair — a tela continua na criação.

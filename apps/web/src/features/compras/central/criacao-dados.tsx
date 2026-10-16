@@ -3,49 +3,25 @@ import * as React from "react";
 import Link from "next/link";
 import { AVISO_PADRAO_INVALIDO_CENTRAL } from "@agro/domain";
 import { useAuth } from "@/lib/auth";
+import { enumOptions } from "@/lib/copy";
 import { Input, LoadingState, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { MensagemTop } from "@/features/sales/tipo-operacao-select";
 import { CampoDaCentral, ColunaDeCampos, DataDaCentral, type IconeDoCampo } from "@/features/central/campo";
 import { PlanoDaCentral } from "@/features/central/painel";
-import { CampoDoLocalPadrao } from "@/features/central/local-padrao";
 import type { IdentidadeDoDocumento } from "@/features/central/contrato";
 import estilosCv from "@/features/central/moldura.module.css";
-import { CamposExtrasDaCompra } from "../campos-extras";
 import { hrefDoConfigurador, textoDoLayoutQueVale } from "../layout-da-central";
-import { PREFIXO_CENTRAL_COMPRAS } from "./adaptador";
 import { opcoesDeNaturezaDeDespesa, type ChaveDoCabecalho, type EstadoDaCriacao } from "./estado";
-import { DadosFiscaisDaConsulta, DadosFiscaisDaCriacao, RateioDaConsulta, temDadosFiscais } from "./dados-fiscais";
+import { DadosFiscaisDaConsulta, RateioDaConsulta, temDadosFiscais } from "./dados-fiscais";
 import { dicaDaIdentidadeNaEdicao } from "./edicao";
-import { blocoFiscalNosDados } from "./rateio-no-rodape";
+import { CAMPOS_DOS_DADOS_PRINCIPAIS } from "./organizacao-do-painel";
+import { fiscalNoPainel } from "./rateio-no-rodape";
 
 /**
- * CENTRAL DE COMPRAS — DADOS PRINCIPAIS DA CRIAÇÃO (VISUAL-UX-04, decisão 276).
- *
- * O cabeçalho de 36 px (Ampliar, nome do documento, ponto de alteração) é da moldura do motor: daqui sai só a
- * `identidade`. O resto é o que a Central de Compras sempre desenhou — a TOP travada, as zonas do layout de compra
- * (COMPRAS-03: principais, adicionais e abas do rodapé), os padrões, a linha do layout e os avisos —, agora no
- * campo do desenho (`CampoDaCentral`). Nada aqui decide valor, obrigatoriedade, erro ou corpo: tudo vem de
- * `useEstadoDaCriacao`. Os testids `compras-*` de hoje continuam no elemento equivalente.
- *
- * OPERACOES-01 F3b (decisão 280): na criação, com a coluna do local na grade, o "Local de estoque" das linhas novas
- * (`CampoDoLocalPadrao`, `central-compras-local-padrao`) logo depois da Empresa, onde ela estiver — estado da tela,
- * fora do corpo; no receber não aparece.
- *
- * OPERACOES-01 F7 (decisão 284): na criação da COMPRA, com a capacidade `importacaoXml` "sim", o bloco "Dados fiscais"
- * (`compras-dados-fiscais`) no FIM dos campos extras — fora do layout (não é campo dele: sem `data-campo`, sem "*",
- * fora das pendências). Sem a capacidade, nada muda.
- *
- * RATEIO-01 (decisão 316): o RATEIO e a classificação dos itens saíram desse bloco — moram na aba "Rateio" do painel
- * (`criacao-painel.tsx`). Aqui ficam os oito dados fiscais do cabeçalho.
- *
- * Sem "Dados adicionais · N campos": os campos da zona adicional e o bloco fiscal ficam sempre à vista
- * (`CamposExtrasDaCompra`), sem o acordeão.
- *
- * EDITAR-02 (decisão 313): na EDIÇÃO, o campo que a PATCH não aceita fica no MESMO `fieldset` travado de sempre, com
- * `data-travado-na-edicao="true"` e o motivo do servidor em `data-motivo` e na `dica` do campo (o `title` que o
- * `CampoDaCentral` já tem; fora da edição, nenhuma) — a empresa; o resto pelos limites; os dados fiscais do
- * cabeçalho (que não mudam depois do lançamento) aparecem em LEITURA, pelos MESMOS blocos da consulta.
+ * CENTRAL DE COMPRAS — DADOS PRINCIPAIS: só identificar a compra (5 linhas).
+ * Financeiro, rateio, fiscal e entrega moram no rodapé (`organizacao-do-painel.tsx`).
+ * Local de estoque padrão fica acima da grade de produtos (`criacao-itens.tsx`).
  */
 
 /** "Novo pedido de compra" / "Nova compra" — o nome do documento ainda sem número; o ponto acende com alteração. */
@@ -94,16 +70,15 @@ export function AvisosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   </>;
 }
 
-/** Dados principais + campos extras (zonas do layout), sem acordeão. Sem o pedido pronto (receber), nada: a faixa diz o que falta. */
+/** Dados principais — identificar a compra (5 linhas). Demais campos vão ao rodapé. */
 export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const { can } = useAuth();
+  const [obsAberta, setObsAberta] = React.useState(false);
   if (!e.mostrarFormulario) return null;
   const h = e.cabecalho;
   const receber = e.modo === "receber";
+  const tiposDoc = enumOptions("document_type");
 
-  /* Sem layout (sem a capacidade) nada de `data-campo`; com layout, o invólucro do campo leva o que levava.
-     LANCAMENTO-01 (decisão 311): o campo cujo valor é o que o padrão da TOP semeou leva `data-padrao-top="semeado"` no
-     MESMO invólucro (atributo, nenhum desenho novo); sem a TOP valer (API anterior, receber), nada a mais. */
   const dc = (c: string) => ({
     ...(e.layout ? { "data-campo": c, "data-obrigatorio": String(e.obrigatorio(c)), ...(e.forcados.has(c) ? { "data-forcado": "true" } : {}) } : {}),
     ...(e.semeadoPelaTop(c) ? { "data-padrao-top": "semeado" } : {})
@@ -123,7 +98,6 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
 
   const desenhar = (c: string): React.ReactNode => {
     switch (c) {
-      /* No receber, Fornecedor e Empresa vêm do pedido, TRAVADOS (o corpo do /convert nem os leva). */
       case "empresa_id": return cc(c, "Empresa", { icone: "pesquisa", preenchido: Boolean(h.empresa_id), desabilitado: receber },
         <RefSelect resource="empresas" value={h.empresa_id} disabled={receber || undefined} allowEmpty={!receber} labelHint={pedidoNome("empresa_nome")} onChange={mudar("empresa_id")} />);
       case "fornecedor_id": return cc(c, "Fornecedor", { icone: "pesquisa", preenchido: Boolean(h.fornecedor_id), desabilitado: receber },
@@ -159,8 +133,6 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
       default: return null;
     }
   };
-  /* Não editável do layout TRAVA (a decisão é do estado: `travado`), mostrando o valor. LANCAMENTO-01: a TOP que não deixa
-     trocar os padrões trava pelo MESMO `fieldset` — com `data-travado-pela-top` para dizer de onde veio a trava. */
   const render = (c: string) => {
     const n = desenhar(c);
     if (n === null) return null;
@@ -170,52 +142,73 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
       : <React.Fragment key={c}>{n}</React.Fragment>;
   };
 
-  /* A TOP TRAVADA: contexto do lançamento, não campo; "<código> · <nome>", o movimento na dica. */
   const top = e.top && <CampoDaCentral rotulo="Tipo de Operação" obrigatorio estado="travado" testId="compras-top-travada" data-tipo-operacao-id={e.top.id}
     dica={e.top.movimento ? `Movimento: ${e.top.movimento}` : undefined}>
     <span className={estilosCv.codigo}>{e.top.codigo}</span> <span className={estilosCv.separador}>·</span> <span>{e.top.nome}</span>
   </CampoDaCentral>;
 
-  /* Só com a capacidade do layout E a resposta conferida. `can` só decide se o atalho aparece (apresentação). */
-  const linhaDoLayout = e.layoutVale && <div className="flex flex-wrap items-baseline gap-x-2">
-    <p data-testid="compras-layout-efetivo" data-origem={e.layoutVale.origem} data-layout-id={e.layoutVale.id ?? ""} className="text-[11.5px] text-slate-500">{textoDoLayoutQueVale(e.layoutVale)}</p>
-    {can("tipos_operacao.edit") && <Link data-testid="compras-layout-configurar" href={hrefDoConfigurador(e.layoutVale)} className="text-[11.5px] font-medium text-emerald-700 hover:underline">Configurar</Link>}
+  const linhaDoLayout = e.layoutVale && <div className="mb-1 flex justify-end" data-testid="compras-layout-acao">
+    <span className="inline-flex items-baseline gap-1.5 text-[11px] text-slate-400">
+      <span data-testid="compras-layout-efetivo" data-origem={e.layoutVale.origem} data-layout-id={e.layoutVale.id ?? ""} className="max-w-[14rem] truncate" title={textoDoLayoutQueVale(e.layoutVale)}>{textoDoLayoutQueVale(e.layoutVale)}</span>
+      {can("tipos_operacao.edit") && <Link data-testid="compras-layout-configurar" href={hrefDoConfigurador(e.layoutVale)} className="shrink-0 text-slate-500 underline-offset-2 hover:text-emerald-700 hover:underline">Configurar</Link>}
+    </span>
   </div>;
 
-  const { principais, adicionais, abas } = e.zonas;
-  /* O "Local de estoque" do cabeçalho vai logo DEPOIS da Empresa (o local é da empresa do documento), na zona onde a
-     Empresa estiver desenhada — os principais, os adicionais ou a aba do painel que a recebeu (o painel desenha cada
-     campo por este mesmo componente). A Empresa é obrigatória do sistema (todo layout a tem): o campo aparece uma vez
-     só, nunca ao lado de outro campo. Não é campo do layout: sem `data-campo`, sem "*", fora das pendências. */
-  const comOLocal = (campos: readonly string[]) => campos.flatMap((c) => (c === "empresa_id" && e.localNaGrade
-    ? [render(c), <CampoDoLocalPadrao key="local-padrao" prefixoTestid={PREFIXO_CENTRAL_COMPRAS} empresaId={h.empresa_id} valor={e.localDoCabecalho} onChange={e.escolherLocal} />]
-    : [render(c)]));
-  /* Os DADOS FISCAIS (F7) moram nos Dados do documento — o desenho que traz a TOP travada —, nunca no campo único que o
-     painel desenha por este mesmo componente (`estadoDeUmCampo`, em `central-compras.tsx`, zera a TOP): lá o bloco
-     repetiria os campos em cada campo do painel. */
-  const comDadosFiscais = blocoFiscalNosDados(e);
-  /* EDITAR-02: na edição da compra com dados fiscais, os MESMOS blocos de leitura da consulta (nos Dados do documento,
-     nunca no campo único do painel — o mesmo critério do bloco da criação). */
+  const { principais } = e.zonas;
+  const identidade = new Set(CAMPOS_DOS_DADOS_PRINCIPAIS);
+  /* Campo único do painel (frete, parcelas…): só desenha o campo, sem o layout das 5 linhas. */
+  const soDoPainel = principais.length > 0 && principais.every((c) => !identidade.has(c));
+  if (soDoPainel) {
+    return <ColunaDeCampos>{principais.map((c) => render(c))}</ColunaDeCampos>;
+  }
+
+  const tem = (c: string) => principais.includes(c);
+  const mostrarObs = tem("observacao") && (obsAberta || Boolean(h.observacao) || Boolean(e.erro("observacao")));
+  const tipoDoc = fiscalNoPainel(e) && <CampoDaCentral rotulo="Tipo de documento" icone="selecao" preenchido={e.fiscal.tipo_documento_fiscal !== ""} testId="compras-tipo-documento-fiscal-campo" data-campo-fiscal="tipo_documento_fiscal">
+    <NativeSelect data-testid="compras-tipo-documento-fiscal" value={e.fiscal.tipo_documento_fiscal} onChange={(ev) => e.mudarFiscal({ tipo_documento_fiscal: ev.target.value })}>
+      <option value="">—</option>
+      {tiposDoc.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </NativeSelect>
+  </CampoDaCentral>;
+
+  /* EDITAR-02: fiscais em leitura ficam na aba Fiscal do painel quando a criação os teria; na edição sem painel fiscal, mantém nos Dados. */
   const fiscaisEmLeitura = e.modo === "edicao" && e.ehCompra && e.top !== null && e.documentoEmEdicao !== null && temDadosFiscais(e.documentoEmEdicao)
     ? e.documentoEmEdicao : null;
-  const temExtras = adicionais.length > 0 || abas.length > 0 || comDadosFiscais || fiscaisEmLeitura !== null;
+
+  const linha = (cols: React.ReactNode, className = "grid-cols-1 sm:grid-cols-2") =>
+    <div className={`grid gap-2 ${className}`}>{cols}</div>;
 
   return <>
     {linhaDoLayout}
-    <ColunaDeCampos>
-      {top}
-      {comOLocal(principais)}
-    </ColunaDeCampos>
-    {temExtras && <CamposExtrasDaCompra>
-      {adicionais.length > 0 && <div data-testid="compras-zona-adicionais" className="contents">{comOLocal(adicionais)}</div>}
-      {abas.map((a) => <div key={a.indice} data-testid={`compras-zona-aba-${a.indice}`} className="contents">
-        {comOLocal(a.campos)}
-      </div>)}
-      {comDadosFiscais && <DadosFiscaisDaCriacao e={e} />}
-      {fiscaisEmLeitura && <div data-testid="compras-edicao-dados-fiscais" className="contents">
-        <DadosFiscaisDaConsulta d={fiscaisEmLeitura} />
-        <RateioDaConsulta d={fiscaisEmLeitura} />
-      </div>}
-    </CamposExtrasDaCompra>}
+    <div data-testid="compras-dados-principais" className="flex flex-col gap-2">
+      {/* Linha 1: Empresa · Tipo de operação */}
+      {linha(<>
+        {tem("empresa_id") && render("empresa_id")}
+        {top}
+      </>)}
+      {/* Linha 2: Fornecedor com mais espaço */}
+      {tem("fornecedor_id") && linha(render("fornecedor_id"), "grid-cols-1")}
+      {/* Linha 3: Número · Série · Tipo de documento */}
+      {linha(<>
+        {tem("numero_nota") && render("numero_nota")}
+        {tem("serie_nota") && render("serie_nota")}
+        {tipoDoc}
+      </>, "grid-cols-1 sm:grid-cols-3")}
+      {/* Linha 4: Datas */}
+      {linha(<>
+        {tem("data_documento") && render("data_documento")}
+        {tem("data_entrada") && render("data_entrada")}
+      </>)}
+      {/* Linha 5: Observação (expansível quando vazia) */}
+      {tem("observacao") && !mostrarObs && <button type="button" data-testid="compras-observacao-abrir"
+        className="self-start text-[12px] font-medium text-emerald-700 underline" onClick={() => setObsAberta(true)}>
+        Adicionar observação
+      </button>}
+      {mostrarObs && linha(render("observacao"), "grid-cols-1")}
+    </div>
+    {fiscaisEmLeitura && !fiscalNoPainel(e) && <div data-testid="compras-edicao-dados-fiscais" className="mt-2 space-y-2">
+      <DadosFiscaisDaConsulta d={fiscaisEmLeitura} />
+      <RateioDaConsulta d={fiscaisEmLeitura} />
+    </div>}
   </>;
 }

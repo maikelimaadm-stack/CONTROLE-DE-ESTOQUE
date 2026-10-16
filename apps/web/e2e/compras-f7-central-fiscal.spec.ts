@@ -99,36 +99,45 @@ async function escolherNaCelula(page: Page, celula: Locator, nome: string) {
   await expect(pesquisa).toHaveCount(0);
 }
 
-/** A criação da compra com o cabeçalho e um item de 2 × 50,00 = 100,00; fiscais sempre à vista (sem acordeão). */
+/** A criação da compra com o cabeçalho e um item de 2 × 50,00 = 100,00; fiscais na aba Fiscal. */
 async function compraNaCentral(page: Page, c: Cenario) {
   await page.goto(`/compras/compras/new?tipo_operacao_id=${c.topCompra}`);
   const central = page.getByTestId("compras-central");
   await expect(central).toHaveAttribute("data-especie", "compra");
   await escolher(page, "Fornecedor", c.fornecedor.nome);
-  await escolher(page, "Natureza de despesa", c.natureza.label);
-  await escolher(page, "Centro de resultado", c.centro.label);
+  const abaRateio = page.getByTestId(`${P}-painel`).getByRole("tab", { name: /^Rateio e classificação/ });
+  if (await abaRateio.count()) {
+    await abaRateio.click();
+    await escolher(page, "Natureza de despesa", c.natureza.label);
+    await escolher(page, "Centro de resultado", c.centro.label);
+  } else {
+    await escolher(page, "Natureza de despesa", c.natureza.label);
+    await escolher(page, "Centro de resultado", c.centro.label);
+  }
+  await escolher(page, "Local de estoque", c.armazem.nome);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
   await escolherNaCelula(page, linha.getByTestId(`${P}-produto`), c.produto.nome);
-  await escolherNaCelula(page, linha.getByTestId(`${P}-armazem`), c.armazem.nome);
   await linha.getByLabel("Quantidade do item 1").fill("2");
   await linha.getByLabel("Valor unitário do item 1").fill("50");
   await expect(page.getByTestId("compras-total"), "premissa: sem os dados fiscais, o total é o dos itens").toContainText("100,00");
-  // Sem acordeão: o bloco fiscal mora nos Dados, sempre à vista, nunca repetido em cada campo do painel
   await expect(central.getByRole("button", { name: /^Dados adicionais/ }), "sem acordeão Dados adicionais").toHaveCount(0);
-  await expect(page.getByTestId("compras-campos-extras"), "os extras (fiscais) estão à vista").toBeVisible();
-  const fiscais = page.getByTestId("compras-dados-fiscais");
-  await expect(fiscais, "com a capacidade, o bloco Dados fiscais aparece na criação da compra").toBeVisible();
+  await expect(page.getByTestId(`${P}-dados`).getByTestId("compras-dados-fiscais"), "fiscais fora dos Dados principais").toHaveCount(0);
+  const abaFiscal = page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Fiscal" });
+  await abaFiscal.click();
+  await expect(abaFiscal).toHaveAttribute("aria-selected", "true");
+  const fiscais = page.getByTestId(`${P}-painel`).getByTestId("compras-dados-fiscais");
+  await expect(fiscais, "com a capacidade, o bloco fiscal mora na aba Fiscal").toBeVisible();
   return fiscais;
 }
 
-/** RATEIO-01 (decisão 316): a aba "Rateio" do painel aberta; devolve o bloco do rateio e da classificação dos itens. */
+/** A aba "Rateio e classificação" do painel aberta. */
 async function abaDoRateio(page: Page): Promise<Locator> {
-  const aba = page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Rateio", exact: true });
+  const aba = page.getByTestId(`${P}-painel`).getByRole("tab", { name: /^Rateio e classificação/ });
   await aba.click();
   await expect(aba).toHaveAttribute("aria-selected", "true");
   const bloco = page.getByTestId(`${P}-painel`).getByTestId("compras-rateio-e-itens");
-  await expect(bloco, "com a capacidade, o rateio e a classificação dos itens estão na aba Rateio").toBeVisible();
+  await expect(bloco, "com a capacidade, o rateio e a classificação dos itens estão na aba Rateio e classificação").toBeVisible();
   return bloco;
 }
 
@@ -145,12 +154,10 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imo
   await fiscais.getByTestId("compras-chave-acesso").fill(chave.valida.replace(/(\d{4})(?=\d)/g, "$1 ")); // como no DANFE, com espaços
   await fiscais.getByTestId("compras-uf-nota").fill("sp");
   await expect(fiscais.getByTestId("compras-uf-nota"), "a UF vai em maiúsculas").toHaveValue("SP");
-  await fiscais.getByTestId("compras-tipo-documento-fiscal").selectOption("nfe");
+  await page.getByTestId("compras-tipo-documento-fiscal").selectOption("nfe");
   await fiscais.getByTestId("compras-valor-ipi").fill("10.00");
-  await fiscais.getByTestId("compras-seguro").fill("5.50");
+  await page.getByTestId("compras-seguro").fill("5.50");
   await expect(page.getByTestId("compras-total"), "100,00 + IPI 10,00 + seguro 5,50").toContainText("115,50");
-  // A classificação do item na tela manual (o que a nota antiga tinha): o item 1 é imobilizado; o rateio fica o do documento.
-  // RATEIO-01 (decisão 316): o rateio e a classificação dos itens moram na aba "Rateio" do painel, não nos Dados fiscais.
   const rateio = await abaDoRateio(page);
   const classificacao = rateio.getByTestId("compras-item-classificacao-0");
   await expect(classificacao.getByTestId("compras-item-0-gera-estoque"), "premissa: o item nasce gerando estoque").toBeChecked();

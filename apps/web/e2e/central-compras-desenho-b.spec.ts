@@ -1,5 +1,5 @@
 import type { Locator, Page, Request } from "@playwright/test";
-import { login, api, uniq, empresaAtiva } from "./helpers";
+import { login, api, uniq, empresaAtiva, abrirAbaDoPainelDeCompras } from "./helpers";
 import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 
 /**
@@ -173,12 +173,13 @@ async function preencherCompraPelaTela(page: Page, c: Cenario) {
   await page.goto(`/compras/compras/new?tipo_operacao_id=${c.topCompra.id}`);
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
   await escolher(page, "Fornecedor", c.nomeFornecedor);
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
+  await escolher(page, "Local de estoque", c.nomeArmazem);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
   await escolherNaCelula(page, linha.getByTestId(`${P}-produto`), c.a.nome);
-  await escolherNaCelula(page, linha.getByTestId(`${P}-armazem`), c.nomeArmazem);
   await linha.getByLabel("Quantidade do item 1").fill("5");
   await linha.getByLabel("Valor unitário do item 1").fill("20");
   await expect(page.getByTestId(`${P}-subtotal`)).toContainText("100,00");

@@ -1,5 +1,5 @@
 import type { Locator, Page, Response } from "@playwright/test";
-import { login, api, uniq, empresaAtiva, abrirLancamentoDeVendas, escolherTopEContinuar } from "./helpers";
+import { login, api, uniq, empresaAtiva, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoPainelDeCompras } from "./helpers";
 import { cfg4, criarTopViaApi, detalheTopNoServidor, excluirTopE2E } from "./top-config-08-comum";
 import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 
@@ -149,15 +149,16 @@ test("CX-1 — lançamento da COMPRA: o valor unitário '0' continua '0' depois 
   await page.goto(`/compras/compras/new?tipo_operacao_id=${c.topCompra.id}`);
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
   await escolher(page, "Fornecedor", c.fornecedor.nome);
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
+  await escolher(page, "Local de estoque", c.armazem.nome);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
   const unitario = linha.getByLabel("Valor unitário do item 1");
   await unitario.fill("0");
-  await escolherNaCelula(page, P, linha.getByTestId(`${P}-produto`), c.produto.nome);
   const leitura = leituraDoSaldo(page, c);
-  await escolherNaCelula(page, P, linha.getByTestId(`${P}-armazem`), c.armazem.nome);
+  await escolherNaCelula(page, P, linha.getByTestId(`${P}-produto`), c.produto.nome);
   await saldoChegouALinha(page, page.getByTestId("compras-itens"), leitura, custo);
   await expect(unitario, "o '0' digitado continua '0' — o custo médio do armazém não é o preço do fornecedor").toHaveValue("0");
   await linha.getByLabel("Quantidade do item 1").fill("3");
@@ -349,12 +350,13 @@ async function preencherCompraPelaTela(page: Page, c: Cenario, top: { id: string
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
   await expect(page.getByTestId("compras-top-travada"), "a criação montou com a TOP pedida").toContainText(top.codigo);
   await escolher(page, "Fornecedor", c.fornecedor.nome);
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
+  await escolher(page, "Local de estoque", c.armazem.nome);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
   await escolherNaCelula(page, P, linha.getByTestId(`${P}-produto`), c.produto.nome);
-  await escolherNaCelula(page, P, linha.getByTestId(`${P}-armazem`), c.armazem.nome);
   await linha.getByLabel("Quantidade do item 1").fill("5");
   await linha.getByLabel("Valor unitário do item 1").fill("20");
   await expect(page.getByTestId(`${P}-subtotal`)).toContainText("100,00");
@@ -462,9 +464,8 @@ test("CX-7 — Duplicar para uma TOP que a criação não abre: a cópia é desc
   const identidade = page.getByTestId(`${P}-identidade-nome`);
   const semRecarga = () => page.evaluate(() => (window as unknown as Record<string, unknown>)["__cx7SemRecarga"]);
   const observacaoNaCriacao = async () => {
-    const aba = page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Observações" });
-    await aba.click();
-    await expect(aba).toHaveAttribute("aria-selected", "true");
+    const abrirObs = page.getByTestId("compras-observacao-abrir");
+    if (await abrirObs.count()) await abrirObs.click();
     return page.getByTestId("compras-observacao");
   };
 

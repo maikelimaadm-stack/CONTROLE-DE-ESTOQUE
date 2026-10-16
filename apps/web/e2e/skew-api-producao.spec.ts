@@ -2500,6 +2500,10 @@ test("COMPRAS-03 · LC-K1 — sem a capacidade declarada pela base, a Central de
    */
   const salvarComoHoje = async (comOItem: () => Promise<void>) => {
     await escolherNoCampo("Fornecedor", nomeFornecedor!);
+    const abaRateio = page.getByTestId("central-compras-painel").getByRole("tab", { name: /^Rateio e classificação/ });
+    await expect(abaRateio, "Natureza/centro estão na aba Rateio e classificação").toBeVisible();
+    await abaRateio.click();
+    await expect(abaRateio).toHaveAttribute("aria-selected", "true");
     await escolherNoCampo("Natureza de despesa", natureza.label);
     await escolherNoCampo("Centro de resultado", centro.label);
     const itens = page.getByTestId("compras-itens");

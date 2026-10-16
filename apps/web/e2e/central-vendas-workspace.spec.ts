@@ -53,9 +53,9 @@ const ALTURA_DO_CABECALHO_DE_DADOS = 37;
  * para cima, como no desenho; "N documentos abertos" leva o número, por isso é casado por padrão.
  */
 const DOCUMENTOS_ABERTOS = expect.stringMatching(/^\d+ documentos? abertos?$/);
-const BARRA_DA_CRIACAO_DE_VENDA = ["Descartar alterações", "Salvar", "Confirmar venda", "Rótulo antes do campo", "Rótulo dentro do campo", "Ações rápidas"];
+const BARRA_DA_CRIACAO_DE_VENDA = ["Descartar alterações", "Salvar", "Confirmar venda", "Rótulo antes do campo", "Rótulo acima do campo", "Rótulo dentro do campo", "Ações rápidas"];
 /* EDITAR-03 (decisão 315): a consulta ganhou a pílula "Editar" (some sem `.edit`; o usuário deste spec tem), depois de Duplicar. */
-const BARRA_DA_CONSULTA_DE_VENDA = ["Novo documento", "Duplicar documento", "Editar", "Confirmar venda", "Rótulo antes do campo", "Rótulo dentro do campo", "Ações rápidas"];
+const BARRA_DA_CONSULTA_DE_VENDA = ["Novo documento", "Duplicar documento", "Editar", "Confirmar venda", "Rótulo antes do campo", "Rótulo acima do campo", "Rótulo dentro do campo", "Ações rápidas"];
 const LEQUE_DA_CRIACAO = ["Alterar operação", "Imprimir", "Histórico de alterações", DOCUMENTOS_ABERTOS];
 const LEQUE_DA_CONSULTA_DE_VENDA_ABERTA = ["Imprimir", "Histórico de alterações", DOCUMENTOS_ABERTOS, "Cancelar venda…"];
 

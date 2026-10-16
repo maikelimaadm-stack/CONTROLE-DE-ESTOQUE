@@ -491,6 +491,14 @@
 .recolherIcone svg { width: 14px; height: 14px; flex-shrink: 0; }
 .recolher[aria-expanded="false"] .recolherIcone { transform: rotate(180deg); }
 .abas { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+/* totais e resumos que ficam FORA do conteúdo das abas (sempre visíveis com o painel expandido) */
+.faixaDoPainel {
+  flex-shrink: 0;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid #eef1f4;
+  background: #fff;
+}
+.painel[data-recolhido="true"] .faixaDoPainel { display: none; }
 /* a faixa (o `.tabs` do desenho: 38px + borda, #fbfcfd) é do painel; o tablist é só o grupo das abas, como no desenho */
 .painel::before {
   content: "";

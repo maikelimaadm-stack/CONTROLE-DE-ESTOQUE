@@ -133,18 +133,23 @@ test("OP01-F7 · K1-1 (sentido 1) — Documentos de Compras e a criação da com
     await page.keyboard.press("Escape");
   }
 
-  // (2) A CRIAÇÃO DA COMPRA. O bloco fiscal mora nos Dados, sempre à vista (sem acordeão). PREMISSA: os Dados
-  //     desenharam com a TOP travada. Legado: nada de Dados fiscais. Novo: o bloco aparece nos extras.
+  // (2) A CRIAÇÃO DA COMPRA. Fiscais na aba Fiscal do painel (fora dos Dados). PREMISSA: os Dados
+  //     desenharam com a TOP travada. Legado: nada de Dados fiscais. Novo: aba Fiscal no painel.
   await page.goto(`/compras/compras/new?tipo_operacao_id=${top}`);
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
   const dados = page.getByTestId(`${P}-dados`);
   await expect(dados, "premissa: os Dados desenharam com a TOP travada").toContainText(nomeDaTop);
   await page.waitForLoadState("networkidle");
   await expect(dados.getByRole("button", { name: /^Dados adicionais/ }), "sem acordeão Dados adicionais").toHaveCount(0);
-  if (mundo === "legado") await expect(page.getByTestId("compras-dados-fiscais"), "sem a capacidade: nada de Dados fiscais").toHaveCount(0);
-  else {
-    await expect(page.getByTestId("compras-campos-extras"), "com a capacidade: os extras à vista").toBeVisible();
-    await expect(page.getByTestId("compras-dados-fiscais"), "com a capacidade: o bloco Dados fiscais").toBeVisible();
+  if (mundo === "legado") {
+    await expect(page.getByTestId("compras-dados-fiscais"), "sem a capacidade: nada de Dados fiscais").toHaveCount(0);
+    await expect(page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Fiscal" }), "sem a capacidade: sem aba Fiscal").toHaveCount(0);
+  } else {
+    await expect(dados.getByTestId("compras-dados-fiscais"), "fiscais fora dos Dados principais").toHaveCount(0);
+    const abaFiscal = page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Fiscal" });
+    await expect(abaFiscal, "com a capacidade: aba Fiscal no painel").toBeVisible();
+    await abaFiscal.click();
+    await expect(page.getByTestId(`${P}-painel`).getByTestId("compras-dados-fiscais"), "bloco fiscal na aba Fiscal").toBeVisible();
   }
 
   // (3) O FIO: a tela falou com a base (premissa) e, sem a capacidade, nunca com a importação.

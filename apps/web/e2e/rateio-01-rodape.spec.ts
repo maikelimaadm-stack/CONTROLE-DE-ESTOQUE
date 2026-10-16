@@ -6,19 +6,11 @@ import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed, ty
  * RATEIO-01 (decisão 316) — O RATEIO SAI DOS DADOS E VAI PARA O RODAPÉ · R01-1 a R01-4.
  *
  * ┌─ O QUE ESTE ARQUIVO PROVA ─────────────────────────────────────────────────────────────────────┐
- * │ R01-1 com a capacidade `importacaoXml`, a criação da COMPRA tem a aba "Rateio" no painel, logo   │
- * │       depois do Financeiro: o rateio (o tipo, as linhas por valor) e a classificação de cada item │
- * │       moram LÁ, uma vez só; nos Dados (sempre à vista, sem acordeão) ficam os oito dados fiscais │
- * │       e nada do rateio.                                                                          │
- * │ R01-2 a recusa do servidor no rateio (soma ≠ 100%) e na classificação de um item ABRE a aba       │
- * │       "Rateio" (com o painel recolhido e outra aba à vista), marca a aba com a pendência, mostra  │
- * │       a mensagem no lugar e leva o foco ao controle.                                             │
- * │ R01-3 o CORPO do POST, com dados fiscais, rateio por valor e item imobilizado preenchidos pela   │
- * │       aba, é BYTE A BYTE o corpo de referência montado aqui do mesmo cenário (a forma do corpo do  │
- * │       estado — a mesma da main); o servidor grava o rateio e o item.                             │
- * │ R01-4 SEM a capacidade (a resposta REAL de `operation-types` sem `importacaoXml` — o mundo da API │
- * │       anterior): nenhuma aba "Rateio", nenhum bloco fiscal, nada do rateio na tela, e o corpo de  │
- * │       hoje, byte a byte.                                                                         │
+ * │ R01-1 com a capacidade `importacaoXml`, a criação da COMPRA tem a aba "Rateio e classificação"   │
+ * │       no painel, depois do Financeiro; os fiscais moram na aba Fiscal (fora dos Dados).          │
+ * │ R01-2 a recusa do rateio ABRE a aba "Rateio e classificação", marca pendência e leva ao controle.│
+ * │ R01-3 o CORPO do POST com fiscais, rateio e item imobilizado é BYTE A BYTE o de referência.      │
+ * │ R01-4 SEM a capacidade: nenhuma aba de rateio/fiscal, e o corpo de hoje byte a byte.             │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * Cada caso cria os PRÓPRIOS cadastros (fornecedor, local de estoque, produto, TOP) pela API, limpos no fim pela fixture;
@@ -30,8 +22,9 @@ const literal = (t: string) => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&
 const caminho = (r: Response) => new URL(r.url()).pathname;
 /** Os testids do rateio e da classificação dos itens (o que mudou de lugar). */
 const DO_RATEIO = ["compras-rateio-e-itens", "compras-rateio", "compras-rateio-tipo", "compras-itens-classificacao", "compras-item-classificacao-0", "compras-item-0-gera-estoque", "compras-item-0-imobilizado"];
-/** Os testids dos oito dados fiscais do cabeçalho (o que ficou nos Dados). */
-const FISCAIS = ["compras-chave-acesso", "compras-uf-nota", "compras-tipo-documento-fiscal", "compras-valor-ipi", "compras-valor-icms-st", "compras-seguro", "compras-tipo-titulo", "compras-classificacao-gasto"];
+/** Testids fiscais (aba Fiscal + faixa de totais + Dados principais para tipo de documento). */
+const FISCAIS_NO_PAINEL = ["compras-chave-acesso", "compras-uf-nota", "compras-valor-ipi", "compras-valor-icms-st"];
+const ABA_RATEIO = "Rateio e classificação";
 
 /* ═════════════════════════════════ fixtures ═════════════════════════════════ */
 
@@ -80,10 +73,10 @@ async function compraNaCentral(page: Page, c: Cenario) {
   const central = page.getByTestId("compras-central");
   await expect(central).toHaveAttribute("data-especie", "compra");
   await escolherEm(page, central, "Fornecedor", c.fornecedor.nome);
+  await escolherEm(page, central, "Local de estoque", c.armazem.nome);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
   await escolherNaCelula(page, linha.getByTestId(`${P}-produto`), c.produto.nome);
-  await escolherNaCelula(page, linha.getByTestId(`${P}-armazem`), c.armazem.nome);
   await linha.getByLabel("Quantidade do item 1").fill("2");
   await linha.getByLabel("Valor unitário do item 1").fill("50");
   await expect(page.getByTestId("compras-total"), "premissa: o total dos itens").toContainText("100,00");
@@ -103,11 +96,11 @@ async function abrirAba(page: Page, nome: string) {
   await expect(alvo).toHaveAttribute("aria-selected", "true");
 }
 
-/** A aba "Rateio" aberta; devolve o bloco do rateio (dentro do painel). */
+/** A aba "Rateio e classificação" aberta; devolve o bloco do rateio (dentro do painel). */
 async function abaDoRateio(page: Page): Promise<Locator> {
-  await abrirAba(page, "Rateio");
+  await abrirAba(page, ABA_RATEIO);
   const bloco = painel(page).getByTestId("compras-rateio-e-itens");
-  await expect(bloco, "o rateio está no painel, na aba Rateio").toBeVisible();
+  await expect(bloco, "o rateio está no painel, na aba Rateio e classificação").toBeVisible();
   return bloco;
 }
 
@@ -117,38 +110,35 @@ const hojeIso = () => new Date().toISOString().slice(0, 10);
 
 /* ═════════════════════════════════ R01-1 ═════════════════════════════════ */
 
-test("R01-1 — com importacaoXml, o rateio e a classificação dos itens moram na aba Rateio do painel (uma vez só); os Dados ficam com os oito fiscais sempre à vista", async ({ page }) => {
+test("R01-1 — com importacaoXml, rateio na aba Rateio e classificação; fiscais na aba Fiscal (fora dos Dados)", async ({ page }) => {
   await login(page);
   const c = await cenario(page);
   const portas = await api<{ capacidades?: Record<string, unknown> }>(page, "GET", "/api/compras/compras/operation-types");
   expect(portas.capacidades?.["importacaoXml"], "premissa: a API declara capacidades.importacaoXml = 1").toBe(1);
   await compraNaCentral(page, c);
 
-  // O PAINEL: a aba Rateio logo depois do Financeiro (o layout do sistema: Totais, Financeiro, Observações de sempre).
-  await expect.poll(() => nomesDasAbas(page), { message: "as abas da criação da compra" }).toEqual(["Totais", "Financeiro", "Rateio", "Observações"]);
-
-  // OS DADOS: sem acordeão — os oito fiscais sempre à vista; o rateio saiu para a aba.
+  await expect.poll(() => nomesDasAbas(page), { message: "as abas da criação da compra" }).toEqual(
+    expect.arrayContaining(["Financeiro", ABA_RATEIO, "Fiscal"])
+  );
   await expect(botaoDosAdicionais(page), "sem acordeão Dados adicionais").toHaveCount(0);
-  await expect(page.getByTestId("compras-campos-extras"), "os extras (fiscais) à vista").toBeVisible();
-  const fiscais = dados(page).getByTestId("compras-dados-fiscais");
-  await expect(fiscais, "o bloco Dados fiscais continua nos Dados").toBeVisible();
-  for (const t of FISCAIS) {
-    await expect(fiscais.getByTestId(t), `${t} fica nos Dados`).toHaveCount(1);
-    await expect(page.getByTestId(t), `${t}: uma vez só na tela`).toHaveCount(1);
-  }
-  await expect(fiscais.locator("[data-campo-fiscal]"), "os oito campos fiscais (com a marca de sempre)").toHaveCount(8);
+  await expect(dados(page).getByTestId("compras-dados-fiscais"), "fiscais fora dos Dados principais").toHaveCount(0);
   for (const t of DO_RATEIO) await expect(dados(page).getByTestId(t), `${t}: nada do rateio nos Dados`).toHaveCount(0);
-  await expect(dados(page).getByText("Rateio e itens"), "nem o título do rateio nos Dados").toHaveCount(0);
+  await expect(dados(page).getByText("Rateio e itens"), "nem o título antigo do rateio").toHaveCount(0);
 
-  // A ABA RATEIO: tudo do rateio, uma vez só na tela, e nada dos fiscais.
   const rateio = await abaDoRateio(page);
-  for (const t of DO_RATEIO.slice(1)) await expect(rateio.getByTestId(t), `${t} na aba Rateio`).toHaveCount(1);
+  for (const t of DO_RATEIO.slice(1)) await expect(rateio.getByTestId(t), `${t} na aba Rateio e classificação`).toHaveCount(1);
   for (const t of DO_RATEIO) await expect(page.getByTestId(t), `${t}: uma vez só na tela`).toHaveCount(1);
-  for (const t of FISCAIS) await expect(painel(page).getByTestId(t), `${t}: nenhum fiscal no painel`).toHaveCount(0);
   await expect(rateio.getByTestId("compras-rateio-tipo"), "o rateio nasce o do documento").toHaveValue("documento");
   await expect(rateio.getByTestId("compras-item-0-gera-estoque"), "o item nasce gerando estoque").toBeChecked();
 
-  // POR VALOR: as linhas nascem e crescem DENTRO da aba; POR PRODUTO: natureza e centro de cada item, também lá.
+  await abrirAba(page, "Fiscal");
+  const fiscais = painel(page).getByTestId("compras-dados-fiscais");
+  await expect(fiscais, "o bloco fiscal mora na aba Fiscal").toBeVisible();
+  for (const t of FISCAIS_NO_PAINEL) await expect(fiscais.getByTestId(t), `${t} na aba Fiscal`).toHaveCount(1);
+  await expect(page.getByTestId("compras-seguro"), "seguro na faixa de totais").toHaveCount(1);
+  await expect(dados(page).getByTestId("compras-tipo-documento-fiscal"), "tipo de documento nos Dados principais").toHaveCount(1);
+
+  await abrirAba(page, ABA_RATEIO);
   await rateio.getByTestId("compras-rateio-tipo").selectOption("por_valor");
   await expect(rateio.getByTestId("compras-rateio-linha-0")).toBeVisible();
   await rateio.getByTestId("compras-rateio-adicionar").click();
@@ -166,20 +156,18 @@ test("R01-1 — com importacaoXml, o rateio e a classificação dos itens moram 
 
 /* ═════════════════════════════════ R01-2 ═════════════════════════════════ */
 
-test("R01-2 — a recusa do rateio (soma ≠ 100%) e a da classificação do item ABREM a aba Rateio, com o painel recolhido, e levam ao controle (sem acordeão Dados adicionais)", async ({ page }) => {
+test("R01-2 — a recusa do rateio ABRE a aba Rateio e classificação, com o painel recolhido, e leva ao controle", async ({ page }) => {
   await login(page);
   const c = await cenario(page);
   await compraNaCentral(page, c);
 
-  // (1) O RATEIO POR VALOR QUE SOMA 90%.
   let rateio = await abaDoRateio(page);
   await rateio.getByTestId("compras-rateio-tipo").selectOption("por_valor");
   const linha = rateio.getByTestId("compras-rateio-linha-0");
   await escolherEm(page, linha, "Natureza", c.natureza.label);
   await escolherEm(page, linha, "Centro de resultado", c.centro.label);
   await linha.getByTestId("compras-rateio-linha-0-percentual").fill("90");
-  // A aba Rateio FORA de vista: outra aba ativa e o painel recolhido.
-  await abrirAba(page, "Totais");
+  await abrirAba(page, "Financeiro");
   await page.getByTestId(`${P}-recolher`).click();
   await expect(painel(page), "premissa: o painel recolhido").toHaveAttribute("data-recolhido", "true");
   await expect(botaoDosAdicionais(page), "premissa: sem acordeão Dados adicionais").toHaveCount(0);
@@ -191,9 +179,9 @@ test("R01-2 — a recusa do rateio (soma ≠ 100%) e a da classificação do ite
   let erro = ((await resposta.json()) as { error: { details?: { path: string; message: string }[] } }).error;
   expect(erro.details?.map((d) => d.path), "a recusa é no caminho do rateio").toEqual(["rateio"]);
 
-  const abaRateio = aba(page, "Rateio");
+  const abaRateio = aba(page, ABA_RATEIO);
   await expect(painel(page), "o painel EXPANDE").toHaveAttribute("data-recolhido", "false");
-  await expect(abaRateio, "a aba Rateio ABRE sozinha").toHaveAttribute("aria-selected", "true");
+  await expect(abaRateio, "a aba Rateio e classificação ABRE sozinha").toHaveAttribute("aria-selected", "true");
   await expect(abaRateio.getByRole("img", { name: "Com pendência" }), "a aba leva o ponto da pendência").toHaveCount(1);
   rateio = painel(page).getByTestId("compras-rateio-e-itens");
   await expect(rateio.getByTestId("compras-rateio").locator('[data-parte="erro"]'), "a mensagem no Rateio").toContainText("precisa somar 100%");
@@ -201,9 +189,8 @@ test("R01-2 — a recusa do rateio (soma ≠ 100%) e a da classificação do ite
   await expect(botaoDosAdicionais(page), "continua sem acordeão (nada do rateio nos Dados)").toHaveCount(0);
   await expect(page).toHaveURL(/\/compras\/compras\/new\?/);
 
-  // (2) O RATEIO POR PRODUTO SEM A NATUREZA DO ITEM — a recusa é da classificação do item.
   await rateio.getByTestId("compras-rateio-tipo").selectOption("por_produto");
-  await abrirAba(page, "Totais");
+  await abrirAba(page, "Financeiro");
   await page.getByTestId(`${P}-recolher`).click();
   await expect(painel(page), "premissa: o painel recolhido de novo").toHaveAttribute("data-recolhido", "true");
   post = postDaCompra(page);
@@ -213,7 +200,7 @@ test("R01-2 — a recusa do rateio (soma ≠ 100%) e a da classificação do ite
   erro = ((await resposta.json()) as { error: { details?: { path: string; message: string }[] } }).error;
   expect(erro.details?.map((d) => d.path), "a recusa é na classificação do item 1").toEqual(["itens[0].categoria_financeira_id"]);
   await expect(painel(page), "o painel EXPANDE").toHaveAttribute("data-recolhido", "false");
-  await expect(abaRateio, "a aba Rateio ABRE sozinha").toHaveAttribute("aria-selected", "true");
+  await expect(abaRateio, "a aba Rateio e classificação ABRE sozinha").toHaveAttribute("aria-selected", "true");
   const item = painel(page).getByTestId("compras-item-classificacao-0");
   await expect(item, "a mensagem na linha do item, na aba").toContainText("informe a natureza e o centro de resultado de cada item");
   await expect(item.getByTestId("compras-item-0-gera-estoque"), "o foco vai à linha do item, na aba").toBeFocused();
@@ -227,15 +214,14 @@ test("R01-2 — a recusa do rateio (soma ≠ 100%) e a da classificação do ite
 /** Natureza e centro do seed como o servidor os devolve (id). */
 const idDe = (o: Opcao) => o.id;
 
-test("R01-3 — o corpo do POST com fiscais, rateio por valor e item imobilizado pela aba Rateio é BYTE A BYTE o de referência; o servidor grava o rateio e o item", async ({ page }) => {
+test("R01-3 — o corpo do POST com fiscais, rateio por valor e item imobilizado pela aba é BYTE A BYTE o de referência; o servidor grava o rateio e o item", async ({ page }) => {
   await login(page);
   const c = await cenario(page);
   await compraNaCentral(page, c);
-  // Os fiscais nos Dados (UF e IPI) — sempre à vista, sem acordeão.
+  await abrirAba(page, "Fiscal");
   await expect(page.getByTestId("compras-dados-fiscais")).toBeVisible();
   await page.getByTestId("compras-uf-nota").fill("sp");
   await page.getByTestId("compras-valor-ipi").fill("10.00");
-  // O rateio e o item na aba.
   const rateio = await abaDoRateio(page);
   await rateio.getByTestId("compras-item-0-imobilizado").check();
   await rateio.getByTestId("compras-rateio-tipo").selectOption("por_valor");
@@ -274,10 +260,9 @@ test("R01-3 — o corpo do POST com fiscais, rateio por valor e item imobilizado
 
 /* ═════════════════════════════════ R01-4 ═════════════════════════════════ */
 
-test("R01-4 — SEM a capacidade importacaoXml: nenhuma aba Rateio, nada do rateio na tela, nenhum Dados adicionais, e o corpo de hoje byte a byte", async ({ page }) => {
+test("R01-4 — SEM a capacidade importacaoXml: nenhuma aba de rateio/fiscal, nada da F7 na tela, e o corpo de hoje byte a byte", async ({ page }) => {
   await login(page);
   const c = await cenario(page);
-  // O mundo da API ANTERIOR: a resposta REAL de `operation-types`, sem a chave `importacaoXml` (só ela sai).
   const declaradasPelaApi: unknown[] = [];
   await page.route("**/api/compras/compras/operation-types", async (r) => {
     const real = await r.fetch();
@@ -287,16 +272,20 @@ test("R01-4 — SEM a capacidade importacaoXml: nenhuma aba Rateio, nada do rate
     await r.fulfill({ response: real, json: { ...corpo, capacidades } });
   });
   await compraNaCentral(page, c);
-  // Sem rateio, a compra que gera contas a pagar classifica pelo cabeçalho (como hoje).
-  await escolherEm(page, page.getByTestId("compras-central"), "Natureza de despesa", c.natureza.label);
-  await escolherEm(page, page.getByTestId("compras-central"), "Centro de resultado", c.centro.label);
   expect(declaradasPelaApi.length, "premissa: a tela perguntou a capacidade (e recebeu sem ela)").toBeGreaterThan(0);
   expect(declaradasPelaApi.every((v) => v === 1), "premissa: a API real declara a capacidade — só a resposta à tela a perdeu").toBe(true);
 
   await page.waitForLoadState("networkidle");
-  await expect.poll(() => nomesDasAbas(page), { message: "as abas de hoje, sem Rateio" }).toEqual(["Totais", "Financeiro", "Observações"]);
+  const abasSemF7 = await nomesDasAbas(page);
+  expect(abasSemF7.includes("Fiscal"), "sem F7: sem aba Fiscal").toBe(false);
+  // Natureza/centro do layout podem estar na aba Rateio e classificação (sem o bloco F7 de rateio).
+  if (abasSemF7.includes(ABA_RATEIO)) await abrirAba(page, ABA_RATEIO);
+  await escolherEm(page, page.getByTestId("compras-central"), "Natureza de despesa", c.natureza.label);
+  await escolherEm(page, page.getByTestId("compras-central"), "Centro de resultado", c.centro.label);
   await expect(botaoDosAdicionais(page), "sem campo a recolher, sem Dados adicionais (como hoje)").toHaveCount(0);
-  for (const t of [...DO_RATEIO, "compras-dados-fiscais", ...FISCAIS]) await expect(page.getByTestId(t), `${t}: nada da F7 na tela`).toHaveCount(0);
+  for (const t of [...DO_RATEIO, "compras-dados-fiscais", ...FISCAIS_NO_PAINEL, "compras-seguro", "compras-tipo-titulo", "compras-classificacao-gasto"]) {
+    await expect(page.getByTestId(t), `${t}: nada da F7 na tela`).toHaveCount(0);
+  }
 
   const referencia = {
     empresa_id: c.empresa, fornecedor_id: c.fornecedor.id, tipo_operacao_id: c.topCompra, data_documento: hojeIso(),

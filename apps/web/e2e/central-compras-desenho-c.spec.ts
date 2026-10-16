@@ -2,7 +2,7 @@ import type { Page, Locator } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { LAYOUT_DO_SISTEMA } from "@agro/domain";
-import { login, api, uniq, empresaAtiva } from "./helpers";
+import { login, api, uniq, empresaAtiva, abrirObservacaoDaCompra } from "./helpers";
 import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 
 /**
@@ -257,7 +257,7 @@ test("CC-12 — Ampliar e restaurar as três regiões; Dados em duas colunas; na
   // ABA ALTERADA: a criação com algo digitado avisa ao fechar a aba do espaço de trabalho (useDirtyTab)
   await page.goto(`/compras/compras/new?tipo_operacao_id=${c.topCompra.id}`);
   await expect(page.getByTestId("compras-top-travada"), "a criação montou com a TOP").toBeVisible();
-  await abrirAba(page, P, "Observações");
+  await abrirObservacaoDaCompra(page);
   await page.getByTestId("compras-observacao").fill("rascunho que não pode sumir calado");
   await expect(page.getByTestId(`${P}-alterado`)).toBeVisible();
   const aba = page.getByTestId("workspace-tabs").locator('[role="tab"][aria-selected="true"]');
@@ -342,7 +342,9 @@ async function percorrerEstados(page: Page, l: Lado, cena: (nome: string) => Pro
   await expect(page.getByTestId(l.prefixo)).toBeVisible();
   await expect(page.getByTestId(`${l.prefixo}-descartar`)).toBeVisible();
   await cena("novo-documento");
-  await abrirAba(page, l.prefixo, "Observações");
+  // Compra: Observação expansível nos Dados (decisão 319). Venda: ainda na aba Observações do painel.
+  if (l.lado === "compra") await abrirObservacaoDaCompra(page);
+  else await abrirAba(page, l.prefixo, "Observações");
   await l.observacao().fill("rascunho da evidência");
   await page.getByTestId(`${l.prefixo}-descartar`).click();
   await expect(page.getByTestId("confirm-dialog")).toBeVisible();

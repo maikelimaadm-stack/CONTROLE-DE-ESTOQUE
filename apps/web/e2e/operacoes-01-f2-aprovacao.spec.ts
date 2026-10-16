@@ -1,5 +1,5 @@
 import type { Locator, Page, Request, Response } from "@playwright/test";
-import { login, api, uniq, empresaAtiva, pickRef, adicionarItemNaCentral, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
+import { login, api, uniq, empresaAtiva, pickRef, adicionarItemNaCentral, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, abrirAbaDoPainelDeCompras } from "./helpers";
 import { cfg4, type RegrasGeraisE2E } from "./top-config-08-comum";
 import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 
@@ -268,12 +268,13 @@ test("F2A-2 — compra, TOP Automática + aprovação 'Sempre': 'Salvar e confir
   await expect(salvar, "o Salvar saiu da trava: as regras chegaram").toBeEnabled();
   await expect(salvar, "TOP Automática: o Salvar se chama 'Salvar e confirmar'").toHaveAttribute("aria-label", "Salvar e confirmar");
   await escolher(page, "Fornecedor", c.nomeFornecedor);
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
+  await escolher(page, "Local de estoque", c.nomeArmazem);
   await page.getByTestId(`${PC}-adicionar-item`).click();
   const linha = page.getByTestId(`${PC}-linha`).first();
   await escolherNaCelula(page, linha.getByTestId(`${PC}-produto`), c.nomeProduto);
-  await escolherNaCelula(page, linha.getByTestId(`${PC}-armazem`), c.nomeArmazem);
   await linha.getByLabel("Quantidade do item 1").fill("5");
   await linha.getByLabel("Valor unitário do item 1").fill("20");
   await expect(page.getByTestId(`${PC}-subtotal`)).toContainText("100,00");

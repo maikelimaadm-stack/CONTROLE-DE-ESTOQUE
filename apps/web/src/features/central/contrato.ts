@@ -29,8 +29,8 @@ import type { WsTab } from "@/lib/workspace-tabs";
 
 /* ─────────────────────────────── Tipos de base ─────────────────────────────── */
 
-/** Posição do rótulo dos campos: rótulo à frente ou compacto. */
-export type Densidade = "rotulo-a-frente" | "compacto";
+/** Posição do rótulo dos campos: à frente, compacto (dentro) ou acima (evita rótulo cortado). */
+export type Densidade = "rotulo-a-frente" | "compacto" | "rotulo-acima";
 export type IconeDoCampo = "pesquisa" | "data" | "selecao";
 export type EstadoDoCampo = "editavel" | "leitura" | "travado" | "desabilitado";
 /** Adorno do campo em leitura: o mesmo ícone do editável, mais o cadeado do travado. */
@@ -181,6 +181,11 @@ export interface PropsDaMoldura {
   dados: React.ReactNode;
   itens: React.ReactNode;
   abas: AbaDoPainel[];
+  /**
+   * Faixa persistente do painel, abaixo da lista de abas e acima do conteúdo — totais da compra, etc.
+   * Fica fora das abas: trocar Financeiro/Fiscal não a esconde.
+   */
+  faixaDoPainel?: React.ReactNode;
   densidade?: Densidade;
   carregando?: boolean;
   controle?: React.MutableRefObject<ControleDaCentral | null>;

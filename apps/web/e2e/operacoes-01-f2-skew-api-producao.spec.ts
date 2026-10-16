@@ -181,6 +181,14 @@ test("OP01-F2 · K-1a (sentido 1) — a Central de Vendas deste web sobre a API 
  * K-1b · A CENTRAL DE COMPRAS
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
 
+/** Abre a aba do painel onde mora o campo (Rateio e classificação: natureza/centro). */
+async function abrirAbaDoPainel(page: Page, nome: string) {
+  const aba = page.getByTestId(`${PC}-painel`).getByRole("tab", { name: new RegExp(`^${nome}`) });
+  await expect(aba, `aba "${nome}" do painel da Central de Compras`).toBeVisible();
+  await aba.click();
+  await expect(aba).toHaveAttribute("aria-selected", "true");
+}
+
 /** Escolhe no RefSelect da Central de Compras pelo rótulo do campo (nome escapado: nomes do seed têm colchetes). */
 async function escolher(page: Page, rotulo: string, nome: string) {
   const campo = page.getByTestId("compras-central").locator("label", { hasText: rotulo }).first().locator("..");
@@ -226,6 +234,7 @@ async function abrirCriacaoDeCompra(page: Page, top: string, c: CenarioDaCompra)
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
   await expect(page.getByTestId("compras-salvar"), "o Salvar saiu da trava: as regras chegaram").toBeEnabled();
   await escolher(page, "Fornecedor", c.nomeFornecedor);
+  await abrirAbaDoPainel(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
   return corpo;
@@ -257,10 +266,10 @@ test("OP01-F2 · K-1b (sentido 1) — a Central de Compras deste web sobre a API
   conferirBlocoDoMundo(await abrirCriacaoDeCompra(page, automatica, c), mundo, { confirmacaoAutomatica: true, aceitaSemItens: false }, "compra, TOP Automática");
   await expect(salvar, `mundo ${mundo}: o nome acessível do Salvar com a TOP Automática, exato`).toHaveAttribute("aria-label", rotuloComAutomatica(mundo));
   await expect(salvar, "e a dica também").toHaveAttribute("data-dica", rotuloComAutomatica(mundo));
+  await escolher(page, "Local de estoque", c.nomeArmazem);
   await page.getByTestId(`${PC}-adicionar-item`).click();
   const linha = page.getByTestId(`${PC}-linha`).first();
   await escolherNaCelula(page, linha.getByTestId(`${PC}-produto`), c.nomeProduto);
-  await escolherNaCelula(page, linha.getByTestId(`${PC}-armazem`), c.nomeArmazem);
   await linha.getByLabel("Quantidade do item 1").fill("5");
   await linha.getByLabel("Valor unitário do item 1").fill("20");
   await expect(page.getByTestId(`${PC}-subtotal`)).toContainText("100,00");

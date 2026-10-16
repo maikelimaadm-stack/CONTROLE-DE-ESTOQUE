@@ -36,6 +36,7 @@ export const IconeEncerrarSaldo = () => <Icone tamanho={15}><path d="M14.5 3H7a2
 export const IconeRaio = () => <Icone tamanho={16}><path d="M13 2 3 14h9l-1 8 10-12h-9z" /></Icone>;
 const IconeRotuloAntes = () => <Icone tamanho={16}><path d="M2.5 12h5" /><path d="M12 7h7.5a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-7.5a2 2 0 0 1 -2 -2v-6a2 2 0 0 1 2 -2z" /></Icone>;
 const IconeRotuloDentro = () => <Icone tamanho={16}><path d="M5 5.5h14a2.5 2.5 0 0 1 2.5 2.5v8a2.5 2.5 0 0 1 -2.5 2.5h-14a2.5 2.5 0 0 1 -2.5 -2.5v-8a2.5 2.5 0 0 1 2.5 -2.5z" /><path d="M6.8 9.8h5" /></Icone>;
+const IconeRotuloAcima = () => <Icone tamanho={16}><path d="M5 4h14" /><path d="M5 9h14a2 2 0 0 1 2 2v6a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-6a2 2 0 0 1 2 -2z" /></Icone>;
 const IconeAlerta = () => <Icone tamanho={13}><circle cx="12" cy="12" r="10" /><line x1="12" x2="12" y1="8" y2="12" /><line x1="12" x2="12.01" y1="16" y2="16" /></Icone>;
 const IconeSalvo = () => <Icone tamanho={13}><circle cx="12" cy="12" r="10" /><path d="m16 9-5.5 5.5L8 12" /></Icone>;
 export const IconeGirando = ({ tamanho = 15 }: { tamanho?: number }) => <span className={estilos.girar}><Icone tamanho={tamanho}><path d="M21 12a9 9 0 1 1-6.219-8.56" /></Icone></span>;
@@ -76,6 +77,7 @@ export function PosicaoDoRotulo({ prefixoTestid, valor, onChange }: PropsDaPosic
     <button type="button" aria-pressed={valor === v} aria-label={rotulo} data-dica={rotulo} className={estilosCentral.dicaFim} onClick={() => onChange(v)}>{icone}</button>;
   return <div role="group" aria-label="Posição do rótulo dos campos" data-testid={`${prefixoTestid}-posicao-rotulo`} className={estilos.segmentado}>
     {opcao("rotulo-a-frente", "Rótulo antes do campo", <IconeRotuloAntes />)}
+    {opcao("rotulo-acima", "Rótulo acima do campo", <IconeRotuloAcima />)}
     {opcao("compacto", "Rótulo dentro do campo", <IconeRotuloDentro />)}
   </div>;
 }

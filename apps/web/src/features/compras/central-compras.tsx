@@ -11,7 +11,7 @@ import { irParaPendenciaDaCompra, useBarraDaCriacao } from "./central/criacao-ba
 import { AvisosDaCriacao, DadosDaCriacao, identidadeDaCriacao } from "./central/criacao-dados";
 import { ItensDaCriacaoDeCompra } from "./central/criacao-itens";
 import { ItensDoRecebimento } from "./central/receber";
-import { CAMPOS_DO_PAINEL_DA_CRIACAO, abaDoCampoNoPainel, abasDoPainelDaCriacao } from "./central/criacao-painel";
+import { CAMPOS_DOS_DADOS_PRINCIPAIS, abaDoCampoNoPainel, abasDoPainelDaCriacao, faixaDosTotaisDoPainel } from "./central/organizacao-do-painel";
 import { CentralDoOrcamento } from "./orcamento/central-orcamento";
 
 /**
@@ -64,10 +64,17 @@ function CentralDoPedidoEDaCompra({ variante }: { variante: VarianteDeCompra }) 
   />;
 }
 
-/** Os campos que o painel toma saem dos Dados (um campo nunca aparece em dois lugares); as abas do rodapé vão ao painel. */
+/** Dados principais: só identificação da compra, na ordem fixa; o restante vai ao painel. */
 function estadoDosDados(e: EstadoDaCriacao): EstadoDaCriacao {
-  const fora = (c: string) => !CAMPOS_DO_PAINEL_DA_CRIACAO.includes(c);
-  return { ...e, zonas: { principais: e.zonas.principais.filter(fora), adicionais: e.zonas.adicionais.filter(fora), abas: [] } };
+  const noLayout = new Set([...e.zonas.principais, ...e.zonas.adicionais]);
+  return {
+    ...e,
+    zonas: {
+      principais: CAMPOS_DOS_DADOS_PRINCIPAIS.filter((c) => noLayout.has(c)),
+      adicionais: [],
+      abas: []
+    }
+  };
 }
 
 /** Um campo só, pelo MESMO renderizador dos Dados (rótulo, "*", erro, padrão, trava do layout). */
@@ -77,7 +84,7 @@ function estadoDeUmCampo(e: EstadoDaCriacao, campo: string): EstadoDaCriacao {
 
 function FormularioDeCompra(props: PropsDoEstadoDaCriacao) {
   const e = useEstadoDaCriacao(props);
-  const [densidade, setDensidade] = React.useState<PosicaoDoRotuloValor>("rotulo-a-frente");
+  const [densidade, setDensidade] = React.useState<PosicaoDoRotuloValor>("rotulo-acima");
   const controle = React.useRef<ControleDaCentral | null>(null);
   /** Pendência no painel: abre a aba primeiro, depois leva ao campo. */
   const irPara = (p: Pendencia) => {
@@ -87,7 +94,8 @@ function FormularioDeCompra(props: PropsDoEstadoDaCriacao) {
   };
   const barra = useBarraDaCriacao({ e, densidade, onDensidade: setDensidade, onIr: irPara });
   const receber = e.modo === "receber";
-  const abas = abasDoPainelDaCriacao(e, (c) => <DadosDaCriacao e={estadoDeUmCampo(e, c)} />);
+  const desenharCampo = (c: string) => <DadosDaCriacao e={estadoDeUmCampo(e, c)} />;
+  const abas = abasDoPainelDaCriacao(e, desenharCampo);
 
   return <div data-testid="compras-central" data-especie={e.variante.variante} data-modo={receber ? "receber" : e.modo === "edicao" ? "edicao" : "lancar"}
     data-documento-id={e.documentoEmEdicao ? String(e.documentoEmEdicao["id"] ?? "") : undefined} className="contents">
@@ -107,6 +115,7 @@ function FormularioDeCompra(props: PropsDoEstadoDaCriacao) {
           {e.errosDeItens.map(([c, m]) => <li key={c}>{descreverCaminhoDeItem(c)}: {m}</li>)}
         </ul>}
       </> : null}
+      faixaDoPainel={faixaDosTotaisDoPainel(e, desenharCampo)}
       abas={abas}
     />
     {barra.dialogos}

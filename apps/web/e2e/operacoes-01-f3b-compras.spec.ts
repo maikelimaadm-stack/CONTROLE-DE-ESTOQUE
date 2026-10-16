@@ -1,6 +1,6 @@
 import type { Locator, Page, Request } from "@playwright/test";
 import { LAYOUT_DO_SISTEMA, type EstruturaLayout } from "@agro/domain";
-import { login, api, uniq, empresaAtiva } from "./helpers";
+import { login, api, uniq, empresaAtiva, abrirAbaDoPainelDeCompras } from "./helpers";
 import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 
 /**
@@ -8,7 +8,7 @@ import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } f
  * com o saldo do local. Dois cenários, com a API e o banco REAIS (o detalhe da regra da pesquisa mora no teste de API
  * `apps/api/test/integration/operacoes-01-f3b-pesquisa.test.ts`, PS-1…PS-8):
  *
- *   · F3B-C1 — o "Local de estoque" do CABEÇALHO (`central-compras-local-padrao`, logo depois da Empresa) preenche a
+ *   · F3B-C1 — o "Local de estoque" do CABEÇALHO (`central-compras-local-padrao`, acima da grade — decisão 319) preenche a
  *     linha NOVA, não conta como alteração, volta ao padrão no Descartar e não vai no corpo; a pesquisa do produto da
  *     linha é a NOVA
  *     (`/api/produtos/pesquisa` com o local DA LINHA) e, na entrada, mostra TUDO com o saldo — P1 "5,0000", P2 "0,0000"
@@ -114,23 +114,17 @@ test("F3B-C1 — compra: o Local de estoque do cabeçalho preenche a linha nova,
   const central = page.getByTestId("compras-central");
   await expect(central).toHaveAttribute("data-especie", "compra");
   const itens = page.getByTestId("compras-itens");
-  // PREMISSA: a coluna do local está na grade, ANTES do Produto — é ela que faz o campo do cabeçalho existir
-  await expect(itens.locator('thead th[data-campo="armazem_id"]'), "premissa: a grade tem a coluna do local").toHaveCount(1);
-  const colunas = await itens.locator("thead th[data-campo]").evaluateAll((ths) => ths.map((th) => th.getAttribute("data-campo")));
-  expect(colunas.indexOf("armazem_id"), "o Local de estoque vem antes do Produto na grade").toBe(colunas.indexOf("produto_id") - 1);
+  // PREMISSA (decisão 319): grade enxuta sem coluna de armazém; o Local de estoque padrão fica ACIMA da grade.
+  await expect(itens.locator('thead th[data-campo="armazem_id"]'), "Local de estoque não é coluna da grade").toHaveCount(0);
+  await expect(itens.locator('thead th[data-campo="produto_id"]'), "premissa: a grade desenha o Produto").toHaveCount(1);
+  await expect(page.getByTestId("compras-local-acima-da-grade"), "o local padrão mora acima da grade").toBeVisible();
 
-  // (1) O CAMPO DO CABEÇALHO: "Local de estoque", logo depois da Empresa, vazio (a TOP não tem padrão), com a dica.
+  // (1) O CAMPO DO CABEÇALHO: "Local de estoque" acima da grade, vazio (a TOP não tem padrão), com a dica.
   const localPadrao = page.getByTestId(`${P}-local-padrao`);
   await expect(localPadrao).toBeVisible();
   await expect(localPadrao.locator("label")).toHaveText(/^Local de estoque/);
   await expect(localPadrao.locator("[title]").first()).toHaveAttribute("title", "Local de estoque das linhas novas. Cada item pode trocar o seu.");
   expect(await localPadrao.getAttribute("data-campo"), "não é campo do layout (sem `data-campo`)").toBeNull();
-  // o vizinho de cima na coluna dos Dados principais: o invólucro da Empresa (ou o `fieldset` que a trava, com ela dentro)
-  const anterior = await localPadrao.evaluate((el) => {
-    const a = el.previousElementSibling;
-    return a?.getAttribute("data-campo") ?? a?.querySelector("[data-campo]")?.getAttribute("data-campo") ?? null;
-  });
-  expect(anterior, "logo depois da Empresa").toBe("empresa_id");
   await expect(localPadrao.locator("[data-preenchido]"), "premissa: sem padrão de cadastro, o campo nasce vazio").toHaveCount(0);
   await expect(page.getByTestId(`${P}-alterado`), "premissa: a criação abre sem alteração").toHaveCount(0);
 
@@ -151,14 +145,15 @@ test("F3B-C1 — compra: o Local de estoque do cabeçalho preenche a linha nova,
   await escolherNoCampo(page, localPadrao, c.local.nome);
   await expect(localPadrao).toContainText(c.local.nome);
   await escolherNoCampo(page, campoPeloRotulo(page, "Fornecedor"), c.fornecedor.nome);
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolherNoCampo(page, campoPeloRotulo(page, "Natureza de despesa"), c.natureza.label);
   await escolherNoCampo(page, campoPeloRotulo(page, "Centro de resultado"), c.centro.label);
 
-  // (2) A LINHA NOVA nasce com o local do cabeçalho.
+  // (2) A LINHA NOVA herda o local do cabeçalho (provado no fio da pesquisa e no POST — a grade não desenha a coluna).
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
   await expect(page.getByTestId(`${P}-linha`)).toHaveCount(1);
-  await expect(linha.getByTestId(`${P}-armazem`), "a linha nova nasce com o Local de estoque do cabeçalho").toContainText(c.local.nome);
+  await expect(linha.getByTestId(`${P}-armazem`), "Local de estoque não é coluna da grade enxuta").toHaveCount(0);
 
   // (3) A PESQUISA DO PRODUTO da linha: a NOVA, com o saldo do local DA LINHA; na entrada aparece tudo.
   await linha.getByTestId(`${P}-produto`).click();
@@ -197,7 +192,7 @@ test("F3B-C1 — compra: o Local de estoque do cabeçalho preenche a linha nova,
   await opcoes.filter({ hasText: c.p2.nome }).click();
   await expect(pesquisa).toHaveCount(0);
   await expect(linha.getByTestId(`${P}-produto`)).toContainText(c.p2.nome);
-  await expect(linha.getByTestId(`${P}-armazem`), "escolher o produto não mexe no local da linha").toContainText(c.local.nome);
+  await expect(localPadrao, "escolher o produto não mexe no local do cabeçalho").toContainText(c.local.nome);
   expect(fio.deAntes.map((u) => u.toString()), "ZERO pedido à pesquisa de antes").toEqual([]);
   await linha.getByLabel("Quantidade do item 1").fill("2");
   await linha.getByLabel("Valor unitário do item 1").fill("7");
@@ -245,15 +240,26 @@ test("F3B-C1 — compra: o Local de estoque do cabeçalho preenche a linha nova,
     await expect(localPadrao).toContainText(l2);
     await page.getByTestId(`${P}-adicionar-item`).click();
     await expect(page.getByTestId(`${P}-linha`)).toHaveCount(1);
-    await expect(page.getByTestId(`${P}-linha`).first().getByTestId(`${P}-armazem`), "a linha nova nasce com a escolha (L2)").toContainText(l2);
+    // a linha herda L2: a pesquisa de produto da linha leva o armazem_id da escolha
+    const fioL2: URL[] = [];
+    page.on("request", (r) => { const u = new URL(r.url()); if (u.pathname === PORTA_DA_PESQUISA) fioL2.push(u); });
+    await page.getByTestId(`${P}-linha`).first().getByTestId(`${P}-produto`).click();
+    await expect(page.getByTestId(`${P}-pesquisa`)).toBeVisible();
+    await expect.poll(() => fioL2.some((u) => u.searchParams.get("armazem_id") === outro.id), { message: "a linha nova herdou L2 do cabeçalho" }).toBe(true);
+    await page.keyboard.press("Escape");
     await expect(page.getByTestId(`${P}-alterado`), "premissa: a linha nova é alteração").toBeVisible();
     await page.getByTestId(`${P}-descartar`).click();
     await page.getByTestId("confirm-dialog").getByRole("button", { name: "Descartar alterações", exact: true }).click();
     await expect(page.getByTestId(`${P}-linha`), "descartado: sem linhas").toHaveCount(0);
     await expect(localPadrao, "o Descartar volta ao PADRÃO do layout (L1)").toContainText(c.local.nome);
     await expect(localPadrao).not.toContainText(l2);
+    const fioL1: URL[] = [];
+    page.on("request", (r) => { const u = new URL(r.url()); if (u.pathname === PORTA_DA_PESQUISA) fioL1.push(u); });
     await page.getByTestId(`${P}-adicionar-item`).click();
-    await expect(page.getByTestId(`${P}-linha`).first().getByTestId(`${P}-armazem`), "e a linha nova nasce com o padrão").toContainText(c.local.nome);
+    await page.getByTestId(`${P}-linha`).first().getByTestId(`${P}-produto`).click();
+    await expect(page.getByTestId(`${P}-pesquisa`)).toBeVisible();
+    await expect.poll(() => fioL1.some((u) => u.searchParams.get("armazem_id") === c.local.id), { message: "a linha nova seguinte herdou o padrão L1" }).toBe(true);
+    await page.keyboard.press("Escape");
     // a limpeza que falha reprova o caso verde (excluir o layout desliga a TOP)
     await api(page, "DELETE", `${LAYOUTS}/${layout}`, {});
     layoutVivo = false;

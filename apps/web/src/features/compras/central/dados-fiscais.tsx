@@ -43,39 +43,45 @@ const TIPOS_DE_DOCUMENTO = enumOptions("document_type");
  * cabeçalho — a dica ao `RefSelect` (o nome do tipo), `data-padrao-top="semeado"` no invólucro, o aviso de padrão
  * inválido de hoje e a trava da TOP que não deixa trocar pelo mesmo `fieldset` de sempre. Sem a TOP valer, nada muda.
  */
-export function DadosFiscaisDaCriacao({ e }: { e: EstadoDaCriacao }) {
+/**
+ * Bloco fiscal da criação. Com `noPainel`, vai na aba Fiscal (sem título "DADOS FISCAIS");
+ * tipo de documento → Dados principais; classificação → Rateio; seguro → faixa de totais.
+ */
+export function DadosFiscaisDaCriacao({ e, noPainel = false }: { e: EstadoDaCriacao; noPainel?: boolean }) {
   if (!e.dadosFiscaisAtivos) return null;
   const f = e.fiscal;
   const cc = (c: ChaveDosDadosFiscais, rotulo: string, o: { preenchido: boolean; icone?: "pesquisa" | "selecao"; testId?: string; dica?: string; abaixo?: React.ReactNode }, controle: React.ReactElement) =>
     <CampoDaCentral key={c} rotulo={rotulo} erro={e.erro(c)} icone={o.icone ?? null} preenchido={o.preenchido} testId={o.testId} dica={o.dica} abaixo={o.abaixo} data-campo-fiscal={c}
       {...(e.semeadoPelaTop(c) ? { "data-padrao-top": "semeado" } : {})}>{controle}</CampoDaCentral>;
-  const tipoTitulo = cc("tipo_titulo_id", "Tipo de título", {
-    preenchido: f.tipo_titulo_id !== "", icone: "pesquisa", testId: "compras-tipo-titulo",
-    abaixo: e.padraoInvalido("tipo_titulo_id") ? <p data-testid="padrao-invalido-aviso" className="mt-0.5 text-[11px] text-amber-700">{AVISO_PADRAO_INVALIDO_CENTRAL}</p> : undefined
-  }, <RefSelect resource="title_types" value={f.tipo_titulo_id} onChange={(v) => e.mudarFiscal({ tipo_titulo_id: v ?? "" })} labelHint={e.dica("tipo_titulo_id")} />);
   const valor = (c: "valor_ipi" | "valor_icms_st" | "seguro", rotulo: string, testId: string) =>
     cc(c, rotulo, { preenchido: f[c] !== "" },
       <Input data-testid={testId} type="number" step="0.01" min="0" inputMode="decimal" value={f[c]} onChange={(ev) => e.mudarFiscal({ [c]: ev.target.value })} />);
   return <div data-testid="compras-dados-fiscais" className="space-y-1">
-    <p className="text-[11px] font-semibold uppercase text-slate-500">Dados fiscais</p>
+    {!noPainel && <p className="text-[11px] font-semibold uppercase text-slate-500">Dados fiscais</p>}
     <ColunaDeCampos>
       {cc("chave_acesso", "Chave de acesso", { preenchido: f.chave_acesso !== "", dica: "Os 44 dígitos da chave da NF-e (espaços são ignorados)." },
         <Input data-testid="compras-chave-acesso" inputMode="numeric" autoComplete="off" maxLength={60} placeholder="44 dígitos" value={f.chave_acesso}
           onChange={(ev) => e.mudarFiscal({ chave_acesso: ev.target.value })} />)}
-      {cc("uf_nota", "UF", { preenchido: f.uf_nota !== "", dica: "A UF do emitente da nota, com duas letras." },
+      {cc("uf_nota", "UF do emitente", { preenchido: f.uf_nota !== "", dica: "A UF do emitente da nota, com duas letras." },
         <Input data-testid="compras-uf-nota" maxLength={2} autoComplete="off" value={f.uf_nota} onChange={(ev) => e.mudarFiscal({ uf_nota: ev.target.value.toUpperCase() })} />)}
-      {cc("tipo_documento_fiscal", "Tipo de documento", { preenchido: f.tipo_documento_fiscal !== "", icone: "selecao" },
+      {!noPainel && cc("tipo_documento_fiscal", "Tipo de documento", { preenchido: f.tipo_documento_fiscal !== "", icone: "selecao" },
         <NativeSelect data-testid="compras-tipo-documento-fiscal" value={f.tipo_documento_fiscal} onChange={(ev) => e.mudarFiscal({ tipo_documento_fiscal: ev.target.value })}>
           <option value="">—</option>
           {TIPOS_DE_DOCUMENTO.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </NativeSelect>)}
       {valor("valor_ipi", "IPI", "compras-valor-ipi")}
       {valor("valor_icms_st", "ICMS-ST", "compras-valor-icms-st")}
-      {valor("seguro", "Seguro", "compras-seguro")}
-      {e.travado("tipo_titulo_id")
-        ? <fieldset key="tipo_titulo_id" disabled data-editavel="false" data-travado-pela-top="true" style={{ display: "contents" }}>{tipoTitulo}</fieldset>
-        : tipoTitulo}
-      {cc("classificacao_gasto", "Classificação", { preenchido: true, icone: "selecao" },
+      {!noPainel && valor("seguro", "Seguro", "compras-seguro")}
+      {!noPainel && (() => {
+        const tipoTitulo = cc("tipo_titulo_id", "Tipo de título", {
+          preenchido: f.tipo_titulo_id !== "", icone: "pesquisa", testId: "compras-tipo-titulo",
+          abaixo: e.padraoInvalido("tipo_titulo_id") ? <p data-testid="padrao-invalido-aviso" className="mt-0.5 text-[11px] text-amber-700">{AVISO_PADRAO_INVALIDO_CENTRAL}</p> : undefined
+        }, <RefSelect resource="title_types" value={f.tipo_titulo_id} onChange={(v) => e.mudarFiscal({ tipo_titulo_id: v ?? "" })} labelHint={e.dica("tipo_titulo_id")} />);
+        return e.travado("tipo_titulo_id")
+          ? <fieldset key="tipo_titulo_id" disabled data-editavel="false" data-travado-pela-top="true" style={{ display: "contents" }}>{tipoTitulo}</fieldset>
+          : tipoTitulo;
+      })()}
+      {!noPainel && cc("classificacao_gasto", "Classificação", { preenchido: true, icone: "selecao" },
         <NativeSelect data-testid="compras-classificacao-gasto" value={f.classificacao_gasto} onChange={(ev) => e.mudarFiscal({ classificacao_gasto: ev.target.value })}>
           <option value="">{enumLabel("classification", "unclassified")}</option>
           <option value="capex">{enumLabel("classificacao_gasto", "capex")}</option>
@@ -83,6 +89,20 @@ export function DadosFiscaisDaCriacao({ e }: { e: EstadoDaCriacao }) {
         </NativeSelect>)}
     </ColunaDeCampos>
   </div>;
+}
+
+/** Tipo de título na aba Financeiro (único local de edição quando o fiscal está no painel). */
+export function TipoDeTituloDaCriacao({ e }: { e: EstadoDaCriacao }) {
+  if (!e.dadosFiscaisAtivos) return null;
+  const f = e.fiscal;
+  const campo = <CampoDaCentral rotulo="Tipo de título" erro={e.erro("tipo_titulo_id")} icone="pesquisa" preenchido={f.tipo_titulo_id !== ""} testId="compras-tipo-titulo"
+    abaixo={e.padraoInvalido("tipo_titulo_id") ? <p data-testid="padrao-invalido-aviso" className="mt-0.5 text-[11px] text-amber-700">{AVISO_PADRAO_INVALIDO_CENTRAL}</p> : undefined}
+    data-campo-fiscal="tipo_titulo_id" {...(e.semeadoPelaTop("tipo_titulo_id") ? { "data-padrao-top": "semeado" } : {})}>
+    <RefSelect resource="title_types" value={f.tipo_titulo_id} onChange={(v) => e.mudarFiscal({ tipo_titulo_id: v ?? "" })} labelHint={e.dica("tipo_titulo_id")} />
+  </CampoDaCentral>;
+  return e.travado("tipo_titulo_id")
+    ? <fieldset disabled data-editavel="false" data-travado-pela-top="true" style={{ display: "contents" }}>{campo}</fieldset>
+    : campo;
 }
 
 const TIPOS_DE_RATEIO: readonly TipoDoRateioDaCompra[] = ["documento", "por_valor", "por_produto"];
@@ -93,66 +113,94 @@ const TIPOS_DE_RATEIO: readonly TipoDoRateioDaCompra[] = ["documento", "por_valo
  */
 export function RateioEItensDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const r = e.rateio;
-  // O caminho da recusa nos dois formatos do servidor (`itens[0].x` das regras, `itens.0.x` do esquema).
+  const f = e.fiscal;
   const erroEm = (base: string, k: number, campo: string) => e.erro(`${base}[${k}].${campo}`) ?? e.erro(`${base}.${k}.${campo}`);
-  return <div data-testid="compras-rateio-e-itens" className="mt-2 space-y-2">
-    <p className="text-[11px] font-semibold uppercase text-slate-500">Rateio e itens</p>
-    <CampoDaCentral rotulo="Rateio" erro={e.erro("rateio")} icone="selecao" preenchido testId="compras-rateio">
-      <NativeSelect data-testid="compras-rateio-tipo" value={r.tipo}
-        onChange={(ev) => e.mudarTipoDoRateio(TIPOS_DE_RATEIO.find((t) => t === ev.target.value) ?? "documento")}>
-        {TIPOS_DE_RATEIO.map((t) => <option key={t} value={t}>{enumLabel("rateio_compra", t)}</option>)}
-      </NativeSelect>
-    </CampoDaCentral>
+  const simples = r.tipo === "documento";
+  return <div data-testid="compras-rateio-e-itens" className="mt-1 space-y-3">
+    <ColunaDeCampos>
+      <CampoDaCentral rotulo="Classificação CAPEX/OPEX" erro={e.erro("classificacao_gasto")} icone="selecao" preenchido testId="compras-classificacao-gasto-campo">
+        <NativeSelect data-testid="compras-classificacao-gasto" value={f.classificacao_gasto} onChange={(ev) => e.mudarFiscal({ classificacao_gasto: ev.target.value })}>
+          <option value="">{enumLabel("classification", "unclassified")}</option>
+          <option value="capex">{enumLabel("classificacao_gasto", "capex")}</option>
+          <option value="opex">{enumLabel("classificacao_gasto", "opex")}</option>
+        </NativeSelect>
+      </CampoDaCentral>
+      <CampoDaCentral rotulo="Distribuição" erro={e.erro("rateio")} icone="selecao" preenchido testId="compras-rateio">
+        <NativeSelect data-testid="compras-rateio-tipo" value={r.tipo}
+          onChange={(ev) => e.mudarTipoDoRateio(TIPOS_DE_RATEIO.find((t) => t === ev.target.value) ?? "documento")}>
+          {TIPOS_DE_RATEIO.map((t) => <option key={t} value={t}>{enumLabel("rateio_compra", t)}</option>)}
+        </NativeSelect>
+      </CampoDaCentral>
+    </ColunaDeCampos>
+    {simples && <p className="text-[12px] text-slate-600" data-testid="compras-rateio-simples">
+      Caso simples: informe a natureza e o centro do documento (100% do valor). Só altere a distribuição se a compra precisar ser dividida.
+    </p>}
     {r.tipo !== "documento" && <p className="text-[12px] text-slate-600">Com rateio, a natureza e o centro de resultado do documento ficam em branco: quem classifica as contas a pagar é o rateio.</p>}
-    {r.tipo === "por_valor" && <div className="space-y-2">
-      {r.linhas.map((l, k) => <div key={k} data-testid={`compras-rateio-linha-${k}`} className="grid grid-cols-12 items-end gap-2 rounded border px-2 py-2 text-[12.5px]">
-        <label className="col-span-12 md:col-span-3">Natureza *
-          <RefSelect resource="financial_categories" value={l.categoriaId} buscarOpcoes={opcoesDeNaturezaDeDespesa} onChange={(v) => e.mudarLinhaDoRateio(k, { categoriaId: v ?? "" })} />
-          {erroEm("rateio.linhas", k, "categoria_financeira_id") && <span className="text-[11px] text-red-600">{erroEm("rateio.linhas", k, "categoria_financeira_id")}</span>}
-        </label>
-        <label className="col-span-12 md:col-span-3">Centro de resultado *
-          <RefSelect resource="cost_centers" value={l.centroId} filter={{ kind: "analytic" }} onChange={(v) => e.mudarLinhaDoRateio(k, { centroId: v ?? "" })} />
-          {erroEm("rateio.linhas", k, "centro_custo_id") && <span className="text-[11px] text-red-600">{erroEm("rateio.linhas", k, "centro_custo_id")}</span>}
-        </label>
-        <label className="col-span-12 md:col-span-2">Conta contábil
-          <RefSelect resource="chart_accounts" value={l.contaId} onChange={(v) => e.mudarLinhaDoRateio(k, { contaId: v ?? "" })} />
-        </label>
-        <label className="col-span-12 md:col-span-2">Safra
-          <RefSelect resource="harvests" value={l.safraId} onChange={(v) => e.mudarLinhaDoRateio(k, { safraId: v ?? "" })} />
-          {erroEm("rateio.linhas", k, "safra_id") && <span className="text-[11px] text-red-600">{erroEm("rateio.linhas", k, "safra_id")}</span>}
-        </label>
-        <label className="col-span-8 md:col-span-1">Percentual (%) *
-          <Input data-testid={`compras-rateio-linha-${k}-percentual`} inputMode="decimal" value={l.percentual} onChange={(ev) => e.mudarLinhaDoRateio(k, { percentual: ev.target.value })} />
-          {erroEm("rateio.linhas", k, "percentual") && <span className="text-[11px] text-red-600">{erroEm("rateio.linhas", k, "percentual")}</span>}
-        </label>
-        <div className="col-span-4 md:col-span-1">{r.linhas.length > 1 && <Button size="sm" variant="ghost" onClick={() => e.removerLinhaDoRateio(k)}>Remover</Button>}</div>
+    {r.tipo === "por_valor" && <div className="space-y-3">
+      {r.linhas.map((l, k) => <div key={k} data-testid={`compras-rateio-linha-${k}`} className="space-y-2 rounded-md border border-slate-100 px-2 py-2">
+        <div className="grid grid-cols-12 gap-2">
+          <div className="col-span-12 md:col-span-3">
+            <CampoDaCentral rotulo="Natureza" obrigatorio erro={erroEm("rateio.linhas", k, "categoria_financeira_id")} icone="pesquisa" preenchido={Boolean(l.categoriaId)}>
+              <RefSelect resource="financial_categories" value={l.categoriaId} buscarOpcoes={opcoesDeNaturezaDeDespesa} onChange={(v) => e.mudarLinhaDoRateio(k, { categoriaId: v ?? "" })} />
+            </CampoDaCentral>
+          </div>
+          <div className="col-span-12 md:col-span-3">
+            <CampoDaCentral rotulo="Centro de resultado" obrigatorio erro={erroEm("rateio.linhas", k, "centro_custo_id")} icone="pesquisa" preenchido={Boolean(l.centroId)}>
+              <RefSelect resource="cost_centers" value={l.centroId} filter={{ kind: "analytic" }} onChange={(v) => e.mudarLinhaDoRateio(k, { centroId: v ?? "" })} />
+            </CampoDaCentral>
+          </div>
+          <div className="col-span-12 md:col-span-2">
+            <CampoDaCentral rotulo="Conta contábil" icone="pesquisa" preenchido={Boolean(l.contaId)}>
+              <RefSelect resource="chart_accounts" value={l.contaId} onChange={(v) => e.mudarLinhaDoRateio(k, { contaId: v ?? "" })} />
+            </CampoDaCentral>
+          </div>
+          <div className="col-span-12 md:col-span-2">
+            <CampoDaCentral rotulo="Safra" icone="pesquisa" erro={erroEm("rateio.linhas", k, "safra_id")} preenchido={Boolean(l.safraId)}>
+              <RefSelect resource="harvests" value={l.safraId} onChange={(v) => e.mudarLinhaDoRateio(k, { safraId: v ?? "" })} />
+            </CampoDaCentral>
+          </div>
+          <div className="col-span-8 md:col-span-1">
+            <CampoDaCentral rotulo="Percentual (%)" obrigatorio erro={erroEm("rateio.linhas", k, "percentual")} preenchido={l.percentual !== ""}>
+              <Input data-testid={`compras-rateio-linha-${k}-percentual`} inputMode="decimal" value={l.percentual} onChange={(ev) => e.mudarLinhaDoRateio(k, { percentual: ev.target.value })} />
+            </CampoDaCentral>
+          </div>
+          <div className="col-span-4 md:col-span-1 flex items-end pb-0.5">
+            {r.linhas.length > 1 && <Button size="sm" variant="ghost" onClick={() => e.removerLinhaDoRateio(k)}>Remover</Button>}
+          </div>
+        </div>
       </div>)}
       <div className="flex items-center gap-3 text-[12.5px]">
         <Button size="sm" variant="outline" data-testid="compras-rateio-adicionar" onClick={e.adicionarLinhaDoRateio} disabled={r.linhas.length >= 50}>Adicionar linha</Button>
         <span data-testid="compras-rateio-soma">Soma: {somaDoRateio(r)}%</span>
       </div>
     </div>}
-    {e.itens.length > 0 && <ul className="space-y-1.5 text-[12.5px]" data-testid="compras-itens-classificacao">
-      {e.itens.map((it, k) => <li key={k} data-testid={`compras-item-classificacao-${k}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded border px-2 py-1.5">
-        <span className="font-medium">Item {k + 1}</span>
-        <label className="flex items-center gap-1.5">
-          <input type="checkbox" data-testid={`compras-item-${k}-gera-estoque`} checked={itemGeraEstoque(it)} onChange={(ev) => e.mudarClassificacaoDoItem(k, { geraEstoque: ev.target.checked })} />
-          Gera estoque
-        </label>
-        <label className="flex items-center gap-1.5">
-          <input type="checkbox" data-testid={`compras-item-${k}-imobilizado`} checked={itemImobilizado(it)} onChange={(ev) => e.mudarClassificacaoDoItem(k, { imobilizado: ev.target.checked })} />
-          Imobilizado (cria o bem na confirmação)
-        </label>
-        {r.tipo === "por_produto" && <>
-          <label className="min-w-[14rem] flex-1">Natureza de despesa do item *
-            <RefSelect resource="financial_categories" value={naturezaDoItem(it)} buscarOpcoes={opcoesDeNaturezaDeDespesa} onChange={(v) => e.mudarClassificacaoDoItem(k, { natureza: v ?? "" })} />
+    {e.itens.length > 0 && <ul className="space-y-2 text-[12.5px]" data-testid="compras-itens-classificacao">
+      {e.itens.map((it, k) => <li key={k} data-testid={`compras-item-classificacao-${k}`} className="space-y-2 rounded-md border border-slate-100 px-2 py-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <span className="font-medium">Item {k + 1}</span>
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" data-testid={`compras-item-${k}-gera-estoque`} checked={itemGeraEstoque(it)} onChange={(ev) => e.mudarClassificacaoDoItem(k, { geraEstoque: ev.target.checked })} />
+            Gera estoque
           </label>
-          <label className="min-w-[14rem] flex-1">Centro de resultado do item *
-            <RefSelect resource="cost_centers" value={centroDoItem(it)} filter={{ kind: "analytic" }} onChange={(v) => e.mudarClassificacaoDoItem(k, { centro: v ?? "" })} />
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" data-testid={`compras-item-${k}-imobilizado`} checked={itemImobilizado(it)} onChange={(ev) => e.mudarClassificacaoDoItem(k, { imobilizado: ev.target.checked })} />
+            Imobilizado (cria o bem na confirmação)
           </label>
-        </>}
+        </div>
+        {r.tipo === "por_produto" && <div className="grid grid-cols-12 gap-2">
+          <div className="col-span-12 md:col-span-6">
+            <CampoDaCentral rotulo="Natureza de despesa do item" obrigatorio icone="pesquisa" preenchido={Boolean(naturezaDoItem(it))}>
+              <RefSelect resource="financial_categories" value={naturezaDoItem(it)} buscarOpcoes={opcoesDeNaturezaDeDespesa} onChange={(v) => e.mudarClassificacaoDoItem(k, { natureza: v ?? "" })} />
+            </CampoDaCentral>
+          </div>
+          <div className="col-span-12 md:col-span-6">
+            <CampoDaCentral rotulo="Centro de resultado do item" obrigatorio icone="pesquisa" preenchido={Boolean(centroDoItem(it))}>
+              <RefSelect resource="cost_centers" value={centroDoItem(it)} filter={{ kind: "analytic" }} onChange={(v) => e.mudarClassificacaoDoItem(k, { centro: v ?? "" })} />
+            </CampoDaCentral>
+          </div>
+        </div>}
         {(["gera_estoque", "imobilizado", "categoria_financeira_id", "centro_custo_id"] as const).map((c) => erroEm("itens", k, c)
-          ? <span key={c} className="w-full text-[11px] text-red-600">{erroEm("itens", k, c)}</span> : null)}
+          ? <span key={c} className="block text-[11px] text-red-600">{erroEm("itens", k, c)}</span> : null)}
       </li>)}
     </ul>}
   </div>;
@@ -190,7 +238,7 @@ export function DadosFiscaisDaConsulta({ d }: { d: Row }) {
     <p className="text-[11px] font-semibold uppercase text-slate-500">Dados fiscais</p>
     <ColunaDeCampos>
       <CampoLeitura rotulo="Chave de acesso" adorno="travado" testId="compras-consulta-chave" valor={ehTexto(d["chave_acesso"]) ? chaveFormatada(d["chave_acesso"]) : ""} />
-      <CampoLeitura rotulo="UF" adorno="travado" testId="compras-consulta-uf" valor={texto(d["uf_nota"])} />
+      <CampoLeitura rotulo="UF do emitente" adorno="travado" testId="compras-consulta-uf" valor={texto(d["uf_nota"])} />
       <CampoLeitura rotulo="Tipo de documento" adorno="travado" testId="compras-consulta-tipo-documento" valor={ehTexto(d["tipo_documento_fiscal"]) ? enumLabel("document_type", d["tipo_documento_fiscal"]) : ""} />
       <CampoLeitura rotulo="IPI" testId="compras-consulta-ipi" valor={dinheiro("valor_ipi")} />
       <CampoLeitura rotulo="ICMS-ST" testId="compras-consulta-icms-st" valor={dinheiro("valor_icms_st")} />
