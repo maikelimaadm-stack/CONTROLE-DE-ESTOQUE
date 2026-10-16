@@ -143,7 +143,7 @@ async function abrirAba(page: Page, nome: string | RegExp) {
   await expect(aba).toHaveAttribute("aria-selected", "true");
 }
 
-/** Abre o campo Observação nos Dados principais (decisão 319: expansível, fora do painel). */
+/** Confere a Observação nos Dados principais (decisão 319: campo da ColunaDeCampos). */
 async function abrirObservacao(page: Page) {
   const abrir = page.getByTestId("compras-observacao-abrir");
   if (await abrir.count()) await abrir.click();
@@ -223,10 +223,7 @@ test("CC-1 — as MESMAS medidas do VD-1 na Central de Compras, na criação e n
   const compra = await compraPelaApi(page, b, top.id, produto.id);
   await abrirCriacao(page, top.id);
   const ws = page.getByTestId(WORKSPACE);
-  await expect(ws, "a densidade padrão da criação de compras é rótulo acima (decisão 319)").toHaveAttribute("data-densidade", "rotulo-acima");
-  // As medidas do VD-1/CC-1 são do rótulo à frente — troca para medir a geometria compartida.
-  await ws.getByRole("button", { name: "Rótulo antes do campo" }).click();
-  await expect(ws).toHaveAttribute("data-densidade", "rotulo-a-frente");
+  await expect(ws, "a densidade padrão é rótulo à frente (paridade com a consulta)").toHaveAttribute("data-densidade", "rotulo-a-frente");
 
   // BARRA
   const barra = ws.getByTestId(`${WORKSPACE}-acoes`);

@@ -342,7 +342,7 @@ async function percorrerEstados(page: Page, l: Lado, cena: (nome: string) => Pro
   await expect(page.getByTestId(l.prefixo)).toBeVisible();
   await expect(page.getByTestId(`${l.prefixo}-descartar`)).toBeVisible();
   await cena("novo-documento");
-  // Compra: Observação expansível nos Dados (decisão 319). Venda: ainda na aba Observações do painel.
+  // Compra: Observação nos Dados (decisão 319). Venda: ainda na aba Observações do painel.
   if (l.lado === "compra") await abrirObservacaoDaCompra(page);
   else await abrirAba(page, l.prefixo, "Observações");
   await l.observacao().fill("rascunho da evidência");

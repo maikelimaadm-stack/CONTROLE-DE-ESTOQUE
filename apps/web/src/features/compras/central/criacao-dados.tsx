@@ -19,9 +19,10 @@ import { CAMPOS_DOS_DADOS_PRINCIPAIS } from "./organizacao-do-painel";
 import { fiscalNoPainel } from "./rateio-no-rodape";
 
 /**
- * CENTRAL DE COMPRAS — DADOS PRINCIPAIS: só identificar a compra (5 linhas).
- * Financeiro, rateio, fiscal e entrega moram no rodapé (`organizacao-do-painel.tsx`).
- * Local de estoque padrão fica acima da grade de produtos (`criacao-itens.tsx`).
+ * CENTRAL DE COMPRAS — DADOS PRINCIPAIS: só identificar a compra.
+ * Geometria = ColunaDeCampos / rótulo à frente (igual à consulta). Redistribuição: financeiro,
+ * rateio, fiscal e entrega no rodapé (`organizacao-do-painel.tsx`). Local de estoque padrão
+ * acima da grade (`criacao-itens.tsx`).
  */
 
 /** "Novo pedido de compra" / "Nova compra" — o nome do documento ainda sem número; o ponto acende com alteração. */
@@ -70,17 +71,9 @@ export function AvisosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   </>;
 }
 
-/** Dados principais — identificar a compra (5 linhas). Demais campos vão ao rodapé. */
+/** Dados principais — identificar a compra (ColunaDeCampos). Demais campos vão ao rodapé. */
 export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const { can } = useAuth();
-  const [obsAberta, setObsAberta] = React.useState(false);
-  const observacaoAnterior = React.useRef(e.cabecalho.observacao);
-  // Descartar (ou limpar) a observação recolhe o expansível — volta ao "Adicionar observação" da abertura.
-  React.useEffect(() => {
-    const atual = e.cabecalho.observacao;
-    if (observacaoAnterior.current && !atual) setObsAberta(false);
-    observacaoAnterior.current = atual;
-  }, [e.cabecalho.observacao]);
   if (!e.mostrarFormulario) return null;
   const h = e.cabecalho;
   const receber = e.modo === "receber";
@@ -154,24 +147,20 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
     <span className={estilosCv.codigo}>{e.top.codigo}</span> <span className={estilosCv.separador}>·</span> <span>{e.top.nome}</span>
   </CampoDaCentral>;
 
-  const linhaDoLayout = e.layoutVale && <div className="mb-1 flex justify-end" data-testid="compras-layout-acao">
-    <span className="inline-flex items-baseline gap-1.5 text-[11px] text-slate-400">
-      <span data-testid="compras-layout-efetivo" data-origem={e.layoutVale.origem} data-layout-id={e.layoutVale.id ?? ""} className="max-w-[14rem] truncate" title={textoDoLayoutQueVale(e.layoutVale)}>{textoDoLayoutQueVale(e.layoutVale)}</span>
-      {can("tipos_operacao.edit") && <Link data-testid="compras-layout-configurar" href={hrefDoConfigurador(e.layoutVale)} className="shrink-0 text-slate-500 underline-offset-2 hover:text-emerald-700 hover:underline">Configurar</Link>}
-    </span>
+  const linhaDoLayout = e.layoutVale && <div className="mb-1 flex flex-wrap items-baseline gap-x-2" data-testid="compras-layout-acao">
+    <p data-testid="compras-layout-efetivo" data-origem={e.layoutVale.origem} data-layout-id={e.layoutVale.id ?? ""} className="text-[11.5px] text-slate-500">{textoDoLayoutQueVale(e.layoutVale)}</p>
+    {can("tipos_operacao.edit") && <Link data-testid="compras-layout-configurar" href={hrefDoConfigurador(e.layoutVale)} className="text-[11.5px] font-medium text-emerald-700 hover:underline">Configurar</Link>}
   </div>;
 
   const { principais } = e.zonas;
   const identidade = new Set(CAMPOS_DOS_DADOS_PRINCIPAIS);
-  /* Campo único do painel (frete, parcelas…): só desenha o campo, sem o layout das 5 linhas. */
+  /* Campo único do painel (frete, parcelas…): só desenha o campo. */
   const soDoPainel = principais.length > 0 && principais.every((c) => !identidade.has(c));
   if (soDoPainel) {
     return <ColunaDeCampos>{principais.map((c) => render(c))}</ColunaDeCampos>;
   }
 
-  const tem = (c: string) => principais.includes(c);
-  const mostrarObs = tem("observacao") && (obsAberta || Boolean(h.observacao) || Boolean(e.erro("observacao")));
-  const tipoDoc = fiscalNoPainel(e) && <CampoDaCentral rotulo="Tipo de documento" icone="selecao" preenchido={e.fiscal.tipo_documento_fiscal !== ""} testId="compras-tipo-documento-fiscal-campo" data-campo-fiscal="tipo_documento_fiscal">
+  const tipoDoc = fiscalNoPainel(e) && <CampoDaCentral key="tipo-documento-fiscal" rotulo="Tipo de documento" icone="selecao" preenchido={e.fiscal.tipo_documento_fiscal !== ""} testId="compras-tipo-documento-fiscal-campo" data-campo-fiscal="tipo_documento_fiscal">
     <NativeSelect data-testid="compras-tipo-documento-fiscal" value={e.fiscal.tipo_documento_fiscal} onChange={(ev) => e.mudarFiscal({ tipo_documento_fiscal: ev.target.value })}>
       <option value="">—</option>
       {tiposDoc.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -182,37 +171,21 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const fiscaisEmLeitura = e.modo === "edicao" && e.ehCompra && e.top !== null && e.documentoEmEdicao !== null && temDadosFiscais(e.documentoEmEdicao)
     ? e.documentoEmEdicao : null;
 
-  const linha = (cols: React.ReactNode, className = "grid-cols-1 sm:grid-cols-2") =>
-    <div className={`grid gap-2 ${className}`}>{cols}</div>;
+  /* Tipo de documento entra depois da série (ou da nota); observação no fim, como campo normal da coluna. */
+  const corpo = principais.flatMap((c) => {
+    if (c === "serie_nota") return [render(c), tipoDoc].filter(Boolean);
+    if (c === "numero_nota" && !principais.includes("serie_nota")) return [render(c), tipoDoc].filter(Boolean);
+    return [render(c)];
+  });
+  if (tipoDoc && !principais.includes("serie_nota") && !principais.includes("numero_nota")) corpo.push(tipoDoc);
 
   return <>
     {linhaDoLayout}
-    {/* gap 6px = ColunaDeCampos / VD-1 (CC-1 mede o espaço entre Fornecedor e a linha abaixo). */}
-    <div data-testid="compras-dados-principais" className="flex flex-col gap-[6px]">
-      {/* Linha 1: Empresa · Tipo de operação */}
-      {linha(<>
-        {tem("empresa_id") && render("empresa_id")}
+    <div data-testid="compras-dados-principais">
+      <ColunaDeCampos>
         {top}
-      </>)}
-      {/* Linha 2: Fornecedor com mais espaço */}
-      {tem("fornecedor_id") && linha(render("fornecedor_id"), "grid-cols-1")}
-      {/* Linha 3: Número · Série · Tipo de documento */}
-      {linha(<>
-        {tem("numero_nota") && render("numero_nota")}
-        {tem("serie_nota") && render("serie_nota")}
-        {tipoDoc}
-      </>, "grid-cols-1 sm:grid-cols-3")}
-      {/* Linha 4: Datas */}
-      {linha(<>
-        {tem("data_documento") && render("data_documento")}
-        {tem("data_entrada") && render("data_entrada")}
-      </>)}
-      {/* Linha 5: Observação (expansível quando vazia) */}
-      {tem("observacao") && !mostrarObs && <button type="button" data-testid="compras-observacao-abrir"
-        className="self-start text-[12px] font-medium text-emerald-700 underline" onClick={() => setObsAberta(true)}>
-        Adicionar observação
-      </button>}
-      {mostrarObs && linha(render("observacao"), "grid-cols-1")}
+        {corpo}
+      </ColunaDeCampos>
     </div>
     {fiscaisEmLeitura && !fiscalNoPainel(e) && <div data-testid="compras-edicao-dados-fiscais" className="mt-2 space-y-2">
       <DadosFiscaisDaConsulta d={fiscaisEmLeitura} />

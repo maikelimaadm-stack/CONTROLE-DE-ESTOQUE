@@ -112,8 +112,8 @@ export async function abrirAbaDoPainelDeCompras(page: Page, nome: "Financeiro" |
 }
 
 /**
- * Abre o campo Observação nos Dados principais da Central de Compras (decisão 319: expansível, fora do painel).
- * Se já estiver aberto (valor gravado ou já expandido), só confere a visibilidade.
+ * Confere a Observação nos Dados principais da Central de Compras (campo da ColunaDeCampos).
+ * Mantém o clique no botão expansível se alguma tela ainda o desenhar.
  */
 export async function abrirObservacaoDaCompra(page: Page) {
   const abrir = page.getByTestId("compras-observacao-abrir");

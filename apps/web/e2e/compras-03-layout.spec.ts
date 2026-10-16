@@ -104,7 +104,7 @@ async function conferirLayoutNaCentral(page: Page, layoutId: string) {
   await expect(campo(page, "fornecedor_id")).toHaveCount(1);
   await expect(campo(page, "numero_nota").locator("label"), "o rótulo do layout").toHaveText(new RegExp(`^${ROTULO_NOTA.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   await expect(central.locator("label", { hasText: "Número da nota" }), "o rótulo de hoje saiu").toHaveCount(0);
-  // A Observação mora nos Dados principais (decisão 319), expansível.
+  // A Observação mora nos Dados principais (decisão 319).
   const abrirObs = page.getByTestId("compras-observacao-abrir");
   if (await abrirObs.count()) await abrirObs.click();
   await expect(campo(page, "observacao")).toHaveAttribute("data-obrigatorio", "true");
@@ -157,7 +157,7 @@ test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigat
   await expect(page.getByTestId("compras-total")).toContainText("30,00");
   await expect(page.getByTestId("compras-salvar"), "premissa: o layout chegou e o Salvar está liberado").toBeEnabled();
   await page.getByTestId("compras-salvar").click();
-  // A Observação mora nos Dados principais (expansível): a pendência abre o campo e mostra o erro nele.
+  // A Observação mora nos Dados principais: a pendência leva ao campo e mostra o erro nele.
   const abrirObs = page.getByTestId("compras-observacao-abrir");
   if (await abrirObs.count()) await abrirObs.click();
   await expect(campo(page, "observacao"), "a recusa aparece NO campo, com o rótulo do layout").toContainText(erroDaObservacao);

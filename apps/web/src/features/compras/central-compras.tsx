@@ -84,7 +84,8 @@ function estadoDeUmCampo(e: EstadoDaCriacao, campo: string): EstadoDaCriacao {
 
 function FormularioDeCompra(props: PropsDoEstadoDaCriacao) {
   const e = useEstadoDaCriacao(props);
-  const [densidade, setDensidade] = React.useState<PosicaoDoRotuloValor>("rotulo-acima");
+  /* Paridade com a consulta e com o motor da Central: rótulo à frente (não redesenhar a geometria). */
+  const [densidade, setDensidade] = React.useState<PosicaoDoRotuloValor>("rotulo-a-frente");
   const controle = React.useRef<ControleDaCentral | null>(null);
   /** Pendência no painel: abre a aba primeiro, depois leva ao campo. */
   const irPara = (p: Pendencia) => {

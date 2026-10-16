@@ -345,16 +345,8 @@ async function criacaoDeCompra(page: Page) {
   const raiz = page.getByTestId("central-compras");
   await expect(raiz).toBeVisible();
   await expect(page.getByTestId("compras-top-travada"), "a criação montou com a TOP").toBeVisible();
-  await expect(raiz, "a densidade padrão da criação de compras é rótulo acima (decisão 319)").toHaveAttribute("data-densidade", "rotulo-acima");
+  await expect(raiz, "a densidade padrão é rótulo à frente").toHaveAttribute("data-densidade", "rotulo-a-frente");
   return raiz;
-}
-
-/** ALN-7 mede a geometria do rótulo à frente: na criação de compras o padrão é rótulo acima — troca antes de medir. */
-async function noRotuloAFrente(raiz: Locator) {
-  const densidade = await raiz.getAttribute("data-densidade");
-  if (densidade === "rotulo-a-frente") return;
-  await raiz.getByRole("button", { name: "Rótulo antes do campo" }).click();
-  await expect(raiz, "densidade rótulo à frente para medir a geometria ALN-7").toHaveAttribute("data-densidade", "rotulo-a-frente");
 }
 
 async function criacaoDeEstoque(page: Page, especie: "entrada" | "saida") {
@@ -647,7 +639,6 @@ test("ALN-7a — não-regressão nas três Centrais: rótulo 128, caixa em 137 c
   page.on("dialog", (d) => { void d.accept(); });
   for (const c of CENTRAIS) {
     const raiz = await c.abrir(page);
-    await noRotuloAFrente(raiz);
     await noRepouso(raiz);
     const linha = linhaPeloRotulo(raiz.getByTestId(c.dados), c.campo);
     const m = await medir(linha);
@@ -666,7 +657,6 @@ test("ALN-7b — não-regressão nas três Centrais: todo ícone de Dados princi
   page.on("dialog", (d) => { void d.accept(); });
   for (const c of CENTRAIS) {
     const raiz = await c.abrir(page);
-    await noRotuloAFrente(raiz);
     await noRepouso(raiz);
     const medidas = await medirTodas(raiz.getByTestId(c.dados));
     const icones = medidas.flatMap((m) => m.icones.map((x) => ({ rotulo: m.rotulo, x })));
