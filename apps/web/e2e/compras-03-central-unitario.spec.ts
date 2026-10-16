@@ -251,7 +251,7 @@ const COMBINACOES_DO_MOTOR: ({ onde: string; arquivo: string; prova: string } & 
   },
   {
     onde: "Central de Compras · lançar", arquivo: "src/features/compras/central/criacao-itens.tsx", prova: "CX-1 (o 0 continua 0), LC-W1 (o layout esconde o Armazém), F3B-C1 (a entrada com tudo e o saldo)",
-    armazemPorItem: "ligada", armazemForcado: "regras?.exigeArmazem === true", custoMedioNoUnitario: "false", lote: "controleDeLote", daOrigem: "ausente",
+    armazemPorItem: "ligada", armazemForcado: "false", custoMedioNoUnitario: "false", lote: "controleDeLote", daOrigem: "ausente",
     pesquisaDeProduto: "PESQUISA_DE_PRODUTO_DA_ENTRADA", linhaNovaEmBranco: "ausente", subtotal: "ausente"
   },
   {
@@ -346,10 +346,9 @@ const semCampos = (familia: string, ...fora: string[]): ColunaDoLayout[] => LAYO
 const comoTexto = (r: readonly ColunaDoLayoutNoEditor[]) => r.map((c) => `${c.chave}${c.obrigatorio ? "*" : ""}`).join(" ");
 
 /**
- * AS COMBINAÇÕES layout × regra × lote da Central de Compras — o que a compra entrega ao motor (`colunasDoEditor`). O
- * motor recebe a compra com `armazemPorItem` e `armazemForcado={exigeArmazem}`: quando a regra exige, o Armazém JÁ está
- * na lista (a conta abaixo o põe), e o motor não tem o que forçar; quando não exige, o layout manda — escondido, a
- * coluna não volta (a S2 da decisão 278). O esperado é escrito à mão.
+ * AS COMBINAÇÕES layout × regra × lote da Central de Compras — o que a compra entrega ao motor (`colunasDoEditor`).
+ * No lançamento (decisão 319) a grade é enxuta e o Local de estoque padrão fica acima dela (`armazemForcado={false}`):
+ * a coluna por linha não é forçada. O esperado abaixo é o de `colunasDoEditor` (antes do filtro da grade).
  */
 const COMBINACOES_DA_COMPRA: { onde: string; familia: string; itens: ColunaDoLayout[]; exigeArmazem: boolean; oProdutoPede: ("lote" | "validade")[]; esperado: string }[] = [
   { onde: "compra · layout do sistema · regra não exige", familia: COMPRA, itens: semCampos(COMPRA), exigeArmazem: false, oProdutoPede: [],

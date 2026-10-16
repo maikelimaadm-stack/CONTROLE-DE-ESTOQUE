@@ -148,10 +148,11 @@ test("EDITAR-02 · K-2 (sentido 2) — o web da base sobre a API deste HEAD: cri
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.ref.natureza.label);
   await escolher(page, "Centro de resultado", c.ref.centro.label);
+  // Decisão 319: Local de estoque padrão acima da grade (sem célula por linha).
+  await escolher(page, "Local de estoque", c.local.nome);
   const itens = page.getByTestId("compras-itens");
   await itens.getByTestId(`${P}-adicionar-item`).click();
   const linha = itens.getByTestId(`${P}-linha`).first();
-  await escolherNaLinha(page, linha.getByTestId(`${P}-armazem`), c.local.nome);
   await escolherNaLinha(page, linha.getByTestId(`${P}-produto`), c.produto.nome);
   await linha.getByLabel("Quantidade do item 1").fill("3");
   await linha.getByLabel("Valor unitário do item 1").fill("11");
