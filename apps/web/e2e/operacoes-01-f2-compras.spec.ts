@@ -1,5 +1,5 @@
 import type { Locator, Page, Request, Response } from "@playwright/test";
-import { login, api, uniq, empresaAtiva } from "./helpers";
+import { login, api, uniq, empresaAtiva, abrirAbaDoPainelDeCompras } from "./helpers";
 import { cfg4, cfg5, detalheTopNoServidor, type RegrasGeraisE2E } from "./top-config-08-comum";
 import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 
@@ -112,17 +112,18 @@ async function abrirCriacao(page: Page, top: { id: string; codigo: string }, c: 
   await expect(page.getByTestId("compras-top-travada"), "a criação montou com a TOP pedida").toContainText(top.codigo);
   await expect(page.getByTestId("compras-salvar"), "o Salvar saiu da trava: as regras chegaram").toBeEnabled();
   await escolher(page, "Fornecedor", c.nomeFornecedor);
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
   return corpo["regrasGerais"];
 }
 
-/** Um item na grade: o produto e o local de estoque do cenário, 5 × 20,00. */
+/** Um item na grade: local padrão acima da grade + produto, 5 × 20,00. */
 async function umItem(page: Page, c: Cenario) {
+  await escolher(page, "Local de estoque", c.nomeArmazem);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
   await escolherNaCelula(page, linha.getByTestId(`${P}-produto`), c.produto.nome);
-  await escolherNaCelula(page, linha.getByTestId(`${P}-armazem`), c.nomeArmazem);
   await linha.getByLabel("Quantidade do item 1").fill("5");
   await linha.getByLabel("Valor unitário do item 1").fill("20");
   await expect(page.getByTestId(`${P}-subtotal`)).toContainText("100,00");

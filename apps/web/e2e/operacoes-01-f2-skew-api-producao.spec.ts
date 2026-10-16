@@ -184,10 +184,9 @@ test("OP01-F2 · K-1a (sentido 1) — a Central de Vendas deste web sobre a API 
 /** Abre a aba do painel onde mora o campo (Rateio e classificação: natureza/centro). */
 async function abrirAbaDoPainel(page: Page, nome: string) {
   const aba = page.getByTestId(`${PC}-painel`).getByRole("tab", { name: new RegExp(`^${nome}`) });
-  if (await aba.count()) {
-    await aba.click();
-    await expect(aba).toHaveAttribute("aria-selected", "true");
-  }
+  await expect(aba, `aba "${nome}" do painel da Central de Compras`).toBeVisible();
+  await aba.click();
+  await expect(aba).toHaveAttribute("aria-selected", "true");
 }
 
 /** Escolhe no RefSelect da Central de Compras pelo rótulo do campo (nome escapado: nomes do seed têm colchetes). */

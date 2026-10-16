@@ -100,6 +100,18 @@ export async function abrirAbaDoLancamento(page: Page, nome: "Totais" | "Finance
 }
 
 /**
+ * Abre uma aba do painel inferior da Central de Compras (decisão 319): Financeiro · Rateio e classificação ·
+ * Fiscal · Entrega e transporte. Natureza/centro moram em "Rateio e classificação" — quem preenche abre a aba
+ * antes, como o usuário. Só retorna com a aba selecionada.
+ */
+export async function abrirAbaDoPainelDeCompras(page: Page, nome: "Financeiro" | "Rateio e classificação" | "Fiscal" | "Entrega e transporte") {
+  const aba = page.getByTestId("central-compras-painel").getByRole("tab", { name: new RegExp(`^${nome}`) });
+  await expect(aba, `aba "${nome}" do painel da Central de Compras`).toBeVisible();
+  await aba.click();
+  await expect(aba).toHaveAttribute("aria-selected", "true");
+}
+
+/**
  * Escolhe o primeiro produto REAL na primeira linha de itens da Central de Vendas (VISUAL-UX-01 R1):
  * abre a pesquisa ancorada à célula de produto e clica na primeira opção que o servidor devolveu.
  */

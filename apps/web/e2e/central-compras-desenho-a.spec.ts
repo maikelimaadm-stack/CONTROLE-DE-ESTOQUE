@@ -502,7 +502,7 @@ test("CC-4 — Duplicar: copia o que deve, NÃO copia nota, série, datas nem or
   const dados = page.getByTestId(WORKSPACE).getByRole("region", { name: "Dados principais" });
   await expect(campoPeloRotulo(dados, "Fornecedor")).toContainText(original.fornecedorNome);
   await expect(page.getByTestId(`${WORKSPACE}-linha`), "os itens vieram").toHaveCount(1);
-  await abrirAba(page, "Observações");
+  await abrirObservacao(page);
   await expect(page.getByTestId("compras-observacao")).toHaveValue("observação do original");
   // as datas NÃO vieram: Data = hoje (o da tela, antes e depois do passo)
   const diasDeHoje = hojes(hojeAntes, todayISO());
@@ -633,7 +633,7 @@ test("CC-4c — Duplicar com a aba de lançamento da espécie já aberta (limpa)
   await expect(abaNova, "a MESMA aba de lançamento, não uma segunda").toHaveCount(1);
   await expect(page.getByTestId("compras-top-travada"), "com a TOP do original").toContainText(top.codigo);
   await expect(page.getByTestId(`${WORKSPACE}-alterado`), "a cópia conta como alteração").toBeVisible();
-  await abrirAba(page, "Observações");
+  await abrirObservacao(page);
   await expect(page.getByTestId("compras-observacao")).toHaveValue("observação que a cópia leva");
   expect(escritas).toEqual([]);
 });
@@ -656,7 +656,7 @@ test("CC-5 — Descartar: pergunta, Continuar editando mantém, confirmar volta 
   const escritas = registrarEscritas(page);
 
   await pickRef(page, "Fornecedor", buscaSemColchetes(b.fornecedor.nome));
-  await abrirAba(page, "Observações");
+  await abrirObservacao(page);
   await page.getByTestId("compras-observacao").fill("vai ser descartado");
   await expect(page.getByTestId(`${WORKSPACE}-alterado`)).toBeVisible();
 
@@ -675,7 +675,7 @@ test("CC-5 — Descartar: pergunta, Continuar editando mantém, confirmar volta 
   await expect(page).toHaveURL(new RegExp(`tipo_operacao_id=${top.id}$`));
   await expect(page.getByTestId("compras-top-travada"), "a MESMA TOP").toContainText(top.codigo);
   await expect.poll(retrato, { message: "Dados principais como na abertura (padrões reaplicados)" }).toEqual(abertura);
-  await abrirAba(page, "Observações");
+  await abrirObservacao(page);
   await expect(page.getByTestId("compras-observacao")).toHaveValue("");
   expect(escritas, "descartar não escreve").toEqual([]);
 });

@@ -1,6 +1,6 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { LAYOUT_DO_SISTEMA, mensagemCampoObrigatorio, type EstruturaLayout } from "@agro/domain";
-import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
+import { login, api, uniq, empresaAtiva, primeiroId, abrirAbaDoPainelDeCompras } from "./helpers";
 import { codigoTop } from "./central-compras-fixtures";
 
 /**
@@ -104,8 +104,9 @@ async function conferirLayoutNaCentral(page: Page, layoutId: string) {
   await expect(campo(page, "fornecedor_id")).toHaveCount(1);
   await expect(campo(page, "numero_nota").locator("label"), "o rótulo do layout").toHaveText(new RegExp(`^${ROTULO_NOTA.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   await expect(central.locator("label", { hasText: "Número da nota" }), "o rótulo de hoje saiu").toHaveCount(0);
-  // A Observação mora na aba "Observações" do painel de baixo.
-  await central.getByRole("tab", { name: /^Observações/ }).click();
+  // A Observação mora nos Dados principais (decisão 319), expansível.
+  const abrirObs = page.getByTestId("compras-observacao-abrir");
+  if (await abrirObs.count()) await abrirObs.click();
   await expect(campo(page, "observacao")).toHaveAttribute("data-obrigatorio", "true");
   await expect(campo(page, "observacao").locator(`label [data-parte="req"]`), "o \"*\" da Observação").toHaveCount(1);
   await expect(campo(page, "transportadora_id"), "a Transportadora está fora do layout").toHaveCount(0);
@@ -141,24 +142,24 @@ test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigat
   await expect(campo(page, "fornecedor_id").locator("button").first(), "o Fornecedor padrão do layout, aplicado ao abrir").toContainText(c.fornecedor.nomePadrao);
 
   // (2) SALVAR SEM OBSERVAÇÃO: o documento está completo menos ela — a recusa é no campo, e nada sai para o servidor.
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
   const itens = page.getByTestId("compras-itens");
   await itens.getByTestId("central-compras-adicionar-item").click();
   const linha = itens.locator("tbody tr").first();
-  // sem a coluna Armazém (o layout a escondeu), a linha não tem onde escolhê-lo — e a regra não o exige
+  // sem a coluna Armazém (o layout a escondeu / grade enxuta), a linha não tem onde escolhê-lo — e a regra não o exige
   await expect(linha.getByTestId("central-compras-armazem"), "a linha não desenha a célula do Armazém").toHaveCount(0);
   await escolherNaLinha(page, linha.getByTestId("central-compras-produto"), c.produto.nome);
   await linha.getByLabel("Quantidade do item 1").fill("2");
   await linha.getByLabel("Valor unitário do item 1").fill("15");
-  await central.getByRole("tab", { name: /^Totais/ }).click();
+  // Totais ficam na faixa fora das abas (decisão 319)
   await expect(page.getByTestId("compras-total")).toContainText("30,00");
   await expect(page.getByTestId("compras-salvar"), "premissa: o layout chegou e o Salvar está liberado").toBeEnabled();
   await page.getByTestId("compras-salvar").click();
-  // A Observação está na aba "Observações" (a Totais estava à vista): a pendência marca a aba, e o erro está no campo.
-  const abaObservacoes = central.getByRole("tab", { name: /^Observações/ });
-  await expect(abaObservacoes.getByRole("img", { name: "Com pendência" }), "a aba da Observação acusa a pendência").toHaveCount(1);
-  await abaObservacoes.click();
+  // A Observação mora nos Dados principais (expansível): a pendência abre o campo e mostra o erro nele.
+  const abrirObs = page.getByTestId("compras-observacao-abrir");
+  if (await abrirObs.count()) await abrirObs.click();
   await expect(campo(page, "observacao"), "a recusa aparece NO campo, com o rótulo do layout").toContainText(erroDaObservacao);
   await expect(campo(page, "fornecedor_id"), "o Fornecedor (preenchido pelo padrão) não é cobrado").not.toContainText("é obrigatório");
   await expect(page).toHaveURL(/\/compras\/compras\/new\?/);

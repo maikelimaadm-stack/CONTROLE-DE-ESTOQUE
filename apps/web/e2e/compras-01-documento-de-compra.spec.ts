@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
+import { login, api, uniq, empresaAtiva, primeiroId, abrirAbaDoPainelDeCompras } from "./helpers";
 import { test, expect, criarCadastro } from "./central-compras-fixtures";
 
 /**
@@ -76,13 +76,14 @@ test("CO-W1 — Compras › Novo → TOP de Compra → Central → salvar → co
   await expect(central).toBeVisible();
   await expect(central).toHaveAttribute("data-especie", "compra");
   await escolher(page, "Fornecedor", c.nomeFornecedor);
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
+  await escolher(page, "Local de estoque", c.nomeArmazem);
   await page.getByTestId("compras-frete").fill("10.00");
   const itens = page.getByTestId("compras-itens");
   await itens.getByTestId("central-compras-adicionar-item").click();
   const linha = itens.locator("tbody tr").first();
-  await escolherNaLinha(page, linha.getByTestId("central-compras-armazem"), c.nomeArmazem);
   await escolherNaLinha(page, linha.getByTestId("central-compras-produto"), c.nomeProduto);
   await linha.getByLabel("Quantidade do item 1").fill("5");
   await linha.getByLabel("Valor unitário do item 1").fill("20");

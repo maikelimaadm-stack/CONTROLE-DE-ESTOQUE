@@ -26,10 +26,10 @@ import {
  *     rota, e a pesquisa de produto é a de HOJE — `data-fonte="opcoes"`, Código | Descrição, sem a coluna Estoque e sem
  *     "Só com saldo neste local"; no fio, ao menos um pedido a `/api/resources/products/options` e NENHUM a
  *     `/api/produtos/pesquisa` (nem parâmetro novo, que a base recusaria com 422); o produto sem saldo APARECE (a
- *     pesquisa de hoje não filtra). A ordem das colunas é a do layout que a BASE manda (Produto antes do Local de
- *     estoque): o web não impõe a ordem nova sobre o layout. O "Local de estoque" do cabeçalho existe (é só da tela; a
- *     base serve os locais da empresa), a linha nova nasce com ele, e o POST leva as chaves de HOJE, chave por chave —
- *     a base grava (201);
+ *     pesquisa de hoje não filtra). Na Central de Vendas a ordem das colunas segue o layout da BASE. Na Central de
+ *     Compras (decisão 319) a grade é enxuta e o Local de estoque padrão fica acima da grade; a linha nova ainda herda
+ *     o local do cabeçalho no POST. O "Local de estoque" do cabeçalho existe (é só da tela; a base serve os locais da
+ *     empresa), e o POST leva as chaves de HOJE, chave por chave — a base grava (201);
  *   · MUNDO NOVO (a base já com a F3b, depois do merge): `data-fonte="pesquisa"`, o pedido com o local DA LINHA e — na
  *     venda — `com_saldo=true` (o produto sem saldo some); na compra, tudo, com o saldo; e ZERO pedido à pesquisa de hoje.
  * Em todos, nenhuma requisição morre no navegador (`semBloqueio`). Não há mock: o servidor é o binário da base,
@@ -301,10 +301,9 @@ test("OP01-F3b · K-1b (sentido 1) — a Central de Compras deste web sobre a AP
   await escolherNoCampo(page, localPadrao, c.l1.nome);
   await escolherNoCampo(page, campoPeloRotulo(page, "Fornecedor"), fornecedor);
   const abaRateio = page.getByTestId(`${PC}-painel`).getByRole("tab", { name: /^Rateio e classificação/ });
-  if (await abaRateio.count()) {
-    await abaRateio.click();
-    await expect(abaRateio).toHaveAttribute("aria-selected", "true");
-  }
+  await expect(abaRateio, "Natureza/centro estão na aba Rateio e classificação").toBeVisible();
+  await abaRateio.click();
+  await expect(abaRateio).toHaveAttribute("aria-selected", "true");
   await escolherNoCampo(page, campoPeloRotulo(page, "Natureza de despesa"), ref.natureza.label);
   await escolherNoCampo(page, campoPeloRotulo(page, "Centro de resultado"), ref.centro.label);
   await page.getByTestId(`${PC}-adicionar-item`).click();

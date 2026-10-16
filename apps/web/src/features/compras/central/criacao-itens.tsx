@@ -54,7 +54,7 @@ export function ItensDaCriacaoDeCompra({ estado }: { estado: EstadoDaCriacao }) 
   const { variante, ehCompra, itens, setItens, colunasDoLayout, fieldsDosItens, errosDeItens, lote, localDoCabecalho, regras, travasDaLinha, aceitaLinhaNova, localNaGrade, cabecalho, escolherLocal } = estado;
   const colunas = React.useMemo(() => colunasDosItensDeCompras(variante), [variante]);
 
-  /** Grade enxuta: produto, qtd, unitário, desconto, total. Local padrão fica acima; lote/local por item no detalhe. */
+  /** Grade enxuta (decisão 319): produto, qtd, unitário, desconto, total. Local de estoque padrão fica acima da grade. */
   const layout = React.useMemo<LayoutDosItens>(() => {
     const lista: ColunaDoLayout[] = colunasDoLayout
       ? colunasDoLayout.map((c) => ({ campo: c.chave, obrigatorio: c.obrigatorio, ...(c.rotulo ? { rotulo: c.rotulo } : {}) }))
