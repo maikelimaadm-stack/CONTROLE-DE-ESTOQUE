@@ -1,6 +1,6 @@
 import type { Page, Request, Response } from "@playwright/test";
 import { configuracaoNeutraTopV5 } from "@agro/domain";
-import { api, empresaAtiva, login, logout, uniq } from "./helpers";
+import { api, empresaAtiva, login, logout, uniq, abrirObservacaoDaCompra, abrirAbaDoPainelDeCompras } from "./helpers";
 import { chamarApi } from "./top-config-08-comum";
 import { hojeISO } from "./estoque-01-comum";
 import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
@@ -155,6 +155,12 @@ async function abrirAba(page: Page, nome: string) {
   await expect(aba).toHaveAttribute("aria-selected", "true");
 }
 
+/** Observação na edição (Dados principais, expansível) ou na consulta (aba Observações do painel). */
+async function abrirObservacao(page: Page, onde: "edicao" | "consulta") {
+  if (onde === "edicao") await abrirObservacaoDaCompra(page);
+  else await abrirAba(page, "Observações");
+}
+
 /** O Editar presente e DESABILITADO, com o motivo em `data-motivo` e na dica — o MESMO texto que o `/edicao` responde. */
 async function editarDesabilitado(page: Page, especie: Especie, doc: DocLido, motivo: string) {
   await expect(editar(page), "o Editar aparece (quem vê tem .edit e .view)").toBeVisible();
@@ -213,7 +219,7 @@ test("E2-1 — compra ABERTA: Editar → a Central em modo edição com o gravad
   // A MUDANÇA: a quantidade de A (5 → 6) e a observação.
   await linhas(page).nth(0).getByTestId(`${P}-selecionar-item`).click();
   await linhas(page).nth(0).getByLabel("Quantidade do item 1").fill("6");
-  await abrirAba(page, "Observações");
+  await abrirObservacao(page, "edicao");
   await expect(page.getByTestId("compras-observacao"), "a observação GRAVADA").toHaveValue("observação gravada");
   await page.getByTestId("compras-observacao").fill("observação editada E2-1");
   await expect(page.getByTestId(`${P}-alterado`), "a identidade acende o ponto de alteração").toHaveCount(1);
@@ -229,7 +235,7 @@ test("E2-1 — compra ABERTA: Editar → a Central em modo edição com o gravad
   // A CONSULTA volta, no lugar, com o valor novo — e o servidor gravou, com a versão +1.
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "aberto");
   await expect(page.getByTestId("compras-consulta-total"), "6 × 20,00 + 2 × 5,00").toContainText("130,00");
-  await abrirAba(page, "Observações");
+  await abrirObservacao(page, "consulta");
   await expect(page.getByTestId(`${P}-painel`).getByRole("tabpanel")).toContainText("observação editada E2-1");
   const depois = await ler(page, "compra", doc.id);
   expect({ version: depois.version, observacao: depois.observacao, valor_total: depois.valor_total, itens: depois.itens.map((i) => [i.id, i.quantidade]) },
@@ -265,7 +271,7 @@ test("E2-2 — pedido ABERTO: Salvar sem mudar nada não manda nada (zero PATCH)
   await linhas(page).nth(0).getByTestId(`${P}-selecionar-item`).click();
   await expect(page.getByTestId(`${P}-remover-item`), "o item salvo do pedido não tem o Remover").toHaveCount(0);
   await linhas(page).nth(0).getByLabel("Quantidade do item 1").fill("12");
-  await abrirAba(page, "Observações");
+  await abrirObservacao(page, "edicao");
   await page.getByTestId("compras-observacao").fill("pedido editado E2-2");
   const patch = await salvarEdicao(page, "pedido", doc);
   expect(patch.status, "a PATCH do pedido gravou").toBe(200);
@@ -401,7 +407,7 @@ test("E2-6 — o documento mudou por fora com a edição aberta: Salvar → 409 
 
   await abrirConsulta(page, "compra", doc);
   await abrirEdicao(page, "compra", doc);
-  await abrirAba(page, "Observações");
+  await abrirObservacao(page, "edicao");
   await page.getByTestId("compras-observacao").fill("a minha alteração");
 
   // POR FORA: outra aba (a mesma sessão, pela API) grava antes — a versão vai a 1.
@@ -423,7 +429,7 @@ test("E2-6 — o documento mudou por fora com a edição aberta: Salvar → 409 
   await expect(conflito).toHaveCount(0);
   await expect(central(page)).toHaveAttribute("data-modo", "edicao");
   await expect(page.getByTestId("compras-salvar")).toBeEnabled();
-  await abrirAba(page, "Observações");
+  await abrirObservacao(page, "edicao");
   await expect(page.getByTestId("compras-observacao"), "o formulário mostra o gravado de fora").toHaveValue("mudou por fora");
 
   // A PRÓXIMA GRAVAÇÃO, sobre a versão recarregada, vale.
@@ -448,11 +454,13 @@ test("E2-7 — a compra salva com natureza e centro NULOS (o par vem da TOP, dec
   })).id;
   const doc = await compraAberta(page, { ...c, topCompra: top }, { categoria_financeira_id: null, centro_custo_id: null });
   expect([doc.categoria_financeira_id, doc.centro_custo_id], "premissa: o gravado sem o par (a TOP o dá)").toEqual([null, null]);
-  const campo = (c: string) => page.getByTestId(`${P}-dados`).locator(`[data-campo="${c}"]`);
+  // Natureza/centro moram em Rateio e classificação (decisão 319), não nos Dados.
+  const campo = (c: string) => central(page).locator(`[data-campo="${c}"]`);
 
   // PREMISSA anti-vacuidade: na CRIAÇÃO com a mesma TOP, natureza e centro chegam SEMEADOS.
   await page.goto(`/compras/compras/new?tipo_operacao_id=${top}`);
   await expect(central(page)).toHaveAttribute("data-modo", "lancar");
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await expect(campo("categoria_financeira_id"), "premissa: a criação semeia a natureza da TOP").toHaveAttribute("data-padrao-top", "semeado");
   await expect(campo("centro_custo_id"), "premissa: e o centro").toHaveAttribute("data-padrao-top", "semeado");
 
@@ -461,10 +469,11 @@ test("E2-7 — a compra salva com natureza e centro NULOS (o par vem da TOP, dec
   const edicao = await abrirEdicao(page, "compra", doc);
   expect(JSON.stringify((edicao["regras"] as Record<string, unknown>)["padroes"]), "premissa no fio: o /edicao traz o par da TOP").toContain(c.natureza);
   await expect(central(page).locator('[data-padrao-top="semeado"]'), "na edição, nenhum campo semeado pela TOP").toHaveCount(0);
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await expect(campo("categoria_financeira_id").getByRole("combobox"), "a natureza continua vazia").toHaveClass(/is-empty/);
   await expect(campo("centro_custo_id").getByRole("combobox"), "o centro continua vazio").toHaveClass(/is-empty/);
 
-  await abrirAba(page, "Observações");
+  await abrirObservacao(page, "edicao");
   await page.getByTestId("compras-observacao").fill("só a observação, E2-7");
   const patch = await salvarEdicao(page, "compra", doc);
   expect([patch.status, patch.corpo], "o corpo sem o par: só a versão e a observação").toEqual([200, { version: "0", observacao: "só a observação, E2-7" }]);

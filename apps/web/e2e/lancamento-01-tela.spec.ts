@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { LAYOUT_DO_SISTEMA, configuracaoNeutraTopV5, type ConfiguracaoTipoOperacaoV5, type EstruturaLayout } from "@agro/domain";
-import { api, empresaAtiva, login, uniq } from "./helpers";
+import { api, empresaAtiva, login, uniq, abrirAbaDoPainelDeCompras } from "./helpers";
 import { test, expect, codigoTop, criarCadastro, criarTop, doSeed, referenciasDoSeed, type Opcao } from "./central-compras-fixtures";
 import { cabecalhosDaSessao } from "./top-config-08-comum";
 
@@ -21,8 +21,9 @@ import { cabecalhosDaSessao } from "./top-config-08-comum";
  * esse pedido que T1 segura para ler a DICA ("código · nome") antes de a árvore responder.
  *
  * OS ATRIBUTOS LIDOS (nenhum desenho novo): `data-padrao-top="semeado"` no invólucro do campo cujo valor é o que a TOP
- * semeou; `fieldset[data-editavel="false"][data-travado-pela-top="true"]` na trava; `padrao-invalido-aviso`; o local da
- * linha no texto de `central-compras-armazem`.
+ * semeou; `fieldset[data-editavel="false"][data-travado-pela-top="true"]` na trava; `padrao-invalido-aviso`. Natureza/
+ * centro moram em "Rateio e classificação"; forma/vencimento em "Financeiro" (decisão 319). O local da linha: na grade
+ * enxuta a coluna some — o POST/gravado prova; com `exigeArmazem` a coluna volta (`armazemForcado`).
  *
  * FIXTURE PRÓPRIA (`central-compras-fixtures.ts`): locais, produtos, fornecedor e TOPs (no formato 5, com os padrões
  * pela porta administrativa) nascem no caso e saem no fim pela exclusão lógica; o layout dos casos de precedência sai
@@ -159,9 +160,12 @@ function configuradaComForma(tudo: boolean, documentoTroca = true): Configuracao
 
 const central = (page: Page) => page.getByTestId("compras-central");
 const dados = (page: Page) => page.getByTestId(`${P}-dados`);
-const campo = (page: Page, c: string) => dados(page).locator(`[data-campo="${c}"]`);
+/** Campo em qualquer zona da Central (Dados ou painel). Abra a aba certa antes de ler o que mora no rodapé. */
+const campo = (page: Page, c: string) => central(page).locator(`[data-campo="${c}"]`);
 const caixa = (page: Page, c: string) => campo(page, c).getByRole("combobox");
 const linhas = (page: Page) => page.getByTestId(`${P}-linha`);
+const abrirRateio = (page: Page) => abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
+const abrirFinanceiro = (page: Page) => abrirAbaDoPainelDeCompras(page, "Financeiro");
 
 interface Aberta { regras: Record<string, unknown>; layout: Record<string, unknown> }
 
@@ -194,10 +198,10 @@ async function estavel(page: Page) {
     { message: "os Dados da criação pararam de mudar", intervals: [300, 300, 300, 600, 1000] }).toBe(true);
 }
 
-/** Extras fiscais sempre à vista (sem acordeão Dados adicionais). */
+/** Tipo de título no Financeiro (decisão 319); sem acordeão Dados adicionais. */
 async function extrasFiscais(page: Page) {
   await expect(dados(page).getByRole("button", { name: /^Dados adicionais/ }), "sem acordeão").toHaveCount(0);
-  await expect(page.getByTestId("compras-campos-extras"), "extras à vista").toBeVisible();
+  await expect(page.getByTestId("compras-tipo-titulo"), "tipo de título no Financeiro").toBeVisible();
 }
 
 /** Escolhe a opção no RefSelect de um campo (o invólucro dado) pelo nome — o gesto do operador. */
@@ -234,13 +238,15 @@ async function novaLinhaCom(page: Page, produto: { nome: string }) {
   await escolherProduto(page, n, produto);
 }
 
-/** O local da linha N, escolhido pelo operador na célula. */
+/** O local da linha N, escolhido pelo operador na célula (só quando a coluna está na grade — ex.: exigeArmazem). */
 async function escolherLocalDaLinha(page: Page, i: number, local: { nome: string }) {
   const linha = linhas(page).nth(i);
-  await linha.getByTestId(`${P}-armazem`).click();
+  const celula = linha.getByTestId(`${P}-armazem`);
+  await expect(celula, `a célula do local da linha ${i + 1} está na grade (exigeArmazem / armazemForcado)`).toHaveCount(1);
+  await celula.click();
   await page.getByPlaceholder("Pesquisar pela descrição").fill(local.nome);
   await page.getByRole("option", { name: literal(local.nome) }).click();
-  await expect(linha.getByTestId(`${P}-armazem`)).toContainText(local.nome);
+  await expect(celula).toContainText(local.nome);
 }
 
 /** O documento mínimo do operador: o fornecedor, uma linha com o produto e o valor unitário (o resto vem da tela). */
@@ -336,6 +342,8 @@ function chaveNoFio(regras: Record<string, unknown>, onde: string): boolean {
 /** O local que a célula da linha mostra: o dado, ou o vazio ("—") — a linha com o local do cabeçalho vazio. */
 async function localDaLinha(linha: Locator, local: { nome: string } | null, mensagem: string) {
   const celula = linha.getByTestId(`${P}-armazem`);
+  // Grade enxuta (decisão 319): sem coluna do Armazém — o POST/gravado prova o local da linha.
+  if (!(await celula.count())) return;
   if (local) await expect(celula, mensagem).toContainText(local.nome);
   else await expect(celula, mensagem).toHaveText("—");
 }
@@ -394,7 +402,8 @@ test("LANC-T1 — compra que gera título, TOP com os 5 padrões, o documento tr
   const localNovo = ligada ? m.local : null;
   await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
 
-  // SEMEADOS, com a dica da TOP enquanto a árvore não responde.
+  // SEMEADOS, com a dica da TOP enquanto a árvore não responde (aba Rateio — decisão 319).
+  await abrirRateio(page);
   for (const [c, p] of [["categoria_financeira_id", m.natureza], ["centro_custo_id", m.centro]] as const) {
     await expect(campo(page, c), `${c}: semeado pela TOP`).toHaveAttribute("data-padrao-top", "semeado");
     await expect(caixa(page, c), `${c}: a dica é o "código · nome" do padrão da TOP`).toHaveText(`${p.codigo} · ${p.nome}`);
@@ -408,13 +417,14 @@ test("LANC-T1 — compra que gera título, TOP com os 5 padrões, o documento tr
     await expect(campo(page, c).locator('[data-parte="req"]'), `${c}: o "*" de hoje (a compra gera título)`).toHaveCount(1);
   }
   // A forma NÃO cobrada não é semeada (S4); nada trava (o documento troca); nenhum aviso; semeado não é alteração.
+  await abrirFinanceiro(page);
   await expect(campo(page, "forma_pagamento_id"), "a forma (presença do campo)").toHaveCount(1);
   await expect(caixa(page, "forma_pagamento_id"), "a forma opcional continua vazia").toHaveClass(/is-empty/);
   await expect(campo(page, "forma_pagamento_id")).not.toHaveAttribute("data-padrao-top", "semeado");
-  await expect(dados(page).locator('fieldset[data-travado-pela-top="true"]'), "o documento troca: nada travado pela TOP").toHaveCount(0);
+  await expect(central(page).locator('fieldset[data-travado-pela-top="true"]'), "o documento troca: nada travado pela TOP").toHaveCount(0);
   await expect(page.getByTestId("padrao-invalido-aviso"), "nenhum aviso de padrão inválido").toHaveCount(0);
   await expect(page.getByTestId(`${P}-alterado`), "o semeado entra no inicial: não é alteração").toHaveCount(0);
-  // O TIPO DE TÍTULO dos dados fiscais (S5): semeado com o nome da TOP.
+  // O TIPO DE TÍTULO no Financeiro (S5): semeado com o nome da TOP.
   await extrasFiscais(page);
   const tipo = page.getByTestId("compras-tipo-titulo");
   await expect(tipo, "o tipo de título: semeado pela TOP").toHaveAttribute("data-padrao-top", "semeado");
@@ -483,19 +493,25 @@ test("LANC-T2 — a TOP que NÃO deixa o documento trocar (documentoTroca false)
   expect([regras["geraTitulos"], regras["exigeFormaPagamento"]], "premissa no fio: gera título e cobra a forma").toEqual([true, true]);
   const ligada = chaveNoFio(regras, "T2");
 
-  const travas = dados(page).locator('fieldset[data-editavel="false"][data-travado-pela-top="true"]');
-  for (const [c, rotulo] of [["categoria_financeira_id", m.natureza.nome], ["centro_custo_id", m.centro.nome], ["forma_pagamento_id", m.forma.label]] as const) {
+  const travas = () => central(page).locator('fieldset[data-editavel="false"][data-travado-pela-top="true"]');
+  const conferirTrava = async (c: string, rotulo: string) => {
     await expect(campo(page, c), `${c}: semeado pela TOP`).toHaveAttribute("data-padrao-top", "semeado");
     await expect(caixa(page, c), `${c}: com o padrão da TOP`).toContainText(rotulo);
-    await expect(travas.locator(`[data-campo="${c}"]`), `${c}: dentro do fieldset da trava`).toHaveCount(1);
+    await expect(travas().locator(`[data-campo="${c}"]`), `${c}: dentro do fieldset da trava`).toHaveCount(1);
     await expect(caixa(page, c), `${c}: o seletor desabilitado`).toBeDisabled();
-  }
-  await expect(travas, "três campos travados pela TOP nos Dados").toHaveCount(3);
+  };
+  // Rateio: natureza e centro (decisão 319).
+  await abrirRateio(page);
+  for (const [c, rotulo] of [["categoria_financeira_id", m.natureza.nome], ["centro_custo_id", m.centro.nome]] as const) await conferirTrava(c, rotulo);
+  await expect(travas(), "dois campos travados pela TOP no Rateio").toHaveCount(2);
   // SEM ESTILO NOVO: a trava é o fieldset do layout, com os mesmos atributos (só a marca de onde veio).
-  const atributos = await travas.evaluateAll((els) => els.map((el) => [el.getAttributeNames().sort().join(","), el.getAttribute("style")]));
-  expect(atributos, "o fieldset de sempre: disabled, data-editavel, display: contents — e a marca da TOP").toEqual(
-    Array.from({ length: 3 }, () => ["data-editavel,data-travado-pela-top,disabled,style", "display: contents;"]));
+  expect(await travas().evaluateAll((els) => els.map((el) => [el.getAttributeNames().sort().join(","), el.getAttribute("style")])),
+    "o fieldset de sempre: disabled, data-editavel, display: contents — e a marca da TOP").toEqual(
+    Array.from({ length: 2 }, () => ["data-editavel,data-travado-pela-top,disabled,style", "display: contents;"]));
   await expect(caixa(page, "fornecedor_id"), "o que a TOP não padroniza continua livre").toBeEnabled();
+  // Financeiro: forma e tipo de título.
+  await abrirFinanceiro(page);
+  await conferirTrava("forma_pagamento_id", m.forma.label);
   await extrasFiscais(page);
   const tipo = page.getByTestId("compras-tipo-titulo");
   await expect(tipo, "o tipo de título: semeado").toHaveAttribute("data-padrao-top", "semeado");
@@ -542,6 +558,7 @@ test("LANC-T3 — receber um pedido cuja TOP de compra tem os 5 padrões: na cri
   const { regras } = await abrirCriacao(page, "compras", topCompra.id);
   premissaDosPadroes(regras, m, { secao: SECAO_NEUTRA, padroes: CINCO_IDS(m) });
   chaveNoFio(regras, "T3");
+  await abrirRateio(page);
   await expect(campo(page, "categoria_financeira_id"), "premissa: na criação, a TOP semeia a natureza").toHaveAttribute("data-padrao-top", "semeado");
   await expect(campo(page, "centro_custo_id"), "premissa: e o centro").toHaveAttribute("data-padrao-top", "semeado");
 
@@ -565,10 +582,14 @@ test("LANC-T3 — receber um pedido cuja TOP de compra tem os 5 padrões: na cri
   await expect(page.getByTestId("compras-salvar")).toBeEnabled();
   await estavel(page);
 
-  for (const c of ["categoria_financeira_id", "centro_custo_id", "forma_pagamento_id"]) {
+  await abrirRateio(page);
+  for (const c of ["categoria_financeira_id", "centro_custo_id"]) {
     await expect(campo(page, c), `${c}: o campo está na tela do receber`).toHaveCount(1);
     await expect(caixa(page, c), `${c}: vazio, como veio do pedido`).toHaveClass(/is-empty/);
   }
+  await abrirFinanceiro(page);
+  await expect(campo(page, "forma_pagamento_id"), "forma_pagamento_id: o campo está na tela do receber").toHaveCount(1);
+  await expect(caixa(page, "forma_pagamento_id"), "forma_pagamento_id: vazio, como veio do pedido").toHaveClass(/is-empty/);
   await expect(central(page).locator("[data-padrao-top]"), "no receber, nada semeado pela TOP").toHaveCount(0);
   await expect(central(page).locator('fieldset[data-travado-pela-top="true"]'), "nem travado").toHaveCount(0);
   await expect(page.getByTestId("padrao-invalido-aviso"), "nem aviso").toHaveCount(0);
@@ -594,6 +615,7 @@ test("LANC-T4 — TOP no 5 que gera título com SÓ o centro: nada semeado (meio
   expect(regras["geraTitulos"], "premissa no fio: gera título").toBe(true);
   chaveNoFio(regras, "T4");
 
+  await abrirRateio(page);
   for (const c of ["categoria_financeira_id", "centro_custo_id"]) {
     await expect(caixa(page, c), `${c}: vazio`).toHaveClass(/is-empty/);
     await expect(campo(page, c).locator('[data-parte="req"]'), `${c}: o "*" de hoje`).toHaveCount(1);
@@ -606,6 +628,7 @@ test("LANC-T4 — TOP no 5 que gera título com SÓ o centro: nada semeado (meio
   for (const k of OMITIDAS_PELO_PAR) expect(Object.hasOwn(envio.corpo, k), `${k}: vazio, fora do corpo`).toBe(false);
   expect(envio.status, "a recusa de hoje do servidor").toBe(422);
   expect(envio.json, "no caminho da natureza, com a mensagem de hoje").toMatchObject({ error: { code: "VALIDATION_ERROR", message: MSG_SEM_O_PAR, details: [{ path: "categoria_financeira_id", message: MSG_SEM_O_PAR }] } });
+  await abrirRateio(page);
   await expect(campo(page, "categoria_financeira_id").locator('[data-parte="erro"]'), "a recusa aparece NO campo").toContainText(MSG_SEM_O_PAR);
   await expect(page, "nada gravado: a Central continua na criação").toHaveURL(/\/compras\/compras\/new\?/);
 });
@@ -620,11 +643,8 @@ test("LANC-T5a — o local do produto: a linha nova nasce com o local do produto
   const outra = (ctx.empresas ?? []).map((e) => e.id).find((e) => e !== m.empresa);
   expect(outra, "premissa: o usuário vê uma segunda empresa").toBeTruthy();
   const daOutra = await criarLocal(page, outra!, m.tag, "local outra empresa");
-  const ajuste = await criarLocal(page, m.empresa, m.tag, "local ajuste");
-  const doTerceiro = await criarLocal(page, m.empresa, m.tag, "local terceiro");
   // nomes que não são prefixo um do outro: a pesquisa da grade escolhe pelo nome inteiro
   const comOutra = await criarProduto(page, m, "item da outra empresa", daOutra.id);
-  const terceiro = await criarProduto(page, m, "item terceiro", doTerceiro.id);
   const top = await topDoCaso(page, "T5a", { configuracao: configuracaoNeutraTopV5(), padroes: OS_CINCO(m) });
 
   // O FIO: as leituras do cadastro do produto e as conferências do local na empresa (`warehouses/options` com `id`).
@@ -656,26 +676,23 @@ test("LANC-T5a — o local do produto: a linha nova nasce com o local do produto
   expect(leituras.length, "o cadastro do produto: a do motor (unidade) e a da Central (lote e local), nenhuma por linha").toBe(2);
   expect(conferencias, ligada ? "uma conferência do local, na empresa do documento" : "desligada: nenhuma conferência do local").toEqual(ligada ? [`${m.empresa}|${m.local.id}`] : []);
 
-  // (2) O produto com o local de OUTRA empresa: ignorado — a linha fica com o do cabeçalho (vazio).
+  // (2) O produto com o local de OUTRA empresa: ignorado — a linha fica sem local (POST; grade enxuta sem coluna).
   await novaLinhaCom(page, comOutra);
   await estavel(page);
-  await expect(linhas(page).nth(3).getByTestId(`${P}-armazem`), "linha 4: o local de outra empresa é ignorado").toHaveText("—");
+  await localDaLinha(linhas(page).nth(3), null, "linha 4: o local de outra empresa é ignorado");
 
-  // (3) O AJUSTE do operador: a linha nasce no local do produto, ele troca, e trocar o produto não derruba o ajuste.
+  // (3) Quinta linha do produto (POST confirma o local). Grade enxuta (decisão 319): sem ajuste por linha na UI —
+  // o invariante "ajuste do operador não cai ao trocar o produto" continua coberto quando exigeArmazem força a coluna (T7).
   await novaLinhaCom(page, m.produto);
   await localDaLinha(linhas(page).nth(4), localNovo, ligada ? "linha 5: nasce no local do produto" : "linha 5: desligada, nasce no do cabeçalho (vazio)");
-  await escolherLocalDaLinha(page, 4, ajuste);
-  await escolherProduto(page, 4, terceiro);
-  await estavel(page);
-  await expect(linhas(page).nth(4).getByTestId(`${P}-armazem`), "linha 5: o ajuste do operador fica (não o local do terceiro produto)").toContainText(ajuste.nome);
 
   for (let i = 0; i < 5; i++) await (await entradaDaLinha(linhas(page).nth(i), `Valor unitário do item ${i + 1}`)).fill("10");
   const envio = await salvar(page, envios);
   const id = await gravou(page, envio);
   const noCorpo = itensDe(envio.corpo).map((i) => i["armazem_id"] ?? null);
   registrar("T5a corpo", noCorpo);
-  const esperado = [localNovo?.id ?? null, localNovo?.id ?? null, localNovo?.id ?? null, null, ajuste.id];
-  expect(noCorpo, ligada ? "no POST: o local do produto, o vazio (outra empresa ignorada) e o ajuste" : "no POST (desligada): sem local nas quatro primeiras, como na main, e o ajuste").toEqual(esperado);
+  const esperado = [localNovo?.id ?? null, localNovo?.id ?? null, localNovo?.id ?? null, null, localNovo?.id ?? null];
+  expect(noCorpo, ligada ? "no POST: o local do produto nas quatro linhas dele e o vazio (outra empresa ignorada)" : "no POST (desligada): sem local nas cinco, como na main").toEqual(esperado);
   expect(JSON.stringify(envio.corpo).includes(daOutra.id), "o POST nunca leva o local da outra empresa").toBe(false);
   expect((await gravado(page, id)).itens_armazem, "o gravado igual ao corpo").toEqual(esperado);
 });
@@ -692,7 +709,7 @@ test("LANC-T5b — o local do cabeçalho ESCOLHIDO pelo operador vence o do prod
   await escolherNoCampo(page, page.getByTestId(`${P}-local-padrao`), escolhido.nome);
   await preencherOMinimo(page, m);
   await estavel(page);
-  await expect(linhas(page).first().getByTestId(`${P}-armazem`), "a escolha do operador no cabeçalho vence o local do produto").toContainText(escolhido.nome);
+  await localDaLinha(linhas(page).first(), escolhido, "a escolha do operador no cabeçalho vence o local do produto");
   const envio = await salvar(page, envios);
   await gravou(page, envio);
   expect(itensDe(envio.corpo).map((i) => i["armazem_id"] ?? null), "no POST: o local escolhido").toEqual([escolhido.id]);
@@ -739,7 +756,8 @@ test("LANC-T6a — PRECEDÊNCIA: o padrão de cadastro do LAYOUT no centro (≠ 
     expect(efetivo, "premissa no fio: o layout ligado com o padrão de cadastro no centro").toMatchObject({ origem: "ligado", id: layout, padroesDeCadastro: { centro_custo_id: { id: doLayout!.id } } });
     registrar("T6a ids", { centroDoLayout: doLayout!.id, centroDaTop: m.centro.id });
 
-    // A TELA (soft: o caso segue até o gravado, que é a conclusão).
+    // A TELA (soft: o caso segue até o gravado, que é a conclusão) — Rateio e classificação.
+    await abrirRateio(page);
     await expect.soft(caixa(page, "centro_custo_id"), "o centro do LAYOUT na tela").toContainText(doLayout!.label);
     await expect.soft(campo(page, "centro_custo_id"), "o centro não é o semeado pela TOP").not.toHaveAttribute("data-padrao-top", "semeado");
     await expect.soft(caixa(page, "categoria_financeira_id"), "a natureza NÃO é semeada (o par da TOP não é o da tela)").toHaveClass(/is-empty/);
@@ -769,6 +787,7 @@ test("LANC-T6b — o layout com o MESMO centro da TOP: a natureza é semeada pel
     premissaDosPadroes(regras, m, { secao: SECAO_NEUTRA, padroes: CINCO_IDS(m) });
     chaveNoFio(regras, "T6b");
     expect(efetivo, "premissa no fio: o layout com o centro da TOP como padrão de cadastro").toMatchObject({ origem: "ligado", id: layout, padroesDeCadastro: { centro_custo_id: { id: m.centro.id } } });
+    await abrirRateio(page);
     await expect(campo(page, "categoria_financeira_id"), "a natureza: semeada pela TOP").toHaveAttribute("data-padrao-top", "semeado");
     await expect(caixa(page, "categoria_financeira_id")).toContainText(m.natureza.nome);
     await expect(caixa(page, "centro_custo_id"), "o centro: o do layout").toContainText(m.centro.nome);
@@ -796,6 +815,7 @@ test("LANC-T7 — a forma COBRADA (execução do M1-E: forma, local e vencimento
   expect([regras["exigeFormaPagamento"], regras["exigeArmazem"], regras["exigeVencimento"]], "premissa no fio: a execução do M1-E").toEqual([true, true, true]);
   const ligada = chaveNoFio(regras, "T7");
   await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
+  await abrirFinanceiro(page);
   await expect(campo(page, "forma_pagamento_id"), "a forma cobrada: semeada").toHaveAttribute("data-padrao-top", "semeado");
   await expect(caixa(page, "forma_pagamento_id"), "com a da TOP").toContainText(m.forma.label);
   await expect(campo(page, "forma_pagamento_id").locator('[data-parte="req"]'), "o \"*\" da regra, já preenchido").toHaveCount(1);
@@ -804,6 +824,7 @@ test("LANC-T7 — a forma COBRADA (execução do M1-E: forma, local e vencimento
   const gestos: string[] = [];
   await preencherOMinimo(page, m); gestos.push("Fornecedor", "Item 1 · Produto", "Item 1 · Valor unitário");
   await localDaLinha(linhas(page).first(), ligada ? m.local : null, ligada ? "o local exigido: o do produto" : "desligada: a linha com o local do cabeçalho (vazio), como na main");
+  await abrirFinanceiro(page);
   const vence = new Date(Date.now() + 30 * 86_400_000);
   const entrada = campo(page, "data_vencimento").locator('input:not([type="hidden"])').first();
   await entrada.fill(dataBr(vence)); await entrada.press("Enter");
@@ -844,6 +865,7 @@ test("LANC-T8 — cabeçalho e itens de hoje intactos: a TOP sem padrões (padro
   expect(regras["geraTitulos"], "premissa no fio: a compra de hoje gera título").toBe(true);
   const ligada = chaveNoFio(regras, "T8");
   await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
+  await abrirRateio(page);
   await expect(campo(page, "categoria_financeira_id"), "premissa: o campo da natureza está na tela").toHaveCount(1);
   await expect(central(page).locator("[data-padrao-top]"), "sem padrões: nada semeado").toHaveCount(0);
   await expect(central(page).locator('fieldset[data-travado-pela-top="true"]'), "nada travado").toHaveCount(0);
@@ -875,6 +897,7 @@ test("LANC-T9 — o PEDIDO de compra: com a provisão ligada a TOP semeia o par 
   // SEM a provisão: o pedido não é classificado pela TOP no salvar — nada semeado (presença do campo antes da ausência).
   const sem = await abrirCriacao(page, "pedidos", semProvisao.id);
   premissaDosPadroes(sem.regras, m, { secao: SECAO_NEUTRA, padroes: CINCO_IDS(m) });
+  await abrirRateio(page);
   await expect(campo(page, "categoria_financeira_id"), "premissa: o campo da natureza está no pedido").toHaveCount(1);
   await expect(central(page).locator("[data-padrao-top]"), "sem a provisão, nada semeado").toHaveCount(0);
 
@@ -893,7 +916,9 @@ test("LANC-T9 — o PEDIDO de compra: com a provisão ligada a TOP semeia o par 
   const ligada = chaveNoFio(com.regras, "T9");
   const localNovo = ligada ? m.local : null;
   await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
+  await abrirRateio(page);
   for (const c of ["categoria_financeira_id", "centro_custo_id"]) await expect(campo(page, c), `${c}: semeado pela TOP que provisiona`).toHaveAttribute("data-padrao-top", "semeado");
+  await abrirFinanceiro(page);
   await expect(caixa(page, "forma_pagamento_id"), "a forma não cobrada: vazia").toHaveClass(/is-empty/);
   await preencherOMinimo(page, m);
   await novaLinhaCom(page, m.produto);
@@ -937,6 +962,7 @@ test("LANC-T10 — a TOP com os 5 padrões E 'Exigir centro de resultado' (exig�
     premissaDosPadroes(regras, m, { secao: c.secao, padroes: CINCO_IDS(m) });
     chaveNoFio(regras, `T10 ${c.segmento}`);
     expect(regras["exigencias"], `premissa no fio (${c.segmento}): a TOP exige o centro de resultado`).toEqual(["centro_custo_id"]);
+    await abrirRateio(page);
     for (const k of OMITIDAS_PELO_PAR) await expect(campo(page, k), `${c.segmento} · ${k}: semeado pela TOP`).toHaveAttribute("data-padrao-top", "semeado");
     await expect(campo(page, "centro_custo_id").locator('[data-parte="req"]'), `${c.segmento}: o "*" da exigência no centro, já preenchido`).toHaveCount(1);
     await preencherOMinimo(page, m);
@@ -962,11 +988,13 @@ test("LANC-T11 — a compra de TOTAL ZERO com a TOP de 5 padrões: o par aparece
   premissaDosPadroes(regras, m, { secao: SECAO_NEUTRA, padroes: CINCO_IDS(m) });
   expect(regras["geraTitulos"], "premissa no fio: a TOP gera título (o que não gera é o total zero)").toBe(true);
   chaveNoFio(regras, "T11");
+  await abrirRateio(page);
   for (const k of OMITIDAS_PELO_PAR) await expect(campo(page, k), `${k}: semeado pela TOP`).toHaveAttribute("data-padrao-top", "semeado");
   await escolherNoCampo(page, campo(page, "fornecedor_id"), m.fornecedor.nome);
   await novaLinhaCom(page, m.produto);
   await expect(await entradaDaLinha(linhas(page).first(), "Valor unitário do item 1"), "premissa: o valor unitário fica no zero com que a linha nasce").toHaveValue("0");
   await expect(page.getByTestId("compras-total"), "premissa: o total do documento é zero").toContainText("0,00");
+  await abrirRateio(page);
   for (const k of OMITIDAS_PELO_PAR) await expect(campo(page, k), `${k}: continua semeado com o total zero`).toHaveAttribute("data-padrao-top", "semeado");
   const envio = await salvar(page, envios);
   const id = await gravou(page, envio);
@@ -1025,6 +1053,7 @@ test("LANC-T12 — a CHAVE do local do produto (emenda R2), lida no fio: DESLIGA
     expect(lidas.produto, "compra: o cadastro do produto lido pelo motor (unidade) e pelo controle de lote — as de hoje, nenhuma por linha").toBe(2);
     if (ligada) expect(lidas.conferencias, "compra ligada: uma conferência do local do produto, na empresa do documento").toEqual([`${m.empresa}|${m.local.id}`]);
     else expect(lidas.opcoesDoLocal, "compra desligada: NENHUMA pergunta a warehouses/options").toEqual([]);
+    await abrirRateio(page);
     await escolherNoCampo(page, campo(page, "categoria_financeira_id"), m.natureza.label);
     await escolherNoCampo(page, campo(page, "centro_custo_id"), m.centro.label);
     await valores();

@@ -112,6 +112,16 @@ export async function abrirAbaDoPainelDeCompras(page: Page, nome: "Financeiro" |
 }
 
 /**
+ * Abre o campo Observação nos Dados principais da Central de Compras (decisão 319: expansível, fora do painel).
+ * Se já estiver aberto (valor gravado ou já expandido), só confere a visibilidade.
+ */
+export async function abrirObservacaoDaCompra(page: Page) {
+  const abrir = page.getByTestId("compras-observacao-abrir");
+  if (await abrir.count()) await abrir.click();
+  await expect(page.getByTestId("compras-observacao"), "Observação nos Dados principais").toBeVisible();
+}
+
+/**
  * Escolhe o primeiro produto REAL na primeira linha de itens da Central de Vendas (VISUAL-UX-01 R1):
  * abre a pesquisa ancorada à célula de produto e clica na primeira opção que o servidor devolveu.
  */

@@ -128,7 +128,8 @@ test("IX-1 — importar o XML e gerar a compra: escolha da empresa, fornecedor p
   await expect(item.getByTestId("importacao-item-1-quantidade-interna"), "10 × 12").toHaveText("120.0000");
   await expect(item.getByTestId("importacao-item-1-unitario-interno"), "1.000,00 ÷ 120, arredondado para cima (a linha fecha o vProd)").toHaveText("8.333334");
   await escolherNoSeletor(page, item.getByTestId("importacao-item-1-local"), c.local.nome);
-  await expect(item.getByTestId("importacao-item-1-lembrar"), "lembrar o vínculo vem marcado").toBeChecked();
+  // "Lembrar" mora na linha de apoio (irmã da linha principal), não dentro de importacao-item-1.
+  await expect(page.getByTestId("importacao-item-1-lembrar"), "lembrar o vínculo vem marcado").toBeChecked();
 
   // FINANCEIRO: as duplicatas da nota; natureza e centro do documento
   await page.getByTestId("importacao-aba-financeiro-rotulo").click();

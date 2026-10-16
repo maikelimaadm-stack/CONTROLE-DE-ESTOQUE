@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { LAYOUT_DO_SISTEMA, configuracaoNeutraTopV5, validarEstruturaLayout, type ConfiguracaoTipoOperacaoV5, type EstruturaLayout } from "@agro/domain";
-import { api, empresaAtiva, login, uniq } from "./helpers";
+import { api, empresaAtiva, login, uniq, abrirAbaDoPainelDeCompras } from "./helpers";
 import { test, expect, codigoTop, criarCadastro, criarTop, doSeed, referenciasDoSeed, type Opcao } from "./central-compras-fixtures";
 
 /**
@@ -236,7 +236,7 @@ async function nomeNaTela(page: Page, caminho: string): Promise<string> {
     const coluna = (await th.count()) ? (await th.first().innerText()).replace(/\s*\*\s*$/, "").trim() : item[2]!;
     return `Item ${Number(item[1]) + 1} · ${coluna}`;
   }
-  const r = page.getByTestId(`${P}-dados`).locator(`[data-campo="${caminho}"] [data-parte="rotulo"]`);
+  const r = page.getByTestId("compras-central").locator(`[data-campo="${caminho}"] [data-parte="rotulo"]`);
   return (await r.count()) ? (await r.first().innerText()).replace(/\s*\*\s*$/, "").trim() : caminho;
 }
 
@@ -300,10 +300,16 @@ async function preencher(page: Page, m: Montado, caminho: string): Promise<strin
         return `escolheu o produto ${m.produto.nome}`;
       }
       case "armazem_id": {
-        await linha.getByTestId(`${P}-armazem`).click();
-        await page.getByPlaceholder("Pesquisar pela descrição").fill(m.tag);
-        await page.getByRole("option", { name: literal(m.local.nome.slice(0, 20)) }).first().click();
-        await expect(linha.getByTestId(`${P}-armazem`)).toContainText(m.local.nome);
+        const celula = linha.getByTestId(`${P}-armazem`);
+        if (await celula.count()) {
+          await celula.click();
+          await page.getByPlaceholder("Pesquisar pela descrição").fill(m.tag);
+          await page.getByRole("option", { name: literal(m.local.nome.slice(0, 20)) }).first().click();
+          await expect(celula).toContainText(m.local.nome);
+        } else {
+          // Grade enxuta: local do cabeçalho acima da grade.
+          await escolherNoCampo(page, page.getByTestId(`${P}-local-padrao`), m.local.nome);
+        }
         return `escolheu o local ${m.local.nome}`;
       }
       case "valor_unitario": {
@@ -317,10 +323,13 @@ async function preencher(page: Page, m: Montado, caminho: string): Promise<strin
       default: throw new Error(`a medição não sabe tocar o campo do item "${caminho}": acrescente o gesto em preencher()`);
     }
   }
-  const dados = page.getByTestId(`${P}-dados`);
-  const campo = dados.locator(`[data-campo="${caminho}"]`);
-  await expect(campo, `o campo ${caminho} está desenhado nos Dados`).toHaveCount(1);
-  // Sem acordeão: o campo dos extras já está à vista (ou o layout o pôs nos principais).
+  // Decisão 319: natureza/centro no Rateio; forma/vencimento no Financeiro; o resto nos Dados.
+  if (caminho === "categoria_financeira_id" || caminho === "centro_custo_id") await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
+  else if (caminho === "forma_pagamento_id" || caminho === "data_vencimento" || caminho === "condicao_pagamento_id" || caminho === "plano_parcelas") {
+    await abrirAbaDoPainelDeCompras(page, "Financeiro");
+  }
+  const campo = page.getByTestId("compras-central").locator(`[data-campo="${caminho}"]`);
+  await expect(campo, `o campo ${caminho} está na Central`).toHaveCount(1);
   await expect(campo).toBeVisible();
   const ref = (o: Opcao) => escolherNoCampo(page, campo, o.label).then(() => `escolheu ${o.label}`);
   switch (caminho) {
