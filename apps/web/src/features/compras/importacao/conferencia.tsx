@@ -43,7 +43,7 @@ import { AbaDivergencias } from "./aba-divergencias";
  */
 
 const NOME_DA_ABA: Record<AbaDaConferencia, string> = {
-  cabecalho: "Cabeçalho", itens: "Itens, vínculos e lotes", pedido: "Pedido", financeiro: "Financeiro", divergencias: "Divergências"
+  cabecalho: "Cabeçalho", itens: "Itens", pedido: "Pedido", financeiro: "Financeiro", divergencias: "Divergências"
 };
 const DICA_DO_GERAR = "Gera uma compra ABERTA. A confirmação (estoque e financeiro) é feita depois, na consulta da compra, com a prévia.";
 
@@ -151,10 +151,9 @@ function ConferenciaCarregada({ conf, solicitacaoId, relendo, erroDaReleitura, o
   };
 
   const bloqueado = e.bloqueios.length > 0 || !e.corpo();
-  const contador = (a: AbaDaConferencia) => {
-    const n = e.divergencias.filter((d) => d.bloqueia && d.aba === a).length + e.recusasPorAba(a);
-    return a === "divergencias" ? e.divergencias.length + e.recusasPorAba(a) : n;
-  };
+  /** Contador da aba: só o que BLOQUEIA nela + as recusas do último Gerar que apontam para ela (mesma regra em todas). */
+  const contador = (a: AbaDaConferencia) =>
+    e.divergencias.filter((d) => d.bloqueia && d.aba === a).length + e.recusasPorAba(a);
   const subtitulo = <>
     <span>{nota.emitente.nome} ({nota.emitente.documento})</span> · <span data-testid="importacao-empresa-da-compra">{conf.empresa.nome}</span> · <span className="font-mono text-[11px]" data-testid="importacao-chave">{formatarChaveDeAcesso(nota.chave)}</span>
   </>;

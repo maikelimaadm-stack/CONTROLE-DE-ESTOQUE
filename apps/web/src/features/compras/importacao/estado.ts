@@ -112,11 +112,13 @@ export const percentualValido = (v: string) => /^\d{1,3}(\.\d{1,4})?$/.test(v) &
 
 /* ═════════════════════════════════════ caminho → aba ═════════════════════════════════════ */
 
-/** A aba de um `path` de recusa do servidor (o corpo do gerar). Desconhecido → Divergências. */
+/** A aba de um `path` de recusa do servidor (o corpo do gerar ou a exigência da TOP). Desconhecido → Divergências. */
 export function abaDoCaminho(path: string): AbaDaConferencia {
   if (/^itens\[\d+\]\.item_origem_id$/.test(path) || path === "pedido_id") return "pedido";
   if (path === "itens" || path.startsWith("itens[")) return "itens";
   if (path.startsWith("financeiro")) return "financeiro";
+  // Exigências da TOP e campos do financeiro sem o prefixo `financeiro.` (o detalhe usa o caminho do documento).
+  if (["centro_custo_id", "categoria_financeira_id", "forma_pagamento_id", "condicao_pagamento_id", "data_vencimento", "tipo_titulo_id", "classificacao_gasto"].includes(path)) return "financeiro";
   if (["tipo_operacao_id", "fornecedor_id", "data_entrada", "observacao", "transportadora_id", "solicitacao_compra_id", "empresa_id"].includes(path)) return "cabecalho";
   return "divergencias";
 }

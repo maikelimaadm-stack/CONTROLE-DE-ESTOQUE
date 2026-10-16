@@ -110,13 +110,30 @@ export async function criarProdutosDaImportacao(id: string, corpo: CriarProdutos
 /** Um detalhe de recusa por campo (422): `path` diz o campo (e a aba), `message` o porquê. */
 export interface RecusaNoCampo { path: string; message: string; motivo?: string }
 
-/** Os detalhes de uma recusa 422 (lista de `{ path, message }`); outra forma → []. */
+/**
+ * Os detalhes de uma recusa 422:
+ *   · lista `{ path, message }` (validação do corpo);
+ *   · OU `{ exigencias: [{ caminho, mensagem }] }` (TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA — o molde da compra).
+ * Outra forma → [].
+ */
 export function recusasNoCampo(e: unknown): RecusaNoCampo[] {
-  if (!(e instanceof ApiError) || !Array.isArray(e.details)) return [];
+  if (!(e instanceof ApiError) || e.details === undefined || e.details === null) return [];
   const out: RecusaNoCampo[] = [];
-  for (const d of e.details as unknown[]) {
-    if (!ehObjeto(d) || !ehTexto(d.path) || !ehTexto(d.message)) continue;
-    out.push({ path: d.path, message: d.message, ...(ehTexto(d.motivo) ? { motivo: d.motivo } : {}) });
+  if (Array.isArray(e.details)) {
+    for (const d of e.details as unknown[]) {
+      if (!ehObjeto(d) || !ehTexto(d.path) || !ehTexto(d.message)) continue;
+      out.push({ path: d.path, message: d.message, ...(ehTexto(d.motivo) ? { motivo: d.motivo } : {}) });
+    }
+    return out;
+  }
+  if (ehObjeto(e.details) && Array.isArray(e.details.exigencias)) {
+    for (const d of e.details.exigencias as unknown[]) {
+      if (!ehObjeto(d)) continue;
+      const path = ehTexto(d.caminho) ? d.caminho : ehTexto(d.path) ? d.path : "";
+      const message = ehTexto(d.mensagem) ? d.mensagem : ehTexto(d.message) ? d.message : "";
+      if (!path || !message) continue;
+      out.push({ path, message });
+    }
   }
   return out;
 }
