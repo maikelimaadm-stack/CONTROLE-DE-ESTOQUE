@@ -74,6 +74,13 @@ export function AvisosDaCriacao({ e }: { e: EstadoDaCriacao }) {
 export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const { can } = useAuth();
   const [obsAberta, setObsAberta] = React.useState(false);
+  const observacaoAnterior = React.useRef(e.cabecalho.observacao);
+  // Descartar (ou limpar) a observação recolhe o expansível — volta ao "Adicionar observação" da abertura.
+  React.useEffect(() => {
+    const atual = e.cabecalho.observacao;
+    if (observacaoAnterior.current && !atual) setObsAberta(false);
+    observacaoAnterior.current = atual;
+  }, [e.cabecalho.observacao]);
   if (!e.mostrarFormulario) return null;
   const h = e.cabecalho;
   const receber = e.modo === "receber";
@@ -180,7 +187,8 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
 
   return <>
     {linhaDoLayout}
-    <div data-testid="compras-dados-principais" className="flex flex-col gap-2">
+    {/* gap 6px = ColunaDeCampos / VD-1 (CC-1 mede o espaço entre Fornecedor e a linha abaixo). */}
+    <div data-testid="compras-dados-principais" className="flex flex-col gap-[6px]">
       {/* Linha 1: Empresa · Tipo de operação */}
       {linha(<>
         {tem("empresa_id") && render("empresa_id")}
