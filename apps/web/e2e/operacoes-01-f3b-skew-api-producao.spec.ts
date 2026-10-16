@@ -286,26 +286,30 @@ test("OP01-F3b · K-1b (sentido 1) — a Central de Compras deste web sobre a AP
   await expect(page.getByTestId("compras-salvar"), "o Salvar saiu da trava: as regras chegaram").toBeEnabled();
   await conferirCapacidadeNoFio(await capacidade, mundo);
 
-  // A ORDEM DAS COLUNAS: as que o layout da base cita aparecem na ordem dele (o motor só acrescenta as que o catálogo
-  // da compra não cita, na posição de sempre)
+  // A GRADE ENXUTA (decisão 319): produto/qtd/valores visíveis; o Local de estoque padrão fica ACIMA da grade
+  // (não como coluna). O layout da base ainda cita armazem_id — a organização da tela o tira da grade.
   const camposDaBase = await camposDoLayoutDaBase(await layout);
-  expect(camposDaBase.indexOf("armazem_id") >= 0 && camposDaBase.indexOf("produto_id") >= 0, "premissa: o layout da base desenha o Local de estoque e o Produto").toBe(true);
+  expect(camposDaBase.indexOf("armazem_id") >= 0 && camposDaBase.indexOf("produto_id") >= 0, "premissa: o layout da base cita Local de estoque e Produto").toBe(true);
   const lerDesenhadas = () => page.getByTestId("compras-itens").locator("thead th[data-campo]").evaluateAll((ths) => ths.map((th) => th.getAttribute("data-campo") ?? ""));
-  await expect.poll(lerDesenhadas, { message: "premissa: a grade desenha o Local de estoque e o Produto" }).toEqual(expect.arrayContaining(["armazem_id", "produto_id"]));
+  await expect.poll(lerDesenhadas, { message: "a grade enxuta desenha o Produto (sem coluna de armazém)" }).toEqual(expect.arrayContaining(["produto_id"]));
   const desenhadas = await lerDesenhadas();
-  expect(desenhadas.filter((x) => camposDaBase.includes(x)), "as colunas do layout da base, na ordem dele").toEqual(camposDaBase.filter((x) => desenhadas.includes(x)));
+  expect(desenhadas.includes("armazem_id"), "Local de estoque não é coluna da grade (fica acima)").toBe(false);
 
-  // O LOCAL DE ESTOQUE DO CABEÇALHO e o cabeçalho do documento
+  // O LOCAL DE ESTOQUE DO CABEÇALHO (acima da grade) e o cabeçalho do documento
   const localPadrao = page.getByTestId(`${PC}-local-padrao`);
   await expect(localPadrao).toContainText("Local de estoque");
   await escolherNoCampo(page, localPadrao, c.l1.nome);
   await escolherNoCampo(page, campoPeloRotulo(page, "Fornecedor"), fornecedor);
+  const abaRateio = page.getByTestId(`${PC}-painel`).getByRole("tab", { name: /^Rateio e classificação/ });
+  if (await abaRateio.count()) {
+    await abaRateio.click();
+    await expect(abaRateio).toHaveAttribute("aria-selected", "true");
+  }
   await escolherNoCampo(page, campoPeloRotulo(page, "Natureza de despesa"), ref.natureza.label);
   await escolherNoCampo(page, campoPeloRotulo(page, "Centro de resultado"), ref.centro.label);
   await page.getByTestId(`${PC}-adicionar-item`).click();
   const linha = page.getByTestId(`${PC}-linha`).first();
   await expect(page.getByTestId(`${PC}-linha`)).toHaveCount(1);
-  await expect(linha.getByTestId(`${PC}-armazem`), "a linha nova nasceu com o Local de estoque do cabeçalho").toContainText(c.l1.nome);
 
   // A PESQUISA DE PRODUTO da linha (entrada): P2, sem saldo
   const painel = await pesquisarProdutoDaLinha(page, PC, linha.getByTestId(`${PC}-produto`), c, mundo, "entrada");
