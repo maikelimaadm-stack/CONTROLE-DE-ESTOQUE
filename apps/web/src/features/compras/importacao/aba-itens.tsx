@@ -58,7 +58,7 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
             <th className="w-20">Fator</th>
             <th className="w-28">Conversão</th>
             <th className="text-right">Qtd interna</th>
-            <th className="text-right">Unit. interno</th>
+            <th className="text-right">Unitário interno</th>
             <th>Local</th>
           </tr>
         </thead>
