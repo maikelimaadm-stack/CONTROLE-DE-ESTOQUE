@@ -1,7 +1,7 @@
 import type { Locator, Page, Response } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { api, empresaAtiva, login, uniq } from "./helpers";
+import { api, empresaAtiva, login, uniq, abrirAbaDoPainelDeCompras } from "./helpers";
 import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 import { vigiar, type Mundo } from "./operacoes-01-f2-skew-comum";
 import { garantirCommit, shaDaBase } from "./skew-fonte-da-base";
@@ -111,6 +111,7 @@ test("OP01-F7 · K2-1 (sentido 2) — a Central de Compras da base lança a comp
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
   await expect(page.getByTestId("compras-salvar"), "o Salvar saiu da trava: as regras chegaram").toBeEnabled();
   await escolher(page, "Fornecedor", nomeFornecedor);
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", ref.natureza.label);
   await escolher(page, "Centro de resultado", ref.centro.label);
   await page.getByTestId(`${PC}-adicionar-item`).click();

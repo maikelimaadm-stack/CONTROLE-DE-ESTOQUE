@@ -1,5 +1,5 @@
 import type { Locator, Page, Request, Response } from "@playwright/test";
-import { login, api, uniq, empresaAtiva, pickRef, adicionarItemNaCentral, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
+import { login, api, uniq, empresaAtiva, pickRef, adicionarItemNaCentral, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, abrirAbaDoPainelDeCompras } from "./helpers";
 import { cfg4, cabecalhosDaSessao, type RegrasGeraisE2E } from "./top-config-08-comum";
 import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 import { mundoDoWebDaBase, premissaDaApiDestaFase, regrasGeraisDoCorpo, vigiar, type Mundo, type RegrasGeraisNoFio } from "./operacoes-01-f2-skew-comum";
@@ -245,6 +245,7 @@ async function abrirCriacaoDeCompra(page: Page, top: string, c: CenarioDaCompra,
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
   await expect(page.getByTestId("compras-salvar"), "o Salvar saiu da trava: as regras chegaram").toBeEnabled();
   await escolher(page, "Fornecedor", c.nomeFornecedor);
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
 }

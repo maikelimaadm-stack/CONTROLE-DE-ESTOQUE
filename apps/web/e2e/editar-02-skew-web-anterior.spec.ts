@@ -1,5 +1,5 @@
 import type { Locator, Page, Request, Response } from "@playwright/test";
-import { api, empresaAtiva, login } from "./helpers";
+import { api, empresaAtiva, login, abrirAbaDoPainelDeCompras } from "./helpers";
 import { cabecalhosDaSessao } from "./top-config-08-comum";
 import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 import { API, MSG_DOCUMENTO_NAO_ENCONTRADO, UUID_INEXISTENTE, vigiar, type Mundo } from "./operacoes-01-f2-skew-comum";
@@ -145,6 +145,7 @@ test("EDITAR-02 · K-2 (sentido 2) — o web da base sobre a API deste HEAD: cri
   await page.goto(`/compras/compras/new?tipo_operacao_id=${c.topCompra}`);
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
   await escolher(page, "Fornecedor", c.fornecedor.nome);
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.ref.natureza.label);
   await escolher(page, "Centro de resultado", c.ref.centro.label);
   const itens = page.getByTestId("compras-itens");
