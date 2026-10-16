@@ -57,9 +57,9 @@ BotaoDaBarra.displayName = "BotaoDaBarra";
 
 /** A pílula (`.tbp`): ícone e texto — Confirmar e as ações de avanço da espécie. */
 export const PilulaDaBarra = React.forwardRef<HTMLButtonElement, PropsDaPilulaDaBarra>(
-  ({ icone, dica, ocupado, className, children, disabled, ...p }, ref) =>
+  ({ icone, dica, ocupado, perigo, className, children, disabled, ...p }, ref) =>
     <button ref={ref} type="button" data-dica={dica} aria-busy={ocupado || undefined} disabled={disabled || ocupado}
-      className={cn(estilos.pilula, estilosCentral.dicaInicio, className)} {...p}>
+      className={cn(estilos.pilula, perigo && estilos.pilulaPerigo, estilosCentral.dicaInicio, className)} {...p}>
       {ocupado ? <IconeGirando /> : icone}{children}
     </button>);
 PilulaDaBarra.displayName = "PilulaDaBarra";

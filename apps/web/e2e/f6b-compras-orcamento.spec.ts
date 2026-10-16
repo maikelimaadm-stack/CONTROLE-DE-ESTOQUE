@@ -84,16 +84,6 @@ async function preencherPreco(page: Page, itemPedidoId: string, n: number, valor
   await expect(campo).toHaveValue(valor);
 }
 
-/** Abre o leque de Ações rápidas (se fechado) e devolve o item. */
-async function itemDoLeque(page: Page, testId: string) {
-  const leque = page.getByTestId(`${P}-acoes-rapidas`);
-  if ((await leque.getAttribute("aria-expanded")) !== "true") await leque.click();
-  await expect(leque).toHaveAttribute("aria-expanded", "true");
-  const item = page.getByTestId(testId);
-  await expect(item).toBeVisible();
-  return item;
-}
-
 /** Abre a aba "Orçamentos" do painel da consulta do pedido. */
 async function abrirAbaDosOrcamentos(page: Page) {
   const aba = page.getByTestId(`${P}-painel`).getByRole("tab", { name: /^Orçamentos/ });
@@ -269,10 +259,10 @@ test("F6B-O1 — editar o orçamento no lugar: UM PUT com todas as chaves e Idem
   expect((await lerOrcamento(page, orcB.id)).situacao, "no servidor: B cancelado").toBe("cancelado");
   await expect(aviso, "o A continua aberto: o aviso fica").toBeVisible();
 
-  // (6) O A PELA CONSULTA DELE: o leque "Cancelar orçamento de compra…"; depois, "Editar orçamento" desabilitado.
+  // (6) O A PELA CONSULTA DELE: a pílula "Cancelar orçamento de compra…"; depois, "Editar orçamento" desabilitado.
   await page.goto(`/compras/orcamentos/${orcA.id}`);
   await expect(corpo).toHaveAttribute("data-situacao", "aberto");
-  await (await itemDoLeque(page, "compras-cancelar")).click();
+  await page.getByTestId("compras-cancelar").click();
   const cancelouA = page.waitForResponse((r) => r.request().method() === "POST" && caminho(r) === `/api/compras/orcamentos/${orcA.id}/cancel`);
   await page.getByTestId("confirm-dialog").getByRole("button", { name: "Cancelar orçamento de compra" }).click();
   expect((await cancelouA).status()).toBe(200);

@@ -104,6 +104,10 @@ async function salvarCriacao(page: Page, segmento: "compras" | "pedidos"): Promi
   return { id, leitura: (await leitura.json()) as Record<string, unknown> };
 }
 
+/**
+ * Este spec roda o WEB DA BASE sobre a API deste HEAD (skew sentido 2). Na base, Cancelar ainda mora no leque
+ * (Ações rápidas); a pílula na barra é desta fatia — por isso abre o leque, e não clica a pílula.
+ */
 async function itemDoLeque(page: Page, testId: string) {
   const leque = page.getByTestId(`${P}-acoes-rapidas`);
   if ((await leque.getAttribute("aria-expanded")) !== "true") await leque.click();
@@ -114,8 +118,7 @@ async function itemDoLeque(page: Page, testId: string) {
 }
 
 async function cancelarPelaTela(page: Page, segmento: "compras" | "pedidos", id: string, rotuloDoBotao: string) {
-  // O aviso da ação anterior (o "Sucesso" do confirmar) cobre o leque enquanto está na tela: espera ele sair, como o
-  // operador espera — sem forçar o clique por cima dele.
+  // O aviso da ação anterior (o "Sucesso" do confirmar) cobre o leque enquanto está na tela: espera ele sair.
   await expect(page.locator("[data-sonner-toast]"), "o aviso da ação anterior saiu da frente do leque").toHaveCount(0, { timeout: 20_000 });
   const cancelou = page.waitForResponse((r) => r.request().method() === "POST" && caminho(r) === `/api/compras/${segmento}/${id}/cancel`);
   await (await itemDoLeque(page, "compras-cancelar")).click();

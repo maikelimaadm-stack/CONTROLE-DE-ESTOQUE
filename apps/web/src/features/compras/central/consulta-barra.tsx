@@ -45,6 +45,8 @@ import { IconeEditar } from "../orcamento/consulta-orcamento";
  *     com `<recurso>.edit` E `.view`; desabilitada com o motivo (`data-dica`/`data-motivo`) no confirmado, no cancelado,
  *     no pedido com compra viva, finalizado ou convertido — e na recusa que o `/edicao` acabou de dar. O handler confere a
  *     MESMA regra (`e.editar.abrir`).
+ *   - Cancelar <espécie>…: pílula na barra (vermelha, `compras-cancelar`), não no leque — a rota e a regra são as de
+ *     sempre (`POST …/cancel`, `<recurso>.delete`); desabilitada com a dica quando o pedido tem compra viva.
  *
  * Nada aqui chama a API de escrita: confirmar, cancelar e encerrar moram no estado (`useEstadoDaConsulta`).
  * Duplicar entrega a cópia em memória (nada na URL além da TOP, nada em storage) e abre a criação.
@@ -210,17 +212,23 @@ export function useBarraDaConsulta({ e, rotulo, densidade, onDensidade, salvoVis
     {e.aprovarParaOrcamento.visivel && <PilulaDaBarra icone={<IconeRaio />} dica="Aprovar o pedido para orçamento" ocupado={e.aprovarParaOrcamento.ocupado}
       data-testid="compras-aprovar-para-orcamento" onClick={e.aprovarParaOrcamento.abrir}>Aprovar para orçamento</PilulaDaBarra>}
     {pilulaNovoOrcamento}
+    {e.podeCancelar && <PilulaDaBarra icone={<IconeCancelarDocumento />} perigo
+      dica={e.dicaCancelarDesabilitado ?? `Cancelar ${especie}`}
+      disabled={e.dicaCancelarDesabilitado !== null || e.cancelarOcupado}
+      ocupado={e.cancelarOcupado}
+      data-testid="compras-cancelar"
+      data-motivo={e.dicaCancelarDesabilitado ?? undefined}
+      onClick={() => { if (e.dicaCancelarDesabilitado === null && !e.cancelarOcupado) e.setCancelando(true); }}>
+      Cancelar {especie}…
+    </PilulaDaBarra>}
   </ConjuntoDaBarra>;
 
-  /* O LEQUE: Imprimir, Histórico, N documentos abertos, Cancelar <espécie>… (vermelho). Sem Anexos. */
+  /* O LEQUE: Imprimir, Histórico, N documentos abertos. Cancelar mora na barra (pílula). Sem Anexos. */
   const antes: ItemRapido[] = [
     { chave: "imprimir", rotulo: "Imprimir", testId: `${PREFIXO}-imprimir`, icone: <IconeImprimir />, onSelect: () => window.print() },
     ...(e.podeVerHistorico ? [{ chave: "historico", rotulo: "Histórico de alterações", testId: `${PREFIXO}-historico`, icone: <IconeHistorico />, onSelect: () => setHistorico(true) }] : [])
   ];
-  const depois: ItemRapido[] = e.podeCancelar ? [{
-    chave: "cancelar", rotulo: e.dicaCancelarDesabilitado ?? `Cancelar ${especie}…`, testId: "compras-cancelar", icone: <IconeCancelarDocumento />, perigo: true,
-    desabilitado: e.dicaCancelarDesabilitado !== null || e.cancelarOcupado, onSelect: () => e.setCancelando(true)
-  }] : [];
+  const depois: ItemRapido[] = [];
 
   const direita = <ConjuntoDireito>
     {e.confirmarOcupado ? <IndicadorConfirmando prefixoTestid={PREFIXO} /> : salvoVisivel ? <IndicadorSalvo prefixoTestid={PREFIXO} /> : null}

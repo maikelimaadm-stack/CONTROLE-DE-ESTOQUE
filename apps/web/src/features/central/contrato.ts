@@ -213,7 +213,11 @@ export interface PropsDasPendencias {
 export type PropsDoBotaoDaBarra = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   rotulo: string; dica?: string; solido?: boolean; ocupado?: boolean; dicaNoFim?: boolean;
 };
-export type PropsDaPilulaDaBarra = React.ButtonHTMLAttributes<HTMLButtonElement> & { icone: React.ReactNode; dica?: string; ocupado?: boolean };
+export type PropsDaPilulaDaBarra = React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  icone: React.ReactNode; dica?: string; ocupado?: boolean;
+  /** Ação destrutiva (Cancelar documento): mesma cor do item `perigo` do leque. Ausente = pílula de sempre. */
+  perigo?: boolean;
+};
 export interface PropsDoConjunto { children: React.ReactNode }
 export interface PropsDosIndicadores { prefixoTestid: string }
 /** O que a criação deixa para a consulta: o "Salvo" e o pedido de abrir a confirmação. */
