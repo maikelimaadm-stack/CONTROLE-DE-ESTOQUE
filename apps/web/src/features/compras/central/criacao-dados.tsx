@@ -6,17 +6,18 @@ import { useAuth } from "@/lib/auth";
 import { Input, LoadingState, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { MensagemTop } from "@/features/sales/tipo-operacao-select";
-import { CampoDaCentral, ColunaDeCampos, DadosAdicionais, DataDaCentral, type IconeDoCampo } from "@/features/central/campo";
+import { CampoDaCentral, ColunaDeCampos, DataDaCentral, type IconeDoCampo } from "@/features/central/campo";
 import { PlanoDaCentral } from "@/features/central/painel";
 import { CampoDoLocalPadrao } from "@/features/central/local-padrao";
 import type { IdentidadeDoDocumento } from "@/features/central/contrato";
 import estilosCv from "@/features/central/moldura.module.css";
+import { CamposExtrasDaCompra } from "../campos-extras";
 import { hrefDoConfigurador, textoDoLayoutQueVale } from "../layout-da-central";
 import { PREFIXO_CENTRAL_COMPRAS } from "./adaptador";
-import { CAMPOS_DOS_DADOS_FISCAIS, opcoesDeNaturezaDeDespesa, type ChaveDoCabecalho, type EstadoDaCriacao } from "./estado";
+import { opcoesDeNaturezaDeDespesa, type ChaveDoCabecalho, type EstadoDaCriacao } from "./estado";
 import { DadosFiscaisDaConsulta, DadosFiscaisDaCriacao, RateioDaConsulta, temDadosFiscais } from "./dados-fiscais";
 import { dicaDaIdentidadeNaEdicao } from "./edicao";
-import { blocoFiscalNosDados, erroEscondidoNosDados, quantidadeDosDadosAdicionais } from "./rateio-no-rodape";
+import { blocoFiscalNosDados } from "./rateio-no-rodape";
 
 /**
  * CENTRAL DE COMPRAS — DADOS PRINCIPAIS DA CRIAÇÃO (VISUAL-UX-04, decisão 276).
@@ -32,12 +33,14 @@ import { blocoFiscalNosDados, erroEscondidoNosDados, quantidadeDosDadosAdicionai
  * fora do corpo; no receber não aparece.
  *
  * OPERACOES-01 F7 (decisão 284): na criação da COMPRA, com a capacidade `importacaoXml` "sim", o bloco "Dados fiscais"
- * (`compras-dados-fiscais`) no FIM dos Dados adicionais — fora do layout (não é campo dele: sem `data-campo`, sem "*",
+ * (`compras-dados-fiscais`) no FIM dos campos extras — fora do layout (não é campo dele: sem `data-campo`, sem "*",
  * fora das pendências). Sem a capacidade, nada muda.
  *
  * RATEIO-01 (decisão 316): o RATEIO e a classificação dos itens saíram desse bloco — moram na aba "Rateio" do painel
- * (`criacao-painel.tsx`). Aqui ficam os oito dados fiscais do cabeçalho; a contagem e o erro escondido deixam o rateio
- * de fora (a recusa dele abre a aba dele) — as contas em `rateio-no-rodape.ts`.
+ * (`criacao-painel.tsx`). Aqui ficam os oito dados fiscais do cabeçalho.
+ *
+ * Sem "Dados adicionais · N campos": os campos da zona adicional e o bloco fiscal ficam sempre à vista
+ * (`CamposExtrasDaCompra`), sem o acordeão.
  *
  * EDITAR-02 (decisão 313): na EDIÇÃO, o campo que a PATCH não aceita fica no MESMO `fieldset` travado de sempre, com
  * `data-travado-na-edicao="true"` e o motivo do servidor em `data-motivo` e na `dica` do campo (o `title` que o
@@ -91,10 +94,9 @@ export function AvisosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   </>;
 }
 
-/** Dados principais + Dados adicionais (zonas do layout). Sem o pedido pronto (receber), nada: a faixa diz o que falta. */
+/** Dados principais + campos extras (zonas do layout), sem acordeão. Sem o pedido pronto (receber), nada: a faixa diz o que falta. */
 export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const { can } = useAuth();
-  const [maisDados, setMaisDados] = React.useState(false);
   if (!e.mostrarFormulario) return null;
   const h = e.cabecalho;
   const receber = e.modo === "receber";
@@ -188,23 +190,15 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const comOLocal = (campos: readonly string[]) => campos.flatMap((c) => (c === "empresa_id" && e.localNaGrade
     ? [render(c), <CampoDoLocalPadrao key="local-padrao" prefixoTestid={PREFIXO_CENTRAL_COMPRAS} empresaId={h.empresa_id} valor={e.localDoCabecalho} onChange={e.escolherLocal} />]
     : [render(c)]));
-  const recolhidos = [...adicionais, ...abas.flatMap((a) => a.campos)];
   /* Os DADOS FISCAIS (F7) moram nos Dados do documento — o desenho que traz a TOP travada —, nunca no campo único que o
      painel desenha por este mesmo componente (`estadoDeUmCampo`, em `central-compras.tsx`, zera a TOP): lá o bloco
-     repetiria os campos (e o botão "Dados adicionais") em cada campo do painel. */
+     repetiria os campos em cada campo do painel. */
   const comDadosFiscais = blocoFiscalNosDados(e);
   /* EDITAR-02: na edição da compra com dados fiscais, os MESMOS blocos de leitura da consulta (nos Dados do documento,
      nunca no campo único do painel — o mesmo critério do bloco da criação). */
   const fiscaisEmLeitura = e.modo === "edicao" && e.ehCompra && e.top !== null && e.documentoEmEdicao !== null && temDadosFiscais(e.documentoEmEdicao)
     ? e.documentoEmEdicao : null;
-  // o Local de estoque conta como campo de Dados adicionais quando a Empresa mora lá; os dados fiscais, quando existem
-  // (RATEIO-01: na criação, sem o rateio — ele está no painel)
-  const quantidade = quantidadeDosDadosAdicionais({ recolhidos, localNaGrade: e.localNaGrade,
-    fiscais: comDadosFiscais ? "criacao" : fiscaisEmLeitura ? "leitura" : null, camposFiscais: CAMPOS_DOS_DADOS_FISCAIS.length });
-  /* Campo com erro numa zona recolhida não ficaria à vista: com erro lá dentro, Dados adicionais abre (a recusa do rateio
-     abre a aba dele, no painel — RATEIO-01). */
-  const erroEscondido = erroEscondidoNosDados({ recolhidos, blocoFiscal: comDadosFiscais, camposFiscais: CAMPOS_DOS_DADOS_FISCAIS, erro: e.erro });
-  const aberto = maisDados || erroEscondido;
+  const temExtras = adicionais.length > 0 || abas.length > 0 || comDadosFiscais || fiscaisEmLeitura !== null;
 
   return <>
     {linhaDoLayout}
@@ -212,19 +206,16 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
       {top}
       {comOLocal(principais)}
     </ColunaDeCampos>
-    <DadosAdicionais quantidade={quantidade} aberto={aberto} onAlternar={() => setMaisDados(!aberto)}>
-      {adicionais.length > 0 && <div data-testid="compras-zona-adicionais">
-        <ColunaDeCampos>{comOLocal(adicionais)}</ColunaDeCampos>
-      </div>}
-      {abas.map((a) => <div key={a.indice} data-testid={`compras-zona-aba-${a.indice}`} className="space-y-1">
-        <p className="text-[11px] font-semibold uppercase text-slate-500">{a.aba}</p>
-        <ColunaDeCampos>{comOLocal(a.campos)}</ColunaDeCampos>
+    {temExtras && <CamposExtrasDaCompra>
+      {adicionais.length > 0 && <div data-testid="compras-zona-adicionais" className="contents">{comOLocal(adicionais)}</div>}
+      {abas.map((a) => <div key={a.indice} data-testid={`compras-zona-aba-${a.indice}`} className="contents">
+        {comOLocal(a.campos)}
       </div>)}
       {comDadosFiscais && <DadosFiscaisDaCriacao e={e} />}
       {fiscaisEmLeitura && <div data-testid="compras-edicao-dados-fiscais" className="contents">
         <DadosFiscaisDaConsulta d={fiscaisEmLeitura} />
         <RateioDaConsulta d={fiscaisEmLeitura} />
       </div>}
-    </DadosAdicionais>
+    </CamposExtrasDaCompra>}
   </>;
 }

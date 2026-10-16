@@ -3,26 +3,27 @@ import * as React from "react";
 import Link from "next/link";
 import { LAYOUT_DO_SISTEMA } from "@agro/domain";
 import { useTradutor } from "@/lib/i18n";
-import { brl, dateBR, dateTimeBR, num } from "@/lib/utils";
+import { brl, dateBR, dateTimeBR } from "@/lib/utils";
 import { enumLabel } from "@/lib/copy";
 import { statusTone } from "@/components/ui";
 import type { Row } from "@/features/docs/shared";
-import { CampoLeitura, ColunaDeCampos, DadosAdicionais } from "@/features/central/campo";
+import { CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
 import { ItensSalvos } from "@/features/central/itens-salvos";
 import { PainelColuna, PainelLargo, PainelRepartido, PlanoEmLeitura, Relacao, Selo, TitulosDoDocumento, type ColunaDaRelacao } from "@/features/central/painel";
 import type { AbaDoPainel } from "@/features/central/contrato";
 import { AprovacaoDoDocumento } from "@/features/aprovacoes/aprovacao-do-documento";
 import { zonasDaCentral, type ZonasDaCentral } from "../layout-da-central";
 import { rotaDoDocumento } from "../documentos-compra-list";
+import { CamposExtrasDaCompra } from "../campos-extras";
 import { PREFIXO_CENTRAL_COMPRAS, colunasDosItensDeCompras, linkDoTituloDeCompra } from "./adaptador";
 import type { EstadoDaConsulta } from "./estado";
 import { BensDaConsulta, DadosFiscaisDaConsulta, RateioDaConsulta, temDadosFiscais } from "./dados-fiscais";
 
 /**
- * O CORPO DA CONSULTA DA COMPRA NO MOTOR (VISUAL-UX-04, decisão 276): Dados principais e adicionais em LEITURA, os
- * itens salvos (grade do motor) e as abas do painel. Nada aqui calcula, decide ou grava: totais, subtotal, títulos,
- * movimentos e compras geradas vêm prontos do detalhe (`/api/compras/<segmento>/<id>`). Os testids `compras-*` de
- * antes continuam no elemento equivalente.
+ * O CORPO DA CONSULTA DA COMPRA NO MOTOR (VISUAL-UX-04, decisão 276): Dados principais e extras em LEITURA (sem
+ * acordeão "Dados adicionais"), os itens salvos (grade do motor) e as abas do painel. Nada aqui calcula, decide ou
+ * grava: totais, subtotal, títulos, movimentos e compras geradas vêm prontos do detalhe
+ * (`/api/compras/<segmento>/<id>`). Os testids `compras-*` de antes continuam no elemento equivalente.
  *
  * Fiscal (nota, série, data de entrada) só aparece como aba quando o layout NÃO os põe nos Dados — a zona vem de
  * quem chama; sem ela, a do LAYOUT_DO_SISTEMA (a consulta não carrega layout).
@@ -30,8 +31,11 @@ import { BensDaConsulta, DadosFiscaisDaConsulta, RateioDaConsulta, temDadosFisca
  * OPERACOES-01 F7 (decisão 284): a compra com dados fiscais (chave de acesso, UF, tipo de documento, IPI, ICMS-ST,
  * seguro, tipo de título, classificação, vínculo com a importação do XML ou com a DF-e) ganha a seção "Dados fiscais"
  * (`compras-consulta-dados-fiscais`) na aba Fiscal — que passa a existir também por ela; IPI, ICMS-ST e seguro entram nos
- * Totais; o rateio vai ao Financeiro (`compras-consulta-rateio`) e os bens do imobilizado ao Estoque
+ * Totais; o rateio vai ao Financeiro (`compras-consulta-rateio`) e os bens do imobilizado às Observações
  * (`compras-consulta-bem-<posicao>`). Compra sem nenhum deles (a de hoje, ou a API anterior): a consulta de hoje.
+ *
+ * Sem aba "Estoque": os produtos já estão na relação de itens; a relação de entradas no estoque (quebrada no layout
+ * derivados) saiu do painel — o detalhe da API continua devolvendo `movimentos` para quem precisar.
  */
 
 const t = (v: unknown) => (v === null || v === undefined || v === "" ? "" : String(v));
@@ -72,16 +76,16 @@ export function itemParaOMotor(it: Row): Row {
 }
 
 /**
- * Dados principais e Dados adicionais (Movimento, Versão da TOP, Origem). Antes dos campos, a situação da aprovação
- * (OPERACOES-01 F2): o bloco de Aprovações, que só aparece com o documento aberto e a TOP exigindo aprovação.
+ * Dados principais e extras (Movimento, Versão da TOP, Origem) — sempre à vista, sem acordeão. Antes dos campos, a
+ * situação da aprovação (OPERACOES-01 F2): o bloco de Aprovações, que só aparece com o documento aberto e a TOP
+ * exigindo aprovação.
  *   · COMPRA: Aprovar/Reprovar a quem tem `compras.approve` (a aprovação vale ao confirmar).
  *   · PEDIDO DE COMPRA (F6b, decisão 283): a aprovação vale ao FINALIZAR (a 0044 a estendeu ao pedido) — o bloco só
  *     com a capacidade da F6 declarada pela API, e Aprovar/Reprovar a quem tem `pedidos_compra.approve` E
- *     `compras.approve` (a porta da decisão). Nos Dados adicionais, quem finalizou e quem aprovou para orçamento.
+ *     `compras.approve` (a porta da decisão). Nos extras, quem finalizou e quem aprovou para orçamento.
  */
 export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: ZonasDaCentral }) {
   const tr = useTradutor();
-  const [maisDados, setMaisDados] = React.useState(false);
   const d = e.documento;
   if (!d) return null;
   const z = zonas ?? zonasPadraoDaConsulta(e.variante.familia);
@@ -93,8 +97,6 @@ export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: Zon
   const origem = !e.origemId
     ? (recebidoPorItem ? "Recebido de pedido" : "Lançamento direto")
     : <Link data-testid="compras-origem" className="text-brand-700 underline" href={e.rotaDaOrigem}>{e.rotuloDoPedido}{d["origem_codigo"] ? ` ${String(d["origem_codigo"])}` : ""}</Link>;
-  // Os dois só existem com a capacidade da F6 e com a data no servidor (o estado já os zera sem ela).
-  const adicionais = (top ? 3 : 2) + (e.finalizacao ? 1 : 0) + (e.aprovadoOrcamento ? 1 : 0);
   return <>
     {e.ehCompra && <AprovacaoDoDocumento area="compras" documentoId={String(d["id"])} documentoAberto={e.situacao === "aberto"}
       versao={versaoDoDocumento(d)} prefixoTestid={PREFIXO_CENTRAL_COMPRAS} codigo={t(d["codigo"])} />}
@@ -115,13 +117,13 @@ export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: Zon
       <CampoLeitura rotulo="Centro de resultado" adorno="pesquisa" valor={codigoNome(d["centro_custo_codigo"], d["centro_custo_nome"])} />
       <div data-testid="compras-consulta-codigo-campo"><CampoLeitura rotulo="Número" adorno="travado" testId="compras-consulta-codigo" valor={t(d["codigo"])} /></div>
     </ColunaDeCampos>
-    <DadosAdicionais quantidade={adicionais} aberto={maisDados} onAlternar={() => setMaisDados((m) => !m)} manterMontado>
+    <CamposExtrasDaCompra>
       <CampoLeitura rotulo="Movimento" adorno="travado" valor={tr(e.variante.chaveI18n)} />
       {top && <CampoLeitura rotulo="Versão da TOP" adorno="travado" valor={top.versao ? String(top.versao) : ""} />}
       <CampoLeitura rotulo="Origem" adorno="travado" testId="compras-consulta-origem" valor={origem} />
       {e.aprovadoOrcamento && <CampoLeitura rotulo="Aprovado para orçamento" adorno="travado" testId="compras-consulta-aprovado-orcamento" valor={quemEQuando(e.aprovadoOrcamento)} />}
       {e.finalizacao && <CampoLeitura rotulo="Finalizado" adorno="travado" testId="compras-consulta-finalizado" valor={quemEQuando(e.finalizacao)} />}
-    </DadosAdicionais>
+    </CamposExtrasDaCompra>
   </>;
 }
 
@@ -145,17 +147,6 @@ export function ItensDaConsulta({ e }: { e: EstadoDaConsulta }) {
   </div>;
 }
 
-const COLUNAS_DOS_MOVIMENTOS: readonly ColunaDaRelacao[] = [
-  { chave: "movement_date", rotulo: "Data", celula: (r) => dataOuVazio(r["movement_date"]) || "—" },
-  // o Local de estoque antes do Produto (OPERACOES-01 F3b, decisão 280)
-  { chave: "warehouse_name", rotulo: "Local de estoque", celula: (r) => t(r["warehouse_name"]) || "—" },
-  { chave: "product_name", rotulo: "Produto", celula: (r) => t(r["product_name"] ?? r["product_id"]) || "—" },
-  { chave: "movement_type", rotulo: "Movimento", celula: (r) => enumLabel("stock_movement_type", r["movement_type"]) },
-  { chave: "quantity", rotulo: "Quantidade", direita: true, celula: (r) => num(String(r["quantity"] ?? "0"), 4) },
-  { chave: "unit_cost", rotulo: "Custo unitário", direita: true, celula: (r) => brl(String(r["unit_cost"] ?? "0")) },
-  { chave: "total_cost", rotulo: "Custo total", direita: true, celula: (r) => brl(String(r["total_cost"] ?? "0")) }
-];
-
 const COLUNAS_DAS_COMPRAS_GERADAS: readonly ColunaDaRelacao[] = [
   { chave: "codigo", rotulo: "Código", celula: (r) => <Link className="text-brand-700 underline" data-testid="compras-gerada" href={rotaDoDocumento({ id: r["id"], especie: "compra" })}>{t(r["codigo"]) || "—"}</Link> },
   { chave: "situacao", rotulo: "Situação", celula: (r) => <Selo tom={statusTone(r["situacao"], "situacao_documento_compra")} valor={r["situacao"]}>{enumLabel("situacao_documento_compra", r["situacao"])}</Selo> }
@@ -163,8 +154,9 @@ const COLUNAS_DAS_COMPRAS_GERADAS: readonly ColunaDaRelacao[] = [
 
 /**
  * As abas do painel da consulta. Compra: Totais, Financeiro, Frete e transporte, Fiscal (se o layout não pôs nota,
- * série e entrada nos Dados), Estoque, Observações. Pedido: Totais, Financeiro, Frete e transporte, Compras geradas,
- * Observações. Sem documento: as abas sem conteúdo (estrutura da tela, não dado).
+ * série e entrada nos Dados), Observações (com bens do imobilizado). Pedido: Totais, Financeiro, Frete e transporte,
+ * Compras geradas, Observações. Sem aba Estoque — produtos já na relação de itens. Sem documento: as abas sem
+ * conteúdo (estrutura da tela, não dado).
  */
 export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): AbaDoPainel[] {
   const d = e.documento;
@@ -179,14 +171,12 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
       { value: "financeiro", label: "Financeiro", content: null },
       { value: "frete", label: "Frete e transporte", content: null },
       ...(fiscalNaAba ? [{ value: "fiscal", label: "Fiscal", content: null }] : []),
-      ...(e.ehCompra ? [{ value: "estoque", label: "Estoque", content: null }] : []),
       ...(e.ehPedido ? [{ value: "compras-geradas", label: "Compras geradas", content: null }] : []),
       { value: "observacoes", label: "Observações", content: null }
     ];
   }
   const codigo = t(d["codigo"]);
   const titulos = d.titulos ?? [];
-  const movimentos = d.movimentos ?? [];
   const abas: AbaDoPainel[] = [
     { value: "totais", label: "Totais", content: <PainelRepartido lado={<PainelColuna>
       <CampoLeitura rotulo="Subtotal dos itens" valor={brl(String(d["valor_itens"] ?? "0"))} />
@@ -217,14 +207,14 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
     {!nosDados.has("data_entrada") && <CampoLeitura rotulo="Data de entrada" adorno="data" valor={dataOuVazio(d["data_entrada"])} />}
     {comDadosFiscais && <DadosFiscaisDaConsulta d={d} />}
   </PainelColuna> });
-  if (e.ehCompra) abas.push({ value: "estoque", label: "Estoque", contador: movimentos.length, content: <PainelLargo><div data-testid="compras-consulta-movimentos">
-    <Relacao legenda={`Entradas no estoque do documento ${codigo}`} modelo="derivados" colunas={COLUNAS_DOS_MOVIMENTOS} linhas={movimentos} vazio="Nenhuma entrada no estoque gerada." />
-  </div><BensDaConsulta itens={e.itens} /></PainelLargo> });
   if (e.ehPedido) abas.push({ value: "compras-geradas", label: "Compras geradas", contador: e.comprasGeradas?.length, content: <PainelLargo><div data-testid="compras-geradas">
     {e.comprasGeradas
       ? <Relacao legenda={`Compras geradas do pedido ${codigo}`} modelo="derivados" colunas={COLUNAS_DAS_COMPRAS_GERADAS} linhas={e.comprasGeradas as unknown as Row[]} vazio="Nenhuma compra gerada deste pedido." />
       : <p className="text-[12.5px] text-slate-500">As compras geradas não estão disponíveis nesta versão do servidor.</p>}
   </div></PainelLargo> });
-  abas.push({ value: "observacoes", label: "Observações", content: <PainelLargo><CampoLeitura rotulo="Observação" multilinha valor={t(d["observacao"])} /></PainelLargo> });
+  abas.push({ value: "observacoes", label: "Observações", content: <PainelLargo>
+    <CampoLeitura rotulo="Observação" multilinha valor={t(d["observacao"])} />
+    {e.ehCompra && <BensDaConsulta itens={e.itens} />}
+  </PainelLargo> });
   return abas;
 }

@@ -221,9 +221,9 @@ test("F6B-F1 — pelo pedido, na tela: Aprovar para orçamento → dois orçamen
   expect([aprovado.situacao, Boolean(aprovado.aprovado_orcamento_em), Boolean(aprovado.aprovado_orcamento_por_nome)],
     "no servidor: o pedido continua aberto, aprovado para orçamento, com quem e quando").toEqual(["aberto", true, true]);
   await expect(aprovarParaOrcamento, "aprovado para orçamento: a pílula sai").toHaveCount(0);
-  await page.getByTestId(`${P}-dados`).getByRole("button", { name: /^Dados adicionais/ }).click();
+  await expect(page.getByTestId(`${P}-dados`).getByRole("button", { name: /^Dados adicionais/ }), "sem acordeão").toHaveCount(0);
   const quando = await page.evaluate((v) => new Date(v).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }), aprovado.aprovado_orcamento_em!);
-  await expect(page.getByTestId("compras-consulta-aprovado-orcamento").locator('[data-parte="valor"]'), "quem aprovou para orçamento e quando, nos Dados adicionais")
+  await expect(page.getByTestId("compras-consulta-aprovado-orcamento").locator('[data-parte="valor"]'), "quem aprovou para orçamento e quando, nos extras à vista")
     .toHaveText(`${quando} por ${aprovado.aprovado_orcamento_por_nome}`);
 
   // (3) O ORÇAMENTO DO FORNECEDOR A (10,00 e 20,00 → 80,00), e de volta ao pedido pelo link da consulta do orçamento.

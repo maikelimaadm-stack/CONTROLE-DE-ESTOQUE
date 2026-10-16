@@ -359,6 +359,11 @@ export interface PropsDosItens {
    */
   armazemPorItem?: boolean;
   /**
+   * A coluna "Estoque" (saldo à vista na grade/formulário). Só `false` a desliga; padrão `true` (o de hoje). A Central
+   * de Compras desliga: o saldo já aparece na relação de itens e na prévia — a coluna repetia o mesmo número.
+   */
+  estoqueNaGrade?: boolean;
+  /**
    * Com layout, a coluna de armazém aparece mesmo que o layout a esconda (ex.: a regra da operação exige o armazém),
    * logo ANTES do Código/Produto (decisão 280: o local antes do produto). Padrão `false`: manda o layout.
    */

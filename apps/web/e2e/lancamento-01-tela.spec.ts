@@ -194,10 +194,10 @@ async function estavel(page: Page) {
     { message: "os Dados da criação pararam de mudar", intervals: [300, 300, 300, 600, 1000] }).toBe(true);
 }
 
-async function abrirDadosAdicionais(page: Page) {
-  const botao = dados(page).getByRole("button", { name: /^Dados adicionais/ });
-  if ((await botao.getAttribute("aria-expanded")) !== "true") await botao.click();
-  await expect(botao).toHaveAttribute("aria-expanded", "true");
+/** Extras fiscais sempre à vista (sem acordeão Dados adicionais). */
+async function extrasFiscais(page: Page) {
+  await expect(dados(page).getByRole("button", { name: /^Dados adicionais/ }), "sem acordeão").toHaveCount(0);
+  await expect(page.getByTestId("compras-campos-extras"), "extras à vista").toBeVisible();
 }
 
 /** Escolhe a opção no RefSelect de um campo (o invólucro dado) pelo nome — o gesto do operador. */
@@ -415,7 +415,7 @@ test("LANC-T1 — compra que gera título, TOP com os 5 padrões, o documento tr
   await expect(page.getByTestId("padrao-invalido-aviso"), "nenhum aviso de padrão inválido").toHaveCount(0);
   await expect(page.getByTestId(`${P}-alterado`), "o semeado entra no inicial: não é alteração").toHaveCount(0);
   // O TIPO DE TÍTULO dos dados fiscais (S5): semeado com o nome da TOP.
-  await abrirDadosAdicionais(page);
+  await extrasFiscais(page);
   const tipo = page.getByTestId("compras-tipo-titulo");
   await expect(tipo, "o tipo de título: semeado pela TOP").toHaveAttribute("data-padrao-top", "semeado");
   await expect(tipo.getByRole("combobox"), "com o nome do padrão").toContainText(m.tipoTitulo.label);
@@ -496,7 +496,7 @@ test("LANC-T2 — a TOP que NÃO deixa o documento trocar (documentoTroca false)
   expect(atributos, "o fieldset de sempre: disabled, data-editavel, display: contents — e a marca da TOP").toEqual(
     Array.from({ length: 3 }, () => ["data-editavel,data-travado-pela-top,disabled,style", "display: contents;"]));
   await expect(caixa(page, "fornecedor_id"), "o que a TOP não padroniza continua livre").toBeEnabled();
-  await abrirDadosAdicionais(page);
+  await extrasFiscais(page);
   const tipo = page.getByTestId("compras-tipo-titulo");
   await expect(tipo, "o tipo de título: semeado").toHaveAttribute("data-padrao-top", "semeado");
   await expect(page.locator('fieldset[data-editavel="false"][data-travado-pela-top="true"]').filter({ has: tipo }), "e travado pelo mesmo fieldset").toHaveCount(1);

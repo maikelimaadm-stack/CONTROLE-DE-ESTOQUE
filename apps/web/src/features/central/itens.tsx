@@ -173,7 +173,7 @@ function CodigoDoProduto({ id, conhecido }: { id?: string; conhecido?: OpcaoReal
 
 export function ItensDaCentral({
   prefixoTestid, colunas: colunasDaEspecie, items, onChange, layout, erros, armazemPadrao, pesquisaDeProduto = null, reservaEstoque = null,
-  armazemPorItem, armazemForcado = false, custoMedioNoUnitario = true, lote = null, daOrigem = null, linhaUnica = false,
+  armazemPorItem, armazemForcado = false, estoqueNaGrade = true, custoMedioNoUnitario = true, lote = null, daOrigem = null, linhaUnica = false,
   linhaNovaEmBranco = false, subtotal: comSubtotal = true, casasDaQuantidade = 2, travasDaLinha = null, aceitaLinhaNova = true
 }: PropsDosItens) {
   const tid = (sufixo: string) => `${prefixoTestid}-${sufixo}`;
@@ -193,8 +193,9 @@ export function ItensDaCentral({
     if (k === "saldo") return Boolean(daOrigem);
     if (k === "lote" || k === "validade") return Boolean(lote);
     if (k === "armazem") return armazemPorItem !== false;
+    if (k === "estoque") return estoqueNaGrade !== false;
     return true;
-  }, [daOrigem, lote, armazemPorItem]);
+  }, [daOrigem, lote, armazemPorItem, estoqueNaGrade]);
   const chavesColunas = React.useMemo(() => ORDEM_COLUNAS.filter(ligada), [ligada]);
   const chavesCampos = React.useMemo(() => ORDEM_CAMPOS.filter((k) => k === "unidade" || ligada(k)), [ligada]);
 

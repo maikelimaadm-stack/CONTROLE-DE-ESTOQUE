@@ -108,10 +108,10 @@ test("CO-W1 — Compras › Novo → TOP de Compra → Central → salvar → co
   await expect(page.getByTestId("compras-previa-financeiro")).toContainText("110,00");
   await page.getByTestId("confirm-dialog-confirm").click();
 
-  // (5) O DOCUMENTO mostra a entrada e as contas a pagar — e o servidor diz o mesmo.
+  // (5) O DOCUMENTO mostra as contas a pagar; a entrada fica no servidor (sem aba Estoque — produtos na relação).
   await expect(corpo).toHaveAttribute("data-situacao", "confirmado");
-  await page.getByRole("tab", { name: /^Estoque/ }).click();
-  await expect(page.getByTestId("compras-consulta-movimentos")).toContainText(c.nomeProduto);
+  await expect(page.getByRole("tab", { name: /^Estoque/ }), "sem aba Estoque no portal de compras").toHaveCount(0);
+  await expect(page.getByTestId("compras-consulta-itens")).toContainText(c.nomeProduto);
   await page.getByRole("tab", { name: /^Financeiro/ }).click();
   await expect(page.getByTestId("compras-consulta-titulos")).toContainText("110,00");
   const saldo = await api<Saldo>(page, "GET", `/api/stock/balances/${c.armazem}/${c.produto}`);

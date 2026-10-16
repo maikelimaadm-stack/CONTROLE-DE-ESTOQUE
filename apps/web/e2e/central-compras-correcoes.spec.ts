@@ -304,9 +304,8 @@ test("CX-5 — 'Recebido de pedido' aparece quando o item tem origem_item_id (a 
   const abrirConsulta = async (id: string, codigo: string) => {
     await page.goto(`/compras/compras/${id}`);
     await expect(page.getByTestId(`${P}-identidade-nome`), "premissa: a tela desenhou ESTE documento").toHaveText(codigo);
-    const grupo = dados.getByRole("button", { name: /^Dados adicionais/ });
-    if ((await grupo.getAttribute("aria-expanded")) !== "true") await grupo.click();
-    await expect(grupo).toHaveAttribute("aria-expanded", "true");
+    await expect(dados.getByRole("button", { name: /^Dados adicionais/ }), "sem acordeão").toHaveCount(0);
+    await expect(page.getByTestId("compras-campos-extras"), "extras (Origem) à vista").toBeVisible();
   };
 
   // (1) Cabeçalho SEM origem, itens COM `origem_item_id` (os do servidor) → "Recebido de pedido"

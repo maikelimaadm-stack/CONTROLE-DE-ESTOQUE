@@ -9,7 +9,8 @@ import { Button, Card, CardBody, CardHeader, Input, LoadingState, Textarea } fro
 import { RefSelect } from "@/components/ui/ref-select";
 import type { ItemRow, Row } from "@/features/docs/shared";
 import { CentralDeDocumento, type ControleDaCentral } from "@/features/central/moldura";
-import { CampoDaCentral, CampoLeitura, ColunaDeCampos, DadosAdicionais, DataDaCentral, type IconeDoCampo } from "@/features/central/campo";
+import { CampoDaCentral, CampoLeitura, ColunaDeCampos, DataDaCentral, type IconeDoCampo } from "@/features/central/campo";
+import { CamposExtrasDaCompra } from "../campos-extras";
 import { ItensDaCentral as ItensDoMotor, type ItensDaOrigem, type LayoutDosItens } from "@/features/central/itens";
 import { AcoesRapidas } from "@/features/central/acoes-rapidas";
 import {
@@ -225,14 +226,11 @@ function FaixaDoPedido({ e }: { e: EstadoDoFormularioDoOrcamento }) {
   </div>;
 }
 
-/** Dados principais e Dados adicionais (as zonas do layout; as abas do rodapé vão ao painel). */
+/** Dados principais e extras do layout — sempre à vista, sem acordeão "Dados adicionais". */
 function DadosDoOrcamento({ e }: { e: EstadoDoFormularioDoOrcamento }) {
   const { can } = useAuth();
-  const [maisDados, setMaisDados] = React.useState(false);
   const desenhar = desenhoDoCampo(e);
   const { principais, adicionais } = e.zonas;
-  const erroEscondido = adicionais.some((c) => Boolean(e.erro(c)));
-  const aberto = maisDados || erroEscondido;
 
   const top = <CampoDaCentral rotulo="Tipo de Operação" obrigatorio estado="travado" testId="compras-top-travada" data-tipo-operacao-id={e.top.id}
     dica={e.movimento ? `Movimento: ${e.movimento}` : undefined}>
@@ -249,9 +247,9 @@ function DadosDoOrcamento({ e }: { e: EstadoDoFormularioDoOrcamento }) {
       {top}
       {principais.map(desenhar)}
     </ColunaDeCampos>
-    <DadosAdicionais quantidade={adicionais.length} aberto={aberto} onAlternar={() => setMaisDados(!aberto)}>
-      <div data-testid="compras-zona-adicionais"><ColunaDeCampos>{adicionais.map(desenhar)}</ColunaDeCampos></div>
-    </DadosAdicionais>
+    {adicionais.length > 0 && <CamposExtrasDaCompra>
+      <div data-testid="compras-zona-adicionais" className="contents">{adicionais.map(desenhar)}</div>
+    </CamposExtrasDaCompra>}
   </>;
 }
 
@@ -313,7 +311,7 @@ function ItensDoOrcamento({ e }: { e: EstadoDoFormularioDoOrcamento }) {
   const erros = e.errosNoMotor;
   const daOrigem = ORIGEM_DO_PEDIDO;
   return <div data-testid="compras-itens" data-modo="orcamento">
-    <ItensDoMotor prefixoTestid={PREFIXO_CENTRAL_COMPRAS} colunas={colunas} items={itens} onChange={setItens} layout={layout} erros={erros} armazemPorItem={false} custoMedioNoUnitario={false} daOrigem={daOrigem} />
+    <ItensDoMotor prefixoTestid={PREFIXO_CENTRAL_COMPRAS} colunas={colunas} items={itens} onChange={setItens} layout={layout} erros={erros} armazemPorItem={false} estoqueNaGrade={false} custoMedioNoUnitario={false} daOrigem={daOrigem} />
     {e.errosDeItens.length > 0 && <ul data-testid="compras-erros-itens" className="mt-2 space-y-0.5 text-[12px] text-red-700">
       {e.errosDeItens.map(([c, m]) => <li key={`${c}:${m}`}>{c}: {m}</li>)}
     </ul>}

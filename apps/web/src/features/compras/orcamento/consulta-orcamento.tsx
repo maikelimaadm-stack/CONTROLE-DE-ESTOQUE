@@ -11,7 +11,8 @@ import { LoadingOr, type Row } from "@/features/docs/shared";
 import { HistoryDialog } from "@/features/base1/history-dialog";
 import { CentralDeDocumento } from "@/features/central/moldura";
 import { TEMPO_DO_SALVO_MS } from "@/features/central/salvo";
-import { CampoLeitura, ColunaDeCampos, DadosAdicionais } from "@/features/central/campo";
+import { CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
+import { CamposExtrasDaCompra } from "../campos-extras";
 import { ItensSalvos } from "@/features/central/itens-salvos";
 import { PainelColuna, PainelLargo } from "@/features/central/painel";
 import { AcoesRapidas } from "@/features/central/acoes-rapidas";
@@ -133,10 +134,9 @@ export function ConsultaDeOrcamento({ variante, id }: { variante: VarianteDeComp
   </div>;
 }
 
-/** Os Dados do orçamento salvo, em LEITURA, com o link do pedido que ele cota. */
+/** Os Dados do orçamento salvo, em LEITURA, com o link do pedido que ele cota — extras sempre à vista. */
 function DadosDoOrcamentoSalvo({ e }: { e: EstadoDaConsultaDoOrcamento }) {
   const tr = useTradutor();
-  const [maisDados, setMaisDados] = React.useState(false);
   const d = e.documento;
   if (!d) return null;
   const top = ehRegistro(d["tipo_operacao"]) ? d["tipo_operacao"] : null;
@@ -160,10 +160,10 @@ function DadosDoOrcamentoSalvo({ e }: { e: EstadoDaConsultaDoOrcamento }) {
       <CampoLeitura rotulo="Pedido de compra" adorno="travado" valor={pedido} />
       <div data-testid="compras-consulta-codigo-campo"><CampoLeitura rotulo="Número" adorno="travado" testId="compras-consulta-codigo" valor={t(d["codigo"])} /></div>
     </ColunaDeCampos>
-    <DadosAdicionais quantidade={top ? 2 : 1} aberto={maisDados} onAlternar={() => setMaisDados((m) => !m)} manterMontado>
+    <CamposExtrasDaCompra>
       <CampoLeitura rotulo="Movimento" adorno="travado" valor={tr(e.variante.chaveI18n)} />
       {top && <CampoLeitura rotulo="Versão da TOP" adorno="travado" valor={top["versao"] ? String(top["versao"]) : ""} />}
-    </DadosAdicionais>
+    </CamposExtrasDaCompra>
   </>;
 }
 

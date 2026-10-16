@@ -239,7 +239,7 @@ test("F6B-P1 — pedido com aprovação 'Sempre' e 'Exigir finalizado': Receber�
   const selo = page.getByTestId(`${P}-situacao`).locator("[data-tone]");
   await expect(selo).toHaveText("Finalizado");
   await expect(selo, "finalizado = em curso: o tom informativo").toHaveAttribute("data-tone", "info");
-  await page.getByTestId(`${P}-dados`).getByRole("button", { name: /^Dados adicionais/ }).click();
+  await expect(page.getByTestId(`${P}-dados`).getByRole("button", { name: /^Dados adicionais/ }), "sem acordeão").toHaveCount(0);
   const quando = await page.evaluate((v) => new Date(v).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }), lido.finalizado_em!);
   await expect(page.getByTestId("compras-consulta-finalizado").locator('[data-parte="valor"]')).toHaveText(`${quando} por ${lido.finalizado_por_nome}`);
   await expect(finalizar, "finalizado: a pílula fica, desabilitada").toBeDisabled();

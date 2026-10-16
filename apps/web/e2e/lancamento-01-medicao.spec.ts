@@ -320,10 +320,7 @@ async function preencher(page: Page, m: Montado, caminho: string): Promise<strin
   const dados = page.getByTestId(`${P}-dados`);
   const campo = dados.locator(`[data-campo="${caminho}"]`);
   await expect(campo, `o campo ${caminho} está desenhado nos Dados`).toHaveCount(1);
-  if (!(await campo.isVisible())) {
-    const grupo = dados.getByRole("button", { name: /^Dados adicionais/ });
-    if ((await grupo.getAttribute("aria-expanded")) !== "true") await grupo.click();
-  }
+  // Sem acordeão: o campo dos extras já está à vista (ou o layout o pôs nos principais).
   await expect(campo).toBeVisible();
   const ref = (o: Opcao) => escolherNoCampo(page, campo, o.label).then(() => `escolheu ${o.label}`);
   switch (caminho) {
