@@ -55,10 +55,18 @@ export function Field({ label, required, error, help, children, className, span 
     {error && <p className="mt-0.5 text-[11px] text-red-600">{error}</p>}
   </div>;
 }
-export function Tabs({ tabs, defaultValue, className, rotuloDaLista }: { tabs: { value: string; label: string; content: React.ReactNode; badge?: React.ReactNode }[]; defaultValue?: string; className?: string; /** nome acessível da lista de abas (opcional; sem ele, nada muda) */ rotuloDaLista?: string }) {
+export function Tabs({ tabs, defaultValue, className, rotuloDaLista, faixa }: {
+  tabs: { value: string; label: string; content: React.ReactNode; badge?: React.ReactNode }[];
+  defaultValue?: string; className?: string;
+  /** nome acessível da lista de abas (opcional; sem ele, nada muda) */
+  rotuloDaLista?: string;
+  /** Conteúdo entre a lista de abas e o painel ativo (totais fora das abas). */
+  faixa?: React.ReactNode;
+}) {
   return (
     <TabsP.Root defaultValue={defaultValue ?? tabs[0]?.value} className={className}>
       <TabsP.List className="flex flex-wrap gap-1 border-b" aria-label={rotuloDaLista}>{tabs.map((t) => <TabsP.Trigger key={t.value} value={t.value} className="px-3 py-1.5 text-xs font-medium text-slate-500 border-b-2 border-transparent data-[state=active]:border-brand-600 data-[state=active]:text-brand-700">{t.label}{t.badge}</TabsP.Trigger>)}</TabsP.List>
+      {faixa}
       {tabs.map((t) => <TabsP.Content key={t.value} value={t.value} className="pt-3">{t.content}</TabsP.Content>)}
     </TabsP.Root>
   );

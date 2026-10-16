@@ -232,6 +232,47 @@ fieldset:disabled .caixa .controle { cursor: default; }
 .erro svg { width: 12px; height: 12px; flex-shrink: 0; }
 .abaixo { padding-left: calc(138px + var(--recuo)); }
 
+/* ═════════════ rótulo acima: nome completo sem corte (Central de Compras e quem escolher) ═════════════ */
+[data-densidade="rotulo-acima"] .coluna .campo { max-width: none; }
+[data-densidade="rotulo-acima"] .linha {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  height: auto;
+  gap: 3px;
+  border: 0;
+}
+[data-densidade="rotulo-acima"] .linha[data-multilinha] { height: auto; }
+[data-densidade="rotulo-acima"] .rotulo {
+  position: static;
+  width: auto;
+  height: auto;
+  max-width: none;
+  justify-content: flex-start;
+  padding: 0;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  pointer-events: auto;
+  line-height: 1.25;
+}
+[data-densidade="rotulo-acima"] .caixa {
+  position: relative;
+  left: auto;
+  right: auto;
+  top: auto;
+  bottom: auto;
+  min-height: 30px;
+  height: 30px;
+}
+[data-densidade="rotulo-acima"] .linha[data-multilinha] .caixa { height: 80px; }
+[data-densidade="rotulo-acima"] .icone { left: 10px; }
+[data-densidade="rotulo-acima"] .botaoData { left: 11px; }
+[data-densidade="rotulo-acima"] .erro,
+[data-densidade="rotulo-acima"] .abaixo { padding-left: var(--recuo); }
+:global(body:has([data-densidade="rotulo-acima"])) :global(.cmd-panel).painelPesquisa { width: var(--radix-popover-trigger-width); translate: none; }
+:global(body:has([data-densidade="rotulo-acima"])) .calendario { translate: none; }
+
 /* ═════════════ compacto: rótulo DENTRO da caixa (flutuante), 32px ═════════════ */
 [data-densidade="compacto"] .linha { height: 32px; }
 [data-densidade="compacto"] .linha[data-multilinha] { height: 80px; }

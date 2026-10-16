@@ -3,9 +3,15 @@ import * as React from "react";
 import type { ColunaDoLayout } from "@agro/domain";
 import { ItensDaCentral as ItensDoMotor, type LayoutDosItens, type LoteDosItens } from "@/features/central/itens";
 import { PESQUISA_DE_PRODUTO_DA_ENTRADA } from "@/features/central/contrato";
+import { CampoDoLocalPadrao } from "@/features/central/local-padrao";
 import type { ColunaDoEditorDeItens, ItemRow } from "@/features/docs/shared";
 import { PREFIXO_CENTRAL_COMPRAS, colunasDosItensDeCompras } from "./adaptador";
 import type { EstadoDaCriacao } from "./estado";
+
+/** Colunas sempre visíveis na grade (detalhe do item cobre o restante). */
+const COLUNAS_DA_GRADE: ReadonlySet<string> = new Set([
+  "produto_id", "quantidade", "valor_unitario", "desconto", "desconto_percentual", "total", "unidade"
+]);
 
 /**
  * ITENS DA CRIAÇÃO DA CENTRAL DE COMPRAS (VISUAL-UX-04, decisão 276) — a grade/formulário do MOTOR sobre o MESMO
@@ -45,17 +51,17 @@ function caminhoDoMotor(caminho: string): string | null {
 }
 
 export function ItensDaCriacaoDeCompra({ estado }: { estado: EstadoDaCriacao }) {
-  const { variante, ehCompra, itens, setItens, colunasDoLayout, fieldsDosItens, errosDeItens, lote, localDoCabecalho, regras, travasDaLinha, aceitaLinhaNova } = estado;
+  const { variante, ehCompra, itens, setItens, colunasDoLayout, fieldsDosItens, errosDeItens, lote, localDoCabecalho, regras, travasDaLinha, aceitaLinhaNova, localNaGrade, cabecalho, escolherLocal } = estado;
   const colunas = React.useMemo(() => colunasDosItensDeCompras(variante), [variante]);
 
-  /** Sempre um layout: com a capacidade, o de `colunasDoEditor`; sem, as colunas de hoje — na ordem fixa da compra. */
+  /** Grade enxuta: produto, qtd, unitário, desconto, total. Local padrão fica acima; lote/local por item no detalhe. */
   const layout = React.useMemo<LayoutDosItens>(() => {
     const lista: ColunaDoLayout[] = colunasDoLayout
       ? colunasDoLayout.map((c) => ({ campo: c.chave, obrigatorio: c.obrigatorio, ...(c.rotulo ? { rotulo: c.rotulo } : {}) }))
       : fieldsDosItens.flatMap((f) => { const campo = CATALOGO_DA_COLUNA[f]; return campo ? [{ campo, obrigatorio: false }] : []; });
-    const semLote = ehCompra ? lista : lista.filter((c) => c.campo !== "lote" && c.campo !== "validade");
-    return { colunas: semLote.some((c) => c.campo === "total") ? semLote : [...semLote, { campo: "total", obrigatorio: false }] };
-  }, [colunasDoLayout, fieldsDosItens, ehCompra]);
+    const daGrade = lista.filter((c) => COLUNAS_DA_GRADE.has(c.campo));
+    return { colunas: daGrade.some((c) => c.campo === "total") ? daGrade : [...daGrade, { campo: "total", obrigatorio: false }] };
+  }, [colunasDoLayout, fieldsDosItens]);
 
   const erros = React.useMemo(() => {
     const r: Record<string, string> = {};
@@ -66,7 +72,10 @@ export function ItensDaCriacaoDeCompra({ estado }: { estado: EstadoDaCriacao }) 
   const controleDeLote = React.useMemo<LoteDosItens | null>(
     () => (ehCompra ? { daLinha: (it: ItemRow) => lote.daLinha(it.product_id) } : null), [ehCompra, lote]);
 
-  return <div data-testid="compras-itens">
+  return <div data-testid="compras-itens" className="flex flex-col gap-2">
+    {localNaGrade && <div data-testid="compras-local-acima-da-grade" className="max-w-md">
+      <CampoDoLocalPadrao prefixoTestid={PREFIXO_CENTRAL_COMPRAS} empresaId={cabecalho.empresa_id} valor={localDoCabecalho} onChange={escolherLocal} />
+    </div>}
     <ItensDoMotor prefixoTestid={PREFIXO_CENTRAL_COMPRAS} colunas={colunas} items={itens} onChange={setItens} layout={layout}
       erros={erros} armazemPadrao={localDoCabecalho} armazemPorItem armazemForcado={regras?.exigeArmazem === true} estoqueNaGrade={false} custoMedioNoUnitario={false}
       lote={controleDeLote} pesquisaDeProduto={PESQUISA_DE_PRODUTO_DA_ENTRADA} travasDaLinha={travasDaLinha} aceitaLinhaNova={aceitaLinhaNova} />

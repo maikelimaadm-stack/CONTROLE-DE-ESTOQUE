@@ -20,9 +20,9 @@ import type { EstadoDaCriacao } from "./estado";
  *     saiu); na edição (EDITAR-02), em leitura, os fiscais e o rateio em leitura, como antes.
  */
 
-/** O valor (`AbaDoPainel.value`) e o rótulo da aba do painel que recebe o rateio e a classificação dos itens. */
+/** O valor (`AbaDoPainel.value`) e o rótulo da aba do painel que recebe o rateio e a classificação. */
 export const ABA_DO_RATEIO = "rateio";
-export const ROTULO_DA_ABA_DO_RATEIO = "Rateio";
+export const ROTULO_DA_ABA_DO_RATEIO = "Rateio e classificação";
 
 /** O caminho da recusa da classificação de um item (F7), nos dois formatos do servidor: `itens[0].x` e `itens.0.x`. */
 export const CAMINHO_DA_CLASSIFICACAO_DO_ITEM = /^itens(?:\[(\d+)\]|\.(\d+))\.(?:gera_estoque|imobilizado|categoria_financeira_id|centro_custo_id)$/;
@@ -37,16 +37,21 @@ export function ehCaminhoDoRateio(caminho: string): boolean {
 type OndeDesenha = Pick<EstadoDaCriacao, "dadosFiscaisAtivos" | "top">;
 
 /**
- * O bloco "Dados fiscais" está nos Dados (a condição de sempre da F7): a capacidade na criação da compra E a TOP travada —
- * o desenho dos Dados do documento, nunca o campo único que o painel desenha pelo mesmo componente (que zera a TOP).
+ * Os dados fiscais saíram dos Dados principais e moram na aba Fiscal do painel.
+ * `blocoFiscalNosDados` fica falso na criação (só leitura na edição ainda pode usar os blocos da consulta).
  */
-export function blocoFiscalNosDados(e: OndeDesenha): boolean {
-  return e.dadosFiscaisAtivos && e.top !== null;
+export function blocoFiscalNosDados(_e: OndeDesenha): boolean {
+  return false;
 }
 
-/** O rateio está no painel: onde o bloco fiscal estaria nos Dados, com o formulário à vista. */
+/** A aba Fiscal do painel: capacidade F7 na criação da compra, com TOP e formulário à vista. */
+export function fiscalNoPainel(e: OndeDesenha & Pick<EstadoDaCriacao, "mostrarFormulario">): boolean {
+  return e.mostrarFormulario && e.dadosFiscaisAtivos && e.top !== null;
+}
+
+/** O rateio está no painel (mesma condição da aba Fiscal). */
 export function rateioNoPainel(e: OndeDesenha & Pick<EstadoDaCriacao, "mostrarFormulario">): boolean {
-  return e.mostrarFormulario && blocoFiscalNosDados(e);
+  return fiscalNoPainel(e);
 }
 
 /** O primeiro caminho de recusa que é do rateio (na ordem em que o servidor os deu), ou `null`. */

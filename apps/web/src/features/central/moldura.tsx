@@ -132,7 +132,7 @@ function Divisor({ eixo, valor, min, max, rotulo, onInicio, onMover, onFim, onTe
   </div>;
 }
 
-export function CentralDeDocumento({ prefixoTestid, titulo, acoes, acoesDireita, identidade, aviso, dados, itens, abas, densidade = "rotulo-a-frente", carregando = false, controle, className }: PropsDaMoldura) {
+export function CentralDeDocumento({ prefixoTestid, titulo, acoes, acoesDireita, identidade, aviso, dados, itens, abas, faixaDoPainel, densidade = "rotulo-a-frente", carregando = false, controle, className }: PropsDaMoldura) {
   const corpoRef = React.useRef<HTMLDivElement>(null);
   const painelRef = React.useRef<HTMLDivElement>(null);
   const [largura, setLargura] = React.useState<number>(LARGURA_DADOS.padrao);
@@ -277,7 +277,8 @@ export function CentralDeDocumento({ prefixoTestid, titulo, acoes, acoesDireita,
           <span className={estilos.painelAmpliar}><BotaoAmpliar regiao="painel" /></span>
           {/* O `Tabs` oficial lê a aba inicial só ao montar: sem a chave, a Central que nasceu carregando (sem abas)
               ficaria sem aba ativa quando a leitura chega — a mesma instância, agora com abas. */}
-          <Tabs key={abas[0]?.value ?? "sem-abas"} className={estilos.abas} tabs={abasDoPainel} rotuloDaLista={ROTULO_DAS_ABAS} />
+          <Tabs key={abas[0]?.value ?? "sem-abas"} className={estilos.abas} tabs={abasDoPainel} rotuloDaLista={ROTULO_DAS_ABAS}
+            faixa={faixaDoPainel ? <div data-testid={`${prefixoTestid}-faixa-painel`} className={estilos.faixaDoPainel}>{faixaDoPainel}</div> : undefined} />
           <span className={estilos.painelAcoes}>
             <button type="button" className={cn(estilos.recolher, estilos.dicaFim)} aria-label={rotuloRecolher} data-dica={rotuloRecolher}
               aria-expanded={!recolhido} data-testid={`${prefixoTestid}-recolher`} onClick={() => setRecolhido((r) => !r)}><span className={estilos.recolherIcone}><ChevronDown aria-hidden /></span></button>
