@@ -76,6 +76,9 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
   if (financeiro.length) abas.push({
     value: valorUnico("financeiro"), label: "Financeiro", erro: comErro(financeiro),
     content: <PainelRepartido lado={<TitulosDoDocumento legenda="Contas a pagar do documento" titulos={[]} linkDoTitulo={linkDoTituloDeCompra} />}>
+      <p className="col-span-full text-[12px] text-slate-500" data-testid="compras-plano-dica">
+        Para informar a quantidade de parcelas e as datas, escolha &quot;Ajustar parcelas&quot; e preencha Nº de parcelas e 1º vencimento.
+      </p>
       {financeiro.map((c) => <React.Fragment key={c}>{desenharCampo(c)}</React.Fragment>)}
     </PainelRepartido>
   });

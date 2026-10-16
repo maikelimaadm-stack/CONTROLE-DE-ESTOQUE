@@ -10,13 +10,11 @@ import type { EstadoTop } from "@/features/sales/tipo-operacao-select";
 import type { EstadoDaConferencia } from "./estado";
 
 /**
- * A ABA "CABEÇALHO" DA CONFERÊNCIA (OPERACOES-01 F7, decisão 284): a TOP de compra, a data de entrada, o FORNECEDOR
- * (o parceiro do emitente, como o servidor o achou), a transportadora, os valores da nota (somente leitura — eles vêm
- * do XML guardado) e a observação. Fornecedor ambíguo é ESCOLHA da pessoa (nunca "o primeiro"); sem cadastro, o
- * cadastro rápido nasce pré-preenchido pelo emitente e só grava com a confirmação dela.
+ * A ABA "CABEÇALHO" DA CONFERÊNCIA (OPERACOES-01 F7, decisão 284): TOP, datas, FORNECEDOR e o essencial da nota.
+ * Valores fiscais da nota ficam num resumo compacto (o XML já guarda o detalhe) — o foco é o que a pessoa decide
+ * para gerar a compra, no mesmo espírito da Central.
  */
 
-// carregado sob demanda, como no seletor de referência (o formulário declarativo usa o seletor)
 const ResourceQuickCreate = React.lazy(() => import("@/features/resources/quick-create").then((m) => ({ default: m.ResourceQuickCreate })));
 
 /** O cadastro rápido (a MESMA porta dos cadastros, `POST /api/resources/<recurso>`) com o pré-preenchimento do servidor. */
@@ -39,9 +37,6 @@ export function presetDoFornecedor(p: PreenchimentoDoFornecedor): Record<string,
   return out;
 }
 
-const Valor = ({ rotulo, valor, testId }: { rotulo: string; valor: React.ReactNode; testId?: string }) =>
-  <div className="flex flex-col"><span className="text-[11px] text-slate-500">{rotulo}</span><span className="text-[13px] font-medium" data-testid={testId}>{valor}</span></div>;
-
 export function AbaCabecalho({ e, tops, onEscolherFornecedor, solicitacaoId, onDesvincularSolicitacao }: {
   e: EstadoDaConferencia; tops: EstadoTop; onEscolherFornecedor: (id: string) => void; solicitacaoId: string | null; onDesvincularSolicitacao: () => void;
 }) {
@@ -50,11 +45,12 @@ export function AbaCabecalho({ e, tops, onEscolherFornecedor, solicitacaoId, onD
   const nota = conf.nota;
   const p = conf.parceiro;
   const [cadastrando, setCadastrando] = React.useState(false);
+  const [detalheNota, setDetalheNota] = React.useState(false);
   const leitura = !e.pendente;
 
   return <div data-testid="importacao-aba-cabecalho" className="flex flex-col gap-4">
     <div className="grid grid-cols-12 gap-3">
-      <Field label="TOP de compra" span={6} required error={e.erroEm("tipo_operacao_id")}>
+      <Field label="TOP de compra" span={5} required error={e.erroEm("tipo_operacao_id")}>
         {tops.situacao === "pronto"
           ? <NativeSelect data-testid="importacao-top" value={cab.topId} disabled={leitura} onChange={(ev) => e.mudarCab({ topId: ev.target.value })}>
             <option value="">Escolha a TOP</option>
@@ -64,7 +60,10 @@ export function AbaCabecalho({ e, tops, onEscolherFornecedor, solicitacaoId, onD
             {tops.situacao === "carregando" ? "Carregando as TOPs de compra…" : tops.situacao === "sem-top" ? "Nenhuma TOP de compra ativa: configure uma TOP de compra." : "As TOPs de compra não puderam ser lidas."}
           </span>}
       </Field>
-      <Field label="Data de entrada" span={3} error={e.erroEm("data_entrada")}>
+      <Field label="Emissão (nota)" span={2}>
+        <Input data-testid="importacao-data-emissao" type="date" value={nota.dataEmissao} disabled readOnly />
+      </Field>
+      <Field label="Data de entrada" span={2} error={e.erroEm("data_entrada")}>
         <Input data-testid="importacao-data-entrada" type="date" value={cab.dataEntrada} disabled={leitura} onChange={(ev) => e.mudarCab({ dataEntrada: ev.target.value })} />
       </Field>
       <Field label="Transportadora" span={3} error={e.erroEm("transportadora_id")}>
@@ -73,7 +72,8 @@ export function AbaCabecalho({ e, tops, onEscolherFornecedor, solicitacaoId, onD
     </div>
 
     <section data-testid="importacao-parceiro" data-situacao={p.situacao} className="rounded border px-3 py-2">
-      <h3 className="mb-1 text-[12px] font-semibold text-slate-600">Fornecedor (emitente {nota.emitente.nome} — {nota.emitente.documento})</h3>
+      <h3 className="mb-1 text-[12px] font-semibold text-slate-600">Fornecedor</h3>
+      <p className="mb-1 text-[11.5px] text-slate-500">Emitente da nota: {nota.emitente.nome} — {nota.emitente.documento}</p>
       {p.situacao === "encontrado" && <p className="text-[13px]">Fornecedor encontrado: <strong>{p.nome}</strong> ({p.documento})</p>}
       {p.situacao === "nao_fornecedor" && <p className="text-[13px] text-amber-800">O cadastro encontrado não é do tipo Fornecedor. <Link className="underline" href={`/cadastros/pessoas/${p.id}`}>Abrir o cadastro de {p.nome}</Link> e marcá-lo como fornecedor.</p>}
       {p.situacao === "ambiguo" && <div className="flex flex-col gap-2">
@@ -100,21 +100,31 @@ export function AbaCabecalho({ e, tops, onEscolherFornecedor, solicitacaoId, onD
     </section>}
 
     <section data-testid="importacao-valores-da-nota" className="rounded border px-3 py-2">
-      <h3 className="mb-2 text-[12px] font-semibold text-slate-600">Valores da nota (do XML guardado)</h3>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Valor rotulo="Número / série" valor={`${nota.numero} / ${nota.serie}`} />
-        <Valor rotulo="Emissão" valor={dateBR(nota.dataEmissao)} />
-        <Valor rotulo="Chave de acesso" valor={<span className="font-mono text-[11px]">{formatarChaveDeAcesso(nota.chave)}</span>} />
-        <Valor rotulo="Natureza da operação" valor={nota.naturezaOperacao ?? "—"} />
-        <Valor rotulo="Produtos" valor={brl(nota.totais.produtos)} />
-        <Valor rotulo="Desconto" valor={brl(nota.totais.desconto)} />
-        <Valor rotulo="Frete" valor={brl(nota.totais.frete)} />
-        <Valor rotulo="Seguro" valor={brl(nota.totais.seguro)} />
-        <Valor rotulo="Outras despesas" valor={brl(nota.totais.outras)} />
-        <Valor rotulo="IPI" valor={brl(nota.totais.ipi)} />
-        <Valor rotulo="ICMS-ST" valor={brl(nota.totais.icmsSt)} />
-        <Valor rotulo="Total da nota" valor={brl(nota.totais.nota)} testId="importacao-total-da-nota" />
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-[13px]">
+          <span className="text-slate-500">Nota</span>{" "}
+          <strong>{nota.numero}/{nota.serie}</strong>
+          <span className="text-slate-400"> · </span>
+          <span className="text-slate-500">emissão</span> {dateBR(nota.dataEmissao)}
+          <span className="text-slate-400"> · </span>
+          <span className="text-slate-500">total</span>{" "}
+          <strong data-testid="importacao-total-da-nota">{brl(nota.totais.nota)}</strong>
+        </p>
+        <button type="button" className="text-[12px] font-medium text-emerald-700 underline" data-testid="importacao-valores-detalhe"
+          aria-expanded={detalheNota} onClick={() => setDetalheNota((v) => !v)}>
+          {detalheNota ? "Ocultar detalhe da nota" : "Ver detalhe da nota"}
+        </button>
       </div>
+      {detalheNota && <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[12.5px] md:grid-cols-4">
+        <div><span className="text-slate-500">Chave</span><div className="font-mono text-[11px]">{formatarChaveDeAcesso(nota.chave)}</div></div>
+        <div><span className="text-slate-500">Natureza</span><div>{nota.naturezaOperacao ?? "—"}</div></div>
+        <div><span className="text-slate-500">Produtos</span><div>{brl(nota.totais.produtos)}</div></div>
+        <div><span className="text-slate-500">Desconto</span><div>{brl(nota.totais.desconto)}</div></div>
+        <div><span className="text-slate-500">Frete</span><div>{brl(nota.totais.frete)}</div></div>
+        <div><span className="text-slate-500">Seguro</span><div>{brl(nota.totais.seguro)}</div></div>
+        <div><span className="text-slate-500">Outras</span><div>{brl(nota.totais.outras)}</div></div>
+        <div><span className="text-slate-500">IPI / ICMS-ST</span><div>{brl(nota.totais.ipi)} / {brl(nota.totais.icmsSt)}</div></div>
+      </div>}
     </section>
 
     <div className="grid grid-cols-12 gap-3">
