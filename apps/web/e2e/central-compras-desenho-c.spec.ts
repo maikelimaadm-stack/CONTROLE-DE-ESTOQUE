@@ -10,8 +10,8 @@ import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } f
  *
  * ┌─ O QUE ESTE ARQUIVO PROVA ─────────────────────────────────────────────────────────────────────┐
  * │ CC-11 a consulta: abas (Totais com o total do SERVIDOR, Financeiro com as contas a pagar e o     │
- * │       contador, Estoque, Fiscal quando o layout não põe a nota nos Dados, Compras geradas no     │
- * │       pedido) e Dados adicionais com Movimento, Versão da TOP e Origem.                          │
+ * │       contador, Fiscal quando o layout não põe a nota nos Dados, Compras geradas no pedido; sem  │
+ * │       aba Estoque) e extras sempre à vista (Movimento, Versão da TOP e Origem), sem acordeão.    │
  * │ CC-12 Ampliar e restaurar as três regiões, nada persiste; aba alterada avisa ao fechar.          │
  * │ CC-13 esqueleto com a leitura atrasada (5 barras de 34 px); reduced-motion sem animação.         │
  * │ CC-14a SEM ROLAGEM HORIZONTAL, sempre na suíte: a Central de Compras nos 13 estados do CC-14,    │
@@ -112,11 +112,11 @@ async function abrirAba(page: Page, prefixo: string, nome: string | RegExp) {
   await expect(page.getByTestId(`${prefixo}-painel`).getByRole("tabpanel")).toBeVisible();
 }
 
-async function abrirDadosAdicionais(page: Page) {
-  const grupo = page.getByTestId(`${P}-dados`).getByRole("button", { name: /^Dados adicionais/ });
-  await expect(grupo, "o grupo Dados adicionais existe na consulta").toBeVisible();
-  if ((await grupo.getAttribute("aria-expanded")) !== "true") await grupo.click();
-  await expect(grupo).toHaveAttribute("aria-expanded", "true");
+/** Extras da consulta (Movimento, Versão, Origem) — sempre à vista, sem acordeão. */
+async function extrasDaConsulta(page: Page) {
+  const extras = page.getByTestId("compras-campos-extras");
+  await expect(extras, "os extras da consulta estão à vista").toBeVisible();
+  return extras;
 }
 
 /** Abre o leque de Ações rápidas (se fechado) e devolve o item. */
@@ -138,7 +138,7 @@ const campo = (escopo: Locator, rotulo: string) => escopo.locator(`[data-campo="
 
 /* ═════════════════════════════════════════════ CC-11 consulta ═════════════════════════════════════════════ */
 
-test("CC-11 — consulta: Totais com o total do servidor, Financeiro com as contas a pagar e o contador, Estoque, Fiscal, Compras geradas no pedido; Dados adicionais com Movimento, Versão e Origem", async ({ page }) => {
+test("CC-11 — consulta: Totais com o total do servidor, Financeiro com as contas a pagar e o contador, Fiscal, Compras geradas no pedido; extras com Movimento, Versão e Origem (sem aba Estoque, sem acordeão)", async ({ page }) => {
   await login(page);
   const c = await cenario(page);
   const antes = await chavesDoNavegador(page);
@@ -162,7 +162,10 @@ test("CC-11 — consulta: Totais com o total do servidor, Financeiro com as cont
   const cabecalhoDoSistema = LAYOUT_DO_SISTEMA("compras.compra").cabecalho.map((x) => x.campo);
   const fiscalNaAba = ["numero_nota", "serie_nota", "data_entrada"].some((campo) => !cabecalhoDoSistema.includes(campo));
   expect(fiscalNaAba, "premissa: o layout do sistema da compra põe nota, série e entrada nos Dados").toBe(false);
-  expect(nomes, "as abas da consulta da compra").toEqual(["Totais", "Financeiro", "Frete e transporte", "Estoque", "Observações"]);
+  expect(nomes, "as abas da consulta da compra (sem Estoque: produtos já na relação de itens)").toEqual(["Totais", "Financeiro", "Frete e transporte", "Observações"]);
+  await expect(painel.getByRole("tab", { name: /Estoque/ }), "sem aba Estoque no portal de compras").toHaveCount(0);
+  await expect(page.getByTestId("compras-consulta-movimentos"), "sem a relação de entradas no painel").toHaveCount(0);
+  await expect(dados.getByRole("button", { name: /^Dados adicionais/ }), "sem acordeão Dados adicionais").toHaveCount(0);
 
   // TOTAIS: o total do SERVIDOR, campo travado
   await abrirAba(page, P, "Totais");
@@ -176,18 +179,16 @@ test("CC-11 — consulta: Totais com o total do servidor, Financeiro com as cont
   await expect(fin.locator(`a[href="/financeiro/contas-a-pagar/${lida.titulos[0]!.id}"]`)).toBeVisible();
   await expect(fin.locator("input:not([type=hidden]):enabled, select:enabled, textarea:enabled"), "nada editável no plano da consulta").toHaveCount(0);
 
-  // ESTOQUE: as entradas do servidor, com contador
-  await expect(painel.getByRole("tab", { name: /Estoque/ })).toContainText(String(lida.movimentos.length));
-  await abrirAba(page, P, /Estoque/);
-  await expect(page.getByTestId("compras-consulta-movimentos")).toBeVisible();
-  await expect(page.getByTestId("compras-consulta-movimentos").getByTestId("base2-items-linha"), "uma linha por entrada do servidor").toHaveCount(lida.movimentos.length);
+  // ITENS: a relação já traz os produtos (entradas no estoque ficam só na API)
+  await expect(page.getByTestId("compras-consulta-itens")).toBeVisible();
+  expect(lida.movimentos.length, "premissa: o servidor ainda devolve as entradas").toBeGreaterThan(0);
 
   // FISCAL: com nota, série e entrada nos Dados (o layout acima), a nota aparece nos Dados e não há aba Fiscal
   await expect(dados, "nota nos Dados, onde o layout a põe").toContainText(nota);
   await expect(painel.getByRole("tab", { name: "Fiscal" }), "e nenhuma aba Fiscal a repete").toHaveCount(0);
 
-  // DADOS ADICIONAIS: Movimento, Versão da TOP, Origem "Lançamento direto"
-  await abrirDadosAdicionais(page);
+  // EXTRAS: Movimento, Versão da TOP, Origem "Lançamento direto" — sempre à vista
+  await extrasDaConsulta(page);
   await expect(campo(dados, "Movimento")).not.toBeEmpty();
   await expect(campo(dados, "Versão da TOP")).toContainText("1");
   await expect(campo(dados, "Origem")).toContainText("Lançamento direto");
@@ -213,7 +214,7 @@ test("CC-11 — consulta: Totais com o total do servidor, Financeiro com as cont
 
   const lidaGerada = await ler(page, "compras", gerada.id);
   await abrirConsulta(page, { id: gerada.id, codigo: lidaGerada.codigo });
-  await abrirDadosAdicionais(page);
+  await extrasDaConsulta(page);
   const origem = page.getByTestId("compras-origem");
   await expect(origem).toHaveAttribute("href", new RegExp(`/compras/pedidos/${pedido.id}$`));
   await expect(origem).toContainText(pedido.codigo);

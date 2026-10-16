@@ -99,7 +99,7 @@ async function escolherNaCelula(page: Page, celula: Locator, nome: string) {
   await expect(pesquisa).toHaveCount(0);
 }
 
-/** A criação da compra com o cabeçalho e um item de 2 × 50,00 = 100,00, e os Dados adicionais abertos. */
+/** A criação da compra com o cabeçalho e um item de 2 × 50,00 = 100,00; fiscais sempre à vista (sem acordeão). */
 async function compraNaCentral(page: Page, c: Cenario) {
   await page.goto(`/compras/compras/new?tipo_operacao_id=${c.topCompra}`);
   const central = page.getByTestId("compras-central");
@@ -114,11 +114,9 @@ async function compraNaCentral(page: Page, c: Cenario) {
   await linha.getByLabel("Quantidade do item 1").fill("2");
   await linha.getByLabel("Valor unitário do item 1").fill("50");
   await expect(page.getByTestId("compras-total"), "premissa: sem os dados fiscais, o total é o dos itens").toContainText("100,00");
-  // UM só "Dados adicionais" na criação: o bloco fiscal mora nos Dados, nunca repetido em cada campo do painel
-  await expect(central.getByRole("button", { name: /^Dados adicionais/ })).toHaveCount(1);
-  const grupo = page.getByTestId(`${P}-dados`).getByRole("button", { name: /^Dados adicionais/ });
-  if ((await grupo.getAttribute("aria-expanded")) !== "true") await grupo.click();
-  await expect(grupo).toHaveAttribute("aria-expanded", "true");
+  // Sem acordeão: o bloco fiscal mora nos Dados, sempre à vista, nunca repetido em cada campo do painel
+  await expect(central.getByRole("button", { name: /^Dados adicionais/ }), "sem acordeão Dados adicionais").toHaveCount(0);
+  await expect(page.getByTestId("compras-campos-extras"), "os extras (fiscais) estão à vista").toBeVisible();
   const fiscais = page.getByTestId("compras-dados-fiscais");
   await expect(fiscais, "com a capacidade, o bloco Dados fiscais aparece na criação da compra").toBeVisible();
   return fiscais;

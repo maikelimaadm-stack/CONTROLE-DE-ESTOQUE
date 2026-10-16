@@ -149,12 +149,12 @@ test("CP-W1 — pedido → Próximos passos → Central em modo receber (em part
   await expect(page.getByTestId("compras-previa")).toHaveAttribute("data-situacao", "pronta");
   await page.getByTestId("confirm-dialog-confirm").click();
   await expect(corpo).toHaveAttribute("data-situacao", "confirmado");
-  await page.getByRole("tab", { name: /^Estoque/ }).click();
-  await expect(page.getByTestId("compras-consulta-movimentos")).toContainText(c.a.nome);
+  await expect(page.getByRole("tab", { name: /^Estoque/ }), "sem aba Estoque no portal de compras").toHaveCount(0);
+  await expect(page.getByTestId("compras-consulta-itens"), "o produto fica na relação de itens").toContainText(c.a.nome);
 
   // (6) O PEDIDO MOSTRA RECEBIDO E SALDO — continua aberto (falta 6 de A e todo o B), com a compra gerada na lista.
-  // A Origem mora em "Dados adicionais", recolhido por padrão.
-  await page.getByRole("button", { name: /^Dados adicionais/ }).click();
+  // A Origem fica sempre à vista (sem acordeão Dados adicionais).
+  await expect(page.getByTestId("central-compras-dados").getByRole("button", { name: /^Dados adicionais/ })).toHaveCount(0);
   await page.getByTestId("compras-origem").click();
   await expect(page).toHaveURL(new RegExp(`/compras/pedidos/${c.pedido.id}$`));
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "aberto");

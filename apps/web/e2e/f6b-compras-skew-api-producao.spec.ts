@@ -185,8 +185,8 @@ test("OP01-F6b · K1-1 (sentido 1) — a consulta do pedido deste web sobre a AP
     await expect(page.getByTestId("compras-finalizar"), "com a capacidade: Finalizar no pedido aberto").toBeEnabled();
     await expect(page.getByTestId("compras-aprovar-para-orcamento"), "e Aprovar para orçamento").toBeEnabled();
   }
-  await page.getByTestId(`${P}-dados`).getByRole("button", { name: /^Dados adicionais/ }).click();
-  await expect(page.getByTestId("compras-consulta-finalizado"), "nada de \"Finalizado\" nos Dados adicionais").toHaveCount(0);
+  await expect(page.getByTestId(`${P}-dados`).getByRole("button", { name: /^Dados adicionais/ }), "sem acordeão").toHaveCount(0);
+  await expect(page.getByTestId("compras-consulta-finalizado"), "nada de \"Finalizado\" nos extras").toHaveCount(0);
   await expect(page.getByTestId("compras-consulta-aprovado-orcamento"), "nem \"Aprovado para orçamento\"").toHaveCount(0);
 
   // O FIO: o que a consulta perguntou à base. Premissa anti-vacuidade: a tela falou com a base (o pedido e os passos).

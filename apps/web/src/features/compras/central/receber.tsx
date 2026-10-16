@@ -85,7 +85,7 @@ export function ItensDoRecebimento({ estado }: { estado: EstadoDaCriacao }) {
   if (modo !== "receber" || !recebendo) return null;
   return <div data-testid="compras-itens" data-modo="receber" data-em-partes={String(emPartes)}>
     <ItensDoMotor prefixoTestid={PREFIXO_CENTRAL_COMPRAS} colunas={colunas} items={itens} onChange={setItens} layout={layout}
-      erros={erros} armazemPadrao={null} armazemPorItem armazemForcado={regras?.exigeArmazem === true} custoMedioNoUnitario={false}
+      erros={erros} armazemPadrao={null} armazemPorItem armazemForcado={regras?.exigeArmazem === true} estoqueNaGrade={false} custoMedioNoUnitario={false}
       lote={controleDeLote} daOrigem={daOrigem} />
   </div>;
 }

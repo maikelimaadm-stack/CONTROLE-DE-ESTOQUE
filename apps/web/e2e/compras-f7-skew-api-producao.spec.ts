@@ -133,23 +133,19 @@ test("OP01-F7 · K1-1 (sentido 1) — Documentos de Compras e a criação da com
     await page.keyboard.press("Escape");
   }
 
-  // (2) A CRIAÇÃO DA COMPRA. O bloco fiscal mora DENTRO dos Dados adicionais (que só existem quando há campo a
-  //     recolher). PREMISSA: os Dados desenharam com a TOP travada (o desenho em que o bloco nasceria). Legado: nada de
-  //     Dados fiscais — e, havendo os Dados adicionais, ABERTOS, também nada lá dentro. Novo: os Dados adicionais
-  //     existem (os campos fiscais contam) e, abertos, mostram o bloco.
+  // (2) A CRIAÇÃO DA COMPRA. O bloco fiscal mora nos Dados, sempre à vista (sem acordeão). PREMISSA: os Dados
+  //     desenharam com a TOP travada. Legado: nada de Dados fiscais. Novo: o bloco aparece nos extras.
   await page.goto(`/compras/compras/new?tipo_operacao_id=${top}`);
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
   const dados = page.getByTestId(`${P}-dados`);
   await expect(dados, "premissa: os Dados desenharam com a TOP travada").toContainText(nomeDaTop);
   await page.waitForLoadState("networkidle");
-  const grupo = dados.getByRole("button", { name: /^Dados adicionais/ });
-  if (mundo === "novo") await expect(grupo, "com a capacidade, os Dados adicionais existem (os campos fiscais)").toHaveCount(1);
-  if ((await grupo.count()) > 0) {
-    if ((await grupo.getAttribute("aria-expanded")) !== "true") await grupo.click();
-    await expect(grupo, "premissa: os Dados adicionais estão abertos").toHaveAttribute("aria-expanded", "true");
-  }
+  await expect(dados.getByRole("button", { name: /^Dados adicionais/ }), "sem acordeão Dados adicionais").toHaveCount(0);
   if (mundo === "legado") await expect(page.getByTestId("compras-dados-fiscais"), "sem a capacidade: nada de Dados fiscais").toHaveCount(0);
-  else await expect(page.getByTestId("compras-dados-fiscais"), "com a capacidade: o bloco Dados fiscais").toBeVisible();
+  else {
+    await expect(page.getByTestId("compras-campos-extras"), "com a capacidade: os extras à vista").toBeVisible();
+    await expect(page.getByTestId("compras-dados-fiscais"), "com a capacidade: o bloco Dados fiscais").toBeVisible();
+  }
 
   // (3) O FIO: a tela falou com a base (premissa) e, sem a capacidade, nunca com a importação.
   expect(fio.requisicoes.some((r) => r.caminho === PORTA_DA_CAPACIDADE), "premissa: o fio registrou a pergunta da capacidade").toBe(true);

@@ -307,15 +307,11 @@ test("F3B-C2 — consulta da compra: a grade começa por Local de estoque → C�
   await expect(previa.locator("tbody tr td").nth(1), "o Produto").toHaveText(`${c.p1.codigo} - ${c.p1.nome}`);
   await page.getByTestId("confirm-dialog-confirm").click();
 
-  // (4) CONFIRMADA, a relação "Entradas no estoque": Data → Local de estoque → Produto, com os valores do servidor.
+  // (4) CONFIRMADA: as entradas ficam no servidor; a tela não tem mais a aba Estoque (produtos já na relação de itens).
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "confirmado");
-  const confirmada = await api<{ movimentos: { warehouse_id: string; product_id: string }[] }>(page, "GET", `/api/compras/compras/${id}`);
+  const confirmada = await api<{ movimentos: { warehouse_id: string; product_id: string; product_name?: string }[] }>(page, "GET", `/api/compras/compras/${id}`);
   expect(confirmada.movimentos.map((m) => [m.warehouse_id, m.product_id]), "premissa: uma entrada, no local do item").toEqual([[c.local.id, c.p1.id]]);
-  await page.getByRole("tab", { name: /^Estoque/ }).click();
-  const movimentos = page.getByTestId("compras-consulta-movimentos");
-  await expect(movimentos.getByRole("columnheader")).toHaveText(["Data", "Local de estoque", "Produto", "Movimento", "Quantidade", "Custo unitário", "Custo total"]);
-  const entrada = movimentos.getByTestId("base2-items-linha");
-  await expect(entrada).toHaveCount(1);
-  await expect(entrada.getByRole("cell").nth(1), "o Local de estoque da entrada").toHaveText(c.local.nome);
-  await expect(entrada.getByRole("cell").nth(2), "o Produto da entrada").toHaveText(c.p1.nome);
+  await expect(page.getByRole("tab", { name: /^Estoque/ }), "sem aba Estoque no portal de compras").toHaveCount(0);
+  await expect(page.getByTestId("compras-consulta-movimentos")).toHaveCount(0);
+  await expect(page.getByTestId("compras-consulta-itens"), "os produtos continuam na relação de itens").toContainText(c.p1.nome);
 });
