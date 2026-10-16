@@ -51,7 +51,7 @@ function caminhoDoMotor(caminho: string): string | null {
 }
 
 export function ItensDaCriacaoDeCompra({ estado }: { estado: EstadoDaCriacao }) {
-  const { variante, ehCompra, itens, setItens, colunasDoLayout, fieldsDosItens, errosDeItens, lote, localDoCabecalho, regras, travasDaLinha, aceitaLinhaNova, localNaGrade, cabecalho, escolherLocal } = estado;
+  const { variante, ehCompra, itens, setItens, colunasDoLayout, fieldsDosItens, errosDeItens, lote, localDoCabecalho, travasDaLinha, aceitaLinhaNova, localNaGrade, cabecalho, escolherLocal } = estado;
   const colunas = React.useMemo(() => colunasDosItensDeCompras(variante), [variante]);
 
   /** Grade enxuta (decisão 319): produto, qtd, unitário, desconto, total. Local de estoque padrão fica acima da grade. */
@@ -76,8 +76,9 @@ export function ItensDaCriacaoDeCompra({ estado }: { estado: EstadoDaCriacao }) 
     {localNaGrade && <div data-testid="compras-local-acima-da-grade" className="max-w-md">
       <CampoDoLocalPadrao prefixoTestid={PREFIXO_CENTRAL_COMPRAS} empresaId={cabecalho.empresa_id} valor={localDoCabecalho} onChange={escolherLocal} />
     </div>}
+    {/* Local padrão acima da grade: não forçar coluna por linha (evita Local duplicado na tela). */}
     <ItensDoMotor prefixoTestid={PREFIXO_CENTRAL_COMPRAS} colunas={colunas} items={itens} onChange={setItens} layout={layout}
-      erros={erros} armazemPadrao={localDoCabecalho} armazemPorItem armazemForcado={regras?.exigeArmazem === true} estoqueNaGrade={false} custoMedioNoUnitario={false}
+      erros={erros} armazemPadrao={localDoCabecalho} armazemPorItem armazemForcado={false} estoqueNaGrade={false} custoMedioNoUnitario={false}
       lote={controleDeLote} pesquisaDeProduto={PESQUISA_DE_PRODUTO_DA_ENTRADA} travasDaLinha={travasDaLinha} aceitaLinhaNova={aceitaLinhaNova} />
   </div>;
 }

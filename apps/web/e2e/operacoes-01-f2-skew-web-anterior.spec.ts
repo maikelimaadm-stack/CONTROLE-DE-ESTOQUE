@@ -1,5 +1,5 @@
 import type { Locator, Page, Request, Response } from "@playwright/test";
-import { login, api, uniq, empresaAtiva, pickRef, adicionarItemNaCentral, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
+import { login, api, uniq, empresaAtiva, pickRef, adicionarItemNaCentral, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, abrirAbaDoPainelDeCompras } from "./helpers";
 import { cfg4, cabecalhosDaSessao, type RegrasGeraisE2E } from "./top-config-08-comum";
 import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 import { mundoDoWebDaBase, premissaDaApiDestaFase, regrasGeraisDoCorpo, vigiar, type Mundo, type RegrasGeraisNoFio } from "./operacoes-01-f2-skew-comum";
@@ -245,8 +245,11 @@ async function abrirCriacaoDeCompra(page: Page, top: string, c: CenarioDaCompra,
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
   await expect(page.getByTestId("compras-salvar"), "o Salvar saiu da trava: as regras chegaram").toBeEnabled();
   await escolher(page, "Fornecedor", c.nomeFornecedor);
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
+  // Decisão 319: Local de estoque padrão acima da grade (a linha nasce com ele).
+  await escolher(page, "Local de estoque", c.nomeArmazem);
 }
 
 /** Clica no Salvar do web da base e devolve o POST (o corpo enviado e o devolvido) — o ouvinte nasce antes do clique. */
@@ -279,7 +282,6 @@ test("OP01-F2 · K-2b (sentido 2) — a Central de Compras do web da base contra
   await page.getByTestId(`${PC}-adicionar-item`).click();
   const linha = page.getByTestId(`${PC}-linha`).first();
   await escolherNaCelula(page, linha.getByTestId(`${PC}-produto`), c.nomeProduto);
-  await escolherNaCelula(page, linha.getByTestId(`${PC}-armazem`), c.nomeArmazem);
   await linha.getByLabel("Quantidade do item 1").fill("5");
   await linha.getByLabel("Valor unitário do item 1").fill("20");
   await expect(page.getByTestId(`${PC}-subtotal`)).toContainText("100,00");

@@ -389,7 +389,7 @@ test("F6B-P3 — a rede cai depois de o servidor gravar a compra: o reenvio do S
   await linha.getByLabel("Quantidade do item 1").fill("3");
   await linha.getByLabel("Valor unitário do item 1").fill("7");
   await expect(page.getByTestId(`${P}-subtotal`)).toContainText("21,00");
-  // Observação mora nos Dados principais (decisão 319), expansível
+  // Observação mora nos Dados principais (decisão 319)
   const abrirObs = page.getByTestId("compras-observacao-abrir");
   if (await abrirObs.count()) await abrirObs.click();
   await page.getByTestId("compras-observacao").fill(observacao);

@@ -1,7 +1,7 @@
 import type { Locator, Page, Response } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { api, empresaAtiva, login, uniq } from "./helpers";
+import { api, empresaAtiva, login, uniq, abrirAbaDoPainelDeCompras } from "./helpers";
 import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } from "./central-compras-fixtures";
 import { vigiar, type Mundo } from "./operacoes-01-f2-skew-comum";
 import { garantirCommit, shaDaBase } from "./skew-fonte-da-base";
@@ -111,12 +111,14 @@ test("OP01-F7 · K2-1 (sentido 2) — a Central de Compras da base lança a comp
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
   await expect(page.getByTestId("compras-salvar"), "o Salvar saiu da trava: as regras chegaram").toBeEnabled();
   await escolher(page, "Fornecedor", nomeFornecedor);
+  await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", ref.natureza.label);
   await escolher(page, "Centro de resultado", ref.centro.label);
+  // Decisão 319: Local de estoque padrão acima da grade (sem célula por linha).
+  await escolher(page, "Local de estoque", nomeLocal);
   await page.getByTestId(`${PC}-adicionar-item`).click();
   const linha = page.getByTestId(`${PC}-linha`).first();
   await escolherNaCelula(page, linha.getByTestId(`${PC}-produto`), nomeProduto);
-  await escolherNaCelula(page, linha.getByTestId(`${PC}-armazem`), nomeLocal);
   await linha.getByLabel("Quantidade do item 1").fill("4");
   await linha.getByLabel("Valor unitário do item 1").fill("25");
   await expect(page.getByTestId("compras-total")).toContainText("100,00");

@@ -155,7 +155,7 @@ async function abrirAba(page: Page, nome: string) {
   await expect(aba).toHaveAttribute("aria-selected", "true");
 }
 
-/** Observação na edição (Dados principais, expansível) ou na consulta (aba Observações do painel). */
+/** Observação na edição (Dados principais) ou na consulta (aba Observações do painel). */
 async function abrirObservacao(page: Page, onde: "edicao" | "consulta") {
   if (onde === "edicao") await abrirObservacaoDaCompra(page);
   else await abrirAba(page, "Observações");
