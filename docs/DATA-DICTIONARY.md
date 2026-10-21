@@ -1310,6 +1310,7 @@ Documento comercial de compra (decisões 267 e 283). A coluna `especie` decide a
 | `dfe_id` | DF-e | uuid | não |  |  |  | Só compra: a DF-e de onde a nota veio (FK composta), da mesma chave e sem empresa ou da mesma empresa. |
 | `solicitacao_compra_id` | Solicitação de compra | uuid | não |  |  |  | Só compra: a solicitação de compra atendida (FK composta), da mesma empresa; ao receber, a solicitação aceita a compra. |
 | `version` |  | bigint | sim |  |  |  |  |
+| `plano_parcelas_operacional` |  | jsonb | não |  |  |  |  |
 
 ### ERP-COMPRAS-DOCUMENTO-ITEM — Item do Documento de Compra
 

@@ -52,7 +52,10 @@ export interface DocumentoGravadoDeCompra {
   tipo_operacao: { id: string; codigo: string; nome: string; versao: number | null; codigoBase: string | null } | null;
   fornecedor_id: string; transportadora_id: string | null; data_documento: string; data_entrada: string | null; data_vencimento: string | null;
   numero_nota: string | null; serie_nota: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null;
-  condicao_pagamento_id: string | null; plano_parcelas: Record<string, unknown> | null; parcelas_ajustadas: boolean;
+  condicao_pagamento_id: string | null; plano_parcelas: Record<string, unknown> | null;
+  /** EDITAR-02B: cronograma operacional (XML); nulo = títulos seguem parcelas_nota/plano clássico. */
+  plano_parcelas_operacional: Record<string, unknown> | null;
+  parcelas_ajustadas: boolean;
   forma_pagamento_id: string | null; frete: string; outras_despesas: string; desconto: string; valor_itens: string; valor_total: string;
   observacao: string | null; origem_documento_id: string | null;
   chave_acesso: string | null; uf_nota: string | null; tipo_documento_fiscal: string | null; valor_ipi: string | null; valor_icms_st: string | null;
@@ -81,6 +84,10 @@ export interface CamposDaEdicaoDeCompra {
   serie_nota?: string | null | undefined; categoria_financeira_id?: string | null | undefined; centro_custo_id?: string | null | undefined;
   condicao_pagamento_id?: string | null | undefined; plano_parcelas?: InstallmentPlan | null | undefined; forma_pagamento_id?: string | null | undefined;
   frete?: string | undefined; outras_despesas?: string | undefined; desconto?: string | undefined; observacao?: string | null | undefined;
+  /** EDITAR-02B (decisão 324): classificação gerencial da compra ABERTA. */
+  tipo_titulo_id?: string | null | undefined;
+  classificacao_gasto?: "capex" | "opex" | null | undefined;
+  rateio?: DocumentoCompraEntrada["rateio"] | null | undefined;
   itens?: ItemDaEdicaoDeCompra[] | undefined;
 }
 /** O contrato da PATCH de uma espécie (`CONTRATO_DA_EDICAO`, em `compras.ts`). */
@@ -179,10 +186,13 @@ const CABECALHO = {
   fornecedor_id: "uuid", transportadora_id: "uuid", data_documento: "data", data_entrada: "data", data_vencimento: "data",
   numero_nota: "texto", serie_nota: "texto", categoria_financeira_id: "uuid", centro_custo_id: "uuid", condicao_pagamento_id: "uuid",
   forma_pagamento_id: "uuid", frete: "decimal", outras_despesas: "decimal", desconto: "decimal", observacao: "texto",
+  tipo_titulo_id: "uuid", classificacao_gasto: "texto",
 } as const satisfies Record<string, Tipo>;
 export type CampoDoCabecalhoDeCompra = keyof typeof CABECALHO;
 /** As colunas do cabeçalho que a PATCH grava quando mudam (lista estática: o SQL só monta identificador daqui). */
 export const CAMPOS_DO_CABECALHO_DA_EDICAO = Object.keys(CABECALHO) as CampoDoCabecalhoDeCompra[];
+/** Colunas do cabeçalho gravadas via `mudancas` sem passar pelo loop genérico de `CABECALHO` (rateio → rateio_tipo + linhas). */
+export const CAMPOS_CLASSIFICACAO_DA_EDICAO = ["tipo_titulo_id", "classificacao_gasto", "rateio_tipo"] as const;
 
 /** Os campos do item que a PATCH pode trocar (os do item do POST), e como se compara cada um. Lista ESTÁTICA. */
 const ITEM = {
@@ -262,16 +272,36 @@ export interface EdicaoDeCompraComoFicara {
   itensAConferir: Set<number>;
   /** As posições novas, ou com natureza/centro trocados (o rateio por produto). */
   classificacaoDosItens: Set<number>;
+  /** EDITAR-02B: a PATCH troca o rateio (tipo ou linhas por valor). */
+  rateioTrocou: boolean;
   /** Algum campo (ou item) muda de fato. */
   mudou: boolean;
 }
 
-/** O rateio GRAVADO na forma do corpo do POST (o tipo é imutável desde a 0047; as linhas por valor, também). */
+/** O rateio GRAVADO na forma do corpo do POST. */
 function rateioGravado(cur: DocumentoGravadoDeCompra): DocumentoCompraEntrada["rateio"] {
   if (cur.rateio_tipo === "por_produto") return { tipo: "por_produto" };
   if (cur.rateio_tipo !== "por_valor") return null;
   return { tipo: "por_valor", linhas: (cur.rateio ?? []).map((l) => ({ categoria_financeira_id: l.categoria_financeira_id, centro_custo_id: l.centro_custo_id,
     conta_contabil_id: l.conta_contabil_id, safra_id: l.safra_id, percentual: l.percentual })) };
+}
+
+/** Compara rateio canônico (tipo + linhas por valor com percentual decimal). */
+function rateioIgual(a: DocumentoCompraEntrada["rateio"] | null | undefined, b: DocumentoCompraEntrada["rateio"] | null | undefined): boolean {
+  const x = a ?? null; const y = b ?? null;
+  if (x === null && y === null) return true;
+  if (x === null || y === null || x.tipo !== y.tipo) return false;
+  if (x.tipo === "por_produto") return true;
+  if (x.tipo !== "por_valor" || y.tipo !== "por_valor") return false;
+  if (x.linhas.length !== y.linhas.length) return false;
+  return x.linhas.every((l, i) => {
+    const o = y.linhas[i]!;
+    return l.categoria_financeira_id.toLowerCase() === o.categoria_financeira_id.toLowerCase()
+      && l.centro_custo_id.toLowerCase() === o.centro_custo_id.toLowerCase()
+      && (l.conta_contabil_id ?? null)?.toString().toLowerCase() === (o.conta_contabil_id ?? null)?.toString().toLowerCase()
+      && (l.safra_id ?? null)?.toString().toLowerCase() === (o.safra_id ?? null)?.toString().toLowerCase()
+      && D(l.percentual).eq(D(o.percentual));
+  });
 }
 
 /**
@@ -291,7 +321,30 @@ export function edicaoDeCompraComoFicara(cur: DocumentoGravadoDeCompra, campos: 
     const v = campos[campo];
     if (v !== undefined && !iguais(tipo, v, cur[campo])) mudancas[campo] = v;
   }
-  if (campos.plano_parcelas !== undefined && !planoIgualAoGravado(cur, campos.plano_parcelas)) mudancas["plano_parcelas"] = campos.plano_parcelas;
+  if (campos.plano_parcelas !== undefined) {
+    // EDITAR-02B: com parcelas_nota, o plano do corpo vira cronograma OPERACIONAL (coluna à parte; XOR 0047 intacto).
+    if (cur.parcelas_nota != null) {
+      const gravadoOp = cur.plano_parcelas_operacional;
+      if (!planoIgualAoGravado({ ...cur, plano_parcelas: gravadoOp }, campos.plano_parcelas)) {
+        mudancas["plano_parcelas_operacional"] = campos.plano_parcelas;
+      }
+    } else if (!planoIgualAoGravado(cur, campos.plano_parcelas)) {
+      mudancas["plano_parcelas"] = campos.plano_parcelas;
+    }
+  }
+
+  const rateioAtual = rateioGravado(cur);
+  let rateioComoFicara = rateioAtual;
+  let rateioTrocou = false;
+  if (campos.rateio !== undefined) {
+    const enviado = campos.rateio ?? null;
+    if (!rateioIgual(enviado, rateioAtual)) {
+      rateioTrocou = true;
+      rateioComoFicara = enviado;
+      mudancas["rateio"] = enviado;
+      mudancas["rateio_tipo"] = enviado?.tipo ?? null;
+    }
+  }
 
   let pares: (ItemGravadoDeCompra | undefined)[] = cur.itens;
   let itens: ItemComoFicara[] = cur.itens.map(itemDoGravado);
@@ -360,14 +413,18 @@ export function edicaoDeCompraComoFicara(cur: DocumentoGravadoDeCompra, campos: 
     plano_parcelas: "plano_parcelas" in mudancas ? campos.plano_parcelas : undefined,
     forma_pagamento_id: valor("forma_pagamento_id"), frete: valor("frete"), outras_despesas: valor("outras_despesas"), desconto: valor("desconto"),
     observacao: valor("observacao"), itens,
-    // Os dados fiscais do cabeçalho: os GRAVADOS (imutáveis, 0047) — entram no total e nas conferências como no POST.
+    // Fato fiscal do cabeçalho: GRAVADO (imutável). Classificação gerencial: a que a PATCH troca (decisão 324).
     chave_acesso: cur.chave_acesso, uf_nota: cur.uf_nota,
     tipo_documento_fiscal: cur.tipo_documento_fiscal as DocumentoCompraEntrada["tipo_documento_fiscal"],
-    valor_ipi: cur.valor_ipi, valor_icms_st: cur.valor_icms_st, seguro: cur.seguro, tipo_titulo_id: cur.tipo_titulo_id,
-    classificacao_gasto: cur.classificacao_gasto as DocumentoCompraEntrada["classificacao_gasto"],
-    rateio: rateioGravado(cur),
+    valor_ipi: cur.valor_ipi, valor_icms_st: cur.valor_icms_st, seguro: cur.seguro,
+    tipo_titulo_id: valor("tipo_titulo_id"),
+    classificacao_gasto: valor("classificacao_gasto") as DocumentoCompraEntrada["classificacao_gasto"],
+    rateio: rateioComoFicara,
   };
-  return { mudancas, d, pares, itens: modo, itensAConferir, classificacaoDosItens, mudou: Object.keys(mudancas).length > 0 || modo.modo === "porId" };
+  return {
+    mudancas, d, pares, itens: modo, itensAConferir, classificacaoDosItens, rateioTrocou,
+    mudou: Object.keys(mudancas).length > 0 || modo.modo === "porId",
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -409,7 +466,7 @@ export function recusaDosTotaisDaEdicaoDeCompra(itensTotais: readonly string[], 
 // 4. O HISTÓRICO
 // ---------------------------------------------------------------------------------------------------------------
 /** Colunas do cabeçalho comparadas no evento (lista estática): as editáveis e as derivadas (totais, plano). */
-const COLUNAS_DO_EVENTO = [...CAMPOS_DO_CABECALHO_DA_EDICAO, "plano_parcelas", "parcelas_ajustadas", "valor_itens", "valor_total"] as const;
+const COLUNAS_DO_EVENTO = [...CAMPOS_DO_CABECALHO_DA_EDICAO, "rateio_tipo", "plano_parcelas", "plano_parcelas_operacional", "parcelas_ajustadas", "valor_itens", "valor_total"] as const;
 // `posicao` entra: reordenar é uma gravação (a versão sobe), e o evento tem de dizer o que foi gravado.
 const CAMPOS_DO_ITEM_NO_EVENTO = [...(Object.keys(ITEM) as CampoDoItemDeCompra[]), "valor_total", "posicao"] as const;
 const mesmo = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);

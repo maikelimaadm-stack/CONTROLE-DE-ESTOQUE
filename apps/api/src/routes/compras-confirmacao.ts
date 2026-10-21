@@ -70,6 +70,8 @@ export interface CompraParaConfirmar {
   tipo_operacao_versao_id: string; data_documento: string; data_entrada: string | null; data_vencimento: string | null;
   numero_nota: string | null; serie_nota: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null;
   forma_pagamento_id: string | null; plano_parcelas: unknown; valor_total: string;
+  /** EDITAR-02B: cronograma operacional (preferido na confirmação quando preenchido). */
+  plano_parcelas_operacional: unknown;
   /** OPERACOES-01 F6a: o pedido de onde a compra veio (nulo = compra direta). Decide se a divergência se aplica. */
   origem_documento_id: string | null;
   /** OPERACOES-01 F9b: a TOP da compra (sempre presente), que vai para o título com a versão. */
@@ -106,6 +108,7 @@ function comoCompra(d: Record<string, unknown>): CompraParaConfirmar {
     numero_nota: (d.numero_nota as string | null) ?? null, serie_nota: (d.serie_nota as string | null) ?? null,
     categoria_financeira_id: (d.categoria_financeira_id as string | null) ?? null, centro_custo_id: (d.centro_custo_id as string | null) ?? null,
     forma_pagamento_id: (d.forma_pagamento_id as string | null) ?? null, plano_parcelas: d.plano_parcelas ?? null, valor_total: String(d.valor_total ?? "0"),
+    plano_parcelas_operacional: d.plano_parcelas_operacional ?? null,
     origem_documento_id: (d.origem_documento_id as string | null) ?? null,
     // OPERACOES-01 F9b: a TOP da compra (NOT NULL na espécie compra).
     tipo_operacao_id: String(d.tipo_operacao_id),
@@ -331,13 +334,20 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
   // TOP-CONFIG-08: a compra SEM ITENS (formato 4 com "Permitido") cai na mesma regra — total 0 não gera título, e
   // o frete sozinho gera o título do total; sem item não há entrada (o rateio abaixo só roda com itens).
   plano.geraTitulos = (politica.financeiro.autoridade === "padrao" || politica.financeiro.efeito === "pagar") && D(d.valor_total).gt(0);
-  plano.plano = lerPlano(d.plano_parcelas);
-  // OPERACOES-01 F7: as duplicatas da nota (exclusivas com o plano, CHECK da 0047) são as parcelas do título.
-  try {
-    plano.parcelas = lerParcelasDaNota(d.parcelas_nota);
-  } catch (e) {
-    if (!(e instanceof DomainError)) throw e;
-    modo.recusar(e);
+  // EDITAR-02B: cronograma operacional, se houver, manda nos títulos; parcelas_nota ficam só como fato fiscal.
+  const planoOperacional = lerPlano(d.plano_parcelas_operacional);
+  if (planoOperacional) {
+    plano.plano = planoOperacional;
+    plano.parcelas = null;
+  } else {
+    plano.plano = lerPlano(d.plano_parcelas);
+    // OPERACOES-01 F7: as duplicatas da nota (exclusivas com o plano, CHECK da 0047) são as parcelas do título.
+    try {
+      plano.parcelas = lerParcelasDaNota(d.parcelas_nota);
+    } catch (e) {
+      if (!(e instanceof DomainError)) throw e;
+      modo.recusar(e);
+    }
   }
 
   // A APROVAÇÃO (TOP-CONFIG-08, decisão 277) — logo depois da política da versão e ANTES das exigências e de

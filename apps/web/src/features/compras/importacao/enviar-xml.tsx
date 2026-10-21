@@ -6,10 +6,32 @@ import { ApiError } from "@/lib/api";
 import { toast } from "@/lib/toast";
 import { Button, Dialog, Field, NativeSelect } from "@/components/ui";
 import { useChaveDeIdempotencia } from "../pedido-e-orcamento";
+import { useTopsDaEspecie, varianteDeCompra } from "../variantes";
 import {
   ARQUIVO_MAXIMO_BYTES, arquivoEmBase64, candidatasDoDestinatario, idDaCompraPeloCodigo, importacaoPendenteDoConflito, importarArquivo,
   lerConferencia, notaJaLancadaDoConflito, recusasNoCampo, rotaDaConferencia
 } from "./api";
+
+/** Prefixo da TOP escolhida ANTES do upload — escopada por importação (`:id`), nunca global (R2). */
+export const PREFIXO_TOP_PRE_UPLOAD = "compras.importacao.topPreUpload:";
+/** @deprecated chave global frágil — só limpeza de legado. */
+export const CHAVE_TOP_PRE_UPLOAD = "compras.importacao.topPreUpload";
+export function chaveTopPreUpload(importacaoId: string): string {
+  return `${PREFIXO_TOP_PRE_UPLOAD}${importacaoId}`;
+}
+export function gravarTopPreUpload(importacaoId: string, topId: string): void {
+  try {
+    sessionStorage.setItem(chaveTopPreUpload(importacaoId), topId);
+    sessionStorage.removeItem(CHAVE_TOP_PRE_UPLOAD);
+  } catch { /* sessão sem storage */ }
+}
+export function lerTopPreUpload(importacaoId: string): string | null {
+  try {
+    const escopada = sessionStorage.getItem(chaveTopPreUpload(importacaoId));
+    if (escopada) return escopada;
+    return null;
+  } catch { return null; }
+}
 
 /**
  * O DIÁLOGO "IMPORTAR XML DE NOTA DE COMPRA" (OPERACOES-01 F7, decisão 284) — aberto pelo botão dos Documentos de
@@ -38,15 +60,26 @@ function tamanhoLegivel(bytes: number): string {
 export function DialogoImportarXml({ aberto, onFechar, solicitacaoId }: { aberto: boolean; onFechar: () => void; solicitacaoId: string | null }) {
   const router = useRouter();
   const chave = useChaveDeIdempotencia();
+  const segmentoCompra = varianteDeCompra("compra")?.segmento ?? "compras";
+  const tops = useTopsDaEspecie(segmentoCompra);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   const [arquivo, setArquivo] = React.useState<File | null>(null);
   const [arrastando, setArrastando] = React.useState(false);
   const [recusas, setRecusas] = React.useState<string[]>([]);
   const [candidatas, setCandidatas] = React.useState<{ id: string; nome: string }[] | null>(null);
   const [empresaId, setEmpresaId] = React.useState("");
+  const [topId, setTopId] = React.useState("");
   const [conflito, setConflito] = React.useState<Conflito | null>(null);
   const [enviando, setEnviando] = React.useState(false);
   const [abrindoCompra, setAbrindoCompra] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!aberto || tops.situacao !== "pronto") return;
+    setTopId((atual) => {
+      if (atual && tops.dados.items.some((t) => t.id === atual)) return atual;
+      return tops.dados.defaultId ?? "";
+    });
+  }, [aberto, tops]);
 
   const limpar = () => { setRecusas([]); setConflito(null); };
   const escolherArquivo = (f: File | null) => {
@@ -57,6 +90,7 @@ export function DialogoImportarXml({ aberto, onFechar, solicitacaoId }: { aberto
   const enviar = async () => {
     if (!arquivo || enviando) return;
     if (arquivo.size > ARQUIVO_MAXIMO_BYTES) { setRecusas(["Arquivo maior que 3 MB."]); return; }
+    if (!topId) { setRecusas(["Escolha a TOP de compra antes de enviar o XML."]); return; }
     if (candidatas && !empresaId) { setRecusas(["Escolha a empresa da compra."]); return; }
     limpar();
     setEnviando(true);
@@ -66,6 +100,7 @@ export function DialogoImportarXml({ aberto, onFechar, solicitacaoId }: { aberto
       const r = await importarArquivo(corpo, chave.doEnvio(corpo));
       const conf = lerConferencia(r);
       if (!conf) { setRecusas(["A resposta do servidor não é a conferência que esta tela sabe ler."]); return; }
+      gravarTopPreUpload(conf.id, topId);
       router.push(rotaDaConferencia(conf.id, solicitacaoId));
     } catch (e) {
       const mensagem = chave.depoisDoErro(e);
@@ -109,7 +144,7 @@ export function DialogoImportarXml({ aberto, onFechar, solicitacaoId }: { aberto
 
   const fechar = (o: boolean) => {
     if (o || enviando) return;
-    setArquivo(null); limpar(); setCandidatas(null); setEmpresaId(""); setArrastando(false);
+    setArquivo(null); limpar(); setCandidatas(null); setEmpresaId(""); setTopId(""); setArrastando(false);
     if (inputRef.current) inputRef.current.value = "";
     onFechar();
   };
@@ -129,14 +164,31 @@ export function DialogoImportarXml({ aberto, onFechar, solicitacaoId }: { aberto
     escolherArquivo(f);
   };
 
+  const topsProntas = tops.situacao === "pronto";
   return <Dialog open={aberto} onOpenChange={fechar} title="Importar XML de nota de compra" size="md" testId="importacao-upload" preventClose={enviando}
     footer={<>
       <Button variant="outline" onClick={() => fechar(false)} disabled={enviando}>Fechar</Button>
-      <Button data-testid="importacao-enviar" loading={enviando} disabled={!arquivo || (candidatas !== null && !empresaId)} onClick={() => void enviar()}>Enviar e conferir</Button>
+      <Button data-testid="importacao-enviar" loading={enviando}
+        disabled={!arquivo || !topId || (candidatas !== null && !empresaId)}
+        onClick={() => void enviar()}>Enviar e conferir</Button>
     </>}>
     <div className="flex flex-col gap-3">
-      <p className="text-sm text-slate-600">O servidor lê a NF-e, guarda o original e abre a conferência. Nada é lançado até você gerar a compra.</p>
+      <p className="text-sm text-slate-600">Escolha a TOP de compra, envie o XML e confira. O servidor só lê e guarda a NF-e — nada é lançado até você gerar a compra.</p>
       {solicitacaoId && <p className="rounded border border-sky-200 bg-sky-50 px-3 py-2 text-[12.5px] text-sky-900" data-testid="importacao-upload-solicitacao">A compra gerada fica vinculada à solicitação de compra de origem.</p>}
+
+      <Field label="TOP de compra" span={12} required>
+        {topsProntas
+          ? <NativeSelect data-testid="importacao-top-upload" value={topId} disabled={enviando}
+              onChange={(ev) => { setTopId(ev.target.value); setRecusas([]); }}>
+              <option value="">Escolha a TOP</option>
+              {tops.dados.items.map((t) => <option key={t.id} value={t.id}>{t.code} — {t.name}</option>)}
+            </NativeSelect>
+          : <span className="text-xs text-slate-500" data-testid="importacao-top-upload-indisponivel">
+              {tops.situacao === "carregando" ? "Carregando as TOPs de compra…"
+                : tops.situacao === "sem-top" ? "Nenhuma TOP de compra ativa: configure uma TOP de compra."
+                  : "As TOPs de compra não puderam ser lidas."}
+            </span>}
+      </Field>
 
       <Field label="Arquivo da nota (XML ou ZIP)" span={12}>
         <div

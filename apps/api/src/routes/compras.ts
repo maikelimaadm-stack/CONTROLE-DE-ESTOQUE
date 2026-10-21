@@ -559,6 +559,11 @@ const recusaDoItem = (i: number, campo: string, message: string) => recusa(`iten
 
 /** OPERACOES-01 F7: os campos fiscais do cabeçalho e do item (só da compra), na ordem do contrato. */
 const CAMPOS_FISCAIS_DO_CABECALHO = ["chave_acesso", "uf_nota", "tipo_documento_fiscal", "valor_ipi", "valor_icms_st", "seguro", "tipo_titulo_id", "classificacao_gasto", "rateio"] as const;
+/**
+ * EDITAR-02B (decisão 324): fato fiscal imutável na PATCH da compra. Tipo de título, CAPEX/OPEX e rateio passam a ser
+ * aceitos no corpo da compra ABERTA (a 0065 libera no banco; o pedido continua recusando o conjunto inteiro).
+ */
+const CAMPOS_FISCAIS_IMUTAVEIS_NA_EDICAO = ["chave_acesso", "uf_nota", "tipo_documento_fiscal", "valor_ipi", "valor_icms_st", "seguro"] as const;
 const CAMPOS_FISCAIS_DO_ITEM = ["gera_estoque", "imobilizado", "categoria_financeira_id", "centro_custo_id", "valor_ipi", "valor_icms_st"] as const;
 export const MSG_PEDIDO_SEM_DADOS_FISCAIS = "O pedido de compra não tem dados fiscais: este campo é da compra";
 /** Os textos de hoje das recusas do pedido (EDITAR-02: a PATCH do pedido recusa as MESMAS chaves com o MESMO texto). */
@@ -740,13 +745,12 @@ async function conferirItens(ctx: ServiceCtx, especie: EspecieCompra, d: Documen
  *    safra viva da organização; nos dois: natureza de DESPESA, natureza e centro analíticos e ativos, conta contábil da
  *    organização (`exigirRateioAnalitico`, a porta da casa), cada recusa no seu caminho.
  *
- * EDITAR-02 (decisão 313, D5) — `edicao`: a PATCH confere sobre o documento COMO FICARÁ, com o rateio GRAVADO (o tipo de
- * título, o tipo do rateio e as linhas do rateio por valor são imutáveis desde a 0047 — a PATCH nem os aceita no corpo).
- * As conferências puras do item rodam em todos os itens, como no POST; o tipo de título e as linhas do rateio por valor,
- * que não mudam, não são reconferidos; no rateio por produto, a natureza e o centro só dos itens em
- * `classificacaoDosItens` (os novos e os que a PATCH reclassifica). Ausente = o POST, exatamente como antes.
+ * EDITAR-02B (decisão 324) — `edicao`: a PATCH confere o documento COMO FICARÁ. Tipo de título e rateio são
+ * reconferidos quando a PATCH os troca (`tipoTituloTrocou` / `rateioTrocou`); no rateio por produto sem troca do tipo,
+ * a natureza e o centro só dos itens em `classificacaoDosItens`. Ausente = o POST, exatamente como antes.
  */
-async function conferirDadosFiscais(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, edicao?: { classificacaoDosItens: ReadonlySet<number> }): Promise<void> {
+async function conferirDadosFiscais(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada,
+  edicao?: { classificacaoDosItens: ReadonlySet<number>; rateioTrocou?: boolean; tipoTituloTrocou?: boolean }): Promise<void> {
   if (especie !== "compra") return;
   const porProduto = d.rateio?.tipo === "por_produto";
   d.itens.forEach((it, i) => {
@@ -756,7 +760,7 @@ async function conferirDadosFiscais(ctx: ServiceCtx, especie: EspecieCompra, d: 
     if (cat !== null && !porProduto) throw recusaDoItem(i, "categoria_financeira_id", "Natureza por item só com rateio por produto");
     if (cat === null && porProduto) throw recusaDoItem(i, "categoria_financeira_id", "Com rateio por produto, informe a natureza e o centro de resultado de cada item");
   });
-  if (!edicao && d.tipo_titulo_id) {
+  if ((!edicao || edicao.tipoTituloTrocou) && d.tipo_titulo_id) {
     const tt = await ctx.tx.query("select 1 from erp.title_types where id = $1 and (organization_id is null or organization_id = $2)", [d.tipo_titulo_id, ctx.orgId]);
     if (!tt.rowCount) throw recusa("tipo_titulo_id", "Tipo de título inválido");
   }
@@ -765,9 +769,10 @@ async function conferirDadosFiscais(ctx: ServiceCtx, especie: EspecieCompra, d: 
   if (d.categoria_financeira_id || d.centro_custo_id) {
     throw recusa(d.categoria_financeira_id ? "categoria_financeira_id" : "centro_custo_id", "Com rateio, a natureza e o centro ficam nas linhas do rateio");
   }
-  // EDITAR-02: as linhas do rateio por valor são as gravadas (imutáveis); no rateio por produto, só os itens reclassificados.
-  if (edicao && (d.rateio.tipo === "por_valor" || edicao.classificacaoDosItens.size === 0)) return;
-  const itensDaClassificacao = edicao ? d.itens.filter((_, i) => edicao.classificacaoDosItens.has(i)) : d.itens;
+  // Sem troca do rateio: por valor fica o gravado (já validado); por produto, só itens reclassificados.
+  if (edicao && !edicao.rateioTrocou && (d.rateio.tipo === "por_valor" || edicao.classificacaoDosItens.size === 0)) return;
+  const itensDaClassificacao = edicao && !edicao.rateioTrocou
+    ? d.itens.filter((_, i) => edicao.classificacaoDosItens.has(i)) : d.itens;
   const linhas = d.rateio.tipo === "por_valor"
     ? d.rateio.linhas.map((l) => ({ financialCategoryId: l.categoria_financeira_id, costCenterId: l.centro_custo_id, chartAccountId: l.conta_contabil_id ?? null }))
     : itensDaClassificacao.map((it) => ({ financialCategoryId: it.categoria_financeira_id!, costCenterId: it.centro_custo_id!, chartAccountId: null }));
@@ -953,6 +958,10 @@ export interface EdicaoNoNucleo {
   itensAConferir: ReadonlySet<number>;
   /** Os itens novos ou com natureza/centro trocados (o rateio por produto, `conferirDadosFiscais`). */
   classificacaoDosItens: ReadonlySet<number>;
+  /** EDITAR-02B: a PATCH troca o rateio (tipo ou linhas) — reconferir o rateio inteiro. */
+  rateioTrocou?: boolean;
+  /** EDITAR-02B: a PATCH troca o tipo de título — reconferir existência/tenant. */
+  tipoTituloTrocou?: boolean;
   /** Fornecedor, número ou série da nota mudam: a nota duplicada é reconferida. */
   notaDuplicada: boolean;
   /** Logo depois de calcular os totais: o que não cabe na coluna (422 no campo, nunca o 500 do banco). */
@@ -1009,7 +1018,11 @@ export async function nucleoDoLancamento(ctx: ServiceCtx, especie: EspecieCompra
   });
   const efeitos = especie === "compra" ? await efeitosPrevistosDaCompra(ctx, top, execucaoConfiguradaHabilitada) : null;
   await conferirItens(ctx, especie, d, efeitos, e?.itensAConferir);
-  await conferirDadosFiscais(ctx, especie, d, e ? { classificacaoDosItens: e.classificacaoDosItens } : undefined);
+  await conferirDadosFiscais(ctx, especie, d, e ? {
+    classificacaoDosItens: e.classificacaoDosItens,
+    rateioTrocou: e.rateioTrocou,
+    tipoTituloTrocou: e.tipoTituloTrocou,
+  } : undefined);
 
   // Totais SEMPRE no servidor: itens − descontos + frete + outras − desconto (+ IPI + ICMS-ST + seguro, OPERACOES-01 F7:
   // a conta do domínio, a MESMA do CHECK da 0047; sem os três, é o total de hoje).
@@ -1272,6 +1285,10 @@ const edicaoDaCompraSchema = z.object({
   data_entrada: campoDoDocumento.data_entrada,
   numero_nota: campoDoDocumento.numero_nota.optional(),
   serie_nota: campoDoDocumento.serie_nota.optional(),
+  // EDITAR-02B (decisão 324): classificação gerencial da compra ABERTA (fato fiscal continua recusado).
+  tipo_titulo_id: campoDoDocumento.tipo_titulo_id,
+  classificacao_gasto: campoDoDocumento.classificacao_gasto,
+  rateio: campoDoDocumento.rateio,
 }).strict() satisfies z.ZodType<CamposDaEdicaoDeCompra>;
 
 /** As recusas próprias de chave de toda PATCH (422 no campo, JUNTAS — a 272): o que a edição não troca nunca. */
@@ -1284,8 +1301,8 @@ const RECUSAS_DE_IDENTIDADE: Readonly<Record<string, string>> = {
 
 /**
  * O CONTRATO DA PATCH POR ESPÉCIE (lido pela forma, `lerPedidoDaEdicaoDeCompra`):
- *   · compra → os dados fiscais do CABEÇALHO são imutáveis desde a 0047 (`documentos_compra_nota_guarda`): recusa
- *     própria, "Os dados fiscais da compra não mudam depois do lançamento." (D5);
+ *   · compra → fato fiscal do CABEÇALHO imutável (chave, UF, tipo, IPI, ICMS-ST, seguro); tipo de título, CAPEX/OPEX e
+ *     rateio editáveis na ABERTA (decisão 324 / 0065);
  *   · pedido → a nota, a entrada e os dados fiscais (do cabeçalho e do item), o lote e a validade são da compra: as
  *     recusas do POST, com o texto do POST (`conferirCamposDaEspecie`), na forma — com a chave presente, qualquer valor.
  * Chave fora da lista → "Campo não reconhecido na edição do documento." (nunca ignorada; D11: os padrões financeiros
@@ -1295,7 +1312,7 @@ export const CONTRATO_DA_EDICAO: Readonly<Record<EspecieCompra, ContratoDaEdicao
   compra: {
     schema: edicaoDaCompraSchema,
     chaves: new Set(Object.keys(edicaoDaCompraSchema.shape)),
-    recusasDeChave: { ...RECUSAS_DE_IDENTIDADE, ...Object.fromEntries(CAMPOS_FISCAIS_DO_CABECALHO.map((c) => [c, MSG_EDICAO_DADOS_FISCAIS])) },
+    recusasDeChave: { ...RECUSAS_DE_IDENTIDADE, ...Object.fromEntries(CAMPOS_FISCAIS_IMUTAVEIS_NA_EDICAO.map((c) => [c, MSG_EDICAO_DADOS_FISCAIS])) },
     recusasDeChaveDoItem: {},
   },
   pedido: {

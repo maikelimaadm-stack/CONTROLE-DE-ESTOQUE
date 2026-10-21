@@ -134,6 +134,19 @@ export function impostosDosDadosFiscais(f: DadosFiscais): string {
 }
 
 /**
+ * Total da compra na tela — UMA fonte de impostos por vez.
+ * Criação com capacidade F7: soma IPI/ICMS-ST/seguro digitados.
+ * Edição/consulta: soma só os gravados (nunca os dois — evita duplicar na edição ABERTA).
+ */
+export function totalExibidoDaCompra(p: {
+  totalItens: number; frete: number; outras: number; desconto: number;
+  impostosDigitados: string; impostosGravados: string; incluirDigitados: boolean;
+}): number {
+  const impostos = Number(p.incluirDigitados ? p.impostosDigitados : p.impostosGravados);
+  return p.totalItens + p.frete + p.outras - p.desconto + (Number.isFinite(impostos) ? impostos : 0);
+}
+
+/**
  * OPERACOES-01 F7 (decisão 284) — O RATEIO E A CLASSIFICAÇÃO DOS ITENS NA COMPRA MANUAL (o que a nota antiga tinha e a
  * conferência do XML já faz): rateio do documento (o de hoje: natureza e centro do cabeçalho), por valor (linhas com
  * natureza, centro, conta contábil, safra e percentual, somando 100%) ou por produto (natureza e centro em cada item);
@@ -617,8 +630,7 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     : limites ? itensNaEdicao(antes, novos, limites) : novos));
   const [ajustarParcelas, setAjustarParcelas] = React.useState(aberturaDaEdicao?.ajustarParcelas ?? false);
   const [plano, setPlano] = React.useState<Plan>(() => (aberturaDaEdicao ? { ...aberturaDaEdicao.plano } : defaultPlan()));
-  /* DADOS FISCAIS (F7): EDITAR só na criação com capacidade "sim" (corpo do POST). MOSTRAR também na edição aberta —
-     as abas Fiscal e Classificação não somem; a PATCH não aceita alterar fiscais/rateio, então a tela os lê. */
+  /* DADOS FISCAIS (F7): fato fiscal (chave/UF/impostos) só na criação. EDITAR-02B: classificação/rateio também na edição ABERTA. */
   const capacidadeFiscal = useImportacaoXml(ehCompra && !modoReceber);
   const editarFiscal = ehCompra && !modoReceber && !modoEdicao && capacidadeFiscal === "sim";
   /* Edição: aba Fiscal só se há capacidade F7 OU dados fiscais/importação gravados — evita aba vazia em legado. */
@@ -630,18 +642,38 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const mostrarFiscal = ehCompra && !modoReceber && (
     editarFiscal || (modoEdicao && (capacidadeFiscal === "sim" || docEdicaoTemFiscal))
   );
-  const editarRateio = editarFiscal;
-  /* Classificação: mesma porta da Fiscal; layout ainda pode trazer natureza/centro sem F7 via rateioCampos. */
-  const mostrarRateio = mostrarFiscal || (modoEdicao && ehCompra && !modoReceber);
+  /* Classificação/rateio editáveis na criação (F7) e na edição ABERTA da compra — distinto de editar fato fiscal. */
+  const editarRateio = ehCompra && !modoReceber && (editarFiscal || modoEdicao);
+  const mostrarRateio = editarRateio || (modoEdicao && ehCompra && !modoReceber);
+  /* Alias histórico = só criação com capacidade: corpo POST fiscal + impostos digitados no total. Nunca edição. */
   const dadosFiscaisAtivos = editarFiscal;
-  const [fiscal, setFiscal] = React.useState<DadosFiscais>(dadosFiscaisVazios);
+  const fiscalDaAbertura = (): DadosFiscais => {
+    if (!aberturaDaEdicao) return dadosFiscaisVazios();
+    return {
+      ...dadosFiscaisVazios(),
+      tipo_titulo_id: aberturaDaEdicao.tipoTituloId,
+      classificacao_gasto: aberturaDaEdicao.classificacaoGasto,
+      valor_ipi: String(documentoEmEdicao?.["valor_ipi"] ?? ""),
+      valor_icms_st: String(documentoEmEdicao?.["valor_icms_st"] ?? ""),
+      seguro: String(documentoEmEdicao?.["seguro"] ?? ""),
+      chave_acesso: String(documentoEmEdicao?.["chave_acesso"] ?? ""),
+      uf_nota: String(documentoEmEdicao?.["uf_nota"] ?? ""),
+      tipo_documento_fiscal: String(documentoEmEdicao?.["tipo_documento_fiscal"] ?? ""),
+    };
+  };
+  const rateioDaAbertura = (): RateioDaCompraNaTela => {
+    if (!aberturaDaEdicao) return rateioDoDocumento();
+    return { tipo: aberturaDaEdicao.rateioTipo, linhas: aberturaDaEdicao.rateioLinhas.map((l) => ({ ...l })) };
+  };
+  const [fiscal, setFiscal] = React.useState<DadosFiscais>(() => fiscalDaAbertura());
   /* LANCAMENTO-01 (decisão 311): o INICIAL dos dados fiscais — vazio, ou com o tipo de título que a TOP semeou (não conta
      como alteração, e o Descartar volta a ele). Sem semeadura, vazio: o "alterado" de hoje, byte a byte. */
-  const fiscalInicial = React.useRef<DadosFiscais>(dadosFiscaisVazios());
+  const fiscalInicial = React.useRef<DadosFiscais>(fiscalDaAbertura());
   /* O QUE A TOP SEMEOU (registrado pelo efeito dos padrões, nunca pela tela): a REGRA do corpo (`omissaoDoCorpo`) o consulta. */
   const semeadura = React.useRef<Semeadura>({});
   const mudarFiscal = React.useCallback((p: Partial<DadosFiscais>) => setFiscal((o) => ({ ...o, ...p })), []);
-  const [rateio, setRateio] = React.useState<RateioDaCompraNaTela>(rateioDoDocumento);
+  const [rateio, setRateio] = React.useState<RateioDaCompraNaTela>(() => rateioDaAbertura());
+  const rateioInicial = React.useRef<RateioDaCompraNaTela>(rateioDaAbertura());
   const mudarTipoDoRateio = (tipo: TipoDoRateioDaCompra) => setRateio((r) => ({ ...r, tipo }));
   const mudarLinhaDoRateio = (k: number, p: Partial<LinhaDoRateioDaCompra>) => setRateio((r) => ({ ...r, linhas: r.linhas.map((l, i) => (i === k ? { ...l, ...p } : l)) }));
   const adicionarLinhaDoRateio = () => setRateio((r) => (r.linhas.length >= 50 ? r : { ...r, linhas: [...r.linhas, linhaDoRateioVazia()] }));
@@ -681,14 +713,20 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   }, [recebendo, pedidoId]);
 
   const totalItens = itens.reduce((a, it) => a + totalDaLinhaExibido(it), 0);
-  /* EDITAR-02: na edição, IPI, ICMS-ST e seguro GRAVADOS (não mudam depois do lançamento) entram no total exibido, como na
-     conta do servidor. */
+  /* EDITAR-02: na edição, IPI/ICMS-ST/seguro GRAVADOS entram uma vez. Na criação F7, entram os digitados — nunca os dois. */
   const [impostosGravados] = React.useState(() => (documentoEmEdicao ? impostosDosDadosFiscais({
     ...dadosFiscaisVazios(), valor_ipi: String(documentoEmEdicao["valor_ipi"] ?? ""), valor_icms_st: String(documentoEmEdicao["valor_icms_st"] ?? ""),
     seguro: String(documentoEmEdicao["seguro"] ?? "")
   }) : "0"));
-  const totalExibido = totalItens + Number(h.frete || 0) + Number(h.outras_despesas || 0) - Number(h.desconto || 0)
-    + (dadosFiscaisAtivos ? Number(impostosDosDadosFiscais(fiscal)) : 0) + Number(impostosGravados);
+  const totalExibido = totalExibidoDaCompra({
+    totalItens,
+    frete: Number(h.frete || 0),
+    outras: Number(h.outras_despesas || 0),
+    desconto: Number(h.desconto || 0),
+    impostosDigitados: impostosDosDadosFiscais(fiscal),
+    impostosGravados,
+    incluirDigitados: editarFiscal,
+  });
 
   /* LANCAMENTO-01 (decisão 311) — A REGRA DO CORPO (`omissaoDoCorpo`): fora do corpo, o PAR natureza+centro que a TOP
      semeou e o operador não mexeu (o salvar da compra que gera título e o do pedido que provisiona aplicam o mesmo par da
@@ -738,7 +776,20 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
    * Nada semeado: o que vai é só o que o operador mudou.
    */
   const corpoDaPatch = (): Record<string, unknown> => (modoEdicao && aberturaDaEdicao
-    ? corpoDaEdicao({ version: edicao.dados.version, ehCompra, abertura: aberturaDaEdicao, atual: { cabecalho: h, itens, ajustarParcelas, plano } })
+    ? corpoDaEdicao({
+      version: edicao.dados.version, ehCompra,
+      abertura: {
+        cabecalho: aberturaDaEdicao.cabecalho, itens: aberturaDaEdicao.itens,
+        ajustarParcelas: aberturaDaEdicao.ajustarParcelas, plano: aberturaDaEdicao.plano,
+        tipoTituloId: aberturaDaEdicao.tipoTituloId, classificacaoGasto: aberturaDaEdicao.classificacaoGasto,
+        rateioTipo: aberturaDaEdicao.rateioTipo, rateioLinhas: aberturaDaEdicao.rateioLinhas,
+      },
+      atual: {
+        cabecalho: h, itens, ajustarParcelas, plano,
+        tipoTituloId: fiscal.tipo_titulo_id, classificacaoGasto: fiscal.classificacao_gasto,
+        rateioTipo: rateio.tipo, rateioLinhas: rateio.linhas,
+      },
+    })
     : {});
   const corpo = (): Record<string, unknown> => (modoEdicao ? corpoDaPatch() : corpoDoLancamento());
   /* O que as pendências conferem: o documento COMO FICARÁ (na edição, o gravado com o que mudou — a forma do lançamento,
@@ -862,7 +913,9 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   /* A forma só se semeia COBRADA: a regra da TOP a exige, ou o layout a marca obrigatória. */
   const formaCobrada = regras?.exigeFormaPagamento === true || obrigatorioNoLayout("forma_pagamento_id");
   /** O valor que a tela mostra no campo que a TOP pode preencher (o tipo de título mora nos dados fiscais). */
-  const valorNaTela = (c: string): string => (c === "tipo_titulo_id" ? (dadosFiscaisAtivos ? fiscal.tipo_titulo_id : "") : c in h ? h[c as ChaveDoCabecalho] : "");
+  const valorNaTela = (c: string): string => (c === "tipo_titulo_id"
+    ? ((editarFiscal || (modoEdicao && editarRateio)) ? fiscal.tipo_titulo_id : "")
+    : c in h ? h[c as ChaveDoCabecalho] : "");
   const travadoPelaTopNaTela = (c: string) => travadoPelaTop({ aplica: aplicaATop, podeTrocar, padroes: padroesTop, campo: c, valor: valorNaTela(c) });
   const semeadoPelaTopNaTela = (c: string) => {
     const s = semeadura.current[c as CampoDoPadraoDaTop];
@@ -1043,7 +1096,8 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const semEmpresa = ({ empresa_id: _empresa, ...resto }: Cabecalho) => resto;
   const alterado = modoEdicao ? mudouAlgo(corpoDaPatch()) : (itens.length > 0 && (!modoReceber || JSON.stringify(itens) !== JSON.stringify(abertura.current?.itens ?? [])))
     || ajustarParcelas || JSON.stringify(semEmpresa(h)) !== JSON.stringify(semEmpresa(inicial.current))
-    || (dadosFiscaisAtivos && (CAMPOS_DOS_DADOS_FISCAIS.some((c) => fiscal[c] !== fiscalInicial.current[c]) || JSON.stringify(rateio) !== JSON.stringify(rateioDoDocumento())));
+    || (dadosFiscaisAtivos && (CAMPOS_DOS_DADOS_FISCAIS.some((c) => fiscal[c] !== fiscalInicial.current[c])
+      || JSON.stringify(rateio) !== JSON.stringify(rateioInicial.current)));
   useDirtyTab(alterado && !salvarM.isSuccess);
   React.useEffect(() => {
     if (modoReceber && preenchimento && !abertura.current) abertura.current = { h: inicial.current, itens: linhasDoRecebimento(recebendo?.pedido.itens ?? []) };
@@ -1057,7 +1111,7 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     if (modoReceber) { router.push(rotaDoPedido); return; }
     if (modoEdicao) { edicao.onFechar(false); return; }
     setH({ ...inicial.current, empresa_id: inicial.current.empresa_id || empresaPadrao });
-    setItensCru([]); setAjustarParcelas(false); setPlano(defaultPlan()); setFiscal({ ...fiscalInicial.current }); setRateio(rateioDoDocumento()); setErros({}); setTentouSalvar(false); setPendenciasAbertas(false);
+    setItensCru([]); setAjustarParcelas(false); setPlano(defaultPlan()); setFiscal({ ...fiscalInicial.current }); setRateio({ ...rateioInicial.current, linhas: rateioInicial.current.linhas.map((l) => ({ ...l })) }); setErros({}); setTentouSalvar(false); setPendenciasAbertas(false);
     local.descartar(); setLocalEscolhidoEm(null); // o local do cabeçalho volta ao padrão (e deixa de ser escolha do operador)
   };
 

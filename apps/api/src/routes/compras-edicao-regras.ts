@@ -85,9 +85,12 @@ export const MSG_EDICAO_FORNECEDOR_DO_PEDIDO_COM_COMPRA = "O fornecedor do pedid
 /** D3 — o item do pedido já orçado (orçamento não cancelado): nem produto nem quantidade (o texto do banco, 0044). */
 export const MSG_EDICAO_ITEM_ORCADO = "O item do pedido de compra já orçado não troca de produto nem de quantidade.";
 /** P3 — a compra com as duplicatas da nota: o que forma o total e as parcelas é o da nota. */
-export const MSG_EDICAO_COMPRA_DA_NOTA = "Esta compra veio da nota com as duplicatas: o que forma o total e as parcelas é o da nota e não muda. Para corrigir, cancele a compra e lance de novo.";
-/** P3 — o item que carrega a linha da nota (`n_item_nota`): produto, quantidade, valores, descontos e impostos da nota. */
-export const MSG_EDICAO_ITEM_DA_NOTA = "Este item veio da nota fiscal: produto, quantidade, valores, descontos e impostos são os da nota e não mudam.";
+export const MSG_EDICAO_COMPRA_DA_NOTA = "Esta compra veio da nota: frete, desconto e totais da NF-e não mudam. As duplicatas fiscais ficam na origem; o cronograma operacional (o que vira título) pode ser revisado na compra aberta.";
+/**
+ * P3 / EDITAR-02B — o item com linha da nota: quantidade, valores, descontos e impostos da nota ficam; o produto
+ * INTERNO pode ser remapeado na compra ABERTA (rastro fiscal `n_item_nota` intacto).
+ */
+export const MSG_EDICAO_ITEM_DA_NOTA = "Este item veio da nota fiscal: quantidade, valores, descontos e impostos são os da nota e não mudam.";
 /**
  * P6 (decisão do dono) — a compra com CHAVE DE ACESSO (digitada ou do XML): a chave (imutável, 0047) codifica o emitente,
  * o número e a série da nota. Trocar fornecedor, número ou série desmentiria a chave — e o título nasceria para outro
@@ -105,9 +108,9 @@ export const MSG_EDICAO_ITEM_NOVO_NA_COMPRA_DA_NOTA = "Esta compra veio da nota 
 
 /** O que forma o total da compra no cabeçalho, e as parcelas (P3; `data_vencimento` = a 1ª duplicata — decisão do A2). */
 const CABECALHO_DA_NOTA: readonly CampoDoCabecalhoDeCompra[] = ["frete", "outras_despesas", "desconto", "condicao_pagamento_id", "data_vencimento"];
-/** O que forma o total de cada item (P3). */
-const ITEM_DO_TOTAL: readonly CampoDoItemDeCompra[] = ["produto_id", "quantidade", "valor_unitario", "desconto", "desconto_percentual"];
-/** A linha da nota no item (P3): o que forma o total e os impostos que vieram da linha. */
+/** O que forma o total de cada item (P3) — sem `produto_id`: o vínculo interno pode mudar na ABERTA (decisão 324). */
+const ITEM_DO_TOTAL: readonly CampoDoItemDeCompra[] = ["quantidade", "valor_unitario", "desconto", "desconto_percentual"];
+/** A linha da nota no item (P3): totais e impostos da linha; produto interno liberado na edição ABERTA. */
 const ITEM_DA_LINHA_DA_NOTA: readonly CampoDoItemDeCompra[] = [...ITEM_DO_TOTAL, "valor_ipi", "valor_icms_st"];
 /** P6 — o que a chave de acesso codifica (o emitente, o número e a série). */
 const IDENTIDADE_DA_NOTA: readonly CampoDoCabecalhoDeCompra[] = ["fornecedor_id", "numero_nota", "serie_nota"];
@@ -200,9 +203,11 @@ export async function limitesDaEdicaoDeCompra(ctx: ServiceCtx, doc: DocumentoPar
     for (const it of itens) if (orcados.has(it.id)) travar(it.campos, ["produto_id", "quantidade"], MSG_EDICAO_ITEM_ORCADO);
   }
 
-  // P3 — a compra com as duplicatas da nota: o que forma o total, as parcelas e o item novo.
+  // P3 — a compra com as duplicatas da nota: o que forma o total fiscal e o item novo.
+  // `plano_parcelas` clássico continua XOR com parcelas_nota (CHECK 0047); a PATCH redireciona o plano enviado
+  // para `plano_parcelas_operacional` (0065) — por isso não trava a chave do corpo aqui.
   if (doc.especie === "compra" && doc.parcelas_nota != null) {
-    travar(campos, [...CABECALHO_DA_NOTA, "plano_parcelas"], MSG_EDICAO_COMPRA_DA_NOTA);
+    travar(campos, [...CABECALHO_DA_NOTA], MSG_EDICAO_COMPRA_DA_NOTA);
     itemNovo ??= MSG_EDICAO_COMPRA_DA_NOTA;
     for (const it of itens) travar(it.campos, ITEM_DO_TOTAL, MSG_EDICAO_COMPRA_DA_NOTA);
   }

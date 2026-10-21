@@ -18,6 +18,7 @@ import { invalidarLeiturasDeCompras, useChaveDeIdempotencia } from "../pedido-e-
 import { useImportacaoXml } from "./capacidade";
 import { descartarImportacao, gerarCompraDaImportacao, lerConferencia, recusasNoCampo, useConferencia } from "./api";
 import { ABAS_DA_CONFERENCIA, abaDoCaminho, useEstadoDaConferencia, type AbaDaConferencia } from "./estado";
+import { lerTopPreUpload } from "./enviar-xml";
 import { AbaCabecalho } from "./aba-cabecalho";
 import { AbaItens } from "./aba-itens";
 import { AbaPedido } from "./aba-pedido";
@@ -108,8 +109,13 @@ function ConferenciaCarregada({ conf, solicitacaoId, relendo, erroDaReleitura, o
   const varianteDaCompra = varianteDeCompra("compra");
   const tops = useTopsDaEspecie(varianteDaCompra?.segmento ?? "");
   const [solicitacao, setSolicitacao] = React.useState(solicitacaoId);
+  const topPreUpload = React.useMemo(() => {
+    const v = lerTopPreUpload(conf.id);
+    if (v && tops.situacao === "pronto" && tops.dados.items.some((t) => t.id === v)) return v;
+    return null;
+  }, [tops, conf.id]);
   const e = useEstadoDaConferencia(conf, {
-    topPadrao: tops.situacao === "pronto" ? tops.dados.defaultId : null,
+    topPadrao: topPreUpload ?? (tops.situacao === "pronto" ? tops.dados.defaultId : null),
     podeReceberPedido: can("pedidos_compra.edit"),
     solicitacaoId: solicitacao,
     compra: varianteDaCompra ? { segmento: varianteDaCompra.segmento, familia: varianteDaCompra.familia } : null,
