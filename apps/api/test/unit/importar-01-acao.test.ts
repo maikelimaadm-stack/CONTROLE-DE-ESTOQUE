@@ -57,8 +57,8 @@ describe("IMPORTAR-01 · unitário da ação", () => {
     expect(colunasQueMudaram(cols, { ...antes, barcode: undefined }, { ...antes, barcode: null }), "ausente e nulo são o mesmo vazio").toEqual([]);
   });
 
-  it("U6: recorte offset/limit fatia as linhas de dados; lote sugerido 25; linhas_arquivo só quando recortou", () => {
-    expect(LOTE_DA_IMPORTACAO).toBe(25);
+  it("U6: recorte offset/limit fatia as linhas de dados; lote sugerido 40; linhas_arquivo só quando recortou", () => {
+    expect(LOTE_DA_IMPORTACAO).toBe(40);
     const linhas = Array.from({ length: 5 }, (_, i) => ({ n: i + 2, celulas: new Map(), erros: [] as { linha: number; coluna: string | null; mensagem: string }[] }));
     const planilha = { cols: [], presentes: new Set<string>(), linhas, erros: [] } satisfies PlanilhaLida;
     expect(recortarPlanilha(planilha).linhas).toHaveLength(5);

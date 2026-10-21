@@ -15,22 +15,22 @@ describe("IMPORTAR-01 · a ação no diálogo", () => {
     expect([urlDoModelo("products", "atualizar"), nomeDoModelo("products", "atualizar")]).toEqual(["/api/imports/products/modelo?acao=atualizar", "modelo-products-atualizar.xlsx"]);
   });
 
-  it("W6: juntar fatias soma contagens; progresso da conferência mostra lote e %", () => {
-    expect(LOTE_DA_IMPORTACAO).toBe(25);
+  it("W6: juntar fatias soma contagens; progresso da gravação mostra lote e %", () => {
+    expect(LOTE_DA_IMPORTACAO).toBe(40);
     const j = juntarFatias([
-      { linhas: 25, gravadas: 0, certas: 25, com_erro: 0, erros: [], linhas_arquivo: 60 },
-      { linhas: 25, gravadas: 0, certas: 23, com_erro: 2, erros: [{ linha: 40, coluna: "Nome", mensagem: "x" }, { linha: 41, coluna: null, mensagem: "y" }], linhas_arquivo: 60 },
-      { linhas: 10, gravadas: 0, certas: 10, com_erro: 0, erros: [], linhas_arquivo: 60 },
+      { linhas: 40, gravadas: 40, certas: 40, com_erro: 0, erros: [], linhas_arquivo: 90 },
+      { linhas: 40, gravadas: 38, certas: 38, com_erro: 2, erros: [{ linha: 50, coluna: "Nome", mensagem: "x" }, { linha: 51, coluna: null, mensagem: "y" }], linhas_arquivo: 90 },
+      { linhas: 10, gravadas: 10, certas: 10, com_erro: 0, erros: [], linhas_arquivo: 90 },
     ]);
-    expect(j).toMatchObject({ linhas: 60, certas: 58, com_erro: 2, gravadas: 0 });
+    expect(j).toMatchObject({ linhas: 90, certas: 88, com_erro: 2, gravadas: 88 });
     expect(j.erros).toHaveLength(2);
-    const andamento = progressoDoLote("conferir", 25, 25, 60, true);
-    expect(andamento).toMatchObject({ fase: "conferir", feitas: 25, total: 60, lote: 2, lotes: 3, aguardando: true });
-    expect(textoDoProgresso(andamento)).toContain("Conferência:");
-    expect(textoDoProgresso(andamento)).toContain("25 de 60");
+    const andamento = progressoDoLote("gravar", 40, 40, 90, true);
+    expect(andamento).toMatchObject({ fase: "gravar", feitas: 40, total: 90, lote: 2, lotes: 3, aguardando: true });
+    expect(textoDoProgresso(andamento)).toContain("Importação:");
+    expect(textoDoProgresso(andamento)).toContain("40 de 90");
     expect(textoDoProgresso(andamento)).toContain("lote 2 de 3");
-    expect(percentualDoProgresso(andamento)).toBe(42);
-    expect(percentualDoProgresso(progressoDoLote("conferir", 0, 25, 0, true))).toBeNull();
+    expect(percentualDoProgresso(andamento)).toBe(44);
+    expect(percentualDoProgresso(progressoDoLote("conferir", 0, 40, 0, true))).toBeNull();
   });
 
   it("W2: o ATUALIZAR aparece nos 6 cadastros importáveis com código (products entre eles), nunca nos 4 sem código nem fora da importação", () => {

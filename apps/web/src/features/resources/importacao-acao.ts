@@ -11,10 +11,10 @@ export type AcaoImportacao = "criar" | "atualizar";
 export type ModoImportacao = "tudo" | "parcial";
 
 /**
- * Linhas de dados por pedido. 100 ainda estourava ~60 s na prévia (create+rollback); 25 cabe com folga
- * depois do cache/getOne. A API aceita até 500.
+ * Linhas por pedido na GRAVAÇÃO. A conferência (prévia) vai num pedido só — no servidor ela só valida,
+ * sem INSERT. A API aceita `limit` até 500.
  */
-export const LOTE_DA_IMPORTACAO = 25;
+export const LOTE_DA_IMPORTACAO = 40;
 
 /**
  * O cadastro tem a ação ATUALIZAR? Importável E com o campo `code` no registry (a chave do casamento) — a mesma regra
