@@ -10,6 +10,8 @@ import { SeletorDeTipoDeDocumento, TODOS_OS_TIPOS } from "@/features/sales/selet
 import { NovoDocumentoPorTop } from "@/features/sales/lancador-unificado";
 import type { LinhaDeLancamento } from "@/features/sales/launcher-operacoes";
 import { DocumentosDeCompraList } from "@/features/compras/documentos-compra-list";
+import { ItensDaNota } from "@/features/compras/itens-da-nota";
+import type { Row } from "@/features/docs/shared";
 import { useTopsDeCompras, variantesDeCompra } from "@/features/compras/variantes";
 import { useFinalizacaoEOrcamento, type EstadoDaCapacidade } from "@/features/compras/pedido-e-orcamento";
 import { useImportacaoXml } from "@/features/compras/importacao/capacidade";
@@ -87,8 +89,15 @@ function Documentos() {
     <NovoDocumentoPorTop variante={atual} rotuloDoTipo={rotuloDoTipo} todosOsGrupos={grupos.filter((g) => g.variante.variante !== "orcamento")} prefixo="compras" rota={rotaDeLancamentoDeCompra} />
     <ImportarXml />
   </span>;
-  return <div data-testid="compras-documentos" data-especie={atual} className="flex min-h-0 flex-1 flex-col">
-    <DocumentosDeCompraList especie={atual} barra={barra} />
+  // MESTRE-DETALHE: o documento selecionado na grade abre os PRODUTOS dele no painel de baixo (sem sair da lista).
+  // A seleção é da grade (um clique); o duplo clique continua abrindo a consulta. Trocar o Tipo recorta a lista e
+  // não há por que manter selecionado um documento que saiu dela.
+  const [selecionado, setSelecionado] = React.useState<Row | null>(null);
+  const aoSelecionar = React.useCallback((rows: Row[]) => { setSelecionado(rows.length === 1 ? rows[0]! : null); }, []);
+  React.useEffect(() => { setSelecionado(null); }, [atual]);
+  return <div data-testid="compras-documentos" data-especie={atual} className="flex min-h-0 flex-1 flex-col gap-2">
+    <DocumentosDeCompraList especie={atual} barra={barra} onSelecionar={aoSelecionar} />
+    <ItensDaNota documento={selecionado} />
   </div>;
 }
 

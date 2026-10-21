@@ -38,6 +38,12 @@ export interface Base1ListProps {
   searchable?: boolean; searchPlaceholder?: string;
   canCreate?: boolean; onNew?: () => void;
   onOpen?: (row: Row) => void;
+  /**
+   * A SELEÇÃO da grade/cards, linha a linha — para quem usa a listagem como MESTRE (o painel de itens da compra).
+   * A lista não decide nada com ela: o clique continua selecionando e o duplo clique continua abrindo. Quem escuta
+   * recebe as linhas selecionadas e é responsável por não disparar um novo estado a cada render.
+   */
+  onSelectionChange?: (rows: Row[]) => void;
   rowActions?: (row: Row) => { label: string; onClick: () => void; danger?: boolean }[];
   /** entidade da auditoria (nome da tabela) para o "Histórico" */
   entity?: string;
@@ -172,6 +178,11 @@ export function Base1List(props: Base1ListProps) {
   const selectedRows = rows.filter((r) => selected.has(String(r["id"])));
   const one = selectedRows.length === 1 ? selectedRows[0]! : null;
   const rowId = (r: Row) => String(r["id"]);
+  // A seleção avisada DEPOIS do render (nunca dentro do `setSelected`), pela ref: a tela que escuta pode mudar de
+  // estado sem que a nova identidade do callback re-dispare o efeito.
+  const avisarSelecao = React.useRef(props.onSelectionChange);
+  React.useEffect(() => { avisarSelecao.current = props.onSelectionChange; });
+  React.useEffect(() => { avisarSelecao.current?.(rows.filter((r) => selected.has(String(r["id"])))); }, [selected, rows]);
   // seleção como no MG: clique = só aquele registro (clicar no selecionado desmarca); Ctrl alterna; Shift intervalo; o controle alterna sem desmarcar os demais
   const onSelectClick = (id: string, mod: SelectClick) => { setScrollToId(null); setSelected((s) => {
     if (mod.shift && lastPick.current) { const ids = rows.map(rowId); const a = ids.indexOf(lastPick.current); const b = ids.indexOf(id); if (a >= 0 && b >= 0) { const [lo, hi] = a < b ? [a, b] : [b, a]; const n = new Set(mod.ctrl ? s : []); for (const x of ids.slice(lo, hi + 1)) n.add(x); return n; } }

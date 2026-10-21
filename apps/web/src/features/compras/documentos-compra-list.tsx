@@ -36,7 +36,7 @@ export { situacaoCancelavel } from "./cancelar-na-lista";
  * SKEW (web nova, API anterior): a API anterior não tem a porta, e responde 404. A aba então diz que a lista está
  * indisponível nesta versão do servidor — e não mostra uma lista vazia, que afirmaria "não há documentos".
  */
-export function DocumentosDeCompraList({ especie, barra }: { especie: string; barra?: React.ReactNode }) {
+export function DocumentosDeCompraList({ especie, barra, onSelecionar }: { especie: string; barra?: React.ReactNode; /** a seleção da grade, para o painel dos itens da nota (mestre-detalhe) */ onSelecionar?: (rows: Row[]) => void }) {
   const disponivel = usePortaDisponivel(especie);
   const opcoesTop = useOpcoesDeTopDeCompras();
   const { can } = useAuth();
@@ -96,6 +96,7 @@ export function DocumentosDeCompraList({ especie, barra }: { especie: string; ba
     <DocList key={especie} title="Documentos de compra" endpoint="/api/compras/documentos" base="/compras" entity="documentos_compra"
       // A rota do detalhe sai da ESPÉCIE DA LINHA (o que o servidor classificou), nunca do filtro ativo.
       rowHref={(r) => rotaDoDocumento(r)}
+      onSelectionChange={onSelecionar}
       canCreate={false} canCancel={false} extraActions={barra}
       defaultFilters={especie ? { especie } : undefined}
       filters={[
