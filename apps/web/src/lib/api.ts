@@ -8,8 +8,9 @@ import { lerSessaoArmazenada } from "@erp/plataforma";
  */
 export const API_URL = (() => {
   const explicita = process.env.NEXT_PUBLIC_API_URL;
-  if (explicita === undefined || explicita === "" || explicita === "same-origin") return "";
-  return explicita.replace(/\/$/, "");
+  if (explicita === "" || explicita === "same-origin") return "";
+  if (explicita !== undefined) return explicita.replace(/\/$/, "");
+  return "http://localhost:3333";
 })();
 
 export class ApiError extends Error {
