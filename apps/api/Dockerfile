@@ -18,4 +18,4 @@ COPY --from=build /out ./
 COPY --from=build /app/supabase/migrations ./supabase/migrations
 EXPOSE 3333
 HEALTHCHECK --interval=30s --timeout=5s CMD wget -qO- http://127.0.0.1:${PORT:-3333}/health || exit 1
-CMD ["node", "dist/main.js"]
+CMD ["node", "dist/index.js"]
