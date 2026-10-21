@@ -155,10 +155,10 @@ async function abrirAba(page: Page, nome: string) {
   await expect(aba).toHaveAttribute("aria-selected", "true");
 }
 
-/** Observação na edição (Dados principais) ou na consulta (aba Observações do painel). */
+/** Observação nos Dados principais (decisão 319) — edição e consulta. */
 async function abrirObservacao(page: Page, onde: "edicao" | "consulta") {
   if (onde === "edicao") await abrirObservacaoDaCompra(page);
-  else await abrirAba(page, "Observações");
+  else await expect(page.getByTestId(`${P}-dados`).locator('[data-campo="Observação"]'), "Observação nos Dados da consulta").toBeVisible();
 }
 
 /** O Editar presente e DESABILITADO, com o motivo em `data-motivo` e na dica — o MESMO texto que o `/edicao` responde. */
@@ -236,7 +236,7 @@ test("E2-1 — compra ABERTA: Editar → a Central em modo edição com o gravad
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "aberto");
   await expect(page.getByTestId("compras-consulta-total"), "6 × 20,00 + 2 × 5,00").toContainText("130,00");
   await abrirObservacao(page, "consulta");
-  await expect(page.getByTestId(`${P}-painel`).getByRole("tabpanel")).toContainText("observação editada E2-1");
+  await expect(page.getByTestId(`${P}-dados`).locator('[data-campo="Observação"]')).toContainText("observação editada E2-1");
   const depois = await ler(page, "compra", doc.id);
   expect({ version: depois.version, observacao: depois.observacao, valor_total: depois.valor_total, itens: depois.itens.map((i) => [i.id, i.quantidade]) },
     "o GET :id: a versão subiu 1, a observação e a quantidade novas, os mesmos itens").toEqual({

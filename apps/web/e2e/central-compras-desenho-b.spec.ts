@@ -176,9 +176,9 @@ async function preencherCompraPelaTela(page: Page, c: Cenario) {
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
-  await escolher(page, "Local de estoque", c.nomeArmazem);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
+  await escolherNaCelula(page, linha.getByTestId(`${P}-armazem`), c.nomeArmazem);
   await escolherNaCelula(page, linha.getByTestId(`${P}-produto`), c.a.nome);
   await linha.getByLabel("Quantidade do item 1").fill("5");
   await linha.getByLabel("Valor unitário do item 1").fill("20");

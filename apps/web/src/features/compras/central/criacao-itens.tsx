@@ -7,9 +7,9 @@ import type { ColunaDoEditorDeItens, ItemRow } from "@/features/docs/shared";
 import { PREFIXO_CENTRAL_COMPRAS, colunasDosItensDeCompras } from "./adaptador";
 import type { EstadoDaCriacao } from "./estado";
 
-/** Colunas sempre visíveis na grade (detalhe do item cobre o restante). */
+/** Colunas sempre visíveis na grade (detalhe do item cobre o restante). Local de estoque POR LINHA (decisão 319/280). */
 const COLUNAS_DA_GRADE: ReadonlySet<string> = new Set([
-  "produto_id", "quantidade", "valor_unitario", "desconto", "desconto_percentual", "total", "unidade"
+  "armazem_id", "produto_id", "quantidade", "valor_unitario", "desconto", "desconto_percentual", "total", "unidade"
 ]);
 
 /**
@@ -52,12 +52,14 @@ export function ItensDaCriacaoDeCompra({ estado }: { estado: EstadoDaCriacao }) 
   const { variante, ehCompra, itens, setItens, colunasDoLayout, fieldsDosItens, errosDeItens, lote, localDoCabecalho, travasDaLinha, aceitaLinhaNova } = estado;
   const colunas = React.useMemo(() => colunasDosItensDeCompras(variante), [variante]);
 
-  /** Grade enxuta (decisão 319): produto, qtd, unitário, desconto, total — mais o Local de estoque de CADA linha. */
+  /** Grade enxuta (decisão 319): Local POR LINHA + produto, qtd, unitário, desconto, total. */
   const layout = React.useMemo<LayoutDosItens>(() => {
     const lista: ColunaDoLayout[] = colunasDoLayout
       ? colunasDoLayout.map((c) => ({ campo: c.chave, obrigatorio: c.obrigatorio, ...(c.rotulo ? { rotulo: c.rotulo } : {}) }))
       : fieldsDosItens.flatMap((f) => { const campo = CATALOGO_DA_COLUNA[f]; return campo ? [{ campo, obrigatorio: false }] : []; });
     const daGrade = lista.filter((c) => COLUNAS_DA_GRADE.has(c.campo));
+    // Layout que esconde armazem_id ainda precisa da coluna: cada item escolhe o seu (armazemForcado no motor reforça).
+    if (!daGrade.some((c) => c.campo === "armazem_id")) daGrade.unshift({ campo: "armazem_id", obrigatorio: false });
     return { colunas: daGrade.some((c) => c.campo === "total") ? daGrade : [...daGrade, { campo: "total", obrigatorio: false }] };
   }, [colunasDoLayout, fieldsDosItens]);
 

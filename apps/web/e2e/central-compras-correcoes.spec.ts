@@ -152,9 +152,9 @@ test("CX-1 — lançamento da COMPRA: o valor unitário '0' continua '0' depois 
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
-  await escolher(page, "Local de estoque", c.armazem.nome);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
+  await escolherNaCelula(page, P, linha.getByTestId(`${P}-armazem`), c.armazem.nome);
   const unitario = linha.getByLabel("Valor unitário do item 1");
   await unitario.fill("0");
   const leitura = leituraDoSaldo(page, c);
@@ -353,9 +353,9 @@ async function preencherCompraPelaTela(page: Page, c: Cenario, top: { id: string
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
-  await escolher(page, "Local de estoque", c.armazem.nome);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
+  await escolherNaCelula(page, P, linha.getByTestId(`${P}-armazem`), c.armazem.nome);
   await escolherNaCelula(page, P, linha.getByTestId(`${P}-produto`), c.produto.nome);
   await linha.getByLabel("Quantidade do item 1").fill("5");
   await linha.getByLabel("Valor unitário do item 1").fill("20");

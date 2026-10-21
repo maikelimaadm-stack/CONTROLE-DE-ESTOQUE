@@ -45,6 +45,8 @@ const caixas = (rotulos: readonly string[]) => rotulos.map((r) => `Mostrar ${r}`
 
 /** O valor em reais como o motor o escreve (`brl`): "R$ 31,00". */
 const reais = (v: string | number) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(v));
+/** Compra na criação usa `semSimboloDeMoeda` — só o número ("0,00"); consulta ainda usa `brl`. */
+const reaisSemSimbolo = (v: string | number) => new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(v));
 
 /** O produto (unidade, grupo e natureza do seed, pelo nome) e o local de estoque da empresa ativa — do caso. */
 async function produtoELocal(page: Page, rotulo: string) {
@@ -93,10 +95,10 @@ async function rotulosDaConsulta(page: Page, p: string) {
  * A CRIAÇÃO, medida no motor: o rodapé antes do item, a linha nova ("1" e "0"), o subtotal da linha e a quantidade da
  * célula não ativa (2 casas, o padrão de `casasDaQuantidade`). Os campos editáveis moram na linha MARCADA.
  */
-async function linhaNovaESubtotal(page: Page, p: string) {
+async function linhaNovaESubtotal(page: Page, p: string, fmt: (v: string | number) => string = reais) {
   const subtotal = page.getByTestId(`${p}-subtotal`);
   await expect(page.getByTestId(`${p}-linha`), "premissa: a criação abre sem itens").toHaveCount(0);
-  await expect(subtotal, "premissa: o rodapé da criação tem o subtotal — zero, sem itens").toHaveText(reais(0));
+  await expect(subtotal, "premissa: o rodapé da criação tem o subtotal — zero, sem itens").toHaveText(fmt(0));
   await expect(page.getByTestId(`${p}-itens-rodape`)).toContainText("Subtotal dos itens");
 
   await page.getByTestId(`${p}-adicionar-item`).click();
@@ -108,17 +110,17 @@ async function linhaNovaESubtotal(page: Page, p: string) {
   await expect(quantidade, "a linha nova nasce com a quantidade de sempre: 1").toHaveValue("1");
   await expect(unitario, "e com o unitário de sempre: 0").toHaveValue("0");
   await expect(page.getByTestId(`${p}-itens-contagem`)).toHaveText("(1)");
-  await expect(subtotal, "o rodapé soma a linha nova: 1 × 0").toHaveText(reais(0));
+  await expect(subtotal, "o rodapé soma a linha nova: 1 × 0").toHaveText(fmt(0));
 
   await quantidade.fill("2.5");
   await unitario.fill("12.4");
-  await expect(subtotal, "o rodapé mostra o total da linha: 2,5 × 12,40").toHaveText(reais(31));
+  await expect(subtotal, "o rodapé mostra o total da linha: 2,5 × 12,40").toHaveText(fmt(31));
 
   // desmarcada, a célula deixa de ser campo e mostra a quantidade formatada
   await linha.getByTestId(`${p}-selecionar-item`).click();
   await expect(linha, "a linha foi desmarcada").toHaveAttribute("aria-selected", "false");
   await expect(linha.getByTestId(`${p}-quantidade`), "a célula não ativa mostra a quantidade em 2 casas").toHaveText("2,50");
-  await expect(subtotal, "desmarcar não muda o subtotal").toHaveText(reais(31));
+  await expect(subtotal, "desmarcar não muda o subtotal").toHaveText(fmt(31));
 }
 
 /* ═════════════════════════════════════════════ F5B-M1 ═════════════════════════════════════════════ */
@@ -189,5 +191,5 @@ test("F5B-M2 — Central de Compras: o subtotal do servidor e os rótulos de sem
   // ── CRIAÇÃO: a linha nova e o rodapé (a compra passa `custoMedioNoUnitario={false}`: nada escreve no "0")
   await page.goto(`/compras/compras/new?tipo_operacao_id=${top.id}`);
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
-  await linhaNovaESubtotal(page, "central-compras");
+  await linhaNovaESubtotal(page, "central-compras", reaisSemSimbolo);
 });

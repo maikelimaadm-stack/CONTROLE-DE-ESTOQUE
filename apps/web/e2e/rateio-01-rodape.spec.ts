@@ -80,9 +80,9 @@ async function compraNaCentral(page: Page, c: Cenario) {
   const central = page.getByTestId("compras-central");
   await expect(central).toHaveAttribute("data-especie", "compra");
   await escolherEm(page, central, "Fornecedor", c.fornecedor.nome);
-  await escolherEm(page, central, "Local de estoque", c.armazem.nome);
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
+  await escolherNaCelula(page, linha.getByTestId(`${P}-armazem`), c.armazem.nome);
   await escolherNaCelula(page, linha.getByTestId(`${P}-produto`), c.produto.nome);
   await linha.getByLabel("Quantidade do item 1").fill("2");
   await linha.getByLabel("Valor unitário do item 1").fill("50");
