@@ -335,8 +335,8 @@ test("CC-9 — receber pedido no modelo: travas, sem Adicionar produto e sem Dup
 
   // (3) A GRADE DO MOTOR NO RECEBER: coluna do saldo; sem Adicionar produto e sem Duplicar item.
   await expect(page.getByTestId(`${P}-grade`).getByRole("columnheader", { name: "Saldo do pedido" })).toBeVisible();
-  await expect(linhaA.getByTestId(`${P}-saldo-da-origem`)).toHaveText("10,0000");
-  await expect(linhaB.getByTestId(`${P}-saldo-da-origem`)).toHaveText("2,0000");
+  await expect(linhaA.getByTestId(`${P}-saldo-da-origem`)).toHaveText("10");
+  await expect(linhaB.getByTestId(`${P}-saldo-da-origem`)).toHaveText("2");
   await expect(page.getByTestId(`${P}-adicionar-item`)).toHaveCount(0);
   await expect(page.getByTestId(`${P}-adicionar-vazio`)).toHaveCount(0);
   await expect(page.getByTestId(`${P}-duplicar-item`)).toHaveCount(0);

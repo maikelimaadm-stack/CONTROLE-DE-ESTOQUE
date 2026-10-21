@@ -216,7 +216,7 @@ test("OP01-F6a · K2-1 (sentido 2) — o web da base recebe pelo 'Receber…' o 
     await expect(page.getByTestId("compras-central-receber")).toHaveAttribute("data-situacao", "pronto");
     await expect(page.getByTestId("compras-receber-pedido")).toContainText(pedido.codigo);
     const linha = page.getByTestId(`compras-receber-item-${item.id}`);
-    await expect(linha.getByTestId("central-compras-saldo-da-origem")).toHaveText("3,0000");
+    await expect(linha.getByTestId("central-compras-saldo-da-origem")).toHaveText("3");
     await escolherNaLinha(page, linha.getByTestId("central-compras-armazem"), i.armazem.nome);
     await expect(linha.getByLabel("Quantidade do item 1"), "a quantidade começa no saldo inteiro").toHaveValue(/^3/);
     await linha.getByLabel("Valor unitário do item 1").fill("7");

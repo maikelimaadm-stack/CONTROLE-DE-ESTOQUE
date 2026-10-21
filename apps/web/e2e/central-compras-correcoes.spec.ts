@@ -11,7 +11,7 @@ import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } f
  * │      armazém com custo médio > 0 — e o POST leva 0 (a compra FORMA o custo, não o lê).           │
  * │ CX-2 o mesmo no RECEBER pedido: o `/convert` leva 0.                                           │
  * │ CX-3 a VENDA não muda: o unitário vazio continua preenchido pelo custo médio do armazém.         │
- * │ CX-4 saldo de 4 casas: 0,0040 aparece "0,0040" na consulta (e Receber/Encerrar coerentes).       │
+ * │ CX-4 saldo fracionário: 0,004 aparece na consulta (e Receber/Encerrar coerentes).                │
  * │ CX-5 "Recebido de pedido" quando o item tem `origem_item_id` (a chave que a leitura devolve).    │
  * │ CX-6 "Confirmar compra" na criação com TOP formato 4 "Confirmação: Automática": o POST confirma, │
  * │      a consulta abre Confirmado e o diálogo NÃO abre (sem prévia, sem segundo /confirm); com a   │
@@ -249,7 +249,7 @@ test("CX-3 — a VENDA não muda: na Central de Vendas o unitário vazio continu
 
 /* ═════════════════════════════════════════════ CX-4 ═════════════════════════════════════════════ */
 
-test("CX-4 — saldo de 4 casas: 0,0040 aparece '0,0040' na consulta do pedido (e a quantidade da compra em 4 casas); Receber e Encerrar saldo coerentes com ele", async ({ page }) => {
+test("CX-4 — saldo fracionário: 0,004 aparece na consulta do pedido (e a quantidade da compra em pt-BR); Receber e Encerrar saldo coerentes com ele", async ({ page }) => {
   await login(page);
   const c = await cenario(page);
   const pedido = await pedidoAberto(page, c, "2.0040", "1.00");
@@ -258,12 +258,12 @@ test("CX-4 — saldo de 4 casas: 0,0040 aparece '0,0040' na consulta do pedido (
   expect(srv.situacao, "PREMISSA: com saldo, o pedido continua aberto").toBe("aberto");
   expect(srv.itens.map((i) => [i.quantidade, i.recebido, i.saldo]), "PREMISSA: o servidor declara saldo 0.0040").toEqual([["2.0040", "2.0000", "0.0040"]]);
 
-  // A CONSULTA DO PEDIDO: quantidade, Recebido e Saldo na escala da compra (4 casas) — o saldo não vira "0,00"
+  // A CONSULTA DO PEDIDO: quantidade, Recebido e Saldo em pt-BR — o saldo 0,004 não vira "0,00"
   await page.goto(`/compras/pedidos/${pedido.id}`);
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "aberto");
-  await expect(page.getByTestId("doc-item-saldo"), "o saldo 0,0040 aparece inteiro").toHaveText(["0,0040"]);
-  await expect(page.getByTestId("doc-item-faturado"), "o Recebido em 4 casas").toHaveText(["2,0000"]);
-  await expect(page.getByTestId(`${P}-quantidade`), "a quantidade em 4 casas").toHaveText(["2,0040"]);
+  await expect(page.getByTestId("doc-item-saldo"), "o saldo 0,004 aparece (sem zeros à direita)").toHaveText(["0,004"]);
+  await expect(page.getByTestId("doc-item-faturado"), "o Recebido em pt-BR").toHaveText(["2"]);
+  await expect(page.getByTestId(`${P}-quantidade`), "a quantidade em pt-BR").toHaveText(["2,004"]);
   // COERENTE com o saldo à vista: Encerrar saldo e Receber continuam oferecidos
   await expect(page.getByTestId("compras-encerrar-saldo"), "há saldo: Encerrar saldo é oferecido").toBeVisible();
   const passo = page.getByTestId(`compras-proximo-passo-${c.topCompra.codigo}`);
@@ -272,14 +272,14 @@ test("CX-4 — saldo de 4 casas: 0,0040 aparece '0,0040' na consulta do pedido (
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-modo", "receber");
   await expect(page.getByTestId("compras-central-receber")).toHaveAttribute("data-situacao", "pronto");
   const linha = page.getByTestId(`compras-receber-item-${pedido.itemId}`);
-  await expect(linha.getByTestId(`${P}-saldo-da-origem`), "o Receber mostra o MESMO saldo").toHaveText("0,0040");
+  await expect(linha.getByTestId(`${P}-saldo-da-origem`), "o Receber mostra o MESMO saldo").toHaveText("0,004");
   await marcar(linha);
   await expect.poll(async () => Number(await linha.getByLabel("Quantidade do item 1").inputValue()), { message: "em partes, a quantidade começa no saldo" }).toBe(0.004);
 
-  // A CONSULTA DA COMPRA GERADA: a quantidade recebida em 4 casas
+  // A CONSULTA DA COMPRA GERADA: a quantidade recebida em pt-BR
   await page.goto(`/compras/compras/${compraId}`);
   await expect(page.getByTestId("compras-consulta-corpo")).toHaveAttribute("data-situacao", "aberto");
-  await expect(page.getByTestId(`${P}-quantidade`), "a quantidade da compra em 4 casas").toHaveText(["2,0000"]);
+  await expect(page.getByTestId(`${P}-quantidade`), "a quantidade da compra em pt-BR").toHaveText(["2"]);
 });
 
 /* ═════════════════════════════════════════════ CX-5 ═════════════════════════════════════════════ */

@@ -13,8 +13,11 @@ describe("numeroBR", () => {
     expect(numeroBR("1000.5")).toBe("1.000,50");
     expect(numeroBR("10,5")).toBe("10,50");
   });
-  it("casas forçadas prevalecem", () => {
-    expect(numeroBR(10, 4)).toBe("10,0000");
+  it("com teto de casas: corta zeros à direita e preserva significativas", () => {
+    expect(numeroBR(10, 4)).toBe("10");
+    expect(numeroBR("2.0040", 4)).toBe("2,004");
+    expect(numeroBR("0.0040", 4)).toBe("0,004");
+    expect(numeroBR("2.5", 2)).toBe("2,5");
     expect(numeroBR("10.5", 0)).toBe("11");
   });
   it("vazio ou inválido vira travessão", () => {

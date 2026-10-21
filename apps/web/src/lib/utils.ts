@@ -5,13 +5,16 @@ export const brl = (v: string | number | null | undefined) => v === null || v ==
 export const num = (v: string | number | null | undefined, d = 2) => v === null || v === undefined || v === "" ? "—" : new Intl.NumberFormat("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d }).format(Number(v));
 /**
  * Número na forma brasileira da tela: inteiro `1.000`, decimal `1.000,00`.
- * `casas` força a quantidade de decimais; sem ela, inteiro (sem parte fracionária) sai com 0 casas e o resto com 2.
+ * Com `casas`, mostra até esse teto e corta zeros à direita (`2,0040` → `2,004`; `3,0000` → `3`).
+ * Sem `casas`, inteiro sai com 0 casas e o resto com 2.
  */
 export function numeroBR(v: string | number | null | undefined, casas?: number): string {
   if (v === null || v === undefined || v === "") return "—";
   const n = typeof v === "number" ? v : Number(String(v).replace(/\s/g, "").replace(",", "."));
   if (!Number.isFinite(n)) return "—";
-  if (casas !== undefined) return new Intl.NumberFormat("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas }).format(n);
+  if (casas !== undefined) {
+    return new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: casas }).format(n);
+  }
   const inteiro = Math.abs(n - Math.round(n)) < 1e-9;
   return new Intl.NumberFormat("pt-BR", { minimumFractionDigits: inteiro ? 0 : 2, maximumFractionDigits: inteiro ? 0 : 2 }).format(n);
 }

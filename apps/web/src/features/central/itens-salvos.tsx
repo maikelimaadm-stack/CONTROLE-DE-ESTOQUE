@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { ChevronLeft, ChevronRight, FileText, Grid3x3, Plus } from "lucide-react";
-import { cn, brl, num, pct } from "@/lib/utils";
+import { cn, brl, num, numeroBR, pct } from "@/lib/utils";
 import { StockCell, type Row } from "@/features/docs/shared";
 import { ehDecimalDaApi } from "@/features/stock/reserva-estoque";
 import estilos from "./moldura.module.css";
@@ -69,7 +69,7 @@ function catalogoDeColunas(prefixoTestid: string, casas: number): Partial<Record
     armazem: { chave: "armazem", rotulo: "Local de estoque", largura: 122, celula: (it) => textoDoItem(it["warehouse_name"]) },
     estoque: { chave: "estoque", rotulo: "Estoque", largura: 74, numero: true, estoque: true, celula: (it) => <SaldoDoItem it={it} /> },
     quantidade: { chave: "quantidade", rotulo: "Quantidade", largura: 104, numero: true, celula: (it) => <span className={grade.quantidade}>
-      <span data-testid={`${prefixoTestid}-quantidade`}>{num(String(it["quantity"] ?? "0"), casas)}</span>
+      <span data-testid={`${prefixoTestid}-quantidade`}>{numeroBR(String(it["quantity"] ?? "0"), casas)}</span>
       {it["unit"] ? <span className={grade.unidade} data-testid={`${prefixoTestid}-unidade`}>{String(it["unit"])}</span> : null}
     </span> },
     unitario: { chave: "unitario", rotulo: "Valor unitário", largura: 108, numero: true, celula: (it) => brl(String(it["unit_price"] ?? "0")) },
@@ -86,8 +86,8 @@ const COLUNAS_DO_LOTE: readonly ColunaDoItemSalvo[] = [
 
 /** Documento com parte gerada — a parte gerada (o rótulo é da espécie) e o Saldo, do servidor, nas casas da quantidade. */
 const colunasDoSaldo = (rotuloDoGerado: string, casas: number): readonly ColunaDoItemSalvo[] => [
-  { chave: "faturado", rotulo: rotuloDoGerado, largura: 100, numero: true, testId: "doc-item-faturado", celula: (it) => num(String(it["faturado"] ?? "0"), casas) },
-  { chave: "saldo", rotulo: "Saldo", largura: 100, numero: true, testId: "doc-item-saldo", celula: (it) => num(String(it["saldo"] ?? it["quantity"] ?? "0"), casas) }
+  { chave: "faturado", rotulo: rotuloDoGerado, largura: 100, numero: true, testId: "doc-item-faturado", celula: (it) => numeroBR(String(it["faturado"] ?? "0"), casas) },
+  { chave: "saldo", rotulo: "Saldo", largura: 100, numero: true, testId: "doc-item-saldo", celula: (it) => numeroBR(String(it["saldo"] ?? it["quantity"] ?? "0"), casas) }
 ];
 
 /** Documento cuja versão congelada reserva estoque — o que cada item ainda segura, do servidor. */
@@ -101,7 +101,7 @@ const camposDoItemSalvo = (casas: number): readonly CampoDoItemSalvo[] => [
   { chave: "produto", rotulo: "Produto", adorno: "pesquisa", valor: (it) => (it["product_code"] ? `${texto(it["product_code"])} · ${texto(it["product_name"])}` : texto(it["product_name"])) },
   { chave: "estoque", rotulo: "Estoque", adorno: "travado", valor: (it) => <><SaldoDoItem it={it} />{it["unit"] ? ` ${texto(it["unit"])}` : ""}</> },
   { chave: "unidade", rotulo: "Unidade", adorno: "travado", valor: (it) => texto(it["unit"]) },
-  { chave: "quantidade", rotulo: "Quantidade", valor: (it) => num(String(it["quantity"] ?? "0"), casas) },
+  { chave: "quantidade", rotulo: "Quantidade", valor: (it) => numeroBR(String(it["quantity"] ?? "0"), casas) },
   { chave: "unitario", rotulo: "Valor unitário", valor: (it) => num(String(it["unit_price"] ?? "0"), 2) },
   { chave: "desconto", rotulo: "Desconto", valor: (it) => num(String(it["discount"] || "0"), 2) },
   { chave: "descontoPercentual", rotulo: "Desconto %", valor: (it) => num(String(it["discount_percent"] || "0"), 2) },
@@ -112,8 +112,8 @@ const CAMPOS_DO_LOTE: readonly CampoDoItemSalvo[] = [
   { chave: "validade", rotulo: "Validade", adorno: "travado", valor: (it) => texto(it["validade"]) }
 ];
 const camposDoSaldo = (rotuloDoGerado: string, casas: number): readonly CampoDoItemSalvo[] => [
-  { chave: "faturado", rotulo: rotuloDoGerado, adorno: "travado", valor: (it) => num(String(it["faturado"] ?? "0"), casas) },
-  { chave: "saldo", rotulo: "Saldo", adorno: "travado", valor: (it) => num(String(it["saldo"] ?? it["quantity"] ?? "0"), casas) }
+  { chave: "faturado", rotulo: rotuloDoGerado, adorno: "travado", valor: (it) => numeroBR(String(it["faturado"] ?? "0"), casas) },
+  { chave: "saldo", rotulo: "Saldo", adorno: "travado", valor: (it) => numeroBR(String(it["saldo"] ?? it["quantity"] ?? "0"), casas) }
 ];
 const CAMPOS_DA_RESERVA: readonly CampoDoItemSalvo[] = [
   { chave: "reservado", rotulo: "Reservado", adorno: "travado", valor: (it) => (ehDecimalDaApi(it["reservado"]) ? num(it["reservado"], 2) : "") }
