@@ -265,7 +265,7 @@ function lerParcelasDaNota(bruto: unknown): ParcelaDoTitulo[] | null {
 /** Valor, vencimento e plano (ou as parcelas da nota) dos títulos a pagar — o que `createTitles` recebe e o que a prévia mostra. */
 function tituloDaCompra(d: CompraParaConfirmar, plano: InstallmentPlan | null, parcelas: ParcelaDoTitulo[] | null = null) {
   if (parcelas?.length) return { amount: d.valor_total, dueDate: parcelas[0]!.dueDate, plan: null, parcelas };
-  return { amount: d.valor_total, dueDate: plano?.first_due_date ?? d.data_vencimento ?? d.data_documento, plan: plano };
+  return { amount: d.valor_total, dueDate: plano?.parcelas?.[0]?.vencimento ?? plano?.first_due_date ?? d.data_vencimento ?? d.data_documento, plan: plano };
 }
 
 /**

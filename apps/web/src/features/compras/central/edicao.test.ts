@@ -3,7 +3,7 @@ import type { ItemRow, Plan, Row } from "@/features/docs/shared";
 import {
   DICA_EDITAR_CANCELADO, DICA_EDITAR_CONFIRMADA, DICA_EDITAR_PEDIDO_CONVERTIDO, DICA_EDITAR_PEDIDO_FINALIZADO, aberturaDoDocumento, acaoEditar,
   MOTIVO_EMPRESA_NA_EDICAO, campoTravadoNaEdicao, corpoDaEdicao, dicaDaIdentidadeNaEdicao, dicaDoEditar, itensNaEdicao, motivoDaTravaNaEdicao, mudouAlgo,
-  travasDaLinhaNaTela, travasDoItem, type EstadoDaEdicao
+  planoGravado, travasDaLinhaNaTela, travasDoItem, type EstadoDaEdicao
 } from "./edicao";
 import { MSG_DOCUMENTO_MUDOU_NA_EDICAO, conflitoDaEdicao, edicaoIndisponivel, lerEdicao, type LimitesDaEdicaoDeCompra } from "./edicao-api";
 import { lerPadroesDaTop, padroesDaTopAplicam } from "./padroes-da-top";
@@ -368,5 +368,21 @@ describe("o erro do salvar: o conflito de versão oferece recarregar; o resto va
   it("a porta que não existe (a API anterior): 404 de ROTA, não de documento", () => {
     expect(edicaoIndisponivel(erro(404, "NOT_FOUND", "Rota não encontrada"))).toBe(true);
     expect(edicaoIndisponivel(erro(404, "NOT_FOUND", "Documento não encontrado"))).toBe(false);
+  });
+});
+
+describe("as parcelas escritas à mão no plano gravado (Central de Compras)", () => {
+  const base = { installments: 2, first_due_date: "2026-02-10", mode: "interval" as const, interval_days: 30, has_down_payment: false };
+
+  it("a abertura lê a lista do plano, com a observação de cada parcela", () => {
+    const lido = planoGravado({ ...base, parcelas: [
+      { vencimento: "2026-02-10T00:00:00.000Z", valor: "100.00", observacao: "Primeira" },
+      { vencimento: "2026-03-12", valor: 50 }
+    ] });
+    expect(lido?.parcelas).toEqual([{ vencimento: "2026-02-10", valor: "100.00", observacao: "Primeira" }, { vencimento: "2026-03-12", valor: "50" }]);
+  });
+
+  it("plano sem lista continua o de sempre (sem a chave)", () => {
+    expect(planoGravado(base)).toEqual(base);
   });
 });

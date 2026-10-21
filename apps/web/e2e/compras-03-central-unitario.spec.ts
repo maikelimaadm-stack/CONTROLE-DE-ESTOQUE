@@ -250,8 +250,8 @@ const COMBINACOES_DO_MOTOR: ({ onde: string; arquivo: string; prova: string } & 
     pesquisaDeProduto: "PESQUISA_DE_PRODUTO_DA_SAIDA", linhaNovaEmBranco: "ausente", subtotal: "ausente"
   },
   {
-    onde: "Central de Compras · lançar", arquivo: "src/features/compras/central/criacao-itens.tsx", prova: "CX-1 (o 0 continua 0), LC-W1 (o layout esconde o Armazém), F3B-C1 (a entrada com tudo e o saldo)",
-    armazemPorItem: "ligada", armazemForcado: "false", custoMedioNoUnitario: "false", lote: "controleDeLote", daOrigem: "ausente",
+    onde: "Central de Compras · lançar", arquivo: "src/features/compras/central/criacao-itens.tsx", prova: "CX-1 (o 0 continua 0), F3B-C1 (o Local de estoque POR LINHA, a entrada com tudo e o saldo)",
+    armazemPorItem: "ligada", armazemForcado: "ligada", custoMedioNoUnitario: "false", lote: "controleDeLote", daOrigem: "ausente",
     pesquisaDeProduto: "PESQUISA_DE_PRODUTO_DA_ENTRADA", linhaNovaEmBranco: "ausente", subtotal: "ausente"
   },
   {

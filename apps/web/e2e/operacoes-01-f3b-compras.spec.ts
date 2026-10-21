@@ -8,16 +8,16 @@ import { test, expect, codigoTop, criarCadastro, criarTop, referenciasDoSeed } f
  * com o saldo do local. Dois cenários, com a API e o banco REAIS (o detalhe da regra da pesquisa mora no teste de API
  * `apps/api/test/integration/operacoes-01-f3b-pesquisa.test.ts`, PS-1…PS-8):
  *
- *   · F3B-C1 — o "Local de estoque" do CABEÇALHO (`central-compras-local-padrao`, acima da grade — decisão 319) preenche a
- *     linha NOVA, não conta como alteração, volta ao padrão no Descartar e não vai no corpo; a pesquisa do produto da
- *     linha é a NOVA
+ *   · F3B-C1 — o "Local de estoque" é COLUNA da grade (`central-compras-armazem`), escolhido em CADA linha: NÃO existe
+ *     mais o campo do cabeçalho acima da grade (`central-compras-local-acima-da-grade`/`central-compras-local-padrao`);
+ *     a pesquisa do produto da linha é a NOVA
  *     (`/api/produtos/pesquisa` com o local DA LINHA) e, na entrada, mostra TUDO com o saldo — P1 "5,0000", P2 "0,0000"
  *     e P3 (não controla estoque) —, sem o controle "Só com saldo neste local" e sem `com_saldo` no fio; ZERO pedido à
  *     pesquisa de antes (`/api/resources/products/options`). O POST é o de sempre, chave por chave
  *     (`CHAVES_DO_POST_PELA_TELA`/`CHAVES_DO_ITEM_PELA_TELA` de `central-compras-desenho-b.spec.ts`, CC-7), com
- *     `itens[0].armazem_id` = o local do cabeçalho, e o servidor grava (201). E o Descartar com o padrão de cadastro
- *     PREENCHIDO: numa TOP com layout ligado cujo local tem padrão (L1), o usuário escolhe L2 no cabeçalho, e o
- *     Descartar volta a L1 — o padrão, não o vazio nem a escolha — e a linha nova seguinte nasce com L1.
+ *     `itens[0].armazem_id` = o local da LINHA, e o servidor grava (201). E o padrão de cadastro PREENCHIDO: numa TOP com
+ *     layout ligado cujo local tem padrão (L1), a linha nova nasce em L1; trocar a célula por L2 muda SÓ aquela linha, e
+ *     o Descartar zera as linhas — a seguinte nasce em L1 outra vez.
  *   · F3B-C2 — a CONSULTA: a grade começa por Local de estoque → Código → Produto, e o formulário de leitura traz o
  *     Local de estoque antes do Produto — cada coluna com o valor do servidor, não só o rótulo. As duas tabelas de
  *     estoque da compra também: a prévia do "Confirmar compra" (Local de estoque → Produto) e, confirmada, a relação
@@ -56,6 +56,16 @@ async function escolherNoCampo(page: Page, campo: Locator, nome: string) {
 }
 /** O campo dos Dados principais pelo rótulo (nome escapado: nomes do seed têm colchetes). */
 const campoPeloRotulo = (page: Page, rotulo: string) => page.getByTestId("compras-central").locator("label", { hasText: rotulo }).first().locator("..");
+
+/** Escolhe numa CÉLULA da grade (o Local de estoque da linha) pela pesquisa do motor. */
+async function escolherNaCelula(page: Page, celula: Locator, nome: string) {
+  await celula.click();
+  const pesquisa = page.getByTestId(`${P}-pesquisa`);
+  await expect(pesquisa).toBeVisible();
+  await pesquisa.getByRole("combobox").fill(nome);
+  await pesquisa.getByRole("option").filter({ hasText: nome }).first().click();
+  await expect(pesquisa).toHaveCount(0);
+}
 
 /**
  * O cadastro do caso: a TOP de compra, o fornecedor, o local L1 e três produtos com o mesmo TAG (uma palavra única por
@@ -105,7 +115,7 @@ function vigiarPesquisas(page: Page) {
   return { nova, deAntes };
 }
 
-test("F3B-C1 — compra: o Local de estoque do cabeçalho preenche a linha nova, fica fora do corpo e volta ao padrão no Descartar (vazio ou o do layout); a pesquisa da entrada mostra tudo com o saldo do local da linha, sem 'só com saldo'", async ({ page }) => {
+test("F3B-C1 — compra: o Local de estoque é POR LINHA na grade (sem campo acima dela), com o padrão do layout semeando a linha nova; a pesquisa da entrada mostra tudo com o saldo do local da linha, sem 'só com saldo'", async ({ page }) => {
   await login(page);
   const c = await cenario(page);
   const fio = vigiarPesquisas(page);
@@ -114,46 +124,28 @@ test("F3B-C1 — compra: o Local de estoque do cabeçalho preenche a linha nova,
   const central = page.getByTestId("compras-central");
   await expect(central).toHaveAttribute("data-especie", "compra");
   const itens = page.getByTestId("compras-itens");
-  // PREMISSA (decisão 319): grade enxuta sem coluna de armazém; o Local de estoque padrão fica ACIMA da grade.
-  await expect(itens.locator('thead th[data-campo="armazem_id"]'), "Local de estoque não é coluna da grade").toHaveCount(0);
+  // PREMISSA: o Local de estoque é COLUNA da grade (cada linha escolhe o seu) e não existe campo acima dela.
+  await expect(itens.locator('thead th[data-campo="armazem_id"]'), "o Local de estoque é coluna da grade").toHaveCount(1);
   await expect(itens.locator('thead th[data-campo="produto_id"]'), "premissa: a grade desenha o Produto").toHaveCount(1);
-  await expect(page.getByTestId("compras-local-acima-da-grade"), "o local padrão mora acima da grade").toBeVisible();
-
-  // (1) O CAMPO DO CABEÇALHO: "Local de estoque" acima da grade, vazio (a TOP não tem padrão), com a dica.
-  const localPadrao = page.getByTestId(`${P}-local-padrao`);
-  await expect(localPadrao).toBeVisible();
-  await expect(localPadrao.locator("label")).toHaveText(/^Local de estoque/);
-  await expect(localPadrao.locator("[title]").first()).toHaveAttribute("title", "Local de estoque das linhas novas. Cada item pode trocar o seu.");
-  expect(await localPadrao.getAttribute("data-campo"), "não é campo do layout (sem `data-campo`)").toBeNull();
-  await expect(localPadrao.locator("[data-preenchido]"), "premissa: sem padrão de cadastro, o campo nasce vazio").toHaveCount(0);
+  await expect(page.getByTestId("compras-local-acima-da-grade"), "sem campo de local acima da grade").toHaveCount(0);
+  await expect(page.getByTestId(`${P}-local-padrao`), "sem Local de estoque no cabeçalho").toHaveCount(0);
   await expect(page.getByTestId(`${P}-alterado`), "premissa: a criação abre sem alteração").toHaveCount(0);
 
-  await escolherNoCampo(page, localPadrao, c.local.nome);
-  await expect(localPadrao).toContainText(c.local.nome);
-  await expect(localPadrao.locator("[data-preenchido]")).toHaveCount(1);
-  await expect(page.getByTestId(`${P}-alterado`), "o local do cabeçalho é estado da tela: não conta como alteração").toHaveCount(0);
-
-  // DESCARTAR volta o local do cabeçalho ao padrão (aqui, nenhum): a escolha não sobrevive ao descarte.
+  // (1) O CABEÇALHO identifica a compra; o local de estoque não mora mais aqui.
   await escolherNoCampo(page, campoPeloRotulo(page, "Fornecedor"), c.fornecedor.nome);
   await expect(page.getByTestId(`${P}-alterado`), "premissa: o Fornecedor é alteração").toBeVisible();
-  await page.getByTestId(`${P}-descartar`).click();
-  await page.getByTestId("confirm-dialog").getByRole("button", { name: "Descartar alterações", exact: true }).click();
-  await expect(page.getByTestId(`${P}-alterado`)).toHaveCount(0);
-  await expect(localPadrao.locator("[data-preenchido]"), "o Descartar volta o local do cabeçalho ao padrão (vazio)").toHaveCount(0);
-  await expect(localPadrao).not.toContainText(c.local.nome);
-
-  await escolherNoCampo(page, localPadrao, c.local.nome);
-  await expect(localPadrao).toContainText(c.local.nome);
-  await escolherNoCampo(page, campoPeloRotulo(page, "Fornecedor"), c.fornecedor.nome);
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
   await escolherNoCampo(page, campoPeloRotulo(page, "Natureza de despesa"), c.natureza.label);
   await escolherNoCampo(page, campoPeloRotulo(page, "Centro de resultado"), c.centro.label);
 
-  // (2) A LINHA NOVA herda o local do cabeçalho (provado no fio da pesquisa e no POST — a grade não desenha a coluna).
+  // (2) A LINHA NOVA: o local é escolhido NA CÉLULA da grade (a TOP não tem padrão: a linha nasce sem local).
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
   await expect(page.getByTestId(`${P}-linha`)).toHaveCount(1);
-  await expect(linha.getByTestId(`${P}-armazem`), "Local de estoque não é coluna da grade enxuta").toHaveCount(0);
+  await expect(linha.getByTestId(`${P}-armazem`), "a linha tem a coluna do Local de estoque").toBeVisible();
+  await expect(linha.getByTestId(`${P}-armazem`), "premissa: sem padrão de cadastro, a linha nasce sem local").toHaveText("—");
+  await escolherNaCelula(page, linha.getByTestId(`${P}-armazem`), c.local.nome);
+  await expect(linha.getByTestId(`${P}-armazem`), "o local escolhido na linha").toContainText(c.local.nome);
 
   // (3) A PESQUISA DO PRODUTO da linha: a NOVA, com o saldo do local DA LINHA; na entrada aparece tudo.
   await linha.getByTestId(`${P}-produto`).click();
@@ -192,7 +184,7 @@ test("F3B-C1 — compra: o Local de estoque do cabeçalho preenche a linha nova,
   await opcoes.filter({ hasText: c.p2.nome }).click();
   await expect(pesquisa).toHaveCount(0);
   await expect(linha.getByTestId(`${P}-produto`)).toContainText(c.p2.nome);
-  await expect(localPadrao, "escolher o produto não mexe no local do cabeçalho").toContainText(c.local.nome);
+  await expect(linha.getByTestId(`${P}-armazem`), "escolher o produto não mexe no local da linha").toContainText(c.local.nome);
   expect(fio.deAntes.map((u) => u.toString()), "ZERO pedido à pesquisa de antes").toEqual([]);
   await linha.getByLabel("Quantidade do item 1").fill("2");
   await linha.getByLabel("Valor unitário do item 1").fill("7");
@@ -206,16 +198,16 @@ test("F3B-C1 — compra: o Local de estoque do cabeçalho preenche a linha nova,
   const corpo = post.request().postDataJSON() as Record<string, unknown> & { itens: Record<string, unknown>[] };
   expect(Object.keys(corpo).sort(), "as MESMAS chaves do POST de hoje (nenhuma chave de local no cabeçalho)").toEqual(CHAVES_DO_POST_PELA_TELA);
   expect(corpo.itens.map((i) => Object.keys(i).sort()), "as MESMAS chaves do item").toEqual([CHAVES_DO_ITEM_PELA_TELA]);
-  expect(corpo.itens[0], "o item com o produto escolhido e o local do cabeçalho").toMatchObject({ produto_id: c.p2.id, armazem_id: c.local.id });
+  expect(corpo.itens[0], "o item com o produto escolhido e o local da linha").toMatchObject({ produto_id: c.p2.id, armazem_id: c.local.id });
   expect(JSON.stringify(corpo).split(c.local.id).length - 1, "o id do local aparece UMA vez: no item").toBe(1);
   await expect(page).toHaveURL(/\/compras\/compras\/[0-9a-f-]{36}$/);
   const id = /\/compras\/compras\/([0-9a-f-]{36})$/.exec(page.url())![1]!;
   const gravada = await api<{ itens: { produto_id: string; armazem_id: string }[] }>(page, "GET", `/api/compras/compras/${id}`);
   expect(gravada.itens.map((i) => [i.produto_id, i.armazem_id]), "o servidor gravou o item com o local da linha").toEqual([[c.p2.id, c.local.id]]);
 
-  // (6) DESCARTAR COM O PADRÃO DE CADASTRO PREENCHIDO: outra TOP de compra, com um layout ligado (a cópia do do sistema)
-  // cujo Local de estoque dos itens tem o padrão L1. O cabeçalho nasce em L1; o usuário escolhe L2; o Descartar volta
-  // ao PADRÃO (L1) — não ao vazio, nem à escolha — e a linha nova seguinte nasce com L1.
+  // (6) O PADRÃO DE CADASTRO DO LAYOUT SEMEIA A LINHA NOVA: outra TOP de compra, com um layout ligado (a cópia do do
+  // sistema) cujo Local de estoque dos itens tem o padrão L1. A linha nova nasce em L1; trocar a célula por L2 muda SÓ
+  // aquela linha; o Descartar zera as linhas e a seguinte nasce em L1 outra vez.
   const outro = await criarCadastro(page, "warehouses", {
     empresa_id: c.empresa, initials: `D${Date.now().toString(36).slice(-5).toUpperCase()}`, description: `L2 ${c.tag}`, type: "inputs"
   });
@@ -234,32 +226,32 @@ test("F3B-C1 — compra: o Local de estoque do cabeçalho preenche a linha nova,
 
     await page.goto(`/compras/compras/new?tipo_operacao_id=${topComPadrao}`);
     await expect(page.getByTestId("compras-layout-efetivo"), "premissa: a Central leu o layout ligado").toHaveAttribute("data-layout-id", layout);
-    await expect(localPadrao, "o cabeçalho nasce no padrão de cadastro do layout").toContainText(c.local.nome);
-    await expect(localPadrao.locator("[data-preenchido]")).toHaveCount(1);
-    await escolherNoCampo(page, localPadrao, l2);
-    await expect(localPadrao).toContainText(l2);
     await page.getByTestId(`${P}-adicionar-item`).click();
+    const linhaPadrao = page.getByTestId(`${P}-linha`).first();
     await expect(page.getByTestId(`${P}-linha`)).toHaveCount(1);
-    // a linha herda L2: a pesquisa de produto da linha leva o armazem_id da escolha
+    await expect(linhaPadrao.getByTestId(`${P}-armazem`), "a linha nova nasce com o padrão de cadastro do layout").toContainText(c.local.nome);
+    // a linha semeada leva L1 na pesquisa de produto dela
+    const fioL1: URL[] = [];
+    page.on("request", (r) => { const u = new URL(r.url()); if (u.pathname === PORTA_DA_PESQUISA) fioL1.push(u); });
+    await linhaPadrao.getByTestId(`${P}-produto`).click();
+    await expect(page.getByTestId(`${P}-pesquisa`)).toBeVisible();
+    await expect.poll(() => fioL1.some((u) => u.searchParams.get("armazem_id") === c.local.id), { message: "a linha nova herdou o padrão L1" }).toBe(true);
+    await page.keyboard.press("Escape");
+    // trocar a célula por L2 muda SÓ aquela linha
+    await escolherNaCelula(page, linhaPadrao.getByTestId(`${P}-armazem`), l2);
+    await expect(linhaPadrao.getByTestId(`${P}-armazem`), "a linha passa a ter L2").toContainText(l2);
     const fioL2: URL[] = [];
     page.on("request", (r) => { const u = new URL(r.url()); if (u.pathname === PORTA_DA_PESQUISA) fioL2.push(u); });
-    await page.getByTestId(`${P}-linha`).first().getByTestId(`${P}-produto`).click();
+    await linhaPadrao.getByTestId(`${P}-produto`).click();
     await expect(page.getByTestId(`${P}-pesquisa`)).toBeVisible();
-    await expect.poll(() => fioL2.some((u) => u.searchParams.get("armazem_id") === outro.id), { message: "a linha nova herdou L2 do cabeçalho" }).toBe(true);
+    await expect.poll(() => fioL2.some((u) => u.searchParams.get("armazem_id") === outro.id), { message: "a pesquisa da linha leva o local que ela tem (L2)" }).toBe(true);
     await page.keyboard.press("Escape");
     await expect(page.getByTestId(`${P}-alterado`), "premissa: a linha nova é alteração").toBeVisible();
     await page.getByTestId(`${P}-descartar`).click();
     await page.getByTestId("confirm-dialog").getByRole("button", { name: "Descartar alterações", exact: true }).click();
     await expect(page.getByTestId(`${P}-linha`), "descartado: sem linhas").toHaveCount(0);
-    await expect(localPadrao, "o Descartar volta ao PADRÃO do layout (L1)").toContainText(c.local.nome);
-    await expect(localPadrao).not.toContainText(l2);
-    const fioL1: URL[] = [];
-    page.on("request", (r) => { const u = new URL(r.url()); if (u.pathname === PORTA_DA_PESQUISA) fioL1.push(u); });
     await page.getByTestId(`${P}-adicionar-item`).click();
-    await page.getByTestId(`${P}-linha`).first().getByTestId(`${P}-produto`).click();
-    await expect(page.getByTestId(`${P}-pesquisa`)).toBeVisible();
-    await expect.poll(() => fioL1.some((u) => u.searchParams.get("armazem_id") === c.local.id), { message: "a linha nova seguinte herdou o padrão L1" }).toBe(true);
-    await page.keyboard.press("Escape");
+    await expect(page.getByTestId(`${P}-linha`).first().getByTestId(`${P}-armazem`), "a linha seguinte volta ao padrão do layout (L1)").toContainText(c.local.nome);
     // a limpeza que falha reprova o caso verde (excluir o layout desliga a TOP)
     await api(page, "DELETE", `${LAYOUTS}/${layout}`, {});
     layoutVivo = false;

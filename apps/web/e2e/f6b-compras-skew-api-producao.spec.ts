@@ -46,7 +46,7 @@ const caminho = (r: Request | Response) => new URL(r.url()).pathname;
 /** A porta da capacidade, a das TOPs de orçamento, e as abas da consulta do pedido de HOJE (CC-11), exatas. */
 const PORTA_DA_CAPACIDADE = "/api/compras/pedidos/operation-types";
 const PORTA_DAS_TOPS_DE_ORCAMENTO = "/api/compras/orcamentos/operation-types";
-const ABAS_DO_PEDIDO_DE_HOJE = ["Totais", "Financeiro", "Frete e transporte", "Compras geradas", "Observações"];
+const ABAS_DO_PEDIDO_DE_HOJE = ["Totais", "Financeiro", "Vínculos", "Entrega e transporte", "Compras geradas", "Observações"];
 /** As quatro capacidades de compras de hoje, na ordem de hoje (a capacidade da F6 só pode vir DEPOIS delas). */
 const CAPACIDADES_DE_HOJE = ["classificacaoFinanceira", "condicaoPagamento", "layoutDocumento", "regrasDaOperacao"];
 

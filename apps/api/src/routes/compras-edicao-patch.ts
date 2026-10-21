@@ -226,7 +226,9 @@ function planoIgualAoGravado(cur: DocumentoGravadoDeCompra, enviado: Installment
   if (!g) return false;
   return g.installments === enviado.installments && g.first_due_date === enviado.first_due_date && g.mode === enviado.mode
     && g.interval_days === enviado.interval_days && g.due_day === enviado.due_day && g.has_down_payment === enviado.has_down_payment
-    && g.down_payment_date === enviado.down_payment_date && mesmoDecimal(g.down_payment_value, enviado.down_payment_value);
+    && g.down_payment_date === enviado.down_payment_date && mesmoDecimal(g.down_payment_value, enviado.down_payment_value)
+    // As parcelas escritas à mão são o cronograma: outra lista é outra decisão, mesmo que o resto do plano coincida.
+    && JSON.stringify(g.parcelas ?? []) === JSON.stringify(enviado.parcelas ?? []);
 }
 
 type ItemComoFicara = DocumentoCompraEntrada["itens"][number];

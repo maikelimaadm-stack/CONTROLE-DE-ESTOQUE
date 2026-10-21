@@ -80,6 +80,8 @@ test("CO-W1 — Compras › Novo → TOP de Compra → Central → salvar → co
   await escolher(page, "Natureza de despesa", c.natureza.label);
   await escolher(page, "Centro de resultado", c.centro.label);
   await escolher(page, "Local de estoque", c.nomeArmazem);
+  // O frete compõe o valor: mora na aba TOTAIS, junto das despesas e do total final.
+  await abrirAbaDoPainelDeCompras(page, "Totais");
   await page.getByTestId("compras-frete").fill("10.00");
   const itens = page.getByTestId("compras-itens");
   await itens.getByTestId("central-compras-adicionar-item").click();
@@ -113,7 +115,7 @@ test("CO-W1 — Compras › Novo → TOP de Compra → Central → salvar → co
   await expect(corpo).toHaveAttribute("data-situacao", "confirmado");
   await expect(page.getByRole("tab", { name: /^Estoque/ }), "sem aba Estoque no portal de compras").toHaveCount(0);
   await expect(page.getByTestId("compras-consulta-itens")).toContainText(c.nomeProduto);
-  await page.getByRole("tab", { name: /^Financeiro/ }).click();
+  await page.getByRole("tab", { name: /^Vínculos/ }).click();
   await expect(page.getByTestId("compras-consulta-titulos")).toContainText("110,00");
   const saldo = await api<Saldo>(page, "GET", `/api/stock/balances/${c.armazem}/${c.produto}`);
   expect(saldo.quantity, "a entrada vale no servidor").toBe("5.0000");

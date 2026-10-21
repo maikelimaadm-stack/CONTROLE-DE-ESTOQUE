@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
+import { login, api, uniq, empresaAtiva, primeiroId, abrirAbaDoPainelDeCompras } from "./helpers";
 import { test, expect, codigoTop, criarCadastro } from "./central-compras-fixtures";
 
 /**
@@ -130,6 +130,7 @@ test("CP-W1 — pedido → Próximos passos → Central em modo receber (em part
   await entrada.fill("05/09/2026");
   await entrada.press("Enter");
   await expect(page.getByTestId("compras-data-entrada").locator("input[type=hidden]"), "a data de entrada vira ISO no formulário").toHaveValue("2026-09-05");
+  await abrirAbaDoPainelDeCompras(page, "Totais");
   await expect(page.getByTestId("compras-total")).toContainText("84,00");
   await page.getByTestId("compras-salvar").click();
 

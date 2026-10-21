@@ -131,7 +131,7 @@ function planoDoPedido(bruto: unknown): InstallmentPlan | null {
  */
 function parcelasDaProvisao(alvo: string, d: PedidoDaProvisao): { plan: InstallmentPlan | null; dueDate: string; parcelas: { amount: string; dueDate: string }[] } {
   const plan = planoDoPedido(d.installment_plan);
-  const dueDate = plan?.first_due_date ?? d.due_date ?? d.document_date;
+  const dueDate = plan?.parcelas?.[0]?.vencimento ?? plan?.first_due_date ?? d.due_date ?? d.document_date;
   try {
     return { plan, dueDate, parcelas: parcelasDoTitulo({ amount: alvo, dueDate, plan }) };
   } catch (e) {

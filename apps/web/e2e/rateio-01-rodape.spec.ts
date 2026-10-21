@@ -57,6 +57,13 @@ async function escolherEm(page: Page, raiz: Locator, rotulo: string, nome: strin
   await painel.getByRole("option", { name: literal(nome.slice(0, 20)) }).first().click();
 }
 
+/** Seletor PADRÃO de lista fixa (MgSelect, sem cadastro): abre a caixa e escolhe a opção pelo rótulo. */
+async function escolherNaLista(page: Page, gatilho: Locator, rotulo: string) {
+  await gatilho.click();
+  const painel = page.locator("div[role='dialog'], [data-radix-popper-content-wrapper]").last();
+  await painel.getByRole("option", { name: literal(rotulo) }).first().click();
+}
+
 /** Pesquisa do motor ancorada à célula (produto ou local de estoque) da linha. */
 async function escolherNaCelula(page: Page, celula: Locator, nome: string) {
   await celula.click();
@@ -128,18 +135,19 @@ test("R01-1 — com importacaoXml, rateio na aba Rateio e classificação; fisca
   const rateio = await abaDoRateio(page);
   for (const t of DO_RATEIO.slice(1)) await expect(rateio.getByTestId(t), `${t} na aba Rateio e classificação`).toHaveCount(1);
   for (const t of DO_RATEIO) await expect(page.getByTestId(t), `${t}: uma vez só na tela`).toHaveCount(1);
-  await expect(rateio.getByTestId("compras-rateio-tipo"), "o rateio nasce o do documento").toHaveValue("documento");
+  await expect(rateio.getByTestId("compras-rateio-tipo"), "o rateio nasce o do documento").toContainText("Natureza e centro do documento");
   await expect(rateio.getByTestId("compras-item-0-gera-estoque"), "o item nasce gerando estoque").toBeChecked();
 
   await abrirAba(page, "Fiscal");
   const fiscais = painel(page).getByTestId("compras-dados-fiscais");
   await expect(fiscais, "o bloco fiscal mora na aba Fiscal").toBeVisible();
   for (const t of FISCAIS_NO_PAINEL) await expect(fiscais.getByTestId(t), `${t} na aba Fiscal`).toHaveCount(1);
-  await expect(page.getByTestId("compras-seguro"), "seguro na faixa de totais").toHaveCount(1);
+  await abrirAba(page, "Totais");
+  await expect(page.getByTestId("compras-seguro"), "seguro nos Totais, junto do que compõe o valor").toHaveCount(1);
   await expect(dados(page).getByTestId("compras-tipo-documento-fiscal"), "tipo de documento nos Dados principais").toHaveCount(1);
 
   await abrirAba(page, ABA_RATEIO);
-  await rateio.getByTestId("compras-rateio-tipo").selectOption("por_valor");
+  await escolherNaLista(page, rateio.getByTestId("compras-rateio-tipo"), "Por valor");
   await expect(rateio.getByTestId("compras-rateio-linha-0")).toBeVisible();
   await rateio.getByTestId("compras-rateio-adicionar").click();
   await expect(rateio.getByTestId("compras-rateio-linha-1")).toBeVisible();
@@ -147,7 +155,7 @@ test("R01-1 — com importacaoXml, rateio na aba Rateio e classificação; fisca
   await rateio.getByTestId("compras-rateio-linha-1-percentual").fill("40");
   await expect(rateio.getByTestId("compras-rateio-soma")).toHaveText("Soma: 100%");
   await expect(dados(page).locator('[data-testid^="compras-rateio-linha-"]'), "nenhuma linha do rateio nos Dados").toHaveCount(0);
-  await rateio.getByTestId("compras-rateio-tipo").selectOption("por_produto");
+  await escolherNaLista(page, rateio.getByTestId("compras-rateio-tipo"), "Por produto");
   const item = rateio.getByTestId("compras-item-classificacao-0");
   await expect(item.locator("label", { hasText: "Natureza de despesa do item" })).toBeVisible();
   await expect(item.locator("label", { hasText: "Centro de resultado do item" })).toBeVisible();
@@ -162,7 +170,7 @@ test("R01-2 — a recusa do rateio ABRE a aba Rateio e classificação, com o pa
   await compraNaCentral(page, c);
 
   let rateio = await abaDoRateio(page);
-  await rateio.getByTestId("compras-rateio-tipo").selectOption("por_valor");
+  await escolherNaLista(page, rateio.getByTestId("compras-rateio-tipo"), "Por valor");
   const linha = rateio.getByTestId("compras-rateio-linha-0");
   await escolherEm(page, linha, "Natureza", c.natureza.label);
   await escolherEm(page, linha, "Centro de resultado", c.centro.label);
@@ -189,7 +197,7 @@ test("R01-2 — a recusa do rateio ABRE a aba Rateio e classificação, com o pa
   await expect(botaoDosAdicionais(page), "continua sem acordeão (nada do rateio nos Dados)").toHaveCount(0);
   await expect(page).toHaveURL(/\/compras\/compras\/new\?/);
 
-  await rateio.getByTestId("compras-rateio-tipo").selectOption("por_produto");
+  await escolherNaLista(page, rateio.getByTestId("compras-rateio-tipo"), "Por produto");
   await abrirAba(page, "Financeiro");
   await page.getByTestId(`${P}-recolher`).click();
   await expect(painel(page), "premissa: o painel recolhido de novo").toHaveAttribute("data-recolhido", "true");
@@ -224,7 +232,7 @@ test("R01-3 — o corpo do POST com fiscais, rateio por valor e item imobilizado
   await page.getByTestId("compras-valor-ipi").fill("10.00");
   const rateio = await abaDoRateio(page);
   await rateio.getByTestId("compras-item-0-imobilizado").check();
-  await rateio.getByTestId("compras-rateio-tipo").selectOption("por_valor");
+  await escolherNaLista(page, rateio.getByTestId("compras-rateio-tipo"), "Por valor");
   const linha = rateio.getByTestId("compras-rateio-linha-0");
   await escolherEm(page, linha, "Natureza", c.natureza.label);
   await escolherEm(page, linha, "Centro de resultado", c.centro.label);

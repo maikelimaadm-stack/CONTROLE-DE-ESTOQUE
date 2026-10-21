@@ -4,11 +4,12 @@ import Link from "next/link";
 import { AVISO_PADRAO_INVALIDO_CENTRAL } from "@agro/domain";
 import { useAuth } from "@/lib/auth";
 import { enumOptions } from "@/lib/copy";
-import { Input, LoadingState, NativeSelect, Textarea } from "@/components/ui";
+import { Input, LoadingState, Textarea } from "@/components/ui";
+import { MgSelect } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { MensagemTop } from "@/features/sales/tipo-operacao-select";
 import { CampoDaCentral, ColunaDeCampos, DataDaCentral, type IconeDoCampo } from "@/features/central/campo";
-import { PlanoDaCentral } from "@/features/central/painel";
+import { ParcelasDaCriacao } from "./parcelas";
 import type { IdentidadeDoDocumento } from "@/features/central/contrato";
 import estilosCv from "@/features/central/moldura.module.css";
 import { hrefDoConfigurador, textoDoLayoutQueVale } from "../layout-da-central";
@@ -21,8 +22,8 @@ import { fiscalNoPainel } from "./rateio-no-rodape";
 /**
  * CENTRAL DE COMPRAS — DADOS PRINCIPAIS: só identificar a compra.
  * Geometria = ColunaDeCampos / rótulo à frente (igual à consulta). Redistribuição: financeiro,
- * rateio, fiscal e entrega no rodapé (`organizacao-do-painel.tsx`). Local de estoque padrão
- * acima da grade (`criacao-itens.tsx`).
+ * rateio, fiscal e entrega no rodapé (`organizacao-do-painel.tsx`). Local de estoque na LINHA da grade
+ * (`criacao-itens.tsx`).
  */
 
 /** "Novo pedido de compra" / "Nova compra" — o nome do documento ainda sem número; o ponto acende com alteração. */
@@ -120,14 +121,7 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
       case "frete": return numero("frete", "Frete", "compras-frete");
       case "outras_despesas": return numero("outras_despesas", "Outras despesas", "compras-outras-despesas");
       case "desconto": return numero("desconto", "Desconto", "compras-desconto");
-      case "plano_parcelas": return <>
-        {cc(c, "Parcelas", { icone: "selecao", preenchido: true },
-          <NativeSelect data-testid="compras-parcelas" value={e.ajustarParcelas ? "ajustar" : "padrao"} onChange={(ev) => e.setAjustarParcelas(ev.target.value === "ajustar")}>
-            <option value="padrao">Pela condição (ou à vista)</option>
-            <option value="ajustar">Ajustar parcelas</option>
-          </NativeSelect>)}
-        {e.ajustarParcelas && <div data-testid="compras-plano"><PlanoDaCentral plano={e.plano} onChange={e.setPlano} /></div>}
-      </>;
+      case "plano_parcelas": return <div data-testid="compras-plano" className="flex flex-col gap-1.5"><ParcelasDaCriacao e={e} /></div>;
       case "observacao": return cc(c, "Observação", { preenchido: Boolean(h.observacao), multilinha: true },
         <Textarea data-testid="compras-observacao" value={h.observacao} onChange={(ev) => e.mudar({ observacao: ev.target.value })} />);
       default: return null;
@@ -161,10 +155,8 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
   }
 
   const tipoDoc = fiscalNoPainel(e) && <CampoDaCentral key="tipo-documento-fiscal" rotulo="Tipo de documento" icone="selecao" preenchido={e.fiscal.tipo_documento_fiscal !== ""} testId="compras-tipo-documento-fiscal-campo" data-campo-fiscal="tipo_documento_fiscal">
-    <NativeSelect data-testid="compras-tipo-documento-fiscal" value={e.fiscal.tipo_documento_fiscal} onChange={(ev) => e.mudarFiscal({ tipo_documento_fiscal: ev.target.value })}>
-      <option value="">—</option>
-      {tiposDoc.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </NativeSelect>
+    <MgSelect data-testid="compras-tipo-documento-fiscal" value={e.fiscal.tipo_documento_fiscal} onChange={(v) => e.mudarFiscal({ tipo_documento_fiscal: v })}
+      allowEmpty placeholder="—" options={tiposDoc} />
   </CampoDaCentral>;
 
   /* EDITAR-02: fiscais em leitura ficam na aba Fiscal do painel quando a criação os teria; na edição sem painel fiscal, mantém nos Dados. */

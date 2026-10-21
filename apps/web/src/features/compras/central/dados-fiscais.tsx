@@ -6,7 +6,8 @@ import { D } from "@agro/shared";
 import { brl } from "@/lib/utils";
 import { useAuth } from "@/lib/auth";
 import { AVISO_PADRAO_INVALIDO_CENTRAL } from "@agro/domain";
-import { Button, Input, NativeSelect } from "@/components/ui";
+import { Button, Input } from "@/components/ui";
+import { MgSelect } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { CampoDaCentral, CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
 import { SimpleTable, type Row } from "@/features/docs/shared";
@@ -34,6 +35,13 @@ import {
  */
 
 const TIPOS_DE_DOCUMENTO = enumOptions("document_type");
+
+/** Classificação do gasto (sem cadastro: lista fixa do domínio) — no seletor padrão, nunca no `<select>` nativo. */
+const CLASSIFICACOES: { value: string; label: string }[] = [
+  { value: "", label: enumLabel("classification", "unclassified") },
+  { value: "capex", label: enumLabel("classificacao_gasto", "capex") },
+  { value: "opex", label: enumLabel("classificacao_gasto", "opex") }
+];
 
 /**
  * O bloco "Dados fiscais" da criação (dentro dos Dados adicionais).
@@ -65,10 +73,8 @@ export function DadosFiscaisDaCriacao({ e, noPainel = false }: { e: EstadoDaCria
       {cc("uf_nota", "UF do emitente", { preenchido: f.uf_nota !== "", dica: "A UF do emitente da nota, com duas letras." },
         <Input data-testid="compras-uf-nota" maxLength={2} autoComplete="off" value={f.uf_nota} onChange={(ev) => e.mudarFiscal({ uf_nota: ev.target.value.toUpperCase() })} />)}
       {!noPainel && cc("tipo_documento_fiscal", "Tipo de documento", { preenchido: f.tipo_documento_fiscal !== "", icone: "selecao" },
-        <NativeSelect data-testid="compras-tipo-documento-fiscal" value={f.tipo_documento_fiscal} onChange={(ev) => e.mudarFiscal({ tipo_documento_fiscal: ev.target.value })}>
-          <option value="">—</option>
-          {TIPOS_DE_DOCUMENTO.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </NativeSelect>)}
+        <MgSelect data-testid="compras-tipo-documento-fiscal" value={f.tipo_documento_fiscal} onChange={(v) => e.mudarFiscal({ tipo_documento_fiscal: v })}
+          allowEmpty placeholder="—" options={TIPOS_DE_DOCUMENTO} />)}
       {valor("valor_ipi", "IPI", "compras-valor-ipi")}
       {valor("valor_icms_st", "ICMS-ST", "compras-valor-icms-st")}
       {!noPainel && valor("seguro", "Seguro", "compras-seguro")}
@@ -82,11 +88,7 @@ export function DadosFiscaisDaCriacao({ e, noPainel = false }: { e: EstadoDaCria
           : tipoTitulo;
       })()}
       {!noPainel && cc("classificacao_gasto", "Classificação", { preenchido: true, icone: "selecao" },
-        <NativeSelect data-testid="compras-classificacao-gasto" value={f.classificacao_gasto} onChange={(ev) => e.mudarFiscal({ classificacao_gasto: ev.target.value })}>
-          <option value="">{enumLabel("classification", "unclassified")}</option>
-          <option value="capex">{enumLabel("classificacao_gasto", "capex")}</option>
-          <option value="opex">{enumLabel("classificacao_gasto", "opex")}</option>
-        </NativeSelect>)}
+        <MgSelect data-testid="compras-classificacao-gasto" value={f.classificacao_gasto} onChange={(v) => e.mudarFiscal({ classificacao_gasto: v })} options={CLASSIFICACOES} />)}
     </ColunaDeCampos>
   </div>;
 }
@@ -119,17 +121,15 @@ export function RateioEItensDaCriacao({ e }: { e: EstadoDaCriacao }) {
   return <div data-testid="compras-rateio-e-itens" className="mt-1 space-y-3">
     <ColunaDeCampos>
       <CampoDaCentral rotulo="Classificação CAPEX/OPEX" erro={e.erro("classificacao_gasto")} icone="selecao" preenchido testId="compras-classificacao-gasto-campo">
-        <NativeSelect data-testid="compras-classificacao-gasto" value={f.classificacao_gasto} onChange={(ev) => e.mudarFiscal({ classificacao_gasto: ev.target.value })}>
-          <option value="">{enumLabel("classification", "unclassified")}</option>
-          <option value="capex">{enumLabel("classificacao_gasto", "capex")}</option>
-          <option value="opex">{enumLabel("classificacao_gasto", "opex")}</option>
-        </NativeSelect>
+        <MgSelect data-testid="compras-classificacao-gasto" value={f.classificacao_gasto} onChange={(v) => e.mudarFiscal({ classificacao_gasto: v })} options={CLASSIFICACOES} />
       </CampoDaCentral>
+      <p className="text-[12px] text-slate-600" data-testid="compras-classificacao-limite">
+        A classificação CAPEX/OPEX vale para o documento inteiro. Compra mista (investimento e despesa na mesma nota) exige decisão explícita — não invente classificação automática por item.
+      </p>
       <CampoDaCentral rotulo="Distribuição" erro={e.erro("rateio")} icone="selecao" preenchido testId="compras-rateio">
-        <NativeSelect data-testid="compras-rateio-tipo" value={r.tipo}
-          onChange={(ev) => e.mudarTipoDoRateio(TIPOS_DE_RATEIO.find((t) => t === ev.target.value) ?? "documento")}>
-          {TIPOS_DE_RATEIO.map((t) => <option key={t} value={t}>{enumLabel("rateio_compra", t)}</option>)}
-        </NativeSelect>
+        <MgSelect data-testid="compras-rateio-tipo" value={r.tipo}
+          onChange={(v) => e.mudarTipoDoRateio(TIPOS_DE_RATEIO.find((t) => t === v) ?? "documento")}
+          options={TIPOS_DE_RATEIO.map((t) => ({ value: t, label: enumLabel("rateio_compra", t) }))} />
       </CampoDaCentral>
     </ColunaDeCampos>
     {simples && <p className="text-[12px] text-slate-600" data-testid="compras-rateio-simples">

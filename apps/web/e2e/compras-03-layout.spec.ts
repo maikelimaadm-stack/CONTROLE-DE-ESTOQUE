@@ -112,11 +112,12 @@ async function conferirLayoutNaCentral(page: Page, layoutId: string) {
   await expect(campo(page, "transportadora_id"), "a Transportadora está fora do layout").toHaveCount(0);
   await expect(central.locator("label", { hasText: "Transportadora" }), "e não aparece na Central").toHaveCount(0);
   // As colunas dos itens também seguem o layout. PRESENÇA antes da ausência: a grade desenhou as colunas pelo layout
-  // (`data-campo`), e o Produto está lá; o Armazém, escondido pelo layout e não exigido pela regra, NÃO.
+  // (`data-campo`), e o Produto está lá; o Local de estoque é a EXCEÇÃO: é por linha, e a Central força a coluna.
   const itens = page.getByTestId("compras-itens");
   await expect(itens.locator('th[data-campo="produto_id"]'), "a grade dos itens desenhou as colunas pelo layout").toHaveCount(1);
-  await expect(itens.locator('th[data-campo="armazem_id"]'), "o Armazém escondido pelo layout não aparece nos itens").toHaveCount(0);
-  await expect(itens.getByRole("columnheader", { name: "Local de estoque" }), "nem pelo rótulo").toHaveCount(0);
+  // O Local de estoque é POR LINHA: a Central força a coluna, mesmo que o layout a esconda.
+  await expect(itens.locator('th[data-campo="armazem_id"]'), "o Local de estoque é coluna da grade, apesar do layout").toHaveCount(1);
+  await expect(itens.getByRole("columnheader", { name: "Local de estoque" }), "com o rótulo").toHaveCount(1);
 }
 
 test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigatória, Fornecedor padrão) governa a Central; sem Observação recusa no campo; no modo receber vale o mesmo layout e o pedido vence o padrão", async ({ page }) => {
@@ -148,12 +149,13 @@ test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigat
   const itens = page.getByTestId("compras-itens");
   await itens.getByTestId("central-compras-adicionar-item").click();
   const linha = itens.locator("tbody tr").first();
-  // sem a coluna Armazém (o layout a escondeu / grade enxuta), a linha não tem onde escolhê-lo — e a regra não o exige
-  await expect(linha.getByTestId("central-compras-armazem"), "a linha não desenha a célula do Armazém").toHaveCount(0);
+  // o local é escolhido NA LINHA; sem padrão do layout e sem escolha, a linha vai sem local — e a regra não o exige
+  await expect(linha.getByTestId("central-compras-armazem"), "a linha desenha a célula do Local de estoque (por linha)").toHaveCount(1);
   await escolherNaLinha(page, linha.getByTestId("central-compras-produto"), c.produto.nome);
   await linha.getByLabel("Quantidade do item 1").fill("2");
   await linha.getByLabel("Valor unitário do item 1").fill("15");
-  // Totais ficam na faixa fora das abas (decisão 319)
+  // O total do documento mora só na aba Totais (sem faixa fora das abas).
+  await abrirAbaDoPainelDeCompras(page, "Totais");
   await expect(page.getByTestId("compras-total")).toContainText("30,00");
   await expect(page.getByTestId("compras-salvar"), "premissa: o layout chegou e o Salvar está liberado").toBeEnabled();
   await page.getByTestId("compras-salvar").click();
@@ -175,7 +177,7 @@ test("LC-W1 — layout de Compra (campo escondido, rótulo, Observação obrigat
   const gravada = await api<Record<string, unknown>>(page, "GET", `/api/compras/compras/${compraId}`);
   expect(gravada, "o servidor gravou o que a tela mostrou").toMatchObject({ fornecedor_id: c.fornecedor.padrao, observacao: "Conferida na portaria", transportadora_id: null, tipo_operacao: { id: c.topCompra.id } });
   expect((gravada["itens"] as { produto_id: string; armazem_id: string | null }[]).map((i) => [i.produto_id, i.armazem_id]),
-    "sem a coluna (e sem padrão), o item foi gravado sem armazém — a regra desta TOP não o exige").toEqual([[c.produto.id, null]]);
+    "sem escolha na linha (e sem padrão), o item foi gravado sem armazém — a regra desta TOP não o exige").toEqual([[c.produto.id, null]]);
 
   // (4) MODO RECEBER: um pedido de OUTRO fornecedor, sem observação; Próximos passos → a Central em modo receber.
   const pedido = (await api<{ id: string }>(page, "POST", "/api/compras/pedidos", {

@@ -120,6 +120,12 @@ export function planoGravado(v: unknown): Plan | null {
   if (typeof v.due_day === "number") plano.due_day = v.due_day;
   if (v.down_payment_value !== undefined && v.down_payment_value !== null) plano.down_payment_value = String(v.down_payment_value);
   if (typeof v.down_payment_date === "string") plano.down_payment_date = v.down_payment_date.slice(0, 10);
+  // As parcelas escritas à mão (Central de Compras): a lista é o cronograma gravado.
+  if (Array.isArray(v.parcelas)) {
+    const parcelas = v.parcelas.filter(ehObjeto).map((x) => ({ vencimento: texto(x["vencimento"]).slice(0, 10), valor: texto(x["valor"]),
+      ...(texto(x["observacao"]) ? { observacao: texto(x["observacao"]) } : {}) })).filter((x) => x.vencimento !== "" && x.valor !== "");
+    if (parcelas.length) plano.parcelas = parcelas;
+  }
   return plano;
 }
 

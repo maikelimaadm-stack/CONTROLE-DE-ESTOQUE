@@ -29,6 +29,13 @@ const P = "central-compras";
 const literal = (t: string) => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 const caminho = (r: Response) => new URL(r.url()).pathname;
 
+/** Seletor PADRÃO de lista fixa (MgSelect, sem cadastro): abre a caixa e escolhe a opção pelo rótulo. */
+async function escolherNaLista(page: Page, gatilho: Locator, rotulo: string) {
+  await gatilho.click();
+  const painel = page.locator("div[role='dialog'], [data-radix-popper-content-wrapper]").last();
+  await painel.getByRole("option", { name: literal(rotulo) }).first().click();
+}
+
 /* ═════════════════════════════════ a chave sintética ═════════════════════════════════ */
 
 /** DV do CNPJ (módulo 11, pesos 2..9 da direita para a esquerda, reiniciando). */
@@ -120,6 +127,7 @@ async function compraNaCentral(page: Page, c: Cenario) {
   await escolherNaCelula(page, linha.getByTestId(`${P}-produto`), c.produto.nome);
   await linha.getByLabel("Quantidade do item 1").fill("2");
   await linha.getByLabel("Valor unitário do item 1").fill("50");
+  await page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Totais" }).click();
   await expect(page.getByTestId("compras-total"), "premissa: sem os dados fiscais, o total é o dos itens").toContainText("100,00");
   await expect(central.getByRole("button", { name: /^Dados adicionais/ }), "sem acordeão Dados adicionais").toHaveCount(0);
   await expect(page.getByTestId(`${P}-dados`).getByTestId("compras-dados-fiscais"), "fiscais fora dos Dados principais").toHaveCount(0);
@@ -154,15 +162,20 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imo
   await fiscais.getByTestId("compras-chave-acesso").fill(chave.valida.replace(/(\d{4})(?=\d)/g, "$1 ")); // como no DANFE, com espaços
   await fiscais.getByTestId("compras-uf-nota").fill("sp");
   await expect(fiscais.getByTestId("compras-uf-nota"), "a UF vai em maiúsculas").toHaveValue("SP");
-  await page.getByTestId("compras-tipo-documento-fiscal").selectOption("nfe");
+  await escolherNaLista(page, page.getByTestId("compras-tipo-documento-fiscal"), "NF-e");
   await fiscais.getByTestId("compras-valor-ipi").fill("10.00");
+  // O seguro mora no Financeiro, junto do que compõe o valor do documento.
+  const abaFinanceiro = page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Financeiro" });
+  await abaFinanceiro.click();
+  await expect(abaFinanceiro).toHaveAttribute("aria-selected", "true");
   await page.getByTestId("compras-seguro").fill("5.50");
+  await page.getByTestId(`${P}-painel`).getByRole("tab", { name: "Totais" }).click();
   await expect(page.getByTestId("compras-total"), "100,00 + IPI 10,00 + seguro 5,50").toContainText("115,50");
   const rateio = await abaDoRateio(page);
   const classificacao = rateio.getByTestId("compras-item-classificacao-0");
   await expect(classificacao.getByTestId("compras-item-0-gera-estoque"), "premissa: o item nasce gerando estoque").toBeChecked();
   await classificacao.getByTestId("compras-item-0-imobilizado").check();
-  await expect(rateio.getByTestId("compras-rateio-tipo")).toHaveValue("documento");
+  await expect(rateio.getByTestId("compras-rateio-tipo")).toContainText("Natureza e centro do documento");
 
   // NO FIO: só as chaves preenchidas, os valores em TEXTO, a chave sem os espaços
   const post = postDaCompra(page);

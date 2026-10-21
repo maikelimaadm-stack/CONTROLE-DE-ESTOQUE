@@ -100,11 +100,12 @@ export async function abrirAbaDoLancamento(page: Page, nome: "Totais" | "Finance
 }
 
 /**
- * Abre uma aba do painel inferior da Central de Compras (decisão 319): Financeiro · Rateio e classificação ·
- * Fiscal · Entrega e transporte. Natureza/centro moram em "Rateio e classificação" — quem preenche abre a aba
- * antes, como o usuário. Só retorna com a aba selecionada.
+ * Abre uma aba do painel inferior da Central de Compras (decisão 319): Totais · Financeiro · Rateio e classificação ·
+ * Fiscal · Entrega e transporte. Os valores da compra (despesas, frete, seguro, desconto) moram em "Totais";
+ * natureza/centro em "Rateio e classificação" — quem preenche abre a aba antes, como o usuário. Só retorna com a
+ * aba selecionada.
  */
-export async function abrirAbaDoPainelDeCompras(page: Page, nome: "Financeiro" | "Rateio e classificação" | "Fiscal" | "Entrega e transporte") {
+export async function abrirAbaDoPainelDeCompras(page: Page, nome: "Totais" | "Financeiro" | "Rateio e classificação" | "Fiscal" | "Entrega e transporte") {
   const aba = page.getByTestId("central-compras-painel").getByRole("tab", { name: new RegExp(`^${nome}`) });
   await expect(aba, `aba "${nome}" do painel da Central de Compras`).toBeVisible();
   await aba.click();

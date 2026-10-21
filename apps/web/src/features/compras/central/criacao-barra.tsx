@@ -134,7 +134,7 @@ export function useBarraDaCriacao({ e, densidade, onDensidade, onIr = irParaPend
 
   const direita = <ConjuntoDireito>
     {tentou && <PendenciasDoDocumento prefixoTestid={PREFIXO} pendencias={e.pendencias} aberta={e.pendenciasAbertas} onAbertaChange={e.setPendenciasAbertas} onIr={onIr} />}
-    <PosicaoDoRotulo prefixoTestid={PREFIXO} valor={densidade} onChange={onDensidade} />
+    <PosicaoDoRotulo prefixoTestid={PREFIXO} valor={densidade} onChange={onDensidade} semRotuloAcima />
     <AcoesRapidas prefixoTestid={PREFIXO} documentosAbertos={fonteDosDocumentosDeCompras} antes={rapidas} desabilitado={e.salvando} />
   </ConjuntoDireito>;
 

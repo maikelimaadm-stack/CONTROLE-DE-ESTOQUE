@@ -400,7 +400,6 @@ test("LANC-T1 — compra que gera título, TOP com os 5 padrões, o documento tr
   const ligada = chaveNoFio(regras, "T1");
   // O LOCAL DA LINHA NOVA: ligada, o do produto; desligada, o do cabeçalho — vazio (sem padrão do layout), como na main.
   const localNovo = ligada ? m.local : null;
-  await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
 
   // SEMEADOS, com a dica da TOP enquanto a árvore não responde (aba Rateio — decisão 319).
   await abrirRateio(page);
@@ -660,7 +659,6 @@ test("LANC-T5a — o local do produto: a linha nova nasce com o local do produto
   const ligada = chaveNoFio(regras, "T5a");
   // ligada, a linha nova nasce no local do produto; desligada, no do cabeçalho (vazio), como na main
   const localNovo = ligada ? m.local : null;
-  await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
   await escolherNoCampo(page, campo(page, "fornecedor_id"), m.fornecedor.nome);
 
   // (1) TRÊS linhas do MESMO produto: todas no local dele (ligada); uma leitura do cadastro e uma conferência do local.
@@ -697,19 +695,19 @@ test("LANC-T5a — o local do produto: a linha nova nasce com o local do produto
   expect((await gravado(page, id)).itens_armazem, "o gravado igual ao corpo").toEqual(esperado);
 });
 
-test("LANC-T5b — o local do cabeçalho ESCOLHIDO pelo operador vence o do produto para a linha nova", async ({ page }) => {
+test("LANC-T5b — o local ESCOLHIDO pelo operador na LINHA vence o local padrão do produto", async ({ page }) => {
   test.setTimeout(180_000);
   await login(page);
   const m = await montar(page);
   const escolhido = await criarLocal(page, m.empresa, m.tag, "local escolhido");
   const top = await topDoCaso(page, "T5b", { configuracao: configuracaoNeutraTopV5(), padroes: OS_CINCO(m) });
   const envios = escutarPosts(page, "/api/compras/compras");
-  // nos dois mundos a escolha do cabeçalho vale para a linha nova (desligada, é o local do cabeçalho da main)
+  // o local é POR LINHA (a coluna da grade): a escolha do operador na célula vence o padrão do produto
   chaveNoFio((await abrirCriacao(page, "compras", top.id)).regras, "T5b");
-  await escolherNoCampo(page, page.getByTestId(`${P}-local-padrao`), escolhido.nome);
   await preencherOMinimo(page, m);
+  await escolherLocalDaLinha(page, 0, escolhido);
   await estavel(page);
-  await localDaLinha(linhas(page).first(), escolhido, "a escolha do operador no cabeçalho vence o local do produto");
+  await localDaLinha(linhas(page).first(), escolhido, "a escolha do operador na linha vence o local do produto");
   const envio = await salvar(page, envios);
   await gravou(page, envio);
   expect(itensDe(envio.corpo).map((i) => i["armazem_id"] ?? null), "no POST: o local escolhido").toEqual([escolhido.id]);
@@ -814,7 +812,6 @@ test("LANC-T7 — a forma COBRADA (execução do M1-E: forma, local e vencimento
   premissaDosPadroes(regras, m, { secao: SECAO_NEUTRA, padroes: CINCO_IDS(m) });
   expect([regras["exigeFormaPagamento"], regras["exigeArmazem"], regras["exigeVencimento"]], "premissa no fio: a execução do M1-E").toEqual([true, true, true]);
   const ligada = chaveNoFio(regras, "T7");
-  await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
   await abrirFinanceiro(page);
   await expect(campo(page, "forma_pagamento_id"), "a forma cobrada: semeada").toHaveAttribute("data-padrao-top", "semeado");
   await expect(caixa(page, "forma_pagamento_id"), "com a da TOP").toContainText(m.forma.label);
@@ -864,7 +861,6 @@ test("LANC-T8 — cabeçalho e itens de hoje intactos: a TOP sem padrões (padro
   premissaDosPadroes(regras, m, { secao: SECAO_NEUTRA, padroes: null });
   expect(regras["geraTitulos"], "premissa no fio: a compra de hoje gera título").toBe(true);
   const ligada = chaveNoFio(regras, "T8");
-  await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
   await abrirRateio(page);
   await expect(campo(page, "categoria_financeira_id"), "premissa: o campo da natureza está na tela").toHaveCount(1);
   await expect(central(page).locator("[data-padrao-top]"), "sem padrões: nada semeado").toHaveCount(0);
@@ -915,7 +911,6 @@ test("LANC-T9 — o PEDIDO de compra: com a provisão ligada a TOP semeia o par 
   premissaDosPadroes(com.regras, m, { secao: { ...SECAO_NEUTRA, provisao: true }, padroes: CINCO_IDS(m) });
   const ligada = chaveNoFio(com.regras, "T9");
   const localNovo = ligada ? m.local : null;
-  await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
   await abrirRateio(page);
   for (const c of ["categoria_financeira_id", "centro_custo_id"]) await expect(campo(page, c), `${c}: semeado pela TOP que provisiona`).toHaveAttribute("data-padrao-top", "semeado");
   await abrirFinanceiro(page);
@@ -993,6 +988,7 @@ test("LANC-T11 — a compra de TOTAL ZERO com a TOP de 5 padrões: o par aparece
   await escolherNoCampo(page, campo(page, "fornecedor_id"), m.fornecedor.nome);
   await novaLinhaCom(page, m.produto);
   await expect(await entradaDaLinha(linhas(page).first(), "Valor unitário do item 1"), "premissa: o valor unitário fica no zero com que a linha nasce").toHaveValue("0");
+  await abrirAbaDoPainelDeCompras(page, "Totais");
   await expect(page.getByTestId("compras-total"), "premissa: o total do documento é zero").toContainText("0,00");
   await abrirRateio(page);
   for (const k of OMITIDAS_PELO_PAR) await expect(campo(page, k), `${k}: continua semeado com o total zero`).toHaveAttribute("data-padrao-top", "semeado");
@@ -1039,7 +1035,6 @@ test("LANC-T12 — a CHAVE do local do produto (emenda R2), lida no fio: DESLIGA
     const { regras, layout: efetivo } = await abrirCriacao(page, "compras", compra.id);
     const ligada = chaveNoFio(regras, "T12 compra");
     expect(efetivo, "premissa no fio: o layout ligado com o padrão de cadastro no local dos itens").toMatchObject({ origem: "ligado", id: layout, padroesDeCadastro: { "itens.armazem_id": { id: doCabecalho.id } } });
-    await expect(page.getByTestId(`${P}-local-padrao`), "premissa: o cabeçalho nasce no padrão do layout").toContainText(doCabecalho.nome);
     const localNovo = ligada ? m.local : doCabecalho;
     leituras.zerar();
     await escolherNoCampo(page, campo(page, "fornecedor_id"), m.fornecedor.nome);
@@ -1071,8 +1066,7 @@ test("LANC-T12 — a CHAVE do local do produto (emenda R2), lida no fio: DESLIGA
     const envios = escutarPosts(page, "/api/compras/pedidos");
     const { regras } = await abrirCriacao(page, "pedidos", pedido.id);
     const ligada = chaveNoFio(regras, "T12 pedido");
-    await expect(page.getByTestId(`${P}-local-padrao`).getByRole("combobox"), "premissa: o local do cabeçalho vazio (sem padrão do layout)").toHaveClass(/is-empty/);
-    const localNovo = ligada ? m.local : null;
+      const localNovo = ligada ? m.local : null;
     leituras.zerar();
     await escolherNoCampo(page, campo(page, "fornecedor_id"), m.fornecedor.nome);
     for (let i = 0; i < N; i++) {

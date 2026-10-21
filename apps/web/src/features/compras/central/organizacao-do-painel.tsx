@@ -1,11 +1,10 @@
 "use client";
 import * as React from "react";
-import { brl } from "@/lib/utils";
+import { num } from "@/lib/utils";
 import { Input } from "@/components/ui";
 import { CampoDaCentral, CampoLeitura, ColunaDeCampos } from "@/features/central/campo";
-import { PainelColuna, PainelLargo, PainelRepartido, TitulosDoDocumento } from "@/features/central/painel";
+import { PainelColuna, PainelLargo } from "@/features/central/painel";
 import type { AbaDoPainel } from "@/features/central/contrato";
-import { linkDoTituloDeCompra } from "./adaptador";
 import type { EstadoDaCriacao } from "./estado";
 import { DadosFiscaisDaCriacao, RateioEItensDaCriacao, TipoDeTituloDaCriacao } from "./dados-fiscais";
 import {
@@ -14,8 +13,12 @@ import {
 
 /**
  * Organização do painel da Central de Compras — identificar → produtos → fechar
- * (Financeiro / Rateio e classificação / Fiscal / Entrega e transporte).
- * Totais ficam FORA das abas (`faixaDosTotaisDoPainel`). Observação fica nos Dados principais.
+ * (Totais / Financeiro / Vínculos / Rateio e classificação / Fiscal / Entrega e transporte).
+ * A conta do documento mora na aba Totais (subtotal dos produtos, despesas, frete, seguro, desconto e total final);
+ * o Financeiro fica só com o pagamento (condição, tipo de título, forma, vencimento e parcelas, com a entrada), e os
+ * títulos que o documento vincula moram na aba Vínculos.
+ * O total do documento aparece uma vez só, na aba Totais — sem a faixa de fechamento fora das abas. Observação nos
+ * Dados principais. Valores em dinheiro sem o símbolo "R$" (decisão do usuário, 10/2026).
  */
 
 /** Campos do layout que a criação desenha no painel (nunca nos Dados principais). */
@@ -26,9 +29,17 @@ export const CAMPOS_DO_PAINEL_DA_CRIACAO: readonly string[] = [
   "transportadora_id"
 ];
 
-const TOTAIS = ["frete", "outras_despesas", "desconto"] as const;
+/**
+ * Os TOTAIS da compra (aba "Totais"): o subtotal dos produtos, o que compõe/ajusta o valor (outras despesas, frete,
+ * seguro, desconto) e o total final. Nada de pagamento aqui.
+ */
+const TOTAIS = ["outras_despesas", "frete", "desconto"] as const;
+/** A ordem dos totais no desenho — o seguro (fiscal) entra entre o frete e o desconto. */
+const ORDEM_DOS_TOTAIS = ["outras_despesas", "frete", "seguro", "desconto"] as const;
+/** O pagamento na aba Financeiro: condição, tipo de título, forma, vencimento e as parcelas (com a entrada). */
 const FINANCEIRO = ["condicao_pagamento_id", "forma_pagamento_id", "data_vencimento", "plano_parcelas"] as const;
 const RATEIO_CAMPOS = ["categoria_financeira_id", "centro_custo_id"] as const;
+/** A entrega fica com o transporte; o frete compõe o valor, na aba Totais. */
 const ENTREGA = ["transportadora_id"] as const;
 
 /** Campos que permanecem nos Dados principais (identificação da compra). */
@@ -43,24 +54,28 @@ export function camposDoPainelNoCabecalho(e: EstadoDaCriacao): Set<string> {
   return new Set(cabecalho.filter((c) => CAMPOS_DO_PAINEL_DA_CRIACAO.includes(c)));
 }
 
-/** Totais sempre visíveis, fora das abas — um único local de edição dos valores. */
-export function faixaDosTotaisDoPainel(e: EstadoDaCriacao, desenharCampo: DesenharCampo): React.ReactNode {
-  if (!e.mostrarFormulario) return null;
-  const doCabecalho = camposDoPainelNoCabecalho(e);
-  const totais = TOTAIS.filter((c) => doCabecalho.has(c));
-  const seguro = fiscalNoPainel(e);
-  return <div data-testid="compras-faixa-totais" className="flex flex-wrap items-end gap-x-4 gap-y-2 pb-2">
-    <CampoLeitura rotulo="Total dos produtos" valor={brl(e.totalItens)} testId="compras-total-produtos" />
-    <div className="grid min-w-0 flex-1 grid-cols-12 gap-2">
-      {totais.map((c) => <div key={c} className="col-span-12 sm:col-span-4 md:col-span-3">{desenharCampo(c)}</div>)}
-      {seguro && <div className="col-span-12 sm:col-span-4 md:col-span-3">
-        <CampoDaCentral rotulo="Seguro" erro={e.erro("seguro")} preenchido={e.fiscal.seguro !== ""} testId="compras-seguro-campo" data-campo-fiscal="seguro">
-          <Input data-testid="compras-seguro" type="number" step="0.01" min="0" inputMode="decimal" value={e.fiscal.seguro}
-            onChange={(ev) => e.mudarFiscal({ seguro: ev.target.value })} />
-        </CampoDaCentral>
-      </div>}
-    </div>
-    <CampoLeitura rotulo="Total do documento" valor={brl(e.totalExibido)} testId="compras-total" />
+/** A régua entre os grupos do Financeiro (subtotal × ajustes × pagamento). */
+const Divisor = () => <div className="h-px bg-slate-200" aria-hidden />;
+
+/** O seguro do documento (dado fiscal) — no Financeiro, junto do que compõe o valor. */
+function CampoSeguro({ e }: { e: EstadoDaCriacao }) {
+  return <CampoDaCentral rotulo="Seguro" erro={e.erro("seguro")} preenchido={e.fiscal.seguro !== ""} testId="compras-seguro-campo" data-campo-fiscal="seguro">
+    <Input data-testid="compras-seguro" type="number" step="0.01" min="0" inputMode="decimal" value={e.fiscal.seguro}
+      onChange={(ev) => e.mudarFiscal({ seguro: ev.target.value })} />
+  </CampoDaCentral>;
+}
+
+/**
+ * A aba VÍNCULOS: as contas que o documento vincula (e os documentos ligados a ele). O tipo de título que as contas
+ * vão nascer com fica no Financeiro, junto do pagamento — ele não é uma conta. Aba própria porque a lista de títulos
+ * não convive com as parcelas na mesma coluna.
+ */
+function VinculosDoDocumento() {
+  return <div className="space-y-2" data-testid="compras-vinculos">
+    <h3 className="text-[11.5px] font-semibold text-slate-600">Vínculos</h3>
+    <p className="text-[12px] text-slate-500" data-testid="compras-vinculos-vazio">
+      Os títulos serão gerados após a confirmação, conforme a TOP e o pagamento.
+    </p>
   </div>;
 }
 
@@ -79,16 +94,55 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
 
   const abas: AbaDoPainel[] = [];
 
+  /* OS TOTAIS: a conta do documento fechada, na ordem do desenho — subtotal dos produtos, o que o compõe
+     (outras despesas, frete, seguro) e o que o reduz (desconto), com o total final. Nada de pagamento aqui. */
+  const totais = presentes(TOTAIS);
+  const seguro = fiscalNoPainel(e);
+  abas.push({
+    value: valorUnico("totais"), label: "Totais",
+    erro: comErro(totais) || Boolean(e.erro("seguro")),
+    content: <PainelColuna>
+      <CampoLeitura rotulo="Total dos produtos" valor={num(e.totalItens, 2)} testId="compras-total-produtos" />
+      {ORDEM_DOS_TOTAIS.map((c) => {
+        if (c === "seguro") return seguro ? <CampoSeguro key="seguro" e={e} /> : null;
+        return totais.includes(c) ? <React.Fragment key={c}>{desenharCampo(c)}</React.Fragment> : null;
+      })}
+      <Divisor />
+      <CampoLeitura rotulo="Total da compra" valor={num(e.totalExibido, 2)} testId="compras-total" />
+    </PainelColuna>
+  });
+
+  /* O PAGAMENTO na aba Financeiro: condição, tipo de título, forma de pagamento, vencimento e as parcelas (com a
+     entrada, quando há). Os totais do documento ficam na aba Totais; as contas vinculadas, na aba Vínculos. */
   const financeiro = presentes(FINANCEIRO);
-  if (financeiro.length) abas.push({
-    value: valorUnico("financeiro"), label: "Financeiro", erro: comErro(financeiro) || Boolean(e.erro("tipo_titulo_id")),
-    content: <PainelRepartido lado={<TitulosDoDocumento legenda="Contas a pagar do documento" titulos={[]} linkDoTitulo={linkDoTituloDeCompra} />}>
-      <p className="col-span-full text-[12px] text-slate-500" data-testid="compras-plano-dica">
-        Para informar a quantidade de parcelas e as datas, escolha &quot;Ajustar parcelas&quot; e preencha Nº de parcelas e 1º vencimento.
-      </p>
-      {financeiro.map((c) => <React.Fragment key={c}>{desenharCampo(c)}</React.Fragment>)}
-      {fiscalNoPainel(e) && <TipoDeTituloDaCriacao e={e} />}
-    </PainelRepartido>
+  const tipoTitulo = fiscalNoPainel(e);
+  /* Com a lista de parcelas manual, a data de cada parcela é o cronograma — o "Vencimento" solto não aparece. */
+  const vencimentoSolto = financeiro.includes("data_vencimento") && !e.ajustarParcelas;
+  if (financeiro.length || tipoTitulo) {
+    abas.push({
+      value: valorUnico("financeiro"), label: "Financeiro",
+      erro: comErro(financeiro) || Boolean(e.erro("tipo_titulo_id")),
+      /* O pagamento fica na coluna de 330px; a tabela de parcelas ocupa a largura do painel, abaixo dele, para
+         vencimento, valor e observação caberem na mesma linha. */
+      content: <div className="space-y-3">
+        <PainelColuna>
+          {financeiro.includes("condicao_pagamento_id") && <React.Fragment>{desenharCampo("condicao_pagamento_id")}</React.Fragment>}
+          {tipoTitulo && <div className="max-w-[300px]"><TipoDeTituloDaCriacao e={e} /></div>}
+          {financeiro.includes("forma_pagamento_id") && <React.Fragment>{desenharCampo("forma_pagamento_id")}</React.Fragment>}
+          {vencimentoSolto && <Divisor />}
+          {vencimentoSolto && <React.Fragment>{desenharCampo("data_vencimento")}</React.Fragment>}
+        </PainelColuna>
+        {financeiro.includes("plano_parcelas") &&
+          <div className="max-w-[960px]" data-testid="compras-financeiro-parcelas">{desenharCampo("plano_parcelas")}</div>}
+      </div>
+    });
+  }
+
+  /* OS VÍNCULOS do documento (os títulos que nascem dele) têm aba própria: a lista não divide mais o espaço com o
+     pagamento nem com as parcelas. */
+  abas.push({
+    value: valorUnico("vinculos"), label: "Vínculos",
+    content: <PainelLargo><VinculosDoDocumento /></PainelLargo>
   });
 
   const rateioCampos = presentes(RATEIO_CAMPOS);
@@ -125,13 +179,6 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
     });
   }
 
-  if (!abas.length) {
-    abas.push({
-      value: valorUnico("resumo"), label: "Resumo", erro: comErro([...TOTAIS]),
-      content: <p className="text-[12.5px] text-slate-500">Totais da compra na faixa acima.</p>
-    });
-  }
-
   return abas;
 }
 
@@ -140,14 +187,14 @@ export function abaDoCampoNoPainel(e: EstadoDaCriacao, campo: string): string | 
   if (doRateio) return doRateio;
   if (campo === "tipo_titulo_id" && fiscalNoPainel(e)) return "financeiro";
   if (campo === "classificacao_gasto" && rateioNoPainel(e)) return ABA_DO_RATEIO;
-  if (campo === "seguro" && fiscalNoPainel(e)) return null; // faixa de totais
+  if (campo === "seguro" && fiscalNoPainel(e)) return "totais";
   if (fiscalNoPainel(e) && ["chave_acesso", "uf_nota", "tipo_documento_fiscal", "valor_ipi", "valor_icms_st"].includes(campo)) {
     return "fiscal";
   }
   const doCabecalho = camposDoPainelNoCabecalho(e);
   if (doCabecalho.has(campo)) {
-    if ((TOTAIS as readonly string[]).includes(campo)) return null;
     if ((FINANCEIRO as readonly string[]).includes(campo)) return "financeiro";
+    if ((TOTAIS as readonly string[]).includes(campo)) return "totais";
     if ((RATEIO_CAMPOS as readonly string[]).includes(campo)) return ABA_DO_RATEIO;
     if ((ENTREGA as readonly string[]).includes(campo)) return "entrega";
   }

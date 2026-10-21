@@ -12,10 +12,21 @@ export const apportionmentSchema = z.array(z.object({
   harvest_id: z.string().uuid().nullable().optional(), area_id: z.string().uuid().nullable().optional(),
   percentage: z.union([z.number(), z.string()]).optional(), amount: z.union([z.number(), z.string()]).optional()
 })).min(1);
+/**
+ * A PARCELA ESCRITA À MÃO (Central de Compras, 10/2026): vencimento, valor e observação, uma a uma. Presente no plano,
+ * ela é o cronograma — o número de parcelas, o intervalo e a entrada deixam de valer (a lista manda). A soma continua
+ * tendo de fechar o total do documento; quem confere é `parcelasDoTitulo`.
+ */
+export const parcelaDoPlanoSchema = z.object({
+  vencimento: z.string().refine(isISODate, "Informe o vencimento da parcela"),
+  valor: z.union([z.number(), z.string().regex(/^\d+(\.\d{1,2})?$/, "Valor da parcela inválido")]),
+  observacao: z.string().max(500).optional()
+});
 export const installmentPlanSchema = z.object({
   installments: z.number().int().min(1).max(120).default(1), first_due_date: z.string().refine(isISODate), mode: z.enum(["interval", "fixed_day"]).default("interval"),
   interval_days: z.number().int().min(1).max(366).default(30), due_day: z.number().int().min(1).max(31).optional(),
-  has_down_payment: z.boolean().default(false), down_payment_value: z.union([z.number(), z.string()]).optional(), down_payment_date: z.string().refine(isISODate).optional()
+  has_down_payment: z.boolean().default(false), down_payment_value: z.union([z.number(), z.string()]).optional(), down_payment_date: z.string().refine(isISODate).optional(),
+  parcelas: z.array(parcelaDoPlanoSchema).min(1).max(120).optional()
 });
 export type InstallmentPlan = z.infer<typeof installmentPlanSchema>;
 
@@ -53,13 +64,31 @@ export interface TitleInput {
  * confirmação de venda (VENDAS-A5-1) lê daqui o PRIMEIRO vencimento em vez de repetir a regra do parcelamento
  * (entrada, intervalo, dia fixo), que envelheceria em silêncio na primeira mudança dela.
  */
-export function parcelasDoTitulo(input: Pick<TitleInput, "amount" | "dueDate" | "plan" | "parcelas">) {
+export interface ParcelaCalculada { number: number; dueDate: string; amount: string; isDownPayment: boolean; note?: string }
+export function parcelasDoTitulo(input: Pick<TitleInput, "amount" | "dueDate" | "plan" | "parcelas">): ParcelaCalculada[] {
   const total = money(input.amount);
   if (input.parcelas?.length) {
     if (input.plan) throw new Error("parcelasDoTitulo: parcelas explícitas e plano de parcelamento juntos");
     const soma = input.parcelas.reduce((a, p) => a.plus(D(p.amount)), D(0));
     if (!soma.eq(D(total))) throw validation("As parcelas não fecham o valor do título", [{ path: "parcelas", message: "As parcelas não fecham o valor do título" }]);
     return input.parcelas.map((p, i) => ({ number: i + 1, dueDate: p.dueDate, amount: money(p.amount), isDownPayment: false }));
+  }
+  // As parcelas escritas à mão no plano (Central de Compras) são o cronograma; a observação de cada uma vira a nota do título.
+  // Com `has_down_payment`, a PRIMEIRA linha é a entrada (número 0 / sufixo -E), como em `buildInstallments` —
+  // a lista manda nas datas e valores; a flag só identifica a entrada, sem recalcular.
+  const manuais = input.plan?.parcelas;
+  if (manuais?.length) {
+    const soma = manuais.reduce((a, p) => a.plus(D(String(p.valor))), D(0));
+    if (!soma.eq(D(total))) throw validation("As parcelas não fecham o valor do título", [{ path: "parcelas", message: "As parcelas não fecham o valor do título" }]);
+    const comEntrada = input.plan?.has_down_payment === true;
+    return manuais.map((p, i) => {
+      const isDownPayment = comEntrada && i === 0;
+      return {
+        number: isDownPayment ? 0 : (comEntrada ? i : i + 1),
+        dueDate: p.vencimento, amount: money(String(p.valor)), isDownPayment,
+        ...(p.observacao?.trim() ? { note: p.observacao.trim() } : {})
+      };
+    });
   }
   return input.plan && (input.plan.installments > 1 || input.plan.has_down_payment)
     ? buildInstallments({ totalAmount: total, installments: input.plan.installments, firstDueDate: input.plan.first_due_date, mode: input.plan.mode, intervalDays: input.plan.interval_days, dueDay: input.plan.due_day, hasDownPayment: input.plan.has_down_payment, downPaymentValue: input.plan.down_payment_value !== undefined ? String(input.plan.down_payment_value) : undefined, downPaymentDate: input.plan.down_payment_date })
@@ -133,7 +162,7 @@ export async function createTitles(ctx: ServiceCtx, input: TitleInput): Promise<
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33) returning id`,
       [ctx.orgId, input.empresaId, code, input.direction, count > 1 ? `${input.number}-${p.isDownPayment ? "E" : p.number}` : input.number, input.titleTypeId ?? null, input.proprietaryId ?? null, input.personId, input.branchId ?? null,
         input.paymentType ?? (count > 1 ? "installments" : "single"), input.recurrenceType ?? null, input.classification ?? "unclassified", input.documentType ?? null, input.isDeductible ?? false, input.isTax ?? false,
-        p.amount, discount, input.emissionDate, p.dueDate, p.isDownPayment ? 0 : p.number, count, groupId, input.appropriation ?? "direct", input.appropriationType ?? null, input.note, input.harvestId ?? null, input.sourceType ?? null, input.sourceId ?? null, ctx.user.id,
+        p.amount, discount, input.emissionDate, p.dueDate, p.isDownPayment ? 0 : p.number, count, groupId, input.appropriation ?? "direct", input.appropriationType ?? null, p.note ?? input.note, input.harvestId ?? null, input.sourceType ?? null, input.sourceId ?? null, ctx.user.id,
         input.tipoOperacaoId ?? null, input.tipoOperacaoVersaoId ?? null, input.contaPrevistaId ?? null, input.previsto ? "previsto" : "open"]);
     const id = r.rows[0]!.id; ids.push(id);
     await atribuirIdGlobal(ctx, "financial_titles", id);
