@@ -96,6 +96,12 @@ importers:
 
   apps/web:
     dependencies:
+      '@agro/api':
+        specifier: workspace:*
+        version: link:../api
+      '@agro/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@agro/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -156,6 +162,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      fastify:
+        specifier: ^5.12.3
+        version: 5.12.3
       lucide-react:
         specifier: ^1.43.0
         version: 1.43.0(react@19.3.0)
@@ -214,6 +223,9 @@ importers:
       eslint-config-next:
         specifier: ^16.3.4
         version: 16.3.4(@typescript-eslint/parser@8.70.0(eslint@10.10.0(jiti@2.7.0))(typescript@5.9.3))(eslint@10.10.0(jiti@2.7.0))(typescript@5.9.3)
+      light-my-request:
+        specifier: ^6.6.0
+        version: 6.6.0
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3

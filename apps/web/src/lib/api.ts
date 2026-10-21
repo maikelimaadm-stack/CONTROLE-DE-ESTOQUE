@@ -1,6 +1,15 @@
 "use client";
 import { lerSessaoArmazenada } from "@erp/plataforma";
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
+/**
+ * Base da API. Na Vercel a Fastify mora no mesmo host (Hobby = um projeto);
+ * string vazia = mesma origem. Fora da Vercel, sem override, local :3333.
+ */
+export const API_URL = (() => {
+  const explicita = process.env.NEXT_PUBLIC_API_URL;
+  if (explicita !== undefined && explicita !== "") return explicita.replace(/\/$/, "");
+  if (process.env.VERCEL) return "";
+  return "http://localhost:3333";
+})();
 
 export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public details?: unknown) { super(message); }
