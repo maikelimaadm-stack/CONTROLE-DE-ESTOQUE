@@ -88,9 +88,7 @@ export function DocumentosDeCompraList({ especie, barra, onSelecionar }: { espec
       text: (r) => enumLabel("situacao_documento_compra", r["situacao"])
     }
   ];
-  // `colSpan` do rodapé DERIVADO da lista de colunas (mesma conta da lista de vendas).
-  const indiceDoTotal = colunas.findIndex((c) => c.key === "valor_total");
-  const depoisDoTotal = colunas.length - indiceDoTotal - 1;
+
 
   return <>
     <DocList key={especie} title="Documentos de compra" endpoint="/api/compras/documentos" base="/compras" entity="documentos_compra"
@@ -114,7 +112,7 @@ export function DocumentosDeCompraList({ especie, barra, onSelecionar }: { espec
         if (!alvo) return [];
         return [{ label: `Cancelar ${alvo.especieMinuscula}`, danger: true, onClick: () => setCancelando(alvo) }];
       }}
-      totals={(t) => <tr><td colSpan={indiceDoTotal} className="px-2 py-1">Total (filtro)</td><td className="num">{brl(t["valor_total"] ?? t["total"] ?? "0")}</td>{Array.from({ length: depoisDoTotal }, (_, i) => <td key={i} />)}</tr>} />
+      summaryExtra={(t) => <span className="mg-summary__item">Total (filtro) <b className="text-slate-800">{brl(t?.valor_total ?? t?.total ?? "0")}</b></span>} />
     <DialogoCancelarDocumento prefixoTestid={PREFIXO_CENTRAL_COMPRAS} aberto={cancelando !== null}
       onFechar={() => { if (!cancelarM.isPending) setCancelando(null); }}
       especie={cancelando?.especieMinuscula ?? ""} codigo={cancelando?.codigo ?? ""}

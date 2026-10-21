@@ -58,6 +58,8 @@ export interface Base1ListProps {
   extraToolbar?: React.ReactNode;
   createLabel?: string;
   footerTotals?: (totals: Record<string, string>) => React.ReactNode;
+  /** conteúdo extra na barra de resumo (Selecionados/Listados/Filtrados/Totais), alinhado aos contadores */
+  summaryExtra?: (totals?: Record<string, string>) => React.ReactNode;
   /** parâmetros vindos da URL (ex.: people?is_provider=true) → filtros aplicados */
   initialParams?: Record<string, string>;
   /** filtros iniciais (ex.: período do mês nos lançamentos) */
@@ -89,7 +91,7 @@ function comColunaDeIdentidade(rodape: React.ReactNode, deslocamento: number): R
  * rodapé com contadores e "Carregar mais". Preferências por usuário (padrão da organização opcional).
  */
 export function Base1List(props: Base1ListProps) {
-  const { moduleId, title, columns, filters, fetchPage, distinct, searchable, canCreate, onNew, onOpen, rowActions, entity, exportXlsx, reportHref, canDelete, onDelete, onDuplicate, Record, extraMenu, footerTotals, initialParams, defaultValues, queryKeyExtra, csvName } = props;
+  const { moduleId, title, columns, filters, fetchPage, distinct, searchable, canCreate, onNew, onOpen, rowActions, entity, exportXlsx, reportHref, canDelete, onDelete, onDuplicate, Record, extraMenu, footerTotals, summaryExtra, initialParams, defaultValues, queryKeyExtra, csvName } = props;
   const colInfo = React.useMemo(() => columns.map((c) => ({ key: c.key, label: c.label })), [columns]);
   const filterInfo = React.useMemo<ListFilterInfo[]>(() => filters.map((f) => ({ key: f.key, label: f.label, kind: f.kind })), [filters]);
   const p = useListPrefs(moduleId, colInfo, filterInfo);
@@ -311,7 +313,7 @@ export function Base1List(props: Base1ListProps) {
             footer={footerTotals && totals ? comColunaDeIdentidade(footerTotals(totals), deslocamentoIdentidade) : undefined} /></div>}
         {/* rodapé (mg-records-summary) */}
         <div className="mg-summary no-print">
-          <div className="mg-summary__counts"><span className="mg-summary__item">Selecionados: {selected.size}</span><span className="mg-summary__item">Listados: {allRows.length}</span><span className="mg-summary__item">Filtrados: {total}</span><span className="mg-summary__item">Totais: {filtersActive ? grand.data ?? "…" : total}</span></div>
+          <div className="mg-summary__counts"><span className="mg-summary__item">Selecionados: {selected.size}</span><span className="mg-summary__item">Listados: {allRows.length}</span><span className="mg-summary__item">Filtrados: {total}</span><span className="mg-summary__item">Totais: {filtersActive ? grand.data ?? "…" : total}</span>{summaryExtra?.(totals)}</div>
           <span className="flex items-center gap-2">
             <select aria-label="Quantidade de registros por carregamento" className="mg-pill-select" value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>{BASE1_PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}</select>
             <IconBtn aria-label="Carregar mais registros" title="Carregar mais registros" disabled={!q.hasNextPage || q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}><ChevronsDown /></IconBtn>

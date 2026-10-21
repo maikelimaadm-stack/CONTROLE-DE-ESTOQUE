@@ -107,14 +107,14 @@ export function ItensDaNota({ documento, altura }: { documento: Row | null; /** 
             : <>
               <Base1List key={`${segmento}:${id}`} moduleId="compras.itens" title="Itens do documento" columns={colunas} filters={filtros}
                 queryKeyExtra={[segmento, id]} fetchPage={buscarPagina} searchable searchPlaceholder="Buscar item" canCreate={false}
-                csvName={`compras-itens-${codigo || id}`} />
-              <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t border-[var(--mg-divider)] px-2 py-1.5 text-[11.5px] text-slate-600">
-                <span>Itens <b className="text-slate-800">{itens.length}</b></span>
-                <span>Quantidade <b className="text-slate-800">{num(totalQtd.toFixed(4), 4)}</b></span>
-                {ehPedido && totalPendente.gt(0) && <span>Pendente <b className="text-slate-800">{num(totalPendente.toFixed(4), 4)}</b></span>}
-                <span>Desconto <b className="text-slate-800">{brl(desconto)}</b></span>
-                <span className="ml-auto font-semibold text-slate-700">Total do documento <b className="text-slate-900">{brl(totalDoDocumento)}</b></span>
-              </div>
+                csvName={`compras-itens-${codigo || id}`}
+                summaryExtra={() => <>
+                  <span className="mg-summary__item">Itens <b className="text-slate-800">{itens.length}</b></span>
+                  <span className="mg-summary__item">Quantidade <b className="text-slate-800">{num(totalQtd.toFixed(4), 4)}</b></span>
+                  {ehPedido && totalPendente.gt(0) && <span className="mg-summary__item">Pendente <b className="text-slate-800">{num(totalPendente.toFixed(4), 4)}</b></span>}
+                  <span className="mg-summary__item">Desconto <b className="text-slate-800">{brl(desconto)}</b></span>
+                  <span className="mg-summary__item ml-auto font-semibold text-slate-700">Total do documento <b className="text-slate-900">{brl(totalDoDocumento)}</b></span>
+                </>} />
             </>}
   </section>;
 }
