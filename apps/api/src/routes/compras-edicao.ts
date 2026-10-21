@@ -198,8 +198,15 @@ async function gravarCabecalho(ctx: ServiceCtx, especie: EspecieCompra, id: stri
   if ("rateio" in m) set("rateio_tipo", m["rateio_tipo"] ?? null);
   set("valor_itens", n.totais.valorItens);
   set("valor_total", n.totais.total);
-  set("plano_parcelas", n.plano ? JSON.stringify(n.plano) : null);
-  set("parcelas_ajustadas", n.parcelasAjustadas);
+  // Com parcelas_nota, o núcleo mantém plano clássico nulo (CHECK 0047); o operacional grava à parte.
+  if ("plano_parcelas_operacional" in m) {
+    const op = m["plano_parcelas_operacional"];
+    set("plano_parcelas_operacional", op == null ? null : JSON.stringify(op));
+  }
+  if (!("plano_parcelas_operacional" in m) || "plano_parcelas" in m || "condicao_pagamento_id" in m) {
+    set("plano_parcelas", n.plano ? JSON.stringify(n.plano) : null);
+    set("parcelas_ajustadas", n.parcelasAjustadas);
+  }
   sets.push("atualizado_em = now()");
   const u = await ctx.tx.query(
     `update erp.documentos_compra set ${sets.join(", ")} where id = $1 and organization_id = $2 and especie = $3 and situacao = 'aberto'`, params)
@@ -220,9 +227,13 @@ async function gravarRateioDaEdicao(ctx: ServiceCtx, id: string, cur: DocumentoG
   const teraPorValor = novo?.tipo === "por_valor";
   if (fase === "antesDoCabecalho") {
     if (tinhaPorValor) {
+      const qtd = await ctx.tx.query<{ n: string }>(
+        `select count(*)::text as n from erp.documentos_compra_rateio
+          where organization_id = $1 and documento_id = $2`, [ctx.orgId, id]);
+      const esperadas = Number(qtd.rows[0]?.n ?? "0");
       const del = await ctx.tx.query(
         `delete from erp.documentos_compra_rateio where organization_id = $1 and documento_id = $2`, [ctx.orgId, id]);
-      if (del.rowCount === null) throw notFound("Documento");
+      if (del.rowCount === null || del.rowCount !== esperadas) throw notFound("Documento");
     }
     return;
   }

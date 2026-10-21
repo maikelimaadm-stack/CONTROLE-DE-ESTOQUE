@@ -429,7 +429,7 @@ describe("0063 — sobre o acervo de documentos de compra, como o runner aplica"
     const ledger = (await db.query<{ n: number; ultima: string }>("select count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
     expect(ledger).toEqual({ n: 63, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
-    expect(noDisco.length, "64 migrations no repositório (0001..0064; a 0064 é da XML-04)").toBe(64);
+    expect(noDisco.length, "65 migrations no repositório (0001..0065; a 0065 é da EDITAR-02B)").toBe(65);
     expect(noDisco[62]).toBe(ALVO);
     // ADD COLUMN com default constante é só metadado: o arquivo físico é o mesmo, e o 0 vem do catálogo.
     expect((await db.query<{ f: number }>("select pg_relation_filenode('erp.documentos_compra')::int f")).rows[0]!.f, "a tabela não foi regravada").toBe(filenodeAntes);

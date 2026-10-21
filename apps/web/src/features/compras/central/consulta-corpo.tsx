@@ -167,7 +167,7 @@ const COLUNAS_DAS_COMPRAS_GERADAS: readonly ColunaDaRelacao[] = [
 function ParcelasEmLeitura({ d, situacao }: { d: Row; situacao: string | null | undefined }) {
   const confirmado = situacao === "confirmado";
   const modelo = modeloDeParcelasParaTela({
-    plano: d["plano_parcelas"],
+    plano: d["plano_parcelas_operacional"] ?? d["plano_parcelas"],
     parcelasNota: d["parcelas_nota"],
     totalAmount: temValor(d["valor_total"]) ? String(d["valor_total"]) : null,
     titulos: Array.isArray(d.titulos) ? d.titulos as { due_date?: unknown; amount?: unknown; note?: unknown; installment_number?: unknown; status?: unknown; situacao?: unknown }[] : null,
@@ -260,7 +260,7 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
     </PainelColuna> },
     { value: "financeiro", label: "Financeiro", content: (() => {
       const modeloFin = modeloDeParcelasParaTela({
-        plano: d["plano_parcelas"], parcelasNota: d["parcelas_nota"],
+        plano: d["plano_parcelas_operacional"] ?? d["plano_parcelas"], parcelasNota: d["parcelas_nota"],
         totalAmount: temValor(d["valor_total"]) ? String(d["valor_total"]) : null,
         titulos: Array.isArray(d.titulos) ? d.titulos as { due_date?: unknown; amount?: unknown; installment_number?: unknown; status?: unknown }[] : null,
         preferirTitulos: e.situacao === "confirmado"

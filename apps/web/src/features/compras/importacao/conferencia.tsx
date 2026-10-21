@@ -18,6 +18,7 @@ import { invalidarLeiturasDeCompras, useChaveDeIdempotencia } from "../pedido-e-
 import { useImportacaoXml } from "./capacidade";
 import { descartarImportacao, gerarCompraDaImportacao, lerConferencia, recusasNoCampo, useConferencia } from "./api";
 import { ABAS_DA_CONFERENCIA, abaDoCaminho, useEstadoDaConferencia, type AbaDaConferencia } from "./estado";
+import { lerTopPreUpload } from "./enviar-xml";
 import { AbaCabecalho } from "./aba-cabecalho";
 import { AbaItens } from "./aba-itens";
 import { AbaPedido } from "./aba-pedido";
@@ -109,12 +110,10 @@ function ConferenciaCarregada({ conf, solicitacaoId, relendo, erroDaReleitura, o
   const tops = useTopsDaEspecie(varianteDaCompra?.segmento ?? "");
   const [solicitacao, setSolicitacao] = React.useState(solicitacaoId);
   const topPreUpload = React.useMemo(() => {
-    try {
-      const v = sessionStorage.getItem("compras.importacao.topPreUpload");
-      if (v && tops.situacao === "pronto" && tops.dados.items.some((t) => t.id === v)) return v;
-    } catch { /* sem storage */ }
+    const v = lerTopPreUpload(conf.id);
+    if (v && tops.situacao === "pronto" && tops.dados.items.some((t) => t.id === v)) return v;
     return null;
-  }, [tops]);
+  }, [tops, conf.id]);
   const e = useEstadoDaConferencia(conf, {
     topPadrao: topPreUpload ?? (tops.situacao === "pronto" ? tops.dados.defaultId : null),
     podeReceberPedido: can("pedidos_compra.edit"),

@@ -85,7 +85,7 @@ export const MSG_EDICAO_FORNECEDOR_DO_PEDIDO_COM_COMPRA = "O fornecedor do pedid
 /** D3 — o item do pedido já orçado (orçamento não cancelado): nem produto nem quantidade (o texto do banco, 0044). */
 export const MSG_EDICAO_ITEM_ORCADO = "O item do pedido de compra já orçado não troca de produto nem de quantidade.";
 /** P3 — a compra com as duplicatas da nota: o que forma o total e as parcelas é o da nota. */
-export const MSG_EDICAO_COMPRA_DA_NOTA = "Esta compra veio da nota com as duplicatas: o que forma o total e as parcelas é o da nota e não muda. Para corrigir, cancele a compra e lance de novo.";
+export const MSG_EDICAO_COMPRA_DA_NOTA = "Esta compra veio da nota: frete, desconto e totais da NF-e não mudam. As duplicatas fiscais ficam na origem; o cronograma operacional (o que vira título) pode ser revisado na compra aberta.";
 /**
  * P3 / EDITAR-02B — o item com linha da nota: quantidade, valores, descontos e impostos da nota ficam; o produto
  * INTERNO pode ser remapeado na compra ABERTA (rastro fiscal `n_item_nota` intacto).
@@ -203,9 +203,11 @@ export async function limitesDaEdicaoDeCompra(ctx: ServiceCtx, doc: DocumentoPar
     for (const it of itens) if (orcados.has(it.id)) travar(it.campos, ["produto_id", "quantidade"], MSG_EDICAO_ITEM_ORCADO);
   }
 
-  // P3 — a compra com as duplicatas da nota: o que forma o total, as parcelas e o item novo.
+  // P3 — a compra com as duplicatas da nota: o que forma o total fiscal e o item novo.
+  // `plano_parcelas` clássico continua XOR com parcelas_nota (CHECK 0047); a PATCH redireciona o plano enviado
+  // para `plano_parcelas_operacional` (0065) — por isso não trava a chave do corpo aqui.
   if (doc.especie === "compra" && doc.parcelas_nota != null) {
-    travar(campos, [...CABECALHO_DA_NOTA, "plano_parcelas"], MSG_EDICAO_COMPRA_DA_NOTA);
+    travar(campos, [...CABECALHO_DA_NOTA], MSG_EDICAO_COMPRA_DA_NOTA);
     itemNovo ??= MSG_EDICAO_COMPRA_DA_NOTA;
     for (const it of itens) travar(it.campos, ITEM_DO_TOTAL, MSG_EDICAO_COMPRA_DA_NOTA);
   }

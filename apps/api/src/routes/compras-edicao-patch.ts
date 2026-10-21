@@ -52,7 +52,10 @@ export interface DocumentoGravadoDeCompra {
   tipo_operacao: { id: string; codigo: string; nome: string; versao: number | null; codigoBase: string | null } | null;
   fornecedor_id: string; transportadora_id: string | null; data_documento: string; data_entrada: string | null; data_vencimento: string | null;
   numero_nota: string | null; serie_nota: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null;
-  condicao_pagamento_id: string | null; plano_parcelas: Record<string, unknown> | null; parcelas_ajustadas: boolean;
+  condicao_pagamento_id: string | null; plano_parcelas: Record<string, unknown> | null;
+  /** EDITAR-02B: cronograma operacional (XML); nulo = títulos seguem parcelas_nota/plano clássico. */
+  plano_parcelas_operacional: Record<string, unknown> | null;
+  parcelas_ajustadas: boolean;
   forma_pagamento_id: string | null; frete: string; outras_despesas: string; desconto: string; valor_itens: string; valor_total: string;
   observacao: string | null; origem_documento_id: string | null;
   chave_acesso: string | null; uf_nota: string | null; tipo_documento_fiscal: string | null; valor_ipi: string | null; valor_icms_st: string | null;
@@ -318,7 +321,17 @@ export function edicaoDeCompraComoFicara(cur: DocumentoGravadoDeCompra, campos: 
     const v = campos[campo];
     if (v !== undefined && !iguais(tipo, v, cur[campo])) mudancas[campo] = v;
   }
-  if (campos.plano_parcelas !== undefined && !planoIgualAoGravado(cur, campos.plano_parcelas)) mudancas["plano_parcelas"] = campos.plano_parcelas;
+  if (campos.plano_parcelas !== undefined) {
+    // EDITAR-02B: com parcelas_nota, o plano do corpo vira cronograma OPERACIONAL (coluna à parte; XOR 0047 intacto).
+    if (cur.parcelas_nota != null) {
+      const gravadoOp = cur.plano_parcelas_operacional;
+      if (!planoIgualAoGravado({ ...cur, plano_parcelas: gravadoOp }, campos.plano_parcelas)) {
+        mudancas["plano_parcelas_operacional"] = campos.plano_parcelas;
+      }
+    } else if (!planoIgualAoGravado(cur, campos.plano_parcelas)) {
+      mudancas["plano_parcelas"] = campos.plano_parcelas;
+    }
+  }
 
   const rateioAtual = rateioGravado(cur);
   let rateioComoFicara = rateioAtual;
@@ -453,7 +466,7 @@ export function recusaDosTotaisDaEdicaoDeCompra(itensTotais: readonly string[], 
 // 4. O HISTÓRICO
 // ---------------------------------------------------------------------------------------------------------------
 /** Colunas do cabeçalho comparadas no evento (lista estática): as editáveis e as derivadas (totais, plano). */
-const COLUNAS_DO_EVENTO = [...CAMPOS_DO_CABECALHO_DA_EDICAO, "rateio_tipo", "plano_parcelas", "parcelas_ajustadas", "valor_itens", "valor_total"] as const;
+const COLUNAS_DO_EVENTO = [...CAMPOS_DO_CABECALHO_DA_EDICAO, "rateio_tipo", "plano_parcelas", "plano_parcelas_operacional", "parcelas_ajustadas", "valor_itens", "valor_total"] as const;
 // `posicao` entra: reordenar é uma gravação (a versão sobe), e o evento tem de dizer o que foi gravado.
 const CAMPOS_DO_ITEM_NO_EVENTO = [...(Object.keys(ITEM) as CampoDoItemDeCompra[]), "valor_total", "posicao"] as const;
 const mesmo = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);

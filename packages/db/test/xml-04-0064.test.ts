@@ -461,7 +461,7 @@ describe("0064 — sobre o acervo de formas de pagamento, como o runner aplica",
     const ledger = (await db.query<{ n: number; ultima: string }>("select count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
     expect(ledger).toEqual({ n: 64, ultima: ALVO });
     const noDisco = listMigrations().map((m) => m.name);
-    expect(noDisco.length, "64 migrations no repositório (0001..0064; a última é a XML-04 0064)").toBe(64);
+    expect(noDisco.length, "65 migrations no repositório (0001..0065; a 0065 EDITAR-02B vem depois da XML-04 0064)").toBe(65);
     expect(noDisco[63]).toBe(ALVO);
     // SEM SEMENTE: nenhuma ligação nasce (o superusuário lê sem RLS: zero é zero de verdade), e nada foi auditado.
     expect((await db.query<{ n: number }>("select count(*)::int n from erp.formas_pagamento_da_nfe")).rows[0]!.n).toBe(0);

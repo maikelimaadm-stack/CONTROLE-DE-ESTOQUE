@@ -287,8 +287,8 @@ describe("(p) P6: o /edicao declara a identidade da nota e o cabeçalho da compr
 
     const comDuplicatas = await compraDoXml({ duplicatas: true });
     const e2 = await lida("compra", comDuplicatas.id);
-    expect(e2.limites.campos, "com as duplicatas, o motivo da P3 fica no que ela já travava; a identidade se soma").toEqual({
-      ...Object.fromEntries(["frete", "outras_despesas", "desconto", "condicao_pagamento_id", "data_vencimento", "plano_parcelas"].map((c) => [c, MSG_EDICAO_COMPRA_DA_NOTA])),
+    expect(e2.limites.campos, "com as duplicatas, o motivo da P3 fica no que ela já travava; a identidade se soma; plano_parcelas livre (vira operacional)").toEqual({
+      ...Object.fromEntries(["frete", "outras_despesas", "desconto", "condicao_pagamento_id", "data_vencimento"].map((c) => [c, MSG_EDICAO_COMPRA_DA_NOTA])),
       ...IDENTIDADE,
     });
     expect(e2.limites.itemNovo, "com as duplicatas, o motivo da P3 (vem primeiro)").toBe(MSG_EDICAO_COMPRA_DA_NOTA);

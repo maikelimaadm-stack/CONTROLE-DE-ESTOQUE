@@ -11,8 +11,12 @@
 -- gerencial (tipo de título, CAPEX/OPEX, tipo de rateio) e a substituição das linhas do rateio por valor (DELETE +
 -- INSERT, ainda só com cabeçalho aberto e `rateio_tipo = por_valor`).
 --
+-- Também cria `plano_parcelas_operacional` (jsonb): cronograma INTERNO revisável na compra ABERTA com `parcelas_nota`
+-- (as duplicatas fiscais). Não viola o XOR `parcelas_nota`×`plano_parcelas` (0047): o plano fiscal/manual clássico
+-- permanece exclusivo; o operacional é coluna à parte e é o que a confirmação usa quando preenchido.
+--
 -- Forward-only no sentido de que o gatilho novo é o contrato; a volta é redeploy da função antiga + revoke DELETE
--- (decisão humana). Trava (2026,99). lock_timeout 2s. Sem backfill, sem coluna nova.
+-- + drop da coluna (decisão humana). Trava (2026,99). lock_timeout 2s. Sem backfill.
 -- =====================================================================
 
 do $$
@@ -143,6 +147,28 @@ comment on function erp.documentos_compra_rateio_guarda() is
 -- ---------- 3) privilégio DELETE nas linhas do rateio (só a guarda decide) ----------
 grant delete on erp.documentos_compra_rateio to erp_app;
 
+-- ---------- 4) cronograma operacional (distinto de parcelas_nota / plano_parcelas) ----------
+do $$
+begin
+  if exists (
+    select 1 from pg_attribute a
+     where a.attrelid = to_regclass('erp.documentos_compra')
+       and a.attname = 'plano_parcelas_operacional' and not a.attisdropped
+  ) then
+    raise exception 'EDITAR-02B: erp.documentos_compra.plano_parcelas_operacional ja existe; a 0065 ja foi aplicada ou ha schema divergente.';
+  end if;
+end $$;
+
+alter table erp.documentos_compra
+  add column plano_parcelas_operacional jsonb;
+
+alter table erp.documentos_compra
+  add constraint chk_documentos_compra_plano_operacional
+  check (plano_parcelas_operacional is null or jsonb_typeof(plano_parcelas_operacional) in ('object', 'array'));
+
+comment on column erp.documentos_compra.plano_parcelas_operacional is
+  'EDITAR-02B: cronograma operacional revisável na compra ABERTA (mesmo shape de plano_parcelas). Distinto de parcelas_nota (fato fiscal) e de plano_parcelas (XOR 0047). Quando preenchido, a confirmação gera títulos por ele; senão, legado (parcelas_nota ou plano_parcelas).';
+
 -- ---------- pós-condições ----------
 do $$
 declare
@@ -157,6 +183,20 @@ begin
   end if;
   if has_table_privilege('erp_app', 'erp.documentos_compra_rateio', 'UPDATE') then
     raise exception 'EDITAR-02B: erp_app não pode ter UPDATE em documentos_compra_rateio (substituir = DELETE+INSERT).';
+  end if;
+  if not exists (
+    select 1 from pg_attribute a
+     where a.attrelid = to_regclass('erp.documentos_compra')
+       and a.attname = 'plano_parcelas_operacional' and not a.attisdropped
+  ) then
+    raise exception 'EDITAR-02B: coluna plano_parcelas_operacional ausente.';
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+     where conrelid = to_regclass('erp.documentos_compra')
+       and conname = 'chk_documentos_compra_plano_operacional'
+  ) then
+    raise exception 'EDITAR-02B: chk_documentos_compra_plano_operacional ausente.';
   end if;
   select array_agg(p.proname order by p.proname) into v_lista
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace

@@ -134,6 +134,19 @@ export function impostosDosDadosFiscais(f: DadosFiscais): string {
 }
 
 /**
+ * Total da compra na tela — UMA fonte de impostos por vez.
+ * Criação com capacidade F7: soma IPI/ICMS-ST/seguro digitados.
+ * Edição/consulta: soma só os gravados (nunca os dois — evita duplicar na edição ABERTA).
+ */
+export function totalExibidoDaCompra(p: {
+  totalItens: number; frete: number; outras: number; desconto: number;
+  impostosDigitados: string; impostosGravados: string; incluirDigitados: boolean;
+}): number {
+  const impostos = Number(p.incluirDigitados ? p.impostosDigitados : p.impostosGravados);
+  return p.totalItens + p.frete + p.outras - p.desconto + (Number.isFinite(impostos) ? impostos : 0);
+}
+
+/**
  * OPERACOES-01 F7 (decisão 284) — O RATEIO E A CLASSIFICAÇÃO DOS ITENS NA COMPRA MANUAL (o que a nota antiga tinha e a
  * conferência do XML já faz): rateio do documento (o de hoje: natureza e centro do cabeçalho), por valor (linhas com
  * natureza, centro, conta contábil, safra e percentual, somando 100%) ou por produto (natureza e centro em cada item);
@@ -629,10 +642,11 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const mostrarFiscal = ehCompra && !modoReceber && (
     editarFiscal || (modoEdicao && (capacidadeFiscal === "sim" || docEdicaoTemFiscal))
   );
-  /* Classificação/rateio editáveis na criação (F7) e na edição ABERTA da compra. */
+  /* Classificação/rateio editáveis na criação (F7) e na edição ABERTA da compra — distinto de editar fato fiscal. */
   const editarRateio = ehCompra && !modoReceber && (editarFiscal || modoEdicao);
   const mostrarRateio = editarRateio || (modoEdicao && ehCompra && !modoReceber);
-  const dadosFiscaisAtivos = editarFiscal || (modoEdicao && editarRateio);
+  /* Alias histórico = só criação com capacidade: corpo POST fiscal + impostos digitados no total. Nunca edição. */
+  const dadosFiscaisAtivos = editarFiscal;
   const fiscalDaAbertura = (): DadosFiscais => {
     if (!aberturaDaEdicao) return dadosFiscaisVazios();
     return {
@@ -699,14 +713,20 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   }, [recebendo, pedidoId]);
 
   const totalItens = itens.reduce((a, it) => a + totalDaLinhaExibido(it), 0);
-  /* EDITAR-02: na edição, IPI, ICMS-ST e seguro GRAVADOS (não mudam depois do lançamento) entram no total exibido, como na
-     conta do servidor. */
+  /* EDITAR-02: na edição, IPI/ICMS-ST/seguro GRAVADOS entram uma vez. Na criação F7, entram os digitados — nunca os dois. */
   const [impostosGravados] = React.useState(() => (documentoEmEdicao ? impostosDosDadosFiscais({
     ...dadosFiscaisVazios(), valor_ipi: String(documentoEmEdicao["valor_ipi"] ?? ""), valor_icms_st: String(documentoEmEdicao["valor_icms_st"] ?? ""),
     seguro: String(documentoEmEdicao["seguro"] ?? "")
   }) : "0"));
-  const totalExibido = totalItens + Number(h.frete || 0) + Number(h.outras_despesas || 0) - Number(h.desconto || 0)
-    + (dadosFiscaisAtivos ? Number(impostosDosDadosFiscais(fiscal)) : 0) + Number(impostosGravados);
+  const totalExibido = totalExibidoDaCompra({
+    totalItens,
+    frete: Number(h.frete || 0),
+    outras: Number(h.outras_despesas || 0),
+    desconto: Number(h.desconto || 0),
+    impostosDigitados: impostosDosDadosFiscais(fiscal),
+    impostosGravados,
+    incluirDigitados: editarFiscal,
+  });
 
   /* LANCAMENTO-01 (decisão 311) — A REGRA DO CORPO (`omissaoDoCorpo`): fora do corpo, o PAR natureza+centro que a TOP
      semeou e o operador não mexeu (o salvar da compra que gera título e o do pedido que provisiona aplicam o mesmo par da
@@ -893,7 +913,9 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   /* A forma só se semeia COBRADA: a regra da TOP a exige, ou o layout a marca obrigatória. */
   const formaCobrada = regras?.exigeFormaPagamento === true || obrigatorioNoLayout("forma_pagamento_id");
   /** O valor que a tela mostra no campo que a TOP pode preencher (o tipo de título mora nos dados fiscais). */
-  const valorNaTela = (c: string): string => (c === "tipo_titulo_id" ? (dadosFiscaisAtivos ? fiscal.tipo_titulo_id : "") : c in h ? h[c as ChaveDoCabecalho] : "");
+  const valorNaTela = (c: string): string => (c === "tipo_titulo_id"
+    ? ((editarFiscal || (modoEdicao && editarRateio)) ? fiscal.tipo_titulo_id : "")
+    : c in h ? h[c as ChaveDoCabecalho] : "");
   const travadoPelaTopNaTela = (c: string) => travadoPelaTop({ aplica: aplicaATop, podeTrocar, padroes: padroesTop, campo: c, valor: valorNaTela(c) });
   const semeadoPelaTopNaTela = (c: string) => {
     const s = semeadura.current[c as CampoDoPadraoDaTop];

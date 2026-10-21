@@ -954,4 +954,46 @@ describe("EDITAR-02B: classificação, CAPEX e rateio na compra ABERTA", () => {
     recusada(negado, 409, "INVALID_STATUS_TRANSITION");
     expect(erro(negado).message).toBe(MSG_EDICAO_COMPRA_CONFIRMADA);
   });
+
+  it("XML com 2 duplicatas: plano operacional de 3 parcelas grava sem tocar parcelas_nota; confirmação gera 3 títulos", async () => {
+    const x = await compraDoXml({ duplicatas: true });
+    const id = x.id;
+    const notaAntes = (await c.admin.query<{ parcelas_nota: unknown; plano: unknown; op: unknown }>(
+      `select parcelas_nota, plano_parcelas as plano, plano_parcelas_operacional as op from erp.documentos_compra where id = $1`, [id])).rows[0]!;
+    expect(notaAntes.parcelas_nota, "premissa: duplicatas fiscais").not.toBeNull();
+    expect(notaAntes.plano).toBeNull();
+    expect(notaAntes.op).toBeNull();
+
+    const planoOp = {
+      installments: 3,
+      first_due_date: "2026-10-15",
+      mode: "interval" as const,
+      interval_days: 30,
+      has_down_payment: false,
+      parcelas: [
+        { vencimento: "2026-10-15", valor: "333.34" },
+        { vencimento: "2026-11-14", valor: "333.33" },
+        { vencimento: "2026-12-14", valor: "333.33" },
+      ],
+    };
+    const r = await patch("compra", id, { version: await versao(id), plano_parcelas: planoOp });
+    expect(r.statusCode, r.body).toBe(200);
+    const depois = (await c.admin.query<{ parcelas_nota: unknown; plano: unknown; op: unknown }>(
+      `select parcelas_nota, plano_parcelas as plano, plano_parcelas_operacional as op from erp.documentos_compra where id = $1`, [id])).rows[0]!;
+    expect(depois.parcelas_nota).toEqual(notaAntes.parcelas_nota);
+    expect(depois.plano).toBeNull();
+    expect(depois.op).toMatchObject({ installments: 3 });
+
+    const conf = await confirmarCompra(id);
+    expect(conf.statusCode, conf.body).toBe(200);
+    const titulos = (await c.admin.query<{ due_date: string; amount: string }>(
+      `select to_char(due_date, 'YYYY-MM-DD') as due_date, amount::text as amount
+         from erp.financial_titles where source_type = 'documentos_compra' and source_id = $1
+         order by installment_number, due_date`, [id])).rows;
+    expect(titulos).toEqual([
+      { due_date: "2026-10-15", amount: "333.34" },
+      { due_date: "2026-11-14", amount: "333.33" },
+      { due_date: "2026-12-14", amount: "333.33" },
+    ]);
+  });
 });

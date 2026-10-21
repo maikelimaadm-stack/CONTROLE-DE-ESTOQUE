@@ -12,8 +12,26 @@ import {
   lerConferencia, notaJaLancadaDoConflito, recusasNoCampo, rotaDaConferencia
 } from "./api";
 
-/** Chave da TOP escolhida ANTES do upload — a conferência a lê e a mantém (decisão 324). */
+/** Prefixo da TOP escolhida ANTES do upload — escopada por importação (`:id`), nunca global (R2). */
+export const PREFIXO_TOP_PRE_UPLOAD = "compras.importacao.topPreUpload:";
+/** @deprecated chave global frágil — só limpeza de legado. */
 export const CHAVE_TOP_PRE_UPLOAD = "compras.importacao.topPreUpload";
+export function chaveTopPreUpload(importacaoId: string): string {
+  return `${PREFIXO_TOP_PRE_UPLOAD}${importacaoId}`;
+}
+export function gravarTopPreUpload(importacaoId: string, topId: string): void {
+  try {
+    sessionStorage.setItem(chaveTopPreUpload(importacaoId), topId);
+    sessionStorage.removeItem(CHAVE_TOP_PRE_UPLOAD);
+  } catch { /* sessão sem storage */ }
+}
+export function lerTopPreUpload(importacaoId: string): string | null {
+  try {
+    const escopada = sessionStorage.getItem(chaveTopPreUpload(importacaoId));
+    if (escopada) return escopada;
+    return null;
+  } catch { return null; }
+}
 
 /**
  * O DIÁLOGO "IMPORTAR XML DE NOTA DE COMPRA" (OPERACOES-01 F7, decisão 284) — aberto pelo botão dos Documentos de
@@ -82,7 +100,7 @@ export function DialogoImportarXml({ aberto, onFechar, solicitacaoId }: { aberto
       const r = await importarArquivo(corpo, chave.doEnvio(corpo));
       const conf = lerConferencia(r);
       if (!conf) { setRecusas(["A resposta do servidor não é a conferência que esta tela sabe ler."]); return; }
-      try { sessionStorage.setItem(CHAVE_TOP_PRE_UPLOAD, topId); } catch { /* sessão sem storage */ }
+      gravarTopPreUpload(conf.id, topId);
       router.push(rotaDaConferencia(conf.id, solicitacaoId));
     } catch (e) {
       const mensagem = chave.depoisDoErro(e);

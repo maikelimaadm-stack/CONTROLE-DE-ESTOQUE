@@ -115,6 +115,24 @@ export interface AberturaDaEdicao {
 export const idDoItem = (l: ItemRow): string => (typeof l["id"] === "string" ? l["id"] : "");
 const data = (v: unknown): string => aparado(v).slice(0, 10);
 
+/** Rascunho do editor a partir das duplicatas fiscais (`parcelas_nota`) — vira operacional só ao salvar. */
+export function planoAPartirDasParcelasNota(v: unknown): Plan | null {
+  if (!Array.isArray(v) || v.length === 0) return null;
+  const parcelas = v.filter(ehObjeto).map((x) => ({
+    vencimento: texto(x["vencimento"]).slice(0, 10),
+    valor: texto(x["valor"]),
+  })).filter((x) => x.vencimento !== "" && x.valor !== "");
+  if (!parcelas.length) return null;
+  return {
+    installments: parcelas.length,
+    first_due_date: parcelas[0]!.vencimento,
+    mode: "interval",
+    interval_days: 30,
+    has_down_payment: false,
+    parcelas,
+  };
+}
+
 /** O plano gravado na forma do editor (`Plan`), ou `null` quando não é dela (aí a tela mostra "pela condição"). */
 export function planoGravado(v: unknown): Plan | null {
   if (!ehObjeto(v)) return null;
@@ -173,8 +191,17 @@ export function aberturaDoDocumento(d: Row, plano: () => Plan): AberturaDaEdicao
     observacao: texto(d["observacao"])
   };
   const itens = (Array.isArray(d["itens"]) ? (d["itens"] as unknown[]) : []).filter(ehObjeto).map(linhaDoItemSalvo);
-  const lido = planoGravado(d["plano_parcelas"]);
-  const ajustarParcelas = lido !== null && (d["parcelas_ajustadas"] === true || !aparado(d["condicao_pagamento_id"]));
+  /* EDITAR-02B: operacional > plano clássico > rascunho a partir das duplicatas fiscais (ainda não gravado como operacional). */
+  const lidoOperacional = planoGravado(d["plano_parcelas_operacional"]);
+  const lidoClassico = planoGravado(d["plano_parcelas"]);
+  const lidoNota = planoAPartirDasParcelasNota(d["parcelas_nota"]);
+  const lido = lidoOperacional ?? lidoClassico ?? lidoNota;
+  const ajustarParcelas = lido !== null && (
+    lidoOperacional !== null
+    || lidoNota !== null
+    || d["parcelas_ajustadas"] === true
+    || !aparado(d["condicao_pagamento_id"])
+  );
   const rateioTipoBruto = texto(d["rateio_tipo"]);
   const rateioTipo = rateioTipoBruto === "por_valor" || rateioTipoBruto === "por_produto" ? rateioTipoBruto : "documento";
   const rateioLinhas = (Array.isArray(d["rateio"]) ? (d["rateio"] as unknown[]) : []).filter(ehObjeto).map((l) => ({
