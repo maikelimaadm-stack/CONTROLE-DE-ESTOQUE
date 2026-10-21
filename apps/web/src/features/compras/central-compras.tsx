@@ -116,7 +116,7 @@ function FormularioDeCompra(props: PropsDoEstadoDaCriacao) {
           {e.errosDeItens.map(([c, m]) => <li key={c}>{descreverCaminhoDeItem(c)}: {m}</li>)}
         </ul>}
       </> : null}
-      faixaDoPainel={faixaDosTotaisDoPainel(e, desenharCampo)}
+      faixaDoPainel={faixaDosTotaisDoPainel(e)}
       abas={abas}
     />
     {barra.dialogos}
