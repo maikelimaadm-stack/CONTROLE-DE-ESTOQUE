@@ -631,7 +631,11 @@ async function efeitosPrevistosDaCompra(ctx: ServiceCtx, top: Pick<TopDoLancamen
 }
 
 /** O plano de parcelas que o documento GRAVA — do corpo, ou derivado da condição. É o que a confirmação lê. */
-export type PlanoGravado = Record<string, unknown> & { first_due_date?: string };
+export type PlanoGravado = Record<string, unknown> & { first_due_date?: string; parcelas?: { vencimento?: string }[] };
+
+/** O primeiro vencimento do plano: a 1ª parcela escrita à mão, quando há; senão o `first_due_date` do plano. */
+const primeiroVencimentoDoPlano = (p: PlanoGravado | null | undefined): string | undefined =>
+  p?.parcelas?.[0]?.vencimento ?? p?.first_due_date;
 
 /**
  * COMPRA QUE VAI GERAR TÍTULO (política congelada prevê conta a pagar E valor_total > 0): natureza e centro
@@ -658,7 +662,7 @@ function conferirExigenciasDoTitulo(d: DocumentoCompraEntrada, efeitos: EfeitosP
     if (!d.centro_custo_id) throw recusa("centro_custo_id", msg);
   }
   if (efeitos.exigeFormaPagamento && !d.forma_pagamento_id) throw recusa("forma_pagamento_id", "A operação desta compra exige a forma de pagamento");
-  if (efeitos.exigeVencimento && !(plano?.first_due_date ?? d.data_vencimento)) throw recusa("data_vencimento", "A operação desta compra exige o vencimento");
+  if (efeitos.exigeVencimento && !(primeiroVencimentoDoPlano(plano) ?? d.data_vencimento)) throw recusa("data_vencimento", "A operação desta compra exige o vencimento");
 }
 
 /** Casas decimais: quantidade até 4 (precisão do estoque), valor unitário até 6 (precisão do custo). */
@@ -1010,7 +1014,8 @@ export async function nucleoDoLancamento(ctx: ServiceCtx, especie: EspecieCompra
   const mantido = e?.planoMantido(totais.total) ?? null;
   const plano: PlanoGravado | null = mantido ? mantido.plano : parcelasNota ? null : d.plano_parcelas ? { ...d.plano_parcelas }
     : condicao ? { ...planoDaCondicao(condicao, { dataDocumento: d.data_documento, total: totais.total }) } : null;
-  const dataVencimento = parcelasNota ? parcelasNota[0]!.vencimento : d.data_vencimento ?? null;
+  // As parcelas escritas à mão dão o vencimento do documento quando ele não veio no corpo (o 1º da lista).
+  const dataVencimento = parcelasNota ? parcelasNota[0]!.vencimento : d.data_vencimento ?? primeiroVencimentoDoPlano(plano) ?? null;
   // OPERACOES-01 F9b (decisão 286): os padrões financeiros da TOP (formato 5) no SALVAR — a troca proibida e a
   // classificação que a provisão do pedido exige são recusadas aqui, antes do número. Sem TOP no 5 com padrões ou
   // provisão, nada muda (sem consulta quando a compra não gera título; o pedido é conferido com qualquer total).

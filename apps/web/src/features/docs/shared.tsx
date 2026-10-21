@@ -221,8 +221,10 @@ export function ApportionmentEditor({ lines, onChange, total }: { lines: AppLine
 }
 export const toAppLines = (l: AppLine[]) => l.map((x) => ({ financial_category_id: x.financial_category_id, cost_center_id: x.cost_center_id, chart_account_id: x.chart_account_id || null, harvest_id: x.harvest_id || null, percentage: x.percentage }));
 
-/** Plano de parcelamento (modal "Parcelamento" do sistema de referência). */
-export interface Plan { installments: number; first_due_date: string; mode: "interval" | "fixed_day"; interval_days: number; due_day?: number; has_down_payment: boolean; down_payment_value?: string; down_payment_date?: string }
+/** A parcela escrita à mão (Central de Compras): vencimento, valor e uma observação, uma a uma. */
+export interface ParcelaDoPlano { vencimento: string; valor: string; observacao?: string }
+/** Plano de parcelamento (modal "Parcelamento" do sistema de referência). `parcelas`, quando presente, é o cronograma. */
+export interface Plan { installments: number; first_due_date: string; mode: "interval" | "fixed_day"; interval_days: number; due_day?: number; has_down_payment: boolean; down_payment_value?: string; down_payment_date?: string; parcelas?: ParcelaDoPlano[] }
 /** As chaves do plano que o editor desenha (as mesmas do `Plan`, que é o que vai no corpo). */
 export type ChaveDoPlano = "installments" | "first_due_date" | "mode" | "interval_days" | "due_day" | "has_down_payment" | "down_payment_value" | "down_payment_date";
 /** Um campo do plano, pronto: rótulo, o controle de sempre já ligado ao plano e, na data, o valor ISO e o mesmo setter. */
