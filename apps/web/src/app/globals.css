@@ -529,5 +529,23 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .mg-crumbs .mg-crumb { color: var(--mg-text-3); font-size: 11px; font-weight: 500; }
 .mg-crumbs .mg-crumb--current { color: var(--mg-text-2); font-weight: 600; }
 .mg-crumbs .mg-crumb-sep { color: var(--mg-text-3); }
+/* ===== painel de itens (mestre-detalhe) — padrão de referência ===== */
+.itpan { flex-shrink: 0; box-sizing: border-box; display: flex; flex-direction: column; background: #fff; border: 1px solid #e7eaee; border-radius: 12px; box-shadow: 0 1px 2px rgba(15,23,42,.03), 0 2px 6px rgba(15,23,42,.02); overflow: hidden; }
+.itbar { flex-shrink: 0; box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 11px; height: 34px; border-bottom: 1px solid #eef1f4; background: #fbfcfd; }
+.itt { font-size: 12.5px; font-weight: 700; color: #0f172a; letter-spacing: .01em; }
+.itbar .code { font-size: 11.5px; }
+.itbar .itbar-info { font-size: 11px; color: #94a3b8; }
+.itbar .itbar-qtd { font-size: 11.5px; color: #64748b; }
+.itbar .vdiv { width: 1px; height: 16px; background: #e7eaee; flex-shrink: 0; }
+.itrolo { flex-grow: 1; min-height: 0; overflow: auto; }
+.itrolo .mg-grid thead th { height: 28px; font-size: 11.5px; background: #fbfcfd; }
+.itrolo .mg-grid tbody td { height: 25px; }
+.itvazio { flex-grow: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 16px; color: #94a3b8; text-align: center; }
+.itvazio b { font-size: 12.5px; font-weight: 600; color: #475569; }
+.itvazio span { font-size: 11.5px; }
+.itfoot { flex-shrink: 0; box-sizing: border-box; height: 30px; display: flex; align-items: center; gap: 14px; padding: 0 11px; border-top: 1px solid #eef1f4; background: #fbfcfd; }
+.itf { font-size: 11.5px; color: #64748b; white-space: nowrap; }
+.itf b { color: #0f172a; font-weight: 700; font-variant-numeric: tabular-nums; }
+.itf.forte b { color: #15803d; }
 @media (max-width: 1100px) { .mg-topnav__search { width: 160px; min-width: 120px; } .mg-topnav__kbd { display: none; } }
 @media (max-width: 1023px) { .mg-topnav__brand-name { display: none; } .mg-topbar-select { max-width: 140px; } .mg-tabbar__count { display: none; } }
