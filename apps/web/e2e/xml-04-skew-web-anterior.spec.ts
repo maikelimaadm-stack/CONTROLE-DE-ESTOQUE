@@ -3,9 +3,9 @@ import { D } from "@agro/shared";
 import { api, login } from "./helpers";
 import { shaDaBase } from "./skew-fonte-da-base";
 import { vigiar, type Mundo } from "./operacoes-01-f2-skew-comum";
-import { escolherNoSeletor, fonteDoCommitContem, fonteDoHeadContem } from "./xml-02-comum";
+import { escolherNoSeletor, expectCamposAvancadosAusentes, fonteDoCommitContem, fonteDoHeadContem, webDaBaseTemImportacaoSemFatorNaTela } from "./xml-02-comum";
 import {
-  COBRANCA_DO_CENARIO, COMMITS_DA_XML04, MARCA_DA_XML04, abrirConferenciaDaXml04, caminho, cenarioDaXml04, compraNoBanco, dataComoSeDigita, expect, importarNotaDaXml04,
+  COBRANCA_DO_CENARIO, COMMITS_DA_XML04, MARCA_DA_XML04, abrirConferenciaDaXml04, caminho, cenarioDaXml04, compraNoBanco, dataComoSeDigita, expect, fatorNoCorpoDoItem, importarNotaDaXml04,
   irParaAba, nDo, test, testidsDaXml04NaTela, textoNormalizado, vinculoNoFio, vinculosDoFornecedor, webDaBaseTemAXml04, type CenarioDaXml04, type ConferenciaNoFioDaXml04
 } from "./xml-04-comum";
 
@@ -106,15 +106,17 @@ test("XML-04 · K2 (sentido 2) — a conferência da base sobre a API deste HEAD
   await expect(page.getByText("A importação de XML não está disponível"), "não é a tela de indisponível").toHaveCount(0);
   await irParaAba(page, "itens");
   const papeis = c.itensDoCenario;
+  const semFatorNaTela = webDaBaseTemImportacaoSemFatorNaTela();
 
   if (mundo === "legado") {
     // O QUE NÃO PODE QUEBRAR: cada item desenha com o produto e o fator que a API manda — o "1" na pergunta.
     for (const [k, i] of papeis.entries()) {
       const vin = vinculoNoFio(noFio, k + 1);
       await expect(page.getByTestId(`importacao-item-${k + 1}`), `${i.papel}: o web da base desenhou o vínculo`).toHaveAttribute("data-vinculo", vin.situacao);
-      await expect(page.getByTestId(`importacao-item-${k + 1}-fator`), `${i.papel}: o fator que a API manda (${vin.fator})`).toHaveValue(D(vin.fator ?? "0").toFixed());
+      const campo = page.getByTestId(`importacao-item-${k + 1}-fator`);
+      if (await campo.count()) await expect(campo, `${i.papel}: o fator que a API manda (${vin.fator})`).toHaveValue(D(vin.fator ?? "0").toFixed());
     }
-    for (const k of [n.U1, n.U2]) await expect(page.getByTestId(`importacao-item-${k}-fator`), `item ${k}: a pergunta aparece com o fator 1 (compatibilidade)`).toHaveValue("1");
+    if (!semFatorNaTela) for (const k of [n.U1, n.U2]) await expect(page.getByTestId(`importacao-item-${k}-fator`), `item ${k}: a pergunta aparece com o fator 1 (compatibilidade)`).toHaveValue("1");
     expect(await testidsDaXml04NaTela(page), "o web da base não tem nada da XML-04 na aba Itens").toEqual([]);
     // As divergências novas do fator: AVISO na lista, nenhuma bloqueia.
     await irParaAba(page, "divergencias");
@@ -125,8 +127,9 @@ test("XML-04 · K2 (sentido 2) — a conferência da base sobre a API deste HEAD
     expect(doFator.map(([codigo, bloqueia, texto]) => [codigo, bloqueia, textoNormalizado(texto!).replace(/\s*Ir para .*$/, "")]),
       "a aba Divergências da base: os três avisos novos do fator, com o texto do servidor, sem bloquear")
       .toEqual(doServidor.map((d) => [d.codigo, "nao", `Aviso: ${d.mensagem}`]));
+  } else if (semFatorNaTela) {
+    for (let k = 1; k <= papeis.length; k++) await expectCamposAvancadosAusentes(page, k);
   } else {
-    // O MUNDO NOVO: o web da base é o deste HEAD — a pergunta com o campo vazio (a pessoa digita).
     for (const k of [n.U1, n.U2]) await expect(page.getByTestId(`importacao-item-${k}-fator`), `mundo novo: o item ${k} com o fator perguntado (vazio)`).toHaveValue("");
     for (const [k, fator] of [[n.U1, "20"], [n.U2, "10"]] as const) await page.getByTestId(`importacao-item-${k}-fator`).fill(fator);
   }
@@ -155,6 +158,9 @@ test("XML-04 · K2 (sentido 2) — a conferência da base sobre a API deste HEAD
     // perguntados; a forma da nota não vem escolhida.
     expect([fatoresDoCorpo[n.U1 - 1], fatoresDoCorpo[n.U2 - 1]], "mundo legado: a pessoa que não conferiu gera com o 1 de compatibilidade (o risco da janela, observado)").toEqual(["1", "1"]);
     expect(gravada.forma, "mundo legado: a forma da nota não vem escolhida (o web da base não lê financeiro.forma)").toBeNull();
+  } else if (semFatorNaTela) {
+    expect(fatoresDoCorpo, "mundo novo (sem fator na tela): fatores automáticos").toEqual(papeis.map((item, k) => D(fatorNoCorpoDoItem(item, vinculoNoFio(noFio, k + 1))).toFixed()));
+    expect(gravada.forma, "mundo novo: a forma da nota").toBe(c.formaCerta.id);
   } else {
     expect([fatoresDoCorpo[n.U1 - 1], fatoresDoCorpo[n.U2 - 1]], "mundo novo: os fatores digitados").toEqual(["20", "10"]);
     expect(gravada.forma, "mundo novo: a forma da nota").toBe(c.formaCerta.id);

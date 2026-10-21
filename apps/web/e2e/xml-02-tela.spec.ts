@@ -4,7 +4,7 @@ import { test as testeDaCentral, expect, criarCadastro } from "./central-compras
 import { cabecalhosDaSessao } from "./top-config-08-comum";
 import {
   API, ROTULO, TEXTO_DA_CONFERENCIA_DA_REFERENCIA, TEXTO_DA_CONFERENCIA_DO_PALPITE, abrirConferencia, caixaDoProduto, caminho, campoDoFormulario, cenarioDaXml02,
-  escapar, escolherNoSeletor, gerarCompraPelaTela, importarNota, itemDo, lembrarNoCorpo, lerConferencia, produtoDo, resumoDoVinculo, rotuloDoCampoDoProduto,
+  escapar, escolherNoSeletor, expectCamposAvancadosAusentes, gerarCompraPelaTela, importarNota, itemDo, lembrarNoCorpo, lerConferencia, produtoDo, quantidadeNotaBR, resumoDoVinculo, rotuloDoCampoDoProduto,
   totalDeVinculosLembrados, vinculoDe, vinculosLembradosDo, type CenarioDaXml02, type ConferenciaNoFio
 } from "./xml-02-comum";
 
@@ -16,29 +16,18 @@ import {
  * │ produto (identidade no servidor, palpite na tela). Os dois vêm escolhidos, com "Lembrar" DESMARCADO, a linha │
  * │ que pede a conferência e "Criar produto". A identidade da tela é o código do fornecedor e o código de barras.│
  * │ X2-T1 a tela diz DE ONDE veio o sugerido: o item da DESCRIÇÃO semelhante com "Sugerido (descrição           │
- * │       semelhante)", a linha que pede a conferência, o produto já escolhido, "Lembrar" DESMARCADO e "Criar      │
- * │       produto" (o diálogo abre com a descrição, a NCM e a unidade da nota); o da REFERÊNCIA com "Sugerido      │
- * │       (referência do produto)", a linha DELA, o produto escolhido, "Lembrar" DESMARCADO e "Criar produto" (o   │
- * │       diálogo com a descrição e a NCM da nota, sem unidade: a referência não traz pré-preenchimento). O GET   │
- * │       da conferência no fio é o mesmo da leitura direta, e traz o pré-preenchimento só no da descrição.      │
- * │ X2-T2 R7, PELO FIO E PELO BANCO: o "Gerar compra" sem tocar no "Lembrar" manda `lembrar_vinculo: false` nos  │
- * │       DOIS (descrição e referência), 201; `erp.produto_fornecedor_vinculos` NÃO ganha nenhum par do          │
- * │       fornecedor (contado antes e depois); a nota seguinte do mesmo fornecedor traz os dois de novo como      │
- * │       SUGERIDOS (descrição e referência), nenhum lembrado (o palpite não virou vínculo).                     │
- * │ X2-T3 marcar o "Lembrar" dos dois palpites é a confirmação: o corpo manda `true` nos dois e o banco ganha os │
- * │       dois pares; a nota seguinte traz os dois LEMBRADOS.                                                    │
+ * │       semelhante)", a linha que pede a conferência, o produto já escolhido e "Criar produto" (sem fator nem    │
+ * │       "Lembrar" na tela); o da REFERÊNCIA com "Sugerido (referência do produto)", a linha DELA, o produto e   │
+ * │       "Criar produto". O GET da conferência no fio é o mesmo da leitura direta.                               │
+ * │ X2-T2 pelo fio e pelo banco: o "Gerar compra" manda `lembrar_vinculo: true` nos dois palpites, 201; o banco   │
+ * │       ganha os dois pares; a nota seguinte traz os dois LEMBRADOS.                                           │
+ * │ X2-T3 repete a regra automática: sem checkbox na tela, o corpo manda `true` e o banco lembra os vínculos.    │
  * │ X2-T4 o LOTE: o sugerido pela descrição NÃO entra no "Criar N produtos da nota" enquanto tem o produto       │
  * │       escolhido; tirado o produto (o "Limpar" da caixa), entra (`data-quantidade` sobe 1) — e o da           │
  * │       referência nunca entra, nem com o produto nem sem ele (o lote olha a identidade do servidor).          │
- * │ X2-T5 a TROCA DE FORNECEDOR (o parceiro ambíguo, escolhido na aba Cabeçalho) não leva o "Lembrar" marcado    │
- * │       para os palpites: a descrição e a referência voltam desmarcadas; a marcação que a pessoa mudou num item │
- * │       de identidade da tela (o código de barras, desmarcado à mão) fica.                                     │
- * │ X2-T6 a pessoa CORRIGE o palpite e a escolha DELA é lembrada (`lembrarAoTrocarProduto`, achado do A5): a      │
- * │       referência aponta para o produto errado e a pessoa escolhe OUTRO no seletor ⇒ "Lembrar" MARCADO; de     │
- * │       volta ao produto do palpite ⇒ desmarcado; outro de novo ⇒ marcado. O palpite da descrição trocado pelo  │
- * │       "Criar produto" ⇒ o produto criado escolhido e "Lembrar" marcado. O Gerar compra manda os produtos       │
- * │       ESCOLHIDOS com `lembrar_vinculo: true`, 201; o banco ganha os dois pares → os produtos escolhidos (0 → 2) │
- * │       e a nota seguinte traz os dois LEMBRADOS, com os produtos da pessoa.                                   │
+ * │ X2-T5 a TROCA DE FORNECEDOR (parceiro ambíguo) refaz os vínculos e mantém os produtos sugeridos.              │
+ * │ X2-T6 a pessoa CORRIGE o palpite (seletor ou "Criar produto"); o Gerar manda `lembrar_vinculo: true`, 201;   │
+ * │       o banco ganha os pares dos produtos escolhidos e a nota seguinte os traz LEMBRADOS.                    │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * O XML é SINTÉTICO (`notaSinteticaDeVariosItens`). Os cadastros do caso nascem pela API e são excluídos (lógica)
@@ -100,7 +89,7 @@ function premissasDoCenario(c: CenarioDaXml02, conf: ConferenciaNoFio, contexto:
 
 /* ═════════════════════════════════ X2-T1 ═════════════════════════════════ */
 
-test("X2-T1 — a tela diz de onde veio o sugerido: a descrição semelhante e a referência são PALPITE — vêm com o produto, a linha que pede a conferência, \"Lembrar\" DESMARCADO e \"Criar produto\" (o diálogo com a descrição e a NCM da nota; a unidade só no da descrição)", async ({ page }) => {
+test("X2-T1 — a tela diz de onde veio o sugerido: a descrição semelhante e a referência são PALPITE — vêm com o produto, a linha que pede a conferência e \"Criar produto\" (sem fator nem \"Lembrar\" na tela)", async ({ page }) => {
   test.setTimeout(180_000);
   await login(page);
   const c = await cenarioDaXml02(page, "T1", ["D", "R", "N"]);
@@ -122,9 +111,8 @@ test("X2-T1 — a tela diz de onde veio o sugerido: a descrição semelhante e a
   await expect(page.getByTestId(`importacao-item-${d}-sugestao-descricao`), "a linha que pede a conferência").toHaveText(TEXTO_DA_CONFERENCIA_DO_PALPITE);
   await expect(page.getByTestId(`importacao-item-${d}-sugestao-referencia`), "a linha da referência é só da referência").toHaveCount(0);
   await expect(caixaDoProduto(page, d), "o produto sugerido vem escolhido").toContainText(`${pd.codigo} — ${pd.descricao}`);
-  await expect(page.getByTestId(`importacao-item-${d}-quantidade-interna`), "com o produto, a quantidade interna é calculada (fator 1)").toHaveText("5.0000");
-  await expect(page.getByTestId(`importacao-item-${d}-fator`), "o fator do caminho 5 é 1").toHaveValue("1");
-  await expect(page.getByTestId(`importacao-item-${d}-lembrar`), "R7: o palpite nasce com \"Lembrar\" DESMARCADO").not.toBeChecked();
+  await expect(page.getByTestId(`importacao-item-${d}-quantidade-nota`), "a quantidade da nota em pt-BR").toHaveText(quantidadeNotaBR(c.itens[d - 1]!.quantidade));
+  await expectCamposAvancadosAusentes(page, d);
   await expect(page.getByTestId(`importacao-item-${d}-criar-produto`), "o palpite oferece \"Criar produto\", como o sem vínculo").toBeVisible();
 
   // O PALPITE DA REFERÊNCIA (decisão do dono): o rótulo, a linha DELA, o produto escolhido, "Lembrar" desmarcado, "Criar produto".
@@ -133,16 +121,15 @@ test("X2-T1 — a tela diz de onde veio o sugerido: a descrição semelhante e a
   await expect(page.getByTestId(`importacao-item-${r}-sugestao-referencia`), "a linha que pede a conferência da referência").toHaveText(TEXTO_DA_CONFERENCIA_DA_REFERENCIA);
   await expect(page.getByTestId(`importacao-item-${r}-sugestao-descricao`), "a linha da descrição é só da descrição").toHaveCount(0);
   await expect(caixaDoProduto(page, r), "o produto da referência vem escolhido").toContainText(`${pr.codigo} — ${pr.descricao}`);
-  await expect(page.getByTestId(`importacao-item-${r}-quantidade-interna`), "com o produto, a quantidade interna é calculada (fator 1)").toHaveText("2.0000");
-  await expect(page.getByTestId(`importacao-item-${r}-fator`), "o fator do caminho 4 é 1").toHaveValue("1");
-  await expect(page.getByTestId(`importacao-item-${r}-lembrar`), "R7: a referência é palpite na tela e nasce com \"Lembrar\" DESMARCADO").not.toBeChecked();
+  await expect(page.getByTestId(`importacao-item-${r}-quantidade-nota`), "a quantidade da nota em pt-BR").toHaveText(quantidadeNotaBR(c.itens[r - 1]!.quantidade));
+  await expectCamposAvancadosAusentes(page, r);
   await expect(page.getByTestId(`importacao-item-${r}-criar-produto`), "a referência oferece \"Criar produto\"").toBeVisible();
 
   // O SEM VÍNCULO segue como antes (as linhas do palpite são só do palpite).
   await expect(page.getByTestId(`importacao-item-${semProduto}-vinculo`)).toHaveText(ROTULO.semVinculo);
   await expect(page.getByTestId(`importacao-item-${semProduto}-sugestao-descricao`)).toHaveCount(0);
   await expect(page.getByTestId(`importacao-item-${semProduto}-sugestao-referencia`)).toHaveCount(0);
-  await expect(page.getByTestId(`importacao-item-${semProduto}-lembrar`), "o sem vínculo nasce com \"Lembrar\" marcado, como sempre").toBeChecked();
+  await expectCamposAvancadosAusentes(page, semProduto);
   await expect(page.getByTestId(`importacao-item-${semProduto}-criar-produto`)).toBeVisible();
 
   // O DIÁLOGO DE UM ITEM, pelo palpite da descrição: a descrição, a NCM e a unidade da NOTA (não as do produto sugerido).
@@ -157,8 +144,6 @@ test("X2-T1 — a tela diz de onde veio o sugerido: a descrição semelhante e a
   await dialogo.getByRole("button", { name: "Cancelar", exact: true }).click();
   await expect(dialogo, "Cancelar fecha o diálogo sem criar nada").toBeHidden();
   await expect(caixaDoProduto(page, d), "o item continua com o produto sugerido").toContainText(`${pd.codigo} — ${pd.descricao}`);
-  await expect(page.getByTestId(`importacao-item-${d}-lembrar`), "e com \"Lembrar\" desmarcado").not.toBeChecked();
-
   // O DIÁLOGO pelo palpite da REFERÊNCIA: a descrição e a NCM da NOTA; sem pré-preenchimento, a unidade fica por escolher.
   const itemR = c.itens[r - 1]!;
   await page.getByTestId(`importacao-item-${r}-criar-produto`).click();
@@ -170,14 +155,13 @@ test("X2-T1 — a tela diz de onde veio o sugerido: a descrição semelhante e a
   await dialogo.getByRole("button", { name: "Cancelar", exact: true }).click();
   await expect(dialogo, "Cancelar fecha o diálogo sem criar nada").toBeHidden();
   await expect(caixaDoProduto(page, r), "o item continua com o produto da referência").toContainText(`${pr.codigo} — ${pr.descricao}`);
-  await expect(page.getByTestId(`importacao-item-${r}-lembrar`), "e com \"Lembrar\" desmarcado").not.toBeChecked();
-  console.log(`[X2-T1] item ${d}: "${ROTULO.descricao}" + conferência + Lembrar desmarcado + Criar produto | item ${r}: "${ROTULO.referencia}" + conferência + Lembrar desmarcado + Criar produto | item ${semProduto}: "${ROTULO.semVinculo}"`
+  console.log(`[X2-T1] item ${d}: "${ROTULO.descricao}" + conferência + Criar produto | item ${r}: "${ROTULO.referencia}" + conferência + Criar produto | item ${semProduto}: "${ROTULO.semVinculo}"`
     + ` | preenchimento do palpite no fio = ${JSON.stringify(vinculoDe(noFio, d).preenchimento)}; da referência = ${JSON.stringify(vinculoDe(noFio, r).preenchimento ?? null)}`);
 });
 
 /* ═════════════════════════════════ X2-T2 ═════════════════════════════════ */
 
-test("X2-T2 — R7 pelo fio e pelo banco: o Gerar compra sem tocar no \"Lembrar\" manda lembrar_vinculo false nos DOIS palpites (descrição e referência), dá 201 e o fornecedor ganha ZERO vínculo; a nota seguinte traz os dois de novo como sugeridos", async ({ page }) => {
+test("X2-T2 — pelo fio e pelo banco: o Gerar compra manda lembrar_vinculo true nos DOIS palpites (descrição e referência), dá 201 e o fornecedor ganha os dois vínculos; a nota seguinte traz os dois LEMBRADOS", async ({ page }) => {
   test.setTimeout(180_000);
   await login(page);
   const c = await cenarioDaXml02(page, "T2", ["D", "R"]);
@@ -190,32 +174,30 @@ test("X2-T2 — R7 pelo fio e pelo banco: o Gerar compra sem tocar no \"Lembrar\
   expect(antes, "premissa: o fornecedor do caso é novo — nenhum vínculo lembrado no banco").toEqual([]);
 
   await abrirConferencia(page, id, c.top);
-  // Ninguém toca no "Lembrar": a tela gera com o que ela mesma decidiu.
-  const marcadoNaTela = { [d]: await page.getByTestId(`importacao-item-${d}-lembrar`).isChecked(), [r]: await page.getByTestId(`importacao-item-${r}-lembrar`).isChecked() };
+  await expectCamposAvancadosAusentes(page, d);
+  await expectCamposAvancadosAusentes(page, r);
   const g = await gerarCompraPelaTela(page, c, id, [d, r]);
-  expect.soft(lembrarNoCorpo(g.corpo), "R7 NO FIO: os dois palpites (a descrição e a referência) vão com lembrar_vinculo false").toEqual([[d, pd.id, false], [r, pr.id, false]]);
+  expect.soft(lembrarNoCorpo(g.corpo), "NO FIO: os dois palpites vão com lembrar_vinculo true (regra automática)").toEqual([[d, pd.id, true], [r, pr.id, true]]);
   expect(g.status, `a compra foi gerada: ${g.texto.slice(0, 300)}`).toBe(201);
   expect(g.compra, "a compra nasce ABERTA, com o total da nota").toMatchObject({ situacao: "aberto", valor_total: nota.vNF, importacao_id: id });
 
-  // R7 NO BANCO: nenhum par do fornecedor (nem o da descrição, nem o da referência).
+  const itemD = c.itens[d - 1]!; const itemR = c.itens[r - 1]!;
   const depois = vinculosLembradosDo(c.fornecedor);
   const totalDepois = totalDeVinculosLembrados();
-  expect(depois, "R7 NO BANCO: o Gerar NÃO gravou vínculo nenhum do fornecedor (os dois eram palpite)").toEqual([]);
-  expect(depois.length - antes.length, "R7 NO BANCO: o fornecedor ganhou ZERO vínculo (contado antes e depois)").toBe(0);
+  expect(depois, "NO BANCO: o Gerar gravou os DOIS pares dos palpites").toEqual([`${itemD.codigo}|${itemD.unidade}|${pd.id}`, `${itemR.codigo}|${itemR.unidade}|${pr.id}`].sort());
+  expect(depois.length - antes.length, "NO BANCO: o fornecedor ganhou DOIS vínculos").toBe(2);
 
-  // A NOTA SEGUINTE do mesmo fornecedor: os dois continuam palpite (nada os lembrou).
-  const seguinte = await importarNota(page, c);
-  const conf2 = await lerConferencia(page, seguinte.id);
-  expect([resumoDoVinculo(vinculoDe(conf2, d)), resumoDoVinculo(vinculoDe(conf2, r))], "a nota seguinte: a descrição e a referência de novo SUGERIDAS, nenhuma lembrada")
-    .toEqual([["sugerido", "descricao", pd.id], ["sugerido", "reference", pr.id]]);
-  console.log(`[X2-T2] Lembrar na tela ao gerar: item ${d}=${String(marcadoNaTela[d])}, item ${r}=${String(marcadoNaTela[r])} | corpo ${JSON.stringify(lembrarNoCorpo(g.corpo).map(([n, , l]) => [n, l]))} | gerar ${g.status}`
+  const conf2 = await lerConferencia(page, (await importarNota(page, c)).id);
+  expect([resumoDoVinculo(vinculoDe(conf2, d)), resumoDoVinculo(vinculoDe(conf2, r))], "a nota seguinte: os dois LEMBRADOS")
+    .toEqual([["lembrado", null, pd.id], ["lembrado", null, pr.id]]);
+  console.log(`[X2-T2] corpo ${JSON.stringify(lembrarNoCorpo(g.corpo).map(([n, , l]) => [n, l]))} | gerar ${g.status}`
     + ` | vínculos do fornecedor: antes=${antes.length}, depois=${depois.length} | tabela inteira: antes=${totalAntes}, depois=${totalDepois}`
     + ` | nota seguinte: item ${d}=${vinculoDe(conf2, d).situacao}/${String(vinculoDe(conf2, d).origem)}, item ${r}=${vinculoDe(conf2, r).situacao}/${String(vinculoDe(conf2, r).origem)}`);
 });
 
 /* ═════════════════════════════════ X2-T3 ═════════════════════════════════ */
 
-test("X2-T3 — marcar o \"Lembrar\" dos dois palpites é a confirmação: o corpo manda true nos dois, o banco ganha os dois pares e a nota seguinte traz os dois LEMBRADOS", async ({ page }) => {
+test("X2-T3 — a regra automática: sem \"Lembrar\" na tela, o corpo manda true nos dois palpites, o banco ganha os dois pares e a nota seguinte traz os dois LEMBRADOS", async ({ page }) => {
   test.setTimeout(180_000);
   await login(page);
   const c = await cenarioDaXml02(page, "T3", ["D", "R"]);
@@ -226,14 +208,9 @@ test("X2-T3 — marcar o \"Lembrar\" dos dois palpites é a confirmação: o cor
   expect(vinculosLembradosDo(c.fornecedor), "premissa: o fornecedor do caso é novo — nenhum vínculo lembrado").toEqual([]);
 
   await abrirConferencia(page, id, c.top);
-  for (const k of [d, r]) {
-    const lembrar = page.getByTestId(`importacao-item-${k}-lembrar`);
-    await expect(lembrar, `premissa: o palpite do item ${k} nasce desmarcado`).not.toBeChecked();
-    await lembrar.check();
-    await expect(lembrar, `a pessoa marcou o item ${k}`).toBeChecked();
-  }
+  for (const k of [d, r]) await expectCamposAvancadosAusentes(page, k);
   const g = await gerarCompraPelaTela(page, c, id, [d, r]);
-  expect(lembrarNoCorpo(g.corpo), "marcados pela pessoa, os dois palpites vão com lembrar_vinculo true").toEqual([[d, pd.id, true], [r, pr.id, true]]);
+  expect(lembrarNoCorpo(g.corpo), "os dois palpites vão com lembrar_vinculo true").toEqual([[d, pd.id, true], [r, pr.id, true]]);
   expect(g.status, `a compra foi gerada: ${g.texto.slice(0, 300)}`).toBe(201);
   const itemD = c.itens[d - 1]!; const itemR = c.itens[r - 1]!;
   const depois = vinculosLembradosDo(c.fornecedor);
@@ -242,7 +219,7 @@ test("X2-T3 — marcar o \"Lembrar\" dos dois palpites é a confirmação: o cor
   const conf2 = await lerConferencia(page, (await importarNota(page, c)).id);
   expect([resumoDoVinculo(vinculoDe(conf2, d)), resumoDoVinculo(vinculoDe(conf2, r))], "a nota seguinte: os dois LEMBRADOS")
     .toEqual([["lembrado", null, pd.id], ["lembrado", null, pr.id]]);
-  console.log(`[X2-T3] Lembrar marcado pela pessoa nos itens ${d} e ${r} | corpo ${JSON.stringify(lembrarNoCorpo(g.corpo).map(([n, , l]) => [n, l]))} | gerar ${g.status} | vínculos do fornecedor depois=${depois.length} | nota seguinte: ${vinculoDe(conf2, d).situacao}/${vinculoDe(conf2, r).situacao}`);
+  console.log(`[X2-T3] corpo ${JSON.stringify(lembrarNoCorpo(g.corpo).map(([n, , l]) => [n, l]))} | gerar ${g.status} | vínculos do fornecedor depois=${depois.length} | nota seguinte: ${vinculoDe(conf2, d).situacao}/${vinculoDe(conf2, r).situacao}`);
 });
 
 /* ═════════════════════════════════ X2-T4 ═════════════════════════════════ */
@@ -278,7 +255,6 @@ test("X2-T4 — o lote: o sugerido pela descrição NÃO entra no \"Criar N prod
   // A PESSOA TIRA o produto sugerido pela descrição (o "Limpar" da caixa): o item fica sem produto e passa a ser candidato do lote.
   await page.getByTestId(`importacao-item-${d}-produto`).getByRole("button", { name: "Limpar" }).click();
   await expect(caixaDoProduto(page, d), "a caixa ficou vazia").toHaveText("Selecione");
-  await expect(page.getByTestId(`importacao-item-${d}-quantidade-interna`), "sem produto, sem quantidade interna").toHaveText("—");
   await expect(page.getByTestId(`importacao-item-${d}-sugestao-descricao`), "sem o produto sugerido, a linha da conferência some").toHaveCount(0);
   await expect(page.getByTestId(`importacao-item-${d}-vinculo`), "o rótulo continua o da origem").toHaveText(ROTULO.descricao);
   await expect(page.getByTestId(`importacao-item-${d}-criar-produto`), "e o \"Criar produto\" continua").toBeVisible();
@@ -288,7 +264,6 @@ test("X2-T4 — o lote: o sugerido pela descrição NÃO entra no \"Criar N prod
   // A PESSOA TIRA também o produto da referência: o item fica sem produto, mas o lote NÃO o conta (o lote olha a identidade).
   await page.getByTestId(`importacao-item-${r}-produto`).getByRole("button", { name: "Limpar" }).click();
   await expect(caixaDoProduto(page, r), "a caixa da referência ficou vazia").toHaveText("Selecione");
-  await expect(page.getByTestId(`importacao-item-${r}-quantidade-interna`), "sem produto, sem quantidade interna").toHaveText("—");
   await expect(page.getByTestId(`importacao-item-${r}-sugestao-referencia`), "sem o produto sugerido, a linha da conferência da referência some").toHaveCount(0);
   await expect(page.getByTestId(`importacao-item-${r}-vinculo`), "o rótulo continua o da origem").toHaveText(ROTULO.referencia);
   await expect(page.getByTestId(`importacao-item-${r}-criar-produto`), "e o \"Criar produto\" de UM item continua").toBeVisible();
@@ -308,7 +283,7 @@ test("X2-T4 — o lote: o sugerido pela descrição NÃO entra no \"Criar N prod
 
 /* ═════════════════════════════════ X2-T5 ═════════════════════════════════ */
 
-test("X2-T5 — a troca de fornecedor não leva o \"Lembrar\" marcado para os palpites: a descrição e a referência voltam desmarcadas; a marcação que a pessoa mudou no item do código de barras (identidade) fica", async ({ page }) => {
+test("X2-T5 — a troca de fornecedor refaz os vínculos e mantém os produtos sugeridos (sem \"Lembrar\" na tela)", async ({ page }) => {
   test.setTimeout(180_000);
   await login(page);
   const c = await cenarioDaXml02(page, "T5", ["D", "R", "G"], { parceiroAmbiguo: true });
@@ -320,18 +295,7 @@ test("X2-T5 — a troca de fornecedor não leva o \"Lembrar\" marcado para os pa
   premissasDoCenario(c, semEscolha, "premissa (sem fornecedor: os caminhos 3 a 5)");
 
   await abrirConferencia(page, id);
-  const lembrarD = page.getByTestId(`importacao-item-${d}-lembrar`);
-  const lembrarR = page.getByTestId(`importacao-item-${r}-lembrar`);
-  const lembrarG = page.getByTestId(`importacao-item-${gtin}-lembrar`);
-  await expect(lembrarD, "premissa: o palpite da descrição nasce desmarcado").not.toBeChecked();
-  await expect(lembrarR, "premissa: o palpite da referência nasce desmarcado").not.toBeChecked();
-  await expect(lembrarG, "premissa: o código de barras (identidade) nasce marcado").toBeChecked();
-  await lembrarD.check();
-  await lembrarR.check();
-  await lembrarG.uncheck();
-  await expect(lembrarD).toBeChecked();
-  await expect(lembrarR).toBeChecked();
-  await expect(lembrarG).not.toBeChecked();
+  for (const k of [d, r, gtin]) await expectCamposAvancadosAusentes(page, k);
 
   // A ESCOLHA DO FORNECEDOR (aba Cabeçalho): a tela relê a conferência com ele, e os vínculos são refeitos.
   const relida = page.waitForResponse((x) => x.request().method() === "GET" && caminho(x) === `/api/compras/importacoes/${id}` && new URL(x.url()).searchParams.get("fornecedor_id") === c.fornecedor, { timeout: 20_000 });
@@ -342,9 +306,7 @@ test("X2-T5 — a troca de fornecedor não leva o \"Lembrar\" marcado para os pa
   premissasDoCenario(c, conf2, "no fio, com o fornecedor (nada lembrado: o fornecedor é novo)");
   await expect(page.getByTestId("importacao-conferencia")).toHaveAttribute("data-relendo", "nao");
   await page.getByTestId("importacao-aba-itens-rotulo").click();
-  await expect(lembrarD, "o palpite da descrição refeito volta DESMARCADO (a marcação com o fornecedor anterior não vale para este)").not.toBeChecked();
-  await expect(lembrarR, "o palpite da referência refeito volta DESMARCADO").not.toBeChecked();
-  await expect(lembrarG, "a marcação que a pessoa mudou no código de barras (identidade) fica: desmarcado à mão continua desmarcado").not.toBeChecked();
+  for (const k of [d, r, gtin]) await expectCamposAvancadosAusentes(page, k);
   await expect(caixaDoProduto(page, d), "o palpite refeito traz o mesmo produto").toContainText(`${pd.codigo} — ${pd.descricao}`);
   await expect(caixaDoProduto(page, r), "a referência refeita traz o mesmo produto").toContainText(`${pr.codigo} — ${pr.descricao}`);
   await expect(caixaDoProduto(page, gtin), "o código de barras refeito traz o mesmo produto").toContainText(`${pg.codigo} — ${pg.descricao}`);
@@ -353,13 +315,12 @@ test("X2-T5 — a troca de fornecedor não leva o \"Lembrar\" marcado para os pa
   await expect(page.getByTestId(`importacao-item-${gtin}-vinculo`), "o código de barras continua identidade").toHaveText(ROTULO.codigoDeBarras);
   await expect(page.getByTestId(`importacao-item-${gtin}-sugestao-descricao`), "a identidade não pede conferência").toHaveCount(0);
   await expect(page.getByTestId(`importacao-item-${gtin}-sugestao-referencia`)).toHaveCount(0);
-  console.log(`[X2-T5] antes da troca: Lembrar item ${d}=marcado pela pessoa, item ${r}=marcado pela pessoa, item ${gtin}=desmarcado pela pessoa`
-    + ` | depois da troca (fornecedor escolhido): item ${d}=${String(await lembrarD.isChecked())}, item ${r}=${String(await lembrarR.isChecked())}, item ${gtin}=${String(await lembrarG.isChecked())}`);
+  console.log(`[X2-T5] fornecedor escolhido: os três itens mantêm produto sugerido e sem campos de fator/lembrar na tela`);
 });
 
 /* ═════════════════════════════════ X2-T6 ═════════════════════════════════ */
 
-test("X2-T6 — a pessoa corrige o palpite e a escolha dela é lembrada: a referência trocada no seletor por OUTRO produto marca o \"Lembrar\" (de volta ao palpite desmarca), a descrição trocada pelo \"Criar produto\" também; o Gerar compra manda os produtos escolhidos com lembrar_vinculo true, 201, o banco ganha os dois pares e a nota seguinte os traz LEMBRADOS", async ({ page, produtosDaTela }) => {
+test("X2-T6 — a pessoa corrige o palpite (seletor ou \"Criar produto\"); o Gerar compra manda lembrar_vinculo true, 201, o banco ganha os dois pares e a nota seguinte os traz LEMBRADOS", async ({ page, produtosDaTela }) => {
   test.setTimeout(240_000);
   await login(page);
   const c = await cenarioDaXml02(page, "T6", ["R", "D"]);
@@ -382,31 +343,16 @@ test("X2-T6 — a pessoa corrige o palpite e a escolha dela é lembrada: a refer
   expect(antes, "premissa: o fornecedor do caso é novo — nenhum vínculo lembrado no banco").toEqual([]);
 
   await abrirConferencia(page, id, c.top);
-  const lembrarR = page.getByTestId(`importacao-item-${r}-lembrar`);
-  const lembrarD = page.getByTestId(`importacao-item-${d}-lembrar`);
   const seletorR = page.getByTestId(`importacao-item-${r}-produto`);
   await expect(caixaDoProduto(page, r), "premissa: a referência vem com o produto ERRADO escolhido").toContainText(`${pr.codigo} — ${pr.descricao}`);
-  await expect(lembrarR, "premissa: o palpite da referência nasce desmarcado").not.toBeChecked();
-  await expect(lembrarD, "premissa: o palpite da descrição nasce desmarcado").not.toBeChecked();
+  await expectCamposAvancadosAusentes(page, r);
+  await expectCamposAvancadosAusentes(page, d);
 
-  // A REFERÊNCIA CORRIGIDA NO SELETOR: outro produto ⇒ marcado; de volta ao do palpite ⇒ desmarcado; o outro de novo ⇒ marcado.
+  // A REFERÊNCIA CORRIGIDA NO SELETOR: outro produto (sem fator na tela).
   await escolherNoSeletor(page, seletorR, certo.descricao, `Produto do item ${r} (o certo)`);
-  await expect.soft(lembrarR, "a pessoa trocou o palpite por OUTRO produto: \"Lembrar\" MARCADO").toBeChecked();
   await expect(page.getByTestId(`importacao-item-${r}-sugestao-referencia`), "com outro produto, a linha da conferência do palpite some").toHaveCount(0);
   await expect(page.getByTestId(`importacao-item-${r}-vinculo`), "o rótulo continua o da origem").toHaveText(ROTULO.referencia);
-  await escolherNoSeletor(page, seletorR, pr.descricao, `Produto do item ${r} (de volta ao palpite)`);
-  await expect(lembrarR, "de volta ao produto do palpite: \"Lembrar\" DESMARCADO").not.toBeChecked();
-  await expect(page.getByTestId(`importacao-item-${r}-sugestao-referencia`), "de volta ao palpite, a linha volta").toHaveText(TEXTO_DA_CONFERENCIA_DA_REFERENCIA);
-  await escolherNoSeletor(page, seletorR, certo.descricao, `Produto do item ${r} (o certo, de novo)`);
-  await expect.soft(lembrarR, "o outro produto de novo: \"Lembrar\" MARCADO").toBeChecked();
   await expect(caixaDoProduto(page, r), "o item fica com o produto da pessoa").toContainText(certo.descricao);
-  // XML-04 (decisão 318): o fator que veio do cadastro do produto do palpite NÃO segue para o produto da pessoa — o
-  // campo esvazia e a tela pergunta; a pessoa informa o fator do produto certo (a mesma unidade da nota: 1).
-  const fatorR = page.getByTestId(`importacao-item-${r}-fator`);
-  await expect(fatorR, "o produto foi trocado: o fator do palpite não segue para o produto da pessoa").toHaveValue("");
-  await expect(page.getByTestId(`importacao-item-${r}-fator-pergunta`)).toHaveText("O produto foi trocado: informe o fator do produto escolhido.");
-  await fatorR.fill("1");
-  await expect(page.getByTestId(`importacao-item-${r}-fator-pergunta`), "digitado: a pergunta sai").toHaveCount(0);
 
   // A DESCRIÇÃO CORRIGIDA PELO "CRIAR PRODUTO": o produto criado fica escolhido e o "Lembrar" marcado.
   await page.getByTestId(`importacao-item-${d}-criar-produto`).click();
@@ -426,11 +372,9 @@ test("X2-T6 — a pessoa corrige o palpite e a escolha dela é lembrada: a refer
   expect([criado.description, criado.id === pd.id], "o produto criado tem a descrição da nota e NÃO é o do palpite").toEqual([itemD.descricao, false]);
   await expect(dialogo, "o diálogo fecha depois do 201").toBeHidden();
   await expect(caixaDoProduto(page, d), "o item recebe o produto criado").toContainText(criado.description);
-  await expect.soft(lembrarD, "o palpite trocado pelo produto criado: \"Lembrar\" MARCADO").toBeChecked();
   await expect(page.getByTestId(`importacao-item-${d}-sugestao-descricao`), "com o produto criado, a linha da conferência do palpite some").toHaveCount(0);
 
   // O "GERAR COMPRA": os produtos ESCOLHIDOS, com lembrar_vinculo true, e os dois pares no banco.
-  const marcadoAoGerar = { [r]: await lembrarR.isChecked(), [d]: await lembrarD.isChecked() };
   const g = await gerarCompraPelaTela(page, c, id, [r, d]);
   expect.soft(lembrarNoCorpo(g.corpo), "NO FIO: os produtos que a pessoa escolheu, com lembrar_vinculo true").toEqual([[r, certo.id, true], [d, criado.id, true]]);
   expect(g.status, `a compra foi gerada: ${g.texto.slice(0, 300)}`).toBe(201);
@@ -444,7 +388,7 @@ test("X2-T6 — a pessoa corrige o palpite e a escolha dela é lembrada: a refer
   const conf2 = await lerConferencia(page, (await importarNota(page, c)).id);
   expect([resumoDoVinculo(vinculoDe(conf2, r)), resumoDoVinculo(vinculoDe(conf2, d))], "a nota seguinte: os dois LEMBRADOS, com os produtos escolhidos")
     .toEqual([["lembrado", null, certo.id], ["lembrado", null, criado.id]]);
-  console.log(`[X2-T6] item ${r} (referência → ${pr.codigo}): trocado no seletor por ${certo.codigo}, Lembrar=${String(marcadoAoGerar[r])} | item ${d} (descrição → ${pd.codigo}): Criar produto ${resposta.status()} → ${criado.code}, Lembrar=${String(marcadoAoGerar[d])}`
+  console.log(`[X2-T6] item ${r} (referência → ${pr.codigo}): trocado no seletor por ${certo.codigo} | item ${d} (descrição → ${pd.codigo}): Criar produto ${resposta.status()} → ${criado.code}`
     + ` | corpo ${JSON.stringify(lembrarNoCorpo(g.corpo).map(([n, , l]) => [n, l]))} | gerar ${g.status} | vínculos do fornecedor: antes=${antes.length}, depois=${depois.length}`
     + ` | nota seguinte: item ${r}=${vinculoDe(conf2, r).situacao}, item ${d}=${vinculoDe(conf2, d).situacao}`);
 });
