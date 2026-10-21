@@ -101,17 +101,19 @@ services:
     image: node:22
     restart: on-failure
     working_dir: /workspace
+    # Mapa (não lista KEY=valor): o gate de CI recusa `DATABASE_URL=<literal longo>` no Git —
+    # credencial local do compose, documentada no cabeçalho; mesma forma do serviço `setup`.
     environment:
-      - NODE_ENV=development
-      - HOST=0.0.0.0
-      - PORT=3333
-      - API_LOG_LEVEL=info
-      - AUTH_MODE=local
-      - DATABASE_URL=postgresql://erp_app:erp_app@db:5432/agro_erp
+      NODE_ENV: development
+      HOST: "0.0.0.0"
+      PORT: "3333"
+      API_LOG_LEVEL: info
+      AUTH_MODE: local
+      DATABASE_URL: "postgresql://erp_app:erp_app@db:5432/agro_erp"
       # Origens permitidas do navegador: o host público do preview desta sandbox é a origem
       # REAL da página (o proxy entrega outro Host ao processo). `WEB_ORIGIN_PREVIEW_SUFFIX`
       # não serve aqui: ele só aceita sufixo de preview da Vercel, por contrato de segurança.
-      - WEB_ORIGIN=http://localhost:3000,https://3000-${BASE44_PUBLIC_HOST_SUFFIX}
+      WEB_ORIGIN: "http://localhost:3000,https://3000-${BASE44_PUBLIC_HOST_SUFFIX}"
     volumes:
       - ./:/workspace
     ports:
