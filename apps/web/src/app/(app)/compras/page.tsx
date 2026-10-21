@@ -11,6 +11,7 @@ import { NovoDocumentoPorTop } from "@/features/sales/lancador-unificado";
 import type { LinhaDeLancamento } from "@/features/sales/launcher-operacoes";
 import { DocumentosDeCompraList } from "@/features/compras/documentos-compra-list";
 import { ItensDaNota } from "@/features/compras/itens-da-nota";
+import { ALTURA_PADRAO_DOS_ITENS, DivisorEntreTabelas } from "@/features/compras/divisor-entre-tabelas";
 import type { Row } from "@/features/docs/shared";
 import { useTopsDeCompras, variantesDeCompra } from "@/features/compras/variantes";
 import { useFinalizacaoEOrcamento, type EstadoDaCapacidade } from "@/features/compras/pedido-e-orcamento";
@@ -95,9 +96,12 @@ function Documentos() {
   const [selecionado, setSelecionado] = React.useState<Row | null>(null);
   const aoSelecionar = React.useCallback((rows: Row[]) => { setSelecionado(rows.length === 1 ? rows[0]! : null); }, []);
   React.useEffect(() => { setSelecionado(null); }, [atual]);
+  // A DIVISÃO entre as duas tabelas é do usuário: o divisor arrasta a altura do painel de itens (estado de tela).
+  const [alturaDosItens, setAlturaDosItens] = React.useState(ALTURA_PADRAO_DOS_ITENS);
   return <div data-testid="compras-documentos" data-especie={atual} className="flex min-h-0 flex-1 flex-col gap-2">
     <DocumentosDeCompraList especie={atual} barra={barra} onSelecionar={aoSelecionar} />
-    <ItensDaNota documento={selecionado} />
+    <DivisorEntreTabelas valor={alturaDosItens} onChange={setAlturaDosItens} />
+    <ItensDaNota documento={selecionado} altura={alturaDosItens} />
   </div>;
 }
 
