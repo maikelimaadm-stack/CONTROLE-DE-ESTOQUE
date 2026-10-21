@@ -14,9 +14,10 @@ export default function LoginPage() {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); setLoading(true); setError(null);
     try {
-      // Sem isso, um agro.session antigo manda Authorization + X-Org-Id no POST de login;
-      // a API valida o vínculo antes do handler e devolve "Usuário não é membro desta organização".
-      setSession(null);
+      // Limpa a sessão ANTIGA sem disparar `agro:session` (evita refresh/401 em corrida no meio do login).
+      // Sem limpar o localStorage, um agro.session antigo manda Authorization + X-Org-Id no POST e a API
+      // devolve "Usuário não é membro desta organização".
+      try { localStorage.removeItem("agro.session"); } catch { /* armazenamento indisponível */ }
       const r = await api<{ token: string; user: { id: string; email: string; name: string } }>("/api/auth/login", { method: "POST", body: { email, password } });
       setSession({ token: r.token, orgId: null, empresaId: null, user: r.user });
       router.replace("/");
