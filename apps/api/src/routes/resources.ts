@@ -402,6 +402,18 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
   // FICHA EM ABAS: grades e perfis na MESMA transação — erro aqui desfaz também o principal
   if (temFicha(def)) await gravarFicha(ctx, def, id, data, null);
   if (def.key === "people") await atualizarSituacaoReceita(ctx, id);
+  // IMPORTAÇÃO EM LOTE: a planilha só precisa de id/código/rótulo/pai para encadear linhas do
+  // mesmo arquivo (`adicionarCriado`). `getOne` + rótulos de ref + grades da ficha são 4–6 idas ao
+  // banco por linha e estouravam o teto de 60 s da ponte Vercel (~90 produtos) — a tela via
+  // "Não foi possível conferir o arquivo". A porta da tela (sem `importacao`) continua com getOne.
+  if (opcoes.importacao) {
+    const codigoIdx = cols.indexOf("code");
+    return {
+      id,
+      ...data,
+      ...(codigoIdx >= 0 ? { code: vals[codigoIdx] } : {}),
+    };
+  }
   return getOne(ctx, def, id);
 }
 

@@ -1,7 +1,12 @@
+import type { Tx } from "@agro/db";
 import { validation } from "./errors.js";
 import type { ServiceCtx } from "./context.js";
 
 export const MENSAGEM_NCM_DO_PRODUTO = "Escolha uma NCM de 8 dígitos vigente (use a busca).";
+
+/** Por transação: a mesma NCM se repete na planilha — uma SELECT por código distinto. */
+const ncmOkPorTx = new WeakMap<Tx, Set<string>>();
+const ncmRuimPorTx = new WeakMap<Tx, Set<string>>();
 
 /**
  * A NCM ESCOLHÍVEL, sobre as colunas de erp.ncm: 8 dígitos e vigente hoje. UM predicado para a conferência de um código
@@ -19,8 +24,19 @@ export async function conferirNcmDoProduto(ctx: ServiceCtx, data: Record<string,
   const ncm = data["ncm_code"];
   if (ncm === null || ncm === undefined || ncm === "") return;
   if (atual !== null && ncm === atual["ncm_code"]) return;
-  const r = await ctx.tx.query(`select 1 from erp.ncm where code=$1 and ${NCM_VIGENTE}`, [ncm]);
-  if (!r.rowCount) throw validation(MENSAGEM_NCM_DO_PRODUTO, [{ path: ["ncm_code"], message: MENSAGEM_NCM_DO_PRODUTO }]);
+  const codigo = String(ncm);
+  let ok = ncmOkPorTx.get(ctx.tx);
+  if (!ok) { ok = new Set(); ncmOkPorTx.set(ctx.tx, ok); }
+  if (ok.has(codigo)) return;
+  let ruim = ncmRuimPorTx.get(ctx.tx);
+  if (!ruim) { ruim = new Set(); ncmRuimPorTx.set(ctx.tx, ruim); }
+  if (ruim.has(codigo)) throw validation(MENSAGEM_NCM_DO_PRODUTO, [{ path: ["ncm_code"], message: MENSAGEM_NCM_DO_PRODUTO }]);
+  const r = await ctx.tx.query(`select 1 from erp.ncm where code=$1 and ${NCM_VIGENTE}`, [codigo]);
+  if (!r.rowCount) {
+    ruim.add(codigo);
+    throw validation(MENSAGEM_NCM_DO_PRODUTO, [{ path: ["ncm_code"], message: MENSAGEM_NCM_DO_PRODUTO }]);
+  }
+  ok.add(codigo);
 }
 
 /**
