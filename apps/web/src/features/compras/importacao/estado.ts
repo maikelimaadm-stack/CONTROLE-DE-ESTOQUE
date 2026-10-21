@@ -139,7 +139,10 @@ export function contaDoItem(item: ItemDaNota, d: DecisaoDoItemNaTela, produto: P
   const fator = fatorValido(d.fator) ? d.fator : "1";
   const tipoFator = d.tipoFator === "divide" ? "divide" : "multiply";
   const semEntrada = !d.geraEstoque || !produto.controlaEstoque;
-  const controle: ControleDeLoteDoProduto = semEntrada && item.rastro.length === 0 ? "nenhum" : produto.controleLote;
+  // Lote/validade na tela são opcionais: sem preenchimento (e sem rastro na nota) a conta não exige controle de lote.
+  const controle: ControleDeLoteDoProduto = item.rastro.length > 0
+    ? (semEntrada ? "nenhum" : produto.controleLote)
+    : (semEntrada || !d.lote.trim() ? "nenhum" : (d.validade && produto.controleLote === "lote_validade" ? "lote_validade" : "lote"));
   let q: string; let u: string;
   try {
     q = quantidadeInterna(item.quantidade, fator, tipoFator);
@@ -151,7 +154,6 @@ export function contaDoItem(item: ItemDaNota, d: DecisaoDoItemNaTela, produto: P
   const r = linhasDoItemDaNota(item, { produtoId: produto.id, fator, tipoFator, controlaLote: controle,
     lote: controle === "nenhum" ? null : d.lote.trim() || null, validade: controle === "nenhum" ? null : d.validade || null });
   if (!r.ok) return { situacao: "recusa", motivo: r.motivo };
-  if (controle === "lote_validade" && item.rastro.length === 0 && !d.validade) return { situacao: "recusa", motivo: "validade_obrigatoria" };
   // O unitário MOSTRADO é o que a compra terá: o da linha quando o item é uma linha só (o domínio arredonda para cima e
   // fecha o vProd no desconto — `valoresDaLinhaDaNota`); com lotes, cada linha tem o seu e a tela mostra o do item.
   return { situacao: "pronta", quantidadeInterna: q, unitarioInterno: r.linhas.length === 1 ? r.linhas[0]!.valorUnitario : u, linhas: r.linhas };
@@ -414,21 +416,14 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
       divergencias.push({ codigo: "parcelas_da_nota", mensagem: semVencimento ? "A nota trouxe duplicatas sem vencimento: use a condição de pagamento."
         : parcelas.situacao === "sem_duplicatas" ? "A nota não traz duplicatas: use a condição de pagamento." : "As duplicatas da nota não conferem com o total: use a condição de pagamento.", nItem: null, bloqueia: true, aba: "financeiro", origem: "tela" });
     }
-    if (fin.rateioTipo === "por_valor") {
-      const ruins = fin.linhas.some((l) => !l.categoriaId || !l.centroId || !percentualValido(l.percentual));
-      const soma = fin.linhas.reduce((a, l) => (percentualValido(l.percentual) ? a.plus(D(l.percentual)) : a), D(0));
-      if (ruins || !soma.eq(100)) divergencias.push({ codigo: "rateio_por_valor", mensagem: `O rateio por valor precisa de natureza, centro e percentual em cada linha, somando 100% (soma: ${soma.toFixed()}%).`, nItem: null, bloqueia: true, aba: "financeiro", origem: "tela" });
-    }
+    // Rateio/classificação saíram da conferência — a compra gerada é que recebe natureza/centro/CAPEX.
   }
   const bloqueios = divergencias.filter((x) => x.bloqueia);
 
   /* ── o corpo ── */
   const corpo = (): GerarCompraDaNota | null => {
     if (!pendente || bloqueios.length > 0 || !conf.fornecedorEscolhido || !cab.topId) return null;
-    const rateio: GerarCompraDaNota["financeiro"]["rateio"] = fin.rateioTipo === "por_valor"
-      ? { tipo: "por_valor", linhas: fin.linhas.map((l) => ({ categoria_financeira_id: l.categoriaId, centro_custo_id: l.centroId, conta_contabil_id: l.contaId || null, safra_id: l.safraId || null, percentual: l.percentual })) }
-      : fin.rateioTipo === "por_produto" ? { tipo: "por_produto" }
-        : { tipo: "documento", categoria_financeira_id: fin.categoriaId || null, centro_custo_id: fin.centroId || null };
+    // Classificação (natureza, centro, CAPEX/OPEX, rateio, tipo de título) fica para a compra depois de gerar.
     return {
       tipo_operacao_id: cab.topId,
       fornecedor_id: conf.fornecedorEscolhido,
@@ -441,9 +436,9 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
         parcelas: fin.parcelas,
         ...(fin.parcelas === "condicao" ? { condicao_pagamento_id: fin.condicaoId || null, data_vencimento: fin.vencimento || null } : {}),
         forma_pagamento_id: forma.formaId || null,
-        tipo_titulo_id: fin.tipoTituloId || null,
-        classificacao_gasto: fin.classificacao || null,
-        rateio
+        tipo_titulo_id: null,
+        classificacao_gasto: null,
+        rateio: { tipo: "documento", categoria_financeira_id: null, centro_custo_id: null }
       },
       itens: itensDaNota.map((item) => {
         const d = itens.find((x) => x.nItem === item.nItem)!;
@@ -455,8 +450,8 @@ export function useEstadoDaConferencia(conf: ConferenciaDaImportacaoNfe, o: Opco
           lembrar_vinculo: true,
           armazem_id: d.armazemId || null, gera_estoque: true, imobilizado: false,
           item_origem_id: cab.pedidoId ? d.itemOrigemId || null : null,
-          categoria_financeira_id: fin.rateioTipo === "por_produto" ? d.categoriaId || null : null,
-          centro_custo_id: fin.rateioTipo === "por_produto" ? d.centroId || null : null,
+          categoria_financeira_id: null,
+          centro_custo_id: null,
           ...(item.rastro.length === 0 && d.lote.trim() ? { lote: d.lote.trim() } : {}),
           ...(item.rastro.length === 0 && d.validade ? { validade: d.validade } : {})
         };
