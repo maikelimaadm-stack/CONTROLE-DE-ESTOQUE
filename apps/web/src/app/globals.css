@@ -550,7 +550,12 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 @media (max-width: 1023px) { .mg-topnav__brand-name { display: none; } .mg-topbar-select { max-width: 140px; } .mg-tabbar__count { display: none; } }
 .mg-grid .th-menu { width: 20px; height: 20px; border-radius: 999px; }
 .mg-grid .th-menu.is-on { background: rgba(64,222,99,.18); color: #15803d; }
-.itpan.recolhido { height: auto !important; }
+.itpan.recolhido { height: 34px !important; }
+/* Divisor mestre-detalhe do HTML: faixa inteira arrastável, não só o traço central. */
+.compras-divisor-itens { position: relative; z-index: 1; flex-shrink: 0; height: 9px; display: flex; align-items: center; justify-content: center; cursor: row-resize; background: transparent; touch-action: none; user-select: none; }
+.compras-divisor-itens > span { width: 46px; height: 3px; border-radius: 999px; background: #d7dde4; transition: background .13s, width .13s; }
+.compras-divisor-itens:hover, .compras-divisor-itens[data-arrastando="true"] { background: #bbf7d0; }
+.compras-divisor-itens:hover > span, .compras-divisor-itens:focus-visible > span, .compras-divisor-itens[data-arrastando="true"] > span { background: #40de63; width: 70px; }
 .itbar .grp { display: inline-flex; align-items: center; gap: 3px; }
 .itbar .ib { width: 25px; height: 25px; border-radius: 999px; border: 1px solid transparent; background: #f1f3f4; color: #475569; display: inline-flex; align-items: center; justify-content: center; }
 .itbar .ib:hover { background: #e5e7eb; color: #0f172a; }

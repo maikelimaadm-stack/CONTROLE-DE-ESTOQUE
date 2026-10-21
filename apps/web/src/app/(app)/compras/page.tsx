@@ -98,10 +98,13 @@ function Documentos() {
   React.useEffect(() => { setSelecionado(null); }, [atual]);
   // A DIVISÃO entre as duas tabelas é do usuário: o divisor arrasta a altura do painel de itens (estado de tela).
   const [alturaDosItens, setAlturaDosItens] = React.useState(ALTURA_PADRAO_DOS_ITENS);
-  return <div data-testid="compras-documentos" data-especie={atual} className="flex min-h-0 flex-1 flex-col gap-2">
-    <DocumentosDeCompraList especie={atual} barra={barra} onSelecionar={aoSelecionar} />
-    <DivisorEntreTabelas valor={alturaDosItens} onChange={setAlturaDosItens} />
-    <ItensDaNota documento={selecionado} altura={alturaDosItens} />
+  const [itensRecolhidos, setItensRecolhidos] = React.useState(false);
+  return <div data-testid="compras-documentos" data-especie={atual} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <DocumentosDeCompraList especie={atual} barra={barra} onSelecionar={aoSelecionar} />
+    </div>
+    <DivisorEntreTabelas valor={alturaDosItens} onChange={setAlturaDosItens} onAbrir={() => setItensRecolhidos(false)} onRecolher={() => setItensRecolhidos((v) => !v)} />
+    <ItensDaNota documento={selecionado} altura={alturaDosItens} recolhido={itensRecolhidos} onRecolher={() => setItensRecolhidos((v) => !v)} />
   </div>;
 }
 

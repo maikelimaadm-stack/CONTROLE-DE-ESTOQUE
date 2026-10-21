@@ -42,7 +42,7 @@ const loteEValidade = (it: Row) => {
   return [lote, validade].filter(Boolean).join(" · ") || "—";
 };
 
-export function ItensDaNota({ documento, altura }: { documento: Row | null; /** altura do painel, vinda do divisor arrastável */ altura: number }) {
+export function ItensDaNota({ documento, altura, recolhido, onRecolher }: { documento: Row | null; /** altura do painel, vinda do divisor arrastável */ altura: number; recolhido: boolean; onRecolher: () => void }) {
   const especie = documento ? texto(documento["especie"]) : "";
   const id = documento ? texto(documento["id"]) : "";
   const variante = varianteDeCompra(especie);
@@ -84,7 +84,6 @@ export function ItensDaNota({ documento, altura }: { documento: Row | null; /** 
   const [ocultas, setOcultas] = React.useState<Set<string>>(new Set());
   const [filtros, setFiltros] = React.useState<Record<string, FiltroAtivo>>({});
   const [filtrando, setFiltrando] = React.useState<string | null>(null);
-  const [recolhido, setRecolhido] = React.useState(false);
   const [menuColunas, setMenuColunas] = React.useState(false);
   React.useEffect(() => { setFiltros({}); setFiltrando(null); }, [id]);
 
@@ -137,7 +136,7 @@ export function ItensDaNota({ documento, altura }: { documento: Row | null; /** 
       {menuColunas && <ColunasDosItens colunas={colunas} ocultas={ocultas}
         onMudar={(k, ocultar) => setOcultas((p) => { const n = new Set(p); if (ocultar) n.add(k); else n.delete(k); return n; })}
         onRestaurar={() => { setOcultas(new Set()); setColWidths({}); }} onFechar={() => setMenuColunas(false)} />}
-      {documento && <span className="grp"><button type="button" className="ib" aria-label={recolhido ? "Abrir o painel" : "Recolher o painel"} title={recolhido ? "Abrir o painel" : "Recolher o painel"} onClick={() => setRecolhido((v) => !v)}>{recolhido ? <ChevronUp /> : <ChevronDown />}</button></span>}
+      {documento && <span className="grp"><button type="button" className="ib" aria-label={recolhido ? "Abrir o painel" : "Recolher o painel"} title={recolhido ? "Abrir o painel" : "Recolher o painel"} onClick={onRecolher}>{recolhido ? <ChevronUp /> : <ChevronDown />}</button></span>}
     </div>
     {recolhido ? null : !documento
       ? <div className="itvazio">
