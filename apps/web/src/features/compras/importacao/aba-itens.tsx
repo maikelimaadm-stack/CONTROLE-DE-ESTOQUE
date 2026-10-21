@@ -102,10 +102,11 @@ export function AbaItens({ e }: { e: EstadoDaConferencia }) {
                   )}
                 </td>
                 <td>
-                  {d.geraEstoque ? <div data-testid={`${pede}-local`} className="min-w-[9rem]">
-                    <RefSelect resource="warehouses" value={d.armazemId} filter={{ empresa_id: conf.empresa.id }} disabled={leitura} onChange={(id) => e.mudarItem(n, { armazemId: id ?? "" })} />
+                  <div data-testid={`${pede}-local`} className="min-w-[9rem]">
+                    <RefSelect resource="warehouses" value={d.armazemId} filter={{ empresa_id: conf.empresa.id }}
+                      disabled={leitura || !d.geraEstoque} onChange={(id) => e.mudarItem(n, { armazemId: id ?? "" })} />
                     {e.erroDoItem(n, "armazem_id") && <p className="mt-0.5 text-[11px] text-red-600">{e.erroDoItem(n, "armazem_id")}</p>}
-                  </div> : <span className="text-slate-400">—</span>}
+                  </div>
                 </td>
               </tr>
               {(palpite || v.situacao === "ambiguo" || item.rastro.length > 0 || pedeLote || e.fin.rateioTipo === "por_produto" || e.erroDoItem(n, "n_item") || e.erroDoItem(n, "fator")) && (

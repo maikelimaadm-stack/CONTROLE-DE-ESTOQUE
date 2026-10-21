@@ -141,8 +141,9 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
      entrada, quando há). Os totais do documento ficam na aba Totais; as contas vinculadas, na aba Vínculos. */
   const financeiro = presentes(FINANCEIRO);
   const tipoTitulo = fiscalNoPainel(e);
-  /* Com a lista de parcelas manual, a data de cada parcela é o cronograma — o "Vencimento" solto não aparece. */
-  const vencimentoSolto = financeiro.includes("data_vencimento") && !e.ajustarParcelas;
+  /* Vencimento fica SEMPRE à vista quando o layout o pede — ajustar parcelas não o desmonta (o cronograma por
+     linha continua na tabela; o campo do cabeçalho não some ao ligar entrada / mudar o modo). */
+  const mostraVencimento = financeiro.includes("data_vencimento");
   if (financeiro.length || tipoTitulo) {
     abas.push({
       value: valorUnico("financeiro"), label: "Financeiro",
@@ -154,8 +155,8 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
           {financeiro.includes("condicao_pagamento_id") && <React.Fragment>{desenharCampo("condicao_pagamento_id")}</React.Fragment>}
           {tipoTitulo && <div className="max-w-[300px]"><TipoDeTituloNoPainel e={e} /></div>}
           {financeiro.includes("forma_pagamento_id") && <React.Fragment>{desenharCampo("forma_pagamento_id")}</React.Fragment>}
-          {vencimentoSolto && <Divisor />}
-          {vencimentoSolto && <React.Fragment>{desenharCampo("data_vencimento")}</React.Fragment>}
+          {mostraVencimento && <Divisor />}
+          {mostraVencimento && <React.Fragment>{desenharCampo("data_vencimento")}</React.Fragment>}
         </PainelColuna>
         {financeiro.includes("plano_parcelas") &&
           <div className="max-w-[960px]" data-testid="compras-financeiro-parcelas">{desenharCampo("plano_parcelas")}</div>}

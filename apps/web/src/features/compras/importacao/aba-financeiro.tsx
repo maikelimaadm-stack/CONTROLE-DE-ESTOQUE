@@ -50,15 +50,14 @@ export function AbaFinanceiro({ e }: { e: EstadoDaConferencia }) {
     </section>
 
     <div className="grid grid-cols-12 gap-3">
-      {fin.parcelas === "condicao" && <>
-        <Field label="Condição de pagamento" span={5} error={e.erroEm("financeiro.condicao_pagamento_id")}>
-          <div data-testid="importacao-condicao"><RefSelect resource="condicoes_pagamento" value={fin.condicaoId} disabled={leitura} onChange={(v) => e.mudarFin({ condicaoId: v ?? "" })} /></div>
-        </Field>
-        <Field label="Vencimento" span={3} error={e.erroEm("financeiro.data_vencimento")}>
-          <Input data-testid="importacao-vencimento" type="date" value={fin.vencimento} disabled={leitura} onChange={(ev) => e.mudarFin({ vencimento: ev.target.value })} />
-        </Field>
-      </>}
-      <Field label="Forma de pagamento" span={fin.parcelas === "condicao" ? 4 : 5} error={e.erroEm("financeiro.forma_pagamento_id")}>
+      {/* Condição e vencimento sempre montados — desabilitados quando as duplicatas da nota valem (não somem ao marcar/desmarcar). */}
+      <Field label="Condição de pagamento" span={5} error={e.erroEm("financeiro.condicao_pagamento_id")}>
+        <div data-testid="importacao-condicao"><RefSelect resource="condicoes_pagamento" value={fin.condicaoId} disabled={leitura || fin.parcelas !== "condicao"} onChange={(v) => e.mudarFin({ condicaoId: v ?? "" })} /></div>
+      </Field>
+      <Field label="Vencimento" span={3} error={e.erroEm("financeiro.data_vencimento")}>
+        <Input data-testid="importacao-vencimento" type="date" value={fin.vencimento} disabled={leitura || fin.parcelas !== "condicao"} onChange={(ev) => e.mudarFin({ vencimento: ev.target.value })} />
+      </Field>
+      <Field label="Forma de pagamento" span={4} error={e.erroEm("financeiro.forma_pagamento_id")}>
         <div data-testid="importacao-forma" data-origem={forma.declarada ? forma.origem : undefined} data-travado-pela-top={forma.travada ? "true" : undefined}>
           <RefSelect resource="payment_methods" value={forma.formaId} labelHint={forma.rotulo} disabled={leitura || forma.travada} onChange={(v) => e.mudarFin({ formaId: v ?? "", formaEscolhida: true })} />
         </div>
@@ -68,19 +67,22 @@ export function AbaFinanceiro({ e }: { e: EstadoDaConferencia }) {
       {forma.aviso && <p className="col-span-12 text-[12px] text-amber-800" data-testid="importacao-forma-aviso">{forma.aviso}</p>}
     </div>
 
-    {fin.rateioTipo === "documento" && <section className="flex flex-col gap-2 rounded border px-3 py-2">
+    <section className="flex flex-col gap-2 rounded border px-3 py-2">
       <h3 className="text-[12px] font-semibold text-slate-600">Classificação do documento</h3>
-      <p className="text-[12px] text-slate-500">Natureza e centro usados na compra (a TOP pode exigir o centro).</p>
+      <p className="text-[12px] text-slate-500">
+        {fin.rateioTipo === "por_produto"
+          ? "Com rateio por produto, a natureza e o centro de cada item ficam na aba Itens; estes campos do documento ficam à vista, sem uso."
+          : "Natureza e centro usados na compra (a TOP pode exigir o centro)."}
+      </p>
       <div className="grid grid-cols-12 gap-3">
         <Field label="Natureza de despesa" span={6} error={e.erroEm("financeiro.rateio.categoria_financeira_id")}>
-          <div data-testid="importacao-natureza"><RefSelect resource="financial_categories" value={fin.categoriaId} buscarOpcoes={opcoesDeNaturezaDeDespesa} disabled={leitura} onChange={(v) => e.mudarFin({ categoriaId: v ?? "" })} /></div>
+          <div data-testid="importacao-natureza"><RefSelect resource="financial_categories" value={fin.categoriaId} buscarOpcoes={opcoesDeNaturezaDeDespesa} disabled={leitura || fin.rateioTipo !== "documento"} onChange={(v) => e.mudarFin({ categoriaId: v ?? "" })} /></div>
         </Field>
         <Field label="Centro de resultado" span={6} error={e.erroEm("financeiro.rateio.centro_custo_id") || e.erroEm("centro_custo_id")}>
-          <div data-testid="importacao-centro"><RefSelect resource="cost_centers" value={fin.centroId} filter={{ kind: "analytic" }} disabled={leitura} onChange={(v) => e.mudarFin({ centroId: v ?? "" })} /></div>
+          <div data-testid="importacao-centro"><RefSelect resource="cost_centers" value={fin.centroId} filter={{ kind: "analytic" }} disabled={leitura || fin.rateioTipo !== "documento"} onChange={(v) => e.mudarFin({ centroId: v ?? "" })} /></div>
         </Field>
       </div>
-    </section>}
-    {fin.rateioTipo === "por_produto" && <p className="text-[12.5px] text-slate-600">A natureza e o centro de resultado ficam em cada item (aba Itens → Mais).</p>}
+    </section>
 
     <div>
       <button type="button" className="text-[12px] font-medium text-emerald-700 underline" data-testid="importacao-financeiro-avancado"
