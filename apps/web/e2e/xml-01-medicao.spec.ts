@@ -413,10 +413,7 @@ test("XML-01 MEDIÇÃO — conferência de 10 itens com 6 produtos inexistentes:
   // 5. Gerar compra, até o 201. A recusa do servidor (422) aponta UM campo; a tela leva à aba dele: preenche-se o
   //    apontado e gera de novo (o clique recusado é marcado `descoberta`). Só os campos que esta medição conhece.
   m.etapa = "gerar";
-  const RECUSA_DO_GERAR: Record<string, { aba: string; testId: string; opcao: string; nome: string }> = {
-    "financeiro.rateio.categoria_financeira_id": { aba: "financeiro", testId: "importacao-natureza", opcao: c.ref.natureza.label, nome: "Natureza de despesa (financeiro da compra)" },
-    "financeiro.rateio.centro_custo_id": { aba: "financeiro", testId: "importacao-centro", opcao: c.ref.centro.label, nome: "Centro de resultado (financeiro da compra)" }
-  };
+  const RECUSA_DO_GERAR: Record<string, { aba: string; testId: string; opcao: string; nome: string }> = {};
   let resposta: Response | null = null;
   for (let rodada = 1; rodada <= 6 && !resposta; rodada++) {
     await expect(gerar, "premissa: sem pendência da tela, Gerar compra libera").toBeEnabled();

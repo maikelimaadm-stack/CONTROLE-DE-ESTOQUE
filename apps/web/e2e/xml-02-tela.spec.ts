@@ -3,7 +3,7 @@ import { api, login } from "./helpers";
 import { test as testeDaCentral, expect, criarCadastro } from "./central-compras-fixtures";
 import { cabecalhosDaSessao } from "./top-config-08-comum";
 import {
-  API, ROTULO, TEXTO_DA_CONFERENCIA_DA_REFERENCIA, TEXTO_DA_CONFERENCIA_DO_PALPITE, abrirConferencia, caixaDoProduto, caminho, campoDoFormulario, cenarioDaXml02,
+  API, abrirConferencia, caixaDoProduto, caminho, campoDoFormulario, cenarioDaXml02,
   escapar, escolherNoSeletor, expectCamposAvancadosAusentes, gerarCompraPelaTela, importarNota, itemDo, lembrarNoCorpo, lerConferencia, produtoDo, quantidadeNotaBR, resumoDoVinculo, rotuloDoCampoDoProduto,
   totalDeVinculosLembrados, vinculoDe, vinculosLembradosDo, type CenarioDaXml02, type ConferenciaNoFio
 } from "./xml-02-comum";
@@ -105,28 +105,29 @@ test("X2-T1 — a tela diz de onde veio o sugerido: a descrição semelhante e a
   expect(noFio.itens.map((i) => [i.nItem, i.vinculo]), "o GET que a tela fez traz os MESMOS vínculos da leitura direta").toEqual(direta.itens.map((i) => [i.nItem, i.vinculo]));
   premissasDoCenario(c, noFio, "no fio");
 
-  // O PALPITE DA DESCRIÇÃO: o rótulo, a linha da conferência, o produto escolhido, "Lembrar" desmarcado, "Criar produto".
+  // O PALPITE DA DESCRIÇÃO: data-vinculo, produto escolhido, sem rótulo/linha de conferência na tela, "Criar produto".
   await expect(page.getByTestId(`importacao-item-${d}`)).toHaveAttribute("data-vinculo", "sugerido");
-  await expect(page.getByTestId(`importacao-item-${d}-vinculo`), "o rótulo diz a origem").toHaveText(ROTULO.descricao);
-  await expect(page.getByTestId(`importacao-item-${d}-sugestao-descricao`), "a linha que pede a conferência").toHaveText(TEXTO_DA_CONFERENCIA_DO_PALPITE);
-  await expect(page.getByTestId(`importacao-item-${d}-sugestao-referencia`), "a linha da referência é só da referência").toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${d}-vinculo`)).toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${d}-sugestao-descricao`)).toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${d}-sugestao-referencia`)).toHaveCount(0);
   await expect(caixaDoProduto(page, d), "o produto sugerido vem escolhido").toContainText(`${pd.codigo} — ${pd.descricao}`);
   await expect(page.getByTestId(`importacao-item-${d}-quantidade-nota`), "a quantidade da nota em pt-BR").toHaveText(quantidadeNotaBR(c.itens[d - 1]!.quantidade));
   await expectCamposAvancadosAusentes(page, d);
   await expect(page.getByTestId(`importacao-item-${d}-criar-produto`), "o palpite oferece \"Criar produto\", como o sem vínculo").toBeVisible();
 
-  // O PALPITE DA REFERÊNCIA (decisão do dono): o rótulo, a linha DELA, o produto escolhido, "Lembrar" desmarcado, "Criar produto".
+  // O PALPITE DA REFERÊNCIA (decisão do dono): data-vinculo, produto escolhido, sem rótulo/linha de conferência, "Criar produto".
   await expect(page.getByTestId(`importacao-item-${r}`)).toHaveAttribute("data-vinculo", "sugerido");
-  await expect(page.getByTestId(`importacao-item-${r}-vinculo`), "o rótulo diz a origem").toHaveText(ROTULO.referencia);
-  await expect(page.getByTestId(`importacao-item-${r}-sugestao-referencia`), "a linha que pede a conferência da referência").toHaveText(TEXTO_DA_CONFERENCIA_DA_REFERENCIA);
-  await expect(page.getByTestId(`importacao-item-${r}-sugestao-descricao`), "a linha da descrição é só da descrição").toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${r}-vinculo`)).toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${r}-sugestao-referencia`)).toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${r}-sugestao-descricao`)).toHaveCount(0);
   await expect(caixaDoProduto(page, r), "o produto da referência vem escolhido").toContainText(`${pr.codigo} — ${pr.descricao}`);
   await expect(page.getByTestId(`importacao-item-${r}-quantidade-nota`), "a quantidade da nota em pt-BR").toHaveText(quantidadeNotaBR(c.itens[r - 1]!.quantidade));
   await expectCamposAvancadosAusentes(page, r);
   await expect(page.getByTestId(`importacao-item-${r}-criar-produto`), "a referência oferece \"Criar produto\"").toBeVisible();
 
-  // O SEM VÍNCULO segue como antes (as linhas do palpite são só do palpite).
-  await expect(page.getByTestId(`importacao-item-${semProduto}-vinculo`)).toHaveText(ROTULO.semVinculo);
+  // O SEM VÍNCULO: data-vinculo nenhum, sem rótulo nem linhas de palpite.
+  await expect(page.getByTestId(`importacao-item-${semProduto}`)).toHaveAttribute("data-vinculo", "nenhum");
+  await expect(page.getByTestId(`importacao-item-${semProduto}-vinculo`)).toHaveCount(0);
   await expect(page.getByTestId(`importacao-item-${semProduto}-sugestao-descricao`)).toHaveCount(0);
   await expect(page.getByTestId(`importacao-item-${semProduto}-sugestao-referencia`)).toHaveCount(0);
   await expectCamposAvancadosAusentes(page, semProduto);
@@ -155,7 +156,7 @@ test("X2-T1 — a tela diz de onde veio o sugerido: a descrição semelhante e a
   await dialogo.getByRole("button", { name: "Cancelar", exact: true }).click();
   await expect(dialogo, "Cancelar fecha o diálogo sem criar nada").toBeHidden();
   await expect(caixaDoProduto(page, r), "o item continua com o produto da referência").toContainText(`${pr.codigo} — ${pr.descricao}`);
-  console.log(`[X2-T1] item ${d}: "${ROTULO.descricao}" + conferência + Criar produto | item ${r}: "${ROTULO.referencia}" + conferência + Criar produto | item ${semProduto}: "${ROTULO.semVinculo}"`
+  console.log(`[X2-T1] item ${d}: sugerido + produto pré-selecionado + Criar produto | item ${r}: sugerido + produto pré-selecionado | item ${semProduto}: nenhum vínculo`
     + ` | preenchimento do palpite no fio = ${JSON.stringify(vinculoDe(noFio, d).preenchimento)}; da referência = ${JSON.stringify(vinculoDe(noFio, r).preenchimento ?? null)}`);
 });
 
@@ -255,8 +256,9 @@ test("X2-T4 — o lote: o sugerido pela descrição NÃO entra no \"Criar N prod
   // A PESSOA TIRA o produto sugerido pela descrição (o "Limpar" da caixa): o item fica sem produto e passa a ser candidato do lote.
   await page.getByTestId(`importacao-item-${d}-produto`).getByRole("button", { name: "Limpar" }).click();
   await expect(caixaDoProduto(page, d), "a caixa ficou vazia").toHaveText("Selecione");
-  await expect(page.getByTestId(`importacao-item-${d}-sugestao-descricao`), "sem o produto sugerido, a linha da conferência some").toHaveCount(0);
-  await expect(page.getByTestId(`importacao-item-${d}-vinculo`), "o rótulo continua o da origem").toHaveText(ROTULO.descricao);
+  await expect(page.getByTestId(`importacao-item-${d}-sugestao-descricao`)).toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${d}-vinculo`)).toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${d}`)).toHaveAttribute("data-vinculo", "sugerido");
   await expect(page.getByTestId(`importacao-item-${d}-criar-produto`), "e o \"Criar produto\" continua").toBeVisible();
   await expect(botao, "tirado o produto, o palpite ENTRA no lote: sobe 1").toHaveAttribute("data-quantidade", String(quantidadeAntes + 1));
   await expect(botao).toHaveText("Criar 2 produtos da nota");
@@ -264,8 +266,9 @@ test("X2-T4 — o lote: o sugerido pela descrição NÃO entra no \"Criar N prod
   // A PESSOA TIRA também o produto da referência: o item fica sem produto, mas o lote NÃO o conta (o lote olha a identidade).
   await page.getByTestId(`importacao-item-${r}-produto`).getByRole("button", { name: "Limpar" }).click();
   await expect(caixaDoProduto(page, r), "a caixa da referência ficou vazia").toHaveText("Selecione");
-  await expect(page.getByTestId(`importacao-item-${r}-sugestao-referencia`), "sem o produto sugerido, a linha da conferência da referência some").toHaveCount(0);
-  await expect(page.getByTestId(`importacao-item-${r}-vinculo`), "o rótulo continua o da origem").toHaveText(ROTULO.referencia);
+  await expect(page.getByTestId(`importacao-item-${r}-sugestao-referencia`)).toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${r}-vinculo`)).toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${r}`)).toHaveAttribute("data-vinculo", "sugerido");
   await expect(page.getByTestId(`importacao-item-${r}-criar-produto`), "e o \"Criar produto\" de UM item continua").toBeVisible();
   await expect(botao, "sem o produto da referência, o lote NÃO sobe: a referência nunca entra").toHaveAttribute("data-quantidade", String(quantidadeAntes + 1));
   await expect(botao).toHaveText("Criar 2 produtos da nota");
@@ -310,10 +313,11 @@ test("X2-T5 — a troca de fornecedor refaz os vínculos e mantém os produtos s
   await expect(caixaDoProduto(page, d), "o palpite refeito traz o mesmo produto").toContainText(`${pd.codigo} — ${pd.descricao}`);
   await expect(caixaDoProduto(page, r), "a referência refeita traz o mesmo produto").toContainText(`${pr.codigo} — ${pr.descricao}`);
   await expect(caixaDoProduto(page, gtin), "o código de barras refeito traz o mesmo produto").toContainText(`${pg.codigo} — ${pg.descricao}`);
-  await expect(page.getByTestId(`importacao-item-${d}-sugestao-descricao`)).toHaveText(TEXTO_DA_CONFERENCIA_DO_PALPITE);
-  await expect(page.getByTestId(`importacao-item-${r}-sugestao-referencia`)).toHaveText(TEXTO_DA_CONFERENCIA_DA_REFERENCIA);
-  await expect(page.getByTestId(`importacao-item-${gtin}-vinculo`), "o código de barras continua identidade").toHaveText(ROTULO.codigoDeBarras);
-  await expect(page.getByTestId(`importacao-item-${gtin}-sugestao-descricao`), "a identidade não pede conferência").toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${d}-sugestao-descricao`)).toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${r}-sugestao-referencia`)).toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${gtin}`)).toHaveAttribute("data-vinculo", "sugerido");
+  await expect(page.getByTestId(`importacao-item-${gtin}-vinculo`)).toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${gtin}-sugestao-descricao`)).toHaveCount(0);
   await expect(page.getByTestId(`importacao-item-${gtin}-sugestao-referencia`)).toHaveCount(0);
   console.log(`[X2-T5] fornecedor escolhido: os três itens mantêm produto sugerido e sem campos de fator/lembrar na tela`);
 });
@@ -350,8 +354,9 @@ test("X2-T6 — a pessoa corrige o palpite (seletor ou \"Criar produto\"); o Ger
 
   // A REFERÊNCIA CORRIGIDA NO SELETOR: outro produto (sem fator na tela).
   await escolherNoSeletor(page, seletorR, certo.descricao, `Produto do item ${r} (o certo)`);
-  await expect(page.getByTestId(`importacao-item-${r}-sugestao-referencia`), "com outro produto, a linha da conferência do palpite some").toHaveCount(0);
-  await expect(page.getByTestId(`importacao-item-${r}-vinculo`), "o rótulo continua o da origem").toHaveText(ROTULO.referencia);
+  await expect(page.getByTestId(`importacao-item-${r}-sugestao-referencia`)).toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${r}-vinculo`)).toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${r}`)).toHaveAttribute("data-vinculo", "sugerido");
   await expect(caixaDoProduto(page, r), "o item fica com o produto da pessoa").toContainText(certo.descricao);
 
   // A DESCRIÇÃO CORRIGIDA PELO "CRIAR PRODUTO": o produto criado fica escolhido e o "Lembrar" marcado.
@@ -372,7 +377,7 @@ test("X2-T6 — a pessoa corrige o palpite (seletor ou \"Criar produto\"); o Ger
   expect([criado.description, criado.id === pd.id], "o produto criado tem a descrição da nota e NÃO é o do palpite").toEqual([itemD.descricao, false]);
   await expect(dialogo, "o diálogo fecha depois do 201").toBeHidden();
   await expect(caixaDoProduto(page, d), "o item recebe o produto criado").toContainText(criado.description);
-  await expect(page.getByTestId(`importacao-item-${d}-sugestao-descricao`), "com o produto criado, a linha da conferência do palpite some").toHaveCount(0);
+  await expect(page.getByTestId(`importacao-item-${d}-sugestao-descricao`)).toHaveCount(0);
 
   // O "GERAR COMPRA": os produtos ESCOLHIDOS, com lembrar_vinculo true, e os dois pares no banco.
   const g = await gerarCompraPelaTela(page, c, id, [r, d]);

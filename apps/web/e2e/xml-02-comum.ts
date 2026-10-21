@@ -297,14 +297,11 @@ export const caixaDoProduto = (page: Page, nItem: number) => page.getByTestId(`i
 export const campoDoFormulario = (raiz: Locator, rotulo: string) => raiz.locator("label", { hasText: exato(rotulo, true) }).locator("..");
 
 /**
- * O "Gerar compra" pela tela: o Local de cada item (`itensComLocal`), a natureza e o centro do documento na aba
- * Financeiro e o clique. Devolve o corpo que foi no fio, o status e a resposta.
+ * O "Gerar compra" pela tela: o Local de cada item (`itensComLocal`) e o clique. Natureza/centro/rateio saíram da
+ * conferência — o corpo manda rateio documento com IDs nulos. Devolve o corpo que foi no fio, o status e a resposta.
  */
 export async function gerarCompraPelaTela(page: Page, c: CenarioDaXml02, importacaoId: string, itensComLocal: readonly number[]) {
   for (const n of itensComLocal) await escolherNoSeletor(page, page.getByTestId(`importacao-item-${n}-local`), c.local.nome, `Local do item ${n}`);
-  await page.getByTestId("importacao-aba-financeiro-rotulo").click();
-  await escolherNoSeletor(page, page.getByTestId("importacao-natureza"), c.ref.natureza.label, "Natureza de despesa da compra");
-  await escolherNoSeletor(page, page.getByTestId("importacao-centro"), c.ref.centro.label, "Centro de resultado da compra");
   const gerar = page.getByTestId("importacao-gerar-compra");
   await expect(gerar, "nada bloqueia o Gerar compra").toBeEnabled();
   const post = page.waitForResponse((r) => r.request().method() === "POST" && caminho(r) === `/api/compras/importacoes/${importacaoId}/gerar-compra`, { timeout: 30_000 });

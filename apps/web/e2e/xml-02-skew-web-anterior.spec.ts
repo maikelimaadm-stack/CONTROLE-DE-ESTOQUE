@@ -4,7 +4,7 @@ import { test, expect } from "./central-compras-fixtures";
 import { shaDaBase } from "./skew-fonte-da-base";
 import { vigiar, type Mundo } from "./operacoes-01-f2-skew-comum";
 import {
-  COMMITS_DA_XML02, MARCA_DA_XML02, ROTULO, TEXTO_DA_CONFERENCIA_DA_REFERENCIA, TEXTO_DA_CONFERENCIA_DO_PALPITE, abrirConferencia, caixaDoProduto, cenarioDaXml02, fonteDoCommitContem,
+  COMMITS_DA_XML02, MARCA_DA_XML02, abrirConferencia, caixaDoProduto, cenarioDaXml02, fonteDoCommitContem,
   fonteDoHeadContem, gerarCompraPelaTela, importarNota, itemDo, lembrarNoCorpo, lerConferencia, produtoDo, resumoDoVinculo, vinculoDe,
   vinculosLembradosDo, webDaBaseTemAXml02, webDaBaseTemImportacaoSemFatorNaTela, type ConferenciaNoFio
 } from "./xml-02-comum";
@@ -104,28 +104,30 @@ test("XML-02 · K2 (sentido 2) — a conferência da base sobre a API deste HEAD
   }
 
   const semFatorNaTela = webDaBaseTemImportacaoSemFatorNaTela();
-  // O QUE A JANELA MOSTRA: o rótulo, o "Criar produto" e (se existir) o "Lembrar".
-  const rotuloNaTela = async (k: number) => (await item(k).getByText(/^Sugerido( \(.+\))?$/).allTextContents()).join(" | ");
+  // O QUE A JANELA MOSTRA: data-vinculo, "Criar produto", (se existir) "Lembrar" — sem rótulo nem linha de palpite na conferência enxuta.
   const lembrarNaTela = async (k: number) => ((await page.getByTestId(`importacao-item-${k}-lembrar`).count()) > 0 ? await page.getByTestId(`importacao-item-${k}-lembrar`).isChecked() : null);
   const doCartao = async (k: number) => ({
-    rotulo: await rotuloNaTela(k), lembrar: await lembrarNaTela(k), criarProduto: await page.getByTestId(`importacao-item-${k}-criar-produto`).count(),
+    vinculo: await item(k).getAttribute("data-vinculo"), lembrar: await lembrarNaTela(k), criarProduto: await page.getByTestId(`importacao-item-${k}-criar-produto`).count(),
     conferenciaDaDescricao: await page.getByTestId(`importacao-item-${k}-sugestao-descricao`).count(),
-    conferenciaDaReferencia: await page.getByTestId(`importacao-item-${k}-sugestao-referencia`).count()
+    conferenciaDaReferencia: await page.getByTestId(`importacao-item-${k}-sugestao-referencia`).count(),
+    rotuloVinculo: await page.getByTestId(`importacao-item-${k}-vinculo`).count()
   });
   const observado = { D: await doCartao(n.D), R: await doCartao(n.R) };
-  const linha = (o: typeof observado.D) => `rótulo="${o.rotulo}" Lembrar=${o.lembrar ? "MARCADO" : "desmarcado"} Criar produto=${o.criarProduto} linha do palpite (descrição/referência)=${o.conferenciaDaDescricao}/${o.conferenciaDaReferencia}`;
+  const linha = (o: typeof observado.D) => `data-vinculo=${o.vinculo} Lembrar=${o.lembrar === null ? "ausente" : o.lembrar ? "MARCADO" : "desmarcado"} Criar produto=${o.criarProduto} rótulo=${o.rotuloVinculo} linha palpite=${o.conferenciaDaDescricao}/${o.conferenciaDaReferencia}`;
   console.log(`[skew] XML-02 · K2 · mundo ${mundo} · na tela da base: item ${n.D} (descrição) ${linha(observado.D)} | item ${n.R} (referência) ${linha(observado.R)}`);
   if (mundo === "novo") {
-    expect(observado.D?.rotulo, "mundo novo: palpite da descrição").toBe(ROTULO.descricao);
-    expect(observado.R?.rotulo, "mundo novo: palpite da referência").toBe(ROTULO.referencia);
+    expect(observado.D?.vinculo, "mundo novo: palpite da descrição").toBe("sugerido");
+    expect(observado.R?.vinculo, "mundo novo: palpite da referência").toBe("sugerido");
+    expect(observado.D?.conferenciaDaDescricao, "mundo novo: sem linha de conferência da descrição").toBe(0);
+    expect(observado.R?.conferenciaDaReferencia, "mundo novo: sem linha de conferência da referência").toBe(0);
+    expect(observado.D?.rotuloVinculo, "mundo novo: sem rótulo de vínculo").toBe(0);
+    expect(observado.R?.rotuloVinculo, "mundo novo: sem rótulo de vínculo").toBe(0);
     if (!semFatorNaTela) {
-      expect(observado, "mundo novo (com Lembrar na tela): os dois palpites desmarcados").toEqual({
-        D: { rotulo: ROTULO.descricao, lembrar: false, criarProduto: 1, conferenciaDaDescricao: 1, conferenciaDaReferencia: 0 },
-        R: { rotulo: ROTULO.referencia, lembrar: false, criarProduto: 1, conferenciaDaDescricao: 0, conferenciaDaReferencia: 1 }
+      expect(observado, "mundo novo (com Lembrar na tela): os dois palpites desmarcados, Criar produto visível").toEqual({
+        D: { vinculo: "sugerido", lembrar: false, criarProduto: 1, conferenciaDaDescricao: 0, conferenciaDaReferencia: 0, rotuloVinculo: 0 },
+        R: { vinculo: "sugerido", lembrar: false, criarProduto: 1, conferenciaDaDescricao: 0, conferenciaDaReferencia: 0, rotuloVinculo: 0 }
       });
     }
-    await expect(page.getByTestId(`importacao-item-${n.D}-sugestao-descricao`)).toHaveText(TEXTO_DA_CONFERENCIA_DO_PALPITE);
-    await expect(page.getByTestId(`importacao-item-${n.R}-sugestao-referencia`)).toHaveText(TEXTO_DA_CONFERENCIA_DA_REFERENCIA);
   }
 
   // O "GERAR COMPRA" da base, sem tocar em nada.

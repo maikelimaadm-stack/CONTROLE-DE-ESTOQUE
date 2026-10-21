@@ -119,7 +119,7 @@ async function abrirConferencia(page: Page, id: string): Promise<ConferenciaNoFi
 const fatorCerto = (valor: string, certo: string) => /^\d{1,12}(\.\d{1,6})?$/.test(valor) && D(valor).eq(D(certo));
 
 interface ItemAoAbrir { n: number; fator: string; tipo: string; localVazio: boolean; marcasNaTela: string[]; temFatorNaTela: boolean }
-interface FinanceiroAoAbrir { formaVazia: boolean; modoCondicao: boolean; condicaoVazia: boolean; vencimentoVazio: boolean; naturezaVisivel: boolean; naturezaVazia: boolean; centroVazio: boolean }
+interface FinanceiroAoAbrir { formaVazia: boolean; modoCondicao: boolean; condicaoVazia: boolean; vencimentoVazio: boolean }
 
 /** A forma de pagamento ao abrir (aba Financeiro), sem nenhum gesto: vazia?, a origem declarada e o porquê do campo vazio. */
 async function formaAoAbrir(page: Page) {
@@ -210,14 +210,10 @@ test("XML-04 MEDIÇÃO — nota de 10 itens: fatores a digitar/conferir (E1), fo
     if (aba === "financeiro") {
       const vencimento = page.getByTestId("importacao-vencimento");
       const modoCondicao = (await vencimento.count()) > 0;
-      const natureza = page.getByTestId("importacao-natureza");
-      const naturezaVisivel = (await natureza.count()) > 0;
       financeiroAoAbrir = {
         formaVazia: await seletorVazio(page.getByTestId("importacao-forma")), modoCondicao,
         condicaoVazia: modoCondicao ? await seletorVazio(page.getByTestId("importacao-condicao")) : true,
-        vencimentoVazio: modoCondicao ? (await vencimento.inputValue()) === "" : true,
-        naturezaVisivel, naturezaVazia: naturezaVisivel ? await seletorVazio(natureza) : false,
-        centroVazio: naturezaVisivel ? await seletorVazio(page.getByTestId("importacao-centro")) : false
+        vencimentoVazio: modoCondicao ? (await vencimento.inputValue()) === "" : true
       };
       explicacaoNoFinanceiro = await page.getByTestId("importacao-aba-financeiro").locator('[data-testid^="importacao-parcelas-"]')
         .evaluateAll((els) => els.map((e) => ({ testid: e.getAttribute("data-testid") ?? "", texto: (e as HTMLElement).innerText })));
@@ -270,8 +266,7 @@ test("XML-04 MEDIÇÃO — nota de 10 itens: fatores a digitar/conferir (E1), fo
   };
 
   /* ═════════════ FASE B — o OPERADOR MÍNIMO, da conferência aberta (recarregada) até a compra gerada ═════════════ */
-  const regras = await api<{ geraTitulos: boolean; exigeArmazem: boolean; padroes: { natureza: unknown; centro: unknown } | null }>(
-    page, "GET", `/api/compras/compras/regras-da-operacao?tipo_operacao_id=${c.top}`);
+  const regras = await api<{ exigeArmazem: boolean }>(page, "GET", `/api/compras/compras/regras-da-operacao?tipo_operacao_id=${c.top}`);
   const reaberta = await abrirConferencia(page, imp.id);
   expect(reaberta.itens, "premissa: a conferência reaberta é a mesma que foi medida").toEqual(conf.itens);
   const g = new Gestos();
@@ -304,12 +299,9 @@ test("XML-04 MEDIÇÃO — nota de 10 itens: fatores a digitar/conferir (E1), fo
     }
   }
 
-  // FINANCEIRO: a forma (vazia), o vencimento (condição sem nada), a natureza e o centro (exigidos e vazios)
-  const exigeClassificacao = regras.geraTitulos && !(regras.padroes?.natureza && regras.padroes?.centro);
+  // FINANCEIRO: a forma (vazia), o vencimento (condição sem nada) — natureza/centro saíram da conferência
   const pedeVencimento = fin.modoCondicao && fin.condicaoVazia && fin.vencimentoVazio;
-  const pedeNatureza = exigeClassificacao && fin.naturezaVisivel && fin.naturezaVazia;
-  const pedeCentro = exigeClassificacao && fin.naturezaVisivel && fin.centroVazio;
-  if (fin.formaVazia || pedeVencimento || pedeNatureza || pedeCentro) {
+  if (fin.formaVazia || pedeVencimento) {
     await g.click(page.getByTestId("importacao-aba-financeiro-rotulo"), "aba Financeiro");
     await expect(page.getByTestId("importacao-aba-financeiro")).toBeVisible();
     if (fin.formaVazia) await escolherNoSeletorContando(page, g, page.getByTestId("importacao-forma"), COBRANCA_DO_CENARIO.formaCerta, "Forma de pagamento");
@@ -321,8 +313,6 @@ test("XML-04 MEDIÇÃO — nota de 10 itens: fatores a digitar/conferir (E1), fo
       await g.press(campo, "Enter", "Vencimento");
       await expect(page.getByTestId("importacao-vencimento"), "o vencimento virou a data ISO da 1ª duplicata").toHaveValue(vencimento);
     }
-    if (pedeNatureza) await escolherNoSeletorContando(page, g, page.getByTestId("importacao-natureza"), c.ref.natureza.label, "Natureza de despesa");
-    if (pedeCentro) await escolherNoSeletorContando(page, g, page.getByTestId("importacao-centro"), c.ref.centro.label, "Centro de resultado");
   }
 
   // GERAR COMPRA

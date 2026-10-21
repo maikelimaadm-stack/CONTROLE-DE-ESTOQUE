@@ -63,15 +63,13 @@ function premissaDaApiNova(conf: ConferenciaNoFioDaXml04, c: CenarioDaXml04, con
   expect(conf.financeiro.forma, `${contexto}: a forma da nota, ligada`).toEqual({ situacao: "ligada", tPag: COBRANCA_DO_CENARIO.tPag, forma: { id: c.formaCerta.id, nome: c.formaCerta.label } });
 }
 
-/** O vencimento (a condição: as duplicatas não fecham), a natureza e o centro do documento, na aba Financeiro. */
-async function resolverOFinanceiro(page: Page, c: CenarioDaXml04) {
+/** O vencimento (a condição: as duplicatas não fecham) — natureza/centro saíram da conferência. */
+async function resolverOFinanceiro(page: Page) {
   await irParaAba(page, "financeiro");
   const vencimento = page.getByTestId("importacao-aba-financeiro").getByLabel("Vencimento", { exact: true });
   await vencimento.fill(dataComoSeDigita("2026-11-16"));
   await vencimento.press("Enter");
   await expect(page.getByTestId("importacao-vencimento")).toHaveValue("2026-11-16");
-  await escolherNoSeletor(page, page.getByTestId("importacao-natureza"), c.ref.natureza.label, "Natureza de despesa da compra");
-  await escolherNoSeletor(page, page.getByTestId("importacao-centro"), c.ref.centro.label, "Centro de resultado da compra");
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -134,7 +132,7 @@ test("XML-04 · K2 (sentido 2) — a conferência da base sobre a API deste HEAD
     for (const [k, fator] of [[n.U1, "20"], [n.U2, "10"]] as const) await page.getByTestId(`importacao-item-${k}-fator`).fill(fator);
   }
 
-  await resolverOFinanceiro(page, c);
+  await resolverOFinanceiro(page);
   const formaNaBase = await page.getByTestId("importacao-forma").getByRole("combobox").innerText();
   const gerar = page.getByTestId("importacao-gerar-compra");
   await expect(gerar, "os avisos novos não bloqueiam: o Gerar compra está livre").toBeEnabled();
