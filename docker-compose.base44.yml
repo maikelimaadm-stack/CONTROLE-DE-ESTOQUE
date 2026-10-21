@@ -1,0 +1,174 @@
+# =====================================================================
+# AMBIENTE DE DESENVOLVIMENTO (Base44) — Agro ERP
+#
+# NÃO é o compose do repositório: aquele empacota imagens de produção (a edição feita aqui
+# precisa aparecer sem rebuild). Este roda o código CLONADO, com bind mount e servidores de
+# desenvolvimento (tsx watch / next dev).
+#
+# O que sobe:
+#   db    → PostgreSQL 16 (era Supabase em produção; as migrations rodam em Postgres puro,
+#           é o que o CI já faz — `.github/workflows/ci.yml`, job `integration`).
+#   setup → one-shot: `pnpm install --frozen-lockfile`, build dos pacotes do workspace
+#           (dist/ é o que os exports dos pacotes servem) e `@agro/db seed` (migrations +
+#           dados de referência + organização DEMO).
+#   roles → one-shot: dá LOGIN ao papel `erp_app` (sem BYPASSRLS), como a API usa em produção.
+#   api   → Fastify em 3333 (AUTH_MODE=local: login por e-mail/senha na tabela erp.users).
+#   web   → Next.js dev em 3000 (entrada pública do preview).
+#
+# Credenciais de infraestrutura (postgres/erp_app) são locais e geradas aqui — não são
+# segredos do usuário e não passam por `/run/base44/app.env`. Nenhum serviço externo é
+# exigido para o app subir: anexos ficam no banco (bytea) e a análise por satélite nasce
+# desligada (COPERNICUS_ENABLED=0).
+#
+# Variáveis BASE44_* vêm do ambiente do sandbox e NUNCA são gravadas resolvidas em arquivo.
+# =====================================================================
+name: agro-base44
+
+services:
+  db:
+    image: postgres:16
+    restart: on-failure
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: agro_erp
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d agro_erp"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    labels:
+      base44.project: "PostgreSQL (agro_erp)"
+      base44.kind: "infra"
+
+  # Instalador único do workspace: nenhum outro serviço roda `pnpm install`, para não haver
+  # dois instaladores concorrentes sobre o mesmo node_modules (bind mount, compartilhado).
+  setup:
+    image: node:22
+    working_dir: /workspace
+    environment:
+      CI: "true"
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      NEXT_TELEMETRY_DISABLED: "1"
+      # e2e (Playwright) não faz parte do preview: baixar os navegadores aqui só custaria minutos.
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      DATABASE_URL: "postgresql://postgres:postgres@db:5432/agro_erp"
+    volumes:
+      - ./:/workspace
+    depends_on:
+      db:
+        condition: service_healthy
+    command:
+      - sh
+      - -ec
+      - >-
+        corepack enable pnpm &&
+        pnpm install --frozen-lockfile &&
+        pnpm --filter @agro/shared build &&
+        pnpm --filter @erp/plataforma build &&
+        pnpm --filter @agro/domain build &&
+        pnpm --filter @agro/db build &&
+        pnpm --filter @agro/db seed
+
+  # A API fala com o banco como `erp_app` (sem BYPASSRLS), exatamente como em produção —
+  # conectar como superusuário desligaria a RLS que o app inteiro assume.
+  roles:
+    image: postgres:16
+    working_dir: /workspace
+    environment:
+      PGPASSWORD: postgres
+    volumes:
+      - ./:/workspace:ro
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    command:
+      - psql
+      - -h
+      - db
+      - -U
+      - postgres
+      - -d
+      - agro_erp
+      - -v
+      - ON_ERROR_STOP=1
+      - -f
+      - /workspace/.base44/db-roles.sql
+
+  api:
+    image: node:22
+    restart: on-failure
+    working_dir: /workspace
+    environment:
+      - NODE_ENV=development
+      - HOST=0.0.0.0
+      - PORT=3333
+      - API_LOG_LEVEL=info
+      - AUTH_MODE=local
+      - DATABASE_URL=postgresql://erp_app:erp_app@db:5432/agro_erp
+      # Origens permitidas do navegador: o host público do preview desta sandbox é a origem
+      # REAL da página (o proxy entrega outro Host ao processo). `WEB_ORIGIN_PREVIEW_SUFFIX`
+      # não serve aqui: ele só aceita sufixo de preview da Vercel, por contrato de segurança.
+      - WEB_ORIGIN=http://localhost:3000,https://3000-${BASE44_PUBLIC_HOST_SUFFIX}
+    volumes:
+      - ./:/workspace
+    ports:
+      - "3333:3333"
+    depends_on:
+      db:
+        condition: service_healthy
+      roles:
+        condition: service_completed_successfully
+    command: ["sh", "-ec", "corepack enable pnpm && exec pnpm --filter @agro/api dev"]
+    healthcheck:
+      test:
+        ["CMD", "node", "-e", "fetch('http://127.0.0.1:3333/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    labels:
+      base44.project: "API (Fastify)"
+      base44.kind: "api"
+      base44.port: "3333"
+
+  web:
+    image: node:22
+    restart: on-failure
+    working_dir: /workspace
+    environment:
+      - NODE_ENV=development
+      - NEXT_TELEMETRY_DISABLED=1
+      # A URL da API é lida pelo NAVEGADOR: o host público do sandbox, nunca `localhost`.
+      - NEXT_PUBLIC_API_URL=https://3333-${BASE44_PUBLIC_HOST_SUFFIX}
+      # Só o preview: mostra as credenciais demo na tela de login (seed cria admin@demo.local).
+      - NEXT_PUBLIC_DEMO_MODE=true
+      # Gate do modo preview (o `next.config.ts` só libera a origem do preview com isto em "1").
+      - BASE44_PREVIEW_MODE
+      - BASE44_PUBLIC_HOST_SUFFIX
+    volumes:
+      - ./:/workspace
+    ports:
+      - "3000:3000"
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+      api:
+        condition: service_healthy
+    command: ["sh", "-ec", "corepack enable pnpm && exec pnpm --filter @agro/web dev"]
+    healthcheck:
+      test:
+        ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+    labels:
+      base44.project: "Web (Next.js)"
+      base44.kind: "web"
+      base44.port: "3000"
+
+volumes:
+  db-data:
