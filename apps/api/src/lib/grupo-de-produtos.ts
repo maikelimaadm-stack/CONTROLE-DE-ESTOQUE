@@ -11,11 +11,16 @@
  * - produto só em grupo ANALÍTICO, ativo, não excluído, da organização. Inexistente, de outra organização
  *   e excluído recebem a MESMA recusa (não revela existência).
  */
+import type { Tx } from "@agro/db";
 import { validation } from "./errors.js";
 import type { ServiceCtx } from "./context.js";
 
 type Linha = Record<string, unknown>;
 const campo = (path: string, message: string) => validation(message, [{ path: [path], message }]);
+
+/** Por transação: o mesmo `group_id` se repete em dezenas de linhas da planilha — uma SELECT basta. */
+const gruposOkPorTx = new WeakMap<Tx, Set<string>>();
+const gruposRuimPorTx = new WeakMap<Tx, Set<string>>();
 
 export const MENSAGEM_GRUPO_DO_PRODUTO = "Escolha um grupo de produtos analítico e ativo (Analítico: Sim).";
 export const MENSAGEM_GRUPO_SEM_CODIGO = "Informe o código do grupo.";
@@ -53,7 +58,14 @@ export async function conferirGrupoDoProduto(ctx: ServiceCtx, data: Linha, atual
   const grupo = data["group_id"];
   if (atual !== null && grupo === atual["group_id"]) return;
   if (typeof grupo !== "string") throw campo("group_id", MENSAGEM_GRUPO_DO_PRODUTO);
+  let ok = gruposOkPorTx.get(ctx.tx);
+  if (!ok) { ok = new Set(); gruposOkPorTx.set(ctx.tx, ok); }
+  if (ok.has(grupo)) return;
+  let ruim = gruposRuimPorTx.get(ctx.tx);
+  if (!ruim) { ruim = new Set(); gruposRuimPorTx.set(ctx.tx, ruim); }
+  if (ruim.has(grupo)) throw campo("group_id", MENSAGEM_GRUPO_DO_PRODUTO);
   const r = await ctx.tx.query(
     "select 1 from erp.product_groups where id=$1 and organization_id=$2 and deleted_at is null and is_active and kind='analytic'", [grupo, ctx.orgId]);
-  if (!r.rowCount) throw campo("group_id", MENSAGEM_GRUPO_DO_PRODUTO);
+  if (!r.rowCount) { ruim.add(grupo); throw campo("group_id", MENSAGEM_GRUPO_DO_PRODUTO); }
+  ok.add(grupo);
 }

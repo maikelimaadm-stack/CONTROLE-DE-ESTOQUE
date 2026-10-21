@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { getResource, RESOURCES } from "@agro/domain";
-import { ACOES_IMPORTACAO, aceitaAtualizar, cabecalhos, cabecalhosDaAcao, campoDoCodigo, colunasQueMudaram, resolverCodigo } from "../../src/lib/importacao.js";
+import { ACOES_IMPORTACAO, aceitaAtualizar, cabecalhos, cabecalhosDaAcao, campoDoCodigo, colunasQueMudaram, comTotalDoArquivo, LOTE_DA_IMPORTACAO, recortarPlanilha, resolverCodigo, type PlanilhaLida } from "../../src/lib/importacao.js";
 
 /**
  * IMPORTAR-01 (decisão 317) — as contas PURAS do ATUALIZAR, sem banco: quais cadastros têm a ação, as colunas do modelo
@@ -55,5 +55,18 @@ describe("IMPORTAR-01 · unitário da ação", () => {
     // a chave nunca vai no corpo; se a porta a mudasse (regra do cadastro), a prévia mostraria
     expect(colunasQueMudaram(cols, antes, { ...antes, code: "99999" })).toEqual(["Código"]);
     expect(colunasQueMudaram(cols, { ...antes, barcode: undefined }, { ...antes, barcode: null }), "ausente e nulo são o mesmo vazio").toEqual([]);
+  });
+
+  it("U6: recorte offset/limit fatia as linhas de dados; lote padrão 100; linhas_arquivo só quando recortou", () => {
+    expect(LOTE_DA_IMPORTACAO).toBe(100);
+    const linhas = Array.from({ length: 5 }, (_, i) => ({ n: i + 2, celulas: new Map(), erros: [] as { linha: number; coluna: string | null; mensagem: string }[] }));
+    const planilha = { cols: [], presentes: new Set<string>(), linhas, erros: [] } satisfies PlanilhaLida;
+    expect(recortarPlanilha(planilha).linhas).toHaveLength(5);
+    expect(recortarPlanilha(planilha, 0, 2).linhas.map((l) => l.n)).toEqual([2, 3]);
+    expect(recortarPlanilha(planilha, 4, 10).linhas.map((l) => l.n)).toEqual([6]);
+    expect(recortarPlanilha(planilha, 10, 10).linhas).toEqual([]);
+    const base = { linhas: 2, gravadas: 0, erros: [] as { linha: number; coluna: string | null; mensagem: string }[], simulacao: true as const, modo: "tudo" as const, certas: 2, com_erro: 0, planilha_erros_base64: null };
+    expect(comTotalDoArquivo(base, 250, false)).toEqual(base);
+    expect(comTotalDoArquivo(base, 250, true)).toEqual({ ...base, linhas_arquivo: 250 });
   });
 });

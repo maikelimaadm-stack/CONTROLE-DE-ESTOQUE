@@ -413,6 +413,23 @@ export interface ResultadoImportacao {
   com_erro: number;
   /** XLSX com SÓ as linhas com erro (colunas do modelo + "Erros"), em base64; null sem linha com erro ou acima do limite */
   planilha_erros_base64: string | null;
+  /**
+   * Total de linhas de dados no arquivo (antes do recorte `offset`/`limit`). Aditivo: a tela usa para progresso
+   * em lotes; cliente antigo ignora. Ausente = o pedido processou o arquivo inteiro (`linhas` = o total).
+   */
+  linhas_arquivo?: number;
+}
+
+/** Teto de linhas por pedido HTTP na importação em lotes (abaixo do teto de ~60 s da ponte Vercel Hobby). */
+export const LOTE_DA_IMPORTACAO = 100;
+
+/**
+ * Recorta as linhas de dados já lidas (`offset`/`limit` 0-based sobre o array, não o número da planilha).
+ * Sem os dois parâmetros, devolve a planilha intacta. Fatia vazia (offset além do fim) = linhas [].
+ */
+export function recortarPlanilha(planilha: PlanilhaLida, offset?: number, limit?: number): PlanilhaLida {
+  if (offset === undefined || limit === undefined) return planilha;
+  return { ...planilha, linhas: planilha.linhas.slice(offset, offset + limit) };
 }
 /** O que muda numa linha do ATUALIZAR: a linha, o código e os TÍTULOS das colunas cujo valor gravado mudou. */
 export interface AlteracaoImportacao { linha: number; codigo: string; colunas: string[] }
@@ -797,6 +814,11 @@ export async function importarPlanilha(ctx: ServiceCtx, def: ResourceDef, planil
   // planilha de erros na MESMA execução, do arquivo já lido em memória: nunca relido depois do commit
   const planilha_erros_base64 = linhasComErro.size ? await gerarPlanilhaErros(planilha, erros) : null;
   return { linhas: planilha.linhas.length, gravadas, erros, simulacao, modo, certas, com_erro: linhasComErro.size, planilha_erros_base64 };
+}
+
+/** Anexa `linhas_arquivo` (total antes do recorte) quando o pedido veio em lote. */
+export function comTotalDoArquivo<T extends ResultadoImportacao>(r: T, linhasArquivo: number, recortou: boolean): T {
+  return recortou ? { ...r, linhas_arquivo: linhasArquivo } : r;
 }
 
 // ------------------------------------------------------------------ ATUALIZAR (IMPORTAR-01, decisão 317)

@@ -26,6 +26,7 @@
  * As regras valem para gravações NOVAS. Um registro antigo fora da máscara continua legível e editável em
  * outros campos; só código ou superior alterados passam de novo pela conferência.
  */
+import type { Tx } from "@agro/db";
 import type { FieldDef, ResourceDef } from "@agro/domain";
 import { getResource } from "@agro/domain";
 import { ehCadastroCodigoHierarquico, larguraDosNiveis, mascaraDoCadastro, nivelDoCodigo, proximoCodigoHierarquico, validarCodigoHierarquico, MASCARA_CODIGO_PADRAO } from "@agro/domain";
@@ -37,6 +38,10 @@ import { MENSAGEM_NOME_ENTRE_IRMAOS } from "./grupo-de-produtos.js";
 import type { ServiceCtx } from "./context.js";
 import { conferirAnaliticoEmUso } from "./analitico-em-uso.js";
 import { detalheDoErro } from "./ficha-em-abas.js";
+
+/** Por transação: o mesmo grupo/natureza/centro se repete na planilha — um `for share` por id. */
+const analiticoOkPorTx = new WeakMap<Tx, Set<string>>();
+const analiticoRuimPorTx = new WeakMap<Tx, Set<string>>();
 
 type Linha = Record<string, unknown>;
 const campo = (path: string, message: string) => validation(message, [{ path: [path], message }]);
@@ -441,6 +446,15 @@ async function precisaRecusar(ctx: ServiceCtx, f: FieldDef, v: unknown, anterior
   if (v === null || v === undefined || v === "" || (temAnterior && v === anterior)) return false;
   const alvo = getResource(f.ref.resource);
   if (!alvo?.tree) return false;
+  const chave = `${alvo.table}:${String(v)}`;
+  let ok = analiticoOkPorTx.get(ctx.tx);
+  if (!ok) { ok = new Set(); analiticoOkPorTx.set(ctx.tx, ok); }
+  if (ok.has(chave)) return false;
+  let ruim = analiticoRuimPorTx.get(ctx.tx);
+  if (!ruim) { ruim = new Set(); analiticoRuimPorTx.set(ctx.tx, ruim); }
+  if (ruim.has(chave)) return true;
   const r = await ctx.tx.query(`select 1 from erp.${ident(alvo.table)} where id=$1 and organization_id=$2 and kind='analytic'${alvo.softDelete ? " and deleted_at is null" : ""} for share`, [String(v), ctx.orgId]);
-  return !r.rowCount;
+  if (r.rowCount) { ok.add(chave); return false; }
+  ruim.add(chave);
+  return true;
 }

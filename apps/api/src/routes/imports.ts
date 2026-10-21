@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getResource, type ResourceDef } from "@agro/domain";
 import { runService, requirePermission } from "../lib/service.js";
 import { notFound, validation } from "../lib/errors.js";
-import { ACOES_IMPORTACAO, MSG_SEM_CODIGO, aceitaAtualizar, atualizarPlanilha, gerarModelo, importarPlanilha, lerPlanilha, type AcaoImportacao, type ResultadoAtualizacao, type ResultadoImportacao } from "../lib/importacao.js";
+import { ACOES_IMPORTACAO, MSG_SEM_CODIGO, aceitaAtualizar, atualizarPlanilha, comTotalDoArquivo, gerarModelo, importarPlanilha, lerPlanilha, recortarPlanilha, type AcaoImportacao, type ResultadoAtualizacao, type ResultadoImportacao } from "../lib/importacao.js";
 import { createOne, getOne, updateOne } from "./resources.js";
 
 /** Desfaz a transação da importação (prévia, ou arquivo com erro) sem transformar o resultado em erro HTTP. */
@@ -47,18 +47,35 @@ export default async function importRoutes(app: FastifyInstance) {
     const permissao = permissaoDaAcao(def, acao);
     // a capacidade vem ANTES de abrir o arquivo: quem não pode criar (ou editar) não faz o servidor descompactar nada
     requirePermission(app.requireCtx(req), permissao);
-    // `modo` (CADASTROS FASE 2): `tudo` é o padrão e o comportamento anterior; valor fora da lista é recusado (422)
-    const q = z.object({ simular: z.enum(["0", "1"]).default("0"), modo: z.enum(["tudo", "parcial"]).default("tudo"), acao: z.enum(ACOES_IMPORTACAO).default("criar") }).strict().parse(req.query);
+    // `modo` (CADASTROS FASE 2): `tudo` é o padrão e o comportamento anterior; valor fora da lista é recusado (422).
+    // `offset`/`limit` (lote): os DOIS juntos ou nenhum — fatia as linhas de dados já lidas; a tela usa para
+    // progresso e para caber no teto de 60 s da ponte Vercel. Pedido sem eles = arquivo inteiro, como antes.
+    const q = z.object({
+      simular: z.enum(["0", "1"]).default("0"),
+      modo: z.enum(["tudo", "parcial"]).default("tudo"),
+      acao: z.enum(ACOES_IMPORTACAO).default("criar"),
+      offset: z.coerce.number().int().min(0).optional(),
+      limit: z.coerce.number().int().min(1).max(500).optional(),
+    }).strict().parse(req.query);
+    if ((q.offset === undefined) !== (q.limit === undefined)) throw validation("Informe offset e limit juntos, ou nenhum dos dois.");
     if (acao === "atualizar" && !aceitaAtualizar(def)) throw validation(MSG_SEM_CODIGO);
     const d = z.object({ arquivo_base64: z.string().min(1) }).strict().parse(req.body);
     const arquivo = Buffer.from(d.arquivo_base64, "base64");
     if (arquivo.byteLength > ARQUIVO_MAXIMO) throw validation("Arquivo maior que 8 MB.");
     const simulacao = q.simular === "1";
     // leitura FORA da transação: nenhuma conexão do pool fica presa enquanto o XLSX é descompactado e percorrido
-    const planilha = await lerPlanilha(def, arquivo, acao);
+    const lida = await lerPlanilha(def, arquivo, acao);
+    const linhasArquivo = lida.linhas.length;
+    const recortou = q.offset !== undefined && q.limit !== undefined;
+    const planilha = recortarPlanilha(lida, q.offset, q.limit);
     const modo = q.modo;
+    const vazioDoLote = (): ResultadoImportacao => ({
+      linhas: 0, gravadas: 0, erros: [], simulacao, modo, certas: 0, com_erro: 0, planilha_erros_base64: null,
+      ...(recortou ? { linhas_arquivo: linhasArquivo } : {}),
+    });
     if (acao === "atualizar") {
-      if (planilha.erros.length) return reply.status(422).send({ linhas: 0, gravadas: 0, erros: planilha.erros, simulacao, modo, certas: 0, com_erro: 0, planilha_erros_base64: null, acao, casaram: 0, nao_casaram: 0, sem_alteracao: 0, alteracoes: [] } satisfies ResultadoAtualizacao);
+      if (lida.erros.length) return reply.status(422).send(comTotalDoArquivo({ linhas: 0, gravadas: 0, erros: lida.erros, simulacao, modo, certas: 0, com_erro: 0, planilha_erros_base64: null, acao, casaram: 0, nao_casaram: 0, sem_alteracao: 0, alteracoes: [] } satisfies ResultadoAtualizacao, linhasArquivo, recortou));
+      if (!planilha.linhas.length) return reply.status(200).send(comTotalDoArquivo({ ...vazioDoLote(), acao, casaram: 0, nao_casaram: 0, sem_alteracao: 0, alteracoes: [] } satisfies ResultadoAtualizacao, linhasArquivo, recortou));
       try {
         const r = await runService(app, req, permissao, async (ctx) => {
           const res = await atualizarPlanilha(ctx, def, planilha, { ler: getOne, atualizar: updateOne }, simulacao, modo);
@@ -68,14 +85,15 @@ export default async function importRoutes(app: FastifyInstance) {
         });
         app.clearContextCache?.();
         // nada é criado: 200 (com `gravadas` = as que mudaram)
-        return reply.status(200).send(r);
+        return reply.status(200).send(comTotalDoArquivo(r, linhasArquivo, recortou));
       } catch (e) {
         if (!(e instanceof DesfazerImportacao)) throw e;
         const recusa = simulacao ? (modo === "parcial" ? e.resultado.certas === 0 : e.resultado.erros.length > 0) : true;
-        return reply.status(recusa ? 422 : 200).send({ ...e.resultado, gravadas: 0 });
+        return reply.status(recusa ? 422 : 200).send(comTotalDoArquivo({ ...e.resultado, gravadas: 0 }, linhasArquivo, recortou));
       }
     }
-    if (planilha.erros.length) return reply.status(422).send({ linhas: 0, gravadas: 0, erros: planilha.erros, simulacao, modo, certas: 0, com_erro: 0, planilha_erros_base64: null } satisfies ResultadoImportacao);
+    if (lida.erros.length) return reply.status(422).send(comTotalDoArquivo({ linhas: 0, gravadas: 0, erros: lida.erros, simulacao, modo, certas: 0, com_erro: 0, planilha_erros_base64: null } satisfies ResultadoImportacao, linhasArquivo, recortou));
+    if (!planilha.linhas.length) return reply.status(200).send(comTotalDoArquivo(vazioDoLote(), linhasArquivo, recortou));
     try {
       const r = await runService(app, req, permissao, async (ctx) => {
         const res = await importarPlanilha(ctx, def, planilha, createOne, simulacao, modo);
@@ -84,12 +102,12 @@ export default async function importRoutes(app: FastifyInstance) {
         return res;
       });
       app.clearContextCache?.();
-      return reply.status(201).send(r);
+      return reply.status(201).send(comTotalDoArquivo(r, linhasArquivo, recortou));
     } catch (e) {
       if (!(e instanceof DesfazerImportacao)) throw e;
       // prévia: 200 com o que SERIA gravado; nada gravável: 422 com a lista, e nada gravado
       const recusa = simulacao ? (modo === "parcial" ? e.resultado.certas === 0 : e.resultado.erros.length > 0) : true;
-      return reply.status(recusa ? 422 : 200).send({ ...e.resultado, gravadas: 0 });
+      return reply.status(recusa ? 422 : 200).send(comTotalDoArquivo({ ...e.resultado, gravadas: 0 }, linhasArquivo, recortou));
     }
   });
 }
