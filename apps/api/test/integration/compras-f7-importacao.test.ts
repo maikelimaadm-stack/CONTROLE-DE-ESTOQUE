@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   c, iniciar, encerrar, j, erro, produto, top, itemCompra, corpoCompra, compraLancada, confirmarCompra, lerCompra,
-  usuario, escopos, type Resposta,
+  lancarCompra, usuario, escopos, type Resposta,
 } from "./top-config-08-ajuda.js";
 import {
-  cnpjComDv, notaSintetica, fornecedorComDocumento, codigoDaCompra, topCompraAutomatica, importar, importada, conferencia, gerar, descartar,
+  cnpjComDv, notaSintetica, fornecedorComDocumento, codigoDaCompra, topCompra, topCompraAutomatica, importar, importada, conferencia, gerar, descartar,
   importarDaDfe, registrarDfe, zipDeArquivos, compraNoBanco, titulosDaCompra, ITEM_PADRAO, type ItemSintetico,
 } from "./f7-ajuda.js";
+import { ERRO_EXIGENCIA_NAO_ATENDIDA, MENSAGEM_EXIGENCIA_NAO_ATENDIDA } from "@agro/domain";
 
 /**
  * OPERACOES-01 F7 (decisão 284) — A IMPORTAÇÃO DO XML NA CENTRAL DE COMPRAS (`routes/compras-importacao.ts`).
@@ -116,6 +117,49 @@ describe("(1) importar e gerar a compra", () => {
     const conf2 = await confirmarCompra(g.id);
     expect(conf2.statusCode, conf2.body).toBe(200);
     expect((await titulosDaCompra(g.id)).map((t) => [t.due_date, t.amount])).toEqual([["2026-10-08", "540.00"], ["2026-11-07", "540.00"]]);
+  });
+
+  it("decisão 323 — TOP exige centro: Gerar sem natureza/centro nasce ABERTA; o POST da Central ainda recusa; confirmar sem classificar recusa", async () => {
+    const emitente = emitenteNovo();
+    const fornecedor = await fornecedorComDocumento(emitente);
+    const p = await produto();
+    const nota = notaSintetica({
+      emitenteCnpj: emitente,
+      duplicatas: [{ numero: "001", vencimento: "2026-10-10", valor: "1000.00" }],
+    });
+    const conf = await importada(nota.xml, { empresaId: c.I.empresa });
+    const topComCentro = await topCompra((x) => { x.geral.exigeCentroResultado = true; });
+
+    // Premissa: o POST da Central (sem extras) com a MESMA TOP e sem centro ainda é recusado.
+    const rPost = await lancarCompra("compra", corpoCompra([itemCompra(p.id, "1", "10.00")], {
+      tipo_operacao_id: topComCentro, categoria_financeira_id: null, centro_custo_id: null, fornecedor_id: fornecedor,
+    }));
+    expect(rPost.statusCode, `premissa: Central sem centro — ${rPost.body}`).toBe(422);
+    expect(erro(rPost)).toMatchObject({
+      code: ERRO_EXIGENCIA_NAO_ATENDIDA, message: MENSAGEM_EXIGENCIA_NAO_ATENDIDA,
+      details: { exigencias: [expect.objectContaining({ caminho: "centro_custo_id" })] },
+    });
+
+    // Importação: rateio nulo, sem natureza/centro — 201 e compra ABERTA sem classificação.
+    const r = await gerar(conf.id, {
+      tipo_operacao_id: topComCentro, fornecedor_id: fornecedor, data_entrada: "2026-09-10",
+      financeiro: {
+        parcelas: "nota", classificacao_gasto: null, tipo_titulo_id: null,
+        rateio: { tipo: "documento", categoria_financeira_id: null, centro_custo_id: null },
+      },
+      itens: [{ n_item: 1, produto_id: p.id, fator: "1", tipo_fator: "multiply", armazem_id: c.I.warehouse }],
+    });
+    expect(r.statusCode, r.body).toBe(201);
+    const g = j(r) as { id: string; situacao: string };
+    expect(g.situacao).toBe("aberto");
+    const classif = (await c.admin.query<{ cat: string | null; cc: string | null }>(
+      "select categoria_financeira_id::text as cat, centro_custo_id::text as cc from erp.documentos_compra where id = $1", [g.id])).rows[0]!;
+    expect(classif).toEqual({ cat: null, cc: null });
+
+    // Confirmar sem classificar: a confirmação ainda exige o par (rede da decisão 322/323).
+    const confRecusa = await confirmarCompra(g.id);
+    expect(confRecusa.statusCode, confRecusa.body).toBe(422);
+    expect(erro(confRecusa).message).toMatch(/natureza financeira|centro de resultado/i);
   });
 });
 

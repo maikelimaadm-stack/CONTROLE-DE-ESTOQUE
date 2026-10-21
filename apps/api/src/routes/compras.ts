@@ -801,11 +801,16 @@ async function conferirDadosFiscais(ctx: ServiceCtx, especie: EspecieCompra, d: 
  * Regras da operação (formato 3): exigências gerais com o mapa da compra e condição permitida. Sem "cliente em atraso".
  * EDITAR-02 (decisão 313, D6): a PATCH confere a condição permitida SÓ quando a troca (`conferirCondicao`, a régua da 272
  * em `cobrarRegrasDaOperacao` de vendas); as exigências gerais, sempre, sobre o documento como ficará. O POST: as duas.
+ *
+ * Decisão 323: `ignorarCaminhos` — a importação XML adia natureza/centro (a compra ABERTA recebe na edição; a
+ * confirmação continua cobrando). Só caminhos do mapa da compra; observação/transportadora/fornecedor seguem.
  */
-async function cobrarRegrasDaCompra(ctx: ServiceCtx, top: TopDoLancamento, d: DocumentoCompraEntrada, o: { conferirCondicao: boolean } = { conferirCondicao: true }): Promise<void> {
+async function cobrarRegrasDaCompra(ctx: ServiceCtx, top: TopDoLancamento, d: DocumentoCompraEntrada,
+  o: { conferirCondicao: boolean; ignorarCaminhos?: ReadonlySet<string> } = { conferirCondicao: true }): Promise<void> {
   const regras = await regrasDaVersaoTop(ctx, top.tipoOperacaoVersaoId);
   if (!regras) return;
-  const faltando = exigenciasGeraisFaltando(regras.config, d, EXIGENCIAS_GERAIS_COMPRA_TOP);
+  const faltando = exigenciasGeraisFaltando(regras.config, d, EXIGENCIAS_GERAIS_COMPRA_TOP)
+    .filter((x) => !o.ignorarCaminhos?.has(x.caminho));
   if (faltando.length) {
     throw new DomainError(ERRO_EXIGENCIA_NAO_ATENDIDA, MENSAGEM_EXIGENCIA_NAO_ATENDIDA,
       { exigencias: faltando.map((x) => ({ caminho: x.caminho, mensagem: `${x.rotulo} é obrigatório nesta operação.` })) });
@@ -828,11 +833,15 @@ async function cobrarRegrasDaCompra(ctx: ServiceCtx, top: TopDoLancamento, d: Do
  * se cobra o obrigatório vazio. LAYOUT DO SISTEMA = NO-OP: documento sem layout configurado não ganha recusa nova. A
  * API de compras sempre declara classificação e condição, por isso as duas capacidades vão ligadas (e nenhum campo do
  * catálogo de compras tem `exige`). Confirmar e cancelar NÃO passam por aqui: só a digitação é cobrada.
+ *
+ * Decisão 323: `capacidades.classificacao = false` na importação XML — natureza/centro do layout não bloqueiam o
+ * "Gerar compra"; a compra ABERTA e a confirmação cobram depois.
  */
-async function cobrarLayoutDaCompra(ctx: ServiceCtx, familia: string, top: TopDoLancamento, d: DocumentoCompraEntrada): Promise<void> {
+async function cobrarLayoutDaCompra(ctx: ServiceCtx, familia: string, top: TopDoLancamento, d: DocumentoCompraEntrada,
+  capacidades: { classificacao?: boolean; condicao?: boolean } = { classificacao: true, condicao: true }): Promise<void> {
   const layout = await layoutEfetivo(ctx, familia, top.tipoOperacaoId);
   if (layout.origem === "sistema") return;
-  const faltando = camposObrigatoriosFaltando(familia, layout.estrutura, d, { classificacao: true, condicao: true });
+  const faltando = camposObrigatoriosFaltando(familia, layout.estrutura, d, capacidades);
   if (!faltando.length) return;
   const details = faltando.map((f) => ({ path: f.caminho, message: mensagemCampoObrigatorio(f.rotulo) }));
   throw err(ERRO_LAYOUT_CAMPO_OBRIGATORIO, details[0]!.message, details);
@@ -977,10 +986,14 @@ export interface ResultadoDoNucleo {
  * ORDEM (a de hoje): campos da espécie → forma → a TOP → parceiros → classificação → condição → regras da versão
  * (exigências gerais e condição permitida) → efeitos previstos → itens → dados fiscais → totais → duplicatas da nota →
  * plano → padrões financeiros da TOP (decisão 311/286) → exigências do título → nota duplicada → chave de acesso → layout.
+ *
+ * Decisão 323: `adiarClassificacao` — só a importação XML (via `extras` em `lancar`): natureza/centro não bloqueiam o
+ * lançamento da compra ABERTA; a edição e a confirmação cobram. POST da Central e PATCH sem o flag: o de sempre.
  */
 export async function nucleoDoLancamento(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, execucaoConfiguradaHabilitada: boolean,
-  o: { top: () => Promise<TopDoLancamento>; parcelasNota: readonly ParcelaDaNotaGravada[] | null; edicao?: EdicaoNoNucleo }): Promise<ResultadoDoNucleo> {
+  o: { top: () => Promise<TopDoLancamento>; parcelasNota: readonly ParcelaDaNotaGravada[] | null; edicao?: EdicaoNoNucleo; adiarClassificacao?: boolean }): Promise<ResultadoDoNucleo> {
   const e = o.edicao;
+  const adiarClassificacao = Boolean(o.adiarClassificacao);
   conferirCamposDaEspecie(especie, d);
   conferirFormaDoDocumento(d);
   const familia = familiaDaEspecie(especie);
@@ -990,7 +1003,10 @@ export async function nucleoDoLancamento(ctx: ServiceCtx, especie: EspecieCompra
   const condicao = !e || e.condicao.trocou
     ? (d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null)
     : e.condicao.gravada;
-  await cobrarRegrasDaCompra(ctx, top, d, { conferirCondicao: !e || e.condicao.trocou });
+  await cobrarRegrasDaCompra(ctx, top, d, {
+    conferirCondicao: !e || e.condicao.trocou,
+    ...(adiarClassificacao ? { ignorarCaminhos: new Set(["centro_custo_id"]) } : {}),
+  });
   const efeitos = especie === "compra" ? await efeitosPrevistosDaCompra(ctx, top, execucaoConfiguradaHabilitada) : null;
   await conferirItens(ctx, especie, d, efeitos, e?.itensAConferir);
   await conferirDadosFiscais(ctx, especie, d, e ? { classificacaoDosItens: e.classificacaoDosItens } : undefined);
@@ -1029,7 +1045,11 @@ export async function nucleoDoLancamento(ctx: ServiceCtx, especie: EspecieCompra
       // LANCAMENTO-01 R2: o tipo de título também é conferido na troca proibida (o pedido não o carrega: sempre nulo).
       tipoTituloId: d.tipo_titulo_id ?? null },
   });
-  if (efeitos) conferirExigenciasDoTitulo({ ...d, data_vencimento: dataVencimento }, efeitos, totais.total, plano, { classificacaoDaTop, comRateio: Boolean(d.rateio) });
+  // Decisão 323: adiar natureza/centro no título (= mesmo efeito de classificacaoDaTop / comRateio para esse par);
+  // forma e vencimento da política continuam cobrados.
+  if (efeitos) conferirExigenciasDoTitulo({ ...d, data_vencimento: dataVencimento }, efeitos, totais.total, plano, {
+    classificacaoDaTop: classificacaoDaTop || adiarClassificacao, comRateio: Boolean(d.rateio),
+  });
 
   // EDITAR-02: na PATCH, só quando fornecedor, número ou série mudam — e sem contar o próprio documento.
   if (especie === "compra" && d.numero_nota && (!e || e.notaDuplicada)) {
@@ -1043,7 +1063,7 @@ export async function nucleoDoLancamento(ctx: ServiceCtx, especie: EspecieCompra
   // COMPRAS-03: o layout da TOP, por último entre as recusas e antes do número — vale para o POST das duas espécies,
   // para o RECEBIMENTO (que chega aqui com a TOP de destino) e, desde a EDITAR-02, para a PATCH (o layout de HOJE da
   // TOP do documento, sobre o documento como ficará).
-  await cobrarLayoutDaCompra(ctx, familia, top, d);
+  await cobrarLayoutDaCompra(ctx, familia, top, d, { classificacao: !adiarClassificacao, condicao: true });
 
   // Derivado no servidor, como na venda: plano próprio sobre uma condição = parcelas ajustadas.
   const parcelasAjustadas = mantido ? mantido.ajustadas : Boolean(d.plano_parcelas) && condicao !== null;
@@ -1082,6 +1102,8 @@ async function lancarComTop(ctx: ServiceCtx, especie: EspecieCompra, d: Document
     // A TOP no MESMO ponto de hoje (depois da forma): a do sem itens, ou a da família, versão ATUAL, `for share`.
     top: async () => topDoSemItens ?? await resolverTopParaLancamento(ctx, familiaDaEspecie(especie), d.tipo_operacao_id),
     parcelasNota: extras?.parcelasNota ?? null,
+    // Decisão 323: todo "Gerar compra" da importação passa `extras` — adia natureza/centro para a compra ABERTA.
+    adiarClassificacao: Boolean(extras),
   });
 
   const codigo = await nextCode(ctx.tx, ctx.orgId, `compras_${especie}`);
