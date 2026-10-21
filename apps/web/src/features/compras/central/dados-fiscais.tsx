@@ -300,18 +300,35 @@ const COLUNAS_DO_RATEIO: { key: string; label: string; render: (r: Row) => React
 ];
 
 /**
- * O RATEIO da compra (`compras-consulta-rateio`): por valor, as linhas que o detalhe trouxe; por produto, a frase (a
- * natureza e o centro estão em cada item). Sem rateio, nada.
+ * O RATEIO da compra (`compras-consulta-rateio`): por valor, as linhas; por produto, pares por item com nome/código.
+ * Conta contábil só no contrato por valor. Sem rateio tipado, nada.
  */
 export function RateioDaConsulta({ d }: { d: Row }) {
   const tipo = d["rateio_tipo"];
   if (tipo !== "por_valor" && tipo !== "por_produto") return null;
   const linhas = Array.isArray(d["rateio"]) ? (d["rateio"] as unknown[]).filter(ehObj) as Row[] : [];
+  const itens = Array.isArray(d["itens"]) ? (d["itens"] as unknown[]).filter(ehObj) as Row[] : [];
   return <div data-testid="compras-consulta-rateio" data-tipo={tipo} className="space-y-1">
-    <p className="text-[11px] font-semibold uppercase text-slate-500">Rateio {tipo === "por_valor" ? "por valor" : "por produto"}</p>
+    <p className="text-[11px] font-semibold uppercase text-slate-500">
+      {tipo === "por_valor" ? "Dividir por percentual (por valor)" : "Classificar por produto"}
+    </p>
     {tipo === "por_valor"
-      ? <SimpleTable rows={linhas} cols={COLUNAS_DO_RATEIO} />
-      : <p className="text-[12.5px] text-slate-600">Cada item leva a própria natureza e o próprio centro de resultado; as contas a pagar somam os itens de cada par.</p>}
+      ? <>
+          <SimpleTable rows={linhas} cols={COLUNAS_DO_RATEIO} />
+          <p className="text-[11px] text-slate-500">Conta contábil é opcional e só existe neste modo (contrato do rateio por valor).</p>
+        </>
+      : <ul className="space-y-2 text-[12.5px]" data-testid="compras-consulta-rateio-por-produto">
+          {itens.length === 0
+            ? <li className="text-slate-600">Cada item leva a própria natureza e o próprio centro; os nomes dos itens não vieram neste detalhe.</li>
+            : itens.map((it, k) => {
+                const rotulo = codigoENome(it["produto_codigo"], it["produto_nome"]) || `Item ${k + 1}`;
+                return <li key={k} data-testid={`compras-consulta-rateio-item-${k}`} className="rounded-md border border-slate-100 px-2 py-2">
+                  <p className="font-medium text-slate-800">{rotulo}</p>
+                  <p className="text-slate-600">Natureza: {codigoENome(it["categoria_financeira_codigo"], it["categoria_financeira_nome"])}</p>
+                  <p className="text-slate-600">Centro: {codigoENome(it["centro_custo_codigo"], it["centro_custo_nome"])}</p>
+                </li>;
+              })}
+        </ul>}
   </div>;
 }
 

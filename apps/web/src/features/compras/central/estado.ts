@@ -621,9 +621,18 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
      as abas Fiscal e Classificação não somem; a PATCH não aceita alterar fiscais/rateio, então a tela os lê. */
   const capacidadeFiscal = useImportacaoXml(ehCompra && !modoReceber);
   const editarFiscal = ehCompra && !modoReceber && !modoEdicao && capacidadeFiscal === "sim";
-  const mostrarFiscal = ehCompra && !modoReceber && (editarFiscal || modoEdicao);
+  /* Edição: aba Fiscal só se há capacidade F7 OU dados fiscais/importação gravados — evita aba vazia em legado. */
+  const docEdicaoTemFiscal = Boolean(documentoEmEdicao && (
+    ["chave_acesso", "uf_nota", "tipo_documento_fiscal", "valor_ipi", "valor_icms_st", "seguro", "tipo_titulo_id", "classificacao_gasto", "rateio_tipo", "importacao_id"]
+      .some((c) => documentoEmEdicao[c] !== null && documentoEmEdicao[c] !== undefined && documentoEmEdicao[c] !== "")
+    || (typeof documentoEmEdicao["dfe"] === "object" && documentoEmEdicao["dfe"] !== null)
+  ));
+  const mostrarFiscal = ehCompra && !modoReceber && (
+    editarFiscal || (modoEdicao && (capacidadeFiscal === "sim" || docEdicaoTemFiscal))
+  );
   const editarRateio = editarFiscal;
-  const mostrarRateio = mostrarFiscal;
+  /* Classificação: mesma porta da Fiscal; layout ainda pode trazer natureza/centro sem F7 via rateioCampos. */
+  const mostrarRateio = mostrarFiscal || (modoEdicao && ehCompra && !modoReceber);
   const dadosFiscaisAtivos = editarFiscal;
   const [fiscal, setFiscal] = React.useState<DadosFiscais>(dadosFiscaisVazios);
   /* LANCAMENTO-01 (decisão 311): o INICIAL dos dados fiscais — vazio, ou com o tipo de título que a TOP semeou (não conta

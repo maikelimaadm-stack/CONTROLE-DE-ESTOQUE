@@ -34,24 +34,25 @@ export function ehCaminhoDoRateio(caminho: string): boolean {
   return caminho.startsWith("rateio") || CAMINHO_DA_CLASSIFICACAO_DO_ITEM.test(caminho);
 }
 
-type OndeDesenha = Pick<EstadoDaCriacao, "mostrarFiscal" | "top">;
+type OndeDesenhaFiscal = Pick<EstadoDaCriacao, "mostrarFiscal" | "top">;
+type OndeDesenhaRateio = Pick<EstadoDaCriacao, "mostrarRateio" | "top">;
 
 /**
  * Os dados fiscais saíram dos Dados principais e moram na aba Fiscal do painel.
  * `blocoFiscalNosDados` fica falso — criação e edição usam a aba; nunca o bloco nos Dados.
  */
-export function blocoFiscalNosDados(_e: OndeDesenha): boolean {
+export function blocoFiscalNosDados(_e: OndeDesenhaFiscal): boolean {
   return false;
 }
 
-/** Aba Fiscal do painel: criação com capacidade OU edição aberta, com TOP e formulário à vista. */
-export function fiscalNoPainel(e: OndeDesenha & Pick<EstadoDaCriacao, "mostrarFormulario">): boolean {
+/** Aba Fiscal do painel: criação com capacidade OU edição com dados/capacidade F7. */
+export function fiscalNoPainel(e: OndeDesenhaFiscal & Pick<EstadoDaCriacao, "mostrarFormulario">): boolean {
   return e.mostrarFormulario && e.mostrarFiscal && e.top !== null;
 }
 
-/** O rateio/classificação está no painel (mesma condição da aba Fiscal). */
-export function rateioNoPainel(e: OndeDesenha & Pick<EstadoDaCriacao, "mostrarFormulario">): boolean {
-  return fiscalNoPainel(e);
+/** Aba Classificação/rateio: `mostrarRateio` (pode abrir na edição mesmo sem aba Fiscal). */
+export function rateioNoPainel(e: OndeDesenhaRateio & Pick<EstadoDaCriacao, "mostrarFormulario">): boolean {
+  return e.mostrarFormulario && e.mostrarRateio && e.top !== null;
 }
 
 /** O primeiro caminho de recusa que é do rateio (na ordem em que o servidor os deu), ou `null`. */
@@ -60,7 +61,7 @@ export function caminhoDoRateioComErro(erros: Readonly<Record<string, string>>):
 }
 
 /** A aba do painel em que o caminho mora, quando é do rateio e o rateio está no painel; senão `null`. */
-export function abaDoRateio(e: OndeDesenha & Pick<EstadoDaCriacao, "mostrarFormulario">, caminho: string): string | null {
+export function abaDoRateio(e: OndeDesenhaRateio & Pick<EstadoDaCriacao, "mostrarFormulario">, caminho: string): string | null {
   return rateioNoPainel(e) && ehCaminhoDoRateio(caminho) ? ABA_DO_RATEIO : null;
 }
 

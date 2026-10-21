@@ -13,8 +13,13 @@ const OITO_FISCAIS = 8;
 const FISCAIS = ["chave_acesso", "uf_nota", "tipo_documento_fiscal", "valor_ipi", "valor_icms_st", "seguro", "tipo_titulo_id", "classificacao_gasto"] as const;
 const TOP = { id: "t", codigo: "7001", nome: "Compra", movimento: "Compra" };
 
-const estado = (o: { capacidade: boolean; top?: boolean; formulario?: boolean }) =>
-  ({ mostrarFiscal: o.capacidade, top: o.top === false ? null : TOP, mostrarFormulario: o.formulario ?? true });
+const estado = (o: { capacidade: boolean; top?: boolean; formulario?: boolean; rateio?: boolean }) =>
+  ({
+    mostrarFiscal: o.capacidade,
+    mostrarRateio: o.rateio ?? o.capacidade,
+    top: o.top === false ? null : TOP,
+    mostrarFormulario: o.formulario ?? true
+  });
 
 describe("RATEIO-01 · os caminhos de recusa que são do rateio", () => {
   it("o rateio (tipo, linhas nos dois formatos) e a classificação de cada item (nos dois formatos) são do rateio", () => {

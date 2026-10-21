@@ -213,13 +213,20 @@ function ConferenciaCarregada({ conf, solicitacaoId, relendo, erroDaReleitura, o
             ? <Link className="font-medium text-brand-700 underline" href={`/compras/${varianteDaCompra?.segmento ?? "compras"}/${conf.documentoCompra.id}`}>{conf.documentoCompra.codigo}</Link>
             : "—"}
           {conf.documentoCompra ? ` · ${enumLabel("situacao_documento_compra", conf.documentoCompra.situacao)}` : ""}.
-          Estoque e títulos só nascem após confirmar na consulta da compra.
+          Estoque e títulos só nascem após confirmar na consulta da compra — nunca ao gerar.
         </p>
-        {conf.documentoCompra && <p>
+        <p className="text-[12px] text-amber-900/90" data-testid="importacao-revisar-limites">
+          Na revisão você pode ajustar o que a edição aberta aceita (ex.: classificação interna, observação, campos liberados pela PATCH).
+          Dados da NF-e (chave, emitente, número/série, totais e tributos da nota) e itens travados pela origem da nota permanecem fiéis ao XML.
+        </p>
+        {conf.documentoCompra && conf.documentoCompra.situacao === "aberto" && <p>
           <Link className="inline-flex font-semibold text-brand-700 underline" data-testid="importacao-revisar-compra"
             href={`/compras/${varianteDaCompra?.segmento ?? "compras"}/${conf.documentoCompra.id}`}>
             Revisar compra
           </Link>
+        </p>}
+        {conf.documentoCompra && conf.documentoCompra.situacao !== "aberto" && <p className="text-[12px]" data-testid="importacao-revisar-indisponivel">
+          A compra já não está aberta ({enumLabel("situacao_documento_compra", conf.documentoCompra.situacao)}) — abra pela consulta do documento.
         </p>}
       </div>}
       {conf.situacao === "descartada" && <p data-testid="importacao-descartada" className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[12.5px] text-slate-700">Importação descartada.</p>}

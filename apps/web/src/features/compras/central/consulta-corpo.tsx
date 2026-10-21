@@ -103,7 +103,7 @@ export function DadosDaConsulta({ e, zonas }: { e: EstadoDaConsulta; zonas?: Zon
   return <>
     {pendenteDeConfirmacao && <div data-testid="compras-pendente-confirmacao" className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-950">
       <p className="font-semibold">Pendente de confirmação</p>
-      <p className="mt-0.5">Compra gerada pela importação do XML — ainda aberta. Confira classificação, locais e pagamento; a confirmação (estoque e financeiro) é explícita e não ocorre ao gerar a compra.</p>
+      <p className="mt-0.5">Compra gerada pela importação do XML — ainda aberta. Revise o que a edição aberta permite (classificação interna, observação, campos liberados). Dados da NF-e e itens travados pela nota permanecem fiéis ao XML. A confirmação (estoque e financeiro) é explícita e não ocorre ao gerar a compra.</p>
       <p className="mt-1">
         <Link className="font-medium text-brand-700 underline" data-testid="compras-revisar-importacao" href={`/compras/importacoes/${importacaoId}`}>
           Ver conferência da nota
@@ -161,14 +161,15 @@ const COLUNAS_DAS_COMPRAS_GERADAS: readonly ColunaDaRelacao[] = [
 ];
 
 /**
- * Cronograma em leitura — SSOT `modeloDeParcelasParaTela` (plano / parcelas_nota / títulos).
- * Confirmado: títulos reais com situação; aberto: plano ou duplicatas da nota; legado sem lista → resumo honesto.
+ * Cronograma em leitura — projeção `modeloDeParcelasParaTela` (plano / derivado / nota / títulos).
+ * Confirmado: títulos reais com situação; observação do título não vem no GET — plano só como `observacaoDoPlano`.
  */
 function ParcelasEmLeitura({ d, situacao }: { d: Row; situacao: string | null | undefined }) {
   const confirmado = situacao === "confirmado";
   const modelo = modeloDeParcelasParaTela({
     plano: d["plano_parcelas"],
     parcelasNota: d["parcelas_nota"],
+    totalAmount: temValor(d["valor_total"]) ? String(d["valor_total"]) : null,
     titulos: Array.isArray(d.titulos) ? d.titulos as { due_date?: unknown; amount?: unknown; note?: unknown; installment_number?: unknown; status?: unknown; situacao?: unknown }[] : null,
     preferirTitulos: confirmado
   });
@@ -183,30 +184,40 @@ function ParcelasEmLeitura({ d, situacao }: { d: Row; situacao: string | null | 
     </div>;
   }
   const cols = confirmado
-    ? "grid-cols-[124px_104px_minmax(0,1fr)_minmax(88px,auto)]"
+    ? "grid-cols-[minmax(96px,124px)_minmax(80px,104px)_minmax(0,1fr)_minmax(88px,auto)]"
     : modelo.comEntrada
-      ? "grid-cols-[72px_124px_104px_minmax(0,1fr)]"
-      : "grid-cols-[124px_104px_minmax(0,1fr)]";
-  return <div data-testid="compras-consulta-parcelas" className="mt-1 divide-y divide-slate-100 overflow-hidden rounded-md border border-slate-200">
+      ? "grid-cols-[72px_minmax(96px,124px)_minmax(80px,104px)_minmax(0,1fr)]"
+      : "grid-cols-[minmax(96px,124px)_minmax(80px,104px)_minmax(0,1fr)]";
+  return <div data-testid="compras-consulta-parcelas" className="mt-1 max-w-full overflow-x-auto divide-y divide-slate-100 rounded-md border border-slate-200">
     <div aria-hidden className={`grid ${cols} gap-2 border-b border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-500`}>
       {modelo.comEntrada && !confirmado && <span>Tipo</span>}
       <span>Vencimento</span><span>Valor</span><span>Observação</span>
       {confirmado && <span>Situação</span>}
     </div>
-    {modelo.linhas.map((l, k) => <div key={k} data-testid="compras-consulta-parcela" data-entrada={l.entrada ? "sim" : "nao"} data-origem={l.origem}
-      className={`grid ${cols} gap-2 px-2 py-1.5 text-[12px]`}>
-      {modelo.comEntrada && !confirmado && <span className="text-slate-500">{l.entrada ? "Entrada" : "Parcela"}</span>}
-      <span className="text-slate-700">{dataOuVazio(l.vencimento)}</span>
-      <span className="tabular-nums text-slate-900">{temValor(l.valor) ? brl(String(l.valor)) : ""}</span>
-      <span className="text-slate-500">{l.observacao || "—"}</span>
-      {confirmado && <span className="text-slate-600">
-        {l.situacaoTitulo
-          ? <Selo tom={statusTone(l.situacaoTitulo, "title_status")} valor={l.situacaoTitulo}>{enumLabel("title_status", l.situacaoTitulo)}</Selo>
-          : "—"}
-      </span>}
-    </div>)}
+    {modelo.linhas.map((l, k) => {
+      const obs = l.observacao || (l.observacaoDoPlano
+        ? <span className="text-slate-500" data-testid="compras-consulta-parcela-obs-plano" title="Do plano gravado — não é a nota do título">
+            {l.observacaoDoPlano} <span className="text-[10px] text-slate-400">(plano)</span>
+          </span>
+        : null);
+      return <div key={k} data-testid="compras-consulta-parcela" data-entrada={l.entrada ? "sim" : "nao"} data-origem={l.origem}
+        className={`grid ${cols} gap-2 px-2 py-1.5 text-[12px]`}>
+        {modelo.comEntrada && !confirmado && <span className="text-slate-500">{l.entrada ? "Entrada" : "Parcela"}</span>}
+        <span className="text-slate-700">{dataOuVazio(l.vencimento)}</span>
+        <span className="tabular-nums text-slate-900">{temValor(l.valor) ? brl(String(l.valor)) : ""}</span>
+        <span className="min-w-0 break-words text-slate-500">{obs || "—"}</span>
+        {confirmado && <span className="text-slate-600">
+          {l.situacaoTitulo
+            ? <Selo tom={statusTone(l.situacaoTitulo, "title_status")} valor={l.situacaoTitulo}>{enumLabel("title_status", l.situacaoTitulo)}</Selo>
+            : "—"}
+        </span>}
+      </div>;
+    })}
     {confirmado && <p className="px-2 py-1.5 text-[11px] text-slate-500" data-testid="compras-consulta-parcelas-titulos-aviso">
-      Cronograma a partir dos títulos gerados. Detalhes de baixa na aba Vínculos.
+      {modelo.avisoObservacaoTitulos ?? "Títulos gerados (valores e situação atuais). Detalhes de baixa na aba Vínculos."}
+    </p>}
+    {modelo.linhas.some((l) => l.origem === "plano_derivado") && <p className="px-2 py-1.5 text-[11px] text-slate-500" data-testid="compras-consulta-parcelas-derivado">
+      Cronograma derivado do plano gravado com a mesma regra de parcelamento do sistema (sem lista linha a linha persistida).
     </p>}
   </div>;
 }
@@ -247,14 +258,24 @@ export function abasDaConsulta(e: EstadoDaConsulta, zonas?: ZonasDaCentral): Aba
       {temValor(d["valor_icms_st"]) && <CampoLeitura rotulo="ICMS-ST" testId="compras-consulta-total-icms-st" valor={brl(String(d["valor_icms_st"]))} />}
       <div data-testid="compras-consulta-total"><CampoLeitura rotulo="Total da compra" adorno="travado" testId="central-compras-total" valor={brl(String(d["valor_total"] ?? "0"))} /></div>
     </PainelColuna> },
-    { value: "financeiro", label: "Financeiro", content: <div className="space-y-3">
-      <PainelColuna>
-        <CampoLeitura rotulo="Condição de pagamento" adorno="pesquisa" valor={codigoNome(d["condicao_pagamento_codigo"], d["condicao_pagamento_nome"])} />
-        <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" valor={t(d["forma_pagamento_nome"])} />
-        <CampoLeitura rotulo="Vencimento" adorno="data" valor={dataOuVazio(d["data_vencimento"])} />
-      </PainelColuna>
-      <ParcelasEmLeitura d={d} situacao={e.situacao} />
-    </div> },
+    { value: "financeiro", label: "Financeiro", content: (() => {
+      const modeloFin = modeloDeParcelasParaTela({
+        plano: d["plano_parcelas"], parcelasNota: d["parcelas_nota"],
+        totalAmount: temValor(d["valor_total"]) ? String(d["valor_total"]) : null,
+        titulos: Array.isArray(d.titulos) ? d.titulos as { due_date?: unknown; amount?: unknown; installment_number?: unknown; status?: unknown }[] : null,
+        preferirTitulos: e.situacao === "confirmado"
+      });
+      /* Com grade de parcelas, o vencimento solto do cabeçalho não aparece (evita segundo vencimento contraditório). */
+      const mostrarVencimentoSolto = modeloFin.especie !== "lista";
+      return <div className="space-y-3">
+        <PainelColuna>
+          <CampoLeitura rotulo="Condição de pagamento" adorno="pesquisa" valor={codigoNome(d["condicao_pagamento_codigo"], d["condicao_pagamento_nome"])} />
+          <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" valor={t(d["forma_pagamento_nome"])} />
+          {mostrarVencimentoSolto && <CampoLeitura rotulo="Vencimento" adorno="data" valor={dataOuVazio(d["data_vencimento"])} />}
+        </PainelColuna>
+        <ParcelasEmLeitura d={d} situacao={e.situacao} />
+      </div>;
+    })() },
     { value: "vinculos", label: "Vínculos", contador: titulos.length, content: <PainelLargo><div data-testid="compras-consulta-titulos">
       {titulos.length
         ? <TitulosDoDocumento legenda={`Contas a pagar geradas pelo documento ${codigo}`} titulos={titulos} linkDoTitulo={linkDoTituloDeCompra} />
