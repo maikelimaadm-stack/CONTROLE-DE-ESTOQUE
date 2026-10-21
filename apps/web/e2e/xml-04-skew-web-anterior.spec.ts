@@ -27,7 +27,7 @@ import {
  * API nova). O VIGIA: nenhuma resposta 404/422/5xx da API nova ao cliente da base e nenhuma requisição morta.
  *
  * O MUNDO DO WEB DA BASE é lido do FONTE do commit (`webDaBaseTemAXml04`: o `apps/web/src` diz a origem do fator,
- * `fator-origem`; reprova quando não consegue ler):
+ * `importacao-forma-origem`; reprova quando não consegue ler):
  *   · LEGADO (a base sem a XML-04): a conferência ABRE (nem "indisponível", nem "não sei ler"); os itens perguntados
  *     aparecem com o fator 1 (o valor de compatibilidade) e o lembrado com o 6 do vínculo; as divergências novas do
  *     fator aparecem na aba Divergências como AVISO (não bloqueiam); o "Gerar compra" dá 201. O RISCO DECLARADO DA JANELA

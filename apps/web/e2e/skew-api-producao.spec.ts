@@ -648,7 +648,7 @@ test("VENDAS-A1 · A1-K1 — sem a capacidade declarada pela base, os campos nã
     // MUNDO LEGADO. A base não declara; o web não oferece o que ela jogaria fora.
     expect(corpoDesc.capacidades?.classificacaoFinanceira, "a base não declara a capacidade").toBeUndefined();
     await expect(dados.locator("label", { hasText: "Natureza" }), "o campo não aparece").toHaveCount(0);
-    await expect(dados.locator("label", { hasText: "Centro de Resultado" }), "o campo não aparece").toHaveCount(0);
+    await expect(dados.locator("label", { hasText: "Centro de resultado" }), "o campo não aparece").toHaveCount(0);
     await expect(salvar, "o Salvar segue a regra de antes: cliente e item bastam").toBeEnabled();
 
     // NO FIO: o POST vai de verdade para a base, e o corpo que saiu do navegador não carrega o par.
@@ -667,8 +667,8 @@ test("VENDAS-A1 · A1-K1 — sem a capacidade declarada pela base, os campos nã
   // MUNDO ATUAL. A base declara a versão que o web conhece; os campos aparecem e voltam a ser exigidos.
   expect(corpoDesc.capacidades?.classificacaoFinanceira, "a árvore da base declara, então o binário tem de servir").toBe(1);
   await expect(dados.locator("label", { hasText: "Natureza" })).toBeVisible();
-  await expect(dados.locator("label", { hasText: "Centro de Resultado" })).toBeVisible();
-  await salvarSemClassificacaoNaoEnvia(page, ["Natureza", "Centro de Resultado"], "declarada, a classificação é exigida");
+  await expect(dados.locator("label", { hasText: "Centro de resultado" })).toBeVisible();
+  await salvarSemClassificacaoNaoEnvia(page, ["Natureza", "Centro de resultado"], "declarada, a classificação é exigida");
   await preencherClassificacaoFinanceira(page);
   await expect(salvar).toBeEnabled();
   v.semBloqueio();
@@ -922,7 +922,7 @@ test("VENDAS-A1 · A1-K5 — venda classificada lida da API da base: o detalhe n
   const fioSem = await abrirDetalhe(semClassificacao);
   expect([fioSem["categoria_financeira_id"], fioSem["centro_custo_id"], fioSem["status"]], "premissa: venda aberta e sem classificação").toEqual([null, null, "open"]);
   await expect(campo("Natureza")).toContainText("Não informada");
-  await expect(campo("Centro de Resultado")).toContainText("Não informado");
+  await expect(campo("Centro de resultado")).toContainText("Não informado");
   await expect(aviso, "sem classificação, a venda aberta avisa o padrão automático — também sobre a base").toBeVisible();
 
   const fio = await abrirDetalhe(classificada);
@@ -938,8 +938,8 @@ test("VENDAS-A1 · A1-K5 — venda classificada lida da API da base: o detalhe n
     // A positiva vem primeiro: ela espera a tela desenhar ESTE documento, e só então as ausências significam algo.
     await expect(campo("Natureza"), "com o id e sem o nome, a tela diz que está informada").toContainText("Informada");
     await expect(campo("Natureza"), "e não o contrário").not.toContainText("Não informada");
-    await expect(campo("Centro de Resultado")).toContainText("Informado");
-    await expect(campo("Centro de Resultado")).not.toContainText("Não informado");
+    await expect(campo("Centro de resultado")).toContainText("Informado");
+    await expect(campo("Centro de resultado")).not.toContainText("Não informado");
     await expect(aviso, "classificada, a venda não promete um padrão que a guarda recusaria").toHaveCount(0);
     v.semBloqueio();
     return;
@@ -952,9 +952,9 @@ test("VENDAS-A1 · A1-K5 — venda classificada lida da API da base: o detalhe n
   expect([rotuloCategoria, rotuloCentro], "premissa: código e nome lidos do banco").toEqual([expect.stringMatching(/^.+ · .+$/), expect.stringMatching(/^.+ · .+$/)]);
   expect(fio["categoria_financeira_codigo"], "a árvore da base declara a classificação, então o binário traz o código").toBeTruthy();
   await expect(campo("Natureza")).toContainText(rotuloCategoria);
-  await expect(campo("Centro de Resultado")).toContainText(rotuloCentro);
+  await expect(campo("Centro de resultado")).toContainText(rotuloCentro);
   await expect(campo("Natureza")).not.toContainText("Não informada");
-  await expect(campo("Centro de Resultado")).not.toContainText("Não informado");
+  await expect(campo("Centro de resultado")).not.toContainText("Não informado");
   await expect(aviso, "classificada, a venda não fala de padrão automático").toHaveCount(0);
   v.semBloqueio();
 });

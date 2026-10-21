@@ -345,7 +345,11 @@ function coerceValue(f: FieldDef, v: unknown): unknown {
  * `adiarIdGlobal` é interno da importação em lote, que reserva o ID Global de todas as linhas no fim do lote
  * (mesma transação): reservar linha a linha prenderia o contador da organização a importação inteira.
  */
-export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown, opcoes: { adiarIdGlobal?: boolean; importacao?: boolean; /** prévia da planilha: mesmas regras, sem INSERT nem numeração */ simular?: boolean } = {}) {
+export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown, opcoes: {
+  adiarIdGlobal?: boolean; importacao?: boolean; /** prévia da planilha: mesmas regras, sem INSERT nem numeração */ simular?: boolean;
+  /** Prévia em árvore: superiores criados em linhas anteriores do mesmo arquivo (sem INSERT). */
+  paisSimulados?: Map<string, Record<string, unknown>>;
+} = {}) {
   // cadastro que nasce por OUTRA porta (ex.: funcionário pelo CPF) não nasce pela genérica
   if (def.criacao) throw validation(def.criacao.mensagem);
   conferirSigiloNaCriacao(ctx, def);
@@ -373,13 +377,14 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
     if (pedido === null) throw validation("Obrigatório.", [{ path: ["code"], message: "Obrigatório." }]);
   }
   const sequencial = (opcoes.importacao && opcoes.simular) ? null : await gerarCodigoSequencial(ctx, def, data);
-  await conferirRegrasDaArvore(ctx, def, null, data, null);
+  await conferirRegrasDaArvore(ctx, def, null, data, null, { paisSimulados: opcoes.paisSimulados });
   await conferirRegrasDoCadastro(ctx, def, null, data, null);
-  // PRÉVIA DA IMPORTAÇÃO: regras ok ⇒ conta como certa; id sintético só para encadear árvore no arquivo.
+  // PRÉVIA DA IMPORTAÇÃO: regras ok ⇒ conta como certa; id UUID sintético (sem INSERT) só para encadear árvore
+  // no arquivo — o superior da linha seguinte resolve em `paisSimulados`, não no banco.
   // Unicidade que só o INSERT do banco pega (código gerado, etc.) aparece na gravação real.
   if (opcoes.importacao && opcoes.simular) {
     return {
-      id: `sim:${crypto.randomUUID()}`,
+      id: crypto.randomUUID(),
       ...data,
       ...(typeof data["code"] === "string" && data["code"] !== "" ? { code: data["code"] } : def.codeEntity ? { code: "(automático)" } : {}),
     };

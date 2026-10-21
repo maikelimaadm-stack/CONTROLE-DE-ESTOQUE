@@ -305,27 +305,19 @@ describe("ID Global e travas", () => {
   });
 
   /**
-   * G11 — a trava do contador de ID Global.
+   * G11 — a trava do contador de ID Global na PRÉVIA (sem INSERT).
    *
-   * COMO ISTO REPROVA SEM A CORREÇÃO. Antes, o `createOne` de CADA linha chamava `atribuirIdGlobalSeAplicavel`
-   * dentro da transação da importação: `erp.proximo_id_global(org)` faz `insert ... on conflict do update` na
-   * linha da ORGANIZAÇÃO em `erp.sequencias_id_global`, e essa trava de linha fica presa até o fim da transação
-   * (o rollback da prévia, segundos depois). Criar uma pessoa pela API também chama `proximo_id_global` para a
-   * mesma organização, então o POST ficava ESPERANDO a prévia acabar. Aqui isso reprova de dois jeitos:
-   *   (a) o amostrador de `pg_locks` vê a conexão da prévia segurando trava de escrita (RowExclusiveLock) em
-   *       `erp.sequencias_id_global`/`erp.registros_globais` — o que cobre também a corrida da primeira linha,
-   *       em que a pessoa pega o contador antes da prévia e é a prévia que espera: nas linhas seguintes a
-   *       prévia passa a segurá-lo até o fim, e o amostrador roda durante a prévia inteira;
-   *   (b) a pessoa só termina DEPOIS da prévia (`previaRodando` = false no fim da pessoa).
-   * Com a correção (ID Global reservado no fim do lote e nunca na prévia), a prévia não toca no contador e
-   * a pessoa termina em milissegundos enquanto a prévia ainda grava.
+   * Depois da prévia rápida (sem INSERT por linha), a importação simulada NÃO segura RowExclusiveLock em
+   * `erp.products`. A barreira observa a conexão da prévia por `pg_stat_activity` (backend ativo nesta base,
+   * fora do amostrador) e amostra `pg_locks` de TODOS os outros backends: a prévia nunca deve segurar trava
+   * de escrita em `sequencias_id_global`/`registros_globais`. Com a correção, criar uma pessoa (que reserva
+   * ID Global) termina ENQUANTO a prévia ainda roda.
    *
-   * DETERMINISMO. A pessoa só é disparada depois de o `pg_locks` mostrar a conexão da prévia com
-   * RowExclusiveLock em `erp.products` — isto é, a transação da importação está de fato no laço de gravação
-   * (a leitura do XLSX acontece antes e fora da transação). Não há `sleep` para "dar tempo".
+   * Controle sequencial (evita verde vacuoso): depois que a prévia termina, criar outra pessoa ainda funciona
+   * e o contador anda de novo.
    */
-  it("G11: enquanto uma prévia grande de produtos grava, criar uma pessoa (que recebe ID Global) termina ANTES da prévia", async () => {
-    const N = 1500;
+  it("G11: enquanto uma prévia grande de produtos confere, criar uma pessoa (que recebe ID Global) termina ANTES da prévia", async () => {
+    const N = 2500;
     const wb = await modelo("products");
     const base = obrigatoriosDoProduto(wb, "x");
     for (let i = 0; i < N; i++) preencher(wb, i + 2, { ...base, "Descrição *": `Volume ${String(i + 1).padStart(4, "0")}`, "Controla estoque": "Não" });
@@ -334,33 +326,39 @@ describe("ID Global e travas", () => {
     const indicesAntes = await contar("registros_globais");
 
     const banco = "(select oid from pg_database where datname = current_database())";
-    const pidGravandoProdutos = async () => (await admin.query<{ pid: number }>(
-      `select l.pid from pg_locks l join pg_class c on c.oid = l.relation join pg_namespace n on n.oid = c.relnamespace
-        where l.database = ${banco} and n.nspname = 'erp' and c.relname = 'products' and l.mode = 'RowExclusiveLock'
-          and l.granted and l.pid <> pg_backend_pid() limit 1`)).rows[0]?.pid ?? null;
-    const travasDa = async (pid: number) => (await admin.query<{ tabela: string; modo: string }>(
-      `select c.relname tabela, l.mode modo from pg_locks l join pg_class c on c.oid = l.relation join pg_namespace n on n.oid = c.relnamespace
-        where l.database = ${banco} and n.nspname = 'erp' and l.pid = $1`, [pid])).rows;
+    /** Backend ativo nesta base que não é o amostrador — a prévia entrou na transação/consulta. */
+    const pidDaPrevia = async () => (await admin.query<{ pid: number }>(
+      `select pid from pg_stat_activity
+        where datname = current_database() and pid <> pg_backend_pid()
+          and state = 'active' and query not ilike '%pg_stat_activity%' and query not ilike '%pg_locks%'
+        order by backend_start desc limit 1`)).rows[0]?.pid ?? null;
+    const travasDeEscritaNoIdGlobal = async () => Number((await admin.query<{ n: string }>(
+      `select count(*)::text n from pg_locks l
+        join pg_class c on c.oid = l.relation join pg_namespace n on n.oid = c.relnamespace
+        where l.database = ${banco} and n.nspname = 'erp'
+          and c.relname in ('sequencias_id_global', 'registros_globais')
+          and l.mode <> 'AccessShareLock' and l.granted and l.pid <> pg_backend_pid()`)).rows[0]!.n);
 
     const marca: { previaFim: number | null } = { previaFim: null };
     const previa = enviar(wb, "products", true).then((r) => { marca.previaFim = performance.now(); return r; });
-    const amostras = { total: 0, gravandoProdutos: 0, comTravaDoIdGlobal: 0 };
+    const amostras = { total: 0, comTravaDoIdGlobal: 0, pidVisto: 0 };
     let amostrador: Promise<void> = Promise.resolve();
     try {
-      // 1) espera a transação da prévia estar GRAVANDO produtos
+      // 1) handshake: a prévia aparece como backend ativo (XLSX já foi lido fora da transação)
       const t0 = performance.now(); let pid: number | null = null;
-      while (pid === null && marca.previaFim === null && performance.now() - t0 < 90_000) { pid = await pidGravandoProdutos(); if (pid === null) await espera(5); }
-      expect(marca.previaFim, "a prévia terminou antes de ser vista gravando: aumente o volume").toBeNull();
-      expect(pid, "a prévia não foi vista gravando em erp.products").not.toBeNull();
+      while (pid === null && marca.previaFim === null && performance.now() - t0 < 90_000) {
+        pid = await pidDaPrevia();
+        if (pid === null) await espera(5);
+      }
+      expect(marca.previaFim, "a prévia terminou antes de ser vista ativa: aumente o volume").toBeNull();
+      expect(pid, "a prévia não foi vista em pg_stat_activity").not.toBeNull();
 
-      // 2) amostra as travas da conexão da prévia até ela terminar
-      const pidPrevia = pid!;
+      // 2) amostra travas de ID Global em QUALQUER outro backend até a prévia terminar
       amostrador = (async () => {
         while (marca.previaFim === null) {
-          const t = await travasDa(pidPrevia);
           amostras.total += 1;
-          if (t.some((x) => x.tabela === "products" && x.modo === "RowExclusiveLock")) amostras.gravandoProdutos += 1;
-          if (t.some((x) => (x.tabela === "sequencias_id_global" || x.tabela === "registros_globais") && x.modo !== "AccessShareLock")) amostras.comTravaDoIdGlobal += 1;
+          if ((await pidDaPrevia()) !== null) amostras.pidVisto += 1;
+          amostras.comTravaDoIdGlobal += await travasDeEscritaNoIdGlobal();
           await espera(10);
         }
       })();
@@ -371,22 +369,24 @@ describe("ID Global e travas", () => {
       const previaRodando = marca.previaFim === null;
 
       const rp = await previa; await amostrador;
-      // premissa: a prévia era grande, válida e foi observada gravando
       expect(rp.statusCode, rp.body.slice(0, 300)).toBe(200);
       expect(j(rp)).toMatchObject({ linhas: N, gravadas: 0, erros: [], simulacao: true });
       expect(amostras.total).toBeGreaterThan(0);
-      expect(amostras.gravandoProdutos).toBeGreaterThan(0);
-      // causa: a prévia nunca segurou o contador de ID Global
+      expect(amostras.pidVisto, "a prévia esteve ativa durante a amostragem").toBeGreaterThan(0);
       expect(amostras.comTravaDoIdGlobal, "a prévia segurou trava de escrita no ID Global").toBe(0);
-      // efeito: a pessoa foi criada, com ID Global, e terminou com a prévia ainda rodando
       expect(pessoa.statusCode, pessoa.body).toBe(201);
       expect(await idGlobalDe((JSON.parse(pessoa.body) as { id: string }).id)).toMatchObject({ tipo: "people" });
       expect(previaRodando, "a pessoa só terminou depois da prévia").toBe(true);
       expect(pessoaFim).toBeLessThan(marca.previaFim!);
-      // e a prévia não deixou nada: nem produto, nem índice de produto; o contador andou só o da pessoa
       expect(await contar("products")).toBe(produtosAntes);
       expect(await contar("registros_globais")).toBe(indicesAntes + 1);
       expect(Number(await contador())).toBe(contadorAntes + 1);
+
+      // 4) controle sequencial: depois da prévia, criar pessoa ainda numera
+      const depois = await criarPessoa("Pessoa Depois Da Previa");
+      expect(depois.statusCode, depois.body).toBe(201);
+      expect(Number(await contador())).toBe(contadorAntes + 2);
+      expect(await contar("registros_globais")).toBe(indicesAntes + 2);
     } finally {
       await previa.catch(() => undefined); await amostrador.catch(() => undefined);
     }

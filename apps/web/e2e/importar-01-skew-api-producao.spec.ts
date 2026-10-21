@@ -109,7 +109,15 @@ test("IMP01 · K1 (sentido 1) — a tela deste HEAD sobre a API da base: o ATUAL
       d2.getByTestId("importar-confirmar").click(),
     ]);
     expect(gravou.status(), "a base cria pelo CRIAR deste web").toBe(201);
-    expect(pedidos, "o CRIAR sai como sempre, sem `acao`").toEqual(["?simular=1", "?simular=0"]);
+    // CRIAR: prévia `simular=1` e gravação `simular=0` (com lote offset/limit quando a tela fatia); nunca `acao`.
+    expect(pedidos.length, "prévia + gravação do CRIAR").toBeGreaterThanOrEqual(2);
+    expect(pedidos[0], "a prévia do CRIAR").toBe("?simular=1");
+    for (const p of pedidos) {
+      const q = new URLSearchParams(p.startsWith("?") ? p.slice(1) : p);
+      expect(q.has("acao"), `CRIAR sem acao (${p})`).toBe(false);
+    }
+    expect(pedidos.some((p) => new URLSearchParams(p.startsWith("?") ? p.slice(1) : p).get("simular") === "0"),
+      "há gravação simular=0").toBe(true);
     const achados = await api<{ items: { id: string; description: string }[] }>(page, "GET", `/api/resources/products?search=${encodeURIComponent(descricao)}`);
     criados.push(...achados.items.filter((x) => x.description === descricao).map((x) => x.id));
     expect(criados.length, "o produto do CRIAR existe").toBe(1);

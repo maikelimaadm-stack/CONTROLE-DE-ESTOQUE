@@ -641,11 +641,12 @@ export function comparacoesDasDuplicatas(n: { somaDasDuplicatas: string; liquido
 /* ═════════════════════════════════ os detectores do mundo da base (skew) ═════════════════════════════════ */
 
 /**
- * As marcas da XML-04 no fonte: a da API (a conferência monta `fatorPelaNota`) e a da tela (o sufixo do testid da
- * origem do fator, `fator-origem`). Lidas do FONTE do commit (`fonteDoCommitContem`, de `xml-02-comum.ts`: reprova
- * quando não consegue ler — nunca vira "não tem").
+ * As marcas da XML-04 no fonte: a da API (a conferência monta `fatorPelaNota`) e a da tela (testid da origem da
+ * forma de pagamento, `importacao-forma-origem` — sobrevive à importação enxuta; o antigo `fator-origem` saiu da
+ * aba Itens). Lidas do FONTE do commit (`fonteDoCommitContem`, de `xml-02-comum.ts`: reprova quando não consegue
+ * ler — nunca vira "não tem").
  */
-export const MARCA_DA_XML04 = { api: "fatorPelaNota", web: "fator-origem" } as const;
+export const MARCA_DA_XML04 = { api: "fatorPelaNota", web: "importacao-forma-origem" } as const;
 
 /** Dois commits FIXOS, um por mundo. Nenhum é a base desta execução: ela muda a cada PR e só exercitaria o ramo dela. */
 export const COMMITS_DA_XML04 = {

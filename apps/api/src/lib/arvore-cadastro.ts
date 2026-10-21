@@ -102,7 +102,11 @@ const canonico = (v: unknown): string | null => (typeof v === "string" && v !== 
  * `codigoGerado`: o código em `data` acabou de ser GERADO pelo servidor para um registro do acervo sem código
  * (`gerarCodigoNaEdicao`, AJUSTES 01 R1 A-7) — não é troca de código pedida pelo cliente.
  */
-export async function conferirRegrasDaArvore(ctx: ServiceCtx, def: ResourceDef, id: string | null, data: Linha, atual: Linha | null, opcoes: { codigoGerado?: boolean } = {}): Promise<void> {
+export async function conferirRegrasDaArvore(ctx: ServiceCtx, def: ResourceDef, id: string | null, data: Linha, atual: Linha | null, opcoes: {
+  codigoGerado?: boolean;
+  /** Prévia da importação: superiores de linhas anteriores do mesmo arquivo (ainda sem INSERT). */
+  paisSimulados?: Map<string, Record<string, unknown>>;
+} = {}): Promise<void> {
   if (!def.tree) return;
   // UUID é o mesmo em qualquer caixa (A-9): o superior do corpo passa à forma canônica ANTES de qualquer comparação
   // — senão o superior atual, reenviado em maiúsculas, parecia "outro" (e o próprio registro passava por outro nó)
@@ -124,7 +128,8 @@ export async function conferirRegrasDaArvore(ctx: ServiceCtx, def: ResourceDef, 
   const parentId = ("parent_id" in data ? canonico(data["parent_id"]) : canonico(atual?.["parent_id"]));
   let pai: Linha | null = null;
   if (parentId) {
-    pai = await registroVivo(ctx, def, parentId, atual === null || mudouPai || mudouCodigo);
+    const simulado = opcoes.paisSimulados?.get(parentId) ?? opcoes.paisSimulados?.get(parentId.toLowerCase());
+    pai = simulado ? (simulado as Linha) : await registroVivo(ctx, def, parentId, atual === null || mudouPai || mudouCodigo);
     if (!pai) throw campo("parent_id", "Superior não encontrado.");
     if (id && mudouPai) {
       if (parentId === idCanonico) throw campo("parent_id", "O superior não pode ser o próprio registro nem um descendente dele.");
