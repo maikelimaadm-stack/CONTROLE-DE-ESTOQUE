@@ -59,15 +59,12 @@ export function camposDoPainelNoCabecalho(e: EstadoDaCriacao): Set<string> {
 /** A régua entre os grupos do Financeiro (subtotal × ajustes × pagamento). */
 const Divisor = () => <div className="h-px bg-slate-200" aria-hidden />;
 
-/** O seguro do documento (dado fiscal) — na aba Totais, junto do que compõe o valor. */
+/** O seguro do documento — na aba Totais, junto do que compõe o valor. */
 function CampoSeguro({ e }: { e: EstadoDaCriacao }) {
   if (!e.editarFiscal && e.documentoEmEdicao) {
     const v = e.documentoEmEdicao["seguro"];
     const texto = v === null || v === undefined || v === "" ? "" : String(v);
-    return <>
-      <CampoLeitura rotulo="Seguro" testId="compras-seguro-campo" valor={texto} />
-      <p className="text-[11px] text-slate-500">Gravado na compra — a edição aberta não altera dados fiscais.</p>
-    </>;
+    return <CampoLeitura rotulo="Seguro" testId="compras-seguro-campo" valor={texto} />;
   }
   return <CampoDaCentral rotulo="Seguro" erro={e.erro("seguro")} preenchido={e.fiscal.seguro !== ""} testId="compras-seguro-campo" data-campo-fiscal="seguro">
     <Input data-testid="compras-seguro" type="number" step="0.01" min="0" inputMode="decimal" value={e.fiscal.seguro}
@@ -75,17 +72,14 @@ function CampoSeguro({ e }: { e: EstadoDaCriacao }) {
   </CampoDaCentral>;
 }
 
-/** Tipo de título: editável na criação; na edição, leitura do documento (PATCH não troca). */
+/** Tipo de título: editável na criação e na edição ABERTA (decisão 324); leitura só quando não há edição de classificação. */
 function TipoDeTituloNoPainel({ e }: { e: EstadoDaCriacao }) {
-  if (e.editarFiscal) return <TipoDeTituloDaCriacao e={e} />;
+  if (e.editarFiscal || e.editarRateio) return <TipoDeTituloDaCriacao e={e} />;
   if (e.documentoEmEdicao) {
     const nome = String(e.documentoEmEdicao["tipo_titulo_nome"] ?? "");
     const id = e.documentoEmEdicao["tipo_titulo_id"];
     const valor = nome || (id ? "Informado" : "");
-    return <>
-      <CampoLeitura rotulo="Tipo de título" adorno="pesquisa" testId="compras-tipo-titulo" valor={valor} />
-      <p className="text-[11px] text-slate-500">Gravado na compra — a edição aberta não altera o tipo de título.</p>
-    </>;
+    return <CampoLeitura rotulo="Tipo de título" adorno="pesquisa" testId="compras-tipo-titulo" valor={valor} />;
   }
   return null;
 }
@@ -141,9 +135,9 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
      entrada, quando há). Os totais do documento ficam na aba Totais; as contas vinculadas, na aba Vínculos. */
   const financeiro = presentes(FINANCEIRO);
   const tipoTitulo = fiscalNoPainel(e);
-  /* Vencimento fica SEMPRE à vista quando o layout o pede — ajustar parcelas não o desmonta (o cronograma por
-     linha continua na tabela; o campo do cabeçalho não some ao ligar entrada / mudar o modo). */
-  const mostraVencimento = financeiro.includes("data_vencimento");
+  /* Com grade de parcelas, o vencimento mora em cada linha — sem campo solto concorrente (decisão 324). */
+  const temGradeParcelas = financeiro.includes("plano_parcelas");
+  const mostraVencimento = financeiro.includes("data_vencimento") && !temGradeParcelas;
   if (financeiro.length || tipoTitulo) {
     abas.push({
       value: valorUnico("financeiro"), label: "Financeiro",
@@ -158,7 +152,7 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
           {mostraVencimento && <Divisor />}
           {mostraVencimento && <React.Fragment>{desenharCampo("data_vencimento")}</React.Fragment>}
         </PainelColuna>
-        {financeiro.includes("plano_parcelas") &&
+        {temGradeParcelas &&
           <div className="max-w-[960px]" data-testid="compras-financeiro-parcelas">{desenharCampo("plano_parcelas")}</div>}
       </div>
     });
@@ -172,28 +166,25 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
   });
 
   const rateioCampos = presentes(RATEIO_CAMPOS);
+  /* Natureza/centro do layout só no modo documento (evita duplicar com linhas do rateio por valor/produto). */
+  const mostraNaturezaCentroDoDocumento = rateioCampos.length > 0 && (!e.editarRateio || e.rateio.tipo === "documento");
   if (rateioNoPainel(e) || rateioCampos.length) abas.push({
     value: valorUnico(ABA_DO_RATEIO), label: ROTULO_DA_ABA_DO_RATEIO,
     erro: caminhoDoRateioComErro(e.errosDaTela) !== null || comErro(rateioCampos) || Boolean(e.erro("classificacao_gasto")),
     content: <PainelLargo>
-      {rateioCampos.length > 0 && <ColunaDeCampos>
+      {mostraNaturezaCentroDoDocumento && <ColunaDeCampos>
         {rateioCampos.map((c) => <React.Fragment key={c}>{desenharCampo(c)}</React.Fragment>)}
       </ColunaDeCampos>}
-      {/* Edição: classificação/rateio gravados em leitura no MESMO lugar da criação (PATCH não os altera). */}
       {rateioNoPainel(e) && (e.editarRateio
         ? <RateioEItensDaCriacao e={e} />
         : e.documentoEmEdicao
           ? <div data-testid="compras-edicao-rateio-leitura" className="space-y-2">
-              <p className="text-[12px] text-slate-600" data-testid="compras-rateio-leitura-motivo">
-                Classificação e rateio gravados na compra. A edição aberta não altera estes campos — só o que a PATCH aceita.
-              </p>
-              {/* Paridade com a consulta: natureza/centro do documento sempre; RateioDaConsulta só por_valor/por_produto. */}
-              <PainelColuna>
+              {!mostraNaturezaCentroDoDocumento && <PainelColuna>
                 <CampoLeitura rotulo="Natureza financeira" adorno="pesquisa"
                   valor={[e.documentoEmEdicao["categoria_financeira_codigo"], e.documentoEmEdicao["categoria_financeira_nome"]].filter(Boolean).join(" — ")} />
                 <CampoLeitura rotulo="Centro de resultado" adorno="pesquisa"
                   valor={[e.documentoEmEdicao["centro_custo_codigo"], e.documentoEmEdicao["centro_custo_nome"]].filter(Boolean).join(" — ")} />
-              </PainelColuna>
+              </PainelColuna>}
               <RateioDaConsulta d={e.documentoEmEdicao} />
             </div>
           : null)}
@@ -208,9 +199,6 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
         ? <DadosFiscaisDaCriacao e={e} noPainel />
         : e.documentoEmEdicao && temDadosFiscais(e.documentoEmEdicao)
           ? <div data-testid="compras-edicao-fiscal-leitura">
-              <p className="mb-2 text-[12px] text-slate-600" data-testid="compras-fiscal-leitura-motivo">
-                Dados fiscais da nota — imutáveis na edição aberta (a PATCH os recusa).
-              </p>
               <DadosFiscaisDaConsulta d={e.documentoEmEdicao} />
             </div>
           : <p className="text-[12px] text-slate-500" data-testid="compras-fiscal-vazio">Nenhum dado fiscal gravado nesta compra.</p>}

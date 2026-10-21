@@ -336,12 +336,13 @@ describe("(d) o corpo é estrito: o que a edição não troca é 422 no campo, j
     }
   });
 
-  it("compra: os dados fiscais do cabeçalho → 'não mudam depois do lançamento' (D5); pedido: a nota, os fiscais e o lote → as recusas do POST", async () => {
+  it("compra: fato fiscal do cabeçalho → 'não mudam depois do lançamento'; pedido: a nota, os fiscais e o lote → as recusas do POST", async () => {
     const compra = await documento("compra", [itemCompra((await produto()).id)]);
-    const rc = await patch("compra", compra, { version: await versao(compra), chave_acesso: null, valor_ipi: "1.00", rateio: { tipo: "por_produto" } });
+    // EDITAR-02B: rateio/tipo_titulo/CAPEX passam a ser aceitos; chave e IPI continuam imutáveis.
+    const rc = await patch("compra", compra, { version: await versao(compra), chave_acesso: null, valor_ipi: "1.00" });
     recusada(rc, 422, "VALIDATION_ERROR");
     expect(detalhes(rc)).toEqual([
-      { path: "chave_acesso", message: MSG_EDICAO_DADOS_FISCAIS }, { path: "valor_ipi", message: MSG_EDICAO_DADOS_FISCAIS }, { path: "rateio", message: MSG_EDICAO_DADOS_FISCAIS },
+      { path: "chave_acesso", message: MSG_EDICAO_DADOS_FISCAIS }, { path: "valor_ipi", message: MSG_EDICAO_DADOS_FISCAIS },
     ]);
     const pedido = await documento("pedido", [itemCompra((await produto()).id)]);
     const item = (await itensDe("pedido", pedido))[0]!.id;
@@ -447,7 +448,7 @@ describe("(h) itens: P1, a compra da nota (P3), a compra do pedido (D2), D3 e D4
     }
   });
 
-  it("P3: a compra da NOTA com as duplicatas — produto, quantidade, valor, descontos (valor e percentual), frete, outras despesas, desconto, condição e item novo → 422 no campo; local, observação e datas editam", async () => {
+  it("P3: a compra da NOTA com as duplicatas — quantidade, valor, descontos, frete, outras, condição e item novo → 422; produto interno, local, observação e datas editam", async () => {
     const emitente = cnpjComDv(`8${String(Date.now() % 1e10).padStart(11, "0").slice(-11)}`);
     const fornecedor = await fornecedorComDocumento(emitente);
     const p = await produto();
@@ -471,7 +472,6 @@ describe("(h) itens: P1, a compra da nota (P3), a compra do pedido (D2), D3 e D4
       [{ itens: [{ id: item.id, desconto: "1.00" }] }, "itens[0].desconto", MSG_EDICAO_COMPRA_DA_NOTA],
       // L5 (o cético): o desconto em PERCENTUAL do item também forma o total.
       [{ itens: [{ id: item.id, desconto_percentual: "1" }] }, "itens[0].desconto_percentual", MSG_EDICAO_COMPRA_DA_NOTA],
-      [{ itens: [{ id: item.id, produto_id: (await produto()).id }] }, "itens[0].produto_id", MSG_EDICAO_COMPRA_DA_NOTA],
       [{ itens: [{ id: item.id, valor_ipi: "1.00" }] }, "itens[0].valor_ipi", MSG_EDICAO_ITEM_DA_NOTA],
       [{ itens: [{ id: item.id }, { produto_id: p.id, quantidade: "1", valor_unitario: "1" }] }, "itens[1]", MSG_EDICAO_COMPRA_DA_NOTA],
       [{ frete: "5.00" }, "frete", MSG_EDICAO_COMPRA_DA_NOTA],
@@ -487,12 +487,17 @@ describe("(h) itens: P1, a compra da nota (P3), a compra do pedido (D2), D3 e D4
       expect(detalhes(r), caminho).toEqual([{ path: caminho, message: mensagem }]);
     }
     expect(await foto(id), "nada gravado").toEqual(antes);
-    // O que não forma o total: local, lote, observação e as datas da entrada editam.
-    const ok = await patch("compra", id, { version: v, data_entrada: "2026-09-11", observacao: "conferida", itens: [{ id: item.id, armazem_id: c.I.warehouse2, observacao: "no silo" }] });
+    // EDITAR-02B: produto interno remapeável; local, observação e datas editam; totais/duplicatas intactos.
+    const novoProduto = (await produto()).id;
+    const ok = await patch("compra", id, { version: v, data_entrada: "2026-09-11", observacao: "conferida",
+      itens: [{ id: item.id, produto_id: novoProduto, armazem_id: c.I.warehouse2, observacao: "no silo" }] });
     expect(ok.statusCode, ok.body).toBe(200);
     const depois = await linha(id);
     expect([depois.observacao, depois.data_entrada, depois.valor_total, depois.parcelas_nota]).toEqual(["conferida", "2026-09-11", banco.valor_total, banco.parcelas_nota]);
-    expect((await itensNoBanco(id))[0]).toMatchObject({ armazem_id: c.I.warehouse2, observacao: "no silo", quantidade: item.quantidade, valor_unitario: item.valor_unitario });
+    expect((await itensNoBanco(id))[0]).toMatchObject({
+      produto_id: novoProduto, armazem_id: c.I.warehouse2, observacao: "no silo",
+      quantidade: item.quantidade, valor_unitario: item.valor_unitario, n_item_nota: 1,
+    });
   });
 
   it("D2: a compra GERADA de pedido — fornecedor, produto e item novo travados; quantidade até o saldo; com o pedido convertido a quantidade trava e a observação do item ainda edita", async () => {
@@ -861,5 +866,92 @@ describe("(o) P6: a chave de acesso trava fornecedor, número e série; a compra
     const depois = await linha(x.id);
     expect([depois.observacao, depois.data_documento, depois.frete, depois.valor_total]).toEqual(["conferida", "2026-09-09", banco.frete, banco.valor_total]);
     expect((await itensNoBanco(x.id))[0]).toMatchObject({ armazem_id: c.I.warehouse2, quantidade: x.item.quantidade });
+  });
+});
+
+// ─────────────── EDITAR-02B (decisão 324): classificação e rateio na compra ABERTA ───────────────
+
+describe("EDITAR-02B: classificação, CAPEX e rateio na compra ABERTA", () => {
+  async function segundaNaturezaECentro(): Promise<{ cat: string; cc: string }> {
+    const cat = (await c.admin.query<{ id: string }>(
+      `select id::text as id from erp.financial_categories
+        where organization_id = $1 and nature = any($2::text[]) and id <> $3 and deleted_at is null
+        order by code, id limit 1`,
+      [c.h.demo.orgId, ["expense", "both"], c.I.category])).rows[0];
+    const cc = (await c.admin.query<{ id: string }>(
+      `select id::text as id from erp.cost_centers
+        where organization_id = $1 and kind = 'analytic' and id <> $2 and deleted_at is null
+        order by code, id limit 1`,
+      [c.h.demo.orgId, c.I.costCenter])).rows[0];
+    expect(cat && cc, "premissa: há segunda natureza e centro analíticos no demo").toBeTruthy();
+    return { cat: cat!.id, cc: cc!.id };
+  }
+
+  it("completa CAPEX/tipo de título, troca para rateio por valor 60/40 e volta; confirmado continua recusando rateio", async () => {
+    const p = await produto();
+    const id = await documento("compra", [itemCompra(p.id, "1", "27.00")]);
+    const tipoTitulo = (await c.admin.query<{ id: string }>(
+      "select id::text as id from erp.title_types where (organization_id is null or organization_id = $1) and not is_advance order by name, id limit 1",
+      [c.h.demo.orgId])).rows[0]!.id;
+    let v = await versao(id);
+    const classifica = await patch("compra", id, {
+      version: v,
+      classificacao_gasto: "opex",
+      tipo_titulo_id: tipoTitulo,
+    });
+    expect(classifica.statusCode, classifica.body).toBe(200);
+    expect(await linha(id)).toMatchObject({
+      classificacao_gasto: "opex",
+      tipo_titulo_id: tipoTitulo,
+      rateio_tipo: null,
+    });
+
+    const { cat, cc } = await segundaNaturezaECentro();
+    v = await versao(id);
+    const rateio = await patch("compra", id, {
+      version: v,
+      categoria_financeira_id: null,
+      centro_custo_id: null,
+      rateio: {
+        tipo: "por_valor",
+        linhas: [
+          { categoria_financeira_id: c.I.category, centro_custo_id: c.I.costCenter, percentual: "60" },
+          { categoria_financeira_id: cat, centro_custo_id: cc, percentual: "40" },
+        ],
+      },
+    });
+    expect(rateio.statusCode, rateio.body).toBe(200);
+    expect(await linha(id)).toMatchObject({
+      categoria_financeira_id: null,
+      centro_custo_id: null,
+      rateio_tipo: "por_valor",
+    });
+    const linhas = (await c.admin.query<{ percentual: string; cat: string }>(
+      `select percentual::text as percentual, categoria_financeira_id::text as cat
+         from erp.documentos_compra_rateio where documento_id = $1 order by posicao`, [id])).rows;
+    expect(linhas.map((l) => [l.cat, l.percentual])).toEqual([
+      [c.I.category, "60.0000"], [cat, "40.0000"],
+    ]);
+
+    // Trocar linhas (DELETE+INSERT) e voltar à classificação única.
+    v = await versao(id);
+    const volta = await patch("compra", id, {
+      version: v,
+      rateio: null,
+      categoria_financeira_id: c.I.category,
+      centro_custo_id: c.I.costCenter,
+    });
+    expect(volta.statusCode, volta.body).toBe(200);
+    expect(await linha(id)).toMatchObject({ rateio_tipo: null, categoria_financeira_id: c.I.category });
+    expect((await c.admin.query("select 1 from erp.documentos_compra_rateio where documento_id = $1", [id])).rowCount).toBe(0);
+
+    const conf = await confirmarCompra(id);
+    expect(conf.statusCode, conf.body).toBe(200);
+    const negado = await patch("compra", id, {
+      version: await versao(id),
+      rateio: { tipo: "por_produto" },
+    });
+    recusada(negado, 409, "INVALID_STATUS_TRANSITION");
+    expect(erro(negado).message).toBe(MSG_EDICAO_COMPRA_CONFIRMADA);
   });
 });
