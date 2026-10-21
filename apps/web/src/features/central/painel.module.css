@@ -12,6 +12,28 @@
 .lado { min-width: 0; }
 .largo { max-width: 960px; }
 
+/*
+ * RÓTULOS DO PAINEL — no painel a coluna é estreita (330px) e há rótulo que não cabe nos 126px do desenho
+ * ("Condição de pagamento", "Forma de pagamento"). O `.rotulo` do campo é `nowrap` com reticências e alinhado à
+ * direita: quando o texto passa, o começo dele é que some — daí os rótulos parecerem cortados e desalinhados entre si.
+ * Aqui o rótulo QUEBRA em duas linhas; 28px de altura comportam duas linhas de 14px, então a linha do campo não cresce
+ * e a caixa continua no lugar. É só veste: o campo e o valor não mudam.
+ */
+.repartido [data-parte="rotulo"],
+.colunaEstreita [data-parte="rotulo"] {
+  display: block;
+  top: 50%;
+  height: auto;
+  transform: translateY(-50%);
+  padding-right: 4px;
+  line-height: 14px;
+  text-align: right;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: break-word;
+}
+
 /* relação: a pauta dos títulos do desenho — o cabeçalho em negrito, a borda da linha em cinza claro */
 .relacao { min-width: 0; line-height: normal; }
 .linha {
