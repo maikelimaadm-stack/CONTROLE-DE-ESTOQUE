@@ -218,18 +218,23 @@ export function RateioEItensDaCriacao({ e }: { e: EstadoDaCriacao }) {
             Imobilizado (cria o bem na confirmação)
           </label>
         </div>
-        {r.tipo === "por_produto" && <div className="grid grid-cols-12 gap-2">
+        {/* Natureza/centro do item sempre à vista — desabilitados fora do rateio por produto (não somem ao trocar o modo). */}
+        <div className="grid grid-cols-12 gap-2">
           <div className="col-span-12 md:col-span-6">
-            <CampoDaCentral rotulo="Natureza financeira do item" obrigatorio icone="pesquisa" preenchido={Boolean(naturezaDoItem(it))}>
-              <RefSelect resource="financial_categories" value={naturezaDoItem(it)} buscarOpcoes={opcoesDeNaturezaDeDespesa} onChange={(v) => e.mudarClassificacaoDoItem(k, { natureza: v ?? "" })} />
+            <CampoDaCentral rotulo="Natureza financeira do item" obrigatorio={r.tipo === "por_produto"} icone="pesquisa"
+              estado={r.tipo === "por_produto" ? "editavel" : "desabilitado"} preenchido={Boolean(naturezaDoItem(it))}>
+              <RefSelect resource="financial_categories" value={naturezaDoItem(it)} buscarOpcoes={opcoesDeNaturezaDeDespesa}
+                disabled={r.tipo !== "por_produto"} onChange={(v) => e.mudarClassificacaoDoItem(k, { natureza: v ?? "" })} />
             </CampoDaCentral>
           </div>
           <div className="col-span-12 md:col-span-6">
-            <CampoDaCentral rotulo="Centro de resultado do item" obrigatorio icone="pesquisa" preenchido={Boolean(centroDoItem(it))}>
-              <RefSelect resource="cost_centers" value={centroDoItem(it)} filter={{ kind: "analytic" }} onChange={(v) => e.mudarClassificacaoDoItem(k, { centro: v ?? "" })} />
+            <CampoDaCentral rotulo="Centro de resultado do item" obrigatorio={r.tipo === "por_produto"} icone="pesquisa"
+              estado={r.tipo === "por_produto" ? "editavel" : "desabilitado"} preenchido={Boolean(centroDoItem(it))}>
+              <RefSelect resource="cost_centers" value={centroDoItem(it)} filter={{ kind: "analytic" }}
+                disabled={r.tipo !== "por_produto"} onChange={(v) => e.mudarClassificacaoDoItem(k, { centro: v ?? "" })} />
             </CampoDaCentral>
           </div>
-        </div>}
+        </div>
         {(["gera_estoque", "imobilizado", "categoria_financeira_id", "centro_custo_id"] as const).map((c) => erroEm("itens", k, c)
           ? <span key={c} className="block text-[11px] text-red-600">{erroEm("itens", k, c)}</span> : null)}
       </li>)}

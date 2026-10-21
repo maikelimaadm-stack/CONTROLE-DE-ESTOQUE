@@ -17,15 +17,14 @@ import estilos from "./parcelas.module.css";
 const CLASSE_DO_INPUT = ["mg", "input"].join("-");
 
 /**
- * PARCELAS DA COMPRA — o pagamento na aba Financeiro (decisão do usuário, 10/2026).
+ * PARCELAS DA COMPRA — o pagamento na aba Financeiro (decisão do usuário, 10/2026; estabilidade 10/2026).
  *
  * A tabela é o pagamento e está SEMPRE à vista: data, valor e observação de cada parcela. "Pela condição" mostra o
  * cronograma que o servidor vai gerar (a MESMA conta de `planoDaCondicao`, sobre a data e o total do documento) com a
- * quantidade de parcelas; "Ajustar parcelas" abre a lista linha a linha, com "Adicionar parcela" e o remover de cada
- * linha (o plano grava `parcelas` e a confirmação gera os títulos a partir dela).
+ * quantidade de parcelas; "Ajustar parcelas" edita a MESMA grade (inputs ativos), com "Adicionar parcela" e o remover.
  *
- * "Possui entrada?" liga a entrada: ela é a PRIMEIRA linha da lista (o cronograma inteiro, entrada incluída, é o que
- * vai no `parcelas` do plano) — por isso os campos de entrada moram na própria linha, como os das demais parcelas.
+ * "Possui entrada?" NÃO desmonta campos: Valor e Data da entrada ficam sempre no cabeçalho (desabilitados quando Não).
+ * Na lista, a entrada continua sendo a PRIMEIRA linha do plano quando ligada.
  *
  * `installments` no plano = parcelas ALÉM da entrada (contrato de `buildInstallments`). A lista `parcelas[]`, quando
  * presente, é a fonte do cronograma no servidor — a contagem não pode incluir a entrada duas vezes.
@@ -140,9 +139,35 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
   const carregandoCondicao = !e.ajustarParcelas && Boolean(condicaoId) && (condicao.isLoading || condicao.isFetching);
   const erroCondicao = !e.ajustarParcelas && Boolean(condicaoId) && condicao.isError;
 
+  const linhasNaTela = e.ajustarParcelas ? linhas : previstas;
+  const valorDaEntrada = comEntrada ? (e.ajustarParcelas ? (linhas[0]?.valor ?? "") : (previstas[0]?.entrada ? previstas[0].valor : p.down_payment_value ?? "")) : "";
+  const dataDaEntrada = comEntrada ? (e.ajustarParcelas ? (linhas[0]?.vencimento ?? "") : (previstas[0]?.entrada ? previstas[0].vencimento : p.down_payment_date ?? "")) : "";
+  const mudarValorEntrada = (valor: string) => {
+    if (!comEntrada) return;
+    if (!e.ajustarParcelas) e.setAjustarParcelas(true);
+    const base = sementeDaTela();
+    const com = base[0]?.entrada ? base : [{ vencimento: p.first_due_date || e.cabecalho.data_documento, valor: "", observacao: "Entrada", entrada: true }, ...base.filter((l) => !l.entrada)];
+    definir(com.map((l, k) => (k === 0 ? { ...l, valor, entrada: true } : l)), true);
+  };
+  const mudarDataEntrada = (vencimento: string) => {
+    if (!comEntrada) return;
+    if (!e.ajustarParcelas) e.setAjustarParcelas(true);
+    const base = sementeDaTela();
+    const com = base[0]?.entrada ? base : [{ vencimento: "", valor: "", observacao: "Entrada", entrada: true }, ...base.filter((l) => !l.entrada)];
+    definir(com.map((l, k) => (k === 0 ? { ...l, vencimento, entrada: true } : l)), true);
+  };
+
   return <>
     <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
-      <div className="w-[260px]"><ChaveSimNao rotulo="Possui entrada?" valor={comEntrada} onChange={mudarEntrada} testId="compras-possui-entrada" /></div>
+      <div className="w-[220px]"><ChaveSimNao rotulo="Possui entrada?" valor={comEntrada} onChange={mudarEntrada} testId="compras-possui-entrada" /></div>
+      <div className="w-[140px]"><CampoDaCentral rotulo="Valor da entrada" estado={comEntrada ? "editavel" : "desabilitado"} preenchido={Boolean(valorDaEntrada)} testId="compras-valor-entrada-campo">
+        <Input data-testid="compras-valor-entrada" type="number" step="0.01" min="0" inputMode="decimal" placeholder="0,00"
+          value={valorDaEntrada} disabled={!comEntrada} onChange={(ev) => mudarValorEntrada(ev.target.value)} />
+      </CampoDaCentral></div>
+      <div className="w-[160px]"><CampoDaCentral rotulo="Data da entrada" icone="data" estado={comEntrada ? "editavel" : "desabilitado"} preenchido={Boolean(dataDaEntrada)} testId="compras-data-entrada-campo">
+        <DataDaCentral className={cn(CLASSE_DO_INPUT, estilos.data)} rotulo="Data da entrada" value={dataDaEntrada}
+          onChange={mudarDataEntrada} disabled={!comEntrada} />
+      </CampoDaCentral></div>
       <div className="w-[300px]"><CampoDaCentral rotulo="Parcelas" icone="selecao" preenchido testId="compras-parcelas-campo">
         <MgSelect data-testid="compras-parcelas" value={e.ajustarParcelas ? "ajustar" : "padrao"}
           onChange={escolherModo}
@@ -155,36 +180,35 @@ export function ParcelasDaCriacao({ e }: { e: EstadoDaCriacao }) {
         <span>vencimento</span><span>valor</span><span>observação</span><span />
       </div>
 
-      {!e.ajustarParcelas && <>
-        {carregandoCondicao && <p className="px-2 py-2 text-[12px] text-slate-500" data-testid="compras-parcelas-carregando">Carregando a condição de pagamento…</p>}
-        {erroCondicao && <p className="px-2 py-2 text-[12px] text-red-700" role="alert" data-testid="compras-parcelas-erro-condicao">Não foi possível ler a condição de pagamento.</p>}
-        {!carregandoCondicao && !erroCondicao && previstas.length === 0 && <p className="px-2 py-2 text-[12px] text-slate-500">Escolha a condição de pagamento para ver as parcelas.</p>}
-        {!carregandoCondicao && !erroCondicao && previstas.map((l, k) => <div key={k} data-testid="compras-parcela" data-entrada={l.entrada ? "true" : undefined} className={GRADE + " px-2 py-1.5 text-[12px]"}>
-          <span className="text-slate-700">{dateBR(l.vencimento)}</span>
-          <span className="tabular-nums text-slate-900">{num(l.valor, 2)}</span>
-          <span className="text-slate-500">{l.entrada ? "entrada" : "—"}</span>
-          <span />
-        </div>)}
-      </>}
-
-      {e.ajustarParcelas && <>
-        {linhas.length === 0 && <p className="px-2 py-2 text-[12px] text-slate-500">Nenhuma parcela. Use “Adicionar parcela”.</p>}
-        {linhas.map((l, k) => <div key={k} data-testid="compras-parcela" data-entrada={l.entrada ? "true" : undefined} className={GRADE + " px-2 py-1.5"}>
-          <DataDaCentral className={cn(CLASSE_DO_INPUT, estilos.data)} rotulo={l.entrada ? "Vencimento da entrada" : `Vencimento da parcela ${k + 1}`} value={l.vencimento} onChange={(v) => mudarLinha(k, "vencimento", v)} />
-          <Input className="min-w-0" data-testid={`compras-parcela-valor-${k}`} type="number" step="0.01" min="0" inputMode="decimal"
-            placeholder="0,00" value={l.valor} onChange={(ev) => mudarLinha(k, "valor", ev.target.value)} />
-          <Input className="min-w-0" data-testid={`compras-parcela-observacao-${k}`} value={l.observacao ?? ""} maxLength={500}
-            placeholder={l.entrada ? "Entrada" : "Observação"} onChange={(ev) => mudarLinha(k, "observacao", ev.target.value)} />
-          <Button size="sm" variant="ghost" className="!h-6 !w-6 !min-h-6 !p-0 justify-self-end text-slate-400 hover:text-rose-600"
-            data-testid={`compras-parcela-remover-${k}`} aria-label={l.entrada ? "Remover entrada" : `Remover parcela ${k + 1}`} title={l.entrada ? "Remover entrada" : "Remover parcela"}
-            onClick={() => remover(k)}><X className="h-3.5 w-3.5" aria-hidden /></Button>
-        </div>)}
-      </>}
+      {carregandoCondicao && <p className="px-2 py-2 text-[12px] text-slate-500" data-testid="compras-parcelas-carregando">Carregando a condição de pagamento…</p>}
+      {erroCondicao && <p className="px-2 py-2 text-[12px] text-red-700" role="alert" data-testid="compras-parcelas-erro-condicao">Não foi possível ler a condição de pagamento.</p>}
+      {!carregandoCondicao && !erroCondicao && linhasNaTela.length === 0 && <p className="px-2 py-2 text-[12px] text-slate-500">
+        {e.ajustarParcelas ? "Nenhuma parcela. Use “Adicionar parcela”." : "Escolha a condição de pagamento para ver as parcelas."}
+      </p>}
+      {!carregandoCondicao && !erroCondicao && linhasNaTela.map((l, k) => <div key={k} data-testid="compras-parcela" data-entrada={l.entrada ? "true" : undefined} className={GRADE + " px-2 py-1.5"}>
+        {e.ajustarParcelas
+          ? <>
+            <DataDaCentral className={cn(CLASSE_DO_INPUT, estilos.data)} rotulo={l.entrada ? "Vencimento da entrada" : `Vencimento da parcela ${k + 1}`} value={l.vencimento} onChange={(v) => mudarLinha(k, "vencimento", v)} />
+            <Input className="min-w-0" data-testid={`compras-parcela-valor-${k}`} type="number" step="0.01" min="0" inputMode="decimal"
+              placeholder="0,00" value={l.valor} onChange={(ev) => mudarLinha(k, "valor", ev.target.value)} />
+            <Input className="min-w-0" data-testid={`compras-parcela-observacao-${k}`} value={l.observacao ?? ""} maxLength={500}
+              placeholder={l.entrada ? "Entrada" : "Observação"} onChange={(ev) => mudarLinha(k, "observacao", ev.target.value)} />
+            <Button size="sm" variant="ghost" className="!h-6 !w-6 !min-h-6 !p-0 justify-self-end text-slate-400 hover:text-rose-600"
+              data-testid={`compras-parcela-remover-${k}`} aria-label={l.entrada ? "Remover entrada" : `Remover parcela ${k + 1}`} title={l.entrada ? "Remover entrada" : "Remover parcela"}
+              onClick={() => remover(k)}><X className="h-3.5 w-3.5" aria-hidden /></Button>
+          </>
+          : <>
+            <span className="text-[12px] text-slate-700">{dateBR(l.vencimento)}</span>
+            <span className="text-[12px] tabular-nums text-slate-900">{num(l.valor, 2)}</span>
+            <span className="text-[12px] text-slate-500">{l.entrada ? "entrada" : (l.observacao || "—")}</span>
+            <span />
+          </>}
+      </div>)}
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-1 text-[12px]">
-        {e.ajustarParcelas && <button type="button" className={cn(grade.botao, grade.botaoAdicionar)} aria-label="Adicionar parcela" title="Adicionar parcela"
-          data-testid="compras-parcela-adicionar" disabled={linhas.length >= 120}
-          onClick={() => definir([...linhas, { vencimento: "", valor: "", observacao: "", entrada: false }])}><Plus aria-hidden /></button>}
+        <button type="button" className={cn(grade.botao, grade.botaoAdicionar)} aria-label="Adicionar parcela" title="Adicionar parcela"
+          data-testid="compras-parcela-adicionar" disabled={!e.ajustarParcelas || linhas.length >= 120}
+          onClick={() => definir([...linhas, { vencimento: "", valor: "", observacao: "", entrada: false }])}><Plus aria-hidden /></button>
         <span data-testid="compras-parcelas-quantidade" className="text-slate-600">{quantidade} {quantidade === 1 ? "parcela" : "parcelas"}</span>
         <span data-testid="compras-parcelas-soma" className={cn("ml-auto", foraDoTotal ? "text-amber-700" : "text-slate-600")}>
           Soma: {num(soma, 2)}{foraDoTotal ? ` (deve fechar o total: ${num(e.totalExibido, 2)})` : ""}
