@@ -60,6 +60,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # `@agro/api` também é buildado aqui: a ponte `/api/*` da web (`apps/web/src/server/erp-api-bridge.ts`)
+    # importa `@agro/api/server` (dist/server.js). Sem esse dist o `pnpm --filter @agro/web typecheck`/`build`
+    # falha com `Cannot find module '@agro/api/server'` e as rotas `/health` e `/api/*` da web respondem 500.
     command:
       - sh
       - -ec
@@ -70,6 +73,7 @@ services:
         pnpm --filter @erp/plataforma build &&
         pnpm --filter @agro/domain build &&
         pnpm --filter @agro/db build &&
+        pnpm --filter @agro/api build &&
         pnpm --filter @agro/db seed
 
   # A API fala com o banco como `erp_app` (sem BYPASSRLS), exatamente como em produção —
