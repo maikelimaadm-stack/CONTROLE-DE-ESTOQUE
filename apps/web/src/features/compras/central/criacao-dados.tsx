@@ -109,9 +109,9 @@ export function DadosDaCriacao({ e }: { e: EstadoDaCriacao }) {
       case "serie_nota": return texto("serie_nota", "Série", "compras-serie-nota");
       case "transportadora_id": return cc(c, "Transportadora", { icone: "pesquisa", preenchido: Boolean(h.transportadora_id) },
         <RefSelect resource="people" value={h.transportadora_id} onChange={mudar("transportadora_id")} filter={{ is_transporter: "true" }} labelHint={e.dica("transportadora_id")} />);
-      case "categoria_financeira_id": return cc(c, "Natureza de despesa", { icone: "pesquisa", preenchido: Boolean(h.categoria_financeira_id) },
+      case "categoria_financeira_id": return cc(c, "Natureza Financeira", { icone: "pesquisa", preenchido: Boolean(h.categoria_financeira_id) },
         <RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={mudar("categoria_financeira_id")} buscarOpcoes={opcoesDeNaturezaDeDespesa} labelHint={e.dica("categoria_financeira_id")} />);
-      case "centro_custo_id": return cc(c, "Centro de resultado", { icone: "pesquisa", preenchido: Boolean(h.centro_custo_id) },
+      case "centro_custo_id": return cc(c, "Centro de Resultado", { icone: "pesquisa", preenchido: Boolean(h.centro_custo_id) },
         <RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={mudar("centro_custo_id")} filter={{ kind: "analytic" }} labelHint={e.dica("centro_custo_id")} />);
       case "condicao_pagamento_id": return cc(c, "Condição de pagamento", { icone: "pesquisa", preenchido: Boolean(h.condicao_pagamento_id) },
         <RefSelect resource="condicoes_pagamento" somenteIds={e.condicoesPermitidas} value={h.condicao_pagamento_id} onChange={mudar("condicao_pagamento_id")} labelHint={e.dica("condicao_pagamento_id")} />);

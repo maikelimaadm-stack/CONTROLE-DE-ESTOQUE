@@ -204,6 +204,26 @@ export function somaDoRateio(r: RateioDaCompraNaTela): string {
   return r.linhas.reduce((a, l) => { try { return l.percentual.trim() ? a.plus(D(l.percentual.trim())) : a; } catch { return a; } }, D(0)).toFixed();
 }
 
+/**
+ * Valor (R$) derivado do percentual sobre a base do documento — `D`/decimal; nunca `Number` para dinheiro.
+ * Persistência continua sendo o percentual; R$ é a outra forma de editar a mesma distribuição.
+ */
+export function valorDoPercentualDoRateio(base: string, percentual: string): string {
+  try {
+    if (!percentual.trim()) return "";
+    return D(base || "0").times(D(percentual.trim())).div(100).toFixed(2);
+  } catch { return ""; }
+}
+
+/** Percentual canônico (até 4 casas) a partir do Valor (R$) e da base do documento. */
+export function percentualDoValorDoRateio(base: string, valor: string): string {
+  try {
+    const b = D(base || "0");
+    if (b.lte(0) || !valor.trim()) return "";
+    return D(valor.trim()).times(100).div(b).toFixed(4);
+  } catch { return ""; }
+}
+
 export const cabecalhoVazio = (): Cabecalho => ({
   empresa_id: "", fornecedor_id: "", transportadora_id: "", data_documento: todayISO(), data_entrada: "", data_vencimento: "",
   numero_nota: "", serie_nota: "", categoria_financeira_id: "", centro_custo_id: "", condicao_pagamento_id: "", forma_pagamento_id: "",
@@ -462,13 +482,17 @@ export interface EstadoDaCriacao {
   dadosFiscaisAtivos: boolean;
   fiscal: DadosFiscais;
   mudarFiscal: (p: Partial<DadosFiscais>) => void;
-  /** O rateio da compra manual (F7): do documento (o de hoje), por valor ou por produto. */
+  /** O rateio da compra: classificação única (documento) ou por valor; por_produto só legados. */
   rateio: RateioDaCompraNaTela;
   mudarTipoDoRateio: (t: TipoDoRateioDaCompra) => void;
   mudarLinhaDoRateio: (k: number, p: Partial<LinhaDoRateioDaCompra>) => void;
   adicionarLinhaDoRateio: () => void;
   removerLinhaDoRateio: (k: number) => void;
-  /** A classificação de UM item (F7): gera estoque, imobilizado, natureza e centro — na própria linha da grade. */
+  /** UX: classificação única → linhas por valor (preserva o par na 1ª linha). */
+  ativarRateioPorValor: () => void;
+  /** UX: linhas por valor → classificação única (1ª linha vira o par do documento). */
+  usarClassificacaoUnica: () => void;
+  /** A classificação de UM item: gera estoque / imobilizado (natureza/centro do item só em legado por_produto). */
   mudarClassificacaoDoItem: (k: number, p: { geraEstoque?: boolean; imobilizado?: boolean; natureza?: string; centro?: string }) => void;
 
   /* layout e regras */
@@ -678,6 +702,31 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
   const mudarLinhaDoRateio = (k: number, p: Partial<LinhaDoRateioDaCompra>) => setRateio((r) => ({ ...r, linhas: r.linhas.map((l, i) => (i === k ? { ...l, ...p } : l)) }));
   const adicionarLinhaDoRateio = () => setRateio((r) => (r.linhas.length >= 50 ? r : { ...r, linhas: [...r.linhas, linhaDoRateioVazia()] }));
   const removerLinhaDoRateio = (k: number) => setRateio((r) => (r.linhas.length <= 1 ? r : { ...r, linhas: r.linhas.filter((_, i) => i !== k) }));
+  /**
+   * UX classificação única → rateio por valor: preserva o par do documento como 1ª linha a 100%,
+   * limpa o cabeçalho (CHECK 0047: com por_valor o par do documento fica nulo).
+   */
+  const ativarRateioPorValor = () => {
+    setRateio({
+      tipo: "por_valor",
+      linhas: [{
+        categoriaId: h.categoria_financeira_id,
+        centroId: h.centro_custo_id,
+        contaId: "", safraId: "", percentual: "100",
+      }],
+    });
+    setH((o) => ({ ...o, categoria_financeira_id: "", centro_custo_id: "" }));
+  };
+  /** Volta à classificação única a partir da 1ª linha (ou vazia). */
+  const usarClassificacaoUnica = () => {
+    const primeira = rateio.linhas[0];
+    setRateio(rateioDoDocumento());
+    setH((o) => ({
+      ...o,
+      categoria_financeira_id: primeira?.categoriaId ?? "",
+      centro_custo_id: primeira?.centroId ?? "",
+    }));
+  };
   /* A classificação mora na LINHA (a mesma lista que a grade edita). Item que deixa de gerar estoque perde o local:
      "não gera estoque" com local seria dois sinais contraditórios (o servidor recusa). */
   const mudarClassificacaoDoItem = (k: number, p: { geraEstoque?: boolean; imobilizado?: boolean; natureza?: string; centro?: string }) =>
@@ -1140,7 +1189,8 @@ export function useEstadoDaCriacao({ variante, adaptador, estado, podeCriar, ped
     mostrarFormulario: !modoReceber || Boolean(recebendo),
     cabecalho: h, mudar, itens, setItens, ajustarParcelas, setAjustarParcelas, plano, setPlano, totalItens, totalExibido, lote,
     mostrarFiscal, editarFiscal, mostrarRateio, editarRateio, dadosFiscaisAtivos, fiscal, mudarFiscal,
-    rateio, mudarTipoDoRateio, mudarLinhaDoRateio, adicionarLinhaDoRateio, removerLinhaDoRateio, mudarClassificacaoDoItem,
+    rateio, mudarTipoDoRateio, mudarLinhaDoRateio, adicionarLinhaDoRateio, removerLinhaDoRateio,
+    ativarRateioPorValor, usarClassificacaoUnica, mudarClassificacaoDoItem,
     layoutAtivo, layout, layoutQ, layoutPendente, layoutNaoCarregado, layoutVale, padroes, regras, regrasPendente, exigidosPelaRegra, condicoesPermitidas,
     zonas, forcados: desenho?.forcados ?? new Set<string>(), cfg,
     rotulo: (c, hoje) => cfg.get(c)?.rotulo || hoje,

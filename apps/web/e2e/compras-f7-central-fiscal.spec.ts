@@ -115,11 +115,11 @@ async function compraNaCentral(page: Page, c: Cenario) {
   const abaRateio = page.getByTestId(`${P}-painel`).getByRole("tab", { name: /^Rateio e classificação/ });
   if (await abaRateio.count()) {
     await abaRateio.click();
-    await escolher(page, "Natureza de despesa", c.natureza.label);
-    await escolher(page, "Centro de resultado", c.centro.label);
+    await escolher(page, "Natureza Financeira", c.natureza.label);
+    await escolher(page, "Centro de Resultado", c.centro.label);
   } else {
-    await escolher(page, "Natureza de despesa", c.natureza.label);
-    await escolher(page, "Centro de resultado", c.centro.label);
+    await escolher(page, "Natureza Financeira", c.natureza.label);
+    await escolher(page, "Centro de Resultado", c.centro.label);
   }
   await page.getByTestId(`${P}-adicionar-item`).click();
   const linha = page.getByTestId(`${P}-linha`).first();
@@ -175,7 +175,8 @@ test("FC-1 — compra manual com chave válida, UF, tipo, IPI, seguro e item imo
   const classificacao = rateio.getByTestId("compras-item-classificacao-0");
   await expect(classificacao.getByTestId("compras-item-0-gera-estoque"), "premissa: o item nasce gerando estoque").toBeChecked();
   await classificacao.getByTestId("compras-item-0-imobilizado").check();
-  await expect(rateio.getByTestId("compras-rateio-tipo")).toContainText("Classificação única (documento)");
+  await expect(rateio.getByTestId("compras-classificacao-unica")).toBeVisible();
+  await expect(rateio.getByTestId("compras-rateio-tipo")).toHaveCount(0);
 
   // NO FIO: só as chaves preenchidas, os valores em TEXTO, a chave sem os espaços
   const post = postDaCompra(page);

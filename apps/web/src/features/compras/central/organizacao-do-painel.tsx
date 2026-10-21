@@ -166,23 +166,27 @@ export function abasDoPainelDaCriacao(e: EstadoDaCriacao, desenharCampo: Desenha
   });
 
   const rateioCampos = presentes(RATEIO_CAMPOS);
-  /* Natureza/centro do layout só no modo documento (evita duplicar com linhas do rateio por valor/produto). */
-  const mostraNaturezaCentroDoDocumento = rateioCampos.length > 0 && (!e.editarRateio || e.rateio.tipo === "documento");
+  /* RateioEItensDaCriacao é a autoridade visual da classificação quando editável — o layout não redesenha o par. */
+  const rateioEditavel = rateioNoPainel(e) && e.editarRateio;
+  const tipoGravado = e.documentoEmEdicao?.["rateio_tipo"];
+  const classificacaoUnicaGravada = tipoGravado !== "por_valor" && tipoGravado !== "por_produto";
+  const mostraNaturezaCentroDoLayout = rateioCampos.length > 0 && !rateioEditavel
+    && (!e.documentoEmEdicao || classificacaoUnicaGravada);
   if (rateioNoPainel(e) || rateioCampos.length) abas.push({
     value: valorUnico(ABA_DO_RATEIO), label: ROTULO_DA_ABA_DO_RATEIO,
     erro: caminhoDoRateioComErro(e.errosDaTela) !== null || comErro(rateioCampos) || Boolean(e.erro("classificacao_gasto")),
     content: <PainelLargo>
-      {mostraNaturezaCentroDoDocumento && <ColunaDeCampos>
+      {mostraNaturezaCentroDoLayout && <ColunaDeCampos>
         {rateioCampos.map((c) => <React.Fragment key={c}>{desenharCampo(c)}</React.Fragment>)}
       </ColunaDeCampos>}
       {rateioNoPainel(e) && (e.editarRateio
         ? <RateioEItensDaCriacao e={e} />
         : e.documentoEmEdicao
           ? <div data-testid="compras-edicao-rateio-leitura" className="space-y-2">
-              {!mostraNaturezaCentroDoDocumento && <PainelColuna>
-                <CampoLeitura rotulo="Natureza financeira" adorno="pesquisa"
+              {classificacaoUnicaGravada && !mostraNaturezaCentroDoLayout && <PainelColuna>
+                <CampoLeitura rotulo="Natureza Financeira" adorno="pesquisa"
                   valor={[e.documentoEmEdicao["categoria_financeira_codigo"], e.documentoEmEdicao["categoria_financeira_nome"]].filter(Boolean).join(" — ")} />
-                <CampoLeitura rotulo="Centro de resultado" adorno="pesquisa"
+                <CampoLeitura rotulo="Centro de Resultado" adorno="pesquisa"
                   valor={[e.documentoEmEdicao["centro_custo_codigo"], e.documentoEmEdicao["centro_custo_nome"]].filter(Boolean).join(" — ")} />
               </PainelColuna>}
               <RateioDaConsulta d={e.documentoEmEdicao} />

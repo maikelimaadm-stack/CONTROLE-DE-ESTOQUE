@@ -146,8 +146,8 @@ test("EDITAR-02 · K-2 (sentido 2) — o web da base sobre a API deste HEAD: cri
   await expect(page.getByTestId("compras-central")).toHaveAttribute("data-especie", "compra");
   await escolher(page, "Fornecedor", c.fornecedor.nome);
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
-  await escolher(page, "Natureza de despesa", c.ref.natureza.label);
-  await escolher(page, "Centro de resultado", c.ref.centro.label);
+  await escolher(page, "Natureza Financeira", c.ref.natureza.label);
+  await escolher(page, "Centro de Resultado", c.ref.centro.label);
   // Decisão 319: Local de estoque padrão acima da grade (sem célula por linha).
   await escolher(page, "Local de estoque", c.local.nome);
   const itens = page.getByTestId("compras-itens");

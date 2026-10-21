@@ -308,8 +308,8 @@ test("OP01-F3b · K-1b (sentido 1) — a Central de Compras deste web sobre a AP
   await expect(abaRateio, "Natureza/centro estão na aba Rateio e classificação").toBeVisible();
   await abaRateio.click();
   await expect(abaRateio).toHaveAttribute("aria-selected", "true");
-  await escolherNoCampo(page, campoPeloRotulo(page, "Natureza de despesa"), ref.natureza.label);
-  await escolherNoCampo(page, campoPeloRotulo(page, "Centro de resultado"), ref.centro.label);
+  await escolherNoCampo(page, campoPeloRotulo(page, "Natureza Financeira"), ref.natureza.label);
+  await escolherNoCampo(page, campoPeloRotulo(page, "Centro de Resultado"), ref.centro.label);
   await page.getByTestId(`${PC}-adicionar-item`).click();
   const linha = page.getByTestId(`${PC}-linha`).first();
   await expect(page.getByTestId(`${PC}-linha`)).toHaveCount(1);

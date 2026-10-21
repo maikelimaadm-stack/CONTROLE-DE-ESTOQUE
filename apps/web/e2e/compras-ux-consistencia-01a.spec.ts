@@ -338,16 +338,16 @@ test("UX1-3 — rateio por_valor: Classificação no painel; conta contábil só
   await expect(rateio).toBeVisible();
   await expect(page.getByTestId(`${P}-dados`).locator('[data-testid^="compras-rateio-linha-"]')).toHaveCount(0);
   await expect(page.getByTestId(`${P}-dados`).getByTestId("compras-rateio-tipo")).toHaveCount(0);
+  await expect(rateio.getByTestId("compras-rateio-tipo"), "sem seletor Como classificar").toHaveCount(0);
+  await expect(rateio.getByTestId("compras-classificacao-unica")).toBeVisible();
 
-  await rateio.getByTestId("compras-rateio-tipo").click();
-  await page.locator("div[role='dialog'], [data-radix-popper-content-wrapper]").last()
-    .getByRole("option", { name: /Por valor/i }).first().click();
+  await rateio.getByTestId("compras-rateio-adicionar-por-valor").click();
   await expect(rateio.getByTestId("compras-rateio-linha-0")).toBeVisible();
-  // Conta contábil NÃO à vista — só sob Detalhes contábeis
+  // Conta Contábil NÃO à vista — só sob Detalhes contábeis
   await expect(rateio.getByTestId("compras-rateio-linha-0-avancado")).toHaveCount(0);
   await rateio.getByTestId("compras-rateio-linha-0-detalhes").click();
   await expect(rateio.getByTestId("compras-rateio-linha-0-avancado")).toBeVisible();
-  await expect(rateio.getByTestId("compras-rateio-linha-0-avancado")).toContainText(/Conta contábil/i);
+  await expect(rateio.getByTestId("compras-rateio-linha-0-avancado")).toContainText(/Conta Contábil/i);
   await foto(page, pasta, "ux1-3-rateio-por-valor-1440x900");
 
   // Mobile: inspeção visual (UI-SUPPORT-MATRIX DEFERRED) — não certifica suporte móvel

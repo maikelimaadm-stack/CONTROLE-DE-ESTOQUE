@@ -77,8 +77,8 @@ test("CO-W1 — Compras › Novo → TOP de Compra → Central → salvar → co
   await expect(central).toHaveAttribute("data-especie", "compra");
   await escolher(page, "Fornecedor", c.nomeFornecedor);
   await abrirAbaDoPainelDeCompras(page, "Rateio e classificação");
-  await escolher(page, "Natureza de despesa", c.natureza.label);
-  await escolher(page, "Centro de resultado", c.centro.label);
+  await escolher(page, "Natureza Financeira", c.natureza.label);
+  await escolher(page, "Centro de Resultado", c.centro.label);
   // O frete compõe o valor: mora na aba TOTAIS, junto das despesas e do total final.
   await abrirAbaDoPainelDeCompras(page, "Totais");
   await page.getByTestId("compras-frete").fill("10.00");
