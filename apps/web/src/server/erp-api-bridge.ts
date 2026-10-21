@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Response as InjectResponse } from "light-my-request";
 import { buildApp } from "@agro/api/server";
+import { corpoParaFetch } from "./erp-api-bridge-corpo";
 
 /**
  * Ponte Next ↔ Fastify no MESMO projeto Vercel (plano Hobby = um projeto).
@@ -56,8 +57,11 @@ export async function encaminharParaApi(req: Request): Promise<Response> {
     payload,
     remoteAddress: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined
   }) as InjectResponse;
-  return new Response(new Uint8Array(injetado.rawPayload), {
-    status: injetado.statusCode,
+  const status = injetado.statusCode;
+  const corpo = corpoParaFetch(status, injetado.rawPayload);
+  // Cast: DOM lib tipa BodyInit com ArrayBuffer "puro"; Uint8Array genérico do Node não casa.
+  return new Response(corpo as BodyInit | null, {
+    status,
     headers: cabecalhosDaResposta(injetado.headers)
   });
 }
