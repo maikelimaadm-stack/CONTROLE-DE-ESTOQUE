@@ -12,8 +12,7 @@ import { brl, dateBR } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { empresaDestinoDoRegistro } from "@/lib/empresa-ativa";
 import { entendeLayoutDocumento } from "@/features/sales/tipo-operacao-select";
-import { useTabTitle } from "@/lib/workspace-tabs";
-import { Button, ConfirmDialog, EmptyState, ErrorState, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import { Button, ConfirmDialog, DetailShell, EmptyState, ErrorState, LoadingState } from "@/components/ui";
 import { useTopsDaEspecie, varianteDeCompra } from "../variantes";
 import { invalidarLeiturasDeCompras, useChaveDeIdempotencia } from "../pedido-e-orcamento";
 import { useImportacaoXml } from "./capacidade";
@@ -75,9 +74,27 @@ function ConferenciaComCapacidade({ id, solicitacaoId }: { id: string; solicitac
 /** A importação DECIDIDA (gerada ou descartada): só o que a nota diz — as decisões estão na compra gerada. */
 function ResumoDaNota({ conf }: { conf: ConferenciaDaImportacaoNfe }) {
   const t = conf.nota.totais;
-  return <section data-testid="importacao-resumo" className="flex flex-col gap-2 rounded border px-3 py-2 text-[12.5px]">
-    <p>Emissão {dateBR(conf.nota.dataEmissao)} · produtos {brl(t.produtos)} · frete {brl(t.frete)} · IPI {brl(t.ipi)} · ICMS-ST {brl(t.icmsSt)} · total da nota <strong>{brl(t.nota)}</strong></p>
-    <ul className="ml-4 list-disc">{conf.nota.itens.map((i) => <li key={i.nItem}>Item {i.nItem}: {i.codigo} — {i.descricao} — {i.quantidade} {i.unidade} — {brl(i.valorProdutos)}</li>)}</ul>
+  return <section data-testid="importacao-resumo" className="flex flex-col gap-3">
+    <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[12.5px] sm:grid-cols-3 lg:grid-cols-6">
+      <div><dt className="text-slate-500">Emissão</dt><dd className="font-medium text-slate-800">{dateBR(conf.nota.dataEmissao)}</dd></div>
+      <div><dt className="text-slate-500">Produtos</dt><dd className="font-medium text-slate-800">{brl(t.produtos)}</dd></div>
+      <div><dt className="text-slate-500">Frete</dt><dd className="font-medium text-slate-800">{brl(t.frete)}</dd></div>
+      <div><dt className="text-slate-500">IPI</dt><dd className="font-medium text-slate-800">{brl(t.ipi)}</dd></div>
+      <div><dt className="text-slate-500">ICMS-ST</dt><dd className="font-medium text-slate-800">{brl(t.icmsSt)}</dd></div>
+      <div><dt className="text-slate-500">Total da nota</dt><dd className="font-semibold text-slate-900">{brl(t.nota)}</dd></div>
+    </dl>
+    <div className="overflow-x-auto rounded border">
+      <table className="table-dense w-full text-[12.5px]">
+        <caption className="sr-only">Itens da NF-e</caption>
+        <thead><tr><th className="w-12">Item</th><th>Código</th><th>Descrição</th><th className="w-20 text-right">Qtd</th><th className="w-16">Un</th><th className="w-28 text-right">Valor</th></tr></thead>
+        <tbody>
+          {conf.nota.itens.map((i) => <tr key={i.nItem}>
+            <td>{i.nItem}</td><td className="font-mono text-[11px]">{i.codigo}</td><td>{i.descricao}</td>
+            <td className="num text-right">{i.quantidade}</td><td>{i.unidade}</td><td className="num text-right">{brl(i.valorProdutos)}</td>
+          </tr>)}
+        </tbody>
+      </table>
+    </div>
   </section>;
 }
 
@@ -104,7 +121,6 @@ function ConferenciaCarregada({ conf, solicitacaoId, relendo, erroDaReleitura, o
   const chaveGerar = useChaveDeIdempotencia();
   const chaveDescartar = useChaveDeIdempotencia();
   const nota = conf.nota;
-  useTabTitle(`NF-e ${nota.numero}/${nota.serie}`);
 
   const reler = () => qc.invalidateQueries({ queryKey: ["compras-importacao", conf.id] });
 
@@ -166,39 +182,51 @@ function ConferenciaCarregada({ conf, solicitacaoId, relendo, erroDaReleitura, o
     divergencias: <AbaDivergencias e={e} irPara={setAba} />
   };
 
-  return <div data-testid="importacao-conferencia" data-situacao={conf.situacao} data-relendo={relendo ? "sim" : "nao"} className="flex flex-col gap-3">
-    <PageHeader title={`Conferência da NF-e ${nota.numero}/${nota.serie}`} subtitle={subtitulo}
-      status={<StatusBadge domain="situacao_importacao_nfe" value={conf.situacao} />}
+  const titulo = `Conferência da NF-e ${nota.numero}/${nota.serie}`;
+  return <div data-testid="importacao-conferencia" data-situacao={conf.situacao} data-relendo={relendo ? "sim" : "nao"}>
+    <DetailShell
+      title={titulo}
+      subtitle={subtitulo}
+      backHref="/compras?tab=documentos"
+      breadcrumbs={[
+        { label: "Compras", href: "/compras" },
+        { label: "Documentos", href: "/compras?tab=documentos" },
+        { label: `NF-e ${nota.numero}/${nota.serie}` }
+      ]}
+      status={conf.situacao}
+      statusDomain="situacao_importacao_nfe"
       actions={e.pendente ? <>
-        <Button variant="outline" data-testid="importacao-descartar" disabled={gerando || descartando} onClick={() => setConfirmandoDescarte(true)}>Descartar importação</Button>
+        <Button variant="outline" size="sm" data-testid="importacao-descartar" disabled={gerando || descartando} onClick={() => setConfirmandoDescarte(true)}>Descartar importação</Button>
         <span title={DICA_DO_GERAR}>
-          <Button data-testid="importacao-gerar-compra" loading={gerando} disabled={bloqueado || relendo || descartando || e.lendoATop} aria-describedby="importacao-dica-gerar" onClick={() => void gerar()}>Gerar compra</Button>
+          <Button size="sm" data-testid="importacao-gerar-compra" loading={gerando} disabled={bloqueado || relendo || descartando || e.lendoATop} aria-describedby="importacao-dica-gerar" onClick={() => void gerar()}>Gerar compra</Button>
         </span>
-      </> : undefined} />
-    {e.pendente && <p id="importacao-dica-gerar" className="text-[12px] text-slate-500">{DICA_DO_GERAR}{e.bloqueios.length > 0 ? ` Antes, resolva ${e.bloqueios.length === 1 ? "1 pendência" : `${e.bloqueios.length} pendências`} (aba Divergências).` : ""}</p>}
-    {erroDaReleitura && <p data-testid="importacao-erro-releitura" role="alert" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-[12.5px] text-red-800">A conferência não pôde ser lida de novo: {erroDaReleitura}</p>}
-    {conf.situacao === "gerada" && <p data-testid="importacao-compra-gerada" className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-[13px] text-emerald-900">
-      Compra gerada: {conf.documentoCompra
-        ? <Link className="underline" href={`/compras/${varianteDaCompra?.segmento ?? "compras"}/${conf.documentoCompra.id}`}>{conf.documentoCompra.codigo}</Link>
-        : "—"}{conf.documentoCompra ? ` (${enumLabel("situacao_documento_compra", conf.documentoCompra.situacao)})` : ""}
-    </p>}
-    {conf.situacao === "descartada" && <p data-testid="importacao-descartada" className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[13px] text-slate-700">Importação descartada.</p>}
+      </> : undefined}
+    >
+      {e.pendente && <p id="importacao-dica-gerar" className="text-[12px] text-slate-500">{DICA_DO_GERAR}{e.bloqueios.length > 0 ? ` Antes, resolva ${e.bloqueios.length === 1 ? "1 pendência" : `${e.bloqueios.length} pendências`} (aba Divergências).` : ""}</p>}
+      {erroDaReleitura && <p data-testid="importacao-erro-releitura" role="alert" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-[12.5px] text-red-800">A conferência não pôde ser lida de novo: {erroDaReleitura}</p>}
+      {conf.situacao === "gerada" && <p data-testid="importacao-compra-gerada" className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12.5px] text-emerald-900">
+        Compra gerada: {conf.documentoCompra
+          ? <Link className="font-medium text-brand-700 underline" href={`/compras/${varianteDaCompra?.segmento ?? "compras"}/${conf.documentoCompra.id}`}>{conf.documentoCompra.codigo}</Link>
+          : "—"}{conf.documentoCompra ? ` (${enumLabel("situacao_documento_compra", conf.documentoCompra.situacao)})` : ""}
+      </p>}
+      {conf.situacao === "descartada" && <p data-testid="importacao-descartada" className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[12.5px] text-slate-700">Importação descartada.</p>}
 
-    {e.pendente ? <TabsP.Root value={aba} onValueChange={(v) => setAba(ABAS_DA_CONFERENCIA.find((x) => x === v) ?? "cabecalho")}>
-      <TabsP.List className="flex flex-wrap gap-1 border-b" aria-label="Conferência da nota">
-        {ABAS_DA_CONFERENCIA.map((a) => {
-          const n = contador(a);
-          return <TabsP.Trigger key={a} value={a} data-testid={`importacao-aba-${a}-rotulo`}
-            className="border-b-2 border-transparent px-3 py-1.5 text-xs font-medium text-slate-500 data-[state=active]:border-brand-600 data-[state=active]:text-brand-700">
-            {NOME_DA_ABA[a]}{n > 0 && <span className="ml-1 rounded-full bg-red-600 px-1.5 text-[10px] text-white" data-testid={`importacao-aba-${a}-contador`}>{n}</span>}
-          </TabsP.Trigger>;
-        })}
-      </TabsP.List>
-      {ABAS_DA_CONFERENCIA.map((a) => <TabsP.Content key={a} value={a} className="pt-3">{conteudo[a]}</TabsP.Content>)}
-    </TabsP.Root> : <ResumoDaNota conf={conf} />}
+      {e.pendente ? <TabsP.Root value={aba} onValueChange={(v) => setAba(ABAS_DA_CONFERENCIA.find((x) => x === v) ?? "cabecalho")}>
+        <TabsP.List className="flex flex-wrap gap-0.5 border-b border-slate-200" aria-label="Conferência da nota">
+          {ABAS_DA_CONFERENCIA.map((a) => {
+            const n = contador(a);
+            return <TabsP.Trigger key={a} value={a} data-testid={`importacao-aba-${a}-rotulo`}
+              className="border-b-2 border-transparent px-3 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:text-slate-700 data-[state=active]:border-brand-600 data-[state=active]:text-brand-700">
+              {NOME_DA_ABA[a]}{n > 0 && <span className="ml-1 rounded-full bg-red-600 px-1.5 text-[10px] text-white" data-testid={`importacao-aba-${a}-contador`}>{n}</span>}
+            </TabsP.Trigger>;
+          })}
+        </TabsP.List>
+        {ABAS_DA_CONFERENCIA.map((a) => <TabsP.Content key={a} value={a} className="pt-3">{conteudo[a]}</TabsP.Content>)}
+      </TabsP.Root> : <ResumoDaNota conf={conf} />}
 
-    <ConfirmDialog open={confirmandoDescarte} onOpenChange={(o) => { if (!descartando) setConfirmandoDescarte(o); }} title="Descartar esta importação?"
-      description="A importação fica registrada como descartada (o XML original continua guardado). Nada é lançado. Para lançar esta nota depois, importe o XML de novo."
-      confirmLabel="Descartar importação" danger loading={descartando} onConfirm={() => void descartar()} />
+      <ConfirmDialog open={confirmandoDescarte} onOpenChange={(o) => { if (!descartando) setConfirmandoDescarte(o); }} title="Descartar esta importação?"
+        description="A importação fica registrada como descartada (o XML original continua guardado). Nada é lançado. Para lançar esta nota depois, importe o XML de novo."
+        confirmLabel="Descartar importação" danger loading={descartando} onConfirm={() => void descartar()} />
+    </DetailShell>
   </div>;
 }
